@@ -8,6 +8,7 @@
 #include "carvisual.h"
 #include "scenery.h"
 #include "font.h"
+#include "groundtex.h"
 #include "fx.h"
 
 using namespace gl;
@@ -232,13 +233,19 @@ void main(){
   gl_Position = uVP * wp;
 })";
 
-const char* kLitFSBody = R"(
+// The lit shader's declarations (the terrain shaders share them).
+const char* kLitIns = R"(
 in vec3 vPos; in vec3 vNrm; in vec4 vCol; in vec4 vLight; in vec3 vLocal;
 out vec4 oCol;
 uniform int uMap;                 // 0 proving ground, 1 mountain, 2 freeway
 uniform sampler2D uTerrainTex;    // per meter: height, grass, paint
 uniform float uTerrainN;          // texels per side
 uniform vec2 uRockSnow;           // heights where bare rock, then snow, take over
+)";
+
+// The procedural ground: the look the terrain had before photo-scanned materials, and still has for
+// paved ground, ice and the like (and everywhere with ground detail off).
+const char* kTerrainProcFS = R"(
 float paintAt(vec2 xz){
   vec2 uv = (xz + 600.0 + 0.5) / uTerrainN;
   return texture(uTerrainTex, uv).b;
@@ -315,12 +322,7 @@ bool surfacePaint(int paint, inout vec3 base, inout float specK, inout float spe
   } else return false;
   return true;
 }
-void main(){
-  vec3 n = normalize(vNrm);
-  vec3 base = vCol.rgb;
-  int mat = int(vCol.a + 0.5);
-  float specK = 0.04, specP = 16.0;
-  if (mat == 7) {
+void terrainProcedural(vec3 n, inout vec3 base, inout float specK, inout float specP){
     float r = length(vPos.xz);
     float pad = 1.0 - smoothstep(130.0, 140.0, r);
     vec3 padc = vec3(0.41, 0.415, 0.43) * (0.92 + 0.10 * vnoise(vPos.xz * 0.5)) * (0.9 + 0.14 * fbm(vPos.xz * 0.04, 3));
@@ -400,6 +402,17 @@ void main(){
     float wet = 1.0 - smoothstep(0.0, 0.5, vPos.y - wl);
     base = mix(base, base * 0.45 + vec3(0.04, 0.035, 0.02), wet);
     base = mix(base, vec3(0.10, 0.11, 0.07), smoothstep(0.0, -0.4, vPos.y - wl) * 0.8);
+}
+)";
+
+const char* kLitFSBody = R"(
+void main(){
+  vec3 n = normalize(vNrm);
+  vec3 base = vCol.rgb;
+  int mat = int(vCol.a + 0.5);
+  float specK = 0.04, specP = 16.0;
+  if (mat == 7) {
+    terrainProcedural(n, base, specK, specP);
   } else if (mat == 12) {
     // Rock: grainy, with darker veins, crusty lichen on the tops.
     float g1 = vnoise(vPos.xz * 2.3 + vPos.y * 1.1), g2 = vnoise(vPos.zy * 2.7 - vPos.x * 0.9);
@@ -1623,7 +1636,7 @@ struct MeshOut {
 
 bool Renderer::init(const World& world, std::string& err) {
     const std::string header = "#version 330 core\n";
-    progLit = linkProgram(kLitVS, header + kCommonFS + kLitFSBody, err);
+    progLit = linkProgram(kLitVS, header + kCommonFS + kLitIns + kTerrainProcFS + kLitFSBody, err);
     progCar = linkProgram(kCarVS, header + kCommonFS + kCarFSBody, err);
     progDepth = linkProgram(kDepthVS, kDepthFS, err);
     progLine = linkProgram(kLineVS, kLineFS, err);
@@ -1636,6 +1649,15 @@ bool Renderer::init(const World& world, std::string& err) {
     progComposite = linkProgram(kPostVS, kCompositeFS, err);
     progGrass = linkProgram(kGrassVS, header + kCommonFS + kGrassFSBody, err);
     progWater = linkProgram(kLitVS, header + kCommonFS + kWaterFSBody, err);
+    // (Photo-scanned ground: if it can't be built the terrain keeps its procedural look.)
+    {
+        std::string gerr;
+        progTerrain = linkProgram(kLitVS, header + kCommonFS + kLitIns + kTerrainProcFS + kGroundShaderFS, gerr);
+        if (!progTerrain) {
+            std::fprintf(stderr, "ground shader: %s\n", gerr.c_str());
+            groundFailed = true;
+        }
+    }
     if (!progLit || !progDepth || !progLine || !progSky || !progHud || !progFx || !progCar || !progAO || !progDown ||
         !progUp || !progComposite || !progGrass || !progWater)
         return false;
@@ -2635,6 +2657,42 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     else if (mapId == MAP_FRONTIER) Uniform2f(GetUniformLocation(progLit, "uRockSnow"), 125.0f, 400.0f);  // (its snow is painted on)
     else if (mapId == MAP_BACKCOUNTRY) Uniform2f(GetUniformLocation(progLit, "uRockSnow"), 105.0f, 400.0f);  // (its snow is painted on)
     else Uniform2f(GetUniformLocation(progLit, "uRockSnow"), 60.0f, 240.0f);
+    // The ground: photo-scanned materials where they're loaded, else the procedural look.
+    int gq = std::min(std::max(settings.ground, 0), 3);
+    if (gq && !groundFailed) {
+        const int want = gq >= 2 ? 1024 : 512;
+        if (!groundTex.ok() || groundSize != want) {
+            std::string gerr;
+            if (loadGroundTextures(groundTex, want, gerr)) groundSize = want;
+            else {
+                std::fprintf(stderr, "ground textures: %s (staying procedural)\n", gerr.c_str());
+                groundFailed = true;
+            }
+        }
+    }
+    if (groundFailed || !groundTex.ok()) gq = 0;
+    if (gq) {
+        setLighting(progTerrain);
+        uniformM4(progTerrain, "uModel", m4identity());
+        bindTerrainTex(progTerrain);
+        Uniform1i(GetUniformLocation(progTerrain, "uMap"), mapId);
+        float rs[2];
+        if (mapId == MAP_MOUNTAIN) rs[0] = 165.0f, rs[1] = 205.0f;
+        else if (mapId == MAP_FRONTIER) rs[0] = 125.0f, rs[1] = 400.0f;
+        else if (mapId == MAP_BACKCOUNTRY) rs[0] = 105.0f, rs[1] = 400.0f;
+        else rs[0] = 60.0f, rs[1] = 240.0f;
+        Uniform2f(GetUniformLocation(progTerrain, "uRockSnow"), rs[0], rs[1]);
+        ActiveTexture(GL_TEXTURE0 + 3);
+        BindTexture(GL_TEXTURE_2D_ARRAY, groundTex.albedo);
+        ActiveTexture(GL_TEXTURE0 + 4);
+        BindTexture(GL_TEXTURE_2D_ARRAY, groundTex.normal);
+        ActiveTexture(GL_TEXTURE0);
+        Uniform1i(GetUniformLocation(progTerrain, "uGroundA"), 3);
+        Uniform1i(GetUniformLocation(progTerrain, "uGroundB"), 4);
+        Uniform1i(GetUniformLocation(progTerrain, "uGroundQ"), gq);
+    } else {
+        UseProgram(progLit);
+    }
     BindVertexArray(terrainVao);
     DrawElements(GL_TRIANGLES, terrainIndexCount, GL_UNSIGNED_INT, nullptr);
     if (effects) {
@@ -2656,6 +2714,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
             DrawArrays(GL_TRIANGLES, 0, (GLsizei)rutVerts.size());
         }
     }
+    UseProgram(progLit);
     BindVertexArray(boxVao);
     DrawArrays(GL_TRIANGLES, 0, boxVertexCount);
     if (figVertexCount > 0) {

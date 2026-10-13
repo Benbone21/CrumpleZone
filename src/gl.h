@@ -46,6 +46,10 @@ enum : GLenum {
     GL_RGBA16F = 0x881A, GL_RGBA32F = 0x8814, GL_R11F_G11F_B10F = 0x8C3A, GL_DEPTH_COMPONENT32F = 0x8CAC,
     GL_READ_FRAMEBUFFER = 0x8CA8, GL_DRAW_FRAMEBUFFER = 0x8CA9, GL_COLOR_ATTACHMENT0 = 0x8CE0,
     GL_RENDERBUFFER = 0x8D41, GL_MAX_SAMPLES = 0x8D57,
+    // Texture arrays and filtering (the ground's photo-scanned materials).
+    GL_TEXTURE_2D_ARRAY = 0x8C1A, GL_SRGB8_ALPHA8 = 0x8C43, GL_RGBA8 = 0x8058, GL_REPEAT = 0x2901,
+    GL_LINEAR_MIPMAP_LINEAR = 0x2703, GL_TEXTURE_MAX_ANISOTROPY = 0x84FE, GL_MAX_TEXTURE_MAX_ANISOTROPY = 0x84FF,
+    GL_TEXTURE_MAX_LEVEL = 0x813D,
 };
 
 #define CZ_GL_FUNCS(X)                                                                         \
@@ -113,7 +117,12 @@ enum : GLenum {
     X(void, RenderbufferStorageMultisample, (GLenum, GLsizei, GLenum, GLsizei, GLsizei))       \
     X(void, FramebufferRenderbuffer, (GLenum, GLenum, GLenum, GLuint))                         \
     X(void, BlitFramebuffer, (GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLbitfield, GLenum)) \
-    X(void, GetIntegerv, (GLenum, GLint*))
+    X(void, GetIntegerv, (GLenum, GLint*))                                                     \
+    X(void, GetFloatv, (GLenum, GLfloat*))                                                     \
+    X(void, TexImage3D, (GLenum, GLint, GLint, GLsizei, GLsizei, GLsizei, GLint, GLenum, GLenum, const void*)) \
+    X(void, TexSubImage3D, (GLenum, GLint, GLint, GLint, GLint, GLsizei, GLsizei, GLsizei, GLenum, GLenum, const void*)) \
+    X(void, TexParameterf, (GLenum, GLenum, GLfloat))                                          \
+    X(void, GenerateMipmap, (GLenum))
 
 namespace gl {
 #define CZ_DECLARE(ret, name, args) \
