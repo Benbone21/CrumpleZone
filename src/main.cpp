@@ -1688,15 +1688,33 @@ int main(int argc, char** argv) {
             }
     };
     auto startHost = [&](int port) {
-        if (net.host(port, settings.playerName, sim.world.map)) {
+        const std::string session = !settings.sessionName.empty() ? settings.sessionName
+                                    : (settings.playerName.empty() ? std::string("PLAYER") : settings.playerName) + "'S GAME";
+        if (net.host(port, settings.playerName, sim.world.map, settings.maxPlayers, session)) {
             net.adopt(sim);
-            hud.toast("HOSTING ON PORT " + std::to_string(port) + ": FRIENDS JOIN YOUR IP");
+            hud.toast("HOSTING " + session + " ON " + mapName(sim.world.map) + ": FRIENDS ON YOUR NETWORK SEE IT IN JOIN");
             std::printf("hosting %s on port %d\n", mapName(sim.world.map), port);
         } else {
             hud.toast("CAN'T HOST: " + net.error);
             std::printf("can't host: %s\n", net.error.c_str());
         }
     };
+    // ---- multiplayer: joining without freezing (the menu shows a CONNECTING card meanwhile)
+    int joinState = 0;  // 0 not joining, 1 connecting, 2 it failed (the card says why)
+    auto beginJoin = [&](const std::string& address, const std::string& label) {
+        menu.joining = true;
+        menu.joinLabel = label.empty() ? address : label;
+        menu.joinError.clear();
+        if (net.beginJoin(address, settings.playerName)) {
+            joinState = 1;
+        } else {
+            joinState = 2;
+            menu.joinError = net.error;
+        }
+        for (char& ch : menu.joinError) ch = (char)std::toupper((unsigned char)ch);
+        std::printf("joining %s\n", address.c_str());
+    };
+    // ---- end multiplayer joining
     auto startJoin = [&](const std::string& address) {
         if (!net.join(address, settings.playerName)) {
             hud.toast("CAN'T JOIN: " + net.error);
@@ -1959,15 +1977,28 @@ int main(int argc, char** argv) {
                 stopPilot();
                 break;
             case PauseMenu::HOST:
+                saveSettings();
+                if (menu.mapPick != sim.world.map) {  // (the HOST card's map)
+                    run.stop();
+                    levelHours = -1;
+                    loadMap(menu.mapPick);
+                    settings.map = menu.mapPick;
+                    saveSettings();
+                }
                 closeMenu();
                 startHost(net::kDefaultPort);
                 if (run.active() && net.role == NetSession::HOST) net.setLevel(saveLevelText(run.level));  // they join into it
                 break;
-            case PauseMenu::JOIN:
-                closeMenu();
+            case PauseMenu::JOIN:  // (a game from the network list, or the typed address)
                 saveSettings();
-                startJoin(menu.joinPick.empty() ? settings.joinAddress : menu.joinPick);  // (a game found on the network, or the typed address)
+                beginJoin(menu.joinPick.empty() ? settings.joinAddress : menu.joinPick, menu.joinLabel);
                 menu.joinPick.clear();
+                break;
+            case PauseMenu::CANCEL_JOIN:
+                if (joinState == 1) net.close();
+                joinState = 0;
+                menu.joining = false;
+                menu.joinError.clear();
                 break;
             case PauseMenu::LEAVE:
                 closeMenu();
@@ -2737,7 +2768,25 @@ int main(int argc, char** argv) {
             if (playback.done && playback.worker.joinable()) playback.worker.join();
         } else {
             const double netNow = (double)(SDL_GetPerformanceCounter()) / freq;
-            net.receive(sim, netNow);
+            if (joinState == 1) {  // ---- multiplayer: joining, a step a frame
+                const int st = net.pollJoin();
+                if (st > 0) {
+                    joinState = 0;
+                    menu.joining = false;
+                    closeMenu();
+                    run.stop();
+                    if (net.map != sim.world.map) loadMap(net.map);
+                    net.adopt(sim);
+                    hud.toast("JOINED " + net.ownerName(0) + "'S GAME ON " + mapName(net.map));
+                    std::printf("joined (player %d)\n", net.self);
+                } else if (st < 0) {
+                    joinState = 2;
+                    menu.joinError = net.error;
+                    for (char& ch : menu.joinError) ch = (char)std::toupper((unsigned char)ch);
+                    std::printf("can't join: %s\n", net.error.c_str());
+                }
+            }
+            if (!net.joining()) net.receive(sim, netNow);
             // The host's level (a client loads it as it comes), and the race chatter.
             if (net.levelFresh) {
                 net.levelFresh = false;
@@ -2929,7 +2978,7 @@ int main(int argc, char** argv) {
             impact += c.impactEnergy;
             c.impactEnergy = 0;
         }
-        if (!(playback.active() && !playback.done)) net.send(sim, (double)(SDL_GetPerformanceCounter()) / freq);
+        if (!(playback.active() && !playback.done) && !net.joining()) net.send(sim, (double)(SDL_GetPerformanceCounter()) / freq);
         FxEvents events = fx.update(sim, simDt);
 
         Car& car = sim.cars[sim.player];
@@ -3125,7 +3174,14 @@ int main(int argc, char** argv) {
         if (walker.active && (editor.active || cam.mode == 3)) renderer.figures.push_back({walker.p, walker.yaw, V3(0.95, 0.5, 0.12), walker.stride});
         for (const RemoteWalker& rw : coop.walkers) renderer.figures.push_back({rw.p, rw.yaw, V3(0.2, 0.6, 0.95), rw.stride});
         const uint64_t drawStart = SDL_GetPerformanceCounter();
-        renderer.drawScene(sim, view, debug, &fx);
+        if (menu.open && menu.title) {  // the main menu is its own screen: no world behind it
+            gl::BindFramebuffer(GL_FRAMEBUFFER, 0);
+            gl::Viewport(0, 0, W, H);
+            gl::ClearColor(0.04f, 0.05f, 0.06f, 1);
+            gl::Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        } else {
+            renderer.drawScene(sim, view, debug, &fx);
+        }
         if (scripted && std::getenv("CZ_BENCH")) {  // (the scene's frame time: wait for the GPU to finish it)
             unsigned char px[4];
             gl::ReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
@@ -3203,28 +3259,65 @@ int main(int argc, char** argv) {
                 menu.pilotActive = pc.pilot.active || pc.ai;
                 menu.pilotStatus = pc.ai ? "CRUISING THE LOOP ROAD" : pc.pilot.active ? "DRIVING: " + pc.pilot.status : "OFF";
             }
-            menu.netActive = net.active();
+            menu.netActive = net.active() && !net.joining();
             menu.levelActive = run.active();
             menu.jobActive = jobOn && !job.done;
             menu.jobStatus = jobOn ? jobStatus(job, sim, sim.cars[sim.player].frame().com) : "";
             menu.netClient = net.role == NetSession::CLIENT;
-            menu.netStatus = !net.active() ? "OFFLINE"
+            menu.netHost = net.role == NetSession::HOST;
+            menu.netStatus = !menu.netActive ? "OFFLINE"
                              : net.role == NetSession::HOST
                                  ? "HOSTING: " + std::to_string(net.playerCount()) + (net.playerCount() == 1 ? " PLAYER" : " PLAYERS")
                                  : "IN " + net.ownerName(0) + "'S GAME: " + std::to_string(net.playerCount()) + " PLAYERS";
-            // Looking for games on the network while you're on the multiplayer page.
-            if (menu.pageNow() == 2 && !net.active()) {
+            // ---- multiplayer page: the session's card, the network list, this machine's addresses
+            if (menu.pageNow() == 2) {
+                static double ipsAt = -10;
+                const double wall = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+                if (wall - ipsAt > 3) {
+                    ipsAt = wall;
+                    menu.localIps.clear();
+                    for (const net::LocalAddress& la : net::localAddresses()) menu.localIps.push_back(la.ip);
+                }
+                if (menu.netActive) {
+                    std::string title = net.role == NetSession::HOST ? "YOU'RE HOSTING " + net.sessionName : "IN " + net.ownerName(0) + "'S GAME";
+                    for (char& ch : title) ch = (char)std::toupper((unsigned char)ch);
+                    menu.sessionTitle = title;
+                    menu.sessionLines.clear();
+                    menu.sessionLines.push_back(std::string(mapName(net.map)) + ": " + std::to_string(net.playerCount()) + " OF " +
+                                                std::to_string(net.role == NetSession::HOST ? net.maxPlayers : net::kMaxPeers) + " PLAYERS");
+                    for (int k = 0; k < net::kMaxPeers; k++) {
+                        const NetPlayer& p = net.players[k];
+                        if (!p.active) continue;
+                        std::string line = "  " + (p.name.empty() ? std::string("PLAYER") : p.name) + (k == net.self ? "  (YOU)" : "");
+                        line += k == 0 ? "  HOST" : "  " + std::to_string((int)std::lround(p.ping * 1000)) + " MS";
+                        for (char& ch : line) ch = (char)std::toupper((unsigned char)ch);
+                        menu.sessionLines.push_back(line);
+                    }
+                }
+            }
+            if (menu.pageNow() == 2 && !net.active() && !menu.joining) {
                 finder.poll(std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count());
+                menu.searching += dt;
                 menu.found.clear();
                 for (const net::FoundHost& fh : finder.hosts) {
-                    std::string who = fh.name.empty() ? "A GAME" : fh.name;
-                    for (char& ch : who) ch = (char)std::toupper((unsigned char)ch);
-                    menu.found.push_back({who + ": " + mapName(fh.map) + " (" + std::to_string(fh.players) + (fh.players == 1 ? " PLAYER)" : " PLAYERS)"), fh.address});
+                    PauseMenu::FoundGame g;
+                    g.host = fh.name.empty() ? "A PLAYER" : fh.name;
+                    g.session = fh.session.empty() ? g.host + "'S GAME" : fh.session;
+                    for (std::string* t : {&g.host, &g.session})
+                        for (char& ch : *t) ch = (char)std::toupper((unsigned char)ch);
+                    g.map = mapName(fh.map);
+                    g.players = std::to_string(fh.players) + "/" + std::to_string(fh.maxPlayers);
+                    g.address = fh.address;
+                    g.ok = fh.joinable();
+                    g.why = fh.version != net::kVersion ? "A DIFFERENT VERSION OF THE GAME" : "FULL: " + g.players;
+                    menu.found.push_back(g);
                 }
-            } else if (!menu.found.empty() || menu.pageNow() != 2) {
+            } else if (!menu.found.empty() || menu.pageNow() != 2 || menu.searching > 0) {
                 finder.close();
                 menu.found.clear();
+                menu.searching = 0;
             }
+            // ---- end multiplayer page
         }
         if (garageUI.open) drawGarage(renderer, garageUI, garage, std::max(0.75f, H / 720.0f), W, H);
         menu.draw(renderer, settings, W, H, dt);

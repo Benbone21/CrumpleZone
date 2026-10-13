@@ -14,8 +14,13 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#if !defined(_WIN32_WINNT) || _WIN32_WINNT < 0x0600
+#undef _WIN32_WINNT
+#define _WIN32_WINNT 0x0600  // (Vista and later: the adapters' prefix lengths)
+#endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <iphlpapi.h>
 typedef int socklen_t;
 #ifndef MSG_NOSIGNAL
 #define MSG_NOSIGNAL 0
@@ -41,6 +46,8 @@ static int newSocket(int type) { return (int)socket(AF_INET, type, 0); }
 #else
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <ifaddrs.h>
+#include <net/if.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -255,7 +262,9 @@ void NetSession::close() {
     if (listenFd >= 0) closeSock(listenFd);
     if (udpFd >= 0) closeSock(udpFd);
     if (findFd >= 0) closeSock(findFd);
-    listenFd = udpFd = findFd = -1;
+    if (connectFd >= 0) closeSock(connectFd);
+    listenFd = udpFd = findFd = connectFd = -1;
+    joinStage = 0;
     delete (sockaddr_in*)hostUdp;
     hostUdp = nullptr;
     for (Remote* r : remotes) delete r;
@@ -272,7 +281,7 @@ void NetSession::close() {
     sessionStart = -1;
 }
 
-bool NetSession::host(int port, const std::string& name, int m) {
+bool NetSession::host(int port, const std::string& name, int m, int maxP, const std::string& session) {
     close();
     netInit();
     listenFd = newSocket(SOCK_STREAM);
@@ -306,8 +315,14 @@ bool NetSession::host(int port, const std::string& name, int m) {
             findFd = -1;
         } else {
             nonBlocking(findFd);
+            setsockopt(findFd, SOL_SOCKET, SO_BROADCAST, (const char*)&one, sizeof one);  // (the announcements)
         }
     }
+    maxPlayers = std::min(std::max(maxP, 2), net::kMaxPeers);
+    sessionName = session;
+    sessionId = (uint32_t)std::chrono::steady_clock::now().time_since_epoch().count() * 2654435761u ^ (uint32_t)port;
+    if (!sessionId) sessionId = 1;
+    nextBeacon = 0;
     role = HOST;
     self = 0;
     map = m;
@@ -317,6 +332,23 @@ bool NetSession::host(int port, const std::string& name, int m) {
 }
 
 bool NetSession::join(const std::string& address, const std::string& name, double timeout) {
+    if (!beginJoin(address, name, timeout)) return false;
+    for (;;) {
+        const int st = pollJoin();
+        if (st > 0) return true;
+        if (st < 0) return false;
+        pollfd rp{};
+        rp.fd = conns.empty() ? connectFd : conns[0]->fd;
+        rp.events = conns.empty() ? POLLOUT : POLLIN;
+        if (rp.fd >= 0) pollFds(&rp, 1, 20);
+    }
+}
+
+namespace {
+double clockNow() { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
+}  // namespace
+
+bool NetSession::beginJoin(const std::string& address, const std::string& name, double timeout) {
     close();
     netInit();
     std::string hostName = address;
@@ -329,81 +361,95 @@ bool NetSession::join(const std::string& address, const std::string& name, doubl
     addrinfo hints{}, *res = nullptr;
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
-    if (getaddrinfo(hostName.c_str(), std::to_string(port).c_str(), &hints, &res) != 0 || !res) {
-        error = "can't find " + hostName;
+    if (hostName.empty() || getaddrinfo(hostName.c_str(), std::to_string(port).c_str(), &hints, &res) != 0 || !res) {
+        error = hostName.empty() ? "no address" : "can't find " + hostName;
         return false;
     }
     sockaddr_in addr = *(sockaddr_in*)res->ai_addr;
     freeaddrinfo(res);
-    const int fd = newSocket(SOCK_STREAM);
-    nonBlocking(fd);
-    connect(fd, (sockaddr*)&addr, sizeof addr);
-    pollfd pf{};
-    pf.fd = fd;
-    pf.events = POLLOUT;
-    int err = 0;
-    socklen_t el = sizeof err;
-    if (pollFds(&pf, 1, (int)(timeout * 1000)) <= 0 || getsockopt(fd, SOL_SOCKET, SO_ERROR, (char*)&err, &el) < 0 || err) {
-        error = "no answer from " + address;
-        closeSock(fd);
-        return false;
-    }
-    int one = 1;
-    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (const char*)&one, sizeof one);
-    Conn* c = new Conn;
-    c->fd = fd;
-    c->peer = 0;
-    conns.push_back(c);
-    udpFd = newSocket(SOCK_DGRAM);
-    sockaddr_in any{};
-    any.sin_family = AF_INET;
-    bind(udpFd, (sockaddr*)&any, sizeof any);
-    nonBlocking(udpFd);
+    connectFd = newSocket(SOCK_STREAM);
+    nonBlocking(connectFd);
+    connect(connectFd, (sockaddr*)&addr, sizeof addr);
     hostUdp = new sockaddr_in(addr);
-    role = CLIENT;
-    Writer w;
-    w.put<uint16_t>(net::kVersion);
-    w.str(name);
-    sendTo(*c, frame(MSG_HELLO, w));
-    // Wait to be let in.
-    const auto t0 = std::chrono::steady_clock::now();
-    while (self < 0 && role == CLIENT) {
-        flush(*c);
-        pollfd rp{};
-        rp.fd = fd;
-        rp.events = POLLIN;
-        pollFds(&rp, 1, 50);
-        readTcp(*c);  // handles WELCOME / REJECT (other messages wait for adopt())
-        if (std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() > timeout) {
-            error = "the host didn't let us in";
-            close();
-            return false;
-        }
-    }
-    if (self < 0) {
-        if (error.empty()) error = "connection closed";
-        close();
-        return false;
-    }
-    // The host sends its vehicles right behind the welcome: take them in now (they wait in
-    // `pending` for adopt()), so we park clear of them rather than on one.
-    {
-        const auto t1 = std::chrono::steady_clock::now();
-        while (role == CLIENT && std::chrono::duration<double>(std::chrono::steady_clock::now() - t1).count() < 0.5) {
-            pollfd rp{};
-            rp.fd = fd;
-            rp.events = POLLIN;
-            if (pollFds(&rp, 1, 120) <= 0) break;  // quiet for a moment: that's all of it
-            readTcp(*c);
-        }
-    }
-    if (role != CLIENT) {
-        if (error.empty()) error = "connection closed";
-        return false;
-    }
-    players[self].active = true;
-    players[self].name = name;
+    joinAddress = address;
+    joinName = name;
+    joinTimeout = timeout;
+    joinStage = 1;
+    joinT0 = clockNow();
+    error.clear();
     return true;
+}
+
+int NetSession::pollJoin() {
+    auto fail = [&](const std::string& why) {
+        error = why;
+        if (connectFd >= 0) closeSock(connectFd);
+        connectFd = -1;
+        const std::string keep = error;
+        close();
+        error = keep;
+        return -1;
+    };
+    const double now = clockNow();
+    if (joinStage == 1) {  // the connection: answered yet?
+        pollfd pf{};
+        pf.fd = connectFd;
+        pf.events = POLLOUT;
+        if (pollFds(&pf, 1, 0) <= 0) {
+            if (now - joinT0 > joinTimeout) return fail("no answer from " + joinAddress);
+            return 0;
+        }
+        int err = 0;
+        socklen_t el = sizeof err;
+        if (getsockopt(connectFd, SOL_SOCKET, SO_ERROR, (char*)&err, &el) < 0 || err) return fail("no answer from " + joinAddress);
+        int one = 1;
+        setsockopt(connectFd, IPPROTO_TCP, TCP_NODELAY, (const char*)&one, sizeof one);
+        Conn* c = new Conn;
+        c->fd = connectFd;
+        c->peer = 0;
+        connectFd = -1;
+        conns.push_back(c);
+        udpFd = newSocket(SOCK_DGRAM);
+        sockaddr_in any{};
+        any.sin_family = AF_INET;
+        bind(udpFd, (sockaddr*)&any, sizeof any);
+        nonBlocking(udpFd);
+        role = CLIENT;
+        Writer w;
+        w.put<uint16_t>(net::kVersion);
+        w.str(joinName);
+        sendTo(*c, frame(MSG_HELLO, w));
+        joinStage = 2;
+        joinT0 = now;
+    }
+    if (joinStage == 2) {  // waiting to be let in
+        if (role != CLIENT || conns.empty() || conns[0]->fd < 0) return fail(error.empty() ? "connection closed" : error);
+        Conn& c = *conns[0];
+        flush(c);
+        readTcp(c);  // handles WELCOME / REJECT (other messages wait for adopt())
+        if (role != CLIENT || (self < 0 && c.fd < 0)) return fail(error.empty() ? "connection closed" : error);
+        if (self < 0) {
+            if (now - joinT0 > joinTimeout) return fail("the host didn't let us in");
+            return 0;
+        }
+        joinStage = 3;
+        joinT0 = joinQuiet = now;
+    }
+    if (joinStage == 3) {
+        // The host sends its vehicles right behind the welcome: take them in now (they wait
+        // in `pending` for adopt()), so we park clear of them rather than on one.
+        if (role != CLIENT || conns.empty() || conns[0]->fd < 0) return fail(error.empty() ? "connection closed" : error);
+        const size_t before = pending.size();
+        readTcp(*conns[0]);
+        if (role != CLIENT || conns[0]->fd < 0) return fail(error.empty() ? "connection closed" : error);
+        if (pending.size() != before) joinQuiet = now;
+        if (now - joinT0 < 0.5 && now - joinQuiet < 0.12) return 0;
+        joinStage = 0;
+        players[self].active = true;
+        players[self].name = joinName;
+        return 1;
+    }
+    return -1;
 }
 
 // ---- Reliable messages ------------------------------------------------------------
@@ -465,6 +511,7 @@ void NetSession::handle(Sim* sim, Conn* from, const std::vector<uint8_t>& msg) {
             int id = -1;
             for (int k = 1; k < net::kMaxPeers && id < 0; k++)
                 if (!players[k].active) id = k;
+            if (playerCount() >= maxPlayers) id = -1;
             if (ver != net::kVersion || id < 0) {
                 Writer w;
                 w.str(ver != net::kVersion ? "different game version" : "session full");
@@ -1046,7 +1093,7 @@ void NetSession::receive(Sim& sim, double now) {
         }
     }
     readUdp(sim, now);
-    if (role == HOST) answerFinders();
+    if (role == HOST) answerFinders(now);
     // Clients: say hello over UDP until the host has heard (that's how it learns our
     // address through any NAT).
     if (role == CLIENT && !udpReady && now >= nextUdpHello) {
@@ -1173,35 +1220,146 @@ void NetSession::sendGame(const std::string& text) {
 
 // ---- Finding games on the local network -------------------------------------------------
 
-void NetSession::answerFinders() {
+// What a host tells anyone looking for games. The old form (0.1.4) is "CZHOST version port map
+// players name"; the new one adds the most players, the session's id and its name, a line each.
+std::string NetSession::hostInfo(bool v2) const {
+    char head[96];
+    if (!v2) {
+        std::snprintf(head, sizeof head, "CZHOST %d %d %d %d ", (int)net::kVersion, hostPort, map, playerCount());
+        return head + players[0].name.substr(0, 40);
+    }
+    std::snprintf(head, sizeof head, "CZHOST2 %d %d %d %d %d %u\n", (int)net::kVersion, hostPort, map, playerCount(), maxPlayers, sessionId);
+    return head + sessionName.substr(0, 40) + "\n" + players[0].name.substr(0, 40);
+}
+
+void NetSession::answerFinders(double now) {
     if (findFd < 0) return;
     char buf[256];
     for (int k = 0; k < 16; k++) {
         sockaddr_in from{};
-#ifdef _WIN32
-        int fl = sizeof from;
-#else
         socklen_t fl = sizeof from;
-#endif
         const int n = (int)recvfrom(findFd, buf, sizeof buf - 1, 0, (sockaddr*)&from, &fl);
         if (n <= 0) break;
         buf[n] = 0;
         if (std::strncmp(buf, "CZFIND", 6) != 0) continue;
-        char reply[160];
-        std::snprintf(reply, sizeof reply, "CZHOST %d %d %d %d %s", (int)net::kVersion, hostPort, map, playerCount(),
-                      players[0].name.substr(0, 40).c_str());
-        sendto(findFd, reply, (int)std::strlen(reply), 0, (sockaddr*)&from, sizeof from);
+        const std::string reply = hostInfo(std::strncmp(buf, "CZFIND2", 7) == 0);
+        sendto(findFd, reply.data(), (int)reply.size(), 0, (sockaddr*)&from, sizeof from);
+    }
+    // And say so, every couple of seconds, to everyone on each network this machine is on
+    // (for when a firewall lets our announcement out but not their question in).
+    if (now >= nextBeacon) {
+        nextBeacon = now + 2.0;
+        const std::string msg = hostInfo(true);
+        std::vector<uint32_t> to = {0xffffffffu, 0x7f000001u};
+        for (const net::LocalAddress& la : net::localAddresses())
+            if (std::find(to.begin(), to.end(), la.broadcast) == to.end()) to.push_back(la.broadcast);
+        for (uint32_t ip : to) {
+            sockaddr_in a{};
+            a.sin_family = AF_INET;
+            a.sin_addr.s_addr = htonl(ip);
+            a.sin_port = htons((uint16_t)net::kBeaconPort);
+            sendto(findFd, msg.data(), (int)msg.size(), 0, (sockaddr*)&a, sizeof a);
+        }
     }
 }
 
 namespace net {
 
+std::vector<LocalAddress> localAddresses() {
+    std::vector<LocalAddress> out;
+    auto add = [&](uint32_t ip, uint32_t mask) {
+        if ((ip >> 24) == 127 || ip == 0) return;
+        if ((ip >> 16) == 0xA9FE) return;  // (169.254: a link-local address, no network behind it)
+        LocalAddress la;
+        la.addr = ip;
+        la.broadcast = ip | ~mask;
+        char b[20];
+        std::snprintf(b, sizeof b, "%u.%u.%u.%u", ip >> 24, (ip >> 16) & 255, (ip >> 8) & 255, ip & 255);
+        la.ip = b;
+        for (const LocalAddress& o : out)
+            if (o.addr == ip) return;
+        out.push_back(la);
+    };
+#ifdef _WIN32
+    netInit();
+    ULONG size = 16 * 1024;
+    std::vector<unsigned char> buf(size);
+    ULONG rc = GetAdaptersAddresses(AF_INET, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER, nullptr,
+                                    (IP_ADAPTER_ADDRESSES*)buf.data(), &size);
+    if (rc == ERROR_BUFFER_OVERFLOW) {
+        buf.resize(size);
+        rc = GetAdaptersAddresses(AF_INET, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER, nullptr,
+                                  (IP_ADAPTER_ADDRESSES*)buf.data(), &size);
+    }
+    if (rc == NO_ERROR)
+        for (IP_ADAPTER_ADDRESSES* ad = (IP_ADAPTER_ADDRESSES*)buf.data(); ad; ad = ad->Next) {
+            if (ad->OperStatus != IfOperStatusUp || ad->IfType == IF_TYPE_SOFTWARE_LOOPBACK) continue;
+            for (IP_ADAPTER_UNICAST_ADDRESS* ua = ad->FirstUnicastAddress; ua; ua = ua->Next) {
+                if (!ua->Address.lpSockaddr || ua->Address.lpSockaddr->sa_family != AF_INET) continue;
+                const uint32_t ip = ntohl(((sockaddr_in*)ua->Address.lpSockaddr)->sin_addr.s_addr);
+                const int bits = std::min(std::max((int)ua->OnLinkPrefixLength, 0), 32);
+                add(ip, bits == 0 ? 0u : 0xffffffffu << (32 - bits));
+            }
+        }
+#else
+    ifaddrs* list = nullptr;
+    if (getifaddrs(&list) == 0) {
+        for (ifaddrs* i = list; i; i = i->ifa_next) {
+            if (!i->ifa_addr || i->ifa_addr->sa_family != AF_INET || !(i->ifa_flags & IFF_UP) || (i->ifa_flags & IFF_LOOPBACK)) continue;
+            const uint32_t ip = ntohl(((sockaddr_in*)i->ifa_addr)->sin_addr.s_addr);
+            const uint32_t mask = i->ifa_netmask ? ntohl(((sockaddr_in*)i->ifa_netmask)->sin_addr.s_addr) : 0xffffff00u;
+            add(ip, mask);
+        }
+        freeifaddrs(list);
+    }
+#endif
+    return out;
+}
+
 Finder::~Finder() { close(); }
 
 void Finder::close() {
     if (fd >= 0) closeSock(fd);
-    fd = -1;
+    if (beaconFd >= 0) closeSock(beaconFd);
+    fd = beaconFd = -1;
     hosts.clear();
+}
+
+// One answer or announcement, from `fromIp` (host byte order).
+void Finder::take(const char* buf, uint32_t fromIp, double now) {
+    FoundHost h;
+    int ver = 0, port = 0, mp = 0, pl = 0, mx = kMaxPeers, used = 0;
+    unsigned id = 0;
+    if (std::strncmp(buf, "CZHOST2 ", 8) == 0) {
+        if (std::sscanf(buf + 8, "%d %d %d %d %d %u%n", &ver, &port, &mp, &pl, &mx, &id, &used) < 6) return;
+        const char* p = std::strchr(buf + 8, '\n');
+        if (p) {
+            const char* q = std::strchr(p + 1, '\n');
+            h.session = q ? std::string(p + 1, q) : std::string(p + 1);
+            h.name = q ? std::string(q + 1) : "";
+        }
+    } else if (std::strncmp(buf, "CZHOST ", 7) == 0) {
+        if (std::sscanf(buf + 7, "%d %d %d %d %n", &ver, &port, &mp, &pl, &used) < 4) return;
+        h.name = used > 0 ? std::string(buf + 7 + used) : "";
+    } else {
+        return;
+    }
+    if (port <= 0 || port > 65535) return;
+    char ip[32];
+    std::snprintf(ip, sizeof ip, "%u.%u.%u.%u:%d", fromIp >> 24, (fromIp >> 16) & 255, (fromIp >> 8) & 255, fromIp & 255, port);
+    h.address = ip;
+    h.map = mp, h.players = pl, h.maxPlayers = std::min(std::max(mx, 2), kMaxPeers), h.version = ver, h.id = id, h.seen = now;
+    const bool loop = (fromIp >> 24) == 127;
+    // The same game heard twice (over the network and on this machine, or on two adapters):
+    // one row, at its network address (that's the one to give a friend).
+    auto it = std::find_if(hosts.begin(), hosts.end(), [&](const FoundHost& o) { return o.address == h.address || (h.id && o.id == h.id); });
+    if (it == hosts.end()) {
+        hosts.push_back(h);
+        return;
+    }
+    const bool wasLoop = it->address.compare(0, 4, "127.") == 0;
+    if (loop && !wasLoop) h.address = it->address;
+    *it = h;
 }
 
 void Finder::poll(double now) {
@@ -1213,41 +1371,52 @@ void Finder::poll(double now) {
         setsockopt(fd, SOL_SOCKET, SO_BROADCAST, (const char*)&one, sizeof one);
         nonBlocking(fd);
         nextAsk = 0;
+        // The hosts' announcements (shared: several games open on one machine all hear them).
+        beaconFd = newSocket(SOCK_DGRAM);
+        if (beaconFd >= 0) {
+            setsockopt(beaconFd, SOL_SOCKET, SO_REUSEADDR, (const char*)&one, sizeof one);
+#ifdef SO_REUSEPORT
+            setsockopt(beaconFd, SOL_SOCKET, SO_REUSEPORT, (const char*)&one, sizeof one);
+#endif
+            sockaddr_in a{};
+            a.sin_family = AF_INET;
+            a.sin_addr.s_addr = INADDR_ANY;
+            a.sin_port = htons((uint16_t)kBeaconPort);
+            if (bind(beaconFd, (sockaddr*)&a, sizeof a) < 0) {
+                closeSock(beaconFd);
+                beaconFd = -1;
+            } else {
+                nonBlocking(beaconFd);
+            }
+        }
     }
     if (now >= nextAsk) {
         nextAsk = now + 1.0;
-        // The whole local network, and this machine (a game hosted in another window).
-        for (uint32_t ip : {0xffffffffu, 0x7f000001u}) {
-            sockaddr_in to{};
-            to.sin_family = AF_INET;
-            to.sin_addr.s_addr = htonl(ip);
-            to.sin_port = htons((uint16_t)kDiscoveryPort);
-            sendto(fd, "CZFIND", 6, 0, (sockaddr*)&to, sizeof to);
+        // The whole local network, each adapter's own subnet (a computer on wired and Wi-Fi,
+        // or with a VPN, sends the first only one way), and this machine (a game hosted in
+        // another window).
+        std::vector<uint32_t> to = {0xffffffffu, 0x7f000001u};
+        for (const LocalAddress& la : localAddresses())
+            if (std::find(to.begin(), to.end(), la.broadcast) == to.end()) to.push_back(la.broadcast);
+        for (uint32_t ip : to) {
+            sockaddr_in a{};
+            a.sin_family = AF_INET;
+            a.sin_addr.s_addr = htonl(ip);
+            a.sin_port = htons((uint16_t)kDiscoveryPort);
+            sendto(fd, "CZFIND2", 7, 0, (sockaddr*)&a, sizeof a);
         }
     }
-    char buf[256];
-    for (int k = 0; k < 32; k++) {
-        sockaddr_in from{};
-#ifdef _WIN32
-        int fl = sizeof from;
-#else
-        socklen_t fl = sizeof from;
-#endif
-        const int n = (int)recvfrom(fd, buf, sizeof buf - 1, 0, (sockaddr*)&from, &fl);
-        if (n <= 0) break;
-        buf[n] = 0;
-        int ver = 0, port = 0, mp = 0, pl = 0, used = 0;
-        if (std::sscanf(buf, "CZHOST %d %d %d %d %n", &ver, &port, &mp, &pl, &used) < 4 || ver != kVersion) continue;
-        char ip[32];
-        const uint32_t a = ntohl(from.sin_addr.s_addr);
-        std::snprintf(ip, sizeof ip, "%u.%u.%u.%u:%d", a >> 24, (a >> 16) & 255, (a >> 8) & 255, a & 255, port);
-        FoundHost h;
-        h.address = ip;
-        h.name = used > 0 ? std::string(buf + used) : "";
-        h.map = mp, h.players = pl, h.seen = now;
-        auto it = std::find_if(hosts.begin(), hosts.end(), [&](const FoundHost& o) { return o.address == h.address; });
-        if (it != hosts.end()) *it = h;
-        else hosts.push_back(h);
+    char buf[512];
+    for (int sock : {fd, beaconFd}) {
+        if (sock < 0) continue;
+        for (int k = 0; k < 32; k++) {
+            sockaddr_in from{};
+            socklen_t fl = sizeof from;
+            const int n = (int)recvfrom(sock, buf, sizeof buf - 1, 0, (sockaddr*)&from, &fl);
+            if (n <= 0) break;
+            buf[n] = 0;
+            take(buf, ntohl(from.sin_addr.s_addr), now);
+        }
     }
     hosts.erase(std::remove_if(hosts.begin(), hosts.end(), [&](const FoundHost& h) { return now - h.seen > 4.0; }), hosts.end());
 }

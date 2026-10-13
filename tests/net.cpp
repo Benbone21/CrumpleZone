@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <deque>
+#include <functional>
 #include <thread>
 
 #include "../src/net.h"
@@ -377,5 +378,96 @@ SCENARIO(netFindHost, "net/find", "A game hosted on this machine shows up in the
     const net::FoundHost& h = finder.hosts[0];
     ctx.check("with its name, map and port", h.name == "HOSTY" && h.map == MAP_BACKCOUNTRY &&
                                                  h.address.find(":" + std::to_string(port)) != std::string::npos, h.name + " " + h.address);
+    host.close();
+}
+
+namespace {
+// A second "machine": its own sim with one truck.
+void otherMachine(Sim& sim2, int map) {
+    sim2.world = World(map);
+    sim2.setupEmpty();
+    sim2.addCar(vehicleCatalog()[3], V3(-30, 0.5, -30), 0, V3(0.2, 0.2, 0.2));
+    sim2.player = 0;
+}
+}  // namespace
+
+SCENARIO(netLanDiscovery, "net/lan-discovery", "The network list: a game's own name, the most players, one row per game (heard over the network and on this machine), the count going up when someone joins, gone a few seconds after the host closes") {
+    NetSession host;
+    const int port = testPort() + 47;
+    ctx.check("host opens a session", host.host(port, "HOSTY", MAP_FRONTIER, 4, "MUD RUN"), host.error);
+    host.adopt(ctx.sim);
+    net::Finder finder;
+    double t = 0;
+    auto pump = [&](double secs, const std::function<bool()>& until) {
+        for (double end = t + secs; t < end; t += 0.01) {
+            finder.poll(t);
+            if (host.active()) host.receive(ctx.sim, t);
+            if (until && until()) return true;
+            usleep(10000);
+        }
+        return false;
+    };
+    auto mine = [&]() -> const net::FoundHost* {
+        for (const net::FoundHost& h : finder.hosts)
+            if (h.address.find(":" + std::to_string(port)) != std::string::npos) return &h;
+        return nullptr;
+    };
+    ctx.check("found within 2 s", pump(2.0, [&] { return mine() != nullptr; }));
+    pump(1.5, nullptr);  // (every way it's heard: broadcast, each adapter, this machine, the announcements)
+    const net::FoundHost* h = mine();
+    if (!h) return;
+    int rows = 0;
+    for (const net::FoundHost& o : finder.hosts) rows += o.id == h->id;
+    ctx.check("one row for the game", rows == 1, std::to_string(rows) + " rows");
+    ctx.check("its name, host, map, 1 of 4", h->session == "MUD RUN" && h->name == "HOSTY" && h->map == MAP_FRONTIER && h->players == 1 && h->maxPlayers == 4,
+              h->session + " / " + h->name + " " + std::to_string(h->players) + "/" + std::to_string(h->maxPlayers));
+    ctx.check("joinable", h->joinable());
+    const std::string address = h->address;
+    // Someone joins (without waiting: the host keeps running here).
+    NetSession client;
+    ctx.check("join starts", client.beginJoin(address, "JOINER"), client.error);
+    int st = 0;
+    pump(5.0, [&] {
+        st = client.pollJoin();
+        return st != 0;
+    });
+    ctx.check("joined", st == 1, client.error);
+    Sim sim2;
+    otherMachine(sim2, MAP_FRONTIER);
+    if (st == 1) {
+        client.adopt(sim2);
+        ctx.check("the list says 2 of 4", pump(3.0, [&] { return mine() && mine()->players == 2; }));
+    }
+    client.close();
+    host.close();
+    ctx.check("gone after the host closes", pump(6.0, [&] { return mine() == nullptr; }));
+}
+
+SCENARIO(netAsyncJoin, "net/async-join", "Joining without freezing the game: beginJoin + pollJoin get in while the host keeps running; a dead address and a full game say why") {
+    NetSession host;
+    const int port = testPort() + 53;
+    ctx.check("host opens a 2-player session", host.host(port, "HOSTY", MAP_PROVING_GROUND, 2, ""), host.error);
+    host.adopt(ctx.sim);
+    double t = 0;
+    auto joinOne = [&](NetSession& c, const std::string& addr, int& polls) {
+        if (!c.beginJoin(addr, "J")) return -1;
+        int st = 0;
+        for (polls = 0; polls < 800 && st == 0; polls++, t += 0.01) {
+            st = c.pollJoin();
+            host.receive(ctx.sim, t);
+            usleep(5000);
+        }
+        return st;
+    };
+    NetSession a, b, dead;
+    int polls = 0;
+    ctx.check("first joiner gets in", joinOne(a, "127.0.0.1:" + std::to_string(port), polls) == 1, a.error);
+    ctx.check("(and pollJoin returned straight away each time: " + std::to_string(polls) + " polls)", polls > 1);
+    Sim sim2;
+    otherMachine(sim2, MAP_PROVING_GROUND);
+    if (a.active()) a.adopt(sim2);
+    ctx.check("a third player is turned away: full", joinOne(b, "127.0.0.1:" + std::to_string(port), polls) == -1 && b.error.find("full") != std::string::npos, b.error);
+    ctx.check("nobody listening: no answer", joinOne(dead, "127.0.0.1:" + std::to_string(port + 1), polls) == -1 && !dead.error.empty(), dead.error);
+    a.close();
     host.close();
 }

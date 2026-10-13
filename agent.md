@@ -307,3 +307,11 @@ Without `--time`, captures start at 10:00 with the clock running.
   - Releases: `.github/workflows/release.yml` (Linux .deb, Windows .zip, universal Mac .app) on a version tag; v0.1.0 published. `make deb`, `make mac`, `src/platform.cpp` (exe path on every OS).
   - Wheels that come off and real spares, Bronco/4Runner/Tacoma only (`src/tires.*`); the on-foot swap is next. A/D on foot were swapped (fixed). Details and the plan: `docs/handoff.md`.
   - Trace tools kept in `tools/trace/`.
+
+- **2026-10-14, Claude: multiplayer page redesign, LAN finding, main menu screen (branch `sync`)**
+  - The multiplayer page (`PauseMenu` page 2, `drawMulti`) is two cards: HOST A GAME (game name, map, most players, START HOSTING) and JOIN A GAME (the network list, a typed address); one SESSION card while in a game; a CONNECTING card (Esc cancels) that shows why a join failed. Rows carry `col` (0 across, 1 host, 2 join); up/down stay in a card, left/right switch cards. `drawRow` is the shared row drawer.
+  - The main menu is its own screen: `main.cpp` skips `drawScene` while `menu.open && menu.title` and `drawBackdrop` draws a contour-map background; sub-pages opened from it share it.
+  - Finding games (`net::Finder`): asks 255.255.255.255, every adapter's subnet broadcast (`net::localAddresses`: getifaddrs, GetAdaptersAddresses + `-liphlpapi` on Windows) and 127.0.0.1; also listens on UDP 27017 for hosts' 2 s announcements. `CZFIND2`/`CZHOST2` add the game name, most players and a session id (one row per game); 0.1.4's `CZFIND`/`CZHOST` still work.
+  - Joining no longer blocks the frame: `NetSession::beginJoin`/`pollJoin` (join() loops over them). While `net.joining()`, main skips `net.receive`/`send`.
+  - Settings: `session`, `maxplayers`; the join address no longer defaults to 127.0.0.1.
+  - Tests: `net/lan-discovery`, `net/async-join`. Suite: 423/436; the 13 failures are physics WIP (tires/*, axle-landing, buggy/UTV rows, rock-hits/4runner, weights, frontier/current, engine/performance on a busy CPU).

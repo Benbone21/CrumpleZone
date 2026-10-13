@@ -39,7 +39,15 @@ bool Settings::load(const std::string& path) {
             continue;
         }
         if (k == "join") {
-            joinAddress = text;
+            joinAddress = text == std::string("127.0.0.1") ? "" : text;  // (the old default: not something you typed)
+            continue;
+        }
+        if (k == "session") {  // (the rest of the line: it can have spaces)
+            const char* p = std::strstr(line, "session");
+            std::string v = p ? p + 7 : "";
+            while (!v.empty() && (v[0] == ' ' || v[0] == '\t')) v.erase(v.begin());
+            while (!v.empty() && (v.back() == '\n' || v.back() == '\r' || v.back() == ' ')) v.pop_back();
+            sessionName = v.substr(0, 24);
             continue;
         }
         const float v = (float)std::atof(text);
@@ -48,6 +56,7 @@ bool Settings::load(const std::string& path) {
         else if (k == "music") music = std::min(std::max(v, 0.0f), 1.0f);
         else if (k == "fov") fovDeg = std::min(std::max(v, 50.0f), 100.0f);
         else if (k == "fullscreen") fullscreen = v != 0;
+        else if (k == "maxplayers") maxPlayers = std::min(std::max((int)v, 2), 8);
         else if (k == "vsync") vsync = v != 0;
         else if (k == "fps") showFps = v != 0;
         else if (k == "shadows") gfx.shadows = std::min(std::max((int)v, 0), 3);
@@ -88,6 +97,8 @@ bool Settings::save(const std::string& path) const {
     std::fprintf(f, "ground %d\nprops %d\n", gfx.ground, gfx.props);
     if (!playerName.empty()) std::fprintf(f, "name %s\n", playerName.c_str());
     if (!joinAddress.empty()) std::fprintf(f, "join %s\n", joinAddress.c_str());
+    if (!sessionName.empty()) std::fprintf(f, "session %s\n", sessionName.c_str());
+    std::fprintf(f, "maxplayers %d\n", maxPlayers);
     std::fprintf(f, "pilotdest %d\npilotspeed %.0f\npilotroute %d\n", pilotDest, pilotSpeed, pilotRoute);
     std::fprintf(f, "timeofday %d\ndaylength %.0f\nclock %.2f\n", timeOfDay, dayMinutes, clockHours);
     std::fprintf(f, "padsteer %d\npaddead %d\npadrumble %d\n", padSteering, padDeadzone, padRumble);
@@ -154,6 +165,7 @@ enum Id {
     PILOT_ROW, DEST_ROW, PSPEED_ROW, PROUTE_ROW, PGO_ROW, PSTOP_ROW,
     FREEDRIVE_ROW, LEVELS_ROW, LEVEL_PICK, LEVEL_PLAY, LEVEL_EDIT, EDITOR_ROW, LRESTART_ROW, LQUIT_ROW, MAINMENU_ROW,
     JOBS_ROW, JOB_PICK, JOB_GO, JOB_STOP_ROW, MEET_ROW, CONTROLLER_ROW,
+    SESSION_ROW, HMAP_ROW, HMAX_ROW, CANCEL_ROW,
 };
 const char* kOffOn[2] = {"OFF", "ON"};
 
@@ -272,18 +284,76 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
         return r;
     }
     if (page == 2) {
-        auto text = [&](int id, const char* label, const std::string& value, const std::string& hint) { r.push_back({TEXT, label, value, hint, id}); };
-        header(netStatus.c_str());
-        text(NAME_ROW, "YOUR NAME", s.playerName, "TYPE IT; ARROWS MOVE");
-        if (!netActive) {
-            button(HOST_ROW, "HOST A GAME", "ON THIS MAP, PORT 27015");
-            if (found.empty()) header("LOOKING FOR GAMES ON YOUR NETWORK...");
-            for (int k = 0; k < (int)found.size() && k < 6; k++) button(FOUND_ROW0 + k, ("JOIN " + found[k].label).c_str(), found[k].address.c_str());
-            text(ADDRESS_ROW, "HOST ADDRESS", s.joinAddress, "IP OR NAME, :PORT OPTIONAL");
-            button(JOIN_ROW, "JOIN");
-        } else {
+        // Two cards: HOST A GAME on the left, JOIN A GAME on the right (your name above, BACK
+        // below); in a session, one card about it; joining, one card saying how it's going.
+        auto inCol = [&](int c, size_t from) {
+            for (size_t k = from; k < r.size(); k++) r[k].col = c;
+        };
+        auto info = [&](const std::string& line) { r.push_back({HEADER, line, "", "", -1}); };
+        auto text = [&](int id, const char* label, const std::string& value, const std::string& hint, const std::string& ph = "") {
+            r.push_back({TEXT, label, value, hint, id});
+            r.back().placeholder = ph;
+        };
+        if (joining) {
+            const size_t c1 = r.size();
+            if (joinError.empty()) {
+                info("CONNECTING TO " + joinLabel);
+                button(CANCEL_ROW, "CANCEL");
+            } else {
+                info("COULDN'T JOIN " + joinLabel);
+                info(joinError);
+                info("IS THE GAME STILL HOSTED? ON ANOTHER NETWORK, THE HOST MAY NEED TO FORWARD PORT 27015");
+                button(CANCEL_ROW, "OK");
+            }
+            inCol(1, c1);
+            return r;
+        }
+        if (netActive) {
+            const size_t c1 = r.size();
+            for (const std::string& line : sessionLines) info(line);
+            if (netHost && !localIps.empty()) {
+                std::string ips;
+                for (const std::string& ip : localIps) ips += (ips.empty() ? "" : "  OR  ") + ip;
+                info("FRIENDS ON YOUR NETWORK SEE THIS GAME IN THEIR JOIN LIST");
+                info("OR THEY TYPE YOUR ADDRESS: " + ips);
+            }
             button(MEET_ROW, "MEET UP", "YOUR TRUCK TO A BUDDY'S (AGAIN: THE NEXT ONE)");
-            button(LEAVE_ROW, "LEAVE THE SESSION");
+            button(LEAVE_ROW, netHost ? "STOP HOSTING" : "LEAVE THE GAME", netHost ? "EVERYONE ELSE IS DROPPED" : "");
+            inCol(1, c1);
+            button(BACK_ROW, "BACK");
+            return r;
+        }
+        text(NAME_ROW, "YOUR NAME", s.playerName, "TYPE IT", "PLAYER");
+        {
+            const size_t c1 = r.size();
+            const std::string me = s.playerName.empty() ? std::string("PLAYER") : s.playerName;
+            text(SESSION_ROW, "GAME NAME", s.sessionName, "TYPE IT", me + "'S GAME");
+            choice(HMAP_ROW, "MAP", mapName(mapPick), MAP_COUNT);
+            choice(HMAX_ROW, "PLAYERS", "UP TO " + std::to_string(std::min(std::max(s.maxPlayers, 2), 8)), 7);
+            button(HOST_ROW, "START HOSTING");
+            info("FRIENDS ON YOUR NETWORK WILL SEE IT");
+            info("IN THEIR JOIN LIST");
+            inCol(1, c1);
+        }
+        {
+            const size_t c2 = r.size();
+            if (found.empty()) {
+                info("SEARCHING YOUR NETWORK...");
+                if (searching > 5) {
+                    info("NOTHING YET. IS YOUR FRIEND HOSTING,");
+                    info("ON THE SAME WI-FI OR NETWORK AS YOU?");
+                    info("WINDOWS: ALLOW CRUMPLE ZONE THROUGH");
+                    info("THE FIREWALL ON PRIVATE NETWORKS.");
+                }
+            }
+            for (int k = 0; k < (int)found.size() && k < 6; k++) {
+                const FoundGame& g = found[k];
+                button(FOUND_ROW0 + k, g.session.c_str(), g.ok ? g.host + "  " + g.map + "  " + g.players : g.why);
+                r.back().dim = !g.ok;
+            }
+            text(ADDRESS_ROW, "ADDRESS", s.joinAddress, "IP:PORT", "TYPE AN IP");
+            button(JOIN_ROW, "JOIN THAT ADDRESS");
+            inCol(2, c2);
         }
         button(BACK_ROW, "BACK");
         return r;
@@ -365,6 +435,31 @@ void PauseMenu::show(int currentVehicle, int currentMap) {
 void PauseMenu::moveSel(int dir, const Settings& s) {
     std::vector<Row> r = rows(s);
     const int n = (int)r.size();
+    if (page == 2 && n > 0) {
+        // Up and down stay in the card you're in (the rows across the top and bottom are in
+        // every card's way).
+        const int c = sel >= 0 && sel < n ? r[sel].col : 0;
+        std::vector<int> order;
+        for (int pass = 0; pass < 3; pass++)
+            for (int k = 0; k < n; k++) {
+                if (r[k].kind == HEADER) continue;
+                const bool top = r[k].col == 0 && (k < n / 2), bottom = r[k].col == 0 && !top;
+                if ((pass == 0 && top) || (pass == 1 && r[k].col != 0 && (r[k].col == c || c == 0)) || (pass == 2 && bottom)) order.push_back(k);
+            }
+        // (From the top or bottom row, down/up goes into the HOST card first.)
+        if (c == 0) {
+            std::vector<int> o2;
+            for (int k : order)
+                if (r[k].col == 0 || r[k].col == 1) o2.push_back(k);
+            if (!o2.empty()) order = o2;
+        }
+        if (order.empty()) return;
+        int at = 0;
+        for (int k = 0; k < (int)order.size(); k++)
+            if (order[k] == sel) at = k;
+        sel = order[(at + dir + (int)order.size()) % (int)order.size()];
+        return;
+    }
     for (int k = 0; k < n; k++) {
         sel = (sel + dir + n) % n;
         if (r[sel].kind != HEADER) return;
@@ -409,7 +504,7 @@ PauseMenu::Result PauseMenu::activate(int row, Settings& s) {
         case GARAGE_ROW: return {GARAGE};
         case SETTINGS_ROW: goPage(1, UNITS); return {};
         case CONTROLLER_ROW: goPage(6, PADSTEER); return {};
-        case MULTI_ROW: goPage(2, netActive ? LEAVE_ROW : HOST_ROW); return {};
+        case MULTI_ROW: goPage(2, joining ? CANCEL_ROW : netActive ? LEAVE_ROW : !found.empty() ? FOUND_ROW0 : HOST_ROW); return {};
         case PILOT_ROW: goPage(3, DEST_ROW); return {};
         case PGO_ROW:
         case DEST_ROW: return {PILOT_GO};
@@ -424,13 +519,23 @@ PauseMenu::Result PauseMenu::activate(int row, Settings& s) {
             }
             goPage(0, page == 2 ? MULTI_ROW : page == 3 ? PILOT_ROW : page == 4 ? LEVELS_ROW : page == 5 ? JOBS_ROW : SETTINGS_ROW); return {};
         case HOST_ROW: return {HOST};
-        case JOIN_ROW: return {JOIN};
+        case JOIN_ROW:
+        case ADDRESS_ROW:
+            if (s.joinAddress.empty()) return {};
+            joinPick.clear();
+            joinLabel = s.joinAddress;
+            return {JOIN};
         case LEAVE_ROW: return {LEAVE};
         case MEET_ROW: return {MEET_UP};
-        case ADDRESS_ROW: return {JOIN};
+        case CANCEL_ROW: return {CANCEL_JOIN};
+        case NAME_ROW:
+        case SESSION_ROW: moveSel(1, s); return {};
     }
     if (it.id >= FOUND_ROW0 && it.id <= FOUND_ROW5 && it.id - FOUND_ROW0 < (int)found.size()) {  // a game found on the network
-        joinPick = found[it.id - FOUND_ROW0].address;
+        const FoundGame& g = found[it.id - FOUND_ROW0];
+        if (!g.ok) return {};
+        joinPick = g.address;
+        joinLabel = g.session;
         return {JOIN};
     }
     if (it.kind == CHOICE) return change(row, 1, s);
@@ -447,7 +552,9 @@ PauseMenu::Result PauseMenu::change(int row, int dir, Settings& s) {
     RenderSettings& g = s.gfx;
     switch (it.id) {
         case VEHICLE_ROW: vehicle = cycle(vehicle); return {};
-        case MAP_ROW: mapPick = cycle(mapPick); return {};
+        case MAP_ROW:
+        case HMAP_ROW: mapPick = cycle(mapPick); return {};
+        case HMAX_ROW: s.maxPlayers = 2 + cycle(std::min(std::max(s.maxPlayers, 2), 8) - 2); break;
         case LEVEL_PICK: levelPick = cycle(std::min(std::max(levelPick, 0), it.count - 1)); return {};
         case JOB_PICK: jobPick = cycle(std::min(std::max(jobPick, 0), it.count - 1)); return {};
         case UNITS: s.mph = !s.mph; break;
@@ -502,12 +609,33 @@ PauseMenu::Result PauseMenu::setSlider(int row, float frac, Settings& s) {
 
 PauseMenu::Result PauseMenu::key(int sc, Settings& s) {
     if (!open) return {};
+    // The multiplayer page: left and right go between the HOST and JOIN cards (except on a
+    // choice, where they change it).
+    auto switchCard = [&](int dir) {
+        std::vector<Row> r = rows(s);
+        if (sel < 0 || sel >= (int)r.size() || r[sel].kind == CHOICE) return false;
+        const int c = r[sel].col;
+        const int want = c == 1 && dir > 0 ? 2 : c == 2 && dir < 0 ? 1 : 0;
+        if (!want) return false;
+        int mine = 0;  // how far down its card the selected row is
+        for (int k = 0; k < sel; k++) mine += r[k].col == c && r[k].kind != HEADER;
+        int best = -1, idx = 0;
+        for (int k = 0; k < (int)r.size(); k++) {
+            if (r[k].col != want || r[k].kind == HEADER) continue;
+            if (best < 0 || idx <= mine) best = k;
+            idx++;
+        }
+        if (best >= 0) sel = best;
+        return best >= 0;
+    };
+    if (page == 2 && joining && (sc == SC_ESCAPE || sc == SC_BACKSPACE)) return {CANCEL_JOIN};
     // Typing into a text field: letters, digits, '.', '-', ':' (shift + ';'); backspace.
     {
         std::vector<Row> r = rows(s);
         if (sel >= 0 && sel < (int)r.size() && r[sel].kind == TEXT) {
-            std::string& field = r[sel].id == NAME_ROW ? s.playerName : s.joinAddress;
+            std::string& field = r[sel].id == NAME_ROW ? s.playerName : r[sel].id == SESSION_ROW ? s.sessionName : s.joinAddress;
             char ch = 0;
+            if (sc == SC_SPACE && r[sel].id == SESSION_ROW && !field.empty()) ch = ' ';
             if (sc >= SC_A && sc <= SC_A + 25) ch = (char)('A' + (sc - SC_A));
             else if (sc >= SC_1 && sc <= SC_1 + 8) ch = (char)('1' + (sc - SC_1));
             else if (sc == SC_1 + 9) ch = '0';
@@ -515,7 +643,7 @@ PauseMenu::Result PauseMenu::key(int sc, Settings& s) {
             else if (sc == 45) ch = shift ? '_' : '-';
             else if (sc == 51 && shift) ch = ':';
             if (r[sel].id == ADDRESS_ROW && ch >= 'A' && ch <= 'Z') ch = (char)(ch - 'A' + 'a');
-            if (ch && field.size() < (r[sel].id == NAME_ROW ? 16u : 60u)) {
+            if (ch && field.size() < (r[sel].id == NAME_ROW ? 16u : r[sel].id == SESSION_ROW ? 24u : 60u)) {
                 field += ch;
                 return {CHANGED};
             }
@@ -525,6 +653,8 @@ PauseMenu::Result PauseMenu::key(int sc, Settings& s) {
             }
             if (sc == SC_UP) moveSel(-1, s);
             else if (sc == SC_DOWN) moveSel(1, s);
+            else if (sc == SC_LEFT) switchCard(-1);
+            else if (sc == SC_RIGHT) switchCard(1);
             else if (sc == SC_RETURN || sc == SC_KP_ENTER) return activate(sel, s);
             if (sc != SC_ESCAPE) return {};
         }
@@ -540,6 +670,8 @@ PauseMenu::Result PauseMenu::key(int sc, Settings& s) {
     }
     if (sc == SC_W || sc == SC_UP) moveSel(-1, s);
     else if (sc == SC_S || sc == SC_DOWN) moveSel(1, s);
+    else if ((sc == SC_A || sc == SC_LEFT) && page == 2 && switchCard(-1)) return {};
+    else if ((sc == SC_D || sc == SC_RIGHT) && page == 2 && switchCard(1)) return {};
     else if (sc == SC_A || sc == SC_LEFT) return change(sel, -1, s);
     else if (sc == SC_D || sc == SC_RIGHT) return change(sel, 1, s);
     else if (sc == SC_RETURN || sc == SC_KP_ENTER || sc == SC_SPACE) return activate(sel, s);
@@ -590,15 +722,154 @@ PauseMenu::Result PauseMenu::mouseDown(float x, float y, Settings& s) {
 
 // ---- Drawing ---------------------------------------------------------------------
 
+// One row in a box from x to x + w, its top at cy: returns its height (and remembers where
+// it went, for the mouse).
+float PauseMenu::drawRow(Renderer& r, const Row& row, int k, float x, float w, float cy, const RowStyle& st) {
+    const float ts = st.ts, small = st.small, u = st.u, rowH = st.rowH, headH = st.headH, a = st.a, pad = 22 * u;
+    if (row.kind == HEADER) {
+        if (row.id == -1)  // an information line
+            r.text(x + pad + 6 * u, cy + headH - 8 * small - 6 * u, small, row.label, 0.82f, 0.84f, 0.88f, 0.95f * a);
+        else
+            r.text(x + pad, cy + headH - 8 * small - 6 * u, small, row.label, 1.0f, 0.75f, 0.3f, 0.85f * a);
+        return headH;
+    }
+    const float valueW = st.valueW, valueX = x + w - pad - valueW;
+    const bool hasHint = row.kind == CHOICE && !row.hint.empty();
+    const float hh = rowH + (hasHint ? 8 * small + 6 * u : 0);
+    const bool on = k == sel;
+    if (on) {
+        r.rect(x + pad * 0.5f, cy, w - pad, hh, 1, 1, 1, 0.07f * a);
+        r.rect(x + pad * 0.5f, cy, 3 * u, hh, 1.0f, 0.75f, 0.3f, a);
+    }
+    const float ty = cy + (rowH - 8 * ts) / 2;
+    const float dimK = row.dim ? 0.45f : 1.0f;
+    const float lr = (on ? 1.0f : 0.86f) * dimK, lg = (on ? 1.0f : 0.87f) * dimK, lb = (on ? 1.0f : 0.9f) * dimK;
+    {
+        std::string lab = row.label;  // (a long one, a game's name: cut to fit beside its value)
+        const float room = (row.kind == BUTTON ? w - 2 * pad - 12 * u - (row.hint.empty() ? 0 : r.textWidth(row.hint, small) + 12 * u)
+                                                : valueX - x - pad - 18 * u);
+        while (lab.size() > 3 && r.textWidth(lab, ts) > room) lab.pop_back();
+        r.text(x + pad + 6 * u, ty, ts, lab, lr, lg, lb, a);
+    }
+    Hit hit{x + pad * 0.5f, cy, w - pad, hh, valueX, valueW, k};
+    if (row.kind == BUTTON && !row.hint.empty())
+        r.text(x + w - pad - r.textWidth(row.hint, small), cy + (rowH - 8 * small) / 2, small, row.hint, 0.55f * dimK + (row.dim ? 0.3f : 0), 0.57f * dimK,
+               0.62f * dimK, a);
+    if (row.kind == CHOICE) {
+        r.rect(valueX, cy + 5 * u, valueW, rowH - 10 * u, 0, 0, 0, 0.35f * a);
+        const float ar = on ? 1.0f : 0.6f, ag = on ? 0.75f : 0.6f, ab = on ? 0.3f : 0.62f;
+        r.text(valueX + 8 * u, ty, ts, "<", ar, ag, ab, a);
+        r.text(valueX + valueW - 8 * u - r.textWidth(">", ts), ty, ts, ">", ar, ag, ab, a);
+        {  // (a long value: smaller, to fit between the arrows)
+            const float vs = r.textWidth(row.value, ts) > valueW - 44 * u ? small : ts;
+            std::string v = row.value;
+            while (!v.empty() && r.textWidth(v, vs) > valueW - 44 * u) v.pop_back();
+            r.text(valueX + (valueW - r.textWidth(v, vs)) / 2, cy + (rowH - 8 * vs) / 2, vs, v, 1, 1, 1, a);
+        }
+        if (hasHint) {
+            std::string hint = row.hint;
+            const float maxW = w - 2 * pad - 12 * u;
+            while (!hint.empty() && r.textWidth(hint, small) > maxW) hint.pop_back();
+            r.text(x + pad + 6 * u, cy + rowH, small, hint, 0.6f, 0.62f, 0.66f, a);
+        }
+        if ((row.id == VEHICLE_ROW || row.id == MAP_ROW || row.id == DEST_ROW || row.id == LEVEL_PICK) && on && !this->title) {
+            const std::string go = std::string(pad::hint("ENTER", pad::B_A)) + (row.id == MAP_ROW ? " TO LOAD" : row.id == DEST_ROW ? " TO GO" : row.id == LEVEL_PICK ? " TO PLAY" : " TO DRIVE");
+            r.text(valueX - r.textWidth(go, small) - 12 * u, cy + (rowH - 8 * small) / 2, small, go, 1.0f, 0.75f, 0.3f, a);
+        }
+    }
+    if (row.kind == TEXT) {
+        r.rect(valueX, cy + 5 * u, valueW, rowH - 10 * u, 0, 0, 0, 0.5f * a);
+        if (on) r.rect(valueX, cy + rowH - 7 * u, valueW, 2 * u, 1.0f, 0.75f, 0.3f, 0.6f * a);
+        std::string v = row.value;
+        while (!v.empty() && r.textWidth(v, ts) > valueW - 20 * u) v.erase(v.begin());
+        if (v.empty() && !row.placeholder.empty()) {
+            std::string ph = row.placeholder;
+            while (!ph.empty() && r.textWidth(ph, ts) > valueW - 20 * u) ph.pop_back();
+            r.text(valueX + 8 * u, ty, ts, ph, 0.42f, 0.44f, 0.48f, a);
+        } else {
+            r.text(valueX + 8 * u, ty, ts, v, 1, 1, 1, a);
+        }
+        if (on && std::fmod(caret, 1.0f) < 0.55f)
+            r.rect(valueX + 9 * u + r.textWidth(v, ts), cy + 9 * u, 2 * u, rowH - 18 * u, 1.0f, 0.75f, 0.3f, a);
+        if (on && valueX - x > r.textWidth(row.label, ts) + r.textWidth(row.hint, small) + 60 * u)
+            r.text(valueX - r.textWidth(row.hint, small) - 12 * u, cy + (rowH - 8 * small) / 2, small, row.hint, 0.6f, 0.62f, 0.66f, a);
+    }
+    if (row.kind == SLIDER) {
+        const float textW = 70 * u, barW = valueW - textW - 8 * u, barY = cy + rowH / 2 - 3 * u;
+        r.rect(valueX, barY, barW, 6 * u, 1, 1, 1, 0.15f * a);
+        r.rect(valueX, barY, barW * row.frac, 6 * u, 1.0f, 0.75f, 0.3f, 0.9f * a);
+        r.rect(valueX + barW * row.frac - 3 * u, barY - 5 * u, 6 * u, 16 * u, on ? 1.0f : 0.85f, on ? 1.0f : 0.85f, on ? 1.0f : 0.88f, a);
+        r.text(valueX + valueW - r.textWidth(row.value, ts), ty, ts, row.value, 1, 1, 1, a);
+        hit.barW = barW;
+    }
+    if (!row.dim) hits.push_back(hit);
+    return hh;
+}
+
+// The main menu's own screen: a dark slate background with faint contour lines (a topo map)
+// and an amber rule: no world behind it.
+void PauseMenu::drawBackdrop(Renderer& r, int W, int H, float a) const {
+    (void)a;
+    const int bands = 24;
+    for (int i = 0; i < bands; i++) {  // a vertical gradient, lighter toward the middle
+        const float t = (i + 0.5f) / bands, k = 1.0f - std::fabs(t - 0.45f) * 1.4f;
+        r.rect(0, H * (float)i / bands, (float)W, H / (float)bands + 1, 0.035f + 0.03f * k, 0.042f + 0.032f * k, 0.052f + 0.035f * k, 1.0f);
+    }
+    // Contour lines: a few hills' worth of wobbly rings, drawn as short thin segments.
+    const float u = std::max(0.75f, H / 720.0f);
+    struct Hill {
+        float x, y, r0;
+    };
+    const Hill hills[3] = {{0.18f, 0.72f, 0.05f}, {0.82f, 0.28f, 0.04f}, {0.62f, 0.95f, 0.08f}};
+    for (const Hill& h : hills)
+        for (int ring = 0; ring < 14; ring++) {
+            const float rad = (h.r0 + ring * 0.045f) * W;
+            const int segs = 90;
+            float px0 = 0, py0 = 0;
+            for (int k = 0; k <= segs; k++) {
+                const float ang = k * 6.2831853f / segs;
+                const float wob = 1 + 0.10f * std::sin(ang * 3 + ring * 0.7f + h.x * 9) + 0.05f * std::sin(ang * 7 - ring * 1.3f);
+                const float px1 = h.x * W + std::cos(ang) * rad * wob, py1 = h.y * H + std::sin(ang) * rad * wob * 0.8f;
+                if (k > 0) {
+                    const float dx = px1 - px0, dy = py1 - py0, l = std::max(0.001f, std::sqrt(dx * dx + dy * dy));
+                    const float nx = -dy / l * 0.6f * u, ny = dx / l * 0.6f * u;
+                    const float al = ring % 5 == 0 ? 0.07f : 0.035f;
+                    r.tri(px0 + nx, py0 + ny, px1 + nx, py1 + ny, px1 - nx, py1 - ny, 0.75f, 0.8f, 0.85f, al);
+                    r.tri(px0 + nx, py0 + ny, px1 - nx, py1 - ny, px0 - nx, py0 - ny, 0.75f, 0.8f, 0.85f, al);
+                }
+                px0 = px1, py0 = py1;
+            }
+        }
+    r.rect(0, 0, (float)W, 3 * u, 1.0f, 0.75f, 0.3f, 0.9f);
+}
+
 void PauseMenu::draw(Renderer& r, const Settings& s, int W, int H, double dt) {
     if (!open) return;
     fade = std::min(1.0f, fade + (float)dt * 7.0f);
     caret += (float)dt;
+    spin += (float)dt;
     const float a = fade;
+    if (this->title) drawBackdrop(r, W, H, a);
+    else r.rect(0, 0, (float)W, (float)H, 0.0f, 0.01f, 0.02f, 0.35f * a);  // darken the (blurred) scene
+    if (page == 2) {
+        drawMulti(r, s, W, H, a);
+        return;
+    }
     std::vector<Row> rs = rows(s);
     const float u = std::max(0.75f, H / 720.0f);
-    const float ts = px(1.6f * u), small = px(1.2f * u), title = px((this->title && page == 0 ? 4.0f : 3.0f) * u);
+    const bool titleMain = this->title && page == 0;
+    const float ts = px(1.6f * u), small = px(1.2f * u), title = px((titleMain ? 2.0f : 3.0f) * u);
     const float pad = 22 * u;
+    // The main menu: the name big above the panel.
+    float top = 0;
+    if (titleMain) {
+        const float big = px(7.0f * u), tag = px(1.6f * u);
+        const std::string name = "CRUMPLE ZONE", line = "SOFT-BODY DRIVING: CRASH IT, CRAWL IT, RACE IT";
+        top = std::max(24 * u, H * 0.08f);
+        label(r, (W - r.textWidth(name, big)) / 2, top, big, name, 1.0f, 0.75f, 0.3f, a);
+        r.text((W - r.textWidth(line, tag)) / 2, top + 8 * big + 12 * u, tag, line, 0.62f, 0.64f, 0.68f, a);
+        top += 8 * big + 12 * u + 8 * tag + 22 * u;
+    }
     // (The settings page is taller than a 720p screen: squeeze the space between rows to fit, keeping the text size.)
     auto pageHeight = [&](float k) {
         float contentH = 0;
@@ -606,13 +877,11 @@ void PauseMenu::draw(Renderer& r, const Settings& s, int W, int H, double dt) {
             contentH += row.kind == HEADER ? 8 * small + 16 * u * k : 8 * ts + 14 * u * k + (row.kind == CHOICE && !row.hint.empty() ? 8 * small + 6 * u : 0);
         return pad * 2 + 8 * title + 18 * u + contentH + 8 * small + 16 * u;
     };
+    const float avail = H - top - 16 * u;
     const float h0 = pageHeight(0), h1 = pageHeight(1);
-    const float squeeze = h1 > H - 16 * u ? std::min(1.0f, std::max(0.2f, (H - 16 * u - h0) / (h1 - h0))) : 1.0f;
+    const float squeeze = h1 > avail ? std::min(1.0f, std::max(0.2f, (avail - h0) / (h1 - h0))) : 1.0f;
     const float headH = 8 * small + 16 * u * squeeze;
     float rowH = 8 * ts + 14 * u * squeeze;
-
-    // Darken the (blurred) scene (the title lets more of the world through).
-    r.rect(0, 0, (float)W, (float)H, 0.0f, 0.01f, 0.02f, (this->title ? 0.2f : 0.35f) * a);
 
     float contentH = 0, h = 0;
     for (int pass = 0; pass < 2; pass++) {
@@ -624,97 +893,129 @@ void PauseMenu::draw(Renderer& r, const Settings& s, int W, int H, double dt) {
         }
         h = pad * 2 + 8 * title + 18 * u + contentH + 8 * small + 16 * u;
         // A long page (settings at 720p) packs its rows closer rather than run off the screen.
-        if (pass == 0 && h > H - 20 * u && n > 0) rowH = std::max(8 * ts + 6 * u, rowH - (h - (H - 20 * u)) / n);
+        if (pass == 0 && h > avail - 4 * u && n > 0) rowH = std::max(8 * ts + 6 * u, rowH - (h - (avail - 4 * u)) / n);
         else break;
     }
     const float w = std::min((float)W - 40 * u, 640 * u);
-    const float x = (W - w) / 2, y = std::max(10 * u, (H - h) / 2);
-    pill(r, x, y, w, h, 0.03f, 0.035f, 0.045f, 0.9f * a);
+    const float x = (W - w) / 2, y = titleMain ? std::max(top, top + (avail - h) * 0.25f) : std::max(10 * u, (H - h) / 2);
+    pill(r, x, y, w, h, 0.03f, 0.035f, 0.045f, (this->title ? 0.82f : 0.9f) * a);
     r.rect(x + pad, y + pad + 8 * title + 8 * u, w - 2 * pad, 2 * u, 1.0f, 0.75f, 0.3f, 0.8f * a);
     label(r, x + pad, y + pad, title,
-          page == 0 ? (this->title ? "CRUMPLE ZONE" : "PAUSED") : page == 1 ? "SETTINGS" : page == 2 ? "MULTIPLAYER" : page == 3 ? "AUTOPILOT" : page == 4 ? "LEVELS" : page == 5 ? "JOBS" : "CONTROLLER",
+          page == 0 ? (this->title ? "MAIN MENU" : "PAUSED") : page == 1 ? "SETTINGS" : page == 3 ? "AUTOPILOT" : page == 4 ? "LEVELS" : page == 5 ? "JOBS" : "CONTROLLER",
           1.0f, 0.75f, 0.3f, a);
-    if (page == 0) {
-        const char* tag = this->title ? "SOFT-BODY DRIVING: CRASH IT, CRAWL IT, RACE IT" : "CRUMPLE ZONE";
+    if (page == 0 && !this->title) {
+        const char* tag = "CRUMPLE ZONE";
         r.text(x + w - pad - r.textWidth(tag, small), y + pad + 8 * title - 8 * small, small, tag, 0.55f, 0.57f, 0.62f, a);
     }
 
     hits.clear();
-    const float valueW = 250 * u, valueX = x + w - pad - valueW;
+    const RowStyle st{ts, small, u, rowH, headH, a, 250 * u};
     float cy = y + pad + 8 * title + 18 * u;
-    for (int k = 0; k < (int)rs.size(); k++) {
-        const Row& row = rs[k];
-        if (row.kind == HEADER) {
-            if (row.id == -1)  // an information line (the levels page)
-                r.text(x + pad + 6 * u, cy + headH - 8 * small - 6 * u, small, row.label, 0.82f, 0.84f, 0.88f, 0.95f * a);
-            else
-                r.text(x + pad, cy + headH - 8 * small - 6 * u, small, row.label, 1.0f, 0.75f, 0.3f, 0.85f * a);
-            cy += headH;
-            continue;
-        }
-        const bool hasHint = row.kind == CHOICE && !row.hint.empty();
-        const float hh = rowH + (hasHint ? 8 * small + 6 * u : 0);
-        const bool on = k == sel;
-        if (on) {
-            r.rect(x + pad * 0.5f, cy, w - pad, hh, 1, 1, 1, 0.07f * a);
-            r.rect(x + pad * 0.5f, cy, 3 * u, hh, 1.0f, 0.75f, 0.3f, a);
-        }
-        const float ty = cy + (rowH - 8 * ts) / 2;
-        const float lr = on ? 1.0f : 0.86f, lg = on ? 1.0f : 0.87f, lb = on ? 1.0f : 0.9f;
-        r.text(x + pad + 6 * u, ty, ts, row.label, lr, lg, lb, a);
-        Hit hit{x + pad * 0.5f, cy, w - pad, hh, valueX, valueW, k};
-        if (row.kind == BUTTON && !row.hint.empty())
-            r.text(x + w - pad - r.textWidth(row.hint, small), cy + (rowH - 8 * small) / 2, small, row.hint, 0.55f, 0.57f,
-                   0.62f, a);
-        if (row.kind == CHOICE) {
-            r.rect(valueX, cy + 5 * u, valueW, rowH - 10 * u, 0, 0, 0, 0.35f * a);
-            const float ar = on ? 1.0f : 0.6f, ag = on ? 0.75f : 0.6f, ab = on ? 0.3f : 0.62f;
-            r.text(valueX + 8 * u, ty, ts, "<", ar, ag, ab, a);
-            r.text(valueX + valueW - 8 * u - r.textWidth(">", ts), ty, ts, ">", ar, ag, ab, a);
-            {  // (a long value: smaller, to fit between the arrows)
-                const float vs = r.textWidth(row.value, ts) > valueW - 44 * u ? small : ts;
-                std::string v = row.value;
-                while (!v.empty() && r.textWidth(v, vs) > valueW - 44 * u) v.pop_back();
-                r.text(valueX + (valueW - r.textWidth(v, vs)) / 2, cy + (rowH - 8 * vs) / 2, vs, v, 1, 1, 1, a);
-            }
-            if (hasHint) {
-                std::string hint = row.hint;
-                const float maxW = w - 2 * pad - 12 * u;
-                while (!hint.empty() && r.textWidth(hint, small) > maxW) hint.pop_back();
-                r.text(x + pad + 6 * u, cy + rowH, small, hint, 0.6f, 0.62f, 0.66f, a);
-            }
-            if ((row.id == VEHICLE_ROW || row.id == MAP_ROW || row.id == DEST_ROW || row.id == LEVEL_PICK) && on && !this->title) {
-                const std::string go = std::string(pad::hint("ENTER", pad::B_A)) + (row.id == MAP_ROW ? " TO LOAD" : row.id == DEST_ROW ? " TO GO" : row.id == LEVEL_PICK ? " TO PLAY" : " TO DRIVE");
-                r.text(valueX - r.textWidth(go, small) - 12 * u, cy + (rowH - 8 * small) / 2, small, go, 1.0f, 0.75f, 0.3f, a);
-            }
-        }
-        if (row.kind == TEXT) {
-            r.rect(valueX, cy + 5 * u, valueW, rowH - 10 * u, 0, 0, 0, 0.5f * a);
-            std::string v = row.value;
-            while (!v.empty() && r.textWidth(v, ts) > valueW - 20 * u) v.erase(v.begin());
-            r.text(valueX + 8 * u, ty, ts, v, 1, 1, 1, a);
-            if (on && std::fmod(caret, 1.0f) < 0.55f)
-                r.rect(valueX + 9 * u + r.textWidth(v, ts), cy + 9 * u, 2 * u, rowH - 18 * u, 1.0f, 0.75f, 0.3f, a);
-            if (on) r.text(valueX - r.textWidth(row.hint, small) - 12 * u, cy + (rowH - 8 * small) / 2, small, row.hint, 0.6f, 0.62f, 0.66f, a);
-        }
-        if (row.kind == SLIDER) {
-            const float textW = 70 * u, barW = valueW - textW - 8 * u, barY = cy + rowH / 2 - 3 * u;
-            r.rect(valueX, barY, barW, 6 * u, 1, 1, 1, 0.15f * a);
-            r.rect(valueX, barY, barW * row.frac, 6 * u, 1.0f, 0.75f, 0.3f, 0.9f * a);
-            r.rect(valueX + barW * row.frac - 3 * u, barY - 5 * u, 6 * u, 16 * u, on ? 1.0f : 0.85f, on ? 1.0f : 0.85f,
-                   on ? 1.0f : 0.88f, a);
-            r.text(valueX + valueW - r.textWidth(row.value, ts), ty, ts, row.value, 1, 1, 1, a);
-            hit.barW = barW;
-        }
-        hits.push_back(hit);
-        cy += hh;
-    }
+    for (int k = 0; k < (int)rs.size(); k++) cy += drawRow(r, rs[k], k, x, w, cy, st);
     std::string keys = page == 0 && this->title ? "W S SELECT   A D CHANGE   ENTER OK"
                        : page == 0                ? "W S SELECT   A D CHANGE   ENTER OK   ESC RESUME"
-                                 : "W S SELECT   A D CHANGE   ENTER OK   ESC BACK";
+                                                  : "W S SELECT   A D CHANGE   ENTER OK   ESC BACK";
     if (pad::ui.last) {  // the controller was the last thing used
         keys = "D-PAD SELECT   LEFT RIGHT CHANGE   " + std::string(pad::hint("", pad::B_A)) + " OK";
         if (!(page == 0 && this->title)) keys += "   " + std::string(pad::hint("", pad::B_B)) + (page == 0 ? " RESUME" : " BACK");
     }
     r.text(x + (w - r.textWidth(keys, small)) / 2, y + h - pad - 8 * small + 6 * u, small, keys, 0.55f, 0.57f, 0.62f, a);
+}
+
+// The multiplayer page: YOUR NAME across the top; the HOST A GAME and JOIN A GAME cards side
+// by side (stacked on a narrow window); BACK below. In a session, or while joining, one card.
+void PauseMenu::drawMulti(Renderer& r, const Settings& s, int W, int H, float a) {
+    std::vector<Row> rs = rows(s);
+    if (sel < 0 || sel >= (int)rs.size() || rs[sel].kind == HEADER) {
+        sel = 0;
+        while (sel < (int)rs.size() - 1 && rs[sel].kind == HEADER) sel++;
+    }
+    const float u = std::max(0.75f, H / 720.0f);
+    const float ts = px(1.6f * u), small = px(1.2f * u), big = px(3.0f * u), cardT = px(2.0f * u);
+    const float pad = 22 * u;
+    const RowStyle base{ts, small, u, 8 * ts + 14 * u, 8 * small + 12 * u, a, 230 * u};
+    auto colHeight = [&](int c) {
+        float h = 0;
+        for (const Row& row : rs)
+            if (row.col == c) h += row.kind == HEADER ? base.headH : base.rowH + (row.kind == CHOICE && !row.hint.empty() ? 8 * small + 6 * u : 0);
+        return h;
+    };
+    bool hasJoin = false;
+    for (const Row& row : rs) hasJoin |= row.col == 2;
+    const bool wide = W >= 900 * u * 0.85f && hasJoin;
+    const float totalW = std::min((float)W - 30 * u, hasJoin ? 1180 * u : 700 * u);
+    const float gap = 20 * u;
+    const float cardW = hasJoin && wide ? (totalW - gap) / 2 : totalW;
+    const float cardHead = pad + 8 * cardT + 16 * u;
+    const float h1 = cardHead + colHeight(1) + pad, h2 = hasJoin ? cardHead + colHeight(2) + pad : 0;
+    const float cardsH = wide ? std::max(h1, h2) : h1 + (hasJoin ? gap + h2 : 0);
+    float top0 = 0, bottom0 = 0;
+    for (const Row& row : rs)
+        if (row.col == 0) (&row < &rs[rs.size() / 2] ? top0 : bottom0) += base.rowH;
+    const float headerH = 8 * big + 20 * u;
+    const float total = headerH + top0 + (top0 > 0 ? 12 * u : 0) + cardsH + 12 * u + bottom0 + 8 * small + 20 * u;
+    const float x0 = (W - totalW) / 2;
+    float y = std::max(12 * u, (H - total) / 2);
+
+    hits.clear();
+    // Title, and what's going on, on the right.
+    label(r, x0, y, big, "MULTIPLAYER", 1.0f, 0.75f, 0.3f, a);
+    {
+        const std::string st = joining ? (joinError.empty() ? "CONNECTING..." : "COULDN'T JOIN") : netStatus;
+        r.text(x0 + totalW - r.textWidth(st, small), y + 8 * big - 8 * small, small, st, 0.6f, 0.62f, 0.66f, a);
+    }
+    r.rect(x0, y + 8 * big + 8 * u, totalW, 2 * u, 1.0f, 0.75f, 0.3f, 0.8f * a);
+    y += headerH;
+    // Your name (offline), across the top.
+    const int n = (int)rs.size();
+    int k = 0;
+    if (top0 > 0) {
+        const float nameW = std::min(totalW, 620 * u);
+        pill(r, x0, y - 4 * u, nameW, base.rowH + 8 * u, 0.03f, 0.035f, 0.045f, 0.85f * a);
+        for (; k < n && rs[k].col == 0; k++) y += drawRow(r, rs[k], k, x0, nameW, y, base);
+        y += 12 * u;
+    }
+    // The cards.
+    auto card = [&](int c, float cx, float cy, float cw, float ch, const char* titleText, const char* sub) {
+        pill(r, cx, cy, cw, ch, 0.03f, 0.035f, 0.045f, 0.9f * a);
+        r.rect(cx, cy, cw, 3 * u, c == 1 ? 1.0f : 0.35f, c == 1 ? 0.75f : 0.75f, c == 1 ? 0.3f : 1.0f, 0.9f * a);
+        label(r, cx + pad, cy + pad, cardT, titleText, 1, 1, 1, a);
+        if (sub && r.textWidth(titleText, cardT) + r.textWidth(sub, small) + 24 * u < cw - 2 * pad)  // (only if it fits beside the title)
+            r.text(cx + cw - pad - r.textWidth(sub, small), cy + pad + 8 * cardT - 8 * small, small, sub, 0.55f, 0.57f, 0.62f, a);
+        float ry = cy + cardHead;
+        RowStyle st = base;
+        st.valueW = std::min(230 * u, cw * 0.46f);
+        for (int i = 0; i < n; i++)
+            if (rs[i].col == c) ry += drawRow(r, rs[i], i, cx, cw, ry, st);
+    };
+    const char* t1 = joining ? (joinError.empty() ? "JOINING" : "NOT CONNECTED") : netActive ? sessionTitle.c_str() : "HOST A GAME";
+    const char* s1 = joining || netActive ? nullptr : "YOUR WORLD: OTHERS JOIN YOU";
+    if (joining && joinError.empty()) {  // a spinner by the title
+        const float cx = x0 + totalW - pad - 10 * u, cy = y + pad + 4 * cardT;
+        for (int i = 0; i < 8; i++) {
+            const float ang = i * 0.785398f + spin * 6.0f;
+            const float al = 0.15f + 0.85f * (float)i / 8;
+            r.rect(cx + std::cos(ang) * 10 * u - 2 * u, cy + std::sin(ang) * 10 * u - 2 * u, 4 * u, 4 * u, 1.0f, 0.75f, 0.3f, al * a);
+        }
+    }
+    if (wide) {
+        card(1, x0, y, cardW, cardsH, t1, s1);
+        if (hasJoin) card(2, x0 + cardW + gap, y, cardW, cardsH, "JOIN A GAME", "PLAY IN SOMEONE ELSE'S WORLD");
+    } else {
+        card(1, x0, y, cardW, h1, t1, s1);
+        if (hasJoin) card(2, x0, y + h1 + gap, cardW, h2, "JOIN A GAME", "PLAY IN SOMEONE ELSE'S WORLD");
+    }
+    y += cardsH + 12 * u;
+    // BACK (and anything else across the bottom).
+    for (k = n / 2; k < n; k++)
+        if (rs[k].col == 0) {
+            const float bw = std::min(totalW, 300 * u);
+            pill(r, x0, y - 4 * u, bw, base.rowH + 8 * u, 0.03f, 0.035f, 0.045f, 0.85f * a);
+            y += drawRow(r, rs[k], k, x0, bw, y, base);
+        }
+    std::string keys = joining ? "ESC CANCEL" : "W S SELECT   A D CARD / CHANGE   ENTER OK   ESC BACK";
+    if (pad::ui.last)
+        keys = joining ? std::string(pad::hint("", pad::B_B)) + " CANCEL"
+                       : "D-PAD SELECT   LEFT RIGHT CARD   " + std::string(pad::hint("", pad::B_A)) + " OK   " + std::string(pad::hint("", pad::B_B)) + " BACK";
+    r.text(x0 + totalW - r.textWidth(keys, small), y + 4 * u, small, keys, 0.55f, 0.57f, 0.62f, a);
 }
