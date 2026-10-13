@@ -1549,6 +1549,8 @@ void Car::wheelStep(double h, const World& w) {
                 if (wh.load <= 0) err = std::fabs(std::min(0.0, wh.omega * wh.rollR() - wh.groundSpeed)) / std::fabs(wh.groundSpeed) * wh.bite - target;
                 wh.abs = clampd(wh.abs - h * 60.0 * err, 0.05, 1.0);
             }
+            else if (brakePressure <= 0.05)
+                wh.abs = 1;  // (pedal up: nothing to hold off)
             else
                 wh.abs = std::min(1.0, wh.abs + h * 6);
             double service = (brakePressure * wh.abs * (1 - 1.5 * wh.escCut) + std::max(wh.tcBrake, wh.escBrake)) * wh.brakeMax;

@@ -2,3 +2,4 @@ build/
 /crumplezone
 *.ppm
 *.o
+/.claude/worktrees/

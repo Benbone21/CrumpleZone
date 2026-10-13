@@ -22,7 +22,7 @@ VEHICLE_SCENARIO(airbornePatch, "components/airborne-tires", "A jump clears cont
         const Wheel& w = c.wheels[i];
         std::string at = "wheel " + std::to_string(i);
         ctx.check(at + " has no stale contact", w.load == 0 && w.stickX == 0 && w.stickY == 0);
-        ctx.check(at + " resets ABS after leaving ground", w.abs == 1);
+        ctx.check(at + " ABS lets go with the brake off", w.abs == 1);
         // (The whole spinning assembly: a driven wheel's half shaft and side gear spin with it.)
         const double Is = c.wheelPowered(w) ? kSideGearI : 0.0;
         ctx.metric(at + " angular momentum lost", (30 - w.omega) * w.I + (30 - w.sideOmega) * Is, "kg m2/s", 0.045, 0.055);
