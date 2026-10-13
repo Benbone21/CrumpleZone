@@ -141,6 +141,9 @@ struct Wheel {
     // The tire against its own car: wheel-well liners, fenders, bumpers, sills. Built once:
     // the skin triangles it could reach; at run time, how hard it's rubbing.
     std::vector<int> rubTris;
+    std::vector<float> rubAllow;  // per rub tri, for each of its 7 sample points: how deep the stock tire
+                                  // already reaches there over its travel and steering lock (the coarse
+                                  // lattice cutting a corner)
     double rubTorque = 0;      // the rubbing's drag on its spin this step (N*m)
     float rub = 0;             // how hard it's pressing on the body (N)
     std::vector<int> mounts;  // beams that attach this wheel to the body
@@ -216,6 +219,9 @@ struct ChassisFrame {
     double yieldDist = 0;
     std::vector<float> weight;  // per member: how hard it's held (x its mass), e.g. a welded-on bracket
                                 // is stouter than the bare rail; empty = all 1
+    std::vector<int> section;   // per member: which cross-section it's part of (a rail station's corners
+                                // bend together: the section itself only crushes under a far bigger
+                                // local shove); empty = each on its own
     std::vector<std::vector<int>> beamsAt;  // per member: its beams to other members (built on first flow)
 };
 

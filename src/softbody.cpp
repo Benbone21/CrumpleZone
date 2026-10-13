@@ -461,13 +461,15 @@ void Car::chassisGroupForces(ChassisFrame& cf, double h) {
     // hard it's held, so the pulls still balance: they never push the structure as a whole.)
     const bool weighted = !cf.weight.empty();
     auto held = [&](int k) { return nodes[cf.nodes[k]].m * (weighted ? cf.weight[k] : 1.0f); };
-    V3 c, vc, rc;
+    // (c: the fit's center; cm: the true center of mass, which the rigid motion is about.)
+    V3 c, vc, rc, cm;
     double M = 0, Mv = 0;
     for (int k = 0; k < n; k++) {
         if (!active(k)) continue;
         const Node& nd = nodes[cf.nodes[k]];
         const double w = held(k);
         c += nd.p * w;
+        cm += nd.p * nd.m;
         vc += nd.v * nd.m;
         rc += cf.rest[k] * w;
         M += w;
@@ -475,6 +477,7 @@ void Car::chassisGroupForces(ChassisFrame& cf, double h) {
     }
     if (M <= 0) return;
     c = c / M;
+    cm = cm / Mv;
     vc = vc / Mv;
     rc = rc / M;  // rest shape's center for the active set (0 unless nodes are released)
     // Best-fit rotation: A = sum m (x - c)(r - rc)^T; iterate R toward the rotational part of A.
@@ -490,11 +493,12 @@ void Car::chassisGroupForces(ChassisFrame& cf, double h) {
         A.c[0] += d * (w * r.x);
         A.c[1] += d * (w * r.y);
         A.c[2] += d * (w * r.z);
-        L += cross(d, nd.v - vc) * nd.m;
-        double dd = dot(d, d);
-        I.c[0] += V3(dd - d.x * d.x, -d.y * d.x, -d.z * d.x) * nd.m;
-        I.c[1] += V3(-d.x * d.y, dd - d.y * d.y, -d.z * d.y) * nd.m;
-        I.c[2] += V3(-d.x * d.z, -d.y * d.z, dd - d.z * d.z) * nd.m;
+        const V3 e = nd.p - cm;
+        L += cross(e, nd.v - vc) * nd.m;
+        double dd = dot(e, e);
+        I.c[0] += V3(dd - e.x * e.x, -e.y * e.x, -e.z * e.x) * nd.m;
+        I.c[1] += V3(-e.x * e.y, dd - e.y * e.y, -e.z * e.y) * nd.m;
+        I.c[2] += V3(-e.x * e.z, -e.y * e.z, dd - e.z * e.z) * nd.m;
     }
     for (int it = 0; it < 4; it++) {
         V3 R0 = cf.rot.rotate(V3(1, 0, 0)), R1 = cf.rot.rotate(V3(0, 1, 0)), R2 = cf.rot.rotate(V3(0, 0, 1));
@@ -514,6 +518,43 @@ void Car::chassisGroupForces(ChassisFrame& cf, double h) {
     static thread_local std::vector<int> flowed;
     F.assign(n, V3());
     flowed.clear();
+    // Steel: past its yield it bends, and the bend is the new shape. Each cross-section
+    // bends as a whole: where its mean is pushed past the yield, all its members' rest
+    // positions follow by the excess. A member shoved much further than the rest of its
+    // section crushes it locally, and flows on its own.
+    if (cf.yieldDist > 0) {
+        static thread_local std::vector<V3> D, secD;
+        static thread_local std::vector<double> secW;
+        D.assign(n, V3());
+        const bool sections = !cf.section.empty();
+        const int nsec = sections ? 1 + *std::max_element(cf.section.begin(), cf.section.end()) : 0;
+        secD.assign(nsec, V3());
+        secW.assign(nsec, 0);
+        for (int k = 0; k < n; k++) {
+            if (!active(k)) continue;
+            D[k] = c + cf.rot.rotate(cf.rest[k] - rc) - nodes[cf.nodes[k]].p;
+            if (sections) secD[cf.section[k]] += D[k] * nodes[cf.nodes[k]].m, secW[cf.section[k]] += nodes[cf.nodes[k]].m;
+        }
+        for (int sct = 0; sct < nsec; sct++) {
+            if (secW[sct] <= 0) continue;
+            const V3 dm = secD[sct] / secW[sct];
+            const double dl = len(dm);
+            secD[sct] = dl > cf.yieldDist ? dm * (1 - cf.yieldDist / dl) : V3();
+        }
+        const double crush = sections ? 3 * cf.yieldDist : cf.yieldDist;
+        for (int k = 0; k < n; k++) {
+            if (!active(k)) continue;
+            V3 back = sections ? secD[cf.section[k]] : V3();
+            const V3 rem = D[k] - back;
+            const double rl = len(rem);
+            if (rl > crush) back += rem * (1 - crush / rl);
+            if (dot(back, back) <= 0) continue;
+            cf.rest[k] += cf.rot.unrotate(-back);
+            const double wk = weighted ? cf.weight[k] : 1.0;
+            impactEnergy += cf.kappa * wk * nodes[cf.nodes[k]].m * cf.yieldDist * len(back);
+            flowed.push_back(k);
+        }
+    }
     V3 sumF, sumT;
     bool capped = false;
     for (int k = 0; k < n; k++) {
@@ -523,7 +564,7 @@ void Car::chassisGroupForces(ChassisFrame& cf, double h) {
             // Follow the dent while it's still moving; once it has been still (relative
             // to the body) for a moment, take that shape as the new rest shape.
             cf.rest[k] = rc + cf.rot.unrotate(nd.p - c);
-            V3 rel = nd.v - (vc + cross(Om, nd.p - c));
+            V3 rel = nd.v - (vc + cross(Om, nd.p - cm));
             if (dot(rel, rel) < 0.1 * 0.1) cf.release[k] -= h;
             continue;
         }
@@ -531,22 +572,13 @@ void Car::chassisGroupForces(ChassisFrame& cf, double h) {
         const double wk = weighted ? cf.weight[k] : 1.0;
         double nodeCap = cap;
         if (cf.yieldDist > 0) {
-            // Steel: past its yield it bends, and the bend is the new shape. The rest position
-            // follows the node to just within reach, and the pull stays at the yield force.
-            const double dl = len(d);
-            if (dl > cf.yieldDist) {
-                const V3 back = d * (1 - cf.yieldDist / dl);
-                cf.rest[k] += cf.rot.unrotate(-back);
-                d -= back;
-                impactEnergy += cf.kappa * wk * nd.m * cf.yieldDist * len(back);
-                flowed.push_back(k);
-            }
-            nodeCap = cf.kappa * wk * nd.m * cf.yieldDist * 1.25;  // (however fast it's bent)
+            // (Flowed above; the pull stays at about the yield force however fast it's bent.)
+            nodeCap = cf.kappa * wk * nd.m * cf.yieldDist * (cf.section.empty() ? 1.25 : 3.0);
         } else if (dot(d, d) > cf.releaseDist * cf.releaseDist) {  // shoved far out of shape: a dent in progress
             cf.release[k] = 0.15f;
             continue;
         }
-        V3 vr = vc + cross(Om, nd.p - c);
+        V3 vr = vc + cross(Om, nd.p - cm);
         V3 f = (d * (cf.kappa * wk) + (vr - nd.v) * cf.damping) * nd.m;
         double fl = len(f);
         if (fl > nodeCap) {
@@ -555,7 +587,7 @@ void Car::chassisGroupForces(ChassisFrame& cf, double h) {
         }
         F[k] = f;
         sumF += f;
-        sumT += cross(nd.p - c, f);
+        sumT += cross(nd.p - cm, f);
     }
     V3 alpha;
     if (capped) alpha = inverseSym(I) * sumT;
@@ -563,7 +595,7 @@ void Car::chassisGroupForces(ChassisFrame& cf, double h) {
         if (!active(k)) continue;
         Node& nd = nodes[cf.nodes[k]];
         V3 f = F[k];
-        if (capped) f -= (sumF / Mv + cross(alpha, nd.p - c)) * nd.m;
+        if (capped) f -= (sumF / Mv + cross(alpha, nd.p - cm)) * nd.m;
         nd.f += f;
     }
     // The steel between nodes that bent takes the same set (so it holds the new shape, and
@@ -760,15 +792,17 @@ static const double kRubSamples[7][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}, {0.5, 
 
 void Car::buildWheelRub() {
     // The clearance the factory designed in: everywhere the stock tire goes through the
-    // steering lock and the suspension's travel (plus a little). Skin inside that is the
-    // coarse lattice cutting a corner, not bodywork, so it's left out; outside it the tire
-    // only arrives past its design travel (a bent arm, a crash shoving it back) or when
-    // it's bigger than the factory's (lifted trucks know this: it rubs).
+    // steering lock and the suspension's travel (plus a little). Skin the stock tire reaches
+    // into over that is the coarse lattice cutting a corner, not bodywork: it's only met past
+    // that depth. Beyond it the tire arrives only past its design travel (a torn coil-over, a
+    // bent arm, a crash shoving it back) or when it's bigger than the factory's (lifted
+    // trucks know this: it rubs).
     const VehicleSpec* stock = spec;
     for (const VehicleSpec& vs : vehicleCatalog())
         if (spec && std::string(vs.id) == spec->id) stock = &vs;
     for (Wheel& wh : wheels) {
         wh.rubTris.clear();
+        wh.rubAllow.clear();
         if (restLocal.empty() || !stock) continue;
         const V3 c0 = (restLocal[wh.inner] + restLocal[wh.outer]) * 0.5, axis0 = norm(restLocal[wh.outer] - restLocal[wh.inner]);
         const double Rs = stock->wheelRadius + 0.03, half = 0.5 * (wh.front || stock->wheelWidthRear <= 0 ? stock->wheelWidth : stock->wheelWidthRear) + 0.02;
@@ -787,28 +821,27 @@ void Car::buildWheelRub() {
                 near |= len(pts[i] - c0) < reach;
             }
             if (!near) continue;
-            bool clearance = false;
+            double allow[7] = {0, 0, 0, 0, 0, 0, 0};
             for (double up : {-droop, -0.5 * droop, 0.0, 0.5 * bump, bump})
-            for (double kp : {0.0, 0.08}) {
-                for (double st : {-0.62, -0.31, 0.0, 0.31, 0.62}) {
-                    if (!wh.front && st != 0) continue;
-                    // (Steered about the kingpin, up to ~8 cm inboard of the wheel's middle, so
-                    // the tire swings round in an arc rather than turning on the spot.)
-                    const double cs = std::cos(st), sn = std::sin(st);
-                    auto turn = [&](const V3& v) { return V3(v.x * cs + v.z * sn, v.y, -v.x * sn + v.z * cs); };
-                    const V3 pivot = c0 - axis0 * kp;
-                    const V3 c = pivot + turn(c0 - pivot) + V3(0, up, 0);
-                    const V3 ax = turn(axis0);
-                    for (const V3& p : pts) {
-                        const V3 d = p - c;
-                        const double da = dot(d, ax);
-                        if (std::fabs(da) < half && len(d - ax * da) < Rs) clearance = true;
+                for (double kp : {0.0, 0.08})
+                    for (double st : {-0.62, -0.31, 0.0, 0.31, 0.62}) {
+                        if (!wh.front && st != 0) continue;
+                        // (Steered about the kingpin, up to ~8 cm inboard of the wheel's middle, so
+                        // the tire swings round in an arc rather than turning on the spot.)
+                        const double cs = std::cos(st), sn = std::sin(st);
+                        auto turn = [&](const V3& v) { return V3(v.x * cs + v.z * sn, v.y, -v.x * sn + v.z * cs); };
+                        const V3 pivot = c0 - axis0 * kp;
+                        const V3 c = pivot + turn(c0 - pivot) + V3(0, up, 0);
+                        const V3 ax = turn(axis0);
+                        for (int i = 0; i < 7; i++) {
+                            const V3 d = pts[i] - c;
+                            const double da = dot(d, ax), dr = len(d - ax * da);
+                            // (By the nearer way out, as the contact measures it.)
+                            if (std::fabs(da) < half && dr < Rs) allow[i] = std::max(allow[i], std::min(Rs - dr, half - std::fabs(da)));
+                        }
                     }
-                    if (clearance) break;
-                }
-                if (clearance) break;
-            }
-            if (!clearance) wh.rubTris.push_back(t);
+            wh.rubTris.push_back(t);
+            for (double a : allow) wh.rubAllow.push_back((float)a);
         }
     }
 }
@@ -829,12 +862,14 @@ void Car::wheelBodyContact(double h) {
         V3 axis = norm(b.p - a.p);
         const double half = wh.width * 0.5, R = wh.popped ? wh.rimR + 0.015 : wh.R, side = R - wh.rimR;
         const V3 spinAxis = wh.left ? axis : -axis;  // points to the car's left: + omega rolls it forward
-        for (int t : wh.rubTris) {
-            const Tri& tr = tris[t];
+        for (size_t ri = 0; ri < wh.rubTris.size(); ri++) {
+            const Tri& tr = tris[wh.rubTris[ri]];
             // Quick reject: the triangle's middle too far from the hub to reach.
             const V3 m = (nodes[tr.v[0]].p + nodes[tr.v[1]].p + nodes[tr.v[2]].p) / 3.0;
             if (dot(m - c, m - c) > (R + 0.4) * (R + 0.4)) continue;
-            for (const auto& wgt : kRubSamples) {
+            for (int si = 0; si < 7; si++) {
+                const auto& wgt = kRubSamples[si];
+                const double allow = wh.rubAllow[ri * 7 + si];
                 V3 p, vp;
                 for (int k = 0; k < 3; k++) p += nodes[tr.v[k]].p * wgt[k], vp += nodes[tr.v[k]].v * wgt[k];
                 const V3 d = p - c;
@@ -844,7 +879,8 @@ void Car::wheelBodyContact(double h) {
                 const double dr = len(rv);
                 if (dr >= R || dr < 1e-6) continue;
                 // Out through the tread, or out past the sidewall, whichever is nearer.
-                const double penR = R - dr, penA = half - std::fabs(da);
+                const double penR = R - dr - allow, penA = half - std::fabs(da) - allow;
+                if (penR <= 0 || penA <= 0) continue;
                 V3 n;
                 double F;
                 if (penR <= penA) {

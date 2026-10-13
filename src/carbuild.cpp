@@ -666,11 +666,21 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 if (std::fabs(stationX[st] - x) < std::fabs(stationX[best] - x)) best = st;
             crossSt.insert(best);
         }
-        for (int st : crossSt)
+        for (int st : crossSt) {
             for (auto e : {std::make_pair(0, 0), std::make_pair(2, 2), std::make_pair(0, 2), std::make_pair(2, 0)}) {
                 const int bi = railBeam(L(st, -1, e.first), L(st, 1, e.second));
                 if (bi >= 0 && e.first == e.second) frameBeams.push_back(bi);
             }
+            // The crossmember's gusseted ends keep the rails square to each other (in plan
+            // view): without them one rail could slide fore and aft against the other
+            // ("matchboxing"), and the front axle with it, which steers the truck.
+            const int to = st + 1 < ladderStations ? st + 1 : st - 1;
+            for (int c : {0, 2})
+                for (int side = -1; side <= 1; side += 2) {
+                    const int bi = railBeam(L(st, side, c), L(to, -side, c));
+                    if (bi >= 0) beams[bi].k *= 3;
+                }
+        }
     }
     [[maybe_unused]] auto nearestFrame = [&](const V3& p, int count) {
         std::vector<std::pair<double, int>> c;
@@ -691,20 +701,22 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
             // A bracket (or tower) welded to the nearest stretch of rail.
             kg = std::max(kg, 4.0);
             double avail = 0;
-            // Welded to the near rail's section at the two nearest stations, and braced across
-            // to the far rail (a crossmember or the tower's brace): a bracket tied to one small
-            // patch of rail would pivot on it like a lever.
+            // Welded to the near rail's section at the two nearest stations (it's held in shape
+            // with that rail, so it can't pivot on its welds like a lever). One on the
+            // centreline (a diff's mount) bridges both rails.
             std::vector<int> to;
             {
                 std::vector<std::pair<double, int>> st;
                 for (int k = 0; k < ladderStations; k++) st.push_back({std::fabs(stationX[k] - p.x), k});
                 std::sort(st.begin(), st.end());
-                const int nearSide = p.z > 0 ? 4 : 0, farSide = 4 - nearSide;
-                for (int a = 0; a < 2 && a < (int)st.size(); a++)
-                    for (int c = 0; c < 4; c++) to.push_back(ladder[st[a].second * 8 + nearSide + c]);
-                for (int c = 0; c < 4; c++) to.push_back(ladder[st[0].second * 8 + farSide + c]);
+                const bool centre = std::fabs(p.z) < 0.05;
+                for (int side : {0, 4}) {
+                    if (!centre && side != (p.z > 0 ? 4 : 0)) continue;
+                    for (int a = 0; a < 2 && a < (int)st.size(); a++)
+                        for (int c = 0; c < 4; c++) to.push_back(ladder[st[a].second * 8 + side + c]);
+                }
             }
-            bracketed.insert(to.begin(), to.end() - 4);
+            bracketed.insert(to.begin(), to.end());
             for (int f : to) {
                 const int bi = addBeam(n, f, BEAM_FRAME);
                 if (bi < 0) continue;
@@ -1455,13 +1467,15 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
             if (std::max(pa.x, pb.x) > xf + 0.2 || std::min(pa.x, pb.x) < xr - 0.8) continue;
             b.yieldStrain *= vs.frameStrength;
         }
-        // Mounts: pairs along the rails, from the firewall back past the rear axle. Each
+        // Mounts: pairs along the rails, from the cowl (just behind the front tires: not in
+        // the wheel well, where a tire forced up would find a mount) back past the rear axle. Each
         // ties the body floor nodes over the rail to its section there: the bushing sits on an
         // outrigger welded across the rail's side, which spreads its load into the whole
         // section (on one corner alone, a landing would crush the rail locally).
         const int perSide = std::max(2, vs.bodyMounts / 2);
         for (int m = 0; m < perSide; m++) {
-            const double x = (xf - 0.15) + ((xr - 0.55) - (xf - 0.15)) * m / (perSide - 1);
+            const double x0 = xf - vs.wheelRadius - 0.12, x1 = xr - 0.55;
+            const double x = x0 + (x1 - x0) * m / (perSide - 1);
             int st = 0;
             for (int k = 1; k < ladderStations; k++)
                 if (std::fabs(stationX[k] - x) < std::fabs(stationX[st] - x)) st = k;
@@ -1839,8 +1853,13 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
             setUp(chassis, range(0, bodyNodes), 300000 * kLadderTubStiffness);
             // Each rail with the brackets welded to it (the pads and brackets between the rails
             // go with the nearer one).
+            // (One on the centreline, a diff's mount, say, is held by both, half each: the
+            // truck stays the same both sides.)
             std::vector<int> side[2];
-            for (int i = bodyNodes; i < frameNodes; i++) side[local[i].z > 0].push_back(i);
+            for (int i = bodyNodes; i < frameNodes; i++) {
+                if (std::fabs(local[i].z) < 0.05) side[0].push_back(i), side[1].push_back(i);
+                else side[local[i].z > 0].push_back(i);
+            }
             for (int r = 0; r < 2; r++) {
                 ChassisFrame& rf = railFrame[r];
                 setUp(rf, side[r], 300000 * vs.frameStiffness * kRailStiffness);
@@ -1852,8 +1871,17 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 // The brackets, towers and pads welded on are stouter than the bare rail (a
                 // coil-over tower is built for the bump stop's hit).
                 rf.weight.assign(rf.nodes.size(), 1.0f);
-                for (size_t k = 0; k < rf.nodes.size(); k++)
-                    if (!std::binary_search(ladder.begin(), ladder.end(), rf.nodes[k])) rf.weight[k] = kBracketHold;
+                rf.section.assign(rf.nodes.size(), 0);
+                int nextSection = ladderStations;
+                for (size_t k = 0; k < rf.nodes.size(); k++) {
+                    auto it = std::lower_bound(ladder.begin(), ladder.end(), rf.nodes[k]);
+                    if (it != ladder.end() && *it == rf.nodes[k]) {
+                        rf.section[k] = (int)(it - ladder.begin()) / 8;  // its station
+                    } else {
+                        rf.weight[k] = kBracketHold * (std::fabs(local[rf.nodes[k]].z) < 0.05 ? 0.5f : 1.0f);
+                        rf.section[k] = nextSection++;  // (a bracket bends on its own)
+                    }
+                }
             }
         } else {
             setUp(chassis, range(0, frameNodes), 300000 * vs.frameStiffness);

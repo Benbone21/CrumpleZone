@@ -397,3 +397,136 @@ SCENARIO(swayBarSet, "components/sway-bar-bend", "Civic lands twisted on a rock:
     ctx.run(3.0);
     ctx.metric("lean after the repair", std::fabs(std::asin(c.frame().left.y) * 180 / M_PI - level0), "deg", 0, lean * 0.6);
 }
+
+// ---- Ladder frames: bending, yield, twist --------------------------------------------
+// Real numbers from the rails' sections (Ford's 2021+ Bronco spec: 4.95 in^3 at 49.3 ksi,
+// I = 22.7 in^4; the 3rd-gen 4Runner's 2.75 x ~5.9 in, 1/8 in rails are an estimate).
+namespace {
+struct FramePress {
+    double sagAt20 = 0, firstSet = 0, keptSag = 0, damage = 0;
+};
+// The truck on its wheels, a press pushing down on the frame station midway between the
+// axles, ramped at 15 kN/s to `peak`, then let off. The sag is the station's drop against
+// the line between the axle stations.
+FramePress pressFrame(Ctx& ctx, const VehicleSpec& spec, double z, double peak) {
+    Car& c = ctx.add(spec, -100, z, 0);
+    ctx.focus(c);
+    ctx.run(1.5, [&] { c.handbrake = 1; });
+    double xf = -1e9, xr = 1e9;
+    for (const Wheel& w : c.wheels) xf = std::max(xf, c.restLocal[w.inner].x), xr = std::min(xr, c.restLocal[w.inner].x);
+    auto sx = [&](int st) { return c.restLocal[c.ladder[st * 8]].x; };
+    auto nearest = [&](double x) {
+        int b = 0;
+        for (int st = 1; st < c.ladderStations; st++)
+            if (std::fabs(sx(st) - x) < std::fabs(sx(b) - x)) b = st;
+        return b;
+    };
+    const int sf = nearest(xf), sr = nearest(xr), mid = nearest(0.5 * (xf + xr));
+    auto stY = [&](int st) {
+        double y = 0;
+        for (int k = 0; k < 8; k++) y += c.nodes[c.ladder[st * 8 + k]].p.y;
+        return y / 8;
+    };
+    auto sag = [&] {
+        const double t = (sx(mid) - sx(sr)) / (sx(sf) - sx(sr));
+        return stY(sr) + (stY(sf) - stY(sr)) * t - stY(mid);
+    };
+    const double sag0 = sag();
+    FramePress r;
+    double P = 0;
+    c.extForce.assign(c.nodes.size(), V3());
+    auto load = [&](double p) {
+        for (int k = 0; k < 8; k++) c.extForce[c.ladder[mid * 8 + k]] = V3(0, -p / 8, 0);
+    };
+    ctx.runUntil(30, [&] { return P >= peak; }, [&] {
+        P += 15000 * Ctx::kFrame;
+        load(P);
+        c.handbrake = 1;
+        if (P >= 20000 && r.sagAt20 == 0) r.sagAt20 = sag() - sag0;
+        if (r.firstSet == 0)
+            for (const Beam& b : c.beams)
+                if (b.type == BEAM_FRAME && std::fabs(b.L0 - b.Lorig) > 0.002) {
+                    r.firstSet = P;
+                    break;
+                }
+        ctx.sample("Frame sag under the press", spec.name, (sag() - sag0) * 1000, "mm");
+    });
+    load(0);
+    ctx.run(1.5, [&] { c.handbrake = 1; });
+    r.keptSag = sag() - sag0;
+    r.damage = c.damage * 100;
+    return r;
+}
+}  // namespace
+
+SCENARIO(framePress, "components/frame-press", "Bronco and 4Runner frames pressed between the axles: stiff like steel up to their yield, then they bend and stay bent") {
+    struct Expect {
+        const VehicleSpec* spec;
+        const char* tag;
+        double sagLo, sagHi, setLo, setHi;
+    };
+    // Bronco: ~1.9 mm per 20 kN, sets at ~85 kN. 4Runner: ~6 mm, ~43 kN (estimate).
+    const Expect ex[2] = {{&vehicleCatalog()[2], "Bronco", 1.5, 4.0, 60, 120}, {&vehicleCatalog()[3], "4Runner", 3.5, 9.0, 35, 80}};
+    for (int i = 0; i < 2; i++) {
+        const Expect& e = ex[i];
+        ctx.sim.cars.clear();
+        const FramePress r = pressFrame(ctx, *e.spec, -60 + 40 * i, 130000);
+        std::printf("FRAME %s: sag at 20 kN %.1f mm, first set at %.0f kN, kept %.0f mm, damage %.2f %%\n", e.tag, r.sagAt20 * 1000,
+                    r.firstSet / 1000, r.keptSag * 1000, r.damage);
+        ctx.metric(std::string(e.tag) + ": frame sag under 20 kN", r.sagAt20 * 1000, "mm", e.sagLo, e.sagHi);
+        ctx.metric(std::string(e.tag) + ": press load when the frame first takes a set", r.firstSet / 1000, "kN", e.setLo, e.setHi);
+        ctx.metric(std::string(e.tag) + ": sag it keeps after 130 kN (bent)", r.keptSag * 1000, "mm", 5, 400);
+        ctx.metric(std::string(e.tag) + ": damage", r.damage, "%", 0.05, 100);
+    }
+}
+
+SCENARIO(frameTwist, "components/frame-twist", "The bare ladder frames twisted between the axles (body mounts cut): a boxed Bronco frame against an older, open-tailed 4Runner one") {
+    // Ladder frames on their own: older open C-channel ~2-5 kNm/deg, fully boxed ~8-20.
+    struct Expect {
+        const VehicleSpec* spec;
+        const char* tag;
+        double lo, hi;
+    };
+    const Expect ex[2] = {{&vehicleCatalog()[2], "Bronco", 8, 20}, {&vehicleCatalog()[3], "4Runner", 2, 6}};
+    for (int i = 0; i < 2; i++) {
+        const Expect& e = ex[i];
+        ctx.sim.cars.clear();
+        Car& c = ctx.add(*e.spec, -100, -60 + 40 * i, 0);
+        for (Node& n : c.nodes) n.p.y += 40;
+        c.extForce.assign(c.nodes.size(), V3());
+        for (int bi : c.bodyMountBeams) c.beams[bi].broken = true;
+        ctx.run(0.3);
+        double xf = -1e9, xr = 1e9;
+        for (const Wheel& w : c.wheels) xf = std::max(xf, c.restLocal[w.inner].x), xr = std::min(xr, c.restLocal[w.inner].x);
+        auto nearest = [&](double x) {
+            int b = 0;
+            for (int st = 1; st < c.ladderStations; st++)
+                if (std::fabs(c.restLocal[c.ladder[st * 8]].x - x) < std::fabs(c.restLocal[c.ladder[b * 8]].x - x)) b = st;
+            return b;
+        };
+        const int sf = nearest(xf), sr = nearest(xr);
+        auto side = [&](int st, int lr) {
+            V3 p;
+            for (int k = 0; k < 4; k++) p += c.nodes[c.ladder[st * 8 + lr * 4 + k]].p;
+            return p / 4.0;
+        };
+        auto roll = [&](int st) {
+            const V3 d = side(st, 0) - side(st, 1);
+            return std::atan2(d.y, -d.z);
+        };
+        const double sep = len(side(sf, 0) - side(sf, 1)), T = 3000;
+        const double f0 = roll(sf), r0 = roll(sr);
+        double twist = 0;
+        ctx.run(0.8, [&] {
+            const double ramp = smoothstep(0, 0.3, ctx.t - 0.3);
+            std::fill(c.extForce.begin(), c.extForce.end(), V3());
+            const V3 F(0, ramp * T / sep / 4, 0);
+            for (int k = 0; k < 4; k++) {
+                c.extForce[c.ladder[sf * 8 + k]] += F, c.extForce[c.ladder[sf * 8 + 4 + k]] -= F;
+                c.extForce[c.ladder[sr * 8 + k]] -= F, c.extForce[c.ladder[sr * 8 + 4 + k]] += F;
+            }
+            twist = ((roll(sf) - f0) - (roll(sr) - r0)) * 180 / M_PI;
+        });
+        ctx.metric(std::string(e.tag) + ": bare frame's torsional stiffness", T / 1000 / std::max(std::fabs(twist), 1e-4), "kNm/deg", e.lo, e.hi);
+    }
+}
