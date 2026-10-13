@@ -322,3 +322,77 @@ SCENARIO(torqueConverter, "components/torque-converter", "Bronco automatic: idle
     ctx.run(5.0, [&] { c.throttle = 0, c.brake = 0; });
     ctx.metric("idle creep in Drive (a real truck walks along at ~5-8 km/h)", speedKmh(c), "km/h", 3, 10);
 }
+
+// ---- A tire rammed up into its own wheel well -------------------------------------
+// The front-left coil-over has torn out (spring, damper and bump stop gone), and the truck
+// drops 1.2 m with that tire landing on a 0.45 m rock block. Nothing stops the wheel now
+// but the body: the tire must meet the wheel well, not pass through it. It shoves the
+// sheet metal (which dents) and the body pushes back through the hub.
+VEHICLE_SCENARIO(tireIntoFender, "components/tire-into-fender", "Coil-over torn out, dropped with that tire on a rock: the tire hits the wheel well and dents it instead of clipping through") {
+    Car& c = ctx.add(spec, -100, -50, 0);
+    ctx.focus(c);
+    ctx.run(1.0);
+    Wheel& w = c.wheels[0];
+    const V3 hub = (c.nodes[w.inner].p + c.nodes[w.outer].p) * 0.5;
+    const double ground = ctx.sim.world.height(hub.x, hub.z);
+    ctx.sim.world.addBox(V3(hub.x, ground + 0.225, hub.z), V3(0.35, 0.225, 0.25), 0, 0, 0, V3(0.55, 0.55, 0.53));
+    ctx.sim.world.buildGrid();
+    c.beams[w.spring].broken = true;
+    for (Node& n : c.nodes) n.p.y += 1.2;
+    std::vector<double> L0(c.beams.size());
+    for (size_t i = 0; i < c.beams.size(); i++) L0[i] = c.beams[i].L0;
+    double peak = 0, deepest = 0;
+    ctx.run(2.0, [&] {
+        peak = std::max(peak, (double)w.rub);
+        // How deep anything of the body got inside that tire.
+        const V3 a = c.nodes[w.inner].p, b = c.nodes[w.outer].p, ctr = (a + b) * 0.5, ax = norm(b - a);
+        for (int t : w.rubTris) {
+            const Tri& tr = c.tris[t];
+            for (const V3& p : {(c.nodes[tr.v[0]].p + c.nodes[tr.v[1]].p) * 0.5, (c.nodes[tr.v[1]].p + c.nodes[tr.v[2]].p) * 0.5,
+                                (c.nodes[tr.v[0]].p + c.nodes[tr.v[1]].p + c.nodes[tr.v[2]].p) / 3.0, c.nodes[tr.v[0]].p}) {
+                const V3 d = p - ctr;
+                const double da = dot(d, ax);
+                // (Inside the tire by the nearer way out: through the tread or past the sidewall.)
+                if (std::fabs(da) < w.width * 0.5) deepest = std::max(deepest, std::min(w.R - len(d - ax * da), w.width * 0.5 - std::fabs(da)));
+            }
+        }
+    });
+    int dented = 0;
+    for (size_t i = 0; i < c.beams.size(); i++)
+        if ((c.beams[i].type == BEAM_PANEL || c.beams[i].type == BEAM_BODY || c.beams[i].type == BEAM_FRAME) && std::fabs(c.beams[i].L0 - L0[i]) > 0.002) dented++;
+    ctx.metric("peak push of the tire on the body", peak / 1000, "kN", 1, 400);
+    ctx.metric("deepest the body got into the tire (no clipping: under the sidewall)", deepest * 100, "cm", 0, 14);
+    ctx.metric("sheet metal and structure bent", dented, "beams", 1, 5000);
+    ctx.check("stays upright", c.frame().up.y > 0.7);
+}
+
+// ---- A sway bar bent by a hard hit ----------------------------------------------------
+// The Civic dropped 2.5 m with its front-left tire on a 0.6 m rock: it lands twisted and a
+// bar is wrung past its elastic limit. Back on flat ground the bent bar holds one corner
+// up (it leans); a trail repair swaps it and it sits level again.
+SCENARIO(swayBarSet, "components/sway-bar-bend", "Civic lands twisted on a rock: a sway bar takes a set, the car leans until it's repaired") {
+    Car& c = ctx.add(vehicleCatalog()[0], -100, -50, 0);
+    ctx.focus(c);
+    ctx.run(1.0);
+    const double level0 = std::asin(c.frame().left.y) * 180 / M_PI;
+    Wheel& w = c.wheels[0];
+    const V3 hub = (c.nodes[w.inner].p + c.nodes[w.outer].p) * 0.5;
+    ctx.sim.world.addBox(V3(hub.x, ctx.sim.world.height(hub.x, hub.z) + 0.3, hub.z), V3(0.35, 0.3, 0.25), 0, 0, 0, V3(0.5, 0.5, 0.5));
+    ctx.sim.world.buildGrid();
+    for (Node& n : c.nodes) n.p.y += 2.5;
+    ctx.run(2.0);
+    double set = 0;
+    for (const Axle& a : c.axles) set = std::max(set, std::fabs(a.arbBend));
+    ctx.metric("bar's permanent set (coil-over difference it now holds)", set * 100, "cm", 1, 15);
+    ctx.check("needs a repair", c.needsRepair());
+    // Off the rock, back on flat ground.
+    ctx.sim.world.boxes.pop_back();
+    ctx.sim.world.buildGrid();
+    c.rotateRigid(c.frame().fwd, 0);
+    ctx.run(3.0);
+    const double lean = std::fabs(std::asin(c.frame().left.y) * 180 / M_PI - level0);
+    ctx.metric("lean on flat ground with the bent bar (a soft rear bar: small)", lean, "deg", 0.1, 5);
+    c.fieldRepair();
+    ctx.run(3.0);
+    ctx.metric("lean after the repair", std::fabs(std::asin(c.frame().left.y) * 180 / M_PI - level0), "deg", 0, lean * 0.6);
+}

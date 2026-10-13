@@ -138,6 +138,11 @@ struct Wheel {
     double twist = 0;          // shaft wind-up, rad (+ = driving forward)
     double shaftTorque = 0;    // torque in the shaft now (N*m)
     double omegaWas = 0;       // omega at the end of the last step (follows outside changes)
+    // The tire against its own car: wheel-well liners, fenders, bumpers, sills. Built once:
+    // the skin triangles it could reach; at run time, how hard it's rubbing.
+    std::vector<int> rubTris;
+    double rubTorque = 0;      // the rubbing's drag on its spin this step (N*m)
+    float rub = 0;             // how hard it's pressing on the body (N)
     std::vector<int> mounts;  // beams that attach this wheel to the body
     // Radius it rolls on (a blown tire runs on its rim).
     double rollR() const { return popped ? rimR + 0.015 : R; }
@@ -172,6 +177,10 @@ struct Axle {
     bool front = false;
     int wheel[2] = {-1, -1};      // left, right
     double arbK = 0;              // anti-roll bar rate, per meter of coil-over difference
+    // The bar is spring steel: twisted past what the suspension's travel asks of it (a big
+    // hit on one wheel), it takes a set and holds that corner up (the truck leans).
+    double arbYield = 1e9;        // elastic limit, in coil-over difference (m)
+    double arbBend = 0;           // permanent set (m of coil-over difference it now holds)
     double heaveK = 0, heaveGap = 0, heaveC = 0;  // third (heave) spring and damper: per meter (per m/s) of both coil-overs squeezing together, past heaveGap
     std::vector<int> diffNodes;   // differential housing (drive torque reacts here)
     int propShaft = -1;           // prop shaft from the gearbox (-1 = none)
@@ -243,6 +252,7 @@ public:
     std::vector<std::array<int, 8>> cells;     // solid cells' corner node ids (bit 0 = +i, 1 = +j, 2 = +k)
     std::vector<std::array<int, 3>> cellIJK;   // lattice coordinates of each solid cell
     std::vector<std::pair<int, int>> skinEdges;  // unique panel edges (for pole collisions)
+    void buildWheelRub();      // each tire's nearby skin triangles (after the tris and rest shape exist)
     std::vector<V3> extForce;  // optional extra force per node (test rigs); empty = none
     ChassisFrame chassis;
     int bodyNodes = 0;
@@ -394,6 +404,7 @@ private:
     V3 groupAvg(const std::vector<int>& g) const;
     double engineTorque(double rpm) const;
     double shaftStiffness() const;
+    void wheelBodyContact(double h);
     double gearRatio(int g) const;
 };
 

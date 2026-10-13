@@ -171,6 +171,8 @@ bool Car::needsFieldRepair() const {
     }
     for (const Beam& b : beams)
         if (!b.broken && (b.type == BEAM_ARM || b.type == BEAM_TIEROD) && std::fabs(b.L0 - b.Lorig) > 0.005 * b.Lorig) return true;
+    for (const Axle& ax : axles)
+        if (std::fabs(ax.arbBend) > 0.005) return true;
     return false;
 }
 
@@ -204,6 +206,7 @@ void Car::fieldRepair() {
         }
         if (!b.broken && (b.type == BEAM_ARM || b.type == BEAM_TIEROD)) b.L0 = b.Lorig;
     }
+    for (Axle& ax : axles) ax.arbBend = 0;  // bent sway bar swapped for the spare (or unbolted)
     if (hydrolocked) {
         hydrolocked = false;
         engineDead = engineHealth < 0.12;

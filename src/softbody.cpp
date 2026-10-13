@@ -1,4 +1,5 @@
 #include "softbody.h"
+#include "vehicles.h"
 
 #include <set>
 #include <utility>
@@ -267,7 +268,15 @@ void Car::computeForces(double h, const World& w) {
         const Beam& sr = beams[r.spring];
         if (l.detached || r.detached || sl.broken || sr.broken) continue;
         double dl = len(nodes[sl.b].p - nodes[sl.a].p) - l.springRest, dr = len(nodes[sr.b].p - nodes[sr.a].p) - r.springRest;
-        double arbForce[2] = {ax.arbK * (dl - dr), -ax.arbK * (dl - dr)};
+        // Twisted past its elastic limit, the bar takes a permanent set.
+        double twist = dl - dr - ax.arbBend;
+        if (std::fabs(twist) > ax.arbYield) {
+            const double over = twist - (twist > 0 ? ax.arbYield : -ax.arbYield);
+            ax.arbBend += over;
+            twist -= over;
+            impactEnergy += ax.arbK * ax.arbYield * std::fabs(over);
+        }
+        double arbForce[2] = {ax.arbK * twist, -ax.arbK * twist};
         for (int s2 = 0; s2 < 2; s2++) {
             const Beam& sp = s2 ? sr : sl;
             V3 dir = norm(nodes[sp.b].p - nodes[sp.a].p) * arbForce[s2];
@@ -381,6 +390,7 @@ void Car::computeForces(double h, const World& w) {
     }
 
     engineBlockContact(h);
+    wheelBodyContact(h);
     wheelStep(h, w);
     poleEdgeContacts(h, w);
 
@@ -681,6 +691,129 @@ void Car::applyTorque(const std::vector<int>& set, const V3& torque) {
     I.c[2].z += tr * 1e-3;
     V3 alpha = inverseSym(I) * torque;
     for (int i : set) nodes[i].f += cross(alpha, nodes[i].p - c);
+}
+
+// Points sampled on a skin triangle for the tire to meet (barycentric weights): the
+// corners, the edge midpoints and the middle. The lattice is coarse (~0.35 m), so a
+// tire's tread could slip between its corners.
+static const double kRubSamples[7][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}, {0.5, 0.5, 0}, {0, 0.5, 0.5}, {0.5, 0, 0.5}, {1.0 / 3, 1.0 / 3, 1.0 / 3}};
+
+void Car::buildWheelRub() {
+    // The clearance the factory designed in: everywhere the stock tire goes through the
+    // steering lock and the suspension's travel (plus a little). Skin inside that is the
+    // coarse lattice cutting a corner, not bodywork, so it's left out; outside it the tire
+    // only arrives past its design travel (a bent arm, a crash shoving it back) or when
+    // it's bigger than the factory's (lifted trucks know this: it rubs).
+    const VehicleSpec* stock = spec;
+    for (const VehicleSpec& vs : vehicleCatalog())
+        if (spec && std::string(vs.id) == spec->id) stock = &vs;
+    for (Wheel& wh : wheels) {
+        wh.rubTris.clear();
+        if (restLocal.empty() || !stock) continue;
+        const V3 c0 = (restLocal[wh.inner] + restLocal[wh.outer]) * 0.5, axis0 = norm(restLocal[wh.outer] - restLocal[wh.inner]);
+        const double Rs = stock->wheelRadius + 0.03, half = 0.5 * (wh.front || stock->wheelWidthRear <= 0 ? stock->wheelWidth : stock->wheelWidthRear) + 0.02;
+        const double bump = wh.front ? (stock->bumpFront > 0 ? stock->bumpFront : 0.085) : (stock->bumpRear > 0 ? stock->bumpRear : 0.085);
+        const double droop = wh.front ? (stock->droopFront > 0 ? stock->droopFront : 0.11) : (stock->droopRear > 0 ? stock->droopRear : 0.11);
+        const double reach = wh.R + 0.35;
+        for (int t = 0; t < (int)tris.size(); t++) {
+            const Tri& tr = tris[t];
+            bool own = false;
+            for (int k = 0; k < 3; k++) own |= std::find(wh.assembly.begin(), wh.assembly.end(), tr.v[k]) != wh.assembly.end();
+            if (own) continue;
+            V3 pts[7];
+            bool near = false;
+            for (int i = 0; i < 7; i++) {
+                for (int k = 0; k < 3; k++) pts[i] += restLocal[tr.v[k]] * kRubSamples[i][k];
+                near |= len(pts[i] - c0) < reach;
+            }
+            if (!near) continue;
+            bool clearance = false;
+            for (double up : {-droop, -0.5 * droop, 0.0, 0.5 * bump, bump})
+            for (double kp : {0.0, 0.08}) {
+                for (double st : {-0.62, -0.31, 0.0, 0.31, 0.62}) {
+                    if (!wh.front && st != 0) continue;
+                    // (Steered about the kingpin, up to ~8 cm inboard of the wheel's middle, so
+                    // the tire swings round in an arc rather than turning on the spot.)
+                    const double cs = std::cos(st), sn = std::sin(st);
+                    auto turn = [&](const V3& v) { return V3(v.x * cs + v.z * sn, v.y, -v.x * sn + v.z * cs); };
+                    const V3 pivot = c0 - axis0 * kp;
+                    const V3 c = pivot + turn(c0 - pivot) + V3(0, up, 0);
+                    const V3 ax = turn(axis0);
+                    for (const V3& p : pts) {
+                        const V3 d = p - c;
+                        const double da = dot(d, ax);
+                        if (std::fabs(da) < half && len(d - ax * da) < Rs) clearance = true;
+                    }
+                    if (clearance) break;
+                }
+                if (clearance) break;
+            }
+            if (!clearance) wh.rubTris.push_back(t);
+        }
+    }
+}
+
+// The tire meeting its own car. Rammed up past the bump stops (a landing, a rock under
+// it, a bent arm) or turned onto the wheel-well liner, it shoves the sheet metal it hits
+// (the fender dents, a bumper cover folds) and the body pushes back on the hub and through
+// the suspension. A tire rubbing a fender drags on its spin.
+void Car::wheelBodyContact(double h) {
+    (void)h;
+    for (Wheel& wh : wheels) {
+        wh.rubTorque = 0;
+        wh.rub = 0;
+        if (wh.detached || wh.rubTris.empty()) continue;
+        Node& a = nodes[wh.inner];
+        Node& b = nodes[wh.outer];
+        const V3 c = (a.p + b.p) * 0.5, vc = (a.v + b.v) * 0.5;
+        V3 axis = norm(b.p - a.p);
+        const double half = wh.width * 0.5, R = wh.popped ? wh.rimR + 0.015 : wh.R, side = R - wh.rimR;
+        const V3 spinAxis = wh.left ? axis : -axis;  // points to the car's left: + omega rolls it forward
+        for (int t : wh.rubTris) {
+            const Tri& tr = tris[t];
+            // Quick reject: the triangle's middle too far from the hub to reach.
+            const V3 m = (nodes[tr.v[0]].p + nodes[tr.v[1]].p + nodes[tr.v[2]].p) / 3.0;
+            if (dot(m - c, m - c) > (R + 0.4) * (R + 0.4)) continue;
+            for (const auto& wgt : kRubSamples) {
+                V3 p, vp;
+                for (int k = 0; k < 3; k++) p += nodes[tr.v[k]].p * wgt[k], vp += nodes[tr.v[k]].v * wgt[k];
+                const V3 d = p - c;
+                const double da = dot(d, axis);
+                if (std::fabs(da) >= half) continue;
+                const V3 rv = d - axis * da;
+                const double dr = len(rv);
+                if (dr >= R || dr < 1e-6) continue;
+                // Out through the tread, or out past the sidewall, whichever is nearer.
+                const double penR = R - dr, penA = half - std::fabs(da);
+                V3 n;
+                double F;
+                if (penR <= penA) {
+                    n = rv / dr;
+                    F = kTireK * penR + kRimK * std::max(0.0, penR - side * 0.85);  // squashed onto the rim, it's steel
+                } else {
+                    n = axis * (da > 0 ? 1.0 : -1.0);
+                    F = kTireK * penA;
+                }
+                const double vn = dot(vp - vc, n);
+                F = std::max(0.0, F - kTireC * vn);
+                if (F <= 0) continue;
+                // Rubbing: the tread's own motion against the sheet metal.
+                const V3 vSurf = vc + cross(spinAxis * wh.omega, rv);
+                V3 vt = vp - vSurf;
+                vt -= n * dot(vt, n);
+                const double vtl = len(vt);
+                V3 Fp = n * F;  // on the body
+                if (vtl > 1e-6) Fp -= vt * (std::min(0.6 * F, 40.0 * vtl) / vtl);
+                for (int k = 0; k < 3; k++) nodes[tr.v[k]].f += Fp * wgt[k];
+                // ...and back on the hub, shared by how far out along the axle it touches.
+                const double share = clampd(0.5 + da / (2 * half), 0, 1);
+                a.f -= Fp * (1 - share);
+                b.f -= Fp * share;
+                wh.rubTorque += dot(cross(rv, -Fp), spinAxis);
+                wh.rub += (float)F;
+            }
+        }
+    }
 }
 
 void Car::wheelStep(double h, const World& w) {
@@ -1135,7 +1268,7 @@ void Car::wheelStep(double h, const World& w) {
             wh.sideOmega += (Td - Ts) / kSideGearI * h;
         }
         wh.shaftTorque = Ts;
-        wh.omega += (Ts - Fx * R) / wh.I * h;
+        wh.omega += (Ts - Fx * R + wh.rubTorque) / wh.I * h;
         // Axle shaft and CV: what the engine winds into it, plus whatever a locker or the
         // locked center shoves through it to keep the wheels together. Full throttle in low
         // range with a wheel in the air and the axle locked doubles the load on the other

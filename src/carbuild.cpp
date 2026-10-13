@@ -1126,6 +1126,13 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
             // Bar rate at the wheel -> per meter of coil-over travel.
             double mr = wheels[a.wheel[0]].motionRatio;
             a.arbK = (a.front ? vs.arbFront : vs.arbRear) / (mr * mr);
+            // Sized to twist through one wheel at full bump and the other at full droop, with
+            // ~15% to spare; past that it yields.
+            {
+                const double bump = a.front ? vs.bumpFront : vs.bumpRear, droop = a.front ? vs.droopFront : vs.droopRear;
+                a.arbYield = ((bump > 0 ? bump : 0.085 * sizeK) + (droop > 0 ? droop : 0.11 * sizeK)) * mr * 1.15;
+                a.arbBend = 0;
+            }
             a.heaveK = vs.heaveRate / (mr * mr);
             a.heaveGap = vs.heaveGap * mr;
             a.heaveC = vs.heaveDamping / (mr * mr);
@@ -1478,6 +1485,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
     nodeTris.assign(nodes.size(), {});
     for (int t = 0; t < (int)tris.size(); t++)
         for (int c = 0; c < 3; c++) nodeTris[tris[t].v[c]].push_back(t);
+    buildWheelRub();
     skinEdges.clear();
     {
         std::set<std::pair<int, int>> edges;
