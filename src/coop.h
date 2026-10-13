@@ -65,6 +65,15 @@ public:
     void drawMarker(Renderer& r, const Sim& sim, const View& view, int W, int H, const V3& at, const std::string& text, const float col[3], double age = 0) const;
     void drawMap(Renderer& r, const Sim& sim, const NetSession& net, int W, int H, const std::vector<std::pair<std::string, V3>>& places);
 
+    // Exploring: the places on each map you've found (kept between sessions).
+    std::vector<std::string> discovered;  // "MAP:NAME"
+    bool isDiscovered(int map, const std::string& name) const;
+    // Marks places within 30 m of `p` found; returns the newly found names.
+    std::vector<std::string> discover(int map, const V3& p, const std::vector<std::pair<std::string, V3>>& places);
+    void loadDiscoveries(const std::string& path);
+    void saveDiscoveries(const std::string& path) const;
+    int mapNow = 0;  // (set by the game: which map the places are on)
+
 private:
     int mapN = 0;
     double mapCell = 8;  // m per map pixel

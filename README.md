@@ -150,6 +150,7 @@ Launched plainly, the game opens on the title screen: free drive (pick map and v
 - **Pings:** middle click pings GO HERE where you point; Shift+middle click pings HELP at your truck. Everyone sees them in the world and on the map.
 - **Chat:** Enter, type, Enter. Name tags float over your buddies' trucks (and over them on foot).
 - **On foot (J):** get out (stopped) to spot a line or walk the trail. WASD walk, Shift run, Space jump; you wade, swim, and climb over rocks. V hooks your truck's winch to the tree, rock or truck nearest you; F pours your truck's spare can into the nearest truck (a buddy's too). J again by a truck gets in.
+- **Exploring:** every named place on a map starts undiscovered ("?" on the map); get within 30 m to find it. Your discoveries are kept between sessions.
 - **Fuel:** engines burn fuel for the power they make (setting FUEL: OFF / REAL / FAST, default FAST: 4x). Run dry and the engine dies. Shops fill the tank and the spare can; the Bronco and 4Runner carry a 20 L can.
 
 ## World editor

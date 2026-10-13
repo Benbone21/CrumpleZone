@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <fstream>
 #include <sstream>
 
 #include "hudkit.h"
@@ -317,7 +318,18 @@ void Coop::drawMap(Renderer& r, const Sim& sim, const NetSession& net, int W, in
         if (!t.empty()) label(r, sx + size, sy - 4 * s, s, t, cr, cg, cb, 1);
     };
     for (const Station& st : sim.world.stations) pin(st.p, st.name, 0.55f, 1.0f, 0.55f, 9 * u);
-    for (const auto& pl : places) pin(pl.second, pl.first, 1.0f, 0.9f, 0.6f, 7 * u);
+    int found = 0;
+    for (const auto& pl : places) {
+        const bool known = isDiscovered(mapNow, pl.first);
+        found += known;
+        if (known) pin(pl.second, pl.first, 1.0f, 0.9f, 0.6f, 7 * u);
+        else pin(pl.second, "?", 0.6f, 0.6f, 0.65f, 6 * u);
+    }
+    {
+        char b[64];
+        std::snprintf(b, sizeof b, "DISCOVERED %d OF %zu PLACES", found, places.size());
+        label(r, 20 * u, 14 * u + 8 * px(2.2f * u) + 8 * u, s, b, 0.85f, 0.87f, 0.9f, 1);
+    }
     for (const Ping& p : pings) pin(p.p, p.who + ": " + kPingNames[p.kind], kPingCol[p.kind][0], kPingCol[p.kind][1], kPingCol[p.kind][2], 12 * u);
     if (haveWaypoint) pin(waypoint, "WAYPOINT", 0.95f, 0.6f, 1.0f, 12 * u);
     // Everyone's trucks: an arrow the way it points, and a name.
@@ -340,4 +352,33 @@ void Coop::drawMap(Renderer& r, const Sim& sim, const NetSession& net, int W, in
     label(r, 20 * u, 14 * u, px(2.2f * u), "MAP", 1.0f, 0.75f, 0.3f, 1);
     const char* keys = "WHEEL ZOOM   DRAG PAN   LEFT CLICK: WAYPOINT   RIGHT CLICK: PING GO HERE   SHIFT+RIGHT: PING HELP   M CLOSE";
     r.text(W / 2.0f - r.textWidth(keys, s) / 2, H - 24 * u, s, keys, 0.75f, 0.77f, 0.8f, 1);
+}
+
+// ---- Exploring -----------------------------------------------------------------------------
+
+bool Coop::isDiscovered(int map, const std::string& name) const {
+    const std::string key = std::to_string(map) + ":" + name;
+    return std::find(discovered.begin(), discovered.end(), key) != discovered.end();
+}
+
+std::vector<std::string> Coop::discover(int map, const V3& p, const std::vector<std::pair<std::string, V3>>& places) {
+    std::vector<std::string> fresh;
+    for (const auto& pl : places)
+        if (std::hypot(pl.second.x - p.x, pl.second.z - p.z) < 30 && !isDiscovered(map, pl.first)) {
+            discovered.push_back(std::to_string(map) + ":" + pl.first);
+            fresh.push_back(pl.first);
+        }
+    return fresh;
+}
+
+void Coop::loadDiscoveries(const std::string& path) {
+    std::ifstream f(path);
+    std::string line;
+    while (std::getline(f, line))
+        if (!line.empty() && std::find(discovered.begin(), discovered.end(), line) == discovered.end()) discovered.push_back(line);
+}
+
+void Coop::saveDiscoveries(const std::string& path) const {
+    std::ofstream f(path);
+    for (const std::string& d : discovered) f << d << '\n';
 }

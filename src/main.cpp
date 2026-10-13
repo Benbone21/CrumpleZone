@@ -33,6 +33,7 @@
 #include "mods.h"
 #include "net.h"
 #include "pilotsense.h"
+#include "platform.h"
 #include "render.h"
 #include "sdl_min.h"
 #include "softbody.h"
@@ -1664,6 +1665,9 @@ int main(int argc, char** argv) {
     };
     // ---- Playing together: pings, chat, name tags, the map ----
     Coop coop;
+    const std::string discoveriesPath = configDir() + "/discovered.txt";
+    if (!scripted) coop.loadDiscoveries(discoveriesPath);
+    double discoverCheck = 0;
     float mouseX = 0, mouseY = 0;  // (drawable pixels)
     bool mapDrag = false;
     auto myName = [&]() { return net.active() && !settings.playerName.empty() ? settings.playerName : std::string("YOU"); };
@@ -2605,6 +2609,22 @@ int main(int argc, char** argv) {
                 if (job.done && jobBanner <= 0) jobOn = false;
             }
             jobBanner = std::max(0.0, jobBanner - dt);
+            // Exploring: places found (you, in the truck or on foot).
+            discoverCheck -= dt;
+            if (discoverCheck <= 0 && !playback.active()) {
+                discoverCheck = 0.5;
+                std::vector<std::pair<std::string, V3>> places;
+                for (const Place& pl : pilotPlaces(sim, net))
+                    if (pl.kind == 0) places.push_back({pl.name, pl.p});
+                coop.mapNow = sim.world.map;
+                const V3 me = walker.active ? walker.p : sim.cars[sim.player].frame().com;
+                for (const std::string& name : coop.discover(sim.world.map, me, places)) {
+                    jobBanner = std::max(jobBanner, 4.0);
+                    jobBannerText = "DISCOVERED: " + name;
+                    if (net.active()) coop.say("FOUND " + name, myName(), net);
+                    if (!scripted) coop.saveDiscoveries(discoveriesPath);
+                }
+            }
             if (!sim.paused && run.active()) {
                 run.update(sim, dt);  // (after the keys: it holds the car on the grid)
                 if (run.state == LevelRun::FINISHED && (bestTimes.find(run.level.name) == bestTimes.end() || run.finishTime < bestTimes[run.level.name]))
