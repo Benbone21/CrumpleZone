@@ -376,6 +376,7 @@ public:
     // State.
     bool sleeping = false;
     double stillTime = 0;
+    double sleptControls[4] = {};  // throttle, brake, handbrake and steer when it fell asleep
     V3 bbMin, bbMax;
     double impactEnergy = 0;  // joules absorbed by deformation since last read
     double damage = 0;        // 0..1
