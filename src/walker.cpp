@@ -32,7 +32,7 @@ V3 pushOut(const World& w, const V3& c, double r, bool* ground) {
 
 void Walker::exitCar(const World& w, const Car& c) {
     const Frame f = c.frame();
-    const V3 fwd = norm(V3(f.fwd.x, 0, f.fwd.z)), left(-fwd.z, 0, fwd.x);
+    const V3 fwd = norm(V3(f.fwd.x, 0, f.fwd.z)), left(fwd.z, 0, -fwd.x);  // (up x forward)
     // The driver's side, past the mirror; if that's blocked (a rock face), the other side.
     for (int side : {1, -1}) {
         const V3 at = f.com + left * (side * (c.spec->width / 2 + 0.7)) + fwd * 0.3;
@@ -68,7 +68,8 @@ int Walker::carToEnter(const Sim& sim, double reach) const {
 void Walker::step(const World& w, const Sim& sim, double dt, double fwd, double side, bool run, bool jump, double viewYaw) {
     if (!active) return;
     // Where the legs want to go.
-    const V3 f(std::cos(viewYaw), 0, -std::sin(viewYaw)), l(-f.z, 0, f.x);
+    // (Left is up x forward: with +x ahead and +y up, -z is on the left. A and D were swapped.)
+    const V3 f(std::cos(viewYaw), 0, -std::sin(viewYaw)), l(f.z, 0, -f.x);
     V3 want = f * fwd + l * side;
     if (len(want) > 1) want = norm(want);
     const double ground = w.height(p.x, p.z);

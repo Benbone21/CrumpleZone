@@ -26,6 +26,17 @@ SCENARIO(walkerBasics, "walker/basics", "Out of the truck beside it, walks 20 m 
     t = 0;
     while (wk.p.x < -80 && t < 30) wk.step(w, ctx.sim, Ctx::kFrame, 1, 0, true, false, 0), t += Ctx::kFrame;
     ctx.metric("running 20 m", t, "s", 3.5, 6);
+    // Strafing: facing east (+x, with +y up, -z is on your left), A goes left and D right.
+    for (int sd : {1, -1}) {
+        wk.p = V3(-100, w.height(-100, -30), -30), wk.v = V3();
+        for (double tt = 0; tt < 2; tt += Ctx::kFrame) wk.step(w, ctx.sim, Ctx::kFrame, 0, sd, false, false, 0);
+        ctx.check(sd > 0 ? "A steps to the left" : "D steps to the right", sd > 0 ? wk.p.z < -31 : wk.p.z > -29, std::to_string(wk.p.z));
+    }
+    {  // and out of the driver's (left) door
+        Walker w2;
+        w2.exitCar(w, c);
+        ctx.check("gets out on the driver's side", dot(w2.p - f.com, f.left) > 0.5);
+    }
     // A rock to step onto (0.3 m showing), and a tree to walk into.
     w.addRock(-60, -20, V3(1.5, 0.4, 1.5), 0.3, 77);
     w.addTree(-60, 0, 10, 0);
