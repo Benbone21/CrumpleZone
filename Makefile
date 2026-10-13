@@ -39,7 +39,7 @@ build/%.o: %.cpp $(HEADERS)
 # Windows runtime) in $(WINSDL).
 WINCXX   ?= x86_64-w64-mingw32-g++-posix
 WINSDL   ?= third_party/sdl2-win64
-WINFLAGS := -O2 -std=gnu++17 -Wall -D_WIN32_WINNT=0x0601
+WINFLAGS := -O2 -march=x86-64-v2 -mtune=generic -std=gnu++17 -Wall -D_WIN32_WINNT=0x0601
 WIN_OBJ  := $(patsubst %.cpp,build/win/obj/%.o,$(GAME_SRC))
 
 build/win/obj/%.o: %.cpp $(HEADERS)

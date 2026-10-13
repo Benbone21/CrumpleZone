@@ -585,6 +585,7 @@ struct HudState {
     // the best, and which side of the start line you were on.
     double lapTime = -1, lastLap = 0, bestLap = 0, lapSide = 0;
     bool showHelp = false, showFps = false, scenarioDetail = false;
+    std::string gpu;        // the graphics card drawing it (GL_RENDERER), shown with the FPS
     double confirmReset = 0;  // R just pressed: a second press within this long respawns at the start
     double hintTime = 7.0;  // "press H for controls" fades out after this
     float needle = 0;       // smoothed tach position 0..1
@@ -1360,11 +1361,23 @@ void drawHud(Renderer& r, const Sim& sim, const View& view, HudState& hud, const
     if (hud.showFps) {
         std::snprintf(buf, sizeof(buf), "%d FPS", (int)std::lround(fps));
         label(r, W - r.textWidth(buf, px(1.3f * u)) - 10 * u, 8 * u, px(1.3f * u), buf, 0.8f, 0.9f, 0.8f);
+        // (Which chip draws it: on a laptop with two, the built-in one is far slower.)
+        if (!hud.gpu.empty()) r.text(W - r.textWidth(hud.gpu, px(1.0f * u)) - 10 * u, 8 * u + 8 * px(1.3f * u) + 4 * u, px(1.0f * u), hud.gpu, 0.7f, 0.75f, 0.8f);
     }
     if (hud.showHelp) pad::ui.last ? drawPadHelp(r, u, W, H) : drawHelp(r, u, W, H, mph);
 }
 
 }  // namespace
+
+// Laptops with two graphics chips run a program on the slow built-in one unless it asks for
+// the fast card: these exports are what the NVIDIA (Optimus) and AMD (PowerXpress) drivers
+// look for in the .exe.
+#ifdef _WIN32
+extern "C" {
+__declspec(dllexport) unsigned long NvOptimusEnablement = 1;
+__declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
+}
+#endif
 
 int main(int argc, char** argv) {
 #ifndef _WIN32
@@ -1432,6 +1445,11 @@ int main(int argc, char** argv) {
     }
     SDL_GL_SetSwapInterval(settings.vsync && opt.vsync && !scripted ? 1 : 0);
     std::printf("OpenGL: %s / %s\n", (const char*)gl::GetString(GL_VERSION), (const char*)gl::GetString(GL_RENDERER));
+    std::string gpuName;
+    if (const GLubyte* gr = gl::GetString(GL_RENDERER)) {
+        gpuName = (const char*)gr;
+        for (char& ch : gpuName) ch = (char)std::toupper((unsigned char)ch);  // (the HUD font is capitals)
+    }
 
     // Scanned rock hulls (assets/props), so what you hit is what you see; without the bake,
     // code-made rocks. Scenario playback keeps the code-made rocks the tests ran with.
@@ -1496,6 +1514,7 @@ int main(int argc, char** argv) {
     DebugView debug = (DebugView)(opt.debug % DEBUG_VIEW_COUNT);
     bool dragging = false;
     HudState hud;
+    hud.gpu = gpuName;
     hud.photo = opt.photo;
     if (scripted) hud.hintTime = 0;
     hud.showHelp = opt.showHelp;
