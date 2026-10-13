@@ -40,12 +40,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Toolchain
-        run: sudo apt-get update -q && sudo apt-get install -y -q g++-mingw-w64-x86-64-posix zip
-      - name: Cross-compile and zip
+        run: sudo apt-get update -q && sudo apt-get install -y -q g++-mingw-w64-x86-64-posix zip nsis
+      - name: Cross-compile and build the installer
         run: |
           V="${VERSION#v}"
-          make -j"$(nproc)" windows
-          mkdir -p out && cp build/win/CrumpleZone-windows.zip "out/CrumpleZone-${V}-windows.zip"
+          make -j"$(nproc)" windows-installer VERSION="$V"
+          mkdir -p out && cp build/win/CrumpleZone-setup.exe "out/CrumpleZone-${V}-windows-setup.exe"
       - uses: actions/upload-artifact@v4
         with: { name: windows, path: out/* }
 
@@ -93,7 +93,7 @@ jobs:
         run: |
           V="${VERSION#v}"
           ls -la dist
-          files=("dist/CrumpleZone-${V}-mac.zip" "dist/CrumpleZone-${V}-windows.zip" "dist/CrumpleZone-${V}-linux.deb")
+          files=("dist/CrumpleZone-${V}-windows-setup.exe" "dist/CrumpleZone-${V}-linux.deb" "dist/CrumpleZone-${V}-mac.zip")
           notes=(--generate-notes)
           if [ -f "docs/releases/${GITHUB_REF_NAME}.md" ]; then notes=(--notes-file "docs/releases/${GITHUB_REF_NAME}.md"); fi
           # (A release made by hand on the website for this tag just gets the files attached.)

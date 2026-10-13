@@ -58,6 +58,10 @@ windows: build/win/CrumpleZone/crumplezone.exe
 	if [ -f assets/props/props.txt ]; then cp -r assets/props build/win/CrumpleZone/assets/; fi
 	cd build/win && rm -f CrumpleZone-windows.zip && zip -qr CrumpleZone-windows.zip CrumpleZone
 
+# Windows installer (NSIS): build/win/CrumpleZone-setup.exe from the windows build. Needs makensis (apt: nsis).
+windows-installer: windows
+	makensis -V2 -DVERSION=$(VERSION) -DSRC=$(CURDIR)/build/win/CrumpleZone -DOUT=$(CURDIR)/build/win/CrumpleZone-setup.exe installer/windows.nsi
+
 # ---- macOS build: run on a Mac (Xcode command line tools) ----------------------------
 #   make mac [VERSION=x.y.z]  ->  build/mac/CrumpleZone.app and build/mac/CrumpleZone-mac.zip
 # A universal (Apple silicon + Intel) app with SDL2.framework inside it. Needs the official
@@ -126,4 +130,4 @@ run: crumplezone
 clean:
 	rm -rf build crumplezone
 
-.PHONY: windows mac deb all test run clean bake
+.PHONY: windows windows-installer mac deb all test run clean bake
