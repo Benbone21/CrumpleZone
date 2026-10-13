@@ -1,50 +1,104 @@
-# Builds the Windows zip and the Debian package and publishes them as a GitHub release
-# whenever a version tag (v1.2.3) is pushed. Release notes come from docs/releases/<tag>.md
-# when it exists, else GitHub writes them from the commits.
+# Builds Crumple Zone for Linux (.deb), Windows (.zip) and macOS (.app in a .zip).
+# - On every push to sync or main: builds all three and keeps them as workflow artifacts
+#   (a check that every platform still builds; nothing is published).
+# - On a version tag (v1.2.3): also publishes them as a GitHub release, with the notes in
+#   docs/releases/<tag>.md when it exists (else GitHub writes them from the commits).
 name: release
 
 on:
   push:
+    branches: [sync, main]
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
 
+env:
+  # v1.2.3 on a tag, else "dev"
+  VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'dev' }}
+
 jobs:
-  build:
+  linux:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-
-      - name: Toolchains
+      - name: Toolchain
+        run: sudo apt-get update -q && sudo apt-get install -y -q g++ libsdl2-2.0-0
+      - name: Build and package
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -y -q g++ g++-mingw-w64-x86-64-posix zip libsdl2-2.0-0
-
-      - name: Linux build and .deb
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          # Generic x86-64 (the Makefile's default is -march=native: this machine's CPU only).
+          V="${VERSION#v}"
+          # Generic x86-64 (the Makefile's default is -march=native: the build machine's CPU only).
           make -j"$(nproc)" CXXFLAGS="-O2 -march=x86-64-v2 -mtune=generic" crumplezone
-          make deb VERSION="$VERSION"
+          make deb VERSION="$V"
+          mkdir -p out && cp "build/deb/crumplezone_${V}_amd64.deb" "out/CrumpleZone-${V}-linux.deb"
+      - uses: actions/upload-artifact@v4
+        with: { name: linux, path: out/* }
 
-      - name: Windows build
+  windows:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: sudo apt-get update -q && sudo apt-get install -y -q g++-mingw-w64-x86-64-posix zip
+      - name: Cross-compile and zip
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          V="${VERSION#v}"
           make -j"$(nproc)" windows
-          mv build/win/CrumpleZone-windows.zip "build/win/CrumpleZone-${VERSION}-windows-x64.zip"
+          mkdir -p out && cp build/win/CrumpleZone-windows.zip "out/CrumpleZone-${V}-windows.zip"
+      - uses: actions/upload-artifact@v4
+        with: { name: windows, path: out/* }
 
+  mac:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: SDL2 framework (official universal build)
+        run: |
+          SDLV=2.30.9
+          curl -fsSL -o sdl.dmg "https://github.com/libsdl-org/SDL/releases/download/release-${SDLV}/SDL2-${SDLV}.dmg"
+          hdiutil attach -quiet -nobrowse -mountpoint /tmp/sdl sdl.dmg
+          mkdir -p third_party/sdl2-mac && cp -R /tmp/sdl/SDL2.framework third_party/sdl2-mac/
+          hdiutil detach -quiet /tmp/sdl
+      - name: Build the app
+        run: |
+          V="${VERSION#v}"
+          make -j"$(sysctl -n hw.ncpu)" mac VERSION="$V"
+          lipo -info build/mac/CrumpleZone.app/Contents/MacOS/crumplezone
+          mkdir -p out && cp build/mac/CrumpleZone-mac.zip "out/CrumpleZone-${V}-mac.zip"
+      - name: Smoke test (starts, loads SDL, draws a few frames if the runner has a GPU)
+        run: |
+          app=build/mac/CrumpleZone.app/Contents/MacOS/crumplezone
+          "$app" --help || true
+          ( "$app" --no-audio --size 640x360 --shot-prefix "$PWD/out-shot" --shot-frames 20 > shot.log 2>&1 & pid=$!; sleep 120; kill $pid 2>/dev/null ) || true
+          cat shot.log || true
+          ls -la out-shot* 2>/dev/null || echo "no screenshot (no GPU on the runner?)"
+      - uses: actions/upload-artifact@v4
+        with: { name: mac, path: out/* }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: mac-smoke, path: "out-shot*", if-no-files-found: ignore }
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, windows, mac]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: dist, merge-multiple: true }
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          V="${VERSION#v}"
+          ls -la dist
+          files=("dist/CrumpleZone-${V}-mac.zip" "dist/CrumpleZone-${V}-windows.zip" "dist/CrumpleZone-${V}-linux.deb")
           notes=(--generate-notes)
           if [ -f "docs/releases/${GITHUB_REF_NAME}.md" ]; then notes=(--notes-file "docs/releases/${GITHUB_REF_NAME}.md"); fi
-          files=("build/win/CrumpleZone-${VERSION}-windows-x64.zip" "build/deb/crumplezone_${VERSION}_amd64.deb")
           # (A release made by hand on the website for this tag just gets the files attached.)
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
           else
-            gh release create "$GITHUB_REF_NAME" --title "Crumple Zone ${VERSION}" "${notes[@]}" "${files[@]}"
+            gh release create "$GITHUB_REF_NAME" --title "Crumple Zone ${V}" "${notes[@]}" "${files[@]}"
           fi

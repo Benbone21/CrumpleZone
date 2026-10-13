@@ -1,4 +1,5 @@
 #include "props.h"
+#include "platform.h"
 
 #include <algorithm>
 #include <cmath>
@@ -186,24 +187,7 @@ std::string assetDir() {
         return found;
     }
     std::vector<std::string> bases = {"."};
-    char buf[4096];
-#ifdef _WIN32
-    const DWORD n = GetModuleFileNameA(nullptr, buf, sizeof buf - 1);
-    if (n > 0 && n < sizeof buf) {
-        buf[n] = 0;
-        std::string exe = buf;
-        const size_t slash = exe.find_last_of("\\/");
-        if (slash != std::string::npos) bases.push_back(exe.substr(0, slash));
-    }
-#else
-    const ssize_t n = readlink("/proc/self/exe", buf, sizeof buf - 1);
-    if (n > 0) {
-        buf[n] = 0;
-        std::string exe = buf;
-        const size_t slash = exe.find_last_of('/');
-        if (slash != std::string::npos) bases.push_back(exe.substr(0, slash));
-    }
-#endif
+    if (const std::string exe = exeDir(); !exe.empty()) bases.push_back(exe), bases.push_back(exe + "/../Resources");  // (../Resources: inside a macOS .app)
     const char* rel[] = {"/assets/props", "/../assets/props", "/../../assets/props", "/../../../assets/props"};
     for (const std::string& b : bases)
         for (const char* r : rel) {

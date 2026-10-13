@@ -16,6 +16,7 @@
 #include <unistd.h>
 #endif
 
+#include <csignal>
 #include <functional>
 #include <map>
 
@@ -197,11 +198,8 @@ struct BuildWatch {
     bool ready = false;
     void start() {
 #ifndef _WIN32
-        char buf[4096];
-        const ssize_t n = readlink("/proc/self/exe", buf, sizeof buf - 1);
-        if (n <= 0) return;
-        buf[n] = 0;
-        exe = buf;
+        exe = exePath();
+        if (exe.empty()) return;
         struct stat st;
         if (stat(exe.c_str(), &st) == 0) mtime = (long long)st.st_mtime;
 #endif
@@ -1368,6 +1366,9 @@ void drawHud(Renderer& r, const Sim& sim, const View& view, HudState& hud, const
 }  // namespace
 
 int main(int argc, char** argv) {
+#ifndef _WIN32
+    signal(SIGPIPE, SIG_IGN);  // (a multiplayer peer dropping mid-send; macOS has no MSG_NOSIGNAL)
+#endif
     Options opt = parseArgs(argc, argv);
     const bool scripted = !opt.shotFrames.empty();
     if (scripted) opt.audio = false;
@@ -1397,6 +1398,9 @@ int main(int argc, char** argv) {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+#ifdef __APPLE__
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);  // (macOS only makes 3.2+ core contexts forward-compatible)
+#endif
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
     SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
