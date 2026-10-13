@@ -591,7 +591,13 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         runner.rearLockerLowOnly = true;   // Toyota's e-locker only engages in 4L
         runner.shaftLimit = 9000;          // 8 in rear; the IFS CVs (~5.9 kN*m) are the weak link on 35s
         runner.lowRange = 2.566;
-        runner.brakeFront = 3400;  // 319 mm vented discs, 4-piston calipers
+        // 319 mm vented discs, 4-piston calipers: two ~43 mm pistons a side, pads (mu ~0.4) at
+        // ~0.13 m, ~30 N*m per bar; a panic stop puts ~140 bar in (ESTIMATES): ~4.2 kN*m. That
+        // takes the 35s to the ABS even with the nose loaded (~9 kN x 0.95 x 0.445 m = 3.8 kN*m).
+        // (At 3,400 the fronts couldn't reach it: held at the same torque each side, they lose
+        // the pull a front ABS gives on the more loaded side, which is what holds a car straight,
+        // and the lifted panhard's sideways push and the offset spare steered the truck 6 deg.)
+        runner.brakeFront = 4200;
         runner.brakeRear = 2000;   // 295 mm drums
         runner.dragArea = 1.50;    // Cd ~0.50 x 3.0 m^2 with the lift, basket and lights
         // Factory 183 hp / 294 N*m; the Magnuson blower at ~6 psi: ~256 hp at 5,200 rpm,
