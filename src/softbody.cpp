@@ -1503,7 +1503,11 @@ void Car::wheelStep(double h, const World& w) {
         // The shaft's wind-up drives the hub (and holds back the side gear).
         double Ts = 0;
         if (wheelPowered(wh)) {
-            const double k = shaftStiffness(), c = std::sqrt(k * wh.I);  // shuffle damped at ~1/2 critical
+            // (The damping works on the side gear's small inertia, stepped explicitly: past
+            // c h / I = 2 it would pump the gear instead of calming it. A big, heavy tire on a
+            // stiff shaft (the buggy's 40s) asked for more than that and the shafts snapped at
+            // rest; it gets what the step can carry. Every other car stays under the cap.)
+            const double k = shaftStiffness(), c = std::min(std::sqrt(k * wh.I), 1.8 * kSideGearI / h);  // shuffle damped at ~1/2 critical
             Ts = k * wh.twist + c * (wh.sideOmega - wh.omega);
             wh.sideOmega += (Td - Ts) / kSideGearI * h;
         }

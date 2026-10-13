@@ -16,6 +16,9 @@ VEHICLE_SCENARIO(airbornePatch, "components/airborne-tires", "A jump clears cont
         w.stickX = w.stickY = 0.01;
         w.groundSpeed = 50;
         w.abs = 0.1;
+        // (No wind-up left in the half shafts either: in 4H a locked centre winds them a little as
+        // the truck settles on its springs, and unwinding in the air passes spin between the axles.)
+        w.twist = 0;
     }
     ctx.run(0.1);
     for (size_t i = 0; i < c.wheels.size(); i++) {
