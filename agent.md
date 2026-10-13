@@ -15,7 +15,7 @@ nice -n 15 ./build/run_tests --jobs 6  # every scenario in parallel, about 60 s;
 ./build/run_tests --update-baseline    # after an intended behavior change: re-record tests/baseline.txt
 ```
 
-- Every change must keep all scenarios passing (currently 161). A failing range means the
+- Every change must keep all scenarios passing (currently 257; the flaky ones are named in the history below). A failing range means the
   physics drifted from real-world numbers. Fix the physics, don't just widen the range,
   unless the range itself was wrong. If you widen one, say why in a comment.
 - Don't hand-edit `tests/baseline.txt`. Drift warnings (>10% from it) are informational.

@@ -255,7 +255,6 @@ void World::buildBackcountry() {
     auto X = [&](int i) { return -kHalfSize + i * kRes; };
     auto cellI = [&](double v) { return std::min(std::max((int)std::lround((v + kHalfSize) / kRes), 0), hN - 1); };
     auto at = [&](double x, double z) -> int { return cellI(x) * hN + cellI(z); };
-    (void)at;
 
     // ---- The land -----------------------------------------------------------------------------
     hgrid.resize(N);
@@ -409,7 +408,6 @@ void World::buildBackcountry() {
         return (rs & 0xFFFFFF) / double(0x1000000);
     };
     auto between = [&](double a, double b) { return a + (b - a) * rnd(); };
-    (void)between;
 
     const Poly &mud = mudTrail(), &creek = creekTrail(), &ridge = ridgeTrail(), &rroad = ridgeRoadTrail(), &hill = hillTrail(), &wash = washTrail(),
                &shelf = shelfTrail(), &pass = passTrail(), &tower = towerTrail(), &cabinT = cabinTrail(), &rivr = riverLine(), &wreckT = wreckTrail(), &cany = canyon();
@@ -884,7 +882,7 @@ void World::buildBackcountry() {
             logs.push_back({a, c, r});
         }
 
-    // ---- Rock steps up Heartbreak Hill are in the profile; the lookouts and the yards -----------------
+    // ---- Props: signs, cairns, the camps' cabins and tables, the mine, the tower, the cabin, the wreck ---------
     auto cairn = [&](const V3& p) { fixtures.push_back({PROP_CAIRN, V3(p.x, height(p.x, p.z), p.z), V3(), between(0, 6.28)}); };
     auto marker = [&](const V3& p) { fixtures.push_back({PROP_MARKER, V3(p.x, height(p.x, p.z), p.z), V3(), 0}); };
     const V3 green(0.1, 0.55, 0.2), blue(0.1, 0.3, 0.8), black(0.03, 0.03, 0.03), red(0.75, 0.08, 0.06);
