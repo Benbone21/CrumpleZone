@@ -20,6 +20,7 @@
 #include <map>
 
 #include "audio.h"
+#include "editor.h"
 #include "fx.h"
 #include "gl.h"
 #include "hudkit.h"
@@ -65,6 +66,7 @@ struct Options {
     double timeHours = -1;        // --time H: hold the clock at H hours (0..24), e.g. 21.5
     int lamps = -1;               // --lamps 0-3: headlight switch (LampMode: auto, low, high, off)
     std::string level;            // --level NAME: play the level whose name has NAME in it
+    bool editor = false;          // --editor: open the world editor on the map
 };
 
 struct CameraRig {
@@ -245,6 +247,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--time") o.timeHours = std::fmod(std::max(0.0, std::atof(next().c_str())), 24.0);
         else if (a == "--lamps") o.lamps = std::atoi(next().c_str());
         else if (a == "--level") o.level = next();
+        else if (a == "--editor") o.editor = true;
         else if (a == "--help" || a == "-h") {
             std::puts("usage: crumplezone [--fullscreen] [--size WxH] [--no-audio] [--no-vsync] [--spawn X,Z[,HEADING]] [--scenario NAME]\n"
                       "                   [--map N] [--host [PORT]] [--join HOST[:PORT]] [--name NAME] [--time HOURS] [--level NAME]");
@@ -1607,7 +1610,19 @@ int main(int argc, char** argv) {
         const auto b = bestTimes.find(lv.name);
         run.best = b != bestTimes.end() ? b->second : -1;
         run.setSelf(net.active() ? net.self : -1, net.active() ? settings.playerName : "YOU");
-        run.begin(sim, runSlot(), 3.0);
+        if (lv.hasJob()) {
+            run.begin(sim, runSlot(), 3.0);
+        } else {  // a world to drive: just put you at its start
+            run.stop();
+            V3 p = lv.hasStart ? lv.start : sim.world.spawn;
+            double yaw = lv.hasStart ? lv.startYaw : sim.world.spawnYaw;
+            if (lv.hasStart) LevelRun::gridSlot(lv, runSlot(), p, yaw);
+            Car& c = sim.cars[sim.player];
+            c.respawn(V3(p.x, sim.world.clearY(p.x, p.z) + 0.05, p.z), yaw);
+            c.setDown(sim.world);
+            c.spawnPos = c.frame().com, c.spawnYaw = yaw;
+            hud.toast(lv.name + ": FREE DRIVE");
+        }
         if (net.role == NetSession::HOST) net.setLevel(saveLevelText(lv));
     };
     auto restartLevel = [&]() {
@@ -1624,6 +1639,31 @@ int main(int argc, char** argv) {
         run.stop();
         if (net.role == NetSession::HOST) net.setLevel("");
         hud.toast("FREE DRIVE");
+    };
+    // ---- The world editor (offline) ----
+    Editor editor;
+    Level lastEdited;
+    bool haveEdited = false;
+    auto openEditor = [&](const Level& base) {
+        if (net.active()) {
+            hud.toast("THE EDITOR IS OFFLINE ONLY: LEAVE THE SESSION FIRST");
+            return;
+        }
+        run.stop();
+        stopPilot();
+        sim.world = World(base.map);
+        editor.open(sim.world, renderer, base);
+        drawnWorld = sim.world.stamp;
+        sim.paused = true;
+        fx.clear();
+    };
+    auto editorKeyLevel = [&]() {  // what F2 edits: the last edited level, or the one being played, or a new one here
+        if (haveEdited && lastEdited.map == sim.world.map) return lastEdited;
+        if (run.active()) return run.level;
+        Level l;
+        l.map = sim.world.map;
+        l.name = "UNTITLED";
+        return l;
     };
     auto handleMenu = [&](PauseMenu::Result res) {
         switch (res.action) {
@@ -1699,10 +1739,22 @@ int main(int argc, char** argv) {
                 playLevel(levelList[res.vehicle]);
                 break;
             case PauseMenu::EDIT_LEVEL:
-            case PauseMenu::EDITOR:
                 closeMenu();
-                hud.toast("THE WORLD EDITOR IS ON ITS WAY (F2)");
+                if (res.vehicle >= 0 && res.vehicle < (int)levelList.size()) {
+                    Level l = levelList[res.vehicle];
+                    if (l.builtin) l.builtin = false, l.file.clear(), l.name += " (MINE)";  // (the game's: edit a copy)
+                    openEditor(l);
+                }
                 break;
+            case PauseMenu::EDITOR: {
+                const int m = menu.title ? menu.mapPick : sim.world.map;
+                closeMenu();
+                Level l;
+                l.map = m;
+                l.name = "UNTITLED";
+                openEditor(l);
+                break;
+            }
             case PauseMenu::LEVEL_RESTART:
                 closeMenu();
                 restartLevel();
@@ -1747,7 +1799,12 @@ int main(int argc, char** argv) {
     if (opt.hostPort > 0) startHost(opt.hostPort);
     else if (!opt.join.empty()) startJoin(opt.join);
     // Launched plainly (no map, spawn, session or test asked for): the title screen first.
-    if (!opt.level.empty()) {
+    if (opt.editor) {
+        Level l;
+        l.map = sim.world.map;
+        l.name = "UNTITLED";
+        openEditor(l);
+    } else if (!opt.level.empty()) {
         refreshLevels();
         std::string want = opt.level;
         for (char& ch : want) ch = (char)std::toupper((unsigned char)ch);
@@ -1785,6 +1842,13 @@ int main(int argc, char** argv) {
 
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
+            if (editor.active && e.type != SDL_QUIT && !menu.open) {
+                int ww = 1, wh = 1, dw = 1, dh = 1;
+                SDL_GetWindowSize(win, &ww, &wh);
+                SDL_GL_GetDrawableSize(win, &dw, &dh);
+                editor.handleEvent(e, (float)dw / std::max(1, ww));
+                continue;
+            }
             switch (e.type) {
                 case SDL_QUIT: running = false; break;
                 case SDL_KEYDOWN: {
@@ -1924,6 +1988,9 @@ int main(int argc, char** argv) {
                             break;
                         }
                         case SC_H: hud.showHelp = !hud.showHelp; break;
+                        case SC_F2:
+                            openEditor(editorKeyLevel());
+                            break;
                         case SC_F3:
                             settings.showFps = hud.showFps = !hud.showFps;
                             saveSettings();
@@ -2089,7 +2156,7 @@ int main(int argc, char** argv) {
         const bool shiftHeld = keys[SC_LSHIFT] || keys[SC_RSHIFT];
         int winch = keys[SC_Z] ? (shiftHeld ? -1 : 1) : 0;
         int airing = keys[SC_9] ? -1 : keys[SC_0] ? 1 : 0;
-        if (garageUI.open || menu.open) {  // parked while you work on it
+        if (garageUI.open || menu.open || editor.active) {  // parked while you work on it
             up = down = left = right = false;
             hb = true;
             winch = airing = 0;
@@ -2219,7 +2286,54 @@ int main(int argc, char** argv) {
 
         int W, H;
         SDL_GL_GetDrawableSize(win, &W, &H);
-        View view = cam.update(fr, sim.world, dt, dragging && !menu.open);
+        if (editor.active && scripted && opt.script == "editdemo" && frame == 5) {
+            // (Screenshots: a few edits in front of the camera, through the editor's core.)
+            const View v = editor.view(W, H);
+            const V3 f = norm(V3(v.target.x - v.eye.x, 0, v.target.z - v.eye.z)), l(-f.z, 0, f.x);
+            const V3 c = V3(v.eye.x, 0, v.eye.z) + f * 45;
+            EditCore& ed = editor.core;
+            ed.brush(BRUSH_RAISE, c.x + l.x * 12, c.z + l.z * 12, 9, 4.0);
+            for (int k = 0; k < (int)paintMaterials().size(); k++) {
+                if (paintMaterials()[k].surface == SURF_MUD) ed.paint(c.x, c.z, 7, k, true);
+                if (paintMaterials()[k].surface == SURF_SNOW) ed.paint(c.x + l.x * 12, c.z + l.z * 12, 6, k, false);
+            }
+            for (int k = 0; k < 4; k++) {
+                LevelObject o;
+                o.kind = OBJ_ROCK, o.p = c - l * (10 + 3 * k) + f * (k % 2) * 3, o.size = V3(1.2, 0.9, 1.0), o.top = 0.8, o.seed = 11 + k, o.col[0] = 1;
+                ed.addObject(ed.grounded(o));
+            }
+            LevelObject t;
+            t.kind = OBJ_TREE, t.p = c + f * 12 - l * 4, t.size = V3(0, 11, 0), t.col[0] = 1;
+            ed.addObject(ed.grounded(t));
+            LevelObject b;
+            b.kind = OBJ_BOX, b.p = c + f * 8 + l * 2, b.size = V3(3, 0.3, 2), b.pitch = 0.25, b.col[0] = 0.6f, b.col[1] = 0.58f, b.col[2] = 0.55f;
+            ed.addObject(ed.grounded(b));
+            const double yaw = std::atan2(-f.z, f.x);
+            ed.setStart(c.x - f.x * 25, c.z - f.z * 25, yaw);
+            ed.addGate({c - f * 10, yaw, 12});
+            ed.addGate({c + f * 25, yaw, 12});
+        }
+        if (editor.active) {
+            editor.update(dt, keys, renderer, W, H);
+            drawnWorld = sim.world.stamp;  // (it redraws what it changes itself)
+            sim.paused = true;
+            if (editor.wantPlay || editor.wantClose) {
+                const bool play = editor.wantPlay;
+                lastEdited = editor.core.level;
+                haveEdited = true;
+                editor.close();
+                sim.paused = false;
+                if (play) playLevel(lastEdited);
+                else {
+                    // Back to driving, on the world as edited.
+                    Level free = lastEdited;
+                    free.mode = LEVEL_FREE;
+                    playLevel(free);
+                }
+                hud.toast(play ? "PLAYING " + lastEdited.name + "   (F2: BACK TO THE EDITOR)" : "DRIVING THE EDITED WORLD   (F2: BACK TO THE EDITOR)");
+            }
+        }
+        View view = editor.active ? editor.view(W, H) : cam.update(fr, sim.world, dt, dragging && !menu.open);
         view.width = W;
         view.height = H;
         lastView = view;
@@ -2262,8 +2376,9 @@ int main(int argc, char** argv) {
         }
         renderer.drawScene(sim, view, debug, &fx);
         hud.update(dt);
-        if (!menu.open) drawHud(renderer, sim, view, hud, &playback, net, winchAim, W, H, fps, dt, settings.mph);
-        if (!menu.open && run.active()) drawLevelHud(renderer, run, sim, view, W, H);
+        if (editor.active && !menu.open) editor.draw(renderer, W, H, dt);
+        else if (!menu.open) drawHud(renderer, sim, view, hud, &playback, net, winchAim, W, H, fps, dt, settings.mph);
+        if (!menu.open && !editor.active && run.active()) drawLevelHud(renderer, run, sim, view, W, H);
         if (menu.open) {
             {
                 const Car& pc = sim.cars[sim.player];

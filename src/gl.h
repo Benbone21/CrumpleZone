@@ -12,6 +12,7 @@ typedef unsigned char GLboolean;
 typedef unsigned int GLbitfield;
 typedef char GLchar;
 typedef ptrdiff_t GLsizeiptr;
+typedef ptrdiff_t GLintptr;
 typedef unsigned char GLubyte;
 
 enum : GLenum {
@@ -86,6 +87,7 @@ enum : GLenum {
     X(void, GenBuffers, (GLsizei, GLuint*))                                                    \
     X(void, BindBuffer, (GLenum, GLuint))                                                      \
     X(void, BufferData, (GLenum, GLsizeiptr, const void*, GLenum))                             \
+    X(void, BufferSubData, (GLenum, GLintptr, GLsizeiptr, const void*))                        \
     X(void, VertexAttribPointer, (GLuint, GLint, GLenum, GLboolean, GLsizei, const void*))     \
     X(void, EnableVertexAttribArray, (GLuint))                                                 \
     X(void, DrawArrays, (GLenum, GLint, GLsizei))                                              \
@@ -94,6 +96,7 @@ enum : GLenum {
     X(void, BindTexture, (GLenum, GLuint))                                                     \
     X(void, ActiveTexture, (GLenum))                                                           \
     X(void, TexImage2D, (GLenum, GLint, GLint, GLsizei, GLsizei, GLint, GLenum, GLenum, const void*)) \
+    X(void, TexSubImage2D, (GLenum, GLint, GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, const void*)) \
     X(void, TexParameteri, (GLenum, GLenum, GLint))                                            \
     X(void, TexParameterfv, (GLenum, GLenum, const GLfloat*))                                  \
     X(void, GenFramebuffers, (GLsizei, GLuint*))                                               \

@@ -1775,6 +1775,11 @@ double sceneryHeight(const World& world, double x, double z) {
 void Renderer::setWorld(const World& world) {
     mapId = world.map;
     buildTerrain(world);
+    updateObjects(world);
+    updateWater(world);
+}
+
+void Renderer::updateObjects(const World& world) {
     buildBoxes(world);
     buildTrees(world);
     std::vector<Vtx> v;
@@ -1783,6 +1788,9 @@ void Renderer::setWorld(const World& world) {
     buildPropMesh(world, v);
     uploadStatic(sceneryVao, sceneryVbo, v);
     sceneryVertexCount = (int)v.size();
+}
+
+void Renderer::updateWater(const World& world) {
     // Lakes: a disc of rings at the water level (the shader cuts it at the shore). Maps
     // with rivers keep water on the height grid: a sheet of quads over every wet cell (2 m),
     // carrying the current in the color (for the ripples to drift).
@@ -1849,25 +1857,62 @@ void Renderer::setWorld(const World& world) {
     TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 }
 
+// One terrain vertex (the mesh's grid point (i, j)), as buildTerrain makes it.
+static Vtx terrainVertex(const World& world, double x, double z) {
+    RoadInfo road = world.roadAt(x, z);
+    V3 nrm = world.normal(x, z);
+    double y = world.height(x, z);
+    if ((std::fabs(x) > 540 && world.wrapPeriod <= 0) || std::fabs(z) > 540) {  // the crags (not across the freeway)
+        y = sceneryHeight(world, x, z);
+        const double e = 1.0;
+        nrm = norm(V3(sceneryHeight(world, x - e, z) - sceneryHeight(world, x + e, z), 2 * e, sceneryHeight(world, x, z - e) - sceneryHeight(world, x, z + e)));
+    }
+    return vtx(V3(x, y, z), nrm, road.near ? 1.0f : 0.0f, road.lateral, road.along, SM_TERRAIN);
+}
+
+void Renderer::updateTerrainRegion(const World& world, int i0, int j0, int i1, int j1) {
+    if (!terrainVao || terrainGridN <= 0) return;
+    const double half = World::kHalfSize;
+    // (One past the edit each way: the normals there changed too.)
+    i0 = std::max(0, i0 - 2), j0 = std::max(0, j0 - 2), i1 = std::min(terrainGridN - 1, i1 + 2), j1 = std::min(terrainGridN - 1, j1 + 2);
+    if (i1 < i0 || j1 < j0) return;
+    // The mesh (its own spacing).
+    const double sp = terrainSpacing;
+    const int n = terrainMeshN;
+    const int mi0 = std::max(0, (int)std::floor(i0 / sp)), mi1 = std::min(n - 1, (int)std::ceil(i1 / sp));
+    const int mj0 = std::max(0, (int)std::floor(j0 / sp)), mj1 = std::min(n - 1, (int)std::ceil(j1 / sp));
+    BindBuffer(GL_ARRAY_BUFFER, terrainVbo);
+    std::vector<Vtx> row;
+    for (int i = mi0; i <= mi1; i++) {
+        row.clear();
+        for (int j = mj0; j <= mj1; j++) row.push_back(terrainVertex(world, -half + i * sp, -half + j * sp));
+        BufferSubData(GL_ARRAY_BUFFER, (GLintptr)(((size_t)i * n + mj0) * sizeof(Vtx)), (GLsizeiptr)(row.size() * sizeof(Vtx)), row.data());
+    }
+    // The shaders' terrain texture (one texel per meter: x across, z down).
+    std::vector<float> data((size_t)(i1 - i0 + 1) * (j1 - j0 + 1) * 4);
+    for (int j = j0; j <= j1; j++)
+        for (int i = i0; i <= i1; i++) {
+            const double x = -half + i, z = -half + j;
+            float* t = &data[((size_t)(j - j0) * (i1 - i0 + 1) + (i - i0)) * 4];
+            t[0] = (float)world.height(x, z);
+            t[1] = world.grassDensity(x, z);
+            t[2] = (float)world.roadAt(x, z).paint;
+            t[3] = (float)std::max(world.waterLevel(x, z), -1000.0);
+        }
+    BindTexture(GL_TEXTURE_2D, terrainTex);
+    TexSubImage2D(GL_TEXTURE_2D, 0, i0, j0, i1 - i0 + 1, j1 - j0 + 1, GL_RGBA, GL_FLOAT, data.data());
+}
 void Renderer::buildTerrain(const World& world) {
     // 1 m on the mountain (its crawl features are small), 2 m on the proving ground.
     const double spacing = world.map == MAP_MOUNTAIN || world.map == MAP_FRONTIER ? 1.0 : 2.0, half = World::kHalfSize;
     const int n = (int)(2 * half / spacing) + 1;
+    terrainSpacing = spacing;
+    terrainMeshN = n;
     std::vector<Vtx> verts;
     verts.reserve(n * n);
     for (int i = 0; i < n; i++)
         for (int j = 0; j < n; j++) {
-            double x = -half + i * spacing, z = -half + j * spacing;
-            RoadInfo road = world.roadAt(x, z);
-            V3 nrm = world.normal(x, z);
-            double y = world.height(x, z);
-            if ((std::fabs(x) > 540 && world.wrapPeriod <= 0) || std::fabs(z) > 540) {  // the crags (not across the freeway)
-                y = sceneryHeight(world, x, z);
-                const double e = 1.0;
-                nrm = norm(V3(sceneryHeight(world, x - e, z) - sceneryHeight(world, x + e, z), 2 * e,
-                              sceneryHeight(world, x, z - e) - sceneryHeight(world, x, z + e)));
-            }
-            verts.push_back(vtx(V3(x, y, z), nrm, road.near ? 1.0f : 0.0f, road.lateral, road.along, SM_TERRAIN));
+            verts.push_back(terrainVertex(world, -half + i * spacing, -half + j * spacing));
         }
     std::vector<unsigned> idx;
     idx.reserve((n - 1) * (n - 1) * 6);
@@ -1885,7 +1930,7 @@ void Renderer::buildTerrain(const World& world) {
     }
     BindVertexArray(terrainVao);
     BindBuffer(GL_ARRAY_BUFFER, terrainVbo);
-    BufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(Vtx), verts.data(), GL_STATIC_DRAW);
+    BufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(Vtx), verts.data(), GL_DYNAMIC_DRAW);  // (the editor patches it)
     BindBuffer(GL_ELEMENT_ARRAY_BUFFER, terrainIbo);
     BufferData(GL_ELEMENT_ARRAY_BUFFER, idx.size() * sizeof(unsigned), idx.data(), GL_STATIC_DRAW);
     terrainIndexCount = (int)idx.size();

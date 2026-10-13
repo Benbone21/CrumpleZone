@@ -59,6 +59,11 @@ public:
     // Rebuilds the static scenery (terrain, boxes, trees, rocks, bushes, grass data) for
     // a new map.
     void setWorld(const World& world);
+    // The world editor: redraw just what changed (terrain cells i, j on the 1 m grid,
+    // inclusive), the water, or the objects.
+    void updateTerrainRegion(const World& world, int i0, int j0, int i1, int j1);
+    void updateWater(const World& world);
+    void updateObjects(const World& world);
     void drawScene(const Sim& sim, const View& view, DebugView debug, Effects* effects);
 
     // HUD (pixel coordinates, origin top-left). Queue with text()/rect(), then flushHud().
@@ -84,7 +89,8 @@ private:
     GLuint progAO = 0, progDown = 0, progUp = 0, progComposite = 0, postVao = 0, progGrass = 0;
     GLuint sceneryVao = 0, sceneryVbo = 0, terrainTex = 0, waterVao = 0, waterVbo = 0, progWater = 0;
     int waterVertexCount = 0;
-    int sceneryVertexCount = 0, terrainGridN = 0, mapId = 0;
+    int sceneryVertexCount = 0, terrainGridN = 0, mapId = 0, terrainMeshN = 0;
+    double terrainSpacing = 1;
     GLuint terrainVao = 0, terrainVbo = 0, terrainIbo = 0;
     int terrainIndexCount = 0;
     GLuint boxVao = 0, boxVbo = 0;
