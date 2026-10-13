@@ -482,7 +482,9 @@ public:
     std::vector<std::string> events;   // things the HUD should announce (it clears them)
     std::string hookWinch(int car);    // hooks the car's winch to the best anchor ahead, or unhooks it
     // Everything within the winch line's reach, nearest first.
-    std::vector<WinchTarget> winchTargets(int car) const;
+    // Every anchor the winch reaches. `look` (optional): where the driver is looking or
+    // standing, offered as a ground anchor too (buried in loose ground, a bolt in rock).
+    std::vector<WinchTarget> winchTargets(int car, const V3* look = nullptr) const;
     std::string hookWinchTo(int car, const RopeEnd& anchor);
     bool dropWinch(int car);           // unhooks the car's winch line (false if none)
     std::string hookStrap(int car);    // straps the car to the nearest other vehicle, or unhooks it

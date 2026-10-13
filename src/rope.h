@@ -43,6 +43,8 @@ struct WinchTarget {
 // Real-world numbers the recovery gear is built from.
 namespace recovery {
 constexpr double kWinchLine = 30.0;      // m of 3/8 in synthetic line
+constexpr double kWinchExtension = 30.0; // m: the extension line in the recovery bag
+constexpr double kWinchReach = kWinchLine + kWinchExtension;
 constexpr double kWinchStall = 44000;    // N: a 9,500 lb winch on its first layer
 constexpr double kWinchSpeed = 0.13;     // m/s line speed with no load
 constexpr double kWinchBreak = 90000;    // N: synthetic line, ~2x the winch

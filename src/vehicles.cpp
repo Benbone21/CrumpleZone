@@ -887,7 +887,9 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         utv.gearboxName = "CVT (5 STEPS)";
         utv.lampStyle = LAMP_SLIM;
         utv.grilleStyle = GRILLE_INTAKE;
-        utv.extras = EXTRA_TUBE_CAGE | EXTRA_SKID_PLATE;
+        // (The Maverick X3 X mr comes with a 4,500 lb winch from the factory.)
+        utv.extras = EXTRA_TUBE_CAGE | EXTRA_SKID_PLATE | EXTRA_WINCH;
+        utv.winchPull = 20000;
         utv.wheelStyle = WHEEL_OFFROAD_BLACK;
         utv.paintColor[0] = 0.10f, utv.paintColor[1] = 0.60f, utv.paintColor[2] = 0.85f;
         utv.coverColor[0] = 0.08f, utv.coverColor[1] = 0.08f, utv.coverColor[2] = 0.09f;
