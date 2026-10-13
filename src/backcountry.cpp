@@ -66,7 +66,7 @@ const std::vector<V3> kShelfCtl = {{22, 0, 116}, {12, 0, 138}, {-2, 0, 170}, {-1
 // terrain adds noise to this; the high trails are laid out on it so they follow the land.
 double softRamp(double v, double w) { return 0.5 * (std::sqrt(v * v + w * w) + v); }
 double macroHeight(double x, double z) {
-    return 2.6 + 0.135 * softRamp(z - 110, 30) + 0.215 * softRamp(z - 362, 30) + 0.07 * softRamp(z - 470, 30) + 42 * smoothstep(160, 460, std::fabs(x - 90));
+    return 2.6 + 0.135 * softRamp(z - 110, 30) + 0.215 * softRamp(z - 362, 30) + 0.07 * softRamp(z - 470, 30) + 30 * smoothstep(160, 460, std::fabs(x - 90));
 }
 // A switchback trail laid out like a trail crew would: traverse the slope at a steady `grade` (+
 // climbing, - descending), a half-circle hairpin at each end of the traverse, until `stop`.
@@ -75,7 +75,7 @@ std::vector<V3> crewTrail(V3 pos, double grade, double xMin, double xMax, int di
     std::vector<V3> pts{pos};
     const double step = 2.0;
     auto h = [](const V3& p) { return macroHeight(p.x, p.z); };
-    for (int n = 0; n < 1200 && !stop(pos); n++) {
+    for (int n = 0; n < 1200 && !stop(pos, dir); n++) {
         if ((dir > 0 && pos.x > xMax) || (dir < 0 && pos.x < xMin)) {
             // Hairpin: a half circle (11 m radius) round toward the uphill side (climbing) or the downhill one.
             const V3 c = pos + V3(0, 0, grade > 0 ? 11 : -11);
@@ -106,7 +106,7 @@ std::vector<V3> crewTrail(V3 pos, double grade, double xMin, double xMax, int di
 // The pass road: climbs from the shelf road's end to the hut at the saddle.
 const std::vector<V3>& passCtl() {
     static const std::vector<V3> t = [] {
-        std::vector<V3> p = crewTrail(V3(14, 0, 362), 0.07, -30, 130, 1, [](const V3& q) { return macroHeight(q.x, q.z) >= 62 || q.z > 470; });
+        std::vector<V3> p = crewTrail(V3(14, 0, 362), 0.07, -30, 110, 1, [](const V3& q, int dir) { return dir > 0 && q.x > 90 && (macroHeight(q.x, q.z) >= 60 || q.z > 470); });
         // thin it to every 6th point (the spline rounds it off)
         std::vector<V3> out;
         for (size_t k = 0; k < p.size(); k += 6) out.push_back(p[k]);
@@ -120,8 +120,9 @@ V3 passHutAt() { return passCtl().back(); }
 const std::vector<V3>& towerCtl() {
     static const std::vector<V3> t = [] {
         const V3 hut = passHutAt();
-        std::vector<V3> p = crewTrail(V3(hut.x + 8, 0, hut.z - 2), -0.12, 20, 215, 1, [](const V3& q) { return macroHeight(q.x, q.z) < 9; });
-        std::vector<V3> out{V3(hut.x + 8, 0, hut.z - 2)};
+        const V3 first(hut.x + 9, 0, hut.z - 3);
+        std::vector<V3> p = crewTrail(first, -0.12, hut.x - 20, 215, 1, [](const V3& q, int) { return macroHeight(q.x, q.z) < 9; });
+        std::vector<V3> out{first};
         for (size_t k = 6; k < p.size(); k += 6) out.push_back(p[k]);
         // And on to the ford's north bank.
         out.push_back(V3(100, 0, 88));
@@ -387,12 +388,13 @@ void World::buildBackcountry() {
         });
     };
     auto noTilt = [](double) { return 0.0; };
-    auto levelDisc = [&](const V3& c, double r, double y, double blend, uint8_t pnt, uint8_t sf) {
+    auto levelDisc = [&](const V3& c, double r, double y, double blend, uint8_t pnt, uint8_t sf, bool keepTreads = false) {
         for (int i = cellI(c.x - r - blend); i <= cellI(c.x + r + blend); i++)
             for (int j = cellI(c.z - r - blend); j <= cellI(c.z + r + blend); j++) {
                 const double d = std::hypot(X(i) - c.x, X(j) - c.z);
                 if (d > r + blend) continue;
                 const int id = i * hN + j;
+                if (keepTreads && d > r && edge[id] < 3.5) continue;  // (a trail running in keeps its own heights)
                 hgrid[id] = (float)(hgrid[id] + (y - hgrid[id]) * smoothstep(r + blend, r, d));
                 if (d < r - 0.5 && pnt != 255) paint[id] = pnt, surf[id] = sf;
                 if (d < r + blend * 0.5) keep[id] = 1;
@@ -647,7 +649,7 @@ void World::buildBackcountry() {
     layTrail(wreckT, groundProfile(wreckT, 6, 0.13, {{0, height(wreckT[0].x, wreckT[0].z)}}), 2.6, 5, gravelTread, noTilt);
 
     // The camps, flat again where the trails ran into them.
-    for (const Pad& p : pads) levelDisc(p.c, p.r + 3, p.y, 9, PAINT_PAD, SURF_PAVED);
+    for (const Pad& p : pads) levelDisc(p.c, p.r + 3, p.y, 9, PAINT_PAD, SURF_PAVED, true);
 
     // ---- Elk River: a carved channel with water on the grid and its flow --------------------------
     // Water level: the land along the bank, smoothed, always falling toward the mouth (west).
@@ -720,7 +722,7 @@ void World::buildBackcountry() {
         const double gx = (hgrid[(i + 1) * hN + j] - hgrid[(i - 1) * hN + j]) / (2 * kRes), gz = (hgrid[i * hN + j + 1] - hgrid[i * hN + j - 1]) / (2 * kRes);
         return std::hypot(gx, gz);
     };
-    auto snowline = [&](double x, double z) { return 48 + 8 * (fbmNoise(x * 0.02 + 3.0, z * 0.02 - 8.0, 3) - 0.5); };
+    auto snowline = [&](double x, double z) { return 50 + 16 * (fbmNoise(x * 0.02 + 3.0, z * 0.02 - 8.0, 3) - 0.5); };
     for (int i = 1; i < hN - 1; i++)
         for (int j = 1; j < hN - 1; j++) {
             const int id = i * hN + j;
@@ -1179,7 +1181,7 @@ V3 backcountryFeature(const char* name) {
     if (n == "slab") return pointAlong(ridgeTrail(), kSlabS);
     if (n == "overlook") return pointAlong(shelfTrail(), kOverlookS);
     if (n == "snowcorner") return pointAlong(passTrail(), kSnowCornerS);
-    if (n == "creekfoot") return pointAlong(creekTrail(), 6);
+    if (n == "creekfoot") return pointAlong(creekTrail(), 36);
     if (n == "mudstart") return pointAlong(mudTrail(), 8);
     if (n == "shelf") return pointAlong(shelfTrail(), 6);
     if (n.rfind("bog", 0) == 0) {
