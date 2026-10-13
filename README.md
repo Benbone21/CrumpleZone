@@ -42,11 +42,23 @@ it, on the same map, in the same vehicle (with its garage parts), at the same sp
 
 ## Releases
 
-Pushing a version tag (`git tag v0.2.0 && git push origin v0.2.0`) runs `.github/workflows/release.yml`: GitHub builds the Windows zip and the Debian package (`make deb`) and publishes them as a release, with notes from `docs/releases/<tag>.md`. Install the `.deb` with `sudo apt install ./crumplezone_<version>_amd64.deb`; it puts the game in `/opt/crumplezone` and `crumplezone` on the path.
+Download from the [releases page](https://github.com/Benbone21/crumplezone/releases). Each release has three builds:
+
+| File | Platform | How to run |
+|---|---|---|
+| `CrumpleZone-<version>-mac.zip` | macOS 11+, Apple silicon and Intel | Unzip and open **CrumpleZone.app**. It isn't notarized, so the first time right-click it and choose **Open** (or run `xattr -dr com.apple.quarantine CrumpleZone.app`). |
+| `CrumpleZone-<version>-windows.zip` | Windows 10/11, 64-bit | Unzip and run `crumplezone.exe` (keep `SDL2.dll` and `assets` beside it). |
+| `CrumpleZone-<version>-linux.deb` | Debian 13+ / Ubuntu 24.04+, amd64 | `sudo apt install ./CrumpleZone-<version>-linux.deb`, then run `crumplezone` or pick Crumple Zone from the games menu. It installs to `/opt/crumplezone`. |
+
+`.github/workflows/release.yml` builds all three on every push to `sync` or `main` (kept as workflow artifacts, as a build check). Pushing a version tag (`git tag v0.2.0 && git push origin v0.2.0`) also publishes them as a release, with notes from `docs/releases/<tag>.md`.
 
 ## Windows
 
 `make windows` cross-compiles `build/win/CrumpleZone/crumplezone.exe` (with `SDL2.dll` beside it) and zips it. It needs the mingw-w64 cross compiler (`g++-mingw-w64-x86-64-posix`) and the official SDL2 x64 Windows runtime (`SDL2.dll`) in `third_party/sdl2-win64/`. Settings and the garage live in `%APPDATA%\crumplezone` on Windows. Multiplayer works between Linux and Windows.
+
+## macOS
+
+`make mac` (on a Mac with the Xcode command line tools) builds a universal `build/mac/CrumpleZone.app` (arm64 + x86_64, macOS 11+) and `build/mac/CrumpleZone-mac.zip`. It needs the official SDL2 macOS framework: copy `SDL2.framework` from the `SDL2-2.30.x.dmg` on SDL's releases page into `third_party/sdl2-mac/`. The app is ad-hoc signed, not notarized. Settings live in `~/.config/crumplezone`, as on Linux.
 
 ## Testing
 
