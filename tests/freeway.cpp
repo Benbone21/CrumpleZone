@@ -18,7 +18,13 @@ void holdLane(Car& c, double z) {
     const Frame f = c.frame();
     const double v = std::max(5.0, len(f.vel));
     const double e = f.com.z - z;  // + = right of the lane center (+z is right, heading +x)
-    const double pull = clampd(0.25 * e + 2.5 * f.vel.z, -3.0, 3.0);  // m/s^2 to the left
+    // (Plus a slow trim, as a driver holds against a steady pull: a lifted truck with a
+    // panhard-located axle drifts a little to one side under power.)
+    static thread_local double trim = 0;
+    static thread_local const Car* who = nullptr;
+    if (who != &c) who = &c, trim = 0;
+    trim = clampd(trim + 0.08 * e * (1.0 / 60), -1.0, 1.0);
+    const double pull = clampd(0.25 * e + trim + 2.5 * f.vel.z, -3.0, 3.0);  // m/s^2 to the left
     c.steer = clampd(c.wheelbase * pull / (v * v), -0.1, 0.1);
 }
 
@@ -29,7 +35,8 @@ VEHICLE_SCENARIO(topSpeed, "freeway/top-speed", "Flat out down the endless freew
     // drag-limited on 1,400 kg of downforce; the low-drag Absolut is the 480+ km/h one); the
     // Bronco and the 4Runner are governed: 161 km/h (100 mph) and 171 km/h (106 mph). The buggy is limited to 150 km/h (an estimate:
     // its tires' rating) and the side-by-side to 130 km/h (Can-Am limits the Turbo RR near 85 mph).
-    static const struct { double lo, hi; } expect[] = {{200, 245}, {370, 455}, {155, 164}, {164, 174}, {144, 152}, {124, 132}};
+    // Tacoma at ~180 (112 mph, for its all-terrains).
+    static const struct { double lo, hi; } expect[] = {{200, 245}, {370, 455}, {155, 164}, {164, 174}, {144, 152}, {124, 132}, {172, 186}};
     ctx.sim.world = World(MAP_FREEWAY);
     Car& c = ctx.add(spec, ctx.sim.world.spawn.x, kLaneZ, 0);
     ctx.sim.player = (int)(&c - ctx.sim.cars.data());

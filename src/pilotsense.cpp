@@ -136,6 +136,8 @@ void Scene::gather(const World& world, const std::vector<Car>* cs, const Car* se
     }
 }
 
+double Scene::grip(double x, double z) const { return surfaceGrip(w->surfaceAt(x, z)); }
+
 double Scene::ground(double x, double z) const { return w->height(x, z); }
 
 double Scene::compute(double x, double z, int* what) const {

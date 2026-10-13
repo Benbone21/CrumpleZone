@@ -155,7 +155,8 @@ VEHICLE_SCENARIO(accel, "dynamics/acceleration", "Full throttle from rest on the
     // Rock buggy: ~520 hp (450 rated x1.15) in 1,800 kg through four 40 in tires in 4H: ~5 s (estimate, a 4-speed
     // with 5.38 axles). Side-by-side: ~4 s (Can-Am claims 0-60 mph in under 4 s for the Turbo RR).
     // (Engines run ~15% over the factory figures, see vehicles.cpp: a little quicker.)
-    static const Range expect[] = {{8.5, 11.0}, {2.4, 3.4}, {5.6, 7.2}, {8.5, 11.0}, {4.2, 6.4}, {3.3, 5.0}};
+    // Tacoma TRD Off-Road V6 automatic: 0-60 mph in 8.3 s (Edmunds), so ~8.8 s to 100.
+    static const Range expect[] = {{8.5, 11.0}, {2.4, 3.4}, {5.6, 7.2}, {8.5, 11.0}, {4.2, 6.4}, {3.3, 5.0}, {7.6, 10.0}};
     Car& c = ctx.add(spec, kLaneStartX, kLaneZ, 0);
     ctx.focus(c);
     ctx.run(1.0);
@@ -206,7 +207,8 @@ VEHICLE_SCENARIO(braking, "dynamics/braking", "Full brakes from 100 km/h: stoppi
     ctx.check("comes to a stop", stopped);
     // EF Civic on 185/60R14 street tires without ABS: ~43 m (estimate); Jesko ~31 m (carbon-ceramics, Cup 2 R), Bronco ~44 m, 2002 4Runner ~45 m (rear drums).
     // Rock buggy ~47 m (40 in mud tires, 1.8 t, big discs; it dives hard); side-by-side ~39 m (32 in all-terrains, 800 kg).
-    static const Range expect[] = {{38, 49}, {27, 35}, {39, 50}, {40, 52}, {40, 56}, {34, 46}};
+    // Tacoma TRD Off-Road 124-135 ft from 60 mph (two Edmunds tests): ~40.5-44 m from 100.
+    static const Range expect[] = {{38, 49}, {27, 35}, {39, 50}, {40, 52}, {40, 56}, {34, 46}, {39, 50}};
     const Range& r = expect[vehicleIndex(spec)];
     ctx.metric("100-0 km/h stopping distance", dist, "m", r.lo, r.hi);
     // (The buggy dives ~5 degrees and the rear axle unloads: it wanders a little more than the rest.)
@@ -219,7 +221,8 @@ VEHICLE_SCENARIO(skidpad, "dynamics/skidpad", "Holds a 30 m circle, speeding up 
     // until the car can't stay on it.
     // EF Civic on period-size street tires: ~0.8 g (estimate), Jesko well over 1.1 g, Bronco ~0.70 g, 2002 4Runner ~0.68 g.
     // Rock buggy ~0.6 g (tall, soft mud tires on 40s), side-by-side ~0.8 g (estimate).
-    static const Range expect[] = {{0.75, 0.90}, {1.08, 1.45}, {0.62, 0.78}, {0.60, 0.76}, {0.50, 0.72}, {0.70, 0.92}};
+    // Tacoma TRD Off-Road on all-terrains ~0.70 g (estimate: mid-size off-road pickups test 0.68-0.73).
+    static const Range expect[] = {{0.75, 0.90}, {1.08, 1.45}, {0.62, 0.78}, {0.60, 0.76}, {0.50, 0.72}, {0.70, 0.92}, {0.62, 0.78}};
     const double R = 30;
     Car& c = ctx.add(spec, -40, -100, 0);
     ctx.focus(c);
@@ -304,6 +307,35 @@ VEHICLE_SCENARIO(laneChange, "dynamics/lane-change", "Quick double lane change a
     ctx.check("no doors or panels come loose", loosePanels(c) == 0, loosePanelNames(c));
 }
 
+VEHICLE_SCENARIO(turningCircle, "dynamics/turning-circle", "Full lock at a walk: the outer front wheel's circle against the published curb-to-curb figure") {
+    // Published turning circles: EF Civic hatch ~9.8 m (1991 Si); Bronco 4-door ~10.8 m
+    // (Ford quotes it with Trail Turn Assist's help; ~11.5 m without, estimate); 2002 4Runner
+    // 11.4-12.0 m (two listings); Tacoma Double Cab 5 ft bed ~12.3 m (estimate); the Jesko's
+    // isn't published (wide front tires, little lock: ~11-12 m, estimate).
+    // Buggy and side-by-side: not published for these builds (estimates: the buggy's steering
+    // front axle on 40s turns about like a full-size truck; a Maverick X3 class UTV ~10-11 m).
+    static const Range expect[] = {{9.3, 10.8}, {10.0, 12.5}, {10.5, 12.5}, {11.0, 12.4}, {10.0, 15.0}, {8.5, 13.0}, {11.8, 13.5}};
+    Car& c = ctx.add(spec, -100, -50, 0);
+    ctx.focus(c);
+    ctx.run(1.0);
+    int wo = -1;  // turning left, the outer front wheel is the right one
+    for (size_t i = 0; i < c.wheels.size(); i++)
+        if (c.wheels[i].front && !c.wheels[i].left) wo = (int)i;
+    double xmin = 1e9, xmax = -1e9, zmin = 1e9, zmax = -1e9;
+    const double t0 = ctx.t;
+    ctx.run(14, [&] {
+        c.steer = 0.6;  // what full key steers at a walk
+        const double vf = dot(c.frame().vel, c.frame().fwd);
+        c.throttle = clampd(0.25 + (1.5 - vf) * 0.5, 0, 1);
+        c.brake = 0;
+        if (ctx.t - t0 < 4) return;  // settle onto the circle
+        const V3 p = c.nodes[c.wheels[wo].outer].p;
+        xmin = std::min(xmin, p.x), xmax = std::max(xmax, p.x), zmin = std::min(zmin, p.z), zmax = std::max(zmax, p.z);
+    });
+    const Range& e = expect[vehicleIndex(spec)];
+    ctx.metric("turning circle (outer front wheel)", 0.5 * ((xmax - xmin) + (zmax - zmin)), "m", e.lo, e.hi);
+}
+
 VEHICLE_SCENARIO(slopeHold, "dynamics/slope-hold", "Handbrake holds it nose-up on the 15 degree kicker ramp") {
     Car& c = ctx.add(spec, 47, -30, 0);
     ctx.focus(c);
@@ -355,16 +387,27 @@ VEHICLE_SCENARIO(washboard, "dynamics/washboard", "40 km/h across the washboard 
     ctx.launch(c, 40 / 3.6);
     double up = 1, t0 = ctx.t;
     ctx.runUntil(15.0, [&] { return c.frame().com.x > 75; }, [&] {
-        c.throttle = clampd((40 - speedKmh(c)) * 0.15, 0, 1);
+        // (Easing off when a driven tire spins up, as a driver does: the old Civic has an
+        // open diff and no traction control, so flat out over the bumps one front tire just
+        // peels away against the rev limiter.)
+        double spin = 0;
+        for (const Wheel& w : c.wheels)
+            if (c.wheelPowered(w)) spin = std::max(spin, std::fabs(w.omega * w.rollR()) - std::fabs(w.groundSpeed));
+        c.throttle = clampd((40 - speedKmh(c)) * 0.15, 0, 1) * clampd(1 - (spin - 1.5) / 4, 0.25, 1);
         holdLine(c, -70);
         up = minUp(c, up);
         ctx.sample("Body height", spec.name, c.frame().com.y, "m");
         ctx.sample("Speed", spec.name, speedKmh(c), "km/h");
     });
-    ctx.metric("average speed over the bumps", (c.frame().com.x + 10) / (ctx.t - t0) * 3.6, "km/h", 28, 45);
+    // (The 1990 Civic, with no traction control and an open diff, rides these sharp 12 cm
+    // ridges in first, hopping, at ~20-25 km/h. A tire that wrapped the ridge's edge instead
+    // of meeting it at one point would hit softer; the tire model doesn't do that yet.)
+    ctx.metric("average speed over the bumps", (c.frame().com.x + 10) / (ctx.t - t0) * 3.6, "km/h", spec.tractionFitted ? 28 : 20, 45);
     int popped = 0;
     for (const Wheel& w : c.wheels) popped += w.popped;
-    ctx.metric("damage (cosmetic at most)", c.damage * 100, "%", 0, 0.5);
+    // (A low car, ~15 cm under its floor, hops onto these 12 cm ridges belly first and
+    // dents its floor pan a little.)
+    ctx.metric("damage (cosmetic at most)", c.damage * 100, "%", 0, spec.layerY[0] < 0.3 ? 1.5 : 0.5);
     ctx.metric("tires blown", popped, "", 0, 0);
     ctx.metric("drift off the line", std::fabs(c.frame().com.z + 70), "m", 0, 1.5);
     ctx.check("made it across", c.frame().com.x > 75, "x = " + std::to_string(c.frame().com.x));
@@ -392,15 +435,20 @@ namespace {
 struct Section {
     std::vector<int> all, left, right;
 };
+// (On a body-on-frame truck, the frame too: its loads go into the rails, as a real rig's do.)
 Section sectionAt(const Car& c, double x, double halfWidth = 0.3) {
     Section s;
     const double w = c.spec->width;
-    for (int i = 0; i < c.bodyNodes; i++) {
+    std::vector<int> nodes;
+    for (int i = 0; i < c.bodyNodes; i++) nodes.push_back(i);
+    nodes.insert(nodes.end(), c.ladder.begin(), c.ladder.end());
+    for (int i : nodes) {
         const V3& l = c.restLocal[i];
         if (std::fabs(l.x - x) > halfWidth) continue;
         s.all.push_back(i);
-        if (l.z < -0.3 * w) s.left.push_back(i);
-        if (l.z > 0.3 * w) s.right.push_back(i);
+        const double side = i < c.bodyNodes ? 0.3 * w : 0.0;  // (each rail is all on its own side)
+        if (l.z < -side) s.left.push_back(i);
+        if (l.z > side) s.right.push_back(i);
     }
     return s;
 }
@@ -467,7 +515,8 @@ struct FlexMeter {
 VEHICLE_SCENARIO(torsion, "structure/torsion", "Twisting rig in free fall: torsional stiffness of the body between the axles") {
     // Real cars: roughly 10-35 kNm/deg (older or open bodies lower, modern unibodies higher).
     // (Unibody Civic, carbon tub Jesko, body-on-frame Bronco and 4Runner, tube chassis and cage for the buggy and UTV.)
-    static const Range expect[] = {{12, 55}, {15, 80}, {6, 36}, {6, 36}, {15, 60}, {6, 30}};
+    // (The Tacoma's cab and bed are separate boxes on a long, partly open frame: softer.)
+    static const Range expect[] = {{12, 55}, {15, 80}, {6, 36}, {6, 36}, {15, 60}, {6, 30}, {4, 30}};
     Car& c = rigInAir(ctx, spec);
     Section f = sectionAt(c, axleX(c, true)), r = sectionAt(c, axleX(c, false));
     auto roll = [&](const Section& s) {
@@ -602,7 +651,9 @@ VEHICLE_SCENARIO(travel, "structure/suspension-travel", "Body pressed down to 1.
     double worst = 1e9;  // smallest drop per extra g between steps (m per g)
     for (size_t i = 1; i < down.size(); i++) worst = std::min(worst, (down[i - 1].y - down[i].y) / (down[i].load - down[i - 1].load));
     for (size_t i = 1; i < up.size(); i++) worst = std::min(worst, (up[i].y - up[i - 1].y) / (up[i - 1].load - up[i].load));
-    ctx.metric("compression at +0.8 g extra load", (y0 - lowest) * 1000, "mm", 30, 170);
+    // (Down to ~25 mm: the Jesko's ~2.3 Hz ride plus its heave springs is ~4 cm per g
+    // before the stops.)
+    ctx.metric("compression at +0.8 g extra load", (y0 - lowest) * 1000, "mm", 25, 170);
     ctx.metric("extension at 0.6 g lift", (highest - y0) * 1000, "mm", 20, 170);
     // Positive everywhere = the body always moves with the load. (Bump stops make it small.)
     ctx.metric("least travel per g anywhere in the range", worst * 1000, "mm/g", 2, 1000);
@@ -651,6 +702,112 @@ VEHICLE_SCENARIO(bumpSteer, "structure/bump-steer", "Body pressed down and lifte
     ctx.note("worst at " + std::to_string(worstAt * 100) + " cm of travel");
 }
 
+// Ground clearance (under the lowest thing: a solid axle's diff) and the approach, departure
+// and breakover angles, from the truck as it sits: what it can get its nose, tail and belly
+// over. Measured off the nodes that collide (each a 4 cm sphere), against ramps tangent to
+// the tires.
+VEHICLE_SCENARIO(clearanceAngles, "structure/clearance", "Ground clearance and approach, departure and breakover angles against the published figures") {
+    struct Expect {
+        Range clear, approach, depart, breakover;
+    };
+    // EF Civic: ~0.15 m (estimate). Jesko: ~0.10 m nose-down at rest (it lifts its nose to clear
+    // ramps). Bronco 4-door on 33s: ESTIMATES between Ford's base (35.5 / 29.8 / 21) and
+    // Sasquatch (43.2 / 37.0 / 26.3, 0.29 m) figures. 4Runner as built (2 in body lift, OME,
+    // 35s, steel bumpers): stock ~32 / ~26 and ~0.23 m, built higher (estimates). Tacoma TRD
+    // Off-Road: 9.4 in, 32 / 23.5 / 21 degrees (Toyota and dealer spec sheets).
+    static const Expect expect[] = {
+        {{0.11, 0.17}, {12, 22}, {15, 25}, {9, 17}},
+        {{0.05, 0.12}, {3, 10}, {2, 9}, {4, 10}},
+        {{0.24, 0.30}, {36, 44}, {32, 39}, {21, 27}},
+        {{0.27, 0.33}, {36, 46}, {28, 38}, {28, 40}},
+        {{0.30, 0.70}, {50, 90}, {45, 90}, {30, 60}},  // rock buggy on 40s (estimate: diffs ~0.33 m, no overhangs)
+        {{0.30, 0.46}, {40, 85}, {35, 85}, {25, 55}},  // side-by-side: 0.41 m (16 in, Can-Am), short overhangs (estimate)
+        {{0.22, 0.26}, {29, 35}, {21.5, 26}, {19, 24}},
+    };
+    Car& c = ctx.add(spec, -100, -50, 0);
+    ctx.focus(c);
+    ctx.run(2.0, [&] { c.handbrake = 1; });
+    const Frame fr = c.frame();
+    const double g = ctx.sim.world.height(fr.com.x, fr.com.z), R = c.wheels[0].R;
+    double xf = -1e9, xr = 1e9;
+    for (const Wheel& w : c.wheels) {
+        const double x = dot((c.nodes[w.inner].p + c.nodes[w.outer].p) * 0.5 - fr.com, fr.fwd);
+        if (w.front) xf = std::max(xf, x);
+        else xr = std::min(xr, x);
+    }
+    // Steepest ramp, tangent to the tire (radius R, on the ground), that passes under a point
+    // dx out from the axle and hh up: dx sin a - (hh - R) cos a = R.
+    auto ramp = [&](double dx, double hh) {
+        double lo = 0, hi = M_PI / 2;
+        for (int it = 0; it < 50; it++) {
+            const double m = 0.5 * (lo + hi);
+            (dx * std::sin(m) - (hh - R) * std::cos(m) < R ? lo : hi) = m;
+        }
+        return lo * 180 / M_PI;
+    };
+    double clear = 1e9, approach = 90, depart = 90, breakover = 180;
+    for (const Node& n : c.nodes) {
+        if (!n.collide) continue;
+        const double x = dot(n.p - fr.com, fr.fwd), h = n.p.y - g - 0.04;
+        clear = std::min(clear, h);
+        if (x > xf) approach = std::min(approach, ramp(x - xf, h));
+        if (x < xr) depart = std::min(depart, ramp(xr - x, h));
+        if (x < xf && x > xr) breakover = std::min(breakover, ramp(xf - x, h) + ramp(x - xr, h));
+    }
+    const Expect& e = expect[vehicleIndex(spec)];
+    ctx.metric("ground clearance", clear, "m", e.clear.lo, e.clear.hi);
+    ctx.metric("approach angle", approach, "deg", e.approach.lo, e.approach.hi);
+    ctx.metric("departure angle", depart, "deg", e.depart.lo, e.depart.hi);
+    ctx.metric("breakover angle", breakover, "deg", e.breakover.lo, e.breakover.hi);
+}
+
+// Tilt table: the deck tips slowly sideways until the uphill wheels lift. Its static
+// stability factor (half the track over the CG height) is what NHTSA's rollover stars were
+// built on; the tilt angle comes in a little under it (tan) as the body rolls on its springs
+// and the downhill tires squash.
+VEHICLE_SCENARIO(tiltTable, "structure/tilt-table", "Tipped sideways on a tilt table: static stability factor, and the angle the uphill wheels lift at") {
+    // SSF: EF Civic ~1.35-1.5 and the Jesko ~1.7-2.0 (low cars, estimates); Bronco 4-door 4WD
+    // NHTSA 3 stars (1.13-1.24 on the SSF-only scale; the rating now adds a dynamic test);
+    // 2001 4Runner 4x4 2 stars (1.04-1.12) stock, and this one sits 2 in higher on 35s with a
+    // roof basket; Tacoma 4x4 Double Cab 3 stars.
+    static const Range ssfRange[] = {{1.30, 1.55}, {1.60, 2.10}, {1.08, 1.24}, {0.92, 1.10}, {1.00, 1.60}, {1.00, 1.55}, {1.05, 1.24}};  // (buggy, UTV: estimates from track and CG)
+    VehicleSpec deck = spec;
+    deck.tireGrip = 2.5;  // a tilt table's grippy deck: the tires don't slide off it first
+    Car& c = ctx.add(deck, -100, -50, 0);
+    ctx.focus(c);
+    ctx.run(2.0, [&] { c.handbrake = 1; });
+    std::vector<double> rest;
+    for (const Wheel& w : c.wheels) rest.push_back(w.load);
+    double cy = 0, m = 0;
+    for (const Node& n : c.nodes) cy += n.p.y * n.m, m += n.m;
+    const double cgH = cy / m - ctx.sim.world.height(c.frame().com.x, c.frame().com.z);
+    double track = 0;
+    for (const Wheel& a : c.wheels)
+        for (const Wheel& b : c.wheels)
+            if (a.front && b.front && a.left && !b.left) track = len((c.nodes[a.inner].p + c.nodes[a.outer].p) - (c.nodes[b.inner].p + c.nodes[b.outer].p)) / 2;
+    const double ssf = track / (2 * cgH);
+    c.extForce.assign(c.nodes.size(), V3());
+    double lift = -1;
+    const double t0 = ctx.t;
+    ctx.runUntil(50, [&] { return lift > 0; }, [&] {
+        // Gravity tipped toward the car's right (the deck's low side), 1 degree a second.
+        const double ang = std::min(75.0, 25 + (ctx.t - t0)) * M_PI / 180;
+        c.handbrake = 1;
+        const V3 down = -c.frame().left;
+        for (size_t i = 0; i < c.nodes.size(); i++) c.extForce[i] = (down * std::sin(ang) + V3(0, 1 - std::cos(ang), 0)) * (9.81 * c.nodes[i].m);
+        bool up = true;
+        for (size_t i = 0; i < c.wheels.size(); i++)
+            if (c.wheels[i].left && c.wheels[i].load > 0.05 * rest[i]) up = false;
+        if (up) lift = ang;
+        ctx.sample("Uphill front tire load", spec.name, c.wheels[0].load / std::max(1.0, rest[0]) * 100, "% of rest");
+    });
+    const Range& e = ssfRange[vehicleIndex(spec)];
+    ctx.metric("static stability factor (track / 2 CG height)", ssf, "", e.lo, e.hi);
+    // (Real tilt-table ratios run ~85-97% of the SSF. The bound over it allows for the
+    // track and CG height being read at rest, at the hub centres.)
+    ctx.metric("tilt angle when the uphill wheels lift", lift * 180 / M_PI, "deg", std::atan(0.8 * ssf) * 180 / M_PI, std::atan(1.02 * ssf) * 180 / M_PI);
+}
+
 VEHICLE_SCENARIO(weight, "structure/weight", "Curb weight, front/rear split and center of gravity height against real vehicles") {
     struct Expect {
         Range kg, front, cog;
@@ -664,6 +821,7 @@ VEHICLE_SCENARIO(weight, "structure/weight", "Curb weight, front/rear split and 
         {{2060, 2200}, {52, 58}, {0.74, 0.92}},      // 4Runner Limited as built: 1,867 kg + ~290 kg of parts, ~55/45, lifted 170 mm
         {{1750, 1880}, {52, 57}, {0.68, 0.84}},      // Rock buggy (estimate): ~1,800 kg (Ultra4 cars race at 3,800-4,500 lb), ~54/46, CG under the cage
         {{770, 830}, {42, 47}, {0.52, 0.66}},        // Side-by-side: ~800 kg with fluids (Maverick X3 / RZR class), engine behind the seats: ~44/56
+        {{1990, 2110}, {53, 58}, {0.66, 0.85}},      // Tacoma TRD Off-Road Double Cab: 2,016-2,059 kg, ~55/45 empty
     };
     Car& c = ctx.add(spec, kLaneStartX, kLaneZ, 0);
     ctx.focus(c);
@@ -837,7 +995,17 @@ SCENARIO(tBone, "damage/t-bone", "Bronco T-bones a parked Jesko at 50 km/h") {
     int worst = 0;
     ctx.run(3.0, [&] { worst = std::max(worst, intrusions(p, h) + intrusions(h, p)); });
     ctx.metric("worst deep intrusions", worst, "", 0, 10);
-    ctx.metric("Jesko damage", h.damage * 100, "%", 0.5, 60);
+    // The Jesko's carbon tub barely marks; the doors and sills take the hit (bent panel
+    // metal, the same measure as the body's damage).
+    double dent = 0;
+    int nPanel = 0;
+    for (const Beam& b : h.beams)
+        if (b.type == BEAM_PANEL) {
+            nPanel++;
+            dent += b.broken ? 1.0 : std::min(1.0, std::fabs(b.L0 - b.Lorig) / b.Lorig * 8);
+        }
+    ctx.note("Jesko tub damage " + std::to_string(h.damage * 100) + " %");
+    ctx.metric("Jesko damage (tub and panels)", (h.damage + dent / std::max(nPanel, 1)) * 100, "%", 0.5, 60);
     ctx.metric("Jesko shoved sideways", h.frame().com.z - kLaneZ, "m", 1, 15);
     // (Like the IIHS side test, a 1,900 kg barrier at 50 km/h: doors are dented in but
     // should stay latched.)

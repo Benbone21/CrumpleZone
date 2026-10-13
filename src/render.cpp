@@ -502,7 +502,7 @@ uniform int uVehicle;  // catalog body style: EF, Jesko, Bronco, 4Runner
 // y up, z across) and these are its lines: floor, belt, roof, hood front | front x,
 // half width, windshield base x, roof front x | B-pillar x, C-pillar x, liftgate
 // bottom y, liftgate half width | trim top y, roof tuck, rear x, liftgate top x.
-uniform int uShell;      // 1 4Runner, 2 Bronco, 3 Civic
+uniform int uShell;      // 1 4Runner, 2 Bronco, 3 Civic, 4 Tacoma (uShD.w: its cab's back x)
 uniform vec4 uShA, uShB, uShC, uShD;
 uniform vec4 uShE;       // front door's front edge x, gate top y, bumper top y, wheel opening top y
 out vec4 oCol;
@@ -615,6 +615,25 @@ void main(){
       float u = abs(P.z) / max(0.1, zLim) * zRef;
       float y0 = shB + (region == 2 ? 0.05 : 0.04), y1 = shT - 0.07;
       win = rbox(vec2(u, P.y), vec2(0.0, 0.5 * (y0 + y1)), vec2(zRef, 0.5 * (y1 - y0)), 0.05);
+    }
+  }
+  if (uShell == 4) {
+    win = 1.0;
+    if (region == 1) {
+      // Double cab: front and rear door glass between the A, B and C pillars.
+      float yc = 0.5 * (shYlo + shYhi), yh = 0.5 * (shYhi - shYlo);
+      float w1 = rbox(P.xy, vec2(0.5 * (shXB + shXa), yc), vec2(0.5 * (shXa - shXB) - 0.05, yh), 0.03);
+      w1 = max(w1, P.x - (shAx - 0.075));
+      float w2 = rbox(P.xy, vec2(0.5 * (shXC + shXB), yc), vec2(0.5 * (shXB - shXC) - 0.05, yh), 0.04);
+      w2 = max(w2, (shXrr + 0.07) - P.x);
+      win = min(w1, w2);
+    } else if (region == 2) {
+      float zRef = shW2 - 0.075, zLim = zRef - shTuck * (P.y - shB) / max(0.1, shT - shB);
+      float u = abs(P.z) / max(0.1, zLim) * zRef;
+      win = rbox(vec2(u, P.y), vec2(0.0, 0.5 * (shB + 0.05 + shT - 0.07)), vec2(zRef, 0.5 * (shT - 0.07 - shB - 0.05)), 0.05);
+    } else if (region == 3) {
+      // The back glass in the cab's back wall (a slider in the middle).
+      win = rbox(P.zy, vec2(0.0, 0.5 * (shB + 0.08 + shT - 0.13)), vec2(0.56, 0.5 * (shT - 0.13 - shB - 0.08)), 0.05);
     }
   }
   bool isWindow = region >= 1 && region <= 3 && win < 0.0;
@@ -969,6 +988,91 @@ void main(){
     if (kind == 3) {
       j = (P.z > 0.0 ? W - 0.62 : 0.62) + (P.z > 0.0 ? -(az - lampZ) : (az - lampZ)) * 2.0;
       k = uBody.z + (P.y - lampY) * 2.0 / 2.2;
+    }
+  } else if (uShell == 4) {
+    // 3rd-gen Tacoma TRD Off-Road: swept headlamps either side of a big black hex grille,
+    // a black lower valance, black window frames and pillars, a stamped tailgate between
+    // tall tail lamps, a chrome step bumper, the bed lined dark.
+    base = uPaint;
+    kind = 0;
+    float fw = max(fwidth(P.x) + fwidth(P.y) + fwidth(P.z), 1e-4);
+    float az = abs(P.z);
+    float lampY = shHood - 0.10;                        // headlamp center height
+    float tailLo = shB - 0.36, tailHi = shB - 0.02;      // tail lamps up the bed's corners
+    float xCab = shXrr;
+    if (region == 7 || region == 8) {
+      base = vec3(region == 8 ? 0.025 : 0.06);
+      kind = 5;
+    } else if (region == 9 || region == 11) {
+      base = vec3(0.045, 0.045, 0.048) * (0.9 + 0.2 * step(0.5, fract(P.z * 7.0)));  // bedliner, ribbed
+      kind = 5;
+    } else if (region == 0) {
+      if (P.y < shF + 0.07) { base = vec3(0.035); kind = 1; }  // rocker
+      if (P.y > shF + 0.02 && P.y < shB + 0.01 && P.x > xCab) {
+        float seam = max(lineAt(P.x, shXE, 0.004, fw), max(lineAt(P.x, shXB, 0.004, fw), lineAt(P.x, shXC, 0.004, fw)));
+        base = mix(base, vec3(0.012), seam * 0.9);
+        float h1 = rbox(P.xy, vec2(shXB + 0.15, shB - 0.09), vec2(0.075, 0.022), 0.012);
+        float h2 = rbox(P.xy, vec2(shXC + 0.14, shB - 0.09), vec2(0.07, 0.022), 0.012);
+        float h = min(h1, h2);
+        if (h < 0.0) { base = h < -0.008 ? uPaint * 0.8 : vec3(0.02); kind = h < -0.008 ? 0 : 1; }
+      }
+      // The gap between the cab and the bed.
+      if (P.y > shF + 0.04) base = mix(base, vec3(0.01), lineAt(P.x, xCab - 0.03, 0.006, fw));
+      // Fuel door on the bed's left side.
+      if (P.z < 0.0 && abs(rbox(P.xy, vec2(xCab - 0.42, shB - 0.17), vec2(0.09, 0.075), 0.02)) < 0.0035) base = vec3(0.015);
+      if (P.x > shXf - 0.12 && abs(P.y - lampY) < 0.055) kind = 3;  // headlamps round the corners
+      if (P.x < shXr + 0.06 && P.y > tailLo && P.y < tailHi) kind = 4;  // tail lamps round the corners
+    } else if (region == 1) {
+      if (P.x > xCab + 0.02 && P.x < shAx - 0.045 && P.y > shB + 0.008 && P.y < shYhi + 0.035) { base = vec3(0.03); kind = 1; }
+      if (win < 0.012) { base = vec3(0.018); kind = 1; }
+    } else if (region == 2 || region == 3) {
+      if (win < 0.012) { base = vec3(0.018); kind = 1; }
+      if (region == 2 && P.y < shB + 0.05) { base = vec3(0.03); kind = 1; }  // cowl
+      if (region == 3 && win < 0.0 && az < 0.012) base = vec3(0.02);  // the slider's frame
+    } else if (region == 10) {
+      if (P.x > shXa) {
+        float seam = max(lineAt(P.x, shXf - 0.10, 0.004, fw), lineAt(az, shW2 - 0.07, 0.004, fw));
+        base = mix(base, vec3(0.012), seam * 0.9);
+        if (P.x < shXa + 0.05) { base = vec3(0.03); kind = 1; }  // cowl vent
+        // The hood scoop (a TRD Off-Road styling bulge): a darker inlet.
+        if (rbox(vec2(P.x, az), vec2(shXa + 0.55, 0.0), vec2(0.13, 0.20), 0.05) < 0.0 && P.x > shXa + 0.62) { base = vec3(0.02); kind = 1; }
+      } else {
+        base = vec3(0.03); kind = 1;  // the bed rail caps: black plastic
+      }
+    } else if (region == 5) {
+      base = uPaint;
+      float lamp = rbox(vec2(az, P.y), vec2(0.60, lampY), vec2(0.22, 0.05), 0.03);
+      float grille = rbox(vec2(az, P.y), vec2(0.0, lampY - 0.07), vec2(0.40, 0.15), 0.05);
+      if (P.y < lampY - 0.26) { base = vec3(0.03); kind = 1; }  // lower valance
+      if (grille < 0.0) {
+        kind = 7;
+        base = vec3(0.02);
+        vec2 hx = vec2(P.z * 14.0, P.y * 16.0);
+        float honey = abs(fract(hx.x + 0.5 * step(0.5, fract(hx.y * 0.5))) - 0.5) + abs(fract(hx.y) - 0.5);
+        if (honey < 0.18) base = vec3(0.06);
+        float e = length(vec2(P.z / 0.09, (P.y - (lampY - 0.03)) / 0.06));
+        if (e > 0.75 && e < 1.0) kind = 2;  // the emblem
+        if (grille > -0.014) { base = vec3(0.025); kind = 1; }
+      }
+      if (lamp < 0.0) kind = (az > 0.74) ? 8 : 3;
+      else if (lamp < 0.012) { base = vec3(0.02); kind = 1; }
+      // Fog lamps in the valance.
+      if (length(vec2(az - 0.68, P.y - (lampY - 0.33))) < 0.045) kind = 3;
+    } else if (region == 6) {
+      // Tailgate: its seams, the stamped name, a handle; tail lamps outboard; the step bumper.
+      if (P.y < shLiftY) { base = vec3(0.55, 0.56, 0.58); kind = 2; }  // chrome step bumper
+      float seam = P.y > shLiftY ? lineAt(az, shLiftZ, 0.004, fw) : 0.0;
+      seam = max(seam, az < shLiftZ ? lineAt(P.y, shLiftY, 0.004, fw) : 0.0);
+      base = mix(base, vec3(0.012), seam * 0.9);
+      if (rbox(P.zy, vec2(0.0, shB - 0.06), vec2(0.13, 0.03), 0.012) < 0.0) { base = vec3(0.02); kind = 1; }  // handle
+      float word = step(abs(P.y - (shB - 0.20)), 0.035) * step(abs(P.z), 0.42) * step(0.55, fract(P.z * 9.0));
+      base = mix(base, uPaint * 0.82, word);  // TACOMA stamped across it
+      if (az > shLiftZ + 0.006 && P.y > tailLo && P.y < tailHi) kind = P.y < tailLo + 0.06 ? 3 : 4;
+    }
+    if (kind == 7) k = P.y * 2.2;
+    if (kind == 3) {
+      j = (P.z / max(0.1, shW2) * 0.5 + 0.5) * W;
+      k = uBody.z + (P.y - lampY) / 0.15;
     }
   }
 
@@ -2646,7 +2750,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
                     case BEAM_ENGINE: r = 1.0f, g = 0.9f, bl = 0.2f; break;
                     case BEAM_MOUNT: r = 0.9f, g = 0.3f, bl = 0.2f; break;
                     case BEAM_ARM: case BEAM_KNUCKLE: r = 0.2f, g = 0.9f, bl = 1.0f; break;
-                    case BEAM_SPRING: r = 1.0f, g = 0.3f, bl = 1.0f; break;
+                    case BEAM_SPRING: case BEAM_BUMPSTOP: r = 1.0f, g = 0.3f, bl = 1.0f; break;
                     case BEAM_TIEROD: r = 0.3f, g = 0.5f, bl = 1.0f; break;
                     case BEAM_SHAFT: r = 1.0f, g = 1.0f, bl = 1.0f; break;
                     case BEAM_PANEL: r = 0.75f, g = 0.8f, bl = 0.9f; break;

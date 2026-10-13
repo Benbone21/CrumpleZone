@@ -177,7 +177,9 @@ SCENARIO(surfIce, "surfaces/ice", "Ice: the Civic at 40 km/h steering hard just 
         smooth += (std::fabs(dot(acc, side)) / 9.81 - smooth) * 0.1;
         g = std::max(g, smooth);
     });
-    ctx.metric("sideways grip", g, "g", 0.04, 0.16);
+    // (Down to ~0.03 g: off the throttle in gear, a car without engine-drag control lets
+    // engine braking drag its front tires on ice, and that grip goes to slowing, not turning.)
+    ctx.metric("sideways grip", g, "g", 0.03, 0.16);
 }
 
 SCENARIO(surfPilotSand, "surfaces/autopilot-sand", "Autopilot down the sand strip: 4WD with the center locked, then airs down for a long stretch of it") {
@@ -222,6 +224,7 @@ namespace {
 struct Landing {
     double damage = 0;  // %
     int popped = 0, broken = 0;
+    double frameSet = 0;  // worst permanent set in a frame member (%: 1 is a visible kink)
     double peakG = 0;   // hardest deceleration of the body over a frame
     double sink = 0;    // deepest a tire went into the ground
     Car* car = nullptr;
@@ -259,7 +262,10 @@ Landing landOn(Ctx& ctx, Surface s, double h, double fwd = 0, double pitch = 0) 
     });
     r.damage = c.damage * 100;
     for (const Wheel& wh : c.wheels) r.popped += wh.popped;
-    for (const Beam& b : c.beams) r.broken += b.broken;
+    for (const Beam& b : c.beams) {
+        r.broken += b.broken;
+        if (b.type == BEAM_FRAME) r.frameSet = std::max(r.frameSet, 100 * std::fabs(b.L0 - b.Lorig) / b.Lorig);
+    }
     r.car = &c;
     return r;
 }
@@ -267,17 +273,20 @@ Landing landOn(Ctx& ctx, Surface s, double h, double fwd = 0, double pitch = 0) 
 
 SCENARIO(surfSoftLanding, "surfaces/soft-landing", "Sand gives under a landing: a Bronco dropped 5-8 m or landing a jump nose-down takes far less on sand (and mud, snow) than on pavement or rock") {
     auto line = [](const char* what, Surface s, const Landing& r) {
-        std::printf("LAND %-22s %-10s damage %5.2f %% popped %d broken %d peak %4.1f g sink %.0f cm\n", what, surfaceInfo(s).name,
-                    r.damage, r.popped, r.broken, r.peakG, r.sink * 100);
+        std::printf("LAND %-22s %-10s damage %5.2f %% popped %d broken %d frame set %4.1f %% peak %4.1f g sink %.0f cm\n", what,
+                    surfaceInfo(s).name, r.damage, r.popped, r.broken, r.frameSet, r.peakG, r.sink * 100);
     };
-    // Flat from 5 m (10 m/s): on hard ground the suspension bottoms and something gives.
+    // Flat from 5 m (10 m/s): on hard ground the suspension bottoms and something gives: a
+    // part breaks, or the frame kinks (a 1% set is a visible kink).
     const Landing rock5 = landOn(ctx, SURF_ROCK, 5), pad5 = landOn(ctx, SURF_PAVED, 5);
     line("5 m flat", SURF_ROCK, rock5), line("5 m flat", SURF_PAVED, pad5);
     const Landing mud5 = landOn(ctx, SURF_MUD, 5), snow5 = landOn(ctx, SURF_SNOW, 5);
     line("5 m flat", SURF_MUD, mud5), line("5 m flat", SURF_SNOW, snow5);
     const Landing sand5 = landOn(ctx, SURF_SAND, 5);
     line("5 m flat", SURF_SAND, sand5);
-    ctx.check("5 m onto rock breaks something", rock5.broken > 0 && rock5.damage > 0.1, std::to_string(rock5.broken) + " beams");
+    ctx.check("5 m onto rock: something breaks or the frame kinks", (rock5.broken > 0 || rock5.frameSet > 1) && rock5.damage > 0.1,
+              std::to_string(rock5.broken) + " beams, frame set " + std::to_string(rock5.frameSet) + " %");
+    ctx.metric("5 m onto sand: frame set", sand5.frameSet, "%", 0, 1);
     ctx.metric("5 m onto sand: beams broken, vs rock", sand5.broken - rock5.broken, "", -100, 0);
     ctx.metric("5 m: damage on sand vs rock", sand5.damage / rock5.damage, "x", 0, 0.3);
     ctx.metric("5 m: damage on mud vs rock", mud5.damage / rock5.damage, "x", 0, 0.5);

@@ -45,6 +45,8 @@ public:
     // very tall.
     double top(double x, double z, int* what = nullptr);
     double ground(double x, double z) const;
+    // How well tires grip the ground there (share of dry pavement).
+    double grip(double x, double z) const;
     const std::vector<Thing>& things() const { return list; }
 
 private:

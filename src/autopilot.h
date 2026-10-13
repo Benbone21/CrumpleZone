@@ -102,6 +102,7 @@ struct Autopilot {
     int wantLevel = 0;
     double easyTime = 0, lockTime[2] = {0, 0}, slipTime[2] = {0, 0};
     double push = 0;          // extra throttle while a tire is up against a ledge
+    double spinCap = 1;       // crawling: the most throttle it gives before the tires start to spin
     bool holdFirst = false;   // crawling in low range: the gearbox stays in first
     double airTarget = 0;     // psi it's letting the tires down to (0 = not)
     bool tcWas = true;        // traction control setting to put back

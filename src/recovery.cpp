@@ -69,6 +69,7 @@ void Car::rotateRigid(const V3& axis, double ang) {
     if (!chassis.nodes.empty()) {
         chassis.rot = q * chassis.rot;
         chassis.rot.normalize();
+        for (ChassisFrame& rf : railFrame) rf.rot = q * rf.rot, rf.rot.normalize();
     }
     for (Wheel& wh : wheels) wh.omega = 0, wh.stickX = wh.stickY = 0;
     wake();
@@ -97,6 +98,7 @@ void Car::placeUpright(const World& w, double x, double z, double yaw) {
     if (!chassis.nodes.empty()) {
         chassis.rot = q * chassis.rot;
         chassis.rot.normalize();
+        for (ChassisFrame& rf : railFrame) rf.rot = q * rf.rot, rf.rot.normalize();
     }
     setDown(w);  // onto the slope under it
     for (Wheel& wh : wheels) wh.omega = 0, wh.stickX = wh.stickY = 0;
@@ -171,6 +173,8 @@ bool Car::needsFieldRepair() const {
     }
     for (const Beam& b : beams)
         if (!b.broken && (b.type == BEAM_ARM || b.type == BEAM_TIEROD) && std::fabs(b.L0 - b.Lorig) > 0.005 * b.Lorig) return true;
+    for (const Axle& ax : axles)
+        if (std::fabs(ax.arbBend) > 0.005) return true;
     return false;
 }
 
@@ -204,6 +208,7 @@ void Car::fieldRepair() {
         }
         if (!b.broken && (b.type == BEAM_ARM || b.type == BEAM_TIEROD)) b.L0 = b.Lorig;
     }
+    for (Axle& ax : axles) ax.arbBend = 0;  // bent sway bar swapped for the spare (or unbolted)
     if (hydrolocked) {
         hydrolocked = false;
         engineDead = engineHealth < 0.12;

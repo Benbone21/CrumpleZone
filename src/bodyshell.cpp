@@ -133,7 +133,7 @@ struct Pt {
 
 // How one vehicle's body is drawn: the character the lattice alone can't give.
 struct Style {
-    int shell;                 // shader id: 1 4Runner, 2 Bronco, 3 Civic
+    int shell;                 // shader id: 1 4Runner, 2 Bronco, 3 Civic, 4 Tacoma
     double crF, crR;           // plan-view corner radii at the nose and the tail
     double noseRoll, noseLen;  // the hood's leading edge rolls down this much over this length
     double rocker;             // radius of the rocker's lower corner
@@ -155,8 +155,16 @@ const Style* styleFor(const VehicleSpec& vs) {
     // 1990 EF Civic hatch: a low wedge nose, soft shoulders, a slightly bowed side and a
     // sloping glass hatch.
     static const Style civic{3, 0.24, 0.13, 0.09, 0.28, 0.06, 0.07, 0.07, 0.03, 0.025, 0.025, 0.07, 0.05, 2.0, 0.05};
+    // 3rd-gen Tacoma double cab: a tall, rounded nose with a domed hood over a big grille,
+    // a cab with a gently curved roof, then the bed: slab sides up to a rail at the cab's
+    // belt line, square at the tailgate; wheel arches with a squarish flare.
+    static const Style tacoma{4, 0.20, 0.05, 0.08, 0.12, 0.04, 0.06, 0.06, 0.02, 0.02, 0.012, 0.06, 0.03, 2.6, 0.07};
     const std::string id = vs.id;
-    return id == "4runner" ? &runner : id == "bronco" ? &bronco : id == "civic" ? &civic : nullptr;
+    return id == "4runner"  ? &runner
+           : id == "bronco" ? &bronco
+           : id == "civic"  ? &civic
+           : id == "tacoma" ? &tacoma
+                            : nullptr;
 }
 
 // The body's lines, placed relative to the physics lattice (floor, belt, roof, hood
@@ -165,6 +173,10 @@ struct ShellLines {
     const VehicleSpec& vs;
     const Style& st;
     double F, B, T, xf, xr, W2, xa, xRoofF, tuck, rakeR, archY, archR;
+    // A pickup: the cab ends at xCab (its back glass there), and behind it the bed: walls up
+    // to the rail at railY, their caps railW across, the floor at bedY.
+    bool bed = false;
+    double xCab = -1e9, bedY = 0, railY = 0, railW = 0.10;
     std::vector<double> axles, hoodX, hoodY;
 
     ShellLines(const VehicleSpec& v, const Style& style) : vs(v), st(style) {
@@ -176,11 +188,18 @@ struct ShellLines {
         W2 = vs.width / 2;
         tuck = vs.roofTuck;
         rakeR = std::max(0.02, vs.rakeRear);
-        int gi0 = 99;
+        int gi0 = 99, gi1 = -1;
         for (const std::string& row : vs.profile)
-            for (int i = 0; i < (int)row.size(); i++)
-                if (row[i] == 'G') gi0 = std::min(gi0, i);
+            for (int i = 0; i < (int)row.size(); i++) {
+                if (row[i] == 'G') gi0 = std::min(gi0, i), gi1 = std::max(gi1, i);
+                if (row[i] == 'B') bed = true;
+            }
         xa = latticeX(vs, gi0);
+        if (bed) {
+            xCab = latticeX(vs, gi1 + 1);
+            bedY = vs.layerY[1];
+            railY = vs.layerY[2];
+        }
         xRoofF = xa - vs.rakeFront;
         for (int c : axleColumns(vs)) axles.push_back(latticeX(vs, c));
         shellArch(vs, archY, archR);
@@ -206,8 +225,12 @@ struct ShellLines {
         return w;
     }
 
-    // Top of the body: hood, windshield, roof, then down the rear glass.
+    bool inBed(double x) const { return bed && x < xCab - 1e-6; }
+
+    // Top of the body: hood, windshield, roof, then down the rear glass (a pickup's bed: the
+    // rail along its walls).
     double top(double x) const {
+        if (inBed(x)) return railY;
         double y;
         if (x >= xa) {
             y = hoodY.back();
@@ -222,8 +245,9 @@ struct ShellLines {
             double shield = B + (T - B) * (xa - x) / std::max(0.05, xa - xRoofF);
             y = smin(shield, T, 0.12);  // rounded windshield header
         }
-        double gate = T - (T - B) * ((xr + rakeR) - x) / rakeR;  // rear glass
-        if (x < xr + rakeR + 0.08) y = smin(y, gate, 0.09);
+        const double xBack = bed ? xCab : xr;
+        double gate = T - (T - B) * ((xBack + rakeR) - x) / rakeR;  // rear glass
+        if (x < xBack + rakeR + 0.08) y = smin(y, gate, 0.09);
         return y;
     }
 
@@ -242,10 +266,11 @@ struct ShellLines {
         return y;
     }
 
-    bool greenhouse(double x) const { return x < xa && top(x) > B + 0.015; }
+    bool greenhouse(double x) const { return x < xa && !inBed(x) && top(x) > B + 0.015; }
 
     // Half cross-section from the bottom center out and up to the top center.
     std::vector<Pt> section(double x) const {
+        if (inBed(x)) return bedSection(x);
         std::vector<Pt> pts;
         pts.reserve(kRows);
         const double yb = bottom(x), yt = top(x), w = halfWidth(x);
@@ -301,6 +326,28 @@ struct ShellLines {
         }
         return pts;
     }
+
+    // A pickup bed, the same number of points: under the floor, up the outside, over the
+    // rail cap, down the inside wall and across the bed floor to the middle.
+    std::vector<Pt> bedSection(double x) const {
+        std::vector<Pt> pts;
+        pts.reserve(kRows);
+        const double yb = bottom(x), w = halfWidth(x), rl = st.rocker, rr = railW / 2;
+        const double ws = w - st.sideBow, y0 = yb + rl, y1 = railY - rr, zIn = ws - railW;
+        for (int k = 0; k < kNB; k++) pts.push_back({(ws - rl) * k / (kNB - 1), yb, SEG_BOTTOM});
+        for (int k = 1; k <= kNL; k++) {
+            double a = -M_PI / 2 + M_PI / 2 * k / kNL;
+            pts.push_back({ws - rl + rl * std::cos(a), yb + rl + rl * std::sin(a), SEG_CORNER});
+        }
+        for (int k = 1; k <= kNS; k++) pts.push_back({ws, y0 + (y1 - y0) * k / kNS, SEG_SIDE});
+        for (int k = 1; k <= kNG; k++) {  // the rail cap, outside over to inside
+            double a = M_PI * k / kNG;
+            pts.push_back({ws - rr + rr * std::cos(a), y1 + rr * std::sin(a), SEG_UPPER});
+        }
+        for (int k = 1; k <= kNE; k++) pts.push_back({zIn - 0.01 * k / kNE, y1 + (bedY - y1) * k / kNE, SEG_EDGE});
+        for (int k = 1; k <= kNT; k++) pts.push_back({(zIn - 0.01) * (1.0 - (double)k / kNT), bedY, SEG_TOP});
+        return pts;
+    }
 };
 
 }  // namespace
@@ -315,6 +362,10 @@ void shellArch(const VehicleSpec& vs, double& centerY, double& radius) {
         // Snug round arches over the 185/60R14s.
         centerY = vs.wheelRadius + 0.012;
         radius = vs.wheelRadius + 0.05;
+    } else if (id == "tacoma") {
+        // Tall openings with room over the 265/70R16s (a ~13 cm gap), raised with the body.
+        centerY = vs.layerY[0] - 0.08;
+        radius = 0.50;
     } else {
         // 4Runner: arches sized for the factory 265/70R16 (radius 0.389 m) with a ~8 cm
         // gap, raised with the body: lifts and body lifts open up the gap over bigger tires.
@@ -344,6 +395,7 @@ bool buildBodyShell(const Car& car, VisualTemplate& t) {
     std::vector<double> xs;
     for (double x = L.xr; x <= L.xf + 1e-9; x += 0.03) xs.push_back(x);
     std::vector<double> forced = {L.xf, L.xr, L.xa, L.xRoofF, L.xr + L.rakeR, L.xf - 0.10};
+    if (L.bed) forced.insert(forced.end(), {L.xCab, L.xCab - 0.012, L.xCab + L.rakeR});  // (the cab's back wall)
     std::map<std::string, std::pair<V3, V3>> box;  // panel bounding boxes
     for (const Panel& p : car.panels) {
         V3 lo(1e9, 1e9, 1e9), hi(-1e9, -1e9, -1e9);
@@ -467,10 +519,17 @@ bool buildBodyShell(const Car& car, VisualTemplate& t) {
         } else if (rf.seg == SEG_CORNER || rf.seg == SEG_SIDE) {
             region = REG_SIDE;
         } else if (rf.seg == SEG_UPPER) {
-            region = L.greenhouse(c.x) ? REG_CABIN_SIDE : REG_SIDE;
+            region = L.greenhouse(c.x) ? REG_CABIN_SIDE : L.inBed(c.x) ? REG_TOP : REG_SIDE;
+        } else if (L.inBed(c.x)) {
+            region = rf.seg == SEG_EDGE ? REG_STEP : REG_BED;  // inside the bed: its walls and floor
         } else {
-            region = c.x > L.xa ? REG_TOP : c.x > L.xRoofF - 0.03 ? REG_WINDSHIELD : c.x < L.xr + L.rakeR + 0.05 ? REG_REAR_WINDOW : REG_ROOF;
+            const double xBack = L.bed ? L.xCab : L.xr;
+            region = c.x > L.xa ? REG_TOP : c.x > L.xRoofF - 0.03 ? REG_WINDSHIELD : c.x < xBack + L.rakeR + 0.05 ? REG_REAR_WINDOW : REG_ROOF;
         }
+        // The cab's back wall (between its last station and the bed's first): the back glass
+        // and the panel round it.
+        if (!rf.cap && L.bed && c.x < L.xCab && c.x > L.xCab - 0.013 && rf.seg != SEG_BOTTOM && rf.seg != SEG_CORNER && rf.seg != SEG_SIDE)
+            region = REG_REAR_WINDOW;
         if (!rf.cap && (rf.seg == SEG_SIDE || rf.seg == SEG_UPPER) && std::fabs(c.z) > 0.3) {
             const bool left = c.z < 0;
             if (inX(left ? "LEFT DOOR" : "RIGHT DOOR", c.x)) group = panelIndex(left ? "LEFT DOOR" : "RIGHT DOOR");
@@ -553,7 +612,7 @@ bool buildBodyShell(const Car& car, VisualTemplate& t) {
     const float sp[16] = {(float)L.F,       (float)L.B,       (float)L.T,      (float)L.top(L.xf - 0.10),
                           (float)L.xf,      (float)L.W2,      (float)L.xa,     (float)L.xRoofF,
                           (float)fd.first.x, (float)rd.first.x, (float)liftY,  (float)liftZ,
-                          (float)trimY,     (float)L.tuck,    (float)L.xr,     (float)(L.xr + L.rakeR)};
+                          (float)trimY,     (float)L.tuck,    (float)L.xr,     (float)(L.bed ? L.xCab : L.xr + L.rakeR)};  // (a pickup: its cab's back)
     std::copy(sp, sp + 16, t.shellParam);
     t.shellParam[16] = (float)fd.second.x;                                  // front door's rear edge (B pillar)
     t.shellParam[17] = (float)(pLift >= 0 ? box[gateName].second.y : L.T);  // gate top

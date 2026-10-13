@@ -36,6 +36,7 @@ enum BeamType : uint8_t {
     BEAM_TIEROD,   // tie rod (length set by the steering rack) or rear toe link
     BEAM_SHAFT,    // drive shaft: carries no load here (it slides and flexes), but it can be torn off
     BEAM_PANEL,    // outer sheet-metal panel (hood, door, bumper...): thin, dents easily
+    BEAM_BUMPSTOP, // jounce bumper from the frame onto a live axle's tube: pushes only once the axle rises onto it
     BEAM_TYPE_COUNT
 };
 
@@ -51,6 +52,8 @@ struct Beam {
     double minL = 0, maxL = 0;  // bump / droop stops for springs (0 = none)
     uint8_t type;
     bool broken = false;
+    bool snub = false;  // a rubber mount with a snubber and rebound washer (hard stops both ways)
+    float friction = 0; // springs: Coulomb friction (N), the leaves of a leaf spring sliding on each other
 };
 
 enum SkinMat : uint8_t { MAT_PAINT, MAT_GLASS, MAT_HEADLIGHT, MAT_TAILLIGHT, MAT_TRIM, MAT_UNDER, MAT_WELL };
@@ -80,12 +83,20 @@ enum LinkKind : uint8_t {
     LINK_LOWER_ARM, LINK_UPPER_ARM, LINK_TIE_ROD, LINK_TOE_LINK, LINK_TRAILING, LINK_PANHARD,
     LINK_BUSHING,  // trailing-arm pivot bushing (not drawn)
     LINK_STRUT_GUIDE,  // holds a strut's top to its mount (part of the strut; not drawn)
+    LINK_LEAF,     // a leaf spring's front half, hanger to axle seat (drawn with its rear half and shackle)
 };
 struct SuspLink {
     int beam;
     uint8_t kind;
     int8_t wheel;  // -1 = belongs to an axle, not one wheel
 };
+
+// Diff side gear plus its share of the ring gear, carrier and prop shaft, as seen at one
+// half shaft (kg*m^2).
+constexpr double kSideGearI = 0.15;
+// A solid axle's tube and diff housing (pumpkin) radii: drawn at this size, and what hits
+// the ground.
+constexpr double kAxleTubeR = 0.04, kAxleDiffR = 0.125;
 
 struct Wheel {
     int inner, outer;       // hub nodes: the axle runs inner -> outer
@@ -94,6 +105,8 @@ struct Wheel {
     int arm = -1;           // steering arm / toe link end
     int spring = -1;        // coil-over beam
     int tieRod = -1;        // tie rod beam (front) or toe link (rear), -1 = none
+    int bumpStop = -1;      // jounce bumper over a live axle's tube (-1 = the coil-over's own stop)
+    int shackle = -1;       // leaf spring: the rear hanger its shackle swings from (frame node; drawn)
     std::vector<int> assembly;  // nodes moving with the hub (brake torque reacts here)
     std::vector<int> shafts;    // drive shafts that must be intact for this wheel to be driven
     double springRest = 0;      // coil-over length at ride height (anti-roll bars work from it)
@@ -101,6 +114,9 @@ struct Wheel {
     double tieOffset = 0;       // permanent bend in the tie rod (m): the wheel is knocked out of line
     double brakeReaction = 0;   // brake torque passed to the knuckle (smoothed by pad/caliper give)
     double abs = 1;             // ABS: share of brake pressure let through to this wheel
+    double tcBrake = 0;         // brake traction control: share of this brake applied to stop it spinning
+    double escBrake = 0;        // stability control: share of this brake applied to stop a spin
+    double escCut = 0;          // ...and how much of the driver's braking it lets off here (inside wheels)
     // Steering geometry in the car's rest frame: lower and upper ball joints (kingpin
     // axis), steering arm end, and rack end. The tie rod's length follows the steer angle.
     V3 kpLow, kpUp, armRest, rackRest;
@@ -123,17 +139,39 @@ struct Wheel {
     float bite = 1;            // how fast its grip builds with slip here (tread and surface): ABS and traction control aim for the peak
     float shaftLoad = 0;       // torque through the axle shaft (N*m, smoothed over ~10 ms)
     double xferTorque = 0;     // torque a locker or the locked center put through it this step
+    // The half shaft (or CV shaft) is a torsion spring between the diff's side gear and
+    // the hub: the gears and lockers turn the side gear, the shaft winds up and drives
+    // the wheel. Its wind-up is what keeps a tire catching an edge from stopping the whole
+    // geared-down engine through the shaft in one step.
+    double sideOmega = 0;      // diff side gear (inner end of the shaft), rad/s
+    double twist = 0;          // shaft wind-up, rad (+ = driving forward)
+    double shaftTorque = 0;    // torque in the shaft now (N*m)
+    double omegaWas = 0;       // omega at the end of the last step (follows outside changes)
+    // The tire against its own car: wheel-well liners, fenders, bumpers, sills and the frame
+    // rails. Built once: the faces it could reach (skin triangles, and the rails' sides as
+    // triangles); at run time, how hard it's rubbing.
+    std::vector<std::array<int, 3>> rubFaces;
+    std::vector<float> rubAllow;  // per rub face, for each of its 7 sample points: how deep the stock tire
+                                  // already reaches there over its travel and steering lock (the coarse
+                                  // lattice cutting a corner)
+    double rubTorque = 0;      // the rubbing's drag on its spin this step (N*m)
+    float rub = 0;             // how hard it's pressing on the body (N)
     std::vector<int> mounts;  // beams that attach this wheel to the body
+    // Radius it rolls on (a blown tire runs on its rim).
+    double rollR() const { return popped ? rimR + 0.015 : R; }
 };
 
 // A pin holds a panel node on the body node under it (a spring with no rest length).
 // Hinges are strong; latches and clips let go in a hard hit.
 // A seal is the rubber a shut door's window frame rests against: soft, it only keeps
 // the frame from rattling, and lets go as soon as the door is open or off.
-enum PinKind : uint8_t { PIN_HINGE, PIN_LATCH, PIN_CLIP, PIN_SEAL };
+// A check is the door check strap (or a hood's prop, a gate's cable): slack until the
+// panel is open to its stop, then it holds it there; flung open hard, it tears.
+enum PinKind : uint8_t { PIN_HINGE, PIN_LATCH, PIN_CLIP, PIN_SEAL, PIN_CHECK };
 struct Pin {
     int body, panel;  // node on the structure, node on the panel
     double k, c, breakDist;
+    double slack = 0;  // pulls only once the nodes are this far apart
     uint8_t kind;
     bool broken = false;
 };
@@ -147,6 +185,11 @@ struct Panel {
     std::vector<int> bodyNodes;      // the structure nodes under it...
     std::vector<int> panelNodes;     // ...and its own nodes over them (same order)
     std::vector<int> pins;
+    // Per panel node: the panel's skin quads it sat on. Off its pin, it's still a sheet of
+    // steel against the body: it can swing out, but not in through the quads under it.
+    std::vector<std::vector<int>> nodeQuads;
+    std::vector<int8_t> outside;     // per panel node: came to the body from outside (only those are held out)
+    std::vector<int> checks;         // its opening stops (PIN_CHECK pins, not in `pins`)
     int state = 0;                   // 0 shut, 1 hanging open on its hinges, 2 torn off
 };
 
@@ -155,6 +198,10 @@ struct Axle {
     bool front = false;
     int wheel[2] = {-1, -1};      // left, right
     double arbK = 0;              // anti-roll bar rate, per meter of coil-over difference
+    // The bar is spring steel: twisted past what the suspension's travel asks of it (a big
+    // hit on one wheel), it takes a set and holds that corner up (the truck leans).
+    double arbYield = 1e9;        // elastic limit, in coil-over difference (m)
+    double arbBend = 0;           // permanent set (m of coil-over difference it now holds)
     double heaveK = 0, heaveGap = 0, heaveC = 0;  // third (heave) spring and damper: per meter (per m/s) of both coil-overs squeezing together, past heaveGap
     std::vector<int> diffNodes;   // differential housing (drive torque reacts here)
     int propShaft = -1;           // prop shaft from the gearbox (-1 = none)
@@ -184,6 +231,16 @@ struct ChassisFrame {
     double releaseDist = 0.02;  // a node pushed this far out of shape is let go (it's being dented)
     double maxPull = 2500;      // most it pulls on one node (N): about what the body around it can carry,
                                 // so in a crash the body itself gives way (and the frame lets go)
+    // Steel that bends and stays bent (a frame rail): > 0, a node held further than this out
+    // of shape doesn't let go, it flows (its rest position moves), and the beams between its
+    // nodes take the same set. 0 = sheet metal: let go when shoved out of shape.
+    double yieldDist = 0;
+    std::vector<float> weight;  // per member: how hard it's held (x its mass), e.g. a welded-on bracket
+                                // is stouter than the bare rail; empty = all 1
+    std::vector<int> section;   // per member: which cross-section it's part of (a rail station's corners
+                                // bend together: the section itself only crushes under a far bigger
+                                // local shove); empty = each on its own
+    std::vector<std::vector<int>> beamsAt;  // per member: its beams to other members (built on first flow)
 };
 
 // Spatial hash of a car's skin triangles, rebuilt on demand for car-vs-car contact.
@@ -226,9 +283,19 @@ public:
     std::vector<std::array<int, 8>> cells;     // solid cells' corner node ids (bit 0 = +i, 1 = +j, 2 = +k)
     std::vector<std::array<int, 3>> cellIJK;   // lattice coordinates of each solid cell
     std::vector<std::pair<int, int>> skinEdges;  // unique panel edges (for pole collisions)
+    void buildWheelRub();      // each tire's nearby skin triangles (after the tris and rest shape exist)
     std::vector<V3> extForce;  // optional extra force per node (test rigs); empty = none
     ChassisFrame chassis;
+    // A body-on-frame truck's ladder frame: each rail (and everything welded to it) holds its
+    // own shape, stiff in bending; the crossmembers tie the two, and give in twist as a real
+    // ladder frame does. The body tub rides on it on its rubber mounts. Empty on a unibody.
+    ChassisFrame railFrame[2];
     int bodyNodes = 0;
+    // Ladder frame (body-on-frame trucks): its nodes, station by station (left rail's four
+    // section corners, then the right rail's), and the rubber body mounts.
+    std::vector<int> ladder;
+    int ladderStations = 0;
+    std::vector<int> bodyMountBeams;
     double mass = 0;
     double wheelbase = 2.5;
     double frontShare = 0.5;  // share of the weight on the front axle (at rest, from the build)
@@ -257,6 +324,11 @@ public:
     double boost = 0;           // turbo boost built up, 0..1
     bool tractionControl = true;
     double tcCut = 1;           // traction-control throttle multiplier
+    // Stability control: the yaw rate it measures (rad/s, + = turning left) and how hard it's
+    // working (0..1: braking the outside front, easing the throttle).
+    double escYaw = 0, escLevel = 0;
+    double govKmh = 0;          // the speed limiter's filtered road speed
+    V3 escFwd;
     double dragAssist = 0;      // throttle opened to stop engine braking locking the driven wheels
     double engineHealth = 1;    // drops as the engine bay is crushed
     bool engineDead = false;
@@ -359,6 +431,7 @@ private:
     std::vector<int> nearPoles;
     void poleEdgeContacts(double h, const World& w);
     void engineBlockContact(double h);
+    void panelBodyContact(double h);
 public:
     bool wheelPowered(const Wheel& wh) const;  // driven, attached, and its shafts are intact
     // 4x4 controls. setDriveMode/setLocker only change state; the caller decides when the
@@ -375,11 +448,14 @@ public:
 private:
     void applyTorque(const std::vector<int>& set, const V3& torque);
     void chassisForces(double h);
+    void chassisGroupForces(ChassisFrame& cf, double h);
     void releaseFromFrame(const Beam& b);
     void updateChassisMembership();
     void wheelStep(double h, const World& w);
     V3 groupAvg(const std::vector<int>& g) const;
     double engineTorque(double rpm) const;
+    double shaftStiffness() const;
+    void wheelBodyContact(double h);
     double gearRatio(int g) const;
 };
 
