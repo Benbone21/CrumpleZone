@@ -2940,9 +2940,9 @@ int main(int argc, char** argv) {
             if (bench && benchN) {
                 std::printf("bench: scene %.2f ms/frame over %d frames\n", 1000.0 * benchSum / benchN, benchN);
                 const PropStats& ps = renderer.propStats();
-                std::printf("bench: props %.2f ms GPU (timer queries), %.2f ms CPU; main %d draws, %d instances, %d billboards, %d scatter, %.0fk tris; "
+                std::printf("bench: props %.2f ms GPU (timer queries), %.2f ms CPU (%.2f ms culling/LODs); main %d draws, %d instances, %d billboards, %d scatter, %.0fk tris; "
                             "shadows %d draws, %d instances, %.0fk tris\n",
-                            ps.gpuMs, ps.cpuMs, ps.draws, ps.instances, ps.billboards, ps.scatter, ps.tris / 1000.0, ps.shadowDraws, ps.shadowInstances,
+                            ps.gpuMs, ps.cpuMs, ps.selectMs, ps.draws, ps.instances, ps.billboards, ps.scatter, ps.tris / 1000.0, ps.shadowDraws, ps.shadowInstances,
                             ps.shadowTris / 1000.0);
             }
             char path[512];

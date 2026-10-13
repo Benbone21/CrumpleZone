@@ -34,7 +34,8 @@ struct PropStats {
     long long tris = 0;
     int shadowDraws = 0, shadowInstances = 0;
     long long shadowTris = 0;
-    double cpuMs = 0;   // selection, buffer upload and draw submission (CPU)
+    double cpuMs = 0;   // selection, buffer upload and draw submission (CPU, GL driver calls included)
+    double selectMs = 0;  // of which picking LODs and culling (no GL)
     double gpuMs = -1;  // the props' share of the GPU frame: shadow passes + main pass (-1: none yet)
 };
 

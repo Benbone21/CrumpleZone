@@ -774,6 +774,12 @@ void PropRenderer::beginFrame(const World& w, const V3& eyePos, const M4& viewPr
 }
 
 void PropRenderer::select(const float pl[6][4], bool useBillboards, int lodBias, bool shadowPass) {
+    const auto t0 = std::chrono::steady_clock::now();
+    struct Timer {
+        const std::chrono::steady_clock::time_point t0;
+        double& out;
+        ~Timer() { out += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(); }
+    } timer{t0, stats.selectMs};
     for (Bucket& b : buckets) b.data.clear();
     bbData.resize(models.size());
     for (auto& v : bbData) v.clear();

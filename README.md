@@ -174,7 +174,7 @@ change and Enter to confirm. Esc goes back.
 - **Vehicle:** pick any of the seven vehicles, then press Enter (or click) to drive it.
 - **Settings:**
   - Game: speed in km/h or mph, time of day (CYCLE: dawn, day, dusk and night go round, a whole day in 6 to 96 real minutes, 24 by default; or held at MORNING, NOON, EVENING or NIGHT; the clock carries on from where you left it), volume, music volume (default 40%, 0 turns it off; it sits under the master volume), field of view.
-  - Graphics: a quality preset (low / medium / high / ultra), shadows, anti-aliasing (MSAA), ambient occlusion, bloom, clouds, render scale (50–200%).
+  - Graphics: a quality preset (low / medium / high / ultra), shadows, anti-aliasing (MSAA), ambient occlusion, bloom, clouds, grass, scanned scenery (photo-scanned ground and props: off / low / high / ultra), render scale (50–200%).
   - Display: fullscreen, vsync, FPS counter.
 
 Settings are saved to `~/.config/crumplezone/settings.txt`.
@@ -522,6 +522,24 @@ ABS and traction control aim for the slip that grips best on that tread and surf
   - rock with strata on steep ground
   - snow on high tops
   - craggy rim mountains, and a mountain range out to the horizon (visual only; the physics map is unchanged)
+- **Photo-scanned ground** (`src/groundtex.cpp`, `src/groundshader.cpp`, `assets/ground/`): ten CC0 Poly Haven
+  PBR sets (colour, normal, AO/roughness, height) in two texture arrays. Each 1 m cell's paint picks a mix of
+  materials (mud, dirt, leaf litter, two grasses, gravel, pale and orange ground, rock, snow); neighbouring cells
+  blend through a noise-wobbled, height-aware border (the knobbly material shows through first). Normal and ARM
+  maps light it; a second, turned and rescaled sample and large patches of lighter and warmer ground break up the
+  tiling; steep banks are mapped from the side (triplanar); detail fades out with distance. Paved ground, ice, the
+  freeway and the race circuit keep the code-made look. Tire tracks, rut lips, puddles in mud, the wet shore,
+  editor painting and night lighting all work on it. SCANNED SCENERY (settings) sets how many layers and taps it
+  takes and the texture size; OFF is the code-made ground.
+- **Scanned props** (`src/propdraw.cpp`, baked into `assets/props/` by `tools/bakeprops.cpp`): Poly Haven
+  scans drawn instanced with their colour, normal and AO/roughness maps, lit and shadowed like everything else
+  (they cast shadows too), each at one of three levels of detail by distance, culled to the view. Pines are
+  fir and pine saplings scaled to the tree, snags and logs are dead trunks (a log fitted to its collider), bushes
+  are shrubs, cliffs lie on the steep faces, and round the camera grass, ferns, stumps and branches grow off the
+  trails, water and pads. Far trees are billboards baked from eight sides. Boulders are the scans too, and so is
+  what you hit: `World::addRock` places the scan's convex hull (48 corners at most, in `rocks.hull`) scaled and
+  turned at random, and the renderer draws the scan in the same frame. Without `assets/props` (or with SCANNED
+  SCENERY off) the scenery is the code-made one, and so are the rock hulls without the bake.
 
 ## Vehicle visuals
 
@@ -600,6 +618,37 @@ Help only appears when you press H.
   - The music sits about 8–14 dB under the engine at the default setting and costs under 1% of one CPU core.
   - To review it offline, `build/review/music/musictest.cpp` renders each map to WAV and writes spectrograms, levels and a note trace.
 
+## Scanned assets
+
+The scans are CC0 from [Poly Haven](https://polyhaven.com). The raw downloads stay out of git:
+
+```bash
+python3 tools/fetch_polyhaven.py assets/source/polyhaven   # ~154 MB, md5-checked
+make bake                                                  # -> assets/props (committed): 3 LODs, atlases, hulls, billboards
+```
+
+`make bake` (needs ImageMagick's `convert`) simplifies each solid scan to three levels of detail (rocks about
+1,500, 400 and 100 triangles), unwraps each level and bakes the full scan's colour, normal and AO/roughness onto
+it, cuts each rock's convex hull down to 48 corners (`rocks.hull`, the format `World::addRock` uses), thins the
+leaf and needle cards for the lower levels (dropping cards, scaling the rest up, inside a triangle budget) and
+renders the trees' far billboards. `CZ_PROPS_DIR=DIR` points the game and the tests at another bake.
+
+The ground has no grass, sand or asphalt scan yet: grass is two scanned grounds tinted green, sand the pale
+ground warmed, asphalt the code-made look. CC0 sets that would fill the gaps (names to check against the sites):
+Poly Haven `leafy_grass`, `aerial_grass_rock` (grass), `coast_sand_01`, `aerial_beach_01` (sand), `asphalt_02`
+(asphalt); ambientCG `Grass001`-`Grass005`, `Asphalt012`.
+
+## Credits
+
+- Scanned rocks, cliffs, trees, plants, logs and ground materials: [Poly Haven](https://polyhaven.com), CC0
+  (rock_moss_set_01/02, rock_07, rock_09, boulder_01, stone_01, namaqualand_boulder_03/04/05,
+  namaqualand_boulders_01, namaqualand_stones_01, rock_face_01/02, namaqualand_cliff_01, fir_sapling,
+  pine_sapling_small, dead_tree_trunk, dead_tree_trunk_02, shrub_02/03/04, fern_02, grass_medium_02,
+  tree_stump_01/02, dry_branches_medium_01; forrest_ground_01, brown_mud_leaves_01, brown_mud_03, brown_mud_dry,
+  rocky_terrain_02, gravel_ground_01, sandy_gravel_02, snow_02, forest_leaves_04, rocky_trail).
+- `src/third_party/stb_image.h`: Sean Barrett, public domain.
+- `src/third_party/cgltf.h`: Johannes Kuhlmann, MIT license.
+
 ## How it works
 
 | File | What it does |
@@ -610,6 +659,9 @@ Help only appears when you press H.
 | `src/vehicles.*` | Vehicle and prop definitions |
 | `src/world.*` | Baked heightfield, road carving, trees, static obstacles, collision queries |
 | `src/render.*` | Shadow-mapped renderer: car body shader (per-pixel lamps, windows, trim), see-through glass pass, detailed wheels, HUD drawing |
+| `src/groundtex.*`, `src/groundshader.cpp` | The photo-scanned ground: texture arrays and the terrain shader that blends them |
+| `src/props.*`, `src/propdraw.*` | Scanned props: the baked model and hull files (no GL; the physics uses the hulls), and their instanced renderer |
+| `tools/bakeprops.cpp`, `tools/fetch_polyhaven.py` | Fetches the Poly Haven sources and bakes them into `assets/props` |
 | `src/carvisual.*` | Visual car models: subdivided body shell skinned to the physics, lattice-attached parts, running gear from the live suspension |
 | `src/fx.*` | Particles, skid marks and tire tracks (decals multiplied into the ground), the lips of shoved-aside ground along ruts and round sunk tires |
 | `src/audio.*` | Procedural sound |
