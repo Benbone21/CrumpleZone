@@ -436,6 +436,9 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         bronco.bumpRear = 0.11, bronco.droopRear = 0.16;
         bronco.swayDisconnect = 1;  // the dash button: front bar unhooks for crawling
         bronco.tirePsi = 35;
+        // Wheels that come off and a spare to swap on (tires.h): the trucks have it so far.
+        bronco.wheelLoss = true;
+        bronco.lugShear = 100000;  // six 14 mm studs
         bronco.tireType = TIRE_ALL_TERRAIN;
         bronco.tireGrip = 0.98;  // all-terrain tires: brake well, but the tall tread squirms in corners
         bronco.lateralGrip = 0.76;
@@ -643,6 +646,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         // (Not a Bronco underneath: a tube chassis with no ladder frame, body mounts, transfer
         // case skid or factory wheel wells, so none of the Bronco's frame settings carry over.)
         buggy.railSpacing = 0;
+        buggy.wheelLoss = false;  // (the trucks' wheels-come-off and spare swaps; not the buggy yet)
         buggy.frameMass = 0;
         buggy.skidDrop = 0;
         buggy.wellTireRadius = buggy.wellTireWidth = 0;
@@ -1036,6 +1040,8 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         tacoma.bumpRear = 0.10, tacoma.droopRear = 0.14;
         tacoma.swayDisconnect = 0;
         tacoma.tirePsi = 30;
+        tacoma.spareFlat = true;   // full-size, winched up under the bed
+        tacoma.lugShear = 90000;
         tacoma.tireType = TIRE_ALL_TERRAIN;
         tacoma.tireGrip = 0.95;
         tacoma.lateralGrip = 0.78;

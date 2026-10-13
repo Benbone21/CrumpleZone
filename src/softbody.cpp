@@ -941,12 +941,12 @@ void Car::wheelBodyContact(double h) {
     for (Wheel& wh : wheels) {
         wh.rubTorque = 0;
         wh.rub = 0;
-        if (wh.detached || wh.rubFaces.empty()) continue;
+        if (wh.detached || !wh.mounted || wh.rubFaces.empty()) continue;
         Node& a = nodes[wh.inner];
         Node& b = nodes[wh.outer];
         const V3 c = (a.p + b.p) * 0.5, vc = (a.v + b.v) * 0.5;
         V3 axis = norm(b.p - a.p);
-        const double half = wh.width * 0.5, R = wh.popped ? wh.rimR + 0.015 : wh.R, side = R - wh.rimR;
+        const double half = wh.width * 0.5, R = wh.rollR(), side = R - wh.rimR;
         const V3 spinAxis = wh.left ? axis : -axis;  // points to the car's left: + omega rolls it forward
         for (size_t ri = 0; ri < wh.rubFaces.size(); ri++) {
             const auto& tv = wh.rubFaces[ri];
@@ -1344,13 +1344,16 @@ void Car::wheelStep(double h, const World& w) {
         if (!wh.left) axis = -axis;  // axis always points to the car's left
 
         const double R = wh.rollR();
-        const double mu = spec->tireGrip * (wh.popped ? 0.55 : 1.0);
+        // (A blown tire runs on what's left of it; a rim or a bare hub on steel.)
+        const double mu = spec->tireGrip * (!wh.mounted ? 0.3 : wh.debeaded ? 0.45 : wh.popped ? 0.55 : 1.0);
+        const bool tire = wh.mounted && !wh.debeaded;  // rubber on the ground (else steel)
         double Fx = 0;
         wh.load = 0;
         wh.slip = 0;
         wh.sx = 0;
         Contact ct;
-        if (w.contact(c, R, &axis, wh.width * 0.5, ct)) {
+        if (!tire) wh.studLoad = wh.beadLoad = 0;
+        if (w.contact(c, R, &axis, (wh.mounted ? wh.width : 0.06) * 0.5, ct)) {
             const V3& n = ct.n;
             wh.surface = ct.surface;
             // Aired down, the tread spreads into a longer, softer patch: it wraps rocks and
@@ -1399,7 +1402,7 @@ void Car::wheelStep(double h, const World& w) {
                 }
             }
             // A hard rim strike pinches the tire (the sand under a rim gives; a rock's edge doesn't).
-            if (!gives && !wh.popped && rimPen > 0 && -vn > popSpeed * (si.sink > 0 ? 1.6 : 1.0)) {
+            if (tire && !gives && !wh.popped && rimPen > 0 && -vn > popSpeed * (si.sink > 0 ? 1.6 : 1.0)) {
                 wh.popped = true;
                 tirePops++;
             }
@@ -1448,6 +1451,15 @@ void Car::wheelStep(double h, const World& w) {
                 }
                 Fx = fx;
                 Ft = fdir * fx + sdir * fy;
+                // Aired right down, a hard sideways load rolls the bead off the rim (unless a
+                // beadlock clamps it): past ~0.75 g of side load at 8 psi, ~0.95 g at 12.
+                if (tire && spec->wheelLoss && !wh.popped && !spec->beadlock && tirePsi < 14 && std::fabs(vx) > 3) {
+                    const double side = std::fabs(fy) / std::max(N, 1.0);
+                    wh.beadLoad += (float)((side - wh.beadLoad) * std::min(1.0, h / 0.06));
+                    if (wh.beadLoad > 0.35 + tirePsi / 20) wh.shed = 2;
+                } else {
+                    wh.beadLoad = 0;
+                }
                 F += Ft;
                 wh.sx = sx;
                 wh.slip = (float)sm;
@@ -1484,6 +1496,17 @@ void Car::wheelStep(double h, const World& w) {
             V3 tau = cross(arm, Ft);
             tau -= axis * dot(tau, axis);
             if (!wh.detached) applyTorque(wh.assembly, tau);
+            // The studs carry the moment of a sideways shove at the tread (a curb or a rock's
+            // edge levering the wheel off its hub face); squeezed straight in on its face (lying
+            // on its side) the hub takes it. As the sideways force at the tread that would make
+            // the same moment: past what they hold, they shear and the wheel comes off.
+            if (tire) {
+                V3 M = cross(-n * (R - pen), F);
+                M -= axis * dot(M, axis);
+                const double stud = len(M) / R;
+                wh.studLoad += (float)((stud - wh.studLoad) * std::min(1.0, h / 0.005));
+                if (spec->wheelLoss && wh.studLoad > spec->lugShear) wh.shed = 1;
+            }
             wh.load = (float)N;
             wh.contactNormal = n;
             wh.contact = c - n * (R - pen);
@@ -2044,6 +2067,14 @@ void Sim::substep() {
         }
         if (!c.sleeping) c.computeForces(h, world);
     }
+    // A wheel that sheared off (or a tire that rolled off its rim) goes its own way.
+    for (int i = 0; i < N; i++)
+        for (int k = 0; k < (int)cars[i].wheels.size(); k++)
+            if (cars[i].wheels[k].shed) {
+                const bool tire = cars[i].wheels[k].shed == 2;
+                cars[i].wheels[k].shed = 0;
+                shedWheel(i, k, tire);
+            }
 
     for (int i = 0; i < N; i++)
         for (int j = i + 1; j < N; j++)
@@ -2052,6 +2083,7 @@ void Sim::substep() {
             if (!(cars[i].sleeping && cars[j].sleeping) && boundsOverlap(cars[i], cars[j])) collide(cars[i], cars[j]);
 
     if (!ropes.empty()) ropeForces();
+    if (!looseWheels.empty()) looseWheelForces();
 
     for (int i = 0; i < N; i++) {
         Car& c = cars[i];
@@ -2074,6 +2106,7 @@ void Sim::substep() {
             for (Wheel& wh : c.wheels) wh.omega = 0;
         }
     }
+    if (!looseWheels.empty()) looseWheelStep();
 }
 
 void Sim::collide(Car& A, Car& B) {

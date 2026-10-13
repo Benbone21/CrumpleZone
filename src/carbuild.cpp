@@ -108,6 +108,9 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
     buildCount++;
     nodes.clear();
     beams.clear();
+    hasSpare = false;
+    spareNodes.clear();
+    spareWeights.clear();
     tris.clear();
     quads.clear();
     cells.clear();
@@ -571,7 +574,24 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
         if (vs.panelMass > 0)
             for (int n = 0; n < bodyNodes; n++)
                 if (onSkin[n]) nodes[n].m += vs.panelMass / skinCount;
-        for (const MassItem& it : vs.items) addMassAt(V3(it.x, it.y, it.z), it.kg);
+        for (const MassItem& it : vs.items) {
+            addMassAt(V3(it.x, it.y, it.z), it.kg);
+            // The spare (tires.h): remember the nodes carrying it, so it can be drawn where it
+            // sits and its weight taken off with it.
+            const std::string nm = it.name;
+            if (vs.wheelLoss && nm.find("spare") != std::string::npos && nm.find("wheel") != std::string::npos) {
+                V3 f;
+                const int ci = cellNear(V3(it.x, it.y, it.z), &f);
+                spareNodes.clear();
+                spareWeights.clear();
+                for (int b = 0; b < 8; b++) {
+                    spareNodes.push_back(cells[ci][b]);
+                    spareWeights.push_back(((b & 1) ? f.x : 1 - f.x) * ((b & 2) ? f.y : 1 - f.y) * ((b & 4) ? f.z : 1 - f.z));
+                }
+                hasSpare = true;
+                spare.mass = it.kg;
+            }
+        }
     }
 
     // ---- 3b. Ladder frame (body-on-frame trucks) --------------------------------
@@ -1144,6 +1164,9 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
             // Tire mass is concentrated near its tread; the rim is closer to the axle.
             // A 0.65 inertia factor approximates that distribution, in kg m^2.
             wh.I = 0.65 * vs.wheelMass * R * R;
+            wh.item.R = wh.R, wh.item.rimR = wh.rimR, wh.item.width = ww;
+            wh.item.mass = vs.wheelMass, wh.item.I = wh.I;
+            wh.item.style = vs.wheelStyle, wh.item.from = vs.id;
             wh.brakeMax = front ? vs.brakeFront : vs.brakeRear;
             double wm = vs.wheelMass / 2 + vs.hubMass * 0.25;
             wh.inner = addNode(V3(xw, R, zc - s * ww / 2), wm, false);
@@ -2076,6 +2099,21 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
             const double cornerW = ms * (wh.front ? frontShare : 1 - frontShare) / 2 * g;
             sp.L0 = sp.Lorig = wh.springRest + cornerW / wh.motionRatio / sp.k;
         }
+    }
+    // The spare's size: a road wheel, unless the spec carries a smaller one (a space saver).
+    if (hasSpare && !wheels.empty()) {
+        const double kg = spare.mass;
+        spare = wheels.back().item;
+        spare.mass = kg;
+        if (vs.spareR > 0) {
+            spare.R = vs.spareR;
+            spare.rimR = vs.spareRimR > 0 ? vs.spareRimR : vs.spareR * 0.62;
+            spare.width = vs.spareWidth > 0 ? vs.spareWidth : spare.width;
+            if (vs.spareMass > 0) spare.mass = vs.spareMass;
+            spare.I = 0.65 * spare.mass * spare.R * spare.R;
+        }
+    } else {
+        hasSpare = false;
     }
     restLocal = local;
     wheelbase = 2.5;
