@@ -15,7 +15,7 @@ nice -n 15 ./build/run_tests --jobs 6  # every scenario in parallel, about 60 s;
 ./build/run_tests --update-baseline    # after an intended behavior change: re-record tests/baseline.txt
 ```
 
-- Every change must keep all scenarios passing (currently 257; the flaky ones are named in the history below). A failing range means the
+- Every change must keep all scenarios passing (currently 257; flaky ones are listed in the Backcountry history entry). A failing range means the
   physics drifted from real-world numbers. Fix the physics, don't just widen the range,
   unless the range itself was wrong. If you widen one, say why in a comment.
 - Don't hand-edit `tests/baseline.txt`. Drift warnings (>10% from it) are informational.
@@ -244,5 +244,5 @@ Without `--time`, captures start at 10:00 with the clock running.
   - Test: `components/axle-articulation`. Landing test `axleLanding` is written but not registered until the flip is fixed.
 - **2026-10-13, Claude: the Backcountry map**
   - New map (`--map 4`, `src/backcountry.cpp`): forested hill country built for driving with buddies. A trailhead camp and 4 km of trails radiating from it, each rated green to red on its signs: the Mud Run (ruts, mud stretches, four bog holes), Creek Crawl (boulder gardens and eight ledges up to 0.45 m, to an old mine), Slickrock Ridge (off-camber slabs, rock drops, down to Elk River), the ford and the deep crossing, Heartbreak Hill, the sand wash and dune bowl, the shelf road along a canyon (a real drop, the wreck site on the floor below), the snow pass with ice and a frozen pond, the tower road, the cabin spur. Four repair camps, 16 discoverable places (`pilotPlaces`), music style reuses the mountain's.
-  - Tests: 11 new scenarios in `tests/backcountry.cpp`.
+  - Tests: 12 new scenarios in `tests/backcountry.cpp`. Known flaky or failing, not from this change: the crawl tests `frontier/mesa-climb`, `frontier/the-wall`, `maps/hard-lines`, `offroad/gully`, `offroad/widowmaker`, `offroad/shaft-break` (the last full run failed only `frontier/mesa-climb`), and `mods/bronco/engine/raptor-3.0-v6-swap` (0-80 ratio 1.00, limit 0.99).
   - Bugs found on the way: a corridor shaped round one trail cut into another one's tread (it skips cells near an earlier tread now); rock ledges placed near the river ended up taller than designed, because the river's bank was cut after them.
