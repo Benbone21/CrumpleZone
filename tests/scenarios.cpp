@@ -690,6 +690,63 @@ VEHICLE_SCENARIO(bumpSteer, "structure/bump-steer", "Body pressed down and lifte
     ctx.note("worst at " + std::to_string(worstAt * 100) + " cm of travel");
 }
 
+// Ground clearance (under the lowest thing: a solid axle's diff) and the approach, departure
+// and breakover angles, from the truck as it sits: what it can get its nose, tail and belly
+// over. Measured off the nodes that collide (each a 4 cm sphere), against ramps tangent to
+// the tires.
+VEHICLE_SCENARIO(clearanceAngles, "structure/clearance", "Ground clearance and approach, departure and breakover angles against the published figures") {
+    struct Expect {
+        Range clear, approach, depart, breakover;
+    };
+    // EF Civic: ~0.15 m (estimate). Jesko: ~0.10 m nose-down at rest (it lifts its nose to clear
+    // ramps). Bronco 4-door on 33s: ESTIMATES between Ford's base (35.5 / 29.8 / 21) and
+    // Sasquatch (43.2 / 37.0 / 26.3, 0.29 m) figures. 4Runner as built (2 in body lift, OME,
+    // 35s, steel bumpers): stock ~32 / ~26 and ~0.23 m, built higher (estimates). Tacoma TRD
+    // Off-Road: 9.4 in, 32 / 23.5 / 21 degrees (Toyota and dealer spec sheets).
+    static const Expect expect[] = {
+        {{0.11, 0.17}, {12, 22}, {15, 25}, {9, 17}},
+        {{0.05, 0.12}, {3, 10}, {2, 9}, {4, 10}},
+        {{0.24, 0.30}, {36, 44}, {32, 39}, {21, 27}},
+        {{0.27, 0.33}, {36, 46}, {28, 38}, {28, 40}},
+        {{0.22, 0.26}, {29, 35}, {21.5, 26}, {19, 24}},
+    };
+    Car& c = ctx.add(spec, -100, -50, 0);
+    ctx.focus(c);
+    ctx.run(2.0, [&] { c.handbrake = 1; });
+    const Frame fr = c.frame();
+    const double g = ctx.sim.world.height(fr.com.x, fr.com.z), R = c.wheels[0].R;
+    double xf = -1e9, xr = 1e9;
+    for (const Wheel& w : c.wheels) {
+        const double x = dot((c.nodes[w.inner].p + c.nodes[w.outer].p) * 0.5 - fr.com, fr.fwd);
+        if (w.front) xf = std::max(xf, x);
+        else xr = std::min(xr, x);
+    }
+    // Steepest ramp, tangent to the tire (radius R, on the ground), that passes under a point
+    // dx out from the axle and hh up: dx sin a - (hh - R) cos a = R.
+    auto ramp = [&](double dx, double hh) {
+        double lo = 0, hi = M_PI / 2;
+        for (int it = 0; it < 50; it++) {
+            const double m = 0.5 * (lo + hi);
+            (dx * std::sin(m) - (hh - R) * std::cos(m) < R ? lo : hi) = m;
+        }
+        return lo * 180 / M_PI;
+    };
+    double clear = 1e9, approach = 90, depart = 90, breakover = 180;
+    for (const Node& n : c.nodes) {
+        if (!n.collide) continue;
+        const double x = dot(n.p - fr.com, fr.fwd), h = n.p.y - g - 0.04;
+        clear = std::min(clear, h);
+        if (x > xf) approach = std::min(approach, ramp(x - xf, h));
+        if (x < xr) depart = std::min(depart, ramp(xr - x, h));
+        if (x < xf && x > xr) breakover = std::min(breakover, ramp(xf - x, h) + ramp(x - xr, h));
+    }
+    const Expect& e = expect[vehicleIndex(spec)];
+    ctx.metric("ground clearance", clear, "m", e.clear.lo, e.clear.hi);
+    ctx.metric("approach angle", approach, "deg", e.approach.lo, e.approach.hi);
+    ctx.metric("departure angle", depart, "deg", e.depart.lo, e.depart.hi);
+    ctx.metric("breakover angle", breakover, "deg", e.breakover.lo, e.breakover.hi);
+}
+
 // Tilt table: the deck tips slowly sideways until the uphill wheels lift. Its static
 // stability factor (half the track over the CG height) is what NHTSA's rollover stars were
 // built on; the tilt angle comes in a little under it (tan) as the body rolls on its springs

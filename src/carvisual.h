@@ -94,9 +94,8 @@ void buildRunningGear(const Car& car, std::vector<Vtx>& out);
 // The frame rails and crossmembers under the floor (part of the running gear).
 void buildFrameRails(const Car& car, std::vector<Vtx>& out);
 
-// A solid axle as drawn: tube and diff radii (Dana 44: 3 in tubes, a ~10.5 in cover;
-// the 4Runner's 8 in is a little smaller).
-constexpr double kAxleTubeR = 0.04, kAxleDiffR = 0.13;
+// (A solid axle's tube and diff radii, kAxleTubeR and kAxleDiffR, are in softbody.h: the
+// physics collides at the size it's drawn.)
 // How far a hard landing drives a solid axle past its spec'd bump travel, squashing the
 // bump stop. The frame, exhaust and tank over and around the axle are laid out to clear
 // it, and tests/components.cpp holds the physics to it.

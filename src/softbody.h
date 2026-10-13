@@ -94,6 +94,9 @@ struct SuspLink {
 // Diff side gear plus its share of the ring gear, carrier and prop shaft, as seen at one
 // half shaft (kg*m^2).
 constexpr double kSideGearI = 0.15;
+// A solid axle's tube and diff housing (pumpkin) radii: drawn at this size, and what hits
+// the ground.
+constexpr double kAxleTubeR = 0.04, kAxleDiffR = 0.125;
 
 struct Wheel {
     int inner, outer;       // hub nodes: the axle runs inner -> outer

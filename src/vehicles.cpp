@@ -356,6 +356,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         bronco.frontOverhang = 0.775;
         bronco.topLine = {1.13, 1.22, 1.25};  // flat clamshell hood
         bronco.bumperLift = 0.14;
+        bronco.bumperLiftRear = 0.09;  // ~35 degree departure on 33s (ESTIMATE: 29.8 base, 37.0 Sasquatch)
         bronco.cornerRound = 0.06;  // boxy
         bronco.roofTuck = 0.05;
         bronco.rakeFront = 0.32;    // upright windshield
@@ -400,6 +401,9 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         // it ~1.9 mm per 20 kN (E = 200 GPa, I = 22.7 in^4) up to then.
         bronco.railYield = 0.0065;
         bronco.bodyMounts = 8;
+        // Transfer case skid ~0.31 m up on 33s (ESTIMATE, from a ~24 degree breakover between
+        // the base 4-door's ~21 and the 35 in Sasquatch's 26.3).
+        bronco.skidDrop = 0.11;
         bronco.panelStrength = 1.6;
         bronco.pinStrength = 1.8;
         bronco.wheelRadius = 0.415;    // 285/70R17 (33 in)
@@ -543,6 +547,9 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         // ~6 mm per 20 kN up to then: half the Bronco's frame. (Here ~53 kN and ~5 mm: the
         // crossmembers and brackets stiffen it a little.) Its open tail twists: ~3 kNm/deg.
         runner.railYield = 0.011;
+        // Transfer case skid: a stock 3rd gen's ~0.30 m (ESTIMATE), plus the OME lift and the
+        // 35s' extra radius (the body lift doesn't move the frame): ~0.40 m.
+        runner.skidDrop = 0.15;
         runner.pinStrength = 1.8;
         // ...then the lift: ~65 mm of Old Man Emu springs, the 2 in (51 mm) body lift, and
         // 56 mm more tire radius (35x12.50R17 against the factory 265/70R16).
@@ -632,7 +639,8 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         tacoma.frontOverhang = 0.88;  // 32 degree approach angle
         tacoma.outerCellWidth = 0.35;  // the bed's walls and the wheel wells (1.19 m between the walls: 1.05 real between the wheel tubs, 1.44 at the top)
         tacoma.topLine = {1.07, 1.13, 1.17, 1.21};  // the hood rising to the cowl
-        tacoma.bumperLift = 0.17;
+        tacoma.bumperLift = 0.04;      // 32 degree approach: the air dam is low
+        tacoma.bumperLiftRear = 0.10;  // 23.5 degree departure (the step bumper and hitch)
         tacoma.cornerRound = 0.07;
         tacoma.roofTuck = 0.08;
         tacoma.rakeFront = 0.55;  // a raked windshield
@@ -690,6 +698,9 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         tacoma.frameStiffness = 0.05;
         tacoma.railYield = 0.0155;
         tacoma.bodyMounts = 10;    // cab and bed
+        // Its 21 degree breakover (dealer spec sheets; the long wheelbase) puts the lowest thing
+        // between the axles ~0.30 m up: the transfer case skid (ESTIMATE).
+        tacoma.skidDrop = 0.19;
         tacoma.wheelRadius = 0.389;  // P265/70R16, 777 mm
         tacoma.wheelWidth = 0.265;
         tacoma.wellTireRadius = 0.40;  // fits ~32s before it rubs

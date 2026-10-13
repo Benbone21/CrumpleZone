@@ -109,6 +109,7 @@ struct VehicleSpec {
     // Shaping applied to the lattice.
     double noseDrop, tailDrop;     // lower the top of the nose / tail
     double bumperLift;             // raise the bottom corners (approach angle)
+    double bumperLiftRear = -1;    // ...at the tail (departure angle); < 0 = the same
     double cornerRound;            // chamfer the four vertical corners
     double roofTuck;               // pull the roof sides inward
     double rakeFront, rakeRear;    // windshield / rear window slope
@@ -133,6 +134,10 @@ struct VehicleSpec {
     double railYield = 0.01;       // how far (m) a rail's shape is pushed before the steel yields
                                    // (sets its strength: the shape-holding pull at that point)
     int bodyMounts = 8;            // rubber mounts between the body and the frame
+    // The transfer case's skid plate, bolted under the frame behind the gearbox: the lowest
+    // thing between the axles on a 4x4 (what the breakover angle is measured to, and what
+    // high-centres it on a ridge). How far it hangs below the rails (m); 0 = none.
+    double skidDrop = 0;
 
     // Powertrain: engine and gearbox as one block on rubber mounts.
     double engineMass = 0, gearboxMass = 0;  // 0 = no powertrain (props)

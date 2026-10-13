@@ -266,7 +266,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
             if (i == NI - 1) y -= vs.tailDrop;
             if (i == NI - 2) y -= vs.tailDrop * 0.35;
         }
-        if (k == 0 && (i == 0 || i == NI - 1)) y += vs.bumperLift;
+        if (k == 0 && (i == 0 || i == NI - 1)) y += i == 0 || vs.bumperLiftRear < 0 ? vs.bumperLift : vs.bumperLiftRear;
         if ((i == 0 || i == NI - 1) && (j == 0 || j == NJ - 1)) {
             z -= (z > 0 ? 1 : -1) * vs.cornerRound;
             x -= (x > 0 ? 1 : -1) * vs.cornerRound * 0.5;
@@ -597,7 +597,8 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
         auto bottomAt = [&](double x) {
             // The horns rise ahead of the front axle to the bumper's line (and the tail to
             // the rear one), so the frame never hangs below the approach and departure angles.
-            double y = base + vs.bumperLift * std::max(smoothstep(xf0 + 0.3, xNose, x), smoothstep(xr - 0.5, xTail, x));
+            const double liftRear = vs.bumperLiftRear < 0 ? vs.bumperLift : vs.bumperLiftRear;
+            double y = base + std::max(vs.bumperLift * smoothstep(xf0 + 0.3, xNose, x), liftRear * smoothstep(xr - 0.5, xTail, x));
             if (!liveRear) return y;
             // Over a live axle: up 0.35 m ahead of its front clearance, and up from there on back.
             return std::max(y, base + kick * smoothstep(xr + 0.65, xr + 0.30, x));
@@ -971,6 +972,16 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                                    : tail - ca * 0.10 - up * 0.05;
         gearboxOut = addNode(outPos, 3.0, false);
         for (int n : gearboxTail) addBeam(gearboxOut, n, BEAM_ENGINE);
+        // The transfer case's skid plate: across the frame under the back of the gearbox, three
+        // points (nodes collide as 4 cm spheres) welded to the rails like any bracket, so a
+        // ridge under the belly lifts the frame, not the engine on its mounts.
+        if (ladderFrame && vs.skidDrop > 0 && vs.transfer != XFER_NONE) {
+            const double xs = tail.x - 0.15;
+            for (double z : {-0.18, 0.0, 0.18}) {
+                const int n = frameNode(V3(xs, vs.layerY[0] - vs.skidDrop + 0.04, z), 4.0);
+                nodes[n].collide = true;
+            }
+        }
         if (vs.transverse)
             for (int b = 0; b < 8; b++)
                 if (!(b & 1)) addBeam(gearboxOut, engineNodes[b], BEAM_ENGINE);
@@ -1247,6 +1258,37 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 wheels.push_back(wh);
             }
             rigid(as.nodes, BEAM_KNUCKLE);
+            // What a solid axle drags over the rocks: the diff's pumpkin, the lowest thing on the
+            // truck (ground clearance is measured under it), and the tubes either side. Nodes
+            // collide as 4 cm spheres: the pumpkin node sits that far above its bottom, ~12.5 cm
+            // below the axle's centre (an 8-8.8 in ring gear's housing: Toyota quotes 9.4 in under
+            // the Tacoma's on its loaded 265/70R16s), and a tube node halfway out to each hub.
+            // (Each is braced to a few of the housing's points, not welded to all of them: a
+            // light node on that many stiff beams would have to borrow weight off the body to
+            // stay stable, and the axle would get heavier.)
+            {
+                const double nodeR = 0.04;
+                auto brace = [&](int n, std::initializer_list<int> to) {
+                    for (int o : to) {
+                        const int bi = addBeam(n, o, BEAM_KNUCKLE);
+                        if (bi >= 0) beams[bi].k *= 0.1, beams[bi].c *= 0.3;
+                    }
+                };
+                const int hubL = wheels[axle.wheel[0]].inner, hubR = wheels[axle.wheel[1]].inner;
+                const int pump = addNode(V3(xw, R - kAxleDiffR + nodeR, 0), am * 0.05, true);
+                brace(pump, {diff, pinion, dtop, hubL, hubR});
+                nodes[diff].m -= am * 0.11;
+                axle.housing.push_back(pump);
+                as.nodes.push_back(pump);
+                for (int sIdx = 0; sIdx < 2; sIdx++) {
+                    const int s = sIdx == 0 ? -1 : 1;
+                    const int hub = sIdx == 0 ? hubL : hubR;
+                    const int tube = addNode(V3(xw, R - (kAxleTubeR - nodeR), s * std::fabs(wheelZ(s, ax)) * 0.5), am * 0.03, true);
+                    brace(tube, {diff, hub, seat[sIdx], lowMount[sIdx], pump});
+                    axle.housing.push_back(tube);
+                    as.nodes.push_back(tube);
+                }
+            }
             const bool leaf = !front && vs.leafSprings;
             for (int sIdx = 0; sIdx < 2; sIdx++) {
                 Wheel& wh = wheels[axle.wheel[sIdx]];

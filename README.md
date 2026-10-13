@@ -230,6 +230,11 @@ all-terrains. Its garage takes it to a TRD Pro, a long-travel build or a 6-speed
   with Ackermann geometry. A hard knock can bend a tie rod, and the car then pulls.
 - **Driveline.** Prop shafts and half shafts. If one is torn off, the wheels it drives
   lose power.
+- **Underbody.** A solid axle's diff and tubes hit the ground and the rocks (the diff is
+  the lowest thing on the truck: hang it on a rock and the axle's held up), and on a 4x4
+  the transfer case's skid plate hangs under the frame between the axles, where a ridge
+  high-centres it. Clearance and angles come out at the real trucks' (the Tacoma's 9.4 in,
+  32° approach, 23.5° departure, 21° breakover: `structure/clearance`).
 - **Panels.** The hood, doors, bumpers and trunk lid (rear doors on the van) are
   separate sheets pinned on with hinges, latches and clips. In a crash, clips and
   latches break: doors swing open on their hinges, hoods pop up, and bumpers fall off.
