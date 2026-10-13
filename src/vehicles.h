@@ -121,6 +121,13 @@ struct VehicleSpec {
     double frameStrength = 1.0;    // multiplier on how far frame rails bend before they take a set (ladder frames: more)
     double panelStrength = 1.0;    // multiplier on panel sheet metal (thicker truck doors and hoods: more)
     double pinStrength = 1.0;      // multiplier on the force hinges, latches and clips hold
+    // Body on frame: a separate steel ladder frame carries the suspension, the engine and the
+    // recovery points, and the body tub sits on it on rubber mounts (0 rail spacing = unibody).
+    double railSpacing = 0;        // between the two rails' centres (m)
+    double railHeight = 0.20;      // boxed rail section, tall x wide (m)
+    double railWidth = 0.09;
+    double frameMass = 0;          // kg (part of structureMass)
+    int bodyMounts = 8;            // rubber mounts between the body and the frame
 
     // Powertrain: engine and gearbox as one block on rubber mounts.
     double engineMass = 0, gearboxMass = 0;  // 0 = no powertrain (props)

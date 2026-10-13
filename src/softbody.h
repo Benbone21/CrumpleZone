@@ -256,6 +256,11 @@ public:
     std::vector<V3> extForce;  // optional extra force per node (test rigs); empty = none
     ChassisFrame chassis;
     int bodyNodes = 0;
+    // Ladder frame (body-on-frame trucks): its nodes, station by station (left rail's four
+    // section corners, then the right rail's), and the rubber body mounts.
+    std::vector<int> ladder;
+    int ladderStations = 0;
+    std::vector<int> bodyMountBeams;
     double mass = 0;
     double wheelbase = 2.5;
     double frontShare = 0.5;  // share of the weight on the front axle (at rest, from the build)

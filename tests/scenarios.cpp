@@ -601,7 +601,9 @@ VEHICLE_SCENARIO(travel, "structure/suspension-travel", "Body pressed down to 1.
     double worst = 1e9;  // smallest drop per extra g between steps (m per g)
     for (size_t i = 1; i < down.size(); i++) worst = std::min(worst, (down[i - 1].y - down[i].y) / (down[i].load - down[i - 1].load));
     for (size_t i = 1; i < up.size(); i++) worst = std::min(worst, (up[i].y - up[i - 1].y) / (up[i - 1].load - up[i].load));
-    ctx.metric("compression at +0.8 g extra load", (y0 - lowest) * 1000, "mm", 30, 170);
+    // (Down to ~25 mm: the Jesko's ~2.3 Hz ride plus its heave springs is ~4 cm per g
+    // before the stops.)
+    ctx.metric("compression at +0.8 g extra load", (y0 - lowest) * 1000, "mm", 25, 170);
     ctx.metric("extension at 0.6 g lift", (highest - y0) * 1000, "mm", 20, 170);
     // Positive everywhere = the body always moves with the load. (Bump stops make it small.)
     ctx.metric("least travel per g anywhere in the range", worst * 1000, "mm/g", 2, 1000);

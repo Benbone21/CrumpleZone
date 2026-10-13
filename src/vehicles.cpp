@@ -387,6 +387,13 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         bronco.frameStiffness = 0.30;  // ladder frame: twists more than a unibody
         bronco.bodyStrength = 1.0;     // high-strength steel body
         bronco.frameStrength = 2.0;
+        // Fully boxed ladder frame, seven crossmembers; rails up to 9.06 x 3.58 in (Ford
+        // spec; 0.20 m is the average depth along it). Rail spacing and mass: estimates.
+        bronco.railSpacing = 1.00;
+        bronco.railHeight = 0.20;
+        bronco.railWidth = 0.091;
+        bronco.frameMass = 230;
+        bronco.bodyMounts = 8;
         bronco.panelStrength = 1.6;
         bronco.pinStrength = 1.8;
         bronco.wheelRadius = 0.415;    // 285/70R17 (33 in)
@@ -516,6 +523,13 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         runner.bodyStrength = 1.0;   // thick 90s sheet metal
         runner.frameStrength = 2.0;
         runner.panelStrength = 1.6;
+        // Boxed ladder frame (C-channel at the tail), ~1/8 in wall, ~2.75 in wide rails;
+        // 36.75 in outside at the hitch, so ~0.86 m between the rails' centres there (ESTIMATE:
+        // 0.90 m along the cab). Depth and mass: estimates.
+        runner.railSpacing = 0.90;
+        runner.railHeight = 0.15;
+        runner.railWidth = 0.07;
+        runner.frameMass = 170;
         runner.pinStrength = 1.8;
         // ...then the lift: ~65 mm of Old Man Emu springs, the 2 in (51 mm) body lift, and
         // 56 mm more tire radius (35x12.50R17 against the factory 265/70R16).

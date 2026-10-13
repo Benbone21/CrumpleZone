@@ -191,7 +191,8 @@ void axleLanding(Ctx& ctx, const VehicleSpec& spec, const std::string& tag, doub
     const double bump = spec.bumpRear;
     ctx.metric(tag + ": axle past its spec bump (" + std::to_string((int)std::lround(bump * 100)) + " cm), squashing the stop", (aw.rise - bump) * 100, "cm", -6, kAxleCrush * 100);
     ctx.check(tag + ": housing stays upright on its links (worst pitch " + std::to_string((int)std::lround(aw.pitch)) + " deg)", std::fabs(aw.pitch) < 35);
-    ctx.check(tag + ": settles back level", std::fabs(aw.housingPitch()) < 3 && aw.riseNow() < 0.04);
+    ctx.check(tag + ": settles back level", std::fabs(aw.housingPitch()) < 3 && aw.riseNow() < 0.04,
+              "pitch " + std::to_string(aw.housingPitch()) + " deg, rise " + std::to_string(aw.riseNow() * 100) + " cm");
     ctx.sim.carRemoved((int)ctx.sim.cars.size() - 1);
     ctx.sim.cars.pop_back();
 }
@@ -325,7 +326,7 @@ SCENARIO(torqueConverter, "components/torque-converter", "Bronco automatic: idle
 
 // ---- A tire rammed up into its own wheel well -------------------------------------
 // The front-left coil-over has torn out (spring, damper and bump stop gone), and the truck
-// drops 1.2 m with that tire landing on a 0.45 m rock block. Nothing stops the wheel now
+// drops 1.5 m with that tire landing on a 0.5 m rock block. Nothing stops the wheel now
 // but the body: the tire must meet the wheel well, not pass through it. It shoves the
 // sheet metal (which dents) and the body pushes back through the hub.
 VEHICLE_SCENARIO(tireIntoFender, "components/tire-into-fender", "Coil-over torn out, dropped with that tire on a rock: the tire hits the wheel well and dents it instead of clipping through") {
@@ -335,10 +336,10 @@ VEHICLE_SCENARIO(tireIntoFender, "components/tire-into-fender", "Coil-over torn 
     Wheel& w = c.wheels[0];
     const V3 hub = (c.nodes[w.inner].p + c.nodes[w.outer].p) * 0.5;
     const double ground = ctx.sim.world.height(hub.x, hub.z);
-    ctx.sim.world.addBox(V3(hub.x, ground + 0.225, hub.z), V3(0.35, 0.225, 0.25), 0, 0, 0, V3(0.55, 0.55, 0.53));
+    ctx.sim.world.addBox(V3(hub.x, ground + 0.25, hub.z), V3(0.35, 0.25, 0.25), 0, 0, 0, V3(0.55, 0.55, 0.53));
     ctx.sim.world.buildGrid();
     c.beams[w.spring].broken = true;
-    for (Node& n : c.nodes) n.p.y += 1.2;
+    for (Node& n : c.nodes) n.p.y += 1.5;
     std::vector<double> L0(c.beams.size());
     for (size_t i = 0; i < c.beams.size(); i++) L0[i] = c.beams[i].L0;
     double peak = 0, deepest = 0;
