@@ -40,6 +40,10 @@ make
 `./crumplezone` lands, the HUD says NEW BUILD READY; press F5 and the game restarts on
 it, on the same map, in the same vehicle (with its garage parts), at the same spot.
 
+## Releases
+
+Pushing a version tag (`git tag v0.2.0 && git push origin v0.2.0`) runs `.github/workflows/release.yml`: GitHub builds the Windows zip and the Debian package (`make deb`) and publishes them as a release, with notes from `docs/releases/<tag>.md`. Install the `.deb` with `sudo apt install ./crumplezone_<version>_amd64.deb`; it puts the game in `/opt/crumplezone` and `crumplezone` on the path.
+
 ## Windows
 
 `make windows` cross-compiles `build/win/CrumpleZone/crumplezone.exe` (with `SDL2.dll` beside it) and zips it. It needs the mingw-w64 cross compiler (`g++-mingw-w64-x86-64-posix`) and the official SDL2 x64 Windows runtime (`SDL2.dll`) in `third_party/sdl2-win64/`. Settings and the garage live in `%APPDATA%\crumplezone` on Windows. Multiplayer works between Linux and Windows.

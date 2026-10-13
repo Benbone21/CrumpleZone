@@ -1,0 +1,46 @@
+# Builds the Windows zip and the Debian package and publishes them as a GitHub release
+# whenever a version tag (v1.2.3) is pushed. Release notes come from docs/releases/<tag>.md
+# when it exists, else GitHub writes them from the commits.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchains
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q g++ g++-mingw-w64-x86-64-posix zip libsdl2-2.0-0
+
+      - name: Linux build and .deb
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # Generic x86-64 (the Makefile's default is -march=native: this machine's CPU only).
+          make -j"$(nproc)" CXXFLAGS="-O2 -march=x86-64-v2 -mtune=generic" crumplezone
+          make deb VERSION="$VERSION"
+
+      - name: Windows build
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          make -j"$(nproc)" windows
+          mv build/win/CrumpleZone-windows.zip "build/win/CrumpleZone-${VERSION}-windows-x64.zip"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          notes=(--generate-notes)
+          if [ -f "docs/releases/${GITHUB_REF_NAME}.md" ]; then notes=(--notes-file "docs/releases/${GITHUB_REF_NAME}.md"); fi
+          gh release create "$GITHUB_REF_NAME" --title "Crumple Zone ${VERSION}" "${notes[@]}" \
+            "build/win/CrumpleZone-${VERSION}-windows-x64.zip" \
+            "build/deb/crumplezone_${VERSION}_amd64.deb"
