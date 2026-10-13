@@ -108,7 +108,7 @@ scenario finishes, you can drive around in the aftermath.
 | W / S or ↑ / ↓ | Throttle / brake (hold S when stopped to reverse) |
 | A / D or ← / → | Steer. Keys are all or nothing, so full steer is as much as the tires can hold at your speed, on that surface (full lock when parking, a few degrees at 130 km/h), plus room to catch a slide |
 | Space | Handbrake |
-| 1 2 3 4 | Become the Civic / Jesko / Bronco / 4Runner (repaired, in place) |
+| 1 2 3 4 5 | Become the Civic / Jesko / Bronco / 4Runner / Tacoma (repaired, in place) |
 | G | Garage: W/S pick engine, suspension or transmission, A/D change the part, Enter fits it |
 | Q / E | Shift down / up (switches to manual) |
 | M | Manual / automatic gearbox |

@@ -927,7 +927,7 @@ void drawHelp(Renderer& r, float u, int W, int H, bool mph) {
         {"V", "WINCH: HOOK / UNHOOK"},        {"Z", "WINCH IN (SHIFT+Z: OUT, - = SPEED)"},
         {"O", "TOW STRAP TO NEARBY TRUCK"},   {"Y", "FRONT SWAY BAR DISCONNECT"},
         {"9 0", "AIR DOWN / UP (STOPPED)"},
-        {"1 - 4", "CIVIC JESKO BRONCO 4RUNNER"}, {"G", "GARAGE: ENGINE, SUSPENSION, GEARBOX"},
+        {"1 - 5", "CIVIC JESKO BRONCO 4RUNNER TACOMA"}, {"G", "GARAGE: ENGINE, SUSPENSION, GEARBOX"},
         {"Q E", "SHIFT DOWN / UP"},           {"M", "MANUAL / AUTOMATIC"},
         {"L", mph ? "4X4: 2H 4H 4L (LOW: BELOW 5 MPH)" : "4X4: 2H 4H 4L (LOW: BELOW 8 KM/H)"},
         {"SHIFT+L", "LIGHTS: AUTO, LOW, HIGH, OFF"},
@@ -1947,7 +1947,8 @@ int main(int argc, char** argv) {
                         case SC_1:
                         case SC_2:
                         case SC_3:
-                        case SC_4: {
+                        case SC_4:
+                        case SC_5: {
                             size_t idx = evKeyScancode(e) - SC_1;
                             if (idx < vehicleCatalog().size()) {
                                 sim.swapPlayerVehicle(garage.spec((int)idx));

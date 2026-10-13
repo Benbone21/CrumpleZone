@@ -985,7 +985,8 @@ void buildParts(const Car& car, PartBuilder& pb) {
     seat(frontSeatX, driverZ, 0.23);
     seat(frontSeatX, -driverZ, 0.23);
     // Rear bench, far enough forward to sit under the roof (fastbacks slope down early).
-    if (cabLen > 1.5 && vs.model != 1) seat(std::min(cabRear + 0.42 + 0.6 * vs.rakeRear, frontSeatX - 0.75), 0, W / 2 - 0.22);
+    // (Its back kept inside the cab: a pickup's back wall is right behind the rear seat.)
+    if (cabLen > 1.5 && vs.model != 1) seat(std::max(cabRear + 0.33, std::min(cabRear + 0.42 + 0.6 * vs.rakeRear, frontSeatX - 0.75)), 0, W / 2 - 0.22);
 
     // Mirrors on stalks at the base of the A-pillars, and wipers.
     for (int s = -1; s <= 1; s += 2) {
