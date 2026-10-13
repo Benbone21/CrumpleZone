@@ -7,6 +7,7 @@ namespace {
 
 const VehicleSpec& bronco() { return vehicleCatalog()[2]; }
 const VehicleSpec& runner() { return vehicleCatalog()[3]; }
+const VehicleSpec& tacoma() { return vehicleCatalog()[4]; }
 
 // Crawls along a straight line through (x, z) heading north at walking pace:
 // pure-pursuit steering, throttle trimmed to hold the speed.
@@ -166,6 +167,9 @@ SCENARIO(rockHitsBronco, "structure/rock-hits/bronco", "Bronco on the trail: bel
 }
 SCENARIO(rockHitsRunner, "structure/rock-hits/4runner", "4Runner on the trail: belly, sill and ledge hits, a tip onto its side and roof, a corner into a boulder") {
     rockHits(ctx, runner());
+}
+SCENARIO(rockHitsTacoma, "structure/rock-hits/tacoma", "Tacoma on the trail: belly, sill and ledge hits, a tip onto its side and roof, a corner into a boulder") {
+    rockHits(ctx, tacoma());
 }
 
 SCENARIO(driveModeSwitching, "offroad/drive-modes", "2H drives the rear only; 4H ties the axles together; lockers need their axle driven") {
@@ -461,6 +465,10 @@ SCENARIO(rampTravel, "offroad/rti", "Ramp travel index on a 20 degree ramp: real
     // Today's long-travel Toyota IFS trucks score ~520-530; this older, shorter one less.)
     ctx.metric("4Runner RTI (lifted 3rd gen, front bar on: ~350-500)", r, "", 350, 650);
     ctx.metric("4Runner RTI, sway bar disconnected", rd, "", r + 10, 800);
+    // (Leaf springs: the rear axle twists the packs and the shackles swing, so the low
+    // corner droops a long way. Stock IFS front, bar on, limits it as on the 4Runner.)
+    const double t = rti(ctx, tacoma(), 85, false);
+    ctx.metric("Tacoma RTI (3rd gen TRD Off-Road, stock: ~450-520)", t, "", 400, 620);
 }
 
 // ---- The mountain's hard lines ---------------------------------------------------

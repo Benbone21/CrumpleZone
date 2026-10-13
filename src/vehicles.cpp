@@ -680,14 +680,15 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         // Hybrid frame: boxed ahead of the cab, C-channel under the bed, ~1/8 in wall,
         // ~2.75 in wide rails 37 in apart outside (2nd-gen measurement; ESTIMATE ~0.87 m
         // between centres), ~6.5 in deep (ESTIMATE). A 6.5 x 2.75 x 1/8 in C at ~50 ksi:
-        // ~2.5 in^3 and ~10 in^4 per rail, so a press between the axles (3.236 m apart) sets
-        // it at ~35 kN and bends it ~9 mm per 20 kN: the longest and softest frame here.
+        // ~2.5 in^3 and ~10 in^4 per rail (boxed: ~3.7 in^3, ~12 in^4), so a press between
+        // the axles (3.236 m apart, under the boxed cab section) sets it at ~35-50 kN and
+        // bends it ~9 mm per 20 kN: the longest and softest frame here.
         tacoma.railSpacing = 0.87;
         tacoma.railHeight = 0.165;
         tacoma.railWidth = 0.07;
         tacoma.frameMass = 100;
         tacoma.frameStiffness = 0.05;
-        tacoma.railYield = 0.012;
+        tacoma.railYield = 0.0155;
         tacoma.bodyMounts = 10;    // cab and bed
         tacoma.wheelRadius = 0.389;  // P265/70R16, 777 mm
         tacoma.wheelWidth = 0.265;

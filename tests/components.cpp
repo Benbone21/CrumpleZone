@@ -459,15 +459,19 @@ FramePress pressFrame(Ctx& ctx, const VehicleSpec& spec, double z, double peak) 
 }
 }  // namespace
 
-SCENARIO(framePress, "components/frame-press", "Bronco and 4Runner frames pressed between the axles: stiff like steel up to their yield, then they bend and stay bent") {
+SCENARIO(framePress, "components/frame-press", "Bronco, 4Runner and Tacoma frames pressed between the axles: stiff like steel up to their yield, then they bend and stay bent") {
     struct Expect {
         const VehicleSpec* spec;
         const char* tag;
         double sagLo, sagHi, setLo, setHi;
     };
     // Bronco: ~1.9 mm per 20 kN, sets at ~85 kN. 4Runner: ~6 mm, ~43 kN (estimate).
-    const Expect ex[2] = {{&vehicleCatalog()[2], "Bronco", 1.5, 4.0, 60, 120}, {&vehicleCatalog()[3], "4Runner", 3.5, 9.0, 35, 80}};
-    for (int i = 0; i < 2; i++) {
+    // Tacoma: a 4Runner-like section over a 16% longer span (sag ~ span^3, the load
+    // that yields it ~ 1/span): ~7-9 mm, ~35-50 kN (C-channel to boxed; estimate).
+    const Expect ex[3] = {{&vehicleCatalog()[2], "Bronco", 1.5, 4.0, 60, 120},
+                          {&vehicleCatalog()[3], "4Runner", 3.5, 9.0, 35, 80},
+                          {&vehicleCatalog()[4], "Tacoma", 4.5, 13.0, 28, 70}};
+    for (int i = 0; i < 3; i++) {
         const Expect& e = ex[i];
         ctx.sim.cars.clear();
         const FramePress r = pressFrame(ctx, *e.spec, -60 + 40 * i, 130000);
@@ -480,15 +484,16 @@ SCENARIO(framePress, "components/frame-press", "Bronco and 4Runner frames presse
     }
 }
 
-SCENARIO(frameTwist, "components/frame-twist", "The bare ladder frames twisted between the axles (body mounts cut): a boxed Bronco frame against an older, open-tailed 4Runner one") {
+SCENARIO(frameTwist, "components/frame-twist", "The bare ladder frames twisted between the axles (body mounts cut): a boxed Bronco frame against older, open-tailed 4Runner and Tacoma ones") {
     // Ladder frames on their own: older open C-channel ~2-5 kNm/deg, fully boxed ~8-20.
     struct Expect {
         const VehicleSpec* spec;
         const char* tag;
         double lo, hi;
     };
-    const Expect ex[2] = {{&vehicleCatalog()[2], "Bronco", 8, 20}, {&vehicleCatalog()[3], "4Runner", 2, 6}};
-    for (int i = 0; i < 2; i++) {
+    // (The Tacoma's is boxed under the cab and open C-channel under the bed.)
+    const Expect ex[3] = {{&vehicleCatalog()[2], "Bronco", 8, 20}, {&vehicleCatalog()[3], "4Runner", 2, 6}, {&vehicleCatalog()[4], "Tacoma", 2, 6}};
+    for (int i = 0; i < 3; i++) {
         const Expect& e = ex[i];
         ctx.sim.cars.clear();
         Car& c = ctx.add(*e.spec, -100, -60 + 40 * i, 0);

@@ -8,14 +8,15 @@ This file covers how to work on the code.
 
 ```bash
 make                                   # builds ./crumplezone (needs g++ and the libsdl2-2.0-0 runtime; no -dev packages)
-./crumplezone --player 3               # start in vehicle 3 (0 Civic, 1 Jesko, 2 Bronco, 3 4Runner)
+./crumplezone --player 3               # start in vehicle 3 (0 Civic, 1 Jesko, 2 Bronco, 3 4Runner, 4 Tacoma)
 make build/run_tests
-nice -n 15 ./build/run_tests --jobs 6  # every scenario in parallel, about 60 s; writes build/test_report.html
+nice -n 15 ./build/run_tests --jobs 6  # every scenario in parallel, about 6 min; writes build/test_report.html
 ./build/run_tests -v damage/           # one group, verbose (filter = substring of the scenario name)
 ./build/run_tests --update-baseline    # after an intended behavior change: re-record tests/baseline.txt
 ```
 
-- Every change must keep all scenarios passing (currently 161). A failing range means the
+- Every change must keep all scenarios passing (currently 284; `engine/performance` fails on a
+  slow or shared CPU, and `offroad/shaft-break` is open: see Open work). A failing range means the
   physics drifted from real-world numbers. Fix the physics, don't just widen the range,
   unless the range itself was wrong. If you widen one, say why in a comment.
 - Don't hand-edit `tests/baseline.txt`. Drift warnings (>10% from it) are informational.
@@ -39,11 +40,12 @@ Without `--time`, captures start at 10:00 with the clock running.
 
 | File | What's in it |
 | --- | --- |
-| `src/vehicles.h/.cpp` | `VehicleSpec` and the catalog of the four real vehicles. Each spec is a text side-profile lattice, dimensions, mass items, engine, gearbox, suspension, tires, aero and looks |
+| `src/vehicles.h/.cpp` | `VehicleSpec` and the catalog of the five real vehicles. Each spec is a text side-profile lattice, dimensions, mass items, engine, gearbox, suspension, tires, aero and looks |
 | `src/mods.h/.cpp` | Garage mods (engine, suspension, transmission). Each option is a function that edits a copy of the spec. `tunedSpec()` caches the result. The garage is saved to `~/.config/crumplezone/garage.txt` |
-| `src/carbuild.cpp` | Turns a spec into nodes and beams: body lattice, frame, engine on mounts, suspension linkages, bolt-on panels with pins, and the stability pass. Beam material table `kSpec` is at the top |
-| `src/softbody.h/.cpp` | The 2 kHz simulation: beams (yield, work hardening, breaking), pins, chassis shape-matching frame, tires, brakes, diffs, gearbox and auto-shift, aero, damage stats, glass |
-| `src/carvisual.cpp` | Builds the visible car: a smooth skin from the lattice, plus parts (engine, suspension, interior) and `buildExtras()` (wing, flares, armor bumpers, snorkel, roof basket...) |
+| `src/carbuild.cpp` | Turns a spec into nodes and beams: body lattice, ladder frame (`ladderFrame`: rails, crossmembers, brackets, body mounts), engine on mounts, suspension linkages (wishbones, struts, 4-link and leaf-sprung live axles), bolt-on panels with pins, and the stability pass. Beam material table `kSpec` and the frame constants (`kRailStiffness`, `kBracketYield`) are at the top |
+| `src/softbody.h/.cpp` | The 2 kHz simulation: beams (yield, work hardening, breaking, mount snubbers, leaf friction), pins, shape-matching groups (`chassis`, the plastic `railFrame[2]`), tires (and tire vs own body, `wheelBodyContact`), brakes, ABS/TC/ESC, diffs and half shafts, torque converter, gearbox and auto-shift, aero, damage stats, glass |
+| `src/carvisual.cpp` | Builds the visible car: a smooth skin from the lattice, plus parts (engine, suspension incl. leaf packs and shackles, frame rails, interior) and `buildExtras()` (wing, flares, armor bumpers, snorkel, roof basket...) |
+| `src/bodyshell.cpp` | Sculpted body shells (`ShellLines` + a per-car `Style`), bound to the physics cells so they dent and their panels open. Pickups (`ShellLines::bed`): behind `xCab` each section is the U of the bed |
 | `src/render.cpp` | GL renderer. The body shader draws lamps, grilles, door seams and two-tone trim from lattice coordinates. Wheel meshes come in a style per `WheelStyle`. The pipeline is HDR: the scene renders into an RGBA16F target (MSAA), then `postProcess()` runs SAO, the bloom chain and the ACES composite. There are two shadow cascades. Sky, clouds and fog live in `kCommonFS`; everything outputs linear HDR. Scenery-only terrain (crags and the backdrop range) comes from `sceneryHeight()` |
 | `src/main.cpp` | Window, input, camera, HUD, garage UI, command-line flags |
 | `src/music.h/.cpp` | Generative background music, one style per map (`Style`, indexed by `World::map`; later maps reuse them in turn). Seeded progressions, motif-based melodies, sections of 30–90 s; band-limited synths, Karplus-Strong plucks, an FDN reverb. `Audio` mixes it in the callback; volume is `Settings::music` x master. Offline review: `build/review/music/musictest.cpp` (WAVs, spectrograms, `layers`, `trace`, `soak`) |
@@ -66,7 +68,8 @@ Without `--time`, captures start at 10:00 with the clock running.
 | `tests/autopilot.cpp` | Autopilot routes and drives |
 | `tests/net.cpp` | Host + client sims in one process over loopback sockets |
 | `src/scenery.cpp` | Meshes for trees (pine, broadleaf, snag), boulders, rock slabs, logs and bushes. Rocks hug their colliders |
-| `tests/offroad.cpp` | 4x4 drive modes and lockers, crawl tests on the mountain (twister open vs locked, ledges, slickrock), map sanity |
+| `tests/offroad.cpp` | 4x4 drive modes and lockers, rock hits per truck, ramp travel index, crawl tests on the mountain (twister open vs locked, ledges, slickrock), map sanity |
+| `tests/components.cpp` | One part at a time: airborne tires, broken half shafts, door glass, live axle articulation and landings, brake TC, torque converter, tire into fender, sway bar set, frame press and frame twist |
 | `tests/scenarios.cpp` | Every scenario and the per-vehicle real-world expectation tables, indexed like the catalog |
 
 ## Conventions and gotchas
@@ -99,13 +102,23 @@ Without `--time`, captures start at 10:00 with the clock running.
   - They also break when the panel around them bends (the limits in `Car::updateStats`).
 - **Ride height:** `raiseBody()` moves the body, engine and mass items up. Mods use it for lifts, and `tires()` calls it for the change in tire radius.
 - **Mods:** the mods test checks that the ride height changes by exactly what the parts say, that the 0–80 km/h time changes the expected way, and that there's no damage or tipping.
+- **Ladder frames** (`VehicleSpec::ladderFrame`): each rail is its own shape-matched group (`Car::railFrame[2]`, see `chassisGroupForces`). Centreline nodes (|z| < 5 cm) belong to both rails at weight 1: they set how much the frame twists. A rail flows plastically by whole sections (a station's 4 corners move together by their mean excess; a lone node only past 3x `yieldDist`), and the frame beams at a flowed node take the new rest length. The fit is by real mass; bracket nodes are held harder (`kBracketYield`, 70 kN) but never lead the fit, and the leftover net force/torque is removed (a loaded bracket on one rail used to steer the truck). Calibrate with `components/frame-press` and `frame-twist`; `railYield` and `frameStiffness` are per vehicle.
+- **Mounts:** `Beam::snub` (ladder-frame engine and body mounts only) is a hard stop between the snubber gap and 2.5x yield; past that the mount takes a set. Unibody engine mounts must stay soft or the wall crashes stop crumpling.
+- **Tire vs own body** (`buildWheelRub`, `wheelBodyContact`): every skin sample has an allowance, how far the stock tire (or `wellTireRadius`/`wellTireWidth`, the biggest it was cut for) already reaches there over its travel and steering lock. Only penetration past that pushes. Change a vehicle's suspension travel or tires and the allowance follows.
+- **Leaf springs** (`leafSprings`, `leafHalf`): the visible `LINK_LEAF` is the front half (seat to hanger). A hidden lateral tie and a hidden wrap link (from under the housing to the frame) stand in for the pack's side and wind-up stiffness; the spring rate is a virtual coil above the seat with `Beam::friction` (inter-leaf friction, 8% of the corner's weight). `Wheel::shackle` is only for drawing.
+- **Stability pass and CG:** borrowing mass for stability moves the CG; a rebalance afterwards tilts the masses of the body's roomy nodes to put it back. If a new vehicle's CG test moves after a stiffness change, that's why.
+- **ESC** (`escYaw`, `escBrake`): brakes the outside front wheel and trims the throttle when yaw rate exceeds the steering's reference, or the rear slides; needs ABS, off in low range and with TC off. Brake TC judges spin along the drive direction (signed).
+- **Damage metric:** `Car::damage` is plastic strain over the BODY and CABIN beams, with frame and mount damage added on top (capped at 1). Adding frame beams doesn't dilute it.
+- **Shader edits without a GPU:** `python3 tools/glslcheck.py` pulls the car and lit shaders out of `render.cpp` and compiles them with `glslangValidator` (apt `glslang-tools`).
 - **Style:** match the surrounding code. Short comments explain *why* in plain words, with real-world figures where they matter.
 
 ## Open work
 
-- **Visual polish:** the four cars are recognisable, but they're built on a coarse lattice. Shapes are rough at the nose, the Civic's hatch and the Jesko's canopy.
+- **Visual polish:** the five vehicles are recognisable, but they're built on a coarse lattice. Shapes are rough at the nose, the Civic's hatch and the Jesko's canopy.
 - **Sound mix:** the engine voices haven't been heard on real speakers yet, only checked offline. Balance the volume and turbo/blower levels per car once someone listens.
   - To check offline, `build/review/claude/audiotest.cpp` renders each voice to WAV and spectrogram images.
+- **`offroad/shaft-break`:** a Bronco in 4L, both locked, at full lock on rock is meant to bind and snap a CV. The front CV's limit at full lock is ~4.65 kNm and the grip-limited shaft torque peaks ~7.6 kNm in a smooth bind, but the half shafts' compliance soaks up the hop spikes that break real ones. Failing since the ladder frames (839f1c8).
+- **Tacoma:** no sound voice of its own yet (it uses the generic V6), no winch or sliders (stock truck).
 
 ## History
 
@@ -235,3 +248,10 @@ Without `--time`, captures start at 10:00 with the clock running.
   - Found: a hard landing (≥2 m drop or tail-first jump) flips the 4-link over centre; the rear housing stays rolled ~110°, pinion up, in the floor. Cause: spring seat above/behind the tube, loaded by the bump stop through a tilting coil-over. Seat on the tube centre line fixes it, but costs crawl tests, so it's reverted. Still open.
   - Visual (`carvisual.cpp`): rails kick up over a live axle (`buildFrameRails`, `axleReach`), no centre rail over the prop shaft, crossmember behind the axle, exhaust over the axle, tank ahead of it, housing drawn at real size.
   - Test: `components/axle-articulation`. Landing test `axleLanding` is written but not registered until the flip is fixed.
+- **2026-10-12/13, Claude: drivetrain, parts that touch, ladder frames, Tacoma**
+  - Live axles land on jounce bumpers on the tube centre line and their brackets are one welded cluster: no more flipping (`components/axle-landing`). Half shafts are torsion springs; lockers are exact rows in the gear solve; torque converter; brake traction control on open diffs.
+  - Tires collide with their own body (with a per-sample allowance for the stock tire's travel); sway bars take a set.
+  - Real ladder frames on the Bronco, 4Runner and Tacoma: two plastic rails (shape-held per rail, bending by sections), crossmembers, brackets, rubber body mounts with snubbers. The body is a skin on top.
+  - Toyota Tacoma TRD Off-Road (catalog 4, key 5): leaf-sprung rear axle, hybrid frame, cab and open bed, its own shell and shader style, mods.
+  - ESC; rolling drag reacts on the knuckle; the governor reads filtered speed; the traffic AI feathers wheelspin.
+  - Tests: 284 (Tacoma rows everywhere, rock hits, RTI, frame press/twist).
