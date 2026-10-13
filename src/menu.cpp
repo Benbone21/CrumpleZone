@@ -142,6 +142,7 @@ enum Id {
     MULTI_ROW, NAME_ROW, HOST_ROW, ADDRESS_ROW, JOIN_ROW, LEAVE_ROW,
     PILOT_ROW, DEST_ROW, PSPEED_ROW, PROUTE_ROW, PGO_ROW, PSTOP_ROW,
     FREEDRIVE_ROW, LEVELS_ROW, LEVEL_PICK, LEVEL_PLAY, LEVEL_EDIT, EDITOR_ROW, LRESTART_ROW, LQUIT_ROW, MAINMENU_ROW,
+    JOBS_ROW, JOB_PICK, JOB_GO, JOB_STOP_ROW,
 };
 const char* kOffOn[2] = {"OFF", "ON"};
 
@@ -201,6 +202,18 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
         button(BACK_ROW, "BACK");
         return r;
     }
+    if (page == 5) {
+        header(jobActive ? jobStatus.c_str() : "JOBS ON THIS MAP");
+        if (!jobs.empty()) {
+            const int k = std::min(std::max(jobPick, 0), (int)jobs.size() - 1);
+            choice(JOB_PICK, "JOB", jobs[k].name, (int)jobs.size(), jobs[k].about);
+            for (const std::string& line : jobs[k].lines) r.push_back({HEADER, "", "", "", 0}), r.back().label = line, r.back().id = -1;
+            button(JOB_GO, jobActive ? "DO THIS ONE INSTEAD" : "START IT", netClient ? "THE HOST PICKS THE JOB" : netActive ? "EVERYONE IN THE SESSION" : "");
+        }
+        if (jobActive && !netClient) button(JOB_STOP_ROW, "GIVE UP THE JOB");
+        button(BACK_ROW, "BACK");
+        return r;
+    }
     if (page == 0) {
         const auto& cat = vehicleCatalog();
         button(RESUME_ROW, "RESUME");
@@ -211,6 +224,7 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
         choice(VEHICLE_ROW, "VEHICLE", cat[vehicle].name, (int)cat.size(), cat[vehicle].blurb);
         choice(MAP_ROW, "MAP", mapName(mapPick), MAP_COUNT, mapHint);
         button(LEVELS_ROW, "LEVELS", levelActive ? "PICK ANOTHER" : "RACES, CLIMBS AND WORLDS");
+        button(JOBS_ROW, "JOBS", jobActive ? jobStatus : "RECOVERIES, CONVOYS, SCOUTING");
         button(GARAGE_ROW, "GARAGE", "ENGINE, SUSPENSION, GEARBOX");
         button(PILOT_ROW, "AUTOPILOT", pilotActive ? pilotStatus : "DRIVE ITSELF SOMEWHERE");
         button(MULTI_ROW, "MULTIPLAYER", netActive ? netStatus : "HOST OR JOIN A GAME");
@@ -349,6 +363,10 @@ PauseMenu::Result PauseMenu::activate(int row, Settings& s) {
             return {LOAD_MAP, mapPick};
         case FREEDRIVE_ROW: return {FREE_DRIVE, vehicle};
         case LEVELS_ROW: goPage(4, LEVEL_PICK); return {};
+        case JOBS_ROW: goPage(5, JOB_PICK); return {};
+        case JOB_PICK:
+        case JOB_GO: return netClient ? Result{} : Result{JOB_START, jobPick};
+        case JOB_STOP_ROW: return {JOB_STOP};
         case LEVEL_PICK:
         case LEVEL_PLAY: return netClient ? Result{} : Result{PLAY_LEVEL, levelPick};
         case LEVEL_EDIT: return {EDIT_LEVEL, levelPick};
@@ -366,7 +384,7 @@ PauseMenu::Result PauseMenu::activate(int row, Settings& s) {
         case CONTROLS_ROW: return {CONTROLS};
         case RESET_ROW: return {RESET};
         case QUIT_ROW: return {QUIT};
-        case BACK_ROW: goPage(0, page == 2 ? MULTI_ROW : page == 3 ? PILOT_ROW : page == 4 ? LEVELS_ROW : SETTINGS_ROW); return {};
+        case BACK_ROW: goPage(0, page == 2 ? MULTI_ROW : page == 3 ? PILOT_ROW : page == 4 ? LEVELS_ROW : page == 5 ? JOBS_ROW : SETTINGS_ROW); return {};
         case HOST_ROW: return {HOST};
         case JOIN_ROW: return {JOIN};
         case LEAVE_ROW: return {LEAVE};
@@ -388,6 +406,7 @@ PauseMenu::Result PauseMenu::change(int row, int dir, Settings& s) {
         case VEHICLE_ROW: vehicle = cycle(vehicle); return {};
         case MAP_ROW: mapPick = cycle(mapPick); return {};
         case LEVEL_PICK: levelPick = cycle(std::min(std::max(levelPick, 0), it.count - 1)); return {};
+        case JOB_PICK: jobPick = cycle(std::min(std::max(jobPick, 0), it.count - 1)); return {};
         case UNITS: s.mph = !s.mph; break;
         case RECOVERY: s.realRecovery = !s.realRecovery; break;
         case FUEL: s.fuelMode = cycle(std::min(std::max(s.fuelMode, 0), 2)); break;
@@ -546,7 +565,7 @@ void PauseMenu::draw(Renderer& r, const Settings& s, int W, int H, double dt) {
     pill(r, x, y, w, h, 0.03f, 0.035f, 0.045f, 0.9f * a);
     r.rect(x + pad, y + pad + 8 * title + 8 * u, w - 2 * pad, 2 * u, 1.0f, 0.75f, 0.3f, 0.8f * a);
     label(r, x + pad, y + pad, title,
-          page == 0 ? (this->title ? "CRUMPLE ZONE" : "PAUSED") : page == 1 ? "SETTINGS" : page == 2 ? "MULTIPLAYER" : page == 3 ? "AUTOPILOT" : "LEVELS",
+          page == 0 ? (this->title ? "CRUMPLE ZONE" : "PAUSED") : page == 1 ? "SETTINGS" : page == 2 ? "MULTIPLAYER" : page == 3 ? "AUTOPILOT" : page == 4 ? "LEVELS" : "JOBS",
           1.0f, 0.75f, 0.3f, a);
     if (page == 0) {
         const char* tag = this->title ? "SOFT-BODY DRIVING: CRASH IT, CRAWL IT, RACE IT" : "CRUMPLE ZONE";
@@ -585,7 +604,12 @@ void PauseMenu::draw(Renderer& r, const Settings& s, int W, int H, double dt) {
             const float ar = on ? 1.0f : 0.6f, ag = on ? 0.75f : 0.6f, ab = on ? 0.3f : 0.62f;
             r.text(valueX + 8 * u, ty, ts, "<", ar, ag, ab, a);
             r.text(valueX + valueW - 8 * u - r.textWidth(">", ts), ty, ts, ">", ar, ag, ab, a);
-            r.text(valueX + (valueW - r.textWidth(row.value, ts)) / 2, ty, ts, row.value, 1, 1, 1, a);
+            {  // (a long value: smaller, to fit between the arrows)
+                const float vs = r.textWidth(row.value, ts) > valueW - 44 * u ? small : ts;
+                std::string v = row.value;
+                while (!v.empty() && r.textWidth(v, vs) > valueW - 44 * u) v.pop_back();
+                r.text(valueX + (valueW - r.textWidth(v, vs)) / 2, cy + (rowH - 8 * vs) / 2, vs, v, 1, 1, 1, a);
+            }
             if (hasHint) {
                 std::string hint = row.hint;
                 const float maxW = w - 2 * pad - 12 * u;

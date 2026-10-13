@@ -221,30 +221,34 @@ void Coop::drawWorld(Renderer& r, const Sim& sim, const NetSession& net, const V
         }
     }
     // Pings and the waypoint: a marker in the world, or an arrow at the screen's edge.
-    auto marker = [&](const V3& at, const std::string& t, const float* col, double age) {
-        const V3 p(at.x, sim.world.height(at.x, at.z) + 3, at.z);
-        const std::string text = t + "  " + distText(len(V3(at.x, me.y, at.z) - me));
-        const float a = (float)clampd((kPingLife - age) / 5, 0.2, 1.0);
-        float sx, sy;
-        const float ms = px(1.3f * u);
-        if (worldToScreen(view, W, H, p, sx, sy) && sx > 0 && sx < W && sy > 0 && sy < H) {
-            const float pulse = 1 + 0.15f * (float)std::sin(age * 6);
-            r.tri(sx - 10 * u * pulse, sy - 16 * u * pulse, sx + 10 * u * pulse, sy - 16 * u * pulse, sx, sy, col[0], col[1], col[2], a);
-            label(r, sx - r.textWidth(text, ms) / 2, sy - 34 * u, ms, text, col[0], col[1], col[2], a);
-        } else {
-            const V3 f = norm(V3(view.target.x - view.eye.x, 0, view.target.z - view.eye.z));
-            const V3 d = norm(V3(p.x - view.eye.x, 0, p.z - view.eye.z));
-            const double ang = std::atan2(f.x * d.z - f.z * d.x, dot(f, d));
-            const float ax = W / 2.0f + (float)clampd(ang / M_PI, -1, 1) * (W / 2.0f - 70 * u), ay = 150 * u;
-            const float dir = ang > 0 ? 1.0f : -1.0f;
-            r.tri(ax + dir * 14 * u, ay, ax - dir * 6 * u, ay - 10 * u, ax - dir * 6 * u, ay + 10 * u, col[0], col[1], col[2], a);
-            label(r, ax - r.textWidth(text, ms) / 2, ay + 14 * u, ms, text, col[0], col[1], col[2], a);
-        }
-    };
+    auto marker = [&](const V3& at, const std::string& t, const float* col, double age) { drawMarker(r, sim, view, W, H, at, t, col, age); };
     for (const Ping& p : pings) marker(p.p, p.who + ": " + kPingNames[p.kind], kPingCol[p.kind], p.age);
     if (haveWaypoint) {
         static const float wc[3] = {0.95f, 0.6f, 1.0f};
         marker(waypoint, "WAYPOINT", wc, 0);
+    }
+}
+
+void Coop::drawMarker(Renderer& r, const Sim& sim, const View& view, int W, int H, const V3& at, const std::string& t, const float col[3], double age) const {
+    const float u = std::max(0.75f, H / 720.0f);
+    const V3 me = sim.cars[sim.player].frame().com;
+    const V3 p(at.x, sim.world.height(at.x, at.z) + 3, at.z);
+    const std::string text = t + "  " + distText(len(V3(at.x, me.y, at.z) - me));
+    const float a = (float)clampd((kPingLife - age) / 5, 0.2, 1.0);
+    float sx, sy;
+    const float ms = px(1.3f * u);
+    if (worldToScreen(view, W, H, p, sx, sy) && sx > 0 && sx < W && sy > 0 && sy < H) {
+        const float pulse = 1 + 0.15f * (float)std::sin(age * 6);
+        r.tri(sx - 10 * u * pulse, sy - 16 * u * pulse, sx + 10 * u * pulse, sy - 16 * u * pulse, sx, sy, col[0], col[1], col[2], a);
+        label(r, sx - r.textWidth(text, ms) / 2, sy - 34 * u, ms, text, col[0], col[1], col[2], a);
+    } else {
+        const V3 f = norm(V3(view.target.x - view.eye.x, 0, view.target.z - view.eye.z));
+        const V3 d = norm(V3(p.x - view.eye.x, 0, p.z - view.eye.z));
+        const double ang = std::atan2(f.x * d.z - f.z * d.x, dot(f, d));
+        const float ax = W / 2.0f + (float)clampd(ang / M_PI, -1, 1) * (W / 2.0f - 70 * u), ay = 150 * u;
+        const float dir = ang > 0 ? 1.0f : -1.0f;
+        r.tri(ax + dir * 14 * u, ay, ax - dir * 6 * u, ay - 10 * u, ax - dir * 6 * u, ay + 10 * u, col[0], col[1], col[2], a);
+        label(r, ax - r.textWidth(text, ms) / 2, ay + 14 * u, ms, text, col[0], col[1], col[2], a);
     }
 }
 

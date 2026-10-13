@@ -61,6 +61,8 @@ public:
     // Drawing (HUD pixels): name tags, pings and waypoint in the world; the chat box; the map.
     void drawWorld(Renderer& r, const Sim& sim, const NetSession& net, const View& view, int W, int H) const;
     void drawChat(Renderer& r, int W, int H) const;
+    // A marker in the world (or an arrow at the screen's edge pointing to it).
+    void drawMarker(Renderer& r, const Sim& sim, const View& view, int W, int H, const V3& at, const std::string& text, const float col[3], double age = 0) const;
     void drawMap(Renderer& r, const Sim& sim, const NetSession& net, int W, int H, const std::vector<std::pair<std::string, V3>>& places);
 
 private:

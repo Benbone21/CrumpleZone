@@ -20,6 +20,7 @@
 #include <map>
 
 #include "audio.h"
+#include "jobs.h"
 #include "walker.h"
 #include "coop.h"
 #include "editor.h"
@@ -819,6 +820,8 @@ void drawVehicleCard(Renderer& r, const Car& car, float u, int H) {
         wy -= ph + 4 * u;
     }
 }
+
+inline float r_textW(Renderer& r, const std::string& s, float scale) { return r.textWidth(s, scale); }
 
 // ---- Levels on screen -------------------------------------------------------------------
 
@@ -1664,6 +1667,43 @@ int main(int argc, char** argv) {
         }
         return false;
     };
+    // ---- Jobs: recoveries, convoys, scouting (the host picks; everyone works on it) ----
+    std::vector<Job> jobList;
+    Job job;
+    bool jobOn = false, jobAnnounce = false;
+    double jobBanner = 0, jobResend = 0;
+    uint32_t jobSeed = 1;
+    std::string jobBannerText;
+    auto refreshJobs = [&]() {
+        std::vector<JobPlace> places;
+        for (const Place& pl : pilotPlaces(sim, net))
+            if (pl.kind == 0) places.push_back({pl.name, pl.p});
+        jobList = makeJobs(sim.world, places, jobSeed + (uint32_t)sim.world.map * 7919u);
+        menu.jobs.clear();
+        static const char* kinds[JOB_KIND_COUNT] = {"RECOVERY", "CONVOY", "SCOUTING"};
+        for (const Job& j : jobList) {
+            PauseMenu::LevelInfo li;
+            li.name = j.title;
+            li.about = j.about;
+            li.lines.push_back(std::string(kinds[j.kind]) + (j.kind == JOB_SCOUT ? ": " + std::to_string(j.spots.size()) + " PLACES" : ": " + j.targetName));
+            menu.jobs.push_back(li);
+        }
+        menu.jobPick = std::min(std::max(menu.jobPick, 0), std::max(0, (int)jobList.size() - 1));
+    };
+    refreshLevelsLater = [&]() {
+        refreshLevels();
+        refreshJobs();
+    };
+    auto startJob = [&](const Job& j) {
+        job = j;
+        job.done = false;
+        job.time = 0;
+        job.wreck = -1, job.wreckId = 0;
+        if (job.kind == JOB_RECOVER) spawnWreck(sim, job);
+        jobOn = true;
+        jobAnnounce = net.role == NetSession::HOST;
+        hud.toast("JOB: " + job.title);
+    };
     // ---- On foot ----
     Walker walker;
     double walkSend = 0, carCamDist = 7.5;
@@ -1810,6 +1850,21 @@ int main(int argc, char** argv) {
                 openEditor(l);
                 break;
             }
+            case PauseMenu::JOB_START:
+                if (res.vehicle < 0 || res.vehicle >= (int)jobList.size()) break;
+                if (net.role == NetSession::CLIENT) {
+                    hud.toast("THE HOST PICKS THE JOB");
+                    break;
+                }
+                closeMenu();
+                startJob(jobList[res.vehicle]);
+                break;
+            case PauseMenu::JOB_STOP:
+                closeMenu();
+                jobOn = false;
+                if (net.role == NetSession::HOST) net.sendGame("jobstop");
+                hud.toast("JOB ABANDONED");
+                break;
             case PauseMenu::LEVEL_RESTART:
                 closeMenu();
                 restartLevel();
@@ -2408,6 +2463,27 @@ int main(int argc, char** argv) {
                 }
             }
             for (const NetSession::GameMsg& m : net.gameIn) {
+                if (m.text.rfind("job|", 0) == 0) {  // the host's job (again, for latecomers)
+                    Job j;
+                    if (Job::parse(m.text, j) && (!jobOn || j.title != job.title || job.wreckId != j.wreckId)) {
+                        job = j;
+                        jobOn = true;
+                        hud.toast("JOB: " + job.title);
+                    }
+                    continue;
+                }
+                if (m.text == "jobstop") {
+                    jobOn = false;
+                    continue;
+                }
+                if (m.text == "jobdone") {
+                    if (jobOn && !job.done) {
+                        job.done = true;
+                        jobBanner = 6;
+                        jobBannerText = "JOB DONE: " + job.title;
+                    }
+                    continue;
+                }
                 if (m.text.rfind("fuel ", 0) == 0) {  // a buddy poured their can into one of mine
                     unsigned id = 0;
                     double liters = 0;
@@ -2446,6 +2522,48 @@ int main(int argc, char** argv) {
                 }
             }
             if (!sim.paused) sim.drive(up, down, left, right, hb, dt);
+            if (jobOn && !sim.paused) {
+                // Where everyone is: you (on foot or in the truck), and each other player's
+                // nearest truck (or them on foot).
+                std::vector<V3> players = {walker.active ? walker.p : sim.cars[sim.player].frame().com};
+                if (net.active())
+                    for (int pid = 0; pid < net::kMaxPeers; pid++) {
+                        if (pid == net.self || !net.players[pid].active) continue;
+                        double best = 1e18;
+                        V3 at;
+                        for (const Car& c : sim.cars)
+                            if (c.remote && !c.isProp() && NetSession::ownerOf(c.netId) == pid && c.netId != job.wreckId) {
+                                const V3 q = c.frame().com;
+                                const double d = std::hypot(q.x - job.target.x, q.z - job.target.z);
+                                if (d < best) best = d, at = q;
+                            }
+                        for (const RemoteWalker& rw : coop.walkers)
+                            if (rw.who == net.players[pid].name && std::hypot(rw.p.x - job.target.x, rw.p.z - job.target.z) < best) at = rw.p, best = 0;
+                        if (best < 1e17) players.push_back(at);
+                    }
+                const bool authority = net.role != NetSession::CLIENT;
+                if (updateJob(job, sim, players, dt) && authority) {
+                    jobBanner = 6;
+                    char b[96];
+                    std::snprintf(b, sizeof b, " IN %d:%02d", (int)job.time / 60, (int)job.time % 60);
+                    jobBannerText = "JOB DONE: " + job.title + b;
+                    if (net.role == NetSession::HOST) net.sendGame("jobdone");
+                    jobSeed++;
+                } else if (!authority) {
+                    job.done = job.done && jobBanner > 0;  // (a client waits for the host's word)
+                }
+                if (net.role == NetSession::HOST) {
+                    jobResend -= dt;
+                    if (job.kind == JOB_RECOVER && job.wreck >= 0 && job.wreck < (int)sim.cars.size() && !job.wreckId) job.wreckId = sim.cars[job.wreck].netId;
+                    if ((jobAnnounce && (job.kind != JOB_RECOVER || job.wreckId)) || jobResend <= 0) {
+                        if (job.kind != JOB_RECOVER || job.wreckId) net.sendGame(job.text());
+                        jobAnnounce = false;
+                        jobResend = 5;
+                    }
+                }
+                if (job.done && jobBanner <= 0) jobOn = false;
+            }
+            jobBanner = std::max(0.0, jobBanner - dt);
             if (!sim.paused && run.active()) {
                 run.update(sim, dt);  // (after the keys: it holds the car on the grid)
                 if (run.state == LevelRun::FINISHED && (bestTimes.find(run.level.name) == bestTimes.end() || run.finishTime < bestTimes[run.level.name]))
@@ -2503,6 +2621,10 @@ int main(int argc, char** argv) {
 
         int W, H;
         SDL_GL_GetDrawableSize(win, &W, &H);
+        if (scripted && opt.script == "job" && frame == 10) {  // (screenshots: a recovery job under way)
+            refreshJobs();
+            if (!jobList.empty()) startJob(jobList[0]);
+        }
         if (scripted && opt.script == "walk") {  // (screenshots: out of the truck and walking off)
             if (frame == 20) getOut();
             if (frame > 30) up = true;
@@ -2619,6 +2741,21 @@ int main(int argc, char** argv) {
         if (editor.active && !menu.open) editor.draw(renderer, W, H, dt);
         else if (!menu.open) drawHud(renderer, sim, view, hud, &playback, net, winchAim, W, H, fps, dt, settings.mph);
         if (!menu.open && !editor.active && run.active()) drawLevelHud(renderer, run, sim, view, W, H);
+        if (!menu.open && !editor.active && jobOn) {  // the job: what to do next, and where
+            const float u = std::max(0.75f, H / 720.0f), s = px(1.2f * u);
+            const V3 me = walker.active ? walker.p : sim.cars[sim.player].frame().com;
+            const std::string status = jobStatus(job, sim, me);
+            const float w = std::max(r_textW(renderer, job.title, s), r_textW(renderer, status, s)) + 24 * u;
+            pill(renderer, 12 * u, 12 * u, w, 2 * 8 * s + 22 * u, 0, 0, 0, 0.55f);
+            label(renderer, 22 * u, 18 * u, s, job.title, 1.0f, 0.62f, 0.25f, 1);
+            renderer.text(22 * u, 24 * u + 8 * s, s, status, 0.92f, 0.93f, 0.95f, 1);
+            V3 at;
+            std::string what;
+            static const float jc[3] = {1.0f, 0.62f, 0.25f};
+            if (jobMarker(job, sim, me, at, what)) coop.drawMarker(renderer, sim, view, W, H, at, what, jc);
+        }
+        if (!menu.open && jobBanner > 0)
+            centeredPill(renderer, W / 2.0f, H * 0.28f, px(2.2f * std::max(0.75f, H / 720.0f)), jobBannerText, 0, 0, 0, (float)std::min(1.0, jobBanner), 1.0f, 0.75f, 0.35f);
         if (!menu.open && !editor.active && settings.fuelMode > 0) {  // the fuel gauge
             const Car& c = sim.cars[sim.player];
             if (!c.isProp() && c.fuel >= 0 && c.spec->fuelCapacity > 0) {
@@ -2654,6 +2791,8 @@ int main(int argc, char** argv) {
             }
             menu.netActive = net.active();
             menu.levelActive = run.active();
+            menu.jobActive = jobOn && !job.done;
+            menu.jobStatus = jobOn ? jobStatus(job, sim, sim.cars[sim.player].frame().com) : "";
             menu.netClient = net.role == NetSession::CLIENT;
             menu.netStatus = !net.active() ? "OFFLINE"
                              : net.role == NetSession::HOST
