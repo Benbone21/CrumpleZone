@@ -131,11 +131,13 @@ const std::vector<DriveMode>& driveModes(TransferCase t) {
     // differential: the clutch that engages the front lets the shafts turn together, which
     // is what keeps a 1,800 lb machine's four tires pulling on loose ground.
     static const std::vector<DriveMode> onDemand = {{"2WD", false, false, false}, {"4WD", true, true, false}};
+    // Plain part-time (Tacoma): no automatic mode, so it lives in 2H.
+    static const std::vector<DriveMode> basic = {{"2H", false, false, false}, {"4H", true, true, false}, {"4L", true, true, true}};
     static const std::vector<DriveMode> none;
-    return t == XFER_PART_TIME ? partTime : t == XFER_FULL_TIME ? fullTime : t == XFER_SELECT ? select : t == XFER_ONDEMAND ? onDemand : none;
+    return t == XFER_PART_TIME ? partTime : t == XFER_FULL_TIME ? fullTime : t == XFER_SELECT ? select : t == XFER_ONDEMAND ? onDemand : t == XFER_PART_TIME_BASIC ? basic : none;
 }
 
-int defaultDriveMode(TransferCase t) { return t == XFER_NONE ? 0 : 1; }
+int defaultDriveMode(TransferCase t) { return t == XFER_NONE || t == XFER_PART_TIME_BASIC ? 0 : 1; }
 
 const std::vector<VehicleSpec>& vehicleCatalog() {
     // Six vehicles (two of them crawl specials), built from their published specs (dimensions, weights,
@@ -364,6 +366,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         bronco.frontOverhang = 0.775;
         bronco.topLine = {1.13, 1.22, 1.25};  // flat clamshell hood
         bronco.bumperLift = 0.14;
+        bronco.bumperLiftRear = 0.09;  // ~35 degree departure on 33s (ESTIMATE: 29.8 base, 37.0 Sasquatch)
         bronco.cornerRound = 0.06;  // boxy
         bronco.roofTuck = 0.05;
         bronco.rakeFront = 0.32;    // upright windshield
@@ -397,9 +400,25 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         bronco.frameStiffness = 0.30;  // ladder frame: twists more than a unibody
         bronco.bodyStrength = 1.0;     // high-strength steel body
         bronco.frameStrength = 2.0;
+        // Fully boxed ladder frame, seven crossmembers; rails up to 9.06 x 3.58 in (Ford
+        // spec; 0.20 m is the average depth along it). Rail spacing and mass: estimates.
+        bronco.railSpacing = 1.00;
+        bronco.railHeight = 0.20;
+        bronco.railWidth = 0.091;
+        bronco.frameMass = 230;
+        // Section modulus 4.95 in^3 at 49.3 ksi (Ford): each rail yields at ~28 kNm, so a
+        // press on the middle of the frame (axles 2.55 m apart) sets it at ~85 kN, and bends
+        // it ~1.9 mm per 20 kN (E = 200 GPa, I = 22.7 in^4) up to then.
+        bronco.railYield = 0.0065;
+        bronco.bodyMounts = 8;
+        // Transfer case skid ~0.31 m up on 33s (ESTIMATE, from a ~24 degree breakover between
+        // the base 4-door's ~21 and the 35 in Sasquatch's 26.3).
+        bronco.skidDrop = 0.11;
         bronco.panelStrength = 1.6;
         bronco.pinStrength = 1.8;
         bronco.wheelRadius = 0.415;    // 285/70R17 (33 in)
+        bronco.wellTireRadius = 0.445; // its wheel openings are cut for the Sasquatch package's 35s
+        bronco.wellTireWidth = 0.318;  // (35x12.50R17)
         bronco.wheelWidth = 0.285;
         bronco.trackFront = bronco.trackRear = 1.651;
         bronco.wheelMass = 38;
@@ -425,7 +444,11 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         bronco.transfer = XFER_PART_TIME;  // advanced 4x4: 2H, 4A, 4H, 4L
         bronco.lockerRear = true;          // Dana 44 rear e-locker (front locker: Sasquatch, in the garage)
         bronco.frontLockerLowOnly = true;  // Ford only lets the front locker in with 4L
-        bronco.shaftLimit = 17000;         // Dana 44 rear shafts; the IFS CVs take ~11 kN*m
+        // Dana 44 (M220) rear shafts, ~36 mm induction-hardened 4340: about 11 kN*m at
+        // ~1,200 MPa ultimate shear (estimate: tau * pi d^3 / 16). The IFS CVs take ~7 kN*m,
+        // less at full lock. In 4L first the engine alone can put ~33 kN*m into the axles, so
+        // a spinning wheel landing, or a locker binding at full lock, can snap one.
+        bronco.shaftLimit = 11000;
         bronco.lowRange = 2.72;
         bronco.brakeFront = 3800;  // 311 mm vented
         bronco.brakeRear = 2800;   // 308 mm vented
@@ -440,6 +463,9 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         bronco.reverseRatio = 4.885;
         bronco.finalDrive = 4.27;
         bronco.shiftTime = 0.20;
+        bronco.stallRpm = 2600;  // 10R80 converter behind the 2.7 (estimate: typical for the pair)
+        bronco.stallRatio = 1.9;
+        bronco.lockupGear = 3;
         bronco.engineName = "2.7L TWIN-TURBO V6";
         bronco.gearboxName = "10-SPEED AUTO";
         bronco.doors = 4;
@@ -515,10 +541,25 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         runner.engineHgt = 0.62;
         runner.gearboxLen = 0.85;
         runner.bodyStiffness = 1.2;
-        runner.frameStiffness = 0.30;
+        runner.frameStiffness = 0.06;  // its thinner rails (below) bend more, and its open C-channel tail twists
         runner.bodyStrength = 1.0;   // thick 90s sheet metal
         runner.frameStrength = 2.0;
         runner.panelStrength = 1.6;
+        // Boxed ladder frame (C-channel at the tail), ~1/8 in wall, ~2.75 in wide rails;
+        // 36.75 in outside at the hitch, so ~0.86 m between the rails' centres there (ESTIMATE:
+        // 0.90 m along the cab). Depth and mass: estimates.
+        runner.railSpacing = 0.90;
+        runner.railHeight = 0.15;
+        runner.railWidth = 0.07;
+        runner.frameMass = 170;
+        // A 2.75 x 5.9 in box of 1/8 in steel (~44 ksi, ESTIMATE): ~2.9 in^3, so each rail
+        // yields at ~14 kNm; a press between the axles (2.675 m) sets it at ~43 kN and bends it
+        // ~6 mm per 20 kN up to then: half the Bronco's frame. (Here ~53 kN and ~5 mm: the
+        // crossmembers and brackets stiffen it a little.) Its open tail twists: ~3 kNm/deg.
+        runner.railYield = 0.011;
+        // Transfer case skid: a stock 3rd gen's ~0.30 m (ESTIMATE), plus the OME lift and the
+        // 35s' extra radius (the body lift doesn't move the frame): ~0.40 m.
+        runner.skidDrop = 0.15;
         runner.pinStrength = 1.8;
         // ...then the lift: ~65 mm of Old Man Emu springs, the 2 in (51 mm) body lift, and
         // 56 mm more tire radius (35x12.50R17 against the factory 265/70R16).
@@ -531,7 +572,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         runner.hubMass = 25;
         runner.axleMass = 80;
         runner.rideFreqFront = 1.32;  // heavy-duty OME coils
-        runner.rideFreqRear = 1.45;
+        runner.rideFreqRear = 1.55;  // heavy-duty OME coils, for the steel bumper, carrier and 35 in spare out back
         runner.dampingRatio = 0.44;   // Bilsteins
         runner.arbFront = 14000;
         runner.arbRear = 4000;
@@ -567,6 +608,9 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         runner.reverseRatio = 2.393;
         runner.finalDrive = 4.10;   // never regeared: tall on 35s
         runner.shiftTime = 0.40;
+        runner.stallRpm = 2200;  // A340F converter (estimate; the blower doesn't change it)
+        runner.stallRatio = 2.0;
+        runner.lockupGear = 3;   // locks up in 3rd and overdrive
         runner.engineName = "3.4L V6 5VZ-FE SUPERCHARGED";
         runner.gearboxName = "A340F 4-SPEED AUTO";
         runner.lampStyle = LAMP_RECT;
@@ -836,6 +880,156 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         utv.coverColor[0] = 0.08f, utv.coverColor[1] = 0.08f, utv.coverColor[2] = 0.09f;
         utv.finish = VehicleSpec::PAINT;
         v.push_back(utv);
+        // ---- Toyota Tacoma TRD Off-Road Double Cab 4x4, short bed (3rd gen, 2016-2023) ----
+        // A mid-size pickup on a hybrid ladder frame (boxed up front, C-channel under the
+        // bed): 3.5 L 2GR-FKS V6, 6-speed automatic, 3.909 axles, a 2.566:1 low range and
+        // Toyota's rear e-locker. Double wishbones in front; behind, a solid 8.75 in axle on
+        // multi-leaf springs: the leaves both hold the axle and spring it. P265/70R16s.
+        // (Toyota pressroom, KBB, Edmunds tests; the leaf geometry, frame section and the
+        // masses inside are estimates, marked where they're made.)
+        VehicleSpec tacoma = runner;
+        tacoma.name = "TOYOTA TACOMA";
+        tacoma.id = "tacoma";
+        tacoma.blurb = "2019 TRD OFF-ROAD DOUBLE CAB  3.5L V6  6-SPEED AUTO  4X4";
+        // Nose and front wheels, the cab (four doors), then the bed over the rear wheels:
+        // bed walls only, open above, the tailgate at the back.
+        tacoma.profile = {
+            "#WW#######WW##",
+            "#########BBBBB",
+            "....GGGGG.....",
+        };
+        // 5,392 x 1,890 x 1,795 mm, 3,236 mm wheelbase; bed floor ~0.95 m up, rails ~1.30.
+        tacoma.layerY = {0.50, 0.97, 1.30, 1.795};
+        tacoma.length = 5.392;
+        tacoma.width = 1.890;
+        tacoma.wheelbase = 3.236;
+        tacoma.frontOverhang = 0.88;  // 32 degree approach angle
+        tacoma.outerCellWidth = 0.35;  // the bed's walls and the wheel wells (1.19 m between the walls: 1.05 real between the wheel tubs, 1.44 at the top)
+        tacoma.topLine = {1.07, 1.13, 1.17, 1.21};  // the hood rising to the cowl
+        tacoma.bumperLift = 0.04;      // 32 degree approach: the air dam is low
+        tacoma.bumperLiftRear = 0.10;  // 23.5 degree departure (the step bumper and hitch)
+        tacoma.cornerRound = 0.07;
+        tacoma.roofTuck = 0.08;
+        tacoma.rakeFront = 0.55;  // a raked windshield
+        tacoma.rakeRear = 0.04;   // upright back glass
+        tacoma.liftgate = false;  // a tailgate
+        tacoma.doors = 4;
+        tacoma.doorLength = 1.05;
+        tacoma.bodyWidth.clear();
+        // 4,445-4,540 lb (2,016-2,059 kg) by the listings: ~2,040 kg, about 55/45 empty.
+        tacoma.structureMass = 450;  // cab and bed shells (the frame is its own, below)
+        tacoma.panelMass = 165;
+        tacoma.items = {
+            {"radiator", 18, 2.30, 0.85, 0},                {"battery", 20, 2.05, 1.00, -0.55},
+            {"front diff and IFS crossmember", 52, 1.82, 0.52, 0},
+            {"front prop shaft", 9, 1.25, 0.52, 0.1},       {"two-piece rear prop shaft", 20, -0.20, 0.52, 0},
+            {"dashboard and heater", 42, 0.95, 1.10, 0},    {"front seats", 48, 0.30, 0.90, 0},
+            {"rear seat", 32, -0.45, 0.90, 0},              {"carpets, trim and wiring", 62, 0.25, 0.75, 0},
+            {"fuel tank (80 L, full)", 70, -0.95, 0.55, -0.45}, {"exhaust", 26, -0.6, 0.40, 0.35},
+            {"steering and brakes", 18, 1.8, 0.70, 0},      {"front skid plate", 14, 1.7, 0.42, 0},
+            {"electronics", 15, 0.6, 0.95, 0},               {"front frame horns and shock towers", 70, 2.10, 0.74, 0},
+            {"front bumper", 20, 2.62, 0.68, 0},             {"rear step bumper and hitch", 30, -2.62, 0.62, 0},
+            {"spare wheel under the bed", 34, -2.25, 0.50, 0}, {"composite bed liner and floor", 25, -1.75, 0.98, 0},
+            // (The cab is the dense steel; the bed is a light box.)
+            {"cab floor, firewall and pillars", 100, 0.90, 0.75, 0}, {"core support and inner fenders", 65, 2.20, 0.85, 0},
+            {"A/C, alternator and power steering", 28, 2.00, 0.85, 0.1},
+        };
+        tacoma.engineMass = 167;   // aluminum 2GR-FKS
+        tacoma.gearboxMass = 110;  // 6-speed auto and transfer case
+        tacoma.engineX = 1.58;
+        tacoma.engineY = 0.92;
+        tacoma.engineZ = 0;
+        tacoma.engineLen = 0.60;
+        tacoma.engineWid = 0.66;
+        tacoma.engineHgt = 0.62;
+        tacoma.gearboxLen = 0.90;
+        tacoma.induction = VehicleSpec::NATURAL;
+        tacoma.displacement = 3.5;
+        tacoma.cylinders = 6;
+        tacoma.turboLag = 0;
+        tacoma.bodyStiffness = 1.15;
+        tacoma.bodyStrength = 1.0;
+        tacoma.frameStrength = 2.0;
+        tacoma.panelStrength = 1.4;
+        tacoma.pinStrength = 1.8;
+        // Hybrid frame: boxed ahead of the cab, C-channel under the bed, ~1/8 in wall,
+        // ~2.75 in wide rails 37 in apart outside (2nd-gen measurement; ESTIMATE ~0.87 m
+        // between centres), ~6.5 in deep (ESTIMATE). A 6.5 x 2.75 x 1/8 in C at ~50 ksi:
+        // ~2.5 in^3 and ~10 in^4 per rail (boxed: ~3.7 in^3, ~12 in^4), so a press between
+        // the axles (3.236 m apart, under the boxed cab section) sets it at ~35-50 kN and
+        // bends it ~9 mm per 20 kN: the longest and softest frame here.
+        tacoma.railSpacing = 0.87;
+        tacoma.railHeight = 0.165;
+        tacoma.railWidth = 0.07;
+        tacoma.frameMass = 100;
+        tacoma.frameStiffness = 0.05;
+        tacoma.railYield = 0.0155;
+        tacoma.bodyMounts = 10;    // cab and bed
+        // Its 21 degree breakover (dealer spec sheets; the long wheelbase) puts the lowest thing
+        // between the axles ~0.30 m up: the transfer case skid (ESTIMATE).
+        tacoma.skidDrop = 0.19;
+        tacoma.wheelRadius = 0.389;  // P265/70R16, 777 mm
+        tacoma.wheelWidth = 0.265;
+        tacoma.wellTireRadius = 0.40;  // fits ~32s before it rubs
+        tacoma.wellTireWidth = 0.285;
+        tacoma.trackFront = 1.600;
+        tacoma.trackRear = 1.605;
+        tacoma.wheelMass = 30;     // 42 lb Wrangler on a ~25 lb 16 in alloy
+        tacoma.hubMass = 25;
+        tacoma.axleMass = 100;     // 8.75 in rear with drums, and half the leaf packs
+        tacoma.rimRadius = 0.203;
+        tacoma.frontSusp = WISHBONE;
+        tacoma.rearSusp = SOLID_AXLE;
+        tacoma.leafSprings = true;
+        tacoma.leafHalf = 0.70;    // 54-3/8 in eye to eye, the seat in the middle (aftermarket packs)
+        tacoma.rideFreqFront = 1.30;
+        tacoma.rideFreqRear = 1.55;  // springs for a payload: firm when it's empty
+        tacoma.dampingRatio = 0.40;  // TRD Off-Road Bilsteins
+        tacoma.arbFront = 13000;     // ~28-30 mm bar
+        tacoma.arbRear = 0;
+        // Wheel travel (ESTIMATE): ~20 cm front, ~24 cm at the rear axle.
+        tacoma.bumpFront = 0.08, tacoma.droopFront = 0.115;
+        tacoma.bumpRear = 0.10, tacoma.droopRear = 0.14;
+        tacoma.swayDisconnect = 0;
+        tacoma.tirePsi = 30;
+        tacoma.tireType = TIRE_ALL_TERRAIN;
+        tacoma.tireGrip = 0.95;
+        tacoma.lateralGrip = 0.78;
+        tacoma.drive = VehicleSpec::AWD;
+        tacoma.diffFront = tacoma.diffRear = DIFF_OPEN;
+        tacoma.transfer = XFER_PART_TIME_BASIC;  // 2H, 4H, 4L
+        tacoma.lockerRear = true;          // electric rear locker (TRD Off-Road)
+        tacoma.frontLockerLowOnly = false;
+        tacoma.rearLockerLowOnly = true;   // Toyota's e-locker only engages in 4L
+        tacoma.shaftLimit = 9500;          // 34-spline 8.75 in rear shafts; the IFS CVs are the weak link
+        tacoma.lowRange = 2.566;
+        tacoma.brakeFront = 3500;  // 319 mm vented discs
+        tacoma.brakeRear = 1800;   // 10 in drums
+        tacoma.dragArea = 1.30;    // Cd ~0.43 x ~3.0 m^2
+        // 278 hp at 6,000 rpm, 359 N*m (265 lb-ft) at 4,600 (SAE J1349); the shape between
+        // is an estimate (a flat 2GR curve).
+        tacoma.torque = {{0, 200}, {1000, 262}, {1600, 292}, {2000, 305}, {3000, 336}, {4000, 355}, {4600, 359}, {5000, 355}, {5500, 342}, {6000, 330}, {6400, 305}};
+        tacoma.idleRpm = 650;
+        tacoma.redline = 6400;
+        tacoma.speedLimit = 180;
+        tacoma.gears = {3.600, 2.090, 1.490, 1.000, 0.690, 0.580};
+        tacoma.reverseRatio = 3.73;
+        tacoma.finalDrive = 3.909;
+        tacoma.shiftTime = 0.35;
+        tacoma.stallRpm = 2300;  // (estimate)
+        tacoma.stallRatio = 2.0;
+        tacoma.lockupGear = 3;
+        tacoma.engineName = "3.5L V6 2GR-FKS";
+        tacoma.gearboxName = "6-SPEED AUTO";
+        tacoma.lampStyle = LAMP_RECT;
+        tacoma.grilleStyle = GRILLE_WIDE;
+        tacoma.extras = EXTRA_SKID_PLATE;
+        tacoma.paintColor[0] = 0.50f, tacoma.paintColor[1] = 0.51f, tacoma.paintColor[2] = 0.49f;  // Cement
+        tacoma.trimColor[0] = tacoma.trimColor[1] = tacoma.trimColor[2] = 0;
+        tacoma.trimTop = 0;
+        tacoma.wheelStyle = WHEEL_OFFROAD_BLACK;
+        tacoma.coverColor[0] = 0.08f, tacoma.coverColor[1] = 0.08f, tacoma.coverColor[2] = 0.09f;
+        v.push_back(tacoma);
 
         // EF Civic Si: the Rio Red hatch in bringatrailer.com/listing/1990-honda-civic-si-5/.
         // Honda's D16A6 rating: 108 hp / 100 lb-ft; 185/60R14 tires, discs/drums,
@@ -896,6 +1090,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         ef.brakeFront = 1550;
         ef.brakeRear = 750;
         ef.absEnabled = false;
+        ef.tractionFitted = false;  // no traction control on a 1990 Civic either
         ef.dragArea = 0.61;
         ef.torque = {{0, 65}, {1000, 91}, {2000, 113}, {3000, 127}, {4000, 135.6}, {5000, 134}, {6000, 128.2}, {6500, 112}};
         ef.idleRpm = 750;
@@ -926,6 +1121,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         v[3].fuelCapacity = 70, v[3].jerryCan = 20;     // 4Runner: 18.5 gal
         v[4].fuelCapacity = 95;                         // rock buggy: a 25 gal fuel cell
         v[5].fuelCapacity = 40;                         // UTV: 10.6 gal (Maverick X3)
+        v[6].fuelCapacity = 80, v[6].jerryCan = 20;     // Tacoma: 21.1 gal
         return v;
     }();
     return catalog;

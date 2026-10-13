@@ -33,6 +33,16 @@ struct BeamSpec {
 };
 // (Yield and break strains run ~40% over what the steel alone would give: the game's
 // cars felt made of tin; this is about where a hard knock leaves a dent, not a wreck.)
+// A body-on-frame truck's body tub (with its roof and pillars) holds its shape better than
+// the ladder frame under it, which twists on the trail.
+constexpr double kLadderTubStiffness = 0.6;
+// A ladder frame's rails: each is shape-held this much stiffer than vs.frameStiffness (they
+// carry the truck's bending; the twist is in the crossmembers).
+constexpr double kRailStiffness = 3.5;
+// What's welded to them (suspension brackets, coil towers, the engine's pads) is built for
+// the suspension's hits, whatever the rails: about this much force before it bends (N).
+constexpr double kBracketYield = 70000;
+
 const BeamSpec kSpec[BEAM_TYPE_COUNT] = {
     {1.6e5, 350, 0.056, 0.65},   // body
     {1.0e5, 240, 0.042, 0.65},   // cabin (softer: roofs crush)
@@ -45,6 +55,7 @@ const BeamSpec kSpec[BEAM_TYPE_COUNT] = {
     {6.0e6, 1200, 0.070, 0.50},  // tie rod / toe link
     {0, 0, 1e9, 0.40},           // drive shaft (no force; tears off past 40% stretch)
     {1.2e5, 170, 0.032, 0.80},   // panel sheet metal (0.8-1 mm steel over its inner frame)
+    {0, 0, 1e9, 1e9},            // jounce bumper (k, c come from the vehicle)
 };
 
 // ---- Small linear algebra for the suspension kinematics -----------------------
@@ -108,6 +119,9 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
     quadPanel.clear();
     links.clear();
     frameBeams.clear();
+    ladder.clear();
+    ladderStations = 0;
+    bodyMountBeams.clear();
     engineNodes.clear();
     engineMounts.clear();
     bayBeams.clear();
@@ -233,6 +247,11 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
 
     auto nodePos = [&](int i, int j, int k) {
         double x = xAt(i), y = vs.layerY[k], z = -vs.width / 2 + dz * j;
+        if (vs.outerCellWidth > 0 && NJ > 3) {
+            // (Outer columns narrower, the rest evenly between.)
+            const double inner = vs.width - 2 * vs.outerCellWidth;
+            z = j == 0 ? -vs.width / 2 : j == NJ - 1 ? vs.width / 2 : -inner / 2 + inner * (j - 1) / (NJ - 3);
+        }
         bool roof = (k == roofCellK + 1) && !std::isnan(roofX[i]);
         if (roof) {
             x = roofX[i];
@@ -247,7 +266,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
             if (i == NI - 1) y -= vs.tailDrop;
             if (i == NI - 2) y -= vs.tailDrop * 0.35;
         }
-        if (k == 0 && (i == 0 || i == NI - 1)) y += vs.bumperLift;
+        if (k == 0 && (i == 0 || i == NI - 1)) y += i == 0 || vs.bumperLiftRear < 0 ? vs.bumperLift : vs.bumperLiftRear;
         if ((i == 0 || i == NI - 1) && (j == 0 || j == NJ - 1)) {
             z -= (z > 0 ? 1 : -1) * vs.cornerRound;
             x -= (x > 0 ? 1 : -1) * vs.cornerRound * 0.5;
@@ -336,8 +355,10 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 cabI0 = std::min(cabI0, i);
                 cabI1 = std::max(cabI1, i + 1);
             }
+    const bool ladderFrame = vs.railSpacing > 0 && vs.engineMass > 0;
     auto frameEdge = [&](int a, int b) {
         if (a < 0 || b < 0) return false;
+        if (ladderFrame) return false;  // the floor is the body tub's sheet metal: the frame is its own
         const V3 &pa = local[a], &pb = local[b];
         // Both ends on the floor layer.
         if (std::fabs(pa.y - vs.layerY[0]) > 0.15 || std::fabs(pb.y - vs.layerY[0]) > 0.15) return false;
@@ -358,11 +379,24 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
             for (int j = 0; j < NJ - 1; j++) {
                 if (!solid(i, j, k)) continue;
                 BeamType t = cellChar(i, j, k) == 'G' ? BEAM_CABIN : BEAM_BODY;
+                // On a body-on-frame truck the cells round a wheel well are the fender and
+                // the inner wheel-well liner: sheet metal hung off the tub (the frame under it
+                // carries the suspension), so a tire forced up into it dents it.
+                bool fender = false;
+                if (ladderFrame)
+                    for (int d = 0; d < 6; d++) {
+                        const int di = d == 0 ? -1 : d == 1 ? 1 : 0, dj = d == 2 ? -1 : d == 3 ? 1 : 0, dk = d == 4 ? -1 : d == 5 ? 1 : 0;
+                        fender |= well(i + di, j + dj, k + dk);
+                    }
                 for (int p = 0; p < 8; p++)
                     for (int q = p + 1; q < 8; q++) {
                         int a = corner(i, j, k, p), b = corner(i, j, k, q);
                         bool frame = !isProp && frameEdge(a, b);
                         int bi = addBeam(a, b, frame ? BEAM_FRAME : t);
+                        if (bi >= 0 && fender && beams[bi].type == BEAM_BODY) {
+                            beams[bi].yieldStrain *= 0.45;
+                            beams[bi].breakStrain *= 0.7;
+                        }
                         // Drawn under the floor: the main rails and the crossmembers (the
                         // outer sills are part of the body sides).
                         bool sill = std::fabs(std::fabs(local[a].z) - vs.width / 2) < 0.05 && std::fabs(local[a].z - local[b].z) < 1e-6;
@@ -530,7 +564,8 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
             share[n] = isProp ? 1.0 : 3.0 - 2.0 * t;
             sum += share[n];
         }
-        for (int n = 0; n < bodyNodes; n++) nodes[n].m = vs.structureMass * share[n] / sum;
+        const double tub = ladderFrame ? std::max(0.0, vs.structureMass - vs.frameMass) : vs.structureMass;
+        for (int n = 0; n < bodyNodes; n++) nodes[n].m = tub * share[n] / sum;
         int skinCount = 0;
         for (int n = 0; n < bodyNodes; n++) skinCount += onSkin[n];
         if (vs.panelMass > 0)
@@ -539,11 +574,173 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
         for (const MassItem& it : vs.items) addMassAt(V3(it.x, it.y, it.z), it.kg);
     }
 
+    // ---- 3b. Ladder frame (body-on-frame trucks) --------------------------------
+    // Two boxed steel rails, each a box section (four corner nodes per station, braced
+    // across every face and through the middle), tied by crossmembers. Between the axles
+    // the rails run along the body's floor; over a live rear axle they kick up so it can
+    // reach full bump under them. Everything that carries the truck's weight and the
+    // road's loads bolts to the frame; the body tub sits on it on rubber mounts.
+    std::vector<double> stationX;
+    if (ladderFrame) {
+        const double xNose = xAt(0) - 0.12, xTail = xAt(ncell) + 0.12;
+        const int nst = std::max(4, (int)std::lround((xNose - xTail) / 0.42));
+        for (int st = 0; st <= nst; st++) stationX.push_back(xNose + (xTail - xNose) * st / nst);
+        ladderStations = (int)stationX.size();
+        const double xr = axleI.size() >= 2 ? xAt(axleI.back()) : -1e9;
+        const bool liveRear = vs.rearSusp == SOLID_AXLE && axleI.size() >= 2;
+        // Rail bottom at the floor; over a live axle, high enough for the tube at full bump
+        // (plus the bumper's squash) to pass under.
+        const double base = vs.layerY[0];
+        const double reach = vs.wheelRadius + (vs.bumpRear > 0 ? vs.bumpRear : 0.085) + 0.08 + 0.05;
+        const double kick = liveRear ? std::max(0.0, reach - base) : 0.0;
+        const double xf0 = axleI.size() >= 2 ? xAt(axleI.front()) : 1e9;
+        auto bottomAt = [&](double x) {
+            // The horns rise ahead of the front axle to the bumper's line (and the tail to
+            // the rear one), so the frame never hangs below the approach and departure angles.
+            const double liftRear = vs.bumperLiftRear < 0 ? vs.bumperLift : vs.bumperLiftRear;
+            double y = base + std::max(vs.bumperLift * smoothstep(xf0 + 0.3, xNose, x), liftRear * smoothstep(xr - 0.5, xTail, x));
+            if (!liveRear) return y;
+            // Over a live axle: up 0.35 m ahead of its front clearance, and up from there on back.
+            return std::max(y, base + kick * smoothstep(xr + 0.65, xr + 0.30, x));
+        };
+        const double hz = vs.railSpacing / 2, hw = vs.railWidth / 2, hh = vs.railHeight;
+        // The frame's weight along it: heavier where the horns, the engine crossmember and
+        // the suspension brackets are, so its center of mass falls where the welded
+        // structure's would (the body tub's spread, which it replaces).
+        double xm = 0, wsum = 0, xs = 0, ssum = 0;
+        for (double x : stationX) xm += x / ladderStations;
+        for (int n = 0; n < bodyNodes; n++) {
+            const double t = clampd((local[n].y - vs.layerY[0]) / std::max(0.1, vs.layerY.back() - vs.layerY[0]), 0, 1);
+            xs += (3.0 - 2.0 * t) * local[n].x;
+            ssum += 3.0 - 2.0 * t;
+        }
+        xs /= std::max(ssum, 1e-9);
+        double var = 0;
+        for (double x : stationX) var += (x - xm) * (x - xm) / ladderStations;
+        const double beta = (xs - xm) / std::max(var, 1e-6);
+        std::vector<double> stW(ladderStations);
+        for (int st = 0; st < ladderStations; st++) wsum += stW[st] = std::max(0.2, 1 + beta * (stationX[st] - xm));
+        for (int st = 0; st < ladderStations; st++) {
+            const double x = stationX[st], yb = bottomAt(x), m = vs.frameMass * stW[st] / wsum / 8;
+            for (int side = -1; side <= 1; side += 2)
+                for (int c = 0; c < 4; c++) {
+                    // Corners: 0 inner bottom, 1 outer bottom, 2 inner top, 3 outer top.
+                    const double z = side * (hz + ((c & 1) ? hw : -hw));
+                    ladder.push_back(addNode(V3(x, yb + ((c & 2) ? hh : 0.0), z), m, true));
+                }
+        }
+        auto L = [&](int st, int side, int c) { return ladder[st * 8 + (side > 0 ? 4 : 0) + c]; };
+        auto railBeam = [&](int a, int b) {
+            const int bi = addBeam(a, b, BEAM_FRAME);
+            if (bi < 0) return bi;
+            beams[bi].k = kSpec[BEAM_FRAME].k;  // boxed steel (the chassis frame does the rest)
+            beams[bi].c = kSpec[BEAM_FRAME].c;
+            // (As strong as a full station-length member however short it is: a beam's
+            // stiffness here doesn't scale with length, and the section's own 7-20 cm sides
+            // would otherwise fold at a couple of kN.)
+            const double f = std::max(1.0, 0.42 / std::max(beams[bi].Lorig, 0.01));
+            beams[bi].yieldStrain = kSpec[BEAM_FRAME].yield * f;
+            beams[bi].breakStrain = kSpec[BEAM_FRAME].brk * f;
+            return bi;
+        };
+        for (int side = -1; side <= 1; side += 2)
+            for (int st = 0; st < ladderStations; st++) {
+                // The section itself: its four sides and both diagonals.
+                for (auto e : {std::make_pair(0, 1), std::make_pair(2, 3), std::make_pair(0, 2), std::make_pair(1, 3),
+                               std::make_pair(0, 3), std::make_pair(1, 2)})
+                    railBeam(L(st, side, e.first), L(st, side, e.second));
+                if (st + 1 >= ladderStations) continue;
+                // On to the next station: the four edges, every face's diagonals.
+                for (int c = 0; c < 4; c++) {
+                    const int bi = railBeam(L(st, side, c), L(st + 1, side, c));
+                    if (bi >= 0) frameBeams.push_back(bi);
+                }
+                for (auto e : {std::make_pair(0, 1), std::make_pair(2, 3), std::make_pair(0, 2), std::make_pair(1, 3)}) {
+                    railBeam(L(st, side, e.first), L(st + 1, side, e.second));
+                    railBeam(L(st, side, e.second), L(st + 1, side, e.first));
+                }
+            }
+        // Crossmembers: front bumper, front axle, gearbox, mid cab, ahead of and behind the
+        // rear axle, rear bumper (a real ladder frame has about seven).
+        std::vector<double> crossAt = {stationX.front(), stationX.back()};
+        if (axleI.size() >= 2) {
+            const double xf = xAt(axleI.front());
+            crossAt.insert(crossAt.end(), {xf, vs.engineX - vs.engineLen / 2 - vs.gearboxLen, 0.5 * (xf + xr), xr + 0.7, xr - 0.45});
+        }
+        std::set<int> crossSt;
+        for (double x : crossAt) {
+            int best = 0;
+            for (int st = 1; st < ladderStations; st++)
+                if (std::fabs(stationX[st] - x) < std::fabs(stationX[best] - x)) best = st;
+            crossSt.insert(best);
+        }
+        for (int st : crossSt) {
+            for (auto e : {std::make_pair(0, 0), std::make_pair(2, 2), std::make_pair(0, 2), std::make_pair(2, 0)}) {
+                const int bi = railBeam(L(st, -1, e.first), L(st, 1, e.second));
+                if (bi >= 0 && e.first == e.second) frameBeams.push_back(bi);
+            }
+            // The crossmember's gusseted ends keep the rails square to each other (in plan
+            // view): without them one rail could slide fore and aft against the other
+            // ("matchboxing"), and the front axle with it, which steers the truck.
+            const int to = st + 1 < ladderStations ? st + 1 : st - 1;
+            for (int c : {0, 2})
+                for (int side = -1; side <= 1; side += 2) {
+                    const int bi = railBeam(L(st, side, c), L(to, -side, c));
+                    if (bi >= 0) beams[bi].k *= 3;
+                }
+        }
+    }
+    [[maybe_unused]] auto nearestFrame = [&](const V3& p, int count) {
+        std::vector<std::pair<double, int>> c;
+        for (int n : ladder) c.push_back({len(local[n] - p), n});
+        std::sort(c.begin(), c.end());
+        std::vector<int> out;
+        for (int k = 0; k < count && k < (int)c.size(); k++) out.push_back(c[k].second);
+        return out;
+    };
+
     // Frame-mounted nodes (suspension pick-ups, rack ends, spring towers) come next:
     // they're bolted rigidly to the body and move with the chassis frame.
     // Their mass comes out of the body cell they're bolted to (it's part of the same steel).
+    std::set<int> bracketed;  // rail nodes something is welded to (that stretch is boxed in and gusseted)
     auto frameNode = [&](const V3& p, double kg) {
         int n = addNode(p, 0, false);
+        if (ladderFrame) {
+            // A bracket (or tower) welded to the nearest stretch of rail.
+            kg = std::max(kg, 4.0);
+            double avail = 0;
+            // Welded to the near rail's section at the two nearest stations (it's held in shape
+            // with that rail, so it can't pivot on its welds like a lever). One on the
+            // centreline (a diff's mount) bridges both rails.
+            std::vector<int> to;
+            {
+                std::vector<std::pair<double, int>> st;
+                for (int k = 0; k < ladderStations; k++) st.push_back({std::fabs(stationX[k] - p.x), k});
+                std::sort(st.begin(), st.end());
+                const bool centre = std::fabs(p.z) < 0.05;
+                for (int side : {0, 4}) {
+                    if (!centre && side != (p.z > 0 ? 4 : 0)) continue;
+                    for (int a = 0; a < 2 && a < (int)st.size(); a++)
+                        for (int c = 0; c < 4; c++) to.push_back(ladder[st[a].second * 8 + side + c]);
+                }
+            }
+            bracketed.insert(to.begin(), to.end());
+            for (int f : to) {
+                const int bi = addBeam(n, f, BEAM_FRAME);
+                if (bi < 0) continue;
+                beams[bi].k = kSpec[BEAM_FRAME].k * 2;
+                beams[bi].yieldStrain = 0.15;  // the rail around it gives way first
+                beams[bi].breakStrain = 0.8;
+            }
+            // (Its mass comes out of the structure around it, as on a unibody: the weight
+            // the factory spec puts at each end stays there.)
+            const int ci = cellNear(p, nullptr);
+            for (int b = 0; b < 8; b++) avail += nodes[cells[ci][b]].m;
+            const double take = std::min(kg, avail * 0.3);
+            for (int b = 0; b < 8; b++) nodes[cells[ci][b]].m -= take * nodes[cells[ci][b]].m / avail;
+            nodes[n].m = take;
+            return n;
+        }
         int ci = anchor(n, BEAM_FRAME, 4.0);
         kg = std::max(kg, 6.0);
         double avail = 0;
@@ -565,7 +762,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
     // Suspension pick-ups, built before the moving parts so they stay in the frame range.
     struct Pickups {
         int lf = -1, lr = -1, uf = -1, ur = -1, rack = -1, coil = -1, toe = -1;
-        int trail = -1, panhard = -1;
+        int trail = -1, panhard = -1, stop = -1, shackle = -1;
     };
     std::vector<std::array<Pickups, 2>> pick(axleI.size());
     std::vector<int> axleUpperPick(axleI.size(), -1), diffFrame(axleI.size(), -1), panhardFrame(axleI.size(), -1);
@@ -585,7 +782,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
     // the knuckle slides along the strut, which pivots at the top mount. Here the "upper
     // ball joint" is the point of the strut at the top mount, held by two long links at
     // right angles to the strut, so it can only slide along it (and swivel).
-    auto wishbone = [&](double xw, int s, double zc, double ww, bool strut) {
+    auto wishbone = [&](double xw, int s, double zc, double ww, bool strut, bool frontAxle) {
         WishboneGeom g;
         const double az = std::fabs(zc);
         const double yl = R - 0.17 * sizeK, yu = strut ? R + 0.40 * sizeK : R + 0.23 * sizeK;  // ball joint heights
@@ -593,12 +790,17 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
         const double zlp = zl - vs.armLower, zup = zu - vs.armUpper;  // inner pivots: lower arm 36 cm, upper 27 cm (long-travel cars: longer)
         g.lowerBJ = V3(xw, yl, s * zl);
         g.upperBJ = V3(xw - (strut ? 0.05 : 0.02), yu, s * zu);  // top joint a little behind: caster
-        // Pivot axes tilted in side view (front lower on top, higher below) so braking
-        // and acceleration forces partly hold the body up: anti-dive / anti-squat.
-        g.lf = V3(xw + 0.24, yl + 0.01 + 0.02, s * zlp);
-        g.lr = V3(xw - 0.24, yl + 0.01 - 0.02, s * zlp);
-        g.uf = V3(xw + 0.14, yu + 0.03 - 0.025, s * zup);
-        g.ur = V3(xw - 0.14, yu + 0.03 + 0.025, s * zup);
+        // Pivot axes tilted in side view so the arms' instant centre is on the car's side of
+        // the wheel, above the ground: braking (and, on a driven rear, acceleration) forces then
+        // partly hold the body up. Anti-dive at the front (~40% on a truck), anti-lift and
+        // anti-squat behind. (Tilted the same way at both ends, the front's centre was ahead of
+        // the wheel: ~60% pro-dive, and a hard stop pitched the nose down until the rear tires
+        // went light.)
+        const double tilt = frontAxle ? -1.0 : 1.0;
+        g.lf = V3(xw + 0.24, yl + 0.01 + 0.02 * tilt, s * zlp);
+        g.lr = V3(xw - 0.24, yl + 0.01 - 0.02 * tilt, s * zlp);
+        g.uf = V3(xw + 0.14, yu + 0.03 - 0.025 * tilt, s * zup);
+        g.ur = V3(xw - 0.14, yu + 0.03 + 0.025 * tilt, s * zup);
         g.seat = g.lowerBJ;
         if (strut) {
             const V3 a = norm(g.upperBJ - g.lowerBJ), in(0, 0, -s);
@@ -665,7 +867,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 const double zc = wheelZ(s, ax), az = std::fabs(zc);
                 Pickups& P = pick[ax][sIdx];
                 if (st == WISHBONE || st == STRUT) {
-                    WishboneGeom G = wishbone(xw, s, zc, ww, st == STRUT);
+                    WishboneGeom G = wishbone(xw, s, zc, ww, st == STRUT, front);
                     P.lf = frameNode(G.lf, 2.5);
                     P.lr = frameNode(G.lr, 2.5);
                     P.uf = frameNode(G.uf, 2.0);
@@ -674,16 +876,58 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                     P.coil = frameNode(G.coil, 2.0);
                 } else if (st == TWIST_BEAM) {
                     P.coil = frameNode(V3(xw + 0.08, R * 0.75 + 0.05 + 0.32 * sizeK, s * (az - 0.16)), 2.0);
+                } else if (!front && vs.leafSprings) {  // SOLID_AXLE on leaf springs
+                    // The leaf rides on the tube (spring over axle), its eyes a little above the
+                    // seat: the front one on a hanger, the rear on a shackle hanging from the frame.
+                    // (The coil-over's top here is where the leaf's own rate pushes from: straight
+                    // up over the seat.)
+                    const double zl = s * (az - 0.20), ys = R + 0.10;
+                    P.trail = frameNode(V3(xw + vs.leafHalf, ys + 0.05, zl), 2.5);
+                    P.shackle = frameNode(V3(xw - vs.leafHalf - 0.03, ys + 0.05 + 0.10, zl), 2.0);
+                    P.coil = frameNode(V3(xw - 0.06, ys + 0.30, zl), 2.0);
+                    P.stop = frameNode(V3(xw, R + 0.31 * sizeK, s * (az - tireWidth(ax) / 2)), 2.0);
                 } else {  // SOLID_AXLE (links run toward the middle of the car)
                     const double dir = front ? -1.0 : 1.0;
-                    P.trail = frameNode(V3(xw + dir * vs.linkLength, R - 0.04, s * (az - 0.30)), 2.5);
+                    // Lower links level at ride height (their frame ends as high as the axle
+                    // brackets): a level link barely moves the axle fore and aft as the body rolls,
+                    // so the axle doesn't steer itself (sloped up to the frame, the outside end swung
+                    // back in a turn or a lopsided stop and the axle steered the truck further in).
+                    P.trail = frameNode(V3(xw + dir * vs.linkLength, R - 0.12, s * (az - 0.30)), 2.5);
                     P.coil = frameNode(V3(xw - dir * 0.06, R + (vs.coilTop > 0 ? vs.coilTop : 0.48 * sizeK), s * (az - 0.20)), 2.0);
+                    // Jounce bumper on a bracket off the rail, straight over the tube's end
+                    // (where the hub's inner node is: the stop lands on the tube itself).
+                    P.stop = frameNode(V3(xw, R + 0.31 * sizeK, s * (az - tireWidth(ax) / 2)), 2.0);
                 }
             }
             if (st == SOLID_AXLE) {
+                const bool leaf = !front && vs.leafSprings;
                 const double dir = front ? -1.0 : 1.0;
-                axleUpperPick[ax] = frameNode(V3(xw + dir * (vs.upperLink > 0 ? vs.linkLength * vs.upperLink : 0.55), R + 0.22, 0), 2.5);
-                panhardFrame[ax] = frameNode(V3(xw - 0.10, R + 0.16, hw - 0.40), 2.5);
+                // (On leaves, the stand-in for their resistance to wind-up pulls from under the
+                // housing: the leaves themselves sit on top of it.)
+                // (The upper link runs down toward the frame: with the level lower links its
+                // instant centre is ahead of the axle, ~70% anti-squat and anti-lift.)
+                axleUpperPick[ax] = frameNode(V3(xw + dir * (vs.upperLink > 0 ? vs.linkLength * vs.upperLink : 0.55), leaf ? R - 0.06 : R + 0.05, 0), 2.5);
+                // (Leaf springs hold the axle sideways themselves, at the seats: the panhard's
+                // place is taken by a level tie at seat height, standing in for the leaves' own
+                // sideways stiffness, and not drawn.)
+                panhardFrame[ax] = leaf ? frameNode(V3(xw - 0.06, R + 0.10, std::fabs(wheelZ(1, ax)) - 0.20 + 0.06), 2.5)
+                                        : frameNode(V3(xw - 0.10, R + 0.16, hw - 0.40), 2.5);
+                // The link brackets, coil towers and bump stops are welded to the same rails
+                // and crossmember: tie them together so they can't shift against each other.
+                // (Held only by the body lattice they moved 2-4 cm apart in a hard landing,
+                // enough to let the housing roll over on its links.)
+                std::vector<int> brackets = {axleUpperPick[ax], panhardFrame[ax]};
+                for (int sIdx = 0; sIdx < 2; sIdx++)
+                    for (int n : {pick[ax][sIdx].trail, pick[ax][sIdx].coil, pick[ax][sIdx].stop, pick[ax][sIdx].shackle})
+                        if (n >= 0) brackets.push_back(n);
+                for (size_t i = 0; i < brackets.size(); i++)
+                    for (size_t j = i + 1; j < brackets.size(); j++) {
+                        int bi = addBeam(brackets[i], brackets[j], BEAM_FRAME);
+                        if (bi < 0) continue;
+                        beams[bi].k = kSpec[BEAM_FRAME].k * 10;
+                        beams[bi].c = kSpec[BEAM_FRAME].c * 3;
+                        beams[bi].yieldStrain = 0.06;
+                    }
             }
             // Differential on the body (independent suspension, driven axle).
             bool driven = vs.drive == VehicleSpec::AWD || (vs.drive == VehicleSpec::FWD) == front;
@@ -691,6 +935,19 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
             bool onBody = st != SOLID_AXLE && driven && !transaxle;
             if (onBody) diffFrame[ax] = frameNode(V3(xw, R + 0.02, 0), 6.0);
         }
+    }
+    // On a ladder frame the engine and gearbox sit on brackets that reach in from the
+    // rails to just under the block's mounts (as on the real truck): pads welded to the
+    // frame, braced to both rails.
+    std::vector<int> enginePads;
+    if (ladderFrame && !isProp && !vs.transverse) {
+        const V3 ca(1, 0, 0), up(0, 1, 0), across(0, 0, 1), c0(vs.engineX, vs.engineY, vs.engineZ);
+        const double hl = vs.engineLen / 2, hwid = vs.engineWid / 2, hh = vs.engineHgt / 2;
+        const V3 at[6] = {c0 + ca * -hl - up * hh - across * hwid, c0 + ca * hl - up * hh - across * hwid,
+                          c0 + ca * -hl - up * hh + across * hwid, c0 + ca * hl - up * hh + across * hwid,
+                          c0 - ca * (hl + vs.gearboxLen) - up * (hh * 0.75) - across * (hwid * 0.5),
+                          c0 - ca * (hl + vs.gearboxLen) - up * (hh * 0.75) + across * (hwid * 0.5)};
+        for (const V3& p : at) enginePads.push_back(frameNode(p - up * 0.06, 4.0));
     }
     frameNodes = (int)nodes.size();
     // =========================================================================
@@ -728,6 +985,16 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                                    : tail - ca * 0.10 - up * 0.05;
         gearboxOut = addNode(outPos, 3.0, false);
         for (int n : gearboxTail) addBeam(gearboxOut, n, BEAM_ENGINE);
+        // The transfer case's skid plate: across the frame under the back of the gearbox, three
+        // points (nodes collide as 4 cm spheres) welded to the rails like any bracket, so a
+        // ridge under the belly lifts the frame, not the engine on its mounts.
+        if (ladderFrame && vs.skidDrop > 0 && vs.transfer != XFER_NONE) {
+            const double xs = tail.x - 0.15;
+            for (double z : {-0.18, 0.0, 0.18}) {
+                const int n = frameNode(V3(xs, vs.layerY[0] - vs.skidDrop + 0.04, z), 4.0);
+                nodes[n].collide = true;
+            }
+        }
         if (vs.transverse)
             for (int b = 0; b < 8; b++)
                 if (!(b & 1)) addBeam(gearboxOut, engineNodes[b], BEAM_ENGINE);
@@ -741,16 +1008,46 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
         };
         std::vector<int> mountFrom = {engineNodes[0], engineNodes[1], engineNodes[4], engineNodes[5],
                                       gearboxTail[0], gearboxTail[2]};
-        for (int m : mountFrom) {
+        for (size_t mi = 0; mi < mountFrom.size(); mi++) {
+            const int m = mountFrom[mi];
             std::vector<std::pair<double, int>> cand;
-            for (int n = 0; n < bodyNodes; n++) {
-                if (insideBlock(local[n], 0.02)) continue;
-                cand.push_back({len(local[n] - local[m]), n});
-            }
+            // (On a ladder frame, each mount sits on its bracket pad under the block, plus
+            // the nearest rail to keep the block from shuffling sideways.)
+            if (ladderFrame && mi < enginePads.size()) {
+                cand.push_back({0.0, enginePads[mi]});
+                // ...and on to the neighbouring pad (fore and aft for the engine's, across at
+                // the gearbox): rubber blocks take shear too, so a knock can't surge the block
+                // off its pads.
+                static const int other[6] = {1, 0, 3, 2, 5, 4};
+                cand.push_back({0.0, enginePads[other[mi]]});
+                double best = 1e9;
+                int near = -1;
+                for (int n : ladder)
+                    if (!insideBlock(local[n], 0.02) && len(local[n] - local[m]) < best) best = len(local[n] - local[m]), near = n;
+                if (near >= 0) cand.push_back({best, near});
+            } else if (ladderFrame)
+                for (int n : ladder) {
+                    if (insideBlock(local[n], 0.02)) continue;
+                    cand.push_back({len(local[n] - local[m]), n});
+                }
+            else
+                for (int n = 0; n < bodyNodes; n++) {
+                    if (insideBlock(local[n], 0.02)) continue;
+                    cand.push_back({len(local[n] - local[m]), n});
+                }
             std::sort(cand.begin(), cand.end());
             for (int k = 0; k < 3 && k < (int)cand.size(); k++) {
                 int bi = addBeam(m, cand[k].second, BEAM_MOUNT);
-                if (bi >= 0) engineMounts.push_back(bi);
+                if (bi < 0) continue;
+                // A mount's rubber gives ~2.5 cm before its snubber bottoms, and tears at ~8,
+                // however long the bracket: short ones (on a frame rail right under the
+                // block) mustn't tear in a hard landing.
+                beams[bi].yieldStrain = std::max(beams[bi].yieldStrain, 0.025 / beams[bi].Lorig);
+                beams[bi].breakStrain = std::max(beams[bi].breakStrain, 0.08 / beams[bi].Lorig);
+                // (On a frame, the mounts' snubbers carry the block through a landing. A unibody
+                // car's subframe mounts give, and soak up some of a crash, as built.)
+                beams[bi].snub = ladderFrame;
+                engineMounts.push_back(bi);
             }
         }
         // Torque rods ("dog bones"): a transverse engine's block takes the whole drive torque
@@ -875,7 +1172,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 Assembly as;
                 if (st == WISHBONE || st == STRUT) {
                     const bool strut = st == STRUT;
-                    WishboneGeom G = wishbone(xw, s, zc, ww, strut);
+                    WishboneGeom G = wishbone(xw, s, zc, ww, strut, front);
                     wh.lower = addNode(G.lowerBJ, vs.hubMass * 0.2 + 2.0, false);
                     wh.top = addNode(G.upperBJ, vs.hubMass * 0.15 + 1.0, false);
                     wh.arm = addNode(G.arm, vs.hubMass * 0.15 + 0.5, false);
@@ -945,6 +1242,12 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
             int pinion = addNode(V3(xw + dir * 0.20, R + 0.02, 0), am * 0.10, false);
             int dtop = addNode(V3(xw, R + 0.14, 0), am * 0.06, false);
             axle.housing = {diff, pinion, dtop};
+            const bool leafAxle = !front && vs.leafSprings;
+            int dbot = -1;  // (leaf springs: under the diff, where the wind-up stand-in pulls)
+            if (leafAxle) {
+                dbot = addNode(V3(xw, R - 0.12, 0), am * 0.04, false);
+                axle.housing.push_back(dbot);
+            }
             axle.diffNode = diff;
             as.nodes = axle.housing;
             int seat[2], lowMount[2];
@@ -992,6 +1295,38 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 wheels.push_back(wh);
             }
             rigid(as.nodes, BEAM_KNUCKLE);
+            // What a solid axle drags over the rocks: the diff's pumpkin, the lowest thing on the
+            // truck (ground clearance is measured under it), and the tubes either side. Nodes
+            // collide as 4 cm spheres: the pumpkin node sits that far above its bottom, ~12.5 cm
+            // below the axle's centre (an 8-8.8 in ring gear's housing: Toyota quotes 9.4 in under
+            // the Tacoma's on its loaded 265/70R16s), and a tube node halfway out to each hub.
+            // (Each is braced to a few of the housing's points, not welded to all of them: a
+            // light node on that many stiff beams would have to borrow weight off the body to
+            // stay stable, and the axle would get heavier.)
+            {
+                const double nodeR = 0.04;
+                auto brace = [&](int n, std::initializer_list<int> to) {
+                    for (int o : to) {
+                        const int bi = addBeam(n, o, BEAM_KNUCKLE);
+                        if (bi >= 0) beams[bi].k *= 0.1, beams[bi].c *= 0.3;
+                    }
+                };
+                const int hubL = wheels[axle.wheel[0]].inner, hubR = wheels[axle.wheel[1]].inner;
+                const int pump = addNode(V3(xw, R - kAxleDiffR + nodeR, 0), am * 0.05, true);
+                brace(pump, {diff, pinion, dtop, hubL, hubR});
+                nodes[diff].m -= am * 0.11;
+                axle.housing.push_back(pump);
+                as.nodes.push_back(pump);
+                for (int sIdx = 0; sIdx < 2; sIdx++) {
+                    const int s = sIdx == 0 ? -1 : 1;
+                    const int hub = sIdx == 0 ? hubL : hubR;
+                    const int tube = addNode(V3(xw, R - (kAxleTubeR - nodeR), s * std::fabs(wheelZ(s, ax)) * 0.5), am * 0.03, true);
+                    brace(tube, {diff, hub, seat[sIdx], lowMount[sIdx], pump});
+                    axle.housing.push_back(tube);
+                    as.nodes.push_back(tube);
+                }
+            }
+            const bool leaf = !front && vs.leafSprings;
             for (int sIdx = 0; sIdx < 2; sIdx++) {
                 Wheel& wh = wheels[axle.wheel[sIdx]];
                 wh.assembly = as.nodes;
@@ -1012,8 +1347,20 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                             if (beams[k].a == a2 && beams[k].b == b2) wh.mounts.push_back((int)k);
                     }
                 }
-                as.links.push_back(link(&wh, lowMount[sIdx], pick[ax][sIdx].trail, BEAM_ARM, LINK_TRAILING, axle.wheel[sIdx]));
+                if (leaf) {
+                    // The leaf's front half: from its hanger to the seat, it holds the axle fore
+                    // and aft (and with the other side, square to the truck).
+                    const int lf = link(&wh, seat[sIdx], pick[ax][sIdx].trail, BEAM_ARM, LINK_LEAF, axle.wheel[sIdx]);
+                    as.links.push_back(lf);
+                    wh.shackle = pick[ax][sIdx].shackle;
+                } else {
+                    as.links.push_back(link(&wh, lowMount[sIdx], pick[ax][sIdx].trail, BEAM_ARM, LINK_TRAILING, axle.wheel[sIdx]));
+                }
                 wh.spring = addBeam(seat[sIdx], pick[ax][sIdx].coil, BEAM_SPRING);
+                // The bumper lands on the tube's centre line: it pushes straight down through
+                // the tube and can't roll the housing over on its links (a stop pushing on the
+                // coil seat behind the tube did).
+                wh.bumpStop = addBeam(wh.inner, pick[ax][sIdx].stop, BEAM_BUMPSTOP);
                 wh.mounts.push_back(wh.spring);
                 as.springs.push_back(wh.spring);
                 if (!steered) {
@@ -1027,8 +1374,20 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 }
             }
             // Upper link (holds the axle against wind-up) and panhard rod (holds it sideways).
-            as.links.push_back(link(nullptr, dtop, axleUpperPick[ax], BEAM_ARM, LINK_TRAILING, -1));
-            as.links.push_back(link(nullptr, seat[0], panhardFrame[ax], BEAM_ARM, LINK_PANHARD, -1));
+            // On leaf springs both are the leaves themselves: the packs clamped to the tube
+            // resist its wind-up (softly: under a hard launch the axle wraps), and their width
+            // holds it sideways. Neither is drawn.
+            if (leaf) {
+                // (Leaves clamped along the seat: stiff against wind-up, though they do wrap a
+                // few degrees under a hard launch, and they spring back rather than bend.)
+                const int wrap = link(nullptr, dbot, axleUpperPick[ax], BEAM_ARM, LINK_BUSHING, -1);
+                if (wrap >= 0) beams[wrap].yieldStrain = 0.25, beams[wrap].c *= 6;  // (interleaf friction damps the wrap)
+                as.links.push_back(wrap);
+                as.links.push_back(link(nullptr, seat[0], panhardFrame[ax], BEAM_ARM, LINK_BUSHING, -1));
+            } else {
+                as.links.push_back(link(nullptr, dtop, axleUpperPick[ax], BEAM_ARM, LINK_TRAILING, -1));
+                as.links.push_back(link(nullptr, seat[0], panhardFrame[ax], BEAM_ARM, LINK_PANHARD, -1));
+            }
             axle.diffNodes = axle.housing;
             assemblies.push_back(as);
         }
@@ -1114,6 +1473,8 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 sp.k = kWheel / (mr * mr);
                 sp.c = cWheel / (mr * mr);
                 double preload = mCorner * g / mr / sp.k;
+                // (A multi-leaf spring: interleaf friction ~8% of the corner's weight.)
+                if (!wh.front && vs.leafSprings) sp.friction = (float)(0.08 * mCorner * g / mr);
                 double L = sp.L0;
                 wh.motionRatio = mr;
                 wh.springRest = L;
@@ -1123,6 +1484,17 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 const double bump = wh.front ? vs.bumpFront : vs.bumpRear, droop = wh.front ? vs.droopFront : vs.droopRear;
                 sp.minL = bump > 0 ? L - bump * mr : L - 0.085 * sizeK;
                 sp.maxL = droop > 0 ? L + droop * mr : L + 0.11 * sizeK;
+                if (wh.bumpStop >= 0) {
+                    // A live axle lands on its jounce bumpers (tube travel ~ wheel travel).
+                    // The coil-over gets no stop of its own: pushing on the seat behind the
+                    // tube, one rolled the housing over on its links in hard landings.
+                    Beam& st = beams[wh.bumpStop];
+                    st.k = kWheel;
+                    st.c = cWheel * 2;  // rubber (or hydraulic) bumpers soak up the hit
+                    st.minL = st.L0 - (bump > 0 ? bump : 0.085 * sizeK);
+                    st.maxL = 1e9;
+                    sp.minL = 0;
+                }
                 if (getenv("CZ_DEBUG"))
                     std::printf("%s %s%s: bump steer %.3f deg/cm, camber %.3f deg/cm\n", vs.name, wh.front ? "front " : "rear ", wh.left ? "left" : "right",
                                 q[4] * 180 / M_PI / 100, q[3] * 180 / M_PI / 100);
@@ -1137,6 +1509,13 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
             // Bar rate at the wheel -> per meter of coil-over travel.
             double mr = wheels[a.wheel[0]].motionRatio;
             a.arbK = (a.front ? vs.arbFront : vs.arbRear) / (mr * mr);
+            // Sized to twist through one wheel at full bump and the other at full droop, with
+            // ~15% to spare; past that it yields.
+            {
+                const double bump = a.front ? vs.bumpFront : vs.bumpRear, droop = a.front ? vs.droopFront : vs.droopRear;
+                a.arbYield = ((bump > 0 ? bump : 0.085 * sizeK) + (droop > 0 ? droop : 0.11 * sizeK)) * mr * 1.15;
+                a.arbBend = 0;
+            }
             a.heaveK = vs.heaveRate / (mr * mr);
             a.heaveGap = vs.heaveGap * mr;
             a.heaveC = vs.heaveDamping / (mr * mr);
@@ -1215,6 +1594,64 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
             const bool slider = (vs.extras & EXTRA_SLIDERS) && std::min(pa.x, pb.x) > xr - 0.3 && std::max(pa.x, pb.x) < xf + 0.3 &&
                                 ((pa.z > sill && pb.z > sill) || (pa.z < -sill && pb.z < -sill));
             if (skid || slider) b.yieldStrain *= 2.5;
+        }
+    }
+
+    // The ladder frame's strength: the rails between the axles bend only under a heavy
+    // hit (frameStrength); the horns ahead of the front axle and the tail behind the rear
+    // one stay crumple zones. Where a shock tower or a link bracket is welded on, the rail
+    // is boxed in and gusseted (it carries the suspension's whole load). And the body tub
+    // sits on the frame on rubber mounts.
+    if (ladderFrame && axleI.size() >= 2) {
+        const double xf = xAt(axleI.front()), xr = xAt(axleI.back());
+        std::set<int> rail(ladder.begin(), ladder.end());
+        for (Beam& b : beams) {
+            if (!rail.count(b.a) || !rail.count(b.b)) continue;
+            if (bracketed.count(b.a) && bracketed.count(b.b)) {
+                b.k *= 2;
+                b.yieldStrain *= 3;
+                b.breakStrain *= 2;
+            }
+            const V3 &pa = local[b.a], &pb = local[b.b];
+            // The horns ahead of the front axle (and the last of the tail) have crush
+            // initiators pressed in: in a crash they fold up, absorbing it, before the cab.
+            if (std::min(pa.x, pb.x) > xf + 0.25 || std::max(pa.x, pb.x) < xr - 0.9) {
+                b.yieldStrain *= 0.75;
+                continue;
+            }
+            if (std::max(pa.x, pb.x) > xf + 0.2 || std::min(pa.x, pb.x) < xr - 0.8) continue;
+            b.yieldStrain *= vs.frameStrength;
+        }
+        // Mounts: pairs along the rails, from the cowl (just behind the front tires: not in
+        // the wheel well, where a tire forced up would find a mount) back past the rear axle. Each
+        // ties the body floor nodes over the rail to its section there: the bushing sits on an
+        // outrigger welded across the rail's side, which spreads its load into the whole
+        // section (on one corner alone, a landing would crush the rail locally).
+        const int perSide = std::max(2, vs.bodyMounts / 2);
+        for (int m = 0; m < perSide; m++) {
+            const double x0 = xf - vs.wheelRadius - 0.12, x1 = xr - 0.55;
+            const double x = x0 + (x1 - x0) * m / (perSide - 1);
+            int st = 0;
+            for (int k = 1; k < ladderStations; k++)
+                if (std::fabs(stationX[k] - x) < std::fabs(stationX[st] - x)) st = k;
+            for (int side = 0; side < 2; side++) {
+                const int top = ladder[st * 8 + side * 4 + 3];
+                std::vector<std::pair<double, int>> cand;
+                for (int n = 0; n < bodyNodes; n++)
+                    if (local[n].y < vs.layerY[0] + 0.5 * (vs.layerY[1] - vs.layerY[0])) cand.push_back({len(local[n] - local[top]), n});
+                std::sort(cand.begin(), cand.end());
+                for (int k = 0; k < 4 && k < (int)cand.size(); k++)  // (a pyramid: it holds every way)
+                    for (int corner = 0; corner < 4; corner++) {
+                        const int bi = addBeam(ladder[st * 8 + side * 4 + corner], cand[k].second, BEAM_MOUNT);
+                        if (bi < 0) continue;
+                        beams[bi].k *= 6.0 / 4;  // body mount bushings: stiff rubber (all four together)
+                        beams[bi].c *= 2.0 / 4;
+                        beams[bi].yieldStrain = 0.12;
+                        beams[bi].breakStrain = 0.6;  // a big enough hit shears the body off its mounts
+                        beams[bi].snub = true;
+                        bodyMountBeams.push_back(bi);
+                    }
+            }
         }
     }
 
@@ -1393,6 +1830,46 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 for (int a : far[0])
                     for (int b : far[1]) addBeam(copy[a], copy[b], BEAM_PANEL);
             }
+            // Opening stops: a door opens to ~70 degrees on its check strap, a hood to ~80 on its
+            // prop, a lid or gate to ~85-90. The strap is a slack pin from each node one cell off
+            // the hinge line to the body node it sat on: that gap grows as 2 r sin(angle / 2).
+            if (d.hingeAxis >= 0) {
+                const std::string nm = d.name;
+                const double open = (nm.find("DOOR") != std::string::npos ? 70 : nm == "HOOD" ? 80 : nm == "TAILGATE" ? 90 : 85) * M_PI / 180;
+                const double hv = d.hingeAtMax ? hi : lo, step = d.hingeAtMax ? -1 : 1;
+                std::vector<int> hingeNodes, next;
+                const bool door = nm.find("DOOR") != std::string::npos;
+                for (size_t k = 0; k < pnl.bodyNodes.size(); k++) {
+                    const float* lt = latOf(pnl.bodyNodes[k]);
+                    if (!lt) continue;
+                    if (std::fabs(lt[d.hingeAxis] - hv) < 1e-3) hingeNodes.push_back((int)k);
+                    // (A door's strap is in the door itself, below the glass: not on its window frame.)
+                    else if (std::fabs(lt[d.hingeAxis] - (hv + step)) < 1e-3 && !(door && lt[2] > gk0)) next.push_back((int)k);
+                }
+                for (int k : next) {
+                    double r = 1e9;
+                    for (int hk : hingeNodes) r = std::min(r, len(local[pnl.bodyNodes[k]] - local[pnl.bodyNodes[hk]]));
+                    if (r > 2 || next.empty()) continue;
+                    Pin pin;
+                    pin.body = pnl.bodyNodes[k];
+                    pin.panel = pnl.panelNodes[k];
+                    pin.kind = PIN_CHECK;
+                    // (A steel stop: a door hanging open through a hard corner barely moves on it.
+                    // Each tears at ~3 kN (a door twisting on its stop loads one more than the
+                    // rest): a door flung open in a crash or a roll goes past.)
+                    pin.k = 4e5 / next.size();
+                    pin.c = 600.0 / next.size();
+                    pin.slack = 2 * r * std::sin(open / 2);
+                    pin.breakDist = pin.slack + 3000.0 / pin.k * (bumper ? 1.0 : vs.pinStrength);
+                    pnl.checks.push_back((int)pins.size());
+                    pins.push_back(pin);
+                }
+            }
+            pnl.nodeQuads.resize(pnl.bodyNodes.size());
+            for (size_t k = 0; k < pnl.bodyNodes.size(); k++)
+                for (int qi : pnl.quads)
+                    for (int c = 0; c < 4; c++)
+                        if (quads[qi].v[c] == pnl.bodyNodes[k]) pnl.nodeQuads[k].push_back(qi);
             // Collision and glass use the same moving nodes as the visible panel.
             // Leaving these on the welded body creates invisible doors after detachment.
             for (int qi : pnl.quads)
@@ -1413,10 +1890,15 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
     // rebound damping) and check h^2*k/m + 2h*c/m against a safe margin (the hard limit
     // is 4). A node over the margin borrows mass from its neighbors; total mass and
     // balance stay the same.
+    // (Where the mass sits before: the pass moves some about, and the balance is put back after.)
+    V3 cgBefore;
+    double mBefore = 0;
+    for (size_t i = 0; i < nodes.size(); i++) cgBefore += local[i] * nodes[i].m, mBefore += nodes[i].m;
+    cgBefore = cgBefore / mBefore;
     {
         // The chassis frame's own pull and damping (see below) use up part of the margin,
         // so a very rigid frame leaves less for the beams.
-        const double h = 1.0 / 2000.0, frameK = 300000 * vs.frameStiffness;
+        const double h = 1.0 / 2000.0, frameK = 300000 * (ladderFrame ? std::max(vs.frameStiffness * kRailStiffness, kLadderTubStiffness) : vs.frameStiffness);
         const double frameLoad = isProp ? 0.0 : h * h * frameK + 2 * h * 2 * 0.85 * std::sqrt(frameK);
         const double target = std::min(1.6, (3.9 - frameLoad) / 1.85);
         std::vector<std::vector<int>> nb(nodes.size());
@@ -1434,8 +1916,8 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                     const Beam& e = beams[bk];
                     double c2 = dot(u, norm(local[e.b] - local[e.a]));
                     c2 *= c2;
-                    bool spring = e.type == BEAM_SPRING;
-                    K += c2 * e.k * (spring ? 26 : 1);
+                    bool spring = e.type == BEAM_SPRING || e.type == BEAM_BUMPSTOP;
+                    K += c2 * e.k * (e.type == BEAM_BUMPSTOP ? 125 : spring ? 26 : 1);
                     C += c2 * e.c * (spring ? 1.35 : 1);
                 }
                 worst = std::max(worst, h * h * K + 2 * h * C);
@@ -1451,6 +1933,11 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 std::vector<int> donors;
                 double avail = 0;
                 for (int bj : nb[i]) {
+                    // (Only within one solid assembly: across a rubber mount or a spring is a
+                    // different part, and borrowing there would move real weight, the engine's,
+                    // say, to where it isn't.)
+                    const uint8_t t = beams[bj].type;
+                    if (t == BEAM_MOUNT || t == BEAM_SPRING || t == BEAM_BUMPSTOP) continue;
                     int o = beams[bj].a == (int)i ? beams[bj].b : beams[bj].a;
                     double spare = nodes[o].m - L[o] / (target * 0.8);
                     if (spare > 0) {
@@ -1480,11 +1967,40 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 }
                 nodes[i].m += take;
             }
+        // Balance: what the body lent shifted the center of mass (toward the stiff nodes
+        // that borrowed: a few cm). Tilt the mass of the body nodes with plenty to spare
+        // fore-aft and side to side, just enough to put it back, so the axle loads stay the
+        // factory's. (Nodes near their limit are left alone.)
+        for (int it = 0; it < 6 && !isProp; it++) {
+            auto roomy = [&](int i) { return nodes[i].m > 2 * L[i] / target; };
+            V3 cg, xb;
+            double M = 0, Mb = 0, vx = 0, vz = 0;
+            for (size_t i = 0; i < nodes.size(); i++) cg += local[i] * nodes[i].m, M += nodes[i].m;
+            cg = cg / M;
+            for (int i = 0; i < bodyNodes; i++)
+                if (roomy(i)) xb += local[i] * nodes[i].m, Mb += nodes[i].m;
+            if (Mb <= 0) break;
+            xb = xb / Mb;
+            for (int i = 0; i < bodyNodes; i++)
+                if (roomy(i)) {
+                    vx += nodes[i].m * (local[i].x - xb.x) * (local[i].x - xb.x);
+                    vz += nodes[i].m * (local[i].z - xb.z) * (local[i].z - xb.z);
+                }
+            const double bx = -(cg.x - cgBefore.x) * M / std::max(vx, 1e-9), bz = -(cg.z - cgBefore.z) * M / std::max(vz, 1e-9);
+            double before = 0, after = 0;
+            for (int i = 0; i < bodyNodes; i++)
+                if (roomy(i)) {
+                    before += nodes[i].m;
+                    nodes[i].m *= clampd(1 + bx * (local[i].x - xb.x) + bz * (local[i].z - xb.z), 0.6, 1.6);
+                    after += nodes[i].m;
+                }
+            for (int i = 0; i < bodyNodes; i++)
+                if (roomy(i)) nodes[i].m *= before / after;  // (same total)
+        }
         if (getenv("CZ_DEBUG"))
             for (size_t i = 0; i < nodes.size(); i++)
                 if (L[i] / nodes[i].m > target) std::printf("%s: node %zu (%.2f, %.2f, %.2f; %.1f kg; %d of %d body) still stiff for its mass (%.2f)\n", vs.name, i, local[i].x, local[i].y, local[i].z, nodes[i].m, (int)(i < (size_t)bodyNodes), bodyNodes, L[i] / nodes[i].m);
     }
-
     restLocal = local;
     wheelbase = 2.5;
     if (axleI.size() >= 2) wheelbase = xAt(axleI.front()) - xAt(axleI.back());
@@ -1492,6 +2008,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
     nodeTris.assign(nodes.size(), {});
     for (int t = 0; t < (int)tris.size(); t++)
         for (int c = 0; c < 3; c++) nodeTris[tris[t].v[c]].push_back(t);
+    buildWheelRub();
     skinEdges.clear();
     {
         std::set<std::pair<int, int>> edges;
@@ -1535,26 +2052,78 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
         for (double& w : aeroShare) w /= sum;
     }
 
-    // Chassis frame: the lattice and everything bolted rigidly to it.
+    // Chassis frame: the lattice and everything bolted rigidly to it. On a body-on-frame
+    // truck, two: the body tub, and the ladder frame with everything welded to it (it twists
+    // more, as ladder frames do; the stiffer tub rides on its mounts).
     chassis = ChassisFrame();
+    for (ChassisFrame& rf : railFrame) rf = ChassisFrame();
     if (!isProp) {
-        chassis.kappa = 300000 * vs.frameStiffness;
-        chassis.damping = 2 * 0.85 * std::sqrt(chassis.kappa);
-        chassis.maxPull = 2500 * vs.bodyStiffness;
-        V3 c;
-        double M = 0;
-        for (int i = 0; i < frameNodes; i++) {
-            chassis.nodes.push_back(i);
-            c += local[i] * nodes[i].m;
-            M += nodes[i].m;
+        auto setUp = [&](ChassisFrame& cf, const std::vector<int>& members, double kappa) {
+            cf.kappa = kappa;
+            cf.damping = 2 * 0.85 * std::sqrt(cf.kappa);
+            cf.maxPull = 2500 * vs.bodyStiffness;
+            V3 c;
+            double M = 0;
+            for (int i : members) {
+                cf.nodes.push_back(i);
+                c += local[i] * nodes[i].m;
+                M += nodes[i].m;
+            }
+            c = c / M;
+            for (int i : cf.nodes) cf.rest.push_back(local[i] - c);
+            cf.attached.assign(cf.nodes.size(), 1);
+            cf.release.assign(cf.nodes.size(), 0);
+            cf.slot.assign(nodes.size(), -1);
+            for (size_t k = 0; k < cf.nodes.size(); k++) cf.slot[cf.nodes[k]] = (int)k;
+            cf.rot = Quat::axisAngle(V3(0, 1, 0), yaw);
+        };
+        auto range = [](int from, int to) {
+            std::vector<int> v;
+            for (int i = from; i < to; i++) v.push_back(i);
+            return v;
+        };
+        if (ladderFrame) {
+            setUp(chassis, range(0, bodyNodes), 300000 * kLadderTubStiffness);
+            // Each rail with the brackets welded to it (the pads and brackets between the rails
+            // go with the nearer one).
+            // (One on the centreline, a diff's mount, say, is held by both, half each: the
+            // truck stays the same both sides.)
+            std::vector<int> side[2];
+            for (int i = bodyNodes; i < frameNodes; i++) {
+                if (std::fabs(local[i].z) < 0.05) side[0].push_back(i), side[1].push_back(i);
+                else side[local[i].z > 0].push_back(i);
+            }
+            for (int r = 0; r < 2; r++) {
+                ChassisFrame& rf = railFrame[r];
+                setUp(rf, side[r], 300000 * vs.frameStiffness * kRailStiffness);
+                // Boxed steel: stiff up to its yield, then it bends and stays bent. (A rail's
+                // shape-holding pull is all that carries its bending: the lattice of a few
+                // nodes per section is far softer than the steel.)
+                rf.maxPull = 1e9;
+                rf.yieldDist = vs.railYield;
+                // The brackets, towers and pads welded on are stouter than the bare rail (a
+                // coil-over tower is built for the bump stop's hit): held harder, to their own
+                // yield force.
+                rf.weight.assign(rf.nodes.size(), 1.0f);
+                rf.section.assign(rf.nodes.size(), 0);
+                int nextSection = ladderStations;
+                for (size_t k = 0; k < rf.nodes.size(); k++) {
+                    auto it = std::lower_bound(ladder.begin(), ladder.end(), rf.nodes[k]);
+                    if (it != ladder.end() && *it == rf.nodes[k]) {
+                        rf.section[k] = (int)(it - ladder.begin()) / 8;  // its station
+                    } else {
+                        const double hold = kBracketYield / (rf.kappa * nodes[rf.nodes[k]].m * rf.yieldDist);
+                        // (One on the centreline sits on a crossmember between the rails: what
+                        // holds it there is what makes the frame stiff in twist, so it's held
+                        // like plain rail by each.)
+                        rf.weight[k] = std::fabs(local[rf.nodes[k]].z) < 0.05 ? 1.0f : (float)clampd(hold, 1, 40);
+                        rf.section[k] = nextSection++;  // (a bracket bends on its own)
+                    }
+                }
+            }
+        } else {
+            setUp(chassis, range(0, frameNodes), 300000 * vs.frameStiffness);
         }
-        c = c / M;
-        for (int i : chassis.nodes) chassis.rest.push_back(local[i] - c);
-        chassis.attached.assign(chassis.nodes.size(), 1);
-        chassis.release.assign(chassis.nodes.size(), 0);
-        chassis.slot.assign(nodes.size(), -1);
-        for (size_t k = 0; k < chassis.nodes.size(); k++) chassis.slot[chassis.nodes[k]] = (int)k;
-        chassis.rot = Quat::axisAngle(V3(0, 1, 0), yaw);
     }
 
     // Recovery points: the frame nodes at the very front and back of the floor (where
@@ -1563,9 +2132,14 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
         hooks[e].clear();
         double ext = e == 0 ? -1e9 : 1e9;
         for (int i = 0; i < bodyNodes; i++) ext = e == 0 ? std::max(ext, local[i].x) : std::min(ext, local[i].x);
-        for (int i = 0; i < bodyNodes; i++)
-            if (local[i].y <= vs.layerY[0] + 0.15 && std::fabs(local[i].x - ext) < 0.7 && std::fabs(local[i].z) < vs.width * 0.4)
-                hooks[e].push_back(i);
+        if (ladderFrame) {  // (shackle mounts bolt to the frame's horns)
+            for (int n : ladder)
+                if (std::fabs(local[n].x - (e == 0 ? stationX.front() : stationX.back())) < 0.5) hooks[e].push_back(n);
+        } else {
+            for (int i = 0; i < bodyNodes; i++)
+                if (local[i].y <= vs.layerY[0] + 0.15 && std::fabs(local[i].x - ext) < 0.7 && std::fabs(local[i].z) < vs.width * 0.4)
+                    hooks[e].push_back(i);
+        }
         hookRest[e] = V3(ext + (e == 0 ? 0.06 : -0.06), vs.layerY[0] + 0.1, 0);
     }
 

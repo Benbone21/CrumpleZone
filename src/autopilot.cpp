@@ -485,6 +485,24 @@ void tryLine(Line& L, Scene& sc, const Car& c, const Autopilot& ap, const Caps& 
         L.maxDrop = std::max(L.maxDrop, drop);
         if (step > caps.best && fail(stepWho, "step")) break;
         if (drop > dropCap && fail(-1, "drop")) break;
+        // An edge beside it: the bare ground falling away more than it can drop within a
+        // metre or so of an outside tire (a crumbling bank, a canyon rim over the river).
+        // Ahead-only checks miss an edge it drives along, and on loose ground the truck
+        // slides off it sideways.
+        if (k % 2 == 0 && !grace) {
+            bool edge = false;
+            for (int wi = 0; wi < 4 && !edge; wi++) {
+                const bool front = wi < 2, left = wi % 2 == 0;
+                const double half = 0.5 * (front ? b.trackF : b.trackR);
+                const V3 P = Q + f * (front ? b.wb : 0) + l * (left ? half : -half);
+                const double g0 = sc.ground(P.x, P.z);
+                for (double d : {0.6, 1.2}) {
+                    const V3 q = P + l * (left ? d : -d);
+                    if (g0 - sc.ground(q.x, q.z) - 0.5 * d > dropCap) edge = true;
+                }
+            }
+            if (edge && fail(-1, "edge")) break;
+        }
         // Which setup this step needs (and whether only aired-down tires will do).
         if (step > 0.04 && !grace) {
             int need = -1;
@@ -507,6 +525,15 @@ void tryLine(Line& L, Scene& sc, const Car& c, const Autopilot& ap, const Caps& 
         L.maxPitch = std::max(L.maxPitch, std::fabs(pitch));
         if (std::fabs(roll) > rollMax && fail(-1, "roll")) break;
         if (std::fabs(pitch) > pitchMax && fail(-1, "pitch")) break;
+        // A slope steeper than the tires can hold it on (tan > grip): nose down, it slides on
+        // however hard it brakes; across it, it slips sideways down the hill. On sand, mud or
+        // snow that's far short of the roll and pitch limits, and whatever is at the bottom
+        // (a ledge, the river), it gets to.
+        if (pitch < -0.2 || std::fabs(roll) > 0.15) {
+            const V3 mid = Q + f * (b.wb * 0.5);
+            const double mu = 0.85 * sc.grip(mid.x, mid.z) * c.spec->tireGrip;
+            if ((std::tan(-pitch) > mu || std::tan(std::fabs(roll)) > mu * c.spec->lateralGrip) && fail(-1, "slide")) break;
+        }
         // The underbody over whatever is under it (every other step).
         double margin = 1e9;
         if (k % 2 == 0) {
@@ -839,8 +866,9 @@ bool setUp(Car& c, Autopilot& ap, const World& w, double v, double dt, double& v
         if (front && (std::fabs(c.steer) > 0.4 || steerPlan > 0.4)) on = false;  // a locked front axle won't turn (and snaps CVs)
         if (on != (front ? c.lockFront : c.lockRear)) c.setLocker(front, on);
     }
-    // Crawling up a ledge: let the wheels work (no traction-control throttle cuts).
-    c.tractionControl = c.lowRange && ap.needDist < 8 && ap.needStep > 0.15 ? false : ap.tcWas;
+    // Crawling up a ledge: let the wheels work (no traction-control throttle cuts). In low
+    // range with ABS, traction control only brakes a spinning wheel, which helps: leave it on.
+    c.tractionControl = c.lowRange && !c.spec->absEnabled && ap.needDist < 8 && ap.needStep > 0.15 ? false : ap.tcWas;
     return false;
 }
 
@@ -1009,6 +1037,10 @@ bool pilotDrive(Car& c, const World& w, double dt, const std::vector<Car>* cars)
         if (ap.onRoute) c.steer = clampd(std::atan2(2 * c.wheelbase * std::sin(alpha), Ld), -0.6, 0.6);
         else c.steer = clampd(std::atan(ap.kappa * ap.body.wb), -0.6, 0.6);
         if (std::fabs(alpha) > 1.2) vt = std::min(vt, 2.5);  // pointing the wrong way: turn round slowly
+        // Working a ledge in low range: wheels near straight. A CV joint cranked to full lock
+        // carries a fraction of its straight-ahead torque, and a locked axle turned hard binds;
+        // drivers line up first, then climb.
+        if (atLedge) c.steer = clampd(c.steer, -0.35, 0.35);
     }
     if (hold) {
         c.throttle = 0;
@@ -1023,12 +1055,31 @@ bool pilotDrive(Car& c, const World& w, double dt, const std::vector<Car>* cars)
     if (vt > 0.3 && vt < 2.5 && v < 0.4 * vt) ap.push = std::min(c.lowRange ? 0.75 : 0.5, ap.push + (c.lowRange ? 0.3 : 0.2) * dt);
     else ap.push = std::max(0.0, ap.push - 0.6 * dt);
     c.throttle = vt <= 0.05 ? 0 : clampd(0.25 + 0.35 * e + ap.push, 0, 1);
+    // Crawling in low range, it drives the tires, not the pedal: through a slipping torque
+    // converter more throttle just spins them up (past the peak, on rock they hold ~70% as
+    // much), so it eases off whenever the tread runs more than ~0.7 m/s ahead of the ground.
+    if (c.lowRange) {
+        // (Loose ground needs more slip for the tread to dig in and bite: sand and mud tires
+        // pull best spinning a good deal faster than the truck moves.)
+        double spin = 0, bite = 1;
+        for (const Wheel& wh : c.wheels)
+            if (c.wheelPowered(wh) && wh.load > 0) {
+                spin = std::max(spin, std::fabs(wh.omega * wh.rollR()) - std::fabs(wh.groundSpeed));
+                bite = std::min(bite, (double)wh.bite);
+            }
+        ap.spinCap = clampd(ap.spinCap + dt * 1.5 * (0.7 / std::max(0.4, bite) - spin), 0.12, 1.0);
+        c.throttle = std::min(c.throttle, ap.spinCap);
+    } else {
+        ap.spinCap = 1;
+    }
+    const double wanted = vt <= 0.05 ? 0 : clampd(0.25 + 0.35 * e + ap.push, 0, 1);  // (before the easing off)
     // Brakes: gently for the speed asked, firmly coming up on something to crawl over.
     c.brake = vt <= 0.05 ? 1 : vt < 3.5 ? (e < -0.3 ? clampd(-0.6 * e, 0, 1) : 0) : (e < -1.0 ? clampd(-0.3 * e, 0, 1) : 0);
     if (c.brake > 0) c.throttle = 0;
     c.handbrake = 0;
-    // Stuck? (Pushing but not moving, or nowhere to go.)
-    if ((c.throttle > 0.3 && std::fabs(v) < 0.35) || ap.blocked) ap.stuckTime += dt * (ap.blocked ? 2 : 1);
+    // Stuck? (Wanting to push but not moving, or nowhere to go. Easing off because the tires
+    // just spin counts: feathering it forever on a slope it can't hold isn't getting anywhere.)
+    if ((wanted > 0.3 && c.brake <= 0 && std::fabs(v) < 0.35) || ap.blocked) ap.stuckTime += dt * (ap.blocked ? 2 : 1);
     else ap.stuckTime = std::max(0.0, ap.stuckTime - dt * 0.5);
     // Against a ledge in low range on full tires: it's set up wrong rather than beaten. Air
     // down (any front locker comes in with stuckCount) and try it again before backing off.
@@ -1044,6 +1095,7 @@ bool pilotDrive(Car& c, const World& w, double dt, const std::vector<Car>* cars)
         ap.backTime = 2.5;
         ap.backSteer = -c.steer;
         ap.push = 0;
+        ap.spinCap = 1;  // the next go is a run at it: some momentum, not a feathered creep
         // Up against a ledge it reckoned it could climb: it can't, in this setup.
         const int cur = currentLevel(c);
         if (ap.needDist < 3.5 && ap.needStep > 0.05 && cur == bestLevel(*c.spec)) {
