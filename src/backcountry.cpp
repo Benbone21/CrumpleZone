@@ -796,13 +796,35 @@ void World::buildBackcountry() {
                 const V3 q = p + l * between(-2.3, 2.3);
                 boulder(q, between(0.34, 0.62), between(0.16, 0.34), (float)between(0.9, 1.1));
             }
-            if (rnd() < 0.34) {
+            if (rnd() < 0.5) {
                 const double side = rnd() < 0.5 ? -1 : 1;
-                const V3 q = p + l * (side * between(3.3, 4.8));
-                const double r = between(0.8, 1.6);
+                const V3 q = p + l * (side * between(3.3, 5.5));
+                const double r = between(0.8, 2.0);
                 boulder(q, r, r * between(0.7, 1.15), 0.95f);
             }
+            // Pines and broadleaf along the rim.
+            if (rnd() < 0.3) {
+                const double side = rnd() < 0.5 ? -1 : 1;
+                const V3 q = p + l * (side * between(8, 18));
+                const int id2 = at(q.x, q.z);
+                if (!keep[id2] && waterY[id2] < -1e8 && paint[id2] == PAINT_NONE) {
+                    Tree t;
+                    t.kind = rnd() < 0.7 ? 0 : 1;
+                    t.base = V3(q.x, height(q.x, q.z) - 0.2, q.z);
+                    t.height = t.kind == 0 ? 10 + rnd() * 8 : 8 + rnd() * 6;
+                    t.radius = t.height * (t.kind == 0 ? 0.2 + rnd() * 0.06 : 0.26 + rnd() * 0.08);
+                    t.tint = (float)(0.8 + rnd() * 0.4);
+                    trees.push_back(t);
+                    poles.push_back({q.x, q.z, t.base.y - 0.5, t.base.y + t.height * 0.6, t.kind == 1 ? 0.3 : 0.22});
+                }
+            }
         }
+        // The cut banks are bare rock.
+        scanNear(creek, 9, [&](int id, double d, double k, double) {
+            const int i = id / hN, j = id % hN;
+            if (d < 2.6 || k < 20 || i < 1 || j < 1 || i >= hN - 1 || j >= hN - 1 || paint[id] != PAINT_NONE) return;
+            if (slopeAtCell(i, j) > 0.4) paint[id] = PAINT_ROCK, surf[id] = SURF_ROCK;
+        });
     }
     // The ridge: a few rocks on the crest (a line to pick), bigger ones along the flanks.
     {
