@@ -740,7 +740,7 @@ struct Music::Song {
 
     void begin(int m, uint32_t seed) {
         map = m;
-        style = m % STYLES;
+        style = m == 4 ? MOUNTAIN : m % STYLES;  // (the Backcountry gets the mountain's airy folk)
         def = &kStyles[style];
         rng.s = (seed * 2654435761u) ^ (uint32_t)(m + 1) * 0x9E3779B9u;
         if (!rng.s) rng.s = 1;

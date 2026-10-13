@@ -105,7 +105,7 @@ const SurfaceInfo& surfaceInfo(Surface s);
 // Tire grip on each surface, as a share of dry pavement.
 inline double surfaceGrip(Surface s) { return surfaceInfo(s).grip; }
 
-enum MapId { MAP_PROVING_GROUND, MAP_MOUNTAIN, MAP_FREEWAY, MAP_FRONTIER, MAP_COUNT };
+enum MapId { MAP_PROVING_GROUND, MAP_MOUNTAIN, MAP_FREEWAY, MAP_FRONTIER, MAP_BACKCOUNTRY, MAP_COUNT };
 const char* mapName(int map);  // as the menu shows it
 
 // Catmull-Rom spline through control points, sampled every ~2 m.
@@ -118,6 +118,13 @@ std::vector<V3> mountainTrail();  // the summit trail's center line, trailhead t
 // delta, bowl, ford1-4, track, outpost, lakeside, hut), and its race circuit's center line.
 V3 frontierFeature(const char* name);
 const std::vector<V3>& frontierTrack();
+// The Backcountry's places and trails (see backcountry.cpp): trailhead, creekcrawl, creekend, mine,
+// slab, ridgeend, deepcrossing, ford, farside, sawmill, hillclimb, hilltop, dunes, wash, mudstart,
+// bog1-4, shelf, shelfend, wreck, pass, passhut, firetower, cabin, ...
+V3 backcountryFeature(const char* name);
+// A trail's center line, ~1 m apart, in the direction of travel: "creek", "ridge", "mud", "wash",
+// "hill", "ridgeroad", "shelf", "pass", "tower", "river", "cabin".
+const std::vector<V3>& backcountryTrail(const char* name);
 
 struct Contact {
     V3 n;            // surface normal, pointing out of the obstacle
@@ -223,6 +230,7 @@ private:
     void buildProvingGround();
     void buildFreeway();
     void buildFrontier();
+    void buildBackcountry();
     void buildMountain();
     double mountainHeight(double x, double z) const;
     void scatterScenery(uint32_t seed);  // bushes and rocks between the trees

@@ -175,6 +175,7 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
     const char* mapHint = mapPick == MAP_MOUNTAIN   ? "TRAILHEAD, SUMMIT TRAIL, CRAWL PARK, VALLEY LOOP"
                           : mapPick == MAP_FREEWAY ? "THREE LANES EACH WAY THAT NEVER END: TOP SPEED"
                           : mapPick == MAP_FRONTIER ? "DESERT, RIVERS, LAKES, A RANGE, A RACE CIRCUIT, A RALLY STAGE"
+                          : mapPick == MAP_BACKCOUNTRY ? "TRAILS TO CRAWL, MUD, FORD AND EXPLORE WITH BUDDIES"
                                                     : "TEST PAD, CRASH WALL, RAMPS, HILL ROADS";
     if (page == 0 && title) {
         const auto& cat = vehicleCatalog();
