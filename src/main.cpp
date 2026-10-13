@@ -34,6 +34,7 @@
 #include "net.h"
 #include "pilotsense.h"
 #include "platform.h"
+#include "props.h"
 #include "render.h"
 #include "sdl_min.h"
 #include "softbody.h"
@@ -59,6 +60,8 @@ struct Options {
     int menu = -1;                // --menu P: open the pause menu on page P (testing)
     int quality = -1;             // --quality 0-3: graphics preset (testing)
     int ground = -1;              // --ground 0-3: terrain materials (testing; see RenderSettings::ground)
+    int props = -1;               // --props 0-3: scanned props (testing; see RenderSettings::props)
+    bool photo = false;           // --photo: no HUD (screenshots; F10 in the game)
     bool mph = false;             // --mph
     int map = -1;                 // --map N: 0 proving ground, 1 mountain
     double orbitYaw = 0, orbitPitch = 0.2, orbitDist = 7.5;  // degrees, degrees, meters
@@ -243,6 +246,8 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--menu") o.menu = std::atoi(next().c_str());
         else if (a == "--quality") o.quality = std::atoi(next().c_str());
         else if (a == "--ground") o.ground = std::atoi(next().c_str());
+        else if (a == "--props") o.props = std::atoi(next().c_str());
+        else if (a == "--photo") o.photo = true;
         else if (a == "--mph") o.mph = true;
         else if (a == "--map") o.map = std::atoi(next().c_str());
         else if (a == "--mods") {
@@ -1311,6 +1316,7 @@ int main(int argc, char** argv) {
     }
     if (opt.quality >= 0) applyPreset(settings.gfx, opt.quality);
     if (opt.ground >= 0) settings.gfx.ground = std::min(opt.ground, 3);
+    if (opt.props >= 0) settings.gfx.props = std::min(opt.props, 3);
     if (opt.mph) settings.mph = true;
     if (opt.map >= 0) settings.map = std::min(opt.map, MAP_COUNT - 1);
     if (!opt.scenario.empty()) settings.map = MAP_PROVING_GROUND;  // the tests are built for it
@@ -1354,6 +1360,9 @@ int main(int argc, char** argv) {
     SDL_GL_SetSwapInterval(settings.vsync && opt.vsync && !scripted ? 1 : 0);
     std::printf("OpenGL: %s / %s\n", (const char*)gl::GetString(GL_VERSION), (const char*)gl::GetString(GL_RENDERER));
 
+    // Scanned rock hulls (assets/props), so what you hit is what you see; without the bake,
+    // code-made rocks. Scenario playback keeps the code-made rocks the tests ran with.
+    if (opt.scenario.empty()) props::setActiveRockScans(&props::sharedHullLibrary());
     Sim sim;
     if (settings.map != MAP_PROVING_GROUND) sim.world = World(settings.map);
     sim.setup();
@@ -1414,6 +1423,7 @@ int main(int argc, char** argv) {
     DebugView debug = (DebugView)(opt.debug % DEBUG_VIEW_COUNT);
     bool dragging = false;
     HudState hud;
+    hud.photo = opt.photo;
     if (scripted) hud.hintTime = 0;
     hud.showHelp = opt.showHelp;
     if (opt.mods[0] >= 0 && sim.cars[sim.player].spec->model >= 0) {
@@ -1963,15 +1973,11 @@ int main(int argc, char** argv) {
     if (opt.menu == 9) {  // (testing: the title screen)
         openMenu();
         menu.showTitle(std::max(0, sim.cars[sim.player].spec->model), sim.world.map);
-    } else if (opt.menu >= 2) {
+    } else if (opt.menu >= 1) {  // (1: the settings page)
         openMenu();
         menu.showPage(opt.menu, std::max(0, sim.cars[sim.player].spec->model), sim.world.map);
     } else if (opt.menu >= 0) {
         openMenu();
-        if (opt.menu == 1) {
-            for (int k = 0; k < 6; k++) menu.key(SC_S, settings);  // down to SETTINGS
-            menu.key(SC_RETURN, settings);
-        }
     }
     if (opt.hostPort > 0) startHost(opt.hostPort);
     else if (!opt.join.empty()) startJoin(opt.join);
@@ -2931,7 +2937,14 @@ int main(int argc, char** argv) {
         static int benchN = 0;
         if (bench && scripted && frame >= 40) benchSum += benchDraw, benchN++;
         if (scripted && opt.shotFrames.count(frame)) {
-            if (bench && benchN) std::printf("bench: scene %.2f ms/frame over %d frames\n", 1000.0 * benchSum / benchN, benchN);
+            if (bench && benchN) {
+                std::printf("bench: scene %.2f ms/frame over %d frames\n", 1000.0 * benchSum / benchN, benchN);
+                const PropStats& ps = renderer.propStats();
+                std::printf("bench: props %.2f ms GPU (timer queries), %.2f ms CPU; main %d draws, %d instances, %d billboards, %d scatter, %.0fk tris; "
+                            "shadows %d draws, %d instances, %.0fk tris\n",
+                            ps.gpuMs, ps.cpuMs, ps.draws, ps.instances, ps.billboards, ps.scatter, ps.tris / 1000.0, ps.shadowDraws, ps.shadowInstances,
+                            ps.shadowTris / 1000.0);
+            }
             char path[512];
             std::snprintf(path, sizeof(path), "%s_%04d.ppm", opt.shotPrefix.c_str(), frame);
             writePPM(path, renderer.readPixels(W, H), W, H);

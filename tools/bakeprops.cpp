@@ -1145,33 +1145,34 @@ struct Card {
     bool tree;
     float lodDist[3];
     int texSize;
+    int budget[3];        // triangles per LOD at most (the share kept shrinks to fit a dense scan)
 };
 
 const Card kCards[] = {
-    {"shrub_02", 0, "shrub_02_a", props::KIND_PLANT, "shrub_02", {1.0f, 0.4f, 0.12f}, 2.2f, 0.035f, false, {20, 55, 1e9f}, 512},
-    {"shrub_02", 1, "shrub_02_b", props::KIND_PLANT, "shrub_02", {1.0f, 0.4f, 0.12f}, 2.2f, 0.035f, false, {20, 55, 1e9f}, 512},
-    {"shrub_02", 2, "shrub_02_c", props::KIND_PLANT, "shrub_02", {1.0f, 0.4f, 0.12f}, 2.2f, 0.035f, false, {20, 55, 1e9f}, 512},
-    {"shrub_02", 3, "shrub_02_d", props::KIND_PLANT, "shrub_02", {1.0f, 0.4f, 0.12f}, 2.2f, 0.035f, false, {20, 55, 1e9f}, 512},
-    {"shrub_03", 0, "shrub_03_a", props::KIND_PLANT, "shrub_03", {1.0f, 0.4f, 0.12f}, 2.0f, 0.04f, false, {20, 55, 1e9f}, 512},
-    {"shrub_03", 1, "shrub_03_b", props::KIND_PLANT, "shrub_03", {1.0f, 0.4f, 0.12f}, 2.0f, 0.04f, false, {20, 55, 1e9f}, 512},
-    {"shrub_03", 2, "shrub_03_c", props::KIND_PLANT, "shrub_03", {1.0f, 0.4f, 0.12f}, 2.0f, 0.04f, false, {20, 55, 1e9f}, 512},
-    {"shrub_03", 3, "shrub_03_d", props::KIND_PLANT, "shrub_03", {1.0f, 0.4f, 0.12f}, 2.0f, 0.04f, false, {20, 55, 1e9f}, 512},
-    {"shrub_04", 0, "shrub_04_a", props::KIND_PLANT, "shrub_04", {0.5f, 0.15f, 0.05f}, 2.2f, 0.03f, false, {20, 55, 1e9f}, 512},
-    {"fern_02", 0, "fern_02_a", props::KIND_PLANT, "fern_02", {1.0f, 0.5f, 0.2f}, 1.8f, 0.05f, false, {18, 45, 1e9f}, 512},
-    {"fern_02", 1, "fern_02_b", props::KIND_PLANT, "fern_02", {1.0f, 0.5f, 0.2f}, 1.8f, 0.05f, false, {18, 45, 1e9f}, 512},
-    {"fern_02", 2, "fern_02_c", props::KIND_PLANT, "fern_02", {1.0f, 0.5f, 0.2f}, 1.8f, 0.05f, false, {18, 45, 1e9f}, 512},
-    {"fern_02", 3, "fern_02_d", props::KIND_PLANT, "fern_02", {1.0f, 0.5f, 0.2f}, 1.8f, 0.05f, false, {18, 45, 1e9f}, 512},
-    {"grass_medium_02", 0, "grass_02_a", props::KIND_PLANT, "grass_medium_02", {1.0f, 0.5f, 0.2f}, 1.7f, 0.12f, false, {15, 35, 1e9f}, 512},
-    {"grass_medium_02", 1, "grass_02_b", props::KIND_PLANT, "grass_medium_02", {1.0f, 0.5f, 0.2f}, 1.7f, 0.12f, false, {15, 35, 1e9f}, 512},
-    {"grass_medium_02", 2, "grass_02_c", props::KIND_PLANT, "grass_medium_02", {1.0f, 0.5f, 0.2f}, 1.7f, 0.12f, false, {15, 35, 1e9f}, 512},
-    {"grass_medium_02", 3, "grass_02_d", props::KIND_PLANT, "grass_medium_02", {1.0f, 0.5f, 0.2f}, 1.7f, 0.12f, false, {15, 35, 1e9f}, 512},
-    {"grass_medium_02", 4, "grass_02_e", props::KIND_PLANT, "grass_medium_02", {1.0f, 0.5f, 0.2f}, 1.7f, 0.12f, false, {15, 35, 1e9f}, 512},
-    {"fir_sapling", 0, "fir_a", props::KIND_TREE, "fir_sapling", {0.22f, 0.05f, 0.012f}, 3.0f, 0.02f, true, {18, 60, 1e9f}, 512},
-    {"fir_sapling", 1, "fir_b", props::KIND_TREE, "fir_sapling", {0.22f, 0.05f, 0.012f}, 3.0f, 0.02f, true, {18, 60, 1e9f}, 512},
-    {"fir_sapling", 2, "fir_c", props::KIND_TREE, "fir_sapling", {0.22f, 0.05f, 0.012f}, 3.0f, 0.02f, true, {18, 60, 1e9f}, 512},
-    {"pine_sapling_small", 1, "pine_a", props::KIND_TREE, "pine_sapling_small", {0.30f, 0.08f, 0.02f}, 3.0f, 0.02f, true, {18, 60, 1e9f}, 512},
-    {"pine_sapling_small", 0, "pine_b", props::KIND_TREE, "pine_sapling_small", {0.30f, 0.08f, 0.02f}, 3.0f, 0.02f, true, {18, 60, 1e9f}, 512},
-    {"pine_sapling_small", 2, "pine_c", props::KIND_TREE, "pine_sapling_small", {0.30f, 0.08f, 0.02f}, 3.0f, 0.02f, true, {18, 60, 1e9f}, 512},
+    {"shrub_02", 0, "shrub_02_a", props::KIND_PLANT, "shrub_02", {1.0f, 0.4f, 0.12f}, 2.2f, 0.035f, false, {20, 55, 1e9f}, 512, {5000, 1500, 400}},
+    {"shrub_02", 1, "shrub_02_b", props::KIND_PLANT, "shrub_02", {1.0f, 0.4f, 0.12f}, 2.2f, 0.035f, false, {20, 55, 1e9f}, 512, {5000, 1500, 400}},
+    {"shrub_02", 2, "shrub_02_c", props::KIND_PLANT, "shrub_02", {1.0f, 0.4f, 0.12f}, 2.2f, 0.035f, false, {20, 55, 1e9f}, 512, {5000, 1500, 400}},
+    {"shrub_02", 3, "shrub_02_d", props::KIND_PLANT, "shrub_02", {1.0f, 0.4f, 0.12f}, 2.2f, 0.035f, false, {20, 55, 1e9f}, 512, {5000, 1500, 400}},
+    {"shrub_03", 0, "shrub_03_a", props::KIND_PLANT, "shrub_03", {1.0f, 0.4f, 0.12f}, 2.0f, 0.04f, false, {20, 55, 1e9f}, 512, {5000, 1500, 400}},
+    {"shrub_03", 1, "shrub_03_b", props::KIND_PLANT, "shrub_03", {1.0f, 0.4f, 0.12f}, 2.0f, 0.04f, false, {20, 55, 1e9f}, 512, {5000, 1500, 400}},
+    {"shrub_03", 2, "shrub_03_c", props::KIND_PLANT, "shrub_03", {1.0f, 0.4f, 0.12f}, 2.0f, 0.04f, false, {20, 55, 1e9f}, 512, {5000, 1500, 400}},
+    {"shrub_03", 3, "shrub_03_d", props::KIND_PLANT, "shrub_03", {1.0f, 0.4f, 0.12f}, 2.0f, 0.04f, false, {20, 55, 1e9f}, 512, {5000, 1500, 400}},
+    {"shrub_04", 0, "shrub_04_a", props::KIND_PLANT, "shrub_04", {0.5f, 0.15f, 0.05f}, 2.2f, 0.03f, false, {20, 55, 1e9f}, 512, {5000, 1500, 400}},
+    {"fern_02", 0, "fern_02_a", props::KIND_PLANT, "fern_02", {1.0f, 0.5f, 0.2f}, 1.8f, 0.05f, false, {18, 45, 1e9f}, 512, {2500, 800, 250}},
+    {"fern_02", 1, "fern_02_b", props::KIND_PLANT, "fern_02", {1.0f, 0.5f, 0.2f}, 1.8f, 0.05f, false, {18, 45, 1e9f}, 512, {2500, 800, 250}},
+    {"fern_02", 2, "fern_02_c", props::KIND_PLANT, "fern_02", {1.0f, 0.5f, 0.2f}, 1.8f, 0.05f, false, {18, 45, 1e9f}, 512, {2500, 800, 250}},
+    {"fern_02", 3, "fern_02_d", props::KIND_PLANT, "fern_02", {1.0f, 0.5f, 0.2f}, 1.8f, 0.05f, false, {18, 45, 1e9f}, 512, {2500, 800, 250}},
+    {"grass_medium_02", 0, "grass_02_a", props::KIND_PLANT, "grass_medium_02", {1.0f, 0.5f, 0.2f}, 1.7f, 0.12f, false, {15, 35, 1e9f}, 512, {1500, 500, 150}},
+    {"grass_medium_02", 1, "grass_02_b", props::KIND_PLANT, "grass_medium_02", {1.0f, 0.5f, 0.2f}, 1.7f, 0.12f, false, {15, 35, 1e9f}, 512, {1500, 500, 150}},
+    {"grass_medium_02", 2, "grass_02_c", props::KIND_PLANT, "grass_medium_02", {1.0f, 0.5f, 0.2f}, 1.7f, 0.12f, false, {15, 35, 1e9f}, 512, {1500, 500, 150}},
+    {"grass_medium_02", 3, "grass_02_d", props::KIND_PLANT, "grass_medium_02", {1.0f, 0.5f, 0.2f}, 1.7f, 0.12f, false, {15, 35, 1e9f}, 512, {1500, 500, 150}},
+    {"grass_medium_02", 4, "grass_02_e", props::KIND_PLANT, "grass_medium_02", {1.0f, 0.5f, 0.2f}, 1.7f, 0.12f, false, {15, 35, 1e9f}, 512, {1500, 500, 150}},
+    {"fir_sapling", 0, "fir_a", props::KIND_TREE, "fir_sapling", {0.22f, 0.05f, 0.012f}, 3.0f, 0.02f, true, {18, 60, 1e9f}, 512, {14000, 3500, 900}},
+    {"fir_sapling", 1, "fir_b", props::KIND_TREE, "fir_sapling", {0.22f, 0.05f, 0.012f}, 3.0f, 0.02f, true, {18, 60, 1e9f}, 512, {14000, 3500, 900}},
+    {"fir_sapling", 2, "fir_c", props::KIND_TREE, "fir_sapling", {0.22f, 0.05f, 0.012f}, 3.0f, 0.02f, true, {18, 60, 1e9f}, 512, {14000, 3500, 900}},
+    {"pine_sapling_small", 1, "pine_a", props::KIND_TREE, "pine_sapling_small", {0.30f, 0.08f, 0.02f}, 3.0f, 0.02f, true, {18, 60, 1e9f}, 512, {14000, 3500, 900}},
+    {"pine_sapling_small", 0, "pine_b", props::KIND_TREE, "pine_sapling_small", {0.30f, 0.08f, 0.02f}, 3.0f, 0.02f, true, {18, 60, 1e9f}, 512, {14000, 3500, 900}},
+    {"pine_sapling_small", 2, "pine_c", props::KIND_TREE, "pine_sapling_small", {0.30f, 0.08f, 0.02f}, 3.0f, 0.02f, true, {18, 60, 1e9f}, 512, {14000, 3500, 900}},
 };
 
 struct DSU {
@@ -1436,49 +1437,71 @@ bool bakeCard(const Card& c, props::Model& model) {
         srcTex.emplace_back();
         if (c.tree && !d.empty()) srcTex.back().load4(dir + d);
     }
+    // Pieces (connected triangle groups by position) of every primitive, once.
+    struct PrimPieces {
+        std::vector<Piece> pieces;
+        bool bark = false;
+        int tris = 0;
+    };
+    std::vector<PrimPieces> pp(prims.size());
+    int leafTotal = 0, barkTotal = 0;
+    for (size_t p = 0; p < prims.size(); p++) {
+        HiMesh& hm = prims[p];
+        std::map<std::array<int64_t, 3>, int> pid;
+        std::vector<int> wid(hm.p.size());
+        for (size_t i = 0; i < hm.p.size(); i++) {
+            std::array<int64_t, 3> k = {(int64_t)std::llround(hm.p[i].x * 1e5), (int64_t)std::llround(hm.p[i].y * 1e5), (int64_t)std::llround(hm.p[i].z * 1e5)};
+            auto it = pid.find(k);
+            if (it == pid.end()) it = pid.emplace(k, (int)pid.size()).first;
+            wid[i] = it->second;
+        }
+        DSU ds((int)pid.size());
+        for (const Tri& t : hm.t) ds.u(wid[t[0]], wid[t[1]]), ds.u(wid[t[1]], wid[t[2]]);
+        std::map<int, Piece> pieces;
+        for (size_t i = 0; i < hm.t.size(); i++) pieces[ds.f(wid[hm.t[i][0]])].tris.push_back((int)i);
+        pp[p].bark = c.tree && !model.mats[p].foliage;
+        for (auto& kv : pieces) {
+            Piece pc = kv.second;
+            // Anchor: the piece's vertex nearest the model's vertical axis (where it joins the stem).
+            double best = 1e30;
+            for (int ti : pc.tris)
+                for (int k = 0; k < 3; k++) {
+                    const V3& q = hm.p[hm.t[ti][k]];
+                    const double dd = std::hypot(q.x, q.z);
+                    if (dd < best) best = dd, pc.anchor = q;
+                }
+            pc.order = hash32((uint32_t)kv.first * 2654435761u + (uint32_t)p) / 4294967296.0;
+            pp[p].pieces.push_back(pc);
+        }
+        // Bark: the biggest pieces first (the trunk, then the main limbs).
+        if (pp[p].bark)
+            std::sort(pp[p].pieces.begin(), pp[p].pieces.end(), [](const Piece& a, const Piece& b) { return a.tris.size() > b.tris.size(); });
+        pp[p].tris = (int)hm.t.size();
+        (pp[p].bark ? barkTotal : leafTotal) += pp[p].tris;
+    }
     for (int lod = 0; lod < 3; lod++) {
         props::Lod L;
         L.maxDist = c.lodDist[lod];
+        // The triangle budget: leaves get three quarters of it on a tree, bark the rest.
+        const double leafBudget = c.budget[lod] * (barkTotal > 0 ? 0.75 : 1.0), barkBudget = c.budget[lod] - (leafTotal > 0 ? leafBudget : 0.0);
+        const double leafKeep = leafTotal > 0 ? std::min((double)c.keep[lod], leafBudget / leafTotal) : 1.0;
         for (size_t p = 0; p < prims.size(); p++) {
             HiMesh& hm = prims[p];
-            // Pieces: connected triangle groups by position.
-            std::map<std::array<int64_t, 3>, int> pid;
-            std::vector<int> wid(hm.p.size());
-            for (size_t i = 0; i < hm.p.size(); i++) {
-                std::array<int64_t, 3> k = {(int64_t)std::llround(hm.p[i].x * 1e5), (int64_t)std::llround(hm.p[i].y * 1e5), (int64_t)std::llround(hm.p[i].z * 1e5)};
-                auto it = pid.find(k);
-                if (it == pid.end()) it = pid.emplace(k, (int)pid.size()).first;
-                wid[i] = it->second;
-            }
-            DSU ds((int)pid.size());
-            for (const Tri& t : hm.t) ds.u(wid[t[0]], wid[t[1]]), ds.u(wid[t[1]], wid[t[2]]);
-            std::map<int, Piece> pieces;
-            for (size_t i = 0; i < hm.t.size(); i++) pieces[ds.f(wid[hm.t[i][0]])].tris.push_back((int)i);
-            const bool bark = c.tree && !model.mats[p].foliage;
-            // Anchor: the piece's vertex nearest the model's vertical axis (where it joins the stem).
-            std::vector<Piece*> list;
-            for (auto& kv : pieces) {
-                Piece& pc = kv.second;
-                double best = 1e30;
-                for (int ti : pc.tris)
-                    for (int k = 0; k < 3; k++) {
-                        const V3& q = hm.p[hm.t[ti][k]];
-                        const double d = std::hypot(q.x, q.z) + 0.15 * std::fabs(q.y - 0);
-                        const double dd = std::hypot(q.x, q.z);
-                        (void)d;
-                        if (dd < best) best = dd, pc.anchor = q;
-                    }
-                pc.order = hash32((uint32_t)kv.first * 2654435761u + (uint32_t)p) / 4294967296.0;
-                list.push_back(&pc);
-            }
-            const double keep = bark ? 1.0 : c.keep[lod];
+            const bool bark = pp[p].bark;
+            const double keep = bark ? 1.0 : leafKeep;
             const double sc = bark ? 1.0 : std::min((double)c.maxScale, 1.0 / std::sqrt(std::max(keep, 1e-3)));
             props::Sub s;
             s.mat = (int)p;
             std::map<int, int> vmap;
-            // Pieces are kept in the order of a shuffled hash, so the survivors stay spread out.
-            for (Piece* pc : list) {
-                if (pc->order >= keep) continue;
+            int barkTris = 0;
+            // Leaves are kept in the order of a shuffled hash, so the survivors stay spread out.
+            for (size_t pi = 0; pi < pp[p].pieces.size(); pi++) {
+                const Piece* pc = &pp[p].pieces[pi];
+                if (bark) {
+                    if (pi > 0 && barkTris + (int)pc->tris.size() > barkBudget) continue;
+                    barkTris += (int)pc->tris.size();
+                } else if (pc->order >= keep)
+                    continue;
                 vmap.clear();
                 for (int ti : pc->tris)
                     for (int k = 0; k < 3; k++) {

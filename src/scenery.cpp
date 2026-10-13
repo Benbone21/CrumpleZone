@@ -140,13 +140,14 @@ void slab(std::vector<Vtx>& out, const Box& b) {
 
 }  // namespace
 
-void buildTreeMesh(const World& world, std::vector<Vtx>& v) {
+void buildTreeMesh(const World& world, std::vector<Vtx>& v, const ScanCover& skip) {
     const int sides = 10;
     auto put = [&](const V3& p, const V3& n, const V3& c, int mat) { v.push_back(vert(p, n, c, mat)); };
     int seed = 0;
     for (const Tree& t : world.trees) {
         double h = t.height, R = t.radius;
         seed++;
+        if ((t.kind == 0 && skip.pines) || (t.kind == 2 && skip.snags)) continue;
         double turn = latticeHash(seed, 7) * 6.2832;
         if (t.kind == 1) {  // broadleaf: a forked trunk under a lumpy crown
             const V3 bark(0.28, 0.23, 0.18);
@@ -210,8 +211,9 @@ void buildTreeMesh(const World& world, std::vector<Vtx>& v) {
     }
 }
 
-void buildRockMesh(const World& world, std::vector<Vtx>& v) {
+void buildRockMesh(const World& world, std::vector<Vtx>& v, const ScanCover& skip) {
     for (const Rock& k : world.rocks) {
+        if (k.scan >= 0 && skip.rocks) continue;
         // The collider's own facets, each split into 16 and given a little relief, always
         // pushed inward (toward the middle), so nothing drawn sticks out past what a tire hits.
         const V3 col = V3(0.34, 0.32, 0.30) * k.tint;
@@ -248,6 +250,7 @@ void buildRockMesh(const World& world, std::vector<Vtx>& v) {
     for (const Box& b : world.boxes)
         if (b.rock) slab(v, b);
     for (const Log& g : world.logs) {
+        if (skip.logs) break;
         tube(v, g.a, g.b, g.r, g.r * 0.92, 12, V3(0.33, 0.25, 0.17), SM_MATTE, true, V3(0.62, 0.50, 0.34));
         // A couple of snapped-off branch stubs.
         V3 mid = (g.a + g.b) * 0.5, ax = norm(g.b - g.a);
@@ -256,7 +259,7 @@ void buildRockMesh(const World& world, std::vector<Vtx>& v) {
     }
 }
 
-void buildBushMesh(const World& world, std::vector<Vtx>& v) {
+void buildBushMesh(const World& world, std::vector<Vtx>& v, const ScanCover& skip) {
     // Reeds round the lakes: clumps of tall thin blades where the bank meets the water.
     int rs = 0;
     for (const Water& wt : world.waters)
@@ -313,6 +316,7 @@ void buildBushMesh(const World& world, std::vector<Vtx>& v) {
     }
     int seed = 0;
     for (const Bush& b : world.bushes) {
+        if (skip.bushes) break;
         seed++;
         const int n = 3 + seed % 3;
         for (int k = 0; k < n; k++) {

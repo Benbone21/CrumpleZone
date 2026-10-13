@@ -56,6 +56,8 @@ bool Settings::load(const std::string& path) {
         else if (k == "clouds") gfx.clouds = v != 0;
         else if (k == "scale") gfx.renderScale = std::min(std::max(v, 0.5f), 2.0f);
         else if (k == "grass") gfx.grass = v != 0;
+        else if (k == "ground") gfx.ground = std::min(std::max((int)v, 0), 3);
+        else if (k == "props") gfx.props = std::min(std::max((int)v, 0), 3);
         else if (k == "map") map = std::min(std::max((int)v, 0), MAP_COUNT - 1);
         else if (k == "recovery") realRecovery = v != 0;
         else if (k == "fuel") fuelMode = std::min(std::max((int)v, 0), 2);
@@ -79,6 +81,7 @@ bool Settings::save(const std::string& path) const {
     std::fprintf(f, "shadows %d\nmsaa %d\nao %d\nbloom %d\nclouds %d\nscale %.2f\ngrass %d\nmap %d\n", gfx.shadows,
                  gfx.msaa, gfx.ao, gfx.bloom, gfx.clouds, gfx.renderScale, gfx.grass, map);
     std::fprintf(f, "recovery %d\nmusic %.2f\nfuel %d\n", realRecovery, music, fuelMode);
+    std::fprintf(f, "ground %d\nprops %d\n", gfx.ground, gfx.props);
     if (!playerName.empty()) std::fprintf(f, "name %s\n", playerName.c_str());
     if (!joinAddress.empty()) std::fprintf(f, "join %s\n", joinAddress.c_str());
     std::fprintf(f, "pilotdest %d\npilotspeed %.0f\npilotroute %d\n", pilotDest, pilotSpeed, pilotRoute);
@@ -93,12 +96,13 @@ namespace {
 struct Preset {
     int shadows, msaa;
     bool ao, bloom, clouds, grass;
+    int scenery;  // photo-scanned ground and props (RenderSettings::ground and ::props)
 };
 const Preset kPresets[4] = {
-    {1, 0, false, false, false, false},  // LOW
-    {2, 2, false, true, true, true},     // MEDIUM
-    {3, 4, true, true, true, true},      // HIGH
-    {3, 8, true, true, true, true},      // ULTRA
+    {1, 0, false, false, false, false, 1},  // LOW
+    {2, 2, false, true, true, true, 2},     // MEDIUM
+    {3, 4, true, true, true, true, 2},      // HIGH
+    {3, 8, true, true, true, true, 3},      // ULTRA
 };
 const int kMsaa[4] = {0, 2, 4, 8};
 int msaaIndex(int samples) {
@@ -117,13 +121,14 @@ void applyPreset(RenderSettings& g, int preset) {
     g.bloom = p.bloom;
     g.clouds = p.clouds;
     g.grass = p.grass;
+    g.ground = g.props = p.scenery;
 }
 
 int presetOf(const RenderSettings& g) {
     for (int k = 0; k < 4; k++) {
         const Preset& p = kPresets[k];
         if (g.shadows == p.shadows && kMsaa[msaaIndex(g.msaa)] == p.msaa && g.ao == p.ao && g.bloom == p.bloom &&
-            g.clouds == p.clouds && g.grass == p.grass)
+            g.clouds == p.clouds && g.grass == p.grass && g.ground == p.scenery && g.props == p.scenery)
             return k;
     }
     return 4;
@@ -135,7 +140,7 @@ namespace {
 enum Id {
     // Settings page.
     UNITS = 1, VOLUME, FOV, RECOVERY, MUSIC, TIMEOFDAY, FUEL,
-    QUALITY = 10, SHADOWS, AA, AO, BLOOM, CLOUDS, GRASS, SCALE,
+    QUALITY = 10, SHADOWS, AA, AO, BLOOM, CLOUDS, GRASS, SCALE, SCENERY,
     FULLSCREEN = 20, VSYNC, FPS,
     // Main page and navigation.
     RESUME_ROW = 100, VEHICLE_ROW, MAP_ROW, GARAGE_ROW, SETTINGS_ROW, CONTROLS_ROW, RESET_ROW, QUIT_ROW, BACK_ROW,
@@ -294,6 +299,12 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
     choice(BLOOM, "BLOOM", kOffOn[s.gfx.bloom], 2);
     choice(CLOUDS, "CLOUDS", kOffOn[s.gfx.clouds], 2);
     choice(GRASS, "GRASS", kOffOn[s.gfx.grass], 2);
+    {
+        // Photo-scanned ground materials and props together (OFF: the code-made look).
+        static const char* scenery[5] = {"OFF", "LOW", "HIGH", "ULTRA", "CUSTOM"};
+        const int sc = s.gfx.ground == s.gfx.props ? std::min(std::max(s.gfx.ground, 0), 3) : 4;
+        choice(SCENERY, "SCANNED SCENERY", scenery[sc], 4);
+    }
     slider(SCALE, "RENDER SCALE", pct(s.gfx.renderScale), (s.gfx.renderScale - 0.5f) / 1.5f, 16);
     header("DISPLAY");
     choice(FULLSCREEN, "FULLSCREEN", kOffOn[s.fullscreen], 2);
@@ -432,6 +443,7 @@ PauseMenu::Result PauseMenu::change(int row, int dir, Settings& s) {
         case BLOOM: g.bloom = !g.bloom; break;
         case CLOUDS: g.clouds = !g.clouds; break;
         case GRASS: g.grass = !g.grass; break;
+        case SCENERY: g.ground = g.props = cycle(g.ground == g.props ? std::min(std::max(g.ground, 0), 3) : 2); break;
         case FULLSCREEN: s.fullscreen = !s.fullscreen; break;
         case VSYNC: s.vsync = !s.vsync; break;
         case FPS: s.showFps = !s.showFps; break;
@@ -553,17 +565,27 @@ void PauseMenu::draw(Renderer& r, const Settings& s, int W, int H, double dt) {
     const float a = fade;
     const float u = std::max(0.75f, H / 720.0f);
     const float ts = px(1.6f * u), small = px(1.2f * u), title = px((this->title && page == 0 ? 4.0f : 3.0f) * u);
-    const float pad = 22 * u, rowH = 8 * ts + 14 * u, headH = 8 * small + 16 * u;
+    const float pad = 22 * u, headH = 8 * small + 16 * u;
+    float rowH = 8 * ts + 14 * u;
     std::vector<Row> rs = rows(s);
 
     // Darken the (blurred) scene (the title lets more of the world through).
     r.rect(0, 0, (float)W, (float)H, 0.0f, 0.01f, 0.02f, (this->title ? 0.2f : 0.35f) * a);
 
-    float contentH = 0;
-    for (const Row& row : rs)
-        contentH += row.kind == HEADER ? headH : rowH + (row.kind == CHOICE && !row.hint.empty() ? 8 * small + 6 * u : 0);
+    float contentH = 0, h = 0;
+    for (int pass = 0; pass < 2; pass++) {
+        contentH = 0;
+        int n = 0;
+        for (const Row& row : rs) {
+            contentH += row.kind == HEADER ? headH : rowH + (row.kind == CHOICE && !row.hint.empty() ? 8 * small + 6 * u : 0);
+            n += row.kind != HEADER;
+        }
+        h = pad * 2 + 8 * title + 18 * u + contentH + 8 * small + 16 * u;
+        // A long page (settings at 720p) packs its rows closer rather than run off the screen.
+        if (pass == 0 && h > H - 20 * u && n > 0) rowH = std::max(8 * ts + 6 * u, rowH - (h - (H - 20 * u)) / n);
+        else break;
+    }
     const float w = std::min((float)W - 40 * u, 640 * u);
-    const float h = pad * 2 + 8 * title + 18 * u + contentH + 8 * small + 16 * u;
     const float x = (W - w) / 2, y = std::max(10 * u, (H - h) / 2);
     pill(r, x, y, w, h, 0.03f, 0.035f, 0.045f, 0.9f * a);
     r.rect(x + pad, y + pad + 8 * title + 8 * u, w - 2 * pad, 2 * u, 1.0f, 0.75f, 0.3f, 0.8f * a);
