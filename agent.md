@@ -26,8 +26,12 @@ nice -n 15 ./build/run_tests --jobs 6  # every scenario in parallel, about 6 min
 
 ### Screenshots without a person at the keyboard
 
+The user works on this machine while agents run: never open a visible window, and keep the load low.
+Prefix every game launch with `SDL_VIDEODRIVER=offscreen nice -n 19` (renders on the GPU, no window;
+`--shot-prefix` works the same) and run tests and builds with `nice -n 19` and at most 6 jobs.
+
 ```bash
-./crumplezone --no-audio --size 900x560 --player 3 --orbit YAW,PITCH,DIST \
+SDL_VIDEODRIVER=offscreen nice -n 19 ./crumplezone --no-audio --size 900x560 --player 3 --orbit YAW,PITCH,DIST \
   --shot-prefix /tmp/shot --shot-frames 90   # writes /tmp/shot_0090.ppm, then exits
 convert /tmp/shot_0090.ppm shot.png
 ```
