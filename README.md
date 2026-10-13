@@ -119,7 +119,7 @@ scenario finishes, you can drive around in the aftermath.
 | F / B | Front / rear locker (4x4s; the front one needs 4WD engaged; the Bronco's front and the 4Runner's factory rear only work in low range; the rock buggy has both, the side-by-side only the front) |
 | Y | Front sway bar disconnect (Bronco: a dash button under 30 km/h, reconnects itself above; 4Runner: quick-disconnect pins, stopped) |
 | 9 / 0 | Hold to let air out of / pump up the tires (stopped). 35 psi street, 15–18 for rock |
-| V | Winch: pick an anchor (every tree, boulder, truck or soft-ground spot within the 30 m line is marked; drag the camera to aim, wheel or Tab for the next, V or click to hook, Esc to cancel). With a line on, V unhooks it |
+| V | Winch: pick an anchor (every tree, boulder or truck within the 60 m line is marked, plus a ground anchor straight ahead and wherever the camera looks; drag the camera to aim, wheel or Tab for the next, V or click to hook, Esc to cancel). With a line on, V unhooks it |
 | Z / Shift+Z | Winch in / pay out (- and = set the winch speed, 10-100%) |
 | O | Tow strap: hook to the nearest truck within 9 m, or unhook |
 | I | Spawn a parked vehicle ahead of you |
@@ -188,7 +188,7 @@ Launched plainly, the game opens on the title screen: free drive (pick map and v
 - **Map (M):** the whole map, north up: trails, water, repair shops, places, everyone's trucks. Wheel zooms, drag pans, left click sets your waypoint, right click pings GO HERE for everyone (Shift: HELP). Shift+M is now manual/automatic.
 - **Pings:** middle click pings GO HERE where you point; Shift+middle click pings HELP at your truck. Everyone sees them in the world and on the map.
 - **Chat:** Enter, type, Enter. **Meet up** (Esc → Multiplayer) parks your truck behind a buddy's (again for the next one). Name tags float over your buddies' trucks (and over them on foot).
-- **On foot (J):** get out (stopped) to spot a line or walk the trail. WASD walk, Shift run, Space jump; you wade, swim, and climb over rocks. V hooks your truck's winch to the tree, rock or truck nearest you; F pours your truck's spare can into the nearest truck (a buddy's too). J again by a truck gets in.
+- **On foot (J):** get out (stopped) to spot a line or walk the trail. You see through your own eyes: the mouse looks around, WASD walk where you look, Shift run, Space jump; you wade, swim, and climb over rocks. V hooks your truck's winch to the tree, rock or truck within arm's reach, or anchors the line right where you stand (up to 60 m from the truck); F pours your truck's spare can into the nearest truck (a buddy's too). J again by a truck gets in.
 - **Exploring:** every named place on a map starts undiscovered ("?" on the map); get within 30 m to find it. Your discoveries are kept between sessions.
 - **Fuel:** engines burn fuel for the power they make (setting FUEL: OFF / REAL / FAST, default FAST: 4x). Run dry and the engine dies. Shops fill the tank and the spare can; the Bronco and 4Runner carry a 20 L can.
 
@@ -392,7 +392,7 @@ Up to 8 players on one map. One of you hosts; the rest join.
 
 The idea: trucks break, and your buddies get you home. (Until multiplayer lands, a buddy is any other truck: Tab into it and drive.)
 
-- **Winch (V, Z, Shift+Z):** the Bronco and 4Runner carry a 9,500 lb winch with 30 m of synthetic line. V hooks the best anchor ahead: a tree, a big boulder, another truck's recovery point, or a buried anchor in soft ground. It reels in at ~0.13 m/s, slower under load, and stalls at its rated 44 kN (the drum brake holds). The line snaps past ~90 kN.
+- **Winch (V, Z, Shift+Z):** the Bronco, 4Runner and rock buggy carry a 9,500 lb winch, the side-by-side a 4,500 lb one (20 kN), each with 30 m of synthetic line and a 30 m extension in the recovery bag (60 m in all). V hooks the best anchor ahead: a tree, a boulder (0.45 m and up), another truck's recovery point, or, anywhere else, a ground anchor (dug into loose ground, or a bolt in bare rock). It reels in at ~0.13 m/s, slower under load, and stalls at its rated pull (the drum brake holds). The line snaps past ~90 kN.
 - **Trail repairs:** stop within a few meters of another truck (yours, a parked one, or a buddy's) and its crew and kit fix what can be fixed out there: flat tires, snapped axle shafts and CVs, bent steering and suspension links, a flooded engine. Dents, panels, glass, a lost wheel or a wrecked engine still need a repair station.
 - **Tow strap (O):** a 9 m kinetic strap between your nearest recovery point and the nearest other truck's. A truck on a strap rolls in neutral, brakes off, steering itself to follow. It breaks at 130 kN.
 - The HUD (top left) shows line out, pull, and how close it is to breaking. The pull is spread through the frame, so recovering doesn't bend the truck.

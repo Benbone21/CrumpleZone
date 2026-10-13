@@ -937,6 +937,7 @@ void Car::buildWheelRub() {
 // the suspension. A tire rubbing a fender drags on its spin.
 void Car::wheelBodyContact(double h) {
     (void)h;
+
     for (Wheel& wh : wheels) {
         wh.rubTorque = 0;
         wh.rub = 0;
@@ -1493,6 +1494,10 @@ void Car::wheelStep(double h, const World& w) {
             // tire sideways on landing, and road speed is the hub's own (for shifts and ABS).
             wh.stickX = wh.stickY = 0;
             wh.groundSpeed = dot(vc, fwd);
+            // Off the brake there is nothing for ABS to hold: its valves stand open, so the
+            // first stab after the landing gets full pressure. (Braking in the air, it keeps
+            // working the valve below.)
+            if (brakePressure <= 0.05) wh.abs = 1;
         }
         double Td = wheelPowered(wh) && !engaged ? driveTorque : 0.0;
         // The shaft's wind-up drives the hub (and holds back the side gear).
@@ -1558,6 +1563,8 @@ void Car::wheelStep(double h, const World& w) {
                 if (wh.load <= 0) err = std::fabs(std::min(0.0, wh.omega * wh.rollR() - wh.groundSpeed)) / std::fabs(wh.groundSpeed) * wh.bite - target;
                 wh.abs = clampd(wh.abs - h * 60.0 * err, 0.05, 1.0);
             }
+            else if (brakePressure <= 0.05)
+                wh.abs = 1;  // (pedal up: nothing to hold off)
             else
                 wh.abs = std::min(1.0, wh.abs + h * 6);
             double service = (brakePressure * wh.abs * (1 - 1.5 * wh.escCut) + std::max(wh.tcBrake, wh.escBrake)) * wh.brakeMax;
@@ -2023,6 +2030,14 @@ void Sim::substep() {
             for (Node& n : c.nodes) n.f = V3();
             continue;
         }
+        // Someone working a parked car's pedals or wheel wakes it too. (The player's car and
+        // the AI's wake themselves every frame; a car driven any other way, by a script or a
+        // test, stayed frozen where it had settled however hard its throttle was pressed.)
+        if (c.sleeping) {
+            const double now[4] = {c.throttle, c.brake, c.handbrake, c.steer};
+            for (int k = 0; k < 4; k++)
+                if (std::fabs(now[k] - c.sleptControls[k]) > 0.01) c.wake();
+        }
         if (!c.sleeping) c.computeForces(h, world);
     }
 
@@ -2046,6 +2061,8 @@ void Sim::substep() {
         c.updateBounds();
         if (i != player && c.stillTime > 1.5) {
             c.sleeping = true;
+            c.sleptControls[0] = c.throttle, c.sleptControls[1] = c.brake;
+            c.sleptControls[2] = c.handbrake, c.sleptControls[3] = c.steer;
             for (Node& n : c.nodes) {
                 n.v = V3();
                 n.scrape = 0;

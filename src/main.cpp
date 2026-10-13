@@ -93,9 +93,15 @@ struct CameraRig {
             target = want;
             initialized = true;
         }
+        // Carried along with the car first, then eased onto it: the easing only smooths the
+        // bumps. (Easing alone trailed the car by speed / 14: 3 m at 140 km/h, 8 at 400, so
+        // a fast car pulled away from the camera.)
+        if (std::isfinite(fr.vel.x + fr.vel.y + fr.vel.z) && len(fr.vel) < 200) target += fr.vel * dt;
         target += (want - target) * (1 - std::exp(-dt * 14));
         if (std::isfinite(carYaw)) chaseYaw += wrapAngle(carYaw - chaseYaw) * (1 - std::exp(-dt * 3));
         idle = dragging ? 0 : idle + dt;
+        // (Spun round and round, it comes back the short way, not unwinding every turn.)
+        userYaw = wrapAngle(userYaw);
         if (mode == 0 && idle > 1.5) {
             userYaw *= std::exp(-dt * 2);
             if (pitch < -0.05) pitch += (-0.05 - pitch) * (1 - std::exp(-dt * 2));  // let go: back to looking at the car
@@ -380,6 +386,8 @@ struct WinchAim {
     int sel = -1;
     double refresh = 0;
     V3 selAt;
+    bool hasLook = false;
+    V3 look;  // the ground under the middle of the screen: offered as an anchor too
     void pickCentered(const View& v) {
         float best = 1e9f;
         for (int k = 0; k < (int)targets.size(); k++) {
@@ -393,7 +401,7 @@ struct WinchAim {
     void update(const Sim& sim, double dt) {
         if (!on || (refresh -= dt) > 0) return;
         refresh = 0.3;
-        targets = sim.winchTargets(sim.player);
+        targets = sim.winchTargets(sim.player, hasLook ? &look : nullptr);
         // Keep the same anchor selected as the truck (or the anchor) moves.
         int keep = -1;
         double bd = 2.0;
@@ -401,6 +409,19 @@ struct WinchAim {
             if (len(targets[k].at - selAt) < bd) bd = len(targets[k].at - selAt), keep = k;
         sel = keep >= 0 ? keep : targets.empty() ? -1 : std::min(std::max(sel, 0), (int)targets.size() - 1);
         if (sel >= 0) selAt = targets[sel].at;
+    }
+    // Where the view ray through the middle of the screen meets the ground (within the line's reach).
+    void aimGround(const View& v, const World& w) {
+        hasLook = false;
+        const V3 d = norm(v.target - v.eye);
+        for (double t = 1; t < recovery::kWinchReach + 10; t += 0.5) {
+            const V3 q = v.eye + d * t;
+            if (q.y < w.height(q.x, q.z)) {
+                look = q;
+                hasLook = true;
+                return;
+            }
+        }
     }
     void step(int dir) {
         if (targets.empty()) return;
@@ -1148,7 +1169,7 @@ void drawWinchAim(Renderer& r, const Sim& sim, const WinchAim& aim, const View& 
     const Car& car = sim.cars[sim.player];
     const V3 hook = car.hookPoint(0);
     // The line's reach: a ring on the ground.
-    const double reach = recovery::kWinchLine - 1;
+    const double reach = recovery::kWinchReach - 1;
     for (int k = 0; k < 120; k++) {
         const double a = k * 2 * M_PI / 120;
         V3 q = hook + V3(std::cos(a), 0, std::sin(a)) * reach;
@@ -1800,6 +1821,10 @@ int main(int argc, char** argv) {
     // ---- On foot ----
     Walker walker;
     double walkSend = 0, carCamDist = 7.5;
+    // On foot you see through your own eyes: the mouse turns your head (no button needed)
+    // and the keys walk where you look.
+    double footYaw = 0, footPitch = 0;
+    bool mouseLook = false;
     auto getOut = [&]() {
         Car& c = sim.cars[sim.player];
         if (len(c.frame().vel) > 2.0) {
@@ -1810,9 +1835,10 @@ int main(int argc, char** argv) {
         c.handbrake = 1;
         walker.exitCar(sim.world, c);
         carCamDist = cam.dist;
-        cam.dist = 3.6;
         cam.initialized = false;
-        hud.toast("ON FOOT: WASD WALK, SHIFT RUN, SPACE JUMP, V HOOK YOUR WINCH HERE, J GET IN");
+        footYaw = walker.yaw;  // looking the way you got out
+        footPitch = -0.1;
+        hud.toast("ON FOOT: MOUSE LOOK, WASD WALK, SHIFT RUN, SPACE JUMP, V HOOK YOUR WINCH HERE, J GET IN");
     };
     auto getIn = [&]() {
         const int k = walker.carToEnter(sim);
@@ -2278,14 +2304,22 @@ int main(int argc, char** argv) {
                                     hud.toast("NO WINCH ON YOUR TRUCK");
                                     break;
                                 }
+                                // A tree, rock or truck within arm's reach; otherwise the line is
+                                // anchored right where you stand (dug in, or bolted to the rock).
                                 double best = 3.0;
-                                int pick = -1;
-                                const std::vector<WinchTarget> targets = sim.winchTargets(sim.player);
+                                int pick = -1, here = -1;
+                                const V3 feet = walker.p;
+                                const std::vector<WinchTarget> targets = sim.winchTargets(sim.player, &feet);
                                 for (int k = 0; k < (int)targets.size(); k++) {
                                     const double d = len(V3(targets[k].at.x - walker.p.x, 0, targets[k].at.z - walker.p.z));
+                                    if (targets[k].end.kind == ANCHOR_STAKE) {
+                                        if (d < 1.0) here = k;
+                                        continue;
+                                    }
                                     if (d < best) best = d, pick = k;
                                 }
-                                if (pick < 0) hud.toast("WALK TO A TREE, ROCK OR TRUCK IN REACH OF THE LINE (30 M)");
+                                if (pick < 0) pick = here;
+                                if (pick < 0) hud.toast("TOO FAR FROM YOUR TRUCK: THE LINE REACHES 60 M WITH THE EXTENSION");
                                 else hud.toast(sim.hookWinchTo(sim.player, targets[pick].end));
                                 break;
                             }
@@ -2296,7 +2330,8 @@ int main(int argc, char** argv) {
                             else {
                                 winchAim = WinchAim();
                                 winchAim.on = true;
-                                winchAim.targets = sim.winchTargets(sim.player);
+                                winchAim.aimGround(lastView, sim.world);
+                                winchAim.targets = sim.winchTargets(sim.player, winchAim.hasLook ? &winchAim.look : nullptr);
                                 winchAim.refresh = 0.3;
                                 winchAim.pickCentered(lastView);
                             }
@@ -2536,6 +2571,9 @@ int main(int argc, char** argv) {
                         float mx, my;
                         toDrawable(evMotionX(e), evMotionY(e), mx, my);
                         handleMenu(menu.mouseMove(mx, my, evMotionState(e) & 1, settings));
+                    } else if (walker.active && !editor.active && !winchAim.on) {  // on foot: the mouse turns your head
+                        footYaw -= evMotionXrel(e) * 0.0035;
+                        footPitch = clampd(footPitch - evMotionYrel(e) * 0.0035, -1.45, 1.45);
                     } else if (evMotionState(e) & 0x5) {  // left or right button held
                         cam.drag(evMotionXrel(e), evMotionYrel(e));
                         dragging = true;
@@ -2954,11 +2992,32 @@ int main(int argc, char** argv) {
                 hud.toast(coop.haveWaypoint ? "WAYPOINT SET" : "WAYPOINT CLEARED");
             }
         }
+        if (walker.active && padCtx == pad::Mode::Drive && cam.mode != 3) {  // (gamepad: the right stick looks around on foot)
+            footYaw -= padLogic.in.lookX * 2.6 * dt;
+            footPitch = clampd(footPitch + padLogic.in.lookY * 1.8 * dt, -1.45, 1.45);
+        }
         View view = editor.active ? editor.view(W, H) : cam.update(fr, sim.world, dt, (dragging || padLooking) && !menu.open);
+        if (walker.active && !editor.active && cam.mode != 3) {
+            // First person: eyes 1.62 m up, a little bob as you walk.
+            const double bob = walker.grounded ? 0.025 * std::sin(walker.stride * 2) * std::min(1.0, len(walker.v) / 1.5) : 0.0;
+            view.eye = walker.p + V3(0, 1.62 + bob, 0);
+            view.target = view.eye + V3(std::cos(footYaw) * std::cos(footPitch), std::sin(footPitch), -std::sin(footYaw) * std::cos(footPitch)) * 10.0;
+            view.up = V3(0, 1, 0);
+            view.fovy = cam.fovy;
+        }
+        {
+            // The mouse is yours to look with on foot; anywhere else it's a pointer.
+            const bool want = walker.active && !menu.open && !editor.active && !winchAim.on && cam.mode != 3;
+            if (want != mouseLook) {
+                SDL_SetRelativeMouseMode(want ? 1 : 0);
+                mouseLook = want;
+            }
+        }
         view.width = W;
         view.height = H;
         lastView = view;
         if (winchAim.on) {
+            winchAim.aimGround(view, sim.world);
             winchAim.update(sim, dt);
             if (dragging) winchAim.pickCentered(view);  // follow the camera while aiming
         }
@@ -2996,7 +3055,8 @@ int main(int argc, char** argv) {
             drawnWorld = sim.world.stamp;
         }
         renderer.figures.clear();
-        if (walker.active) renderer.figures.push_back({walker.p, walker.yaw, V3(0.95, 0.5, 0.12), walker.stride});
+        // (Your own figure isn't drawn: you're looking out of its eyes.)
+        if (walker.active && (editor.active || cam.mode == 3)) renderer.figures.push_back({walker.p, walker.yaw, V3(0.95, 0.5, 0.12), walker.stride});
         for (const RemoteWalker& rw : coop.walkers) renderer.figures.push_back({rw.p, rw.yaw, V3(0.2, 0.6, 0.95), rw.stride});
         const uint64_t drawStart = SDL_GetPerformanceCounter();
         renderer.drawScene(sim, view, debug, &fx);

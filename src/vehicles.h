@@ -233,6 +233,7 @@ struct VehicleSpec {
     // Looks.
     int lampStyle = LAMP_RECT, grilleStyle = GRILLE_CENTER;
     unsigned extras = 0;
+    double winchPull = 44000;      // N the winch stalls at (EXTRA_WINCH): a 9,500 lb winch on its first layer
     float coverColor[3] = {0.05f, 0.05f, 0.05f};  // engine cover
     float paintColor[3] = {-1, -1, -1};  // factory color (< 0: picked from the palette)
     float trimColor[3] = {0, 0, 0};      // two-tone lower body and flares...

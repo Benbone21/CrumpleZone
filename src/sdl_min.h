@@ -44,6 +44,7 @@ void* SDL_GL_GetProcAddress(const char* proc);
 void SDL_GL_GetDrawableSize(SDL_Window* window, int* w, int* h);
 void SDL_GetWindowSize(SDL_Window* window, int* w, int* h);
 int SDL_PollEvent(SDL_Event* event);
+int SDL_SetRelativeMouseMode(int enabled);  // SDL_bool: the mouse turns the view, no cursor
 const uint8_t* SDL_GetKeyboardState(int* numkeys);
 uint64_t SDL_GetPerformanceCounter(void);
 uint64_t SDL_GetPerformanceFrequency(void);

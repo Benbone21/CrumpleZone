@@ -376,6 +376,7 @@ public:
     // State.
     bool sleeping = false;
     double stillTime = 0;
+    double sleptControls[4] = {};  // throttle, brake, handbrake and steer when it fell asleep
     V3 bbMin, bbMax;
     double impactEnergy = 0;  // joules absorbed by deformation since last read
     double damage = 0;        // 0..1
@@ -388,7 +389,12 @@ public:
 
     void build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& color);
     void translate(const V3& d);  // moves the whole vehicle (and its autopilot's route) by d
-    void respawn(const V3& pos, double yaw) { build(*spec, pos, yaw, color); }
+    // A respawn is a fresh vehicle: repaired, a full tank and its spare can (switching to
+    // another vehicle used to inherit the last one's tank, empty if it had run dry).
+    void respawn(const V3& pos, double yaw) {
+        build(*spec, pos, yaw, color);
+        fuel = jerry = -1;
+    }
     // Driver gear change (+1 up, -1 down); returns false if refused (would over-rev).
     bool shift(int dir);
     Frame frame() const;
@@ -476,7 +482,9 @@ public:
     std::vector<std::string> events;   // things the HUD should announce (it clears them)
     std::string hookWinch(int car);    // hooks the car's winch to the best anchor ahead, or unhooks it
     // Everything within the winch line's reach, nearest first.
-    std::vector<WinchTarget> winchTargets(int car) const;
+    // Every anchor the winch reaches. `look` (optional): where the driver is looking or
+    // standing, offered as a ground anchor too (buried in loose ground, a bolt in rock).
+    std::vector<WinchTarget> winchTargets(int car, const V3* look = nullptr) const;
     std::string hookWinchTo(int car, const RopeEnd& anchor);
     bool dropWinch(int car);           // unhooks the car's winch line (false if none)
     std::string hookStrap(int car);    // straps the car to the nearest other vehicle, or unhooks it
