@@ -936,7 +936,7 @@ void drawHelp(Renderer& r, float u, int W, int H, bool mph) {
         {"Q E", "SHIFT DOWN / UP"},           {"SHIFT+M", "MANUAL / AUTOMATIC"},
         {"M", "MAP (WAYPOINTS, PINGS)"},      {"ENTER", "CHAT"},
         {"MIDDLE CLICK", "PING: GO HERE (SHIFT: HELP)"},
-        {"J", "GET OUT / IN (ON FOOT: V HOOKS YOUR WINCH)"},
+        {"J", "GET OUT / IN (ON FOOT: V WINCH, F FUEL CAN)"},
         {"L", mph ? "4X4: 2H 4H 4L (LOW: BELOW 5 MPH)" : "4X4: 2H 4H 4L (LOW: BELOW 8 KM/H)"},
         {"SHIFT+L", "LIGHTS: AUTO, LOW, HIGH, OFF"},
         {"F B", "FRONT / REAR LOCKER"},       {"I", "SPAWN PARKED VEHICLE"},
@@ -2213,7 +2213,44 @@ int main(int argc, char** argv) {
                             break;
                         }
                         case SC_F:
-                        case SC_B: {  // lockers
+                        case SC_B: {  // lockers (on foot, F: the fuel can)
+                            if (walker.active && evKeyScancode(e) == SC_F) {
+                                {  // pour your truck's spare can into the nearest vehicle
+                                    Car& mine = sim.cars[sim.player];
+                                    if (mine.jerry <= 0.5) {
+                                        hud.toast(mine.spec->jerryCan > 0 ? "YOUR SPARE CAN IS EMPTY (FILL IT AT A SHOP)" : "YOUR VEHICLE HAS NO SPARE CAN");
+                                        break;
+                                    }
+                                    int best = -1;
+                                    double bd = 3.5;
+                                    for (int i = 0; i < (int)sim.cars.size(); i++) {
+                                        const Car& o = sim.cars[i];
+                                        if (o.isProp()) continue;
+                                        const Frame of = o.frame();
+                                        const V3 d = walker.p + V3(0, 1, 0) - of.com;
+                                        const double dd = std::hypot(std::max(0.0, std::fabs(dot(d, of.fwd)) - o.spec->length / 2), std::max(0.0, std::fabs(dot(d, of.left)) - o.spec->width / 2));
+                                        if (dd < bd) bd = dd, best = i;
+                                    }
+                                    if (best < 0) {
+                                        hud.toast("WALK UP TO THE TRUCK THAT NEEDS FUEL");
+                                        break;
+                                    }
+                                    Car& t = sim.cars[best];
+                                    const double liters = mine.jerry;
+                                    mine.jerry = 0;
+                                    if (t.remote) {
+                                        char b[64];
+                                        std::snprintf(b, sizeof b, "fuel %u %.1f", t.netId, liters);
+                                        net.sendGame(b);
+                                        hud.toast("POURED " + std::to_string((int)liters) + " L INTO " + net.ownerName(t.netId) + "'S TANK");
+                                    } else {
+                                        if (t.fuel < 0) t.fuel = t.spec->fuelCapacity;
+                                        t.fuel = std::min(t.spec->fuelCapacity, t.fuel + liters);
+                                        hud.toast("POURED " + std::to_string((int)liters) + " L INTO THE " + t.spec->name);
+                                    }
+                                    break;
+                                }
+                            }
                             Car& c = sim.cars[sim.player];
                             const bool front = evKeyScancode(e) == SC_F;
                             const char* which = front ? "FRONT" : "REAR";
@@ -2371,6 +2408,18 @@ int main(int argc, char** argv) {
                 }
             }
             for (const NetSession::GameMsg& m : net.gameIn) {
+                if (m.text.rfind("fuel ", 0) == 0) {  // a buddy poured their can into one of mine
+                    unsigned id = 0;
+                    double liters = 0;
+                    if (std::sscanf(m.text.c_str(), "fuel %u %lf", &id, &liters) == 2)
+                        for (Car& c : sim.cars)
+                            if (c.netId == id && !c.remote) {
+                                if (c.fuel < 0) c.fuel = c.spec->fuelCapacity;
+                                c.fuel = std::min(c.spec->fuelCapacity, c.fuel + liters);
+                                hud.toast(net.players[std::min(std::max(m.player, 0), net::kMaxPeers - 1)].name + " POURED IN " + std::to_string((int)liters) + " L OF FUEL");
+                            }
+                    continue;
+                }
                 if (m.player >= 0 && m.player < net::kMaxPeers && coop.onMessage(net.players[m.player].name, m.text)) continue;
                 if (m.text == "restart") {
                     if (run.active()) run.begin(sim, runSlot(), 3.0);
@@ -2379,6 +2428,8 @@ int main(int argc, char** argv) {
                 }
             }
             net.gameIn.clear();
+            for (Car& c : sim.cars)
+                if (!c.remote) c.fuelUse = settings.fuelMode == 0 ? 0.0 : settings.fuelMode == 1 ? 1.0 : 4.0;
             if (walker.active && !sim.paused) {
                 // On foot: the keys walk you; the truck sits on its handbrake.
                 const V3 vf = norm(V3(lastView.target.x - lastView.eye.x, 0, lastView.target.z - lastView.eye.z));
@@ -2568,6 +2619,20 @@ int main(int argc, char** argv) {
         if (editor.active && !menu.open) editor.draw(renderer, W, H, dt);
         else if (!menu.open) drawHud(renderer, sim, view, hud, &playback, net, winchAim, W, H, fps, dt, settings.mph);
         if (!menu.open && !editor.active && run.active()) drawLevelHud(renderer, run, sim, view, W, H);
+        if (!menu.open && !editor.active && settings.fuelMode > 0) {  // the fuel gauge
+            const Car& c = sim.cars[sim.player];
+            if (!c.isProp() && c.fuel >= 0 && c.spec->fuelCapacity > 0) {
+                const float u = std::max(0.75f, H / 720.0f), s = px(1.2f * u);
+                const float f = (float)(c.fuel / c.spec->fuelCapacity), w = 150 * u, x = W - w - 26 * u, y = H - 245 * u;
+                pill(renderer, x - 8 * u, y - 6 * u, w + 16 * u, 8 * s + 22 * u, 0, 0, 0, 0.5f);
+                char b[64];
+                std::snprintf(b, sizeof b, "FUEL %.0f L%s", c.fuel, c.jerry > 0.5 ? ("   CAN " + std::to_string((int)std::lround(c.jerry)) + " L").c_str() : "");
+                renderer.text(x, y, s, b, f < 0.15f ? 1.0f : 0.9f, f < 0.15f ? 0.4f : 0.9f, f < 0.15f ? 0.3f : 0.92f, 1);
+                renderer.rect(x, y + 8 * s + 4 * u, w, 5 * u, 1, 1, 1, 0.15f);
+                renderer.rect(x, y + 8 * s + 4 * u, w * f, 5 * u, f < 0.15f ? 1.0f : 0.95f, f < 0.15f ? 0.35f : 0.75f, 0.25f, 0.95f);
+                if (c.outOfFuel()) centeredPill(renderer, W / 2.0f, H * 0.62f, px(1.6f * u), "OUT OF FUEL: A BUDDY'S SPARE CAN (F ON FOOT) OR A TOW TO A SHOP", 0, 0, 0, 1, 1, 0.5f, 0.4f);
+            }
+        }
         coop.update(dt);
         if (!menu.open && !editor.active) {
             coop.drawWorld(renderer, sim, net, view, W, H);

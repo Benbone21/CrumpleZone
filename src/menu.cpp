@@ -58,6 +58,7 @@ bool Settings::load(const std::string& path) {
         else if (k == "grass") gfx.grass = v != 0;
         else if (k == "map") map = std::min(std::max((int)v, 0), MAP_COUNT - 1);
         else if (k == "recovery") realRecovery = v != 0;
+        else if (k == "fuel") fuelMode = std::min(std::max((int)v, 0), 2);
         else if (k == "pilotspeed") pilotSpeed = std::min(std::max(v, 5.0f), 100.0f);
         else if (k == "pilotroute") pilotRoute = std::min(std::max((int)v, 0), 2);
         else if (k == "timeofday") timeOfDay = std::min(std::max((int)v, 0), TOD_COUNT - 1);
@@ -77,7 +78,7 @@ bool Settings::save(const std::string& path) const {
                  vsync, showFps);
     std::fprintf(f, "shadows %d\nmsaa %d\nao %d\nbloom %d\nclouds %d\nscale %.2f\ngrass %d\nmap %d\n", gfx.shadows,
                  gfx.msaa, gfx.ao, gfx.bloom, gfx.clouds, gfx.renderScale, gfx.grass, map);
-    std::fprintf(f, "recovery %d\nmusic %.2f\n", realRecovery, music);
+    std::fprintf(f, "recovery %d\nmusic %.2f\nfuel %d\n", realRecovery, music, fuelMode);
     if (!playerName.empty()) std::fprintf(f, "name %s\n", playerName.c_str());
     if (!joinAddress.empty()) std::fprintf(f, "join %s\n", joinAddress.c_str());
     std::fprintf(f, "pilotdest %d\npilotspeed %.0f\npilotroute %d\n", pilotDest, pilotSpeed, pilotRoute);
@@ -133,7 +134,7 @@ int presetOf(const RenderSettings& g) {
 namespace {
 enum Id {
     // Settings page.
-    UNITS = 1, VOLUME, FOV, RECOVERY, MUSIC, TIMEOFDAY,
+    UNITS = 1, VOLUME, FOV, RECOVERY, MUSIC, TIMEOFDAY, FUEL,
     QUALITY = 10, SHADOWS, AA, AO, BLOOM, CLOUDS, GRASS, SCALE,
     FULLSCREEN = 20, VSYNC, FPS,
     // Main page and navigation.
@@ -255,6 +256,10 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
     choice(UNITS, "SPEED UNITS", s.mph ? "MPH" : "KM/H", 2);
     choice(RECOVERY, "RECOVERY", s.realRecovery ? "REAL" : "ARCADE", 2,
            s.realRecovery ? "DAMAGE STAYS: TOW OR DRIVE TO A REPAIR STATION" : "T FIXES EVERYTHING WHERE YOU ARE");
+    {
+        static const char* fuel[3] = {"OFF", "REAL", "FAST"};
+        choice(FUEL, "FUEL", fuel[std::min(std::max(s.fuelMode, 0), 2)], 3);
+    }
     {
         // One row (the page is full at 720p): the running clock at a few day lengths, then
         // the fixed times.
@@ -385,6 +390,7 @@ PauseMenu::Result PauseMenu::change(int row, int dir, Settings& s) {
         case LEVEL_PICK: levelPick = cycle(std::min(std::max(levelPick, 0), it.count - 1)); return {};
         case UNITS: s.mph = !s.mph; break;
         case RECOVERY: s.realRecovery = !s.realRecovery; break;
+        case FUEL: s.fuelMode = cycle(std::min(std::max(s.fuelMode, 0), 2)); break;
         case TIMEOFDAY: {
             const int t = cycle(todIndex(s));
             s.timeOfDay = t < 5 ? (int)TOD_CYCLE : t - 4;

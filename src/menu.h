@@ -15,6 +15,7 @@ struct Settings {
     bool fullscreen = false, vsync = true, showFps = false;
     int map = 0;                // the map you were on last
     bool realRecovery = true;   // damage stays until a repair station (or arcade: T fixes it)
+    int fuelMode = 2;           // 0 off, 1 real use, 2 fast (4x: so a session's driving matters)
     std::string playerName;     // shown to the others in multiplayer (default: your login)
     std::string joinAddress = "127.0.0.1";  // the last host you joined
     int pilotDest = 0;          // autopilot: which place (index into the menu's list)

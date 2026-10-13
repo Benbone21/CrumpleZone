@@ -52,3 +52,28 @@ SCENARIO(walkerBasics, "walker/basics", "Out of the truck beside it, walks 20 m 
     walkFor(5, 0, false, 0);
     ctx.check("floats in deep water", wk.inWater > 0.3 && wk.p.y > w.height(-30, 30) + 0.5, std::to_string(wk.inWater));
 }
+
+SCENARIO(gameplayFuel, "gameplay/fuel", "Fuel: a Bronco at full throttle burns about what a 330 hp engine should, stalls when the tank runs dry, and a shop pad fills it back up") {
+    Car& c = ctx.add(vehicleCatalog()[2], -120, -50, 0);
+    ctx.focus(c);
+    ctx.run(1.0);
+    c.fuelUse = 1;  // real
+    const double f0 = c.fuel;
+    ctx.check("starts full", std::fabs(f0 - c.spec->fuelCapacity) < 0.5, std::to_string(f0));
+    ctx.run(8, [&] { c.throttle = 1, c.brake = 0, c.handbrake = 0; });
+    const double used = f0 - c.fuel;
+    // ~250 kW average over a full-throttle pull: 250*250/745/3600*8 = ~0.19 L.
+    ctx.metric("burned in 8 s flat out", used, "L", 0.08, 0.4);
+    c.fuel = 0.02;
+    ctx.run(4, [&] { c.throttle = 1, c.brake = 0, c.handbrake = 0; });
+    ctx.check("out of fuel", c.outOfFuel());
+    ctx.metric("engine stops", c.rpm, "rpm", 0, 200);
+    // Another truck, nearly dry, parked on the proving ground's shop pad.
+    const Station st = ctx.sim.world.stations[0];
+    Car& d = ctx.add(vehicleCatalog()[2], st.p.x, st.p.z, 0);
+    ctx.run(0.5);
+    d.fuelUse = 1;
+    d.fuel = 1;
+    ctx.run(5, [&] { d.throttle = 0, d.brake = 1, d.handbrake = 1; });
+    ctx.metric("filled at the shop in 5 s", d.fuel, "L", 10, 20);
+}

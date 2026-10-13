@@ -260,6 +260,10 @@ public:
     double dragAssist = 0;      // throttle opened to stop engine braking locking the driven wheels
     double engineHealth = 1;    // drops as the engine bay is crushed
     bool engineDead = false;
+    double fuel = -1;           // L in the tank (-1: full; filled when first driven)
+    double jerry = -1;          // L in its spare can (-1: as it came)
+    double fuelUse = 0;         // how fast it burns: 0 none (tests), 1 real, more for the game
+    bool outOfFuel() const { return fuelUse > 0 && fuel == 0; }
     bool hydrolocked = false;   // sucked water into the intake (dead until repaired)
     // Trail setup.
     double tirePsi = 32;        // tire pressure (starts at the spec's; air down for rock)

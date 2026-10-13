@@ -509,6 +509,11 @@ void Sim::updateTrail(double dt) {
             const double rate = c.airing < 0 ? 1.0 : st >= 0 ? 3.0 : 0.4;
             c.tirePsi = clampd(c.tirePsi + c.airing * rate * dt, 12, 40);
         }
+        // The shop's pump: fills the tank (and the spare can) while you're on its pad.
+        if (st >= 0 && speed < 0.5 && c.fuel >= 0) {
+            c.fuel = std::min(c.spec->fuelCapacity, c.fuel + 3.0 * dt);
+            if (c.jerry >= 0) c.jerry = std::min(c.spec->jerryCan, c.jerry + 3.0 * dt);
+        }
         // An electronic sway-bar disconnect hooks itself back up past ~30 km/h.
         if (c.swayDisconnected && c.spec->swayDisconnect == 1 && speed > 30 / 3.6) {
             c.swayDisconnected = false;

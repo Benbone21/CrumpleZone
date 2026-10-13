@@ -651,6 +651,11 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         // with the drivetrain's spinning mass counted the stock figures felt flat in the game.
         for (VehicleSpec& s : v)
             for (TorquePoint& tp : s.torque) tp.nm *= 1.15;
+        // Tanks (and the trucks' spare cans).
+        v[0].fuelCapacity = 45;                         // EF Civic
+        v[1].fuelCapacity = 72;                         // Jesko
+        v[2].fuelCapacity = 79, v[2].jerryCan = 20;     // Bronco: 20.8 gal
+        v[3].fuelCapacity = 70, v[3].jerryCan = 20;     // 4Runner: 18.5 gal
         return v;
     }();
     return catalog;

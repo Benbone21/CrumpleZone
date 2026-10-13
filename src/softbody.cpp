@@ -752,8 +752,10 @@ void Car::wheelStep(double h, const World& w) {
     const int ng = (int)spec->gears.size();
     bool clutchSlipping = wheelRpm < 1250;
     double Te;
-    if (engineDead || nd == 0) {
-        if (engineDead) rpm += (0 - rpm) * std::min(1.0, h * 2);
+    if (fuel < 0) fuel = spec->fuelCapacity;
+    if (jerry < 0) jerry = spec->jerryCan;
+    if (engineDead || nd == 0 || outOfFuel()) {
+        if (engineDead || outOfFuel()) rpm += (0 - rpm) * std::min(1.0, h * 2);
         else rpm += (spec->idleRpm + thr * 4500 - rpm) * std::min(1.0, h * 4);  // nothing to drive: revs freely
         Te = 0;
     } else if (clutchSlipping) {
@@ -800,6 +802,13 @@ void Car::wheelStep(double h, const World& w) {
                 shiftTimer = spec->shiftTime * 0.7;
             }
         }
+    }
+    // Fuel: what the engine burns for the power it makes (~250 g/kWh, petrol 0.745 kg/L), and
+    // a trickle at idle.
+    if (fuelUse > 0 && !engineDead && fuel > 0) {
+        const double kW = std::max(0.0, Te) * rpm * 2 * M_PI / 60 / 1000;
+        const double lps = kW * 250.0 / 745.0 / 3600.0 + (rpm > 300 ? 0.8 / 3600.0 : 0.0);
+        fuel = std::max(0.0, fuel - lps * fuelUse * h);
     }
     int driveWheels = 0;
     for (const Wheel& wh : wheels) driveWheels += wh.driven && (!wh.front || frontEngaged());
