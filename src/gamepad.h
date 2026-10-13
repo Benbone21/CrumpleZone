@@ -106,6 +106,9 @@ struct Intent {
     int mapZoom = 0;                  // +1 in, -1 out (per frame held)
     bool mapSelect = false;           // A pressed: set the waypoint at the centre
     bool modifier = false;       // LB held
+    // On foot.
+    bool interact = false;       // X held: the hold-E job in front of you
+    bool drop = false;           // B pressed: put down what you carry
 };
 
 class Logic {

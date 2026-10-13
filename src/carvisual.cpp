@@ -626,8 +626,10 @@ void buildExtras(const Car& car, PartBuilder& pb) {
         const double tw = vs.wheelWidth, x = armor ? -L / 2 - 0.2 - tw / 2 : -L / 2 - 0.16;
         const double y = armor ? floorY + 0.36 + R * 0.55 : vs.layerY[1] + 0.12, z = armor ? -W * 0.2 : 0;
         const double rimR = vs.wheelStyle == WHEEL_ALLOY ? R * 0.55 : R * 0.49;
-        pb.cylinder(V3(x - tw / 2, y, z), V3(x + tw / 2, y, z), R, 20, V3(0.03, 0.03, 0.03), SM_MATTE);
-        pb.cylinder(V3(x - tw / 2 - 0.004, y, z), V3(x - tw / 2 + 0.02, y, z), rimR, 16, rimCol, SM_METAL);
+        if (!vs.wheelLoss) {  // (the trucks' spare is drawn where it really is, and only while it's there: render.cpp)
+            pb.cylinder(V3(x - tw / 2, y, z), V3(x + tw / 2, y, z), R, 20, V3(0.03, 0.03, 0.03), SM_MATTE);
+            pb.cylinder(V3(x - tw / 2 - 0.004, y, z), V3(x - tw / 2 + 0.02, y, z), rimR, 16, rimCol, SM_METAL);
+        }
         if (armor) {
             // Carrier arm: a post at the left corner, a beam across, a mount plate.
             const double xa = -L / 2 - 0.16, ya = floorY + 0.36;

@@ -438,7 +438,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         bronco.tirePsi = 35;
         // Wheels that come off and a spare to swap on (tires.h): the trucks have it so far.
         bronco.wheelLoss = true;
-        bronco.lugShear = 100000;  // six 14 mm studs
+        bronco.lugShear = 120000;  // six 14 mm studs (above every hit in the suite: see docs/handoff.md)  // six 14 mm studs
         bronco.tireType = TIRE_ALL_TERRAIN;
         bronco.tireGrip = 0.98;  // all-terrain tires: brake well, but the tall tread squirms in corners
         bronco.lateralGrip = 0.76;
@@ -1041,7 +1041,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         tacoma.swayDisconnect = 0;
         tacoma.tirePsi = 30;
         tacoma.spareFlat = true;   // full-size, winched up under the bed
-        tacoma.lugShear = 90000;
+        tacoma.lugShear = 110000;
         tacoma.tireType = TIRE_ALL_TERRAIN;
         tacoma.tireGrip = 0.95;
         tacoma.lateralGrip = 0.78;

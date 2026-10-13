@@ -22,6 +22,7 @@
 
 #include "audio.h"
 #include "jobs.h"
+#include "interact.h"
 #include "walker.h"
 #include "coop.h"
 #include "editor.h"
@@ -1837,6 +1838,7 @@ int main(int argc, char** argv) {
     };
     // ---- On foot ----
     Walker walker;
+    Interact interact;  // on foot: the hold-E jobs (the spare, the wheels)
     double walkSend = 0, carCamDist = 7.5;
     // On foot you see through your own eyes: the mouse turns your head (no button needed)
     // and the keys walk where you look.
@@ -1858,6 +1860,7 @@ int main(int argc, char** argv) {
         hud.toast("ON FOOT: MOUSE LOOK, WASD WALK, SHIFT RUN, SPACE JUMP, V HOOK YOUR WINCH HERE, J GET IN");
     };
     auto getIn = [&]() {
+        if (walker.carrying) Interact::drop(sim, walker, V3(std::cos(walker.yaw), 0, -std::sin(walker.yaw)));  // (whisked away: it's left there)
         const int k = walker.carToEnter(sim);
         if (k < 0) {
             hud.toast("WALK UP TO A TRUCK TO GET IN");
@@ -2409,7 +2412,8 @@ int main(int argc, char** argv) {
                                 hud.scenarioDetail = !hud.scenarioDetail;
                                 break;
                             }
-                            if (walker.active) getIn();
+                            if (walker.active && walker.carrying) hud.toast("PUT THE WHEEL DOWN FIRST (G)");
+                            else if (walker.active) getIn();
                             else getOut();
                             break;
                         case SC_F3:
@@ -2445,7 +2449,10 @@ int main(int argc, char** argv) {
                             }
                             break;
                         }
-                        case SC_G: openGarage(); break;
+                        case SC_G:
+                            if (walker.active && walker.carrying) Interact::drop(sim, walker, lastView.target - lastView.eye);  // (on foot: put down what you carry)
+                            else openGarage();
+                            break;
                         case SC_E:
                         case SC_Q: {
                             if (cam.mode == 3 || walker.active) break;  // (flying the drone / on foot: Q E aren't the gears)
@@ -2770,6 +2777,13 @@ int main(int argc, char** argv) {
                 const V3 vf = norm(V3(lastView.target.x - lastView.eye.x, 0, lastView.target.z - lastView.eye.z));
                 const double viewYaw = std::atan2(-vf.z, vf.x);
                 walker.step(sim.world, sim, dt, (up ? 1 : 0) - (down ? 1 : 0), (left ? 1 : 0) - (right ? 1 : 0), shiftHeld, hb, viewYaw);
+                {  // hands on: hold E (pad: X) for the job in front of you
+                    const uint8_t* ks = SDL_GetKeyboardState(nullptr);
+                    const bool holdE = (!menu.open && ks[SC_E]) || (padCtx == pad::Mode::Drive && padLogic.in.interact);
+                    const std::string said = interact.update(sim, walker, lastView.eye, lastView.target - lastView.eye, holdE, dt);
+                    if (!said.empty()) hud.toast(said);
+                    if (padCtx == pad::Mode::Drive && padLogic.in.drop) Interact::drop(sim, walker, lastView.target - lastView.eye);
+                }
                 up = down = left = right = false;
                 hb = true;
                 walkSend -= dt;
@@ -3022,6 +3036,16 @@ int main(int argc, char** argv) {
             view.up = V3(0, 1, 0);
             view.fovy = cam.fovy;
         }
+        // A wheel in your arms: held low in front of you, its face toward you.
+        renderer.carried.on = walker.active && walker.carrying && !editor.active && cam.mode != 3;
+        if (renderer.carried.on) {
+            const V3 fwd = norm(V3(std::cos(footYaw), 0, -std::sin(footYaw)));
+            const WheelItem& it = *walker.carrying;
+            renderer.carried.item = it;
+            renderer.carried.c = view.eye + fwd * (0.45 + it.width * 0.5) - V3(0, 0.95 - it.R * 0.4, 0);
+            renderer.carried.axis = -fwd;
+            renderer.carried.up = V3(0, 1, 0);
+        }
         {
             // The mouse is yours to look with on foot; anywhere else it's a pointer.
             const bool want = walker.active && !menu.open && !editor.active && !winchAim.on && cam.mode != 3;
@@ -3088,6 +3112,25 @@ int main(int argc, char** argv) {
         if (editor.active && !menu.open) editor.draw(renderer, W, H, dt);
         else if (!menu.open && !hud.photo) drawHud(renderer, sim, view, hud, &playback, net, winchAim, W, H, fps, dt, settings.mph);
         const bool showHud = !menu.open && !editor.active && !hud.photo;
+        if (showHud && walker.active && cam.mode != 3) {  // on foot: a crosshair, the job in front of you, what you carry
+            const float u = std::max(0.75f, H / 720.0f), s = px(1.4f * u);
+            renderer.rect(W / 2.0f - 2 * u, H / 2.0f - 2 * u, 4 * u, 4 * u, 1, 1, 1, 0.8f);
+            const bool padNow = pad::ui.last && padDev.connected();
+            if (interact.current.kind != IA_NONE) {
+                const std::string line = std::string(padNow ? "HOLD X  " : "HOLD E  ") + interact.current.prompt;
+                centeredPill(renderer, W / 2.0f, H / 2.0f + 40 * u, s, line, 0, 0, 0, 0.6f, 1.0f, 0.85f, 0.45f);
+                if (interact.progress > 0) {
+                    const float bw = 220 * u, bx = W / 2.0f - bw / 2, by = H / 2.0f + 40 * u + 8 * s + 14 * u;
+                    renderer.rect(bx, by, bw, 5 * u, 0, 0, 0, 0.6f);
+                    renderer.rect(bx, by, bw * (float)interact.share(), 5 * u, 1.0f, 0.75f, 0.3f, 0.95f);
+                }
+            }
+            if (walker.carrying) {
+                const std::string line = "CARRYING A " + walker.carrying->sizeName() + (walker.carrying->tireOnly ? "" : " WHEEL") +
+                                         (walker.carrying->popped ? " (FLAT)" : "") + (padNow ? "   B: PUT IT DOWN" : "   G: PUT IT DOWN");
+                centeredPill(renderer, W / 2.0f, H - 110 * u, px(1.2f * u), line, 0, 0, 0, 0.55f, 0.9f, 0.92f, 0.95f);
+            }
+        }
         if (showHud && run.active()) drawLevelHud(renderer, run, sim, view, W, H);
         if (showHud && jobOn) {  // the job: what to do next, and where
             const float u = std::max(0.75f, H / 720.0f), s = px(1.2f * u);

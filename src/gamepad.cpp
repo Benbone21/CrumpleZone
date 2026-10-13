@@ -166,6 +166,8 @@ void Logic::update(const Raw& raw, Mode ctx, double dt) {
             in.throttle = rt;
             in.brake = lt;
             in.handbrake = D(B_A) || D(B_B);
+            in.interact = D(B_X);  // (on foot; driving, X is the gear down tap above)
+            in.drop = P(B_B);
             flick_ = false;
         }
         in.steerStick = std::fabs(L.x) > 0;

@@ -71,6 +71,12 @@ public:
         double stride = 0;  // walk cycle phase (radians), legs and arms swing with it
     };
     std::vector<Figure> figures;
+    // A wheel in your arms, drawn this frame (first person: low in front of the eye).
+    struct Carried {
+        bool on = false;
+        V3 c, axis, up;  // center, its axle, which way is up for it
+        WheelItem item;
+    } carried;
     // The world editor: redraw just what changed (terrain cells i, j on the 1 m grid,
     // inclusive), the water, or the objects.
     void updateTerrainRegion(const World& world, int i0, int j0, int i1, int j1);

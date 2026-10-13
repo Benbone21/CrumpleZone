@@ -2,7 +2,8 @@
 
 A soft-body driving sandbox for Linux in C++17 and OpenGL 3.3, in the spirit of BeamNG.
 Read `README.md` first. It covers controls, vehicles, damage and how a vehicle is built.
-This file covers how to work on the code.
+This file covers how to work on the code. **What's in flight right now (known failures, paused
+work, the wheel-swap feature, releases): `docs/handoff.md`.**
 
 ## Build, run, test
 
@@ -299,3 +300,10 @@ Without `--time`, captures start at 10:00 with the clock running.
   - Rumble from impacts, rough ground, sliding tires and the rev limiter, only while the pad was the last input and the window has the focus. Settings: RUMBLE, STEERING, STICK DEADZONE (new CONTROLLER page; the settings page now squeezes its row spacing to fit 720p). HUD shows button names while the pad is in use.
   - Tests: 6 new `gamepad/` scenarios. Baseline before the change: 341/415 passed (74 failing from an unrelated merge: the rock buggy and side-by-side rows, `mods/civic` and `mods/buggy`, `components/airborne-tires`, several `offroad/` crawl tests and so on); same set after.
   - Not verified: how the sticks and rumble feel on a real pad (the logic is tested with synthetic input and a virtual SDL controller; the game was only run offscreen), and a Windows build.
+
+- **2026-10-13, Claude: merge, releases, Mac build, wheels that come off (branch `sync`)**
+  - Merged the buggy/UTV retune, the merge-failure fixes and the scanned-props work into `sync`; the buggy's frame narrowing at 0.9 (at 0.62 its diff got trapped in the floor on hard landings).
+  - Springs sized after the stability pass (live rears sat ~1 cm high); ladder rails held to the same strength end to end.
+  - Releases: `.github/workflows/release.yml` (Linux .deb, Windows .zip, universal Mac .app) on a version tag; v0.1.0 published. `make deb`, `make mac`, `src/platform.cpp` (exe path on every OS).
+  - Wheels that come off and real spares, Bronco/4Runner/Tacoma only (`src/tires.*`); the on-foot swap is next. A/D on foot were swapped (fixed). Details and the plan: `docs/handoff.md`.
+  - Trace tools kept in `tools/trace/`.

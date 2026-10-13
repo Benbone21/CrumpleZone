@@ -1501,7 +1501,14 @@ void Car::wheelStep(double h, const World& w) {
             // on its side) the hub takes it. As the sideways force at the tread that would make
             // the same moment: past what they hold, they shear and the wheel comes off.
             if (tire) {
-                V3 M = cross(-n * (R - pen), F);
+                // (Where it's really touching: the tread under the hub, or the sidewall's edge
+                // when a curb or a rock's face catches the side of the tire.)
+                const double na = dot(n, axis);
+                const V3 radial = n - axis * na;
+                const double rl = len(radial);
+                V3 arm = rl > 1e-3 ? -radial * ((R - pen) / rl) : V3();
+                if (std::fabs(na) > 1e-3) arm -= axis * (wh.width * 0.5 * (na > 0 ? 1.0 : -1.0));
+                V3 M = cross(arm, F);
                 M -= axis * dot(M, axis);
                 const double stud = len(M) / R;
                 wh.studLoad += (float)((stud - wh.studLoad) * std::min(1.0, h / 0.005));

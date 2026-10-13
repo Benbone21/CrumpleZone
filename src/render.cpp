@@ -2364,14 +2364,54 @@ void Renderer::buildFont() {
     TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 }
 
+// The same, for a wheel off its vehicle: centered at c, axle `axis` (local +Z, the outer
+// face), turned by `spin` about it, sized R x width.
+M4 wheelMatrixAt(const V3& c, const V3& axis, const V3& up, double spin, double R, double width, double radialScale = 1.0) {
+    V3 f0 = norm(cross(axis, up));
+    if (len(f0) < 0.5) f0 = norm(cross(axis, V3(1, 0, 0)));
+    const V3 u0 = cross(f0, axis);
+    const double radial = R / 0.32 * radialScale, axial = width / 0.24;
+    const V3 e1 = rotateAxis(f0, axis, spin) * radial, e2 = rotateAxis(u0, axis, spin) * radial, out = axis * axial;
+    M4 m = m4identity();
+    m.m[0] = (float)e1.x; m.m[1] = (float)e1.y; m.m[2] = (float)e1.z;
+    m.m[4] = (float)e2.x; m.m[5] = (float)e2.y; m.m[6] = (float)e2.z;
+    m.m[8] = (float)out.x; m.m[9] = (float)out.y; m.m[10] = (float)out.z;
+    m.m[12] = (float)c.x; m.m[13] = (float)c.y; m.m[14] = (float)c.z;
+    return m;
+}
+
 void Renderer::drawWheels(const Sim& sim, GLuint prog) {
+    // A wheel (or a bare tire, or a flat) off a vehicle, by its matrix at full size.
+    auto drawItem = [&](const WheelItem& it, const M4& full, const M4& flat) {
+        const int st = std::min(std::max(it.style, 0), WHEEL_STYLES - 1);
+        BindVertexArray(wheelVao[st]);
+        if (it.tireOnly) {
+            uniformM4(prog, "uModel", full);
+            DrawArrays(GL_TRIANGLES, 0, tireVertexCount[st]);
+        } else if (it.popped) {
+            uniformM4(prog, "uModel", flat);
+            DrawArrays(GL_TRIANGLES, 0, tireVertexCount[st]);
+            uniformM4(prog, "uModel", full);
+            DrawArrays(GL_TRIANGLES, tireVertexCount[st], wheelVertexCount[st] - tireVertexCount[st]);
+        } else {
+            uniformM4(prog, "uModel", full);
+            DrawArrays(GL_TRIANGLES, 0, wheelVertexCount[st]);
+        }
+    };
     for (const Car& car : sim.cars) {
         if (car.wheels.empty()) continue;
         Frame fr = car.frame();
         for (const Wheel& wh : car.wheels) {
-            const int st = std::min(std::max(car.spec->wheelStyle, 0), WHEEL_STYLES - 1);
+            const int st = std::min(std::max(wh.mounted ? wh.item.style : car.spec->wheelStyle, 0), WHEEL_STYLES - 1);
             BindVertexArray(wheelVao[st]);
-            if (wh.popped) {
+            if (!wh.mounted) {
+                // Nothing on the hub but its rotor (the caliper below) and the studs: a sliver of rim face.
+                uniformM4(prog, "uModel", wheelMatrix(car, wh, fr.up, true, kBareHubR / wh.R));
+                DrawArrays(GL_TRIANGLES, tireVertexCount[st], wheelVertexCount[st] - tireVertexCount[st]);
+            } else if (wh.debeaded) {  // the rim alone, the tire gone
+                uniformM4(prog, "uModel", wheelMatrix(car, wh, fr.up, true));
+                DrawArrays(GL_TRIANGLES, tireVertexCount[st], wheelVertexCount[st] - tireVertexCount[st]);
+            } else if (wh.popped) {
                 uniformM4(prog, "uModel", wheelMatrix(car, wh, fr.up, true, (wh.rimR + 0.015) / wh.R));
                 DrawArrays(GL_TRIANGLES, 0, tireVertexCount[st]);
                 uniformM4(prog, "uModel", wheelMatrix(car, wh, fr.up, true));
@@ -2385,6 +2425,34 @@ void Renderer::drawWheels(const Sim& sim, GLuint prog) {
             uniformM4(prog, "uModel", wheelMatrix(car, wh, fr.up, false, st == WHEEL_OFFROAD_BRONZE || st == WHEEL_OFFROAD_BLACK ? 0.72 : st == WHEEL_HONDA_COVER ? 0.82 : 1.0));
             DrawArrays(GL_TRIANGLES, 0, caliperVertexCount);
         }
+        // The spare where it rides (gone when it's been taken).
+        if (car.hasSpare && !car.spareNodes.empty()) {
+            const V3 c = car.spareAt(), ax = car.spareAxis();
+            const WheelItem& it = car.spare;
+            drawItem(it, wheelMatrixAt(c, ax, fr.fwd, 0, it.R, it.width), wheelMatrixAt(c, ax, fr.fwd, 0, it.R, it.width, (it.rimR + 0.015) / it.R));
+        }
+    }
+    // Wheels lying about: their own frame (local z the axle).
+    for (const LooseWheel& lw : sim.looseWheels) {
+        const WheelItem& it = lw.item;
+        const V3 e1 = lw.q.rotate(V3(1, 0, 0)), e2 = lw.q.rotate(V3(0, 1, 0)), ez = lw.q.rotate(V3(0, 0, 1));
+        auto mat = [&](double rs) {
+            const double radial = it.R / 0.32 * rs, axial = it.width / 0.24;
+            M4 m = m4identity();
+            const V3 a = e1 * radial, b = e2 * radial, o = ez * axial;
+            m.m[0] = (float)a.x; m.m[1] = (float)a.y; m.m[2] = (float)a.z;
+            m.m[4] = (float)b.x; m.m[5] = (float)b.y; m.m[6] = (float)b.z;
+            m.m[8] = (float)o.x; m.m[9] = (float)o.y; m.m[10] = (float)o.z;
+            m.m[12] = (float)lw.p.x; m.m[13] = (float)lw.p.y; m.m[14] = (float)lw.p.z;
+            return m;
+        };
+        drawItem(it, mat(1.0), mat((it.rimR + 0.015) / it.R));
+    }
+    // The one in your arms.
+    if (carried.on) {
+        const WheelItem& it = carried.item;
+        drawItem(it, wheelMatrixAt(carried.c, carried.axis, carried.up, 0, it.R, it.width),
+                 wheelMatrixAt(carried.c, carried.axis, carried.up, 0, it.R, it.width, (it.rimR + 0.015) / it.R));
     }
     uniformM4(prog, "uModel", m4identity());
 }
