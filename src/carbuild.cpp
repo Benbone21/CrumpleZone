@@ -39,7 +39,9 @@ constexpr double kLadderTubStiffness = 0.6;
 // A ladder frame's rails: each is shape-held this much stiffer than vs.frameStiffness (they
 // carry the truck's bending; the twist is in the crossmembers).
 constexpr double kRailStiffness = 3.5;
-constexpr float kBracketHold = 4.0f;  // ...and what's welded to them this much more again
+// What's welded to them (suspension brackets, coil towers, the engine's pads) is built for
+// the suspension's hits, whatever the rails: about this much force before it bends (N).
+constexpr double kBracketYield = 70000;
 
 const BeamSpec kSpec[BEAM_TYPE_COUNT] = {
     {1.6e5, 350, 0.056, 0.65},   // body
@@ -1691,6 +1693,11 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
     // rebound damping) and check h^2*k/m + 2h*c/m against a safe margin (the hard limit
     // is 4). A node over the margin borrows mass from its neighbors; total mass and
     // balance stay the same.
+    // (Where the mass sits before: the pass moves some about, and the balance is put back after.)
+    V3 cgBefore;
+    double mBefore = 0;
+    for (size_t i = 0; i < nodes.size(); i++) cgBefore += local[i] * nodes[i].m, mBefore += nodes[i].m;
+    cgBefore = cgBefore / mBefore;
     {
         // The chassis frame's own pull and damping (see below) use up part of the margin,
         // so a very rigid frame leaves less for the beams.
@@ -1763,11 +1770,40 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 }
                 nodes[i].m += take;
             }
+        // Balance: what the body lent shifted the center of mass (toward the stiff nodes
+        // that borrowed: a few cm). Tilt the mass of the body nodes with plenty to spare
+        // fore-aft and side to side, just enough to put it back, so the axle loads stay the
+        // factory's. (Nodes near their limit are left alone.)
+        for (int it = 0; it < 6 && !isProp; it++) {
+            auto roomy = [&](int i) { return nodes[i].m > 2 * L[i] / target; };
+            V3 cg, xb;
+            double M = 0, Mb = 0, vx = 0, vz = 0;
+            for (size_t i = 0; i < nodes.size(); i++) cg += local[i] * nodes[i].m, M += nodes[i].m;
+            cg = cg / M;
+            for (int i = 0; i < bodyNodes; i++)
+                if (roomy(i)) xb += local[i] * nodes[i].m, Mb += nodes[i].m;
+            if (Mb <= 0) break;
+            xb = xb / Mb;
+            for (int i = 0; i < bodyNodes; i++)
+                if (roomy(i)) {
+                    vx += nodes[i].m * (local[i].x - xb.x) * (local[i].x - xb.x);
+                    vz += nodes[i].m * (local[i].z - xb.z) * (local[i].z - xb.z);
+                }
+            const double bx = -(cg.x - cgBefore.x) * M / std::max(vx, 1e-9), bz = -(cg.z - cgBefore.z) * M / std::max(vz, 1e-9);
+            double before = 0, after = 0;
+            for (int i = 0; i < bodyNodes; i++)
+                if (roomy(i)) {
+                    before += nodes[i].m;
+                    nodes[i].m *= clampd(1 + bx * (local[i].x - xb.x) + bz * (local[i].z - xb.z), 0.6, 1.6);
+                    after += nodes[i].m;
+                }
+            for (int i = 0; i < bodyNodes; i++)
+                if (roomy(i)) nodes[i].m *= before / after;  // (same total)
+        }
         if (getenv("CZ_DEBUG"))
             for (size_t i = 0; i < nodes.size(); i++)
                 if (L[i] / nodes[i].m > target) std::printf("%s: node %zu still stiff for its mass (%.2f)\n", vs.name, i, L[i] / nodes[i].m);
     }
-
     restLocal = local;
     wheelbase = 2.5;
     if (axleI.size() >= 2) wheelbase = xAt(axleI.front()) - xAt(axleI.back());
@@ -1869,7 +1905,8 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 rf.maxPull = 1e9;
                 rf.yieldDist = vs.railYield;
                 // The brackets, towers and pads welded on are stouter than the bare rail (a
-                // coil-over tower is built for the bump stop's hit).
+                // coil-over tower is built for the bump stop's hit): held harder, to their own
+                // yield force.
                 rf.weight.assign(rf.nodes.size(), 1.0f);
                 rf.section.assign(rf.nodes.size(), 0);
                 int nextSection = ladderStations;
@@ -1878,7 +1915,11 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                     if (it != ladder.end() && *it == rf.nodes[k]) {
                         rf.section[k] = (int)(it - ladder.begin()) / 8;  // its station
                     } else {
-                        rf.weight[k] = kBracketHold * (std::fabs(local[rf.nodes[k]].z) < 0.05 ? 0.5f : 1.0f);
+                        const double hold = kBracketYield / (rf.kappa * nodes[rf.nodes[k]].m * rf.yieldDist);
+                        // (One on the centreline sits on a crossmember between the rails: what
+                        // holds it there is what makes the frame stiff in twist, so it's held
+                        // like plain rail by each.)
+                        rf.weight[k] = std::fabs(local[rf.nodes[k]].z) < 0.05 ? 1.0f : (float)clampd(hold, 1, 40);
                         rf.section[k] = nextSection++;  // (a bracket bends on its own)
                     }
                 }

@@ -431,10 +431,14 @@ static double rti(Ctx& ctx, const VehicleSpec& spec, double z, bool disconnect) 
     const Wheel* fl = nullptr;
     for (const Wheel& wh : c.wheels)
         if (wh.front && wh.left) fl = &wh;
+    // (A wheel is off when it carries under 5% of its weight at rest: hanging there, it rides
+    // on the bar and the spring at full stretch and leaves the ground at the next ripple.)
+    std::vector<double> rest;
+    for (const Wheel& wh : c.wheels) rest.push_back(wh.load);
     double best = 0;
     ctx.runUntil(30, [&] {
-        for (const Wheel& wh : c.wheels)
-            if (&wh != fl && wh.load < 30) return true;
+        for (size_t i = 0; i < c.wheels.size(); i++)
+            if (&c.wheels[i] != fl && c.wheels[i].load < 0.05 * rest[i]) return true;
         return false;
     }, [&] {
         crawlEast(c, z, 0.25);
@@ -452,7 +456,10 @@ SCENARIO(rampTravel, "offroad/rti", "Ramp travel index on a 20 degree ramp: real
     // (Unhooking the bar of an independent front frees some travel, not a lot: the arms'
     // own droop limits it. At least a little more, then.)
     ctx.metric("Bronco RTI, sway bar disconnected", bd, "", b + 10, 800);
-    ctx.metric("4Runner RTI (lifted 3rd gen: ~450-550)", r, "", 380, 650);
+    // (A 3rd-gen 4Runner's independent front with its bar hooked up: the low front tire sheds
+    // its load through the spring and the bar before either front wheel reaches its travel.
+    // Today's long-travel Toyota IFS trucks score ~520-530; this older, shorter one less.)
+    ctx.metric("4Runner RTI (lifted 3rd gen, front bar on: ~350-500)", r, "", 350, 650);
     ctx.metric("4Runner RTI, sway bar disconnected", rd, "", r + 10, 800);
 }
 

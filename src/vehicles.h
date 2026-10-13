@@ -140,6 +140,8 @@ struct VehicleSpec {
 
     // Running gear.
     double wheelRadius, wheelWidth;
+    double wellTireRadius = 0;     // the biggest tire the wheel wells were cut for (m; 0 = this one): bigger rubs
+    double wellTireWidth = 0;      // ...and its width
     double wheelWidthRear = 0;                // 0 = same as the front (staggered tires otherwise)
     double trackFront = 0, trackRear = 0;     // tire center to tire center (m); 0 = from the body width
     double wheelMass = 20, hubMass = 16;      // per corner: wheel and tire; knuckle, hub and brake

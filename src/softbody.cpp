@@ -457,10 +457,10 @@ void Car::chassisGroupForces(ChassisFrame& cf, double h) {
     // Nodes in a fresh dent are left to the beams; everything else holds its shape.
     auto active = [&](int k) { return cf.attached[k] && cf.release[k] <= 0; };
 
-    // Center of mass and momentum of the structure. (The shape fit weighs each member by how
-    // hard it's held, so the pulls still balance: they never push the structure as a whole.)
+    // Center of mass and momentum of the structure. (The shape is fitted by mass alone: a
+    // member held harder, a bracket on a rail, follows the rail's shape rather than leading it.)
     const bool weighted = !cf.weight.empty();
-    auto held = [&](int k) { return nodes[cf.nodes[k]].m * (weighted ? cf.weight[k] : 1.0f); };
+    auto held = [&](int k) { return nodes[cf.nodes[k]].m; };
     // (c: the fit's center; cm: the true center of mass, which the rigid motion is about.)
     V3 c, vc, rc, cm;
     double M = 0, Mv = 0;
@@ -589,6 +589,8 @@ void Car::chassisGroupForces(ChassisFrame& cf, double h) {
         sumF += f;
         sumT += cross(nd.p - cm, f);
     }
+    // (Members held harder than their mass leave a net pull too: taken out the same way.)
+    capped |= weighted;
     V3 alpha;
     if (capped) alpha = inverseSym(I) * sumT;
     for (int k = 0; k < n; k++) {
@@ -805,7 +807,8 @@ void Car::buildWheelRub() {
         wh.rubAllow.clear();
         if (restLocal.empty() || !stock) continue;
         const V3 c0 = (restLocal[wh.inner] + restLocal[wh.outer]) * 0.5, axis0 = norm(restLocal[wh.outer] - restLocal[wh.inner]);
-        const double Rs = stock->wheelRadius + 0.03, half = 0.5 * (wh.front || stock->wheelWidthRear <= 0 ? stock->wheelWidth : stock->wheelWidthRear) + 0.02;
+        const double Rs = std::max(stock->wheelRadius, stock->wellTireRadius) + 0.03,
+                     half = 0.5 * std::max(wh.front || stock->wheelWidthRear <= 0 ? stock->wheelWidth : stock->wheelWidthRear, stock->wellTireWidth) + 0.02;
         const double bump = wh.front ? (stock->bumpFront > 0 ? stock->bumpFront : 0.085) : (stock->bumpRear > 0 ? stock->bumpRear : 0.085);
         const double droop = wh.front ? (stock->droopFront > 0 ? stock->droopFront : 0.11) : (stock->droopRear > 0 ? stock->droopRear : 0.11);
         const double reach = wh.R + 0.35;
@@ -1602,8 +1605,10 @@ void Car::updateStats() {
     for (const Beam& b : beams) {
         // The structure: body and cabin, frame members (and a ladder frame's brackets), and
         // the rubber mounts that hold the engine and the body on (a torn mount is damage).
+        // Scaled by the body's size alone: a ladder frame's hundreds of members add their
+        // damage on top, rather than thinning out the body's.
         if (b.type != BEAM_BODY && b.type != BEAM_CABIN && b.type != BEAM_FRAME && b.type != BEAM_MOUNT) continue;
-        n++;
+        n += b.type == BEAM_BODY || b.type == BEAM_CABIN;
         if (b.broken) {
             sum += 1;
             brokenBeams++;
@@ -1613,7 +1618,7 @@ void Car::updateStats() {
             sum += std::min(1.0, std::fabs(b.L0 - b.Lorig) / b.Lorig * 8);
         }
     }
-    damage = n ? sum / n : 0;
+    damage = n ? std::min(1.0, sum / n) : 0;
 
     for (Wheel& wh : wheels) {
         bool attached = false;

@@ -396,11 +396,13 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         // Section modulus 4.95 in^3 at 49.3 ksi (Ford): each rail yields at ~28 kNm, so a
         // press on the middle of the frame (axles 2.55 m apart) sets it at ~85 kN, and bends
         // it ~1.9 mm per 20 kN (E = 200 GPa, I = 22.7 in^4) up to then.
-        bronco.railYield = 0.007;
+        bronco.railYield = 0.0065;
         bronco.bodyMounts = 8;
         bronco.panelStrength = 1.6;
         bronco.pinStrength = 1.8;
         bronco.wheelRadius = 0.415;    // 285/70R17 (33 in)
+        bronco.wellTireRadius = 0.445; // its wheel openings are cut for the Sasquatch package's 35s
+        bronco.wellTireWidth = 0.318;  // (35x12.50R17)
         bronco.wheelWidth = 0.285;
         bronco.trackFront = bronco.trackRear = 1.651;
         bronco.wheelMass = 38;
@@ -536,8 +538,9 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         runner.frameMass = 170;
         // A 2.75 x 5.9 in box of 1/8 in steel (~44 ksi, ESTIMATE): ~2.9 in^3, so each rail
         // yields at ~14 kNm; a press between the axles (2.675 m) sets it at ~43 kN and bends it
-        // ~6 mm per 20 kN up to then: half the Bronco's frame.
-        runner.railYield = 0.015;
+        // ~6 mm per 20 kN up to then: half the Bronco's frame. (Here ~53 kN and ~5 mm: the
+        // crossmembers and brackets stiffen it a little.) Its open tail twists: ~3 kNm/deg.
+        runner.railYield = 0.011;
         runner.pinStrength = 1.8;
         // ...then the lift: ~65 mm of Old Man Emu springs, the 2 in (51 mm) body lift, and
         // 56 mm more tire radius (35x12.50R17 against the factory 265/70R16).
