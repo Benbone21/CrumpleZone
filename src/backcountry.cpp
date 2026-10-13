@@ -155,7 +155,7 @@ const std::vector<V3>& cabinCtl() {
 constexpr double kBogS[4] = {120, 372, 440, 520}, kBogLen[4] = {14, 16, 12, 18}, kBogDepth[4] = {0.40, 0.48, 0.56, 0.45};
 // The mud stretches of the Mud Run.
 constexpr double kMudZone[5][2] = {{96, 150}, {232, 330}, {350, 398}, {418, 470}, {494, 548}};
-constexpr double kCreekLedge[8][2] = {{70, 0.20}, {112, 0.24}, {150, 0.28}, {188, 0.28}, {224, 0.31}, {262, 0.33}, {300, 0.35}, {334, 0.36}};  // s, rise
+constexpr double kCreekLedge[8][2] = {{70, 0.20}, {112, 0.26}, {150, 0.32}, {188, 0.36}, {224, 0.40}, {262, 0.42}, {300, 0.44}, {334, 0.45}};  // s, rise
 constexpr double kRidgeStep[3][2] = {{105, -0.30}, {150, -0.34}, {192, -0.38}};  // (drops going down)
 constexpr double kSlabS = 150;       // Slab Point, along the ridge
 constexpr double kOverlookS = 168;   // Cliff Overlook, along the shelf road
@@ -1128,17 +1128,31 @@ void World::buildBackcountry() {
 
 V3 backcountryFeature(const char* name) {
     const std::string n = name;
+    // A point on a trail nearest p.
+    auto onTrail = [](const Poly& t, const V3& p) {
+        V3 best = t[0];
+        for (const V3& q : t)
+            if (std::hypot(q.x - p.x, q.z - p.z) < std::hypot(best.x - p.x, best.z - p.z)) best = q;
+        return best;
+    };
     if (n == "trailhead" || n == "start") return kTrailhead;
     if (n == "sawmill") return kSawmill;
     if (n == "farside") return kFarSide;
     if (n == "passhut") return passHutAt();
     if (n == "mine") return kMine;
     if (n == "firetower") return towerSite();
+    if (n == "towerlook") return onTrail(towerTrail(), towerSite());  // the road beside the fire tower
     if (n == "cabin") return kCabin;
+    if (n == "cabinend") return cabinTrail().back();
     if (n == "dunes") return kDunes;
-    if (n == "hilltop") return kHill;
+    if (n == "dunering") return onTrail(washTrail(), kDunes + V3(-kDuneR, 0, 0));
+    if (n == "washmid") return pointAlong(washTrail(), 110);
+    if (n == "hilltop") return pointAlong(hillTrail(), 66);
+    // The river's crossings: its centre, and a spot on the south bank on the way in.
     if (n == "ford") return V3(kFordX, 0, riverZ(kFordX));
     if (n == "deepcrossing") return V3(kDeepX, 0, riverZ(kDeepX));
+    if (n == "fordbank") return onTrail(ridgeRoadTrail(), V3(kFordX + 4, 0, riverZ(kFordX) - 17));
+    if (n == "deepbank") return onTrail(ridgeTrail(), V3(kDeepX - 8, 0, riverZ(kDeepX) - 16));
     if (n == "wreck") return wreckTrail().back();
     if (n == "slab") return pointAlong(ridgeTrail(), kSlabS);
     if (n == "overlook") return pointAlong(shelfTrail(), kOverlookS);

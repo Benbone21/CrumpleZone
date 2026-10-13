@@ -294,3 +294,47 @@ SCENARIO(backcountryShelf, "backcountry/shelf-road", "The 4Runner drives the She
     ctx.metric("4Runner: shelf road and pass (m along the line)", got, "m", (pts.size() - 1) * 2.0 - 6, 1e4);
     ctx.metric("4Runner: damage", worst * 100, "%", 0, 1);
 }
+
+namespace {
+// Runs the autopilot to `goal`; returns whether it arrived.
+bool pilotRun(Ctx& ctx, Car& c, const V3& goal, double kmh, double maxS, int route, double* worst = nullptr) {
+    const std::string msg = pilotStart(c, ctx.sim.world, goal, "THERE", kmh / 3.6, route);
+    ctx.check("route planned", c.pilot.active, msg);
+    if (std::getenv("BC_TRACE")) std::printf("ROUTE %zu points: %s\n", c.pilot.path.size(), msg.c_str());
+    const int i = (int)(&c - ctx.sim.cars.data());
+    ctx.runUntil(maxS, [&] { return !c.pilot.active; }, [&] {
+        ctx.sim.pilotStep(i, Ctx::kFrame);
+        if (worst) *worst = std::max(*worst, c.damage);
+        static thread_local int fr = 0;
+        if (std::getenv("BC_TRACE") && ++fr % 300 == 0) {
+            const Frame f = c.frame();
+            std::printf("TRACE t %.0f (%.1f %.1f %.1f) v %.1f mode %d lock %d%d psi %.0f stuck %d route %d | %s | %s\n", ctx.t, f.com.x, f.com.y, f.com.z, dot(f.vel, f.fwd), c.driveMode,
+                        c.lockFront, c.lockRear, c.tirePsi, c.pilot.stuckCount, c.pilot.onRoute, c.pilot.status.c_str(), c.pilot.thought.c_str());
+        }
+    });
+    return c.pilot.arrived;
+}
+}  // namespace
+
+SCENARIO(backcountryPilotFar, "backcountry/autopilot-far", "Autopilot plans the Bronco's way from the trailhead to Far Side Camp, across the ford, and drives it") {
+    ctx.sim.world = World(MAP_BACKCOUNTRY);
+    const V3 s = ctx.sim.world.spawn;
+    Car& c = ctx.add(bBronco(), s.x, s.z, 0);
+    ctx.focus(c);
+    ctx.run(1.0);
+    double worst = 0;
+    const bool ok = pilotRun(ctx, c, backcountryFeature("farside") + V3(0, 0, -12), 35, 600, PILOT_TRAILS, &worst);
+    std::printf("route length %.0f m\n", (double)c.pilot.path.size() * 2.0);
+    ctx.check("arrived", ok, c.pilot.status);
+    ctx.metric("damage on the way", worst * 100, "%", 0, 3);
+}
+
+SCENARIO(backcountryCreekCivic, "backcountry/creek-civic", "A Civic can't get up the Creek Crawl: it stalls at one of the first ledges") {
+    ctx.sim.world = World(MAP_BACKCOUNTRY);
+    const std::vector<V3> pts = trailLine("creek", 8, 366);
+    Car& c = ctx.add(bCivic(), pts[0].x, pts[0].z, headingTo(pts[0], pts[1]));
+    ctx.focus(c);
+    ctx.run(1.0);
+    const double got = driveLine(ctx, c, pts, 6, 90, nullptr);
+    ctx.metric("how far it got (the ledges start at 62 m)", got, "m", 10, 150);
+}
