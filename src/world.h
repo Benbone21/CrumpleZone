@@ -28,6 +28,11 @@ struct Rock {
     std::vector<std::array<int, 3>> f;  // faces, wound outward
     std::vector<V3> fn;                 // face normals
     std::vector<double> fd;             // plane offsets: dot(fn, p) == fd on the face
+    // A scanned rock (props::activeRockScans() was on when it was added): its hull in the
+    // library, and the scan's model frame in the world (world = origin + axis * model, the
+    // axes scaled), which the renderer draws the scan's mesh with. -1: a code-made rock.
+    int scan = -1;
+    V3 axis[3], origin;
 };
 
 // Fallen log: a capsule from a to b.
@@ -197,7 +202,9 @@ public:
     // How thick the grass grows at (x, z), 0..1 (the renderer's grass blades).
     float grassDensity(double x, double z) const;
     // Adds a boulder at (x, z): half-sizes (along, up, across), `top` of it showing above
-    // the ground, turned to a random yaw and tipped a little. Returns it.
+    // the ground, turned to a random yaw and tipped a little. Returns it. With scanned hulls
+    // on (props::activeRockScans()) it's the scan whose proportions fit best, scaled to the
+    // half-sizes; else a code-made hull.
     Rock& addRock(double x, double z, const V3& radii, double top, uint32_t seed, float tint = 1);
     // Indices of poles whose cylinders may overlap the box [mn, mx] (appended to out).
     void polesNear(const V3& mn, const V3& mx, std::vector<int>& out) const;

@@ -1,8 +1,13 @@
 #include "props.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <map>
+#include <mutex>
+#include <set>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -176,6 +181,10 @@ std::string assetDir() {
     static std::string found;
     if (done) return found;
     done = true;
+    if (const char* env = std::getenv("CZ_PROPS_DIR")) {  // (testing: another bake)
+        found = env;
+        return found;
+    }
     std::vector<std::string> bases = {"."};
     char buf[4096];
 #ifdef _WIN32
@@ -267,6 +276,169 @@ bool HullLibrary::save(const std::string& path) const {
     }
     std::fclose(f);
     return true;
+}
+
+// ---- Hull building ---------------------------------------------------------------------
+namespace {
+struct HullFace {
+    std::array<int, 3> i;
+    V3 n;
+    double d;
+    bool alive;
+};
+
+// Incremental 3D hull over a point set (only the points added take part).
+struct Hull {
+    const std::vector<V3>* p = nullptr;
+    std::vector<HullFace> faces;
+    std::set<int> used;
+    V3 centroid;
+    bool init(const std::vector<V3>& pts) {
+        p = &pts;
+        const int n = (int)pts.size();
+        if (n < 4) return false;
+        int t[4] = {0, 0, 0, 0};
+        for (int i = 0; i < n; i++)
+            if (pts[i].x < pts[t[0]].x) t[0] = i;
+        for (int i = 0; i < n; i++)
+            if (len(pts[i] - pts[t[0]]) > len(pts[t[1]] - pts[t[0]])) t[1] = i;
+        const V3 axis = norm(pts[t[1]] - pts[t[0]]);
+        auto lineDist = [&](int i) {
+            const V3 dd = pts[i] - pts[t[0]];
+            return len(dd - axis * dot(dd, axis));
+        };
+        for (int i = 0; i < n; i++)
+            if (lineDist(i) > lineDist(t[2])) t[2] = i;
+        const V3 pn = norm(cross(pts[t[1]] - pts[t[0]], pts[t[2]] - pts[t[0]]));
+        for (int i = 0; i < n; i++)
+            if (std::fabs(dot(pts[i] - pts[t[0]], pn)) > std::fabs(dot(pts[t[3]] - pts[t[0]], pn))) t[3] = i;
+        if (std::fabs(dot(pts[t[3]] - pts[t[0]], pn)) < 1e-9) return false;  // flat
+        centroid = (pts[t[0]] + pts[t[1]] + pts[t[2]] + pts[t[3]]) * 0.25;
+        make(t[0], t[1], t[2]), make(t[0], t[1], t[3]), make(t[0], t[2], t[3]), make(t[1], t[2], t[3]);
+        used = {t[0], t[1], t[2], t[3]};
+        return true;
+    }
+    void make(int a, int b, int c) {
+        const std::vector<V3>& pts = *p;
+        V3 nrm = norm(cross(pts[b] - pts[a], pts[c] - pts[a]));
+        if (dot(nrm, pts[a] - centroid) < 0) {
+            std::swap(b, c);
+            nrm = -nrm;
+        }
+        faces.push_back({{a, b, c}, nrm, dot(nrm, pts[a]), true});
+    }
+    void add(int k) {
+        const std::vector<V3>& pts = *p;
+        std::vector<std::pair<int, int>> edges;
+        for (HullFace& f : faces)
+            if (f.alive && dot(f.n, pts[k]) - f.d > 1e-9) {
+                f.alive = false;
+                for (int e = 0; e < 3; e++) edges.push_back({f.i[e], f.i[(e + 1) % 3]});
+            }
+        if (edges.empty()) return;
+        for (const auto& e : edges) {
+            bool shared = false;
+            for (const auto& o : edges) shared |= o.first == e.second && o.second == e.first;
+            if (!shared) make(e.first, e.second, k);
+        }
+        if (faces.size() > 4096) {
+            std::vector<HullFace> keep;
+            for (const HullFace& f : faces)
+                if (f.alive) keep.push_back(f);
+            faces.swap(keep);
+        }
+        used.clear();
+        for (const HullFace& f : faces)
+            if (f.alive) used.insert({f.i[0], f.i[1], f.i[2]});
+    }
+    double outside(const V3& q) const {
+        double m = -1e30;
+        for (const HullFace& f : faces)
+            if (f.alive) m = std::max(m, dot(f.n, q) - f.d);
+        return m;
+    }
+};
+}  // namespace
+
+RockHull buildRockHull(const std::string& name, const std::vector<V3>& pts, int maxVerts, double* worstMiss) {
+    RockHull out;
+    out.name = name;
+    // The exact hull first: its corners are the only candidates.
+    Hull full;
+    if (!full.init(pts)) return out;
+    for (int k = 0; k < (int)pts.size(); k++) full.add(k);
+    std::vector<V3> cand;
+    for (int i : full.used) cand.push_back(pts[i]);
+    // Then grow a small one from the biggest misses.
+    Hull h;
+    h.init(cand);
+    while ((int)h.used.size() < maxVerts) {
+        int best = -1;
+        double bd = 1e-4;  // 0.1 mm
+        for (int k = 0; k < (int)cand.size(); k++) {
+            const double d = h.outside(cand[k]);
+            if (d > bd) bd = d, best = k;
+        }
+        if (best < 0) break;
+        h.add(best);  // (one more corner at most: some may drop inside)
+    }
+    double err = 0;
+    for (const V3& q : pts) err = std::max(err, h.outside(q));
+    // Push the corners out a little so the scan doesn't poke through, then re-hull them
+    // (they stay extreme; the windings need redoing).
+    const std::vector<int> ids(h.used.begin(), h.used.end());
+    std::vector<V3> corner;
+    for (int id : ids) {
+        V3 nsum;
+        for (const HullFace& f : h.faces)
+            if (f.alive && (f.i[0] == id || f.i[1] == id || f.i[2] == id)) nsum += f.n;
+        corner.push_back(cand[id] + norm(nsum) * std::min(err * 0.5, 0.01));
+    }
+    Hull h2;
+    if (!h2.init(corner)) return out;
+    for (int k = 0; k < (int)corner.size(); k++) h2.add(k);
+    std::map<int, int> r2;
+    for (int i : h2.used) {
+        r2[i] = (int)out.v.size();
+        out.v.push_back(corner[i]);
+    }
+    for (const HullFace& f : h2.faces)
+        if (f.alive) out.f.push_back({r2[f.i[0]], r2[f.i[1]], r2[f.i[2]]});
+    for (int k = 0; k < 3; k++) out.bmin[k] = 1e30f, out.bmax[k] = -1e30f;
+    for (const V3& p : out.v) {
+        const double c3[3] = {p.x, p.y, p.z};
+        for (int k = 0; k < 3; k++) out.bmin[k] = std::fmin(out.bmin[k], (float)c3[k]), out.bmax[k] = std::fmax(out.bmax[k], (float)c3[k]);
+    }
+    if (worstMiss) *worstMiss = err;
+    return out;
+}
+
+// ---- The active hull library ------------------------------------------------------------
+namespace {
+thread_local const HullLibrary* tActive = nullptr;
+}
+const HullLibrary* activeRockScans() { return tActive && tActive->loaded() ? tActive : nullptr; }
+void setActiveRockScans(const HullLibrary* lib) { tActive = lib; }
+
+const HullLibrary& sharedHullLibrary() {
+    static HullLibrary lib;
+    static std::once_flag once;
+    std::call_once(once, [] {
+        const std::string dir = assetDir();
+        if (!dir.empty()) lib.load(dir);
+    });
+    return lib;
+}
+
+std::vector<ManifestEntry> readManifest(const std::string& dir) {
+    std::vector<ManifestEntry> out;
+    FILE* f = std::fopen((dir + "/props.txt").c_str(), "r");
+    if (!f) return out;
+    char name[128];
+    int kind = 0;
+    while (std::fscanf(f, " %127s %d", name, &kind) == 2) out.push_back({name, kind});
+    std::fclose(f);
+    return out;
 }
 
 }  // namespace props
