@@ -233,3 +233,41 @@ SCENARIO(axleTwister, "components/axle-articulation", "Bronco and 4Runner crawl 
         ctx.sim.cars.pop_back();
     }
 }
+
+// ---- Brake traction control on a split-friction pull-away ------------------------
+// Left wheels on the ice strip, right wheels on the concrete apron beside it, rear-drive
+// only (2H). An open diff gives both rear wheels the torque the one on ice can hold, so
+// with the system off the ice wheel spins and the truck barely creeps. Braking that wheel
+// (Bronco: AdvanceTrac's brake traction control) hands the concrete side its own share.
+SCENARIO(splitMuPullAway, "components/brake-traction-control", "Bronco in 2H, left wheels on ice: brake traction control gets it moving, the open diff alone barely does") {
+    auto pull = [&](bool tc) {
+        ctx.sim.cars.clear();
+        ctx.sim.player = 0;
+        // Ice strip z 117..125, concrete from 125: centre the truck on the edge.
+        Car& c = ctx.add(vehicleCatalog()[2], -100, 125.2, 0);
+        ctx.focus(c);
+        const auto& modes = driveModes(c.spec->transfer);
+        for (size_t m = 0; m < modes.size(); m++)
+            if (!modes[m].front) c.setDriveMode((int)m);
+        c.tractionControl = tc;
+        ctx.run(1.0);
+        Surface l = SURF_PAVED, r = SURF_PAVED;
+        for (const Wheel& w : c.wheels)
+            if (!w.front) (w.left ? l : r) = w.surface;
+        ctx.check(std::string(tc ? "on: " : "off: ") + "left rear on ice, right rear on concrete", l == SURF_ICE && r == SURF_PAVED);
+        double brakeMax = 0;
+        ctx.run(4.0, [&] {
+            c.throttle = 1;
+            c.steer = 0;
+            for (const Wheel& w : c.wheels) brakeMax = std::max(brakeMax, w.tcBrake);
+        });
+        return std::make_pair(speedKmh(c), brakeMax);
+    };
+    const auto off = pull(false);
+    const auto on = pull(true);
+    // Off: ~0.1 g of grip on the ice wheel, twice over: ~0.05 g, about 7 km/h in 4 s.
+    ctx.metric("speed after 4 s, traction control off", off.first, "km/h", 1, 12);
+    // On: the concrete wheel pulls on its own grip (less what the brake costs the engine).
+    ctx.metric("speed after 4 s, traction control on", on.first, "km/h", 15, 45);
+    ctx.metric("most brake it used on the ice wheel", on.second * 100, "%", 10, 100);
+}

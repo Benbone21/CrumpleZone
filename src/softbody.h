@@ -101,6 +101,7 @@ struct Wheel {
     double tieOffset = 0;       // permanent bend in the tie rod (m): the wheel is knocked out of line
     double brakeReaction = 0;   // brake torque passed to the knuckle (smoothed by pad/caliper give)
     double abs = 1;             // ABS: share of brake pressure let through to this wheel
+    double tcBrake = 0;         // brake traction control: share of this brake applied to stop it spinning
     // Steering geometry in the car's rest frame: lower and upper ball joints (kingpin
     // axis), steering arm end, and rack end. The tie rod's length follows the steer angle.
     V3 kpLow, kpUp, armRest, rackRest;
@@ -124,6 +125,8 @@ struct Wheel {
     float shaftLoad = 0;       // torque through the axle shaft (N*m, smoothed over ~10 ms)
     double xferTorque = 0;     // torque a locker or the locked center put through it this step
     std::vector<int> mounts;  // beams that attach this wheel to the body
+    // Radius it rolls on (a blown tire runs on its rim).
+    double rollR() const { return popped ? rimR + 0.015 : R; }
 };
 
 // A pin holds a panel node on the body node under it (a spring with no rest length).

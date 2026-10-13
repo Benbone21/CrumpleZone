@@ -839,8 +839,9 @@ bool setUp(Car& c, Autopilot& ap, const World& w, double v, double dt, double& v
         if (front && (std::fabs(c.steer) > 0.4 || steerPlan > 0.4)) on = false;  // a locked front axle won't turn (and snaps CVs)
         if (on != (front ? c.lockFront : c.lockRear)) c.setLocker(front, on);
     }
-    // Crawling up a ledge: let the wheels work (no traction-control throttle cuts).
-    c.tractionControl = c.lowRange && ap.needDist < 8 && ap.needStep > 0.15 ? false : ap.tcWas;
+    // Crawling up a ledge: let the wheels work (no traction-control throttle cuts). In low
+    // range with ABS, traction control only brakes a spinning wheel, which helps: leave it on.
+    c.tractionControl = c.lowRange && !c.spec->absEnabled && ap.needDist < 8 && ap.needStep > 0.15 ? false : ap.tcWas;
     return false;
 }
 

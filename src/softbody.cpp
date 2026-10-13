@@ -697,6 +697,36 @@ void Car::wheelStep(double h, const World& w) {
     double roadRpm = (nd ? gs / nd : 0) * std::fabs(ratio) * 60 / (2 * M_PI);
     shiftTimer -= h;
 
+    // Brake traction control (it needs the ABS unit to work the brakes on its own): an
+    // open diff gives both sides the same torque, so one wheel spinning (in the air, on
+    // ice, unloaded by the body's roll) leaves the other with only what the spinner can
+    // hold. Braking the spinner adds that braking torque to what the diff hands the
+    // other side. It acts on the spin difference across the axle; the engine cut below
+    // still watches every wheel (backing off a spinning tire keeps it from digging in).
+    const bool btcs = tractionControl && spec->absEnabled && brake < 0.05 && throttle > 0.05;
+    for (const Axle& ax : axles) {
+        if (ax.wheel[0] < 0 || ax.wheel[1] < 0) continue;
+        Wheel& l = wheels[ax.wheel[0]];
+        Wheel& r = wheels[ax.wheel[1]];
+        const bool open = diffType(ax.front) == DIFF_OPEN && wheelPowered(l) && wheelPowered(r);
+        for (int s2 = 0; s2 < 2; s2++) {
+            Wheel& me = s2 ? r : l;
+            const Wheel& other = s2 ? l : r;
+            if (btcs && open) {
+                // How much faster this tread slides over the road than the other's (m/s;
+                // either way, so reversing counts too).
+                const double lead = std::fabs(me.omega * me.rollR() - me.groundSpeed) - std::fabs(other.omega * other.rollR() - other.groundSpeed);
+                // Pressure keeps building while it leads by more than ~0.3 m/s and bleeds off
+                // once it doesn't (the valves hold it there, as ABS does the other way).
+                me.tcBrake = clampd(me.tcBrake + h * 4.0 * clampd(lead - 0.3, -2, 1), 0, 1);
+                // (Off above ~60 km/h: there it's stability control's job, and a stab of brake
+                // at speed pulls the car sideways.)
+                me.tcBrake = std::min(me.tcBrake, 1 - smoothstep(14, 18, std::fabs(me.groundSpeed)));
+            } else {
+                me.tcBrake = std::max(0.0, me.tcBrake - h * 20);
+            }
+        }
+    }
     // Traction control: back off the throttle while a driven wheel is spinning.
     // At a crawl a wheel turning a little faster than the car reads as a big slip ratio;
     // only count spin once the tread is really sliding (> ~1 m/s), so climbing a kerb or
@@ -704,7 +734,7 @@ void Car::wheelStep(double h, const World& w) {
     double maxSpin = 0, cornerSpin = 0;
     for (const Wheel& wh : wheels)
         if (wheelPowered(wh)) {
-            double slideSpeed = std::fabs(wh.omega * wh.R - wh.groundSpeed);
+            double slideSpeed = std::fabs(wh.omega * wh.rollR() - wh.groundSpeed);
             // (As a share of the slip that grips best on this tread and surface: more on
             // loose ground, where a wheel has to dig to pull.)
             maxSpin = std::max(maxSpin, std::fabs(wh.sx) * wh.bite * clampd((slideSpeed - 0.5) / 1.5, 0, 1));
@@ -719,7 +749,10 @@ void Car::wheelStep(double h, const World& w) {
     // switching the power on and off (which shakes a live axle into hopping).
     // (Down to a trickle when it's the car sliding sideways under power; otherwise a floor,
     // so a hopping live axle still gets some drive.)
-    if (tractionControl) tcCut = clampd(tcCut - h * 30.0 * (maxSpin - 0.14), cornerSpin > 0.16 ? 0.02 : 0.15, 1.0);
+    // In low range it only works the brakes (Toyota's A-TRAC, Ford's rock crawl mode): a
+    // throttle cut at the foot of a ledge stalls the climb, and at a crawl a spinning
+    // tire isn't going fast enough to dig in.
+    if (tractionControl && !(lowRange && spec->absEnabled)) tcCut = clampd(tcCut - h * 30.0 * (maxSpin - 0.14), cornerSpin > 0.16 ? 0.02 : 0.15, 1.0);
     else tcCut = 1;
     // Engine drag control (the other half of a modern traction system): off the throttle on
     // ice or snow, engine braking can drag the driven wheels toward locking, and a dragging
@@ -727,7 +760,7 @@ void Car::wheelStep(double h, const World& w) {
     double maxDrag = 0;
     for (const Wheel& wh : wheels)
         if (wheelPowered(wh) && wh.load > 0) {
-            double slideSpeed = std::fabs(wh.omega * wh.R - wh.groundSpeed);
+            double slideSpeed = std::fabs(wh.omega * wh.rollR() - wh.groundSpeed);
             maxDrag = std::max(maxDrag, -wh.sx * wh.bite * clampd((slideSpeed - 0.5) / 1.5, 0, 1));
         }
     if (tractionControl && brake < 0.05) dragAssist = clampd(dragAssist + h * 20.0 * (maxDrag - 0.1), 0.0, 0.35);
@@ -897,7 +930,7 @@ void Car::wheelStep(double h, const World& w) {
         if (!wh.left) axis = -axis;  // axis always points to the car's left
 
         const double sidewall = wh.R - wh.rimR;
-        const double R = wh.popped ? wh.rimR + 0.015 : wh.R;
+        const double R = wh.rollR();
         const double mu = spec->tireGrip * (wh.popped ? 0.55 : 1.0);
         double Fx = 0;
         wh.load = 0;
@@ -1100,7 +1133,7 @@ void Car::wheelStep(double h, const World& w) {
             }
             else
                 wh.abs = std::min(1.0, wh.abs + h * 6);
-            double service = brakePressure * wh.brakeMax * wh.abs;
+            double service = (brakePressure * wh.abs + wh.tcBrake) * wh.brakeMax;
             Tb += service + (wh.front ? 0.0 : handbrake * kHandbrakeTorque);
         }
         // The brake grips the wheel to its knuckle, so it stops the wheel turning relative to
