@@ -1503,7 +1503,11 @@ void Car::wheelStep(double h, const World& w) {
         // The shaft's wind-up drives the hub (and holds back the side gear).
         double Ts = 0;
         if (wheelPowered(wh)) {
-            const double k = shaftStiffness(), c = std::sqrt(k * wh.I);  // shuffle damped at ~1/2 critical
+            // Shuffle damped at ~1/2 critical, but no more than the light side gear can take in
+            // one step: past ~1.5 h c / Is the step overshoots and the wind-up grows instead of
+            // dying (the buggy's stiff 30 kN*m shafts on 40 in tires: 3.1, its shafts snapped
+            // the moment it touched down). The trucks sit at 1.0-1.3.
+            const double k = shaftStiffness(), c = std::min(std::sqrt(k * wh.I), 1.5 * kSideGearI / h);
             Ts = k * wh.twist + c * (wh.sideOmega - wh.omega);
             wh.sideOmega += (Td - Ts) / kSideGearI * h;
         }
