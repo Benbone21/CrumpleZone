@@ -690,6 +690,53 @@ VEHICLE_SCENARIO(bumpSteer, "structure/bump-steer", "Body pressed down and lifte
     ctx.note("worst at " + std::to_string(worstAt * 100) + " cm of travel");
 }
 
+// Tilt table: the deck tips slowly sideways until the uphill wheels lift. Its static
+// stability factor (half the track over the CG height) is what NHTSA's rollover stars were
+// built on; the tilt angle comes in a little under it (tan) as the body rolls on its springs
+// and the downhill tires squash.
+VEHICLE_SCENARIO(tiltTable, "structure/tilt-table", "Tipped sideways on a tilt table: static stability factor, and the angle the uphill wheels lift at") {
+    // SSF: EF Civic ~1.35-1.5 and the Jesko ~1.7-2.0 (low cars, estimates); Bronco 4-door 4WD
+    // NHTSA 3 stars (1.13-1.24 on the SSF-only scale; the rating now adds a dynamic test);
+    // 2001 4Runner 4x4 2 stars (1.04-1.12) stock, and this one sits 2 in higher on 35s with a
+    // roof basket; Tacoma 4x4 Double Cab 3 stars.
+    static const Range ssfRange[] = {{1.30, 1.55}, {1.60, 2.10}, {1.08, 1.24}, {0.92, 1.10}, {1.05, 1.24}};
+    VehicleSpec deck = spec;
+    deck.tireGrip = 2.5;  // a tilt table's grippy deck: the tires don't slide off it first
+    Car& c = ctx.add(deck, -100, -50, 0);
+    ctx.focus(c);
+    ctx.run(2.0, [&] { c.handbrake = 1; });
+    std::vector<double> rest;
+    for (const Wheel& w : c.wheels) rest.push_back(w.load);
+    double cy = 0, m = 0;
+    for (const Node& n : c.nodes) cy += n.p.y * n.m, m += n.m;
+    const double cgH = cy / m - ctx.sim.world.height(c.frame().com.x, c.frame().com.z);
+    double track = 0;
+    for (const Wheel& a : c.wheels)
+        for (const Wheel& b : c.wheels)
+            if (a.front && b.front && a.left && !b.left) track = len((c.nodes[a.inner].p + c.nodes[a.outer].p) - (c.nodes[b.inner].p + c.nodes[b.outer].p)) / 2;
+    const double ssf = track / (2 * cgH);
+    c.extForce.assign(c.nodes.size(), V3());
+    double lift = -1;
+    const double t0 = ctx.t;
+    ctx.runUntil(50, [&] { return lift > 0; }, [&] {
+        // Gravity tipped toward the car's right (the deck's low side), 1 degree a second.
+        const double ang = std::min(75.0, 25 + (ctx.t - t0)) * M_PI / 180;
+        c.handbrake = 1;
+        const V3 down = -c.frame().left;
+        for (size_t i = 0; i < c.nodes.size(); i++) c.extForce[i] = (down * std::sin(ang) + V3(0, 1 - std::cos(ang), 0)) * (9.81 * c.nodes[i].m);
+        bool up = true;
+        for (size_t i = 0; i < c.wheels.size(); i++)
+            if (c.wheels[i].left && c.wheels[i].load > 0.05 * rest[i]) up = false;
+        if (up) lift = ang;
+        ctx.sample("Uphill front tire load", spec.name, c.wheels[0].load / std::max(1.0, rest[0]) * 100, "% of rest");
+    });
+    const Range& e = ssfRange[vehicleIndex(spec)];
+    ctx.metric("static stability factor (track / 2 CG height)", ssf, "", e.lo, e.hi);
+    // (Real tilt-table ratios run ~85-97% of the SSF. The bound over it allows for the
+    // track and CG height being read at rest, at the hub centres.)
+    ctx.metric("tilt angle when the uphill wheels lift", lift * 180 / M_PI, "deg", std::atan(0.8 * ssf) * 180 / M_PI, std::atan(1.02 * ssf) * 180 / M_PI);
+}
+
 VEHICLE_SCENARIO(weight, "structure/weight", "Curb weight, front/rear split and center of gravity height against real vehicles") {
     struct Expect {
         Range kg, front, cog;
