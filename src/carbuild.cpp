@@ -1729,6 +1729,46 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 for (int a : far[0])
                     for (int b : far[1]) addBeam(copy[a], copy[b], BEAM_PANEL);
             }
+            // Opening stops: a door opens to ~70 degrees on its check strap, a hood to ~80 on its
+            // prop, a lid or gate to ~85-90. The strap is a slack pin from each node one cell off
+            // the hinge line to the body node it sat on: that gap grows as 2 r sin(angle / 2).
+            if (d.hingeAxis >= 0) {
+                const std::string nm = d.name;
+                const double open = (nm.find("DOOR") != std::string::npos ? 70 : nm == "HOOD" ? 80 : nm == "TAILGATE" ? 90 : 85) * M_PI / 180;
+                const double hv = d.hingeAtMax ? hi : lo, step = d.hingeAtMax ? -1 : 1;
+                std::vector<int> hingeNodes, next;
+                const bool door = nm.find("DOOR") != std::string::npos;
+                for (size_t k = 0; k < pnl.bodyNodes.size(); k++) {
+                    const float* lt = latOf(pnl.bodyNodes[k]);
+                    if (!lt) continue;
+                    if (std::fabs(lt[d.hingeAxis] - hv) < 1e-3) hingeNodes.push_back((int)k);
+                    // (A door's strap is in the door itself, below the glass: not on its window frame.)
+                    else if (std::fabs(lt[d.hingeAxis] - (hv + step)) < 1e-3 && !(door && lt[2] > gk0)) next.push_back((int)k);
+                }
+                for (int k : next) {
+                    double r = 1e9;
+                    for (int hk : hingeNodes) r = std::min(r, len(local[pnl.bodyNodes[k]] - local[pnl.bodyNodes[hk]]));
+                    if (r > 2 || next.empty()) continue;
+                    Pin pin;
+                    pin.body = pnl.bodyNodes[k];
+                    pin.panel = pnl.panelNodes[k];
+                    pin.kind = PIN_CHECK;
+                    // (A steel stop: a door hanging open through a hard corner barely moves on it.
+                    // Each tears at ~3 kN (a door twisting on its stop loads one more than the
+                    // rest): a door flung open in a crash or a roll goes past.)
+                    pin.k = 4e5 / next.size();
+                    pin.c = 600.0 / next.size();
+                    pin.slack = 2 * r * std::sin(open / 2);
+                    pin.breakDist = pin.slack + 3000.0 / pin.k * (bumper ? 1.0 : vs.pinStrength);
+                    pnl.checks.push_back((int)pins.size());
+                    pins.push_back(pin);
+                }
+            }
+            pnl.nodeQuads.resize(pnl.bodyNodes.size());
+            for (size_t k = 0; k < pnl.bodyNodes.size(); k++)
+                for (int qi : pnl.quads)
+                    for (int c = 0; c < 4; c++)
+                        if (quads[qi].v[c] == pnl.bodyNodes[k]) pnl.nodeQuads[k].push_back(qi);
             // Collision and glass use the same moving nodes as the visible panel.
             // Leaving these on the welded body creates invisible doors after detachment.
             for (int qi : pnl.quads)

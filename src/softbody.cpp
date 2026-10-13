@@ -388,6 +388,15 @@ void Car::computeForces(double h, const World& w) {
             pn.broken = true;
             continue;
         }
+        if (pn.slack > 0) {  // a stop: nothing until it's pulled tight
+            const double L = len(d);
+            if (L <= pn.slack) continue;
+            const V3 u = d / L;
+            const double F = pn.k * (L - pn.slack) + std::max(0.0, dot(B.v - A.v, u)) * pn.c;
+            A.f += u * F;
+            B.f -= u * F;
+            continue;
+        }
         V3 F = d * pn.k + (B.v - A.v) * pn.c;
         A.f += F;
         B.f -= F;
@@ -404,6 +413,7 @@ void Car::computeForces(double h, const World& w) {
     }
 
     engineBlockContact(h);
+    panelBodyContact(h);
     wheelBodyContact(h);
     wheelStep(h, w);
     poleEdgeContacts(h, w);
@@ -665,6 +675,66 @@ void Car::engineBlockContact(double h) {
     }
 }
 
+// A panel off its clips (a door unlatched, a hood popped, a bumper hanging by one corner)
+// swings out from the body, not in through it: a loose node that has gone behind every
+// body quad it sat on (inside the shell) is pushed back out the nearest way, and the body
+// takes the push (a door slammed past its pillar dents the pillar). Skin quads are wound
+// outward. (At a convex fold a node is only inside once it's behind both faces, so a
+// bumper sliding down past its own top face isn't caught on it.)
+void Car::panelBodyContact(double h) {
+    constexpr double kTol = 0.004, kK = 1.5e5;
+    for (Panel& pn : panels) {
+        if (pn.nodeQuads.size() != pn.panelNodes.size()) continue;
+        pn.outside.resize(pn.panelNodes.size(), 1);
+        for (size_t k = 0; k < pn.panelNodes.size(); k++) {
+            if (!pins[pn.pins[k]].broken) continue;  // on its pin: the pin holds it
+            Node& P = nodes[pn.panelNodes[k]];
+            double best = -1e9;  // least deep of its quads (the way out)
+            int bq = -1;
+            double bs = 0, bt = 0;
+            V3 bn;
+            bool inside = !pn.nodeQuads[k].empty(), near = false;
+            for (int qi : pn.nodeQuads[k]) {
+                const SkinQuad& q = quads[qi];
+                const V3 &b0 = nodes[q.v[0]].p, &b1 = nodes[q.v[1]].p, &b2 = nodes[q.v[2]].p, &b3 = nodes[q.v[3]].p;
+                const V3 e1 = ((b1 - b0) + (b2 - b3)) * 0.5, e2 = ((b3 - b0) + (b2 - b1)) * 0.5;
+                V3 n = cross(e1, e2);
+                const double nl = len(n);
+                if (nl < 1e-9) continue;
+                n = n / nl;
+                const V3 d = P.p - (b0 + b1 + b2 + b3) * 0.25;
+                const double hgt = dot(d, n);
+                if (hgt > -kTol) {
+                    inside = false;
+                    break;
+                }
+                const double s = dot(d, e1) / std::max(dot(e1, e1), 1e-9), t = dot(d, e2) / std::max(dot(e2, e2), 1e-9);
+                near |= std::fabs(s) < 0.75 && std::fabs(t) < 0.75;
+                if (hgt > best) best = hgt, bq = qi, bs = s, bt = t, bn = n;
+            }
+            if (!inside || bq < 0) {
+                pn.outside[k] = 1;
+                continue;
+            }
+            // Got in some other way (round the panel's edge, or flung through before the
+            // first step caught it): let it find its own way out rather than pump it out.
+            if (!near || best < -0.3) pn.outside[k] = 0;
+            if (!pn.outside[k]) continue;
+            const SkinQuad& q = quads[bq];
+            const double u = clampd(bs + 0.5, 0, 1), v = clampd(bt + 0.5, 0, 1);
+            const double wgt[4] = {(1 - u) * (1 - v), u * (1 - v), u * v, (1 - u) * v};
+            V3 vb;
+            for (int c = 0; c < 4; c++) vb += nodes[q.v[c]].v * wgt[c];
+            const double vn = dot(P.v - vb, bn);
+            double F = kK * (-best - kTol) - std::min(300.0, 0.4 * P.m / h) * vn;
+            if (F <= 0) continue;
+            F = std::min(F, P.m * 3000.0);
+            P.f += bn * F;
+            for (int c = 0; c < 4; c++) nodes[q.v[c]].f -= bn * (F * wgt[c]);
+        }
+    }
+}
+
 // Panel edges against poles and trunks: catches a pole that would otherwise pass
 // between two nodes (the nodes themselves collide through World::contact).
 void Car::poleEdgeContacts(double h, const World& w) {
@@ -803,8 +873,20 @@ void Car::buildWheelRub() {
     const VehicleSpec* stock = spec;
     for (const VehicleSpec& vs : vehicleCatalog())
         if (spec && std::string(vs.id) == spec->id) stock = &vs;
+    // The faces it could meet: the skin's triangles, and each frame rail's four sides from
+    // station to station (a tire knocked inboard, or turned with a bent arm, hits the rail).
+    std::vector<std::array<int, 3>> faces;
+    for (const Tri& tr : tris) faces.push_back({tr.v[0], tr.v[1], tr.v[2]});
+    for (int side = 0; side < 2; side++)
+        for (int st = 0; st + 1 < ladderStations; st++)
+            for (auto e : {std::make_pair(0, 1), std::make_pair(2, 3), std::make_pair(0, 2), std::make_pair(1, 3)}) {
+                const int a0 = ladder[st * 8 + side * 4 + e.first], b0 = ladder[st * 8 + side * 4 + e.second];
+                const int a1 = ladder[(st + 1) * 8 + side * 4 + e.first], b1 = ladder[(st + 1) * 8 + side * 4 + e.second];
+                faces.push_back({a0, b0, b1});
+                faces.push_back({a0, b1, a1});
+            }
     for (Wheel& wh : wheels) {
-        wh.rubTris.clear();
+        wh.rubFaces.clear();
         wh.rubAllow.clear();
         if (restLocal.empty() || !stock) continue;
         const V3 c0 = (restLocal[wh.inner] + restLocal[wh.outer]) * 0.5, axis0 = norm(restLocal[wh.outer] - restLocal[wh.inner]);
@@ -813,15 +895,14 @@ void Car::buildWheelRub() {
         const double bump = wh.front ? (stock->bumpFront > 0 ? stock->bumpFront : 0.085) : (stock->bumpRear > 0 ? stock->bumpRear : 0.085);
         const double droop = wh.front ? (stock->droopFront > 0 ? stock->droopFront : 0.11) : (stock->droopRear > 0 ? stock->droopRear : 0.11);
         const double reach = wh.R + 0.35;
-        for (int t = 0; t < (int)tris.size(); t++) {
-            const Tri& tr = tris[t];
+        for (const auto& f : faces) {
             bool own = false;
-            for (int k = 0; k < 3; k++) own |= std::find(wh.assembly.begin(), wh.assembly.end(), tr.v[k]) != wh.assembly.end();
+            for (int k = 0; k < 3; k++) own |= std::find(wh.assembly.begin(), wh.assembly.end(), f[k]) != wh.assembly.end();
             if (own) continue;
             V3 pts[7];
             bool near = false;
             for (int i = 0; i < 7; i++) {
-                for (int k = 0; k < 3; k++) pts[i] += restLocal[tr.v[k]] * kRubSamples[i][k];
+                for (int k = 0; k < 3; k++) pts[i] += restLocal[f[k]] * kRubSamples[i][k];
                 near |= len(pts[i] - c0) < reach;
             }
             if (!near) continue;
@@ -844,7 +925,7 @@ void Car::buildWheelRub() {
                             if (std::fabs(da) < half && dr < Rs) allow[i] = std::max(allow[i], std::min(Rs - dr, half - std::fabs(da)));
                         }
                     }
-            wh.rubTris.push_back(t);
+            wh.rubFaces.push_back(f);
             for (double a : allow) wh.rubAllow.push_back((float)a);
         }
     }
@@ -859,23 +940,23 @@ void Car::wheelBodyContact(double h) {
     for (Wheel& wh : wheels) {
         wh.rubTorque = 0;
         wh.rub = 0;
-        if (wh.detached || wh.rubTris.empty()) continue;
+        if (wh.detached || wh.rubFaces.empty()) continue;
         Node& a = nodes[wh.inner];
         Node& b = nodes[wh.outer];
         const V3 c = (a.p + b.p) * 0.5, vc = (a.v + b.v) * 0.5;
         V3 axis = norm(b.p - a.p);
         const double half = wh.width * 0.5, R = wh.popped ? wh.rimR + 0.015 : wh.R, side = R - wh.rimR;
         const V3 spinAxis = wh.left ? axis : -axis;  // points to the car's left: + omega rolls it forward
-        for (size_t ri = 0; ri < wh.rubTris.size(); ri++) {
-            const Tri& tr = tris[wh.rubTris[ri]];
+        for (size_t ri = 0; ri < wh.rubFaces.size(); ri++) {
+            const auto& tv = wh.rubFaces[ri];
             // Quick reject: the triangle's middle too far from the hub to reach.
-            const V3 m = (nodes[tr.v[0]].p + nodes[tr.v[1]].p + nodes[tr.v[2]].p) / 3.0;
+            const V3 m = (nodes[tv[0]].p + nodes[tv[1]].p + nodes[tv[2]].p) / 3.0;
             if (dot(m - c, m - c) > (R + 0.4) * (R + 0.4)) continue;
             for (int si = 0; si < 7; si++) {
                 const auto& wgt = kRubSamples[si];
                 const double allow = wh.rubAllow[ri * 7 + si];
                 V3 p, vp;
-                for (int k = 0; k < 3; k++) p += nodes[tr.v[k]].p * wgt[k], vp += nodes[tr.v[k]].v * wgt[k];
+                for (int k = 0; k < 3; k++) p += nodes[tv[k]].p * wgt[k], vp += nodes[tv[k]].v * wgt[k];
                 const V3 d = p - c;
                 const double da = dot(d, axis);
                 if (std::fabs(da) >= half) continue;
@@ -904,7 +985,7 @@ void Car::wheelBodyContact(double h) {
                 const double vtl = len(vt);
                 V3 Fp = n * F;  // on the body
                 if (vtl > 1e-6) Fp -= vt * (std::min(0.6 * F, 40.0 * vtl) / vtl);
-                for (int k = 0; k < 3; k++) nodes[tr.v[k]].f += Fp * wgt[k];
+                for (int k = 0; k < 3; k++) nodes[tv[k]].f += Fp * wgt[k];
                 // ...and back on the hub, shared by how far out along the axle it touches.
                 const double share = clampd(0.5 + da / (2 * half), 0, 1);
                 a.f -= Fp * (1 - share);
@@ -1246,7 +1327,6 @@ void Car::wheelStep(double h, const World& w) {
         V3 axis = norm(b.p - a.p);
         if (!wh.left) axis = -axis;  // axis always points to the car's left
 
-        const double sidewall = wh.R - wh.rimR;
         const double R = wh.rollR();
         const double mu = spec->tireGrip * (wh.popped ? 0.55 : 1.0);
         double Fx = 0;
@@ -1285,8 +1365,9 @@ void Car::wheelStep(double h, const World& w) {
             double vn = dot(vc, n);
             // Soft ground gives: the tire sinks until what's under it holds it up.
             const double pen = ct.pen - wh.sink;
-            // Rim contact: once the sidewall is squashed flat, the rim takes the load.
-            double rimPen = wh.popped ? 0.0 : pen - sidewall * 0.85;
+            // Rim contact: once the sidewall is squashed flat, the rim takes the load. (Flat, the
+            // folded rubber under the rim is all there is: past it, the rim strikes steel-hard.)
+            double rimPen = pen - (R - wh.rimR) * 0.85;
             double N = pen > 0 ? std::max(0.0, tireK * pen + kRimK * std::max(0.0, rimPen) - kTireC * vn) : 0.0;
             // Soft ground gives way under a hard landing: past what it can bear, the sand
             // (mud, snow) is shoved aside and packed down instead of the tire squashing
@@ -1302,7 +1383,7 @@ void Car::wheelStep(double h, const World& w) {
                 }
             }
             // A hard rim strike pinches the tire (the sand under a rim gives; a rock's edge doesn't).
-            if (!gives && rimPen > 0 && -vn > popSpeed * (si.sink > 0 ? 1.6 : 1.0)) {
+            if (!gives && !wh.popped && rimPen > 0 && -vn > popSpeed * (si.sink > 0 ? 1.6 : 1.0)) {
                 wh.popped = true;
                 tirePops++;
             }
@@ -1746,6 +1827,8 @@ void Car::updateStats() {
         if (p.state != 0)  // an open door's frame swings away from its seal
             for (int pi : p.pins)
                 if (pins[pi].kind == PIN_SEAL) pins[pi].broken = true;
+        if (p.state == 2)  // torn off: nothing left to stop it
+            for (int pi : p.checks) pins[pi].broken = true;
     }
 
     // Windows: glass panels shatter when their frame is bent or stretched.

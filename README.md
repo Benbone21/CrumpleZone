@@ -197,13 +197,16 @@ all-terrains. Its garage takes it to a TRD Pro, a long-travel build or a 6-speed
   the Tacoma's (longer, open C-channel under the bed) at ~39. Bare, the frames twist
   11, 3.6 and 2.9 kNm per degree; bolted to their bodies, 25, 15 and 23. A suspension
   bracket breaks loose at ~70 kN, so a hard hit tears a bracket before it folds the rail.
-- **Parts that touch.** The tires collide with their own body: a wheel pushed up
-  past its travel dents the fender liner and the panels above it, and a bent arm
-  can drive the tire into the door. Each wheel well knows what tire it was built for
-  (and what size fits before it rubs, ~35s on the Bronco, ~32s on the Tacoma), so
-  only tires bigger than that or wheels knocked out of place scrape. Anti-roll bars,
-  arms and links bend and keep the bend; engine and body mounts squash onto rubber
-  snubbers and tear or take a set beyond them.
+- **Parts that touch.** The tires collide with their own body and the frame rails:
+  a wheel pushed up past its travel dents the fender liner and the panels above it,
+  a bent arm can drive the tire into the door, and a wheel knocked inboard meets the
+  rail. Each wheel well knows what tire it was built for (and what size fits before
+  it rubs, ~35s on the Bronco, ~32s on the Tacoma), so only tires bigger than that or
+  wheels knocked out of place scrape. A loose panel can swing out but not in: an
+  unlatched door opens to ~70° on its check strap and stops there, a hood to ~80°, and
+  none of them pass into the cabin or the engine bay (flung open hard, the strap
+  tears). Anti-roll bars, arms and links bend and keep the bend; engine and body
+  mounts squash onto rubber snubbers and tear or take a set beyond them.
 - **Weight.** Every heavy item is placed where it really sits: engine, gearbox, seats,
   dashboard, fuel tank, battery, radiator, exhaust, spare wheel. That sets the
   front/rear balance, the center of gravity height and how the car pitches and rolls.
@@ -240,9 +243,9 @@ all-terrains. Its garage takes it to a TRD Pro, a long-travel build or a 6-speed
 ## Damage
 
 - **Bodywork** dents permanently and tears apart. Bent metal gets stiffer as it crumples, and crushed metal barely springs back, so a 50 km/h wall hit gives about 0.3–0.5 m of crush and a small rebound, like a real crash test.
-- **Panels** come loose: bumpers drop off, hoods pop open, doors hang on their hinges or come off.
+- **Panels** come loose: bumpers drop off, hoods pop open, doors swing open to their check straps or come off.
 - **Windows** shatter once their frame bends: the bonded windshield at about 5%, side and back glass (loose in rubber channels) at about 7.5%.
-- **Tires** blow out on hard rim strikes, such as big landings or kerbs taken at speed. You then run on the rim with much less grip.
+- **Tires** blow out on hard rim strikes, such as big landings or kerbs taken at speed. You then run on the rim with much less grip, and the next big hit lands on steel.
 - **Engine:** a crushed engine bay loses power, smokes, and eventually dies. Torn engine mounts hurt it too.
 - **Suspension and steering** bend: a bent tie rod or control arm knocks the wheel out of line, and the car pulls.
 - **Drive shafts** snap, and the wheels they drive lose power.

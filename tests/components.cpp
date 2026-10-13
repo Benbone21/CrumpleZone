@@ -76,6 +76,68 @@ VEHICLE_SCENARIO(detachedDoorGlass, "components/door-glass", "A removed door car
     ctx.check("detached assembly remains finite",c.finite());
 }
 
+// How far any loose node of a panel has gone in behind the body quads it sat on (the deepest,
+// m), skipping nodes still on their pins.
+static double panelIntrusion(const Car& c, const Panel& pn) {
+    double worst = 0;
+    for (size_t k = 0; k < pn.panelNodes.size(); k++) {
+        if (!c.pins[pn.pins[k]].broken || pn.nodeQuads[k].empty()) continue;
+        const V3 p = c.nodes[pn.panelNodes[k]].p;
+        double least = 1e9;  // inside only if behind all of them: by the least
+        for (int qi : pn.nodeQuads[k]) {
+            const SkinQuad& q = c.quads[qi];
+            const V3 b0 = c.nodes[q.v[0]].p, b1 = c.nodes[q.v[1]].p, b2 = c.nodes[q.v[2]].p, b3 = c.nodes[q.v[3]].p;
+            const V3 n = norm(cross((b1 - b0) + (b2 - b3), (b3 - b0) + (b2 - b1)));
+            least = std::min(least, -dot(p - (b0 + b1 + b2 + b3) * 0.25, n));
+        }
+        worst = std::max(worst, least);
+    }
+    return worst;
+}
+
+VEHICLE_SCENARIO(doorStops, "components/door-stops", "Doors unlatched on a slalom: they swing open to their check straps and back, never in through the body") {
+    Car& c = ctx.add(spec, -100, -50, 0);
+    ctx.focus(c);
+    ctx.run(1.0);
+    std::vector<Panel*> doors;
+    for (Panel& p : c.panels)
+        if (std::string(p.name).find("DOOR") != std::string::npos) doors.push_back(&p);
+    if (!ctx.check("has doors", !doors.empty())) return;
+    for (Panel* d : doors)
+        for (int pi : d->pins)
+            if (c.pins[pi].kind != PIN_HINGE) c.pins[pi].broken = true;
+    ctx.launch(c, 20 / 3.6);
+    const double t0 = ctx.t;
+    double deepest = 0, overStop = 0, widest = 0;
+    ctx.run(4.0, [&] {
+        c.steer = std::sin((ctx.t - t0) * 3) * 0.4;
+        c.throttle = 0.2;
+        for (Panel* d : doors) {
+            deepest = std::max(deepest, panelIntrusion(c, *d));
+            for (int pi : d->checks) {
+                const Pin& pn = c.pins[pi];
+                if (pn.broken) continue;
+                const double L = len(c.nodes[pn.panel].p - c.nodes[pn.body].p);
+                overStop = std::max(overStop, L - pn.slack);
+                widest = std::max(widest, L / pn.slack);
+            }
+        }
+        ctx.sample("Deepest door node inside the body", spec.name, deepest * 100, "cm");
+    });
+    int off = 0, torn = 0;
+    for (Panel* d : doors) {
+        off += d->state == 2;
+        for (int pi : d->checks) torn += c.pins[pi].broken;
+    }
+    // (A node pressed on the body skin sits a few mm inside it, and the coarse lattice's
+    // faces meet at angles: a couple of cm is the skin, not the cabin.)
+    ctx.metric("deepest a loose door got inside the body", deepest * 100, "cm", 0, 3);
+    ctx.metric("doors swung open (on their check straps)", widest, "x stop", 0.5, 1.15);
+    ctx.metric("furthest past the stop", overStop * 100, "cm", -100, 4);
+    ctx.metric("doors torn off", off, "", 0, 0);
+    ctx.metric("check straps torn", torn, "", 0, 0);
+}
+
 SCENARIO(lockedHalfshaft, "components/locked-differential", "A locked differential still drives its surviving output after a halfshaft breaks") {
     VehicleSpec locker=vehicleCatalog()[0];
     locker.diffFront=DIFF_LOCKED;
@@ -347,10 +409,9 @@ VEHICLE_SCENARIO(tireIntoFender, "components/tire-into-fender", "Coil-over torn 
         peak = std::max(peak, (double)w.rub);
         // How deep anything of the body got inside that tire.
         const V3 a = c.nodes[w.inner].p, b = c.nodes[w.outer].p, ctr = (a + b) * 0.5, ax = norm(b - a);
-        for (int t : w.rubTris) {
-            const Tri& tr = c.tris[t];
-            for (const V3& p : {(c.nodes[tr.v[0]].p + c.nodes[tr.v[1]].p) * 0.5, (c.nodes[tr.v[1]].p + c.nodes[tr.v[2]].p) * 0.5,
-                                (c.nodes[tr.v[0]].p + c.nodes[tr.v[1]].p + c.nodes[tr.v[2]].p) / 3.0, c.nodes[tr.v[0]].p}) {
+        for (const auto& tv : w.rubFaces) {
+            for (const V3& p : {(c.nodes[tv[0]].p + c.nodes[tv[1]].p) * 0.5, (c.nodes[tv[1]].p + c.nodes[tv[2]].p) * 0.5,
+                                (c.nodes[tv[0]].p + c.nodes[tv[1]].p + c.nodes[tv[2]].p) / 3.0, c.nodes[tv[0]].p}) {
                 const V3 d = p - ctr;
                 const double da = dot(d, ax);
                 // (Inside the tire by the nearer way out: through the tread or past the sidewall.)

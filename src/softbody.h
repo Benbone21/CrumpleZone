@@ -143,10 +143,11 @@ struct Wheel {
     double twist = 0;          // shaft wind-up, rad (+ = driving forward)
     double shaftTorque = 0;    // torque in the shaft now (N*m)
     double omegaWas = 0;       // omega at the end of the last step (follows outside changes)
-    // The tire against its own car: wheel-well liners, fenders, bumpers, sills. Built once:
-    // the skin triangles it could reach; at run time, how hard it's rubbing.
-    std::vector<int> rubTris;
-    std::vector<float> rubAllow;  // per rub tri, for each of its 7 sample points: how deep the stock tire
+    // The tire against its own car: wheel-well liners, fenders, bumpers, sills and the frame
+    // rails. Built once: the faces it could reach (skin triangles, and the rails' sides as
+    // triangles); at run time, how hard it's rubbing.
+    std::vector<std::array<int, 3>> rubFaces;
+    std::vector<float> rubAllow;  // per rub face, for each of its 7 sample points: how deep the stock tire
                                   // already reaches there over its travel and steering lock (the coarse
                                   // lattice cutting a corner)
     double rubTorque = 0;      // the rubbing's drag on its spin this step (N*m)
@@ -160,10 +161,13 @@ struct Wheel {
 // Hinges are strong; latches and clips let go in a hard hit.
 // A seal is the rubber a shut door's window frame rests against: soft, it only keeps
 // the frame from rattling, and lets go as soon as the door is open or off.
-enum PinKind : uint8_t { PIN_HINGE, PIN_LATCH, PIN_CLIP, PIN_SEAL };
+// A check is the door check strap (or a hood's prop, a gate's cable): slack until the
+// panel is open to its stop, then it holds it there; flung open hard, it tears.
+enum PinKind : uint8_t { PIN_HINGE, PIN_LATCH, PIN_CLIP, PIN_SEAL, PIN_CHECK };
 struct Pin {
     int body, panel;  // node on the structure, node on the panel
     double k, c, breakDist;
+    double slack = 0;  // pulls only once the nodes are this far apart
     uint8_t kind;
     bool broken = false;
 };
@@ -177,6 +181,11 @@ struct Panel {
     std::vector<int> bodyNodes;      // the structure nodes under it...
     std::vector<int> panelNodes;     // ...and its own nodes over them (same order)
     std::vector<int> pins;
+    // Per panel node: the panel's skin quads it sat on. Off its pin, it's still a sheet of
+    // steel against the body: it can swing out, but not in through the quads under it.
+    std::vector<std::vector<int>> nodeQuads;
+    std::vector<int8_t> outside;     // per panel node: came to the body from outside (only those are held out)
+    std::vector<int> checks;         // its opening stops (PIN_CHECK pins, not in `pins`)
     int state = 0;                   // 0 shut, 1 hanging open on its hinges, 2 torn off
 };
 
@@ -414,6 +423,7 @@ private:
     std::vector<int> nearPoles;
     void poleEdgeContacts(double h, const World& w);
     void engineBlockContact(double h);
+    void panelBodyContact(double h);
 public:
     bool wheelPowered(const Wheel& wh) const;  // driven, attached, and its shafts are intact
     // 4x4 controls. setDriveMode/setLocker only change state; the caller decides when the
