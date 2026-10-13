@@ -997,6 +997,9 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 // block) mustn't tear in a hard landing.
                 beams[bi].yieldStrain = std::max(beams[bi].yieldStrain, 0.025 / beams[bi].Lorig);
                 beams[bi].breakStrain = std::max(beams[bi].breakStrain, 0.08 / beams[bi].Lorig);
+                // (On a frame, the mounts' snubbers carry the block through a landing. A unibody
+                // car's subframe mounts give, and soak up some of a crash, as built.)
+                beams[bi].snub = ladderFrame;
                 engineMounts.push_back(bi);
             }
         }
@@ -1495,6 +1498,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                         beams[bi].c *= 2.0 / 4;
                         beams[bi].yieldStrain = 0.12;
                         beams[bi].breakStrain = 0.6;  // a big enough hit shears the body off its mounts
+                        beams[bi].snub = true;
                         bodyMountBeams.push_back(bi);
                     }
             }

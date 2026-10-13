@@ -52,6 +52,7 @@ struct Beam {
     double minL = 0, maxL = 0;  // bump / droop stops for springs (0 = none)
     uint8_t type;
     bool broken = false;
+    bool snub = false;  // a rubber mount with a snubber and rebound washer (hard stops both ways)
 };
 
 enum SkinMat : uint8_t { MAT_PAINT, MAT_GLASS, MAT_HEADLIGHT, MAT_TAILLIGHT, MAT_TRIM, MAT_UNDER, MAT_WELL };

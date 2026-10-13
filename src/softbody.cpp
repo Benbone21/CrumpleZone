@@ -331,22 +331,20 @@ void Car::computeForces(double h, const World& w) {
             double yieldNow = b.yieldStrain * (1 + b.hardening * plastic);
             double strain = (L - b.L0) / b.L0;
             // A rubber mount has a snubber both ways (the rebound washer on its through-bolt):
-            // squashed flat or pulled up to the washer it's a hard stop, and only a pull well
-            // past that tears the rubber, which then sets (and at breakStrain, lets go).
-            const bool mount = b.type == BEAM_MOUNT;
+            // squashed flat or pulled up to the washer it's a hard stop. Well past that, pulled
+            // the rubber tears, pushed the bracket bends: either way it sets (and stretched to
+            // breakStrain, lets go).
+            const bool mount = b.snub;
             const double snub = mount ? yieldNow : 0;
             if (mount) yieldNow *= 2.5;
-            if (mount && (strain > snub && strain <= yieldNow)) {
-                // on the rebound washer: no set
+            if (mount && std::fabs(strain) > snub && std::fabs(strain) <= yieldNow) {
+                // on the rebound washer or the snubber: no set
             } else if (strain > yieldNow) {  // stretched past yield: permanent elongation
                 double nl = L / (1 + yieldNow);
                 impactEnergy += b.k * yieldNow * b.L0 * (nl - b.L0);
                 b.L0 = nl;
                 b.relaxTime = 0.25f;
                 releaseFromFrame(b);
-            } else if (strain < -snub && mount) {
-                // A rubber mount squashed flat bottoms on its snubber, a hard stop: it carries the
-                // load without taking a set (only tearing it, stretched, ruins it).
             } else if (strain < -yieldNow) {  // crushed past yield: permanent shortening
                 double nl = std::max(L / (1 - yieldNow), 0.25 * b.Lorig);
                 impactEnergy += b.k * yieldNow * b.L0 * std::fabs(b.L0 - nl);
@@ -366,7 +364,7 @@ void Car::computeForces(double h, const World& w) {
                 continue;
             }
             F = b.k * (L - b.L0);
-            if (mount && strain < -snub) F -= 6 * b.k * (-strain - snub) * b.L0;  // on the snubber
+            if (mount && strain < -snub) F -= 6 * b.k * (std::min(-strain, yieldNow) - snub) * b.L0;  // on the snubber
             if (mount && strain > snub) F += 6 * b.k * (std::min(strain, yieldNow) - snub) * b.L0;  // on the washer
             // Fully crushed material is nearly solid. One-way (only resists further
             // crushing) so it soaks up energy instead of springing the car back.
