@@ -185,6 +185,14 @@ struct AxleWatch {
             if (l.kind == LINK_TRAILING && l.wheel < 0 && (b.a == ax->housing[2] || b.b == ax->housing[2]))
                 pick[2] = b.a == ax->housing[2] ? b.b : b.a;
         }
+        // (On leaf springs there's no upper link: the leaves' wind-up stand-in pulls from under
+        // the housing to a frame point ahead, and that serves the same.)
+        if (pick[2] < 0 && ax->housing.size() > 3)
+            for (const SuspLink& l : c.links) {
+                const Beam& b = c.beams[l.beam];
+                if (l.kind == LINK_BUSHING && l.wheel < 0 && (b.a == ax->housing[3] || b.b == ax->housing[3]))
+                    pick[2] = b.a == ax->housing[3] ? b.b : b.a;
+            }
         line.push_back({-1, 0});
         for (int s = 0; s < 2; s++)
             for (double f : {0.4, 0.7}) line.push_back({c.wheels[ax->wheel[s]].inner, f});  // under the rails
@@ -310,10 +318,10 @@ SCENARIO(axleTwister, "components/axle-articulation", "Bronco and 4Runner crawl 
 }
 
 // Landings: flat drops, tail first, and a jump landing at speed.
-SCENARIO(axleLandings, "components/axle-landing", "Bronco and 4Runner dropped flat, tail first and at speed: the live rear axle takes the hit on its bump stops, stays upright on its links and settles back level") {
-    for (int v : {2, 3}) {
+SCENARIO(axleLandings, "components/axle-landing", "Every live-axle truck (Bronco, 4Runner, rock buggy, Tacoma on leaves) dropped flat, tail first and at speed: the rear axle takes the hit on its bump stops, stays upright on its links and settles back level") {
+    for (int v : {2, 3, 4, 6}) {
         const VehicleSpec& spec = vehicleCatalog()[v];
-        const std::string name = v == 2 ? "Bronco" : "4Runner";
+        const std::string name = v == 2 ? "Bronco" : v == 3 ? "4Runner" : v == 4 ? "Rock buggy" : "Tacoma";
         axleLanding(ctx, spec, name + " 1 m flat", -50, 1.0, 0, 0, 0);
         axleLanding(ctx, spec, name + " 2 m flat", -50, 2.0, 0, 0, 0);
         axleLanding(ctx, spec, name + " 2 m tail first", -50, 2.0, 12, 0, 0);
