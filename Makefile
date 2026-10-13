@@ -58,6 +58,24 @@ windows: build/win/CrumpleZone/crumplezone.exe
 	if [ -f assets/props/props.txt ]; then cp -r assets/props build/win/CrumpleZone/assets/; fi
 	cd build/win && rm -f CrumpleZone-windows.zip && zip -qr CrumpleZone-windows.zip CrumpleZone
 
+# ---- Debian package ---------------------------------------------------------------
+#   make deb [VERSION=x.y.z]  ->  build/deb/crumplezone_VERSION_amd64.deb
+# Installs to /opt/crumplezone (the game finds assets/ beside its executable), with
+# /usr/games/crumplezone and a desktop menu entry. Settings stay in ~/.config/crumplezone.
+VERSION ?= 0.1.0
+DEBROOT := build/deb/root
+deb: crumplezone
+	rm -rf $(DEBROOT) && mkdir -p $(DEBROOT)/DEBIAN $(DEBROOT)/opt/crumplezone $(DEBROOT)/usr/games $(DEBROOT)/usr/share/applications $(DEBROOT)/usr/share/doc/crumplezone
+	install -m755 crumplezone $(DEBROOT)/opt/crumplezone/crumplezone
+	strip $(DEBROOT)/opt/crumplezone/crumplezone
+	mkdir -p $(DEBROOT)/opt/crumplezone/assets && cp -r assets/ground $(DEBROOT)/opt/crumplezone/assets/
+	if [ -f assets/props/props.txt ]; then cp -r assets/props $(DEBROOT)/opt/crumplezone/assets/; fi
+	ln -s /opt/crumplezone/crumplezone $(DEBROOT)/usr/games/crumplezone
+	cp README.md $(DEBROOT)/usr/share/doc/crumplezone/README.md
+	printf '[Desktop Entry]\nType=Application\nName=Crumple Zone\nComment=Soft-body driving: crash it, crawl it, race it\nExec=/usr/games/crumplezone\nTerminal=false\nCategories=Game;Simulation;\n' > $(DEBROOT)/usr/share/applications/crumplezone.desktop
+	printf 'Package: crumplezone\nVersion: $(VERSION)\nSection: games\nPriority: optional\nArchitecture: amd64\nDepends: libsdl2-2.0-0, libgl1, libc6, libstdc++6\nMaintainer: Crumple Zone <noreply@users.noreply.github.com>\nInstalled-Size: %s\nDescription: Soft-body driving sim: crash it, crawl it, race it\n Node-and-beam soft-body vehicles (ladder frames, live axles, crumple zones)\n for rock crawling, off-roading, crashes and racing.\n' "$$(du -sk $(DEBROOT) | cut -f1)" > $(DEBROOT)/DEBIAN/control
+	dpkg-deb --root-owner-group --build $(DEBROOT) build/deb/crumplezone_$(VERSION)_amd64.deb
+
 # ---- Props: the offline baker for the Poly Haven scans (Linux; needs ImageMagick's `convert`) ----
 #   make bake PROPSRC=/path/to/polyhaven/models   ->  assets/props/ (committed; the game reads it)
 PROPSRC ?= assets/source/polyhaven/models
@@ -79,4 +97,4 @@ run: crumplezone
 clean:
 	rm -rf build crumplezone
 
-.PHONY: windows all test run clean bake
+.PHONY: windows deb all test run clean bake
