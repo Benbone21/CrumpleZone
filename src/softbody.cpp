@@ -937,6 +937,7 @@ void Car::buildWheelRub() {
 // the suspension. A tire rubbing a fender drags on its spin.
 void Car::wheelBodyContact(double h) {
     (void)h;
+
     for (Wheel& wh : wheels) {
         wh.rubTorque = 0;
         wh.rub = 0;

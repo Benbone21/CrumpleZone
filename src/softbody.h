@@ -388,7 +388,12 @@ public:
 
     void build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& color);
     void translate(const V3& d);  // moves the whole vehicle (and its autopilot's route) by d
-    void respawn(const V3& pos, double yaw) { build(*spec, pos, yaw, color); }
+    // A respawn is a fresh vehicle: repaired, a full tank and its spare can (switching to
+    // another vehicle used to inherit the last one's tank, empty if it had run dry).
+    void respawn(const V3& pos, double yaw) {
+        build(*spec, pos, yaw, color);
+        fuel = jerry = -1;
+    }
     // Driver gear change (+1 up, -1 down); returns false if refused (would over-rev).
     bool shift(int dir);
     Frame frame() const;

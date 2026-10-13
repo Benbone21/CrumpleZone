@@ -1281,7 +1281,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                     int rack = addNode(V3(xw + dir * 0.17, R - 0.05, s * 0.30), am * 0.02 + 1.5, false);
                     knuckle[sIdx] = {wh.inner, wh.outer, kpLow, kpUp, arm};
                     steerNodes[sIdx] = {kpLow, kpUp, arm, rack};
-                    mine = {seat[sIdx], lowMount[sIdx], kpLow, kpUp, rack};
+                    mine = {seat[sIdx], lowMount[sIdx], kpLow, kpUp};
                     wh.lower = kpLow;
                     wh.top = kpUp;
                     wh.arm = arm;
@@ -1295,6 +1295,16 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 wheels.push_back(wh);
             }
             rigid(as.nodes, BEAM_KNUCKLE);
+            // (The tie rod's fixed end is a bracket on the tube, braced to the kingpin and the
+            // housing beside it, not welded to every point of the axle: that many stiff beams on
+            // one light node needed more weight than a tube chassis has to lend.)
+            if (steered)
+                for (int sIdx = 0; sIdx < 2; sIdx++) {
+                    const int rack = steerNodes[sIdx][3];
+                    for (int o : {steerNodes[sIdx][0], steerNodes[sIdx][1], lowMount[sIdx], seat[sIdx], diff, pinion}) addBeam(rack, o, BEAM_KNUCKLE);
+                    axle.housing.push_back(rack);
+                    as.nodes.push_back(rack);
+                }
             // What a solid axle drags over the rocks: the diff's pumpkin, the lowest thing on the
             // truck (ground clearance is measured under it), and the tubes either side. Nodes
             // collide as 4 cm spheres: the pumpkin node sits that far above its bottom, ~12.5 cm
@@ -1311,7 +1321,9 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                         if (bi >= 0) beams[bi].k *= 0.1, beams[bi].c *= 0.3;
                     }
                 };
-                const int hubL = wheels[axle.wheel[0]].inner, hubR = wheels[axle.wheel[1]].inner;
+                // (The tube ends: the hubs on a rigid axle; the lower kingpins on a steered one,
+                // whose hubs turn with the knuckles.)
+                const int hubL = steered ? steerNodes[0][0] : wheels[axle.wheel[0]].inner, hubR = steered ? steerNodes[1][0] : wheels[axle.wheel[1]].inner;
                 const int pump = addNode(V3(xw, R - kAxleDiffR + nodeR, 0), am * 0.05, true);
                 brace(pump, {diff, pinion, dtop, hubL, hubR});
                 nodes[diff].m -= am * 0.11;
@@ -1906,8 +1918,16 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
             nb[beams[bi].a].push_back((int)bi);
             nb[beams[bi].b].push_back((int)bi);
         }
+        // (Panel pins pull a panel node toward the body node under it in every direction.)
+        std::vector<std::vector<int>> pinsAt(nodes.size());
+        for (size_t pi = 0; pi < pins.size(); pi++) {
+            pinsAt[pins[pi].body].push_back((int)pi);
+            pinsAt[pins[pi].panel].push_back((int)pi);
+        }
         auto load = [&](size_t i) {  // worst-direction h^2*k + 2h*c
-            double worst = 0;
+            double pk = 0, pc = 0;
+            for (int pi : pinsAt[i]) pk += pins[pi].k, pc += pins[pi].c;
+            double worst = h * h * pk + 2 * h * pc;
             for (int bj : nb[i]) {
                 const Beam& d = beams[bj];
                 V3 u = norm(local[d.b] - local[d.a]);
@@ -1920,7 +1940,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                     K += c2 * e.k * (e.type == BEAM_BUMPSTOP ? 125 : spring ? 26 : 1);
                     C += c2 * e.c * (spring ? 1.35 : 1);
                 }
-                worst = std::max(worst, h * h * K + 2 * h * C);
+                worst = std::max(worst, h * h * (K + pk) + 2 * h * (C + pc));
             }
             return worst;
         };
@@ -1967,6 +1987,35 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 }
                 nodes[i].m += take;
             }
+        // Still over the margin where nothing was left to lend (a light tube chassis): soften
+        // that node's stiff beams until it steps stably. A slightly springier joint is better
+        // than a node that runs away at the first step.
+        for (int it = 0; it < 4; it++) {
+            bool changed = false;
+            for (size_t i = 0; i < nodes.size(); i++) {
+                const double lim = target * 1.25 * nodes[i].m;
+                if (L[i] <= lim) continue;
+                const double f = lim / L[i];
+                for (int bj : nb[i]) {
+                    Beam& b = beams[bj];
+                    if (b.type == BEAM_SPRING || b.type == BEAM_BUMPSTOP) continue;
+                    b.k *= f;
+                    b.c *= f;
+                }
+                for (int pi : pinsAt[i]) {  // (a softer pin still lets go at the same force)
+                    Pin& pn = pins[pi];
+                    pn.breakDist = pn.slack + (pn.breakDist - pn.slack) / f;
+                    pn.k *= f;
+                    pn.c *= f;
+                }
+                changed = true;
+            }
+            if (!changed) break;
+            for (size_t i = 0; i < nodes.size(); i++) L[i] = load(i);
+        }
+        if (getenv("CZ_STAB"))
+            for (size_t i = 0; i < nodes.size(); i++)
+                if (L[i] / nodes[i].m > target * 1.3) std::printf("STAB node %zu L %.2f m %.2f L/m %.2f target %.2f\n", i, L[i], nodes[i].m, L[i] / nodes[i].m, target);
         // Balance: what the body lent shifted the center of mass (toward the stiff nodes
         // that borrowed: a few cm). Tilt the mass of the body nodes with plenty to spare
         // fore-aft and side to side, just enough to put it back, so the axle loads stay the

@@ -634,6 +634,13 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         // 12-18 psi, and selectable lockers in both axles. The numbers are class figures,
         // not one builder's car: weights and travel are estimates.
         VehicleSpec buggy = bronco;
+        // (Not a Bronco underneath: a tube chassis with no ladder frame, body mounts, transfer
+        // case skid or factory wheel wells, so none of the Bronco's frame settings carry over.)
+        buggy.railSpacing = 0;
+        buggy.frameMass = 0;
+        buggy.skidDrop = 0;
+        buggy.bumperLiftRear = -1;
+        buggy.wellTireRadius = buggy.wellTireWidth = 0;
         buggy.name = "ROCK BUGGY";
         buggy.id = "buggy";
         buggy.blurb = "ULTRA4 TUBE CHASSIS  6.2L V8  4-SPEED AUTO  40 IN TIRES";
