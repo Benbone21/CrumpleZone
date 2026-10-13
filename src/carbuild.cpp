@@ -1333,7 +1333,11 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                     const int s = sIdx == 0 ? -1 : 1;
                     const int hub = sIdx == 0 ? hubL : hubR;
                     const int tube = addNode(V3(xw, R - (kAxleTubeR - nodeR), s * std::fabs(wheelZ(s, ax)) * 0.5), am * 0.03, true);
-                    brace(tube, {diff, hub, seat[sIdx], lowMount[sIdx], pump});
+                    // (And to the pinion, ahead of the tube: every other brace lies close to one
+                    // plane through the tube's line, so a node held only by them could swing across
+                    // it with almost nothing pushing back or damping it. The rock buggy's tube nodes
+                    // rang there at 5 Hz, ~1 mm, for good after it spawned.)
+                    brace(tube, {diff, hub, seat[sIdx], lowMount[sIdx], pump, pinion});
                     axle.housing.push_back(tube);
                     as.nodes.push_back(tube);
                 }
