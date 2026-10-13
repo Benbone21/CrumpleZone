@@ -17,7 +17,9 @@ struct Settings {
     bool realRecovery = true;   // damage stays until a repair station (or arcade: T fixes it)
     int fuelMode = 2;           // 0 off, 1 real use, 2 fast (4x: so a session's driving matters)
     std::string playerName;     // shown to the others in multiplayer (default: your login)
-    std::string joinAddress = "127.0.0.1";  // the last host you joined
+    std::string joinAddress;    // the last address you typed to join
+    std::string sessionName;    // the game you host, as others' lists show it ("" = "<NAME>'S GAME")
+    int maxPlayers = 8;         // the most in a game you host (2..8)
     int pilotDest = 0;          // autopilot: which place (index into the menu's list)
     float pilotSpeed = 30;      // km/h
     int pilotRoute = 1;         // 0 roads only, 1 roads and trails, 2 anywhere
@@ -41,7 +43,8 @@ int presetOf(const RenderSettings& g);
 class PauseMenu {
 public:
     enum Action { NONE, RESUME, DRIVE, GARAGE, CONTROLS, RESET, QUIT, CHANGED, LOAD_MAP, HOST, JOIN, LEAVE, PILOT_GO, PILOT_STOP,
-                  FREE_DRIVE, PLAY_LEVEL, EDIT_LEVEL, EDITOR, LEVEL_RESTART, LEVEL_QUIT, MAIN_MENU, JOB_START, JOB_STOP, MEET_UP };
+                  FREE_DRIVE, PLAY_LEVEL, EDIT_LEVEL, EDITOR, LEVEL_RESTART, LEVEL_QUIT, MAIN_MENU, JOB_START, JOB_STOP, MEET_UP,
+                  CANCEL_JOIN };
     struct Result {
         Action action = NONE;
         int vehicle = 0;  // for DRIVE; the map for LOAD_MAP
@@ -53,12 +56,26 @@ public:
     int mapPick = 0;  // the map shown in the MAP row
     // Multiplayer page: the session's state, set by the game before drawing.
     std::string netStatus = "OFFLINE";
-    // Games found on the local network (net::Finder): a row each on the multiplayer page.
+    // Multiplayer page, set by the game before drawing.
+    // JOIN: games found on the local network (net::Finder), a row each.
     struct FoundGame {
-        std::string label, address;
+        std::string session{}, host{}, map{}, players{}, address{};
+        bool ok = true;   // can be joined (not full, same version)
+        std::string why{};  // when it can't
     };
     std::vector<FoundGame> found;
-    std::string joinPick;  // set when one of them is picked (JOIN then goes there)
+    double searching = 0;                 // s the list has been looking (for the "can't see it?" help)
+    std::string joinPick;                 // set when one is picked (JOIN then goes there)
+    std::string joinLabel;                // what JOIN connects to (for the connecting card)
+    // HOST: this machine's addresses (to give a friend on another network).
+    std::vector<std::string> localIps;
+    // In a session: who's in it (a line each), and whether we host it.
+    std::vector<std::string> sessionLines;
+    std::string sessionTitle;
+    bool netHost = false;
+    // Joining (connecting, or it just failed: joinError).
+    bool joining = false;
+    std::string joinError;
     int pageNow() const { return page; }
     bool netActive = false;
     std::string padName;  // the connected controller (settings page), set by the game
@@ -104,6 +121,9 @@ private:
         int id = 0;           // which option or action
         int count = 0;        // CHOICE: how many values; SLIDER: steps
         float frac = 0;       // SLIDER: position 0..1
+        int col = 0;          // multiplayer page: 0 across the top/bottom, 1 the HOST card, 2 the JOIN card
+        bool dim = false;     // shown but can't be picked (a full game)
+        std::string placeholder{};  // TEXT: shown greyed while it's empty
     };
     struct Hit {  // where a row was drawn (for the mouse)
         float x, y, w, h, barX, barW;
@@ -122,4 +142,13 @@ private:
     Result setSlider(int row, float frac, Settings& s);
     void moveSel(int dir, const Settings& s);
     int hitAt(float x, float y) const;
+    // Drawing pieces: one row in a box at (x, w); the multiplayer page's cards; the main
+    // menu's own background (no world behind it).
+    struct RowStyle {
+        float ts, small, u, rowH, headH, a, valueW;
+    };
+    float drawRow(Renderer& r, const Row& row, int k, float x, float w, float cy, const RowStyle& st);
+    void drawMulti(Renderer& r, const Settings& s, int W, int H, float a);
+    void drawBackdrop(Renderer& r, int W, int H, float a) const;
+    float spin = 0;  // the connecting card's spinner
 };

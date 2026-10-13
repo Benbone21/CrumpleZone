@@ -197,7 +197,7 @@ Picking a winch anchor: right stick aims, D-pad left/right or LB/RB step through
 
 ## Main menu and levels
 
-Launched plainly, the game opens on the title screen: free drive (pick map and vehicle), levels, multiplayer, world editor, garage, settings. Levels are races (laps through gates) and sprints (start to finish through gates) with medal times, damage/time limits and a no-repairs rule. Seven come with the game (Frontier GP, The Wall, Mesa Climb, Snake River Ford, Summit Run, Widowmaker, Boulder Gully); your own are `.czl` files in `~/.config/crumplezone/levels` or `./levels`. `--level NAME` starts one. In multiplayer the host picks the level and everyone gets it (edits and all), starts together, and sees a live leaderboard.
+Launched plainly, the game opens on the main menu, a screen of its own (no world behind it): free drive (pick map and vehicle), levels, multiplayer, world editor, garage, settings. Levels are races (laps through gates) and sprints (start to finish through gates) with medal times, damage/time limits and a no-repairs rule. Seven come with the game (Frontier GP, The Wall, Mesa Climb, Snake River Ford, Summit Run, Widowmaker, Boulder Gully); your own are `.czl` files in `~/.config/crumplezone/levels` or `./levels`. `--level NAME` starts one. In multiplayer the host picks the level and everyone gets it (edits and all), starts together, and sees a live leaderboard.
 
 ## Playing together
 
@@ -208,7 +208,7 @@ Launched plainly, the game opens on the title screen: free drive (pick map and v
 - **Exploring:** every named place on a map starts undiscovered ("?" on the map); get within 30 m to find it. Your discoveries are kept between sessions.
 - **Fuel:** engines burn fuel for the power they make (setting FUEL: OFF / REAL / FAST, default FAST: 4x). Run dry and the engine dies. Shops fill the tank and the spare can; the Bronco and 4Runner carry a 20 L can.
 
-- **Finding games:** Menu > Multiplayer lists games hosted on your local network (a UDP broadcast on port 27016); pick one to join, or type an address. On Windows, allow the game through the firewall on **Private networks** the first time you host (ports 27015 and 27016).
+- **Finding games:** Menu > Multiplayer > JOIN lists games hosted on your local network. It asks every network adapter's subnet (UDP 27016) and also listens for hosts announcing themselves (UDP 27017), so either direction getting through a firewall is enough. Pick one to join, or type an address. On Windows, allow the game through the firewall on **Private networks** the first time you host or search (ports 27015-27017).
 
 ## World editor
 
@@ -395,7 +395,10 @@ Esc → Autopilot picks where and how; U starts and stops it (steering or the pe
 
 Up to 8 players on one map. One of you hosts; the rest join.
 
-- **From the menu:** Esc → Multiplayer. Type your name, then either Host a game (on the map you're on) or type the host's address and Join. Leave the session from the same page.
+- **From the menu:** Main menu (or Esc) → Multiplayer. The page has two halves:
+  - **HOST A GAME** (left): name your game, pick the map and how many players (2-8), START HOSTING. Friends on your network see it in their list; the hosting card shows your address for anyone who has to type it.
+  - **JOIN A GAME** (right): games hosted on your network show up by themselves (game name, host, map, players); pick one. Games on another network: type the address and JOIN THAT ADDRESS. A card says while it connects (Esc cancels) and says why if it can't.
+  - In a game, the same page shows who's in it with their pings, MEET UP, and LEAVE (STOP HOSTING for the host).
 - **From the command line:**
   - Host: `./crumplezone --map 1 --host` (port 27015 by default, or `--host 27100`)
   - Join: `./crumplezone --join 192.168.1.20` (or `HOST:PORT`), with `--name YOURNAME` if you like
