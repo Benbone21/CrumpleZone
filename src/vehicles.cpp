@@ -393,6 +393,10 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         bronco.railHeight = 0.20;
         bronco.railWidth = 0.091;
         bronco.frameMass = 230;
+        // Section modulus 4.95 in^3 at 49.3 ksi (Ford): each rail yields at ~28 kNm, so a
+        // press on the middle of the frame (axles 2.55 m apart) sets it at ~85 kN, and bends
+        // it ~1.9 mm per 20 kN (E = 200 GPa, I = 22.7 in^4) up to then.
+        bronco.railYield = 0.01;
         bronco.bodyMounts = 8;
         bronco.panelStrength = 1.6;
         bronco.pinStrength = 1.8;
@@ -519,7 +523,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         runner.engineHgt = 0.62;
         runner.gearboxLen = 0.85;
         runner.bodyStiffness = 1.2;
-        runner.frameStiffness = 0.30;
+        runner.frameStiffness = 0.12;  // its thinner rails (below) bend more
         runner.bodyStrength = 1.0;   // thick 90s sheet metal
         runner.frameStrength = 2.0;
         runner.panelStrength = 1.6;
@@ -530,6 +534,10 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         runner.railHeight = 0.15;
         runner.railWidth = 0.07;
         runner.frameMass = 170;
+        // A 2.75 x 5.9 in box of 1/8 in steel (~44 ksi, ESTIMATE): ~2.9 in^3, so each rail
+        // yields at ~14 kNm; a press between the axles (2.675 m) sets it at ~43 kN and bends it
+        // ~6 mm per 20 kN up to then: half the Bronco's frame.
+        runner.railYield = 0.012;
         runner.pinStrength = 1.8;
         // ...then the lift: ~65 mm of Old Man Emu springs, the 2 in (51 mm) body lift, and
         // 56 mm more tire radius (35x12.50R17 against the factory 265/70R16).

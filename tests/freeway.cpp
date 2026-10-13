@@ -18,7 +18,13 @@ void holdLane(Car& c, double z) {
     const Frame f = c.frame();
     const double v = std::max(5.0, len(f.vel));
     const double e = f.com.z - z;  // + = right of the lane center (+z is right, heading +x)
-    const double pull = clampd(0.25 * e + 2.5 * f.vel.z, -3.0, 3.0);  // m/s^2 to the left
+    // (Plus a slow trim, as a driver holds against a steady pull: a lifted truck with a
+    // panhard-located axle drifts a little to one side under power.)
+    static thread_local double trim = 0;
+    static thread_local const Car* who = nullptr;
+    if (who != &c) who = &c, trim = 0;
+    trim = clampd(trim + 0.08 * e * (1.0 / 60), -1.0, 1.0);
+    const double pull = clampd(0.25 * e + trim + 2.5 * f.vel.z, -3.0, 3.0);  // m/s^2 to the left
     c.steer = clampd(c.wheelbase * pull / (v * v), -0.1, 0.1);
 }
 

@@ -127,6 +127,8 @@ struct VehicleSpec {
     double railHeight = 0.20;      // boxed rail section, tall x wide (m)
     double railWidth = 0.09;
     double frameMass = 0;          // kg (part of structureMass)
+    double railYield = 0.01;       // how far (m) a rail's shape is pushed before the steel yields
+                                   // (sets its strength: the shape-holding pull at that point)
     int bodyMounts = 8;            // rubber mounts between the body and the frame
 
     // Powertrain: engine and gearbox as one block on rubber mounts.

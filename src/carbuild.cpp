@@ -33,6 +33,14 @@ struct BeamSpec {
 };
 // (Yield and break strains run ~40% over what the steel alone would give: the game's
 // cars felt made of tin; this is about where a hard knock leaves a dent, not a wreck.)
+// A body-on-frame truck's body tub (with its roof and pillars) holds its shape better than
+// the ladder frame under it, which twists on the trail.
+constexpr double kLadderTubStiffness = 0.6;
+// A ladder frame's rails: each is shape-held this much stiffer than vs.frameStiffness (they
+// carry the truck's bending; the twist is in the crossmembers).
+constexpr double kRailStiffness = 3.5;
+constexpr float kBracketHold = 4.0f;  // ...and what's welded to them this much more again
+
 const BeamSpec kSpec[BEAM_TYPE_COUNT] = {
     {1.6e5, 350, 0.056, 0.65},   // body
     {1.0e5, 240, 0.042, 0.65},   // cabin (softer: roofs crush)
@@ -578,10 +586,14 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
         const double base = vs.layerY[0];
         const double reach = vs.wheelRadius + (vs.bumpRear > 0 ? vs.bumpRear : 0.085) + 0.08 + 0.05;
         const double kick = liveRear ? std::max(0.0, reach - base) : 0.0;
+        const double xf0 = axleI.size() >= 2 ? xAt(axleI.front()) : 1e9;
         auto bottomAt = [&](double x) {
-            if (!liveRear) return base;
-            // Up over 0.35 m ahead of the axle's front clearance, and up from there on back.
-            return base + kick * smoothstep(xr + 0.65, xr + 0.30, x);
+            // The horns rise ahead of the front axle to the bumper's line (and the tail to
+            // the rear one), so the frame never hangs below the approach and departure angles.
+            double y = base + vs.bumperLift * std::max(smoothstep(xf0 + 0.3, xNose, x), smoothstep(xr - 0.5, xTail, x));
+            if (!liveRear) return y;
+            // Over a live axle: up 0.35 m ahead of its front clearance, and up from there on back.
+            return std::max(y, base + kick * smoothstep(xr + 0.65, xr + 0.30, x));
         };
         const double hz = vs.railSpacing / 2, hw = vs.railWidth / 2, hh = vs.railHeight;
         // The frame's weight along it: heavier where the horns, the engine crossmember and
@@ -1444,7 +1456,9 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
             b.yieldStrain *= vs.frameStrength;
         }
         // Mounts: pairs along the rails, from the firewall back past the rear axle. Each
-        // ties the rail's top outer corner to the body floor nodes over it.
+        // ties the body floor nodes over the rail to its section there: the bushing sits on an
+        // outrigger welded across the rail's side, which spreads its load into the whole
+        // section (on one corner alone, a landing would crush the rail locally).
         const int perSide = std::max(2, vs.bodyMounts / 2);
         for (int m = 0; m < perSide; m++) {
             const double x = (xf - 0.15) + ((xr - 0.55) - (xf - 0.15)) * m / (perSide - 1);
@@ -1457,15 +1471,16 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 for (int n = 0; n < bodyNodes; n++)
                     if (local[n].y < vs.layerY[0] + 0.5 * (vs.layerY[1] - vs.layerY[0])) cand.push_back({len(local[n] - local[top]), n});
                 std::sort(cand.begin(), cand.end());
-                for (int k = 0; k < 2 && k < (int)cand.size(); k++) {
-                    const int bi = addBeam(top, cand[k].second, BEAM_MOUNT);
-                    if (bi < 0) continue;
-                    beams[bi].k *= 6;           // body mount bushings: stiff rubber
-                    beams[bi].c *= 2;
-                    beams[bi].yieldStrain = 0.12;
-                    beams[bi].breakStrain = 0.6;  // a big enough hit shears the body off its mounts
-                    bodyMountBeams.push_back(bi);
-                }
+                for (int k = 0; k < 4 && k < (int)cand.size(); k++)  // (a pyramid: it holds every way)
+                    for (int corner = 0; corner < 4; corner++) {
+                        const int bi = addBeam(ladder[st * 8 + side * 4 + corner], cand[k].second, BEAM_MOUNT);
+                        if (bi < 0) continue;
+                        beams[bi].k *= 6.0 / 4;  // body mount bushings: stiff rubber (all four together)
+                        beams[bi].c *= 2.0 / 4;
+                        beams[bi].yieldStrain = 0.12;
+                        beams[bi].breakStrain = 0.6;  // a big enough hit shears the body off its mounts
+                        bodyMountBeams.push_back(bi);
+                    }
             }
         }
     }
@@ -1665,7 +1680,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
     {
         // The chassis frame's own pull and damping (see below) use up part of the margin,
         // so a very rigid frame leaves less for the beams.
-        const double h = 1.0 / 2000.0, frameK = 300000 * vs.frameStiffness;
+        const double h = 1.0 / 2000.0, frameK = 300000 * (ladderFrame ? std::max(vs.frameStiffness * kRailStiffness, kLadderTubStiffness) : vs.frameStiffness);
         const double frameLoad = isProp ? 0.0 : h * h * frameK + 2 * h * 2 * 0.85 * std::sqrt(frameK);
         const double target = std::min(1.6, (3.9 - frameLoad) / 1.85);
         std::vector<std::vector<int>> nb(nodes.size());
@@ -1790,26 +1805,59 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
         for (double& w : aeroShare) w /= sum;
     }
 
-    // Chassis frame: the lattice and everything bolted rigidly to it.
+    // Chassis frame: the lattice and everything bolted rigidly to it. On a body-on-frame
+    // truck, two: the body tub, and the ladder frame with everything welded to it (it twists
+    // more, as ladder frames do; the stiffer tub rides on its mounts).
     chassis = ChassisFrame();
+    for (ChassisFrame& rf : railFrame) rf = ChassisFrame();
     if (!isProp) {
-        chassis.kappa = 300000 * vs.frameStiffness;
-        chassis.damping = 2 * 0.85 * std::sqrt(chassis.kappa);
-        chassis.maxPull = 2500 * vs.bodyStiffness;
-        V3 c;
-        double M = 0;
-        for (int i = 0; i < frameNodes; i++) {
-            chassis.nodes.push_back(i);
-            c += local[i] * nodes[i].m;
-            M += nodes[i].m;
+        auto setUp = [&](ChassisFrame& cf, const std::vector<int>& members, double kappa) {
+            cf.kappa = kappa;
+            cf.damping = 2 * 0.85 * std::sqrt(cf.kappa);
+            cf.maxPull = 2500 * vs.bodyStiffness;
+            V3 c;
+            double M = 0;
+            for (int i : members) {
+                cf.nodes.push_back(i);
+                c += local[i] * nodes[i].m;
+                M += nodes[i].m;
+            }
+            c = c / M;
+            for (int i : cf.nodes) cf.rest.push_back(local[i] - c);
+            cf.attached.assign(cf.nodes.size(), 1);
+            cf.release.assign(cf.nodes.size(), 0);
+            cf.slot.assign(nodes.size(), -1);
+            for (size_t k = 0; k < cf.nodes.size(); k++) cf.slot[cf.nodes[k]] = (int)k;
+            cf.rot = Quat::axisAngle(V3(0, 1, 0), yaw);
+        };
+        auto range = [](int from, int to) {
+            std::vector<int> v;
+            for (int i = from; i < to; i++) v.push_back(i);
+            return v;
+        };
+        if (ladderFrame) {
+            setUp(chassis, range(0, bodyNodes), 300000 * kLadderTubStiffness);
+            // Each rail with the brackets welded to it (the pads and brackets between the rails
+            // go with the nearer one).
+            std::vector<int> side[2];
+            for (int i = bodyNodes; i < frameNodes; i++) side[local[i].z > 0].push_back(i);
+            for (int r = 0; r < 2; r++) {
+                ChassisFrame& rf = railFrame[r];
+                setUp(rf, side[r], 300000 * vs.frameStiffness * kRailStiffness);
+                // Boxed steel: stiff up to its yield, then it bends and stays bent. (A rail's
+                // shape-holding pull is all that carries its bending: the lattice of a few
+                // nodes per section is far softer than the steel.)
+                rf.maxPull = 1e9;
+                rf.yieldDist = vs.railYield;
+                // The brackets, towers and pads welded on are stouter than the bare rail (a
+                // coil-over tower is built for the bump stop's hit).
+                rf.weight.assign(rf.nodes.size(), 1.0f);
+                for (size_t k = 0; k < rf.nodes.size(); k++)
+                    if (!std::binary_search(ladder.begin(), ladder.end(), rf.nodes[k])) rf.weight[k] = kBracketHold;
+            }
+        } else {
+            setUp(chassis, range(0, frameNodes), 300000 * vs.frameStiffness);
         }
-        c = c / M;
-        for (int i : chassis.nodes) chassis.rest.push_back(local[i] - c);
-        chassis.attached.assign(chassis.nodes.size(), 1);
-        chassis.release.assign(chassis.nodes.size(), 0);
-        chassis.slot.assign(nodes.size(), -1);
-        for (size_t k = 0; k < chassis.nodes.size(); k++) chassis.slot[chassis.nodes[k]] = (int)k;
-        chassis.rot = Quat::axisAngle(V3(0, 1, 0), yaw);
     }
 
     // Recovery points: the frame nodes at the very front and back of the floor (where

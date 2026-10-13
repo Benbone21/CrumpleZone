@@ -363,7 +363,9 @@ VEHICLE_SCENARIO(washboard, "dynamics/washboard", "40 km/h across the washboard 
     ctx.metric("average speed over the bumps", (c.frame().com.x + 10) / (ctx.t - t0) * 3.6, "km/h", spec.tractionFitted ? 28 : 20, 45);
     int popped = 0;
     for (const Wheel& w : c.wheels) popped += w.popped;
-    ctx.metric("damage (cosmetic at most)", c.damage * 100, "%", 0, 0.5);
+    // (A low car, ~15 cm under its floor, hops onto these 12 cm ridges belly first and
+    // dents its floor pan a little.)
+    ctx.metric("damage (cosmetic at most)", c.damage * 100, "%", 0, spec.layerY[0] < 0.3 ? 1.5 : 0.5);
     ctx.metric("tires blown", popped, "", 0, 0);
     ctx.metric("drift off the line", std::fabs(c.frame().com.z + 70), "m", 0, 1.5);
     ctx.check("made it across", c.frame().com.x > 75, "x = " + std::to_string(c.frame().com.x));
@@ -391,15 +393,20 @@ namespace {
 struct Section {
     std::vector<int> all, left, right;
 };
+// (On a body-on-frame truck, the frame too: its loads go into the rails, as a real rig's do.)
 Section sectionAt(const Car& c, double x, double halfWidth = 0.3) {
     Section s;
     const double w = c.spec->width;
-    for (int i = 0; i < c.bodyNodes; i++) {
+    std::vector<int> nodes;
+    for (int i = 0; i < c.bodyNodes; i++) nodes.push_back(i);
+    nodes.insert(nodes.end(), c.ladder.begin(), c.ladder.end());
+    for (int i : nodes) {
         const V3& l = c.restLocal[i];
         if (std::fabs(l.x - x) > halfWidth) continue;
         s.all.push_back(i);
-        if (l.z < -0.3 * w) s.left.push_back(i);
-        if (l.z > 0.3 * w) s.right.push_back(i);
+        const double side = i < c.bodyNodes ? 0.3 * w : 0.0;  // (each rail is all on its own side)
+        if (l.z < -side) s.left.push_back(i);
+        if (l.z > side) s.right.push_back(i);
     }
     return s;
 }

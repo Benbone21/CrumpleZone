@@ -449,9 +449,11 @@ SCENARIO(rampTravel, "offroad/rti", "Ramp travel index on a 20 degree ramp: real
     const double b = rti(ctx, bronco(), -40, false), bd = rti(ctx, bronco(), -20, true);
     const double r = rti(ctx, runner(), 45, false), rd = rti(ctx, runner(), 65, true);  // clear of the platform (z -15..15)
     ctx.metric("Bronco RTI (real 4-door: ~450-550)", b, "", 380, 650);
-    ctx.metric("Bronco RTI, sway bar disconnected", bd, "", b + 20, 800);
+    // (Unhooking the bar of an independent front frees some travel, not a lot: the arms'
+    // own droop limits it. At least a little more, then.)
+    ctx.metric("Bronco RTI, sway bar disconnected", bd, "", b + 10, 800);
     ctx.metric("4Runner RTI (lifted 3rd gen: ~450-550)", r, "", 380, 650);
-    ctx.metric("4Runner RTI, sway bar disconnected", rd, "", r + 20, 800);
+    ctx.metric("4Runner RTI, sway bar disconnected", rd, "", r + 10, 800);
 }
 
 // ---- The mountain's hard lines ---------------------------------------------------

@@ -210,6 +210,13 @@ struct ChassisFrame {
     double releaseDist = 0.02;  // a node pushed this far out of shape is let go (it's being dented)
     double maxPull = 2500;      // most it pulls on one node (N): about what the body around it can carry,
                                 // so in a crash the body itself gives way (and the frame lets go)
+    // Steel that bends and stays bent (a frame rail): > 0, a node held further than this out
+    // of shape doesn't let go, it flows (its rest position moves), and the beams between its
+    // nodes take the same set. 0 = sheet metal: let go when shoved out of shape.
+    double yieldDist = 0;
+    std::vector<float> weight;  // per member: how hard it's held (x its mass), e.g. a welded-on bracket
+                                // is stouter than the bare rail; empty = all 1
+    std::vector<std::vector<int>> beamsAt;  // per member: its beams to other members (built on first flow)
 };
 
 // Spatial hash of a car's skin triangles, rebuilt on demand for car-vs-car contact.
@@ -255,6 +262,10 @@ public:
     void buildWheelRub();      // each tire's nearby skin triangles (after the tris and rest shape exist)
     std::vector<V3> extForce;  // optional extra force per node (test rigs); empty = none
     ChassisFrame chassis;
+    // A body-on-frame truck's ladder frame: each rail (and everything welded to it) holds its
+    // own shape, stiff in bending; the crossmembers tie the two, and give in twist as a real
+    // ladder frame does. The body tub rides on it on its rubber mounts. Empty on a unibody.
+    ChassisFrame railFrame[2];
     int bodyNodes = 0;
     // Ladder frame (body-on-frame trucks): its nodes, station by station (left rail's four
     // section corners, then the right rail's), and the rubber body mounts.
@@ -403,6 +414,7 @@ public:
 private:
     void applyTorque(const std::vector<int>& set, const V3& torque);
     void chassisForces(double h);
+    void chassisGroupForces(ChassisFrame& cf, double h);
     void releaseFromFrame(const Beam& b);
     void updateChassisMembership();
     void wheelStep(double h, const World& w);

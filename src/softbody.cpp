@@ -330,12 +330,23 @@ void Car::computeForces(double h, const World& w) {
             double plastic = std::fabs(b.L0 - b.Lorig) / b.Lorig;
             double yieldNow = b.yieldStrain * (1 + b.hardening * plastic);
             double strain = (L - b.L0) / b.L0;
-            if (strain > yieldNow) {  // stretched past yield: permanent elongation
+            // A rubber mount has a snubber both ways (the rebound washer on its through-bolt):
+            // squashed flat or pulled up to the washer it's a hard stop, and only a pull well
+            // past that tears the rubber, which then sets (and at breakStrain, lets go).
+            const bool mount = b.type == BEAM_MOUNT;
+            const double snub = mount ? yieldNow : 0;
+            if (mount) yieldNow *= 2.5;
+            if (mount && (strain > snub && strain <= yieldNow)) {
+                // on the rebound washer: no set
+            } else if (strain > yieldNow) {  // stretched past yield: permanent elongation
                 double nl = L / (1 + yieldNow);
                 impactEnergy += b.k * yieldNow * b.L0 * (nl - b.L0);
                 b.L0 = nl;
                 b.relaxTime = 0.25f;
                 releaseFromFrame(b);
+            } else if (strain < -snub && mount) {
+                // A rubber mount squashed flat bottoms on its snubber, a hard stop: it carries the
+                // load without taking a set (only tearing it, stretched, ruins it).
             } else if (strain < -yieldNow) {  // crushed past yield: permanent shortening
                 double nl = std::max(L / (1 - yieldNow), 0.25 * b.Lorig);
                 impactEnergy += b.k * yieldNow * b.L0 * std::fabs(b.L0 - nl);
@@ -355,6 +366,8 @@ void Car::computeForces(double h, const World& w) {
                 continue;
             }
             F = b.k * (L - b.L0);
+            if (mount && strain < -snub) F -= 6 * b.k * (-strain - snub) * b.L0;  // on the snubber
+            if (mount && strain > snub) F += 6 * b.k * (std::min(strain, yieldNow) - snub) * b.L0;  // on the washer
             // Fully crushed material is nearly solid. One-way (only resists further
             // crushing) so it soaks up energy instead of springing the car back.
             if (L < 0.45 * b.Lorig && vrel < 0) F -= 3 * b.k * (0.45 * b.Lorig - L);
@@ -424,35 +437,45 @@ void Car::computeForces(double h, const World& w) {
 }
 
 void Car::releaseFromFrame(const Beam& b) {
-    ChassisFrame& cf = chassis;
-    if (cf.slot.empty()) return;
-    for (int nid : {b.a, b.b}) {
-        int k = cf.slot[nid];
-        if (k >= 0) cf.release[k] = 0.15f;
+    for (ChassisFrame* cf : {&chassis, &railFrame[0], &railFrame[1]}) {
+        if (cf->slot.empty() || cf->yieldDist > 0) continue;  // (steel flows instead)
+        for (int nid : {b.a, b.b}) {
+            int k = cf->slot[nid];
+            if (k >= 0) cf->release[k] = 0.15f;
+        }
     }
 }
 
 void Car::chassisForces(double h) {
-    ChassisFrame& cf = chassis;
+    chassisGroupForces(chassis, h);
+    for (ChassisFrame& rf : railFrame) chassisGroupForces(rf, h);
+}
+
+void Car::chassisGroupForces(ChassisFrame& cf, double h) {
     if (cf.nodes.empty() || cf.kappa <= 0) return;
     const int n = (int)cf.nodes.size();
     // Nodes in a fresh dent are left to the beams; everything else holds its shape.
     auto active = [&](int k) { return cf.attached[k] && cf.release[k] <= 0; };
 
-    // Center of mass and momentum of the structure.
+    // Center of mass and momentum of the structure. (The shape fit weighs each member by how
+    // hard it's held, so the pulls still balance: they never push the structure as a whole.)
+    const bool weighted = !cf.weight.empty();
+    auto held = [&](int k) { return nodes[cf.nodes[k]].m * (weighted ? cf.weight[k] : 1.0f); };
     V3 c, vc, rc;
-    double M = 0;
+    double M = 0, Mv = 0;
     for (int k = 0; k < n; k++) {
         if (!active(k)) continue;
         const Node& nd = nodes[cf.nodes[k]];
-        c += nd.p * nd.m;
+        const double w = held(k);
+        c += nd.p * w;
         vc += nd.v * nd.m;
-        rc += cf.rest[k] * nd.m;
-        M += nd.m;
+        rc += cf.rest[k] * w;
+        M += w;
+        Mv += nd.m;
     }
     if (M <= 0) return;
     c = c / M;
-    vc = vc / M;
+    vc = vc / Mv;
     rc = rc / M;  // rest shape's center for the active set (0 unless nodes are released)
     // Best-fit rotation: A = sum m (x - c)(r - rc)^T; iterate R toward the rotational part of A.
     M3 A;
@@ -463,9 +486,10 @@ void Car::chassisForces(double h) {
         const Node& nd = nodes[cf.nodes[k]];
         V3 d = nd.p - c;
         V3 r = cf.rest[k] - rc;
-        A.c[0] += d * (nd.m * r.x);
-        A.c[1] += d * (nd.m * r.y);
-        A.c[2] += d * (nd.m * r.z);
+        const double w = held(k);
+        A.c[0] += d * (w * r.x);
+        A.c[1] += d * (w * r.y);
+        A.c[2] += d * (w * r.z);
         L += cross(d, nd.v - vc) * nd.m;
         double dd = dot(d, d);
         I.c[0] += V3(dd - d.x * d.x, -d.y * d.x, -d.z * d.x) * nd.m;
@@ -487,7 +511,9 @@ void Car::chassisForces(double h) {
     // net force and torque left over are taken back out evenly: the frame can never push
     // the car as a whole.
     static thread_local std::vector<V3> F;
+    static thread_local std::vector<int> flowed;
     F.assign(n, V3());
+    flowed.clear();
     V3 sumF, sumT;
     bool capped = false;
     for (int k = 0; k < n; k++) {
@@ -502,15 +528,29 @@ void Car::chassisForces(double h) {
             continue;
         }
         V3 d = c + cf.rot.rotate(cf.rest[k] - rc) - nd.p;
-        if (dot(d, d) > cf.releaseDist * cf.releaseDist) {  // shoved far out of shape: a dent in progress
+        const double wk = weighted ? cf.weight[k] : 1.0;
+        double nodeCap = cap;
+        if (cf.yieldDist > 0) {
+            // Steel: past its yield it bends, and the bend is the new shape. The rest position
+            // follows the node to just within reach, and the pull stays at the yield force.
+            const double dl = len(d);
+            if (dl > cf.yieldDist) {
+                const V3 back = d * (1 - cf.yieldDist / dl);
+                cf.rest[k] += cf.rot.unrotate(-back);
+                d -= back;
+                impactEnergy += cf.kappa * wk * nd.m * cf.yieldDist * len(back);
+                flowed.push_back(k);
+            }
+            nodeCap = cf.kappa * wk * nd.m * cf.yieldDist * 1.25;  // (however fast it's bent)
+        } else if (dot(d, d) > cf.releaseDist * cf.releaseDist) {  // shoved far out of shape: a dent in progress
             cf.release[k] = 0.15f;
             continue;
         }
         V3 vr = vc + cross(Om, nd.p - c);
-        V3 f = (d * cf.kappa + (vr - nd.v) * cf.damping) * nd.m;
+        V3 f = (d * (cf.kappa * wk) + (vr - nd.v) * cf.damping) * nd.m;
         double fl = len(f);
-        if (fl > cap) {
-            f *= cap / fl;
+        if (fl > nodeCap) {
+            f *= nodeCap / fl;
             capped = true;
         }
         F[k] = f;
@@ -523,8 +563,28 @@ void Car::chassisForces(double h) {
         if (!active(k)) continue;
         Node& nd = nodes[cf.nodes[k]];
         V3 f = F[k];
-        if (capped) f -= (sumF / M + cross(alpha, nd.p - c)) * nd.m;
+        if (capped) f -= (sumF / Mv + cross(alpha, nd.p - c)) * nd.m;
         nd.f += f;
+    }
+    // The steel between nodes that bent takes the same set (so it holds the new shape, and
+    // counts as damage).
+    if (!flowed.empty()) {
+        if (cf.beamsAt.empty()) {
+            cf.beamsAt.assign(n, {});
+            for (size_t i = 0; i < beams.size(); i++) {
+                const Beam& b = beams[i];
+                if (b.type != BEAM_FRAME) continue;
+                const int ka = cf.slot[b.a], kb = cf.slot[b.b];
+                if (ka < 0 || kb < 0) continue;
+                cf.beamsAt[ka].push_back((int)i);
+                cf.beamsAt[kb].push_back((int)i);
+            }
+        }
+        for (int k : flowed)
+            for (int bi : cf.beamsAt[k]) {
+                Beam& b = beams[bi];
+                if (!b.broken) b.L0 = len(cf.rest[cf.slot[b.a]] - cf.rest[cf.slot[b.b]]);
+            }
     }
 }
 
@@ -1504,11 +1564,15 @@ void Car::updateStats() {
     int n = 0;
     brokenBeams = 0;
     for (const Beam& b : beams) {
-        if (b.type != BEAM_BODY && b.type != BEAM_CABIN) continue;
+        // The structure: body and cabin, frame members (and a ladder frame's brackets), and
+        // the rubber mounts that hold the engine and the body on (a torn mount is damage).
+        if (b.type != BEAM_BODY && b.type != BEAM_CABIN && b.type != BEAM_FRAME && b.type != BEAM_MOUNT) continue;
         n++;
         if (b.broken) {
             sum += 1;
             brokenBeams++;
+        } else if (b.type == BEAM_MOUNT) {
+            sum += std::min(1.0, std::fabs(b.L0 - b.Lorig) / 0.04);  // rubber: ~4 cm of set and it's done
         } else {
             sum += std::min(1.0, std::fabs(b.L0 - b.Lorig) / b.Lorig * 8);
         }
@@ -1548,11 +1612,16 @@ void Car::updateStats() {
                 int ra = find(b.a), rb = find(b.b);
                 if (ra != rb) parent[ra] = rb;
             }
+        // Each shape-holding group (the body; a ladder frame) keeps only its largest piece:
+        // whatever has been torn off it goes its own way.
         static thread_local std::vector<double> compMass;
-        compMass.assign(frameNodes, 0);
-        for (int i = 0; i < frameNodes; i++) compMass[find(i)] += nodes[i].m;
-        int main = (int)(std::max_element(compMass.begin(), compMass.end()) - compMass.begin());
-        for (size_t k = 0; k < chassis.nodes.size(); k++) chassis.attached[k] = find(chassis.nodes[k]) == main;
+        for (ChassisFrame* cf : {&chassis, &railFrame[0], &railFrame[1]}) {
+            if (cf->nodes.empty()) continue;
+            compMass.assign(frameNodes, 0);
+            for (int i : cf->nodes) compMass[find(i)] += nodes[i].m;
+            int main = (int)(std::max_element(compMass.begin(), compMass.end()) - compMass.begin());
+            for (size_t k = 0; k < cf->nodes.size(); k++) cf->attached[k] = find(cf->nodes[k]) == main;
+        }
     }
 
     // Panels: a pin lets go when the sheet metal around it is crushed (clips first, then
