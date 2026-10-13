@@ -2050,6 +2050,29 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
             for (size_t i = 0; i < nodes.size(); i++)
                 if (L[i] / nodes[i].m > target) std::printf("%s: node %zu (%.2f, %.2f, %.2f; %.1f kg; %d of %d body) still stiff for its mass (%.2f)\n", vs.name, i, local[i].x, local[i].y, local[i].z, nodes[i].m, (int)(i < (size_t)bodyNodes), bodyNodes, L[i] / nodes[i].m);
     }
+    // Spring preloads again, now that the weight has settled where it ends up. The pass
+    // above lends body weight to the suspension's stiff little nodes (a live axle's take
+    // ~60 kg on the Bronco) and then shifts the body's weight forward to put the balance
+    // back, so the springs carried less than the preload set above was sized for and a live
+    // rear rode ~1 cm high. Same coils (same rate); only their free length changes, so they
+    // sit at design height under the weight they really carry.
+    if (!isProp && axles.size() >= 2) {
+        const double xf = xAt(axleI.front()), xr = xAt(axleI.back());
+        std::vector<char> unsprung(nodes.size(), 0);
+        for (const Wheel& wh : wheels)
+            for (int n : wh.assembly) unsprung[n] = 1;
+        double ms = 0, xs = 0;
+        for (size_t i = 0; i < nodes.size(); i++)
+            if (!unsprung[i]) ms += nodes[i].m, xs += local[i].x * nodes[i].m;
+        xs /= std::max(ms, 1e-9);
+        const double frontShare = clampd((xs - xr) / (xf - xr), 0.2, 0.8);
+        for (Wheel& wh : wheels) {
+            if (wh.spring < 0 || wh.motionRatio <= 0) continue;
+            Beam& sp = beams[wh.spring];
+            const double cornerW = ms * (wh.front ? frontShare : 1 - frontShare) / 2 * g;
+            sp.L0 = sp.Lorig = wh.springRest + cornerW / wh.motionRatio / sp.k;
+        }
+    }
     restLocal = local;
     wheelbase = 2.5;
     if (axleI.size() >= 2) wheelbase = xAt(axleI.front()) - xAt(axleI.back());
