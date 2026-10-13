@@ -16,6 +16,7 @@
 #include <unistd.h>
 #endif
 
+#include <chrono>
 #include <csignal>
 #include <functional>
 #include <map>
@@ -1533,6 +1534,7 @@ int main(int argc, char** argv) {
     }
     // Multiplayer session (see net.h).
     NetSession net;
+    net::Finder finder;  // games on the local network, while the multiplayer page is open
     WinchAim winchAim;
     View lastView;
     // The pause menu, and putting its settings into effect.
@@ -1772,6 +1774,7 @@ int main(int argc, char** argv) {
             V3 p = lv.hasStart ? lv.start : sim.world.spawn;
             double yaw = lv.hasStart ? lv.startYaw : sim.world.spawnYaw;
             if (lv.hasStart) LevelRun::gridSlot(lv, runSlot(), p, yaw);
+            else p += V3(std::sin(yaw), 0, std::cos(yaw)) * (6.5 * runSlot());  // (each player their own spot, side by side)
             Car& c = sim.cars[sim.player];
             c.respawn(V3(p.x, sim.world.clearY(p.x, p.z) + 0.05, p.z), yaw);
             c.setDown(sim.world);
@@ -1963,7 +1966,8 @@ int main(int argc, char** argv) {
             case PauseMenu::JOIN:
                 closeMenu();
                 saveSettings();
-                startJoin(settings.joinAddress);
+                startJoin(menu.joinPick.empty() ? settings.joinAddress : menu.joinPick);  // (a game found on the network, or the typed address)
+                menu.joinPick.clear();
                 break;
             case PauseMenu::LEAVE:
                 closeMenu();
@@ -3208,6 +3212,19 @@ int main(int argc, char** argv) {
                              : net.role == NetSession::HOST
                                  ? "HOSTING: " + std::to_string(net.playerCount()) + (net.playerCount() == 1 ? " PLAYER" : " PLAYERS")
                                  : "IN " + net.ownerName(0) + "'S GAME: " + std::to_string(net.playerCount()) + " PLAYERS";
+            // Looking for games on the network while you're on the multiplayer page.
+            if (menu.pageNow() == 2 && !net.active()) {
+                finder.poll(std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count());
+                menu.found.clear();
+                for (const net::FoundHost& fh : finder.hosts) {
+                    std::string who = fh.name.empty() ? "A GAME" : fh.name;
+                    for (char& ch : who) ch = (char)std::toupper((unsigned char)ch);
+                    menu.found.push_back({who + ": " + mapName(fh.map) + " (" + std::to_string(fh.players) + (fh.players == 1 ? " PLAYER)" : " PLAYERS)"), fh.address});
+                }
+            } else if (!menu.found.empty() || menu.pageNow() != 2) {
+                finder.close();
+                menu.found.clear();
+            }
         }
         if (garageUI.open) drawGarage(renderer, garageUI, garage, std::max(0.75f, H / 720.0f), W, H);
         menu.draw(renderer, settings, W, H, dt);

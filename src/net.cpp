@@ -254,7 +254,8 @@ void NetSession::close() {
     conns.clear();
     if (listenFd >= 0) closeSock(listenFd);
     if (udpFd >= 0) closeSock(udpFd);
-    listenFd = udpFd = -1;
+    if (findFd >= 0) closeSock(findFd);
+    listenFd = udpFd = findFd = -1;
     delete (sockaddr_in*)hostUdp;
     hostUdp = nullptr;
     for (Remote* r : remotes) delete r;
@@ -265,6 +266,7 @@ void NetSession::close() {
     players.assign(net::kMaxPeers, NetPlayer());
     role = OFF;
     self = -1;
+    nextCarId = nextRopeId = 1;
     adopted = false;
     udpReady = false;
     sessionStart = -1;
@@ -289,6 +291,23 @@ bool NetSession::host(int port, const std::string& name, int m) {
     }
     nonBlocking(listenFd);
     nonBlocking(udpFd);
+    hostPort = port;
+    // Listen for "who's hosting?" from the local network (if the port's taken, say by another
+    // game hosted on this machine, it just can't be found that way: typing the address works).
+    findFd = newSocket(SOCK_DGRAM);
+    if (findFd >= 0) {
+        setsockopt(findFd, SOL_SOCKET, SO_REUSEADDR, (const char*)&one, sizeof one);
+        sockaddr_in fa{};
+        fa.sin_family = AF_INET;
+        fa.sin_addr.s_addr = INADDR_ANY;
+        fa.sin_port = htons((uint16_t)net::kDiscoveryPort);
+        if (bind(findFd, (sockaddr*)&fa, sizeof fa) < 0) {
+            closeSock(findFd);
+            findFd = -1;
+        } else {
+            nonBlocking(findFd);
+        }
+    }
     role = HOST;
     self = 0;
     map = m;
@@ -364,6 +383,22 @@ bool NetSession::join(const std::string& address, const std::string& name, doubl
     if (self < 0) {
         if (error.empty()) error = "connection closed";
         close();
+        return false;
+    }
+    // The host sends its vehicles right behind the welcome: take them in now (they wait in
+    // `pending` for adopt()), so we park clear of them rather than on one.
+    {
+        const auto t1 = std::chrono::steady_clock::now();
+        while (role == CLIENT && std::chrono::duration<double>(std::chrono::steady_clock::now() - t1).count() < 0.5) {
+            pollfd rp{};
+            rp.fd = fd;
+            rp.events = POLLIN;
+            if (pollFds(&rp, 1, 120) <= 0) break;  // quiet for a moment: that's all of it
+            readTcp(*c);
+        }
+    }
+    if (role != CLIENT) {
+        if (error.empty()) error = "connection closed";
         return false;
     }
     players[self].active = true;
@@ -731,21 +766,46 @@ void NetSession::dropConn(size_t i) {
 
 void NetSession::adopt(Sim& sim) {
     lastSim = &sim;
+    // My vehicles get fresh ids in this session (send() hands them out): one left from an
+    // earlier session would match another player's vehicle and be taken for it.
+    for (Car& c : sim.cars)
+        if (!c.remote) c.netId = 0;
     if (role == CLIENT) {
         // The host's parked trucks and props are the shared ones; keep only my vehicle,
         // parked beside the spawn so we don't land on each other.
         for (int i = (int)sim.cars.size() - 1; i >= 0; i--)
             if (i != sim.player) eraseCar(sim, i);
         sim.ropes.clear();
-        Car& me = sim.cars[sim.player];
-        const V3 side = V3(std::sin(sim.world.spawnYaw), 0, std::cos(sim.world.spawnYaw));
-        const V3 p = sim.world.spawn + side * (6.5 * self);
-        me.respawn(V3(p.x, sim.world.clearY(p.x, p.z) + 0.05, p.z), sim.world.spawnYaw);
-        me.setDown(sim.world);
     }
     adopted = true;
     for (const auto& m : pending) apply(sim, m);
     pending.clear();
+    if (role == CLIENT) {
+        // Then my vehicle beside the spawn, in my slot or the first one along that's clear
+        // of everything already there (the host's parked trucks, the other players): two
+        // trucks built inside each other fight it out.
+        Car& me = sim.cars[sim.player];
+        const V3 side = V3(std::sin(sim.world.spawnYaw), 0, std::cos(sim.world.spawnYaw));
+        const V3 back = V3(-std::cos(sim.world.spawnYaw), 0, std::sin(sim.world.spawnYaw));
+        V3 p = sim.world.spawn + side * (6.5 * self);
+        for (int k = 0; k < 40; k++) {
+            const V3 q = sim.world.spawn + side * (6.5 * (self + k % 8)) + back * (9.0 * (k / 8));
+            bool clear = true;
+            for (int i = 0; i < (int)sim.cars.size() && clear; i++) {
+                if (i == sim.player) continue;
+                const Car& o = sim.cars[i];
+                const V3 d = o.frame().com - q;
+                const double r = std::max(o.spec->length, o.spec->width) / 2 + 3.0;
+                if (d.x * d.x + d.z * d.z < r * r) clear = false;
+            }
+            if (clear) {
+                p = q;
+                break;
+            }
+        }
+        me.respawn(V3(p.x, sim.world.clearY(p.x, p.z) + 0.05, p.z), sim.world.spawnYaw);
+        me.setDown(sim.world);
+    }
 }
 
 // ---- Vehicle states --------------------------------------------------------------------
@@ -986,6 +1046,7 @@ void NetSession::receive(Sim& sim, double now) {
         }
     }
     readUdp(sim, now);
+    if (role == HOST) answerFinders();
     // Clients: say hello over UDP until the host has heard (that's how it learns our
     // address through any NAT).
     if (role == CLIENT && !udpReady && now >= nextUdpHello) {
@@ -1023,7 +1084,10 @@ void NetSession::send(Sim& sim, double now) {
     std::vector<uint32_t> seen;
     for (Car& c : sim.cars) {
         if (c.remote) continue;
-        if (!c.netId) c.netId = ((uint32_t)self << 16) | (nextCarId++ & 0xffff);
+        // (Only ever an id with my player number in it: one left from an earlier session, as
+        // host or as someone else's guest, would clash with another player's and be taken
+        // for theirs.)
+        if (!c.netId || (c.netId >> 16) != (uint32_t)self) c.netId = ((uint32_t)self << 16) | (nextCarId++ & 0xffff);
         seen.push_back(c.netId);
         auto k = std::find_if(knownCars.begin(), knownCars.end(), [&](const Known& kc) { return kc.netId == c.netId; });
         if (k == knownCars.end()) {
@@ -1106,3 +1170,86 @@ void NetSession::sendGame(const std::string& text) {
     if (role == HOST) broadcast(frame(MSG_GAME, w));
     else if (!conns.empty()) sendTo(*conns[0], frame(MSG_GAME, w));
 }
+
+// ---- Finding games on the local network -------------------------------------------------
+
+void NetSession::answerFinders() {
+    if (findFd < 0) return;
+    char buf[256];
+    for (int k = 0; k < 16; k++) {
+        sockaddr_in from{};
+#ifdef _WIN32
+        int fl = sizeof from;
+#else
+        socklen_t fl = sizeof from;
+#endif
+        const int n = (int)recvfrom(findFd, buf, sizeof buf - 1, 0, (sockaddr*)&from, &fl);
+        if (n <= 0) break;
+        buf[n] = 0;
+        if (std::strncmp(buf, "CZFIND", 6) != 0) continue;
+        char reply[160];
+        std::snprintf(reply, sizeof reply, "CZHOST %d %d %d %d %s", (int)net::kVersion, hostPort, map, playerCount(),
+                      players[0].name.substr(0, 40).c_str());
+        sendto(findFd, reply, (int)std::strlen(reply), 0, (sockaddr*)&from, sizeof from);
+    }
+}
+
+namespace net {
+
+Finder::~Finder() { close(); }
+
+void Finder::close() {
+    if (fd >= 0) closeSock(fd);
+    fd = -1;
+    hosts.clear();
+}
+
+void Finder::poll(double now) {
+    if (fd < 0) {
+        netInit();
+        fd = newSocket(SOCK_DGRAM);
+        if (fd < 0) return;
+        int one = 1;
+        setsockopt(fd, SOL_SOCKET, SO_BROADCAST, (const char*)&one, sizeof one);
+        nonBlocking(fd);
+        nextAsk = 0;
+    }
+    if (now >= nextAsk) {
+        nextAsk = now + 1.0;
+        // The whole local network, and this machine (a game hosted in another window).
+        for (uint32_t ip : {0xffffffffu, 0x7f000001u}) {
+            sockaddr_in to{};
+            to.sin_family = AF_INET;
+            to.sin_addr.s_addr = htonl(ip);
+            to.sin_port = htons((uint16_t)kDiscoveryPort);
+            sendto(fd, "CZFIND", 6, 0, (sockaddr*)&to, sizeof to);
+        }
+    }
+    char buf[256];
+    for (int k = 0; k < 32; k++) {
+        sockaddr_in from{};
+#ifdef _WIN32
+        int fl = sizeof from;
+#else
+        socklen_t fl = sizeof from;
+#endif
+        const int n = (int)recvfrom(fd, buf, sizeof buf - 1, 0, (sockaddr*)&from, &fl);
+        if (n <= 0) break;
+        buf[n] = 0;
+        int ver = 0, port = 0, mp = 0, pl = 0, used = 0;
+        if (std::sscanf(buf, "CZHOST %d %d %d %d %n", &ver, &port, &mp, &pl, &used) < 4 || ver != kVersion) continue;
+        char ip[32];
+        const uint32_t a = ntohl(from.sin_addr.s_addr);
+        std::snprintf(ip, sizeof ip, "%u.%u.%u.%u:%d", a >> 24, (a >> 16) & 255, (a >> 8) & 255, a & 255, port);
+        FoundHost h;
+        h.address = ip;
+        h.name = used > 0 ? std::string(buf + used) : "";
+        h.map = mp, h.players = pl, h.seen = now;
+        auto it = std::find_if(hosts.begin(), hosts.end(), [&](const FoundHost& o) { return o.address == h.address; });
+        if (it != hosts.end()) *it = h;
+        else hosts.push_back(h);
+    }
+    hosts.erase(std::remove_if(hosts.begin(), hosts.end(), [&](const FoundHost& h) { return now - h.seen > 4.0; }), hosts.end());
+}
+
+}  // namespace net

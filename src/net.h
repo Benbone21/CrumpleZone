@@ -18,10 +18,32 @@
 
 namespace net {
 constexpr int kDefaultPort = 27015;
+constexpr int kDiscoveryPort = 27016;  // UDP: "who's hosting?" on the local network
 constexpr int kMaxPeers = 8;
 constexpr uint16_t kVersion = 2;
 constexpr double kSendRate = 20;      // vehicle states per second
 constexpr double kPlaybackDelay = 0.1; // s behind the newest state received
+}  // namespace net
+
+// Finds games hosted on the local network: asks "who's hosting?" (a UDP broadcast) every
+// second and lists who answers. Poll it while the multiplayer page is open.
+namespace net {
+struct FoundHost {
+    std::string address;  // "ip:port", for join()
+    std::string name;     // the host player's name
+    int map = 0, players = 0;
+    double seen = 0;
+};
+class Finder {
+public:
+    ~Finder();
+    void poll(double now);  // opens itself on first use
+    void close();
+    std::vector<FoundHost> hosts;
+private:
+    int fd = -1;
+    double nextAsk = 0;
+};
 }  // namespace net
 
 struct NetPlayer {
@@ -94,6 +116,9 @@ private:
     struct Snap;
     struct Remote;
     int listenFd = -1, udpFd = -1;
+    int findFd = -1;            // host: answers "who's hosting?" (net::kDiscoveryPort)
+    int hostPort = 0;
+    void answerFinders();
     std::vector<Conn*> conns;   // host: one per client; client: just the host
     void* hostUdp = nullptr;    // client: the host's UDP address (sockaddr_in)
     bool udpReady = false;      // client: the host has heard our UDP

@@ -208,6 +208,8 @@ Launched plainly, the game opens on the title screen: free drive (pick map and v
 - **Exploring:** every named place on a map starts undiscovered ("?" on the map); get within 30 m to find it. Your discoveries are kept between sessions.
 - **Fuel:** engines burn fuel for the power they make (setting FUEL: OFF / REAL / FAST, default FAST: 4x). Run dry and the engine dies. Shops fill the tank and the spare can; the Bronco and 4Runner carry a 20 L can.
 
+- **Finding games:** Menu > Multiplayer lists games hosted on your local network (a UDP broadcast on port 27016); pick one to join, or type an address. On Windows, allow the game through the firewall on **Private networks** the first time you host (ports 27015 and 27016).
+
 ## World editor
 
 Build your own worlds and levels: title screen → WORLD EDITOR (a new level on the map picked), Levels → OPEN IN THE EDITOR (the game's levels open as your copy), or F2 while driving. `--editor` opens it on launch.

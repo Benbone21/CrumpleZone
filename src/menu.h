@@ -53,6 +53,13 @@ public:
     int mapPick = 0;  // the map shown in the MAP row
     // Multiplayer page: the session's state, set by the game before drawing.
     std::string netStatus = "OFFLINE";
+    // Games found on the local network (net::Finder): a row each on the multiplayer page.
+    struct FoundGame {
+        std::string label, address;
+    };
+    std::vector<FoundGame> found;
+    std::string joinPick;  // set when one of them is picked (JOIN then goes there)
+    int pageNow() const { return page; }
     bool netActive = false;
     std::string padName;  // the connected controller (settings page), set by the game
     bool shift = false;  // a shift key is down (typing ':' in an address)

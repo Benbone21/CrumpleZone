@@ -150,7 +150,7 @@ enum Id {
     PADSTEER = 30, PADDEAD, PADRUMBLE,
     // Main page and navigation.
     RESUME_ROW = 100, VEHICLE_ROW, MAP_ROW, GARAGE_ROW, SETTINGS_ROW, CONTROLS_ROW, RESET_ROW, QUIT_ROW, BACK_ROW,
-    MULTI_ROW, NAME_ROW, HOST_ROW, ADDRESS_ROW, JOIN_ROW, LEAVE_ROW,
+    MULTI_ROW, NAME_ROW, HOST_ROW, ADDRESS_ROW, JOIN_ROW, LEAVE_ROW, FOUND_ROW0, FOUND_ROW5 = FOUND_ROW0 + 5,
     PILOT_ROW, DEST_ROW, PSPEED_ROW, PROUTE_ROW, PGO_ROW, PSTOP_ROW,
     FREEDRIVE_ROW, LEVELS_ROW, LEVEL_PICK, LEVEL_PLAY, LEVEL_EDIT, EDITOR_ROW, LRESTART_ROW, LQUIT_ROW, MAINMENU_ROW,
     JOBS_ROW, JOB_PICK, JOB_GO, JOB_STOP_ROW, MEET_ROW, CONTROLLER_ROW,
@@ -277,6 +277,8 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
         text(NAME_ROW, "YOUR NAME", s.playerName, "TYPE IT; ARROWS MOVE");
         if (!netActive) {
             button(HOST_ROW, "HOST A GAME", "ON THIS MAP, PORT 27015");
+            if (found.empty()) header("LOOKING FOR GAMES ON YOUR NETWORK...");
+            for (int k = 0; k < (int)found.size() && k < 6; k++) button(FOUND_ROW0 + k, ("JOIN " + found[k].label).c_str(), found[k].address.c_str());
             text(ADDRESS_ROW, "HOST ADDRESS", s.joinAddress, "IP OR NAME, :PORT OPTIONAL");
             button(JOIN_ROW, "JOIN");
         } else {
@@ -426,6 +428,10 @@ PauseMenu::Result PauseMenu::activate(int row, Settings& s) {
         case LEAVE_ROW: return {LEAVE};
         case MEET_ROW: return {MEET_UP};
         case ADDRESS_ROW: return {JOIN};
+    }
+    if (it.id >= FOUND_ROW0 && it.id <= FOUND_ROW5 && it.id - FOUND_ROW0 < (int)found.size()) {  // a game found on the network
+        joinPick = found[it.id - FOUND_ROW0].address;
+        return {JOIN};
     }
     if (it.kind == CHOICE) return change(row, 1, s);
     return {};

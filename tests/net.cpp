@@ -285,3 +285,97 @@ SCENARIO(netCrawlers, "net/crawlers", "A host in the rock buggy and a client in 
     ctx.metric("host's buggy speed", len(hostCar.frame().vel) * 3.6, "km/h", 15, 90);
     ctx.metric("host's copy of the side-by-side vs the real one: worst node", worst, "m", 0, 4.0);  // (the copy is ~0.1 s behind: ~2.8 m at 100 km/h)
 }
+
+// The bug from real play: a machine that had hosted (its truck kept the host's car id) then
+// joined someone else's game. The host dropped its truck as its own, and the joiner rebuilt
+// its truck on top of the host's. Every session now starts with fresh ids, and the joiner
+// is parked clear of everything already there.
+SCENARIO(netStaleIdsAndClearSpawn, "net/rejoin", "A machine that hosted before then joins: each side sees the other's truck, and the joiner starts clear of every vehicle") {
+    Car& hostCar = ctx.add(vehicleCatalog()[2], 10, -8, 0);
+    ctx.focus(hostCar);
+    // A parked truck right where the joiner's slot is (the Backcountry's trailhead has one).
+    const World& w0 = ctx.sim.world;
+    const V3 side(std::sin(w0.spawnYaw), 0, std::cos(w0.spawnYaw));
+    const V3 slot = w0.spawn + side * 6.5;
+    ctx.sim.addCar(vehicleCatalog()[3], V3(slot.x, w0.clearY(slot.x, slot.z) + 0.5, slot.z), w0.spawnYaw, V3(0.4, 0.4, 0.4));
+    ctx.run(0.5);
+    NetSession host;
+    const int port = testPort() + 40;
+    ctx.check("host opens a session", host.host(port, "HOSTY", MAP_PROVING_GROUND), host.error);
+    host.adopt(ctx.sim);
+    host.send(ctx.sim, 0);  // (the game does this every frame: it's what announces the host's trucks)
+
+    // The joining machine hosted a session of its own first, and left it.
+    Sim sim2;
+    sim2.world = World(MAP_PROVING_GROUND);
+    sim2.setupEmpty();
+    sim2.addCar(vehicleCatalog()[3], V3(-30, 0.5, -30), 0, V3(0.2, 0.2, 0.2));
+    sim2.player = 0;
+    {
+        NetSession before;
+        ctx.check("the joiner hosted before", before.host(port + 1, "OLD", MAP_PROVING_GROUND), before.error);
+        before.adopt(sim2);
+        before.send(sim2, 0);
+        ctx.check("its truck took a host's id then", NetSession::ownerOf(sim2.cars[0].netId) == 0 && sim2.cars[0].netId != 0);
+        before.close();
+    }
+    NetSession client;
+    bool joined = false, joinDone = false;
+    std::thread joiner([&] {
+        joined = client.join("127.0.0.1:" + std::to_string(port), "BUDDY", 3.0);
+        joinDone = true;
+    });
+    for (int k = 0; k < 400 && !joinDone; k++) {
+        host.receive(ctx.sim, ctx.t);
+        usleep(5000);
+    }
+    joiner.join();
+    ctx.check("client is let in", joined, client.error);
+    if (!joined) return;
+    client.adopt(sim2);
+    for (int k = 0; k < 120; k++) {
+        host.send(ctx.sim, ctx.t);
+        host.receive(ctx.sim, ctx.t);
+        client.receive(sim2, ctx.t);
+        sim2.advance(Ctx::kFrame, 1000);
+        client.send(sim2, ctx.t);
+        usleep(300);
+        ctx.run(Ctx::kFrame);
+    }
+    const Car& mine = sim2.cars[sim2.player];
+    ctx.check("the joiner's truck has its own id", NetSession::ownerOf(mine.netId) == client.self && !mine.remote);
+    ctx.check("the host sees the joiner's truck", remoteCount(ctx.sim) == 1, std::to_string(remoteCount(ctx.sim)));
+    ctx.check("the joiner sees the host's trucks", remoteCount(sim2) >= 2, std::to_string(remoteCount(sim2)));
+    double nearest = 1e9;
+    std::string who;
+    for (const Car& o : sim2.cars) {
+        if (&o == &mine) continue;
+        const double d = len(V3(o.frame().com.x - mine.frame().com.x, 0, o.frame().com.z - mine.frame().com.z));
+        if (d < nearest) nearest = d, who = std::string(o.spec->name) + (o.remote ? " remote " : " local ") + std::to_string(NetSession::ownerOf(o.netId));
+    }
+    ctx.check("(nearest: " + who + ")", true);
+    ctx.metric("joiner's start: distance to the nearest vehicle", nearest, "m", 4, 1000);
+    client.close();
+    host.close();
+}
+
+SCENARIO(netFindHost, "net/find", "A game hosted on this machine shows up in the multiplayer page's list of games on the network") {
+    NetSession host;
+    const int port = testPort() + 43;
+    ctx.check("host opens a session", host.host(port, "HOSTY", MAP_BACKCOUNTRY), host.error);
+    host.adopt(ctx.sim);
+    net::Finder finder;
+    double t = 0;
+    for (int k = 0; k < 300 && finder.hosts.empty(); k++) {
+        finder.poll(t);
+        host.receive(ctx.sim, t);
+        usleep(10000);
+        t += 0.01;
+    }
+    ctx.check("found it", !finder.hosts.empty());
+    if (finder.hosts.empty()) return;
+    const net::FoundHost& h = finder.hosts[0];
+    ctx.check("with its name, map and port", h.name == "HOSTY" && h.map == MAP_BACKCOUNTRY &&
+                                                 h.address.find(":" + std::to_string(port)) != std::string::npos, h.name + " " + h.address);
+    host.close();
+}
