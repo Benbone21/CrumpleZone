@@ -645,7 +645,6 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         buggy.railSpacing = 0;
         buggy.frameMass = 0;
         buggy.skidDrop = 0;
-        buggy.bumperLiftRear = -1;
         buggy.wellTireRadius = buggy.wellTireWidth = 0;
         buggy.name = "ROCK BUGGY";
         buggy.id = "buggy";
@@ -672,7 +671,10 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         buggy.doors = 0;
         buggy.liftgate = false;
         buggy.noseDrop = buggy.tailDrop = 0;
-        buggy.bumperLift = 0.0;
+        // The tube bumpers sit high, where buildOpenFrame draws them: the front one's wings at
+        // ~0.84 m, the rear one at ~0.97 m (the lattice's nose and tail were 0.62 m up, under them).
+        buggy.bumperLift = 0.22;
+        buggy.bumperLiftRear = 0.33;
         buggy.cornerRound = 0.05;
         buggy.roofTuck = 0.08;
         buggy.rakeFront = 0.12;
@@ -759,7 +761,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         buggy.flatPlane = false;
         buggy.displacement = 6.2;
         buggy.gears = {2.48, 1.48, 1.00, 0.75};  // 4L80E
-        buggy.reverseRatio = 2.07;
+        buggy.reverseRatio = 2.08;  // (GM: 2.48 / 1.48 / 1.00 / 0.75, reverse 2.08)
         buggy.finalDrive = 5.38;    // typical for 40s
         buggy.shiftTime = 0.30;
         // 4L80E converter: these crawl/race builds run ~2,000-2,400 rpm stalls (estimate: low
