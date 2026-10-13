@@ -80,6 +80,10 @@ bool pilotRun(Ctx& ctx, Car& c, const V3& goal, double kmh, double maxS, int rou
                         f.com.z, dot(f.vel, f.fwd), c.driveMode, c.gear, c.lockFront, c.lockRear, c.tirePsi, c.tractionControl, c.throttle, c.brake, c.pilot.needLevel,
                         std::min(99.0, c.pilot.needDist), c.pilot.needStep, c.pilot.stuckCount, c.pilot.stuckTime, c.steer, c.pilot.onRoute, c.pilot.lockTime[0], c.pilot.status.c_str(),
                         c.pilot.thought.c_str());
+            if (std::getenv("CZ_WHEELS"))
+                for (const Wheel& wh : c.wheels)
+                    std::printf("      %s%s load %5.0f spin %+5.2f T %5.0f brk %3.0f%% sink %.2f %s\n", wh.front ? "F" : "R", wh.left ? "L" : "R", wh.load,
+                                wh.omega * wh.rollR() - wh.groundSpeed, wh.shaftTorque, wh.tcBrake * 100, wh.sink, wh.shaftBroken ? "BROKEN" : "");
         }
         static thread_local bool told = false;
         if (c.engineDead && !told && std::getenv("CZ_DEBUG")) {

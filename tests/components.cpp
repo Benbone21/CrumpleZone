@@ -23,7 +23,9 @@ VEHICLE_SCENARIO(airbornePatch, "components/airborne-tires", "A jump clears cont
         std::string at = "wheel " + std::to_string(i);
         ctx.check(at + " has no stale contact", w.load == 0 && w.stickX == 0 && w.stickY == 0);
         ctx.check(at + " resets ABS after leaving ground", w.abs == 1);
-        ctx.metric(at + " angular momentum lost", (30 - w.omega) * w.I, "kg m2/s", 0.045, 0.055);
+        // (The whole spinning assembly: a driven wheel's half shaft and side gear spin with it.)
+        const double Is = c.wheelPowered(w) ? kSideGearI : 0.0;
+        ctx.metric(at + " angular momentum lost", (30 - w.omega) * w.I + (30 - w.sideOmega) * Is, "kg m2/s", 0.045, 0.055);
         ctx.metric(at + " tread/road speed", std::fabs(w.groundSpeed), "m/s", 0, 0.2);
     }
 }
@@ -123,13 +125,19 @@ struct AxleWatch {
     }
     // A point in the frame of the body around the axle (its coil towers and upper link
     // mount), at rest or now: so it's what you'd see against the frame and floor above.
+    // (Levelled: the upper link's frame end sits well below and ahead of the coil tops, so
+    // the raw frame leans ~33 deg; turned so its y is the body's vertical, as the rails and
+    // floor carvisual.cpp clears are laid out.)
     V3 local(const V3& p, bool rest) const {
         auto P = [&](int n) { return rest ? c.restLocal[n] : c.nodes[n].p; };
         const V3 a = P(pick[0]), b = P(pick[1]), mid = (a + b) * 0.5, ez = norm(b - a);
         V3 ex = P(pick[2]) - mid;
         ex = norm(ex - ez * dot(ex, ez));
         const V3 ey = cross(ez, ex), d = p - mid;
-        return V3(dot(d, ex), dot(d, ey), dot(d, ez));
+        const V3 r = c.restLocal[pick[2]] - (c.restLocal[pick[0]] + c.restLocal[pick[1]]) * 0.5;
+        const double phi = std::atan2(r.y, std::sqrt(r.x * r.x + r.z * r.z));
+        const V3 exH = ex * std::cos(phi) - ey * std::sin(phi), eyH = ex * std::sin(phi) + ey * std::cos(phi);
+        return V3(dot(d, exH), dot(d, eyH), dot(d, ez));
     }
     V3 point(int i, bool rest) const {
         auto P = [&](int n) { return rest ? c.restLocal[n] : c.nodes[n].p; };
@@ -160,7 +168,7 @@ struct AxleWatch {
 
 // Drops a truck from `h` (optionally pitched nose-up, rolled, moving forward) and watches
 // its rear axle through the landing and the settle.
-[[maybe_unused]] void axleLanding(Ctx& ctx, const VehicleSpec& spec, const std::string& tag, double z, double h, double pitchDeg, double rollDeg, double speed) {
+void axleLanding(Ctx& ctx, const VehicleSpec& spec, const std::string& tag, double z, double h, double pitchDeg, double rollDeg, double speed) {
     Car& c = ctx.add(spec, -100, z, 0);
     ctx.focus(c);
     ctx.run(1.0);
@@ -234,6 +242,18 @@ SCENARIO(axleTwister, "components/axle-articulation", "Bronco and 4Runner crawl 
     }
 }
 
+// Landings: flat drops, tail first, and a jump landing at speed.
+SCENARIO(axleLandings, "components/axle-landing", "Bronco and 4Runner dropped flat, tail first and at speed: the live rear axle takes the hit on its bump stops, stays upright on its links and settles back level") {
+    for (int v : {2, 3}) {
+        const VehicleSpec& spec = vehicleCatalog()[v];
+        const std::string name = v == 2 ? "Bronco" : "4Runner";
+        axleLanding(ctx, spec, name + " 1 m flat", -50, 1.0, 0, 0, 0);
+        axleLanding(ctx, spec, name + " 2 m flat", -50, 2.0, 0, 0, 0);
+        axleLanding(ctx, spec, name + " 2 m tail first", -50, 2.0, 12, 0, 0);
+        axleLanding(ctx, spec, name + " 1.5 m at 40 km/h", -50, 1.5, 4, 0, 40 / 3.6);
+    }
+}
+
 // ---- Brake traction control on a split-friction pull-away ------------------------
 // Left wheels on the ice strip, right wheels on the concrete apron beside it, rear-drive
 // only (2H). An open diff gives both rear wheels the torque the one on ice can hold, so
@@ -270,4 +290,35 @@ SCENARIO(splitMuPullAway, "components/brake-traction-control", "Bronco in 2H, le
     // On: the concrete wheel pulls on its own grip (less what the brake costs the engine).
     ctx.metric("speed after 4 s, traction control on", on.first, "km/h", 15, 45);
     ctx.metric("most brake it used on the ice wheel", on.second * 100, "%", 10, 100);
+}
+
+// ---- Torque converter (automatics) -----------------------------------------------
+// The Bronco's 10-speed automatic: in Drive at idle it creeps at a walk; held on the
+// brakes at full throttle the engine flares to the converter's stall speed and stays
+// there (the converter slips, nothing breaks); stopped with the pedal up it sits still.
+SCENARIO(torqueConverter, "components/torque-converter", "Bronco automatic: idle creep, a brake stand at the stall speed, parked when stopped") {
+    const VehicleSpec& spec = vehicleCatalog()[2];
+    Car& c = ctx.add(spec, -100, -50, 0);
+    ctx.focus(c);
+    ctx.run(1.0);
+    // Parked: stopped with the pedal up.
+    const V3 p0 = c.frame().com;
+    ctx.run(3.0, [&] { c.throttle = 0, c.brake = 0; });
+    ctx.metric("parked: drift in 3 s", len(c.frame().com - p0) * 100, "cm", 0, 3);
+    // Brake stand: both pedals down for a second. (Held longer, the converter's ~21 kN*m at
+    // the wheels in first beats the brakes' ~13 kN*m: a real Bronco's brake-throttle
+    // override cuts the power before that.)
+    double rpm = 0;
+    ctx.run(1.0, [&] {
+        c.throttle = 1, c.brake = 1;
+        rpm = c.rpm;
+    });
+    ctx.metric("brake stand: engine at the converter's stall speed (2,600 rpm)", rpm, "rpm", 2200, 3000);
+    double shaft = 0;
+    for (const Wheel& w : c.wheels) shaft = std::max(shaft, std::fabs(w.shaftTorque));
+    ctx.metric("brake stand: shaft torque (under its 11 kN*m limit)", shaft, "N*m", 300, 6000);
+    // Idle creep: a touch on the pedal to put it in gear, then off the brake and the pedal.
+    ctx.run(0.3, [&] { c.throttle = 0.05, c.brake = 0; });
+    ctx.run(5.0, [&] { c.throttle = 0, c.brake = 0; });
+    ctx.metric("idle creep in Drive (a real truck walks along at ~5-8 km/h)", speedKmh(c), "km/h", 3, 10);
 }

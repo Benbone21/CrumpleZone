@@ -45,6 +45,7 @@ const BeamSpec kSpec[BEAM_TYPE_COUNT] = {
     {6.0e6, 1200, 0.070, 0.50},  // tie rod / toe link
     {0, 0, 1e9, 0.40},           // drive shaft (no force; tears off past 40% stretch)
     {1.2e5, 170, 0.032, 0.80},   // panel sheet metal (0.8-1 mm steel over its inner frame)
+    {0, 0, 1e9, 1e9},            // jounce bumper (k, c come from the vehicle)
 };
 
 // ---- Small linear algebra for the suspension kinematics -----------------------
@@ -565,7 +566,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
     // Suspension pick-ups, built before the moving parts so they stay in the frame range.
     struct Pickups {
         int lf = -1, lr = -1, uf = -1, ur = -1, rack = -1, coil = -1, toe = -1;
-        int trail = -1, panhard = -1;
+        int trail = -1, panhard = -1, stop = -1;
     };
     std::vector<std::array<Pickups, 2>> pick(axleI.size());
     std::vector<int> axleUpperPick(axleI.size(), -1), diffFrame(axleI.size(), -1), panhardFrame(axleI.size(), -1);
@@ -677,11 +678,29 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 } else {  // SOLID_AXLE
                     P.trail = frameNode(V3(xw + 0.77, R - 0.04, s * (az - 0.30)), 2.5);
                     P.coil = frameNode(V3(xw - 0.06, R + 0.48 * sizeK, s * (az - 0.20)), 2.0);
+                    // Jounce bumper on a bracket off the rail, straight over the tube's end
+                    // (where the hub's inner node is: the stop lands on the tube itself).
+                    P.stop = frameNode(V3(xw, R + 0.31 * sizeK, s * (az - tireWidth(ax) / 2)), 2.0);
                 }
             }
             if (st == SOLID_AXLE) {
                 axleUpperPick[ax] = frameNode(V3(xw + 0.55, R + 0.22, 0), 2.5);
                 panhardFrame[ax] = frameNode(V3(xw - 0.10, R + 0.16, hw - 0.40), 2.5);
+                // The link brackets, coil towers and bump stops are welded to the same rails
+                // and crossmember: tie them together so they can't shift against each other.
+                // (Held only by the body lattice they moved 2-4 cm apart in a hard landing,
+                // enough to let the housing roll over on its links.)
+                std::vector<int> brackets = {axleUpperPick[ax], panhardFrame[ax]};
+                for (int sIdx = 0; sIdx < 2; sIdx++)
+                    for (int n : {pick[ax][sIdx].trail, pick[ax][sIdx].coil, pick[ax][sIdx].stop}) brackets.push_back(n);
+                for (size_t i = 0; i < brackets.size(); i++)
+                    for (size_t j = i + 1; j < brackets.size(); j++) {
+                        int bi = addBeam(brackets[i], brackets[j], BEAM_FRAME);
+                        if (bi < 0) continue;
+                        beams[bi].k = kSpec[BEAM_FRAME].k * 10;
+                        beams[bi].c = kSpec[BEAM_FRAME].c * 3;
+                        beams[bi].yieldStrain = 0.06;
+                    }
             }
             // Differential on the body (independent suspension, driven axle).
             bool driven = vs.drive == VehicleSpec::AWD || (vs.drive == VehicleSpec::FWD) == front;
@@ -971,6 +990,10 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 wh.assembly = as.nodes;
                 as.links.push_back(link(&wh, lowMount[sIdx], pick[ax][sIdx].trail, BEAM_ARM, LINK_TRAILING, axle.wheel[sIdx]));
                 wh.spring = addBeam(seat[sIdx], pick[ax][sIdx].coil, BEAM_SPRING);
+                // The bumper lands on the tube's centre line: it pushes straight down through
+                // the tube and can't roll the housing over on its links (a stop pushing on the
+                // coil seat behind the tube did).
+                wh.bumpStop = addBeam(wh.inner, pick[ax][sIdx].stop, BEAM_BUMPSTOP);
                 wh.mounts.push_back(wh.spring);
                 as.springs.push_back(wh.spring);
                 // The tube from the diff out to this hub: if it snaps, the wheel is off.
@@ -1078,6 +1101,17 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 const double bump = wh.front ? vs.bumpFront : vs.bumpRear, droop = wh.front ? vs.droopFront : vs.droopRear;
                 sp.minL = bump > 0 ? L - bump * mr : L - 0.085 * sizeK;
                 sp.maxL = droop > 0 ? L + droop * mr : L + 0.11 * sizeK;
+                if (wh.bumpStop >= 0) {
+                    // A live axle lands on its jounce bumpers (tube travel ~ wheel travel).
+                    // The coil-over gets no stop of its own: pushing on the seat behind the
+                    // tube, one rolled the housing over on its links in hard landings.
+                    Beam& st = beams[wh.bumpStop];
+                    st.k = kWheel;
+                    st.c = cWheel * 2;  // rubber (or hydraulic) bumpers soak up the hit
+                    st.minL = st.L0 - (bump > 0 ? bump : 0.085 * sizeK);
+                    st.maxL = 1e9;
+                    sp.minL = 0;
+                }
                 if (getenv("CZ_DEBUG"))
                     std::printf("%s %s%s: bump steer %.3f deg/cm, camber %.3f deg/cm\n", vs.name, wh.front ? "front " : "rear ", wh.left ? "left" : "right",
                                 q[4] * 180 / M_PI / 100, q[3] * 180 / M_PI / 100);
@@ -1386,8 +1420,8 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                     const Beam& e = beams[bk];
                     double c2 = dot(u, norm(local[e.b] - local[e.a]));
                     c2 *= c2;
-                    bool spring = e.type == BEAM_SPRING;
-                    K += c2 * e.k * (spring ? 26 : 1);
+                    bool spring = e.type == BEAM_SPRING || e.type == BEAM_BUMPSTOP;
+                    K += c2 * e.k * (e.type == BEAM_BUMPSTOP ? 125 : spring ? 26 : 1);
                     C += c2 * e.c * (spring ? 1.35 : 1);
                 }
                 worst = std::max(worst, h * h * K + 2 * h * C);

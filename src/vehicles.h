@@ -97,6 +97,7 @@ struct VehicleSpec {
     double doorLength = 1.0;        // physical front door length (m)
     double rimRadius = 0;           // metal rim radius; 0 = inferred from wheel style
     bool absEnabled = true;
+    bool tractionFitted = true;  // has traction control at all (the driver can still switch it off)
     int cylinders = 4;
     bool flatPlane = false;        // flat-plane crank V8: even firing, a high-pitched howl
     enum Induction { NATURAL, TURBO, SUPERCHARGER } induction = TURBO;
@@ -178,6 +179,13 @@ struct VehicleSpec {
     double shiftTime = 0.18;    // s with no drive during a shift
     double lowRange = 0;        // transfer case low ratio (4LO); 0 = none
     double turboLag = 0;        // s for boost to build (0 = naturally aspirated)
+    // Automatic gearbox: a torque converter between the engine and the gears (0 = a clutch).
+    // The stall speed (rpm the engine reaches at full throttle against a held turbine) sets
+    // how hard the converter grips; it multiplies torque by stallRatio there. Above
+    // lockupGear (and once moving) its clutch locks it solid.
+    double stallRpm = 0;
+    double stallRatio = 2.0;
+    int lockupGear = 3;
     const char* engineName = "";
     const char* gearboxName = "";
 

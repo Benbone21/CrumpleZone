@@ -36,6 +36,7 @@ enum BeamType : uint8_t {
     BEAM_TIEROD,   // tie rod (length set by the steering rack) or rear toe link
     BEAM_SHAFT,    // drive shaft: carries no load here (it slides and flexes), but it can be torn off
     BEAM_PANEL,    // outer sheet-metal panel (hood, door, bumper...): thin, dents easily
+    BEAM_BUMPSTOP, // jounce bumper from the frame onto a live axle's tube: pushes only once the axle rises onto it
     BEAM_TYPE_COUNT
 };
 
@@ -87,6 +88,10 @@ struct SuspLink {
     int8_t wheel;  // -1 = belongs to an axle, not one wheel
 };
 
+// Diff side gear plus its share of the ring gear, carrier and prop shaft, as seen at one
+// half shaft (kg*m^2).
+constexpr double kSideGearI = 0.15;
+
 struct Wheel {
     int inner, outer;       // hub nodes: the axle runs inner -> outer
     int top = -1;           // upper ball joint (or spring seat on a solid axle)
@@ -94,6 +99,7 @@ struct Wheel {
     int arm = -1;           // steering arm / toe link end
     int spring = -1;        // coil-over beam
     int tieRod = -1;        // tie rod beam (front) or toe link (rear), -1 = none
+    int bumpStop = -1;      // jounce bumper over a live axle's tube (-1 = the coil-over's own stop)
     std::vector<int> assembly;  // nodes moving with the hub (brake torque reacts here)
     std::vector<int> shafts;    // drive shafts that must be intact for this wheel to be driven
     double springRest = 0;      // coil-over length at ride height (anti-roll bars work from it)
@@ -124,6 +130,14 @@ struct Wheel {
     float bite = 1;            // how fast its grip builds with slip here (tread and surface): ABS and traction control aim for the peak
     float shaftLoad = 0;       // torque through the axle shaft (N*m, smoothed over ~10 ms)
     double xferTorque = 0;     // torque a locker or the locked center put through it this step
+    // The half shaft (or CV shaft) is a torsion spring between the diff's side gear and
+    // the hub: the gears and lockers turn the side gear, the shaft winds up and drives
+    // the wheel. Its wind-up is what keeps a tire catching an edge from stopping the whole
+    // geared-down engine through the shaft in one step.
+    double sideOmega = 0;      // diff side gear (inner end of the shaft), rad/s
+    double twist = 0;          // shaft wind-up, rad (+ = driving forward)
+    double shaftTorque = 0;    // torque in the shaft now (N*m)
+    double omegaWas = 0;       // omega at the end of the last step (follows outside changes)
     std::vector<int> mounts;  // beams that attach this wheel to the body
     // Radius it rolls on (a blown tire runs on its rim).
     double rollR() const { return popped ? rimR + 0.015 : R; }
@@ -379,6 +393,7 @@ private:
     void wheelStep(double h, const World& w);
     V3 groupAvg(const std::vector<int>& g) const;
     double engineTorque(double rpm) const;
+    double shaftStiffness() const;
     double gearRatio(int g) const;
 };
 

@@ -207,16 +207,20 @@ SCENARIO(driveModeSwitching, "offroad/drive-modes", "2H drives the rear only; 4H
     ctx.check("4H ties front and rear together", c.centerLocked() && std::string(c.mode()->name) == "4H");
     c.setLocker(true, true);
     ctx.check("Ford's front locker refuses in 4H (4L only)", !c.lockFront);
-    double worst = 0;
+    // (Averaged over the run: the half shafts wind up and let go at each shift, so the
+    // axles can differ for a moment, as on a real truck.)
+    double sum = 0;
+    int n = 0;
     ctx.run(3, [&] {
         c.throttle = 0.5;
         c.steer = 0.3;
         if (ctx.t < 7.0) return;
         double f = 0, r = 0;
         for (const Wheel& wh : c.wheels) (wh.front ? f : r) += wh.omega * 0.5;
-        worst = std::max(worst, std::fabs(f - r) / std::max(std::fabs(r), 1.0));
+        sum += std::fabs(f - r) / std::max(std::fabs(r), 1.0);
+        n++;
     });
-    ctx.metric("4H: front vs rear average wheel speed mismatch (driveline wind-up)", worst * 100, "%", 0, 5);
+    ctx.metric("4H: front vs rear average wheel speed mismatch (driveline wind-up)", sum / std::max(n, 1) * 100, "%", 0, 5);
     c.setDriveMode((int)modes.size() - 1);
     ctx.check("4L engages low range", c.lowRange && c.centerLocked());
     c.setLocker(true, true);
@@ -463,8 +467,16 @@ void crawlAlong(Car& c, const V3& from, const V3& dir, double speed) {
     V3 d = target - fr.com;
     c.steer = clampd(std::atan2(dot(d, fr.left), std::max(dot(d, fr.fwd), 0.5)) * 2.0, -0.6, 0.6);
     double v = dot(fr.vel, fr.fwd);
-    // Feathered: a crawler never floors it in low range (the tires just dig and spin).
-    c.throttle = clampd(0.3 + (speed - v) * 0.7, 0, 0.6);
+    // Feathered: a crawler never floors it in low range (the tires just dig and spin), and
+    // eases off as soon as they start to spin (the converter lets the engine flare).
+    static thread_local double cap = 1;
+    static thread_local const Car* who = nullptr;
+    if (who != &c) who = &c, cap = 1;
+    double spin = 0;
+    for (const Wheel& wh : c.wheels)
+        if (c.wheelPowered(wh) && wh.load > 0) spin = std::max(spin, std::fabs(wh.omega * wh.rollR()) - std::fabs(wh.groundSpeed));
+    cap = clampd(cap + Ctx::kFrame * 1.5 * (0.7 - spin), 0.12, 0.6);
+    c.throttle = std::min(clampd(0.3 + (speed - v) * 0.7, 0, 0.6), cap);
     c.brake = v > speed + 0.7 ? 0.4 : 0;
     c.handbrake = 0;
 }

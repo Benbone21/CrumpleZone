@@ -290,7 +290,15 @@ void Car::computeForces(double h, const World& w) {
         V3 dir = d / L;
         double F;
         double vrel = dot(B.v - A.v, dir);
-        if (b.type == BEAM_SPRING) {
+        if (b.type == BEAM_BUMPSTOP) {
+            // Jounce bumper: nothing until the axle rises onto it, then the same progressive
+            // rubber as a coil-over's stop, damped only while it's being squashed. Past ~4 cm
+            // the rubber is solid and the tube is on the frame: steel on steel.
+            if (L >= b.minL + 0.01) continue;
+            double c = std::min(b.minL + 0.01 - L, 0.03);
+            F = -(25 * b.k * c * c / 0.03 + 25 * b.k * std::max(0.0, b.minL - 0.02 - L) + 100 * b.k * std::max(0.0, b.minL - 0.04 - L));
+            if (vrel < 0) F += b.c * vrel;
+        } else if (b.type == BEAM_SPRING) {
             F = b.k * (L - b.L0);
             // Progressive rubber bump stop: firms up over its first 3 cm.
             if (L < b.minL + 0.01) {
@@ -676,16 +684,22 @@ void Car::applyTorque(const std::vector<int>& set, const V3& torque) {
 }
 
 void Car::wheelStep(double h, const World& w) {
-    // Wheel speeds at the start of the step: the drivetrain's real spin-up over the step,
-    // whatever caused it (drive, road, brakes, lockers), is what the engine has to follow.
+    // Half shafts. A wheel spun or stopped from outside (a test, a reset, the network)
+    // takes its side gear along; one with no drive has nothing winding its shaft.
+    for (Wheel& wh : wheels) {
+        if (wh.omega != wh.omegaWas) wh.sideOmega += wh.omega - wh.omegaWas;
+        if (!wheelPowered(wh)) wh.sideOmega = wh.omega, wh.twist = 0;
+    }
+    // Side-gear speeds at the start of the step: the drivetrain's real spin-up over the
+    // step, whatever caused it (drive, road, brakes, lockers), is what the engine follows.
     double omega0[16] = {0};
-    for (size_t i = 0; i < wheels.size() && i < 16; i++) omega0[i] = wheels[i].omega;
+    for (size_t i = 0; i < wheels.size() && i < 16; i++) omega0[i] = wheels[i].sideOmega;
     // Engine: rpm follows the driven wheels once the clutch is locked.
     int nd = 0;
     double ws = 0, gs = 0;
     for (Wheel& wh : wheels)
         if (wheelPowered(wh)) {
-            ws += wh.omega;
+            ws += wh.sideOmega;
             gs += std::fabs(wh.groundSpeed) / wh.R;
             nd++;
         }
@@ -703,7 +717,8 @@ void Car::wheelStep(double h, const World& w) {
     // hold. Braking the spinner adds that braking torque to what the diff hands the
     // other side. It acts on the spin difference across the axle; the engine cut below
     // still watches every wheel (backing off a spinning tire keeps it from digging in).
-    const bool btcs = tractionControl && spec->absEnabled && brake < 0.05 && throttle > 0.05;
+    const bool tcOn = tractionControl && spec->tractionFitted;
+    const bool btcs = tcOn && spec->absEnabled && brake < 0.05 && throttle > 0.05;
     for (const Axle& ax : axles) {
         if (ax.wheel[0] < 0 || ax.wheel[1] < 0) continue;
         Wheel& l = wheels[ax.wheel[0]];
@@ -752,7 +767,7 @@ void Car::wheelStep(double h, const World& w) {
     // In low range it only works the brakes (Toyota's A-TRAC, Ford's rock crawl mode): a
     // throttle cut at the foot of a ledge stalls the climb, and at a crawl a spinning
     // tire isn't going fast enough to dig in.
-    if (tractionControl && !(lowRange && spec->absEnabled)) tcCut = clampd(tcCut - h * 30.0 * (maxSpin - 0.14), cornerSpin > 0.16 ? 0.02 : 0.15, 1.0);
+    if (tcOn && !(lowRange && spec->absEnabled)) tcCut = clampd(tcCut - h * 30.0 * (maxSpin - 0.14), cornerSpin > 0.16 ? 0.02 : 0.15, 1.0);
     else tcCut = 1;
     // Engine drag control (the other half of a modern traction system): off the throttle on
     // ice or snow, engine braking can drag the driven wheels toward locking, and a dragging
@@ -763,7 +778,7 @@ void Car::wheelStep(double h, const World& w) {
             double slideSpeed = std::fabs(wh.omega * wh.rollR() - wh.groundSpeed);
             maxDrag = std::max(maxDrag, -wh.sx * wh.bite * clampd((slideSpeed - 0.5) / 1.5, 0, 1));
         }
-    if (tractionControl && brake < 0.05) dragAssist = clampd(dragAssist + h * 20.0 * (maxDrag - 0.1), 0.0, 0.35);
+    if (tcOn && brake < 0.05) dragAssist = clampd(dragAssist + h * 20.0 * (maxDrag - 0.1), 0.0, 0.35);
     else dragAssist = 0;
     double thr = shiftTimer > 0 || engineDead ? 0.0 : std::max(throttle * tcCut, dragAssist);
     // Speed limiter (the ECU): eases the throttle off over the last 3 km/h.
@@ -783,12 +798,83 @@ void Car::wheelStep(double h, const World& w) {
     }
 
     const int ng = (int)spec->gears.size();
-    bool clutchSlipping = wheelRpm < 1250;
-    double Te;
-    if (engineDead || nd == 0) {
+    // Automatic shifting, judged on the gearbox's input speed (the engine's, through a
+    // clutch or a locked converter; the turbine's through a slipping one).
+    auto autoShift = [&](double in) {
+        if (manualShift || gear < 1) return;
+        // The autopilot crawling in low range keeps it in first (no upshift between
+        // ledges, to arrive at the next one in second, lugging).
+        const int top = pilot.active && pilot.holdFirst ? 1 : ng;
+        // Full throttle: upshift near the redline. Light throttle: short-shift to keep the
+        // revs down, as a real gearbox does when cruising. Downshift once revs really sag
+        // (lower point under throttle, never right after an upshift, so wheelspin doesn't
+        // cause hunting); kick down a gear for a burst of power when the pedal is floored
+        // at low revs.
+        const double pedal = clampd(throttle, 0, 1);
+        const double easyUp = std::max(2300.0, 0.45 * spec->redline), fullUp = spec->redline - 400;
+        const double upAt = easyUp + (fullUp - easyUp) * smoothstep(0.35, 0.9, pedal);
+        const double downAt = pedal > 0.5 ? 1600 : 1900;
+        const double nextRpm = gear < ng ? in * spec->gears[gear] / spec->gears[gear - 1] : 0;
+        const double lowerRpm = gear > 1 ? in * spec->gears[gear - 2] / spec->gears[gear - 1] : 1e9;
+        if (gear > top && shiftTimer < -0.3) {
+            gear--;
+            shiftTimer = spec->shiftTime * 0.7;
+        } else if (gear < top && in > upAt && roadRpm > upAt - 1100 && nextRpm > downAt + 350 && shiftTimer < -0.3) {
+            gear++;
+            shiftTimer = spec->shiftTime;
+        } else if (gear > 1 && std::min(in, roadRpm) < downAt && shiftTimer < -1.2) {
+            gear--;
+            shiftTimer = spec->shiftTime * 0.7;
+        } else if (gear > 1 && pedal > 0.9 && in < 0.55 * spec->redline && lowerRpm < spec->redline - 900 && shiftTimer < -0.6) {
+            gear--;
+            shiftTimer = spec->shiftTime * 0.7;
+        }
+    };
+    // The engine and flywheel (and gearbox input), kg*m^2.
+    const double Ie = 0.06 + 0.00012 * peakTorque(*spec);
+    const bool automatic = spec->stallRpm > 0;
+    // A torque converter locks up in the higher gears once it's moving; below that its
+    // fluid coupling slips, and the engine runs on its own speed.
+    const bool converterSlips = automatic && !(gear >= spec->lockupGear && wheelRpm > 1300);
+    bool clutchSlipping = !automatic && wheelRpm < 1250;
+    double Te, Iin = Ie;
+    if (engineDead || nd == 0 || gear == 0) {
         if (engineDead) rpm += (0 - rpm) * std::min(1.0, h * 2);
         else rpm += (spec->idleRpm + thr * 4500 - rpm) * std::min(1.0, h * 4);  // nothing to drive: revs freely
         Te = 0;
+    } else if (converterSlips) {
+        // Torque converter. The pump (on the crank) churns oil at the turbine (on the
+        // gearbox input): it takes (rpm / K)^2 from the engine, K set by the stall speed,
+        // and the stator multiplies that up to stallRatio at the turbine while the turbine
+        // lags far behind, falling to 1:1 at the coupling point (~85% of pump speed). The
+        // wheels driving the engine (coasting) go back through it, weakly: an automatic's
+        // engine braking is soft.
+        const double K = spec->stallRpm / std::sqrt(std::max(1.0, engineTorque(spec->stallRpm)));
+        const double pump = std::max(rpm, 0.0), turb = wheelRpm;
+        double Tp, Tt;
+        const double sr = pump > 1 ? turb / pump : (turb > 1 ? 9.0 : 0.0);
+        // Stopped with the pedal up, it's parked (in neutral, so a strap or a winch can
+        // still move it): no creep until the driver asks for it.
+        const bool parked = throttle < 0.02 && (nd ? gs / nd * wheels[0].R : 0.0) < 0.5;
+        if (parked) {
+            Tp = Tt = 0;
+        } else if (sr < 1) {
+            const double sc = std::max(sr, 0.0);
+            const double cap = sc < 0.85 ? 1.0 : (1 - sc) / 0.15;  // capacity falls away near coupling
+            Tp = (pump / K) * (pump / K) * cap;
+            Tt = Tp * (sc < 0.85 ? spec->stallRatio - (spec->stallRatio - 1) * sc / 0.85 : 1.0);
+        } else {
+            Tp = Tt = -0.6 * (turb / K) * (turb / K) * std::min(1.0, (sr - 1) / 0.15);
+        }
+        // The engine spins up or down on its own inertia; an idle governor holds it at idle.
+        const double idleThr = clampd((spec->idleRpm + 100 - rpm) / 400, 0, 0.4);
+        const double tEff = std::max(thr, idleThr);
+        double Teng = tEff * engineTorque(rpm) * power * turbo - (1 - tEff) * (18 + rpm * 0.005);
+        if (rpm > spec->redline) Teng = std::min(Teng, 0.0) - (rpm - spec->redline) * 0.5;  // rev limiter
+        rpm = std::max(0.0, rpm + (Teng - Tp) / Ie * h * 60 / (2 * M_PI));
+        Te = Tt;          // what the gears get
+        Iin = 0.08;       // turbine and gearbox input
+        autoShift(turb);  // (a modern auto shifts on output speed, not on a flaring engine)
     } else if (clutchSlipping) {
         double target = spec->idleRpm + thr * 2600;
         rpm += (target - rpm) * std::min(1.0, h * 5);
@@ -803,36 +889,7 @@ void Car::wheelStep(double h, const World& w) {
         rpm = wheelRpm;
         Te = thr * engineTorque(rpm) * power * turbo - (1 - thr) * (18 + rpm * 0.005);  // engine braking
         if (rpm > spec->redline) Te = std::min(Te, 0.0) - (rpm - spec->redline) * 0.5;  // rev limiter
-        if (!manualShift && gear >= 1) {
-            // The autopilot crawling in low range keeps it in first (no upshift between
-            // ledges, to arrive at the next one in second, lugging).
-            const int top = pilot.active && pilot.holdFirst ? 1 : ng;
-            // Automatic shifting. Full throttle: upshift near the redline. Light throttle:
-            // short-shift to keep the revs down, as a real gearbox does when cruising.
-            // Downshift once revs really sag (lower point under throttle, never right after an
-            // upshift, so wheelspin doesn't cause hunting); kick down a gear for a burst of
-            // power when the pedal is floored at low revs.
-            const double pedal = clampd(throttle, 0, 1);
-            const double easyUp = std::max(2300.0, 0.45 * spec->redline), fullUp = spec->redline - 400;
-            const double upAt = easyUp + (fullUp - easyUp) * smoothstep(0.35, 0.9, pedal);
-            const double downAt = pedal > 0.5 ? 1600 : 1900;
-            const double nextRpm = gear < ng ? rpm * spec->gears[gear] / spec->gears[gear - 1] : 0;
-            const double lowerRpm = gear > 1 ? rpm * spec->gears[gear - 2] / spec->gears[gear - 1] : 1e9;
-            if (gear > top && shiftTimer < -0.3) {
-                gear--;
-                shiftTimer = spec->shiftTime * 0.7;
-            } else if (gear < top && rpm > upAt && roadRpm > upAt - 1100 && nextRpm > downAt + 350 && shiftTimer < -0.3) {
-                gear++;
-                shiftTimer = spec->shiftTime;
-            } else if (gear > 1 && std::min(rpm, roadRpm) < downAt && shiftTimer < -1.2) {
-                gear--;
-                shiftTimer = spec->shiftTime * 0.7;
-            } else if (gear > 1 && pedal > 0.9 && rpm < 0.55 * spec->redline && lowerRpm < spec->redline - 900 &&
-                       shiftTimer < -0.6) {
-                gear--;
-                shiftTimer = spec->shiftTime * 0.7;
-            }
-        }
+        autoShift(rpm);
     }
     int driveWheels = 0;
     for (const Wheel& wh : wheels) driveWheels += wh.driven && (!wh.front || frontEngaged());
@@ -841,56 +898,33 @@ void Car::wheelStep(double h, const World& w) {
     // crank, not straight to the hubs: the gearbox, the transfer case and the differentials
     // pass it on (solved after the wheels, below). Slipping (pulling away), the clutch
     // presses a set torque into the gearbox, the same to every driven wheel.
-    const bool engaged = !clutchSlipping && nd > 0 && !engineDead && gear != 0;
+    const bool engaged = !clutchSlipping && nd > 0 && !engineDead && gear != 0;  // (a converter is always "in")
     brakePressure += clampd(brake - brakePressure, -h * 10, h * 7);
 
-    // Limited-slip and locked differentials: torque flows from the faster wheel to the
-    // slower one. A locker holds them together; a limited-slip diff only up to its bias
-    // (a share of the torque going through it), so it frees up off the throttle.
+    // Limited-slip differentials: torque flows from the faster side to the slower one, up
+    // to the diff's bias (a share of the torque going through it), so it frees up off the
+    // throttle. (Lockers and a locked center are solid gears: they're in the exact solve
+    // at the end of the step.)
     for (const Axle& ax : axles) {
         if (ax.wheel[0] < 0 || ax.wheel[1] < 0) continue;
         Wheel& l = wheels[ax.wheel[0]];
         Wheel& r = wheels[ax.wheel[1]];
         const DiffType dt = diffType(ax.front);
-        if (dt == DIFF_OPEN || !wheelPowered(l) || !wheelPowered(r)) continue;
-        const double Ieff = l.I * r.I / (l.I + r.I);
+        if (dt != DIFF_LSD || !wheelPowered(l) || !wheelPowered(r)) continue;
+        const double Ieff = kSideGearI / 2;
         // A limited-slip diff grabs the wheels together hard at low speed (launches, slow
         // corners) and eases off as the speed climbs: held stiffly together at 300 km/h, the
         // rear wheels' fight over every tiny yaw sets the car weaving (e-diffs open up at
         // speed for the same reason).
         const double v = 0.5 * (std::fabs(l.groundSpeed) + std::fabs(r.groundSpeed));
         const double lsdGain = 0.25 * clampd((70 - v) / 35, 0.02, 1.0);
-        double T = (l.omega - r.omega) * Ieff / h * (dt == DIFF_LOCKED ? 0.5 : lsdGain);
-        const double cap = dt == DIFF_LOCKED ? 8000.0 : 30 + (spec->lsdBias - 1) / (spec->lsdBias + 1) * std::fabs(2 * driveTorque);
+        double T = (l.sideOmega - r.sideOmega) * Ieff / h * lsdGain;
+        const double cap = 30 + (spec->lsdBias - 1) / (spec->lsdBias + 1) * std::fabs(2 * driveTorque);
         T = clampd(T, -cap, cap);
-        l.omega -= T * h / l.I;
-        r.omega += T * h / r.I;
+        l.sideOmega -= T * h / kSideGearI;
+        r.sideOmega += T * h / kSideGearI;
         l.xferTorque -= T;
         r.xferTorque += T;
-    }
-    // Locked transfer case (part-time 4H/4L, or the center diff locked): the front and
-    // rear prop shafts turn together, so each axle's average wheel speed matches the
-    // other's. Within an axle an open diff still lets the two sides differ.
-    if (centerLocked()) {
-        double If = 0, Ir = 0, wf = 0, wr = 0;
-        int nf = 0, nr = 0;
-        for (const Wheel& wh : wheels) {
-            if (!wheelPowered(wh)) continue;
-            (wh.front ? If : Ir) += wh.I;
-            (wh.front ? wf : wr) += wh.omega;
-            (wh.front ? nf : nr)++;
-        }
-        if (nf && nr) {
-            wf /= nf;
-            wr /= nr;
-            const double Ieff = If * Ir / (If + Ir);
-            const double T = clampd((wf - wr) * Ieff / h * 0.5, -12000.0, 12000.0);
-            for (Wheel& wh : wheels) {
-                if (!wheelPowered(wh)) continue;
-                wh.omega += wh.front ? -T * h / If : T * h / Ir;
-                wh.xferTorque += wh.front ? -T * wh.I / If : T * wh.I / Ir;
-            }
-        }
     }
 
     V3 fwd = norm(groupAvg(grpFront) - groupAvg(grpRear));
@@ -900,6 +934,15 @@ void Car::wheelStep(double h, const World& w) {
     // it sends to the wheels (squat under power, axle wind-up on a solid axle), and
     // the prop shaft twists the gearbox one way and the diff the other.
     if (!engineNodes.empty()) {
+        // What the engine (or the converter's turbine) is actually putting in, at the
+        // wheels. The housings take the shafts' torque only up to that: the rest is the
+        // shafts ringing against the free-spinning gears (parked, or between shifts),
+        // which goes round inside the driveline and doesn't wrap the axle.
+        const double input = std::fabs(engaged ? Te * ratio * 0.92 : driveTorque * driveWheels);
+        double shafts = 0;
+        for (const Wheel& wh : wheels)
+            if (wheelPowered(wh)) shafts += wh.driveActual;
+        const double share = std::fabs(shafts) > 1 ? std::min(1.0, input / std::fabs(shafts)) : 0.0;
         double propTotal = 0;
         for (const Axle& ax : axles) {
             int powered = 0;
@@ -909,6 +952,7 @@ void Car::wheelStep(double h, const World& w) {
             double Taxle = 0;  // what reached its hubs last step
             for (int s2 = 0; s2 < 2; s2++)
                 if (ax.wheel[s2] >= 0 && wheelPowered(wheels[ax.wheel[s2]])) Taxle += wheels[ax.wheel[s2]].driveActual;
+            Taxle *= share;
             if (Taxle == 0) continue;
             V3 axleDir = leftDir;
             if (ax.propShaft >= 0) {
@@ -1083,15 +1127,23 @@ void Car::wheelStep(double h, const World& w) {
             wh.abs = 1;
         }
         double Td = wheelPowered(wh) && !engaged ? driveTorque : 0.0;
-        wh.omega += (Td - Fx * R) / wh.I * h;
-        // Axle shaft and CV: the engine's share plus whatever a locker or the locked
-        // center shoves through it to keep the wheels together. Full throttle in low range
-        // with a wheel in the air and the axle locked doubles the load on the other side,
-        // and a locker at full lock binds; past its limit the shaft snaps and that hub
-        // freewheels until it's repaired. IFS CVs are weaker than solid-axle shafts, and
-        // weaker again at a steep angle.
+        // The shaft's wind-up drives the hub (and holds back the side gear).
+        double Ts = 0;
+        if (wheelPowered(wh)) {
+            const double k = shaftStiffness(), c = std::sqrt(k * wh.I);  // shuffle damped at ~1/2 critical
+            Ts = k * wh.twist + c * (wh.sideOmega - wh.omega);
+            wh.sideOmega += (Td - Ts) / kSideGearI * h;
+        }
+        wh.shaftTorque = Ts;
+        wh.omega += (Ts - Fx * R) / wh.I * h;
+        // Axle shaft and CV: what the engine winds into it, plus whatever a locker or the
+        // locked center shoves through it to keep the wheels together. Full throttle in low
+        // range with a wheel in the air and the axle locked doubles the load on the other
+        // side, a locker at full lock binds, and a spinning wheel landing grabs; past its
+        // limit the shaft snaps and that hub freewheels until it's repaired. IFS CVs are
+        // weaker than solid-axle shafts, and weaker again at a steep angle.
         if (wheelPowered(wh) && spec->shaftLimit > 0) {
-            const double shaftT = std::fabs((engaged ? (double)wh.driveActual : Td) + wh.xferTorque);
+            const double shaftT = std::fabs(Ts);
             wh.shaftLoad += (float)((shaftT - wh.shaftLoad) * std::min(1.0, h / 0.01));
             double limit = spec->shaftLimit;
             if (wh.front && spec->frontSusp != SOLID_AXLE) limit *= 0.65 * (1 - 0.35 * clampd(std::fabs(steer) / 0.6, 0, 1));
@@ -1181,21 +1233,20 @@ void Car::wheelStep(double h, const World& w) {
         if (!wh.detached && std::fabs(wh.brakeReaction) > 1) applyTorque(wh.assembly, axis * wh.brakeReaction);
         wh.angle += wh.omega * h;
     }
-    // The drivetrain, clutch in: the crank (engine, flywheel, gearbox input: inertia Ie)
-    // turns at the gear ratio times the transfer case's output, which turns at the mean of
-    // the axles' carriers, each at the mean of its two wheels (that's what a differential
-    // is). With the center locked the two carriers turn together. The wheels have just moved
-    // under the road, brakes and lockers; the crank under the engine's torque. These are
-    // rigid gears, so take out whatever breaks them, sharing it by inertia (an exact
-    // impulse solve). It's what makes an open diff an open diff: the same torque to both
-    // sides, so a wheel in the air spins up (revving the engine with it) and the other gets
-    // only what that one takes; and the engine's own spinning mass is felt in every gear.
-    for (Wheel& wh : wheels) wh.driveActual = engaged ? 0.0f : (float)(wheelPowered(wh) ? driveTorque : 0.0);
-    if (engaged) {
-        const double Ie = 0.06 + 0.00012 * peakTorque(*spec);
-        // Rows: [crank, wheels...]. Carrier weights per wheel.
+    // The drivetrain's gears, solved exactly. The crank (engine, flywheel, gearbox input:
+    // inertia Ie; or the converter's turbine) turns at the gear ratio times the transfer
+    // case's output, which turns at the mean of the axles' carriers, each at the mean of its
+    // two side gears (that's what a differential is). With the center locked the two
+    // carriers turn together; a locker holds its two side gears together. The side gears
+    // have just moved under the half shafts and the limited-slip diffs, the crank under the
+    // engine's torque. These are rigid gears, so take out whatever breaks them, sharing it
+    // by inertia (an exact impulse solve). It's what makes an open diff an open diff: the
+    // same torque to both sides, so a wheel in the air spins up (revving the engine with it)
+    // and the other gets only what that one takes; and the engine's own spinning mass is
+    // felt in every gear. With the clutch slipping (or the engine off) only the locks apply.
+    {
         const int nw = (int)wheels.size();
-        double cf[16] = {0}, cr[16] = {0};  // each wheel's weight in the front and rear carriers
+        double cf[16] = {0}, cr[16] = {0};  // each side gear's weight in the front and rear carriers
         int nf = 0, nr = 0;
         for (int i = 0; i < nw; i++)
             if (wheelPowered(wheels[i])) (wheels[i].front ? nf : nr)++;
@@ -1205,48 +1256,81 @@ void Car::wheelStep(double h, const World& w) {
                 else cr[i] = 1.0 / nr;
             }
         const int axlesOn = (nf > 0) + (nr > 0);
-        // Row 0: crank - ratio * root = 0, root = mean of the carriers.
-        // Row 1 (center locked, both axles): front carrier - rear carrier = 0.
-        double J[2][17] = {{0}};
-        const int rows = centerLocked() && nf > 0 && nr > 0 ? 2 : 1;
-        J[0][0] = 1;
-        for (int i = 0; i < nw; i++) J[0][1 + i] = -ratio * (cf[i] + cr[i]) / axlesOn;
-        if (rows == 2)
-            for (int i = 0; i < nw; i++) J[1][1 + i] = cf[i] - cr[i];
-        double invM[17], v[17];
-        invM[0] = 1 / Ie;
-        // The crank: where the gears had it at the start of the step, plus the engine's torque.
-        double root0 = 0;
-        for (int i = 0; i < nw; i++) root0 += (cf[i] + cr[i]) * omega0[i];
-        root0 /= axlesOn;
-        v[0] = ratio * root0 + Te * 0.92 / Ie * h;
-        for (int i = 0; i < nw; i++) invM[1 + i] = 1 / wheels[i].I, v[1 + i] = wheels[i].omega;
-        // (J M^-1 J^T) lambda = J v
-        double A[2][2] = {{0}}, bvec[2] = {0};
-        for (int r = 0; r < rows; r++) {
-            for (int k = 0; k <= nw; k++) bvec[r] += J[r][k] * v[k];
-            for (int c2 = 0; c2 < rows; c2++)
-                for (int k = 0; k <= nw; k++) A[r][c2] += J[r][k] * invM[k] * J[c2][k];
+        double J[4][17] = {{0}};
+        int rows = 0;
+        if (engaged && axlesOn) {  // crank - ratio * root = 0, root = mean of the carriers
+            J[rows][0] = 1;
+            for (int i = 0; i < nw; i++) J[rows][1 + i] = -ratio * (cf[i] + cr[i]) / axlesOn;
+            rows++;
         }
-        double lam[2] = {0, 0};
-        if (rows == 1) {
-            lam[0] = A[0][0] > 1e-12 ? bvec[0] / A[0][0] : 0;
-        } else {
-            const double det = A[0][0] * A[1][1] - A[0][1] * A[1][0];
-            if (std::fabs(det) > 1e-12) {
-                lam[0] = (bvec[0] * A[1][1] - bvec[1] * A[0][1]) / det;
-                lam[1] = (A[0][0] * bvec[1] - A[1][0] * bvec[0]) / det;
+        if (centerLocked() && nf > 0 && nr > 0) {  // front carrier - rear carrier = 0
+            for (int i = 0; i < nw; i++) J[rows][1 + i] = cf[i] - cr[i];
+            rows++;
+        }
+        for (const Axle& ax : axles) {  // locker: left side gear - right side gear = 0
+            if (ax.wheel[0] < 0 || ax.wheel[1] < 0 || diffType(ax.front) != DIFF_LOCKED) continue;
+            if (!wheelPowered(wheels[ax.wheel[0]]) || !wheelPowered(wheels[ax.wheel[1]]) || rows >= 4) continue;
+            J[rows][1 + ax.wheel[0]] = 1;
+            J[rows][1 + ax.wheel[1]] = -1;
+            rows++;
+        }
+        if (rows > 0) {
+            double invM[17], v[17];
+            invM[0] = 1 / Iin;
+            // The crank: where the gears had it at the start of the step, plus the engine's torque.
+            double root0 = 0;
+            for (int i = 0; i < nw; i++) root0 += (cf[i] + cr[i]) * omega0[i];
+            root0 /= std::max(axlesOn, 1);
+            v[0] = ratio * root0 + Te * 0.92 / Iin * h;
+            for (int i = 0; i < nw; i++) invM[1 + i] = 1 / kSideGearI, v[1 + i] = wheels[i].sideOmega;
+            // (J M^-1 J^T) lambda = J v, by Gaussian elimination (up to 4 rows).
+            double A[4][5] = {{0}};
+            for (int r = 0; r < rows; r++) {
+                for (int k = 0; k <= nw; k++) A[r][4] += J[r][k] * v[k];
+                for (int c2 = 0; c2 < rows; c2++)
+                    for (int k = 0; k <= nw; k++) A[r][c2] += J[r][k] * invM[k] * J[c2][k];
+            }
+            double lam[4] = {0, 0, 0, 0};
+            bool ok = true;
+            for (int c2 = 0; c2 < rows && ok; c2++) {
+                int piv = c2;
+                for (int r = c2 + 1; r < rows; r++)
+                    if (std::fabs(A[r][c2]) > std::fabs(A[piv][c2])) piv = r;
+                if (std::fabs(A[piv][c2]) < 1e-12) {
+                    ok = false;
+                    break;
+                }
+                if (piv != c2)
+                    for (int k = 0; k < 5; k++) std::swap(A[piv][k], A[c2][k]);
+                for (int r = 0; r < rows; r++) {
+                    if (r == c2) continue;
+                    const double f = A[r][c2] / A[c2][c2];
+                    for (int k = c2; k < 5; k++) A[r][k] -= f * A[c2][k];
+                }
+            }
+            if (ok)
+                for (int r = 0; r < rows; r++) lam[r] = A[r][4] / A[r][r];
+            for (int i = 0; i < nw; i++) {
+                if (!wheelPowered(wheels[i])) continue;
+                double d = 0;
+                for (int r = 0; r < rows; r++) d += J[r][1 + i] * lam[r];
+                wheels[i].sideOmega -= invM[1 + i] * d;
             }
         }
-        for (int i = 0; i < nw; i++) {
-            if (!wheelPowered(wheels[i])) continue;
-            const double dw = -invM[1 + i] * (J[0][1 + i] * lam[0] + J[1][1 + i] * lam[1]);
-            wheels[i].omega += dw;
-            wheels[i].angle += dw * h;
-            wheels[i].driveActual = (float)(dw * wheels[i].I / h);  // what the gears put through this hub
-        }
+    }
+    // The shafts wind up by how far each side gear ran ahead of its hub; what they put
+    // through the hubs is what the axle housings feel (torque reactions, next step).
+    for (Wheel& wh : wheels) {
+        if (wheelPowered(wh)) wh.twist += (wh.sideOmega - wh.omega) * h;
+        wh.driveActual = (float)wh.shaftTorque;
+        wh.omegaWas = wh.omega;
     }
 }
+
+// Half-shaft torsional stiffness (N*m/rad). A ~33 mm, 0.8 m steel shaft is ~12 kN*m/rad
+// and yields near 30 deg of twist; the tire's sidewall adds give in series. Scaled to
+// the shaft's strength: ~19 deg of wind-up at the torque that snaps it.
+double Car::shaftStiffness() const { return spec->shaftLimit > 0 ? 3.0 * spec->shaftLimit : 15000.0; }
 
 void Car::integrate(double h) {
     double maxV2 = 0;

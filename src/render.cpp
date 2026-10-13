@@ -2543,7 +2543,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
                     case BEAM_ENGINE: r = 1.0f, g = 0.9f, bl = 0.2f; break;
                     case BEAM_MOUNT: r = 0.9f, g = 0.3f, bl = 0.2f; break;
                     case BEAM_ARM: case BEAM_KNUCKLE: r = 0.2f, g = 0.9f, bl = 1.0f; break;
-                    case BEAM_SPRING: r = 1.0f, g = 0.3f, bl = 1.0f; break;
+                    case BEAM_SPRING: case BEAM_BUMPSTOP: r = 1.0f, g = 0.3f, bl = 1.0f; break;
                     case BEAM_TIEROD: r = 0.3f, g = 0.5f, bl = 1.0f; break;
                     case BEAM_SHAFT: r = 1.0f, g = 1.0f, bl = 1.0f; break;
                     case BEAM_PANEL: r = 0.75f, g = 0.8f, bl = 0.9f; break;

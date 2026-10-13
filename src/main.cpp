@@ -568,7 +568,7 @@ void drawGauges(Renderer& r, const Car& car, HudState& hud, float u, int W, int 
     // Indicator lights above the hub.
     float is = px(1.0f * u), iy = cy - 26 * u;
     std::vector<std::pair<std::string, std::array<float, 3>>> lights;
-    if (!car.tractionControl) lights.push_back({"TC OFF", {1.0f, 0.75f, 0.2f}});
+    if (!car.tractionControl && car.spec->tractionFitted) lights.push_back({"TC OFF", {1.0f, 0.75f, 0.2f}});
     if (car.manualShift) lights.push_back({"MAN", {0.6f, 0.9f, 0.5f}});
     if (const DriveMode* m = car.isProp() ? nullptr : car.mode())
         lights.push_back({m->name, m->low ? std::array<float, 3>{1.0f, 0.75f, 0.2f}
@@ -1940,7 +1940,8 @@ int main(int argc, char** argv) {
                         case SC_X: {
                             Car& c = sim.cars[sim.player];
                             c.tractionControl = !c.tractionControl;
-                            hud.toast(c.tractionControl ? "TRACTION CONTROL ON" : "TRACTION CONTROL OFF");
+                            hud.toast(!c.spec->tractionFitted ? "NO TRACTION CONTROL ON THIS CAR"
+                                      : c.tractionControl ? "TRACTION CONTROL ON" : "TRACTION CONTROL OFF");
                             break;
                         }
                         case SC_1:

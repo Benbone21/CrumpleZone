@@ -415,7 +415,11 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         bronco.transfer = XFER_PART_TIME;  // advanced 4x4: 2H, 4A, 4H, 4L
         bronco.lockerRear = true;          // Dana 44 rear e-locker (front locker: Sasquatch, in the garage)
         bronco.frontLockerLowOnly = true;  // Ford only lets the front locker in with 4L
-        bronco.shaftLimit = 17000;         // Dana 44 rear shafts; the IFS CVs take ~11 kN*m
+        // Dana 44 (M220) rear shafts, ~36 mm induction-hardened 4340: about 11 kN*m at
+        // ~1,200 MPa ultimate shear (estimate: tau * pi d^3 / 16). The IFS CVs take ~7 kN*m,
+        // less at full lock. In 4L first the engine alone can put ~33 kN*m into the axles, so
+        // a spinning wheel landing, or a locker binding at full lock, can snap one.
+        bronco.shaftLimit = 11000;
         bronco.lowRange = 2.72;
         bronco.brakeFront = 3800;  // 311 mm vented
         bronco.brakeRear = 2800;   // 308 mm vented
@@ -430,6 +434,9 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         bronco.reverseRatio = 4.885;
         bronco.finalDrive = 4.27;
         bronco.shiftTime = 0.20;
+        bronco.stallRpm = 2600;  // 10R80 converter behind the 2.7 (estimate: typical for the pair)
+        bronco.stallRatio = 1.9;
+        bronco.lockupGear = 3;
         bronco.engineName = "2.7L TWIN-TURBO V6";
         bronco.gearboxName = "10-SPEED AUTO";
         bronco.doors = 4;
@@ -557,6 +564,9 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         runner.reverseRatio = 2.393;
         runner.finalDrive = 4.10;   // never regeared: tall on 35s
         runner.shiftTime = 0.40;
+        runner.stallRpm = 2200;  // A340F converter (estimate; the blower doesn't change it)
+        runner.stallRatio = 2.0;
+        runner.lockupGear = 3;   // locks up in 3rd and overdrive
         runner.engineName = "3.4L V6 5VZ-FE SUPERCHARGED";
         runner.gearboxName = "A340F 4-SPEED AUTO";
         runner.lampStyle = LAMP_RECT;
@@ -628,6 +638,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         ef.brakeFront = 1550;
         ef.brakeRear = 750;
         ef.absEnabled = false;
+        ef.tractionFitted = false;  // no traction control on a 1990 Civic either
         ef.dragArea = 0.61;
         ef.torque = {{0, 65}, {1000, 91}, {2000, 113}, {3000, 127}, {4000, 135.6}, {5000, 134}, {6000, 128.2}, {6500, 112}};
         ef.idleRpm = 750;

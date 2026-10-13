@@ -153,7 +153,9 @@ SCENARIO(surfIce, "surfaces/ice", "Ice: the Civic at 40 km/h steering hard just 
         smooth += (std::fabs(dot(acc, side)) / 9.81 - smooth) * 0.1;
         g = std::max(g, smooth);
     });
-    ctx.metric("sideways grip", g, "g", 0.04, 0.16);
+    // (Down to ~0.03 g: off the throttle in gear, a car without engine-drag control lets
+    // engine braking drag its front tires on ice, and that grip goes to slowing, not turning.)
+    ctx.metric("sideways grip", g, "g", 0.03, 0.16);
 }
 
 SCENARIO(surfPilotSand, "surfaces/autopilot-sand", "Autopilot down the sand strip: 4WD with the center locked, then airs down for a long stretch of it") {
