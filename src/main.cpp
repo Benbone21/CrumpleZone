@@ -20,6 +20,7 @@
 #include <map>
 
 #include "audio.h"
+#include "walker.h"
 #include "coop.h"
 #include "editor.h"
 #include "fx.h"
@@ -935,6 +936,7 @@ void drawHelp(Renderer& r, float u, int W, int H, bool mph) {
         {"Q E", "SHIFT DOWN / UP"},           {"SHIFT+M", "MANUAL / AUTOMATIC"},
         {"M", "MAP (WAYPOINTS, PINGS)"},      {"ENTER", "CHAT"},
         {"MIDDLE CLICK", "PING: GO HERE (SHIFT: HELP)"},
+        {"J", "GET OUT / IN (ON FOOT: V HOOKS YOUR WINCH)"},
         {"L", mph ? "4X4: 2H 4H 4L (LOW: BELOW 5 MPH)" : "4X4: 2H 4H 4L (LOW: BELOW 8 KM/H)"},
         {"SHIFT+L", "LIGHTS: AUTO, LOW, HIGH, OFF"},
         {"F B", "FRONT / REAR LOCKER"},       {"I", "SPAWN PARKED VEHICLE"},
@@ -1662,6 +1664,37 @@ int main(int argc, char** argv) {
         }
         return false;
     };
+    // ---- On foot ----
+    Walker walker;
+    double walkSend = 0, carCamDist = 7.5;
+    auto getOut = [&]() {
+        Car& c = sim.cars[sim.player];
+        if (len(c.frame().vel) > 2.0) {
+            hud.toast("STOP FIRST");
+            return;
+        }
+        stopPilot();
+        c.handbrake = 1;
+        walker.exitCar(sim.world, c);
+        carCamDist = cam.dist;
+        cam.dist = 3.6;
+        cam.initialized = false;
+        hud.toast("ON FOOT: WASD WALK, SHIFT RUN, SPACE JUMP, V HOOK YOUR WINCH HERE, J GET IN");
+    };
+    auto getIn = [&]() {
+        const int k = walker.carToEnter(sim);
+        if (k < 0) {
+            hud.toast("WALK UP TO A TRUCK TO GET IN");
+            return;
+        }
+        sim.player = k;
+        sim.cars[k].handbrake = 0;
+        walker.active = false;
+        cam.dist = carCamDist;
+        cam.initialized = false;
+        net.sendGame("inside");
+        hud.toast(std::string("IN THE ") + sim.cars[k].spec->name);
+    };
     // ---- The world editor (offline) ----
     Editor editor;
     Level lastEdited;
@@ -2022,7 +2055,29 @@ int main(int argc, char** argv) {
                             hud.toast(t);
                             break;
                         }
-                        case SC_V: {  // unhook, or start picking an anchor
+                        case SC_V:
+                            if (walker.active) {  // by hand: the anchor nearest you, your truck's line
+                                const Car& c = sim.cars[sim.player];
+                                if (sim.dropWinch(sim.player)) {
+                                    hud.toast("WINCH LINE UNHOOKED AND SPOOLED");
+                                    break;
+                                }
+                                if (c.isProp() || !(c.spec->extras & EXTRA_WINCH)) {
+                                    hud.toast("NO WINCH ON YOUR TRUCK");
+                                    break;
+                                }
+                                double best = 3.0;
+                                int pick = -1;
+                                const std::vector<WinchTarget> targets = sim.winchTargets(sim.player);
+                                for (int k = 0; k < (int)targets.size(); k++) {
+                                    const double d = len(V3(targets[k].at.x - walker.p.x, 0, targets[k].at.z - walker.p.z));
+                                    if (d < best) best = d, pick = k;
+                                }
+                                if (pick < 0) hud.toast("WALK TO A TREE, ROCK OR TRUCK IN REACH OF THE LINE (30 M)");
+                                else hud.toast(sim.hookWinchTo(sim.player, targets[pick].end));
+                                break;
+                            }
+                            {  // in the truck: unhook, or start picking an anchor
                             const Car& c = sim.cars[sim.player];
                             if (sim.dropWinch(sim.player)) hud.toast("WINCH LINE UNHOOKED AND SPOOLED");
                             else if (c.isProp() || !(c.spec->extras & EXTRA_WINCH)) hud.toast("NO WINCH ON THIS TRUCK");
@@ -2075,11 +2130,18 @@ int main(int argc, char** argv) {
                         case SC_F2:
                             openEditor(editorKeyLevel());
                             break;
+                        case SC_J:
+                            if (playback.active()) {  // (a scenario: J opens its checks list)
+                                hud.scenarioDetail = !hud.scenarioDetail;
+                                break;
+                            }
+                            if (walker.active) getIn();
+                            else getOut();
+                            break;
                         case SC_F3:
                             settings.showFps = hud.showFps = !hud.showFps;
                             saveSettings();
                             break;
-                        case SC_J: hud.scenarioDetail = !hud.scenarioDetail; break;
                         case SC_F5:  // load the new build (see BuildWatch)
                             if (hud.newBuild) reload = true, running = false;
                             else hud.toast(watch.exe.empty() ? "RELOADING ISN'T AVAILABLE HERE" : "NO NEW BUILD YET");
@@ -2317,6 +2379,21 @@ int main(int argc, char** argv) {
                 }
             }
             net.gameIn.clear();
+            if (walker.active && !sim.paused) {
+                // On foot: the keys walk you; the truck sits on its handbrake.
+                const V3 vf = norm(V3(lastView.target.x - lastView.eye.x, 0, lastView.target.z - lastView.eye.z));
+                const double viewYaw = std::atan2(-vf.z, vf.x);
+                walker.step(sim.world, sim, dt, (up ? 1 : 0) - (down ? 1 : 0), (left ? 1 : 0) - (right ? 1 : 0), shiftHeld, hb, viewYaw);
+                up = down = left = right = false;
+                hb = true;
+                walkSend -= dt;
+                if (net.active() && walkSend <= 0) {
+                    walkSend = 0.1;
+                    char b[96];
+                    std::snprintf(b, sizeof b, "walk %.2f %.2f %.2f %.3f %.2f", walker.p.x, walker.p.y, walker.p.z, walker.yaw, walker.stride);
+                    net.sendGame(b);
+                }
+            }
             if (!sim.paused) sim.drive(up, down, left, right, hb, dt);
             if (!sim.paused && run.active()) {
                 run.update(sim, dt);  // (after the keys: it holds the car on the grid)
@@ -2375,6 +2452,10 @@ int main(int argc, char** argv) {
 
         int W, H;
         SDL_GL_GetDrawableSize(win, &W, &H);
+        if (scripted && opt.script == "walk") {  // (screenshots: out of the truck and walking off)
+            if (frame == 20) getOut();
+            if (frame > 30) up = true;
+        }
         if (scripted && opt.script == "map" && frame == 5) {  // (screenshots: the map, a ping and a waypoint)
             const V3 c = sim.cars[sim.player].frame().com;
             coop.ping(1, c + V3(120, 0, 80), "BUDDY", net);
@@ -2430,6 +2511,14 @@ int main(int argc, char** argv) {
                 hud.toast(play ? "PLAYING " + lastEdited.name + "   (F2: BACK TO THE EDITOR)" : "DRIVING THE EDITED WORLD   (F2: BACK TO THE EDITOR)");
             }
         }
+        if (walker.active) {  // the camera follows you on foot
+            fr = Frame();
+            fr.com = walker.p + V3(0, 1.1, 0);
+            fr.fwd = V3(std::cos(walker.yaw), 0, -std::sin(walker.yaw));
+            fr.up = V3(0, 1, 0);
+            fr.left = cross(fr.up, fr.fwd);
+            fr.vel = walker.v;
+        }
         View view = editor.active ? editor.view(W, H) : cam.update(fr, sim.world, dt, dragging && !menu.open);
         view.width = W;
         view.height = H;
@@ -2471,6 +2560,9 @@ int main(int argc, char** argv) {
             renderer.setWorld(sim.world);
             drawnWorld = sim.world.stamp;
         }
+        renderer.figures.clear();
+        if (walker.active) renderer.figures.push_back({walker.p, walker.yaw, V3(0.95, 0.5, 0.12), walker.stride});
+        for (const RemoteWalker& rw : coop.walkers) renderer.figures.push_back({rw.p, rw.yaw, V3(0.2, 0.6, 0.95), rw.stride});
         renderer.drawScene(sim, view, debug, &fx);
         hud.update(dt);
         if (editor.active && !menu.open) editor.draw(renderer, W, H, dt);

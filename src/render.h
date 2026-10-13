@@ -59,6 +59,14 @@ public:
     // Rebuilds the static scenery (terrain, boxes, trees, rocks, bushes, grass data) for
     // a new map.
     void setWorld(const World& world);
+    // People on foot this frame (you, your buddies): drawn as simple figures.
+    struct Figure {
+        V3 p;            // feet, on the ground
+        double yaw = 0;  // facing (0 = +x)
+        V3 col;          // jacket
+        double stride = 0;  // walk cycle phase (radians), legs and arms swing with it
+    };
+    std::vector<Figure> figures;
     // The world editor: redraw just what changed (terrain cells i, j on the 1 m grid,
     // inclusive), the water, or the objects.
     void updateTerrainRegion(const World& world, int i0, int j0, int i1, int j1);
@@ -90,6 +98,9 @@ private:
     GLuint sceneryVao = 0, sceneryVbo = 0, terrainTex = 0, waterVao = 0, waterVbo = 0, progWater = 0;
     int waterVertexCount = 0;
     int sceneryVertexCount = 0, terrainGridN = 0, mapId = 0, terrainMeshN = 0;
+    unsigned figVao = 0, figVbo = 0;
+    int figVertexCount = 0;
+    void buildFigures();
     double terrainSpacing = 1;
     GLuint terrainVao = 0, terrainVbo = 0, terrainIbo = 0;
     int terrainIndexCount = 0;

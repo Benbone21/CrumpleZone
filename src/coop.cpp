@@ -47,6 +47,8 @@ void Coop::update(double dt) {
     for (Ping& p : pings) p.age += dt;
     pings.erase(std::remove_if(pings.begin(), pings.end(), [](const Ping& p) { return p.age > kPingLife; }), pings.end());
     for (ChatLine& c : chat) c.age += dt;
+    for (RemoteWalker& w : walkers) w.age += dt;
+    walkers.erase(std::remove_if(walkers.begin(), walkers.end(), [](const RemoteWalker& w) { return w.age > 2.0; }), walkers.end());
     if (chat.size() > 40) chat.erase(chat.begin(), chat.begin() + (chat.size() - 40));
 }
 
@@ -63,6 +65,17 @@ bool Coop::onMessage(const std::string& who, const std::string& text) {
         pings.erase(std::remove_if(pings.begin(), pings.end(), [&](const Ping& q) { return q.who == who; }), pings.end());
         pings.push_back(p);
         chat.push_back({who, std::string("PINGED: ") + kPingNames[p.kind]});
+        return true;
+    }
+    if (tag == "walk" || tag == "inside") {
+        auto it = std::find_if(walkers.begin(), walkers.end(), [&](const RemoteWalker& w) { return w.who == who; });
+        if (tag == "inside") {
+            if (it != walkers.end()) walkers.erase(it);
+            return true;
+        }
+        if (it == walkers.end()) walkers.push_back(RemoteWalker{who}), it = walkers.end() - 1;
+        in >> it->p.x >> it->p.y >> it->p.z >> it->yaw >> it->stride;
+        it->age = 0;
         return true;
     }
     if (tag == "chat") {
@@ -200,6 +213,13 @@ void Coop::drawWorld(Renderer& r, const Sim& sim, const NetSession& net, const V
             const std::string t = net.ownerName(c.netId) + "  " + distText(len(c.frame().com - me));
             label(r, sx - r.textWidth(t, s) / 2, sy - 8 * s, s, t, 0.6f, 0.95f, 0.7f, 0.95f);
         }
+    for (const RemoteWalker& wk : walkers) {
+        float sx, sy;
+        if (worldToScreen(view, W, H, wk.p + V3(0, 2.2, 0), sx, sy)) {
+            const std::string t = wk.who + " (ON FOOT)  " + distText(len(wk.p - me));
+            label(r, sx - r.textWidth(t, s) / 2, sy - 8 * s, s, t, 0.6f, 0.95f, 0.7f, 0.95f);
+        }
+    }
     // Pings and the waypoint: a marker in the world, or an arrow at the screen's edge.
     auto marker = [&](const V3& at, const std::string& t, const float* col, double age) {
         const V3 p(at.x, sim.world.height(at.x, at.z) + 3, at.z);

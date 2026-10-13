@@ -19,6 +19,12 @@ struct Ping {
     double age = 0;
 };
 
+struct RemoteWalker {
+    std::string who;
+    V3 p;
+    double yaw = 0, stride = 0, age = 0;
+};
+
 struct ChatLine {
     std::string who, text;
     double age = 0;
@@ -28,6 +34,7 @@ class Coop {
 public:
     std::vector<Ping> pings;
     std::vector<ChatLine> chat;
+    std::vector<RemoteWalker> walkers;  // buddies on foot
     bool haveWaypoint = false;
     V3 waypoint;
     // Typing a chat line.

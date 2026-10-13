@@ -1980,6 +1980,54 @@ void Renderer::buildBoxes(const World& world) {
     boxVertexCount = (int)v.size();
 }
 
+void Renderer::buildFigures() {
+    std::vector<Vtx> v;
+    auto box = [&](const V3& c, const V3& he, const V3 ax[3], const V3& col) {
+        const double h[3] = {he.x, he.y, he.z};
+        for (int axis = 0; axis < 3; axis++)
+            for (int s = -1; s <= 1; s += 2) {
+                const int a = (axis + 1) % 3, b = (axis + 2) % 3;
+                const V3 n = ax[axis] * s, f = c + n * h[axis], du = ax[a] * h[a], dw = ax[b] * h[b];
+                const V3 q[4] = {f - du - dw, f + du - dw, f + du + dw, f - du + dw};
+                const int order[6] = {0, 1, 2, 0, 2, 3};
+                for (int k : s > 0 ? order : order) v.push_back(vtx(q[k], n, (float)col.x, (float)col.y, (float)col.z, SM_CONCRETE));
+            }
+    };
+    for (const Figure& fg : figures) {
+        const V3 f(std::cos(fg.yaw), 0, -std::sin(fg.yaw)), l(-f.z, 0, f.x), up(0, 1, 0);
+        const V3 ax[3] = {f, up, l};
+        const V3 skin(0.85, 0.66, 0.5), pants(0.22, 0.24, 0.3), boots(0.18, 0.13, 0.1);
+        const double swing = std::sin(fg.stride) * 0.45;
+        // A limb hanging from `top`, swung `a` radians forward about the left axis.
+        auto limb = [&](const V3& top, double length, double halfW, double a, const V3& col) {
+            const V3 dir = up * -std::cos(a) + f * std::sin(a);
+            const V3 lax[3] = {norm(cross(l, dir)), dir * -1.0, l};
+            box(top + dir * (length / 2), V3(halfW, length / 2, halfW), lax, col);
+        };
+        const V3 hip = fg.p + up * 0.95;
+        limb(hip + l * 0.11, 0.9, 0.075, swing, pants);
+        limb(hip - l * 0.11, 0.9, 0.075, -swing, pants);
+        box(fg.p + up * 0.04 + l * 0.11 + f * (std::sin(swing) * 0.85 + 0.04), V3(0.13, 0.05, 0.07), ax, boots);
+        box(fg.p + up * 0.04 - l * 0.11 + f * (std::sin(-swing) * 0.85 + 0.04), V3(0.13, 0.05, 0.07), ax, boots);
+        box(fg.p + up * 1.27, V3(0.13, 0.33, 0.21), ax, fg.col);  // torso
+        const V3 shoulder = fg.p + up * 1.55;
+        limb(shoulder + l * 0.28, 0.68, 0.06, -swing * 0.8, fg.col);
+        limb(shoulder - l * 0.28, 0.68, 0.06, swing * 0.8, fg.col);
+        box(fg.p + up * 1.74, V3(0.11, 0.12, 0.1), ax, skin);  // head
+        box(fg.p + up * 1.87, V3(0.12, 0.035, 0.11), ax, fg.col * 0.6);  // cap
+        box(fg.p + up * 1.85 + f * 0.13, V3(0.06, 0.012, 0.1), ax, fg.col * 0.6);  // peak
+    }
+    if (!figVao) {
+        GenVertexArrays(1, &figVao);
+        GenBuffers(1, &figVbo);
+        setupVtxVao(figVao, figVbo);
+    }
+    BindVertexArray(figVao);
+    BindBuffer(GL_ARRAY_BUFFER, figVbo);
+    BufferData(GL_ARRAY_BUFFER, v.size() * sizeof(Vtx), v.data(), GL_STREAM_DRAW);
+    figVertexCount = (int)v.size();
+}
+
 void Renderer::buildTrees(const World& world) {
     std::vector<Vtx> v;
     buildTreeMesh(world, v);
@@ -2318,6 +2366,7 @@ void Renderer::drawCarBodies(const Sim& sim, GLuint prog, bool glassPass) {
 }
 
 void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effects* effects) {
+    buildFigures();
     prepareCars(sim, debug);
 
     // Headlamps lit as real lights: the nearest cars with their lamps on, two spots each,
@@ -2391,6 +2440,10 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         uniformM4(progDepth, "uModel", m4identity());
         BindVertexArray(boxVao);
         DrawArrays(GL_TRIANGLES, 0, boxVertexCount);
+        if (figVertexCount > 0) {
+            BindVertexArray(figVao);
+            DrawArrays(GL_TRIANGLES, 0, figVertexCount);
+        }
         BindVertexArray(treeVao);
         DrawArrays(GL_TRIANGLES, 0, treeVertexCount);
         BindVertexArray(sceneryVao);
@@ -2500,6 +2553,10 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     }
     BindVertexArray(boxVao);
     DrawArrays(GL_TRIANGLES, 0, boxVertexCount);
+    if (figVertexCount > 0) {
+        BindVertexArray(figVao);
+        DrawArrays(GL_TRIANGLES, 0, figVertexCount);
+    }
     BindVertexArray(treeVao);
     DrawArrays(GL_TRIANGLES, 0, treeVertexCount);
     BindVertexArray(sceneryVao);
