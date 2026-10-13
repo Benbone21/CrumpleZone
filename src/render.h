@@ -4,6 +4,7 @@
 
 #include "daylight.h"
 #include "gl.h"
+#include "groundtex.h"
 #include "lights.h"
 #include "softbody.h"
 
@@ -44,6 +45,7 @@ struct RenderSettings {
     bool bloom = true;
     bool clouds = true;
     bool grass = true;          // grass blades round the camera
+    int ground = 2;             // terrain materials: 0 procedural, 1 photo-scanned (one tap), 2 full, 3 full + more layers
     float renderScale = 1.0f;   // scene resolution relative to the window, 0.5 .. 2
     float blur = 0;             // 0..1: blurs the scene behind a menu
 };
@@ -94,6 +96,10 @@ private:
 
     static const int kBloomLevels = 6;
     GLuint progLit = 0, progDepth = 0, progLine = 0, progSky = 0, progHud = 0, progFx = 0, progCar = 0;
+    GLuint progTerrain = 0;
+    GroundTextures groundTex;
+    bool groundFailed = false;  // the textures couldn't be loaded: stay procedural
+    int groundSize = 0;         // texels a side of what's loaded
     GLuint progAO = 0, progDown = 0, progUp = 0, progComposite = 0, postVao = 0, progGrass = 0;
     GLuint sceneryVao = 0, sceneryVbo = 0, terrainTex = 0, waterVao = 0, waterVbo = 0, progWater = 0;
     int waterVertexCount = 0;

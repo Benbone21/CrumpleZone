@@ -58,6 +58,7 @@ struct Options {
     int mods[3] = {-1, -1, -1};  // --mods E,S,T: fit these to the player's car (testing)
     int menu = -1;                // --menu P: open the pause menu on page P (testing)
     int quality = -1;             // --quality 0-3: graphics preset (testing)
+    int ground = -1;              // --ground 0-3: terrain materials (testing; see RenderSettings::ground)
     bool mph = false;             // --mph
     int map = -1;                 // --map N: 0 proving ground, 1 mountain
     double orbitYaw = 0, orbitPitch = 0.2, orbitDist = 7.5;  // degrees, degrees, meters
@@ -241,6 +242,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--garage") o.showGarage = true;
         else if (a == "--menu") o.menu = std::atoi(next().c_str());
         else if (a == "--quality") o.quality = std::atoi(next().c_str());
+        else if (a == "--ground") o.ground = std::atoi(next().c_str());
         else if (a == "--mph") o.mph = true;
         else if (a == "--map") o.map = std::atoi(next().c_str());
         else if (a == "--mods") {
@@ -1308,6 +1310,7 @@ int main(int argc, char** argv) {
         if (settings.playerName.size() > 16) settings.playerName.resize(16);
     }
     if (opt.quality >= 0) applyPreset(settings.gfx, opt.quality);
+    if (opt.ground >= 0) settings.gfx.ground = std::min(opt.ground, 3);
     if (opt.mph) settings.mph = true;
     if (opt.map >= 0) settings.map = std::min(opt.map, MAP_COUNT - 1);
     if (!opt.scenario.empty()) settings.map = MAP_PROVING_GROUND;  // the tests are built for it
@@ -2004,6 +2007,7 @@ int main(int argc, char** argv) {
     float fps = 60;
     uint64_t freq = SDL_GetPerformanceFrequency(), last = SDL_GetPerformanceCounter();
     int frame = 0;
+    double benchDraw = 0;
     size_t spawnType = 0, trafficType = 0;
 
     while (running) {
@@ -2845,7 +2849,13 @@ int main(int argc, char** argv) {
         renderer.figures.clear();
         if (walker.active) renderer.figures.push_back({walker.p, walker.yaw, V3(0.95, 0.5, 0.12), walker.stride});
         for (const RemoteWalker& rw : coop.walkers) renderer.figures.push_back({rw.p, rw.yaw, V3(0.2, 0.6, 0.95), rw.stride});
+        const uint64_t drawStart = SDL_GetPerformanceCounter();
         renderer.drawScene(sim, view, debug, &fx);
+        if (scripted && std::getenv("CZ_BENCH")) {  // (the scene's frame time: wait for the GPU to finish it)
+            unsigned char px[4];
+            gl::ReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
+            benchDraw = (double)(SDL_GetPerformanceCounter() - drawStart) / freq;
+        }
         hud.update(dt);
         if (editor.active && !menu.open) editor.draw(renderer, W, H, dt);
         else if (!menu.open && !hud.photo) drawHud(renderer, sim, view, hud, &playback, net, winchAim, W, H, fps, dt, settings.mph);
@@ -2913,7 +2923,13 @@ int main(int argc, char** argv) {
         menu.draw(renderer, settings, W, H, dt);
         renderer.flushHud(W, H);
 
+        // CZ_BENCH=1 (with --shot-frames): average frame time, the GPU finished (one pixel read back).
+        static const bool bench = std::getenv("CZ_BENCH") != nullptr;
+        static double benchSum = 0;
+        static int benchN = 0;
+        if (bench && scripted && frame >= 40) benchSum += benchDraw, benchN++;
         if (scripted && opt.shotFrames.count(frame)) {
+            if (bench && benchN) std::printf("bench: scene %.2f ms/frame over %d frames\n", 1000.0 * benchSum / benchN, benchN);
             char path[512];
             std::snprintf(path, sizeof(path), "%s_%04d.ppm", opt.shotPrefix.c_str(), frame);
             writePPM(path, renderer.readPixels(W, H), W, H);
