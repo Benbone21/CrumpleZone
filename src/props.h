@@ -59,8 +59,8 @@ struct Model {
 bool saveModel(const std::string& path, const Model& m);
 bool loadModel(const std::string& path, Model& m);
 
-// The assets/props folder: next to the working directory, or the executable, or a few
-// levels up from it (empty if not found). Cached after the first call.
+// The assets/props folder: $CZ_PROPS_DIR if set, else next to the working directory, or the
+// executable, or a few levels up from it (empty if not found). Cached after the first call.
 std::string assetDir();
 
 // ---- Rock collision hulls -------------------------------------------------------------
@@ -80,5 +80,33 @@ struct HullLibrary {
     bool load(const std::string& dir);
     bool save(const std::string& path) const;
 };
+
+// The convex hull of `pts` cut down to at most `maxVerts` corners (each a corner of the true
+// hull: the farthest miss is added until the budget runs out), then pushed out along the
+// corner normals by half the worst miss so the scan hardly pokes through. Faces wound outward.
+// worstMiss (optional) gets how far the farthest point of `pts` was outside the cut-down hull.
+RockHull buildRockHull(const std::string& name, const std::vector<V3>& pts, int maxVerts, double* worstMiss = nullptr);
+
+// ---- Which rocks World::addRock makes --------------------------------------------------
+// Scanned hulls are opt-in, per thread: the game turns them on (on the thread that builds
+// its maps) when assets/props is there; build/run_tests never does, so the physics tests
+// keep the code-made rocks they were tuned on. tests/props.cpp turns them on for its own
+// scenarios with ScopedRockScans.
+const HullLibrary* activeRockScans();            // nullptr: code-made rocks
+void setActiveRockScans(const HullLibrary* lib);
+// rocks.hull from assetDir() (or $CZ_PROPS_DIR), read once; empty if there's none.
+const HullLibrary& sharedHullLibrary();
+struct ScopedRockScans {
+    const HullLibrary* prev;
+    explicit ScopedRockScans(const HullLibrary* lib) : prev(activeRockScans()) { setActiveRockScans(lib); }
+    ~ScopedRockScans() { setActiveRockScans(prev); }
+};
+
+// The models listed in props.txt (the baker writes it): name and kind, in file order.
+struct ManifestEntry {
+    std::string name;
+    int kind = KIND_ROCK;
+};
+std::vector<ManifestEntry> readManifest(const std::string& dir);
 
 }  // namespace props

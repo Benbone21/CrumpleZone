@@ -1661,6 +1661,12 @@ bool Renderer::init(const World& world, std::string& err) {
     if (!progLit || !progDepth || !progLine || !progSky || !progHud || !progFx || !progCar || !progAO || !progDown ||
         !progUp || !progComposite || !progGrass || !progWater)
         return false;
+    // (Scanned props: if their shaders won't build, the scenery stays code-made.)
+    {
+        std::string perr;
+        propsOk = props.init(kCommonFS, linkProgram, perr);
+        if (!propsOk) std::fprintf(stderr, "prop shaders: %s\n", perr.c_str());
+    }
 
     buildWheel();
     buildFont();
@@ -1906,11 +1912,22 @@ void Renderer::setWorld(const World& world) {
 }
 
 void Renderer::updateObjects(const World& world) {
+    // The scanned props first: whatever they cover, the code-made meshes leave out.
+    const int pq = propsOk ? std::min(std::max(settings.props, 0), 3) : 0;
+    if (pq) props.ensureLoaded(pq);
+    props.setWorld(world, pq);
+    const ScanCover cover = props.cover(pq);
+    propsApplied = settings.props;
     buildBoxes(world);
-    buildTrees(world);
+    {
+        std::vector<Vtx> v;
+        buildTreeMesh(world, v, cover);
+        uploadStatic(treeVao, treeVbo, v);
+        treeVertexCount = (int)v.size();
+    }
     std::vector<Vtx> v;
-    buildRockMesh(world, v);
-    buildBushMesh(world, v);
+    buildRockMesh(world, v, cover);
+    buildBushMesh(world, v, cover);
     buildPropMesh(world, v);
     uploadStatic(sceneryVao, sceneryVbo, v);
     sceneryVertexCount = (int)v.size();
@@ -2027,6 +2044,7 @@ void Renderer::updateTerrainRegion(const World& world, int i0, int j0, int i1, i
         }
     BindTexture(GL_TEXTURE_2D, terrainTex);
     TexSubImage2D(GL_TEXTURE_2D, 0, i0, j0, i1 - i0 + 1, j1 - j0 + 1, GL_RGBA, GL_FLOAT, data.data());
+    props.terrainChanged(-half + i0, -half + j0, -half + i1, -half + j1);  // (grass doesn't grow on a new trail)
 }
 void Renderer::buildTerrain(const World& world) {
     // 1 m on the mountain (its crawl features are small), 2 m on the proving ground.
@@ -2152,13 +2170,6 @@ void Renderer::buildFigures() {
     BindBuffer(GL_ARRAY_BUFFER, figVbo);
     BufferData(GL_ARRAY_BUFFER, v.size() * sizeof(Vtx), v.data(), GL_STREAM_DRAW);
     figVertexCount = (int)v.size();
-}
-
-void Renderer::buildTrees(const World& world) {
-    std::vector<Vtx> v;
-    buildTreeMesh(world, v);
-    uploadStatic(treeVao, treeVbo, v);
-    treeVertexCount = (int)v.size();
 }
 
 void Renderer::buildWheelStyle(int style) {
@@ -2554,6 +2565,10 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     DepthFunc(GL_LEQUAL);
     Disable(GL_CULL_FACE);
 
+    // Scanned props: rebuild the scenery if their quality changed, pick the scatter round the camera.
+    if (settings.props != propsApplied) updateObjects(sim.world);
+    props.beginFrame(sim.world, view.eye, M4(), propsOk ? settings.props : 0, view.time);
+
     // Shadow passes.
     for (int c = 0; sq && c < 2; c++) {
         BindFramebuffer(GL_FRAMEBUFFER, shadowFbo[c]);
@@ -2578,6 +2593,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         BindVertexArray(dynVao);
         DrawArrays(GL_TRIANGLES, 0, (GLsizei)partVerts.size());
         drawWheels(sim, progDepth);
+        props.drawShadow(lightVP[c], c, keyDir);
         Disable(GL_POLYGON_OFFSET_FILL);
     }
 
@@ -2725,6 +2741,11 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     DrawArrays(GL_TRIANGLES, 0, treeVertexCount);
     BindVertexArray(sceneryVao);
     DrawArrays(GL_TRIANGLES, 0, sceneryVertexCount);
+    props.draw(vp, [&](GLuint prog) {
+        setLighting(prog);
+        Uniform1i(GetUniformLocation(prog, "uMap"), mapId);
+    });
+    UseProgram(progLit);
     if (settings.grass) {
         setLighting(progGrass);
         bindTerrainTex(progGrass);
@@ -2844,6 +2865,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         Enable(GL_DEPTH_TEST);
     }
     postProcess(view, proj);
+    props.endFrame();
 }
 
 void Renderer::text(float x, float y, float s, const std::string& str, float r, float g, float b, float a) {

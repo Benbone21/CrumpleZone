@@ -32,8 +32,6 @@ const vec4  kVTint[17] = vec4[](
   vec4(1.0));
 const float kVTile[17] = float[](2.5, 3.0, 2.5, 3.0, 3.0, 3.0, 2.5, 3.0, 3.5, 3.5, 4.0, 3.5, 2.0, 3.5, 3.0, 4.5, 3.0);
 const float kVBump[17] = float[](1.0, 1.0, 1.0, 1.0, 0.8, 0.8, 1.0, 0.9, 0.5, 0.7, 0.7, 1.1, 1.2, 0.5, 0.8, 1.3, 0.0);
-// Variants that are bare rock: mapped from the side as well on steep faces.
-bool isRock(int v){ return v == 11 || v == 12 || v == 15 || v == 10; }
 
 // ---- The material mix at this pixel: up to 12 (variant, weight) slots ----
 int sV[12]; float sW[12]; int sN = 0;
@@ -125,13 +123,22 @@ vec3 tangentNormal(vec4 b, float strength){
   vec2 xy = (b.xy * 2.0 - 1.0) * strength;
   return vec3(xy, sqrt(max(1.0 - dot(xy, xy), 0.05)));
 }
-// The ground seen from above is mapped by x, z (right = +x, image up = -z); a face seen from the side by
-// (horizontal axis, y). The image rows run down with v, so the "up" of a texture is the negative of v.
-void sideFrame(vec3 g, out vec3 R, out vec3 U, out vec3 N, out vec2 axis){
-  U = vec3(0.0, 1.0, 0.0);
-  if (abs(g.x) > abs(g.z)) { float s = g.x < 0.0 ? -1.0 : 1.0; R = vec3(0.0, 0.0, -s); N = vec3(s, 0.0, 0.0); }
-  else { float s = g.z < 0.0 ? -1.0 : 1.0; R = vec3(s, 0.0, 0.0); N = vec3(0.0, 0.0, s); }
-  axis = vec2(dot(vPos, R), -vPos.y);  // uv before scaling: right along R, down along -y
+// The ground seen from above is mapped by x, z (right = +x, image up = -z); a steep face also from the
+// two sides (triplanar): seen along x and along z, by (horizontal axis, y). The image rows run down
+// with v, so the "up" of a texture is the negative of v.
+struct Side { vec3 R, N; vec2 uv, gx, gy; float w; };
+Side sideX, sideZ;
+void sideFrames(vec3 g, vec3 dPx, vec3 dPy){
+  float sx = g.x < 0.0 ? -1.0 : 1.0, sz = g.z < 0.0 ? -1.0 : 1.0;
+  sideX.R = vec3(0.0, 0.0, -sx); sideX.N = vec3(sx, 0.0, 0.0);
+  sideZ.R = vec3(sz, 0.0, 0.0);  sideZ.N = vec3(0.0, 0.0, sz);
+  float wx = pow(abs(g.x), 4.0), wz = pow(abs(g.z), 4.0);
+  sideX.w = wx / max(wx + wz, 1e-5); sideZ.w = 1.0 - sideX.w;
+  sideX.uv = vec2(dot(vPos, sideX.R), -vPos.y); sideX.gx = vec2(dot(dPx, sideX.R), -dPx.y); sideX.gy = vec2(dot(dPy, sideX.R), -dPy.y);
+  sideZ.uv = vec2(dot(vPos, sideZ.R), -vPos.y); sideZ.gx = vec2(dot(dPx, sideZ.R), -dPx.y); sideZ.gy = vec2(dot(dPy, sideZ.R), -dPy.y);
+}
+vec4 sideTap(sampler2DArray s, float L, Side f, float scale){
+  return textureGrad(s, vec3(f.uv * scale, L), f.gx * scale, f.gy * scale);
 }
 
 void main(){
@@ -194,11 +201,9 @@ void main(){
   // ---- Photo layers ----
   bool two = uGroundQ >= 2 && dist < 250.0;
   float mix2 = 0.15 + 0.7 * smoothstep(0.25, 0.75, vnoise(p * 0.11 + 4.0));
-  bool steepFace = uGroundQ >= 2 && N0.y < 0.93;
-  vec3 SR, SU, SN; vec2 sAxis;
-  sideFrame(N0, SR, SU, SN, sAxis);
   float wTop = smoothstep(0.55, 0.93, N0.y);  // how much the top-down mapping counts on a slope
-  vec2 gSx = vec2(dot(dPx, SR), -dPx.y), gSy = vec2(dot(dPy, SR), -dPy.y);
+  bool steepFace = uGroundQ >= 2 && wTop < 0.999 && dist < 400.0;
+  sideFrames(N0, dPx, dPy);
   vec4 A[4];
   float Lr[4]; float scl[4]; vec4 avgA[4];
   for (int k = 0; k < 4; k++) {
@@ -208,10 +213,14 @@ void main(){
     Lr[k] = float(kVLayer[v]); scl[k] = 1.0 / kVTile[v];
     avgA[k] = textureLod(uGroundA, vec3(0.5, 0.5, Lr[k]), 12.0);
     vec4 a = planarTap(uGroundA, Lr[k], p, scl[k], dPx.xz, dPy.xz, mix2, avgA[k], two);
-    if (steepFace && isRock(v) && wTop < 0.999) {
-      vec4 s = textureGrad(uGroundA, vec3(sAxis * scl[k], Lr[k]), gSx * scl[k], gSy * scl[k]);
-      a = mix(s, a, wTop);
+    if (steepFace) {
+      vec4 sd = vec4(0.0);
+      if (sideX.w > 0.02) sd += sideTap(uGroundA, Lr[k], sideX, scl[k]) * sideX.w;
+      if (sideZ.w > 0.02) sd += sideTap(uGroundA, Lr[k], sideZ, scl[k]) * sideZ.w;
+      a = mix(sd / max(sideX.w * step(0.02, sideX.w) + sideZ.w * step(0.02, sideZ.w), 1e-3), a, wTop);
     }
+    // Far off, each layer eases toward its own average colour: no tiling to see from across the valley.
+    a.rgb = mix(a.rgb, avgA[k].rgb, smoothstep(180.0, 700.0, dist) * 0.6);
     A[k] = a;
     A[k].a = clamp(A[k].a, 0.0, 1.0);
   }
@@ -234,11 +243,13 @@ void main(){
     vec4 b = planarTap(uGroundB, Lr[k], p, scl[k], dPx.xz, dPy.xz, mix2, textureLod(uGroundB, vec3(0.5, 0.5, Lr[k]), 12.0), two);
     float st = kVBump[v] * distFade;
     vec3 nY = reorient(tangentNormal(b, st), vec3(1.0, 0.0, 0.0), vec3(0.0, 0.0, -1.0), vec3(0.0, 1.0, 0.0), N0);
-    if (steepFace && isRock(v) && wTop < 0.999) {
-      vec4 bs = textureGrad(uGroundB, vec3(sAxis * scl[k], Lr[k]), gSx * scl[k], gSy * scl[k]);
-      vec3 nS = reorient(tangentNormal(bs, st), SR, SU, SN, N0);
-      nY = mix(nS, nY, wTop);
-      b = mix(bs, b, wTop);
+    if (steepFace) {
+      vec3 nS = vec3(0.0); vec4 bs = vec4(0.0); float ws = 0.0;
+      const vec3 U = vec3(0.0, 1.0, 0.0);
+      if (sideX.w > 0.02) { vec4 t = sideTap(uGroundB, Lr[k], sideX, scl[k]); nS += reorient(tangentNormal(t, st), sideX.R, U, sideX.N, N0) * sideX.w; bs += t * sideX.w; ws += sideX.w; }
+      if (sideZ.w > 0.02) { vec4 t = sideTap(uGroundB, Lr[k], sideZ, scl[k]); nS += reorient(tangentNormal(t, st), sideZ.R, U, sideZ.N, N0) * sideZ.w; bs += t * sideZ.w; ws += sideZ.w; }
+      nY = mix(normalize(nS), nY, wTop);
+      b = mix(bs / max(ws, 1e-3), b, wTop);
     }
     vec3 tint = kVTint[v].rgb;
     alb += A[k].rgb * tint * w;
