@@ -297,6 +297,33 @@ VEHICLE_SCENARIO(laneChange, "dynamics/lane-change", "Quick double lane change a
     ctx.check("no doors or panels come loose", loosePanels(c) == 0, loosePanelNames(c));
 }
 
+VEHICLE_SCENARIO(turningCircle, "dynamics/turning-circle", "Full lock at a walk: the outer front wheel's circle against the published curb-to-curb figure") {
+    // Published turning circles: EF Civic hatch ~9.8 m (1991 Si); Bronco 4-door ~10.8 m
+    // (Ford quotes it with Trail Turn Assist's help; ~11.5 m without, estimate); 2002 4Runner
+    // 11.4-12.0 m (two listings); Tacoma Double Cab 5 ft bed ~12.3 m (estimate); the Jesko's
+    // isn't published (wide front tires, little lock: ~11-12 m, estimate).
+    static const Range expect[] = {{9.3, 10.8}, {10.0, 12.5}, {10.5, 12.5}, {11.0, 12.4}, {11.8, 13.5}};
+    Car& c = ctx.add(spec, -100, -50, 0);
+    ctx.focus(c);
+    ctx.run(1.0);
+    int wo = -1;  // turning left, the outer front wheel is the right one
+    for (size_t i = 0; i < c.wheels.size(); i++)
+        if (c.wheels[i].front && !c.wheels[i].left) wo = (int)i;
+    double xmin = 1e9, xmax = -1e9, zmin = 1e9, zmax = -1e9;
+    const double t0 = ctx.t;
+    ctx.run(14, [&] {
+        c.steer = 0.6;  // what full key steers at a walk
+        const double vf = dot(c.frame().vel, c.frame().fwd);
+        c.throttle = clampd(0.25 + (1.5 - vf) * 0.5, 0, 1);
+        c.brake = 0;
+        if (ctx.t - t0 < 4) return;  // settle onto the circle
+        const V3 p = c.nodes[c.wheels[wo].outer].p;
+        xmin = std::min(xmin, p.x), xmax = std::max(xmax, p.x), zmin = std::min(zmin, p.z), zmax = std::max(zmax, p.z);
+    });
+    const Range& e = expect[vehicleIndex(spec)];
+    ctx.metric("turning circle (outer front wheel)", 0.5 * ((xmax - xmin) + (zmax - zmin)), "m", e.lo, e.hi);
+}
+
 VEHICLE_SCENARIO(slopeHold, "dynamics/slope-hold", "Handbrake holds it nose-up on the 15 degree kicker ramp") {
     Car& c = ctx.add(spec, 47, -30, 0);
     ctx.focus(c);
