@@ -294,14 +294,15 @@ void Sim::carRemoved(int car) {
     }
 }
 
-std::vector<WinchTarget> Sim::winchTargets(int ci) const {
+std::vector<WinchTarget> Sim::winchTargets(int ci, const V3* look) const {
     std::vector<WinchTarget> out;
     const Car& c = cars[ci];
     if (c.isProp() || !(c.spec->extras & EXTRA_WINCH)) return out;
     const V3 p = c.hookPoint(0);
     const Frame fr = c.frame();
     const V3 fwd = norm(V3(fr.fwd.x, 0, fr.fwd.z));
-    const double reach = recovery::kWinchLine - 1;
+    // (The drum's line plus the extension from the recovery bag.)
+    const double reach = recovery::kWinchReach - 1;
     auto consider = [&](const RopeEnd& e, const char* what) {
         const V3 q = endPoint(cars, e);
         const V3 d = q - p;
@@ -328,7 +329,7 @@ std::vector<WinchTarget> Sim::winchTargets(int ci) const {
         consider(e, pl.r > 0.2 ? "TREE" : "STUMP");
     }
     for (const Rock& rk : world.rocks) {
-        if (rk.r < 0.7) continue;  // too small: it would just roll toward you
+        if (rk.r < 0.45) continue;  // too small: it would just roll toward you
         if (len(rk.c - p) > reach + rk.r) continue;
         RopeEnd e;
         e.kind = ANCHOR_ROCK;
@@ -347,17 +348,19 @@ std::vector<WinchTarget> Sim::winchTargets(int ci) const {
             consider(e, h ? "TRUCK (REAR)" : "TRUCK (FRONT)");
         }
     }
-    // Soft ground ahead takes a buried anchor (a spare tire or a pull-pal).
-    for (double d = 16; d >= 8; d -= 2) {
-        const V3 q = p + fwd * d;
+    // Anywhere else: a buried anchor in loose ground (a spare tire or a pull-pal dug in), or
+    // a bolt drilled into bare rock (or a stake in the verge beside a road). One straight
+    // ahead, and one wherever the driver is looking or standing.
+    auto ground = [&](const V3& q) {
+        if (world.waterLevel(q.x, q.z) > world.height(q.x, q.z) + 0.3) return;  // not under water
         const Surface s = world.surfaceAt(q.x, q.z);
-        if (s != SURF_DIRT && s != SURF_GRASS) continue;
         RopeEnd e;
         e.kind = ANCHOR_STAKE;
         e.p = V3(q.x, world.height(q.x, q.z) + 0.1, q.z);
-        consider(e, "GROUND ANCHOR");
-        break;
-    }
+        consider(e, s == SURF_ROCK || s == SURF_PAVED || s == SURF_WET ? "ROCK ANCHOR" : "GROUND ANCHOR");
+    };
+    ground(p + fwd * 14);
+    if (look) ground(*look);
     std::sort(out.begin(), out.end(), [](const WinchTarget& x, const WinchTarget& y) { return x.dist < y.dist; });
     return out;
 }
@@ -388,7 +391,7 @@ std::string Sim::hookWinch(int ci) {
         const double score = t.dist * (2.2 - ahead) + (t.end.kind == ANCHOR_STAKE ? 1e6 : 0);
         if (score < bestScore) bestScore = score, best = &t;
     }
-    if (!best) return "NOTHING TO WINCH TO AHEAD (TREE, BOULDER OR TRUCK WITHIN 30 M)";
+    if (!best) return "NOTHING TO WINCH TO AHEAD";
     return hookWinchTo(ci, best->end);
 }
 
@@ -403,12 +406,12 @@ std::string Sim::hookWinchTo(int ci, const RopeEnd& best) {
     r.a.car = ci;
     r.a.hook = 0;
     r.b = best;
-    r.maxLen = recovery::kWinchLine;
+    r.maxLen = recovery::kWinchReach;
     r.length = std::min(r.maxLen, len(endPoint(cars, r.b) - p) + 0.4);
     r.k = 2.5e5;
     r.c = 3000;
     r.breakN = recovery::kWinchBreak;
-    r.stallN = recovery::kWinchStall;
+    r.stallN = c.spec->winchPull > 0 ? c.spec->winchPull : recovery::kWinchStall;
     ropes.push_back(r);
     if (best.kind == ANCHOR_CAR) cars[best.car].wake();
     char buf[96];

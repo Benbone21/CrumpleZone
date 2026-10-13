@@ -186,6 +186,16 @@ struct VehicleSpec {
     // 2 quick-disconnect pins (stopped only).
     int swayDisconnect = 0;
     double tirePsi = 32;          // street pressure; air down for rock (the game airs between 12 and 40 psi)
+    // Wheels coming off (tires.h), on vehicles with wheelLoss (the trucks, so far): the
+    // studs holding a wheel shear at about this sideways force at the tread (N); beadlock
+    // rims clamp the tire's bead, so it can't roll off however low it's aired.
+    bool wheelLoss = false;
+    double lugShear = 80000;
+    bool beadlock = false;
+    // The spare: the mass item named "spare ... wheel" is it. Its size (0 = the road
+    // wheels'), and whether it lies flat (under a bed, in a trunk) or stands on a carrier.
+    double spareR = 0, spareRimR = 0, spareWidth = 0, spareMass = 0;
+    bool spareFlat = false;
     double ledgeFactor = 1.0;     // how much further than the tire-radius rule it climbs a square ledge (autopilot's step table: travel and soft sidewalls help)
     double looseGrip = 1.0;       // grip multiplier off the pavement (a soft crawler compound sticks to rock and dirt)
     double tireSoft = 1.0;        // radial stiffness at that pressure, against the 33 in truck tire (tall, low-pressure tires are softer)
@@ -233,6 +243,7 @@ struct VehicleSpec {
     // Looks.
     int lampStyle = LAMP_RECT, grilleStyle = GRILLE_CENTER;
     unsigned extras = 0;
+    double winchPull = 44000;      // N the winch stalls at (EXTRA_WINCH): a 9,500 lb winch on its first layer
     float coverColor[3] = {0.05f, 0.05f, 0.05f};  // engine cover
     float paintColor[3] = {-1, -1, -1};  // factory color (< 0: picked from the palette)
     float trimColor[3] = {0, 0, 0};      // two-tone lower body and flares...

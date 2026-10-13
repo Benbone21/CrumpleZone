@@ -937,15 +937,16 @@ void Car::buildWheelRub() {
 // the suspension. A tire rubbing a fender drags on its spin.
 void Car::wheelBodyContact(double h) {
     (void)h;
+
     for (Wheel& wh : wheels) {
         wh.rubTorque = 0;
         wh.rub = 0;
-        if (wh.detached || wh.rubFaces.empty()) continue;
+        if (wh.detached || !wh.mounted || wh.rubFaces.empty()) continue;
         Node& a = nodes[wh.inner];
         Node& b = nodes[wh.outer];
         const V3 c = (a.p + b.p) * 0.5, vc = (a.v + b.v) * 0.5;
         V3 axis = norm(b.p - a.p);
-        const double half = wh.width * 0.5, R = wh.popped ? wh.rimR + 0.015 : wh.R, side = R - wh.rimR;
+        const double half = wh.width * 0.5, R = wh.rollR(), side = R - wh.rimR;
         const V3 spinAxis = wh.left ? axis : -axis;  // points to the car's left: + omega rolls it forward
         for (size_t ri = 0; ri < wh.rubFaces.size(); ri++) {
             const auto& tv = wh.rubFaces[ri];
@@ -1343,13 +1344,16 @@ void Car::wheelStep(double h, const World& w) {
         if (!wh.left) axis = -axis;  // axis always points to the car's left
 
         const double R = wh.rollR();
-        const double mu = spec->tireGrip * (wh.popped ? 0.55 : 1.0);
+        // (A blown tire runs on what's left of it; a rim or a bare hub on steel.)
+        const double mu = spec->tireGrip * (!wh.mounted ? 0.3 : wh.debeaded ? 0.45 : wh.popped ? 0.55 : 1.0);
+        const bool tire = wh.mounted && !wh.debeaded;  // rubber on the ground (else steel)
         double Fx = 0;
         wh.load = 0;
         wh.slip = 0;
         wh.sx = 0;
         Contact ct;
-        if (w.contact(c, R, &axis, wh.width * 0.5, ct)) {
+        if (!tire) wh.studLoad = wh.beadLoad = 0;
+        if (w.contact(c, R, &axis, (wh.mounted ? wh.width : 0.06) * 0.5, ct)) {
             const V3& n = ct.n;
             wh.surface = ct.surface;
             // Aired down, the tread spreads into a longer, softer patch: it wraps rocks and
@@ -1398,7 +1402,7 @@ void Car::wheelStep(double h, const World& w) {
                 }
             }
             // A hard rim strike pinches the tire (the sand under a rim gives; a rock's edge doesn't).
-            if (!gives && !wh.popped && rimPen > 0 && -vn > popSpeed * (si.sink > 0 ? 1.6 : 1.0)) {
+            if (tire && !gives && !wh.popped && rimPen > 0 && -vn > popSpeed * (si.sink > 0 ? 1.6 : 1.0)) {
                 wh.popped = true;
                 tirePops++;
             }
@@ -1447,6 +1451,15 @@ void Car::wheelStep(double h, const World& w) {
                 }
                 Fx = fx;
                 Ft = fdir * fx + sdir * fy;
+                // Aired right down, a hard sideways load rolls the bead off the rim (unless a
+                // beadlock clamps it): past ~0.75 g of side load at 8 psi, ~0.95 g at 12.
+                if (tire && spec->wheelLoss && !wh.popped && !spec->beadlock && tirePsi < 14 && std::fabs(vx) > 3) {
+                    const double side = std::fabs(fy) / std::max(N, 1.0);
+                    wh.beadLoad += (float)((side - wh.beadLoad) * std::min(1.0, h / 0.06));
+                    if (wh.beadLoad > 0.35 + tirePsi / 20) wh.shed = 2;
+                } else {
+                    wh.beadLoad = 0;
+                }
                 F += Ft;
                 wh.sx = sx;
                 wh.slip = (float)sm;
@@ -1483,6 +1496,24 @@ void Car::wheelStep(double h, const World& w) {
             V3 tau = cross(arm, Ft);
             tau -= axis * dot(tau, axis);
             if (!wh.detached) applyTorque(wh.assembly, tau);
+            // The studs carry the moment of a sideways shove at the tread (a curb or a rock's
+            // edge levering the wheel off its hub face); squeezed straight in on its face (lying
+            // on its side) the hub takes it. As the sideways force at the tread that would make
+            // the same moment: past what they hold, they shear and the wheel comes off.
+            if (tire) {
+                // (Where it's really touching: the tread under the hub, or the sidewall's edge
+                // when a curb or a rock's face catches the side of the tire.)
+                const double na = dot(n, axis);
+                const V3 radial = n - axis * na;
+                const double rl = len(radial);
+                V3 arm = rl > 1e-3 ? -radial * ((R - pen) / rl) : V3();
+                if (std::fabs(na) > 1e-3) arm -= axis * (wh.width * 0.5 * (na > 0 ? 1.0 : -1.0));
+                V3 M = cross(arm, F);
+                M -= axis * dot(M, axis);
+                const double stud = len(M) / R;
+                wh.studLoad += (float)((stud - wh.studLoad) * std::min(1.0, h / 0.005));
+                if (spec->wheelLoss && wh.studLoad > spec->lugShear) wh.shed = 1;
+            }
             wh.load = (float)N;
             wh.contactNormal = n;
             wh.contact = c - n * (R - pen);
@@ -1493,12 +1524,20 @@ void Car::wheelStep(double h, const World& w) {
             // tire sideways on landing, and road speed is the hub's own (for shifts and ABS).
             wh.stickX = wh.stickY = 0;
             wh.groundSpeed = dot(vc, fwd);
+            // Off the brake there is nothing for ABS to hold: its valves stand open, so the
+            // first stab after the landing gets full pressure. (Braking in the air, it keeps
+            // working the valve below.)
+            if (brakePressure <= 0.05) wh.abs = 1;
         }
         double Td = wheelPowered(wh) && !engaged ? driveTorque : 0.0;
         // The shaft's wind-up drives the hub (and holds back the side gear).
         double Ts = 0;
         if (wheelPowered(wh)) {
-            const double k = shaftStiffness(), c = std::sqrt(k * wh.I);  // shuffle damped at ~1/2 critical
+            // Shuffle damped at ~1/2 critical, but no more than the light side gear can take in
+            // one step: past ~1.5 h c / Is the step overshoots and the wind-up grows instead of
+            // dying (the buggy's stiff 30 kN*m shafts on 40 in tires: 3.1, its shafts snapped
+            // the moment it touched down). The trucks sit at 1.0-1.3.
+            const double k = shaftStiffness(), c = std::min(std::sqrt(k * wh.I), 1.5 * kSideGearI / h);
             Ts = k * wh.twist + c * (wh.sideOmega - wh.omega);
             wh.sideOmega += (Td - Ts) / kSideGearI * h;
         }
@@ -1558,6 +1597,8 @@ void Car::wheelStep(double h, const World& w) {
                 if (wh.load <= 0) err = std::fabs(std::min(0.0, wh.omega * wh.rollR() - wh.groundSpeed)) / std::fabs(wh.groundSpeed) * wh.bite - target;
                 wh.abs = clampd(wh.abs - h * 60.0 * err, 0.05, 1.0);
             }
+            else if (brakePressure <= 0.05)
+                wh.abs = 1;  // (pedal up: nothing to hold off)
             else
                 wh.abs = std::min(1.0, wh.abs + h * 6);
             double service = (brakePressure * wh.abs * (1 - 1.5 * wh.escCut) + std::max(wh.tcBrake, wh.escBrake)) * wh.brakeMax;
@@ -2023,8 +2064,24 @@ void Sim::substep() {
             for (Node& n : c.nodes) n.f = V3();
             continue;
         }
+        // Someone working a parked car's pedals or wheel wakes it too. (The player's car and
+        // the AI's wake themselves every frame; a car driven any other way, by a script or a
+        // test, stayed frozen where it had settled however hard its throttle was pressed.)
+        if (c.sleeping) {
+            const double now[4] = {c.throttle, c.brake, c.handbrake, c.steer};
+            for (int k = 0; k < 4; k++)
+                if (std::fabs(now[k] - c.sleptControls[k]) > 0.01) c.wake();
+        }
         if (!c.sleeping) c.computeForces(h, world);
     }
+    // A wheel that sheared off (or a tire that rolled off its rim) goes its own way.
+    for (int i = 0; i < N; i++)
+        for (int k = 0; k < (int)cars[i].wheels.size(); k++)
+            if (cars[i].wheels[k].shed) {
+                const bool tire = cars[i].wheels[k].shed == 2;
+                cars[i].wheels[k].shed = 0;
+                shedWheel(i, k, tire);
+            }
 
     for (int i = 0; i < N; i++)
         for (int j = i + 1; j < N; j++)
@@ -2033,6 +2090,7 @@ void Sim::substep() {
             if (!(cars[i].sleeping && cars[j].sleeping) && boundsOverlap(cars[i], cars[j])) collide(cars[i], cars[j]);
 
     if (!ropes.empty()) ropeForces();
+    if (!looseWheels.empty()) looseWheelForces();
 
     for (int i = 0; i < N; i++) {
         Car& c = cars[i];
@@ -2046,6 +2104,8 @@ void Sim::substep() {
         c.updateBounds();
         if (i != player && c.stillTime > 1.5) {
             c.sleeping = true;
+            c.sleptControls[0] = c.throttle, c.sleptControls[1] = c.brake;
+            c.sleptControls[2] = c.handbrake, c.sleptControls[3] = c.steer;
             for (Node& n : c.nodes) {
                 n.v = V3();
                 n.scrape = 0;
@@ -2053,6 +2113,7 @@ void Sim::substep() {
             for (Wheel& wh : c.wheels) wh.omega = 0;
         }
     }
+    if (!looseWheels.empty()) looseWheelStep();
 }
 
 void Sim::collide(Car& A, Car& B) {

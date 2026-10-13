@@ -108,6 +108,9 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
     buildCount++;
     nodes.clear();
     beams.clear();
+    hasSpare = false;
+    spareNodes.clear();
+    spareWeights.clear();
     tris.clear();
     quads.clear();
     cells.clear();
@@ -571,7 +574,24 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
         if (vs.panelMass > 0)
             for (int n = 0; n < bodyNodes; n++)
                 if (onSkin[n]) nodes[n].m += vs.panelMass / skinCount;
-        for (const MassItem& it : vs.items) addMassAt(V3(it.x, it.y, it.z), it.kg);
+        for (const MassItem& it : vs.items) {
+            addMassAt(V3(it.x, it.y, it.z), it.kg);
+            // The spare (tires.h): remember the nodes carrying it, so it can be drawn where it
+            // sits and its weight taken off with it.
+            const std::string nm = it.name;
+            if (vs.wheelLoss && nm.find("spare") != std::string::npos && nm.find("wheel") != std::string::npos) {
+                V3 f;
+                const int ci = cellNear(V3(it.x, it.y, it.z), &f);
+                spareNodes.clear();
+                spareWeights.clear();
+                for (int b = 0; b < 8; b++) {
+                    spareNodes.push_back(cells[ci][b]);
+                    spareWeights.push_back(((b & 1) ? f.x : 1 - f.x) * ((b & 2) ? f.y : 1 - f.y) * ((b & 4) ? f.z : 1 - f.z));
+                }
+                hasSpare = true;
+                spare.mass = it.kg;
+            }
+        }
     }
 
     // ---- 3b. Ladder frame (body-on-frame trucks) --------------------------------
@@ -1144,6 +1164,9 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
             // Tire mass is concentrated near its tread; the rim is closer to the axle.
             // A 0.65 inertia factor approximates that distribution, in kg m^2.
             wh.I = 0.65 * vs.wheelMass * R * R;
+            wh.item.R = wh.R, wh.item.rimR = wh.rimR, wh.item.width = ww;
+            wh.item.mass = vs.wheelMass, wh.item.I = wh.I;
+            wh.item.style = vs.wheelStyle, wh.item.from = vs.id;
             wh.brakeMax = front ? vs.brakeFront : vs.brakeRear;
             double wm = vs.wheelMass / 2 + vs.hubMass * 0.25;
             wh.inner = addNode(V3(xw, R, zc - s * ww / 2), wm, false);
@@ -1281,7 +1304,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                     int rack = addNode(V3(xw + dir * 0.17, R - 0.05, s * 0.30), am * 0.02 + 1.5, false);
                     knuckle[sIdx] = {wh.inner, wh.outer, kpLow, kpUp, arm};
                     steerNodes[sIdx] = {kpLow, kpUp, arm, rack};
-                    mine = {seat[sIdx], lowMount[sIdx], kpLow, kpUp, rack};
+                    mine = {seat[sIdx], lowMount[sIdx], kpLow, kpUp};
                     wh.lower = kpLow;
                     wh.top = kpUp;
                     wh.arm = arm;
@@ -1295,6 +1318,16 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 wheels.push_back(wh);
             }
             rigid(as.nodes, BEAM_KNUCKLE);
+            // (The tie rod's fixed end is a bracket on the tube, braced to the kingpin and the
+            // housing beside it, not welded to every point of the axle: that many stiff beams on
+            // one light node needed more weight than a tube chassis has to lend.)
+            if (steered)
+                for (int sIdx = 0; sIdx < 2; sIdx++) {
+                    const int rack = steerNodes[sIdx][3];
+                    for (int o : {steerNodes[sIdx][0], steerNodes[sIdx][1], lowMount[sIdx], seat[sIdx], diff, pinion}) addBeam(rack, o, BEAM_KNUCKLE);
+                    axle.housing.push_back(rack);
+                    as.nodes.push_back(rack);
+                }
             // What a solid axle drags over the rocks: the diff's pumpkin, the lowest thing on the
             // truck (ground clearance is measured under it), and the tubes either side. Nodes
             // collide as 4 cm spheres: the pumpkin node sits that far above its bottom, ~12.5 cm
@@ -1311,7 +1344,9 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                         if (bi >= 0) beams[bi].k *= 0.1, beams[bi].c *= 0.3;
                     }
                 };
-                const int hubL = wheels[axle.wheel[0]].inner, hubR = wheels[axle.wheel[1]].inner;
+                // (The tube ends: the hubs on a rigid axle; the lower kingpins on a steered one,
+                // whose hubs turn with the knuckles.)
+                const int hubL = steered ? steerNodes[0][0] : wheels[axle.wheel[0]].inner, hubR = steered ? steerNodes[1][0] : wheels[axle.wheel[1]].inner;
                 const int pump = addNode(V3(xw, R - kAxleDiffR + nodeR, 0), am * 0.05, true);
                 brace(pump, {diff, pinion, dtop, hubL, hubR});
                 nodes[diff].m -= am * 0.11;
@@ -1321,7 +1356,11 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                     const int s = sIdx == 0 ? -1 : 1;
                     const int hub = sIdx == 0 ? hubL : hubR;
                     const int tube = addNode(V3(xw, R - (kAxleTubeR - nodeR), s * std::fabs(wheelZ(s, ax)) * 0.5), am * 0.03, true);
-                    brace(tube, {diff, hub, seat[sIdx], lowMount[sIdx], pump});
+                    // (And to the pinion, ahead of the tube: every other brace lies close to one
+                    // plane through the tube's line, so a node held only by them could swing across
+                    // it with almost nothing pushing back or damping it. The rock buggy's tube nodes
+                    // rang there at 5 Hz, ~1 mm, for good after it spawned.)
+                    brace(tube, {diff, hub, seat[sIdx], lowMount[sIdx], pump, pinion});
                     axle.housing.push_back(tube);
                     as.nodes.push_back(tube);
                 }
@@ -1906,8 +1945,16 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
             nb[beams[bi].a].push_back((int)bi);
             nb[beams[bi].b].push_back((int)bi);
         }
+        // (Panel pins pull a panel node toward the body node under it in every direction.)
+        std::vector<std::vector<int>> pinsAt(nodes.size());
+        for (size_t pi = 0; pi < pins.size(); pi++) {
+            pinsAt[pins[pi].body].push_back((int)pi);
+            pinsAt[pins[pi].panel].push_back((int)pi);
+        }
         auto load = [&](size_t i) {  // worst-direction h^2*k + 2h*c
-            double worst = 0;
+            double pk = 0, pc = 0;
+            for (int pi : pinsAt[i]) pk += pins[pi].k, pc += pins[pi].c;
+            double worst = h * h * pk + 2 * h * pc;
             for (int bj : nb[i]) {
                 const Beam& d = beams[bj];
                 V3 u = norm(local[d.b] - local[d.a]);
@@ -1920,7 +1967,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                     K += c2 * e.k * (e.type == BEAM_BUMPSTOP ? 125 : spring ? 26 : 1);
                     C += c2 * e.c * (spring ? 1.35 : 1);
                 }
-                worst = std::max(worst, h * h * K + 2 * h * C);
+                worst = std::max(worst, h * h * (K + pk) + 2 * h * (C + pc));
             }
             return worst;
         };
@@ -1967,6 +2014,35 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 }
                 nodes[i].m += take;
             }
+        // Still over the margin where nothing was left to lend (a light tube chassis): soften
+        // that node's stiff beams until it steps stably. A slightly springier joint is better
+        // than a node that runs away at the first step.
+        for (int it = 0; it < 4; it++) {
+            bool changed = false;
+            for (size_t i = 0; i < nodes.size(); i++) {
+                const double lim = target * 1.25 * nodes[i].m;
+                if (L[i] <= lim) continue;
+                const double f = lim / L[i];
+                for (int bj : nb[i]) {
+                    Beam& b = beams[bj];
+                    if (b.type == BEAM_SPRING || b.type == BEAM_BUMPSTOP) continue;
+                    b.k *= f;
+                    b.c *= f;
+                }
+                for (int pi : pinsAt[i]) {  // (a softer pin still lets go at the same force)
+                    Pin& pn = pins[pi];
+                    pn.breakDist = pn.slack + (pn.breakDist - pn.slack) / f;
+                    pn.k *= f;
+                    pn.c *= f;
+                }
+                changed = true;
+            }
+            if (!changed) break;
+            for (size_t i = 0; i < nodes.size(); i++) L[i] = load(i);
+        }
+        if (getenv("CZ_STAB"))
+            for (size_t i = 0; i < nodes.size(); i++)
+                if (L[i] / nodes[i].m > target * 1.3) std::printf("STAB node %zu L %.2f m %.2f L/m %.2f target %.2f\n", i, L[i], nodes[i].m, L[i] / nodes[i].m, target);
         // Balance: what the body lent shifted the center of mass (toward the stiff nodes
         // that borrowed: a few cm). Tilt the mass of the body nodes with plenty to spare
         // fore-aft and side to side, just enough to put it back, so the axle loads stay the
@@ -2000,6 +2076,44 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
         if (getenv("CZ_DEBUG"))
             for (size_t i = 0; i < nodes.size(); i++)
                 if (L[i] / nodes[i].m > target) std::printf("%s: node %zu (%.2f, %.2f, %.2f; %.1f kg; %d of %d body) still stiff for its mass (%.2f)\n", vs.name, i, local[i].x, local[i].y, local[i].z, nodes[i].m, (int)(i < (size_t)bodyNodes), bodyNodes, L[i] / nodes[i].m);
+    }
+    // Spring preloads again, now that the weight has settled where it ends up. The pass
+    // above lends body weight to the suspension's stiff little nodes (a live axle's take
+    // ~60 kg on the Bronco) and then shifts the body's weight forward to put the balance
+    // back, so the springs carried less than the preload set above was sized for and a live
+    // rear rode ~1 cm high. Same coils (same rate); only their free length changes, so they
+    // sit at design height under the weight they really carry.
+    if (!isProp && axles.size() >= 2) {
+        const double xf = xAt(axleI.front()), xr = xAt(axleI.back());
+        std::vector<char> unsprung(nodes.size(), 0);
+        for (const Wheel& wh : wheels)
+            for (int n : wh.assembly) unsprung[n] = 1;
+        double ms = 0, xs = 0;
+        for (size_t i = 0; i < nodes.size(); i++)
+            if (!unsprung[i]) ms += nodes[i].m, xs += local[i].x * nodes[i].m;
+        xs /= std::max(ms, 1e-9);
+        const double frontShare = clampd((xs - xr) / (xf - xr), 0.2, 0.8);
+        for (Wheel& wh : wheels) {
+            if (wh.spring < 0 || wh.motionRatio <= 0) continue;
+            Beam& sp = beams[wh.spring];
+            const double cornerW = ms * (wh.front ? frontShare : 1 - frontShare) / 2 * g;
+            sp.L0 = sp.Lorig = wh.springRest + cornerW / wh.motionRatio / sp.k;
+        }
+    }
+    // The spare's size: a road wheel, unless the spec carries a smaller one (a space saver).
+    if (hasSpare && !wheels.empty()) {
+        const double kg = spare.mass;
+        spare = wheels.back().item;
+        spare.mass = kg;
+        if (vs.spareR > 0) {
+            spare.R = vs.spareR;
+            spare.rimR = vs.spareRimR > 0 ? vs.spareRimR : vs.spareR * 0.62;
+            spare.width = vs.spareWidth > 0 ? vs.spareWidth : spare.width;
+            if (vs.spareMass > 0) spare.mass = vs.spareMass;
+            spare.I = 0.65 * spare.mass * spare.R * spare.R;
+        }
+    } else {
+        hasSpare = false;
     }
     restLocal = local;
     wheelbase = 2.5;
@@ -2120,6 +2234,19 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                         rf.section[k] = nextSection++;  // (a bracket bends on its own)
                     }
                 }
+                // The rail is the same steel section end to end, so every station takes the
+                // same force to bend; but the pull scales with each node's mass, and that
+                // varies 3:1 along it (the frame's weight follows its brackets and horns, and
+                // the stability pass lends some to the suspension). Held to the rail's mean, so
+                // the light ends (the 4Runner's tail station carried 5.8 kg against 17 in the
+                // middle) don't set at a third of the force the middle takes.
+                double railM = 0;
+                int railN = 0;
+                for (size_t k = 0; k < rf.nodes.size(); k++)
+                    if (rf.section[k] < ladderStations) railM += nodes[rf.nodes[k]].m, railN++;
+                railM /= std::max(railN, 1);
+                for (size_t k = 0; k < rf.nodes.size(); k++)
+                    if (rf.section[k] < ladderStations) rf.weight[k] = (float)clampd(railM / nodes[rf.nodes[k]].m, 0.33, 3);
             }
         } else {
             setUp(chassis, range(0, frameNodes), 300000 * vs.frameStiffness);

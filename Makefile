@@ -6,9 +6,9 @@ CXXFLAGS ?= -O2 -march=native
 CXXFLAGS += -std=c++17 -Wall -Wextra
 LDLIBS   := -l:libSDL2-2.0.so.0 -lpthread -lm
 
-PHYS     := src/jobs.cpp src/walker.cpp src/softbody.cpp src/recovery.cpp src/net.cpp src/level.cpp src/levels_builtin.cpp src/levelrun.cpp src/editcore.cpp src/autopilot.cpp src/pilotsense.cpp src/carbuild.cpp src/world.cpp src/mountain.cpp src/freeway.cpp src/frontier.cpp src/backcountry.cpp src/vehicles.cpp src/mods.cpp
-SCEN     := tests/jobs.cpp tests/walker.cpp tests/editor.cpp tests/levels.cpp tests/circuit.cpp tests/frontier.cpp tests/backcountry.cpp tests/freeway.cpp tests/surfaces.cpp tests/handling.cpp tests/harness.cpp tests/scenarios.cpp tests/components.cpp tests/offroad.cpp tests/recovery.cpp tests/net.cpp tests/autopilot.cpp
-GAME_SRC := src/main.cpp src/editor.cpp src/coop.cpp src/gl.cpp src/render.cpp src/carvisual.cpp src/bodyshell.cpp src/scenery.cpp src/menu.cpp src/fx.cpp src/audio.cpp src/music.cpp src/daylight.cpp src/lights.cpp src/groundtex.cpp src/groundshader.cpp $(PHYS) $(SCEN)
+PHYS     := src/props.cpp src/jobs.cpp src/walker.cpp src/softbody.cpp src/recovery.cpp src/net.cpp src/level.cpp src/levels_builtin.cpp src/levelrun.cpp src/editcore.cpp src/autopilot.cpp src/pilotsense.cpp src/carbuild.cpp src/world.cpp src/mountain.cpp src/freeway.cpp src/frontier.cpp src/backcountry.cpp src/vehicles.cpp src/mods.cpp src/gamepad.cpp src/platform.cpp src/tires.cpp src/interact.cpp
+SCEN     := tests/props.cpp tests/jobs.cpp tests/walker.cpp tests/editor.cpp tests/levels.cpp tests/circuit.cpp tests/frontier.cpp tests/backcountry.cpp tests/freeway.cpp tests/surfaces.cpp tests/handling.cpp tests/harness.cpp tests/scenarios.cpp tests/components.cpp tests/offroad.cpp tests/recovery.cpp tests/net.cpp tests/autopilot.cpp tests/gamepad.cpp tests/tires.cpp
+GAME_SRC := src/main.cpp src/gamepad_sdl.cpp src/editor.cpp src/coop.cpp src/gl.cpp src/render.cpp src/carvisual.cpp src/bodyshell.cpp src/scenery.cpp src/menu.cpp src/fx.cpp src/audio.cpp src/music.cpp src/daylight.cpp src/lights.cpp src/groundtex.cpp src/groundshader.cpp src/propdraw.cpp $(PHYS) $(SCEN)
 GAME_OBJ := $(patsubst %.cpp,build/%.o,$(GAME_SRC))
 TEST_OBJ := $(patsubst %.cpp,build/%.o,tests/run_tests.cpp $(PHYS) $(SCEN))
 HEADERS  := $(wildcard src/*.h tests/*.h)
@@ -53,7 +53,57 @@ build/win/CrumpleZone/crumplezone.exe: $(WIN_OBJ)
 windows: build/win/CrumpleZone/crumplezone.exe
 	cp $(WINSDL)/SDL2.dll build/win/CrumpleZone/
 	cp README.md build/win/CrumpleZone/README.txt
+	rm -rf build/win/CrumpleZone/assets && mkdir -p build/win/CrumpleZone/assets
+	cp -r assets/ground build/win/CrumpleZone/assets/
+	if [ -f assets/props/props.txt ]; then cp -r assets/props build/win/CrumpleZone/assets/; fi
 	cd build/win && rm -f CrumpleZone-windows.zip && zip -qr CrumpleZone-windows.zip CrumpleZone
+
+# ---- macOS build: run on a Mac (Xcode command line tools) ----------------------------
+#   make mac [VERSION=x.y.z]  ->  build/mac/CrumpleZone.app and build/mac/CrumpleZone-mac.zip
+# A universal (Apple silicon + Intel) app with SDL2.framework inside it. Needs the official
+# SDL2 macOS framework (from the SDL2-2.x.dmg) in $(MACSDL). Ad-hoc signed only: the first
+# launch needs right-click > Open (or: xattr -dr com.apple.quarantine CrumpleZone.app).
+VERSION  ?= 0.1.0
+MACCXX   ?= clang++
+MACSDL   ?= third_party/sdl2-mac
+MACFLAGS := -O2 -std=c++17 -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -Wall
+MAC_OBJ  := $(patsubst %.cpp,build/mac/obj/%.o,$(GAME_SRC))
+MACAPP   := build/mac/CrumpleZone.app
+
+build/mac/obj/%.o: %.cpp $(HEADERS)
+	@mkdir -p $(dir $@)
+	$(MACCXX) $(MACFLAGS) -c -o $@ $<
+
+build/mac/crumplezone: $(MAC_OBJ)
+	$(MACCXX) $(MACFLAGS) -o $@ $^ -F$(MACSDL) -framework SDL2 -Wl,-rpath,@executable_path/../Frameworks
+
+mac: build/mac/crumplezone
+	rm -rf $(MACAPP) && mkdir -p $(MACAPP)/Contents/MacOS $(MACAPP)/Contents/Resources/assets $(MACAPP)/Contents/Frameworks
+	cp build/mac/crumplezone $(MACAPP)/Contents/MacOS/crumplezone
+	cp -R assets/ground $(MACAPP)/Contents/Resources/assets/
+	if [ -f assets/props/props.txt ]; then cp -R assets/props $(MACAPP)/Contents/Resources/assets/; fi
+	cp -R $(MACSDL)/SDL2.framework $(MACAPP)/Contents/Frameworks/
+	cp README.md $(MACAPP)/Contents/Resources/README.md
+	printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>\n<key>CFBundleName</key><string>Crumple Zone</string>\n<key>CFBundleDisplayName</key><string>Crumple Zone</string>\n<key>CFBundleIdentifier</key><string>io.github.benbone21.crumplezone</string>\n<key>CFBundleExecutable</key><string>crumplezone</string>\n<key>CFBundlePackageType</key><string>APPL</string>\n<key>CFBundleShortVersionString</key><string>$(VERSION)</string>\n<key>CFBundleVersion</key><string>$(VERSION)</string>\n<key>LSMinimumSystemVersion</key><string>11.0</string>\n<key>LSApplicationCategoryType</key><string>public.app-category.simulation-games</string>\n<key>NSHighResolutionCapable</key><true/>\n</dict></plist>\n' > $(MACAPP)/Contents/Info.plist
+	codesign --force --deep --sign - $(MACAPP)
+	cd build/mac && rm -f CrumpleZone-mac.zip && ditto -c -k --keepParent CrumpleZone.app CrumpleZone-mac.zip
+
+# ---- Debian package ---------------------------------------------------------------
+#   make deb [VERSION=x.y.z]  ->  build/deb/crumplezone_VERSION_amd64.deb
+# Installs to /opt/crumplezone (the game finds assets/ beside its executable), with
+# /usr/games/crumplezone and a desktop menu entry. Settings stay in ~/.config/crumplezone.
+DEBROOT := build/deb/root
+deb: crumplezone
+	rm -rf $(DEBROOT) && mkdir -p $(DEBROOT)/DEBIAN $(DEBROOT)/opt/crumplezone $(DEBROOT)/usr/games $(DEBROOT)/usr/share/applications $(DEBROOT)/usr/share/doc/crumplezone
+	install -m755 crumplezone $(DEBROOT)/opt/crumplezone/crumplezone
+	strip $(DEBROOT)/opt/crumplezone/crumplezone
+	mkdir -p $(DEBROOT)/opt/crumplezone/assets && cp -r assets/ground $(DEBROOT)/opt/crumplezone/assets/
+	if [ -f assets/props/props.txt ]; then cp -r assets/props $(DEBROOT)/opt/crumplezone/assets/; fi
+	ln -s /opt/crumplezone/crumplezone $(DEBROOT)/usr/games/crumplezone
+	cp README.md $(DEBROOT)/usr/share/doc/crumplezone/README.md
+	printf '[Desktop Entry]\nType=Application\nName=Crumple Zone\nComment=Soft-body driving: crash it, crawl it, race it\nExec=/usr/games/crumplezone\nTerminal=false\nCategories=Game;Simulation;\n' > $(DEBROOT)/usr/share/applications/crumplezone.desktop
+	printf 'Package: crumplezone\nVersion: $(VERSION)\nSection: games\nPriority: optional\nArchitecture: amd64\nDepends: libsdl2-2.0-0, libgl1, libc6, libstdc++6\nMaintainer: Crumple Zone <noreply@users.noreply.github.com>\nInstalled-Size: %s\nDescription: Soft-body driving sim: crash it, crawl it, race it\n Node-and-beam soft-body vehicles (ladder frames, live axles, crumple zones)\n for rock crawling, off-roading, crashes and racing.\n' "$$(du -sk $(DEBROOT) | cut -f1)" > $(DEBROOT)/DEBIAN/control
+	dpkg-deb --root-owner-group --build $(DEBROOT) build/deb/crumplezone_$(VERSION)_amd64.deb
 
 # ---- Props: the offline baker for the Poly Haven scans (Linux; needs ImageMagick's `convert`) ----
 #   make bake PROPSRC=/path/to/polyhaven/models   ->  assets/props/ (committed; the game reads it)
@@ -76,4 +126,4 @@ run: crumplezone
 clean:
 	rm -rf build crumplezone
 
-.PHONY: windows all test run clean bake
+.PHONY: windows mac deb all test run clean bake

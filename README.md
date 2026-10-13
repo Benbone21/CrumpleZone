@@ -28,6 +28,7 @@ make
 | `--size 1920x1080` | Window size |
 | `--no-audio` | Disable sound |
 | `--no-vsync` | Disable vsync |
+| `--no-pad` | Ignore game controllers (also `CZ_NO_PAD=1`) |
 | `--spawn X,Z[,HEADING]` | Start somewhere else; for example, `--spawn 300,0,-80` puts you on the loop road |
 | `--scenario NAME` | Play one of the test scenarios (see Testing) |
 | `--host [PORT]` | Host a multiplayer session (default port 27015) |
@@ -39,9 +40,25 @@ make
 `./crumplezone` lands, the HUD says NEW BUILD READY; press F5 and the game restarts on
 it, on the same map, in the same vehicle (with its garage parts), at the same spot.
 
+## Releases
+
+Download from the [releases page](https://github.com/Benbone21/crumplezone/releases). Each release has three builds:
+
+| File | Platform | How to run |
+|---|---|---|
+| `CrumpleZone-<version>-mac.zip` | macOS 11+, Apple silicon and Intel | Unzip and open **CrumpleZone.app**. It isn't notarized, so the first time right-click it and choose **Open** (or run `xattr -dr com.apple.quarantine CrumpleZone.app`). |
+| `CrumpleZone-<version>-windows.zip` | Windows 10/11, 64-bit | Unzip and run `crumplezone.exe` (keep `SDL2.dll` and `assets` beside it). |
+| `CrumpleZone-<version>-linux.deb` | Debian 13+ / Ubuntu 24.04+, amd64 | `sudo apt install ./CrumpleZone-<version>-linux.deb`, then run `crumplezone` or pick Crumple Zone from the games menu. It installs to `/opt/crumplezone`. |
+
+`.github/workflows/release.yml` builds all three on every push to `sync` or `main` (kept as workflow artifacts, as a build check). Pushing a version tag (`git tag v0.2.0 && git push origin v0.2.0`) also publishes them as a release, with notes from `docs/releases/<tag>.md`.
+
 ## Windows
 
 `make windows` cross-compiles `build/win/CrumpleZone/crumplezone.exe` (with `SDL2.dll` beside it) and zips it. It needs the mingw-w64 cross compiler (`g++-mingw-w64-x86-64-posix`) and the official SDL2 x64 Windows runtime (`SDL2.dll`) in `third_party/sdl2-win64/`. Settings and the garage live in `%APPDATA%\crumplezone` on Windows. Multiplayer works between Linux and Windows.
+
+## macOS
+
+`make mac` (on a Mac with the Xcode command line tools) builds a universal `build/mac/CrumpleZone.app` (arm64 + x86_64, macOS 11+) and `build/mac/CrumpleZone-mac.zip`. It needs the official SDL2 macOS framework: copy `SDL2.framework` from the `SDL2-2.30.x.dmg` on SDL's releases page into `third_party/sdl2-mac/`. The app is ad-hoc signed, not notarized. Settings live in `~/.config/crumplezone`, as on Linux.
 
 ## Testing
 
@@ -96,6 +113,7 @@ scenario finishes, you can drive around in the aftermath.
 | `surfaces/` | The side-by-side flat out through mud and sand; stopping from 40 km/h on pavement, wet, gravel, sand, mud, snow and ice; locked wheels vs ABS on pavement and gravel; sand sinking, floating aired down and digging in; all-terrains vs semi-slicks in mud; ice; the autopilot on sand and ice |
 | `freeway/` | Top speed per vehicle (flat out until it stops gaining; holds its lane, nothing scrapes), and seamless 400 m wraps at 200 km/h |
 | `handling/` | Keyboard steering at 130 km/h: a tap is a nudge, a hold is a hard sweeper without a spin (each per vehicle) |
+| `gamepad/` | The controller logic with synthetic pad input: deadzone and curves, the speed-sensitive steering ratio, trigger pedals and reverse, the button bindings, rumble, a Bronco's lane change at 80 km/h and a 4L crawl on the pad |
 | `net/` | A host and a client over loopback: each sees the other's truck (node for node), a strap between them tows, leaving cleans up |
 | `ai/` | Laps (all vehicles and both directions), following, oncoming traffic, passing an obstacle, getting back on the road, getting unstuck, 8-car traffic |
 | `engine/` | Determinism, timestep convergence, sleeping, performance |
@@ -117,7 +135,7 @@ scenario finishes, you can drive around in the aftermath.
 | F / B | Front / rear locker (4x4s; the front one needs 4WD engaged; the Bronco's front and the 4Runner's factory rear only work in low range; the rock buggy has both, the side-by-side only the front) |
 | Y | Front sway bar disconnect (Bronco: a dash button under 30 km/h, reconnects itself above; 4Runner: quick-disconnect pins, stopped) |
 | 9 / 0 | Hold to let air out of / pump up the tires (stopped). 35 psi street, 15–18 for rock |
-| V | Winch: pick an anchor (every tree, boulder, truck or soft-ground spot within the 30 m line is marked; drag the camera to aim, wheel or Tab for the next, V or click to hook, Esc to cancel). With a line on, V unhooks it |
+| V | Winch: pick an anchor (every tree, boulder or truck within the 60 m line is marked, plus a ground anchor straight ahead and wherever the camera looks; drag the camera to aim, wheel or Tab for the next, V or click to hook, Esc to cancel). With a line on, V unhooks it |
 | Z / Shift+Z | Winch in / pay out (- and = set the winch speed, 10-100%) |
 | O | Tow strap: hook to the nearest truck within 9 m, or unhook |
 | I | Spawn a parked vehicle ahead of you |
@@ -140,6 +158,43 @@ scenario finishes, you can drive around in the aftermath.
 | F5 | Load the new build when the HUD says one is ready (see Build and run) |
 | J | Expand the checks list while a scenario plays |
 
+## Controller
+
+Xbox, PlayStation and generic pads work through SDL2's game controller API: plug one in (or unplug it) at any time and the game says `CONTROLLER CONNECTED: <name>`. The HUD hints show the pad's button names (A / CROSS and so on) while it was the last thing you used; touch the keyboard or mouse and they go back. `--no-pad` (or `CZ_NO_PAD=1`) leaves controllers alone. The pad does nothing while the game window doesn't have the focus.
+
+Driving is analog. The left stick is a real analog steering input: a radial deadzone (0.12 by default), a response curve, and a speed-sensitive ratio. Full stick is what the tires can hold at that speed (the same limit the keys use, a little more room), so it is full lock when parking or crawling and a few degrees at 130 km/h; half a stick is half of that. RT is the throttle and LT the brake, both analog; LT at a standstill puts the car in reverse (RT while rolling backwards brakes, then drives forward), exactly as holding S does.
+
+| Button | Action |
+| --- | --- |
+| Left stick | Steer |
+| RT / LT | Throttle / brake (LT at a stop: reverse) |
+| A or B | Handbrake (hold) |
+| X / Y | Shift down / up (switches to manual) |
+| Right stick | Look around (the chase camera recentres on its own) |
+| R3 (hold) | Look back; let go to reset the view |
+| RB | Camera: chase / orbit / cockpit / drone |
+| D-pad up | 4x4 mode (L) |
+| D-pad left / right | Front / rear locker |
+| D-pad down | Front sway bar disconnect |
+| L3 | Headlights |
+| Back (View) | The map: sticks pan, RT / LT zoom, A sets the waypoint, Back or B closes |
+| Start (Menu) | Pause menu |
+| LB + D-pad up / down | Winch: hook (or unhook) / tow strap |
+| LB + RT / LT | Winch in / out (right stick up and down sets the winch speed) |
+| LB + D-pad left / right | Air down / pump up the tires (hold, stopped) |
+| LB + A | Repair in place (twice quickly: back to the start) |
+| LB + B | Back on its wheels |
+| LB + X | Traction control on/off |
+| LB + Y | Get out / get in |
+| LB + RB | Manual / automatic gearbox |
+| LB + L3 | Autopilot on/off |
+| LB + Back | Next vehicle |
+| LB + Start | The controls list (shows the pad's map) |
+
+Picking a winch anchor: right stick aims, D-pad left/right or LB/RB step through the anchors, A hooks, B cancels. Menus, the title screen, the level list and the garage: D-pad or left stick move (hold to repeat), A selects, B or Start goes back. On foot the left stick walks, A jumps, and the right stick looks; Y with LB gets back in. The drone camera flies with the left stick and looks with the right.
+
+**Rumble** (settings, CONTROLLER page: OFF / LOW / HIGH): a thump on impacts, a rumble over rough ground, a buzz from tires sliding and from the engine on its limiter. It only runs while the pad is the last thing you used and the window has the focus. The same page sets STEERING (SOFT / NORMAL / SHARP: how the stick maps to the wheels) and STICK DEADZONE (SMALL / MEDIUM / LARGE). Multiplayer needs nothing: each machine reads its own pad.
+
 ## Main menu and levels
 
 Launched plainly, the game opens on the title screen: free drive (pick map and vehicle), levels, multiplayer, world editor, garage, settings. Levels are races (laps through gates) and sprints (start to finish through gates) with medal times, damage/time limits and a no-repairs rule. Seven come with the game (Frontier GP, The Wall, Mesa Climb, Snake River Ford, Summit Run, Widowmaker, Boulder Gully); your own are `.czl` files in `~/.config/crumplezone/levels` or `./levels`. `--level NAME` starts one. In multiplayer the host picks the level and everyone gets it (edits and all), starts together, and sees a live leaderboard.
@@ -149,7 +204,7 @@ Launched plainly, the game opens on the title screen: free drive (pick map and v
 - **Map (M):** the whole map, north up: trails, water, repair shops, places, everyone's trucks. Wheel zooms, drag pans, left click sets your waypoint, right click pings GO HERE for everyone (Shift: HELP). Shift+M is now manual/automatic.
 - **Pings:** middle click pings GO HERE where you point; Shift+middle click pings HELP at your truck. Everyone sees them in the world and on the map.
 - **Chat:** Enter, type, Enter. **Meet up** (Esc → Multiplayer) parks your truck behind a buddy's (again for the next one). Name tags float over your buddies' trucks (and over them on foot).
-- **On foot (J):** get out (stopped) to spot a line or walk the trail. WASD walk, Shift run, Space jump; you wade, swim, and climb over rocks. V hooks your truck's winch to the tree, rock or truck nearest you; F pours your truck's spare can into the nearest truck (a buddy's too). J again by a truck gets in.
+- **On foot (J):** get out (stopped) to spot a line or walk the trail. You see through your own eyes: the mouse looks around, WASD walk where you look, Shift run, Space jump; you wade, swim, and climb over rocks. V hooks your truck's winch to the tree, rock or truck within arm's reach, or anchors the line right where you stand (up to 60 m from the truck); F pours your truck's spare can into the nearest truck (a buddy's too). J again by a truck gets in.
 - **Exploring:** every named place on a map starts undiscovered ("?" on the map); get within 30 m to find it. Your discoveries are kept between sessions.
 - **Fuel:** engines burn fuel for the power they make (setting FUEL: OFF / REAL / FAST, default FAST: 4x). Run dry and the engine dies. Shops fill the tank and the spare can; the Bronco and 4Runner carry a 20 L can.
 
@@ -174,7 +229,7 @@ change and Enter to confirm. Esc goes back.
 - **Vehicle:** pick any of the seven vehicles, then press Enter (or click) to drive it.
 - **Settings:**
   - Game: speed in km/h or mph, time of day (CYCLE: dawn, day, dusk and night go round, a whole day in 6 to 96 real minutes, 24 by default; or held at MORNING, NOON, EVENING or NIGHT; the clock carries on from where you left it), volume, music volume (default 40%, 0 turns it off; it sits under the master volume), field of view.
-  - Graphics: a quality preset (low / medium / high / ultra), shadows, anti-aliasing (MSAA), ambient occlusion, bloom, clouds, render scale (50–200%).
+  - Graphics: a quality preset (low / medium / high / ultra), shadows, anti-aliasing (MSAA), ambient occlusion, bloom, clouds, grass, scanned scenery (photo-scanned ground and props: off / low / high / ultra), render scale (50–200%).
   - Display: fullscreen, vsync, FPS counter.
 
 Settings are saved to `~/.config/crumplezone/settings.txt`.
@@ -353,7 +408,7 @@ Up to 8 players on one map. One of you hosts; the rest join.
 
 The idea: trucks break, and your buddies get you home. (Until multiplayer lands, a buddy is any other truck: Tab into it and drive.)
 
-- **Winch (V, Z, Shift+Z):** the Bronco and 4Runner carry a 9,500 lb winch with 30 m of synthetic line. V hooks the best anchor ahead: a tree, a big boulder, another truck's recovery point, or a buried anchor in soft ground. It reels in at ~0.13 m/s, slower under load, and stalls at its rated 44 kN (the drum brake holds). The line snaps past ~90 kN.
+- **Winch (V, Z, Shift+Z):** the Bronco, 4Runner and rock buggy carry a 9,500 lb winch, the side-by-side a 4,500 lb one (20 kN), each with 30 m of synthetic line and a 30 m extension in the recovery bag (60 m in all). V hooks the best anchor ahead: a tree, a boulder (0.45 m and up), another truck's recovery point, or, anywhere else, a ground anchor (dug into loose ground, or a bolt in bare rock). It reels in at ~0.13 m/s, slower under load, and stalls at its rated pull (the drum brake holds). The line snaps past ~90 kN.
 - **Trail repairs:** stop within a few meters of another truck (yours, a parked one, or a buddy's) and its crew and kit fix what can be fixed out there: flat tires, snapped axle shafts and CVs, bent steering and suspension links, a flooded engine. Dents, panels, glass, a lost wheel or a wrecked engine still need a repair station.
 - **Tow strap (O):** a 9 m kinetic strap between your nearest recovery point and the nearest other truck's. A truck on a strap rolls in neutral, brakes off, steering itself to follow. It breaks at 130 kN.
 - The HUD (top left) shows line out, pull, and how close it is to breaking. The pull is spread through the frame, so recovering doesn't bend the truck.
@@ -522,6 +577,24 @@ ABS and traction control aim for the slip that grips best on that tread and surf
   - rock with strata on steep ground
   - snow on high tops
   - craggy rim mountains, and a mountain range out to the horizon (visual only; the physics map is unchanged)
+- **Photo-scanned ground** (`src/groundtex.cpp`, `src/groundshader.cpp`, `assets/ground/`): ten CC0 Poly Haven
+  PBR sets (colour, normal, AO/roughness, height) in two texture arrays. Each 1 m cell's paint picks a mix of
+  materials (mud, dirt, leaf litter, two grasses, gravel, pale and orange ground, rock, snow); neighbouring cells
+  blend through a noise-wobbled, height-aware border (the knobbly material shows through first). Normal and ARM
+  maps light it; a second, turned and rescaled sample and large patches of lighter and warmer ground break up the
+  tiling; steep banks are mapped from the side (triplanar); detail fades out with distance. Paved ground, ice, the
+  freeway and the race circuit keep the code-made look. Tire tracks, rut lips, puddles in mud, the wet shore,
+  editor painting and night lighting all work on it. SCANNED SCENERY (settings) sets how many layers and taps it
+  takes and the texture size; OFF is the code-made ground.
+- **Scanned props** (`src/propdraw.cpp`, baked into `assets/props/` by `tools/bakeprops.cpp`): Poly Haven
+  scans drawn instanced with their colour, normal and AO/roughness maps, lit and shadowed like everything else
+  (they cast shadows too), each at one of three levels of detail by distance, culled to the view. Pines are
+  fir and pine saplings scaled to the tree, snags and logs are dead trunks (a log fitted to its collider), bushes
+  are shrubs, cliffs lie on the steep faces, and round the camera grass, ferns, stumps and branches grow off the
+  trails, water and pads. Far trees are billboards baked from eight sides. Boulders are the scans too, and so is
+  what you hit: `World::addRock` places the scan's convex hull (48 corners at most, in `rocks.hull`) scaled and
+  turned at random, and the renderer draws the scan in the same frame. Without `assets/props` (or with SCANNED
+  SCENERY off) the scenery is the code-made one, and so are the rock hulls without the bake.
 
 ## Vehicle visuals
 
@@ -600,6 +673,37 @@ Help only appears when you press H.
   - The music sits about 8–14 dB under the engine at the default setting and costs under 1% of one CPU core.
   - To review it offline, `build/review/music/musictest.cpp` renders each map to WAV and writes spectrograms, levels and a note trace.
 
+## Scanned assets
+
+The scans are CC0 from [Poly Haven](https://polyhaven.com). The raw downloads stay out of git:
+
+```bash
+python3 tools/fetch_polyhaven.py assets/source/polyhaven   # ~154 MB, md5-checked
+make bake                                                  # -> assets/props (committed): 3 LODs, atlases, hulls, billboards
+```
+
+`make bake` (needs ImageMagick's `convert`) simplifies each solid scan to three levels of detail (rocks about
+1,500, 400 and 100 triangles), unwraps each level and bakes the full scan's colour, normal and AO/roughness onto
+it, cuts each rock's convex hull down to 48 corners (`rocks.hull`, the format `World::addRock` uses), thins the
+leaf and needle cards for the lower levels (dropping cards, scaling the rest up, inside a triangle budget) and
+renders the trees' far billboards. `CZ_PROPS_DIR=DIR` points the game and the tests at another bake.
+
+The ground has no grass, sand or asphalt scan yet: grass is two scanned grounds tinted green, sand the pale
+ground warmed, asphalt the code-made look. CC0 sets that would fill the gaps (names to check against the sites):
+Poly Haven `leafy_grass`, `aerial_grass_rock` (grass), `coast_sand_01`, `aerial_beach_01` (sand), `asphalt_02`
+(asphalt); ambientCG `Grass001`-`Grass005`, `Asphalt012`.
+
+## Credits
+
+- Scanned rocks, cliffs, trees, plants, logs and ground materials: [Poly Haven](https://polyhaven.com), CC0
+  (rock_moss_set_01/02, rock_07, rock_09, boulder_01, stone_01, namaqualand_boulder_03/04/05,
+  namaqualand_boulders_01, namaqualand_stones_01, rock_face_01/02, namaqualand_cliff_01, fir_sapling,
+  pine_sapling_small, dead_tree_trunk, dead_tree_trunk_02, shrub_02/03/04, fern_02, grass_medium_02,
+  tree_stump_01/02, dry_branches_medium_01; forrest_ground_01, brown_mud_leaves_01, brown_mud_03, brown_mud_dry,
+  rocky_terrain_02, gravel_ground_01, sandy_gravel_02, snow_02, forest_leaves_04, rocky_trail).
+- `src/third_party/stb_image.h`: Sean Barrett, public domain.
+- `src/third_party/cgltf.h`: Johannes Kuhlmann, MIT license.
+
 ## How it works
 
 | File | What it does |
@@ -610,8 +714,12 @@ Help only appears when you press H.
 | `src/vehicles.*` | Vehicle and prop definitions |
 | `src/world.*` | Baked heightfield, road carving, trees, static obstacles, collision queries |
 | `src/render.*` | Shadow-mapped renderer: car body shader (per-pixel lamps, windows, trim), see-through glass pass, detailed wheels, HUD drawing |
+| `src/groundtex.*`, `src/groundshader.cpp` | The photo-scanned ground: texture arrays and the terrain shader that blends them |
+| `src/props.*`, `src/propdraw.*` | Scanned props: the baked model and hull files (no GL; the physics uses the hulls), and their instanced renderer |
+| `tools/bakeprops.cpp`, `tools/fetch_polyhaven.py` | Fetches the Poly Haven sources and bakes them into `assets/props` |
 | `src/carvisual.*` | Visual car models: subdivided body shell skinned to the physics, lattice-attached parts, running gear from the live suspension |
 | `src/fx.*` | Particles, skid marks and tire tracks (decals multiplied into the ground), the lips of shoved-aside ground along ruts and round sunk tires |
 | `src/audio.*` | Procedural sound |
 | `src/music.*` | Generative background music (one style per map), mixed in by `audio.cpp` |
 | `src/sdl_min.h`, `src/gl.*` | Minimal SDL2 and OpenGL declarations, so no headers need installing |
+| `src/gamepad.*`, `src/gamepad_sdl.cpp` | Game controller support: shaping, steering, pedals, bindings and rumble (no SDL), and the SDL device with hot-plugging |

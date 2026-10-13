@@ -6,6 +6,7 @@
 #include "gl.h"
 #include "groundtex.h"
 #include "lights.h"
+#include "propdraw.h"
 #include "softbody.h"
 
 class Effects;
@@ -46,6 +47,7 @@ struct RenderSettings {
     bool clouds = true;
     bool grass = true;          // grass blades round the camera
     int ground = 2;             // terrain materials: 0 procedural, 1 photo-scanned (one tap), 2 full, 3 full + more layers
+    int props = 2;              // scanned props (propdraw.h): 0 off (code-made scenery), 1 low, 2 high, 3 ultra
     float renderScale = 1.0f;   // scene resolution relative to the window, 0.5 .. 2
     float blur = 0;             // 0..1: blurs the scene behind a menu
 };
@@ -69,6 +71,12 @@ public:
         double stride = 0;  // walk cycle phase (radians), legs and arms swing with it
     };
     std::vector<Figure> figures;
+    // A wheel in your arms, drawn this frame (first person: low in front of the eye).
+    struct Carried {
+        bool on = false;
+        V3 c, axis, up;  // center, its axle, which way is up for it
+        WheelItem item;
+    } carried;
     // The world editor: redraw just what changed (terrain cells i, j on the 1 m grid,
     // inclusive), the water, or the objects.
     void updateTerrainRegion(const World& world, int i0, int j0, int i1, int j1);
@@ -86,6 +94,7 @@ public:
     void flushHud(int width, int height);
 
     std::vector<unsigned char> readPixels(int width, int height);
+    const PropStats& propStats() const { return props.stats; }
 
 private:
     struct CarSlot {
@@ -97,6 +106,9 @@ private:
     static const int kBloomLevels = 6;
     GLuint progLit = 0, progDepth = 0, progLine = 0, progSky = 0, progHud = 0, progFx = 0, progCar = 0;
     GLuint progTerrain = 0;
+    PropRenderer props;
+    bool propsOk = false;     // its shaders built
+    int propsApplied = -1;    // the props quality the scenery was last built for
     GroundTextures groundTex;
     bool groundFailed = false;  // the textures couldn't be loaded: stay procedural
     int groundSize = 0;         // texels a side of what's loaded
@@ -144,7 +156,6 @@ private:
     void buildBoxes(const World& world);
     void buildWheel();
     void buildWheelStyle(int style);
-    void buildTrees(const World& world);
     void buildFont();
     void buildBackdrop(const World& world, std::vector<Vtx>& verts, std::vector<unsigned>& idx);
     void ensureShadows(int size);

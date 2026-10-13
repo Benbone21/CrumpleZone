@@ -2,6 +2,8 @@
 // to a tree by hand. A capsule-ish body (two spheres, feet and chest) that walks, runs,
 // jumps, steps up rocks and logs, wades (and swims) and keeps out of trees and trucks.
 #pragma once
+#include <optional>
+
 #include "softbody.h"
 
 struct Walker {
@@ -12,6 +14,9 @@ struct Walker {
     double stride = 0; // walk cycle (radians)
     bool grounded = false;
     double inWater = 0;  // how deep the water is where it stands (m)
+    // A wheel in your arms (interact.h): slow going, no running or jumping, and no getting
+    // into a vehicle until it's put down or stowed.
+    std::optional<WheelItem> carrying;
 
     // Steps (dt, ~60 Hz): `fwd`/`side` (-1..1) move relative to `viewYaw` (the camera's
     // heading), `run` faster, `jump` once when grounded.

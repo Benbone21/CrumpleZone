@@ -1,4 +1,4 @@
-// The few things that differ between Linux and Windows builds.
+// The few things that differ between the Linux, Windows and macOS builds.
 #pragma once
 #include <cstdlib>
 #include <string>
@@ -32,3 +32,7 @@ inline void makeDir(const std::string& path) {
 #endif
 }
 
+// The running executable's full path (symlinks resolved) and its folder; "" if unknown.
+// (platform.cpp: /proc/self/exe, GetModuleFileName, _NSGetExecutablePath.)
+std::string exePath();
+std::string exeDir();

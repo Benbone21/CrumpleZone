@@ -1,4 +1,5 @@
 #include "groundtex.h"
+#include "platform.h"
 
 #include <algorithm>
 #include <cmath>
@@ -19,7 +20,10 @@
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_JPEG
 #define STBI_ONLY_PNG
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
 #include "third_party/stb_image.h"
+#pragma GCC diagnostic pop
 
 using namespace gl;
 
@@ -47,21 +51,6 @@ bool fileExists(const std::string& p) {
     return true;
 }
 
-std::string exeDir() {
-    char buf[4096];
-#ifdef _WIN32
-    const DWORD n = GetModuleFileNameA(nullptr, buf, sizeof buf - 1);
-    if (n == 0 || n >= sizeof buf - 1) return "";
-    buf[n] = 0;
-#else
-    const ssize_t n = readlink("/proc/self/exe", buf, sizeof buf - 1);
-    if (n <= 0) return "";
-    buf[n] = 0;
-#endif
-    std::string s = buf;
-    const size_t cut = s.find_last_of("/\\");
-    return cut == std::string::npos ? "" : s.substr(0, cut);
-}
 
 struct Decoded {
     std::vector<uint8_t> albedo, normal;  // RGBA, size x size
@@ -142,7 +131,7 @@ void decodeLayer(const std::string& dir, const char* id, int maxSize, int expect
 std::string findGroundDir() {
     std::vector<std::string> roots = {"."};
     const std::string exe = exeDir();
-    if (!exe.empty()) roots.insert(roots.end(), {exe, exe + "/..", exe + "/../.."});
+    if (!exe.empty()) roots.insert(roots.end(), {exe, exe + "/../Resources", exe + "/..", exe + "/../.."});  // (../Resources: inside a macOS .app)
     for (const std::string& r : roots) {
         const std::string d = r + "/assets/ground";
         if (fileExists(d + "/" + kGroundLayers[0] + "_diff_1k.jpg")) return d;

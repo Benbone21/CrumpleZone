@@ -480,8 +480,9 @@ SCENARIO(rampTravel, "offroad/rti", "Ramp travel index on a 20 degree ramp: real
 // ---- The mountain's hard lines ---------------------------------------------------
 
 namespace {
-// Crawls along the line from `from` in direction `dir` (flat), holding the center.
-void crawlAlong(Car& c, const V3& from, const V3& dir, double speed) {
+// Crawls along the line from `from` in direction `dir` (flat), holding the center. `cap`
+// is the throttle it has learned to stop at (start it at 1; the caller keeps it per car).
+void crawlAlong(Car& c, const V3& from, const V3& dir, double speed, double& cap) {
     Frame fr = c.frame();
     const V3 rel = fr.com - from;
     const double s = dot(rel, dir);
@@ -492,9 +493,6 @@ void crawlAlong(Car& c, const V3& from, const V3& dir, double speed) {
     double v = dot(fr.vel, fr.fwd);
     // Feathered: a crawler never floors it in low range (the tires just dig and spin), and
     // eases off as soon as they start to spin (the converter lets the engine flare).
-    static thread_local double cap = 1;
-    static thread_local const Car* who = nullptr;
-    if (who != &c) who = &c, cap = 1;
     double spin = 0;
     for (const Wheel& wh : c.wheels)
         if (c.wheelPowered(wh) && wh.load > 0) spin = std::max(spin, std::fabs(wh.omega * wh.rollR()) - std::fabs(wh.groundSpeed));
@@ -584,10 +582,10 @@ SCENARIO(widowmaker, "offroad/widowmaker", "A built Bronco (4L, rear locker, 18 
     const V3 out = norm(V3(pin.x - s0.x, 0, pin.z - s0.z));
     const V3 start = s0 - out * 1.5;
     Car& c = crawler(ctx, start.x, start.z, out, false);
-    double best = 0, lowest = 1e9;
+    double best = 0, lowest = 1e9, cap = 1;
     const double crestY0 = ctx.sim.world.height(s0.x, s0.z);
     ctx.runUntil(200, [&] { return best > 150; }, [&] {
-        crawlAlong(c, start, out, 1.2);
+        crawlAlong(c, start, out, 1.2, cap);
         const V3 p = c.frame().com;
         best = std::max(best, dot(p - start, out));
         lowest = std::min(lowest, p.y - crestY0);
@@ -605,9 +603,9 @@ SCENARIO(gullyClimb, "offroad/gully", "A built Bronco (4L, both lockers, 18 psi)
     const V3 start = foot - up * 6;
     Car& c = crawler(ctx, start.x, start.z, up, true);
     const double y0 = c.frame().com.y;
-    double best = 0, rise = 0;
+    double best = 0, rise = 0, cap = 1;
     ctx.runUntil(240, [&] { return best > 110; }, [&] {
-        crawlAlong(c, start, up, 1.0);
+        crawlAlong(c, start, up, 1.0, cap);
         best = std::max(best, dot(c.frame().com - start, up));
         rise = std::max(rise, c.frame().com.y - y0);
         ctx.sample("progress", "bronco", dot(c.frame().com - start, up), "m");

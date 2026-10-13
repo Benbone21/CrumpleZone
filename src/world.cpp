@@ -1,5 +1,7 @@
 #include "world.h"
 
+#include "props.h"
+
 #include <atomic>
 
 namespace {
@@ -160,6 +162,80 @@ std::vector<std::array<int, 3>> convexHull(const std::vector<V3>& p) {
 }
 }  // namespace
 
+namespace {
+// World::addRock with the scanned hulls on.
+Rock& addScannedRock(World& w, const props::HullLibrary& lib, double x, double z, const V3& radii, double top, uint32_t seed, float tint) {
+    uint32_t s = seed * 2246822519u + 0x85ebca6bu;
+    auto rnd = [&]() {
+        s ^= s << 13;
+        s ^= s >> 17;
+        s ^= s << 5;
+        return (s & 0xFFFFFF) / double(0x1000000);
+    };
+    // The scans whose proportions are nearest what the map asked for (either way round:
+    // the yaw is random anyway), one of the closest four by the seed. Then it's scaled to
+    // the asked size on each axis (so tests and trails that size a rock still get that
+    // rock), a few percent either way, so no two look alike.
+    struct Cand {
+        double score;
+        int i;
+        bool swap;
+    };
+    std::vector<Cand> cands;
+    const double ry = std::max(radii.y, 1e-3);
+    for (int i = 0; i < (int)lib.hulls.size(); i++) {
+        const V3 h = lib.hulls[i].half();
+        const double hy = std::max(h.y, 1e-3);
+        for (int sw = 0; sw < 2; sw++) {
+            const double hx = sw ? h.z : h.x, hz = sw ? h.x : h.z;
+            const double sc = std::fabs(std::log((hx / hy) / (radii.x / ry))) + std::fabs(std::log((hz / hy) / (radii.z / ry)));
+            cands.push_back({sc, i, sw != 0});
+        }
+    }
+    std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) { return a.score < b.score || (a.score == b.score && a.i < b.i); });
+    std::vector<Cand> pick;
+    for (const Cand& c : cands) {
+        bool dup = false;
+        for (const Cand& p : pick) dup |= p.i == c.i;
+        if (!dup) pick.push_back(c);
+        if (pick.size() == 4) break;
+    }
+    const Cand& c = pick[std::min((size_t)(rnd() * pick.size()), pick.size() - 1)];
+    const props::RockHull& hull = lib.hulls[c.i];
+    const V3 h = hull.half(), mid((hull.bmin[0] + hull.bmax[0]) * 0.5, (hull.bmin[1] + hull.bmax[1]) * 0.5, (hull.bmin[2] + hull.bmax[2]) * 0.5);
+    const double wantX = c.swap ? radii.z : radii.x, wantZ = c.swap ? radii.x : radii.z;
+    const V3 scale(wantX / std::max(h.x, 1e-3) * (0.94 + 0.12 * rnd()), radii.y / std::max(h.y, 1e-3) * (0.94 + 0.12 * rnd()),
+                   wantZ / std::max(h.z, 1e-3) * (0.94 + 0.12 * rnd()));
+    const double yaw = rnd() * 2 * M_PI, tipX = (rnd() - 0.5) * 0.2, tipZ = (rnd() - 0.5) * 0.2;
+    // Model axes in the world: scaled, tipped, turned.
+    V3 ax[3] = {V3(scale.x, 0, 0), V3(0, scale.y, 0), V3(0, 0, scale.z)};
+    for (V3& a : ax) a = rotateAxis(rotateAxis(rotateAxis(a, V3(1, 0, 0), tipX), V3(0, 0, 1), tipZ), V3(0, 1, 0), yaw);
+    auto local = [&](const V3& p) { return ax[0] * (p.x - mid.x) + ax[1] * (p.y - mid.y) + ax[2] * (p.z - mid.z); };
+    double topY = -1e9;
+    for (const V3& p : hull.v) topY = std::max(topY, local(p).y);
+    const V3 at(x, w.height(x, z) + top - topY, z);
+    Rock k;
+    k.tint = tint;
+    k.seed = seed;
+    k.scan = c.i;
+    for (int a = 0; a < 3; a++) k.axis[a] = ax[a];
+    k.origin = at - (ax[0] * mid.x + ax[1] * mid.y + ax[2] * mid.z);
+    for (const V3& p : hull.v) k.v.push_back(at + local(p));
+    k.f = hull.f;
+    for (const auto& f : k.f) {
+        const V3 nrm = norm(cross(k.v[f[1]] - k.v[f[0]], k.v[f[2]] - k.v[f[0]]));
+        k.fn.push_back(nrm);
+        k.fd.push_back(dot(nrm, k.v[f[0]]));
+    }
+    V3 cen;
+    for (const V3& q : k.v) cen += q;
+    k.c = cen / (double)k.v.size();
+    for (const V3& q : k.v) k.r = std::max(k.r, len(q - k.c));
+    w.rocks.push_back(std::move(k));
+    return w.rocks.back();
+}
+}  // namespace
+
 Rock& World::addRock(double x, double z, const V3& radii, double top, uint32_t seed, float tint) {
     uint32_t s = seed * 2654435761u + 0x9e3779b9u;
     auto rnd = [&]() {
@@ -168,6 +244,7 @@ Rock& World::addRock(double x, double z, const V3& radii, double top, uint32_t s
         s ^= s << 5;
         return (s & 0xFFFFFF) / double(0x1000000);
     };
+    if (const props::HullLibrary* lib = props::activeRockScans()) return addScannedRock(*this, *lib, x, z, radii, top, seed, tint);
     // Points spread evenly over the ellipsoid, then pulled in at random: deep pulls
     // cut facets, light ones keep it chunky.
     const int n = 16 + (int)(rnd() * 10);
@@ -910,7 +987,31 @@ std::string World::removeNear(double x, double z, double r) {
         }
         case 2: logs.erase(logs.begin() + idx); return "LOG";
         case 3: boxes.erase(boxes.begin() + idx); return "BLOCK";
-        case 4: fixtures.erase(fixtures.begin() + idx); return "PROP";
+        case 4: {
+            const Prop f = fixtures[idx];
+            fixtures.erase(fixtures.begin() + idx);
+            if (f.kind == PROP_GARAGE) {
+                // A repair shed is the station, the shed and its four corner posts: take them
+                // all (the posts used to stay behind, standing in the open).
+                for (size_t k = 0; k < stations.size(); k++)
+                    if (std::hypot(stations[k].p.x - f.a.x, stations[k].p.z - f.a.z) < 0.05) {
+                        stations.erase(stations.begin() + k);
+                        break;
+                    }
+                const V3 fwd(std::cos(f.yaw), 0, -std::sin(f.yaw)), side(std::sin(f.yaw), 0, std::cos(f.yaw));
+                for (int a = -1; a <= 1; a += 2)
+                    for (int b = -1; b <= 1; b += 2) {
+                        const V3 q = f.a + fwd * (5.0 * a) + side * (3.7 * b);
+                        for (size_t k = 0; k < poles.size(); k++)
+                            if (std::hypot(poles[k].x - q.x, poles[k].z - q.z) < 0.05) {
+                                poles.erase(poles.begin() + k);
+                                break;
+                            }
+                    }
+                return "REPAIR SHOP";
+            }
+            return "PROP";
+        }
         default: return "";
     }
 }

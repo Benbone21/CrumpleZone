@@ -44,6 +44,7 @@ void* SDL_GL_GetProcAddress(const char* proc);
 void SDL_GL_GetDrawableSize(SDL_Window* window, int* w, int* h);
 void SDL_GetWindowSize(SDL_Window* window, int* w, int* h);
 int SDL_PollEvent(SDL_Event* event);
+int SDL_SetRelativeMouseMode(int enabled);  // SDL_bool: the mouse turns the view, no cursor
 const uint8_t* SDL_GetKeyboardState(int* numkeys);
 uint64_t SDL_GetPerformanceCounter(void);
 uint64_t SDL_GetPerformanceFrequency(void);
@@ -52,14 +53,34 @@ SDL_AudioDeviceID SDL_OpenAudioDevice(const char* device, int iscapture, const S
 void SDL_PauseAudioDevice(SDL_AudioDeviceID dev, int pause_on);
 void SDL_CloseAudioDevice(SDL_AudioDeviceID dev);
 int SDL_ShowSimpleMessageBox(uint32_t flags, const char* title, const char* message, SDL_Window* window);
+
+// Game controllers (SDL_gamecontroller.h / SDL_joystick.h). Handles are opaque.
+typedef struct SDL_GameController SDL_GameController;
+typedef struct SDL_Joystick SDL_Joystick;
+typedef int32_t SDL_JoystickID;
+int SDL_InitSubSystem(uint32_t flags);
+int SDL_NumJoysticks(void);
+int SDL_IsGameController(int joystick_index);  // SDL_bool
+SDL_GameController* SDL_GameControllerOpen(int joystick_index);
+void SDL_GameControllerClose(SDL_GameController* gamecontroller);
+const char* SDL_GameControllerName(SDL_GameController* gamecontroller);
+SDL_Joystick* SDL_GameControllerGetJoystick(SDL_GameController* gamecontroller);
+SDL_JoystickID SDL_JoystickInstanceID(SDL_Joystick* joystick);
+int16_t SDL_GameControllerGetAxis(SDL_GameController* gamecontroller, int axis);        // SDL_GameControllerAxis
+uint8_t SDL_GameControllerGetButton(SDL_GameController* gamecontroller, int button);     // SDL_GameControllerButton
+int SDL_GameControllerRumble(SDL_GameController* gamecontroller, uint16_t low_frequency_rumble, uint16_t high_frequency_rumble,
+                             uint32_t duration_ms);  // SDL 2.0.9+
 }
 
 enum : uint32_t {
     SDL_INIT_AUDIO = 0x10,
     SDL_INIT_VIDEO = 0x20,
     SDL_INIT_EVENTS = 0x4000,
+    SDL_INIT_JOYSTICK = 0x200,
+    SDL_INIT_GAMECONTROLLER = 0x2000,
 
     SDL_WINDOW_OPENGL = 0x2,
+    SDL_WINDOW_INPUT_FOCUS = 0x200,
     SDL_WINDOW_RESIZABLE = 0x20,
     SDL_WINDOW_ALLOW_HIGHDPI = 0x2000,
     SDL_WINDOW_FULLSCREEN_DESKTOP = 0x1001,
@@ -72,6 +93,12 @@ enum : uint32_t {
     SDL_MOUSEBUTTONDOWN = 0x401,
     SDL_MOUSEBUTTONUP = 0x402,
     SDL_MOUSEWHEEL = 0x403,
+    SDL_CONTROLLERAXISMOTION = 0x650,
+    SDL_CONTROLLERBUTTONDOWN = 0x651,
+    SDL_CONTROLLERBUTTONUP = 0x652,
+    SDL_CONTROLLERDEVICEADDED = 0x653,
+    SDL_CONTROLLERDEVICEREMOVED = 0x654,
+    SDL_CONTROLLERDEVICEREMAPPED = 0x655,
 
     SDL_MESSAGEBOX_ERROR = 0x10,
     AUDIO_F32SYS = 0x8120,
@@ -87,8 +114,21 @@ enum {
     SDL_GL_MULTISAMPLESAMPLES = 14,
     SDL_GL_CONTEXT_MAJOR_VERSION = 17,
     SDL_GL_CONTEXT_MINOR_VERSION = 18,
+    SDL_GL_CONTEXT_FLAGS = 20,
     SDL_GL_CONTEXT_PROFILE_MASK = 21,
     SDL_GL_CONTEXT_PROFILE_CORE = 1,
+    SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG = 2,
+};
+
+// SDL_GameControllerAxis / SDL_GameControllerButton values.
+enum {
+    SDL_CONTROLLER_AXIS_LEFTX = 0, SDL_CONTROLLER_AXIS_LEFTY, SDL_CONTROLLER_AXIS_RIGHTX, SDL_CONTROLLER_AXIS_RIGHTY,
+    SDL_CONTROLLER_AXIS_TRIGGERLEFT, SDL_CONTROLLER_AXIS_TRIGGERRIGHT,
+    SDL_CONTROLLER_BUTTON_A = 0, SDL_CONTROLLER_BUTTON_B, SDL_CONTROLLER_BUTTON_X, SDL_CONTROLLER_BUTTON_Y,
+    SDL_CONTROLLER_BUTTON_BACK, SDL_CONTROLLER_BUTTON_GUIDE, SDL_CONTROLLER_BUTTON_START,
+    SDL_CONTROLLER_BUTTON_LEFTSTICK, SDL_CONTROLLER_BUTTON_RIGHTSTICK,
+    SDL_CONTROLLER_BUTTON_LEFTSHOULDER, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER,
+    SDL_CONTROLLER_BUTTON_DPAD_UP, SDL_CONTROLLER_BUTTON_DPAD_DOWN, SDL_CONTROLLER_BUTTON_DPAD_LEFT, SDL_CONTROLLER_BUTTON_DPAD_RIGHT,
 };
 
 // Scancodes (USB HID usage ids, stable across SDL2 versions).
@@ -115,3 +155,10 @@ inline int evMotionY(const SDL_Event& e) { return evI32(e, 24); }
 inline int evButton(const SDL_Event& e) { return e.padding[16]; }  // 1 left, 2 middle, 3 right
 inline int evButtonX(const SDL_Event& e) { return evI32(e, 20); }
 inline int evButtonY(const SDL_Event& e) { return evI32(e, 24); }
+
+// Controller events (SDL_ControllerAxisEvent / ButtonEvent / DeviceEvent): type, timestamp, then
+// `which` at 8 (the instance id; for DEVICEADDED the joystick index), axis or button at 12.
+inline int32_t evCtrlWhich(const SDL_Event& e) { return evI32(e, 8); }
+inline int evCtrlAxis(const SDL_Event& e) { return e.padding[12]; }
+inline int evCtrlAxisValue(const SDL_Event& e) { int16_t v; std::memcpy(&v, e.padding + 16, 2); return v; }
+inline int evCtrlButton(const SDL_Event& e) { return e.padding[12]; }

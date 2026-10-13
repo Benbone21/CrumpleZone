@@ -934,147 +934,6 @@ Baked bake(const Unwrapped& lo, const HiMesh& hi, const BVH& bvh, int S, double 
 }
 
 // ---------------------------------------------------------------------------------------
-// Convex hulls
-struct HullFace {
-    std::array<int, 3> i;
-    V3 n;
-    double d;
-    bool alive;
-};
-
-struct Hull {
-    const std::vector<V3>* p;
-    std::vector<HullFace> faces;
-    V3 centroid;
-    void init(const std::vector<V3>& pts) {
-        p = &pts;
-        const int n = (int)pts.size();
-        int t[4] = {0, 0, 0, 0};
-        for (int i = 0; i < n; i++)
-            if (pts[i].x < pts[t[0]].x) t[0] = i;
-        for (int i = 0; i < n; i++)
-            if (len(pts[i] - pts[t[0]]) > len(pts[t[1]] - pts[t[0]])) t[1] = i;
-        const V3 axis = norm(pts[t[1]] - pts[t[0]]);
-        auto lineDist = [&](int i) {
-            V3 dd = pts[i] - pts[t[0]];
-            return len(dd - axis * dot(dd, axis));
-        };
-        for (int i = 0; i < n; i++)
-            if (lineDist(i) > lineDist(t[2])) t[2] = i;
-        const V3 pn = norm(cross(pts[t[1]] - pts[t[0]], pts[t[2]] - pts[t[0]]));
-        for (int i = 0; i < n; i++)
-            if (std::fabs(dot(pts[i] - pts[t[0]], pn)) > std::fabs(dot(pts[t[3]] - pts[t[0]], pn))) t[3] = i;
-        centroid = (pts[t[0]] + pts[t[1]] + pts[t[2]] + pts[t[3]]) * 0.25;
-        make(t[0], t[1], t[2]), make(t[0], t[1], t[3]), make(t[0], t[2], t[3]), make(t[1], t[2], t[3]);
-        used.insert({t[0], t[1], t[2], t[3]});
-    }
-    std::set<int> used;
-    void make(int a, int b, int c) {
-        const std::vector<V3>& pts = *p;
-        V3 nrm = norm(cross(pts[b] - pts[a], pts[c] - pts[a]));
-        if (dot(nrm, pts[a] - centroid) < 0) {
-            std::swap(b, c);
-            nrm = -nrm;
-        }
-        faces.push_back({{a, b, c}, nrm, dot(nrm, pts[a]), true});
-    }
-    void add(int k) {
-        const std::vector<V3>& pts = *p;
-        std::vector<std::pair<int, int>> edges;
-        for (HullFace& f : faces)
-            if (f.alive && dot(f.n, pts[k]) - f.d > 1e-9) {
-                f.alive = false;
-                for (int e = 0; e < 3; e++) edges.push_back({f.i[e], f.i[(e + 1) % 3]});
-            }
-        if (edges.empty()) return;
-        for (const auto& e : edges) {
-            bool shared = false;
-            for (const auto& o : edges) shared |= o.first == e.second && o.second == e.first;
-            if (!shared) make(e.first, e.second, k);
-        }
-        // Compact now and then.
-        if (faces.size() > 4096) {
-            std::vector<HullFace> keep;
-            for (const HullFace& f : faces)
-                if (f.alive) keep.push_back(f);
-            faces.swap(keep);
-        }
-        used.clear();
-        for (const HullFace& f : faces)
-            if (f.alive) used.insert({f.i[0], f.i[1], f.i[2]});
-    }
-    double outside(const V3& q) const {
-        double m = -1e30;
-        for (const HullFace& f : faces)
-            if (f.alive) m = std::max(m, dot(f.n, q) - f.d);
-        return m;
-    }
-};
-
-props::RockHull makeHull(const std::string& name, const std::vector<V3>& pts, int maxVerts) {
-    // The exact hull first.
-    Hull full;
-    full.init(pts);
-    for (int k = 0; k < (int)pts.size(); k++) full.add(k);
-    std::vector<V3> cand;
-    {
-        std::set<int> u;
-        for (const HullFace& f : full.faces)
-            if (f.alive) u.insert({f.i[0], f.i[1], f.i[2]});
-        for (int i : u) cand.push_back(pts[i]);
-    }
-    // Then grow a small one from the biggest misses (every corner is a corner of the true hull).
-    Hull h;
-    h.init(cand);
-    while ((int)h.used.size() < maxVerts) {
-        int best = -1;
-        double bd = 1e-4;  // 0.1 mm
-        for (int k = 0; k < (int)cand.size(); k++) {
-            const double d = h.outside(cand[k]);
-            if (d > bd) bd = d, best = k;
-        }
-        if (best < 0) break;
-        h.add(best);
-    }
-    double err = 0;
-    for (const V3& q : pts) err = std::max(err, h.outside(q));
-    // Corners and faces; nudge the corners out a little so the scan doesn't poke through.
-    std::vector<int> ids(h.used.begin(), h.used.end());
-    std::map<int, int> remap;
-    props::RockHull out;
-    out.name = name;
-    std::vector<V3> corner;
-    for (size_t i = 0; i < ids.size(); i++) {
-        remap[ids[i]] = (int)i;
-        V3 nsum;
-        for (const HullFace& f : h.faces)
-            if (f.alive && (f.i[0] == ids[i] || f.i[1] == ids[i] || f.i[2] == ids[i])) nsum += f.n;
-        corner.push_back(cand[ids[i]] + norm(nsum) * (err * 0.5));
-    }
-    // Re-hull the nudged corners (they stay extreme, but the faces' windings need redoing).
-    Hull h2;
-    h2.init(corner);
-    for (int k = 0; k < (int)corner.size(); k++) h2.add(k);
-    std::set<int> u2;
-    for (const HullFace& f : h2.faces)
-        if (f.alive) u2.insert({f.i[0], f.i[1], f.i[2]});
-    std::map<int, int> r2;
-    for (int i : u2) {
-        r2[i] = (int)out.v.size();
-        out.v.push_back(corner[i]);
-    }
-    for (const HullFace& f : h2.faces)
-        if (f.alive) out.f.push_back({r2[f.i[0]], r2[f.i[1]], r2[f.i[2]]});
-    for (int k = 0; k < 3; k++) out.bmin[k] = 1e30f, out.bmax[k] = -1e30f;
-    for (const V3& p : out.v) {
-        const double c3[3] = {p.x, p.y, p.z};
-        for (int k = 0; k < 3; k++) out.bmin[k] = std::fmin(out.bmin[k], (float)c3[k]), out.bmax[k] = std::fmax(out.bmax[k], (float)c3[k]);
-    }
-    std::printf("    hull: %zu corners, %zu faces, worst miss %.1f mm\n", out.v.size(), out.f.size(), err * 1000);
-    return out;
-}
-
-// ---------------------------------------------------------------------------------------
 // Units
 enum Mode { CENTER_BASE, CENTER_ALL };
 
@@ -1101,19 +960,19 @@ struct Unit {
 
 const Unit kUnits[] = {
     // Rocks: closed scans, with hulls.
-    {"rock_moss_set_01", 0, "rock_moss1_a", props::KIND_ROCK, true, {1500, 400, 100}, {1024, 512, 256}, true},
-    {"rock_moss_set_01", 1, "rock_moss1_b", props::KIND_ROCK, true, {1500, 400, 100}, {1024, 512, 256}, true},
-    {"rock_moss_set_01", 2, "rock_moss1_c", props::KIND_ROCK, true, {1500, 400, 100}, {1024, 512, 256}, true},
-    {"rock_moss_set_01", 3, "rock_moss1_d", props::KIND_ROCK, true, {1500, 400, 100}, {1024, 512, 256}, true},
-    {"rock_moss_set_01", 4, "rock_moss1_e", props::KIND_ROCK, true, {1500, 400, 100}, {1024, 512, 256}, true},
-    {"rock_moss_set_01", 5, "rock_moss1_f", props::KIND_ROCK, true, {1500, 400, 100}, {1024, 512, 256}, true},
-    {"rock_moss_set_02", 0, "rock_moss2_a", props::KIND_ROCK, true, {1500, 400, 100}, {1024, 512, 256}, true},
-    {"rock_moss_set_02", 1, "rock_moss2_b", props::KIND_ROCK, true, {1500, 400, 100}, {1024, 512, 256}, true},
-    {"rock_moss_set_02", 2, "rock_moss2_c", props::KIND_ROCK, true, {1500, 400, 100}, {1024, 512, 256}, true},
-    {"rock_moss_set_02", 3, "rock_moss2_d", props::KIND_ROCK, true, {1500, 400, 100}, {1024, 512, 256}, true},
-    {"rock_moss_set_02", 4, "rock_moss2_e", props::KIND_ROCK, true, {1500, 400, 100}, {1024, 512, 256}, true},
-    {"rock_moss_set_02", 5, "rock_moss2_f", props::KIND_ROCK, true, {1500, 400, 100}, {1024, 512, 256}, true},
-    {"rock_moss_set_02", 6, "rock_moss2_g", props::KIND_ROCK, true, {1500, 400, 100}, {1024, 512, 256}, true},
+    {"rock_moss_set_01", 0, "rock_moss1_a", props::KIND_ROCK, true, {1500, 400, 100}, {512, 256, 128}, true},
+    {"rock_moss_set_01", 1, "rock_moss1_b", props::KIND_ROCK, true, {1500, 400, 100}, {512, 256, 128}, true},
+    {"rock_moss_set_01", 2, "rock_moss1_c", props::KIND_ROCK, true, {1500, 400, 100}, {512, 256, 128}, true},
+    {"rock_moss_set_01", 3, "rock_moss1_d", props::KIND_ROCK, true, {1500, 400, 100}, {512, 256, 128}, true},
+    {"rock_moss_set_01", 4, "rock_moss1_e", props::KIND_ROCK, true, {1500, 400, 100}, {512, 256, 128}, true},
+    {"rock_moss_set_01", 5, "rock_moss1_f", props::KIND_ROCK, true, {1500, 400, 100}, {512, 256, 128}, true},
+    {"rock_moss_set_02", 0, "rock_moss2_a", props::KIND_ROCK, true, {1500, 400, 100}, {512, 256, 128}, true},
+    {"rock_moss_set_02", 1, "rock_moss2_b", props::KIND_ROCK, true, {1500, 400, 100}, {512, 256, 128}, true},
+    {"rock_moss_set_02", 2, "rock_moss2_c", props::KIND_ROCK, true, {1500, 400, 100}, {512, 256, 128}, true},
+    {"rock_moss_set_02", 3, "rock_moss2_d", props::KIND_ROCK, true, {1500, 400, 100}, {512, 256, 128}, true},
+    {"rock_moss_set_02", 4, "rock_moss2_e", props::KIND_ROCK, true, {1500, 400, 100}, {512, 256, 128}, true},
+    {"rock_moss_set_02", 5, "rock_moss2_f", props::KIND_ROCK, true, {1500, 400, 100}, {512, 256, 128}, true},
+    {"rock_moss_set_02", 6, "rock_moss2_g", props::KIND_ROCK, true, {1500, 400, 100}, {512, 256, 128}, true},
     {"rock_07", 0, "rock_07", props::KIND_ROCK, true, {1500, 400, 100}, {512, 256, 128}, true},
     {"rock_09", 0, "rock_09", props::KIND_ROCK, true, {1500, 400, 100}, {512, 256, 128}, true},
     {"boulder_01", 0, "boulder_01", props::KIND_ROCK, true, {1500, 400, 100}, {1024, 512, 256}, true},
@@ -1177,11 +1036,11 @@ void centreMesh(HiMesh& hm, const Unit& u) {
     for (V3& p : hm.p) p += shift;
 }
 
-void bakeSolid(const Unit& u, props::HullLibrary& hulls, props::Model& model) {
+bool bakeSolid(const Unit& u, props::HullLibrary& hulls, props::Model& model) {
     Gltf g;
     if (!g.load(u.src)) {
-        std::fprintf(stderr, "cannot load %s\n", u.src);
-        std::exit(1);
+        std::fprintf(stderr, "cannot load %s (skipped)\n", u.src);
+        return false;
     }
     HiMesh hm;
     int node = 0;
@@ -1194,6 +1053,10 @@ void bakeSolid(const Unit& u, props::HullLibrary& hulls, props::Model& model) {
             addPrim(hm, g.d->nodes[i].mesh->primitives[p], M, false);
             if (hm.tex[0].w == 0) loadTextures(hm, g.dir, g.d->nodes[i].mesh->primitives[p].material);
         }
+    }
+    if (hm.t.empty()) {
+        std::fprintf(stderr, "%s: no mesh %d in %s (skipped)\n", u.name, u.mesh, u.src);
+        return false;
     }
     std::printf("%s: %zu hi-res tris\n", u.name, hm.t.size());
     centreMesh(hm, u);
@@ -1255,7 +1118,13 @@ void bakeSolid(const Unit& u, props::HullLibrary& hulls, props::Model& model) {
         }
     model.bmin[0] = (float)mn.x, model.bmin[1] = (float)mn.y, model.bmin[2] = (float)mn.z;
     model.bmax[0] = (float)mx.x, model.bmax[1] = (float)mx.y, model.bmax[2] = (float)mx.z;
-    if (u.hull) hulls.hulls.push_back(makeHull(u.name, welded.p, 40));
+    if (u.hull) {
+        double miss = 0;
+        hulls.hulls.push_back(props::buildRockHull(u.name, welded.p, 48, &miss));
+        const props::RockHull& h = hulls.hulls.back();
+        std::printf("    hull: %zu corners, %zu faces, worst miss %.1f mm\n", h.v.size(), h.f.size(), miss * 1000);
+    }
+    return true;
 }
 
 }  // namespace
@@ -1276,33 +1145,34 @@ struct Card {
     bool tree;
     float lodDist[3];
     int texSize;
+    int budget[3];        // triangles per LOD at most (the share kept shrinks to fit a dense scan)
 };
 
 const Card kCards[] = {
-    {"shrub_02", 0, "shrub_02_a", props::KIND_PLANT, "shrub_02", {1.0f, 0.4f, 0.12f}, 2.2f, 0.035f, false, {20, 55, 1e9f}, 512},
-    {"shrub_02", 1, "shrub_02_b", props::KIND_PLANT, "shrub_02", {1.0f, 0.4f, 0.12f}, 2.2f, 0.035f, false, {20, 55, 1e9f}, 512},
-    {"shrub_02", 2, "shrub_02_c", props::KIND_PLANT, "shrub_02", {1.0f, 0.4f, 0.12f}, 2.2f, 0.035f, false, {20, 55, 1e9f}, 512},
-    {"shrub_02", 3, "shrub_02_d", props::KIND_PLANT, "shrub_02", {1.0f, 0.4f, 0.12f}, 2.2f, 0.035f, false, {20, 55, 1e9f}, 512},
-    {"shrub_03", 0, "shrub_03_a", props::KIND_PLANT, "shrub_03", {1.0f, 0.4f, 0.12f}, 2.0f, 0.04f, false, {20, 55, 1e9f}, 512},
-    {"shrub_03", 1, "shrub_03_b", props::KIND_PLANT, "shrub_03", {1.0f, 0.4f, 0.12f}, 2.0f, 0.04f, false, {20, 55, 1e9f}, 512},
-    {"shrub_03", 2, "shrub_03_c", props::KIND_PLANT, "shrub_03", {1.0f, 0.4f, 0.12f}, 2.0f, 0.04f, false, {20, 55, 1e9f}, 512},
-    {"shrub_03", 3, "shrub_03_d", props::KIND_PLANT, "shrub_03", {1.0f, 0.4f, 0.12f}, 2.0f, 0.04f, false, {20, 55, 1e9f}, 512},
-    {"shrub_04", 0, "shrub_04_a", props::KIND_PLANT, "shrub_04", {0.5f, 0.15f, 0.05f}, 2.2f, 0.03f, false, {20, 55, 1e9f}, 512},
-    {"fern_02", 0, "fern_02_a", props::KIND_PLANT, "fern_02", {1.0f, 0.5f, 0.2f}, 1.8f, 0.05f, false, {18, 45, 1e9f}, 512},
-    {"fern_02", 1, "fern_02_b", props::KIND_PLANT, "fern_02", {1.0f, 0.5f, 0.2f}, 1.8f, 0.05f, false, {18, 45, 1e9f}, 512},
-    {"fern_02", 2, "fern_02_c", props::KIND_PLANT, "fern_02", {1.0f, 0.5f, 0.2f}, 1.8f, 0.05f, false, {18, 45, 1e9f}, 512},
-    {"fern_02", 3, "fern_02_d", props::KIND_PLANT, "fern_02", {1.0f, 0.5f, 0.2f}, 1.8f, 0.05f, false, {18, 45, 1e9f}, 512},
-    {"grass_medium_02", 0, "grass_02_a", props::KIND_PLANT, "grass_medium_02", {1.0f, 0.5f, 0.2f}, 1.7f, 0.12f, false, {15, 35, 1e9f}, 512},
-    {"grass_medium_02", 1, "grass_02_b", props::KIND_PLANT, "grass_medium_02", {1.0f, 0.5f, 0.2f}, 1.7f, 0.12f, false, {15, 35, 1e9f}, 512},
-    {"grass_medium_02", 2, "grass_02_c", props::KIND_PLANT, "grass_medium_02", {1.0f, 0.5f, 0.2f}, 1.7f, 0.12f, false, {15, 35, 1e9f}, 512},
-    {"grass_medium_02", 3, "grass_02_d", props::KIND_PLANT, "grass_medium_02", {1.0f, 0.5f, 0.2f}, 1.7f, 0.12f, false, {15, 35, 1e9f}, 512},
-    {"grass_medium_02", 4, "grass_02_e", props::KIND_PLANT, "grass_medium_02", {1.0f, 0.5f, 0.2f}, 1.7f, 0.12f, false, {15, 35, 1e9f}, 512},
-    {"fir_sapling", 0, "fir_a", props::KIND_TREE, "fir_sapling", {0.22f, 0.05f, 0.012f}, 3.0f, 0.02f, true, {18, 60, 1e9f}, 512},
-    {"fir_sapling", 1, "fir_b", props::KIND_TREE, "fir_sapling", {0.22f, 0.05f, 0.012f}, 3.0f, 0.02f, true, {18, 60, 1e9f}, 512},
-    {"fir_sapling", 2, "fir_c", props::KIND_TREE, "fir_sapling", {0.22f, 0.05f, 0.012f}, 3.0f, 0.02f, true, {18, 60, 1e9f}, 512},
-    {"pine_sapling_small", 1, "pine_a", props::KIND_TREE, "pine_sapling_small", {0.30f, 0.08f, 0.02f}, 3.0f, 0.02f, true, {18, 60, 1e9f}, 512},
-    {"pine_sapling_small", 0, "pine_b", props::KIND_TREE, "pine_sapling_small", {0.30f, 0.08f, 0.02f}, 3.0f, 0.02f, true, {18, 60, 1e9f}, 512},
-    {"pine_sapling_small", 2, "pine_c", props::KIND_TREE, "pine_sapling_small", {0.30f, 0.08f, 0.02f}, 3.0f, 0.02f, true, {18, 60, 1e9f}, 512},
+    {"shrub_02", 0, "shrub_02_a", props::KIND_PLANT, "shrub_02", {1.0f, 0.4f, 0.12f}, 2.2f, 0.035f, false, {20, 55, 1e9f}, 512, {5000, 1500, 400}},
+    {"shrub_02", 1, "shrub_02_b", props::KIND_PLANT, "shrub_02", {1.0f, 0.4f, 0.12f}, 2.2f, 0.035f, false, {20, 55, 1e9f}, 512, {5000, 1500, 400}},
+    {"shrub_02", 2, "shrub_02_c", props::KIND_PLANT, "shrub_02", {1.0f, 0.4f, 0.12f}, 2.2f, 0.035f, false, {20, 55, 1e9f}, 512, {5000, 1500, 400}},
+    {"shrub_02", 3, "shrub_02_d", props::KIND_PLANT, "shrub_02", {1.0f, 0.4f, 0.12f}, 2.2f, 0.035f, false, {20, 55, 1e9f}, 512, {5000, 1500, 400}},
+    {"shrub_03", 0, "shrub_03_a", props::KIND_PLANT, "shrub_03", {1.0f, 0.4f, 0.12f}, 2.0f, 0.04f, false, {20, 55, 1e9f}, 512, {5000, 1500, 400}},
+    {"shrub_03", 1, "shrub_03_b", props::KIND_PLANT, "shrub_03", {1.0f, 0.4f, 0.12f}, 2.0f, 0.04f, false, {20, 55, 1e9f}, 512, {5000, 1500, 400}},
+    {"shrub_03", 2, "shrub_03_c", props::KIND_PLANT, "shrub_03", {1.0f, 0.4f, 0.12f}, 2.0f, 0.04f, false, {20, 55, 1e9f}, 512, {5000, 1500, 400}},
+    {"shrub_03", 3, "shrub_03_d", props::KIND_PLANT, "shrub_03", {1.0f, 0.4f, 0.12f}, 2.0f, 0.04f, false, {20, 55, 1e9f}, 512, {5000, 1500, 400}},
+    {"shrub_04", 0, "shrub_04_a", props::KIND_PLANT, "shrub_04", {0.5f, 0.15f, 0.05f}, 2.2f, 0.03f, false, {20, 55, 1e9f}, 512, {5000, 1500, 400}},
+    {"fern_02", 0, "fern_02_a", props::KIND_PLANT, "fern_02", {1.0f, 0.5f, 0.2f}, 1.8f, 0.05f, false, {18, 45, 1e9f}, 512, {2500, 800, 250}},
+    {"fern_02", 1, "fern_02_b", props::KIND_PLANT, "fern_02", {1.0f, 0.5f, 0.2f}, 1.8f, 0.05f, false, {18, 45, 1e9f}, 512, {2500, 800, 250}},
+    {"fern_02", 2, "fern_02_c", props::KIND_PLANT, "fern_02", {1.0f, 0.5f, 0.2f}, 1.8f, 0.05f, false, {18, 45, 1e9f}, 512, {2500, 800, 250}},
+    {"fern_02", 3, "fern_02_d", props::KIND_PLANT, "fern_02", {1.0f, 0.5f, 0.2f}, 1.8f, 0.05f, false, {18, 45, 1e9f}, 512, {2500, 800, 250}},
+    {"grass_medium_02", 0, "grass_02_a", props::KIND_PLANT, "grass_medium_02", {1.0f, 0.5f, 0.2f}, 1.7f, 0.12f, false, {15, 35, 1e9f}, 512, {1500, 500, 150}},
+    {"grass_medium_02", 1, "grass_02_b", props::KIND_PLANT, "grass_medium_02", {1.0f, 0.5f, 0.2f}, 1.7f, 0.12f, false, {15, 35, 1e9f}, 512, {1500, 500, 150}},
+    {"grass_medium_02", 2, "grass_02_c", props::KIND_PLANT, "grass_medium_02", {1.0f, 0.5f, 0.2f}, 1.7f, 0.12f, false, {15, 35, 1e9f}, 512, {1500, 500, 150}},
+    {"grass_medium_02", 3, "grass_02_d", props::KIND_PLANT, "grass_medium_02", {1.0f, 0.5f, 0.2f}, 1.7f, 0.12f, false, {15, 35, 1e9f}, 512, {1500, 500, 150}},
+    {"grass_medium_02", 4, "grass_02_e", props::KIND_PLANT, "grass_medium_02", {1.0f, 0.5f, 0.2f}, 1.7f, 0.12f, false, {15, 35, 1e9f}, 512, {1500, 500, 150}},
+    {"fir_sapling", 0, "fir_a", props::KIND_TREE, "fir_sapling", {0.22f, 0.05f, 0.012f}, 3.0f, 0.02f, true, {18, 60, 1e9f}, 512, {14000, 3500, 900}},
+    {"fir_sapling", 1, "fir_b", props::KIND_TREE, "fir_sapling", {0.22f, 0.05f, 0.012f}, 3.0f, 0.02f, true, {18, 60, 1e9f}, 512, {14000, 3500, 900}},
+    {"fir_sapling", 2, "fir_c", props::KIND_TREE, "fir_sapling", {0.22f, 0.05f, 0.012f}, 3.0f, 0.02f, true, {18, 60, 1e9f}, 512, {14000, 3500, 900}},
+    {"pine_sapling_small", 1, "pine_a", props::KIND_TREE, "pine_sapling_small", {0.30f, 0.08f, 0.02f}, 3.0f, 0.02f, true, {18, 60, 1e9f}, 512, {14000, 3500, 900}},
+    {"pine_sapling_small", 0, "pine_b", props::KIND_TREE, "pine_sapling_small", {0.30f, 0.08f, 0.02f}, 3.0f, 0.02f, true, {18, 60, 1e9f}, 512, {14000, 3500, 900}},
+    {"pine_sapling_small", 2, "pine_c", props::KIND_TREE, "pine_sapling_small", {0.30f, 0.08f, 0.02f}, 3.0f, 0.02f, true, {18, 60, 1e9f}, 512, {14000, 3500, 900}},
 };
 
 struct DSU {
@@ -1327,20 +1197,177 @@ struct Piece {
     double order;
 };
 
-void convertTexture(const std::string& srcDir, const char* srcName, const std::string& outName, int size, int quality, bool full444) {
+// An image with alpha (the cards' diffuse), nearest-texel lookups with repeat.
+struct Img4 {
+    int w = 0, h = 0;
+    std::vector<uint8_t> px;
+    bool load4(const std::string& path) {
+        int c = 0;
+        uint8_t* d = stbi_load(path.c_str(), &w, &h, &c, 4);
+        if (!d) {
+            w = h = 0;
+            return false;
+        }
+        px.assign(d, d + (size_t)w * h * 4);
+        stbi_image_free(d);
+        return true;
+    }
+    const uint8_t* at(double u, double v) const {
+        int x = (int)std::floor(u * w) % w, y = (int)std::floor(v * h) % h;
+        if (x < 0) x += w;
+        if (y < 0) y += h;
+        return &px[((size_t)y * w + x) * 4];
+    }
+};
+
+// Far-view billboard of a tree: its LOD0 drawn orthographically from kBillboardViews sides
+// (view k looks from the direction (cos a, 0, sin a), a = 2 pi k / views, toward the trunk),
+// side by side in one atlas: <name>_bb_d.png (sRGB colour, alpha = coverage) and
+// <name>_bb_n.jpg (the tree's own-frame normal, 0.5 + 0.5 n, turned to face the viewer).
+// The quad spans x in [-R, R] round the trunk, y in [0, height] (R = the widest reach).
+// Rendered at 4x and boxed down; colour is spread into the empty texels so mipmaps don't
+// darken the edges.
+const int kBillboardViews = 8, kBillboardW = 128, kBillboardH = 256;
+void bakeBillboard(const props::Model& m, const std::vector<Img4>& tex) {
+    if (gNoTex || m.lods.empty()) return;
+    const int SS = 4, W = kBillboardW * SS, H = kBillboardH * SS;
+    double R = 0.01;
+    for (const props::Sub& s : m.lods[0].subs)
+        for (const props::Vert& v : s.v) R = std::max(R, std::hypot((double)v.p[0], (double)v.p[2]));
+    const double top = std::max(0.01f, m.bmax[1]);
+    const int AW = kBillboardW * kBillboardViews, AH = kBillboardH;
+    std::vector<uint8_t> outD((size_t)AW * AH * 4, 0), outN((size_t)AW * AH * 3, 128);
+    for (int view = 0; view < kBillboardViews; view++) {
+        const double a = 2 * M_PI * view / kBillboardViews;
+        const V3 e(std::cos(a), 0, std::sin(a)), up(0, 1, 0), r = cross(up, e);
+        std::vector<float> zb((size_t)W * H, -1e30f);
+        std::vector<float> col((size_t)W * H * 3, 0.0f), nrm((size_t)W * H * 3, 0.0f);
+        std::vector<char> cov((size_t)W * H, 0);
+        for (const props::Sub& s : m.lods[0].subs) {
+            const props::Material& mt = m.mats[s.mat];
+            const Img4* img = s.mat < (int)tex.size() && tex[s.mat].w ? &tex[s.mat] : nullptr;
+            for (size_t t = 0; t + 2 < s.idx.size(); t += 3) {
+                const props::Vert* vv[3] = {&s.v[s.idx[t]], &s.v[s.idx[t + 1]], &s.v[s.idx[t + 2]]};
+                double X[3], Y[3], Z[3];
+                for (int k = 0; k < 3; k++) {
+                    const V3 p(vv[k]->p[0], vv[k]->p[1], vv[k]->p[2]);
+                    X[k] = (dot(p, r) / R * 0.5 + 0.5) * W;
+                    Y[k] = (1.0 - p.y / top) * H;  // row 0 at the top
+                    Z[k] = dot(p, e);
+                }
+                const double area = (X[1] - X[0]) * (Y[2] - Y[0]) - (X[2] - X[0]) * (Y[1] - Y[0]);
+                if (std::fabs(area) < 1e-12) continue;
+                const int x0 = std::max(0, (int)std::floor(std::min({X[0], X[1], X[2]}))), x1 = std::min(W - 1, (int)std::ceil(std::max({X[0], X[1], X[2]})));
+                const int y0 = std::max(0, (int)std::floor(std::min({Y[0], Y[1], Y[2]}))), y1 = std::min(H - 1, (int)std::ceil(std::max({Y[0], Y[1], Y[2]})));
+                for (int py = y0; py <= y1; py++)
+                    for (int px = x0; px <= x1; px++) {
+                        const double cx = px + 0.5, cy = py + 0.5;
+                        const double w0 = ((X[1] - cx) * (Y[2] - cy) - (X[2] - cx) * (Y[1] - cy)) / area;
+                        const double w1 = ((X[2] - cx) * (Y[0] - cy) - (X[0] - cx) * (Y[2] - cy)) / area;
+                        const double w2 = 1 - w0 - w1;
+                        if (w0 < 0 || w1 < 0 || w2 < 0) continue;
+                        const double z = w0 * Z[0] + w1 * Z[1] + w2 * Z[2];
+                        const size_t o = (size_t)py * W + px;
+                        if (z <= zb[o]) continue;
+                        const double u = w0 * vv[0]->uv[0] + w1 * vv[1]->uv[0] + w2 * vv[2]->uv[0];
+                        const double v = w0 * vv[0]->uv[1] + w1 * vv[1]->uv[1] + w2 * vv[2]->uv[1];
+                        float c3[3] = {0.25f, 0.2f, 0.15f};
+                        if (img) {
+                            const uint8_t* q = img->at(u, v);
+                            if (mt.alphaMode && q[3] < mt.cutoff * 255) continue;
+                            for (int k = 0; k < 3; k++) c3[k] = q[k] / 255.0f;
+                        }
+                        V3 n = norm(V3(vv[0]->n[0], vv[0]->n[1], vv[0]->n[2]) * w0 + V3(vv[1]->n[0], vv[1]->n[1], vv[1]->n[2]) * w1 +
+                                    V3(vv[2]->n[0], vv[2]->n[1], vv[2]->n[2]) * w2);
+                        if (dot(n, e) < 0) n = -n;  // two-sided cards face the viewer
+                        zb[o] = (float)z;
+                        cov[o] = 1;
+                        for (int k = 0; k < 3; k++) col[o * 3 + k] = toLinear(c3[k]);
+                        nrm[o * 3] = (float)n.x, nrm[o * 3 + 1] = (float)n.y, nrm[o * 3 + 2] = (float)n.z;
+                    }
+            }
+        }
+        // Box down to the atlas cell.
+        for (int y = 0; y < kBillboardH; y++)
+            for (int x = 0; x < kBillboardW; x++) {
+                double cs[3] = {0, 0, 0}, ns[3] = {0, 0, 0};
+                int n = 0;
+                for (int sy = 0; sy < SS; sy++)
+                    for (int sx = 0; sx < SS; sx++) {
+                        const size_t o = (size_t)(y * SS + sy) * W + (x * SS + sx);
+                        if (!cov[o]) continue;
+                        n++;
+                        for (int k = 0; k < 3; k++) cs[k] += col[o * 3 + k], ns[k] += nrm[o * 3 + k];
+                    }
+                const size_t q = (size_t)y * AW + view * kBillboardW + x;
+                outD[q * 4 + 3] = (uint8_t)std::lround(255.0 * n / (SS * SS));
+                if (!n) continue;
+                for (int k = 0; k < 3; k++) outD[q * 4 + k] = (uint8_t)std::lround(255 * clampd(toSrgb((float)(cs[k] / n)), 0, 1));
+                const V3 nn = norm(V3(ns[0], ns[1], ns[2]));
+                outN[q * 3] = (uint8_t)std::lround(255 * (nn.x * 0.5 + 0.5)), outN[q * 3 + 1] = (uint8_t)std::lround(255 * (nn.y * 0.5 + 0.5)),
+                outN[q * 3 + 2] = (uint8_t)std::lround(255 * (nn.z * 0.5 + 0.5));
+            }
+    }
+    // Spread colour (and normals) outward into the empty texels, within each view's cell.
+    std::vector<char> valid((size_t)AW * AH);
+    for (size_t i = 0; i < valid.size(); i++) valid[i] = outD[i * 4 + 3] > 0;
+    for (int pass = 0; pass < 16; pass++) {
+        std::vector<char> nv = valid;
+        std::vector<uint8_t> d2 = outD, n2 = outN;
+        for (int y = 0; y < AH; y++)
+            for (int x = 0; x < AW; x++) {
+                const size_t i = (size_t)y * AW + x;
+                if (valid[i]) continue;
+                int acc[6] = {0, 0, 0, 0, 0, 0}, cnt = 0;
+                for (int dy = -1; dy <= 1; dy++)
+                    for (int dx = -1; dx <= 1; dx++) {
+                        const int qx = x + dx, qy = y + dy;
+                        if (qx < 0 || qy < 0 || qx >= AW || qy >= AH || qx / kBillboardW != x / kBillboardW) continue;
+                        const size_t j = (size_t)qy * AW + qx;
+                        if (!valid[j]) continue;
+                        for (int k = 0; k < 3; k++) acc[k] += outD[j * 4 + k], acc[3 + k] += outN[j * 3 + k];
+                        cnt++;
+                    }
+                if (!cnt) continue;
+                for (int k = 0; k < 3; k++) d2[i * 4 + k] = (uint8_t)(acc[k] / cnt), n2[i * 3 + k] = (uint8_t)(acc[3 + k] / cnt);
+                nv[i] = 1;
+            }
+        valid.swap(nv);
+        outD.swap(d2);
+        outN.swap(n2);
+    }
+    const std::string base = gOut + "/tex/" + m.name + "_bb";
+    {
+        const std::string tmp = base + "_d.pam";
+        FILE* f = std::fopen(tmp.c_str(), "wb");
+        if (!f) return;
+        std::fprintf(f, "P7\nWIDTH %d\nHEIGHT %d\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n", AW, AH);
+        std::fwrite(outD.data(), 1, outD.size(), f);
+        std::fclose(f);
+        const std::string cmd = "convert '" + tmp + "' -define png:compression-level=9 '" + base + "_d.png'";
+        if (std::system(cmd.c_str()) != 0) std::fprintf(stderr, "convert failed: %s\n", cmd.c_str());
+        std::remove(tmp.c_str());
+    }
+    writeJpg(base + "_n.jpg", AW, AH, outN, 90, true);
+    std::printf("    billboard: %d views, %dx%d, R %.2f m, height %.2f m\n", kBillboardViews, AW, AH, R, top);
+}
+
+void convertTexture(const std::string& srcDir, const std::string& srcRel, const std::string& outName, int size, int quality, bool full444) {
     if (gNoTex) return;
     const std::string dst = gOut + "/tex/" + outName;
-    const std::string src = srcDir + "textures/" + srcName;
-    const std::string cmd = "convert '" + src + "' -resize " + std::to_string(size) + "x" + std::to_string(size) + " -sampling-factor " +
-                            (full444 ? "4:4:4" : "4:2:0") + " -quality " + std::to_string(quality) + " '" + dst + "'";
+    const std::string src = srcDir + srcRel;
+    const bool png = outName.size() > 4 && outName.compare(outName.size() - 4, 4, ".png") == 0;
+    const std::string cmd = "convert '" + src + "' -resize " + std::to_string(size) + "x" + std::to_string(size) +
+                            (png ? std::string(" -define png:compression-level=9") : " -sampling-factor " + std::string(full444 ? "4:4:4" : "4:2:0") + " -quality " + std::to_string(quality)) +
+                            " '" + dst + "'";
     if (std::system(cmd.c_str()) != 0) std::fprintf(stderr, "convert failed: %s\n", cmd.c_str());
 }
 
-void bakeCard(const Card& c, props::Model& model) {
+bool bakeCard(const Card& c, props::Model& model) {
     Gltf g;
     if (!g.load(c.src)) {
-        std::fprintf(stderr, "cannot load %s\n", c.src);
-        std::exit(1);
+        std::fprintf(stderr, "cannot load %s (skipped)\n", c.src);
+        return false;
     }
     // Find the node, one HiMesh per primitive (each has its own material).
     int node = 0;
@@ -1350,8 +1377,8 @@ void bakeCard(const Card& c, props::Model& model) {
         if (node++ == c.mesh) nd = &g.d->nodes[i];
     }
     if (!nd) {
-        std::fprintf(stderr, "no node %d in %s\n", c.mesh, c.src);
-        std::exit(1);
+        std::fprintf(stderr, "no node %d in %s (skipped)\n", c.mesh, c.src);
+        return false;
     }
     std::vector<HiMesh> prims(nd->mesh->primitives_count);
     std::vector<const cgltf_material*> mats(prims.size());
@@ -1371,6 +1398,7 @@ void bakeCard(const Card& c, props::Model& model) {
     }
     model.name = c.name;
     model.kind = c.kind;
+    std::vector<Img4> srcTex;  // the diffuse with its alpha, per material (trees: for the billboards)
     // Materials: one per primitive, textures shared by name across variants.
     for (size_t p = 0; p < prims.size(); p++) {
         props::Material m;
@@ -1393,54 +1421,87 @@ void bakeCard(const Card& c, props::Model& model) {
         const std::string d = gm ? texName(gm->pbr_metallic_roughness.base_color_texture.texture) : "", n = gm ? texName(gm->normal_texture.texture) : "",
                           a = gm ? texName(gm->pbr_metallic_roughness.metallic_roughness_texture.texture) : "";
         const std::string base = tag;
-        if (!d.empty()) convertTexture(dir, d.substr(d.rfind('/') + 1).c_str(), base + "_d.jpg", c.texSize, 84, false), m.tex[0] = base + "_d.jpg";
-        if (!n.empty()) convertTexture(dir, n.substr(n.rfind('/') + 1).c_str(), base + "_n.jpg", c.texSize, 90, true), m.tex[1] = base + "_n.jpg";
-        if (!a.empty()) convertTexture(dir, a.substr(a.rfind('/') + 1).c_str(), base + "_a.jpg", c.texSize, 80, false), m.tex[2] = base + "_a.jpg";
+        if (m.alphaMode == 2) m.alphaMode = 1;  // (blended leaves are drawn cut out: no sorting)
+        if (gm && gm->alpha_mode != cgltf_alpha_mode_opaque) m.cutoff = gm->alpha_cutoff > 0 ? gm->alpha_cutoff : 0.5f;
+        // Cut-out cards keep the diffuse's alpha (PNG); a texture shared by several variants
+        // is converted once.
+        const std::string dName = base + (m.alphaMode ? "_d.png" : "_d.jpg");
+        static std::set<std::string> done;
+        auto conv = [&](const std::string& rel, const std::string& out, int q, bool full) {
+            if (done.insert(out).second) convertTexture(dir, rel, out, c.texSize, q, full);
+        };
+        if (!d.empty()) conv(d, dName, 84, false), m.tex[0] = dName;
+        if (!n.empty()) conv(n, base + "_n.jpg", 90, true), m.tex[1] = base + "_n.jpg";
+        if (!a.empty()) conv(a, base + "_a.jpg", 80, false), m.tex[2] = base + "_a.jpg";
         model.mats.push_back(m);
+        srcTex.emplace_back();
+        if (c.tree && !d.empty()) srcTex.back().load4(dir + d);
+    }
+    // Pieces (connected triangle groups by position) of every primitive, once.
+    struct PrimPieces {
+        std::vector<Piece> pieces;
+        bool bark = false;
+        int tris = 0;
+    };
+    std::vector<PrimPieces> pp(prims.size());
+    int leafTotal = 0, barkTotal = 0;
+    for (size_t p = 0; p < prims.size(); p++) {
+        HiMesh& hm = prims[p];
+        std::map<std::array<int64_t, 3>, int> pid;
+        std::vector<int> wid(hm.p.size());
+        for (size_t i = 0; i < hm.p.size(); i++) {
+            std::array<int64_t, 3> k = {(int64_t)std::llround(hm.p[i].x * 1e5), (int64_t)std::llround(hm.p[i].y * 1e5), (int64_t)std::llround(hm.p[i].z * 1e5)};
+            auto it = pid.find(k);
+            if (it == pid.end()) it = pid.emplace(k, (int)pid.size()).first;
+            wid[i] = it->second;
+        }
+        DSU ds((int)pid.size());
+        for (const Tri& t : hm.t) ds.u(wid[t[0]], wid[t[1]]), ds.u(wid[t[1]], wid[t[2]]);
+        std::map<int, Piece> pieces;
+        for (size_t i = 0; i < hm.t.size(); i++) pieces[ds.f(wid[hm.t[i][0]])].tris.push_back((int)i);
+        pp[p].bark = c.tree && !model.mats[p].foliage;
+        for (auto& kv : pieces) {
+            Piece pc = kv.second;
+            // Anchor: the piece's vertex nearest the model's vertical axis (where it joins the stem).
+            double best = 1e30;
+            for (int ti : pc.tris)
+                for (int k = 0; k < 3; k++) {
+                    const V3& q = hm.p[hm.t[ti][k]];
+                    const double dd = std::hypot(q.x, q.z);
+                    if (dd < best) best = dd, pc.anchor = q;
+                }
+            pc.order = hash32((uint32_t)kv.first * 2654435761u + (uint32_t)p) / 4294967296.0;
+            pp[p].pieces.push_back(pc);
+        }
+        // Bark: the biggest pieces first (the trunk, then the main limbs).
+        if (pp[p].bark)
+            std::sort(pp[p].pieces.begin(), pp[p].pieces.end(), [](const Piece& a, const Piece& b) { return a.tris.size() > b.tris.size(); });
+        pp[p].tris = (int)hm.t.size();
+        (pp[p].bark ? barkTotal : leafTotal) += pp[p].tris;
     }
     for (int lod = 0; lod < 3; lod++) {
         props::Lod L;
         L.maxDist = c.lodDist[lod];
+        // The triangle budget: leaves get three quarters of it on a tree, bark the rest.
+        const double leafBudget = c.budget[lod] * (barkTotal > 0 ? 0.75 : 1.0), barkBudget = c.budget[lod] - (leafTotal > 0 ? leafBudget : 0.0);
+        const double leafKeep = leafTotal > 0 ? std::min((double)c.keep[lod], leafBudget / leafTotal) : 1.0;
         for (size_t p = 0; p < prims.size(); p++) {
             HiMesh& hm = prims[p];
-            // Pieces: connected triangle groups by position.
-            std::map<std::array<int64_t, 3>, int> pid;
-            std::vector<int> wid(hm.p.size());
-            for (size_t i = 0; i < hm.p.size(); i++) {
-                std::array<int64_t, 3> k = {(int64_t)std::llround(hm.p[i].x * 1e5), (int64_t)std::llround(hm.p[i].y * 1e5), (int64_t)std::llround(hm.p[i].z * 1e5)};
-                auto it = pid.find(k);
-                if (it == pid.end()) it = pid.emplace(k, (int)pid.size()).first;
-                wid[i] = it->second;
-            }
-            DSU ds((int)pid.size());
-            for (const Tri& t : hm.t) ds.u(wid[t[0]], wid[t[1]]), ds.u(wid[t[1]], wid[t[2]]);
-            std::map<int, Piece> pieces;
-            for (size_t i = 0; i < hm.t.size(); i++) pieces[ds.f(wid[hm.t[i][0]])].tris.push_back((int)i);
-            const bool bark = c.tree && !model.mats[p].foliage;
-            // Anchor: the piece's vertex nearest the model's vertical axis (where it joins the stem).
-            std::vector<Piece*> list;
-            for (auto& kv : pieces) {
-                Piece& pc = kv.second;
-                double best = 1e30;
-                for (int ti : pc.tris)
-                    for (int k = 0; k < 3; k++) {
-                        const V3& q = hm.p[hm.t[ti][k]];
-                        const double d = std::hypot(q.x, q.z) + 0.15 * std::fabs(q.y - 0);
-                        const double dd = std::hypot(q.x, q.z);
-                        (void)d;
-                        if (dd < best) best = dd, pc.anchor = q;
-                    }
-                pc.order = hash32((uint32_t)kv.first * 2654435761u + (uint32_t)p) / 4294967296.0;
-                list.push_back(&pc);
-            }
-            const double keep = bark ? 1.0 : c.keep[lod];
+            const bool bark = pp[p].bark;
+            const double keep = bark ? 1.0 : leafKeep;
             const double sc = bark ? 1.0 : std::min((double)c.maxScale, 1.0 / std::sqrt(std::max(keep, 1e-3)));
             props::Sub s;
             s.mat = (int)p;
             std::map<int, int> vmap;
-            // Pieces are kept in the order of a shuffled hash, so the survivors stay spread out.
-            for (Piece* pc : list) {
-                if (pc->order >= keep) continue;
+            int barkTris = 0;
+            // Leaves are kept in the order of a shuffled hash, so the survivors stay spread out.
+            for (size_t pi = 0; pi < pp[p].pieces.size(); pi++) {
+                const Piece* pc = &pp[p].pieces[pi];
+                if (bark) {
+                    if (pi > 0 && barkTris + (int)pc->tris.size() > barkBudget) continue;
+                    barkTris += (int)pc->tris.size();
+                } else if (pc->order >= keep)
+                    continue;
                 vmap.clear();
                 for (int ti : pc->tris)
                     for (int k = 0; k < 3; k++) {
@@ -1470,6 +1531,8 @@ void bakeCard(const Card& c, props::Model& model) {
         for (const props::Vert& v : s.v)
             for (int k = 0; k < 3; k++) mn[k] = std::fmin(mn[k], v.p[k]), mx[k] = std::fmax(mx[k], v.p[k]);
     for (int k = 0; k < 3; k++) model.bmin[k] = mn[k], model.bmax[k] = mx[k];
+    if (c.tree) bakeBillboard(model, srcTex);
+    return true;
 }
 
 }  // namespace
@@ -1496,23 +1559,44 @@ int main(int argc, char** argv) {
         if (old.load(gOut)) hulls = old;
     }
     auto matches = [&](const char* name) { return only.empty() || only == name || std::string(name).find(only) != std::string::npos; };
+    int skipped = 0;
     for (const Unit& u : kUnits) {
         if (!matches(u.name)) continue;
         props::Model m;
         for (size_t i = 0; i < hulls.hulls.size(); i++)
             if (hulls.hulls[i].name == u.name) hulls.hulls.erase(hulls.hulls.begin() + i--);
-        bakeSolid(u, hulls, m);
+        if (!bakeSolid(u, hulls, m)) {
+            skipped++;
+            continue;
+        }
         if (!props::saveModel(gOut + "/" + u.name + ".prop", m)) return 1;
     }
     for (const Card& c : kCards) {
         if (!matches(c.name)) continue;
         props::Model m;
-        bakeCard(c, m);
+        if (!bakeCard(c, m)) {
+            skipped++;
+            continue;
+        }
         if (!props::saveModel(gOut + "/" + c.name + ".prop", m)) return 1;
+    }
+    // The manifest: every model whose file is there (from this run or an earlier one).
+    {
+        FILE* f = std::fopen((gOut + "/props.txt").c_str(), "w");
+        if (!f) return 1;
+        auto put = [&](const char* name, int kind) {
+            if (FILE* t = std::fopen((gOut + "/" + name + ".prop").c_str(), "rb")) {
+                std::fclose(t);
+                std::fprintf(f, "%s %d\n", name, kind);
+            }
+        };
+        for (const Unit& u : kUnits) put(u.name, u.kind);
+        for (const Card& c : kCards) put(c.name, c.kind);
+        std::fclose(f);
     }
     // Hulls in a stable order.
     std::sort(hulls.hulls.begin(), hulls.hulls.end(), [](const props::RockHull& a, const props::RockHull& b) { return a.name < b.name; });
     if (!hulls.save(gOut + "/rocks.hull")) return 1;
-    std::printf("done: %zu hulls\n", hulls.hulls.size());
-    return 0;
+    std::printf("done: %zu hulls%s\n", hulls.hulls.size(), skipped ? " (some sources missing: see above)" : "");
+    return skipped ? 2 : 0;
 }

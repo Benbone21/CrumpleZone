@@ -16,15 +16,18 @@
 #include <unistd.h>
 #endif
 
+#include <csignal>
 #include <functional>
 #include <map>
 
 #include "audio.h"
 #include "jobs.h"
+#include "interact.h"
 #include "walker.h"
 #include "coop.h"
 #include "editor.h"
 #include "fx.h"
+#include "gamepad.h"
 #include "gl.h"
 #include "hudkit.h"
 #include "level.h"
@@ -34,6 +37,7 @@
 #include "net.h"
 #include "pilotsense.h"
 #include "platform.h"
+#include "props.h"
 #include "render.h"
 #include "sdl_min.h"
 #include "softbody.h"
@@ -46,6 +50,7 @@ const double kTimeScales[] = {1.0, 0.5, 0.25, 0.1, 0.03};
 struct Options {
     int width = 1600, height = 900;
     bool fullscreen = false, audio = true, vsync = true;
+    bool pad = true;  // --no-pad: don't open game controllers (also CZ_NO_PAD=1)
     // Scripted capture (for testing): fixed 60 Hz steps, writes PPM screenshots.
     std::string shotPrefix;
     std::set<int> shotFrames;
@@ -59,6 +64,8 @@ struct Options {
     int menu = -1;                // --menu P: open the pause menu on page P (testing)
     int quality = -1;             // --quality 0-3: graphics preset (testing)
     int ground = -1;              // --ground 0-3: terrain materials (testing; see RenderSettings::ground)
+    int props = -1;               // --props 0-3: scanned props (testing; see RenderSettings::props)
+    bool photo = false;           // --photo: no HUD (screenshots; F10 in the game)
     bool mph = false;             // --mph
     int map = -1;                 // --map N: 0 proving ground, 1 mountain
     double orbitYaw = 0, orbitPitch = 0.2, orbitDist = 7.5;  // degrees, degrees, meters
@@ -91,9 +98,15 @@ struct CameraRig {
             target = want;
             initialized = true;
         }
+        // Carried along with the car first, then eased onto it: the easing only smooths the
+        // bumps. (Easing alone trailed the car by speed / 14: 3 m at 140 km/h, 8 at 400, so
+        // a fast car pulled away from the camera.)
+        if (std::isfinite(fr.vel.x + fr.vel.y + fr.vel.z) && len(fr.vel) < 200) target += fr.vel * dt;
         target += (want - target) * (1 - std::exp(-dt * 14));
         if (std::isfinite(carYaw)) chaseYaw += wrapAngle(carYaw - chaseYaw) * (1 - std::exp(-dt * 3));
         idle = dragging ? 0 : idle + dt;
+        // (Spun round and round, it comes back the short way, not unwinding every turn.)
+        userYaw = wrapAngle(userYaw);
         if (mode == 0 && idle > 1.5) {
             userYaw *= std::exp(-dt * 2);
             if (pitch < -0.05) pitch += (-0.05 - pitch) * (1 - std::exp(-dt * 2));  // let go: back to looking at the car
@@ -148,6 +161,19 @@ struct CameraRig {
         else userYaw -= dx * 0.006;
         pitch = clampd(pitch + dy * 0.005, -1.0, 1.35);
     }
+    // ---- gamepad: the right stick looks (+ = right / down), R3 held looks back, R3 let go resets ----
+    void padLook(double x, double y, bool back, bool reset, double dt) {
+        const double kx = std::copysign(std::pow(std::fabs(x), 1.5), x), ky = std::copysign(std::pow(std::fabs(y), 1.5), y);
+        if (mode == 3) {
+            droneYaw -= kx * 2.4 * dt;
+            dronePitch = clampd(dronePitch - ky * 1.4 * dt, -1.5, 1.4);
+            return;
+        }
+        (mode == 1 ? orbitYaw : userYaw) -= kx * 2.4 * dt;
+        pitch = clampd(pitch + ky * 1.3 * dt, -1.0, 1.35);
+        if (back && mode != 1) userYaw += wrapAngle(M_PI - userYaw) * (1 - std::exp(-dt * 10));
+        if (reset) userYaw = 0, pitch = 0.2;
+    }
 };
 
 void writePPM(const std::string& path, const std::vector<unsigned char>& px, int w, int h) {
@@ -173,11 +199,8 @@ struct BuildWatch {
     bool ready = false;
     void start() {
 #ifndef _WIN32
-        char buf[4096];
-        const ssize_t n = readlink("/proc/self/exe", buf, sizeof buf - 1);
-        if (n <= 0) return;
-        buf[n] = 0;
-        exe = buf;
+        exe = exePath();
+        if (exe.empty()) return;
         struct stat st;
         if (stat(exe.c_str(), &st) == 0) mtime = (long long)st.st_mtime;
 #endif
@@ -226,6 +249,7 @@ Options parseArgs(int argc, char** argv) {
         if (a == "--fullscreen") o.fullscreen = true;
         else if (a == "--no-audio") o.audio = false;
         else if (a == "--no-vsync") o.vsync = false;
+        else if (a == "--no-pad") o.pad = false;
         else if (a == "--size") {
             std::string s = next();
             std::sscanf(s.c_str(), "%dx%d", &o.width, &o.height);
@@ -243,6 +267,8 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--menu") o.menu = std::atoi(next().c_str());
         else if (a == "--quality") o.quality = std::atoi(next().c_str());
         else if (a == "--ground") o.ground = std::atoi(next().c_str());
+        else if (a == "--props") o.props = std::atoi(next().c_str());
+        else if (a == "--photo") o.photo = true;
         else if (a == "--mph") o.mph = true;
         else if (a == "--map") o.map = std::atoi(next().c_str());
         else if (a == "--mods") {
@@ -268,7 +294,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--level") o.level = next();
         else if (a == "--editor") o.editor = true;
         else if (a == "--help" || a == "-h") {
-            std::puts("usage: crumplezone [--fullscreen] [--size WxH] [--no-audio] [--no-vsync] [--spawn X,Z[,HEADING]] [--scenario NAME]\n"
+            std::puts("usage: crumplezone [--fullscreen] [--size WxH] [--no-audio] [--no-vsync] [--no-pad] [--spawn X,Z[,HEADING]] [--scenario NAME]\n"
                       "                   [--map N] [--host [PORT]] [--join HOST[:PORT]] [--name NAME] [--time HOURS] [--level NAME]");
             std::exit(0);
         }
@@ -364,6 +390,8 @@ struct WinchAim {
     int sel = -1;
     double refresh = 0;
     V3 selAt;
+    bool hasLook = false;
+    V3 look;  // the ground under the middle of the screen: offered as an anchor too
     void pickCentered(const View& v) {
         float best = 1e9f;
         for (int k = 0; k < (int)targets.size(); k++) {
@@ -377,7 +405,7 @@ struct WinchAim {
     void update(const Sim& sim, double dt) {
         if (!on || (refresh -= dt) > 0) return;
         refresh = 0.3;
-        targets = sim.winchTargets(sim.player);
+        targets = sim.winchTargets(sim.player, hasLook ? &look : nullptr);
         // Keep the same anchor selected as the truck (or the anchor) moves.
         int keep = -1;
         double bd = 2.0;
@@ -385,6 +413,19 @@ struct WinchAim {
             if (len(targets[k].at - selAt) < bd) bd = len(targets[k].at - selAt), keep = k;
         sel = keep >= 0 ? keep : targets.empty() ? -1 : std::min(std::max(sel, 0), (int)targets.size() - 1);
         if (sel >= 0) selAt = targets[sel].at;
+    }
+    // Where the view ray through the middle of the screen meets the ground (within the line's reach).
+    void aimGround(const View& v, const World& w) {
+        hasLook = false;
+        const V3 d = norm(v.target - v.eye);
+        for (double t = 1; t < recovery::kWinchReach + 10; t += 0.5) {
+            const V3 q = v.eye + d * t;
+            if (q.y < w.height(q.x, q.z)) {
+                look = q;
+                hasLook = true;
+                return;
+            }
+        }
     }
     void step(int dir) {
         if (targets.empty()) return;
@@ -717,7 +758,9 @@ void drawRecovery(Renderer& r, const Sim& sim, float u) {
     if (rp.kind == ROPE_WINCH && rp.a.car == sim.player) {
         const float sm = px(1.1f * u);
         char hint[96];
-        std::snprintf(hint, sizeof hint, "Z REEL IN   SHIFT+Z PAY OUT   - = SPEED %d%%   V UNHOOK", (int)std::lround(sim.cars[sim.player].winchSpeed * 100));
+        const int pct = (int)std::lround(sim.cars[sim.player].winchSpeed * 100);
+        if (pad::ui.last) std::snprintf(hint, sizeof hint, "%s + RT REEL IN   %s + LT PAY OUT   RIGHT STICK UP DOWN: SPEED %d%%   %s + D-PAD UP: UNHOOK", pad::hint("", pad::B_LB), pad::hint("", pad::B_LB), pct, pad::hint("", pad::B_LB));
+        else std::snprintf(hint, sizeof hint, "Z REEL IN   SHIFT+Z PAY OUT   - = SPEED %d%%   V UNHOOK", pct);
         r.text(x + 8 * u, y + h + 4 * u, sm, hint, 0.8f, 0.82f, 0.86f, 0.9f);
     }
 }
@@ -1003,6 +1046,28 @@ void drawHelp(Renderer& r, float u, int W, int H, bool mph) {
     }
 }
 
+// The controller's button map (the help overlay when the pad was the last thing used).
+void drawPadHelp(Renderer& r, float u, int W, int H) {
+    const auto rows = pad::helpRows(pad::ui.style);
+    const int n = (int)rows.size(), per = (n + 1) / 2;
+    float s = px(1.2f * u), lh = 8 * s + 5 * u, keyW[2] = {0, 0}, descW[2] = {0, 0};
+    for (int k = 0; k < n; k++) {
+        keyW[k / per] = std::max(keyW[k / per], r.textWidth(rows[k].first, s));
+        descW[k / per] = std::max(descW[k / per], r.textWidth(rows[k].second, s));
+    }
+    const float pd = 18 * u, colW0 = keyW[0] + 12 * u + descW[0], colW1 = keyW[1] + 12 * u + descW[1];
+    const float w = colW0 + colW1 + 3 * pd, h = per * lh + 8 * s * 1.5f + 3 * pd;
+    const float x = (W - w) / 2, y = (H - h) / 2;
+    pill(r, x, y, w, h, 0.02f, 0.025f, 0.035f, 0.85f);
+    label(r, x + pd, y + pd, px(2.0f * u), "CONTROLLER", 1.0f, 0.75f, 0.3f);
+    for (int k = 0; k < n; k++) {
+        const int col = k / per;
+        const float cx = x + pd + (col ? colW0 + pd : 0), cy = y + pd * 2 + 8 * s * 1.5f + (k % per) * lh;
+        r.text(cx, cy, s, rows[k].first, 1.0f, 0.75f, 0.3f);
+        r.text(cx + keyW[col] + 12 * u, cy, s, rows[k].second, 0.9f, 0.91f, 0.93f);
+    }
+}
+
 void drawScenarioStatus(Renderer& r, const Playback& pb, HudState& hud, float u, int W) {
     const Ctx& c = *pb.ctx;
     int ok = 0, total = 0;
@@ -1098,7 +1163,9 @@ void drawGarage(Renderer& r, const GarageUI& g, const Garage& garage, float u, i
         r.text(x + pad, cy, s, l, 0.85f, 0.87f, 0.9f);
         cy += lh;
     }
-    r.text(x + pad, y + h - pad - 8 * s, s, "W S CHOOSE PART   A D CHANGE   ENTER FIT AND DRIVE   G CLOSE", 1.0f, 0.75f, 0.3f);
+    const std::string garageKeys = pad::ui.last ? "D-PAD UP DOWN: CHOOSE PART   LEFT RIGHT: CHANGE   " + std::string(pad::hint("", pad::B_A)) + " FIT AND DRIVE   " + pad::hint("", pad::B_B) + " CLOSE"
+                                                : "W S CHOOSE PART   A D CHANGE   ENTER FIT AND DRIVE   G CLOSE";
+    r.text(x + pad, y + h - pad - 8 * s, s, garageKeys, 1.0f, 0.75f, 0.3f);
 }
 
 void drawWinchAim(Renderer& r, const Sim& sim, const WinchAim& aim, const View& view, float u, int W, int H) {
@@ -1106,7 +1173,7 @@ void drawWinchAim(Renderer& r, const Sim& sim, const WinchAim& aim, const View& 
     const Car& car = sim.cars[sim.player];
     const V3 hook = car.hookPoint(0);
     // The line's reach: a ring on the ground.
-    const double reach = recovery::kWinchLine - 1;
+    const double reach = recovery::kWinchReach - 1;
     for (int k = 0; k < 120; k++) {
         const double a = k * 2 * M_PI / 120;
         V3 q = hook + V3(std::cos(a), 0, std::sin(a)) * reach;
@@ -1141,8 +1208,11 @@ void drawWinchAim(Renderer& r, const Sim& sim, const WinchAim& aim, const View& 
         const float ts = px(1.8f * u);
         label(r, sx - r.textWidth(buf, ts) / 2, sy + b + 6 * u, ts, buf, cr, cg, cb);
     }
-    const char* help = aim.targets.empty() ? "NOTHING IN REACH (30 M LINE)   ESC CANCEL"
-                                           : "DRAG TO AIM   WHEEL OR TAB: NEXT   V OR CLICK: HOOK   ESC: CANCEL";
+    const std::string padHelp = aim.targets.empty() ? "NOTHING IN REACH (30 M LINE)   " + std::string(pad::hint("", pad::B_B)) + " CANCEL"
+                                                    : "RIGHT STICK AIMS   D-PAD OR LB RB: NEXT   " + std::string(pad::hint("", pad::B_A)) + ": HOOK   " + pad::hint("", pad::B_B) + ": CANCEL";
+    const char* help = pad::ui.last ? padHelp.c_str()
+                       : aim.targets.empty() ? "NOTHING IN REACH (30 M LINE)   ESC CANCEL"
+                                             : "DRAG TO AIM   WHEEL OR TAB: NEXT   V OR CLICK: HOOK   ESC: CANCEL";
     centeredPill(r, W / 2.0f, H - 110 * u, px(1.5f * u), help, 0.02f, 0.02f, 0.03f, 0.95f, 1.0f, 0.75f, 0.3f);
 }
 
@@ -1283,18 +1353,23 @@ void drawHud(Renderer& r, const Sim& sim, const View& view, HudState& hud, const
     }
     if (hud.hintTime > 0 && !hud.showHelp) {
         float a = (float)std::min(1.0, hud.hintTime);
-        centeredPill(r, W / 2.0f, y, px(1.4f * u), "H: CONTROLS   ESC: MENU", 0.02f, 0.02f, 0.03f, a, 0.9f, 0.9f, 0.92f);
+        const std::string line = pad::ui.last ? std::string(pad::hint("", pad::B_LB)) + " + " + pad::hint("", pad::B_START) + ": CONTROLS   " + pad::hint("", pad::B_START) + ": MENU"
+                                              : "H: CONTROLS   ESC: MENU";
+        centeredPill(r, W / 2.0f, y, px(1.4f * u), line, 0.02f, 0.02f, 0.03f, a, 0.9f, 0.9f, 0.92f);
     }
     if (hud.showFps) {
         std::snprintf(buf, sizeof(buf), "%d FPS", (int)std::lround(fps));
         label(r, W - r.textWidth(buf, px(1.3f * u)) - 10 * u, 8 * u, px(1.3f * u), buf, 0.8f, 0.9f, 0.8f);
     }
-    if (hud.showHelp) drawHelp(r, u, W, H, mph);
+    if (hud.showHelp) pad::ui.last ? drawPadHelp(r, u, W, H) : drawHelp(r, u, W, H, mph);
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
+#ifndef _WIN32
+    signal(SIGPIPE, SIG_IGN);  // (a multiplayer peer dropping mid-send; macOS has no MSG_NOSIGNAL)
+#endif
     Options opt = parseArgs(argc, argv);
     const bool scripted = !opt.shotFrames.empty();
     if (scripted) opt.audio = false;
@@ -1311,6 +1386,7 @@ int main(int argc, char** argv) {
     }
     if (opt.quality >= 0) applyPreset(settings.gfx, opt.quality);
     if (opt.ground >= 0) settings.gfx.ground = std::min(opt.ground, 3);
+    if (opt.props >= 0) settings.gfx.props = std::min(opt.props, 3);
     if (opt.mph) settings.mph = true;
     if (opt.map >= 0) settings.map = std::min(opt.map, MAP_COUNT - 1);
     if (!opt.scenario.empty()) settings.map = MAP_PROVING_GROUND;  // the tests are built for it
@@ -1323,6 +1399,9 @@ int main(int argc, char** argv) {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+#ifdef __APPLE__
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);  // (macOS only makes 3.2+ core contexts forward-compatible)
+#endif
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
     SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
@@ -1354,6 +1433,9 @@ int main(int argc, char** argv) {
     SDL_GL_SetSwapInterval(settings.vsync && opt.vsync && !scripted ? 1 : 0);
     std::printf("OpenGL: %s / %s\n", (const char*)gl::GetString(GL_VERSION), (const char*)gl::GetString(GL_RENDERER));
 
+    // Scanned rock hulls (assets/props), so what you hit is what you see; without the bake,
+    // code-made rocks. Scenario playback keeps the code-made rocks the tests ran with.
+    if (opt.scenario.empty()) props::setActiveRockScans(&props::sharedHullLibrary());
     Sim sim;
     if (settings.map != MAP_PROVING_GROUND) sim.world = World(settings.map);
     sim.setup();
@@ -1414,6 +1496,7 @@ int main(int argc, char** argv) {
     DebugView debug = (DebugView)(opt.debug % DEBUG_VIEW_COUNT);
     bool dragging = false;
     HudState hud;
+    hud.photo = opt.photo;
     if (scripted) hud.hintTime = 0;
     hud.showHelp = opt.showHelp;
     if (opt.mods[0] >= 0 && sim.cars[sim.player].spec->model >= 0) {
@@ -1441,6 +1524,7 @@ int main(int argc, char** argv) {
     double clock = 0;
     // Time of day: the clock (hours) carries on from last time; --time holds it still.
     double dayHours = opt.timeHours >= 0 ? opt.timeHours : settings.clockHours;
+    double levelHours = -1;  // the playing level's own hour (-1: none)
     int lampMode = opt.lamps >= 0 && opt.lamps < LAMP_MODES ? opt.lamps : LAMPS_AUTO;  // the player's headlight switch
     auto applySettings = [&]() {
         cam.fovy = (float)(settings.fovDeg * M_PI / 180);
@@ -1482,9 +1566,17 @@ int main(int argc, char** argv) {
     BuildWatch watch;
     if (!scripted) watch.start();
     bool reload = false;
+    // ---- gamepad: a pad button press arrives as the key press it stands for (see gamepad.h) ----
+    pad::Device padDev;
+    pad::Logic padLogic;
+    pad::Rumbler rumbler;
+    pad::Mode padCtx = pad::Mode::Off;
+    bool padShift = false, padRumbling = false;  // (padShift: the key press being handled carries Shift)
+    double padRumbleTimer = 0;
+    if (opt.pad && !scripted && !std::getenv("CZ_NO_PAD")) padDev.start();
     auto shiftDown = [&]() {
         const uint8_t* ks = SDL_GetKeyboardState(nullptr);
-        return ks[SC_LSHIFT] || ks[SC_RSHIFT];
+        return padShift || ks[SC_LSHIFT] || ks[SC_RSHIFT];
     };
     auto confirmWinch = [&]() {
         if (winchAim.sel < 0 || winchAim.sel >= (int)winchAim.targets.size()) {
@@ -1649,6 +1741,7 @@ int main(int argc, char** argv) {
         wrapSeen = sim.wrapShift = 0;
         hud.bestKmh = 0;
         if (lv.timeOfDay >= 0) dayHours = lv.timeOfDay;
+        levelHours = lv.timeOfDay;
         run.level = lv;
         const auto b = bestTimes.find(lv.name);
         run.best = b != bestTimes.end() ? b->second : -1;
@@ -1680,6 +1773,7 @@ int main(int argc, char** argv) {
     auto quitLevel = [&]() {
         if (!run.active()) return;
         run.stop();
+        levelHours = -1;
         if (net.role == NetSession::HOST) net.setLevel("");
         hud.toast("FREE DRIVE");
     };
@@ -1744,7 +1838,12 @@ int main(int argc, char** argv) {
     };
     // ---- On foot ----
     Walker walker;
+    Interact interact;  // on foot: the hold-E jobs (the spare, the wheels)
     double walkSend = 0, carCamDist = 7.5;
+    // On foot you see through your own eyes: the mouse turns your head (no button needed)
+    // and the keys walk where you look.
+    double footYaw = 0, footPitch = 0;
+    bool mouseLook = false;
     auto getOut = [&]() {
         Car& c = sim.cars[sim.player];
         if (len(c.frame().vel) > 2.0) {
@@ -1755,11 +1854,13 @@ int main(int argc, char** argv) {
         c.handbrake = 1;
         walker.exitCar(sim.world, c);
         carCamDist = cam.dist;
-        cam.dist = 3.6;
         cam.initialized = false;
-        hud.toast("ON FOOT: WASD WALK, SHIFT RUN, SPACE JUMP, V HOOK YOUR WINCH HERE, J GET IN");
+        footYaw = walker.yaw;  // looking the way you got out
+        footPitch = -0.1;
+        hud.toast("ON FOOT: MOUSE LOOK, WASD WALK, SHIFT RUN, SPACE JUMP, V HOOK YOUR WINCH HERE, J GET IN");
     };
     auto getIn = [&]() {
+        if (walker.carrying) Interact::drop(sim, walker, V3(std::cos(walker.yaw), 0, -std::sin(walker.yaw)));  // (whisked away: it's left there)
         const int k = walker.carToEnter(sim);
         if (k < 0) {
             hud.toast("WALK UP TO A TRUCK TO GET IN");
@@ -1783,6 +1884,7 @@ int main(int argc, char** argv) {
             return;
         }
         run.stop();
+        levelHours = -1;
         stopPilot();
         sim.world = World(base.map);
         editor.open(sim.world, renderer, base);
@@ -1853,6 +1955,7 @@ int main(int argc, char** argv) {
             case PauseMenu::FREE_DRIVE:
                 closeMenu();
                 run.stop();
+                levelHours = -1;
                 if (net.role == NetSession::HOST) net.setLevel("");
                 if (menu.mapPick != sim.world.map && net.role != NetSession::CLIENT) {
                     loadMap(menu.mapPick);
@@ -1942,6 +2045,7 @@ int main(int argc, char** argv) {
                 break;
             case PauseMenu::MAIN_MENU:
                 run.stop();
+                levelHours = -1;
                 if (net.role == NetSession::HOST) net.setLevel("");
                 refreshLevels();
                 menu.showTitle(std::max(0, sim.cars[sim.player].spec->model), sim.world.map);
@@ -1953,6 +2057,7 @@ int main(int argc, char** argv) {
                     break;
                 }
                 loadMap(res.vehicle);
+                levelHours = -1;
                 settings.map = res.vehicle;
                 saveSettings();
                 hud.toast(std::string("MAP: ") + mapName(res.vehicle));
@@ -1963,15 +2068,11 @@ int main(int argc, char** argv) {
     if (opt.menu == 9) {  // (testing: the title screen)
         openMenu();
         menu.showTitle(std::max(0, sim.cars[sim.player].spec->model), sim.world.map);
-    } else if (opt.menu >= 2) {
+    } else if (opt.menu >= 1) {  // (1: the settings page)
         openMenu();
         menu.showPage(opt.menu, std::max(0, sim.cars[sim.player].spec->model), sim.world.map);
     } else if (opt.menu >= 0) {
         openMenu();
-        if (opt.menu == 1) {
-            for (int k = 0; k < 6; k++) menu.key(SC_S, settings);  // down to SETTINGS
-            menu.key(SC_RETURN, settings);
-        }
     }
     if (opt.hostPort > 0) startHost(opt.hostPort);
     else if (!opt.join.empty()) startJoin(opt.join);
@@ -2018,8 +2119,42 @@ int main(int argc, char** argv) {
         hud.newBuild = watch.poll();
         if (hud.newBuild && std::getenv("CZ_AUTORELOAD")) reload = true, running = false;  // (testing the reload)
 
+        // ---- gamepad: what the pad is doing this frame (its presses are fed in as keys below) ----
+        padCtx = editor.active || coop.typing || playback.active() || !padDev.connected() ? pad::Mode::Off
+                 : menu.open || garageUI.open                                             ? pad::Mode::Menu
+                 : coop.mapOpen                                                           ? pad::Mode::Map
+                 : winchAim.on                                                            ? pad::Mode::Aim
+                                                                                          : pad::Mode::Drive;
+        padLogic.tune = {settings.padSteering, settings.padDeadzone, settings.padRumble};
+        padLogic.update(padDev.read((SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS) != 0), padCtx, dt);
+        size_t padTap = 0;
+        bool fromPad = false;
+        auto nextEvent = [&](SDL_Event& ev) {
+            fromPad = false;
+            padShift = false;
+            if (padTap < padLogic.taps.size()) {
+                const pad::Tap& t = padLogic.taps[padTap++];
+                std::memset(&ev, 0, sizeof ev);
+                ev.type = SDL_KEYDOWN;
+                std::memcpy(ev.padding + 16, &t.scancode, 4);
+                padShift = t.shift;
+                fromPad = true;
+                return true;
+            }
+            return SDL_PollEvent(&ev) != 0;
+        };
+
         SDL_Event e;
-        while (SDL_PollEvent(&e)) {
+        while (nextEvent(e)) {
+            {  // ---- gamepad: hot-plug and buttons; the keyboard and mouse take the HUD hints back ----
+                std::string padToast;
+                if (!fromPad && padDev.handleEvent(e, padToast)) {
+                    if (!padToast.empty()) hud.toast(padToast), std::fprintf(stderr, "crumplezone: %s\n", padToast.c_str());
+                    menu.padName = padDev.name();
+                    continue;
+                }
+                if (!fromPad && (e.type == SDL_KEYDOWN || e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEWHEEL)) pad::ui.last = false;
+            }
             if (!editor.active && !menu.open && coop.typing && e.type == SDL_KEYDOWN) {
                 coop.typeKey(evKeyScancode(e), shiftDown(), myName(), net);
                 continue;
@@ -2189,14 +2324,22 @@ int main(int argc, char** argv) {
                                     hud.toast("NO WINCH ON YOUR TRUCK");
                                     break;
                                 }
+                                // A tree, rock or truck within arm's reach; otherwise the line is
+                                // anchored right where you stand (dug in, or bolted to the rock).
                                 double best = 3.0;
-                                int pick = -1;
-                                const std::vector<WinchTarget> targets = sim.winchTargets(sim.player);
+                                int pick = -1, here = -1;
+                                const V3 feet = walker.p;
+                                const std::vector<WinchTarget> targets = sim.winchTargets(sim.player, &feet);
                                 for (int k = 0; k < (int)targets.size(); k++) {
                                     const double d = len(V3(targets[k].at.x - walker.p.x, 0, targets[k].at.z - walker.p.z));
+                                    if (targets[k].end.kind == ANCHOR_STAKE) {
+                                        if (d < 1.0) here = k;
+                                        continue;
+                                    }
                                     if (d < best) best = d, pick = k;
                                 }
-                                if (pick < 0) hud.toast("WALK TO A TREE, ROCK OR TRUCK IN REACH OF THE LINE (30 M)");
+                                if (pick < 0) pick = here;
+                                if (pick < 0) hud.toast("TOO FAR FROM YOUR TRUCK: THE LINE REACHES 60 M WITH THE EXTENSION");
                                 else hud.toast(sim.hookWinchTo(sim.player, targets[pick].end));
                                 break;
                             }
@@ -2207,7 +2350,8 @@ int main(int argc, char** argv) {
                             else {
                                 winchAim = WinchAim();
                                 winchAim.on = true;
-                                winchAim.targets = sim.winchTargets(sim.player);
+                                winchAim.aimGround(lastView, sim.world);
+                                winchAim.targets = sim.winchTargets(sim.player, winchAim.hasLook ? &winchAim.look : nullptr);
                                 winchAim.refresh = 0.3;
                                 winchAim.pickCentered(lastView);
                             }
@@ -2268,7 +2412,8 @@ int main(int argc, char** argv) {
                                 hud.scenarioDetail = !hud.scenarioDetail;
                                 break;
                             }
-                            if (walker.active) getIn();
+                            if (walker.active && walker.carrying) hud.toast("PUT THE WHEEL DOWN FIRST (G)");
+                            else if (walker.active) getIn();
                             else getOut();
                             break;
                         case SC_F3:
@@ -2304,7 +2449,10 @@ int main(int argc, char** argv) {
                             }
                             break;
                         }
-                        case SC_G: openGarage(); break;
+                        case SC_G:
+                            if (walker.active && walker.carrying) Interact::drop(sim, walker, lastView.target - lastView.eye);  // (on foot: put down what you carry)
+                            else openGarage();
+                            break;
                         case SC_E:
                         case SC_Q: {
                             if (cam.mode == 3 || walker.active) break;  // (flying the drone / on foot: Q E aren't the gears)
@@ -2447,6 +2595,9 @@ int main(int argc, char** argv) {
                         float mx, my;
                         toDrawable(evMotionX(e), evMotionY(e), mx, my);
                         handleMenu(menu.mouseMove(mx, my, evMotionState(e) & 1, settings));
+                    } else if (walker.active && !editor.active && !winchAim.on) {  // on foot: the mouse turns your head
+                        footYaw -= evMotionXrel(e) * 0.0035;
+                        footPitch = clampd(footPitch - evMotionYrel(e) * 0.0035, -1.45, 1.45);
                     } else if (evMotionState(e) & 0x5) {  // left or right button held
                         cam.drag(evMotionXrel(e), evMotionYrel(e));
                         dragging = true;
@@ -2492,6 +2643,7 @@ int main(int argc, char** argv) {
             if (right) m -= l;
             if (keys[SC_E]) m.y += 1;
             if (keys[SC_Q]) m.y -= 1;
+            if (padCtx == pad::Mode::Drive) m += f * (double)padLogic.in.walkForward + l * (double)padLogic.in.walkTurn;  // (gamepad: left stick flies)
             if (len(m) > 0) cam.droneEye += norm(m) * (speed * dt);
             cam.droneEye.y = std::max(cam.droneEye.y, sim.world.height(cam.droneEye.x, cam.droneEye.z) + 0.5);
             up = down = left = right = false;
@@ -2501,6 +2653,21 @@ int main(int argc, char** argv) {
             up = down = left = right = false;
             hb = true;
             winch = airing = 0;
+        }
+        // ---- gamepad: the held controls (the steering and pedals go on the car after Sim::drive) ----
+        const bool padDrives = padCtx == pad::Mode::Drive && !walker.active && cam.mode != 3;
+        if (padCtx == pad::Mode::Drive) {
+            const pad::Intent& pin = padLogic.in;
+            hb = hb || pin.handbrake;
+            if (pin.winch) winch = pin.winch;
+            if (pin.airing) airing = pin.airing;
+            if (walker.active) {  // on foot: the left stick walks, A jumps
+                up = up || pin.walkForward > 0.4f, down = down || pin.walkForward < -0.4f;
+                left = left || pin.walkTurn > 0.4f, right = right || pin.walkTurn < -0.4f;
+            } else if (cam.mode != 3 && sim.player >= 0 && sim.player < (int)sim.cars.size() && sim.cars[sim.player].pilot.active) {
+                up = up || pin.throttle > 0.3, down = down || pin.brake > 0.3;  // (taking the wheel switches the autopilot off)
+                left = left || pin.steerTarget > 0.3, right = right || pin.steerTarget < -0.3;
+            }
         }
         if (!playback.active() && sim.player >= 0 && sim.player < (int)sim.cars.size()) {  // (a scenario drives its own cars)
             for (Car& c : sim.cars) c.airing = 0;
@@ -2610,6 +2777,13 @@ int main(int argc, char** argv) {
                 const V3 vf = norm(V3(lastView.target.x - lastView.eye.x, 0, lastView.target.z - lastView.eye.z));
                 const double viewYaw = std::atan2(-vf.z, vf.x);
                 walker.step(sim.world, sim, dt, (up ? 1 : 0) - (down ? 1 : 0), (left ? 1 : 0) - (right ? 1 : 0), shiftHeld, hb, viewYaw);
+                {  // hands on: hold E (pad: X) for the job in front of you
+                    const uint8_t* ks = SDL_GetKeyboardState(nullptr);
+                    const bool holdE = (!menu.open && ks[SC_E]) || (padCtx == pad::Mode::Drive && padLogic.in.interact);
+                    const std::string said = interact.update(sim, walker, lastView.eye, lastView.target - lastView.eye, holdE, dt);
+                    if (!said.empty()) hud.toast(said);
+                    if (padCtx == pad::Mode::Drive && padLogic.in.drop) Interact::drop(sim, walker, lastView.target - lastView.eye);
+                }
                 up = down = left = right = false;
                 hb = true;
                 walkSend -= dt;
@@ -2621,6 +2795,11 @@ int main(int argc, char** argv) {
                 }
             }
             if (!sim.paused) sim.drive(up, down, left, right, hb, dt);
+            {  // ---- gamepad: analog steering and pedals on top of the keyboard path ----
+                Car& pc = sim.cars[sim.player];
+                if (padDrives && !sim.paused && !pc.ai && !pc.pilot.active) padLogic.apply(pc, dt);
+                else padLogic.steerState = 0;
+            }
             if (jobOn && !sim.paused) {
                 // Where everyone is: you (on foot or in the truck), and each other player's
                 // nearest truck (or them on foot).
@@ -2697,6 +2876,22 @@ int main(int argc, char** argv) {
             sim.events.clear();
             for (const std::string& ev : net.events) hud.toast(ev);
             net.events.clear();
+            {  // ---- gamepad rumble: only while the player is on the pad (the last thing they used) ----
+                const bool want = pad::ui.last && padDev.connected() && padCtx == pad::Mode::Drive && !walker.active && !sim.paused && settings.padRumble > 0 &&
+                                  (SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS) && sim.player >= 0 && sim.player < (int)sim.cars.size();
+                if (want) {
+                    const pad::RumbleOut ro = rumbler.update(sim.cars[sim.player], settings.padRumble, dt);
+                    if ((padRumbleTimer -= dt) <= 0) {
+                        padRumbleTimer = 0.1;
+                        padDev.rumble(ro.low, ro.high);
+                        padRumbling = ro.low > 0.01f || ro.high > 0.01f;
+                    }
+                } else if (padRumbling) {
+                    padDev.rumble(0, 0);
+                    padRumbling = false;
+                    rumbler.reset();
+                }
+            }
         }
 
         // Reset anything that exploded numerically; track damage and crash energy.
@@ -2807,11 +3002,63 @@ int main(int argc, char** argv) {
             fr.left = cross(fr.up, fr.fwd);
             fr.vel = walker.v;
         }
-        View view = editor.active ? editor.view(W, H) : cam.update(fr, sim.world, dt, dragging && !menu.open);
+        // ---- gamepad: the right stick turns the camera; on the map the sticks pan and the triggers zoom ----
+        bool padLooking = false;
+        if (padCtx == pad::Mode::Drive || padCtx == pad::Mode::Aim) {
+            const pad::Intent& pin = padLogic.in;
+            padLooking = pin.lookX != 0 || pin.lookY != 0 || pin.lookBack;
+            if (padLooking || pin.resetView) cam.padLook(pin.lookX, pin.lookY, pin.lookBack, pin.resetView, dt);
+            if (padLooking && winchAim.on) winchAim.pickCentered(lastView);
+        } else if (padCtx == pad::Mode::Map) {
+            const pad::Intent& pin = padLogic.in;
+            int dw = 1, dh = 1;
+            SDL_GL_GetDrawableSize(win, &dw, &dh);
+            if (pin.mapPanX != 0 || pin.mapPanY != 0) coop.mapMouse(dw / 2.0f, dh / 2.0f, 0, true, -pin.mapPanX * 600.0f * (float)dt, -pin.mapPanY * 600.0f * (float)dt);
+            if (pin.mapZoom) coop.mapMouse(dw / 2.0f, dh / 2.0f, pin.mapZoom, false, 0, 0);
+            V3 wp;
+            if (pin.mapSelect && coop.mapPoint(dw / 2.0f, dh / 2.0f, wp)) {  // (A: the waypoint at the centre, as a click would)
+                wp.y = sim.world.height(wp.x, wp.z);
+                coop.haveWaypoint = !(coop.haveWaypoint && len(V3(wp.x - coop.waypoint.x, 0, wp.z - coop.waypoint.z)) < 15);
+                coop.waypoint = wp;
+                hud.toast(coop.haveWaypoint ? "WAYPOINT SET" : "WAYPOINT CLEARED");
+            }
+        }
+        if (walker.active && padCtx == pad::Mode::Drive && cam.mode != 3) {  // (gamepad: the right stick looks around on foot)
+            footYaw -= padLogic.in.lookX * 2.6 * dt;
+            footPitch = clampd(footPitch + padLogic.in.lookY * 1.8 * dt, -1.45, 1.45);
+        }
+        View view = editor.active ? editor.view(W, H) : cam.update(fr, sim.world, dt, (dragging || padLooking) && !menu.open);
+        if (walker.active && !editor.active && cam.mode != 3) {
+            // First person: eyes 1.62 m up, a little bob as you walk.
+            const double bob = walker.grounded ? 0.025 * std::sin(walker.stride * 2) * std::min(1.0, len(walker.v) / 1.5) : 0.0;
+            view.eye = walker.p + V3(0, 1.62 + bob, 0);
+            view.target = view.eye + V3(std::cos(footYaw) * std::cos(footPitch), std::sin(footPitch), -std::sin(footYaw) * std::cos(footPitch)) * 10.0;
+            view.up = V3(0, 1, 0);
+            view.fovy = cam.fovy;
+        }
+        // A wheel in your arms: held low in front of you, its face toward you.
+        renderer.carried.on = walker.active && walker.carrying && !editor.active && cam.mode != 3;
+        if (renderer.carried.on) {
+            const V3 fwd = norm(V3(std::cos(footYaw), 0, -std::sin(footYaw)));
+            const WheelItem& it = *walker.carrying;
+            renderer.carried.item = it;
+            renderer.carried.c = view.eye + fwd * (0.45 + it.width * 0.5) - V3(0, 0.95 - it.R * 0.4, 0);
+            renderer.carried.axis = -fwd;
+            renderer.carried.up = V3(0, 1, 0);
+        }
+        {
+            // The mouse is yours to look with on foot; anywhere else it's a pointer.
+            const bool want = walker.active && !menu.open && !editor.active && !winchAim.on && cam.mode != 3;
+            if (want != mouseLook) {
+                SDL_SetRelativeMouseMode(want ? 1 : 0);
+                mouseLook = want;
+            }
+        }
         view.width = W;
         view.height = H;
         lastView = view;
         if (winchAim.on) {
+            winchAim.aimGround(view, sim.world);
             winchAim.update(sim, dt);
             if (dragging) winchAim.pickCentered(view);  // follow the camera while aiming
         }
@@ -2825,6 +3072,8 @@ int main(int argc, char** argv) {
                 if (net.dayFresh) dayHours = net.dayHours, net.dayFresh = false;
                 dayRate = net.dayRate;
             } else if (opt.timeHours >= 0) dayHours = opt.timeHours;
+            else if (editor.active && editor.core.level.timeOfDay >= 0) dayHours = editor.core.level.timeOfDay;  // the editor shows the level's light
+            else if (levelHours >= 0 && settings.timeOfDay != TOD_CYCLE) dayHours = levelHours;  // a level's hour holds over a fixed setting (with the cycle it starts there and runs)
             else if (settings.timeOfDay != TOD_CYCLE) dayHours = timeOfDayHours(settings.timeOfDay);
             else dayRate = clockAdvance(1.0, settings.dayMinutes);
             if (!sim.paused) dayHours = std::fmod(dayHours + dayRate * dt * sim.timeScale, 24.0);
@@ -2849,7 +3098,8 @@ int main(int argc, char** argv) {
             drawnWorld = sim.world.stamp;
         }
         renderer.figures.clear();
-        if (walker.active) renderer.figures.push_back({walker.p, walker.yaw, V3(0.95, 0.5, 0.12), walker.stride});
+        // (Your own figure isn't drawn: you're looking out of its eyes.)
+        if (walker.active && (editor.active || cam.mode == 3)) renderer.figures.push_back({walker.p, walker.yaw, V3(0.95, 0.5, 0.12), walker.stride});
         for (const RemoteWalker& rw : coop.walkers) renderer.figures.push_back({rw.p, rw.yaw, V3(0.2, 0.6, 0.95), rw.stride});
         const uint64_t drawStart = SDL_GetPerformanceCounter();
         renderer.drawScene(sim, view, debug, &fx);
@@ -2862,6 +3112,25 @@ int main(int argc, char** argv) {
         if (editor.active && !menu.open) editor.draw(renderer, W, H, dt);
         else if (!menu.open && !hud.photo) drawHud(renderer, sim, view, hud, &playback, net, winchAim, W, H, fps, dt, settings.mph);
         const bool showHud = !menu.open && !editor.active && !hud.photo;
+        if (showHud && walker.active && cam.mode != 3) {  // on foot: a crosshair, the job in front of you, what you carry
+            const float u = std::max(0.75f, H / 720.0f), s = px(1.4f * u);
+            renderer.rect(W / 2.0f - 2 * u, H / 2.0f - 2 * u, 4 * u, 4 * u, 1, 1, 1, 0.8f);
+            const bool padNow = pad::ui.last && padDev.connected();
+            if (interact.current.kind != IA_NONE) {
+                const std::string line = std::string(padNow ? "HOLD X  " : "HOLD E  ") + interact.current.prompt;
+                centeredPill(renderer, W / 2.0f, H / 2.0f + 40 * u, s, line, 0, 0, 0, 0.6f, 1.0f, 0.85f, 0.45f);
+                if (interact.progress > 0) {
+                    const float bw = 220 * u, bx = W / 2.0f - bw / 2, by = H / 2.0f + 40 * u + 8 * s + 14 * u;
+                    renderer.rect(bx, by, bw, 5 * u, 0, 0, 0, 0.6f);
+                    renderer.rect(bx, by, bw * (float)interact.share(), 5 * u, 1.0f, 0.75f, 0.3f, 0.95f);
+                }
+            }
+            if (walker.carrying) {
+                const std::string line = "CARRYING A " + walker.carrying->sizeName() + (walker.carrying->tireOnly ? "" : " WHEEL") +
+                                         (walker.carrying->popped ? " (FLAT)" : "") + (padNow ? "   B: PUT IT DOWN" : "   G: PUT IT DOWN");
+                centeredPill(renderer, W / 2.0f, H - 110 * u, px(1.2f * u), line, 0, 0, 0, 0.55f, 0.9f, 0.92f, 0.95f);
+            }
+        }
         if (showHud && run.active()) drawLevelHud(renderer, run, sim, view, W, H);
         if (showHud && jobOn) {  // the job: what to do next, and where
             const float u = std::max(0.75f, H / 720.0f), s = px(1.2f * u);
@@ -2931,7 +3200,14 @@ int main(int argc, char** argv) {
         static int benchN = 0;
         if (bench && scripted && frame >= 40) benchSum += benchDraw, benchN++;
         if (scripted && opt.shotFrames.count(frame)) {
-            if (bench && benchN) std::printf("bench: scene %.2f ms/frame over %d frames\n", 1000.0 * benchSum / benchN, benchN);
+            if (bench && benchN) {
+                std::printf("bench: scene %.2f ms/frame over %d frames\n", 1000.0 * benchSum / benchN, benchN);
+                const PropStats& ps = renderer.propStats();
+                std::printf("bench: props %.2f ms GPU (timer queries), %.2f ms CPU (%.2f ms culling/LODs); main %d draws, %d instances, %d billboards, %d scatter, %.0fk tris; "
+                            "shadows %d draws, %d instances, %.0fk tris\n",
+                            ps.gpuMs, ps.cpuMs, ps.selectMs, ps.draws, ps.instances, ps.billboards, ps.scatter, ps.tris / 1000.0, ps.shadowDraws, ps.shadowInstances,
+                            ps.shadowTris / 1000.0);
+            }
             char path[512];
             std::snprintf(path, sizeof(path), "%s_%04d.ppm", opt.shotPrefix.c_str(), frame);
             writePPM(path, renderer.readPixels(W, H), W, H);
@@ -2958,6 +3234,7 @@ int main(int argc, char** argv) {
     audio.stop();
     SDL_GL_DeleteContext(ctx);
     SDL_DestroyWindow(win);
+    padDev.close();  // (before SDL goes: stops any rumble)
     SDL_Quit();
     if (reload) {
         std::printf("reloading the new build at %s\n", resume.size() > 5 ? resume[5].c_str() : "?");

@@ -203,6 +203,10 @@ void Editor::click() {
         case OBJECTS:
             if (hover.kind == EditPick::OBJECT || hover.kind == EditPick::BASE) {
                 sel = hover;
+                if (sel.kind == EditPick::BASE) {  // a map's repair shop: picked up to move like your own
+                    const int k = core.adoptBase(sel);
+                    if (k >= 0) sel.kind = EditPick::OBJECT, sel.index = k, sel.baseKind = -1;
+                }
                 if (sel.kind == EditPick::OBJECT) {
                     dragging = true;
                     const LevelObject& o = core.level.objects[sel.index];

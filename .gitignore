@@ -5,3 +5,5 @@ build/
 
 # Raw downloaded asset sources (processed versions live in assets/)
 assets/source
+/.claude/worktrees/
+/third_party/sdl2-mac/

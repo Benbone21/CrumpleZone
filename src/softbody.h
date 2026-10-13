@@ -14,6 +14,7 @@
 #include "autopilot.h"
 #include "mathx.h"
 #include "rope.h"
+#include "tires.h"
 #include "vehicles.h"
 #include "world.h"
 
@@ -134,6 +135,15 @@ struct Wheel {
     bool detached = false;
     bool popped = false;    // blown tire: runs on the rim
     bool shaftBroken = false;  // its axle shaft / CV snapped: the hub freewheels
+    // The wheel bolted on (tires.h): what it is, and whether it's there at all. Off (its
+    // studs sheared, or taken off on the trail), the corner rolls on its bare hub; with
+    // the tire rolled off the rim (debeaded), on the rim.
+    WheelItem item;
+    bool mounted = true;
+    bool debeaded = false;
+    float studLoad = 0;        // load trying to shear the wheel off its studs (N, smoothed over ~5 ms)
+    float beadLoad = 0;        // side load over the tire's load, trying to roll it off the rim (smoothed)
+    uint8_t shed = 0;          // set by the tire model: 1 the wheel came off, 2 the tire did (Sim spawns it)
     float sink = 0;            // how far it has sunk into sand, mud or snow (m)
     float clog = 0;            // mud packed into the tread, 0..1 (spinning flings it out)
     float bite = 1;            // how fast its grip builds with slip here (tread and surface): ABS and traction control aim for the peak
@@ -158,7 +168,7 @@ struct Wheel {
     float rub = 0;             // how hard it's pressing on the body (N)
     std::vector<int> mounts;  // beams that attach this wheel to the body
     // Radius it rolls on (a blown tire runs on its rim).
-    double rollR() const { return popped ? rimR + 0.015 : R; }
+    double rollR() const { return !mounted ? kBareHubR : debeaded ? rimR + 0.005 : popped ? rimR + 0.015 : R; }
 };
 
 // A pin holds a panel node on the body node under it (a spring with no rest length).
@@ -339,6 +349,15 @@ public:
     bool hydrolocked = false;   // sucked water into the intake (dead until repaired)
     // Trail setup.
     double tirePsi = 32;        // tire pressure (starts at the spec's; air down for rock)
+    // The spare (tires.h): on its carrier (or under the bed, in the trunk) if hasSpare.
+    // Where it sits follows the body: a weighted mix of the lattice nodes around it, which
+    // also carry its weight (taken off with it, put back when one is stowed).
+    WheelItem spare;
+    bool hasSpare = false;
+    std::vector<int> spareNodes;
+    std::vector<double> spareWeights;
+    V3 spareAt() const;          // where it is (world)
+    V3 spareAxis() const;        // its axle (world)
     double winchSpeed = 1.0;    // winch control: share of the drum's full line speed (0.1-1)
     bool swayDisconnected = false;  // front anti-roll bar unhooked
     int shaftsBroken = 0;       // axle shafts snapped since last read (for the HUD)
@@ -376,6 +395,7 @@ public:
     // State.
     bool sleeping = false;
     double stillTime = 0;
+    double sleptControls[4] = {};  // throttle, brake, handbrake and steer when it fell asleep
     V3 bbMin, bbMax;
     double impactEnergy = 0;  // joules absorbed by deformation since last read
     double damage = 0;        // 0..1
@@ -388,7 +408,12 @@ public:
 
     void build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& color);
     void translate(const V3& d);  // moves the whole vehicle (and its autopilot's route) by d
-    void respawn(const V3& pos, double yaw) { build(*spec, pos, yaw, color); }
+    // A respawn is a fresh vehicle: repaired, a full tank and its spare can (switching to
+    // another vehicle used to inherit the last one's tank, empty if it had run dry).
+    void respawn(const V3& pos, double yaw) {
+        build(*spec, pos, yaw, color);
+        fuel = jerry = -1;
+    }
     // Driver gear change (+1 up, -1 down); returns false if refused (would over-rev).
     bool shift(int dir);
     Frame frame() const;
@@ -470,13 +495,32 @@ public:
     static constexpr int kMaxVehicles = 12;
     static constexpr int kMaxBodies = 48;  // vehicles + props
 
+    // Wheels off their vehicles (tires.cpp): lying about, rolling, bouncing.
+    std::vector<LooseWheel> looseWheels;
+    uint32_t nextLooseId = 1;
+    WheelItem wheelItem(const Car& c, const Wheel& wh) const;  // what's bolted to that corner
+    // The wheel (or with tireOnly, just the tire) comes off that corner and goes its own way.
+    int shedWheel(int car, int wheel, bool tireOnly);
+    int addLooseWheel(const WheelItem& it, const V3& p, const Quat& q, const V3& v, const V3& w);
+    // On foot (interact.h): each needs the vehicle stopped, and returns false if it can't.
+    bool takeSpare(int car, WheelItem& out);
+    bool stowSpare(int car, const WheelItem& it);
+    bool removeWheel(int car, int wheel, WheelItem& out);
+    bool fitWheel(int car, int wheel, const WheelItem& it);  // a wheel on a bare hub, or a tire back on its rim
+    bool pickUpWheel(int loose, WheelItem& out);
+    int dropWheel(const WheelItem& it, const V3& at, const V3& facing);
+    void looseWheelForces();  // ground, rocks and vehicles (run by substep)
+    void looseWheelStep();
+
     // Winch lines and tow straps (recovery.cpp).
     std::vector<Rope> ropes;
     bool realRecovery = true;          // damage stays until a repair station fixes it
     std::vector<std::string> events;   // things the HUD should announce (it clears them)
     std::string hookWinch(int car);    // hooks the car's winch to the best anchor ahead, or unhooks it
     // Everything within the winch line's reach, nearest first.
-    std::vector<WinchTarget> winchTargets(int car) const;
+    // Every anchor the winch reaches. `look` (optional): where the driver is looking or
+    // standing, offered as a ground anchor too (buried in loose ground, a bolt in rock).
+    std::vector<WinchTarget> winchTargets(int car, const V3* look = nullptr) const;
     std::string hookWinchTo(int car, const RopeEnd& anchor);
     bool dropWinch(int car);           // unhooks the car's winch line (false if none)
     std::string hookStrap(int car);    // straps the car to the nearest other vehicle, or unhooks it
