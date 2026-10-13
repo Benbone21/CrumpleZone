@@ -96,6 +96,10 @@ public:
     void removeObject(int k);
     // Takes a base-map object out (records it in level.removed).
     bool removeBase(const EditPick& p);
+    // A map's own repair shop, picked: it becomes the level's object (same place, turn and
+    // name) so it can be dragged, turned or deleted like one you placed. Returns its object
+    // index, or -1 if the pick isn't a map repair shop.
+    int adoptBase(const EditPick& p);
     // A copy of an object with its height worked out for where it stands now (boxes sit
     // on the ground, logs lie on it).
     LevelObject grounded(LevelObject o) const;

@@ -910,7 +910,31 @@ std::string World::removeNear(double x, double z, double r) {
         }
         case 2: logs.erase(logs.begin() + idx); return "LOG";
         case 3: boxes.erase(boxes.begin() + idx); return "BLOCK";
-        case 4: fixtures.erase(fixtures.begin() + idx); return "PROP";
+        case 4: {
+            const Prop f = fixtures[idx];
+            fixtures.erase(fixtures.begin() + idx);
+            if (f.kind == PROP_GARAGE) {
+                // A repair shed is the station, the shed and its four corner posts: take them
+                // all (the posts used to stay behind, standing in the open).
+                for (size_t k = 0; k < stations.size(); k++)
+                    if (std::hypot(stations[k].p.x - f.a.x, stations[k].p.z - f.a.z) < 0.05) {
+                        stations.erase(stations.begin() + k);
+                        break;
+                    }
+                const V3 fwd(std::cos(f.yaw), 0, -std::sin(f.yaw)), side(std::sin(f.yaw), 0, std::cos(f.yaw));
+                for (int a = -1; a <= 1; a += 2)
+                    for (int b = -1; b <= 1; b += 2) {
+                        const V3 q = f.a + fwd * (5.0 * a) + side * (3.7 * b);
+                        for (size_t k = 0; k < poles.size(); k++)
+                            if (std::hypot(poles[k].x - q.x, poles[k].z - q.z) < 0.05) {
+                                poles.erase(poles.begin() + k);
+                                break;
+                            }
+                    }
+                return "REPAIR SHOP";
+            }
+            return "PROP";
+        }
         default: return "";
     }
 }

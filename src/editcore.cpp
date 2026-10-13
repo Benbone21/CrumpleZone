@@ -599,6 +599,25 @@ bool EditCore::removeBase(const EditPick& p) {
     return gone;
 }
 
+int EditCore::adoptBase(const EditPick& p) {
+    if (!world || p.kind != EditPick::BASE || p.baseKind != 4 || p.index < 0 || p.index >= (int)world->fixtures.size()) return -1;
+    const Prop f = world->fixtures[p.index];
+    if (f.kind != PROP_GARAGE) return -1;
+    LevelObject o;
+    o.kind = OBJ_STATION;
+    o.p = V3(f.a.x, world->height(f.a.x, f.a.z), f.a.z);
+    o.yaw = f.yaw;
+    for (const Station& st : world->stations)
+        if (std::hypot(st.p.x - f.a.x, st.p.z - f.a.z) < 0.05) o.name = st.name;
+    beginEdit("MOVE MAP " + p.name);
+    touchMeta();
+    level.removed.push_back(V3(f.a.x, 0, f.a.z));
+    level.objects.push_back(o);
+    rebuildObjects();
+    endEdit();
+    return (int)level.objects.size() - 1;
+}
+
 // ---- The course ------------------------------------------------------------------------
 
 void EditCore::setStart(double x, double z, double yaw) {
@@ -762,8 +781,8 @@ EditPick EditCore::pick(const V3& o, const V3& d, double hitT, bool includeBase)
         if (f.kind == PROP_FENCE) {
             if (raySegment(o, d, f.a + V3(0, 0.6, 0), f.b + V3(0, 0.6, 0), t) < 0.8) consider(t, EditPick::BASE, i, 4, f.a, name);
         } else if (f.kind == PROP_GARAGE) {
-            // (A map's own repair shop can't be taken out: only its sign would go.)
-            if (raySphere(o, d, f.a + V3(0, 2.5, 0), 5.5, t) && ownerOf(4, i) >= 0) consider(t, EditPick::BASE, i, 4, f.a, name);
+            // (A map's own repair shop goes as a whole: the station, the shed and its posts.)
+            if (raySphere(o, d, f.a + V3(0, 2.5, 0), 5.5, t)) consider(t, EditPick::BASE, i, 4, f.a, name);
         } else {
             const double r = f.kind == PROP_CABIN ? 4.0 : 1.4;
             if (raySphere(o, d, f.a + V3(0, r * 0.6, 0), r, t)) consider(t, EditPick::BASE, i, 4, f.a, name);
