@@ -48,7 +48,7 @@ build/win/obj/%.o: %.cpp $(HEADERS)
 
 build/win/CrumpleZone/crumplezone.exe: $(WIN_OBJ)
 	@mkdir -p $(dir $@)
-	$(WINCXX) $(WINFLAGS) -mwindows -o $@ $^ $(WINSDL)/SDL2.dll -lws2_32 -static -static-libgcc -static-libstdc++
+	$(WINCXX) $(WINFLAGS) -mwindows -o $@ $^ $(WINSDL)/SDL2.dll -lws2_32 -liphlpapi -static -static-libgcc -static-libstdc++
 
 windows: build/win/CrumpleZone/crumplezone.exe
 	cp $(WINSDL)/SDL2.dll build/win/CrumpleZone/
