@@ -608,7 +608,7 @@ void drawGauges(Renderer& r, const Car& car, HudState& hud, float u, int W, int 
     // Indicator lights above the hub.
     float is = px(1.0f * u), iy = cy - 26 * u;
     std::vector<std::pair<std::string, std::array<float, 3>>> lights;
-    if (!car.tractionControl) lights.push_back({"TC OFF", {1.0f, 0.75f, 0.2f}});
+    if (!car.tractionControl && car.spec->tractionFitted) lights.push_back({"TC OFF", {1.0f, 0.75f, 0.2f}});
     if (car.manualShift) lights.push_back({"MAN", {0.6f, 0.9f, 0.5f}});
     if (const DriveMode* m = car.isProp() ? nullptr : car.mode())
         lights.push_back({m->name, m->low ? std::array<float, 3>{1.0f, 0.75f, 0.2f}
@@ -969,7 +969,7 @@ void drawHelp(Renderer& r, float u, int W, int H, bool mph) {
         {"V", "WINCH: HOOK / UNHOOK"},        {"Z", "WINCH IN (SHIFT+Z: OUT, - = SPEED)"},
         {"O", "TOW STRAP TO NEARBY TRUCK"},   {"Y", "FRONT SWAY BAR DISCONNECT"},
         {"9 0", "AIR DOWN / UP (STOPPED)"},
-        {"1 - 6", "CIVIC JESKO BRONCO 4RUNNER BUGGY UTV"}, {"G", "GARAGE: ENGINE, SUSPENSION, GEARBOX"},
+        {"1 - 7", "CIVIC JESKO BRONCO 4RUNNER BUGGY UTV TACOMA"}, {"G", "GARAGE: ENGINE, SUSPENSION, GEARBOX"},
         {"Q E", "SHIFT DOWN / UP"},           {"SHIFT+M", "MANUAL / AUTOMATIC"},
         {"M", "MAP (WAYPOINTS, PINGS)"},      {"ENTER", "CHAT"},
         {"MIDDLE CLICK", "PING: GO HERE (SHIFT: HELP)"},
@@ -2286,7 +2286,8 @@ int main(int argc, char** argv) {
                         case SC_X: {
                             Car& c = sim.cars[sim.player];
                             c.tractionControl = !c.tractionControl;
-                            hud.toast(c.tractionControl ? "TRACTION CONTROL ON" : "TRACTION CONTROL OFF");
+                            hud.toast(!c.spec->tractionFitted ? "NO TRACTION CONTROL ON THIS CAR"
+                                      : c.tractionControl ? "TRACTION CONTROL ON" : "TRACTION CONTROL OFF");
                             break;
                         }
                         case SC_1:
@@ -2294,7 +2295,8 @@ int main(int argc, char** argv) {
                         case SC_3:
                         case SC_4:
                         case SC_5:
-                        case SC_6: {
+                        case SC_6:
+                        case SC_7: {
                             size_t idx = evKeyScancode(e) - SC_1;
                             if (idx < vehicleCatalog().size()) {
                                 sim.swapPlayerVehicle(garage.spec((int)idx));

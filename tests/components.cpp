@@ -23,7 +23,9 @@ VEHICLE_SCENARIO(airbornePatch, "components/airborne-tires", "A jump clears cont
         std::string at = "wheel " + std::to_string(i);
         ctx.check(at + " has no stale contact", w.load == 0 && w.stickX == 0 && w.stickY == 0);
         ctx.check(at + " resets ABS after leaving ground", w.abs == 1);
-        ctx.metric(at + " angular momentum lost", (30 - w.omega) * w.I, "kg m2/s", 0.045, 0.055);
+        // (The whole spinning assembly: a driven wheel's half shaft and side gear spin with it.)
+        const double Is = c.wheelPowered(w) ? kSideGearI : 0.0;
+        ctx.metric(at + " angular momentum lost", (30 - w.omega) * w.I + (30 - w.sideOmega) * Is, "kg m2/s", 0.045, 0.055);
         ctx.metric(at + " tread/road speed", std::fabs(w.groundSpeed), "m/s", 0, 0.2);
     }
 }
@@ -78,6 +80,68 @@ VEHICLE_SCENARIO(detachedDoorGlass, "components/door-glass", "A removed door car
     ctx.check("detached assembly remains finite",c.finite());
 }
 
+// How far any loose node of a panel has gone in behind the body quads it sat on (the deepest,
+// m), skipping nodes still on their pins.
+static double panelIntrusion(const Car& c, const Panel& pn) {
+    double worst = 0;
+    for (size_t k = 0; k < pn.panelNodes.size(); k++) {
+        if (!c.pins[pn.pins[k]].broken || pn.nodeQuads[k].empty()) continue;
+        const V3 p = c.nodes[pn.panelNodes[k]].p;
+        double least = 1e9;  // inside only if behind all of them: by the least
+        for (int qi : pn.nodeQuads[k]) {
+            const SkinQuad& q = c.quads[qi];
+            const V3 b0 = c.nodes[q.v[0]].p, b1 = c.nodes[q.v[1]].p, b2 = c.nodes[q.v[2]].p, b3 = c.nodes[q.v[3]].p;
+            const V3 n = norm(cross((b1 - b0) + (b2 - b3), (b3 - b0) + (b2 - b1)));
+            least = std::min(least, -dot(p - (b0 + b1 + b2 + b3) * 0.25, n));
+        }
+        worst = std::max(worst, least);
+    }
+    return worst;
+}
+
+VEHICLE_SCENARIO(doorStops, "components/door-stops", "Doors unlatched on a slalom: they swing open to their check straps and back, never in through the body") {
+    Car& c = ctx.add(spec, -100, -50, 0);
+    ctx.focus(c);
+    ctx.run(1.0);
+    std::vector<Panel*> doors;
+    for (Panel& p : c.panels)
+        if (std::string(p.name).find("DOOR") != std::string::npos) doors.push_back(&p);
+    if (!ctx.check("has doors", !doors.empty())) return;
+    for (Panel* d : doors)
+        for (int pi : d->pins)
+            if (c.pins[pi].kind != PIN_HINGE) c.pins[pi].broken = true;
+    ctx.launch(c, 20 / 3.6);
+    const double t0 = ctx.t;
+    double deepest = 0, overStop = 0, widest = 0;
+    ctx.run(4.0, [&] {
+        c.steer = std::sin((ctx.t - t0) * 3) * 0.4;
+        c.throttle = 0.2;
+        for (Panel* d : doors) {
+            deepest = std::max(deepest, panelIntrusion(c, *d));
+            for (int pi : d->checks) {
+                const Pin& pn = c.pins[pi];
+                if (pn.broken) continue;
+                const double L = len(c.nodes[pn.panel].p - c.nodes[pn.body].p);
+                overStop = std::max(overStop, L - pn.slack);
+                widest = std::max(widest, L / pn.slack);
+            }
+        }
+        ctx.sample("Deepest door node inside the body", spec.name, deepest * 100, "cm");
+    });
+    int off = 0, torn = 0;
+    for (Panel* d : doors) {
+        off += d->state == 2;
+        for (int pi : d->checks) torn += c.pins[pi].broken;
+    }
+    // (A node pressed on the body skin sits a few mm inside it, and the coarse lattice's
+    // faces meet at angles: a couple of cm is the skin, not the cabin.)
+    ctx.metric("deepest a loose door got inside the body", deepest * 100, "cm", 0, 3);
+    ctx.metric("doors swung open (on their check straps)", widest, "x stop", 0.5, 1.15);
+    ctx.metric("furthest past the stop", overStop * 100, "cm", -100, 4);
+    ctx.metric("doors torn off", off, "", 0, 0);
+    ctx.metric("check straps torn", torn, "", 0, 0);
+}
+
 SCENARIO(lockedHalfshaft, "components/locked-differential", "A locked differential still drives its surviving output after a halfshaft breaks") {
     VehicleSpec locker=vehicleCatalog()[0];
     locker.diffFront=DIFF_LOCKED;
@@ -127,13 +191,19 @@ struct AxleWatch {
     }
     // A point in the frame of the body around the axle (its coil towers and upper link
     // mount), at rest or now: so it's what you'd see against the frame and floor above.
+    // (Levelled: the upper link's frame end sits well below and ahead of the coil tops, so
+    // the raw frame leans ~33 deg; turned so its y is the body's vertical, as the rails and
+    // floor carvisual.cpp clears are laid out.)
     V3 local(const V3& p, bool rest) const {
         auto P = [&](int n) { return rest ? c.restLocal[n] : c.nodes[n].p; };
         const V3 a = P(pick[0]), b = P(pick[1]), mid = (a + b) * 0.5, ez = norm(b - a);
         V3 ex = P(pick[2]) - mid;
         ex = norm(ex - ez * dot(ex, ez));
         const V3 ey = cross(ez, ex), d = p - mid;
-        return V3(dot(d, ex), dot(d, ey), dot(d, ez));
+        const V3 r = c.restLocal[pick[2]] - (c.restLocal[pick[0]] + c.restLocal[pick[1]]) * 0.5;
+        const double phi = std::atan2(r.y, std::sqrt(r.x * r.x + r.z * r.z));
+        const V3 exH = ex * std::cos(phi) - ey * std::sin(phi), eyH = ex * std::sin(phi) + ey * std::cos(phi);
+        return V3(dot(d, exH), dot(d, eyH), dot(d, ez));
     }
     V3 point(int i, bool rest) const {
         auto P = [&](int n) { return rest ? c.restLocal[n] : c.nodes[n].p; };
@@ -164,7 +234,7 @@ struct AxleWatch {
 
 // Drops a truck from `h` (optionally pitched nose-up, rolled, moving forward) and watches
 // its rear axle through the landing and the settle.
-[[maybe_unused]] void axleLanding(Ctx& ctx, const VehicleSpec& spec, const std::string& tag, double z, double h, double pitchDeg, double rollDeg, double speed) {
+void axleLanding(Ctx& ctx, const VehicleSpec& spec, const std::string& tag, double z, double h, double pitchDeg, double rollDeg, double speed) {
     Car& c = ctx.add(spec, -100, z, 0);
     ctx.focus(c);
     ctx.run(1.0);
@@ -187,7 +257,8 @@ struct AxleWatch {
     const double bump = spec.bumpRear;
     ctx.metric(tag + ": axle past its spec bump (" + std::to_string((int)std::lround(bump * 100)) + " cm), squashing the stop", (aw.rise - bump) * 100, "cm", -6, kAxleCrush * 100);
     ctx.check(tag + ": housing stays upright on its links (worst pitch " + std::to_string((int)std::lround(aw.pitch)) + " deg)", std::fabs(aw.pitch) < 35);
-    ctx.check(tag + ": settles back level", std::fabs(aw.housingPitch()) < 3 && aw.riseNow() < 0.04);
+    ctx.check(tag + ": settles back level", std::fabs(aw.housingPitch()) < 3 && aw.riseNow() < 0.04,
+              "pitch " + std::to_string(aw.housingPitch()) + " deg, rise " + std::to_string(aw.riseNow() * 100) + " cm");
     ctx.sim.carRemoved((int)ctx.sim.cars.size() - 1);
     ctx.sim.cars.pop_back();
 }
@@ -235,5 +306,297 @@ SCENARIO(axleTwister, "components/axle-articulation", "Bronco and 4Runner crawl 
         ctx.check(tag + ": housing stays upright (worst pitch " + std::to_string((int)std::lround(aw.pitch)) + " deg)", std::fabs(aw.pitch) < 20);
         ctx.sim.carRemoved((int)ctx.sim.cars.size() - 1);
         ctx.sim.cars.pop_back();
+    }
+}
+
+// Landings: flat drops, tail first, and a jump landing at speed.
+SCENARIO(axleLandings, "components/axle-landing", "Bronco and 4Runner dropped flat, tail first and at speed: the live rear axle takes the hit on its bump stops, stays upright on its links and settles back level") {
+    for (int v : {2, 3}) {
+        const VehicleSpec& spec = vehicleCatalog()[v];
+        const std::string name = v == 2 ? "Bronco" : "4Runner";
+        axleLanding(ctx, spec, name + " 1 m flat", -50, 1.0, 0, 0, 0);
+        axleLanding(ctx, spec, name + " 2 m flat", -50, 2.0, 0, 0, 0);
+        axleLanding(ctx, spec, name + " 2 m tail first", -50, 2.0, 12, 0, 0);
+        axleLanding(ctx, spec, name + " 1.5 m at 40 km/h", -50, 1.5, 4, 0, 40 / 3.6);
+    }
+}
+
+// ---- Brake traction control on a split-friction pull-away ------------------------
+// Left wheels on the ice strip, right wheels on the concrete apron beside it, rear-drive
+// only (2H). An open diff gives both rear wheels the torque the one on ice can hold, so
+// with the system off the ice wheel spins and the truck barely creeps. Braking that wheel
+// (Bronco: AdvanceTrac's brake traction control) hands the concrete side its own share.
+SCENARIO(splitMuPullAway, "components/brake-traction-control", "Bronco in 2H, left wheels on ice: brake traction control gets it moving, the open diff alone barely does") {
+    auto pull = [&](bool tc) {
+        ctx.sim.cars.clear();
+        ctx.sim.player = 0;
+        // Ice strip z 117..125, concrete from 125: centre the truck on the edge.
+        Car& c = ctx.add(vehicleCatalog()[2], -100, 125.2, 0);
+        ctx.focus(c);
+        const auto& modes = driveModes(c.spec->transfer);
+        for (size_t m = 0; m < modes.size(); m++)
+            if (!modes[m].front) c.setDriveMode((int)m);
+        c.tractionControl = tc;
+        ctx.run(1.0);
+        Surface l = SURF_PAVED, r = SURF_PAVED;
+        for (const Wheel& w : c.wheels)
+            if (!w.front) (w.left ? l : r) = w.surface;
+        ctx.check(std::string(tc ? "on: " : "off: ") + "left rear on ice, right rear on concrete", l == SURF_ICE && r == SURF_PAVED);
+        double brakeMax = 0;
+        ctx.run(4.0, [&] {
+            c.throttle = 1;
+            c.steer = 0;
+            for (const Wheel& w : c.wheels) brakeMax = std::max(brakeMax, w.tcBrake);
+        });
+        return std::make_pair(speedKmh(c), brakeMax);
+    };
+    const auto off = pull(false);
+    const auto on = pull(true);
+    // Off: ~0.1 g of grip on the ice wheel, twice over: ~0.05 g, about 7 km/h in 4 s.
+    ctx.metric("speed after 4 s, traction control off", off.first, "km/h", 1, 12);
+    // On: the concrete wheel pulls on its own grip (less what the brake costs the engine).
+    ctx.metric("speed after 4 s, traction control on", on.first, "km/h", 15, 45);
+    ctx.metric("most brake it used on the ice wheel", on.second * 100, "%", 10, 100);
+}
+
+// ---- Torque converter (automatics) -----------------------------------------------
+// The Bronco's 10-speed automatic: in Drive at idle it creeps at a walk; held on the
+// brakes at full throttle the engine flares to the converter's stall speed and stays
+// there (the converter slips, nothing breaks); stopped with the pedal up it sits still.
+SCENARIO(torqueConverter, "components/torque-converter", "Bronco automatic: idle creep, a brake stand at the stall speed, parked when stopped") {
+    const VehicleSpec& spec = vehicleCatalog()[2];
+    Car& c = ctx.add(spec, -100, -50, 0);
+    ctx.focus(c);
+    ctx.run(1.0);
+    // Parked: stopped with the pedal up.
+    const V3 p0 = c.frame().com;
+    ctx.run(3.0, [&] { c.throttle = 0, c.brake = 0; });
+    ctx.metric("parked: drift in 3 s", len(c.frame().com - p0) * 100, "cm", 0, 3);
+    // Brake stand: both pedals down for a second. (Held longer, the converter's ~21 kN*m at
+    // the wheels in first beats the brakes' ~13 kN*m: a real Bronco's brake-throttle
+    // override cuts the power before that.)
+    double rpm = 0;
+    ctx.run(1.0, [&] {
+        c.throttle = 1, c.brake = 1;
+        rpm = c.rpm;
+    });
+    ctx.metric("brake stand: engine at the converter's stall speed (2,600 rpm)", rpm, "rpm", 2200, 3000);
+    double shaft = 0;
+    for (const Wheel& w : c.wheels) shaft = std::max(shaft, std::fabs(w.shaftTorque));
+    ctx.metric("brake stand: shaft torque (under its 11 kN*m limit)", shaft, "N*m", 300, 6000);
+    // Idle creep: a touch on the pedal to put it in gear, then off the brake and the pedal.
+    ctx.run(0.3, [&] { c.throttle = 0.05, c.brake = 0; });
+    ctx.run(5.0, [&] { c.throttle = 0, c.brake = 0; });
+    ctx.metric("idle creep in Drive (a real truck walks along at ~5-8 km/h)", speedKmh(c), "km/h", 3, 10);
+}
+
+// ---- A tire rammed up into its own wheel well -------------------------------------
+// The front-left coil-over has torn out (spring, damper and bump stop gone), and the truck
+// drops 1.5 m with that tire landing on a 0.5 m rock block. Nothing stops the wheel now
+// but the body: the tire must meet the wheel well, not pass through it. It shoves the
+// sheet metal (which dents) and the body pushes back through the hub.
+VEHICLE_SCENARIO(tireIntoFender, "components/tire-into-fender", "Coil-over torn out, dropped with that tire on a rock: the tire hits the wheel well and dents it instead of clipping through") {
+    Car& c = ctx.add(spec, -100, -50, 0);
+    ctx.focus(c);
+    ctx.run(1.0);
+    Wheel& w = c.wheels[0];
+    const V3 hub = (c.nodes[w.inner].p + c.nodes[w.outer].p) * 0.5;
+    const double ground = ctx.sim.world.height(hub.x, hub.z);
+    ctx.sim.world.addBox(V3(hub.x, ground + 0.25, hub.z), V3(0.35, 0.25, 0.25), 0, 0, 0, V3(0.55, 0.55, 0.53));
+    ctx.sim.world.buildGrid();
+    c.beams[w.spring].broken = true;
+    for (Node& n : c.nodes) n.p.y += 1.5;
+    std::vector<double> L0(c.beams.size());
+    for (size_t i = 0; i < c.beams.size(); i++) L0[i] = c.beams[i].L0;
+    double peak = 0, deepest = 0;
+    ctx.run(2.0, [&] {
+        peak = std::max(peak, (double)w.rub);
+        // How deep anything of the body got inside that tire.
+        const V3 a = c.nodes[w.inner].p, b = c.nodes[w.outer].p, ctr = (a + b) * 0.5, ax = norm(b - a);
+        for (const auto& tv : w.rubFaces) {
+            for (const V3& p : {(c.nodes[tv[0]].p + c.nodes[tv[1]].p) * 0.5, (c.nodes[tv[1]].p + c.nodes[tv[2]].p) * 0.5,
+                                (c.nodes[tv[0]].p + c.nodes[tv[1]].p + c.nodes[tv[2]].p) / 3.0, c.nodes[tv[0]].p}) {
+                const V3 d = p - ctr;
+                const double da = dot(d, ax);
+                // (Inside the tire by the nearer way out: through the tread or past the sidewall.)
+                if (std::fabs(da) < w.width * 0.5) deepest = std::max(deepest, std::min(w.R - len(d - ax * da), w.width * 0.5 - std::fabs(da)));
+            }
+        }
+    });
+    int dented = 0;
+    for (size_t i = 0; i < c.beams.size(); i++)
+        if ((c.beams[i].type == BEAM_PANEL || c.beams[i].type == BEAM_BODY || c.beams[i].type == BEAM_FRAME) && std::fabs(c.beams[i].L0 - L0[i]) > 0.002) dented++;
+    ctx.metric("peak push of the tire on the body", peak / 1000, "kN", 1, 400);
+    ctx.metric("deepest the body got into the tire (no clipping: under the sidewall)", deepest * 100, "cm", 0, 14);
+    ctx.metric("sheet metal and structure bent", dented, "beams", 1, 5000);
+    ctx.check("stays upright", c.frame().up.y > 0.7);
+}
+
+// ---- A sway bar bent by a hard hit ----------------------------------------------------
+// The Civic dropped 2.5 m with its front-left tire on a 0.6 m rock: it lands twisted and a
+// bar is wrung past its elastic limit. Back on flat ground the bent bar holds one corner
+// up (it leans); a trail repair swaps it and it sits level again.
+SCENARIO(swayBarSet, "components/sway-bar-bend", "Civic lands twisted on a rock: a sway bar takes a set, the car leans until it's repaired") {
+    Car& c = ctx.add(vehicleCatalog()[0], -100, -50, 0);
+    ctx.focus(c);
+    ctx.run(1.0);
+    const double level0 = std::asin(c.frame().left.y) * 180 / M_PI;
+    Wheel& w = c.wheels[0];
+    const V3 hub = (c.nodes[w.inner].p + c.nodes[w.outer].p) * 0.5;
+    ctx.sim.world.addBox(V3(hub.x, ctx.sim.world.height(hub.x, hub.z) + 0.3, hub.z), V3(0.35, 0.3, 0.25), 0, 0, 0, V3(0.5, 0.5, 0.5));
+    ctx.sim.world.buildGrid();
+    for (Node& n : c.nodes) n.p.y += 2.5;
+    ctx.run(2.0);
+    double set = 0;
+    for (const Axle& a : c.axles) set = std::max(set, std::fabs(a.arbBend));
+    ctx.metric("bar's permanent set (coil-over difference it now holds)", set * 100, "cm", 1, 15);
+    ctx.check("needs a repair", c.needsRepair());
+    // Off the rock, back on flat ground.
+    ctx.sim.world.boxes.pop_back();
+    ctx.sim.world.buildGrid();
+    c.rotateRigid(c.frame().fwd, 0);
+    ctx.run(3.0);
+    const double lean = std::fabs(std::asin(c.frame().left.y) * 180 / M_PI - level0);
+    ctx.metric("lean on flat ground with the bent bar (a soft rear bar: small)", lean, "deg", 0.1, 5);
+    c.fieldRepair();
+    ctx.run(3.0);
+    ctx.metric("lean after the repair", std::fabs(std::asin(c.frame().left.y) * 180 / M_PI - level0), "deg", 0, lean * 0.6);
+}
+
+// ---- Ladder frames: bending, yield, twist --------------------------------------------
+// Real numbers from the rails' sections (Ford's 2021+ Bronco spec: 4.95 in^3 at 49.3 ksi,
+// I = 22.7 in^4; the 3rd-gen 4Runner's 2.75 x ~5.9 in, 1/8 in rails are an estimate).
+namespace {
+struct FramePress {
+    double sagAt20 = 0, firstSet = 0, keptSag = 0, damage = 0;
+};
+// The truck on its wheels, a press pushing down on the frame station midway between the
+// axles, ramped at 15 kN/s to `peak`, then let off. The sag is the station's drop against
+// the line between the axle stations.
+FramePress pressFrame(Ctx& ctx, const VehicleSpec& spec, double z, double peak) {
+    Car& c = ctx.add(spec, -100, z, 0);
+    ctx.focus(c);
+    ctx.run(1.5, [&] { c.handbrake = 1; });
+    double xf = -1e9, xr = 1e9;
+    for (const Wheel& w : c.wheels) xf = std::max(xf, c.restLocal[w.inner].x), xr = std::min(xr, c.restLocal[w.inner].x);
+    auto sx = [&](int st) { return c.restLocal[c.ladder[st * 8]].x; };
+    auto nearest = [&](double x) {
+        int b = 0;
+        for (int st = 1; st < c.ladderStations; st++)
+            if (std::fabs(sx(st) - x) < std::fabs(sx(b) - x)) b = st;
+        return b;
+    };
+    const int sf = nearest(xf), sr = nearest(xr), mid = nearest(0.5 * (xf + xr));
+    auto stY = [&](int st) {
+        double y = 0;
+        for (int k = 0; k < 8; k++) y += c.nodes[c.ladder[st * 8 + k]].p.y;
+        return y / 8;
+    };
+    auto sag = [&] {
+        const double t = (sx(mid) - sx(sr)) / (sx(sf) - sx(sr));
+        return stY(sr) + (stY(sf) - stY(sr)) * t - stY(mid);
+    };
+    const double sag0 = sag();
+    FramePress r;
+    double P = 0;
+    c.extForce.assign(c.nodes.size(), V3());
+    auto load = [&](double p) {
+        for (int k = 0; k < 8; k++) c.extForce[c.ladder[mid * 8 + k]] = V3(0, -p / 8, 0);
+    };
+    ctx.runUntil(30, [&] { return P >= peak; }, [&] {
+        P += 15000 * Ctx::kFrame;
+        load(P);
+        c.handbrake = 1;
+        if (P >= 20000 && r.sagAt20 == 0) r.sagAt20 = sag() - sag0;
+        if (r.firstSet == 0)
+            for (const Beam& b : c.beams)
+                if (b.type == BEAM_FRAME && std::fabs(b.L0 - b.Lorig) > 0.002) {
+                    r.firstSet = P;
+                    break;
+                }
+        ctx.sample("Frame sag under the press", spec.name, (sag() - sag0) * 1000, "mm");
+    });
+    load(0);
+    ctx.run(1.5, [&] { c.handbrake = 1; });
+    r.keptSag = sag() - sag0;
+    r.damage = c.damage * 100;
+    return r;
+}
+}  // namespace
+
+SCENARIO(framePress, "components/frame-press", "Bronco, 4Runner and Tacoma frames pressed between the axles: stiff like steel up to their yield, then they bend and stay bent") {
+    struct Expect {
+        const VehicleSpec* spec;
+        const char* tag;
+        double sagLo, sagHi, setLo, setHi;
+    };
+    // Bronco: ~1.9 mm per 20 kN, sets at ~85 kN. 4Runner: ~6 mm, ~43 kN (estimate).
+    // Tacoma: a 4Runner-like section over a 16% longer span (sag ~ span^3, the load
+    // that yields it ~ 1/span): ~7-9 mm, ~35-50 kN (C-channel to boxed; estimate).
+    const Expect ex[3] = {{&vehicleCatalog()[2], "Bronco", 1.5, 4.0, 60, 120},
+                          {&vehicleCatalog()[3], "4Runner", 3.5, 9.0, 35, 80},
+                          {&vehicleCatalog()[6], "Tacoma", 4.5, 13.0, 28, 70}};
+    for (int i = 0; i < 3; i++) {
+        const Expect& e = ex[i];
+        ctx.sim.cars.clear();
+        const FramePress r = pressFrame(ctx, *e.spec, -60 + 40 * i, 130000);
+        std::printf("FRAME %s: sag at 20 kN %.1f mm, first set at %.0f kN, kept %.0f mm, damage %.2f %%\n", e.tag, r.sagAt20 * 1000,
+                    r.firstSet / 1000, r.keptSag * 1000, r.damage);
+        ctx.metric(std::string(e.tag) + ": frame sag under 20 kN", r.sagAt20 * 1000, "mm", e.sagLo, e.sagHi);
+        ctx.metric(std::string(e.tag) + ": press load when the frame first takes a set", r.firstSet / 1000, "kN", e.setLo, e.setHi);
+        ctx.metric(std::string(e.tag) + ": sag it keeps after 130 kN (bent)", r.keptSag * 1000, "mm", 5, 400);
+        ctx.metric(std::string(e.tag) + ": damage", r.damage, "%", 0.05, 100);
+    }
+}
+
+SCENARIO(frameTwist, "components/frame-twist", "The bare ladder frames twisted between the axles (body mounts cut): a boxed Bronco frame against older, open-tailed 4Runner and Tacoma ones") {
+    // Ladder frames on their own: older open C-channel ~2-5 kNm/deg, fully boxed ~8-20.
+    struct Expect {
+        const VehicleSpec* spec;
+        const char* tag;
+        double lo, hi;
+    };
+    // (The Tacoma's is boxed under the cab and open C-channel under the bed.)
+    const Expect ex[3] = {{&vehicleCatalog()[2], "Bronco", 8, 20}, {&vehicleCatalog()[3], "4Runner", 2, 6}, {&vehicleCatalog()[6], "Tacoma", 2, 6}};
+    for (int i = 0; i < 3; i++) {
+        const Expect& e = ex[i];
+        ctx.sim.cars.clear();
+        Car& c = ctx.add(*e.spec, -100, -60 + 40 * i, 0);
+        for (Node& n : c.nodes) n.p.y += 40;
+        c.extForce.assign(c.nodes.size(), V3());
+        for (int bi : c.bodyMountBeams) c.beams[bi].broken = true;
+        ctx.run(0.3);
+        double xf = -1e9, xr = 1e9;
+        for (const Wheel& w : c.wheels) xf = std::max(xf, c.restLocal[w.inner].x), xr = std::min(xr, c.restLocal[w.inner].x);
+        auto nearest = [&](double x) {
+            int b = 0;
+            for (int st = 1; st < c.ladderStations; st++)
+                if (std::fabs(c.restLocal[c.ladder[st * 8]].x - x) < std::fabs(c.restLocal[c.ladder[b * 8]].x - x)) b = st;
+            return b;
+        };
+        const int sf = nearest(xf), sr = nearest(xr);
+        auto side = [&](int st, int lr) {
+            V3 p;
+            for (int k = 0; k < 4; k++) p += c.nodes[c.ladder[st * 8 + lr * 4 + k]].p;
+            return p / 4.0;
+        };
+        auto roll = [&](int st) {
+            const V3 d = side(st, 0) - side(st, 1);
+            return std::atan2(d.y, -d.z);
+        };
+        const double sep = len(side(sf, 0) - side(sf, 1)), T = 3000;
+        const double f0 = roll(sf), r0 = roll(sr);
+        double twist = 0;
+        ctx.run(0.8, [&] {
+            const double ramp = smoothstep(0, 0.3, ctx.t - 0.3);
+            std::fill(c.extForce.begin(), c.extForce.end(), V3());
+            const V3 F(0, ramp * T / sep / 4, 0);
+            for (int k = 0; k < 4; k++) {
+                c.extForce[c.ladder[sf * 8 + k]] += F, c.extForce[c.ladder[sf * 8 + 4 + k]] -= F;
+                c.extForce[c.ladder[sr * 8 + k]] -= F, c.extForce[c.ladder[sr * 8 + 4 + k]] += F;
+            }
+            twist = ((roll(sf) - f0) - (roll(sr) - r0)) * 180 / M_PI;
+        });
+        ctx.metric(std::string(e.tag) + ": bare frame's torsional stiffness", T / 1000 / std::max(std::fabs(twist), 1e-4), "kNm/deg", e.lo, e.hi);
     }
 }

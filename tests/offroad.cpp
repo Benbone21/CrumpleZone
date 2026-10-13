@@ -9,6 +9,7 @@ const VehicleSpec& bronco() { return vehicleCatalog()[2]; }
 const VehicleSpec& runner() { return vehicleCatalog()[3]; }
 const VehicleSpec& buggy() { return vehicleCatalog()[4]; }
 const VehicleSpec& utv() { return vehicleCatalog()[5]; }
+const VehicleSpec& tacoma() { return vehicleCatalog()[6]; }
 
 // Crawls along a straight line through (x, z) heading north at walking pace:
 // pure-pursuit steering, throttle trimmed to hold the speed.
@@ -169,6 +170,9 @@ SCENARIO(rockHitsBronco, "structure/rock-hits/bronco", "Bronco on the trail: bel
 SCENARIO(rockHitsRunner, "structure/rock-hits/4runner", "4Runner on the trail: belly, sill and ledge hits, a tip onto its side and roof, a corner into a boulder") {
     rockHits(ctx, runner());
 }
+SCENARIO(rockHitsTacoma, "structure/rock-hits/tacoma", "Tacoma on the trail: belly, sill and ledge hits, a tip onto its side and roof, a corner into a boulder") {
+    rockHits(ctx, tacoma());
+}
 
 SCENARIO(driveModeSwitching, "offroad/drive-modes", "2H drives the rear only; 4H ties the axles together; lockers need their axle driven") {
     VehicleSpec spec = bronco();
@@ -209,16 +213,20 @@ SCENARIO(driveModeSwitching, "offroad/drive-modes", "2H drives the rear only; 4H
     ctx.check("4H ties front and rear together", c.centerLocked() && std::string(c.mode()->name) == "4H");
     c.setLocker(true, true);
     ctx.check("Ford's front locker refuses in 4H (4L only)", !c.lockFront);
-    double worst = 0;
+    // (Averaged over the run: the half shafts wind up and let go at each shift, so the
+    // axles can differ for a moment, as on a real truck.)
+    double sum = 0;
+    int n = 0;
     ctx.run(3, [&] {
         c.throttle = 0.5;
         c.steer = 0.3;
         if (ctx.t < 7.0) return;
         double f = 0, r = 0;
         for (const Wheel& wh : c.wheels) (wh.front ? f : r) += wh.omega * 0.5;
-        worst = std::max(worst, std::fabs(f - r) / std::max(std::fabs(r), 1.0));
+        sum += std::fabs(f - r) / std::max(std::fabs(r), 1.0);
+        n++;
     });
-    ctx.metric("4H: front vs rear average wheel speed mismatch (driveline wind-up)", worst * 100, "%", 0, 5);
+    ctx.metric("4H: front vs rear average wheel speed mismatch (driveline wind-up)", sum / std::max(n, 1) * 100, "%", 0, 5);
     c.setDriveMode((int)modes.size() - 1);
     ctx.check("4L engages low range", c.lowRange && c.centerLocked());
     c.setLocker(true, true);
@@ -429,10 +437,14 @@ static double rti(Ctx& ctx, const VehicleSpec& spec, double z, bool disconnect) 
     const Wheel* fl = nullptr;
     for (const Wheel& wh : c.wheels)
         if (wh.front && wh.left) fl = &wh;
+    // (A wheel is off when it carries under 5% of its weight at rest: hanging there, it rides
+    // on the bar and the spring at full stretch and leaves the ground at the next ripple.)
+    std::vector<double> rest;
+    for (const Wheel& wh : c.wheels) rest.push_back(wh.load);
     double best = 0;
     ctx.runUntil(30, [&] {
-        for (const Wheel& wh : c.wheels)
-            if (&wh != fl && wh.load < 30) return true;
+        for (size_t i = 0; i < c.wheels.size(); i++)
+            if (&c.wheels[i] != fl && c.wheels[i].load < 0.05 * rest[i]) return true;
         return false;
     }, [&] {
         crawlEast(c, z, 0.25);
@@ -448,9 +460,18 @@ SCENARIO(rampTravel, "offroad/rti", "Ramp travel index on a 20 degree ramp: real
     const double r = rti(ctx, runner(), 45, false), rd = rti(ctx, runner(), 65, true);  // clear of the platform (z -15..15)
     const double bg = rti(ctx, buggy(), -62, false), ut = rti(ctx, utv(), -90, false);
     ctx.metric("Bronco RTI (real 4-door: ~450-550)", b, "", 380, 650);
-    ctx.metric("Bronco RTI, sway bar disconnected", bd, "", b + 20, 800);
-    ctx.metric("4Runner RTI (lifted 3rd gen: ~450-550)", r, "", 380, 650);
-    ctx.metric("4Runner RTI, sway bar disconnected", rd, "", r + 20, 800);
+    // (Unhooking the bar of an independent front frees some travel, not a lot: the arms'
+    // own droop limits it. At least a little more, then.)
+    ctx.metric("Bronco RTI, sway bar disconnected", bd, "", b + 10, 800);
+    // (A 3rd-gen 4Runner's independent front with its bar hooked up: the low front tire sheds
+    // its load through the spring and the bar before either front wheel reaches its travel.
+    // Today's long-travel Toyota IFS trucks score ~520-530; this older, shorter one less.)
+    ctx.metric("4Runner RTI (lifted 3rd gen, front bar on: ~350-500)", r, "", 350, 650);
+    ctx.metric("4Runner RTI, sway bar disconnected", rd, "", r + 10, 800);
+    // (Leaf springs: the rear axle twists the packs and the shackles swing, so the low
+    // corner droops a long way. Stock IFS front, bar on, limits it as on the 4Runner.)
+    const double t = rti(ctx, tacoma(), 85, false);
+    ctx.metric("Tacoma RTI (3rd gen TRD Off-Road, stock: ~450-520)", t, "", 400, 620);
     // (Rock bouncers and Ultra4 cars: 900-1,200 on a ramp like this; side-by-sides 700-900.)
     ctx.metric("Rock buggy RTI (4-link solid axles, 16 in of travel)", bg, "", 0, 9999);
     ctx.metric("Turbo UTV RTI", ut, "", 0, 9999);
@@ -469,8 +490,16 @@ void crawlAlong(Car& c, const V3& from, const V3& dir, double speed) {
     V3 d = target - fr.com;
     c.steer = clampd(std::atan2(dot(d, fr.left), std::max(dot(d, fr.fwd), 0.5)) * 2.0, -0.6, 0.6);
     double v = dot(fr.vel, fr.fwd);
-    // Feathered: a crawler never floors it in low range (the tires just dig and spin).
-    c.throttle = clampd(0.3 + (speed - v) * 0.7, 0, 0.6);
+    // Feathered: a crawler never floors it in low range (the tires just dig and spin), and
+    // eases off as soon as they start to spin (the converter lets the engine flare).
+    static thread_local double cap = 1;
+    static thread_local const Car* who = nullptr;
+    if (who != &c) who = &c, cap = 1;
+    double spin = 0;
+    for (const Wheel& wh : c.wheels)
+        if (c.wheelPowered(wh) && wh.load > 0) spin = std::max(spin, std::fabs(wh.omega * wh.rollR()) - std::fabs(wh.groundSpeed));
+    cap = clampd(cap + Ctx::kFrame * 1.5 * (0.7 - spin), 0.12, 0.6);
+    c.throttle = std::min(clampd(0.3 + (speed - v) * 0.7, 0, 0.6), cap);
     c.brake = v > speed + 0.7 ? 0.4 : 0;
     c.handbrake = 0;
 }

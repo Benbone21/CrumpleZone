@@ -108,7 +108,7 @@ scenario finishes, you can drive around in the aftermath.
 | W / S or ↑ / ↓ | Throttle / brake (hold S when stopped to reverse) |
 | A / D or ← / → | Steer. Keys are all or nothing, so full steer is as much as the tires can hold at your speed, on that surface (full lock when parking, a few degrees at 130 km/h), plus room to catch a slide |
 | Space | Handbrake |
-| 1 2 3 4 5 6 | Become the Civic / Jesko / Bronco / 4Runner / rock buggy / side-by-side (repaired, in place) |
+| 1 2 3 4 5 6 7 | Become the Civic / Jesko / Bronco / 4Runner / rock buggy / side-by-side / Tacoma (repaired, in place) |
 | G | Garage: W/S pick engine, suspension or transmission, A/D change the part, Enter fits it |
 | Q / E | Shift down / up (switches to manual) |
 | M | Manual / automatic gearbox |
@@ -171,7 +171,7 @@ Build your own worlds and levels: title screen → WORLD EDITOR (a new level on 
 Press Esc to pause and open the menu. Use the mouse, or W/S to select, A/D to
 change and Enter to confirm. Esc goes back.
 
-- **Vehicle:** pick any of the six vehicles, then press Enter (or click) to drive it.
+- **Vehicle:** pick any of the seven vehicles, then press Enter (or click) to drive it.
 - **Settings:**
   - Game: speed in km/h or mph, time of day (CYCLE: dawn, day, dusk and night go round, a whole day in 6 to 96 real minutes, 24 by default; or held at MORNING, NOON, EVENING or NIGHT; the clock carries on from where you left it), volume, music volume (default 40%, 0 turns it off; it sits under the master volume), field of view.
   - Graphics: a quality preset (low / medium / high / ultra), shadows, anti-aliasing (MSAA), ambient occlusion, bloom, clouds, render scale (50–200%).
@@ -181,7 +181,7 @@ Settings are saved to `~/.config/crumplezone/settings.txt`.
 
 ## Vehicles
 
-All six are built from short side-profile maps plus a parts list in
+All seven are built from short side-profile maps plus a parts list in
 `src/vehicles.cpp` (where every heavy item sits, the engine's size and position,
 the suspension type and its ride frequency), so adding a new one is mostly a
 matter of drawing it in text.
@@ -207,12 +207,17 @@ The **rock buggy** and the **side-by-side** are the two crawl and rough-ground s
 | Numbers | 0-100 km/h ~5.2 s (4H), limited to 150 km/h | 0-100 km/h ~4.0 s, limited to 130 km/h |
 
 Weights, travel, and the Atlas ratio are class estimates, not one builder's car (marked in `src/vehicles.cpp`). Measured against the Bronco in the tests: the buggy climbs a 0.65 m square ledge with room to spare (about 0.7 is its limit; the Bronco 0.45 m, the side-by-side 0.3 m), a 48 degree slickrock slab (the Bronco slides back), and walks through the twister with open diffs where the Bronco bogs down; ramp travel index ~960 against the Bronco's 580. The side-by-side is quickest through the whoops lane (53 km/h average at a 55 km/h cruise, level, undamaged) and 20% faster than the Bronco across 50 m of mud or sand. At that pace the Bronco, 4Runner and buggy slow, stall or roll.
+| Toyota Tacoma TRD Off-Road (2019 Double Cab) | 4x4 with low range | 2,040 kg (55/45) | 3.5 L V6, 6-speed auto | Double wishbone / solid axle on leaf springs |
 
 The 4Runner is one particular truck, the Bring a Trailer car from December 2021:
 black over silver, 2 in body lift and Old Man Emu coils on 35x12.50R17 KO2s and
 bronze wheels, steel bumpers with a winch and swing-out spare, rock sliders,
 snorkel, roof basket and a Magnuson supercharger. Its garage "AS BUILT" options are
 that truck; the others put parts back to factory or take it further.
+
+The Tacoma is a stock 3rd-gen TRD Off-Road: cab and open bed as separate boxes on one
+long frame, Bilstein shocks, a rear e-locker that only works in 4L, a skid plate and
+all-terrains. Its garage takes it to a TRD Pro, a long-travel build or a 6-speed manual.
 
 ## How a vehicle is built
 
@@ -221,6 +226,25 @@ that truck; the others put parts back to factory or take it further.
   where the metal bends for good, the frame lets go and takes on the new shape.
   The floor rails, sills and crossmembers are stronger members, and every point
   something bolts to (spring towers, arm and engine mounts) is reinforced.
+- **Ladder frames (Bronco, 4Runner, Tacoma).** Two boxed steel rails with crossmembers
+  carry everything: the suspension brackets, the engine mounts and the body, which sits
+  on rubber body mounts and is only a skin by comparison. Each rail holds its shape
+  like real steel: springy up to its yield point, then it kinks and keeps the kink
+  (a whole rail section bends together, it doesn't fold at one node). A press midway
+  between the axles sets the Bronco's boxed frame at ~88 kN, the 4Runner's at ~53 and
+  the Tacoma's (longer, open C-channel under the bed) at ~39. Bare, the frames twist
+  11, 3.6 and 2.9 kNm per degree; bolted to their bodies, 25, 15 and 23. A suspension
+  bracket breaks loose at ~70 kN, so a hard hit tears a bracket before it folds the rail.
+- **Parts that touch.** The tires collide with their own body and the frame rails:
+  a wheel pushed up past its travel dents the fender liner and the panels above it,
+  a bent arm can drive the tire into the door, and a wheel knocked inboard meets the
+  rail. Each wheel well knows what tire it was built for (and what size fits before
+  it rubs, ~35s on the Bronco, ~32s on the Tacoma), so only tires bigger than that or
+  wheels knocked out of place scrape. A loose panel can swing out but not in: an
+  unlatched door opens to ~70° on its check strap and stops there, a hood to ~80°, and
+  none of them pass into the cabin or the engine bay (flung open hard, the strap
+  tears). Anti-roll bars, arms and links bend and keep the bend; engine and body
+  mounts squash onto rubber snubbers and tear or take a set beyond them.
 - **Weight.** Every heavy item is placed where it really sits: engine, gearbox, seats,
   dashboard, fuel tank, battery, radiator, exhaust, spare wheel. That sets the
   front/rear balance, the center of gravity height and how the car pitches and rolls.
@@ -230,8 +254,11 @@ that truck; the others put parts back to factory or take it further.
 - **Suspension.** Real linkages:
   - Double wishbones with ball joints, a coil-over and a tie rod (or toe link).
   - A twist beam on the hatchback.
-  - On the pickup and van, a live axle on trailing links with a panhard rod.
-  - On the rock buggy, live axles front and rear on long four-links: the front one steers, with knuckles turning on kingpins at the tube ends and tie rods from the axle.
+    - On the rock buggy, live axles front and rear on long four-links: the front one steers, with knuckles turning on kingpins at the tube ends and tie rods from the axle.
+  - On the Bronco and 4Runner, a live axle on trailing links with a panhard rod.
+  - On the Tacoma, a live axle on leaf springs: a fixed front hanger, a swinging
+    shackle behind, inter-leaf friction that firms the ride over small bumps, and
+    axle wrap (the housing twists the springs under torque until they hold it).
   - Anti-roll bars.
 
   Spring and damper rates come from each vehicle's ride frequency and the actual
@@ -242,19 +269,27 @@ that truck; the others put parts back to factory or take it further.
   with Ackermann geometry. A hard knock can bend a tie rod, and the car then pulls.
 - **Driveline.** Prop shafts and half shafts. If one is torn off, the wheels it drives
   lose power.
+- **Underbody.** A solid axle's diff and tubes hit the ground and the rocks (the diff is
+  the lowest thing on the truck: hang it on a rock and the axle's held up), and on a 4x4
+  the transfer case's skid plate hangs under the frame between the axles, where a ridge
+  high-centres it. Clearance and angles come out at the real trucks' (the Tacoma's 9.4 in,
+  32° approach, 23.5° departure, 21° breakover: `structure/clearance`).
 - **Panels.** The hood, doors, bumpers and trunk lid (rear doors on the van) are
   separate sheets pinned on with hinges, latches and clips. In a crash, clips and
   latches break: doors swing open on their hinges, hoods pop up, and bumpers fall off.
 - **Brakes and tires.** Per-wheel ABS, brake pressure that takes a moment to build,
   brake torque that reacts through the knuckles (nose dive), rolling resistance, and
   tire forces that act at the contact patch (which is what rolls the body).
+- **Stability control.** Above ~10 km/h, if the truck yaws faster than the steering
+  asks (or its rear slides), it brakes the outside front wheel and trims the
+  throttle, as real ESC does. It's off in low range and with traction control off.
 
 ## Damage
 
 - **Bodywork** dents permanently and tears apart. Bent metal gets stiffer as it crumples, and crushed metal barely springs back, so a 50 km/h wall hit gives about 0.3–0.5 m of crush and a small rebound, like a real crash test.
-- **Panels** come loose: bumpers drop off, hoods pop open, doors hang on their hinges or come off.
+- **Panels** come loose: bumpers drop off, hoods pop open, doors swing open to their check straps or come off.
 - **Windows** shatter once their frame bends: the bonded windshield at about 5%, side and back glass (loose in rubber channels) at about 7.5%.
-- **Tires** blow out on hard rim strikes, such as big landings or kerbs taken at speed. You then run on the rim with much less grip.
+- **Tires** blow out on hard rim strikes, such as big landings or kerbs taken at speed. You then run on the rim with much less grip, and the next big hit lands on steel.
 - **Engine:** a crushed engine bay loses power, smokes, and eventually dies. Torn engine mounts hurt it too.
 - **Suspension and steering** bend: a bent tie rod or control arm knocks the wheel out of line, and the car pulls.
 - **Drive shafts** snap, and the wheels they drive lose power.
@@ -262,7 +297,7 @@ that truck; the others put parts back to factory or take it further.
 
 ## 4x4
 
-The Bronco, the 4Runner, the rock buggy and the side-by-side have real transfer cases and selectable lockers (the side-by-side has a front diff lock). The HUD shows a small driveline next to the gauges: wheels light up when they're driven, the prop shaft is solid when front and rear are tied together, and a red block marks a locked axle.
+The Bronco, the 4Runner, the Tacoma, the rock buggy and the side-by-side have real transfer cases and selectable lockers (the side-by-side has a front diff lock). The HUD shows a small driveline next to the gauges: wheels light up when they're driven, the prop shaft is solid when front and rear are tied together, and a red block marks a locked axle.
 
 | Truck | Modes (L) | Lockers |
 | --- | --- | --- |
@@ -270,14 +305,15 @@ The Bronco, the 4Runner, the rock buggy and the side-by-side have real transfer 
 | 4Runner (full-time multi-mode) | 2H; 4H (center diff open); 4H LOCK; 4L LOCK | rear e-locker; ARB front and rear with the garage's locker options |
 | Rock buggy (Atlas-style two-speed case) | 2H; 4H and 4L (shafts locked together; it leaves in 4H) | air lockers front and rear, in any range |
 | Side-by-side (on-demand 4WD) | 2WD; 4WD (the clutch ties the shafts; no low range) | front diff lock (F); the rear is a limited-slip |
+| Tacoma (part-time) | 2H; 4H and 4L (front and rear shafts locked together) | rear e-locker (4L only) |
 
 - **Open diffs:** each axle splits torque equally, so a lifted wheel spins and the other gets almost nothing.
 - **Lockers:** both wheels on the axle turn together.
 - **4H and 4L:** front and rear turn together. On dry pavement this binds the driveline in tight turns, just like the real thing, so use 4A or 2H there.
-- **Low range:** multiplies every gear (2.72:1 Bronco, 2.57:1 4Runner, 4.3:1 rock buggy: about a 57:1 crawl ratio in first).
-- **Locker rules, as on the real trucks:** the Bronco's front locker only engages in 4L; the 4Runner's factory rear e-locker only in 4L LOCK (the ARB lockers from the garage work in any mode). Leaving low range drops them.
+- **Low range:** multiplies every gear (2.72:1 Bronco, 2.57:1 4Runner and Tacoma, 4.3:1 rock buggy: about a 57:1 crawl ratio in first).
+- **Locker rules, as on the real trucks:** the Bronco's front locker only engages in 4L; the 4Runner's factory rear e-locker only in 4L LOCK, the Tacoma's rear e-locker only in 4L (the ARB lockers from the garage work in any mode). Leaving low range drops them.
 - **Axle shafts break:** the shaft carries the engine's torque plus whatever a locker forces through it. Full throttle in low range with a locked axle and a wheel in the air, or a front locker at full lock, can snap a CV joint (IFS CVs take 65% of a solid-axle shaft, less at steep angles). That wheel freewheels until a repair station fixes it.
-- **Sway bar disconnect (Y):** more articulation for crawling, more body roll on the road. Ramp travel index on a 20° ramp: Bronco ~580, ~650 disconnected; 4Runner ~645, ~715.
+- **Sway bar disconnect (Y):** more articulation for crawling, more body roll on the road. Ramp travel index on a 20° ramp: Bronco ~550, ~610 disconnected; 4Runner ~520, ~570; Tacoma (no disconnect) ~470.
 - **Tire pressure (9 / 0):** airing down softens the tire into a longer patch, about +1.2% grip per psi off pavement (15 psi climbs a 41° granite slab that 35 psi spins out on). The price: the sidewall rolls over in fast corners and the rim is closer to the rocks, so a fast hit pinches a tire. Shop air at a repair station pumps up fast.
 
 ## Autopilot
@@ -421,7 +457,7 @@ A straight six-lane divided freeway across farmland that never ends, for top spe
 
 It never ends because everything repeats every 400 m, and whenever you get 200 m from the middle, the sim moves every vehicle, line and route back 400 m onto the identical stretch. Physics and the view can't tell (tested: no change in speed, lane or the gap to a car behind). Not in multiplayer: there it's just the 1.2 km of the map.
 
-Top speeds on it (`freeway/top-speed`): Jesko ~413 km/h (drag-limited, 9th gear, after ~7 km), Civic Si ~200 km/h, Bronco 161 km/h and 4Runner 171 km/h (governed, like the real ones).
+Top speeds on it (`freeway/top-speed`): Jesko ~413 km/h (drag-limited, 9th gear, after ~7 km), Civic Si ~200 km/h, Bronco 161 km/h, 4Runner 171 km/h and Tacoma ~180 km/h (governed, like the real ones).
 
 ### Proving ground
 

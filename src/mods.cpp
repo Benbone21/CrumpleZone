@@ -315,6 +315,59 @@ Slots buggyMods() {
     return m;
 }
 
+Slots tacomaMods() {
+    Slots m(MOD_SLOTS);
+    m[MOD_ENGINE] = {
+        stock("3.5L V6 2GR-FKS  278 HP AT 6000  359 NM"),
+        {"INTAKE AND TUNE", "COLD AIR INTAKE  91 OCTANE TUNE  ~295 HP  372 NM", [](VehicleSpec& s) {
+             engine(s, "3.5L V6 2GR-FKS TUNED",
+                    {{0, 205}, {1000, 270}, {1600, 300}, {2000, 314}, {3000, 347}, {4000, 367}, {4600, 372}, {5000, 368}, {5500, 356}, {6000, 344}, {6400, 320}}, 6400, 0);
+         }},
+        {"MAGNUSON SUPERCHARGER", "TVS1900 AT 6 PSI  ~350 HP  450 NM", [](VehicleSpec& s) {
+             engine(s, "3.5L V6 2GR-FKS SUPERCHARGED",
+                    {{0, 260}, {1000, 330}, {1600, 380}, {2000, 405}, {3000, 435}, {4000, 450}, {4600, 448}, {5000, 440}, {5500, 425}, {6000, 405}, {6400, 375}}, 6400, 0);
+             s.induction = VehicleSpec::SUPERCHARGER;
+             s.engineMass += 14;
+         }},
+    };
+    m[MOD_SUSPENSION] = {
+        stock("TRD BILSTEINS  LEAF PACK  265/70R16 ALL-TERRAINS"),
+        {"3 IN LIFT AND 33S", "COILOVERS  ADD-A-LEAF  +75 MM  285/75R16 ALL-TERRAINS", [](VehicleSpec& s) {
+             tires(s, 0.42, 0.285, 6, 0.95, 0.76, 1.63);
+             springs(s, 0.075, 1.05, 0.9, 0.40);
+             s.bumpFront = 0.09, s.droopFront = 0.13, s.droopRear = 0.16;
+         }},
+        {"LONG TRAVEL AND 35S", "+50 MM  LONG-TRAVEL ARMS  NEW LEAF PACK  35X12.50R17  FENDERS TRIMMED", [](VehicleSpec& s) {
+             tires(s, 0.445, 0.318, 14, 0.93, 0.72, 1.70);
+             s.tireType = TIRE_MUD_TERRAIN;
+             springs(s, 0.05, 0.9, 0.7, 0.38);
+             s.bumpFront = 0.12, s.droopFront = 0.17, s.bumpRear = 0.13, s.droopRear = 0.19;
+             s.wellTireRadius = 0.46, s.wellTireWidth = 0.32;  // (cut for them)
+         }},
+        {"STREET LOWERED", "-25 MM  265/65R17 ROAD TIRES  STIFFER", [](VehicleSpec& s) {
+             tires(s, 0.385, 0.265, -4, 1.02, 0.88, 1.60);
+             s.tireType = TIRE_STREET;
+             springs(s, -0.025, 1.25, 1.4, 0.45);
+             s.bumpFront = 0.065, s.bumpRear = 0.08;
+         }},
+    };
+    m[MOD_TRANSMISSION] = {
+        stock("6-SPEED AUTO  3.909 AXLES  REAR E-LOCKER IN 4L"),
+        {"4.88 REGEAR", "SHORTER AXLE GEARS FOR BIGGER TIRES", [](VehicleSpec& s) { s.finalDrive = 4.88; }},
+        {"4.88 AND FRONT LOCKER", "4.88 AXLES  ARB AIR LOCKER IN FRONT  E-LOCKER BEHIND", [](VehicleSpec& s) {
+             s.finalDrive = 4.88;
+             s.lockerFront = true;
+         }},
+        {"CRAWL BOX", "4.88  FRONT LOCKER  4.3:1 LOW RANGE", [](VehicleSpec& s) {
+             s.finalDrive = 4.88;
+             s.lockerFront = true;
+             s.lowRange = 4.3;
+             s.gearboxName = "6-SPEED AUTO + 4.3 LOW RANGE";
+         }},
+    };
+    return m;
+}
+
 Slots utvMods() {
     Slots m(MOD_SLOTS);
     m[MOD_ENGINE] = {
@@ -351,7 +404,7 @@ const std::vector<Slots>& allMods() {
         std::vector<Slots> m;
         for (const VehicleSpec& vs : vehicleCatalog()) {
             std::string id = vs.id;
-            m.push_back(id == "civic" ? civicMods() : id == "jesko" ? jeskoMods() : id == "bronco" ? broncoMods() : id == "buggy" ? buggyMods() : id == "utv" ? utvMods() : runnerMods());
+            m.push_back(id == "civic" ? civicMods() : id == "jesko" ? jeskoMods() : id == "bronco" ? broncoMods() : id == "buggy" ? buggyMods() : id == "utv" ? utvMods() : id == "tacoma" ? tacomaMods() : runnerMods());
         }
         return m;
     }();

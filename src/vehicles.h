@@ -35,6 +35,7 @@ enum TransferCase {
     XFER_FULL_TIME,  // center differential: 2H; 4H (center open); 4H LOCK and 4L LOCK
     XFER_SELECT,     // plain two-speed lever (rock buggy): 2H; 4H and 4L tie the front and rear shafts together
     XFER_ONDEMAND,   // side-by-side: 2WD; 4WD (the front axle comes in through an open center, no low range)
+    XFER_PART_TIME_BASIC,  // plain part-time: 2H (where it's driven day to day), 4H and 4L shafts locked
 };
 
 // One position of the transfer-case lever.
@@ -96,6 +97,8 @@ struct VehicleSpec {
     // entries; 0 = leave it at its layer). Shapes hoods, decks and engine covers.
     std::vector<double> topLine;
     std::vector<double> bodyWidth;  // half-width multiplier per longitudinal node column
+    double outerCellWidth = 0;      // width of the outermost cell column each side (m; 0 = even): a
+                                    // pickup's bed walls and the fenders over its wheels
     int doors = 0;                 // 0 = infer from cabin; 2/4 = explicit body style
     // Tube-frame vehicle (rock buggy, side-by-side): the lattice is the chassis and cage and
     // is not drawn; only the cells marked 'p' (hood, tail and body panels) carry a skin.
@@ -104,6 +107,7 @@ struct VehicleSpec {
     double doorLength = 1.0;        // physical front door length (m)
     double rimRadius = 0;           // metal rim radius; 0 = inferred from wheel style
     bool absEnabled = true;
+    bool tractionFitted = true;  // has traction control at all (the driver can still switch it off)
     int cylinders = 4;
     bool flatPlane = false;        // flat-plane crank V8: even firing, a high-pitched howl
     enum Induction { NATURAL, TURBO, SUPERCHARGER } induction = TURBO;
@@ -112,6 +116,7 @@ struct VehicleSpec {
     // Shaping applied to the lattice.
     double noseDrop, tailDrop;     // lower the top of the nose / tail
     double bumperLift;             // raise the bottom corners (approach angle)
+    double bumperLiftRear = -1;    // ...at the tail (departure angle); < 0 = the same
     double cornerRound;            // chamfer the four vertical corners
     double roofTuck;               // pull the roof sides inward
     double rakeFront, rakeRear;    // windshield / rear window slope
@@ -127,6 +132,19 @@ struct VehicleSpec {
     double frameStrength = 1.0;    // multiplier on how far frame rails bend before they take a set (ladder frames: more)
     double panelStrength = 1.0;    // multiplier on panel sheet metal (thicker truck doors and hoods: more)
     double pinStrength = 1.0;      // multiplier on the force hinges, latches and clips hold
+    // Body on frame: a separate steel ladder frame carries the suspension, the engine and the
+    // recovery points, and the body tub sits on it on rubber mounts (0 rail spacing = unibody).
+    double railSpacing = 0;        // between the two rails' centres (m)
+    double railHeight = 0.20;      // boxed rail section, tall x wide (m)
+    double railWidth = 0.09;
+    double frameMass = 0;          // kg (part of structureMass)
+    double railYield = 0.01;       // how far (m) a rail's shape is pushed before the steel yields
+                                   // (sets its strength: the shape-holding pull at that point)
+    int bodyMounts = 8;            // rubber mounts between the body and the frame
+    // The transfer case's skid plate, bolted under the frame behind the gearbox: the lowest
+    // thing between the axles on a 4x4 (what the breakover angle is measured to, and what
+    // high-centres it on a ridge). How far it hangs below the rails (m); 0 = none.
+    double skidDrop = 0;
 
     // Powertrain: engine and gearbox as one block on rubber mounts.
     double engineMass = 0, gearboxMass = 0;  // 0 = no powertrain (props)
@@ -137,6 +155,8 @@ struct VehicleSpec {
 
     // Running gear.
     double wheelRadius, wheelWidth;
+    double wellTireRadius = 0;     // the biggest tire the wheel wells were cut for (m; 0 = this one): bigger rubs
+    double wellTireWidth = 0;      // ...and its width
     double wheelWidthRear = 0;                // 0 = same as the front (staggered tires otherwise)
     double trackFront = 0, trackRear = 0;     // tire center to tire center (m); 0 = from the body width
     double wheelMass = 20, hubMass = 16;      // per corner: wheel and tire; knuckle, hub and brake
@@ -148,6 +168,10 @@ struct VehicleSpec {
     // the size-scaled default). Wishbones: how far the inner pivots are from the ball joints.
     double linkLength = 0.77, upperLink = 0, coilTop = 0, axleSeat = 0.10;  // (axleSeat: the coil-over's seat above the axle's centre line)
     double armLower = 0.36, armUpper = 0.27;
+    // A live rear axle on leaf springs (pickups): each leaf locates the axle and is its spring;
+    // the front half pivots on a hanger, the rear swings on a shackle. No links, no panhard.
+    bool leafSprings = false;
+    double leafHalf = 0.70;        // spring eye to the axle seat (m), each side
     double rideFreqFront = 1.5, rideFreqRear = 1.6;  // body bounce frequency on its springs (Hz)
     double dampingRatio = 0.35;
     double arbFront = 0, arbRear = 0;
@@ -196,6 +220,13 @@ struct VehicleSpec {
     double shiftTime = 0.18;    // s with no drive during a shift
     double lowRange = 0;        // transfer case low ratio (4LO); 0 = none
     double turboLag = 0;        // s for boost to build (0 = naturally aspirated)
+    // Automatic gearbox: a torque converter between the engine and the gears (0 = a clutch).
+    // The stall speed (rpm the engine reaches at full throttle against a held turbine) sets
+    // how hard the converter grips; it multiplies torque by stallRatio there. Above
+    // lockupGear (and once moving) its clutch locks it solid.
+    double stallRpm = 0;
+    double stallRatio = 2.0;
+    int lockupGear = 3;
     const char* engineName = "";
     const char* gearboxName = "";
 
