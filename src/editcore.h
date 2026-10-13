@@ -1,0 +1,190 @@
+// The world editor's working state, without any graphics: the level being made, the world
+// it's shown on, the terrain brushes, painting, water, objects, the course (start and gates),
+// and undo. The editor's UI (editor.h) drives it with the mouse; tests/editor.cpp drives it
+// directly.
+//
+// Every edit goes into the World at once (so the physics, the autopilot and the renderer see
+// it) and into the Level (so it saves). The Level only ever holds what applyLevel() would put
+// on a fresh World(level.map), so what you see in the editor is what the level plays like.
+#pragma once
+#include <algorithm>
+#include <cstdint>
+#include <map>
+#include <string>
+#include <vector>
+
+#include "level.h"
+
+enum BrushOp { BRUSH_RAISE, BRUSH_LOWER, BRUSH_SMOOTH, BRUSH_FLATTEN };
+
+// A paint material: how it drives (surface) and how it looks (paint), and a swatch color
+// for the editor's UI.
+struct PaintMaterial {
+    const char* name;
+    uint8_t surface, paint;
+    float col[3];
+};
+const std::vector<PaintMaterial>& paintMaterials();
+
+// A rectangle of grid cells (inclusive) that changed.
+struct CellRegion {
+    int i0 = 1 << 30, j0 = 1 << 30, i1 = -1, j1 = -1;
+    bool empty() const { return i1 < i0 || j1 < j0; }
+    void add(int i, int j) {
+        i0 = std::min(i0, i), j0 = std::min(j0, j), i1 = std::max(i1, i), j1 = std::max(j1, j);
+    }
+    void add(const CellRegion& o) {
+        if (!o.empty()) add(o.i0, o.j0), add(o.i1, o.j1);
+    }
+    void clear() { *this = CellRegion(); }
+};
+
+// Something in the world the editor can point at.
+struct EditPick {
+    enum Kind { NONE, OBJECT, BASE, GATE, START };
+    Kind kind = NONE;
+    int index = -1;     // OBJECT: into level.objects; GATE: into level.gates; BASE: into its world list
+    int baseKind = -1;  // BASE: 0 rock, 1 tree, 2 log, 3 box, 4 fixture
+    V3 at;              // where it stands (on the ground); for BASE, where removeNear will find it
+    double t = 1e18;    // distance along the ray
+    std::string name;   // "ROCK", "GATE 3", ...
+    bool operator==(const EditPick& o) const { return kind == o.kind && index == o.index && baseKind == o.baseKind; }
+    bool operator!=(const EditPick& o) const { return !(*this == o); }
+};
+
+class EditCore {
+public:
+    World* world = nullptr;
+    Level level;
+    // What changed since the UI last caught up (it redraws, then clears these).
+    CellRegion dirtyCells;
+    bool dirtyWater = false, dirtyObjects = false;
+    double clock = 0;  // seconds (the UI's; undo merges quick repeats of the same edit)
+
+    // Starts editing `lv` on `w`, which must be the plain map (World(lv.map), nothing of the
+    // level on it yet): remembers the map's own objects, then puts the level on it.
+    void begin(World& w, const Level& lv);
+    bool started() const { return world != nullptr; }
+
+    // ---- Edits ------------------------------------------------------------------------
+    // Everything between beginEdit and endEdit is one undo step (they nest). The single
+    // operations below open their own when none is open.
+    void beginEdit(const std::string& what, const std::string& mergeKey = "");
+    void endEdit();
+    bool editing() const { return depth > 0; }
+
+    // Terrain brush at (cx, cz), radius r (m). RAISE/LOWER: `amount` meters at the center;
+    // SMOOTH/FLATTEN: the share (0..1) of the way to go this time; FLATTEN goes to `target`.
+    void brush(BrushOp op, double cx, double cz, double r, double amount, double target = 0);
+    // A straight ramp of ground from a to b (their heights: a.y, b.y), `width` across, with
+    // shoulders blending into the land around it.
+    void ramp(const V3& a, const V3& b, double width);
+    // Flattens a rectangle (half-length hl along yaw, half-width hw) to height y, blending
+    // over `margin` meters round it (a pad for a repair station).
+    void levelPad(const V3& c, double yaw, double hl, double hw, double y, double margin);
+    // Paints a material (index into paintMaterials) within r; soft edges dither.
+    void paint(double cx, double cz, double r, int material, bool soft);
+    // Fills the hollow at (cx, cz) with water to `depth` above the ground there (or above the
+    // water already there), spreading over lower ground no further than maxR. Returns how many
+    // cells it wet; spilled is set if it ran up to maxR (it would have kept going).
+    int flood(double cx, double cz, double depth, double maxR, bool* spilled = nullptr);
+    void dry(double cx, double cz, double r);   // takes water away within r
+
+    // Objects. add returns its index in level.objects.
+    int addObject(const LevelObject& o);
+    void setObject(int k, const LevelObject& o, const std::string& mergeKey = "");
+    void removeObject(int k);
+    // Takes a base-map object out (records it in level.removed).
+    bool removeBase(const EditPick& p);
+    // A copy of an object with its height worked out for where it stands now (boxes sit
+    // on the ground, logs lie on it).
+    LevelObject grounded(LevelObject o) const;
+
+    // The course.
+    void setStart(double x, double z, double yaw);
+    int addGate(const Gate& g, int at = -1);  // at: index to insert at (-1 the end)
+    void setGate(int k, const Gate& g, const std::string& mergeKey = "");
+    void removeGate(int k);
+    void moveGate(int k, int dir);             // earlier (-1) or later (+1) in the order
+    // Level settings: fn changes the level (its name, mode, rules...), as one undo step.
+    template <typename F>
+    void settings(const std::string& key, F fn) {
+        beginEdit("SETTINGS", key);
+        touchMeta();
+        fn(level);
+        endEdit();
+    }
+
+    // ---- Undo -------------------------------------------------------------------------
+    bool undo();
+    bool redo();
+    bool canUndo() const { return !history.empty(); }
+    bool canRedo() const { return !future.empty(); }
+    std::string undoName() const { return history.empty() ? "" : history.back().what; }
+    std::string redoName() const { return future.empty() ? "" : future.back().what; }
+    int changes = 0, savedChanges = 0;  // unsaved while they differ
+    bool unsaved() const { return changes != savedChanges; }
+    bool save(const std::string& path, std::string* err = nullptr);
+
+    // ---- Looking --------------------------------------------------------------------------
+    // Where a ray from o along d (unit) first meets the ground, within maxT.
+    bool rayGround(const V3& o, const V3& d, double maxT, V3& hit) const;
+    // The nearest object, gate or start marker on the ray (and in front of hitT, the ground).
+    EditPick pick(const V3& o, const V3& d, double hitT, bool base = true) const;
+    // Which level object a world rock/tree/log/box/fixture index belongs to (-1: the map's own).
+    int ownerOf(int baseKind, int index) const;
+    // How many cells, objects... the level changes (for the status bar).
+    size_t cellEdits() const { return level.heights.size() + level.surfaces.size() + level.water.size(); }
+
+    // Rebuilds the world's objects from the map's own plus the level's (after changing
+    // level.objects or level.removed by hand). The editor ops call it themselves.
+    void rebuildObjects();
+
+private:
+    struct CellChange {
+        int id;
+        uint8_t what;  // 0 height, 1 surface, 2 water
+        bool hadOld, hasNew;
+        double worldOld, worldNew, lvOld, lvNew;
+    };
+    struct Entry {
+        std::string what, mergeKey;
+        double time = 0;
+        std::vector<CellChange> cells;
+        bool meta = false;
+        Level before, after;  // (without the cell maps)
+    };
+    // The map's own objects, as built.
+    struct Base {
+        std::vector<Rock> rocks;
+        std::vector<Tree> trees;
+        std::vector<Pole> poles;
+        std::vector<Log> logs;
+        std::vector<Box> boxes;
+        std::vector<Prop> fixtures;
+        std::vector<Station> stations;
+        V3 spawn;
+        double spawnYaw = 0;
+    } base;
+    int baseCount[5] = {0, 0, 0, 0, 0};       // after removals: rocks, trees, logs, boxes, fixtures
+    std::vector<int> owner[5];                // world index -> level object (-1 the map's)
+    std::vector<Entry> history, future;
+    Entry pending;
+    std::map<int, size_t> pendingCells;       // (id * 4 + what) -> index in pending.cells
+    int depth = 0;
+
+    void touchHeight(int id, float h);
+    void touchSurface(int id, uint16_t sp);
+    void touchWater(int id, float level);
+    void touchMeta();
+    void setCell(int id, int what, double v, bool inLevel, double lv);
+    double worldCell(int id, int what) const;
+    Level metaOf();
+    void restoreMeta(const Level& m);
+    void syncSpawn();
+    void markCell(int id);
+    void trim();
+};
+
+// A file name for a level name ("Dune Run!" -> "dune_run").
+std::string levelFileName(const std::string& name);

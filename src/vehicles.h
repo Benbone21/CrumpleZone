@@ -1,0 +1,218 @@
+// Vehicle definitions. Each vehicle's body is described by a side-profile map
+// that the soft-body builder turns into a node/beam lattice.
+#pragma once
+#include <string>
+#include <vector>
+
+struct TorquePoint {
+    double rpm, nm;
+};
+
+// A lump of mass that rides on the body (seats, fuel tank, battery...). Position in
+// the car's frame: x forward from the middle, y up from the ground, z to the right.
+struct MassItem {
+    const char* name;
+    double kg, x, y, z;
+};
+
+enum SuspensionType {
+    WISHBONE,    // double wishbone: upper and lower A-arms, coil-over, tie rod or toe link
+    TWIST_BEAM,  // trailing arms joined by a torsion beam (light front-drive cars)
+    SOLID_AXLE,  // one rigid axle housing on trailing links and a panhard rod (trucks, vans)
+    STRUT,       // MacPherson strut: lower A-arm, the knuckle slides on a strut up to the tower
+};
+
+enum DiffType {
+    DIFF_OPEN,    // equal torque both sides: a wheel in the air spins and the other gets little
+    DIFF_LSD,     // limited slip: sends torque to the slower wheel, up to a bias ratio
+    DIFF_LOCKED,  // both wheels turn together (off-road lockers)
+};
+
+// Transfer case: how a 4x4 drives its front axle.
+enum TransferCase {
+    XFER_NONE,       // the drive layout is fixed
+    XFER_PART_TIME,  // 2H; 4A (front engaged, center free); 4H and 4L tie the front and rear shafts together
+    XFER_FULL_TIME,  // center differential: 2H; 4H (center open); 4H LOCK and 4L LOCK
+};
+
+// One position of the transfer-case lever.
+// Tire tread: how it gets on with each surface (on top of the spec's pavement grip).
+enum TireType { TIRE_STREET, TIRE_SEMI_SLICK, TIRE_ALL_TERRAIN, TIRE_MUD_TERRAIN };
+const char* tireTypeName(int t);
+
+struct DriveMode {
+    const char* name;
+    bool front;       // front axle driven
+    bool centerLock;  // front and rear prop shafts turn together
+    bool low;         // low range
+};
+const std::vector<DriveMode>& driveModes(TransferCase t);  // empty for XFER_NONE
+int defaultDriveMode(TransferCase t);                      // what the truck leaves the factory in
+
+// Bolt-on visual extras (bit flags).
+enum BodyExtra : unsigned {
+    EXTRA_WING = 1,         // big rear wing on pylons
+    EXTRA_SPARE = 2,        // spare wheel on the tailgate
+    EXTRA_ROOF_RACK = 4,
+    EXTRA_HOOD_SCOOP = 8,
+    EXTRA_LIP_SPOILER = 16, // small spoiler on the trunk lid
+    EXTRA_FLARES = 32,      // black fender flares
+    EXTRA_ROOF_SCOOP = 64,  // engine air intake on the roof (mid-engine)
+    EXTRA_SKID_PLATE = 128,
+    EXTRA_ARMOR = 256,        // steel bumpers on the frame: winch up front, swing-out tire carrier behind
+    EXTRA_SNORKEL = 512,      // raised air intake up the right A-pillar
+    EXTRA_ROOF_BASKET = 1024, // full-length roof basket with a light bar
+    EXTRA_SLIDERS = 2048,     // steel rock sliders along the sills
+    EXTRA_WINCH = 4096,       // electric winch on the front bumper (V hooks it, Z reels in)
+};
+
+// Wheel and tire look.
+enum WheelStyle { WHEEL_ALLOY = 0, WHEEL_OFFROAD_BRONZE = 1, WHEEL_OFFROAD_BLACK = 2, WHEEL_HONDA_COVER = 3, WHEEL_FORGED = 4, WHEEL_STYLES };
+
+// Headlamp and grille shapes (body shader).
+enum LampStyle { LAMP_RECT = 0, LAMP_ROUND = 1, LAMP_SLIM = 2 };
+enum GrilleStyle { GRILLE_CENTER = 0, GRILLE_WIDE = 1, GRILLE_INTAKE = 2 };
+
+struct VehicleSpec {
+    const char* name;        // shown in the HUD
+    const char* id = "";     // short lowercase name (test names, save file)
+    const char* blurb = "";  // one line about the real car this models
+    // Side profile: one string per cell layer (bottom layer first), one character
+    // per cell from the front bumper back. Every layer must be the same length.
+    //   '#' solid body          'G' cabin (glass sides, painted roof)
+    //   'W' wheel well (solid only in the inner columns; a run of W's is an axle)
+    //   'B' bed wall (solid only in the outer columns)      '.' empty
+    std::vector<std::string> profile;
+    std::vector<double> layerY;  // node layer heights, profile.size() + 1 entries
+    double length, width;
+    int widthCells;
+    // Real wheelbase and front overhang (m). The lattice columns are stretched so the
+    // axles land exactly there; 0 = evenly spaced columns.
+    double wheelbase = 0, frontOverhang = 0;
+    // Height of the top surface at each column of nodes (front first, profile[0].size() + 1
+    // entries; 0 = leave it at its layer). Shapes hoods, decks and engine covers.
+    std::vector<double> topLine;
+    std::vector<double> bodyWidth;  // half-width multiplier per longitudinal node column
+    int doors = 0;                 // 0 = infer from cabin; 2/4 = explicit body style
+    double doorLength = 1.0;        // physical front door length (m)
+    double rimRadius = 0;           // metal rim radius; 0 = inferred from wheel style
+    bool absEnabled = true;
+    int cylinders = 4;
+    bool flatPlane = false;        // flat-plane crank V8: even firing, a high-pitched howl
+    enum Induction { NATURAL, TURBO, SUPERCHARGER } induction = TURBO;
+    double displacement = 1.5;     // liters, also sets the procedural engine voice
+
+    // Shaping applied to the lattice.
+    double noseDrop, tailDrop;     // lower the top of the nose / tail
+    double bumperLift;             // raise the bottom corners (approach angle)
+    double cornerRound;            // chamfer the four vertical corners
+    double roofTuck;               // pull the roof sides inward
+    double rakeFront, rakeRear;    // windshield / rear window slope
+
+    // Weight (kg). Everything is placed where it really sits, so the center of
+    // gravity and the front/rear split come out of the build.
+    double structureMass;          // welded body structure: floor, rails, pillars (mostly low down)
+    double panelMass;              // outer panels and glass, spread over the skin
+    std::vector<MassItem> items;   // interior, fuel, battery, radiator, exhaust...
+    double bodyStiffness;          // multiplier on beam stiffness
+    double bodyStrength = 1.0;     // multiplier on how far the body steel bends before it dents (thinner, older steel < 1)
+    double frameStiffness = 1.0;   // multiplier on the chassis frame's rigidity (body-on-frame trucks: less)
+    double frameStrength = 1.0;    // multiplier on how far frame rails bend before they take a set (ladder frames: more)
+    double panelStrength = 1.0;    // multiplier on panel sheet metal (thicker truck doors and hoods: more)
+    double pinStrength = 1.0;      // multiplier on the force hinges, latches and clips hold
+
+    // Powertrain: engine and gearbox as one block on rubber mounts.
+    double engineMass = 0, gearboxMass = 0;  // 0 = no powertrain (props)
+    bool transverse = false;                  // crank across the car (front-drive) or along it
+    double engineX = 0, engineY = 0.5, engineZ = 0;  // block center
+    double engineLen = 0.6, engineWid = 0.5, engineHgt = 0.5;  // along the crank, across, up
+    double gearboxLen = 0.5;                  // behind the block (beside it, if transverse)
+
+    // Running gear.
+    double wheelRadius, wheelWidth;
+    double wheelWidthRear = 0;                // 0 = same as the front (staggered tires otherwise)
+    double trackFront = 0, trackRear = 0;     // tire center to tire center (m); 0 = from the body width
+    double wheelMass = 20, hubMass = 16;      // per corner: wheel and tire; knuckle, hub and brake
+    double axleMass = 60;                     // solid axle housing and differential
+    SuspensionType frontSusp = WISHBONE, rearSusp = WISHBONE;
+    double rideFreqFront = 1.5, rideFreqRear = 1.6;  // body bounce frequency on its springs (Hz)
+    double dampingRatio = 0.35;
+    double arbFront = 0, arbRear = 0;
+    // A third spring per axle that only resists both wheels going up together (heave):
+    // downforce squats the car without the springs going hard in bumps and roll. Rate at
+    // each wheel (N/m) and the wheel travel it picks up after (m). 0 = none.
+    double heaveRate = 0, heaveGap = 0, heaveDamping = 0;  // (damping: N*s/m at each wheel)         // anti-roll bar rate at the wheels (N/m, left vs right)
+    // Wheel travel from ride height (m at the wheel): up to the bump stop, down to full droop.
+    // 0 = the old defaults scaled by tire size.
+    double bumpFront = 0, droopFront = 0, bumpRear = 0, droopRear = 0;
+    // Front anti-roll bar disconnect: 0 none, 1 electronic (a dash button, under 30 km/h),
+    // 2 quick-disconnect pins (stopped only).
+    int swayDisconnect = 0;
+    double tirePsi = 32;          // street pressure; air down for rock
+    int tireType = TIRE_STREET;
+    double tireGrip = 1.1;    // peak friction coefficient on pavement
+    double lateralGrip = 1.0; // cornering grip as a share of braking/traction grip (blocky off-road treads squirm)
+    enum Drive { RWD, FWD, AWD } drive;
+    bool midEngine = false;   // engine ahead of the rear axle, gearbox and diff in one transaxle
+    bool liftgate = false;    // tall back opens upward (hinged at the top) rather than to the side
+    DiffType diffFront = DIFF_OPEN, diffRear = DIFF_OPEN;
+    double lsdBias = 2.5;     // limited slip: most torque one side can get vs the other
+    TransferCase transfer = XFER_NONE;
+    bool lockerFront = false, lockerRear = false;  // selectable lockers (a switch on the dash)
+    bool frontLockerLowOnly = false, rearLockerLowOnly = false;  // the switch only works in low range
+    double speedLimit = 0;    // km/h the ECU won't go past (0 = none): trucks are governed to their tires' rating
+    double shaftLimit = 0;    // N*m an axle shaft takes before it snaps (0 = never); IFS CVs take 65% of it
+    double brakeFront, brakeRear;  // N*m per wheel
+
+    // Aerodynamics.
+    double dragArea = 0.70;    // drag coefficient times frontal area (m^2)
+    double downforce = 0;      // N per (m/s)^2
+    double downforceMax = 0;   // N; the wing flattens out past this (0 = no limit)
+    double aeroBalance = 0.45; // share of the downforce on the front axle
+
+    // Engine and gearbox.
+    std::vector<TorquePoint> torque;
+    double idleRpm, redline;
+    std::vector<double> gears;  // forward ratios, 1st first
+    double reverseRatio, finalDrive;
+    double shiftTime = 0.18;    // s with no drive during a shift
+    double lowRange = 0;        // transfer case low ratio (4LO); 0 = none
+    double turboLag = 0;        // s for boost to build (0 = naturally aspirated)
+    const char* engineName = "";
+    const char* gearboxName = "";
+
+    // Looks.
+    int lampStyle = LAMP_RECT, grilleStyle = GRILLE_CENTER;
+    unsigned extras = 0;
+    float coverColor[3] = {0.05f, 0.05f, 0.05f};  // engine cover
+    float paintColor[3] = {-1, -1, -1};  // factory color (< 0: picked from the palette)
+    float trimColor[3] = {0, 0, 0};      // two-tone lower body and flares...
+    float trimTop = 0;                   // ...up to this lattice height (layers; 0 = no two-tone)
+    int wheelStyle = WHEEL_ALLOY;
+    // Set on tuned copies (see mods.h): which catalog vehicle, and the mods fitted.
+    int model = -1;
+    int mods[3] = {0, 0, 0};
+    std::string modSummary;  // "STAGE 1 / COILOVERS / STOCK" (empty when stock)
+
+    enum Finish { PAINT, MATTE, CONCRETE } finish = PAINT;
+    double contactScale = 1.0;  // < 1 for soft things (foam) that cushion impacts
+};
+
+// Drivable vehicles (keys 1-4).
+const std::vector<VehicleSpec>& vehicleCatalog();
+// Body lattice: x (m, + forward) of node column i (fractional i interpolates).
+double latticeX(const VehicleSpec& vs, double i);
+// Node columns the axles sit on (from the runs of 'W' in the bottom layer).
+std::vector<int> axleColumns(const VehicleSpec& vs);
+// Doors: how many lattice columns each door spans (about a meter), and whether the
+// cabin is long enough for rear doors too.
+int doorCells(const VehicleSpec& vs);
+bool hasRearDoors(const VehicleSpec& vs);
+// Peak power (W) and the rpm it's made at.
+double peakPower(const VehicleSpec& vs, double* atRpm = nullptr);
+double peakTorque(const VehicleSpec& vs, double* atRpm = nullptr);
+// Moves the body (and everything on it) up by dy relative to the wheels: lift kits, lowering.
+void raiseBody(VehicleSpec& vs, double dy);
+// Wheel-less soft bodies placed around the map: foam crash boxes, concrete barriers.
+const VehicleSpec& crashBoxSpec();
+const VehicleSpec& barrierSpec();

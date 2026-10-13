@@ -1,0 +1,915 @@
+#include "world.h"
+
+#include <atomic>
+
+namespace {
+const V3 kConcrete(0.62, 0.62, 0.60);
+const V3 kRampYellow(0.86, 0.62, 0.16);
+const V3 kPoleWhite(0.85, 0.85, 0.82);
+const double kPadRadius = World::kPadRadius;
+}  // namespace
+
+const SurfaceInfo& surfaceInfo(Surface s) {
+    // name, grip, bite, keep, rolling, sink, dust color
+    static const SurfaceInfo table[SURF_COUNT] = {
+        {"PAVEMENT", 1.00, 1.00, 0.71, 0.012, 0, {0.86f, 0.86f, 0.88f}},
+        {"GRASS", 0.72, 0.70, 0.85, 0.030, 0, {0.45f, 0.42f, 0.28f}},
+        {"DIRT", 0.82, 0.75, 0.90, 0.020, 0, {0.52f, 0.43f, 0.30f}},
+        {"ROCK", 1.00, 1.00, 0.71, 0.012, 0, {0.62f, 0.60f, 0.57f}},
+        {"SCREE", 0.60, 0.50, 0.92, 0.045, 0, {0.62f, 0.60f, 0.56f}},
+        {"GRAVEL", 0.68, 0.55, 0.98, 0.030, 0, {0.60f, 0.56f, 0.50f}},
+        {"SAND", 0.58, 0.40, 1.00, 0.060, 0.11, {0.80f, 0.70f, 0.50f}},
+        {"MUD", 0.40, 0.45, 1.00, 0.050, 0.13, {0.30f, 0.22f, 0.14f}},
+        {"SNOW", 0.32, 0.60, 0.95, 0.025, 0.09, {0.95f, 0.96f, 1.00f}},
+        {"ICE", 0.10, 1.00, 0.80, 0.008, 0, {0.88f, 0.94f, 1.00f}},
+        {"WET PAVEMENT", 0.68, 0.95, 0.62, 0.014, 0, {0.78f, 0.82f, 0.86f}},
+    };
+    return table[s < SURF_COUNT ? s : SURF_PAVED];
+}
+
+// The proving ground's surface course: six 8 m strips side by side north-west of the
+// pad, 70 m long, running east: wet asphalt, gravel, sand, mud, snow, ice.
+namespace {
+constexpr double kCourseX0 = -118, kCourseX1 = -48, kCourseZ0 = 72, kStrip = 9.0;
+constexpr Surface kCourse[] = {SURF_WET, SURF_GRAVEL, SURF_SAND, SURF_MUD, SURF_SNOW, SURF_ICE};
+constexpr int kStrips = 6;
+// How far (x, z) is outside the course's rectangle (negative inside).
+double courseOutside(double x, double z) {
+    const double dx = std::max(kCourseX0 - x, x - kCourseX1), dz = std::max(kCourseZ0 - z, z - (kCourseZ0 + kStrips * kStrip));
+    return std::max(dx, dz);
+}
+}  // namespace
+
+int World::courseSurface(double x, double z) const {
+    if (map != MAP_PROVING_GROUND || courseOutside(x, z) > 0) return -1;
+    const int k = (int)std::floor((z - kCourseZ0) / kStrip);
+    if (k < 0 || k >= kStrips) return -1;
+    if (z - kCourseZ0 - k * kStrip > 8.0) return -1;  // 1 m of concrete between strips
+    return kCourse[k];
+}
+
+V3 World::courseStart(int surface) const {
+    for (int k = 0; k < kStrips; k++)
+        if (kCourse[k] == surface) return V3(kCourseX0 - 6, 0, kCourseZ0 + k * kStrip + 4.0);
+    return V3(kCourseX0 - 6, 0, kCourseZ0 + 4.0);
+}
+
+const char* mapName(int map) {
+    return map == MAP_MOUNTAIN ? "MOUNTAIN" : map == MAP_FREEWAY ? "FREEWAY" : map == MAP_FRONTIER ? "FRONTIER" : "PROVING GROUND";
+}
+
+std::vector<V3> splinePoints(const std::vector<V3>& pts, bool closed) {
+    std::vector<V3> out;
+    int n = (int)pts.size();
+    int segs = closed ? n : n - 1;
+    auto P = [&](int i) {
+        if (closed) return pts[((i % n) + n) % n];
+        return pts[std::min(std::max(i, 0), n - 1)];
+    };
+    for (int s = 0; s < segs; s++) {
+        V3 p0 = P(s - 1), p1 = P(s), p2 = P(s + 1), p3 = P(s + 2);
+        int steps = std::max(2, (int)(len(p2 - p1) / 2.0));
+        for (int k = 0; k < steps; k++) {
+            double t = (double)k / steps, t2 = t * t, t3 = t2 * t;
+            out.push_back((p1 * 2 + (p2 - p0) * t + (p0 * 2 - p1 * 5 + p2 * 4 - p3) * t2 + (p1 * 3 - p0 - p2 * 3 + p3) * t3) * 0.5);
+        }
+    }
+    if (!closed) out.push_back(pts.back());
+    return out;
+}
+
+namespace {
+// Closest point to p on triangle abc (Ericson, Real-Time Collision Detection 5.1.5).
+V3 closestOnTriangle(const V3& p, const V3& a, const V3& b, const V3& c) {
+    V3 ab = b - a, ac = c - a, ap = p - a;
+    double d1 = dot(ab, ap), d2 = dot(ac, ap);
+    if (d1 <= 0 && d2 <= 0) return a;
+    V3 bp = p - b;
+    double d3 = dot(ab, bp), d4 = dot(ac, bp);
+    if (d3 >= 0 && d4 <= d3) return b;
+    double vc = d1 * d4 - d3 * d2;
+    if (vc <= 0 && d1 >= 0 && d3 <= 0) return a + ab * (d1 / (d1 - d3));
+    V3 cp = p - c;
+    double d5 = dot(ab, cp), d6 = dot(ac, cp);
+    if (d6 >= 0 && d5 <= d6) return c;
+    double vb = d5 * d2 - d1 * d6;
+    if (vb <= 0 && d2 >= 0 && d6 <= 0) return a + ac * (d2 / (d2 - d6));
+    double va = d3 * d6 - d5 * d4;
+    if (va <= 0 && d4 - d3 >= 0 && d5 - d6 >= 0) return b + (c - b) * ((d4 - d3) / ((d4 - d3) + (d5 - d6)));
+    double den = 1 / (va + vb + vc);
+    return a + ab * (vb * den) + ac * (vc * den);
+}
+
+// Convex hull of a point cloud (incremental: each point outside the hull so far
+// replaces the faces it can see with a fan to their horizon). Faces wind outward.
+std::vector<std::array<int, 3>> convexHull(const std::vector<V3>& p) {
+    const int n = (int)p.size();
+    // A well-spread starting tetrahedron: two far-apart points, the one farthest from
+    // their line, the one farthest from that plane. Its centroid stays inside the hull.
+    int t[4] = {0, 0, 0, 0};
+    for (int i = 0; i < n; i++)
+        if (p[i].x < p[t[0]].x) t[0] = i;
+    for (int i = 0; i < n; i++)
+        if (len(p[i] - p[t[0]]) > len(p[t[1]] - p[t[0]])) t[1] = i;
+    const V3 axis = norm(p[t[1]] - p[t[0]]);
+    auto lineDist = [&](int i) { V3 d = p[i] - p[t[0]]; return len(d - axis * dot(d, axis)); };
+    for (int i = 0; i < n; i++)
+        if (lineDist(i) > lineDist(t[2])) t[2] = i;
+    const V3 pn = norm(cross(p[t[1]] - p[t[0]], p[t[2]] - p[t[0]]));
+    for (int i = 0; i < n; i++)
+        if (std::fabs(dot(p[i] - p[t[0]], pn)) > std::fabs(dot(p[t[3]] - p[t[0]], pn))) t[3] = i;
+    const V3 centroid = (p[t[0]] + p[t[1]] + p[t[2]] + p[t[3]]) * 0.25;
+    struct F {
+        std::array<int, 3> i;
+        V3 nrm;
+        double d;
+        bool alive;
+    };
+    std::vector<F> faces;
+    auto make = [&](int a, int b, int c) {
+        V3 nrm = norm(cross(p[b] - p[a], p[c] - p[a]));
+        if (dot(nrm, p[a] - centroid) < 0) {
+            std::swap(b, c);
+            nrm = -nrm;
+        }
+        faces.push_back({{a, b, c}, nrm, dot(nrm, p[a]), true});
+    };
+    make(t[0], t[1], t[2]), make(t[0], t[1], t[3]), make(t[0], t[2], t[3]), make(t[1], t[2], t[3]);
+    for (int k = 0; k < n; k++) {
+        if (k == t[0] || k == t[1] || k == t[2] || k == t[3]) continue;
+        std::vector<std::pair<int, int>> edges;
+        bool any = false;
+        for (F& f : faces)
+            if (f.alive && dot(f.nrm, p[k]) - f.d > 1e-9) {
+                f.alive = false;
+                any = true;
+                for (int e = 0; e < 3; e++) edges.push_back({f.i[e], f.i[(e + 1) % 3]});
+            }
+        if (!any) continue;
+        // Horizon: edges of the removed faces whose reverse wasn't removed too.
+        for (const auto& e : edges) {
+            bool shared = false;
+            for (const auto& o : edges) shared |= o.first == e.second && o.second == e.first;
+            if (!shared) make(e.first, e.second, k);
+        }
+    }
+    std::vector<std::array<int, 3>> out;
+    for (const F& f : faces)
+        if (f.alive) out.push_back(f.i);
+    return out;
+}
+}  // namespace
+
+Rock& World::addRock(double x, double z, const V3& radii, double top, uint32_t seed, float tint) {
+    uint32_t s = seed * 2654435761u + 0x9e3779b9u;
+    auto rnd = [&]() {
+        s ^= s << 13;
+        s ^= s >> 17;
+        s ^= s << 5;
+        return (s & 0xFFFFFF) / double(0x1000000);
+    };
+    // Points spread evenly over the ellipsoid, then pulled in at random: deep pulls
+    // cut facets, light ones keep it chunky.
+    const int n = 16 + (int)(rnd() * 10);
+    const double yaw = rnd() * 2 * M_PI, tipX = (rnd() - 0.5) * 0.35, tipZ = (rnd() - 0.5) * 0.35;
+    std::vector<V3> pts;
+    for (int i = 0; i < n; i++) {
+        double y = 1 - 2 * (i + 0.5) / n, rr = std::sqrt(std::max(0.0, 1 - y * y));
+        double a = i * 2.39996 + rnd() * 0.6;
+        V3 d(std::cos(a) * rr, y, std::sin(a) * rr);
+        double k = 0.72 + 0.3 * rnd();
+        V3 q(d.x * radii.x * k, d.y * radii.y * k, d.z * radii.z * k);
+        q = rotateAxis(q, V3(1, 0, 0), tipX);
+        q = rotateAxis(q, V3(0, 0, 1), tipZ);
+        pts.push_back(rotateAxis(q, V3(0, 1, 0), yaw));
+    }
+    double topY = -1e9;
+    for (const V3& q : pts) topY = std::max(topY, q.y);
+    const V3 origin(x, height(x, z) + top - topY, z);
+    Rock k;
+    k.tint = tint;
+    k.seed = seed;
+    k.f = convexHull(pts);
+    for (const V3& q : pts) k.v.push_back(origin + q);
+    for (const auto& f : k.f) {
+        V3 nrm = norm(cross(k.v[f[1]] - k.v[f[0]], k.v[f[2]] - k.v[f[0]]));
+        k.fn.push_back(nrm);
+        k.fd.push_back(dot(nrm, k.v[f[0]]));
+    }
+    V3 c;
+    for (const V3& q : k.v) c += q;
+    k.c = c / (double)k.v.size();
+    for (const V3& q : k.v) k.r = std::max(k.r, len(q - k.c));
+    rocks.push_back(std::move(k));
+    return rocks.back();
+}
+
+void World::addLake(double x, double z, double r, double depth) {
+    // An irregular shore: the basin's radius wanders with the bearing.
+    auto shore = [&](double ang) {
+        return r * (0.72 + 0.4 * valueNoise(std::cos(ang) * 1.6 + x * 0.013, std::sin(ang) * 1.6 + z * 0.013));
+    };
+    // Water stands just below the lowest point of the rim.
+    double level = 1e9;
+    for (int a = 0; a < 128; a++) {
+        double ang = a * M_PI / 64, rr = shore(ang);
+        level = std::min(level, height(x + rr * std::cos(ang), z + rr * std::sin(ang)));
+    }
+    level -= 0.15;
+    const double reach = r * 1.15 + 40;
+    for (int i = std::max(0, (int)((x - reach + kHalfSize) / kRes)); i <= std::min(hN - 1, (int)((x + reach + kHalfSize) / kRes)); i++)
+        for (int j = std::max(0, (int)((z - reach + kHalfSize) / kRes)); j <= std::min(hN - 1, (int)((z + reach + kHalfSize) / kRes)); j++) {
+            double px = -kHalfSize + i * kRes, pz = -kHalfSize + j * kRes, d = std::hypot(px - x, pz - z);
+            double rr = shore(std::atan2(pz - z, px - x)), q = d / rr;
+            double bed = d < rr ? level - depth * (1 - q * q) : level + (d - rr) * 0.25;
+            float& hh = hgrid[i * hN + j];
+            hh = (float)std::min((double)hh, bed);
+        }
+    waters.push_back({x, z, r * 1.15, level});
+}
+
+World::World(int m) : map(m) {
+    if (map == MAP_MOUNTAIN) buildMountain();
+    else if (map == MAP_FREEWAY) buildFreeway();
+    else if (map == MAP_FRONTIER) buildFrontier();
+    else buildProvingGround();
+    buildGrid();
+}
+
+void World::buildProvingGround() {
+    map = MAP_PROVING_GROUND;
+    // Spawn is at the origin facing +X. Everything below sits on the flat test pad.
+    spawn = V3(0, 0, 0);
+    spawnYaw = 0;
+    parking = {V3(25, 0, 12), V3(32, 0, 12), V3(39.5, 0, 12)};
+    parkingYaw = M_PI / 2;
+    crashProps = true;
+
+    // Kicker ramp and landing ramp (jump line at z = -30).
+    addRamp(V3(40, 0, -30), V3(53, 3.4, -30), 7, 3.6, kRampYellow);
+    addRamp(V3(88, 3.4, -30), V3(104, 0, -30), 9, 3.6, kRampYellow);
+
+    // Raised platform with an approach ramp: drive off the far end for an 8 m drop.
+    addRamp(V3(-20, 0, 0), V3(-55, 8, 0), 9, 8.4, kRampYellow);
+    addBox(V3(-70, 4, 0), V3(15, 4, 15), 0, 0, 0, kConcrete);
+
+    // Crash wall straight ahead of spawn.
+    addBox(V3(115, 2, 0), V3(1, 2, 22), 0, 0, 0, kConcrete);
+
+    // Row of poles for wrapping cars around.
+    for (int k = 0; k < 6; k++) {
+        addBox(V3(30 + 20 * k, 4, 38), V3(0.22, 4, 0.22), 0, 0, 0, kPoleWhite);
+        boxes.back().solid = false;
+        poles.push_back({30.0 + 20 * k, 38, -1, 8, 0.24});
+    }
+
+    // Washboard of triangular bumps (z = -70) for suspension testing.
+    for (int k = 0; k < 24; k++) addBox(V3(10 + 2.6 * k, -0.19, -70), V3(0.22, 0.22, 4), 0, M_PI / 4, 0, kConcrete);
+
+    // Banked side ramp: drive up it on two wheels.
+    addBox(V3(60, 0, 75), V3(20, 1.2, 4), 0, 0, 0.42, kRampYellow);
+
+    // The shop, beside the spawn.
+    addStation(V3(-10, 0, 24), 0, "PROVING GROUND SHOP");
+
+    bakeTerrain();
+    scatterScenery(777);
+}
+
+// Bushes round the groves and boulders out in the meadows (the proving ground's hills).
+void World::scatterScenery(uint32_t seed) {
+    uint32_t rng = seed;
+    auto rnd = [&]() {
+        rng ^= rng << 13;
+        rng ^= rng >> 17;
+        rng ^= rng << 5;
+        return (rng & 0xFFFFFF) / double(0x1000000);
+    };
+    auto clearOfTrees = [&](double x, double z, double d) {
+        for (const Tree& t : trees)
+            if ((t.base.x - x) * (t.base.x - x) + (t.base.z - z) * (t.base.z - z) < d * d) return false;
+        return true;
+    };
+    auto offRoad = [&](double x, double z, double margin) {
+        RoadInfo r = roadAt(x, z);
+        return !r.near && std::sqrt(x * x + z * z) > kPadRadius + margin && courseOutside(x, z) > margin;
+    };
+    // A pond out in a meadow: the first open spot far from the pad, the roads and the trees.
+    for (double pz = 380; pz > -400 && waters.empty(); pz -= 40)
+        for (double px = -380; px < 400 && waters.empty(); px += 40) {
+            if (std::hypot(px, pz) < 260 || !clearOfTrees(px, pz, 60)) continue;
+            bool clear = true;
+            for (double a = 0; a < 2 * M_PI && clear; a += 0.5)
+                for (double rr : {0.0, 30.0, 60.0}) clear &= !roadAt(px + rr * std::cos(a), pz + rr * std::sin(a)).near;
+            if (clear) addLake(px, pz, 26, 1.6);
+        }
+    auto dry = [&](double x, double z, double margin) {
+        for (const Water& wt : waters)
+            if (std::hypot(x - wt.x, z - wt.z) < wt.r + margin) return false;
+        return true;
+    };
+    // Bushes: most at the edges of the woods, a few out in the open.
+    for (int attempt = 0; attempt < 30000 && bushes.size() < 1800; attempt++) {
+        double x = (rnd() * 2 - 1) * 510, z = (rnd() * 2 - 1) * 510;
+        if (!offRoad(x, z, 12) || !dry(x, z, 2)) continue;
+        bool nearWood = !clearOfTrees(x, z, 14);
+        if (rnd() > (nearWood ? 0.8 : 0.08)) continue;
+        bushes.push_back({V3(x, height(x, z), z), 0.5 + rnd() * 0.9, (float)(0.8 + rnd() * 0.4)});
+    }
+    // Boulders in the meadows, clear of the trees (and the paths to them) and the roads.
+    for (int attempt = 0; attempt < 20000 && rocks.size() < 140; attempt++) {
+        double x = (rnd() * 2 - 1) * 500, z = (rnd() * 2 - 1) * 500;
+        if (!offRoad(x, z, 45) || !clearOfTrees(x, z, 22) || !dry(x, z, 8)) continue;
+        RoadInfo r = roadAt(x, z);
+        if (std::fabs(r.lateral) < 18 && r.lateral != 0) continue;
+        double rr = 0.5 + rnd() * rnd() * 1.6, flat = 0.55 + 0.4 * rnd();
+        addRock(x, z, V3(rr, rr * flat, rr * (0.75 + 0.3 * rnd())), rr * flat * (0.5 + 0.6 * rnd()), rng, (float)(0.85 + rnd() * 0.3));
+    }
+}
+
+double World::baseHeight(double x, double z) const {
+    double h = 0;
+    double r = std::sqrt(x * x + z * z);
+    if (r > kPadRadius) {
+        double t = smoothstep(kPadRadius, kPadRadius + 100, r);
+        double hills = 9.0 * std::sin(x * 0.012 + 0.7) * std::cos(z * 0.010 - 0.3) +
+                       4.0 * std::sin(x * 0.027 + z * 0.021 + 1.3) +
+                       1.6 * std::sin(x * 0.061 - z * 0.047) * std::cos(z * 0.053 + x * 0.013);
+        h = t * (hills + 6.0 * t);
+        // Flat under the surface course (and its run-up).
+        if (map == MAP_PROVING_GROUND) h *= smoothstep(0, 18, courseOutside(x, z) + 6);
+    }
+    // Rim mountains keep you on the map.
+    double ex = std::max(0.0, std::fabs(x) - 520), ez = std::max(0.0, std::fabs(z) - 520);
+    h += (ex * ex + ez * ez) * 0.02;
+    return h;
+}
+
+void World::bakeTerrain() {
+    hN = (int)(2 * kHalfSize / kRes) + 1;
+    hgrid.resize(hN * hN);
+    for (int i = 0; i < hN; i++)
+        for (int j = 0; j < hN; j++) hgrid[i * hN + j] = (float)baseHeight(-kHalfSize + i * kRes, -kHalfSize + j * kRes);
+
+    // Roads: a loop through the hills and a link road from the north side of the pad.
+    const std::vector<V3> loopPts = {
+        {300, 0, 0},     {330, 0, 150},   {230, 0, 290},   {60, 0, 340},    {-120, 0, 300},
+        {-280, 0, 330},  {-380, 0, 180},  {-330, 0, 0},    {-380, 0, -170}, {-260, 0, -320},
+        {-60, 0, -300},  {100, 0, -360},  {280, 0, -280},  {360, 0, -130},
+    };
+    const std::vector<V3> linkPts = {{0, 0, 90}, {0, 0, 180}, {25, 0, 265}, {60, 0, 340}};
+    std::vector<V3> loop = splinePoints(loopPts, true), link = splinePoints(linkPts, false);
+
+    // Road height follows the hills, smoothed so grades stay drivable.
+    auto profile = [&](std::vector<V3>& road, bool closed, int window) {
+        int n = (int)road.size();
+        std::vector<double> raw(n);
+        for (int i = 0; i < n; i++) raw[i] = baseHeight(road[i].x, road[i].z);
+        for (int i = 0; i < n; i++) {
+            double sum = 0;
+            int cnt = 0;
+            for (int k = -window; k <= window; k++) {
+                int idx = i + k;
+                if (closed) idx = ((idx % n) + n) % n;
+                else if (idx < 0 || idx >= n) continue;
+                sum += raw[idx];
+                cnt++;
+            }
+            road[i].y = sum / cnt;
+        }
+    };
+    profile(loop, true, 30);
+    profile(link, false, 30);
+    // The link road starts flush with the pad and meets the loop at the loop's height.
+    double joinY = loop[0].y, best = 1e18;
+    for (const V3& p : loop) {
+        double d = len(V3(p.x - link.back().x, 0, p.z - link.back().z));
+        if (d < best) {
+            best = d;
+            joinY = p.y;
+        }
+    }
+    for (size_t i = 0; i < link.size(); i++) {
+        V3& p = link[i];
+        p.y *= smoothstep(kPadRadius, kPadRadius + 50, std::sqrt(p.x * p.x + p.z * p.z));
+        double tEnd = smoothstep(link.size() - 25.0, link.size() - 1.0, (double)i);
+        p.y += (joinY - p.y) * tEnd;
+    }
+
+    // Carve: for each cell near a road keep the closest road sample, then blend.
+    const double flat = kRoadHalfWidth + 2.0, blend = kRoadHalfWidth + 17.0;
+    std::vector<float> dist(hN * hN, 1e9f), roadY(hN * hN, 0);
+    roadLat.assign(hN * hN, 0);
+    roadAlong.assign(hN * hN, 0);
+    roadNear.assign(hN * hN, 0);
+    auto carve = [&](const std::vector<V3>& road, bool closed) {
+        int n = (int)road.size();
+        double along = 0;
+        for (int s = 0; s < (closed ? n : n - 1); s++) {
+            const V3& a = road[s];
+            const V3& b = road[(s + 1) % n];
+            V3 d(b.x - a.x, 0, b.z - a.z);
+            double L = len(d);
+            if (L < 1e-6) continue;
+            V3 dir = d / L;
+            int i0 = std::max(0, (int)((std::min(a.x, b.x) - blend + kHalfSize) / kRes));
+            int i1 = std::min(hN - 1, (int)((std::max(a.x, b.x) + blend + kHalfSize) / kRes) + 1);
+            int j0 = std::max(0, (int)((std::min(a.z, b.z) - blend + kHalfSize) / kRes));
+            int j1 = std::min(hN - 1, (int)((std::max(a.z, b.z) + blend + kHalfSize) / kRes) + 1);
+            for (int i = i0; i <= i1; i++)
+                for (int j = j0; j <= j1; j++) {
+                    double x = -kHalfSize + i * kRes, z = -kHalfSize + j * kRes;
+                    double t = clampd(((x - a.x) * dir.x + (z - a.z) * dir.z) / L, 0, 1);
+                    double cx = a.x + d.x * t, cz = a.z + d.z * t;
+                    double dd = std::sqrt((x - cx) * (x - cx) + (z - cz) * (z - cz));
+                    int id = i * hN + j;
+                    if (dd >= dist[id]) continue;
+                    dist[id] = (float)dd;
+                    roadY[id] = (float)(a.y + (b.y - a.y) * t);
+                    roadLat[id] = (float)(dir.x * (z - a.z) - dir.z * (x - a.x));
+                    roadAlong[id] = (float)(along + L * t);
+                }
+            along += L;
+        }
+    };
+    carve(loop, true);
+    carve(link, false);
+    loopRoad = loop;
+    loopAlong.resize(loop.size());
+    loopLength = 0;
+    for (size_t i = 0; i < loop.size(); i++) {
+        loopAlong[i] = loopLength;
+        const V3& a = loop[i];
+        const V3& b = loop[(i + 1) % loop.size()];
+        loopLength += len(V3(b.x - a.x, 0, b.z - a.z));
+    }
+
+    // Trees in groves on the hills: clear of the pad, the roads and steep slopes.
+    uint32_t rng = 12345;
+    auto rnd = [&]() {
+        rng ^= rng << 13;
+        rng ^= rng >> 17;
+        rng ^= rng << 5;
+        return (rng & 0xFFFFFF) / double(0x1000000);
+    };
+    auto grove = [](double x, double z) {  // smooth 0..1 field deciding where woods grow
+        return 0.5 + 0.25 * std::sin(x * 0.021 + 1.7) * std::cos(z * 0.017 - 0.4) + 0.25 * std::sin((x + z) * 0.013);
+    };
+    for (int attempt = 0; attempt < 20000 && trees.size() < 650; attempt++) {
+        double x = (rnd() * 2 - 1) * 500, z = (rnd() * 2 - 1) * 500;
+        if (std::sqrt(x * x + z * z) < kPadRadius + 25 || courseOutside(x, z) < 20) continue;
+        if (rnd() > grove(x, z) * grove(x, z) * 1.3) continue;
+        int i = (int)std::lround((x + kHalfSize) / kRes), j = (int)std::lround((z + kHalfSize) / kRes);
+        if (dist[i * hN + j] < kRoadHalfWidth + 9) continue;
+        double hx = gridAt(std::min(i + 1, hN - 1), j) - gridAt(std::max(i - 1, 0), j);
+        double hz = gridAt(i, std::min(j + 1, hN - 1)) - gridAt(i, std::max(j - 1, 0));
+        if (std::sqrt(hx * hx + hz * hz) / (2 * kRes) > 0.55) continue;
+        Tree t;
+        t.base = V3(x, gridAt(i, j) - 0.2, z);
+        t.height = 6 + rnd() * 7;
+        t.radius = t.height * (0.22 + rnd() * 0.08);
+        t.tint = (float)(0.8 + rnd() * 0.4);
+        trees.push_back(t);
+        // Trunk collider.
+        double hh = t.height * 0.3;
+        poles.push_back({t.base.x, t.base.z, t.base.y - 0.5, t.base.y + 2 * hh, 0.22});
+    }
+    for (int id = 0; id < hN * hN; id++) {
+        if (dist[id] >= blend) continue;
+        double w = dist[id] < flat ? 1.0 : smoothstep(blend, flat, dist[id]);
+        hgrid[id] = (float)(hgrid[id] + (roadY[id] - hgrid[id]) * w);
+        roadNear[id] = dist[id] < kRoadHalfWidth + 4.0;
+    }
+}
+
+double World::height(double x, double z) const {
+    if (!std::isfinite(x) || !std::isfinite(z)) return 0;  // (an exploded vehicle: the game resets it after the frame)
+    double fx = (x + kHalfSize) / kRes, fz = (z + kHalfSize) / kRes;
+    fx = clampd(fx, 0, hN - 1.001);
+    fz = clampd(fz, 0, hN - 1.001);
+    int i = (int)fx, j = (int)fz;
+    double tx = fx - i, tz = fz - j;
+    double a = gridAt(i, j), b = gridAt(i + 1, j), c = gridAt(i, j + 1), d = gridAt(i + 1, j + 1);
+    return (a * (1 - tx) + b * tx) * (1 - tz) + (c * (1 - tx) + d * tx) * tz;
+}
+
+RoadInfo World::roadAt(double x, double z) const {
+    if (!std::isfinite(x) || !std::isfinite(z)) return RoadInfo();
+    int i = (int)std::lround((x + kHalfSize) / kRes), j = (int)std::lround((z + kHalfSize) / kRes);
+    RoadInfo r;
+    if (i < 0 || j < 0 || i >= hN || j >= hN) return r;
+    int id = i * hN + j;
+    r.paint = paint.empty() ? (uint8_t)(roadNear[id] ? PAINT_ROAD : PAINT_NONE) : paint[id];
+    r.near = roadNear[id] || r.paint != PAINT_NONE;
+    if (paint.empty()) {  // the proving ground: its surface course is painted on
+        const int c = courseSurface(x, z);
+        static const uint8_t look[SURF_COUNT] = {PAINT_PAD, PAINT_NONE, PAINT_TRAIL, PAINT_ROCK, PAINT_SCREE, PAINT_GRAVEL,
+                                                 PAINT_SAND, PAINT_MUD, PAINT_SNOW, PAINT_ICE, PAINT_WET};
+        if (c >= 0) r.paint = look[c], r.near = false;
+        else if (courseOutside(x, z) < 4) r.paint = PAINT_PAD, r.near = false;
+    }
+    r.lateral = roadLat[id];
+    r.along = roadAlong[id];
+    return r;
+}
+
+Surface World::surfaceAt(double x, double z) const {
+    if (!std::isfinite(x) || !std::isfinite(z)) return SURF_PAVED;
+    if (!surf.empty()) {
+        int i = (int)std::lround((x + kHalfSize) / kRes), j = (int)std::lround((z + kHalfSize) / kRes);
+        if (i < 0 || j < 0 || i >= hN || j >= hN) return SURF_ROCK;
+        return (Surface)surf[i * hN + j];
+    }
+    const int course = courseSurface(x, z);
+    if (course >= 0) return (Surface)course;
+    if (x * x + z * z < kPadRadius * kPadRadius || courseOutside(x, z) < 4) return SURF_PAVED;
+    RoadInfo r = roadAt(x, z);
+    return r.near && std::fabs(r.lateral) < kRoadHalfWidth + 1.5 ? SURF_PAVED : SURF_GRASS;
+}
+
+float World::grassDensity(double x, double z) const {
+    if (surfaceAt(x, z) != SURF_GRASS || height(x, z) < waterLevel(x, z) + 0.25) return 0;
+    RoadInfo r = roadAt(x, z);
+    if (r.near && r.paint != PAINT_NONE) return 0;
+    double h = height(x, z);
+    float d = (float)(0.35 + 0.65 * fbmNoise(x * 0.03 + 11.0, z * 0.03 - 4.0, 3));
+    if (map == MAP_PROVING_GROUND) d *= (float)smoothstep(kPadRadius + 2, kPadRadius + 12, std::sqrt(x * x + z * z));
+    return d * (float)(1 - smoothstep(120, 190, h));  // thins out up the mountains
+}
+
+V3 World::normal(double x, double z) const {
+    if (map == MAP_PROVING_GROUND && x * x + z * z < (kPadRadius - 5) * (kPadRadius - 5)) return V3(0, 1, 0);
+    const double e = 0.5;
+    double dx = (height(x + e, z) - height(x - e, z)) / (2 * e);
+    double dz = (height(x, z + e) - height(x, z - e)) / (2 * e);
+    return norm(V3(-dx, 1, -dz));
+}
+
+bool World::contact(const V3& c, double R, const V3* axis, double hw, Contact& out) const {
+    if (!std::isfinite(c.x + c.y + c.z)) return false;
+    // Support distance of the shape along -n (how far it reaches toward the surface).
+    auto support = [&](const V3& n) {
+        if (!axis) return R;
+        double na = dot(n, *axis);
+        return R * std::sqrt(std::max(0.0, 1 - na * na)) + hw * std::fabs(na);
+    };
+    bool hit = false;
+    out.pen = 0;
+
+    // Terrain.
+    double h = height(c.x, c.z);
+    if (c.y - h < R + hw + 0.5) {
+        V3 n = normal(c.x, c.z);
+        double dist = (c.y - h) * n.y;
+        double pen = support(n) - dist;
+        if (pen > out.pen) {
+            out.pen = pen;
+            out.n = n;
+            out.surface = surfaceAt(c.x, c.z);
+            hit = true;
+        }
+    }
+
+    // Boxes.
+    const double reach = R + hw;
+    // Poles and trunks (vertical cylinders).
+    for (int pi : poleGrid[cellOf(c.x) * gridN + cellOf(c.z)]) {
+        const Pole& p = poles[pi];
+        if (c.y < p.y0 - reach || c.y > p.y1 + reach) continue;
+        double hx = c.x - p.x, hz = c.z - p.z, d = std::sqrt(hx * hx + hz * hz);
+        if (d > p.r + reach) continue;
+        V3 n = d > 1e-9 ? V3(hx / d, 0, hz / d) : V3(1, 0, 0);
+        double pen = support(n) - (d - p.r);
+        if (pen > out.pen) {
+            out.pen = pen;
+            out.n = n;
+            out.surface = SURF_PAVED;
+            hit = true;
+        }
+    }
+
+    for (int bi : grid[cellOf(c.x) * gridN + cellOf(c.z)]) {
+        const Box& b = boxes[bi];
+        if (!b.solid) continue;
+        V3 d = c - b.c;
+        if (dot(d, d) > (b.bound + reach) * (b.bound + reach)) continue;
+        double l[3] = {dot(d, b.ax[0]), dot(d, b.ax[1]), dot(d, b.ax[2])};
+        double he[3] = {b.h.x, b.h.y, b.h.z};
+        bool inside = true;
+        V3 q = b.c;
+        for (int i = 0; i < 3; i++) {
+            double ci = clampd(l[i], -he[i], he[i]);
+            if (ci != l[i]) inside = false;
+            q += b.ax[i] * ci;
+        }
+        V3 n;
+        double dist;
+        if (!inside) {
+            V3 diff = c - q;
+            dist = len(diff);
+            if (dist > reach) continue;
+            n = diff / dist;
+        } else {
+            // Center is inside: push out through the nearest face.
+            int best = 0;
+            double bestDepth = 1e9;
+            for (int i = 0; i < 3; i++) {
+                double depth = he[i] - std::fabs(l[i]);
+                if (depth < bestDepth) {
+                    bestDepth = depth;
+                    best = i;
+                }
+            }
+            n = b.ax[best] * (l[best] >= 0 ? 1.0 : -1.0);
+            dist = -bestDepth;
+        }
+        double pen = support(n) - dist;
+        if (pen > out.pen) {
+            out.pen = pen;
+            out.n = n;
+            out.surface = b.rock ? SURF_ROCK : SURF_PAVED;
+            hit = true;
+        }
+    }
+
+    // Boulders (spheres) and logs (capsules).
+    if (!rockGrid.empty()) {
+        const int cell = rockCellOf(c.x) * rockN + rockCellOf(c.z);
+        for (int ri : rockGrid[cell]) {
+            const Rock& k = rocks[ri];
+            V3 d = c - k.c;
+            double dd = dot(d, d), lim = k.r + reach;
+            if (dd > lim * lim) continue;
+            // Farthest face plane: the true distance is never less, so it rejects cheaply;
+            // inside the rock it's the way out.
+            double far = -1e9;
+            int fi = 0;
+            for (size_t f = 0; f < k.f.size(); f++) {
+                double s = dot(k.fn[f], c) - k.fd[f];
+                if (s > far) far = s, fi = (int)f;
+            }
+            if (far > reach) continue;
+            V3 n;
+            double dist;
+            if (far <= 0) {
+                n = k.fn[fi];
+                dist = far;
+            } else {  // outside: the nearest point is on a face it can see
+                double best = 1e18;
+                V3 q;
+                for (size_t f = 0; f < k.f.size(); f++) {
+                    if (dot(k.fn[f], c) - k.fd[f] <= 0) continue;
+                    V3 t = closestOnTriangle(c, k.v[k.f[f][0]], k.v[k.f[f][1]], k.v[k.f[f][2]]);
+                    double e = dot(c - t, c - t);
+                    if (e < best) best = e, q = t;
+                }
+                dist = std::sqrt(best);
+                if (dist > reach) continue;
+                n = dist > 1e-9 ? (c - q) / dist : k.fn[fi];
+            }
+            double pen = support(n) - dist;
+            if (pen > out.pen) {
+                out.pen = pen;
+                out.n = n;
+                out.surface = SURF_ROCK;
+                hit = true;
+            }
+        }
+        for (int li : logGrid[cell]) {
+            const Log& g = logs[li];
+            V3 ab = g.b - g.a;
+            double t = clampd(dot(c - g.a, ab) / std::max(dot(ab, ab), 1e-9), 0, 1);
+            V3 d = c - (g.a + ab * t);
+            double dist = len(d);
+            if (dist > g.r + reach) continue;
+            V3 n = dist > 1e-9 ? d / dist : V3(0, 1, 0);
+            double pen = support(n) - (dist - g.r);
+            if (pen > out.pen) {
+                out.pen = pen;
+                out.n = n;
+                out.surface = SURF_GRASS;  // wet bark: slippery
+                hit = true;
+            }
+        }
+    }
+    return hit;
+}
+
+double World::clearY(double x, double z) const {
+    double y = height(x, z);
+    Contact ct;
+    for (int i = 0; i < 120; i++) {
+        if (!contact(V3(x, y + 1.0, z), 1.0, nullptr, 0, ct)) return y;
+        y += 0.25;
+    }
+    return y;
+}
+
+void World::addStation(V3 p, double yaw, const char* name) {
+    Station st;
+    st.p = p;
+    st.yaw = yaw;
+    st.name = name;
+    stations.push_back(st);
+    Prop pr;
+    pr.kind = PROP_GARAGE;
+    pr.a = p;
+    pr.yaw = yaw;
+    fixtures.push_back(pr);
+    // Steel posts at the shed's four corners, 10 m long (drive-through) and 7.4 m wide.
+    const V3 fwd(std::cos(yaw), 0, -std::sin(yaw)), side(std::sin(yaw), 0, std::cos(yaw));
+    for (int a = -1; a <= 1; a += 2)
+        for (int b = -1; b <= 1; b += 2) {
+            const V3 q = p + fwd * (5.0 * a) + side * (3.7 * b);
+            poles.push_back({q.x, q.z, p.y - 0.5, p.y + 4.6, 0.11});
+        }
+}
+
+void World::addBox(V3 c, V3 h, double yaw, double pitch, double roll, V3 col) {
+    Box b;
+    b.c = c;
+    b.h = h;
+    V3 ax[3] = {V3(1, 0, 0), V3(0, 1, 0), V3(0, 0, 1)};
+    for (V3& a : ax) {
+        a = rotateAxis(a, V3(1, 0, 0), roll);
+        a = rotateAxis(a, V3(0, 0, 1), pitch);
+        a = rotateAxis(a, V3(0, 1, 0), yaw);
+    }
+    for (int i = 0; i < 3; i++) b.ax[i] = ax[i];
+    b.col[0] = (float)col.x;
+    b.col[1] = (float)col.y;
+    b.col[2] = (float)col.z;
+    b.bound = len(h);
+    boxes.push_back(b);
+}
+
+void World::addRamp(V3 from, V3 to, double width, double thick, V3 col) {
+    // A box whose top face runs along the line from -> to.
+    V3 d = to - from;
+    double horiz = std::sqrt(d.x * d.x + d.z * d.z);
+    double yaw = std::atan2(-d.z, d.x);
+    double pitch = std::atan2(d.y, horiz);
+    double L = len(d);
+    V3 up = rotateAxis(rotateAxis(V3(0, 1, 0), V3(0, 0, 1), pitch), V3(0, 1, 0), yaw);
+    V3 c = (from + to) * 0.5 - up * (thick * 0.5);
+    addBox(c, V3(L * 0.5, thick * 0.5, width * 0.5), yaw, pitch, 0, col);
+}
+
+int World::rockCellOf(double v) const {
+    int i = (int)((v + kHalfSize) / kRockCell);
+    return std::min(std::max(i, 0), rockN - 1);
+}
+
+int World::cellOf(double v) const {
+    int i = (int)((v + kHalfSize) / kCell);
+    return std::min(std::max(i, 0), gridN - 1);
+}
+
+void World::buildGrid() {
+    static std::atomic<uint64_t> stamps{0};
+    stamp = ++stamps;
+    gridN = (int)(2 * kHalfSize / kCell);
+    grid.assign(gridN * gridN, {});
+    for (int bi = 0; bi < (int)boxes.size(); bi++) {
+        const Box& b = boxes[bi];
+        double r = b.bound + 2.0;
+        for (int ix = cellOf(b.c.x - r); ix <= cellOf(b.c.x + r); ix++)
+            for (int iz = cellOf(b.c.z - r); iz <= cellOf(b.c.z + r); iz++) grid[ix * gridN + iz].push_back(bi);
+    }
+    poleGrid.assign(gridN * gridN, {});
+    for (int pi = 0; pi < (int)poles.size(); pi++) {
+        const Pole& p = poles[pi];
+        double r = p.r + 2.0;
+        for (int ix = cellOf(p.x - r); ix <= cellOf(p.x + r); ix++)
+            for (int iz = cellOf(p.z - r); iz <= cellOf(p.z + r); iz++) poleGrid[ix * gridN + iz].push_back(pi);
+    }
+    // Rocks and logs: a finer grid (a boulder field has a lot of them).
+    rockN = (int)(2 * kHalfSize / kRockCell);
+    rockGrid.assign(rockN * rockN, {});
+    logGrid.assign(rockN * rockN, {});
+    const double margin = 1.0;  // wheel radius plus half width
+    for (int ri = 0; ri < (int)rocks.size(); ri++) {
+        const Rock& k = rocks[ri];
+        double r = k.r + margin;
+        for (int ix = rockCellOf(k.c.x - r); ix <= rockCellOf(k.c.x + r); ix++)
+            for (int iz = rockCellOf(k.c.z - r); iz <= rockCellOf(k.c.z + r); iz++) rockGrid[ix * rockN + iz].push_back(ri);
+    }
+    for (int li = 0; li < (int)logs.size(); li++) {
+        const Log& g = logs[li];
+        double r = g.r + margin;
+        for (int ix = rockCellOf(std::min(g.a.x, g.b.x) - r); ix <= rockCellOf(std::max(g.a.x, g.b.x) + r); ix++)
+            for (int iz = rockCellOf(std::min(g.a.z, g.b.z) - r); iz <= rockCellOf(std::max(g.a.z, g.b.z) + r); iz++)
+                logGrid[ix * rockN + iz].push_back(li);
+    }
+}
+
+void World::polesNear(const V3& mn, const V3& mx, std::vector<int>& out) const {
+    for (int ix = cellOf(mn.x); ix <= cellOf(mx.x); ix++)
+        for (int iz = cellOf(mn.z); iz <= cellOf(mx.z); iz++)
+            for (int pi : poleGrid[ix * gridN + iz]) {
+                const Pole& p = poles[pi];
+                if (p.x + p.r < mn.x || p.x - p.r > mx.x || p.z + p.r < mn.z || p.z - p.r > mx.z) continue;
+                if (std::find(out.begin(), out.end(), pi) == out.end()) out.push_back(pi);
+            }
+}
+
+// ---- Editing ---------------------------------------------------------------------------
+
+int World::cellIndex(double x, double z) const {
+    if (!std::isfinite(x) || !std::isfinite(z)) return -1;
+    const int i = (int)std::lround((x + kHalfSize) / kRes), j = (int)std::lround((z + kHalfSize) / kRes);
+    if (i < 0 || j < 0 || i >= hN || j >= hN) return -1;
+    return i * hN + j;
+}
+
+V3 World::cellCenter(int id) const {
+    const int i = id / hN, j = id % hN;
+    return V3(i * kRes - kHalfSize, hgrid[id], j * kRes - kHalfSize);
+}
+
+uint8_t World::cellSurface(int id) const {
+    if (!surf.empty()) return surf[id];
+    const V3 c = cellCenter(id);
+    return (uint8_t)surfaceAt(c.x, c.z);
+}
+
+uint8_t World::cellPaint(int id) const {
+    if (!paint.empty()) return paint[id];
+    const V3 c = cellCenter(id);
+    return roadAt(c.x, c.z).paint;
+}
+
+void World::setCellSurface(int id, uint8_t surface, uint8_t paintLook) {
+    if (surf.empty() || paint.empty()) {
+        // This map works its surfaces out as it goes (the proving ground): bake them all
+        // first, so an edit is one more cell like the rest.
+        std::vector<uint8_t> s(hN * hN), p(hN * hN);
+        for (int k = 0; k < hN * hN; k++) s[k] = cellSurface(k), p[k] = cellPaint(k);
+        surf.swap(s);
+        paint.swap(p);
+    }
+    surf[id] = surface;
+    paint[id] = paintLook;
+}
+
+void World::setCellWater(int id, float level) {
+    if (waterY.empty()) {
+        waterY.assign(hN * hN, -1e9f);
+        flowX.assign(hN * hN, 0.0f);
+        flowZ.assign(hN * hN, 0.0f);
+        // (Lakes defined as discs move onto the grid with it.)
+        for (int k = 0; k < hN * hN; k++) {
+            const V3 c = cellCenter(k);
+            for (const Water& wt : waters)
+                if ((c.x - wt.x) * (c.x - wt.x) + (c.z - wt.z) * (c.z - wt.z) < wt.r * wt.r) waterY[k] = (float)wt.y;
+        }
+    }
+    waterY[id] = level;
+}
+
+void World::addTree(double x, double z, double treeHeight, int kind, float tint) {
+    Tree t;
+    t.base = V3(x, height(x, z) - 0.2, z);
+    t.height = treeHeight;
+    t.radius = treeHeight * (kind == 1 ? 0.32 : 0.25);
+    t.tint = tint;
+    t.kind = kind;
+    trees.push_back(t);
+    poles.push_back({x, z, t.base.y - 0.5, t.base.y + treeHeight * 0.6, kind == 1 ? 0.3 : 0.22});
+}
+
+void World::addLog(V3 a, V3 b, double r) { logs.push_back({a, b, r}); }
+
+std::string World::removeNear(double x, double z, double r) {
+    double best = r;
+    int kind = -1, idx = -1;
+    auto consider = [&](double d, int k, int i) {
+        if (d < best) best = d, kind = k, idx = i;
+    };
+    for (int i = 0; i < (int)rocks.size(); i++) consider(std::max(0.0, std::hypot(rocks[i].c.x - x, rocks[i].c.z - z) - rocks[i].r * 0.5), 0, i);
+    for (int i = 0; i < (int)trees.size(); i++) consider(std::hypot(trees[i].base.x - x, trees[i].base.z - z), 1, i);
+    for (int i = 0; i < (int)logs.size(); i++) {
+        const V3 m = (logs[i].a + logs[i].b) * 0.5;
+        consider(std::hypot(m.x - x, m.z - z), 2, i);
+    }
+    for (int i = 0; i < (int)boxes.size(); i++)
+        if (!boxes[i].hidden) consider(std::hypot(boxes[i].c.x - x, boxes[i].c.z - z), 3, i);
+    for (int i = 0; i < (int)fixtures.size(); i++) consider(std::hypot(fixtures[i].a.x - x, fixtures[i].a.z - z), 4, i);
+    switch (kind) {
+        case 0: rocks.erase(rocks.begin() + idx); return "ROCK";
+        case 1: {
+            const Tree t = trees[idx];
+            trees.erase(trees.begin() + idx);
+            for (size_t k = 0; k < poles.size(); k++)
+                if (std::hypot(poles[k].x - t.base.x, poles[k].z - t.base.z) < 0.05) {
+                    poles.erase(poles.begin() + k);
+                    break;
+                }
+            return "TREE";
+        }
+        case 2: logs.erase(logs.begin() + idx); return "LOG";
+        case 3: boxes.erase(boxes.begin() + idx); return "BLOCK";
+        case 4: fixtures.erase(fixtures.begin() + idx); return "PROP";
+        default: return "";
+    }
+}

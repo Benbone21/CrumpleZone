@@ -1,0 +1,237 @@
+# Agent guide: Crumple Zone
+
+A soft-body driving sandbox for Linux in C++17 and OpenGL 3.3, in the spirit of BeamNG.
+Read `README.md` first. It covers controls, vehicles, damage and how a vehicle is built.
+This file covers how to work on the code.
+
+## Build, run, test
+
+```bash
+make                                   # builds ./crumplezone (needs g++ and the libsdl2-2.0-0 runtime; no -dev packages)
+./crumplezone --player 3               # start in vehicle 3 (0 Civic, 1 Jesko, 2 Bronco, 3 4Runner)
+make build/run_tests
+nice -n 15 ./build/run_tests --jobs 6  # every scenario in parallel, about 60 s; writes build/test_report.html
+./build/run_tests -v damage/           # one group, verbose (filter = substring of the scenario name)
+./build/run_tests --update-baseline    # after an intended behavior change: re-record tests/baseline.txt
+```
+
+- Every change must keep all scenarios passing (currently 161). A failing range means the
+  physics drifted from real-world numbers. Fix the physics, don't just widen the range,
+  unless the range itself was wrong. If you widen one, say why in a comment.
+- Don't hand-edit `tests/baseline.txt`. Drift warnings (>10% from it) are informational.
+- The user plays other games on this machine. Run the test suite with `nice`. Launch the
+  game only when you need to, and close it when you're done.
+
+### Screenshots without a person at the keyboard
+
+```bash
+./crumplezone --no-audio --size 900x560 --player 3 --orbit YAW,PITCH,DIST \
+  --shot-prefix /tmp/shot --shot-frames 90   # writes /tmp/shot_0090.ppm, then exits
+convert /tmp/shot_0090.ppm shot.png
+```
+
+Yaw 0 is a side view. Yaw -90 is from the front, and 90 is from the back.
+Other flags: `--garage`, `--mods E,S,T` (fit mod options), `--scenario NAME` (play a test visually),
+`--time H` (hold the clock, e.g. `--time 23` for night), `--lamps 0-3` (headlights: auto, low, high, off).
+Without `--time`, captures start at 10:00 with the clock running.
+
+## Source layout
+
+| File | What's in it |
+| --- | --- |
+| `src/vehicles.h/.cpp` | `VehicleSpec` and the catalog of the four real vehicles. Each spec is a text side-profile lattice, dimensions, mass items, engine, gearbox, suspension, tires, aero and looks |
+| `src/mods.h/.cpp` | Garage mods (engine, suspension, transmission). Each option is a function that edits a copy of the spec. `tunedSpec()` caches the result. The garage is saved to `~/.config/crumplezone/garage.txt` |
+| `src/carbuild.cpp` | Turns a spec into nodes and beams: body lattice, frame, engine on mounts, suspension linkages, bolt-on panels with pins, and the stability pass. Beam material table `kSpec` is at the top |
+| `src/softbody.h/.cpp` | The 2 kHz simulation: beams (yield, work hardening, breaking), pins, chassis shape-matching frame, tires, brakes, diffs, gearbox and auto-shift, aero, damage stats, glass |
+| `src/carvisual.cpp` | Builds the visible car: a smooth skin from the lattice, plus parts (engine, suspension, interior) and `buildExtras()` (wing, flares, armor bumpers, snorkel, roof basket...) |
+| `src/render.cpp` | GL renderer. The body shader draws lamps, grilles, door seams and two-tone trim from lattice coordinates. Wheel meshes come in a style per `WheelStyle`. The pipeline is HDR: the scene renders into an RGBA16F target (MSAA), then `postProcess()` runs SAO, the bloom chain and the ACES composite. There are two shadow cascades. Sky, clouds and fog live in `kCommonFS`; everything outputs linear HDR. Scenery-only terrain (crags and the backdrop range) comes from `sceneryHeight()` |
+| `src/main.cpp` | Window, input, camera, HUD, garage UI, command-line flags |
+| `src/music.h/.cpp` | Generative background music, one style per map (`Style`, indexed by `World::map`; later maps reuse them in turn). Seeded progressions, motif-based melodies, sections of 30–90 s; band-limited synths, Karplus-Strong plucks, an FDN reverb. `Audio` mixes it in the callback; volume is `Settings::music` x master. Offline review: `build/review/music/musictest.cpp` (WAVs, spectrograms, `layers`, `trace`, `soak`) |
+| `src/daylight.h/.cpp` | Time of day: `computeDaylight(hours)` gives the sun, moon and key-light directions, light and sky colors, exposure and the star sphere's turn; `kKeys` holds the sky keyframes by sun height. The game runs the clock (`dayHours` in main.cpp; setting TIME OF DAY: the cycle at a day length, or a fixed time; `--time H` holds it) and hands `Renderer::daylight` the result; in multiplayer the host's clock goes out as `MSG_CLOCK` |
+| `src/lights.h/.cpp` | Vehicle lamps: where each model's head and tail lamps sit (from the shell lines the body shader uses), the body node each rides on, and whether it survived (`carLamps`). The renderer turns the nearest 8 cars' headlamps into spot lights (`lampLight()` in `kCommonFS`, evaluated in every lit shader) and feeds the body shader `uLampOn/uLampOk/uReverse`. Shift+L is the player's switch (`LampMode`) |
+| `src/menu.h/.cpp` | Esc pause menu and `Settings` (units, volume, FOV, graphics, display), saved to `~/.config/crumplezone/settings.txt`. Offline tests use `--menu 0/1` (opens the menu in screenshots), `--quality 0-3` and `--mph` |
+| `src/hudkit.h` | HUD drawing helpers shared by the HUD and the menus |
+| `src/world.cpp` | Maps (`World(MAP_...)`): the proving ground (pad, crash wall at x = 114, poles, ramps, loop road, trees, the surface course at x -118..-48, z 72..126), shared collision (terrain, boxes, poles, boulders = spheres, logs = capsules), the surface table `surfaceInfo()` (grip, bite, keep, rolling, sink, dust color) |
+| `src/freeway.cpp` | The freeway map (`World::buildFreeway`): everything repeats every `World::wrapPeriod` (400 m) along x; `Sim::wrapAround` (run by `advance`) moves all cars, ropes and autopilot routes back a period when the player is half a period out (`Car::translate`, `Sim::wrapShift`; the game shifts the camera and `Effects::translate`). Anything added to it must repeat with the period. The renderer carries the road on past the map via `sceneryHeight` and the clamped paint texture |
+| `src/frontier.cpp` | The Frontier map (`World::buildFrontier`, `MAP_FRONTIER = 3`, 1 m grid): race circuit, rally stage, desert (mesa staircase, bowl, wash), THE WALL (its site is searched for at build time: a ~30% hillside just off the rally stage, approached in line with the stairs), the range with the summit trail (`summitTrail`), rivers and lakes with flowing water on the grid (`World::waterY/flowX/flowZ`), stations. `staircase(...)` cuts a ramp along the ledge lips and lays thin pitched rock boxes on it (a step is never more than a riser). Blackwater Bayou (`kBayou*`: the swamp floor at a set water level on the grid, `bayouMask`; the mud trail `bayouTrail()` laid to a designed profile with puddles, the two wallows and a corduroy; MUD HILL's line across the loop) and Cold Creek (`kCold*`: a U-shaped valley carved into the range, `coldMask` for where it's under snow; the snow road `snowRoad()`, the frozen creek and pond, the lodge). `groundProfile`/`layTrail` lay a trail to a set profile after THE WALL's site is found (so it never moves); the bayou and Cold Creek scenery use their own random numbers, so everything placed before stays put. `frontierFeature(name)` gives positions for tests and the autopilot menu (start, mesa, mesaclimb, wall, walltop, wallfrom, garden, summit, tarn, lake, bog, delta, bowl, ford1-4, track, outpost, lakeside, hut, bayou, bayoufrom, wallow1-2, mudhill, mudhillfrom, mudhillto, snowroad, snowfield, coldcreek, lodge, icepond; `bayou:S` / `snowroad:S` are the points S m along the mud trail / snow road) |
+| `tests/frontier.cpp` | Map sanity (fords shallow, rivers deep, every surface present), wading a ford, drifting in the current, the mesa and THE WALL by autopilot and by a scripted crawl, autopilot across the river; the bayou (puddles, wallows, mud share) and Cold Creek (snow share, ice, road grade) maps, a Civic bogged in THE WALLOW and a set-up Bronco through both wallows and over MUD HILL, the 4Runner up the snow road, autopilot to the bayou and the lodge (`driveLine` follows a trail by pure pursuit) |
+| `src/mountain.cpp` | The mountain map: massif, spiral summit trail, valley loop, trailhead, crawl park, creek, the Widowmaker Spur and Boulder Gully, repair stations, scenery. `mountainFeature(name)` gives feature positions for tests (spur, pinnacle, gully, gullytop, halfway, garage, pit...) |
+| `src/rope.h`, `src/recovery.cpp` | Winch lines and tow straps (`Sim::ropes`, forces in `Sim::ropeForces` at 2 kHz, spread over the chassis by `Car::pullHook`), anchors, towed-car behaviour (`Sim::drive`), tire airing, sway-bar reconnect, repair stations (`Sim::updateTrail`, run by `advance`), `placeUpright`/`rotateRigid` |
+| `tests/recovery.cpp` | Winching, strap tow, repair, righting |
+| `src/net.h/.cpp` | Multiplayer (`NetSession`): TCP for reliable messages (join, spawn/despawn, lines), UDP for vehicle states (20 Hz, fragmented, node offsets from the rigid rest shape as int16 mm). The host relays. Each machine owns and simulates its own cars; others' are `Car::remote` (kinematic: positions from the network, they only push back). `send()` diffs cars (`netId`, `buildCount`) and ropes (`Rope::netId`) each frame, so game code doesn't call into it |
+| `src/autopilot.h/.cpp` | Route planning (A* on a 2 m grid, cached per `World::stamp`: slope, surface, how tall the rocks/logs/ledges in each cell stand), seeing (`sense`: ~50 candidate lines rolled out over the scene, scored), drive setup (`setUp`: transfer case, lockers, sway bar, tire pressure), driving, unsticking. `Car::pilot`, run by `Sim::pilotStep` from `Sim::drive` |
+| `src/pilotsense.h/.cpp` | What the autopilot sees: `Scene` (exact tops of boulders, boxes, logs, poles, other vehicles over the terrain, cached on a 0.125 m grid per look) and the step-climb table `stepCap` (measured: see the README) |
+| `tests/surfaces.cpp`, `tests/handling.cpp` | The surface course strips, tire treads, ABS/TC on loose ground, soft landings (drops and jumps onto sand vs rock), ruts (`surfaces/ruts` is also the screenshot scene for tracks and sinking); keyboard steering at speed |
+| `src/platform.h` | Linux/Windows differences (config folder, mkdir). Sockets are wrapped at the top of `net.cpp` |
+| `tests/autopilot.cpp` | Autopilot routes and drives |
+| `tests/net.cpp` | Host + client sims in one process over loopback sockets |
+| `src/scenery.cpp` | Meshes for trees (pine, broadleaf, snag), boulders, rock slabs, logs and bushes. Rocks hug their colliders |
+| `tests/offroad.cpp` | 4x4 drive modes and lockers, crawl tests on the mountain (twister open vs locked, ledges, slickrock), map sanity |
+| `tests/scenarios.cpp` | Every scenario and the per-vehicle real-world expectation tables, indexed like the catalog |
+
+## Conventions and gotchas
+
+- **Coordinates:** vehicle-local x is forward, y is up, z is right (so -z is the left, driver's side). The lattice goes front to back: `latticeX(vs, 0)` is the nose.
+- **Real data:**
+  - Every vehicle is a real car built from published specs: dimensions, curb weight, weight split, torque curve, gear ratios, tire sizes.
+  - Comment where each number comes from.
+  - Estimates are fine, but label them as estimates.
+- **The 4Runner is one specific truck:**
+  - It's the modified 2002 Limited from the Bring a Trailer listing `2002-toyota-4runner-41`.
+  - That means black over silver, OME coils plus a 2 in body lift, 35x12.50R17 KO2s, armor bumpers with a winch, a snorkel, a roof basket and a Magnuson supercharger.
+  - Its mod slot 0 is "AS BUILT".
+- **Explicit integrator, so watch stability:**
+  - Light nodes on stiff beams blow up.
+  - The stability pass at the end of `Car::build` lets nodes borrow mass from their neighbors, keeping the total.
+  - Raise stiffness (`k`) cautiously. Raising yield or break strain is safe.
+- **Multiplayer and the sim:** remote cars skip forces and integration (they coast on their sent velocities between frames), never sleep or repair, and lines pull only on local cars. A winch's length is set by its owner's machine. Don't pause or scale time while `net.active()`.
+- **Don't overwrite a binary someone's playing:** `make build/crumplezone-dev` links the game to a side path.
+- **Rebuilding in place:** call `Car::setDown(world)` after `respawn()` anywhere that isn't flat (repairs, arcade recovery, vehicle swaps already do). `build()` makes the truck level, and on a hillside the uphill tires would start inside the ground and get rammed up through the suspension into the body (`recovery/rebuild-on-slope`).
+- **Turning a car rigidly:** use `Car::rotateRigid` (it also turns `chassis.rot`). Rotating the nodes alone makes the shape-matching frame drag the body back to its old attitude and leave the wheels behind.
+- **Truck strength:** `frameStrength`, `panelStrength` and `pinStrength`, plus physical `EXTRA_SKID_PLATE`/`EXTRA_SLIDERS`, only reach the frame between the axles and the vertical/crosswise members under the belly and sills. The crumple zones ahead of the front axle and at the tail are left alone, so the wall crash tests still crumple. Bumper covers stay stock.
+- **World changes redraw themselves:** `World::buildGrid()` bumps `World::stamp`; the game re-uploads the map when it changes (so a scenario's own map and the rocks/boxes it adds show up), and the autopilot's route grid rebuilds. Call `buildGrid()` after adding anything to a world.
+- **The surface course** sits on the proving ground north-west of the pad (x -118..-48, z 72..126, flattened, a concrete apron 4 m round it). Tests that drive there will hit sand and mud: keep test lanes off it.
+- **Tires:** `tireCurve(s, bite, keep)` with bite from the surface and tread (`kTreadBite`), keep from the surface; grip = surface grip x `kTreadGrip[tread][surface]`. ABS and TC aim at `slip x Wheel::bite`. `Wheel::sink` lowers the tire into sand/mud/snow (it's subtracted from the contact penetration) and adds bulldozing drag; it only comes back up as the tire rolls. A hard landing past `softBearing()` pushes it down to `softCrushMax()` instead of loading the tire further; body nodes on those surfaces get a crush layer (6% stiffness, hard below `sink x 3`, little push back). The harness's tunnelling check allows that depth. `Wheel::clog` is mud in the tread. Keyboard steering is limited to what the tires hold (`Sim::drive`): the AI and autopilot set `steer` directly and aren't.
+- **Hot reload:** the game watches `/proc/self/exe`; after a rebuild F5 `execv`s the new binary with `--map --player --spawn --resume-model`. `CZ_AUTORELOAD=1` reloads without the key (testing).
+- **Visual-only parts don't collide.** Anything in `buildExtras()` is drawn but has no physics. Add its weight as a `MassItem` in the spec.
+- **Panels** are separate node sheets pinned to the body (hinges, latches, clips).
+  - Pins break by distance (`breakDist` = force / k).
+  - They also break when the panel around them bends (the limits in `Car::updateStats`).
+- **Ride height:** `raiseBody()` moves the body, engine and mass items up. Mods use it for lifts, and `tires()` calls it for the change in tire radius.
+- **Mods:** the mods test checks that the ride height changes by exactly what the parts say, that the 0–80 km/h time changes the expected way, and that there's no damage or tipping.
+- **Style:** match the surrounding code. Short comments explain *why* in plain words, with real-world figures where they matter.
+
+## Open work
+
+- **Visual polish:** the four cars are recognisable, but they're built on a coarse lattice. Shapes are rough at the nose, the Civic's hatch and the Jesko's canopy.
+- **Sound mix:** the engine voices haven't been heard on real speakers yet, only checked offline. Balance the volume and turbo/blower levels per car once someone listens.
+  - To check offline, `build/review/claude/audiotest.cpp` renders each voice to WAV and spectrogram images.
+
+## History
+
+- **2026-10-11, Claude:**
+  - Real-car rebuild of all four vehicles.
+  - Rebuilt the 4Runner as the listing truck.
+  - Strengthened panels and bodies.
+- **2026-10-11/12, Codex:**
+  - Turned the Civic into the 1990 EF Si hatch.
+  - Gave each car its own lamps, trim and wheels, and the Bronco its black hardtop.
+  - Made door glass and mirrors move with their panels.
+  - Physics fixes: timestep-independent contacts, airborne tire state, locked diff with a broken shaft.
+  - Added `tests/components.cpp`.
+  - Stopped at its usage limit with 7 failing tests.
+- **2026-10-12, Claude (took over from Codex):**
+  - Fixed the 7 failures:
+    - Door window frames now rest on soft seal pins (`PIN_SEAL`).
+    - The Jesko's mass is placed where the real car carries it.
+    - The pitch-inertia test now uses the dynamic index.
+  - Found and fixed a long-standing bug: the steering rack jumped instantly, so every car's tie rods bent when the AI snapped the wheel. The rack now moves at a finite speed (`rackSteer`), with test `structure/steering-snap`.
+  - AI lane holding now has an integral trim, and its recovery ramps smoothly.
+  - The skidpad test now holds a real 30 m circle and measures true lateral acceleration.
+  - The Jesko's roll stiffness is biased to the rear, and it has Cup 2 R lateral grip.
+  - Added per-vehicle engine sound.
+- **2026-10-12, Claude:**
+  - Added a sculpted 4Runner body shell (`src/bodyshell.cpp`), drawn instead of the smoothed cage.
+  - Its vertices are bound to the physics cells and panels, so it dents and its doors, hood and liftgate move.
+  - The shader draws its windows, lamps, grille and seams in meters (`uShell`, `uShA`–`uShD` in `render.cpp`).
+  - At the same time, Codex built the Jesko's mesh (`buildJeskoMesh` in `carvisual.cpp`).
+- **2026-10-12, Codex — Jesko body pass:**
+  - Authored curved, dimensioned Jesko patches with open arches and a separate canopy, bound to the cage and detachable panels.
+  - Split topology at panel seams; attached lamps to the hood and windows/mirrors to their doors. Glass damage maps to physical glass faces.
+  - Matched the dashboard, two bucket seats, lamps, intakes, wing and hexagonal center exhaust to the body; hid solver-only upper tub braces.
+  - Moved its equivalent coil package inboard, below the low hood, retaining the linkage-derived spring and damper rates. This does not implement the full real Triplex rocker system.
+  - Added `make build/test_jesko_visual` / `nice -n 15 ./build/test_jesko_visual` for mesh dimensions, transforms, detached seams, glass, garage height mods and crash deformation.
+  - Final validation: 155/155 physics scenarios and 13/13 mesh checks passed. Screenshots, logs and the handoff are in `build/review/jesko-review.md`.
+- **2026-10-12, Claude: graphics and pause menu**
+  - Moved rendering to HDR, with MSAA, SAO ambient occlusion, bloom, ACES tone mapping and a vignette.
+  - Two shadow cascades with Poisson PCF.
+  - Procedural sky and clouds (also in reflections), and height fog.
+  - Terrain: meadow, rock with strata, snow, craggy rim and a backdrop mountain range (render only).
+  - Better trees.
+  - Esc now opens a pause menu instead of quitting. It works with mouse and keyboard and has car select, garage, settings, controls, reset and quit. Settings are saved; mph is an option.
+- **2026-10-12, Claude: 4x4, mountain map and scenery**
+  - Transfer cases: `VehicleSpec::transfer` (part-time / full-time), modes in `driveModes()`, selectable lockers (`lockerFront/Rear`; `Car::setDriveMode/setLocker`, `diffType`, `centerLocked`). Default modes (4A / 4H) reproduce the earlier physics exactly.
+  - Locker mods are now selectable (they used to be permanently locked).
+  - Mountain map (`MAP_MOUNTAIN`), chosen from the pause menu.
+  - New colliders: boulders (spheres) and logs (capsules), plus rock slab boxes.
+  - Surfaces: dirt and rock.
+  - Scenery: rocks and bushes on the proving ground too, and procedural grass round the camera (`kGrassVS`, from the terrain data texture).
+  - Tests: 161.
+- **2026-10-12, Claude: assets pass**
+  - Rocks are convex hulls (`World::addRock`, exact closest-point collision).
+  - Lakes (`World::addLake`, `waterLevel`): drag, buoyancy and hydrolock (`Car::hydrolocked`), plus a water shader.
+  - Fixtures (`World::fixtures`: fence, cabin, signs, trail map, tables, stumps; meshes in `buildPropMesh`).
+  - Forest logs, outcrops and scree, reeds, wildflowers in the grass, cloud shadows.
+- **2026-10-12, Claude: Bronco and Civic shells**
+  - `bodyshell.cpp` is now general: `ShellLines` plus a per-car `Style` (corner radii, nose roll, shoulders, side bow, arch shape).
+  - Sculpted shells for the Bronco (`uShell` 2) and the EF Civic (3), alongside the 4Runner (1). Each has its own shader decals: windows, lamps, grille, hinges, hardtop, moonroof.
+  - Bumper covers ride on their panels.
+  - Flares follow the shell's arch (`shellArchHeight`).
+  - `shellParam` now has 20 values (`uShE`).
+- **2026-10-12, Claude: crawl and recovery update**
+  - Tougher trucks: frame, panel and pin strength fields; skid plates and sliders are physical. New `structure/rock-hits` tests.
+  - Suspension travel per vehicle (`bumpFront`...), sway-bar disconnect, tire pressure in the tire model, locker interlocks, axle shaft/CV breakage.
+  - Winch, tow strap, repair stations (`PROP_GARAGE`), real/arcade recovery setting, compass HUD.
+  - Mountain: Widowmaker Spur, Boulder Gully, scree surface (`SURF_SCREE`, `PAINT_SCREE`), three stations.
+  - Tests: 174. Multiplayer is next: ropes, controls and repair state are plain `Sim` data.
+- **2026-10-12, Claude: multiplayer**
+  - `NetSession` (host/join from the menu or `--host` / `--join` / `--name`), remote cars, shared ropes across machines, player list, name tags, buddies on the compass.
+  - Fix: `Car::setDown` after in-place rebuilds (the rear axle ended up in the body on slopes).
+  - Tests: 176.
+  - Not done yet: host migration, map change mid-session, remote engine sounds, chat.
+- **2026-10-12, Claude: winch aiming, autopilot, trail repairs, Windows target**
+  - V opens a picker (`Sim::winchTargets`, `hookWinchTo`; `WinchAim` in main.cpp).
+  - Autopilot to named places, followed vehicles or the camera's look point, with a speed and route mode (menu page 3).
+  - Trail repairs from any vehicle parked alongside (`Car::fieldRepair`).
+  - `make windows` (mingw-w64, SDL2 2.30.9 runtime in third_party/sdl2-win64): built, and tested under Wine, including a Linux host with a Windows client.
+  - Tests: 183.
+- **2026-10-12, Claude: autopilot that sees, surfaces, handling, hot reload**
+  - Autopilot scans the ground ahead and picks a line (over / straddle / around), and its own 2H-4WD-low range, lockers, sway bar and tire pressure. The step it can climb per setup was measured (Bronco 0.15 / 0.30 / 0.45 m). The HUD draws its line, options and verdicts.
+  - New surfaces (gravel, sand, mud, snow, ice, wet asphalt) with their own grip curve, sinking, rolling drag and mud clogging; tire treads (street, semi-slick, all-terrain, mud-terrain); the surface course on the proving ground; mud creek, beach and summit snow on the mountain; roost, spray and ruts.
+  - Keyboard steering limited to the tires' grip at speed (a tap at 130 km/h was asking 1.3 g of the Jesko). Engine drag control. Traction control aims a little nearer the peak.
+  - Fixed: scenario mode wrote into a car that wasn't there yet (heap overflow); sim events were cleared before the HUD saw them; the route grid was shared between test threads.
+  - Tests: 204.
+- **2026-10-12, Claude: freeway**
+  - Endless six-lane freeway map (wraps every 400 m), odometer and best speed on the HUD, top-speed tests.
+  - Speed limiters (`VehicleSpec::speedLimit`): Bronco 161, 4Runner 171 km/h.
+  - Jesko at 300-400 km/h: it weaved and crashed. The causes were the limited-slip diff holding the rear wheels together every substep (now it eases off above ~125 km/h, as e-diffs do) and the floor touching the road under downforce. The fix: raised 15 mm, plus a heave (Triplex) spring and damper per axle (`heaveRate/heaveGap/heaveDamping`) that comes in with airspeed. Keyboard steering also builds more slowly past ~150 km/h.
+  - Tests: 209.
+- **2026-10-12, Claude: background music**
+  - Added `src/music.*`, generative music synthesized at runtime, one mood per map: lo-fi (proving ground), airy folk/ambient (mountain), synthwave (freeway) and desert road trip (frontier).
+  - Crossfades on map change. There's a MUSIC slider in the settings (default 40%, saved as `music`).
+  - Checked offline: about -18.7 dBFS RMS, peaks under -3 dBFS, no clipping or DC, no aliasing above 12 kHz from the tonal parts, under 1% of one core.
+- **2026-10-12, Claude: day and night, headlights**
+  - A clock runs the sun and moon (`src/daylight.*`): sky, ambient, fog, clouds, shadows and exposure follow it; stars, a phased moon, a night-vision grade. Setting TIME OF DAY (CYCLE at 6-96 min a day / MORNING / NOON / EVENING / NIGHT), `--time H`, `--lamps N`.
+  - Real headlights (`src/lights.*`): two spot lights per car for the nearest 8 cars, in every lit shader; glowing lenses, tail, brake and reversing lamps; smashed lamps go dark. Shift+L.
+  - The host's clock is shared in multiplayer (`MSG_CLOCK`). Physics untouched.
+- **2026-10-12, Claude: levels, menus, drivetrain, toughness**
+  - `src/level.*` (level file format, apply to World), `src/levels_builtin.cpp`, `src/levelrun.*` (gates, laps, medals, leaderboard), title screen + levels page in `src/menu.*`, MSG_LEVEL/MSG_GAME in net (protocol v2). Tests: tests/levels.cpp, net/level, tests/circuit.cpp.
+  - Drivetrain: crank inertia + gear/diff constraints solved at the end of `Car::wheelStep` (open diffs split torque equally). TC watches combined slip; ABS cornering brake control; keyboard slide lock only when countersteering.
+  - Cars ~40% tougher (kSpec yields), engines +15% (catalog and mods). Frontier circuit rebuilt from straights and arcs; paddock moved off the straight.
+  - R = repair in place, R R = respawn/restart; winch speed (-/=); mouse look up.
+  - Open issue: crawl tests (gully, widowmaker, wall/mesa stairs, shaft-break) regressed while the axle and soft-ground agents' edits were in flight.
+- **2026-10-12, Claude: the Frontier map**
+  - New map (`--map 3`): race circuit with lap timer, 4 km rally stage, desert with the mesa climb, THE WALL, a pine range with a summit trail, frozen tarn, two rivers with current and fords, Echo Lake, a mud bog and delta, four repair stations.
+  - Water on the height grid with flow, so rivers run downhill. Floating cars drift with the current, and the water shader follows the flow.
+  - Autopilot:
+    - holds first gear crawling in low range (`Autopilot::holdFirst`)
+    - walks up to ledges
+    - airs down when stuck against a ledge on full tires
+    - backs off at a walk in low range
+    - deep water is dilated a cell in the planner
+  - Debug env vars in `tests/frontier.cpp`: `CZ_TRACE` (`CZ_FAST` for every 10 frames), `CZ_DEBUG`, `CZ_ROUTE`.
+  - Tests: 217.
+- **2026-10-12, Claude: Frontier mud section and snow biome**
+  - Blackwater Bayou (south-east): a swamp at Echo Lake's level, with still water on the height grid, mud flats, hummocks, drowned snags, logs and stumps. It has a 740 m marked mud trail with puddles of every depth, two wallows (a Civic can't climb out, a set-up Bronco wades through), a log corduroy and MUD HILL across the middle.
+  - Cold Creek (north-east): a glacial valley under snow. It has a snow road with wheel tracks, ploughed banks, snow poles, black ice and a frozen-creek crossing, plus snow-laden pines, snowy boulders, a frozen pond, and Cold Creek Lodge with a repair station.
+  - Scenery: pines standing in snow carry it on their boughs, rocks on snow have white tops, and reeds grow in still shallow water over mud.
+  - Render (two small shader changes): wheel tracks on snow-covered roads and trails. Water over a mud bed is murky brown and doesn't foam white at its edge.
+  - Tests: 8 new Frontier scenarios. `frontier/the-wall` (autopilot) was already failing from concurrent physics/autopilot work: it fails identically with the map as it was before these changes.
+- **2026-10-12, Claude: tire tracks, visible sinking, soft landings**
+  - Tracks for every wheel of every car (`Effects::Rut`, a 12000-segment ring, oldest fade): decal strips drawn multiplied into the ground (fx modes 3/4, `BlendFunc(DST_COLOR, SRC_COLOR)`), with a groove profile, tread print and shading from screen-space derivatives, so they're lit like the ground day and night. The old skid marks sat at the tire's bottom, under the ground, once it sank: hidden.
+  - `Effects::buildRutWalls`: terrain-painted lips (lit shader material 7) along fresh ruts in sand, mud and snow, and a collar round each sunk tire; drawn right after the terrain.
+  - Soft ground in the physics (`softBearing`, `softCrushMax`, the node crush layer): landings in sand, mud and snow are far gentler. Tests `surfaces/soft-landing`, `surfaces/ruts`.
+- **2026-10-12, Claude: live rear axle clipping (Bronco, 4Runner)**
+  - Found: a hard landing (≥2 m drop or tail-first jump) flips the 4-link over centre; the rear housing stays rolled ~110°, pinion up, in the floor. Cause: spring seat above/behind the tube, loaded by the bump stop through a tilting coil-over. Seat on the tube centre line fixes it, but costs crawl tests, so it's reverted. Still open.
+  - Visual (`carvisual.cpp`): rails kick up over a live axle (`buildFrameRails`, `axleReach`), no centre rail over the prop shaft, crossmember behind the axle, exhaust over the axle, tank ahead of it, housing drawn at real size.
+  - Test: `components/axle-articulation`. Landing test `axleLanding` is written but not registered until the flip is fixed.

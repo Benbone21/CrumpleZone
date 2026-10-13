@@ -1,0 +1,708 @@
+#include "vehicles.h"
+
+#include <algorithm>
+#include <cmath>
+
+std::vector<int> axleColumns(const VehicleSpec& vs) {
+    std::vector<int> cols;
+    const std::string& row = vs.profile[0];
+    const int n = (int)row.size();
+    for (int a = 0; a < n;) {
+        if (row[a] != 'W') {
+            a++;
+            continue;
+        }
+        int b = a;
+        while (b + 1 < n && row[b + 1] == 'W') b++;
+        cols.push_back(a + (b - a + 1) / 2);
+        a = b + 1;
+    }
+    return cols;
+}
+
+double latticeX(const VehicleSpec& vs, double i) {
+    const int n = (int)vs.profile[0].size();
+    std::vector<int> ax = vs.wheelbase > 0 ? axleColumns(vs) : std::vector<int>();
+    if (ax.size() != 2) return vs.length / 2 - vs.length / n * i;
+    // Piecewise linear: bumper -> front axle -> rear axle -> tail.
+    const double xs[4] = {vs.length / 2, vs.length / 2 - vs.frontOverhang, vs.length / 2 - vs.frontOverhang - vs.wheelbase,
+                          -vs.length / 2};
+    const double is[4] = {0, (double)ax[0], (double)ax[1], (double)n};
+    int seg = i < is[1] ? 0 : i < is[2] ? 1 : 2;
+    double t = (i - is[seg]) / std::max(1e-9, is[seg + 1] - is[seg]);
+    return xs[seg] + (xs[seg + 1] - xs[seg]) * t;
+}
+
+namespace {
+void cabinRange(const VehicleSpec& vs, int& i0, int& i1) {
+    i0 = (int)vs.profile[0].size();
+    i1 = -1;
+    for (const std::string& row : vs.profile)
+        for (int i = 0; i < (int)row.size(); i++)
+            if (row[i] == 'G') {
+                i0 = std::min(i0, i);
+                i1 = std::max(i1, i + 1);
+            }
+}
+}  // namespace
+
+int doorCells(const VehicleSpec& vs) {
+    int i0, i1;
+    cabinRange(vs, i0, i1);
+    if (i1 < 0) return 2;
+    double cell = (latticeX(vs, i0) - latticeX(vs, i1)) / (i1 - i0);
+    return std::max(1, std::min(4, (int)std::lround(vs.doorLength / cell)));
+}
+
+bool hasRearDoors(const VehicleSpec& vs) {
+    if (vs.doors) return vs.doors == 4;
+    int i0, i1;
+    cabinRange(vs, i0, i1);
+    return i1 >= 0 && i1 - i0 >= 2 * doorCells(vs) + 1;
+}
+
+namespace {
+double torqueAt(const VehicleSpec& vs, double r) {
+    const auto& pts = vs.torque;
+    if (r <= pts.front().rpm) return pts.front().nm;
+    for (size_t i = 1; i < pts.size(); i++)
+        if (r < pts[i].rpm) {
+            double t = (r - pts[i - 1].rpm) / (pts[i].rpm - pts[i - 1].rpm);
+            return pts[i - 1].nm + t * (pts[i].nm - pts[i - 1].nm);
+        }
+    return pts.back().nm;
+}
+}  // namespace
+
+double peakPower(const VehicleSpec& vs, double* atRpm) {
+    double best = 0, at = 0;
+    for (double r = 1000; r <= vs.redline; r += 25) {
+        double p = torqueAt(vs, r) * r * 2 * M_PI / 60;
+        if (p > best) {
+            best = p;
+            at = r;
+        }
+    }
+    if (atRpm) *atRpm = at;
+    return best;
+}
+
+double peakTorque(const VehicleSpec& vs, double* atRpm) {
+    double best = 0, at = 0;
+    for (double r = 1000; r <= vs.redline; r += 25) {
+        double t = torqueAt(vs, r);
+        if (t > best + 1e-9) {
+            best = t;
+            at = r;
+        }
+    }
+    if (atRpm) *atRpm = at;
+    return best;
+}
+
+void raiseBody(VehicleSpec& vs, double dy) {
+    for (double& y : vs.layerY) y += dy;
+    for (double& y : vs.topLine)
+        if (y > 0) y += dy;
+    vs.engineY += dy;
+    for (MassItem& it : vs.items) it.y += dy;
+}
+
+const char* tireTypeName(int t) {
+    return t == TIRE_SEMI_SLICK ? "SEMI-SLICK" : t == TIRE_ALL_TERRAIN ? "ALL-TERRAIN" : t == TIRE_MUD_TERRAIN ? "MUD-TERRAIN" : "STREET";
+}
+
+const std::vector<DriveMode>& driveModes(TransferCase t) {
+    // Part-time (Bronco): 4A drives both axles with the center free, so it's fine on dry
+    // pavement; 4H and 4L lock the shafts together for loose ground and rock.
+    static const std::vector<DriveMode> partTime = {
+        {"2H", false, false, false}, {"4A", true, false, false}, {"4H", true, true, false}, {"4L", true, true, true}};
+    // Full-time multi-mode (3rd-gen 4Runner Limited): a center differential the driver
+    // can lock; low range always locks it.
+    static const std::vector<DriveMode> fullTime = {
+        {"2H", false, false, false}, {"4H", true, false, false}, {"4H LOCK", true, true, false}, {"4L LOCK", true, true, true}};
+    static const std::vector<DriveMode> none;
+    return t == XFER_PART_TIME ? partTime : t == XFER_FULL_TIME ? fullTime : none;
+}
+
+int defaultDriveMode(TransferCase t) { return t == XFER_NONE ? 0 : 1; }
+
+const std::vector<VehicleSpec>& vehicleCatalog() {
+    // Four real vehicles, built from their published specs (dimensions, weights,
+    // engine outputs, gear ratios, suspension layouts). Where a maker doesn't publish
+    // a number (weight split of the Jesko, its final drive...), it's a careful estimate.
+    // Lattice: x forward from the middle, y up from the ground; masses in kg.
+    static const std::vector<VehicleSpec> catalog = [] {
+        std::vector<VehicleSpec> v;
+
+        // ---- Honda Civic Si (11th generation sedan, 2022-) ---------------------------
+        // Front-drive fastback sedan, 1.5 L turbo four, 6-speed manual, helical LSD.
+        VehicleSpec civic;
+        civic.name = "HONDA CIVIC SI";
+        civic.id = "civic";
+        civic.blurb = "2022 SEDAN  1.5L TURBO I4  6-SPEED MANUAL  FWD";
+        civic.profile = {
+            "#WW######WW#",
+            "############",
+            "...GGGGGGGG.",
+        };
+        civic.layerY = {0.21, 0.58, 0.97, 1.41};
+        civic.length = 4.674;
+        civic.width = 1.801;
+        civic.widthCells = 4;
+        civic.wheelbase = 2.736;
+        civic.frontOverhang = 0.98;
+        civic.topLine = {0.66, 0.80, 0.90, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.98};  // low nose, short high deck
+        civic.noseDrop = civic.tailDrop = 0;
+        civic.bumperLift = 0.08;
+        civic.cornerRound = 0.13;
+        civic.roofTuck = 0.15;
+        civic.rakeFront = 0.85;  // windshield ~62 degrees from vertical
+        civic.rakeRear = 1.15;   // fastback roofline down to the short trunk
+        // 1,318 kg, 60/40 (Honda): transverse engine hung out ahead of the front axle.
+        civic.structureMass = 405;
+        civic.panelMass = 150;
+        civic.items = {
+            {"radiator and intercooler", 16, 2.05, 0.45, 0}, {"battery", 15, 1.55, 0.75, -0.55},
+            {"front crash beam", 9, 2.22, 0.45, 0},          {"air conditioning", 22, 1.70, 0.55, 0.30},
+            {"front subframe and rack", 34, 1.30, 0.32, 0},  {"dashboard and heater", 38, 0.70, 0.85, 0},
+            {"driver seat", 20, -0.05, 0.42, -0.38},         {"passenger seat", 20, -0.05, 0.42, 0.38},
+            {"rear seat", 20, -0.95, 0.42, 0},               {"carpets, trim and wiring", 60, 0.0, 0.45, 0},
+            {"fuel tank (47 L, full)", 44, -0.85, 0.32, 0},  {"exhaust", 18, -0.6, 0.20, 0.25},
+            {"rear subframe and links", 32, -1.38, 0.30, 0}, {"rear crash beam", 7, -2.25, 0.42, 0},
+            {"brakes and steering", 18, 1.3, 0.5, 0},        {"airbags and electronics", 16, 0.3, 0.7, 0},
+            {"bumper, lamps and grille", 22, 2.15, 0.55, 0}, {"front rails and strut towers", 30, 1.55, 0.6, 0},
+        };
+        civic.engineMass = 108;
+        civic.gearboxMass = 42;
+        civic.transverse = true;
+        civic.engineX = 1.50;
+        civic.engineY = 0.56;
+        civic.engineZ = 0.10;
+        civic.engineLen = 0.50;
+        civic.engineWid = 0.42;
+        civic.engineHgt = 0.55;
+        civic.gearboxLen = 0.30;
+        civic.bodyStiffness = 1.15;
+        civic.wheelRadius = 0.323;  // 235/40R18
+        civic.wheelWidth = 0.235;
+        civic.trackFront = 1.537;
+        civic.trackRear = 1.567;
+        civic.wheelMass = 20;
+        civic.hubMass = 15;
+        civic.frontSusp = STRUT;
+        civic.rearSusp = WISHBONE;  // multi-link: works like short-long arms
+        civic.rideFreqFront = 1.6;
+        civic.rideFreqRear = 1.8;
+        civic.dampingRatio = 0.42;
+        civic.arbFront = 15000;  // 27 mm tubular bar
+        civic.arbRear = 9000;    // 18 mm solid bar
+        civic.tireGrip = 1.12;   // summer tires
+        civic.lateralGrip = 0.90;
+        civic.drive = VehicleSpec::FWD;
+        civic.diffFront = DIFF_LSD;  // helical limited slip
+        civic.lsdBias = 2.2;
+        civic.brakeFront = 2300;  // 312 mm vented
+        civic.brakeRear = 1100;   // 282 mm solid
+        civic.dragArea = 0.62;    // Cd ~0.30 x 2.1 m^2
+        // 200 hp at 6,000 rpm, 260 N*m flat from 1,800 to 5,000.
+        civic.torque = {{0, 140}, {1000, 175}, {1800, 260}, {5000, 260}, {5500, 252}, {6000, 237}, {6600, 205}};
+        civic.idleRpm = 750;
+        civic.redline = 6600;
+        civic.turboLag = 0.5;
+        civic.gears = {3.643, 2.080, 1.361, 1.024, 0.830, 0.686};
+        civic.reverseRatio = 3.673;
+        civic.finalDrive = 4.35;
+        civic.shiftTime = 0.30;
+        civic.engineName = "1.5L TURBO I4";
+        civic.gearboxName = "6-SPEED MANUAL";
+        civic.lampStyle = LAMP_SLIM;
+        civic.grilleStyle = GRILLE_WIDE;
+        civic.extras = EXTRA_LIP_SPOILER;
+        v.push_back(civic);
+
+        // ---- Koenigsegg Jesko Attack -------------------------------------------------------
+        // Mid-engine carbon hypercar: 5.0 L twin-turbo V8, 9-speed multi-clutch LST,
+        // huge rear wing (1,000 kg of downforce at 290 km/h).
+        VehicleSpec jesko = civic;
+        jesko.name = "KOENIGSEGG JESKO";
+        jesko.id = "jesko";
+        jesko.blurb = "ATTACK  5.0L TWIN-TURBO V8  9-SPEED LST  RWD";
+        jesko.profile = {
+            "#WW######WW#",
+            "############",
+            "...GGGGG###.",
+        };
+        jesko.layerY = {0.11, 0.48, 0.80, 1.21};
+        jesko.length = 4.626;
+        jesko.width = 2.030;
+        jesko.wheelbase = 2.700;
+        jesko.frontOverhang = 0.90;
+        // Low nose rising to the cowl; long engine cover falling to the tail.
+        jesko.topLine = {0.50, 0.66, 0.77, 0, 0, 0, 0, 0, 0, 1.07, 1.01, 0.95, 0.86};
+        jesko.bumperLift = 0.0;
+        jesko.cornerRound = 0.16;
+        jesko.roofTuck = 0.24;   // teardrop canopy
+        jesko.rakeFront = 0.75;  // very raked windshield
+        jesko.rakeRear = 0.15;   // canopy tapers into the engine cover
+        // 1,420 kg curb (Koenigsegg); about 42/58 with the V8 behind the seats.
+        jesko.structureMass = 385;  // carbon tub, subframes, crash structures
+        jesko.panelMass = 95;       // carbon panels, glass (the roof is one thin carbon panel)
+        jesko.items = {
+            {"front radiators", 25, 2.05, 0.40, 0},       {"front splitter and canards", 15, 2.20, 0.18, 0},
+            {"front crash structure", 10, 2.20, 0.35, 0}, {"front lift system", 10, 1.45, 0.40, 0},
+            {"battery", 10, 1.75, 0.45, 0.4},             {"air conditioning", 15, 1.6, 0.36, -0.3},
+            {"dashboard", 22, 0.95, 0.55, 0},             {"carbon seats", 24, 0.25, 0.25, 0},
+            {"carpets, trim and wiring", 40, 0.4, 0.35, 0}, {"steering and pedals", 15, 1.1, 0.4, -0.3},
+            {"fuel tank (72 L, full)", 60, -0.35, 0.30, 0}, {"intercoolers and turbos", 32, -0.95, 0.40, 0},  // slung low beside the block
+            {"dry sump oil tank", 15, -0.55, 0.40, 0.45}, {"air tank and compressor", 10, -0.5, 0.3, -0.45},
+            {"exhaust", 25, -1.75, 0.55, 0},              {"rear wing and pylons", 26, -1.95, 1.15, 0},
+            {"rear crash structure", 8, -2.25, 0.35, 0},  {"brake hydraulics and electronics", 40, 0.0, 0.20, 0},
+            {"carbon tub floor and sills", 91, 0.3, 0.16, 0},
+        };
+        jesko.engineMass = 189;  // Koenigsegg's figure
+        jesko.gearboxMass = 90;  // LST, 90 kg
+        jesko.transverse = false;
+        jesko.midEngine = true;
+        jesko.engineX = -0.77;
+        jesko.engineY = 0.43;
+        jesko.engineZ = 0;
+        jesko.engineLen = 0.62;
+        jesko.engineWid = 0.66;
+        jesko.engineHgt = 0.46;
+        jesko.gearboxLen = 0.42;
+        jesko.bodyStiffness = 1.1;   // carbon monocoque
+        jesko.wheelRadius = 0.355;    // 265/35R20 front, 325/30R21 rear
+        jesko.wheelWidth = 0.265;
+        jesko.wheelWidthRear = 0.325;
+        jesko.trackFront = 1.70;
+        jesko.trackRear = 1.66;
+        jesko.wheelMass = 22;
+        jesko.hubMass = 17;
+        jesko.frontSusp = WISHBONE;
+        jesko.rearSusp = WISHBONE;
+        jesko.rideFreqFront = 2.1;  // stiff track springs
+        jesko.rideFreqRear = 2.25;
+        jesko.dampingRatio = 0.48;
+        // Koenigsegg's Triplex: a third, horizontal damper and spring across each axle that
+        // holds the car up against ~1,000 kg of downforce at speed (estimate: it picks up after
+        // 8 mm and roughly triples each corner's rate).
+        jesko.heaveRate = 150000;
+        jesko.heaveGap = 0.008;
+        jesko.heaveDamping = 22000;  // well damped: it mustn't bounce the car off a kerb
+        jesko.arbFront = 16000;  // roll stiffness biased to the heavy rear (42/58)
+        jesko.arbRear = 18000;
+        jesko.tireGrip = 1.32;  // Michelin Cup 2 R
+        jesko.tireType = TIRE_SEMI_SLICK;
+        jesko.lateralGrip = 1.0;  // semi-slick Cup 2 R: corners as hard as it brakes (~1.2 g at skidpad speed)
+        jesko.drive = VehicleSpec::RWD;
+        jesko.diffFront = DIFF_OPEN;
+        jesko.diffRear = DIFF_LSD;  // electronic differential
+        jesko.lsdBias = 3.0;
+        jesko.brakeFront = 4400;  // 410 mm carbon-ceramic, 6 pistons
+        jesko.brakeRear = 3300;   // 395 mm, 4 pistons
+        jesko.dragArea = 0.75;
+        jesko.downforce = 1.48;       // 700 kg at 250 km/h, 1,000 kg at 290 km/h
+        jesko.downforceMax = 13700;   // 1,400 kg
+        jesko.aeroBalance = 0.40;
+        // 1,280 hp at 7,800 rpm on petrol, over 1,000 N*m from 2,700 to 6,170.
+        jesko.torque = {{0, 400}, {1500, 560}, {2700, 1000}, {4000, 1150}, {5100, 1250}, {6500, 1240}, {7800, 1168}, {8500, 1050}};
+        jesko.idleRpm = 950;
+        jesko.redline = 8500;
+        jesko.turboLag = 0.25;  // the air tank spools the turbos
+        jesko.gears = {4.720, 3.644, 2.874, 2.250, 1.737, 1.370, 1.078, 0.833, 0.657};
+        jesko.reverseRatio = 5.0;
+        jesko.finalDrive = 3.3;
+        jesko.shiftTime = 0.03;  // multi-clutch: practically instant
+        jesko.engineName = "5.0L TWIN-TURBO V8";
+        jesko.gearboxName = "9-SPEED LST";
+        jesko.doors = 2;
+        jesko.doorLength = 1.2;
+        jesko.cylinders = 8;
+        jesko.flatPlane = true;
+        jesko.displacement = 5.0;
+        jesko.rimRadius = 0.254;
+        jesko.wheelStyle = WHEEL_FORGED;
+        jesko.paintColor[0] = 0.08f, jesko.paintColor[1] = 0.32f, jesko.paintColor[2] = 0.72f;
+        // Plan-view taper: wide fenders, tucked doors, narrow rounded nose.
+        jesko.bodyWidth = {0.84, 0.95, 1.0, 0.98, 0.93, 0.90, 0.90, 0.94, 1.0, 1.0, 1.0, 0.96, 0.90};
+        jesko.lampStyle = LAMP_SLIM;
+        jesko.grilleStyle = GRILLE_INTAKE;
+        jesko.extras = EXTRA_WING | EXTRA_ROOF_SCOOP;
+        jesko.coverColor[0] = 0.55f, jesko.coverColor[1] = 0.45f, jesko.coverColor[2] = 0.12f;
+        // Ride height: ~100 mm under the splitter and floor at rest (it was drawn 15 mm
+        // low, and scraped at 300+ km/h with the downforce on).
+        raiseBody(jesko, 0.015);
+        v.push_back(jesko);
+
+        // ---- Ford Bronco 4-door ------------------------------------------------------------
+        // Body-on-frame 4x4: 2.7 L twin-turbo V6, 10-speed auto, independent front,
+        // five-link solid rear axle, 33 in tires, swing gate with the spare.
+        VehicleSpec bronco = civic;
+        bronco.name = "FORD BRONCO";
+        bronco.id = "bronco";
+        bronco.blurb = "4-DOOR  2.7L TWIN-TURBO V6  10-SPEED AUTO  4X4";
+        bronco.profile = {
+            "#WW######WW#",
+            "############",
+            "...GGGGGGGGG",
+        };
+        bronco.layerY = {0.44, 0.88, 1.25, 1.88};
+        bronco.length = 4.53;  // body only: 4,811 mm with the spare wheel on the gate
+        bronco.width = 1.928;
+        bronco.wheelbase = 2.949;
+        bronco.frontOverhang = 0.775;
+        bronco.topLine = {1.13, 1.22, 1.25};  // flat clamshell hood
+        bronco.bumperLift = 0.14;
+        bronco.cornerRound = 0.06;  // boxy
+        bronco.roofTuck = 0.05;
+        bronco.rakeFront = 0.32;    // upright windshield
+        bronco.rakeRear = 0.02;
+        // ~2,214 kg (2.7 4-door), about 56/44.
+        bronco.structureMass = 610;  // boxed ladder frame and body shell
+        bronco.panelMass = 220;
+        bronco.items = {
+            {"radiator", 20, 2.15, 0.85, 0},               {"battery", 22, 1.85, 1.05, -0.6},
+            {"steel front bumper", 35, 2.33, 0.62, 0},     {"front diff and IFS subframe", 60, 1.63, 0.50, 0},
+            {"front prop shaft", 9, 1.0, 0.50, 0.1},       {"rear prop shaft", 14, -0.4, 0.50, 0},
+            {"dashboard and heater", 45, 0.85, 1.15, 0},   {"front seats", 50, 0.05, 0.85, 0},
+            {"rear seat", 35, -0.85, 0.85, 0},             {"carpets, trim and wiring", 70, 0.1, 0.70, 0},
+            {"fuel tank (64 L, full)", 60, -0.55, 0.55, 0.45}, {"exhaust", 30, -0.3, 0.38, 0.35},
+            {"spare wheel on the gate", 46, -2.32, 1.05, 0}, {"rear bumper", 18, -2.20, 0.62, 0},
+            {"hard top", 40, -0.3, 1.86, 0},               {"steering and brakes", 20, 1.5, 0.7, 0},
+            {"skid plates and bars", 30, 0.9, 0.42, 0},    {"electronics", 15, 0.6, 0.9, 0},
+            {"front frame horns and shock towers", 80, 1.85, 0.75, 0},
+        };
+        bronco.engineMass = 200;
+        bronco.gearboxMass = 130;  // 10-speed auto and transfer case
+        bronco.transverse = false;
+        bronco.engineX = 1.45;
+        bronco.engineY = 0.88;
+        bronco.engineZ = 0;
+        bronco.engineLen = 0.62;
+        bronco.engineWid = 0.66;
+        bronco.engineHgt = 0.62;
+        bronco.gearboxLen = 0.85;
+        bronco.bodyStiffness = 1.2;
+        bronco.frameStiffness = 0.30;  // ladder frame: twists more than a unibody
+        bronco.bodyStrength = 1.0;     // high-strength steel body
+        bronco.frameStrength = 2.0;
+        bronco.panelStrength = 1.6;
+        bronco.pinStrength = 1.8;
+        bronco.wheelRadius = 0.415;    // 285/70R17 (33 in)
+        bronco.wheelWidth = 0.285;
+        bronco.trackFront = bronco.trackRear = 1.651;
+        bronco.wheelMass = 38;
+        bronco.hubMass = 28;
+        bronco.axleMass = 90;  // Dana 44 rear
+        bronco.frontSusp = WISHBONE;
+        bronco.rearSusp = SOLID_AXLE;
+        bronco.rideFreqFront = 1.25;
+        bronco.rideFreqRear = 1.45;
+        bronco.dampingRatio = 0.42;
+        bronco.arbFront = 15000;
+        bronco.arbRear = 5000;
+        // Wheel travel: ~22 cm front (IFS), ~27 cm rear (5-link Dana 44).
+        bronco.bumpFront = 0.09, bronco.droopFront = 0.13;
+        bronco.bumpRear = 0.11, bronco.droopRear = 0.16;
+        bronco.swayDisconnect = 1;  // the dash button: front bar unhooks for crawling
+        bronco.tirePsi = 35;
+        bronco.tireType = TIRE_ALL_TERRAIN;
+        bronco.tireGrip = 0.98;  // all-terrain tires: brake well, but the tall tread squirms in corners
+        bronco.lateralGrip = 0.76;
+        bronco.drive = VehicleSpec::AWD;
+        bronco.diffFront = bronco.diffRear = DIFF_OPEN;
+        bronco.transfer = XFER_PART_TIME;  // advanced 4x4: 2H, 4A, 4H, 4L
+        bronco.lockerRear = true;          // Dana 44 rear e-locker (front locker: Sasquatch, in the garage)
+        bronco.frontLockerLowOnly = true;  // Ford only lets the front locker in with 4L
+        bronco.shaftLimit = 17000;         // Dana 44 rear shafts; the IFS CVs take ~11 kN*m
+        bronco.lowRange = 2.72;
+        bronco.brakeFront = 3800;  // 311 mm vented
+        bronco.brakeRear = 2800;   // 308 mm vented
+        bronco.dragArea = 1.70;    // Cd ~0.53 x 3.2 m^2
+        // 330 hp at 5,250 rpm, 563 N*m at 3,100 (premium fuel).
+        bronco.torque = {{0, 240}, {1000, 330}, {2000, 500}, {3100, 563}, {4500, 530}, {5250, 447}, {5800, 400}};
+        bronco.idleRpm = 700;
+        bronco.redline = 5800;
+        bronco.speedLimit = 161;  // governed at 100 mph (the off-road tires' speed rating)
+        bronco.turboLag = 0.45;
+        bronco.gears = {4.714, 2.997, 2.149, 1.769, 1.521, 1.275, 1.000, 0.853, 0.689, 0.636};
+        bronco.reverseRatio = 4.885;
+        bronco.finalDrive = 4.27;
+        bronco.shiftTime = 0.20;
+        bronco.engineName = "2.7L TWIN-TURBO V6";
+        bronco.gearboxName = "10-SPEED AUTO";
+        bronco.doors = 4;
+        bronco.cylinders = 6;
+        bronco.displacement = 2.7;
+        bronco.rimRadius = 0.216;
+        bronco.wheelStyle = WHEEL_OFFROAD_BLACK;
+        bronco.paintColor[0] = 0.30f, bronco.paintColor[1] = 0.40f, bronco.paintColor[2] = 0.43f;
+        bronco.lampStyle = LAMP_ROUND;
+        bronco.grilleStyle = GRILLE_WIDE;
+        bronco.extras = EXTRA_SPARE | EXTRA_FLARES | EXTRA_ROOF_RACK | EXTRA_SKID_PLATE | EXTRA_SLIDERS | EXTRA_WINCH;
+        bronco.coverColor[0] = 0.05f, bronco.coverColor[1] = 0.05f, bronco.coverColor[2] = 0.06f;
+        v.push_back(bronco);
+
+        // ---- Toyota 4Runner Limited 4x4 (3rd generation, 2002), as built ----------------
+        // The Bring a Trailer truck (lot 61042, sold December 2021): a black 2002 Limited
+        // with a Magnuson supercharger, Old Man Emu coils, Bilstein struts and SPC upper
+        // arms, a Toytec 2 in body lift, 35x12.50R17 BFGoodrich KO2s on bronze Icon
+        // Rebound wheels, Body Armor bumpers with a Smittybilt winch and a swing-out tire
+        // carrier, rock sliders, a snorkel and a BajaRack roof basket.
+        // Underneath it's the factory truck: body on a ladder frame, 3.4 L 5VZ-FE V6,
+        // A340F 4-speed automatic with 4.10 axles, Multi-Mode 4WD with a 2.566:1 low range,
+        // double wishbones in front and a four-link coil-sprung solid axle behind.
+        VehicleSpec runner = bronco;
+        runner.name = "TOYOTA 4RUNNER";
+        runner.id = "4runner";
+        runner.blurb = "2002 LIMITED  SUPERCHARGED 3.4L V6  LIFTED ON 35S";
+        runner.profile = {
+            "#WW######WW#",
+            "############",
+            "...GGGGGGGGG",
+        };
+        // Factory body first (Limited: 4,656 x 1,689 body / 1,801 over the flares x
+        // 1,740 mm, 2,675 mm wheelbase)...
+        runner.layerY = {0.40, 0.80, 1.09, 1.74};
+        runner.length = 4.656;
+        runner.width = 1.689;
+        runner.wheelbase = 2.675;
+        runner.frontOverhang = 0.85;
+        runner.topLine = {0.99, 1.06, 1.08};  // long, nearly flat hood over a blunt nose
+        runner.bumperLift = 0.10;
+        runner.cornerRound = 0.07;  // square-shouldered
+        runner.roofTuck = 0.08;
+        runner.rakeFront = 0.50;
+        runner.rakeRear = 0.05;     // upright tailgate
+        runner.liftgate = true;     // third-generation 4Runner: top-hinged liftgate with power rear glass
+        // Limited 4x4 1,867 kg; the build adds ~290 kg (bumpers and winch, carrier and
+        // spare, sliders, basket, supercharger, heavier wheels): ~2,150 kg, about 55/45.
+        runner.structureMass = 455;  // ladder frame and body shell
+        runner.panelMass = 175;
+        runner.items = {
+            {"radiator", 18, 1.95, 0.80, 0},               {"battery", 20, 1.70, 0.95, -0.55},
+            {"front diff and IFS crossmember", 50, 1.46, 0.46, 0},
+            {"front prop shaft", 9, 0.85, 0.46, 0.1},      {"rear prop shaft", 13, -0.35, 0.46, 0},
+            {"dashboard and heater", 40, 0.80, 1.02, 0},   {"leather power seats", 58, 0.05, 0.78, 0},
+            {"rear seat", 35, -0.80, 0.78, 0},             {"carpets, trim and wiring", 75, 0.0, 0.66, 0},
+            {"fuel tank (70 L, full)", 62, -0.55, 0.46, 0}, {"exhaust (Gibson cat-back)", 26, -0.3, 0.34, 0.33},
+            {"sunroof and roof trim", 18, 0.1, 1.72, 0},  {"steering and brakes", 18, 1.4, 0.65, 0},
+            {"front skid plate", 22, 1.3, 0.38, 0},        {"electronics and stereo", 18, 0.4, 0.85, 0},
+            {"front frame horns and shock towers", 90, 1.75, 0.68, 0},
+            {"Body Armor front bumper", 48, 2.36, 0.58, 0}, {"Smittybilt winch and rope", 34, 2.38, 0.58, 0},
+            {"Body Armor rear bumper and carrier", 52, -2.38, 0.58, 0},
+            {"spare 35 in wheel on the carrier", 44, -2.62, 1.0, -0.34},
+            {"rock sliders", 36, 0.0, 0.36, 0},           {"roof basket and lights", 30, -0.25, 1.86, 0},
+            {"snorkel", 4, 1.0, 1.5, 0.85},
+        };
+        runner.engineMass = 198;   // iron-block 5VZ-FE with the supercharger
+        runner.gearboxMass = 100;  // 4-speed auto and transfer case
+        runner.engineX = 1.28;
+        runner.engineY = 0.80;
+        runner.engineLen = 0.58;
+        runner.engineWid = 0.62;
+        runner.engineHgt = 0.62;
+        runner.gearboxLen = 0.85;
+        runner.bodyStiffness = 1.2;
+        runner.frameStiffness = 0.30;
+        runner.bodyStrength = 1.0;   // thick 90s sheet metal
+        runner.frameStrength = 2.0;
+        runner.panelStrength = 1.6;
+        runner.pinStrength = 1.8;
+        // ...then the lift: ~65 mm of Old Man Emu springs, the 2 in (51 mm) body lift, and
+        // 56 mm more tire radius (35x12.50R17 against the factory 265/70R16).
+        runner.wheelRadius = 0.389;  // factory 265/70R16, 777 mm
+        raiseBody(runner, 0.065 + 0.051 + (0.445 - 0.389));
+        runner.wheelRadius = 0.445;  // 35x12.50R17
+        runner.wheelWidth = 0.318;
+        runner.trackFront = runner.trackRear = 1.56;  // factory 1,506 mm, wider with the Icon wheels
+        runner.wheelMass = 45;       // KO2 and 17 in alloy (factory: ~30 kg)
+        runner.hubMass = 25;
+        runner.axleMass = 80;
+        runner.rideFreqFront = 1.32;  // heavy-duty OME coils
+        runner.rideFreqRear = 1.45;
+        runner.dampingRatio = 0.44;   // Bilsteins
+        runner.arbFront = 14000;
+        runner.arbRear = 4000;
+        // Wheel travel: ~20 cm front (IFS with OME), ~25 cm rear (4-link coils).
+        runner.bumpFront = 0.085, runner.droopFront = 0.12;
+        runner.bumpRear = 0.11, runner.droopRear = 0.14;
+        runner.swayDisconnect = 2;  // quick-disconnect end links: pull the pins, stopped
+        runner.tirePsi = 35;
+        runner.tireType = TIRE_ALL_TERRAIN;
+        runner.tireGrip = 0.95;       // KO2: good on the brakes, soft-blocked in corners
+        runner.lateralGrip = 0.74;
+        runner.diffFront = runner.diffRear = DIFF_OPEN;
+        runner.transfer = XFER_FULL_TIME;  // multi-mode 4WD with the center diff lock on the dash
+        runner.lockerRear = true;          // factory rear e-locker option
+        runner.frontLockerLowOnly = false;
+        runner.rearLockerLowOnly = true;   // Toyota's e-locker only engages in 4L
+        runner.shaftLimit = 9000;          // 8 in rear; the IFS CVs (~5.9 kN*m) are the weak link on 35s
+        runner.lowRange = 2.566;
+        runner.brakeFront = 3400;  // 319 mm vented discs, 4-piston calipers
+        runner.brakeRear = 2000;   // 295 mm drums
+        runner.dragArea = 1.50;    // Cd ~0.50 x 3.0 m^2 with the lift, basket and lights
+        // Factory 183 hp / 294 N*m; the Magnuson blower at ~6 psi: ~256 hp at 5,200 rpm,
+        // 366 N*m (270 lb-ft) at 3,600.
+        runner.torque = {{0, 230}, {1000, 290}, {2000, 340}, {3000, 360}, {3600, 366}, {4200, 364}, {4800, 358}, {5200, 350}, {5500, 315}};
+        runner.idleRpm = 700;
+        runner.redline = 5500;
+        runner.speedLimit = 171;  // Toyota's governor: 106 mph
+        runner.induction = VehicleSpec::SUPERCHARGER;
+        runner.displacement = 3.4;
+        runner.cylinders = 6;
+        runner.turboLag = 0;  // a positive-displacement blower: boost from idle
+        runner.gears = {2.804, 1.531, 1.000, 0.705};
+        runner.reverseRatio = 2.393;
+        runner.finalDrive = 4.10;   // never regeared: tall on 35s
+        runner.shiftTime = 0.40;
+        runner.engineName = "3.4L V6 5VZ-FE SUPERCHARGED";
+        runner.gearboxName = "A340F 4-SPEED AUTO";
+        runner.lampStyle = LAMP_RECT;
+        runner.grilleStyle = GRILLE_WIDE;
+        runner.extras = EXTRA_FLARES | EXTRA_SPARE | EXTRA_ARMOR | EXTRA_SNORKEL | EXTRA_ROOF_BASKET | EXTRA_SLIDERS | EXTRA_SKID_PLATE | EXTRA_WINCH;
+        runner.paintColor[0] = 0.025f, runner.paintColor[1] = 0.026f, runner.paintColor[2] = 0.03f;  // Black
+        runner.trimColor[0] = 0.47f, runner.trimColor[1] = 0.47f, runner.trimColor[2] = 0.46f;       // Limited two-tone (silver)
+        runner.trimTop = 0.72f;
+        runner.wheelStyle = WHEEL_OFFROAD_BRONZE;
+        runner.coverColor[0] = 0.1f, runner.coverColor[1] = 0.1f, runner.coverColor[2] = 0.11f;
+        v.push_back(runner);
+
+        // EF Civic Si: the Rio Red hatch in bringatrailer.com/listing/1990-honda-civic-si-5/.
+        // Honda's D16A6 rating: 108 hp / 100 lb-ft; 185/60R14 tires, discs/drums,
+        // double wishbones and a five-speed. Internal mass placement and CG are estimates.
+        VehicleSpec& ef = v[0];
+        ef.blurb = "1990 EF HATCH  1.6L D16A6  5-SPEED MANUAL  FWD";
+        ef.profile = {"#WW######WW#", "############", "...GGGGGGGGG"};
+        ef.layerY = {0.19, 0.53, 0.89, 1.335};
+        ef.length = 3.965;
+        ef.width = 1.666;
+        ef.wheelbase = 2.500;
+        ef.frontOverhang = 0.78;
+        ef.topLine = {0.64, 0.73, 0.83};
+        ef.rakeFront = 0.55;
+        ef.rakeRear = 0.35;
+        ef.roofTuck = 0.11;
+        ef.cornerRound = 0.055;
+        ef.doors = 2;
+        ef.doorLength = 1.2;
+        ef.liftgate = true;
+        ef.structureMass = 315;
+        ef.panelMass = 120;
+        ef.items = {
+            {"radiator", 12, 1.68, 0.4, 0}, {"battery", 12, 1.32, 0.62, -0.4},
+            {"front subframe and rack", 30, 1.15, 0.29, 0}, {"dashboard and heater", 30, 0.55, 0.68, 0},
+            {"front seats", 32, 0.05, 0.38, 0}, {"rear seat", 18, -0.8, 0.38, 0},
+            {"interior, wiring and glass hardware", 50, -0.1, 0.47, 0},
+            {"fuel tank (45 L)", 39, -0.8, 0.29, 0}, {"exhaust", 15, -0.4, 0.20, 0.22},
+            {"rear suspension crossmember", 25, -1.27, 0.3, 0}, {"front bumper and lamps", 20, 1.8, 0.40, 0},
+            {"rear bumper", 12, -1.83, 0.4, 0}, {"air conditioning", 16, 1.3, 0.48, 0.25},
+            {"spare wheel and tools", 15, -1.55, 0.26, 0}, {"strut towers and front rails", 24, 1.4, 0.5, 0},
+        };
+        ef.engineMass = 100;
+        ef.gearboxMass = 35;
+        ef.engineX = 1.42;
+        ef.engineY = 0.48;
+        ef.engineLen = 0.49;
+        ef.engineWid = 0.41;
+        ef.engineHgt = 0.48;
+        ef.bodyStiffness = 0.87;
+        ef.bodyStrength = 0.67;  // 1990 unibody: thinner, mild steel; it folds up much more than a modern car
+        ef.frameStiffness = 0.55;
+        ef.wheelRadius = 0.289; // 14 in rim + 185 mm * 0.60 sidewall
+        ef.rimRadius = 0.1778;
+        ef.wheelWidth = 0.185;
+        ef.trackFront = 1.450;
+        ef.trackRear = 1.455;
+        ef.wheelMass = 13;
+        ef.hubMass = 11;
+        ef.frontSusp = ef.rearSusp = WISHBONE;
+        ef.rideFreqFront = 1.45;
+        ef.rideFreqRear = 1.6;
+        ef.arbFront = 10000;
+        ef.arbRear = 4000;
+        ef.tireGrip = 1.04;
+        ef.lateralGrip = 0.87;
+        ef.diffFront = DIFF_OPEN;
+        ef.brakeFront = 1550;
+        ef.brakeRear = 750;
+        ef.absEnabled = false;
+        ef.dragArea = 0.61;
+        ef.torque = {{0, 65}, {1000, 91}, {2000, 113}, {3000, 127}, {4000, 135.6}, {5000, 134}, {6000, 128.2}, {6500, 112}};
+        ef.idleRpm = 750;
+        ef.redline = 6500;
+        ef.turboLag = 0;
+        ef.induction = VehicleSpec::NATURAL;
+        ef.displacement = 1.6;
+        ef.gears = {3.250, 1.894, 1.259, 0.937, 0.771};
+        ef.reverseRatio = 3.153;
+        ef.finalDrive = 4.250;
+        ef.engineName = "1.6L SOHC D16A6";
+        ef.gearboxName = "5-SPEED MANUAL";
+        ef.paintColor[0] = 0.72f, ef.paintColor[1] = 0.045f, ef.paintColor[2] = 0.035f;
+        ef.lampStyle = LAMP_RECT;
+        ef.grilleStyle = GRILLE_CENTER;
+        ef.wheelStyle = WHEEL_HONDA_COVER;
+        ef.extras = EXTRA_LIP_SPOILER;
+
+        for (size_t i = 0; i < v.size(); i++) v[i].model = (int)i;
+        // Engines tuned ~15% over their factory ratings: rated torque is the crank's, and
+        // with the drivetrain's spinning mass counted the stock figures felt flat in the game.
+        for (VehicleSpec& s : v)
+            for (TorquePoint& tp : s.torque) tp.nm *= 1.15;
+        return v;
+    }();
+    return catalog;
+}
+
+namespace {
+VehicleSpec propBase() {
+    VehicleSpec p = vehicleCatalog()[0];
+    p.widthCells = 1;
+    p.noseDrop = p.tailDrop = p.bumperLift = p.cornerRound = p.roofTuck = 0;
+    p.rakeFront = p.rakeRear = 0;
+    p.engineMass = p.gearboxMass = 0;
+    p.wheelbase = p.frontOverhang = 0;
+    p.topLine.clear();
+    p.bodyWidth.clear();
+    p.doors = 0;
+    p.downforce = 0;
+    p.extras = 0;
+    p.items.clear();
+    p.panelMass = 0;
+    p.finish = VehicleSpec::MATTE;
+    return p;
+}
+}  // namespace
+
+const VehicleSpec& crashBoxSpec() {
+    static const VehicleSpec spec = [] {
+        VehicleSpec p = propBase();
+        p.name = "CRASH BOX";
+        p.profile = {"#"};
+        p.layerY = {0.0, 1.0};
+        p.length = p.width = 1.0;
+        p.structureMass = 40;
+        p.bodyStiffness = 0.08;  // soft foam: dents and splits easily
+        p.contactScale = 0.12;
+        return p;
+    }();
+    return spec;
+}
+
+const VehicleSpec& barrierSpec() {
+    static const VehicleSpec spec = [] {
+        VehicleSpec p = propBase();
+        p.name = "BARRIER";
+        p.profile = {"##"};
+        p.layerY = {0.0, 0.8};
+        p.length = 2.0;
+        p.width = 0.6;
+        p.structureMass = 1200;
+        p.bodyStiffness = 6.0;
+        p.finish = VehicleSpec::CONCRETE;
+        return p;
+    }();
+    return spec;
+}
