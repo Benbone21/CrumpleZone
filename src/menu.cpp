@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "gamepad.h"
 #include "hudkit.h"
 #include "platform.h"
 #include "sdl_min.h"
@@ -64,6 +65,9 @@ bool Settings::load(const std::string& path) {
         else if (k == "timeofday") timeOfDay = std::min(std::max((int)v, 0), TOD_COUNT - 1);
         else if (k == "daylength") dayMinutes = std::min(std::max(v, 1.0f), 240.0f);
         else if (k == "clock") clockHours = std::fmod(std::max(v, 0.0f), 24.0f);
+        else if (k == "padsteer") padSteering = std::min(std::max((int)v, 0), 2);
+        else if (k == "paddead") padDeadzone = std::min(std::max((int)v, 0), 2);
+        else if (k == "padrumble") padRumble = std::min(std::max((int)v, 0), 2);
     }
     std::fclose(f);
     return true;
@@ -83,6 +87,7 @@ bool Settings::save(const std::string& path) const {
     if (!joinAddress.empty()) std::fprintf(f, "join %s\n", joinAddress.c_str());
     std::fprintf(f, "pilotdest %d\npilotspeed %.0f\npilotroute %d\n", pilotDest, pilotSpeed, pilotRoute);
     std::fprintf(f, "timeofday %d\ndaylength %.0f\nclock %.2f\n", timeOfDay, dayMinutes, clockHours);
+    std::fprintf(f, "padsteer %d\npaddead %d\npadrumble %d\n", padSteering, padDeadzone, padRumble);
     std::fclose(f);
     return true;
 }
@@ -137,12 +142,13 @@ enum Id {
     UNITS = 1, VOLUME, FOV, RECOVERY, MUSIC, TIMEOFDAY, FUEL,
     QUALITY = 10, SHADOWS, AA, AO, BLOOM, CLOUDS, GRASS, SCALE,
     FULLSCREEN = 20, VSYNC, FPS,
+    PADSTEER = 30, PADDEAD, PADRUMBLE,
     // Main page and navigation.
     RESUME_ROW = 100, VEHICLE_ROW, MAP_ROW, GARAGE_ROW, SETTINGS_ROW, CONTROLS_ROW, RESET_ROW, QUIT_ROW, BACK_ROW,
     MULTI_ROW, NAME_ROW, HOST_ROW, ADDRESS_ROW, JOIN_ROW, LEAVE_ROW,
     PILOT_ROW, DEST_ROW, PSPEED_ROW, PROUTE_ROW, PGO_ROW, PSTOP_ROW,
     FREEDRIVE_ROW, LEVELS_ROW, LEVEL_PICK, LEVEL_PLAY, LEVEL_EDIT, EDITOR_ROW, LRESTART_ROW, LQUIT_ROW, MAINMENU_ROW,
-    JOBS_ROW, JOB_PICK, JOB_GO, JOB_STOP_ROW, MEET_ROW,
+    JOBS_ROW, JOB_PICK, JOB_GO, JOB_STOP_ROW, MEET_ROW, CONTROLLER_ROW,
 };
 const char* kOffOn[2] = {"OFF", "ON"};
 
@@ -189,6 +195,16 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
         button(SETTINGS_ROW, "SETTINGS", "UNITS, GRAPHICS, SOUND");
         button(CONTROLS_ROW, "CONTROLS");
         button(QUIT_ROW, "QUIT GAME");
+        return r;
+    }
+    if (page == 6) {
+        header(padName.empty() ? "NO CONTROLLER CONNECTED" : ("CONTROLLER: " + padName).c_str());
+        choice(PADSTEER, "STEERING", pad::kSteeringNames[std::min(std::max(s.padSteering, 0), 2)], 3,
+               "HOW QUICKLY THE STICK TURNS THE WHEELS: SOFT IS GENTLE NEAR THE CENTRE");
+        choice(PADDEAD, "STICK DEADZONE", pad::kDeadzoneNames[std::min(std::max(s.padDeadzone, 0), 2)], 3,
+               "RAISE IT IF THE CAR DRIFTS WITH YOUR HANDS OFF");
+        choice(PADRUMBLE, "RUMBLE", pad::kRumbleNames[std::min(std::max(s.padRumble, 0), 2)], 3, "BUMPS, SLIDES AND THE REV LIMITER");
+        button(BACK_ROW, "BACK");
         return r;
     }
     if (page == 4) {
@@ -299,6 +315,7 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
     choice(FULLSCREEN, "FULLSCREEN", kOffOn[s.fullscreen], 2);
     choice(VSYNC, "VSYNC", kOffOn[s.vsync], 2);
     choice(FPS, "SHOW FPS", kOffOn[s.showFps], 2);
+    button(CONTROLLER_ROW, "CONTROLLER", "STEERING, DEADZONE, RUMBLE");
     button(BACK_ROW, "BACK");
     return r;
 }
@@ -378,6 +395,7 @@ PauseMenu::Result PauseMenu::activate(int row, Settings& s) {
         case MAINMENU_ROW: return {MAIN_MENU};
         case GARAGE_ROW: return {GARAGE};
         case SETTINGS_ROW: goPage(1, UNITS); return {};
+        case CONTROLLER_ROW: goPage(6, PADSTEER); return {};
         case MULTI_ROW: goPage(2, netActive ? LEAVE_ROW : HOST_ROW); return {};
         case PILOT_ROW: goPage(3, DEST_ROW); return {};
         case PGO_ROW:
@@ -386,7 +404,12 @@ PauseMenu::Result PauseMenu::activate(int row, Settings& s) {
         case CONTROLS_ROW: return {CONTROLS};
         case RESET_ROW: return {RESET};
         case QUIT_ROW: return {QUIT};
-        case BACK_ROW: goPage(0, page == 2 ? MULTI_ROW : page == 3 ? PILOT_ROW : page == 4 ? LEVELS_ROW : page == 5 ? JOBS_ROW : SETTINGS_ROW); return {};
+        case BACK_ROW:
+            if (page == 6) {
+                goPage(1, CONTROLLER_ROW);
+                return {};
+            }
+            goPage(0, page == 2 ? MULTI_ROW : page == 3 ? PILOT_ROW : page == 4 ? LEVELS_ROW : page == 5 ? JOBS_ROW : SETTINGS_ROW); return {};
         case HOST_ROW: return {HOST};
         case JOIN_ROW: return {JOIN};
         case LEAVE_ROW: return {LEAVE};
@@ -435,6 +458,9 @@ PauseMenu::Result PauseMenu::change(int row, int dir, Settings& s) {
         case FULLSCREEN: s.fullscreen = !s.fullscreen; break;
         case VSYNC: s.vsync = !s.vsync; break;
         case FPS: s.showFps = !s.showFps; break;
+        case PADSTEER: s.padSteering = cycle(std::min(std::max(s.padSteering, 0), 2)); break;
+        case PADDEAD: s.padDeadzone = cycle(std::min(std::max(s.padDeadzone, 0), 2)); break;
+        case PADRUMBLE: s.padRumble = cycle(std::min(std::max(s.padRumble, 0), 2)); break;
         default: return {};
     }
     return {CHANGED};
@@ -551,10 +577,20 @@ void PauseMenu::draw(Renderer& r, const Settings& s, int W, int H, double dt) {
     fade = std::min(1.0f, fade + (float)dt * 7.0f);
     caret += (float)dt;
     const float a = fade;
+    std::vector<Row> rs = rows(s);
     const float u = std::max(0.75f, H / 720.0f);
     const float ts = px(1.6f * u), small = px(1.2f * u), title = px((this->title && page == 0 ? 4.0f : 3.0f) * u);
-    const float pad = 22 * u, rowH = 8 * ts + 14 * u, headH = 8 * small + 16 * u;
-    std::vector<Row> rs = rows(s);
+    const float pad = 22 * u;
+    // (The settings page is taller than a 720p screen: squeeze the space between rows to fit, keeping the text size.)
+    auto pageHeight = [&](float k) {
+        float contentH = 0;
+        for (const Row& row : rs)
+            contentH += row.kind == HEADER ? 8 * small + 16 * u * k : 8 * ts + 14 * u * k + (row.kind == CHOICE && !row.hint.empty() ? 8 * small + 6 * u : 0);
+        return pad * 2 + 8 * title + 18 * u + contentH + 8 * small + 16 * u;
+    };
+    const float h0 = pageHeight(0), h1 = pageHeight(1);
+    const float squeeze = h1 > H - 16 * u ? std::min(1.0f, std::max(0.2f, (H - 16 * u - h0) / (h1 - h0))) : 1.0f;
+    const float rowH = 8 * ts + 14 * u * squeeze, headH = 8 * small + 16 * u * squeeze;
 
     // Darken the (blurred) scene (the title lets more of the world through).
     r.rect(0, 0, (float)W, (float)H, 0.0f, 0.01f, 0.02f, (this->title ? 0.2f : 0.35f) * a);
@@ -568,7 +604,7 @@ void PauseMenu::draw(Renderer& r, const Settings& s, int W, int H, double dt) {
     pill(r, x, y, w, h, 0.03f, 0.035f, 0.045f, 0.9f * a);
     r.rect(x + pad, y + pad + 8 * title + 8 * u, w - 2 * pad, 2 * u, 1.0f, 0.75f, 0.3f, 0.8f * a);
     label(r, x + pad, y + pad, title,
-          page == 0 ? (this->title ? "CRUMPLE ZONE" : "PAUSED") : page == 1 ? "SETTINGS" : page == 2 ? "MULTIPLAYER" : page == 3 ? "AUTOPILOT" : page == 4 ? "LEVELS" : "JOBS",
+          page == 0 ? (this->title ? "CRUMPLE ZONE" : "PAUSED") : page == 1 ? "SETTINGS" : page == 2 ? "MULTIPLAYER" : page == 3 ? "AUTOPILOT" : page == 4 ? "LEVELS" : page == 5 ? "JOBS" : "CONTROLLER",
           1.0f, 0.75f, 0.3f, a);
     if (page == 0) {
         const char* tag = this->title ? "SOFT-BODY DRIVING: CRASH IT, CRAWL IT, RACE IT" : "CRUMPLE ZONE";
@@ -620,7 +656,7 @@ void PauseMenu::draw(Renderer& r, const Settings& s, int W, int H, double dt) {
                 r.text(x + pad + 6 * u, cy + rowH, small, hint, 0.6f, 0.62f, 0.66f, a);
             }
             if ((row.id == VEHICLE_ROW || row.id == MAP_ROW || row.id == DEST_ROW || row.id == LEVEL_PICK) && on && !this->title) {
-                const char* go = row.id == MAP_ROW ? "ENTER TO LOAD" : row.id == DEST_ROW ? "ENTER TO GO" : row.id == LEVEL_PICK ? "ENTER TO PLAY" : "ENTER TO DRIVE";
+                const std::string go = std::string(pad::hint("ENTER", pad::B_A)) + (row.id == MAP_ROW ? " TO LOAD" : row.id == DEST_ROW ? " TO GO" : row.id == LEVEL_PICK ? " TO PLAY" : " TO DRIVE");
                 r.text(valueX - r.textWidth(go, small) - 12 * u, cy + (rowH - 8 * small) / 2, small, go, 1.0f, 0.75f, 0.3f, a);
             }
         }
@@ -645,8 +681,12 @@ void PauseMenu::draw(Renderer& r, const Settings& s, int W, int H, double dt) {
         hits.push_back(hit);
         cy += hh;
     }
-    const char* keys = page == 0 && this->title ? "W S SELECT   A D CHANGE   ENTER OK"
+    std::string keys = page == 0 && this->title ? "W S SELECT   A D CHANGE   ENTER OK"
                        : page == 0                ? "W S SELECT   A D CHANGE   ENTER OK   ESC RESUME"
                                  : "W S SELECT   A D CHANGE   ENTER OK   ESC BACK";
+    if (pad::ui.last) {  // the controller was the last thing used
+        keys = "D-PAD SELECT   LEFT RIGHT CHANGE   " + std::string(pad::hint("", pad::B_A)) + " OK";
+        if (!(page == 0 && this->title)) keys += "   " + std::string(pad::hint("", pad::B_B)) + (page == 0 ? " RESUME" : " BACK");
+    }
     r.text(x + (w - r.textWidth(keys, small)) / 2, y + h - pad - 8 * small + 6 * u, small, keys, 0.55f, 0.57f, 0.62f, a);
 }

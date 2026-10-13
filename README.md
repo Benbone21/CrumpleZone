@@ -28,6 +28,7 @@ make
 | `--size 1920x1080` | Window size |
 | `--no-audio` | Disable sound |
 | `--no-vsync` | Disable vsync |
+| `--no-pad` | Ignore game controllers (also `CZ_NO_PAD=1`) |
 | `--spawn X,Z[,HEADING]` | Start somewhere else; for example, `--spawn 300,0,-80` puts you on the loop road |
 | `--scenario NAME` | Play one of the test scenarios (see Testing) |
 | `--host [PORT]` | Host a multiplayer session (default port 27015) |
@@ -96,6 +97,7 @@ scenario finishes, you can drive around in the aftermath.
 | `surfaces/` | The side-by-side flat out through mud and sand; stopping from 40 km/h on pavement, wet, gravel, sand, mud, snow and ice; locked wheels vs ABS on pavement and gravel; sand sinking, floating aired down and digging in; all-terrains vs semi-slicks in mud; ice; the autopilot on sand and ice |
 | `freeway/` | Top speed per vehicle (flat out until it stops gaining; holds its lane, nothing scrapes), and seamless 400 m wraps at 200 km/h |
 | `handling/` | Keyboard steering at 130 km/h: a tap is a nudge, a hold is a hard sweeper without a spin (each per vehicle) |
+| `gamepad/` | The controller logic with synthetic pad input: deadzone and curves, the speed-sensitive steering ratio, trigger pedals and reverse, the button bindings, rumble, a Bronco's lane change at 80 km/h and a 4L crawl on the pad |
 | `net/` | A host and a client over loopback: each sees the other's truck (node for node), a strap between them tows, leaving cleans up |
 | `ai/` | Laps (all vehicles and both directions), following, oncoming traffic, passing an obstacle, getting back on the road, getting unstuck, 8-car traffic |
 | `engine/` | Determinism, timestep convergence, sleeping, performance |
@@ -139,6 +141,43 @@ scenario finishes, you can drive around in the aftermath.
 | F3 | Show FPS |
 | F5 | Load the new build when the HUD says one is ready (see Build and run) |
 | J | Expand the checks list while a scenario plays |
+
+## Controller
+
+Xbox, PlayStation and generic pads work through SDL2's game controller API: plug one in (or unplug it) at any time and the game says `CONTROLLER CONNECTED: <name>`. The HUD hints show the pad's button names (A / CROSS and so on) while it was the last thing you used; touch the keyboard or mouse and they go back. `--no-pad` (or `CZ_NO_PAD=1`) leaves controllers alone. The pad does nothing while the game window doesn't have the focus.
+
+Driving is analog. The left stick is a real analog steering input: a radial deadzone (0.12 by default), a response curve, and a speed-sensitive ratio. Full stick is what the tires can hold at that speed (the same limit the keys use, a little more room), so it is full lock when parking or crawling and a few degrees at 130 km/h; half a stick is half of that. RT is the throttle and LT the brake, both analog; LT at a standstill puts the car in reverse (RT while rolling backwards brakes, then drives forward), exactly as holding S does.
+
+| Button | Action |
+| --- | --- |
+| Left stick | Steer |
+| RT / LT | Throttle / brake (LT at a stop: reverse) |
+| A or B | Handbrake (hold) |
+| X / Y | Shift down / up (switches to manual) |
+| Right stick | Look around (the chase camera recentres on its own) |
+| R3 (hold) | Look back; let go to reset the view |
+| RB | Camera: chase / orbit / cockpit / drone |
+| D-pad up | 4x4 mode (L) |
+| D-pad left / right | Front / rear locker |
+| D-pad down | Front sway bar disconnect |
+| L3 | Headlights |
+| Back (View) | The map: sticks pan, RT / LT zoom, A sets the waypoint, Back or B closes |
+| Start (Menu) | Pause menu |
+| LB + D-pad up / down | Winch: hook (or unhook) / tow strap |
+| LB + RT / LT | Winch in / out (right stick up and down sets the winch speed) |
+| LB + D-pad left / right | Air down / pump up the tires (hold, stopped) |
+| LB + A | Repair in place (twice quickly: back to the start) |
+| LB + B | Back on its wheels |
+| LB + X | Traction control on/off |
+| LB + Y | Get out / get in |
+| LB + RB | Manual / automatic gearbox |
+| LB + L3 | Autopilot on/off |
+| LB + Back | Next vehicle |
+| LB + Start | The controls list (shows the pad's map) |
+
+Picking a winch anchor: right stick aims, D-pad left/right or LB/RB step through the anchors, A hooks, B cancels. Menus, the title screen, the level list and the garage: D-pad or left stick move (hold to repeat), A selects, B or Start goes back. On foot the left stick walks, A jumps, and the right stick looks; Y with LB gets back in. The drone camera flies with the left stick and looks with the right.
+
+**Rumble** (settings, CONTROLLER page: OFF / LOW / HIGH): a thump on impacts, a rumble over rough ground, a buzz from tires sliding and from the engine on its limiter. It only runs while the pad is the last thing you used and the window has the focus. The same page sets STEERING (SOFT / NORMAL / SHARP: how the stick maps to the wheels) and STICK DEADZONE (SMALL / MEDIUM / LARGE). Multiplayer needs nothing: each machine reads its own pad.
 
 ## Main menu and levels
 
@@ -615,3 +654,4 @@ Help only appears when you press H.
 | `src/audio.*` | Procedural sound |
 | `src/music.*` | Generative background music (one style per map), mixed in by `audio.cpp` |
 | `src/sdl_min.h`, `src/gl.*` | Minimal SDL2 and OpenGL declarations, so no headers need installing |
+| `src/gamepad.*`, `src/gamepad_sdl.cpp` | Game controller support: shaping, steering, pedals, bindings and rumble (no SDL), and the SDL device with hot-plugging |
