@@ -206,9 +206,11 @@ VEHICLE_SCENARIO(braking, "dynamics/braking", "Full brakes from 100 km/h: stoppi
     double dist = travelled(c, p0, V3(1, 0, 0)) * (100 / v0) * (100 / v0);  // normalize to exactly 100 km/h
     ctx.check("comes to a stop", stopped);
     // EF Civic on 185/60R14 street tires without ABS: ~43 m (estimate); Jesko ~31 m (carbon-ceramics, Cup 2 R), Bronco ~44 m, 2002 4Runner ~45 m (rear drums).
-    // Rock buggy ~47 m (40 in mud tires, 1.8 t, big discs; it dives hard); side-by-side ~39 m (32 in all-terrains, 800 kg).
+    // Rock buggy ~47 m (40 in mud tires, 1.8 t, big discs, no ABS; it dives hard). Side-by-side: no
+    // published figure, and no ABS (Can-Am's and Polaris's spec sheets list none): on pavement its
+    // 32 in all-terrains lock and slide, ~0.8 g, so ~45-50 m (estimate; the earlier ~39 m assumed ABS).
     // Tacoma TRD Off-Road 124-135 ft from 60 mph (two Edmunds tests): ~40.5-44 m from 100.
-    static const Range expect[] = {{38, 49}, {27, 35}, {39, 50}, {40, 52}, {40, 56}, {34, 46}, {39, 50}};
+    static const Range expect[] = {{38, 49}, {27, 35}, {39, 50}, {40, 52}, {40, 56}, {38, 52}, {39, 50}};
     const Range& r = expect[vehicleIndex(spec)];
     ctx.metric("100-0 km/h stopping distance", dist, "m", r.lo, r.hi);
     // (The buggy dives ~5 degrees and the rear axle unloads: it wanders a little more than the rest.)
@@ -422,7 +424,10 @@ VEHICLE_SCENARIO(reverse, "dynamics/reverse", "Backs up: reverse gear engages an
     ctx.run(5.0, [&] { ctx.sim.drive(false, true, false, false, false, Ctx::kFrame); });
     Frame f = c.frame();
     ctx.check("in reverse gear", c.gear == -1);
-    ctx.metric("reverse speed after 5 s (rev-limited)", -dot(f.vel, f.fwd) * 3.6, "km/h", 12, tallBuggy(spec) ? 105 : 80);  // (a 4L80E in reverse on 5.38 axles and 40s: 100 km/h at redline)
+    // (A 4L80E in reverse (2.08, GM) on 5.38 axles and 40 in tires: 6,500 rpm / 11.2 is 581 rpm at the
+    // wheels, x 3.19 m = 111 km/h at the rev limiter. The limit here used to be 105, from "100 km/h at
+    // redline", which doesn't follow from those ratios.)
+    ctx.metric("reverse speed after 5 s (rev-limited)", -dot(f.vel, f.fwd) * 3.6, "km/h", 12, tallBuggy(spec) ? 113 : 80);
 }
 
 // =============================================================================
@@ -720,8 +725,16 @@ VEHICLE_SCENARIO(clearanceAngles, "structure/clearance", "Ground clearance and a
         {{0.05, 0.12}, {3, 10}, {2, 9}, {4, 10}},
         {{0.24, 0.30}, {36, 44}, {32, 39}, {21, 27}},
         {{0.27, 0.33}, {36, 46}, {28, 38}, {28, 40}},
-        {{0.30, 0.70}, {50, 90}, {45, 90}, {30, 60}},  // rock buggy on 40s (estimate: diffs ~0.33 m, no overhangs)
-        {{0.30, 0.46}, {40, 85}, {35, 85}, {25, 55}},  // side-by-side: 0.41 m (16 in, Can-Am), short overhangs (estimate)
+        // Rock buggy on 40s: no builder publishes angles (searched: GenRight's Nexus 4400, Ultra4 team
+        // builds; one 4400 car quotes a 21 in belly on a 118 in wheelbase). Estimates from its own
+        // geometry: diffs ~0.33 m up; tube bumpers 0.84 / 0.97 m up, 0.95 / 0.85 m beyond the axles,
+        // ~47 / ~54 degrees (the old 50-degree floor assumed no overhang ahead of the tires).
+        {{0.30, 0.70}, {42, 70}, {45, 75}, {30, 60}},
+        // Side-by-side: 16 in (0.41 m) under it (Can-Am, Maverick X3 X rs/X rc Turbo RR). 132.5 in long
+        // on a 102 in wheelbase with ~31 in tires (Can-Am): each overhang is about a tire radius, so
+        // nothing hangs past the tires' outline behind and the departure angle can be the full 90
+        // (the old 85 ceiling was an estimate). Approach and breakover: estimates.
+        {{0.30, 0.46}, {40, 85}, {35, 90}, {25, 55}},
         {{0.22, 0.26}, {29, 35}, {21.5, 26}, {19, 24}},
     };
     Car& c = ctx.add(spec, -100, -50, 0);

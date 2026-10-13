@@ -16,6 +16,9 @@ VEHICLE_SCENARIO(airbornePatch, "components/airborne-tires", "A jump clears cont
         w.stickX = w.stickY = 0.01;
         w.groundSpeed = 50;
         w.abs = 0.1;
+        // (No wind-up left in the half shafts either: in 4H a locked centre winds them a little as
+        // the truck settles on its springs, and unwinding in the air passes spin between the axles.)
+        w.twist = 0;
     }
     ctx.run(0.1);
     for (size_t i = 0; i < c.wheels.size(); i++) {
@@ -100,6 +103,10 @@ static double panelIntrusion(const Car& c, const Panel& pn) {
 }
 
 VEHICLE_SCENARIO(doorStops, "components/door-stops", "Doors unlatched on a slalom: they swing open to their check straps and back, never in through the body") {
+    if (spec.openFrame) {
+        ctx.note(std::string(spec.name) + " is a tube frame with no doors (its only hinged panel is the hood); skipped");
+        return;
+    }
     Car& c = ctx.add(spec, -100, -50, 0);
     ctx.focus(c);
     ctx.run(1.0);
