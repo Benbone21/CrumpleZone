@@ -2,3 +2,6 @@ build/
 /crumplezone
 *.ppm
 *.o
+
+# Raw downloaded asset sources (processed versions live in assets/)
+assets/source/
