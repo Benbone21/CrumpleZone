@@ -1509,6 +1509,7 @@ int main(int argc, char** argv) {
     double clock = 0;
     // Time of day: the clock (hours) carries on from last time; --time holds it still.
     double dayHours = opt.timeHours >= 0 ? opt.timeHours : settings.clockHours;
+    double levelHours = -1;  // the playing level's own hour (-1: none)
     int lampMode = opt.lamps >= 0 && opt.lamps < LAMP_MODES ? opt.lamps : LAMPS_AUTO;  // the player's headlight switch
     auto applySettings = [&]() {
         cam.fovy = (float)(settings.fovDeg * M_PI / 180);
@@ -1725,6 +1726,7 @@ int main(int argc, char** argv) {
         wrapSeen = sim.wrapShift = 0;
         hud.bestKmh = 0;
         if (lv.timeOfDay >= 0) dayHours = lv.timeOfDay;
+        levelHours = lv.timeOfDay;
         run.level = lv;
         const auto b = bestTimes.find(lv.name);
         run.best = b != bestTimes.end() ? b->second : -1;
@@ -1756,6 +1758,7 @@ int main(int argc, char** argv) {
     auto quitLevel = [&]() {
         if (!run.active()) return;
         run.stop();
+        levelHours = -1;
         if (net.role == NetSession::HOST) net.setLevel("");
         hud.toast("FREE DRIVE");
     };
@@ -1864,6 +1867,7 @@ int main(int argc, char** argv) {
             return;
         }
         run.stop();
+        levelHours = -1;
         stopPilot();
         sim.world = World(base.map);
         editor.open(sim.world, renderer, base);
@@ -1934,6 +1938,7 @@ int main(int argc, char** argv) {
             case PauseMenu::FREE_DRIVE:
                 closeMenu();
                 run.stop();
+                levelHours = -1;
                 if (net.role == NetSession::HOST) net.setLevel("");
                 if (menu.mapPick != sim.world.map && net.role != NetSession::CLIENT) {
                     loadMap(menu.mapPick);
@@ -2023,6 +2028,7 @@ int main(int argc, char** argv) {
                 break;
             case PauseMenu::MAIN_MENU:
                 run.stop();
+                levelHours = -1;
                 if (net.role == NetSession::HOST) net.setLevel("");
                 refreshLevels();
                 menu.showTitle(std::max(0, sim.cars[sim.player].spec->model), sim.world.map);
@@ -2034,6 +2040,7 @@ int main(int argc, char** argv) {
                     break;
                 }
                 loadMap(res.vehicle);
+                levelHours = -1;
                 settings.map = res.vehicle;
                 saveSettings();
                 hud.toast(std::string("MAP: ") + mapName(res.vehicle));
@@ -3031,6 +3038,8 @@ int main(int argc, char** argv) {
                 if (net.dayFresh) dayHours = net.dayHours, net.dayFresh = false;
                 dayRate = net.dayRate;
             } else if (opt.timeHours >= 0) dayHours = opt.timeHours;
+            else if (editor.active && editor.core.level.timeOfDay >= 0) dayHours = editor.core.level.timeOfDay;  // the editor shows the level's light
+            else if (levelHours >= 0 && settings.timeOfDay != TOD_CYCLE) dayHours = levelHours;  // a level's hour holds over a fixed setting (with the cycle it starts there and runs)
             else if (settings.timeOfDay != TOD_CYCLE) dayHours = timeOfDayHours(settings.timeOfDay);
             else dayRate = clockAdvance(1.0, settings.dayMinutes);
             if (!sim.paused) dayHours = std::fmod(dayHours + dayRate * dt * sim.timeScale, 24.0);

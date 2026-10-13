@@ -139,3 +139,54 @@ SCENARIO(editorWater, "editor/water", "Flooding a dug hollow fills it to the bri
     ed.dry(-60, 80, 15);
     ctx.check("dried", w.waterLevel(-60, 80) < w.height(-60, 80));
 }
+
+SCENARIO(editorRepairShop, "editor/repair-shop", "A map's own repair shop can be taken out whole (no posts left standing) or picked up and moved, and both survive save and load") {
+    World w(MAP_PROVING_GROUND);
+    if (!ctx.check("the proving ground has a repair shop", !w.stations.empty())) return;
+    const V3 at = w.stations[0].p;
+    const std::string name = w.stations[0].name;
+    auto postsNear = [](const World& ww, const V3& p) {
+        int n = 0;
+        for (const Pole& pl : ww.poles) n += std::hypot(pl.x - p.x, pl.z - p.z) < 7.0 && pl.r > 0.1 && pl.r < 0.12;
+        return n;
+    };
+    ctx.metric("posts round the shop to start with", postsNear(w, at), "", 4, 4);
+    // Taken out: the station, the shed and its four posts all go.
+    {
+        World t = w;
+        t.removeNear(at.x, at.z, 1.5);
+        ctx.metric("repair stations left after taking it out", (double)t.stations.size(), "", w.stations.size() - 1.0, w.stations.size() - 1.0);
+        ctx.metric("posts left standing", postsNear(t, at), "", 0, 0);
+    }
+    // Picked up in the editor and moved 30 m: the shop (and its name) is there, not here.
+    Level lv;
+    lv.map = MAP_PROVING_GROUND;
+    EditCore ed;
+    ed.begin(w, lv);
+    EditPick p;
+    p.kind = EditPick::BASE;
+    p.baseKind = 4;
+    for (int i = 0; i < (int)w.fixtures.size(); i++)
+        if (w.fixtures[i].kind == PROP_GARAGE && std::hypot(w.fixtures[i].a.x - at.x, w.fixtures[i].a.z - at.z) < 0.05) p.index = i, p.at = w.fixtures[i].a;
+    p.name = "REPAIR SHOP";
+    const int k = ed.adoptBase(p);
+    if (!ctx.check("picked up as the level's object", k >= 0)) return;
+    LevelObject o = ed.level.objects[k];
+    o.p.x += 30;
+    ed.setObject(k, o);
+    int here = 0, there = 0;
+    for (const Station& st : w.stations) {
+        here += std::hypot(st.p.x - at.x, st.p.z - at.z) < 1.0;
+        there += std::hypot(st.p.x - (at.x + 30), st.p.z - at.z) < 1.0 && name == st.name;
+    }
+    ctx.check("gone from where it was", here == 0);
+    ctx.check("standing where it was moved to, with its name", there == 1);
+    ctx.metric("posts left at the old place", postsNear(w, at), "", 0, 0);
+    Level back;
+    std::string err;
+    ctx.check("parses", parseLevelText(saveLevelText(ed.level), back, &err), err);
+    World pw = playWorld(back);
+    int played = 0;
+    for (const Station& st : pw.stations) played += std::hypot(st.p.x - (at.x + 30), st.p.z - at.z) < 1.0;
+    ctx.check("played back: the shop is at its new place", played == 1);
+}
