@@ -121,6 +121,7 @@ Without `--time`, captures start at 10:00 with the clock running.
 - **`offroad/shaft-break`:** a Bronco in 4L, both locked, at full lock on rock is meant to bind and snap a CV. The front CV's limit at full lock is ~4.65 kNm and the grip-limited shaft torque peaks ~7.6 kNm in a smooth bind, but the half shafts' compliance soaks up the hop spikes that break real ones. Failing since the ladder frames (839f1c8).
 - **Tacoma:** no sound voice of its own yet (it uses the generic V6), no winch or sliders (stock truck).
 - **Frames don't neck in at the front wheels:** the stock tire's sweep at full lock and full bump reaches ~8 cm past the rail's outer face (Bronco, 4Runner), so that much is allowance and a wheel knocked inboard can sink that far into the rail. Real frames narrow there; doing it means moving the front brackets with them.
+- **Solid axles are ~20-40% too heavy:** every housing node is tied to every other at knuckle stiffness, and the stability pass has them borrow ~35-80 kg off the body to stay stable (Tacoma's axle and wheels: 288 kg against ~210 from its parts). At 60% stiffness the weight is right but the housing flexes enough to steer the wheels (a Bronco yawed 27 degrees braking). A leaner truss with the same rigidity would fix it.
 - **Suspension links vs the frame:** arms are beams with no contact; in a roll a lower arm can pass ~4 cm through a rail.
 
 ## History

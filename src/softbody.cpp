@@ -1084,14 +1084,20 @@ void Car::wheelStep(double h, const World& w) {
             const double sign = escYaw >= 0 ? 1 : -1;
             const double over = (escYaw - ref) * sign;            // turning faster than asked (rad/s)
             const double slip = std::fabs(std::atan2(vy, vx));     // body sideslip (rad)
-            // (It lets a car run ~7 degrees of slip before it steps in, and fades in from 30 km/h.)
-            want = clampd(std::max((over - 0.08) * 3, (slip - 0.12) * 3), 0, 0.35) * smoothstep(8, 12, vx);
+            // (It lets a car run ~7 degrees of slip before it steps in, and fades in from 30 km/h.
+            // Its yaw deadband grows with the turn it expects: going straight, where the model is
+            // exact, ~2 deg/s of yaw nobody asked for is enough; in a bend it allows ~4.5.)
+            const double deadband = 0.035 + 0.5 * std::fabs(ref);
+            want = clampd(std::max((over - std::min(deadband, 0.08)) * 3, (slip - 0.12) * 3), 0, 0.35) * smoothstep(8, 12, vx);
         }
         escLevel += (want - escLevel) * std::min(1.0, h * 25);
         for (Wheel& wh : wheels) {
-            // The front wheel on the outside of the turn the car is actually making.
-            const bool outside = wh.front && (escYaw >= 0 ? !wh.left : wh.left);
-            wh.escBrake = outside ? escLevel : 0;
+            // The front wheel on the outside of the turn the car is actually making. Under hard
+            // braking that brake is already full, so it also lets off the inside wheels, front
+            // and rear (it works through the ABS valves).
+            const bool outsideSide = escYaw >= 0 ? !wh.left : wh.left;
+            wh.escBrake = wh.front && outsideSide ? escLevel : 0;
+            wh.escCut = outsideSide ? 0 : escLevel;
         }
     }
     // Traction control: back off the throttle while a driven wheel is spinning.
@@ -1475,10 +1481,9 @@ void Car::wheelStep(double h, const World& w) {
 
         if (wh.load <= 0) {
             // No contact patch survives a jump. Old deflection otherwise kicks the
-            // tire sideways on landing and stale road speed confuses shifts/ABS.
+            // tire sideways on landing, and road speed is the hub's own (for shifts and ABS).
             wh.stickX = wh.stickY = 0;
             wh.groundSpeed = dot(vc, fwd);
-            wh.abs = 1;
         }
         double Td = wheelPowered(wh) && !engaged ? driveTorque : 0.0;
         // The shaft's wind-up drives the hub (and holds back the side gear).
@@ -1529,17 +1534,24 @@ void Car::wheelStep(double h, const World& w) {
             // ABS: each wheel's pressure is backed off quickly when it starts to lock and
             // let back in when it grips again (it switches off at a crawl).
             // It holds each tire just under the slip that gives the most grip (~13%).
-            if (spec->absEnabled && brakePressure > 0.05 && wh.load > 0 && std::fabs(wh.groundSpeed) > 2.0)
+            if (spec->absEnabled && brakePressure > 0.05 && std::fabs(wh.groundSpeed) > 2.0)
             {
                 // Cornering brake control: braking while the tire is also sliding sideways,
                 // ease it off (the rears especially: a rear sliding under braking spins the car).
-                double err = std::fabs(wh.sx) * wh.bite - 0.11;
+                // (The rears are held under the slip the fronts run at, as real ABS does: a
+                // rear tire braking at its peak has little left to hold the tail in line.)
+                const double target = wh.front ? 0.11 : 0.07;
+                double err = std::fabs(wh.sx) * wh.bite - target;
                 if (wh.sx < -0.01) err = std::max(err, wh.slip * wh.bite * (wh.front ? 0.8 : 0.95) - 0.14);
+                // A wheel off the ground (a light rear hopping under a hard stop, a jump): the
+                // wheel-speed sensor still sees it slowing against the car, and the pressure is
+                // held off rather than let back in, so it isn't locked when it lands.
+                if (wh.load <= 0) err = std::fabs(std::min(0.0, wh.omega * wh.rollR() - wh.groundSpeed)) / std::fabs(wh.groundSpeed) * wh.bite - target;
                 wh.abs = clampd(wh.abs - h * 60.0 * err, 0.05, 1.0);
             }
             else
                 wh.abs = std::min(1.0, wh.abs + h * 6);
-            double service = (brakePressure * wh.abs + std::max(wh.tcBrake, wh.escBrake)) * wh.brakeMax;
+            double service = (brakePressure * wh.abs * (1 - 1.5 * wh.escCut) + std::max(wh.tcBrake, wh.escBrake)) * wh.brakeMax;
             Tb += service + (wh.front ? 0.0 : handbrake * kHandbrakeTorque);
         }
         // The brake grips the wheel to its knuckle, so it stops the wheel turning relative to

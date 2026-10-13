@@ -782,7 +782,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
     // the knuckle slides along the strut, which pivots at the top mount. Here the "upper
     // ball joint" is the point of the strut at the top mount, held by two long links at
     // right angles to the strut, so it can only slide along it (and swivel).
-    auto wishbone = [&](double xw, int s, double zc, double ww, bool strut) {
+    auto wishbone = [&](double xw, int s, double zc, double ww, bool strut, bool frontAxle) {
         WishboneGeom g;
         const double az = std::fabs(zc);
         const double yl = R - 0.17 * sizeK, yu = strut ? R + 0.40 * sizeK : R + 0.23 * sizeK;  // ball joint heights
@@ -790,12 +790,17 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
         const double zlp = zl - 0.36, zup = zu - 0.27;              // inner pivots: lower arm 36 cm, upper 27 cm
         g.lowerBJ = V3(xw, yl, s * zl);
         g.upperBJ = V3(xw - (strut ? 0.05 : 0.02), yu, s * zu);  // top joint a little behind: caster
-        // Pivot axes tilted in side view (front lower on top, higher below) so braking
-        // and acceleration forces partly hold the body up: anti-dive / anti-squat.
-        g.lf = V3(xw + 0.24, yl + 0.01 + 0.02, s * zlp);
-        g.lr = V3(xw - 0.24, yl + 0.01 - 0.02, s * zlp);
-        g.uf = V3(xw + 0.14, yu + 0.03 - 0.025, s * zup);
-        g.ur = V3(xw - 0.14, yu + 0.03 + 0.025, s * zup);
+        // Pivot axes tilted in side view so the arms' instant centre is on the car's side of
+        // the wheel, above the ground: braking (and, on a driven rear, acceleration) forces then
+        // partly hold the body up. Anti-dive at the front (~40% on a truck), anti-lift and
+        // anti-squat behind. (Tilted the same way at both ends, the front's centre was ahead of
+        // the wheel: ~60% pro-dive, and a hard stop pitched the nose down until the rear tires
+        // went light.)
+        const double tilt = frontAxle ? -1.0 : 1.0;
+        g.lf = V3(xw + 0.24, yl + 0.01 + 0.02 * tilt, s * zlp);
+        g.lr = V3(xw - 0.24, yl + 0.01 - 0.02 * tilt, s * zlp);
+        g.uf = V3(xw + 0.14, yu + 0.03 - 0.025 * tilt, s * zup);
+        g.ur = V3(xw - 0.14, yu + 0.03 + 0.025 * tilt, s * zup);
         g.seat = g.lowerBJ;
         if (strut) {
             const V3 a = norm(g.upperBJ - g.lowerBJ), in(0, 0, -s);
@@ -862,7 +867,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 const double zc = wheelZ(s, ax), az = std::fabs(zc);
                 Pickups& P = pick[ax][sIdx];
                 if (st == WISHBONE || st == STRUT) {
-                    WishboneGeom G = wishbone(xw, s, zc, ww, st == STRUT);
+                    WishboneGeom G = wishbone(xw, s, zc, ww, st == STRUT, front);
                     P.lf = frameNode(G.lf, 2.5);
                     P.lr = frameNode(G.lr, 2.5);
                     P.uf = frameNode(G.uf, 2.0);
@@ -882,7 +887,11 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                     P.coil = frameNode(V3(xw - 0.06, ys + 0.30, zl), 2.0);
                     P.stop = frameNode(V3(xw, R + 0.31 * sizeK, s * (az - tireWidth(ax) / 2)), 2.0);
                 } else {  // SOLID_AXLE
-                    P.trail = frameNode(V3(xw + 0.77, R - 0.04, s * (az - 0.30)), 2.5);
+                    // Lower links level at ride height (their frame ends as high as the axle
+                    // brackets): a level link barely moves the axle fore and aft as the body rolls,
+                    // so the axle doesn't steer itself (sloped up to the frame, the outside end swung
+                    // back in a turn or a lopsided stop and the axle steered the truck further in).
+                    P.trail = frameNode(V3(xw + 0.77, R - 0.12, s * (az - 0.30)), 2.5);
                     P.coil = frameNode(V3(xw - 0.06, R + 0.48 * sizeK, s * (az - 0.20)), 2.0);
                     // Jounce bumper on a bracket off the rail, straight over the tube's end
                     // (where the hub's inner node is: the stop lands on the tube itself).
@@ -893,7 +902,9 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 const bool leaf = !front && vs.leafSprings;
                 // (On leaves, the stand-in for their resistance to wind-up pulls from under the
                 // housing: the leaves themselves sit on top of it.)
-                axleUpperPick[ax] = frameNode(V3(xw + 0.55, leaf ? R - 0.06 : R + 0.22, 0), 2.5);
+                // (The upper link runs down toward the frame: with the level lower links its
+                // instant centre is ahead of the axle, ~70% anti-squat and anti-lift.)
+                axleUpperPick[ax] = frameNode(V3(xw + 0.55, leaf ? R - 0.06 : R + 0.05, 0), 2.5);
                 // (Leaf springs hold the axle sideways themselves, at the seats: the panhard's
                 // place is taken by a level tie at seat height, standing in for the leaves' own
                 // sideways stiffness, and not drawn.)
@@ -1159,7 +1170,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 Assembly as;
                 if (st == WISHBONE || st == STRUT) {
                     const bool strut = st == STRUT;
-                    WishboneGeom G = wishbone(xw, s, zc, ww, strut);
+                    WishboneGeom G = wishbone(xw, s, zc, ww, strut, front);
                     wh.lower = addNode(G.lowerBJ, vs.hubMass * 0.2 + 2.0, false);
                     wh.top = addNode(G.upperBJ, vs.hubMass * 0.15 + 1.0, false);
                     wh.arm = addNode(G.arm, vs.hubMass * 0.15 + 0.5, false);

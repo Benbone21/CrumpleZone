@@ -116,6 +116,7 @@ struct Wheel {
     double abs = 1;             // ABS: share of brake pressure let through to this wheel
     double tcBrake = 0;         // brake traction control: share of this brake applied to stop it spinning
     double escBrake = 0;        // stability control: share of this brake applied to stop a spin
+    double escCut = 0;          // ...and how much of the driver's braking it lets off here (inside wheels)
     // Steering geometry in the car's rest frame: lower and upper ball joints (kingpin
     // axis), steering arm end, and rack end. The tie rod's length follows the steer angle.
     V3 kpLow, kpUp, armRest, rackRest;
