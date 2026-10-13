@@ -14,15 +14,13 @@ constexpr double kLaneZ = 6.9;  // the middle eastbound lane
 // Keeps the car in its lane the way a driver does at speed: asks for a little sideways
 // pull toward the lane center (and against any drift), then steers just enough for that
 // (the angle a given pull needs falls with the square of the speed).
-void holdLane(Car& c, double z) {
+// `trim` is the driver's slow correction: the caller keeps one per car.
+void holdLane(Car& c, double z, double& trim) {
     const Frame f = c.frame();
     const double v = std::max(5.0, len(f.vel));
     const double e = f.com.z - z;  // + = right of the lane center (+z is right, heading +x)
     // (Plus a slow trim, as a driver holds against a steady pull: a lifted truck with a
     // panhard-located axle drifts a little to one side under power.)
-    static thread_local double trim = 0;
-    static thread_local const Car* who = nullptr;
-    if (who != &c) who = &c, trim = 0;
     trim = clampd(trim + 0.08 * e * (1.0 / 60), -1.0, 1.0);
     const double pull = clampd(0.25 * e + trim + 2.5 * f.vel.z, -3.0, 3.0);  // m/s^2 to the left
     c.steer = clampd(c.wheelbase * pull / (v * v), -0.1, 0.1);
@@ -43,11 +41,11 @@ VEHICLE_SCENARIO(topSpeed, "freeway/top-speed", "Flat out down the endless freew
     ctx.focus(c);
     ctx.run(1.0);
     ctx.launch(c, 120 / 3.6);
-    double top = 0, worstLane = 0, lastGain = ctx.t, lastTop = 0, scrape = 0;
+    double top = 0, worstLane = 0, lastGain = ctx.t, lastTop = 0, scrape = 0, trim = 0;
     const double x0 = c.frame().com.x;
     ctx.runUntil(240, [&] { return ctx.t - lastGain > 6; }, [&] {
         c.throttle = 1, c.brake = 0, c.handbrake = 0;
-        holdLane(c, kLaneZ);
+        holdLane(c, kLaneZ, trim);
         const double kmh = len(c.frame().vel) * 3.6;
         static thread_local int fr = 0;
         if (getenv("CZ_DEBUG") && ++fr % 10 == 0) {
@@ -97,13 +95,13 @@ SCENARIO(freewayWrap, "freeway/wrap", "Two Jeskos at 200 km/h through the 400 m 
     ctx.launch(lead, 200 / 3.6);
     ctx.launch(tail, 200 / 3.6);
     int wraps = 0;
-    double lastShift = 0, worstJump = 0, gap0 = 0, worstGap = 0;
+    double lastShift = 0, worstJump = 0, gap0 = 0, worstGap = 0, trim[2] = {0, 0};
     V3 prev = lead.frame().vel;
     ctx.run(30, [&] {
         for (int k = 0; k < 2; k++) {
             Car& c = ctx.sim.cars[k];
             c.throttle = clampd(0.3 + (200 / 3.6 - len(c.frame().vel)) * 0.3, 0, 1), c.brake = 0, c.handbrake = 0;
-            holdLane(c, kLaneZ);
+            holdLane(c, kLaneZ, trim[k]);
         }
         const V3 v = lead.frame().vel;
         worstJump = std::max(worstJump, len(v - prev));  // per frame: a wrap must not jolt it
