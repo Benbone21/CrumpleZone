@@ -942,6 +942,26 @@ void World::buildBackcountry() {
         trailSign(creek, 6, 6.5, red);   // CREEK CRAWL
         trailSign(mud, 8, 5.5, black);   // THE MUD RUN
     }
+    // SAWMILL CAMP: the old mill shed, a pile of logs, a map; FAR SIDE CAMP: tables, a fire ring and a map;
+    // PASS HUT: a stone-chimney cabin.
+    {
+        const V3 t = kSawmill;
+        cabinAt(t + V3(-4, 0, 17), -0.4);
+        sign(t.x + 15, t.z + 8, M_PI / 2, V3(0.3, 0.22, 0.14), PROP_MAPBOARD);
+        for (int k = 0; k < 9; k++) {  // a stack of logs
+            const double row = k < 4 ? 0 : k < 7 ? 1 : 2, col = k < 4 ? k : k < 7 ? k - 4 + 0.5 : k - 7 + 1.0;
+            V3 a(t.x - 14 + col * 0.62, 0, t.z - 15), b(a.x, 0, a.z - 3.4);
+            a.y = height(a.x, a.z) + 0.3 + row * 0.5, b.y = a.y;
+            logs.push_back({a, b, 0.3});
+        }
+        const V3 f = kFarSide;
+        sign(f.x + 4, f.z - 15, M_PI / 2, V3(0.3, 0.22, 0.14), PROP_MAPBOARD);
+        table(f.x - 17, f.z - 3, 0.3);
+        table(f.x - 17, f.z + 5, -0.2);
+        fireRing(f + V3(-22, 0, 1));
+        cabinAt(passHutAt() + V3(-3, 0, 15), 0.5);
+        table(passHutAt().x + 16, passHutAt().z + 5, 1.2);
+    }
     // The trails' ratings, at their starts and where it matters.
     trailSign(ridge, 8, 5.5, black);                                       // SLICKROCK RIDGE
     trailSign(ridge, ridgeDown + 4.0, 5.0, black);                         // the DEEP CROSSING, south bank

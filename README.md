@@ -305,13 +305,34 @@ The idea: trucks break, and your buddies get you home. (Until multiplayer lands,
 - The HUD (top left) shows line out, pull, and how close it is to breaking. The pull is spread through the frame, so recovering doesn't bend the truck.
 - **Repair stations:** park on the pad and stop. The crew fixes everything (dents, panels, glass, tires, shafts, engine, hydrolock) in 4 s plus time per thing broken; moving resets the work. Towed trucks get fixed too, and the strap comes off.
   - Mountain: Trailhead Garage (in the lot), Crawl Park Pit (by the dome), Halfway Hut (a pull-off on the summit trail, where the Widowmaker Spur leaves it).
+  - Backcountry: Trailhead Camp, Sawmill Camp, Far Side Camp and Pass Hut.
   - Proving ground: the shop beside the spawn.
 - **Real or arcade (Settings → Recovery):** in Real (the default) damage stays until a station fixes it: T only puts you back on your wheels and R tows you to the start as you are. Arcade keeps the old instant repair.
 - **Compass (top):** headings, the nearest repair station and the summit, with distances.
 
 ## Maps
 
-Pick the map in the pause menu (Esc). The game remembers it. From the command line: `--map 0` proving ground, `1` mountain, `2` freeway, `3` Frontier.
+Pick the map in the pause menu (Esc). The game remembers it. From the command line: `--map 0` proving ground, `1` mountain, `2` freeway, `3` Frontier, `4` Backcountry.
+
+### Backcountry
+
+Forested hill country for crawling, mudding and exploring with buddies. You start at **Trailhead Camp** in the south and a network of trails (about 4 km in all) radiates from it, each its own challenge and rated on its signs: green easy, blue, black hard, red extreme. Elk River runs east to west across the middle, and the trails loop so a group can split up and meet again: Mud Run → Sawmill → ford → Far Side Camp on one side, Creek Crawl → mine → Slickrock Ridge → deep crossing → Far Side Camp on the other. Fuel is something to plan for (the camps have the shops).
+
+- **The Mud Run (black, 580 m):** a forest track east of camp to Sawmill Camp, worn into deep ruts, with five mud stretches and four **bog holes** (0.4–0.56 m of water over a mud bottom, wider than the trail so there's no way round). A 2WD car stalls in the first mud; a 4x4 in low range with lockers, aired down, wades through all four.
+- **Creek Crawl (red, 375 m):** up a gully with a trickle of water over its bed: boulder gardens and eight rock ledges from 0.2 m to 0.45 m (the same as the autopilot's best-set-up climb), to **the old mine** (portal, ore cart on rails, tailings, office). A Civic stops at the first boulders; a Bronco in 4L with lockers crawls the lot.
+- **Slickrock Ridge (black, 440 m):** from the mine along a bare rock spine over **Slab Point** (a lookout with a cairn and a bench), with off-camber slabs (the tread leans toward the drop, one way and then the other) and three rock drops, steeply down to Elk River.
+- **Deep crossing (black):** the ridge wades the river across a ~0.9 m pool with a current of about 1.2 m/s. The 4Runner's snorkel makes it; a Civic's engine drowns. It comes out on the way to Far Side Camp.
+- **Ridge Road (green, 230 m) and the ford:** Sawmill Camp to Far Side Camp, across the **ford** (0.4 m of gravel, a current of about 0.9 m/s: a truck wades it at walking pace).
+- **Heartbreak Hill (red, 175 m):** from Sawmill Camp straight over the hill beside the Ridge Road: loose gravel up a ~30% face, rocks in the tread, and down the far side.
+- **Sand Wash (blue, 520 m):** east from Sawmill Camp down a dry wash (soft sand, boulders along it) to a **dune bowl**, once round it on the ring trail, and out to the Mud Run. The tires sink: air down.
+- **Shelf Road (black, 270 m):** from Far Side Camp north along the rim of a canyon: a one-truck shelf with a sheer 15–25 m drop on one side (orange posts mark the edge; go over it and you land on the canyon floor), the **Cliff Overlook** pull-out, and a trail map. **Wreck Spur (green, 200 m)** runs up the canyon floor beside a stream to **the wreck site**, an old pickup on its side.
+- **High Pass (blue, 435 m):** the shelf road goes on up three switchbacks to **Pass Hut** (a repair shed and a cabin at 80 m), through snow: packed snow with two patches of black ice and a frozen pond by the hut.
+- **Tower Road (green, 670 m):** from the hut down the east side to the **fire tower** (a four-legged tower on a hairpin) and on to the ford. The **cabin spur** (175 m) leaves it for **Trapper's Cabin** on the river.
+- **Repair stations:** Trailhead Camp (it has a wash-down bay), Sawmill Camp (old mill, a stack of logs), Far Side Camp, and Pass Hut.
+- **Places to find:** 16 named places besides the camps (the autopilot menu lists them): Creek Crawl foot, the old mine, Slab Point, the deep crossing, the ford, Heartbreak Hill, the Mud Run's start and its third bog (THE SINK), the sand wash, the dune bowl, the shelf road, Cliff Overlook, the wreck site, Snow Corner, the fire tower, Trapper's Cabin.
+- **Water and land:** Elk River and the creeks run with a current on the height grid; trees (pine, broadleaf, snags) thicken away from the river, boulders and logs lie about, and every surface type is somewhere on the map.
+- **In multiplayer:** the Mud Run bogs and the Creek Crawl are made for winching each other out. Jobs and scouting runs use the places above.
+- Music: the mountain's airy folk.
 
 ### Frontier
 
@@ -518,6 +539,7 @@ Help only appears when you press H.
   - **Mountain:** airy pads, fingerpicked plucks (Karplus-Strong), a breathy flute and bells, sometimes in 3/4.
   - **Freeway:** synthwave. Pumping saw bass and pads, a pulse arpeggio, a gated snare and a saw lead with echo.
   - **Frontier:** a desert road trip. Open pads, a twangy picked guitar with a dotted echo, root-fifth bass, cross-stick and shaker.
+  - **Backcountry:** the mountain's airy folk again.
   - A seeded generator picks the key, mode and tempo and writes chord progressions (4–8 chords). Melodies come from a two-bar motif (statement, sequence, cadence) that lands on chord tones.
   - Every 30–90 s a new section adds or drops layers, and may change the progression or the key. Changing maps crossfades over 4 s.
   - The music sits about 8–14 dB under the engine at the default setting and costs under 1% of one CPU core.
