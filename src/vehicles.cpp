@@ -663,7 +663,11 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         buggy.wheelbase = 2.90;  // 114 in
         buggy.frontOverhang = 0.95;
         buggy.topLine = {0.96, 1.04, 1.12, 1.16, 1.16, 1.16, 0, 0, 0, 0, 0, 1.08, 1.04, 1.00, 0.96};
-        buggy.bodyWidth.clear();
+        // The tube frame necks in between the tires (the rails run ~0.34 m either side of the
+        // middle there, as drawn): full width only at the cockpit. At 1.5 m all the way along, its
+        // sides stood 2 cm inside the tires' sidewalls, and the rear tires rubbed them as the
+        // car squatted under power.
+        buggy.bodyWidth = {1, 1, 0.62, 0.62, 0.62, 1, 1, 1, 1, 1, 0.62, 0.62, 0.62, 1, 1};
         buggy.openFrame = true;
         buggy.doors = 0;
         buggy.liftgate = false;
@@ -737,7 +741,9 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         buggy.transfer = XFER_SELECT;
         buggy.lockerFront = buggy.lockerRear = true;  // air lockers in both axles (a switch each)
         buggy.frontLockerLowOnly = buggy.rearLockerLowOnly = false;
-        buggy.shaftLimit = 30000;   // 40-spline chromoly shafts (estimate)
+        // 40-spline 4340 chromoly shafts, ~41 mm at the spline root: ~16.5 kN*m at ~1,200 MPa
+        // ultimate shear (estimate, tau * pi d^3 / 16, as for the Bronco's).
+        buggy.shaftLimit = 16500;
         buggy.lowRange = 4.3;       // Atlas-style low range (they come 2.0 to 5.0)
         buggy.brakeFront = 4200;    // 13 in discs, 4-piston calipers (estimate)
         buggy.brakeRear = 3600;
@@ -756,6 +762,17 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         buggy.reverseRatio = 2.07;
         buggy.finalDrive = 5.38;    // typical for 40s
         buggy.shiftTime = 0.30;
+        // 4L80E converter: these crawl/race builds run ~2,000-2,400 rpm stalls (estimate: low
+        // enough to creep up a ledge on the brake, high enough to launch); ~2.0 torque ratio at
+        // stall (GM's 298 mm 4L80E converter); the lock-up clutch applies in 3rd and 4th.
+        buggy.stallRpm = 2200;
+        buggy.stallRatio = 2.0;
+        buggy.lockupGear = 3;
+        // A race car: no ABS, so no stability control or brake traction control either (the
+        // lockers do that job). Its standalone engine ECU (Holley Dominator / MoTeC class, as these
+        // LS builds run) has a throttle-side traction control, which stays.
+        buggy.absEnabled = false;
+        buggy.tractionFitted = true;
         buggy.engineName = "6.2L LS V8";
         buggy.gearboxName = "4L80E 4-SPEED AUTO + ATLAS 2-SPEED";
         buggy.lampStyle = LAMP_RECT;
@@ -869,6 +886,13 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         utv.brakeFront = 1500;
         utv.brakeRear = 1300;
         utv.dragArea = 1.10;
+        // (Built from the Jesko's spec: none of its wing's downforce carries over.)
+        utv.downforce = utv.downforceMax = 0;
+        utv.aeroBalance = 0.45;
+        // Like the Maverick X3 and RZR: no ABS, no traction or stability control (Can-Am and
+        // Polaris spec sheets list neither); the front diff lock is the traction aid.
+        utv.absEnabled = false;
+        utv.tractionFitted = false;
         // 195 hp at 7,500 rpm (Can-Am's rating for the Turbo RR), ~200 N*m through the mid-range.
         utv.torque = {{0, 90}, {1500, 110}, {3000, 160}, {4500, 195}, {5500, 205}, {6500, 200}, {7500, 185}, {8000, 165}, {8400, 130}};
         utv.idleRpm = 1400;

@@ -103,6 +103,10 @@ static double panelIntrusion(const Car& c, const Panel& pn) {
 }
 
 VEHICLE_SCENARIO(doorStops, "components/door-stops", "Doors unlatched on a slalom: they swing open to their check straps and back, never in through the body") {
+    if (spec.openFrame) {
+        ctx.note(std::string(spec.name) + " is a tube frame with no doors (its only hinged panel is the hood); skipped");
+        return;
+    }
     Car& c = ctx.add(spec, -100, -50, 0);
     ctx.focus(c);
     ctx.run(1.0);

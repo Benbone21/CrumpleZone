@@ -206,9 +206,11 @@ VEHICLE_SCENARIO(braking, "dynamics/braking", "Full brakes from 100 km/h: stoppi
     double dist = travelled(c, p0, V3(1, 0, 0)) * (100 / v0) * (100 / v0);  // normalize to exactly 100 km/h
     ctx.check("comes to a stop", stopped);
     // EF Civic on 185/60R14 street tires without ABS: ~43 m (estimate); Jesko ~31 m (carbon-ceramics, Cup 2 R), Bronco ~44 m, 2002 4Runner ~45 m (rear drums).
-    // Rock buggy ~47 m (40 in mud tires, 1.8 t, big discs; it dives hard); side-by-side ~39 m (32 in all-terrains, 800 kg).
+    // Rock buggy ~47 m (40 in mud tires, 1.8 t, big discs, no ABS; it dives hard). Side-by-side: no
+    // published figure, and no ABS (Can-Am's and Polaris's spec sheets list none): on pavement its
+    // 32 in all-terrains lock and slide, ~0.8 g, so ~45-50 m (estimate; the earlier ~39 m assumed ABS).
     // Tacoma TRD Off-Road 124-135 ft from 60 mph (two Edmunds tests): ~40.5-44 m from 100.
-    static const Range expect[] = {{38, 49}, {27, 35}, {39, 50}, {40, 52}, {40, 56}, {34, 46}, {39, 50}};
+    static const Range expect[] = {{38, 49}, {27, 35}, {39, 50}, {40, 52}, {40, 56}, {38, 52}, {39, 50}};
     const Range& r = expect[vehicleIndex(spec)];
     ctx.metric("100-0 km/h stopping distance", dist, "m", r.lo, r.hi);
     // (The buggy dives ~5 degrees and the rear axle unloads: it wanders a little more than the rest.)
