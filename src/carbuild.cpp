@@ -2192,6 +2192,19 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                         rf.section[k] = nextSection++;  // (a bracket bends on its own)
                     }
                 }
+                // The rail is the same steel section end to end, so every station takes the
+                // same force to bend; but the pull scales with each node's mass, and that
+                // varies 3:1 along it (the frame's weight follows its brackets and horns, and
+                // the stability pass lends some to the suspension). Held to the rail's mean, so
+                // the light ends (the 4Runner's tail station carried 5.8 kg against 17 in the
+                // middle) don't set at a third of the force the middle takes.
+                double railM = 0;
+                int railN = 0;
+                for (size_t k = 0; k < rf.nodes.size(); k++)
+                    if (rf.section[k] < ladderStations) railM += nodes[rf.nodes[k]].m, railN++;
+                railM /= std::max(railN, 1);
+                for (size_t k = 0; k < rf.nodes.size(); k++)
+                    if (rf.section[k] < ladderStations) rf.weight[k] = (float)clampd(railM / nodes[rf.nodes[k]].m, 0.33, 3);
             }
         } else {
             setUp(chassis, range(0, frameNodes), 300000 * vs.frameStiffness);
