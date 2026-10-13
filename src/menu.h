@@ -24,6 +24,8 @@ struct Settings {
     int timeOfDay = 0;          // TimeOfDay (daylight.h): 0 the clock runs, else a fixed time
     float dayMinutes = 24;      // real minutes for a whole day when it runs
     float clockHours = 10;      // where the clock is (kept between sessions)
+    // Game controller (gamepad.h): indices into pad::kSteeringNames / kDeadzoneNames / kRumbleNames.
+    int padSteering = 1, padDeadzone = 1, padRumble = 1;
     RenderSettings gfx;
 
     bool load(const std::string& path);
@@ -52,6 +54,7 @@ public:
     // Multiplayer page: the session's state, set by the game before drawing.
     std::string netStatus = "OFFLINE";
     bool netActive = false;
+    std::string padName;  // the connected controller (settings page), set by the game
     bool shift = false;  // a shift key is down (typing ':' in an address)
     void showMultiplayer(int currentVehicle, int currentMap);  // opens straight onto that page
     void showPage(int page, int currentVehicle, int currentMap);  // (2 multiplayer, 3 autopilot)
@@ -99,7 +102,7 @@ private:
         float x, y, w, h, barX, barW;
         int row;
     };
-    int page = 0;  // 0 main (or the title), 1 settings, 2 multiplayer, 3 autopilot, 4 levels, 5 jobs
+    int page = 0;  // 0 main (or the title), 1 settings, 2 multiplayer, 3 autopilot, 4 levels, 5 jobs, 6 controller
     int sel = 0;
     int dragSlider = -1;
     float fade = 0;

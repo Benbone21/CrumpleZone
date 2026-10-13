@@ -25,6 +25,7 @@
 #include "coop.h"
 #include "editor.h"
 #include "fx.h"
+#include "gamepad.h"
 #include "gl.h"
 #include "hudkit.h"
 #include "level.h"
@@ -46,6 +47,7 @@ const double kTimeScales[] = {1.0, 0.5, 0.25, 0.1, 0.03};
 struct Options {
     int width = 1600, height = 900;
     bool fullscreen = false, audio = true, vsync = true;
+    bool pad = true;  // --no-pad: don't open game controllers (also CZ_NO_PAD=1)
     // Scripted capture (for testing): fixed 60 Hz steps, writes PPM screenshots.
     std::string shotPrefix;
     std::set<int> shotFrames;
@@ -148,6 +150,19 @@ struct CameraRig {
         else userYaw -= dx * 0.006;
         pitch = clampd(pitch + dy * 0.005, -1.0, 1.35);
     }
+    // ---- gamepad: the right stick looks (+ = right / down), R3 held looks back, R3 let go resets ----
+    void padLook(double x, double y, bool back, bool reset, double dt) {
+        const double kx = std::copysign(std::pow(std::fabs(x), 1.5), x), ky = std::copysign(std::pow(std::fabs(y), 1.5), y);
+        if (mode == 3) {
+            droneYaw -= kx * 2.4 * dt;
+            dronePitch = clampd(dronePitch - ky * 1.4 * dt, -1.5, 1.4);
+            return;
+        }
+        (mode == 1 ? orbitYaw : userYaw) -= kx * 2.4 * dt;
+        pitch = clampd(pitch + ky * 1.3 * dt, -1.0, 1.35);
+        if (back && mode != 1) userYaw += wrapAngle(M_PI - userYaw) * (1 - std::exp(-dt * 10));
+        if (reset) userYaw = 0, pitch = 0.2;
+    }
 };
 
 void writePPM(const std::string& path, const std::vector<unsigned char>& px, int w, int h) {
@@ -226,6 +241,7 @@ Options parseArgs(int argc, char** argv) {
         if (a == "--fullscreen") o.fullscreen = true;
         else if (a == "--no-audio") o.audio = false;
         else if (a == "--no-vsync") o.vsync = false;
+        else if (a == "--no-pad") o.pad = false;
         else if (a == "--size") {
             std::string s = next();
             std::sscanf(s.c_str(), "%dx%d", &o.width, &o.height);
@@ -268,7 +284,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--level") o.level = next();
         else if (a == "--editor") o.editor = true;
         else if (a == "--help" || a == "-h") {
-            std::puts("usage: crumplezone [--fullscreen] [--size WxH] [--no-audio] [--no-vsync] [--spawn X,Z[,HEADING]] [--scenario NAME]\n"
+            std::puts("usage: crumplezone [--fullscreen] [--size WxH] [--no-audio] [--no-vsync] [--no-pad] [--spawn X,Z[,HEADING]] [--scenario NAME]\n"
                       "                   [--map N] [--host [PORT]] [--join HOST[:PORT]] [--name NAME] [--time HOURS] [--level NAME]");
             std::exit(0);
         }
@@ -717,7 +733,9 @@ void drawRecovery(Renderer& r, const Sim& sim, float u) {
     if (rp.kind == ROPE_WINCH && rp.a.car == sim.player) {
         const float sm = px(1.1f * u);
         char hint[96];
-        std::snprintf(hint, sizeof hint, "Z REEL IN   SHIFT+Z PAY OUT   - = SPEED %d%%   V UNHOOK", (int)std::lround(sim.cars[sim.player].winchSpeed * 100));
+        const int pct = (int)std::lround(sim.cars[sim.player].winchSpeed * 100);
+        if (pad::ui.last) std::snprintf(hint, sizeof hint, "%s + RT REEL IN   %s + LT PAY OUT   RIGHT STICK UP DOWN: SPEED %d%%   %s + D-PAD UP: UNHOOK", pad::hint("", pad::B_LB), pad::hint("", pad::B_LB), pct, pad::hint("", pad::B_LB));
+        else std::snprintf(hint, sizeof hint, "Z REEL IN   SHIFT+Z PAY OUT   - = SPEED %d%%   V UNHOOK", pct);
         r.text(x + 8 * u, y + h + 4 * u, sm, hint, 0.8f, 0.82f, 0.86f, 0.9f);
     }
 }
@@ -1003,6 +1021,28 @@ void drawHelp(Renderer& r, float u, int W, int H, bool mph) {
     }
 }
 
+// The controller's button map (the help overlay when the pad was the last thing used).
+void drawPadHelp(Renderer& r, float u, int W, int H) {
+    const auto rows = pad::helpRows(pad::ui.style);
+    const int n = (int)rows.size(), per = (n + 1) / 2;
+    float s = px(1.2f * u), lh = 8 * s + 5 * u, keyW[2] = {0, 0}, descW[2] = {0, 0};
+    for (int k = 0; k < n; k++) {
+        keyW[k / per] = std::max(keyW[k / per], r.textWidth(rows[k].first, s));
+        descW[k / per] = std::max(descW[k / per], r.textWidth(rows[k].second, s));
+    }
+    const float pd = 18 * u, colW0 = keyW[0] + 12 * u + descW[0], colW1 = keyW[1] + 12 * u + descW[1];
+    const float w = colW0 + colW1 + 3 * pd, h = per * lh + 8 * s * 1.5f + 3 * pd;
+    const float x = (W - w) / 2, y = (H - h) / 2;
+    pill(r, x, y, w, h, 0.02f, 0.025f, 0.035f, 0.85f);
+    label(r, x + pd, y + pd, px(2.0f * u), "CONTROLLER", 1.0f, 0.75f, 0.3f);
+    for (int k = 0; k < n; k++) {
+        const int col = k / per;
+        const float cx = x + pd + (col ? colW0 + pd : 0), cy = y + pd * 2 + 8 * s * 1.5f + (k % per) * lh;
+        r.text(cx, cy, s, rows[k].first, 1.0f, 0.75f, 0.3f);
+        r.text(cx + keyW[col] + 12 * u, cy, s, rows[k].second, 0.9f, 0.91f, 0.93f);
+    }
+}
+
 void drawScenarioStatus(Renderer& r, const Playback& pb, HudState& hud, float u, int W) {
     const Ctx& c = *pb.ctx;
     int ok = 0, total = 0;
@@ -1098,7 +1138,9 @@ void drawGarage(Renderer& r, const GarageUI& g, const Garage& garage, float u, i
         r.text(x + pad, cy, s, l, 0.85f, 0.87f, 0.9f);
         cy += lh;
     }
-    r.text(x + pad, y + h - pad - 8 * s, s, "W S CHOOSE PART   A D CHANGE   ENTER FIT AND DRIVE   G CLOSE", 1.0f, 0.75f, 0.3f);
+    const std::string garageKeys = pad::ui.last ? "D-PAD UP DOWN: CHOOSE PART   LEFT RIGHT: CHANGE   " + std::string(pad::hint("", pad::B_A)) + " FIT AND DRIVE   " + pad::hint("", pad::B_B) + " CLOSE"
+                                                : "W S CHOOSE PART   A D CHANGE   ENTER FIT AND DRIVE   G CLOSE";
+    r.text(x + pad, y + h - pad - 8 * s, s, garageKeys, 1.0f, 0.75f, 0.3f);
 }
 
 void drawWinchAim(Renderer& r, const Sim& sim, const WinchAim& aim, const View& view, float u, int W, int H) {
@@ -1141,8 +1183,11 @@ void drawWinchAim(Renderer& r, const Sim& sim, const WinchAim& aim, const View& 
         const float ts = px(1.8f * u);
         label(r, sx - r.textWidth(buf, ts) / 2, sy + b + 6 * u, ts, buf, cr, cg, cb);
     }
-    const char* help = aim.targets.empty() ? "NOTHING IN REACH (30 M LINE)   ESC CANCEL"
-                                           : "DRAG TO AIM   WHEEL OR TAB: NEXT   V OR CLICK: HOOK   ESC: CANCEL";
+    const std::string padHelp = aim.targets.empty() ? "NOTHING IN REACH (30 M LINE)   " + std::string(pad::hint("", pad::B_B)) + " CANCEL"
+                                                    : "RIGHT STICK AIMS   D-PAD OR LB RB: NEXT   " + std::string(pad::hint("", pad::B_A)) + ": HOOK   " + pad::hint("", pad::B_B) + ": CANCEL";
+    const char* help = pad::ui.last ? padHelp.c_str()
+                       : aim.targets.empty() ? "NOTHING IN REACH (30 M LINE)   ESC CANCEL"
+                                             : "DRAG TO AIM   WHEEL OR TAB: NEXT   V OR CLICK: HOOK   ESC: CANCEL";
     centeredPill(r, W / 2.0f, H - 110 * u, px(1.5f * u), help, 0.02f, 0.02f, 0.03f, 0.95f, 1.0f, 0.75f, 0.3f);
 }
 
@@ -1283,13 +1328,15 @@ void drawHud(Renderer& r, const Sim& sim, const View& view, HudState& hud, const
     }
     if (hud.hintTime > 0 && !hud.showHelp) {
         float a = (float)std::min(1.0, hud.hintTime);
-        centeredPill(r, W / 2.0f, y, px(1.4f * u), "H: CONTROLS   ESC: MENU", 0.02f, 0.02f, 0.03f, a, 0.9f, 0.9f, 0.92f);
+        const std::string line = pad::ui.last ? std::string(pad::hint("", pad::B_LB)) + " + " + pad::hint("", pad::B_START) + ": CONTROLS   " + pad::hint("", pad::B_START) + ": MENU"
+                                              : "H: CONTROLS   ESC: MENU";
+        centeredPill(r, W / 2.0f, y, px(1.4f * u), line, 0.02f, 0.02f, 0.03f, a, 0.9f, 0.9f, 0.92f);
     }
     if (hud.showFps) {
         std::snprintf(buf, sizeof(buf), "%d FPS", (int)std::lround(fps));
         label(r, W - r.textWidth(buf, px(1.3f * u)) - 10 * u, 8 * u, px(1.3f * u), buf, 0.8f, 0.9f, 0.8f);
     }
-    if (hud.showHelp) drawHelp(r, u, W, H, mph);
+    if (hud.showHelp) pad::ui.last ? drawPadHelp(r, u, W, H) : drawHelp(r, u, W, H, mph);
 }
 
 }  // namespace
@@ -1482,9 +1529,17 @@ int main(int argc, char** argv) {
     BuildWatch watch;
     if (!scripted) watch.start();
     bool reload = false;
+    // ---- gamepad: a pad button press arrives as the key press it stands for (see gamepad.h) ----
+    pad::Device padDev;
+    pad::Logic padLogic;
+    pad::Rumbler rumbler;
+    pad::Mode padCtx = pad::Mode::Off;
+    bool padShift = false, padRumbling = false;  // (padShift: the key press being handled carries Shift)
+    double padRumbleTimer = 0;
+    if (opt.pad && !scripted && !std::getenv("CZ_NO_PAD")) padDev.start();
     auto shiftDown = [&]() {
         const uint8_t* ks = SDL_GetKeyboardState(nullptr);
-        return ks[SC_LSHIFT] || ks[SC_RSHIFT];
+        return padShift || ks[SC_LSHIFT] || ks[SC_RSHIFT];
     };
     auto confirmWinch = [&]() {
         if (winchAim.sel < 0 || winchAim.sel >= (int)winchAim.targets.size()) {
@@ -1969,7 +2024,7 @@ int main(int argc, char** argv) {
     } else if (opt.menu >= 0) {
         openMenu();
         if (opt.menu == 1) {
-            for (int k = 0; k < 6; k++) menu.key(SC_S, settings);  // down to SETTINGS
+            for (int k = 0; k < 8; k++) menu.key(SC_S, settings);  // down to SETTINGS
             menu.key(SC_RETURN, settings);
         }
     }
@@ -2018,8 +2073,42 @@ int main(int argc, char** argv) {
         hud.newBuild = watch.poll();
         if (hud.newBuild && std::getenv("CZ_AUTORELOAD")) reload = true, running = false;  // (testing the reload)
 
+        // ---- gamepad: what the pad is doing this frame (its presses are fed in as keys below) ----
+        padCtx = editor.active || coop.typing || playback.active() || !padDev.connected() ? pad::Mode::Off
+                 : menu.open || garageUI.open                                             ? pad::Mode::Menu
+                 : coop.mapOpen                                                           ? pad::Mode::Map
+                 : winchAim.on                                                            ? pad::Mode::Aim
+                                                                                          : pad::Mode::Drive;
+        padLogic.tune = {settings.padSteering, settings.padDeadzone, settings.padRumble};
+        padLogic.update(padDev.read((SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS) != 0), padCtx, dt);
+        size_t padTap = 0;
+        bool fromPad = false;
+        auto nextEvent = [&](SDL_Event& ev) {
+            fromPad = false;
+            padShift = false;
+            if (padTap < padLogic.taps.size()) {
+                const pad::Tap& t = padLogic.taps[padTap++];
+                std::memset(&ev, 0, sizeof ev);
+                ev.type = SDL_KEYDOWN;
+                std::memcpy(ev.padding + 16, &t.scancode, 4);
+                padShift = t.shift;
+                fromPad = true;
+                return true;
+            }
+            return SDL_PollEvent(&ev) != 0;
+        };
+
         SDL_Event e;
-        while (SDL_PollEvent(&e)) {
+        while (nextEvent(e)) {
+            {  // ---- gamepad: hot-plug and buttons; the keyboard and mouse take the HUD hints back ----
+                std::string padToast;
+                if (!fromPad && padDev.handleEvent(e, padToast)) {
+                    if (!padToast.empty()) hud.toast(padToast), std::fprintf(stderr, "crumplezone: %s\n", padToast.c_str());
+                    menu.padName = padDev.name();
+                    continue;
+                }
+                if (!fromPad && (e.type == SDL_KEYDOWN || e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEWHEEL)) pad::ui.last = false;
+            }
             if (!editor.active && !menu.open && coop.typing && e.type == SDL_KEYDOWN) {
                 coop.typeKey(evKeyScancode(e), shiftDown(), myName(), net);
                 continue;
@@ -2492,6 +2581,7 @@ int main(int argc, char** argv) {
             if (right) m -= l;
             if (keys[SC_E]) m.y += 1;
             if (keys[SC_Q]) m.y -= 1;
+            if (padCtx == pad::Mode::Drive) m += f * (double)padLogic.in.walkForward + l * (double)padLogic.in.walkTurn;  // (gamepad: left stick flies)
             if (len(m) > 0) cam.droneEye += norm(m) * (speed * dt);
             cam.droneEye.y = std::max(cam.droneEye.y, sim.world.height(cam.droneEye.x, cam.droneEye.z) + 0.5);
             up = down = left = right = false;
@@ -2501,6 +2591,21 @@ int main(int argc, char** argv) {
             up = down = left = right = false;
             hb = true;
             winch = airing = 0;
+        }
+        // ---- gamepad: the held controls (the steering and pedals go on the car after Sim::drive) ----
+        const bool padDrives = padCtx == pad::Mode::Drive && !walker.active && cam.mode != 3;
+        if (padCtx == pad::Mode::Drive) {
+            const pad::Intent& pin = padLogic.in;
+            hb = hb || pin.handbrake;
+            if (pin.winch) winch = pin.winch;
+            if (pin.airing) airing = pin.airing;
+            if (walker.active) {  // on foot: the left stick walks, A jumps
+                up = up || pin.walkForward > 0.4f, down = down || pin.walkForward < -0.4f;
+                left = left || pin.walkTurn > 0.4f, right = right || pin.walkTurn < -0.4f;
+            } else if (cam.mode != 3 && sim.player >= 0 && sim.player < (int)sim.cars.size() && sim.cars[sim.player].pilot.active) {
+                up = up || pin.throttle > 0.3, down = down || pin.brake > 0.3;  // (taking the wheel switches the autopilot off)
+                left = left || pin.steerTarget > 0.3, right = right || pin.steerTarget < -0.3;
+            }
         }
         if (!playback.active() && sim.player >= 0 && sim.player < (int)sim.cars.size()) {  // (a scenario drives its own cars)
             for (Car& c : sim.cars) c.airing = 0;
@@ -2621,6 +2726,11 @@ int main(int argc, char** argv) {
                 }
             }
             if (!sim.paused) sim.drive(up, down, left, right, hb, dt);
+            {  // ---- gamepad: analog steering and pedals on top of the keyboard path ----
+                Car& pc = sim.cars[sim.player];
+                if (padDrives && !sim.paused && !pc.ai && !pc.pilot.active) padLogic.apply(pc, dt);
+                else padLogic.steerState = 0;
+            }
             if (jobOn && !sim.paused) {
                 // Where everyone is: you (on foot or in the truck), and each other player's
                 // nearest truck (or them on foot).
@@ -2697,6 +2807,22 @@ int main(int argc, char** argv) {
             sim.events.clear();
             for (const std::string& ev : net.events) hud.toast(ev);
             net.events.clear();
+            {  // ---- gamepad rumble: only while the player is on the pad (the last thing they used) ----
+                const bool want = pad::ui.last && padDev.connected() && padCtx == pad::Mode::Drive && !walker.active && !sim.paused && settings.padRumble > 0 &&
+                                  (SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS) && sim.player >= 0 && sim.player < (int)sim.cars.size();
+                if (want) {
+                    const pad::RumbleOut ro = rumbler.update(sim.cars[sim.player], settings.padRumble, dt);
+                    if ((padRumbleTimer -= dt) <= 0) {
+                        padRumbleTimer = 0.1;
+                        padDev.rumble(ro.low, ro.high);
+                        padRumbling = ro.low > 0.01f || ro.high > 0.01f;
+                    }
+                } else if (padRumbling) {
+                    padDev.rumble(0, 0);
+                    padRumbling = false;
+                    rumbler.reset();
+                }
+            }
         }
 
         // Reset anything that exploded numerically; track damage and crash energy.
@@ -2807,7 +2933,28 @@ int main(int argc, char** argv) {
             fr.left = cross(fr.up, fr.fwd);
             fr.vel = walker.v;
         }
-        View view = editor.active ? editor.view(W, H) : cam.update(fr, sim.world, dt, dragging && !menu.open);
+        // ---- gamepad: the right stick turns the camera; on the map the sticks pan and the triggers zoom ----
+        bool padLooking = false;
+        if (padCtx == pad::Mode::Drive || padCtx == pad::Mode::Aim) {
+            const pad::Intent& pin = padLogic.in;
+            padLooking = pin.lookX != 0 || pin.lookY != 0 || pin.lookBack;
+            if (padLooking || pin.resetView) cam.padLook(pin.lookX, pin.lookY, pin.lookBack, pin.resetView, dt);
+            if (padLooking && winchAim.on) winchAim.pickCentered(lastView);
+        } else if (padCtx == pad::Mode::Map) {
+            const pad::Intent& pin = padLogic.in;
+            int dw = 1, dh = 1;
+            SDL_GL_GetDrawableSize(win, &dw, &dh);
+            if (pin.mapPanX != 0 || pin.mapPanY != 0) coop.mapMouse(dw / 2.0f, dh / 2.0f, 0, true, -pin.mapPanX * 600.0f * (float)dt, -pin.mapPanY * 600.0f * (float)dt);
+            if (pin.mapZoom) coop.mapMouse(dw / 2.0f, dh / 2.0f, pin.mapZoom, false, 0, 0);
+            V3 wp;
+            if (pin.mapSelect && coop.mapPoint(dw / 2.0f, dh / 2.0f, wp)) {  // (A: the waypoint at the centre, as a click would)
+                wp.y = sim.world.height(wp.x, wp.z);
+                coop.haveWaypoint = !(coop.haveWaypoint && len(V3(wp.x - coop.waypoint.x, 0, wp.z - coop.waypoint.z)) < 15);
+                coop.waypoint = wp;
+                hud.toast(coop.haveWaypoint ? "WAYPOINT SET" : "WAYPOINT CLEARED");
+            }
+        }
+        View view = editor.active ? editor.view(W, H) : cam.update(fr, sim.world, dt, (dragging || padLooking) && !menu.open);
         view.width = W;
         view.height = H;
         lastView = view;
@@ -2958,6 +3105,7 @@ int main(int argc, char** argv) {
     audio.stop();
     SDL_GL_DeleteContext(ctx);
     SDL_DestroyWindow(win);
+    padDev.close();  // (before SDL goes: stops any rumble)
     SDL_Quit();
     if (reload) {
         std::printf("reloading the new build at %s\n", resume.size() > 5 ? resume[5].c_str() : "?");
