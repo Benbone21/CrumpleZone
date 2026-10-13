@@ -665,8 +665,11 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         // The tube frame necks in between the tires (the rails run ~0.34 m either side of the
         // middle there, as drawn): full width only at the cockpit. At 1.5 m all the way along, its
         // sides stood 2 cm inside the tires' sidewalls, and the rear tires rubbed them as the
-        // car squatted under power.
-        buggy.bodyWidth = {1, 1, 0.62, 0.62, 0.62, 1, 1, 1, 1, 1, 0.62, 0.62, 0.62, 1, 1};
+        // car squatted under power. Narrowed to 0.9 there (~10 cm clear of the sidewalls): at
+        // 0.62 the floor nodes over the rear axle bunched up so a hard landing drove the diff up
+        // between them and trapped it inside the body, the housing rolled 40 degrees. (It still
+        // lands ~5 cm deeper than the trucks: the diff's top sits level with the floor at rest.)
+        buggy.bodyWidth = {1, 1, 0.9, 0.9, 0.9, 1, 1, 1, 1, 1, 0.9, 0.9, 0.9, 1, 1};
         buggy.openFrame = true;
         buggy.doors = 0;
         buggy.liftgate = false;

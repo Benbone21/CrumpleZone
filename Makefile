@@ -53,6 +53,9 @@ build/win/CrumpleZone/crumplezone.exe: $(WIN_OBJ)
 windows: build/win/CrumpleZone/crumplezone.exe
 	cp $(WINSDL)/SDL2.dll build/win/CrumpleZone/
 	cp README.md build/win/CrumpleZone/README.txt
+	rm -rf build/win/CrumpleZone/assets && mkdir -p build/win/CrumpleZone/assets
+	cp -r assets/ground build/win/CrumpleZone/assets/
+	if [ -f assets/props/props.txt ]; then cp -r assets/props build/win/CrumpleZone/assets/; fi
 	cd build/win && rm -f CrumpleZone-windows.zip && zip -qr CrumpleZone-windows.zip CrumpleZone
 
 # ---- Props: the offline baker for the Poly Haven scans (Linux; needs ImageMagick's `convert`) ----
