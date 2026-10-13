@@ -559,6 +559,18 @@ void World::buildBackcountry() {
     // The mine's yard sits where the creek ends; the ridge starts from it.
     const double mineY = creekY.back();
     levelDisc(kMine, 9, mineY, 7, PAINT_GRAVEL, SURF_GRAVEL);
+    {
+        // The hillside the mine is dug into: a rocky knoll west of the yard, with a level apron at its foot.
+        const V3 k(kMine.x - 27, 0, kMine.z - 4);
+        for (int i = cellI(k.x - 24); i <= cellI(k.x + 24); i++)
+            for (int j = cellI(k.z - 24); j <= cellI(k.z + 24); j++) {
+                const double d = std::hypot(X(i) - k.x, X(j) - k.z), e = d + 3 * (valueNoise(X(i) * 0.15, X(j) * 0.15) - 0.5);
+                const int id = i * hN + j;
+                hgrid[id] += (float)(13 * std::exp(-sq(d / 8.5)));
+                if (e < 10 && paint[id] == PAINT_NONE) paint[id] = PAINT_ROCK, surf[id] = SURF_ROCK, keep[id] = 1;
+            }
+        levelDisc(kMine + V3(-14, 0, -3), 4.5, mineY, 3, PAINT_GRAVEL, SURF_GRAVEL);
+    }
     // ---- SLICKROCK RIDGE -------------------------------------------------------------------------
     const int ridgeN = (int)ridge.size();
     int ridgeDown = ridgeN - 1;  // where it comes down onto the flood plain
@@ -983,7 +995,7 @@ void World::buildBackcountry() {
     }
     // OLD MINE: a timber portal in the hillside, ore cart on rails, tailings, an office.
     {
-        const V3 m = kMine + V3(-14, 0, -4);
+        const V3 m = kMine + V3(-14.5, 0, -3);
         const double y = height(m.x, m.z);
         const V3 timber(0.30, 0.20, 0.12);
         piece(V3(m.x, y + 1.1, m.z - 1.7), V3(0.2, 1.1, 0.2), 0, 0, 0, timber);
@@ -1197,7 +1209,8 @@ V3 backcountryFeature(const char* name) {
     if (n == "deepcrossing") return V3(kDeepX, 0, riverZ(kDeepX));
     if (n == "fordbank") return onTrail(ridgeRoadTrail(), V3(kFordX + 4, 0, riverZ(kFordX) - 17));
     if (n == "deepbank") return onTrail(ridgeTrail(), V3(kDeepX - 8, 0, riverZ(kDeepX) - 16));
-    if (n == "wreck") return wreckTrail().back();
+    if (n == "wreck") return pointAlong(wreckTrail(), (double)wreckTrail().size() - 12);  // on the spur, a little short of the wreck itself
+    if (n == "wreckbody") return wreckTrail().back();
     if (n == "slab") return pointAlong(ridgeTrail(), kSlabS);
     if (n == "overlook") return pointAlong(shelfTrail(), kOverlookS);
     if (n == "snowcorner") return pointAlong(passTrail(), kSnowCornerS);

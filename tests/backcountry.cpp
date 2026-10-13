@@ -138,6 +138,8 @@ SCENARIO(backcountryMap, "maps/backcountry",
         const V3 dc = backcountryFeature("deepcrossing");
         ctx.metric("Elk River's current at the deep crossing", len(w.waterFlow(dc.x, dc.z)), "m/s", 0.2, 2.5);
     }
+    // The Mud Run's bog holes hold 0.3-0.7 m of water.
+    for (const char* b : {"bog1", "bog2", "bog3", "bog4"}) ctx.metric(std::string(b) + ": water over the mud", waterDepth(w, backcountryFeature(b), 6), "m", 0.3, 0.7);
     // The shelf road runs along a real drop.
     {
         const V3 o = backcountryFeature("overlook");
@@ -237,7 +239,7 @@ SCENARIO(backcountryBogBronco, "backcountry/bog-bronco", "A set-up Bronco (4L, l
     }
 }
 
-SCENARIO(backcountryHill, "backcountry/hill", "A set-up Bronco climbs Heartbreak Hill (loose gravel up a ~30% face) and comes down the far side; the Civic doesn't make the top") {
+SCENARIO(backcountryHill, "backcountry/hill", "A set-up Bronco climbs Heartbreak Hill (loose gravel up a ~30% face) and comes down the far side") {
     ctx.sim.world = World(MAP_BACKCOUNTRY);
     const std::vector<V3> pts = trailLine("hill", 4, 160);
     const VehicleSpec& spec = bBronco();
@@ -337,4 +339,22 @@ SCENARIO(backcountryCreekCivic, "backcountry/creek-civic", "A Civic can't get up
     ctx.run(1.0);
     const double got = driveLine(ctx, c, pts, 6, 90, nullptr);
     ctx.metric("how far it got (the ledges start at 62 m)", got, "m", 10, 150);
+}
+
+SCENARIO(backcountryRoutes, "backcountry/routes", "The autopilot can plan a way from the trailhead to every named place (the far ones too: the fire tower, the cabin, the pass hut, the wreck, the mine)") {
+    ctx.sim.world = World(MAP_BACKCOUNTRY);
+    const V3 s = ctx.sim.world.spawn;
+    Car& c = ctx.add(bBronco(), s.x, s.z, 0);
+    ctx.focus(c);
+    ctx.run(0.5);
+    for (const char* f : {"creekfoot", "mine", "slab", "deepbank", "fordbank", "hilltop", "mudstart", "bog3", "washmid", "dunering", "shelf", "overlook", "wreck", "snowcorner", "towerlook",
+                          "cabinend", "passhut", "sawmill", "farside"}) {
+        std::vector<V3> route;
+        const V3 goal = backcountryFeature(f);
+        const bool ok = planRoute(ctx.sim.world, bBronco(), s, goal, PILOT_TRAILS, {}, route);
+        double L = 0;
+        for (size_t k = 1; k < route.size(); k++) L += std::hypot(route[k].x - route[k - 1].x, route[k].z - route[k - 1].z);
+        std::printf("ROUTE to %-10s %s %5.0f m\n", f, ok ? "ok " : "NONE", L);
+        ctx.check(std::string("a route to ") + f, ok);
+    }
 }
