@@ -142,7 +142,7 @@ enum Id {
     MULTI_ROW, NAME_ROW, HOST_ROW, ADDRESS_ROW, JOIN_ROW, LEAVE_ROW,
     PILOT_ROW, DEST_ROW, PSPEED_ROW, PROUTE_ROW, PGO_ROW, PSTOP_ROW,
     FREEDRIVE_ROW, LEVELS_ROW, LEVEL_PICK, LEVEL_PLAY, LEVEL_EDIT, EDITOR_ROW, LRESTART_ROW, LQUIT_ROW, MAINMENU_ROW,
-    JOBS_ROW, JOB_PICK, JOB_GO, JOB_STOP_ROW,
+    JOBS_ROW, JOB_PICK, JOB_GO, JOB_STOP_ROW, MEET_ROW,
 };
 const char* kOffOn[2] = {"OFF", "ON"};
 
@@ -258,6 +258,7 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
             text(ADDRESS_ROW, "HOST ADDRESS", s.joinAddress, "IP OR NAME, :PORT OPTIONAL");
             button(JOIN_ROW, "JOIN");
         } else {
+            button(MEET_ROW, "MEET UP", "YOUR TRUCK TO A BUDDY'S (AGAIN: THE NEXT ONE)");
             button(LEAVE_ROW, "LEAVE THE SESSION");
         }
         button(BACK_ROW, "BACK");
@@ -388,6 +389,7 @@ PauseMenu::Result PauseMenu::activate(int row, Settings& s) {
         case HOST_ROW: return {HOST};
         case JOIN_ROW: return {JOIN};
         case LEAVE_ROW: return {LEAVE};
+        case MEET_ROW: return {MEET_UP};
         case ADDRESS_ROW: return {JOIN};
     }
     if (it.kind == CHOICE) return change(row, 1, s);

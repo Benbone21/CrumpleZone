@@ -1868,6 +1868,35 @@ int main(int argc, char** argv) {
                 openEditor(l);
                 break;
             }
+            case PauseMenu::MEET_UP: {
+                // Your truck parked just behind the next player's (repaired, on the ground).
+                static int lastMet = -1;
+                closeMenu();
+                int pick = -1;
+                for (int k = 1; k <= net::kMaxPeers && pick < 0; k++) {
+                    const int pid = (lastMet + k + net::kMaxPeers) % net::kMaxPeers;
+                    if (pid != net.self && net.players[pid].active) pick = pid;
+                }
+                const Car* theirs = nullptr;
+                for (const Car& c : sim.cars)
+                    if (c.remote && !c.isProp() && NetSession::ownerOf(c.netId) == pick) theirs = &c;
+                if (pick < 0 || !theirs) {
+                    hud.toast("NOBODY TO MEET UP WITH");
+                    break;
+                }
+                lastMet = pick;
+                const Frame f = theirs->frame();
+                const V3 back = norm(V3(f.fwd.x, 0, f.fwd.z));
+                const V3 at = f.com - back * (theirs->spec->length / 2 + 6);
+                if (walker.active) getIn();
+                Car& me = sim.cars[sim.player];
+                sim.dropRopes(sim.player);
+                me.respawn(V3(at.x, sim.world.clearY(at.x, at.z) + 0.1, at.z), std::atan2(-back.z, back.x));
+                me.setDown(sim.world);
+                cam.initialized = false;
+                hud.toast("MET UP WITH " + net.players[pick].name);
+                break;
+            }
             case PauseMenu::JOB_START:
                 if (res.vehicle < 0 || res.vehicle >= (int)jobList.size()) break;
                 if (net.role == NetSession::CLIENT) {
