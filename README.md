@@ -127,7 +127,8 @@ scenario finishes, you can drive around in the aftermath.
 | Delete | Remove the vehicle you're in |
 | R | Repair in place. R twice quickly: respawn at the start (in a level: restart the attempt) |
 | T | Real recovery: back on your wheels where you are, damage stays. Arcade: repaired, upright |
-| C | Camera: chase / orbit / cockpit |
+| C | Camera: chase / orbit / cockpit / drone (WASD fly, Q/E down/up, drag look; the truck stays put) |
+| F10 | Photo mode: hide the HUD |
 | Mouse drag, wheel | Look around (drag up past level to look up at the sky), zoom |
 | N | Beam view: x-ray (colored by part: frame orange, engine yellow, suspension cyan, springs magenta, steering blue, shafts white, panels pale) / beams only (colored by strain) |
 | [ and ] | Slow motion down / up |

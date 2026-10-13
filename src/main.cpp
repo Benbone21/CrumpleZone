@@ -73,7 +73,9 @@ struct Options {
 };
 
 struct CameraRig {
-    int mode = 0;  // 0 chase, 1 orbit, 2 cockpit
+    int mode = 0;  // 0 chase, 1 orbit, 2 cockpit, 3 drone (flies free; the truck stays put)
+    V3 droneEye;
+    double droneYaw = 0, dronePitch = -0.3;
     double chaseYaw = 0, userYaw = 0, orbitYaw = 0.6, pitch = 0.2, dist = 7.5, idle = 0;
     float fovy = 1.15f;  // radians (settings: FIELD OF VIEW)
     V3 target;
@@ -97,6 +99,12 @@ struct CameraRig {
 
         View v;
         v.fovy = fovy;
+        if (mode == 3) {
+            v.eye = droneEye;
+            v.target = droneEye + V3(std::cos(droneYaw) * std::cos(dronePitch), std::sin(dronePitch), -std::sin(droneYaw) * std::cos(dronePitch)) * 10;
+            v.up = V3(0, 1, 0);
+            return v;
+        }
         if (mode == 2) {
             // (Dragging looks round the cabin: sideways, and up or down from straight ahead.)
             v.eye = fr.com + fr.fwd * 0.1 + fr.up * 0.55 + fr.left * 0.35;
@@ -129,6 +137,11 @@ struct CameraRig {
     }
 
     void drag(int dx, int dy) {
+        if (mode == 3) {
+            droneYaw -= dx * 0.004;
+            dronePitch = clampd(dronePitch - dy * 0.004, -1.5, 1.4);
+            return;
+        }
         if (mode == 1) orbitYaw -= dx * 0.006;
         else userYaw -= dx * 0.006;
         pitch = clampd(pitch + dy * 0.005, -1.0, 1.35);
@@ -504,6 +517,7 @@ void drawPilot(Renderer& r, const Sim& sim, const View& view, float u, int W, in
 
 struct HudState {
     std::vector<Toast> toasts;
+    bool photo = false;     // F10: everything hidden, for pictures
     bool newBuild = false;  // the game's been rebuilt since it started: F5 reloads it
     double bestKmh = 0;     // freeway: fastest so far
     // The Frontier's race circuit: time on the lap running (-1: not on one), the last and
@@ -948,7 +962,7 @@ void drawHelp(Renderer& r, float u, int W, int H, bool mph) {
         {"MOUSE", "LOOK / ZOOM"},             {"N", "BEAM VIEW"},
         {"[ ]", "SLOW MOTION"},               {"P", "PAUSE"},
         {"X", "TRACTION CONTROL"},            {"F11", "FULLSCREEN"},
-        {"F3", "FPS"},                        {"ESC", "MENU: CARS, SETTINGS, QUIT"},
+        {"F3", "FPS"},                        {"F10", "HIDE THE HUD (PHOTOS)"},                        {"ESC", "MENU: CARS, SETTINGS, QUIT"},
         {"H", "CLOSE"},
     };
     const int n = sizeof(keys) / sizeof(keys[0]), rows = (n + 1) / 2;
@@ -2170,11 +2184,21 @@ int main(int argc, char** argv) {
                             hud.toast(std::string("DRIVING ") + sim.cars[sim.player].spec->name);
                             break;
                         case SC_C: {
-                            static const char* names[] = {"CAMERA: CHASE", "CAMERA: ORBIT", "CAMERA: COCKPIT"};
-                            cam.mode = (cam.mode + 1) % 3;
+                            static const char* names[] = {"CAMERA: CHASE", "CAMERA: ORBIT", "CAMERA: COCKPIT",
+                                                          "CAMERA: DRONE (WASD FLY, Q E DOWN UP, DRAG LOOK, SHIFT FAST; F10 HIDES THE HUD)"};
+                            cam.mode = (cam.mode + 1) % 4;
+                            if (cam.mode == 3) {  // the drone takes off from where the camera was
+                                cam.droneEye = lastView.eye;
+                                const V3 d = norm(lastView.target - lastView.eye);
+                                cam.droneYaw = std::atan2(-d.z, d.x);
+                                cam.dronePitch = std::asin(clampd(d.y, -1, 1));
+                            }
                             hud.toast(names[cam.mode]);
                             break;
                         }
+                        case SC_F10:
+                            hud.photo = !hud.photo;
+                            break;
                         case SC_N: {
                             static const char* names[] = {"BEAM VIEW OFF", "BEAM VIEW: X-RAY", "BEAM VIEW: BEAMS ONLY"};
                             debug = (DebugView)((debug + 1) % DEBUG_VIEW_COUNT);
@@ -2225,6 +2249,7 @@ int main(int argc, char** argv) {
                         case SC_G: openGarage(); break;
                         case SC_E:
                         case SC_Q: {
+                            if (cam.mode == 3 || walker.active) break;  // (flying the drone / on foot: Q E aren't the gears)
                             Car& c = sim.cars[sim.player];
                             if (c.shift(evKeyScancode(e) == SC_E ? 1 : -1) && !c.manualShift) {
                                 c.manualShift = true;  // taking over the gears switches to manual
@@ -2398,6 +2423,22 @@ int main(int argc, char** argv) {
         const bool shiftHeld = keys[SC_LSHIFT] || keys[SC_RSHIFT];
         int winch = keys[SC_Z] ? (shiftHeld ? -1 : 1) : 0;
         int airing = keys[SC_9] ? -1 : keys[SC_0] ? 1 : 0;
+        if (cam.mode == 3 && !menu.open && !editor.active && !coop.typing && !coop.mapOpen) {
+            // The drone: the keys fly the camera; the truck waits on its handbrake.
+            const double speed = (8 + std::max(0.0, cam.droneEye.y - sim.world.height(cam.droneEye.x, cam.droneEye.z)) * 0.6) * (shiftHeld ? 3 : 1);
+            const V3 f(std::cos(cam.droneYaw), 0, -std::sin(cam.droneYaw)), l(-f.z, 0, f.x);
+            V3 m;
+            if (up) m += f;
+            if (down) m -= f;
+            if (left) m += l;
+            if (right) m -= l;
+            if (keys[SC_E]) m.y += 1;
+            if (keys[SC_Q]) m.y -= 1;
+            if (len(m) > 0) cam.droneEye += norm(m) * (speed * dt);
+            cam.droneEye.y = std::max(cam.droneEye.y, sim.world.height(cam.droneEye.x, cam.droneEye.z) + 0.5);
+            up = down = left = right = false;
+            hb = true;
+        }
         if (garageUI.open || menu.open || editor.active || coop.typing || coop.mapOpen) {  // parked while you work on it
             up = down = left = right = false;
             hb = true;
@@ -2739,9 +2780,10 @@ int main(int argc, char** argv) {
         renderer.drawScene(sim, view, debug, &fx);
         hud.update(dt);
         if (editor.active && !menu.open) editor.draw(renderer, W, H, dt);
-        else if (!menu.open) drawHud(renderer, sim, view, hud, &playback, net, winchAim, W, H, fps, dt, settings.mph);
-        if (!menu.open && !editor.active && run.active()) drawLevelHud(renderer, run, sim, view, W, H);
-        if (!menu.open && !editor.active && jobOn) {  // the job: what to do next, and where
+        else if (!menu.open && !hud.photo) drawHud(renderer, sim, view, hud, &playback, net, winchAim, W, H, fps, dt, settings.mph);
+        const bool showHud = !menu.open && !editor.active && !hud.photo;
+        if (showHud && run.active()) drawLevelHud(renderer, run, sim, view, W, H);
+        if (showHud && jobOn) {  // the job: what to do next, and where
             const float u = std::max(0.75f, H / 720.0f), s = px(1.2f * u);
             const V3 me = walker.active ? walker.p : sim.cars[sim.player].frame().com;
             const std::string status = jobStatus(job, sim, me);
@@ -2754,9 +2796,9 @@ int main(int argc, char** argv) {
             static const float jc[3] = {1.0f, 0.62f, 0.25f};
             if (jobMarker(job, sim, me, at, what)) coop.drawMarker(renderer, sim, view, W, H, at, what, jc);
         }
-        if (!menu.open && jobBanner > 0)
+        if (showHud && jobBanner > 0)
             centeredPill(renderer, W / 2.0f, H * 0.28f, px(2.2f * std::max(0.75f, H / 720.0f)), jobBannerText, 0, 0, 0, (float)std::min(1.0, jobBanner), 1.0f, 0.75f, 0.35f);
-        if (!menu.open && !editor.active && settings.fuelMode > 0) {  // the fuel gauge
+        if (showHud && settings.fuelMode > 0) {  // the fuel gauge
             const Car& c = sim.cars[sim.player];
             if (!c.isProp() && c.fuel >= 0 && c.spec->fuelCapacity > 0) {
                 const float u = std::max(0.75f, H / 720.0f), s = px(1.2f * u);
@@ -2771,8 +2813,8 @@ int main(int argc, char** argv) {
             }
         }
         coop.update(dt);
-        if (!menu.open && !editor.active) {
-            coop.drawWorld(renderer, sim, net, view, W, H);
+        if (showHud || (coop.mapOpen && !menu.open && !editor.active)) {
+            if (showHud) coop.drawWorld(renderer, sim, net, view, W, H);
             if (coop.mapOpen) {
                 std::vector<std::pair<std::string, V3>> places;
                 for (const Place& pl : pilotPlaces(sim, net))
