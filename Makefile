@@ -55,6 +55,16 @@ windows: build/win/CrumpleZone/crumplezone.exe
 	cp README.md build/win/CrumpleZone/README.txt
 	cd build/win && rm -f CrumpleZone-windows.zip && zip -qr CrumpleZone-windows.zip CrumpleZone
 
+# ---- Props: the offline baker for the Poly Haven scans (Linux; needs ImageMagick's `convert`) ----
+#   make bake PROPSRC=/path/to/polyhaven/models   ->  assets/props/ (committed; the game reads it)
+PROPSRC ?= assets/source/polyhaven/models
+build/bakeprops: tools/bakeprops.cpp src/props.cpp src/props.h src/third_party/cgltf.h src/third_party/stb_image.h
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) -fopenmp -o $@ tools/bakeprops.cpp src/props.cpp -lm
+
+bake: build/bakeprops
+	./build/bakeprops --src $(PROPSRC) --out assets/props $(BAKEARGS)
+
 # Runs every scenario test in parallel and writes build/test_report.html.
 # Pass a filter with: make test T=braking
 test: build/run_tests
@@ -66,4 +76,4 @@ run: crumplezone
 clean:
 	rm -rf build crumplezone
 
-.PHONY: windows all test run clean
+.PHONY: windows all test run clean bake
