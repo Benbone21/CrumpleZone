@@ -55,7 +55,7 @@ V3 World::courseStart(int surface) const {
 }
 
 const char* mapName(int map) {
-    return map == MAP_MOUNTAIN ? "MOUNTAIN" : map == MAP_FREEWAY ? "FREEWAY" : map == MAP_FRONTIER ? "FRONTIER" : "PROVING GROUND";
+    return map == MAP_MOUNTAIN ? "MOUNTAIN" : map == MAP_FREEWAY ? "FREEWAY" : map == MAP_FRONTIER ? "FRONTIER" : map == MAP_BACKCOUNTRY ? "BACKCOUNTRY" : "PROVING GROUND";
 }
 
 std::vector<V3> splinePoints(const std::vector<V3>& pts, bool closed) {
@@ -232,6 +232,7 @@ World::World(int m) : map(m) {
     if (map == MAP_MOUNTAIN) buildMountain();
     else if (map == MAP_FREEWAY) buildFreeway();
     else if (map == MAP_FRONTIER) buildFrontier();
+    else if (map == MAP_BACKCOUNTRY) buildBackcountry();
     else buildProvingGround();
     buildGrid();
 }

@@ -425,6 +425,23 @@ std::vector<Place> pilotPlaces(const Sim& sim, const NetSession& net) {
         out.push_back({"MUD HILL", frontierFeature("mudhill")});
         out.push_back({"COLD CREEK VALLEY", frontierFeature("snowfield")});
         out.push_back({"COLD CREEK LODGE", frontierFeature("lodge")});
+    } else if (sim.world.map == MAP_BACKCOUNTRY) {
+        out.push_back({"CREEK CRAWL (FOOT)", backcountryFeature("creekfoot")});
+        out.push_back({"OLD MINE", backcountryFeature("mine")});
+        out.push_back({"SLAB POINT LOOKOUT", backcountryFeature("slab")});
+        out.push_back({"DEEP CROSSING (SOUTH BANK)", backcountryFeature("deepbank")});
+        out.push_back({"ELK RIVER FORD (SOUTH BANK)", backcountryFeature("fordbank")});
+        out.push_back({"HEARTBREAK HILL (TOP)", backcountryFeature("hilltop")});
+        out.push_back({"THE MUD RUN (START)", backcountryFeature("mudstart")});
+        out.push_back({"THE SINK (BOG HOLE)", backcountryFeature("bog3")});
+        out.push_back({"SAND WASH", backcountryFeature("washmid")});
+        out.push_back({"DUNE BOWL", backcountryFeature("dunering")});
+        out.push_back({"SHELF ROAD (START)", backcountryFeature("shelf")});
+        out.push_back({"CLIFF OVERLOOK", backcountryFeature("overlook")});
+        out.push_back({"WRECK SITE", backcountryFeature("wreck")});
+        out.push_back({"SNOW CORNER", backcountryFeature("snowcorner")});
+        out.push_back({"FIRE TOWER", backcountryFeature("towerlook")});
+        out.push_back({"TRAPPER'S CABIN", backcountryFeature("cabinend")});
     } else if (sim.world.map == MAP_PROVING_GROUND) {
         out.push_back({"SPAWN", sim.world.spawn});
         out.push_back({"CRASH WALL", V3(95, 0, 0)});

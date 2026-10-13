@@ -1904,7 +1904,7 @@ void Renderer::updateTerrainRegion(const World& world, int i0, int j0, int i1, i
 }
 void Renderer::buildTerrain(const World& world) {
     // 1 m on the mountain (its crawl features are small), 2 m on the proving ground.
-    const double spacing = world.map == MAP_MOUNTAIN || world.map == MAP_FRONTIER ? 1.0 : 2.0, half = World::kHalfSize;
+    const double spacing = world.map == MAP_MOUNTAIN || world.map == MAP_FRONTIER || world.map == MAP_BACKCOUNTRY ? 1.0 : 2.0, half = World::kHalfSize;
     const int n = (int)(2 * half / spacing) + 1;
     terrainSpacing = spacing;
     terrainMeshN = n;
@@ -2529,6 +2529,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     // whose forest climbs to ~175 m.
     if (mapId == MAP_MOUNTAIN) Uniform2f(GetUniformLocation(progLit, "uRockSnow"), 165.0f, 205.0f);
     else if (mapId == MAP_FRONTIER) Uniform2f(GetUniformLocation(progLit, "uRockSnow"), 125.0f, 400.0f);  // (its snow is painted on)
+    else if (mapId == MAP_BACKCOUNTRY) Uniform2f(GetUniformLocation(progLit, "uRockSnow"), 105.0f, 400.0f);  // (its snow is painted on)
     else Uniform2f(GetUniformLocation(progLit, "uRockSnow"), 60.0f, 240.0f);
     BindVertexArray(terrainVao);
     DrawElements(GL_TRIANGLES, terrainIndexCount, GL_UNSIGNED_INT, nullptr);
