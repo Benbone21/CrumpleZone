@@ -20,6 +20,7 @@
 #include <map>
 
 #include "audio.h"
+#include "coop.h"
 #include "editor.h"
 #include "fx.h"
 #include "gl.h"
@@ -931,7 +932,9 @@ void drawHelp(Renderer& r, float u, int W, int H, bool mph) {
         {"O", "TOW STRAP TO NEARBY TRUCK"},   {"Y", "FRONT SWAY BAR DISCONNECT"},
         {"9 0", "AIR DOWN / UP (STOPPED)"},
         {"1 - 4", "CIVIC JESKO BRONCO 4RUNNER"}, {"G", "GARAGE: ENGINE, SUSPENSION, GEARBOX"},
-        {"Q E", "SHIFT DOWN / UP"},           {"M", "MANUAL / AUTOMATIC"},
+        {"Q E", "SHIFT DOWN / UP"},           {"SHIFT+M", "MANUAL / AUTOMATIC"},
+        {"M", "MAP (WAYPOINTS, PINGS)"},      {"ENTER", "CHAT"},
+        {"MIDDLE CLICK", "PING: GO HERE (SHIFT: HELP)"},
         {"L", mph ? "4X4: 2H 4H 4L (LOW: BELOW 5 MPH)" : "4X4: 2H 4H 4L (LOW: BELOW 8 KM/H)"},
         {"SHIFT+L", "LIGHTS: AUTO, LOW, HIGH, OFF"},
         {"F B", "FRONT / REAR LOCKER"},       {"I", "SPAWN PARKED VEHICLE"},
@@ -1640,6 +1643,25 @@ int main(int argc, char** argv) {
         if (net.role == NetSession::HOST) net.setLevel("");
         hud.toast("FREE DRIVE");
     };
+    // ---- Playing together: pings, chat, name tags, the map ----
+    Coop coop;
+    float mouseX = 0, mouseY = 0;  // (drawable pixels)
+    bool mapDrag = false;
+    auto myName = [&]() { return net.active() && !settings.playerName.empty() ? settings.playerName : std::string("YOU"); };
+    auto groundUnder = [&](float sx, float sy, V3& out) {  // where the screen point meets the ground
+        int dw = 1, dh = 1;
+        SDL_GL_GetDrawableSize(win, &dw, &dh);
+        V3 o, d;
+        screenRay(lastView, dw, dh, sx, sy, o, d);
+        for (double t = 1; t < 600; t += 0.5) {
+            const V3 p = o + d * t;
+            if (p.y < sim.world.height(p.x, p.z)) {
+                out = p;
+                return true;
+            }
+        }
+        return false;
+    };
     // ---- The world editor (offline) ----
     Editor editor;
     Level lastEdited;
@@ -1842,6 +1864,63 @@ int main(int argc, char** argv) {
 
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
+            if (!editor.active && !menu.open && coop.typing && e.type == SDL_KEYDOWN) {
+                coop.typeKey(evKeyScancode(e), shiftDown(), myName(), net);
+                continue;
+            }
+            if (!editor.active && !menu.open && coop.mapOpen && e.type != SDL_QUIT) {
+                // The map has the mouse (and Esc / M close it).
+                float mx, my;
+                if (e.type == SDL_KEYDOWN) {
+                    const int sc = evKeyScancode(e);
+                    if ((sc == SC_ESCAPE || (sc == SC_M && !shiftDown())) && !evKeyRepeat(e)) {
+                        coop.mapOpen = false;
+                        continue;
+                    }
+                } else if (e.type == SDL_MOUSEWHEEL) {
+                    coop.mapMouse(mouseX, mouseY, evWheelY(e), false, 0, 0);
+                    continue;
+                } else if (e.type == SDL_MOUSEMOTION) {
+                    toDrawable(evMotionX(e), evMotionY(e), mx, my);
+                    const float dx = mx - mouseX, dy = my - mouseY;
+                    mouseX = mx, mouseY = my;
+                    if (evMotionState(e) & 1) {
+                        if (std::fabs(dx) + std::fabs(dy) > 0) mapDrag = true;
+                        coop.mapMouse(mx, my, 0, true, dx, dy);
+                    }
+                    continue;
+                } else if (e.type == SDL_MOUSEBUTTONDOWN) {
+                    toDrawable(evButtonX(e), evButtonY(e), mx, my);
+                    mouseX = mx, mouseY = my;
+                    if (evButton(e) == 1) mapDrag = false;
+                    V3 p;
+                    if (evButton(e) == 3 && coop.mapPoint(mx, my, p)) {
+                        p.y = sim.world.height(p.x, p.z);
+                        coop.ping(shiftDown() ? 1 : 0, p, myName(), net);
+                    }
+                    continue;
+                } else if (e.type == SDL_MOUSEBUTTONUP) {
+                    toDrawable(evButtonX(e), evButtonY(e), mx, my);
+                    V3 p;
+                    if (evButton(e) == 1 && !mapDrag && coop.mapPoint(mx, my, p)) {
+                        p.y = sim.world.height(p.x, p.z);
+                        coop.haveWaypoint = !(coop.haveWaypoint && len(V3(p.x - coop.waypoint.x, 0, p.z - coop.waypoint.z)) < 15);
+                        coop.waypoint = p;
+                        hud.toast(coop.haveWaypoint ? "WAYPOINT SET" : "WAYPOINT CLEARED");
+                    }
+                    mapDrag = false;
+                    continue;
+                }
+            }
+            if (e.type == SDL_MOUSEMOTION) toDrawable(evMotionX(e), evMotionY(e), mouseX, mouseY);
+            if (!editor.active && !menu.open && e.type == SDL_MOUSEBUTTONDOWN && evButton(e) == 2) {
+                // Middle click: ping where the mouse points (Shift: HELP, at your truck).
+                toDrawable(evButtonX(e), evButtonY(e), mouseX, mouseY);
+                V3 p;
+                if (shiftDown()) coop.ping(1, sim.cars[sim.player].frame().com, myName(), net);
+                else if (groundUnder(mouseX, mouseY, p)) coop.ping(0, p, myName(), net);
+                continue;
+            }
             if (editor.active && e.type != SDL_QUIT && !menu.open) {
                 int ww = 1, wh = 1, dw = 1, dh = 1;
                 SDL_GetWindowSize(win, &ww, &wh);
@@ -1894,6 +1973,11 @@ int main(int argc, char** argv) {
                             confirmWinch();
                             break;
                         }
+                    }
+                    if ((evKeyScancode(e) == SC_RETURN || evKeyScancode(e) == SC_KP_ENTER) && !winchAim.on) {
+                        coop.typing = true;
+                        coop.draft.clear();
+                        break;
                     }
                     switch (evKeyScancode(e)) {
                         case SC_ESCAPE:
@@ -2027,11 +2111,15 @@ int main(int argc, char** argv) {
                             Car& c = sim.cars[sim.player];
                             if (c.shift(evKeyScancode(e) == SC_E ? 1 : -1) && !c.manualShift) {
                                 c.manualShift = true;  // taking over the gears switches to manual
-                                hud.toast("MANUAL SHIFTING (M FOR AUTOMATIC)");
+                                hud.toast("MANUAL SHIFTING (SHIFT+M FOR AUTOMATIC)");
                             }
                             break;
                         }
                         case SC_M: {
+                            if (!shiftDown()) {  // M: the map (Shift+M: the gearbox)
+                                coop.mapOpen = !coop.mapOpen;
+                                break;
+                            }
                             Car& c = sim.cars[sim.player];
                             c.manualShift = !c.manualShift;
                             hud.toast(c.manualShift ? "MANUAL SHIFTING: Q DOWN, E UP" : "AUTOMATIC SHIFTING");
@@ -2156,7 +2244,7 @@ int main(int argc, char** argv) {
         const bool shiftHeld = keys[SC_LSHIFT] || keys[SC_RSHIFT];
         int winch = keys[SC_Z] ? (shiftHeld ? -1 : 1) : 0;
         int airing = keys[SC_9] ? -1 : keys[SC_0] ? 1 : 0;
-        if (garageUI.open || menu.open || editor.active) {  // parked while you work on it
+        if (garageUI.open || menu.open || editor.active || coop.typing || coop.mapOpen) {  // parked while you work on it
             up = down = left = right = false;
             hb = true;
             winch = airing = 0;
@@ -2221,6 +2309,7 @@ int main(int argc, char** argv) {
                 }
             }
             for (const NetSession::GameMsg& m : net.gameIn) {
+                if (m.player >= 0 && m.player < net::kMaxPeers && coop.onMessage(net.players[m.player].name, m.text)) continue;
                 if (m.text == "restart") {
                     if (run.active()) run.begin(sim, runSlot(), 3.0);
                 } else if (m.player >= 0 && m.player < net::kMaxPeers) {
@@ -2286,6 +2375,14 @@ int main(int argc, char** argv) {
 
         int W, H;
         SDL_GL_GetDrawableSize(win, &W, &H);
+        if (scripted && opt.script == "map" && frame == 5) {  // (screenshots: the map, a ping and a waypoint)
+            const V3 c = sim.cars[sim.player].frame().com;
+            coop.ping(1, c + V3(120, 0, 80), "BUDDY", net);
+            coop.haveWaypoint = true;
+            coop.waypoint = c + V3(-150, 0, 200);
+            coop.mapOpen = opt.camera != 5;
+            coop.say("ON MY WAY, HANG TIGHT", "YOU", net);
+        }
         if (editor.active && scripted && opt.script == "editdemo" && frame == 5) {
             // (Screenshots: a few edits in front of the camera, through the editor's core.)
             const View v = editor.view(W, H);
@@ -2379,6 +2476,17 @@ int main(int argc, char** argv) {
         if (editor.active && !menu.open) editor.draw(renderer, W, H, dt);
         else if (!menu.open) drawHud(renderer, sim, view, hud, &playback, net, winchAim, W, H, fps, dt, settings.mph);
         if (!menu.open && !editor.active && run.active()) drawLevelHud(renderer, run, sim, view, W, H);
+        coop.update(dt);
+        if (!menu.open && !editor.active) {
+            coop.drawWorld(renderer, sim, net, view, W, H);
+            if (coop.mapOpen) {
+                std::vector<std::pair<std::string, V3>> places;
+                for (const Place& pl : pilotPlaces(sim, net))
+                    if (pl.kind == 0) places.push_back({pl.name, pl.p});
+                coop.drawMap(renderer, sim, net, W, H, places);
+            }
+            coop.drawChat(renderer, W, H);
+        }
         if (menu.open) {
             {
                 const Car& pc = sim.cars[sim.player];
