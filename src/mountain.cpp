@@ -835,6 +835,7 @@ V3 mountainFeature(const char* name) {
     if (n == "logs") return V3(kLogX, y, kLaneZ0);
     if (n == "notch") return V3(kNotchX, y, kLaneZ0);
     if (n == "dome") return V3(kDomeX, y, kDomeZ);
+    if (n == "whoops") return V3(67, y, -430);                           // the whoops lane's south end: it runs 130 m north (0.55 m bumps every 9 m)
     if (n == "trailhead") return V3(kLotX, y, kLotZ);
     if (n == "summit") return V3(kPeakX, y, kPeakZ);
     if (n == "lookout") return spiralAt(2 * M_PI - 0.06);             // the summit trail's end

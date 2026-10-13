@@ -94,7 +94,7 @@ enum {
 // Scancodes (USB HID usage ids, stable across SDL2 versions).
 enum {
     SC_A = 4, SC_C = 6, SC_D = 7, SC_H = 11, SC_I = 12, SC_J = 13, SC_K = 14, SC_N = 17, SC_P = 19, SC_R = 21, SC_S = 22, SC_T = 23, SC_U = 24, SC_W = 26, SC_X = 27,
-    SC_1 = 30, SC_2 = 31, SC_3 = 32, SC_4 = 33, SC_BACKSPACE = 42, SC_DELETE = 76,
+    SC_1 = 30, SC_2 = 31, SC_3 = 32, SC_4 = 33, SC_5 = 34, SC_6 = 35, SC_BACKSPACE = 42, SC_DELETE = 76,
     SC_ESCAPE = 41, SC_TAB = 43, SC_SPACE = 44, SC_LEFTBRACKET = 47, SC_RIGHTBRACKET = 48,
     SC_F2 = 59, SC_F3 = 60, SC_F5 = 62, SC_F11 = 68, SC_RIGHT = 79, SC_LEFT = 80, SC_DOWN = 81, SC_UP = 82,
     SC_B = 5, SC_E = 8, SC_F = 9, SC_G = 10, SC_L = 15, SC_M = 16, SC_Q = 20, SC_RETURN = 40, SC_KP_ENTER = 88,

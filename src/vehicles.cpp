@@ -121,14 +121,24 @@ const std::vector<DriveMode>& driveModes(TransferCase t) {
     // can lock; low range always locks it.
     static const std::vector<DriveMode> fullTime = {
         {"2H", false, false, false}, {"4H", true, false, false}, {"4H LOCK", true, true, false}, {"4L LOCK", true, true, true}};
+    // Rock buggy (Atlas-style two-speed case): a lever with no center differential, so 4H
+    // and 4L tie the shafts together like a part-time truck. It leaves in 4H: a crawler
+    // wants all four driven (and the open center is only a bind in tight turns on pavement).
+    static const std::vector<DriveMode> select = {
+        {"2H", false, false, false}, {"4H", true, true, false}, {"4L", true, true, true}};
+    // Side-by-side: a switch for 2WD or 4WD. In 4WD the front axle is driven through its
+    // own differential (the front diff lock is the separate switch). There's no center
+    // differential: the clutch that engages the front lets the shafts turn together, which
+    // is what keeps a 1,800 lb machine's four tires pulling on loose ground.
+    static const std::vector<DriveMode> onDemand = {{"2WD", false, false, false}, {"4WD", true, true, false}};
     static const std::vector<DriveMode> none;
-    return t == XFER_PART_TIME ? partTime : t == XFER_FULL_TIME ? fullTime : none;
+    return t == XFER_PART_TIME ? partTime : t == XFER_FULL_TIME ? fullTime : t == XFER_SELECT ? select : t == XFER_ONDEMAND ? onDemand : none;
 }
 
 int defaultDriveMode(TransferCase t) { return t == XFER_NONE ? 0 : 1; }
 
 const std::vector<VehicleSpec>& vehicleCatalog() {
-    // Four real vehicles, built from their published specs (dimensions, weights,
+    // Six vehicles (two of them crawl specials), built from their published specs (dimensions, weights,
     // engine outputs, gear ratios, suspension layouts). Where a maker doesn't publish
     // a number (weight split of the Jesko, its final drive...), it's a careful estimate.
     // Lattice: x forward from the middle, y up from the ground; masses in kg.
@@ -569,6 +579,264 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         runner.coverColor[0] = 0.1f, runner.coverColor[1] = 0.1f, runner.coverColor[2] = 0.11f;
         v.push_back(runner);
 
+        // ---- Ultra4-class rock buggy ---------------------------------------------------
+        // A tube-chassis crawler/racer of the kind built for Ultra4 and King of the
+        // Hammers: a chromoly tube frame and roll cage with a fiberglass hood and tail,
+        // a front-mid 6.2 L LS-type V8 (Chevrolet's LS3 crate engine is rated 430 hp at
+        // 5,900 rpm and 424 lb-ft at 4,600; these builds run ~450 hp), a GM 4L80E
+        // four-speed automatic behind an Atlas-style two-speed transfer case, solid axles
+        // front and rear on long four-link suspensions (Dana 60 front, 9 in rear; ~16 in of
+        // wheel travel on 2.5 in coil-overs), 40 in tires on beadlock wheels run at
+        // 12-18 psi, and selectable lockers in both axles. The numbers are class figures,
+        // not one builder's car: weights and travel are estimates.
+        VehicleSpec buggy = bronco;
+        buggy.name = "ROCK BUGGY";
+        buggy.id = "buggy";
+        buggy.blurb = "ULTRA4 TUBE CHASSIS  6.2L V8  4-SPEED AUTO  40 IN TIRES";
+        // 14 columns: 'p' is fiberglass (hood, tail), 'G' the cage (not drawn: tubes are), '#' the frame.
+        buggy.profile = {
+            "ppWW######WWpp",
+            "ppp###GGGG##pp",
+            "......GGGG....",
+        };
+        buggy.layerY = {0.62, 0.90, 1.22, 1.70};  // 24 in under the frame; 67 in to the cage top
+        buggy.length = 4.70;
+        buggy.width = 1.50;     // the chassis; the tires stand outside it
+        buggy.widthCells = 4;
+        buggy.wheelbase = 2.90;  // 114 in
+        buggy.frontOverhang = 0.95;
+        buggy.topLine = {0.96, 1.04, 1.12, 1.16, 1.16, 1.16, 0, 0, 0, 0, 0, 1.08, 1.04, 1.00, 0.96};
+        buggy.bodyWidth.clear();
+        buggy.openFrame = true;
+        buggy.doors = 0;
+        buggy.liftgate = false;
+        buggy.noseDrop = buggy.tailDrop = 0;
+        buggy.bumperLift = 0.0;
+        buggy.cornerRound = 0.05;
+        buggy.roofTuck = 0.08;
+        buggy.rakeFront = 0.12;
+        buggy.rakeRear = 0.10;
+        // ~1,800 kg (estimate: Ultra4 cars race at ~3,800-4,500 lb), about 54/46 with the engine
+        // just behind the front axle and the fuel cell at the tail.
+        buggy.structureMass = 312;  // chromoly tube frame, cage, floor and skid plates
+        buggy.panelMass = 40;       // fiberglass hood and tail, aluminum floor
+        buggy.items = {
+            {"radiator and fan", 24, 2.00, 0.95, 0},        {"front bumper hoop and winch", 52, 2.32, 0.80, 0},
+            {"battery", 20, -0.95, 0.80, 0},                {"steering box and hydraulic ram", 22, 1.05, 0.78, 0},
+            {"bucket seats", 36, -0.30, 0.82, 0},           {"dashboard, wiring and switches", 28, 0.15, 1.10, 0},
+            {"fuel cell (95 L, full)", 71, -1.80, 0.85, 0}, {"exhaust (two side pipes)", 28, 0.25, 0.70, 0},
+            {"prop shafts", 22, 0.1, 0.62, 0},              {"rear bumper and recovery gear", 36, -2.30, 0.80, 0},
+            {"front coil-overs and bump stops", 26, 1.28, 1.05, 0}, {"rear coil-overs and bump stops", 26, -1.55, 1.05, 0},
+            {"skid plates", 30, 0.5, 0.60, 0},              {"jack and recovery straps", 12, -2.0, 1.0, 0},
+            {"upper cage tubing", 30, -0.35, 1.55, 0},      {"brake lines, cooler and electronics", 24, 0.3, 0.7, 0},
+        };
+        buggy.engineMass = 215;  // 6.2 L aluminum LS with its accessories
+        buggy.gearboxMass = 190;  // 4L80E and the transfer case
+        buggy.transverse = false;
+        buggy.midEngine = false;
+        buggy.engineX = 0.92;
+        buggy.engineY = 0.98;
+        buggy.engineZ = 0;
+        buggy.engineLen = 0.70;
+        buggy.engineWid = 0.66;
+        buggy.engineHgt = 0.60;
+        buggy.gearboxLen = 0.95;
+        buggy.bodyStiffness = 1.3;
+        buggy.bodyStrength = 3.0;   // 1.75 in chromoly tube: it takes a hit that would fold sheet steel
+        buggy.frameStiffness = 1.0;
+        buggy.frameStrength = 3.0;
+        buggy.panelStrength = 0.6;  // fiberglass cracks and falls off
+        buggy.pinStrength = 0.6;
+        buggy.wheelRadius = 0.508;  // 40x13.5-17 (a 40 in tire)
+        buggy.wheelWidth = 0.343;
+        buggy.wheelWidthRear = 0;
+        buggy.rimRadius = 0.2159;   // 17 in beadlock
+        buggy.trackFront = buggy.trackRear = 1.88;
+        buggy.wheelMass = 58;       // ~42 kg of tire and ~16 kg of beadlock wheel
+        buggy.hubMass = 30;
+        buggy.axleMass = 118;       // Dana 60 / 9 in housings with 40-spline shafts and big discs
+        buggy.frontSusp = SOLID_AXLE;
+        buggy.rearSusp = SOLID_AXLE;
+        buggy.linkLength = 1.05;    // long four-link arms
+        buggy.upperLink = 0.714;    // the upper link (0.75 m) is a bit shorter, as on the trucks
+        buggy.coilTop = 0.62;
+        buggy.rideFreqFront = 1.2;
+        buggy.rideFreqRear = 1.3;
+        buggy.dampingRatio = 0.45;
+        buggy.arbFront = buggy.arbRear = 0;  // no sway bars
+        buggy.swayDisconnect = 0;
+        // ~16 in (0.41 m) front and ~17.5 in (0.44 m) rear wheel travel (estimate for a long-travel buggy).
+        buggy.bumpFront = 0.17, buggy.droopFront = 0.23;
+        buggy.bumpRear = 0.19, buggy.droopRear = 0.25;
+        buggy.tirePsi = 30;         // desert and road pressure; the rocks want 12-15 (the game airs between 12 and 40)
+        buggy.tireSoft = 0.55;      // a 40 in sidewall at that pressure is soft
+        buggy.looseGrip = 1.18;     // a soft, deep-lugged crawler compound
+        buggy.ledgeFactor = 1.2;    // measured: it climbs 0.7 m square ledges at 12 psi in 4L with lockers (the Bronco: 0.45)
+        buggy.tireType = TIRE_MUD_TERRAIN;
+        buggy.tireGrip = 0.95;
+        buggy.lateralGrip = 0.70;
+        buggy.drive = VehicleSpec::AWD;
+        buggy.diffFront = buggy.diffRear = DIFF_OPEN;
+        buggy.transfer = XFER_SELECT;
+        buggy.lockerFront = buggy.lockerRear = true;  // air lockers in both axles (a switch each)
+        buggy.frontLockerLowOnly = buggy.rearLockerLowOnly = false;
+        buggy.shaftLimit = 30000;   // 40-spline chromoly shafts (estimate)
+        buggy.lowRange = 4.3;       // Atlas-style low range (they come 2.0 to 5.0)
+        buggy.brakeFront = 4200;    // 13 in discs, 4-piston calipers (estimate)
+        buggy.brakeRear = 3600;
+        buggy.dragArea = 1.95;      // Cd ~0.85 x 2.3 m^2: a box of tubes and tires
+        // 450 hp at 6,000 rpm, ~565 N*m at 4,600 (LS3 crate: 430 hp, 575 N*m).
+        buggy.torque = {{0, 300}, {1000, 360}, {2000, 470}, {3000, 520}, {4000, 555}, {4600, 565}, {5200, 560}, {6000, 534}, {6500, 485}};
+        buggy.idleRpm = 800;
+        buggy.redline = 6500;
+        buggy.speedLimit = 150;     // limited for the tires' speed rating (estimate)
+        buggy.induction = VehicleSpec::NATURAL;
+        buggy.turboLag = 0;
+        buggy.cylinders = 8;
+        buggy.flatPlane = false;
+        buggy.displacement = 6.2;
+        buggy.gears = {2.48, 1.48, 1.00, 0.75};  // 4L80E
+        buggy.reverseRatio = 2.07;
+        buggy.finalDrive = 5.38;    // typical for 40s
+        buggy.shiftTime = 0.30;
+        buggy.engineName = "6.2L LS V8";
+        buggy.gearboxName = "4L80E 4-SPEED AUTO + ATLAS 2-SPEED";
+        buggy.lampStyle = LAMP_RECT;
+        buggy.grilleStyle = GRILLE_INTAKE;
+        buggy.extras = EXTRA_TUBE_CAGE | EXTRA_WINCH | EXTRA_SKID_PLATE;
+        buggy.wheelStyle = WHEEL_OFFROAD_BLACK;
+        buggy.trimColor[0] = buggy.trimColor[1] = buggy.trimColor[2] = 0;
+        buggy.trimTop = 0;
+        buggy.paintColor[0] = 0.95f, buggy.paintColor[1] = 0.55f, buggy.paintColor[2] = 0.06f;  // orange
+        buggy.coverColor[0] = 0.55f, buggy.coverColor[1] = 0.1f, buggy.coverColor[2] = 0.08f;
+        v.push_back(buggy);
+
+        // ---- Turbo side-by-side (RZR / Maverick class) ---------------------------------
+        // A ~200 hp long-travel sport UTV like the Can-Am Maverick X3 Turbo RR (a 900 cc
+        // Rotax three-cylinder turbo, 195 hp, rated up to ~85 mph) or Polaris's RZR Turbo S:
+        // a tube chassis and cage with plastic bodywork, the engine behind the seats driving
+        // all four wheels through a CVT (approximated with five close ratios), double
+        // wishbones all round with ~16-18 in of travel, 32 in tires on 15 in wheels. Class
+        // figures: the 1.7 m width and ~800 kg are what the class is sold at; the wheelbase
+        // (~102 in), lengths and weight split are estimates.
+        VehicleSpec utv = jesko;
+        utv.name = "TURBO UTV";
+        utv.id = "utv";
+        utv.blurb = "SIDE-BY-SIDE  900CC TURBO TRIPLE  CVT  4X4  LONG TRAVEL";
+        utv.profile = {
+            "pWWppWWp",
+            "pwwGGwwp",
+            "...GG...",
+        };
+        utv.layerY = {0.40, 0.72, 1.12, 1.78};
+        utv.length = 3.35;
+        utv.width = 1.40;
+        utv.widthCells = 4;
+        utv.wheelbase = 2.60;
+        utv.frontOverhang = 0.42;
+        utv.topLine = {0.84, 0.92, 0.98, 0, 0, 0, 0.98, 0.95, 0.90};
+        utv.bodyWidth.clear();
+        utv.openFrame = true;
+        utv.doors = 0;
+        utv.noseDrop = utv.tailDrop = 0;
+        utv.bumperLift = 0.0;
+        utv.cornerRound = 0.06;
+        utv.roofTuck = 0.06;
+        utv.rakeFront = 0.05;
+        utv.rakeRear = 0.05;
+        // ~800 kg with fluids (class figure), about 47/53 with the engine behind the seats.
+        utv.structureMass = 165;  // chromoly tube frame and cage
+        utv.panelMass = 55;       // plastic hood, fenders and tail
+        utv.items = {
+            {"radiator and intercooler", 14, 1.55, 0.62, 0},  {"front bumper and skid plate", 22, 1.60, 0.46, 0},
+            {"front differential", 26, 1.26, 0.45, 0},         {"front prop shaft", 8, 0.1, 0.45, 0},
+            {"battery", 11, 0.95, 0.65, 0},                   {"dashboard, steering and pedals", 20, 0.72, 0.85, 0},
+            {"seats and belts", 30, -0.05, 0.62, 0},            {"fuel tank (40 L, full)", 30, -0.30, 0.50, 0},
+            {"exhaust and muffler", 12, -1.35, 0.62, 0},     {"rear bumper and tow hitch", 10, -1.70, 0.55, 0},
+            {"coil-overs", 28, 0.0, 0.8, 0},                    {"skid plates", 14, 0.2, 0.40, 0},
+            {"cargo box and tail", 10, -1.40, 0.9, 0},          {"electronics, lamps and wiring", 18, 0.5, 0.9, 0},
+        };
+        utv.engineMass = 85;      // 900 cc triple with the turbo, intercooler plumbing and manifold
+        utv.gearboxMass = 55;     // CVT housing, gearbox and the front-drive output
+        utv.transverse = false;
+        utv.midEngine = true;
+        utv.engineX = -0.80;
+        utv.engineY = 0.60;
+        utv.engineZ = 0;
+        utv.engineLen = 0.46;
+        utv.engineWid = 0.45;
+        utv.engineHgt = 0.46;
+        utv.gearboxLen = 0.32;
+        utv.bodyStiffness = 0.8;
+        utv.bodyStrength = 3.5;
+        utv.frameStiffness = 0.7;
+        utv.frameStrength = 2.5;
+        utv.panelStrength = 0.5;
+        utv.pinStrength = 0.5;
+        utv.wheelRadius = 0.406;   // 32x10R15
+        utv.wheelWidth = 0.254;
+        utv.wheelWidthRear = 0;
+        utv.rimRadius = 0.1905;
+        utv.trackFront = utv.trackRear = 1.46;  // 1.7 m over the tires
+        utv.wheelMass = 25;
+        utv.hubMass = 16;
+        utv.axleMass = 60;
+        utv.frontSusp = WISHBONE;
+        utv.rearSusp = WISHBONE;
+        utv.armLower = 0.46, utv.armUpper = 0.38;
+        utv.rideFreqFront = 1.35;
+        utv.rideFreqRear = 1.45;
+        utv.dampingRatio = 0.38;
+        utv.arbFront = 2500;
+        utv.arbRear = 1500;
+        utv.swayDisconnect = 0;
+        utv.heaveRate = utv.heaveGap = utv.heaveDamping = 0;
+        // ~16 in (0.41 m) front and ~18 in (0.46 m) rear travel.
+        utv.bumpFront = 0.17, utv.droopFront = 0.24;
+        utv.bumpRear = 0.19, utv.droopRear = 0.27;
+        utv.tirePsi = 14;
+        utv.tireSoft = 0.8;
+        utv.tireType = TIRE_ALL_TERRAIN;
+        utv.tireGrip = 1.00;
+        utv.lateralGrip = 0.82;
+        utv.drive = VehicleSpec::AWD;
+        utv.diffFront = DIFF_OPEN;
+        utv.diffRear = DIFF_LSD;  // (estimate: UTV rears are open or limited-slip)
+        utv.lsdBias = 2.0;
+        utv.transfer = XFER_ONDEMAND;
+        utv.lockerFront = true;   // the front diff lock
+        utv.lockerRear = false;
+        utv.frontLockerLowOnly = utv.rearLockerLowOnly = false;
+        utv.shaftLimit = 7500;    // CV axles (estimate)
+        utv.lowRange = 0;
+        utv.brakeFront = 1500;
+        utv.brakeRear = 1300;
+        utv.dragArea = 1.10;
+        // 195 hp at 7,500 rpm (Can-Am's rating for the Turbo RR), ~200 N*m through the mid-range.
+        utv.torque = {{0, 90}, {1500, 110}, {3000, 160}, {4500, 195}, {5500, 205}, {6500, 200}, {7500, 185}, {8000, 165}, {8400, 130}};
+        utv.idleRpm = 1400;
+        utv.redline = 8300;
+        utv.speedLimit = 130;     // the factory limiter, ~80 mph
+        utv.induction = VehicleSpec::TURBO;
+        utv.turboLag = 0.4;
+        utv.cylinders = 3;
+        utv.flatPlane = false;
+        utv.displacement = 0.9;
+        utv.gears = {3.4, 2.4, 1.75, 1.28, 0.95};  // a CVT sweeps this range; five steps stand in for it
+        utv.reverseRatio = 3.4;
+        utv.finalDrive = 9.3;
+        utv.shiftTime = 0.06;
+        utv.engineName = "900CC TURBO I3";
+        utv.gearboxName = "CVT (5 STEPS)";
+        utv.lampStyle = LAMP_SLIM;
+        utv.grilleStyle = GRILLE_INTAKE;
+        utv.extras = EXTRA_TUBE_CAGE | EXTRA_SKID_PLATE;
+        utv.wheelStyle = WHEEL_OFFROAD_BLACK;
+        utv.paintColor[0] = 0.10f, utv.paintColor[1] = 0.60f, utv.paintColor[2] = 0.85f;
+        utv.coverColor[0] = 0.08f, utv.coverColor[1] = 0.08f, utv.coverColor[2] = 0.09f;
+        utv.finish = VehicleSpec::PAINT;
+        v.push_back(utv);
+
         // EF Civic Si: the Rio Red hatch in bringatrailer.com/listing/1990-honda-civic-si-5/.
         // Honda's D16A6 rating: 108 hp / 100 lb-ft; 185/60R14 tires, discs/drums,
         // double wishbones and a five-speed. Internal mass placement and CG are estimates.
@@ -656,6 +924,8 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         v[1].fuelCapacity = 72;                         // Jesko
         v[2].fuelCapacity = 79, v[2].jerryCan = 20;     // Bronco: 20.8 gal
         v[3].fuelCapacity = 70, v[3].jerryCan = 20;     // 4Runner: 18.5 gal
+        v[4].fuelCapacity = 95;                         // rock buggy: a 25 gal fuel cell
+        v[5].fuelCapacity = 40;                         // UTV: 10.6 gal (Maverick X3)
         return v;
     }();
     return catalog;

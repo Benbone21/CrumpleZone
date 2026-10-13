@@ -271,12 +271,87 @@ Slots runnerMods() {
     return m;
 }
 
+Slots buggyMods() {
+    Slots m(MOD_SLOTS);
+    m[MOD_ENGINE] = {
+        stock("6.2L LS V8  450 HP  565 NM"),
+        {"7.0 LS7", "7.0L DRY-SUMP V8  ABOUT 505 HP  650 NM  +8 KG", [](VehicleSpec& s) {
+             // Estimated: LS7 crate figures (505 hp, 470 lb-ft) with a truck-friendly curve.
+             engine(s, "7.0L LS7 V8",
+                    {{0, 340}, {1000, 410}, {2000, 520}, {3000, 590}, {4000, 630}, {4800, 650}, {5600, 620}, {6300, 574}, {6800, 520}}, 6800, 0);
+             s.displacement = 7.0;
+             s.engineMass += 8;
+         }},
+        {"BLOWN 6.2", "ROOTS-BLOWN LS3  ABOUT 650 HP  820 NM  +30 KG", [](VehicleSpec& s) {
+             engine(s, "6.2L LS V8 SUPERCHARGED",
+                    {{0, 420}, {1000, 520}, {2000, 690}, {3000, 780}, {4000, 820}, {5000, 810}, {5800, 740}, {6400, 640}}, 6400, 0);
+             s.induction = VehicleSpec::SUPERCHARGER;
+             s.engineMass += 30;
+         }},
+    };
+    m[MOD_SUSPENSION] = {
+        stock("4-LINK SOLID AXLES  16 IN TRAVEL  40 IN TIRES"),
+        {"42 IN TIRES", "42X14.5 TIRES  +25 MM  LONGER SHOCKS  WIDER TRACK", [](VehicleSpec& s) {
+             tires(s, 0.533, 0.368, 9, 0.95, 0.69, 1.92);
+             s.bumpFront += 0.02, s.droopFront += 0.02, s.bumpRear += 0.02, s.droopRear += 0.02;
+             s.coilTop += 0.03;
+         }},
+        {"DESERT SETUP", "FIRMER SPRINGS  RACE SHOCKS  36 IN TIRES", [](VehicleSpec& s) {
+             tires(s, 0.457, 0.30, -14, 0.98, 0.76, 1.84);
+             springs(s, 0.0, 1.5, 1.0, 0.55);
+             s.arbFront = s.arbRear = 6000;
+         }},
+    };
+    m[MOD_TRANSMISSION] = {
+        stock("4L80E + ATLAS 4.3 LOW  5.38 AXLES  OPEN DIFFS"),
+        {"TH400 3-SPEED", "THE CLASSIC BUGGY BOX: THREE GEARS, FEWER SHIFTS", [](VehicleSpec& s) {
+             gears(s, "TH400 3-SPEED + ATLAS 4.3 LOW", {2.48, 1.48, 1.00}, 2.07, 5.38, 0.35);
+         }},
+        {"ATLAS 5.0 LOW", "DEEPER LOW RANGE: ABOUT 20% LOWER CRAWL RATIO", [](VehicleSpec& s) {
+             s.lowRange = 5.0;
+             s.gearboxName = "4L80E + ATLAS 5.0 LOW";
+         }},
+    };
+    return m;
+}
+
+Slots utvMods() {
+    Slots m(MOD_SLOTS);
+    m[MOD_ENGINE] = {
+        stock("900CC TURBO TRIPLE  195 HP  205 NM"),
+        {"STAGE 2 TUNE", "BIGGER TURBO AND INTERCOOLER  ABOUT 230 HP  240 NM", [](VehicleSpec& s) {
+             // Estimated bolt-on figures for the Rotax 900 turbo.
+             engine(s, "900CC TURBO I3 STAGE 2",
+                    {{0, 95}, {1500, 120}, {3000, 190}, {4500, 232}, {5500, 242}, {6500, 238}, {7500, 220}, {8000, 195}, {8400, 150}}, 8300, 0.5);
+             s.engineMass += 4;
+         }},
+        {"ECO TUNE", "SOFTER MAP FOR TRAIL RIDES  ABOUT 150 HP  170 NM", [](VehicleSpec& s) {
+             engine(s, "900CC TURBO I3 ECO",
+                    {{0, 85}, {1500, 100}, {3000, 140}, {4500, 165}, {5500, 172}, {6500, 168}, {7500, 150}, {8000, 130}, {8400, 100}}, 8000, 0.3);
+         }},
+    };
+    m[MOD_SUSPENSION] = {
+        stock("LONG-TRAVEL A-ARMS  16 IN TRAVEL  32 IN TIRES"),
+        {"RACE SHOCKS", "FIRMER SPRINGS  BIGGER BARS  FIRMER DAMPING", [](VehicleSpec& s) { springs(s, 0.0, 1.35, 1.4, 0.5); }},
+        {"SOFT TRAIL SETUP", "+25 MM  SOFTER  LONGER DROOP", [](VehicleSpec& s) {
+             springs(s, 0.025, 0.8, 0.7, 0.36);
+             s.droopFront += 0.03, s.droopRear += 0.03;
+         }},
+    };
+    m[MOD_TRANSMISSION] = {
+        stock("CVT  4WD  FRONT DIFF LOCK"),
+        {"SHORT GEARING", "10.2 FINAL: HARDER PULL, LOWER TOP SPEED", [](VehicleSpec& s) { s.finalDrive = 10.2; }},
+        {"REAR LOCKER", "FRONT AND REAR DIFF LOCKS", [](VehicleSpec& s) { s.lockerRear = true; }},
+    };
+    return m;
+}
+
 const std::vector<Slots>& allMods() {
     static const std::vector<Slots> mods = [] {
         std::vector<Slots> m;
         for (const VehicleSpec& vs : vehicleCatalog()) {
             std::string id = vs.id;
-            m.push_back(id == "civic" ? civicMods() : id == "jesko" ? jeskoMods() : id == "bronco" ? broncoMods() : runnerMods());
+            m.push_back(id == "civic" ? civicMods() : id == "jesko" ? jeskoMods() : id == "bronco" ? broncoMods() : id == "buggy" ? buggyMods() : id == "utv" ? utvMods() : runnerMods());
         }
         return m;
     }();

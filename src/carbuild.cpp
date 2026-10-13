@@ -167,12 +167,12 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
     auto outerCol = [&](int j) { return j == 0 || j == NJ - 2; };
     auto solid = [&](int i, int j, int k) {
         char c = cellChar(i, j, k);
-        if (c == '#' || c == 'G') return true;
-        if (c == 'W') return !outerCol(j);
+        if (c == '#' || c == 'G' || c == 'p') return true;  // ('p': a panel cell of a tube-frame vehicle: same structure, drawn skin)
+        if (c == 'W' || c == 'w') return !outerCol(j);  // ('w': a wheel-well cell whose skin is drawn on a tube-frame vehicle)
         if (c == 'B') return outerCol(j);
         return false;
     };
-    auto well = [&](int i, int j, int k) { return cellChar(i, j, k) == 'W' && outerCol(j); };
+    auto well = [&](int i, int j, int k) { return (cellChar(i, j, k) == 'W' || cellChar(i, j, k) == 'w') && outerCol(j); };
 
     std::vector<int> idx(NI * NJ * NK, -1);
     auto id = [&](int i, int j, int k) -> int& { return idx[(i * NJ + j) * NK + k]; };
@@ -590,7 +590,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
         const double az = std::fabs(zc);
         const double yl = R - 0.17 * sizeK, yu = strut ? R + 0.40 * sizeK : R + 0.23 * sizeK;  // ball joint heights
         const double zl = az - 0.03, zu = strut ? az - 0.17 : az - 0.11;  // ball joints, just inboard of the wheel center
-        const double zlp = zl - 0.36, zup = zu - 0.27;              // inner pivots: lower arm 36 cm, upper 27 cm
+        const double zlp = zl - vs.armLower, zup = zu - vs.armUpper;  // inner pivots: lower arm 36 cm, upper 27 cm (long-travel cars: longer)
         g.lowerBJ = V3(xw, yl, s * zl);
         g.upperBJ = V3(xw - (strut ? 0.05 : 0.02), yu, s * zu);  // top joint a little behind: caster
         // Pivot axes tilted in side view (front lower on top, higher below) so braking
@@ -674,13 +674,15 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                     P.coil = frameNode(G.coil, 2.0);
                 } else if (st == TWIST_BEAM) {
                     P.coil = frameNode(V3(xw + 0.08, R * 0.75 + 0.05 + 0.32 * sizeK, s * (az - 0.16)), 2.0);
-                } else {  // SOLID_AXLE
-                    P.trail = frameNode(V3(xw + 0.77, R - 0.04, s * (az - 0.30)), 2.5);
-                    P.coil = frameNode(V3(xw - 0.06, R + 0.48 * sizeK, s * (az - 0.20)), 2.0);
+                } else {  // SOLID_AXLE (links run toward the middle of the car)
+                    const double dir = front ? -1.0 : 1.0;
+                    P.trail = frameNode(V3(xw + dir * vs.linkLength, R - 0.04, s * (az - 0.30)), 2.5);
+                    P.coil = frameNode(V3(xw - dir * 0.06, R + (vs.coilTop > 0 ? vs.coilTop : 0.48 * sizeK), s * (az - 0.20)), 2.0);
                 }
             }
             if (st == SOLID_AXLE) {
-                axleUpperPick[ax] = frameNode(V3(xw + 0.55, R + 0.22, 0), 2.5);
+                const double dir = front ? -1.0 : 1.0;
+                axleUpperPick[ax] = frameNode(V3(xw + dir * (vs.upperLink > 0 ? vs.linkLength * vs.upperLink : 0.55), R + 0.22, 0), 2.5);
                 panhardFrame[ax] = frameNode(V3(xw - 0.10, R + 0.16, hw - 0.40), 2.5);
             }
             // Differential on the body (independent suspension, driven axle).
@@ -934,13 +936,20 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
         } else {  // SOLID_AXLE
             Assembly as;
             const double am = vs.axleMass;
+            // Links run toward the middle of the car; the pinion points that way too. A front
+            // solid axle steers: the hubs sit on knuckles that turn on kingpins at the tube
+            // ends (two shared nodes make the hinge), pushed by tie rods from the axle.
+            const double dir = front ? -1.0 : 1.0;
+            const bool steered = front;
             int diff = addNode(V3(xw, R, 0), am * 0.30, false);
-            int pinion = addNode(V3(xw + 0.20, R + 0.02, 0), am * 0.10, false);
+            int pinion = addNode(V3(xw + dir * 0.20, R + 0.02, 0), am * 0.10, false);
             int dtop = addNode(V3(xw, R + 0.14, 0), am * 0.06, false);
             axle.housing = {diff, pinion, dtop};
             axle.diffNode = diff;
             as.nodes = axle.housing;
             int seat[2], lowMount[2];
+            std::vector<std::vector<int>> knuckle(2);
+            std::vector<std::array<int, 4>> steerNodes(2);  // kpLow, kpUp, arm, rack
             for (int sIdx = 0; sIdx < 2; sIdx++) {
                 const int s = sIdx == 0 ? -1 : 1;
                 const double zc = wheelZ(s, ax), az = std::fabs(zc);
@@ -949,15 +958,32 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 nodes[wh.outer].m += am * 0.03;
                 // Spring seat behind and link bracket ahead of the tube: the housing is a
                 // solid 3D piece, so the wheels can't toe in or out.
-                seat[sIdx] = addNode(V3(xw - 0.06, R + 0.10, s * (az - 0.20)), am * 0.07, false);
-                lowMount[sIdx] = addNode(V3(xw + 0.12, R - 0.12, s * (az - 0.30)), am * 0.07, false);
-                // Hub carrier: braces the hub above and below, right at the wheel, so the
-                // hub is held in every direction and not just along the axle tube.
-                int carUp = addNode(V3(xw - 0.04, R + 0.13, s * (az - 0.06)), am * 0.03, false);
-                int carLow = addNode(V3(xw + 0.06, R - 0.12, s * (az - 0.06)), am * 0.03, false);
+                seat[sIdx] = addNode(V3(xw - dir * 0.06, R + vs.axleSeat, s * (az - 0.20)), am * 0.07, false);
+                lowMount[sIdx] = addNode(V3(xw + dir * 0.12, R - 0.12, s * (az - 0.30)), am * 0.07, false);
                 wh.top = seat[sIdx];
                 wh.lower = lowMount[sIdx];
-                for (int n : {wh.inner, wh.outer, seat[sIdx], lowMount[sIdx], carUp, carLow}) {
+                std::vector<int> mine;
+                if (!steered) {
+                    // Hub carrier: braces the hub above and below, right at the wheel, so the
+                    // hub is held in every direction and not just along the axle tube.
+                    int carUp = addNode(V3(xw - dir * 0.04, R + 0.13, s * (az - 0.06)), am * 0.03, false);
+                    int carLow = addNode(V3(xw + dir * 0.06, R - 0.12, s * (az - 0.06)), am * 0.03, false);
+                    mine = {wh.inner, wh.outer, seat[sIdx], lowMount[sIdx], carUp, carLow};
+                } else {
+                    // Kingpin (a little caster: the top leans back), steering arm behind the
+                    // axle, and the tie rod's fixed end on the housing.
+                    int kpLow = addNode(V3(xw, R - 0.13, s * (az - 0.06)), am * 0.03 + 3.0, false);
+                    int kpUp = addNode(V3(xw - 0.035, R + 0.17, s * (az - 0.09)), am * 0.03 + 3.0, false);
+                    int arm = addNode(V3(xw + dir * 0.17, R - 0.05, s * (az - 0.26)), am * 0.02 + 1.5, false);
+                    int rack = addNode(V3(xw + dir * 0.17, R - 0.05, s * 0.30), am * 0.02 + 1.5, false);
+                    knuckle[sIdx] = {wh.inner, wh.outer, kpLow, kpUp, arm};
+                    steerNodes[sIdx] = {kpLow, kpUp, arm, rack};
+                    mine = {seat[sIdx], lowMount[sIdx], kpLow, kpUp, rack};
+                    wh.lower = kpLow;
+                    wh.top = kpUp;
+                    wh.arm = arm;
+                }
+                for (int n : mine) {
                     axle.housing.push_back(n);
                     as.nodes.push_back(n);
                 }
@@ -969,16 +995,35 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
             for (int sIdx = 0; sIdx < 2; sIdx++) {
                 Wheel& wh = wheels[axle.wheel[sIdx]];
                 wh.assembly = as.nodes;
+                if (steered) {
+                    rigid(knuckle[sIdx], BEAM_KNUCKLE);
+                    wh.assembly.insert(wh.assembly.end(), {wh.inner, wh.outer, steerNodes[sIdx][2]});
+                    const int kpLow = steerNodes[sIdx][0], kpUp = steerNodes[sIdx][1], arm = steerNodes[sIdx][2], rack = steerNodes[sIdx][3];
+                    wh.tieRod = link(&wh, arm, rack, BEAM_TIEROD, LINK_TIE_ROD, axle.wheel[sIdx]);
+                    as.links.push_back(wh.tieRod);
+                    wh.kpLow = local[kpLow];
+                    wh.kpUp = local[kpUp];
+                    wh.armRest = local[arm];
+                    wh.rackRest = local[rack];
+                    // The tube from the diff out to the kingpin: if it snaps, the wheel is off.
+                    for (const auto& bi : {std::make_pair(diff, kpLow), std::make_pair(seat[sIdx], kpUp), std::make_pair(lowMount[sIdx], kpLow)}) {
+                        int a2 = std::min(bi.first, bi.second), b2 = std::max(bi.first, bi.second);
+                        for (size_t k = 0; k < beams.size(); k++)
+                            if (beams[k].a == a2 && beams[k].b == b2) wh.mounts.push_back((int)k);
+                    }
+                }
                 as.links.push_back(link(&wh, lowMount[sIdx], pick[ax][sIdx].trail, BEAM_ARM, LINK_TRAILING, axle.wheel[sIdx]));
                 wh.spring = addBeam(seat[sIdx], pick[ax][sIdx].coil, BEAM_SPRING);
                 wh.mounts.push_back(wh.spring);
                 as.springs.push_back(wh.spring);
-                // The tube from the diff out to this hub: if it snaps, the wheel is off.
-                for (const auto& bi : {std::make_pair(diff, wh.inner), std::make_pair(seat[sIdx], wh.inner),
-                                       std::make_pair(lowMount[sIdx], wh.inner)}) {
-                    int a = std::min(bi.first, bi.second), b = std::max(bi.first, bi.second);
-                    for (size_t k = 0; k < beams.size(); k++)
-                        if (beams[k].a == a && beams[k].b == b) wh.mounts.push_back((int)k);
+                if (!steered) {
+                    // The tube from the diff out to this hub: if it snaps, the wheel is off.
+                    for (const auto& bi : {std::make_pair(diff, wh.inner), std::make_pair(seat[sIdx], wh.inner),
+                                           std::make_pair(lowMount[sIdx], wh.inner)}) {
+                        int a2 = std::min(bi.first, bi.second), b2 = std::max(bi.first, bi.second);
+                        for (size_t k = 0; k < beams.size(); k++)
+                            if (beams[k].a == a2 && beams[k].b == b2) wh.mounts.push_back((int)k);
+                    }
                 }
             }
             // Upper link (holds the axle against wind-up) and panhard rod (holds it sideways).
@@ -1015,7 +1060,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
     if (!isProp && axles.size() >= 2) {
         const double xf = xAt(axleI.front()), xr = xAt(axleI.back());
         const double frontShare = clampd((sprungX - xr) / (xf - xr), 0.2, 0.8);
-        const double kTire = 2.2e5;
+        const double kTire = 2.2e5 * vs.tireSoft;  // (softbody.cpp's kTireK, scaled: the springs are sized for the tire it really has)
         for (const Assembly& as : assemblies) {
             std::vector<Row> J;
             V3 o;
@@ -1195,8 +1240,11 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
             bool hingeAtMax;
         };
         std::vector<Def> defs;
-        defs.push_back({"HOOD", [&](const SkinQuad& q) { return q.axis == 2 && q.side == 1 && q.cell[0] < cabI0 && q.cellChar != 'G'; }, 0, true});
-        for (int sd = -1; sd <= 1; sd += 2) {
+        defs.push_back({"HOOD", [&](const SkinQuad& q) {
+                            return q.axis == 2 && q.side == 1 && q.cell[0] < cabI0 && q.cellChar != 'G' &&
+                                   (!vs.openFrame || q.cellChar == 'p' || q.cellChar == 'w');
+                        }, 0, true});
+        for (int sd = -1; sd <= 1 && !vs.openFrame; sd += 2) {  // (tube-frame vehicles have no doors)
             const char* nm = sd < 0 ? "LEFT DOOR" : "RIGHT DOOR";
             defs.push_back({nm, [&, sd](const SkinQuad& q) {
                                 return outerSide(q, sd) && q.cell[0] >= cabI0 && q.cell[0] < cabI0 + dc && q.cell[2] <= gk0;
@@ -1211,7 +1259,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
             }
         }
         // Steel armor bumpers bolt to the frame: no plastic bumper covers to knock off.
-        const bool armor = vs.extras & EXTRA_ARMOR;
+        const bool armor = (vs.extras & EXTRA_ARMOR) || vs.openFrame;  // (tube bumpers are part of the frame)
         if (!armor) defs.push_back({"FRONT BUMPER", [&](const SkinQuad& q) {
                             return q.cell[0] == 0 && q.cell[2] == 0 && ((q.axis == 0 && q.side == 0) || outerSide(q, -1) || outerSide(q, 1));
                         },
@@ -1224,8 +1272,8 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
         for (int k = 0; k < NK - 1; k++)
             for (int j = 0; j < NJ - 1; j++)
                 if (solid(last, j, k)) topLast = k;
-        if (hasBed) {
-            // Pickup: an open bed, no lid.
+        if (hasBed || vs.openFrame) {
+            // Pickup: an open bed, no lid. (Tube-frame vehicles: nothing to open at the back.)
         } else if (topLast >= gk0) {
             // Tall back (SUV): a swing gate hinged at the side, or a liftgate hinged at the top.
             defs.push_back({vs.liftgate ? "LIFTGATE" : "TAILGATE", [&](const SkinQuad& q) {
@@ -1434,7 +1482,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
             }
         if (getenv("CZ_DEBUG"))
             for (size_t i = 0; i < nodes.size(); i++)
-                if (L[i] / nodes[i].m > target) std::printf("%s: node %zu still stiff for its mass (%.2f)\n", vs.name, i, L[i] / nodes[i].m);
+                if (L[i] / nodes[i].m > target) std::printf("%s: node %zu (%.2f, %.2f, %.2f; %.1f kg; %d of %d body) still stiff for its mass (%.2f)\n", vs.name, i, local[i].x, local[i].y, local[i].z, nodes[i].m, (int)(i < (size_t)bodyNodes), bodyNodes, L[i] / nodes[i].m);
     }
 
     restLocal = local;
