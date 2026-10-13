@@ -53,6 +53,7 @@ struct Beam {
     uint8_t type;
     bool broken = false;
     bool snub = false;  // a rubber mount with a snubber and rebound washer (hard stops both ways)
+    float friction = 0; // springs: Coulomb friction (N), the leaves of a leaf spring sliding on each other
 };
 
 enum SkinMat : uint8_t { MAT_PAINT, MAT_GLASS, MAT_HEADLIGHT, MAT_TAILLIGHT, MAT_TRIM, MAT_UNDER, MAT_WELL };
@@ -82,6 +83,7 @@ enum LinkKind : uint8_t {
     LINK_LOWER_ARM, LINK_UPPER_ARM, LINK_TIE_ROD, LINK_TOE_LINK, LINK_TRAILING, LINK_PANHARD,
     LINK_BUSHING,  // trailing-arm pivot bushing (not drawn)
     LINK_STRUT_GUIDE,  // holds a strut's top to its mount (part of the strut; not drawn)
+    LINK_LEAF,     // a leaf spring's front half, hanger to axle seat (drawn with its rear half and shackle)
 };
 struct SuspLink {
     int beam;
@@ -101,6 +103,7 @@ struct Wheel {
     int spring = -1;        // coil-over beam
     int tieRod = -1;        // tie rod beam (front) or toe link (rear), -1 = none
     int bumpStop = -1;      // jounce bumper over a live axle's tube (-1 = the coil-over's own stop)
+    int shackle = -1;       // leaf spring: the rear hanger its shackle swings from (frame node; drawn)
     std::vector<int> assembly;  // nodes moving with the hub (brake torque reacts here)
     std::vector<int> shafts;    // drive shafts that must be intact for this wheel to be driven
     double springRest = 0;      // coil-over length at ride height (anti-roll bars work from it)
@@ -109,6 +112,7 @@ struct Wheel {
     double brakeReaction = 0;   // brake torque passed to the knuckle (smoothed by pad/caliper give)
     double abs = 1;             // ABS: share of brake pressure let through to this wheel
     double tcBrake = 0;         // brake traction control: share of this brake applied to stop it spinning
+    double escBrake = 0;        // stability control: share of this brake applied to stop a spin
     // Steering geometry in the car's rest frame: lower and upper ball joints (kingpin
     // axis), steering arm end, and rack end. The tie rod's length follows the steer angle.
     V3 kpLow, kpUp, armRest, rackRest;
@@ -307,6 +311,11 @@ public:
     double boost = 0;           // turbo boost built up, 0..1
     bool tractionControl = true;
     double tcCut = 1;           // traction-control throttle multiplier
+    // Stability control: the yaw rate it measures (rad/s, + = turning left) and how hard it's
+    // working (0..1: braking the outside front, easing the throttle).
+    double escYaw = 0, escLevel = 0;
+    double govKmh = 0;          // the speed limiter's filtered road speed
+    V3 escFwd;
     double dragAssist = 0;      // throttle opened to stop engine braking locking the driven wheels
     double engineHealth = 1;    // drops as the engine bay is crushed
     bool engineDead = false;

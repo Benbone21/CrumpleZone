@@ -247,6 +247,11 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
 
     auto nodePos = [&](int i, int j, int k) {
         double x = xAt(i), y = vs.layerY[k], z = -vs.width / 2 + dz * j;
+        if (vs.outerCellWidth > 0 && NJ > 3) {
+            // (Outer columns narrower, the rest evenly between.)
+            const double inner = vs.width - 2 * vs.outerCellWidth;
+            z = j == 0 ? -vs.width / 2 : j == NJ - 1 ? vs.width / 2 : -inner / 2 + inner * (j - 1) / (NJ - 3);
+        }
         bool roof = (k == roofCellK + 1) && !std::isnan(roofX[i]);
         if (roof) {
             x = roofX[i];
@@ -756,7 +761,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
     // Suspension pick-ups, built before the moving parts so they stay in the frame range.
     struct Pickups {
         int lf = -1, lr = -1, uf = -1, ur = -1, rack = -1, coil = -1, toe = -1;
-        int trail = -1, panhard = -1, stop = -1;
+        int trail = -1, panhard = -1, stop = -1, shackle = -1;
     };
     std::vector<std::array<Pickups, 2>> pick(axleI.size());
     std::vector<int> axleUpperPick(axleI.size(), -1), diffFrame(axleI.size(), -1), panhardFrame(axleI.size(), -1);
@@ -865,6 +870,16 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                     P.coil = frameNode(G.coil, 2.0);
                 } else if (st == TWIST_BEAM) {
                     P.coil = frameNode(V3(xw + 0.08, R * 0.75 + 0.05 + 0.32 * sizeK, s * (az - 0.16)), 2.0);
+                } else if (!front && vs.leafSprings) {  // SOLID_AXLE on leaf springs
+                    // The leaf rides on the tube (spring over axle), its eyes a little above the
+                    // seat: the front one on a hanger, the rear on a shackle hanging from the frame.
+                    // (The coil-over's top here is where the leaf's own rate pushes from: straight
+                    // up over the seat.)
+                    const double zl = s * (az - 0.20), ys = R + 0.10;
+                    P.trail = frameNode(V3(xw + vs.leafHalf, ys + 0.05, zl), 2.5);
+                    P.shackle = frameNode(V3(xw - vs.leafHalf - 0.03, ys + 0.05 + 0.10, zl), 2.0);
+                    P.coil = frameNode(V3(xw - 0.06, ys + 0.30, zl), 2.0);
+                    P.stop = frameNode(V3(xw, R + 0.31 * sizeK, s * (az - tireWidth(ax) / 2)), 2.0);
                 } else {  // SOLID_AXLE
                     P.trail = frameNode(V3(xw + 0.77, R - 0.04, s * (az - 0.30)), 2.5);
                     P.coil = frameNode(V3(xw - 0.06, R + 0.48 * sizeK, s * (az - 0.20)), 2.0);
@@ -874,15 +889,23 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 }
             }
             if (st == SOLID_AXLE) {
-                axleUpperPick[ax] = frameNode(V3(xw + 0.55, R + 0.22, 0), 2.5);
-                panhardFrame[ax] = frameNode(V3(xw - 0.10, R + 0.16, hw - 0.40), 2.5);
+                const bool leaf = !front && vs.leafSprings;
+                // (On leaves, the stand-in for their resistance to wind-up pulls from under the
+                // housing: the leaves themselves sit on top of it.)
+                axleUpperPick[ax] = frameNode(V3(xw + 0.55, leaf ? R - 0.06 : R + 0.22, 0), 2.5);
+                // (Leaf springs hold the axle sideways themselves, at the seats: the panhard's
+                // place is taken by a level tie at seat height, standing in for the leaves' own
+                // sideways stiffness, and not drawn.)
+                panhardFrame[ax] = leaf ? frameNode(V3(xw - 0.06, R + 0.10, std::fabs(wheelZ(1, ax)) - 0.20 + 0.06), 2.5)
+                                        : frameNode(V3(xw - 0.10, R + 0.16, hw - 0.40), 2.5);
                 // The link brackets, coil towers and bump stops are welded to the same rails
                 // and crossmember: tie them together so they can't shift against each other.
                 // (Held only by the body lattice they moved 2-4 cm apart in a hard landing,
                 // enough to let the housing roll over on its links.)
                 std::vector<int> brackets = {axleUpperPick[ax], panhardFrame[ax]};
                 for (int sIdx = 0; sIdx < 2; sIdx++)
-                    for (int n : {pick[ax][sIdx].trail, pick[ax][sIdx].coil, pick[ax][sIdx].stop}) brackets.push_back(n);
+                    for (int n : {pick[ax][sIdx].trail, pick[ax][sIdx].coil, pick[ax][sIdx].stop, pick[ax][sIdx].shackle})
+                        if (n >= 0) brackets.push_back(n);
                 for (size_t i = 0; i < brackets.size(); i++)
                     for (size_t j = i + 1; j < brackets.size(); j++) {
                         int bi = addBeam(brackets[i], brackets[j], BEAM_FRAME);
@@ -1190,6 +1213,12 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
             int pinion = addNode(V3(xw + 0.20, R + 0.02, 0), am * 0.10, false);
             int dtop = addNode(V3(xw, R + 0.14, 0), am * 0.06, false);
             axle.housing = {diff, pinion, dtop};
+            const bool leafAxle = !front && vs.leafSprings;
+            int dbot = -1;  // (leaf springs: under the diff, where the wind-up stand-in pulls)
+            if (leafAxle) {
+                dbot = addNode(V3(xw, R - 0.12, 0), am * 0.04, false);
+                axle.housing.push_back(dbot);
+            }
             axle.diffNode = diff;
             as.nodes = axle.housing;
             int seat[2], lowMount[2];
@@ -1218,10 +1247,19 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 wheels.push_back(wh);
             }
             rigid(as.nodes, BEAM_KNUCKLE);
+            const bool leaf = !front && vs.leafSprings;
             for (int sIdx = 0; sIdx < 2; sIdx++) {
                 Wheel& wh = wheels[axle.wheel[sIdx]];
                 wh.assembly = as.nodes;
-                as.links.push_back(link(&wh, lowMount[sIdx], pick[ax][sIdx].trail, BEAM_ARM, LINK_TRAILING, axle.wheel[sIdx]));
+                if (leaf) {
+                    // The leaf's front half: from its hanger to the seat, it holds the axle fore
+                    // and aft (and with the other side, square to the truck).
+                    const int lf = link(&wh, seat[sIdx], pick[ax][sIdx].trail, BEAM_ARM, LINK_LEAF, axle.wheel[sIdx]);
+                    as.links.push_back(lf);
+                    wh.shackle = pick[ax][sIdx].shackle;
+                } else {
+                    as.links.push_back(link(&wh, lowMount[sIdx], pick[ax][sIdx].trail, BEAM_ARM, LINK_TRAILING, axle.wheel[sIdx]));
+                }
                 wh.spring = addBeam(seat[sIdx], pick[ax][sIdx].coil, BEAM_SPRING);
                 // The bumper lands on the tube's centre line: it pushes straight down through
                 // the tube and can't roll the housing over on its links (a stop pushing on the
@@ -1238,8 +1276,20 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 }
             }
             // Upper link (holds the axle against wind-up) and panhard rod (holds it sideways).
-            as.links.push_back(link(nullptr, dtop, axleUpperPick[ax], BEAM_ARM, LINK_TRAILING, -1));
-            as.links.push_back(link(nullptr, seat[0], panhardFrame[ax], BEAM_ARM, LINK_PANHARD, -1));
+            // On leaf springs both are the leaves themselves: the packs clamped to the tube
+            // resist its wind-up (softly: under a hard launch the axle wraps), and their width
+            // holds it sideways. Neither is drawn.
+            if (leaf) {
+                // (Leaves clamped along the seat: stiff against wind-up, though they do wrap a
+                // few degrees under a hard launch, and they spring back rather than bend.)
+                const int wrap = link(nullptr, dbot, axleUpperPick[ax], BEAM_ARM, LINK_BUSHING, -1);
+                if (wrap >= 0) beams[wrap].yieldStrain = 0.25, beams[wrap].c *= 6;  // (interleaf friction damps the wrap)
+                as.links.push_back(wrap);
+                as.links.push_back(link(nullptr, seat[0], panhardFrame[ax], BEAM_ARM, LINK_BUSHING, -1));
+            } else {
+                as.links.push_back(link(nullptr, dtop, axleUpperPick[ax], BEAM_ARM, LINK_TRAILING, -1));
+                as.links.push_back(link(nullptr, seat[0], panhardFrame[ax], BEAM_ARM, LINK_PANHARD, -1));
+            }
             axle.diffNodes = axle.housing;
             assemblies.push_back(as);
         }
@@ -1325,6 +1375,8 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 sp.k = kWheel / (mr * mr);
                 sp.c = cWheel / (mr * mr);
                 double preload = mCorner * g / mr / sp.k;
+                // (A multi-leaf spring: interleaf friction ~8% of the corner's weight.)
+                if (!wh.front && vs.leafSprings) sp.friction = (float)(0.08 * mCorner * g / mr);
                 double L = sp.L0;
                 wh.motionRatio = mr;
                 wh.springRest = L;

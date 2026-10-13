@@ -1447,6 +1447,28 @@ void buildRunningGear(const Car& car, std::vector<Vtx>& out) {
         case LINK_TOE_LINK: link(out, joint, body, 0.011 * sz, kMetal); break;
         case LINK_TRAILING: link(out, joint, body, 0.024 * sz, armCol); break;
         case LINK_PANHARD: link(out, joint, body, 0.02 * sz, armCol); break;
+        case LINK_LEAF: {
+            // Leaf spring: the pack from the front eye to the seat on the tube, on to the rear
+            // eye, and the shackle from there up to its hanger. Leaves stacked under the main
+            // one, each a little shorter.
+            const Wheel* w = l.wheel >= 0 ? &car.wheels[l.wheel] : nullptr;
+            const V3 front = body, seat = joint, rearEye = seat + (seat - front);
+            const V3 up = fr.up;
+            for (int leaf = 0; leaf < 4; leaf++) {
+                const double f = 1.0 - 0.18 * leaf;
+                const V3 drop = up * (-0.011 * leaf);
+                tube(out, seat + (front - seat) * f + drop, seat + drop, 0.0065, 4, kDarkGrey, SM_METAL);
+                tube(out, seat + drop, seat + (rearEye - seat) * f + drop, 0.0065, 4, kDarkGrey, SM_METAL);
+            }
+            blob(out, front, 0.022, kBlack, SM_MATTE);  // eye bushings
+            blob(out, rearEye, 0.022, kBlack, SM_MATTE);
+            if (w && w->shackle >= 0) {
+                tube(out, rearEye, P(w->shackle), 0.012, 6, kMetal, SM_METAL);
+                blob(out, P(w->shackle), 0.02, kBlack, SM_MATTE);
+            }
+            tube(out, seat + up * 0.02, seat - up * 0.10, 0.007, 4, kMetal, SM_METAL);  // U-bolts
+            break;
+        }
         default: break;
         }
     }
@@ -1488,7 +1510,15 @@ void buildRunningGear(const Car& car, std::vector<Vtx>& out) {
             const Beam& sp = car.beams[wh.spring];
             bool aBody = sp.a < car.frameNodes;
             V3 lower = aBody ? P(sp.b) : P(sp.a), upper = aBody ? P(sp.a) : P(sp.b);
-            coilOver(out, lower, upper, 0.055 * sz, springCol, damperCol);
+            if (wh.shackle >= 0) {
+                // On leaf springs the leaf is the spring: just the shock, from below the tube
+                // up to the frame.
+                const V3 bottom = P(wh.lower), mid = bottom + (upper - bottom) * 0.55;
+                tube(out, bottom, mid, 0.026, 8, damperCol, SM_METAL);
+                tube(out, mid, upper, 0.011, 6, kMetal, SM_METAL);
+            } else {
+                coilOver(out, lower, upper, 0.055 * sz, springCol, damperCol);
+            }
         }
         (void)hub;
     }

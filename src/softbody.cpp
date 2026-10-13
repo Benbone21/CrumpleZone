@@ -325,6 +325,9 @@ void Car::computeForces(double h, const World& w) {
                 double sv = -vrel, knee = 0.25;
                 F -= b.c * 0.65 * (sv < knee ? sv : knee + 0.3 * (sv - knee));
             }
+            // A leaf pack's leaves rub on each other as it flexes: friction damping, strongest
+            // on small, quick movements (washboard), as real leaf springs ride.
+            if (b.friction > 0) F += b.friction * std::tanh(vrel / 0.06);  // (smoothed: an explicit step can't hold a true stick)
         } else {
             // Work hardening: bent metal gets harder to bend further (folds stack up).
             double plastic = std::fabs(b.L0 - b.Lorig) / b.Lorig;
@@ -958,9 +961,12 @@ void Car::wheelStep(double h, const World& w) {
             Wheel& me = s2 ? r : l;
             const Wheel& other = s2 ? l : r;
             if (btcs && open) {
-                // How much faster this tread slides over the road than the other's (m/s;
-                // either way, so reversing counts too).
-                const double lead = std::fabs(me.omega * me.rollR() - me.groundSpeed) - std::fabs(other.omega * other.rollR() - other.groundSpeed);
+                // How much faster this tread spins over the road than the other's, in the
+                // direction it's being driven (m/s; reversing too). A tread turning slower than
+                // the road (the inside wheel of a turn, one dragging on ice) isn't spinning:
+                // braking it would only drag it more.
+                const double dir = gear < 0 ? -1.0 : 1.0;
+                const double lead = dir * (me.omega * me.rollR() - me.groundSpeed) - dir * (other.omega * other.rollR() - other.groundSpeed);
                 // Pressure keeps building while it leads by more than ~0.3 m/s and bleeds off
                 // once it doesn't (the valves hold it there, as ABS does the other way).
                 me.tcBrake = clampd(me.tcBrake + h * 4.0 * clampd(lead - 0.3, -2, 1), 0, 1);
@@ -970,6 +976,41 @@ void Car::wheelStep(double h, const World& w) {
             } else {
                 me.tcBrake = std::max(0.0, me.tcBrake - h * 20);
             }
+        }
+    }
+    // Stability control (VSC / AdvanceTrac / ESC: it needs the ABS unit too): it compares
+    // how fast the car is turning with how fast the steering asks for (a simple bicycle model,
+    // no faster than the tires can hold), and when the tail comes round, or the body slides
+    // past ~4 degrees, it brakes the outside front wheel to pull the nose back and eases the
+    // throttle. Off in low range (as Toyota's and Ford's are), off with traction control.
+    // (It works the brake gently, a third of its force at most: a hard stab at speed would
+    // pull the car off line.)
+    {
+        const V3 fwd = chassis.nodes.empty() ? V3(1, 0, 0) : chassis.rot.rotate(V3(1, 0, 0));
+        const V3 up = chassis.nodes.empty() ? V3(0, 1, 0) : chassis.rot.rotate(V3(0, 1, 0));
+        if (dot(escFwd, escFwd) > 0.5) escYaw += (dot(cross(escFwd, fwd), up) / h - escYaw) * std::min(1.0, h * 40);
+        escFwd = fwd;
+        V3 vc;
+        double M = 0;
+        for (int i = 0; i < bodyNodes; i++) vc += nodes[i].v * nodes[i].m, M += nodes[i].m;
+        vc = vc / std::max(M, 1e-9);
+        const double vx = dot(vc, fwd), vy = dot(vc, cross(up, fwd));  // (vy: + to the left)
+        double want = 0;
+        if (tcOn && spec->absEnabled && !lowRange && vx > 8) {
+            const double vch = 25, refYaw = vx * steer / (wheelbase * (1 + vx * vx / (vch * vch)));
+            const double cap = 0.9 * 9.81 / vx;
+            const double ref = clampd(refYaw, -cap, cap);
+            const double sign = escYaw >= 0 ? 1 : -1;
+            const double over = (escYaw - ref) * sign;            // turning faster than asked (rad/s)
+            const double slip = std::fabs(std::atan2(vy, vx));     // body sideslip (rad)
+            // (It lets a car run ~7 degrees of slip before it steps in, and fades in from 30 km/h.)
+            want = clampd(std::max((over - 0.08) * 3, (slip - 0.12) * 3), 0, 0.35) * smoothstep(8, 12, vx);
+        }
+        escLevel += (want - escLevel) * std::min(1.0, h * 25);
+        for (Wheel& wh : wheels) {
+            // The front wheel on the outside of the turn the car is actually making.
+            const bool outside = wh.front && (escYaw >= 0 ? !wh.left : wh.left);
+            wh.escBrake = outside ? escLevel : 0;
         }
     }
     // Traction control: back off the throttle while a driven wheel is spinning.
@@ -999,6 +1040,7 @@ void Car::wheelStep(double h, const World& w) {
     // tire isn't going fast enough to dig in.
     if (tcOn && !(lowRange && spec->absEnabled)) tcCut = clampd(tcCut - h * 30.0 * (maxSpin - 0.14), cornerSpin > 0.16 ? 0.02 : 0.15, 1.0);
     else tcCut = 1;
+    tcCut = std::min(tcCut, 1 - 0.9 * escLevel);  // (stability control eases the throttle too)
     // Engine drag control (the other half of a modern traction system): off the throttle on
     // ice or snow, engine braking can drag the driven wheels toward locking, and a dragging
     // front axle won't steer; it opens the throttle just enough to keep them rolling.
@@ -1011,10 +1053,11 @@ void Car::wheelStep(double h, const World& w) {
     if (tcOn && brake < 0.05) dragAssist = clampd(dragAssist + h * 20.0 * (maxDrag - 0.1), 0.0, 0.35);
     else dragAssist = 0;
     double thr = shiftTimer > 0 || engineDead ? 0.0 : std::max(throttle * tcCut, dragAssist);
-    // Speed limiter (the ECU): eases the throttle off over the last 3 km/h.
+    // Speed limiter (the ECU): eases the throttle off over the last 3 km/h. (On the road
+    // speed it filters, ~0.3 s: a live axle hopping on its springs mustn't pulse the throttle.)
     if (spec->speedLimit > 0 && nd) {
-        const double kmh = gs / nd * wheels[0].R * 3.6;
-        thr *= clampd((spec->speedLimit - kmh) / 3.0, 0, 1);
+        govKmh += (gs / nd * wheels[0].R * 3.6 - govKmh) * std::min(1.0, h / 0.3);
+        thr *= clampd((spec->speedLimit - govKmh) / 3.0, 0, 1);
     }
     double power = 0.25 + 0.75 * engineHealth;  // a crushed engine bay loses power
     // Turbo: boost follows the pedal, slowly at low revs (lag), and leaks away off throttle.
@@ -1415,7 +1458,7 @@ void Car::wheelStep(double h, const World& w) {
             }
             else
                 wh.abs = std::min(1.0, wh.abs + h * 6);
-            double service = (brakePressure * wh.abs + wh.tcBrake) * wh.brakeMax;
+            double service = (brakePressure * wh.abs + std::max(wh.tcBrake, wh.escBrake)) * wh.brakeMax;
             Tb += service + (wh.front ? 0.0 : handbrake * kHandbrakeTorque);
         }
         // The brake grips the wheel to its knuckle, so it stops the wheel turning relative to
@@ -1457,8 +1500,10 @@ void Car::wheelStep(double h, const World& w) {
         wh.omega = spin + rel;
         // The caliper is bolted to the knuckle: braking twists it (nose dive through the arms).
         // (Smoothed over ~10 ms, like the give in pads and caliper; the total is unchanged.)
-        // Only the brakes' share: rolling resistance pushes back through the road, not the hub.
-        double Tbrake = (before - wh.omega) * wh.I / h * (1.0 - Tdrag / Tb);
+        // The drag too: it holds the wheel to the knuckle's turning, so the knuckle takes the
+        // reaction (else a housing rocking on its springs would drag its wheels round with
+        // nothing pushing back, and never settle).
+        double Tbrake = (before - wh.omega) * wh.I / h;
         wh.brakeReaction += (Tbrake - wh.brakeReaction) * std::min(1.0, h / 0.01);
         if (!wh.detached && std::fabs(wh.brakeReaction) > 1) applyTorque(wh.assembly, axis * wh.brakeReaction);
         wh.angle += wh.omega * h;
@@ -2275,10 +2320,18 @@ void Sim::aiDrive(int self, double dt) {
     c.throttle = clampd(accel / 3.0, 0, 1);
     c.brake = clampd(-accel / 7.0, 0, 1);
     c.aiGap = gap;
+    // A driver feels a tire spinning away (an open diff, an unloaded inside wheel, no
+    // traction control) and feathers the pedal.
+    {
+        double spin = 0;
+        for (const Wheel& w : c.wheels)
+            if (c.wheelPowered(w)) spin = std::max(spin, std::fabs(w.omega * w.rollR()) - std::fabs(w.groundSpeed));
+        c.throttle *= clampd(1 - (spin - 2.0) / 4.0, 0.3, 1.0);
+    }
 
-    // Stuck (nose in a wall or ditch while trying to drive): back up with the wheel
-    // turned the other way, then try again.
-    if (speed < 0.6 && c.throttle > 0.3) c.aiStuckTime += dt;
+    // Stuck (nose in a wall or ditch while trying to drive, or rolling back down a slope
+    // with a wheel spinning): back up with the wheel turned the other way, then try again.
+    if ((speed < 0.6 || dot(fr.vel, fr.fwd) < -0.3) && c.throttle > 0.25) c.aiStuckTime += dt;
     else c.aiStuckTime = 0;
     if (c.aiStuckTime > 3.0) {
         c.aiStuckTime = 0;

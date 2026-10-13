@@ -148,8 +148,9 @@ VEHICLE_SCENARIO(accel, "dynamics/acceleration", "Full throttle from rest on the
     // Civic Si ~7.2 s (0-60 mph in 6.8), Jesko ~2.5-3 s, Bronco 2.7 ~6.9 s, 4Runner ~10 s
     // (factory 3.4: 10.1-10.5 s; the blower makes up for the weight and the 35s).
     // EF replaces the 200 hp 2022 sedan: 108 hp and ~1,037 kg, estimated 0-100 ~10 s.
+    // Tacoma TRD Off-Road V6 automatic: 0-60 mph in 8.3 s (Edmunds), so ~8.8 s to 100.
     // (Engines run ~15% over the factory figures, see vehicles.cpp: a little quicker.)
-    static const Range expect[] = {{8.5, 11.0}, {2.4, 3.4}, {5.6, 7.2}, {8.5, 11.0}};
+    static const Range expect[] = {{8.5, 11.0}, {2.4, 3.4}, {5.6, 7.2}, {8.5, 11.0}, {7.6, 10.0}};
     Car& c = ctx.add(spec, kLaneStartX, kLaneZ, 0);
     ctx.focus(c);
     ctx.run(1.0);
@@ -198,8 +199,9 @@ VEHICLE_SCENARIO(braking, "dynamics/braking", "Full brakes from 100 km/h: stoppi
     });
     double dist = travelled(c, p0, V3(1, 0, 0)) * (100 / v0) * (100 / v0);  // normalize to exactly 100 km/h
     ctx.check("comes to a stop", stopped);
-    // EF Civic on 185/60R14 street tires without ABS: ~43 m (estimate); Jesko ~31 m (carbon-ceramics, Cup 2 R), Bronco ~44 m, 2002 4Runner ~45 m (rear drums).
-    static const Range expect[] = {{38, 49}, {27, 35}, {39, 50}, {40, 52}};
+    // EF Civic on 185/60R14 street tires without ABS: ~43 m (estimate); Jesko ~31 m (carbon-ceramics, Cup 2 R), Bronco ~44 m, 2002 4Runner ~45 m (rear drums),
+    // Tacoma TRD Off-Road 124-135 ft from 60 mph (two Edmunds tests): ~40.5-44 m from 100.
+    static const Range expect[] = {{38, 49}, {27, 35}, {39, 50}, {40, 52}, {39, 50}};
     const Range& r = expect[vehicleIndex(spec)];
     ctx.metric("100-0 km/h stopping distance", dist, "m", r.lo, r.hi);
     ctx.metric("sideways drift while braking", std::fabs(c.frame().com.z - kLaneZ), "m", 0, 0.8);
@@ -209,8 +211,9 @@ VEHICLE_SCENARIO(braking, "dynamics/braking", "Full brakes from 100 km/h: stoppi
 VEHICLE_SCENARIO(skidpad, "dynamics/skidpad", "Holds a 30 m circle, speeding up slowly: peak steady lateral grip, no rollover") {
     // Like a magazine skidpad test: the driver holds the circle and creeps up the speed
     // until the car can't stay on it.
-    // EF Civic on period-size street tires: ~0.8 g (estimate), Jesko well over 1.1 g, Bronco ~0.70 g, 2002 4Runner ~0.68 g.
-    static const Range expect[] = {{0.75, 0.90}, {1.08, 1.45}, {0.62, 0.78}, {0.60, 0.76}};
+    // EF Civic on period-size street tires: ~0.8 g (estimate), Jesko well over 1.1 g, Bronco ~0.70 g, 2002 4Runner ~0.68 g,
+    // Tacoma TRD Off-Road on all-terrains ~0.70 g (estimate: mid-size off-road pickups test 0.68-0.73).
+    static const Range expect[] = {{0.75, 0.90}, {1.08, 1.45}, {0.62, 0.78}, {0.60, 0.76}, {0.62, 0.78}};
     const double R = 30;
     Car& c = ctx.add(spec, -40, -100, 0);
     ctx.focus(c);
@@ -473,7 +476,8 @@ struct FlexMeter {
 VEHICLE_SCENARIO(torsion, "structure/torsion", "Twisting rig in free fall: torsional stiffness of the body between the axles") {
     // Real cars: roughly 10-35 kNm/deg (older or open bodies lower, modern unibodies higher).
     // (Unibody Civic, carbon tub Jesko, body-on-frame Bronco and 4Runner.)
-    static const Range expect[] = {{12, 55}, {15, 80}, {6, 36}, {6, 36}};
+    // (The Tacoma's cab and bed are separate boxes on a long, partly open frame: softer.)
+    static const Range expect[] = {{12, 55}, {15, 80}, {6, 36}, {6, 36}, {4, 30}};
     Car& c = rigInAir(ctx, spec);
     Section f = sectionAt(c, axleX(c, true)), r = sectionAt(c, axleX(c, false));
     auto roll = [&](const Section& s) {
@@ -670,6 +674,7 @@ VEHICLE_SCENARIO(weight, "structure/weight", "Curb weight, front/rear split and 
         {{1380, 1460}, {39, 45}, {0.34, 0.46}},      // Jesko Attack: 1,420 kg, ~42/58
         {{2150, 2290}, {54, 59}, {0.70, 0.86}},      // Bronco 4-door 2.7: ~2,214 kg, ~56/44
         {{2060, 2200}, {52, 58}, {0.74, 0.92}},      // 4Runner Limited as built: 1,867 kg + ~290 kg of parts, ~55/45, lifted 170 mm
+        {{1990, 2110}, {53, 58}, {0.66, 0.85}},      // Tacoma TRD Off-Road Double Cab: 2,016-2,059 kg, ~55/45 empty
     };
     Car& c = ctx.add(spec, kLaneStartX, kLaneZ, 0);
     ctx.focus(c);

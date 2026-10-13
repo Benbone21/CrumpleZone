@@ -33,6 +33,7 @@ enum TransferCase {
     XFER_NONE,       // the drive layout is fixed
     XFER_PART_TIME,  // 2H; 4A (front engaged, center free); 4H and 4L tie the front and rear shafts together
     XFER_FULL_TIME,  // center differential: 2H; 4H (center open); 4H LOCK and 4L LOCK
+    XFER_PART_TIME_BASIC,  // plain part-time: 2H (where it's driven day to day), 4H and 4L shafts locked
 };
 
 // One position of the transfer-case lever.
@@ -93,6 +94,8 @@ struct VehicleSpec {
     // entries; 0 = leave it at its layer). Shapes hoods, decks and engine covers.
     std::vector<double> topLine;
     std::vector<double> bodyWidth;  // half-width multiplier per longitudinal node column
+    double outerCellWidth = 0;      // width of the outermost cell column each side (m; 0 = even): a
+                                    // pickup's bed walls and the fenders over its wheels
     int doors = 0;                 // 0 = infer from cabin; 2/4 = explicit body style
     double doorLength = 1.0;        // physical front door length (m)
     double rimRadius = 0;           // metal rim radius; 0 = inferred from wheel style
@@ -147,6 +150,10 @@ struct VehicleSpec {
     double wheelMass = 20, hubMass = 16;      // per corner: wheel and tire; knuckle, hub and brake
     double axleMass = 60;                     // solid axle housing and differential
     SuspensionType frontSusp = WISHBONE, rearSusp = WISHBONE;
+    // A live rear axle on leaf springs (pickups): each leaf locates the axle and is its spring;
+    // the front half pivots on a hanger, the rear swings on a shackle. No links, no panhard.
+    bool leafSprings = false;
+    double leafHalf = 0.70;        // spring eye to the axle seat (m), each side
     double rideFreqFront = 1.5, rideFreqRear = 1.6;  // body bounce frequency on its springs (Hz)
     double dampingRatio = 0.35;
     double arbFront = 0, arbRear = 0;
