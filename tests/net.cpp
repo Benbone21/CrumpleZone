@@ -230,3 +230,58 @@ SCENARIO(netLevel, "net/level", "The host's level reaches the client whole (a bi
     client.close();
     host.close();
 }
+
+SCENARIO(netCrawlers, "net/crawlers", "A host in the rock buggy and a client in the side-by-side: each sees the other as the right vehicle (spec ids), driving and steering, node for node") {
+    Car& hostCar = ctx.add(vehicleCatalog()[4], 10, -8, 0);
+    ctx.focus(hostCar);
+    NetSession host;
+    const int port = testPort() + 2;
+    ctx.check("host opens a session", host.host(port, "HOSTY", MAP_PROVING_GROUND), host.error);
+    host.adopt(ctx.sim);
+    Sim sim2;
+    sim2.world = World(MAP_PROVING_GROUND);
+    sim2.setupEmpty();
+    sim2.addCar(vehicleCatalog()[5], V3(-30, 0.5, -30), 0, V3(0.2, 0.2, 0.2));
+    sim2.player = 0;
+    NetSession client;
+    bool joined = false, joinDone = false;
+    std::thread joiner([&] {
+        joined = client.join("127.0.0.1:" + std::to_string(port), "BUDDY", 3.0);
+        joinDone = true;
+    });
+    for (int k = 0; k < 400 && !joinDone; k++) {
+        host.receive(ctx.sim, ctx.t);
+        usleep(5000);
+    }
+    joiner.join();
+    ctx.check("client is let in", joined, client.error);
+    if (!joined) return;
+    client.adopt(sim2);
+    auto frameBoth = [&](bool hostDrive, bool clientDrive) {
+        host.send(ctx.sim, ctx.t);
+        host.receive(ctx.sim, ctx.t);
+        client.receive(sim2, ctx.t);
+        ctx.sim.drive(hostDrive, false, false, false, false, Ctx::kFrame);
+        sim2.drive(clientDrive, false, false, false, false, Ctx::kFrame);
+        sim2.advance(Ctx::kFrame, 1000);
+        for (Car& c : sim2.cars) c.updateStats();
+        client.send(sim2, ctx.t);
+        usleep(300);
+    };
+    ctx.run(1.5, [&] { frameBoth(false, false); });
+    const Car* onHost = remoteCar(ctx.sim);
+    const Car* onClient = remoteCar(sim2);
+    ctx.check("host sees the side-by-side", onHost && onHost->spec->model == 5, onHost ? onHost->spec->name : "none");
+    ctx.check("client sees the rock buggy", onClient && onClient->spec->model == 4, onClient ? onClient->spec->name : "none");
+    if (!onHost || !onClient) return;
+    ctx.check("same node count as the real vehicle", onHost->nodes.size() == sim2.cars[sim2.player].nodes.size() && onClient->nodes.size() == hostCar.nodes.size());
+    // Both drive off along +x (the buggy on the host, the UTV on the client).
+    ctx.run(4.0, [&] { frameBoth(true, true); });
+    const Car* r = remoteCar(ctx.sim);
+    const Car& mine = sim2.cars[sim2.player];
+    double worst = 0;
+    for (size_t i = 0; i < r->nodes.size(); i++) worst = std::max(worst, len(r->nodes[i].p - mine.nodes[i].p));
+    ctx.metric("client's side-by-side speed", len(mine.frame().vel) * 3.6, "km/h", 15, 115);
+    ctx.metric("host's buggy speed", len(hostCar.frame().vel) * 3.6, "km/h", 15, 90);
+    ctx.metric("host's copy of the side-by-side vs the real one: worst node", worst, "m", 0, 4.0);  // (the copy is ~0.1 s behind: ~2.8 m at 100 km/h)
+}

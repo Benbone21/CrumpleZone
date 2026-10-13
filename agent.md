@@ -8,14 +8,15 @@ This file covers how to work on the code.
 
 ```bash
 make                                   # builds ./crumplezone (needs g++ and the libsdl2-2.0-0 runtime; no -dev packages)
-./crumplezone --player 3               # start in vehicle 3 (0 Civic, 1 Jesko, 2 Bronco, 3 4Runner)
+./crumplezone --player 3               # start next to car 3 of those parked at the start (0 Civic, 1 Jesko, 2 Bronco, 3 4Runner)
+./crumplezone --resume-model 4         # be vehicle 4 or 5 (the rock buggy, the side-by-side); keys 1-6 do it in the game
 make build/run_tests
 nice -n 15 ./build/run_tests --jobs 6  # every scenario in parallel, about 60 s; writes build/test_report.html
 ./build/run_tests -v damage/           # one group, verbose (filter = substring of the scenario name)
 ./build/run_tests --update-baseline    # after an intended behavior change: re-record tests/baseline.txt
 ```
 
-- Every change must keep all scenarios passing (currently 161). A failing range means the
+- Every change must keep all scenarios passing (count is in `--list`). A failing range means the
   physics drifted from real-world numbers. Fix the physics, don't just widen the range,
   unless the range itself was wrong. If you widen one, say why in a comment.
 - Don't hand-edit `tests/baseline.txt`. Drift warnings (>10% from it) are informational.
@@ -39,7 +40,7 @@ Without `--time`, captures start at 10:00 with the clock running.
 
 | File | What's in it |
 | --- | --- |
-| `src/vehicles.h/.cpp` | `VehicleSpec` and the catalog of the four real vehicles. Each spec is a text side-profile lattice, dimensions, mass items, engine, gearbox, suspension, tires, aero and looks |
+| `src/vehicles.h/.cpp` | `VehicleSpec` and the catalog of the six vehicles (indices 0-5: Civic, Jesko, Bronco, 4Runner, rock buggy, side-by-side; the code addresses them by index, so only ever append). Each spec is a text side-profile lattice, dimensions, mass items, engine, gearbox, suspension, tires, aero and looks |
 | `src/mods.h/.cpp` | Garage mods (engine, suspension, transmission). Each option is a function that edits a copy of the spec. `tunedSpec()` caches the result. The garage is saved to `~/.config/crumplezone/garage.txt` |
 | `src/carbuild.cpp` | Turns a spec into nodes and beams: body lattice, frame, engine on mounts, suspension linkages, bolt-on panels with pins, and the stability pass. Beam material table `kSpec` is at the top |
 | `src/softbody.h/.cpp` | The 2 kHz simulation: beams (yield, work hardening, breaking), pins, chassis shape-matching frame, tires, brakes, diffs, gearbox and auto-shift, aero, damage stats, glass |
@@ -58,7 +59,7 @@ Without `--time`, captures start at 10:00 with the clock running.
 | `src/editor.h/.cpp` | The world editor's UI: free-fly camera, tools, panels, the brush ring and course marks drawn over the view, open/save/play. main.cpp routes events to it while `editor.active`; the renderer catches up via `updateTerrainRegion/updateWater/updateObjects` |
 | `tests/editor.cpp` | The editor core: brushes, undo, objects, course, water, and that what it makes saves and plays back the same |
 | `tests/frontier.cpp` | Map sanity (fords shallow, rivers deep, every surface present), wading a ford, drifting in the current, the mesa and THE WALL by autopilot and by a scripted crawl, autopilot across the river; the bayou (puddles, wallows, mud share) and Cold Creek (snow share, ice, road grade) maps, a Civic bogged in THE WALLOW and a set-up Bronco through both wallows and over MUD HILL, the 4Runner up the snow road, autopilot to the bayou and the lodge (`driveLine` follows a trail by pure pursuit) |
-| `src/mountain.cpp` | The mountain map: massif, spiral summit trail, valley loop, trailhead, crawl park, creek, the Widowmaker Spur and Boulder Gully, repair stations, scenery. `mountainFeature(name)` gives feature positions for tests (spur, pinnacle, gully, gullytop, halfway, garage, pit...) |
+| `src/mountain.cpp` | The mountain map: massif, spiral summit trail, valley loop, trailhead, crawl park, creek, the Widowmaker Spur and Boulder Gully, repair stations, scenery. `mountainFeature(name)` gives feature positions for tests (spur, pinnacle, gully, gullytop, halfway, garage, pit, whoops...) |
 | `src/rope.h`, `src/recovery.cpp` | Winch lines and tow straps (`Sim::ropes`, forces in `Sim::ropeForces` at 2 kHz, spread over the chassis by `Car::pullHook`), anchors, towed-car behaviour (`Sim::drive`), tire airing, sway-bar reconnect, repair stations (`Sim::updateTrail`, run by `advance`), `placeUpright`/`rotateRigid` |
 | `tests/recovery.cpp` | Winching, strap tow, repair, righting |
 | `src/net.h/.cpp` | Multiplayer (`NetSession`): TCP for reliable messages (join, spawn/despawn, lines), UDP for vehicle states (20 Hz, fragmented, node offsets from the rigid rest shape as int16 mm). The host relays. Each machine owns and simulates its own cars; others' are `Car::remote` (kinematic: positions from the network, they only push back). `send()` diffs cars (`netId`, `buildCount`) and ropes (`Rope::netId`) each frame, so game code doesn't call into it |
@@ -96,6 +97,8 @@ Without `--time`, captures start at 10:00 with the clock running.
 - **The surface course** sits on the proving ground north-west of the pad (x -118..-48, z 72..126, flattened, a concrete apron 4 m round it). Tests that drive there will hit sand and mud: keep test lanes off it.
 - **Tires:** `tireCurve(s, bite, keep)` with bite from the surface and tread (`kTreadBite`), keep from the surface; grip = surface grip x `kTreadGrip[tread][surface]`. ABS and TC aim at `slip x Wheel::bite`. `Wheel::sink` lowers the tire into sand/mud/snow (it's subtracted from the contact penetration) and adds bulldozing drag; it only comes back up as the tire rolls. A hard landing past `softBearing()` pushes it down to `softCrushMax()` instead of loading the tire further; body nodes on those surfaces get a crush layer (6% stiffness, hard below `sink x 3`, little push back). The harness's tunnelling check allows that depth. `Wheel::clog` is mud in the tread. Keyboard steering is limited to what the tires hold (`Sim::drive`): the AI and autopilot set `steer` directly and aren't.
 - **Hot reload:** the game watches `/proc/self/exe`; after a rebuild F5 `execv`s the new binary with `--map --player --spawn --resume-model`. `CZ_AUTORELOAD=1` reloads without the key (testing).
+- **Tube-frame vehicles (rock buggy 4, side-by-side 5):** `VehicleSpec::openFrame`. The lattice is the chassis and cage and isn't drawn; profile char `p` marks the cells that carry skin ('w' is a wheel-well cell with skin; plain `#`, `G` and `W` stay hidden). They have no doors, covers or glass: the carbuild panel list keeps only the hood. Everything you see of them is `buildOpenFrame()` in `carvisual.cpp` (cage, rails, bumpers, seats, wheel, exhaust, light bars, fenders), bound to the lattice like any part. Keep their mass items left/right symmetric: an 8 mm CG offset made the buggy veer 2 m in 8 s of coasting. The front solid axle steers (`carbuild.cpp`, "SOLID_AXLE": kingpin nodes shared between the housing and the knuckle, tie rod to a node on the housing; the steering code works from `kpLow/kpUp/armRest/rackRest` in rest coordinates, so it needs no special case). Spring rates are sized for the tire it has (`tireSoft`), and `looseGrip` is a crawler compound's extra grip off the pavement.
+- **Solid axles flip on hard landings** (Bronco, 4Runner and the buggy: a 3 m drop leaves the housing rolled ~120 degrees, pinion up). Known and open (see the history entry on live rear axle clipping); the rock buggy also takes 1.2-1.5 m hops fine.
 - **Visual-only parts don't collide.** Anything in `buildExtras()` is drawn but has no physics. Add its weight as a `MassItem` in the spec.
 - **Panels** are separate node sheets pinned to the body (hinges, latches, clips).
   - Pins break by distance (`breakDist` = force / k).
@@ -240,3 +243,10 @@ Without `--time`, captures start at 10:00 with the clock running.
   - Found: a hard landing (≥2 m drop or tail-first jump) flips the 4-link over centre; the rear housing stays rolled ~110°, pinion up, in the floor. Cause: spring seat above/behind the tube, loaded by the bump stop through a tilting coil-over. Seat on the tube centre line fixes it, but costs crawl tests, so it's reverted. Still open.
   - Visual (`carvisual.cpp`): rails kick up over a live axle (`buildFrameRails`, `axleReach`), no centre rail over the prop shaft, crossmember behind the axle, exhaust over the axle, tank ahead of it, housing drawn at real size.
   - Test: `components/axle-articulation`. Landing test `axleLanding` is written but not registered until the flip is fixed.
+- **2026-10-13, Claude: crawl vehicles (branch `vehicles`)**
+  - Two new catalog entries (indices 4 and 5, keys 5/6): an Ultra4-class tube-chassis rock buggy (6.2 L V8, 4L80E + Atlas 4.3 low, live axles on long four-links with a steering front axle, 40 in tires, both lockers, ~1,820 kg) and a turbo side-by-side (900 cc turbo triple, CVT as five steps, 4WD with a front diff lock, long-travel wishbones, 32 in tires, ~800 kg). Class figures and estimates are marked in `vehicles.cpp`.
+  - New: `openFrame` tube-frame look, steered front solid axle, `XFER_SELECT` (2H/4H/4L) and `XFER_ONDEMAND` (2WD/4WD) transfer cases, `tireSoft`, `looseGrip`, `ledgeFactor` (autopilot step table), `linkLength/upperLink/coilTop/axleSeat/armLower/armUpper`, `mountainFeature("whoops")`, garage mods for both.
+  - Tests: per-vehicle tables extended to six; `offroad/` ledge, slab, twister, ledges, dome and whoops comparisons, `surfaces/utv-mud-sand`, `autopilot/buggy-ledge`, `autopilot/step-table`, `net/crawlers`, `structure/rock-hits/buggy|utv`. Tube-frame checks that assume glass, doors or a crushable nose have their own limits (`tubeFrame()` / `tallBuggy()` in `tests/scenarios.cpp`).
+  - Tuning lessons: 0.7 m is the buggy's ledge (0.8 m only with 1.05 Hz springs; it trades against road manners); steeper slabs are friction-limited; a 4-speed with 5.38 axles in 2H is a wheelspin machine, so it leaves in 4H.
+  - Baseline before the change: `frontier/mesa-climb` and `mods/bronco/engine/raptor-3.0-v6-swap` failed.
+

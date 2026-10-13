@@ -34,6 +34,10 @@ void lampRest(const Car& car, const VisualTemplate& t, V3 head[2], V3 tail[2]) {
     } else if (vs.model == 1) {  // Jesko: teardrop lenses on the front fenders (buildCoachwork)
         hx = vs.length / 2 - 0.32, hy = 0.62, hz = 0.74;
         tx = -vs.length / 2 + 0.02, ty = 0.60, tz = 0.58;
+    } else if (vs.model == 4 || vs.model == 5) {  // tube-frame vehicles: lamps in the nose cone / hood, tails on the tail panel
+        const double F = vs.layerY[0];
+        hx = vs.length / 2 - 0.04, hy = F + (vs.model == 4 ? 0.40 : 0.36), hz = vs.model == 4 ? 0.46 : 0.42;
+        tx = -vs.length / 2 + 0.03, ty = F + (vs.model == 4 ? 0.32 : 0.34), tz = vs.model == 4 ? 0.48 : 0.40;
     } else {
         // Smoothed cage: the lamp rows the shader uses (uBody.z/w), at the ends.
         double xf = -1e9, xr = 1e9;

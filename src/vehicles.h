@@ -33,6 +33,8 @@ enum TransferCase {
     XFER_NONE,       // the drive layout is fixed
     XFER_PART_TIME,  // 2H; 4A (front engaged, center free); 4H and 4L tie the front and rear shafts together
     XFER_FULL_TIME,  // center differential: 2H; 4H (center open); 4H LOCK and 4L LOCK
+    XFER_SELECT,     // plain two-speed lever (rock buggy): 2H; 4H and 4L tie the front and rear shafts together
+    XFER_ONDEMAND,   // side-by-side: 2WD; 4WD (the front axle comes in through an open center, no low range)
 };
 
 // One position of the transfer-case lever.
@@ -64,6 +66,7 @@ enum BodyExtra : unsigned {
     EXTRA_ROOF_BASKET = 1024, // full-length roof basket with a light bar
     EXTRA_SLIDERS = 2048,     // steel rock sliders along the sills
     EXTRA_WINCH = 4096,       // electric winch on the front bumper (V hooks it, Z reels in)
+    EXTRA_TUBE_CAGE = 8192,   // tube-frame vehicles: the roll cage, tube chassis and bumpers are drawn from tubes (carvisual.cpp)
 };
 
 // Wheel and tire look.
@@ -94,6 +97,10 @@ struct VehicleSpec {
     std::vector<double> topLine;
     std::vector<double> bodyWidth;  // half-width multiplier per longitudinal node column
     int doors = 0;                 // 0 = infer from cabin; 2/4 = explicit body style
+    // Tube-frame vehicle (rock buggy, side-by-side): the lattice is the chassis and cage and
+    // is not drawn; only the cells marked 'p' (hood, tail and body panels) carry a skin.
+    // It has no doors, and its panels are plain bolt-ons.
+    bool openFrame = false;
     double doorLength = 1.0;        // physical front door length (m)
     double rimRadius = 0;           // metal rim radius; 0 = inferred from wheel style
     bool absEnabled = true;
@@ -135,6 +142,12 @@ struct VehicleSpec {
     double wheelMass = 20, hubMass = 16;      // per corner: wheel and tire; knuckle, hub and brake
     double axleMass = 60;                     // solid axle housing and differential
     SuspensionType frontSusp = WISHBONE, rearSusp = WISHBONE;
+    // Linkage sizes (m). Solid axle: the length of the lower trailing links (the upper link
+    // is `upperLink` times it, or 0.55 m if that is 0; equal lengths keep the axle parallel to the frame through its travel); a front solid axle steers on kingpins and trails them back toward the
+    // middle of the car), and how high above the axle the coil-over's top mount sits (0 =
+    // the size-scaled default). Wishbones: how far the inner pivots are from the ball joints.
+    double linkLength = 0.77, upperLink = 0, coilTop = 0, axleSeat = 0.10;  // (axleSeat: the coil-over's seat above the axle's centre line)
+    double armLower = 0.36, armUpper = 0.27;
     double rideFreqFront = 1.5, rideFreqRear = 1.6;  // body bounce frequency on its springs (Hz)
     double dampingRatio = 0.35;
     double arbFront = 0, arbRear = 0;
@@ -148,7 +161,10 @@ struct VehicleSpec {
     // Front anti-roll bar disconnect: 0 none, 1 electronic (a dash button, under 30 km/h),
     // 2 quick-disconnect pins (stopped only).
     int swayDisconnect = 0;
-    double tirePsi = 32;          // street pressure; air down for rock
+    double tirePsi = 32;          // street pressure; air down for rock (the game airs between 12 and 40 psi)
+    double ledgeFactor = 1.0;     // how much further than the tire-radius rule it climbs a square ledge (autopilot's step table: travel and soft sidewalls help)
+    double looseGrip = 1.0;       // grip multiplier off the pavement (a soft crawler compound sticks to rock and dirt)
+    double tireSoft = 1.0;        // radial stiffness at that pressure, against the 33 in truck tire (tall, low-pressure tires are softer)
     double fuelCapacity = 50;     // L in a full tank
     double jerryCan = 0;          // L in the spare can it carries (0: none)
     int tireType = TIRE_STREET;
@@ -200,7 +216,7 @@ struct VehicleSpec {
     double contactScale = 1.0;  // < 1 for soft things (foam) that cushion impacts
 };
 
-// Drivable vehicles (keys 1-4).
+// Drivable vehicles (keys 1-6).
 const std::vector<VehicleSpec>& vehicleCatalog();
 // Body lattice: x (m, + forward) of node column i (fractional i interpolates).
 double latticeX(const VehicleSpec& vs, double i);

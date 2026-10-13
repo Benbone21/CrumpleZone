@@ -90,10 +90,10 @@ scenario finishes, you can drive around in the aftermath.
 | `structure/` | Torsional and bending stiffness (test rigs in free fall), how much the body shakes, weight and balance, suspension travel, bump steer (each per vehicle) |
 | `damage/` | Wall crashes, pole, tree, head-on, T-bone, rear-end, rollover (van with a roof load), jump, crash boxes |
 | `structure/rock-hits/` | Trucks on the trail: belly on a boulder, sill onto a rock, nose off a 1.2 m ledge, tipped on its side and roof, a corner into a boulder |
-| `offroad/` | Drive modes and locker rules, twister, ledges, slickrock, air-down, ramp travel index, shaft breakage, the Widowmaker Spur and Boulder Gully |
+| `offroad/` | Drive modes and locker rules, twister, ledges, slickrock, air-down, ramp travel index, shaft breakage, the Widowmaker Spur and Boulder Gully; the crawl specials against the Bronco (ledge heights, a 48 degree slab, the twister with open diffs, the crawl park's ledges and dome) and the side-by-side through the whoops lane |
 | `recovery/` | Winching up the dome, winch stall and line snap, a strap tow to the shop, repairs, righting a wreck, rebuilding on a slope |
 | `autopilot/` | To the shop, holding a set speed, the trailhead to the Halfway Hut on the trail, cross-country to the lake, through the boulder lane, following a truck; and what it sees: a boulder dropped on its route (around it), a knee-high rock in a walled lane (over it), a 0.38 m ledge (stops, 4L, locker, climbs), a wall with a gap, a parked truck, the Civic avoiding a rock a truck would straddle |
-| `surfaces/` | Stopping from 40 km/h on pavement, wet, gravel, sand, mud, snow and ice; locked wheels vs ABS on pavement and gravel; sand sinking, floating aired down and digging in; all-terrains vs semi-slicks in mud; ice; the autopilot on sand and ice |
+| `surfaces/` | The side-by-side flat out through mud and sand; stopping from 40 km/h on pavement, wet, gravel, sand, mud, snow and ice; locked wheels vs ABS on pavement and gravel; sand sinking, floating aired down and digging in; all-terrains vs semi-slicks in mud; ice; the autopilot on sand and ice |
 | `freeway/` | Top speed per vehicle (flat out until it stops gaining; holds its lane, nothing scrapes), and seamless 400 m wraps at 200 km/h |
 | `handling/` | Keyboard steering at 130 km/h: a tap is a nudge, a hold is a hard sweeper without a spin (each per vehicle) |
 | `net/` | A host and a client over loopback: each sees the other's truck (node for node), a strap between them tows, leaving cleans up |
@@ -108,13 +108,13 @@ scenario finishes, you can drive around in the aftermath.
 | W / S or ↑ / ↓ | Throttle / brake (hold S when stopped to reverse) |
 | A / D or ← / → | Steer. Keys are all or nothing, so full steer is as much as the tires can hold at your speed, on that surface (full lock when parking, a few degrees at 130 km/h), plus room to catch a slide |
 | Space | Handbrake |
-| 1 2 3 4 | Become the Civic / Jesko / Bronco / 4Runner (repaired, in place) |
+| 1 2 3 4 5 6 | Become the Civic / Jesko / Bronco / 4Runner / rock buggy / side-by-side (repaired, in place) |
 | G | Garage: W/S pick engine, suspension or transmission, A/D change the part, Enter fits it |
 | Q / E | Shift down / up (switches to manual) |
 | M | Manual / automatic gearbox |
 | Shift+L | Headlights: AUTO (on at dusk) / LOW BEAM / HIGH BEAM / OFF |
-| L | Transfer case (4x4s): Bronco 2H / 4A / 4H / 4L; 4Runner 2H / 4H / 4H LOCK / 4L LOCK. Into or out of low range under 8 km/h |
-| F / B | Front / rear locker (4x4s; the front one needs 4WD engaged; the Bronco's front and the 4Runner's factory rear only work in low range) |
+| L | Transfer case (4x4s): Bronco 2H / 4A / 4H / 4L; 4Runner 2H / 4H / 4H LOCK / 4L LOCK; rock buggy 2H / 4H / 4L; side-by-side 2WD / 4WD. Into or out of low range under 8 km/h |
+| F / B | Front / rear locker (4x4s; the front one needs 4WD engaged; the Bronco's front and the 4Runner's factory rear only work in low range; the rock buggy has both, the side-by-side only the front) |
 | Y | Front sway bar disconnect (Bronco: a dash button under 30 km/h, reconnects itself above; 4Runner: quick-disconnect pins, stopped) |
 | 9 / 0 | Hold to let air out of / pump up the tires (stopped). 35 psi street, 15–18 for rock |
 | V | Winch: pick an anchor (every tree, boulder, truck or soft-ground spot within the 30 m line is marked; drag the camera to aim, wheel or Tab for the next, V or click to hook, Esc to cancel). With a line on, V unhooks it |
@@ -171,7 +171,7 @@ Build your own worlds and levels: title screen → WORLD EDITOR (a new level on 
 Press Esc to pause and open the menu. Use the mouse, or W/S to select, A/D to
 change and Enter to confirm. Esc goes back.
 
-- **Vehicle:** pick any of the four cars, then press Enter (or click) to drive it.
+- **Vehicle:** pick any of the six vehicles, then press Enter (or click) to drive it.
 - **Settings:**
   - Game: speed in km/h or mph, time of day (CYCLE: dawn, day, dusk and night go round, a whole day in 6 to 96 real minutes, 24 by default; or held at MORNING, NOON, EVENING or NIGHT; the clock carries on from where you left it), volume, music volume (default 40%, 0 turns it off; it sits under the master volume), field of view.
   - Graphics: a quality preset (low / medium / high / ultra), shadows, anti-aliasing (MSAA), ambient occlusion, bloom, clouds, render scale (50–200%).
@@ -181,7 +181,7 @@ Settings are saved to `~/.config/crumplezone/settings.txt`.
 
 ## Vehicles
 
-All four are built from short side-profile maps plus a parts list in
+All six are built from short side-profile maps plus a parts list in
 `src/vehicles.cpp` (where every heavy item sits, the engine's size and position,
 the suspension type and its ride frequency), so adding a new one is mostly a
 matter of drawing it in text.
@@ -192,6 +192,21 @@ matter of drawing it in text.
 | Koenigsegg Jesko Attack | Rear-wheel, mid-engine | 1,420 kg (42/58) | 5.0 L twin-turbo V8, 9-speed | Double wishbone / double wishbone |
 | Ford Bronco 4-door | 4x4 with low range | 2,214 kg (56/44) | 2.7 L twin-turbo V6, 10-speed auto | Double wishbone / solid axle |
 | Toyota 4Runner (2002 Limited, built) | 4x4 with low range | 2,100 kg (54/46) | Supercharged 3.4 L V6, 4-speed auto | Double wishbone / solid axle |
+| Rock buggy (Ultra4 class) | 4x4, 4.3:1 low range, both lockers | ~1,820 kg (55/45), estimate | 6.2 L V8 (450 hp), 4-speed auto | Solid axle, 4-link / solid axle, 4-link; 16-17 in of travel |
+| Turbo side-by-side (RZR / Maverick class) | 4WD, front diff lock | ~800 kg (44/56), estimate | 900 cc turbo triple (195 hp), CVT (5 steps) | Double wishbone / double wishbone; 16-18 in of travel |
+
+The **rock buggy** and the **side-by-side** are the two crawl and rough-ground specials (keys 5 and 6). Both are tube-frame vehicles: the lattice is the chassis and cage and isn't drawn; the roll cage, frame, bumpers, seats and exhaust are tubes and parts bound to it, and only a nose cone and tail (buggy) or hood, fenders and tail (side-by-side) carry skin. They have no doors, glass or covers.
+
+| | Rock buggy | Turbo side-by-side |
+| --- | --- | --- |
+| Class figures | An Ultra4 / King of the Hammers car: LS3-class V8 (crate rating 430 hp at 5,900 rpm, 424 lb-ft; these run ~450 hp), 4L80E 4-speed auto behind an Atlas-style two-speed case (low 4.3:1), 5.38 axles | A Can-Am Maverick X3 Turbo RR / Polaris RZR Turbo S: a 900 cc Rotax-class turbo three (195 hp, ~85 mph limiter), CVT |
+| Size | 4.70 x 2.22 m over the tires (1.88 m track), 2.90 m wheelbase, 0.62 m under the frame, 1.70 m to the cage top | 3.35 x 1.70 m (1.46 m track), 2.60 m wheelbase, 0.40 m under the skid plate |
+| Tires | 40x13.5-17 mud-terrain on beadlocks, 30 psi (the game airs down to 12; a soft, sticky compound on rock) | 32x10R15 all-terrain, 14 psi |
+| Suspension | Solid axles on long four-links, 0.41 m front and 0.44 m rear wheel travel, no sway bars; the front axle steers on kingpins | Double wishbones all round, 0.41 m front and 0.46 m rear travel, light bars |
+| Drive | 2H / 4H / 4L; selectable front and rear lockers | 2WD / 4WD (center locked); front diff lock |
+| Numbers | 0-100 km/h ~5.2 s (4H), limited to 150 km/h | 0-100 km/h ~4.0 s, limited to 130 km/h |
+
+Weights, travel, and the Atlas ratio are class estimates, not one builder's car (marked in `src/vehicles.cpp`). Measured against the Bronco in the tests: the buggy climbs a 0.65 m square ledge with room to spare (about 0.7 is its limit; the Bronco 0.45 m, the side-by-side 0.3 m), a 48 degree slickrock slab (the Bronco slides back), and walks through the twister with open diffs where the Bronco bogs down; ramp travel index ~960 against the Bronco's 580. The side-by-side is quickest through the whoops lane (53 km/h average at a 55 km/h cruise, level, undamaged) and 20% faster than the Bronco across 50 m of mud or sand. At that pace the Bronco, 4Runner and buggy slow, stall or roll.
 
 The 4Runner is one particular truck, the Bring a Trailer car from December 2021:
 black over silver, 2 in body lift and Old Man Emu coils on 35x12.50R17 KO2s and
@@ -216,6 +231,7 @@ that truck; the others put parts back to factory or take it further.
   - Double wishbones with ball joints, a coil-over and a tie rod (or toe link).
   - A twist beam on the hatchback.
   - On the pickup and van, a live axle on trailing links with a panhard rod.
+  - On the rock buggy, live axles front and rear on long four-links: the front one steers, with knuckles turning on kingpins at the tube ends and tie rods from the axle.
   - Anti-roll bars.
 
   Spring and damper rates come from each vehicle's ride frequency and the actual
@@ -246,17 +262,19 @@ that truck; the others put parts back to factory or take it further.
 
 ## 4x4
 
-The Bronco and the 4Runner have real transfer cases and selectable lockers. The HUD shows a small driveline next to the gauges: wheels light up when they're driven, the prop shaft is solid when front and rear are tied together, and a red block marks a locked axle.
+The Bronco, the 4Runner, the rock buggy and the side-by-side have real transfer cases and selectable lockers (the side-by-side has a front diff lock). The HUD shows a small driveline next to the gauges: wheels light up when they're driven, the prop shaft is solid when front and rear are tied together, and a red block marks a locked axle.
 
 | Truck | Modes (L) | Lockers |
 | --- | --- | --- |
 | Bronco (part-time, advanced 4x4) | 2H; 4A (all four driven, center free, fine on pavement); 4H and 4L (front and rear shafts locked together) | rear e-locker; front too with the garage's 4.70 AND LOCKERS (Sasquatch) |
 | 4Runner (full-time multi-mode) | 2H; 4H (center diff open); 4H LOCK; 4L LOCK | rear e-locker; ARB front and rear with the garage's locker options |
+| Rock buggy (Atlas-style two-speed case) | 2H; 4H and 4L (shafts locked together; it leaves in 4H) | air lockers front and rear, in any range |
+| Side-by-side (on-demand 4WD) | 2WD; 4WD (the clutch ties the shafts; no low range) | front diff lock (F); the rear is a limited-slip |
 
 - **Open diffs:** each axle splits torque equally, so a lifted wheel spins and the other gets almost nothing.
 - **Lockers:** both wheels on the axle turn together.
 - **4H and 4L:** front and rear turn together. On dry pavement this binds the driveline in tight turns, just like the real thing, so use 4A or 2H there.
-- **Low range:** multiplies every gear (2.72:1 Bronco, 2.57:1 4Runner).
+- **Low range:** multiplies every gear (2.72:1 Bronco, 2.57:1 4Runner, 4.3:1 rock buggy: about a 57:1 crawl ratio in first).
 - **Locker rules, as on the real trucks:** the Bronco's front locker only engages in 4L; the 4Runner's factory rear e-locker only in 4L LOCK (the ARB lockers from the garage work in any mode). Leaving low range drops them.
 - **Axle shafts break:** the shaft carries the engine's torque plus whatever a locker forces through it. Full throttle in low range with a locked axle and a wheel in the air, or a front locker at full lock, can snap a CV joint (IFS CVs take 65% of a solid-axle shaft, less at steep angles). That wheel freewheels until a repair station fixes it.
 - **Sway bar disconnect (Y):** more articulation for crawling, more body roll on the road. Ramp travel index on a 20° ramp: Bronco ~580, ~650 disconnected; 4Runner ~645, ~715.
@@ -271,7 +289,7 @@ Esc → Autopilot picks where and how; U starts and stops it (steering or the pe
 - **Route:** roads only, roads and trails (prefers them, cuts across when it pays), or anywhere it can get through.
 - **Route:** A* over the map (2 m cells) from slope, side slope, surface, and what's on the ground. Rocks, logs and ledges cost in proportion to how much of what this vehicle can climb they take; anything taller than it can climb at its best (low range, lockers, aired down), trees, walls and deep water are off limits. So a Bronco's route crosses a 0.3 m rock the Civic's goes round.
 - **What it sees:** ten times a second it scans the ground ahead: exact heights of the terrain, boulders, ledges, logs, trees, walls and other vehicles. It tries about 50 lines (hold a steering angle for a third, two thirds or all of the next 9–20 m, then head back to the route) and drives each one in its head a quarter meter at a time: where every tire sits and what step or drop it meets, whether the diffs, belly or bumpers touch, how far the truck leans and pitches. Lines that hit something, lean past a safe angle or need a ledge taller than the truck can climb are out. The rest are scored on how far they stray from the route, how slowly they'd have to be taken, and how rough they are. So it straddles a small rock, puts a tire up on a bigger one, and goes round one that would mean crawling or scraping if there's room.
-- **What it can climb:** measured on square ledges: the Bronco climbs 0.15 m in 2H, 0.30 m in 4H and 0.45 m in 4L; the 4Runner 0.15 / 0.20 / 0.35 m. Lockers and aired-down tires add a little. If it gets stuck on something it thought it could climb, it remembers that it can't.
+- **What it can climb:** measured on square ledges: the Bronco climbs 0.15 m in 2H, 0.30 m in 4H and 0.45 m in 4L; the 4Runner 0.15 / 0.20 / 0.35 m; the rock buggy 0.7 m in 4L with lockers at 12 psi (its table has a 1.2x factor for 40 in tires and 16 in of travel); the side-by-side 0.3 m. Lockers and aired-down tires add a little. If it gets stuck on something it thought it could climb, it remembers that it can't.
 - **Setup:** 2H on pavement, 4WD on dirt and gravel, the center locked on loose, steep, sandy, muddy or snowy ground, low range for ledges, rock and steep grades (it slows to shift into or out of low). Lockers go in for ledges, side hills and wheel spin and come out for tight turns (a locked front axle won't turn and snaps CVs) and above 25 km/h. The sway bar comes off for crawling. Before a long rocky or sandy stretch, or a ledge it can only climb aired down, it stops and airs the tires down to 20 psi, and it pumps them back up at a repair station. It eases off on low grip: slow on snow and mud, very slow on ice.
 - **On screen:** the route on the ground, the line it's taking (green), the lines it tried (faint; red where they hit something), brackets on what it sees (ROCK 0.45M: OVER / AROUND LEFT / STRADDLE / BLOCKED), what it's doing ("LEDGE 0.38 M: CLIMBING IT"), and its setup (4L, lockers, sway bar, psi, how tall a ledge it can climb right now). It announces each shift and locker change.
 - **Crawling:** on ledges in low range it keeps first gear and walks up to each one.
@@ -452,6 +470,7 @@ ABS and traction control aim for the slip that grips best on that tread and surf
 
 **Body**
 - The general body shell subdivides the physics skin twice (Catmull-Clark), with crisp shoulder and roof lines. Dedicated shells can replace it while following the same physics.
+- The rock buggy and the side-by-side are tube-frame vehicles: their cage, chassis rails, bumpers, seats, harnesses, exhaust, winch and light bars are tubes and small parts bound to the physics lattice (so a hit bends them with it), and only the nose cone and tail (buggy) or hood, fenders and tail (side-by-side) carry body skin. The exposed V8 and the four-link axles show.
 - The Jesko has a dedicated curved hood, canopy, rear haunches and open wheel arches, with swept lamps, side intakes, a shaped wing and center exhaust. Its shell uses Koenigsegg's [published dimensions](https://www.koenigsegg.com/technical-specifications-jesko-attack): 4,626 × 2,030 × 1,210 mm, on the existing 2,700 mm wheelbase. Surface contours are hand-shaped approximations, not factory CAD.
 - Its hood, doors and engine cover have separate mesh seams and follow their physical panels. The glass follows physical breakage, and garage ride-height changes move the shell too. The collision solver continues to use the coarse physics cage. The spring package is an equivalent inboard inclined coil, not a full Triplex rocker simulation.
 - The 4Runner, Bronco and Civic have sculpted shells built from their real lines (the Bronco's black hardtop, exposed door hinges, squared flares and round lamps; the EF hatch's wedge nose, wide flush lamps and moonroof). They dent, and their doors, hood and gate open, with the physics.

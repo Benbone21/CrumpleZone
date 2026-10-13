@@ -105,10 +105,14 @@ std::string loosePanelNames(const Car& c) {
         if (p.state > 0) s += std::string(s.empty() ? "" : ", ") + p.name + (p.state == 2 ? " (off)" : " (open)");
     return s.empty() ? "none" : s;
 }
-// Per-vehicle expectations, indexed like vehicleCatalog(): Civic Si, Jesko, Bronco, 4Runner.
+// Per-vehicle expectations, indexed like vehicleCatalog(): Civic Si, Jesko, Bronco, 4Runner, rock buggy, side-by-side.
 // The ranges are the real cars' road-test figures (0-100 km/h, 100-0 km/h braking,
 // skidpad grip), with some room for the differences between tests.
 int vehicleIndex(const VehicleSpec& s) { return (int)(&s - &vehicleCatalog()[0]); }
+// The tube-frame vehicles have no glass, doors or covers, and the rock buggy is tall and soft on 40 in tires:
+// the checks that assume a closed car (glass, doors, a crushable nose) or a tight hands-off line get their own limits.
+bool tubeFrame(const VehicleSpec& s) { return s.openFrame; }
+bool tallBuggy(const VehicleSpec& s) { return s.openFrame && s.wheelRadius > 0.45; }
 
 }  // namespace
 
@@ -148,8 +152,10 @@ VEHICLE_SCENARIO(accel, "dynamics/acceleration", "Full throttle from rest on the
     // Civic Si ~7.2 s (0-60 mph in 6.8), Jesko ~2.5-3 s, Bronco 2.7 ~6.9 s, 4Runner ~10 s
     // (factory 3.4: 10.1-10.5 s; the blower makes up for the weight and the 35s).
     // EF replaces the 200 hp 2022 sedan: 108 hp and ~1,037 kg, estimated 0-100 ~10 s.
+    // Rock buggy: ~520 hp (450 rated x1.15) in 1,800 kg through four 40 in tires in 4H: ~5 s (estimate, a 4-speed
+    // with 5.38 axles). Side-by-side: ~4 s (Can-Am claims 0-60 mph in under 4 s for the Turbo RR).
     // (Engines run ~15% over the factory figures, see vehicles.cpp: a little quicker.)
-    static const Range expect[] = {{8.5, 11.0}, {2.4, 3.4}, {5.6, 7.2}, {8.5, 11.0}};
+    static const Range expect[] = {{8.5, 11.0}, {2.4, 3.4}, {5.6, 7.2}, {8.5, 11.0}, {4.2, 6.4}, {3.3, 5.0}};
     Car& c = ctx.add(spec, kLaneStartX, kLaneZ, 0);
     ctx.focus(c);
     ctx.run(1.0);
@@ -199,18 +205,21 @@ VEHICLE_SCENARIO(braking, "dynamics/braking", "Full brakes from 100 km/h: stoppi
     double dist = travelled(c, p0, V3(1, 0, 0)) * (100 / v0) * (100 / v0);  // normalize to exactly 100 km/h
     ctx.check("comes to a stop", stopped);
     // EF Civic on 185/60R14 street tires without ABS: ~43 m (estimate); Jesko ~31 m (carbon-ceramics, Cup 2 R), Bronco ~44 m, 2002 4Runner ~45 m (rear drums).
-    static const Range expect[] = {{38, 49}, {27, 35}, {39, 50}, {40, 52}};
+    // Rock buggy ~47 m (40 in mud tires, 1.8 t, big discs; it dives hard); side-by-side ~39 m (32 in all-terrains, 800 kg).
+    static const Range expect[] = {{38, 49}, {27, 35}, {39, 50}, {40, 52}, {40, 56}, {34, 46}};
     const Range& r = expect[vehicleIndex(spec)];
     ctx.metric("100-0 km/h stopping distance", dist, "m", r.lo, r.hi);
-    ctx.metric("sideways drift while braking", std::fabs(c.frame().com.z - kLaneZ), "m", 0, 0.8);
-    ctx.metric("heading change while braking", std::fabs(headingDeg(c)), "deg", 0, 3);
+    // (The buggy dives ~5 degrees and the rear axle unloads: it wanders a little more than the rest.)
+    ctx.metric("sideways drift while braking", std::fabs(c.frame().com.z - kLaneZ), "m", 0, tallBuggy(spec) ? 1.5 : 0.8);
+    ctx.metric("heading change while braking", std::fabs(headingDeg(c)), "deg", 0, tallBuggy(spec) ? 6 : 3);
 }
 
 VEHICLE_SCENARIO(skidpad, "dynamics/skidpad", "Holds a 30 m circle, speeding up slowly: peak steady lateral grip, no rollover") {
     // Like a magazine skidpad test: the driver holds the circle and creeps up the speed
     // until the car can't stay on it.
     // EF Civic on period-size street tires: ~0.8 g (estimate), Jesko well over 1.1 g, Bronco ~0.70 g, 2002 4Runner ~0.68 g.
-    static const Range expect[] = {{0.75, 0.90}, {1.08, 1.45}, {0.62, 0.78}, {0.60, 0.76}};
+    // Rock buggy ~0.6 g (tall, soft mud tires on 40s), side-by-side ~0.8 g (estimate).
+    static const Range expect[] = {{0.75, 0.90}, {1.08, 1.45}, {0.62, 0.78}, {0.60, 0.76}, {0.50, 0.72}, {0.70, 0.92}};
     const double R = 30;
     Car& c = ctx.add(spec, -40, -100, 0);
     ctx.focus(c);
@@ -262,8 +271,9 @@ VEHICLE_SCENARIO(stability, "dynamics/high-speed", "140 km/h hands-off on the st
         maxYaw = std::max(maxYaw, std::fabs(headingDeg(c)));
         ctx.sample("Heading", spec.name, headingDeg(c), "deg");
     });
-    ctx.metric("heading wander", maxYaw, "deg", 0, 1.5);
-    ctx.metric("sideways drift", std::fabs(c.frame().com.z - kLaneZ), "m", 0, 1.0);
+    // (A tall buggy on soft 40 in tires and solid axles holds a line less well hands-off.)
+    ctx.metric("heading wander", maxYaw, "deg", 0, tallBuggy(spec) ? 2.2 : 1.5);
+    ctx.metric("sideways drift", std::fabs(c.frame().com.z - kLaneZ), "m", 0, tallBuggy(spec) ? 1.6 : 1.0);
 }
 
 VEHICLE_SCENARIO(laneChange, "dynamics/lane-change", "Quick double lane change at 60 km/h: recovers, stays upright, no damage") {
@@ -323,7 +333,7 @@ VEHICLE_SCENARIO(drop, "dynamics/drop", "Dropped from 0.3 m and 1.2 m: suspensio
         else if (settleT < 0) settleT = ctx.t - t0;
         ctx.sample("Body height after 0.3 m drop", spec.name, err * 100, "cm");
     });
-    ctx.metric("settle time after 0.3 m drop (within 1 cm)", settleT < 0 ? 9 : settleT, "s", 0.2, 1.6);
+    ctx.metric("settle time after 0.3 m drop (within 1 cm)", settleT < 0 ? 9 : settleT, "s", 0.2, tallBuggy(spec) ? 2.4 : 1.6);  // (16 in of soft travel takes longer to settle)
     ctx.metric("swings through rest height (real cars: 2-4)", crossings, "", 0, 4);
     for (Node& n : c.nodes) n.p.y += 1.2;
     ctx.run(3.0);
@@ -369,7 +379,7 @@ VEHICLE_SCENARIO(reverse, "dynamics/reverse", "Backs up: reverse gear engages an
     ctx.run(5.0, [&] { ctx.sim.drive(false, true, false, false, false, Ctx::kFrame); });
     Frame f = c.frame();
     ctx.check("in reverse gear", c.gear == -1);
-    ctx.metric("reverse speed after 5 s (rev-limited)", -dot(f.vel, f.fwd) * 3.6, "km/h", 12, 80);
+    ctx.metric("reverse speed after 5 s (rev-limited)", -dot(f.vel, f.fwd) * 3.6, "km/h", 12, tallBuggy(spec) ? 105 : 80);  // (a 4L80E in reverse on 5.38 axles and 40s: 100 km/h at redline)
 }
 
 // =============================================================================
@@ -456,8 +466,8 @@ struct FlexMeter {
 
 VEHICLE_SCENARIO(torsion, "structure/torsion", "Twisting rig in free fall: torsional stiffness of the body between the axles") {
     // Real cars: roughly 10-35 kNm/deg (older or open bodies lower, modern unibodies higher).
-    // (Unibody Civic, carbon tub Jesko, body-on-frame Bronco and 4Runner.)
-    static const Range expect[] = {{12, 55}, {15, 80}, {6, 36}, {6, 36}};
+    // (Unibody Civic, carbon tub Jesko, body-on-frame Bronco and 4Runner, tube chassis and cage for the buggy and UTV.)
+    static const Range expect[] = {{12, 55}, {15, 80}, {6, 36}, {6, 36}, {15, 60}, {6, 30}};
     Car& c = rigInAir(ctx, spec);
     Section f = sectionAt(c, axleX(c, true)), r = sectionAt(c, axleX(c, false));
     auto roll = [&](const Section& s) {
@@ -500,7 +510,7 @@ VEHICLE_SCENARIO(bending, "structure/bending", "Bending rig in free fall: load t
         s = sag() - s0;
         ctx.sample("Sag under 6 kN", spec.name, s * 1000, "mm");
     });
-    ctx.metric("bending stiffness", F / 1000 / std::max(s * 1000, 1e-4), "kN/mm", 4, 40);
+    ctx.metric("bending stiffness", F / 1000 / std::max(s * 1000, 1e-4), "kN/mm", tubeFrame(spec) ? 2.5 : 4, 40);  // (a tube frame is open between the axles: the cage carries it)
 }
 
 VEHICLE_SCENARIO(jiggle, "structure/jiggle", "How much the body itself shakes: cruising, over bumps, and braking hard") {
@@ -565,7 +575,7 @@ VEHICLE_SCENARIO(travel, "structure/suspension-travel", "Body pressed down to 1.
         }
         return worst;
     };
-    ctx.metric("ride height error at rest (worst coil-over vs design)", springDev() * 1000, "mm", 0, 12);
+    ctx.metric("ride height error at rest (worst coil-over vs design)", springDev() * 1000, "mm", 0, tubeFrame(spec) ? 25 : 12);  // (soft long-travel springs: the same force error is twice the length)
     const double y0 = bodyY();
     // Extra load as a fraction of weight: ramp up to +0.8, down to -0.6, back to 0, slowly
     // (quasi-static). Within each ramp the height must keep moving the right way: every
@@ -652,6 +662,8 @@ VEHICLE_SCENARIO(weight, "structure/weight", "Curb weight, front/rear split and 
         {{1380, 1460}, {39, 45}, {0.34, 0.46}},      // Jesko Attack: 1,420 kg, ~42/58
         {{2150, 2290}, {54, 59}, {0.70, 0.86}},      // Bronco 4-door 2.7: ~2,214 kg, ~56/44
         {{2060, 2200}, {52, 58}, {0.74, 0.92}},      // 4Runner Limited as built: 1,867 kg + ~290 kg of parts, ~55/45, lifted 170 mm
+        {{1750, 1880}, {52, 57}, {0.68, 0.84}},      // Rock buggy (estimate): ~1,800 kg (Ultra4 cars race at 3,800-4,500 lb), ~54/46, CG under the cage
+        {{770, 830}, {42, 47}, {0.52, 0.66}},        // Side-by-side: ~800 kg with fluids (Maverick X3 / RZR class), engine behind the seats: ~44/56
     };
     Car& c = ctx.add(spec, kLaneStartX, kLaneZ, 0);
     ctx.focus(c);
@@ -705,15 +717,15 @@ VEHICLE_SCENARIO(wall50, "damage/wall-50", "50 km/h into the concrete wall: crum
         ctx.sample("Speed along +X", spec.name, vx * 3.6, "km/h");
     });
     double crush = L0 - bodyLength(c);
-    ctx.metric("crumple depth", crush, "m", 0.12, 1.0);  // (tougher than stock: see wall-25)
+    ctx.metric("crumple depth", crush, "m", tubeFrame(spec) ? 0.0 : 0.12, 1.0);  // (tougher than stock: see wall-25; a tube cage takes a 50 km/h hit with its bumper and hood)
     ctx.metric("peak deceleration (smoothed)", peakDecel, "g", 8, 60);
     // (A long-nosed car can take a 50 km/h hit in its crumple zone before the engine.)
-    ctx.metric("engine health", c.engineHealth, "", 0.15, 0.99);
+    ctx.metric("engine health", c.engineHealth, "", 0.15, tubeFrame(spec) ? 1.0 : 0.99);  // (a tube frame has no bay to crush)
     ctx.check("does not pass through the wall", c.frame().com.x < 114 - 0.5);
-    ctx.metric("rebound speed (real cars: ~5-8 km/h; stiffer here)", rebound, "km/h", 0, 14);
+    ctx.metric("rebound speed (real cars: ~5-8 km/h; stiffer here)", rebound, "km/h", 0, tubeFrame(spec) ? 22 : 14);
     int glass = 0;
     for (const Tri& t : c.tris) glass += t.mat == MAT_GLASS && t.shattered;
-    ctx.metric("broken glass panels", glass, "", 1, 60);
+    ctx.metric("broken glass panels", glass, "", tubeFrame(spec) ? 0 : 1, 60);
     // (Steel armor bumpers have no covers to knock off.)
     ctx.metric("body panels knocked loose", loosePanels(c), "", 0, 6);
     ctx.note("loose: " + loosePanelNames(c));
@@ -752,7 +764,7 @@ VEHICLE_SCENARIO(wall25, "damage/wall-25", "25 km/h into the wall: nose bent, do
     const bool ladderFrame = spec.frameStrength > 1;
     // (The cars are built ~40% tougher than bare steel, for the game: a 25 km/h knock dents.)
     ctx.metric("crumple depth", (L0 - bodyLength(c)) * 100, "cm", (spec.extras & EXTRA_ARMOR) || ladderFrame ? -1 : 0.5, 30);
-    ctx.metric("damage", c.damage * 100, "%", 0.05, 8);
+    ctx.metric("damage", c.damage * 100, "%", tubeFrame(spec) ? 0 : 0.05, 8);
     ctx.metric("doors come open", looseDoors(c), "", 0, 0);
     ctx.metric("panels knocked loose", loosePanels(c), "", 0, 2);
     ctx.note("loose: " + loosePanelNames(c));

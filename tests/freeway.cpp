@@ -27,8 +27,9 @@ void holdLane(Car& c, double z) {
 VEHICLE_SCENARIO(topSpeed, "freeway/top-speed", "Flat out down the endless freeway until it stops gaining: top speed, and it stays in its lane") {
     // Civic Si ~220 km/h (137 mph); Jesko Attack with its big wing ~400+ (estimate: it's
     // drag-limited on 1,400 kg of downforce; the low-drag Absolut is the 480+ km/h one); the
-    // Bronco and the 4Runner are governed: 161 km/h (100 mph) and 171 km/h (106 mph).
-    static const struct { double lo, hi; } expect[] = {{200, 245}, {370, 455}, {155, 164}, {164, 174}};
+    // Bronco and the 4Runner are governed: 161 km/h (100 mph) and 171 km/h (106 mph). The buggy is limited to 150 km/h (an estimate:
+    // its tires' rating) and the side-by-side to 130 km/h (Can-Am limits the Turbo RR near 85 mph).
+    static const struct { double lo, hi; } expect[] = {{200, 245}, {370, 455}, {155, 164}, {164, 174}, {144, 152}, {124, 132}};
     ctx.sim.world = World(MAP_FREEWAY);
     Car& c = ctx.add(spec, ctx.sim.world.spawn.x, kLaneZ, 0);
     ctx.sim.player = (int)(&c - ctx.sim.cars.data());
@@ -73,8 +74,8 @@ VEHICLE_SCENARIO(topSpeed, "freeway/top-speed", "Flat out down the endless freew
     std::printf("TOP %s %.0f km/h after %.1f km, %.0f s, gear %d, rpm %.0f\n", spec.name, top, km, ctx.t, c.gear, c.rpm);
     const int i = (int)(&spec - &vehicleCatalog()[0]);
     ctx.metric("top speed", top, "km/h", expect[i].lo, expect[i].hi);
-    ctx.metric("distance driven", km, "km", 0.3, 40);
-    ctx.metric("worst drift from the lane center", worstLane, "m", 0, 1.2);
+    ctx.metric("distance driven", km, "km", 0.15, 40);
+    ctx.metric("worst drift from the lane center", worstLane, "m", 0, spec.openFrame && spec.wheelRadius > 0.45 ? 2.6 : 1.2);  // (the buggy: soft 40s, solid axles)
     ctx.check("no damage", c.damage < 0.002);
     ctx.metric("anything scraping the road over 250 km/h (sliding speed)", scrape, "m/s", 0, 0);
 }

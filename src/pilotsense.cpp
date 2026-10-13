@@ -220,5 +220,5 @@ double stepCap(const VehicleSpec& vs, int level, int lockers, double psi) {
     // in 4L; the 4Runner 0.15 / 0.20 / 0.35): roughly these shares of the tire radius.
     static const double k[LEVEL_COUNT] = {0.38, 0.5, 0.62, 0.95};
     double share = k[std::min(std::max(level, 0), LEVEL_COUNT - 1)] + 0.05 * lockers + 0.006 * std::max(0.0, 35 - psi);
-    return share * vs.wheelRadius;
+    return share * vs.wheelRadius * vs.ledgeFactor;  // (the buggy's 40s on 16 in of travel clear ~0.7 m; the side-by-side's 32s ~0.3 m: see tests/offroad.cpp)
 }

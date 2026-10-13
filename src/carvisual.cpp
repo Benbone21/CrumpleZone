@@ -820,6 +820,223 @@ void buildCoachwork(const Car& car, PartBuilder& pb) {
     if(v.model==1)for(size_t i=firstCorner;i<pb.corners.size();i++)pb.corners[i].y+=v.layerY[0]-0.11;
 }
 
+// ---- Tube-frame vehicles (rock buggy, side-by-side) --------------------------------
+// The lattice is the chassis and cage and isn't drawn; the tubes, seats and bumpers here
+// are parts bound to it, so a hit bends them with the frame. Only the 'p' cells carry
+// body panels (see VehicleSpec::openFrame).
+void buildOpenFrame(const Car& car, PartBuilder& pb) {
+    const VehicleSpec& vs = *car.spec;
+    const int cells = (int)vs.profile[0].size();
+    const double W = vs.width, L = vs.length, hz = W / 2, F = vs.layerY[0], roofY = vs.layerY.back();
+    auto xAt = [&](double i) { return latticeX(vs, i); };
+    int gi0 = cells, gi1 = -1;
+    for (const std::string& row : vs.profile)
+        for (int i = 0; i < cells; i++)
+            if (row[i] == 'G') gi0 = std::min(gi0, i), gi1 = std::max(gi1, i);
+    const double cabF = xAt(gi0), cabR = xAt(gi1 + 1), Lh = L / 2;
+    const std::vector<int> ax = axleColumns(vs);
+    const double xf = xAt(ax.front()), xr = xAt(ax.back());
+    const V3 tubeCol = vs.model == 4 ? V3(0.045, 0.045, 0.05) : V3(0.035, 0.035, 0.04);  // powder coat
+    const V3 alu(0.42, 0.43, 0.45), seatCol(0.07, 0.07, 0.075), belt(0.75, 0.08, 0.05);
+    const V3 paint(car.color);
+    // A tube from a to b (and its mirror image across the car).
+    auto T = [&](const V3& a, const V3& b, double r = 0.022, const V3& col = V3(-1, -1, -1)) {
+        const V3 c = col.x < 0 ? tubeCol : col;
+        pb.cylinder(a, b, r * (r > 0.01 ? 1.3 : 1.0), 6, c, SM_MATTE);  // (chromoly tube is 1.75 in across)
+    };
+    auto M = [&](const V3& a, const V3& b, double r = 0.022, const V3& col = V3(-1, -1, -1)) {
+        T(a, b, r, col);
+        T(V3(a.x, a.y, -a.z), V3(b.x, b.y, -b.z), r, col);
+    };
+    auto across = [&](double x, double y, double z, double r = 0.022) { T(V3(x, y, -z), V3(x, y, z), r); };
+    // A tube path, joined end to end (with a small ball at each joint for a clean weld).
+    auto path = [&](std::initializer_list<V3> pts, double r = 0.022, bool mirror = true) {
+        const V3* prev = nullptr;
+        for (const V3& p : pts) {
+            if (prev) mirror ? M(*prev, p, r) : T(*prev, p, r);
+            prev = &p;
+        }
+    };
+    const double ey = vs.engineY;
+    const bool buggy = vs.model == 4;
+
+    if (buggy) {
+        const double cz = 0.64, rz = 0.50;               // cage half width low and at the roof
+        const double sill = F + 0.12;                    // top of the main rails
+        // Roll cage: A-pillars, main hoop, roof, door bars, rear stays.
+        const double xA = cabF + 0.03, xAt_ = cabF - 0.34, xB = cabR + 0.14, xBt = cabR + 0.06;
+        M(V3(xA, sill, cz), V3(xAt_, roofY - 0.02, rz));
+        M(V3(xB, sill, cz), V3(xBt, roofY - 0.02, rz));
+        M(V3(xAt_, roofY - 0.02, rz), V3(xBt, roofY - 0.02, rz));  // roof rails
+        across(xAt_, roofY - 0.02, rz);
+        across(0.5 * (xAt_ + xBt), roofY - 0.02, rz);
+        across(xBt, roofY - 0.02, rz);
+        // Roof X brace and halo
+        T(V3(xAt_, roofY - 0.02, -rz), V3(xBt, roofY - 0.02, rz), 0.016);
+        T(V3(xAt_, roofY - 0.02, rz), V3(xBt, roofY - 0.02, -rz), 0.016);
+        // Door bars (and a diagonal), the dash bar and the harness bar behind the seats.
+        for (double y : {sill + 0.30, sill + 0.62}) {
+            const double t = (y - sill) / (roofY - 0.02 - sill);
+            M(V3(xA + (xAt_ - xA) * t, y, cz + (rz - cz) * t), V3(xB + (xBt - xB) * t, y, cz + (rz - cz) * t));
+        }
+        M(V3(xA - 0.02, sill + 0.30, cz + 0.01), V3(xB, sill + 0.62, cz - 0.04), 0.016);
+        across(xA + 0.02, sill + 0.66, cz - 0.05);
+        across(xB + 0.02, sill + 0.78, cz - 0.05);
+        across(xB + 0.04, sill + 0.30, cz);
+        // Rear stays from the roof down to the frame behind the axle, and the tail hoop.
+        const double xTail = -Lh + 0.30;
+        path({V3(xBt, roofY - 0.02, rz), V3(xr + 0.25, F + 0.65, 0.58), V3(xTail, F + 0.40, 0.55)}, 0.022);
+        across(xr + 0.25, F + 0.65, 0.58);
+        across(xTail, F + 0.40, 0.55);
+        // Main rails (the lattice's floor members are drawn under the car by the running gear).
+        M(V3(xA + 0.06, sill, 0.34), V3(xB, sill, 0.34), 0.03);
+        M(V3(xB, sill, 0.34), V3(xTail, F + 0.30, 0.34), 0.03);
+        // Front: horns, shock hoops over the axle, the tubular bumper, the winch plate.
+        const double xH = Lh - 0.10;
+        M(V3(xA + 0.06, sill, 0.34), V3(xf + 0.18, F + 0.35, 0.34), 0.03);
+        M(V3(xf + 0.18, F + 0.35, 0.34), V3(xH, F + 0.30, 0.30), 0.03);
+        const double sy = (vs.wheelRadius + vs.coilTop) + 0.07;  // coil-over tops
+        const double shz = 0.725;
+        for (double x : {xf + 0.06, xr - 0.06}) {
+            M(V3(x, F + 0.30, 0.38), V3(x, sy, shz - 0.02), 0.022);
+            M(V3(x - (x > 0 ? 0.20 : -0.20), F + 0.32, 0.45), V3(x, sy, shz - 0.02), 0.018);
+            across(x, sy, shz - 0.02, 0.026);
+        }
+        M(V3(xf + 0.06, sy, shz - 0.02), V3(xA, roofY - 0.52, cz), 0.022);  // shock hoop to the A-pillar
+        M(V3(xH, F + 0.30, 0.30), V3(xH + 0.06, F + 0.22, 0.62), 0.03);      // bumper wings
+        across(xH + 0.06, F + 0.22, 0.62, 0.032);
+        M(V3(xH + 0.06, F + 0.22, 0.62), V3(xH - 0.12, F + 0.70, 0.56), 0.024);
+        across(xH - 0.12, F + 0.70, 0.56, 0.024);
+        M(V3(xH - 0.12, F + 0.70, 0.56), V3(xf + 0.06, sy, shz - 0.02), 0.022);
+        // Winch between the horns, with its fairlead.
+        pb.box(V3(xH - 0.04, F + 0.30, 0), V3(0.10, 0.07, 0.24), V3(0.08, 0.08, 0.09), SM_METAL);
+        pb.cylinder(V3(xH - 0.04, F + 0.30, -0.19), V3(xH - 0.04, F + 0.30, 0.19), 0.065, 12, V3(0.10, 0.10, 0.11), SM_METAL);
+        pb.cylinder(V3(xH - 0.04, F + 0.30, -0.08), V3(xH - 0.04, F + 0.30, 0.08), 0.072, 12, V3(0.75, 0.72, 0.62), SM_MATTE);
+        pb.box(V3(xH + 0.08, F + 0.27, 0), V3(0.012, 0.03, 0.1), V3(0.6, 0.6, 0.62), SM_METAL);
+        // Rear bumper and tow loop.
+        const double xRb = -Lh + 0.04;
+        across(xRb, F + 0.35, 0.60, 0.03);
+        M(V3(xRb, F + 0.35, 0.60), V3(xTail, F + 0.40, 0.55), 0.026);
+        M(V3(xRb, F + 0.35, 0.60), V3(xRb, F + 0.75, 0.50), 0.024);
+        across(xRb, F + 0.75, 0.50, 0.024);
+        // Light bar on the A-pillar bar, and pods on the bumper.
+        const double lx = xAt_ - 0.02;
+        pb.box(V3(lx, roofY + 0.04, 0), V3(0.035, 0.032, 0.52), V3(0.03, 0.03, 0.035), SM_MATTE);
+        pb.box(V3(lx + 0.037, roofY + 0.04, 0), V3(0.002, 0.024, 0.50), V3(1.0, 0.98, 0.9), SM_EMISSIVE);
+        for (int s = -1; s <= 1; s += 2) {
+            pb.box(V3(xH - 0.10, F + 0.62, s * 0.50), V3(0.035, 0.05, 0.06), V3(0.03, 0.03, 0.035), SM_MATTE);
+            pb.box(V3(xH - 0.063, F + 0.62, s * 0.50), V3(0.002, 0.04, 0.05), V3(1.0, 0.98, 0.9), SM_EMISSIVE);
+        }
+        // Seats (bucket seats with harnesses), steering wheel and column, dash and gauges.
+        const double sx = cabR + 0.55, szz = 0.30, sh = F + 0.20;
+        for (int s = -1; s <= 1; s += 2) {
+            pb.box(V3(sx, sh, s * szz), V3(0.24, 0.05, 0.20), seatCol, SM_MATTE);
+            pb.obox(V3(sx - 0.24, sh + 0.30, s * szz), norm(V3(1, 0.22, 0)), norm(V3(-0.22, 1, 0)), V3(0, 0, 1), 0.05, 0.33, 0.20, seatCol, SM_MATTE);
+            pb.box(V3(sx - 0.30, sh + 0.68, s * szz), V3(0.05, 0.08, 0.13), seatCol, SM_MATTE);
+            pb.box(V3(sx - 0.20, sh + 0.30, s * (szz - 0.12)), V3(0.012, 0.28, 0.025), belt, SM_MATTE);
+            pb.box(V3(sx - 0.20, sh + 0.30, s * (szz + 0.12)), V3(0.012, 0.28, 0.025), belt, SM_MATTE);
+        }
+        const V3 wc(cabF - 0.38, F + 0.58, -szz);
+        for (int k = 0; k < 14; k++) {
+            const double a0 = 2 * M_PI * k / 14, a1 = 2 * M_PI * (k + 1) / 14, R = 0.17, tilt = 0.5;
+            auto ring = [&](double a) { return wc + V3(std::sin(a) * R * std::sin(tilt), std::sin(a) * R * std::cos(tilt), std::cos(a) * R); };
+            pb.cylinder(ring(a0), ring(a1), 0.016, 5, kBlack, SM_MATTE, false);
+        }
+        pb.cylinder(wc, wc + V3(0.36, -0.14, 0), 0.022, 6, kDarkGrey, SM_MATTE);
+        pb.box(V3(cabF - 0.10, F + 0.52, 0), V3(0.05, 0.09, 0.62), V3(0.04, 0.04, 0.045), SM_MATTE);  // dash
+        pb.box(V3(cabF - 0.15, F + 0.64, 0), V3(0.012, 0.04, 0.30), V3(0.05, 0.4, 0.05), SM_EMISSIVE);  // gauge strip
+        // Floor and firewall panels (aluminum), and the tail panel's fuel cell.
+        pb.box(V3(cabF - 0.55, F + 0.02, 0), V3(0.85, 0.008, 0.56), alu, SM_METAL);
+        pb.box(V3(cabF + 0.02, F + 0.38, 0), V3(0.008, 0.36, 0.62), alu, SM_METAL);
+        pb.box(V3(xTail + 0.10, F + 0.34, 0), V3(0.36, 0.24, 0.40), V3(0.07, 0.07, 0.08), SM_MATTE);   // fuel cell
+        pb.box(V3(xTail + 0.10, F + 0.60, 0), V3(0.36, 0.01, 0.40), alu, SM_METAL);
+        // Side-exit exhaust from the headers back along the left sill, with a turndown.
+        const double exZ = -0.43;
+        pb.cylinder(V3(vs.engineX - 0.10, ey - 0.18, exZ + 0.12), V3(vs.engineX - 0.45, F + 0.14, exZ), 0.04, 8, kMetal, SM_METAL, false);
+        pb.cylinder(V3(vs.engineX - 0.45, F + 0.14, exZ), V3(xr + 0.5, F + 0.14, exZ), 0.04, 8, kMetal, SM_METAL, false);
+        pb.box(V3(xr + 0.8, F + 0.14, exZ), V3(0.30, 0.07, 0.07), V3(0.3, 0.3, 0.31), SM_METAL);
+        pb.cylinder(V3(xr + 0.5, F + 0.14, exZ), V3(xr + 0.2, F + 0.06, exZ), 0.042, 8, kChrome, SM_CHROME);
+    } else {
+        // Side-by-side: a cage like a six-point hoop, door nets, a bumper tube, shock towers.
+        const double cz = 0.60, rz = 0.48, sill = F + 0.32;
+        const double xA = cabF + 0.02, xAt_ = cabF - 0.50, xB = cabR + 0.06, xBt = cabR - 0.02;
+        M(V3(xA, sill, cz), V3(xAt_, roofY - 0.02, rz));
+        M(V3(xB, sill, cz), V3(xBt, roofY - 0.02, rz));
+        M(V3(xAt_, roofY - 0.02, rz), V3(xBt, roofY - 0.02, rz));
+        across(xAt_, roofY - 0.02, rz);
+        across(xBt, roofY - 0.02, rz);
+        across(0.5 * (xAt_ + xBt), roofY - 0.02, rz, 0.018);
+        // Door frames: two bars and the net's diagonal strings.
+        for (double y : {sill + 0.26, sill + 0.56}) {
+            const double t = (y - sill) / (roofY - 0.02 - sill);
+            M(V3(xA + (xAt_ - xA) * t, y, cz + (rz - cz) * t), V3(xB + (xBt - xB) * t, y, cz + (rz - cz) * t), 0.02);
+        }
+        for (int k = 1; k < 5; k++) {
+            const double f = k / 5.0;
+            const double x0 = xA + (xB - xA) * f, x1 = xA + (xB - xA) * (f + 0.12);
+            M(V3(x0, sill + 0.28, cz), V3(x1, sill + 0.54, cz), 0.006, V3(0.02, 0.02, 0.02));
+        }
+        // Rear: the engine cage behind the seats and the tail.
+        const double xTail = -Lh + 0.12;
+        M(V3(xBt, roofY - 0.02, rz), V3(xr + 0.20, F + 0.78, 0.55), 0.022);
+        M(V3(xr + 0.20, F + 0.78, 0.55), V3(xTail, F + 0.55, 0.50), 0.022);
+        across(xr + 0.20, F + 0.78, 0.55);
+        across(xTail, F + 0.55, 0.50);
+        M(V3(xB, sill, cz), V3(xr + 0.20, F + 0.78, 0.55), 0.02);
+        // Main frame rails, front bumper, towers.
+        M(V3(xA + 0.05, F + 0.10, 0.34), V3(xTail, F + 0.20, 0.34), 0.028);
+        const double xH = Lh - 0.03;
+        M(V3(xA + 0.05, F + 0.10, 0.34), V3(xH, F + 0.14, 0.34), 0.028);
+        M(V3(xH, F + 0.14, 0.34), V3(xH + 0.02, F + 0.30, 0.55), 0.03);
+        across(xH + 0.02, F + 0.30, 0.55, 0.03);
+        across(xH + 0.01, F + 0.14, 0.34, 0.028);
+        M(V3(xH + 0.02, F + 0.30, 0.55), V3(xH - 0.15, F + 0.62, 0.45), 0.024);
+        across(xH - 0.15, F + 0.62, 0.45, 0.024);
+        const double sy = (vs.wheelRadius + 0.46 * vs.wheelRadius / 0.32) + 0.06;
+        for (double x : {xf, xr}) {
+            M(V3(x, F + 0.12, 0.34), V3(x, sy, 0.50), 0.022);
+            M(V3(x + (x > 0 ? 0.20 : -0.20), F + 0.14, 0.34), V3(x, sy, 0.50), 0.018);
+            across(x, sy, 0.50, 0.024);
+        }
+        M(V3(xf, sy, 0.50), V3(xA, sill + 0.55, cz), 0.022);
+        // LED bar on the cage's front crossbar, pods in the hood, roof panel.
+        pb.box(V3(xAt_ - 0.02, roofY + 0.03, 0), V3(0.03, 0.03, 0.46), V3(0.03, 0.03, 0.035), SM_MATTE);
+        pb.box(V3(xAt_ + 0.012, roofY + 0.03, 0), V3(0.002, 0.022, 0.44), V3(1.0, 0.98, 0.9), SM_EMISSIVE);
+        pb.box(V3(0.5 * (xAt_ + xBt), roofY + 0.012, 0), V3(0.5 * (xAt_ - xBt), 0.012, rz + 0.04), paint, SM_PAINT);
+        // Seats, wheel, dash.
+        const double sx = cabR + 0.52, szz = 0.28, sh = F + 0.20;
+        for (int s = -1; s <= 1; s += 2) {
+            pb.box(V3(sx, sh, s * szz), V3(0.22, 0.05, 0.20), seatCol, SM_MATTE);
+            pb.obox(V3(sx - 0.22, sh + 0.28, s * szz), norm(V3(1, 0.20, 0)), norm(V3(-0.20, 1, 0)), V3(0, 0, 1), 0.05, 0.30, 0.20, seatCol, SM_MATTE);
+            pb.box(V3(sx - 0.28, sh + 0.62, s * szz), V3(0.05, 0.08, 0.13), seatCol, SM_MATTE);
+            pb.box(V3(sx - 0.18, sh + 0.28, s * (szz - 0.11)), V3(0.012, 0.26, 0.025), belt, SM_MATTE);
+            pb.box(V3(sx - 0.18, sh + 0.28, s * (szz + 0.11)), V3(0.012, 0.26, 0.025), belt, SM_MATTE);
+        }
+        const V3 wc(cabF - 0.34, F + 0.62, -szz);
+        for (int k = 0; k < 14; k++) {
+            const double a0 = 2 * M_PI * k / 14, a1 = 2 * M_PI * (k + 1) / 14, R = 0.15, tilt = 0.55;
+            auto ring = [&](double a) { return wc + V3(std::sin(a) * R * std::sin(tilt), std::sin(a) * R * std::cos(tilt), std::cos(a) * R); };
+            pb.cylinder(ring(a0), ring(a1), 0.015, 5, kBlack, SM_MATTE, false);
+        }
+        pb.cylinder(wc, wc + V3(0.32, -0.12, 0), 0.02, 6, kDarkGrey, SM_MATTE);
+        pb.box(V3(cabF - 0.04, F + 0.58, 0), V3(0.06, 0.08, 0.56), V3(0.05, 0.05, 0.055), SM_MATTE);
+        pb.box(V3(cabF - 0.10, F + 0.68, 0), V3(0.012, 0.04, 0.22), V3(0.05, 0.4, 0.05), SM_EMISSIVE);
+        // Fender arches over each tire (plastic, drawn at the tire's width), and a skid under the nose.
+        for (double x : {xf, xr})
+            for (int s = -1; s <= 1; s += 2)
+                for (int k = 0; k < 14; k++) {
+                    const double a0 = M_PI * k / 14, a1 = M_PI * (k + 1) / 14, rr = vs.wheelRadius + 0.07, cy = vs.wheelRadius;
+                    const V3 p0(x + std::cos(a0) * rr, cy + std::sin(a0) * rr, s * vs.trackFront / 2), p1(x + std::cos(a1) * rr, cy + std::sin(a1) * rr, s * vs.trackFront / 2);
+                    const V3 d = norm(p1 - p0), c = (p0 + p1) * 0.5;
+                    pb.obox(c, d, cross(V3(0, 0, 1), d), V3(0, 0, 1), len(p1 - p0) * 0.52, 0.012, 0.14, paint, SM_PAINT);
+                }
+        // Exhaust: out the rear with a turned-down tip.
+        const double exZ = -0.18;
+        pb.cylinder(V3(vs.engineX - 0.25, ey, exZ), V3(xTail + 0.12, F + 0.32, exZ), 0.032, 8, kMetal, SM_METAL, false);
+        pb.cylinder(V3(xTail + 0.14, F + 0.32, exZ), V3(xTail - 0.04, F + 0.26, exZ), 0.04, 10, kChrome, SM_CHROME);
+    }
+}
+
 void buildParts(const Car& car, PartBuilder& pb) {
     const VehicleSpec& vs = *car.spec;
     const int cells = (int)vs.profile[0].size();
@@ -906,6 +1123,11 @@ void buildParts(const Car& car, PartBuilder& pb) {
     for (const MassItem& it : vs.items)
         if (std::string(it.name) == "battery") pb.box(V3(it.x, it.y, it.z), V3(0.12, 0.09, 0.08), kBlack, SM_MATTE);
 
+    if (vs.openFrame) {  // tube-frame vehicles: their own cage, seats, exhaust and bumpers
+        buildExtras(car, pb);
+        buildOpenFrame(car, pb);
+        return;
+    }
     // Exhaust: down from the engine, along the floor, out the back.
     const double exY = floorY - 0.06;
     const std::vector<int> axCols = axleColumns(vs);
@@ -1060,6 +1282,8 @@ const VisualTemplate& visualTemplate(const Car& car) {
     for (int n = 0; n < car.bodyNodes; n++) m.verts[n] = {{n, 1.0f}};
     for (size_t q = 0; q < car.quads.size(); q++) {
         const SkinQuad& sq = car.quads[q];
+        // Tube-frame vehicles show skin only on their panel cells ('p', and 'w' wheel wells).
+        if (vs.openFrame && sq.cellChar != 'p' && sq.cellChar != 'w') continue;
         m.faces.push_back({sq.v[0], sq.v[1], sq.v[2], sq.v[3]});
         m.parent.push_back((int)q);
         std::array<Lat, 4> l;
@@ -1474,6 +1698,15 @@ void buildRunningGear(const Car& car, std::vector<Vtx>& out) {
                 tube(out, mid, P(wh.inner), 0.045 * sz, 8, knuckleCol, SM_METAL);
                 tube(out, lo + (mid - lo) * 0.5, P(wh.arm), 0.018 * sz, 6, knuckleCol, SM_METAL);
                 blob(out, lo, 0.03 * sz, kDarkGrey, SM_METAL);
+            } else if (st == SOLID_AXLE && wh.tieRod >= 0) {
+                // Steering knuckle on a live front axle: the kingpin (ball joint to ball joint), a stub
+                // axle out to the hub and the steering arm the tie rod pushes.
+                V3 lo = P(wh.lower), hi = P(wh.top), mid = (lo + hi) * 0.5;
+                tube(out, lo, hi, 0.04, 8, housingCol, SM_METAL);
+                tube(out, mid, P(wh.inner), 0.045, 8, knuckleCol, SM_METAL);
+                tube(out, (mid + lo) * 0.5, P(wh.arm), 0.02, 6, knuckleCol, SM_METAL);
+                blob(out, lo, 0.045, kDarkGrey, SM_METAL);
+                blob(out, hi, 0.04, kDarkGrey, SM_METAL);
             } else if (st == TWIST_BEAM) {
                 // Boxed trailing arm from its pivot bushing back to the hub.
                 V3 piv = (P(wh.lower) + P(wh.arm)) * 0.5;
@@ -1502,13 +1735,15 @@ void buildRunningGear(const Car& car, std::vector<Vtx>& out) {
             // Axle tubes out to the hubs, the diff "pumpkin" and its pinion snout.
             // Real sizes (Dana 44: 3 in tubes, a ~10.5 in cover), not scaled with the tires.
             V3 diff = P(ax.housing[0]), pin = P(ax.housing[1]);
-            if (!wl.detached) tube(out, diff, P(wl.inner), kAxleTubeR, 10, housingCol, SM_METAL);
-            if (!wr.detached) tube(out, diff, P(wr.inner), kAxleTubeR, 10, housingCol, SM_METAL);
-            V3 lat = norm(P(wr.inner) - P(wl.inner));
+            // (A steering axle's tubes end at the kingpins, which turn with the knuckles.)
+            auto tubeEnd = [&](const Wheel& w) { return w.tieRod >= 0 ? (P(w.lower) + P(w.top)) * 0.5 : P(w.inner); };
+            if (!wl.detached) tube(out, diff, tubeEnd(wl), kAxleTubeR, 10, housingCol, SM_METAL);
+            if (!wr.detached) tube(out, diff, tubeEnd(wr), kAxleTubeR, 10, housingCol, SM_METAL);
+            V3 lat = norm(tubeEnd(wr) - tubeEnd(wl));
             tube(out, diff - lat * 0.12, diff + lat * 0.12, kAxleDiffR, 12, housingCol, SM_METAL);
             tube(out, diff, pin, 0.055, 10, housingCol, SM_METAL);
             for (const Wheel* w : {&wl, &wr})
-                if (!w->detached) tube(out, P(w->lower), P(w->inner), 0.03, 6, housingCol, SM_METAL);  // link bracket
+                if (!w->detached && w->tieRod < 0) tube(out, P(w->lower), P(w->inner), 0.03, 6, housingCol, SM_METAL);  // link bracket
         }
         if (st == TWIST_BEAM) {
             // The torsion beam itself, between the two arms.
@@ -1526,8 +1761,8 @@ void buildRunningGear(const Car& car, std::vector<Vtx>& out) {
             tube(out, lb, l0 + back * 0.6, 0.008 * sz, 4, kMetal, SM_METAL);
             tube(out, rb, r0 + back * 0.6, 0.008 * sz, 4, kMetal, SM_METAL);
         }
-        // Steering rack between the inner tie-rod ends.
-        if (ax.front) {
+        // Steering rack between the inner tie-rod ends (a live axle has a cross tie rod instead).
+        if (ax.front && st != SOLID_AXLE) {
             int rl = -1, rr = -1;
             for (int s2 = 0; s2 < 2; s2++) {
                 const Wheel& w = car.wheels[ax.wheel[s2]];

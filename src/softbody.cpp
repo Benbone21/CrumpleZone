@@ -923,7 +923,7 @@ void Car::wheelStep(double h, const World& w) {
             const SurfaceInfo& si = surfaceInfo(ct.surface);
             const int tread = std::min(std::max(spec->tireType, 0), 3);
             double grip = si.grip * kTreadGrip[tread][ct.surface];
-            if (ct.surface != SURF_PAVED && ct.surface != SURF_WET && ct.surface != SURF_ICE) grip *= 1 + 0.012 * psiDrop;
+            if (ct.surface != SURF_PAVED && ct.surface != SURF_WET && ct.surface != SURF_ICE) grip *= (1 + 0.012 * psiDrop) * spec->looseGrip;
             // Mud packed into the tread turns it into a slick.
             grip *= 1 - (tread == TIRE_MUD_TERRAIN ? 0.25 : 0.4) * wh.clog;
             // Standing water: past ~80 km/h the tread can't push it out of the way fast
@@ -931,7 +931,7 @@ void Car::wheelStep(double h, const World& w) {
             if (ct.surface == SURF_WET) grip *= 1 - (tread == TIRE_SEMI_SLICK ? 0.6 : 0.45) * smoothstep(22, 40, len(vc));
             const double bite = si.bite * kTreadBite[tread];
             wh.bite = (float)bite;
-            const double tireK = kTireK * (tirePsi + 10) / (spec->tirePsi + 10);
+            const double tireK = kTireK * spec->tireSoft * (tirePsi + 10) / (spec->tirePsi + 10);
             const double popSpeed = kRimPopSpeed * clampd((tirePsi + 5) / (spec->tirePsi + 5), 0.45, 1.1);
             // Slip is measured where the tread touches the road: the hub's velocity plus the
             // knuckle tilting or steering (its rotation other than the wheel's own spin).
@@ -1880,7 +1880,8 @@ void Sim::aiDrive(int self, double dt) {
 
     // ---- Speed: bends ahead, then car following ------------------------------
     // Tall, heavy vehicles corner more gently.
-    const double height = spec->layerY.back(), aLat = clampd(6.5 - 3.0 * (height - 1.4) - (c.mass - 1300) / 800, 3.2, 5.5);
+    // (A tube-frame buggy's 40 in tires and long travel top out at ~0.6 g: it drives the loop gently.)
+    const double height = spec->layerY.back(), aLat = std::min(clampd(6.5 - 3.0 * (height - 1.4) - (c.mass - 1300) / 800, 3.2, 5.5), spec->openFrame && spec->wheelRadius > 0.45 ? 3.3 : 9.0);
     const double decel = aLat * 0.75;
     auto bendSpeed = [&](int from) {  // max speed for the ~10 m of road starting at `from`
         double seg = 0;

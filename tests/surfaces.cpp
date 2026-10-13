@@ -139,6 +139,30 @@ SCENARIO(surfMud, "surfaces/mud", "Mud: the Bronco's all-terrains pull through 5
     (void)b;
 }
 
+SCENARIO(surfUtv, "surfaces/utv-mud-sand", "Flat out from a stop along the mud and sand strips: the 800 kg side-by-side on 32 in all-terrains floats on top and pulls through both quicker than the Bronco") {
+    struct Run {
+        double time, sink;
+    };
+    auto pull = [&](const VehicleSpec& spec, Surface s) {
+        Car& c = onStrip(ctx, spec, s, 1);
+        const double z = c.frame().com.z, x0 = c.frame().com.x, t0 = ctx.t;
+        double sink = 0;
+        ctx.runUntil(25, [&] { return c.frame().com.x > x0 + 50; }, [&] {
+            c.throttle = 1, c.brake = 0, c.handbrake = 0;
+            holdLine(c, z);
+            for (const Wheel& w : c.wheels) sink = std::max(sink, (double)w.sink);
+        });
+        return Run{c.frame().com.x - x0 > 49 ? ctx.t - t0 : 99, sink * 100};
+    };
+    const VehicleSpec& utv = vehicleCatalog()[5];
+    const Run bm = pull(bronco(), SURF_MUD), um = pull(utv, SURF_MUD), bs = pull(bronco(), SURF_SAND), us = pull(utv, SURF_SAND);
+    ctx.metric("side-by-side: 50 m of mud from a stop", um.time, "s", 3, 7);
+    ctx.metric("... against the Bronco's time", um.time / bm.time, "x", 0.5, 0.92);
+    ctx.metric("side-by-side: 50 m of sand from a stop", us.time, "s", 3, 7);
+    ctx.metric("... against the Bronco's time", us.time / bs.time, "x", 0.5, 0.92);
+    ctx.metric("side-by-side sinks less than the Bronco in mud (cm)", um.sink - bm.sink, "cm", -6, -0.5);
+}
+
 SCENARIO(surfIce, "surfaces/ice", "Ice: the Civic at 40 km/h steering hard just slides on: about a tenth of a g sideways") {
     Car& c = onStrip(ctx, civic(), SURF_ICE, 1);
     ctx.launch(c, 40 / 3.6);
