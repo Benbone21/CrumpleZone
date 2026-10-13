@@ -7,6 +7,8 @@ namespace {
 
 const VehicleSpec& bronco() { return vehicleCatalog()[2]; }
 const VehicleSpec& runner() { return vehicleCatalog()[3]; }
+const VehicleSpec& buggy() { return vehicleCatalog()[4]; }
+const VehicleSpec& utv() { return vehicleCatalog()[5]; }
 
 // Crawls along a straight line through (x, z) heading north at walking pace:
 // pure-pursuit steering, throttle trimmed to hold the speed.
@@ -444,10 +446,14 @@ static double rti(Ctx& ctx, const VehicleSpec& spec, double z, bool disconnect) 
 SCENARIO(rampTravel, "offroad/rti", "Ramp travel index on a 20 degree ramp: realistic articulation, more with the front sway bar unhooked") {
     const double b = rti(ctx, bronco(), -40, false), bd = rti(ctx, bronco(), -20, true);
     const double r = rti(ctx, runner(), 45, false), rd = rti(ctx, runner(), 65, true);  // clear of the platform (z -15..15)
+    const double bg = rti(ctx, buggy(), -62, false), ut = rti(ctx, utv(), -90, false);
     ctx.metric("Bronco RTI (real 4-door: ~450-550)", b, "", 380, 650);
     ctx.metric("Bronco RTI, sway bar disconnected", bd, "", b + 20, 800);
     ctx.metric("4Runner RTI (lifted 3rd gen: ~450-550)", r, "", 380, 650);
     ctx.metric("4Runner RTI, sway bar disconnected", rd, "", r + 20, 800);
+    // (Rock bouncers and Ultra4 cars: 900-1,200 on a ramp like this; side-by-sides 700-900.)
+    ctx.metric("Rock buggy RTI (4-link solid axles, 16 in of travel)", bg, "", 0, 9999);
+    ctx.metric("Turbo UTV RTI", ut, "", 0, 9999);
 }
 
 // ---- The mountain's hard lines ---------------------------------------------------
@@ -580,4 +586,213 @@ SCENARIO(gullyClimb, "offroad/gully", "A built Bronco (4L, both lockers, 18 psi)
     ctx.metric("distance up the gully (top at ~116 m)", best, "m", 105, 130);
     ctx.metric("height climbed", rise, "m", 25, 60);
     ctx.metric("damage", c.damage * 100, "%", 0, 2);
+}
+
+// ---- The crawl specials: the rock buggy and the side-by-side, against the Bronco ----------
+
+namespace {
+
+// A vehicle set up for the hard stuff: lowest range, every locker it has (the Bronco gets its
+// optional front one, as `crawler()` does), aired down to the game's 12 psi, traction control off.
+Car& crawlSetUp(Ctx& ctx, const VehicleSpec& base, double x, double z, double headingDeg) {
+    VehicleSpec& spec = *new VehicleSpec(base);  // lives for the run (scenarios are short-lived processes)
+    spec.lockerFront = true;
+    Car& c = ctx.add(spec, x, z, headingDeg);
+    ctx.run(1.0);
+    c.setDriveMode((int)driveModes(spec.transfer).size() - 1);  // 4L, or 4WD for the side-by-side
+    c.setLocker(true, true);
+    c.setLocker(false, true);
+    c.tractionControl = false;
+    c.tirePsi = 12;
+    c.swayDisconnected = spec.swayDisconnect > 0;
+    return c;
+}
+
+void clearCars(Ctx& ctx) {
+    ctx.sim.cars.clear();
+    ctx.sim.ropes.clear();
+    ctx.sim.player = 0;
+}
+
+// Does it climb a square ledge H high? One lane per attempt on the proving ground's flat apron; the
+// ledge's face is at x = -112, and the vehicle starts 12 m back from it.
+struct Attempt {
+    Car* car;
+    double z, faceX;
+    bool cleared() const { return car->frame().com.x > faceX + 4; }
+};
+Attempt ledgeAttempt(Ctx& ctx, const VehicleSpec& spec, double z, double H) {
+    World& w = ctx.sim.world;
+    const double faceX = -112;
+    w.addBox(V3(faceX + 8, w.height(faceX + 8, z) + H / 2, z), V3(8, H / 2, 5), 0, 0, 0, V3(0.4, 0.38, 0.35));
+    w.boxes.back().rock = true;
+    w.buildGrid();
+    Car& c = crawlSetUp(ctx, spec, faceX - 12, z, 0);
+    return {&c, z, faceX};
+}
+
+}  // namespace
+
+SCENARIO(ledgeCrawlers, "offroad/ledge-crawlers", "Square ledges in 4L with lockers at 12 psi: the Bronco stops at 0.45 m, the rock buggy takes 0.65 m, the side-by-side only 0.3 m") {
+    std::vector<Attempt> a;
+    a.push_back(ledgeAttempt(ctx, buggy(), -55, 0.65));
+    a.push_back(ledgeAttempt(ctx, bronco(), -40, 0.65));
+    a.push_back(ledgeAttempt(ctx, bronco(), -25, 0.45));
+    a.push_back(ledgeAttempt(ctx, utv(), -10, 0.3));
+    a.push_back(ledgeAttempt(ctx, utv(), 5, 0.5));
+    ctx.focus(*a[0].car);
+    ctx.run(40, [&] {
+        for (const Attempt& at : a) crawlEast(*at.car, at.z, 1.0);
+    });
+    ctx.check("rock buggy climbs a 0.65 m ledge", a[0].cleared(), "x = " + std::to_string(a[0].car->frame().com.x));
+    ctx.check("Bronco can't climb the same 0.65 m ledge", !a[1].cleared(), "x = " + std::to_string(a[1].car->frame().com.x));
+    ctx.check("Bronco climbs 0.45 m", a[2].cleared(), "x = " + std::to_string(a[2].car->frame().com.x));
+    ctx.check("side-by-side climbs 0.3 m", a[3].cleared(), "x = " + std::to_string(a[3].car->frame().com.x));
+    ctx.check("side-by-side can't climb 0.5 m", !a[4].cleared(), "x = " + std::to_string(a[4].car->frame().com.x));
+    ctx.metric("rock buggy: damage over the 0.65 m ledge", a[0].car->damage * 100, "%", 0, 1.5);
+}
+
+SCENARIO(slabCrawlers, "offroad/slickrock-crawlers", "A 48 degree slickrock slab in 4L with lockers at 12 psi: the rock buggy climbs most of it, the Bronco slides back") {
+    World& w = ctx.sim.world;
+    const double angle = 48 * M_PI / 180, run = 9;
+    Car* cars[2];
+    const VehicleSpec* specs[2] = {&buggy(), &bronco()};
+    const double zs[2] = {30, -30};
+    for (int k = 0; k < 2; k++) {
+        w.addRamp(V3(-80, 0, zs[k]), V3(-80 + run * std::cos(angle), run * std::sin(angle), zs[k]), 5, 1.5, V3(0.5, 0.48, 0.45));
+        w.boxes.back().rock = true;
+    }
+    w.buildGrid();
+    for (int k = 0; k < 2; k++) cars[k] = &crawlSetUp(ctx, *specs[k], -92, zs[k], 0);
+    ctx.focus(*cars[0]);
+    double y0[2], top[2] = {0, 0};
+    for (int k = 0; k < 2; k++) y0[k] = cars[k]->frame().com.y;
+    ctx.run(30, [&] {
+        for (int k = 0; k < 2; k++) {
+            crawlEast(*cars[k], zs[k], 1.0);
+            top[k] = std::max(top[k], cars[k]->frame().com.y - y0[k]);
+        }
+        ctx.sample("height", "rock buggy", cars[0]->frame().com.y - y0[0], "m");
+        ctx.sample("height", "Bronco", cars[1]->frame().com.y - y0[1], "m");
+    });
+    ctx.metric("rock buggy: height up the 48 degree slab (6.7 m to the top)", top[0], "m", 4.5, 7.0);
+    ctx.metric("Bronco: height up the same slab", top[1], "m", 0, 3.5);
+    ctx.check("the buggy climbs at least 1.5x as high", top[0] > 1.5 * top[1]);
+}
+
+// The twister with open diffs: the Bronco's lifted wheels spin and it bogs down; the buggy's
+// long travel keeps its tires on the mounds.
+static double twisterOpenRun(Ctx& ctx, const VehicleSpec& spec, double* time) {
+    clearCars(ctx);
+    Car& c = crawlStart(ctx, spec, "twister");
+    const V3 start = c.frame().com;
+    double best = 0;
+    ctx.runUntil(65, [&] { return best > 62; }, [&] {
+        crawlNorth(c, mountainFeature("twister").x, 1.0);
+        best = std::max(best, c.frame().com.z - start.z);
+    });
+    if (time) *time = ctx.t;
+    return best;
+}
+
+SCENARIO(twisterBuggy, "offroad/twister-crawlers", "The twister in 4L with open diffs (no lockers): the rock buggy's long axle travel walks through it, the Bronco bogs down") {
+    double t0 = ctx.t, tBuggy = 0;
+    const double bronc = twisterOpenRun(ctx, bronco(), nullptr);
+    const double bug = twisterOpenRun(ctx, buggy(), &tBuggy);
+    (void)t0;
+    ctx.metric("rock buggy: distance through the twister, open diffs (62 m clears it)", bug, "m", 62, 70);
+    ctx.metric("Bronco: distance, open diffs", bronc, "m", 0, 55);
+    ctx.check("no damage crawling it", ctx.sim.cars[0].damage < 0.02);
+}
+
+SCENARIO(ledgesCrawlers, "offroad/ledges-buggy", "The crawl park's ledges (0.3 m steps up to 1.5 m, and down) in 4L with lockers: the rock buggy climbs them cleanly and no slower than the Bronco") {
+    double progress[2], tDone[2];
+    const VehicleSpec* specs[2] = {&buggy(), &bronco()};
+    for (int k = 0; k < 2; k++) {
+        clearCars(ctx);
+        VehicleSpec& spec = *new VehicleSpec(*specs[k]);
+        spec.lockerFront = true;
+        Car& c = crawlStart(ctx, spec, "ledges");
+        c.setLocker(true, true);
+        c.setLocker(false, true);
+        const double t0 = ctx.t, y0 = c.frame().com.y;
+        double top = 0;
+        ctx.runUntil(60, [&] { return c.frame().com.z > mountainFeature("ledges").z + 52; }, [&] {
+            crawlNorth(c, mountainFeature("ledges").x, 1.0);
+            top = std::max(top, c.frame().com.y - y0);
+        });
+        progress[k] = c.frame().com.z - mountainFeature("ledges").z;
+        tDone[k] = ctx.t - t0;
+        ctx.check(std::string(k ? "Bronco" : "rock buggy") + ": over the top (1.5 m step) and down the far side", top > 1.3 && progress[k] > 45);
+        ctx.check(std::string(k ? "Bronco" : "rock buggy") + ": no damage on the rocks", c.damage < 0.03);
+    }
+    ctx.metric("rock buggy: time through the ledges", tDone[0], "s", 20, 60);
+    ctx.metric("... against the Bronco's", tDone[0] / tDone[1], "x", 0.5, 1.02);
+}
+
+SCENARIO(domeBuggy, "offroad/slickrock-dome", "The slickrock dome in 4L: the rock buggy climbs it as quickly as the Bronco") {
+    double t[2];
+    const VehicleSpec* specs[2] = {&buggy(), &bronco()};
+    for (int k = 0; k < 2; k++) {
+        clearCars(ctx);
+        Car& c = crawlStart(ctx, *specs[k], "dome", 30);
+        c.tirePsi = 15;
+        const double t0 = ctx.t, y0 = c.frame().com.y;
+        double top = 0;
+        ctx.runUntil(40, [&] { return c.frame().com.z > mountainFeature("dome").z + 10; }, [&] {
+            crawlNorth(c, mountainFeature("dome").x, 1.5);
+            top = std::max(top, c.frame().com.y - y0);
+        });
+        t[k] = ctx.t - t0;
+        ctx.metric(std::string(k ? "Bronco" : "rock buggy") + ": height gained (dome is 10 m)", top, "m", 8.5, 11.5);
+    }
+    ctx.metric("rock buggy over the Bronco's time to the top", t[0] / t[1], "x", 0.5, 1.02);
+}
+
+// The mountain's whoops lane (0.55 m bumps every 9 m, 130 m of them): each vehicle cruises at 55 km/h.
+// The side-by-side's long travel eats them and it holds the speed; the stock trucks tip or slow.
+struct WhoopsRun {
+    double time, minUp, damage;
+    bool finished;
+};
+static WhoopsRun whoopsRun(Ctx& ctx, const VehicleSpec& spec, double target) {
+    clearCars(ctx);
+    ctx.sim.world = World(MAP_MOUNTAIN);
+    const V3 f = mountainFeature("whoops");
+    Car& c = ctx.add(spec, f.x, f.z - 45, -90);
+    ctx.focus(c);
+    ctx.run(1.0);
+    double tIn = -1, tOut = -1, minUp = 1;
+    ctx.runUntil(40, [&] { return tOut > 0; }, [&] {
+        Frame fr = c.frame();
+        V3 d = V3(f.x, fr.com.y, fr.com.z + 8) - fr.com;
+        c.steer = clampd(std::atan2(dot(d, fr.left), std::max(dot(d, fr.fwd), 0.5)), -0.3, 0.3);
+        const double v = len(fr.vel) * 3.6;
+        c.throttle = clampd(0.3 + (target - v) * 0.2, 0, 1);
+        c.brake = v > target + 8 ? 0.3 : 0;
+        c.handbrake = 0;
+        if (tIn < 0 && fr.com.z > f.z) tIn = ctx.t;
+        if (tIn > 0 && tOut < 0 && fr.com.z > f.z + 130) tOut = ctx.t;
+        if (tIn > 0) minUp = std::min(minUp, fr.up.y);
+    });
+    return {tOut > 0 ? tOut - tIn : 99, minUp, c.damage * 100, tOut > 0};
+}
+
+SCENARIO(whoops, "offroad/whoops", "The whoops lane at 55 km/h: the side-by-side's long-travel suspension holds the speed through all of it, quicker than the Bronco, 4Runner and rock buggy") {
+    const WhoopsRun u = whoopsRun(ctx, utv(), 55), b = whoopsRun(ctx, bronco(), 55), r = whoopsRun(ctx, runner(), 55), g = whoopsRun(ctx, buggy(), 55);
+    auto avg = [](const WhoopsRun& w) { return w.finished ? 130 / w.time * 3.6 : 0.0; };
+    std::printf("WHOOPS UTV %.1f s up %.2f | Bronco %.1f s up %.2f | 4Runner %.1f s up %.2f | buggy %.1f s up %.2f\n", u.time, u.minUp, b.time, b.minUp, r.time, r.minUp, g.time, g.minUp);
+    ctx.metric("side-by-side: average speed through the whoops (cruising at 55)", avg(u), "km/h", 45, 60);
+    ctx.metric("side-by-side: lowest body tilt (1 = level)", u.minUp, "", 0.75, 1);
+    ctx.metric("side-by-side: damage", u.damage, "%", 0, 0.5);
+    ctx.check("the side-by-side is quicker than the Bronco", !b.finished || u.time < b.time);
+    ctx.check("... than the 4Runner", !r.finished || u.time < r.time);
+    ctx.check("... and than the rock buggy", !g.finished || u.time < g.time);
+}
+
+SCENARIO(rockHitsBuggy, "structure/rock-hits/buggy", "Rock buggy on the trail: belly, sill and ledge hits, a tip onto its side and roof, a corner into a boulder") {
+    rockHits(ctx, buggy());
+}
+SCENARIO(rockHitsUtv, "structure/rock-hits/utv", "Side-by-side on the trail: belly, sill and ledge hits, a tip onto its side and roof, a corner into a boulder") {
+    rockHits(ctx, utv());
 }

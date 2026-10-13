@@ -46,6 +46,10 @@ VEHICLE_SCENARIO(brokenDifferential, "components/broken-halfshaft", "An open or 
 }
 
 VEHICLE_SCENARIO(detachedDoorGlass, "components/door-glass", "A removed door carries its glass and collision surface with it") {
+    if (spec.openFrame) {
+        ctx.note(std::string(spec.name) + " is a tube frame with no doors or glass; skipped");
+        return;
+    }
     Car& c = ctx.add(spec, -100, -50, 0);
     ctx.focus(c);
     ctx.run(1.0);

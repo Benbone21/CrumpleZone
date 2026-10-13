@@ -289,6 +289,29 @@ SCENARIO(pilotLedge, "autopilot/ledge", "A 0.38 m ledge across a walled lane (to
     ctx.metric("damage", r.worst * 100, "%", 0, 0.5);
 }
 
+SCENARIO(pilotLedgeBuggy, "autopilot/buggy-ledge", "A 0.5 m ledge across a walled lane (past the Bronco's 0.45 m): the rock buggy's autopilot knows its tires can take it: low range, lockers, and over") {
+    World& w = testLane(ctx, 2.6);
+    w.addBox(V3(6, 0.25, 0), V3(5, 0.25, 2.6), 0, 0, 0, V3(0.5, 0.48, 0.45));
+    w.buildGrid();
+    Car& c = ctx.add(vehicleCatalog()[4], -40, 0, 0);
+    ctx.focus(c);
+    ctx.run(1.0);
+    const PilotRun r = pilotTo(ctx, c, V3(40, 0, 0), 25, 120);
+    ctx.check("shifted into 4L", r.low);
+    ctx.check("over it and on to the far side", c.frame().com.x > 14, "x = " + std::to_string(c.frame().com.x));
+    ctx.metric("damage", r.worst * 100, "%", 0, 0.5);
+}
+
+SCENARIO(pilotStepTable, "autopilot/step-table", "The autopilot's step table for the crawl vehicles matches what they climbed in the offroad tests: side-by-side ~0.3 m, Bronco ~0.45, rock buggy ~0.7") {
+    const auto& cat = vehicleCatalog();
+    const double u = stepCap(cat[5], LEVEL_4WD_LOCKED, 1, 14), b = stepCap(cat[2], LEVEL_LOW, 1, 20), g = stepCap(cat[4], LEVEL_LOW, 2, 20);
+    ctx.metric("side-by-side (4WD, front diff lock, 14 psi)", u, "m", 0.25, 0.40);
+    ctx.metric("Bronco (4L, rear locker, 20 psi)", b, "m", 0.40, 0.55);
+    ctx.metric("rock buggy (4L, both lockers, 20 psi)", g, "m", 0.60, 0.80);
+    ctx.check("the buggy's table is well past the Bronco's, the Bronco's past the side-by-side's", g > 1.4 * b && b > 1.2 * u);
+    ctx.check("the buggy has 4L and both lockers to offer, the side-by-side has no low range", cat[4].lowRange > 3 && cat[5].lowRange == 0 && cat[4].lockerFront && cat[4].lockerRear && cat[5].lockerFront);
+}
+
 SCENARIO(pilotWallGap, "autopilot/wall-gap", "A chest-high wall across the way with a gap at one end: the route goes through the gap") {
     World& w = testLane(ctx);
     w.addBox(V3(0, 0.4, 2), V3(0.4, 0.4, 14), 0, 0, 0, V3(0.5, 0.5, 0.5));  // z -12 .. 16: the gap is past z = -12
