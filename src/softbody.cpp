@@ -337,11 +337,21 @@ void Car::computeForces(double h, const World& w) {
             // Dampers resist rebound (extension) harder than bump. In bump the valves blow
             // off above ~0.25 m/s, so a sharp hit doesn't turn into a huge kick; rebound
             // stays firm so the car doesn't spring itself into the air.
+            // High-speed choke: additional damping above ~3 m/s to prevent bottoming on
+            // large bumps (monotube shock absorber behavior). Subtle effect.
             if (vrel > 0) {
                 F += b.c * 1.35 * vrel;
+                // High-speed choke in rebound (very subtle)
+                if (vrel > 3.0) {
+                    F += b.c * 0.2 * (vrel - 3.0);
+                }
             } else {
                 double sv = -vrel, knee = 0.25;
                 F -= b.c * 0.65 * (sv < knee ? sv : knee + 0.3 * (sv - knee));
+                // High-speed choke in bump (very subtle)
+                if (sv > 3.0) {
+                    F -= b.c * 0.15 * (sv - 3.0);
+                }
             }
             // A leaf pack's leaves rub on each other as it flexes: friction damping, strongest
             // on small, quick movements (washboard), as real leaf springs ride.
