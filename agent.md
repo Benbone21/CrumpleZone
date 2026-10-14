@@ -135,7 +135,14 @@ Without `--time`, captures start at 10:00 with the clock running.
 
 ## Open work
 
-- **Physics improvements (branch `wip/field-repair`, active):** See `docs/beamng-implementation-plan.md` for detailed analysis of BeamNG.drive's physics approach and specific implementation recommendations. Focus areas: velocity-dependent suspension damping, progressive damage (separate yield/break thresholds), slip angle tire curves, engine torque curves, Ackerman steering. Claude is coordinating this work; Codex should implement as directed.
+- **Release integration (2026-10-14):** all available branch work is merged into `main` for
+  `v0.1.8`; read `docs/release-merge-0.1.8.md` and the new handoff first. Release defaults
+  preserve the verified suspension behavior. High-speed damping and free coils remain
+  opt-in development experiments (`CZ_HIGH_SPEED_DAMPING=1`, `CZ_FREE_COILS=1`) after
+  regression checks found instability. The final functional suite passes 448/468 with
+  the same 20 failures as the prior verified build; no new failing scenarios.
+
+- **Physics improvements (merged; further tuning planned):** See `docs/beamng-implementation-plan.md` for detailed analysis of BeamNG.drive's physics approach and specific implementation recommendations. Focus areas: velocity-dependent suspension damping, progressive damage (separate yield/break thresholds), slip angle tire curves, engine torque curves, Ackerman steering. Claude is coordinating this work; Codex should implement as directed.
   - **Phase 1 (quick wins):** Velocity-dependent suspension damping, progressive bump stops, speed-sensitive downforce, tune spring rates per vehicle
   - **Phase 2 (damage model):** Separate yield/break thresholds, damage zones, mesh deformation
   - **Phase 3 (tires):** Slip angle curves, load sensitivity, tire self-collision

@@ -8,9 +8,23 @@
 #include <cstdlib>
 #include <queue>
 #include <chrono>
-struct PT{double gather=0,lines=0,rest=0,plan=0,drive=0;int n=0,plans=0;}; PT g_pt; 
-static double nowMs(){return std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count();}
-struct PTPrint{~PTPrint(){std::fprintf(stderr,"PT gather %.1f lines %.1f rest %.1f plan %.1f (%d plans) n=%d\n",g_pt.gather,g_pt.lines,g_pt.rest,g_pt.plan,g_pt.plans,g_pt.n);}} g_ptp;
+namespace {
+struct PilotTimes {
+    double gather = 0, lines = 0, plan = 0;
+    int n = 0, plans = 0;
+    ~PilotTimes() {
+        if (std::getenv("CZ_PILOT_PROFILE"))
+            std::fprintf(stderr, "PILOT gather %.1f lines %.1f plan %.1f (%d plans) n=%d\n",
+                         gather, lines, plan, plans, n);
+    }
+};
+thread_local PilotTimes g_pt;
+double nowMs() {
+    static const bool enabled = std::getenv("CZ_PILOT_PROFILE") != nullptr;
+    return enabled ? std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count() : 0;
+}
+}  // namespace
+
 
 #include "pilotsense.h"
 #include "softbody.h"

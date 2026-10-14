@@ -2643,7 +2643,9 @@ int main(int argc, char** argv) {
                             break;
                         }
                         case SC_DELETE:
-                        case SC_BACKSPACE: sim.removePlayerCar(); hud.toast("VEHICLE REMOVED"); break;
+                        case SC_BACKSPACE:
+                            hud.toast(sim.removeCar(sim.player) ? "VEHICLE REMOVED" : "KEEP ONE LOCAL VEHICLE");
+                            break;
                         case SC_LEFTBRACKET:
                             if (net.active()) break;  // everyone shares one clock
                             timeScaleIdx = std::min(timeScaleIdx + 1, 4); sim.timeScale = kTimeScales[timeScaleIdx]; break;

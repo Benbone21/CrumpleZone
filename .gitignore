@@ -7,3 +7,6 @@ build/
 assets/source
 /.claude/worktrees/
 /third_party/sdl2-mac/
+
+# Python tooling bytecode
+__pycache__/

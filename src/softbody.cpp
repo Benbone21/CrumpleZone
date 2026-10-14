@@ -2,6 +2,7 @@
 #include "collision.h"
 #include "vehicles.h"
 
+#include <cstdlib>
 #include <set>
 #include <utility>
 
@@ -179,6 +180,14 @@ bool Car::shift(int dir) {
 // Physics
 
 void Car::computeForces(double h, const World& w) {
+    static const bool freeCoils = [] {
+        const char* option = std::getenv("CZ_FREE_COILS");
+        return option && std::string(option) == "1";
+    }();
+    static const bool highSpeedDamping = [] {
+        const char* option = std::getenv("CZ_HIGH_SPEED_DAMPING");
+        return option && std::string(option) == "1";
+    }();
     const V3 g(0, -9.81, 0);
     const double dragPerKg = 0.5 * 1.2 * spec->dragArea / mass;  // 0.5 * rho * Cd * A, spread over the nodes
     for (Node& n : nodes) n.f = g * n.m - n.v * (len(n.v) * dragPerKg * n.m);
@@ -332,7 +341,8 @@ void Car::computeForces(double h, const World& w) {
             // to the shock's droop stop. (Pulling, a soft long-travel spring held the wheel ~g/w^2
             // below ride height, 0.14-0.17 m on the buggy and the UTV, and the rest of their droop
             // was never used.) A leaf spring, clamped to the axle, does pull.
-            if (F > 0 && b.friction == 0) F = 0;
+            // The unfinished free-coil retune remains opt-in: it destabilizes whoops runs.
+            if (freeCoils && F > 0 && b.friction == 0) F = 0;
             // Progressive rubber bump stop: firms up over its first 3 cm.
             if (L < b.minL + 0.01) {
                 double c = std::min(b.minL + 0.01 - L, 0.03);
@@ -348,14 +358,14 @@ void Car::computeForces(double h, const World& w) {
             if (vrel > 0) {
                 F += b.c * 1.35 * vrel;
                 // High-speed choke in rebound (very subtle)
-                if (vrel > 3.0) {
+                if (highSpeedDamping && vrel > 3.0) {
                     F += b.c * 0.2 * (vrel - 3.0);
                 }
             } else {
                 double sv = -vrel, knee = 0.25;
                 F -= b.c * 0.65 * (sv < knee ? sv : knee + 0.3 * (sv - knee));
                 // High-speed choke in bump (very subtle)
-                if (sv > 3.0) {
+                if (highSpeedDamping && sv > 3.0) {
                     F -= b.c * 0.15 * (sv - 3.0);
                 }
             }

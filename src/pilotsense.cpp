@@ -74,7 +74,12 @@ void Scene::gather(const World& world, const std::vector<Car>* cs, const Car* se
     id.resize(kN * kN);
     have.assign(kN * kN, 0);
     auto near = [&](double x, double z, double r) { return std::hypot(x - around.x, z - around.z) < radius + r; };
-    for (int i = 0; i < (int)w->rocks.size(); i++) {
+    World::NearbySolids nearby;
+    w->solidsNear(around.x - radius, around.z - radius, around.x + radius, around.z + radius, nearby);
+    // Keep the original index order so equal-cost choices stay deterministic.
+    for (auto* indices : {&nearby.rocks, &nearby.boxes, &nearby.logs, &nearby.poles})
+        std::sort(indices->begin(), indices->end());
+    for (int i : nearby.rocks) {
         const Rock& r = w->rocks[i];
         if (!near(r.c.x, r.c.z, r.r)) continue;
         double top = -1e9;
@@ -85,7 +90,7 @@ void Scene::gather(const World& world, const std::vector<Car>* cs, const Car* se
         for (const V3& v : r.v) reach = std::max(reach, std::hypot(v.x - r.c.x, v.z - r.c.z));
         list.push_back({SEEN_ROCK, i, r.c.x, r.c.z, reach, hgt});
     }
-    for (int i = 0; i < (int)w->boxes.size(); i++) {
+    for (int i : nearby.boxes) {
         const Box& b = w->boxes[i];
         if (!b.solid && !b.hidden) continue;
         const double reach = std::hypot(b.h.x, b.h.z) + b.h.y;
@@ -99,14 +104,14 @@ void Scene::gather(const World& world, const std::vector<Car>* cs, const Car* se
             }
         list.push_back({(uint8_t)(hgt > 1.2 ? SEEN_WALL : SEEN_LEDGE), i, b.c.x, b.c.z, reach, hgt});
     }
-    for (int i = 0; i < (int)w->logs.size(); i++) {
+    for (int i : nearby.logs) {
         const Log& l = w->logs[i];
         const V3 m = (l.a + l.b) * 0.5;
         const double reach = len(l.b - l.a) * 0.5 + l.r;
         if (!near(m.x, m.z, reach)) continue;
         list.push_back({SEEN_LOG, i, m.x, m.z, reach, m.y + l.r - w->height(m.x, m.z)});
     }
-    for (int i = 0; i < (int)w->poles.size(); i++) {
+    for (int i : nearby.poles) {
         const Pole& p = w->poles[i];
         if (!near(p.x, p.z, p.r)) continue;
         list.push_back({SEEN_TREE, i, p.x, p.z, p.r, p.y1 - w->height(p.x, p.z)});

@@ -1,5 +1,21 @@
 # Handoff: where Crumple Zone stands (2026-10-13)
 
+**Release integration, 2026-10-14:** all available local/cached remote branch commits are
+merged into `main`, including audio, field repairs, compatibility fixes, autopilot spatial
+queries and vehicle-tool prototypes. The release is prepared as `v0.1.8`: Windows installer
+EXE, universal Mac DMG (plus ZIP), and Linux DEB via the release workflow. Local final suite:
+**448/468 pass**, the same 20 failures as the previous verified build; 41 audio and five
+importer checks pass. Source and build details: `docs/release-merge-0.1.8.md`.
+
+Both suspension experiments are preserved but disabled by default: the free-coil retune
+and OpenCode's high-speed damping destabilized the Bronco/shaft-break workload. Use
+`CZ_FREE_COILS=1` / `CZ_HIGH_SPEED_DAMPING=1` only for development comparisons until retuned.
+The vehicle command popup has a tested model but no new render/input adapter yet. The
+standalone autopilot performance targets remain unmet. Do not describe either roadmap
+as completed release work. GitHub push/publication is blocked by this environment's
+network access; native Windows/Mac CI must still run before a release is published.
+
+
 **Engine recordings / release checkpoint (2026-10-13):** user requested committing/pushing all updates before continuing, then asked for a Windows release. Prepared `docs/releases/v0.1.6.md`; publishing requires pushing the updated `sync` and a new version tag. The Windows ZIP builds locally; the installer is built by release CI (local `makensis` is unavailable).
 - Recorded-loop startup loading, vehicle/garage engine mapping and RPM/load playback now serve local and nearby multiplayer voices. No actual recordings have been imported. Missing banks explicitly retain procedural audio. See `docs/engine-recordings.md` for format and reference sources.
 - All **27** audio checks pass, including temporary PCM recordings, actual driver/remote playback, bank transitions, startup retention and malformed-file fallback. Native and Windows game/audio-test executables build. No new physics changes in this recorded-audio preparation.

@@ -891,7 +891,7 @@ void World::polesNear(const V3& mn, const V3& mx, std::vector<int>& out) const {
             }
 }
 
-void World::solidsNear(double x0, double z0, double x1, double z1, Near& out) const {
+void World::solidsNear(double x0, double z0, double x1, double z1, NearbySolids& out) const {
     out.clear();
     if (gridN == 0) return;
     // Each object is in the lookup lists of every cell it reaches into, so one object turns up

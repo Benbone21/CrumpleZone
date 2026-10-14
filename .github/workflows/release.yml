@@ -1,4 +1,4 @@
-# Builds Crumple Zone for Linux (.deb), Windows (.zip) and macOS (.app in a .zip).
+# Builds Linux (.deb), Windows (.exe installer) and macOS (universal .app in a .dmg).
 # - On every push to sync or main: builds all three and keeps them as workflow artifacts
 #   (a check that every platform still builds; nothing is published).
 # - On a version tag (v1.2.3): also publishes them as a GitHub release, with the notes in
@@ -31,7 +31,7 @@ jobs:
           # Generic x86-64 (the Makefile's default is -march=native: the build machine's CPU only).
           make -j"$(nproc)" CXXFLAGS="-O2 -march=x86-64-v2 -mtune=generic" crumplezone
           make -j"$(nproc)" CXXFLAGS="-O2 -march=x86-64-v2 -mtune=generic" build/run_tests build/test_render build/test_audio
-          ./build/run_tests --jobs 1 engine/collision engine/physics-workers net/state
+          ./build/run_tests --jobs 1 engine/collision engine/physics-workers net/state vtools/
           SDL_VIDEODRIVER=offscreen LP_NUM_THREADS=2 ./build/test_render
           SDL_AUDIODRIVER=dummy CZ_AUDIO_DEVICE_TEST=1 ./build/test_audio
           python3 tests/test_engine_import.py
@@ -87,7 +87,7 @@ jobs:
       - name: Native Windows networking, configurable workers, and audio
         shell: pwsh
         run: |
-          .\cpu-tests\run_tests.exe --jobs 1 net/ engine/collision engine/physics-workers
+          .\cpu-tests\run_tests.exe --jobs 1 net/ engine/collision engine/physics-workers vtools/
           if ($LASTEXITCODE -ne 0) { throw "Windows networking/physics regression checks failed" }
           $env:SDL_AUDIODRIVER = 'dummy'
           $env:CZ_AUDIO_DEVICE_TEST = '1'
@@ -95,7 +95,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Windows audio regression checks failed" }
 
   mac:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - name: SDL2 framework (official universal build)
@@ -108,13 +108,14 @@ jobs:
       - name: Build the app
         run: |
           V="${VERSION#[vV]}"
-          make -j"$(sysctl -n hw.ncpu)" mac VERSION="$V"
+          make -j4 mac-dmg VERSION="$V"
           lipo -info build/mac/CrumpleZone.app/Contents/MacOS/crumplezone
           mkdir -p out && cp build/mac/CrumpleZone-mac.zip "out/CrumpleZone-${V}-mac.zip"
+          cp build/mac/CrumpleZone-mac.dmg "out/CrumpleZone-${V}-mac.dmg"
       - name: Native macOS regression checks
         run: |
           make -j4 build/mac/bench_sim build/mac/run_tests build/mac/test_audio build/mac/test_render
-          ./build/mac/run_tests --jobs 1 net/ engine/collision engine/physics-workers
+          ./build/mac/run_tests --jobs 1 net/ engine/collision engine/physics-workers vtools/
           SDL_AUDIODRIVER=dummy CZ_AUDIO_DEVICE_TEST=1 ./build/mac/test_audio
           ./build/mac/test_render
           python3 - <<'PY'
@@ -149,6 +150,15 @@ jobs:
           if 'ground textures:' in output:
               raise SystemExit('Packaged Mac ground assets failed to load')
           PY
+      - name: Verify the mounted DMG
+        run: |
+          mkdir -p "$RUNNER_TEMP/crumplezone-dmg"
+          hdiutil attach -quiet -readonly -nobrowse -mountpoint "$RUNNER_TEMP/crumplezone-dmg" build/mac/CrumpleZone-mac.dmg
+          trap 'hdiutil detach -quiet "$RUNNER_TEMP/crumplezone-dmg"' EXIT
+          test -d "$RUNNER_TEMP/crumplezone-dmg/CrumpleZone.app"
+          test -L "$RUNNER_TEMP/crumplezone-dmg/Applications"
+          codesign --verify --deep --strict "$RUNNER_TEMP/crumplezone-dmg/CrumpleZone.app"
+          lipo -verify_arch arm64 x86_64 "$RUNNER_TEMP/crumplezone-dmg/CrumpleZone.app/Contents/MacOS/crumplezone"
       - uses: actions/upload-artifact@v4
         with: { name: mac, path: out/* }
       - uses: actions/upload-artifact@v4
@@ -169,7 +179,10 @@ jobs:
         run: |
           V="${VERSION#[vV]}"
           ls -la dist
-          files=("dist/CrumpleZone-${V}-windows-setup.exe" "dist/CrumpleZone-${V}-linux.deb" "dist/CrumpleZone-${V}-mac.zip")
+          files=("dist/CrumpleZone-${V}-windows-setup.exe" "dist/CrumpleZone-${V}-linux.deb" "dist/CrumpleZone-${V}-mac.dmg" "dist/CrumpleZone-${V}-mac.zip")
+          for file in "${files[@]}"; do test -s "$file"; done
+          (cd dist && sha256sum "CrumpleZone-${V}-windows-setup.exe" "CrumpleZone-${V}-linux.deb" "CrumpleZone-${V}-mac.dmg" "CrumpleZone-${V}-mac.zip" > SHA256SUMS)
+          files+=("dist/SHA256SUMS")
           notes=(--generate-notes)
           if [ -f "docs/releases/${GITHUB_REF_NAME}.md" ]; then notes=(--notes-file "docs/releases/${GITHUB_REF_NAME}.md"); fi
           # (A release made by hand on the website for this tag just gets the files attached.)

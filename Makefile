@@ -7,7 +7,7 @@ CXXFLAGS += -std=c++17 -Wall -Wextra
 LDLIBS   := -l:libSDL2-2.0.so.0 -lpthread -lm
 
 PHYS     := src/physics_workers.cpp src/collision.cpp src/props.cpp src/jobs.cpp src/walker.cpp src/softbody.cpp src/recovery.cpp src/net.cpp src/level.cpp src/levels_builtin.cpp src/levelrun.cpp src/editcore.cpp src/autopilot.cpp src/pilotsense.cpp src/carbuild.cpp src/world.cpp src/mountain.cpp src/freeway.cpp src/frontier.cpp src/backcountry.cpp src/vehicles.cpp src/mods.cpp src/gamepad.cpp src/platform.cpp src/tires.cpp src/interact.cpp src/vtools.cpp
-SCEN     := tests/drivetrain.cpp tests/net_state.cpp tests/collision.cpp tests/props.cpp tests/jobs.cpp tests/walker.cpp tests/editor.cpp tests/levels.cpp tests/circuit.cpp tests/frontier.cpp tests/backcountry.cpp tests/freeway.cpp tests/surfaces.cpp tests/handling.cpp tests/harness.cpp tests/scenarios.cpp tests/components.cpp tests/offroad.cpp tests/recovery.cpp tests/net.cpp tests/autopilot.cpp tests/lidar.cpp tests/gamepad.cpp tests/tires.cpp tests/vtools.cpp
+SCEN     := tests/drivetrain.cpp tests/net_state.cpp tests/collision.cpp tests/props.cpp tests/jobs.cpp tests/walker.cpp tests/editor.cpp tests/levels.cpp tests/circuit.cpp tests/frontier.cpp tests/backcountry.cpp tests/freeway.cpp tests/surfaces.cpp tests/handling.cpp tests/harness.cpp tests/scenarios.cpp tests/components.cpp tests/offroad.cpp tests/recovery.cpp tests/net.cpp tests/autopilot.cpp tests/nearby.cpp tests/gamepad.cpp tests/tires.cpp tests/vtools.cpp
 GAME_SRC := src/main.cpp src/gamepad_sdl.cpp src/editor.cpp src/coop.cpp src/gl.cpp src/gpu.cpp src/render.cpp src/carvisual.cpp src/bodyshell.cpp src/scenery.cpp src/menu.cpp src/fx.cpp src/engine_samples.cpp src/engineaudio.cpp src/audio.cpp src/music.cpp src/ambience.cpp src/daylight.cpp src/lights.cpp src/groundtex.cpp src/groundshader.cpp src/propdraw.cpp $(PHYS) $(SCEN)
 GAME_OBJ := $(patsubst %.cpp,build/%.o,$(GAME_SRC))
 TEST_OBJ := $(patsubst %.cpp,build/%.o,tests/run_tests.cpp $(PHYS) $(SCEN))
@@ -27,6 +27,10 @@ build/run_tests: $(TEST_OBJ)
 
 # CPU-only workload; args: car count, separated|pileup, 2 kHz steps.
 build/bench_sim: build/tools/bench_sim.o $(patsubst %.cpp,build/%.o,$(PHYS))
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -lm
+
+# Prototype performance targets are measured separately from functional scenario checks.
+build/bench_autopilot: build/tests/run_tests.o build/tests/lidar.o build/tests/harness.o $(patsubst %.cpp,build/%.o,$(PHYS))
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -lm
 
 # Run with SDL_VIDEODRIVER=offscreen; exercises shaders, quality presets and MSAA fallback.
@@ -97,11 +101,11 @@ windows-installer: windows
 	makensis -V2 -DVERSION=$(VERSION) -DSRC=$(CURDIR)/build/win/CrumpleZone -DOUT=$(CURDIR)/build/win/CrumpleZone-setup.exe installer/windows.nsi
 
 # ---- macOS build: run on a Mac (Xcode command line tools) ----------------------------
-#   make mac [VERSION=x.y.z]  ->  build/mac/CrumpleZone.app and build/mac/CrumpleZone-mac.zip
+#   make mac [VERSION=x.y.z]  ->  universal app, ZIP and DMG
 # A universal (Apple silicon + Intel) app with SDL2.framework inside it. Needs the official
 # SDL2 macOS framework (from the SDL2-2.x.dmg) in $(MACSDL). Ad-hoc signed only: the first
 # launch needs right-click > Open (or: xattr -dr com.apple.quarantine CrumpleZone.app).
-VERSION  ?= 0.1.7
+VERSION  ?= 0.1.8
 MACCXX   ?= clang++
 MACSDL   ?= third_party/sdl2-mac
 MACFLAGS := -O2 -std=c++17 -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -Wall
@@ -126,6 +130,15 @@ mac: build/mac/crumplezone
 	printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>\n<key>CFBundleName</key><string>Crumple Zone</string>\n<key>CFBundleDisplayName</key><string>Crumple Zone</string>\n<key>CFBundleIdentifier</key><string>io.github.benbone21.crumplezone</string>\n<key>CFBundleExecutable</key><string>crumplezone</string>\n<key>CFBundlePackageType</key><string>APPL</string>\n<key>CFBundleShortVersionString</key><string>$(VERSION)</string>\n<key>CFBundleVersion</key><string>$(VERSION)</string>\n<key>LSMinimumSystemVersion</key><string>11.0</string>\n<key>LSApplicationCategoryType</key><string>public.app-category.simulation-games</string>\n<key>NSHighResolutionCapable</key><true/>\n</dict></plist>\n' > $(MACAPP)/Contents/Info.plist
 	codesign --force --deep --sign - $(MACAPP)
 	cd build/mac && rm -f CrumpleZone-mac.zip && ditto -c -k --keepParent CrumpleZone.app CrumpleZone-mac.zip
+
+# DMG contains the signed app and an Applications shortcut for drag-and-drop installation.
+mac-dmg: mac
+	rm -rf build/mac/dmg-root && mkdir -p build/mac/dmg-root
+	ditto $(MACAPP) build/mac/dmg-root/CrumpleZone.app
+	ln -s /Applications build/mac/dmg-root/Applications
+	cp README.md build/mac/dmg-root/README.md
+	hdiutil create -ov -volname "Crumple Zone $(VERSION)" -srcfolder build/mac/dmg-root -format UDZO build/mac/CrumpleZone-mac.dmg
+	hdiutil verify build/mac/CrumpleZone-mac.dmg
 
 # Native macOS regression executables, using the same universal release flags.
 build/mac/bench_sim: build/mac/obj/tools/bench_sim.o $(patsubst %.cpp,build/mac/obj/%.o,$(PHYS))
@@ -179,4 +192,4 @@ run: crumplezone
 clean:
 	rm -rf build crumplezone
 
-.PHONY: windows windows-installer mac deb all test run clean bake
+.PHONY: windows windows-installer mac mac-dmg deb all test run clean bake

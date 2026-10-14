@@ -1,5 +1,5 @@
 // Vehicle tools: what to call each vehicle, taking vehicles away, and the click popup that
-// sends them places. No graphics in here (the tests link it); src/vtoolsdraw.cpp draws it.
+// sends them places. No graphics in here; the tests exercise the command model.
 //
 //  Names     Every vehicle gets a short unique label that follows it for the whole session:
 //            "BRONCO 2 (RED)" (the number counts the vehicles of that model, the colour is

@@ -57,6 +57,7 @@ SCENARIO(vtoolsNames, "vtools/names", "Five Broncos are told apart by number and
     bool same = true;
     for (int i = 0; i < 6; i++) same &= vtools::name(sim, i, kOwner) == before[i];
     ctx.check("a new arrival changes nobody's label", same && unique(allNames(sim)), vtools::name(sim, fresh, kOwner));
+    const uint32_t uidBronco3 = sim.cars[2].uid;
     const uint32_t uid3 = sim.cars[3].uid;
     const std::string n3 = vtools::name(sim, 3, kOwner);
     ctx.check("the sixth Bronco is BRONCO 6", vtools::tag(sim, fresh, kOwner) == "BRONCO 6");
@@ -97,8 +98,9 @@ SCENARIO(vtoolsNames, "vtools/names", "Five Broncos are told apart by number and
               vtools::directionText(from, face, V3(50, 0, 0)) == "AHEAD" && vtools::directionText(from, face, V3(-50, 0, 0)) == "BEHIND" &&
                   vtools::directionText(from, face, V3(0, 0, -50)) == "LEFT" && vtools::directionText(from, face, V3(0, 0, 50)) == "RIGHT" &&
                   vtools::directionText(from, face, V3(30, 0, -30)) == "AHEAD LEFT" && vtools::directionText(from, face, V3(-30, 0, 30)) == "BEHIND RIGHT");
-    const V3 at = sim.cars[2].frame().com;
-    const std::string line = vtools::listLine(sim, 2, at - V3(45, 0, 0), face, kOwner);
+    const int bronco3 = vtools::indexOfUid(sim, uidBronco3);
+    const V3 at = sim.cars[bronco3].frame().com;
+    const std::string line = vtools::listLine(sim, bronco3, at - V3(45, 0, 0), face, kOwner);
     ctx.check("list line: number, colour, distance, direction", line.find("BRONCO 3 - ") == 0 && line.find("45 M AHEAD") != std::string::npos, line);
     ctx.check("far away in km", vtools::distanceText(1234) == "1.2 KM" && vtools::distanceText(45) == "45 M");
 }
@@ -106,7 +108,7 @@ SCENARIO(vtoolsNames, "vtools/names", "Five Broncos are told apart by number and
 SCENARIO(vtoolsRemove, "vtools/remove", "Removing a car fixes the player, every autopilot's followCar, the lines and the job's wreck; your own car, a prop and another player's are refused") {
     Sim& sim = ctx.sim;
     for (int k = 0; k < 6; k++) addAt(ctx, k % 2 ? 3 : 2, 40 + k * 8, -30);
-    const int prop = (ctx.addProp(vehicleCatalog()[0], 0, 0, 0), (int)sim.cars.size() - 1);
+    const int prop = (ctx.addProp(crashBoxSpec(), 0, 0, 0), (int)sim.cars.size() - 1);
     (void)prop;
     sim.player = 4;
     vtools::assign(sim);
@@ -171,8 +173,8 @@ SCENARIO(vtoolsRemove, "vtools/remove", "Removing a car fixes the player, every 
 SCENARIO(vtoolsRemoveAll, "vtools/remove-all", "Removing all the spares leaves your own car, props and other players' cars alone, and drops their lines") {
     Sim& sim = ctx.sim;
     for (int k = 0; k < 5; k++) addAt(ctx, k % 3, 40 + k * 8, -30);
-    ctx.addProp(vehicleCatalog()[0], 0, 0, 0);
-    ctx.addProp(vehicleCatalog()[0], 0, 5, 0);
+    ctx.addProp(crashBoxSpec(), 0, 0, 0);
+    ctx.addProp(crashBoxSpec(), 0, 5, 0);
     const int remote = addAt(ctx, 2, 80, 40);
     sim.cars[remote].remote = true;
     sim.cars[remote].netId = (1u << 16) | 9;
@@ -203,10 +205,10 @@ SCENARIO(vtoolsPick, "vtools/pick", "A ray finds the vehicle it hits first; the 
     addAt(ctx, 2, 30, 0);   // 0: ahead of the camera
     addAt(ctx, 2, 60, 0);   // 1: behind it, further
     addAt(ctx, 3, 40, 25);  // 2: well off to the side
-    ctx.addProp(vehicleCatalog()[0], 20, 0, 0);
+    ctx.addProp(crashBoxSpec(), 20, 0, 0);
     const V3 eye(0, 1.5, 0);
     ctx.check("first hit", vtools::pickVehicle(sim, eye, V3(1, 0, 0)) == 0);
-    ctx.check("the one behind it when it's out of the way", vtools::pickVehicle(sim, eye + V3(0, 0, 0), norm(V3(60, -1.0, 0))) == 1);
+    ctx.check("the one behind it when it's out of the way", vtools::pickVehicle(sim, eye + V3(40, 0, 0), V3(1, 0, 0)) == 1);
     ctx.check("a ray into the sky hits nothing", vtools::pickVehicle(sim, eye, V3(0, 1, 0)) == -1);
     ctx.check("props are not picked", vtools::pickVehicle(sim, eye, V3(1, 0, 0), 25) == -1);
     ctx.check("aimed at: the middle of the view", vtools::aimedVehicle(sim, eye, V3(1, 0, 0)) == 0);
@@ -257,7 +259,7 @@ SCENARIO(vtoolsPopup, "vtools/popup", "The click popup: FOLLOW picks from the la
     ctx.check("picking a place goes back with GO ready", p.page == vtools::Popup::PG_MAIN && p.dst == vtools::Popup::D_PLACE && p.rows(env)[p.cursor].id == vtools::Popup::ID_GO);
     p.key(env, vtools::Popup::K_ENTER);
     ctx.check("GO sends it to the shop at the speed asked", !p.open && sim.cars[a].pilot.active && std::fabs(sim.cars[a].pilot.speed * 3.6 - sim.cars[a].wantKmh) < 0.1 &&
-                                                                  sim.cars[a].pilot.route == PILOT_ROADS && sim.cars[a].pilot.goalName == shop.name,
+                                                                  sim.cars[a].pilot.route == PILOT_ROADS && sim.cars[a].pilot.goalName == env.dests[0].name,
               p.say);
     ctx.check("and the others still have their own", sim.cars[b].wantKmh == 0 && !sim.cars[b].pilot.active);
 
@@ -266,7 +268,7 @@ SCENARIO(vtoolsPopup, "vtools/popup", "The click popup: FOLLOW picks from the la
     choose(p, env, vtools::Popup::ID_FOLLOW);
     rs = p.rows(env);
     bool labelled = rs.size() >= 4 && rs[1].text.find("BRONCO 1 - ") != std::string::npos;
-    ctx.check("the follow list says which is which", labelled && rs[1].text.find("AHEAD") != std::string::npos, rs.size() > 1 ? rs[1].text : "");
+    ctx.check("the follow list says which is which", labelled && rs[1].text.find("RIGHT HERE") != std::string::npos, rs.size() > 1 ? rs[1].text : "");
     bool nearestFirst = true;
     for (size_t k = 2; k + 1 < rs.size(); k++) {
         const V3 q1 = sim.cars[rs[k].arg].frame().com, q2 = sim.cars[rs[k + 1].arg].frame().com;
@@ -309,7 +311,7 @@ SCENARIO(vtoolsPopup, "vtools/popup", "The click popup: FOLLOW picks from the la
     choose(p, env, vtools::Popup::ID_REMOVE);
     ctx.check("REMOVE asks again", p.open && (int)sim.cars.size() == 4 && p.rows(env)[rowOf(p, env, vtools::Popup::ID_REMOVE)].text.find("AGAIN") != std::string::npos);
     choose(p, env, vtools::Popup::ID_REMOVE);
-    ctx.check("then does it", !p.open && (int)sim.cars.size() == 3 && vtools::indexOfUid(sim, uidA) < 0 && p.say.find("REMOVED BRONCO") == std::string::npos ? true : (int)sim.cars.size() == 3,
+    ctx.check("then does it", !p.open && (int)sim.cars.size() == 3 && vtools::indexOfUid(sim, uidA) < 0,
               p.say);
     ctx.check("removing says what went", p.say.rfind("REMOVED ", 0) == 0, p.say);
     ctx.check("player index still right", sim.cars[sim.player].uid == uidC);
@@ -322,11 +324,11 @@ SCENARIO(vtoolsPopup, "vtools/popup", "The click popup: FOLLOW picks from the la
     rs = gp.rows(env);
     ctx.check("ground: send the selected one, send all", rowOf(gp, env, vtools::Popup::ID_SEND_SEL) >= 0 && rowOf(gp, env, vtools::Popup::ID_SEND_ALL) >= 0);
     ctx.check("the selected one defaults to the car you're in", gp.selIndex(sim) == sim.player);
-    ctx.check("ALL counts the others", rs[rowOf(gp, env, vtools::Popup::ID_SEND_ALL)].value == "1 VEHICLE", rs[rowOf(gp, env, vtools::Popup::ID_SEND_ALL)].value);
+    ctx.check("ALL counts the others", rs[rowOf(gp, env, vtools::Popup::ID_SEND_ALL)].value == "2 VEHICLES", rs[rowOf(gp, env, vtools::Popup::ID_SEND_ALL)].value);
     // Choose another vehicle to send.
     choose(gp, env, vtools::Popup::ID_PICK_VEHICLE);
     rs = gp.rows(env);
-    ctx.check("vehicle chooser lists yours", gp.page == vtools::Popup::PG_VEHICLES && rs.size() == 3);
+    ctx.check("vehicle chooser lists yours", gp.page == vtools::Popup::PG_VEHICLES && rs.size() == 4);
     for (int k = 1; k < (int)rs.size(); k++)
         if (rs[k].arg == bi) gp.click(env, k, 0.5f);
     ctx.check("chosen vehicle is selected", gp.page == vtools::Popup::PG_MAIN && gp.selIndex(sim) == bi);

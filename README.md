@@ -47,7 +47,7 @@ Download from the [releases page](https://github.com/Benbone21/crumplezone/relea
 
 | File | Platform | How to run |
 |---|---|---|
-| `CrumpleZone-<version>-mac.zip` | macOS 11+, Apple silicon and Intel | Unzip and open **CrumpleZone.app**. It isn't notarized, so the first time right-click it and choose **Open** (or run `xattr -dr com.apple.quarantine CrumpleZone.app`). |
+| `CrumpleZone-<version>-mac.dmg` | macOS 11+, Apple silicon and Intel | Open the DMG, drag **CrumpleZone.app** to **Applications**, then open it. It isn't notarized, so the first time right-click it and choose **Open** (or run `xattr -dr com.apple.quarantine CrumpleZone.app`). |
 | `CrumpleZone-<version>-windows-setup.exe` | Windows 10/11, 64-bit | Run it to install (no admin needed; Start menu and desktop shortcuts). Unsigned: Windows may say "unknown publisher" (More info > Run anyway). `make windows-installer` builds it (needs `nsis`). |
 | `CrumpleZone-<version>-linux.deb` | Debian 13+ / Ubuntu 24.04+, amd64 | `sudo apt install ./CrumpleZone-<version>-linux.deb`, then run `crumplezone` or pick Crumple Zone from the games menu. It installs to `/opt/crumplezone`. |
 
@@ -65,7 +65,7 @@ Set **PHYSICS THREADS** in **Esc → Settings** to AUTO or any count up to all l
 
 ## macOS
 
-`make mac` (on a Mac with the Xcode command line tools) builds a universal `build/mac/CrumpleZone.app` (arm64 + x86_64, macOS 11+) and `build/mac/CrumpleZone-mac.zip`. It needs the official SDL2 macOS framework: copy `SDL2.framework` from the `SDL2-2.30.x.dmg` on SDL's releases page into `third_party/sdl2-mac/`. The app is ad-hoc signed, not notarized. Settings live in `~/.config/crumplezone`, as on Linux.
+`make mac` (on a Mac with the Xcode command line tools) builds a universal `build/mac/CrumpleZone.app` (arm64 + x86_64, macOS 11+) and `build/mac/CrumpleZone-mac.zip`. `make mac-dmg` also builds `build/mac/CrumpleZone-mac.dmg` with an Applications shortcut. It needs the official SDL2 macOS framework: copy `SDL2.framework` from the `SDL2-2.30.x.dmg` on SDL's releases page into `third_party/sdl2-mac/`. The app is ad-hoc signed, not notarized. Settings live in `~/.config/crumplezone`, as on Linux.
 
 ## Audio
 
