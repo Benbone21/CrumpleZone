@@ -136,7 +136,14 @@ Without `--time`, captures start at 10:00 with the clock running.
 ## Open work
 
 - **Physics improvements (branch `wip/field-repair`, active):** See `docs/beamng-implementation-plan.md` for detailed analysis of BeamNG.drive's physics approach and specific implementation recommendations. Focus areas: velocity-dependent suspension damping, progressive damage (separate yield/break thresholds), slip angle tire curves, engine torque curves, Ackerman steering. Claude is coordinating this work; Codex should implement as directed.
+  - **Phase 1 (quick wins):** Velocity-dependent suspension damping, progressive bump stops, speed-sensitive downforce, tune spring rates per vehicle
+  - **Phase 2 (damage model):** Separate yield/break thresholds, damage zones, mesh deformation
+  - **Phase 3 (tires):** Slip angle curves, load sensitivity, tire self-collision
 - **UI organization and usability (branch `wip/field-repair`, planned):** Review menu structure, improve navigation flow, add visual hierarchy. Codex should focus on this while Claude handles physics.
+  - Audit current menu structure and identify pain points
+  - Improve vehicle selection screen layout
+  - Add tooltips and contextual help
+  - Streamline settings navigation
 - **Visual polish:** the five vehicles are recognisable, but they're built on a coarse lattice. Shapes are rough at the nose, the Civic's hatch and the Jesko's canopy.
 - **Sound mix:** the engine voices haven't been heard on real speakers yet, only checked offline. Balance the volume and turbo/blower levels per car once someone listens.
   - To check offline, `build/review/claude/audiotest.cpp` renders each voice to WAV and spectrogram images.
