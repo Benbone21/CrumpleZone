@@ -1,0 +1,110 @@
+name: recover verified release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Previously tested release tag
+        required: true
+      verified_run:
+        description: Release run with passing native regression and packaged-app checks
+        required: true
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  mac:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+      - name: Require successful application verification for this exact commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERIFIED_RUN: ${{ inputs.verified_run }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess
+          tag, run = os.environ['RELEASE_TAG'], os.environ['VERIFIED_RUN']
+          if not re.fullmatch(r'v\d+\.\d+\.\d+', tag) or not run.isdigit():
+              raise SystemExit('Expected a version tag and numeric workflow run')
+          result = json.loads(subprocess.check_output(['gh', 'run', 'view', run, '--json', 'headSha,jobs,workflowName'], text=True))
+          commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          if result['headSha'] != commit or result['workflowName'] != 'release':
+              raise SystemExit('Verification run does not match the checked-out release source')
+          jobs = {job['name']: job for job in result['jobs']}
+          for name in ('linux', 'windows', 'windows-cpu'):
+              if jobs[name]['conclusion'] != 'success':
+                  raise SystemExit('Required original job did not pass: ' + name)
+          steps = {step['name']: step['conclusion'] for step in jobs['mac']['steps']}
+          for name in ('Build the app', 'Native macOS regression checks', 'Packaged app smoke test'):
+              if steps.get(name) != 'success':
+                  raise SystemExit('Required original Mac check did not pass: ' + name)
+          print('Verified exact source commit and all original application checks:', commit)
+          PY
+      - name: Official universal SDL2 framework
+        run: |
+          curl -fsSL -o sdl.dmg https://github.com/libsdl-org/SDL/releases/download/release-2.30.9/SDL2-2.30.9.dmg
+          hdiutil attach -quiet -nobrowse -mountpoint /tmp/sdl sdl.dmg
+          mkdir -p third_party/sdl2-mac
+          cp -R /tmp/sdl/SDL2.framework third_party/sdl2-mac/
+          hdiutil detach -quiet /tmp/sdl
+      - name: Rebuild and verify the release DMG
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          V="${RELEASE_TAG#v}"
+          make -j4 mac-dmg VERSION="$V"
+          mkdir -p "$RUNNER_TEMP/crumplezone-dmg"
+          hdiutil attach -quiet -readonly -nobrowse -mountpoint "$RUNNER_TEMP/crumplezone-dmg" build/mac/CrumpleZone-mac.dmg
+          trap 'hdiutil detach -quiet "$RUNNER_TEMP/crumplezone-dmg"' EXIT
+          test -d "$RUNNER_TEMP/crumplezone-dmg/CrumpleZone.app"
+          test -L "$RUNNER_TEMP/crumplezone-dmg/Applications"
+          codesign --verify --deep --strict "$RUNNER_TEMP/crumplezone-dmg/CrumpleZone.app"
+          lipo "$RUNNER_TEMP/crumplezone-dmg/CrumpleZone.app/Contents/MacOS/crumplezone" -verify_arch arm64 x86_64
+          mkdir -p out
+          cp build/mac/CrumpleZone-mac.dmg "out/CrumpleZone-${V}-mac.dmg"
+          cp build/mac/CrumpleZone-mac.zip "out/CrumpleZone-${V}-mac.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac
+          path: out/*
+
+  publish:
+    needs: mac
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux
+          run-id: ${{ inputs.verified_run }}
+          github-token: ${{ github.token }}
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows
+          run-id: ${{ inputs.verified_run }}
+          github-token: ${{ github.token }}
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: mac
+          path: dist
+      - name: Publish verified installers and checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          V="${RELEASE_TAG#v}"
+          files=("CrumpleZone-${V}-windows-setup.exe" "CrumpleZone-${V}-linux.deb" "CrumpleZone-${V}-mac.dmg" "CrumpleZone-${V}-mac.zip")
+          cd dist
+          for file in "${files[@]}"; do test -s "$file"; done
+          sha256sum "${files[@]}" > SHA256SUMS
+          gh release create "$RELEASE_TAG" --verify-tag --title "Crumple Zone ${V}" --notes-file "../docs/releases/${RELEASE_TAG}.md" "${files[@]}" SHA256SUMS

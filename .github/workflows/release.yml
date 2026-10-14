@@ -166,7 +166,7 @@ jobs:
           test -d "$RUNNER_TEMP/crumplezone-dmg/CrumpleZone.app"
           test -L "$RUNNER_TEMP/crumplezone-dmg/Applications"
           codesign --verify --deep --strict "$RUNNER_TEMP/crumplezone-dmg/CrumpleZone.app"
-          lipo -verify_arch arm64 x86_64 "$RUNNER_TEMP/crumplezone-dmg/CrumpleZone.app/Contents/MacOS/crumplezone"
+          lipo "$RUNNER_TEMP/crumplezone-dmg/CrumpleZone.app/Contents/MacOS/crumplezone" -verify_arch arm64 x86_64
       - uses: actions/upload-artifact@v4
         with: { name: mac, path: out/* }
       - uses: actions/upload-artifact@v4
