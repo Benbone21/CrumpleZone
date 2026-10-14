@@ -399,7 +399,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         bronco.bodyStiffness = 1.2;
         bronco.frameStiffness = 0.30;  // ladder frame: twists more than a unibody
         bronco.bodyStrength = 1.0;     // high-strength steel body
-        bronco.frameStrength = 2.0;
+        bronco.frameStrength = 2.5;    // beefed up for offroad abuse
         // Fully boxed ladder frame, seven crossmembers; rails up to 9.06 x 3.58 in (Ford
         // spec; 0.20 m is the average depth along it). Rail spacing and mass: estimates.
         bronco.railSpacing = 1.00;
@@ -451,7 +451,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         // ~1,200 MPa ultimate shear (estimate: tau * pi d^3 / 16). The IFS CVs take ~7 kN*m,
         // less at full lock. In 4L first the engine alone can put ~33 kN*m into the axles, so
         // a spinning wheel landing, or a locker binding at full lock, can snap one.
-        bronco.shaftLimit = 11000;
+        bronco.shaftLimit = 13000;    // beefier axles for offroad abuse
         bronco.lowRange = 2.72;
         bronco.brakeFront = 3800;  // 311 mm vented
         bronco.brakeRear = 2800;   // 308 mm vented
@@ -546,7 +546,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         runner.bodyStiffness = 1.2;
         runner.frameStiffness = 0.06;  // its thinner rails (below) bend more, and its open C-channel tail twists
         runner.bodyStrength = 1.0;   // thick 90s sheet metal
-        runner.frameStrength = 2.0;
+        runner.frameStrength = 2.5;  // beefed up for offroad abuse
         runner.panelStrength = 1.6;
         // Boxed ladder frame (C-channel at the tail), ~1/8 in wall, ~2.75 in wide rails;
         // 36.75 in outside at the hitch, so ~0.86 m between the rails' centres there (ESTIMATE:
@@ -584,6 +584,9 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         runner.bumpRear = 0.11, runner.droopRear = 0.14;
         runner.swayDisconnect = 2;  // quick-disconnect end links: pull the pins, stopped
         runner.tirePsi = 35;
+        runner.wheelLoss = true;
+        runner.lugShear = 100000;      // heavy-duty studs on the 4Runner
+        runner.beadlock = false;
         runner.tireType = TIRE_ALL_TERRAIN;
         runner.tireGrip = 0.95;       // KO2: good on the brakes, soft-blocked in corners
         runner.lateralGrip = 0.74;
@@ -592,7 +595,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         runner.lockerRear = true;          // factory rear e-locker option
         runner.frontLockerLowOnly = false;
         runner.rearLockerLowOnly = true;   // Toyota's e-locker only engages in 4L
-        runner.shaftLimit = 9000;          // 8 in rear; the IFS CVs (~5.9 kN*m) are the weak link on 35s
+        runner.shaftLimit = 10000;         // beefed up for offroad abuse
         runner.lowRange = 2.566;
         // 319 mm vented discs, 4-piston calipers: two ~43 mm pistons a side, pads (mu ~0.4) at
         // ~0.13 m, ~30 N*m per bar; a panic stop puts ~140 bar in (ESTIMATES): ~4.2 kN*m. That
@@ -997,7 +1000,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         tacoma.turboLag = 0;
         tacoma.bodyStiffness = 1.15;
         tacoma.bodyStrength = 1.0;
-        tacoma.frameStrength = 2.0;
+        tacoma.frameStrength = 2.5;    // beefed up for offroad abuse
         tacoma.panelStrength = 1.4;
         tacoma.pinStrength = 1.8;
         // Hybrid frame: boxed ahead of the cab, C-channel under the bed, ~1/8 in wall,
@@ -1040,6 +1043,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         tacoma.bumpRear = 0.10, tacoma.droopRear = 0.14;
         tacoma.swayDisconnect = 0;
         tacoma.tirePsi = 30;
+        tacoma.wheelLoss = true;
         tacoma.spareFlat = true;   // full-size, winched up under the bed
         tacoma.lugShear = 110000;
         tacoma.tireType = TIRE_ALL_TERRAIN;
@@ -1051,7 +1055,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         tacoma.lockerRear = true;          // electric rear locker (TRD Off-Road)
         tacoma.frontLockerLowOnly = false;
         tacoma.rearLockerLowOnly = true;   // Toyota's e-locker only engages in 4L
-        tacoma.shaftLimit = 9500;          // 34-spline 8.75 in rear shafts; the IFS CVs are the weak link
+        tacoma.shaftLimit = 11000;         // beefed up for offroad abuse
         tacoma.lowRange = 2.566;
         tacoma.brakeFront = 3500;  // 319 mm vented discs
         tacoma.brakeRear = 1800;   // 10 in drums

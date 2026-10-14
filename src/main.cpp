@@ -1942,6 +1942,7 @@ int main(int argc, char** argv) {
     };
     auto getIn = [&]() {
         if (walker.carrying) Interact::drop(sim, walker, V3(std::cos(walker.yaw), 0, -std::sin(walker.yaw)));  // (whisked away: it's left there)
+        else if (walker.holdingJack) Interact::dropJack(sim, walker);  // (put the jack down)
         const int k = walker.carToEnter(sim);
         if (k < 0) {
             hud.toast("WALK UP TO A TRUCK TO GET IN");
@@ -2509,7 +2510,10 @@ int main(int argc, char** argv) {
                             break;
                         }
                         case SC_G:
-                            if (walker.active && walker.carrying) Interact::drop(sim, walker, lastView.target - lastView.eye);  // (on foot: put down what you carry)
+                            if (walker.active) {
+                                if (walker.carrying) Interact::drop(sim, walker, lastView.target - lastView.eye);  // (on foot: put down what you carry)
+                                else if (walker.holdingJack) Interact::dropJack(sim, walker);  // (put the jack down)
+                            }
                             else openGarage();
                             break;
                         case SC_E:
@@ -2865,7 +2869,10 @@ int main(int argc, char** argv) {
                     const bool holdE = (!menu.open && ks[SC_E]) || (padCtx == pad::Mode::Drive && padLogic.in.interact);
                     const std::string said = interact.update(sim, walker, lastView.eye, lastView.target - lastView.eye, holdE, dt);
                     if (!said.empty()) hud.toast(said);
-                    if (padCtx == pad::Mode::Drive && padLogic.in.drop) Interact::drop(sim, walker, lastView.target - lastView.eye);
+                    if (padCtx == pad::Mode::Drive && padLogic.in.drop) {
+                        if (walker.carrying) Interact::drop(sim, walker, lastView.target - lastView.eye);
+                        else if (walker.holdingJack) Interact::dropJack(sim, walker);
+                    }
                 }
                 up = down = left = right = false;
                 hb = true;

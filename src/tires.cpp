@@ -53,6 +53,15 @@ V3 Car::spareAt() const {
     return p;
 }
 
+void Car::setJack(bool has) {
+    hasJack = has;
+    if (!has) {
+        jackPlaced = false;
+        jackWheel = -1;
+        jackHeight = 0;
+    }
+}
+
 V3 Car::spareAxis() const {
     const Frame f = frame();
     return spec->spareFlat ? f.up : -f.fwd;
@@ -173,6 +182,7 @@ bool Sim::fitWheel(int ci, int wi, const WheelItem& it) {
     wh.sink = wh.clog = 0;
     wh.stickX = wh.stickY = 0;
     wh.studLoad = wh.beadLoad = 0;
+    wh.poppedAnim = 0;
     // It's on the jack while the wheel goes on: let it down onto the new tire rather than
     // have it spring out of the ground.
     const V3 hub = (c.nodes[wh.inner].p + c.nodes[wh.outer].p) * 0.5;

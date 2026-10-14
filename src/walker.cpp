@@ -78,6 +78,7 @@ void Walker::step(const World& w, const Sim& sim, double dt, double fwd, double 
     const bool swimming = inWater > 1.2;
     if (carrying) run = jump = false;  // (a 40 kg wheel in your arms)
     double speed = carrying ? 1.2 : run ? 4.6 : 1.7;
+    if (holdingJack && !carrying) speed *= 0.9;  // (the jack is heavy to carry)
     if (inWater > 0.3) speed *= clampd(1.0 - (inWater - 0.3) * 0.5, 0.35, 1.0);  // wading
     if (swimming) speed = 1.0;
     // Soft ground drags at the boots.

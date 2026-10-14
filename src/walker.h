@@ -17,6 +17,8 @@ struct Walker {
     // A wheel in your arms (interact.h): slow going, no running or jumping, and no getting
     // into a vehicle until it's put down or stowed.
     std::optional<WheelItem> carrying;
+    // A tool in your hand (the jack): placed and used to lift a vehicle corner.
+    bool holdingJack = false;
 
     // Steps (dt, ~60 Hz): `fwd`/`side` (-1..1) move relative to `viewYaw` (the camera's
     // heading), `run` faster, `jump` once when grounded.

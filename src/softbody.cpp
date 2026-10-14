@@ -1582,6 +1582,10 @@ void Car::wheelStep(double h, const World& w) {
         }
         wh.shaftTorque = Ts;
         wh.omega += (Ts - Fx * R + wh.rubTorque) / wh.I * h;
+        // Deflation animation: when the tire pops, animate it squashing to the rim over ~0.5s.
+        if (wh.popped && wh.poppedAnim < 1.0) {
+            wh.poppedAnim = std::min(1.0, wh.poppedAnim + h / 0.5);
+        }
         // Axle shaft and CV: what the engine winds into it, plus whatever a locker or the
         // locked center shoves through it to keep the wheels together. Full throttle in low
         // range with a wheel in the air and the axle locked doubles the load on the other

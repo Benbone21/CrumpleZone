@@ -591,6 +591,10 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 hasSpare = true;
                 spare.mass = it.kg;
             }
+            // The jack: a tool the player can use to lift a corner off the ground.
+            if (nm.find("jack") != std::string::npos) {
+                setJack(true);
+            }
         }
     }
 
@@ -1624,7 +1628,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
             // Crumple zones: the frame horns up front, the last of the tail (the rails
             // over and just behind the rear axle carry the hitch and spare, so they count).
             if (std::max(pa.x, pb.x) > xf + 0.2 || std::min(pa.x, pb.x) < xr - 0.8) continue;
-            if (b.type == BEAM_FRAME) b.yieldStrain *= vs.frameStrength;
+            if (b.type == BEAM_FRAME) { b.yieldStrain *= vs.frameStrength; b.breakStrain *= vs.frameStrength; }
             if (pa.y > yTop || pb.y > yTop) continue;
             // Plates and sliders take hits from below and the side (vertical and crosswise
             // members), not the lengthwise crush of a frontal impact.
@@ -1660,6 +1664,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
             }
             if (std::max(pa.x, pb.x) > xf + 0.2 || std::min(pa.x, pb.x) < xr - 0.8) continue;
             b.yieldStrain *= vs.frameStrength;
+            b.breakStrain *= vs.frameStrength;
         }
         // Mounts: pairs along the rails, from the cowl (just behind the front tires: not in
         // the wheel well, where a tire forced up would find a mount) back past the rear axle. Each
@@ -1691,6 +1696,14 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                         bodyMountBeams.push_back(bi);
                     }
             }
+        }
+    }
+    // Offroad vehicles have beefier suspension arms that resist bending and breaking.
+    if (vs.frameStrength > 1.0) {
+        for (Beam& b : beams) {
+            if (b.type != BEAM_ARM) continue;
+            b.yieldStrain *= vs.frameStrength;
+            b.breakStrain *= vs.frameStrength;
         }
     }
 

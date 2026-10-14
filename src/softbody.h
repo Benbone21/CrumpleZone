@@ -138,6 +138,7 @@ struct Wheel {
     Surface surface = SURF_PAVED;
     bool detached = false;
     bool popped = false;    // blown tire: runs on the rim
+    double poppedAnim = 0;  // deflation animation: 0 = inflated, 1 = fully flat
     bool shaftBroken = false;  // its axle shaft / CV snapped: the hub freewheels
     // The wheel bolted on (tires.h): what it is, and whether it's there at all. Off (its
     // studs sheared, or taken off on the trail), the corner rolls on its bare hub; with
@@ -373,6 +374,12 @@ public:
     double repairTime = 0;      // s spent waiting on the pad
     int fieldHelper = -1;       // vehicle parked alongside doing trail repairs (-1 none)
     double fieldTime = 0;       // s of trail repairs done
+    // The jack: a tool the player can place under a wheel to lift it off the ground.
+    bool hasJack = false;       // the "jack and recovery straps" mod
+    bool jackPlaced = false;    // the jack is currently under the car
+    int jackWheel = -1;         // which wheel the jack is under
+    double jackHeight = 0;      // how far up the jack has lifted (m)
+    void setJack(bool has);     // called when the jack mod is fitted
     // Multiplayer: a remote car is another player's, moved by the network (no physics
     // here, it just pushes back). netId is the same on every machine.
     bool remote = false;
@@ -458,6 +465,22 @@ public:
     bool needsFieldRepair() const;
     double fieldRepairSeconds() const;
     void fieldRepair();
+
+    // Repair kit: parts carried for trail-side field repairs. Consumed when fixing damage.
+    struct RepairKit {
+        int spareTires = 1;       // spare tire and wheel assemblies
+        int cvJoints = 1;         // axle shaft / CV joint
+        int tieRods = 1;          // tie rod or steering link
+        int suspensionLinks = 1;  // control arm or suspension link
+        int oilQuarts = 4;        // engine oil (quarts)
+        int brakeFluid = 1;       // brake fluid (quarts)
+        int tireValves = 4;       // tire valve cores
+        int towStraps = 1;        // tow/recovery straps
+        int fuelFilter = 1;       // fuel filter
+        bool hasSpareParts() const { return spareTires > 0 || cvJoints > 0 || tieRods > 0 || suspensionLinks > 0; }
+        bool isEmpty() const { return !hasSpareParts() && oilQuarts == 0 && brakeFluid == 0 && tireValves == 0 && towStraps == 0 && fuelFilter == 0; }
+    };
+    RepairKit repairKit;
 
 private:
     std::vector<int> grpFront, grpRear, grpLeft, grpRight;

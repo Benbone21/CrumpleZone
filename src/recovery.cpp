@@ -192,23 +192,63 @@ double Car::fieldRepairSeconds() const {
 }
 
 void Car::fieldRepair() {
+    // Consume parts from the repair kit. If a part is missing, the damage stays.
     for (Wheel& wh : wheels) {
         if (wh.detached) continue;
-        wh.popped = false;      // the spare goes on
-        wh.shaftBroken = false; // a spare shaft or CV
-        wh.tieOffset = 0;       // straightened (or a spare tie rod)
+        if (wh.popped) {
+            if (repairKit.spareTires > 0) {
+                wh.popped = false;
+                repairKit.spareTires--;
+            }
+        }
+        if (wh.shaftBroken) {
+            if (repairKit.cvJoints > 0) {
+                wh.shaftBroken = false;
+                repairKit.cvJoints--;
+            }
+        }
+        if (std::fabs(wh.tieOffset) > 0.002) {
+            if (repairKit.tieRods > 0) {
+                wh.tieOffset = 0;
+                repairKit.tieRods--;
+            }
+        }
         wh.shaftLoad = 0;
     }
     // Bent links bolted straight; torn drive shafts replaced if the ends are still there.
     for (Beam& b : beams) {
         if (b.broken && b.type == BEAM_SHAFT) {
             const double L = len(nodes[b.b].p - nodes[b.a].p);
-            if (L < b.Lorig * 1.2 && L > b.Lorig * 0.6) b.broken = false;
+            if (L < b.Lorig * 1.2 && L > b.Lorig * 0.6) {
+                if (repairKit.cvJoints > 0) {
+                    b.broken = false;
+                    repairKit.cvJoints--;
+                }
+            }
             continue;
         }
-        if (!b.broken && (b.type == BEAM_ARM || b.type == BEAM_TIEROD)) b.L0 = b.Lorig;
+        if (!b.broken && (b.type == BEAM_ARM || b.type == BEAM_TIEROD) && std::fabs(b.L0 - b.Lorig) > 0.005 * b.Lorig) {
+            if (b.type == BEAM_ARM) {
+                if (repairKit.suspensionLinks > 0) {
+                    b.L0 = b.Lorig;
+                    repairKit.suspensionLinks--;
+                }
+            } else {
+                if (repairKit.tieRods > 0) {
+                    b.L0 = b.Lorig;
+                    repairKit.tieRods--;
+                }
+            }
+        }
     }
-    for (Axle& ax : axles) ax.arbBend = 0;  // bent sway bar swapped for the spare (or unbolted)
+    for (Axle& ax : axles) {
+        if (std::fabs(ax.arbBend) > 0.005) {
+            if (repairKit.suspensionLinks > 0) {
+                ax.arbBend = 0;
+                repairKit.suspensionLinks--;
+            }
+        }
+    }
     if (hydrolocked) {
         hydrolocked = false;
         engineDead = engineHealth < 0.12;
@@ -230,6 +270,8 @@ void Sim::repairCar(int i) {
     c.spawnPos = sp;
     c.spawnYaw = sy;
     c.handbrake = 1;
+    // Repair station replenishes the field kit
+    c.repairKit = Car::RepairKit();
 }
 
 int Sim::stationAt(const V3& p) const {
@@ -623,11 +665,26 @@ void Sim::updateTrail(double dt) {
             }
         }
         if (c.fieldHelper >= 0) {
+            // The helper vehicle's kit is used for the repairs
+            Car& helper = cars[c.fieldHelper];
+            if (!helper.repairKit.hasSpareParts()) {
+                c.fieldTime = 0;
+                if (i == player) events.push_back("HELPER TRUCK HAS NO SPARE PARTS LEFT");
+                continue;
+            }
             c.fieldTime += dt;
             if (c.fieldTime >= c.fieldRepairSeconds()) {
                 c.fieldRepair();
                 c.fieldTime = 0;
-                if (i == player) events.push_back(std::string("TRAIL REPAIRS DONE") + (c.needsRepair() ? " (BODYWORK STILL NEEDS A STATION)" : ""));
+                if (i == player) {
+                    if (c.needsFieldRepair()) {
+                        events.push_back("TRAIL REPAIRS DONE (SOME PARTS MISSING, DAMAGE REMAINS)");
+                    } else if (c.needsRepair()) {
+                        events.push_back("TRAIL REPAIRS DONE (BODYWORK STILL NEEDS A STATION)");
+                    } else {
+                        events.push_back("TRAIL REPAIRS DONE");
+                    }
+                }
             }
         } else {
             c.fieldTime = 0;

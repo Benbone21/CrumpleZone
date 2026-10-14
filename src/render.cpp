@@ -2431,13 +2431,25 @@ void Renderer::drawWheels(const Sim& sim, GLuint prog) {
                 uniformM4(prog, "uModel", wheelMatrix(car, wh, fr.up, true));
                 DrawArrays(GL_TRIANGLES, tireVertexCount[st], wheelVertexCount[st] - tireVertexCount[st]);
             } else if (wh.popped) {
-                uniformM4(prog, "uModel", wheelMatrix(car, wh, fr.up, true, (wh.rimR + 0.015) / wh.R));
+                // Smooth deflation animation: interpolate between inflated and flat
+                const double flatScale = (wh.rimR + 0.015) / wh.R;
+                double scale = (1.0 - wh.poppedAnim) * 1.0 + wh.poppedAnim * flatScale;
+                uniformM4(prog, "uModel", wheelMatrix(car, wh, fr.up, true, scale));
                 DrawArrays(GL_TRIANGLES, 0, tireVertexCount[st]);
                 uniformM4(prog, "uModel", wheelMatrix(car, wh, fr.up, true));
                 DrawArrays(GL_TRIANGLES, tireVertexCount[st], wheelVertexCount[st] - tireVertexCount[st]);
             } else {
+                // Pressure-based deflection: interpolate between full and flat based on pressure
+                const double fullPsi = car.spec->tirePsi;
+                const double minPsi = 12.0;
+                const double flatScale = (wh.rimR + 0.015) / wh.R;
+                double psiRatio = (car.tirePsi - minPsi) / (fullPsi - minPsi);
+                psiRatio = std::max(0.0, std::min(1.0, psiRatio));
+                double scale = psiRatio * 1.0 + (1.0 - psiRatio) * flatScale;
+                uniformM4(prog, "uModel", wheelMatrix(car, wh, fr.up, true, scale));
+                DrawArrays(GL_TRIANGLES, 0, tireVertexCount[st]);
                 uniformM4(prog, "uModel", wheelMatrix(car, wh, fr.up, true));
-                DrawArrays(GL_TRIANGLES, 0, wheelVertexCount[st]);
+                DrawArrays(GL_TRIANGLES, tireVertexCount[st], wheelVertexCount[st] - tireVertexCount[st]);
             }
             BindVertexArray(caliperVao);
             // (The off-road rim is smaller for its tire: its brake is too.)

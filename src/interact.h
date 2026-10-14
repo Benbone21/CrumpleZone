@@ -18,6 +18,11 @@ enum InteractKind {
     IA_FIT_WHEEL,     // the wheel you carry onto a bare hub
     IA_RESEAT_TIRE,   // the tire you carry back onto its rim
     IA_PICK_UP,       // a wheel lying about
+    IA_TAKE_JACK,     // take the jack from the car's bed
+    IA_PLACE_JACK,    // place the jack under the car near a wheel
+    IA_USE_JACK,      // operate the jack to lift the corner
+    IA_LOWER_JACK,    // lower the jack back down
+    IA_REMOVE_JACK,   // remove the jack after lowering
 };
 
 struct InteractOption {
@@ -42,4 +47,6 @@ struct Interact {
     std::string update(Sim& sim, Walker& wk, const V3& eye, const V3& look, bool holdE, double dt);
     // Puts down what you carry, stood on its tread in front of you (G). False if empty-handed.
     static bool drop(Sim& sim, Walker& wk, const V3& look);
+    // Drops the jack you're holding.
+    static bool dropJack(Sim& sim, Walker& wk);
 };
