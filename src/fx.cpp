@@ -407,7 +407,7 @@ void Effects::buildRutWalls(const Sim& sim, const V3& eye, std::vector<Vtx>& out
             V3 ax = norm(b.p - a.p);
             V3 n, g;
             double sink;
-            const double R = wh.rollR();
+            const double R = (wh.mounted && !wh.debeaded && !wh.popped) ? (wh.R - 0.03 * clampd((car.spec->tirePsi - car.tirePsi) / (car.spec->tirePsi - 12.0), 0.0, 1.0) * (wh.R - wh.rimR)) : wh.rollR();
             if (car.remote) {
                 Contact ct;
                 if (!sim.world.contact(c, R, &ax, wh.width * 0.5, ct) || surfaceInfo(ct.surface).sink <= 0) continue;
