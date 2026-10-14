@@ -208,6 +208,14 @@ public:
     Rock& addRock(double x, double z, const V3& radii, double top, uint32_t seed, float tint = 1);
     // Indices of poles whose cylinders may overlap the box [mn, mx] (appended to out).
     void polesNear(const V3& mn, const V3& mx, std::vector<int>& out) const;
+    // Every solid whose lookup cells touch the rectangle [x0, x1] x [z0, z1]: indices into
+    // poles, boxes, rocks and logs, each once. A superset (the lookup cells are coarse), found
+    // without walking the whole map; what the autopilot's sensors cast their rays against.
+    struct Near {
+        std::vector<int> poles, boxes, rocks, logs;
+        void clear() { poles.clear(), boxes.clear(), rocks.clear(), logs.clear(); }
+    };
+    void solidsNear(double x0, double z0, double x1, double z1, Near& out) const;
 
     explicit World(int map = MAP_PROVING_GROUND);
     double height(double x, double z) const;  // terrain only (baked grid, bilinear)

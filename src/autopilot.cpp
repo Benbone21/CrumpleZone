@@ -7,6 +7,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <queue>
+#include <chrono>
+struct PT{double gather=0,lines=0,rest=0,plan=0,drive=0;int n=0,plans=0;}; PT g_pt; 
+static double nowMs(){return std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count();}
+struct PTPrint{~PTPrint(){std::fprintf(stderr,"PT gather %.1f lines %.1f rest %.1f plan %.1f (%d plans) n=%d\n",g_pt.gather,g_pt.lines,g_pt.rest,g_pt.plan,g_pt.plans,g_pt.n);}} g_ptp;
 
 #include "pilotsense.h"
 #include "softbody.h"
@@ -157,6 +161,7 @@ double bestCap(const VehicleSpec& vs) {
 bool planRoute(const World& w, const VehicleSpec& vs, const V3& from, const V3& to, int route, const std::vector<V3>& avoid,
                std::vector<V3>& out, double capScale) {
     out.clear();
+    double TP=nowMs(); struct PS{double t;~PS(){g_pt.plan+=nowMs()-t;g_pt.plans++;}} ps{TP};
     const Grid& g = gridFor(w);
     const bool truck = vs.transfer != XFER_NONE;
     const Limits lim{truck ? 0.5 : 0.28, truck ? 0.45 : 0.26, truck};
@@ -633,7 +638,9 @@ void sense(Car& c, Autopilot& ap, const World& w, const std::vector<Car>* cars, 
     Q = nR ? Q / nR : fr.com - f * (b.wb * 0.5);
     Q.y = 0;
     const double H = clampd(8 + 1.2 * std::fabs(v), 9, 20);
+    double T0=nowMs();
     sc.gather(w, cars, &c, Q + f * (H * 0.5), H * 0.5 + b.front + 4);
+    g_pt.gather+=nowMs()-T0; T0=nowMs(); g_pt.n++;
     const Caps caps = capsFor(c, ap);
     const double kPrev = ap.onRoute ? 0 : ap.kappa;
     // The lines: the route itself, and every steering angle held for a third, two thirds
@@ -651,6 +658,7 @@ void sense(Car& c, Autopilot& ap, const World& w, const std::vector<Car>* cars, 
             lines.push_back(L);
         }
     for (Line& L : lines) tryLine(L, sc, c, ap, caps, Q, f, v, H, kPrev);
+    g_pt.lines+=nowMs()-T0;
     int best = 0;
     for (int k = 1; k < (int)lines.size(); k++)
         if (lines[k].cost < lines[best].cost) best = k;
