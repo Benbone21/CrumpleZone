@@ -88,7 +88,7 @@ jobs:
         shell: pwsh
         run: |
           .\cpu-tests\run_tests.exe --jobs 1 net/ engine/collision engine/physics-workers vtools/
-          if ($LASTEXITCODE -ne 0) { throw "Windows networking/physics regression checks failed" }
+          if ($LASTEXITCODE -ne 0) { throw "Windows networking/physics regression checks failed (exit $LASTEXITCODE)" }
           $env:SDL_AUDIODRIVER = 'dummy'
           $env:CZ_AUDIO_DEVICE_TEST = '1'
           .\cpu-tests\test_audio.exe
@@ -117,7 +117,10 @@ jobs:
           make -j4 build/mac/bench_sim build/mac/run_tests build/mac/test_audio build/mac/test_render
           ./build/mac/run_tests --jobs 1 net/ engine/collision engine/physics-workers vtools/
           SDL_AUDIODRIVER=dummy CZ_AUDIO_DEVICE_TEST=1 ./build/mac/test_audio
-          ./build/mac/test_render
+          python3 -u - <<'PY'
+          import subprocess
+          subprocess.run(['./build/mac/test_render'], check=True, timeout=120)
+          PY
           python3 - <<'PY'
           import re, subprocess
           for mode in ('separated', 'pileup'):

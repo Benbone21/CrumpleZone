@@ -12,8 +12,12 @@ and OpenCode's high-speed damping destabilized the Bronco/shaft-break workload. 
 `CZ_FREE_COILS=1` / `CZ_HIGH_SPEED_DAMPING=1` only for development comparisons until retuned.
 The vehicle command popup has a tested model but no new render/input adapter yet. The
 standalone autopilot performance targets remain unmet. Do not describe either roadmap
-as completed release work. GitHub push/publication is blocked by this environment's
-network access; native Windows/Mac CI must still run before a release is published.
+as completed release work. GitHub access was restored and all branches plus `v0.1.8`
+were pushed. All ten local networking checks now pass. Native Windows release checks
+pass, as do Mac networking and audio, but the Mac render test hangs. The release was
+stopped before publication; render diagnostics and a timeout are being added before
+the next release attempt. A duplicate Windows job exited after all scenarios passed;
+its isolated rerun is pending. See the release report for retained CI logs.
 
 
 **Engine recordings / release checkpoint (2026-10-13):** user requested committing/pushing all updates before continuing, then asked for a Windows release. Prepared `docs/releases/v0.1.6.md`; publishing requires pushing the updated `sync` and a new version tag. The Windows ZIP builds locally; the installer is built by release CI (local `makensis` is unavailable).

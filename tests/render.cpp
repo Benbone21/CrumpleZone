@@ -29,6 +29,8 @@ GLenum checkFramebuffer(GLenum target) {
 }
 
 int main() {
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+    std::puts("Render check: creating OpenGL context");
     if (SDL_Init(SDL_INIT_VIDEO) != 0) { std::puts(SDL_GetError()); return 1; }
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
@@ -45,6 +47,7 @@ int main() {
     try {
         if (!context) throw std::runtime_error(SDL_GetError());
         if (const char* missing = gl::load(SDL_GL_GetProcAddress)) throw std::runtime_error(missing);
+        std::printf("Render check: %s / %s\n", gl::GetString(GL_VENDOR), gl::GetString(GL_RENDERER));
         auto getError = reinterpret_cast<GLenum(*)()>(SDL_GL_GetProcAddress("glGetError"));
         attachment = reinterpret_cast<decltype(attachment)>(SDL_GL_GetProcAddress("glGetFramebufferAttachmentParameteriv"));
         if (!getError || !attachment) throw std::runtime_error("missing core GL test function");
@@ -95,7 +98,9 @@ int main() {
         sim.addCar(vehicleCatalog()[0], V3(-40, 0.05, -40), 0, V3(0.4, 0.5, 0.6));
         Renderer renderer;
         std::string error;
+        std::puts("Render check: initializing renderer");
         if (!renderer.init(sim.world, error)) throw std::runtime_error(error);
+        std::puts("Render check: renderer initialized");
         clean();
         // Exercise the actual menu through keyboard input, plus disk persistence.
         Settings settings;
@@ -120,6 +125,7 @@ int main() {
         menu.key(SC_RIGHT, settings);
         if (settings.physicsThreads != 0) throw std::runtime_error("menu cannot select automatic threads");
         menu.draw(renderer, settings, 960, 720, 0.1);
+        std::puts("Render check: drawing settings HUD");
         renderer.flushHud(960, 720);
         clean();
         std::puts("PASS physics threads menu: AUTO, all logical CPUs, saved and restored");
@@ -144,6 +150,7 @@ int main() {
         view.eye = V3(-46, 3, -46); view.target = V3(-40, 0.7, -40); view.up = V3(0, 1, 0);
         view.width = 160; view.height = 90;
         for (int quality = 0; quality < 4; quality++) {
+            std::printf("Render check: drawing quality %d\n", quality);
             applyPreset(renderer.settings, quality);
             renderer.drawScene(sim, view, DEBUG_OFF, nullptr);
             renderer.flushHud(view.width, view.height);

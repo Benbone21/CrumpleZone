@@ -50,11 +50,19 @@ still have unmet performance targets, as described above.
 
 ## Release state
 
-The Windows installer and Mac DMG are produced by the release workflow. Local Windows
-cross-compilation is available, but NSIS and a Mac SDK are unavailable here. GitHub
-networking is currently blocked, so remote refs and native CI results cannot yet be
-verified. The GitHub integration has been suggested as another publishing route and is
-not confirmed installed or connected.
+GitHub access was restored on 2026-10-14. A fresh fetch confirmed that every branch
+commit is merged into `main`; no open pull requests or uncommitted work remain.
+All branches and `v0.1.8` were pushed. A focused local networking recheck passes all
+ten scenarios, resolving the seven socket restrictions from the original full run.
+
+The [tagged workflow](https://github.com/Benbone21/CrumpleZone/actions/runs/38644019223)
+builds the Linux DEB, Windows installer and universal Mac app/DMG successfully. Native
+Windows passes all 19 selected scenarios, audio checks and serial/parallel fingerprints.
+Mac networking (19 scenarios) and audio pass in the duplicate branch workflow, but its
+render executable hangs. Publication was stopped; the next attempt adds immediate
+render diagnostics and a 120-second rendering timeout. The duplicate Windows job
+exited after printing 19 passing scenarios without its final summary; its isolated
+rerun is pending. Logs are retained under `build/review/0.1.8/github/`.
 
 Local logs are in `build/review/0.1.8/`. Prepared release packages are in
 `build/release-0.1.8/`. The earlier review is preserved in `docs/platform-verification.md`.
