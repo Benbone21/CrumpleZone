@@ -377,6 +377,13 @@ public:
     V3 hookRest[2];
 
     Autopilot pilot;  // drives to a destination (autopilot.h)
+    // ---- vehicle tools (vtools.h): this vehicle's own name and autopilot preferences ----
+    uint32_t uid = 0;         // stays with the vehicle for the whole session (the list and popup find it by this)
+    int labelNo = 0;          // "BRONCO 2": its number among the vehicles of that model (kept until the model changes)
+    int labelModel = -2;      // ... the model (and owner) the number was given for
+    double wantKmh = 0;       // speed it is asked to drive at (km/h; 0 = the settings' default)
+    int wantRoute = -1;       // route strictness (PilotRoute; -1 = the settings' default)
+    double followGap = 0;     // when following: how far behind the leader to aim, on top of the autopilot's own 12 m
 
     // AI driver (follows the loop road in its lane).
     bool ai = false;
@@ -527,7 +534,10 @@ public:
     void setWinch(int car, int dir);   // +1 reel in, -1 pay out, 0 hold
     int ropeOn(int car, int kind = -1) const;  // index of a line on that car (-1 none)
     void dropRopes(int car);
-    void carRemoved(int car);          // fixes up line ends after cars[car] is erased
+    void carRemoved(int car);          // call BEFORE erasing cars[car]: drops its lines, shifts the line ends and every autopilot's followCar
+    // Takes cars[i] out (a vehicle, not a prop, and not another player's) and fixes the player index. False if refused.
+    // Removing the car you are in switches to another one first.
+    bool removeCar(int i);
     // Per frame: tire pressure, sway bars, repair stations. Run by advance().
     void updateTrail(double dt);
     void repairCar(int car);

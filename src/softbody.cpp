@@ -2610,7 +2610,12 @@ void Sim::pilotStep(int i, double dt) {
             events.push_back("AUTOPILOT: LOST THE VEHICLE IT WAS FOLLOWING");
             return;
         }
-        const V3 g = cars[ap.followCar].frame().com;
+        V3 g = cars[ap.followCar].frame().com;
+        if (c.followGap > 0) {  // (vehicle tools: aim a way behind it, to follow at a distance)
+            const Frame lf = cars[ap.followCar].frame();
+            V3 d(lf.fwd.x, 0, lf.fwd.z);
+            if (len(d) > 0.1) g = g - norm(d) * c.followGap;
+        }
         ap.replanTime -= dt;
         if (ap.replanTime <= 0 && len(g - ap.goal) > 8) {
             ap.replanTime = 3;
@@ -2717,9 +2722,20 @@ bool Sim::spawnTraffic(const VehicleSpec& vs) {
 }
 
 void Sim::removePlayerCar() {
-    if (vehicleCount() <= 1) return;
-    carRemoved(player);
-    cars.erase(cars.begin() + player);
-    player = nextVehicle(player - 1 < 0 ? (int)cars.size() - 1 : player - 1);
+    removeCar(player);
+}
+
+bool Sim::removeCar(int i) {
+    if (i < 0 || i >= (int)cars.size() || cars[i].isProp() || cars[i].remote) return false;
+    int np = player;
+    if (i == player) {
+        np = nextVehicle(i);  // (only your own vehicles: never another player's)
+        if (np == i) return false;
+    }
+    carRemoved(i);
+    cars.erase(cars.begin() + i);
+    if (i == player) player = np > i ? np - 1 : np;
+    else if (player > i) player--;
     cars[player].wake();
+    return true;
 }
