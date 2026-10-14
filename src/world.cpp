@@ -891,6 +891,38 @@ void World::polesNear(const V3& mn, const V3& mx, std::vector<int>& out) const {
             }
 }
 
+void World::solidsNear(double x0, double z0, double x1, double z1, Near& out) const {
+    out.clear();
+    if (gridN == 0) return;
+    // Each object is in the lookup lists of every cell it reaches into, so one object turns up
+    // in several cells: a generation mark per object keeps the lists free of repeats.
+    static thread_local std::vector<uint32_t> markP, markB, markR, markL;
+    static thread_local uint32_t gen = 0;
+    if (markP.size() < poles.size()) markP.resize(poles.size(), 0);
+    if (markB.size() < boxes.size()) markB.resize(boxes.size(), 0);
+    if (markR.size() < rocks.size()) markR.resize(rocks.size(), 0);
+    if (markL.size() < logs.size()) markL.resize(logs.size(), 0);
+    if (++gen == 0) {
+        for (auto* m : {&markP, &markB, &markR, &markL}) std::fill(m->begin(), m->end(), 0u);
+        gen = 1;
+    }
+    for (int ix = cellOf(x0); ix <= cellOf(x1); ix++)
+        for (int iz = cellOf(z0); iz <= cellOf(z1); iz++) {
+            for (int pi : poleGrid[ix * gridN + iz])
+                if (markP[pi] != gen) markP[pi] = gen, out.poles.push_back(pi);
+            for (int bi : grid[ix * gridN + iz])
+                if (markB[bi] != gen) markB[bi] = gen, out.boxes.push_back(bi);
+        }
+    if (rockGrid.empty()) return;
+    for (int ix = rockCellOf(x0); ix <= rockCellOf(x1); ix++)
+        for (int iz = rockCellOf(z0); iz <= rockCellOf(z1); iz++) {
+            for (int ri : rockGrid[ix * rockN + iz])
+                if (markR[ri] != gen) markR[ri] = gen, out.rocks.push_back(ri);
+            for (int li : logGrid[ix * rockN + iz])
+                if (markL[li] != gen) markL[li] = gen, out.logs.push_back(li);
+        }
+}
+
 // ---- Editing ---------------------------------------------------------------------------
 
 int World::cellIndex(double x, double z) const {
