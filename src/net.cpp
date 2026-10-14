@@ -54,9 +54,19 @@ static int newSocket(int type) { return (int)socket(AF_INET, type, 0); }
 #include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0  // macOS uses the per-socket SO_NOSIGPIPE option instead.
+#endif
 static void closeSock(int fd) { ::close(fd); }
 static bool wouldBlock() { return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINPROGRESS; }
-static void nonBlocking(int fd) { fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK); }
+static void nonBlocking(int fd) {
+    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
+#ifdef SO_NOSIGPIPE
+    // A disconnected peer must return an error, including in tools without main's signal handler.
+    const int one = 1;
+    setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
+#endif
+}
 static int pollFds(pollfd* p, int n, int ms) { return poll(p, (nfds_t)n, ms); }
 static void netInit() {}
 static int newSocket(int type) { return socket(AF_INET, type, 0); }

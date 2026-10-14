@@ -27,6 +27,7 @@ enum : GLenum {
     GL_TEXTURE_2D = 0x0DE1, GL_TEXTURE_BORDER_COLOR = 0x1004,
     GL_UNSIGNED_BYTE = 0x1401, GL_UNSIGNED_INT = 0x1405, GL_FLOAT = 0x1406,
     GL_DEPTH_COMPONENT = 0x1902, GL_RED = 0x1903, GL_RGB = 0x1907,
+    GL_EXTENSIONS = 0x1F03, GL_NUM_EXTENSIONS = 0x821D,
     GL_VENDOR = 0x1F00, GL_RENDERER = 0x1F01, GL_VERSION = 0x1F02,
     GL_NEAREST = 0x2600, GL_LINEAR = 0x2601,
     GL_TEXTURE_MAG_FILTER = 0x2800, GL_TEXTURE_MIN_FILTER = 0x2801,
@@ -70,6 +71,7 @@ enum : GLenum {
     X(void, PixelStorei, (GLenum, GLint))                                                      \
     X(void, ReadPixels, (GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, void*))               \
     X(const GLubyte*, GetString, (GLenum))                                                     \
+    X(const GLubyte*, GetStringi, (GLenum, GLuint))                                            \
     X(GLuint, CreateShader, (GLenum))                                                          \
     X(void, ShaderSource, (GLuint, GLsizei, const GLchar* const*, const GLint*))               \
     X(void, CompileShader, (GLuint))                                                           \
@@ -148,6 +150,8 @@ CZ_GL_FUNCS(CZ_DECLARE)
 
 // Resolves every function; returns the name of the first missing one, or nullptr.
 const char* load(void* (*getProc)(const char*));
+// Optional filtering is unavailable on some otherwise valid OpenGL 3.3 drivers.
+float maxTextureAnisotropy();
 // Uniform names are linked-program constants; avoid repeated driver lookups per wheel/pass.
 GLint uniformLocation(GLuint program, const char* name);
 }  // namespace gl

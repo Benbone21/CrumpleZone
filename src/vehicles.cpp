@@ -399,7 +399,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         bronco.bodyStiffness = 1.2;
         bronco.frameStiffness = 0.30;  // ladder frame: twists more than a unibody
         bronco.bodyStrength = 1.0;     // high-strength steel body
-        bronco.frameStrength = 2.5;    // beefed up for offroad abuse
+        bronco.frameStrength = 3.0;    // beefed up for offroad abuse
         // Fully boxed ladder frame, seven crossmembers; rails up to 9.06 x 3.58 in (Ford
         // spec; 0.20 m is the average depth along it). Rail spacing and mass: estimates.
         bronco.railSpacing = 1.00;
@@ -546,7 +546,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         runner.bodyStiffness = 1.2;
         runner.frameStiffness = 0.06;  // its thinner rails (below) bend more, and its open C-channel tail twists
         runner.bodyStrength = 1.0;   // thick 90s sheet metal
-        runner.frameStrength = 2.5;  // beefed up for offroad abuse
+        runner.frameStrength = 3.0;  // beefed up for offroad abuse
         runner.panelStrength = 1.6;
         // Boxed ladder frame (C-channel at the tail), ~1/8 in wall, ~2.75 in wide rails;
         // 36.75 in outside at the hitch, so ~0.86 m between the rails' centres there (ESTIMATE:
@@ -856,7 +856,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         utv.bodyStiffness = 0.8;
         utv.bodyStrength = 3.5;
         utv.frameStiffness = 0.7;
-        utv.frameStrength = 2.5;
+        utv.frameStrength = 3.0;
         utv.panelStrength = 0.5;
         utv.pinStrength = 0.5;
         utv.wheelRadius = 0.406;   // 32x10R15
@@ -1000,7 +1000,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         tacoma.turboLag = 0;
         tacoma.bodyStiffness = 1.15;
         tacoma.bodyStrength = 1.0;
-        tacoma.frameStrength = 2.5;    // beefed up for offroad abuse
+        tacoma.frameStrength = 3.0;    // beefed up for offroad abuse
         tacoma.panelStrength = 1.4;
         tacoma.pinStrength = 1.8;
         // Hybrid frame: boxed ahead of the cab, C-channel under the bed, ~1/8 in wall,

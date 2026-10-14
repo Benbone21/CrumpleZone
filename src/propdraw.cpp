@@ -304,8 +304,7 @@ GLuint upload(const Decoded& d, bool srgb, float cutoff) {
     TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
     TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-    float aniso = 1;
-    GetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &aniso);
+    const float aniso = maxTextureAnisotropy();
     if (aniso > 1) TexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, std::min(aniso, 8.0f));
     return t;
 }

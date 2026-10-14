@@ -1,5 +1,6 @@
 // Offscreen OpenGL integration checks, including an emulated driver rejecting HDR MSAA.
 #include "../src/render.h"
+#include "../src/gpu.h"
 #include "../src/menu.h"
 #include "../src/sdl_min.h"
 #include <cstdio>
@@ -8,6 +9,12 @@
 namespace {
 gl::PFN_CheckFramebufferStatus originalCheck;
 void (*attachment)(GLenum, GLenum, GLenum, GLint*);
+const char* extension = nullptr;
+int anisotropyReads = 0;
+void extensionCount(GLenum, GLint* count) { *count = 1; }
+const GLubyte* extensionName(GLenum, GLuint) { return (const GLubyte*)extension; }
+void anisotropyLimit(GLenum, GLfloat* value) { anisotropyReads++; *value = 16; }
+const GLubyte* noExtensions(GLenum, GLuint) { return (const GLubyte*)""; }
 bool rejectMsaa = false;
 int rejected = 0;
 GLenum checkFramebuffer(GLenum target) {
@@ -26,6 +33,9 @@ int main() {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+#ifdef __APPLE__
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);
+#endif
     SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 0);
     SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 0);
     SDL_Window* window = SDL_CreateWindow("render check", 0, 0, 160, 90, SDL_WINDOW_OPENGL);
@@ -42,6 +52,42 @@ int main() {
             const GLenum error = getError();
             if (error) { char s[64]; std::snprintf(s, sizeof s, "OpenGL error 0x%x", error); throw std::runtime_error(s); }
         };
+        struct GpuCase { const char* vendor; const char* renderer; GpuVendor expected; };
+        const GpuCase gpuCases[] = {
+            {nullptr, nullptr, GpuVendor::Unknown},
+            {"NVIDIA Corporation", "GeForce RTX 4090", GpuVendor::NVIDIA},
+            {"ATI Technologies Inc.", "AMD Radeon RX 7900", GpuVendor::AMD},
+            {"Apple", "AMD Radeon Pro 5500M OpenGL Engine", GpuVendor::AMD},
+            {"Apple", "Intel Iris Pro OpenGL Engine", GpuVendor::Intel},
+            {"Apple", "Apple M4", GpuVendor::Apple},
+            {"Mesa", "INTEL UHD Graphics", GpuVendor::Intel},
+            {"Mesa", "llvmpipe (LLVM 18.1, 256 bits)", GpuVendor::Mesa},
+            {"VMware, Inc.", "SVGA3D virtualization", GpuVendor::Unknown},
+            {nullptr, "nvidia", GpuVendor::NVIDIA},
+        };
+        for (const auto& c : gpuCases)
+            if (detectGpuVendor(c.vendor, c.renderer) != c.expected)
+                throw std::runtime_error("GPU diagnostic misidentified the renderer");
+        std::puts("PASS GPU diagnostics: discrete, integrated, Apple, software and unknown renderers");
+        const auto originalInteger = gl::GetIntegerv;
+        const auto originalStringi = gl::GetStringi;
+        const auto originalFloat = gl::GetFloatv;
+        gl::GetIntegerv = extensionCount;
+        gl::GetStringi = extensionName;
+        gl::GetFloatv = anisotropyLimit;
+        bool filteringOk = gl::maxTextureAnisotropy() == 1 && anisotropyReads == 0;
+        extension = "GL_EXT_texture_filter_anisotropic_suffix";
+        filteringOk &= gl::maxTextureAnisotropy() == 1 && anisotropyReads == 0;
+        extension = "GL_EXT_texture_filter_anisotropic";
+        filteringOk &= gl::maxTextureAnisotropy() == 16 && anisotropyReads == 1;
+        extension = "GL_ARB_texture_filter_anisotropic";
+        filteringOk &= gl::maxTextureAnisotropy() == 16 && anisotropyReads == 2;
+        gl::GetIntegerv = originalInteger;
+        gl::GetStringi = originalStringi;
+        gl::GetFloatv = originalFloat;
+        if (!filteringOk) throw std::runtime_error("optional anisotropy queried without support");
+        clean();
+        std::puts("PASS optional anisotropy: EXT, ARB and unsupported drivers");
         originalCheck = gl::CheckFramebufferStatus;
         gl::CheckFramebufferStatus = checkFramebuffer;
         Sim sim;
@@ -87,6 +133,19 @@ int main() {
             clean();
             std::printf("PASS quality %d, shaders and framebuffer operations\n", quality);
         }
+        // Render photo ground with extension support hidden, to exercise actual texture setup.
+        gl::GetStringi = noExtensions;
+        GroundTextures fallbackGround;
+        std::string fallbackError;
+        const bool fallbackLoaded = loadGroundTextures(fallbackGround, 512, fallbackError);
+        freeGroundTextures(fallbackGround);
+        renderer.settings.ground = 1;
+        view.width = 159;
+        renderer.drawScene(sim, view, DEBUG_OFF, nullptr);
+        gl::GetStringi = originalStringi;
+        clean();
+        if (!fallbackLoaded) throw std::runtime_error(fallbackError);
+        std::puts("PASS photo ground without optional anisotropic filtering");
         rejectMsaa = true;
         view.width = 158; view.height = 88;
         renderer.settings.msaa = 4;

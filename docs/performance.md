@@ -75,6 +75,21 @@ builds the CPU-only Windows equivalent, which needs no SDL DLL or display.
 - F3 shows physics and scene submission CPU time. Driver stalls count toward draw CPU
   time; it is not GPU timer-query time.
 
+### GPU compatibility review (2026-10-14)
+
+GPU vendor detection uses both `GL_VENDOR` and `GL_RENDERER` for diagnostics, including
+Apple GPUs and Mesa software renderers. It does not override the saved VSync choice.
+VSync ON requests swap interval 1 on every vendor; OFF, `--no-vsync`, and scripted
+captures request 0. A renderer name alone is not evidence for a faster presentation mode.
+
+Ground and prop textures now check for `GL_EXT_texture_filter_anisotropic` or
+`GL_ARB_texture_filter_anisotropic` before querying or setting anisotropy. Drivers without
+these extensions retain ordinary mipmap filtering. Existing limits stay at 16x for ground
+and 8x for props. The extension's [specification](https://registry.khronos.org/OpenGL/extensions/EXT/EXT_texture_filter_anisotropic.txt)
+defines these optional parameters; no texture compression or Metal backend was added.
+See the [current platform verification report](platform-verification.md) for the review,
+macOS networking fix, release checks and remaining hardware validation.
+
 Linux and Windows executables were built locally. Configurable counts above four,
 live changes between serial and parallel operation, saved settings, and menu selection
 of AUTO and ALL were additionally verified after removing the hard limit. The graphics integration test passed

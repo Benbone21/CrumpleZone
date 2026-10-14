@@ -32,6 +32,7 @@
 #include "fx.h"
 #include "gamepad.h"
 #include "gl.h"
+#include "gpu.h"
 #include "hudkit.h"
 #include "level.h"
 #include "levelrun.h"
@@ -1454,12 +1455,16 @@ int main(int argc, char** argv) {
         fail(std::string("missing OpenGL function ") + missing);
         return 1;
     }
+    const char* glRenderer = (const char*)gl::GetString(GL_RENDERER);
+    const char* glVendor = (const char*)gl::GetString(GL_VENDOR);
+    // Honor the saved setting on every GPU; vendor names do not establish driver performance.
     SDL_GL_SetSwapInterval(settings.vsync && opt.vsync && !scripted ? 1 : 0);
-    std::printf("OpenGL: %s / %s / %s\n", (const char*)gl::GetString(GL_VENDOR), (const char*)gl::GetString(GL_VERSION),
-                (const char*)gl::GetString(GL_RENDERER));
+    std::printf("OpenGL: %s / %s / %s\n", glVendor ? glVendor : "unknown",
+                (const char*)gl::GetString(GL_VERSION), glRenderer ? glRenderer : "unknown");
+    std::printf("GPU vendor: %s\n", gpuVendorName(detectGpuVendor(glVendor, glRenderer)));
     std::string gpuName;
-    if (const GLubyte* gr = gl::GetString(GL_RENDERER)) {
-        gpuName = (const char*)gr;
+    if (glRenderer) {
+        gpuName = glRenderer;
         for (char& ch : gpuName) ch = (char)std::toupper((unsigned char)ch);  // (the HUD font is capitals)
     }
 

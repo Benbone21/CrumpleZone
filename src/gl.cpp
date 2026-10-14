@@ -1,5 +1,6 @@
 #include "gl.h"
 #include <map>
+#include <cstring>
 #include <string>
 
 namespace gl {
@@ -18,6 +19,21 @@ const char* load(void* (*getProc)(const char*)) {
     CZ_GL_FUNCS(CZ_LOAD)
 #undef CZ_LOAD
     return nullptr;
+}
+
+float maxTextureAnisotropy() {
+    GLint count = 0;
+    GetIntegerv(GL_NUM_EXTENSIONS, &count);
+    for (GLint i = 0; i < count; i++) {
+        const char* name = (const char*)GetStringi(GL_EXTENSIONS, (GLuint)i);
+        if (name && (std::strcmp(name, "GL_EXT_texture_filter_anisotropic") == 0 ||
+                     std::strcmp(name, "GL_ARB_texture_filter_anisotropic") == 0)) {
+            GLfloat limit = 1;
+            GetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &limit);
+            return limit > 1 ? limit : 1;
+        }
+    }
+    return 1;
 }
 
 GLint uniformLocation(GLuint program, const char* name) {

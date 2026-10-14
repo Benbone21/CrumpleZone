@@ -110,18 +110,49 @@ jobs:
           make -j"$(sysctl -n hw.ncpu)" mac VERSION="$V"
           lipo -info build/mac/CrumpleZone.app/Contents/MacOS/crumplezone
           mkdir -p out && cp build/mac/CrumpleZone-mac.zip "out/CrumpleZone-${V}-mac.zip"
-      - name: Smoke test (starts, loads SDL, draws a few frames if the runner has a GPU)
+      - name: Native macOS regression checks
         run: |
-          app=build/mac/CrumpleZone.app/Contents/MacOS/crumplezone
-          "$app" --help || true
-          ( "$app" --no-audio --size 640x360 --shot-prefix "$PWD/out-shot" --shot-frames 20 > shot.log 2>&1 & pid=$!; sleep 120; kill $pid 2>/dev/null ) || true
-          cat shot.log || true
-          ls -la out-shot* 2>/dev/null || echo "no screenshot (no GPU on the runner?)"
+          make -j4 build/mac/bench_sim build/mac/run_tests build/mac/test_audio build/mac/test_render
+          ./build/mac/run_tests --jobs 1 net/ engine/collision engine/physics-workers
+          SDL_AUDIODRIVER=dummy CZ_AUDIO_DEVICE_TEST=1 ./build/mac/test_audio
+          ./build/mac/test_render
+          python3 - <<'PY'
+          import re, subprocess
+          for mode in ('separated', 'pileup'):
+              states = []
+              for workers in (1, 4):
+                  output = subprocess.check_output(['./build/mac/bench_sim', '12', mode, '1000', str(workers)], text=True, timeout=120)
+                  print(output, end='')
+                  match = re.search(r'state ([0-9a-f]{16})', output)
+                  if not match:
+                      raise SystemExit('Missing simulation fingerprint')
+                  states.append(match.group(1))
+              if states[0] != states[1]:
+                  raise SystemExit('Serial/parallel macOS simulation differs: ' + mode)
+          PY
+      - name: Packaged app smoke test
+        run: |
+          python3 - <<'PY'
+          import pathlib, subprocess, tempfile
+          app = pathlib.Path('build/mac/CrumpleZone.app/Contents/MacOS/crumplezone').resolve()
+          prefix = pathlib.Path('out-shot').resolve()
+          # Launch away from the repository so packaged framework and asset lookup are tested.
+          with tempfile.TemporaryDirectory() as cwd, open('shot.log', 'w') as log:
+              subprocess.run([str(app), '--no-audio', '--no-pad', '--quality', '1', '--ground', '1', '--props', '0', '--size', '160x90',
+                              '--shot-prefix', str(prefix), '--shot-frames', '1'], cwd=cwd,
+                             stdout=log, stderr=subprocess.STDOUT, check=True, timeout=90)
+          if not pathlib.Path(str(prefix) + '_0001.ppm').is_file():
+              raise SystemExit('Packaged Mac app did not render its screenshot')
+          output = pathlib.Path('shot.log').read_text()
+          print(output)
+          if 'ground textures:' in output:
+              raise SystemExit('Packaged Mac ground assets failed to load')
+          PY
       - uses: actions/upload-artifact@v4
         with: { name: mac, path: out/* }
       - uses: actions/upload-artifact@v4
         if: always()
-        with: { name: mac-smoke, path: "out-shot*", if-no-files-found: ignore }
+        with: { name: mac-smoke, path: "out-shot*\nshot.log", if-no-files-found: ignore }
 
   publish:
     if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/V')

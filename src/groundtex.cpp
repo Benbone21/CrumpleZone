@@ -167,8 +167,7 @@ bool loadGroundTextures(GroundTextures& gt, int maxSize, std::string& err) {
     freeGroundTextures(gt);
     GLuint tex[2];
     GenTextures(2, tex);
-    float aniso = 1;
-    GetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &aniso);
+    const float aniso = maxTextureAnisotropy();
     PixelStorei(GL_UNPACK_ALIGNMENT, 4);
     for (int k = 0; k < 2; k++) {
         BindTexture(GL_TEXTURE_2D_ARRAY, tex[k]);
