@@ -8,7 +8,7 @@ LDLIBS   := -l:libSDL2-2.0.so.0 -lpthread -lm
 
 PHYS     := src/physics_workers.cpp src/collision.cpp src/props.cpp src/jobs.cpp src/walker.cpp src/softbody.cpp src/recovery.cpp src/net.cpp src/level.cpp src/levels_builtin.cpp src/levelrun.cpp src/editcore.cpp src/autopilot.cpp src/pilotsense.cpp src/carbuild.cpp src/world.cpp src/mountain.cpp src/freeway.cpp src/frontier.cpp src/backcountry.cpp src/vehicles.cpp src/mods.cpp src/gamepad.cpp src/platform.cpp src/tires.cpp src/interact.cpp
 SCEN     := tests/drivetrain.cpp tests/net_state.cpp tests/collision.cpp tests/props.cpp tests/jobs.cpp tests/walker.cpp tests/editor.cpp tests/levels.cpp tests/circuit.cpp tests/frontier.cpp tests/backcountry.cpp tests/freeway.cpp tests/surfaces.cpp tests/handling.cpp tests/harness.cpp tests/scenarios.cpp tests/components.cpp tests/offroad.cpp tests/recovery.cpp tests/net.cpp tests/autopilot.cpp tests/gamepad.cpp tests/tires.cpp
-GAME_SRC := src/main.cpp src/gamepad_sdl.cpp src/editor.cpp src/coop.cpp src/gl.cpp src/gpu.cpp src/render.cpp src/carvisual.cpp src/bodyshell.cpp src/scenery.cpp src/menu.cpp src/fx.cpp src/engine_samples.cpp src/engineaudio.cpp src/audio.cpp src/music.cpp src/daylight.cpp src/lights.cpp src/groundtex.cpp src/groundshader.cpp src/propdraw.cpp $(PHYS) $(SCEN)
+GAME_SRC := src/main.cpp src/gamepad_sdl.cpp src/editor.cpp src/coop.cpp src/gl.cpp src/gpu.cpp src/render.cpp src/carvisual.cpp src/bodyshell.cpp src/scenery.cpp src/menu.cpp src/fx.cpp src/engine_samples.cpp src/engineaudio.cpp src/audio.cpp src/music.cpp src/ambience.cpp src/daylight.cpp src/lights.cpp src/groundtex.cpp src/groundshader.cpp src/propdraw.cpp $(PHYS) $(SCEN)
 GAME_OBJ := $(patsubst %.cpp,build/%.o,$(GAME_SRC))
 TEST_OBJ := $(patsubst %.cpp,build/%.o,tests/run_tests.cpp $(PHYS) $(SCEN))
 HEADERS  := $(wildcard src/*.h tests/*.h)
@@ -33,10 +33,13 @@ build/bench_sim: build/tools/bench_sim.o $(patsubst %.cpp,build/%.o,$(PHYS))
 build/test_render: build/tests/render.o $(filter-out build/src/main.o,$(GAME_OBJ))
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDLIBS)
 
-build/test_audio: build/tests/audio.o build/tests/engine_samples.o build/src/audio.o build/src/engineaudio.o build/src/engine_samples.o build/src/music.o $(patsubst %.cpp,build/%.o,$(PHYS))
+build/test_audio: build/tests/audio.o build/tests/engine_samples.o build/tests/soundscape.o build/src/audio.o build/src/engineaudio.o build/src/engine_samples.o build/src/music.o build/src/ambience.o $(patsubst %.cpp,build/%.o,$(PHYS))
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDLIBS)
 
 # Silent audition files: build/engine_preview [output directory].
+build/soundscape_preview: build/tools/soundscape_preview.o build/src/music.o build/src/ambience.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lm
+
 build/engine_preview: build/tools/engine_preview.o build/src/engineaudio.o build/src/engine_samples.o $(patsubst %.cpp,build/%.o,$(PHYS))
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -lm
 
@@ -47,7 +50,7 @@ build/win/bench_sim.exe: build/win/obj/tools/bench_sim.o $(patsubst %.cpp,build/
 build/win/run_tests.exe: build/win/obj/tests/run_tests.o $(patsubst %.cpp,build/win/obj/%.o,$(PHYS) $(SCEN))
 	$(WINCXX) $(WINFLAGS) -o $@ $^ -lws2_32 -liphlpapi -static -static-libgcc -static-libstdc++
 
-build/win/test_audio.exe: build/win/obj/tests/audio.o build/win/obj/tests/engine_samples.o build/win/obj/src/audio.o build/win/obj/src/engineaudio.o build/win/obj/src/engine_samples.o build/win/obj/src/music.o $(patsubst %.cpp,build/win/obj/%.o,$(PHYS))
+build/win/test_audio.exe: build/win/obj/tests/audio.o build/win/obj/tests/engine_samples.o build/win/obj/tests/soundscape.o build/win/obj/src/audio.o build/win/obj/src/engineaudio.o build/win/obj/src/engine_samples.o build/win/obj/src/music.o build/win/obj/src/ambience.o $(patsubst %.cpp,build/win/obj/%.o,$(PHYS))
 	$(WINCXX) $(WINFLAGS) -o $@ $^ $(WINSDL)/SDL2.dll -lws2_32 -liphlpapi -static -static-libgcc -static-libstdc++
 
 # Render-mesh integration checks, with no SDL window or OpenGL context.
@@ -82,6 +85,7 @@ windows: build/win/CrumpleZone/crumplezone.exe
 	cp docs/performance.md build/win/CrumpleZone/docs/
 	cp docs/multiplayer.md build/win/CrumpleZone/docs/
 	cp docs/recovery-audio.md build/win/CrumpleZone/docs/
+	cp docs/audio-soundscape.md docs/engine-recordings.md build/win/CrumpleZone/docs/
 	rm -rf build/win/CrumpleZone/assets && mkdir -p build/win/CrumpleZone/assets
 	cp -r assets/ground build/win/CrumpleZone/assets/
 	if [ -d assets/audio ]; then cp -r assets/audio build/win/CrumpleZone/assets/; fi
@@ -130,7 +134,7 @@ build/mac/bench_sim: build/mac/obj/tools/bench_sim.o $(patsubst %.cpp,build/mac/
 build/mac/run_tests: build/mac/obj/tests/run_tests.o $(patsubst %.cpp,build/mac/obj/%.o,$(PHYS) $(SCEN))
 	$(MACCXX) $(MACFLAGS) -o $@ $^
 
-build/mac/test_audio: build/mac/obj/tests/audio.o build/mac/obj/tests/engine_samples.o build/mac/obj/src/audio.o build/mac/obj/src/engineaudio.o build/mac/obj/src/engine_samples.o build/mac/obj/src/music.o $(patsubst %.cpp,build/mac/obj/%.o,$(PHYS))
+build/mac/test_audio: build/mac/obj/tests/audio.o build/mac/obj/tests/engine_samples.o build/mac/obj/tests/soundscape.o build/mac/obj/src/audio.o build/mac/obj/src/engineaudio.o build/mac/obj/src/engine_samples.o build/mac/obj/src/music.o build/mac/obj/src/ambience.o $(patsubst %.cpp,build/mac/obj/%.o,$(PHYS))
 	$(MACCXX) $(MACFLAGS) -o $@ $^ -F$(MACSDL) -framework SDL2 -Wl,-rpath,$(abspath $(MACSDL))
 
 build/mac/test_render: build/mac/obj/tests/render.o $(filter-out build/mac/obj/src/main.o,$(MAC_OBJ))

@@ -1,6 +1,7 @@
 // Procedural background music: one generative piece per map, synthesized at runtime (no
 // samples, no recorded melodies). Proving ground: mellow lo-fi. Mountain: airy pads and
-// plucked arpeggios. Freeway: synthwave pulse. It runs in the audio callback, under the
+// plucked arpeggios. Freeway: synthwave pulse. Backcountry: warm keys and picked strings.
+// It runs in the audio callback, under the
 // engine sounds.
 #pragma once
 #include <cstdint>

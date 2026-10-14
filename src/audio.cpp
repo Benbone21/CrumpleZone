@@ -7,6 +7,11 @@
 #include "softbody.h"
 
 void Audio::setNearbyEngines(const Sim& sim, const V3& listener, const V3& right, float timeScale) {
+    // The player's own engine should recede when walking away or flying the drone.
+    if (sim.player >= 0 && sim.player < (int)sim.cars.size()) {
+        const double distance = len(sim.cars[sim.player].frame().com - listener);
+        localGain_ = (float)(1 / (1 + std::max(0.0, distance * distance - 64) / 144));
+    }
     Sources& frame = sources_[backSources_];
     frame.count = 0;
     std::array<double, kNearbyEngines> distances{};
@@ -61,8 +66,8 @@ void Audio::updateRemoteVoices() {
         }
         voice->input = source.engine;
         voice->targetGain = source.gain;
-        voice->left = std::sqrt(0.5f * (1 - source.pan));
-        voice->right = std::sqrt(0.5f * (1 + source.pan));
+        voice->targetLeft = std::sqrt(0.5f * (1 - source.pan));
+        voice->targetRight = std::sqrt(0.5f * (1 + source.pan));
     }
 }
 
@@ -120,7 +125,12 @@ void Audio::callback(void* user, uint8_t* stream, int len) {
 
 void Audio::render(float* out, int frames) {
     const float dt = 1.0f / rate_;
-    const float tRpm = rpm_, tLoad = load_, tSlip = slip_, tSpeed = speed_, tBoost = boost_, master = master_;
+    auto level = [](float value, float fallback = 0.0f) {
+        return std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : fallback;
+    };
+    const float tRpm = rpm_, tLoad = load_, tSlip = slip_, tSpeed = speed_, tBoost = boost_;
+    const float master = level(master_), sceneGain = level(sceneGain_), localGain = level(localGain_);
+    const float exposure = level(exposure_, 1);
     float imp = pendingImpact_.exchange(0);
     if (imp > 0) {
         crunchEnv_ = std::max(crunchEnv_, imp);
@@ -143,11 +153,13 @@ void Audio::render(float* out, int frames) {
     const auto* localBank = recordings_.bank(engineInput.recording);
     updateRemoteVoices();
     const float smooth = 1.0f - std::exp(-dt * 30.0f);
+    const float cabinA = 1 - std::exp(-2 * (float)M_PI * 1100 * dt);
     for (int i = 0; i < frames; i++) {
         sSlip_ += (tSlip - sSlip_) * smooth * 0.5f;
         sSpeed_ += (tSpeed - sSpeed_) * smooth;
 
-        const float engine = engine_.sample(engineInput, dt, localBank);
+        sLocalGain_ += (localGain - sLocalGain_) * smooth;
+        const float engine = engine_.sample(engineInput, dt, localBank) * sLocalGain_;
         const float ph = engine_.phase();
 
         // Tire squeal: resonant band-pass noise, pitch wobbles a little.
@@ -194,26 +206,43 @@ void Audio::render(float* out, int frames) {
         float popSnd = popLp_ * popEnv_ * 2.5f;
         popEnv_ *= std::exp(-dt / 0.05f);
 
-        float mix = engine + squeal + wind + crunch * 0.9f + thump * 0.8f + glassSnd + popSnd;
+        float mix = engine + (squeal + wind) * sLocalGain_ + crunch * 0.9f + thump * 0.8f + glassSnd + popSnd;
         float nearbyLeft = 0, nearbyRight = 0;
         for (auto& voice : nearby_) {
             if (!voice.id) continue;
             voice.gain += (voice.targetGain - voice.gain) * smooth;
+            voice.left += (voice.targetLeft - voice.left) * smooth;
+            voice.right += (voice.targetRight - voice.right) * smooth;
             if (voice.gain < 1e-6f && voice.targetGain == 0) { voice.id = 0; continue; }
             const float sound = voice.synth.sample(voice.input, dt, recordings_.bank(voice.input.recording)) * voice.gain;
             nearbyLeft += sound * voice.left;
             nearbyRight += sound * voice.right;
         }
-        out[2 * i] = std::tanh((mix + nearbyLeft) * 1.2f) * master;
-        out[2 * i + 1] = std::tanh((mix + nearbyRight) * 1.2f) * master;
+        const float left = std::tanh((mix + nearbyLeft) * 1.2f);
+        const float right = std::tanh((mix + nearbyRight) * 1.2f);
+        cabinLowL_ += (left - cabinLowL_) * cabinA;
+        cabinLowR_ += (right - cabinLowR_) * cabinA;
+        sExposure_ += (exposure - sExposure_) * smooth;
+        const float cabin = (1 - sExposure_) * 0.65f;
+        out[2 * i] = (left + (cabinLowL_ - left) * cabin) * sceneGain;
+        out[2 * i + 1] = (right + (cabinLowR_ - right) * cabin) * sceneGain;
     }
     // Music goes on top, quieter than the car (its own level is about -18 dBFS before the
     // volume setting). A soft knee catches the rare moment both peak together.
-    const float mv = musicVol_;
+    // Leave space for engine detail during hard acceleration and impacts.
+    const float duck = 1 - 0.25f * level(tLoad) - 0.25f * std::min(1.0f, thumpEnv_);
+    const float mv = level(musicVol_) * duck;
     music_.render(out, frames, musicMap_, mv);
-    if (mv > 0)
-        for (int i = 0; i < 2 * frames; i++) {
-            float a = std::fabs(out[i]);
-            if (a > 0.8f) out[i] = std::copysign(0.8f + 0.2f * std::tanh((a - 0.8f) / 0.2f), out[i]);
+    ambience_.render(out, frames, rate_, {(int)ambienceMap_, (float)hours_, level(ambienceVol_) * sceneGain, exposure});
+    const float volumeA = 1 - std::exp(-dt / 0.025f);
+    for (int i = 0; i < frames; i++) {
+        sMaster_ += (master - sMaster_) * volumeA;
+        if (master == 0 && sMaster_ < 1e-6f) sMaster_ = 0;
+        for (int c = 0; c < 2; c++) {
+            float& sample = out[2 * i + c];
+            const float a = std::fabs(sample);
+            if (a > 0.8f) sample = std::copysign(0.8f + 0.2f * std::tanh((a - 0.8f) / 0.2f), sample);
+            sample *= sMaster_;
         }
+    }
 }

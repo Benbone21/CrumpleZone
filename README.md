@@ -67,6 +67,14 @@ Set **PHYSICS THREADS** in **Esc → Settings** to AUTO or any count up to all l
 
 `make mac` (on a Mac with the Xcode command line tools) builds a universal `build/mac/CrumpleZone.app` (arm64 + x86_64, macOS 11+) and `build/mac/CrumpleZone-mac.zip`. It needs the official SDL2 macOS framework: copy `SDL2.framework` from the `SDL2-2.30.x.dmg` on SDL's releases page into `third_party/sdl2-mac/`. The app is ad-hoc signed, not notarized. Settings live in `~/.config/crumplezone`, as on Linux.
 
+## Audio
+
+Audio includes adjustable outdoor ambience (wind, foliage, bird phrases and night insects),
+with its own **AMBIENCE** level in Settings. Backcountry has a distinct arrangement of warm
+keys and picked strings. Master volume controls every layer. Exact recorded vehicle banks
+are still pending; absent banks use procedural engine sounds. See
+[audio changes and silent auditions](docs/audio-soundscape.md).
+
 ## Testing
 
 The physics, the AI and every garage mod are covered by about 200 scenario tests in `tests/`.

@@ -161,7 +161,7 @@ inline float mtof(float m) { return 440.0f * std::exp2((m - 69.0f) / 12.0f); }
 
 // ---- Styles ---------------------------------------------------------------------------
 
-enum Style { LOFI, MOUNTAIN, SYNTH, DESERT, STYLES };  // indexed by map; later maps reuse them in turn
+enum Style { LOFI, MOUNTAIN, SYNTH, DESERT, BACKCOUNTRY, STYLES };  // indexed by map; later maps reuse them in turn
 enum Layer { CHORD, BASS, KICK, SNARE, HAT, ARP, LEAD, EXTRA, LAYERS };
 enum Inst { OFF, EPIANO, PAD, PLUCK, SUB, SAWBASS, VIBES, FLUTE, SAWLEAD, SQARP, BELL, BD, SD, RIM, HH, SHAKER, TOM, CRASH };
 const char* kLayerNames[LAYERS] = {"chords", "bass", "kick", "snare", "hats", "arp", "lead", "bells"};
@@ -238,6 +238,21 @@ const StyleDef kStyles[STYLES] = {
       bit(CHORD) | bit(ARP) | bit(BASS) | bit(KICK) | bit(SNARE) | bit(HAT) | bit(LEAD)},
      bit(HAT) | bit(LEAD),
      0},
+    // Backcountry: warm keys and fingerpicked strings, a gentle bass and hand drum.
+    // More space between phrases leaves room for the forest and mechanical sounds.
+    {72, 88, 0.52f, 0.56f,
+     {3, 2, 3, 0, 1},
+     {1.0f, 0.6f, 0.5f, 1.1f, 0.9f, 0.8f, 0.2f},
+     2.2f, 4200, 0.40f, 0.75f, 0.24f,
+     {0.26f, 0.18f, 0.26f, 0.0f, 0.16f, 0.34f, 0.14f, 0.08f},
+     {0.24f, 0.02f, 0.14f, 0.0f, 0.12f, 0.30f, 0.35f, 0.50f},
+     {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.14f, 0.18f, 0.0f},
+     {0, 0, 0, 0, 0, 0, 0, 0},
+     {bit(CHORD) | bit(ARP), bit(CHORD) | bit(ARP) | bit(BASS),
+      bit(CHORD) | bit(ARP) | bit(BASS) | bit(LEAD),
+      bit(CHORD) | bit(ARP) | bit(BASS) | bit(LEAD) | bit(KICK) | bit(HAT)},
+     bit(LEAD) | bit(HAT),
+     4800},
 };
 
 // Layer -> instrument, per style.
@@ -246,6 +261,7 @@ const int kInst[STYLES][LAYERS] = {
     {PAD, SUB, TOM, SD, SHAKER, PLUCK, FLUTE, BELL},
     {PAD, SAWBASS, BD, SD, HH, SQARP, SAWLEAD, BELL},
     {PAD, SUB, BD, RIM, SHAKER, PLUCK, FLUTE, BELL},
+    {EPIANO, SUB, TOM, RIM, SHAKER, PLUCK, VIBES, BELL},
 };
 
 // ---- Reverb and echo ------------------------------------------------------------------
@@ -516,7 +532,7 @@ struct Music::Song {
         static const float kMotion[7] = {0.0f, 1.4f, 0.8f, 3.0f, 1.3f, 1.6f, 1.2f};  // by root step up
         const bool eight = rng.p(0.35f);
         progLen = eight ? 8 : 4;
-        barsPerChord = style == MOUNTAIN || style == DESERT ? (eight ? 1 : 2) : style == SYNTH ? (eight || rng.p(0.4f) ? 1 : 2) : 1;
+        barsPerChord = style == MOUNTAIN || style == BACKCOUNTRY || style == DESERT ? (eight ? 1 : 2) : style == SYNTH ? (eight || rng.p(0.4f) ? 1 : 2) : 1;
         if (style == LOFI && !eight && rng.p(0.25f)) barsPerChord = 2;
         auto next = [&](int prev, int i, int last, int target) {
             float w[7];
@@ -544,7 +560,7 @@ struct Music::Song {
             const bool nine = semis(d, 8) % 12 == 2;
             int fl = 0;
             if (style == LOFI) fl = nine && rng.p(0.65f) ? 5 : 4;
-            else if (style == MOUNTAIN || style == DESERT) {
+            else if (style == MOUNTAIN || style == BACKCOUNTRY || style == DESERT) {
                 float w[4] = {1.0f, nine ? 1.4f : 0.0f, nine ? 0.5f : 0.0f, semis(d, 3) == 5 && d != 0 ? 0.35f : 0.0f};
                 fl = rng.pick(w);
             } else {
@@ -588,9 +604,9 @@ struct Music::Song {
         // Rhythm: durations in steps and how much each is liked, per style; retried until the
         // two bars hold a singable number of notes.
         static const int kDur[6] = {2, 3, 4, 6, 8, 12};
-        static const float kDurW[STYLES][6] = {{3, 2, 3, 1.5f, 0.8f, 0}, {1, 0, 3, 2, 2, 0.8f}, {3, 0, 3, 1, 2, 0.6f}, {2, 1, 3, 2, 2, 0.6f}};
-        static const float kRest[STYLES] = {0.15f, 0.2f, 0.12f, 0.2f};
-        static const int kMinN[STYLES] = {5, 3, 5, 4}, kMaxN[STYLES] = {8, 6, 9, 7};
+        static const float kDurW[STYLES][6] = {{3, 2, 3, 1.5f, 0.8f, 0}, {1, 0, 3, 2, 2, 0.8f}, {3, 0, 3, 1, 2, 0.6f}, {2, 1, 3, 2, 2, 0.6f}, {1, 0.5f, 2, 3, 2, 1}};
+        static const float kRest[STYLES] = {0.15f, 0.2f, 0.12f, 0.2f, 0.3f};
+        static const int kMinN[STYLES] = {5, 3, 5, 4, 3}, kMaxN[STYLES] = {8, 6, 9, 7, 6};
         const int unit = 2 * spb;
         for (int tries = 0; tries < 12; tries++) {
             int pos = rng.p(0.35f) ? (style == MOUNTAIN ? 4 : rng.p(0.5f) ? 2 : 3) : 0;
@@ -661,7 +677,7 @@ struct Music::Song {
             sec.arp = rng.i(5);
             std::copy(kPats[sec.arp], kPats[sec.arp] + 8, arpPat);
             arpLen = 8;
-        } else if (style == MOUNTAIN || style == DESERT) {
+        } else if (style == MOUNTAIN || style == BACKCOUNTRY || style == DESERT) {
             // Fingerpicking: start on the low tone, roll up, ease back down.
             arpLen = spb / 2;
             arpPat[0] = 0;
@@ -732,7 +748,7 @@ struct Music::Song {
         sec.ghost = rng.r(0.05f, 0.3f);
         sec.hat16 = rng.r(0.0f, 0.25f);
         sec.push = rng.p(0.4f);
-        sec.lead = true;
+        sec.lead = style != BACKCOUNTRY || rng.p(0.7f);
         if (first || rng.p(0.6f)) makeMotif();
         makeArp();
         for (int l = 0; l < LAYERS; l++) layerTarget[l] = (mask & bit(l)) ? 1.0f : 0.0f;
@@ -740,7 +756,7 @@ struct Music::Song {
 
     void begin(int m, uint32_t seed) {
         map = m;
-        style = m == 4 ? MOUNTAIN : m % STYLES;  // (the Backcountry gets the mountain's airy folk)
+        style = m % STYLES;
         def = &kStyles[style];
         rng.s = (seed * 2654435761u) ^ (uint32_t)(m + 1) * 0x9E3779B9u;
         if (!rng.s) rng.s = 1;
@@ -834,7 +850,7 @@ struct Music::Song {
                 v.amp.set(0.0005f, 100.0f, 1.0f, 0.2f, r);
                 v.freq = std::max(v.freq, 80.0f);
                 v.ksDelay = std::min((float)ksSize - 4, r / v.freq - 0.5f);
-                const float t60 = style == MOUNTAIN ? 3.2f : style == DESERT ? 2.2f : 1.6f;
+                const float t60 = style == BACKCOUNTRY ? 2.6f : style == MOUNTAIN ? 3.2f : style == DESERT ? 2.2f : 1.6f;
                 v.ksLoss = std::pow(10.0f, -3.0f / (t60 * v.freq));
                 v.maxAge = (int)(t60 * 1.2f * r);
                 // Excite the string with a burst of filtered noise (brighter when picked harder).
@@ -1030,7 +1046,7 @@ struct Music::Song {
             if (step == 0) note(BASS, (float)root, 0.85f, 6.0f, 0.0f);
             else if (step == 8) note(BASS, (float)(fifth > 47 ? fifth - 12 : fifth), 0.7f, approach ? 5.0f : 7.0f, 0.0f);
             else if (step == 14 && approach) note(BASS, (float)approachNote(), 0.6f, 1.6f, 0.0f);
-        } else if (style == MOUNTAIN) {
+        } else if (style == MOUNTAIN || style == BACKCOUNTRY) {
             if (step == 0 && progBar % barsPerChord == 0) note(BASS, (float)root, 0.8f, barsPerChord * spb - 1.0f, 0.0f);
             else if (sec.bass >= 2 && step == spb / 2 + (spb == 12 ? 2 : 0) && !approach) note(BASS, (float)fifth - 12 + (fifth - 12 < 33 ? 12 : 0), 0.55f, spb / 2 - 1.0f, 0.0f);
         } else {
@@ -1068,7 +1084,7 @@ struct Music::Song {
             if (on(KICK) && (s == 0 || (s == 8 && !lastBar) || (s == 10 && kickAlt))) note(KICK, 60, s == 0 ? 0.85f : 0.6f, 0, 0.0f);
             if (on(SNARE) && (s == 4 || s == 12)) note(SNARE, 60, nz.r(0.75f, 0.9f), 0, -0.15f, human(4));  // cross-stick
             if (on(HAT) && s % 2 == 0) note(HAT, 60, (s % 4 == 2 ? 0.34f : 0.2f) * nz.r(0.85f, 1.1f), 0, 0.4f, human(6));
-        } else if (style == MOUNTAIN) {
+        } else if (style == MOUNTAIN || style == BACKCOUNTRY) {
             if (on(KICK)) {
                 if (s == 0) note(KICK, 60, 0.75f, 0, 0.0f);
                 else if (s == 8 && (spb == 16 || rng.p(0.5f))) note(KICK, 60, 0.45f, 0, 0.0f);
@@ -1101,7 +1117,7 @@ struct Music::Song {
             ladder(c, 57, lad, 8);
             const int k = (sec.intensity == 0 ? step / 2 : step) % arpLen;
             note(ARP, (float)lad[arpPat[k]], step % 4 == 0 ? 0.85f : 0.65f, 0.9f, step % 2 ? 0.35f : -0.35f);
-        } else if (style == MOUNTAIN || style == DESERT) {
+        } else if (style == MOUNTAIN || style == BACKCOUNTRY || style == DESERT) {
             if (step % 2) return;
             ladder(c, 50, lad, 7);
             const int j = (step / 2) % arpLen;
@@ -1195,7 +1211,7 @@ struct Music::Song {
                 v.ph[0] = wrap1(v.ph[0] + d0 * 1.004f);
                 v.ph[1] = wrap1(v.ph[1] + d0 * 0.996f);
                 float s = saw(v.ph[0], d0) + saw(v.ph[1], d0);
-                if (style == MOUNTAIN || style == DESERT) {
+                if (style == MOUNTAIN || style == BACKCOUNTRY || style == DESERT) {
                     v.ph[2] = wrap1(v.ph[2] + 2.0f * d0);
                     s += 0.6f * sine(v.ph[2]);  // airy octave
                 } else {
@@ -1437,7 +1453,9 @@ Music::Music() : cur_(new Song), old_(new Song) {
 Music::~Music() = default;
 
 void Music::setRate(int rate) {
+    rate = std::clamp(rate, 8000, 192000);
     rate_ = rate;
+    vol_ = 0; xfade_ = 1;
     cur_->init(rate);
     old_->init(rate);
     playing_ = false;
@@ -1446,7 +1464,7 @@ void Music::setRate(int rate) {
 std::string Music::status() const { return playing_ ? cur_->status() : "off"; }
 
 void Music::render(float* out, int frames, int map, float volume) {
-    volume = std::min(1.0f, std::max(0.0f, volume));
+    volume = std::isfinite(volume) ? std::clamp(volume, 0.0f, 1.0f) : 0;
     if (volume <= 0.0f && vol_ < 1e-4f) {  // off: no work at all
         vol_ = 0;
         return;

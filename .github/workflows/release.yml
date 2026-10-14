@@ -34,6 +34,7 @@ jobs:
           ./build/run_tests --jobs 1 engine/collision engine/physics-workers net/state
           SDL_VIDEODRIVER=offscreen LP_NUM_THREADS=2 ./build/test_render
           SDL_AUDIODRIVER=dummy CZ_AUDIO_DEVICE_TEST=1 ./build/test_audio
+          python3 tests/test_engine_import.py
           make deb VERSION="$V"
           mkdir -p out && cp "build/deb/crumplezone_${V}_amd64.deb" "out/CrumpleZone-${V}-linux.deb"
       - uses: actions/upload-artifact@v4
