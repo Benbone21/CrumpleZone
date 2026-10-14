@@ -334,6 +334,20 @@ void Sim::carRemoved(int car) {
         if (r.a.kind == ANCHOR_CAR && r.a.car > car) r.a.car--;
         if (r.b.kind == ANCHOR_CAR && r.b.car > car) r.b.car--;
     }
+    // Autopilots following a vehicle: the one that left stops following, the rest keep their leader's new index.
+    for (int i = 0; i < (int)cars.size(); i++) {
+        Autopilot& ap = cars[i].pilot;
+        if (ap.followCar < 0) continue;
+        if (ap.followCar == car) {
+            ap.followCar = -1;
+            if (ap.active) {
+                ap.active = false;
+                if (i == player) events.push_back("AUTOPILOT: THE VEHICLE IT WAS FOLLOWING IS GONE");
+            }
+        } else if (ap.followCar > car) {
+            ap.followCar--;
+        }
+    }
 }
 
 std::vector<WinchTarget> Sim::winchTargets(int ci, const V3* look) const {
