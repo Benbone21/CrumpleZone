@@ -24,12 +24,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Toolchain
-        run: sudo apt-get update -q && sudo apt-get install -y -q g++ libsdl2-2.0-0
+        run: sudo apt-get update -q && sudo apt-get install -y -q g++ libsdl2-2.0-0 libegl1 libgl1-mesa-dri libglx-mesa0
       - name: Build and package
         run: |
           V="${VERSION#[vV]}"
           # Generic x86-64 (the Makefile's default is -march=native: the build machine's CPU only).
           make -j"$(nproc)" CXXFLAGS="-O2 -march=x86-64-v2 -mtune=generic" crumplezone
+          make -j"$(nproc)" CXXFLAGS="-O2 -march=x86-64-v2 -mtune=generic" build/run_tests build/test_render build/test_audio
+          ./build/run_tests --jobs 1 engine/collision engine/physics-workers net/state
+          SDL_VIDEODRIVER=offscreen LP_NUM_THREADS=2 ./build/test_render
+          SDL_AUDIODRIVER=dummy CZ_AUDIO_DEVICE_TEST=1 ./build/test_audio
           make deb VERSION="$V"
           mkdir -p out && cp "build/deb/crumplezone_${V}_amd64.deb" "out/CrumpleZone-${V}-linux.deb"
       - uses: actions/upload-artifact@v4
@@ -45,9 +49,49 @@ jobs:
         run: |
           V="${VERSION#[vV]}"
           make -j"$(nproc)" windows-installer VERSION="$V"
+          make -j"$(nproc)" build/win/bench_sim.exe build/win/run_tests.exe build/win/test_audio.exe
+          mkdir -p build/win/cpu-tests
+          cp build/win/bench_sim.exe build/win/run_tests.exe build/win/test_audio.exe third_party/sdl2-win64/SDL2.dll build/win/cpu-tests/
+          x86_64-w64-mingw32-objdump -p build/win/CrumpleZone/crumplezone.exe > build/win/imports.txt
+          grep -q 'NvOptimusEnablement' build/win/imports.txt
+          grep -q 'AmdPowerXpressRequestHighPerformance' build/win/imports.txt
           mkdir -p out && cp build/win/CrumpleZone-setup.exe "out/CrumpleZone-${V}-windows-setup.exe"
       - uses: actions/upload-artifact@v4
         with: { name: windows, path: out/* }
+      - uses: actions/upload-artifact@v4
+        with: { name: windows-cpu-tests, path: build/win/cpu-tests/* }
+
+  windows-cpu:
+    needs: windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: windows-cpu-tests, path: cpu-tests }
+      - name: Native Windows serial and parallel simulation
+        shell: pwsh
+        run: |
+          foreach ($mode in @('separated', 'pileup')) {
+            $serial = & .\cpu-tests\bench_sim.exe 12 $mode 1000 1
+            if ($LASTEXITCODE -ne 0) { throw "Serial benchmark failed" }
+            $parallel = & .\cpu-tests\bench_sim.exe 12 $mode 1000 4
+            if ($LASTEXITCODE -ne 0) { throw "Parallel benchmark failed" }
+            Write-Output $serial
+            Write-Output $parallel
+            $a = [regex]::Match($serial, 'state ([0-9a-f]{16})')
+            $b = [regex]::Match($parallel, 'state ([0-9a-f]{16})')
+            if (!$a.Success -or !$b.Success -or $a.Groups[1].Value -ne $b.Groups[1].Value) {
+              throw "Serial and parallel simulation differ on Windows ($mode)"
+            }
+          }
+      - name: Native Windows networking, configurable workers, and audio
+        shell: pwsh
+        run: |
+          .\cpu-tests\run_tests.exe --jobs 1 net/ engine/collision engine/physics-workers
+          if ($LASTEXITCODE -ne 0) { throw "Windows networking/physics regression checks failed" }
+          $env:SDL_AUDIODRIVER = 'dummy'
+          $env:CZ_AUDIO_DEVICE_TEST = '1'
+          .\cpu-tests\test_audio.exe
+          if ($LASTEXITCODE -ne 0) { throw "Windows audio regression checks failed" }
 
   mac:
     runs-on: macos-14
@@ -81,7 +125,7 @@ jobs:
 
   publish:
     if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/V')
-    needs: [linux, windows, mac]
+    needs: [linux, windows, windows-cpu, mac]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4

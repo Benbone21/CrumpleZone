@@ -847,13 +847,13 @@ void PropRenderer::submit(GLuint prog, bool depth, long long& tris, int& draws, 
     BufferData(GL_ARRAY_BUFFER, instCap, nullptr, GL_STREAM_DRAW);  // (orphan the old one)
     BufferSubData(GL_ARRAY_BUFFER, 0, bytes, uploadBuf.data());
     UseProgram(prog);
-    Uniform1f(GetUniformLocation(prog, "uTime"), time);
-    Uniform1i(GetUniformLocation(prog, "uDiff"), 5);
-    Uniform1i(GetUniformLocation(prog, "uNorm"), 6);
-    Uniform1i(GetUniformLocation(prog, "uArm"), 7);
-    const GLint uAlpha = GetUniformLocation(prog, "uAlpha"), uCut = GetUniformLocation(prog, "uCutoff"), uFol = GetUniformLocation(prog, "uFoliage");
-    const GLint uHasN = GetUniformLocation(prog, "uHasNorm"), uHasA = GetUniformLocation(prog, "uHasArm"), uWind = GetUniformLocation(prog, "uWind");
-    const GLint uTop = GetUniformLocation(prog, "uTop");
+    Uniform1f(uniformLocation(prog, "uTime"), time);
+    Uniform1i(uniformLocation(prog, "uDiff"), 5);
+    Uniform1i(uniformLocation(prog, "uNorm"), 6);
+    Uniform1i(uniformLocation(prog, "uArm"), 7);
+    const GLint uAlpha = uniformLocation(prog, "uAlpha"), uCut = uniformLocation(prog, "uCutoff"), uFol = uniformLocation(prog, "uFoliage");
+    const GLint uHasN = uniformLocation(prog, "uHasNorm"), uHasA = uniformLocation(prog, "uHasArm"), uWind = uniformLocation(prog, "uWind");
+    const GLint uTop = uniformLocation(prog, "uTop");
     for (size_t b = 0; b < buckets.size(); b++) {
         const int n = (int)(buckets[b].data.size() / 16);
         if (!n) continue;
@@ -907,9 +907,9 @@ void PropRenderer::submitBillboards(GLuint prog, bool depth) {
     BufferData(GL_ARRAY_BUFFER, bbCap, nullptr, GL_STREAM_DRAW);
     BufferSubData(GL_ARRAY_BUFFER, 0, bytes, uploadBuf.data());
     UseProgram(prog);
-    Uniform1f(GetUniformLocation(prog, "uViews"), (float)kBillboardViews);
-    Uniform1i(GetUniformLocation(prog, "uDiff"), 5);
-    Uniform1i(GetUniformLocation(prog, "uNorm"), 6);
+    Uniform1f(uniformLocation(prog, "uViews"), (float)kBillboardViews);
+    Uniform1i(uniformLocation(prog, "uDiff"), 5);
+    Uniform1i(uniformLocation(prog, "uNorm"), 6);
     BindVertexArray(bbVao);
     for (size_t m = 0; m < bbData.size(); m++) {
         const int n = (int)(bbData[m].size() / 8);
@@ -943,12 +943,12 @@ void PropRenderer::drawShadow(const M4& lightVP, int cascade, const V3& lightDir
     // The far cascade takes a coarser LOD; the scatter only casts into the near one.
     select(pl, true, cascade, true);
     UseProgram(progDepth);
-    UniformMatrix4fv(GetUniformLocation(progDepth, "uVP"), 1, 0, lightVP.m);
+    UniformMatrix4fv(uniformLocation(progDepth, "uVP"), 1, 0, lightVP.m);
     submit(progDepth, true, stats.shadowTris, stats.shadowDraws, stats.shadowInstances);
     UseProgram(progBBDepth);
-    UniformMatrix4fv(GetUniformLocation(progBBDepth, "uVP"), 1, 0, lightVP.m);
-    Uniform1i(GetUniformLocation(progBBDepth, "uFaceLight"), 1);
-    Uniform3f(GetUniformLocation(progBBDepth, "uLightDir"), (float)lightDir.x, (float)lightDir.y, (float)lightDir.z);
+    UniformMatrix4fv(uniformLocation(progBBDepth, "uVP"), 1, 0, lightVP.m);
+    Uniform1i(uniformLocation(progBBDepth, "uFaceLight"), 1);
+    Uniform3f(uniformLocation(progBBDepth, "uLightDir"), (float)lightDir.x, (float)lightDir.y, (float)lightDir.z);
     submitBillboards(progBBDepth, true);
     endQuery();
     stats.cpuMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
@@ -964,8 +964,8 @@ void PropRenderer::draw(const M4& viewProj, const std::function<void(GLuint)>& s
     setLighting(progLit);
     submit(progLit, false, stats.tris, stats.draws, stats.instances);
     setLighting(progBB);
-    Uniform3f(GetUniformLocation(progBB, "uEye"), (float)eye.x, (float)eye.y, (float)eye.z);
-    Uniform1i(GetUniformLocation(progBB, "uFaceLight"), 0);
+    Uniform3f(uniformLocation(progBB, "uEye"), (float)eye.x, (float)eye.y, (float)eye.z);
+    Uniform1i(uniformLocation(progBB, "uFaceLight"), 0);
     submitBillboards(progBB, false);
     endQuery();
     stats.cpuMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();

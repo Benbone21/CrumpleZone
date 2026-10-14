@@ -1,10 +1,87 @@
 #include "audio.h"
 
 #include <cmath>
+#include <cstdio>
 
 #include "sdl_min.h"
+#include "softbody.h"
+
+void Audio::setNearbyEngines(const Sim& sim, const V3& listener, const V3& right, float timeScale) {
+    Sources& frame = sources_[backSources_];
+    frame.count = 0;
+    std::array<double, kNearbyEngines> distances{};
+    for (size_t i = 0; i < sim.cars.size(); i++) {
+        const Car& c = sim.cars[i];
+        if ((int)i == sim.player || c.isProp()) continue;
+        const V3 offset = c.frame().com - listener;
+        const double distance = len(offset);
+        if (distance > 160) continue;
+        int slot = 0;
+        while (slot < frame.count && distances[slot] <= distance) slot++;
+        if (slot >= kNearbyEngines) continue;
+        const int end = std::min(frame.count, kNearbyEngines - 1);
+        for (int k = end; k > slot; k--) {
+            frame.engines[k] = frame.engines[k - 1];
+            distances[k] = distances[k - 1];
+        }
+        Source& out = frame.engines[slot];
+        const VehicleSpec& v = *c.spec;
+        out.id = c.netId ? c.netId : 0x80000000u | (uint32_t)(i + 1);
+        out.engine = EngineInput{(float)(c.engineDead || sim.paused ? 0 : c.rpm) * timeScale,
+            (float)clampd(c.throttle * c.tcCut, 0, 1), (float)c.boost,
+            v.cylinders, (int)v.induction, (float)v.displacement, (float)v.redline, v.flatPlane,
+            (uint8_t)engineSamples::forVehicle(v)};
+        out.gain = (float)(0.55 / (1 + distance * distance / 144));
+        out.pan = (float)clampd(distance > 1e-6 ? dot(offset / distance, right) : 0, -1, 1);
+        distances[slot] = distance;
+        frame.count = std::min(frame.count + 1, kNearbyEngines);
+    }
+    backSources_ = middleSources_.exchange(backSources_ | 4u, std::memory_order_acq_rel) & 3u;
+}
+
+void Audio::updateRemoteVoices() {
+    if (middleSources_.load(std::memory_order_acquire) & 4u)
+        frontSources_ = middleSources_.exchange(frontSources_, std::memory_order_acq_rel) & 3u;
+    const Sources& frame = sources_[frontSources_];
+    for (auto& voice : nearby_) voice.targetGain = 0;
+    for (int i = 0; i < frame.count; i++) {
+        const Source& source = frame.engines[i];
+        NearbyVoice* voice = nullptr;
+        for (auto& v : nearby_) if (v.id == source.id) { voice = &v; break; }
+        if (!voice) {
+            float quietest = 1e9f;
+            for (auto& v : nearby_) {
+                bool needed = false;
+                for (int k = 0; k < frame.count; k++) needed |= frame.engines[k].id == v.id;
+                if (!needed && v.gain < quietest) { quietest = v.gain; voice = &v; }
+            }
+            if (!voice) continue;
+            *voice = NearbyVoice{};
+            voice->id = source.id;
+        }
+        voice->input = source.engine;
+        voice->targetGain = source.gain;
+        voice->left = std::sqrt(0.5f * (1 - source.pan));
+        voice->right = std::sqrt(0.5f * (1 + source.pan));
+    }
+}
+
+int Audio::loadEngineRecordings(const std::string& directory) {
+    if (device_) return -1; // don't mutate buffers an active callback might be reading
+    engine_ = EngineVoice{};
+    for (auto& voice : nearby_) voice = NearbyVoice{};
+    std::vector<std::string> errors;
+    const int count = recordings_.load(directory, &errors);
+    recordingsReady_ = true;
+    recordingCount_ = count;
+    for (const std::string& error : errors) std::fprintf(stderr, "Engine recording: %s\n", error.c_str());
+    return count;
+}
 
 bool Audio::start() {
+    if (device_) return true;
+    const int banks = recordingsReady_ ? recordingCount_ : loadEngineRecordings("assets/audio/engines");
+    std::printf("Engine recordings: %d banks loaded; missing banks use procedural audio\n", banks);
     SDL_AudioSpec want{}, have{};
     want.freq = 48000;
     want.format = AUDIO_F32SYS;
@@ -61,82 +138,17 @@ void Audio::render(float* out, int frames) {
         popEnv_ = 1.0f;
         thumpEnv_ = std::max(thumpEnv_, 0.6f);
     }
+    const EngineInput engineInput{tRpm, tLoad, tBoost, (int)cyl_, (int)induction_, (float)liters_, (float)redline_, (bool)flatPlane_,
+                                 (uint8_t)std::clamp((int)recording_, 0, engineSamples::kBanks - 1)};
+    const auto* localBank = recordings_.bank(engineInput.recording);
+    updateRemoteVoices();
     const float smooth = 1.0f - std::exp(-dt * 30.0f);
     for (int i = 0; i < frames; i++) {
-        sRpm_ += (tRpm - sRpm_) * smooth;
-        sLoad_ += (tLoad - sLoad_) * smooth;
         sSlip_ += (tSlip - sSlip_) * smooth * 0.5f;
         sSpeed_ += (tSpeed - sSpeed_) * smooth;
-        sBoost_ += (tBoost - sBoost_) * smooth;
 
-        // ---- Engine ------------------------------------------------------------
-        // Each cylinder fires once every two revolutions, so pulses come at
-        // rpm/60 * cylinders/2 Hz. Small differences between cylinders (and, on a
-        // cross-plane V8 or odd-fire engine, uneven spacing) give the half-order
-        // "lump"; a flat-plane V8 fires evenly, like two fours, and howls instead.
-        // Bigger engines sound deeper (lower exhaust resonance), turbos muffle the
-        // pulses and whistle, a Roots blower whines with the crank.
-        const int cyl = std::max(1, std::min(12, (int)cyl_)), ind = induction_;
-        const float liters = std::max(0.6f, (float)liters_), redline = std::max(3000.0f, (float)redline_);
-        if (cyl != voiceCyl_) {
-            voiceCyl_ = cyl;
-            for (int c = 0; c < 12; c++) cylGain_[c] = 1.0f - 0.18f * (0.5f + 0.5f * noise());
-        }
-        float fire = sRpm_ / 60.0f * cyl * 0.5f;
-        phase_ += fire * dt;
-        subPhase_ += sRpm_ / 60.0f * 0.5f * dt;  // once per cycle (two revolutions)
-        if (phase_ > 1) {
-            phase_ -= std::floor(phase_);
-            fireCount_ = (fireCount_ + 1) % cyl;
-        }
-        if (subPhase_ > 1) subPhase_ -= std::floor(subPhase_);
-        float ph = (float)phase_;
-        const float sharp = 5.0f + 2.5f * sLoad_ + (flatPlane_ ? 3.0f : 0.0f);
-        // The lump: alternate pulses a little stronger and weaker (strong on fours and V6s,
-        // faint on a flat-plane V8), which puts a half-order under the firing note.
-        float lumpAmt = flatPlane_ ? 0.04f : cyl <= 4 ? 0.28f : cyl == 6 ? 0.2f : 0.34f;
-        float lump = 1.0f + lumpAmt * ((fireCount_ & 1) ? 1.0f : -1.0f) * std::cos(2.0f * (float)M_PI * (float)subPhase_);
-        float pulse = (std::exp(-ph * sharp) - 1.0f / sharp) * cylGain_[fireCount_] * lump;
-        float rasp = noise() * std::exp(-ph * 4.0f) * (0.2f + 0.5f * sLoad_) * (ind == 1 ? 0.6f : 1.0f);
-        float raw = pulse * 1.4f + rasp;
-        // Exhaust resonance: deeper for big engines, brighter with load and revs.
-        float cutoff = (250.0f + 2200.0f * sLoad_) * std::pow(1.6f / liters, 0.35f) + sRpm_ * 0.28f;
-        if (ind == 1) cutoff *= 0.75f;  // the turbine soaks up the sharp edges
-        if (flatPlane_) cutoff *= 1.5f;
-        float a = 1.0f - std::exp(-2.0f * (float)M_PI * cutoff * dt);
-        engLp_ += (raw - engLp_) * a;
-        engLp2_ += (engLp_ - engLp2_) * a;
-        // Intake honk near the top of the rev range on naturally aspirated engines.
-        float ia = 1.0f - std::exp(-2.0f * (float)M_PI * 900.0f * dt);
-        intakeLp_ += (pulse - intakeLp_) * ia;
-        float intake = ind == 0 ? intakeLp_ * 0.25f * sLoad_ * std::max(0.0f, sRpm_ / redline - 0.55f) * 2.0f : 0.0f;
-        float size = 0.8f + 0.12f * std::min(liters, 5.0f);
-        float engine = (engLp2_ * (0.28f + 0.45f * sLoad_) * size + intake) * std::min(1.0f, sRpm_ / 400.0f);  // silent when stalled
-
-        // Turbo: spool whistle rising with boost, and a blow-off "pssh" when the throttle
-        // closes on boost.
-        float forced = 0;
-        if (ind == 1) {
-            spoolPhase_ += (1800.0f + 5200.0f * sBoost_) * sRpm_ / redline * dt;
-            if (spoolPhase_ > 1) spoolPhase_ -= std::floor(spoolPhase_);
-            forced += std::sin(2.0f * (float)M_PI * (float)spoolPhase_) * 0.05f * sBoost_ * sBoost_;
-            if (prevLoad_ - sLoad_ > 0.25f * dt * 30.0f && sBoost_ > 0.4f) bovEnv_ = std::max(bovEnv_, sBoost_);
-            float bw = 2.0f * std::sin((float)M_PI * 2400.0f * dt);
-            float bh = noise() - bovLow_ - 0.7f * bovBand_;
-            bovBand_ += bw * bh;
-            bovLow_ += bw * bovBand_;
-            forced += bovBand_ * 0.22f * bovEnv_;
-            bovEnv_ *= std::exp(-dt / 0.25f);
-        } else if (ind == 2) {
-            // Roots blower: belt-driven at ~2.5x crank, three-lobe rotors, so its whine
-            // tracks the revs exactly.
-            whinePhase_ += sRpm_ / 60.0f * 2.5f * 6.0f * dt;
-            if (whinePhase_ > 1) whinePhase_ -= std::floor(whinePhase_);
-            float wp = 2.0f * (float)M_PI * (float)whinePhase_;
-            forced += (std::sin(wp) + 0.3f * std::sin(2.0f * wp)) * 0.06f * (0.3f + 0.7f * sLoad_) * std::min(1.0f, sRpm_ / 2500.0f);
-        }
-        prevLoad_ = sLoad_;
-        engine += forced;
+        const float engine = engine_.sample(engineInput, dt, localBank);
+        const float ph = engine_.phase();
 
         // Tire squeal: resonant band-pass noise, pitch wobbles a little.
         float f0 = 820.0f + 120.0f * std::sin(ph * 6.28f);
@@ -183,9 +195,17 @@ void Audio::render(float* out, int frames) {
         popEnv_ *= std::exp(-dt / 0.05f);
 
         float mix = engine + squeal + wind + crunch * 0.9f + thump * 0.8f + glassSnd + popSnd;
-        mix = std::tanh(mix * 1.2f) * master;
-        out[2 * i] = mix;
-        out[2 * i + 1] = mix;
+        float nearbyLeft = 0, nearbyRight = 0;
+        for (auto& voice : nearby_) {
+            if (!voice.id) continue;
+            voice.gain += (voice.targetGain - voice.gain) * smooth;
+            if (voice.gain < 1e-6f && voice.targetGain == 0) { voice.id = 0; continue; }
+            const float sound = voice.synth.sample(voice.input, dt, recordings_.bank(voice.input.recording)) * voice.gain;
+            nearbyLeft += sound * voice.left;
+            nearbyRight += sound * voice.right;
+        }
+        out[2 * i] = std::tanh((mix + nearbyLeft) * 1.2f) * master;
+        out[2 * i + 1] = std::tanh((mix + nearbyRight) * 1.2f) * master;
     }
     // Music goes on top, quieter than the car (its own level is about -18 dBFS before the
     // volume setting). A soft knee catches the rare moment both peak together.

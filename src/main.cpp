@@ -9,6 +9,8 @@
 #include <cstring>
 #include <mutex>
 #include <set>
+#include <stdexcept>
+#include <system_error>
 #include <string>
 #include <thread>
 #ifndef _WIN32
@@ -49,6 +51,7 @@ namespace {
 const double kTimeScales[] = {1.0, 0.5, 0.25, 0.1, 0.03};
 
 struct Options {
+    int physicsThreads = -1;  // -1 saved setting; 0 automatic; otherwise a CPU thread budget
     int width = 1600, height = 900;
     bool fullscreen = false, audio = true, vsync = true;
     bool pad = true;  // --no-pad: don't open game controllers (also CZ_NO_PAD=1)
@@ -250,6 +253,11 @@ Options parseArgs(int argc, char** argv) {
         if (a == "--fullscreen") o.fullscreen = true;
         else if (a == "--no-audio") o.audio = false;
         else if (a == "--no-vsync") o.vsync = false;
+        else if (a == "--physics-threads") {
+            const std::string value = next();
+            o.physicsThreads = value == "all" ? physicsThreadLimit() :
+                value == "auto" ? 0 : (int)std::clamp(std::strtol(value.c_str(), nullptr, 10), 0L, (long)physicsThreadLimit());
+        }
         else if (a == "--no-pad") o.pad = false;
         else if (a == "--size") {
             std::string s = next();
@@ -296,7 +304,8 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--editor") o.editor = true;
         else if (a == "--help" || a == "-h") {
             std::puts("usage: crumplezone [--fullscreen] [--size WxH] [--no-audio] [--no-vsync] [--no-pad] [--spawn X,Z[,HEADING]] [--scenario NAME]\n"
-                      "                   [--map N] [--host [PORT]] [--join HOST[:PORT]] [--name NAME] [--time HOURS] [--level NAME]");
+                      "                   [--map N] [--host [PORT]] [--join HOST[:PORT]] [--name NAME] [--time HOURS] [--level NAME]\n"
+                      "                   [--physics-threads auto|all|N]");
             std::exit(0);
         }
     }
@@ -383,55 +392,40 @@ bool project(const View& v, const V3& p, float& sx, float& sy) {
     return true;
 }
 
-// Picking a winch anchor (V): everything in reach is marked, the one nearest where the
-// camera looks is selected; drag to aim, wheel or Tab for the next, V or a click hooks it.
+// Pointer/controller recovery picker. Straps first choose our recovery point,
+// then a point on another vehicle; winches choose one reachable anchor.
 struct WinchAim {
-    bool on = false;
+    bool on = false, pointer = false;
+    RopeKind kind = ROPE_WINCH;
+    int sourceHook = -1, sel = -1;
+    float pointerX = 0, pointerY = 0;
     std::vector<WinchTarget> targets;
-    int sel = -1;
-    double refresh = 0;
-    V3 selAt;
+    V3 look;
     bool hasLook = false;
-    V3 look;  // the ground under the middle of the screen: offered as an anchor too
-    void pickCentered(const View& v) {
-        float best = 1e9f;
-        for (int k = 0; k < (int)targets.size(); k++) {
-            float sx, sy;
-            if (!project(v, targets[k].at, sx, sy)) continue;
-            const float d = std::hypot(sx - v.width / 2.0f, sy - v.height * 0.45f) + (targets[k].inArc ? 0 : 4000);
-            if (d < best) best = d, sel = k;
-        }
-        if (sel >= 0) selAt = targets[sel].at;
+    V3 ray(const View& v) const {
+        const float x = pointer ? pointerX : v.width * 0.5f, y = pointer ? pointerY : v.height * 0.5f;
+        const V3 f = norm(v.target - v.eye), right = norm(cross(f, v.up)), up = cross(right, f);
+        const double scale = 2 * std::tan(v.fovy / 2) / std::max(1, v.height);
+        return norm(f + right * ((x - v.width * 0.5) * scale) - up * ((y - v.height * 0.5) * scale));
     }
-    void update(const Sim& sim, double dt) {
-        if (!on || (refresh -= dt) > 0) return;
-        refresh = 0.3;
-        targets = sim.winchTargets(sim.player, hasLook ? &look : nullptr);
-        // Keep the same anchor selected as the truck (or the anchor) moves.
-        int keep = -1;
-        double bd = 2.0;
-        for (int k = 0; k < (int)targets.size(); k++)
-            if (len(targets[k].at - selAt) < bd) bd = len(targets[k].at - selAt), keep = k;
-        sel = keep >= 0 ? keep : targets.empty() ? -1 : std::min(std::max(sel, 0), (int)targets.size() - 1);
-        if (sel >= 0) selAt = targets[sel].at;
-    }
-    // Where the view ray through the middle of the screen meets the ground (within the line's reach).
-    void aimGround(const View& v, const World& w) {
+    void update(const Sim& sim, const View& v) {
+        if (!on) return;
+        const V3 dir = ray(v);
         hasLook = false;
-        const V3 d = norm(v.target - v.eye);
-        for (double t = 1; t < recovery::kWinchReach + 10; t += 0.5) {
-            const V3 q = v.eye + d * t;
-            if (q.y < w.height(q.x, q.z)) {
-                look = q;
-                hasLook = true;
-                return;
+        if (kind == ROPE_WINCH) {
+            for (double d = 0.5; d < recovery::kWinchReach + 20; d += 0.5) {
+                const V3 q = v.eye + dir * d;
+                if (q.y <= sim.world.height(q.x, q.z)) { look = q; hasLook = true; break; }
             }
-        }
-    }
-    void step(int dir) {
-        if (targets.empty()) return;
-        sel = ((sel < 0 ? 0 : sel + dir) % (int)targets.size() + (int)targets.size()) % (int)targets.size();
-        selAt = targets[sel].at;
+            targets = sim.winchTargets(sim.player, hasLook ? &look : nullptr);
+        } else if (sourceHook < 0) {
+            targets.clear();
+            for (int h = 0; h < 2; h++) {
+                RopeEnd end; end.car = sim.player; end.hook = h;
+                targets.push_back({end, sim.cars[sim.player].hookPoint(h), 0, true, h ? "YOUR REAR POINT" : "YOUR FRONT POINT"});
+            }
+        } else targets = sim.strapTargets(sim.player, sourceHook);
+        sel = sim.pickRecoveryTarget(targets, v.eye, dir, 44 * std::tan(v.fovy / 2) / std::max(1, v.height));
     }
 };
 
@@ -587,6 +581,7 @@ struct HudState {
     double lapTime = -1, lastLap = 0, bestLap = 0, lapSide = 0;
     bool showHelp = false, showFps = false, scenarioDetail = false;
     std::string gpu;        // the graphics card drawing it (GL_RENDERER), shown with the FPS
+    double physicsMs = 0, drawCpuMs = 0;
     double confirmReset = 0;  // R just pressed: a second press within this long respawns at the start
     double hintTime = 7.0;  // "press H for controls" fades out after this
     float needle = 0;       // smoothed tach position 0..1
@@ -644,7 +639,7 @@ void drawGauges(Renderer& r, const Car& car, HudState& hud, float u, int W, int 
     const char* unit = mph ? "MPH" : "KM/H";
     r.text(cx - r.textWidth(unit, sm) / 2, cy + 12 * u + 9 * ss, sm, unit, 0.7f, 0.72f, 0.76f);
     // Gear in a small box in the dial's bottom opening.
-    std::string gear = car.engineDead ? "-" : car.gear < 0 ? "R" : std::to_string(car.gear);
+    std::string gear = car.engineDead ? "-" : car.gear < 0 ? "R" : car.gear == 0 ? "N" : std::to_string(car.gear);
     float gs = px(2.2f * u), gw = 12 * gs * 0.5f + 8 * u, gh = 8 * gs + 6 * u, gy = cy + R - gh - 2 * u;
     pill(r, cx - gw / 2, gy, gw, gh, 0.0f, 0.0f, 0.0f, 0.55f);
     r.text(cx - r.textWidth(gear, gs) / 2, gy + 3 * u + gs * 0.5f, gs, gear, 1.0f, 0.72f, 0.25f);
@@ -760,9 +755,9 @@ void drawRecovery(Renderer& r, const Sim& sim, float u) {
     if (rp.kind == ROPE_WINCH && rp.a.car == sim.player) {
         const float sm = px(1.1f * u);
         char hint[96];
-        const int pct = (int)std::lround(sim.cars[sim.player].winchSpeed * 100);
-        if (pad::ui.last) std::snprintf(hint, sizeof hint, "%s + RT REEL IN   %s + LT PAY OUT   RIGHT STICK UP DOWN: SPEED %d%%   %s + D-PAD UP: UNHOOK", pad::hint("", pad::B_LB), pad::hint("", pad::B_LB), pct, pad::hint("", pad::B_LB));
-        else std::snprintf(hint, sizeof hint, "Z REEL IN   SHIFT+Z PAY OUT   - = SPEED %d%%   V UNHOOK", pct);
+        const double speed = sim.cars[sim.player].winchSpeed;
+        if (pad::ui.last) std::snprintf(hint, sizeof hint, "%s + RT REEL IN   %s + LT PAY OUT   RIGHT STICK UP DOWN: SPEED %.2gX   %s + D-PAD UP: UNHOOK", pad::hint("", pad::B_LB), pad::hint("", pad::B_LB), speed, pad::hint("", pad::B_LB));
+        else std::snprintf(hint, sizeof hint, "Z REEL IN   SHIFT+Z PAY OUT   - = SPEED %.2gX   V UNHOOK", speed);
         r.text(x + 8 * u, y + h + 4 * u, sm, hint, 0.8f, 0.82f, 0.86f, 0.9f);
     }
 }
@@ -1012,10 +1007,10 @@ void drawHelp(Renderer& r, float u, int W, int H, bool mph) {
         {"SPACE", "HANDBRAKE"},               {"R", "REPAIR IN PLACE (R R: RESPAWN)"},
         {"T", "BACK ON ITS WHEELS"},          {"TAB", "NEXT VEHICLE (DRIVE YOUR BUDDY)"},
         {"V", "WINCH: HOOK / UNHOOK"},        {"Z", "WINCH IN (SHIFT+Z: OUT, - = SPEED)"},
-        {"O", "TOW STRAP TO NEARBY TRUCK"},   {"Y", "FRONT SWAY BAR DISCONNECT"},
+        {"O", "TOW STRAP: CLICK YOUR POINT, THEN THEIRS"},   {"Y", "FRONT SWAY BAR DISCONNECT"},
         {"9 0", "AIR DOWN / UP (STOPPED)"},
         {"1 - 7", "CIVIC JESKO BRONCO 4RUNNER BUGGY UTV TACOMA"}, {"G", "GARAGE: ENGINE, SUSPENSION, GEARBOX"},
-        {"Q E", "SHIFT DOWN / UP"},           {"SHIFT+M", "MANUAL / AUTOMATIC"},
+        {"Q E", "SHIFT DOWN / UP (R N 1...)"},           {"SHIFT+M", "MANUAL / AUTOMATIC"},
         {"M", "MAP (WAYPOINTS, PINGS)"},      {"ENTER", "CHAT"},
         {"MIDDLE CLICK", "PING: GO HERE (SHIFT: HELP)"},
         {"J", "GET OUT / IN (ON FOOT: V WINCH, F FUEL CAN)"},
@@ -1173,9 +1168,9 @@ void drawGarage(Renderer& r, const GarageUI& g, const Garage& garage, float u, i
 void drawWinchAim(Renderer& r, const Sim& sim, const WinchAim& aim, const View& view, float u, int W, int H) {
     if (!aim.on) return;
     const Car& car = sim.cars[sim.player];
-    const V3 hook = car.hookPoint(0);
+    const V3 hook = car.hookPoint(aim.kind == ROPE_STRAP && aim.sourceHook >= 0 ? aim.sourceHook : 0);
     // The line's reach: a ring on the ground.
-    const double reach = recovery::kWinchReach - 1;
+    const double reach = aim.kind == ROPE_WINCH ? recovery::kWinchReach - 1 : recovery::kStrapReach;
     for (int k = 0; k < 120; k++) {
         const double a = k * 2 * M_PI / 120;
         V3 q = hook + V3(std::cos(a), 0, std::sin(a)) * reach;
@@ -1210,11 +1205,14 @@ void drawWinchAim(Renderer& r, const Sim& sim, const WinchAim& aim, const View& 
         const float ts = px(1.8f * u);
         label(r, sx - r.textWidth(buf, ts) / 2, sy + b + 6 * u, ts, buf, cr, cg, cb);
     }
-    const std::string padHelp = aim.targets.empty() ? "NOTHING IN REACH (30 M LINE)   " + std::string(pad::hint("", pad::B_B)) + " CANCEL"
-                                                    : "RIGHT STICK AIMS   D-PAD OR LB RB: NEXT   " + std::string(pad::hint("", pad::B_A)) + ": HOOK   " + pad::hint("", pad::B_B) + ": CANCEL";
-    const char* help = pad::ui.last ? padHelp.c_str()
-                       : aim.targets.empty() ? "NOTHING IN REACH (30 M LINE)   ESC CANCEL"
-                                             : "DRAG TO AIM   WHEEL OR TAB: NEXT   V OR CLICK: HOOK   ESC: CANCEL";
+    const char* stage = aim.kind == ROPE_WINCH ? "WINCH: CHOOSE AN ANCHOR" : aim.sourceHook < 0 ? "STRAP: CHOOSE YOUR FRONT OR REAR POINT" : "STRAP: CHOOSE THE OTHER VEHICLE'S POINT (9 M)";
+    centeredPill(r, W / 2.0f, H - 139 * u, px(1.5f * u), stage, 0.02f, 0.02f, 0.03f, 0.95f, 1.0f, 0.75f, 0.3f);
+    if (!aim.pointer) {
+        r.rect(W * 0.5f - 8 * u, H * 0.5f - u, 16 * u, 2 * u, 1, 1, 1, 0.8f);
+        r.rect(W * 0.5f - u, H * 0.5f - 8 * u, 2 * u, 16 * u, 1, 1, 1, 0.8f);
+    }
+    const std::string padHelp = "RIGHT STICK AIMS   " + std::string(pad::hint("", pad::B_A)) + ": SELECT   " + pad::hint("", pad::B_B) + ": CANCEL";
+    const char* help = pad::ui.last ? padHelp.c_str() : "CLICK: SELECT   MIDDLE DRAG: LOOK   WHEEL: ZOOM   ESC: CANCEL";
     centeredPill(r, W / 2.0f, H - 110 * u, px(1.5f * u), help, 0.02f, 0.02f, 0.03f, 0.95f, 1.0f, 0.75f, 0.3f);
 }
 
@@ -1364,6 +1362,9 @@ void drawHud(Renderer& r, const Sim& sim, const View& view, HudState& hud, const
         label(r, W - r.textWidth(buf, px(1.3f * u)) - 10 * u, 8 * u, px(1.3f * u), buf, 0.8f, 0.9f, 0.8f);
         // (Which chip draws it: on a laptop with two, the built-in one is far slower.)
         if (!hud.gpu.empty()) r.text(W - r.textWidth(hud.gpu, px(1.0f * u)) - 10 * u, 8 * u + 8 * px(1.3f * u) + 4 * u, px(1.0f * u), hud.gpu, 0.7f, 0.75f, 0.8f);
+        std::snprintf(buf, sizeof(buf), "PHYSICS %.1f MS  DRAW CPU %.1f MS", hud.physicsMs, hud.drawCpuMs);
+        r.text(W - r.textWidth(buf, px(1.0f * u)) - 10 * u, 8 * u + 8 * px(1.3f * u) + 8 * px(1.0f * u) + 8 * u,
+               px(1.0f * u), buf, 0.7f, 0.75f, 0.8f);
     }
     if (hud.showHelp) pad::ui.last ? drawPadHelp(r, u, W, H) : drawHelp(r, u, W, H, mph);
 }
@@ -1386,11 +1387,24 @@ int main(int argc, char** argv) {
 #endif
     Options opt = parseArgs(argc, argv);
     const bool scripted = !opt.shotFrames.empty();
+#ifdef _WIN32
+    // The GUI executable has no terminal. Keep driver/shader errors where players can find them.
+    makeDir(configDir());
+    const std::string logPath = configDir() + "/graphics.log";
+    if (FILE* log = std::fopen(logPath.c_str(), "w")) {
+        std::fclose(log);
+        std::freopen(logPath.c_str(), "a", stdout);
+        std::freopen(logPath.c_str(), "a", stderr);
+        std::setvbuf(stdout, nullptr, _IONBF, 0);
+        std::setvbuf(stderr, nullptr, _IONBF, 0);
+    }
+#endif
     if (scripted) opt.audio = false;
     // Settings from last time (scripted captures use the defaults, so they're repeatable).
     Settings settings;
     const std::string settingsPath = Settings::defaultPath();
     if (!scripted) settings.load(settingsPath);
+    if (opt.physicsThreads >= 0) settings.physicsThreads = opt.physicsThreads;
     if (!opt.name.empty()) settings.playerName = opt.name;
     if (settings.playerName.empty()) {
         const char* user = std::getenv("USER");
@@ -1418,19 +1432,15 @@ int main(int argc, char** argv) {
 #endif
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
-    SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
-    SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 4);
+    // MSAA belongs to the HDR scene target. The window only receives the full-screen
+    // composite and HUD; sampling it again wastes bandwidth and restricts pixel formats.
+    SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 0);
+    SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 0);
 
     uint32_t flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
     if (settings.fullscreen) flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
     SDL_Window* win = SDL_CreateWindow("Crumple Zone", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, opt.width,
                                        opt.height, flags);
-    if (!win) {  // retry without multisampling
-        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 0);
-        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 0);
-        win = SDL_CreateWindow("Crumple Zone", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, opt.width, opt.height,
-                               flags);
-    }
     if (!win) {
         fail(std::string("could not create window: ") + SDL_GetError());
         return 1;
@@ -1445,7 +1455,8 @@ int main(int argc, char** argv) {
         return 1;
     }
     SDL_GL_SetSwapInterval(settings.vsync && opt.vsync && !scripted ? 1 : 0);
-    std::printf("OpenGL: %s / %s\n", (const char*)gl::GetString(GL_VERSION), (const char*)gl::GetString(GL_RENDERER));
+    std::printf("OpenGL: %s / %s / %s\n", (const char*)gl::GetString(GL_VENDOR), (const char*)gl::GetString(GL_VERSION),
+                (const char*)gl::GetString(GL_RENDERER));
     std::string gpuName;
     if (const GLubyte* gr = gl::GetString(GL_RENDERER)) {
         gpuName = (const char*)gr;
@@ -1456,6 +1467,13 @@ int main(int argc, char** argv) {
     // code-made rocks. Scenario playback keeps the code-made rocks the tests ran with.
     if (opt.scenario.empty()) props::setActiveRockScans(&props::sharedHullLibrary());
     Sim sim;
+    const int physicsThreads = resolvePhysicsThreads(settings.physicsThreads);
+    try {
+        sim.setPhysicsThreads(physicsThreads);
+        std::printf("Physics: %d threads (small scenes use the main thread)\n", physicsThreads);
+    } catch (const std::system_error& error) {
+        std::fprintf(stderr, "Physics workers unavailable; using one thread: %s\n", error.what());
+    }
     if (settings.map != MAP_PROVING_GROUND) sim.world = World(settings.map);
     sim.setup();
     // Your garage: the mods fitted last time go back on the cars.
@@ -1548,6 +1566,17 @@ int main(int argc, char** argv) {
     double levelHours = -1;  // the playing level's own hour (-1: none)
     int lampMode = opt.lamps >= 0 && opt.lamps < LAMP_MODES ? opt.lamps : LAMPS_AUTO;  // the player's headlight switch
     auto applySettings = [&]() {
+        const int threads = resolvePhysicsThreads(settings.physicsThreads);
+        if (threads != sim.physicsThreads()) {
+            try {
+                sim.setPhysicsThreads(threads);
+                std::printf("Physics: %d threads of %d available\n", threads, physicsThreadLimit());
+            } catch (const std::system_error& error) {
+                hud.toast("COULD NOT CHANGE PHYSICS THREAD COUNT");
+                std::fprintf(stderr, "Physics threads unchanged: %s\n", error.what());
+                settings.physicsThreads = sim.physicsThreads();
+            }
+        }
         cam.fovy = (float)(settings.fovDeg * M_PI / 180);
         hud.showFps = settings.showFps;
         bool fs = (SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN_DESKTOP) == SDL_WINDOW_FULLSCREEN_DESKTOP;
@@ -1555,6 +1584,7 @@ int main(int argc, char** argv) {
             SDL_SetWindowFullscreen(win, settings.fullscreen ? (uint32_t)SDL_WINDOW_FULLSCREEN_DESKTOP : 0u);
         SDL_GL_SetSwapInterval(settings.vsync && opt.vsync && !scripted ? 1 : 0);
         sim.realRecovery = settings.realRecovery;
+        for (Car& c : sim.cars) if (!c.remote) c.winchSpeed = settings.winchSpeed;
     };
     auto saveSettings = [&]() {
         if (!scripted) settings.save(settingsPath);
@@ -1583,6 +1613,7 @@ int main(int argc, char** argv) {
         sim.paused = menuWasPaused;
     };
     bool running = true;
+    int exitCode = 0;
     double wrapSeen = 0;  // sim.wrapShift the camera and effects have caught up with
     BuildWatch watch;
     if (!scripted) watch.start();
@@ -1600,17 +1631,27 @@ int main(int argc, char** argv) {
         return padShift || ks[SC_LSHIFT] || ks[SC_RSHIFT];
     };
     auto confirmWinch = [&]() {
+        winchAim.update(sim, lastView);
         if (winchAim.sel < 0 || winchAim.sel >= (int)winchAim.targets.size()) {
-            winchAim.on = false;
+            hud.toast("POINT AT A RECOVERY POINT OR ANCHOR");
             return;
         }
-        const WinchTarget& t = winchAim.targets[winchAim.sel];
-        if (!t.inArc) {
-            hud.toast("THAT'S BEHIND THE WINCH: TURN TO FACE IT");
+        const WinchTarget t = winchAim.targets[winchAim.sel];
+        if (winchAim.kind == ROPE_STRAP && winchAim.sourceHook < 0) {
+            winchAim.sourceHook = t.end.hook;
+            winchAim.update(sim, lastView);
+            hud.toast("NOW CLICK THE OTHER VEHICLE'S FRONT OR REAR POINT");
             return;
         }
-        hud.toast(sim.hookWinchTo(sim.player, t.end));
-        winchAim.on = false;
+        if (!t.inArc) { hud.toast("THAT'S BEHIND THE WINCH: TURN TO FACE IT"); return; }
+        const std::string message = winchAim.kind == ROPE_WINCH ? sim.hookWinchTo(sim.player, t.end)
+            : sim.hookStrapTo(sim.player, winchAim.sourceHook, t.end);
+        hud.toast(message);
+        if (message.rfind("WINCH HOOKED", 0) == 0 || message.rfind("TOW STRAP:", 0) == 0) winchAim.on = false;
+    };
+    auto startRecoveryPick = [&](RopeKind kind) {
+        winchAim = WinchAim(); winchAim.on = true; winchAim.kind = kind;
+        winchAim.update(sim, lastView);
     };
     auto stopPilot = [&]() {
         Car& c = sim.cars[sim.player];
@@ -2304,20 +2345,20 @@ int main(int argc, char** argv) {
                         if (!garageUI.open) garageFromMenu = false;
                         break;
                     }
-                    if (winchAim.on) {  // picking a winch anchor takes these keys
+                    if (winchAim.on) {  // recovery picker owns keyboard confirmation/cancel
                         const int sc = evKeyScancode(e);
+                        if (sc == SC_BACKSPACE && winchAim.kind == ROPE_STRAP && winchAim.sourceHook >= 0) {
+                            winchAim.sourceHook = -1;
+                            winchAim.update(sim, lastView);
+                            break;
+                        }
                         if (sc == SC_ESCAPE || sc == SC_BACKSPACE) {
                             winchAim.on = false;
                             break;
                         }
-                        if (sc == SC_TAB) {
-                            winchAim.step(shiftDown() ? -1 : 1);
-                            break;
-                        }
-                        if (sc == SC_V || sc == SC_RETURN || sc == SC_KP_ENTER) {
-                            confirmWinch();
-                            break;
-                        }
+                        if (fromPad) winchAim.pointer = false;
+                        if (sc == SC_V || sc == SC_O || sc == SC_RETURN || sc == SC_KP_ENTER) confirmWinch();
+                        break;
                     }
                     if ((evKeyScancode(e) == SC_RETURN || evKeyScancode(e) == SC_KP_ENTER) && !winchAim.on) {
                         coop.typing = true;
@@ -2361,59 +2402,23 @@ int main(int argc, char** argv) {
                         case SC_MINUS:
                         case SC_EQUALS: {  // winch speed
                             Car& c = sim.cars[sim.player];
-                            c.winchSpeed = clampd(std::round((c.winchSpeed + (evKeyScancode(e) == SC_EQUALS ? 0.1 : -0.1)) * 10) / 10, 0.1, 1.0);
-                            char t[48];
-                            std::snprintf(t, sizeof t, "WINCH SPEED %d%%", (int)std::lround(c.winchSpeed * 100));
-                            hud.toast(t);
+                            settings.winchSpeed = recovery::adjustWinchSpeed(settings.winchSpeed, evKeyScancode(e) == SC_EQUALS ? 1 : -1);
+                            for (Car& car : sim.cars) if (!car.remote) car.winchSpeed = settings.winchSpeed;
+                            char t[64];
+                            std::snprintf(t, sizeof t, "WINCH SPEED %.2gX (UP TO %.2f M/S)", c.winchSpeed, recovery::kWinchSpeed * c.winchSpeed);
+                            hud.toast(t); saveSettings();
                             break;
                         }
-                        case SC_V:
-                            if (walker.active) {  // by hand: the anchor nearest you, your truck's line
-                                const Car& c = sim.cars[sim.player];
-                                if (sim.dropWinch(sim.player)) {
-                                    hud.toast("WINCH LINE UNHOOKED AND SPOOLED");
-                                    break;
-                                }
-                                if (c.isProp() || !(c.spec->extras & EXTRA_WINCH)) {
-                                    hud.toast("NO WINCH ON YOUR TRUCK");
-                                    break;
-                                }
-                                // A tree, rock or truck within arm's reach; otherwise the line is
-                                // anchored right where you stand (dug in, or bolted to the rock).
-                                double best = 3.0;
-                                int pick = -1, here = -1;
-                                const V3 feet = walker.p;
-                                const std::vector<WinchTarget> targets = sim.winchTargets(sim.player, &feet);
-                                for (int k = 0; k < (int)targets.size(); k++) {
-                                    const double d = len(V3(targets[k].at.x - walker.p.x, 0, targets[k].at.z - walker.p.z));
-                                    if (targets[k].end.kind == ANCHOR_STAKE) {
-                                        if (d < 1.0) here = k;
-                                        continue;
-                                    }
-                                    if (d < best) best = d, pick = k;
-                                }
-                                if (pick < 0) pick = here;
-                                if (pick < 0) hud.toast("TOO FAR FROM YOUR TRUCK: THE LINE REACHES 60 M WITH THE EXTENSION");
-                                else hud.toast(sim.hookWinchTo(sim.player, targets[pick].end));
-                                break;
-                            }
-                            {  // in the truck: unhook, or start picking an anchor
+                        case SC_V: {
                             const Car& c = sim.cars[sim.player];
                             if (sim.dropWinch(sim.player)) hud.toast("WINCH LINE UNHOOKED AND SPOOLED");
                             else if (c.isProp() || !(c.spec->extras & EXTRA_WINCH)) hud.toast("NO WINCH ON THIS TRUCK");
-                            else {
-                                winchAim = WinchAim();
-                                winchAim.on = true;
-                                winchAim.aimGround(lastView, sim.world);
-                                winchAim.targets = sim.winchTargets(sim.player, winchAim.hasLook ? &winchAim.look : nullptr);
-                                winchAim.refresh = 0.3;
-                                winchAim.pickCentered(lastView);
-                            }
+                            else startRecoveryPick(ROPE_WINCH);
                             break;
                         }
                         case SC_O: {
-                            const std::string m = sim.hookStrap(sim.player);
-                            if (!m.empty()) hud.toast(m);
+                            if (sim.dropStrap(sim.player)) hud.toast("TOW STRAP UNHOOKED");
+                            else if (!sim.cars[sim.player].isProp()) startRecoveryPick(ROPE_STRAP);
                             break;
                         }
                         case SC_Y: {  // front sway bar disconnect
@@ -2524,7 +2529,8 @@ int main(int argc, char** argv) {
                             }
                             Car& c = sim.cars[sim.player];
                             c.manualShift = !c.manualShift;
-                            hud.toast(c.manualShift ? "MANUAL SHIFTING: Q DOWN, E UP" : "AUTOMATIC SHIFTING");
+                            if (!c.manualShift && c.gear == 0) c.gear = 1;
+                            hud.toast(c.manualShift ? "MANUAL: Q/E SELECT R N 1... W GAS, S BRAKE" : "AUTOMATIC SHIFTING");
                             break;
                         }
                         case SC_L: {  // transfer case: 2H -> 4A/4H -> 4H/4H LOCK -> 4L -> 2H
@@ -2649,6 +2655,14 @@ int main(int argc, char** argv) {
                         float mx, my;
                         toDrawable(evMotionX(e), evMotionY(e), mx, my);
                         handleMenu(menu.mouseMove(mx, my, evMotionState(e) & 1, settings));
+                    } else if (winchAim.on) {
+                        if (evMotionState(e) & 2) {
+                            if (walker.active) {
+                                footYaw -= evMotionXrel(e) * 0.0035;
+                                footPitch = clampd(footPitch - evMotionYrel(e) * 0.0035, -1.45, 1.45);
+                            } else cam.drag(evMotionXrel(e), evMotionYrel(e));
+                        }
+                        else { toDrawable(evMotionX(e), evMotionY(e), winchAim.pointerX, winchAim.pointerY); winchAim.pointer = true; }
                     } else if (walker.active && !editor.active && !winchAim.on) {  // on foot: the mouse turns your head
                         footYaw -= evMotionXrel(e) * 0.0035;
                         footPitch = clampd(footPitch - evMotionYrel(e) * 0.0035, -1.45, 1.45);
@@ -2667,15 +2681,15 @@ int main(int argc, char** argv) {
                     break;
                 case SDL_MOUSEBUTTONUP:
                     if (!menu.open && winchAim.on && evButton(e) == 1) {
-                        if (dragging) winchAim.pickCentered(lastView);  // aimed by turning the camera
-                        else confirmWinch();                            // a click
+                        toDrawable(evButtonX(e), evButtonY(e), winchAim.pointerX, winchAim.pointerY);
+                        winchAim.pointer = true;
+                        confirmWinch();
                     }
                     dragging = false;
                     menu.mouseUp();
                     break;
                 case SDL_MOUSEWHEEL:
-                    if (!menu.open && winchAim.on) winchAim.step(evWheelY(e) > 0 ? -1 : 1);
-                    else if (!menu.open) cam.dist = clampd(cam.dist * std::pow(0.88, evWheelY(e)), 3.0, 60.0);
+                    if (!menu.open) cam.dist = clampd(cam.dist * std::pow(0.88, evWheelY(e)), 3.0, 60.0);
                     break;
             }
         }
@@ -2724,7 +2738,7 @@ int main(int argc, char** argv) {
             }
         }
         if (!playback.active() && sim.player >= 0 && sim.player < (int)sim.cars.size()) {  // (a scenario drives its own cars)
-            for (Car& c : sim.cars) c.airing = 0;
+            for (Car& c : sim.cars) { c.airing = 0; if (!c.remote) c.winchSpeed = settings.winchSpeed; }
             sim.cars[sim.player].airing = airing;
             for (int i = 0; i < (int)sim.cars.size(); i++) sim.setWinch(i, i == sim.player ? winch : 0);
             if (airing && len(sim.cars[sim.player].frame().vel) > 0.5) hud.toast("STOP TO LET AIR OUT OR PUMP UP THE TIRES");
@@ -2744,10 +2758,7 @@ int main(int argc, char** argv) {
             }
             if (opt.script == "pilot") up = down = left = right = false;
             if (opt.script == "aim" && frame == 20) {  // screenshot of picking a winch anchor
-                winchAim = WinchAim();
-                winchAim.on = true;
-                winchAim.targets = sim.winchTargets(sim.player);
-                winchAim.pickCentered(lastView);
+                startRecoveryPick(ROPE_WINCH);
             }
             if (opt.script == "winch" || opt.script == "strap") {  // screenshots of the recovery gear
                 if (frame == 20) std::printf("%s\n", (opt.script == "winch" ? sim.hookWinch(sim.player) : sim.hookStrap(sim.player)).c_str());
@@ -2937,7 +2948,10 @@ int main(int argc, char** argv) {
                 for (const std::string& m : run.outbox) net.sendGame(m);
                 run.outbox.clear();
             }
+            const uint64_t physicsStart = SDL_GetPerformanceCounter();
             simDt = sim.advance(dt, 120) * sim.h;
+            const double physicsMs = (double)(SDL_GetPerformanceCounter() - physicsStart) * 1000 / freq;
+            hud.physicsMs += (physicsMs - hud.physicsMs) * 0.05;
             if (sim.wrapShift != wrapSeen) {  // the freeway moved everything back a period: so do the camera and the effects
                 const V3 d(sim.wrapShift - wrapSeen, 0, 0);
                 cam.target += d;
@@ -2974,9 +2988,13 @@ int main(int argc, char** argv) {
                 sim.dropRopes(i);
                 c.respawn(c.spawnPos, c.spawnYaw);
             }
-            c.updateStats();
+            if (!c.remote) c.updateStats();
             impact += c.impactEnergy;
             c.impactEnergy = 0;
+        }
+        for (int i = 0; i < (int)sim.cars.size(); i++) {
+            Car& c = sim.cars[i];
+            if (!c.remote) c.lampMode = (uint8_t)(i == sim.player ? lampMode : c.ai || c.pilot.active ? LAMPS_AUTO : LAMPS_OFF);
         }
         if (!(playback.active() && !playback.done) && !net.joining()) net.send(sim, (double)(SDL_GetPerformanceCounter()) / freq);
         FxEvents events = fx.update(sim, simDt);
@@ -2987,9 +3005,10 @@ int main(int argc, char** argv) {
             float slip = 0, load = (float)(sim.paused ? 0 : car.throttle * car.tcCut);
             for (const Wheel& wh : car.wheels)
                 if (wh.load > 500) slip = std::max(slip, wh.slip);
-            audio.setEngine((float)car.rpm * (float)std::max(0.35, sim.timeScale), load);
+            audio.setEngine((float)(car.engineDead ? 0 : car.rpm) * (float)std::max(0.35, sim.timeScale), load);
             const VehicleSpec& vs = *car.spec;
             audio.setVoice(vs.cylinders, (float)vs.displacement, (int)vs.induction, vs.flatPlane, (float)vs.redline);
+            audio.setRecording(engineSamples::forVehicle(vs));
             audio.setBoost(vs.induction == VehicleSpec::TURBO ? (float)car.boost : 0.0f);
             audio.setTires(sim.paused ? 0 : slip);
             audio.setVolume(settings.volume * (menu.open ? 0.35f : 1.0f));
@@ -3079,8 +3098,11 @@ int main(int argc, char** argv) {
         if (padCtx == pad::Mode::Drive || padCtx == pad::Mode::Aim) {
             const pad::Intent& pin = padLogic.in;
             padLooking = pin.lookX != 0 || pin.lookY != 0 || pin.lookBack;
-            if (padLooking || pin.resetView) cam.padLook(pin.lookX, pin.lookY, pin.lookBack, pin.resetView, dt);
-            if (padLooking && winchAim.on) winchAim.pickCentered(lastView);
+            if (walker.active && winchAim.on) {
+                footYaw -= pin.lookX * 2.6 * dt;
+                footPitch = clampd(footPitch + pin.lookY * 1.8 * dt, -1.45, 1.45);
+            } else if (padLooking || pin.resetView) cam.padLook(pin.lookX, pin.lookY, pin.lookBack, pin.resetView, dt);
+            if (padLooking && winchAim.on) winchAim.pointer = false;
         } else if (padCtx == pad::Mode::Map) {
             const pad::Intent& pin = padLogic.in;
             int dw = 1, dh = 1;
@@ -3128,12 +3150,10 @@ int main(int argc, char** argv) {
         }
         view.width = W;
         view.height = H;
+        if (audioOn) audio.setNearbyEngines(sim, view.eye, norm(cross(view.target - view.eye, view.up)),
+                                           (float)std::max(0.35, sim.timeScale));
         lastView = view;
-        if (winchAim.on) {
-            winchAim.aimGround(view, sim.world);
-            winchAim.update(sim, dt);
-            if (dragging) winchAim.pickCentered(view);  // follow the camera while aiming
-        }
+        if (winchAim.on) winchAim.update(sim, view);
         clock += dt;
         view.time = (float)clock;
         {
@@ -3152,13 +3172,11 @@ int main(int argc, char** argv) {
             settings.clockHours = (float)dayHours;
             if (net.role == NetSession::HOST) net.dayHours = dayHours, net.dayRate = dayRate;
             renderer.daylight = computeDaylight(dayHours);
-            // Headlights: yours on the switch; the AI's, autopilots' and other players' come
-            // on at dusk; parked cars have nobody to switch them on.
+            // Each owner's switch is carried reliably, including OFF and high beams.
             renderer.carBeams.assign(sim.cars.size(), 0);
             for (int i = 0; i < (int)sim.cars.size(); i++) {
                 const Car& c = sim.cars[i];
-                const int mode = i == sim.player ? lampMode : c.ai || c.pilot.active || c.remote ? LAMPS_AUTO : LAMPS_OFF;
-                renderer.carBeams[i] = lampBeam(mode, renderer.daylight.night);
+                renderer.carBeams[i] = lampBeam(c.lampMode, renderer.daylight.night);
             }
         }
         menuBlur +=((menu.open ? 1.0f : 0.0f) - menuBlur) * (float)std::min(1.0, dt * 10);
@@ -3180,8 +3198,16 @@ int main(int argc, char** argv) {
             gl::ClearColor(0.04f, 0.05f, 0.06f, 1);
             gl::Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         } else {
-            renderer.drawScene(sim, view, debug, &fx);
+            try {
+                renderer.drawScene(sim, view, debug, &fx);
+            } catch (const std::runtime_error& error) {
+                fail(error.what());
+                exitCode = 1;
+                break;
+            }
         }
+        const double drawCpuMs = (double)(SDL_GetPerformanceCounter() - drawStart) * 1000 / freq;
+        hud.drawCpuMs += (drawCpuMs - hud.drawCpuMs) * 0.05;
         if (scripted && std::getenv("CZ_BENCH")) {  // (the scene's frame time: wait for the GPU to finish it)
             unsigned char px[4];
             gl::ReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
@@ -3370,5 +3396,5 @@ int main(int argc, char** argv) {
         std::fflush(stdout);
         watch.exec(argc, argv, resume);
     }
-    return 0;
+    return exitCode;
 }

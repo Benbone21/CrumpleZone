@@ -29,6 +29,7 @@ make
 | `--no-audio` | Disable sound |
 | `--no-vsync` | Disable vsync |
 | `--no-pad` | Ignore game controllers (also `CZ_NO_PAD=1`) |
+| `--physics-threads auto\|all\|N` | Override the saved physics thread budget: AUTO, every logical CPU, or a number. 1 runs serially |
 | `--spawn X,Z[,HEADING]` | Start somewhere else; for example, `--spawn 300,0,-80` puts you on the loop road |
 | `--scenario NAME` | Play one of the test scenarios (see Testing) |
 | `--host [PORT]` | Host a multiplayer session (default port 27015) |
@@ -55,6 +56,12 @@ Download from the [releases page](https://github.com/Benbone21/crumplezone/relea
 ## Windows
 
 `make windows` cross-compiles `build/win/CrumpleZone/crumplezone.exe` (with `SDL2.dll` beside it) and zips it. It needs the mingw-w64 cross compiler (`g++-mingw-w64-x86-64-posix`) and the official SDL2 x64 Windows runtime (`SDL2.dll`) in `third_party/sdl2-win64/`. Settings and the garage live in `%APPDATA%\crumplezone` on Windows. Multiplayer works between Linux and Windows.
+
+The executable requests the high-performance NVIDIA/AMD GPU on hybrid laptops. Windows can override that request: if **F3** shows the integrated GPU, select `crumplezone.exe` in Windows **Settings → System → Display → Graphics**, choose **High performance**, and restart the game. [NVIDIA explains the Windows GPU preference override here](https://nvidia.custhelp.com/app/answers/detail/a_id/5035).
+
+F3 shows the active GPU, FPS, physics time and CPU time submitting the scene. If physics time rises with more cars, lower the car count; if rendering is expensive, lower the graphics preset or render scale. The draw CPU number includes time blocked by the graphics driver and is not a measurement of GPU execution time. Windows writes the driver version, active GPU, physics thread count, HDR target and shader errors to `%APPDATA%\crumplezone\graphics.log` on each launch.
+
+Set **PHYSICS THREADS** in **Esc → Settings** to AUTO or any count up to all logical CPUs (hardware threads), including counts above four. It saves between launches and applies immediately. AUTO uses the conservative tested budget of up to four threads; choosing the highest count, marked ALL, permits the whole CPU. More threads can cost more than they save in small scenes, so compare physics time with F3. The budget includes the main thread; small workloads still run serially. Car forces and collision geometry preparation share this budget for larger scenes. Car-to-car contact forces stay in their original order, at the same 2,000 Hz timestep. Collision bounds use a spatial sweep, and stationary supports reuse their triangle grids. HDR anti-aliasing is applied to the scene once; unsupported multisample targets fall back to fewer samples. See [performance measurements and verification](docs/performance.md).
 
 ## macOS
 
@@ -128,16 +135,16 @@ scenario finishes, you can drive around in the aftermath.
 | Space | Handbrake |
 | 1 2 3 4 5 6 7 | Become the Civic / Jesko / Bronco / 4Runner / rock buggy / side-by-side / Tacoma (repaired, in place) |
 | G | Garage: W/S pick engine, suspension or transmission, A/D change the part, Enter fits it |
-| Q / E | Shift down / up (switches to manual) |
-| M | Manual / automatic gearbox |
+| Q / E | Shift down / up (R, N, 1…; switches to manual). In manual W is gas, S is brake |
+| Shift+M | Manual / automatic gearbox |
 | Shift+L | Headlights: AUTO (on at dusk) / LOW BEAM / HIGH BEAM / OFF |
 | L | Transfer case (4x4s): Bronco 2H / 4A / 4H / 4L; 4Runner 2H / 4H / 4H LOCK / 4L LOCK; rock buggy 2H / 4H / 4L; side-by-side 2WD / 4WD. Into or out of low range under 8 km/h |
 | F / B | Front / rear locker (4x4s; the front one needs 4WD engaged; the Bronco's front and the 4Runner's factory rear only work in low range; the rock buggy has both, the side-by-side only the front) |
 | Y | Front sway bar disconnect (Bronco: a dash button under 30 km/h, reconnects itself above; 4Runner: quick-disconnect pins, stopped) |
 | 9 / 0 | Hold to let air out of / pump up the tires (stopped). 35 psi street, 15–18 for rock |
-| V | Winch: pick an anchor (every tree, boulder or truck within the 60 m line is marked, plus a ground anchor straight ahead and wherever the camera looks; drag the camera to aim, wheel or Tab for the next, V or click to hook, Esc to cancel). With a line on, V unhooks it |
-| Z / Shift+Z | Winch in / pay out (- and = set the winch speed, 10-100%) |
-| O | Tow strap: hook to the nearest truck within 9 m, or unhook |
+| V | Winch: point and click an anchor; right stick + A on a controller. V with a line attached unhooks it |
+| Z / Shift+Z | Winch in / pay out (- and = change the saved speed, 0.1–20x; default 4x) |
+| O | Tow strap: click your front/rear point, then the other vehicle's point within 9 m; O with a strap attached unhooks it |
 | I | Spawn a parked vehicle ahead of you |
 | K | Spawn AI traffic on the loop road |
 | U | Autopilot on/off: drives to the place picked in Esc → Autopilot |
@@ -191,7 +198,7 @@ Driving is analog. The left stick is a real analog steering input: a radial dead
 | LB + Back | Next vehicle |
 | LB + Start | The controls list (shows the pad's map) |
 
-Picking a winch anchor: right stick aims, D-pad left/right or LB/RB step through the anchors, A hooks, B cancels. Menus, the title screen, the level list and the garage: D-pad or left stick move (hold to repeat), A selects, B or Start goes back. On foot the left stick walks, A jumps, and the right stick looks; Y with LB gets back in. The drone camera flies with the left stick and looks with the right.
+Picking a winch anchor or tow-strap point: right stick aims the crosshair, A selects the highlighted point, B cancels. With a mouse, point and click; middle-drag looks and the wheel zooms. Menus, the title screen, the level list and the garage: D-pad or left stick move (hold to repeat), A selects, B or Start goes back. On foot the left stick walks, A jumps, and the right stick looks; Y with LB gets back in. The drone camera flies with the left stick and looks with the right.
 
 **Rumble** (settings, CONTROLLER page: OFF / LOW / HIGH): a thump on impacts, a rumble over rough ground, a buzz from tires sliding and from the engine on its limiter. It only runs while the pad is the last thing you used and the window has the focus. The same page sets STEERING (SOFT / NORMAL / SHARP: how the stick maps to the wheels) and STICK DEADZONE (SMALL / MEDIUM / LARGE). Multiplayer needs nothing: each machine reads its own pad.
 
@@ -201,10 +208,13 @@ Launched plainly, the game opens on the main menu, a screen of its own (no world
 
 ## Playing together
 
+- **Remote cars:** buffered motion uses a steady clock so varying packet latency does not make cars jump backwards. Steering, wheels and engine RPM interpolate between states; repairs/recovery jump directly to the new position. Nearby engines use the same car-specific synthesizer as your own, with distance volume and stereo positioning.
+- **Lights:** Shift+L (pad L3) shares AUTO / LOW / HIGH / OFF with everyone, including while parked. Brake and reverse lights follow the owner's controls.
+- **Compatibility:** this build uses network protocol 3. All players need this updated build; older releases cannot join it.
 - **Map (M):** the whole map, north up: trails, water, repair shops, places, everyone's trucks. Wheel zooms, drag pans, left click sets your waypoint, right click pings GO HERE for everyone (Shift: HELP). Shift+M is now manual/automatic.
 - **Pings:** middle click pings GO HERE where you point; Shift+middle click pings HELP at your truck. Everyone sees them in the world and on the map.
 - **Chat:** Enter, type, Enter. **Meet up** (Esc → Multiplayer) parks your truck behind a buddy's (again for the next one). Name tags float over your buddies' trucks (and over them on foot).
-- **On foot (J):** get out (stopped) to spot a line or walk the trail. You see through your own eyes: the mouse looks around, WASD walk where you look, Shift run, Space jump; you wade, swim, and climb over rocks. V hooks your truck's winch to the tree, rock or truck within arm's reach, or anchors the line right where you stand (up to 60 m from the truck); F pours your truck's spare can into the nearest truck (a buddy's too). J again by a truck gets in.
+- **On foot (J):** get out (stopped) to spot a line or walk the trail. You see through your own eyes: the mouse looks around, WASD walk where you look, Shift run, Space jump; you wade, swim, and climb over rocks. V opens your truck's winch picker; point and click a tree, rock, vehicle recovery point or ground anchor within 60 m; F pours your truck's spare can into the nearest truck (a buddy's too). J again by a truck gets in.
 - **Exploring:** every named place on a map starts undiscovered ("?" on the map); get within 30 m to find it. Your discoveries are kept between sessions.
 - **Fuel:** engines burn fuel for the power they make (setting FUEL: OFF / REAL / FAST, default FAST: 4x). Run dry and the engine dies. Shops fill the tank and the spare can; the Bronco and 4Runner carry a 20 L can.
 
@@ -413,10 +423,10 @@ Up to 8 players on one map. One of you hosts; the rest join.
 
 The idea: trucks break, and your buddies get you home. (Until multiplayer lands, a buddy is any other truck: Tab into it and drive.)
 
-- **Winch (V, Z, Shift+Z):** the Bronco, 4Runner and rock buggy carry a 9,500 lb winch, the side-by-side a 4,500 lb one (20 kN), each with 30 m of synthetic line and a 30 m extension in the recovery bag (60 m in all). V hooks the best anchor ahead: a tree, a boulder (0.45 m and up), another truck's recovery point, or, anywhere else, a ground anchor (dug into loose ground, or a bolt in bare rock). It reels in at ~0.13 m/s, slower under load, and stalls at its rated pull (the drum brake holds). The line snaps past ~90 kN.
-- **Trail repairs:** stop within a few meters of another truck (yours, a parked one, or a buddy's) and its crew and kit fix what can be fixed out there: flat tires, snapped axle shafts and CVs, bent steering and suspension links, a flooded engine. Dents, panels, glass, a lost wheel or a wrecked engine still need a repair station.
-- **Tow strap (O):** a 9 m kinetic strap between your nearest recovery point and the nearest other truck's. A truck on a strap rolls in neutral, brakes off, steering itself to follow. It breaks at 130 kN.
-- The HUD (top left) shows line out, pull, and how close it is to breaking. The pull is spread through the frame, so recovering doesn't bend the truck.
+- **Winch (V, Z, Shift+Z):** the Bronco, 4Runner and rock buggy carry a 9,500 lb winch, the side-by-side a 4,500 lb one (20 kN), with 30 m of line and a 30 m extension (60 m total). V opens a pointer/controller picker for trees, boulders, vehicle recovery points and ground anchors. The default 4x speed reels in at about 0.52 m/s unloaded; -/= or Settings → WINCH SPEED adjusts 0.1–20x (up to 2.6 m/s). Speed falls under load, the drum stalls at rated pull, and the line breaks past about 90 kN.
+
+- **Tow strap (O):** click your front/rear recovery point, then the other vehicle's front/rear point within 9 m. The 9 m kinetic strap breaks at 130 kN. An unattended vehicle rolls in neutral with both brakes released and steers to follow. See [engine audio, recovery and gearing](docs/recovery-audio.md) for controls, audio previews and validation.
+
 - **Repair stations:** park on the pad and stop. The crew fixes everything (dents, panels, glass, tires, shafts, engine, hydrolock) in 4 s plus time per thing broken; moving resets the work. Towed trucks get fixed too, and the strap comes off.
   - Mountain: Trailhead Garage (in the lot), Crawl Park Pit (by the dome), Halfway Hut (a pull-off on the summit trail, where the Widowmaker Spur leaves it).
   - Backcountry: Trailhead Camp, Sawmill Camp, Far Side Camp and Pass Hut.
@@ -725,6 +735,7 @@ Poly Haven `leafy_grass`, `aerial_grass_rock` (grass), `coast_sand_01`, `aerial_
 | `src/carvisual.*` | Visual car models: subdivided body shell skinned to the physics, lattice-attached parts, running gear from the live suspension |
 | `src/fx.*` | Particles, skid marks and tire tracks (decals multiplied into the ground), the lips of shoved-aside ground along ruts and round sunk tires |
 | `src/audio.*` | Procedural sound |
+| `src/engineaudio.*` | Shared engine synthesizer for your car and nearby engines |
 | `src/music.*` | Generative background music (one style per map), mixed in by `audio.cpp` |
 | `src/sdl_min.h`, `src/gl.*` | Minimal SDL2 and OpenGL declarations, so no headers need installing |
 | `src/gamepad.*`, `src/gamepad_sdl.cpp` | Game controller support: shaping, steering, pedals, bindings and rumble (no SDL), and the SDL device with hot-plugging |

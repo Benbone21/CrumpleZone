@@ -21,7 +21,7 @@ constexpr int kDefaultPort = 27015;
 constexpr int kDiscoveryPort = 27016;  // UDP: "who's hosting?" on the local network
 constexpr int kBeaconPort = 27017;     // UDP: hosts also announce themselves here every couple of seconds
 constexpr int kMaxPeers = 8;
-constexpr uint16_t kVersion = 2;
+constexpr uint16_t kVersion = 3;  // engine state and reliable per-car light switches
 constexpr double kSendRate = 20;      // vehicle states per second
 constexpr double kPlaybackDelay = 0.1; // s behind the newest state received
 }  // namespace net
@@ -138,6 +138,7 @@ public:
 
 private:
     struct Conn;
+    friend struct NetSessionTest;  // Socket-free wire/playback regression tests.
     struct Snap;
     struct Remote;
     int listenFd = -1, udpFd = -1;
@@ -159,6 +160,7 @@ private:
         uint32_t netId;
         const VehicleSpec* spec;
         int builds;
+        uint8_t lamps;
     };
     std::vector<Known> knownCars;       // my vehicles as the others know them
     std::vector<uint32_t> knownRopes;   // lines everyone knows about
@@ -176,9 +178,14 @@ private:
     void apply(Sim& sim, const std::vector<uint8_t>& msg);
     void readUdp(Sim& sim, double now);
     void sendSnapshot(Sim& sim, const Car& c, double now);
+    std::vector<uint8_t> snapshotMsg(const Sim& sim, const Car& c, double now) const;
+    void takeSnapshot(Sim& sim, uint32_t netId, const std::vector<uint8_t>& data, double now);
+    void takeFragment(Sim& sim, uint32_t netId, uint32_t sequence, uint8_t fragment, uint8_t fragments,
+                      const uint8_t* data, size_t size, double now);
     void applyRemotes(Sim& sim, double now);
     void welcome(Sim& sim, Conn& c);
     std::vector<uint8_t> spawnMsg(const Car& c) const;
+    std::vector<uint8_t> lampMsg(const Car& c) const;
     std::vector<uint8_t> ropeMsg(const Sim& sim, const Rope& r) const;
     void sendLevel(Conn* to);  // the level's text, in parts (to one client, or everyone)
     std::string levelIn;       // client: parts so far

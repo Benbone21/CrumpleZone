@@ -6,9 +6,9 @@ CXXFLAGS ?= -O2 -march=native
 CXXFLAGS += -std=c++17 -Wall -Wextra
 LDLIBS   := -l:libSDL2-2.0.so.0 -lpthread -lm
 
-PHYS     := src/props.cpp src/jobs.cpp src/walker.cpp src/softbody.cpp src/recovery.cpp src/net.cpp src/level.cpp src/levels_builtin.cpp src/levelrun.cpp src/editcore.cpp src/autopilot.cpp src/pilotsense.cpp src/carbuild.cpp src/world.cpp src/mountain.cpp src/freeway.cpp src/frontier.cpp src/backcountry.cpp src/vehicles.cpp src/mods.cpp src/gamepad.cpp src/platform.cpp src/tires.cpp src/interact.cpp
-SCEN     := tests/props.cpp tests/jobs.cpp tests/walker.cpp tests/editor.cpp tests/levels.cpp tests/circuit.cpp tests/frontier.cpp tests/backcountry.cpp tests/freeway.cpp tests/surfaces.cpp tests/handling.cpp tests/harness.cpp tests/scenarios.cpp tests/components.cpp tests/offroad.cpp tests/recovery.cpp tests/net.cpp tests/autopilot.cpp tests/gamepad.cpp tests/tires.cpp
-GAME_SRC := src/main.cpp src/gamepad_sdl.cpp src/editor.cpp src/coop.cpp src/gl.cpp src/render.cpp src/carvisual.cpp src/bodyshell.cpp src/scenery.cpp src/menu.cpp src/fx.cpp src/audio.cpp src/music.cpp src/daylight.cpp src/lights.cpp src/groundtex.cpp src/groundshader.cpp src/propdraw.cpp $(PHYS) $(SCEN)
+PHYS     := src/physics_workers.cpp src/collision.cpp src/props.cpp src/jobs.cpp src/walker.cpp src/softbody.cpp src/recovery.cpp src/net.cpp src/level.cpp src/levels_builtin.cpp src/levelrun.cpp src/editcore.cpp src/autopilot.cpp src/pilotsense.cpp src/carbuild.cpp src/world.cpp src/mountain.cpp src/freeway.cpp src/frontier.cpp src/backcountry.cpp src/vehicles.cpp src/mods.cpp src/gamepad.cpp src/platform.cpp src/tires.cpp src/interact.cpp
+SCEN     := tests/drivetrain.cpp tests/net_state.cpp tests/collision.cpp tests/props.cpp tests/jobs.cpp tests/walker.cpp tests/editor.cpp tests/levels.cpp tests/circuit.cpp tests/frontier.cpp tests/backcountry.cpp tests/freeway.cpp tests/surfaces.cpp tests/handling.cpp tests/harness.cpp tests/scenarios.cpp tests/components.cpp tests/offroad.cpp tests/recovery.cpp tests/net.cpp tests/autopilot.cpp tests/gamepad.cpp tests/tires.cpp
+GAME_SRC := src/main.cpp src/gamepad_sdl.cpp src/editor.cpp src/coop.cpp src/gl.cpp src/render.cpp src/carvisual.cpp src/bodyshell.cpp src/scenery.cpp src/menu.cpp src/fx.cpp src/engine_samples.cpp src/engineaudio.cpp src/audio.cpp src/music.cpp src/daylight.cpp src/lights.cpp src/groundtex.cpp src/groundshader.cpp src/propdraw.cpp $(PHYS) $(SCEN)
 GAME_OBJ := $(patsubst %.cpp,build/%.o,$(GAME_SRC))
 TEST_OBJ := $(patsubst %.cpp,build/%.o,tests/run_tests.cpp $(PHYS) $(SCEN))
 HEADERS  := $(wildcard src/*.h tests/*.h)
@@ -24,6 +24,31 @@ build/crumplezone-dev: $(GAME_OBJ)
 
 build/run_tests: $(TEST_OBJ)
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -lm
+
+# CPU-only workload; args: car count, separated|pileup, 2 kHz steps.
+build/bench_sim: build/tools/bench_sim.o $(patsubst %.cpp,build/%.o,$(PHYS))
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -lm
+
+# Run with SDL_VIDEODRIVER=offscreen; exercises shaders, quality presets and MSAA fallback.
+build/test_render: build/tests/render.o $(filter-out build/src/main.o,$(GAME_OBJ))
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDLIBS)
+
+build/test_audio: build/tests/audio.o build/tests/engine_samples.o build/src/audio.o build/src/engineaudio.o build/src/engine_samples.o build/src/music.o $(patsubst %.cpp,build/%.o,$(PHYS))
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDLIBS)
+
+# Silent audition files: build/engine_preview [output directory].
+build/engine_preview: build/tools/engine_preview.o build/src/engineaudio.o build/src/engine_samples.o $(patsubst %.cpp,build/%.o,$(PHYS))
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -lm
+
+# Same CPU benchmark compiled with the portable Windows release flags.
+build/win/bench_sim.exe: build/win/obj/tools/bench_sim.o $(patsubst %.cpp,build/win/obj/%.o,$(PHYS))
+	$(WINCXX) $(WINFLAGS) -o $@ $^ -lws2_32 -liphlpapi -static -static-libgcc -static-libstdc++
+
+build/win/run_tests.exe: build/win/obj/tests/run_tests.o $(patsubst %.cpp,build/win/obj/%.o,$(PHYS) $(SCEN))
+	$(WINCXX) $(WINFLAGS) -o $@ $^ -lws2_32 -liphlpapi -static -static-libgcc -static-libstdc++
+
+build/win/test_audio.exe: build/win/obj/tests/audio.o build/win/obj/tests/engine_samples.o build/win/obj/src/audio.o build/win/obj/src/engineaudio.o build/win/obj/src/engine_samples.o build/win/obj/src/music.o $(patsubst %.cpp,build/win/obj/%.o,$(PHYS))
+	$(WINCXX) $(WINFLAGS) -o $@ $^ $(WINSDL)/SDL2.dll -lws2_32 -liphlpapi -static -static-libgcc -static-libstdc++
 
 # Render-mesh integration checks, with no SDL window or OpenGL context.
 build/test_jesko_visual: build/tests/jesko_visual.o build/src/carvisual.o build/src/bodyshell.o $(patsubst %.cpp,build/%.o,$(PHYS)) build/tests/harness.o
@@ -53,8 +78,13 @@ build/win/CrumpleZone/crumplezone.exe: $(WIN_OBJ)
 windows: build/win/CrumpleZone/crumplezone.exe
 	cp $(WINSDL)/SDL2.dll build/win/CrumpleZone/
 	cp README.md build/win/CrumpleZone/README.txt
+	@mkdir -p build/win/CrumpleZone/docs
+	cp docs/performance.md build/win/CrumpleZone/docs/
+	cp docs/multiplayer.md build/win/CrumpleZone/docs/
+	cp docs/recovery-audio.md build/win/CrumpleZone/docs/
 	rm -rf build/win/CrumpleZone/assets && mkdir -p build/win/CrumpleZone/assets
 	cp -r assets/ground build/win/CrumpleZone/assets/
+	if [ -d assets/audio ]; then cp -r assets/audio build/win/CrumpleZone/assets/; fi
 	if [ -f assets/props/props.txt ]; then cp -r assets/props build/win/CrumpleZone/assets/; fi
 	cd build/win && rm -f CrumpleZone-windows.zip && zip -qr CrumpleZone-windows.zip CrumpleZone
 
@@ -85,6 +115,7 @@ mac: build/mac/crumplezone
 	rm -rf $(MACAPP) && mkdir -p $(MACAPP)/Contents/MacOS $(MACAPP)/Contents/Resources/assets $(MACAPP)/Contents/Frameworks
 	cp build/mac/crumplezone $(MACAPP)/Contents/MacOS/crumplezone
 	cp -R assets/ground $(MACAPP)/Contents/Resources/assets/
+	if [ -d assets/audio ]; then cp -R assets/audio $(MACAPP)/Contents/Resources/assets/; fi
 	if [ -f assets/props/props.txt ]; then cp -R assets/props $(MACAPP)/Contents/Resources/assets/; fi
 	cp -R $(MACSDL)/SDL2.framework $(MACAPP)/Contents/Frameworks/
 	cp README.md $(MACAPP)/Contents/Resources/README.md
@@ -102,6 +133,7 @@ deb: crumplezone
 	install -m755 crumplezone $(DEBROOT)/opt/crumplezone/crumplezone
 	strip $(DEBROOT)/opt/crumplezone/crumplezone
 	mkdir -p $(DEBROOT)/opt/crumplezone/assets && cp -r assets/ground $(DEBROOT)/opt/crumplezone/assets/
+	if [ -d assets/audio ]; then cp -r assets/audio $(DEBROOT)/opt/crumplezone/assets/; fi
 	if [ -f assets/props/props.txt ]; then cp -r assets/props $(DEBROOT)/opt/crumplezone/assets/; fi
 	ln -s /opt/crumplezone/crumplezone $(DEBROOT)/usr/games/crumplezone
 	cp README.md $(DEBROOT)/usr/share/doc/crumplezone/README.md

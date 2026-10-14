@@ -84,6 +84,7 @@ enum MsgType : uint8_t {
     MSG_CLOCK,        // f32 hours, f32 hours per second: the host's time of day
     MSG_LEVEL,        // u32 serial, u16 part, u16 parts, bytes: the level's text, in parts
     MSG_GAME,         // u8 player, str: race chatter
+    MSG_LAMPS,        // u32 car id, u8 LampMode: reliable, also while the car sleeps
 };
 enum DgramType : uint8_t { DG_SNAP = 1, DG_HELLO = 2 };
 constexpr uint16_t kMagic = 0xC27A;
@@ -225,6 +226,8 @@ struct NetSession::Snap {
     std::vector<float> wheelAngle, wheelOmega;
     std::vector<uint8_t> wheelFlags;
     float steer = 0, brake = 0, damage = 0;
+    float rpm = 0, load = 0, boost = 0;
+    int8_t gear = 1;
     uint8_t status = 0;
     std::vector<std::pair<uint32_t, float>> ropeLen;
 };
@@ -233,10 +236,15 @@ struct NetSession::Remote {
     uint32_t netId = 0;
     std::deque<Snap> buf;
     double newestT = -1, newestArrival = 0;
-    uint32_t asmSeq = 0;
-    std::vector<uint8_t> asmData;
-    std::vector<uint8_t> asmGot;
-    int asmCount = 0;
+    double clockOffset = 0, playbackTime = 0, playbackNow = -1;
+    bool clockSet = false;
+    struct Assembly {
+        bool active = false;
+        uint32_t seq = 0;
+        std::vector<uint8_t> data, got;
+        int count = 0;
+    };
+    std::array<Assembly, 3> assemblies;  // A newer partial packet must not discard an older complete one.
 };
 
 NetSession::NetSession() {}
@@ -628,9 +636,22 @@ std::vector<uint8_t> NetSession::spawnMsg(const Car& c) const {
     w.put<uint8_t>(id.model);
     for (int k = 0; k < 3; k++) w.put<uint8_t>(id.mods[k]);
     w.v3(c.color);
-    w.v3(fr.com);
-    w.put<float>((float)std::atan2(-fr.fwd.z, fr.fwd.x));
+    const double yaw = std::atan2(-fr.fwd.z, fr.fwd.x);
+    const Quat rot = c.chassis.nodes.empty() ? Quat::axisAngle(V3(0, 1, 0), yaw) : c.chassis.rot;
+    // Car::build expects a vehicle origin, not its center of mass. Sending the COM
+    // made late-join cars float high, then drop when the first snapshot arrived.
+    w.v3(fr.com - rot.rotate(restCom(c)));
+    w.put<float>((float)yaw);
+    w.put<uint8_t>(c.lampMode);
+    w.put<uint32_t>((uint32_t)c.buildCount);
     return frame(MSG_SPAWN, w);
+}
+
+std::vector<uint8_t> NetSession::lampMsg(const Car& c) const {
+    Writer w;
+    w.put<uint32_t>(c.netId);
+    w.put<uint8_t>(c.lampMode);
+    return frame(MSG_LAMPS, w);
 }
 
 std::vector<uint8_t> NetSession::ropeMsg(const Sim& sim, const Rope& r) const {
@@ -682,6 +703,8 @@ void NetSession::apply(Sim& sim, const std::vector<uint8_t>& msg) {
             for (int k = 0; k < 3; k++) id.mods[k] = r.get<uint8_t>();
             const V3 color = r.v3(), pos = r.v3();
             const double yaw = r.get<float>();
+            const uint8_t lamps = r.get<uint8_t>();
+            const uint32_t build = r.get<uint32_t>();
             const VehicleSpec* spec = specFrom(id);
             if (!r.ok || !spec || ownerOf(netId) == self) return;
             int i = findCar(sim, netId);
@@ -697,10 +720,22 @@ void NetSession::apply(Sim& sim, const std::vector<uint8_t>& msg) {
             c.remote = true;
             c.netId = netId;
             c.handbrake = 0;
+            c.lampMode = std::min<uint8_t>(lamps, 3);
+            c.buildCount = (int)build;
             if (Remote* rm = remoteFor(netId)) {
                 rm->buf.clear();
                 rm->newestT = -1;
+                rm->clockSet = false;
+                rm->playbackNow = -1;
+                for (auto& assembly : rm->assemblies) assembly.active = false;
             }
+            return;
+        }
+        case MSG_LAMPS: {
+            const uint32_t id = r.get<uint32_t>();
+            const uint8_t mode = r.get<uint8_t>();
+            const int i = findCar(sim, id);
+            if (r.ok && mode < 4 && i >= 0 && sim.cars[i].remote) sim.cars[i].lampMode = mode;
             return;
         }
         case MSG_DESPAWN: {
@@ -866,11 +901,12 @@ NetSession::Remote* NetSession::remoteFor(uint32_t netId) {
     return r;
 }
 
-void NetSession::sendSnapshot(Sim& sim, const Car& c, double now) {
+std::vector<uint8_t> NetSession::snapshotMsg(const Sim& sim, const Car& c, double now) const {
     Writer w;
     const Frame fr = c.frame();
     const Quat rot = c.chassis.nodes.empty() ? Quat::axisAngle(V3(0, 1, 0), std::atan2(-fr.fwd.z, fr.fwd.x)) : c.chassis.rot;
     w.put<double>(now - sessionStart);
+    w.put<uint32_t>((uint32_t)c.buildCount);
     w.v3(fr.com);
     w.put<float>((float)rot.w), w.put<float>((float)rot.x), w.put<float>((float)rot.y), w.put<float>((float)rot.z);
     w.v3(fr.vel);
@@ -878,6 +914,10 @@ void NetSession::sendSnapshot(Sim& sim, const Car& c, double now) {
     w.put<uint8_t>((uint8_t)std::lround(clampd(std::max(c.brake, c.handbrake * 0.6), 0, 1) * 255));
     w.put<float>((float)c.damage);
     w.put<uint8_t>((uint8_t)(c.engineDead | (c.hydrolocked << 1)));
+    w.put<float>((float)c.rpm);
+    w.put<float>((float)clampd(c.throttle * c.tcCut, 0, 1));
+    w.put<float>((float)c.boost);
+    w.put<int8_t>((int8_t)c.gear);
     w.put<uint8_t>((uint8_t)c.wheels.size());
     for (const Wheel& wh : c.wheels) {
         w.put<float>((float)wh.angle);
@@ -899,8 +939,13 @@ void NetSession::sendSnapshot(Sim& sim, const Car& c, double now) {
         w.put<uint32_t>(r->netId);
         w.put<float>((float)r->length);
     }
+    return w.b;
+}
+
+void NetSession::sendSnapshot(Sim& sim, const Car& c, double now) {
+    const std::vector<uint8_t> data = snapshotMsg(sim, c, now);
     // Split into datagrams.
-    const size_t total = w.b.size(), frags = (total + kChunk - 1) / kChunk;
+    const size_t total = data.size(), frags = (total + kChunk - 1) / kChunk;
     seq++;
     for (size_t f = 0; f < frags; f++) {
         Writer d;
@@ -912,7 +957,7 @@ void NetSession::sendSnapshot(Sim& sim, const Car& c, double now) {
         d.put<uint8_t>((uint8_t)f);
         d.put<uint8_t>((uint8_t)frags);
         const size_t a = f * kChunk, b = std::min(total, a + kChunk);
-        d.b.insert(d.b.end(), w.b.begin() + a, w.b.begin() + b);
+        d.b.insert(d.b.end(), data.begin() + a, data.begin() + b);
         if (role == CLIENT && hostUdp) {
             const int n = (int)sendto(udpFd, (const char*)d.b.data(), (int)d.b.size(), 0, (sockaddr*)hostUdp, sizeof(sockaddr_in));
             if (n > 0) bytesOut += n;
@@ -959,58 +1004,105 @@ void NetSession::readUdp(Sim& sim, double now) {
                 if (c->udpKnown && c->peer != peer) sendto(udpFd, (const char*)buf, n, 0, (sockaddr*)&c->udp, sizeof c->udp);
         if (role == CLIENT) udpReady = true;
         if (!adopted) continue;
-        Remote* rm = remoteFor(netId);
-        if (sq < rm->asmSeq) continue;  // older than what we're building
-        if (sq > rm->asmSeq) {
-            rm->asmSeq = sq;
-            rm->asmData.assign((size_t)frags * kChunk, 0);
-            rm->asmGot.assign(frags, 0);
-            rm->asmCount = 0;
-        }
-        if (rm->asmGot.size() != frags || rm->asmGot[frag]) continue;
-        const size_t len = n - kDgramHeader;
-        std::memcpy(rm->asmData.data() + (size_t)frag * kChunk, buf + kDgramHeader, len);
-        rm->asmGot[frag] = 1;
-        if (frag + 1 == frags) rm->asmData.resize((size_t)frag * kChunk + len);
-        if (++rm->asmCount < frags) continue;
-        // A whole state: decode it.
-        const int ci = findCar(sim, netId);
-        if (ci < 0 || !sim.cars[ci].remote) continue;
-        const Car& car = sim.cars[ci];
-        Reader r{rm->asmData.data(), rm->asmData.size()};
-        Snap s;
-        s.t = r.get<double>();
-        s.com = r.v3();
-        s.rot.w = r.get<float>(), s.rot.x = r.get<float>(), s.rot.y = r.get<float>(), s.rot.z = r.get<float>();
-        s.vel = r.v3();
-        s.steer = r.get<float>();
-        s.brake = r.get<uint8_t>() / 255.0f;
-        s.damage = r.get<float>();
-        s.status = r.get<uint8_t>();
-        const int nw = r.get<uint8_t>();
-        for (int k = 0; k < nw; k++) {
-            s.wheelAngle.push_back(r.get<float>());
-            s.wheelOmega.push_back(r.get<float>());
-            s.wheelFlags.push_back(r.get<uint8_t>());
-        }
-        const int nn = r.get<uint16_t>();
-        if (nn != (int)car.nodes.size() || nw != (int)car.wheels.size()) continue;  // built from a different spec (a respawn on the way)
-        s.local.resize(nn);
-        for (int k = 0; k < nn; k++) {
-            const double x = r.get<int16_t>() * 0.001, y = r.get<int16_t>() * 0.001, z = r.get<int16_t>() * 0.001;
-            s.local[k] = V3(x, y, z);
-        }
-        const int nr = r.get<uint8_t>();
-        for (int k = 0; k < nr; k++) {
-            const uint32_t id = r.get<uint32_t>();
-            s.ropeLen.push_back({id, r.get<float>()});
-        }
-        if (!r.ok || s.t <= rm->newestT) continue;
-        rm->newestT = s.t;
-        rm->newestArrival = now;
-        rm->buf.push_back(std::move(s));
-        while (rm->buf.size() > 30) rm->buf.pop_front();
+        takeFragment(sim, netId, sq, frag, frags, buf + kDgramHeader, n - kDgramHeader, now);
     }
+}
+
+void NetSession::takeFragment(Sim& sim, uint32_t netId, uint32_t sequence, uint8_t fragment, uint8_t fragments,
+                              const uint8_t* data, size_t size, double now) {
+    if (!fragments || fragment >= fragments || size > kChunk || (fragment + 1 < fragments && size != kChunk)) return;
+    if (findCar(sim, netId) < 0) return;
+    Remote* remote = remoteFor(netId);
+    Remote::Assembly* slot = nullptr;
+    for (auto& assembly : remote->assemblies)
+        if (assembly.active && assembly.seq == sequence) slot = &assembly;
+    if (!slot) {
+        for (auto& assembly : remote->assemblies)
+            if (!assembly.active) { slot = &assembly; break; }
+        if (!slot) slot = &*std::min_element(remote->assemblies.begin(), remote->assemblies.end(),
+            [](const auto& a, const auto& b) { return (int32_t)(a.seq - b.seq) < 0; });
+        slot->active = true;
+        slot->seq = sequence;
+        slot->data.assign((size_t)fragments * kChunk, 0);
+        slot->got.assign(fragments, 0);
+        slot->count = 0;
+    }
+    if (slot->got.size() != fragments || slot->got[fragment]) return;
+    std::memcpy(slot->data.data() + (size_t)fragment * kChunk, data, size);
+    slot->got[fragment] = 1;
+    if (fragment + 1 == fragments) slot->data.resize((size_t)fragment * kChunk + size);
+    if (++slot->count == fragments) {
+        takeSnapshot(sim, netId, slot->data, now);
+        slot->active = false;
+    }
+}
+
+void NetSession::takeSnapshot(Sim& sim, uint32_t netId, const std::vector<uint8_t>& data, double now) {
+    // A whole state: decode it. Also exercised without sockets by the regression tests.
+    const int ci = findCar(sim, netId);
+    if (ci < 0 || !sim.cars[ci].remote) return;
+    Remote* rm = remoteFor(netId);
+    const Car& car = sim.cars[ci];
+    Reader r{data.data(), data.size()};
+    Snap s;
+    s.t = r.get<double>();
+    const uint32_t build = r.get<uint32_t>();
+    if (build != (uint32_t)car.buildCount) return;
+    s.com = r.v3();
+    s.rot.w = r.get<float>(), s.rot.x = r.get<float>(), s.rot.y = r.get<float>(), s.rot.z = r.get<float>();
+    s.vel = r.v3();
+    s.steer = r.get<float>();
+    s.brake = r.get<uint8_t>() / 255.0f;
+    s.damage = r.get<float>();
+    s.status = r.get<uint8_t>();
+    s.rpm = r.get<float>();
+    s.load = r.get<float>();
+    s.boost = r.get<float>();
+    s.gear = r.get<int8_t>();
+    const int nw = r.get<uint8_t>();
+    for (int k = 0; k < nw; k++) {
+        s.wheelAngle.push_back(r.get<float>());
+        s.wheelOmega.push_back(r.get<float>());
+        s.wheelFlags.push_back(r.get<uint8_t>());
+    }
+    const int nn = r.get<uint16_t>();
+    if (nn != (int)car.nodes.size() || nw != (int)car.wheels.size()) return;  // a rebuilt spec on the way
+    s.local.resize(nn);
+    for (int k = 0; k < nn; k++) {
+        const double x = r.get<int16_t>() * 0.001, y = r.get<int16_t>() * 0.001, z = r.get<int16_t>() * 0.001;
+        s.local[k] = V3(x, y, z);
+    }
+    const int nr = r.get<uint8_t>();
+    for (int k = 0; k < nr; k++) {
+        const uint32_t id = r.get<uint32_t>();
+        s.ropeLen.push_back({id, r.get<float>()});
+    }
+    if (!r.ok || !std::isfinite(s.t + s.com.x + s.com.y + s.com.z + s.vel.x + s.vel.y + s.vel.z +
+        s.rot.w + s.rot.x + s.rot.y + s.rot.z + s.rpm + s.load + s.boost) || s.t <= rm->newestT) return;
+    const double offset = now - s.t;
+    if (!rm->clockSet) {
+        rm->clockOffset = offset;
+        rm->clockSet = true;
+    } else {
+        // Arrival jitter must not reset the playback clock on every packet. Track the
+        // clock difference slowly; the presentation clock below never runs backwards.
+        rm->clockOffset += clampd(offset - rm->clockOffset, -0.05, 0.05) * 0.02;
+    }
+    if (!rm->buf.empty()) {
+        const Snap& previous = rm->buf.back();
+        const double elapsed = s.t - previous.t;
+        const V3 predicted = previous.com + (previous.vel + s.vel) * (elapsed * 0.5);
+        if (len(s.com - predicted) > std::max(4.0, elapsed * 20.0)) {
+            // Repairs/recovery/spawn changes jump immediately, without interpolating
+            // a car through everything between the old and new positions.
+            rm->buf.clear();
+            rm->playbackNow = -1;
+        }
+    }
+    rm->newestT = s.t;
+    rm->newestArrival = now;
+    rm->buf.push_back(std::move(s));
+    while (rm->buf.size() > 30) rm->buf.pop_front();
 }
 
 void NetSession::applyRemotes(Sim& sim, double now) {
@@ -1020,7 +1112,11 @@ void NetSession::applyRemotes(Sim& sim, double now) {
         Car& c = sim.cars[ci];
         if (!c.remote) continue;
         // Play back a little behind the newest state, in the sender's time.
-        const double t = rm->newestT + (now - rm->newestArrival) - net::kPlaybackDelay;
+        const double target = now - rm->clockOffset - net::kPlaybackDelay;
+        if (rm->playbackNow < 0) rm->playbackTime = target;
+        else rm->playbackTime += clampd(target - rm->playbackTime, 0, std::max(0.0, now - rm->playbackNow) * 1.1);
+        rm->playbackNow = now;
+        const double t = rm->playbackTime;
         while (rm->buf.size() > 2 && rm->buf[1].t < t - 0.5) rm->buf.pop_front();
         const V3 rc = restCom(c);
         auto pose = [&](double at, std::vector<V3>& out, V3& vel, Quat& rot, size_t& idx, double& alpha) {
@@ -1032,7 +1128,10 @@ void NetSession::applyRemotes(Sim& sim, double now) {
             alpha = n.t > a.t ? clampd((at - a.t) / (n.t - a.t), 0, 1) : 0;
             V3 com = a.com + (n.com - a.com) * alpha;
             vel = a.vel + (n.vel - a.vel) * alpha;
-            if (&n == &a) com += a.vel * clampd(at - a.t, 0, 0.25);  // nothing newer: coast briefly
+            if (&n == &a) {
+                com += a.vel * clampd(at - a.t, 0, 0.25);  // nothing newer: coast briefly
+                if (at > a.t + 0.25) vel = V3();
+            }
             rot = nlerp(a.rot, n.rot, alpha);
             out.resize(c.nodes.size());
             for (size_t i = 0; i < c.nodes.size(); i++)
@@ -1047,23 +1146,34 @@ void NetSession::applyRemotes(Sim& sim, double now) {
         pose(t, now0, vel, rot, idx, alpha);
         // A jump (put back on its wheels, towed home) is a teleport, not a speed.
         const bool jumped = len((now0[0] - prev[0]) / 0.05 - vel) > 25;
+        const bool stopped = t >= rm->buf.back().t + 0.25;
         for (size_t i = 0; i < c.nodes.size(); i++) {
             c.nodes[i].p = now0[i];
-            c.nodes[i].v = jumped ? vel : (now0[i] - prev[i]) / 0.05;
+            c.nodes[i].v = jumped || stopped ? vel : (now0[i] - prev[i]) / 0.05;
             c.nodes[i].f = V3();
         }
         if (!c.chassis.nodes.empty()) c.chassis.rot = rot;
         const Snap& s = rm->buf[std::min(idx + (alpha > 0.5), rm->buf.size() - 1)];
+        const Snap& a = rm->buf[idx];
+        const Snap& b = rm->buf[std::min(idx + 1, rm->buf.size() - 1)];
+        auto blend = [alpha](double x, double y) { return x + (y - x) * alpha; };
         for (size_t k = 0; k < c.wheels.size() && k < s.wheelAngle.size(); k++) {
             Wheel& wh = c.wheels[k];
-            wh.angle = s.wheelAngle[k];
-            wh.omega = s.wheelOmega[k];
+            wh.angle = blend(a.wheelAngle[k], b.wheelAngle[k]);
+            wh.omega = blend(a.wheelOmega[k], b.wheelOmega[k]);
+            if (&a == &b) wh.angle += wh.omega * clampd(t - a.t, 0, 0.25);
             wh.popped = s.wheelFlags[k] & 1;
             wh.detached = (s.wheelFlags[k] >> 1) & 1;
             wh.shaftBroken = (s.wheelFlags[k] >> 2) & 1;
         }
-        c.steer = c.rackSteer = s.steer;
-        c.brake = s.brake;
+        c.steer = c.rackSteer = blend(a.steer, b.steer);
+        c.brake = blend(a.brake, b.brake);
+        c.damage = blend(a.damage, b.damage);
+        c.rpm = blend(a.rpm, b.rpm);
+        c.throttle = blend(a.load, b.load);
+        c.tcCut = 1;
+        c.boost = blend(a.boost, b.boost);
+        c.gear = s.gear;
         c.engineDead = s.status & 1;
         c.hydrolocked = (s.status >> 1) & 1;
         c.sleeping = false;
@@ -1138,12 +1248,16 @@ void NetSession::send(Sim& sim, double now) {
         seen.push_back(c.netId);
         auto k = std::find_if(knownCars.begin(), knownCars.end(), [&](const Known& kc) { return kc.netId == c.netId; });
         if (k == knownCars.end()) {
-            knownCars.push_back({c.netId, c.spec, c.buildCount});
+            knownCars.push_back({c.netId, c.spec, c.buildCount, c.lampMode});
             broadcast(spawnMsg(c));
         } else if (k->spec != c.spec || k->builds != c.buildCount) {
             k->spec = c.spec;
             k->builds = c.buildCount;
+            k->lamps = c.lampMode;
             broadcast(spawnMsg(c));
+        } else if (k->lamps != c.lampMode) {
+            k->lamps = c.lampMode;
+            broadcast(lampMsg(c));
         }
     }
     for (size_t k = 0; k < knownCars.size();) {

@@ -1,4 +1,5 @@
 #include "softbody.h"
+#include "collision.h"
 #include "vehicles.h"
 
 #include <set>
@@ -133,14 +134,22 @@ double Car::engineTorque(double r) const {
     return pts.back().nm;
 }
 
-double Car::gearRatio(int g) const { return g < 0 ? -spec->reverseRatio : spec->gears[g - 1]; }
+double Car::gearRatio(int g) const { return g < 0 ? -spec->reverseRatio : g == 0 ? 0 : spec->gears[g - 1]; }
 
 bool Car::shift(int dir) {
-    if (engineDead || shiftTimer > 0) return false;
+    if (dir == 0 || shiftTimer > 0) return false;
     const int ng = (int)spec->gears.size();
+    auto targetRpm = [&](int g) {
+        double omega = 0; int driven = 0;
+        for (const Wheel& wh : wheels) if (wheelPowered(wh)) { omega += wh.sideOmega; driven++; }
+        const double low = lowRange && spec->lowRange > 0 ? spec->lowRange : 1.0;
+        return std::fabs((driven ? omega / driven : 0) * gearRatio(g) * spec->finalDrive * low * 60 / (2 * M_PI));
+    };
     if (dir > 0) {
-        if (gear < 1) {  // out of reverse
-            gear = 1;
+        if (gear < 1) {  // R -> N -> 1
+            if (gear == 0 && dot(frame().vel, frame().fwd) < -0.8) return false;
+            if (gear == 0 && targetRpm(1) > spec->redline + 200) return false;
+            gear++;
             shiftTimer = spec->shiftTime;
             return true;
         }
@@ -149,9 +158,18 @@ bool Car::shift(int dir) {
         shiftTimer = spec->shiftTime;
         return true;
     }
-    if (gear <= 1) return false;
+    if (gear <= -1) return false;
+    if (gear <= 1) {
+        // Never select reverse while rolling at speed. Neutral remains available.
+        if (gear == 0 && std::fabs(dot(frame().vel, frame().fwd)) > 0.8) return false;
+        gear--;
+        shiftTimer = spec->shiftTime * 0.7;
+        return true;
+    }
     // Refuse a downshift that would throw the engine past its redline.
-    if (rpm * spec->gears[gear - 2] / spec->gears[gear - 1] > spec->redline + 200) return false;
+    // Neutral/free revving and an unlocked torque converter decouple engine RPM
+    // from road speed. Check the speed the selected gear would actually require.
+    if (targetRpm(gear - 1) > spec->redline + 200) return false;
     gear--;
     shiftTimer = spec->shiftTime * 0.7;
     return true;
@@ -1136,9 +1154,13 @@ void Car::wheelStep(double h, const World& w) {
     for (const Wheel& wh : wheels)
         if (wheelPowered(wh) && wh.load > 0) {
             double slideSpeed = std::fabs(wh.omega * wh.rollR() - wh.groundSpeed);
-            maxDrag = std::max(maxDrag, -wh.sx * wh.bite * clampd((slideSpeed - 0.5) / 1.5, 0, 1));
+            // Longitudinal slip is signed in the car's forward direction. In reverse,
+            // powered wheelspin has negative slip; it must not open the throttle as
+            // "engine braking" after the driver releases the pedal.
+            const double direction = wh.groundSpeed < 0 ? -1 : 1;
+            maxDrag = std::max(maxDrag, -wh.sx * direction * wh.bite * clampd((slideSpeed - 0.5) / 1.5, 0, 1));
         }
-    if (tcOn && brake < 0.05) dragAssist = clampd(dragAssist + h * 20.0 * (maxDrag - 0.1), 0.0, 0.35);
+    if (tcOn && brake < 0.05 && gear != 0) dragAssist = clampd(dragAssist + h * 20.0 * (maxDrag - 0.1), 0.0, 0.35);
     else dragAssist = 0;
     double thr = shiftTimer > 0 || engineDead ? 0.0 : std::max(throttle * tcCut, dragAssist);
     // Speed limiter (the ECU): eases the throttle off over the last 3 km/h. (On the road
@@ -1196,14 +1218,18 @@ void Car::wheelStep(double h, const World& w) {
     const bool automatic = spec->stallRpm > 0;
     // A torque converter locks up in the higher gears once it's moving; below that its
     // fluid coupling slips, and the engine runs on its own speed.
-    const bool converterSlips = automatic && !(gear >= spec->lockupGear && wheelRpm > 1300);
+    // Driver-requested changes unlock the converter to keep engine RPM continuous.
+    // The automatic controller retains its existing lockup/overlap behavior.
+    const bool converterSlips = automatic && ((manualShift && shiftTimer > 0) || !(gear >= spec->lockupGear && wheelRpm > 1300));
     bool clutchSlipping = !automatic && wheelRpm < 1250;
+    const double rpmBeforeEngine = rpm;
+    const bool wasShifting = shiftTimer > 0;
     double Te, Iin = Ie;
     if (fuel < 0) fuel = spec->fuelCapacity;
     if (jerry < 0) jerry = spec->jerryCan;
     if (engineDead || nd == 0 || gear == 0 || outOfFuel()) {
         if (engineDead || outOfFuel()) rpm += (0 - rpm) * std::min(1.0, h * 2);
-        else rpm += (spec->idleRpm + thr * 4500 - rpm) * std::min(1.0, h * 4);  // nothing to drive: revs freely
+        else rpm += (spec->idleRpm + thr * (spec->redline - spec->idleRpm) - rpm) * std::min(1.0, h * 4);  // neutral: revs freely
         Te = 0;
     } else if (converterSlips) {
         // Torque converter. The pump (on the crank) churns oil at the turbine (on the
@@ -1253,6 +1279,19 @@ void Car::wheelStep(double h, const World& w) {
         Te = thr * engineTorque(rpm) * power * turbo - (1 - thr) * (18 + rpm * 0.005);  // engine braking
         if (rpm > spec->redline) Te = std::min(Te, 0.0) - (rpm - spec->redline) * 0.5;  // rev limiter
         autoShift(rpm);
+    }
+    if (shiftTimer > 0 && gear != 0 && !engineDead && !automatic && spec->shiftTime > 0.06) {
+        // Manual gearboxes open the clutch during a shift. Torque converters unlock
+        // above and keep the pump RPM independent; LST/CVT keep their fast coupling.
+        // Match the new input speed with the engine
+        // disconnected instead of applying engine braking through the old ratio and
+        // snapping RPM to the new gear on the next 2 kHz step.
+        ratio = gearRatio(gear) * spec->finalDrive * lowMul;
+        const double match = std::clamp((nd ? ws / nd : 0) * ratio * 60 / (2 * M_PI), spec->idleRpm, spec->redline);
+        if (wasShifting) rpm = rpmBeforeEngine;
+        rpm += clampd(match - rpm, -9000 * h, 9000 * h);
+        Te = 0;
+        clutchSlipping = true;
     }
     // Fuel: what the engine burns for the power it makes (~250 g/kWh, petrol 0.745 kg/L), and
     // a trickle at idle.
@@ -1764,6 +1803,9 @@ void Car::integrate(double h) {
 }
 
 void Car::updateBounds() {
+    // Movement, rebuilds, recovery and network snapshots invalidate parked-car caches too.
+    if (grid) grid->stamp = -1;
+    nodeGridStamp = -1;
     bbMin = bbMax = nodes[0].p;
     for (const Node& n : nodes) {
         bbMin = V3(std::min(bbMin.x, n.p.x), std::min(bbMin.y, n.p.y), std::min(bbMin.z, n.p.z));
@@ -1781,6 +1823,12 @@ void Car::updateTris() {
         const V3& c = nodes[t.v[2]].p;
         t.nrm = norm(cross(b - a, c - a));
         t.torn = len(b - a) > 1.8 * t.rest[0] || len(c - b) > 1.8 * t.rest[1] || len(a - c) > 1.8 * t.rest[2];
+        t.e0 = b - a;
+        t.e1 = c - a;
+        t.d00 = dot(t.e0, t.e0);
+        t.d01 = dot(t.e0, t.e1);
+        t.d11 = dot(t.e1, t.e1);
+        t.den = t.d00 * t.d11 - t.d01 * t.d01;
     }
 }
 
@@ -2001,6 +2049,8 @@ int Sim::advance(double realDt, int maxSubsteps) {
 }
 
 void Car::translate(const V3& d) {
+    if (grid) grid->stamp = -1;
+    nodeGridStamp = -1;
     for (Node& n : nodes) n.p += d;
     for (Wheel& wh : wheels) wh.contact += d;
     bbMin += d;
@@ -2036,29 +2086,26 @@ void Sim::wrapAround() {
     wrapShift += dx;
 }
 
-static bool boundsOverlap(const Car& a, const Car& b) {
-    return a.bbMin.x <= b.bbMax.x && b.bbMin.x <= a.bbMax.x && a.bbMin.y <= b.bbMax.y && b.bbMin.y <= a.bbMax.y &&
-           a.bbMin.z <= b.bbMax.z && b.bbMin.z <= a.bbMax.z;
-}
-
 void Sim::substep() {
     stepCount++;
     const int N = (int)cars.size();
+    collision::candidates(cars, contactPairs, contactOrder);
 
     // Anything moving that touches a sleeping body wakes it up. (A neighbor that is
     // awake but already still doesn't, or stacked boxes would keep waking each other.)
-    for (int i = 0; i < N; i++)
-        for (int j = i + 1; j < N; j++) {
-            Car& a = cars[i];
-            Car& b = cars[j];
-            if (a.remote || b.remote || a.sleeping == b.sleeping || !boundsOverlap(a, b)) continue;
-            const Car& awake = a.sleeping ? b : a;
-            if (awake.stillTime < 0.5) {
-                a.wake();
-                b.wake();
-            }
+    for (const auto& pair : contactPairs) {
+        Car& a = cars[pair.first];
+        Car& b = cars[pair.second];
+        if (a.remote || b.remote || a.sleeping == b.sleeping) continue;
+        const Car& awake = a.sleeping ? b : a;
+        if (awake.stillTime < 0.5) {
+            a.wake();
+            b.wake();
         }
+    }
 
+    forceCars.clear();
+    needsContact.assign(N, 0);
     for (Car& c : cars) {
         if (c.remote) {  // another player's: moved by the network, it only pushes back
             for (Node& n : c.nodes) n.f = V3();
@@ -2072,8 +2119,22 @@ void Sim::substep() {
             for (int k = 0; k < 4; k++)
                 if (std::fabs(now[k] - c.sleptControls[k]) > 0.01) c.wake();
         }
-        if (!c.sleeping) c.computeForces(h, world);
     }
+    for (const auto& pair : contactPairs)
+        if (!(cars[pair.first].sleeping && cars[pair.second].sleeping))
+            needsContact[pair.first] = needsContact[pair.second] = 1;
+    for (int i = 0; i < N; i++)
+        if ((!cars[i].remote && !cars[i].sleeping) || needsContact[i]) forceCars.push_back(i);
+    auto forces = [&](int index) {
+        const int i = forceCars[index];
+        Car& c = cars[i];
+        if (!c.remote && !c.sleeping) c.computeForces(h, world);
+        if (needsContact[i]) c.prepareContact(stepCount);
+    };
+    // A few cars cost less than waking the pool at 2 kHz. Pileups also benefit because
+    // triangle/grid preparation is independent per car, before any shared contact forces.
+    if (physicsWorkers && forceCars.size() >= 4) physicsWorkers->run((int)forceCars.size(), forces);
+    else for (int i = 0; i < (int)forceCars.size(); i++) forces(i);
     // A wheel that sheared off (or a tire that rolled off its rim) goes its own way.
     for (int i = 0; i < N; i++)
         for (int k = 0; k < (int)cars[i].wheels.size(); k++)
@@ -2083,11 +2144,12 @@ void Sim::substep() {
                 shedWheel(i, k, tire);
             }
 
-    for (int i = 0; i < N; i++)
-        for (int j = i + 1; j < N; j++)
-            // Sleeping bodies still push back (they act as static supports); the forces
-            // they receive are discarded until they wake.
-            if (!(cars[i].sleeping && cars[j].sleeping) && boundsOverlap(cars[i], cars[j])) collide(cars[i], cars[j]);
+    for (const auto& pair : contactPairs) {
+        const int i = pair.first, j = pair.second;
+        // Sleeping bodies still push back (they act as static supports); the forces
+        // they receive are discarded until they wake.
+        if (!(cars[i].sleeping && cars[j].sleeping)) collide(cars[i], cars[j]);
+    }
 
     if (!ropes.empty()) ropeForces();
     if (!looseWheels.empty()) looseWheelForces();
@@ -2121,26 +2183,48 @@ void Sim::collide(Car& A, Car& B) {
     pointsVsSkin(B, A);
 }
 
-// Pushes A's nodes (and wheels) out of B's skin with penalty forces.
-void Sim::pointsVsSkin(Car& A, Car& B) {
-    if (B.grid->stamp != stepCount) {
-        B.updateTris();
-        B.grid->clear();
+void Sim::setPhysicsThreads(int threads) {
+    threads = resolvePhysicsThreads(threads);
+    if (threads == physicsThreadCount) return;
+    // Build first so a failed allocation leaves the current pool usable.
+    std::unique_ptr<PhysicsWorkers> next;
+    if (threads > 1) next = std::make_unique<PhysicsWorkers>(threads);
+    physicsWorkers = std::move(next);
+    physicsThreadCount = threads;
+}
+
+// Rebuild only the geometry that moved; parked supports keep their collision grids.
+void Car::prepareContact(long step) {
+    if (grid->stamp != step && (!sleeping || grid->stamp < 0)) {
+        updateTris();
+        grid->clear();
         const V3 m(0.45, 0.45, 0.45);
-        for (int ti = 0; ti < (int)B.tris.size(); ti++) {
-            const Tri& t = B.tris[ti];
+        for (int ti = 0; ti < (int)tris.size(); ti++) {
+            const Tri& t = tris[ti];
             if (t.torn) continue;
-            V3 mn = B.nodes[t.v[0]].p, mx = mn;
+            V3 mn = nodes[t.v[0]].p, mx = mn;
             for (int c = 1; c < 3; c++) {
-                const V3& p = B.nodes[t.v[c]].p;
+                const V3& p = nodes[t.v[c]].p;
                 mn = V3(std::min(mn.x, p.x), std::min(mn.y, p.y), std::min(mn.z, p.z));
                 mx = V3(std::max(mx.x, p.x), std::max(mx.y, p.y), std::max(mx.z, p.z));
             }
-            B.grid->insert(ti, mn - m, mx + m);
+            grid->insert(ti, mn - m, mx + m);
         }
-        B.grid->stamp = stepCount;
+        grid->stamp = step;
     }
+    const V3 reach(0.36, 0.36, 0.36);
+    if (nodeGridStamp != step && (!sleeping || nodeGridStamp < 0)) {
+        nodeGrid->clear();
+        for (int i = 0; i < bodyNodes; i++) {
+            if (!nodeTris[i].empty()) continue;
+            const V3& p = nodes[i].p;
+            nodeGrid->insert(i, p - reach, p + reach);
+        }
+        nodeGridStamp = step;
+    }
+}
 
+void Sim::pointsVsSkin(Car& A, Car& B) {
     const double kK = 4e5 * std::min(A.spec->contactScale, B.spec->contactScale), kC = 700, kCt = 2000, kMu = 0.45;
     struct Hit {
         int tri = -1;
@@ -2162,9 +2246,9 @@ void Sim::pointsVsSkin(Car& A, Car& B) {
             if (pen <= 0 || d < -0.4) continue;
             const bool shallow = pen < radius + 0.03;
             if (shallow ? pen <= hit.pen : pen >= nearest.pen) continue;
-            V3 e0 = B.nodes[t.v[1]].p - a, e1 = B.nodes[t.v[2]].p - a, q = p - a;
-            double d00 = dot(e0, e0), d01 = dot(e0, e1), d11 = dot(e1, e1), d20 = dot(q, e0), d21 = dot(q, e1);
-            double den = d00 * d11 - d01 * d01;
+            V3 q = p - a;
+            const double d00 = t.d00, d01 = t.d01, d11 = t.d11, den = t.den;
+            double d20 = dot(q, t.e0), d21 = dot(q, t.e1);
             if (den < 1e-12) continue;
             double v = (d11 * d20 - d01 * d21) / den, ww = (d00 * d21 - d01 * d20) / den, u = 1 - v - ww;
             if (u < -0.02 || v < -0.02 || ww < -0.02) continue;
@@ -2234,15 +2318,6 @@ void Sim::pointsVsSkin(Car& A, Car& B) {
     // B's *interior* nodes (not on the skin) is inside B, so push it back out. Skin
     // nodes are left alone so touching bodies don't hover apart.
     const double rr = 0.36;  // contact distance between node centers
-    if (B.nodeGridStamp != stepCount) {
-        B.nodeGrid->clear();
-        for (int i = 0; i < B.bodyNodes; i++) {
-            if (!B.nodeTris[i].empty()) continue;  // skin node
-            const V3& p = B.nodes[i].p;
-            B.nodeGrid->insert(i, p - V3(rr, rr, rr), p + V3(rr, rr, rr));
-        }
-        B.nodeGridStamp = stepCount;
-    }
     for (Node& na : A.nodes) {
         if (!na.collide || !inBounds(na.p)) continue;
         for (int j : B.nodeGrid->query(na.p)) {
@@ -2516,6 +2591,7 @@ void Sim::drive(bool up, bool down, bool left, bool right, bool hb, double dt) {
         }
         o.throttle = o.brake = o.steerInput = o.steer = 0;
         o.handbrake = 1;
+        bool rolling = false;
         // On a tow strap or another truck's winch line: off the brakes and rolling, steered
         // to follow the line (the buddy in the seat).
         for (const Rope& r : ropes) {
@@ -2524,16 +2600,20 @@ void Sim::drive(bool up, bool down, bool left, bool right, bool hb, double dt) {
             const RopeEnd& other = isA ? r.b : r.a;
             if (other.kind != ANCHOR_CAR || (r.kind == ROPE_WINCH && isA)) continue;
             o.handbrake = 0;
+            rolling = true;
+            if (!o.towRolling) { o.towGear = o.gear; o.towRolling = true; o.brakePressure = 0; }
+            o.gear = 0;
             const Frame fr = o.frame();
             const V3 to = cars[other.car].hookPoint(other.hook) - o.hookPoint(isA ? r.a.hook : r.b.hook);
             const int hook = isA ? r.a.hook : r.b.hook;
             const double sgn = hook == 0 ? 1 : -1;  // towed backwards: steer the other way
             o.steer = clampd(std::atan2(dot(to, fr.left), std::max(sgn * dot(to, fr.fwd), 0.5)) * sgn * 0.8, -0.5, 0.5);
-            if (len(fr.vel) < 0.3 && r.tension < 500) o.brake = 0.2;  // parked on slack: hold it
         }
+        if (!rolling && o.towRolling) { o.gear = o.towGear; o.towRolling = false; }
     }
     updateAI(dt);
     Car& c = cars[player];
+    if (c.towRolling) { c.gear = c.towGear; c.towRolling = false; }
     c.wake();
     if (c.ai) return;  // following the loop road
     if (c.pilot.active) {
@@ -2579,7 +2659,12 @@ void Sim::drive(bool up, bool down, bool left, bool right, bool hb, double dt) {
 
     c.throttle = c.brake = 0;
     c.handbrake = hb ? 1 : 0;
-    if (c.gear >= 1) {
+    if (c.manualShift || c.gear == 0) {
+        // In manual, the selected gear stays selected: W is gas and S is brake,
+        // including in reverse and neutral.
+        c.throttle = up ? 1 : 0;
+        c.brake = down ? 1 : 0;
+    } else if (c.gear >= 1) {
         if (up) c.throttle = 1;
         if (down) {
             if (vf > 0.8) c.brake = 1;

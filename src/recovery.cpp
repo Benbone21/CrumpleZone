@@ -396,8 +396,16 @@ std::string Sim::hookWinch(int ci) {
 }
 
 std::string Sim::hookWinchTo(int ci, const RopeEnd& best) {
+    if (ci < 0 || ci >= (int)cars.size()) return "VEHICLE NO LONGER AVAILABLE";
     Car& c = cars[ci];
     if (c.isProp() || !(c.spec->extras & EXTRA_WINCH)) return "NO WINCH ON THIS TRUCK";
+    if (best.kind == ANCHOR_CAR && (best.car < 0 || best.car >= (int)cars.size() || best.car == ci ||
+                                  cars[best.car].isProp() || best.hook < 0 || best.hook > 1)) return "INVALID RECOVERY POINT";
+    const V3 dest = endPoint(cars, best), source = c.hookPoint(0);
+    const V3 delta = dest - source;
+    if (!std::isfinite(len(delta)) || len(delta) < 1.5 || len(delta) > recovery::kWinchReach) return "ANCHOR OUT OF LINE REACH";
+    const V3 fwd = c.frame().fwd;
+    if (dot(norm(V3(delta.x, 0, delta.z)), norm(V3(fwd.x, 0, fwd.z))) <= 0.26) return "THAT'S BEHIND THE WINCH: TURN TO FACE IT";
     dropWinch(ci);
     const V3 p = c.hookPoint(0);
     Rope r;
@@ -419,12 +427,75 @@ std::string Sim::hookWinchTo(int ci, const RopeEnd& best) {
     return buf;
 }
 
-std::string Sim::hookStrap(int ci) {
+bool Sim::dropStrap(int ci) {
     for (int r = 0; r < (int)ropes.size(); r++)
         if (ropes[r].kind == ROPE_STRAP && ((ropes[r].a.kind == ANCHOR_CAR && ropes[r].a.car == ci) || (ropes[r].b.kind == ANCHOR_CAR && ropes[r].b.car == ci))) {
             ropes.erase(ropes.begin() + r);
-            return "TOW STRAP UNHOOKED";
+            return true;
         }
+    return false;
+}
+
+int Sim::pickRecoveryTarget(const std::vector<WinchTarget>& targets, const V3& eye, const V3& ray, double cone) const {
+    int pick = -1;
+    double best = 1e18;
+    const V3 dir = norm(ray);
+    for (int k = 0; k < (int)targets.size(); k++) {
+        const WinchTarget& t = targets[k];
+        const V3 to = t.at - eye;
+        const double depth = dot(to, dir);
+        if (depth < 0.3) continue;
+        const double miss = len(to - dir * depth);
+        bool bodyHit = false;
+        double hit = depth;
+        if (t.end.kind == ANCHOR_CAR && t.end.car >= 0 && t.end.car < (int)cars.size()) {
+            // Clicking the vehicle body snaps to the nearer front/rear recovery point.
+            // Use its oriented bounds, so a roof or door click works as well as a marker.
+            const Car& car = cars[t.end.car];
+            const Frame fr = car.frame();
+            const V3 axes[] = {fr.fwd, fr.up, fr.left};
+            const double extents[] = {car.spec->length * 0.5, 0.9, car.spec->width * 0.5};
+            double lo = 0.3, hi = 1e9;
+            for (int a = 0; a < 3; a++) {
+                const double origin = dot(eye - fr.com, axes[a]), slope = dot(dir, axes[a]);
+                if (std::fabs(slope) < 1e-8) { if (std::fabs(origin) > extents[a]) hi = -1; }
+                else {
+                    double x = (-extents[a] - origin) / slope, y = (extents[a] - origin) / slope;
+                    if (x > y) std::swap(x, y);
+                    lo = std::max(lo, x); hi = std::min(hi, y);
+                }
+            }
+            bodyHit = lo <= hi;
+            hit = lo;
+        }
+        if (!bodyHit && miss > 0.18 + depth * cone) continue;
+        // Real anchors beat the ground below them. Select a point under the cursor,
+        // never a distant marker merely because it's the closest marker on screen.
+        double score = miss / depth + (t.end.kind == ANCHOR_STAKE ? 100 : 0);
+        if (bodyHit) score = -10 + hit * 0.001 + len(t.at - (eye + dir * hit)) * 0.0001;
+        if (score < best) best = score, pick = k;
+    }
+    return pick;
+}
+
+std::vector<WinchTarget> Sim::strapTargets(int ci, int hook) const {
+    std::vector<WinchTarget> out;
+    if (ci < 0 || ci >= (int)cars.size() || cars[ci].isProp() || hook < 0 || hook > 1) return out;
+    for (int o = 0; o < (int)cars.size(); o++) {
+        if (o == ci || cars[o].isProp()) continue;
+        for (int h = 0; h < 2; h++) {
+            const V3 at = cars[o].hookPoint(h);
+            const double dist = len(at - cars[ci].hookPoint(hook));
+            if (dist > recovery::kStrapReach) continue;
+            RopeEnd end; end.car = o; end.hook = h;
+            out.push_back({end, at, dist, true, h ? "VEHICLE (REAR)" : "VEHICLE (FRONT)"});
+        }
+    }
+    return out;
+}
+
+std::string Sim::hookStrap(int ci) {
+    if (dropStrap(ci)) return "TOW STRAP UNHOOKED";
     Car& c = cars[ci];
     if (c.isProp()) return "";
     double best = recovery::kStrapReach;
@@ -438,6 +509,17 @@ std::string Sim::hookStrap(int ci) {
             }
     }
     if (bo < 0) return "NO VEHICLE WITHIN STRAP REACH (9 M)";
+    RopeEnd target; target.car = bo; target.hook = bh;
+    return hookStrapTo(ci, mh, target);
+}
+
+std::string Sim::hookStrapTo(int ci, int mh, const RopeEnd& target) {
+    if (ci < 0 || ci >= (int)cars.size() || cars[ci].isProp() || mh < 0 || mh > 1 || target.kind != ANCHOR_CAR ||
+        target.car < 0 || target.car >= (int)cars.size() || target.car == ci || cars[target.car].isProp() ||
+        target.hook < 0 || target.hook > 1) return "INVALID RECOVERY POINT";
+    const int bo = target.car, bh = target.hook;
+    if (len(cars[ci].hookPoint(mh) - cars[bo].hookPoint(bh)) > recovery::kStrapReach) return "THAT POINT IS BEYOND STRAP REACH (9 M)";
+    dropStrap(ci);
     Rope r;
     r.kind = ROPE_STRAP;
     r.a.kind = ANCHOR_CAR;
@@ -471,7 +553,7 @@ void Sim::ropeForces() {
         // rated pull; pays out freely.
         if (r.kind == ROPE_WINCH && !cars[r.a.car].remote) {  // the winch's owner works the drum
             // (The remote's speed control: a share of the drum's full speed.)
-            const double sp = clampd(cars[r.a.car].winchSpeed, 0.1, 1.0);
+            const double sp = clampd(cars[r.a.car].winchSpeed, recovery::kWinchSpeedMin, recovery::kWinchSpeedMax);
             if (r.winch > 0) r.length -= recovery::kWinchSpeed * sp * std::max(0.0, 1 - r.tension / r.stallN) * h;
             else if (r.winch < 0) r.length += 0.25 * sp * h;
             r.length = clampd(r.length, 0.6, r.maxLen);

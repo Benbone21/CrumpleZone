@@ -17,6 +17,7 @@
 #include "tires.h"
 #include "vehicles.h"
 #include "world.h"
+#include "physics_workers.h"
 
 struct Node {
     V3 p, v, f;
@@ -66,6 +67,9 @@ struct Tri {
     V3 nrm;          // outward normal (refreshed when needed for collisions)
     bool torn = false;
     bool shattered = false;  // glass that has broken out
+    // Collision geometry shared by every point query until the nodes move again.
+    V3 e0, e1;
+    double d00 = 0, d01 = 0, d11 = 0, den = 0;
 };
 
 // One quad of the outer skin (two Tris), with where it sits in the body lattice.
@@ -324,8 +328,11 @@ public:
     double rackSteer = 0;   // where the rack actually is: it follows `steer` at a finite speed
 
     // Drivetrain.
-    int gear = 1;  // -1 reverse, 1..N
+    int gear = 1;  // -1 reverse, 0 neutral, 1..N
+    bool towRolling = false;   // unattended recovery: temporarily in neutral
+    int towGear = 1;           // restore the driver's selection when taking the wheel
     double rpm = 850, shiftTimer = 0;
+    uint8_t lampMode = 0;  // LampMode (lights.h); carried reliably to other players
     bool manualShift = false;   // the driver picks gears (otherwise it shifts itself)
     bool lowRange = false;      // transfer case in low range (follows driveMode on a 4x4)
     int driveMode = -1;         // transfer-case position (index into driveModes(spec->transfer))
@@ -358,7 +365,7 @@ public:
     std::vector<double> spareWeights;
     V3 spareAt() const;          // where it is (world)
     V3 spareAxis() const;        // its axle (world)
-    double winchSpeed = 1.0;    // winch control: share of the drum's full line speed (0.1-1)
+    double winchSpeed = 1.0;    // multiplier of the rated line speed (0.1-20); game preference starts at 4x
     bool swayDisconnected = false;  // front anti-roll bar unhooked
     int shaftsBroken = 0;       // axle shafts snapped since last read (for the HUD)
     int airing = 0;             // tire valves: -1 letting air out, +1 pumping up (held key)
@@ -422,6 +429,7 @@ public:
     void integrate(double h);
     void updateBounds();
     void updateTris();
+    void prepareContact(long step);
     void updateStats();
     bool finite() const;
     void wake() {
@@ -486,6 +494,9 @@ private:
 
 class Sim {
 public:
+    // 1 = serial. The game opts in; scenario runners stay serial to avoid nested pools.
+    void setPhysicsThreads(int threads);
+    int physicsThreads() const { return physicsThreadCount; }
     World world;
     std::vector<Car> cars;
     int player = 0;
@@ -524,6 +535,10 @@ public:
     std::string hookWinchTo(int car, const RopeEnd& anchor);
     bool dropWinch(int car);           // unhooks the car's winch line (false if none)
     std::string hookStrap(int car);    // straps the car to the nearest other vehicle, or unhooks it
+    bool dropStrap(int car);
+    std::vector<WinchTarget> strapTargets(int car, int hook) const;
+    std::string hookStrapTo(int car, int hook, const RopeEnd& target);
+    int pickRecoveryTarget(const std::vector<WinchTarget>& targets, const V3& eye, const V3& ray, double cone) const;
     void setWinch(int car, int dir);   // +1 reel in, -1 pay out, 0 hold
     int ropeOn(int car, int kind = -1) const;  // index of a line on that car (-1 none)
     void dropRopes(int car);
@@ -570,6 +585,12 @@ public:
 
 private:
     double accum = 0;
+    std::vector<std::pair<int, int>> contactPairs;
+    std::vector<int> contactOrder;
+    std::unique_ptr<PhysicsWorkers> physicsWorkers;
+    int physicsThreadCount = 1;
+    std::vector<int> forceCars;
+    std::vector<uint8_t> needsContact;
     long stepCount = 0;
     int colorIndex = 0;
     void placeProps();

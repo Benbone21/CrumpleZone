@@ -3,8 +3,14 @@
 #pragma once
 #include <atomic>
 #include <cstdint>
+#include <array>
 
 #include "music.h"
+#include "engineaudio.h"
+#include "engine_samples.h"
+#include "mathx.h"
+
+class Sim;
 
 class Audio {
 public:
@@ -22,6 +28,10 @@ public:
         redline_ = redline;
     }
     void setBoost(float boost) { boost_ = boost; }  // turbo boost built up, 0..1
+    void setRecording(int recording) { recording_ = recording; }
+    // Before start only; loading/decoding is never performed by the callback.
+    int loadEngineRecordings(const std::string& directory);
+    int recordingBankCount() const { return recordingCount_; }
     void setTires(float slip) { slip_ = slip; }
     void setSpeed(float metersPerSecond) { speed_ = metersPerSecond; }
     void setVolume(float v) { master_ = v; }
@@ -33,8 +43,11 @@ public:
     void impact(float strength);  // 0..1
     void glass(float strength);   // window shattering, 0..1
     void pop();                   // tire blowout
+    // Game thread: publish the nearest engines, with distance attenuation and stereo pan.
+    void setNearbyEngines(const Sim& sim, const V3& listener, const V3& right, float timeScale);
 
 private:
+    friend struct AudioTest;
     static void callback(void* user, uint8_t* stream, int len);
     void render(float* out, int frames);
 
@@ -42,6 +55,7 @@ private:
     int rate_ = 48000;
     std::atomic<float> rpm_{850}, load_{0}, slip_{0}, speed_{0}, master_{0.8f};
     std::atomic<int> cyl_{4}, induction_{0};
+    std::atomic<int> recording_{0};
     std::atomic<bool> flatPlane_{false};
     std::atomic<float> liters_{1.6f}, redline_{6500}, boost_{0};
     std::atomic<float> pendingImpact_{0}, pendingGlass_{0}, pendingPop_{0};
@@ -50,15 +64,31 @@ private:
     Music music_;  // audio thread only (after start)
 
     // Synth state (audio thread only).
-    double phase_ = 0, subPhase_ = 0;
-    float sRpm_ = 850, sLoad_ = 0, sSlip_ = 0, sSpeed_ = 0, sBoost_ = 0;
-    int fireCount_ = 0;                  // which cylinder fired last (for per-cylinder character)
-    float cylGain_[12] = {};             // each cylinder's pulse strength (set by the voice)
-    int voiceCyl_ = 0;                   // cylinder count the gains were made for
-    double whinePhase_ = 0, spoolPhase_ = 0;
-    float bovEnv_ = 0, bovBand_ = 0, bovLow_ = 0, prevLoad_ = 0;
-    float intakeLp_ = 0;
-    float engLp_ = 0, engLp2_ = 0, windLp_ = 0, crunchLp_ = 0;
+    engineSamples::Library recordings_;
+    bool recordingsReady_ = false;
+    int recordingCount_ = 0;
+    EngineVoice engine_;
+    float sSlip_ = 0, sSpeed_ = 0, windLp_ = 0, crunchLp_ = 0;
+    static constexpr int kNearbyEngines = 8;
+    struct Source {
+        uint32_t id = 0;
+        EngineInput engine;
+        float gain = 0, pan = 0;
+    };
+    struct Sources { std::array<Source, kNearbyEngines> engines{}; int count = 0; };
+    // Single producer/consumer triple buffer: the callback never locks or allocates,
+    // and the game cannot overwrite a frame the callback is still reading.
+    std::array<Sources, 3> sources_{};
+    std::atomic<unsigned> middleSources_{1};
+    unsigned backSources_ = 2, frontSources_ = 0;
+    struct NearbyVoice {
+        uint32_t id = 0;
+        EngineVoice synth;
+        EngineInput input;
+        float gain = 0, targetGain = 0, left = 0.7f, right = 0.7f;
+    };
+    std::array<NearbyVoice, kNearbyEngines> nearby_{};
+    void updateRemoteVoices();
     float bp1_ = 0, bp2_ = 0;
     float crunchEnv_ = 0, thumpEnv_ = 0, thumpPhase_ = 0;
     float glassEnv_ = 0, glassBand_ = 0, glassLow_ = 0;

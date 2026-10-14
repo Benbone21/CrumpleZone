@@ -71,7 +71,7 @@ struct Pedals {
 // RT and LT after shaping, the car's speed along its heading and its gear: throttle and brake as
 // the keyboard's W and S would set them, including reverse (LT at a stop selects R and drives
 // backwards; RT while rolling backwards brakes, then selects D).
-Pedals pedals(double rt, double lt, double vf, int gear);
+Pedals pedals(double rt, double lt, double vf, int gear, bool manual = false);
 
 // ---- What the bindings make of a pad ------------------------------------------------------
 enum class Mode {  // what the pad is for right now

@@ -303,3 +303,81 @@ SCENARIO(fieldRepair, "recovery/trail-repair", "A Bronco with a flat, a snapped 
     for (const Wheel& wh : f.wheels) powered += f.wheelPowered(wh);
     ctx.metric("driven wheels after the repair", powered, "", 4, 4);
 }
+
+SCENARIO(recoveryPicking, "recovery/pointer-picking", "Pointing at front/rear vehicle areas selects those recovery points; empty space selects nothing") {
+    ctx.add(runner(), -40, -40, 0);
+    ctx.add(bronco(), -47, -40, 0);
+    ctx.sim.player = 0;
+    ctx.run(0.5);
+    auto targets = ctx.sim.strapTargets(0, 1);
+    ctx.check("both ends of the other vehicle are offered", targets.size() == 2);
+    const V3 eye(-47, 6, -34);
+    for (int h = 0; h < 2; h++) {
+        const V3 hook = ctx.sim.cars[1].hookPoint(h);
+        const int pick = ctx.sim.pickRecoveryTarget(targets, eye, norm(hook - eye), 0.02);
+        ctx.check(h ? "clicking the rear picks the rear" : "clicking the front picks the front", pick >= 0 && targets[pick].end.hook == h);
+    }
+    const int body = ctx.sim.pickRecoveryTarget(targets, eye, norm(ctx.sim.cars[1].frame().com + V3(1.5, 0.1, 0) - eye), 0.02);
+    ctx.check("a click on the vehicle body snaps to its front point", body >= 0 && targets[body].end.hook == 0);
+    ctx.check("empty space does not silently hook a distant car", ctx.sim.pickRecoveryTarget(targets, eye, V3(0, 1, 0), 0.02) == -1);
+    if (targets.empty()) return;
+    const std::string hooked = ctx.sim.hookStrapTo(0, 1, targets[0].end);
+    ctx.check("the selected endpoints are attached", ctx.sim.ropes.size() == 1 && ctx.sim.ropes[0].a.hook == 1 && ctx.sim.ropes[0].b.hook == targets[0].end.hook, hooked);
+    RopeEnd invalid; invalid.car = 999;
+    ctx.sim.hookStrapTo(0, 1, invalid);
+    ctx.check("an invalid target preserves the existing strap", ctx.sim.ropes.size() == 1);
+}
+
+SCENARIO(towingHealthy, "recovery/healthy-car-tow", "A running unattended truck rolls in neutral, with no hidden slack-line brake, and restores its gear when taking the wheel") {
+    ctx.add(runner(), -45, -40, 0);
+    ctx.add(bronco(), -52, -40, 0);
+    ctx.sim.player = 0;
+    ctx.run(1);
+    Car& tow = ctx.sim.cars[0]; Car& other = ctx.sim.cars[1];
+    other.gear = 3; other.brake = other.handbrake = other.brakePressure = 1;
+    RopeEnd target; target.car = 1;
+    ctx.sim.hookStrapTo(0, 1, target);
+    ctx.sim.drive(false, false, false, false, false, Ctx::kFrame);
+    ctx.check("unattended tow selects neutral", other.gear == 0 && other.towRolling);
+    ctx.check("brakes are released even with a slack strap", other.brake == 0 && other.handbrake == 0 && other.brakePressure == 0);
+    const V3 start = other.frame().com;
+    double peak = 0;
+    ctx.run(12, [&] {
+        ctx.sim.drive(false, false, false, false, false, Ctx::kFrame);
+        const double speed = dot(tow.frame().vel, tow.frame().fwd);
+        tow.throttle = clampd((2.0 - speed) * 0.35, 0, 0.4);
+        const int r = ctx.sim.ropeOn(0, ROPE_STRAP);
+        if (r >= 0) peak = std::max(peak, ctx.sim.ropes[r].shown);
+    });
+    ctx.metric("running vehicle rolls behind the tow truck", other.frame().com.x - start.x, "m", 8, 35);
+    ctx.metric("tow force on paved ground stays modest", peak / 1000, "kN", 0.1, 20);
+    ctx.check("strap holds", ctx.sim.ropeOn(0, ROPE_STRAP) >= 0);
+    ctx.sim.player = 1;
+    ctx.sim.drive(false, false, false, false, false, Ctx::kFrame);
+    ctx.check("taking the wheel restores the selected gear", other.gear == 3 && !other.towRolling);
+}
+
+SCENARIO(winchSpeedControl, "recovery/winch-speed-control", "Faster drum speeds scale line travel but preserve rated stall pull and payout bounds") {
+    Car& c = ctx.add(bronco(), -50, -50, 0);
+    ctx.focus(c); ctx.run(0.5);
+    RopeEnd anchor; anchor.kind = ANCHOR_STAKE; anchor.p = c.hookPoint(0) + V3(14, 0, 0);
+    ctx.sim.hookWinchTo(0, anchor);
+    ctx.check("fixed anchor connected", ctx.sim.ropes.size() == 1);
+    if (ctx.sim.ropes.empty()) return;
+    Rope& line = ctx.sim.ropes[0];
+    line.length = 25; line.tension = 0; line.winch = 1; c.winchSpeed = 4;
+    const double before = line.length;
+    ctx.sim.substep();
+    ctx.metric("default 4x unloaded line speed", (before - line.length) / ctx.sim.h, "m/s", 0.519, 0.521);
+    line.tension = line.stallN; c.winchSpeed = 20;
+    const double stalled = line.length;
+    ctx.sim.substep();
+    ctx.metric("20x cannot reel past rated stall load", std::fabs(stalled - line.length), "m", 0, 1e-9);
+    line.tension = 0; line.winch = -1; line.length = line.maxLen;
+    ctx.sim.substep();
+    ctx.check("payout cannot exceed the available line", line.length == line.maxLen);
+    line.winch = 1; line.length = 25;
+    const double fast = line.length;
+    ctx.sim.substep();
+    ctx.metric("maximum 20x unloaded line speed", (fast - line.length) / ctx.sim.h, "m/s", 2.599, 2.601);
+}

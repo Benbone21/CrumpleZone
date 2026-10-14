@@ -138,6 +138,7 @@ private:
     // Offscreen HDR targets: the multisampled scene (when MSAA is on) resolves into
     // sceneTex/depthTex; ambient occlusion and the bloom chain work from those.
     int targetW = 0, targetH = 0, targetSamples = -1, aoW = 1, aoH = 1;
+    int targetRequestedSamples = -1;
     GLuint msFbo = 0, msColor = 0, msDepth = 0, sceneFbo = 0, sceneTex = 0, depthTex = 0, aoFbo = 0, aoTex = 0;
     GLuint bloomFbo[kBloomLevels] = {}, bloomTex[kBloomLevels] = {};
     int bloomW[kBloomLevels] = {}, bloomH[kBloomLevels] = {};

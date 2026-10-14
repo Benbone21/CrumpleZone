@@ -81,9 +81,10 @@ double steerRatio(double limit, double gain) { return std::min(kMaxLock, limit *
 
 // ---- Pedals ---------------------------------------------------------------------------------
 
-Pedals pedals(double rt, double lt, double vf, int gear) {
+Pedals pedals(double rt, double lt, double vf, int gear, bool manual) {
     Pedals p;
     p.gear = gear;
+    if (manual || gear == 0) { p.throttle = rt; p.brake = lt; return p; }
     if (gear >= 1) {
         p.throttle = rt;
         if (lt > 0) {
@@ -194,11 +195,9 @@ void Logic::update(const Raw& raw, Mode ctx, double dt) {
         return;
     }
 
-    if (ctx == Mode::Aim) {  // choosing a winch anchor: the camera turns it, D-pad / bumpers step
+    if (ctx == Mode::Aim) {  // point with the stick, A chooses the highlighted recovery point
         if (P(B_A)) tap(SC_V);
         if (P(B_B) || P(B_START)) tap(SC_ESCAPE);
-        if (P(B_LEFT) || P(B_LB)) tap(SC_TAB, true);
-        if (P(B_RIGHT) || P(B_RB)) tap(SC_TAB);
         in.lookX = std::fabs(R.x) > std::fabs(L.x) ? R.x : L.x;
         in.lookY = std::fabs(R.y) > std::fabs(L.y) ? R.y : L.y;
         return;
@@ -244,7 +243,7 @@ bool Logic::apply(Car& c, double dt) {
     }
     if (in.throttle > 0 || in.brake > 0) {
         const Frame fr = c.frame();
-        const Pedals p = pedals(in.throttle, in.brake, dot(fr.vel, fr.fwd), c.gear);
+        const Pedals p = pedals(in.throttle, in.brake, dot(fr.vel, fr.fwd), c.gear, c.manualShift);
         c.throttle = p.throttle;
         c.brake = p.brake;
         c.gear = p.gear;

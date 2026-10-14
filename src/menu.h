@@ -13,8 +13,10 @@ struct Settings {
     float music = 0.4f;         // background music, under the master volume (0 = off)
     float fovDeg = 66;          // vertical field of view of the chase and orbit cameras
     bool fullscreen = false, vsync = true, showFps = false;
+    int physicsThreads = 0;     // 0 AUTO; 1 serial; otherwise up to the available logical CPUs
     int map = 0;                // the map you were on last
     bool realRecovery = true;   // damage stays until a repair station (or arcade: T fixes it)
+    double winchSpeed = 4.0;    // saved gameplay speed multiplier; 1x is rated line speed
     int fuelMode = 2;           // 0 off, 1 real use, 2 fast (4x: so a session's driving matters)
     std::string playerName;     // shown to the others in multiplayer (default: your login)
     std::string joinAddress;    // the last address you typed to join

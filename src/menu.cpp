@@ -8,6 +8,7 @@
 #include <cstring>
 
 #include "gamepad.h"
+#include "rope.h"
 #include "hudkit.h"
 #include "platform.h"
 #include "sdl_min.h"
@@ -34,6 +35,10 @@ bool Settings::load(const std::string& path) {
             playerName = text;
             continue;
         }
+        if (k == "physicsthreads") {
+            physicsThreads = (int)std::clamp(std::strtol(text, nullptr, 10), 0L, (long)physicsThreadLimit());
+            continue;
+        }
         if (k == "pilotdest") {
             pilotDest = std::max(0, std::atoi(text));
             continue;
@@ -52,6 +57,7 @@ bool Settings::load(const std::string& path) {
         }
         const float v = (float)std::atof(text);
         if (k == "mph") mph = v != 0;
+        else if (k == "winchspeed" && std::isfinite(v)) winchSpeed = std::clamp((double)v, recovery::kWinchSpeedMin, recovery::kWinchSpeedMax);
         else if (k == "volume") volume = std::min(std::max(v, 0.0f), 1.0f);
         else if (k == "music") music = std::min(std::max(v, 0.0f), 1.0f);
         else if (k == "fov") fovDeg = std::min(std::max(v, 50.0f), 100.0f);
@@ -95,6 +101,8 @@ bool Settings::save(const std::string& path) const {
                  gfx.msaa, gfx.ao, gfx.bloom, gfx.clouds, gfx.renderScale, gfx.grass, map);
     std::fprintf(f, "recovery %d\nmusic %.2f\nfuel %d\n", realRecovery, music, fuelMode);
     std::fprintf(f, "ground %d\nprops %d\n", gfx.ground, gfx.props);
+    std::fprintf(f, "physicsthreads %d\n", physicsThreads);
+    std::fprintf(f, "winchspeed %.2f\n", winchSpeed);
     if (!playerName.empty()) std::fprintf(f, "name %s\n", playerName.c_str());
     if (!joinAddress.empty()) std::fprintf(f, "join %s\n", joinAddress.c_str());
     if (!sessionName.empty()) std::fprintf(f, "session %s\n", sessionName.c_str());
@@ -157,7 +165,7 @@ enum Id {
     // Settings page.
     UNITS = 1, VOLUME, FOV, RECOVERY, MUSIC, TIMEOFDAY, FUEL,
     QUALITY = 10, SHADOWS, AA, AO, BLOOM, CLOUDS, GRASS, SCALE, SCENERY,
-    FULLSCREEN = 20, VSYNC, FPS,
+    FULLSCREEN = 20, VSYNC, FPS, PHYSICSTHREADS, WINCHSPEED,
     PADSTEER = 30, PADDEAD, PADRUMBLE,
     // Main page and navigation.
     RESUME_ROW = 100, VEHICLE_ROW, MAP_ROW, GARAGE_ROW, SETTINGS_ROW, CONTROLS_ROW, RESET_ROW, QUIT_ROW, BACK_ROW,
@@ -379,6 +387,8 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
     slider(VOLUME, "VOLUME", pct(s.volume), s.volume, 21);
     slider(MUSIC, "MUSIC", s.music > 0 ? pct(s.music) : "OFF", s.music, 21);
     slider(FOV, "FIELD OF VIEW", std::to_string((int)std::lround(s.fovDeg)) + " DEG", (s.fovDeg - 50) / 50, 26);
+    char speed[32]; std::snprintf(speed, sizeof speed, "%.2gX", s.winchSpeed);
+    choice(WINCHSPEED, "WINCH SPEED", speed, 11, "1X: RATED SPEED. 4X: DEFAULT. UP TO 20X. - AND = CHANGE IT WHILE DRIVING.");
     header("GRAPHICS");
     choice(QUALITY, "QUALITY", quality[presetOf(s.gfx)], 4);
     choice(SHADOWS, "SHADOWS", shadows[std::min(std::max(s.gfx.shadows, 0), 3)], 4);
@@ -398,6 +408,14 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
     choice(FULLSCREEN, "FULLSCREEN", kOffOn[s.fullscreen], 2);
     choice(VSYNC, "VSYNC", kOffOn[s.vsync], 2);
     choice(FPS, "SHOW FPS", kOffOn[s.showFps], 2);
+    {
+        const int available = physicsThreadLimit();
+        const int chosen = std::clamp(s.physicsThreads, 0, available);
+        const std::string value = chosen == 0 ? "AUTO (" + std::to_string(resolvePhysicsThreads(0)) + ")" :
+            std::to_string(chosen) + (chosen == available ? " (ALL)" : "");
+        choice(PHYSICSTHREADS, "PHYSICS THREADS", value, available + 1,
+               "1: SINGLE THREAD. ALL: USE EVERY CPU THREAD. MORE MAY NOT BE FASTER.");
+    }
     button(CONTROLLER_ROW, "CONTROLLER", "STEERING, DEADZONE, RUMBLE");
     button(BACK_ROW, "BACK");
     return r;
@@ -583,6 +601,8 @@ PauseMenu::Result PauseMenu::change(int row, int dir, Settings& s) {
         case FULLSCREEN: s.fullscreen = !s.fullscreen; break;
         case VSYNC: s.vsync = !s.vsync; break;
         case FPS: s.showFps = !s.showFps; break;
+        case PHYSICSTHREADS: s.physicsThreads = cycle(std::clamp(s.physicsThreads, 0, it.count - 1)); break;
+        case WINCHSPEED: s.winchSpeed = recovery::adjustWinchSpeed(s.winchSpeed, dir); break;
         case PADSTEER: s.padSteering = cycle(std::min(std::max(s.padSteering, 0), 2)); break;
         case PADDEAD: s.padDeadzone = cycle(std::min(std::max(s.padDeadzone, 0), 2)); break;
         case PADRUMBLE: s.padRumble = cycle(std::min(std::max(s.padRumble, 0), 2)); break;

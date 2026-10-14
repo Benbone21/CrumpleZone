@@ -47,6 +47,14 @@ constexpr double kWinchExtension = 30.0; // m: the extension line in the recover
 constexpr double kWinchReach = kWinchLine + kWinchExtension;
 constexpr double kWinchStall = 44000;    // N: a 9,500 lb winch on its first layer
 constexpr double kWinchSpeed = 0.13;     // m/s line speed with no load
+constexpr double kWinchSpeedMin = 0.1, kWinchSpeedMax = 20.0;
+constexpr double kWinchDefaultSpeed = 4.0; // gameplay preference; 1x retains the rated speed
+inline double adjustWinchSpeed(double speed, int direction) {
+    const double steps[] = {0.1, 0.25, 0.5, 1, 2, 4, 6, 8, 10, 15, 20};
+    if (direction > 0) { for (double step : steps) if (step > speed + 1e-6) return step; return kWinchSpeedMax; }
+    for (int i = 10; i >= 0; --i) if (steps[i] < speed - 1e-6) return steps[i];
+    return kWinchSpeedMin;
+}
 constexpr double kWinchBreak = 90000;    // N: synthetic line, ~2x the winch
 constexpr double kStrapLen = 9.0;        // m: a 30 ft kinetic strap
 constexpr double kStrapBreak = 130000;   // N

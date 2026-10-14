@@ -1,6 +1,74 @@
 # Handoff: where Crumple Zone stands (2026-10-13)
 
+**Engine recordings / release checkpoint (2026-10-13):** user requested committing/pushing all updates before continuing, then asked for a Windows release. Prepared `docs/releases/v0.1.6.md`; publishing requires pushing the updated `sync` and a new version tag. The Windows ZIP builds locally; the installer is built by release CI (local `makensis` is unavailable).
+- Recorded-loop startup loading, vehicle/garage engine mapping and RPM/load playback now serve local and nearby multiplayer voices. No actual recordings have been imported. Missing banks explicitly retain procedural audio. See `docs/engine-recordings.md` for format and reference sources.
+- All **27** audio checks pass, including temporary PCM recordings, actual driver/remote playback, bank transitions, startup retention and malformed-file fallback. Native and Windows game/audio-test executables build. No new physics changes in this recorded-audio preparation.
+- The CC0-only asset rule still applies. An optional question about allowing other game-use licenses is unanswered; no purchases or third-party audio downloads have been made.
+
+**Engine audio / recovery / drivetrain follow-up (on `sync`):**
+- Full 720-degree procedural engine cycles, bank-specific V8 rumble, exhaust/intake
+  resonances and quieter induction sounds replace the old click/noise voice. Same synth
+  serves local/nearby multiplayer engines. Silent before/after auditions are in
+  `build/review/engine-audio/index.html` (WAVs alongside it); source is
+  `tools/engine_preview.cpp`. These are approximations, not vehicle recordings.
+- V opens a mouse/controller winch picker. O (letter O, explicitly confirmed by user)
+  chooses your front/rear point, then the other vehicle's; body-area clicks snap to
+  recovery points. Right stick aims, A selects, B cancels; mouse middle-drag looks,
+  wheel zooms, Esc/right click cancels. No target cycling required. 0 still airs up tires.
+- Saved winch multiplier defaults to 4x (~0.52 m/s unloaded), adjusts 0.1–20x with -/=
+  or Settings. Rated stall pull, line break strength and tire grip are unchanged.
+  Unattended tows release both brakes, temporarily select neutral and restore the
+  prior gear when taking the wheel or ending the tow; no hidden slack-line brake.
+- Manual R/N/1… with Q/E; W gas/S brake (RT/LT on pad) preserve selected gear.
+  Neutral free-revs; reverse and first-gear engagement guards use travel/shaft speed.
+  Reverse wheelspin no longer falsely opens engine-drag assistance after release.
+  Manual clutches disengage/match RPM through shifts. Driver-selected shifts in torque
+  converter automatics unlock; automatic-controller overlap remains unchanged.
+- Validation: 14 offline/dummy-device audio checks and offscreen render integration pass.
+  Windows game, audio test, runner and benchmark cross-compile; ZIP rebuilt. Full run
+  before the last controller correction: **441/461 passed, 20 failures** (454 s).
+  Final affected recheck: **26/26 passed**, including the previously failing Backcountry
+  autopilot, modified buggy acceleration, Tacoma rock hits and all drivetrain guards.
+  The remaining **19 failures are pre-existing**, including seven socket-blocked network
+  tests; no baseline edits or range widening. Reports/logs are in
+  `build/review/recovery-drivetrain/`. Native Windows/NVIDIA and live two-PC remain untested.
+- User requested OpenCode with `ollama/qwen3.8:latest` as a sub-agent. Tried service and
+  standalone modes; both cannot start a server in this sandbox (listen EPERM). No report
+  or code contribution was received from OpenCode. Do not claim it participated.
+- User explicitly requested a visible game launch after checks; this overrides the usual
+  no-visible-window rule for that final launch only. Launch attempted: default PulseAudio initialization hung with `pa_write EPERM` and was
+  interrupted. Explicit X11 and Wayland launches both failed (`SDL_Init: not available`);
+  GTK also could not open the display. No test/game window was left running. To launch
+  from a normal desktop terminal: `cd /home/bread/Documents/GitHub/MemeNG && ./crumplezone --map 0 --resume-model 2`.
+
+See `docs/recovery-audio.md` for controls and validation details.
+
 Start with `agent.md` (layout, rules, history). This page covers what's in flight.
+
+**Windows/NVIDIA and CPU optimization work (2026-10-13, Codex):** changes are on `sync`.
+The game now has saved **PHYSICS THREADS** (Esc → Settings): AUTO or 1 through all
+available logical CPUs, applied immediately. AUTO retains the conservative four-thread
+budget; manual counts above four are supported, also via `--physics-threads auto|all|N`.
+This budget controls independent car forces and collision geometry; shared forces retain their order and the 2 kHz step. Swept collision
+bounds, parked-car grid reuse, cached triangle projections and GL uniform locations;
+single window sampling, HDR MSAA fallback, Windows `graphics.log` and F3 CPU timings.
+Linux and Windows builds and new collision/worker/GL checks pass. Benchmarked separated
+cars at roughly 3× the prior CPU throughput and the dense 12-car pileup at 23% less CPU
+time, with matching state fingerprints. See `docs/performance.md` for measurements and
+full-suite validation. Native Windows/NVIDIA hardware is still unverified; native Windows
+CPU checks were added to release CI. Other worktrees do not automatically include these changes.
+Final full suite (including multiplayer follow-up): **423/442 passed**, **19 pre-existing failures**, no new failures (seven
+network tests cannot open sockets in this sandbox). Before: 416/436, 20 failures; the
+load-sensitive serial performance threshold passed in the final run. Windows ZIP:
+`build/win/CrumpleZone-windows.zip`; the Linux `./crumplezone` was rebuilt too.
+
+**Multiplayer follow-up (same local work):** protocol 3 carries RPM/load/boost/reverse;
+headlights use reliable per-car switches and late-join state. A monotonic playback clock,
+three fragment assemblies, interpolation of controls/wheels and build counters address
+jitter and queued old states. Shared engine synthesis mixes nearby cars spatially through
+a lock-free audio frame buffer. New socket-free wire/playback and offline audio checks
+pass; native Windows loopback checks were added to CI. **Both players need this build.**
+See `docs/multiplayer.md`. Local real-socket and Wine tests remain sandbox-blocked.
 
 **Rules:** work on branch `sync`. Never run `--update-baseline` until the suite passes, never edit `tests/baseline.txt` by hand, and use CC0 assets only. Run tests with `nice -n 19 ./build/run_tests --jobs 6`. Take screenshots offscreen (`SDL_VIDEODRIVER=offscreen`); never open a window. Fix the physics or the specs; never widen a test's range to make it pass.
 

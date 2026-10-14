@@ -170,7 +170,7 @@ SCENARIO(padBindings, "gamepad/bindings", "Button presses become the keys they s
     press(B_A, Mode::Aim);
     ctx.check("winch aim: A hooks (V)", hasTap(l, SC_V));
     press(B_RIGHT, Mode::Aim);
-    ctx.check("winch aim: D-pad right is the next anchor (Tab)", hasTap(l, SC_TAB));
+    ctx.check("recovery picker does not cycle or switch vehicles with D-pad right", l.taps.empty());
     press(B_A, Mode::Map);
     ctx.check("map: A sets the waypoint", l.in.mapSelect);
     press(B_X, Mode::Off);

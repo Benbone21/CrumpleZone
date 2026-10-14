@@ -27,7 +27,7 @@ enum : GLenum {
     GL_TEXTURE_2D = 0x0DE1, GL_TEXTURE_BORDER_COLOR = 0x1004,
     GL_UNSIGNED_BYTE = 0x1401, GL_UNSIGNED_INT = 0x1405, GL_FLOAT = 0x1406,
     GL_DEPTH_COMPONENT = 0x1902, GL_RED = 0x1903, GL_RGB = 0x1907,
-    GL_RENDERER = 0x1F01, GL_VERSION = 0x1F02,
+    GL_VENDOR = 0x1F00, GL_RENDERER = 0x1F01, GL_VERSION = 0x1F02,
     GL_NEAREST = 0x2600, GL_LINEAR = 0x2601,
     GL_TEXTURE_MAG_FILTER = 0x2800, GL_TEXTURE_MIN_FILTER = 0x2801,
     GL_TEXTURE_WRAP_S = 0x2802, GL_TEXTURE_WRAP_T = 0x2803,
@@ -148,4 +148,6 @@ CZ_GL_FUNCS(CZ_DECLARE)
 
 // Resolves every function; returns the name of the first missing one, or nullptr.
 const char* load(void* (*getProc)(const char*));
+// Uniform names are linked-program constants; avoid repeated driver lookups per wheel/pass.
+GLint uniformLocation(GLuint program, const char* name);
 }  // namespace gl

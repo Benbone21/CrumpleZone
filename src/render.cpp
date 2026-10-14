@@ -1,4 +1,5 @@
 #include "render.h"
+#include <stdexcept>
 
 #include <algorithm>
 #include <cmath>
@@ -1561,10 +1562,10 @@ Vtx vtx(const V3& p, const V3& n, float r, float g, float b, int mat) {
 }
 
 void uniformM4(GLuint prog, const char* name, const M4& m) {
-    UniformMatrix4fv(GetUniformLocation(prog, name), 1, 0, m.m);
+    UniformMatrix4fv(uniformLocation(prog, name), 1, 0, m.m);
 }
 void uniformV3(GLuint prog, const char* name, const V3& v) {
-    Uniform3f(GetUniformLocation(prog, name), (float)v.x, (float)v.y, (float)v.z);
+    Uniform3f(uniformLocation(prog, name), (float)v.x, (float)v.y, (float)v.z);
 }
 
 // World transform for a wheel mesh (local Z = axle, +Z = outer face). The meshes are
@@ -1748,6 +1749,12 @@ GLuint makeFbo(GLuint color, GLuint depth = 0) {
     BindFramebuffer(GL_FRAMEBUFFER, f);
     FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, color, 0);
     if (depth) FramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depth, 0);
+    const GLenum status = CheckFramebufferStatus(GL_FRAMEBUFFER);
+    if (status != GL_FRAMEBUFFER_COMPLETE) {
+        char msg[200];
+        std::snprintf(msg, sizeof msg, "Could not create an OpenGL render target (status 0x%x). Try a smaller window or lower render scale.", status);
+        throw std::runtime_error(msg);
+    }
     return f;
 }
 }  // namespace
@@ -1757,7 +1764,7 @@ void Renderer::ensureTargets(int w, int h, int samples) {
     GLint maxSamples = 0;
     GetIntegerv(GL_MAX_SAMPLES, &maxSamples);
     samples = samples > 1 ? std::min(samples, (int)maxSamples) : 0;
-    if (w == targetW && h == targetH && samples == targetSamples) return;
+    if (w == targetW && h == targetH && samples == targetRequestedSamples) return;
     GLuint fbos[] = {msFbo, sceneFbo, aoFbo}, rbs[] = {msColor, msDepth}, texs[] = {sceneTex, depthTex, aoTex};
     DeleteFramebuffers(3, fbos);
     DeleteRenderbuffers(2, rbs);
@@ -1765,23 +1772,35 @@ void Renderer::ensureTargets(int w, int h, int samples) {
     DeleteFramebuffers(kBloomLevels, bloomFbo);
     DeleteTextures(kBloomLevels, bloomTex);
     msFbo = msColor = msDepth = 0;
-    targetW = w, targetH = h, targetSamples = samples;
+    targetW = w, targetH = h, targetRequestedSamples = samples;
 
     sceneTex = makeTex(w, h, GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT, GL_LINEAR);
     depthTex = makeTex(w, h, GL_DEPTH_COMPONENT32F, GL_DEPTH_COMPONENT, GL_FLOAT, GL_NEAREST);
     sceneFbo = makeFbo(sceneTex, depthTex);
-    if (samples) {
+    // GL_MAX_SAMPLES is a ceiling, not a guarantee for this color/depth combination.
+    // Some drivers support fewer samples for floating-point HDR. Retry down to no MSAA.
+    int actualSamples = samples;
+    while (actualSamples > 1) {
         GenRenderbuffers(1, &msColor);
         BindRenderbuffer(GL_RENDERBUFFER, msColor);
-        RenderbufferStorageMultisample(GL_RENDERBUFFER, samples, GL_RGBA16F, w, h);
+        RenderbufferStorageMultisample(GL_RENDERBUFFER, actualSamples, GL_RGBA16F, w, h);
         GenRenderbuffers(1, &msDepth);
         BindRenderbuffer(GL_RENDERBUFFER, msDepth);
-        RenderbufferStorageMultisample(GL_RENDERBUFFER, samples, GL_DEPTH_COMPONENT32F, w, h);
+        RenderbufferStorageMultisample(GL_RENDERBUFFER, actualSamples, GL_DEPTH_COMPONENT32F, w, h);
         GenFramebuffers(1, &msFbo);
         BindFramebuffer(GL_FRAMEBUFFER, msFbo);
         FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, msColor);
         FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, msDepth);
+        if (CheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) break;
+        std::fprintf(stderr, "HDR MSAA %dx unavailable at %dx%d; retrying with fewer samples\n", actualSamples, w, h);
+        DeleteFramebuffers(1, &msFbo);
+        GLuint failed[] = {msColor, msDepth};
+        DeleteRenderbuffers(2, failed);
+        msFbo = msColor = msDepth = 0;
+        actualSamples /= 2;
     }
+    targetSamples = actualSamples > 1 ? actualSamples : 0;
+    std::printf("HDR target: %dx%d, MSAA %dx (requested %dx)\n", w, h, targetSamples, samples);
     aoW = std::max(1, w / 2), aoH = std::max(1, h / 2);
     aoTex = makeTex(aoW, aoH, GL_R8, GL_RED, GL_UNSIGNED_BYTE, GL_LINEAR);
     aoFbo = makeFbo(aoTex);
@@ -1816,38 +1835,38 @@ void Renderer::postProcess(const View& view, const M4& proj) {
         M4 invProj;
         invert(proj, invProj);
         uniformM4(progAO, "uInvProj", invProj);
-        Uniform2f(GetUniformLocation(progAO, "uTexel"), 1.0f / w, 1.0f / h);
-        Uniform2f(GetUniformLocation(progAO, "uAOTexel"), 1.0f / aoW, 1.0f / aoH);
-        Uniform1f(GetUniformLocation(progAO, "uProjScale"), aoH / (2.0f * std::tan(view.fovy * 0.5f)));
+        Uniform2f(uniformLocation(progAO, "uTexel"), 1.0f / w, 1.0f / h);
+        Uniform2f(uniformLocation(progAO, "uAOTexel"), 1.0f / aoW, 1.0f / aoH);
+        Uniform1f(uniformLocation(progAO, "uProjScale"), aoH / (2.0f * std::tan(view.fovy * 0.5f)));
         ActiveTexture(GL_TEXTURE0);
         BindTexture(GL_TEXTURE_2D, depthTex);
-        Uniform1i(GetUniformLocation(progAO, "uDepth"), 0);
+        Uniform1i(uniformLocation(progAO, "uDepth"), 0);
         DrawArrays(GL_TRIANGLES, 0, 3);
     }
 
     const bool chain = rs.bloom || rs.blur > 0;
     if (chain) {
         UseProgram(progDown);
-        Uniform1i(GetUniformLocation(progDown, "uSrc"), 0);
+        Uniform1i(uniformLocation(progDown, "uSrc"), 0);
         ActiveTexture(GL_TEXTURE0);
         for (int l = 0; l < kBloomLevels; l++) {
             BindFramebuffer(GL_FRAMEBUFFER, bloomFbo[l]);
             Viewport(0, 0, bloomW[l], bloomH[l]);
             BindTexture(GL_TEXTURE_2D, l ? bloomTex[l - 1] : sceneTex);
             int sw = l ? bloomW[l - 1] : w, sh = l ? bloomH[l - 1] : h;
-            Uniform2f(GetUniformLocation(progDown, "uTexel"), 1.0f / sw, 1.0f / sh);
-            Uniform1f(GetUniformLocation(progDown, "uThreshold"), l == 0 && rs.blur <= 0 ? 1.2f : -1.0f);
+            Uniform2f(uniformLocation(progDown, "uTexel"), 1.0f / sw, 1.0f / sh);
+            Uniform1f(uniformLocation(progDown, "uThreshold"), l == 0 && rs.blur <= 0 ? 1.2f : -1.0f);
             DrawArrays(GL_TRIANGLES, 0, 3);
         }
         UseProgram(progUp);
-        Uniform1i(GetUniformLocation(progUp, "uSrc"), 0);
+        Uniform1i(uniformLocation(progUp, "uSrc"), 0);
         Enable(GL_BLEND);
         BlendFunc(GL_ONE, GL_ONE);
         for (int l = kBloomLevels - 2; l >= 0; l--) {
             BindFramebuffer(GL_FRAMEBUFFER, bloomFbo[l]);
             Viewport(0, 0, bloomW[l], bloomH[l]);
             BindTexture(GL_TEXTURE_2D, bloomTex[l + 1]);
-            Uniform2f(GetUniformLocation(progUp, "uTexel"), 1.0f / bloomW[l + 1], 1.0f / bloomH[l + 1]);
+            Uniform2f(uniformLocation(progUp, "uTexel"), 1.0f / bloomW[l + 1], 1.0f / bloomH[l + 1]);
             DrawArrays(GL_TRIANGLES, 0, 3);
         }
         Disable(GL_BLEND);
@@ -1861,19 +1880,19 @@ void Renderer::postProcess(const View& view, const M4& proj) {
     for (int k = 0; k < 4; k++) {
         ActiveTexture(GL_TEXTURE0 + k);
         BindTexture(GL_TEXTURE_2D, texs[k]);
-        Uniform1i(GetUniformLocation(progComposite, names[k]), k);
+        Uniform1i(uniformLocation(progComposite, names[k]), k);
     }
     ActiveTexture(GL_TEXTURE0);
     // The chain sums kBloomLevels blurred copies: normalize it here.
     // (More glow round the lamps at night, when the eye is open wide.)
-    Uniform1f(GetUniformLocation(progComposite, "uBloomK"), rs.bloom && rs.blur <= 0 ? 0.08f * (1 + 0.8f * daylight.night) / kBloomLevels : 0.0f);
-    Uniform1f(GetUniformLocation(progComposite, "uNight"), daylight.night);
-    Uniform1f(GetUniformLocation(progComposite, "uBlur"), chain ? rs.blur : 0.0f);
-    Uniform1f(GetUniformLocation(progComposite, "uBlurNorm"), 0.8f / kBloomLevels);
-    Uniform1f(GetUniformLocation(progComposite, "uAOK"), rs.ao ? 0.75f : 0.0f);
-    Uniform1f(GetUniformLocation(progComposite, "uExposure"), daylight.exposure);
-    Uniform2f(GetUniformLocation(progComposite, "uAOTexel"), 1.0f / aoW, 1.0f / aoH);
-    Uniform2f(GetUniformLocation(progComposite, "uNearFar"), nearZ, farZ);
+    Uniform1f(uniformLocation(progComposite, "uBloomK"), rs.bloom && rs.blur <= 0 ? 0.08f * (1 + 0.8f * daylight.night) / kBloomLevels : 0.0f);
+    Uniform1f(uniformLocation(progComposite, "uNight"), daylight.night);
+    Uniform1f(uniformLocation(progComposite, "uBlur"), chain ? rs.blur : 0.0f);
+    Uniform1f(uniformLocation(progComposite, "uBlurNorm"), 0.8f / kBloomLevels);
+    Uniform1f(uniformLocation(progComposite, "uAOK"), rs.ao ? 0.75f : 0.0f);
+    Uniform1f(uniformLocation(progComposite, "uExposure"), daylight.exposure);
+    Uniform2f(uniformLocation(progComposite, "uAOTexel"), 1.0f / aoW, 1.0f / aoH);
+    Uniform2f(uniformLocation(progComposite, "uNearFar"), nearZ, farZ);
     DrawArrays(GL_TRIANGLES, 0, 3);
     Enable(GL_DEPTH_TEST);
 }
@@ -2542,27 +2561,27 @@ void Renderer::drawCarBodies(const Sim& sim, GLuint prog, bool glassPass) {
         const CarSlot& slot = carSlots[ci];
         const VisualTemplate& t = *static_cast<const VisualTemplate*>(slot.tpl);
         if (prog == progCar) {
-            Uniform3f(GetUniformLocation(prog, "uPaint"), (float)car.color.x, (float)car.color.y, (float)car.color.z);
-            Uniform1i(GetUniformLocation(prog, "uPass"), glassPass ? 1 : 0);
-            Uniform1f(GetUniformLocation(prog, "uBrake"), (float)std::max(car.brake, car.handbrake * 0.6));
+            Uniform3f(uniformLocation(prog, "uPaint"), (float)car.color.x, (float)car.color.y, (float)car.color.z);
+            Uniform1i(uniformLocation(prog, "uPass"), glassPass ? 1 : 0);
+            Uniform1f(uniformLocation(prog, "uBrake"), (float)std::max(car.brake, car.handbrake * 0.6));
             const CarLamps lp = ci < carLampState.size() ? carLampState[ci] : CarLamps();
             const float level = lp.beam == 2 ? 1.5f : lp.beam ? 1.0f : 0.0f, tailOn = lp.beam ? 1.0f : 0.0f;
-            Uniform4f(GetUniformLocation(prog, "uLampOn"), level * lp.head[0], level * lp.head[1], tailOn * lp.tail[0], tailOn * lp.tail[1]);
-            Uniform4f(GetUniformLocation(prog, "uLampOk"), lp.head[0], lp.head[1], lp.tail[0], lp.tail[1]);
-            Uniform1f(GetUniformLocation(prog, "uReverse"), car.gear < 0 ? 1.0f : 0.0f);
-            Uniform4f(GetUniformLocation(prog, "uCabin"), t.cabin[0], t.cabin[1], t.cabin[2], t.cabin[3]);
-            Uniform4f(GetUniformLocation(prog, "uBody"), t.body[0], t.body[1], t.body[2], t.body[3]);
-            Uniform4f(GetUniformLocation(prog, "uStyle"), t.style[0], t.style[1], t.style[2], t.style[3]);
+            Uniform4f(uniformLocation(prog, "uLampOn"), level * lp.head[0], level * lp.head[1], tailOn * lp.tail[0], tailOn * lp.tail[1]);
+            Uniform4f(uniformLocation(prog, "uLampOk"), lp.head[0], lp.head[1], lp.tail[0], lp.tail[1]);
+            Uniform1f(uniformLocation(prog, "uReverse"), car.gear < 0 ? 1.0f : 0.0f);
+            Uniform4f(uniformLocation(prog, "uCabin"), t.cabin[0], t.cabin[1], t.cabin[2], t.cabin[3]);
+            Uniform4f(uniformLocation(prog, "uBody"), t.body[0], t.body[1], t.body[2], t.body[3]);
+            Uniform4f(uniformLocation(prog, "uStyle"), t.style[0], t.style[1], t.style[2], t.style[3]);
             const VehicleSpec& vs = *car.spec;
-            Uniform1i(GetUniformLocation(prog, "uVehicle"), vs.model);
-            Uniform4f(GetUniformLocation(prog, "uTrim"), vs.trimColor[0], vs.trimColor[1], vs.trimColor[2], vs.trimTop);
+            Uniform1i(uniformLocation(prog, "uVehicle"), vs.model);
+            Uniform4f(uniformLocation(prog, "uTrim"), vs.trimColor[0], vs.trimColor[1], vs.trimColor[2], vs.trimTop);
             const float* sp = t.shellParam;
-            Uniform1i(GetUniformLocation(prog, "uShell"), t.shell);
-            Uniform4f(GetUniformLocation(prog, "uShA"), sp[0], sp[1], sp[2], sp[3]);
-            Uniform4f(GetUniformLocation(prog, "uShB"), sp[4], sp[5], sp[6], sp[7]);
-            Uniform4f(GetUniformLocation(prog, "uShC"), sp[8], sp[9], sp[10], sp[11]);
-            Uniform4f(GetUniformLocation(prog, "uShD"), sp[12], sp[13], sp[14], sp[15]);
-            Uniform4f(GetUniformLocation(prog, "uShE"), sp[16], sp[17], sp[18], sp[19]);
+            Uniform1i(uniformLocation(prog, "uShell"), t.shell);
+            Uniform4f(uniformLocation(prog, "uShA"), sp[0], sp[1], sp[2], sp[3]);
+            Uniform4f(uniformLocation(prog, "uShB"), sp[4], sp[5], sp[6], sp[7]);
+            Uniform4f(uniformLocation(prog, "uShC"), sp[8], sp[9], sp[10], sp[11]);
+            Uniform4f(uniformLocation(prog, "uShD"), sp[12], sp[13], sp[14], sp[15]);
+            Uniform4f(uniformLocation(prog, "uShE"), sp[16], sp[17], sp[18], sp[19]);
         }
         BindVertexArray(slot.vao);
         BindBuffer(GL_ELEMENT_ARRAY_BUFFER, glassPass ? slot.glassIbo : slot.ibo);
@@ -2679,9 +2698,9 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         UseProgram(prog);
         uniformV3(prog, "uSun", keyDir);
         uniformV3(prog, "uCam", view.eye);
-        Uniform3f(GetUniformLocation(prog, "uFog"), kFog[0], kFog[1], kFog[2]);
-        Uniform1f(GetUniformLocation(prog, "uTime"), view.time);
-        Uniform1f(GetUniformLocation(prog, "uClouds"), settings.clouds ? 1.0f : 0.0f);
+        Uniform3f(uniformLocation(prog, "uFog"), kFog[0], kFog[1], kFog[2]);
+        Uniform1f(uniformLocation(prog, "uTime"), view.time);
+        Uniform1f(uniformLocation(prog, "uClouds"), settings.clouds ? 1.0f : 0.0f);
         const Daylight& d = daylight;
         const std::pair<const char*, V3> sky[] = {
             {"uKeyCol", d.keyCol},     {"uAmbSky", d.ambSky},       {"uAmbGround", d.ambGround}, {"uSunDir", d.sunDir},
@@ -2689,17 +2708,17 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
             {"uSunGlow", d.sunGlow},   {"uSunDisc", d.sunDisc},     {"uCloudLit", d.cloudLit},   {"uCloudDark", d.cloudDark},
             {"uMoonCol", d.moonCol},   {"uGround", d.groundCol}};
         for (const auto& u : sky) uniformV3(prog, u.first, u.second);
-        Uniform1f(GetUniformLocation(prog, "uStars"), d.stars);
-        Uniform1f(GetUniformLocation(prog, "uNight"), d.night);
-        Uniform1f(GetUniformLocation(prog, "uMoonPhase"), d.moonPhase);
+        Uniform1f(uniformLocation(prog, "uStars"), d.stars);
+        Uniform1f(uniformLocation(prog, "uNight"), d.night);
+        Uniform1f(uniformLocation(prog, "uMoonPhase"), d.moonPhase);
         float rot[9];
         for (int k = 0; k < 9; k++) rot[k] = (float)d.skyRot[k];
-        UniformMatrix3fv(GetUniformLocation(prog, "uSkyRot"), 1, 1, rot);  // (row major: transposed)
-        Uniform1i(GetUniformLocation(prog, "uLampN"), lampCount);
+        UniformMatrix3fv(uniformLocation(prog, "uSkyRot"), 1, 1, rot);  // (row major: transposed)
+        Uniform1i(uniformLocation(prog, "uLampN"), lampCount);
         if (lampCount) {
-            Uniform4fv(GetUniformLocation(prog, "uLampPos"), lampCount, lampPos);
-            Uniform4fv(GetUniformLocation(prog, "uLampDir"), lampCount, lampDir);
-            Uniform4fv(GetUniformLocation(prog, "uLampUp"), lampCount, lampUp);
+            Uniform4fv(uniformLocation(prog, "uLampPos"), lampCount, lampPos);
+            Uniform4fv(uniformLocation(prog, "uLampDir"), lampCount, lampDir);
+            Uniform4fv(uniformLocation(prog, "uLampUp"), lampCount, lampUp);
         }
     };
     DepthMask(0);
@@ -2715,32 +2734,32 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         uniformM4(prog, "uLightVP", lightVP[0]);
         uniformM4(prog, "uLightVP0", lightVP[0]);
         uniformM4(prog, "uLightVP1", lightVP[1]);
-        Uniform4f(GetUniformLocation(prog, "uShadowCfg"), sq ? 1.0f : 0.0f, (float)kShadowTaps[sq], 0, 0);
+        Uniform4f(uniformLocation(prog, "uShadowCfg"), sq ? 1.0f : 0.0f, (float)kShadowTaps[sq], 0, 0);
         for (int c = 0; c < 2; c++) {
             ActiveTexture(GL_TEXTURE0 + c);
             BindTexture(GL_TEXTURE_2D, shadowTex[c]);
         }
         ActiveTexture(GL_TEXTURE0);
-        Uniform1i(GetUniformLocation(prog, "uShadow0"), 0);
-        Uniform1i(GetUniformLocation(prog, "uShadow1"), 1);
+        Uniform1i(uniformLocation(prog, "uShadow0"), 0);
+        Uniform1i(uniformLocation(prog, "uShadow1"), 1);
     };
     auto bindTerrainTex = [&](GLuint prog) {
         ActiveTexture(GL_TEXTURE0 + 2);
         BindTexture(GL_TEXTURE_2D, terrainTex);
         ActiveTexture(GL_TEXTURE0);
-        Uniform1i(GetUniformLocation(prog, "uTerrainTex"), 2);
-        Uniform1f(GetUniformLocation(prog, "uTerrainN"), (float)terrainGridN);
+        Uniform1i(uniformLocation(prog, "uTerrainTex"), 2);
+        Uniform1f(uniformLocation(prog, "uTerrainN"), (float)terrainGridN);
     };
     setLighting(progLit);
     uniformM4(progLit, "uModel", m4identity());
     bindTerrainTex(progLit);
-    Uniform1i(GetUniformLocation(progLit, "uMap"), mapId);
+    Uniform1i(uniformLocation(progLit, "uMap"), mapId);
     // Bare rock and snow: high on the proving ground's rim; lower on the mountain,
     // whose forest climbs to ~175 m.
-    if (mapId == MAP_MOUNTAIN) Uniform2f(GetUniformLocation(progLit, "uRockSnow"), 165.0f, 205.0f);
-    else if (mapId == MAP_FRONTIER) Uniform2f(GetUniformLocation(progLit, "uRockSnow"), 125.0f, 400.0f);  // (its snow is painted on)
-    else if (mapId == MAP_BACKCOUNTRY) Uniform2f(GetUniformLocation(progLit, "uRockSnow"), 105.0f, 400.0f);  // (its snow is painted on)
-    else Uniform2f(GetUniformLocation(progLit, "uRockSnow"), 60.0f, 240.0f);
+    if (mapId == MAP_MOUNTAIN) Uniform2f(uniformLocation(progLit, "uRockSnow"), 165.0f, 205.0f);
+    else if (mapId == MAP_FRONTIER) Uniform2f(uniformLocation(progLit, "uRockSnow"), 125.0f, 400.0f);  // (its snow is painted on)
+    else if (mapId == MAP_BACKCOUNTRY) Uniform2f(uniformLocation(progLit, "uRockSnow"), 105.0f, 400.0f);  // (its snow is painted on)
+    else Uniform2f(uniformLocation(progLit, "uRockSnow"), 60.0f, 240.0f);
     // The ground: photo-scanned materials where they're loaded, else the procedural look.
     int gq = std::min(std::max(settings.ground, 0), 3);
     if (gq && !groundFailed) {
@@ -2759,21 +2778,21 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         setLighting(progTerrain);
         uniformM4(progTerrain, "uModel", m4identity());
         bindTerrainTex(progTerrain);
-        Uniform1i(GetUniformLocation(progTerrain, "uMap"), mapId);
+        Uniform1i(uniformLocation(progTerrain, "uMap"), mapId);
         float rs[2];
         if (mapId == MAP_MOUNTAIN) rs[0] = 165.0f, rs[1] = 205.0f;
         else if (mapId == MAP_FRONTIER) rs[0] = 125.0f, rs[1] = 400.0f;
         else if (mapId == MAP_BACKCOUNTRY) rs[0] = 105.0f, rs[1] = 400.0f;
         else rs[0] = 60.0f, rs[1] = 240.0f;
-        Uniform2f(GetUniformLocation(progTerrain, "uRockSnow"), rs[0], rs[1]);
+        Uniform2f(uniformLocation(progTerrain, "uRockSnow"), rs[0], rs[1]);
         ActiveTexture(GL_TEXTURE0 + 3);
         BindTexture(GL_TEXTURE_2D_ARRAY, groundTex.albedo);
         ActiveTexture(GL_TEXTURE0 + 4);
         BindTexture(GL_TEXTURE_2D_ARRAY, groundTex.normal);
         ActiveTexture(GL_TEXTURE0);
-        Uniform1i(GetUniformLocation(progTerrain, "uGroundA"), 3);
-        Uniform1i(GetUniformLocation(progTerrain, "uGroundB"), 4);
-        Uniform1i(GetUniformLocation(progTerrain, "uGroundQ"), gq);
+        Uniform1i(uniformLocation(progTerrain, "uGroundA"), 3);
+        Uniform1i(uniformLocation(progTerrain, "uGroundB"), 4);
+        Uniform1i(uniformLocation(progTerrain, "uGroundQ"), gq);
     } else {
         UseProgram(progLit);
     }
@@ -2811,15 +2830,15 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     DrawArrays(GL_TRIANGLES, 0, sceneryVertexCount);
     props.draw(vp, [&](GLuint prog) {
         setLighting(prog);
-        Uniform1i(GetUniformLocation(prog, "uMap"), mapId);
+        Uniform1i(uniformLocation(prog, "uMap"), mapId);
     });
     UseProgram(progLit);
     if (settings.grass) {
         setLighting(progGrass);
         bindTerrainTex(progGrass);
         const int side = 200;
-        Uniform1i(GetUniformLocation(progGrass, "uSide"), side);
-        Uniform1f(GetUniformLocation(progGrass, "uCell"), 0.6f);
+        Uniform1i(uniformLocation(progGrass, "uSide"), side);
+        Uniform1f(uniformLocation(progGrass, "uCell"), 0.6f);
         BindVertexArray(postVao);
         DrawArrays(GL_TRIANGLES, 0, side * side * 15);
         setLighting(progLit);
@@ -2981,10 +3000,10 @@ void Renderer::flushHud(int width, int height) {
     Enable(GL_BLEND);
     BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     UseProgram(progHud);
-    Uniform2f(GetUniformLocation(progHud, "uScreen"), (float)width, (float)height);
+    Uniform2f(uniformLocation(progHud, "uScreen"), (float)width, (float)height);
     ActiveTexture(GL_TEXTURE0);
     BindTexture(GL_TEXTURE_2D, fontTex);
-    Uniform1i(GetUniformLocation(progHud, "uFont"), 0);
+    Uniform1i(uniformLocation(progHud, "uFont"), 0);
     BindVertexArray(hudVao);
     BindBuffer(GL_ARRAY_BUFFER, hudVbo);
     BufferData(GL_ARRAY_BUFFER, hudVerts.size() * sizeof(float), hudVerts.data(), GL_STREAM_DRAW);
