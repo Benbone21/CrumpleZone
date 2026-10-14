@@ -58,7 +58,18 @@ jobs:
           RELEASE_TAG: ${{ inputs.tag }}
         run: |
           V="${RELEASE_TAG#v}"
-          make -j4 mac-dmg VERSION="$V"
+          make -j4 mac VERSION="$V"
+          rm -rf build/mac/dmg-root && mkdir -p build/mac/dmg-root
+          ditto build/mac/CrumpleZone.app build/mac/dmg-root/CrumpleZone.app
+          ln -s /Applications build/mac/dmg-root/Applications
+          cp README.md build/mac/dmg-root/README.md
+          hdiutil create -ov -volname "Crumple Zone $V" -srcfolder build/mac/dmg-root -format UDZO build/mac/CrumpleZone-mac.dmg
+          verified=false
+          for attempt in 1 2 3 4 5; do
+            if hdiutil verify build/mac/CrumpleZone-mac.dmg; then verified=true; break; fi
+            sleep 3
+          done
+          test "$verified" = true
           mkdir -p "$RUNNER_TEMP/crumplezone-dmg"
           hdiutil attach -quiet -readonly -nobrowse -mountpoint "$RUNNER_TEMP/crumplezone-dmg" build/mac/CrumpleZone-mac.dmg
           trap 'hdiutil detach -quiet "$RUNNER_TEMP/crumplezone-dmg"' EXIT
