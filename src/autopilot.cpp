@@ -1,3 +1,4 @@
+#include "thread_cache.h"
 // Autopilot: route planning, seeing the ground ahead, picking a line and a drive setup,
 // and driving (see autopilot.h).
 #include "autopilot.h"
@@ -64,7 +65,7 @@ template <class F> void disc(double x, double z, double r, F mark) {
 }
 
 const Grid& gridFor(const World& w) {
-    static thread_local Grid g;
+    CZ_THREAD_CACHE(Grid, g);
     if (g.stamp == w.stamp && w.stamp) return g;
     g.stamp = w.stamp;
     const int N = kN * kN;
@@ -183,9 +184,10 @@ bool planRoute(const World& w, const VehicleSpec& vs, const V3& from, const V3& 
     const double cap = bestCap(vs) * capScale;
     const double dropCap = truck ? 2.2 * vs.wheelRadius : 0.6 * vs.wheelRadius;
     const int N = kN * kN;
-    static thread_local std::vector<float> cost;
-    static thread_local std::vector<int> parent;
-    static thread_local std::vector<uint8_t> closed, extra;
+    CZ_THREAD_CACHE(std::vector<float>, cost);
+    CZ_THREAD_CACHE(std::vector<int>, parent);
+    CZ_THREAD_CACHE(std::vector<uint8_t>, closed);
+    CZ_THREAD_CACHE(std::vector<uint8_t>, extra);
     cost.assign(N, 1e30f);
     parent.assign(N, -1);
     closed.assign(N, 0);
@@ -641,7 +643,7 @@ void sense(Car& c, Autopilot& ap, const World& w, const std::vector<Car>* cars, 
     if (ap.body.build != c.buildCount) buildBody(c, ap.body);
     const PilotBody& b = ap.body;
     if (b.under.empty()) return;
-    static thread_local Scene sc;
+    CZ_THREAD_CACHE(Scene, sc);
     const Frame fr = c.frame();
     V3 f = norm(V3(fr.fwd.x, 0, fr.fwd.z));
     // The rear axle's center.

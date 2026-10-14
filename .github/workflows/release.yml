@@ -31,7 +31,7 @@ jobs:
           # Generic x86-64 (the Makefile's default is -march=native: the build machine's CPU only).
           make -j"$(nproc)" CXXFLAGS="-O2 -march=x86-64-v2 -mtune=generic" crumplezone
           make -j"$(nproc)" CXXFLAGS="-O2 -march=x86-64-v2 -mtune=generic" build/run_tests build/test_render build/test_audio
-          ./build/run_tests --jobs 1 engine/collision engine/physics-workers net/state vtools/
+          ./build/run_tests --jobs 1 engine/collision engine/physics-workers engine/thread-cache net/state vtools/
           SDL_VIDEODRIVER=offscreen LP_NUM_THREADS=2 ./build/test_render
           SDL_AUDIODRIVER=dummy CZ_AUDIO_DEVICE_TEST=1 ./build/test_audio
           python3 tests/test_engine_import.py
@@ -87,8 +87,12 @@ jobs:
       - name: Native Windows networking, configurable workers, and audio
         shell: pwsh
         run: |
-          .\cpu-tests\run_tests.exe --jobs 1 net/ engine/collision engine/physics-workers vtools/
+          .\cpu-tests\run_tests.exe --jobs 1 net/ engine/collision engine/physics-workers engine/thread-cache vtools/
           if ($LASTEXITCODE -ne 0) { throw "Windows networking/physics regression checks failed (exit $LASTEXITCODE)" }
+          foreach ($attempt in 1..5) {
+            .\cpu-tests\run_tests.exe --jobs 1 engine/thread-cache vtools/go net/state
+            if ($LASTEXITCODE -ne 0) { throw "Windows thread-exit stress failed (attempt $attempt, exit $LASTEXITCODE)" }
+          }
           $env:SDL_AUDIODRIVER = 'dummy'
           $env:CZ_AUDIO_DEVICE_TEST = '1'
           .\cpu-tests\test_audio.exe
@@ -115,11 +119,12 @@ jobs:
       - name: Native macOS regression checks
         run: |
           make -j4 build/mac/bench_sim build/mac/run_tests build/mac/test_audio build/mac/test_render
-          ./build/mac/run_tests --jobs 1 net/ engine/collision engine/physics-workers vtools/
+          ./build/mac/run_tests --jobs 1 net/ engine/collision engine/physics-workers engine/thread-cache vtools/
           SDL_AUDIODRIVER=dummy CZ_AUDIO_DEVICE_TEST=1 ./build/mac/test_audio
           python3 -u - <<'PY'
           import subprocess
-          subprocess.run(['./build/mac/test_render'], check=True, timeout=120)
+          # Hosted Macs use Apple Software Renderer; the full graphics checks take minutes.
+          subprocess.run(['./build/mac/test_render'], check=True, timeout=900)
           PY
           python3 - <<'PY'
           import re, subprocess
@@ -145,7 +150,7 @@ jobs:
           with tempfile.TemporaryDirectory() as cwd, open('shot.log', 'w') as log:
               subprocess.run([str(app), '--no-audio', '--no-pad', '--quality', '1', '--ground', '1', '--props', '0', '--size', '160x90',
                               '--shot-prefix', str(prefix), '--shot-frames', '1'], cwd=cwd,
-                             stdout=log, stderr=subprocess.STDOUT, check=True, timeout=90)
+                             stdout=log, stderr=subprocess.STDOUT, check=True, timeout=900)
           if not pathlib.Path(str(prefix) + '_0001.ppm').is_file():
               raise SystemExit('Packaged Mac app did not render its screenshot')
           output = pathlib.Path('shot.log').read_text()

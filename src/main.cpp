@@ -1400,7 +1400,10 @@ int main(int argc, char** argv) {
         std::setvbuf(stderr, nullptr, _IONBF, 0);
     }
 #endif
-    if (scripted) opt.audio = false;
+    if (scripted) {
+        opt.audio = false;
+        std::setvbuf(stdout, nullptr, _IONBF, 0);  // Keep packaged-app diagnostics visible during slow CI rendering.
+    }
     // Settings from last time (scripted captures use the defaults, so they're repeatable).
     Settings settings;
     const std::string settingsPath = Settings::defaultPath();

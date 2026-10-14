@@ -1,7 +1,39 @@
 #include "harness.h"
 #include "../src/collision.h"
+#include "../src/thread_cache.h"
 #include <random>
 #include <stdexcept>
+
+namespace {
+std::atomic<int> cacheDestroyed{0};
+struct CacheProbe {
+    std::vector<int> values;
+    ~CacheProbe() { cacheDestroyed++; }
+};
+}
+
+SCENARIO(threadCaches, "engine/thread-cache", "Scratch caches stay isolated and destroy their storage safely at thread exit") {
+    const int before = cacheDestroyed.load();
+    std::atomic<bool> isolated{true};
+    for (int batch = 0; batch < 32; batch++) {
+        std::vector<std::thread> threads;
+        for (int id = 0; id < 4; id++) threads.emplace_back([&, id] {
+            for (int use = 0; use < 100; use++) {
+                CZ_THREAD_CACHE(CacheProbe, first);
+                CZ_THREAD_CACHE(CacheProbe, second);
+                if (use == 0) {
+                    if (!first.values.empty() || !second.values.empty()) isolated = false;
+                    first.values.assign(100, id);
+                    second.values.assign(100, id + 10);
+                }
+                if (&first == &second || first.values[99] != id || second.values[99] != id + 10) isolated = false;
+            }
+        });
+        for (auto& thread : threads) thread.join();
+    }
+    ctx.check("independent caches retain only their own thread's data", isolated);
+    ctx.check("both caches destroyed for all 128 joined threads", cacheDestroyed.load() - before == 256);
+}
 
 SCENARIO(collisionBroadphase, "engine/collision-bounds", "Swept bounds exactly match all-pairs, including touching bounds, crossings and body removal") {
     std::vector<Car> cars(80);

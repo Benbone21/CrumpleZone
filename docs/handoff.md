@@ -1,23 +1,24 @@
 # Handoff: where Crumple Zone stands (2026-10-13)
 
-**Release integration, 2026-10-14:** all available local/cached remote branch commits are
-merged into `main`, including audio, field repairs, compatibility fixes, autopilot spatial
-queries and vehicle-tool prototypes. The release is prepared as `v0.1.8`: Windows installer
-EXE, universal Mac DMG (plus ZIP), and Linux DEB via the release workflow. Local final suite:
-**448/468 pass**, the same 20 failures as the previous verified build; 41 audio and five
-importer checks pass. Source and build details: `docs/release-merge-0.1.8.md`.
+**Release integration, 2026-10-14:** all local and freshly fetched remote branch commits
+are merged into `main` and all branches are pushed. The next release is `v0.1.9`, with
+Windows installer EXE, universal Mac DMG/ZIP and Linux DEB. See
+`docs/release-merge-0.1.9.md` and `docs/releases/v0.1.9.md`. The original full suite
+passes 448/468 with thirteen existing physics failures and seven denied socket checks;
+after restoring network access, all ten networking checks pass. Audio (41 checks),
+importer (five checks), and seven newly merged scenarios pass.
 
-Both suspension experiments are preserved but disabled by default: the free-coil retune
-and OpenCode's high-speed damping destabilized the Bronco/shaft-break workload. Use
-`CZ_FREE_COILS=1` / `CZ_HIGH_SPEED_DAMPING=1` only for development comparisons until retuned.
-The vehicle command popup has a tested model but no new render/input adapter yet. The
-standalone autopilot performance targets remain unmet. Do not describe either roadmap
-as completed release work. GitHub access was restored and all branches plus `v0.1.8`
-were pushed. All ten local networking checks now pass. Native Windows release checks
-pass, as do Mac networking and audio, but the Mac render test hangs. The release was
-stopped before publication; render diagnostics and a timeout are being added before
-the next release attempt. A duplicate Windows job exited after all scenarios passed;
-its isolated rerun is pending. See the release report for retained CI logs.
+Native Windows CI exposed intermittent access violations at thread exit after passing
+scenario assertions. Scratch caches now use native FLS lifetime management; CI adds
+128-thread cleanup checks and five separate process-exit stress runs. Mac CI uses Apple
+Software Renderer: the full original graphics test passed but took about nine minutes.
+Graphics/app checks have 15-minute timeouts and immediate diagnostics. Release 0.1.8
+was stopped before publication; 0.1.9 publication requires every platform job to pass.
+
+Suspension experiments remain development-only (`CZ_FREE_COILS=1` and
+`CZ_HIGH_SPEED_DAMPING=1`). The vehicle command-popup model is merged but its new
+render/input adapter remains planned. Autopilot performance targets remain unmet;
+neither roadmap nor real Mac/NVIDIA GPU FPS gains should be described as completed.
 
 
 **Engine recordings / release checkpoint (2026-10-13):** user requested committing/pushing all updates before continuing, then asked for a Windows release. Prepared `docs/releases/v0.1.6.md`; publishing requires pushing the updated `sync` and a new version tag. The Windows ZIP builds locally; the installer is built by release CI (local `makensis` is unavailable).

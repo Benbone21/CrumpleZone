@@ -1,3 +1,4 @@
+#include "thread_cache.h"
 #include "world.h"
 
 #include "props.h"
@@ -896,7 +897,10 @@ void World::solidsNear(double x0, double z0, double x1, double z1, NearbySolids&
     if (gridN == 0) return;
     // Each object is in the lookup lists of every cell it reaches into, so one object turns up
     // in several cells: a generation mark per object keeps the lists free of repeats.
-    static thread_local std::vector<uint32_t> markP, markB, markR, markL;
+    CZ_THREAD_CACHE(std::vector<uint32_t>, markP);
+    CZ_THREAD_CACHE(std::vector<uint32_t>, markB);
+    CZ_THREAD_CACHE(std::vector<uint32_t>, markR);
+    CZ_THREAD_CACHE(std::vector<uint32_t>, markL);
     static thread_local uint32_t gen = 0;
     if (markP.size() < poles.size()) markP.resize(poles.size(), 0);
     if (markB.size() < boxes.size()) markB.resize(boxes.size(), 0);

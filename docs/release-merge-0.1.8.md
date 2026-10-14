@@ -58,11 +58,14 @@ ten scenarios, resolving the seven socket restrictions from the original full ru
 The [tagged workflow](https://github.com/Benbone21/CrumpleZone/actions/runs/38644019223)
 builds the Linux DEB, Windows installer and universal Mac app/DMG successfully. Native
 Windows passes all 19 selected scenarios, audio checks and serial/parallel fingerprints.
-Mac networking (19 scenarios) and audio pass in the duplicate branch workflow, but its
-render executable hangs. Publication was stopped; the next attempt adds immediate
-render diagnostics and a 120-second rendering timeout. The duplicate Windows job
-exited after printing 19 passing scenarios without its final summary; its isolated
-rerun is pending. Logs are retained under `build/review/0.1.8/github/`.
+Mac networking (19 scenarios), audio and full rendering checks also passed in the tag
+workflow. Rendering took about nine minutes on Apple Software Renderer. Publication
+was stopped during investigation, before the packaged-app check completed. Windows
+intermittently crashes at thread exit with `0xC0000005`, despite passing every scenario;
+an isolated rerun passed but the diagnostic run reproduced it. The native cache cleanup
+correction and software-renderer timeouts are recorded in
+[the 0.1.9 report](release-merge-0.1.9.md). Logs are retained under
+`build/review/0.1.8/github/`.
 
 Local logs are in `build/review/0.1.8/`. Prepared release packages are in
 `build/release-0.1.8/`. The earlier review is preserved in `docs/platform-verification.md`.

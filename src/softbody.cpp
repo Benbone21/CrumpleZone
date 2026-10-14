@@ -1,3 +1,4 @@
+#include "thread_cache.h"
 #include "softbody.h"
 #include "collision.h"
 #include "vehicles.h"
@@ -569,8 +570,8 @@ void Car::chassisGroupForces(ChassisFrame& cf, double h) {
     // Forces, capped per node. Capping (only ever in a crash) breaks the balance, so the
     // net force and torque left over are taken back out evenly: the frame can never push
     // the car as a whole.
-    static thread_local std::vector<V3> F;
-    static thread_local std::vector<int> flowed;
+    CZ_THREAD_CACHE(std::vector<V3>, F);
+    CZ_THREAD_CACHE(std::vector<int>, flowed);
     F.assign(n, V3());
     flowed.clear();
     // Steel: past its yield it bends, and the bend is the new shape. Each cross-section
@@ -578,8 +579,9 @@ void Car::chassisGroupForces(ChassisFrame& cf, double h) {
     // positions follow by the excess. A member shoved much further than the rest of its
     // section crushes it locally, and flows on its own.
     if (cf.yieldDist > 0) {
-        static thread_local std::vector<V3> D, secD;
-        static thread_local std::vector<double> secW;
+        CZ_THREAD_CACHE(std::vector<V3>, D);
+        CZ_THREAD_CACHE(std::vector<V3>, secD);
+        CZ_THREAD_CACHE(std::vector<double>, secW);
         D.assign(n, V3());
         const bool sections = !cf.section.empty();
         const int nsec = sections ? 1 + *std::max_element(cf.section.begin(), cf.section.end()) : 0;
@@ -1905,7 +1907,7 @@ void Car::updateStats() {
 
     // Chassis frame: anything torn off the main structure stops being held by it.
     if (!chassis.nodes.empty()) {
-        static thread_local std::vector<int> parent;
+        CZ_THREAD_CACHE(std::vector<int>, parent);
         parent.resize(frameNodes);
         for (int i = 0; i < frameNodes; i++) parent[i] = i;
         auto find = [&](int x) {
@@ -1919,7 +1921,7 @@ void Car::updateStats() {
             }
         // Each shape-holding group (the body; a ladder frame) keeps only its largest piece:
         // whatever has been torn off it goes its own way.
-        static thread_local std::vector<double> compMass;
+        CZ_THREAD_CACHE(std::vector<double>, compMass);
         for (ChassisFrame* cf : {&chassis, &railFrame[0], &railFrame[1]}) {
             if (cf->nodes.empty()) continue;
             compMass.assign(frameNodes, 0);
@@ -1932,7 +1934,7 @@ void Car::updateStats() {
     // Panels: a pin lets go when the sheet metal around it is crushed (clips first, then
     // latches, hinges only when it's mangled).
     if (!pins.empty()) {
-        static thread_local std::vector<float> bent;
+        CZ_THREAD_CACHE(std::vector<float>, bent);
         bent.assign(nodes.size(), 0.0f);
         for (const Beam& b : beams) {
             if (b.type != BEAM_PANEL) continue;

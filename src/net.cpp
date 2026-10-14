@@ -1,3 +1,4 @@
+#include "thread_cache.h"
 // Multiplayer session: see net.h.
 #include "net.h"
 
@@ -1147,7 +1148,8 @@ void NetSession::applyRemotes(Sim& sim, double now) {
             for (size_t i = 0; i < c.nodes.size(); i++)
                 out[i] = com + rot.rotate(c.restLocal[i] - rc + a.local[i] + (n.local[i] - a.local[i]) * alpha);
         };
-        static thread_local std::vector<V3> now0, prev;
+        CZ_THREAD_CACHE(std::vector<V3>, now0);
+        CZ_THREAD_CACHE(std::vector<V3>, prev);
         V3 vel;
         Quat rot;
         size_t idx;

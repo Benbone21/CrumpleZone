@@ -1,3 +1,4 @@
+#include "thread_cache.h"
 #include "carvisual.h"
 
 #include "bodyshell.h"
@@ -1451,7 +1452,8 @@ const VisualTemplate& visualTemplate(const Car& car) {
 
 void evalBody(const Car& car, const VisualTemplate& t, std::vector<BodyDynamic>& dyn, std::vector<unsigned>& opaque,
               std::vector<unsigned>& glass) {
-    static thread_local std::vector<V3> pos, nrm;
+    CZ_THREAD_CACHE(std::vector<V3>, pos);
+    CZ_THREAD_CACHE(std::vector<V3>, nrm);
     pos.assign(t.topoCount, V3());
     nrm.assign(t.topoCount, V3());
     for (int v = 0; v < t.topoCount; v++) {
@@ -1467,7 +1469,8 @@ void evalBody(const Car& car, const VisualTemplate& t, std::vector<BodyDynamic>&
     }
 
     // Skin quads that have torn apart (stretched far past factory length) are hidden.
-    static thread_local std::vector<char> torn, shattered;
+    CZ_THREAD_CACHE(std::vector<char>, torn);
+    CZ_THREAD_CACHE(std::vector<char>, shattered);
     torn.assign(car.quads.size(), 0);
     shattered.assign(car.quads.size(), 0);
     for (size_t q = 0; q < car.quads.size(); q++) {

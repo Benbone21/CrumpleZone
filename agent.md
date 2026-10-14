@@ -136,11 +136,15 @@ Without `--time`, captures start at 10:00 with the clock running.
 ## Open work
 
 - **Release integration (2026-10-14):** all available branch work is merged into `main` for
-  `v0.1.8`; read `docs/release-merge-0.1.8.md` and the new handoff first. Release defaults
+  `v0.1.9`; read `docs/release-merge-0.1.9.md` and the new handoff first. Release defaults
   preserve the verified suspension behavior. High-speed damping and free coils remain
   opt-in development experiments (`CZ_HIGH_SPEED_DAMPING=1`, `CZ_FREE_COILS=1`) after
   regression checks found instability. The final functional suite passes 448/468 with
   the same 20 failures as the prior verified build; no new failing scenarios.
+  Networking passes after sandbox restrictions were removed. Native Windows CI exposed
+  a MinGW thread-local destruction crash; scratch caches now use Windows FLS cleanup.
+  Native CI includes thread-exit stress checks. Hosted Mac rendering uses Apple's
+  software renderer, so graphics checks need minutes and do not measure hardware FPS.
 
 - **Physics improvements (merged; further tuning planned):** See `docs/beamng-implementation-plan.md` for detailed analysis of BeamNG.drive's physics approach and specific implementation recommendations. Focus areas: velocity-dependent suspension damping, progressive damage (separate yield/break thresholds), slip angle tire curves, engine torque curves, Ackerman steering. Claude is coordinating this work; Codex should implement as directed.
   - **Phase 1 (quick wins):** Velocity-dependent suspension damping, progressive bump stops, speed-sensitive downforce, tune spring rates per vehicle
