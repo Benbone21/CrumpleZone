@@ -135,6 +135,8 @@ Without `--time`, captures start at 10:00 with the clock running.
 
 ## Open work
 
+- **Physics improvements (branch `wip/field-repair`, active):** See `docs/beamng-implementation-plan.md` for detailed analysis of BeamNG.drive's physics approach and specific implementation recommendations. Focus areas: velocity-dependent suspension damping, progressive damage (separate yield/break thresholds), slip angle tire curves, engine torque curves, Ackerman steering. Claude is coordinating this work; Codex should implement as directed.
+- **UI organization and usability (branch `wip/field-repair`, planned):** Review menu structure, improve navigation flow, add visual hierarchy. Codex should focus on this while Claude handles physics.
 - **Visual polish:** the five vehicles are recognisable, but they're built on a coarse lattice. Shapes are rough at the nose, the Civic's hatch and the Jesko's canopy.
 - **Sound mix:** the engine voices haven't been heard on real speakers yet, only checked offline. Balance the volume and turbo/blower levels per car once someone listens.
   - To check offline, `build/review/claude/audiotest.cpp` renders each voice to WAV and spectrogram images.
