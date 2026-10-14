@@ -52,8 +52,10 @@ public:
     float sample(const EngineInput& input, float dt, const engineSamples::Bank* bank);
     float phase() const { return bank_ ? recorded_.phase() : procedural_.phase(); }
 private:
-    EngineSynth procedural_;
+    EngineSynth procedural_, previousProcedural_;
     engineSamples::Player recorded_, previous_;
+    EngineInput lastInput_, previousInput_;
+    uint64_t identity_ = UINT64_MAX;
     const engineSamples::Bank* bank_ = nullptr;
     const engineSamples::Bank* previousBank_ = nullptr;
     float fade_ = 1;

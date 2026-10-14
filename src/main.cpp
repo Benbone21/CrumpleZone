@@ -3018,8 +3018,8 @@ int main(int argc, char** argv) {
             audio.setRecording(engineSamples::forVehicle(vs));
             audio.setBoost(vs.induction == VehicleSpec::TURBO ? (float)car.boost : 0.0f);
             audio.setTires(sim.paused ? 0 : slip);
-            audio.setVolume(settings.volume * (menu.open ? 0.35f : 1.0f));
-            audio.setMusic(sim.world.map, settings.music * settings.volume);  // not ducked in the menu
+            audio.setVolume(settings.volume, menu.open ? 0.35f : 1.0f);
+            audio.setMusic(sim.world.map, settings.music);  // master volume applies to the whole mix
             audio.setSpeed(sim.paused ? 0 : (float)len(fr.vel));
             float amp = (float)clampd(std::log10(1.0 + impact / 50.0) / 3.5, 0, 1);
             if (amp > 0.08) audio.impact(amp);
@@ -3159,6 +3159,8 @@ int main(int argc, char** argv) {
         view.height = H;
         if (audioOn) audio.setNearbyEngines(sim, view.eye, norm(cross(view.target - view.eye, view.up)),
                                            (float)std::max(0.35, sim.timeScale));
+        if (audioOn) audio.setEnvironment(sim.world.map, (float)dayHours, settings.ambience,
+                                         !walker.active && cam.mode == 2 ? 0.3f : 1.0f);
         lastView = view;
         if (winchAim.on) winchAim.update(sim, view);
         clock += dt;

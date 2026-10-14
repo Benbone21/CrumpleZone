@@ -60,6 +60,7 @@ bool Settings::load(const std::string& path) {
         else if (k == "winchspeed" && std::isfinite(v)) winchSpeed = std::clamp((double)v, recovery::kWinchSpeedMin, recovery::kWinchSpeedMax);
         else if (k == "volume") volume = std::min(std::max(v, 0.0f), 1.0f);
         else if (k == "music") music = std::min(std::max(v, 0.0f), 1.0f);
+        else if (k == "ambience" && std::isfinite(v)) ambience = std::clamp(v, 0.0f, 1.0f);
         else if (k == "fov") fovDeg = std::min(std::max(v, 50.0f), 100.0f);
         else if (k == "fullscreen") fullscreen = v != 0;
         else if (k == "maxplayers") maxPlayers = std::min(std::max((int)v, 2), 8);
@@ -99,7 +100,7 @@ bool Settings::save(const std::string& path) const {
                  vsync, showFps);
     std::fprintf(f, "shadows %d\nmsaa %d\nao %d\nbloom %d\nclouds %d\nscale %.2f\ngrass %d\nmap %d\n", gfx.shadows,
                  gfx.msaa, gfx.ao, gfx.bloom, gfx.clouds, gfx.renderScale, gfx.grass, map);
-    std::fprintf(f, "recovery %d\nmusic %.2f\nfuel %d\n", realRecovery, music, fuelMode);
+    std::fprintf(f, "recovery %d\nmusic %.2f\nambience %.2f\nfuel %d\n", realRecovery, music, ambience, fuelMode);
     std::fprintf(f, "ground %d\nprops %d\n", gfx.ground, gfx.props);
     std::fprintf(f, "physicsthreads %d\n", physicsThreads);
     std::fprintf(f, "winchspeed %.2f\n", winchSpeed);
@@ -163,7 +164,7 @@ int presetOf(const RenderSettings& g) {
 namespace {
 enum Id {
     // Settings page.
-    UNITS = 1, VOLUME, FOV, RECOVERY, MUSIC, TIMEOFDAY, FUEL,
+    UNITS = 1, VOLUME, FOV, RECOVERY, MUSIC, TIMEOFDAY, FUEL, AMBIENCE,
     QUALITY = 10, SHADOWS, AA, AO, BLOOM, CLOUDS, GRASS, SCALE, SCENERY,
     FULLSCREEN = 20, VSYNC, FPS, PHYSICSTHREADS, WINCHSPEED,
     PADSTEER = 30, PADDEAD, PADRUMBLE,
@@ -386,6 +387,7 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
     }
     slider(VOLUME, "VOLUME", pct(s.volume), s.volume, 21);
     slider(MUSIC, "MUSIC", s.music > 0 ? pct(s.music) : "OFF", s.music, 21);
+    slider(AMBIENCE, "AMBIENCE", s.ambience > 0 ? pct(s.ambience) : "OFF", s.ambience, 21);
     slider(FOV, "FIELD OF VIEW", std::to_string((int)std::lround(s.fovDeg)) + " DEG", (s.fovDeg - 50) / 50, 26);
     char speed[32]; std::snprintf(speed, sizeof speed, "%.2gX", s.winchSpeed);
     choice(WINCHSPEED, "WINCH SPEED", speed, 11, "1X: RATED SPEED. 4X: DEFAULT. UP TO 20X. - AND = CHANGE IT WHILE DRIVING.");
@@ -619,6 +621,7 @@ PauseMenu::Result PauseMenu::setSlider(int row, float frac, Settings& s) {
     switch (r[row].id) {
         case VOLUME: s.volume = frac; break;
         case MUSIC: s.music = frac; break;
+        case AMBIENCE: s.ambience = frac; break;
         case FOV: s.fovDeg = 50 + 50 * frac; break;
         case SCALE: s.gfx.renderScale = 0.5f + 1.5f * frac; break;
         case PSPEED_ROW: s.pilotSpeed = 5 + 95 * frac; break;

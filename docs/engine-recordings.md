@@ -18,6 +18,10 @@ No real-car recordings have been imported. The game continues to use procedural 
 
 ## Recorded bank format
 
+The local-recording importer and audition workflow are documented in
+[audio-soundscape.md](audio-soundscape.md). It requires documented CC0 PCM recordings
+and explicit measured RPM/load clip ranges. No vehicle audio is synthesized by the importer.
+
 The startup loader reads `assets/audio/engines/<engine-key>/bank.txt`. It requires source, author and license metadata, plus at least two distinct RPM loops for each of coast (0) and load (1):
 
 ```text

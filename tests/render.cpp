@@ -77,6 +77,23 @@ int main() {
         renderer.flushHud(960, 720);
         clean();
         std::puts("PASS physics threads menu: AUTO, all logical CPUs, saved and restored");
+        PauseMenu ambientMenu;
+        ambientMenu.showPage(1, 0, 0);
+        bool foundAmbience = false;
+        for (int row = 0; row < 64; row++) {
+            const float previous = settings.ambience;
+            ambientMenu.key(SC_RIGHT, settings);
+            if (settings.ambience != previous) { foundAmbience = true; break; }
+            ambientMenu.key(SC_DOWN, settings);
+        }
+        if (!foundAmbience) throw std::runtime_error("ambience slider cannot be reached");
+        for (int k = 0; k < 24; k++) ambientMenu.key(SC_LEFT, settings);
+        if (settings.ambience != 0) throw std::runtime_error("ambience slider cannot mute nature");
+        settings.ambience = 0.65f;
+        if (!settings.save(settingsPath) || !loaded.load(settingsPath) || std::fabs(loaded.ambience - 0.65f) > 0.001f)
+            throw std::runtime_error("ambience level did not persist");
+        std::remove(settingsPath);
+        std::puts("PASS ambience menu: reachable, muted and saved/restored");
         View view;
         view.eye = V3(-46, 3, -46); view.target = V3(-40, 0.7, -40); view.up = V3(0, 1, 0);
         view.width = 160; view.height = 90;

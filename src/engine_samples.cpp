@@ -202,13 +202,22 @@ float Player::sample(const Bank& bank, const EngineInput& input, float dt) {
 }
 }
 float EngineVoice::sample(const EngineInput& input, float dt, const engineSamples::Bank* bank) {
-    if (bank != bank_) {
+    const float liters = std::isfinite(input.liters) ? std::clamp(input.liters, 0.6f, 10.0f) : 1.6f;
+    const uint64_t identity = (uint64_t)input.recording | (uint64_t)std::clamp(input.cylinders, 1, 12) << 8 |
+        (uint64_t)std::clamp(input.induction, 0, 2) << 12 | (uint64_t)input.flatPlane << 14 |
+        (uint64_t)std::lround(liters * 100) << 16;
+    if (identity_ == UINT64_MAX) { identity_ = identity; lastInput_ = input; }
+    if (bank != bank_ || identity != identity_) {
         previous_ = recorded_; previousBank_ = bank_; bank_ = bank;
+        previousProcedural_ = procedural_; previousInput_ = lastInput_;
+        if (identity != identity_) procedural_ = EngineSynth{};
         recorded_ = engineSamples::Player{}; fade_ = 0;
+        identity_ = identity;
     }
     const float current = bank_ ? recorded_.sample(*bank_, input, dt) : procedural_.sample(input, dt);
+    lastInput_ = input;
     if (fade_ >= 1) return current;
-    const float old = previousBank_ ? previous_.sample(*previousBank_, input, dt) : bank_ ? procedural_.sample(input, dt) : current;
+    const float old = previousBank_ ? previous_.sample(*previousBank_, previousInput_, dt) : previousProcedural_.sample(previousInput_, dt);
     fade_ = std::min(1.0f, fade_ + dt / 0.04f);
     return current * fade_ + old * (1 - fade_);
 }

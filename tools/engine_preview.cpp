@@ -27,7 +27,7 @@ int main(int argc, char** argv) {
     std::vector<float> combined;
     engineSamples::Library recordings;
     std::vector<std::string> errors;
-    const int count = recordings.load("assets/audio/engines", &errors);
+    const int count = recordings.load(argc > 2 ? argv[2] : "assets/audio/engines", &errors);
     std::printf("Recorded banks loaded: %d; absent banks remain procedural\n", count);
     for (const auto& error : errors) std::fprintf(stderr, "%s\n", error.c_str());
     for (const auto& v : vehicleCatalog()) {

@@ -6,6 +6,7 @@
 #include <array>
 
 #include "music.h"
+#include "ambience.h"
 #include "engineaudio.h"
 #include "engine_samples.h"
 #include "mathx.h"
@@ -34,7 +35,11 @@ public:
     int recordingBankCount() const { return recordingCount_; }
     void setTires(float slip) { slip_ = slip; }
     void setSpeed(float metersPerSecond) { speed_ = metersPerSecond; }
-    void setVolume(float v) { master_ = v; }
+    void setVolume(float v, float sceneGain = 1) { master_ = v; sceneGain_ = sceneGain; }
+    // Cabin exposure attenuates outdoor ambience and softens the engine mix.
+    void setEnvironment(int map, float hours, float volume, float exposure = 1) {
+        ambienceMap_ = map; hours_ = hours; ambienceVol_ = volume; exposure_ = exposure;
+    }
     // Background music: which map's piece, and its volume (0 = off). Changing map crossfades.
     void setMusic(int map, float volume) {
         musicMap_ = map;
@@ -59,6 +64,11 @@ private:
     std::atomic<bool> flatPlane_{false};
     std::atomic<float> liters_{1.6f}, redline_{6500}, boost_{0};
     std::atomic<float> pendingImpact_{0}, pendingGlass_{0}, pendingPop_{0};
+    std::atomic<float> sceneGain_{1}, localGain_{1};
+    std::atomic<int> ambienceMap_{-1};
+    std::atomic<float> hours_{10}, ambienceVol_{0}, exposure_{1};
+    Ambience ambience_;
+    float sMaster_ = 0.8f, sLocalGain_ = 1, sExposure_ = 1, cabinLowL_ = 0, cabinLowR_ = 0;
     std::atomic<int> musicMap_{-1};
     std::atomic<float> musicVol_{0};
     Music music_;  // audio thread only (after start)
@@ -85,7 +95,7 @@ private:
         uint32_t id = 0;
         EngineVoice synth;
         EngineInput input;
-        float gain = 0, targetGain = 0, left = 0.7f, right = 0.7f;
+        float gain = 0, targetGain = 0, left = 0.7f, right = 0.7f, targetLeft = 0.7f, targetRight = 0.7f;
     };
     std::array<NearbyVoice, kNearbyEngines> nearby_{};
     void updateRemoteVoices();

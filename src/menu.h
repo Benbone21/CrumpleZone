@@ -8,6 +8,7 @@
 #include "render.h"
 
 struct Settings {
+    float ambience = 0.6f;      // outdoor wind, foliage, birds and night insects
     bool mph = false;           // speed in mph instead of km/h
     float volume = 0.8f;        // master volume 0..1
     float music = 0.4f;         // background music, under the master volume (0 = off)

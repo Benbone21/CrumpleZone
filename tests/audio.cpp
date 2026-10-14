@@ -9,8 +9,24 @@
 #include <vector>
 #include <limits>
 #include <functional>
+#include <new>
+
+// Trace C++ allocations only around offline calls to the actual callback mixer.
+static std::atomic<bool> traceAllocations{false};
+static std::atomic<unsigned> callbackAllocations{0};
+void* operator new(std::size_t bytes) {
+    if (traceAllocations.load(std::memory_order_relaxed)) callbackAllocations++;
+    if (void* p = std::malloc(bytes ? bytes : 1)) return p;
+    throw std::bad_alloc();
+}
+void* operator new[](std::size_t bytes) { return ::operator new(bytes); }
+void operator delete(void* p) noexcept { std::free(p); }
+void operator delete[](void* p) noexcept { std::free(p); }
+void operator delete(void* p, std::size_t) noexcept { std::free(p); }
+void operator delete[](void* p, std::size_t) noexcept { std::free(p); }
 
 void recordedEngineTests(const std::function<void(const char*, bool)>& check, void (*render)(Audio&, float*, int));
+void soundscapeTests(const std::function<void(const char*, bool)>& check, void (*render)(Audio&, float*, int));
 
 struct AudioTest {
     static void render(Audio& audio, float* out, int frames) { audio.render(out, frames); }
@@ -163,6 +179,18 @@ int main() {
     consumer.join();
     check("audio callback receives coherent frames during concurrent publication", coherent);
     recordedEngineTests(check, AudioTest::render);
+    soundscapeTests(check, AudioTest::render);
+    Audio allocationCheck;
+    allocationCheck.setEngine(3000, 0.8f);
+    allocationCheck.setEnvironment(4, 8, 0.6f);
+    float callbackBlock[1024];
+    traceAllocations = true;
+    for (int k = 0; k < 500; k++) {
+        allocationCheck.setMusic(k < 50 ? 1 : 4, 0.5f);
+        AudioTest::render(allocationCheck, callbackBlock, 512);
+    }
+    traceAllocations = false;
+    check("mixer and music map changes perform no C++ allocations in the callback", callbackAllocations == 0);
     if (std::getenv("CZ_AUDIO_DEVICE_TEST")) {
         // With SDL_AUDIODRIVER=dummy this exercises SDL's real callback lifecycle silently.
         const bool initialized = SDL_Init(SDL_INIT_AUDIO) == 0;
