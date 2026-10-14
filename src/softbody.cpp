@@ -327,6 +327,12 @@ void Car::computeForces(double h, const World& w) {
             if (vrel < 0) F += b.c * vrel;
         } else if (b.type == BEAM_SPRING) {
             F = b.k * (L - b.L0);
+            // A coil spring only pushes: stretched past its free length it sits loose in its
+            // seats (a tender spring keeps it located) and the wheel hangs on its own weight down
+            // to the shock's droop stop. (Pulling, a soft long-travel spring held the wheel ~g/w^2
+            // below ride height, 0.14-0.17 m on the buggy and the UTV, and the rest of their droop
+            // was never used.) A leaf spring, clamped to the axle, does pull.
+            if (F > 0 && b.friction == 0) F = 0;
             // Progressive rubber bump stop: firms up over its first 3 cm.
             if (L < b.minL + 0.01) {
                 double c = std::min(b.minL + 0.01 - L, 0.03);
