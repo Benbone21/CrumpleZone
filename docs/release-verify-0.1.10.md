@@ -21,8 +21,8 @@ All previous feature branches were already merged into main. Fresh fetch and ope
 | Configuration | Run 1 | Run 2 | Effective render scale |
 | --- | ---: | ---: | ---: |
 | 0.1.9 binary, fixed | 49.87 ms | 50.14 ms | 100% |
-| Candidate, fixed | 50.01 ms | 50.02 ms | 100% |
-| Candidate, adaptive | 38.13 ms | 38.23 ms | 50% |
+| Candidate, fixed | 50.37 ms | 50.43 ms | 100% |
+| Candidate, adaptive | 38.48 ms | 38.53 ms | 50% |
 
 The adaptive figure is approximately 24% lower scene render time with reduced visual quality; it is not a same-quality optimization or a guaranteed 60 FPS result. CPU/physics targets and Mac/NVIDIA FPS gains are not claimed.
 
@@ -32,4 +32,9 @@ Logs, screenshots, source patch, benchmark commands and full-suite report are un
 
 ## Full regression run
 
-The first full run passed **457/471 scenarios** (447.4 seconds), with the thirteen existing failures plus the newly detected `offroad/ledge-crawlers` regression. The duplicate sag model was then corrected. The final focused rerun passes **4/4**: `offroad/ledge-crawlers`, `offroad/air-down`, `offroad/shaft-break`, and `tires/pressure`. A complete rerun of the final code proceeds alongside native CI; its report and final count will be included in the published release verification. Thirteen physics scenarios were already failing before this release: `frontier/current`, `backcountry/autopilot-far`, `freeway/top-speed/turbo utv`, `structure/weight/koenigsegg jesko`, `structure/weight/toyota tacoma`, `components/axle-landing`, `components/tire-into-fender/rock buggy`, `components/tire-into-fender/turbo utv`, `structure/rock-hits/4runner`, `offroad/whoops`, `tires/swap`, `tires/shear`, and `tires/debead`. No test ranges or baseline files were changed.
+The first full run passed **457/471 scenarios** (447.4 seconds), with the thirteen existing failures plus the newly detected `offroad/ledge-crawlers` regression. The duplicate sag model was then corrected. The final focused rerun passes **4/4**: `offroad/ledge-crawlers`, `offroad/air-down`, `offroad/shaft-break`, and `tires/pressure`. The complete final-code rerun passes **458/471 scenarios** (446.4 seconds). Its thirteen failures exactly match the previously documented set; the newly introduced ledge failure is gone. The 176 baseline metric drifts are informational, and no ranges or baselines were changed. Thirteen physics scenarios were already failing before this release: `frontier/current`, `backcountry/autopilot-far`, `freeway/top-speed/turbo utv`, `structure/weight/koenigsegg jesko`, `structure/weight/toyota tacoma`, `components/axle-landing`, `components/tire-into-fender/rock buggy`, `components/tire-into-fender/turbo utv`, `structure/rock-hits/4runner`, `offroad/whoops`, `tires/swap`, `tires/shear`, and `tires/debead`. No test ranges or baseline files were changed.
+
+
+Final native Windows verification passes 22/22 curated scenarios, five independent 5/5 thread-exit stress runs, all 45 audio checks, and matching one/four-worker fingerprints. The actual Ubuntu-built DEB identifies itself as 0.1.10/amd64 and successfully renders with bundled assets after extraction and launch from an unrelated temporary directory. Native release workflow: https://github.com/Benbone21/CrumpleZone/actions/runs/38664084681 (application commit `aa9dc431b08dbd342cda572d1db8ca720e9fd546`).
+
+Native macOS regression checks also pass, including networking, adaptive quality, pressure controls, audio, all graphics presets, and matching serial/parallel simulation fingerprints. The packaged-app launch, mounted-DMG signature/architecture checks and publication are subsequent gates in the linked workflow.

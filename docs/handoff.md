@@ -8,6 +8,12 @@ remove duplicate sag while preserving damaged-tire contact radii, prevent spinni
 and make air hiss callback-independent and safe across device rates. No real-car
 engine banks were imported. See `docs/release-verify-0.1.10.md` and
 `docs/releases/v0.1.10.md` for measurements, checks and known limitations.
+Final full suite: **458/471**, with exactly the thirteen previously known physics
+failures. The initial extra ledge regression was fixed by removing double-counted
+pressure sag. Audio 45/45, importer 5/5, rendering/menu 12/12; native Windows curated
+checks 22/22 plus five process-exit stress runs pass. Native Mac regression checks also
+pass; packaged-app and DMG checks gate publication. `main` and `sync` are synchronized;
+application release tag `v0.1.10` is commit `aa9dc43`.
 
 **Release integration, 2026-10-14:** all local and freshly fetched remote branch commits
 were merged into `main` and pushed. Release `v0.1.9` was published with
