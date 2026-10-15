@@ -166,6 +166,7 @@ int main() {
         std::remove(settingsPath);
         std::puts("PASS ambience menu: reachable, muted and saved/restored");
         View view;
+        renderer.daylight = computeDaylight(10);
         view.eye = V3(-46, 3, -46); view.target = V3(-40, 0.7, -40); view.up = V3(0, 1, 0);
         view.width = 160; view.height = 90;
         sim.cars[0].tirePsi = 12;
@@ -174,11 +175,52 @@ int main() {
             std::printf("Render check: drawing quality %d\n", quality);
             applyPreset(renderer.settings, quality);
             renderer.drawScene(sim, view, DEBUG_OFF, nullptr);
+            const auto geometry = renderer.geometryStats();
+            if (!geometry.terrainTriangles || geometry.terrainTriangles >= geometry.terrainFullTriangles / 2 ||
+                geometry.terrainVisibleChunks >= geometry.terrainChunks)
+                throw std::runtime_error("terrain culling/LOD did not reduce submitted geometry");
+            std::printf("Terrain: %u/%u triangles, %u/%u chunks; scenery %u vertices, shadows %u\n",
+                        geometry.terrainTriangles, geometry.terrainFullTriangles,
+                        geometry.terrainVisibleChunks, geometry.terrainChunks,
+                        geometry.sceneryVertices, geometry.shadowSceneryVertices);
             renderer.flushHud(view.width, view.height);
             clean();
             std::printf("PASS quality %d, shaders and framebuffer operations\n", quality);
         }
         sim.cars[0].tirePsi = sim.cars[0].spec->tirePsi;
+        const View groundView = view;
+        view.eye = V3(0, 10000, 0); view.target = V3(0, 11000, 0); view.up = V3(0, 0, 1);
+        renderer.drawScene(sim, view, DEBUG_OFF, nullptr);
+        clean();
+        if (renderer.geometryStats().terrainTriangles || renderer.geometryStats().sceneryVertices)
+            throw std::runtime_error("camera facing away still submits world geometry");
+        view.eye = V3(-100, 3003, -100); view.target = V3(-88, 3000, -88); view.up = V3(0, 1, 0);
+        view.fovy = 0.1f;
+        renderer.drawScene(sim, view, DEBUG_OFF, nullptr);
+        if (renderer.geometryStats().terrainTriangles)
+            throw std::runtime_error("high camera should not see unedited ground");
+        std::vector<std::pair<int, float>> oldHeights;
+        for (int i = 508; i <= 516; ++i)
+            for (int j = 508; j <= 516; ++j) {
+                const int id = i * sim.world.gridSize() + j;
+                oldHeights.push_back({id, sim.world.cellHeight(id)});
+                sim.world.setCellHeight(id, 3000);
+            }
+        renderer.updateTerrainRegion(sim.world, 508, 508, 516, 516);
+        renderer.drawScene(sim, view, DEBUG_OFF, nullptr);
+        clean();
+        if (!renderer.geometryStats().terrainTriangles)
+            throw std::runtime_error("raised editor terrain was culled with stale height bounds");
+        for (const auto& h : oldHeights) sim.world.setCellHeight(h.first, h.second);
+        renderer.updateTerrainRegion(sim.world, 508, 508, 516, 516);
+        view = groundView;
+        renderer.updateTerrainRegion(sim.world, 500, 500, 520, 520);
+        renderer.updateObjects(sim.world);
+        renderer.drawScene(sim, view, DEBUG_OFF, nullptr);
+        clean();
+        if (!renderer.geometryStats().terrainTriangles)
+            throw std::runtime_error("editor updates lost terrain batches");
+        std::puts("PASS culling rejects world behind camera; editor updates retain terrain and scenery batches");
         // Render photo ground with extension support hidden, to exercise actual texture setup.
         gl::GetStringi = noExtensions;
         GroundTextures fallbackGround;

@@ -3398,6 +3398,11 @@ int main(int argc, char** argv) {
         if (scripted && opt.shotFrames.count(frame)) {
             if (bench && benchN) {
                 std::printf("bench: scene %.2f ms/frame over %d frames\n", 1000.0 * benchSum / benchN, benchN);
+                const auto& geometry = renderer.geometryStats();
+                std::printf("bench: terrain %u/%u triangles, %u/%u visible chunks; scenery %u vertices, shadows %u vertices\n",
+                            geometry.terrainTriangles, geometry.terrainFullTriangles,
+                            geometry.terrainVisibleChunks, geometry.terrainChunks,
+                            geometry.sceneryVertices, geometry.shadowSceneryVertices);
                 std::printf("bench: adaptive %d, scale %.2f, shadows %d, MSAA %d, AO %d, ground %d, props %d\n",
                             settings.adaptiveQuality, renderer.settings.renderScale, renderer.settings.shadows,
                             renderer.settings.msaa, renderer.settings.ao, renderer.settings.ground, renderer.settings.props);

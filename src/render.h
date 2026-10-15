@@ -4,6 +4,7 @@
 
 #include "daylight.h"
 #include "gl.h"
+#include "visibility.h"
 #include "groundtex.h"
 #include "lights.h"
 #include "propdraw.h"
@@ -95,6 +96,12 @@ public:
 
     std::vector<unsigned char> readPixels(int width, int height);
     const PropStats& propStats() const { return props.stats; }
+    struct GeometryStats {
+        unsigned terrainTriangles = 0, terrainFullTriangles = 0;
+        unsigned terrainChunks = 0, terrainVisibleChunks = 0;
+        unsigned sceneryVertices = 0, shadowSceneryVertices = 0;
+    };
+    const GeometryStats& geometryStats() const { return geometryStats_; }
 
 private:
     struct CarSlot {
@@ -121,7 +128,17 @@ private:
     void buildFigures();
     double terrainSpacing = 1;
     GLuint terrainVao = 0, terrainVbo = 0, terrainIbo = 0;
-    int terrainIndexCount = 0;
+    struct TerrainChunk {
+        RenderBounds bounds;
+        unsigned first[4] = {}, count[4] = {};
+    };
+    struct StaticBatch { RenderBounds bounds; int first = 0, count = 0; };
+    std::vector<TerrainChunk> terrainChunks;
+    std::vector<StaticBatch> boxBatches, treeBatches, sceneryBatches;
+    GeometryStats geometryStats_;
+    void uploadBatches(GLuint& vao, GLuint& vbo, std::vector<Vtx>& vertices, std::vector<StaticBatch>& batches);
+    void drawBatches(GLuint vao, const std::vector<StaticBatch>& batches, const M4& vp, bool shadow);
+    void drawTerrain(const M4& vp, const View& view);
     GLuint boxVao = 0, boxVbo = 0;
     int boxVertexCount = 0;
     GLuint treeVao = 0, treeVbo = 0;

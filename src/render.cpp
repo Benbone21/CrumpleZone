@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <map>
 
 #include "carvisual.h"
 #include "scenery.h"
@@ -1946,15 +1947,65 @@ void Renderer::updateObjects(const World& world) {
     {
         std::vector<Vtx> v;
         buildTreeMesh(world, v, cover);
-        uploadStatic(treeVao, treeVbo, v);
+        uploadBatches(treeVao, treeVbo, v, treeBatches);
         treeVertexCount = (int)v.size();
     }
     std::vector<Vtx> v;
     buildRockMesh(world, v, cover);
     buildBushMesh(world, v, cover);
     buildPropMesh(world, v);
-    uploadStatic(sceneryVao, sceneryVbo, v);
+    uploadBatches(sceneryVao, sceneryVbo, v, sceneryBatches);
     sceneryVertexCount = (int)v.size();
+}
+
+// Reorder complete triangles into spatial bins. Bounds include all three
+// vertices, so large objects crossing bin edges remain conservatively visible.
+void Renderer::uploadBatches(GLuint& vao, GLuint& vbo, std::vector<Vtx>& vertices,
+                             std::vector<StaticBatch>& batches) {
+    std::map<std::pair<int, int>, std::vector<Vtx>> bins;
+    for (size_t k = 0; k + 2 < vertices.size(); k += 3) {
+        const float x = (vertices[k].p[0] + vertices[k+1].p[0] + vertices[k+2].p[0]) / 3;
+        const float z = (vertices[k].p[2] + vertices[k+1].p[2] + vertices[k+2].p[2]) / 3;
+        auto& bin = bins[{(int)std::floor(x / 64), (int)std::floor(z / 64)}];
+        bin.insert(bin.end(), vertices.begin() + k, vertices.begin() + k + 3);
+    }
+    vertices.clear();
+    batches.clear();
+    for (const auto& entry : bins) {
+        StaticBatch batch;
+        batch.first = (int)vertices.size();
+        batch.count = (int)entry.second.size();
+        for (const auto& v : entry.second) batch.bounds.add(V3(v.p[0], v.p[1], v.p[2]));
+        vertices.insert(vertices.end(), entry.second.begin(), entry.second.end());
+        batches.push_back(batch);
+    }
+    uploadStatic(vao, vbo, vertices);
+}
+
+void Renderer::drawBatches(GLuint vao, const std::vector<StaticBatch>& batches, const M4& vp, bool shadow) {
+    BindVertexArray(vao);
+    for (const auto& batch : batches) {
+        if (!batch.bounds.visible(vp)) continue;
+        DrawArrays(GL_TRIANGLES, batch.first, batch.count);
+        (shadow ? geometryStats_.shadowSceneryVertices : geometryStats_.sceneryVertices) += batch.count;
+    }
+}
+
+void Renderer::drawTerrain(const M4& vp, const View& view) {
+    BindVertexArray(terrainVao);
+    geometryStats_.terrainChunks = (unsigned)terrainChunks.size();
+    // Keep collision-scale detail nearby; select distance from the nearest point
+    // of the chunk, not its center, to protect terrain under the camera.
+    for (const auto& chunk : terrainChunks) {
+        geometryStats_.terrainFullTriangles += chunk.count[0] / 3;
+        if (!chunk.bounds.visible(vp)) continue;
+        const double distance = chunk.bounds.distance(view.eye);
+        const int lod = distance < 100 ? 0 : distance < 220 ? 1 : distance < 450 ? 2 : 3;
+        DrawElements(GL_TRIANGLES, chunk.count[lod], GL_UNSIGNED_INT,
+                     reinterpret_cast<const void*>((uintptr_t)chunk.first[lod] * sizeof(unsigned)));
+        geometryStats_.terrainTriangles += chunk.count[lod] / 3;
+        ++geometryStats_.terrainVisibleChunks;
+    }
 }
 
 void Renderer::updateWater(const World& world) {
@@ -2055,6 +2106,21 @@ void Renderer::updateTerrainRegion(const World& world, int i0, int j0, int i1, i
         for (int j = mj0; j <= mj1; j++) row.push_back(terrainVertex(world, -half + i * sp, -half + j * sp));
         BufferSubData(GL_ARRAY_BUFFER, (GLintptr)(((size_t)i * n + mj0) * sizeof(Vtx)), (GLsizeiptr)(row.size() * sizeof(Vtx)), row.data());
     }
+    // Bounds must include raised/lowered editor vertices before the next culling pass.
+    for (auto& chunk : terrainChunks) {
+        if (chunk.bounds.hi.x < -half + mi0 * sp || chunk.bounds.lo.x > -half + mi1 * sp ||
+            chunk.bounds.hi.z < -half + mj0 * sp || chunk.bounds.lo.z > -half + mj1 * sp) continue;
+        const int xi0 = std::max(mi0, (int)std::ceil((chunk.bounds.lo.x + half) / sp));
+        const int xi1 = std::min(mi1, (int)std::floor((chunk.bounds.hi.x + half) / sp));
+        const int zj0 = std::max(mj0, (int)std::ceil((chunk.bounds.lo.z + half) / sp));
+        const int zj1 = std::min(mj1, (int)std::floor((chunk.bounds.hi.z + half) / sp));
+        for (int i = xi0; i <= xi1; ++i)
+            for (int j = zj0; j <= zj1; ++j) {
+                const auto v = terrainVertex(world, -half + i * sp, -half + j * sp);
+                chunk.bounds.lo.y = std::min(chunk.bounds.lo.y, (double)v.p[1]);
+                chunk.bounds.hi.y = std::max(chunk.bounds.hi.y, (double)v.p[1]);
+            }
+    }
     // The shaders' terrain texture (one texel per meter: x across, z down).
     std::vector<float> data((size_t)(i1 - i0 + 1) * (j1 - j0 + 1) * 4);
     for (int j = j0; j <= j1; j++)
@@ -2083,13 +2149,47 @@ void Renderer::buildTerrain(const World& world) {
             verts.push_back(terrainVertex(world, -half + i * spacing, -half + j * spacing));
         }
     std::vector<unsigned> idx;
-    idx.reserve((n - 1) * (n - 1) * 6);
-    for (int i = 0; i < n - 1; i++)
-        for (int j = 0; j < n - 1; j++) {
-            unsigned a = i * n + j, b = (i + 1) * n + j, c = (i + 1) * n + j + 1, d = i * n + j + 1;
-            idx.insert(idx.end(), {a, d, c, a, c, b});
+    terrainChunks.clear();
+    // Keep every boundary vertex at all LODs so adjacent chunks share exact edges.
+    for (int i = 0; i < n - 1; i += 64)
+        for (int j = 0; j < n - 1; j += 64) {
+            const int ie = std::min(i + 64, n - 1), je = std::min(j + 64, n - 1);
+            TerrainChunk chunk;
+            for (int x = i; x <= ie; ++x)
+                for (int z = j; z <= je; ++z) {
+                    const auto& v = verts[x * n + z];
+                    chunk.bounds.add(V3(v.p[0], v.p[1], v.p[2]));
+                }
+            for (int lod = 0; lod < 4; ++lod) {
+                chunk.first[lod] = (unsigned)idx.size();
+                appendTerrainLod(idx, n, i, j, ie, je, 1 << lod);
+                chunk.count[lod] = (unsigned)idx.size() - chunk.first[lod];
+            }
+            terrainChunks.push_back(chunk);
         }
+    // Backdrop is already coarse; spatially batch it for camera culling too.
+    const unsigned backdropFirst = (unsigned)idx.size();
     buildBackdrop(world, verts, idx);
+    std::map<std::pair<int, int>, std::vector<unsigned>> backdrop;
+    for (unsigned k = backdropFirst; k < idx.size(); k += 3) {
+        const auto& v = verts[idx[k]];
+        auto& bin = backdrop[{(int)std::floor(v.p[0] / 384), (int)std::floor(v.p[2] / 384)}];
+        bin.insert(bin.end(), {idx[k], idx[k + 1], idx[k + 2]});
+    }
+    idx.resize(backdropFirst);
+    for (const auto& entry : backdrop) {
+        TerrainChunk chunk;
+        for (unsigned index : entry.second) {
+            const auto& v = verts[index];
+            chunk.bounds.add(V3(v.p[0], v.p[1], v.p[2]));
+        }
+        for (int lod = 0; lod < 4; ++lod) {
+            chunk.first[lod] = (unsigned)idx.size();
+            chunk.count[lod] = (unsigned)entry.second.size();
+        }
+        idx.insert(idx.end(), entry.second.begin(), entry.second.end());
+        terrainChunks.push_back(chunk);
+    }
     if (!terrainVao) {
         GenVertexArrays(1, &terrainVao);
         GenBuffers(1, &terrainVbo);
@@ -2101,7 +2201,6 @@ void Renderer::buildTerrain(const World& world) {
     BufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(Vtx), verts.data(), GL_DYNAMIC_DRAW);  // (the editor patches it)
     BindBuffer(GL_ELEMENT_ARRAY_BUFFER, terrainIbo);
     BufferData(GL_ELEMENT_ARRAY_BUFFER, idx.size() * sizeof(unsigned), idx.data(), GL_STATIC_DRAW);
-    terrainIndexCount = (int)idx.size();
 }
 
 // The mountain range around the map, out to 3.6 km: a coarse grid with the map's
@@ -2144,7 +2243,7 @@ void Renderer::buildBoxes(const World& world) {
                 for (int k : order) v.push_back(vtx(q[k], n, b.col[0], b.col[1], b.col[2], SM_CONCRETE));
             }
     }
-    uploadStatic(boxVao, boxVbo, v);
+    uploadBatches(boxVao, boxVbo, v, boxBatches);
     boxVertexCount = (int)v.size();
 }
 
@@ -2656,7 +2755,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     M4 lightVP[2];
     for (int c = 0; c < 2; c++) {
         V3 ft = transformPoint(lightView, view.target + ahead * (cascadeHalf[c] * 0.5));
-        float texel = 2 * cascadeHalf[c] / shadowSize, hh = cascadeHalf[c];
+        float texel = 2 * cascadeHalf[c] / std::max(1, shadowSize), hh = cascadeHalf[c];
         float fx = std::floor((float)ft.x / texel) * texel, fy = std::floor((float)ft.y / texel) * texel;
         lightVP[c] = ortho(fx - hh, fx + hh, fy - hh, fy + hh, (float)-ft.z - cascadeDepth[c], (float)-ft.z + cascadeDepth[c]) *
                      lightView;
@@ -2670,6 +2769,10 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     if (settings.props != propsApplied) updateObjects(sim.world);
     props.beginFrame(sim.world, view.eye, M4(), propsOk ? settings.props : 0, view.time);
 
+    M4 proj = perspective(view.fovy, (float)view.width / std::max(1, view.height), 0.05f, 6000.0f);
+    M4 vp = proj * lookAt(view.eye, view.target, view.up);
+    geometryStats_ = {};
+
     // Shadow passes.
     for (int c = 0; sq && c < 2; c++) {
         BindFramebuffer(GL_FRAMEBUFFER, shadowFbo[c]);
@@ -2680,16 +2783,13 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         UseProgram(progDepth);
         uniformM4(progDepth, "uLightVP", lightVP[c]);
         uniformM4(progDepth, "uModel", m4identity());
-        BindVertexArray(boxVao);
-        DrawArrays(GL_TRIANGLES, 0, boxVertexCount);
+        drawBatches(boxVao, boxBatches, lightVP[c], true);
         if (figVertexCount > 0) {
             BindVertexArray(figVao);
             DrawArrays(GL_TRIANGLES, 0, figVertexCount);
         }
-        BindVertexArray(treeVao);
-        DrawArrays(GL_TRIANGLES, 0, treeVertexCount);
-        BindVertexArray(sceneryVao);
-        DrawArrays(GL_TRIANGLES, 0, sceneryVertexCount);
+        drawBatches(treeVao, treeBatches, lightVP[c], true);
+        drawBatches(sceneryVao, sceneryBatches, lightVP[c], true);
         drawCarBodies(sim, progDepth, false);
         BindVertexArray(dynVao);
         DrawArrays(GL_TRIANGLES, 0, (GLsizei)partVerts.size());
@@ -2703,8 +2803,6 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     Viewport(0, 0, targetW, targetH);
     ClearColor(kFog[0], kFog[1], kFog[2], 1);
     Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    M4 proj = perspective(view.fovy, (float)view.width / std::max(1, view.height), 0.05f, 6000.0f);
-    M4 vp = proj * lookAt(view.eye, view.target, view.up);
     M4 invVP;
     invert(vp, invVP);
 
@@ -2810,8 +2908,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     } else {
         UseProgram(progLit);
     }
-    BindVertexArray(terrainVao);
-    DrawElements(GL_TRIANGLES, terrainIndexCount, GL_UNSIGNED_INT, nullptr);
+    drawTerrain(vp, view);
     if (effects) {
         // The ground shoved up beside tire tracks and round sunk tires, painted like the
         // terrain under it.
@@ -2832,16 +2929,13 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         }
     }
     UseProgram(progLit);
-    BindVertexArray(boxVao);
-    DrawArrays(GL_TRIANGLES, 0, boxVertexCount);
+    drawBatches(boxVao, boxBatches, vp, false);
     if (figVertexCount > 0) {
         BindVertexArray(figVao);
         DrawArrays(GL_TRIANGLES, 0, figVertexCount);
     }
-    BindVertexArray(treeVao);
-    DrawArrays(GL_TRIANGLES, 0, treeVertexCount);
-    BindVertexArray(sceneryVao);
-    DrawArrays(GL_TRIANGLES, 0, sceneryVertexCount);
+    drawBatches(treeVao, treeBatches, vp, false);
+    drawBatches(sceneryVao, sceneryBatches, vp, false);
     props.draw(vp, [&](GLuint prog) {
         setLighting(prog);
         Uniform1i(uniformLocation(prog, "uMap"), mapId);

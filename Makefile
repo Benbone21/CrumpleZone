@@ -15,6 +15,19 @@ HEADERS  := $(wildcard src/*.h tests/*.h)
 
 all: crumplezone
 
+# Geometry-only culling and crack-free terrain LOD checks (no SDL/OpenGL).
+build/test_visibility: tests/visibility.cpp src/visibility.h src/mathx.h
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) -o $@ $<
+
+build/win/test_visibility.exe: tests/visibility.cpp src/visibility.h src/mathx.h
+	@mkdir -p build/win
+	$(WINCXX) $(WINFLAGS) -o $@ $< -static -static-libgcc -static-libstdc++
+
+build/mac/test_visibility: tests/visibility.cpp src/visibility.h src/mathx.h
+	@mkdir -p build/mac
+	$(MACCXX) $(MACFLAGS) -o $@ $<
+
 crumplezone: $(GAME_OBJ)
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDLIBS)
 
@@ -105,7 +118,7 @@ windows-installer: windows
 # A universal (Apple silicon + Intel) app with SDL2.framework inside it. Needs the official
 # SDL2 macOS framework (from the SDL2-2.x.dmg) in $(MACSDL). Ad-hoc signed only: the first
 # launch needs right-click > Open (or: xattr -dr com.apple.quarantine CrumpleZone.app).
-VERSION  ?= 0.1.10
+VERSION  ?= 0.1.11
 MACCXX   ?= clang++
 MACSDL   ?= third_party/sdl2-mac
 MACFLAGS := -O2 -std=c++17 -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -Wall

@@ -30,7 +30,8 @@ jobs:
           V="${VERSION#[vV]}"
           # Generic x86-64 (the Makefile's default is -march=native: the build machine's CPU only).
           make -j"$(nproc)" CXXFLAGS="-O2 -march=x86-64-v2 -mtune=generic" crumplezone
-          make -j"$(nproc)" CXXFLAGS="-O2 -march=x86-64-v2 -mtune=generic" build/run_tests build/test_render build/test_audio
+          make -j"$(nproc)" CXXFLAGS="-O2 -march=x86-64-v2 -mtune=generic" build/run_tests build/test_render build/test_audio build/test_visibility
+          ./build/test_visibility
           ./build/run_tests --jobs 1 engine/collision engine/physics-workers engine/thread-cache engine/adaptive-quality tires/pressure net/state vtools/
           SDL_VIDEODRIVER=offscreen LP_NUM_THREADS=2 ./build/test_render
           SDL_AUDIODRIVER=dummy CZ_AUDIO_DEVICE_TEST=1 ./build/test_audio
@@ -50,9 +51,9 @@ jobs:
         run: |
           V="${VERSION#[vV]}"
           make -j"$(nproc)" windows-installer VERSION="$V"
-          make -j"$(nproc)" build/win/bench_sim.exe build/win/run_tests.exe build/win/test_audio.exe
+          make -j"$(nproc)" build/win/bench_sim.exe build/win/run_tests.exe build/win/test_audio.exe build/win/test_visibility.exe
           mkdir -p build/win/cpu-tests
-          cp build/win/bench_sim.exe build/win/run_tests.exe build/win/test_audio.exe third_party/sdl2-win64/SDL2.dll build/win/cpu-tests/
+          cp build/win/bench_sim.exe build/win/run_tests.exe build/win/test_audio.exe build/win/test_visibility.exe third_party/sdl2-win64/SDL2.dll build/win/cpu-tests/
           x86_64-w64-mingw32-objdump -p build/win/CrumpleZone/crumplezone.exe > build/win/imports.txt
           grep -q 'NvOptimusEnablement' build/win/imports.txt
           grep -q 'AmdPowerXpressRequestHighPerformance' build/win/imports.txt
@@ -87,6 +88,8 @@ jobs:
       - name: Native Windows networking, configurable workers, and audio
         shell: pwsh
         run: |
+          .\cpu-tests\test_visibility.exe
+          if ($LASTEXITCODE -ne 0) { throw "Windows culling/LOD geometry checks failed" }
           .\cpu-tests\run_tests.exe --jobs 1 net/ engine/collision engine/physics-workers engine/thread-cache engine/adaptive-quality tires/pressure vtools/
           if ($LASTEXITCODE -ne 0) { throw "Windows networking/physics regression checks failed (exit $LASTEXITCODE)" }
           foreach ($attempt in 1..5) {
@@ -118,7 +121,8 @@ jobs:
           cp build/mac/CrumpleZone-mac.dmg "out/CrumpleZone-${V}-mac.dmg"
       - name: Native macOS regression checks
         run: |
-          make -j4 build/mac/bench_sim build/mac/run_tests build/mac/test_audio build/mac/test_render
+          make -j4 build/mac/bench_sim build/mac/run_tests build/mac/test_audio build/mac/test_render build/mac/test_visibility
+          ./build/mac/test_visibility
           ./build/mac/run_tests --jobs 1 net/ engine/collision engine/physics-workers engine/thread-cache engine/adaptive-quality tires/pressure vtools/
           SDL_AUDIODRIVER=dummy CZ_AUDIO_DEVICE_TEST=1 ./build/mac/test_audio
           python3 -u - <<'PY'
