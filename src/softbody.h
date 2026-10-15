@@ -393,6 +393,7 @@ public:
     // Winch lines and tow straps (recovery.cpp).
     std::vector<Rope> ropes;
     bool realRecovery = true;          // damage stays until a repair station fixes it
+    bool steeringAssist = true;        // limit steering angle at high speeds (false = simulation mode)
     std::vector<std::string> events;   // things the HUD should announce (it clears them)
     std::string hookWinch(int car);    // hooks the car's winch to the best anchor ahead, or unhooks it
     // Everything within the winch line's reach, nearest first.

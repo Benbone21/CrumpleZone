@@ -49,6 +49,7 @@ bool Settings::load(const std::string& path) {
         else if (k == "fullscreen") fullscreen = v != 0;
         else if (k == "vsync") vsync = v != 0;
         else if (k == "fps") showFps = v != 0;
+        else if (k == "steeringassist") steeringAssist = v != 0;
         else if (k == "shadows") gfx.shadows = std::min(std::max((int)v, 0), 3);
         else if (k == "msaa") gfx.msaa = (int)v;
         else if (k == "ao") gfx.ao = v != 0;
@@ -73,8 +74,8 @@ bool Settings::save(const std::string& path) const {
     if (!dir.empty()) makeDir(dir);
     FILE* f = std::fopen(path.c_str(), "w");
     if (!f) return false;
-    std::fprintf(f, "mph %d\nvolume %.2f\nfov %.0f\nfullscreen %d\nvsync %d\nfps %d\n", mph, volume, fovDeg, fullscreen,
-                 vsync, showFps);
+    std::fprintf(f, "mph %d\nvolume %.2f\nfov %.0f\nfullscreen %d\nvsync %d\nfps %d\nsteeringassist %d\n", mph, volume,
+                 fovDeg, fullscreen, vsync, showFps, steeringAssist);
     std::fprintf(f, "shadows %d\nmsaa %d\nao %d\nbloom %d\nclouds %d\nscale %.2f\ngrass %d\nmap %d\n", gfx.shadows,
                  gfx.msaa, gfx.ao, gfx.bloom, gfx.clouds, gfx.renderScale, gfx.grass, map);
     std::fprintf(f, "recovery %d\nmusic %.2f\n", realRecovery, music);
@@ -133,7 +134,7 @@ int presetOf(const RenderSettings& g) {
 namespace {
 enum Id {
     // Settings page.
-    UNITS = 1, VOLUME, FOV, RECOVERY, MUSIC, TIMEOFDAY,
+    UNITS = 1, VOLUME, FOV, RECOVERY, STEERING, MUSIC, TIMEOFDAY,
     QUALITY = 10, SHADOWS, AA, AO, BLOOM, CLOUDS, GRASS, SCALE,
     FULLSCREEN = 20, VSYNC, FPS,
     // Main page and navigation.
@@ -255,6 +256,8 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
     choice(UNITS, "SPEED UNITS", s.mph ? "MPH" : "KM/H", 2);
     choice(RECOVERY, "RECOVERY", s.realRecovery ? "REAL" : "ARCADE", 2,
            s.realRecovery ? "DAMAGE STAYS: TOW OR DRIVE TO A REPAIR STATION" : "T FIXES EVERYTHING WHERE YOU ARE");
+    choice(STEERING, "STEERING ASSIST", kOffOn[s.steeringAssist], 2,
+           s.steeringAssist ? "LIMITS TURNING AT HIGH SPEED (SAFE)" : "FULL LOCK AT ALL SPEEDS (SIMULATION)");
     {
         // One row (the page is full at 720p): the running clock at a few day lengths, then
         // the fixed times.
@@ -385,6 +388,7 @@ PauseMenu::Result PauseMenu::change(int row, int dir, Settings& s) {
         case LEVEL_PICK: levelPick = cycle(std::min(std::max(levelPick, 0), it.count - 1)); return {};
         case UNITS: s.mph = !s.mph; break;
         case RECOVERY: s.realRecovery = !s.realRecovery; break;
+        case STEERING: s.steeringAssist = !s.steeringAssist; break;
         case TIMEOFDAY: {
             const int t = cycle(todIndex(s));
             s.timeOfDay = t < 5 ? (int)TOD_CYCLE : t - 4;

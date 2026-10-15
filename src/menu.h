@@ -13,6 +13,7 @@ struct Settings {
     float music = 0.4f;         // background music, under the master volume (0 = off)
     float fovDeg = 66;          // vertical field of view of the chase and orbit cameras
     bool fullscreen = false, vsync = true, showFps = false;
+    bool steeringAssist = true; // limit steering angle at high speeds (false = simulation mode)
     int map = 0;                // the map you were on last
     bool realRecovery = true;   // damage stays until a repair station (or arcade: T fixes it)
     std::string playerName;     // shown to the others in multiplayer (default: your login)

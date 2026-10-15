@@ -1407,6 +1407,7 @@ int main(int argc, char** argv) {
             SDL_SetWindowFullscreen(win, settings.fullscreen ? (uint32_t)SDL_WINDOW_FULLSCREEN_DESKTOP : 0u);
         SDL_GL_SetSwapInterval(settings.vsync && opt.vsync && !scripted ? 1 : 0);
         sim.realRecovery = settings.realRecovery;
+        sim.steeringAssist = settings.steeringAssist;
     };
     auto saveSettings = [&]() {
         if (!scripted) settings.save(settingsPath);
@@ -1919,6 +1920,15 @@ int main(int argc, char** argv) {
                                 sim.recoverPlayer();
                                 hud.toast("REPAIRED (R TWICE: BACK TO THE START)");
                             }
+                            break;
+                        case SC_S:
+                            sim.steeringAssist = !sim.steeringAssist;
+                            settings.steeringAssist = sim.steeringAssist;
+                            saveSettings();
+                            if (sim.steeringAssist)
+                                hud.toast("STEERING ASSIST ON (LIMITED AT HIGH SPEED)");
+                            else
+                                hud.toast("STEERING ASSIST OFF (FULL LOCK AT ALL SPEEDS)");
                             break;
                         case SC_T:
                             if (sim.realRecovery) {
