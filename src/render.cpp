@@ -1570,7 +1570,7 @@ void uniformV3(GLuint prog, const char* name, const V3& v) {
 
 // World transform for a wheel mesh (local Z = axle, +Z = outer face). The meshes are
 // built for a 0.32 m x 0.24 m wheel and scaled to each vehicle's size.
-M4 wheelMatrix(const Car& car, const Wheel& wh, const V3& up, bool spin, double radialScale = 1.0) {
+M4 wheelMatrix(const Car& car, const Wheel& wh, const V3& up, bool spin, double radialScale = 1.0, double verticalScale = 0.0, double widthScale = 1.0) {
     const V3& a = car.nodes[wh.inner].p;
     const V3& b = car.nodes[wh.outer].p;
     V3 c = (a + b) * 0.5;
@@ -1580,8 +1580,13 @@ M4 wheelMatrix(const Car& car, const Wheel& wh, const V3& up, bool spin, double 
     if (len(f0) < 0.5) f0 = norm(cross(axis, V3(0, 1, 0)));
     V3 u0 = cross(f0, axis);
     double ang = spin ? wh.angle : 0.0;
-    double radial = wh.R / 0.32 * radialScale, axial = wh.width / 0.24;
-    V3 e1 = rotateAxis(f0, axis, ang) * radial, e2 = rotateAxis(u0, axis, ang) * radial;
+    double radial = wh.R / 0.32 * radialScale, axial = wh.width / 0.24 * widthScale;
+    double vertScale = verticalScale > 0 ? verticalScale : radialScale;
+    V3 e1 = rotateAxis(f0, axis, ang) * radial;
+    V3 e2 = rotateAxis(u0, axis, ang) * radial;
+    const double squash = vertScale / radialScale - 1;
+    e1 += u0 * (dot(e1, u0) * squash);
+    e2 += u0 * (dot(e2, u0) * squash);
     V3 out = (wh.left ? axis : -axis) * axial;
     M4 m = m4identity();
     m.m[0] = (float)e1.x; m.m[1] = (float)e1.y; m.m[2] = (float)e1.z;
@@ -2439,14 +2444,11 @@ void Renderer::drawWheels(const Sim& sim, GLuint prog) {
                 uniformM4(prog, "uModel", wheelMatrix(car, wh, fr.up, true));
                 DrawArrays(GL_TRIANGLES, tireVertexCount[st], wheelVertexCount[st] - tireVertexCount[st]);
             } else {
-                // Pressure-based deflection: interpolate between full and flat based on pressure
-                const double fullPsi = car.spec->tirePsi;
-                const double minPsi = 12.0;
-                const double flatScale = (wh.rimR + 0.015) / wh.R;
-                double psiRatio = (car.tirePsi - minPsi) / (fullPsi - minPsi);
-                psiRatio = std::max(0.0, std::min(1.0, psiRatio));
-                double scale = psiRatio * 1.0 + (1.0 - psiRatio) * flatScale;
-                uniformM4(prog, "uModel", wheelMatrix(car, wh, fr.up, true, scale));
+                // Match load-dependent sidewall sag; keep the rim full size and
+                // the compressed axis stationary while the tread rotates.
+                const double vertical = wh.loadedRadius(car.tirePsi, car.spec->tirePsi, car.spec->tireSoft) / wh.R;
+                const double bulge = 1 + 0.3 * (1 - vertical);
+                uniformM4(prog, "uModel", wheelMatrix(car, wh, fr.up, true, 1.0, vertical, bulge));
                 DrawArrays(GL_TRIANGLES, 0, tireVertexCount[st]);
                 uniformM4(prog, "uModel", wheelMatrix(car, wh, fr.up, true));
                 DrawArrays(GL_TRIANGLES, tireVertexCount[st], wheelVertexCount[st] - tireVertexCount[st]);

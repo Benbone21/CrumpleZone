@@ -30,6 +30,22 @@ void soundscapeTests(const std::function<void(const char*, bool)>& check, void (
 
 struct AudioTest {
     static void render(Audio& audio, float* out, int frames) { audio.render(out, frames); }
+    static bool hissRates() {
+        for (int rate : {8000, 22050, 44100, 48000, 192000}) {
+            Audio audio;
+            audio.rate_ = rate;
+            audio.setEngine(0, 0); audio.setHiss(1);
+            std::vector<float> samples(rate * 2);
+            audio.render(samples.data(), rate);
+            double energy = 0;
+            for (float value : samples) {
+                if (!std::isfinite(value) || std::fabs(value) > 1) return false;
+                energy += value * value;
+            }
+            if (energy < 1e-5) return false;
+        }
+        return true;
+    }
     static bool coherent(Audio& audio) {
         audio.updateRemoteVoices();
         const auto& frame = audio.sources_[audio.frontSources_];
@@ -180,6 +196,7 @@ int main() {
     check("audio callback receives coherent frames during concurrent publication", coherent);
     recordedEngineTests(check, AudioTest::render);
     soundscapeTests(check, AudioTest::render);
+    check("tire hiss stays finite and audible from 8 to 192 kHz", AudioTest::hissRates());
     Audio allocationCheck;
     allocationCheck.setEngine(3000, 0.8f);
     allocationCheck.setEnvironment(4, 8, 0.6f);

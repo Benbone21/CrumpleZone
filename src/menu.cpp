@@ -65,6 +65,7 @@ bool Settings::load(const std::string& path) {
         else if (k == "fullscreen") fullscreen = v != 0;
         else if (k == "maxplayers") maxPlayers = std::min(std::max((int)v, 2), 8);
         else if (k == "vsync") vsync = v != 0;
+        else if (k == "adaptive") adaptiveQuality = v != 0;
         else if (k == "fps") showFps = v != 0;
         else if (k == "shadows") gfx.shadows = std::min(std::max((int)v, 0), 3);
         else if (k == "msaa") gfx.msaa = (int)v;
@@ -103,6 +104,7 @@ bool Settings::save(const std::string& path) const {
     std::fprintf(f, "recovery %d\nmusic %.2f\nambience %.2f\nfuel %d\n", realRecovery, music, ambience, fuelMode);
     std::fprintf(f, "ground %d\nprops %d\n", gfx.ground, gfx.props);
     std::fprintf(f, "physicsthreads %d\n", physicsThreads);
+    std::fprintf(f, "adaptive %d\n", adaptiveQuality);
     std::fprintf(f, "winchspeed %.2f\n", winchSpeed);
     if (!playerName.empty()) std::fprintf(f, "name %s\n", playerName.c_str());
     if (!joinAddress.empty()) std::fprintf(f, "join %s\n", joinAddress.c_str());
@@ -165,7 +167,7 @@ namespace {
 enum Id {
     // Settings page.
     UNITS = 1, VOLUME, FOV, RECOVERY, MUSIC, TIMEOFDAY, FUEL, AMBIENCE,
-    QUALITY = 10, SHADOWS, AA, AO, BLOOM, CLOUDS, GRASS, SCALE, SCENERY,
+    ADAPTIVE = 9, QUALITY = 10, SHADOWS, AA, AO, BLOOM, CLOUDS, GRASS, SCALE, SCENERY,
     FULLSCREEN = 20, VSYNC, FPS, PHYSICSTHREADS, WINCHSPEED,
     PADSTEER = 30, PADDEAD, PADRUMBLE,
     // Main page and navigation.
@@ -393,6 +395,7 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
     choice(WINCHSPEED, "WINCH SPEED", speed, 11, "1X: RATED SPEED. 4X: DEFAULT. UP TO 20X. - AND = CHANGE IT WHILE DRIVING.");
     header("GRAPHICS");
     choice(QUALITY, "QUALITY", quality[presetOf(s.gfx)], 4);
+    choice(ADAPTIVE, "ADAPTIVE QUALITY", kOffOn[s.adaptiveQuality], 2, "AUTO-SCALE GRAPHICS TO MAINTAIN FRAMERATE");
     choice(SHADOWS, "SHADOWS", shadows[std::min(std::max(s.gfx.shadows, 0), 3)], 4);
     choice(AA, "ANTI-ALIASING", aa[msaaIndex(s.gfx.msaa)], 4);
     choice(AO, "AMBIENT OCCLUSION", kOffOn[s.gfx.ao], 2);
@@ -593,6 +596,7 @@ PauseMenu::Result PauseMenu::change(int row, int dir, Settings& s) {
             applyPreset(g, cur == 4 ? (dir > 0 ? 3 : 0) : cycle(cur));
             break;
         }
+        case ADAPTIVE: s.adaptiveQuality = !s.adaptiveQuality; break;
         case SHADOWS: g.shadows = cycle(std::min(std::max(g.shadows, 0), 3)); break;
         case AA: g.msaa = kMsaa[cycle(msaaIndex(g.msaa))]; break;
         case AO: g.ao = !g.ao; break;

@@ -118,6 +118,7 @@ void Audio::glass(float strength) {
 }
 
 void Audio::pop() { pendingPop_ = 1.0f; }
+void Audio::setHiss(float level) { pendingHiss_ = std::isfinite(level) ? std::clamp(level, 0.0f, 1.0f) : 0; }
 
 void Audio::callback(void* user, uint8_t* stream, int len) {
     static_cast<Audio*>(user)->render(reinterpret_cast<float*>(stream), len / (int)(2 * sizeof(float)));
@@ -148,6 +149,10 @@ void Audio::render(float* out, int frames) {
         popEnv_ = 1.0f;
         thumpEnv_ = std::max(thumpEnv_, 0.6f);
     }
+    const float targetHiss = pendingHiss_.load();
+    const float hissSmooth = 1.0f - std::exp(-dt * 100.0f);
+    const float hissLowA = 1.0f - std::exp(-2 * (float)M_PI * std::min(1500.0f, 0.10f / dt) * dt);
+    const float hissHighA = 1.0f - std::exp(-2 * (float)M_PI * std::min(3200.0f, 0.20f / dt) * dt);
     const EngineInput engineInput{tRpm, tLoad, tBoost, (int)cyl_, (int)induction_, (float)liters_, (float)redline_, (bool)flatPlane_,
                                  (uint8_t)std::clamp((int)recording_, 0, engineSamples::kBanks - 1)};
     const auto* localBank = recordings_.bank(engineInput.recording);
@@ -187,7 +192,7 @@ void Audio::render(float* out, int frames) {
         thumpEnv_ *= std::exp(-dt / 0.12f);
 
         // Glass: bright band-passed noise plus a few decaying pings.
-        float gw = 2.0f * std::sin((float)M_PI * 4800.0f * dt);
+        float gw = 2.0f * std::sin((float)M_PI * std::min(4800.0f, 0.15f / dt) * dt);
         float gh = noise() - glassLow_ - 0.5f * glassBand_;
         glassBand_ += gw * gh;
         glassLow_ += gw * glassBand_;
@@ -206,7 +211,18 @@ void Audio::render(float* out, int frames) {
         float popSnd = popLp_ * popEnv_ * 2.5f;
         popEnv_ *= std::exp(-dt / 0.05f);
 
-        float mix = engine + (squeal + wind) * sLocalGain_ + crunch * 0.9f + thump * 0.8f + glassSnd + popSnd;
+        // Two stable one-pole filters, safe at every supported sample rate.
+        // Advance the envelope per sample, independently of callback block size.
+        hissEnv_ += (targetHiss - hissEnv_) * hissSmooth;
+        float hissSnd = 0;
+        if (hissEnv_ > 0.000001f) {
+            const float n = noise();
+            hissBp_ += (n - hissBp_) * hissHighA;
+            hissBp2_ += (n - hissBp2_) * hissLowA;
+            hissSnd = (hissBp_ - hissBp2_) * hissEnv_ * 1.2f;
+        }
+
+        float mix = engine + (squeal + wind) * sLocalGain_ + crunch * 0.9f + thump * 0.8f + glassSnd + popSnd + hissSnd;
         float nearbyLeft = 0, nearbyRight = 0;
         for (auto& voice : nearby_) {
             if (!voice.id) continue;

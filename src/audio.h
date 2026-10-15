@@ -48,6 +48,7 @@ public:
     void impact(float strength);  // 0..1
     void glass(float strength);   // window shattering, 0..1
     void pop();                   // tire blowout
+    void setHiss(float level);    // tire air hiss: 0 = off, 1 = full hiss (inflate/deflate)
     // Game thread: publish the nearest engines, with distance attenuation and stereo pan.
     void setNearbyEngines(const Sim& sim, const V3& listener, const V3& right, float timeScale);
 
@@ -104,6 +105,8 @@ private:
     float glassEnv_ = 0, glassBand_ = 0, glassLow_ = 0;
     float pingEnv_[3] = {0, 0, 0}, pingPhase_[3] = {0, 0, 0}, pingFreq_[3] = {3000, 4200, 5600};
     float popEnv_ = 0, popLp_ = 0;
+    std::atomic<float> pendingHiss_{0};
+    float hissEnv_ = 0, hissBp_ = 0, hissBp2_ = 0;
     uint32_t rng_ = 0x12345678;
     float noise() {
         rng_ ^= rng_ << 13;

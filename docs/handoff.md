@@ -1,7 +1,16 @@
 # Handoff: where Crumple Zone stands (2026-10-13)
 
+
+**Performance / tire pressure verification, 0.1.10:** OpenCode's adaptive-quality and
+faster airing work is integrated along with the tire-radius edits that arrived after
+0.1.9. Review fixes preserve saved graphics choices, enable VSync-capped recovery,
+remove duplicate sag while preserving damaged-tire contact radii, prevent spinning tire squash,
+and make air hiss callback-independent and safe across device rates. No real-car
+engine banks were imported. See `docs/release-verify-0.1.10.md` and
+`docs/releases/v0.1.10.md` for measurements, checks and known limitations.
+
 **Release integration, 2026-10-14:** all local and freshly fetched remote branch commits
-are merged into `main` and all branches are pushed. The next release is `v0.1.9`, with
+were merged into `main` and pushed. Release `v0.1.9` was published with
 Windows installer EXE, universal Mac DMG/ZIP and Linux DEB. See
 `docs/release-merge-0.1.9.md` and `docs/releases/v0.1.9.md`. The original full suite
 passes 448/468 with thirteen existing physics failures and seven denied socket checks;
@@ -13,7 +22,7 @@ scenario assertions. Scratch caches now use native FLS lifetime management; CI a
 128-thread cleanup checks and five separate process-exit stress runs. Mac CI uses Apple
 Software Renderer: the full original graphics test passed but took about nine minutes.
 Graphics/app checks have 15-minute timeouts and immediate diagnostics. Release 0.1.8
-was stopped before publication; 0.1.9 publication requires every platform job to pass.
+was stopped before publication. Release 0.1.9 passed native application checks; a packaging recovery run and manual upload completed publication after an empty release already existed.
 
 Suspension experiments remain development-only (`CZ_FREE_COILS=1` and
 `CZ_HIGH_SPEED_DAMPING=1`). The vehicle command-popup model is merged but its new

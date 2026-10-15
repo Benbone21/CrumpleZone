@@ -43,6 +43,7 @@
 #include "platform.h"
 #include "props.h"
 #include "render.h"
+#include "perf.h"
 #include "sdl_min.h"
 #include "softbody.h"
 #include "../tests/harness.h"
@@ -70,6 +71,7 @@ struct Options {
     int quality = -1;             // --quality 0-3: graphics preset (testing)
     int ground = -1;              // --ground 0-3: terrain materials (testing; see RenderSettings::ground)
     int props = -1;               // --props 0-3: scanned props (testing; see RenderSettings::props)
+    int adaptive = -1;            // --adaptive 0/1: auto-scale quality (default: on)
     bool photo = false;           // --photo: no HUD (screenshots; F10 in the game)
     bool mph = false;             // --mph
     int map = -1;                 // --map N: 0 proving ground, 1 mountain
@@ -278,6 +280,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--quality") o.quality = std::atoi(next().c_str());
         else if (a == "--ground") o.ground = std::atoi(next().c_str());
         else if (a == "--props") o.props = std::atoi(next().c_str());
+        else if (a == "--adaptive") o.adaptive = std::atoi(next().c_str());
         else if (a == "--photo") o.photo = true;
         else if (a == "--mph") o.mph = true;
         else if (a == "--map") o.map = std::atoi(next().c_str());
@@ -1419,6 +1422,7 @@ int main(int argc, char** argv) {
     if (opt.quality >= 0) applyPreset(settings.gfx, opt.quality);
     if (opt.ground >= 0) settings.gfx.ground = std::min(opt.ground, 3);
     if (opt.props >= 0) settings.gfx.props = std::min(opt.props, 3);
+    if (opt.adaptive >= 0) settings.adaptiveQuality = opt.adaptive != 0;
     if (opt.mph) settings.mph = true;
     if (opt.map >= 0) settings.map = std::min(opt.map, MAP_COUNT - 1);
     if (!opt.scenario.empty()) settings.map = MAP_PROVING_GROUND;  // the tests are built for it
@@ -1527,6 +1531,10 @@ int main(int argc, char** argv) {
         fail("renderer init failed:\n" + err);
         return 1;
     }
+    // Adaptive quality: auto-scales graphics to maintain smooth framerate
+    AdaptiveQuality adaptiveQuality;
+    adaptiveQuality.init(settings.gfx, 60.0f);
+    RenderSettings adaptiveSettings = settings.gfx;
     Audio audio;
     bool audioOn = opt.audio && audio.start();
 
@@ -2217,7 +2225,8 @@ int main(int argc, char** argv) {
 
     while (running) {
         uint64_t now = SDL_GetPerformanceCounter();
-        double dt = scripted ? 1.0 / 60.0 : std::min(0.1, (double)(now - last) / freq);
+        const double frameTimeMs = 1000.0 * (double)(now - last) / freq;
+        double dt = scripted ? 1.0 / 60.0 : std::min(0.1, frameTimeMs / 1000.0);
         last = now;
         if (dt > 0) fps += ((float)(1.0 / dt) - fps) * 0.05f;
         hud.newBuild = watch.poll();
@@ -3035,6 +3044,11 @@ int main(int argc, char** argv) {
             if (amp > 0.08) audio.impact(amp);
             if (events.glass) audio.glass(std::min(1.0f, 0.4f + 0.06f * events.glass));
             if (events.tirePops) audio.pop();
+            // Tire air hiss while inflating/deflating
+            const Car& pcar = sim.cars[sim.player];
+            const bool airing = !sim.paused && pcar.airing != 0 && len(pcar.frame().vel) < 0.5 &&
+                                (pcar.airing < 0 ? pcar.tirePsi > 12 : pcar.tirePsi < 40);
+            audio.setHiss(airing ? 0.6f : 0.0f);
         }
 
         int W, H;
@@ -3200,7 +3214,15 @@ int main(int argc, char** argv) {
         }
         menuBlur +=((menu.open ? 1.0f : 0.0f) - menuBlur) * (float)std::min(1.0, dt * 10);
         if (!menu.open && menuBlur < 0.01f) menuBlur = 0;
-        renderer.settings = settings.gfx;
+        // Keep saved/menu choices separate from temporary runtime reductions.
+        // Scripted captures stay deterministic unless adaptation is explicitly requested.
+        if (settings.adaptiveQuality && !menu.open && !garageUI.open && !editor.active && (!scripted || opt.adaptive == 1)) {
+            adaptiveQuality.evaluate((float)frameTimeMs, adaptiveSettings);
+        } else {
+            adaptiveQuality.reset(settings.gfx);
+            adaptiveSettings = settings.gfx;
+        }
+        renderer.settings = adaptiveSettings;
         renderer.settings.blur = menuBlur;
         if (sim.world.stamp != drawnWorld) {  // the map changed (a scenario built its own): redraw it
             renderer.setWorld(sim.world);
@@ -3376,6 +3398,9 @@ int main(int argc, char** argv) {
         if (scripted && opt.shotFrames.count(frame)) {
             if (bench && benchN) {
                 std::printf("bench: scene %.2f ms/frame over %d frames\n", 1000.0 * benchSum / benchN, benchN);
+                std::printf("bench: adaptive %d, scale %.2f, shadows %d, MSAA %d, AO %d, ground %d, props %d\n",
+                            settings.adaptiveQuality, renderer.settings.renderScale, renderer.settings.shadows,
+                            renderer.settings.msaa, renderer.settings.ao, renderer.settings.ground, renderer.settings.props);
                 const PropStats& ps = renderer.propStats();
                 std::printf("bench: props %.2f ms GPU (timer queries), %.2f ms CPU (%.2f ms culling/LODs); main %d draws, %d instances, %d billboards, %d scatter, %.0fk tris; "
                             "shadows %d draws, %d instances, %.0fk tris\n",

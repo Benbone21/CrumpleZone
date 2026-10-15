@@ -21,6 +21,31 @@ std::vector<float> nature(AmbienceInput input, int rate = 48000, int seconds = 1
 }
 
 void soundscapeTests(const std::function<void(const char*, bool)>& check, void (*render)(Audio&, float*, int)) {
+    auto hiss = [&](int blockSize) {
+        Audio audio;
+        audio.setEngine(0, 0);
+        audio.setVolume(1);
+        audio.setHiss(0.6f);
+        std::vector<float> wave(48000 * 2);
+        for (int at = 0; at < 48000; at += blockSize)
+            render(audio, wave.data() + at * 2, std::min(blockSize, 48000 - at));
+        return wave;
+    };
+    const auto hissSmall = hiss(64), hissLarge = hiss(1024);
+    check("tire hiss is audible and callback-block independent", clean(hissSmall) && energy(hissSmall) > 1e-5 && hissSmall == hissLarge);
+    Audio air;
+    air.setEngine(0, 0);
+    std::vector<float> airBlock(48000 * 2);
+    air.setVolume(1); air.setHiss(1);
+    render(air, airBlock.data(), 48000);
+    air.setHiss(0);
+    render(air, airBlock.data(), 48000);
+    render(air, airBlock.data(), 48000);
+    check("stopping tire airing releases to silence", clean(airBlock) && energy(airBlock) < 1e-9);
+    air.setHiss(1); air.setVolume(0);
+    render(air, airBlock.data(), 48000);
+    render(air, airBlock.data(), 48000);  // allow the existing master-volume fade to finish
+    check("master mute also silences tire hiss", energy(airBlock) == 0);
     const auto day = nature({4, 8, 1, 1}), night = nature({4, 23, 1, 1});
     check("forest ambience is audible, bounded and different between day and night", clean(day) && clean(night) &&
           energy(day) > 1e-6 && energy(night) > 1e-6 && day != night);

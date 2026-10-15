@@ -648,11 +648,11 @@ void Sim::updateTrail(double dt) {
         Car& c = cars[i];
         if (c.isProp() || c.remote) continue;
         const double speed = len(c.frame().vel);
-        // Tires: let air out at the valves (~1 psi/s), pump up with the onboard
-        // compressor (~0.4 psi/s), or from the shop air at a repair station.
+        // Tires: let air out at the valves (5 psi/s), pump up with the onboard
+        // compressor (2 psi/s), or shop air at a repair station (8 psi/s).
         const int st = stationAt(c.frame().com);
         if (c.airing != 0 && speed < 0.5) {
-            const double rate = c.airing < 0 ? 1.0 : st >= 0 ? 3.0 : 0.4;
+            const double rate = c.airing < 0 ? 5.0 : st >= 0 ? 8.0 : 2.0;
             c.tirePsi = clampd(c.tirePsi + c.airing * rate * dt, 12, 40);
         }
         // The shop's pump: fills the tank (and the spare can) while you're on its pad.

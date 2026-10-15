@@ -174,6 +174,17 @@ struct Wheel {
     std::vector<int> mounts;  // beams that attach this wheel to the body
     // Radius it rolls on (a blown tire runs on its rim).
     double rollR() const { return !mounted ? kBareHubR : debeaded ? rimR + 0.005 : popped ? rimR + 0.015 : R; }
+    static constexpr double radialStiffness = 2.2e5;
+    double radialK(double psi, double stockPsi, double softness = 1) const {
+        return radialStiffness * softness * (psi + 10) / (stockPsi + 10);
+    }
+    // Pressure already changes spring compliance in wheelStep. Do not shrink
+    // collision geometry as well: that double-counts sag and hurts ledge climbing.
+    double loadedRadius(double psi, double stockPsi, double softness = 1) const {
+        if (!mounted || debeaded || popped || !std::isfinite(psi) || !std::isfinite(stockPsi) ||
+            !std::isfinite(softness) || psi < 0 || stockPsi < 0 || softness <= 0) return rollR();
+        return std::max(rimR + 0.015, R - std::max(0.0, (double)load) / radialK(psi, stockPsi, softness));
+    }
 };
 
 // A pin holds a panel node on the body node under it (a spring with no rest length).

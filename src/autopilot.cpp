@@ -1088,7 +1088,7 @@ bool pilotDrive(Car& c, const World& w, double dt, const std::vector<Car>* cars)
         double spin = 0, bite = 1;
         for (const Wheel& wh : c.wheels)
             if (c.wheelPowered(wh) && wh.load > 0) {
-                const double rollR = (wh.mounted && !wh.debeaded && !wh.popped) ? (wh.R - 0.03 * clampd((c.spec->tirePsi - c.tirePsi) / (c.spec->tirePsi - 12.0), 0.0, 1.0) * (wh.R - wh.rimR)) : wh.rollR();
+                const double rollR = wh.rollR();
                 spin = std::max(spin, std::fabs(wh.omega * rollR) - std::fabs(wh.groundSpeed));
                 bite = std::min(bite, (double)wh.bite);
             }

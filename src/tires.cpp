@@ -188,8 +188,8 @@ bool Sim::fitWheel(int ci, int wi, const WheelItem& it) {
     const V3 hub = (c.nodes[wh.inner].p + c.nodes[wh.outer].p) * 0.5;
     Contact ct;
     const V3 out = norm(c.nodes[wh.outer].p - c.nodes[wh.inner].p);
-    // Include the effective rolling radius (pressure affects it) when checking ground contact
-    const double rollR = wh.mounted && !wh.debeaded && !wh.popped ? (wh.R - 0.03 * clampd((c.spec->tirePsi - c.tirePsi) / (c.spec->tirePsi - 12.0), 0.0, 1.0) * (wh.R - wh.rimR)) : wh.rollR();
+    // Pressure-dependent compliance is handled by wheelStep, not by shrinking the collision tire.
+    const double rollR = wh.rollR();
     if (world.contact(hub, rollR, &out, wh.width * 0.5, ct) && ct.pen > 0) c.translate(V3(0, ct.pen * 1.05 + 0.01, 0));
     c.wake();
     return true;
@@ -238,7 +238,7 @@ void Sim::looseWheelForces() {
             for (Wheel& wh : c.wheels) {
                 Node &a = c.nodes[wh.inner], &b = c.nodes[wh.outer];
                 const V3 hc = (a.p + b.p) * 0.5;
-                const double r = (wh.mounted && !wh.debeaded && !wh.popped ? (wh.R - 0.03 * clampd((c.spec->tirePsi - c.tirePsi) / (c.spec->tirePsi - 12.0), 0.0, 1.0) * (wh.R - wh.rimR)) : wh.rollR()) * 0.9;
+                const double r = wh.rollR() * 0.9;
                 const V3 cp = closest(hc, nullptr);
                 V3 d = hc - cp;
                 const double dl = len(d);

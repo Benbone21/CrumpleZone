@@ -32,6 +32,7 @@ struct Settings {
     // Game controller (gamepad.h): indices into pad::kSteeringNames / kDeadzoneNames / kRumbleNames.
     int padSteering = 1, padDeadzone = 1, padRumble = 1;
     RenderSettings gfx;
+    bool adaptiveQuality = true;  // auto-scale quality to maintain framerate
 
     bool load(const std::string& path);
     bool save(const std::string& path) const;

@@ -1,6 +1,10 @@
 # Engine recordings: preparation and source status
 
-No real-car recordings have been imported. The game continues to use procedural engine audio when an engine's recorded bank is absent. The preview tool reports this fallback explicitly. Research references below identify engine families; they are not redistributable game assets. The repository's CC0-only asset rule remains in effect pending the user's response about other game-use licenses. No purchases have been made.
+No real-car recordings have been imported. The game continues to use procedural engine audio for all engines. The preview tool reports this fallback explicitly. Research references below identify engine families; they are not redistributable game assets. The repository's CC0-only asset rule remains in effect. No purchases have been made.
+
+## Muted.io evaluation
+
+The muted.io "Performance Cars" CC0 sample pack (68 files, 96kHz/24-bit) was evaluated but not imported. The pack contains field recordings of cars driving, not loopable engine samples. The files are numbered 001-068 without descriptive names, making it difficult to identify specific engine types. The recordings are not designed for pitch-scaling, which the game's audio system requires to simulate different RPMs from a small set of clips. The pack is retained in `assets/source/performance-cars-free-sample-pack-mutedio/` for future reference if better clip selection techniques are developed.
 
 ## Reference research
 
@@ -14,7 +18,7 @@ No real-car recordings have been imported. The game continues to use procedural 
 | Side-by-side / turbo Rotax 900 triple | [Can-Am Maverick X3 manufacturer demonstration](https://www.youtube.com/watch?v=BcKOSR-QJcg) | Correct engine family reference; reuse rights not verified. Renegade V-twin and naturally aspirated Ryker packs are unsuitable substitutes. |
 | Tacoma / 3.5 2GR-FKS V6 | [Watson Wu 2020 Tacoma library](https://www.watsonwu.com/vehicles/toyota-tacoma-truck-sound-fx-library) | Exact engine candidate; paid, not acquired. Game and public-source redistribution rights require verification. |
 
-[Muted.io's performance-car field recordings](https://muted.io/performance-cars/) are a CC0 candidate, but individual vehicle identities and suitable onboard loops have not been verified. Do not label a generic recording as an exact vehicle match. External references have not been auditioned in this environment.
+[Muted.io's performance-car field recordings](https://muted.io/performance-cars/) were evaluated but not imported. The pack contains field recordings of cars driving, not loopable engine samples suitable for the game's pitch-scaling audio system. External references have not been auditioned in this environment.
 
 ## Recorded bank format
 

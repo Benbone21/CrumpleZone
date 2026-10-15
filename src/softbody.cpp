@@ -10,7 +10,7 @@
 namespace {
 
 // ---- Tires and ground -------------------------------------------------------
-const double kTireK = 2.2e5, kTireC = 1500;
+const double kTireK = Wheel::radialStiffness, kTireC = 1500;
 const double kRimK = 3.0e6;          // stiffness once the tire is squashed onto the rim
 const double kRimPopSpeed = 7.0;     // rim strike faster than this (m/s) pinches the tire -> blowout
 const double kStickK = 1.2e5, kStickC = 4000;  // contact-patch static friction (parking, slopes)
@@ -60,17 +60,6 @@ const V3 kPalette[] = {
     {0.80, 0.16, 0.10}, {0.14, 0.34, 0.78}, {0.90, 0.72, 0.16}, {0.88, 0.88, 0.86}, {0.16, 0.55, 0.30},
     {0.10, 0.10, 0.12}, {0.95, 0.45, 0.10}, {0.55, 0.20, 0.60}, {0.40, 0.70, 0.85}, {0.60, 0.60, 0.62},
 };
-
-// Effective rolling radius: at lower pressure, the tire is flatter and rolls
-// on a smaller effective radius. At 12 psi (rock crawling), ~3% smaller than
-// at spec pressure. This makes the car sit lower when aired down.
-static double effectiveRollRadius(const Wheel& wh, const VehicleSpec* spec, double tirePsi) {
-    if (!wh.mounted || wh.debeaded) return wh.rollR();
-    if (spec->tirePsi <= 12.0) return wh.R;
-    const double psiDrop = spec->tirePsi - tirePsi;
-    const double dropFraction = clampd(psiDrop / (spec->tirePsi - 12.0), 0.0, 1.0);
-    return wh.R - dropFraction * 0.03 * (wh.R - wh.rimR);
-}
 
 }  // namespace
 
@@ -1003,7 +992,7 @@ void Car::wheelBodyContact(double h) {
         Node& b = nodes[wh.outer];
         const V3 c = (a.p + b.p) * 0.5, vc = (a.v + b.v) * 0.5;
         V3 axis = norm(b.p - a.p);
-        const double half = wh.width * 0.5, R = effectiveRollRadius(wh, spec, tirePsi), side = R - wh.rimR;
+        const double half = wh.width * 0.5, R = wh.rollR(), side = R - wh.rimR;
         const V3 spinAxis = wh.left ? axis : -axis;  // points to the car's left: + omega rolls it forward
         for (size_t ri = 0; ri < wh.rubFaces.size(); ri++) {
             const auto& tv = wh.rubFaces[ri];
@@ -1105,7 +1094,7 @@ void Car::wheelStep(double h, const World& w) {
                 // the road (the inside wheel of a turn, one dragging on ice) isn't spinning:
                 // braking it would only drag it more.
                 const double dir = gear < 0 ? -1.0 : 1.0;
-                const double lead = dir * (me.omega * effectiveRollRadius(me, spec, tirePsi) - me.groundSpeed) - dir * (other.omega * effectiveRollRadius(other, spec, tirePsi) - other.groundSpeed);
+                const double lead = dir * (me.omega * me.rollR() - me.groundSpeed) - dir * (other.omega * other.rollR() - other.groundSpeed);
                 // Pressure keeps building while it leads by more than ~0.3 m/s and bleeds off
                 // once it doesn't (the valves hold it there, as ABS does the other way).
                 me.tcBrake = clampd(me.tcBrake + h * 4.0 * clampd(lead - 0.3, -2, 1), 0, 1);
@@ -1165,7 +1154,7 @@ void Car::wheelStep(double h, const World& w) {
     double maxSpin = 0, cornerSpin = 0;
     for (const Wheel& wh : wheels)
         if (wheelPowered(wh)) {
-            double slideSpeed = std::fabs(wh.omega * effectiveRollRadius(wh, spec, tirePsi) - wh.groundSpeed);
+            double slideSpeed = std::fabs(wh.omega * wh.rollR() - wh.groundSpeed);
             // (As a share of the slip that grips best on this tread and surface: more on
             // loose ground, where a wheel has to dig to pull.)
             maxSpin = std::max(maxSpin, std::fabs(wh.sx) * wh.bite * clampd((slideSpeed - 0.5) / 1.5, 0, 1));
@@ -1192,7 +1181,7 @@ void Car::wheelStep(double h, const World& w) {
     double maxDrag = 0;
     for (const Wheel& wh : wheels)
         if (wheelPowered(wh) && wh.load > 0) {
-            double slideSpeed = std::fabs(wh.omega * effectiveRollRadius(wh, spec, tirePsi) - wh.groundSpeed);
+            double slideSpeed = std::fabs(wh.omega * wh.rollR() - wh.groundSpeed);
             // Longitudinal slip is signed in the car's forward direction. In reverse,
             // powered wheelspin has negative slip; it must not open the throttle as
             // "engine braking" after the driver releases the pedal.
@@ -1421,7 +1410,7 @@ void Car::wheelStep(double h, const World& w) {
         V3 axis = norm(b.p - a.p);
         if (!wh.left) axis = -axis;  // axis always points to the car's left
 
-        const double R = effectiveRollRadius(wh, spec, tirePsi);
+        const double R = wh.rollR();
         // (A blown tire runs on what's left of it; a rim or a bare hub on steel.)
         const double mu = spec->tireGrip * (!wh.mounted ? 0.3 : wh.debeaded ? 0.45 : wh.popped ? 0.55 : 1.0);
         const bool tire = wh.mounted && !wh.debeaded;  // rubber on the ground (else steel)
@@ -1449,7 +1438,7 @@ void Car::wheelStep(double h, const World& w) {
             if (ct.surface == SURF_WET) grip *= 1 - (tread == TIRE_SEMI_SLICK ? 0.6 : 0.45) * smoothstep(22, 40, len(vc));
             const double bite = si.bite * kTreadBite[tread];
             wh.bite = (float)bite;
-            const double tireK = kTireK * spec->tireSoft * (tirePsi + 10) / (spec->tirePsi + 10);
+            const double tireK = wh.radialK(tirePsi, spec->tirePsi, spec->tireSoft);
             const double popSpeed = kRimPopSpeed * clampd((tirePsi + 5) / (spec->tirePsi + 5), 0.45, 1.1);
             // Slip is measured where the tread touches the road: the hub's velocity plus the
             // knuckle tilting or steering (its rotation other than the wheel's own spin).
@@ -1676,7 +1665,7 @@ void Car::wheelStep(double h, const World& w) {
                 // A wheel off the ground (a light rear hopping under a hard stop, a jump): the
                 // wheel-speed sensor still sees it slowing against the car, and the pressure is
                 // held off rather than let back in, so it isn't locked when it lands.
-                if (wh.load <= 0) err = std::fabs(std::min(0.0, wh.omega * effectiveRollRadius(wh, spec, tirePsi) - wh.groundSpeed)) / std::fabs(wh.groundSpeed) * wh.bite - target;
+                if (wh.load <= 0) err = std::fabs(std::min(0.0, wh.omega * wh.rollR() - wh.groundSpeed)) / std::fabs(wh.groundSpeed) * wh.bite - target;
                 wh.abs = clampd(wh.abs - h * 60.0 * err, 0.05, 1.0);
             }
             else if (brakePressure <= 0.05)
@@ -2609,7 +2598,7 @@ void Sim::aiDrive(int self, double dt) {
     {
         double spin = 0;
         for (const Wheel& w : c.wheels)
-            if (c.wheelPowered(w)) spin = std::max(spin, std::fabs(w.omega * effectiveRollRadius(w, c.spec, c.tirePsi)) - std::fabs(w.groundSpeed));
+            if (c.wheelPowered(w)) spin = std::max(spin, std::fabs(w.omega * w.rollR()) - std::fabs(w.groundSpeed));
         c.throttle *= clampd(1 - (spin - 2.0) / 4.0, 0.3, 1.0);
     }
 

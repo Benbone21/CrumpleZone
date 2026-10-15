@@ -230,3 +230,37 @@ SCENARIO(tireDebead, "tires/debead", "The 4Runner aired to 8 psi, flung into a h
         else ctx.check(tag + ": a tire rolls off its rim", off >= 1, std::to_string(off));
     }
 }
+
+SCENARIO(tirePressure, "tires/pressure", "Airing changes pressure at stopped vehicles and preserves damaged tire contact radii") {
+    Car& c = ctx.add(bronco(), -150, -50, 0);
+    c.tirePsi = 35;
+    c.airing = -1;
+    ctx.sim.updateTrail(1);
+    ctx.check("valves deflate five psi per second", std::fabs(c.tirePsi - 30) < 1e-9);
+    c.airing = 1;
+    ctx.sim.updateTrail(1);
+    ctx.check("onboard compressor inflates two psi per second", std::fabs(c.tirePsi - 32) < 1e-9);
+    ctx.sim.updateTrail(10);
+    ctx.check("inflation stops at forty psi", c.tirePsi == 40);
+    c.airing = -1;
+    ctx.sim.updateTrail(10);
+    ctx.check("deflation stops at twelve psi", c.tirePsi == 12);
+    for (Node& n : c.nodes) n.v = V3(2, 0, 0);
+    c.airing = 1;
+    ctx.sim.updateTrail(1);
+    ctx.check("moving vehicles cannot inflate", c.tirePsi == 12);
+    Wheel wh = c.wheels[0];
+    wh.load = 3000;
+    const double full = wh.loadedRadius(35, 35), low = wh.loadedRadius(12, 35);
+    ctx.check("low pressure lowers the hub without collapsing onto the rim", low < full && low > wh.rimR + 0.05);
+    ctx.check("low stock pressure remains finite", std::isfinite(wh.loadedRadius(12, 12)) && wh.loadedRadius(12, 12) > wh.rimR);
+    wh.load = 0;
+    ctx.check("unloaded tires do not shrink when aired down", wh.loadedRadius(12, 35) == wh.R);
+    wh.load = 3000;
+    wh.popped = true;
+    ctx.check("punctured tires keep the rim contact radius", wh.loadedRadius(35, 35) == wh.rollR());
+    wh.popped = false; wh.debeaded = true;
+    ctx.check("debeaded tires keep the rim contact radius", wh.loadedRadius(12, 35) == wh.rollR());
+    wh.debeaded = false; wh.mounted = false;
+    ctx.check("missing wheels keep the bare hub radius", wh.loadedRadius(12, 35) == kBareHubR);
+}

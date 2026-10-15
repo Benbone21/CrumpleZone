@@ -129,6 +129,25 @@ int main() {
         renderer.flushHud(960, 720);
         clean();
         std::puts("PASS physics threads menu: AUTO, all logical CPUs, saved and restored");
+        PauseMenu adaptiveMenu;
+        adaptiveMenu.showPage(1, 0, 0);
+        bool foundAdaptive = false;
+        for (int row = 0; row < 64; row++) {
+            const bool before = settings.adaptiveQuality;
+            const bool fullscreen = settings.fullscreen;
+            adaptiveMenu.key(SC_RIGHT, settings);
+            if (settings.adaptiveQuality != before) {
+                if (settings.fullscreen != fullscreen) throw std::runtime_error("adaptive control changed fullscreen");
+                foundAdaptive = true; break;
+            }
+            adaptiveMenu.key(SC_DOWN, settings);
+        }
+        if (!foundAdaptive) throw std::runtime_error("adaptive setting cannot be reached");
+        settings.adaptiveQuality = false;
+        if (!settings.save(settingsPath) || !loaded.load(settingsPath) || loaded.adaptiveQuality)
+            throw std::runtime_error("adaptive toggle did not persist");
+        std::remove(settingsPath);
+        std::puts("PASS adaptive menu: independent toggle and persistence");
         PauseMenu ambientMenu;
         ambientMenu.showPage(1, 0, 0);
         bool foundAmbience = false;
@@ -149,7 +168,9 @@ int main() {
         View view;
         view.eye = V3(-46, 3, -46); view.target = V3(-40, 0.7, -40); view.up = V3(0, 1, 0);
         view.width = 160; view.height = 90;
+        sim.cars[0].tirePsi = 12;
         for (int quality = 0; quality < 4; quality++) {
+            for (Wheel& wheel : sim.cars[0].wheels) { wheel.angle = quality * 0.7; wheel.load = 3000; }
             std::printf("Render check: drawing quality %d\n", quality);
             applyPreset(renderer.settings, quality);
             renderer.drawScene(sim, view, DEBUG_OFF, nullptr);
@@ -157,6 +178,7 @@ int main() {
             clean();
             std::printf("PASS quality %d, shaders and framebuffer operations\n", quality);
         }
+        sim.cars[0].tirePsi = sim.cars[0].spec->tirePsi;
         // Render photo ground with extension support hidden, to exercise actual texture setup.
         gl::GetStringi = noExtensions;
         GroundTextures fallbackGround;
