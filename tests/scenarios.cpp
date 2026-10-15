@@ -1268,3 +1268,82 @@ VEHICLE_SCENARIO(barrierBump, "damage/barrier-bump", "18 km/h into a concrete ba
         ctx.metric("engine health" + tag, c.engineHealth, "", 0.9, 1.0);
     }
 }
+
+// Blazer-specific tests (vehicle index 4).
+SCENARIO(blazer_weight, "blazer/weight", "Stock Blazer sits level and carries its own weight") {
+    const VehicleSpec& s = vehicleCatalog()[4];
+    Car& c = ctx.add(s, 0, kLaneZ, 0);
+    ctx.focus(c);
+    ctx.run(3.0);
+    Frame f = c.frame();
+    ctx.metric("mass", c.mass, "kg", 1650, 1900);
+    ctx.metric("sits level (1 - up.y)", (1 - f.up.y) * 1000, "milli", 0, 3);
+    double load = 0;
+    for (const Wheel& w : c.wheels) load += w.load;
+    ctx.metric("wheels carry its weight", load / (c.mass * 9.81) * 100, "%", 90, 110);
+}
+
+SCENARIO(blazer_accel, "blazer/acceleration", "Stock Blazer 0-60 mph: slow but strong V8") {
+    const VehicleSpec& s = vehicleCatalog()[4];
+    Car& c = ctx.add(s, kLaneStartX, kLaneZ, 0);
+    ctx.focus(c);
+    ctx.run(0.5);
+    double t0 = ctx.t, t60 = -1;
+    ctx.runUntil(15.0, [&] { return t60 > 0; }, [&] {
+        c.throttle = 1;
+        c.handbrake = 0;
+        holdLine(c, kLaneZ);
+        if (t60 < 0 && speedKmh(c) >= 96.5) t60 = ctx.t - t0;
+    });
+    ctx.check("reaches 60 mph", t60 > 0, "didn't reach speed");
+    ctx.metric("0-60 mph", t60, "s", 5.5, 12);
+    ctx.metric("damage", c.damage * 100, "%", 0, 0.5);
+}
+
+SCENARIO(blazer_top_speed, "blazer/top-speed", "Stock Blazer top speed: limited by gearing and aero") {
+    const VehicleSpec& s = vehicleCatalog()[4];
+    Car& c = ctx.add(s, kLaneStartX, kLaneZ, 0);
+    ctx.focus(c);
+    ctx.run(0.5);
+    double maxSpeed = 0;
+    ctx.run(40.0, [&] {
+        c.throttle = 1;
+        c.handbrake = 0;
+        holdLine(c, kLaneZ);
+        maxSpeed = std::max(maxSpeed, speedKmh(c));
+    });
+    ctx.metric("top speed", maxSpeed, "km/h", 120, 160);
+    ctx.check("stays upright", c.frame().up.y > 0.9);
+}
+
+SCENARIO(blazer_articulation, "blazer/articulation", "Stock Blazer on rough trail: drives over bumps without damage") {
+    const VehicleSpec& s = vehicleCatalog()[4];
+    Car& c = ctx.add(s, kLaneStartX, kLaneZ, 0);
+    c.setDriveMode((int)driveModes(s.transfer).size() - 1);  // 4L
+    ctx.focus(c);
+    // Drive over the washboard section.
+    ctx.run(15.0, [&] {
+        c.throttle = 0.3;
+        c.handbrake = 0;
+        holdLine(c, kLaneZ);
+    });
+    ctx.metric("damage after washboard", c.damage * 100, "%", 0, 5);
+    ctx.check("stays upright", c.frame().up.y > 0.85);
+}
+
+SCENARIO(blazer_vs_runner, "blazer/comparison", "Blazer vs 4Runner: older, lighter, different driving feel") {
+    const VehicleSpec& blazer = vehicleCatalog()[4];
+    const VehicleSpec& runner = vehicleCatalog()[3];
+    // Build both and compare their masses.
+    Car& cBlazer = ctx.add(blazer, 0, -10, 0);
+    Car& cRunner = ctx.add(runner, 0, 10, 0);
+    ctx.run(2.0);
+    ctx.metric("blazer mass", cBlazer.mass, "kg", 1600, 1900);
+    ctx.metric("runner mass", cRunner.mass, "kg", 2000, 2300);
+    ctx.check("blazer is lighter than 4Runner", cBlazer.mass < cRunner.mass);
+    // Compare power-to-weight.
+    double blazerPWR = peakPower(blazer) / cBlazer.mass;
+    double runnerPWR = peakPower(runner) / cRunner.mass;
+    ctx.metric("blazer power-to-weight", blazerPWR, "W/kg", 80, 200);
+    ctx.metric("runner power-to-weight", runnerPWR, "W/kg", 80, 200);
+}

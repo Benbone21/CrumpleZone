@@ -152,11 +152,13 @@ const Style* styleFor(const VehicleSpec& vs) {
     // 2021 Bronco 4-door: a box with crisp corners, a flat clamshell hood, an upright
     // windshield and swing gate, squared-off wheel openings under black flares.
     static const Style bronco{2, 0.07, 0.06, 0.015, 0.05, 0.03, 0.03, 0.035, 0.008, 0.010, 0.0, 0.03, 0.03, 3.5, 0.03};
+    // 1972 Chevy Blazer: squared-off box, flat hood, upright windshield, simple body lines.
+    static const Style blazer{4, 0.08, 0.06, 0.01, 0.06, 0.03, 0.03, 0.03, 0.008, 0.010, 0.0, 0.04, 0.04, 3.5, 0.04};
     // 1990 EF Civic hatch: a low wedge nose, soft shoulders, a slightly bowed side and a
     // sloping glass hatch.
     static const Style civic{3, 0.24, 0.13, 0.09, 0.28, 0.06, 0.07, 0.07, 0.03, 0.025, 0.025, 0.07, 0.05, 2.0, 0.05};
     const std::string id = vs.id;
-    return id == "4runner" ? &runner : id == "bronco" ? &bronco : id == "civic" ? &civic : nullptr;
+    return id == "4runner" ? &runner : id == "bronco" ? &bronco : id == "civic" ? &civic : id == "blazer" ? &blazer : nullptr;
 }
 
 // The body's lines, placed relative to the physics lattice (floor, belt, roof, hood
@@ -315,6 +317,10 @@ void shellArch(const VehicleSpec& vs, double& centerY, double& radius) {
         // Snug round arches over the 185/60R14s.
         centerY = vs.wheelRadius + 0.012;
         radius = vs.wheelRadius + 0.05;
+    } else if (id == "blazer") {
+        // Stock 28" tires: snug but not tight, squared arches.
+        centerY = vs.layerY[0] - 0.04;
+        radius = 0.42;
     } else {
         // 4Runner: arches sized for the factory 265/70R16 (radius 0.389 m) with a ~8 cm
         // gap, raised with the body: lifts and body lifts open up the gap over bigger tires.

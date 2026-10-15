@@ -271,12 +271,60 @@ Slots runnerMods() {
     return m;
 }
 
+Slots blazerMods() {
+    // The Blazer is stock: the 350 V8, 4-speed manual, T18 transfer case.
+    Slots m(MOD_SLOTS);
+    m[MOD_ENGINE] = {
+        stock("350 SMALL-BLOCK V8  195 HP  399 NM"),
+        {"383 BIG-BLOCK", "6.3L BIG-BLOCK  260 HP  520 NM  +40 KG", [](VehicleSpec& s) {
+             engine(s, "383 BIG-BLOCK V8",
+                    {{0, 260}, {1000, 380}, {2000, 470}, {3200, 520}, {4200, 505}, {5000, 470}, {5400, 420}}, 5400, 0);
+             s.displacement = 6.3;
+             s.engineMass += 40;
+             s.engineLen = 0.68;
+         }},
+        {"SUPERCHARGED 350", "MAGNUSON BLOWER ON 350  275 HP  500 NM  +12 KG", [](VehicleSpec& s) {
+             engine(s, "SUPERCHARGED 350 V8",
+                    {{0, 280}, {1000, 410}, {2000, 480}, {3200, 500}, {4200, 490}, {5000, 460}, {5400, 410}}, 5400, 0);
+             s.engineMass += 12;
+             s.induction = VehicleSpec::SUPERCHARGER;
+         }},
+    };
+    m[MOD_SUSPENSION] = {
+        stock("SOLID AXLES  LEAF SPRINGS REAR  28 IN TIRES"),
+        {"2 IN LIFT", "2 IN SPRINGS  31 IN TIRES  SOFTER", [](VehicleSpec& s) {
+             tires(s, 0.394, 0.254, 5, 0.94, 0.72, 1.58);
+             springs(s, 0.051, 0.90, 0.85, 0.36);
+         }},
+        {"4 IN LIFT", "4 IN SPRINGS  33 IN TIRES  SOFTER", [](VehicleSpec& s) {
+             tires(s, 0.419, 0.267, 9, 0.93, 0.70, 1.61);
+             springs(s, 0.102, 0.82, 0.75, 0.34);
+             s.bumpFront = 0.11, s.droopFront = 0.17, s.bumpRear = 0.13, s.droopRear = 0.20;
+         }},
+        {"6 IN LIFT", "6 IN SPRINGS  35 IN TIRES  LONG TRAVEL", [](VehicleSpec& s) {
+             tires(s, 0.445, 0.292, 14, 0.92, 0.68, 1.65);
+             springs(s, 0.152, 0.75, 0.65, 0.32);
+             s.bumpFront = 0.12, s.droopFront = 0.18, s.bumpRear = 0.14, s.droopRear = 0.22;
+         }},
+    };
+    m[MOD_TRANSMISSION] = {
+        stock("M21 4-SPEED MANUAL  3.90 AXLES  OPEN DIFFS"),
+        {"4.10 AXLES", "STANDARD 4.10 RATIO", [](VehicleSpec& s) { s.finalDrive = 4.10; }},
+        {"4.56 AXLES", "TALL TIRES NEED SHORT GEARS  4.56", [](VehicleSpec& s) { s.finalDrive = 4.56; }},
+        {"T5 5-SPEED SWAP", "GM T5 5-SPEED MANUAL  4.10 AXLES", [](VehicleSpec& s) {
+             gears(s, "GM T5 5-SPEED MANUAL", {3.50, 2.35, 1.53, 1.00, 0.72}, 3.74, 4.10, 0.18);
+         }},
+    };
+    return m;
+}
+
 const std::vector<Slots>& allMods() {
     static const std::vector<Slots> mods = [] {
         std::vector<Slots> m;
         for (const VehicleSpec& vs : vehicleCatalog()) {
             std::string id = vs.id;
-            m.push_back(id == "civic" ? civicMods() : id == "jesko" ? jeskoMods() : id == "bronco" ? broncoMods() : runnerMods());
+            m.push_back(id == "civic" ? civicMods() : id == "jesko" ? jeskoMods() : id == "bronco" ? broncoMods() :
+                         id == "blazer" ? blazerMods() : runnerMods());
         }
         return m;
     }();

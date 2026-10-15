@@ -569,6 +569,129 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         runner.coverColor[0] = 0.1f, runner.coverColor[1] = 0.1f, runner.coverColor[2] = 0.11f;
         v.push_back(runner);
 
+        // ---- 1972 Chevy Blazer 350 (stock) ------------------------------------------
+        // Classic squared-off K5 Blazer with the 350 small-block V8. Body-on-frame,
+        // solid front and rear axles, leaf springs rear, 4-speed manual, T18 transfer
+        // case. ~1,770 kg (3,900 lbs), 195 hp @ 4000, 399 N·m @ 3200.
+        VehicleSpec blazer = bronco;
+        blazer.name = "CHEVY BLAZER";
+        blazer.id = "blazer";
+        blazer.blurb = "1972  350 SMALL-BLOCK V8  4-SPEED MANUAL  4X4";
+        blazer.profile = {
+            "#WW######WW#",
+            "############",
+            "...GGGGGGGGG",
+        };
+        // Stock dimensions: 185" L x 72" W x 70" H, 110" wheelbase.
+        blazer.layerY = {0.40, 0.82, 1.15, 1.65};
+        blazer.length = 4.70;   // 185"
+        blazer.width = 1.83;   // 72"
+        blazer.wheelbase = 2.79;  // 110"
+        blazer.frontOverhang = 0.79;  // ~31"
+        blazer.topLine = {0.92, 1.00, 1.05};  // flat hood
+        blazer.bumperLift = 0.12;
+        blazer.cornerRound = 0.05;  // very boxy
+        blazer.roofTuck = 0.04;
+        blazer.rakeFront = 0.40;    // upright windshield
+        blazer.rakeRear = 0.03;     // nearly vertical tailgate
+        // ~1,770 kg (3,900 lbs), about 57/43 front/rear (V8 up front).
+        blazer.structureMass = 540;  // frame and body
+        blazer.panelMass = 190;
+        blazer.items = {
+            {"radiator and grille", 28, 1.95, 0.85, 0},
+            {"battery", 25, 1.65, 0.95, -0.55},
+            {"front diff and axle housing", 85, 1.45, 0.48, 0},
+            {"front prop shaft", 8, 0.90, 0.48, 0.1},
+            {"rear prop shaft", 14, -0.40, 0.48, 0},
+            {"dashboard and heater", 30, 0.75, 1.00, 0},
+            {"front bucket seats", 48, 0.00, 0.80, 0},
+            {"rear bench seat", 30, -0.85, 0.80, 0},
+            {"carpets, trim, wiring", 55, 0.00, 0.62, 0},
+            {"fuel tank (75 L, full)", 70, -0.50, 0.48, 0.40},
+            {"exhaust", 30, -0.30, 0.34, 0.30},
+            {"spare wheel (inside)", 35, -1.55, 0.75, 0},
+            {"rear bumper", 22, -2.20, 0.55, 0},
+            {"soft top and sides", 25, -0.30, 1.62, 0},
+            {"steering and brakes", 28, 1.40, 0.65, 0},
+            {"skid plates", 18, 1.20, 0.40, 0},
+            {"front frame horns", 60, 1.85, 0.70, 0},
+            {"rear leaf spring hangers", 30, -1.40, 0.45, 0},
+        };
+        blazer.engineMass = 195;   // 350 V8
+        blazer.gearboxMass = 95;   // 4-speed manual + T18 transfer case
+        // Reduce overall mass to match the real ~1,770 kg stock Blazer.
+        blazer.structureMass = 480;
+        blazer.panelMass = 170;
+        for (MassItem& item : blazer.items) item.kg *= 0.85;
+        blazer.engineX = 1.45;
+        blazer.engineY = 0.82;
+        blazer.engineZ = 0;
+        blazer.engineLen = 0.65;
+        blazer.engineWid = 0.62;
+        blazer.engineHgt = 0.60;
+        blazer.gearboxLen = 0.75;
+        blazer.bodyStiffness = 1.0;  // older unibody-on-frame
+        blazer.frameStiffness = 0.28;  // ladder frame
+        blazer.bodyStrength = 0.9;
+        blazer.frameStrength = 1.8;
+        blazer.panelStrength = 1.4;
+        blazer.pinStrength = 1.6;
+        // Stock 235/75R15 (28") tires.
+        blazer.wheelRadius = 0.356;
+        blazer.wheelWidth = 0.235;
+        blazer.rimRadius = 0.191;   // 15"
+        blazer.trackFront = blazer.trackRear = 1.55;
+        blazer.wheelMass = 22;
+        blazer.hubMass = 20;
+        blazer.axleMass = 95;  // heavy Dana 60-style axles
+        blazer.frontSusp = SOLID_AXLE;  // solid front axle (not IFS)
+        blazer.rearSusp = SOLID_AXLE;
+        blazer.rideFreqFront = 1.15;  // soft, long-travel
+        blazer.rideFreqRear = 1.25;   // leaf springs
+        blazer.dampingRatio = 0.38;
+        blazer.arbFront = 8000;
+        blazer.arbRear = 3000;
+        // Long travel: ~25 cm front, ~30 cm rear (leaf springs).
+        blazer.bumpFront = 0.10, blazer.droopFront = 0.15;
+        blazer.bumpRear = 0.12, blazer.droopRear = 0.18;
+        blazer.swayDisconnect = 0;   // no disconnect (stock)
+        blazer.tirePsi = 30;
+        blazer.tireType = TIRE_ALL_TERRAIN;
+        blazer.tireGrip = 0.98;
+        blazer.lateralGrip = 0.76;
+        // Part-time 4WD with T18 transfer case.
+        blazer.drive = VehicleSpec::AWD;
+        blazer.diffFront = blazer.diffRear = DIFF_OPEN;
+        blazer.transfer = XFER_PART_TIME;
+        blazer.lockerRear = false;   // stock: no lockers
+        blazer.lockerFront = false;
+        blazer.shaftLimit = 12000;
+        blazer.lowRange = 2.64;      // T18 low range
+        blazer.brakeFront = 2200;    // 11" drums
+        blazer.brakeRear = 1800;     // 10" drums
+        blazer.dragArea = 1.45;      // Cd ~0.50 x 2.9 m^2
+        // 195 hp @ 4000 rpm, 399 N·m @ 3200 rpm.
+        blazer.torque = {{0, 200}, {1000, 310}, {2000, 370}, {3200, 399}, {4000, 385}, {4800, 350}, {5200, 310}};
+        blazer.idleRpm = 750;
+        blazer.redline = 5200;
+        blazer.speedLimit = 145;     // ~90 mph, limited by gearing and aero
+        blazer.gears = {2.52, 1.74, 1.30, 1.00};  // Muncie M21 close-ratio
+        blazer.reverseRatio = 2.36;
+        blazer.finalDrive = 3.90;    // standard 3.90 axle ratio
+        blazer.shiftTime = 0.15;     // manual
+        blazer.engineName = "350 SMALL-BLOCK V8";
+        blazer.gearboxName = "M21 4-SPEED MANUAL";
+        blazer.doors = 2;
+        blazer.cylinders = 8;
+        blazer.displacement = 5.7;
+        blazer.wheelStyle = WHEEL_ALLOY;  // basic steel wheels
+        blazer.paintColor[0] = 0.15f, blazer.paintColor[1] = 0.45f, blazer.paintColor[2] = 0.55f;  // Palladium Blue
+        blazer.lampStyle = LAMP_ROUND;
+        blazer.grilleStyle = GRILLE_WIDE;
+        blazer.extras = EXTRA_SPARE;
+        blazer.coverColor[0] = 0.1f, blazer.coverColor[1] = 0.1f, blazer.coverColor[2] = 0.11f;
+        v.push_back(blazer);
+
         // EF Civic Si: the Rio Red hatch in bringatrailer.com/listing/1990-honda-civic-si-5/.
         // Honda's D16A6 rating: 108 hp / 100 lb-ft; 185/60R14 tires, discs/drums,
         // double wishbones and a five-speed. Internal mass placement and CG are estimates.
