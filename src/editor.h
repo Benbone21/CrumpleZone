@@ -54,6 +54,7 @@ private:
     double floodDepth = 1.0;
     int objKind = OBJ_ROCK;
     double rockSize = 1.2, treeHeight = 10, boxLen = 6, boxWidth = 4, boxHeight = 0.6, boxPitch = 0, objYaw = 0, logR = 0.3, logLen = 6;
+    double objOffset = 0;
     int treeKind = 0;
     bool slab = false;
     uint32_t nextSeed = 1;
