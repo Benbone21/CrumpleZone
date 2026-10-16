@@ -34,6 +34,7 @@ int main(int argc, char** argv) {
         EngineVoice synth;
         EngineInput in{(float)v.idleRpm, 0, 0, v.cylinders, (int)v.induction, (float)v.displacement, (float)v.redline, v.flatPlane};
         in.recording = (uint8_t)engineSamples::forVehicle(v);
+        in.voice = voiceFor(v);
         const auto* bank = recordings.bank(in.recording);
         std::vector<float> samples(12 * 48000);
         double energy = 0, sum = 0; float peak = 0;

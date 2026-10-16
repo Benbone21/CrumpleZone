@@ -3074,7 +3074,7 @@ int main(int argc, char** argv) {
                 if (wh.load > 500) slip = std::max(slip, wh.slip);
             audio.setEngine((float)(car.engineDead ? 0 : car.rpm) * (float)std::max(0.35, sim.timeScale), load);
             const VehicleSpec& vs = *car.spec;
-            audio.setVoice(vs.cylinders, (float)vs.displacement, (int)vs.induction, vs.flatPlane, (float)vs.redline);
+            audio.setVoice(vs.cylinders, (float)vs.displacement, (int)vs.induction, vs.flatPlane, (float)vs.redline, voiceFor(vs));
             audio.setRecording(engineSamples::forVehicle(vs));
             audio.setBoost(vs.induction == VehicleSpec::TURBO ? (float)car.boost : 0.0f);
             audio.setTires(sim.paused ? 0 : slip);

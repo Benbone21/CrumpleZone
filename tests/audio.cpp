@@ -1,7 +1,9 @@
 // Offline audio checks: no device, speakers or window required.
 #include "../src/audio.h"
+#include "../src/mods.h"
 #include "../src/softbody.h"
 #include "../src/sdl_min.h"
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <chrono>
@@ -218,6 +220,78 @@ int main() {
         device.stop();
         SDL_Quit();
         check("SDL callback starts, mixes nearby engines and shuts down", started);
+    }
+    {
+        // Every engine in the garage sounds like itself: its spectrum at idle and at 3,000 rpm
+        // under load (48 bands, 40 Hz to 8 kHz) differs from every other engine's, even ones
+        // with the same cylinder count (exhaust, cam, intake, valvetrain, its own pulses).
+        struct Engine { std::string name; EngineInput in; float idle; };
+        std::vector<Engine> engines;
+        for (int v = 0; v < (int)vehicleCatalog().size(); v++)
+            for (int o = 0; o < (int)modOptions(v, MOD_ENGINE).size(); o++) {
+                ModSet ms; ms.pick[MOD_ENGINE] = o;
+                const VehicleSpec& s = tunedSpec(v, ms);
+                bool seen = false;
+                for (const Engine& e : engines) seen |= e.name == s.engineName;
+                if (seen) continue;
+                EngineInput in{0, 0, 0, s.cylinders, (int)s.induction, (float)s.displacement, (float)s.redline, s.flatPlane};
+                in.voice = voiceFor(s);
+                engines.push_back({s.engineName, in, (float)s.idleRpm});
+            }
+        const int kBands = 48;
+        auto spectrum = [&](EngineInput in, float rpm, float load) {
+            EngineSynth synth;
+            in.rpm = rpm, in.load = load, in.boost = load;
+            const int n = 48000, skip = 12000;
+            std::vector<float> x(n);
+            for (int i = 0; i < skip; i++) synth.sample(in, 1.0f / 48000);
+            for (int i = 0; i < n; i++) x[i] = synth.sample(in, 1.0f / 48000);
+            std::vector<double> band(kBands);
+            double total = 1e-12;
+            for (int b = 0; b < kBands; b++) {
+                const double f = 40 * std::pow(200.0, (b + 0.5) / kBands), w = 2 * M_PI * f / 48000, c = 2 * std::cos(w);
+                double s0 = 0, s1 = 0, s2 = 0;
+                for (int i = 0; i < n; i++) s0 = x[i] + c * s1 - s2, s2 = s1, s1 = s0;
+                band[b] = s1 * s1 + s2 * s2 - c * s1 * s2;
+                total += band[b];
+            }
+            for (double& v : band) v = std::log10(v / total + 1e-9);
+            return band;
+        };
+        std::vector<std::vector<double>> idle, load;
+        for (const Engine& e : engines) idle.push_back(spectrum(e.in, e.idle, 0.05f)), load.push_back(spectrum(e.in, 3000, 0.8f));
+        double closest = 1e9;
+        std::string pair;
+        for (size_t a = 0; a < engines.size(); a++)
+            for (size_t b = a + 1; b < engines.size(); b++) {
+                double d = 0;
+                for (int k = 0; k < kBands; k++) d += std::fabs(idle[a][k] - idle[b][k]) + std::fabs(load[a][k] - load[b][k]);
+                d /= 2 * kBands;
+                if (d < closest) closest = d, pair = engines[a].name + " / " + engines[b].name;
+            }
+        std::printf("  %zu engines; the closest two: %s (%.3f)\n", engines.size(), pair.c_str(), closest);
+        if (std::getenv("TONE_DEBUG")) {
+            std::vector<std::pair<double, std::string>> all;
+            std::vector<std::vector<double>> idle0, load0;
+            for (const Engine& e : engines) {
+                EngineInput plain = e.in;
+                plain.voice = EngineTone{};
+                idle0.push_back(spectrum(plain, e.idle, 0.05f)), load0.push_back(spectrum(plain, 3000, 0.8f));
+            }
+            double closest0 = 1e9;
+            for (size_t a = 0; a < engines.size(); a++)
+                for (size_t b = a + 1; b < engines.size(); b++) {
+                    double d = 0, d0 = 0;
+                    for (int k = 0; k < kBands; k++) d += std::fabs(idle[a][k] - idle[b][k]) + std::fabs(load[a][k] - load[b][k]),
+                                                      d0 += std::fabs(idle0[a][k] - idle0[b][k]) + std::fabs(load0[a][k] - load0[b][k]);
+                    all.push_back({d / (2 * kBands), engines[a].name + " / " + engines[b].name});
+                    closest0 = std::min(closest0, d0 / (2 * kBands));
+                }
+            std::sort(all.begin(), all.end());
+            for (int k = 0; k < 8; k++) std::printf("    %.3f %s\n", all[k].first, all[k].second.c_str());
+            std::printf("  without the voices (cylinders, size and induction only): closest %.3f\n", closest0);
+        }
+        check("every engine in the garage has its own sound", engines.size() > 20 && closest > 0.05);
     }
     return failures ? 1 : 0;
 }

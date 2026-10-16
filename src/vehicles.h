@@ -1,6 +1,7 @@
 // Vehicle definitions. Each vehicle's body is described by a side-profile map
 // that the soft-body builder turns into a node/beam lattice.
 #pragma once
+#include "engineaudio.h"
 #include <string>
 #include <vector>
 
@@ -116,6 +117,7 @@ struct VehicleSpec {
     bool tractionFitted = true;  // has traction control at all (the driver can still switch it off)
     int cylinders = 4;
     bool flatPlane = false;        // flat-plane crank V8: even firing, a high-pitched howl
+    EngineTone voice;             // its own sound (engineaudio.h); voiceFor() fills its seed
     enum Induction { NATURAL, TURBO, SUPERCHARGER } induction = TURBO;
     double displacement = 1.5;     // liters, also sets the procedural engine voice
 
@@ -282,6 +284,8 @@ int doorCells(const VehicleSpec& vs);
 bool hasRearDoors(const VehicleSpec& vs);
 // Peak power (W) and the rpm it's made at.
 double peakPower(const VehicleSpec& vs, double* atRpm = nullptr);
+// The engine's voice with its seed (from its name: each engine its own small differences).
+EngineTone voiceFor(const VehicleSpec& vs);
 double peakTorque(const VehicleSpec& vs, double* atRpm = nullptr);
 // Moves the body (and everything on it) up by dy relative to the wheels: lift kits, lowering.
 void raiseBody(VehicleSpec& vs, double dy);

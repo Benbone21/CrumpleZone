@@ -72,16 +72,19 @@ Slots civicMods() {
         stock("1.6L D16A6  108 HP  136 NM"),
         {"D16 CAM AND HEADER", "MILD SOHC BUILD  ABOUT 125 HP  145 NM", [](VehicleSpec& s) {
              // Estimated street cam/header curve, not a factory engine rating.
+             s.voice.muffler = 0.5f, s.voice.intake = 0.65f;
              engine(s, "1.6L D16A6 CAM AND HEADER",
                     {{0, 65}, {1000, 89}, {2500, 122}, {4000, 141}, {5000, 145}, {6500, 137}, {7000, 119}}, 7000, 0);
          }},
         {"B16A VTEC SWAP", "1.6L DOHC  160 HP  150 NM  +20 KG", [](VehicleSpec& s) {
+             s.voice.intake = 0.9f, s.voice.rasp = 0.75f, s.voice.muffler = 0.45f;
              engine(s, "1.6L DOHC B16A VTEC",
                     {{0, 65}, {1000, 86}, {3000, 120}, {5000, 137}, {6000, 145}, {7000, 150}, {7600, 150}, {8200, 130}}, 8200, 0);
              s.engineMass += 20;
              s.engineLen = 0.54;
          }},
         {"B18C TYPE R SWAP", "1.8L DOHC  195 HP  176 NM  +25 KG", [](VehicleSpec& s) {
+             s.voice.intake = 0.95f, s.voice.rasp = 0.8f, s.voice.muffler = 0.55f;
              engine(s, "1.8L DOHC B18C TYPE R",
                     {{0, 85}, {1000, 105}, {3000, 146}, {5000, 160}, {6200, 176}, {7300, 175}, {8000, 174}, {8400, 155}}, 8400, 0);
              s.displacement = 1.8;
@@ -123,10 +126,12 @@ Slots jeskoMods() {
     m[MOD_ENGINE] = {
         stock("5.0L TWIN-TURBO V8 ON PETROL  1280 HP"),
         {"E85 FLEX FUEL", "FACTORY E85 MAP  1600 HP  1500 NM", [](VehicleSpec& s) {
+             s.voice.crackle = 0.45f;
              engine(s, "5.0L TWIN-TURBO V8 E85",
                     {{0, 500}, {1500, 700}, {2700, 1050}, {4000, 1350}, {5100, 1500}, {6500, 1500}, {7800, 1460}, {8500, 1300}}, 8500, 0.25);
          }},
         {"RACE FUEL AND BOOST", "MORE BOOST ON RACE FUEL  ABOUT 1750 HP  1600 NM", [](VehicleSpec& s) {
+             s.voice.crackle = 0.6f, s.voice.muffler = 0.85f;
              engine(s, "5.0L TWIN-TURBO V8 RACE",
                     {{0, 520}, {1500, 720}, {2700, 1100}, {4000, 1450}, {5100, 1600}, {6500, 1600}, {7800, 1600}, {8500, 1420}}, 8500, 0.28);
          }},
@@ -156,6 +161,7 @@ Slots broncoMods() {
     m[MOD_ENGINE] = {
         stock("2.7L TWIN-TURBO V6  330 HP  563 NM"),
         {"2.3 ECOBOOST I4", "THE BASE ENGINE  300 HP  441 NM  -50 KG", [](VehicleSpec& s) {
+             s.voice.rasp = 0.55f, s.voice.muffler = 0.32f;
              engine(s, "2.3L TURBO I4",
                     {{0, 200}, {1000, 280}, {2000, 400}, {3400, 441}, {4500, 420}, {5700, 375}, {6250, 330}}, 6250, 0.5);
              s.cylinders = 4;
@@ -165,10 +171,12 @@ Slots broncoMods() {
              s.engineLen = 0.60;
          }},
         {"2.7 STAGE 1 TUNE", "93 OCTANE TUNE  390 HP  690 NM", [](VehicleSpec& s) {
+             s.voice.muffler = 0.45f, s.voice.crackle = 0.15f;
              engine(s, "2.7L TWIN-TURBO V6 STAGE 1",
                     {{0, 260}, {1000, 360}, {2000, 600}, {3000, 690}, {4500, 610}, {5250, 529}, {5800, 470}}, 5800, 0.45);
          }},
         {"RAPTOR 3.0 V6 SWAP", "3.0L TWIN-TURBO V6  418 HP  597 NM  +15 KG", [](VehicleSpec& s) {
+             s.voice.muffler = 0.6f, s.voice.crackle = 0.25f, s.voice.rasp = 0.45f;
              engine(s, "3.0L TWIN-TURBO V6 RAPTOR",
                     {{0, 280}, {1000, 380}, {2000, 560}, {3250, 597}, {4500, 580}, {5600, 532}, {6000, 490}}, 6000, 0.45);
              s.displacement = 3.0;
@@ -216,12 +224,14 @@ Slots runnerMods() {
     m[MOD_ENGINE] = {
         asBuilt("MAGNUSON SUPERCHARGED 3.4L V6  256 HP  366 NM"),
         {"FACTORY 3.4 V6", "SUPERCHARGER OFF  183 HP AT 4800  294 NM", [](VehicleSpec& s) {
+             s.voice.rasp = 0.2f, s.voice.muffler = 0.25f, s.voice.intake = 0.25f, s.voice.mech = 0.5f;  // (an older 24-valve V6: deeper, clattery)
              engine(s, "3.4L V6 5VZ-FE",
                     {{0, 190}, {1000, 235}, {2000, 270}, {3000, 288}, {3600, 294}, {4200, 290}, {4800, 272}, {5400, 235}}, 5400, 0);
              s.induction = VehicleSpec::NATURAL;
              s.engineMass -= 18;
          }},
         {"4.0 V6 1GR SWAP", "LATER 4RUNNER ENGINE  270 HP  377 NM", [](VehicleSpec& s) {
+             s.voice.rasp = 0.55f, s.voice.muffler = 0.42f, s.voice.intake = 0.6f, s.voice.mech = 0.15f;  // (crisper, an intake roar)
              engine(s, "4.0L V6 1GR-FE",
                     {{0, 220}, {1000, 280}, {2000, 345}, {3000, 362}, {4400, 377}, {5000, 368}, {5600, 343}, {6100, 310}}, 6100, 0);
              s.displacement = 4.0;
@@ -229,6 +239,7 @@ Slots runnerMods() {
              s.engineMass -= 33;
          }},
         {"1GR SUPERCHARGED", "4.0 V6 WITH A TRD BLOWER  340 HP  470 NM", [](VehicleSpec& s) {
+             s.voice.rasp = 0.3f, s.voice.muffler = 0.45f;
              engine(s, "4.0L V6 1GR-FE SUPERCHARGED",
                     {{0, 290}, {1000, 370}, {2000, 440}, {3000, 465}, {4000, 470}, {5000, 455}, {5600, 425}, {6100, 380}}, 6100, 0);
              s.displacement = 4.0;
@@ -278,12 +289,14 @@ Slots buggyMods() {
         stock("6.2L LS V8  450 HP  565 NM"),
         {"7.0 LS7", "7.0L DRY-SUMP V8  ABOUT 505 HP  650 NM  +8 KG", [](VehicleSpec& s) {
              // Estimated: LS7 crate figures (505 hp, 470 lb-ft) with a truck-friendly curve.
+             s.voice.lope = 0.45f, s.voice.rasp = 0.25f;
              engine(s, "7.0L LS7 V8",
                     {{0, 340}, {1000, 410}, {2000, 520}, {3000, 590}, {4000, 630}, {4800, 650}, {5600, 620}, {6300, 574}, {6800, 520}}, 6800, 0);
              s.displacement = 7.0;
              s.engineMass += 8;
          }},
         {"BLOWN 6.2", "ROOTS-BLOWN LS3  ABOUT 650 HP  820 NM  +30 KG", [](VehicleSpec& s) {
+             s.voice.lope = 0.25f, s.voice.intake = 0.4f;
              engine(s, "6.2L LS V8 SUPERCHARGED",
                     {{0, 420}, {1000, 520}, {2000, 690}, {3000, 780}, {4000, 820}, {5000, 810}, {5800, 740}, {6400, 640}}, 6400, 0);
              s.induction = VehicleSpec::SUPERCHARGER;
@@ -321,10 +334,12 @@ Slots tacomaMods() {
     m[MOD_ENGINE] = {
         stock("3.5L V6 2GR-FKS  278 HP AT 6000  359 NM"),
         {"INTAKE AND TUNE", "COLD AIR INTAKE  91 OCTANE TUNE  ~295 HP  372 NM", [](VehicleSpec& s) {
+             s.voice.muffler = 0.45f, s.voice.intake = 0.55f;
              engine(s, "3.5L V6 2GR-FKS TUNED",
                     {{0, 205}, {1000, 270}, {1600, 300}, {2000, 314}, {3000, 347}, {4000, 367}, {4600, 372}, {5000, 368}, {5500, 356}, {6000, 344}, {6400, 320}}, 6400, 0);
          }},
         {"MAGNUSON SUPERCHARGER", "TVS1900 AT 6 PSI  ~350 HP  450 NM", [](VehicleSpec& s) {
+             s.voice.muffler = 0.5f;
              engine(s, "3.5L V6 2GR-FKS SUPERCHARGED",
                     {{0, 260}, {1000, 330}, {1600, 380}, {2000, 405}, {3000, 435}, {4000, 450}, {4600, 448}, {5000, 440}, {5500, 425}, {6000, 405}, {6400, 375}}, 6400, 0);
              s.induction = VehicleSpec::SUPERCHARGER;
@@ -375,11 +390,13 @@ Slots utvMods() {
         stock("900CC TURBO TRIPLE  195 HP  205 NM"),
         {"STAGE 2 TUNE", "BIGGER TURBO AND INTERCOOLER  ABOUT 230 HP  240 NM", [](VehicleSpec& s) {
              // Estimated bolt-on figures for the Rotax 900 turbo.
+             s.voice.muffler = 0.8f, s.voice.crackle = 0.5f;
              engine(s, "900CC TURBO I3 STAGE 2",
                     {{0, 95}, {1500, 120}, {3000, 190}, {4500, 232}, {5500, 242}, {6500, 238}, {7500, 220}, {8000, 195}, {8400, 150}}, 8300, 0.5);
              s.engineMass += 4;
          }},
         {"ECO TUNE", "SOFTER MAP FOR TRAIL RIDES  ABOUT 150 HP  170 NM", [](VehicleSpec& s) {
+             s.voice.muffler = 0.45f, s.voice.crackle = 0.0f;
              engine(s, "900CC TURBO I3 ECO",
                     {{0, 85}, {1500, 100}, {3000, 140}, {4500, 165}, {5500, 172}, {6500, 168}, {7500, 150}, {8000, 130}, {8400, 100}}, 8000, 0.3);
          }},
@@ -406,17 +423,20 @@ Slots blazerMods() {
         stock("350 V8 2-BARREL  165 HP  280 LB-FT"),
         {"350 4-BARREL", "THE QUADRAJET 350  175 HP  290 LB-FT", [](VehicleSpec& s) {
              // 1972 SAE net, L48 four-barrel (GM).
+             s.voice.intake = 0.75f, s.voice.muffler = 0.42f;
              engine(s, "350 V8 4-BARREL",
                     {{0, 255}, {800, 310}, {1200, 345}, {1800, 380}, {2400, 393}, {3000, 385}, {3600, 365}, {4000, 345}, {4800, 280}, {5200, 230}}, 5200, 0);
          }},
         {"454 BIG BLOCK", "THE PICKUPS' 7.4 L  ABOUT 240 HP  370 LB-FT  +70 KG", [](VehicleSpec& s) {
              // 1972 LS5 truck rating ~230-240 hp net, 360-375 lb-ft (estimate from GM's 1972 figures).
+             s.voice.rasp = 0.04f, s.voice.muffler = 0.45f, s.voice.mech = 0.45f, s.voice.lope = 0.1f;
              engine(s, "454 BIG BLOCK V8",
                     {{0, 330}, {800, 410}, {1200, 450}, {1800, 490}, {2400, 505}, {2800, 500}, {3600, 470}, {4000, 440}, {4400, 395}, {4800, 340}}, 4800, 0);
              s.displacement = 7.4;
              s.engineMass += 70;
          }},
         {"ZZ4 CRATE 350", "ALUMINUM HEADS, ROLLER CAM  355 HP  405 LB-FT  LOPEY IDLE", [](VehicleSpec& s) {
+             s.voice.lope = 0.65f, s.voice.muffler = 0.7f, s.voice.crackle = 0.3f, s.voice.intake = 0.7f;
              engine(s, "ZZ4 350 CRATE V8",
                     {{0, 300}, {1000, 400}, {2000, 470}, {3000, 535}, {3500, 549}, {4500, 520}, {5250, 480}, {5800, 420}, {6000, 390}}, 6000, 0);
              s.engineMass -= 15;
@@ -482,6 +502,7 @@ void takeEngine(VehicleSpec& s, const VehicleSpec& from) {
     s.engineName = from.engineName;
     s.engineMass = from.engineMass;
     s.engineLen = from.engineLen, s.engineWid = from.engineWid, s.engineHgt = from.engineHgt;
+    s.voice = from.voice;
     s.engineOrigin = from.model;
 }
 
