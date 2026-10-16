@@ -190,7 +190,14 @@ std::vector<std::array<int, 3>> convexHull(const std::vector<V3>& p) {
 
 namespace {
 // World::addRock with the scanned hulls on.
-Rock& addScannedRock(World& w, const props::HullLibrary& lib, double x, double z, const V3& radii, double top, uint32_t seed, float tint) {
+// The frame a pose asks for: (along, up, across), right-handed (along x up = across).
+void poseFrame(const RockPose& p, V3 out[3]) {
+    const double cy = std::cos(p.yaw), sy = std::sin(p.yaw), cp = std::cos(p.pitch), sp = std::sin(p.pitch);
+    const V3 along(cy * cp, sp, -sy * cp), up0(-cy * sp, cp, sy * sp);
+    out[0] = along, out[1] = rotateAxis(up0, along, p.roll), out[2] = cross(along, out[1]);
+}
+
+Rock& addScannedRock(World& w, const props::HullLibrary& lib, double x, double z, const V3& radii, double top, uint32_t seed, float tint, const RockPose* pose) {
     uint32_t s = seed * 2246822519u + 0x85ebca6bu;
     auto rnd = [&]() {
         s ^= s << 13;
@@ -236,6 +243,12 @@ Rock& addScannedRock(World& w, const props::HullLibrary& lib, double x, double z
     // Model axes in the world: scaled, tipped, turned.
     V3 ax[3] = {V3(scale.x, 0, 0), V3(0, scale.y, 0), V3(0, 0, scale.z)};
     for (V3& a : ax) a = rotateAxis(rotateAxis(rotateAxis(a, V3(1, 0, 0), tipX), V3(0, 0, 1), tipZ), V3(0, 1, 0), yaw);
+    if (pose) {  // (the scan's long axis, whichever of its two the fit gave the first half-size, along the pose's)
+        V3 f[3];
+        poseFrame(*pose, f);
+        const V3 mx = c.swap ? f[2] * -1.0 : f[0], mz = c.swap ? f[0] : f[2];  // where the scan's own x and z axes go
+        ax[0] = mx * scale.x, ax[1] = f[1] * scale.y, ax[2] = mz * scale.z;
+    }
     auto local = [&](const V3& p) { return ax[0] * (p.x - mid.x) + ax[1] * (p.y - mid.y) + ax[2] * (p.z - mid.z); };
     double topY = -1e9;
     for (const V3& p : hull.v) topY = std::max(topY, local(p).y);
@@ -262,7 +275,7 @@ Rock& addScannedRock(World& w, const props::HullLibrary& lib, double x, double z
 }
 }  // namespace
 
-Rock& World::addRock(double x, double z, const V3& radii, double top, uint32_t seed, float tint) {
+Rock& World::addRock(double x, double z, const V3& radii, double top, uint32_t seed, float tint, const RockPose* pose) {
     uint32_t s = seed * 2654435761u + 0x9e3779b9u;
     auto rnd = [&]() {
         s ^= s << 13;
@@ -270,7 +283,7 @@ Rock& World::addRock(double x, double z, const V3& radii, double top, uint32_t s
         s ^= s << 5;
         return (s & 0xFFFFFF) / double(0x1000000);
     };
-    if (const props::HullLibrary* lib = props::activeRockScans()) return addScannedRock(*this, *lib, x, z, radii, top, seed, tint);
+    if (const props::HullLibrary* lib = props::activeRockScans()) return addScannedRock(*this, *lib, x, z, radii, top, seed, tint, pose);
     // Points spread evenly over the ellipsoid, then pulled in at random: deep pulls
     // cut facets, light ones keep it chunky.
     const int n = 16 + (int)(rnd() * 10);
@@ -284,7 +297,14 @@ Rock& World::addRock(double x, double z, const V3& radii, double top, uint32_t s
         V3 q(d.x * radii.x * k, d.y * radii.y * k, d.z * radii.z * k);
         q = rotateAxis(q, V3(1, 0, 0), tipX);
         q = rotateAxis(q, V3(0, 0, 1), tipZ);
-        pts.push_back(rotateAxis(q, V3(0, 1, 0), yaw));
+        q = rotateAxis(q, V3(0, 1, 0), yaw);
+        if (pose) {
+            V3 f[3];
+            poseFrame(*pose, f);
+            const V3 raw(d.x * radii.x * k, d.y * radii.y * k, d.z * radii.z * k);
+            q = f[0] * raw.x + f[1] * raw.y + f[2] * raw.z;
+        }
+        pts.push_back(q);
     }
     double topY = -1e9;
     for (const V3& q : pts) topY = std::max(topY, q.y);

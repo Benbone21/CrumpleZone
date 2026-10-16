@@ -17,6 +17,12 @@ struct Box {
     bool rock = false;    // a rock slab: drawn as rock, grips like rock
 };
 
+// A rock's orientation when it isn't left to chance (World::addRock): its long axis (the first half-size) runs along
+// `yaw` (radians, the game's: 0 = +X, pi/2 = -Z) climbing `pitch`, and the rock is rolled `roll` about that axis (right-handed).
+struct RockPose {
+    double yaw = 0, pitch = 0, roll = 0;
+};
+
 // Boulder: an irregular convex rock (the hull of points scattered over a squashed,
 // tilted ellipsoid), collided with exactly as it's drawn.
 struct Rock {
@@ -250,7 +256,9 @@ public:
     // the ground, turned to a random yaw and tipped a little. Returns it. With scanned hulls
     // on (props::activeRockScans()) it's the scan whose proportions fit best, scaled to the
     // half-sizes; else a code-made hull.
-    Rock& addRock(double x, double z, const V3& radii, double top, uint32_t seed, float tint = 1);
+    // With `pose` it isn't turned or tipped at random but as asked (a ledge's row of rocks, a ramp): the first half-size
+    // lies along the pose's yaw, and `top` is then its highest point's height over the ground at (x, z).
+    Rock& addRock(double x, double z, const V3& radii, double top, uint32_t seed, float tint = 1, const RockPose* pose = nullptr);
     // Indices of poles whose cylinders may overlap the box [mn, mx] (appended to out).
     void polesNear(const V3& mn, const V3& mx, std::vector<int>& out) const;
     // Every solid whose lookup cells touch the rectangle [x0, x1] x [z0, z1]: indices into

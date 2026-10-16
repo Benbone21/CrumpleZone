@@ -437,14 +437,14 @@ void main(){
   float specK = 0.04, specP = 16.0;
   if (mat == 7) {
     terrainProcedural(n, base, specK, specP);
-  } else if (mat == 12) {
-    // Rock: grainy, with darker veins, crusty lichen on the tops.
+  } else if (mat == 12 || mat == 16) {
+    // Rock: grainy, with darker veins, crusty lichen on the tops (not on a slab: sandstone and granite stay their own colour).
     float g1 = vnoise(vPos.xz * 2.3 + vPos.y * 1.1), g2 = vnoise(vPos.zy * 2.7 - vPos.x * 0.9);
     base *= 0.72 + 0.5 * (0.5 * g1 + 0.5 * g2);
     float vein = 1.0 - smoothstep(0.0, 0.04, abs(vnoise(vPos.xy * 0.9 + vPos.z * 0.6) - 0.5));
     base *= 1.0 - 0.35 * vein;
     float lichen = smoothstep(0.6, 0.72, vnoise(vPos.xz * 3.1 + vPos.y * 2.0)) * smoothstep(0.35, 0.85, n.y);
-    base = mix(base, vec3(0.42, 0.45, 0.26), lichen * 0.5);
+    if (mat == 12) base = mix(base, vec3(0.42, 0.45, 0.26), lichen * 0.5);
     specK = 0.06; specP = 20.0;
   } else if (mat == 14) {
     // Wood: weathered grain.

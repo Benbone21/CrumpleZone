@@ -92,47 +92,115 @@ void tube(std::vector<Vtx>& out, const V3& a, const V3& b, double ra, double rb,
     }
 }
 
-// A rock slab: the collider box with rounded edges (inside the box, so nothing pokes
-// out that a tire would sink into) and a little surface relief.
+// A rock slab: the collider box worn into rock. The surface is a rounded box (radius ~0.2 m, bigger on a
+// big slab) lying inside the collider, so nothing drawn sticks out past what a tire hits; its corners
+// and edges are chipped, its faces pitted and lumpy (more on the sides than on the tread, so the top
+// still reads where a wheel stands), its shading banded with the strata and darker in the pits.
+// Seeded by the slab's place alone, so a slab always wears the same; built once with the world's rocks.
+namespace slabwear {
+struct Wear {
+    V3 o1, o2, o3;  // noise offsets (this slab's seed)
+    double rr;      // rounding radius
+};
+// Lumpiness at a point of the slab, 0..1 (before the amplitude and the edge chips).
+double lumps(const Wear& w, const V3& p) {
+    return 0.62 * noise3(p * 0.85 + w.o1) + 0.38 * noise3(p * 2.6 + w.o2);
+}
+double chipNoise(const Wear& w, const V3& p) { return noise3(p * 1.7 + w.o3); }
+}  // namespace slabwear
+
 void slab(std::vector<Vtx>& out, const Box& b) {
+    using namespace slabwear;
     const double he[3] = {b.h.x, b.h.y, b.h.z};
-    const double rr = std::min(0.14, std::min({he[0], he[1], he[2]}) * 0.4);
+    const uint32_t sd = (uint32_t)(std::lround(b.c.x * 8) * 73856093 ^ std::lround(b.c.y * 8) * 19349663 ^ std::lround(b.c.z * 8) * 83492791);
+    auto h01 = [&](int k) { return latticeHash((int)(sd % 100003) + k * 17, k * 31 + 5); };
+    Wear w;
+    w.o1 = V3(h01(1) * 90, h01(2) * 90, h01(3) * 90), w.o2 = V3(h01(4) * 90, h01(5) * 90, h01(6) * 90), w.o3 = V3(h01(7) * 90, h01(8) * 90, h01(9) * 90);
+    const double minHe = std::min({he[0], he[1], he[2]});
+    w.rr = std::min(0.13 + 0.04 * minHe, minHe * 0.4);
     const V3 col(b.col[0], b.col[1], b.col[2]);
+    const double bandPh = h01(10) * 6.28;
     for (int axis = 0; axis < 3; axis++)
         for (int sgn = -1; sgn <= 1; sgn += 2) {
-            const int u = (axis + 1) % 3, w = (axis + 2) % 3;
-            const int G = std::max(4, (int)(std::max(he[u], he[w]) * 3));
-            auto at = [&](int iu, int iw, V3& pos, V3& nrm) {
-                double s[3];
-                s[axis] = sgn;
-                s[u] = -1 + 2.0 * iu / G;
-                s[w] = -1 + 2.0 * iw / G;
-                double q[3], inner[3], dq[3];
-                for (int k = 0; k < 3; k++) {
-                    q[k] = s[k] * he[k];
-                    inner[k] = clampd(q[k], -(he[k] - rr), he[k] - rr);
-                    dq[k] = q[k] - inner[k];
-                }
-                V3 d(dq[0], dq[1], dq[2]);
-                double dl = len(d);
-                V3 n = dl > 1e-9 ? d / dl : V3(axis == 0 ? sgn : 0, axis == 1 ? sgn : 0, axis == 2 ? sgn : 0);
-                V3 local = V3(inner[0], inner[1], inner[2]) + n * rr;
-                V3 world = b.c + b.ax[0] * local.x + b.ax[1] * local.y + b.ax[2] * local.z;
-                V3 wn = norm(b.ax[0] * n.x + b.ax[1] * n.y + b.ax[2] * n.z);
-                world -= wn * (0.025 * noise3(world * 1.3));  // relief, always inward
-                pos = world;
-                nrm = wn;
+            const int u = (axis + 1) % 3, v = (axis + 2) % 3;
+            const bool under = axis == 1 && sgn < 0;  // (the underside is mostly buried: coarse)
+            // Grid lines across each of the face's two axes: the flat middle every `step`, the rounded edge in 3 bands.
+            auto lines = [&](int k) {
+                std::vector<double> q;
+                const double flat = he[k] - w.rr, step = under ? 1.2 : 0.38;
+                const int n = std::max(1, (int)std::ceil(2 * flat / step));
+                for (int i = 0; i < 3; i++) q.push_back(-he[k] + w.rr * i / 3.0);
+                for (int i = 0; i <= n; i++) q.push_back(-flat + 2 * flat * i / n);
+                for (int i = 1; i <= 3; i++) q.push_back(flat + w.rr * i / 3.0);
+                return q;
             };
-            for (int iu = 0; iu < G; iu++)
-                for (int iw = 0; iw < G; iw++) {
-                    V3 p[4], n[4];
-                    at(iu, iw, p[0], n[0]), at(iu + 1, iw, p[1], n[1]), at(iu + 1, iw + 1, p[2], n[2]), at(iu, iw + 1, p[3], n[3]);
+            const std::vector<double> qu = lines(u), qv = lines(v);
+            const int Nu = (int)qu.size(), Nv = (int)qv.size();
+            std::vector<V3> pos(Nu * Nv), nrm(Nu * Nv);
+            std::vector<float> shade(Nu * Nv);
+            for (int iu = 0; iu < Nu; iu++)
+                for (int iv = 0; iv < Nv; iv++) {
+                    double q[3], inner[3], dq[3];
+                    q[axis] = sgn * he[axis], q[u] = qu[iu], q[v] = qv[iv];
+                    for (int k = 0; k < 3; k++) {
+                        inner[k] = clampd(q[k], -(he[k] - w.rr), he[k] - w.rr);
+                        dq[k] = q[k] - inner[k];
+                    }
+                    const V3 d(dq[0], dq[1], dq[2]);
+                    const double dl = len(d);
+                    const V3 n = dl > 1e-9 ? d / dl : V3(axis == 0 ? sgn : 0, axis == 1 ? sgn : 0, axis == 2 ? sgn : 0);
+                    const V3 local = V3(inner[0], inner[1], inner[2]) + n * w.rr;
+                    const V3 base = b.c + b.ax[0] * local.x + b.ax[1] * local.y + b.ax[2] * local.z;
+                    const V3 wn = norm(b.ax[0] * n.x + b.ax[1] * n.y + b.ax[2] * n.z);
+                    // How far the point is from the nearest edge (0 on an edge) and corner of the box.
+                    double edge = 1e9, corner = 0;
+                    int ne = 0;
+                    for (int k = 0; k < 3; k++)
+                        if (k != axis) {
+                            const double dk = he[k] - std::fabs(q[k]);
+                            edge = std::min(edge, dk);
+                            corner += dk * dk, ne++;
+                        }
+                    corner = std::sqrt(corner / ne);
+                    // The wear: lumps (less on a tread), the sides stepped in layers (the strata), pits and corners chipped
+                    // out along the edges, the rounded lips eroded a bit more. All of it inward.
+                    const double up = std::max(0.0, wn.y), side = (1 - up) * (1 - up);
+                    const double amp = 0.05 + 0.13 * side + 0.03 * minHe;
+                    const double lump = lumps(w, base) * amp;
+                    const double cn = chipNoise(w, base), cn2 = chipNoise(w, base * 0.7 + V3(11, 4, 7));
+                    const double chip = 0.2 * smoothstep(0.5, 0.72, cn) * smoothstep(0.5, 0.03, edge);
+                    const double broke = 0.3 * smoothstep(0.58, 0.82, cn2) * smoothstep(0.75, 0.1, corner);
+                    const double erode = 0.07 * smoothstep(0.35, 0.0, edge) * (0.4 + 0.6 * lumps(w, base * 1.7 + V3(5, 5, 5)));
+                    // Layers about 0.3 m thick, each stood back by its own amount (a ramp between), sides only.
+                    const double ly = base.y * 3.3 + h01(11) * 5, li = std::floor(ly), lf = ly - li;
+                    auto layer = [&](double i) { return 0.16 * latticeHash((int)i + (int)(sd % 977), 13) * (0.6 + 0.8 * lumps(w, base * 0.6 + V3(3, 0, 3))); };
+                    const double r0 = layer(li - 1), r1 = layer(li), ramp = smoothstep(0.0, 0.22, lf);
+                    const double stepped = (r0 + (r1 - r0) * ramp) * side;
+                    const double dStep = (r1 - r0) * 6 * ramp * (1 - ramp) / 0.22 * 3.3 * side;  // d(stepped)/dy, roughly
+                    const double depth = lump + chip + broke + erode + stepped;
+                    // The surface leans with the lumps and the steps: a normal bent along their slope.
+                    const double e = 0.12;
+                    const V3 g(lumps(w, base + V3(e, 0, 0)) - lumps(w, base - V3(e, 0, 0)), lumps(w, base + V3(0, e, 0)) - lumps(w, base - V3(0, e, 0)),
+                               lumps(w, base + V3(0, 0, e)) - lumps(w, base - V3(0, 0, e)));
+                    const V3 slope = g * (amp / (2 * e) * 1.4) + V3(0, dStep, 0);
+                    const V3 sn = norm(wn + (slope - wn * dot(slope, wn)));
+                    pos[iu * Nv + iv] = base - wn * depth;
+                    nrm[iu * Nv + iv] = sn;
+                    // Strata banding and a darker pit.
+                    const double y = base.y;
+                    double band = 0.05 * std::sin(y * 8.0 + w.o1.x) + 0.035 * std::sin(y * 21.0 + bandPh) + 0.03 * std::sin(y * 3.3 + w.o2.y);
+                    shade[iu * Nv + iv] = (float)(1.0 + band + 0.14 * (lumps(w, base * 1.3 + w.o3) - 0.5) - 1.3 * depth + 0.08 * up);
+                }
+            for (int iu = 0; iu + 1 < Nu; iu++)
+                for (int iv = 0; iv + 1 < Nv; iv++) {
+                    const int idx[4] = {iu * Nv + iv, (iu + 1) * Nv + iv, (iu + 1) * Nv + iv + 1, iu * Nv + iv + 1};
+                    const V3 fn = cross(pos[idx[1]] - pos[idx[0]], pos[idx[2]] - pos[idx[0]]);
+                    const bool flip = dot(fn, nrm[idx[0]]) < 0;
+                    const V3 fq = len(fn) > 1e-12 ? norm(fn) * (flip ? -1.0 : 1.0) : nrm[idx[0]];  // (the facet's own normal, mixed in: a little crystalline, not pillowy)
                     const int order[6] = {0, 1, 2, 0, 2, 3};
-                    V3 fn = norm(cross(p[1] - p[0], p[2] - p[0]));
-                    const bool flip = dot(fn, n[0]) < 0;
                     for (int k = 0; k < 6; k++) {
-                        int o = flip ? order[5 - k] : order[k];
-                        out.push_back(vert(p[o], n[o], col, SM_ROCK));
+                        const int o = idx[flip ? order[5 - k] : order[k]];
+                        out.push_back(vert(pos[o], norm(nrm[o] * 0.55 + fq * 0.45), col * (double)shade[o], SM_SLAB));
                     }
                 }
         }
