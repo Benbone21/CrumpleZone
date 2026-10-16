@@ -347,8 +347,40 @@ were retried at those speeds); the bracket says what happened one step higher.
 | 4Runner | 35 | 40 (42 stops at 5 m) | 35 | 40 (42 at 1.2; 45 stops at 0.5 m) |
 | Tacoma | 35 | 35 (40 at 1.2 and 2.0; 7 of 9 m at 0.7) | 35 | 40 (42 stops at 0.9 m) |
 
-Slower climbs go higher on the margin. **Tires popped** on the top crest in 21 of 112 aired slab runs
-(8 of 112 at normal pressure), mostly on the gentle 20–30° slabs: a cost for airing down over a lip.
+Slower climbs go higher on the margin. **Tires popped** in 21 of 112 aired slab runs (8 of 112 at normal
+pressure), mostly on the gentle 20–30° slabs. **Not the crest:** see "Where the pops and snapped shafts
+come from" below. Don't read this as a cost of airing down over a lip.
+
+**Where the pops and snapped shafts come from** (re-checked with a debug print at the one place a tire
+pops, `softbody.cpp` rim strike: rim touched at more than `7 m/s * (psi+5)/(stock psi+5)`, i.e. 3.2 m/s at
+12 psi). Nothing here is a game bug; nothing was changed.
+- *Slab pops are the probe running off the end.* `slopeProbe` shapes only `run + 30` m of plateau and the
+  truck keeps driving for 60 s, so every climber that makes the top goes off a 4.8 to 10 m drop and lands on
+  the rim (n up, 4 to 16 m/s) or hits the cliff step (n.x 0.97). All 19 pops in the 116 set-up aired
+  slab/slabv runs re-measured here sit at or past the plateau's end, none on the crest. With a plateau that
+  keeps going, a 35° grid crest, a 35° box ramp onto a box plateau and a grid ramp onto a box plateau gave
+  0 pops in 24 runs (Blazer and Bronco set-ups, 12 psi, 1.0 to 2.5 m/s). A drop of 8 m onto rock popping a
+  tire is pinned on purpose (`surfaces/soft-landing`), so the cliff pops are right. The 8 normal-pressure
+  pops are the same fall (7 m/s limit). A box corner is a real point contact (`World::contact`), but no pop
+  came from one: the rim has to bottom, and that takes a hub falling at over 3.2 m/s.
+- *Ledge and stair pops need a stall and a flat-out throttle.* The probe's driver goes to full throttle
+  as soon as the truck slows at the face. The front tires bite the lip with a locked, low-range driveline,
+  the nose pitches up 35 to 43° and comes back down on the rims at 3.2 to 4.8 m/s. That is 10 pops in 504
+  set-up aired ledge runs, all at 1.7 and 2.0 m/s (none at 1.5 m/s or less), and 2 of 18 runs up a
+  5-step box staircase (steps of 0.2, 0.3, 0.4 m at 1.0, 1.5, 2.0 m/s; both pops were the Blazer at 2.0 m/s
+  on 0.3 and 0.4 m steps, none at 1.5 m/s or less). Capping the throttle at 0.6 removed them. Real drivers
+  feather it.
+- *The 4Runner's shafts are the same story.* A solid-axle shaft takes `shaftLimit` (10,000 N·m); the 4Runner's
+  independent front CVs take 65% of it, less with steering lock (snaps seen at 5.1 to 6.5 kN·m). The load is the
+  tire's traction torque, `Fx * R`: a front tire carrying 11 to 20 kN on a ledge face and gripping at
+  mu 1.2 on rock is 6 kN·m, so the front CVs go the moment one tire takes the whole front axle's load flat
+  out (rears at 10 kN·m with the 37s and the 4.7:1 box, where the engine can put in more than that at
+  stall). Ledge runs of the aired 4Runner: stock 1 of 126 with shafts, set up 8 (4.88 and lockers), 37s with
+  crawl box 32. Capping the throttle at 0.5 gives 0, 0 and 12; at 0.35, 0, 0 and 1. So the gearing is
+  not the fault; the probe's flat-out driver is. "Nothing beat stock" above means *with that driver*.
+  Real crawl-box trucks do break shafts when driven this way.
+If these probes are repeated, end the plateau with a ramp or run until the crest plus 5 m, and cap the
+throttle at about 0.5 for a crawl.
 
 **Takeaway:** a slab "needs ~15 psi" at **38–40°** (everything stops at 40° at normal pressure and
 climbs it aired, except the Blazer, which needs a set-up and slow). 30–35° is free; 42–45° is for a
@@ -401,8 +433,9 @@ spectator (0.10 m ledge, 25° side slope, 0.7 m water; it climbed none of the ro
   lucky try. Wall and camber are one run each: borderline cells (marked ~) flip with the crawl speed; slab
   35°/40° cells flip for the Blazer and Bronco. Wading is repeatable to 0.05 m. Walls, 65° and up, are not
   noisy (0 m everywhere).
-- **Failure costs show up.** Snapped axle shafts (ledge, wall, slab 25–35°), popped tires aired down on
-  crests, and tires and shafts lost on the 40° side slope. The probes record them as `SHAFTS-BROKEN` and
+- **Failure costs show up.** Snapped axle shafts (ledge, wall, slab 25–35°), popped tires aired down
+  (ledge hits at 1.7 m/s and up, and falls off the slab plateau's end, not the crests), and tires and shafts
+  lost on the 40° side slope. The probes record them as `SHAFTS-BROKEN` and
   `TIRES-POPPED` on every `CAP` line.
 
 ---
