@@ -3,21 +3,27 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <fstream>
 
 #include "hudkit.h"
 #include "levelrun.h"
+#include "sectionfile.h"
 #include "vehicles.h"
 
 using namespace hud;
 
 namespace {
 
-const char* kToolNames[Editor::TOOL_COUNT] = {"SCULPT", "PAINT", "WATER", "OBJECTS", "COURSE", "SETTINGS"};
+const char* kToolNames[Editor::TOOL_COUNT] = {"SCULPT", "PAINT", "WATER", "OBJECTS", "COURSE", "SETTINGS", "SECTION"};
 const char* kToolHints[Editor::TOOL_COUNT] = {"RAISE, LOWER, SMOOTH, FLATTEN THE GROUND", "PAINT MUD, SAND, SNOW, ROCK...",
                                               "FLOOD A HOLLOW, OR DRY IT", "ROCKS, TREES, LOGS, RAMPS, SHOPS",
-                                              "START AND GATES", "NAME, MODE, RULES, MEDALS"};
+                                              "START AND GATES", "NAME, MODE, RULES, MEDALS", "TYPE, DIFFICULTY, KIT, STAMP A GENERATOR"};
 const char* kOpNames[4] = {"RAISE", "LOWER", "SMOOTH", "FLATTEN"};
-const char* kObjNames[OBJ_KIND_COUNT] = {"ROCK", "RAMP / BLOCK", "LOG", "TREE", "REPAIR SHOP"};
+const char* kObjNames[OBJ_KIND_COUNT + 1] = {"ROCK", "RAMP / BLOCK", "LOG", "TREE", "REPAIR SHOP", "SLAB LEDGE"};
+const int K_LEDGE = OBJ_KIND_COUNT;  // (the objects tool's extra brush: a row of rock slabs along a dragged line)
+const double kRisers[5] = {0.3, 0.45, 0.6, 0.9, 1.2};  // m: the step a ledge makes (a notch step stays under 0.4)
+const double kSnaps[4] = {0, 0.5, 1, 2};               // m
+const char* kTestShort[ST_COUNT] = {"SKILL", "PROBLEMS", "COMMITMENT", "ATTRITION", "CO-OP"};
 const char* kTreeNames[3] = {"PINE", "BROADLEAF", "DEAD SNAG"};
 
 // Button ids.
@@ -26,15 +32,19 @@ enum {
     B_OP = 200,              // + brush op
     B_MAT = 300,             // + material
     B_OBJ = 400,             // + object kind
-    B_SAVE = 500, B_OPEN, B_PLAY, B_UNDO, B_REDO, B_EXIT, B_NEWMAP,
+    B_SAVE = 500, B_OPEN, B_PLAY, B_UNDO, B_REDO, B_EXIT, B_NEWMAP, B_NEWSEC,
     B_RAD_DN = 600, B_RAD_UP, B_STR_DN, B_STR_UP, B_SOFT, B_DEPTH_DN, B_DEPTH_UP, B_DRY,
     B_SIZE_DN, B_SIZE_UP, B_TREE, B_YAW_DN, B_YAW_UP, B_PITCH_DN, B_PITCH_UP, B_SLAB, B_W_DN, B_W_UP, B_LEN_DN, B_LEN_UP,
-    B_OFFSET_DN, B_OFFSET_UP,
+    B_OFFSET_DN, B_OFFSET_UP, B_SNAP_DN, B_SNAP_UP, B_RISE_DN, B_RISE_UP, B_LDEPTH_DN, B_LDEPTH_UP,
     B_OBJPROP = 900,    // + property index for object editor
     B_GATEW_DN, B_GATEW_UP, B_DELETE, B_EARLIER, B_LATER,
     B_SET = 700,             // + settings row (click selects it)
     B_FILE = 800,            // + file index
+    B_SEC = 1000,            // + section page action (SecAct)
 };
+
+// The section page's actions.
+enum SecAct { S_NAME, S_KIND_DN, S_KIND_UP, S_DIFF_DN, S_DIFF_UP, S_GEN_DN, S_GEN_UP, S_SEED_DN, S_SEED_UP, S_STAMP, S_TEST = 20, S_KIT = 30 };
 
 bool screenPoint(const View& v, int W, int H, const V3& p, float& sx, float& sy) {
     const V3 f = norm(v.target - v.eye), rt = norm(cross(f, v.up)), up = cross(rt, f);
@@ -53,7 +63,62 @@ std::string fmt1(double v, const char* unit = "") {
     return b;
 }
 
+// The ground's slope at (x, z) in degrees, over 2 m.
+double slopeDeg(const World& w, double x, double z) {
+    const double gx = (w.height(x + 1, z) - w.height(x - 1, z)) / 2, gz = (w.height(x, z + 1) - w.height(x, z - 1)) / 2;
+    return std::atan(std::hypot(gx, gz)) * 180 / M_PI;
+}
+
+// What a slope means for the trucks (the handoff's measurements: a set-up Bronco on a side slope holds
+// 35 and rolls at 40; stock slides at 30 on dirt; a grid wall seals a pass from 65).
+const char* slopeNote(double deg, float& r, float& g, float& b) {
+    r = 0.7f, g = 1.0f, b = 0.6f;
+    if (deg < 25) return "ANYTHING DRIVES IT";
+    r = 0.9f, g = 1.0f, b = 0.5f;
+    if (deg < 30) return "STOCK HOLDS ON ROCK, SLIDES ON DIRT AT 30";
+    r = 1.0f, g = 0.85f, b = 0.4f;
+    if (deg < 35) return "SIDE SLOPE: STOCK SLIDES ON DIRT, SET-UP HOLDS";
+    r = 1.0f, g = 0.65f, b = 0.3f;
+    if (deg < 40) return "SET-UP TRUCK ONLY (4L, LOCKERS, AIR DOWN)";
+    r = 1.0f, g = 0.45f, b = 0.3f;
+    if (deg < 55) return "SIDE SLOPE ROLLS OR SLIDES. A WALL: ROCK BUGGY STILL CLIMBS";
+    r = 1.0f, g = 0.35f, b = 0.35f;
+    if (deg < 65) return "A WALL: ONLY THE BEST SET-UPS GET UP A STEP OR TWO";
+    return "SEALS THE PASS (65+ STOPS EVEN THE ROCK BUGGY)";
+}
+
+std::string uniqueSectionName() {
+    for (int n = 1; n < 1000; n++) {
+        const std::string name = "MY SECTION " + std::to_string(n);
+        std::ifstream f(userLevelFolder() + "/" + levelFileName(name) + ".czl");
+        if (!f) return name;
+    }
+    return "MY SECTION";
+}
+
 }  // namespace
+
+V3 Editor::snapped(const V3& p) const {
+    const double s = kSnaps[snapIdx];
+    return s > 0 ? V3(std::round(p.x / s) * s, p.y, std::round(p.z / s) * s) : p;
+}
+
+void Editor::newSection(World& w, Renderer& r) {
+    rend = &r;
+    w = World(MAP_PROVING_GROUND);
+    Level l;
+    l.map = MAP_PROVING_GROUND;
+    l.name = uniqueSectionName();
+    l.mode = LEVEL_SPRINT;
+    open(w, r, l);
+    core.newSection(defaultSectionCanvas());
+    const SectionInfo& c = core.level.section;
+    const V3 f(std::cos(c.heading), 0, -std::sin(c.heading));
+    yaw = c.heading, pitch = -0.55;
+    eye = core.level.start - f * 78 + V3(0, 64, 0);
+    tool = SECTION;
+    say("NEW SECTION: ENTRY AND EXIT ARE SET. BUILD BETWEEN THEM, THEN SAVE (CTRL+S)", 6);
+}
 
 void Editor::open(World& w, Renderer& r, const Level& lv) {
     rend = &r;
@@ -202,6 +267,10 @@ void Editor::click() {
             break;
         }
         case OBJECTS:
+            if (objKind == K_LEDGE) {  // (drag a line: the row of slabs goes along it)
+                if (haveHit) ledgeOn = true, ledgeA = snapped(hit);
+                break;
+            }
             if (hover.kind == EditPick::OBJECT || hover.kind == EditPick::BASE) {
                 sel = hover;
                 if (sel.kind == EditPick::BASE) {  // a map's repair shop: picked up to move like your own
@@ -216,7 +285,7 @@ void Editor::click() {
                 say(sel.kind == EditPick::BASE ? "THE MAP'S OWN " + sel.name + ": DELETE TAKES IT OUT" : sel.name + ": DRAG TO MOVE, Q E TURN, DELETE");
             } else if (haveHit) {
                 sel = EditPick();
-                LevelObject o = makeObject(hit);
+                LevelObject o = makeObject(snapped(hit));
                 const int k = core.addObject(o);
                 nextSeed = nextSeed * 1103515245u + 12345u;
                 sel.kind = EditPick::OBJECT, sel.index = k, sel.name = kObjNames[objKind];
@@ -233,11 +302,11 @@ void Editor::click() {
                     core.setStart(hit.x, hit.z, yaw);
                     sel = EditPick();
                     sel.kind = EditPick::START;
-                    say("START SET (FACING THE WAY YOU LOOK). CLICK AGAIN FOR GATES");
+                    say(core.level.section.on ? "ENTRY SET. CLICK AGAIN FOR THE EXIT (THE LAST GATE)" : "START SET (FACING THE WAY YOU LOOK). CLICK AGAIN FOR GATES");
                 } else {
                     Gate g;
                     g.p = V3(hit.x, 0, hit.z);
-                    g.yaw = yaw;
+                    g.yaw = core.level.section.on ? core.level.section.heading : yaw;
                     g.width = gateWidth;
                     // After the selected gate if there is one, else at the end.
                     const int at = sel.kind == EditPick::GATE ? sel.index + 1 : -1;
@@ -253,11 +322,47 @@ void Editor::click() {
 }
 
 void Editor::release() {
+    if (ledgeOn) {
+        ledgeOn = false;
+        if (haveHit) placeLedge(ledgeA, snapped(hit));
+    }
     if (stroke) {
         core.endEdit();
         stroke = false;
     }
     dragging = false;
+}
+
+// A row of rock slabs along the line a-b, their tops `rise` m over the ground at the line, the ledge
+// rising away from where you look: one rock-slab box per ~2.4 m, overlapping, sunk 0.8 m (the handoff:
+// slab boxes are the primitive for ledges; a notch step wants to stay under 0.4 m).
+void Editor::placeLedge(const V3& a, const V3& b) {
+    const V3 d(b.x - a.x, 0, b.z - a.z);
+    const double L = len(d);
+    if (L < 1.5) {
+        say("DRAG A LINE AT LEAST 1.5 M LONG");
+        return;
+    }
+    const V3 dir = d * (1 / L);
+    V3 n(dir.z, 0, -dir.x);
+    if (dot(n, V3(std::cos(yaw), 0, -std::sin(yaw))) < 0) n = n * -1;
+    const double rise = kRisers[ledgeRise], thick = rise + 0.8, depth = ledgeDepth;
+    const int count = std::max(1, (int)std::ceil(L / 2.4));
+    const double seg = L / count, boxYaw = std::atan2(-dir.z, dir.x);
+    std::vector<LevelObject> row;
+    for (int k = 0; k < count; k++) {
+        const V3 lip = a + dir * (seg * (k + 0.5)), c = lip + n * (depth / 2);
+        LevelObject o;
+        o.kind = OBJ_BOX, o.sub = 1;
+        o.size = V3(seg / 2 + 0.15, thick / 2, depth / 2);
+        o.yaw = boxYaw;
+        o.p = V3(c.x, core.world->height(lip.x, lip.z) + rise - thick / 2, c.z);
+        const float v = 0.02f * (float)((k * 7) % 5 - 2);
+        o.col[0] = 0.70f + v, o.col[1] = 0.45f + v, o.col[2] = 0.32f + v;
+        row.push_back(o);
+    }
+    core.addObjects(row, "SLAB LEDGE");
+    say("LEDGE: " + std::to_string(count) + " SLABS, " + fmt1(rise, " M") + " RISE" + (rise > 0.4 ? " (OVER THE 0.4 M NOTCH STEP)" : ""));
 }
 
 void Editor::applyBrush(double dt) {
@@ -288,7 +393,9 @@ void Editor::save() {
     if (core.save(path, &err)) {
         core.level.file = path;
         core.level.builtin = false;
-        say("SAVED " + path);
+        if (core.level.section.on && core.saveNote.empty()) say("SAVED " + path + " AND ITS SECTION FILE (.CZS)", 4);
+        else if (!core.saveNote.empty()) say("SAVED " + path + ", BUT " + core.saveNote, 6);
+        else say("SAVED " + path);
     } else {
         say("CAN'T SAVE: " + err, 4);
     }
@@ -364,7 +471,7 @@ void Editor::key(int sc) {
         case SC_TAB:
             if (tool == SCULPT) op = (BrushOp)((op + 1) % 4);
             else if (tool == PAINT) material = (material + 1) % (int)paintMaterials().size();
-            else if (tool == OBJECTS) objKind = (objKind + 1) % OBJ_KIND_COUNT;
+            else if (tool == OBJECTS) objKind = (objKind + 1) % (OBJ_KIND_COUNT + 1);
             return;
         case SC_LEFTBRACKET: radius = std::max(1.0, radius / 1.2), gateWidth = std::max(4.0, gateWidth - 1); return;
         case SC_RIGHTBRACKET: radius = std::min(60.0, radius * 1.2), gateWidth = std::min(40.0, gateWidth + 1); return;
@@ -453,8 +560,42 @@ void Editor::settingChange(int row, int dir) {
     });
 }
 
+void Editor::sectionAction(int code) {
+    if (!core.level.section.on) return;
+    auto step = [&](int cur, int dir, int n) { return ((cur + dir) % n + n) % n; };
+    switch (code) {
+        case S_NAME: typing = true; return;
+        case S_KIND_DN:
+        case S_KIND_UP: core.settings("seckind", [&](Level& l) { l.section.kind = step(l.section.kind, code == S_KIND_UP ? 1 : -1, SK_COUNT); }); return;
+        case S_DIFF_DN:
+        case S_DIFF_UP: core.settings("secdiff", [&](Level& l) { l.section.difficulty = std::min(5, std::max(1, l.section.difficulty + (code == S_DIFF_UP ? 1 : -1))); }); return;
+        case S_GEN_DN:
+        case S_GEN_UP: genType = step(genType, code == S_GEN_UP ? 1 : -1, SEC_COUNT); return;
+        case S_SEED_DN:
+        case S_SEED_UP: genSeed = (uint32_t)std::min(99, std::max(1, (int)genSeed + (code == S_SEED_UP ? 1 : -1))); return;
+        case S_STAMP: {
+            if (!core.level.hasStart) {
+                say("SET THE ENTRY FIRST (COURSE TOOL)", 4);
+                return;
+            }
+            const int n = core.stampSection(genType, genSeed);
+            sel = EditPick();
+            say(n < 0 ? "CAN'T STAMP HERE" : std::string("STAMPED ") + sectionName((SectionType)genType) + " " + std::to_string(genSeed) + ": " + std::to_string(n) + " OBJECTS. EDIT IT BY HAND", 5);
+            return;
+        }
+        default: break;
+    }
+    if (code >= S_TEST && code < S_TEST + ST_COUNT) core.settings("sectest" + std::to_string(code), [&](Level& l) { l.section.tests ^= 1 << (code - S_TEST); });
+    else if (code >= S_KIT && code < S_KIT + SKIT_COUNT) core.settings("seckit" + std::to_string(code), [&](Level& l) { l.section.kit ^= 1 << (code - S_KIT); });
+}
+
 void Editor::doButton(int id) {
+    if (id != B_NEWSEC) confirmNew = false;
     confirmClose = false;
+    if (id >= B_SEC) {
+        sectionAction(id - B_SEC);
+        return;
+    }
     if (id >= B_TOOL && id < B_TOOL + TOOL_COUNT) {
         tool = (Tool)(id - B_TOOL);
         sel = EditPick();
@@ -468,7 +609,7 @@ void Editor::doButton(int id) {
         material = id - B_MAT;
         return;
     }
-    if (id >= B_OBJ && id < B_OBJ + OBJ_KIND_COUNT) {
+    if (id >= B_OBJ && id < B_OBJ + OBJ_KIND_COUNT + 1) {
         objKind = id - B_OBJ;
         sel = EditPick();
         return;
@@ -527,6 +668,15 @@ void Editor::doButton(int id) {
             say(std::string("NEW LEVEL ON ") + mapName(newMap));
             break;
         }
+        case B_NEWSEC:
+            if (core.unsaved() && !confirmNew) {
+                confirmNew = true;
+                say("NOT SAVED: SAVE FIRST, OR CLICK NEW SECTION AGAIN TO DISCARD", 4);
+                return;
+            }
+            sel = EditPick();
+            newSection(*core.world, *rend);
+            break;
         case B_PLAY:
             if (core.level.mode != LEVEL_FREE && (!core.level.hasStart || core.level.gates.empty())) {
                 say("A RACE OR SPRINT NEEDS A START AND GATES (COURSE TOOL), OR SET THE MODE TO FREE DRIVE", 4);
@@ -588,6 +738,12 @@ void Editor::doButton(int id) {
         case B_OFFSET_UP:
             objOffset = clampd(objOffset + 0.5, -5.0, 15.0);
             break;
+        case B_SNAP_DN: snapIdx = (snapIdx + 3) % 4; break;
+        case B_SNAP_UP: snapIdx = (snapIdx + 1) % 4; break;
+        case B_RISE_DN: ledgeRise = std::max(0, ledgeRise - 1); break;
+        case B_RISE_UP: ledgeRise = std::min(4, ledgeRise + 1); break;
+        case B_LDEPTH_DN: bump(ledgeDepth, 1 / 1.2, 1, 12); break;
+        case B_LDEPTH_UP: bump(ledgeDepth, 1.2, 1, 12); break;
         case B_GATEW_DN:
         case B_GATEW_UP: {
             gateWidth = clampd(gateWidth + (id == B_GATEW_UP ? 2 : -2), 4, 40);
@@ -660,7 +816,7 @@ void Editor::update(double dt, const uint8_t* keys, Renderer& r, int w, int h) {
     if (lmb && dragging && haveHit) {
         if (sel.kind == EditPick::OBJECT && sel.index < (int)core.level.objects.size()) {
             LevelObject ob = core.level.objects[sel.index];
-            const V3 to(hit.x + dragOffset.x, 0, hit.z + dragOffset.z);
+            const V3 to = snapped(V3(hit.x + dragOffset.x, 0, hit.z + dragOffset.z));
             if (ob.kind == OBJ_LOG) {
                 const V3 m = (ob.p + ob.p2) * 0.5, sh = V3(to.x - m.x, 0, to.z - m.z);
                 ob.p += sh, ob.p2 += sh;
@@ -718,6 +874,38 @@ void Editor::drawWorldMarks(Renderer& r) {
         if (screenPoint(v, W, H, p, sx, sy)) label(r, sx - r.textWidth(t, s) / 2, sy - 8 * s - 6 * u, s, t, cr, cg, cb, 1);
     };
     const World& w = *core.world;
+    // A section's canvas: its outline (and the blend beyond it), distance ticks from the entry.
+    if (core.level.section.on) {
+        const SectionInfo& c = core.level.section;
+        const double ch = std::cos(c.heading), sh = std::sin(c.heading);
+        const V3 f(ch, 0, -sh), l(sh, 0, ch), o(c.x, 0, c.z);
+        auto at = [&](double uu, double vv, double lift) {
+            const V3 p = o + f * uu + l * vv;
+            return V3(p.x, w.height(p.x, p.z) + lift, p.z);
+        };
+        auto rect = [&](double grow, double step, float size, float cr, float cg, float cb, float al) {
+            const double u0 = -grow, u1 = c.length + grow, v0 = -c.half - grow, v1 = c.half + grow;
+            for (double uu = u0; uu <= u1; uu += step) dotAt(at(uu, v0, 0.3), size, cr, cg, cb, al), dotAt(at(uu, v1, 0.3), size, cr, cg, cb, al);
+            for (double vv = v0; vv <= v1; vv += step) dotAt(at(u0, vv, 0.3), size, cr, cg, cb, al), dotAt(at(u1, vv, 0.3), size, cr, cg, cb, al);
+        };
+        rect(24, 6, 3 * u, 0.7f, 0.6f, 0.4f, 0.55f);  // (where the ground blends back into the land)
+        rect(0, 2.5, 5 * u, 1.0f, 0.85f, 0.3f, 1);
+        const double eu = core.level.hasStart ? (core.level.start.x - c.x) * ch - (core.level.start.z - c.z) * sh : 40;
+        // Ticks every 20 m from the entry, and their distances along the near edge.
+        for (int k = (int)std::ceil(-eu / 20); eu + k * 20 <= c.length; k++) {
+            const double uu = eu + k * 20;
+            for (double up = 0; up <= 2; up += 0.5) dotAt(at(uu, -c.half, up + 0.3), 3 * u, 1.0f, 0.85f, 0.3f, 0.9f);
+            if (k != 0 && k % 2 == 0) tag(at(uu, -c.half, 3), (k > 0 ? "+" : "") + std::to_string(k * 20), 1.0f, 0.9f, 0.5f);
+        }
+        tag(at(0, c.half, 2), "CANVAS " + std::to_string((int)std::lround(c.length)) + " X " + std::to_string((int)std::lround(c.half * 2)) + " M", 1.0f, 0.85f, 0.3f);
+        if (core.level.hasStart) {  // the entry's line across the track
+            const V3 e = core.level.start;
+            for (double vv = -7; vv <= 7; vv += 0.7) {
+                const V3 p = e + l * vv;
+                dotAt(V3(p.x, w.height(p.x, p.z) + 0.4, p.z), 4 * u, 0.3f, 1.0f, 0.4f, 1);
+            }
+        }
+    }
     // The brush ring, lying on the ground.
     if (haveHit && (tool == SCULPT || tool == PAINT || tool == WATER)) {
         const int n = 72;
@@ -740,7 +928,8 @@ void Editor::drawWorldMarks(Renderer& r) {
         line(p - f * 4, p + f * 4, 16, 5 * u, 0.3f, 1.0f, 0.4f, 1);
         line(p + f * 4, p + f * 2 + l * 1.5, 6, 5 * u, 0.3f, 1.0f, 0.4f, 1);
         line(p + f * 4, p + f * 2 - l * 1.5, 6, 5 * u, 0.3f, 1.0f, 0.4f, 1);
-        tag(p + V3(0, 3, 0), on ? "START (SELECTED)" : "START", 0.3f, 1.0f, 0.4f);
+        const char* nm = core.level.section.on ? "ENTRY" : "START";
+        tag(p + V3(0, 3, 0), on ? std::string(nm) + " (SELECTED)" : std::string(nm), 0.3f, 1.0f, 0.4f);
     }
     for (int k = 0; k < (int)core.level.gates.size(); k++) {
         const Gate& g = core.level.gates[k];
@@ -756,7 +945,8 @@ void Editor::drawWorldMarks(Renderer& r) {
         // Which way it's driven through.
         const V3 f(std::cos(g.yaw), 0, -std::sin(g.yaw)), m(g.p.x, (ya + yb) / 2 + 0.4, g.p.z);
         line(m - f * 2, m + f * 2, 8, 4 * u, cr, cg, cb, 0.8f);
-        tag(V3(g.p.x, std::max(ya, yb) + 5, g.p.z), last && core.level.mode != LEVEL_FREE ? std::to_string(k + 1) + " FINISH" : std::to_string(k + 1), cr, cg, cb);
+        tag(V3(g.p.x, std::max(ya, yb) + 5, g.p.z),
+            core.level.section.on && last ? "EXIT" : last && core.level.mode != LEVEL_FREE ? std::to_string(k + 1) + " FINISH" : std::to_string(k + 1), cr, cg, cb);
     }
     // Hovered / selected objects.
     auto mark = [&](const EditPick& p, bool selected) {
@@ -788,10 +978,11 @@ void Editor::drawToolbar(Renderer& r, float u) {
     for (int t = 0; t < TOOL_COUNT; t++) y = button(r, x, y, w, bh, std::to_string(t + 1) + "  " + kToolNames[t], B_TOOL + t, tool == t, u);
     // File and history.
     y += 14 * u;
-    pill(r, x - 6 * u, y - 6 * u, w + 12 * u, (bh + 4 * u) * 7 + 8 * u, 0, 0, 0, 0.55f);
+    pill(r, x - 6 * u, y - 6 * u, w + 12 * u, (bh + 4 * u) * 8 + 8 * u, 0, 0, 0, 0.55f);
     y = button(r, x, y, w, bh, "SAVE", B_SAVE, false, u);
     y = button(r, x, y, w, bh, "OPEN...", B_OPEN, false, u);
     y = button(r, x, y, w, bh, std::string("NEW: ") + mapName(nextListedMap(newMap, 1)), B_NEWMAP, false, u);
+    y = button(r, x, y, w, bh, confirmNew ? "SURE? CLICK AGAIN" : "NEW SECTION", B_NEWSEC, confirmNew, u);
     y = button(r, x, y, w, bh, "UNDO", B_UNDO, false, u);
     y = button(r, x, y, w, bh, "REDO", B_REDO, false, u);
     y = button(r, x, y, w, bh, "PLAY IT", B_PLAY, false, u);
@@ -805,7 +996,7 @@ void Editor::drawOptions(Renderer& r, float u) {
     std::vector<std::string> info;
     // (Drawn in two passes: the panel's height isn't known till the end, so draw into a
     // scratch list of rows first. Simpler: a fixed tall panel per tool.)
-    const float panelH = tool == PAINT ? 560 * u : tool == SETTINGS ? 420 * u : tool == OBJECTS ? 420 * u : 300 * u;
+    const float panelH = tool == PAINT ? 560 * u : tool == SETTINGS ? 420 * u : tool == OBJECTS ? 470 * u : tool == SECTION ? 600 * u : 300 * u;
     pill(r, x - 8 * u, top - 6 * u, w + 16 * u, panelH, 0, 0, 0, 0.55f);
     label(r, x, y, px(1.6f * u), kToolNames[tool], 1.0f, 0.75f, 0.3f, 1);
     y += 8 * px(1.6f * u) + 6 * u;
@@ -862,8 +1053,22 @@ void Editor::drawOptions(Renderer& r, float u) {
             note("SHIFT+CLICK: DRY");
             break;
         case OBJECTS:
-            for (int k = 0; k < OBJ_KIND_COUNT; k++) button(r, x + (k % 2) * (half + 4 * u), y + (k / 2) * (bh + 4 * u), half, bh, kObjNames[k], B_OBJ + k, objKind == k, u);
+            for (int k = 0; k < OBJ_KIND_COUNT + 1; k++) button(r, x + (k % 2) * (half + 4 * u), y + (k / 2) * (bh + 4 * u), half, bh, kObjNames[k], B_OBJ + k, objKind == k, u);
             y += 3 * (bh + 4 * u) + 6 * u;
+            if (objKind == K_LEDGE) {
+                const double rise = kRisers[ledgeRise];
+                row("RISER", fmt1(rise, " M"), B_RISE_DN, B_RISE_UP);
+                row("DEPTH", fmt1(ledgeDepth, " M"), B_LDEPTH_DN, B_LDEPTH_UP);
+                row("SNAP", kSnaps[snapIdx] > 0 ? fmt1(kSnaps[snapIdx], " M") : "OFF", B_SNAP_DN, B_SNAP_UP);
+                y += 6 * u;
+                note("DRAG A LINE ON THE GROUND: A ROW OF ROCK");
+                note("SLABS GOES ALONG IT, RISING AWAY FROM YOU.");
+                note(rise > 0.4 ? "THIS RISE IS TOO BIG FOR A NOTCH STEP" : "A STEP THIS SIZE IS FINE FOR A NOTCH (0.4 M MAX)");
+                note("A BRONCO CLIMBS A SQUARE LEDGE UP TO 0.45 M");
+                note("FACES 0.75-1.3 M NEED A LINE OR A WINCH");
+                note("UNDO TAKES THE WHOLE ROW BACK");
+                break;
+            }
             if (objKind == OBJ_ROCK) row("SIZE", fmt1(rockSize * 2, " M"), B_SIZE_DN, B_SIZE_UP);
             if (objKind == OBJ_TREE) {
                 row("HEIGHT", fmt1(treeHeight, " M"), B_SIZE_DN, B_SIZE_UP);
@@ -884,6 +1089,7 @@ void Editor::drawOptions(Renderer& r, float u) {
             }
             row("TURN", std::to_string((int)std::lround(std::fmod(objYaw * 180 / M_PI + 3600, 360))) + " DEG", B_YAW_DN, B_YAW_UP);
             row("OFFSET (UP/DOWN)", fmt1(objOffset, " M"), B_OFFSET_DN, B_OFFSET_UP);
+            row("GRID SNAP", kSnaps[snapIdx] > 0 ? fmt1(kSnaps[snapIdx], " M") : "OFF", B_SNAP_DN, B_SNAP_UP);
             if (sel.kind == EditPick::OBJECT && sel.index < (int)core.level.objects.size()) {
                 // Object editor panel.
                 const LevelObject& ob = core.level.objects[sel.index];
@@ -909,7 +1115,8 @@ void Editor::drawOptions(Renderer& r, float u) {
             break;
         case COURSE: {
             const int n = (int)core.level.gates.size();
-            note(core.level.hasStart ? (std::to_string(n) + (n == 1 ? " GATE" : " GATES") + " IN ORDER") : "FIRST CLICK: THE START");
+            note(core.level.section.on ? (core.level.hasStart ? std::to_string(n) + (n == 1 ? " GATE: THE LAST IS THE EXIT" : " GATES: THE LAST IS THE EXIT") : "FIRST CLICK: THE ENTRY")
+                                       : core.level.hasStart ? (std::to_string(n) + (n == 1 ? " GATE" : " GATES") + " IN ORDER") : "FIRST CLICK: THE START");
             row("GATE WIDTH", fmt1(gateWidth, " M"), B_GATEW_DN, B_GATEW_UP);
             if (sel.kind == EditPick::GATE) {
                 button(r, x, y, half, bh, "EARLIER", B_EARLIER, false, u);
@@ -919,6 +1126,14 @@ void Editor::drawOptions(Renderer& r, float u) {
                 y += bh + 4 * u;
             }
             y += 6 * u;
+            if (core.level.section.on) {
+                note("ENTRY = THE START: IT SNAPS TO A WHOLE");
+                note("METRE AND FACES ALONG THE CANVAS.");
+                note("EXIT = THE LAST GATE. KEEP BOTH INSIDE");
+                note("THE CANVAS. DRAG EITHER TO MOVE IT.");
+                note("[ ]: GATE WIDTH");
+                break;
+            }
             note("CLICK THE GROUND: NEW GATE, FACING");
             note("THE WAY YOU LOOK (AFTER THE SELECTED)");
             note("DRAG A GATE OR THE START TO MOVE IT");
@@ -958,6 +1173,36 @@ void Editor::drawOptions(Renderer& r, float u) {
             note("ENTER ON NAME: TYPE IT");
             break;
         }
+        case SECTION: {
+            const SectionInfo& c = core.level.section;
+            if (!c.on) {
+                note("THIS LEVEL ISN'T A SECTION.");
+                note("TOOLBAR: NEW SECTION STARTS ONE ON A");
+                note("CLEARED CANVAS, WITH AN ENTRY AND AN EXIT.");
+                break;
+            }
+            const std::string nm = core.level.name + (typing && std::fmod(clock, 1.0) < 0.5 ? "_" : "");
+            button(r, x, y, w, bh, "NAME: " + nm, B_SEC + S_NAME, typing, u);
+            y += bh + 4 * u;
+            row("TYPE", sectionKindName(c.kind), B_SEC + S_KIND_DN, B_SEC + S_KIND_UP);
+            row("DIFFICULTY", std::to_string(c.difficulty) + " OF 5", B_SEC + S_DIFF_DN, B_SEC + S_DIFF_UP);
+            note("WHAT IT TESTS");
+            for (int k = 0; k < ST_COUNT; k++)
+                button(r, x + (k % 2) * (half + 4 * u), y + (k / 2) * (bh + 4 * u), half, bh, std::string(kTestShort[k]) + (c.tests >> k & 1 ? ": ON" : ""), B_SEC + S_TEST + k, c.tests >> k & 1, u);
+            y += 3 * (bh + 4 * u) + 2 * u;
+            note("KIT IT WANTS");
+            for (int k = 0; k < SKIT_COUNT; k++)
+                button(r, x + (k % 2) * (half + 4 * u), y + (k / 2) * (bh + 4 * u), half, bh, std::string(sectionKitName(k)) + (c.kit >> k & 1 ? ": ON" : ""), B_SEC + S_KIT + k, c.kit >> k & 1, u);
+            y += 3 * (bh + 4 * u) + 2 * u;
+            note(c.gen >= 0 ? std::string("STAMPED FROM ") + sectionName((SectionType)c.gen) + " " + std::to_string(c.genSeed) : "START FROM A GENERATOR (OPTIONAL)");
+            row("GENERATOR", sectionName((SectionType)genType), B_SEC + S_GEN_DN, B_SEC + S_GEN_UP);
+            row("SEED", std::to_string(genSeed), B_SEC + S_SEED_DN, B_SEC + S_SEED_UP);
+            button(r, x, y, w, bh, "STAMP IT AT THE ENTRY", B_SEC + S_STAMP, false, u);
+            y += bh + 8 * u;
+            note("SAVE WRITES THE LEVEL AND A .CZS SECTION");
+            note("FILE (MEASURED FROM THE ENTRY) FOR THE STITCHER");
+            break;
+        }
         default: break;
     }
     if (mx >= x - 8 * u && my >= top - 6 * u && my < top - 6 * u + panelH) overUi = true;
@@ -972,7 +1217,7 @@ void Editor::drawStatus(Renderer& r, float u) {
                   mapName(l.map), levelModeName(l.mode), core.cellEdits(), l.objects.size(), l.gates.size(),
                   core.canUndo() ? core.undoName().c_str() : "-");
     r.text(12 * u, y + 7 * u, s, buf, 0.9f, 0.91f, 0.94f, 1);
-    const char* keys = "WASD FLY  MOUSE WHEEL ZOOM  Q E SIZE/UP DOWN  RIGHT-DRAG LOOK  SHIFT FAST  1-6 TOOLS  CTRL+Z/Y UNDO/REDO  CTRL+S SAVE  F5 PLAY  ESC EXIT";
+    const char* keys = "WASD FLY  MOUSE WHEEL ZOOM  Q E SIZE/UP DOWN  RIGHT-DRAG LOOK  SHIFT FAST  1-7 TOOLS  CTRL+Z/Y UNDO/REDO  CTRL+S SAVE  F5 PLAY  ESC EXIT";
     const float ks = px(1.0f * u);
     r.rect(W - r.textWidth(keys, ks) - 20 * u, y - 8 * ks - 10 * u, r.textWidth(keys, ks) + 20 * u, 8 * ks + 10 * u, 0, 0, 0, 0.45f);
     r.text(W - r.textWidth(keys, ks) - 10 * u, y - 8 * ks - 5 * u, ks, keys, 0.7f, 0.72f, 0.76f, 1);
@@ -980,6 +1225,22 @@ void Editor::drawStatus(Renderer& r, float u) {
     if (haveHit) {
         std::snprintf(buf, sizeof buf, "%.0f, %.0f  H %.1f  %s", hit.x, hit.z, hit.y, surfaceInfo(core.world->surfaceAt(hit.x, hit.z)).name);
         r.text(12 * u, y - 8 * s - 6 * u, s, buf, 0.8f, 0.82f, 0.86f, 0.9f);
+        // The slope, and what the trucks make of it.
+        float cr, cg, cb;
+        const double deg = slopeDeg(*core.world, hit.x, hit.z);
+        const char* note = slopeNote(deg, cr, cg, cb);
+        std::snprintf(buf, sizeof buf, "SLOPE %.0f DEG  -  %s", deg, note);
+        r.text(12 * u, y - 2 * (8 * s + 6 * u), s, buf, cr, cg, cb, 0.95f);
+    }
+    if (ledgeOn && haveHit) {  // (the line being dragged)
+        const V3 a = ledgeA, b = snapped(hit);
+        const int n = std::max(2, (int)(len(b - a) / 1.0));
+        const View v = view(W, H);
+        for (int k = 0; k <= n; k++) {
+            const V3 p = a + (b - a) * ((double)k / n);
+            float sx, sy;
+            if (screenPoint(v, W, H, V3(p.x, core.world->height(p.x, p.z) + 0.4, p.z), sx, sy)) r.rect(sx - 2 * u, sy - 2 * u, 4 * u, 4 * u, 1, 0.7f, 0.3f, 1);
+        }
     }
 }
 
@@ -1000,7 +1261,8 @@ void Editor::drawFiles(Renderer& r, float u) {
         buttons.push_back({x + 8 * u, ry, w - 16 * u, rowH, B_FILE + i});
         if (mx >= x + 8 * u && mx < x + w - 8 * u && my >= ry && my < ry + rowH) fileSel = i;
         r.text(x + 16 * u, ry + (rowH - 8 * s) / 2, s, lv.name, 1, 1, 1, 1);
-        const std::string tagText = std::string(mapName(lv.map)) + "  " + levelModeName(lv.mode) + (lv.builtin ? "  (GAME'S: OPENS A COPY)" : "");
+        const std::string tagText = std::string(mapName(lv.map)) + "  " + levelModeName(lv.mode) + (lv.section.on ? std::string("  SECTION ") + sectionKindName(lv.section.kind) + " " + std::to_string(lv.section.difficulty) : std::string()) +
+                                   (lv.builtin ? "  (GAME'S: OPENS A COPY)" : "");
         r.text(x + w - 16 * u - r.textWidth(tagText, px(1.0f * u)), ry + (rowH - 8 * px(1.0f * u)) / 2, px(1.0f * u), tagText, 0.6f, 0.62f, 0.66f, 1);
     }
     overUi = true;

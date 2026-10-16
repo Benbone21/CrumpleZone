@@ -180,7 +180,7 @@ enum Id {
     RESUME_ROW = 100, VEHICLE_ROW, MAP_ROW, GARAGE_ROW, SETTINGS_ROW, CONTROLS_ROW, RESET_ROW, QUIT_ROW, BACK_ROW,
     MULTI_ROW, NAME_ROW, HOST_ROW, ADDRESS_ROW, JOIN_ROW, LEAVE_ROW, FOUND_ROW0, FOUND_ROW5 = FOUND_ROW0 + 5,
     PILOT_ROW, DEST_ROW, PSPEED_ROW, PROUTE_ROW, PGO_ROW, PSTOP_ROW,
-    FREEDRIVE_ROW, MODE_ROW, LEVELS_ROW, LEVEL_PICK, LEVEL_PLAY, LEVEL_EDIT, EDITOR_ROW, LAB_ROW, LRESTART_ROW, LQUIT_ROW, MAINMENU_ROW,
+    FREEDRIVE_ROW, MODE_ROW, LEVELS_ROW, LEVEL_SHOW, LEVEL_PICK, LEVEL_PLAY, LEVEL_EDIT, EDITOR_ROW, SECTION_ROW, LAB_ROW, LRESTART_ROW, LQUIT_ROW, MAINMENU_ROW,
     JOBS_ROW, JOB_PICK, JOB_GO, JOB_STOP_ROW, MEET_ROW, CONTROLLER_ROW,
     SESSION_ROW, HMAP_ROW, HMAX_ROW, CANCEL_ROW,
     STEERING, KEYBINDS_ROW, KEYS_RESET, KEY_ROW0, KEY_ROWN = KEY_ROW0 + KA_COUNT,
@@ -228,6 +228,7 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
         button(LEVELS_ROW, "LEVELS", std::to_string(levels.size()) + " RACES, CLIMBS AND WORLDS");
         button(MULTI_ROW, "MULTIPLAYER", netActive ? netStatus : "HOST OR JOIN A GAME");
         button(EDITOR_ROW, "WORLD EDITOR", "BUILD YOUR OWN WORLDS AND LEVELS");
+        button(SECTION_ROW, "NEW SECTION", "HAND-BUILD AN OBSTACLE SECTION (DEV)");
         button(LAB_ROW, "MODEL LAB", "PICK, TWEAK OR REDO THE GAME'S MODELS");
         button(GARAGE_ROW, "GARAGE", "ENGINE, SUSPENSION, GEARBOX");
         button(SETTINGS_ROW, "SETTINGS", "UNITS, GRAPHICS, SOUND");
@@ -255,10 +256,12 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
         return r;
     }
     if (page == 4) {
-        header(levels.empty() ? "NO LEVELS" : (std::to_string(levels.size()) + " LEVELS").c_str());
-        if (!levels.empty()) {
-            const int k = std::min(std::max(levelPick, 0), (int)levels.size() - 1);
-            choice(LEVEL_PICK, "LEVEL", levels[k].name, (int)levels.size(), levels[k].about);
+        const std::vector<int> vis = visibleLevels();
+        header(levels.empty() ? "NO LEVELS" : vis.empty() ? "NO SECTIONS YET: MAIN MENU > NEW SECTION" : (std::to_string(vis.size()) + (levelSections ? " SECTIONS" : " LEVELS")).c_str());
+        choice(LEVEL_SHOW, "SHOW", levelSections ? "SECTIONS" : "ALL", 2, "SECTIONS: THE OBSTACLE SECTIONS YOU BUILT");
+        if (!vis.empty()) {
+            const int k = shownLevel();
+            choice(LEVEL_PICK, "LEVEL", levels[k].name, (int)vis.size(), levels[k].about);
             for (const std::string& line : levels[k].lines) r.push_back({HEADER, "", "", "", 0}), r.back().label = line, r.back().id = -1;
             button(LEVEL_PLAY, "PLAY", netClient ? "THE HOST PICKS THE LEVEL" : netActive ? "EVERYONE IN THE SESSION PLAYS IT" : "");
             if (!netClient) button(LEVEL_EDIT, "OPEN IN THE EDITOR", "CHANGE IT, OR START YOURS FROM IT");
@@ -540,10 +543,12 @@ PauseMenu::Result PauseMenu::activate(int row, Settings& s) {
         case JOB_PICK:
         case JOB_GO: return netClient ? Result{} : Result{JOB_START, jobPick};
         case JOB_STOP_ROW: return {JOB_STOP};
+        case LEVEL_SHOW: levelSections = !levelSections, levelPick = std::max(0, shownLevel()); return {};
         case LEVEL_PICK:
-        case LEVEL_PLAY: return netClient ? Result{} : Result{PLAY_LEVEL, levelPick};
-        case LEVEL_EDIT: return {EDIT_LEVEL, levelPick};
+        case LEVEL_PLAY: return netClient || shownLevel() < 0 ? Result{} : Result{PLAY_LEVEL, shownLevel()};
+        case LEVEL_EDIT: return shownLevel() < 0 ? Result{} : Result{EDIT_LEVEL, shownLevel()};
         case EDITOR_ROW: return {EDITOR};
+        case SECTION_ROW: return {NEW_SECTION};
         case LAB_ROW: return {MODEL_LAB};
         case LRESTART_ROW: return {LEVEL_RESTART};
         case LQUIT_ROW: return {LEVEL_QUIT};
@@ -597,6 +602,19 @@ PauseMenu::Result PauseMenu::activate(int row, Settings& s) {
     return {};
 }
 
+std::vector<int> PauseMenu::visibleLevels() const {
+    std::vector<int> vis;
+    for (int k = 0; k < (int)levels.size(); k++)
+        if (!levelSections || levels[k].section) vis.push_back(k);
+    return vis;
+}
+
+int PauseMenu::shownLevel() const {
+    const std::vector<int> vis = visibleLevels();
+    if (vis.empty()) return -1;
+    return std::find(vis.begin(), vis.end(), levelPick) != vis.end() ? levelPick : vis[0];
+}
+
 PauseMenu::Result PauseMenu::change(int row, int dir, Settings& s) {
     std::vector<Row> r = rows(s);
     if (row < 0 || row >= (int)r.size()) return {};
@@ -610,7 +628,14 @@ PauseMenu::Result PauseMenu::change(int row, int dir, Settings& s) {
         case MAP_ROW:
         case HMAP_ROW: mapPick = nextListedMap(mapPick, dir); return {};
         case HMAX_ROW: s.maxPlayers = 2 + cycle(std::min(std::max(s.maxPlayers, 2), 8) - 2); break;
-        case LEVEL_PICK: levelPick = cycle(std::min(std::max(levelPick, 0), it.count - 1)); return {};
+        case LEVEL_SHOW: levelSections = !levelSections, levelPick = std::max(0, shownLevel()); return {};
+        case LEVEL_PICK: {  // (among the ones showing)
+            const std::vector<int> vis = visibleLevels();
+            if (vis.empty()) return {};
+            const int at = (int)(std::find(vis.begin(), vis.end(), shownLevel()) - vis.begin());
+            levelPick = vis[(at + dir + (int)vis.size()) % (int)vis.size()];
+            return {};
+        }
         case JOB_PICK: jobPick = cycle(std::min(std::max(jobPick, 0), it.count - 1)); return {};
         case UNITS: s.mph = !s.mph; break;
         case RECOVERY: s.realRecovery = !s.realRecovery; break;

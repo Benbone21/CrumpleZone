@@ -1,6 +1,10 @@
 #pragma once
 #include <cstdint>
 
+#include <functional>
+#include <vector>
+
+#include "level.h"
 #include "world.h"
 
 // Obstacle sections: seeded strips of hard ground about 140-180 m long, each a chokepoint to drive
@@ -48,4 +52,9 @@ SectionFootprint sectionFootprint(SectionType t);
 // Stamps section `t` (the same seed: the same section) onto `w`. Call w.buildGrid() afterwards (the
 // lookup grids don't know about what it added). Whatever scanned rock hulls are active
 // (props::activeRockScans) are used for the boulders.
-SectionBuilt buildSection(World& w, SectionType t, uint32_t seed, const SectionFrame& f);
+// With `record`, every rock, rock slab, tree and log it stands up is also added there as a LevelObject
+// (in world coordinates), so the editor can keep it in a level and let it be edited by hand.
+SectionBuilt buildSection(World& w, SectionType t, uint32_t seed, const SectionFrame& f, std::vector<LevelObject>* record = nullptr);
+
+// Takes everything standing where `in(x, z)` is true off the ground (what a section does first).
+void clearObjectsWhere(World& w, const std::function<bool(double, double)>& in);

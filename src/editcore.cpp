@@ -5,6 +5,8 @@
 #include <cstdio>
 #include <deque>
 
+#include "sectionfile.h"
+
 // ---- Materials ---------------------------------------------------------------------------
 
 const std::vector<PaintMaterial>& paintMaterials() {
@@ -132,7 +134,10 @@ void EditCore::begin(World& w, const Level& lv) {
         if (s.first >= 0 && s.first < n * n) w.setCellSurface(s.first, (uint8_t)(s.second >> 8), (uint8_t)(s.second & 0xff));
     for (const auto& wt : level.water)
         if (wt.first >= 0 && wt.first < n * n) w.setCellWater(wt.first, wt.second);
+    for (const auto& f : level.flow)
+        if (f.first >= 0 && f.first < n * n && !w.flowX.empty()) w.flowX[f.first] = f.second.first, w.flowZ[f.first] = f.second.second;
     rebuildObjects();
+    if (level.section.on) clearBushes();
     syncSpawn();
     history.clear();
     future.clear();
@@ -251,16 +256,17 @@ void EditCore::trim() {
 Level EditCore::metaOf() {
     std::map<int, float> h, wt;
     std::map<int, uint16_t> s;
-    h.swap(level.heights), s.swap(level.surfaces), wt.swap(level.water);
+    std::map<int, std::pair<float, float>> fl;
+    h.swap(level.heights), s.swap(level.surfaces), wt.swap(level.water), fl.swap(level.flow);
     Level m = level;
-    h.swap(level.heights), s.swap(level.surfaces), wt.swap(level.water);
+    h.swap(level.heights), s.swap(level.surfaces), wt.swap(level.water), fl.swap(level.flow);
     return m;
 }
 
 void EditCore::restoreMeta(const Level& m) {
     const bool objs = !sameObjects(m, level);
     Level n = m;
-    n.heights.swap(level.heights), n.surfaces.swap(level.surfaces), n.water.swap(level.water);
+    n.heights.swap(level.heights), n.surfaces.swap(level.surfaces), n.water.swap(level.water), n.flow.swap(level.flow);
     n.file = level.file;
     n.builtin = level.builtin;
     level = std::move(n);
@@ -559,6 +565,15 @@ LevelObject EditCore::grounded(LevelObject o) const {
 
 static const char* kObjectNames[OBJ_KIND_COUNT] = {"ROCK", "BLOCK", "LOG", "TREE", "REPAIR SHOP"};
 
+void EditCore::addObjects(const std::vector<LevelObject>& objs, const std::string& what) {
+    if (!world || objs.empty()) return;
+    beginEdit(what);
+    touchMeta();
+    level.objects.insert(level.objects.end(), objs.begin(), objs.end());
+    rebuildObjects();
+    endEdit();
+}
+
 int EditCore::addObject(const LevelObject& o) {
     if (!world) return -1;
     beginEdit(std::string("ADD ") + kObjectNames[std::min(std::max(o.kind, 0), OBJ_KIND_COUNT - 1)]);
@@ -622,6 +637,7 @@ int EditCore::adoptBase(const EditPick& p) {
 
 void EditCore::setStart(double x, double z, double yaw) {
     if (!world) return;
+    if (level.section.on) x = std::round(x), z = std::round(z), yaw = level.section.heading;  // (the entry is on a whole metre: the frame's samples are cells)
     beginEdit("MOVE START");
     touchMeta();
     level.hasStart = true;
@@ -672,6 +688,147 @@ void EditCore::moveGate(int k, int dir) {
     endEdit();
 }
 
+// ---- Sections --------------------------------------------------------------------------
+
+void EditCore::clearBushes() {
+    const SectionInfo& c = level.section;
+    std::vector<Bush>& b = world->bushes;
+    b.erase(std::remove_if(b.begin(), b.end(), [&](const Bush& k) { return c.outside(k.p.x, k.p.z) < 26; }), b.end());
+}
+
+void EditCore::newSection(const SectionInfo& canvas) {
+    if (!world) return;
+    World& w = *world;
+    const double blend = 24;
+    level.section = canvas;
+    level.section.on = true;
+    level.map = w.map;
+    level.mode = LEVEL_SPRINT;
+    const double ch = std::cos(canvas.heading), sh = std::sin(canvas.heading);
+    const V3 fwd(ch, 0, -sh), left(sh, 0, ch), origin(canvas.x, 0, canvas.z);
+    // The pad at the canvas's mean ground, to the half metre.
+    double sum = 0;
+    int n = 0;
+    for (double u = 0; u <= canvas.length; u += 5)
+        for (double v = -canvas.half; v <= canvas.half; v += 5) {
+            const V3 p = origin + fwd * u + left * v;
+            sum += w.height(p.x, p.z), n++;
+        }
+    const double padY = std::round(sum / std::max(1, n) * 2) / 2;
+    beginEdit("NEW SECTION");
+    touchMeta();
+    levelPad(origin + fwd * (canvas.length / 2), canvas.heading, canvas.length / 2, canvas.half, padY, blend);
+    // Whatever stood on it goes (the map's own, noted so the level plays the same): until nothing's left.
+    for (int pass = 0; pass < 4; pass++) {
+        std::vector<V3> gone;
+        auto in = [&](double x, double z) { return canvas.outside(x, z) < blend + 1; };
+        for (const Rock& r : w.rocks)
+            if (in(r.c.x, r.c.z)) gone.push_back(V3(r.c.x, 0, r.c.z));
+        for (const Tree& t : w.trees)
+            if (in(t.base.x, t.base.z)) gone.push_back(V3(t.base.x, 0, t.base.z));
+        for (const Log& g : w.logs) {
+            const V3 m = (g.a + g.b) * 0.5;
+            if (in(m.x, m.z)) gone.push_back(V3(m.x, 0, m.z));
+        }
+        for (const Box& b : w.boxes)
+            if (!b.hidden && in(b.c.x, b.c.z)) gone.push_back(V3(b.c.x, 0, b.c.z));
+        for (const Prop& f : w.fixtures)
+            if (in(f.a.x, f.a.z)) gone.push_back(V3(f.a.x, 0, f.a.z));
+        if (gone.empty()) break;
+        level.removed.insert(level.removed.end(), gone.begin(), gone.end());
+        rebuildObjects();
+    }
+    clearBushes();
+    // The entry near the back, the exit near the far end: a section's run is the 180 m between.
+    const double entryU = 40, exitU = std::max(entryU + 20, canvas.length - 40);
+    setStart(origin.x + fwd.x * entryU, origin.z + fwd.z * entryU, canvas.heading);
+    Gate g;
+    g.p = origin + fwd * exitU;
+    g.yaw = canvas.heading;
+    g.width = 14;
+    addGate(g);
+    endEdit();
+    history.clear();
+    future.clear();
+    pending = Entry();
+    pendingCells.clear();
+    changes = savedChanges = 0;
+    dirtyCells.add(0, 0);
+    dirtyCells.add(w.gridSize() - 1, w.gridSize() - 1);
+    dirtyWater = dirtyObjects = true;
+}
+
+int EditCore::stampSection(int type, uint32_t seed) {
+    if (!world || !level.section.on || !level.hasStart || type < 0 || type >= SEC_COUNT) return -1;
+    const SectionType t = (SectionType)type;
+    const SectionInfo& c = level.section;
+    SectionFrame f;
+    f.entry = V3(level.start.x, world->height(level.start.x, level.start.z), level.start.z);
+    f.heading = c.heading;
+    const SectionFootprint fp = sectionFootprint(t);
+    // Built on a copy of the world, then the differences go through the edit (so undo has them).
+    World scratch = *world;
+    std::vector<LevelObject> made;
+    const SectionBuilt built = buildSection(scratch, t, seed, f, &made);
+    const double ch = std::cos(f.heading), sh = std::sin(f.heading);
+    auto local = [&](double x, double z, double& u, double& v) {
+        u = (x - f.entry.x) * ch - (z - f.entry.z) * sh;
+        v = (x - f.entry.x) * sh + (z - f.entry.z) * ch;
+    };
+    auto inFootprint = [&](double x, double z) {
+        double u, v;
+        local(x, z, u, v);
+        return std::max({-fp.apron - u, u - (fp.length + fp.apron), std::fabs(v) - fp.half}) < fp.blend + 1;
+    };
+    beginEdit(std::string("STAMP ") + sectionName(t));
+    touchMeta();
+    double x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
+    for (double uu : {-fp.apron - fp.blend, fp.length + fp.apron + fp.blend})
+        for (double vv : {-fp.half - fp.blend, fp.half + fp.blend}) {
+            const double x = f.entry.x + ch * uu + sh * vv, z = f.entry.z - sh * uu + ch * vv;
+            x0 = std::min(x0, x), x1 = std::max(x1, x), z0 = std::min(z0, z), z1 = std::max(z1, z);
+        }
+    for (int xi = (int)std::floor(x0); xi <= (int)std::ceil(x1); xi++)
+        for (int zi = (int)std::floor(z0); zi <= (int)std::ceil(z1); zi++) {
+            const int id = world->cellIndex(xi, zi);
+            if (id < 0) continue;
+            if (std::fabs(scratch.cellHeight(id) - world->cellHeight(id)) > 1e-5) touchHeight(id, scratch.cellHeight(id));
+            const uint16_t sp = (uint16_t)(scratch.cellSurface(id) << 8 | scratch.cellPaint(id));
+            if (sp != (uint16_t)(world->cellSurface(id) << 8 | world->cellPaint(id))) touchSurface(id, sp);
+            if (!scratch.waterY.empty()) {
+                const float wl = scratch.waterY[id];
+                if (std::fabs(wl - worldCell(id, 2)) > 1e-4) touchWater(id, wl);
+                // The current goes with it (the level keeps it; undo leaves it where there's no water: harmless, and not saved).
+                level.flow.erase(id);
+                const float fx = scratch.flowX[id], fz = scratch.flowZ[id];
+                if (wl > -1e8f && (fx != 0 || fz != 0)) level.flow[id] = {fx, fz};
+                if (!world->flowX.empty()) world->flowX[id] = wl > -1e8f ? fx : 0, world->flowZ[id] = wl > -1e8f ? fz : 0;
+            }
+        }
+    // The level's own objects there go too (the generator clears what stands on its ground).
+    level.objects.erase(std::remove_if(level.objects.begin(), level.objects.end(),
+                                       [&](const LevelObject& o) {
+                                           const V3 at = o.kind == OBJ_LOG ? (o.p + o.p2) * 0.5 : o.p;
+                                           return inFootprint(at.x, at.z);
+                                       }),
+                        level.objects.end());
+    level.objects.insert(level.objects.end(), made.begin(), made.end());
+    // The exit where the section ends.
+    Gate g;
+    g.p = built.exit;
+    g.yaw = f.heading;
+    g.width = 14;
+    g.p.y = world->height(g.p.x, g.p.z);
+    if (level.gates.empty()) level.gates.push_back(g);
+    else level.gates.back() = g;
+    static const int kindOf[SEC_COUNT] = {SK_CLIMB, SK_BOG, SK_CROSSING, SK_LEDGES, SK_DUNES, SK_SHELF, SK_TIMBER};
+    if (level.section.kind == SK_CUSTOM) level.section.kind = kindOf[type];
+    level.section.gen = type, level.section.genSeed = seed;
+    rebuildObjects();
+    endEdit();
+    return (int)made.size();
+}
+
 // ---- Undo ------------------------------------------------------------------------------
 
 bool EditCore::undo() {
@@ -705,6 +862,15 @@ bool EditCore::save(const std::string& path, std::string* err) {
     level.file = path;
     level.builtin = false;
     savedChanges = changes;
+    // A section is also saved in its own frame, beside the level.
+    saveNote.clear();
+    if (level.section.on) {
+        SectionFile sf;
+        std::string why;
+        if (!extractSection(*world, level, sf, &why)) saveNote = "NO SECTION FILE: " + why;
+        else if (!saveSectionFile(sf, sectionPathFor(path), &why)) saveNote = "NO SECTION FILE: " + why;
+        else if (sf.dropped) saveNote = std::to_string(sf.dropped) + " OBJECTS OUTSIDE THE CANVAS LEFT OUT OF THE SECTION FILE";
+    }
     return true;
 }
 

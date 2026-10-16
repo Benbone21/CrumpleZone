@@ -86,6 +86,23 @@ double land(double u, double v, uint32_t seed) {
     return kLandAmp * (fbmNoise(u * 0.012 + ox, v * 0.012 + oz, 4) - 0.5) + kLandFine * (valueNoise(u * 0.05 + ox, v * 0.05 + oz) - 0.5);
 }
 
+}  // namespace
+
+void clearObjectsWhere(World& w, const std::function<bool(double, double)>& in) {
+    auto drop = [](auto& vec, auto gone) { vec.erase(std::remove_if(vec.begin(), vec.end(), gone), vec.end()); };
+    drop(w.rocks, [&](const Rock& r) { return in(r.c.x, r.c.z); });
+    drop(w.trees, [&](const Tree& t) { return in(t.base.x, t.base.z); });
+    drop(w.poles, [&](const Pole& p) { return in(p.x, p.z); });
+    drop(w.boxes, [&](const Box& b) { return in(b.c.x, b.c.z); });
+    drop(w.logs, [&](const Log& l) { return in(l.a.x, l.a.z) || in(l.b.x, l.b.z); });
+    drop(w.bushes, [&](const Bush& b) { return in(b.p.x, b.p.z); });
+    drop(w.fixtures, [&](const Prop& p) { return in(p.a.x, p.a.z); });
+    drop(w.models, [&](const Placed& p) { return in(p.p.x, p.p.z); });
+    drop(w.stations, [&](const Station& s) { return in(s.p.x, s.p.z); });
+}
+
+namespace {
+
 // A section's working copy of the ground: every cell its footprint touches, in local (u, v), with
 // the height measured from the entry and the surface and water to give it. commit() blends that
 // over the world's ground; objects go in after it (they sit on the finished ground).
@@ -106,10 +123,11 @@ struct Canvas {
     const uint32_t seed;
     Rng rng;
     std::vector<Cell> cells;
+    std::vector<LevelObject>* rec;  // (the editor: also keep what's stood up)
 
-    Canvas(World& w, SectionType t, uint32_t seed, const SectionFrame& fr)
+    Canvas(World& w, SectionType t, uint32_t seed, const SectionFrame& fr, std::vector<LevelObject>* record = nullptr)
         : w(w), fp(sectionFootprint(t)), f(fr), dx(std::cos(fr.heading)), dz(-std::sin(fr.heading)), px(std::sin(fr.heading)), pz(std::cos(fr.heading)),
-          ey(fr.entry.y), seed(seed), rng((seed + 1) * 1009u + (uint32_t)t) {
+          ey(fr.entry.y), seed(seed), rng((seed + 1) * 1009u + (uint32_t)t), rec(record) {
         const double reachU0 = -fp.apron - fp.blend, reachU1 = fp.length + fp.apron + fp.blend, reachV = fp.half + fp.blend;
         double x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
         for (double uu : {reachU0, reachU1})
@@ -164,21 +182,11 @@ struct Canvas {
 
     // Takes the ground (everything standing on it goes), then blends this over it.
     void clearGround() {
-        auto in = [&](double x, double z) {
+        clearObjectsWhere(w, [&](double x, double z) {
             double u, v;
             local(x, z, u, v);
             return outside(u, v) < fp.blend + 1;
-        };
-        auto drop = [](auto& vec, auto gone) { vec.erase(std::remove_if(vec.begin(), vec.end(), gone), vec.end()); };
-        drop(w.rocks, [&](const Rock& r) { return in(r.c.x, r.c.z); });
-        drop(w.trees, [&](const Tree& t) { return in(t.base.x, t.base.z); });
-        drop(w.poles, [&](const Pole& p) { return in(p.x, p.z); });
-        drop(w.boxes, [&](const Box& b) { return in(b.c.x, b.c.z); });
-        drop(w.logs, [&](const Log& l) { return in(l.a.x, l.a.z) || in(l.b.x, l.b.z); });
-        drop(w.bushes, [&](const Bush& b) { return in(b.p.x, b.p.z); });
-        drop(w.fixtures, [&](const Prop& p) { return in(p.a.x, p.a.z); });
-        drop(w.models, [&](const Placed& p) { return in(p.p.x, p.p.z); });
-        drop(w.stations, [&](const Station& s) { return in(s.p.x, s.p.z); });
+        });
     }
     void commit() {
         for (const Cell& k : cells) {
@@ -196,15 +204,31 @@ struct Canvas {
     // ---- Objects (after commit(): they sit on the finished ground) ------------------------------
     Rock& rock(double u, double v, const V3& r, double top, uint32_t rseed, float tint = 1) {
         const V3 p = at(u, v);
+        if (rec) {
+            LevelObject o;
+            o.kind = OBJ_ROCK, o.p = p, o.size = r, o.top = top, o.seed = rseed, o.col[0] = tint;
+            rec->push_back(o);
+        }
         return w.addRock(p.x, p.z, r, top, rseed, tint);
     }
     // A rock slab: an oriented box (yaw, pitch, roll in the section's frame) drawn and gripping as rock.
     void slab(double u, double y, double v, const V3& h, double yaw, double pitch, double roll, const V3& col) {
         w.addBox(at(u, v, y), h, yaw + f.heading, pitch, roll, col);
         w.boxes.back().rock = true;
+        if (rec) {
+            LevelObject o;
+            o.kind = OBJ_BOX, o.p = at(u, v, y), o.size = h, o.yaw = yaw + f.heading, o.pitch = pitch, o.roll = roll, o.sub = 1;
+            o.col[0] = (float)col.x, o.col[1] = (float)col.y, o.col[2] = (float)col.z;
+            rec->push_back(o);
+        }
     }
     void tree(double u, double v, double h, int kind, float tint = 1) {
         const V3 p = at(u, v);
+        if (rec) {
+            LevelObject o;
+            o.kind = OBJ_TREE, o.p = p, o.size = V3(0, h, 0), o.sub = kind, o.col[0] = tint;
+            rec->push_back(o);
+        }
         w.addTree(p.x, p.z, h, kind, tint);
     }
     // Forest outside |v| > clear (dense when `wall`: trunks too close to drive between).
@@ -528,6 +552,11 @@ void timber(Canvas& c) {
         V3 p0 = c.at(u - std::sin(a) * len / 2, -std::cos(a) * len / 2), p1 = c.at(u + std::sin(a) * len / 2, std::cos(a) * len / 2);
         p0.y = c.w.height(p0.x, p0.z) + r * 0.85, p1.y = c.w.height(p1.x, p1.z) + r * 0.85;
         c.w.addLog(p0, p1, r);
+        if (c.rec) {
+            LevelObject o;
+            o.kind = OBJ_LOG, o.p = p0, o.p2 = p1, o.size = V3(r, 0, 0);
+            c.rec->push_back(o);
+        }
     }
 }
 
@@ -541,8 +570,8 @@ const char* sectionName(SectionType t) { return specOf(t).name; }
 double sectionLength(SectionType t) { return specOf(t).length; }
 SectionFootprint sectionFootprint(SectionType t) { return {specOf(t).length, specOf(t).half, kApron, kBlend}; }
 
-SectionBuilt buildSection(World& w, SectionType t, uint32_t seed, const SectionFrame& f) {
-    Canvas c(w, t, seed, f);
+SectionBuilt buildSection(World& w, SectionType t, uint32_t seed, const SectionFrame& f, std::vector<LevelObject>* record) {
+    Canvas c(w, t, seed, f, record);
     c.clearGround();
     switch (t) {
         case SEC_STEEP_HILL: steepHill(c); break;
