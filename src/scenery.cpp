@@ -370,7 +370,7 @@ V3 fromYaw(double yaw) { return V3(std::cos(yaw), 0, -std::sin(yaw)); }  // the 
 
 void appendModel(std::vector<Vtx>& out, const mk::Mesh& m, const V3& p, double yaw, const V3& s, float tint) {
     const V3 f(std::cos(yaw), 0, -std::sin(yaw)), up(0, 1, 0), l(-f.z, 0, f.x);
-    out.reserve(out.size() + m.v.size());
+    if (out.capacity() < out.size() + m.v.size()) out.reserve(std::max(out.capacity() * 2, out.size() + m.v.size()));  // (grow by doubling: an exact reserve per model copied the whole forest for every tree)
     for (const mk::MVert& q : m.v) {
         const V3 w = p + f * (q.p[0] * s.x) + up * (q.p[1] * s.y) + l * (q.p[2] * s.z);
         const V3 n = norm(f * (q.n[0] / s.x) + up * (q.n[1] / s.y) + l * (q.n[2] / s.z));
