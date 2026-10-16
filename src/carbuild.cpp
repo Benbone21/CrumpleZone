@@ -127,6 +127,8 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
     ladder.clear();
     ladderStations = 0;
     bodyMountBeams.clear();
+    crossStations.clear();
+    skidNodes.clear();
     engineNodes.clear();
     engineMounts.clear();
     bayBeams.clear();
@@ -700,6 +702,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 if (std::fabs(stationX[st] - x) < std::fabs(stationX[best] - x)) best = st;
             crossSt.insert(best);
         }
+        crossStations.assign(crossSt.begin(), crossSt.end());
         for (int st : crossSt) {
             for (auto e : {std::make_pair(0, 0), std::make_pair(2, 2), std::make_pair(0, 2), std::make_pair(2, 0)}) {
                 const int bi = railBeam(L(st, -1, e.first), L(st, 1, e.second));
@@ -1025,6 +1028,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
             for (double z : {-0.18, 0.0, 0.18}) {
                 const int n = frameNode(V3(xs, vs.layerY[0] - vs.skidDrop + 0.04, z), 4.0);
                 nodes[n].collide = true;
+                skidNodes.push_back(n);
             }
         }
         if (vs.transverse)

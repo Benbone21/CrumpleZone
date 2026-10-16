@@ -44,6 +44,7 @@
 #include "pilotsense.h"
 #include "platform.h"
 #include "props.h"
+#include "carframe.h"
 #include "carparts.h"
 #include "handwork.h"
 #include "lab.h"
@@ -3108,22 +3109,87 @@ int main(int argc, char** argv) {
             }
             if (opt.script.rfind("work-", 0) == 0) {  // screenshots of hands-on work: a wheel off, a chain on, a CV axle in
                 Car& c = sim.cars[sim.player];
-                const int k = opt.script == "work-chain" ? 0 : 2;
+                const int k = std::getenv("CZ_WORK_WHEEL") ? std::atoi(std::getenv("CZ_WORK_WHEEL")) : opt.script == "work-chain" ? 0 : 2;  // (CZ_WORK_WHEEL: which corner)
                 if (frame == 20) c.handbrake = 1, getOut();
                 if (frame == 30 && k < (int)c.wheels.size()) {
                     const Wheel& wh = c.wheels[k];
                     const V3 hub = (c.nodes[wh.inner].p + c.nodes[wh.outer].p) * 0.5, out = norm(c.nodes[wh.outer].p - c.nodes[wh.inner].p);
                     if (opt.script == "work-chain") walker.holdingChain = true;
                     else if (std::getenv("CZ_WORK_PLACE")) walker.holdingJack = true;  // (the jack still in your arms: the placing job)
-                    else c.placeJack(sim.world, k), c.jackWorked = true, c.jackHeight = std::getenv("CZ_JACK_H") ? std::atof(std::getenv("CZ_JACK_H")) : 0.12;
+                    else c.placeJack(sim.world, k), c.wake(), c.jackWorked = true, c.jackHeight = std::getenv("CZ_JACK_H") ? std::atof(std::getenv("CZ_JACK_H")) : 0.12;
                     if (opt.script == "work-fix") c.wheels[k].shaftBroken = true;
-                    const V3 aim = opt.script == "work-fix" ? hub + (c.frame().com - hub) * 0.25 : std::getenv("CZ_WORK_PLACE") ? Interact::jackSpot(sim, c, k) + V3(0, 0.3, 0) : hub;
+                    const V3 aim = opt.script == "work-fix" ? hub + (c.frame().com - hub) * 0.25 : std::getenv("CZ_WORK_PLACE") || opt.script == "work-jack" ? Interact::jackAim(sim, c, k) : hub;
                     walker.p = hub + out * 1.0 - c.frame().fwd * 0.3;
                     walker.p.y = sim.world.height(walker.p.x, walker.p.z);
                     const V3 d = norm(aim - (walker.p + V3(0, 1.62, 0)));
                     footYaw = std::atan2(-d.z, d.x), footPitch = std::asin(d.y);
                 }
                 scriptE = frame > 70;
+            }
+            if (opt.script == "damage") {  // screenshots of broken parts: CZ_BREAK=cv:fl,tie:fr,bend:fl,shaft:f,spring:rl,leaf:rr,flood (corner = front/rear + left/right),
+                // CZ_STAND=fwd,left (m from the car's middle, default 2.6,1.9) and CZ_LOOKAT=fwd,left,up (m, default the front axle at hub height)
+                Car& c = sim.cars[sim.player];
+                const Frame fr0 = c.frame();
+                const V3 fl = norm(V3(fr0.fwd.x, 0, fr0.fwd.z)), lf = norm(V3(fr0.left.x, 0, fr0.left.z));
+                const bool orbit = std::getenv("CZ_ORBIT") != nullptr;  // (the breaking only: look with --orbit)
+                if (frame == 20) c.handbrake = 1;
+                if (frame == 20 && !orbit) getOut();
+                if (frame == 24) {
+                    auto corner = [&](const std::string& t) {
+                        for (int k = 0; k < (int)c.wheels.size(); k++)
+                            if (c.wheels[k].front == (t[0] == 'f') && c.wheels[k].left == (t[1] == 'l')) return k;
+                        return -1;
+                    };
+                    std::string list = std::getenv("CZ_BREAK") ? std::getenv("CZ_BREAK") : "cv:fl";
+                    for (size_t at = 0; at < list.size();) {
+                        size_t e = list.find(',', at);
+                        if (e == std::string::npos) e = list.size();
+                        const std::string it = list.substr(at, e - at);
+                        at = e + 1;
+                        const size_t colon = it.find(':');
+                        const std::string what = it.substr(0, colon), arg = colon == std::string::npos ? "" : it.substr(colon + 1);
+                        const int k = arg.size() >= 2 ? corner(arg) : -1;
+                        if (what == "flood") c.hydrolocked = true;
+                        else if (what == "dead") c.engineDead = true;
+                        else if (what == "shaft") {
+                            for (Axle& ax : c.axles)
+                                if (ax.propShaft >= 0 && ax.front == (arg == "f")) c.beams[ax.propShaft].broken = true;
+                        } else if (k >= 0) {
+                            Wheel& wh = c.wheels[k];
+                            if (what == "cv") {
+                                wh.shaftBroken = true;
+                                for (int bi : wh.shafts) c.beams[bi].broken = true;
+                            } else if (what == "tie") wh.tieOffset = 0.05;
+                            else if (what == "tiebreak" && wh.tieRod >= 0) c.beams[wh.tieRod].broken = true;
+                            else if (what == "spring" && wh.spring >= 0) c.beams[wh.spring].broken = true;
+                            else
+                                for (const SuspLink& l : c.links) {
+                                    if (l.wheel != k) continue;
+                                    Beam& b = c.beams[l.beam];
+                                    if (what == "bend" && (l.kind == LINK_LOWER_ARM || l.kind == LINK_TRAILING)) b.L0 = b.Lorig * 0.95;
+                                    if (what == "armbreak" && (l.kind == LINK_LOWER_ARM || l.kind == LINK_TRAILING)) b.broken = true;
+                                    if (what == "leaf" && l.kind == LINK_LEAF) b.broken = true;
+                                }
+                        }
+                    }
+                    double st[3] = {2.6, 1.9, 1.0}, la[3] = {c.spec->wheelbase * 0.5, 0.8, 0.3};
+                    if (const char* e = std::getenv("CZ_STAND")) std::sscanf(e, "%lf,%lf,%lf", st, st + 1, st + 2);  // (the 3rd, the drone camera's height, with CZ_ORBIT)
+                    if (const char* e = std::getenv("CZ_LOOKAT")) std::sscanf(e, "%lf,%lf,%lf", la, la + 1, la + 2);
+                    if (orbit) {  // the drone camera there, looking at the same spot
+                        const V3 e = fr0.com + fl * st[0] + lf * st[1];
+                        const V3 at = fr0.com + fl * la[0] + lf * la[1];
+                        const V3 eye(e.x, sim.world.height(e.x, e.z) + st[2], e.z);
+                        const V3 d = norm(V3(at.x, sim.world.height(at.x, at.z) + la[2], at.z) - eye);
+                        cam.mode = 3, cam.droneEye = eye, cam.droneYaw = std::atan2(-d.z, d.x), cam.dronePitch = std::asin(d.y);
+                    } else {
+                        walker.p = fr0.com + fl * st[0] + lf * st[1];
+                        walker.p.y = sim.world.height(walker.p.x, walker.p.z);
+                        walker.v = V3();
+                        const V3 at = fr0.com + fl * la[0] + lf * la[1];
+                        const V3 d = norm(V3(at.x, sim.world.height(at.x, at.z) + la[2], at.z) - (walker.p + V3(0, 1.62, 0)));
+                        footYaw = std::atan2(-d.z, d.x), footPitch = std::asin(d.y);
+                    }
+                }
             }
             if (opt.script == "trunk") {  // screenshots of the cargo: the gate, what rides in the back, taking things out, the list
                 Car& c = sim.cars[sim.player];
@@ -3315,6 +3381,14 @@ int main(int argc, char** argv) {
                         interact.kit = onYou ? have : trunk::reachKit(have, reach, hd, walker.holdingJack);
                         if (invOpen && !reach) invOpen = false;  // (walked off, or shut it)
                         if (padCtx == pad::Mode::Drive && padLogic.in.inventory) toggleInventory();
+                    }
+                    interact.hover = PartHit();  // the car part under the crosshair (carparts.h), nearest car part wins
+                    if (cam.mode != 3) {
+                        const V3 look = norm(lastView.target - lastView.eye);
+                        for (int ci = 0; ci < (int)sim.cars.size(); ci++) {
+                            PartHit h;
+                            if (pickCarPart(sim.cars[ci], lastView.eye, look, 4.0, debug != DEBUG_PARTS, h) && (!interact.hover.ok || h.t < interact.hover.t)) h.car = ci, interact.hover = h;
+                        }
                     }
                     const std::string said = interact.update(sim, walker, lastView.eye, lastView.target - lastView.eye, holdE, dt);
                     if (!said.empty()) hud.toast(said);
@@ -3735,7 +3809,7 @@ int main(int argc, char** argv) {
                 double e[3] = {1, 0.3, 0};
                 std::sscanf(wc, "%lf,%lf,%lf", e, e + 1, e + 2);
                 const Car& wc0 = sim.cars[sim.player];
-                const int k = opt.script == "work-chain" ? 0 : 2;
+                const int k = std::getenv("CZ_WORK_WHEEL") ? std::atoi(std::getenv("CZ_WORK_WHEEL")) : opt.script == "work-chain" ? 0 : 2;
                 if (k < (int)wc0.wheels.size()) {
                     const Wheel& wh = wc0.wheels[k];
                     const V3 hub = (wc0.nodes[wh.inner].p + wc0.nodes[wh.outer].p) * 0.5, out = norm(wc0.nodes[wh.outer].p - wc0.nodes[wh.inner].p);
@@ -3854,10 +3928,16 @@ int main(int argc, char** argv) {
                 if (away < 40) near.push_back({away, &c});
             }
             std::sort(near.begin(), near.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
-            for (size_t i = 0; i < near.size() && i < 8; i++) carPartModels(*near[i].second, renderer.frameModels, i < 4 && near[i].first < 20 ? PARTS_ALL : PARTS_BIG);
+            for (size_t i = 0; i < near.size() && i < 8; i++) {
+                const int level = i < 4 && near[i].first < 20 ? PARTS_ALL : PARTS_BIG;
+                carPartModels(*near[i].second, renderer.frameModels, level);
+                carFrameModels(*near[i].second, renderer.frameModels, level);  // (a ladder frame's rails, crossmembers, brackets and jack pads: carframe.h)
+            }
         }
         // The work in your hands (first person): tools, the hand, a part going in; a wheel or
         // chain being moved (handwork.h).
+        renderer.xrayRange = walker.active && !editor.active && cam.mode != 3 ? 7.0 : 0.0;  // (on foot: the hurt parts glow through the body)
+        renderer.xrayEye = view.eye;
         renderer.wheelWork = Renderer::WheelWork();
         if (walker.active && !editor.active && cam.mode != 3) {
             const Handwork hw = handwork(sim, walker, interact, view.eye, view.target - view.eye, clock);
@@ -3903,6 +3983,26 @@ int main(int argc, char** argv) {
                     renderer.rect(bx, by, bw, 5 * u, 0, 0, 0, 0.6f);
                     renderer.rect(bx, by, bw * (float)interact.share(), 5 * u, 1.0f, 0.75f, 0.3f, 0.95f);
                 }
+            }
+            if (interact.hover.ok && !walker.carrying) {  // the part under the crosshair: its name and how it is, and the repair that goes with it
+                const PartHit& ph = interact.hover;
+                const bool bad = ph.tag.state == PS_BROKEN, hurt = ph.tag.state != PS_OK;
+                const float cr = bad ? 1.0f : hurt ? 1.0f : 0.85f, cg = bad ? 0.42f : hurt ? 0.7f : 0.95f, cb = bad ? 0.32f : hurt ? 0.3f : 0.85f;
+                const float ls = px(1.8f * u);
+                float y = H / 2.0f - 44 * u - 12 * ls;
+                std::string hint;
+                if (!(interact.current.kind == IA_FIX && partMatchesFix(ph.tag, interact.current.fix)) && ph.car >= 0 && ph.car < (int)sim.cars.size())
+                    for (const Fix& f : fixesFor(sim.cars[ph.car]))
+                        if (partMatchesFix(ph.tag, f)) {
+                            const std::string miss = missingFor(f, interact.kit, f.wheel >= 0 && Interact::cornerLifted(sim, sim.cars[ph.car], f.wheel));
+                            hint = std::string(len(ph.at - (walker.p + V3(0, 1.0, 0))) > 2.5 ? "GET CLOSER, THEN HOLD E: " : "HOLD E: ") + f.what + (miss.empty() ? "" : " (" + miss + ")");
+                            break;
+                        }
+                if (!hint.empty()) {
+                    centeredPill(renderer, W / 2.0f, y, s, hint, 0, 0, 0, 0.9f, 1.0f, 0.85f, 0.45f);
+                    y -= 15 * s;
+                }
+                centeredPill(renderer, W / 2.0f, y, ls, ph.tag.label(), 0, 0, 0, 1.0f, cr, cg, cb);
             }
             if (walker.hand.any() && !walker.carrying) {
                 const std::string line = "IN YOUR HAND: " + trunk::name(walker.hand) + (padNow ? "   (PUT IT BACK AT THE OPEN BACK: X)" : "   (PUT IT BACK AT THE OPEN BACK: E)");

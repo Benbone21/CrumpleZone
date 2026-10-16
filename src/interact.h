@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "carparts.h"
 #include "fixes.h"
 #include "softbody.h"
 #include "trunk.h"
@@ -72,14 +73,15 @@ struct Interact {
     double progress = 0;     // s held on it so far
     std::vector<InteractSpot> spots;  // things out in the world to open (set by the game)
     std::string openedSpot;           // set when one's been opened (its id): the game takes it from here
+    PartHit hover;                    // the car part under the crosshair (set by the game each frame): its repair, if any, is the one picked
     double share() const { return current.hold > 0 ? std::min(1.0, progress / current.hold) : 0; }
-    static constexpr double kJackMax = 0.45;  // m the saddle can rise
+    static constexpr double kJackMax = 0.45;  // m the saddle can rise above where it met the pad (the hi-lift's bar is 1.2 m)
 
     // The job in front of you: the nearest thing to where you're looking, within reach
     // (2.5 m) and no more than ~35 degrees off your line of sight.
     // `own`: everything you own, if the trucks' backs are in play (trunk.h).
     static InteractOption pick(const Sim& sim, const Walker& wk, const V3& eye, const V3& look, const std::vector<InteractSpot>* spots = nullptr,
-                               const Kit& kit = Kit(), const TrunkStock* own = nullptr);
+                               const Kit& kit = Kit(), const TrunkStock* own = nullptr, const PartHit* hover = nullptr);
     // Once a frame on foot: finds the job, runs the hold, and does it when the hold is done.
     // Returns what to announce ("" most frames).
     std::string update(Sim& sim, Walker& wk, const V3& eye, const V3& look, bool holdE, double dt);
@@ -87,11 +89,13 @@ struct Interact {
     static bool drop(Sim& sim, Walker& wk, const V3& look);
     // Drops the jack you're holding.
     static bool dropJack(Sim& sim, Walker& wk);
-    // Where a jack goes for a corner: on the ground under its jack point (Car::jackPoint: the
-    // axle tube or the lower arm, just inboard of the tire).
+    // Where a jack goes for a corner: on the ground under its jack point (Car::jackPoint: the frame's
+    // jack pad beside the wheel well; a unibody's axle or lower arm).
     static V3 jackSpot(const Sim& sim, const Car& c, int wheel);
-    // The jack standing there, as models turn it: its handle (the crank, the pump lever) sticks
-    // out from under the car, toward you. `x` is where the model's +X points, `lift` its param.
+    // Where you aim to work the jack there: the middle of it, between its saddle and its bar out past the body.
+    static V3 jackAim(const Sim& sim, const Car& c, int wheel);
+    // The jack standing there, as models turn it: its saddle on the pad, its bar and handle out past
+    // the body's side, toward you. `x` is where the model's +X points, `lift` and `reach` its params.
     static Placed jackModel(const Sim& sim, const Car& c, int wheel);
     // Whether the corner's off the ground (its tire clear, or its bare hub high enough for one).
     static bool cornerLifted(const Sim& sim, const Car& c, int wheel);

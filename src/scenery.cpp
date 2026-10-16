@@ -438,7 +438,7 @@ V3 fromYaw(double yaw) { return V3(std::cos(yaw), 0, -std::sin(yaw)); }  // the 
 
 void appendModel(std::vector<Vtx>& out, const mk::Mesh& m, const V3& p, double yaw, const V3& s, float tint) {
     const V3 f(std::cos(yaw), 0, -std::sin(yaw)), up(0, 1, 0), l(-f.z, 0, f.x);
-    out.reserve(out.size() + m.v.size());
+    if (out.capacity() < out.size() + m.v.size()) out.reserve(std::max(out.capacity() * 2, out.size() + m.v.size()));  // (grow by doubling: an exact reserve per model copied the whole forest for every tree)
     for (const mk::MVert& q : m.v) {
         const V3 w = p + f * (q.p[0] * s.x) + up * (q.p[1] * s.y) + l * (q.p[2] * s.z);
         const V3 n = norm(f * (q.n[0] / s.x) + up * (q.n[1] / s.y) + l * (q.n[2] / s.z));
@@ -478,10 +478,18 @@ void appendModel(std::vector<Vtx>& out, const mk::Mesh& m, const V3& p, const V3
 
 void appendPlaced(std::vector<Vtx>& out, const Placed& pl, const mk::Mesh& m) {
     const size_t at = out.size();
-    if (pl.oriented) appendModel(out, m, pl.p, pl.ax, pl.scale);
+    if (pl.clip) {  // (squash what lies past the cut flat onto it: a straight tube is cut clean, the rest folds to nothing)
+        mk::Mesh cut;
+        cut.v = m.v;
+        for (mk::MVert& q : cut.v) q.p[0] = std::min(std::max(q.p[0], pl.clipLo), pl.clipHi);
+        if (pl.oriented) appendModel(out, cut, pl.p, pl.ax, pl.scale);
+        else appendModel(out, cut, pl.p, pl.yaw, pl.scale);
+    } else if (pl.oriented) appendModel(out, m, pl.p, pl.ax, pl.scale);
     else appendModel(out, m, pl.p, pl.yaw, pl.scale);
-    if (pl.sunlit)  // (material + 100: the lit shader skips the shadow)
-        for (size_t i = at; i < out.size(); i++) out[i].c[3] += 100.0f;
+    // (material + 100: the lit shader skips the shadow; + 200 per wear step: it tints and rims the part)
+    const float add = (pl.sunlit ? 100.0f : 0.0f) + 200.0f * pl.wear;
+    if (add > 0)
+        for (size_t i = at; i < out.size(); i++) out[i].c[3] += add;
 }
 
 const mk::Mesh& placedMesh(const Placed& pl) {

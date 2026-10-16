@@ -76,6 +76,11 @@ struct Placed {
     V3 ax[3];
     bool bare = false;       // a part fitted in a car (carparts.h): built without the stand it's shown on (cached)
     bool sunlit = false;     // lit as if out in the sun, whatever shades it (a truck's load, under its roof: trunk.h)
+    // A damaged part (carparts.h): 1 bent, 2 broken (the lit shader tints it and rims it hot), 3 dead (sooty).
+    uint8_t wear = 0;
+    // Only this stretch of the model along its X is drawn (a snapped shaft's halves: the cut end is capped by another model).
+    bool clip = false;
+    float clipLo = -1e9f, clipHi = 1e9f;
 };
 
 // A repair station: a concrete pad under an open shed. Park on it, stop, and the crew

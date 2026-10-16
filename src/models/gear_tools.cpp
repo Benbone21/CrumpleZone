@@ -95,20 +95,25 @@ V3 worn(const V3& c, double wear) { return mix(c, c * 0.55 + V3(0.12, 0.07, 0.03
 // =============================================================================================
 
 // The high-lift farm jack: a tall holed bar on a cast foot, a carriage with a lifting nose that
-// climbs the bar, a long pumping handle. Saddle (the top of the nose pad): 0.30 m -> 0.65 m.
+// climbs the bar, a long pumping handle. Saddle (the top of the nose pad): 0.30 m -> 1.05 m, as high as a
+// lifted truck's frame. `reach` is how far the bar stands out from the saddle (0.10 m: the plain jack under
+// an axle; more, the carriage's lifting arm reaches in past the body's side to a frame rail's jack pad).
 void farmJack(B& b, const P& p) {
     const double lift = p("lift"), wear = p("wear");
-    const double sy = 0.30 + 0.35 * lift;
+    const double sy = 0.30 + 0.75 * lift;
     const V3 red = worn(paint(p.i("paint")), wear), blk = kBlack * 1.2;
-    const double bx = -0.10, H = 1.2;
+    const double bx = -std::max(0.10, p("reach")), H = 1.2;
     // The foot: a cast plate, ribbed, with the bar socket.
     b.style(blk, PAINT);
+    b.push();
+    b.move(bx + 0.10, 0, 0);  // (under the bar, whatever the reach)
     b.extrudeUp({V2(-0.24, -0.09), V2(0.20, -0.1), V2(0.23, -0.05), V2(0.23, 0.05), V2(0.20, 0.1), V2(-0.24, 0.09)}, 0.028);
-    b.box(V3(bx, 0.05, 0), V3(0.11, 0.07, 0.12), 0.015);
+    b.box(V3(-0.10, 0.05, 0), V3(0.11, 0.07, 0.12), 0.015);
     for (int s = -1; s <= 1; s += 2) {
-        b.extrude({V2(bx - 0.04, 0.028), V2(bx + 0.14, 0.028), V2(bx + 0.04, 0.085), V2(bx - 0.04, 0.085)}, 0.012, s * 0.052);
-        b.extrude({V2(bx - 0.05, 0.028), V2(bx - 0.17, 0.028), V2(bx - 0.04, 0.075)}, 0.012, s * 0.052);
+        b.extrude({V2(-0.14, 0.028), V2(0.04, 0.028), V2(-0.06, 0.085), V2(-0.14, 0.085)}, 0.012, s * 0.052);
+        b.extrude({V2(-0.15, 0.028), V2(-0.27, 0.028), V2(-0.14, 0.075)}, 0.012, s * 0.052);
     }
+    b.pop();
     // The bar: a heavy section with a ladder of holes up its front, a cap and a ring.
     b.style(red, PAINT);
     b.box(V3(bx, 0.03 + H / 2 - 0.02, 0), V3(0.05, H - 0.04, 0.085), 0.006);
@@ -131,8 +136,13 @@ void farmJack(B& b, const P& p) {
     for (int s = -1; s <= 1; s += 2) b.cyl(V3(bx + 0.032, cy + 0.05, s * 0.0585), V3(bx + 0.032, cy + 0.05, s * 0.066), 0.011, 8);  // pins
     // Lifting nose (steel tongue) running out to the saddle at x = 0.
     b.style(kSteel * 0.85, METAL);
-    b.box(V3(0.0, sy - 0.022, 0), V3(0.13, 0.034, 0.09), 0.006);
+    const double armL = 0.065 - (bx + 0.03);
+    b.box(V3((0.065 + bx + 0.03) * 0.5, sy - 0.022, 0), V3(armL, 0.034, 0.09), 0.006);
     b.box(V3(bx + 0.04, sy - 0.07, 0), V3(0.022, 0.07, 0.07), 0.006);
+    if (armL > 0.2) {  // a long arm: a brace down to the carriage, and a rib along it
+        b.beam(V3(bx + 0.05, sy - 0.15, 0), V3(bx + armL * 0.7, sy - 0.04, 0), 0.02, 0.07, V3(0, 0, 1), 0.004);
+        b.box(V3((0.065 + bx + 0.03) * 0.5, sy - 0.044, 0), V3(armL * 0.9, 0.012, 0.03), 0.003);
+    }
     // Saddle: a ridged pad with a hooked toe.
     b.style(blk, MATTE);
     b.box(V3(0.0, sy - 0.0065, 0), V3(0.11, 0.013, 0.082), 0.003);
@@ -140,7 +150,7 @@ void farmJack(B& b, const P& p) {
     b.style(kSteel * 0.85, METAL);
     b.box(V3(0.06, sy + 0.008, 0), V3(0.012, 0.045, 0.09), 0.004);
     // The handle: from the carriage mechanism up to its hook near the top of the bar.
-    const V3 P0(bx + 0.06, cy + 0.045, 0), P1(0.13, 1.13, 0);
+    const V3 P0(bx + 0.06, cy + 0.045, 0), P1(bx + 0.23, 1.13, 0);
     b.style(blk * 1.3, PAINT);
     b.beam(P0 + V3(0, 0, 0.0), P1, 0.026, 0.013, V3(0, 0, 1), 0.003);
     b.style(kRubber, MATTE);
@@ -281,11 +291,11 @@ void scissorJack(B& b, const P& p) {
     rustSpots(b, V3(0, 0.1, 0), V3(0.18, 0.04, 0.09), 6, wear, 31);
 }
 
-Reg jack({"jack", "JACK", "TOOLS", "Wheel jack: put under a wheel or axle to change a tyre; lift 0..1 raises the saddle by 0.35 m", 1.2,
+Reg jack({"jack", "JACK", "TOOLS", "Wheel jack: put under a truck's frame (or a car's axle) to change a tyre; lift 0..1 raises the saddle (the hi-lift by 0.75 m, the others 0.35 m)", 1.2,
           {
               {"FARM JACK",
-               "Tall high-lift bar jack, red and black. Saddle 0.30 m at lift 0, 0.65 m at lift 1",
-               {num("lift", "LIFT", 0, 0, 1), paintParam(0), num("wear", "WEAR", 0.2, 0, 1)},
+               "Tall high-lift bar jack, red and black. Saddle 0.30 m at lift 0, 1.05 m at lift 1; the arm reaches in `reach` from the bar",
+               {num("lift", "LIFT", 0, 0, 1), paintParam(0), num("wear", "WEAR", 0.2, 0, 1), num("reach", "ARM REACH", 0.10, 0.10, 0.9, 0.01)},
                farmJack},
               {"BOTTLE JACK",
                "Hydraulic bottle jack on a wide base, blue with a yellow saddle. Saddle 0.26 m at lift 0, 0.61 m at lift 1",
