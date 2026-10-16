@@ -223,7 +223,7 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
         button(FREEDRIVE_ROW, "FREE DRIVE", "THIS MAP, THIS VEHICLE:");
         choice(MODE_ROW, "MODE", s.career ? "CAREER" : "SANDBOX", 2,
                s.career ? "START STOCK: FIND, WIN AND BUY BETTER PARTS" : "EVERY PART ON EVERY VEHICLE, ANY TIME");
-        choice(VEHICLE_ROW, "VEHICLE", cat[vehicle].name, (int)cat.size(), cat[vehicle].blurb);
+        choice(VEHICLE_ROW, "VEHICLE", cat[vehicle].name, (int)listedVehicles().size(), cat[vehicle].blurb);
         choice(MAP_ROW, "MAP", mapName(mapPick), (int)listedMaps().size(), mapHint);
         button(LEVELS_ROW, "LEVELS", std::to_string(levels.size()) + " RACES, CLIMBS AND WORLDS");
         button(MULTI_ROW, "MULTIPLAYER", netActive ? netStatus : "HOST OR JOIN A GAME");
@@ -285,7 +285,7 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
             button(LRESTART_ROW, "RESTART LEVEL", "OR R TWICE");
             button(LQUIT_ROW, "QUIT LEVEL", "BACK TO FREE DRIVE");
         }
-        choice(VEHICLE_ROW, "VEHICLE", cat[vehicle].name, (int)cat.size(), cat[vehicle].blurb);
+        choice(VEHICLE_ROW, "VEHICLE", cat[vehicle].name, (int)listedVehicles().size(), cat[vehicle].blurb);
         choice(MAP_ROW, "MAP", mapName(mapPick), (int)listedMaps().size(), mapHint);
         button(LEVELS_ROW, "LEVELS", levelActive ? "PICK ANOTHER" : "RACES, CLIMBS AND WORLDS");
         button(JOBS_ROW, "JOBS", jobActive ? jobStatus : "RECOVERIES, CONVOYS, SCOUTING");
@@ -606,7 +606,7 @@ PauseMenu::Result PauseMenu::change(int row, int dir, Settings& s) {
     auto cycle = [&](int cur) { return (cur + dir + it.count) % it.count; };
     RenderSettings& g = s.gfx;
     switch (it.id) {
-        case VEHICLE_ROW: vehicle = cycle(vehicle); return {};
+        case VEHICLE_ROW: vehicle = nextListedVehicle(vehicle, dir); return {};
         case MAP_ROW:
         case HMAP_ROW: mapPick = nextListedMap(mapPick, dir); return {};
         case HMAX_ROW: s.maxPlayers = 2 + cycle(std::min(std::max(s.maxPlayers, 2), 8) - 2); break;

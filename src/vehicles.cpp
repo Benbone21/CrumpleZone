@@ -150,6 +150,34 @@ const std::vector<DriveMode>& driveModes(TransferCase t) {
 
 int defaultDriveMode(TransferCase t) { return t == XFER_NONE || t == XFER_PART_TIME_BASIC ? 0 : 1; }
 
+const std::vector<int>& listedVehicles() {
+    static const std::vector<int> l = [] {
+        std::vector<int> out;
+        const auto& cat = vehicleCatalog();
+        for (const char* id : {"blazer", "bronco", "4runner", "tacoma", "jesko"})
+            for (int i = 0; i < (int)cat.size(); i++)
+                if (std::string(cat[i].id) == id) out.push_back(i);
+        return out;
+    }();
+    return l;
+}
+
+bool vehicleListed(int v) {
+    for (int k : listedVehicles())
+        if (k == v) return true;
+    return false;
+}
+
+int nextListedVehicle(int v, int dir) {
+    const std::vector<int>& l = listedVehicles();
+    int at = -1;
+    for (int i = 0; i < (int)l.size(); i++)
+        if (l[i] == v) at = i;
+    if (at < 0) return l[0];
+    const int n = (int)l.size();
+    return l[((at + dir) % n + n) % n];
+}
+
 const std::vector<VehicleSpec>& vehicleCatalog() {
     // Six vehicles (two of them crawl specials), built from their published specs (dimensions, weights,
     // engine outputs, gear ratios, suspension layouts). Where a maker doesn't publish

@@ -272,8 +272,14 @@ struct VehicleSpec {
     double contactScale = 1.0;  // < 1 for soft things (foam) that cushion impacts
 };
 
-// Drivable vehicles (keys 1-6).
+// Drivable vehicles.
 const std::vector<VehicleSpec>& vehicleCatalog();
+// The ones the game offers (the vehicle menu, keys 1-5, spawning), in that order: the
+// overlanders first, then the Jesko. The Civic, the UTV and the buggy stay in the catalog
+// (the tests drive them, old levels may name them) but aren't offered.
+const std::vector<int>& listedVehicles();
+bool vehicleListed(int v);
+int nextListedVehicle(int v, int dir);  // the next one on the list (from any vehicle)
 // Body lattice: x (m, + forward) of node column i (fractional i interpolates).
 double latticeX(const VehicleSpec& vs, double i);
 // Node columns the axles sit on (from the runs of 'W' in the bottom layer).

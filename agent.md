@@ -10,7 +10,7 @@ work, the wheel-swap feature, releases): `docs/handoff.md`.**
 ```bash
 make                                   # builds ./crumplezone (needs g++ and the libsdl2-2.0-0 runtime; no -dev packages)
 ./crumplezone --player 3               # start next to car 3 of those parked at the start (0 Civic, 1 Jesko, 2 Bronco, 3 4Runner)
-./crumplezone --resume-model 4         # be vehicle 4, 5 or 6 (the rock buggy, the side-by-side, the Tacoma); keys 1-7 do it in the game
+./crumplezone --resume-model 7         # be catalog vehicle 7 (the Blazer); keys 1-5 pick the listed ones (Blazer, Bronco, 4Runner, Tacoma, Jesko)
 make build/run_tests
 nice -n 15 ./build/run_tests --jobs 6  # every scenario in parallel, about 6 min; writes build/test_report.html
 ./build/run_tests -v damage/           # one group, verbose (filter = substring of the scenario name)

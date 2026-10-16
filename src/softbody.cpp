@@ -2055,12 +2055,15 @@ void Sim::setup() {
     ropes.clear();
     cars.reserve(kMaxBodies);
     colorIndex = 0;
-    // You in the Civic, the others parked beside you (on the proving ground's pad, or at
-    // the mountain's trailhead).
+    // You in the first of the lineup, the others parked beside you (on the proving ground's
+    // pad, or at the mountain's trailhead).
+    std::vector<int> order = lineup;
+    if (order.empty())
+        for (int i = 0; i < (int)cat.size(); i++) order.push_back(i);
     auto at = [&](const V3& p) { return V3(p.x, world.map == MAP_PROVING_GROUND ? 0.02 : world.clearY(p.x, p.z) + 0.05, p.z); };
-    addCar(cat[0], at(world.spawn), world.spawnYaw, nextColor());
-    for (size_t k = 0; k < world.parking.size() && k + 1 < cat.size(); k++)
-        addCar(cat[k + 1], at(world.parking[k]), world.parkingYaw, nextColor());
+    addCar(cat[order[0]], at(world.spawn), world.spawnYaw, nextColor());
+    for (size_t k = 0; k < world.parking.size() && k + 1 < order.size(); k++)
+        addCar(cat[order[k + 1]], at(world.parking[k]), world.parkingYaw, nextColor());
     for (size_t i = 1; i < cars.size(); i++) cars[i].handbrake = 1;
     player = 0;
     if (world.crashProps) placeProps();

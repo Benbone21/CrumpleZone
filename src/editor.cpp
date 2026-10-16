@@ -428,12 +428,20 @@ void Editor::key(int sc) {
 }
 
 void Editor::settingChange(int row, int dir) {
-    const int nv = (int)vehicleCatalog().size();
     core.settings("set" + std::to_string(row), [&](Level& l) {
         switch (row) {
             case 1: l.mode = (l.mode + dir + LEVEL_MODE_COUNT) % LEVEL_MODE_COUNT; break;
             case 2: l.laps = std::min(std::max(l.laps + dir, 1), 20); break;
-            case 3: l.vehicle = (l.vehicle + 1 + dir + nv + 1) % (nv + 1) - 1; break;
+            case 3: {  // (ANY, then the listed vehicles)
+                const std::vector<int>& lv = listedVehicles();
+                const int n = (int)lv.size() + 1;
+                int at = 0;
+                for (int i = 0; i < (int)lv.size(); i++)
+                    if (lv[i] == l.vehicle) at = i + 1;
+                at = ((at + dir) % n + n) % n;
+                l.vehicle = at ? lv[at - 1] : -1;
+                break;
+            }
             case 4: l.timeOfDay = l.timeOfDay < 0 && dir > 0 ? 6 : l.timeOfDay + dir < 0 ? -1 : std::fmod(l.timeOfDay + dir, 24.0); break;
             case 5: l.resets = !l.resets; break;
             case 6: l.maxDamage = std::min(std::max(l.maxDamage + dir * 5, 0.0), 95.0); break;

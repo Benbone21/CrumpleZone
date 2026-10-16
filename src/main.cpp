@@ -1029,7 +1029,7 @@ void drawHelp(Renderer& r, float u, int W, int H, bool mph) {
         {"V", "WINCH: HOOK / UNHOOK"},        {"Z", "WINCH IN (SHIFT+Z: OUT, - = SPEED)"},
         {"O", "TOW STRAP: CLICK YOUR POINT, THEN THEIRS"},   {"Y", "FRONT SWAY BAR DISCONNECT"},
         {"9 0", "AIR DOWN / UP (STOPPED)"},
-        {"1 - 7", "CIVIC JESKO BRONCO 4RUNNER BUGGY UTV TACOMA"}, {"G", "GARAGE: ENGINE, SUSPENSION, GEARBOX"},
+        {"1 - 5", "BLAZER BRONCO 4RUNNER TACOMA JESKO"}, {"G", "GARAGE: ENGINE, SUSPENSION, GEARBOX"},
         {"Q E", "SHIFT DOWN / UP (R N 1...)"},           {"SHIFT+M", "MANUAL / AUTOMATIC"},
         {"M", "MAP (WAYPOINTS, PINGS)"},      {"ENTER", "CHAT"},
         {"MIDDLE CLICK", "PING: GO HERE (SHIFT: HELP)"},
@@ -1560,6 +1560,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "Physics workers unavailable; using one thread: %s\n", error.what());
     }
     if (settings.map != MAP_PROVING_GROUND) sim.world = World(settings.map);
+    sim.lineup = listedVehicles();  // (the overlanders and the Jesko: no Civic, UTV or buggy)
     sim.setup();
     // Your garage: the mods fitted last time go back on the cars. (A career keeps a garage of
     // its own: it starts on factory parts.)
@@ -1820,7 +1821,7 @@ int main(int argc, char** argv) {
         sim.world = World(m);
         sim.setup();
         fitGarage();
-        if (model != 0) sim.swapPlayerVehicle(garage.spec(model));
+        if (model != sim.cars[sim.player].spec->model) sim.swapPlayerVehicle(garage.spec(model));
         sim.paused = false;
         renderer.setWorld(sim.world);
         drawnWorld = sim.world.stamp;
@@ -2703,9 +2704,10 @@ int main(int argc, char** argv) {
                         case SC_5:
                         case SC_6:
                         case SC_7: {
-                            size_t idx = gsc - SC_1;
-                            if (idx < vehicleCatalog().size()) {
-                                sim.swapPlayerVehicle(garage.spec((int)idx));
+                            const size_t k = gsc - SC_1;  // (the listed vehicles, in order: 1 the Blazer)
+                            if (k < listedVehicles().size()) {
+                                const int idx = listedVehicles()[k];
+                                sim.swapPlayerVehicle(garage.spec(idx));
                                 hud.toast(std::string("NOW DRIVING ") + vehicleCatalog()[idx].name);
                             }
                             break;
@@ -2821,16 +2823,16 @@ int main(int argc, char** argv) {
                             break;
                         }
                         case SC_I:
-                            hud.toast(sim.spawnAhead(garage.spec((int)spawnType))
-                                          ? std::string("SPAWNED ") + vehicleCatalog()[spawnType].name
+                            hud.toast(sim.spawnAhead(garage.spec(listedVehicles()[spawnType]))
+                                          ? std::string("SPAWNED ") + vehicleCatalog()[listedVehicles()[spawnType]].name
                                           : std::string("VEHICLE LIMIT REACHED"));
-                            spawnType = (spawnType + 1) % vehicleCatalog().size();
+                            spawnType = (spawnType + 1) % listedVehicles().size();
                             break;
                         case SC_K:
-                            hud.toast(sim.spawnTraffic(garage.spec((int)trafficType))
-                                          ? std::string("AI ") + vehicleCatalog()[trafficType].name + " ON THE LOOP ROAD"
+                            hud.toast(sim.spawnTraffic(garage.spec(listedVehicles()[trafficType]))
+                                          ? std::string("AI ") + vehicleCatalog()[listedVehicles()[trafficType]].name + " ON THE LOOP ROAD"
                                           : std::string("VEHICLE LIMIT REACHED"));
-                            trafficType = (trafficType + 1) % vehicleCatalog().size();
+                            trafficType = (trafficType + 1) % listedVehicles().size();
                             break;
                         case SC_U: {  // autopilot on (to the place picked in the menu) or off
                             Car& c = sim.cars[sim.player];

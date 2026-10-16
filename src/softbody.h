@@ -609,6 +609,9 @@ public:
     void wrapAround();
 
     void setup();
+    // The vehicles setup() puts out, you in the first (empty: the whole catalog in order, you
+    // in the Civic: what the tests expect). The game sets listedVehicles().
+    std::vector<int> lineup;
     void setupEmpty();  // just the world (for tests)
     // Runs every AI driver (and the player's autopilot) for one frame.
     void updateAI(double dt);
