@@ -78,6 +78,7 @@ constexpr double kShelfLine = 1.3;  // the line through it keeps 2.6 m clear (a 
 constexpr double kShelfBack = 0.6;  // the cliff's foot stands this far behind the road's edge (the toe fills the gap)
 constexpr double kShelfToe = 0.4;  // the toe's rocks reach this far in from the road's edge at their widest
 constexpr double kShelfRockTop = 0.24;  // a rock in the line stands no higher than this
+constexpr double kShelfBuriedLine = 0.40;  // a big buried boulder's crown in the line stands no higher than this over the road (its mound and its cap together)
 
 
 // Timber: a forest track blocked by standing trees and windfall.
@@ -894,6 +895,54 @@ void cliffShelf(Canvas& c) {
         for (const Zone& z : zones) m = std::max(m, smoothstep(z.a - 3, z.a, u) * smoothstep(z.b + 3, z.b, u));
         return m;
     };
+    // Big boulders sunk into the ground, 1.2-2.5 m across with only their crowns showing: in the line (a crown to drive over), against the
+    // talus, and on the drop side by the lip. The ground heaps up round each (a mound, so a low gentle rise to a hump of rock rather than
+    // a step); the rock itself is laid after the ground is done. Drawn from their own generator, so the rest of the shelf is as it was.
+    struct Bury {
+        double u, lat, hx, hz, ry, yaw, mound, cap, mx, mz;  // (mx, mz: how far the mound reaches along and across)
+        int where;                                          // 0 the line, 1 against the talus, 2 at the lip
+    };
+    std::vector<Bury> buried;
+    Rng nr((seed + 1) * 4099u + 77);
+    auto corridorHit = [&](double u, double lat, double rx, double rz) {  // does the ellipse (rx along, rz across) at (u, lat) reach the line's 2.6 m corridor?
+        for (double uu = u - rx; uu <= u + rx + 1e-9; uu += 0.5) {
+            const double w = rz * std::sqrt(std::max(0.0, 1 - sq((uu - u) / rx))), l = lineLat(uu);
+            if (lat + w > l - kShelfLine && lat - w < l + kShelfLine) return true;
+        }
+        return false;
+    };
+    {
+        struct Spot {
+            double u;
+            int where;
+        };
+        // (in the clear stretches between the set pieces)
+        for (const Spot& sp : {Spot{16, 0}, Spot{22, 1}, Spot{13, 2}, Spot{56, 1}, Spot{63, 0}, Spot{70, 2}, Spot{156, 2}, Spot{158, 0}, Spot{164, 1}, Spot{169, 0}}) {
+            Bury b;
+            b.where = sp.where, b.u = sp.u + nr.range(-1.0, 1.0);
+            b.hx = nr.range(0.8, 1.25), b.hz = nr.range(0.6, 0.95), b.yaw = nr.range(-0.5, 0.5);
+            if (sp.where == 1) b.hz = nr.range(0.55, 0.8);
+            if (sp.where == 2) b.hx = nr.range(0.7, 1.05), b.hz = nr.range(0.55, 0.75), b.yaw *= 0.25;  // (the lip's: turned along the shelf, so it doesn't reach out over the drop)
+            b.lat = sp.where == 0 ? lineLat(b.u) + nr.range(0.15, 0.55) : sp.where == 1 ? -half + 0.05 + b.hz * 0.65 : half - 0.4;
+            b.ry = std::min(b.hx, b.hz) * nr.range(0.5, 0.7);
+            // how high the crown stands over the road: low where it meets the corridor (and a little toward the drop side of the line, so a wheel that climbs it tips the truck toward the wall), more beside it
+            const bool inLine = corridorHit(b.u, b.lat, b.hx * 0.95, b.hz * 0.95);
+            const double crown = inLine ? nr.range(kShelfBuriedLine - 0.08, kShelfBuriedLine) : nr.range(0.5, 0.8);
+            b.mound = crown * nr.range(0.2, 0.3), b.cap = crown - b.mound;
+            b.mx = b.hx * 1.5, b.mz = b.hz * (sp.where == 2 ? 2.1 : 1.5);  // (more shoulder past the lip: the ground there falls away)
+            buried.push_back(b);
+        }
+    }
+    // The mound's height at (u, lat): flat on top, falling away smoothly; and how much of it there is there (0 to 1).
+    auto moundW = [&](double u, double lat, double* height) {
+        double m = 0, wt = 0;
+        for (const Bury& b : buried) {
+            const double d = std::hypot((u - b.u) / b.mx, (lat - b.lat) / b.mz);
+            if (d < 1) m = std::max(m, b.mound * (1 - smoothstep(0.3, 1.0, d))), wt = std::max(wt, 1 - smoothstep(0.3, 1.0, d));
+        }
+        if (height) *height = m;
+        return wt;
+    };
     c.each(-c.fp.apron, L + c.fp.apron, -c.fp.half, c.fp.half, [&](int id, double u, double v) {
         const double fade = smoothstep(-c.fp.apron, 10, u) * smoothstep(L + c.fp.apron, L - 10, u);
         const double lat = v - curve(u);  // + toward the drop
@@ -908,11 +957,16 @@ void cliffShelf(Canvas& c) {
             const double ox = (seed % 997) * 7.1, oz = (seed % 991) * 3.3;
             const double rough = 0.20 * (2 * valueNoise(u * 0.125 + ox, lat * 0.08 + oz) - 1) + 0.16 * (2 * valueNoise(u * 0.25 + ox + 40, lat * 0.12 + oz) - 1) +
                                  0.08 * (2 * valueNoise(u * 0.5 + ox + 80, lat * 0.2 + oz) - 1);
-            h += rough * smoothstep(8, 26, u) * smoothstep(L - 8, L - 26, u) * (1 - zoneMask(u));
+            h += rough * smoothstep(8, 26, u) * smoothstep(L - 8, L - 26, u) * (1 - zoneMask(u)) * (1 - 0.85 * moundW(u, lat, nullptr));  // (smoothed under a buried boulder, so its crown shows all round)
             if (u > table.a - 1 && u < table.a + 2 * tableRun + tablePlat + 1)
                 h += (tableH(u) - 0.1 * smoothstep(0.05, 0.2, tableH(u))) * smoothstep(tableW + 0.5, tableW - 0.1, std::fabs(lat - lineLat(u)));
             if (u > stairs.a - 1 && u < stairs.b + 1) h += (stairH(u) - 0.1 * smoothstep(0.05, 0.2, stairH(u))) * smoothstep(stairW + 0.5, stairW - 0.1, std::fabs(lat - lineLat(u)));
         } else h = -tilt * 2 * half - (lat - half) * 2.8 + 2 * (valueNoise(u * 0.1, v * 0.1) - 0.5);               // the drop
+        if (lat >= -half - kShelfBack) {  // (the mounds round the buried boulders; past the lip they make a shoulder for a boulder there to sit on)
+            double m;
+            moundW(u, lat, &m);
+            if (m > 0) h = lat <= half ? h + m : std::max(h, -tilt * 2 * half + m);
+        }
         h = std::max(h, -kShelfDrop + 4 * valueNoise(u * 0.03, v * 0.03));                                         // valley floor
         const double base = c.getH(id);
         c.setH(id, base + (h - base) * fade);
@@ -966,6 +1020,11 @@ void cliffShelf(Canvas& c) {
             if (ry * lift > kShelfRockTop && r < 0.9) ry = kShelfRockTop / lift;  // (squatter, to fit)
             else if (ry * lift > kShelfRockTop) return false;
         }
+        for (const Bury& b : buried)  // (not on a buried boulder's crown; its draws are spent all the same, so the rest falls as it did)
+            if (sq((u - b.u) / (0.9 * b.hx + r * 0.5)) + sq((lat - b.lat) / (0.9 * b.hz + r * 0.5)) < 1) {
+                for (int k = 0; k < 4; k++) c.rng();
+                return false;
+            }
         c.rock(u, curve(u) + lat, V3(r * c.rng.range(0.85, 1.0), ry, r * c.rng.range(0.8, 1.0)), ry * lift, seed * 7919 + rockN++, (float)c.rng.range(0.85, 1.05));
         return true;
     };
@@ -1072,6 +1131,37 @@ void cliffShelf(Canvas& c) {
             flat(straddle.a + ramp - 0.05, 0.3, straddle.b - 2 - ramp, 0.3, l, 0.62, yw, warm());
             flat(straddle.b - 2 - ramp, 0.3, straddle.b - 2, 0, l, 0.62, yw, warm());
         }
+    }
+
+    // ---- The buried boulders, laid in their mounds: the crown `cap` over the mound, the rest of the rock under the ground. ----
+    for (const Bury& b : buried) {
+        const double v = curve(b.u) + b.lat;
+        c.laid(b.u, v, -(yawAt(b.u) + b.yaw), V3(b.hx, b.ry, b.hz), ground(b.u, v) + b.cap, slopeA, bedRoll * 0.8, (float)nr.range(0.9, 1.08));
+    }
+    // More fallen rock, thicker through the stretches the first strewing left bare (its clusters sit between theirs): a quarter as many
+    // again, mixed sizes, thickest in the line, then a few stones heaped round each boulder.
+    {
+        double cl[10];
+        for (int k = 0; k < 10; k++) cl[k] = 29 + k * 14.5 + c.rng.range(-4, 4);
+        int placed = 0;
+        for (int k = 0; k < 6000 && placed < 36; k++) {
+            const double u = c.rng.range(12, L - 12), lat = c.rng.range(-half + 0.5, half - 0.3);
+            if (zoneMask(u) > 0.3) continue;
+            double near = 0;
+            for (double x : cl) near = std::max(near, bump(u, x, 6));
+            const double mid = bump(lat - lineLat(u), 0, 1.4);
+            if (c.rng() > 0.10 + 0.40 * near * (0.4 + 0.6 * mid) + 0.1 * mid) continue;
+            if (mid > 0.37 && c.rng() > 0.4) continue;
+            const double q = c.rng(), r = q < 0.55 ? c.rng.range(0.25, 0.5) : q < 0.88 ? c.rng.range(0.5, 0.85) : c.rng.range(0.9, 1.4);
+            placed += stone(u, lat, r, c.rng.range(0.55, 0.8));
+        }
+        for (const Bury& b : buried)
+            for (int k = 0, got = 0; k < 12 && got < 2; k++) {
+                const double a = c.rng.range(0, 2 * M_PI), r = c.rng.range(0.14, 0.34), e = c.rng.range(1.0, 1.35);
+                const double lat = b.lat + std::sin(a) * (b.hz + r) * e;
+                if (lat > half + 0.1 || lat < -half) continue;
+                got += stone(b.u + std::cos(a) * (b.hx + r) * e, lat, r, c.rng.range(0.55, 0.85));
+            }
     }
 
     // The line, one point a metre, on the finished ground.

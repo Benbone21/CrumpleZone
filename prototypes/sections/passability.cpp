@@ -2,7 +2,8 @@
 // crawls the line each obstacle section reports (SectionBuilt::line) with a pure-pursuit driver, backing off and rushing it again when
 // it stalls. Physics only; this is not a gameplay check. Scanned rock hulls are on, as in the game.
 //
-//   scenarios:  rp/info/<section>-<seed>            rock counts, line, build time
+//   scenarios:  rp/info/<section>-<seed>            rock counts, line, build time, rock triangles
+//               rp/steps/<section>-<seed>           the biggest steps in the line's 2.6 m corridor (terrain and rock)
 //               rp/pass/<section>-<seed>[-v<dm/s>]  one crawl: where it got to, stuck where, damage
 //   sections:   hill mud river wall timber dunes shelf
 //
@@ -60,6 +61,8 @@ struct Which {
 };
 const Which kWhich[] = {{"hill", SEC_STEEP_HILL}, {"mud", SEC_MUD_PIT}, {"river", SEC_ROCKY_RIVER}, {"wall", SEC_ROCK_WALL},
                         {"dunes", SEC_DUNES},     {"shelf", SEC_CLIFF_SHELF}, {"timber", SEC_TIMBER}};
+
+double rockTopAt(const Rock& rk, double x, double z);
 
 struct Built {
     SectionFrame f;
@@ -121,14 +124,111 @@ void info(Ctx& ctx, SectionType t, uint32_t seed) {
         return std::max({-fp.apron - u, u - (fp.length + fp.apron), std::fabs(v) - fp.half}) < 0;
     };
     int rocks = 0, boxes = 0, onLine = 0, within3 = 0, scans = 0;
+    long long tris[3] = {0, 0, 0};  // drawn triangles of the section's scanned rocks if all stood at LOD 0 / 1 / 2 (the renderer picks one by size on screen)
+    std::map<std::string, std::array<int, 3>> triCache;
     for (const Rock& rk : w.rocks) {
         if (!inside(rk.c.x, rk.c.z)) continue;
+        if (rk.scan >= 0) {
+            const std::string& nm = props::sharedHullLibrary().hulls[rk.scan].name;
+            auto it = triCache.find(nm);
+            if (it == triCache.end()) {
+                props::Model m;
+                std::array<int, 3> t = {0, 0, 0};
+                if (props::loadModel(props::assetDir() + "/" + nm + ".prop", m))
+                    for (int l = 0; l < 3; l++) t[l] = m.lods.empty() ? 0 : m.lods[std::min<size_t>(l, m.lods.size() - 1)].tris();
+                it = triCache.emplace(nm, t).first;
+            }
+            for (int l = 0; l < 3; l++) tris[l] += it->second[l];
+        }
         double best = 1e9;
         for (const V3& p : s.b.line) best = std::min(best, std::hypot(p.x - rk.c.x, p.z - rk.c.z));
         rocks++, within3 += best < 3, onLine += best < 1.2, scans += rk.scan >= 0;
     }
     for (const Box& b : w.boxes) boxes += inside(b.c.x, b.c.z);
-    std::printf("RP info %s seed %u: %d rocks (%d scanned, %d within 3 m of the line, %d within 1.2 m), %d boxes, build %.1f ms\n", sectionName(t), seed, rocks, scans, within3, onLine, boxes, s.buildMs);
+    if (std::getenv("RP_BURIED")) {  // (the rocks with their middle under the ground: u, v from the entry, size across, crown over the ground at the middle and over the line)
+        for (const Rock& rk : w.rocks) {
+            if (!inside(rk.c.x, rk.c.z) || rk.r < 0.8) continue;
+            double top = -1e9, lo = 1e9;
+            for (const V3& q : rk.v) top = std::max(top, q.y), lo = std::min(lo, q.y);
+            const double g = w.height(rk.c.x, rk.c.z);
+            if (top - g > 1.3 || lo > g - 0.25) continue;
+            int bi = 0;
+            double best = 1e9;
+            for (size_t i = 0; i < s.b.line.size(); i++) {
+                const double d = std::hypot(s.b.line[i].x - rk.c.x, s.b.line[i].z - rk.c.z);
+                if (d < best) best = d, bi = (int)i;
+            }
+            const double u = (rk.c.x - s.f.entry.x), v = (rk.c.z - s.f.entry.z);
+            double shown = 0, maxOut = 0, buriedEdge = 0;  // m2 of its top above the ground, its biggest height over the ground, the lowest the ground stands against it (over its rim)
+            for (double x = rk.c.x - rk.r; x <= rk.c.x + rk.r; x += 0.1)
+                for (double z = rk.c.z - rk.r; z <= rk.c.z + rk.r; z += 0.1) {
+                    const double y = rockTopAt(rk, x, z);
+                    if (y < -1e8) continue;
+                    const double out = y - w.height(x, z);
+                    if (out > 0.02) shown += 0.01;
+                    maxOut = std::max(maxOut, out);
+                }
+            (void)buriedEdge;
+            std::printf("RP   buried rock u %.1f v %.2f: radius %.2f, crown %.2f over the ground, %.2f over the line there, %.1f m from the line (bottom %.2f under the ground), %.2f m2 shows (up to %.2f m)\n", u, v, rk.r, top - g, top - s.b.line[bi].y, best, g - lo, shown, maxOut);
+        }
+    }
+    std::printf("RP info %s seed %u: %d rocks (%d scanned, %d within 3 m of the line, %d within 1.2 m), %d boxes, build %.1f ms; rock triangles at LOD 0/1/2: %lld / %lld / %lld\n", sectionName(t), seed, rocks, scans, within3, onLine, boxes, s.buildMs, tris[0], tris[1], tris[2]);
+    ctx.metric("x", 0, "", -1, 1);
+}
+
+// How high one rock's upper faces are at (x, z) (-1e9 where it isn't).
+double rockTopAt(const Rock& rk, double x, double z) {
+    double y = -1e9;
+    for (size_t i = 0; i < rk.f.size(); i++) {
+        if (rk.fn[i].y < 1e-6) continue;
+        const V3 &a = rk.v[rk.f[i][0]], &b = rk.v[rk.f[i][1]], &c = rk.v[rk.f[i][2]];
+        auto side = [&](const V3& p, const V3& q) { return (q.x - p.x) * (z - p.z) - (q.z - p.z) * (x - p.x); };
+        const double s0 = side(a, b), s1 = side(b, c), s2 = side(c, a);
+        if ((s0 >= 0 && s1 >= 0 && s2 >= 0) || (s0 <= 0 && s1 <= 0 && s2 <= 0)) y = std::max(y, (rk.fd[i] - rk.fn[i].x * x - rk.fn[i].z * z) / rk.fn[i].y);
+    }
+    return y;
+}
+
+// The highest thing at (x, z): the terrain, or a rock's upper faces (a vertical ray through each hull in reach).
+double topAt(const World& w, double x, double z) {
+    double y = w.height(x, z);
+    for (const Rock& rk : w.rocks) {
+        if (std::hypot(rk.c.x - x, rk.c.z - z) > rk.r) continue;
+        for (size_t i = 0; i < rk.f.size(); i++) {
+            if (rk.fn[i].y < 1e-6) continue;
+            const V3 &a = rk.v[rk.f[i][0]], &b = rk.v[rk.f[i][1]], &c = rk.v[rk.f[i][2]];
+            auto side = [&](const V3& p, const V3& q) { return (q.x - p.x) * (z - p.z) - (q.z - p.z) * (x - p.x); };
+            const double s0 = side(a, b), s1 = side(b, c), s2 = side(c, a);
+            if ((s0 >= 0 && s1 >= 0 && s2 >= 0) || (s0 <= 0 && s1 <= 0 && s2 <= 0)) y = std::max(y, (rk.fd[i] - rk.fn[i].x * x - rk.fn[i].z * z) / rk.fn[i].y);
+        }
+    }
+    return y;
+}
+
+// The steps in the line's 2.6 m corridor: at offsets across it, the height (terrain or rock, whichever is higher) every 5 cm along the line;
+// the biggest rises over 25 cm and over 50 cm of the way, and where.
+void steps(Ctx& ctx, SectionType t, uint32_t seed) {
+    World& w = ctx.sim.world;
+    const Built s = stamp(ctx, t, seed);
+    const std::vector<V3>& line = s.b.line;
+    double worst25 = 0, worst50 = 0, at25 = 0, at50 = 0;
+    for (double off : {-1.3, -0.65, 0.0, 0.65, 1.3}) {
+        std::vector<double> hs;
+        for (size_t i = 5; i + 6 < line.size(); i++)
+            for (double f = 0; f < 1; f += 0.05) {
+                const V3 p = line[i] + (line[i + 1] - line[i]) * f;
+                const V3 d = norm(V3(line[i + 1].x - line[i].x, 0, line[i + 1].z - line[i].z));
+                hs.push_back(topAt(w, p.x - d.z * off, p.z + d.x * off));
+            }
+        double w25 = 0, a25 = 0;
+        for (size_t k = 0; k + 10 < hs.size(); k++) {
+            if (hs[k + 5] - hs[k] > worst25) worst25 = hs[k + 5] - hs[k], at25 = 5 + k * 0.05;
+            if (hs[k + 10] - hs[k] > worst50) worst50 = hs[k + 10] - hs[k], at50 = 5 + k * 0.05;
+            if (hs[k + 5] - hs[k] > w25) w25 = hs[k + 5] - hs[k], a25 = 5 + k * 0.05;
+        }
+        std::printf("RP   offset %+.2f: worst rise over 25 cm %.2f m (u %.0f)\n", off, w25, a25);
+    }
+    std::printf("RP steps %s seed %u: worst rise over 25 cm %.2f m (u %.0f), over 50 cm %.2f m (u %.0f)\n", sectionName(t), seed, worst25, at25, worst50, at50);
     ctx.metric("x", 0, "", -1, 1);
 }
 
@@ -269,8 +369,9 @@ int reg = [] {
     for (const Which& wh : kWhich)
         for (uint32_t seed : {1u, 2u, 3u}) {
             const SectionType t = wh.t;
+            add(std::string("steps/") + wh.key + "-" + std::to_string(seed), [t, seed](Ctx& c) { steps(c, t, seed); });
             add(std::string("info/") + wh.key + "-" + std::to_string(seed), [t, seed](Ctx& c) { info(c, t, seed); });
-            for (int dm : {4, 6, 10, 15, 25})
+            for (int dm : {4, 6, 10, 15, 20, 25})
                 add(std::string("pass/") + wh.key + "-" + std::to_string(seed) + "-v" + std::to_string(dm), [t, seed, dm](Ctx& c) { pass(c, t, seed, dm / 10.0); });
         }
     return 0;
