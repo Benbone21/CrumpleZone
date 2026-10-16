@@ -144,6 +144,9 @@ private:
     GLuint treeVao = 0, treeVbo = 0;
     int treeVertexCount = 0;
     GLuint wheelVao[WHEEL_STYLES] = {}, wheelVbo[WHEEL_STYLES] = {}, caliperVao = 0, caliperVbo = 0;
+    // Each tread on each wheel style (the tire alone: the rim is the wheel's), and snow chains.
+    GLuint tireVao[WHEEL_STYLES][TIRE_TYPES] = {}, tireVbo[WHEEL_STYLES][TIRE_TYPES] = {}, chainVao = 0, chainVbo = 0;
+    int treadVertexCount[WHEEL_STYLES][TIRE_TYPES] = {}, chainVertexCount = 0;
     int tireVertexCount[WHEEL_STYLES] = {}, wheelVertexCount[WHEEL_STYLES] = {}, caliperVertexCount = 0;
     GLuint dynVao = 0, dynVbo = 0;  // per-frame lit geometry: car parts and running gear
     GLuint lineVao = 0, lineVbo = 0;
@@ -174,6 +177,8 @@ private:
     void buildBoxes(const World& world);
     void buildWheel();
     void buildWheelStyle(int style);
+    void buildTire(int style, int tread);
+    void buildChains();
     void buildFont();
     void buildBackdrop(const World& world, std::vector<Vtx>& verts, std::vector<unsigned>& idx);
     void ensureShadows(int size);

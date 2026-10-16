@@ -2578,8 +2578,205 @@ void Renderer::buildWheelStyle(int style) {
     wheelVertexCount[style] = (int)v.size();
 }
 
+// One tread on one wheel style: the tire alone, built (like the wheel) for R = 0.32 and a
+// half-width of 0.12, its bead on that style's rim.
+void Renderer::buildTire(int style, int tread) {
+    const bool offStyle = style == WHEEL_OFFROAD_BRONZE || style == WHEEL_OFFROAD_BLACK || style == WHEEL_STEEL;
+    const double rimR = offStyle ? 0.158 : style == WHEEL_HONDA_COVER ? 0.197 : style == WHEEL_FORGED ? 0.23 : 0.215;
+    const bool knobby = tread == TIRE_ALL_TERRAIN || tread == TIRE_MUD_TERRAIN || tread == TIRE_SNOW || tread == TIRE_CHAINS;
+    const bool slick = tread == TIRE_RACE_SLICK;
+    std::vector<Vtx> v;
+    MeshOut m{v};
+    const int segs = 48;
+    // The carcass: a rounded profile from bead to bead. Knobby tires have a tall, rounded
+    // sidewall and their tread blocks stand on it; road tires a low, square shoulder.
+    static const double road[][2] = {{0.212, 0.104}, {0.23, 0.117}, {0.27, 0.122}, {0.302, 0.114}, {0.316, 0.098},
+                                     {0.32, 0.07},   {0.32, 0.0},   {0.32, -0.07}, {0.316, -0.098}, {0.302, -0.114},
+                                     {0.27, -0.122}, {0.23, -0.117}, {0.212, -0.104}};
+    static const double tall[][2] = {{0.155, 0.108}, {0.18, 0.122}, {0.23, 0.13},  {0.28, 0.126}, {0.305, 0.112},
+                                     {0.312, 0.09},  {0.312, 0.0},  {0.312, -0.09}, {0.305, -0.112}, {0.28, -0.126},
+                                     {0.23, -0.13},  {0.18, -0.122}, {0.155, -0.108}};
+    const int np = 13;
+    double prof[13][2];
+    for (int k = 0; k < np; k++) {
+        const double (*src)[2] = knobby ? tall : road;
+        const double r0 = knobby ? 0.155 : 0.212, rOut = knobby ? 0.312 : 0.32;
+        prof[k][0] = rimR + (src[k][0] - r0) * (rOut - rimR) / (rOut - r0);
+        prof[k][1] = src[k][1];
+        if (slick && (k == 4 || k == 8)) prof[k][0] += 0.003;  // (a squarer shoulder: all contact patch)
+    }
+    auto profNormal = [&](int k) {
+        int a = std::max(0, k - 1), b = std::min(np - 1, k + 1);
+        double tr = prof[b][0] - prof[a][0], tz = prof[b][1] - prof[a][1];
+        double l = std::sqrt(tr * tr + tz * tz);
+        return std::make_pair(-tz / l, tr / l);
+    };
+    const V3 rubber = slick ? V3(0.075, 0.075, 0.078) : V3(0.06, 0.06, 0.06);  // (a slick's scrubbed, greyer face)
+    for (int sg = 0; sg < segs; sg++) {
+        double a0 = 2 * M_PI * sg / segs, a1 = 2 * M_PI * (sg + 1) / segs;
+        for (int k = 0; k + 1 < np; k++) {
+            auto P = [&](double a, int pk) { return V3(std::cos(a) * prof[pk][0], std::sin(a) * prof[pk][0], prof[pk][1]); };
+            auto N = [&](double a, int pk) {
+                auto nn = profNormal(pk);
+                return V3(std::cos(a) * nn.first, std::sin(a) * nn.first, nn.second);
+            };
+            V3 p[4] = {P(a0, k), P(a1, k), P(a1, k + 1), P(a0, k + 1)};
+            V3 n[4] = {N(a0, k), N(a1, k), N(a1, k + 1), N(a0, k + 1)};
+            const int order[6] = {0, 2, 1, 0, 3, 2};
+            for (int o : order) v.push_back(vtx(p[o], n[o], (float)rubber.x, (float)rubber.y, (float)rubber.z, SM_TIRE));
+        }
+    }
+    // A raised block of tread: centred at angle a, half-angle `half`, from radius r0 up to r1, z0..z1.
+    auto block = [&](double a, double half, double r0, double r1, double z0, double z1, const V3& col = V3(0.06, 0.06, 0.06)) {
+        V3 p[8];
+        for (int b = 0; b < 8; b++) {
+            double aa = a + ((b & 1) ? half : -half), r = (b & 2) ? r1 : r0, z = (b & 4) ? z1 : z0;
+            p[b] = V3(std::cos(aa) * r, std::sin(aa) * r, z);
+        }
+        m.hexa(p, col, SM_TIRE);
+    };
+    // A dark band around the tread at z: a groove's shadow (road tires).
+    auto groove = [&](double z, double w) {
+        for (int sg = 0; sg < segs; sg++) {
+            double a0 = 2 * M_PI * sg / segs, a1 = 2 * M_PI * (sg + 1) / segs, r = 0.3205;
+            V3 p0(std::cos(a0) * r, std::sin(a0) * r, z - w), p1(std::cos(a1) * r, std::sin(a1) * r, z - w);
+            V3 q0(std::cos(a0) * r, std::sin(a0) * r, z + w), q1(std::cos(a1) * r, std::sin(a1) * r, z + w);
+            m.quad(p0, q0, q1, p1, V3(0.012, 0.012, 0.012), SM_MATTE);
+        }
+    };
+    if (tread == TIRE_STREET) {
+        for (double z : {-0.062, -0.022, 0.022, 0.062}) groove(z, 0.0045);
+        // Sipes across the shoulders.
+        for (int b = 0; b < 60; b++) {
+            const double a = 2 * M_PI * b / 60;
+            for (int sd = -1; sd <= 1; sd += 2) block(a, 0.004, 0.3195, 0.3215, sd > 0 ? 0.075 : -0.105, sd > 0 ? 0.105 : -0.075, V3(0.015, 0.015, 0.015));
+        }
+    } else if (tread == TIRE_SEMI_SLICK) {
+        for (double z : {-0.038, 0.038}) groove(z, 0.005);
+    } else if (slick) {
+        // A colored band round the sidewall (a race tire's compound marking).
+        for (int sg = 0; sg < segs; sg++) {
+            double a0 = 2 * M_PI * sg / segs, a1 = 2 * M_PI * (sg + 1) / segs;
+            const double r0 = 0.262, r1 = 0.274, z = 0.1225;
+            V3 p0(std::cos(a0) * r0, std::sin(a0) * r0, z), p1(std::cos(a1) * r0, std::sin(a1) * r0, z);
+            V3 q0(std::cos(a0) * r1, std::sin(a0) * r1, z), q1(std::cos(a1) * r1, std::sin(a1) * r1, z);
+            m.quad(p0, q0, q1, p1, V3(0.95, 0.78, 0.08), SM_MATTE);
+        }
+    } else if (tread == TIRE_ALL_TERRAIN || tread == TIRE_CHAINS) {
+        // Two staggered rows of blocks, and shoulder lugs wrapping onto the sidewalls.
+        const int blocks = 36;
+        for (int b = 0; b < blocks; b++) {
+            double a = 2 * M_PI * b / blocks, h = M_PI / blocks * 0.62;
+            for (int side = -1; side <= 1; side += 2) {
+                double shift = side * 0.25 * (2 * M_PI / blocks);
+                block(a + shift, h, 0.309, 0.322, side > 0 ? 0.004 : -0.052, side > 0 ? 0.052 : -0.004);
+                double zs = side * 0.118;
+                block(a + shift + side * 0.03, h * 0.8, 0.27, 0.312, std::min(zs, zs + side * 0.016), std::max(zs, zs + side * 0.016));
+            }
+        }
+        if (style == WHEEL_OFFROAD_BRONZE) {  // raised white letters
+            const V3 white(0.82, 0.82, 0.8);
+            for (int arc = 0; arc < 2; arc++)
+                for (int c = 0; c < 15; c++) {
+                    double a = (arc ? M_PI : 0) + 0.55 + c * 0.13, h = 0.035 * ((c % 3) ? 1.0 : 0.6);
+                    V3 p[8];
+                    for (int b = 0; b < 8; b++) {
+                        double aa = a + ((b & 1) ? h : -h), r = (b & 2) ? 0.255 : 0.215, z = (b & 4) ? 0.133 : 0.127;
+                        p[b] = V3(std::cos(aa) * r, std::sin(aa) * r, z);
+                    }
+                    m.hexa(p, white, SM_MATTE);
+                }
+        }
+    } else if (tread == TIRE_MUD_TERRAIN) {
+        // Big lugs with wide voids between them, angled in a V, standing proud; heavy shoulder
+        // lugs down the sidewall.
+        const int blocks = 20;
+        for (int b = 0; b < blocks; b++) {
+            double a = 2 * M_PI * b / blocks, h = M_PI / blocks * 0.52;
+            for (int side = -1; side <= 1; side += 2) {
+                double shift = side * 0.3 * (2 * M_PI / blocks);
+                block(a + shift, h, 0.306, 0.330, side > 0 ? 0.008 : -0.062, side > 0 ? 0.062 : -0.008);
+                double zs = side * 0.116;
+                block(a + shift + side * 0.05, h * 0.9, 0.24, 0.318, std::min(zs, zs + side * 0.022), std::max(zs, zs + side * 0.022));
+            }
+        }
+    } else if (tread == TIRE_SNOW) {
+        // Many small siped blocks in three staggered rows.
+        const int blocks = 52;
+        for (int b = 0; b < blocks; b++) {
+            double a = 2 * M_PI * b / blocks, h = M_PI / blocks * 0.66;
+            const double zs[3][2] = {{-0.10, -0.038}, {-0.03, 0.03}, {0.038, 0.10}};
+            for (int row = 0; row < 3; row++) {
+                double shift = (row - 1) * 0.33 * (2 * M_PI / blocks);
+                block(a + shift, h, 0.306, 0.326, zs[row][0], zs[row][1]);
+                // Two sipes across each block: thin dark slots.
+                for (double d : {-0.4, 0.4}) block(a + shift + d * h, 0.0025, 0.3255, 0.3268, zs[row][0] + 0.004, zs[row][1] - 0.004, V3(0.012, 0.012, 0.012));
+            }
+        }
+        // The mountain-snowflake mark on the outer sidewall, four times round.
+        for (int mk = 0; mk < 4; mk++) {
+            const double a = mk * M_PI / 2 + 0.4;
+            for (int spoke = 0; spoke < 3; spoke++) {
+                const double b = spoke * M_PI / 3;
+                const V3 c(std::cos(a) * 0.255, std::sin(a) * 0.255, 0.131);
+                const V3 d(std::cos(b) * 0.016, std::sin(b) * 0.016, 0);
+                V3 p[8];
+                const V3 side = norm(cross(d, V3(0, 0, 1))) * 0.0025;
+                for (int q = 0; q < 8; q++) p[q] = c + ((q & 1) ? d : d * -1.0) + ((q & 2) ? side : side * -1.0) + V3(0, 0, (q & 4) ? 0.002 : 0.0);
+                m.hexa(p, V3(0.85, 0.86, 0.88), SM_MATTE);
+            }
+        }
+    }
+    GenVertexArrays(1, &tireVao[style][tread]);
+    GenBuffers(1, &tireVbo[style][tread]);
+    setupVtxVao(tireVao[style][tread], tireVbo[style][tread]);
+    BufferData(GL_ARRAY_BUFFER, v.size() * sizeof(Vtx), v.data(), GL_STATIC_DRAW);
+    treadVertexCount[style][tread] = (int)v.size();
+}
+
+// Snow chains: cross links over the tread every few inches, and a side chain round each
+// shoulder holding them. (Drawn on a chained wheel with the tire's own matrix.)
+void Renderer::buildChains() {
+    std::vector<Vtx> v;
+    MeshOut m{v};
+    const V3 steel(0.55, 0.56, 0.58);
+    auto link = [&](const V3& a, const V3& b, double r) {  // a short box along a to b
+        const V3 d = b - a, c = (a + b) * 0.5;
+        const double L = len(d);
+        if (L < 1e-6) return;
+        const V3 ax = d / L, ref = std::fabs(ax.z) < 0.9 ? V3(0, 0, 1) : V3(1, 0, 0), ay = norm(cross(ref, ax)), az = cross(ax, ay);
+        V3 p[8];
+        for (int k = 0; k < 8; k++)
+            p[k] = c + ax * ((k & 1) ? L * 0.5 : -L * 0.5) + ay * ((k & 2) ? r : -r) + az * ((k & 4) ? r : -r);
+        m.hexa(p, steel, SM_METAL);
+    };
+    const int cross = 14, segs = 56;
+    for (int k = 0; k < cross; k++) {
+        const double a = 2 * M_PI * k / cross;
+        // A zig of links across the tread from one side chain to the other.
+        for (int j = 0; j < 6; j++) {
+            const double z0 = -0.118 + 0.236 * j / 6, z1 = -0.118 + 0.236 * (j + 1) / 6, wob = (j % 2 ? 1 : -1) * 0.015;
+            const double r = 0.326;
+            link(V3(std::cos(a + wob) * r, std::sin(a + wob) * r, z0), V3(std::cos(a - wob) * r, std::sin(a - wob) * r, z1), 0.004);
+        }
+    }
+    for (int sd = -1; sd <= 1; sd += 2)
+        for (int k = 0; k < segs; k++) {
+            const double a0 = 2 * M_PI * k / segs, a1 = 2 * M_PI * (k + 1) / segs, r = 0.30, z = sd * 0.124;
+            link(V3(std::cos(a0) * r, std::sin(a0) * r, z), V3(std::cos(a1) * r, std::sin(a1) * r, z), 0.0045);
+        }
+    GenVertexArrays(1, &chainVao);
+    GenBuffers(1, &chainVbo);
+    setupVtxVao(chainVao, chainVbo);
+    BufferData(GL_ARRAY_BUFFER, v.size() * sizeof(Vtx), v.data(), GL_STATIC_DRAW);
+    chainVertexCount = (int)v.size();
+}
+
 void Renderer::buildWheel() {
     for (int st = 0; st < WHEEL_STYLES; st++) buildWheelStyle(st);
+    for (int st = 0; st < WHEEL_STYLES; st++)
+        for (int tt = 0; tt < TIRE_TYPES; tt++) buildTire(st, tt);
+    buildChains();
     std::vector<Vtx> cal;
 
     // Parts that don't spin: brake caliper straddling the disc, and the hub carrier.
@@ -2662,6 +2859,17 @@ void Renderer::drawWheels(const Sim& sim, GLuint prog) {
     for (const Car& car : sim.cars) {
         if (car.wheels.empty()) continue;
         Frame fr = car.frame();
+        // The car's own tread on this wheel (and chains over it when they're on).
+        const int tread = std::min(std::max(car.spec->tireType, 0), TIRE_TYPES - 1);
+        auto drawTread = [&](int st, const M4& tm, bool chained) {
+            uniformM4(prog, "uModel", tm);
+            BindVertexArray(tireVao[st][tread]);
+            DrawArrays(GL_TRIANGLES, 0, treadVertexCount[st][tread]);
+            if (chained) {
+                BindVertexArray(chainVao);
+                DrawArrays(GL_TRIANGLES, 0, chainVertexCount);
+            }
+        };
         for (const Wheel& wh : car.wheels) {
             const int st = std::min(std::max(wh.mounted ? wh.item.style : car.spec->wheelStyle, 0), WHEEL_STYLES - 1);
             BindVertexArray(wheelVao[st]);
@@ -2676,8 +2884,9 @@ void Renderer::drawWheels(const Sim& sim, GLuint prog) {
                 // Smooth deflation animation: interpolate between inflated and flat
                 const double flatScale = (wh.rimR + 0.015) / wh.R;
                 double scale = (1.0 - wh.poppedAnim) * 1.0 + wh.poppedAnim * flatScale;
-                uniformM4(prog, "uModel", wheelMatrix(car, wh, fr.up, true, scale));
-                DrawArrays(GL_TRIANGLES, 0, tireVertexCount[st]);
+                const M4 tm = wheelMatrix(car, wh, fr.up, true, scale);
+                drawTread(st, tm, wh.chained);
+                BindVertexArray(wheelVao[st]);
                 uniformM4(prog, "uModel", wheelMatrix(car, wh, fr.up, true));
                 DrawArrays(GL_TRIANGLES, tireVertexCount[st], wheelVertexCount[st] - tireVertexCount[st]);
             } else {
@@ -2685,8 +2894,8 @@ void Renderer::drawWheels(const Sim& sim, GLuint prog) {
                 // the compressed axis stationary while the tread rotates.
                 const double vertical = wh.loadedRadius(car.tirePsi, car.spec->tirePsi, car.spec->tireSoft) / wh.R;
                 const double bulge = 1 + 0.3 * (1 - vertical);
-                uniformM4(prog, "uModel", wheelMatrix(car, wh, fr.up, true, 1.0, vertical, bulge));
-                DrawArrays(GL_TRIANGLES, 0, tireVertexCount[st]);
+                drawTread(st, wheelMatrix(car, wh, fr.up, true, 1.0, vertical, bulge), wh.chained);
+                BindVertexArray(wheelVao[st]);
                 uniformM4(prog, "uModel", wheelMatrix(car, wh, fr.up, true));
                 DrawArrays(GL_TRIANGLES, tireVertexCount[st], wheelVertexCount[st] - tireVertexCount[st]);
             }

@@ -1,6 +1,7 @@
 // On foot, hands on: what the thing in front of you lets you do (hold E), and doing it.
 // Take a truck's spare off its carrier, take a wheel off, carry it, bolt a wheel onto a bare
-// hub (any size), put a tire back on its rim, pick a wheel up off the trail, stow one. The
+// hub (any size), put a tire back on its rim, pick a wheel up off the trail, stow one; take a
+// snow chain out of the back, wrap it round a tire, take it off again. The
 // wheel jobs are on the trucks with wheelLoss (tires.h); the hold times are the work.
 #pragma once
 #include <algorithm>
@@ -23,6 +24,10 @@ enum InteractKind {
     IA_USE_JACK,      // operate the jack to lift the corner
     IA_LOWER_JACK,    // lower the jack back down
     IA_REMOVE_JACK,   // remove the jack after lowering
+    IA_TAKE_CHAIN,    // a snow chain out of the back
+    IA_FIT_CHAIN,     // wrap the chain you carry round a tire (stopped)
+    IA_REMOVE_CHAIN,  // unhook a chain from a tire
+    IA_STOW_CHAIN,    // put the chain you carry back in the truck
 };
 
 struct InteractOption {

@@ -1331,6 +1331,10 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         v[5].fuelCapacity = 40;                         // UTV: 10.6 gal (Maverick X3)
         v[6].fuelCapacity = 80, v[6].jerryCan = 20;     // Tacoma: 21.1 gal
         v[7].fuelCapacity = 117;                        // Blazer: 31 gal
+        // A set of snow chains in the back of each off-roader (a pair per axle).
+        for (const char* id : {"bronco", "4runner", "buggy", "utv", "tacoma", "blazer"})
+            for (VehicleSpec& s : v)
+                if (std::string(s.id) == id) s.snowChains = 4;
         return v;
     }();
     return catalog;

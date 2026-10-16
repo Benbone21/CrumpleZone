@@ -1968,6 +1968,11 @@ int main(int argc, char** argv) {
         if (walker.carrying) Interact::drop(sim, walker, V3(std::cos(walker.yaw), 0, -std::sin(walker.yaw)));  // (whisked away: it's left there)
         else if (walker.holdingJack) Interact::dropJack(sim, walker);  // (put the jack down)
         const int k = walker.carToEnter(sim);
+        if (walker.holdingChain && k >= 0) {  // (a chain in your hands goes in the back with you)
+            Car& kc = sim.cars[k];
+            if (kc.chains < std::max(kc.spec->snowChains, 4)) kc.chains++;
+            walker.holdingChain = false;
+        }
         if (k < 0) {
             hud.toast("WALK UP TO A TRUCK TO GET IN");
             return;
@@ -3080,6 +3085,12 @@ int main(int argc, char** argv) {
             if (amp > 0.08) audio.impact(amp);
             if (events.glass) audio.glass(std::min(1.0f, 0.4f + 0.06f * events.glass));
             if (events.tirePops) audio.pop();
+            {  // ---- snow chains snapping (driven too fast on them)
+                static int chainsSeen = 0;
+                Car& pc = sim.cars[sim.player];
+                if (pc.chainsSnapped > chainsSeen) hud.toast("A SNOW CHAIN SNAPPED: KEEP UNDER 50 KM/H ON CHAINS");
+                chainsSeen = pc.chainsSnapped;
+            }
             // Tire air hiss while inflating/deflating
             const Car& pcar = sim.cars[sim.player];
             const bool airing = !sim.paused && pcar.airing != 0 && len(pcar.frame().vel) < 0.5 &&

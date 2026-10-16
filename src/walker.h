@@ -19,6 +19,7 @@ struct Walker {
     std::optional<WheelItem> carrying;
     // A tool in your hand (the jack): placed and used to lift a vehicle corner.
     bool holdingJack = false;
+    bool holdingChain = false;  // a snow chain off the truck, to wrap a tire in
 
     // Steps (dt, ~60 Hz): `fwd`/`side` (-1..1) move relative to `viewYaw` (the camera's
     // heading), `run` faster, `jump` once when grounded.

@@ -138,6 +138,8 @@ struct Wheel {
     Surface surface = SURF_PAVED;
     bool detached = false;
     bool popped = false;    // blown tire: runs on the rim
+    bool chained = false;   // snow chains fitted over the tire (on foot: interact.h)
+    float chainStrain = 0;  // s driven too fast on them: past ~2 s they snap
     double poppedAnim = 0;  // deflation animation: 0 = inflated, 1 = fully flat
     bool shaftBroken = false;  // its axle shaft / CV snapped: the hub freewheels
     // The wheel bolted on (tires.h): what it is, and whether it's there at all. Off (its
@@ -386,6 +388,8 @@ public:
     int fieldHelper = -1;       // vehicle parked alongside doing trail repairs (-1 none)
     double fieldTime = 0;       // s of trail repairs done
     // The jack: a tool the player can place under a wheel to lift it off the ground.
+    int chains = 0;             // snow chains in the back (VehicleSpec::snowChains, back after a rebuild)
+    int chainsSnapped = 0;      // chains that broke from too much speed (the HUD counts these)
     bool hasJack = false;       // the "jack and recovery straps" mod
     bool jackPlaced = false;    // the jack is currently under the car
     int jackWheel = -1;         // which wheel the jack is under

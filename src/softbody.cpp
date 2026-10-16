@@ -1436,7 +1436,14 @@ void Car::wheelStep(double h, const World& w) {
             // sooner in a fast corner and the rim is closer to the rocks.
             const double psiDrop = spec->tirePsi - tirePsi;
             const SurfaceInfo& si = surfaceInfo(ct.surface);
-            const int tread = std::min(std::max(spec->tireType, 0), TIRE_TYPES - 1);
+            // Chains over the tire: they do the gripping. Run fast on them and they let go: they
+            // snap after ~2 s over 60 km/h (they're rated for ~50).
+            if (wh.chained) {
+                const double v = std::fabs(wh.omega) * R;
+                wh.chainStrain = v > 16.7 ? wh.chainStrain + (float)h : std::max(0.0f, wh.chainStrain - (float)h);
+                if (wh.chainStrain > 2.0f) wh.chained = false, wh.chainStrain = 0, chainsSnapped++;
+            }
+            const int tread = wh.chained ? (int)TIRE_CHAINS : std::min(std::max(spec->tireType, 0), TIRE_TYPES - 1);
             double grip = si.grip * kTreadGrip[tread][ct.surface];
             if (ct.surface != SURF_PAVED && ct.surface != SURF_WET && ct.surface != SURF_ICE) grip *= (1 + 0.012 * psiDrop) * spec->looseGrip;
             // Mud packed into the tread turns it into a slick.
