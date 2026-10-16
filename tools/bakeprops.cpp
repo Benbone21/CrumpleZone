@@ -1072,9 +1072,11 @@ bool bakeSolid(const Unit& u, props::HullLibrary& hulls, props::Model& model) {
     mat.doubleSided = u.kind == props::KIND_CLIFF || u.kind == props::KIND_BRANCHES;
     model.mats.push_back(mat);
     Mesh cur = welded;
+    std::vector<V3> drawn;  // the first LOD's corners: what the player sees
     for (int lod = 0; lod < 3; lod++) {
         cur = simplify(cur, u.tris[lod]);
         Unwrapped uw = unwrap(cur, u.tex[lod]);
+        if (lod == 0) drawn = uw.p;
         std::printf("  LOD%d: %zu tris, %zu verts, atlas %d\n", lod, uw.t.size(), uw.p.size(), u.tex[lod]);
         if (!gNoTex) {
             Baked bk = bake(uw, hm, bvh, u.tex[lod], u.cage);
@@ -1120,7 +1122,9 @@ bool bakeSolid(const Unit& u, props::HullLibrary& hulls, props::Model& model) {
     model.bmax[0] = (float)mx.x, model.bmax[1] = (float)mx.y, model.bmax[2] = (float)mx.z;
     if (u.hull) {
         double miss = 0;
-        hulls.hulls.push_back(props::buildRockHull(u.name, welded.p, 48, &miss));
+        // Made from the drawn mesh, not the raw scan: the simplified first LOD pulls sharp
+        // corners in by up to 5 cm, and a hull off the raw scan then stands off what you see.
+        hulls.hulls.push_back(props::buildRockHull(u.name, drawn, 48, &miss));
         const props::RockHull& h = hulls.hulls.back();
         std::printf("    hull: %zu corners, %zu faces, worst miss %.1f mm\n", h.v.size(), h.f.size(), miss * 1000);
     }

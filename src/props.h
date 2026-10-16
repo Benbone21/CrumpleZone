@@ -64,8 +64,8 @@ bool loadModel(const std::string& path, Model& m);
 std::string assetDir();
 
 // ---- Rock collision hulls -------------------------------------------------------------
-// One per scanned rock: the convex hull of the scan reduced to <= 48 corners, in the model's
-// own frame (the same one the visual mesh is in, so the two line up under any transform).
+// One per scanned rock: the convex hull of the scan's drawn (first-LOD) mesh reduced to <= 48
+// corners, in the model's own frame (the same one the visual mesh is in, so the two line up under any transform).
 struct RockHull {
     std::string name;
     float bmin[3], bmax[3];                 // of the hull
