@@ -3220,7 +3220,9 @@ int main(int argc, char** argv) {
                     look(trunk::gateAt(c));
                     scriptE = frame > 40 && c.gateShut();
                 } else if (frame >= 140 && frame < 175) {  // the open back, and a step closer to look in
-                    if (frame == 140) stand(1.0);
+                    double behind = 1.7, rise = 0, aside = 0;  // (CZ_TRUNKCAM=behind,rise,aside: a look from another spot)
+                    if (const char* e = std::getenv("CZ_TRUNKCAM")) std::sscanf(e, "%lf,%lf,%lf", &behind, &rise, &aside);
+                    if (frame == 140 || rise != 0 || aside != 0) stand(behind), walker.p += V3(-fl.z, 0, fl.x) * aside, walker.p.y += rise;
                     look(trunk::cargoCenter(c));
                 } else if (frame >= 175 && frame < 270) {  // the hi-lift jack: hold E, and it's in your hands
                     if (itemAim({TK_JACK, 0}, at) || walker.holdingJack) look(walker.holdingJack ? trunk::cargoCenter(c) : at);

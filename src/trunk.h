@@ -20,6 +20,7 @@
 
 #include "anchors.h"
 #include "fixes.h"
+#include "modelkit.h"
 #include "softbody.h"
 
 enum TrunkKind { TK_NONE = -1, TK_TOOL, TK_PART, TK_GEAR, TK_CHAINS, TK_JACK };
@@ -68,6 +69,7 @@ constexpr double kReachIn = 3.3;   // m from your chest: how far into the back y
 
 std::string name(TrunkRef r);      // "HAMMER", "TREE STRAP"
 const char* model(TrunkRef r);     // its modelkit id
+const mk::Mesh& itemMesh(const std::string& model);  // what's drawn of it in the back: built with Placed::bare, as the renderer does
 std::string lineFor(const TrunkItem& it);  // "HAMMER", "STAKES X3", "CV AXLE (ENDLESS)" for the list
 
 // Where the cargo is, in the rest frame.
@@ -87,14 +89,17 @@ std::vector<TrunkItem> contents(const Car& c, const TrunkStock& own, bool primar
 // How many copies of an item are drawn now.
 inline int copiesShown(const TrunkItem& it) { return std::min(std::max(it.count - it.taken, 0), kMaxCopies); }
 
-// Lays the contents out on the cargo floor: long things across the back, the rest on shelves
-// from the gate forward, stacks piled up. Everything stays inside cargoBox (things shrink a
-// little, if there's a lot, before they'd overflow).
+// Lays the contents out on the cargo floor: packed tight from the gate forward (each kind turned
+// whichever way it fits), stacks piled up. Everything stays inside cargoBox and nothing lies on
+// anything else: the whole lot shrinks (the big things most) until every kind is on the floor.
 std::vector<TrunkSlot> layout(const Car& c, const std::vector<TrunkItem>& items);
 
 // An SUV's cargo deck is a slide: with the back open it runs out behind the bumper (so what's on it is in
-// the open, in the light, and not behind a high sill), and back in when it's shut. How far out it is (m).
+// the open, in the light, and not behind a high sill), and back in when it's shut. The deck is kOver longer
+// than its bay (its back end is what hangs out): slide() is how far it's moved back from where its box is
+// (kSlide open; shut, it rides kOver forward, all of it in the bay).
 constexpr double kSlide = 0.62;
+constexpr double kOver = 0.25;
 double slide(const Car& c);
 
 // A point in the rest frame, carried by the body: the nearest nodes' positions plus the turn of
