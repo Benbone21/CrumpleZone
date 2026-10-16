@@ -51,7 +51,7 @@ SCENARIO(tire_heat, "simulation/tire-heat",
         static int phase = 0;
         phase++;
         if (phase % 100 == 0) c.steer = -c.steer;
-        if (std::abs(c.steer) < 0.1) c.steer = 0.3;
+        if (std::abs(c.steer) < 0.1) c.steer = 0.2;  // (0.3 rolled main's Jesko, which keeps its lateralGrip 1.0 and softer springs; editor-ui's retune is not applied)
         maxSpeed = std::max(maxSpeed, len(c.frame().vel) * 3.6);
     });
 
