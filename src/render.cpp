@@ -418,8 +418,13 @@ void main(){
   vec3 n = normalize(vNrm);
   vec3 base = vCol.rgb;
   int mat = int(vCol.a + 0.5);
+  int wear = mat / 200;  // (a damaged car part: Placed::wear)
+  mat -= wear * 200;
   bool sunlit = mat >= 100;  // (a cargo model inside a body's shadow: Placed::sunlit)
   if (sunlit) mat -= 100;
+  if (wear == 1) base = mix(base, base * vec3(1.0, 0.72, 0.5), 0.7);  // bent: warmed
+  else if (wear == 2) base = mix(base, vec3(0.62, 0.17, 0.08), 0.45) * 0.9;  // broken: rust red
+  else if (wear == 3) base *= 0.3;  // dead: soot
   if (uTreeFadeN > 0 && (mat == 13 || mat == 15)) {  // a tree the camera sees through: its leaves (and the snow on them) dither away; trunks and limbs never do
     float fade = 0.0;
     for (int i = 0; i < uTreeFadeN; i++) {
@@ -498,6 +503,11 @@ void main(){
     col = lin * (amb + diff * sh * kSunCol + lamp) + pow(max(dot(n, H), 0.0), specP) * specK * sh * 2.0 * kSunSpec + lspec * specK * 2.0;
   }
   if (mat == 6) col = lin * 2.2;
+  if (wear == 1 || wear == 2) {  // a rim of hot light, breathing slowly: reads from a few metres, in the dark under a car too
+    float rim = pow(1.0 - max(dot(n, V), 0.0), 2.0);
+    float pulse = 0.7 + 0.3 * sin(uTime * 3.5);
+    col += (wear == 2 ? vec3(1.0, 0.2, 0.04) * 1.1 : vec3(0.9, 0.45, 0.04) * 0.6) * (0.14 + 0.95 * rim) * pulse;
+  }
   oCol = finishColor(col, vPos, 1.0);
 })";
 
@@ -1299,6 +1309,27 @@ const char* kLineFS = R"(#version 330 core
 in vec4 vCol; out vec4 oCol;
 void main(){ oCol = vCol; })";
 
+// A bent or broken car part seen through what hides it (Renderer::xrayRange): a rim of hot light, added over the
+// scene where the part is behind something.
+const char* kXrayVS = R"(#version 330 core
+layout(location=0) in vec3 aPos;
+layout(location=1) in vec3 aNrm;
+layout(location=2) in vec4 aCol;
+uniform mat4 uVP;
+out vec3 vPos; out vec3 vNrm; out float vWear;
+void main(){ vPos = aPos; vNrm = aNrm; vWear = floor((aCol.a + 0.5) / 200.0); gl_Position = uVP * vec4(aPos, 1.0); })";
+
+const char* kXrayFS = R"(#version 330 core
+in vec3 vPos; in vec3 vNrm; in float vWear; out vec4 oCol;
+uniform vec3 uCam; uniform float uTime;
+void main(){
+  vec3 n = normalize(vNrm), V = normalize(uCam - vPos);
+  float rim = pow(1.0 - abs(dot(n, V)), 1.6);
+  float pulse = 0.65 + 0.35 * sin(uTime * 3.5);
+  vec3 c = vWear > 1.5 ? vec3(1.0, 0.22, 0.05) : vec3(0.95, 0.55, 0.06);
+  oCol = vec4(c * (0.35 + 1.1 * rim) * pulse * 0.75, 1.0);
+})";
+
 const char* kSkyVS = R"(#version 330 core
 out vec2 vNdc;
 void main(){
@@ -1863,6 +1894,7 @@ bool Renderer::init(const World& world, std::string& err) {
     progCar = linkProgram(kCarVS, header + kCommonFS + kCarFSBody, err);
     progDepth = linkProgram(kDepthVS, kDepthFS, err);
     progLine = linkProgram(kLineVS, kLineFS, err);
+    progXray = linkProgram(kXrayVS, kXrayFS, err);
     progSky = linkProgram(kSkyVS, header + kCommonFS + kSkyFSBody, err);
     progHud = linkProgram(kHudVS, kHudFS, err);
     progFx = linkProgram(kFxVS, header + kCommonFS + kFxFSBody, err);
@@ -1881,7 +1913,7 @@ bool Renderer::init(const World& world, std::string& err) {
             groundFailed = true;
         }
     }
-    if (!progLit || !progDepth || !progLine || !progSky || !progHud || !progFx || !progCar || !progAO || !progDown ||
+    if (!progLit || !progDepth || !progLine || !progXray || !progSky || !progHud || !progFx || !progCar || !progAO || !progDown ||
         !progUp || !progComposite || !progGrass || !progWater)
         return false;
     // (Scanned props: if their shaders won't build, the scenery stays code-made.)
@@ -2522,6 +2554,20 @@ void Renderer::buildFigures() {
     BindBuffer(GL_ARRAY_BUFFER, figVbo);
     BufferData(GL_ARRAY_BUFFER, v.size() * sizeof(Vtx), v.data(), GL_STREAM_DRAW);
     figVertexCount = (int)v.size();
+    // The hurt parts near you again, for the see-through glow.
+    std::vector<Vtx> xr;
+    if (xrayRange > 0)
+        for (const Placed& pl : frameModels)
+            if ((pl.wear == 1 || pl.wear == 2) && len(pl.p - xrayEye) < xrayRange) appendPlaced(xr, pl, placedMesh(pl));
+    if (!xrayVao) {
+        GenVertexArrays(1, &xrayVao);
+        GenBuffers(1, &xrayVbo);
+        setupVtxVao(xrayVao, xrayVbo);
+    }
+    BindVertexArray(xrayVao);
+    BindBuffer(GL_ARRAY_BUFFER, xrayVbo);
+    BufferData(GL_ARRAY_BUFFER, xr.size() * sizeof(Vtx), xr.empty() ? nullptr : xr.data(), GL_STREAM_DRAW);
+    xrayVertexCount = (int)xr.size();
 }
 
 void Renderer::buildWheelStyle(int style) {
@@ -3517,6 +3563,23 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         DepthMask(0);
         drawCarBodies(sim, progCar, true);
+        DepthMask(1);
+        Disable(GL_BLEND);
+    }
+
+    // Hurt parts glowing through what hides them: only where something's in front (depth greater), added on.
+    if (xrayVertexCount > 0 && debug != DEBUG_PARTS) {
+        UseProgram(progXray);
+        uniformM4(progXray, "uVP", vp);
+        Uniform3f(uniformLocation(progXray, "uCam"), (float)view.eye.x, (float)view.eye.y, (float)view.eye.z);
+        Uniform1f(uniformLocation(progXray, "uTime"), view.time);
+        Enable(GL_BLEND);
+        BlendFunc(GL_ONE, GL_ONE);
+        DepthMask(0);
+        DepthFunc(GL_GREATER);
+        BindVertexArray(xrayVao);
+        DrawArrays(GL_TRIANGLES, 0, xrayVertexCount);
+        DepthFunc(GL_LEQUAL);
         DepthMask(1);
         Disable(GL_BLEND);
     }

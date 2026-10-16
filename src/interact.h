@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "carparts.h"
 #include "fixes.h"
 #include "softbody.h"
 #include "trunk.h"
@@ -72,6 +73,7 @@ struct Interact {
     double progress = 0;     // s held on it so far
     std::vector<InteractSpot> spots;  // things out in the world to open (set by the game)
     std::string openedSpot;           // set when one's been opened (its id): the game takes it from here
+    PartHit hover;                    // the car part under the crosshair (set by the game each frame): its repair, if any, is the one picked
     double share() const { return current.hold > 0 ? std::min(1.0, progress / current.hold) : 0; }
     static constexpr double kJackMax = 0.45;  // m the saddle can rise
 
@@ -79,7 +81,7 @@ struct Interact {
     // (2.5 m) and no more than ~35 degrees off your line of sight.
     // `own`: everything you own, if the trucks' backs are in play (trunk.h).
     static InteractOption pick(const Sim& sim, const Walker& wk, const V3& eye, const V3& look, const std::vector<InteractSpot>* spots = nullptr,
-                               const Kit& kit = Kit(), const TrunkStock* own = nullptr);
+                               const Kit& kit = Kit(), const TrunkStock* own = nullptr, const PartHit* hover = nullptr);
     // Once a frame on foot: finds the job, runs the hold, and does it when the hold is done.
     // Returns what to announce ("" most frames).
     std::string update(Sim& sim, Walker& wk, const V3& eye, const V3& look, bool holdE, double dt);

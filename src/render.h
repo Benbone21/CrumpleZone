@@ -81,6 +81,10 @@ public:
     // Code-made models (modelkit.h) drawn this frame only: a jack under a wheel, the tools in
     // your hands (handwork.h)...
     std::vector<Placed> frameModels;
+    // On foot, a car part that's bent or broken (Placed::wear 1, 2) within `xrayRange` m of `xrayEye` glows through
+    // whatever hides it (the body, a tire), faint and slow-pulsing, so you can tell from outside (0: off).
+    V3 xrayEye;
+    double xrayRange = 0;
     // A wheel being worked on this frame: slid out along its axle (coming off), and its snow
     // chain part wrapped (0..1; -1 as it is).
     struct WheelWork {
@@ -140,6 +144,9 @@ private:
     int sceneryVertexCount = 0, terrainGridN = 0, mapId = 0, terrainMeshN = 0;
     unsigned figVao = 0, figVbo = 0;
     int figVertexCount = 0;
+    unsigned xrayVao = 0, xrayVbo = 0;
+    int xrayVertexCount = 0;
+    GLuint progXray = 0;
     void buildFigures();
     double terrainSpacing = 1;
     GLuint terrainVao = 0, terrainVbo = 0, terrainIbo = 0;
