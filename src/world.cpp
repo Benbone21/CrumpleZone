@@ -6,6 +6,7 @@
 #include "props.h"
 #include "sections.h"
 
+#include <algorithm>
 #include <atomic>
 
 namespace {
@@ -435,8 +436,9 @@ void World::buildModelYard() {
 
 // The section park, out beyond the loop road in the north-west where the land is open: two strips
 // of ground, each section's cleared ground next to the last. The west strip runs north (-Z) and the
-// north strip carries on east, so driving the sections in order goes round the corner. Each has
-// its name over its entry and is a place on the compass and map. Seed 1 of each.
+// north strip carries on east, so driving the sections in order goes round the corner. The dunes, a
+// field 440 m long, have the band of open ground south of the loop road to themselves, driven east.
+// Each has its name over its entry and is a place on the compass and map. Seed 1 of each.
 void World::buildSectionPark() {
     struct Strip {
         double x, z, heading;  // where the first section's cleared ground starts, and which way the strip runs
@@ -445,7 +447,8 @@ void World::buildSectionPark() {
     const double gap = 28;  // between one section's cleared ground and the next (more than the blend)
     const Strip strips[] = {
         {-465, 300, M_PI / 2, {SEC_STEEP_HILL, SEC_MUD_PIT, SEC_ROCKY_RIVER}},
-        {-500, -455, 0, {SEC_ROCK_WALL, SEC_DUNES, SEC_CLIFF_SHELF, SEC_TIMBER}},
+        {-500, -455, 0, {SEC_ROCK_WALL, SEC_CLIFF_SHELF, SEC_TIMBER}},
+        {-240, 460, 0, {SEC_DUNES}},  // (its middle line is z 460: the field fills the band south of the loop road)
     };
     for (const Strip& s : strips) {
         const V3 dir(std::cos(s.heading), 0, -std::sin(s.heading));
@@ -462,6 +465,8 @@ void World::buildSectionPark() {
             along += fp.length + 2 * fp.apron + gap;
         }
     }
+    // (In the order of the section types, whichever strip they're on: --spawn-section N and the tests count that way.)
+    std::stable_sort(sections.begin(), sections.end(), [](const SectionSpot& a, const SectionSpot& b) { return a.type < b.type; });
 }
 
 // Bushes round the groves and boulders out in the meadows (the proving ground's hills).

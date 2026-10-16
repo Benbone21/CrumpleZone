@@ -133,6 +133,7 @@ struct CameraRig {
         View v;
         v.fovy = fovy;
         if (mode == 3) {
+            v.fadeNear = 0.5f;  // (the drone sees through what it flies into)
             v.eye = droneEye;
             v.target = droneEye + V3(std::cos(droneYaw) * std::cos(dronePitch), std::sin(dronePitch), -std::sin(droneYaw) * std::cos(dronePitch)) * 10;
             v.up = V3(0, 1, 0);
@@ -146,6 +147,7 @@ struct CameraRig {
             v.target = v.eye + (flat * std::cos(lookUp) + fr.up * std::sin(lookUp)) * 10.0;
             v.up = fr.up;
             v.fovy = fovy * 1.087f;
+            v.fadeNear = 0.2f;  // (inside the cab: just what the windows are pressed against)
             return v;
         }
         double yaw = mode == 0 ? chaseYaw + userYaw : orbitYaw;
@@ -153,6 +155,7 @@ struct CameraRig {
         // up instead (to the sky, the trees, the cliff above).
         const double camPitch = std::max(pitch, -0.05), lookUp = std::max(0.0, -0.05 - pitch);
         v.target = target;
+        v.focus = target, v.hasFocus = true, v.fadeNear = 1;  // (the trees between the camera and the car, and any close to the camera, dissolve)
         v.eye = target + V3(-std::cos(yaw) * std::cos(camPitch), std::sin(camPitch), std::sin(yaw) * std::cos(camPitch)) * dist;
         if (lookUp > 0) v.target = target + V3(0, std::tan(lookUp) * dist, 0);
         // Pull the camera in front of walls and ramps instead of clipping through them.

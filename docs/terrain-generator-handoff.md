@@ -626,3 +626,24 @@ every asset.
   stitcher reads sections straight from the library.
 
 Wilderness map removed from the game (2026-10-16); see commit c735d9e for the old seeded generator.
+
+## 9. Dunes, tree clearance and see-through trees (2026-10-16)
+
+- **Dunes** are now a 440 x 160 m field (`SEC_DUNES`, the park's biggest by far) on their own, in the open
+  band south of the loop road: entry (-220, 460), driven east. `World::buildSectionPark()` places it and
+  then sorts `sections` by type, so `--spawn-section 4` is still the dunes. The height comes from the
+  reusable `duneHeight(u, v, DuneParams, seed)` (sections.h): a transverse-ridge sawtooth along the wind
+  (gentle 12 degree backs, 32 degree slip faces, flat hollows; each ridge's crest height sets its lengths, so the
+  slopes hold), its phase bent by a longer second wave (crescents) and by noise (crests meander and merge),
+  crest height swelling from ~10 m at the edge to ~20 m in the middle, a second set of dunes at half the
+  spacing, small swells and a slow floor. The generator then rounds the crests and settles the cells to
+  32 degrees (thermal relaxation), so no slope is steeper than sand stands. Ends and rim of the field and
+  patches of the hollows are firm desert floor (`SURF_DIRT`, `PAINT_DESERT`); the rest is sand. Costs about
+  +40 ms of `World` build.
+- **Tree clearance:** timber trunks start 4.2 m from the track's centre line (2 m off its edge) and the trees near
+  them are kept under 10 m; the mud pit's trunks stand 3.5 m back from the mud. The trees standing in the
+  timber track and its windfall are unchanged.
+- **See-through trees** (`src/treefade.h`): trees close to the camera, or across the line from the camera to the car
+  (chase and orbit views), dissolve with an ordered dither in the shader (no sorting; shadows stay). The scanned
+  trees and snags carry the fade in the instance extras (`propdraw.cpp`); the code-made ones get a small uniform
+  list (`render.cpp`, `uTreeFade`). `CZ_NO_SEETHROUGH=1` turns it off for comparing screenshots.

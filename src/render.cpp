@@ -9,6 +9,7 @@
 
 #include "carvisual.h"
 #include "scenery.h"
+#include "treefade.h"
 #include "font.h"
 #include "groundtex.h"
 #include "fx.h"
@@ -42,6 +43,9 @@ uniform vec4 uLampPos[16];                   // lens center, beam (1 low, 2 high
 uniform vec4 uLampDir[16];                   // beam axis (the car's forward), range (m)
 uniform vec4 uLampUp[16];                    // the car's up, peak intensity
 float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+// Ordered dither (4x4 Bayer) at a pixel, 0..1: a fade of f drops the pixels whose threshold is under f (screen door).
+const int kBayer[16] = int[](0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5);
+float ditherAt(vec2 fc){ ivec2 p = ivec2(fc) & 3; return (float(kBayer[p.x + p.y * 4]) + 0.5) / 16.0; }
 float vnoise(vec2 p){
   vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
   return mix(mix(hash(i), hash(i+vec2(1,0)), f.x), mix(hash(i+vec2(0,1)), hash(i+vec2(1,1)), f.x), f.y);
@@ -243,6 +247,8 @@ uniform int uMap;                 // 0 proving ground, 1 mountain, 2 freeway
 uniform sampler2D uTerrainTex;    // per meter: height, grass, paint
 uniform float uTerrainN;          // texels per side
 uniform vec2 uRockSnow;           // heights where bare rock, then snow, take over
+uniform int uTreeFadeN;           // see-through trees: this many, each (x, z, reach, fade 0..1)
+uniform vec4 uTreeFade[24];
 )";
 
 // The procedural ground: the look the terrain had before photo-scanned materials, and still has for
@@ -409,6 +415,15 @@ void terrainProcedural(vec3 n, inout vec3 base, inout float specK, inout float s
 
 const char* kLitFSBody = R"(
 void main(){
+  if (uTreeFadeN > 0) {  // a tree the camera sees through: its pixels dither away
+    float fade = 0.0;
+    for (int i = 0; i < uTreeFadeN; i++) {
+      vec4 t = uTreeFade[i];
+      vec2 d = vPos.xz - t.xy;
+      if (dot(d, d) < t.z * t.z) fade = max(fade, t.w);
+    }
+    if (fade > ditherAt(gl_FragCoord.xy)) discard;
+  }
   vec3 n = normalize(vNrm);
   vec3 base = vCol.rgb;
   int mat = int(vCol.a + 0.5);
@@ -2068,6 +2083,8 @@ void Renderer::updateObjects(const World& world) {
     if (pq) props.ensureLoaded(pq);
     props.setWorld(world, pq);
     const ScanCover cover = props.cover(pq);
+    scanCover_ = cover;
+    treeFade_.assign(world.trees.size(), 0.0f);
     propsApplied = settings.props;
     buildBoxes(world);
     {
@@ -3156,6 +3173,9 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
 
     // Scanned props: rebuild the scenery if their quality changed, pick the scatter round the camera.
     if (settings.props != propsApplied) updateObjects(sim.world);
+    static const bool noSeeThrough = std::getenv("CZ_NO_SEETHROUGH") != nullptr;  // (for comparing screenshots)
+    const SeeThrough seeThrough{view.eye, view.focus, view.hasFocus && !noSeeThrough, noSeeThrough ? 0.0f : view.fadeNear};
+    props.setSeeThrough(seeThrough);
     props.beginFrame(sim.world, view.eye, M4(), propsOk ? settings.props : 0, view.time);
 
     M4 proj = perspective(view.fovy, (float)view.width / std::max(1, view.height), 0.05f, 6000.0f);
@@ -3323,7 +3343,37 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         BindVertexArray(figVao);
         DrawArrays(GL_TRIANGLES, 0, figVertexCount);
     }
+    // The code-made trees the camera sees through (close to it, or across the line to the car) dither away:
+    // the few most hidden go to the shader as (x, z, reach, fade).
+    {
+        const SeeThrough& st = seeThrough;
+        float list[24 * 4];
+        int n = 0;
+        const double dt = clampd(view.time - fadeTime_, 0.0, 0.1);
+        fadeTime_ = view.time;
+        if (treeFade_.size() == sim.world.trees.size() && (st.nearScale > 0 || st.hasFocus))
+            for (size_t i = 0; i < sim.world.trees.size(); i++) {
+                const Tree& t = sim.world.trees[i];
+                if ((t.kind == 0 && scanCover_.pines) || (t.kind == 2 && scanCover_.snags)) continue;
+                float& f = treeFade_[i];
+                const bool far = std::fabs(t.base.x - st.eye.x) > 40 || std::fabs(t.base.z - st.eye.z) > 40;
+                f = far ? 0.0f : treefade::ease(f, treefade::target(st, t.base, t.height, t.radius), dt);
+                if (f < 0.02f) continue;
+                int at = n;
+                if (n < 24) n++;
+                else {  // (full: replace the least hidden if this one is more)
+                    at = 0;
+                    for (int k = 1; k < 24; k++)
+                        if (list[k * 4 + 3] < list[at * 4 + 3]) at = k;
+                    if (list[at * 4 + 3] >= f) continue;
+                }
+                list[at * 4] = (float)t.base.x, list[at * 4 + 1] = (float)t.base.z, list[at * 4 + 2] = (float)(t.radius * 1.1 + 0.4), list[at * 4 + 3] = f;
+            }
+        Uniform1i(uniformLocation(progLit, "uTreeFadeN"), n);
+        if (n) Uniform4fv(uniformLocation(progLit, "uTreeFade"), n, list);
+    }
     drawBatches(treeVao, treeBatches, vp, false);
+    Uniform1i(uniformLocation(progLit, "uTreeFadeN"), 0);
     drawBatches(sceneryVao, sceneryBatches, vp, false);
     props.draw(vp, [&](GLuint prog) {
         setLighting(prog);

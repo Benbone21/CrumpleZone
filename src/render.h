@@ -37,6 +37,11 @@ struct View {
     float fovy = 1.15f;
     int width = 1, height = 1;
     float time = 0;  // seconds, drives the drifting clouds
+    // See-through trees (treefade.h): trees in the way dissolve. `focus` is what to keep in sight (the car, in
+    // the chase and orbit views); `fadeNear` scales how far from the camera they dissolve (0 off, 1 chase).
+    V3 focus;
+    bool hasFocus = false;
+    float fadeNear = 0;
 };
 
 // Graphics options (the pause menu's GRAPHICS section).
@@ -152,6 +157,9 @@ private:
     int boxVertexCount = 0;
     GLuint treeVao = 0, treeVbo = 0;
     int treeVertexCount = 0;
+    ScanCover scanCover_;           // what the scanned props draw instead of the code-made meshes
+    std::vector<float> treeFade_;   // per tree (World::trees): how much of it the camera hides now (treefade.h)
+    double fadeTime_ = 0;
     GLuint wheelVao[WHEEL_STYLES] = {}, wheelVbo[WHEEL_STYLES] = {}, caliperVao = 0, caliperVbo = 0;
     // Each tread on each wheel style (the tire alone: the rim is the wheel's), and snow chains.
     GLuint tireVao[WHEEL_STYLES][TIRE_TYPES] = {}, tireVbo[WHEEL_STYLES][TIRE_TYPES] = {}, chainVao = 0, chainVbo = 0;

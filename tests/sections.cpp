@@ -3,6 +3,7 @@
 // the game keeps the spawn pad, the loop road and the test courses as they were.
 #include <cmath>
 #include <cstdio>
+#include <map>
 
 #include "../src/sections.h"
 #include "harness.h"
@@ -57,8 +58,9 @@ void checkSection(Ctx& ctx, SectionType t) {
         w.buildGrid();
         // Everything finite, in the footprint and round it.
         bool finite = true;
-        int mud = 0, sand = 0, wet = 0;
-        double lo = 1e9, hi = -1e9;
+        int mud = 0, sand = 0, wet = 0, dirt = 0, steep = 0, cellsIn = 0;
+        double lo = 1e9, hi = -1e9, blockRelief = 0;
+        std::map<std::pair<int, int>, std::pair<double, double>> blocks;  // 60 m blocks of the section: lowest and highest ground
         for (double x = f.entry.x - 320; x <= f.entry.x + 320; x += 1)
             for (double z = f.entry.z - 320; z <= f.entry.z + 320; z += 1) {
                 const int id = w.cellIndex(x, z);
@@ -68,6 +70,13 @@ void checkSection(Ctx& ctx, SectionType t) {
                 if (o < 0) {
                     lo = std::min(lo, h), hi = std::max(hi, h);
                     mud += w.cellSurface(id) == SURF_MUD, sand += w.cellSurface(id) == SURF_SAND, wet += w.waterLevel(x, z) > h + 0.05;
+                    dirt += w.cellSurface(id) == SURF_DIRT;
+                    if (t == SEC_DUNES) {
+                        auto& bk = blocks.try_emplace({(int)std::floor(x / 60), (int)std::floor(z / 60)}, std::make_pair(1e9, -1e9)).first->second;
+                        bk.first = std::min(bk.first, h), bk.second = std::max(bk.second, h);
+                        const double gx = w.cellHeight(w.cellIndex(x + 1, z)) - w.cellHeight(w.cellIndex(x - 1, z)), gz = w.cellHeight(w.cellIndex(x, z + 1)) - w.cellHeight(w.cellIndex(x, z - 1));
+                        cellsIn++, steep += std::hypot(gx, gz) / 2 > std::tan(36 * M_PI / 180);
+                    }
                 }
                 // Outside its blend the ground is exactly as it was.
                 if (o > fp.blend + 1 && std::fabs(h - base.cellHeight(id)) > 1e-5) ctx.check(tag + ": ground outside the blend untouched", false, "cell moved at " + std::to_string(x) + "," + std::to_string(z));
@@ -81,22 +90,46 @@ void checkSection(Ctx& ctx, SectionType t) {
         ctx.check(tag + ": entry is where it was asked", std::hypot(b.entry.x - f.entry.x, b.entry.z - f.entry.z) < 1e-6 && std::fabs(b.entry.y - f.entry.y) < 0.6);
         ctx.check(tag + ": exit is its length along", std::fabs(std::hypot(b.exit.x - b.entry.x, b.exit.z - b.entry.z) - fp.length) < 6.0);
         // Its own character.
-        int slabs = 0, trees = 0, track = 0;
+        int slabs = 0, trees = 0, track = 0, tooClose = 0, tooClose2 = 0;
         for (const Box& bx : w.boxes) slabs += bx.rock && std::hypot(bx.c.x - f.entry.x, bx.c.z - f.entry.z) < 400;
         for (const Tree& tr2 : w.trees) {
             if (outsideOf(fp, f, tr2.base.x, tr2.base.z) >= 0) continue;
             trees++;
             const double dx = tr2.base.x - f.entry.x, dz = tr2.base.z - f.entry.z;
-            track += std::fabs(dx * std::sin(f.heading) + dz * std::cos(f.heading)) < 2.0;
+            const double lat = std::fabs(dx * std::sin(f.heading) + dz * std::cos(f.heading));
+            track += lat < 2.0;
+            tooClose2 += lat < 10.5;  // (the mud pit's edge is 7.5 m out)
+            tooClose += lat > 1.2 && lat < 3.9;  // (the ones deliberately standing in the track are within 1 m of the line)
         }
         switch (t) {
             case SEC_STEEP_HILL: ctx.check(tag + ": climbs", b.exit.y - b.entry.y > 8, std::to_string(b.exit.y - b.entry.y)); break;
-            case SEC_MUD_PIT: ctx.check(tag + ": mud and water", mud > 300 && wet > 100, std::to_string(mud) + " mud, " + std::to_string(wet) + " wet"); break;
+            case SEC_MUD_PIT:
+                ctx.check(tag + ": mud and water", mud > 300 && wet > 100, std::to_string(mud) + " mud, " + std::to_string(wet) + " wet");
+                ctx.check(tag + ": trunks stand 3 m back from the mud's edge", tooClose2 == 0, std::to_string(tooClose2) + " trees too close");
+                break;
             case SEC_ROCKY_RIVER: ctx.check(tag + ": a river of water", wet > 400, std::to_string(wet)); break;
             case SEC_ROCK_WALL: ctx.check(tag + ": slab boxes", slabs >= 60, std::to_string(slabs)); break;
-            case SEC_DUNES: ctx.check(tag + ": sand dunes", sand > 1500 && hi - lo > 3, std::to_string(sand) + " sand, " + std::to_string(hi - lo) + " m of relief"); break;
+            case SEC_DUNES: {
+                for (const auto& bk : blocks) blockRelief = std::max(blockRelief, bk.second.second - bk.second.first);
+                ctx.check(tag + ": a sea of sand", sand > 20000 && dirt > 3000, std::to_string(sand) + " sand, " + std::to_string(dirt) + " firm");
+                ctx.check(tag + ": dunes taller than 8 m (big ones 15 m and up)", blockRelief > 15, std::to_string(blockRelief) + " m in a 60 m block");
+                ctx.check(tag + ": drivable: no slope over 36 degrees but the odd cell (1%)", steep * 100 < cellsIn, std::to_string(steep) + " of " + std::to_string(cellsIn) + " cells");
+                // Never start (or end) on sand: cars bog.
+                int bog = 0;
+                for (double uu : {0.0, fp.length})
+                    for (double uv = -6; uv <= 6; uv += 2)
+                        for (double du2 = -6; du2 <= 6; du2 += 2) {
+                            const double ex = f.entry.x + std::cos(f.heading) * (uu + du2) + std::sin(f.heading) * uv, ez = f.entry.z - std::sin(f.heading) * (uu + du2) + std::cos(f.heading) * uv;
+                            bog += w.surfaceAt(ex, ez) == SURF_SAND;
+                        }
+                ctx.check(tag + ": starts and ends on firm ground", bog == 0, std::to_string(bog) + " sandy spots");
+                break;
+            }
             case SEC_CLIFF_SHELF: ctx.check(tag + ": a real drop", lo < b.entry.y - 15, std::to_string(b.entry.y - lo)); break;
-            case SEC_TIMBER: ctx.check(tag + ": trees, with some in the track", trees > 250 && track >= 4 && !w.logs.empty(), std::to_string(trees) + " trees, " + std::to_string(track) + " in the track"); break;
+            case SEC_TIMBER:
+                ctx.check(tag + ": trees, with some in the track", trees > 250 && track >= 4 && !w.logs.empty(), std::to_string(trees) + " trees, " + std::to_string(track) + " in the track");
+                ctx.check(tag + ": trunks stand back 2 m from the track's edge", tooClose == 0, std::to_string(tooClose) + " trees too close");
+                break;
             default: break;
         }
     }
@@ -179,4 +212,66 @@ SCENARIO(sectionPark, "sections/park", "The game's proving ground has its sectio
         for (const Station& g : game.stations) kept |= std::hypot(g.p.x - st.p.x, g.p.z - st.p.z) < 1e-6;
         ctx.check("the repair station is kept", kept);
     }
+}
+
+SCENARIO(sectionDuneProfile, "sections/dune-profile", "duneHeight: a gentle windward back, a steep slip face near the angle of repose, tall crests, the same for the same seed") {
+    DuneParams P;
+    P.halfU = 220, P.halfV = 68;
+    P.sub = 0;  // (the dominant wave alone: the smaller dunes over it add their own slopes, and the section settles the sum to the repose)
+    const double th = P.windDeg * M_PI / 180;
+    // Along the wind through the middle of the field: the steepest climb and the steepest drop.
+    double up = 0, down = 0, tall = 0, tallestStep = 0;
+    int slipSteps = 0, backSteps = 0;
+    for (double q = -330; q < 330; q += 0.5) {
+        const double h0 = duneHeight(q * std::cos(th), q * std::sin(th), P, 1), h1 = duneHeight((q + 0.5) * std::cos(th), (q + 0.5) * std::sin(th), P, 1);
+        const double s = (h1 - h0) / 0.5;
+        tall = std::max(tall, h1);
+        if (s > 0) up = std::max(up, s), backSteps += s > 0.1;
+        else down = std::max(down, -s), slipSteps += -s > 0.1;
+        tallestStep = std::max(tallestStep, std::fabs(s));
+    }
+    const double upDeg = std::atan(up) * 180 / M_PI, downDeg = std::atan(down) * 180 / M_PI;
+    ctx.check("dune crests taller than 8 m exist (the big ones near 20)", tall > 15, std::to_string(tall) + " m");
+    ctx.check("windward backs are gentle (10 to 18 degrees)", upDeg > 8 && upDeg < 18, std::to_string(upDeg));
+    ctx.check("slip faces are steeper than the backs", downDeg > upDeg + 8, std::to_string(downDeg) + " against " + std::to_string(upDeg));
+    ctx.check("slip faces stand near the angle of repose (28 to 38 degrees)", downDeg > 28 && downDeg < 38, std::to_string(downDeg));
+    ctx.check("the backs are longer than the slip faces", backSteps > slipSteps * 2, std::to_string(backSteps) + " against " + std::to_string(slipSteps));
+    ctx.check("the same seed, the same dunes; another seed, other dunes", duneHeight(31, 17, P, 1) == duneHeight(31, 17, P, 1) && std::fabs(duneHeight(31, 17, P, 1) - duneHeight(31, 17, P, 2)) + std::fabs(duneHeight(-70, 5, P, 1) - duneHeight(-70, 5, P, 2)) > 0.01);
+    ctx.check("nothing outside the field", duneHeight(260, 0, P, 1) == 0 && duneHeight(0, 90, P, 1) == 0);
+}
+
+SCENARIO(sectionParkSpace, "sections/park-space", "The park's sections keep apart from each other and from the loop road (cleared ground and blends)") {
+    const bool was = World::withShowcase;
+    World::withShowcase = true;
+    const World game(MAP_PROVING_GROUND);
+    World::withShowcase = was;
+    auto outsideSpot = [&](const World::SectionSpot& s, double x, double z) {
+        SectionFrame f;
+        f.entry = s.entry, f.heading = s.heading;
+        return outsideOf(sectionFootprint((SectionType)s.type), f, x, z);
+    };
+    int overlaps = 0, nearRoad = 0, offMap = 0;
+    for (double x = -540; x <= 540; x += 4)
+        for (double z = -540; z <= 540; z += 4) {
+            int in = 0;
+            for (const World::SectionSpot& s : game.sections) in += outsideSpot(s, x, z) < 0;
+            overlaps += in > 1;
+        }
+    for (const World::SectionSpot& s : game.sections) {
+        for (const V3& p : game.loopRoad) nearRoad += outsideSpot(s, p.x, p.z) < 12;
+        const SectionFootprint fp = sectionFootprint((SectionType)s.type);
+        for (double u : {-fp.apron, fp.length + fp.apron})
+            for (double v : {-fp.half, fp.half}) {
+                const double x = s.entry.x + std::cos(s.heading) * u + std::sin(s.heading) * v, z = s.entry.z - std::sin(s.heading) * u + std::cos(s.heading) * v;
+                offMap += std::fabs(x) > 560 || std::fabs(z) > 560;
+            }
+        ctx.check(s.name + ": the model yard and the pad are not under it", outsideSpot(s, -80, -60) > 0 && outsideSpot(s, 0, 0) > 0);
+    }
+    ctx.check("no two sections' cleared ground overlap", overlaps == 0, std::to_string(overlaps) + " cells");
+    ctx.check("the loop road is well clear of every section", nearRoad == 0, std::to_string(nearRoad) + " road points");
+    ctx.check("every section's corners are on the map", offMap == 0);
+    int dune = -1;
+    for (size_t i = 0; i < game.sections.size(); i++) dune = game.sections[i].type == SEC_DUNES ? (int)i : dune;
+    ctx.check("the dunes are the park's biggest by far (300+ m across)", dune >= 0 && sectionFootprint(SEC_DUNES).length >= 300 && sectionFootprint(SEC_DUNES).half * 2 >= 140);
+    ctx.check("sections are in the order of their types", dune == SEC_DUNES);
 }
