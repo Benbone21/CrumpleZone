@@ -59,6 +59,27 @@ V3 World::courseStart(int surface) const {
     return V3(kCourseX0 - 6, 0, kCourseZ0 + 4.0);
 }
 
+const std::vector<int>& listedMaps() {
+    static const std::vector<int> m = {MAP_PROVING_GROUND};
+    return m;
+}
+
+bool mapListed(int map) {
+    for (int m : listedMaps())
+        if (m == map) return true;
+    return false;
+}
+
+int nextListedMap(int map, int dir) {
+    const std::vector<int>& l = listedMaps();
+    int at = -1;
+    for (int i = 0; i < (int)l.size(); i++)
+        if (l[i] == map) at = i;
+    if (at < 0) return l[0];
+    const int n = (int)l.size();
+    return l[((at + dir) % n + n) % n];
+}
+
 const char* mapName(int map) {
     return map == MAP_MOUNTAIN ? "MOUNTAIN" : map == MAP_FREEWAY ? "FREEWAY" : map == MAP_FRONTIER ? "FRONTIER" : map == MAP_BACKCOUNTRY ? "BACKCOUNTRY" : map == MAP_WILDERNESS ? "WILDERNESS" : "PROVING GROUND";
 }
@@ -356,6 +377,60 @@ void World::buildProvingGround() {
 
     bakeTerrain();
     scatterScenery(777);
+    if (withModelYard) buildModelYard();
+}
+
+// The model yard, south-west on the pad: everything the game draws (the designs picked in the
+// model lab), in rows by kind, each with its name over it and the solid ones solid, to walk
+// round, drive into and try out.
+void World::buildModelYard() {
+    const double x0 = -32, x1 = -128, z0 = -30;  // rows run west from x0, stepping south from z0
+    double x = x0, z = z0, rowDepth = 0;
+    std::string cat;
+    // Shown smaller than they're used, so they fit in the yard: (id, settings).
+    auto settingsFor = [](const std::string& id) -> std::vector<std::pair<std::string, double>> {
+        if (id == "sign_gantry") return {{"span", 16}};
+        if (id == "race_gate") return {{"width", 10}};
+        if (id == "guardrail") return {{"length", 8}};
+        if (id == "jersey_barrier") return {{"length", 6}};
+        return {};
+    };
+    auto see = [](const std::string& id) { return id != "fp_hand" && id != "lug_nut"; };
+    // Things to walk through or round rather than bump into.
+    auto ghost = [](const std::string& id) {
+        return id == "repair_shed" || id == "fire_tower" || id == "race_gate" || id == "sign_gantry" || id == "mine_portal" || id == "tent" ||
+               id == "person" || id == "campfire" || id == "tree_saver" || id == "ground_anchor" || id.rfind("tree_", 0) == 0 || id == "bush" ||
+               id == "lamp_post" || id == "marker_post" || id == "trail_sign" || id == "map_board";
+    };
+    for (const mk::ModelDef& d : mk::catalog()) {
+        if (!see(d.id)) continue;
+        const std::vector<std::pair<std::string, double>> set = settingsFor(d.id);
+        const mk::Mesh m = set.empty() ? mk::modelMesh(d.id) : mk::modelMesh(d.id, set);
+        if (m.v.empty()) continue;
+        // Facing north, toward the spawn (front +X to world +Z, its left +Z to world -X): its
+        // width across the row is its z extent, its depth its x extent.
+        const double yaw = -M_PI / 2;
+        const double wx = std::max(1.0, m.hi.z - m.lo.z), dz = std::max(1.0, m.hi.x - m.lo.x);
+        if (d.category != cat || x - wx < x1) {  // a new row for each kind, and when a row's full
+            if (!cat.empty()) z -= rowDepth + 5, x = x0, rowDepth = 0;
+            cat = d.category;
+        }
+        const double cx = x - wx / 2, cz = z - dz / 2;  // (the fronts in a line at z)
+        const double gy = height(cx, cz);
+        Placed pl;
+        pl.id = d.id, pl.yaw = yaw, pl.set = set;
+        pl.p = V3(cx + (m.lo.z + m.hi.z) / 2, gy, cz - (m.lo.x + m.hi.x) / 2);
+        models.push_back(pl);
+        tags.push_back({d.title, V3(cx, gy + std::min(m.hi.y, 7.0) + 0.5, cz)});
+        if (!ghost(d.id) && m.hi.y > 0.25) {  // its bounds as a collider
+            addBox(V3(cx, gy + (m.lo.y + m.hi.y) / 2, cz), V3((m.hi.x - m.lo.x) / 2 * 0.95, (m.hi.y - m.lo.y) / 2, (m.hi.z - m.lo.z) / 2 * 0.95), yaw, 0, 0,
+                   V3(0.5, 0.5, 0.5));
+            boxes.back().hidden = true;
+        }
+        x -= wx + 2.5;
+        rowDepth = std::max(rowDepth, dz);
+    }
+    buildGrid();
 }
 
 // Bushes round the groves and boulders out in the meadows (the proving ground's hills).

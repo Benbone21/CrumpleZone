@@ -1310,6 +1310,18 @@ void drawCaches(Renderer& r, const Career& career, const std::vector<CacheSpot>&
     }
 }
 
+// The names over things nearby (the proving ground's model yard).
+void drawTags(Renderer& r, const World& world, const View& view, float u, int W, int H) {
+    const float ts = px(1.3f * u);
+    for (const World::Tag& t : world.tags) {
+        const double d = len(t.p - view.eye);
+        if (d > 28) continue;
+        float sx, sy;
+        if (!project(view, t.p, sx, sy) || sx < 0 || sx > W || sy < 0 || sy > H) continue;
+        label(r, sx - r.textWidth(t.text, ts) / 2, sy, ts, t.text, 1.0f, 0.85f, 0.4f);
+    }
+}
+
 void drawHud(Renderer& r, const Sim& sim, const View& view, HudState& hud, const Playback* pb, const NetSession& net, const WinchAim& aim, int W,
              int H, float fps, double dt, bool mph, const Career& career, const std::vector<CacheSpot>& caches) {
     float u = std::max(0.75f, H / 720.0f);
@@ -1323,6 +1335,7 @@ void drawHud(Renderer& r, const Sim& sim, const View& view, HudState& hud, const
     drawWinchAim(r, sim, aim, view, u, W, H);
     drawPilot(r, sim, view, u, W, H);
     drawCaches(r, career, caches, view, u, W, H);
+    drawTags(r, sim.world, view, u, W, H);
 
     // Top-center: compass, scenario status, persistent states, then toasts.
     float y = 12 * u;
@@ -1481,6 +1494,8 @@ int main(int argc, char** argv) {
     if (opt.props >= 0) settings.gfx.props = std::min(opt.props, 3);
     if (opt.adaptive >= 0) settings.adaptiveQuality = opt.adaptive != 0;
     if (opt.mph) settings.mph = true;
+    if (!mapListed(settings.map)) settings.map = MAP_PROVING_GROUND;  // (a map that's been taken off the list)
+    World::withModelYard = opt.scenario.empty();  // (everything laid out on the proving ground: not under a test's replay)
     if (opt.map >= 0) settings.map = std::min(opt.map, MAP_COUNT - 1);
     if (!opt.scenario.empty()) settings.map = MAP_PROVING_GROUND;  // the tests are built for it
     if (opt.lab) settings.map = MAP_PROVING_GROUND;                // (the model lab builds its own studio)
@@ -1867,6 +1882,7 @@ int main(int argc, char** argv) {
     std::map<std::string, double> bestTimes;  // this session's best finish per level
     auto refreshLevels = [&]() {
         levelList = listLevels();
+        levelList.erase(std::remove_if(levelList.begin(), levelList.end(), [](const Level& lv) { return !mapListed(lv.map); }), levelList.end());  // (on maps taken off the list)
         menu.levels.clear();
         for (const Level& lv : levelList) {
             PauseMenu::LevelInfo li;

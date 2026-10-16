@@ -372,10 +372,11 @@ Tires: street, semi-slick, race slick, all-terrain, mud-terrain and winter, each
 ### Career: start stock, earn the rest
 Main menu → MODE switches between **SANDBOX** (every part on every vehicle, any time: the garage above) and **CAREER**. A career starts every vehicle on its factory parts with $1,000; the rest you find, win or buy:
 
-- **Supply caches**: ten crates each on the Frontier and in the Backcountry, out where it takes some getting to (the top of THE WALL, the summit, the wallow, the old mine, the cliff overlook...). A green marker shows the ones within ~250 m. On foot (J), hold E at the crate: its part or its cash is yours. The best finds are at the hardest places (the 454 big block at the top of THE WALL, race slicks at the summit, the LS7 at the cliff overlook).
+- **Supply caches**: three by the proving ground's model yard (and ten each on the Frontier and in the Backcountry, off the map list for now), out where it takes some getting to (the top of THE WALL, the summit, the wallow, the old mine, the cliff overlook...). A green marker shows the ones within ~250 m. On foot (J), hold E at the crate: its part or its cash is yours. The best finds are at the hardest places (the 454 big block at the top of THE WALL, race slicks at the summit, the LS7 at the cliff overlook).
 - **Rewards**: a job done pays $1,200 (everyone on it is paid); a level's medals pay $400 / $800 / $1,500 the first time, and a level's first gold brings one of the best parts.
 - **The shop**: at a repair station, the garage sells everyday parts and serious ones (dearer); the very best (race slicks, the big-power engines) aren't sold. B (pad: Y) buys the part shown.
 - **Fitting**: the garage fits only parts you own, and only at a repair station. A part, once owned, fits every vehicle that offers it.
+- **Tools and repair parts**: you start with a lug wrench and a jack. Caches hold more tools and spare parts, and each station has a rack beside the shed: walk up and hold E to buy a socket set, a hammer, a CV axle... (see Trail repairs below).
 
 Each player's career is their own (`~/.config/crumplezone/career.txt`, and a garage of its own, `garage-career.txt`) and comes with them into anyone's game; a cache opened in a session counts for everyone there.
 
@@ -470,12 +471,13 @@ The idea: trucks break, and your buddies get you home. (Until multiplayer lands,
   - Mountain: Trailhead Garage (in the lot), Crawl Park Pit (by the dome), Halfway Hut (a pull-off on the summit trail, where the Widowmaker Spur leaves it).
   - Backcountry: Trailhead Camp, Sawmill Camp, Far Side Camp and Pass Hut.
   - Proving ground: the shop beside the spawn.
+- **Trail repairs (on foot, hold E):** walk up to what's broken and fix it yourself, with your own tools and a spare part: a CV axle (socket set and hammer, the corner jacked up), a tie rod (wrenches and hammer), a bent control arm or sway bar link (socket set or wrenches, pry bar), a drive shaft (wrenches), a new tire on the rim (tire irons, jacked up), a flooded engine (socket set and spark plugs). The prompt says what you're missing. Wheels come off and on with the lug wrench once the corner's jacked: take the jack out of the back, put it under the corner, then hold E on it to raise it (and again to lower it). Chains and the jack ride in their own places in the back, apart from the spare. The work shows in first person: the wrench round the lug nuts, the wheel sliding off its studs, the chain wrapping round the tread, the hammer at the hub, the new part going in. In sandbox you have every tool and endless parts.
 - **Real or arcade (Settings → Recovery):** in Real (the default) damage stays until a station fixes it: T only puts you back on your wheels and R tows you to the start as you are. Arcade keeps the old instant repair.
 - **Compass (top):** headings, the nearest repair station and the summit, with distances.
 
 ## Maps
 
-Pick the map in the pause menu (Esc). The game remembers it. From the command line: `--map 0` proving ground, `1` mountain, `2` freeway, `3` Frontier, `4` Backcountry.
+The map list has just the **proving ground** for now: it's where everything in the game is laid out to look at and try while the world is rebuilt. The other maps are still in the code (the tests use them) and `--map N` still loads one: `1` mountain, `2` freeway, `3` Frontier, `4` Backcountry, `5` Wilderness (unfinished).
 
 ### Backcountry
 
@@ -572,6 +574,7 @@ Top speeds on it (`freeway/top-speed`): Jesko ~413 km/h (drag-limited, 9th gear,
 
 **The grid test pad** has:
 
+- **the model yard** (south-west of the spawn): every model in the game in the design picked in the model lab, in rows by kind, its name over it as you walk up; the solid ones are solid. Three supply caches stand beside it (career). The **model lab** (main menu → MODEL LAB, or `crumplezone --lab`) shows each model's designs side by side as the game draws them: pick one, tweak its settings, or flag it for a redo with a note; the picks save to `assets/models/choices.txt` and the game uses them. `build/modelsheet` (make build/modelsheet) draws contact sheets of every model to `build/review/models/`.
 - a concrete crash wall about 115 m ahead of spawn
 - a kicker and landing ramp
 - a row of poles

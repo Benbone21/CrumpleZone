@@ -509,7 +509,7 @@ void Editor::doButton(int id) {
             fileOpen = true;
             break;
         case B_NEWMAP: {
-            newMap = (newMap + 1) % MAP_COUNT;
+            newMap = nextListedMap(newMap, 1);
             Level l;
             l.map = newMap;
             l.name = "UNTITLED";
@@ -783,7 +783,7 @@ void Editor::drawToolbar(Renderer& r, float u) {
     pill(r, x - 6 * u, y - 6 * u, w + 12 * u, (bh + 4 * u) * 7 + 8 * u, 0, 0, 0, 0.55f);
     y = button(r, x, y, w, bh, "SAVE", B_SAVE, false, u);
     y = button(r, x, y, w, bh, "OPEN...", B_OPEN, false, u);
-    y = button(r, x, y, w, bh, std::string("NEW: ") + mapName((newMap + 1) % MAP_COUNT), B_NEWMAP, false, u);
+    y = button(r, x, y, w, bh, std::string("NEW: ") + mapName(nextListedMap(newMap, 1)), B_NEWMAP, false, u);
     y = button(r, x, y, w, bh, "UNDO", B_UNDO, false, u);
     y = button(r, x, y, w, bh, "REDO", B_REDO, false, u);
     y = button(r, x, y, w, bh, "PLAY IT", B_PLAY, false, u);

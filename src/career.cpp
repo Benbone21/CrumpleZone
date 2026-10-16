@@ -62,6 +62,14 @@ std::vector<std::string> cacheGear(int i) {
     return g;
 }
 
+// The proving ground's: three crates by the model yard, to try opening one (no feature: dx, dz
+// are where they are).
+const Loot kProving[] = {
+    {"YARD CRATE A", nullptr, -22, -28, "", MOD_TIRES, "MUD-TERRAIN", 0},
+    {"YARD CRATE B", nullptr, -22, -52, "blazer", MOD_ENGINE, "454 BIG BLOCK", 0},
+    {"YARD CRATE C", nullptr, -22, -76, nullptr, 0, nullptr, 1000},
+};
+
 std::string lootKey(const Loot& l) {
     if (!l.part) return "";
     if (l.slot == MOD_TIRES && !*l.vehicle) return std::string("TIRES:") + l.part;
@@ -83,9 +91,10 @@ std::vector<CacheSpot> cacheSpots(const World& world) {
     int n = 0;
     if (world.map == MAP_FRONTIER) list = kFrontier, n = sizeof(kFrontier) / sizeof(kFrontier[0]);
     else if (world.map == MAP_BACKCOUNTRY) list = kBackcountry, n = sizeof(kBackcountry) / sizeof(kBackcountry[0]);
+    else if (world.map == MAP_PROVING_GROUND) list = kProving, n = sizeof(kProving) / sizeof(kProving[0]);
     for (int i = 0; i < n; i++) {
         const Loot& l = list[i];
-        const V3 f = (world.map == MAP_FRONTIER ? frontierFeature(l.feature) : backcountryFeature(l.feature)) + V3(l.dx, 0, l.dz);
+        const V3 f = (!l.feature ? V3() : world.map == MAP_FRONTIER ? frontierFeature(l.feature) : backcountryFeature(l.feature)) + V3(l.dx, 0, l.dz);
         // (On dry ground: out of the bog or the river, the nearest spot above the water.)
         V3 p = f;
         auto dry = [&](const V3& q) { return world.waterLevel(q.x, q.z) < world.height(q.x, q.z) - 0.3; };

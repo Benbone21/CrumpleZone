@@ -26,7 +26,7 @@ using mk::ModelDef;
 World studioWorld() {
     World w(MAP_PROVING_GROUND);
     w.boxes.clear(), w.rocks.clear(), w.trees.clear(), w.bushes.clear(), w.logs.clear(), w.poles.clear();
-    w.fixtures.clear(), w.stations.clear(), w.models.clear(), w.waters.clear();
+    w.fixtures.clear(), w.stations.clear(), w.models.clear(), w.waters.clear(), w.tags.clear();
     for (double x = -110; x <= 110; x += 1)
         for (double z = -110; z <= 110; z += 1) {
             const int id = w.cellIndex(x, z);

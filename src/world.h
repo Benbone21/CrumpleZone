@@ -140,6 +140,12 @@ inline double surfaceGrip(Surface s) { return surfaceInfo(s).grip; }
 
 enum MapId { MAP_PROVING_GROUND, MAP_MOUNTAIN, MAP_FREEWAY, MAP_FRONTIER, MAP_BACKCOUNTRY, MAP_WILDERNESS, MAP_COUNT };
 const char* mapName(int map);  // as the menu shows it
+// The maps on offer (menus, hosting, the editor): just the proving ground, where everything in
+// the game is laid out to look at and try, while the world is rebuilt. (The others are still
+// built here, for the tests and --map.)
+const std::vector<int>& listedMaps();
+bool mapListed(int map);
+int nextListedMap(int map, int dir);  // the next one on the list (from any map)
 
 // Catmull-Rom spline through control points, sampled every ~2 m.
 std::vector<V3> splinePoints(const std::vector<V3>& pts, bool closed);
@@ -194,6 +200,15 @@ public:
     std::vector<Water> waters;
     std::vector<Prop> fixtures;  // fences, cabins, signs, tables, stumps
     std::vector<Placed> models;  // code-made models (modelkit.h)
+    // Names shown over things when you're near (the proving ground's model yard).
+    struct Tag {
+        std::string text;
+        V3 p;
+    };
+    std::vector<Tag> tags;
+    // Whether the proving ground gets its model yard: the game turns it on; the tests keep the
+    // pad as it always was.
+    static inline bool withModelYard = false;
     std::vector<Station> stations;
     // Water surface height at (x, z), or -1e9 where there's none.
     double waterLevel(double x, double z) const {
@@ -280,6 +295,7 @@ private:
     void buildFrontier();
     void buildBackcountry();
     void buildWilderness();  // wilderness.cpp: generated from `seed`
+    void buildModelYard();   // every model laid out on the proving ground (world.cpp)
     void buildMountain();
     double mountainHeight(double x, double z) const;
     void scatterScenery(uint32_t seed);  // bushes and rocks between the trees

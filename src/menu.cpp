@@ -217,14 +217,14 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
                           : mapPick == MAP_FREEWAY ? "THREE LANES EACH WAY THAT NEVER END: TOP SPEED"
                           : mapPick == MAP_FRONTIER ? "DESERT, RIVERS, LAKES, A RANGE, A RACE CIRCUIT, A RALLY STAGE"
                           : mapPick == MAP_BACKCOUNTRY ? "TRAILS TO CRAWL, MUD, FORD AND EXPLORE WITH BUDDIES"
-                                                    : "TEST PAD, CRASH WALL, RAMPS, HILL ROADS";
+                                                    : "EVERYTHING IN THE GAME, LAID OUT TO LOOK AT AND TRY";
     if (page == 0 && title) {
         const auto& cat = vehicleCatalog();
         button(FREEDRIVE_ROW, "FREE DRIVE", "THIS MAP, THIS VEHICLE:");
         choice(MODE_ROW, "MODE", s.career ? "CAREER" : "SANDBOX", 2,
                s.career ? "START STOCK: FIND, WIN AND BUY BETTER PARTS" : "EVERY PART ON EVERY VEHICLE, ANY TIME");
         choice(VEHICLE_ROW, "VEHICLE", cat[vehicle].name, (int)cat.size(), cat[vehicle].blurb);
-        choice(MAP_ROW, "MAP", mapName(mapPick), MAP_COUNT, mapHint);
+        choice(MAP_ROW, "MAP", mapName(mapPick), (int)listedMaps().size(), mapHint);
         button(LEVELS_ROW, "LEVELS", std::to_string(levels.size()) + " RACES, CLIMBS AND WORLDS");
         button(MULTI_ROW, "MULTIPLAYER", netActive ? netStatus : "HOST OR JOIN A GAME");
         button(EDITOR_ROW, "WORLD EDITOR", "BUILD YOUR OWN WORLDS AND LEVELS");
@@ -286,7 +286,7 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
             button(LQUIT_ROW, "QUIT LEVEL", "BACK TO FREE DRIVE");
         }
         choice(VEHICLE_ROW, "VEHICLE", cat[vehicle].name, (int)cat.size(), cat[vehicle].blurb);
-        choice(MAP_ROW, "MAP", mapName(mapPick), MAP_COUNT, mapHint);
+        choice(MAP_ROW, "MAP", mapName(mapPick), (int)listedMaps().size(), mapHint);
         button(LEVELS_ROW, "LEVELS", levelActive ? "PICK ANOTHER" : "RACES, CLIMBS AND WORLDS");
         button(JOBS_ROW, "JOBS", jobActive ? jobStatus : "RECOVERIES, CONVOYS, SCOUTING");
         button(GARAGE_ROW, "GARAGE", "ENGINE, SUSPENSION, GEARBOX");
@@ -358,7 +358,7 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
             const size_t c1 = r.size();
             const std::string me = s.playerName.empty() ? std::string("PLAYER") : s.playerName;
             text(SESSION_ROW, "GAME NAME", s.sessionName, "TYPE IT", me + "'S GAME");
-            choice(HMAP_ROW, "MAP", mapName(mapPick), MAP_COUNT);
+            choice(HMAP_ROW, "MAP", mapName(mapPick), (int)listedMaps().size());
             choice(HMAX_ROW, "PLAYERS", "UP TO " + std::to_string(std::min(std::max(s.maxPlayers, 2), 8)), 7);
             button(HOST_ROW, "START HOSTING");
             info("FRIENDS ON YOUR NETWORK WILL SEE IT");
@@ -465,7 +465,7 @@ void PauseMenu::showTitle(int currentVehicle, int currentMap) {
 }
 
 void PauseMenu::show(int currentVehicle, int currentMap) {
-    mapPick = currentMap;
+    mapPick = mapListed(currentMap) ? currentMap : nextListedMap(currentMap, 0);
     open = true;
     title = false;
     page = 0;
@@ -608,7 +608,7 @@ PauseMenu::Result PauseMenu::change(int row, int dir, Settings& s) {
     switch (it.id) {
         case VEHICLE_ROW: vehicle = cycle(vehicle); return {};
         case MAP_ROW:
-        case HMAP_ROW: mapPick = cycle(mapPick); return {};
+        case HMAP_ROW: mapPick = nextListedMap(mapPick, dir); return {};
         case HMAX_ROW: s.maxPlayers = 2 + cycle(std::min(std::max(s.maxPlayers, 2), 8) - 2); break;
         case LEVEL_PICK: levelPick = cycle(std::min(std::max(levelPick, 0), it.count - 1)); return {};
         case JOB_PICK: jobPick = cycle(std::min(std::max(jobPick, 0), it.count - 1)); return {};

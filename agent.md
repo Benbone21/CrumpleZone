@@ -138,6 +138,26 @@ Without `--time`, captures start at 10:00 with the clock running.
 
 ## Open work
 
+- **Models and the model lab (2026-10-16):** everything the game draws that isn't a vehicle
+  body is a code-made model in `src/models/*.cpp`, built with the kit in `src/modelkit.h`
+  (frame: +X front, +Y up, +Z left, origin on the ground; read `docs/model-brief.md` before
+  adding one). Each has 2-3 designs; the owner picks in the lab (`crumplezone --lab`, title
+  menu MODEL LAB) and the picks live in `assets/models/choices.txt` (status `redo` with a
+  `note`: do those designs again). `make build/modelsheet && build/modelsheet [id]` draws
+  contact sheets to `build/review/models/` without the game; `tests/models.cpp` checks
+  budgets, soundness, ground contact and the per-copy settings (`rating`, `open`, `lift`,
+  `swing`, `width`, `length`, `span`, `snow`, `dry`). Placement: `World::models` /
+  `placeModel` / `standIn` (draws a model over the boxes that stood in for it, keeping them
+  as its collider); scenery.cpp falls back to the old code-made props if a model is missing.
+- **Map list is just the proving ground** (owner's call, 2026-10-16: another agent is doing
+  world gen). `listedMaps()` in world.cpp; the other maps still build for the tests and
+  `--map`. The proving ground carries the **model yard** (`World::buildModelYard`, game
+  only: `World::withModelYard`, off in the tests, which drive over that corner).
+- **Hands-on repairs** (`fixes.h`, `interact.cpp`, `handwork.cpp`): the parked-alongside
+  field repair is gone. Tools and repair parts are career keys (`TOOL:`, `REPAIR:` in
+  `Career::owned` / `stock`); sandbox has everything. `--script work-wheel|work-chain|work-fix`
+  stages a first-person job for screenshots.
+
 - **Release integration (2026-10-14):** all available branch work is merged into `main` for
   `v0.1.9`; read `docs/release-merge-0.1.9.md` and the new handoff first. Release defaults
   preserve the verified suspension behavior. High-speed damping and free coils remain
