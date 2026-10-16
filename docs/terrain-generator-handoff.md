@@ -670,3 +670,28 @@ Wilderness map removed from the game (2026-10-16); see commit c735d9e for the ol
 - **Measured passability (crawl, 4L):** the set-up Blazer (ZZ4, 4 in lift and 35s, 4.56 and lockers, 12 psi) got through
   at 1.0, 1.5 and 2.5 m/s and with the line 0.3 m off; a stock Blazer (no lockers) at 1.0 and 1.5 m/s mostly (it slides off the
   off-camber run past ~20 degrees and falls at 2.5 m/s). Off the lip is a long way down.
+
+## 11. Scanned rock for the obstacles, uneven ground, rock slabs that look like rock (2026-10-16)
+
+- **Rock, not blocks.** Ledges, steps, toes and strata are now scanned hull rocks (`World::addRock`), not boxes. The rock wall, the
+  steep hill's ledges and the whole cliff shelf have no slab boxes left (rock wall 580 rocks, 0 boxes; before 76 and 281).
+  `Canvas::laid` (sections.cpp) is the helper: half-sizes, a long-axis direction in the section's frame, pitch, lean, and the
+  height of the rock's highest point; it makes the rock tall enough to stand on the ground it's in.
+- **`addRock` takes a pose** (`RockPose`: yaw of the long axis, pitch, roll about it). Without one it's random as before, so nothing
+  that existed moves. With one, `top` is the highest point over the ground at (x, z) and the rock is scaled to the half-sizes.
+  Level files keep it (`rock ... col yaw pitch roll`, optional; `LevelObject::sub == 1`) and `placeSection` turns the yaw with the heading.
+- **How a ledge is made:** the terrain carries the rough shape (the ledge's smooth rise, the staircase's steps and the table's
+  ramps, each a tenth under the rocks' tops) and rocks laid on it make the lip, the face and the treads. A rock alone left dips
+  between hull ends: steps came out 0.55-0.79 m instead of 0.3. The grid and the rocks do each other's job.
+- **Rock wall layout:** gaps between ledges are 9-12 m (were 4.5-7.5), notches 0.5-1.2 m off centre (were 0.8-2.2), the squeeze has 4 m
+  of level after it, the first ledge at 36. At the old spacing a truck (4.4 m) could not turn from one notch to the next:
+  the set-up Blazer stuck at the first tread, original code included.
+- **Slab boxes that remain** (the editor's, other maps') are drawn as worn rock: rounded and chipped edges, stepped sides, strata
+  banding, its own `SM_SLAB` material (SM_ROCK's grain and veins, none of its green lichen: that read as camouflage on
+  red and grey slabs). Collision stays the box.
+- **Uneven ground** (`roughen`, sections.cpp): bumps 0.1-0.35 m over 2-8 m, holes, a washed-out gully, an off-camber dip, ruts (mud
+  pit, timber), tree-root mounds, from seeded noise; flat for the first and last 18 m (the land's own relief too).
+- **Passability** (`prototypes/sections/passability.cpp`, set-up Blazer, 4L, lockers, 12 psi, pure-pursuit bot that backs off and
+  retries): mud pit through at 1.0 m/s (all seeds); rock wall: ledges 0-2 and the squeeze, to the last one or two ledges (seed 2 to
+  the final ledge); steep hill: stuck at its first ledge at 56-64 m of 140, as before (with the rocks near the line removed the hill
+  passes in 120 s, so it is the ledge on a 27 degree scree slope, not the scree).

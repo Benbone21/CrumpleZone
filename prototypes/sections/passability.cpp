@@ -114,16 +114,21 @@ Built stamp(Ctx& ctx, SectionType t, uint32_t seed, double heading = 0) {
 
 void info(Ctx& ctx, SectionType t, uint32_t seed) {
     World& w = ctx.sim.world;
-    const size_t r0 = w.rocks.size(), b0 = w.boxes.size();
     const Built s = stamp(ctx, t, seed);
-    int onLine = 0, within3 = 0, scans = 0;
-    for (size_t i = r0; i < w.rocks.size(); i++) {
+    const SectionFootprint fp = sectionFootprint(t);
+    auto inside = [&](double x, double z) {  // in the cleared ground
+        const double u = (x - s.f.entry.x) * std::cos(s.f.heading) - (z - s.f.entry.z) * std::sin(s.f.heading), v = (x - s.f.entry.x) * std::sin(s.f.heading) + (z - s.f.entry.z) * std::cos(s.f.heading);
+        return std::max({-fp.apron - u, u - (fp.length + fp.apron), std::fabs(v) - fp.half}) < 0;
+    };
+    int rocks = 0, boxes = 0, onLine = 0, within3 = 0, scans = 0;
+    for (const Rock& rk : w.rocks) {
+        if (!inside(rk.c.x, rk.c.z)) continue;
         double best = 1e9;
-        for (const V3& p : s.b.line) best = std::min(best, std::hypot(p.x - w.rocks[i].c.x, p.z - w.rocks[i].c.z));
-        within3 += best < 3, onLine += best < 1.2, scans += w.rocks[i].scan >= 0;
+        for (const V3& p : s.b.line) best = std::min(best, std::hypot(p.x - rk.c.x, p.z - rk.c.z));
+        rocks++, within3 += best < 3, onLine += best < 1.2, scans += rk.scan >= 0;
     }
-    std::printf("RP info %s seed %u: %zu rocks (%d scanned, %d within 3 m of the line, %d within 1.2 m), %zu boxes, build %.1f ms\n", sectionName(t), seed, w.rocks.size() - r0, scans, within3,
-                onLine, w.boxes.size() - b0, s.buildMs);
+    for (const Box& b : w.boxes) boxes += inside(b.c.x, b.c.z);
+    std::printf("RP info %s seed %u: %d rocks (%d scanned, %d within 3 m of the line, %d within 1.2 m), %d boxes, build %.1f ms\n", sectionName(t), seed, rocks, scans, within3, onLine, boxes, s.buildMs);
     ctx.metric("x", 0, "", -1, 1);
 }
 
@@ -224,7 +229,8 @@ void pass(Ctx& ctx, SectionType t, uint32_t seed, double speed, double heading =
             }
             stalls.push_back({idx, ctx.t - t0});
             backUntil = ctx.t + 5, lastProgressT = ctx.t + 5, tries++;
-            v = std::min(v + 0.8, 5.0);
+            static const double kTry[5] = {0.8, 1.3, 0.6, 2.0, 1.0};
+            v = std::getenv("RP_CYCLE") ? kTry[tries % 5] : std::min(v + 0.8, 5.0);
         }
     });
     const bool ok = done;
@@ -264,7 +270,7 @@ int reg = [] {
         for (uint32_t seed : {1u, 2u, 3u}) {
             const SectionType t = wh.t;
             add(std::string("info/") + wh.key + "-" + std::to_string(seed), [t, seed](Ctx& c) { info(c, t, seed); });
-            for (int dm : {6, 10, 15, 25})
+            for (int dm : {4, 6, 10, 15, 25})
                 add(std::string("pass/") + wh.key + "-" + std::to_string(seed) + "-v" + std::to_string(dm), [t, seed, dm](Ctx& c) { pass(c, t, seed, dm / 10.0); });
         }
     return 0;

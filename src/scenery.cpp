@@ -117,7 +117,7 @@ void slab(std::vector<Vtx>& out, const Box& b) {
     Wear w;
     w.o1 = V3(h01(1) * 90, h01(2) * 90, h01(3) * 90), w.o2 = V3(h01(4) * 90, h01(5) * 90, h01(6) * 90), w.o3 = V3(h01(7) * 90, h01(8) * 90, h01(9) * 90);
     const double minHe = std::min({he[0], he[1], he[2]});
-    w.rr = std::min(0.2 + 0.05 * minHe, minHe * 0.45);
+    w.rr = std::min(0.13 + 0.04 * minHe, minHe * 0.4);
     const V3 col(b.col[0], b.col[1], b.col[2]);
     const double bandPh = h01(10) * 6.28;
     for (int axis = 0; axis < 3; axis++)
@@ -196,10 +196,11 @@ void slab(std::vector<Vtx>& out, const Box& b) {
                     const int idx[4] = {iu * Nv + iv, (iu + 1) * Nv + iv, (iu + 1) * Nv + iv + 1, iu * Nv + iv + 1};
                     const V3 fn = cross(pos[idx[1]] - pos[idx[0]], pos[idx[2]] - pos[idx[0]]);
                     const bool flip = dot(fn, nrm[idx[0]]) < 0;
+                    const V3 fq = len(fn) > 1e-12 ? norm(fn) * (flip ? -1.0 : 1.0) : nrm[idx[0]];  // (the facet's own normal, mixed in: a little crystalline, not pillowy)
                     const int order[6] = {0, 1, 2, 0, 2, 3};
                     for (int k = 0; k < 6; k++) {
                         const int o = idx[flip ? order[5 - k] : order[k]];
-                        out.push_back(vert(pos[o], nrm[o], col * (double)shade[o], SM_ROCK));
+                        out.push_back(vert(pos[o], norm(nrm[o] * 0.55 + fq * 0.45), col * (double)shade[o], SM_SLAB));
                     }
                 }
         }

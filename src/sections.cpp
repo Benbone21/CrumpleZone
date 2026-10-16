@@ -55,12 +55,11 @@ constexpr double kRiverCurrent = 1.4;
 constexpr int kRiverBoulders = 140;
 
 // Rock wall (v3): sandstone ledges in a slot canyon.
-constexpr double kWallStart = 42;  // the first ledge's mean position
+constexpr double kWallStart = 36;  // the first ledge's mean position
 constexpr int kWallLedges = 6;
-constexpr Range kWallRise = {0.75, 1.15}, kWallLastRise = {1.3, 1.6}, kWallGap = {8, 11}, kWallAmp = {0.8, 2.2}, kWallTilt = {-0.10, 0.10};
-constexpr double kWallSqueezeAfter = 2, kWallSqueezeLen = 8, kWallSqueezeHalf = 2.7, kWallHeight = 8, kWallStep = 0.40;
+constexpr Range kWallRise = {0.75, 1.15}, kWallLastRise = {1.3, 1.6}, kWallGap = {9, 12}, kWallAmp = {0.8, 2.2}, kWallTilt = {-0.10, 0.10};
+constexpr double kWallSqueezeAfter = 2, kWallSqueezeLen = 8, kWallSqueezeHalf = 2.7, kWallHeight = 8, kWallStep = 0.32;  // (a hull rock's top is lumpy: steps are cut finer than the 0.4 limit)
 constexpr double kWallRimSlope = 0.12, kWallFadeIn = 36;  // the land rises this much per m beyond the canyon's walls; the walls fade in over kWallFadeIn m
-constexpr Range kWallSlabHx = {1.3, 2.4}, kWallSlabHz = {0.8, 1.4}, kWallSlabTh = {0.45, 0.8};
 
 // Dunes: a sea of sand (duneHeight below): ridges with gentle windward backs and steep slip faces.
 constexpr Range kDuneWind = {18, 38}, kDuneSpacing = {125, 150}, kDuneCrest = {18, 21};  // degrees from the heading; m; m
@@ -68,16 +67,16 @@ constexpr double kDuneRepose = 32;   // sand holds no steeper than this (degrees
 constexpr double kDuneHardpan = 0.7, kDunePatch = 0.5;  // hollows lower than this above the floor (m) are hard ground where the patch noise tops that
 constexpr int kDuneSmooth = 2, kDuneRelax = 60;  // passes rounding the crests, passes settling the slopes
 
-// Cliff shelf: a one-truck shelf cut into a cliff, a real drop off the edge, fallen rock and talus, rock slabs to
+// Cliff shelf: a one-truck shelf cut into a cliff, a real drop off the edge, fallen rock and talus, scanned rock to
 // climb, a line through it all. The terrain's 1 m grid fills the corner where a road meets a wall into a gentler ramp
 // than the face, and a wheel is held up by the ground under its hub alone, so tires sank 10 cm into the foot of a bare
-// wall (measured): the cliff stands back from the road's edge and rock slabs lean against its foot (the toe), which the
+// wall (measured): the cliff stands back from the road's edge and a talus of scanned rocks stands against its foot (the toe), which the
 // tires meet exactly.
 constexpr Range kShelfHalf = {2.05, 2.35}, kShelfTilt = {4, 8};  // 4.1-4.7 m of road, 0.4 of it under the toe; leans you toward the drop
 constexpr double kShelfDrop = 22, kShelfCliffMax = 24, kShelfEase = 40;
 constexpr double kShelfLine = 1.3;  // the line through it keeps 2.6 m clear (a Blazer is 2.0 with its mirrors)
 constexpr double kShelfBack = 0.6;  // the cliff's foot stands this far behind the road's edge (the toe fills the gap)
-constexpr double kShelfToe = 0.4, kShelfToeDeg = 74;  // the toe slabs' base stands this far in from the road's edge, 74 deg (steep: not a ramp)
+constexpr double kShelfToe = 0.4;  // the toe's rocks reach this far in from the road's edge at their widest
 constexpr double kShelfRockTop = 0.24;  // a rock in the line stands no higher than this
 
 
@@ -174,7 +173,7 @@ struct Canvas {
                 Cell k;
                 k.id = id, k.u = (float)u, k.v = (float)v, k.wgt = (float)(d <= 0 ? 1.0 : smoothstep(fp.blend, 0, d));
                 k.orig = w.cellHeight(id);
-                k.h = (float)(land(u, v, seed) * smoothstep(0, 30, u) * smoothstep(fp.length, fp.length - 30, u));  // (calm at both ends)
+                k.h = (float)(land(u, v, seed) * smoothstep(kPadFlat - 3, kPadFlat + 17, u) * smoothstep(fp.length - kPadFlat + 3, fp.length - kPadFlat - 17, u));  // (flat for the pad's 15 m at both ends)
                 if (k.wgt > 0.5f) k.surf = SURF_GRASS, k.paint = PAINT_NONE;
                 cells.push_back(k);
             }
@@ -226,14 +225,34 @@ struct Canvas {
     }
 
     // ---- Objects (after commit(): they sit on the finished ground) ------------------------------
-    Rock& rock(double u, double v, const V3& r, double top, uint32_t rseed, float tint = 1) {
+    Rock& rock(double u, double v, const V3& r, double top, uint32_t rseed, float tint = 1, const RockPose* pose = nullptr) {
         const V3 p = at(u, v);
         if (rec) {
             LevelObject o;
             o.kind = OBJ_ROCK, o.p = p, o.size = r, o.top = top, o.seed = rseed, o.col[0] = tint;
+            if (pose) o.sub = 1, o.yaw = pose->yaw, o.pitch = pose->pitch, o.roll = pose->roll;
             rec->push_back(o);
         }
-        return w.addRock(p.x, p.z, r, top, rseed, tint);
+        return w.addRock(p.x, p.z, r, top, rseed, tint, pose);
+    }
+    // A hull rock laid in place, the stuff ledges, steps, ramps and toes are made of: half-sizes `r` (long, up, across), its
+    // long axis along `dir` (radians from +u toward +v) and climbing `pitch`, its top leaning `lean` toward +v, its highest
+    // point `topH` above the section's plane at u (so the ground there is likely above its foot: it's sunk in). It's made
+    // tall enough to stand on the ground it's in (a hull rock is placed by the ground at its centre alone).
+    Rock& laid(double u, double v, double dir, V3 r, double topH, double pitch = 0, double lean = 0, float tint = 1) {
+        const V3 p = at(u, v);
+        const double top = std::max(0.06, ey + slope * u + topH - w.height(p.x, p.z));
+        r.y = std::max(r.y, (top + 0.25) / 2);
+        RockPose pose;
+        pose.yaw = f.heading - dir, pose.pitch = pitch;
+        if (lean != 0) {  // (the roll that tips the top toward +v)
+            const V3 toward(px, 0, pz);
+            const double cy = std::cos(pose.yaw), sy = std::sin(pose.yaw), cp = std::cos(pitch), sp = std::sin(pitch);
+            const V3 along(cy * cp, sp, -sy * cp), up0(-cy * sp, cp, sy * sp);
+            pose.roll = dot(rotateAxis(up0, along, 0.1), toward) > 0 ? lean : -lean;
+        }
+        spots.push_back({u, v, std::min(r.x, r.z)});
+        return rock(u, v, r, top, seed * 211 + (uint32_t)rockN++, tint, &pose);
     }
     // The finished ground at (u, v), above the plane through the entry (after commit()).
     double ground(double u, double v) const {
@@ -411,8 +430,11 @@ void steepHill(Canvas& c) {
     c.commit();
     // Ledges on the upper half: square rock lips the line must climb.
     for (int k = 0; k < kHillLedges; k++) {
-        const double u = ledgeU[k], h = c.rng.range(kHillLedgeH), g = rise / len;
-        c.slab(u, c.ground(u, 0) + h / 2 - 0.4, 0, V3(0.9, h / 2 + 0.4, 3.0), 0, -std::atan(g), 0, V3(0.45, 0.42, 0.38));
+        const double u = ledgeU[k], h = c.rng.range(kHillLedgeH);  // a row of big rocks laid across the climb, sunk to make a lip h high
+        for (double v = -3.4; v < 3.5; v += c.rng.range(1.2, 1.7)) {
+            const double rl = c.rng.range(0.95, 1.35), rd = c.rng.range(0.8, 1.1), g = c.ground(u, v);
+            c.laid(u, v, M_PI / 2 + c.rng.range(-0.25, 0.25), V3(rl, h / 2 + 0.3, rd), g + h + c.rng.range(0.0, 0.1), 0, 0, (float)c.rng.range(0.9, 1.08));
+        }
     }
     // Scree: piles of loose rock down the climb (small ones everywhere, the bigger ones off the line), thicker toward the ledges,
     // rubble at the foot of each ledge and the big ones beside its ends.
@@ -534,19 +556,28 @@ void rockyRiver(Canvas& c) {
     c.forest(8, 0.07, false);
 }
 
-// ---- 4. ROCK WALL (v3): a slickrock formation in a slot canyon -------------------------------------
-// Sandstone ledges whose lips wander across the canyon; each ledge a row of thick rock slabs (tops at
-// the upper tread, faces 0.75-1.3 m) with a notch built as a staircase of slabs, no step over ~0.4 m,
-// on alternating sides: find it or stay put. A V-notch squeeze, a pour-over pool under the fifth
-// ledge, banded strata jutting from the canyon walls and a final ledge too tall for anyone (winch to
-// the junipers above).
+// ---- 4. ROCK WALL (v4): a slickrock formation in a slot canyon -------------------------------------
+// Sandstone ledges whose lips wander across the canyon; each ledge a row of big scanned rocks laid along the lip, sunk
+// into the tread (their tops the step, their flanks the face), with a notch built as a staircase (the ground steps, a pair
+// of rocks on each tread), no step over ~0.35 m, on alternating sides: find it or stay put. A V-notch squeeze with
+// chockstones, a pour-over pool under the fifth ledge, banded strata (flat rocks jutting from the canyon walls) and a
+// final ledge too tall for anyone (winch to the junipers above). Gaps between ledges are long enough for a truck to turn
+// from one notch to the next. No boxes.
 struct SlickLedge {
     double x, rise, amp, phase, notchZ, tilt;
 };
 struct Slick {
     std::vector<SlickLedge> L;
-    double xs = kWallStart, xe = 0, vx0 = 0, vx1 = 0, wallH = kWallHeight;
+    double xs = kWallStart, xe = 0, vx0 = 0, vx1 = 0, wallH = kWallHeight, len = 1e9;  // (len: the section's length, so the exit pad stays flat)
     uint32_t seed = 1;
+    // A notch's staircase carried by the ground (a tenth under the rock treads laid on it): the steps climb from `lower` to `upper`
+    // over ns - 1 treads a metre deep, 2.6 m wide across the notch.
+    struct Stair {
+        double lx, nz, lower, upper;
+        int ns;
+        double front(int j) const { return lx + 0.3 - ((ns - j) + 0.4); }  // where step j's tread begins
+    };
+    std::vector<Stair> stairs;
     double lip(int k, double v) const { return L[k].x + L[k].amp * std::sin(v * 0.45 + L[k].phase) + 0.9 * (valueNoise(v * 0.3, k * 7.3 + seed) - 0.5); }
     double halfW(double x) const {
         if (x > vx0 && x < vx1) return kWallSqueezeHalf + 0.4 * std::sin(x);  // the squeeze
@@ -558,8 +589,15 @@ struct Slick {
             const double s = smoothstep(lip((int)k, v) - 0.25, lip((int)k, v) + 0.55, x);
             h += L[k].rise * s + L[k].tilt * v * s;
         }
-        h += 0.35 * (valueNoise(x * 0.17, v * 0.17) - 0.5) * smoothstep(xs - 10, xs, x);  // slickrock humps
+        h += 0.35 * (valueNoise(x * 0.17, v * 0.17) - 0.5) * smoothstep(xs - 10, xs, x) * smoothstep(len - kPadFlat, len - kPadFlat - 16, x);  // slickrock humps
         if (x > vx0 - 2 && x < vx1 + 2) h += 0.6 * std::fabs(v) * smoothstep(vx0 - 2, vx0 + 1, x) * smoothstep(vx1 + 2, vx1 - 1, x);
+        for (const Stair& st : stairs) {
+            const double lat = smoothstep(1.75, 1.25, std::fabs(v - st.nz));
+            if (lat <= 0 || x < st.lx - 4 || x > st.lx + 1) continue;
+            double prof = 0;
+            for (int j = 1; j < st.ns; j++) prof += smoothstep(st.front(j) - 0.4, st.front(j) + 0.4, x);
+            h = std::max(h, st.lower + (st.upper - st.lower) * prof / st.ns * lat - 0.1 * smoothstep(0, 0.6, prof) * lat);
+        }
         return h;
     }
 };
@@ -568,6 +606,7 @@ void rockWall(Canvas& c) {
     const uint32_t seed = c.seed;
     Slick s;
     s.seed = seed;
+    s.len = c.fp.length;
     double x = s.xs;
     const int n = kWallLedges;
     for (int k = 0; k < n; k++) {
@@ -576,13 +615,17 @@ void rockWall(Canvas& c) {
         l.rise = k == n - 1 ? c.rng.range(kWallLastRise) : c.rng.range(kWallRise);
         l.amp = c.rng.range(kWallAmp);
         l.phase = c.rng.range(0, 6.28);
-        l.notchZ = (k % 2 ? 1 : -1) * c.rng.range(0.6, 1.7);
+        l.notchZ = (k % 2 ? 1 : -1) * c.rng.range(0.5, 1.2);
         l.tilt = c.rng.range(kWallTilt);
         s.L.push_back(l);
         x += c.rng.range(kWallGap);
-        if (k == kWallSqueezeAfter) s.vx0 = x - 1, s.vx1 = x + kWallSqueezeLen - 1, x += kWallSqueezeLen;  // the squeeze after the third ledge
+        if (k == kWallSqueezeAfter) s.vx0 = x - 1, s.vx1 = x + kWallSqueezeLen - 1, x += kWallSqueezeLen + 4;  // the squeeze after the third ledge
     }
     s.xe = x;
+    for (int k = 0; k + 1 < n; k++) {  // (each notch's staircase: found from the ground without it)
+        const double lx = s.lip(k, s.L[k].notchZ), nz = s.L[k].notchZ, lower = s.floorY(lx - 3.0, nz), upper = s.floorY(lx + 2.0, nz) + 0.1;
+        s.stairs.push_back({lx, nz, lower, upper, (int)std::ceil((upper - lower) / kWallStep)});
+    }
     // Terrain: dirt wash in, the formation, the plateau out; canyon walls either side.
     c.each(-c.fp.apron, c.fp.length + c.fp.apron, -c.fp.half, c.fp.half, [&](int id, double pu, double pv) {
         const double hw = s.halfW(pu), e = std::fabs(pv) - hw;
@@ -610,38 +653,43 @@ void rockWall(Canvas& c) {
         });
     }
     c.commit();
-    // Sandstone slabs make each ledge: a row of thick rock slabs across the canyon, their fronts on
-    // the lip, tops at the upper tread, each turned and tipped a little, overlapping. At the notch a
-    // half-height slab stands in front: two steps of ~half the rise. The last ledge has no notch.
-    auto sand = [&](double k) { const double v = c.rng.range(-0.06, 0.06) + k; return V3(0.70 + v, 0.42 + v * 0.8, 0.30 + v * 0.6); };
+    // Each ledge is a row of real rock: big hull rocks laid along the lip, overlapping, sunk into the tread so their tops
+    // make the step and their flanks the face. At the notch they stop, and a staircase of rocks climbs it (no step over
+    // ~0.35 m: a hull's top is lumpy). No boxes: the canyon is made of scanned rock.
     for (int k = 0; k < n; k++) {
         const SlickLedge& l = s.L[k];
-        const double hw = s.halfW(l.x);
-        for (double v = -hw - 1.5; v <= hw + 1.5;) {
-            const double hz = c.rng.range(kWallSlabHz), hx = c.rng.range(kWallSlabHx), th = c.rng.range(kWallSlabTh);
-            const double lx = s.lip(k, v), top = s.floorY(lx + 2.0, v) + c.rng.range(-0.05, 0.18);
-            const double yaw = c.rng.range(-0.3, 0.3);
-            c.slab(lx + hx * 0.9, top - th, v, V3(hx, th, hz), yaw, c.rng.range(-0.05, 0.05), c.rng.range(-0.06, 0.06), sand(0));
-            v += hz * c.rng.range(1.2, 1.7);
-        }
-        if (k < n - 1) {  // the notch: a staircase of slabs, no step over ~0.4 m
-            const double lx = s.lip(k, l.notchZ), lower = s.floorY(lx - 3.0, l.notchZ), upper = s.floorY(lx + 2.0, l.notchZ) + 0.18;
-            const int ns = (int)std::ceil((upper - lower) / kWallStep);
-            for (int j = ns - 1; j >= 1; j--) {
-                const double top = lower + (upper - lower) * j / ns, len = 1.0 * (ns - j) + 0.4, th = std::max(0.3, top - lower + 0.3) / 2;
-                c.slab(lx - len / 2 + 0.3, top - th, l.notchZ, V3(len / 2, th, 1.4), c.rng.range(-0.08, 0.08), 0, 0, sand(-0.04));
+        const double hw = s.halfW(l.x), gapHalf = 1.5;
+        auto row = [&](double v0, double v1, int dirn) {  // from v0 outward to v1 (dirn +1 or -1)
+            for (double v = v0; dirn * (v1 - v) > 0;) {
+                const double rl = c.rng.range(1.05, 1.5), rd = c.rng.range(0.95, 1.35), vc = v + dirn * rl * 0.85;
+                const double lx = s.lip(k, vc), dl = (s.lip(k, vc + 0.3) - s.lip(k, vc - 0.3)) / 0.6;  // (where the lip runs)
+                const double tread = s.floorY(lx + 2.0, vc) + c.rng.range(0.0, 0.14), foot = s.floorY(lx - 1.5, vc);
+                c.laid(lx + rd - 1.0, vc, std::atan2(1.0, dl), V3(rl, (tread - foot + 0.5) / 2, rd), tread, 0, 0, (float)c.rng.range(0.9, 1.08));
+                v += dirn * rl * c.rng.range(1.2, 1.5);
+            }
+        };
+        if (k < n - 1) {
+            row(l.notchZ + gapHalf + 0.05, hw + 1.6, 1);
+            row(l.notchZ - gapHalf - 0.05, -hw - 1.6, -1);
+        } else row(-hw - 1.6, hw + 1.6, 1);
+        if (k < n - 1) {  // the notch: a staircase of rocks, each step a pair side by side on the ground's own steps
+            const Slick::Stair& st = s.stairs[k];
+            for (int j = 1; j < st.ns; j++) {
+                const double top = st.lower + (st.upper - st.lower) * j / st.ns, rd = 0.62;
+                for (int side : {-1, 1}) {
+                    const double vc = st.nz + side * 0.66;
+                    c.laid(st.front(j) + rd, vc, M_PI / 2 + c.rng.range(-0.12, 0.12), V3(0.85, 0.35, rd), top + 0.03, 0, 0, (float)c.rng.range(0.92, 1.06));
+                }
             }
         }
     }
-    // Banded strata in the canyon walls: slabs jutting from the face at each layer.
+    // Banded strata in the canyon walls: flat rocks jutting from the face at each layer.
     for (double pu = s.xs - 12; pu < s.xe + 6; pu += c.rng.range(1.8, 3.2))
         for (int side : {-1, 1})
-            for (double yr = c.rng.range(0.6, 1.4); yr < s.wallH - 0.5; yr += c.rng.range(0.9, 1.7)) {
-                if (c.rng() < 0.25) continue;
-                const double hw = s.halfW(pu), face = hw + yr / 3.8, ha = c.rng.range(0.8, 1.6), jut = c.rng.range(0.2, 0.7);
-                const double floor = s.floorY(pu, side * hw);
-                c.slab(pu, floor + yr, side * (face + ha - jut), V3(c.rng.range(1.0, 2.2), c.rng.range(0.25, 0.5), ha), c.rng.range(-0.15, 0.15), 0, c.rng.range(-0.05, 0.05),
-                       sand(c.rng.range(-0.08, 0.05)));
+            for (double yr = c.rng.range(0.9, 1.6); yr < s.wallH - 0.5; yr += c.rng.range(1.0, 1.8)) {
+                if (c.rng() < 0.3) continue;
+                const double hw = s.halfW(pu), v = side * (hw + yr / 3.8), ry = c.rng.range(0.25, 0.42);
+                c.laid(pu, v, c.rng.range(-0.15, 0.15), V3(c.rng.range(1.1, 2.0), ry, c.rng.range(0.6, 0.95)), c.ground(pu, v) + ry, 0, 0, (float)c.rng.range(0.9, 1.08));
             }
     // Slabs on the treads, boulders heaped along the canyon walls.
     for (int k = 0; k + 1 < n; k++)
@@ -715,17 +763,6 @@ void rockWall(Canvas& c) {
         const double u = s.vx0 + 1.5 + i * (s.vx1 - s.vx0 - 3) / 4, r = c.rng.range(0.35, 0.6), v = (i % 2 ? 1 : -1) * c.rng.range(0.45, 1.4);
         c.boulder(u, v, r, 0, r * c.rng.range(0.9, 1.3));
     }
-    for (int k = 0; k < n; k++) {  // flat rocks capping each lip
-        const double hw = s.halfW(s.L[k].x);
-        for (double v = -hw - 0.4; v < hw + 0.4; v += c.rng.range(0.9, 1.4)) {
-            if (k < nn && std::fabs(v - nz[k]) < 1.55) continue;
-            const double rx = c.rng.range(0.5, 0.85), lx = s.lip(k, v);
-            const V3 p0 = c.at(lx + rx * 0.45, v), p1 = c.at(lx + 2.0, v);
-            const double top = c.w.height(p1.x, p1.z) + 0.2 - c.w.height(p0.x, p0.z);
-            c.rock(lx + rx * 0.45, v, V3(rx, c.rng.range(0.14, 0.24), c.rng.range(0.4, 0.65)), top, seed * 977 + 31 * k + (uint32_t)(v * 10 + 100), (float)c.rng.range(0.9, 1.1));
-        }
-    }
-    if (std::getenv("CZ_DBG")) for (int k = 0; k < nn; k++) std::fprintf(stderr, "DBG ledge %d nx %.1f nz %.2f rise %.2f gap-to-next %.1f\n", k, nx[k], nz[k], s.L[k].rise, k + 1 < nn ? nx[k + 1] - nx[k] : 0.0);
     for (double u = 0; u <= c.fp.length; u += 2) c.lineUV.push_back({u, lineV(u)});
     // Junipers on the plateau (anchors for the last ledge) and scattered over the rims.
     for (int k = 0; k < 12; k++) c.tree(s.xe + c.rng.range(3, 16), c.rng.range(-7, 7), c.rng.range(4, 7), 1, 0.8f);
@@ -827,6 +864,31 @@ void cliffShelf(Canvas& c) {
     };
     const Zone chokeA = {24, 36}, table = {40, 53}, camber = {74, 93}, chokeB = {98, 110}, stairs = {112, 133}, straddle = {138, 152};
     const Zone zones[] = {chokeA, table, camber, chokeB, stairs, straddle};
+    auto bump = [](double u, double at, double w) { return std::exp(-sq((u - at) / w)); };
+    auto lineLat = [&](double u) { return 0.10 + 0.15 * std::sin(u * 0.09 + seed) + 0.25 * bump(u, 30, 5) - 0.25 * bump(u, 104, 5); };
+    // The staircase: three steps up (0.25-0.30 each, treads 2.8 m: one axle takes a step at a time), a platform of 2.4 m, three down.
+    // The ground carries it (a tenth under the rock treads laid on it), `stairH` the height of its treads above the road.
+    double stairRise[3];
+    for (double& r : stairRise) r = c.rng.range(0.25, 0.30);
+    const double tread = 2.8, plat = 2.4, stairW = 1.55;
+    struct Tread {
+        double a, b, y;  // from u a to b at height y (above the road)
+    };
+    std::vector<Tread> treads;
+    {
+        double u = stairs.a, y = 0;
+        for (int k = 0; k < 3; k++) y += stairRise[k], treads.push_back({u - 0.15, u + tread, y}), u += tread;
+        treads.push_back({u - 0.15, u + plat, y}), u += plat;
+        for (int k = 2; k >= 0; k--) y -= stairRise[k], treads.push_back({u - 0.15, u + tread, y}), u += tread;
+    }
+    auto stairH = [&](double u) {
+        double h = 0, prev = 0;
+        for (const Tread& t : treads) h += (t.y - prev) * smoothstep(t.a - 0.35, t.a + 0.45, u), prev = t.y;
+        return h;
+    };
+    // The table: up a ramp (10 deg), across a platform, down another; carried by the ground (a tenth under the rock laid on it).
+    const double tableRise = 0.55, tableW = 1.55, tableRun = tableRise / std::tan(10 * M_PI / 180), tablePlat = 3.6;
+    auto tableH = [&](double u) { return tableRise * std::min(clampd((u - table.a) / tableRun, 0, 1), clampd((table.a + 2 * tableRun + tablePlat - u) / tableRun, 0, 1)); };
     auto zoneMask = [&](double u) {
         double m = 0;
         for (const Zone& z : zones) m = std::max(m, smoothstep(z.a - 3, z.a, u) * smoothstep(z.b + 3, z.b, u));
@@ -847,6 +909,9 @@ void cliffShelf(Canvas& c) {
             const double rough = 0.20 * (2 * valueNoise(u * 0.125 + ox, lat * 0.08 + oz) - 1) + 0.16 * (2 * valueNoise(u * 0.25 + ox + 40, lat * 0.12 + oz) - 1) +
                                  0.08 * (2 * valueNoise(u * 0.5 + ox + 80, lat * 0.2 + oz) - 1);
             h += rough * smoothstep(8, 26, u) * smoothstep(L - 8, L - 26, u) * (1 - zoneMask(u));
+            if (u > table.a - 1 && u < table.a + 2 * tableRun + tablePlat + 1)
+                h += (tableH(u) - 0.1 * smoothstep(0.05, 0.2, tableH(u))) * smoothstep(tableW + 0.5, tableW - 0.1, std::fabs(lat - lineLat(u)));
+            if (u > stairs.a - 1 && u < stairs.b + 1) h += (stairH(u) - 0.1 * smoothstep(0.05, 0.2, stairH(u))) * smoothstep(stairW + 0.5, stairW - 0.1, std::fabs(lat - lineLat(u)));
         } else h = -tilt * 2 * half - (lat - half) * 2.8 + 2 * (valueNoise(u * 0.1, v * 0.1) - 0.5);               // the drop
         h = std::max(h, -kShelfDrop + 4 * valueNoise(u * 0.03, v * 0.03));                                         // valley floor
         const double base = c.getH(id);
@@ -857,39 +922,28 @@ void cliffShelf(Canvas& c) {
 
     // ---- The line: where a truck goes, 2.6 m clear to either side of it (see kShelfLine). It wanders a little
     // across the road, and the two boulder chokes push it to one side then the other. ----
-    auto bump = [](double u, double at, double w) { return std::exp(-sq((u - at) / w)); };
-    auto lineLat = [&](double u) { return 0.10 + 0.15 * std::sin(u * 0.09 + seed) + 0.25 * bump(u, 30, 5) - 0.25 * bump(u, 104, 5); };
     auto ground = [&](double u, double v) {  // the finished ground's height above the section's plane
         const V3 p = c.at(u, v);
         return c.w.height(p.x, p.z) - p.y;
     };
     auto yawAt = [&](double u) { return -std::atan((curve(u + 0.5) - curve(u - 0.5)) / 1.0); };  // along the shelf here
-    // A slab by its top face: the point of it at (u, lat) and that point's height, its half sizes along (hx) and
-    // across (hz), and half its thickness (th) below the top; turned yaw about up, tipped pitch (up along the shelf)
-    // and roll (the top falls toward the drop). Its colour is a rock: `warm` leans rusty, else grey.
-    auto slabTop = [&](double u, double lat, double topY, double hx, double hz, double th, double yaw, double pitch, double roll, double warm) {
-        V3 n = rotateAxis(rotateAxis(V3(0, 1, 0), V3(1, 0, 0), roll), V3(0, 0, 1), pitch);
-        n = rotateAxis(n, V3(0, 1, 0), yaw);
-        const double g = c.rng.range(0.9, 1.08);
-        const V3 col = (V3(0.31, 0.29, 0.27) * (1 - warm) + V3(0.52, 0.31, 0.23) * warm) * g;
-        c.slab(u - n.x * th, topY - n.y * th, curve(u) + lat - n.z * th, V3(hx, th, hz), yaw, pitch, roll, col);
+    // A rock laid by its top face: the point of it at (u, lat) and that point's height, its half sizes along (hx) and across (hz),
+    // and about half its thickness (th, a little thicker where it must reach the ground); turned yaw about up, tipped pitch (up along
+    // the shelf) and roll (the top falls toward the drop). The scanned hull that fits, sunk in so its top is where it's asked: rock
+    // where this used to be slab boxes, so the colour is the scans' own.
+    auto slabTop = [&](double u, double lat, double topY, double hx, double hz, double th, double yaw, double pitch, double roll, double) {
+        c.laid(u, curve(u) + lat, -yaw, V3(hx, th * 0.8, hz), topY + 0.05, pitch, roll, (float)c.rng.range(0.92, 1.08));
     };
     const double bedRoll = std::atan(tilt);  // the road's own cross-slope (a slab lying on it has this roll)
     auto warm = [&]() { return sq(c.rng()); };  // (mostly grey, some rusty, all shades between)
 
-    // ---- The toe: slabs leaning against the cliff all along the shelf, from just below the road up to where they meet the face
-    // (2 m up): a ledge of rock along the foot, steep, so a tire meets a wall and not a ramp to climb (a 56 deg toe let a truck ride up
-    // it and roll). ----
-    {
-        const double rho = kShelfToeDeg * M_PI / 180, th = 0.9;
-        for (double u = -8; u < L + 8; u += 2.2) {
-            const double uc = u + c.rng.range(-0.15, 0.15), hx = 1.3 + c.rng.range(0, 0.15), hz = c.rng.range(0.7, 1.25);  // (a ledge of ragged height)
-            const double latB = -half + kShelfToe + c.rng.range(-0.04, 0.06);
-            const double yB = ground(uc, curve(uc) + latB) - 0.45;  // (below the road: it stands on the dips too)
-            const double ro = rho + c.rng.range(-0.04, 0.04);
-            // the face's middle: up the slope from the base, and its centre top-down by hz
-            slabTop(uc, latB - std::cos(ro) * hz, yB + std::sin(ro) * hz, hx, hz, th, yawAt(uc) + c.rng.range(-0.09, 0.09), 0, ro, warm());
-        }
+    // ---- The toe: a talus of scanned rocks packed against the cliff's foot all along the shelf, 1.2-1.9 m high, overlapping, their
+    // widest part at the road's side of the foot: a tire meets a rock (an exact collider), never the grid's ramp into the wall. ----
+    for (double u = -8; u < L + 8; u += c.rng.range(1.2, 1.7)) {
+        const double uc = u + c.rng.range(-0.15, 0.15), rl = c.rng.range(0.85, 1.25), rd = c.rng.range(0.55, 0.8);
+        const double latB = -half + kShelfToe + c.rng.range(-0.04, 0.06), lat = latB - rd * 0.9;
+        const double ry = c.rng.range(0.7, 1.0), hgt = c.rng.range(1.2, 1.9);
+        c.laid(uc, curve(uc) + lat, -(yawAt(uc) + c.rng.range(-0.25, 0.25)), V3(rl, ry, rd), ground(uc, curve(uc) + lat) + hgt, 0, 0, (float)c.rng.range(0.9, 1.08));
     }
 
     // ---- Rock: fallen boulders, talus, perched stones. Never in the line's corridor (but pebbles). ----
@@ -969,17 +1023,19 @@ void cliffShelf(Canvas& c) {
         const double ya = ground(ua, curve(ua) + lat) + ra, yb = ground(ub, curve(ub) + lat) + rb, d = ub - ua;
         slabTop(0.5 * (ua + ub), lat, 0.5 * (ya + yb), 0.5 * std::hypot(d, yb - ya) + 0.06, w, 0.5, yaw, std::atan2(yb - ya, d), bedRoll, warmth);
     };
-    // A table: up a tilted slab, across a flat one, down another (the ramps are 10 deg; their low ends are in the road, so
-    // there is no lip).
+    // The table's rocks: a pair side by side along each of the ramps and the platform, laid on the ground's own ramps.
     {
-        const double rise = 0.55, w = 1.55, run = rise / std::tan(10 * M_PI / 180), platform = 3.6;
-        const double lat = lineLat(table.a + 7), yaw = yawAt(table.a + 7);
-        double u = table.a;
-        flat(u, 0, u + run, rise, lat, w, yaw, warm());
-        u += run;
-        flat(u - 0.1, rise, u + platform, rise, lat, w, yaw, warm());
-        u += platform;
-        flat(u, rise, u + run, 0, lat, w, yaw, warm());
+        const double lat = lineLat(table.a + 7), yaw = yawAt(table.a + 7), pitch = std::atan2(tableRise, tableRun);
+        struct Piece {
+            double a, b, pitch;
+        };
+        for (const Piece& pc : {Piece{table.a, table.a + tableRun, pitch}, Piece{table.a + tableRun - 0.1, table.a + tableRun + tablePlat + 0.1, 0.0},
+                                Piece{table.a + tableRun + tablePlat, table.a + 2 * tableRun + tablePlat, -pitch}}) {
+            const double uc = 0.5 * (pc.a + pc.b), hl = 0.5 * std::hypot(pc.b - pc.a, pc.pitch * (pc.b - pc.a)) + 0.1;
+            for (int side : {-1, 1})
+                c.laid(uc, curve(uc) + lat + side * 0.8, -yaw, V3(hl, 0.3, 0.88), ground(uc, curve(uc) + lat + side * 0.8) + 0.14 + std::fabs(std::sin(pc.pitch)) * hl, slopeA + pc.pitch, bedRoll,
+                       (float)c.rng.range(0.92, 1.06));
+        }
     }
     // The off-camber run: slabs whose tilt grows toward the drop, a long one at 18 deg (the road itself leans 4-8; a stock Blazer slides off past ~20 on rock), then
     // eases back. Each lies flush with the road at its low edge (the line's drop side) so the step from one to the next is
@@ -997,24 +1053,14 @@ void cliffShelf(Canvas& c) {
             slabTop(u, latC, topY, len * 0.5 + 0.12, w, 0.6, yawAt(u), slopeA, th, warm());
         }
     }
-    // A staircase: three steps up, a platform, three down. Each step 0.25-0.30 m; the treads are 2.8 m (a wheelbase) so one axle
-    // takes a step at a time (1.2 m treads stopped a stock Blazer at the first step).
+    // The staircase's treads: rocks laid on the ground's steps, a pair side by side across each (hulls with rounded ends, so they
+    // overlap a hand's width and the ground between is a tenth under their tops).
     {
-        const double lat = lineLat(stairs.a + 6), yaw = yawAt(stairs.a + 6), w = 1.55, tread = 2.8;
-        double u = stairs.a, y = 0;
-        double rises[3];
-        for (double& r : rises) r = c.rng.range(0.25, 0.30);
-        for (int k = 0; k < 3; k++) {  // up
-            y += rises[k];
-            flat(u - 0.15, y, u + tread, y, lat, w, yaw + c.rng.range(-0.03, 0.03), warm());
-            u += tread;
-        }
-        flat(u - 0.15, y, u + 2.4, y, lat, w, yaw, warm());  // the platform
-        u += 2.4;
-        for (int k = 2; k >= 0; k--) {  // down
-            y -= rises[k];
-            flat(u - 0.15, y, u + tread, y, lat, w, yaw + c.rng.range(-0.03, 0.03), warm());
-            u += tread;
+        const double lat = lineLat(stairs.a + 6), yaw = yawAt(stairs.a + 6);
+        for (const Tread& t : treads) {
+            const double uc = 0.5 * (t.a + t.b), hl = 0.5 * (t.b - t.a) + 0.12;
+            for (int side : {-1, 1})
+                c.laid(uc, curve(uc) + lat + side * 0.8, -(yaw + c.rng.range(-0.04, 0.04)), V3(hl, 0.3, 0.88), ground(uc, curve(uc) + lat + side * 0.8) + 0.13, slopeA, bedRoll, (float)c.rng.range(0.92, 1.06));
         }
     }
     // A pair of slabs side by side with a gap between them, 0.3 m proud (ramped on and off, 0.9 m each): a wheel on each, the gap between.

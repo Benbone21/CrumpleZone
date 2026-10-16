@@ -10,6 +10,7 @@
 #include <sstream>
 
 #include "../src/editcore.h"
+#include "../src/props.h"
 #include "../src/level.h"
 #include "../src/sectionfile.h"
 #include "../src/sections.h"
@@ -130,8 +131,12 @@ void checkSection(Ctx& ctx, SectionType t) {
         ctx.check(tag + ": entry is where it was asked", std::hypot(b.entry.x - f.entry.x, b.entry.z - f.entry.z) < 1e-6 && std::fabs(b.entry.y - f.entry.y) < 0.6);
         ctx.check(tag + ": exit is its length along", std::fabs(std::hypot(b.exit.x - b.entry.x, b.exit.z - b.entry.z) - fp.length) < 6.0);
         // Its own character.
-        int slabs = 0, trees = 0, track = 0, tooClose = 0, tooClose2 = 0;
-        for (const Box& bx : w.boxes) slabs += bx.rock && std::hypot(bx.c.x - f.entry.x, bx.c.z - f.entry.z) < 400;
+        int slabs = 0, hullsIn = 0, trees = 0, track = 0, tooClose = 0, tooClose2 = 0;
+        for (const Box& bx : w.boxes) slabs += bx.rock && outsideOf(fp, f, bx.c.x, bx.c.z) < 0;
+        for (const Rock& rk : w.rocks) hullsIn += outsideOf(fp, f, rk.c.x, rk.c.z) < 0;
+        // The obstacles are scanned rock; boxes only where nothing else works (a small minority of the section's solid objects).
+        if (t == SEC_STEEP_HILL || t == SEC_ROCK_WALL || t == SEC_CLIFF_SHELF)
+            ctx.check(tag + ": rock, not blocks", slabs * 10 <= hullsIn + slabs, std::to_string(hullsIn) + " rocks, " + std::to_string(slabs) + " boxes");
         for (const Tree& tr2 : w.trees) {
             if (outsideOf(fp, f, tr2.base.x, tr2.base.z) >= 0) continue;
             trees++;
@@ -148,7 +153,7 @@ void checkSection(Ctx& ctx, SectionType t) {
                 ctx.check(tag + ": trunks stand 3 m back from the mud's edge", tooClose2 == 0, std::to_string(tooClose2) + " trees too close");
                 break;
             case SEC_ROCKY_RIVER: ctx.check(tag + ": a river of water", wet > 400, std::to_string(wet)); break;
-            case SEC_ROCK_WALL: ctx.check(tag + ": slab boxes", slabs >= 60, std::to_string(slabs)); break;
+            case SEC_ROCK_WALL: ctx.check(tag + ": scanned rock for the ledges, steps and strata", hullsIn >= 250, std::to_string(hullsIn)); break;
             case SEC_DUNES: {
                 for (const auto& bk : blocks) blockRelief = std::max(blockRelief, bk.second.second - bk.second.first);
                 ctx.check(tag + ": a sea of sand", sand > 20000 && dirt > 3000, std::to_string(sand) + " sand, " + std::to_string(dirt) + " firm");
@@ -167,10 +172,7 @@ void checkSection(Ctx& ctx, SectionType t) {
             }
             case SEC_CLIFF_SHELF: {
                 ctx.check(tag + ": a real drop", lo < b.entry.y - 15, std::to_string(b.entry.y - lo));
-                ctx.check(tag + ": rock slabs to drive (toe, ramps, stairs, off-camber, straddle)", slabs >= 100, std::to_string(slabs));
-                int hulls = 0;
-                for (const Rock& rk : w.rocks) hulls += outsideOf(fp, f, rk.c.x, rk.c.z) < 0;
-                ctx.check(tag + ": boulders and talus", hulls >= 120, std::to_string(hulls));
+                ctx.check(tag + ": rocks for the toe, ramps, stairs, off-camber run, straddle pair, boulders and talus", hullsIn >= 280, std::to_string(hullsIn));
                 ctx.check(tag + ": a marked line, entry to exit", b.line.size() > 150 && std::hypot(b.line[0].x - b.entry.x, b.line[0].z - b.entry.z) < 1.0);
                 double drop = 0;
                 double at = 0;
@@ -198,8 +200,10 @@ SCENARIO(sectionDunes, "sections/dunes", "The dunes build at four headings: fini
 SCENARIO(sectionCliffShelf, "sections/cliff-shelf", "The cliff shelf builds at four headings: finite, ends drivable, only its own ground changed, a drop") { checkSection(ctx, SEC_CLIFF_SHELF); }
 // The set-up Blazer (garage parts, 4L, both lockers, 12 psi) follows the cliff shelf's marked line at a crawl: through the
 // rocks, up the slab ramps and stairs, across the off-camber slabs and the straddle pair, to the end.
-SCENARIO(sectionCliffShelfDrive, "sections/cliff-shelf-drive", "A set-up Blazer in 4L with lockers drives the cliff shelf's marked line at 1.5 m/s: no fall, no stall") {
+namespace {
+void driveShelf(Ctx& ctx, bool scanned) {
     const SectionFrame f = testFrame(ctx.sim.world, SEC_CLIFF_SHELF, 0);
+    props::ScopedRockScans scans(scanned ? &props::sharedHullLibrary() : nullptr);  // (the game's rocks are the scans')
     const SectionBuilt b = buildSection(ctx.sim.world, SEC_CLIFF_SHELF, 1, f);
     ctx.sim.world.buildGrid();
     const int v = 7;
@@ -239,6 +243,43 @@ SCENARIO(sectionCliffShelfDrive, "sections/cliff-shelf-drive", "A set-up Blazer 
     ctx.check("got to the end of the line", seg + 8 >= b.line.size(), "reached " + std::to_string(seg) + " of " + std::to_string(b.line.size()) + " m");
     ctx.metric("worst lean", std::acos(clampd(minUp, -1, 1)) * 180 / M_PI, "deg", 0, 40);
     ctx.metric("damage", c.damage * 100, "%", 0, 5);
+}
+}  // namespace
+
+SCENARIO(sectionCliffShelfDrive, "sections/cliff-shelf-drive", "A set-up Blazer in 4L with lockers drives the cliff shelf's marked line at 1.5 m/s: no fall, no stall") { driveShelf(ctx, false); }
+// A tire is held up by the ground under its hub alone, so a wheel pushed at the cliff's foot must meet rock before the terrain's gentle
+// ramp into the wall (where it once sank 10 cm): roll a tire-sized sphere sideways at the wall all along the shelf and see how deep
+// the ground is under its hub where it first touches anything.
+SCENARIO(sectionShelfToe, "sections/shelf-toe", "A tire pushed at the cliff foot, with the scanned rocks of the toe, meets rock before the wall's ramp: it doesn't sink") {
+    World w(MAP_PROVING_GROUND);
+    const SectionFrame f = testFrame(w, SEC_CLIFF_SHELF, 0.4);
+    props::ScopedRockScans scans(props::sharedHullLibrary().loaded() ? &props::sharedHullLibrary() : nullptr);
+    const SectionBuilt b = buildSection(w, SEC_CLIFF_SHELF, 1, f);
+    w.buildGrid();
+    const V3 wallDir(-std::sin(f.heading), 0, -std::cos(f.heading));  // (toward the wall: -v)
+    double worst = 0;
+    int touched = 0, tried = 0;
+    for (size_t k = 10; k + 10 < b.line.size(); k += 2) {
+        const V3 p = b.line[k];
+        const double y0 = p.y + 0.445;
+        for (double t = 0; t < 3.5; t += 0.02) {
+            const V3 c = p + wallDir * t;
+            Contact ct;
+            if (w.contact(V3(c.x, y0, c.z), 0.445, nullptr, 0, ct)) {
+                touched++;
+                worst = std::max(worst, w.height(c.x, c.z) - p.y);  // (ground under the hub above the road's: the tire would sink by that)
+                break;
+            }
+        }
+        tried++;
+    }
+    ctx.check("the tire touches something all along", touched == tried, std::to_string(touched) + " of " + std::to_string(tried));
+    ctx.check("and the ground under its hub is no more than 6 cm above the road there", worst < 0.06, std::to_string(worst) + " m");
+}
+
+SCENARIO(sectionCliffShelfDriveScans, "sections/cliff-shelf-drive-scans", "The same drive with the scanned rock hulls the game uses for the toe, ramps, stairs and boulders (skipped without assets/props)") {
+    if (!props::sharedHullLibrary().loaded()) return;
+    driveShelf(ctx, true);
 }
 
 SCENARIO(sectionTimber, "sections/timber", "The timber track builds at four headings: finite, ends drivable, only its own ground changed, trees in the track and logs") { checkSection(ctx, SEC_TIMBER); }
@@ -587,8 +628,8 @@ SCENARIO(sectionStamp, "sections/stamp", "Stamping each generator into the canva
         ctx.check(tag + ": the world has them too", (int)w.rocks.size() + (int)w.boxes.size() + (int)w.trees.size() + (int)w.logs.size() > 0);
         if (t == SEC_ROCK_WALL) {
             int slabs = 0;
-            for (const LevelObject& o : ed.level.objects) slabs += o.kind == OBJ_BOX && o.sub == 1;
-            ctx.check(tag + ": the ledges are rock slab boxes", slabs >= 60, std::to_string(slabs));
+            for (const LevelObject& o : ed.level.objects) slabs += o.kind == OBJ_ROCK;
+            ctx.check(tag + ": the ledges are scanned rock", slabs >= 250, std::to_string(slabs));
         }
         ctx.check(tag + ": undo puts it back", ed.undo() && ed.level.objects.empty() && ed.level.section.gen == -1 && ed.level.heights.size() == cells0);
         double after = 0;
@@ -664,13 +705,18 @@ SCENARIO(sectionLocalFrame, "sections/local-frame", "Author, save, place at anot
         const V3 d(b.exit.x - b.entry.x, 0, b.exit.z - b.entry.z);
         ctx.check(tag + ": the exit is as far along the heading", std::fabs(len(d) - sf.length()) < 0.1 && std::fabs(dot(norm(d), V3(std::cos(fr.heading), 0, -std::sin(fr.heading))) - 1) < 1e-6, std::to_string(len(d)));
         // Objects: the same count, each slab where it was in the frame, turned with the heading.
-        int slabsFile = 0, slabsPlaced = 0;
-        for (const LevelObject& o : sf.objects) slabsFile += o.kind == OBJ_BOX;
+        int slabsFile = 0, slabsPlaced = 0, rocksFile = 0, rocksPlaced = 0, posed = 0;
+        for (const LevelObject& o : sf.objects) slabsFile += o.kind == OBJ_BOX, rocksFile += o.kind == OBJ_ROCK, posed += o.kind == OBJ_ROCK && o.sub == 1;
         for (const Box& bx : p.boxes) {
             const V3 l = sectionToLocal(f, bx.c);
             slabsPlaced += l.x > sf.u0 && l.x < sf.u1 && std::fabs(l.z) < sf.half;
         }
-        ctx.check(tag + ": the slabs, all of them", slabsFile > 60 && slabsPlaced == slabsFile, std::to_string(slabsPlaced) + " of " + std::to_string(slabsFile));
+        for (const Rock& rk : p.rocks) {
+            const V3 l = sectionToLocal(f, rk.c);
+            rocksPlaced += l.x > sf.u0 && l.x < sf.u1 && std::fabs(l.z) < sf.half;
+        }
+        ctx.check(tag + ": the rocks, all of them (and their poses)", rocksFile > 250 && posed > 100 && rocksPlaced >= rocksFile, std::to_string(rocksPlaced) + " of " + std::to_string(rocksFile) + ", " + std::to_string(posed) + " posed");
+        ctx.check(tag + ": the slab, all of them", slabsFile >= 1 && slabsPlaced == slabsFile, std::to_string(slabsPlaced) + " of " + std::to_string(slabsFile));
         // The hand-placed slab (the last box in the file) is where it was, and turned by the heading.
         const LevelObject* mine = nullptr;
         for (const LevelObject& o : sf.objects)

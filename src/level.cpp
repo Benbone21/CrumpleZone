@@ -60,7 +60,8 @@ int sectionBitsParse(const std::string& list, bool kit) {
 void placeObject(const LevelObject& o, World& w) {
     switch (o.kind) {
         case OBJ_ROCK: {
-            Rock& r = w.addRock(o.p.x, o.p.z, o.size, o.top, o.seed, o.col[0]);
+            const RockPose pose{o.yaw, o.pitch, o.roll};  // (sub 1: placed, not left to chance)
+            Rock& r = w.addRock(o.p.x, o.p.z, o.size, o.top, o.seed, o.col[0], o.sub == 1 ? &pose : nullptr);
             (void)r;
             break;
         }
@@ -207,7 +208,9 @@ std::string saveLevelText(const Level& lv) {
         switch (b.kind) {
             case OBJ_ROCK:
                 o << "rock " << num(b.p.x) << ' ' << num(b.p.z) << ' ' << num(b.size.x, 3) << ' ' << num(b.size.y, 3) << ' ' << num(b.size.z, 3) << ' '
-                  << num(b.top, 3) << ' ' << b.seed << ' ' << num(b.col[0], 2) << '\n';
+                  << num(b.top, 3) << ' ' << b.seed << ' ' << num(b.col[0], 2);
+                if (b.sub == 1) o << ' ' << num(b.yaw, 4) << ' ' << num(b.pitch, 4) << ' ' << num(b.roll, 4);  // (a rock set in place: its pose)
+                o << '\n';
                 break;
             case OBJ_BOX:
                 o << "box " << num(b.p.x) << ' ' << num(b.p.y) << ' ' << num(b.p.z) << ' ' << num(b.size.x, 3) << ' ' << num(b.size.y, 3) << ' '
@@ -343,6 +346,7 @@ bool parseLevelText(const std::string& text, Level& lv, std::string* error) {
             LevelObject b;
             b.kind = OBJ_ROCK;
             ls >> b.p.x >> b.p.z >> b.size.x >> b.size.y >> b.size.z >> b.top >> b.seed >> b.col[0];
+            if (ls >> b.yaw >> b.pitch >> b.roll) b.sub = 1;  // (optional: a pose)
             out.objects.push_back(b);
         } else if (tag == "box") {
             LevelObject b;
