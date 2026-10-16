@@ -6,7 +6,8 @@ wrong, and what is still open. Start here before touching terrain generation.
 
 **Where things stand:** an approved design, a physics feasibility spike with numbers, and a
 **throwaway prototype** of seven obstacle-section generators (in `prototypes/sections/`, outside the
-build) that export playable levels. **No game code has changed.** The owner rejected the first
+build) that export playable levels. **Update: the generators now live in `src/sections.*` and the
+Proving Ground shows them, see §8.** The owner rejected the first
 visuals and wants to hand-build sections in the editor as well as generate them. The next step, a
 section library plus a stitcher, is designed below but **not yet approved by the owner**.
 
@@ -348,3 +349,38 @@ are already in `assets/source/polyhaven/models` (27 hulls, including `rock_face_
 5. Gameplay features the templates need: restrict stakes, dynamic log props attachable to winch and
    strap, tree cutting.
 6. Camps, fuel and respawn cost, per the agreed fail state.
+
+## 8. Status update: the section library is in the game (2026-10-16)
+
+Step 2 of §7 is done, and the sections are on the Proving Ground, where the owner views and tests
+every asset.
+
+- **Library:** `src/sections.h/.cpp` (in the Makefile's `PHYS` list). `buildSection(World&, type, seed,
+  SectionFrame{entry, heading})` stamps one of the seven types (`SEC_STEEP_HILL`, `SEC_MUD_PIT`,
+  `SEC_ROCKY_RIVER`, `SEC_ROCK_WALL`, `SEC_DUNES`, `SEC_CLIFF_SHELF`, `SEC_TIMBER`) into a World and
+  returns where its entry and exit ended up; also `sectionName`, `sectionLength`,
+  `sectionFootprint`. Every parameter range is a named constant at the top of `sections.cpp`.
+  The generators are the prototype's, ported to a local frame (u along the heading, v to the left,
+  heights from the entry plane). The rock wall is the v3 construction as it was (slab ledges, notch
+  staircases of slabs, strata in the walls, the pour-over pool). The level recorder, `crawlLine` and
+  `gSlickLine` are gone. The call needs `w.buildGrid()` afterwards.
+- **What changed from the prototype:** a section clears only its own ground (its length plus a 20 m
+  flat run-in and run-out, and a half-width of 28-34 m), removes what stands there, and blends 24 m
+  into the surroundings. The ground tilts a little along the section (at most 0.04) to meet the
+  land. The hill's gully walls open out onto a summit instead of ending in a step. The dunes are flat
+  at both ends (they used to start on sand). The cliff shelf eases onto its line from the entry, and
+  its cliff levels off at 24 m. The river runs out into marsh at the sides of the cleared ground. Any
+  heading works (terrain is sampled per world cell, boxes turn with it); the tests and the park use
+  0, 90, 180 and 270 degrees.
+- **On the map:** `World::buildSectionPark()` (world.cpp) lays seed 1 of each out beyond the loop road
+  in the north-west, gated by `World::withShowcase` (renamed from `withModelYard`; the game turns it
+  on, the tests keep it off). West strip, running north from (-465, 280): STEEP HILL, MUD PIT, ROCKY
+  RIVER. North strip, running east from (-480, -455): ROCK WALL, DUNES, CLIFF SHELF, TIMBER. Each has
+  its name over its entry (`World::tags`) and is a place (`NAME (SECTION)`) in the autopilot's
+  DRIVE TO list, the compass and the map's discoveries. `crumplezone --spawn-section N` (0-based, in
+  that order) starts you at an entry, facing along it.
+- **Tests:** `tests/sections.cpp`. **Prototype:** `prototypes/sections/showcase.cpp` is unchanged and
+  still compiles; it keeps its own copy of the generators (its level export needs the recorder the
+  library dropped), so it is now out of date. Use it only for `export/...` levels until the
+  stitcher reads sections straight from the library.
+

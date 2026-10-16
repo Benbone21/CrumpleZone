@@ -207,9 +207,18 @@ public:
         V3 p;
     };
     std::vector<Tag> tags;
-    // Whether the proving ground gets its model yard: the game turns it on; the tests keep the
-    // pad as it always was.
-    static inline bool withModelYard = false;
+    // Whether the proving ground gets its showcase, the model yard and the section park (everything
+    // the game makes, laid out to look at and try): the game turns it on; the tests keep the pad as
+    // it always was. (Per thread: the tests build both kinds side by side.)
+    static inline thread_local bool withShowcase = false;
+    // The park's obstacle sections (sections.h), in the order they're driven: where each starts.
+    struct SectionSpot {
+        std::string name;
+        int type = 0;         // SectionType
+        V3 entry, exit;       // on the ground
+        double heading = 0;   // radians, the game's yaw
+    };
+    std::vector<SectionSpot> sections;
     std::vector<Station> stations;
     // Water surface height at (x, z), or -1e9 where there's none.
     double waterLevel(double x, double z) const {
@@ -297,6 +306,7 @@ private:
     void buildBackcountry();
     void buildWilderness();  // wilderness.cpp: generated from `seed`
     void buildModelYard();   // every model laid out on the proving ground (world.cpp)
+    void buildSectionPark(); // the obstacle sections laid out outside the loop road (world.cpp)
     void buildMountain();
     double mountainHeight(double x, double z) const;
     void scatterScenery(uint32_t seed);  // bushes and rocks between the trees

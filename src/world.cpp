@@ -4,6 +4,7 @@
 #include "modelkit.h"
 
 #include "props.h"
+#include "sections.h"
 
 #include <atomic>
 
@@ -377,7 +378,7 @@ void World::buildProvingGround() {
 
     bakeTerrain();
     scatterScenery(777);
-    if (withModelYard) buildModelYard();
+    if (withShowcase) buildModelYard(), buildSectionPark();
 }
 
 // The model yard, south-west on the pad: everything the game draws (the designs picked in the
@@ -431,6 +432,37 @@ void World::buildModelYard() {
         rowDepth = std::max(rowDepth, dz);
     }
     buildGrid();
+}
+
+// The section park, out beyond the loop road in the north-west where the land is open: two strips
+// of ground, each section's cleared ground next to the last. The west strip runs north (-Z) and the
+// north strip carries on east, so driving the sections in order goes round the corner. Each has
+// its name over its entry and is a place on the compass and map. Seed 1 of each.
+void World::buildSectionPark() {
+    struct Strip {
+        double x, z, heading;  // where the first section's cleared ground starts, and which way the strip runs
+        std::vector<SectionType> types;
+    };
+    const double gap = 28;  // between one section's cleared ground and the next (more than the blend)
+    const Strip strips[] = {
+        {-465, 300, M_PI / 2, {SEC_STEEP_HILL, SEC_MUD_PIT, SEC_ROCKY_RIVER}},
+        {-500, -455, 0, {SEC_ROCK_WALL, SEC_DUNES, SEC_CLIFF_SHELF, SEC_TIMBER}},
+    };
+    for (const Strip& s : strips) {
+        const V3 dir(std::cos(s.heading), 0, -std::sin(s.heading));
+        double along = 0;  // from the strip's start
+        for (SectionType t : s.types) {
+            const SectionFootprint fp = sectionFootprint(t);
+            SectionFrame f;
+            f.entry = V3(s.x, 0, s.z) + dir * (along + fp.apron);
+            f.entry.y = height(f.entry.x, f.entry.z);
+            f.heading = s.heading;
+            const SectionBuilt b = buildSection(*this, t, 1, f);
+            sections.push_back({sectionName(t), (int)t, b.entry, b.exit, s.heading});
+            tags.push_back({sectionName(t), b.entry + V3(0, 5, 0)});
+            along += fp.length + 2 * fp.apron + gap;
+        }
+    }
 }
 
 // Bushes round the groves and boulders out in the meadows (the proving ground's hills).

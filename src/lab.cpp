@@ -24,7 +24,10 @@ using mk::ModelDef;
 
 // A flat studio out on the proving ground: a concrete pad in the grass, nothing else.
 World studioWorld() {
+    const bool showcase = World::withShowcase;  // (no need to lay out the yard and park just to clear them)
+    World::withShowcase = false;
     World w(MAP_PROVING_GROUND);
+    World::withShowcase = showcase;
     w.boxes.clear(), w.rocks.clear(), w.trees.clear(), w.bushes.clear(), w.logs.clear(), w.poles.clear();
     w.fixtures.clear(), w.stations.clear(), w.models.clear(), w.waters.clear(), w.tags.clear();
     for (double x = -110; x <= 110; x += 1)

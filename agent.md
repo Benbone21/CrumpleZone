@@ -152,7 +152,8 @@ Without `--time`, captures start at 10:00 with the clock running.
 - **Map list is just the proving ground** (owner's call, 2026-10-16: another agent is doing
   world gen). `listedMaps()` in world.cpp; the other maps still build for the tests and
   `--map`. The proving ground carries the **model yard** (`World::buildModelYard`, game
-  only: `World::withModelYard`, off in the tests, which drive over that corner).
+  only: `World::withShowcase`, off in the tests, which drive over that corner). The same flag lays
+  out the **section park** (`World::buildSectionPark`, `src/sections.*`) north-west of the loop road.
 - **Hands-on repairs** (`fixes.h`, `interact.cpp`, `handwork.cpp`): the parked-alongside
   field repair is gone. Tools and repair parts are career keys (`TOOL:`, `REPAIR:` in
   `Career::owned` / `stock`); sandbox has everything. `--script work-wheel|work-chain|work-fix`

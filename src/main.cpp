@@ -86,6 +86,7 @@ struct Options {
     bool spawnSet = false;
     int resumeModel = -1;  // --resume-model: the vehicle to be in (after a reload)
     double spawnX = 0, spawnZ = 0, spawnHeading = 0;  // heading in degrees, 0 = +X
+    int spawnSection = -1;        // --spawn-section N: start at the Nth obstacle section's entry (0-based, proving ground)
     int hostPort = -1;            // --host [PORT]: open a multiplayer session
     std::string join;             // --join HOST[:PORT]
     std::string name;             // --name NAME (multiplayer)
@@ -238,7 +239,7 @@ struct BuildWatch {
     void exec(int argc, char** argv, const std::vector<std::string>& extra) {
 #ifndef _WIN32
         static const std::set<std::string> withValue = {"--map", "--player", "--spawn", "--resume-model", "--scenario", "--script",
-                                                        "--shot-prefix", "--shot-frames", "--menu", "--orbit"};
+                                                        "--shot-prefix", "--shot-frames", "--menu", "--orbit", "--spawn-section"};
         static const std::set<std::string> flags = {"--garage", "--show-help"};
         std::vector<std::string> args = {exe};
         for (int i = 1; i < argc; i++) {
@@ -313,6 +314,7 @@ Options parseArgs(int argc, char** argv) {
             std::string s = next();
             o.spawnSet = std::sscanf(s.c_str(), "%lf,%lf,%lf", &o.spawnX, &o.spawnZ, &o.spawnHeading) >= 2;
         }
+        else if (a == "--spawn-section") o.spawnSection = std::atoi(next().c_str());
         else if (a == "--host") {
             o.hostPort = net::kDefaultPort;
             if (i + 1 < argc && std::isdigit((unsigned char)argv[i + 1][0])) o.hostPort = std::atoi(argv[++i]);
@@ -327,7 +329,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--lab-model") o.lab = true, o.labModel = next();
         else if (a == "--lab-design") o.lab = true, o.labDesign = std::atoi(next().c_str());
         else if (a == "--help" || a == "-h") {
-            std::puts("usage: crumplezone [--fullscreen] [--size WxH] [--no-audio] [--no-vsync] [--no-pad] [--spawn X,Z[,HEADING]] [--scenario NAME]\n"
+            std::puts("usage: crumplezone [--fullscreen] [--size WxH] [--no-audio] [--no-vsync] [--no-pad] [--spawn X,Z[,HEADING]] [--spawn-section N] [--scenario NAME]\n"
                       "                   [--map N] [--host [PORT]] [--join HOST[:PORT]] [--name NAME] [--time HOURS] [--level NAME]\n"
                       "                   [--physics-threads auto|all|N] [--lab [--lab-model ID]]");
             std::exit(0);
@@ -509,6 +511,7 @@ std::vector<Place> pilotPlaces(const Sim& sim, const NetSession& net) {
         out.push_back({"CRASH WALL", V3(95, 0, 0)});
         out.push_back({"JUMP RAMPS", V3(28, 0, -30)});
         out.push_back({"WASHBOARD", V3(-6, 0, -70)});
+        for (const World::SectionSpot& s : sim.world.sections) out.push_back({std::string(s.name) + " (SECTION)", s.entry});
     }
     out.push_back({"WHERE I'M LOOKING", V3(), 2});
     for (int i = 0; i < (int)sim.cars.size(); i++) {
@@ -1496,7 +1499,7 @@ int main(int argc, char** argv) {
     if (opt.adaptive >= 0) settings.adaptiveQuality = opt.adaptive != 0;
     if (opt.mph) settings.mph = true;
     if (!mapListed(settings.map)) settings.map = MAP_PROVING_GROUND;  // (a map that's been taken off the list)
-    World::withModelYard = opt.scenario.empty();  // (everything laid out on the proving ground: not under a test's replay)
+    World::withShowcase = opt.scenario.empty();  // (the model yard and section park laid out on the proving ground: not under a test's replay)
     if (opt.map >= 0) settings.map = std::min(opt.map, MAP_COUNT - 1);
     if (!opt.scenario.empty()) settings.map = MAP_PROVING_GROUND;  // the tests are built for it
     if (opt.lab) settings.map = MAP_PROVING_GROUND;                // (the model lab builds its own studio)
@@ -1602,6 +1605,12 @@ int main(int argc, char** argv) {
     sim.player = std::min(std::max(opt.player, 0), (int)sim.cars.size() - 1);
     if (opt.resumeModel >= 0 && !sim.cars.empty() && sim.cars[sim.player].spec->model != opt.resumeModel)
         sim.swapPlayerVehicle(garage.spec(opt.resumeModel));
+    if (opt.spawnSection >= 0) {  // (the obstacle sections' entries, facing along them)
+        if (opt.spawnSection < (int)sim.world.sections.size()) {
+            const World::SectionSpot& s = sim.world.sections[opt.spawnSection];
+            opt.spawnSet = true, opt.spawnX = s.entry.x, opt.spawnZ = s.entry.z, opt.spawnHeading = s.heading * 180 / M_PI;
+        } else std::printf("no section %d: the proving ground has %zu\n", opt.spawnSection, sim.world.sections.size());
+    }
     if (opt.spawnSet) {
         Car& c = sim.cars[sim.player];
         c.respawn(V3(opt.spawnX, sim.world.clearY(opt.spawnX, opt.spawnZ) + 0.05, opt.spawnZ), opt.spawnHeading * M_PI / 180);
