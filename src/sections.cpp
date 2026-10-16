@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <vector>
 
 // Calibration (from the handoff's probes): grid walls >= 65 deg seal a chokepoint even for the rock
@@ -31,12 +33,13 @@ constexpr double kBlend = 24;        // the ground blends back to its surroundin
 constexpr double kMaxSlope = 0.04;   // the section tilts to follow the ground along its length, this much at most
 constexpr double kLandAmp = 7, kLandFine = 2;  // rolling country under everything: broad and fine relief
 constexpr double kForestPerM2 = 0.32;          // tree attempts per square metre (before density)
+constexpr double kPadFlat = 18;                // the first and last this many m of a section are as flat as the ground was (the stitch points)
 
 // Steep hill: a loose scree climb in a gully, rock ledges across it near the top.
 constexpr double kHillStart = 45;                    // the climb starts here
-constexpr Range kHillLen = {34, 44}, kHillAngle = {24, 30}, kHillLedgeH = {0.32, 0.5}, kHillRock = {0.2, 0.45};
+constexpr Range kHillLen = {34, 44}, kHillAngle = {24, 30}, kHillLedgeH = {0.32, 0.5};
 constexpr double kHillTrailHalf = 2.6, kHillTrailBlend = 10, kHillWallHalf = 4.2, kHillWallDeg = 68, kHillWallH = 4.5;
-constexpr int kHillLedges = 3, kHillRocks = 14;
+constexpr int kHillLedges = 3;
 
 // Mud pit: a long pit, floor 0.3-1.5 m (varying), standing water, a steep exit bank.
 constexpr double kMudStart = 40, kMudHalf = 7.5, kMudDepthMin = 0.3, kMudDepthVar = 1.2, kMudWater = -0.12;
@@ -52,9 +55,9 @@ constexpr double kRiverCurrent = 1.4;
 constexpr int kRiverBoulders = 140;
 
 // Rock wall (v3): sandstone ledges in a slot canyon.
-constexpr double kWallStart = 48;  // the first ledge's mean position
+constexpr double kWallStart = 42;  // the first ledge's mean position
 constexpr int kWallLedges = 6;
-constexpr Range kWallRise = {0.75, 1.15}, kWallLastRise = {1.3, 1.6}, kWallGap = {4.5, 7.5}, kWallAmp = {0.8, 2.2}, kWallTilt = {-0.10, 0.10};
+constexpr Range kWallRise = {0.75, 1.15}, kWallLastRise = {1.3, 1.6}, kWallGap = {8, 11}, kWallAmp = {0.8, 2.2}, kWallTilt = {-0.10, 0.10};
 constexpr double kWallSqueezeAfter = 2, kWallSqueezeLen = 8, kWallSqueezeHalf = 2.7, kWallHeight = 8, kWallStep = 0.40;
 constexpr double kWallRimSlope = 0.12, kWallFadeIn = 36;  // the land rises this much per m beyond the canyon's walls; the walls fade in over kWallFadeIn m
 constexpr Range kWallSlabHx = {1.3, 2.4}, kWallSlabHz = {0.8, 1.4}, kWallSlabTh = {0.45, 0.8};
@@ -130,6 +133,12 @@ struct Canvas {
     Rng rng;
     std::vector<Cell> cells;
     std::vector<LevelObject>* rec;  // (the editor: also keep what's stood up)
+    std::vector<std::pair<double, double>> line;  // (u, v) of the line meant to be driven, if it isn't straight down the middle
+    struct Spot {
+        double u, v, r;
+    };
+    std::vector<Spot> spots;  // the boulders stood up so far (they don't overlap much)
+    int rockN = 0;
 
     Canvas(World& w, SectionType t, uint32_t seed, const SectionFrame& fr, std::vector<LevelObject>* record = nullptr)
         : w(w), fp(sectionFootprint(t)), f(fr), dx(std::cos(fr.heading)), dz(-std::sin(fr.heading)), px(std::sin(fr.heading)), pz(std::cos(fr.heading)),
@@ -217,6 +226,21 @@ struct Canvas {
         }
         return w.addRock(p.x, p.z, r, top, rseed, tint);
     }
+    // The finished ground at (u, v), above the plane through the entry (after commit()).
+    double ground(double u, double v) const {
+        const V3 p = at(u, v);
+        return w.height(p.x, p.z) - (ey + slope * u);
+    }
+    // A boulder in the rocky river's style: a scanned hull of "radius" r, flattened, sunk in about half (`top` m
+    // of it showing above the ground, or `lift` more than that). Not on top of another one.
+    bool boulder(double u, double v, double r, double lift = 0, double top = 0) {
+        for (const Spot& sp : spots)
+            if (std::hypot(sp.u - u, sp.v - v) < 0.45 * (sp.r + r)) return false;
+        spots.push_back({u, v, r});
+        const double hy = r * rng.range(0.55, 0.8), hz = r * rng.range(0.7, 1.0), tp = top > 0 ? top : r * rng.range(0.5, 0.8) + lift;
+        rock(u, v, V3(r, hy, hz), tp, seed * 131 + (uint32_t)rockN++, (float)rng.range(0.85, 1.1));
+        return true;
+    }
     // A rock slab: an oriented box (yaw, pitch, roll in the section's frame) drawn and gripping as rock.
     void slab(double u, double y, double v, const V3& h, double yaw, double pitch, double roll, const V3& col) {
         w.addBox(at(u, v, y), h, yaw + f.heading, pitch, roll, col);
@@ -285,22 +309,126 @@ template <class HF, class Y> void walls(Canvas& c, double ua, double ub, double 
     });
 }
 
+// How big the river's boulders are: `small` of them 0.25-0.5 m, `mid` 0.5-0.85, the rest 0.9-1.4 (all times k).
+double boulderR(Rng& g, double small, double mid, double k = 1) {
+    const double q = g();
+    return k * (q < small ? g.range(0.25, 0.5) : q < small + mid ? g.range(0.5, 0.85) : g.range(0.9, 1.4));
+}
+
+// Uneven ground: bumps and dips (2-8 m across, `amp` m high), the odd hole, a washed-out gully across the line,
+// off-camber dips (one side low), tyre ruts, and mounds. Flat for the first and last kPadFlat m (and eased in).
+double roughNoise(double u, double v, uint32_t seed) {
+    const double ox = (seed % 997) * 5.3 + 11, oz = (seed % 991) * 3.7 + 7;
+    return 0.65 * (2 * valueNoise(u / 7 + ox, v / 5 + oz) - 1) + 0.35 * (2 * valueNoise(u / 3 + oz, v / 2.5 + ox) - 1);
+}
+struct Rough {
+    double amp = 0.25;  // peak height of the bumps (m)
+    double rut = 0;     // depth of two tyre grooves along the line, 0 for none
+    int holes = 2, washouts = 1, cambers = 1;
+    struct Mound {
+        double u, v, sigma, h;
+    };
+    std::vector<Mound> mounds;
+    std::vector<double> keep;  // u's kept smooth (a ledge stands here)
+};
+double padEnv(double u, double L) { return smoothstep(kPadFlat, kPadFlat + 14, u) * smoothstep(L - kPadFlat, L - kPadFlat - 14, u); }
+template <class LV> void roughen(Canvas& c, double half, double blend, const Rough& r, LV lineV) {
+    const double L = c.fp.length;
+    auto nearKeep = [&](double u) {
+        double d = 1e9;
+        for (double k : r.keep) d = std::min(d, std::fabs(u - k));
+        return d;
+    };
+    auto pick = [&](double lo, double hi) {  // a u away from the pads' ends and the kept ones
+        for (int t = 0; t < 40; t++) {
+            const double u = c.rng.range(lo, hi);
+            if (nearKeep(u) > 4.5) return u;
+        }
+        return c.rng.range(lo, hi);
+    };
+    const double lo = kPadFlat + 8, hi = L - kPadFlat - 8;
+    struct Hole {
+        double u, v, rad, depth;
+    };
+    std::vector<Hole> holes;
+    for (int i = 0; i < r.holes; i++) {
+        const double u = pick(lo, hi);
+        holes.push_back({u, lineV(u) + c.rng.range(-0.9, 0.9), c.rng.range(1.2, 1.9), c.rng.range(0.22, 0.4)});
+    }
+    struct Wash {
+        double u, skew, sigma, depth;
+    };
+    std::vector<Wash> washes;
+    for (int i = 0; i < r.washouts; i++) washes.push_back({pick(lo, hi), c.rng.range(-0.5, 0.5), c.rng.range(0.9, 1.4), c.rng.range(0.25, 0.4)});
+    struct Cam {
+        double u, tilt, sigma;
+    };
+    std::vector<Cam> cams;
+    for (int i = 0; i < r.cambers; i++) cams.push_back({pick(lo, hi), (c.rng() < 0.5 ? -1 : 1) * c.rng.range(0.12, 0.2), c.rng.range(3.5, 5.5)});
+    const double ph = c.rng.range(0, 6.28);
+    c.each(kPadFlat, L - kPadFlat, -half - blend, half + blend, [&](int id, double u, double v) {
+        const double e = std::fabs(v) - half, wgt = e < 0.5 ? 1.0 : smoothstep(blend, 0.5, e), env = padEnv(u, L);
+        if (wgt <= 0 || env <= 0) return;
+        const double lv = lineV(u), dv = v - lv;
+        double dh = r.amp * 1.4 * roughNoise(u, v, c.seed) * smoothstep(0.8, 3.2, nearKeep(u));
+        for (const Hole& h : holes) dh -= h.depth * std::exp(-(sq(u - h.u) + sq(v - h.v)) / sq(h.rad * 0.6));
+        for (const Wash& w : washes) dh -= w.depth * std::exp(-sq((u - w.u + w.skew * v) / w.sigma));
+        for (const Cam& m : cams) dh -= m.tilt * clampd(dv, -3, 3) * std::exp(-sq((u - m.u) / m.sigma)) + 0.08 * std::exp(-sq((u - m.u) / m.sigma));
+        for (const Rough::Mound& m : r.mounds) dh += m.h * std::exp(-(sq(u - m.u) + sq(v - m.v)) / sq(m.sigma));
+        if (r.rut > 0) {
+            const double vc = lv + 0.5 * std::sin(u * 0.09 + ph) + 0.3 * std::sin(u * 0.23 + ph * 2), depth = r.rut * (0.7 + 0.3 * (2 * valueNoise(u / 6 + ph, 3.3) - 1));
+            dh -= depth * (std::exp(-sq((v - vc - 0.9) / 0.55)) + std::exp(-sq((v - vc + 0.9) / 0.55)));
+        }
+        c.setH(id, c.getH(id) + dh * env * wgt);
+    });
+}
+
 // ---- 1. STEEP HILL -------------------------------------------------------------------------------
 void steepHill(Canvas& c) {
+    const uint32_t seed = c.seed;
     const double xs = kHillStart, len = c.rng.range(kHillLen), rise = len * std::tan(c.rng.range(kHillAngle) * M_PI / 180);
     auto y = [&](double u) { return rise * smoothstep(xs, xs + len, u) * 0.15 + rise * clampd((u - xs) / len, 0, 1) * 0.85; };
+    // The line winds a little up the climb, between the scree piles.
+    auto lineV = [&](double u) { return 1.1 * std::sin(u * 0.16 + seed) * smoothstep(xs - 8, xs + 4, u) * smoothstep(xs + len + 6, xs + len - 6, u); };
     trail(c, kHillTrailHalf, kHillTrailBlend, y, [&](double u) { return u > xs && u < xs + len ? SURF_SCREE : SURF_DIRT; });
+    Rough fx;
+    fx.amp = 0.2, fx.holes = 2, fx.washouts = 1, fx.cambers = 1;
+    double ledgeU[kHillLedges];
+    for (int k = 0; k < kHillLedges; k++) ledgeU[k] = xs + len * (0.45 + 0.18 * k), fx.keep.push_back(ledgeU[k]);
+    roughen(c, 2.6, 2.0, fx, lineV);
     // The gully's walls run on past the top, opening out onto the summit.
     walls(c, xs - 6, c.fp.length + c.fp.apron, kHillWallHalf, kHillWallDeg, [&](double u) { return kHillWallH * smoothstep(xs + len + 40, xs + len + 6, u); }, y, SURF_ROCK);
+    for (double u = 0; u <= c.fp.length; u += 2) c.line.push_back({u, lineV(u)});
     c.commit();
     // Ledges on the upper half: square rock lips the line must climb.
     for (int k = 0; k < kHillLedges; k++) {
-        const double u = xs + len * (0.45 + 0.18 * k), h = c.rng.range(kHillLedgeH), g = rise / len;
-        c.slab(u, y(u) + h / 2 - 0.4, 0, V3(0.9, h / 2 + 0.4, 3.0), 0, -std::atan(g), 0, V3(0.45, 0.42, 0.38));
+        const double u = ledgeU[k], h = c.rng.range(kHillLedgeH), g = rise / len;
+        c.slab(u, c.ground(u, 0) + h / 2 - 0.4, 0, V3(0.9, h / 2 + 0.4, 3.0), 0, -std::atan(g), 0, V3(0.45, 0.42, 0.38));
     }
-    for (int k = 0; k < kHillRocks; k++) {  // loose rocks on the climb
-        const double u = c.rng.range(xs, xs + len), v = c.rng.range(-2.4, 2.4), r = c.rng.range(kHillRock);
-        c.rock(u, v, V3(r, r * 0.7, r * 0.9), r * 0.5, c.seed * 31 + k);
+    // Scree: piles of loose rock down the climb (small ones everywhere, the bigger ones off the line), thicker toward the ledges,
+    // rubble at the foot of each ledge and the big ones beside its ends.
+    auto clearOfLine = [&](double u, double v, double r) { return r < 0.34 || std::fabs(v - lineV(u)) > r * 0.85 + 1.25; };
+    const int piles = 10;
+    for (int p = 0; p < piles; p++) {
+        const double pu = xs + len * (0.04 + 0.92 * (p + c.rng.range(0.1, 0.9)) / piles), pv = c.rng.range(-2.3, 2.3), radius = c.rng.range(1.6, 3.0);
+        const double up = (pu - xs) / len;  // (rocks get bigger toward the top)
+        const int n = 4 + (int)(c.rng() * 5);
+        for (int i = 0; i < n; i++) {
+            const double a = c.rng.range(0, 6.283), d = radius * std::sqrt(c.rng()), u = pu + d * std::cos(a), v = clampd(pv + d * std::sin(a) * 0.8, -3.4, 3.4);
+            const double r = boulderR(c.rng, 0.9 - 0.25 * up, 0.1 + 0.15 * up, 0.55);
+            if (clearOfLine(u, v, r)) c.boulder(u, v, r);
+        }
+    }
+    for (int k = 0; k < kHillLedges; k++) {
+        const double lu = ledgeU[k];
+        for (int i = 0; i < 7; i++) {  // rubble at the foot of the ledge
+            const double u = lu - c.rng.range(1.2, 4.2), v = c.rng.range(-3.2, 3.2), r = boulderR(c.rng, 0.75, 0.25, 0.55);
+            if (clearOfLine(u, v, r)) c.boulder(u, v, r);
+        }
+        for (int side : {-1, 1}) {  // big ones where the ledge meets the walls
+            const double r = boulderR(c.rng, 0, 0.7, 0.9);
+            c.boulder(lu + c.rng.range(-2, 1.5), side * c.rng.range(3.0, 3.9), r);
+        }
     }
     c.forest(14, 0.08, false);
 }
@@ -310,6 +438,9 @@ void mudPit(Canvas& c) {
     const uint32_t seed = c.seed;
     trail(c, 2.6, 12, [](double) { return 0.0; }, [](double) { return SURF_DIRT; });
     const double xa = kMudStart, xb = xa + c.rng.range(kMudLen), half = kMudHalf;
+    Rough fx;  // bumps, holes, a gully and a dip on the run-in and run-out, the trucks' ruts all the way
+    fx.amp = 0.22, fx.rut = 0.15, fx.holes = 2, fx.washouts = 1, fx.cambers = 1;
+    roughen(c, 3.5, 6, fx, [](double) { return 0.0; });
     c.each(xa - 6, xb + 6, -half - 8, half + 8, [&](int id, double u, double v) {
         const double inU = std::min(u - xa, xb - u), inV = half + 2.5 * (valueNoise(u * 0.12, seed) - 0.5) - std::fabs(v);
         if (inU < -4 || inV < -6) return;
@@ -327,7 +458,27 @@ void mudPit(Canvas& c) {
         c.setH(id, c.getH(id) - 0.12 * std::exp(-sq((std::fabs(v) - 0.9) / 0.4)));
         c.paint(id, SURF_MUD);
     });
+    for (double u = 0; u <= c.fp.length; u += 2) c.line.push_back({u, 0.0});
     c.commit();
+    // Rock: strewn over both banks (thickest on the way out, where it's steepest), along the shores, and a few hidden under the water.
+    auto clearOfLane = [&](double v, double r) { return r < 0.34 || std::fabs(v) > r * 0.85 + 1.25; };
+    for (int i = 0; i < 16; i++) {  // the entry bank
+        const double u = xa + c.rng.range(-7, 3), v = c.rng.range(-half, half), r = boulderR(c.rng, 0.6, 0.3, 0.75);
+        if (clearOfLane(v, r)) c.boulder(u, v, r);
+    }
+    for (int i = 0; i < 24; i++) {  // the exit bank
+        const double u = xb + c.rng.range(-3, 9), v = c.rng.range(-half - 1, half + 1), r = boulderR(c.rng, 0.5, 0.35, 0.9);
+        if (clearOfLane(v, r)) c.boulder(u, v, r);
+    }
+    for (int i = 0; i < 16; i++) {  // along the shores
+        const double u = c.rng.range(xa + 3, xb - 3), v = (c.rng() < 0.5 ? -1 : 1) * (half + c.rng.range(-1.2, 1.2)), r = boulderR(c.rng, 0.5, 0.4, 0.7);
+        c.boulder(u, v, r);
+    }
+    for (int i = 0, got = 0; i < 40 && got < 3; i++) {  // hidden: tops just under the water
+        const double u = c.rng.range(xa + 8, xb - 8), v = c.rng.range(-3.2, 3.2), r = c.rng.range(0.45, 0.8), g = c.ground(u, v);
+        if (g > kMudWater - 0.3 || std::fabs(v) < 0.9) continue;  // (too shallow to hide one, or in the middle of the line)
+        got += c.boulder(u, v, r, 0, kMudWater - 0.1 - g);
+    }
     // Dense timber both sides (no driving round), its trunks 3.5 m back from the mud and its crowns kept low near it.
     c.forest(half + kMudClear, 0.15, true, xa - 6, xb + 6, 1.0, 6.0, kNearH);
     c.forest(half + kMudClear, 0.05, false, -c.fp.apron, c.fp.length + c.fp.apron, kForestPerM2, 6.0, kNearH);
@@ -337,6 +488,10 @@ void mudPit(Canvas& c) {
 void rockyRiver(Canvas& c) {
     const uint32_t seed = c.seed;
     trail(c, 2.6, 12, [](double) { return 0.0; }, [](double) { return SURF_DIRT; });
+    Rough fx;  // the banks either side of the channel are lumpy too
+    fx.amp = 0.2, fx.holes = 1, fx.washouts = 0, fx.cambers = 1;
+    roughen(c, 3.0, 8, fx, [](double) { return 0.0; });
+    for (double u = 0; u <= c.fp.length; u += 2) c.line.push_back({u, 0.0});
     const double xr = kRiverAt, width = c.rng.range(kRiverWidth), depth = c.rng.range(kRiverDepth), skew = c.rng.range(kRiverSkew);
     const double level = -depth + c.rng.range(kRiverWater);  // water depth over the bed
     const double hw = c.fp.half;
@@ -412,7 +567,7 @@ void rockWall(Canvas& c) {
         l.rise = k == n - 1 ? c.rng.range(kWallLastRise) : c.rng.range(kWallRise);
         l.amp = c.rng.range(kWallAmp);
         l.phase = c.rng.range(0, 6.28);
-        l.notchZ = (k % 2 ? 1 : -1) * c.rng.range(0.8, 2.2);
+        l.notchZ = (k % 2 ? 1 : -1) * c.rng.range(0.6, 1.7);
         l.tilt = c.rng.range(kWallTilt);
         s.L.push_back(l);
         x += c.rng.range(kWallGap);
@@ -424,6 +579,8 @@ void rockWall(Canvas& c) {
         const double hw = s.halfW(pu), e = std::fabs(pv) - hw;
         const double inCanyon = smoothstep(s.xs - kWallFadeIn, s.xs - 10, pu) * smoothstep(s.xe + 18, s.xe + 6, pu);
         double h = s.floorY(pu, pv) + c.getH(id) * (1 - inCanyon);  // (the land's own relief outside the canyon)
+        if (pu < s.xs - 6 || pu > s.xe + 12)  // the wash in and the plateau out are lumpy (and flat at the ends)
+            h += 0.3 * roughNoise(pu, pv, seed) * padEnv(pu, c.fp.length) * smoothstep(hw + 5, hw, std::fabs(pv));
         if (e > 0) {
             const double rise = std::min(e * 3.8, s.wallH) + kWallRimSlope * std::max(0.0, e - s.wallH / 3.8);
             h += rise * inCanyon + 1.5 * (valueNoise(pu * 0.25, pv * 0.25) - 0.5) * smoothstep(0, 1.5, e) * inCanyon;
@@ -494,6 +651,73 @@ void rockWall(Canvas& c) {
                 c.rock(pu + c.rng.range(-1, 1), pv2, V3(r2, r2 * 0.7, r2), r2 * 0.6, seed * 1000 + (uint32_t)(c.rng() * 1e6), (float)c.rng.range(0.8, 1.0));
             }
         }
+    // ---- Real rock in the path: boulders on the treads, rubble at the foot of each riser, rock in and beside the notches,
+    // chockstones in the squeeze, a garden between ledges, and a row of flat rocks along each lip (so the lips read as scanned
+    // rock, not slab). The line (through the notches, one to the next) keeps a lane the truck's width clear of anything over
+    // ~0.35 m; smaller rock may lie in it, and the staircases themselves are left alone.
+    const int nn = n - 1;  // ledges with a notch
+    std::vector<double> nx(n, 0.0), nz(n, 0.0);
+    for (int k = 0; k < nn; k++) nx[k] = s.lip(k, s.L[k].notchZ), nz[k] = s.L[k].notchZ;
+    std::vector<std::pair<double, double>> A = {{0.0, 0.0}, {nx[0] - 14, 0.0}};
+    for (int k = 0; k < nn; k++) {
+        if (k > 0 && nx[k - 1] < s.vx0 && s.vx0 < nx[k]) A.push_back({s.vx0 + 1.5, 0.0}), A.push_back({std::max(s.vx0 + 2.5, nx[k] - 6), 0.0});
+        A.push_back({nx[k] - 3.2, nz[k]}), A.push_back({nx[k] + 2.2, nz[k]});
+    }
+    A.push_back({s.L[n - 1].x - 3.0, 0.0}), A.push_back({c.fp.length, 0.0});
+    for (size_t i = 1; i < A.size(); i++) A[i].first = std::max(A[i].first, A[i - 1].first + 0.5);
+    auto lineV = [&](double u) {
+        for (size_t i = 1; i < A.size(); i++)
+            if (u <= A[i].first) return A[i - 1].second + (A[i].second - A[i - 1].second) * smoothstep(A[i - 1].first, A[i].first, u);
+        return 0.0;
+    };
+    auto onStairs = [&](double u, double v, double r) {
+        for (int k = 0; k < nn; k++)
+            if (u > nx[k] - 3.0 - r && u < nx[k] + 0.9 + r && std::fabs(v - nz[k]) < 1.45 + r * 0.7) return true;
+        return false;
+    };
+    auto laneOK = [&](double u, double v, double r) { return r < 0.34 || std::fabs(v - lineV(u)) > r * 0.85 + 1.25; };
+    auto place = [&](double u, double v, double r, double lift) {
+        if (std::fabs(v) > s.halfW(u) - 0.3 - r * 0.5 || onStairs(u, v, r) || !laneOK(u, v, r)) return false;
+        return c.boulder(u, v, r, lift);
+    };
+    for (int k = 0; k < n; k++) {
+        const double xa = k == 0 ? s.xs - 12 : s.L[k - 1].x + 0.9, xb = s.L[k].x - 0.6;
+        const int want = k == 1 ? 18 : k == 3 ? 22 : 9;  // (the garden after the second ledge and the one in front of the squeeze's notch)
+        for (int i = 0, got = 0; i < 400 && got < want; i++) {  // boulders on the treads (over the slabs' tops: a little proud of them)
+            const double u = c.rng.range(xa, xb), v = c.rng.range(-5.5, 5.5), r = boulderR(c.rng, 0.62, 0.3, 0.75);
+            got += place(u, v, r, 0.12);
+        }
+        for (int i = 0, got = 0; i < 200 && got < (k == n - 1 ? 14 : 8); i++) {  // rubble at the foot of the riser
+            const double v = c.rng.range(-5, 5), u = s.lip(k, v) - c.rng.range(0.7, 3.0), r = boulderR(c.rng, 0.85, 0.15, 0.6);
+            got += place(u, v, r, 0.1);
+        }
+    }
+    for (int k = 0; k < nn; k++)  // beside and below the notch
+        for (int i = 0; i < 4; i++) {
+            const double r = c.rng.range(0.28, 0.65), side = i % 2 ? 1 : -1, v = nz[k] + side * (1.55 + r * 0.8 + c.rng.range(0, 0.7)), u = nx[k] - c.rng.range(2.0, 0.0);
+            if (std::fabs(v) < s.halfW(u) - 0.4) c.boulder(u, v, r, 0.05);
+        }
+    for (int k = 0; k < nn; k++)  // a couple of small ones in the mouth of the notch, in front of its first step
+        for (int i = 0; i < 2; i++) {
+            const double r = c.rng.range(0.16, 0.26), u = nx[k] - c.rng.range(3.1, 4.4), v = nz[k] + c.rng.range(-1.0, 1.0);
+            c.boulder(u, v, r, 0.05);
+        }
+    for (int i = 0; i < 5; i++) {  // chockstones wedged in the V of the squeeze, alternating sides
+        const double u = s.vx0 + 1.5 + i * (s.vx1 - s.vx0 - 3) / 4, r = c.rng.range(0.35, 0.6), v = (i % 2 ? 1 : -1) * c.rng.range(0.45, 1.4);
+        c.boulder(u, v, r, 0, r * c.rng.range(0.9, 1.3));
+    }
+    for (int k = 0; k < n; k++) {  // flat rocks capping each lip
+        const double hw = s.halfW(s.L[k].x);
+        for (double v = -hw - 0.4; v < hw + 0.4; v += c.rng.range(0.9, 1.4)) {
+            if (k < nn && std::fabs(v - nz[k]) < 1.55) continue;
+            const double rx = c.rng.range(0.5, 0.85), lx = s.lip(k, v);
+            const V3 p0 = c.at(lx + rx * 0.45, v), p1 = c.at(lx + 2.0, v);
+            const double top = c.w.height(p1.x, p1.z) + 0.2 - c.w.height(p0.x, p0.z);
+            c.rock(lx + rx * 0.45, v, V3(rx, c.rng.range(0.14, 0.24), c.rng.range(0.4, 0.65)), top, seed * 977 + 31 * k + (uint32_t)(v * 10 + 100), (float)c.rng.range(0.9, 1.1));
+        }
+    }
+    if (std::getenv("CZ_DBG")) for (int k = 0; k < nn; k++) std::fprintf(stderr, "DBG ledge %d nx %.1f nz %.2f rise %.2f gap-to-next %.1f\n", k, nx[k], nz[k], s.L[k].rise, k + 1 < nn ? nx[k + 1] - nx[k] : 0.0);
+    for (double u = 0; u <= c.fp.length; u += 2) c.line.push_back({u, lineV(u)});
     // Junipers on the plateau (anchors for the last ledge) and scattered over the rims.
     for (int k = 0; k < 12; k++) c.tree(s.xe + c.rng.range(3, 16), c.rng.range(-7, 7), c.rng.range(4, 7), 1, 0.8f);
     for (int k = 0; k < 80; k++) {
@@ -570,7 +794,15 @@ void dunes(Canvas& c) {
         else if (above[m] < kDuneHardpan && fbmNoise(k.u * 0.022 + ox, k.v * 0.022 + oz, 2) > kDunePatch) c.surface(mine[m], SURF_DIRT, PAINT_DESERT);
         else c.paint(mine[m], SURF_SAND);
     }
+    for (double u = 0; u <= L; u += 2) c.line.push_back({u, 0.0});
     c.commit();
+    // A few half-buried rocks down in the hollows (where the dunes aren't).
+    for (int i = 0, got = 0; i < 600 && got < 12; i++) {
+        const double u = c.rng.range(30, L - 30), v = c.rng.range(-(hw - 24), hw - 24), r = c.rng.range(0.35, 0.9);
+        double ab = 0;
+        duneHeight(u - L / 2, v, P, seed, &ab);
+        if (ab < 0.6) got += c.boulder(u, v, r, 0, r * 0.45);
+    }
 }
 
 // ---- 6. CLIFF SHELF ------------------------------------------------------------------------------
@@ -609,9 +841,26 @@ void cliffShelf(Canvas& c) {
 // ---- 7. TIMBER -----------------------------------------------------------------------------------
 void timber(Canvas& c) {
     trail(c, kTimberHalf, 6, [](double) { return 0.0; }, [](double) { return SURF_DIRT; });
+    // Trees growing in the track, with roots humped up round them.
+    struct Trunk {
+        double u, v, h;
+    };
+    std::vector<Trunk> trunks;
+    for (int k = 0; k < 4; k++) trunks.push_back({30 + 25 * k + c.rng.range(-5, 5), c.rng.range(-1.0, 1.0), c.rng.range(12, 18)});
+    Rough fx;  // ruts, bumps, roots, a gully, a dip
+    fx.amp = 0.2, fx.rut = 0.15, fx.holes = 2, fx.washouts = 1, fx.cambers = 2;
+    for (const Trunk& t : trunks) {
+        fx.mounds.push_back({t.u, t.v, 1.0, 0.22});
+        for (int i = 0; i < 3; i++) {
+            const double a = c.rng.range(0, 6.283), d = c.rng.range(1.1, 1.8);
+            fx.mounds.push_back({t.u + d * std::cos(a), t.v + d * std::sin(a), 0.55, c.rng.range(0.12, 0.22)});
+        }
+    }
+    roughen(c, kTimberHalf, 6, fx, [](double) { return 0.0; });
+    for (double u = 0; u <= c.fp.length; u += 2) c.line.push_back({u, 0.0});
     c.commit();
     c.forestLow(kTimberClear, 0.5, true, kTimberNear, kNearH);  // a wall of trunks either side, back from the track
-    for (int k = 0; k < 4; k++) c.tree(30 + 25 * k + c.rng.range(-5, 5), c.rng.range(-1.0, 1.0), c.rng.range(12, 18), 0);  // trees growing in the track
+    for (const Trunk& t : trunks) c.tree(t.u, t.v, t.h, 0);
     for (int k = 0; k < 3; k++) {  // windfall across it: too big to climb in a truck
         const double u = 42 + 25 * k + c.rng.range(-4, 4), a = c.rng.range(-0.4, 0.4), len = c.rng.range(kTimberLog), r = c.rng.range(kTimberLogR);
         V3 p0 = c.at(u - std::sin(a) * len / 2, -std::cos(a) * len / 2), p1 = c.at(u + std::sin(a) * len / 2, std::cos(a) * len / 2);
@@ -622,6 +871,30 @@ void timber(Canvas& c) {
             o.kind = OBJ_LOG, o.p = p0, o.p2 = p1, o.size = V3(r, 0, 0);
             c.rec->push_back(o);
         }
+    }
+    // Rock among the roots: a few round each trunk in the track, more heaped beside it, and one at the foot of the trunks along it.
+    for (const Trunk& t : trunks)
+        for (int i = 0; i < 3; i++) {
+            const double a = c.rng.range(0, 6.283), d = c.rng.range(1.0, 1.7), r = c.rng.range(0.18, 0.4);
+            c.boulder(t.u + d * std::cos(a), t.v + d * std::sin(a), r);
+        }
+    for (int cl = 0; cl < 9; cl++) {  // heaps beside the track
+        const double pu = c.rng.range(24, c.fp.length - 24), side = c.rng() < 0.5 ? -1 : 1, pv = side * c.rng.range(2.6, 5.5), radius = c.rng.range(1.3, 2.6);
+        const int n = 4 + (int)(c.rng() * 4);
+        for (int i = 0; i < n; i++) {
+            const double a = c.rng.range(0, 6.283), d = radius * std::sqrt(c.rng()), v = pv + d * std::sin(a);
+            if (std::fabs(v) < 2.5) continue;  // (the track's edge stays free but for the odd stray)
+            c.boulder(pu + d * std::cos(a), v, boulderR(c.rng, 0.55, 0.35, 0.8));
+        }
+    }
+    int foot = 0;
+    for (size_t i = 0; i < c.w.trees.size() && foot < 40; i++) {
+        double u, v;
+        const Tree& t = c.w.trees[i];
+        c.local(t.base.x, t.base.z, u, v);
+        if (std::fabs(v) < 3.5 || std::fabs(v) > 9 || u < 22 || u > c.fp.length - 22 || c.rng() > 0.2) continue;
+        const double a = c.rng.range(0, 6.283), d = t.radius + c.rng.range(0.3, 0.9);
+        foot += c.boulder(u + d * std::cos(a), v + d * std::sin(a), c.rng.range(0.2, 0.55));
     }
 }
 
@@ -718,5 +991,13 @@ SectionBuilt buildSection(World& w, SectionType t, uint32_t seed, const SectionF
     out.entry = c.at(0, 0), out.exit = c.at(L, exitV);
     out.entry.y = w.height(out.entry.x, out.entry.z), out.exit.y = w.height(out.exit.x, out.exit.z);
     out.exitHeading = f.heading;
+    // The line to drive: what the generator set (u, v), else straight along (the shelf's wandering one, to its exit).
+    if (c.line.empty())
+        for (double u = 0; u <= L; u += 2) c.line.push_back({u, exitV * u / L});
+    for (const auto& uv : c.line) {
+        V3 p = c.at(uv.first, uv.second);
+        p.y = w.height(p.x, p.z);
+        out.line.push_back(p);
+    }
     return out;
 }

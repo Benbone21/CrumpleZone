@@ -170,6 +170,109 @@ SCENARIO(sectionSameSeed, "sections/same-seed", "The same seed builds the same s
     }
 }
 
+// ---- Rock and uneven ground on the driven line ------------------------------------------------------------------------
+
+namespace {
+
+struct LineCase {
+    SectionType t;
+    const char* name;
+    int rocksNear;  // at least this many rocks within 3 m of the line
+};
+const LineCase kLineCases[] = {{SEC_STEEP_HILL, "steep hill", 30}, {SEC_MUD_PIT, "mud pit", 6}, {SEC_ROCK_WALL, "rock wall", 60}, {SEC_TIMBER, "timber", 10}, {SEC_ROCKY_RIVER, "rocky river", 10}};
+
+// The line as (u, v)-free samples of height, and the ground at (u, v) metres from the entry along the frame.
+double groundAt(const World& w, const SectionFrame& f, double u, double v) {
+    const double x = f.entry.x + std::cos(f.heading) * u + std::sin(f.heading) * v, z = f.entry.z - std::sin(f.heading) * u + std::cos(f.heading) * v;
+    return w.height(x, z);
+}
+
+}  // namespace
+
+SCENARIO(sectionRocksOnLine, "sections/rocks-on-line", "The hill, mud pit, rock wall, timber and river have scanned-style rocks standing along the driven line (and none on the entry and exit pads)") {
+    for (const LineCase& lc : kLineCases)
+        for (uint32_t seed : {1u, 2u}) {
+            const std::string tag = std::string(lc.name) + " seed " + std::to_string(seed);
+            World w(MAP_PROVING_GROUND);
+            const size_t before = w.rocks.size();
+            const SectionFrame f = testFrame(w, lc.t, seed == 1 ? 0 : M_PI / 2);
+            const SectionBuilt b = buildSection(w, lc.t, seed, f);
+            ctx.check(tag + ": a line is reported", b.line.size() > 20, std::to_string(b.line.size()));
+            int near3 = 0, onPad = 0;
+            for (size_t i = before; i < w.rocks.size(); i++) {
+                double best = 1e9;
+                for (size_t k = 0; k < b.line.size(); k++) {
+                    const double d = std::hypot(b.line[k].x - w.rocks[i].c.x, b.line[k].z - w.rocks[i].c.z);
+                    best = std::min(best, d);
+                    if (d < 6 && (k < 8 || k + 8 >= b.line.size())) onPad++;
+                }
+                near3 += best < 3;
+            }
+            ctx.check(tag + ": rocks on the line", near3 >= lc.rocksNear, std::to_string(near3) + " within 3 m of it (want " + std::to_string(lc.rocksNear) + ")");
+            ctx.check(tag + ": the entry and exit pads are clear of rock", onPad == 0, std::to_string(onPad));
+        }
+}
+
+SCENARIO(sectionUneven, "sections/uneven-ground", "The ground along each section's line fluctuates (bumps, dips, ruts), while the entry and exit pads stay flat for 15 m") {
+    for (const LineCase& lc : kLineCases)
+        for (uint32_t seed : {1u, 2u}) {
+            const std::string tag = std::string(lc.name) + " seed " + std::to_string(seed);
+            World w(MAP_PROVING_GROUND);
+            const SectionFrame f = testFrame(w, lc.t, seed == 1 ? M_PI : 0.5);
+            const double L = sectionLength(lc.t);
+            buildSection(w, lc.t, seed, f);
+            // The ground's height every metre down the line, less its own trend (a 17 m moving mean): what's left is the bumps.
+            std::vector<double> y;
+            for (double u = 0; u <= L; u += 1) y.push_back(groundAt(w, f, u, 0));
+            double sum2 = 0;
+            int n = 0;
+            for (int i = 18; i + 18 < (int)y.size(); i++) {
+                double mean = 0;
+                for (int k = -8; k <= 8; k++) mean += y[i + k] / 17;
+                sum2 += (y[i] - mean) * (y[i] - mean), n++;
+            }
+            const double sd = std::sqrt(sum2 / n);
+            ctx.check(tag + ": the line's ground varies", sd > 0.05, std::to_string(sd) + " m (want over 0.05)");
+            // The pads: flat to a few cm about their own plane, across the width a truck uses.
+            for (int end = 0; end < 2; end++) {
+                const double u0 = end ? L - 15 : -15, u1 = end ? L + 15 : 15;
+                double worst = 0;
+                for (double v : {-2.0, 0.0, 2.0}) {
+                    std::vector<double> h;
+                    for (double u = u0; u <= u1; u += 1) h.push_back(groundAt(w, f, u, v));
+                    // (a straight line fitted through it)
+                    const int m = (int)h.size();
+                    const double mx = (m - 1) / 2.0;
+                    double mh = 0, sxy = 0, sxx = 0;
+                    for (double hv : h) mh += hv / m;
+                    for (int i = 0; i < m; i++) sxy += (i - mx) * (h[i] - mh), sxx += (i - mx) * (i - mx);
+                    for (int i = 0; i < m; i++) worst = std::max(worst, std::fabs(h[i] - (mh + sxy / sxx * (i - mx))));
+                }
+                ctx.check(tag + (end ? ": exit pad flat" : ": entry pad flat"), worst < 0.12, std::to_string(worst) + " m off a straight line (want under 0.12)");
+            }
+        }
+}
+
+SCENARIO(sectionRocksSame, "sections/rocks-same-seed", "A section's rocks, slabs and line are exactly the same for the same seed, and differ for another") {
+    for (const LineCase& lc : kLineCases) {
+        auto build = [&](uint32_t seed, double& sum, size_t& n, double& lineSum) {
+            World w(MAP_PROVING_GROUND);
+            const size_t r0 = w.rocks.size();
+            const SectionFrame f = testFrame(w, lc.t, 0);
+            const SectionBuilt b = buildSection(w, lc.t, seed, f);
+            sum = 0, lineSum = 0;
+            for (size_t i = r0; i < w.rocks.size(); i++) sum += w.rocks[i].c.x * 1.3 + w.rocks[i].c.y * 2.7 + w.rocks[i].c.z * 0.9 + w.rocks[i].r;
+            for (const V3& p : b.line) lineSum += p.x + 2 * p.y + 3 * p.z;
+            n = w.rocks.size() - r0;
+        };
+        double s1, s2, s3, l1, l2, l3;
+        size_t n1, n2, n3;
+        build(1, s1, n1, l1), build(1, s2, n2, l2), build(2, s3, n3, l3);
+        ctx.check(std::string(lc.name) + ": same seed, same rocks and line", s1 == s2 && n1 == n2 && l1 == l2);
+        ctx.check(std::string(lc.name) + ": another seed, other rocks", s1 != s3 || n1 != n3);
+    }
+}
+
 SCENARIO(sectionPark, "sections/park", "The game's proving ground has its section park clear of the spawn pad, the loop road and the courses; the tests' one has none") {
     const World plain(MAP_PROVING_GROUND);
     ctx.check("no park without the showcase", plain.sections.empty() && plain.tags.empty());

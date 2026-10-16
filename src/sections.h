@@ -32,6 +32,7 @@ struct SectionFrame {
 struct SectionBuilt {
     V3 entry, exit;       // the trail's two ends, on the finished ground
     double exitHeading = 0;
+    std::vector<V3> line;  // the line meant to be driven, entry to exit about every 2 m, on the finished ground (empty from a hand-made section)
 };
 
 // The ground a section takes over: from `apron` m before the entry to `apron` m past the exit
