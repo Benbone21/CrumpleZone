@@ -249,7 +249,7 @@ void Audio::render(float* out, int frames) {
     // Leave space for engine detail during hard acceleration and impacts.
     const float duck = 1 - 0.25f * level(tLoad) - 0.25f * std::min(1.0f, thumpEnv_);
     const float mv = level(musicVol_) * duck;
-    music_.render(out, frames, musicMap_, mv);
+    music_.render(out, frames, musicMap_, mv, musicBiome_);
     ambience_.render(out, frames, rate_, {(int)ambienceMap_, (float)hours_, level(ambienceVol_) * sceneGain, exposure});
     const float volumeA = 1 - std::exp(-dt / 0.025f);
     for (int i = 0; i < frames; i++) {
