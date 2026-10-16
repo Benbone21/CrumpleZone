@@ -40,6 +40,7 @@ enum Mat : uint8_t {
     ROCK = 12,      // stone: grain, veins, lichen on the tops
     FOLIAGE = 13,   // leaves, needles, grass: soft light, glows with the sun behind
     WOOD = 14,      // weathered grain
+    SNOWLEAF = 15,  // snow lying on boughs and crowns: plain matte, but dissolves with the foliage under it (see-through trees)
 };
 
 struct MVert {

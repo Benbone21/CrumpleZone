@@ -415,7 +415,12 @@ void terrainProcedural(vec3 n, inout vec3 base, inout float specK, inout float s
 
 const char* kLitFSBody = R"(
 void main(){
-  if (uTreeFadeN > 0) {  // a tree the camera sees through: its pixels dither away
+  vec3 n = normalize(vNrm);
+  vec3 base = vCol.rgb;
+  int mat = int(vCol.a + 0.5);
+  bool sunlit = mat >= 100;  // (a cargo model inside a body's shadow: Placed::sunlit)
+  if (sunlit) mat -= 100;
+  if (uTreeFadeN > 0 && (mat == 13 || mat == 15)) {  // a tree the camera sees through: its leaves (and the snow on them) dither away; trunks and limbs never do
     float fade = 0.0;
     for (int i = 0; i < uTreeFadeN; i++) {
       vec4 t = uTreeFade[i];
@@ -424,11 +429,6 @@ void main(){
     }
     if (fade > ditherAt(gl_FragCoord.xy)) discard;
   }
-  vec3 n = normalize(vNrm);
-  vec3 base = vCol.rgb;
-  int mat = int(vCol.a + 0.5);
-  bool sunlit = mat >= 100;  // (a cargo model inside a body's shadow: Placed::sunlit)
-  if (sunlit) mat -= 100;
   float specK = 0.04, specP = 16.0;
   if (mat == 7) {
     terrainProcedural(n, base, specK, specP);

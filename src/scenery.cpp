@@ -215,8 +215,8 @@ void buildTreeMesh(const World& world, std::vector<Vtx>& v, const ScanCover& ski
                     const double f0 = 0.18 + 0.22 * latticeHash(seed * 17 + c, s), f1 = 0.18 + 0.22 * latticeHash(seed * 17 + c, (s + 1) % sides);
                     const V3 lift(0, 0.06 + 0.02 * r, 0), snow(0.80, 0.83, 0.88);
                     const V3 q0 = p0 + (apex - p0) * f0 + lift, q1 = p1 + (apex - p1) * f1 + lift;
-                    put(q0, norm(n0 + V3(0, 0.6, 0)), snow * 0.92, SM_MATTE), put(apex + lift, V3(0, 1, 0), snow, SM_MATTE),
-                        put(q1, norm(n1 + V3(0, 0.6, 0)), snow * 0.92, SM_MATTE);
+                    put(q0, norm(n0 + V3(0, 0.6, 0)), snow * 0.92, SM_SNOWLEAF), put(apex + lift, V3(0, 1, 0), snow, SM_SNOWLEAF),
+                        put(q1, norm(n1 + V3(0, 0.6, 0)), snow * 0.92, SM_SNOWLEAF);
                 }
             }
         }
