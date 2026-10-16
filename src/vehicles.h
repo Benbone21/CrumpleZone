@@ -71,7 +71,9 @@ enum BodyExtra : unsigned {
 };
 
 // Wheel and tire look.
-enum WheelStyle { WHEEL_ALLOY = 0, WHEEL_OFFROAD_BRONZE = 1, WHEEL_OFFROAD_BLACK = 2, WHEEL_HONDA_COVER = 3, WHEEL_FORGED = 4, WHEEL_STYLES };
+enum WheelStyle { WHEEL_ALLOY = 0, WHEEL_OFFROAD_BRONZE = 1, WHEEL_OFFROAD_BLACK = 2, WHEEL_HONDA_COVER = 3, WHEEL_FORGED = 4,
+                  WHEEL_STEEL = 5,  // 1970s painted steel wheel, chrome dog-dish cap, on a tall tire
+                  WHEEL_STYLES };
 
 // Headlamp and grille shapes (body shader).
 enum LampStyle { LAMP_RECT = 0, LAMP_ROUND = 1, LAMP_SLIM = 2 };
@@ -172,6 +174,10 @@ struct VehicleSpec {
     // the front half pivots on a hanger, the rear swings on a shackle. No links, no panhard.
     bool leafSprings = false;
     double leafHalf = 0.70;        // spring eye to the axle seat (m), each side
+    // The front axle on leaves too (a steered solid axle: the 1970s 4x4s): fixed eye ahead,
+    // shackle behind, the same way round as the rear.
+    bool leafFront = false;
+    double leafHalfFront = 0.60;
     double rideFreqFront = 1.5, rideFreqRear = 1.6;  // body bounce frequency on its springs (Hz)
     double dampingRatio = 0.35;
     double arbFront = 0, arbRear = 0;

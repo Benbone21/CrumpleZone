@@ -25,7 +25,10 @@ VEHICLE_SCENARIO(manualNeutral, "drivetrain/manual-neutral", "Manual R-N-1 selec
     ctx.check("manual controller pedals preserve reverse", p.gear == -1 && p.throttle == 0.7 && p.brake == 0.2);
     ctx.check("E from reverse selects neutral", c.shift(1) && c.gear == 0);
     ctx.run(spec.shiftTime + 0.1);
-    ctx.launch(c, 10);
+    // (Rolling at 10 m/s, or slower where first gear can't take it: a granny-geared truck box
+    // tops out first well under 36 km/h.)
+    const double firstTop = 0.6 * spec.redline * 2 * M_PI / 60 / (spec.gears[0] * spec.finalDrive) * spec.wheelRadius;
+    ctx.launch(c, std::min(10.0, firstTop));
     c.gear = 0;  // launch() normally picks a suitable forward gear for its speed
     ctx.run(0.05, [&] { c.throttle = c.brake = c.handbrake = 0; });
     ctx.check("reverse cannot engage while rolling at speed", !c.shift(-1) && c.gear == 0);

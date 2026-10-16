@@ -584,7 +584,8 @@ void buildExtras(const Car& car, PartBuilder& pb) {
     }
     const V3 trim(vs.trimColor[0], vs.trimColor[1], vs.trimColor[2]);
     const V3 steel(0.035, 0.035, 0.038);  // black powder-coated steel
-    const V3 rimCol = vs.wheelStyle == WHEEL_OFFROAD_BRONZE ? V3(0.36, 0.27, 0.16)
+    const V3 rimCol = vs.wheelStyle == WHEEL_STEEL ? V3(0.86, 0.86, 0.83)
+                    : vs.wheelStyle == WHEEL_OFFROAD_BRONZE ? V3(0.36, 0.27, 0.16)
                     : vs.wheelStyle == WHEEL_OFFROAD_BLACK  ? V3(0.05, 0.05, 0.055)
                                                             : V3(0.3, 0.3, 0.32);
     const double floorY = vs.layerY[0];

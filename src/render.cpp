@@ -1618,11 +1618,11 @@ struct MeshOut {
         quad(p[2], p[6], p[7], p[3], col, mat);
     }
     // Ring between radii r0 and r1 at axial z, facing +z (facing = 1) or -z.
-    void annulus(double r0, double r1, double z, int segs, int facing, const V3& col, int mat) {
+    void annulus(double r0, double r1, double z, int segs, int facing, const V3& col, int mat, const V3& at = V3()) {
         for (int s = 0; s < segs; s++) {
             double a0 = 2 * M_PI * s / segs, a1 = 2 * M_PI * (s + 1) / segs;
-            V3 p0(std::cos(a0) * r0, std::sin(a0) * r0, z), p1(std::cos(a1) * r0, std::sin(a1) * r0, z);
-            V3 q0(std::cos(a0) * r1, std::sin(a0) * r1, z), q1(std::cos(a1) * r1, std::sin(a1) * r1, z);
+            V3 p0 = at + V3(std::cos(a0) * r0, std::sin(a0) * r0, z), p1 = at + V3(std::cos(a1) * r0, std::sin(a1) * r0, z);
+            V3 q0 = at + V3(std::cos(a0) * r1, std::sin(a0) * r1, z), q1 = at + V3(std::cos(a1) * r1, std::sin(a1) * r1, z);
             if (facing > 0) quad(p0, q0, q1, p1, col, mat);
             else quad(p0, p1, q1, q0, col, mat);
         }
@@ -2300,7 +2300,8 @@ void Renderer::buildWheelStyle(int style) {
     // Road wheel: low-profile tire on a big five-spoke alloy. Off-road wheel: a tall
     // all-terrain tire (35x12.50R17 proportions) with tread blocks and raised white
     // letters, on an eight-spoke rim.
-    const bool offroad = style == WHEEL_OFFROAD_BRONZE || style == WHEEL_OFFROAD_BLACK;
+    const bool steelWheel = style == WHEEL_STEEL;
+    const bool offroad = style == WHEEL_OFFROAD_BRONZE || style == WHEEL_OFFROAD_BLACK || steelWheel;
     const bool cover = style == WHEEL_HONDA_COVER, forged = style == WHEEL_FORGED;
     const int segs = 48;
     const double rimR = offroad ? 0.158 : cover ? 0.197 : forged ? 0.23 : 0.215;
@@ -2380,13 +2381,24 @@ void Renderer::buildWheelStyle(int style) {
 
     tireVertexCount[style] = (int)v.size();
     // Rim: barrel, outer lip, dished spokes, hub with lug nuts and a center cap.
-    const V3 alloy = forged ? V3(0.12, 0.13, 0.15) : cover ? V3(0.55, 0.56, 0.58) : style == WHEEL_OFFROAD_BRONZE ? V3(0.36, 0.27, 0.16)
+    const V3 alloy = steelWheel ? V3(0.86, 0.86, 0.83) : forged ? V3(0.12, 0.13, 0.15) : cover ? V3(0.55, 0.56, 0.58) : style == WHEEL_OFFROAD_BRONZE ? V3(0.36, 0.27, 0.16)
                    : style == WHEEL_OFFROAD_BLACK  ? V3(0.05, 0.05, 0.055)
                                                    : V3(0.62, 0.63, 0.66);
     const int rimMat = offroad || forged || cover ? SM_MATTE : SM_METAL;
     const V3 dark(0.12, 0.12, 0.13), chrome(0.85, 0.85, 0.87);
-    const int spokes = offroad ? 8 : forged ? 10 : cover ? 12 : 5;
+    const int spokes = steelWheel ? 0 : offroad ? 8 : forged ? 10 : cover ? 12 : 5;
     m.barrel(rimR, -0.104, 0.1, segs, true, offroad ? alloy * 0.7 : V3(0.3, 0.3, 0.32), rimMat);
+    if (steelWheel) {
+        // Pressed steel: a dished center disc welded in the barrel, a ring of round vent
+        // holes, painted white; a small chrome "dog dish" cap over the lugs.
+        m.annulus(0.075, rimR - 0.012, 0.072, segs, 1, alloy, SM_MATTE);
+        m.barrel(rimR - 0.012, 0.072, 0.095, segs, false, alloy, SM_MATTE);
+        for (int hole = 0; hole < 6; hole++) {
+            const double a = 2 * M_PI * hole / 6, hr = 0.022, rr = 0.5 * (0.075 + rimR - 0.012);
+            m.annulus(0.0, hr, 0.0735, 12, 1, V3(0.02, 0.02, 0.02), SM_MATTE, V3(std::cos(a) * rr, std::sin(a) * rr, 0));
+        }
+        m.annulus(0.0, 0.075, 0.074, 24, 1, V3(0.9, 0.9, 0.92), SM_CHROME);
+    }
     m.annulus(rimR - 0.012, rimR + 0.006, 0.104, segs, 1, alloy, rimMat);
     m.barrel(rimR - 0.012, 0.085, 0.104, segs, true, alloy, rimMat);
     if (offroad) m.annulus(rimR - 0.012, rimR - 0.004, 0.108, segs, 1, V3(0.02, 0.02, 0.02), SM_MATTE);  // dark beauty ring
@@ -2403,17 +2415,17 @@ void Renderer::buildWheelStyle(int style) {
         }
         m.hexa(p, alloy, rimMat);
     }
-    const double hubZ = offroad ? 0.08 : 0.06;
+    const double hubZ = steelWheel ? 0.076 : offroad ? 0.08 : 0.06;
     m.annulus(0.0, 0.058, hubZ, 20, 1, alloy, rimMat);
     m.barrel(0.058, 0.035, hubZ, 20, false, alloy, rimMat);
-    const V3 cap = offroad ? V3(0.03, 0.03, 0.03) : chrome;
+    const V3 cap = steelWheel ? chrome : offroad ? V3(0.03, 0.03, 0.03) : chrome;
     m.annulus(0.0, 0.026, hubZ + 0.01, 12, 1, cap, SM_CHROME);
     m.barrel(0.026, hubZ, hubZ + 0.01, 12, false, cap, SM_CHROME);
     if (cover) { // period Honda wheel cover, radial cooling slots and raised center
         m.annulus(0.0, rimR * 0.71, 0.100, segs, 1, alloy, SM_MATTE);
         m.annulus(rimR * 0.88, rimR, 0.100, segs, 1, alloy, SM_MATTE);
     }
-    const int lugs = offroad ? 6 : cover ? 4 : forged ? 1 : 5;
+    const int lugs = steelWheel ? 0 : offroad ? 6 : cover ? 4 : forged ? 1 : 5;
     for (int l = 0; l < lugs; l++) {
         double a = 2 * M_PI * (l + 0.5) / lugs;
         V3 c(std::cos(a) * 0.04, std::sin(a) * 0.04, 0);
@@ -2554,7 +2566,7 @@ void Renderer::drawWheels(const Sim& sim, GLuint prog) {
             }
             BindVertexArray(caliperVao);
             // (The off-road rim is smaller for its tire: its brake is too.)
-            uniformM4(prog, "uModel", wheelMatrix(car, wh, fr.up, false, st == WHEEL_OFFROAD_BRONZE || st == WHEEL_OFFROAD_BLACK ? 0.72 : st == WHEEL_HONDA_COVER ? 0.82 : 1.0));
+            uniformM4(prog, "uModel", wheelMatrix(car, wh, fr.up, false, st == WHEEL_OFFROAD_BRONZE || st == WHEEL_OFFROAD_BLACK || st == WHEEL_STEEL ? 0.72 : st == WHEEL_HONDA_COVER ? 0.82 : 1.0));
             DrawArrays(GL_TRIANGLES, 0, caliperVertexCount);
         }
         // The spare where it rides (gone when it's been taken).

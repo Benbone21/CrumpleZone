@@ -2547,7 +2547,10 @@ void Sim::aiDrive(int self, double dt) {
     // ---- Speed: bends ahead, then car following ------------------------------
     // Tall, heavy vehicles corner more gently.
     // (A tube-frame buggy's 40 in tires and long travel top out at ~0.6 g: it drives the loop gently.)
-    const double height = spec->layerY.back(), aLat = std::min(clampd(6.5 - 3.0 * (height - 1.4) - (c.mass - 1300) / 800, 3.2, 5.5), spec->openFrame && spec->wheelRadius > 0.45 ? 3.3 : 9.0);
+    // (And on old or soft tires, gentler again: what's left of the grip, against ~0.72 for a
+    // modern all-terrain.)
+    const double tireK = std::min(1.0, spec->tireGrip * spec->lateralGrip / 0.72);
+    const double height = spec->layerY.back(), aLat = std::min(clampd(6.5 - 3.0 * (height - 1.4) - (c.mass - 1300) / 800, 3.2, 5.5) * tireK, spec->openFrame && spec->wheelRadius > 0.45 ? 3.3 : 9.0);
     const double decel = aLat * 0.75;
     auto bendSpeed = [&](int from) {  // max speed for the ~10 m of road starting at `from`
         double seg = 0;

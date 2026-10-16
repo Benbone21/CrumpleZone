@@ -1085,6 +1085,159 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         tacoma.coverColor[0] = 0.08f, tacoma.coverColor[1] = 0.08f, tacoma.coverColor[2] = 0.09f;
         v.push_back(tacoma);
 
+        // ---- 1972 Chevrolet K5 Blazer 4x4 (first generation, 1969-72) ----------------------
+        // The short, square two-door: a full-length box on a ladder frame with a removable
+        // fiberglass/steel hardtop over the back, a 350 small-block V8, the SM465 four-speed
+        // ("granny" first), an NP205 gear-drive transfer case, a Dana 44 front and a GM 12-bolt
+        // rear, both on multi-leaf springs, the front one steering on kingpins. 104 in
+        // wheelbase, 177.5 x 79 in (GM specs for 1969-72). 1972 SAE net ratings for the
+        // two-barrel 350: 165 hp at 4,000 rpm, 280 lb-ft at 2,400. ~4,000 lb with the top on.
+        VehicleSpec blazer = bronco;
+        blazer.name = "CHEVY BLAZER";
+        blazer.id = "blazer";
+        blazer.blurb = "1972 K5 4X4  350 V8  SM465 4-SPEED  NP205";
+        // Nose and front wheels, the cab (two long doors), the back under the hardtop.
+        blazer.profile = {
+            "#WW#####WW#",
+            "###########",
+            "...GGGGGGGG",
+        };
+        // 4,509 x 2,007 mm (with the mirrors folded: the body ~1,980), ~1,770 mm tall with the top.
+        blazer.layerY = {0.53, 0.99, 1.32, 1.80};  // (the 4x4's floor sits high over the frame and the leaf packs)
+        blazer.length = 4.509;
+        blazer.width = 1.98;
+        blazer.wheelbase = 2.642;  // 104 in
+        blazer.frontOverhang = 0.80;
+        blazer.outerCellWidth = 0;
+        blazer.topLine = {1.18, 1.25, 1.30};  // a long, flat hood, nearly level to the cowl
+        blazer.bumperLift = 0.10;
+        blazer.bumperLiftRear = 0.10;
+        blazer.cornerRound = 0.04;  // a box
+        blazer.roofTuck = 0.06;
+        blazer.rakeFront = 0.26;    // a near-vertical windshield
+        blazer.rakeRear = 0.02;     // the tailgate glass, upright
+        blazer.liftgate = false;    // a drop-down tailgate with a roll-down window
+        blazer.doors = 2;
+        blazer.doorLength = 1.25;
+        blazer.bodyWidth.clear();
+        // ~4,000 lb (1,815 kg) with the hardtop and a full tank, about 55/45 (ESTIMATE from
+        // period road tests: the iron V8 and the front axle over the front wheels).
+        blazer.structureMass = 380;  // the steel body tub (the frame is its own, below)
+        blazer.panelMass = 150;      // thick 1970s sheet metal
+        blazer.items = {
+            {"radiator and core support", 30, 1.82, 0.88, 0},   {"battery", 25, 1.55, 1.00, -0.55},
+            {"front bumper (chrome)", 30, 2.20, 0.62, 0},       {"steering box and drag link", 22, 1.75, 0.70, -0.45},
+            {"front prop shaft", 10, 0.90, 0.52, 0.1},          {"rear prop shaft", 15, -0.45, 0.52, 0},
+            {"dashboard and heater", 32, 0.80, 1.10, 0},        {"front bucket seats", 44, 0.05, 0.98, 0},
+            {"rear bench seat", 32, -0.95, 0.96, 0},            {"floor mats, trim, wiring", 30, -0.10, 0.70, 0},
+            {"fuel tank (117 L, full)", 85, -1.20, 0.58, 0.40}, {"exhaust", 28, -0.30, 0.40, 0.35},
+            {"spare wheel inside, on the side wall", 38, -1.45, 1.00, 0.70},
+            {"rear bumper (chrome)", 22, -2.22, 0.62, 0},        {"hardtop", 45, -0.70, 1.72, 0},
+            {"brakes", 22, 0.0, 0.50, 0},                       {"tailgate", 25, -2.20, 0.95, 0},
+        };
+        blazer.engineMass = 240;   // cast-iron small block with its accessories
+        blazer.gearboxMass = 110;  // SM465 (~70 kg, cast iron) and the NP205 (~40 kg)
+        blazer.transverse = false;
+        blazer.engineX = 1.35;
+        blazer.engineY = 1.02;
+        blazer.engineZ = 0;
+        blazer.engineLen = 0.68;
+        blazer.engineWid = 0.66;
+        blazer.engineHgt = 0.64;
+        blazer.gearboxLen = 0.90;
+        blazer.induction = VehicleSpec::NATURAL;
+        blazer.turboLag = 0;
+        blazer.displacement = 5.7;
+        blazer.cylinders = 8;
+        blazer.bodyStiffness = 0.95;   // an open-backed tub (the top is bolted on)
+        blazer.bodyStrength = 0.85;    // mild steel, thick
+        blazer.frameStrength = 2.6;
+        blazer.panelStrength = 1.5;
+        blazer.pinStrength = 1.8;
+        // Ladder frame: C-channel rails, riveted crossmembers (ESTIMATE: ~7 x 2.5 in, 3/16 in).
+        blazer.railSpacing = 0.86;
+        blazer.railHeight = 0.18;
+        blazer.railWidth = 0.065;
+        blazer.frameMass = 170;
+        blazer.frameStiffness = 0.12;  // an open C: it twists
+        blazer.railYield = 0.010;
+        blazer.bodyMounts = 8;
+        blazer.skidDrop = 0.20;        // the NP205 and its crossmember hang low
+        // 10-15LT on 15 x 7 steel wheels: ~30.5 x 10 in (ESTIMATE between the G78-15 base tire
+        // and the optional 10-15 the off-road package listed).
+        blazer.wheelRadius = 0.385;
+        blazer.wheelWidth = 0.255;
+        blazer.wellTireRadius = 0.42;  // ~33s before they rub
+        blazer.wellTireWidth = 0.29;
+        blazer.rimRadius = 0.191;      // 15 in
+        blazer.trackFront = 1.638;     // 64.5 in
+        blazer.trackRear = 1.600;      // 63 in
+        blazer.wheelMass = 27;
+        blazer.hubMass = 25;           // locking hubs and the brake
+        blazer.axleMass = 110;         // Dana 44 front / 12-bolt rear, and half the leaf packs
+        blazer.frontSusp = SOLID_AXLE;
+        blazer.rearSusp = SOLID_AXLE;
+        blazer.leafFront = true;       // multi-leaf packs at both ends, the front axle steering
+        blazer.leafSprings = true;
+        blazer.leafHalfFront = 0.58;   // 46 in front springs (ESTIMATE)
+        blazer.leafHalf = 0.70;        // 52 in rear springs (ESTIMATE)
+        blazer.linkLength = 0.70;
+        blazer.upperLink = 0;
+        blazer.rideFreqFront = 1.45;   // stiff front leaves: the V8 sits on them
+        blazer.rideFreqRear = 1.45;
+        blazer.dampingRatio = 0.30;    // 1970s shocks
+        blazer.arbFront = 6000;        // a thin front bar
+        blazer.arbRear = 0;
+        // Wheel travel (ESTIMATE): leaf packs, ~20 cm front, ~22 cm rear.
+        blazer.bumpFront = 0.08, blazer.droopFront = 0.11;
+        blazer.bumpRear = 0.09, blazer.droopRear = 0.13;
+        blazer.swayDisconnect = 0;
+        blazer.tirePsi = 32;
+        blazer.wheelLoss = true;
+        blazer.spareFlat = false;
+        blazer.lugShear = 105000;      // eight 1/2 in studs
+        blazer.tireType = TIRE_ALL_TERRAIN;
+        blazer.tireGrip = 0.90;        // bias-ply-era tread
+        blazer.lateralGrip = 0.74;     // ~0.63 g on the skidpad: 1970s light-truck tires
+        blazer.drive = VehicleSpec::AWD;
+        blazer.diffFront = blazer.diffRear = DIFF_OPEN;
+        blazer.transfer = XFER_PART_TIME_BASIC;  // NP205: 2H, 4H, 4L (locking hubs in front)
+        blazer.lockerRear = false;
+        blazer.lockerFront = false;
+        blazer.frontLockerLowOnly = false;
+        blazer.rearLockerLowOnly = false;
+        blazer.shaftLimit = 9500;      // Dana 44 front shafts and the 12-bolt's C-clip rears
+        blazer.lowRange = 1.96;        // NP205
+        blazer.brakeFront = 3300;      // 11.86 in discs (power front discs from 1971)
+        blazer.brakeRear = 1300;       // 11 in drums (behind a proportioning valve: the fronts lock first)
+        blazer.absEnabled = false;
+        blazer.tractionFitted = false;
+        blazer.dragArea = 1.75;        // Cd ~0.55 x 3.2 m^2 (a brick)
+        // 165 hp at 4,000 rpm, 280 lb-ft (380 N*m) at 2,400 (SAE net, 1972 2-bbl 350); the curve
+        // between is the small block's (estimate).
+        blazer.torque = {{0, 250}, {800, 300}, {1200, 335}, {1800, 365}, {2400, 380}, {3000, 370}, {3600, 345}, {4000, 320}, {4400, 285}, {4800, 240}};
+        blazer.idleRpm = 650;
+        blazer.redline = 4800;
+        blazer.speedLimit = 150;
+        blazer.gears = {6.55, 3.58, 1.70, 1.00};  // SM465
+        blazer.reverseRatio = 6.09;
+        blazer.finalDrive = 3.73;
+        blazer.shiftTime = 0.45;       // a long-throw truck box, double-clutched if you like
+        blazer.stallRpm = 0;           // a clutch, not a converter
+        blazer.lockupGear = 0;
+        blazer.engineName = "350 V8 2-BARREL";
+        blazer.gearboxName = "SM465 4-SPEED MANUAL";
+        blazer.lampStyle = LAMP_ROUND;
+        blazer.grilleStyle = GRILLE_WIDE;
+        blazer.extras = 0;
+        // Ochre with the white hardtop, the classic two-tone.
+        blazer.paintColor[0] = 0.66f, blazer.paintColor[1] = 0.44f, blazer.paintColor[2] = 0.12f;
+        blazer.trimColor[0] = blazer.trimColor[1] = blazer.trimColor[2] = 0;
+        blazer.trimTop = 0;
+        blazer.wheelStyle = WHEEL_STEEL;
+        blazer.coverColor[0] = 0.92f, blazer.coverColor[1] = 0.92f, blazer.coverColor[2] = 0.90f;  // the white top
+        v.push_back(blazer);
+
         // EF Civic Si: the Rio Red hatch in bringatrailer.com/listing/1990-honda-civic-si-5/.
         // Honda's D16A6 rating: 108 hp / 100 lb-ft; 185/60R14 tires, discs/drums,
         // double wishbones and a five-speed. Internal mass placement and CG are estimates.
@@ -1176,6 +1329,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         v[4].fuelCapacity = 95;                         // rock buggy: a 25 gal fuel cell
         v[5].fuelCapacity = 40;                         // UTV: 10.6 gal (Maverick X3)
         v[6].fuelCapacity = 80, v[6].jerryCan = 20;     // Tacoma: 21.1 gal
+        v[7].fuelCapacity = 117;                        // Blazer: 31 gal
         return v;
     }();
     return catalog;

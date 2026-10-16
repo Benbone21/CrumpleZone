@@ -441,7 +441,10 @@ VEHICLE_SCENARIO(tireIntoFender, "components/tire-into-fender", "Coil-over torn 
     int dented = 0;
     for (size_t i = 0; i < c.beams.size(); i++)
         if ((c.beams[i].type == BEAM_PANEL || c.beams[i].type == BEAM_BODY || c.beams[i].type == BEAM_FRAME) && std::fabs(c.beams[i].L0 - L0[i]) > 0.002) dented++;
-    ctx.metric("peak push of the tire on the body", peak / 1000, "kN", 1, 400);
+    // (A leaf-sprung corner has no coil-over to tear out: the pack is the spring, and its bump
+    // stop holds the tire clear of the fender, so there may be no push at all.)
+    const bool leafCorner = w.front ? spec.leafFront : spec.leafSprings;
+    ctx.metric("peak push of the tire on the body", peak / 1000, "kN", leafCorner ? 0 : 1, 400);
     ctx.metric("deepest the body got into the tire (no clipping: under the sidewall)", deepest * 100, "cm", 0, 14);
     ctx.metric("sheet metal and structure bent", dented, "beams", 1, 5000);
     ctx.check("stays upright", c.frame().up.y > 0.7);
