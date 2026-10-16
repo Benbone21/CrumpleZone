@@ -364,6 +364,7 @@ public:
     double govKmh = 0;          // the speed limiter's filtered road speed
     V3 escFwd;
     double dragAssist = 0;      // throttle opened to stop engine braking locking the driven wheels
+    double throttleFill = 0;    // the throttle the engine has built up to (see wheelStep)
     double engineHealth = 1;    // drops as the engine bay is crushed
     bool engineDead = false;
     double fuel = -1;           // L in the tank (-1: full; filled when first driven)

@@ -1059,6 +1059,8 @@ void Car::wheelBodyContact(double h) {
     }
 }
 
+constexpr double kShaftBuildRate = 20;  // per second: torque at the hubs, in multiples of the weakest shaft's limit
+
 void Car::wheelStep(double h, const World& w) {
     // Half shafts. A wheel spun or stopped from outside (a test, a reset, the network)
     // takes its side gear along; one with no drive has nothing winding its shaft.
@@ -1205,7 +1207,26 @@ void Car::wheelStep(double h, const World& w) {
         }
     if (tcOn && brake < 0.05 && gear != 0) dragAssist = clampd(dragAssist + h * 20.0 * (maxDrag - 0.1), 0.0, 0.35);
     else dragAssist = 0;
-    double thr = shiftTimer > 0 || engineDead ? 0.0 : std::max(throttle * tcCut, dragAssist);
+    // A stab of the pedal doesn't put the engine's whole torque on the shafts in one 0.5 ms
+    // step: the manifold fills and the revs build. Fed in as a step, it rings the half shafts
+    // (a spring: the first swing is twice the steady torque) and, through a crawler's 70:1
+    // stack, snaps a CV axle the instant the pedal reaches the floor with nothing for the tires
+    // to have done yet. So the torque at the hubs can build no faster than
+    // kShaftBuildRate x the weakest shaft's limit per second (a 13 kN*m demand on a 6.5 kN*m CV
+    // takes 0.1 s). Where full throttle can't overload a shaft, which is every stock truck,
+    // it's untouched.
+    // Lifting off, or a shift's cut, is immediate.
+    {
+        const double pedal = std::max(throttle * tcCut, dragAssist);
+        double rise = 1e9;
+        if (spec->shaftLimit > 0) {
+            const double demand = peakTorque(*spec) * std::fabs(ratio) * 0.92 / std::max(nd, 1);
+            const double weakest = 0.65 * spec->shaftLimit;
+            if (demand > weakest) rise = kShaftBuildRate * weakest / demand;
+        }
+        throttleFill = pedal > throttleFill ? std::min(pedal, throttleFill + h * rise) : pedal;
+    }
+    double thr = shiftTimer > 0 || engineDead ? 0.0 : throttleFill;
     // Speed limiter (the ECU): eases the throttle off over the last 3 km/h. (On the road
     // speed it filters, ~0.3 s: a live axle hopping on its springs mustn't pulse the throttle.)
     if (spec->speedLimit > 0 && nd) {
