@@ -8,6 +8,7 @@
 #include <sstream>
 
 #include "platform.h"
+#include "world.h"
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -73,6 +74,7 @@ void addGateMarkers(const Level& lv, World& w) {
         const Gate& g = lv.gates[k];
         const V3 f(std::cos(g.yaw), 0, -std::sin(g.yaw)), l(-f.z, 0, f.x);
         const bool line = k == n - 1;  // the finish (or the start-finish line)
+        const size_t first = w.boxes.size();
         const V3 post = line ? V3(0.95, 0.95, 0.95) : V3(0.95, 0.45, 0.1);
         double top = -1e9;
         for (int side = -1; side <= 1; side += 2) {
@@ -91,6 +93,7 @@ void addGateMarkers(const Level& lv, World& w) {
             w.addBox(V3(c.x, top - 0.35, c.z), V3(0.08, 0.35, g.width / blocks / 2), g.yaw, 0, 0, col);
             w.boxes.back().solid = false;
         }
+        w.standIn(first, "race_gate", V3(g.p.x, w.height(g.p.x, g.p.z), g.p.z), g.yaw, {{"width", g.width}, {"finish", line ? 1.0 : 0.0}});
     }
     w.buildGrid();
 }

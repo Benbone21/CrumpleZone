@@ -4,6 +4,7 @@
 #pragma once
 #include <cstdint>
 #include <cstring>
+#include <string>
 
 extern "C" {
 typedef struct SDL_Window SDL_Window;
@@ -46,6 +47,8 @@ void SDL_GetWindowSize(SDL_Window* window, int* w, int* h);
 int SDL_PollEvent(SDL_Event* event);
 int SDL_PushEvent(SDL_Event* event);
 int SDL_SetHintWithPriority(const char* name, const char* value, int priority);  // (priority 0: a default, the player's environment variables still win)
+void SDL_StartTextInput(void);  // typed text arrives as SDL_TEXTINPUT
+void SDL_StopTextInput(void);
 int SDL_SetRelativeMouseMode(int enabled);  // SDL_bool: the mouse turns the view, no cursor
 const uint8_t* SDL_GetKeyboardState(int* numkeys);
 uint64_t SDL_GetPerformanceCounter(void);
@@ -91,6 +94,7 @@ enum : uint32_t {
     SDL_QUIT = 0x100,
     SDL_KEYDOWN = 0x300,
     SDL_KEYUP = 0x301,
+    SDL_TEXTINPUT = 0x303,
     SDL_MOUSEMOTION = 0x400,
     SDL_MOUSEBUTTONDOWN = 0x401,
     SDL_MOUSEBUTTONUP = 0x402,
@@ -154,6 +158,12 @@ inline int evMotionYrel(const SDL_Event& e) { return evI32(e, 32); }
 inline int evWheelY(const SDL_Event& e) { return evI32(e, 20); }
 inline int evMotionX(const SDL_Event& e) { return evI32(e, 20); }
 inline int evMotionY(const SDL_Event& e) { return evI32(e, 24); }
+inline std::string evText(const SDL_Event& e) {  // SDL_TEXTINPUT: up to 32 bytes of UTF-8 at 12
+    char t[33];
+    std::memcpy(t, e.padding + 12, 32);
+    t[32] = 0;
+    return t;
+}
 inline int evButton(const SDL_Event& e) { return e.padding[16]; }  // 1 left, 2 middle, 3 right
 inline int evButtonX(const SDL_Event& e) { return evI32(e, 20); }
 inline int evButtonY(const SDL_Event& e) { return evI32(e, 24); }

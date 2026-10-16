@@ -665,44 +665,7 @@ void Sim::updateTrail(double dt) {
             c.swayDisconnected = false;
             if (i == player) events.push_back("FRONT SWAY BAR RECONNECTED (OVER 30 KM/H)");
         }
-        // Trail repairs: stopped beside another vehicle (anyone's), its crew and kit fix
-        // what can be fixed out here.
-        c.fieldHelper = -1;
-        if (st < 0 && speed < 0.5 && c.needsFieldRepair()) {
-            const V3 me = c.frame().com;
-            double best = 7.5;
-            for (int o = 0; o < (int)cars.size(); o++) {
-                if (o == i || cars[o].isProp()) continue;
-                const Frame of = cars[o].frame();
-                const double d = len(of.com - me);
-                if (d < best && len(of.vel) < 0.8) best = d, c.fieldHelper = o;
-            }
-        }
-        if (c.fieldHelper >= 0) {
-            // The helper vehicle's kit is used for the repairs
-            Car& helper = cars[c.fieldHelper];
-            if (!helper.repairKit.hasSpareParts()) {
-                c.fieldTime = 0;
-                if (i == player) events.push_back("HELPER TRUCK HAS NO SPARE PARTS LEFT");
-                continue;
-            }
-            c.fieldTime += dt;
-            if (c.fieldTime >= c.fieldRepairSeconds()) {
-                c.fieldRepair();
-                c.fieldTime = 0;
-                if (i == player) {
-                    if (c.needsFieldRepair()) {
-                        events.push_back("TRAIL REPAIRS DONE (SOME PARTS MISSING, DAMAGE REMAINS)");
-                    } else if (c.needsRepair()) {
-                        events.push_back("TRAIL REPAIRS DONE (BODYWORK STILL NEEDS A STATION)");
-                    } else {
-                        events.push_back("TRAIL REPAIRS DONE");
-                    }
-                }
-            }
-        } else {
-            c.fieldTime = 0;
-        }
+        // (Trail repairs are hands-on now: on foot, with your own tools and parts. fixes.h)
         // Repair stations: park on the pad and wait.
         c.station = st;
         if (st >= 0 && speed < 0.5 && c.needsRepair()) {

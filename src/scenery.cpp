@@ -149,6 +149,18 @@ void buildTreeMesh(const World& world, std::vector<Vtx>& v, const ScanCover& ski
         seed++;
         if ((t.kind == 0 && skip.pines) || (t.kind == 2 && skip.snags)) continue;
         double turn = latticeHash(seed, 7) * 6.2832;
+        // The picked model (modelkit.h), when there is one: a handful of seeds, with and
+        // without snow, scaled to the tree (made 10 m tall; snags 8 m).
+        static const char* const kTreeModel[3] = {"tree_pine", "tree_broadleaf", "tree_snag"};
+        if (t.kind >= 0 && t.kind < 3 && mk::findModel(kTreeModel[t.kind])) {
+            Placed pl;
+            pl.id = kTreeModel[t.kind];
+            const bool snow = world.surfaceAt(t.base.x, t.base.z) == SURF_SNOW;
+            pl.set = {{"seed", 1 + seed % 6}, {"snow", snow ? 1 : 0}};
+            const double k = h / (t.kind == 2 ? 8.0 : 10.0);
+            appendModel(v, placedMesh(pl), t.base, turn, V3(k, k, k), (float)(0.85 + 0.15 * t.tint));
+            continue;
+        }
         if (t.kind == 1) {  // broadleaf: a forked trunk under a lumpy crown
             const V3 bark(0.28, 0.23, 0.18);
             V3 top = t.base + V3(0, h * 0.55, 0);
@@ -315,9 +327,18 @@ void buildBushMesh(const World& world, std::vector<Vtx>& v, const ScanCover& ski
             }
     }
     int seed = 0;
+    const bool bushModel = mk::findModel("bush") != nullptr;
     for (const Bush& b : world.bushes) {
         if (skip.bushes) break;
         seed++;
+        if (bushModel) {  // the picked model, made 0.8 m in radius
+            Placed pl;
+            pl.id = "bush";
+            pl.set = {{"seed", 1 + seed % 6}, {"dry", seed % 7 == 0 ? 1 : 0}};
+            const double k = b.r / 0.8;
+            appendModel(v, placedMesh(pl), b.p, seed * 2.39996, V3(k, k * (0.8 + 0.4 * latticeHash(seed, 2)), k), (float)(0.85 + 0.15 * b.tint));
+            continue;
+        }
         const int n = 3 + seed % 3;
         for (int k = 0; k < n; k++) {
             double a = k * 2.39996 + seed, d = b.r * 0.45 * latticeHash(seed, k);
@@ -347,12 +368,83 @@ void obox(std::vector<Vtx>& out, const V3& c, const V3& h, double yaw, const V3&
 V3 fromYaw(double yaw) { return V3(std::cos(yaw), 0, -std::sin(yaw)); }  // the way it faces
 }  // namespace
 
+void appendModel(std::vector<Vtx>& out, const mk::Mesh& m, const V3& p, double yaw, const V3& s, float tint) {
+    const V3 f(std::cos(yaw), 0, -std::sin(yaw)), up(0, 1, 0), l(-f.z, 0, f.x);
+    out.reserve(out.size() + m.v.size());
+    for (const mk::MVert& q : m.v) {
+        const V3 w = p + f * (q.p[0] * s.x) + up * (q.p[1] * s.y) + l * (q.p[2] * s.z);
+        const V3 n = norm(f * (q.n[0] / s.x) + up * (q.n[1] / s.y) + l * (q.n[2] / s.z));
+        out.push_back(Vtx{{(float)w.x, (float)w.y, (float)w.z}, {(float)n.x, (float)n.y, (float)n.z}, {q.c[0] * tint, q.c[1] * tint, q.c[2] * tint, (float)q.mat}});
+    }
+}
+
+void appendModel(std::vector<Vtx>& out, const mk::Mesh& m, const V3& p, const V3 a[3], double s) {
+    out.reserve(out.size() + m.v.size());
+    for (const mk::MVert& q : m.v) {
+        const V3 w = p + (a[0] * q.p[0] + a[1] * q.p[1] + a[2] * q.p[2]) * s;
+        const V3 n = norm(a[0] * q.n[0] + a[1] * q.n[1] + a[2] * q.n[2]);
+        out.push_back(Vtx{{(float)w.x, (float)w.y, (float)w.z}, {(float)n.x, (float)n.y, (float)n.z}, {q.c[0], q.c[1], q.c[2], (float)q.mat}});
+    }
+}
+
+void appendPlaced(std::vector<Vtx>& out, const Placed& pl, const mk::Mesh& m) {
+    if (pl.oriented) appendModel(out, m, pl.p, pl.ax, pl.scale.x);
+    else appendModel(out, m, pl.p, pl.yaw, pl.scale);
+}
+
+const mk::Mesh& placedMesh(const Placed& pl) {
+    if (pl.set.empty() && pl.variant < 0) return mk::modelMesh(pl.id);
+    static std::map<std::string, mk::Mesh> built;  // (cleared with the picks: see the lab)
+    static uint64_t builtFor = 0;
+    if (builtFor != mk::picksVersion()) built.clear(), builtFor = mk::picksVersion();
+    std::string key = pl.id + "#" + std::to_string(pl.variant);
+    for (const auto& kv : pl.set) key += "|" + kv.first + "=" + std::to_string(kv.second);
+    auto it = built.find(key);
+    if (it != built.end()) return it->second;
+    mk::Mesh& m = built[key];
+    if (pl.variant < 0) m = mk::modelMesh(pl.id, pl.set);
+    else if (const mk::ModelDef* d = mk::findModel(pl.id)) {
+        mk::P p = mk::pickedParams(*d, pl.variant);
+        for (const auto& kv : pl.set) p.v[kv.first] = kv.second;
+        mk::build(*d, pl.variant, p, m);
+    }
+    return m;
+}
+
 void buildPropMesh(const World& world, std::vector<Vtx>& v) {
+    for (const Placed& pl : world.models) appendPlaced(v, pl, placedMesh(pl));
     const V3 wood(0.45, 0.33, 0.21), darkWood(0.28, 0.20, 0.13), grey(0.42, 0.40, 0.37);
     int seed = 0;
     for (const Prop& p : world.fixtures) {
         seed++;
         const V3 f = fromYaw(p.yaw), side(-f.z, 0, f.x), up(0, 1, 0);
+        // The picked model (modelkit.h) for it, when there is one.
+        {
+            Placed pl;
+            pl.p = p.a, pl.yaw = p.yaw;
+            switch (p.kind) {
+            case PROP_CABIN: pl.id = "cabin"; break;
+            case PROP_GARAGE: pl.id = "repair_shed"; break;
+            case PROP_TABLE: pl.id = "picnic_table"; break;
+            case PROP_MAPBOARD: pl.id = "map_board"; break;
+            case PROP_MARKER: pl.id = "marker_post"; break;
+            case PROP_CAIRN: pl.id = "cairn", pl.set = {{"seed", 1 + seed % 9}}; break;
+            case PROP_SIGN: {  // the rating from its colour: green, blue, black, red
+                const double rating = p.col[1] > 0.4 ? 0 : p.col[2] > 0.5 ? 1 : p.col[0] > 0.5 ? 3 : 2;
+                pl.id = "trail_sign", pl.set = {{"rating", rating}};
+                break;
+            }
+            case PROP_STUMP:
+                pl.id = "stump", pl.set = {{"seed", 1 + seed % 6}};
+                pl.scale = V3(p.b.x / 0.35, p.b.y / 0.6, p.b.x / 0.35);
+                break;
+            default: break;
+            }
+            if (!pl.id.empty() && mk::findModel(pl.id)) {
+                appendModel(v, placedMesh(pl), pl.p, pl.yaw, pl.scale);
+                continue;
+            }
+        }
         switch (p.kind) {
             case PROP_FENCE: {  // split-rail: posts every 2.5 m, two rails following the ground
                 V3 d = p.b - p.a;

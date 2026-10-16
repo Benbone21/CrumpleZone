@@ -1142,7 +1142,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
             {"dashboard and heater", 32, 0.80, 1.10, 0},        {"front bucket seats", 44, 0.05, 0.98, 0},
             {"rear bench seat", 32, -0.95, 0.96, 0},            {"floor mats, trim, wiring", 30, -0.10, 0.70, 0},
             {"fuel tank (117 L, full)", 85, -1.20, 0.58, 0.40}, {"exhaust", 28, -0.30, 0.40, 0.35},
-            {"spare wheel inside, on the side wall", 38, -1.45, 1.00, 0.70},
+            {"spare wheel on the swing-away carrier", 38, -2.42, 1.11, 0},  // (a big tire doesn't fit inside, on the side wall where the factory put it)
             {"rear bumper (chrome)", 22, -2.22, 0.62, 0},        {"hardtop", 45, -0.70, 1.72, 0},
             {"brakes", 22, 0.0, 0.50, 0},                       {"tailgate", 25, -2.20, 0.95, 0},
         };
@@ -1240,7 +1240,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         blazer.gearboxName = "SM465 4-SPEED MANUAL";
         blazer.lampStyle = LAMP_ROUND;
         blazer.grilleStyle = GRILLE_WIDE;
-        blazer.extras = 0;
+        blazer.extras = EXTRA_SPARE;  // the spare on a swing-away carrier behind the tailgate
         // Ochre with the white hardtop, the classic two-tone.
         blazer.paintColor[0] = 0.66f, blazer.paintColor[1] = 0.44f, blazer.paintColor[2] = 0.12f;
         blazer.trimColor[0] = 0.93f, blazer.trimColor[1] = 0.93f, blazer.trimColor[2] = 0.90f;  // the white hardtop (its shell paints it)

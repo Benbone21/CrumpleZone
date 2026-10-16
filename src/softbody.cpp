@@ -2164,6 +2164,25 @@ void Sim::wrapAround() {
     wrapShift += dx;
 }
 
+// A jack under a corner: its saddle pushes the hub up (never pulls), stiff and damped, as
+// high as it's been worked (interact.cpp), so the corner rises off the ground and stays there.
+void Sim::jackForces() {
+    for (Car& c : cars) {
+        if (c.remote || c.sleeping || !c.jackPlaced || c.jackWheel < 0 || c.jackWheel >= (int)c.wheels.size()) continue;
+        const Wheel& wh = c.wheels[c.jackWheel];
+        if (wh.detached) continue;
+        Node* hub[2] = {&c.nodes[wh.inner], &c.nodes[wh.outer]};
+        const V3 mid = (hub[0]->p + hub[1]->p) * 0.5;
+        const double top = world.height(mid.x, mid.z) + c.jackBase + c.jackHeight;
+        for (Node* n : hub) {
+            const double gap = top - n->p.y;
+            if (gap <= 0) continue;
+            const double f = 1.5e5 * gap - 4000 * n->v.y;
+            if (f > 0) n->f.y += std::min(f, 3e4);
+        }
+    }
+}
+
 void Sim::substep() {
     stepCount++;
     const int N = (int)cars.size();
@@ -2230,6 +2249,7 @@ void Sim::substep() {
     }
 
     if (!ropes.empty()) ropeForces();
+    jackForces();
     if (!looseWheels.empty()) looseWheelForces();
 
     for (int i = 0; i < N; i++) {

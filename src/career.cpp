@@ -50,6 +50,18 @@ const Loot kBackcountry[] = {
     {"TRAPPER'S CABIN", "cabinend", 5, 5, nullptr, 0, nullptr, 2000},
 };
 
+// The trail-repair gear in the i-th cache of a map: the tools spread over the first few
+// (each map has a full set to find), a part or two in every one.
+std::vector<std::string> cacheGear(int i) {
+    static const Tool tools[] = {TOOL_RATCHET, TOOL_HAMMER, TOOL_WRENCH, TOOL_PRY_BAR, TOOL_TIRE_IRONS};
+    static const RepairPart parts[] = {PART_CV_AXLE, PART_TIE_ROD, PART_TIRE, PART_CONTROL_ARM, PART_SPARK_PLUGS, PART_DRIVE_SHAFT};
+    std::vector<std::string> g;
+    if (i < 5) g.push_back(toolKey(tools[i]));
+    g.push_back(repairPartKey(parts[i % 6]));
+    if (i % 3 == 2) g.push_back(repairPartKey(parts[(i + 2) % 6]));
+    return g;
+}
+
 std::string lootKey(const Loot& l) {
     if (!l.part) return "";
     if (l.slot == MOD_TIRES && !*l.vehicle) return std::string("TIRES:") + l.part;
@@ -86,7 +98,7 @@ std::vector<CacheSpot> cacheSpots(const World& world) {
                 }
             }
         p.y = world.height(p.x, p.z);
-        out.push_back({l.id, world.map, p, lootKey(l), l.cash});
+        out.push_back({l.id, world.map, p, lootKey(l), l.cash, cacheGear(i)});
     }
     return out;
 }
@@ -130,6 +142,14 @@ bool Career::buy(int vehicle, int slot, int option, std::string& why) {
 }
 
 std::string Career::grant(const std::string& key) {
+    if (key.rfind("REPAIR:", 0) == 0) {
+        stock[key]++;
+        return key.substr(7);
+    }
+    if (key.rfind("TOOL:", 0) == 0) {
+        owned.insert(key);
+        return key.substr(5);
+    }
     if (!key.empty()) owned.insert(key);
     const std::string t = modPartTitle(key);
     return t.empty() ? key : t;
@@ -138,9 +158,56 @@ std::string Career::grant(const std::string& key) {
 std::string Career::openCache(const CacheSpot& c) {
     if (isOpened(c)) return "";
     opened.insert(std::to_string(c.map) + ":" + c.id);
-    if (!c.part.empty()) return "FOUND: " + grant(c.part);
-    cash += c.cash;
-    return "FOUND: $" + std::to_string(c.cash);
+    std::string said;
+    if (!c.part.empty()) said = "FOUND: " + grant(c.part);
+    else cash += c.cash, said = "FOUND: $" + std::to_string(c.cash);
+    for (const std::string& g : c.gear) said += ", " + grant(g);
+    return said;
+}
+
+Kit Career::kit() const {
+    Kit k;
+    k.unlimited = !on;
+    for (int t = 0; t < TOOL_COUNT; t++) k.tools[t] = owned.count(toolKey((Tool)t)) > 0;
+    for (int p = 0; p < PART_COUNT; p++) {
+        auto it = stock.find(repairPartKey((RepairPart)p));
+        k.parts[p] = it == stock.end() ? 0 : it->second;
+    }
+    return k;
+}
+
+void Career::usePart(RepairPart p) {
+    auto it = stock.find(repairPartKey(p));
+    if (it != stock.end() && --it->second <= 0) stock.erase(it);
+}
+
+const std::vector<ShopItem>& stationRack() {
+    static const std::vector<ShopItem> r = [] {
+        std::vector<ShopItem> v;
+        const int toolPrice[TOOL_COUNT] = {60, 140, 220, 45, 70, 55, 180};
+        const int partPrice[PART_COUNT] = {160, 240, 300, 90, 190, 40};
+        for (int t = 0; t < TOOL_COUNT; t++) v.push_back({toolKey((Tool)t), toolPrice[t], toolModel((Tool)t)});
+        for (int p = 0; p < PART_COUNT; p++) v.push_back({repairPartKey((RepairPart)p), partPrice[p], p == PART_TIRE ? "" : repairPartModel((RepairPart)p)});
+        return v;
+    }();
+    return r;
+}
+
+V3 rackSpot(const World& world, int station, int i) {
+    const Station& st = world.stations[station];
+    const V3 f(std::cos(st.yaw), 0, -std::sin(st.yaw)), left(-f.z, 0, f.x);
+    const int n = (int)stationRack().size();
+    V3 p = st.p - left * 5.0 + f * ((i - (n - 1) / 2.0) * 0.75);
+    p.y = world.height(p.x, p.z);
+    return p;
+}
+
+bool Career::buyGear(const ShopItem& it, std::string& why) {
+    if (it.key.rfind("TOOL:", 0) == 0 && owned.count(it.key)) return why = "YOU HAVE ONE", false;
+    if (cash < it.price) return why = "NOT ENOUGH CASH", false;
+    cash -= it.price;
+    grant(it.key);
+    return true;
 }
 
 std::string Career::jobDone() {
@@ -169,13 +236,15 @@ std::string Career::medal(const std::string& level, int m) {
 
 void Career::startFresh() {
     cash = kStartCash;
-    owned.clear(), opened.clear(), claimed.clear();
+    owned.clear(), opened.clear(), claimed.clear(), stock.clear();
+    // You set out with what's in any truck: a lug wrench and a jack.
+    owned.insert(toolKey(TOOL_LUG_WRENCH)), owned.insert(toolKey(TOOL_JACK));
 }
 
 bool Career::load(const std::string& path) {
     std::ifstream f(path);
     if (!f) return false;
-    owned.clear(), opened.clear(), claimed.clear();
+    owned.clear(), opened.clear(), claimed.clear(), stock.clear();
     cash = 0;
     std::string line;
     while (std::getline(f, line)) {
@@ -186,6 +255,10 @@ bool Career::load(const std::string& path) {
         else if (k == "own") owned.insert(v);
         else if (k == "cache") opened.insert(v);
         else if (k == "claim") claimed.insert(v);
+        else if (k == "stock") {  // "stock N KEY"
+            const size_t sp2 = v.find(' ');
+            if (sp2 != std::string::npos) stock[v.substr(sp2 + 1)] = std::atoi(v.substr(0, sp2).c_str());
+        }
     }
     return true;
 }
@@ -199,6 +272,7 @@ bool Career::save(const std::string& path) const {
     for (const auto& k : owned) f << "own " << k << '\n';
     for (const auto& k : opened) f << "cache " << k << '\n';
     for (const auto& k : claimed) f << "claim " << k << '\n';
+    for (const auto& k : stock) f << "stock " << k.second << ' ' << k.first << '\n';
     return (bool)f;
 }
 

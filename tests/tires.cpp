@@ -43,6 +43,29 @@ std::string holdOn(Ctx& ctx, Interact& ia, Walker& wk, const V3& at, double secs
     return said;
 }
 
+// Lets go of E (a held job that finished wants it let go before the next).
+void letGo(Ctx& ctx, Interact& ia, Walker& wk) {
+    const V3 eye = wk.p + V3(0, 1.62, 0);
+    ia.update(ctx.sim, wk, eye, V3(1, 0, 0), false, Ctx::kFrame);
+}
+
+// The jack out of the back, under corner k, worked up until the tire's off the ground.
+bool jackUp(Ctx& ctx, Interact& ia, Walker& wk, Car& c, int k) {
+    const World& w = ctx.sim.world;
+    const V3 stow = c.stowAt(Car::STOW_JACK);
+    standAt(w, c, wk, stow, 1.0);
+    if (holdOn(ctx, ia, wk, stow, 4) != "GOT THE JACK") return false;
+    letGo(ctx, ia, wk);
+    const V3 spot = Interact::jackSpot(ctx.sim, c, k) + V3(0, 0.3, 0);
+    standAt(w, c, wk, hubOf(c, k), 1.1);
+    if (holdOn(ctx, ia, wk, spot, 4) != "JACK UNDER") return false;
+    letGo(ctx, ia, wk);
+    const std::string up = holdOn(ctx, ia, wk, spot, 8);
+    letGo(ctx, ia, wk);
+    ctx.run(0.5);
+    return up == "CORNER UP" && Interact::cornerLifted(ctx.sim, c, k);
+}
+
 // Drives straight east at a walking pace for `dist` m; returns how far it wandered sideways.
 double driveStraight(Ctx& ctx, Car& c, double dist) {
     const V3 start = c.frame().com;
@@ -72,7 +95,8 @@ SCENARIO(tireSwap, "tires/swap", "A flat on the Bronco: on foot, take the flat o
     ctx.run(1.0);
     Walker wk;
     Interact ia;
-    // The flat off.
+    // Jack it up, then the flat off.
+    ctx.check("the corner jacks up (hold E: the jack out, under, up)", jackUp(ctx, ia, wk, c, k), std::to_string(c.jackHeight));
     const V3 hub = hubOf(c, k);
     standAt(w, c, wk, hub, 0.9);
     std::string said = holdOn(ctx, ia, wk, hub, 12);
@@ -92,6 +116,12 @@ SCENARIO(tireSwap, "tires/swap", "A flat on the Bronco: on foot, take the flat o
     standAt(w, c, wk, hub2, 0.9);
     said = holdOn(ctx, ia, wk, hub2, 14);
     ctx.check("the spare goes on", said == "WHEEL ON" && c.wheels[k].mounted && !c.wheels[k].popped && !wk.carrying, said);
+    letGo(ctx, ia, wk);
+    const V3 jack = Interact::jackSpot(ctx.sim, c, k) + V3(0, 0.3, 0);
+    ctx.check("the jack comes down", holdOn(ctx, ia, wk, jack, 8) == "JACK DOWN");
+    letGo(ctx, ia, wk);
+    const std::string out = holdOn(ctx, ia, wk, jack, 3);
+    ctx.check("...and out", out == "GOT THE JACK" && !c.jackPlaced, out + " / " + ia.current.prompt);
     ctx.run(1.5);
     // And away (back in, driving it).
     wk.active = false;
@@ -142,10 +172,18 @@ SCENARIO(tireRefitLost, "tires/refit-lost", "A Bronco wheel that came off is pic
     standAt(w, c, wk, at, 0.7);
     std::string said = holdOn(ctx, ia, wk, at, 3);
     ctx.check("picked up", wk.carrying.has_value() && ctx.sim.looseWheels.empty());
+    // (Set it down to work the jack, jack the bare corner up, pick it up again.)
+    Interact::drop(ctx.sim, wk, V3(1, 0, 0));
+    ctx.check("the bare corner jacks up", jackUp(ctx, ia, wk, c, k));
+    const V3 lw = ctx.sim.looseWheels[0].p;
+    standAt(w, c, wk, lw, 0.7);
+    holdOn(ctx, ia, wk, lw, 3);
+    letGo(ctx, ia, wk);
     const V3 hub = hubOf(c, k);
     standAt(w, c, wk, hub, 0.9);
     said = holdOn(ctx, ia, wk, hub, 14);
     ctx.check("bolted back on", said == "WHEEL ON" && c.wheels[k].mounted, said);
+    c.jackPlaced = false, c.jackHeight = 0;
     ctx.run(1.5);
     const double wander = driveStraight(ctx, c, 30);
     ctx.metric("drives 30 m: sideways wander", wander, "m", 0, 1.5);
@@ -166,11 +204,13 @@ SCENARIO(tireWrongSize, "tires/wrong-size", "A 35 in wheel off the 4Runner bolte
     ctx.check("Bronco wheel off", ctx.sim.removeWheel(bi, 2, off));
     WheelItem big;
     ctx.check("4Runner spare off", ctx.sim.takeSpare(ri, big));
+    ctx.check("the bare corner jacks up", jackUp(ctx, ia, wk, b, 2));
     wk.carrying = big;
     const V3 hub = hubOf(b, 2);
     standAt(w, b, wk, hub, 0.9);
     const std::string said = holdOn(ctx, ia, wk, hub, 14);
     ctx.check("the 35 in wheel goes on", said == "WHEEL ON" && std::fabs(b.wheels[2].R - big.R) < 1e-9, said);
+    b.jackPlaced = false, b.jackHeight = 0;
     ctx.run(2.0);
     ctx.metric("its radius", b.wheels[2].R * 2 / 0.0254, "in", 34, 36);
     ctx.sim.player = bi;

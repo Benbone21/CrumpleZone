@@ -996,13 +996,17 @@ void World::buildBackcountry() {
         const V3 m = kMine + V3(-14.5, 0, -3);
         const double y = height(m.x, m.z);
         const V3 timber(0.30, 0.20, 0.12);
+        const size_t portal = boxes.size();
         piece(V3(m.x, y + 1.1, m.z - 1.7), V3(0.2, 1.1, 0.2), 0, 0, 0, timber);
         piece(V3(m.x, y + 1.1, m.z + 1.7), V3(0.2, 1.1, 0.2), 0, 0, 0, timber);
         piece(V3(m.x, y + 2.35, m.z), V3(0.3, 0.2, 2.1), 0, 0, 0, timber);
         piece(V3(m.x - 0.5, y + 1.0, m.z), V3(0.1, 1.0, 1.55), 0, 0, 0, V3(0.01, 0.01, 0.01));  // the dark way in
+        standIn(portal, "mine_portal", V3(m.x, y, m.z), 0);
+        const size_t cart = boxes.size();
         piece(V3(m.x + 6, y + 0.25, m.z - 0.7), V3(4.5, 0.025, 0.05), 0, 0, 0, V3(0.35, 0.3, 0.28), false);  // rails
         piece(V3(m.x + 6, y + 0.25, m.z + 0.7), V3(4.5, 0.025, 0.05), 0, 0, 0, V3(0.35, 0.3, 0.28), false);
         piece(V3(m.x + 3.2, y + 0.65, m.z), V3(0.85, 0.35, 0.6), 0.1, 0, 0, V3(0.38, 0.17, 0.1));       // the ore cart
+        standIn(cart, "ore_cart", V3(m.x + 3.2, y + 0.2, m.z), 0.0, {{"track", 1}});
         for (int k = 0; k < 14; k++) {
             const double a = k * 0.9;
             boulder(V3(m.x + 3 + 5 * std::cos(a) * between(0.5, 1.2), 0, m.z + 9 + 3.5 * std::sin(a) * between(0.5, 1.2)), between(0.4, 1.0), between(0.2, 0.6), 1.15f);
@@ -1035,6 +1039,7 @@ void World::buildBackcountry() {
         levelDisc(t, 5.5, height(t.x, t.z), 6, PAINT_GRAVEL, SURF_GRAVEL);
         const double y0 = height(t.x, t.z);
         const V3 wood(0.36, 0.30, 0.22), tin(0.45, 0.46, 0.46);
+        const size_t tower = boxes.size();
         for (int a = -1; a <= 1; a += 2)
             for (int b = -1; b <= 1; b += 2) {
                 const double tilt = 0.075;
@@ -1055,6 +1060,7 @@ void World::buildBackcountry() {
         poles.push_back({t.x - 1.75, t.z + 1.75, y0 - 0.5, y0 + 14, 0.16});
         poles.push_back({t.x + 1.75, t.z - 1.75, y0 - 0.5, y0 + 14, 0.16});
         poles.push_back({t.x - 1.75, t.z - 1.75, y0 - 0.5, y0 + 14, 0.16});
+        standIn(tower, "fire_tower", V3(t.x, y0, t.z), 0);
     }
     // TRAPPER'S CABIN at the end of its spur, with a woodpile and a table by the fire ring.
     {
@@ -1063,17 +1069,20 @@ void World::buildBackcountry() {
         table(c.x - 2, c.z - 7, 0.4);
         fireRing(c + V3(-9, 0, -2));
         piece(V3(c.x + 8, height(c.x + 8, c.z - 4) + 0.5, c.z - 4), V3(1.4, 0.5, 0.5), 0, 0, 0, V3(0.4, 0.28, 0.16));
+        standIn(boxes.size() - 1, "woodpile", V3(c.x + 8, height(c.x + 8, c.z - 4), c.z - 4), 0);
     }
     // THE WRECK: an old pickup on its side in the canyon, parts thrown about.
     {
         const V3 w = wreckT.back();
         const double y = height(w.x, w.z);
         const V3 rust(0.45, 0.22, 0.1), dark(0.22, 0.15, 0.1), steel(0.32, 0.3, 0.28);
+        const size_t wreck = boxes.size();
         piece(V3(w.x, y + 0.9, w.z), V3(2.0, 0.08, 0.8), 0.5, 0, 1.45, rust);                       // the bed's side
         piece(V3(w.x + 1.2, y + 0.55, w.z + 0.9), V3(2.3, 0.1, 0.8), 0.5, 0, 0.1, dark);                   // the frame
         piece(V3(w.x - 2.0, y + 0.8, w.z - 1.2), V3(0.9, 0.7, 0.8), 0.5, 0.1, 1.2, rust);                 // the cab
         piece(V3(w.x - 3.0, y + 0.5, w.z - 0.6), V3(0.7, 0.4, 0.75), 0.4, 0.3, 0.2, steel);               // the engine
         for (int k = 0; k < 4; k++) piece(V3(w.x + (k % 2 ? 1.6 : -0.9), y + 0.4, w.z + (k < 2 ? 1.8 : 3.4)), V3(0.35, 0.35, 0.14), 0.5, 0, 1.4, V3(0.03, 0.03, 0.03));
+        standIn(wreck, "wreck_pickup", V3(w.x, y, w.z), 0.5);
         for (int k = 0; k < 7; k++)
             piece(V3(w.x + between(-5, 5), y + 0.12, w.z + between(-5, 5)), V3(between(0.3, 0.9), 0.05, between(0.2, 0.6)), between(0, 6.28), between(-0.2, 0.2), between(-0.2, 0.2), k % 2 ? rust : steel);
         // a scorched snag beside it

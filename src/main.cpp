@@ -43,6 +43,9 @@
 #include "pilotsense.h"
 #include "platform.h"
 #include "props.h"
+#include "handwork.h"
+#include "lab.h"
+#include "modelkit.h"
 #include "render.h"
 #include "perf.h"
 #include "sdl_min.h"
@@ -89,6 +92,9 @@ struct Options {
     int lamps = -1;               // --lamps 0-3: headlight switch (LampMode: auto, low, high, off)
     std::string level;            // --level NAME: play the level whose name has NAME in it
     bool editor = false;          // --editor: open the world editor on the map
+    bool lab = false;             // --lab: the model lab (lab.h) instead of the game
+    std::string labModel;         // --lab-model ID: start on that model
+    int labDesign = -1;           // --lab-design N: just that design
 };
 
 struct CameraRig {
@@ -316,10 +322,13 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--lamps") o.lamps = std::atoi(next().c_str());
         else if (a == "--level") o.level = next();
         else if (a == "--editor") o.editor = true;
+        else if (a == "--lab") o.lab = true;
+        else if (a == "--lab-model") o.lab = true, o.labModel = next();
+        else if (a == "--lab-design") o.lab = true, o.labDesign = std::atoi(next().c_str());
         else if (a == "--help" || a == "-h") {
             std::puts("usage: crumplezone [--fullscreen] [--size WxH] [--no-audio] [--no-vsync] [--no-pad] [--spawn X,Z[,HEADING]] [--scenario NAME]\n"
                       "                   [--map N] [--host [PORT]] [--join HOST[:PORT]] [--name NAME] [--time HOURS] [--level NAME]\n"
-                      "                   [--physics-threads auto|all|N]");
+                      "                   [--physics-threads auto|all|N] [--lab [--lab-model ID]]");
             std::exit(0);
         }
     }
@@ -779,11 +788,8 @@ void drawRecovery(Renderer& r, const Sim& sim, float u) {
 // Repair station status while parked on (or rolling onto) a pad.
 void drawStation(Renderer& r, const Sim& sim, float u, int W, int H) {
     const Car& car = sim.cars[sim.player];
-    if (car.fieldHelper >= 0 && car.fieldHelper < (int)sim.cars.size()) {
-        char buf[128];
-        std::snprintf(buf, sizeof buf, "TRAIL REPAIRS FROM THE %s: %d%%  (TIRES, SHAFTS, STEERING, FLOODED ENGINE)", sim.cars[car.fieldHelper].spec->name,
-                      (int)std::lround(100 * car.fieldTime / car.fieldRepairSeconds()));
-        centeredPill(r, W / 2.0f, H - 70 * u, px(1.5f * u), buf, 0.02f, 0.08f, 0.04f, 0.95f, 0.6f, 1.0f, 0.6f);
+    if (car.station < 0 && !car.isProp() && car.needsFieldRepair() && len(car.frame().vel) < 0.5) {  // (fixes.h: hands-on)
+        centeredPill(r, W / 2.0f, H - 70 * u, px(1.5f * u), "SOMETHING'S BROKEN: GET OUT (J) AND FIX IT, OR GET TO A REPAIR STATION", 0.08f, 0.05f, 0.02f, 0.95f, 1.0f, 0.75f, 0.4f);
         return;
     }
     if (car.station < 0 || car.isProp()) return;
@@ -1477,6 +1483,7 @@ int main(int argc, char** argv) {
     if (opt.mph) settings.mph = true;
     if (opt.map >= 0) settings.map = std::min(opt.map, MAP_COUNT - 1);
     if (!opt.scenario.empty()) settings.map = MAP_PROVING_GROUND;  // the tests are built for it
+    if (opt.lab) settings.map = MAP_PROVING_GROUND;                // (the model lab builds its own studio)
     if (opt.fullscreen) settings.fullscreen = true;
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | (opt.audio ? (uint32_t)SDL_INIT_AUDIO : 0u)) != 0) {
@@ -1588,6 +1595,18 @@ int main(int argc, char** argv) {
     if (!renderer.init(sim.world, err)) {
         fail("renderer init failed:\n" + err);
         return 1;
+    }
+    if (opt.lab) {  // the model lab instead of the game (lab.h)
+        LabOptions lo;
+        lo.select = opt.labModel, lo.variant = opt.labDesign;
+        lo.shotPrefix = opt.shotPrefix, lo.shotFrames = opt.shotFrames;
+        if (opt.timeHours >= 0) lo.hours = opt.timeHours;
+        renderer.settings = settings.gfx;
+        const int rc = runModelLab(win, renderer, lo);
+        SDL_GL_DeleteContext(ctx);
+        SDL_DestroyWindow(win);
+        SDL_Quit();
+        return rc;
     }
     // Adaptive quality: auto-scales graphics to maintain smooth framerate
     AdaptiveQuality adaptiveQuality;
@@ -1968,6 +1987,8 @@ int main(int argc, char** argv) {
             if (c.id != id) continue;
             const std::string said = career.openCache(c);
             if (said.empty()) return false;
+            for (Placed& pl : sim.world.models)  // its lid comes off
+                if (pl.id == "supply_crate" && len(pl.p - c.at) < 0.05) pl.set = {{"open", 1.0}}, renderer.updateObjects(sim.world);
             jobBanner = std::max(jobBanner, 5.0);
             jobBannerText = (who.empty() ? c.id + ": " : who + " OPENED " + c.id + ": ") + said;
             if (!scripted) career.save(Career::defaultPath());
@@ -2012,6 +2033,7 @@ int main(int argc, char** argv) {
     // On foot you see through your own eyes: the mouse turns your head (no button needed)
     // and the keys walk where you look.
     double footYaw = 0, footPitch = 0;
+    bool scriptE = false;  // (--script work-*: E held)
     bool mouseLook = false;
     auto getOut = [&]() {
         Car& c = sim.cars[sim.player];
@@ -2184,6 +2206,14 @@ int main(int argc, char** argv) {
                     openEditor(l);
                 }
                 break;
+            case PauseMenu::MODEL_LAB: {  // the model lab (lab.h), then back here with the picks drawn
+                SDL_SetRelativeMouseMode(0);
+                LabOptions lo;
+                runModelLab(win, renderer, lo);
+                renderer.setWorld(sim.world);
+                drawnWorld = sim.world.stamp;
+                break;
+            }
             case PauseMenu::EDITOR: {
                 const int m = menu.title ? menu.mapPick : sim.world.map;
                 closeMenu();
@@ -2923,6 +2953,25 @@ int main(int argc, char** argv) {
             if (opt.script == "aim" && frame == 20) {  // screenshot of picking a winch anchor
                 startRecoveryPick(ROPE_WINCH);
             }
+            if (opt.script.rfind("work-", 0) == 0) {  // screenshots of hands-on work: a wheel off, a chain on, a CV axle in
+                Car& c = sim.cars[sim.player];
+                const int k = opt.script == "work-chain" ? 0 : 2;
+                if (frame == 20) c.handbrake = 1, getOut();
+                if (frame == 30 && k < (int)c.wheels.size()) {
+                    const Wheel& wh = c.wheels[k];
+                    const V3 hub = (c.nodes[wh.inner].p + c.nodes[wh.outer].p) * 0.5, out = norm(c.nodes[wh.outer].p - c.nodes[wh.inner].p);
+                    const double ground = sim.world.height(hub.x, hub.z);
+                    if (opt.script == "work-chain") walker.holdingChain = true;
+                    else c.jackPlaced = true, c.jackWheel = k, c.jackWorked = true, c.jackBase = hub.y - ground - 0.02, c.jackHeight = 0.12;
+                    if (opt.script == "work-fix") c.wheels[k].shaftBroken = true;
+                    const V3 aim = opt.script == "work-fix" ? hub + (c.frame().com - hub) * 0.25 : hub;
+                    walker.p = hub + out * 1.0 - c.frame().fwd * 0.3;
+                    walker.p.y = sim.world.height(walker.p.x, walker.p.z);
+                    const V3 d = norm(aim - (walker.p + V3(0, 1.62, 0)));
+                    footYaw = std::atan2(-d.z, d.x), footPitch = std::asin(d.y);
+                }
+                scriptE = frame > 70;
+            }
             if (opt.script == "winch" || opt.script == "strap") {  // screenshots of the recovery gear
                 if (frame == 20) std::printf("%s\n", (opt.script == "winch" ? sim.hookWinch(sim.player) : sim.hookStrap(sim.player)).c_str());
                 winch = opt.script == "winch" && frame > 20 ? 1 : 0;
@@ -3037,13 +3086,46 @@ int main(int argc, char** argv) {
                 walker.step(sim.world, sim, dt, (up ? 1 : 0) - (down ? 1 : 0), (left ? 1 : 0) - (right ? 1 : 0), shiftHeld, hb, viewYaw);
                 {  // hands on: hold E (pad: X) for the job in front of you
                     const uint8_t* ks = SDL_GetKeyboardState(nullptr);
-                    const bool holdE = (!menu.open && ks[SC_E]) || (padCtx == pad::Mode::Drive && padLogic.in.interact);
+                    const bool holdE = (!menu.open && ks[SC_E]) || (padCtx == pad::Mode::Drive && padLogic.in.interact) || scriptE;
                     interact.spots.clear();  // (a career's supply caches in reach: E opens one)
-                    if (career.on)
+                    if (career.on) {
                         for (const CacheSpot& c : caches)
                             if (!career.isOpened(c) && len(c.at - walker.p) < 6) interact.spots.push_back({c.id, c.at, "OPEN THE SUPPLY CACHE"});
+                        // A station's rack: tools and repair parts for sale.
+                        for (int s = 0; s < (int)sim.world.stations.size(); s++) {
+                            if (len(sim.world.stations[s].p - walker.p) > 14) continue;
+                            for (int i = 0; i < (int)stationRack().size(); i++) {
+                                const ShopItem& it = stationRack()[i];
+                                const std::string name = it.key.substr(it.key.find(':') + 1);
+                                std::string prompt = "BUY " + name + "  $" + std::to_string(it.price);
+                                if (it.key.rfind("TOOL:", 0) == 0 && career.owned.count(it.key)) prompt = name + ": YOU HAVE IT";
+                                else if (career.stock.count(it.key)) prompt += "  (YOU HAVE " + std::to_string(career.stock.at(it.key)) + ")";
+                                interact.spots.push_back({"SHOP:" + std::to_string(i), rackSpot(sim.world, s, i) - V3(0, 0.3, 0), prompt});
+                            }
+                        }
+                    }
+                    interact.kit = career.kit();
                     const std::string said = interact.update(sim, walker, lastView.eye, lastView.target - lastView.eye, holdE, dt);
                     if (!said.empty()) hud.toast(said);
+                    if (interact.usedPart >= 0) {  // a repair used a part
+                        if (career.on) {
+                            career.usePart((RepairPart)interact.usedPart);
+                            if (!scripted) career.save(Career::defaultPath());
+                        }
+                        interact.usedPart = -1;
+                    }
+                    if (interact.openedSpot.rfind("SHOP:", 0) == 0) {  // bought off a rack
+                        const int i = std::atoi(interact.openedSpot.c_str() + 5);
+                        std::string why;
+                        if (i >= 0 && i < (int)stationRack().size()) {
+                            const ShopItem& it = stationRack()[i];
+                            if (career.buyGear(it, why)) {
+                                hud.toast("BOUGHT " + it.key.substr(it.key.find(':') + 1) + "  ($" + std::to_string(career.cash) + " LEFT)");
+                                if (!scripted) career.save(Career::defaultPath());
+                            } else hud.toast(why);
+                        }
+                        interact.openedSpot.clear();
+                    }
                     if (!interact.openedSpot.empty()) {
                         if (openCache(interact.openedSpot, "") && net.active()) net.sendGame("cache " + std::to_string(sim.world.map) + " " + interact.openedSpot);
                         interact.openedSpot.clear();
@@ -3125,12 +3207,37 @@ int main(int argc, char** argv) {
                         if (len(b.c - (p + V3(0, 0.33, 0))) < 0.05) return true;
                     return false;
                 };
+                // ...and each station's rack of tools and parts, laid out beside the shed.
+                if (career.on && !sim.world.stations.empty()) {
+                    bool shown = false;  // (a marker in the world's models: gone when the map's rebuilt)
+                    for (const Placed& pl : sim.world.models) shown |= pl.id == "(station racks)";
+                    if (!shown) {
+                        Placed mark;
+                        mark.id = "(station racks)";
+                        sim.world.models.push_back(mark);
+                        for (int s = 0; s < (int)sim.world.stations.size(); s++)
+                            for (int i = 0; i < (int)stationRack().size(); i++)
+                                if (!stationRack()[i].model.empty())
+                                    sim.world.placeModel(stationRack()[i].model, rackSpot(sim.world, s, i), sim.world.stations[s].yaw + M_PI / 2);
+                        renderer.updateObjects(sim.world);
+                    }
+                }
                 if (!career.on) caches.clear(), cachesMap = -1;
                 else if (cachesMap != sim.world.map || (!caches.empty() && !crateAt(caches[0].at))) {
                     caches = cacheSpots(sim.world);
                     cachesMap = sim.world.map;
                     for (const CacheSpot& c : caches)
-                        if (!crateAt(c.at)) sim.world.addBox(c.at + V3(0, 0.33, 0), V3(0.55, 0.33, 0.38), (double)(std::hash<std::string>()(c.id) % 628) / 100, 0, 0, V3(0.29, 0.34, 0.19));
+                        if (!crateAt(c.at)) {
+                            const double yaw = (double)(std::hash<std::string>()(c.id) % 628) / 100;
+                            sim.world.addBox(c.at + V3(0, 0.33, 0), V3(0.55, 0.33, 0.38), yaw, 0, 0, V3(0.29, 0.34, 0.19));
+                            if (mk::findModel("supply_crate")) {  // drawn as the picked crate (the box stays its collider)
+                                sim.world.boxes.back().hidden = true;
+                                Placed pl;
+                                pl.id = "supply_crate", pl.p = c.at, pl.yaw = yaw;
+                                pl.set = {{"open", career.isOpened(c) ? 1.0 : 0.0}};
+                                sim.world.models.push_back(pl);
+                            }
+                        }
                     if (!caches.empty()) sim.world.buildGrid();
                 }
                 std::vector<std::pair<std::string, V3>> places;
@@ -3429,6 +3536,43 @@ int main(int argc, char** argv) {
         // (Your own figure isn't drawn: you're looking out of its eyes.)
         if (walker.active && (editor.active || cam.mode == 3)) renderer.figures.push_back({walker.p, walker.yaw, V3(0.95, 0.5, 0.12), walker.stride});
         for (const RemoteWalker& rw : coop.walkers) renderer.figures.push_back({rw.p, rw.yaw, V3(0.2, 0.6, 0.95), rw.stride});
+        // A jack under a wheel: on the ground just inboard of it, raised as far as it's been worked.
+        renderer.frameModels.clear();
+        if (mk::findModel("jack"))
+            for (const Car& c : sim.cars) {
+                if (!c.jackPlaced || c.jackWheel < 0 || c.jackWheel >= (int)c.wheels.size()) continue;
+                const Wheel& wh = c.wheels[c.jackWheel];
+                const V3 hub = (c.nodes[wh.inner].p + c.nodes[wh.outer].p) * 0.5, out = norm(c.nodes[wh.outer].p - c.nodes[wh.inner].p);
+                V3 at = hub - out * 0.45;
+                at.y = sim.world.height(at.x, at.z);
+                Placed pl;
+                pl.id = "jack", pl.p = at, pl.yaw = std::atan2(-out.z, out.x);
+                pl.set = {{"lift", std::clamp((c.jackBase + c.jackHeight - 0.28) / 0.35, 0.0, 1.0)}};
+                renderer.frameModels.push_back(pl);
+            }
+        // What rides in the back: the chains in their bag, the jack (while they're there).
+        for (const Car& c : sim.cars) {
+            if (c.isProp() || !c.spec->wheelLoss) continue;
+            const Frame fr = c.frame();
+            auto stowed = [&](const char* id, const V3& at) {
+                if (!mk::findModel(id)) return;
+                Placed pl;
+                pl.id = id, pl.p = at - fr.up * 0.12, pl.oriented = true;
+                pl.ax[0] = fr.fwd, pl.ax[1] = fr.up, pl.ax[2] = fr.left;
+                renderer.frameModels.push_back(pl);
+            };
+            if (c.chains > 0) stowed("chain_bundle", c.stowAt(Car::STOW_CHAINS));
+            if (c.hasJack && !c.jackPlaced && !walker.holdingJack) stowed("jack", c.stowAt(Car::STOW_JACK));
+        }
+        // The work in your hands (first person): tools, the hand, a part going in; a wheel or
+        // chain being moved (handwork.h).
+        renderer.wheelWork = Renderer::WheelWork();
+        if (walker.active && !editor.active && cam.mode != 3) {
+            const Handwork hw = handwork(sim, walker, interact, view.eye, view.target - view.eye, clock);
+            renderer.frameModels.insert(renderer.frameModels.end(), hw.models.begin(), hw.models.end());
+            renderer.wheelWork = hw.wheel;
+            if (hw.carriedPose && renderer.carried.on) renderer.carried.c = hw.carriedC, renderer.carried.axis = hw.carriedAxis;
+        }
         const uint64_t drawStart = SDL_GetPerformanceCounter();
         if (menu.open && menu.title) {  // the main menu is its own screen: no world behind it
             gl::BindFramebuffer(GL_FRAMEBUFFER, 0);

@@ -377,16 +377,19 @@ public:
     bool hasSpare = false;
     std::vector<int> spareNodes;
     std::vector<double> spareWeights;
+    std::vector<double> spareShift;  // kg taken off each node with the spare (put back when one's stowed)
     V3 spareAt() const;          // where it is (world)
     V3 spareAxis() const;        // its axle (world)
+    // Where the snow chains (STOW_CHAINS) and the jack (STOW_JACK) ride: in the back by the
+    // tailgate, either side, apart from the spare so each is its own thing to reach for.
+    enum Stow { STOW_CHAINS, STOW_JACK };
+    V3 stowAt(Stow what) const;
     double winchSpeed = 1.0;    // multiplier of the rated line speed (0.1-20); game preference starts at 4x
     bool swayDisconnected = false;  // front anti-roll bar unhooked
     int shaftsBroken = 0;       // axle shafts snapped since last read (for the HUD)
     int airing = 0;             // tire valves: -1 letting air out, +1 pumping up (held key)
     int station = -1;           // repair station it's parked at (-1 = none)
     double repairTime = 0;      // s spent waiting on the pad
-    int fieldHelper = -1;       // vehicle parked alongside doing trail repairs (-1 none)
-    double fieldTime = 0;       // s of trail repairs done
     // The jack: a tool the player can place under a wheel to lift it off the ground.
     int chains = 0;             // snow chains in the back (VehicleSpec::snowChains, back after a rebuild)
     int chainsSnapped = 0;      // chains that broke from too much speed (the HUD counts these)
@@ -394,6 +397,8 @@ public:
     bool jackPlaced = false;    // the jack is currently under the car
     int jackWheel = -1;         // which wheel the jack is under
     double jackHeight = 0;      // how far up the jack has lifted (m)
+    bool jackWorked = false;    // it's been raised since it went under (so once it's down again, it comes out)
+    double jackBase = 0;        // where its saddle met the axle when it went under (m over the ground)
     void setJack(bool has);     // called when the jack mod is fitted
     // Multiplayer: a remote car is another player's, moved by the network (no physics
     // here, it just pushes back). netId is the same on every machine.
@@ -649,5 +654,6 @@ private:
     int trafficDir = 1;
     void collide(Car& A, Car& B);
     void ropeForces();
+    void jackForces();
     void pointsVsSkin(Car& A, Car& B);
 };

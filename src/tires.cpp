@@ -30,16 +30,36 @@ double speedOf(const Car& c) { return len(c.frame().vel); }
 // A vehicle has to be stopped (rolling under ~1 km/h) to work on it.
 constexpr double kStopped = 0.3;
 
-// Takes `kg` off (or with kg < 0, puts it back on) the nodes carrying the spare, never more
-// than half of what a node weighs (the stability pass sized them).
+// Takes `kg` off the nodes carrying the spare, never more than half of what a node weighs
+// (the stability pass sized them); what they can't spare comes off the rest of the body, a
+// little from each. With kg < 0 a spare goes back on: what came off, scaled to its weight.
 void shiftSpareMass(Car& c, double kg) {
-    for (size_t i = 0; i < c.spareNodes.size(); i++) {
-        Node& n = c.nodes[c.spareNodes[i]];
-        double d = kg * c.spareWeights[i];
-        if (d > 0) d = std::min(d, 0.5 * n.m);
-        n.m -= d;
-        n.invm = 1.0 / n.m;
+    if (kg < 0) {
+        double taken = 0;
+        for (double d : c.spareShift) taken += d;
+        if (taken <= 0) {  // (nothing recorded: onto the carrier's nodes)
+            for (size_t i = 0; i < c.spareNodes.size(); i++) c.nodes[c.spareNodes[i]].m -= kg * c.spareWeights[i];
+        } else
+            for (size_t i = 0; i < c.spareShift.size() && i < c.nodes.size(); i++) c.nodes[i].m += c.spareShift[i] * (-kg / taken);
+        for (Node& n : c.nodes) n.invm = 1.0 / n.m;
+        c.spareShift.clear();
+        return;
     }
+    c.spareShift.assign(c.nodes.size(), 0);
+    double left = kg;
+    for (size_t i = 0; i < c.spareNodes.size(); i++) {
+        const int ni = c.spareNodes[i];
+        const double d = std::min(kg * c.spareWeights[i], 0.5 * c.nodes[ni].m);
+        c.nodes[ni].m -= d, c.spareShift[ni] += d, left -= d;
+    }
+    double body = 0;
+    for (size_t i = 0; i < c.nodes.size(); i++) body += c.nodes[i].m;
+    if (left > 0 && body > 0)
+        for (size_t i = 0; i < c.nodes.size(); i++) {
+            const double d = std::min(left * c.nodes[i].m / body, 0.1 * c.nodes[i].m);
+            c.nodes[i].m -= d, c.spareShift[i] += d;
+        }
+    for (Node& n : c.nodes) n.invm = 1.0 / n.m;
 }
 
 // Spin inertia of a hub and rotor alone (kg m^2).
@@ -51,6 +71,12 @@ V3 Car::spareAt() const {
     V3 p;
     for (size_t i = 0; i < spareNodes.size(); i++) p += nodes[spareNodes[i]].p * spareWeights[i];
     return p;
+}
+
+V3 Car::stowAt(Stow what) const {
+    const Frame f = frame();
+    const double side = spec->width * 0.27 * (what == STOW_CHAINS ? 1 : -1);
+    return f.com - f.fwd * (spec->length * 0.5 - 0.5) + f.left * side - f.up * 0.1;
 }
 
 void Car::setJack(bool has) {

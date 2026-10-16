@@ -57,6 +57,34 @@ struct Prop {
     float col[3] = {0, 0, 0};  // signs: the difficulty color
 };
 
+// A code-made model (modelkit.h, src/models/) placed on the map: drawn only; whatever is solid
+// about it is added separately as boxes or poles. Drawn as picked in the model lab.
+struct Placed {
+    std::string id;
+    V3 p;                    // its origin, on the ground
+    double yaw = 0;          // facing (radians, 0 = +X)
+    V3 scale{1, 1, 1};       // (front, up, left)
+    std::vector<std::pair<std::string, double>> set;  // its own params: a sign's rating, a crate opened
+    int variant = -1;        // (the model lab: this design, not the picked one)
+    bool oriented = false;   // turned any way at all (things in your hands): its front, up and left
+    V3 ax[3];
+};
+
+// A named place on a generated map (the Wilderness): where it is, and whether a career's
+// supply cache lies there (its tier: 1 everyday .. 3 the best; 0 cash; -1 none).
+struct Landmark {
+    std::string name;
+    V3 p;
+    int cache = -1;
+};
+
+// A generated map's road or trail: its centre line (~1 m apart) and what it's called.
+struct Route {
+    std::string name;
+    std::vector<V3> pts;
+    bool road = false;  // a road (else a trail)
+};
+
 // A repair station: a concrete pad under an open shed. Park on it, stop, and the crew
 // fixes whatever is broken.
 struct Station {
@@ -110,7 +138,7 @@ const SurfaceInfo& surfaceInfo(Surface s);
 // Tire grip on each surface, as a share of dry pavement.
 inline double surfaceGrip(Surface s) { return surfaceInfo(s).grip; }
 
-enum MapId { MAP_PROVING_GROUND, MAP_MOUNTAIN, MAP_FREEWAY, MAP_FRONTIER, MAP_BACKCOUNTRY, MAP_COUNT };
+enum MapId { MAP_PROVING_GROUND, MAP_MOUNTAIN, MAP_FREEWAY, MAP_FRONTIER, MAP_BACKCOUNTRY, MAP_WILDERNESS, MAP_COUNT };
 const char* mapName(int map);  // as the menu shows it
 
 // Catmull-Rom spline through control points, sampled every ~2 m.
@@ -165,6 +193,7 @@ public:
     std::vector<Bush> bushes;
     std::vector<Water> waters;
     std::vector<Prop> fixtures;  // fences, cabins, signs, tables, stumps
+    std::vector<Placed> models;  // code-made models (modelkit.h)
     std::vector<Station> stations;
     // Water surface height at (x, z), or -1e9 where there's none.
     double waterLevel(double x, double z) const {
@@ -191,6 +220,9 @@ public:
     double frontierHeight(double x, double z) const;  // the Frontier's land before anything's carved into it
 
     int map = MAP_PROVING_GROUND;
+    uint32_t seed = 1;           // a generated map's seed (the same seed: the same world)
+    std::vector<Landmark> landmarks;  // a generated map's named places (autopilot, discovery, caches)
+    std::vector<Route> routes;        // ...and its roads and trails
     V3 spawn;                    // where the player starts (on the ground)
     double spawnYaw = 0;
     std::vector<V3> parking;     // where the other vehicles start, facing parkingYaw
@@ -217,7 +249,8 @@ public:
     };
     void solidsNear(double x0, double z0, double x1, double z1, NearbySolids& out) const;
 
-    explicit World(int map = MAP_PROVING_GROUND);
+    // `seed` picks which world a generated map (the Wilderness) is; the others ignore it.
+    explicit World(int map = MAP_PROVING_GROUND, uint32_t seed = 1);
     double height(double x, double z) const;  // terrain only (baked grid, bilinear)
     V3 normal(double x, double z) const;
     RoadInfo roadAt(double x, double z) const;
@@ -246,6 +279,7 @@ private:
     void buildFreeway();
     void buildFrontier();
     void buildBackcountry();
+    void buildWilderness();  // wilderness.cpp: generated from `seed`
     void buildMountain();
     double mountainHeight(double x, double z) const;
     void scatterScenery(uint32_t seed);  // bushes and rocks between the trees
@@ -273,6 +307,12 @@ public:
     // A repair station on flat ground at p: the pad, the open drive-through shed (its
     // corner posts are solid) and its sign.
     void addStation(V3 p, double yaw, const char* name);
+    // Puts a code-made model (modelkit.h) here, if there is one by that id: whether there was.
+    // (Map builders use it to draw a model over the plain boxes that stood in for it, keeping
+    // the boxes as its collider.)
+    bool placeModel(const std::string& id, V3 p, double yaw, std::vector<std::pair<std::string, double>> set = {}, V3 scale = V3(1, 1, 1));
+    // ...and hides boxes [from, end) behind it if it was placed.
+    bool standIn(size_t fromBox, const std::string& id, V3 p, double yaw, std::vector<std::pair<std::string, double>> set = {});
 
     // ---- Editing: level files and the world editor ------------------------------------
     // The terrain is a 1 m grid of cells over the whole map (gridSize() a side); each has

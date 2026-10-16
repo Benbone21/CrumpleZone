@@ -88,7 +88,7 @@ SCENARIO(chainsOnFoot, "tires/chains", "On foot: a snow chain out of the back, r
     const V3 back = f.com - f.fwd * (c.spec->length * 0.5);
     wk.p = back - f.fwd * 1.2;
     wk.p.y = w.height(wk.p.x, wk.p.z);
-    const V3 tailAt = c.spareNodes.empty() ? back : c.spareAt();
+    const V3 tailAt = c.stowAt(Car::STOW_CHAINS);
     ctx.check("takes a chain", hold(tailAt, 5).find("CHAIN") != std::string::npos && wk.holdingChain && c.chains == 3);
     // Walk to the front left tire and wrap it.
     Wheel& wh = c.wheels[0];

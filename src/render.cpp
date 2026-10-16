@@ -2264,7 +2264,7 @@ void Renderer::updateTerrainRegion(const World& world, int i0, int j0, int i1, i
 }
 void Renderer::buildTerrain(const World& world) {
     // 1 m on the mountain (its crawl features are small), 2 m on the proving ground.
-    const double spacing = world.map == MAP_MOUNTAIN || world.map == MAP_FRONTIER || world.map == MAP_BACKCOUNTRY ? 1.0 : 2.0, half = World::kHalfSize;
+    const double spacing = world.map == MAP_MOUNTAIN || world.map == MAP_FRONTIER || world.map == MAP_BACKCOUNTRY || world.map == MAP_WILDERNESS ? 1.0 : 2.0, half = World::kHalfSize;
     const int n = (int)(2 * half / spacing) + 1;
     terrainSpacing = spacing;
     terrainMeshN = n;
@@ -2386,7 +2386,17 @@ void Renderer::buildFigures() {
                 for (int k : s > 0 ? order : order) v.push_back(vtx(q[k], n, (float)col.x, (float)col.y, (float)col.z, SM_CONCRETE));
             }
     };
+    for (const Placed& pl : frameModels) appendPlaced(v, pl, pl.set.empty() ? mk::modelMesh(pl.id) : mk::modelMesh(pl.id, pl.set));
+    const bool modelled = mk::findModel("person") != nullptr;
     for (const Figure& fg : figures) {
+        if (modelled) {  // the picked person (modelkit.h), posed for this frame
+            int jacket = 0;
+            double best = 1e9;
+            for (int i = 0; i < (int)mk::paintNames().size(); i++)
+                if (len(mk::paint(i) - fg.col) < best) best = len(mk::paint(i) - fg.col), jacket = i;
+            appendModel(v, mk::modelMesh("person", {{"swing", std::sin(fg.stride)}, {"jacket", jacket}}), fg.p, fg.yaw);
+            continue;
+        }
         const V3 f(std::cos(fg.yaw), 0, -std::sin(fg.yaw)), l(-f.z, 0, f.x), up(0, 1, 0);
         const V3 ax[3] = {f, up, l};
         const V3 skin(0.85, 0.66, 0.5), pants(0.22, 0.24, 0.3), boots(0.18, 0.13, 0.1);
@@ -2738,33 +2748,54 @@ void Renderer::buildTire(int style, int tread) {
 // shoulder holding them. (Drawn on a chained wheel with the tire's own matrix.)
 void Renderer::buildChains() {
     std::vector<Vtx> v;
-    MeshOut m{v};
     const V3 steel(0.55, 0.56, 0.58);
-    auto link = [&](const V3& a, const V3& b, double r) {  // a short box along a to b
+    // A link from a to b: an oval loop of round wire, each turned a quarter from the last.
+    int linkN = 0;
+    auto link = [&](const V3& a, const V3& b, double r) {
         const V3 d = b - a, c = (a + b) * 0.5;
         const double L = len(d);
         if (L < 1e-6) return;
         const V3 ax = d / L, ref = std::fabs(ax.z) < 0.9 ? V3(0, 0, 1) : V3(1, 0, 0), ay = norm(cross(ref, ax)), az = cross(ax, ay);
-        V3 p[8];
-        for (int k = 0; k < 8; k++)
-            p[k] = c + ax * ((k & 1) ? L * 0.5 : -L * 0.5) + ay * ((k & 2) ? r : -r) + az * ((k & 4) ? r : -r);
-        m.hexa(p, steel, SM_METAL);
+        const V3 side = linkN++ % 2 ? ay : az;
+        const double hl = L * 0.62, hw = std::max(r * 2.4, L * 0.3), wire = r * 0.85;
+        const int n = 8, sides = 3;
+        V3 p[n];
+        for (int i = 0; i < n; i++) {
+            const double t = 2 * M_PI * i / n;
+            p[i] = c + ax * (std::cos(t) * hl) + side * (std::sin(t) * hw);
+        }
+        auto ring = [&](int i, int j, V3& at, V3& nn) {
+            const V3 T = norm(p[(i + 1) % n] - p[(i + n - 1) % n]);
+            V3 out = p[i] - c;
+            out = norm(out - T * dot(out, T));
+            const V3 o2 = cross(T, out);
+            const double t = 2 * M_PI * j / sides;
+            nn = out * std::cos(t) + o2 * std::sin(t);
+            at = p[i] + nn * wire;
+        };
+        for (int i = 0; i < n; i++)
+            for (int j = 0; j < sides; j++) {
+                V3 q[4], nq[4];
+                ring(i, j, q[0], nq[0]), ring((i + 1) % n, j, q[1], nq[1]), ring((i + 1) % n, j + 1, q[2], nq[2]), ring(i, j + 1, q[3], nq[3]);
+                for (int k : {0, 1, 2, 0, 2, 3}) v.push_back(vtx(q[k], nq[k], (float)steel.x, (float)steel.y, (float)steel.z, SM_METAL));
+            }
     };
+    // In order round the tire, so drawing the first part of it shows a chain part wrapped on.
     const int cross = 14, segs = 56;
-    for (int k = 0; k < cross; k++) {
-        const double a = 2 * M_PI * k / cross;
+    for (int k = 0; k < segs; k++) {
+        for (int sd = -1; sd <= 1; sd += 2) {
+            const double a0 = 2 * M_PI * k / segs, a1 = 2 * M_PI * (k + 1) / segs, r = 0.30, z = sd * 0.124;
+            link(V3(std::cos(a0) * r, std::sin(a0) * r, z), V3(std::cos(a1) * r, std::sin(a1) * r, z), 0.0045);
+        }
+        if (k % (segs / cross)) continue;
         // A zig of links across the tread from one side chain to the other.
+        const double a = 2 * M_PI * k / segs;
         for (int j = 0; j < 6; j++) {
             const double z0 = -0.118 + 0.236 * j / 6, z1 = -0.118 + 0.236 * (j + 1) / 6, wob = (j % 2 ? 1 : -1) * 0.015;
             const double r = 0.326;
             link(V3(std::cos(a + wob) * r, std::sin(a + wob) * r, z0), V3(std::cos(a - wob) * r, std::sin(a - wob) * r, z1), 0.004);
         }
     }
-    for (int sd = -1; sd <= 1; sd += 2)
-        for (int k = 0; k < segs; k++) {
-            const double a0 = 2 * M_PI * k / segs, a1 = 2 * M_PI * (k + 1) / segs, r = 0.30, z = sd * 0.124;
-            link(V3(std::cos(a0) * r, std::sin(a0) * r, z), V3(std::cos(a1) * r, std::sin(a1) * r, z), 0.0045);
-        }
     GenVertexArrays(1, &chainVao);
     GenBuffers(1, &chainVbo);
     setupVtxVao(chainVao, chainVbo);
@@ -2861,42 +2892,52 @@ void Renderer::drawWheels(const Sim& sim, GLuint prog) {
         Frame fr = car.frame();
         // The car's own tread on this wheel (and chains over it when they're on).
         const int tread = std::min(std::max(car.spec->tireType, 0), TIRE_TYPES - 1);
-        auto drawTread = [&](int st, const M4& tm, bool chained) {
+        auto drawTread = [&](int st, const M4& tm, double chain) {  // (chain: how much of one is wrapped on, 0..1)
             uniformM4(prog, "uModel", tm);
             BindVertexArray(tireVao[st][tread]);
             DrawArrays(GL_TRIANGLES, 0, treadVertexCount[st][tread]);
-            if (chained) {
+            if (chain > 0) {
                 BindVertexArray(chainVao);
-                DrawArrays(GL_TRIANGLES, 0, chainVertexCount);
+                DrawArrays(GL_TRIANGLES, 0, chain >= 1 ? chainVertexCount : (int)(chainVertexCount * chain / 3) * 3);
             }
         };
+        const int ci = (int)(&car - sim.cars.data());
         for (const Wheel& wh : car.wheels) {
+            // The wheel you're working on (handwork.h): slid out along its axle, a chain going on or off.
+            const bool worked = wheelWork.car == ci && wheelWork.wheel == (int)(&wh - car.wheels.data());
+            const V3 slide = worked ? norm(car.nodes[wh.outer].p - car.nodes[wh.inner].p) * wheelWork.out : V3();
+            const double chain = worked && wheelWork.chain >= 0 ? wheelWork.chain : wh.chained ? 1.0 : 0.0;
+            auto wm = [&](bool spin, double rs = 1.0, double vs = 0.0, double ws = 1.0) {
+                M4 m = wheelMatrix(car, wh, fr.up, spin, rs, vs, ws);
+                m.m[12] += (float)slide.x, m.m[13] += (float)slide.y, m.m[14] += (float)slide.z;
+                return m;
+            };
             const int st = std::min(std::max(wh.mounted ? wh.item.style : car.spec->wheelStyle, 0), WHEEL_STYLES - 1);
             BindVertexArray(wheelVao[st]);
             if (!wh.mounted) {
                 // Nothing on the hub but its rotor (the caliper below) and the studs: a sliver of rim face.
-                uniformM4(prog, "uModel", wheelMatrix(car, wh, fr.up, true, kBareHubR / wh.R));
+                uniformM4(prog, "uModel", wm(true, kBareHubR / wh.R));
                 DrawArrays(GL_TRIANGLES, tireVertexCount[st], wheelVertexCount[st] - tireVertexCount[st]);
             } else if (wh.debeaded) {  // the rim alone, the tire gone
-                uniformM4(prog, "uModel", wheelMatrix(car, wh, fr.up, true));
+                uniformM4(prog, "uModel", wm(true));
                 DrawArrays(GL_TRIANGLES, tireVertexCount[st], wheelVertexCount[st] - tireVertexCount[st]);
             } else if (wh.popped) {
                 // Smooth deflation animation: interpolate between inflated and flat
                 const double flatScale = (wh.rimR + 0.015) / wh.R;
                 double scale = (1.0 - wh.poppedAnim) * 1.0 + wh.poppedAnim * flatScale;
-                const M4 tm = wheelMatrix(car, wh, fr.up, true, scale);
-                drawTread(st, tm, wh.chained);
+                const M4 tm = wm(true, scale);
+                drawTread(st, tm, chain);
                 BindVertexArray(wheelVao[st]);
-                uniformM4(prog, "uModel", wheelMatrix(car, wh, fr.up, true));
+                uniformM4(prog, "uModel", wm(true));
                 DrawArrays(GL_TRIANGLES, tireVertexCount[st], wheelVertexCount[st] - tireVertexCount[st]);
             } else {
                 // Match load-dependent sidewall sag; keep the rim full size and
                 // the compressed axis stationary while the tread rotates.
                 const double vertical = wh.loadedRadius(car.tirePsi, car.spec->tirePsi, car.spec->tireSoft) / wh.R;
                 const double bulge = 1 + 0.3 * (1 - vertical);
-                drawTread(st, wheelMatrix(car, wh, fr.up, true, 1.0, vertical, bulge), wh.chained);
+                drawTread(st, wm(true, 1.0, vertical, bulge), chain);
                 BindVertexArray(wheelVao[st]);
-                uniformM4(prog, "uModel", wheelMatrix(car, wh, fr.up, true));
+                uniformM4(prog, "uModel", wm(true));
                 DrawArrays(GL_TRIANGLES, tireVertexCount[st], wheelVertexCount[st] - tireVertexCount[st]);
             }
             BindVertexArray(caliperVao);
@@ -3217,7 +3258,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     // whose forest climbs to ~175 m.
     if (mapId == MAP_MOUNTAIN) Uniform2f(uniformLocation(progLit, "uRockSnow"), 165.0f, 205.0f);
     else if (mapId == MAP_FRONTIER) Uniform2f(uniformLocation(progLit, "uRockSnow"), 125.0f, 400.0f);  // (its snow is painted on)
-    else if (mapId == MAP_BACKCOUNTRY) Uniform2f(uniformLocation(progLit, "uRockSnow"), 105.0f, 400.0f);  // (its snow is painted on)
+    else if (mapId == MAP_BACKCOUNTRY || mapId == MAP_WILDERNESS) Uniform2f(uniformLocation(progLit, "uRockSnow"), 105.0f, 400.0f);  // (its snow is painted on)
     else Uniform2f(uniformLocation(progLit, "uRockSnow"), 60.0f, 240.0f);
     // The ground: photo-scanned materials where they're loaded, else the procedural look.
     int gq = std::min(std::max(settings.ground, 0), 3);
@@ -3241,7 +3282,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         float rs[2];
         if (mapId == MAP_MOUNTAIN) rs[0] = 165.0f, rs[1] = 205.0f;
         else if (mapId == MAP_FRONTIER) rs[0] = 125.0f, rs[1] = 400.0f;
-        else if (mapId == MAP_BACKCOUNTRY) rs[0] = 105.0f, rs[1] = 400.0f;
+        else if (mapId == MAP_BACKCOUNTRY || mapId == MAP_WILDERNESS) rs[0] = 105.0f, rs[1] = 400.0f;
         else rs[0] = 60.0f, rs[1] = 240.0f;
         Uniform2f(uniformLocation(progTerrain, "uRockSnow"), rs[0], rs[1]);
         ActiveTexture(GL_TEXTURE0 + 3);

@@ -70,17 +70,23 @@ void World::buildFreeway() {
         }
 
     // The median: a concrete barrier the length of the map, in 20 m sections.
-    for (double x = -kHalfSize; x < kHalfSize; x += 20) addBox(V3(x + 10, 0.42, 0), V3(10, 0.42, 0.28), 0, 0, 0, kConcrete);
+    for (double x = -kHalfSize; x < kHalfSize; x += 20) {
+        addBox(V3(x + 10, 0.42, 0), V3(10, 0.42, 0.28), 0, 0, 0, kConcrete);
+        standIn(boxes.size() - 1, "jersey_barrier", V3(x + 10, 0, 0), 0, {{"length", 20}});
+    }
     // Guardrails, with a gap at each slip road (eastbound).
     for (int s = -1; s <= 1; s += 2)
         for (double x = -kHalfSize; x < kHalfSize; x += 20) {
             if (s > 0 && std::fabs(fold(x + 10)) < 12) continue;
             addBox(V3(x + 10, 0.38, s * kRail), V3(10, 0.38, 0.07), 0, 0, 0, kSteel);
+            standIn(boxes.size() - 1, "guardrail", V3(x + 10, 0, s * kRail), s > 0 ? M_PI : 0,  // (its rail to the traffic)
+                    {{"length", 20}});
         }
     // Lamp posts every 50 m on both sides, the heads reaching over the outer lane.
     for (double x = -kHalfSize + 25; x < kHalfSize; x += 50)
         for (int s = -1; s <= 1; s += 2) {
             const double z = s * (kRail + 1.0);
+            const size_t first = boxes.size();
             addBox(V3(x, 5, z), V3(0.1, 5, 0.1), 0, 0, 0, kSteel);
             boxes.back().solid = false;
             addBox(V3(x, 9.9, z - s * 1.4), V3(0.12, 0.07, 1.4), 0, 0, 0, kSteel);
@@ -88,11 +94,13 @@ void World::buildFreeway() {
             addBox(V3(x, 9.8, z - s * 2.7), V3(0.35, 0.08, 0.2), 0, 0, 0, V3(0.95, 0.9, 0.75));
             boxes.back().solid = false;
             poles.push_back({x, z, -0.5, 10, 0.12});
+            standIn(first, "lamp_post", V3(x, 0, z), s * M_PI / 2);  // (its arm out over the road)
         }
     // A sign gantry over both carriageways every period (half a period from the shops).
     for (int k = -2; k <= 1; k++) {
         const double x = kPeriod / 2 + k * kPeriod;
         if (std::fabs(x) > kHalfSize - 5) continue;
+        const size_t first = boxes.size();
         for (int s = -1; s <= 1; s += 2) {
             const double z = s * (kRail + 2.4);
             addBox(V3(x, 3.6, z), V3(0.25, 3.6, 0.25), 0, 0, 0, kSteel);
@@ -103,6 +111,7 @@ void World::buildFreeway() {
         }
         addBox(V3(x, 7.0, 0), V3(0.35, 0.3, kRail + 2.6), 0, 0, 0, kSteel);
         boxes.back().solid = false;
+        standIn(first, "sign_gantry", V3(x, 0, 0), 0, {{"span", 2 * (kRail + 2.4)}, {"sign", (double)((k + 4) % 4)}});
     }
     // The shops.
     for (int k = -1; k <= 1; k++) addStation(V3(k * kPeriod, 0, restZ), M_PI / 2, "REST AREA SHOP");  // drive in from the slip road

@@ -1,6 +1,8 @@
 #include "thread_cache.h"
 #include "world.h"
 
+#include "modelkit.h"
+
 #include "props.h"
 
 #include <atomic>
@@ -58,7 +60,7 @@ V3 World::courseStart(int surface) const {
 }
 
 const char* mapName(int map) {
-    return map == MAP_MOUNTAIN ? "MOUNTAIN" : map == MAP_FREEWAY ? "FREEWAY" : map == MAP_FRONTIER ? "FRONTIER" : map == MAP_BACKCOUNTRY ? "BACKCOUNTRY" : "PROVING GROUND";
+    return map == MAP_MOUNTAIN ? "MOUNTAIN" : map == MAP_FREEWAY ? "FREEWAY" : map == MAP_FRONTIER ? "FRONTIER" : map == MAP_BACKCOUNTRY ? "BACKCOUNTRY" : map == MAP_WILDERNESS ? "WILDERNESS" : "PROVING GROUND";
 }
 
 std::vector<V3> splinePoints(const std::vector<V3>& pts, bool closed) {
@@ -306,11 +308,12 @@ void World::addLake(double x, double z, double r, double depth) {
     waters.push_back({x, z, r * 1.15, level});
 }
 
-World::World(int m) : map(m) {
+World::World(int m, uint32_t sd) : map(m), seed(sd ? sd : 1) {
     if (map == MAP_MOUNTAIN) buildMountain();
     else if (map == MAP_FREEWAY) buildFreeway();
     else if (map == MAP_FRONTIER) buildFrontier();
     else if (map == MAP_BACKCOUNTRY) buildBackcountry();
+    else if (map == MAP_WILDERNESS) buildWilderness();
     else buildProvingGround();
     buildGrid();
 }
@@ -802,6 +805,20 @@ void World::addStation(V3 p, double yaw, const char* name) {
             const V3 q = p + fwd * (5.0 * a) + side * (3.7 * b);
             poles.push_back({q.x, q.z, p.y - 0.5, p.y + 4.6, 0.11});
         }
+}
+
+bool World::placeModel(const std::string& id, V3 p, double yaw, std::vector<std::pair<std::string, double>> set, V3 scale) {
+    if (!mk::findModel(id)) return false;
+    Placed pl;
+    pl.id = id, pl.p = p, pl.yaw = yaw, pl.scale = scale, pl.set = std::move(set);
+    models.push_back(pl);
+    return true;
+}
+
+bool World::standIn(size_t fromBox, const std::string& id, V3 p, double yaw, std::vector<std::pair<std::string, double>> set) {
+    if (!placeModel(id, p, yaw, std::move(set))) return false;
+    for (size_t i = fromBox; i < boxes.size(); i++) boxes[i].hidden = true;
+    return true;
 }
 
 void World::addBox(V3 c, V3 h, double yaw, double pitch, double roll, V3 col) {

@@ -7,37 +7,44 @@
 
 namespace {
 
-// Hold times (s): the work each job is. Shortened for responsiveness.
-constexpr double kTakeSpare = 3, kStowSpare = 3, kRemoveWheel = 4, kFitWheel = 4, kReseatTire = 10, kPickUp = 1;
-constexpr double kTakeJack = 2, kPlaceJack = 3, kUseJack = 4, kLowerJack = 3, kRemoveJack = 2;
-// Chains: lay it out, drive-free wrap round the tread, hook and tension it (a few minutes in
-// real life; shortened like the rest).
-constexpr double kTakeChain = 1.5, kFitChain = 8, kRemoveChain = 5, kStowChain = 1.5;
-constexpr double kOpenCache = 2;  // prise the lid off a supply cache
+// Hold times (s): the work each job is, kept short (the game shows the job being done).
+constexpr double kTakeSpare = 1.0, kStowSpare = 1.0, kRemoveWheel = 2.5, kFitWheel = 2.5, kReseatTire = 3.5, kPickUp = 0.5;
+constexpr double kTakeJack = 0.6, kStowJack = 0.6, kPlaceJack = 1.0, kRemoveJack = 0.8;
+constexpr double kJackRate = 0.14;  // m/s the saddle moves while E is held
+constexpr double kTakeChain = 0.6, kFitChain = 3.0, kRemoveChain = 2.0, kStowChain = 0.6;
+constexpr double kOpenCache = 1.5;  // prise the lid off a supply cache
 constexpr double kReach = 2.5;           // m from your chest
 constexpr double kCone = 35 * M_PI / 180;  // off your line of sight
 
 std::string withSize(const char* what, const WheelItem& it) { return std::string(what) + " (" + it.sizeName() + ")"; }
 
-// The jack lifts a corner off the ground so the wheel can be removed or fitted.
-// A corner is "lifted" when the tire no longer touches the ground.
-bool isCornerLifted(const Car& c, int wi) {
-    const Wheel& wh = c.wheels[wi];
-    if (!wh.mounted) return true;  // no wheel = lifted
-    const V3 hub = (c.nodes[wh.inner].p + c.nodes[wh.outer].p) * 0.5;
-    const V3 out = norm(c.nodes[wh.outer].p - c.nodes[wh.inner].p);
-    const V3 contact = hub - out * wh.R;
-    return contact.y > 0.05;  // 5 cm above ground
-}
+V3 hubOf(const Car& c, const Wheel& wh) { return (c.nodes[wh.inner].p + c.nodes[wh.outer].p) * 0.5; }
 
 }  // namespace
 
-InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, const V3& look, const std::vector<InteractSpot>* spots) {
+V3 Interact::jackSpot(const Sim& sim, const Car& c, int k) {
+    const Wheel& wh = c.wheels[k];
+    const V3 hub = hubOf(c, wh), out = norm(c.nodes[wh.outer].p - c.nodes[wh.inner].p);
+    V3 at = hub - out * (wh.width * 0.5 + 0.25);
+    at.y = sim.world.height(at.x, at.z);
+    return at;
+}
+
+bool Interact::cornerLifted(const Sim& sim, const Car& c, int k) {
+    const Wheel& wh = c.wheels[k];
+    const V3 hub = hubOf(c, wh);
+    const double ground = sim.world.height(hub.x, hub.z);
+    if (!wh.mounted) return hub.y - ground > wh.R * 0.92;  // room for a wheel under it
+    return hub.y - wh.R - ground > 0.03;
+}
+
+InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, const V3& look, const std::vector<InteractSpot>* spots, const Kit& kit) {
     InteractOption best;
     double bestScore = 1e9;
     const V3 chest = wk.p + V3(0, 1.0, 0);
     const V3 dir = norm(look);
-    // A candidate at `at`: scored on how far off your aim it is, then how far away.
+    // A candidate at `at`: scored on how far off your aim it is, then how far away (a job you
+    // can't do yet loses to one you can, close by).
     auto consider = [&](InteractOption o) {
         if (len(o.at - chest) > kReach) return;
         const V3 to = o.at - eye;
@@ -45,143 +52,131 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
         if (d < 1e-6) return;
         const double off = std::acos(clampd(dot(to / d, dir), -1, 1));
         if (off > kCone) return;
-        const double score = off + 0.15 * d;
+        const double score = off + 0.15 * d + (o.blocked ? 0.04 : 0);
         if (score < bestScore) bestScore = score, best = o;
     };
+    // A job that needs tools you may not have, or a corner up off the ground.
+    auto needs = [&](InteractOption& o, std::initializer_list<Tool> tools, bool lift, bool lifted) {
+        std::string miss;
+        for (Tool t : tools)
+            if (!kit.has(t)) miss += (miss.empty() ? "" : ", ") + std::string(toolName(t));
+        if (!miss.empty()) o.blocked = true, o.prompt += ": NEEDS " + miss;
+        else if (lift && !lifted) o.blocked = true, o.prompt += ": JACK THIS CORNER UP FIRST";
+    };
     const bool hands = wk.carrying.has_value() || wk.holdingChain;
-    const bool wheelInHands = hands && !wk.carrying->tireOnly, tireInHands = hands && wk.carrying->tireOnly;
+    const bool busy = hands || wk.holdingJack;
+    const bool wheelInHands = wk.carrying.has_value() && !wk.carrying->tireOnly, tireInHands = wk.carrying.has_value() && wk.carrying->tireOnly;
     for (int ci = 0; ci < (int)sim.cars.size(); ci++) {
         const Car& c = sim.cars[ci];
-        if (c.remote || c.isProp() || !c.spec->wheelLoss) continue;
-        // Snow chains: out of the back (where the spare and the tools are), onto a tire, off
-        // again, back in.
-        if (c.spec->snowChains > 0) {
-            InteractOption o;
-            o.car = ci;
-            o.at = c.spareNodes.empty() ? c.frame().com - c.frame().fwd * (c.spec->length * 0.5) : c.spareAt();
-            if (!hands && !wk.holdingJack && c.chains > 0) {
-                o.kind = IA_TAKE_CHAIN, o.hold = kTakeChain, o.prompt = "TAKE A SNOW CHAIN (" + std::to_string(c.chains) + " LEFT)";
-                consider(o);
-            } else if (wk.holdingChain && c.chains < c.spec->snowChains) {
-                o.kind = IA_STOW_CHAIN, o.hold = kStowChain, o.prompt = "PUT THE CHAIN BACK";
-                consider(o);
+        if (c.remote || c.isProp()) continue;
+        if (c.spec->wheelLoss) {
+            // Snow chains: in the back on one side (the jack's on the other), onto a tire, off
+            // again, back in.
+            if (c.spec->snowChains > 0) {
+                InteractOption o;
+                o.car = ci;
+                o.at = c.stowAt(Car::STOW_CHAINS);
+                if (!busy && c.chains > 0) {
+                    o.kind = IA_TAKE_CHAIN, o.hold = kTakeChain, o.prompt = "TAKE A SNOW CHAIN (" + std::to_string(c.chains) + " LEFT)";
+                    consider(o);
+                } else if (wk.holdingChain && c.chains < c.spec->snowChains) {
+                    o.kind = IA_STOW_CHAIN, o.hold = kStowChain, o.prompt = "PUT THE CHAIN BACK";
+                    consider(o);
+                }
+                for (int k = 0; k < (int)c.wheels.size(); k++) {
+                    const Wheel& wh = c.wheels[k];
+                    if (wh.detached || !wh.mounted || wh.debeaded) continue;
+                    InteractOption w;
+                    w.car = ci, w.wheel = k;
+                    w.at = hubOf(c, wh);
+                    if (wk.holdingChain && !wh.chained) {
+                        w.kind = IA_FIT_CHAIN, w.hold = kFitChain, w.prompt = "WRAP THE CHAIN ROUND THIS TIRE";
+                        consider(w);
+                    } else if (!busy && wh.chained) {
+                        w.kind = IA_REMOVE_CHAIN, w.hold = kRemoveChain, w.prompt = "TAKE THE CHAIN OFF";
+                        consider(w);
+                    }
+                }
             }
-            for (int k = 0; k < (int)c.wheels.size(); k++) {
-                const Wheel& wh = c.wheels[k];
-                if (wh.detached || !wh.mounted || wh.debeaded) continue;
-                InteractOption w;
-                w.car = ci, w.wheel = k;
-                w.at = (c.nodes[wh.inner].p + c.nodes[wh.outer].p) * 0.5;
-                if (wk.holdingChain && !wh.chained) {
-                    w.kind = IA_FIT_CHAIN, w.hold = kFitChain, w.prompt = "WRAP THE CHAIN ROUND THIS TIRE";
-                    consider(w);
-                } else if (!hands && !wk.holdingJack && wh.chained) {
-                    w.kind = IA_REMOVE_CHAIN, w.hold = kRemoveChain, w.prompt = "TAKE THE CHAIN OFF";
-                    consider(w);
+            if (!c.spareNodes.empty()) {
+                InteractOption o;
+                o.car = ci;
+                o.at = c.spareAt();
+                if (c.hasSpare && !busy) {
+                    o.kind = IA_TAKE_SPARE, o.hold = kTakeSpare, o.prompt = withSize("TAKE THE SPARE", c.spare);
+                    consider(o);
+                } else if (!c.hasSpare && wheelInHands) {
+                    o.kind = IA_STOW_SPARE, o.hold = kStowSpare, o.prompt = withSize("STOW IT AS THE SPARE", *wk.carrying);
+                    consider(o);
                 }
             }
         }
-        if (!c.spareNodes.empty()) {
+        // The jack: the truck's own, or yours.
+        if (c.hasJack || kit.has(TOOL_JACK)) {
             InteractOption o;
             o.car = ci;
-            o.at = c.spareAt();
-            if (c.hasSpare && !hands) {
-                o.kind = IA_TAKE_SPARE, o.hold = kTakeSpare, o.prompt = withSize("TAKE THE SPARE", c.spare);
+            o.at = c.stowAt(Car::STOW_JACK);
+            if (!c.jackPlaced && !busy) {
+                o.kind = IA_TAKE_JACK, o.hold = kTakeJack, o.prompt = "TAKE THE JACK";
                 consider(o);
-            } else if (!c.hasSpare && wheelInHands) {
-                o.kind = IA_STOW_SPARE, o.hold = kStowSpare, o.prompt = withSize("STOW IT AS THE SPARE", *wk.carrying);
+            } else if (wk.holdingJack) {
+                o.kind = IA_STOW_JACK, o.hold = kStowJack, o.prompt = "PUT THE JACK AWAY";
                 consider(o);
             }
+            if (wk.holdingJack && !c.jackPlaced)
+                for (int k = 0; k < (int)c.wheels.size(); k++) {
+                    if (c.wheels[k].detached) continue;
+                    InteractOption p;
+                    p.car = ci, p.wheel = k, p.kind = IA_PLACE_JACK, p.hold = kPlaceJack, p.prompt = "PUT THE JACK UNDER THIS CORNER";
+                    p.at = jackSpot(sim, c, k) + V3(0, 0.3, 0);
+                    consider(p);
+                }
+            if (c.jackPlaced && !busy && c.jackWheel >= 0 && c.jackWheel < (int)c.wheels.size()) {
+                InteractOption j;
+                j.car = ci, j.wheel = c.jackWheel;
+                j.at = jackSpot(sim, c, c.jackWheel) + V3(0, 0.3, 0);
+                if (c.jackWorked && c.jackHeight <= 0.005) j.kind = IA_REMOVE_JACK, j.hold = kRemoveJack, j.prompt = "TAKE THE JACK OUT";
+                else if (!cornerLifted(sim, c, c.jackWheel) && c.jackHeight < kJackMax) j.kind = IA_RAISE_JACK, j.continuous = true, j.prompt = "RAISE THE JACK";
+                else j.kind = IA_LOWER_JACK, j.continuous = true, j.prompt = "LOWER THE JACK";
+                consider(j);
+            }
         }
-        // Jack interactions.
-        if (c.hasJack && !wk.holdingJack && !hands) {
-            InteractOption o;
-            o.car = ci;
-            o.at = c.spareAt();  // jack is in the same place as the spare
-            o.kind = IA_TAKE_JACK;
-            o.hold = kTakeJack;
-            o.prompt = "TAKE THE JACK";
-            consider(o);
-        }
-        if (wk.holdingJack) {
+        // Wheels off and on (a lug wrench, the corner up off the ground).
+        if (c.spec->wheelLoss)
             for (int k = 0; k < (int)c.wheels.size(); k++) {
                 const Wheel& wh = c.wheels[k];
                 if (wh.detached) continue;
                 InteractOption o;
-                o.car = ci;
-                o.wheel = k;
-                o.at = (c.nodes[wh.inner].p + c.nodes[wh.outer].p) * 0.5;
-                if (!c.jackPlaced) {
-                    o.kind = IA_PLACE_JACK;
-                    o.hold = kPlaceJack;
-                    o.prompt = "PLACE THE JACK";
+                o.car = ci, o.wheel = k;
+                o.at = hubOf(c, wh);
+                const bool lifted = cornerLifted(sim, c, k);
+                if (wh.mounted && !busy) {
+                    o.kind = IA_REMOVE_WHEEL, o.hold = kRemoveWheel;
+                    o.prompt = wh.debeaded ? "TAKE THE BARE RIM OFF" : wh.popped ? "TAKE THE FLAT OFF" : "TAKE THE WHEEL OFF";
+                    needs(o, {TOOL_LUG_WRENCH}, true, lifted);
                     consider(o);
-                } else if (c.jackWheel == k && c.jackHeight < 0.1) {
-                    // Jack is under this wheel but not lifting yet.
-                    o.kind = IA_USE_JACK;
-                    o.hold = kUseJack;
-                    o.prompt = "LIFT WITH THE JACK";
+                } else if (!wh.mounted && wheelInHands) {
+                    o.kind = IA_FIT_WHEEL, o.hold = kFitWheel, o.prompt = withSize("FIT THE WHEEL", *wk.carrying);
+                    needs(o, {TOOL_LUG_WRENCH}, true, lifted);
                     consider(o);
-                } else if (c.jackWheel == k && c.jackHeight > 0.1 && !isCornerLifted(c, k)) {
-                    // Jack is under this wheel and lifting.
-                    o.kind = IA_USE_JACK;
-                    o.hold = kUseJack;
-                    o.prompt = "LIFT MORE";
+                } else if (wh.mounted && wh.debeaded && tireInHands) {
+                    o.kind = IA_RESEAT_TIRE, o.hold = kReseatTire, o.prompt = "PUT THE TIRE BACK ON THE RIM";
+                    needs(o, {TOOL_TIRE_IRONS}, false, lifted);
                     consider(o);
-                } else if (c.jackWheel == k && isCornerLifted(c, k)) {
-                    // Corner is lifted, can lower or remove wheel.
-                    if (!wh.mounted && wheelInHands) {
-                        o.kind = IA_FIT_WHEEL;
-                        o.hold = kFitWheel;
-                        o.prompt = withSize("FIT THE WHEEL", *wk.carrying);
-                        consider(o);
-                    } else if (wh.mounted) {
-                        o.kind = IA_REMOVE_WHEEL;
-                        o.hold = kRemoveWheel;
-                        o.prompt = wh.debeaded ? "TAKE THE BARE RIM OFF" : wh.popped ? "TAKE THE FLAT OFF" : "TAKE THE WHEEL OFF";
-                        consider(o);
-                    } else {
-                        o.kind = IA_LOWER_JACK;
-                        o.hold = kLowerJack;
-                        o.prompt = "LOWER THE JACK";
-                        consider(o);
-                    }
                 }
             }
-        }
-        if (c.jackPlaced && wk.holdingJack) {
-            InteractOption o;
-            o.car = ci;
-            o.at = c.spareAt();
-            if (c.jackHeight > 0.1) {
-                o.kind = IA_LOWER_JACK;
-                o.hold = kLowerJack;
-                o.prompt = "LOWER THE JACK";
-            } else {
-                o.kind = IA_REMOVE_JACK;
-                o.hold = kRemoveJack;
-                o.prompt = "REMOVE THE JACK";
-            }
-            consider(o);
-        }
-        for (int k = 0; k < (int)c.wheels.size(); k++) {
-            const Wheel& wh = c.wheels[k];
-            if (wh.detached) continue;
-            InteractOption o;
-            o.car = ci, o.wheel = k;
-            o.at = (c.nodes[wh.inner].p + c.nodes[wh.outer].p) * 0.5;
-            if (wh.mounted && !hands && !wk.holdingJack) {
-                o.kind = IA_REMOVE_WHEEL, o.hold = kRemoveWheel;
-                o.prompt = wh.debeaded ? "TAKE THE BARE RIM OFF" : wh.popped ? "TAKE THE FLAT OFF" : "TAKE THE WHEEL OFF";
-                consider(o);
-            } else if (!wh.mounted && wheelInHands) {
-                o.kind = IA_FIT_WHEEL, o.hold = kFitWheel, o.prompt = withSize("FIT THE WHEEL", *wk.carrying);
-                consider(o);
-            } else if (wh.mounted && wh.debeaded && tireInHands) {
-                o.kind = IA_RESEAT_TIRE, o.hold = kReseatTire, o.prompt = "PUT THE TIRE BACK ON THE RIM";
+        // Repairs (fixes.h): your tools and a part.
+        if (!busy)
+            for (const Fix& f : fixesFor(c)) {
+                InteractOption o;
+                o.car = ci, o.wheel = f.wheel, o.kind = IA_FIX, o.fix = f, o.at = f.at, o.hold = f.hold;
+                const bool lifted = f.wheel >= 0 && cornerLifted(sim, c, f.wheel);
+                const std::string miss = missingFor(f, kit, lifted);
+                o.prompt = f.what;
+                if (!miss.empty()) o.blocked = true, o.prompt += ": " + miss;
+                else if (!kit.unlimited) o.prompt += " (" + std::to_string(kit.parts[f.part]) + " " + repairPartName(f.part) + (kit.parts[f.part] == 1 ? ")" : "S)");
                 consider(o);
             }
-        }
     }
     if (!hands && spots)
         for (int si = 0; si < (int)spots->size(); si++) {
@@ -203,14 +198,36 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
 }
 
 std::string Interact::update(Sim& sim, Walker& wk, const V3& eye, const V3& look, bool holdE, double dt) {
-    const InteractOption o = pick(sim, wk, eye, look, &spots);
+    InteractOption o = pick(sim, wk, eye, look, &spots, kit);
+    if (!holdE) waitRelease = false;
+    // Working the jack: it goes on while E is held, whatever it turns into on the way.
+    if (holdE && progress > 0 && current.continuous && o.car == current.car) o = current;
     if (!o.same(current)) progress = 0;
     current = o;
-    if (!holdE || o.kind == IA_NONE) {
+    if (!holdE || o.kind == IA_NONE || o.blocked || waitRelease) {
         progress = 0;
         return "";
     }
     progress += dt;
+    if (o.continuous) {
+        Car& c = sim.cars[o.car];
+        c.wake();
+        if (o.kind == IA_RAISE_JACK) {
+            c.jackHeight = std::min(kJackMax, c.jackHeight + kJackRate * dt);
+            c.jackWorked = true;
+            if (cornerLifted(sim, c, o.wheel) || c.jackHeight >= kJackMax) {
+                progress = 0, waitRelease = true;
+                return c.jackHeight >= kJackMax && !cornerLifted(sim, c, o.wheel) ? "THE JACK'S AS HIGH AS IT GOES" : "CORNER UP";
+            }
+        } else {
+            c.jackHeight = std::max(0.0, c.jackHeight - kJackRate * dt);
+            if (c.jackHeight <= 0) {
+                progress = 0, waitRelease = true;
+                return "JACK DOWN";
+            }
+        }
+        return "";
+    }
     if (progress < o.hold) return "";
     progress = 0;
     WheelItem it;
@@ -236,9 +253,6 @@ std::string Interact::update(Sim& sim, Walker& wk, const V3& eye, const V3& look
             if (!sim.pickUpWheel(o.loose, it)) return "";
             wk.carrying = it;
             return "";
-        case IA_TAKE_JACK:
-            wk.holdingJack = true;
-            return "GOT THE JACK";
         case IA_OPEN_CACHE:
             if (o.spot >= 0 && o.spot < (int)spots.size()) openedSpot = spots[o.spot].id;
             return "";
@@ -275,41 +289,34 @@ std::string Interact::update(Sim& sim, Walker& wk, const V3& eye, const V3& look
             wk.holdingChain = true;
             return "CHAIN OFF";
         }
-        case IA_PLACE_JACK:
-            sim.cars[o.car].jackPlaced = true;
-            sim.cars[o.car].jackWheel = o.wheel;
-            sim.cars[o.car].jackHeight = 0;
-            wk.holdingJack = false;
-            return "JACK PLACED";
-        case IA_USE_JACK: {
-            Car& c = sim.cars[o.car];
-            if (!c.jackPlaced) return "PLACE THE JACK FIRST";
-            if (c.jackWheel != o.wheel) return "USE THE JACK UNDER THIS WHEEL";
-            // Lift the corner by moving the hub up.
-            Wheel& wh = c.wheels[o.wheel];
-            const V3 hub = (c.nodes[wh.inner].p + c.nodes[wh.outer].p) * 0.5;
-            const V3 lift = V3(0, 0.02, 0);  // 2 cm per use
-            for (Node& n : c.nodes) n.p += lift;
-            c.jackHeight += 0.02;
-            c.wake();
-            return "LIFTING";
-        }
-        case IA_LOWER_JACK: {
-            Car& c = sim.cars[o.car];
-            if (!c.jackPlaced) return "";
-            // Lower the corner.
-            const V3 drop = V3(0, -0.02, 0);  // 2 cm per use
-            for (Node& n : c.nodes) n.p += drop;
-            c.jackHeight = std::max(0.0, c.jackHeight - 0.02);
-            c.wake();
-            return "LOWERING";
-        }
-        case IA_REMOVE_JACK:
-            sim.cars[o.car].jackPlaced = false;
-            sim.cars[o.car].jackWheel = -1;
-            sim.cars[o.car].jackHeight = 0;
+        case IA_TAKE_JACK:
             wk.holdingJack = true;
-            return "JACK REMOVED";
+            return "GOT THE JACK";
+        case IA_STOW_JACK:
+            wk.holdingJack = false;
+            return "JACK PUT AWAY";
+        case IA_PLACE_JACK: {
+            Car& c = sim.cars[o.car];
+            const Wheel& wh = c.wheels[o.wheel];
+            const V3 hub = hubOf(c, wh);
+            c.jackPlaced = true, c.jackWheel = o.wheel, c.jackHeight = 0, c.jackWorked = false;
+            c.jackBase = hub.y - sim.world.height(hub.x, hub.z) - 0.02;  // (the saddle wound up to just under the axle)
+            wk.holdingJack = false;
+            return "JACK UNDER";
+        }
+        case IA_REMOVE_JACK: {
+            Car& c = sim.cars[o.car];
+            c.jackPlaced = false, c.jackWheel = -1, c.jackHeight = 0;
+            wk.holdingJack = true;
+            return "GOT THE JACK";
+        }
+        case IA_FIX: {
+            Car& c = sim.cars[o.car];
+            if (len(c.frame().vel) > 0.5) return "STOP THE TRUCK FIRST";
+            if (!applyFix(c, o.fix)) return "";
+            usedPart = o.fix.part;
+            return std::string(repairPartName(o.fix.part)) + " FITTED";
+        }
         default:
             return "";
     }

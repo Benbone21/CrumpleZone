@@ -72,6 +72,15 @@ public:
         double stride = 0;  // walk cycle phase (radians), legs and arms swing with it
     };
     std::vector<Figure> figures;
+    // Code-made models (modelkit.h) drawn this frame only: a jack under a wheel, the tools in
+    // your hands (handwork.h)...
+    std::vector<Placed> frameModels;
+    // A wheel being worked on this frame: slid out along its axle (coming off), and its snow
+    // chain part wrapped (0..1; -1 as it is).
+    struct WheelWork {
+        int car = -1, wheel = -1;
+        double out = 0, chain = -1;
+    } wheelWork;
     // A wheel in your arms, drawn this frame (first person: low in front of the eye).
     struct Carried {
         bool on = false;
