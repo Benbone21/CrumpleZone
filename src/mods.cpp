@@ -595,7 +595,7 @@ const Universal& universal() {
             for (int w = 0; w < n; w++) {
                 if (w == v) continue;
                 const VehicleSpec* from = &cat[w];
-                const std::string who = shortName(cat[w]) + ": ";
+                const std::string who = vehicleListed(w) ? shortName(cat[w]) + ": " : std::string("SWAP: ");  // (the Civic, UTV and buggy aren't offered: their parts are just swaps)
                 U.opts[v][MOD_ENGINE].push_back({who + cat[w].engineName, "STOCK  " + powerLine(cat[w]), [from](VehicleSpec& s) { takeEngine(s, *from); }, w, 0});
                 for (size_t o = 1; o < base[w][MOD_ENGINE].size(); o++) {
                     const ModOption& mo = base[w][MOD_ENGINE][o];
