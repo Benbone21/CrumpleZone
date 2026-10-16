@@ -70,7 +70,7 @@ constexpr double kBareHubI = 0.3;
 V3 Car::spareAt() const {
     V3 p;
     for (size_t i = 0; i < spareNodes.size(); i++) p += nodes[spareNodes[i]].p * spareWeights[i];
-    return p;
+    return gateCarried() ? gateSwung(p, true) : p;  // (a carrier swings away with the gate)
 }
 
 V3 Car::stowAt(Stow what) const {
@@ -120,7 +120,8 @@ void Car::placeJack(const World& world, int k) {
 
 V3 Car::spareAxis() const {
     const Frame f = frame();
-    return spec->spareFlat ? f.up : -f.fwd;
+    const V3 ax = spec->spareFlat ? f.up : -f.fwd;
+    return gateCarried() ? gateSwung(ax, false) : ax;
 }
 
 WheelItem Sim::wheelItem(const Car& c, const Wheel& wh) const {

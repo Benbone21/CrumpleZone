@@ -465,6 +465,7 @@ void Car::computeForces(double h, const World& w) {
         }
     }
 
+    gateServo(h);
     engineBlockContact(h);
     panelBodyContact(h);
     wheelBodyContact(h);
@@ -2012,6 +2013,10 @@ void Car::updateStats() {
         else if (hinges > 0 && othersLeft == 0) p.state = 1;
         else if (hinges == 0 && othersLeft * 3 < holding) p.state = 1;  // hanging by a clip or two
         else p.state = 0;
+        if (p.hand) {  // opened by hand (trunk.cpp): that's using it, not damage, while a hinge holds
+            if (hingesLeft > 0) p.state = 0;
+            else p.hand = false;
+        }
         if (p.state != 0)  // an open door's frame swings away from its seal
             for (int pi : p.pins)
                 if (pins[pi].kind == PIN_SEAL) pins[pi].broken = true;
@@ -2128,6 +2133,8 @@ int Sim::advance(double realDt, int maxSubsteps) {
         n++;
     }
     if (n == maxSubsteps) accum = 0;  // can't keep up: slow down rather than spiral
+    for (Car& c : cars)
+        if (c.gate.dir != 0) c.gateStep(realDt * timeScale);
     wrapAround();
     return n;
 }

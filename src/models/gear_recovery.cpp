@@ -1076,11 +1076,20 @@ Reg treeSaver({"tree_saver", "TREE SAVER", "RECOVERY", "Trunk-protector strap dr
 
 // ---- 7. Ground anchor -------------------------------------------------------------------------
 
+// Gear out of the ground (in the back of a truck, in your hands: Placed::bare): none of the soil, snow,
+// ice or drill scar it's shown set in.
+thread_local bool tLoose = false;
+struct Loose {
+    explicit Loose(const P& p) { tLoose = p("bare") > 0; }
+    ~Loose() { tLoose = false; }
+};
+
 V3 soilCol(int i) {
     static const V3 c[] = {V3(0.38, 0.30, 0.21), V3(0.24, 0.19, 0.14), V3(0.55, 0.46, 0.32)};
     return c[std::clamp(i, 0, 2)];
 }
 void soilMound(B& b, const V3& c, const V3& radii, uint32_t seed, const V3& soil, int detail = 1) {
+    if (tLoose) return;
     b.style(soil * (0.88 + 0.24 * hash01(seed, 4)), MATTE);
     b.blob(c, radii, 0.22, seed, detail, 0.5, 0.0);
 }
@@ -1321,16 +1330,17 @@ Reg groundStake({"ground_stake", "GROUND STAKE", "RECOVERY", "A stake or plate a
                  {
                      {"PLATE ANCHOR", "A pull-pal plate dug in at a slant, a pad-eye and a shackle",
                       {choice("finish", "PLATE", 0, {"RAW STEEL", "YELLOW", "RED"}), num("wear", "WEAR", 0.3, 0, 1, 0.05), choice("soil", "SOIL", 0, {"LOAM", "DARK", "SAND"})},
-                      [](B& b, const P& p) { plateStake(b, p.i("finish"), p("wear"), soilCol(p.i("soil"))); }},
+                      [](B& b, const P& p) { Loose l(p); plateStake(b, p.i("finish"), p("wear"), soilCol(p.i("soil"))); }},
                      {"DRIVEN STAKE", "A steel stake sledged in leaning back, a welded eye and a shackle",
                       {choice("finish", "STAKE", 0, {"RAW STEEL", "RED", "YELLOW"}), num("lean", "LEAN", 20, 0, 35, 1), num("wear", "WEAR", 0.3, 0, 1, 0.05), choice("soil", "SOIL", 0, {"LOAM", "DARK", "SAND"})},
-                      [](B& b, const P& p) { drivenStake(b, p.i("finish"), p("lean"), p("wear"), soilCol(p.i("soil"))); }},
+                      [](B& b, const P& p) { Loose l(p); drivenStake(b, p.i("finish"), p("lean"), p("wear"), soilCol(p.i("soil"))); }},
                  }});
 
 // ---- Rock bolt: drilled into bare rock ----
 
 // The pale scar where the drill bit chewed the rock, and the dust round the hole.
 void drillScar(B& b, double R, uint32_t seed) {
+    if (tLoose) return;
     b.style(V3(0.66, 0.62, 0.55), ROCK);
     b.blob(V3(0, 0.002, 0), V3(R, 0.008, R * 0.92), 0.25, seed, 1, 0.6, 0.0);
     b.style(V3(0.58, 0.54, 0.48), MATTE);
@@ -1374,10 +1384,10 @@ Reg rockBolt({"rock_bolt", "ROCK BOLT", "RECOVERY", "An eye bolt or pad-eye dril
               {
                   {"EYE BOLT", "A forged eye bolt in an expansion sleeve, a shackle through it",
                    {paintParam(0, "shackle", "SHACKLE"), num("wear", "WEAR", 0.3, 0, 1, 0.05)},
-                   [](B& b, const P& p) { eyeBolt(b, p("wear"), paint(p.i("shackle"))); }},
+                   [](B& b, const P& p) { Loose l(p); eyeBolt(b, p("wear"), paint(p.i("shackle"))); }},
                   {"PAD-EYE", "A plate bolted down with four anchors, a welded lug and a shackle",
                    {paintParam(8, "shackle", "SHACKLE"), choice("finish", "PLATE", 0, {"RAW STEEL", "RED"}), num("wear", "WEAR", 0.3, 0, 1, 0.05)},
-                   [](B& b, const P& p) { padEye(b, p("wear"), paint(p.i("shackle")), p.i("finish") == 1); }},
+                   [](B& b, const P& p) { Loose l(p); padEye(b, p("wear"), paint(p.i("shackle")), p.i("finish") == 1); }},
               }});
 
 // ---- Ice anchor: a snow picket or an ice screw ----
@@ -1400,9 +1410,11 @@ void snowPicket(B& b, double lean, double wear, const V3& snow) {
     b.tube(spline(loop, 3), 0.0035, 5, true);
     b.style(V3(0.78, 0.80, 0.82), METAL);
     ringAxis(b, V3(0.12, 0.075, 0), 'z', 0.028, 0.0065, 14, 5);
-    b.style(snow * 0.97, MATTE);
-    b.blob(V3(0.02, 0, 0), V3(0.22, 0.06, 0.2), 0.25, 61, 2, 0.45, 0.0);
-    b.blob(V3(-0.1, 0, 0.1), V3(0.1, 0.04, 0.09), 0.3, 62, 1, 0.5, 0.0);
+    if (!tLoose) {
+        b.style(snow * 0.97, MATTE);
+        b.blob(V3(0.02, 0, 0), V3(0.22, 0.06, 0.2), 0.25, 61, 2, 0.45, 0.0);
+        b.blob(V3(-0.1, 0, 0.1), V3(0.1, 0.04, 0.09), 0.3, 62, 1, 0.5, 0.0);
+    }
 }
 
 // A tubular ice screw wound in, its folded hanger and a clip, the crank handle laid beside it.
@@ -1420,12 +1432,14 @@ void iceScrew(B& b, double wear, const V3& ice) {
     // The crank, laid on the ice.
     b.style(V3(0.30, 0.31, 0.33), METAL);
     b.tube({V3(-0.12, 0.012, 0.22), V3(-0.12, 0.012, 0.06), V3(-0.15, 0.012, 0.02), V3(-0.25, 0.012, 0.02)}, 0.0075, 6);
-    // The crust cracked round the hole, chips of ice.
-    b.style(ice, MATTE);
-    b.blob(V3(0, 0.003, 0), V3(0.12, 0.012, 0.11), 0.3, 63, 1, 0.6, 0.0);
-    for (int i = 0; i < 6; i++) {
-        const double ang = rad(60 * i + 15), rr = 0.1 + 0.07 * hash01(64, i);
-        b.blob(V3(rr * std::cos(ang), 0.003, rr * std::sin(ang)), V3(0.02, 0.008, 0.016), 0.3, 65 + i, 0, 0.5, 0.0);
+    if (!tLoose) {
+        // The crust cracked round the hole, chips of ice.
+        b.style(ice, MATTE);
+        b.blob(V3(0, 0.003, 0), V3(0.12, 0.012, 0.11), 0.3, 63, 1, 0.6, 0.0);
+        for (int i = 0; i < 6; i++) {
+            const double ang = rad(60 * i + 15), rr = 0.1 + 0.07 * hash01(64, i);
+            b.blob(V3(rr * std::cos(ang), 0.003, rr * std::sin(ang)), V3(0.02, 0.008, 0.016), 0.3, 65 + i, 0, 0.5, 0.0);
+        }
     }
 }
 
@@ -1433,10 +1447,10 @@ Reg iceAnchor({"ice_anchor", "ICE ANCHOR", "RECOVERY", "A snow picket or an ice 
                {
                    {"SNOW PICKET", "An aluminium picket buried at a slant, a cable loop and a clip",
                     {num("lean", "LEAN", 30, 0, 45, 1), num("wear", "WEAR", 0.3, 0, 1, 0.05), choice("snow", "SNOW", 0, {"FRESH", "BLUE", "DIRTY"})},
-                    [](B& b, const P& p) { snowPicket(b, p("lean"), p("wear"), snowCol(p.i("snow"))); }},
+                    [](B& b, const P& p) { Loose l(p); snowPicket(b, p("lean"), p("wear"), snowCol(p.i("snow"))); }},
                    {"ICE SCREW", "A tubular screw wound into the ice, a hanger, a clip and the crank beside it",
                     {num("wear", "WEAR", 0.3, 0, 1, 0.05), choice("ice", "ICE", 0, {"FRESH", "BLUE", "DIRTY"})},
-                    [](B& b, const P& p) { iceScrew(b, p("wear"), snowCol(p.i("ice"))); }},
+                    [](B& b, const P& p) { Loose l(p); iceScrew(b, p("wear"), snowCol(p.i("ice"))); }},
                }});
 
 // ---- Chain sling: choked round a boulder ----

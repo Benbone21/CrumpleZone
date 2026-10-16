@@ -1,5 +1,6 @@
 #include "handwork.h"
 
+#include <algorithm>
 #include <cmath>
 
 #include "mathx.h"
@@ -25,7 +26,7 @@ double smooth(double x) { return x * x * (3 - 2 * x); }
 struct Scene {
     Handwork& out;
     // A model turned so its front is X and its up is (near) Y.
-    void put(const char* id, const V3& at, V3 X, V3 Y) {
+    void put(const char* id, const V3& at, V3 X, V3 Y, double scale = 1) {
         if (!id || !*id || !mk::findModel(id)) return;
         X = norm(X);
         Y = Y - X * dot(Y, X);
@@ -33,6 +34,7 @@ struct Scene {
         Placed p;
         p.id = id, p.p = at, p.oriented = true;
         p.ax[0] = X, p.ax[1] = Y, p.ax[2] = cross(X, Y);
+        p.scale = V3(scale, scale, scale);
         out.models.push_back(p);
     }
     // A wrench or socket turning a nut or bolt: `top` is the middle of its outer face, `axis` the
@@ -122,10 +124,10 @@ int starNut(int visit, int n) { return n % 2 ? visit * 2 % n : visit % n; }
 
 }  // namespace
 
-Handwork handwork(const Sim& sim, const Walker& wk, const Interact& ia, const V3& eye, const V3& look, double /*time*/) {
+Handwork handwork(const Sim& sim, const Walker& wk, const Interact& ia, const V3& eye, const V3& look, double time) {
     Handwork h;
     Scene sc{h};
-    const V3 F = norm(look), R = norm(cross(F, kUp));
+    const V3 F = norm(look), R = norm(cross(F, kUp)), U = cross(R, F);
     const InteractOption& o = ia.current;
     const bool working = ia.progress > 0 && o.kind != IA_NONE && !o.blocked;
     const double t = o.continuous ? 0 : ia.share();
@@ -137,6 +139,18 @@ Handwork handwork(const Sim& sim, const Walker& wk, const Interact& ia, const V3
     // What you carry while you walk.
     if (wk.holdingJack && !(working && o.kind == IA_PLACE_JACK)) sc.put("jack", eye + flat(F) * 0.55 + R * 0.1 - kUp * 1.05, flat(F), kUp);
     if (wk.holdingChain && !(working && o.kind == IA_FIT_CHAIN)) sc.put("chain_bundle", eye + flat(F) * 0.5 + R * 0.05 - kUp * 0.75, flat(F), kUp);
+    // A tool, part or anchor out of the back (trunk.h): held out in front of the right hand.
+    if (wk.hand.any() && !working) {
+        const char* id = trunk::model(wk.hand);
+        if (id && *id && mk::findModel(id)) {
+            const mk::Mesh& m = mk::modelMesh(id);
+            const double L = std::max({m.hi.x - m.lo.x, m.hi.y - m.lo.y, m.hi.z - m.lo.z, 0.05});
+            const double k = clampd(0.4 / L, 0.35, 2.0), bob = 0.01 * std::sin(time * 1.7);
+            const V3 grip = eye + F * 0.5 + R * 0.2 - U * 0.24 + kUp * bob;
+            sc.put(id, grip, flat(F) * 0.95 + U * 0.3 - R * 0.15, kUp, k);
+            h.models.back().bare = true;  // (an anchor without the soil, snow or rock it's shown set in)
+        }  // (no hand drawn: just the thing)
+    }
     if (!working) return h;
 
     switch (o.kind) {

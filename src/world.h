@@ -69,6 +69,7 @@ struct Placed {
     bool oriented = false;   // turned any way at all (things in your hands): its front, up and left
     V3 ax[3];
     bool bare = false;       // a part fitted in a car (carparts.h): built without the stand it's shown on (cached)
+    bool sunlit = false;     // lit as if out in the sun, whatever shades it (a truck's load, under its roof: trunk.h)
 };
 
 // A repair station: a concrete pad under an open shed. Park on it, stop, and the crew

@@ -427,6 +427,8 @@ void main(){
   vec3 n = normalize(vNrm);
   vec3 base = vCol.rgb;
   int mat = int(vCol.a + 0.5);
+  bool sunlit = mat >= 100;  // (a cargo model inside a body's shadow: Placed::sunlit)
+  if (sunlit) mat -= 100;
   float specK = 0.04, specP = 16.0;
   if (mat == 7) {
     terrainProcedural(n, base, specK, specP);
@@ -469,6 +471,7 @@ void main(){
 
   vec3 lin = pow(base, vec3(2.2));
   float sh = shadowAt(vPos, n);
+  if (sunlit) sh = max(sh, 0.85);
   float diff = max(dot(n, uSun), 0.0);
   vec3 amb = ambientAt(n);
   vec3 V = normalize(uCam - vPos);

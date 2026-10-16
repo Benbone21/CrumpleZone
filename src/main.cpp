@@ -819,6 +819,48 @@ void drawAnchors(Renderer& r, const Sim& sim, float u, int W, int H) {
     }
 }
 
+// On foot at the open back: everything in the truck (trunk.h), a line each, grouped. In your hands: marked.
+void drawInventory(Renderer& r, const Sim& sim, const TrunkStock& own, const Walker& wk, float u, int W, int H) {
+    const Car& car = sim.cars[sim.player];
+    const std::vector<TrunkItem> items = trunk::contents(car, own, true, TrunkRef(), false);
+    struct Row {
+        std::string text;
+        bool head;
+        bool held;
+    };
+    std::vector<Row> rows;
+    static const char* heads[] = {"TOOLS", "REPAIR PARTS", "ANCHOR GEAR", "RECOVERY AND SNOW"};
+    for (int grp = 0; grp < 4; grp++) {
+        std::vector<Row> g;
+        for (const TrunkItem& it : items) {
+            const int k = it.ref.kind;
+            if ((grp == 0 && k != TK_TOOL) || (grp == 1 && k != TK_PART) || (grp == 2 && k != TK_GEAR) || (grp == 3 && k != TK_CHAINS && k != TK_JACK)) continue;
+            g.push_back({trunk::lineFor(it), false, it.ref == wk.hand});
+        }
+        if (grp == 3 && car.jackPlaced) g.push_back({"HI-LIFT JACK (UNDER THE TRUCK)", false, false});
+        if (g.empty()) continue;
+        rows.push_back({heads[grp], true, false});
+        rows.insert(rows.end(), g.begin(), g.end());
+    }
+    if (rows.empty()) rows.push_back({"NOTHING IN THE BACK", false, false});
+    const float s = px(1.3f * u), lh = 11 * s;
+    float w = r.textWidth("TRUCK INVENTORY", px(1.6f * u));
+    for (const Row& row : rows) w = std::max(w, r.textWidth(row.text + (row.held ? "  (IN YOUR HAND)" : ""), s));
+    w += 40 * u;
+    const float h = lh * (float)rows.size() + 34 * u + 10 * s + 40 * u;
+    const float x = 30 * u, y = std::max(70.0f * u, (H - h) / 2);
+    pill(r, x, y, w, h, 0.02f, 0.03f, 0.04f, 0.78f);
+    label(r, x + 16 * u, y + 12 * u, px(1.6f * u), "TRUCK INVENTORY", 1.0f, 0.75f, 0.3f);
+    float yy = y + 34 * u + 10 * s;
+    for (const Row& row : rows) {
+        if (row.head) r.text(x + 16 * u, yy, s, row.text, 0.55f, 0.62f, 0.7f);
+        else r.text(x + 26 * u, yy, s, row.text + (row.held ? "  (IN YOUR HAND)" : ""), row.held ? 1.0f : 0.92f, row.held ? 0.75f : 0.93f, row.held ? 0.3f : 0.95f);
+        yy += lh;
+    }
+    (void)W;
+    r.text(x + 16 * u, y + h - 24 * u, px(1.1f * u), pad::ui.last ? "Y: CLOSE" : "TAB OR I: CLOSE", 0.65f, 0.68f, 0.72f);
+}
+
 // Repair station status while parked on (or rolling onto) a pad.
 void drawStation(Renderer& r, const Sim& sim, float u, int W, int H) {
     const Car& car = sim.cars[sim.player];
@@ -1059,7 +1101,7 @@ void drawHelp(Renderer& r, float u, int W, int H, bool mph) {
     const char* keys[][2] = {
         {"W S", "DRIVE / BRAKE / REVERSE"}, {"A D", "STEER"},
         {"SPACE", "HANDBRAKE"},               {"R", "REPAIR IN PLACE (R R: RESPAWN)"},
-        {"T", "BACK ON ITS WHEELS"},          {"TAB", "NEXT VEHICLE (DRIVE YOUR BUDDY)"},
+        {"T", "BACK ON ITS WHEELS"},          {"TAB", "NEXT VEHICLE (ON FOOT: TRUCK INVENTORY, I)"},
         {"V", "WINCH: HOOK / UNHOOK"},        {"Z", "WINCH IN (SHIFT+Z: OUT, - = SPEED)"},
         {"O", "TOW STRAP: CLICK YOUR POINT, THEN THEIRS"},   {"Y", "FRONT SWAY BAR DISCONNECT"},
         {"9 0", "AIR DOWN / UP (STOPPED)"},
@@ -2103,12 +2145,21 @@ int main(int argc, char** argv) {
     // ---- On foot ----
     Walker walker;
     Interact interact;  // on foot: the hold-E jobs (the spare, the wheels)
+    bool invOpen = false;  // on foot at the open back: the list of what's in the truck (TAB / I)
     double walkSend = 0, carCamDist = 7.5;
     // On foot you see through your own eyes: the mouse turns your head (no button needed)
     // and the keys walk where you look.
     double footYaw = 0, footPitch = 0;
     bool scriptE = false;  // (--script work-*: E held)
     bool mouseLook = false;
+    auto toggleInventory = [&]() {
+        if (invOpen) {
+            invOpen = false;
+            return;
+        }
+        if (!trunk::kitInReach(sim, walker.p)) hud.toast("OPEN THE BACK OF YOUR TRUCK (HOLD E AT IT) TO SEE WHAT'S IN IT");
+        else invOpen = true;
+    };
     auto getOut = [&]() {
         Car& c = sim.cars[sim.player];
         if (len(c.frame().vel) > 2.0) {
@@ -2125,6 +2176,8 @@ int main(int argc, char** argv) {
         hud.toast("ON FOOT: MOUSE LOOK, WASD WALK, SHIFT RUN, SPACE JUMP, V HOOK YOUR WINCH HERE, J GET IN");
     };
     auto getIn = [&]() {
+        walker.hand = TrunkRef();  // (a tool in your hand goes back in the truck with you)
+        invOpen = false;
         if (walker.carrying) Interact::drop(sim, walker, V3(std::cos(walker.yaw), 0, -std::sin(walker.yaw)));  // (whisked away: it's left there)
         else if (walker.holdingJack) Interact::dropJack(sim, walker);  // (put the jack down)
         const int k = walker.carToEnter(sim);
@@ -2707,6 +2760,10 @@ int main(int argc, char** argv) {
                             break;
                         }
                         case SC_TAB:
+                            if (walker.active) {  // (on foot: the truck's inventory)
+                                toggleInventory();
+                                break;
+                            }
                             sim.player = sim.nextVehicle(sim.player);
                             sim.cars[sim.player].wake();
                             hud.toast(std::string("DRIVING ") + sim.cars[sim.player].spec->name);
@@ -2784,6 +2841,7 @@ int main(int argc, char** argv) {
                             if (walker.active) {
                                 if (walker.carrying) Interact::drop(sim, walker, lastView.target - lastView.eye);  // (on foot: put down what you carry)
                                 else if (walker.holdingJack) Interact::dropJack(sim, walker);  // (put the jack down)
+                                else if (walker.hand.any()) hud.toast("PUT IT BACK IN THE TRUCK: HOLD E AT THE OPEN BACK");
                             }
                             else openGarage();
                             break;
@@ -2891,6 +2949,10 @@ int main(int argc, char** argv) {
                             break;
                         }
                         case SC_I:
+                            if (walker.active) {
+                                toggleInventory();
+                                break;
+                            }
                             hud.toast(sim.spawnAhead(garage.spec(listedVehicles()[spawnType]))
                                           ? std::string("SPAWNED ") + vehicleCatalog()[listedVehicles()[spawnType]].name
                                           : std::string("VEHICLE LIMIT REACHED"));
@@ -3058,6 +3120,50 @@ int main(int argc, char** argv) {
                 }
                 scriptE = frame > 70;
             }
+            if (opt.script == "trunk") {  // screenshots of the cargo: the gate, what rides in the back, taking things out, the list
+                Car& c = sim.cars[sim.player];
+                const Frame fr = c.frame();
+                const V3 fl = norm(V3(fr.fwd.x, 0, fr.fwd.z));
+                auto stand = [&](double behind) {  // behind the truck, centred
+                    walker.p = fr.com - fl * (c.spec->length * 0.5 + behind);
+                    walker.p.y = sim.world.height(walker.p.x, walker.p.z);
+                    walker.v = V3();
+                };
+                auto look = [&](const V3& at) {
+                    const V3 d = norm(at - (walker.p + V3(0, 1.62, 0)));
+                    footYaw = std::atan2(-d.z, d.x), footPitch = std::asin(d.y);
+                };
+                auto itemAim = [&](TrunkRef r, V3& at) {  // where an item of the back lies
+                    const TrunkStock st{career.kit(), sim.anchorStock};
+                    const std::vector<TrunkItem> items = trunk::wholeLoad(c, st, true, walker.hand, walker.holdingJack, walker.holdingChain);
+                    const std::vector<TrunkSlot> slots = trunk::layout(c, items);
+                    for (int i = 0; i < (int)items.size(); i++)
+                        if (items[i].ref == r) return trunk::aimAt(c, fr, items, slots, i, at);
+                    return false;
+                };
+                V3 at;
+                if (frame == 20) c.handbrake = 1, getOut();
+                scriptE = false;
+                if (frame >= 24 && frame < 140) {  // the closed back, then hold E: it opens
+                    if (frame == 24) stand(1.9);
+                    look(trunk::gateAt(c));
+                    scriptE = frame > 40 && c.gateShut();
+                } else if (frame >= 140 && frame < 175) {  // the open back, and a step closer to look in
+                    if (frame == 140) stand(1.0);
+                    look(trunk::cargoCenter(c));
+                } else if (frame >= 175 && frame < 270) {  // the hi-lift jack: hold E, and it's in your hands
+                    if (itemAim({TK_JACK, 0}, at) || walker.holdingJack) look(walker.holdingJack ? trunk::cargoCenter(c) : at);
+                    scriptE = frame > 180 && !walker.holdingJack;
+                } else if (frame >= 270 && frame < 330) {  // ...and back it goes
+                    look(trunk::cargoCenter(c));
+                    scriptE = frame > 275 && walker.holdingJack;
+                } else if (frame >= 330 && frame < 420) {  // a ground stake
+                    if (itemAim({TK_GEAR, GEAR_STAKE}, at)) look(at);
+                    scriptE = frame > 335 && !walker.hand.any();
+                } else if (frame == 420) {
+                    invOpen = true;
+                }
+            }
             if (opt.script == "winch" || opt.script == "strap") {  // screenshots of the recovery gear
                 if (frame == 20) std::printf("%s\n", (opt.script == "winch" ? sim.hookWinch(sim.player) : sim.hookStrap(sim.player)).c_str());
                 winch = opt.script == "winch" && frame > 20 ? 1 : 0;
@@ -3190,7 +3296,21 @@ int main(int argc, char** argv) {
                             }
                         }
                     }
-                    interact.kit = career.kit();
+                    {  // your kit rides in the truck's back (trunk.h): usable in your hand, or at its open back
+                        const Kit have = career.kit();
+                        TrunkRef& hd = walker.hand;
+                        if ((hd.kind == TK_TOOL && !have.has((Tool)hd.id)) || (hd.kind == TK_PART && !have.hasPart((RepairPart)hd.id)) ||
+                            (hd.kind == TK_GEAR && sim.anchorStock.n[hd.id] <= 0))
+                            hd = TrunkRef();  // (used up, or lost)
+                        interact.own = TrunkStock{have, sim.anchorStock};
+                        // (--script work-*: the old way, everything on you: those shots are of the work, not the trunk)
+                        const bool onYou = scripted && opt.script.rfind("work-", 0) == 0;
+                        interact.trunkOn = !onYou;
+                        const bool reach = onYou || trunk::kitInReach(sim, walker.p);
+                        interact.kit = onYou ? have : trunk::reachKit(have, reach, hd, walker.holdingJack);
+                        if (invOpen && !reach) invOpen = false;  // (walked off, or shut it)
+                        if (padCtx == pad::Mode::Drive && padLogic.in.inventory) toggleInventory();
+                    }
                     const std::string said = interact.update(sim, walker, lastView.eye, lastView.target - lastView.eye, holdE, dt);
                     if (!said.empty()) hud.toast(said);
                     if (interact.usedPart >= 0) {  // a repair used a part
@@ -3219,6 +3339,7 @@ int main(int argc, char** argv) {
                     if (padCtx == pad::Mode::Drive && padLogic.in.drop) {
                         if (walker.carrying) Interact::drop(sim, walker, lastView.target - lastView.eye);
                         else if (walker.holdingJack) Interact::dropJack(sim, walker);
+                        else if (walker.hand.any()) hud.toast("PUT IT BACK IN THE TRUCK: HOLD " + std::string("X") + " AT THE OPEN BACK");
                     }
                 }
                 up = down = left = right = false;
@@ -3695,9 +3816,17 @@ int main(int argc, char** argv) {
         if (mk::findModel("jack"))
             for (const Car& c : sim.cars)
                 if (c.jackPlaced && c.jackWheel >= 0 && c.jackWheel < (int)c.wheels.size()) renderer.frameModels.push_back(Interact::jackModel(sim, c, c.jackWheel));
-        // What rides in the back: the chains in their bag, the jack (while they're there).
+        // What rides in the back (trunk.h): your load laid out in the cargo area of a truck with its back
+        // open (a pickup's bed always), and a pickup's gate.
+        const TrunkStock ownStock{career.kit(), sim.anchorStock};
+        for (int i = 0; i < (int)sim.cars.size(); i++) {
+            const Car& c = sim.cars[i];
+            if (c.isProp() || c.nodes.empty() || !c.hasGate() || len(c.nodes[0].p - view.eye) > 30) continue;
+            trunk::models(sim, i, ownStock, walker.active ? walker.hand : TrunkRef(), walker.active && walker.holdingJack, walker.active && walker.holdingChain, renderer.frameModels);
+        }
+        // What rides in the back of a truck with no cargo area to open: the chains in their bag, the jack (while they're there).
         for (const Car& c : sim.cars) {
-            if (c.isProp() || !c.spec->wheelLoss) continue;
+            if (c.isProp() || !c.spec->wheelLoss || c.hasGate()) continue;
             const Frame fr = c.frame();
             auto stowed = [&](const char* id, const V3& at) {
                 if (!mk::findModel(id)) return;
@@ -3770,6 +3899,11 @@ int main(int argc, char** argv) {
                     renderer.rect(bx, by, bw * (float)interact.share(), 5 * u, 1.0f, 0.75f, 0.3f, 0.95f);
                 }
             }
+            if (walker.hand.any() && !walker.carrying) {
+                const std::string line = "IN YOUR HAND: " + trunk::name(walker.hand) + (padNow ? "   (PUT IT BACK AT THE OPEN BACK: X)" : "   (PUT IT BACK AT THE OPEN BACK: E)");
+                centeredPill(renderer, W / 2.0f, H - 110 * u, px(1.2f * u), line, 0, 0, 0, 0.55f, 0.9f, 0.92f, 0.95f);
+            }
+            if (invOpen) drawInventory(renderer, sim, TrunkStock{career.kit(), sim.anchorStock}, walker, u, W, H);
             if (walker.carrying) {
                 const std::string line = "CARRYING A " + walker.carrying->sizeName() + (walker.carrying->tireOnly ? "" : " WHEEL") +
                                          (walker.carrying->popped ? " (FLAT)" : "") + (padNow ? "   B: PUT IT DOWN" : "   G: PUT IT DOWN");

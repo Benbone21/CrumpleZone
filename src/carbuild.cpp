@@ -106,6 +106,7 @@ V3 pointVel(const Row& q, const V3& o, const V3& p) {
 void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col) {
     spec = &vs;
     chains = vs.snowChains;
+    gate = Gate();  // (a rebuilt body has its gate shut and latched: trunk.h)
     buildCount++;
     nodes.clear();
     beams.clear();

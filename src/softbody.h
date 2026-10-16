@@ -219,6 +219,9 @@ struct Panel {
     std::vector<int8_t> outside;     // per panel node: came to the body from outside (only those are held out)
     std::vector<int> checks;         // its opening stops (PIN_CHECK pins, not in `pins`)
     int state = 0;                   // 0 shut, 1 hanging open on its hinges, 2 torn off
+    // By hand (Car::setGate): its latches off, and the sheet driven round its hinges.
+    bool hand = false;
+    double handSign = 0;             // which way round the hinge line it opens (+-1)
 };
 
 // One axle: its two wheels, anti-roll bar, and where its differential pushes back.
@@ -384,6 +387,25 @@ public:
     // tailgate, either side, apart from the spare so each is its own thing to reach for.
     enum Stow { STOW_CHAINS, STOW_JACK };
     V3 stowAt(Stow what) const;
+    // The back gate (trunk.h): a tailgate or liftgate panel opened by hand on its real hinges (its
+    // latches let go and the sheet is driven round the hinge line, held there like a gas strut, so
+    // a bump rattles it), or, on a pickup, a drawn gate with no panel under it.
+    struct Gate {
+        double share = 0;  // 0 shut .. 1 open
+        int dir = 0;       // +1 opening, -1 closing
+        double jam = 0;    // s spent closing against something
+    } gate;
+    static constexpr double kGateTime = 1.1;    // s to swing it
+    static constexpr double kGateAngle = 1.40;  // rad open (80 degrees: short of the check strap)
+    int gatePanel() const;     // the LIFTGATE / TAILGATE panel (-1: none)
+    bool bedGate() const;      // a pickup: the gate is drawn (trunk.h), not a panel
+    bool hasGate() const { return gatePanel() >= 0 || bedGate(); }
+    bool gateOpen() const;     // open enough to reach in (or torn off)
+    bool gateShut() const;
+    void setGate(bool open);   // starts it swinging
+    bool gateCarried() const;  // the spare rides the gate's carrier: it swings away with it
+    V3 gateSwung(const V3& p, bool point) const;  // a point (or direction) on the gate, turned as far as it's open
+    void gateStep(double dt);  // per frame: the swing, and latching it again when it's home
     double winchSpeed = 1.0;    // multiplier of the rated line speed (0.1-20); game preference starts at 4x
     bool swayDisconnected = false;  // front anti-roll bar unhooked
     int shaftsBroken = 0;       // axle shafts snapped since last read (for the HUD)
@@ -522,6 +544,7 @@ private:
     void poleEdgeContacts(double h, const World& w);
     void engineBlockContact(double h);
     void panelBodyContact(double h);
+    void gateServo(double h);  // the back gate driven round its hinges (trunk.cpp)
 public:
     bool wheelPowered(const Wheel& wh) const;  // driven, attached, and its shafts are intact
     // 4x4 controls. setDriveMode/setLocker only change state; the caller decides when the
