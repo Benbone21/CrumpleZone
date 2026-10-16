@@ -25,6 +25,7 @@
 
 #include "audio.h"
 #include "jobs.h"
+#include "career.h"
 #include "interact.h"
 #include "walker.h"
 #include "coop.h"
@@ -73,6 +74,7 @@ struct Options {
     int ground = -1;              // --ground 0-3: terrain materials (testing; see RenderSettings::ground)
     int props = -1;               // --props 0-3: scanned props (testing; see RenderSettings::props)
     int adaptive = -1;            // --adaptive 0/1: auto-scale quality (default: on)
+    bool career = false;          // --career: career mode (a fresh one when scripted)
     bool photo = false;           // --photo: no HUD (screenshots; F10 in the game)
     bool mph = false;             // --mph
     int map = -1;                 // --map N: 0 proving ground, 1 mountain
@@ -290,6 +292,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--adaptive") o.adaptive = std::atoi(next().c_str());
         else if (a == "--photo") o.photo = true;
         else if (a == "--mph") o.mph = true;
+        else if (a == "--career") o.career = true;
         else if (a == "--map") o.map = std::atoi(next().c_str());
         else if (a == "--mods") {
             std::string s = next();
@@ -1130,7 +1133,9 @@ std::string fmt(const char* f, double a, double b = 0, double c = 0) {
     return buf;
 }
 
-void drawGarage(Renderer& r, const GarageUI& g, const Garage& garage, float u, int W, int H) {
+// In a career: the parts you haven't got are locked (a price if a station sells them), and
+// parts are fitted at a repair station (`station`: the one you're at, -1 none).
+void drawGarage(Renderer& r, const GarageUI& g, const Garage& garage, const Career& career, int station, const Sim& sim, float u, int W, int H) {
     const VehicleSpec& stock = vehicleCatalog()[g.vehicle];
     const VehicleSpec& vs = tunedSpec(g.vehicle, g.pick);
     const float s = px(1.4f * u), big = px(2.0f * u), lh = 8 * s + 6 * u, pad = 18 * u;
@@ -1138,6 +1143,11 @@ void drawGarage(Renderer& r, const GarageUI& g, const Garage& garage, float u, i
     const float x = (W - w) / 2, y = (H - h) / 2;
     pill(r, x, y, w, h, 0.02f, 0.025f, 0.035f, 0.88f);
     label(r, x + pad, y + pad, big, std::string("GARAGE  ") + stock.name, 1.0f, 0.75f, 0.3f);
+    if (career.on) {
+        const std::string where = station >= 0 ? std::string("AT ") + sim.world.stations[station].name : "FIT PARTS AT A REPAIR STATION";
+        const std::string top = "CASH $" + std::to_string(career.cash) + "   " + where;
+        r.text(x + w - pad - r.textWidth(top, s), y + pad + 2 * u, s, top, station >= 0 ? 0.55f : 1.0f, station >= 0 ? 0.9f : 0.55f, station >= 0 ? 0.6f : 0.4f);
+    }
     r.text(x + pad, y + pad + 8 * big + 4 * u, s, stock.blurb, 0.6f, 0.62f, 0.66f);
     float cy = y + pad * 2 + 8 * big * 1.5f;
     for (int k = 0; k < MOD_SLOTS; k++) {
@@ -1146,10 +1156,18 @@ void drawGarage(Renderer& r, const GarageUI& g, const Garage& garage, float u, i
         bool sel = k == g.slot, fitted = garage.fitted[g.vehicle].pick[k] == g.pick.pick[k];
         if (sel) r.rect(x + pad * 0.5f, cy - 4 * u, w - pad, lh * 2.2f, 1, 1, 1, 0.07f);
         r.text(x + pad, cy, s, modSlotName(k), 0.6f, 0.62f, 0.66f);
+        const bool have = career.owns(g.vehicle, k, g.pick.pick[k]);
         std::string name = std::string(sel ? "< " : "  ") + o.name + (sel ? " >" : "") + "   " +
-                           std::to_string(g.pick.pick[k] + 1) + "/" + std::to_string(opts.size()) + (fitted ? "" : "  *");
-        r.text(x + pad + 150 * u, cy, s, name, sel ? 1.0f : 0.9f, sel ? 0.8f : 0.9f, sel ? 0.35f : 0.92f);
-        r.text(x + pad + 150 * u, cy + lh, s, o.detail, 0.62f, 0.65f, 0.7f);
+                           std::to_string(g.pick.pick[k] + 1) + "/" + std::to_string(opts.size()) + (fitted ? "" : "  *") + (have ? "" : "  LOCKED");
+        if (have) r.text(x + pad + 150 * u, cy, s, name, sel ? 1.0f : 0.9f, sel ? 0.8f : 0.9f, sel ? 0.35f : 0.92f);
+        else r.text(x + pad + 150 * u, cy, s, name, 0.55f, 0.55f, 0.58f);
+        std::string detail = o.detail;
+        if (!have) {
+            const int price = Career::price(g.vehicle, k, g.pick.pick[k]);
+            detail = price > 0 ? "$" + std::to_string(price) + (station >= 0 ? (pad::ui.last ? "  Y: BUY IT" : "  B: BUY IT") : "  AT ANY REPAIR STATION")
+                               : "NOT SOLD: FIND IT OUT THERE, OR WIN IT";
+        }
+        r.text(x + pad + 150 * u, cy + lh, s, detail, have ? 0.62f : 1.0f, have ? 0.65f : 0.7f, have ? 0.7f : 0.35f);
         cy += lh * 2.4f;
     }
     // What the combination adds up to.
@@ -1171,8 +1189,9 @@ void drawGarage(Renderer& r, const GarageUI& g, const Garage& garage, float u, i
         r.text(x + pad, cy, s, l, 0.85f, 0.87f, 0.9f);
         cy += lh;
     }
-    const std::string garageKeys = pad::ui.last ? "D-PAD UP DOWN: CHOOSE PART   LEFT RIGHT: CHANGE   " + std::string(pad::hint("", pad::B_A)) + " FIT AND DRIVE   " + pad::hint("", pad::B_B) + " CLOSE"
-                                                : "W S CHOOSE PART   A D CHANGE   ENTER FIT AND DRIVE   G CLOSE";
+    const std::string garageKeys = pad::ui.last ? "D-PAD UP DOWN: CHOOSE PART   LEFT RIGHT: CHANGE   " + std::string(pad::hint("", pad::B_A)) + " FIT AND DRIVE   " +
+                                                      (career.on ? std::string(pad::hint("", pad::B_Y)) + " BUY   " : std::string()) + pad::hint("", pad::B_B) + " CLOSE"
+                                                : std::string("W S CHOOSE PART   A D CHANGE   ENTER FIT AND DRIVE   ") + (career.on ? "B BUY   " : "") + "G CLOSE";
     r.text(x + pad, y + h - pad - 8 * s, s, garageKeys, 1.0f, 0.75f, 0.3f);
 }
 
@@ -1261,8 +1280,32 @@ void drawPlayers(Renderer& r, const Sim& sim, const NetSession& net, const View&
     }
 }
 
+// A career's supply caches still to open, within ~250 m: a marker over each and how far.
+// (Your cash, top left.)
+void drawCaches(Renderer& r, const Career& career, const std::vector<CacheSpot>& caches, const View& view, float u, int W, int H) {
+    if (!career.on) return;
+    const std::string cash = "CAREER  $" + std::to_string(career.cash);
+    const float cs = px(1.4f * u);
+    pill(r, 12 * u, 12 * u, r.textWidth(cash, cs) + 16 * u, 8 * cs + 10 * u, 0.02f, 0.025f, 0.035f, 0.75f);
+    r.text(20 * u, 17 * u, cs, cash, 0.55f, 0.9f, 0.6f);
+    for (const CacheSpot& c : caches) {
+        if (career.isOpened(c)) continue;
+        const double d = len(c.at - view.eye);
+        if (d > 250) continue;
+        float sx, sy;
+        if (!project(view, c.at + V3(0, 1.4, 0), sx, sy) || sx < 0 || sx > W || sy < 0 || sy > H) continue;
+        const float k = d < 40 ? 7 * u : 5 * u;
+        r.tri(sx, sy - k, sx + k, sy, sx, sy + k, 0.55f, 0.9f, 0.6f, 0.95f);
+        r.tri(sx, sy - k, sx, sy + k, sx - k, sy, 0.55f, 0.9f, 0.6f, 0.95f);
+        char buf[64];
+        std::snprintf(buf, sizeof buf, "SUPPLY CACHE  %.0f M", d);
+        const float ts = px(1.2f * u);
+        label(r, sx - r.textWidth(buf, ts) / 2, sy + k + 4 * u, ts, buf, 0.55f, 0.9f, 0.6f);
+    }
+}
+
 void drawHud(Renderer& r, const Sim& sim, const View& view, HudState& hud, const Playback* pb, const NetSession& net, const WinchAim& aim, int W,
-             int H, float fps, double dt, bool mph) {
+             int H, float fps, double dt, bool mph, const Career& career, const std::vector<CacheSpot>& caches) {
     float u = std::max(0.75f, H / 720.0f);
     const Car& car = sim.cars[sim.player];
     drawGauges(r, car, hud, u, W, H, dt, mph);
@@ -1273,6 +1316,7 @@ void drawHud(Renderer& r, const Sim& sim, const View& view, HudState& hud, const
     drawPlayers(r, sim, net, view, u, W, H);
     drawWinchAim(r, sim, aim, view, u, W, H);
     drawPilot(r, sim, view, u, W, H);
+    drawCaches(r, career, caches, view, u, W, H);
 
     // Top-center: compass, scenario status, persistent states, then toasts.
     float y = 12 * u;
@@ -1495,10 +1539,17 @@ int main(int argc, char** argv) {
     }
     if (settings.map != MAP_PROVING_GROUND) sim.world = World(settings.map);
     sim.setup();
-    // Your garage: the mods fitted last time go back on the cars.
+    // Your garage: the mods fitted last time go back on the cars. (A career keeps a garage of
+    // its own: it starts on factory parts.)
+    if (opt.career) settings.career = true;
     Garage garage;
-    const std::string garagePath = Garage::defaultPath();
+    std::string garagePath = settings.career ? configDir() + "/garage-career.txt" : Garage::defaultPath();
     garage.load(garagePath);
+    Career career;  // (career.h: what you own, cash, the caches you've opened)
+    career.on = settings.career;
+    if (scripted || !career.load(Career::defaultPath())) career.startFresh();
+    std::vector<CacheSpot> caches;  // this map's supply caches (a career's)
+    int cachesMap = -1;
     auto fitGarage = [&]() {
         for (Car& c : sim.cars)
             if (!c.isProp() && c.spec->model >= 0 && !garage.fitted[c.spec->model].stock()) {
@@ -1911,6 +1962,19 @@ int main(int argc, char** argv) {
     double jobBanner = 0, jobResend = 0;
     uint32_t jobSeed = 1;
     std::string jobBannerText;
+    // A supply cache opened (by you, or by `who` in your session): its part or cash is yours.
+    auto openCache = [&](const std::string& id, const std::string& who) {
+        for (const CacheSpot& c : caches) {
+            if (c.id != id) continue;
+            const std::string said = career.openCache(c);
+            if (said.empty()) return false;
+            jobBanner = std::max(jobBanner, 5.0);
+            jobBannerText = (who.empty() ? c.id + ": " : who + " OPENED " + c.id + ": ") + said;
+            if (!scripted) career.save(Career::defaultPath());
+            return true;
+        }
+        return false;
+    };
     auto refreshJobs = [&]() {
         std::vector<JobPlace> places;
         for (const Place& pl : pilotPlaces(sim, net))
@@ -2037,7 +2101,20 @@ int main(int argc, char** argv) {
                 }
                 break;
             case PauseMenu::QUIT: running = false; break;
-            case PauseMenu::CHANGED: applySettings(); saveSettings(); break;
+            case PauseMenu::CHANGED:
+                applySettings();
+                saveSettings();
+                if (settings.career != career.on) {  // career <-> sandbox: each has its own garage
+                    career.on = settings.career;
+                    garagePath = career.on ? configDir() + "/garage-career.txt" : Garage::defaultPath();
+                    garage = Garage();
+                    garage.load(garagePath);
+                    const Car& pc = sim.cars[sim.player];
+                    if (!pc.isProp() && pc.spec->model >= 0) sim.swapPlayerVehicle(garage.spec(pc.spec->model));
+                    cachesMap = -1;  // (the crates go out, or stay out of the way)
+                    hud.toast(career.on ? "CAREER: FACTORY PARTS. FIND, WIN AND BUY THE REST" : "SANDBOX: EVERY PART ON EVERY VEHICLE");
+                }
+                break;
             case PauseMenu::PILOT_GO:
                 closeMenu();
                 saveSettings();
@@ -2382,7 +2459,29 @@ int main(int argc, char** argv) {
                         else if (sc == SC_S || sc == SC_DOWN) garageUI.slot = (garageUI.slot + 1) % MOD_SLOTS;
                         else if (sc == SC_A || sc == SC_LEFT) pk = (pk + n - 1) % n;
                         else if (sc == SC_D || sc == SC_RIGHT) pk = (pk + 1) % n;
-                        else if (sc == SC_RETURN || sc == SC_KP_ENTER) {
+                        else if (sc == SC_B && career.on) {  // buy the part shown, at a station
+                            const int at = sim.stationAt(sim.cars[sim.player].frame().com);
+                            std::string why;
+                            if (at < 0) hud.toast("PARTS ARE SOLD AT THE REPAIR STATIONS");
+                            else if (career.buy(garageUI.vehicle, garageUI.slot, pk, why)) {
+                                if (!scripted) career.save(Career::defaultPath());
+                                hud.toast("BOUGHT " + modOptions(garageUI.vehicle, garageUI.slot)[pk].name + ": $" + std::to_string(career.cash) + " LEFT");
+                            } else hud.toast(why);
+                        } else if ((sc == SC_RETURN || sc == SC_KP_ENTER) && career.on && sim.stationAt(sim.cars[sim.player].frame().com) < 0 &&
+                                   !(garageUI.pick.pick[0] == garage.fitted[garageUI.vehicle].pick[0] && garageUI.pick.pick[1] == garage.fitted[garageUI.vehicle].pick[1] &&
+                                     garageUI.pick.pick[2] == garage.fitted[garageUI.vehicle].pick[2] && garageUI.pick.pick[3] == garage.fitted[garageUI.vehicle].pick[3] &&
+                                     garageUI.pick.pick[4] == garage.fitted[garageUI.vehicle].pick[4])) {
+                            hud.toast("DRIVE TO A REPAIR STATION TO FIT PARTS");
+                        } else if ((sc == SC_RETURN || sc == SC_KP_ENTER) && career.on &&
+                                   [&] {
+                                       for (int k = 0; k < MOD_SLOTS; k++)
+                                           if (!career.owns(garageUI.vehicle, k, garageUI.pick.pick[k])) return true;
+                                       return false;
+                                   }()) {
+                            int k = 0;
+                            while (k < MOD_SLOTS && career.owns(garageUI.vehicle, k, garageUI.pick.pick[k])) k++;
+                            hud.toast(std::string("LOCKED: ") + modOptions(garageUI.vehicle, k)[garageUI.pick.pick[k]].name);
+                        } else if (sc == SC_RETURN || sc == SC_KP_ENTER) {
                             garage.fitted[garageUI.vehicle] = garageUI.pick;
                             garage.save(garagePath);
                             sim.swapPlayerVehicle(garage.spec(garageUI.vehicle));
@@ -2889,11 +2988,23 @@ int main(int argc, char** argv) {
                     jobOn = false;
                     continue;
                 }
+                if (m.text.rfind("cache ", 0) == 0) {  // a buddy opened a supply cache: it counts for you too
+                    const size_t sp = m.text.find(' ', 6);
+                    if (career.on && sp != std::string::npos && std::atoi(m.text.c_str() + 6) == sim.world.map) {
+                        const std::string who = m.player >= 0 && m.player < net::kMaxPeers ? net.players[m.player].name : std::string("A BUDDY");
+                        openCache(m.text.substr(sp + 1), who);
+                    }
+                    continue;
+                }
                 if (m.text == "jobdone") {
                     if (jobOn && !job.done) {
                         job.done = true;
                         jobBanner = 6;
                         jobBannerText = "JOB DONE: " + job.title;
+                        if (career.on) {  // (everyone on the job is paid)
+                            jobBannerText += "   " + career.jobDone();
+                            if (!scripted) career.save(Career::defaultPath());
+                        }
                     }
                     continue;
                 }
@@ -2927,8 +3038,16 @@ int main(int argc, char** argv) {
                 {  // hands on: hold E (pad: X) for the job in front of you
                     const uint8_t* ks = SDL_GetKeyboardState(nullptr);
                     const bool holdE = (!menu.open && ks[SC_E]) || (padCtx == pad::Mode::Drive && padLogic.in.interact);
+                    interact.spots.clear();  // (a career's supply caches in reach: E opens one)
+                    if (career.on)
+                        for (const CacheSpot& c : caches)
+                            if (!career.isOpened(c) && len(c.at - walker.p) < 6) interact.spots.push_back({c.id, c.at, "OPEN THE SUPPLY CACHE"});
                     const std::string said = interact.update(sim, walker, lastView.eye, lastView.target - lastView.eye, holdE, dt);
                     if (!said.empty()) hud.toast(said);
+                    if (!interact.openedSpot.empty()) {
+                        if (openCache(interact.openedSpot, "") && net.active()) net.sendGame("cache " + std::to_string(sim.world.map) + " " + interact.openedSpot);
+                        interact.openedSpot.clear();
+                    }
                     if (padCtx == pad::Mode::Drive && padLogic.in.drop) {
                         if (walker.carrying) Interact::drop(sim, walker, lastView.target - lastView.eye);
                         else if (walker.holdingJack) Interact::dropJack(sim, walker);
@@ -2975,6 +3094,10 @@ int main(int argc, char** argv) {
                     char b[96];
                     std::snprintf(b, sizeof b, " IN %d:%02d", (int)job.time / 60, (int)job.time % 60);
                     jobBannerText = "JOB DONE: " + job.title + b;
+                    if (career.on) {
+                        jobBannerText += "   " + career.jobDone();
+                        if (!scripted) career.save(Career::defaultPath());
+                    }
                     if (net.role == NetSession::HOST) net.sendGame("jobdone");
                     jobSeed++;
                 } else if (!authority) {
@@ -2996,6 +3119,20 @@ int main(int argc, char** argv) {
             discoverCheck -= dt;
             if (discoverCheck <= 0 && !playback.active()) {
                 discoverCheck = 0.5;
+                // A career's supply caches: a crate at each (put back when the map's rebuilt).
+                auto crateAt = [&](const V3& p) {
+                    for (const Box& b : sim.world.boxes)
+                        if (len(b.c - (p + V3(0, 0.33, 0))) < 0.05) return true;
+                    return false;
+                };
+                if (!career.on) caches.clear(), cachesMap = -1;
+                else if (cachesMap != sim.world.map || (!caches.empty() && !crateAt(caches[0].at))) {
+                    caches = cacheSpots(sim.world);
+                    cachesMap = sim.world.map;
+                    for (const CacheSpot& c : caches)
+                        if (!crateAt(c.at)) sim.world.addBox(c.at + V3(0, 0.33, 0), V3(0.55, 0.33, 0.38), (double)(std::hash<std::string>()(c.id) % 628) / 100, 0, 0, V3(0.29, 0.34, 0.19));
+                    if (!caches.empty()) sim.world.buildGrid();
+                }
                 std::vector<std::pair<std::string, V3>> places;
                 for (const Place& pl : pilotPlaces(sim, net))
                     if (pl.kind == 0) places.push_back({pl.name, pl.p});
@@ -3010,6 +3147,19 @@ int main(int argc, char** argv) {
             }
             if (!sim.paused && run.active()) {
                 run.update(sim, dt);  // (after the keys: it holds the car on the grid)
+                // A career: medals pay (each once a level), a level's first gold brings a part.
+                static bool medalPaid = false;
+                if (run.state != LevelRun::FINISHED) medalPaid = false;
+                else if (!medalPaid) {
+                    medalPaid = true;
+                    const int m = run.medalFor(run.finishTime);  // (0 gold .. 2 bronze, -1 none)
+                    const std::string paid = career.on && m >= 0 ? career.medal(run.level.name, 3 - m) : "";
+                    if (!paid.empty()) {
+                        jobBanner = std::max(jobBanner, 6.0);
+                        jobBannerText = run.level.name + ": " + paid;
+                        if (!scripted) career.save(Career::defaultPath());
+                    }
+                }
                 if (run.state == LevelRun::FINISHED && (bestTimes.find(run.level.name) == bestTimes.end() || run.finishTime < bestTimes[run.level.name]))
                     bestTimes[run.level.name] = run.finishTime;
                 for (const std::string& m : run.outbox) net.sendGame(m);
@@ -3303,7 +3453,7 @@ int main(int argc, char** argv) {
         }
         hud.update(dt);
         if (editor.active && !menu.open) editor.draw(renderer, W, H, dt);
-        else if (!menu.open && !hud.photo) drawHud(renderer, sim, view, hud, &playback, net, winchAim, W, H, fps, dt, settings.mph);
+        else if (!menu.open && !hud.photo) drawHud(renderer, sim, view, hud, &playback, net, winchAim, W, H, fps, dt, settings.mph, career, caches);
         const bool showHud = !menu.open && !editor.active && !hud.photo;
         if (showHud && walker.active && cam.mode != 3) {  // on foot: a crosshair, the job in front of you, what you carry
             const float u = std::max(0.75f, H / 720.0f), s = px(1.4f * u);
@@ -3433,7 +3583,7 @@ int main(int argc, char** argv) {
             }
             // ---- end multiplayer page
         }
-        if (garageUI.open) drawGarage(renderer, garageUI, garage, std::max(0.75f, H / 720.0f), W, H);
+        if (garageUI.open) drawGarage(renderer, garageUI, garage, career, sim.stationAt(sim.cars[sim.player].frame().com), sim, std::max(0.75f, H / 720.0f), W, H);
         menu.draw(renderer, settings, W, H, dt);
         renderer.flushHud(W, H);
 

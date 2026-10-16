@@ -589,31 +589,32 @@ const Universal& universal() {
                     list.back().detail = b;
                 }
                 U.own[v][k] = (int)list.size();
+                for (int o = 0; o < (int)list.size(); o++) list[o].fromVehicle = v, list[o].fromOption = o;
             }
             // Every other vehicle's parts.
             for (int w = 0; w < n; w++) {
                 if (w == v) continue;
                 const VehicleSpec* from = &cat[w];
                 const std::string who = shortName(cat[w]) + ": ";
-                U.opts[v][MOD_ENGINE].push_back({who + cat[w].engineName, "STOCK  " + powerLine(cat[w]), [from](VehicleSpec& s) { takeEngine(s, *from); }});
+                U.opts[v][MOD_ENGINE].push_back({who + cat[w].engineName, "STOCK  " + powerLine(cat[w]), [from](VehicleSpec& s) { takeEngine(s, *from); }, w, 0});
                 for (size_t o = 1; o < base[w][MOD_ENGINE].size(); o++) {
                     const ModOption& mo = base[w][MOD_ENGINE][o];
                     auto fn = mo.apply;
                     U.opts[v][MOD_ENGINE].push_back({who + mo.name, mo.detail, [from, fn](VehicleSpec& s) {
                                                          takeEngine(s, *from);
                                                          fn(s);
-                                                     }});
+                                                     }, w, (int)o});
                 }
-                U.opts[v][MOD_TRANSMISSION].push_back({who + cat[w].gearboxName, "STOCK GEARBOX AND AXLE RATIO", [from](VehicleSpec& s) { takeGearbox(s, *from); }});
+                U.opts[v][MOD_TRANSMISSION].push_back({who + cat[w].gearboxName, "STOCK GEARBOX AND AXLE RATIO", [from](VehicleSpec& s) { takeGearbox(s, *from); }, w, 0});
                 for (size_t o = 1; o < base[w][MOD_TRANSMISSION].size(); o++) {
                     const ModOption& mo = base[w][MOD_TRANSMISSION][o];
                     auto fn = mo.apply;
                     U.opts[v][MOD_TRANSMISSION].push_back({who + mo.name, mo.detail, [from, fn](VehicleSpec& s) {
                                                                takeGearbox(s, *from);
                                                                fn(s);
-                                                           }});
+                                                           }, w, (int)o});
                 }
-                U.opts[v][MOD_SUSPENSION].push_back({who + "STOCK SUSPENSION", base[w][MOD_SUSPENSION][0].detail, [from](VehicleSpec& s) { takeSuspension(s, *from); }});
+                U.opts[v][MOD_SUSPENSION].push_back({who + "STOCK SUSPENSION", base[w][MOD_SUSPENSION][0].detail, [from](VehicleSpec& s) { takeSuspension(s, *from); }, w, 0});
                 for (size_t o = 1; o < base[w][MOD_SUSPENSION].size(); o++) {
                     const ModOption& mo = base[w][MOD_SUSPENSION][o];
                     auto fn = mo.apply;
@@ -629,11 +630,11 @@ const Universal& universal() {
                                                                  takeWheels(s, m);
                                                                  s.tireGrip = m.tireGrip, s.lateralGrip = m.lateralGrip, s.tireType = m.tireType;
                                                              }
-                                                         }});
+                                                         }, w, (int)o});
                 }
                 char b[96];
                 std::snprintf(b, sizeof b, "%.0f MM TALL  %.0f MM WIDE  %.0f IN RIMS", from->wheelRadius * 2000, from->wheelWidth * 1000, from->rimRadius * 2 / 0.0254);
-                U.opts[v][MOD_WHEELS].push_back({who + "WHEELS AND TIRES", b, [from](VehicleSpec& s) { takeWheels(s, *from); }});
+                U.opts[v][MOD_WHEELS].push_back({who + "WHEELS AND TIRES", b, [from](VehicleSpec& s) { takeWheels(s, *from); }, w, 0});
             }
             // Tires: every tread, on the wheels it has.
             static const int kOffer[] = {TIRE_STREET, TIRE_SEMI_SLICK, TIRE_RACE_SLICK, TIRE_ALL_TERRAIN, TIRE_MUD_TERRAIN, TIRE_SNOW};
@@ -649,7 +650,7 @@ const Universal& universal() {
                                                     s.tireGrip *= kTypeGrip[type][0] / kTypeGrip[was][0];
                                                     s.lateralGrip *= kTypeGrip[type][1] / kTypeGrip[was][1];
                                                     s.tireType = type;
-                                                }});
+                                                }, -1, type});
             }
         }
         return U;
@@ -661,6 +662,48 @@ const Universal& universal() {
 
 const std::vector<ModOption>& modOptions(int vehicle, int slot) { return universal().opts[vehicle][slot]; }
 int modOwnCount(int vehicle, int slot) { return universal().own[vehicle][slot]; }
+
+std::string modPartKey(int vehicle, int slot, int option) {
+    if (vehicle < 0 || vehicle >= (int)vehicleCatalog().size() || slot < 0 || slot >= MOD_SLOTS || option < 0 || option >= (int)modOptions(vehicle, slot).size()) return "";
+    const ModOption& o = modOptions(vehicle, slot)[option];
+    if (o.fromVehicle < 0) return std::string("TIRES:") + tireTypeName(o.fromOption);
+    return std::string(modSlotName(slot)) + ":" + vehicleCatalog()[o.fromVehicle].id + ":" + std::to_string(o.fromOption);
+}
+
+bool modIsFactory(int vehicle, int slot, int option) {
+    if (modPartKey(vehicle, slot, option).empty()) return false;
+    const ModOption& o = modOptions(vehicle, slot)[option];
+    return o.fromVehicle == vehicle && o.fromOption == 0;
+}
+
+std::string modPartTitle(const std::string& key) {
+    const auto& cat = vehicleCatalog();
+    for (int v = 0; v < (int)cat.size(); v++)
+        for (int k = 0; k < MOD_SLOTS; k++)
+            for (int o = 0; o < (int)modOptions(v, k).size(); o++) {
+                if (modPartKey(v, k, o) != key) continue;
+                const ModOption& mo = modOptions(v, k)[o];
+                if (mo.fromVehicle < 0) return mo.name;
+                if (mo.fromVehicle != v) return mo.name;  // (offered on another vehicle: already "WHO: NAME")
+                if (o == 0) {
+                    const VehicleSpec& s = cat[v];
+                    return shortName(s) + ": " + (k == MOD_ENGINE ? s.engineName : k == MOD_TRANSMISSION ? s.gearboxName : k == MOD_WHEELS ? "WHEELS AND TIRES" : "STOCK SUSPENSION");
+                }
+                return shortName(cat[v]) + ": " + mo.name;
+            }
+    return "";
+}
+
+std::string modFindPart(const char* vehicleId, int slot, const char* name) {
+    const auto& cat = vehicleCatalog();
+    for (int v = 0; v < (int)cat.size(); v++) {
+        if (std::string(cat[v].id) != vehicleId) continue;
+        const auto& opts = modOptions(v, slot);
+        for (int o = 0; o < (int)opts.size(); o++)
+            if ((o < modOwnCount(v, slot) || opts[o].fromVehicle < 0) && opts[o].name.find(name) != std::string::npos) return modPartKey(v, slot, o);
+    }
+    return "";
+}
 
 const VehicleSpec& tunedSpec(int vehicle, const ModSet& mods) {
     if (mods.stock()) return vehicleCatalog()[vehicle];

@@ -79,6 +79,7 @@ bool Settings::load(const std::string& path) {
         else if (k == "props") gfx.props = std::min(std::max((int)v, 0), 3);
         else if (k == "map") map = std::min(std::max((int)v, 0), MAP_COUNT - 1);
         else if (k == "recovery") realRecovery = v != 0;
+        else if (k == "career") career = v != 0;
         else if (k == "fuel") fuelMode = std::min(std::max((int)v, 0), 2);
         else if (k == "pilotspeed") pilotSpeed = std::min(std::max(v, 5.0f), 100.0f);
         else if (k == "pilotroute") pilotRoute = std::min(std::max((int)v, 0), 2);
@@ -104,7 +105,7 @@ bool Settings::save(const std::string& path) const {
                  fovDeg, fullscreen, vsync, showFps, steeringAssist);
     std::fprintf(f, "shadows %d\nmsaa %d\nao %d\nbloom %d\nclouds %d\nscale %.2f\ngrass %d\nmap %d\n", gfx.shadows,
                  gfx.msaa, gfx.ao, gfx.bloom, gfx.clouds, gfx.renderScale, gfx.grass, map);
-    std::fprintf(f, "recovery %d\nmusic %.2f\nambience %.2f\nfuel %d\n", realRecovery, music, ambience, fuelMode);
+    std::fprintf(f, "recovery %d\nmusic %.2f\nambience %.2f\nfuel %d\ncareer %d\n", realRecovery, music, ambience, fuelMode, career);
     std::fprintf(f, "ground %d\nprops %d\n", gfx.ground, gfx.props);
     std::fprintf(f, "physicsthreads %d\n", physicsThreads);
     std::fprintf(f, "adaptive %d\n", adaptiveQuality);
@@ -179,7 +180,7 @@ enum Id {
     RESUME_ROW = 100, VEHICLE_ROW, MAP_ROW, GARAGE_ROW, SETTINGS_ROW, CONTROLS_ROW, RESET_ROW, QUIT_ROW, BACK_ROW,
     MULTI_ROW, NAME_ROW, HOST_ROW, ADDRESS_ROW, JOIN_ROW, LEAVE_ROW, FOUND_ROW0, FOUND_ROW5 = FOUND_ROW0 + 5,
     PILOT_ROW, DEST_ROW, PSPEED_ROW, PROUTE_ROW, PGO_ROW, PSTOP_ROW,
-    FREEDRIVE_ROW, LEVELS_ROW, LEVEL_PICK, LEVEL_PLAY, LEVEL_EDIT, EDITOR_ROW, LRESTART_ROW, LQUIT_ROW, MAINMENU_ROW,
+    FREEDRIVE_ROW, MODE_ROW, LEVELS_ROW, LEVEL_PICK, LEVEL_PLAY, LEVEL_EDIT, EDITOR_ROW, LRESTART_ROW, LQUIT_ROW, MAINMENU_ROW,
     JOBS_ROW, JOB_PICK, JOB_GO, JOB_STOP_ROW, MEET_ROW, CONTROLLER_ROW,
     SESSION_ROW, HMAP_ROW, HMAX_ROW, CANCEL_ROW,
     STEERING, KEYBINDS_ROW, KEYS_RESET, KEY_ROW0, KEY_ROWN = KEY_ROW0 + KA_COUNT,
@@ -220,6 +221,8 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
     if (page == 0 && title) {
         const auto& cat = vehicleCatalog();
         button(FREEDRIVE_ROW, "FREE DRIVE", "THIS MAP, THIS VEHICLE:");
+        choice(MODE_ROW, "MODE", s.career ? "CAREER" : "SANDBOX", 2,
+               s.career ? "START STOCK: FIND, WIN AND BUY BETTER PARTS" : "EVERY PART ON EVERY VEHICLE, ANY TIME");
         choice(VEHICLE_ROW, "VEHICLE", cat[vehicle].name, (int)cat.size(), cat[vehicle].blurb);
         choice(MAP_ROW, "MAP", mapName(mapPick), MAP_COUNT, mapHint);
         button(LEVELS_ROW, "LEVELS", std::to_string(levels.size()) + " RACES, CLIMBS AND WORLDS");
@@ -609,6 +612,7 @@ PauseMenu::Result PauseMenu::change(int row, int dir, Settings& s) {
         case JOB_PICK: jobPick = cycle(std::min(std::max(jobPick, 0), it.count - 1)); return {};
         case UNITS: s.mph = !s.mph; break;
         case RECOVERY: s.realRecovery = !s.realRecovery; break;
+        case MODE_ROW: s.career = !s.career; break;
         case FUEL: s.fuelMode = cycle(std::min(std::max(s.fuelMode, 0), 2)); break;
         case STEERING: s.steeringAssist = !s.steeringAssist; break;
         case TIMEOFDAY: {

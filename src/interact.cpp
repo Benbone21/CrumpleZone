@@ -13,6 +13,7 @@ constexpr double kTakeJack = 2, kPlaceJack = 3, kUseJack = 4, kLowerJack = 3, kR
 // Chains: lay it out, drive-free wrap round the tread, hook and tension it (a few minutes in
 // real life; shortened like the rest).
 constexpr double kTakeChain = 1.5, kFitChain = 8, kRemoveChain = 5, kStowChain = 1.5;
+constexpr double kOpenCache = 2;  // prise the lid off a supply cache
 constexpr double kReach = 2.5;           // m from your chest
 constexpr double kCone = 35 * M_PI / 180;  // off your line of sight
 
@@ -31,7 +32,7 @@ bool isCornerLifted(const Car& c, int wi) {
 
 }  // namespace
 
-InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, const V3& look) {
+InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, const V3& look, const std::vector<InteractSpot>* spots) {
     InteractOption best;
     double bestScore = 1e9;
     const V3 chest = wk.p + V3(0, 1.0, 0);
@@ -182,6 +183,13 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
             }
         }
     }
+    if (!hands && spots)
+        for (int si = 0; si < (int)spots->size(); si++) {
+            InteractOption o;
+            o.kind = IA_OPEN_CACHE, o.spot = si, o.hold = kOpenCache, o.at = (*spots)[si].at + V3(0, 0.5, 0);
+            o.prompt = (*spots)[si].prompt;
+            consider(o);
+        }
     if (!hands)
         for (int li = 0; li < (int)sim.looseWheels.size(); li++) {
             const LooseWheel& lw = sim.looseWheels[li];
@@ -195,7 +203,7 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
 }
 
 std::string Interact::update(Sim& sim, Walker& wk, const V3& eye, const V3& look, bool holdE, double dt) {
-    const InteractOption o = pick(sim, wk, eye, look);
+    const InteractOption o = pick(sim, wk, eye, look, &spots);
     if (!o.same(current)) progress = 0;
     current = o;
     if (!holdE || o.kind == IA_NONE) {
@@ -231,6 +239,9 @@ std::string Interact::update(Sim& sim, Walker& wk, const V3& eye, const V3& look
         case IA_TAKE_JACK:
             wk.holdingJack = true;
             return "GOT THE JACK";
+        case IA_OPEN_CACHE:
+            if (o.spot >= 0 && o.spot < (int)spots.size()) openedSpot = spots[o.spot].id;
+            return "";
         case IA_TAKE_CHAIN: {
             Car& c = sim.cars[o.car];
             if (c.chains <= 0) return "";

@@ -142,7 +142,7 @@ scenario finishes, you can drive around in the aftermath.
 | A / D or ← / → | Steer. Keys are all or nothing, so full steer is as much as the tires can hold at your speed, on that surface (full lock when parking, a few degrees at 130 km/h), plus room to catch a slide |
 | Space | Handbrake |
 | 1 2 3 4 5 6 7 | Become the Civic / Jesko / Bronco / 4Runner / rock buggy / side-by-side / Tacoma (repaired, in place) |
-| G | Garage: W/S pick engine, suspension or transmission, A/D change the part, Enter fits it |
+| G | Garage: W/S pick engine, suspension, transmission, wheels or tires, A/D change the part, Enter fits it (career: B buys it, at a repair station) |
 | Q / E | Shift down / up (R, N, 1…; switches to manual). In manual W is gas, S is brake |
 | Shift+M | Manual / automatic gearbox |
 | Shift+L | Headlights: AUTO (on at dusk) / LOW BEAM / HIGH BEAM / OFF |
@@ -212,7 +212,7 @@ Picking a winch anchor or tow-strap point: right stick aims the crosshair, A sel
 
 ## Main menu and levels
 
-Launched plainly, the game opens on the main menu, a screen of its own (no world behind it): free drive (pick map and vehicle), levels, multiplayer, world editor, garage, settings. Levels are races (laps through gates) and sprints (start to finish through gates) with medal times, damage/time limits and a no-repairs rule. Seven come with the game (Frontier GP, The Wall, Mesa Climb, Snake River Ford, Summit Run, Widowmaker, Boulder Gully); your own are `.czl` files in `~/.config/crumplezone/levels` or `./levels`. `--level NAME` starts one. In multiplayer the host picks the level and everyone gets it (edits and all), starts together, and sees a live leaderboard.
+Launched plainly, the game opens on the main menu, a screen of its own (no world behind it): free drive (pick map and vehicle), mode (sandbox or career), levels, multiplayer, world editor, garage, settings. Levels are races (laps through gates) and sprints (start to finish through gates) with medal times, damage/time limits and a no-repairs rule. Seven come with the game (Frontier GP, The Wall, Mesa Climb, Snake River Ford, Summit Run, Widowmaker, Boulder Gully); your own are `.czl` files in `~/.config/crumplezone/levels` or `./levels`. `--level NAME` starts one. In multiplayer the host picks the level and everyone gets it (edits and all), starts together, and sees a live leaderboard.
 
 ## Playing together
 
@@ -368,6 +368,16 @@ G opens the garage. Five sections: ENGINE, SUSPENSION, TRANSMISSION, WHEELS, TIR
 Tires: street, semi-slick, race slick, all-terrain, mud-terrain and winter, each with its own grip on every surface and its own look. Race slicks have the most grip on dry pavement and almost none in mud, snow or wet; mud tires clear mud; winter tires hold snow and ice.
 
 **Snow chains** aren't a tire: the off-roaders carry four in the back. On foot (J), hold E at the back of the truck to take one, hold E at a tire (stopped) to wrap it on, and hold E again to take it off. Chained tires grip ice, packed snow and mud far better and skate on pavement; keep under ~50 km/h on them: past 60 for a couple of seconds they snap.
+
+### Career: start stock, earn the rest
+Main menu → MODE switches between **SANDBOX** (every part on every vehicle, any time: the garage above) and **CAREER**. A career starts every vehicle on its factory parts with $1,000; the rest you find, win or buy:
+
+- **Supply caches**: ten crates each on the Frontier and in the Backcountry, out where it takes some getting to (the top of THE WALL, the summit, the wallow, the old mine, the cliff overlook...). A green marker shows the ones within ~250 m. On foot (J), hold E at the crate: its part or its cash is yours. The best finds are at the hardest places (the 454 big block at the top of THE WALL, race slicks at the summit, the LS7 at the cliff overlook).
+- **Rewards**: a job done pays $1,200 (everyone on it is paid); a level's medals pay $400 / $800 / $1,500 the first time, and a level's first gold brings one of the best parts.
+- **The shop**: at a repair station, the garage sells everyday parts and serious ones (dearer); the very best (race slicks, the big-power engines) aren't sold. B (pad: Y) buys the part shown.
+- **Fitting**: the garage fits only parts you own, and only at a repair station. A part, once owned, fits every vehicle that offers it.
+
+Each player's career is their own (`~/.config/crumplezone/career.txt`, and a garage of its own, `garage-career.txt`) and comes with them into anyone's game; a cache opened in a session counts for everyone there.
 
 ## Damage
 

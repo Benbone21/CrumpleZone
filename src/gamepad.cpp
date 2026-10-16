@@ -222,6 +222,7 @@ void Logic::update(const Raw& raw, Mode ctx, double dt) {
     }
     if (P(B_A)) tap(SC_RETURN);
     if (P(B_B) || P(B_START)) tap(SC_ESCAPE);
+    if (P(B_Y)) tap(SC_B);  // (the garage: buy the part, at a station in a career)
 }
 
 bool Logic::apply(Car& c, double dt) {

@@ -21,7 +21,7 @@ constexpr int kDefaultPort = 27015;
 constexpr int kDiscoveryPort = 27016;  // UDP: "who's hosting?" on the local network
 constexpr int kBeaconPort = 27017;     // UDP: hosts also announce themselves here every couple of seconds
 constexpr int kMaxPeers = 8;
-constexpr uint16_t kVersion = 3;  // engine state and reliable per-car light switches
+constexpr uint16_t kVersion = 4;  // every garage slot (wheels and tires too) in a car's spec
 constexpr double kSendRate = 20;      // vehicle states per second
 constexpr double kPlaybackDelay = 0.1; // s behind the newest state received
 }  // namespace net
