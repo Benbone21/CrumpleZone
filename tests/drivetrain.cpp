@@ -169,3 +169,42 @@ SCENARIO(lowRangeCrawler, "drivetrain/low-range-crawler", "4Runner with LS7 and 
     ctx.run(3, [&] { stuck.throttle = 1; stuck.brake = 1; });
     ctx.check("flat out against the brakes still snaps a shaft", shaftsGone(stuck) > 0);
 }
+
+// The sandbox garage's 4Runner (LONG TRAVEL AND 37S, CRAWL BOX, stock wheels and tires) with each of
+// the buggy's engines (and the saved 1GR swap): into 4L by the L key's route (4H, 4H LOCK, 4L LOCK)
+// at idle, rolling, with the pedal already down (a pad trigger) and with the wheels spinning.
+// Nothing may break on engaging; and the engines' own torque must not either, short of a stuck tire.
+SCENARIO(lowRangeBuggyEngines, "drivetrain/low-range-buggy-engines", "4Runner (long travel 37s, crawl box) with each buggy engine: into 4L via 4H LOCK at idle, rolling, pedal down, wheels spinning: nothing breaks") {
+    const int buggy = 4;
+    ctx.check("(catalog index 4 is the buggy)", std::string(vehicleCatalog()[buggy].id) == "buggy");
+    std::vector<int> engines{partIndex(3, MOD_ENGINE, "1GR SWAP")};
+    const auto& opts = modOptions(3, MOD_ENGINE);
+    for (int i = 0; i < (int)opts.size(); i++)
+        if (opts[i].fromVehicle == buggy) engines.push_back(i);
+    ctx.check("the buggy's engines are on offer", engines.size() >= 4);
+    int lane = 0;
+    for (int e : engines) {
+        ModSet ms;
+        ms.pick[MOD_ENGINE] = e;
+        ms.pick[MOD_SUSPENSION] = partIndex(3, MOD_SUSPENSION, "LONG TRAVEL AND 37S");
+        ms.pick[MOD_TRANSMISSION] = partIndex(3, MOD_TRANSMISSION, "CRAWL BOX");
+        const VehicleSpec& spec = tunedSpec(3, ms);
+        const std::string tag = modOptions(3, MOD_ENGINE)[e].name;
+        for (int trial : {0, 3}) {
+            // idle; or rolling 1 m/s with the pedal down at 0.7 and the wheels spinning 8 rad/s over the road
+            Car& c = ctx.add(spec, -80 + 10 * trial, -40 - 14 * lane, 0);
+            ctx.run(1.2);
+            if (trial >= 1) ctx.launch(c, 1.0);
+            if (trial == 3) for (Wheel& w : c.wheels) w.omega += 8, w.sideOmega = w.omega;
+            const double pedal = trial >= 2 ? 0.7 : 0.0;
+            auto hold = [&] { c.throttle = pedal; c.brake = c.handbrake = 0; };
+            ctx.run(0.3, hold);
+            c.setDriveMode(2);  // 4H LOCK on the way
+            ctx.run(0.3, hold);
+            c.setDriveMode((int)driveModes(spec.transfer).size() - 1);  // 4L LOCK
+            ctx.run(3, hold);
+            ctx.check(tag + " trial " + std::to_string(trial) + ": nothing breaks engaging 4L", shaftsGone(c) == 0);
+        }
+        lane++;
+    }
+}
