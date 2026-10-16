@@ -40,7 +40,11 @@ enum TransferCase {
 
 // One position of the transfer-case lever.
 // Tire tread: how it gets on with each surface (on top of the spec's pavement grip).
-enum TireType { TIRE_STREET, TIRE_SEMI_SLICK, TIRE_ALL_TERRAIN, TIRE_MUD_TERRAIN };
+enum TireType { TIRE_STREET, TIRE_SEMI_SLICK, TIRE_ALL_TERRAIN, TIRE_MUD_TERRAIN,
+                TIRE_RACE_SLICK,  // no tread at all: the most rubber on dry pavement, nothing to bite with off it
+                TIRE_SNOW,        // winter tire: soft compound, siped blocks: grips snow and ice
+                TIRE_CHAINS,      // snow chains over the tire: they cut into ice, snow and mud, skate on pavement
+                TIRE_TYPES };
 const char* tireTypeName(int t);
 
 struct DriveMode {
@@ -257,7 +261,8 @@ struct VehicleSpec {
     int wheelStyle = WHEEL_ALLOY;
     // Set on tuned copies (see mods.h): which catalog vehicle, and the mods fitted.
     int model = -1;
-    int mods[3] = {0, 0, 0};
+    int mods[5] = {0, 0, 0, 0, 0};  // the garage's pick in each slot (mods.h ModSlot)
+    int engineOrigin = -1;          // the catalog vehicle whose engine is fitted (-1: its own): picks its recorded sound
     std::string modSummary;  // "STAGE 1 / COILOVERS / STOCK" (empty when stock)
 
     enum Finish { PAINT, MATTE, CONCRETE } finish = PAINT;

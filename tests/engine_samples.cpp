@@ -94,7 +94,7 @@ void recordedEngineTests(const std::function<void(const char*, bool)>& check, vo
     bool mapped = true;
     for (int v = 0; v < 7; v++) {
         const auto& options = modOptions(v, MOD_ENGINE);
-        for (int m = 0; m < (int)options.size(); m++) {
+        for (int m = 0; m < modOwnCount(v, MOD_ENGINE); m++) {
             ModSet mods; mods.pick[MOD_ENGINE] = m;
             const auto& spec = tunedSpec(v, mods);
             const int recording = forVehicle(spec);

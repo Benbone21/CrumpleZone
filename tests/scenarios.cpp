@@ -1207,10 +1207,60 @@ std::string slug(const std::string& s) {
     return out;
 }
 
+// Every other vehicle's parts on this one (the universal garage): each builds, settles on its
+// wheels in one piece and drives off. (The full drive-to-80 check is for the car's own parts.)
+void swapScenario(Ctx& ctx, int vehicle, int slot) {
+    int bad = 0, total = 0;
+    std::string worst;
+    // (A car parked well away to be the player: the sim never removes the player's only car,
+    // and one left in the lane would be in the next one's way.)
+    ctx.add(vehicleCatalog()[0], kLaneStartX, kLaneZ + 60, 0);
+    ctx.sim.player = (int)ctx.sim.cars.size() - 1;
+    for (int o = modOwnCount(vehicle, slot); o < (int)modOptions(vehicle, slot).size(); o++) {
+        ModSet ms;
+        ms.pick[slot] = o;
+        const VehicleSpec& spec = tunedSpec(vehicle, ms);
+        const int before = (int)ctx.sim.cars.size();
+        // (Each on its own patch of ground: the ruts the last ones dug stay in it.)
+        const int n = o - modOwnCount(vehicle, slot);
+        Car& c = ctx.add(spec, kLaneStartX + 9.0 * (n % 12), kLaneZ + 7.0 * (n / 12), 0);
+        const int idx = (int)ctx.sim.cars.size() - 1;
+        ctx.run(1.5);
+        const V3 p0 = c.frame().com;
+        ctx.run(2.0, [&] {
+            c.throttle = 0.5;
+            c.brake = c.handbrake = 0;
+        });
+        Car& cc = ctx.sim.cars[idx];
+        const Frame f = cc.frame();
+        bool finite = true;
+        for (const Node& n : cc.nodes) finite &= std::isfinite(n.p.x) && std::isfinite(n.p.y) && std::isfinite(n.p.z);
+        // (It may rub, struggle or barely move: a 40 in tire on a Civic or a 1.6 in a 2 t truck do. It
+        // must not blow apart or fall over.)
+        const bool ok = finite && f.up.y > 0.85;
+        total++;
+        if (!ok) {
+            bad++;
+            worst += (worst.empty() ? "" : "; ") + modOptions(vehicle, slot)[o].name + (finite ? "" : " (blew up)") +
+                     (f.up.y > 0.85 ? "" : " (tipped)") + (cc.damage < 0.01 ? "" : " (damaged)") + (len(f.com - p0) > 1.0 ? "" : " (didn't move)");
+        }
+        ctx.sim.removeCar(idx);
+        ctx.sim.looseWheels.clear();  // (a wheel it shed would be under the next one)
+        (void)before;
+    }
+    ctx.metric("parts from other vehicles that don't work on it", bad, "of " + std::to_string(total), 0, 0);
+    if (!worst.empty()) ctx.note(worst), ctx.check("(" + worst + ")", true);
+}
+
 int modScenarios = [] {
     for (int v = 0; v < (int)vehicleCatalog().size(); v++)
         for (int k = 0; k < MOD_SLOTS; k++)
-            for (int o = 1; o < (int)modOptions(v, k).size(); o++)
+            scenarioRegistry().push_back({std::string("garage/swaps/") + vehicleCatalog()[v].id + "/" + slug(modSlotName(k)),
+                                          "Every other vehicle's parts in this slot: each builds, settles in one piece and drives",
+                                          [v, k](Ctx& c) { swapScenario(c, v, k); }});
+    for (int v = 0; v < (int)vehicleCatalog().size(); v++)
+        for (int k = 0; k < MOD_SLOTS; k++)
+            for (int o = 1; o < modOwnCount(v, k); o++)  // (its own parts; everyone else's: garage/swaps)
                 scenarioRegistry().push_back({std::string("mods/") + vehicleCatalog()[v].id + "/" + slug(modSlotName(k)) + "/" +
                                                   slug(modOptions(v, k)[o].name),
                                               "Fitted next to a stock car: sits level, right ride height, drives, the expected effect",

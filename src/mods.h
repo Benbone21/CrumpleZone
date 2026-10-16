@@ -1,4 +1,5 @@
-// Car mods: engine, suspension and transmission upgrades for each vehicle.
+// Car mods: engine, suspension, transmission, wheels and tires for each vehicle, and every
+// other vehicle's parts too (the Jesko's V8 in the Blazer, the buggy's axles under the Civic).
 //
 // Every mod is a change to the vehicle's spec (torque curve, ride height, spring
 // rates, tires, gear ratios, diffs...), and the car is rebuilt from the modified spec,
@@ -11,7 +12,7 @@
 
 #include "vehicles.h"
 
-enum ModSlot { MOD_ENGINE, MOD_SUSPENSION, MOD_TRANSMISSION, MOD_SLOTS };
+enum ModSlot { MOD_ENGINE, MOD_SUSPENSION, MOD_TRANSMISSION, MOD_WHEELS, MOD_TIRES, MOD_SLOTS };
 const char* modSlotName(int slot);
 
 struct ModOption {
@@ -21,12 +22,18 @@ struct ModOption {
 };
 
 struct ModSet {
-    int pick[MOD_SLOTS] = {0, 0, 0};
-    bool stock() const { return !pick[0] && !pick[1] && !pick[2]; }
+    int pick[MOD_SLOTS] = {0, 0, 0, 0, 0};
+    bool stock() const {
+        for (int p : pick)
+            if (p) return false;
+        return true;
+    }
 };
 
-// The options for one slot of catalog vehicle `vehicle` (option 0 = stock).
+// The options for one slot of catalog vehicle `vehicle` (option 0 = stock): its own parts
+// first (modOwnCount of them, stock included), then every other vehicle's.
 const std::vector<ModOption>& modOptions(int vehicle, int slot);
+int modOwnCount(int vehicle, int slot);
 // Catalog vehicle with these mods fitted. The same mods always give the same object
 // (cars keep a pointer to their spec); no mods gives the catalog entry itself.
 const VehicleSpec& tunedSpec(int vehicle, const ModSet& mods);

@@ -45,16 +45,24 @@ double tireCurve(double s, double bite, double keep) {
 // Each tread on each surface, against its grip on dry pavement (PAVED, GRASS, DIRT, ROCK,
 // SCREE, GRAVEL, SAND, MUD, SNOW, ICE, WET). Semi-slicks have no voids for water, mud or
 // snow to go; knobbly tires bite into loose stuff; big mud lugs clear mud but have less
-// rubber on ice and wet pavement.
-const double kTreadGrip[4][SURF_COUNT] = {
+// rubber on ice and wet pavement. A race slick is all rubber: on loose ground it rolls on
+// top like a ball bearing, and water can't get out from under it. A winter tire's soft,
+// siped blocks hold snow (snow grips snow) and its sipes' edges ice. Chains dig into ice,
+// packed snow and mud, but on pavement only the links touch: steel on asphalt.
+// (The tire's own peak grip, VehicleSpec::tireGrip, is on top of this.)
+const double kTreadGrip[TIRE_TYPES][SURF_COUNT] = {
     {1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 0.95, 0.85, 0.90, 1.00, 1.00},  // street
     {1.00, 0.75, 0.80, 0.95, 0.80, 0.80, 0.70, 0.50, 0.55, 0.80, 0.72},  // semi-slick
     {1.00, 1.08, 1.08, 1.00, 1.08, 1.08, 1.10, 1.20, 1.15, 1.00, 0.95},  // all-terrain
     {1.00, 1.12, 1.12, 1.00, 1.12, 1.10, 1.08, 1.45, 1.05, 0.90, 0.88},  // mud-terrain
+    {1.00, 0.55, 0.62, 0.92, 0.55, 0.60, 0.50, 0.32, 0.30, 0.55, 0.50},  // race slick
+    {1.00, 1.04, 1.04, 0.96, 1.04, 1.04, 1.00, 1.05, 1.55, 1.75, 1.05},  // snow (winter)
+    {1.00, 1.12, 1.18, 0.88, 1.22, 1.18, 0.92, 1.42, 1.95, 3.20, 0.95},  // chains
 };
 // How stiff the tread is (how quickly grip builds with slip): a semi-slick's shallow
-// tread barely squirms, tall lugs do.
-const double kTreadBite[4] = {1.0, 1.4, 1.0, 0.85};
+// tread barely squirms, a slick not at all; tall lugs and soft winter blocks do; chains
+// bite at once.
+const double kTreadBite[TIRE_TYPES] = {1.0, 1.4, 1.0, 0.85, 1.7, 0.9, 1.25};
 
 const V3 kPalette[] = {
     {0.80, 0.16, 0.10}, {0.14, 0.34, 0.78}, {0.90, 0.72, 0.16}, {0.88, 0.88, 0.86}, {0.16, 0.55, 0.30},
@@ -1428,14 +1436,14 @@ void Car::wheelStep(double h, const World& w) {
             // sooner in a fast corner and the rim is closer to the rocks.
             const double psiDrop = spec->tirePsi - tirePsi;
             const SurfaceInfo& si = surfaceInfo(ct.surface);
-            const int tread = std::min(std::max(spec->tireType, 0), 3);
+            const int tread = std::min(std::max(spec->tireType, 0), TIRE_TYPES - 1);
             double grip = si.grip * kTreadGrip[tread][ct.surface];
             if (ct.surface != SURF_PAVED && ct.surface != SURF_WET && ct.surface != SURF_ICE) grip *= (1 + 0.012 * psiDrop) * spec->looseGrip;
             // Mud packed into the tread turns it into a slick.
-            grip *= 1 - (tread == TIRE_MUD_TERRAIN ? 0.25 : 0.4) * wh.clog;
+            grip *= 1 - (tread == TIRE_MUD_TERRAIN ? 0.25 : tread == TIRE_CHAINS ? 0.15 : tread == TIRE_RACE_SLICK ? 0.5 : 0.4) * wh.clog;
             // Standing water: past ~80 km/h the tread can't push it out of the way fast
             // enough and the tire rides up on it (aquaplaning).
-            if (ct.surface == SURF_WET) grip *= 1 - (tread == TIRE_SEMI_SLICK ? 0.6 : 0.45) * smoothstep(22, 40, len(vc));
+            if (ct.surface == SURF_WET) grip *= 1 - (tread == TIRE_RACE_SLICK ? 0.75 : tread == TIRE_SEMI_SLICK ? 0.6 : tread == TIRE_SNOW ? 0.35 : 0.45) * smoothstep(22, 40, len(vc));
             const double bite = si.bite * kTreadBite[tread];
             wh.bite = (float)bite;
             const double tireK = wh.radialK(tirePsi, spec->tirePsi, spec->tireSoft);

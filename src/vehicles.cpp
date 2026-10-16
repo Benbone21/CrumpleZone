@@ -109,7 +109,8 @@ void raiseBody(VehicleSpec& vs, double dy) {
 }
 
 const char* tireTypeName(int t) {
-    return t == TIRE_SEMI_SLICK ? "SEMI-SLICK" : t == TIRE_ALL_TERRAIN ? "ALL-TERRAIN" : t == TIRE_MUD_TERRAIN ? "MUD-TERRAIN" : "STREET";
+    return t == TIRE_SEMI_SLICK ? "SEMI-SLICK" : t == TIRE_ALL_TERRAIN ? "ALL-TERRAIN" : t == TIRE_MUD_TERRAIN ? "MUD-TERRAIN"
+           : t == TIRE_RACE_SLICK ? "RACE SLICK" : t == TIRE_SNOW ? "SNOW" : t == TIRE_CHAINS ? "CHAINED" : "STREET";
 }
 
 const std::vector<DriveMode>& driveModes(TransferCase t) {

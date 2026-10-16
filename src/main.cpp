@@ -67,7 +67,7 @@ struct Options {
     int player = 0;
     std::string scenario;  // play a test scenario instead of the sandbox
     bool orbitSet = false, showHelp = false, showGarage = false;
-    int mods[3] = {-1, -1, -1};  // --mods E,S,T: fit these to the player's car (testing)
+    int mods[5] = {-1, -1, -1, -1, -1};  // --mods E,S,T[,W,R]: fit these to the player's car (testing)
     int menu = -1;                // --menu P: open the pause menu on page P (testing)
     int quality = -1;             // --quality 0-3: graphics preset (testing)
     int ground = -1;              // --ground 0-3: terrain materials (testing; see RenderSettings::ground)
@@ -293,7 +293,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--map") o.map = std::atoi(next().c_str());
         else if (a == "--mods") {
             std::string s = next();
-            std::sscanf(s.c_str(), "%d,%d,%d", &o.mods[0], &o.mods[1], &o.mods[2]);
+            std::sscanf(s.c_str(), "%d,%d,%d,%d,%d", &o.mods[0], &o.mods[1], &o.mods[2], &o.mods[3], &o.mods[4]);
         }
         else if (a == "--orbit") {
             std::string s = next();

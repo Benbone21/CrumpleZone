@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -12,7 +13,7 @@
 #include <mutex>
 
 const char* modSlotName(int slot) {
-    static const char* names[MOD_SLOTS] = {"ENGINE", "SUSPENSION", "TRANSMISSION"};
+    static const char* names[MOD_SLOTS] = {"ENGINE", "SUSPENSION", "TRANSMISSION", "WHEELS", "TIRES"};
     return slot >= 0 && slot < MOD_SLOTS ? names[slot] : "";
 }
 
@@ -399,28 +400,256 @@ Slots utvMods() {
     return m;
 }
 
+Slots blazerMods() {
+    Slots m(MOD_SLOTS);
+    m[MOD_ENGINE] = {
+        stock("350 V8 2-BARREL  165 HP  280 LB-FT"),
+        {"350 4-BARREL", "THE QUADRAJET 350  175 HP  290 LB-FT", [](VehicleSpec& s) {
+             // 1972 SAE net, L48 four-barrel (GM).
+             engine(s, "350 V8 4-BARREL",
+                    {{0, 255}, {800, 310}, {1200, 345}, {1800, 380}, {2400, 393}, {3000, 385}, {3600, 365}, {4000, 345}, {4800, 280}, {5200, 230}}, 5200, 0);
+         }},
+        {"454 BIG BLOCK", "THE PICKUPS' 7.4 L  ABOUT 240 HP  370 LB-FT  +70 KG", [](VehicleSpec& s) {
+             // 1972 LS5 truck rating ~230-240 hp net, 360-375 lb-ft (estimate from GM's 1972 figures).
+             engine(s, "454 BIG BLOCK V8",
+                    {{0, 330}, {800, 410}, {1200, 450}, {1800, 490}, {2400, 505}, {2800, 500}, {3600, 470}, {4000, 440}, {4400, 395}, {4800, 340}}, 4800, 0);
+             s.displacement = 7.4;
+             s.engineMass += 70;
+         }},
+        {"ZZ4 CRATE 350", "ALUMINUM HEADS, ROLLER CAM  355 HP  405 LB-FT  LOPEY IDLE", [](VehicleSpec& s) {
+             engine(s, "ZZ4 350 CRATE V8",
+                    {{0, 300}, {1000, 400}, {2000, 470}, {3000, 535}, {3500, 549}, {4500, 520}, {5250, 480}, {5800, 420}, {6000, 390}}, 6000, 0);
+             s.engineMass -= 15;
+             s.idleRpm = 800;
+         }},
+    };
+    m[MOD_SUSPENSION] = {
+        stock("LEAF SPRINGS BOTH ENDS  10-15 TIRES"),
+        {"4 IN LIFT AND 35S", "+100 MM ON TALLER LEAVES  35X12.50 MUD TIRES", [](VehicleSpec& s) {
+             springs(s, 0.10, 0.9, 0.8, 0.34);
+             tires(s, 0.445, 0.318, 14, 0.92, 0.72, 0);
+             s.tireType = TIRE_MUD_TERRAIN;
+             s.bumpFront += 0.02, s.droopFront += 0.04, s.bumpRear += 0.02, s.droopRear += 0.05;
+         }},
+        {"SOFT TRAIL LEAVES", "+50 MM  SOFTER PACKS  MORE FLEX", [](VehicleSpec& s) {
+             springs(s, 0.05, 0.7, 0.5, 0.30);
+             s.droopFront += 0.03, s.droopRear += 0.04;
+         }},
+    };
+    m[MOD_TRANSMISSION] = {
+        stock("SM465 4-SPEED  NP205  3.73 AXLES  OPEN DIFFS"),
+        {"TH350 AUTOMATIC", "THREE-SPEED AUTO WITH A TORQUE CONVERTER", [](VehicleSpec& s) {
+             gears(s, "TH350 3-SPEED AUTO", {2.52, 1.52, 1.00}, 2.07, 3.73, 0.4);
+             s.stallRpm = 1900, s.stallRatio = 2.0, s.lockupGear = 9;  // (no lock-up: a 1970s converter)
+         }},
+        {"4.56 GEARS AND LOCKERS", "4.56 AXLES  DETROIT REAR  ARB FRONT", [](VehicleSpec& s) {
+             s.finalDrive = 4.56;
+             s.lockerRear = true;
+             s.lockerFront = true;
+             s.frontLockerLowOnly = false;
+         }},
+    };
+    return m;
+}
+
 const std::vector<Slots>& allMods() {
     static const std::vector<Slots> mods = [] {
         std::vector<Slots> m;
         for (const VehicleSpec& vs : vehicleCatalog()) {
             std::string id = vs.id;
-            m.push_back(id == "civic" ? civicMods() : id == "jesko" ? jeskoMods() : id == "bronco" ? broncoMods() : id == "buggy" ? buggyMods() : id == "utv" ? utvMods() : id == "tacoma" ? tacomaMods() : runnerMods());
+            m.push_back(id == "civic" ? civicMods() : id == "jesko" ? jeskoMods() : id == "bronco" ? broncoMods() : id == "buggy" ? buggyMods() : id == "utv" ? utvMods() : id == "tacoma" ? tacomaMods() : id == "blazer" ? blazerMods() : runnerMods());
         }
         return m;
     }();
     return mods;
 }
 
+// ---- Everyone's parts on everything ---------------------------------------------
+// Another vehicle's part goes on whole: its stock engine (or gearbox, or suspension, or
+// wheels) first, then that vehicle's own mod on top of it, as on its own car. (A mod alone
+// only touches what it changes: the Civic's VTEC swap on the Bronco would otherwise keep the
+// Bronco's six cylinders and twin turbos.)
+
+void takeEngine(VehicleSpec& s, const VehicleSpec& from) {
+    s.torque = from.torque;  // (already the catalog's, ~15% over the rating)
+    s.idleRpm = from.idleRpm;
+    s.redline = from.redline;
+    s.turboLag = from.turboLag;
+    s.induction = from.induction;
+    s.displacement = from.displacement;
+    s.cylinders = from.cylinders;
+    s.flatPlane = from.flatPlane;
+    s.engineName = from.engineName;
+    s.engineMass = from.engineMass;
+    s.engineLen = from.engineLen, s.engineWid = from.engineWid, s.engineHgt = from.engineHgt;
+    s.engineOrigin = from.model;
+}
+
+void takeGearbox(VehicleSpec& s, const VehicleSpec& from) {
+    s.gears = from.gears;
+    s.reverseRatio = from.reverseRatio;
+    s.finalDrive = from.finalDrive;
+    s.shiftTime = from.shiftTime;
+    s.stallRpm = from.stallRpm, s.stallRatio = from.stallRatio, s.lockupGear = from.lockupGear;
+    s.gearboxName = from.gearboxName;
+    s.gearboxMass = from.gearboxMass;
+}
+
+// The suspension's tuning: springs, dampers, bars and travel. (The layout stays the car's:
+// wishbones on a car's subframe, leaves on a truck's frame. Bolting a truck's solid axles
+// under a unibody that has nothing to hang them from tore the cars apart.)
+void takeSuspension(VehicleSpec& s, const VehicleSpec& from) {
+    s.rideFreqFront = from.rideFreqFront, s.rideFreqRear = from.rideFreqRear;
+    s.dampingRatio = from.dampingRatio;
+    s.arbFront = from.arbFront, s.arbRear = from.arbRear;
+    s.bumpFront = from.bumpFront, s.droopFront = from.droopFront, s.bumpRear = from.bumpRear, s.droopRear = from.droopRear;
+    s.swayDisconnect = from.swayDisconnect;
+}
+
+void takeWheels(VehicleSpec& s, const VehicleSpec& from) {
+    const double grip = s.tireGrip, lat = s.lateralGrip;
+    // Tires taller than its wheel wells take a lift to clear them, as on a real build.
+    const double wellR = s.wellTireRadius > 0 ? s.wellTireRadius : s.wheelRadius + 0.03;
+    if (from.wheelRadius > wellR) raiseBody(s, from.wheelRadius - wellR);
+    tires(s, from.wheelRadius, from.wheelWidth, from.wheelMass - s.wheelMass, grip, lat, 0);
+    s.wheelWidthRear = from.wheelWidthRear;
+    s.rimRadius = from.rimRadius;
+    s.wheelStyle = from.wheelStyle;
+    s.tirePsi = from.tirePsi;
+    s.tireSoft = from.tireSoft;
+}
+
+// Each tread's own peak grip (dry pavement, then the cornering share of it), against which a
+// change of tire scales the vehicle's calibrated figures.
+const double kTypeGrip[TIRE_TYPES][2] = {
+    {1.00, 0.86},  // street
+    {1.10, 0.95},  // semi-slick
+    {0.98, 0.77},  // all-terrain
+    {0.92, 0.72},  // mud-terrain
+    {1.32, 1.02},  // race slick
+    {0.94, 0.80},  // snow
+    {0.80, 0.70},  // (chains: fitted on foot, not here)
+};
+
+std::string shortName(const VehicleSpec& v) {
+    std::string n = v.id;
+    for (char& ch : n) ch = (char)std::toupper((unsigned char)ch);
+    return n;
+}
+
+std::string powerLine(const VehicleSpec& v) {
+    char b[96];
+    std::snprintf(b, sizeof b, "%.0f HP  %.0f NM  %d CYL", peakPower(v) / 745.7, peakTorque(v), v.cylinders);
+    return b;
+}
+
+struct Universal {
+    std::vector<std::vector<std::vector<ModOption>>> opts;  // [vehicle][slot]
+    std::vector<std::vector<int>> own;
+};
+
+const Universal& universal() {
+    static const Universal u = [] {
+        Universal U;
+        const auto& cat = vehicleCatalog();
+        const auto& base = allMods();
+        const int n = (int)cat.size();
+        U.opts.assign(n, std::vector<std::vector<ModOption>>(MOD_SLOTS));
+        U.own.assign(n, std::vector<int>(MOD_SLOTS, 1));
+        for (int v = 0; v < n; v++) {
+            for (int k = 0; k < MOD_SLOTS; k++) {
+                auto& list = U.opts[v][k];
+                if (k < (int)base[v].size()) list = base[v][k];
+                if (list.empty()) {
+                    char b[96];
+                    if (k == MOD_WHEELS) std::snprintf(b, sizeof b, "%.0f MM TIRES  %.0f IN RIMS", cat[v].wheelRadius * 2000, cat[v].rimRadius * 2 / 0.0254);
+                    else std::snprintf(b, sizeof b, "%s", k == MOD_TIRES ? tireTypeName(cat[v].tireType) : "");
+                    list.push_back(stock(""));
+                    list.back().detail = b;
+                }
+                U.own[v][k] = (int)list.size();
+            }
+            // Every other vehicle's parts.
+            for (int w = 0; w < n; w++) {
+                if (w == v) continue;
+                const VehicleSpec* from = &cat[w];
+                const std::string who = shortName(cat[w]) + ": ";
+                U.opts[v][MOD_ENGINE].push_back({who + cat[w].engineName, "STOCK  " + powerLine(cat[w]), [from](VehicleSpec& s) { takeEngine(s, *from); }});
+                for (size_t o = 1; o < base[w][MOD_ENGINE].size(); o++) {
+                    const ModOption& mo = base[w][MOD_ENGINE][o];
+                    auto fn = mo.apply;
+                    U.opts[v][MOD_ENGINE].push_back({who + mo.name, mo.detail, [from, fn](VehicleSpec& s) {
+                                                         takeEngine(s, *from);
+                                                         fn(s);
+                                                     }});
+                }
+                U.opts[v][MOD_TRANSMISSION].push_back({who + cat[w].gearboxName, "STOCK GEARBOX AND AXLE RATIO", [from](VehicleSpec& s) { takeGearbox(s, *from); }});
+                for (size_t o = 1; o < base[w][MOD_TRANSMISSION].size(); o++) {
+                    const ModOption& mo = base[w][MOD_TRANSMISSION][o];
+                    auto fn = mo.apply;
+                    U.opts[v][MOD_TRANSMISSION].push_back({who + mo.name, mo.detail, [from, fn](VehicleSpec& s) {
+                                                               takeGearbox(s, *from);
+                                                               fn(s);
+                                                           }});
+                }
+                U.opts[v][MOD_SUSPENSION].push_back({who + "STOCK SUSPENSION", base[w][MOD_SUSPENSION][0].detail, [from](VehicleSpec& s) { takeSuspension(s, *from); }});
+                for (size_t o = 1; o < base[w][MOD_SUSPENSION].size(); o++) {
+                    const ModOption& mo = base[w][MOD_SUSPENSION][o];
+                    auto fn = mo.apply;
+                    // (Fitted to its own vehicle first: then its tuning, its tires if it brings
+                    // any, and what it does to the ride height, within reason, come across.)
+                    U.opts[v][MOD_SUSPENSION].push_back({who + mo.name, mo.detail, [from, fn](VehicleSpec& s) {
+                                                             VehicleSpec m = *from;
+                                                             fn(m);
+                                                             takeSuspension(s, m);
+                                                             const double lift = (m.layerY[0] - from->layerY[0]) - (m.wheelRadius - from->wheelRadius);
+                                                             raiseBody(s, std::min(std::max(lift, -0.04), 0.15));
+                                                             if (std::fabs(m.wheelRadius - from->wheelRadius) > 0.005 || m.tireType != from->tireType) {
+                                                                 takeWheels(s, m);
+                                                                 s.tireGrip = m.tireGrip, s.lateralGrip = m.lateralGrip, s.tireType = m.tireType;
+                                                             }
+                                                         }});
+                }
+                char b[96];
+                std::snprintf(b, sizeof b, "%.0f MM TALL  %.0f MM WIDE  %.0f IN RIMS", from->wheelRadius * 2000, from->wheelWidth * 1000, from->rimRadius * 2 / 0.0254);
+                U.opts[v][MOD_WHEELS].push_back({who + "WHEELS AND TIRES", b, [from](VehicleSpec& s) { takeWheels(s, *from); }});
+            }
+            // Tires: every tread, on the wheels it has.
+            static const int kOffer[] = {TIRE_STREET, TIRE_SEMI_SLICK, TIRE_RACE_SLICK, TIRE_ALL_TERRAIN, TIRE_MUD_TERRAIN, TIRE_SNOW};
+            static const char* kWhat[] = {"ROAD TREAD: GOOD ON PAVEMENT, FAIR ELSEWHERE", "TRACK-DAY TREAD: STICKY, POOR IN MUD AND SNOW",
+                                          "NO TREAD AT ALL: HUGE DRY GRIP, HOPELESS OFF IT", "KNOBBY ALL-ROUNDER FOR TRAILS AND GRAVEL",
+                                          "BIG LUGS: CLEAR MUD, BITE LOOSE GROUND", "SOFT SIPED WINTER TREAD: SNOW AND ICE"};
+            for (int t = 0; t < 6; t++) {
+                const int type = kOffer[t];
+                if (type == cat[v].tireType) continue;
+                std::string name = std::string(tireTypeName(type)) + (type == TIRE_RACE_SLICK || type == TIRE_SEMI_SLICK ? "S" : " TIRES");
+                U.opts[v][MOD_TIRES].push_back({name, kWhat[t], [type](VehicleSpec& s) {
+                                                    const int was = std::min(std::max(s.tireType, 0), TIRE_TYPES - 1);
+                                                    s.tireGrip *= kTypeGrip[type][0] / kTypeGrip[was][0];
+                                                    s.lateralGrip *= kTypeGrip[type][1] / kTypeGrip[was][1];
+                                                    s.tireType = type;
+                                                }});
+            }
+        }
+        return U;
+    }();
+    return u;
+}
+
 }  // namespace
 
-const std::vector<ModOption>& modOptions(int vehicle, int slot) { return allMods()[vehicle][slot]; }
+const std::vector<ModOption>& modOptions(int vehicle, int slot) { return universal().opts[vehicle][slot]; }
+int modOwnCount(int vehicle, int slot) { return universal().own[vehicle][slot]; }
 
 const VehicleSpec& tunedSpec(int vehicle, const ModSet& mods) {
     if (mods.stock()) return vehicleCatalog()[vehicle];
     static std::mutex lock;
-    static std::map<std::array<int, 4>, std::unique_ptr<VehicleSpec>> cache;
+    static std::map<std::array<int, MOD_SLOTS + 1>, std::unique_ptr<VehicleSpec>> cache;
     std::lock_guard<std::mutex> g(lock);
-    auto& slot = cache[{vehicle, mods.pick[0], mods.pick[1], mods.pick[2]}];
+    std::array<int, MOD_SLOTS + 1> key{};
+    key[0] = vehicle;
+    for (int k = 0; k < MOD_SLOTS; k++) key[k + 1] = mods.pick[k];
+    auto& slot = cache[key];
     if (!slot) {
         slot = std::make_unique<VehicleSpec>(vehicleCatalog()[vehicle]);
         VehicleSpec& s = *slot;
@@ -445,15 +674,16 @@ std::string Garage::defaultPath() {
 bool Garage::load(const std::string& path) {
     FILE* f = std::fopen(path.c_str(), "r");
     if (!f) return false;
-    char id[64];
-    int e, s, t;
-    while (std::fscanf(f, "%63s %d %d %d", id, &e, &s, &t) == 4) {
+    char line[256];
+    while (std::fgets(line, sizeof line, f)) {  // "id engine suspension transmission [wheels tires]"
+        char id[64];
+        int p[MOD_SLOTS] = {0, 0, 0, 0, 0};
+        if (std::sscanf(line, "%63s %d %d %d %d %d", id, &p[0], &p[1], &p[2], &p[3], &p[4]) < 4) continue;
         const auto& cat = vehicleCatalog();
         for (size_t v = 0; v < cat.size(); v++) {
             if (std::string(cat[v].id) != id) continue;
-            int pick[3] = {e, s, t};
             for (int k = 0; k < MOD_SLOTS; k++)
-                fitted[v].pick[k] = std::min(std::max(pick[k], 0), (int)modOptions((int)v, k).size() - 1);
+                fitted[v].pick[k] = std::min(std::max(p[k], 0), (int)modOptions((int)v, k).size() - 1);
         }
     }
     std::fclose(f);
@@ -468,7 +698,7 @@ bool Garage::save(const std::string& path) const {
     if (!f) return false;
     const auto& cat = vehicleCatalog();
     for (size_t v = 0; v < cat.size(); v++)
-        std::fprintf(f, "%s %d %d %d\n", cat[v].id, fitted[v].pick[0], fitted[v].pick[1], fitted[v].pick[2]);
+        std::fprintf(f, "%s %d %d %d %d %d\n", cat[v].id, fitted[v].pick[0], fitted[v].pick[1], fitted[v].pick[2], fitted[v].pick[3], fitted[v].pick[4]);
     std::fclose(f);
     return true;
 }

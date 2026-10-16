@@ -110,7 +110,7 @@ const char* key(int n) { return n >= 0 && n < kBanks ? kKeys[n] : kKeys[0]; }
 int id(const std::string& name) { for (int n = 1; n < kBanks; n++) if (name == kKeys[n]) return n; return 0; }
 int forVehicle(const VehicleSpec& v) {
     const std::string name = v.engineName;
-    switch (v.model) {
+    switch (v.engineOrigin >= 0 ? v.engineOrigin : v.model) {  // (a swapped engine sounds like where it came from)
         case 0: return name.find("B18") != std::string::npos ? 3 : name.find("B16") != std::string::npos ? 2 : 1;
         case 1: return 4;
         case 2: return v.cylinders == 4 ? 6 : v.displacement > 2.85 ? 7 : 5;
