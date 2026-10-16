@@ -256,6 +256,19 @@ FxEvents Effects::update(Sim& sim, double dt) {
                     emit(SMOKE, wh.contact + V3(randS() * 0.15, 0.15, randS() * 0.15), vel * 0.35 + V3(randS(), 0.5 + rand01(), randS()) * 0.8,
                          0.9f, 0.15f, 1.0f, 0.82f, 0.85f, 0.88f, 0.16f);
             }
+            // Wading: a bow wave of spray off a tire moving through water (brown over a mud bed).
+            if (world.hasWater() && speed > 1.5) {
+                const double wl = world.waterLevel(wh.contact.x, wh.contact.z);
+                if (wl > wh.contact.y + 0.02 && wl < wh.contact.y + wh.R * 1.6) {
+                    const bool murky = wh.surface == SURF_MUD;
+                    const float c[3] = {murky ? 0.42f : 0.82f, murky ? 0.31f : 0.88f, murky ? 0.2f : 0.92f};
+                    int n = count(std::min(60.0, speed * 3.0), dt);
+                    for (int k = 0; k < n; k++)
+                        emit(SMOKE, V3(wh.contact.x + randS() * 0.2, wl + 0.03, wh.contact.z + randS() * 0.2),
+                             vel * 0.2 + V3(randS() * 0.8, 0.6 + rand01() * (0.4 + speed * 0.15), randS() * 0.8), 0.7f + 0.4f * (float)rand01(),
+                             0.08f, 0.5f, c[0], c[1], c[2], 0.3f);
+                }
+            }
             // Tracks. On loose ground every tire leaves one: a groove the width of the tread,
             // as deep as it sank (with the ground shoved up either side in sand, mud and
             // snow), darker where it spun. On hard ground, black rubber where it slid.

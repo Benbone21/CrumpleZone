@@ -71,6 +71,8 @@ struct Options {
     int debug = 0;
     int player = 0;
     std::string scenario;  // play a test scenario instead of the sandbox
+    bool eyeSet = false;          // --eye X,Z,H,YAW,PITCH: the drone camera parked there (H m above the ground; degrees; yaw 0 looks +X, 90 looks -Z)
+    double eyeX = 0, eyeZ = 0, eyeH = 1, eyeYaw = 0, eyePitch = 0;
     bool orbitSet = false, showHelp = false, showGarage = false;
     int mods[5] = {-1, -1, -1, -1, -1};  // --mods E,S,T[,W,R]: fit these to the player's car (testing)
     int menu = -1;                // --menu P: open the pause menu on page P (testing)
@@ -239,7 +241,7 @@ struct BuildWatch {
     void exec(int argc, char** argv, const std::vector<std::string>& extra) {
 #ifndef _WIN32
         static const std::set<std::string> withValue = {"--map", "--player", "--spawn", "--resume-model", "--scenario", "--script",
-                                                        "--shot-prefix", "--shot-frames", "--menu", "--orbit", "--spawn-section"};
+                                                        "--shot-prefix", "--shot-frames", "--menu", "--orbit", "--spawn-section", "--eye"};
         static const std::set<std::string> flags = {"--garage", "--show-help"};
         std::vector<std::string> args = {exe};
         for (int i = 1; i < argc; i++) {
@@ -309,6 +311,10 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--orbit") {
             std::string s = next();
             o.orbitSet = std::sscanf(s.c_str(), "%lf,%lf,%lf", &o.orbitYaw, &o.orbitPitch, &o.orbitDist) == 3;
+        }
+        else if (a == "--eye") {
+            std::string s = next();
+            o.eyeSet = std::sscanf(s.c_str(), "%lf,%lf,%lf,%lf,%lf", &o.eyeX, &o.eyeZ, &o.eyeH, &o.eyeYaw, &o.eyePitch) == 5;
         }
         else if (a == "--spawn") {
             std::string s = next();
@@ -1609,6 +1615,7 @@ int main(int argc, char** argv) {
         if (opt.spawnSection < (int)sim.world.sections.size()) {
             const World::SectionSpot& s = sim.world.sections[opt.spawnSection];
             opt.spawnSet = true, opt.spawnX = s.entry.x, opt.spawnZ = s.entry.z, opt.spawnHeading = s.heading * 180 / M_PI;
+            std::printf("section %d %s: entry %.1f,%.1f heading %.1f deg\n", opt.spawnSection, s.name.c_str(), s.entry.x, s.entry.z, opt.spawnHeading);
         } else std::printf("no section %d: the proving ground has %zu\n", opt.spawnSection, sim.world.sections.size());
     }
     if (opt.spawnSet) {
@@ -1648,6 +1655,11 @@ int main(int argc, char** argv) {
         cam.orbitYaw = opt.orbitYaw * M_PI / 180;
         cam.pitch = opt.orbitPitch * M_PI / 180;
         cam.dist = opt.orbitDist;
+    }
+    if (opt.eyeSet) {
+        cam.mode = 3;
+        cam.droneEye = V3(opt.eyeX, sim.world.height(opt.eyeX, opt.eyeZ) + opt.eyeH, opt.eyeZ);
+        cam.droneYaw = opt.eyeYaw * M_PI / 180, cam.dronePitch = opt.eyePitch * M_PI / 180;
     }
     DebugView debug = (DebugView)(opt.debug % DEBUG_VIEW_COUNT);
     bool dragging = false;
