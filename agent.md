@@ -345,3 +345,13 @@ Without `--time`, captures start at 10:00 with the clock running.
   - Left out: the Chevy Blazer (154fcfd; being redone elsewhere) and the Jesko springs/`lateralGrip` retune (broke `freeway/top-speed/koenigsegg jesko` on `main`'s physics; the anti-roll bar change stayed).
   - Controller: `main`'s GameController code is intact; added `SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS`. Hot-plug checked offscreen with an SDL virtual controller. The DualSense itself was not connected during this work, so a real BT pairing was not re-checked.
   - Tests: `keybinds/*` (3 new), OpenCode's six suites (28 scenarios; `simulation/tire-heat` zigzag lowered from 0.3 to 0.2 rad because it assumed the Jesko retune, the Blazer rows removed from `vehicle-physics/` and `extreme/offroad`). Suite before the merge: 458/471; after: 489/502. The same 13 fail in both (frontier/current, backcountry/autopilot-far, freeway/top-speed/turbo utv, structure/weight jesko and tacoma, components/axle-landing, tire-into-fender buggy and UTV, structure/rock-hits/4runner, offroad/whoops, tires/swap, shear, debead). Windows cross-build (`make windows`) builds.
+
+- **2026-10-15, Claude: Blazer, universal garage, tires and chains, engine voices, banked circuit (branch `blazer-garage`, from main + `inputfix`)**
+  - 1972 K5 Blazer (catalog 7, key 8) from GM's figures; its own shell (`uShell == 5`: egg-crate grille, round lamps in square bezels, white top, chrome bumpers) and `WHEEL_STEEL`. `leafFront`: a steered solid axle on leaf packs.
+  - Steering bug on every steered solid axle (the buggy too, and why OpenCode's Blazer wouldn't turn): the tie rods ran straight across, 40 degrees off the steering arm, so the inside wheel could snap over the fold near full lock and jam. Now square to the arm. The traffic AI corners gentler on low-grip tires.
+  - Garage (`mods.cpp` universal()): ENGINE, SUSPENSION, TRANSMISSION, WHEELS, TIRES; own parts first (`modOwnCount`), then every other vehicle's (stock part + that vehicle's mod). `garage/swaps/*` builds and drives every swap.
+  - Tire types: + `TIRE_RACE_SLICK`, `TIRE_SNOW`, `TIRE_CHAINS` (grip row for chained wheels); per-tread tire meshes (`Renderer::buildTire`) and a chain mesh. Chains: `Car::chains`, `Wheel::chained`, on-foot IA_TAKE/FIT/REMOVE/STOW_CHAIN; they snap after ~2 s over 60 km/h. tests/treads.cpp.
+  - Engine voices: `EngineTone` per engine, used by `EngineSynth`; test_audio checks the garage's 28 engines are all apart.
+  - Frontier circuit: banking per corner (`kTrackBank`), eased in and out; `frontier/circuit-banking`.
+  - Suite: 575/588; the 13 failures are main's.
+

@@ -294,6 +294,9 @@ The Tacoma is a stock 3rd-gen TRD Off-Road: cab and open bed as separate boxes o
 long frame, Bilstein shocks, a rear e-locker that only works in 4L, a skid plate and
 all-terrains. Its garage takes it to a TRD Pro, a long-travel build or a 6-speed manual.
 
+### 1972 Chevy Blazer (K5)
+Key 8. The first-generation K5: a 104 in wheelbase box with a white removable hardtop, a 350 small block (165 hp / 280 lb-ft net, carbureted), the SM465 four-speed with its 6.55:1 "granny" first, an NP205 transfer case (2H, 4H, 4L), and leaf springs at both ends with the front axle steering on kingpins. Front discs, rear drums, no ABS, open diffs. About 1,850 kg. Garage: 350 four-barrel, 454 big block, ZZ4 crate; 4 in lift and 35s, soft trail leaves; TH350 automatic, 4.56 gears and lockers.
+
 ## How a vehicle is built
 
 - **Body structure.** A lattice of nodes and beams that is held in shape by a stiff
@@ -358,6 +361,13 @@ all-terrains. Its garage takes it to a TRD Pro, a long-travel build or a 6-speed
 - **Stability control.** Above ~10 km/h, if the truck yaws faster than the steering
   asks (or its rear slides), it brakes the outside front wheel and trims the
   throttle, as real ESC does. It's off in low range and with traction control off.
+
+### The garage: anything on anything
+G opens the garage. Five sections: ENGINE, SUSPENSION, TRANSMISSION, WHEELS, TIRES. Each lists the car's own parts first, then every other vehicle's: the Jesko's V8 in the Blazer, the buggy's gearbox in the Civic, the Bronco's wheels on the Jesko. A part from another vehicle goes on whole (its stock engine, gearbox, suspension tuning or wheels, then that vehicle's mod on top). Suspension swaps bring the springs, dampers, bars and travel but keep the car's own layout; wheels too big for the wells come with the lift to clear them. A swapped engine keeps its own sound.
+
+Tires: street, semi-slick, race slick, all-terrain, mud-terrain and winter, each with its own grip on every surface and its own look. Race slicks have the most grip on dry pavement and almost none in mud, snow or wet; mud tires clear mud; winter tires hold snow and ice.
+
+**Snow chains** aren't a tire: the off-roaders carry four in the back. On foot (J), hold E at the back of the truck to take one, hold E at a tire (stopped) to wrap it on, and hold E again to take it off. Chained tires grip ice, packed snow and mud far better and skate on pavement; keep under ~50 km/h on them: past 60 for a couple of seconds they snap.
 
 ## Damage
 
@@ -682,6 +692,8 @@ The HUD stays out of the way:
 Help only appears when you press H.
 
 ## Effects and sound
+
+**Engine sounds.** Every engine has its own voice (EngineTone in `src/engineaudio.h`): its exhaust (the pipe's resonance, how open it is), a big cam's lope at idle, its intake or carb roar, valvetrain tick, a thin-to-deep timbre, pops on the overrun, and small cylinder-to-cylinder differences of its own. So two V6s or two V8s don't sound alike, and each changes as the revs sweep its harmonics across its exhaust's resonances.
 
 - Tire smoke on pavement and dust on grass
 - Skid marks, and tire tracks pressed into loose ground (see Surfaces and tires)
