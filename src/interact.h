@@ -78,8 +78,12 @@ struct Interact {
     static bool drop(Sim& sim, Walker& wk, const V3& look);
     // Drops the jack you're holding.
     static bool dropJack(Sim& sim, Walker& wk);
-    // Where a jack goes for a corner: on the ground just inboard of the wheel.
+    // Where a jack goes for a corner: on the ground under its jack point (Car::jackPoint: the
+    // axle tube or the lower arm, just inboard of the tire).
     static V3 jackSpot(const Sim& sim, const Car& c, int wheel);
+    // The jack standing there, as models turn it: its handle (the crank, the pump lever) sticks
+    // out from under the car, toward you. `x` is where the model's +X points, `lift` its param.
+    static Placed jackModel(const Sim& sim, const Car& c, int wheel);
     // Whether the corner's off the ground (its tire clear, or its bare hub high enough for one).
     static bool cornerLifted(const Sim& sim, const Car& c, int wheel);
 };

@@ -2171,16 +2171,19 @@ void Sim::wrapAround() {
     wrapShift += dx;
 }
 
-// A jack under a corner: its saddle pushes the hub up (never pulls), stiff and damped, as
-// high as it's been worked (interact.cpp), so the corner rises off the ground and stays there.
+// A jack under a corner: its saddle (under the axle or lower arm, just inboard of the tire)
+// pushes the hub up (never pulls), stiff and damped, as high as it's been worked (interact.cpp),
+// so the corner rises off the ground and stays there.
 void Sim::jackForces() {
     for (Car& c : cars) {
         if (c.remote || c.sleeping || !c.jackPlaced || c.jackWheel < 0 || c.jackWheel >= (int)c.wheels.size()) continue;
         const Wheel& wh = c.wheels[c.jackWheel];
         if (wh.detached) continue;
         Node* hub[2] = {&c.nodes[wh.inner], &c.nodes[wh.outer]};
-        const V3 mid = (hub[0]->p + hub[1]->p) * 0.5;
-        const double top = world.height(mid.x, mid.z) + c.jackBase + c.jackHeight;
+        // The saddle's under the axle or arm just inboard of the tire (Car::jackPoint): it
+        // stands on the ground there, and the hub rides as far above it as it did going under.
+        const V3 foot = c.jackPoint(c.jackWheel);
+        const double top = world.height(foot.x, foot.z) + c.jackBase + c.jackHeight + c.jackDrop(c.jackWheel);
         for (Node* n : hub) {
             const double gap = top - n->p.y;
             if (gap <= 0) continue;

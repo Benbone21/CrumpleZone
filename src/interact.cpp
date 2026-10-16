@@ -3,12 +3,14 @@
 
 #include <cmath>
 
+#include "modelkit.h"
 #include "walker.h"
 
 namespace {
 
-// Hold times (s): the work each job is, kept short (the game shows the job being done).
-constexpr double kTakeSpare = 1.0, kStowSpare = 1.0, kRemoveWheel = 2.5, kFitWheel = 2.5, kReseatTire = 3.5, kPickUp = 0.5;
+// Hold times (s): the work each job is, kept short (the game shows the job being done). The wheel jobs are
+// five nuts a go at about two ratchet swings each (handwork.cpp), so they run to nearly 6 s.
+constexpr double kTakeSpare = 1.0, kStowSpare = 1.0, kRemoveWheel = 5.8, kFitWheel = 5.8, kReseatTire = 3.5, kPickUp = 0.5;
 constexpr double kTakeJack = 0.6, kStowJack = 0.6, kPlaceJack = 1.0, kRemoveJack = 0.8;
 constexpr double kJackRate = 0.14;  // m/s the saddle moves while E is held
 constexpr double kTakeChain = 0.6, kFitChain = 3.0, kRemoveChain = 2.0, kStowChain = 0.6;
@@ -23,11 +25,28 @@ V3 hubOf(const Car& c, const Wheel& wh) { return (c.nodes[wh.inner].p + c.nodes[
 }  // namespace
 
 V3 Interact::jackSpot(const Sim& sim, const Car& c, int k) {
-    const Wheel& wh = c.wheels[k];
-    const V3 hub = hubOf(c, wh), out = norm(c.nodes[wh.outer].p - c.nodes[wh.inner].p);
-    V3 at = hub - out * (wh.width * 0.5 + 0.25);
+    V3 at = c.jackPoint(k);
     at.y = sim.world.height(at.x, at.z);
     return at;
+}
+
+Placed Interact::jackModel(const Sim& sim, const Car& c, int k) {
+    // Each design's handle is on a different end of it, and the saddle sits at its own height.
+    double handle = -1, saddle0 = 0.30;  // (+1: the crank is on the model's +X end; -1: the lever or bar is on its -X end)
+    if (const mk::ModelDef* d = mk::findModel("jack")) {
+        const std::string& n = d->variants[mk::pickedVariant(*d)].name;
+        if (n == "SCISSOR JACK") handle = 1, saddle0 = 0.12;
+        else if (n == "BOTTLE JACK") saddle0 = 0.26;
+    }
+    const V3 out = c.jackOut(k), foot = jackSpot(sim, c, k);
+    Placed pl;
+    pl.id = "jack", pl.oriented = true;
+    pl.ax[0] = out * handle, pl.ax[1] = V3(0, 1, 0), pl.ax[2] = cross(pl.ax[0], pl.ax[1]);
+    const double saddle = c.jackBase + c.jackHeight, lift = clampd((saddle - saddle0) / 0.35, 0, 1);
+    pl.p = foot;
+    pl.p.y += std::max(-0.08, saddle - (saddle0 + 0.35 * lift));  // (a low car: the jack's foot sunk a little; never gapped)
+    pl.set = {{"lift", lift}};
+    return pl;
 }
 
 bool Interact::cornerLifted(const Sim& sim, const Car& c, int k) {
@@ -35,7 +54,7 @@ bool Interact::cornerLifted(const Sim& sim, const Car& c, int k) {
     const V3 hub = hubOf(c, wh);
     const double ground = sim.world.height(hub.x, hub.z);
     if (!wh.mounted) return hub.y - ground > wh.R * 0.92;  // room for a wheel under it
-    return hub.y - wh.R - ground > 0.03;
+    return hub.y - wh.R - ground > 0.05;
 }
 
 InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, const V3& look, const std::vector<InteractSpot>* spots, const Kit& kit) {
@@ -297,10 +316,7 @@ std::string Interact::update(Sim& sim, Walker& wk, const V3& eye, const V3& look
             return "JACK PUT AWAY";
         case IA_PLACE_JACK: {
             Car& c = sim.cars[o.car];
-            const Wheel& wh = c.wheels[o.wheel];
-            const V3 hub = hubOf(c, wh);
-            c.jackPlaced = true, c.jackWheel = o.wheel, c.jackHeight = 0, c.jackWorked = false;
-            c.jackBase = hub.y - sim.world.height(hub.x, hub.z) - 0.02;  // (the saddle wound up to just under the axle)
+            c.placeJack(sim.world, o.wheel);
             wk.holdingJack = false;
             return "JACK UNDER";
         }

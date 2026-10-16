@@ -3025,11 +3025,11 @@ int main(int argc, char** argv) {
                 if (frame == 30 && k < (int)c.wheels.size()) {
                     const Wheel& wh = c.wheels[k];
                     const V3 hub = (c.nodes[wh.inner].p + c.nodes[wh.outer].p) * 0.5, out = norm(c.nodes[wh.outer].p - c.nodes[wh.inner].p);
-                    const double ground = sim.world.height(hub.x, hub.z);
                     if (opt.script == "work-chain") walker.holdingChain = true;
-                    else c.jackPlaced = true, c.jackWheel = k, c.jackWorked = true, c.jackBase = hub.y - ground - 0.02, c.jackHeight = 0.12;
+                    else if (std::getenv("CZ_WORK_PLACE")) walker.holdingJack = true;  // (the jack still in your arms: the placing job)
+                    else c.placeJack(sim.world, k), c.jackWorked = true, c.jackHeight = std::getenv("CZ_JACK_H") ? std::atof(std::getenv("CZ_JACK_H")) : 0.12;
                     if (opt.script == "work-fix") c.wheels[k].shaftBroken = true;
-                    const V3 aim = opt.script == "work-fix" ? hub + (c.frame().com - hub) * 0.25 : hub;
+                    const V3 aim = opt.script == "work-fix" ? hub + (c.frame().com - hub) * 0.25 : std::getenv("CZ_WORK_PLACE") ? Interact::jackSpot(sim, c, k) + V3(0, 0.3, 0) : hub;
                     walker.p = hub + out * 1.0 - c.frame().fwd * 0.3;
                     walker.p.y = sim.world.height(walker.p.x, walker.p.z);
                     const V3 d = norm(aim - (walker.p + V3(0, 1.62, 0)));
@@ -3545,6 +3545,20 @@ int main(int argc, char** argv) {
             view.target = view.eye + V3(std::cos(footYaw) * std::cos(footPitch), std::sin(footPitch), -std::sin(footYaw) * std::cos(footPitch)) * 10.0;
             view.up = V3(0, 1, 0);
             view.fovy = cam.fovy;
+            // (--script work-*: CZ_WORK_CAM=out,up,side puts the eye out / up / along from the corner's hub, looking at it: the work seen from outside)
+            if (const char* wc = std::getenv("CZ_WORK_CAM"); wc && opt.script.rfind("work-", 0) == 0 && sim.player >= 0) {
+                double e[3] = {1, 0.3, 0};
+                std::sscanf(wc, "%lf,%lf,%lf", e, e + 1, e + 2);
+                const Car& wc0 = sim.cars[sim.player];
+                const int k = opt.script == "work-chain" ? 0 : 2;
+                if (k < (int)wc0.wheels.size()) {
+                    const Wheel& wh = wc0.wheels[k];
+                    const V3 hub = (wc0.nodes[wh.inner].p + wc0.nodes[wh.outer].p) * 0.5, out = norm(wc0.nodes[wh.outer].p - wc0.nodes[wh.inner].p);
+                    const V3 side = norm(cross(V3(0, 1, 0), out));
+                    view.eye = hub + out * e[0] + V3(0, e[1], 0) + side * e[2];
+                    view.target = hub;
+                }
+            }
         }
         // A wheel in your arms: held low in front of you, its face toward you.
         renderer.carried.on = walker.active && walker.carrying && !editor.active && cam.mode != 3;
@@ -3617,20 +3631,11 @@ int main(int argc, char** argv) {
         // (Your own figure isn't drawn: you're looking out of its eyes.)
         if (walker.active && (editor.active || cam.mode == 3)) renderer.figures.push_back({walker.p, walker.yaw, V3(0.95, 0.5, 0.12), walker.stride});
         for (const RemoteWalker& rw : coop.walkers) renderer.figures.push_back({rw.p, rw.yaw, V3(0.2, 0.6, 0.95), rw.stride});
-        // A jack under a wheel: on the ground just inboard of it, raised as far as it's been worked.
+        // A jack under a wheel: on the ground under its axle or arm, handle out, raised as far as it's been worked.
         renderer.frameModels.clear();
         if (mk::findModel("jack"))
-            for (const Car& c : sim.cars) {
-                if (!c.jackPlaced || c.jackWheel < 0 || c.jackWheel >= (int)c.wheels.size()) continue;
-                const Wheel& wh = c.wheels[c.jackWheel];
-                const V3 hub = (c.nodes[wh.inner].p + c.nodes[wh.outer].p) * 0.5, out = norm(c.nodes[wh.outer].p - c.nodes[wh.inner].p);
-                V3 at = hub - out * 0.45;
-                at.y = sim.world.height(at.x, at.z);
-                Placed pl;
-                pl.id = "jack", pl.p = at, pl.yaw = std::atan2(-out.z, out.x);
-                pl.set = {{"lift", std::clamp((c.jackBase + c.jackHeight - 0.28) / 0.35, 0.0, 1.0)}};
-                renderer.frameModels.push_back(pl);
-            }
+            for (const Car& c : sim.cars)
+                if (c.jackPlaced && c.jackWheel >= 0 && c.jackWheel < (int)c.wheels.size()) renderer.frameModels.push_back(Interact::jackModel(sim, c, c.jackWheel));
         // What rides in the back: the chains in their bag, the jack (while they're there).
         for (const Car& c : sim.cars) {
             if (c.isProp() || !c.spec->wheelLoss) continue;

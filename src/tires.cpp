@@ -88,6 +88,36 @@ void Car::setJack(bool has) {
     }
 }
 
+V3 Car::jackOut(int k) const {
+    const Wheel& wh = wheels[k];
+    V3 out = nodes[wh.outer].p - nodes[wh.inner].p;
+    out.y = 0;
+    return len(out) > 1e-6 ? norm(out) : V3(1, 0, 0);
+}
+
+double Car::jackDrop(int k) const {
+    const Wheel& wh = wheels[k];
+    for (const Axle& ax : axles)
+        if ((ax.wheel[0] == k || ax.wheel[1] == k) && !ax.housing.empty()) return 0.05;  // (under the axle tube's belly)
+    const V3 hub = (nodes[wh.inner].p + nodes[wh.outer].p) * 0.5;
+    const double arm = wh.lower >= 0 ? hub.y - nodes[wh.lower].p.y : 0.12;  // (the lower ball joint, or the arm's pivot)
+    return clampd(arm, 0.08, 0.2) + 0.025;
+}
+
+V3 Car::jackPoint(int k) const {
+    const Wheel& wh = wheels[k];
+    const V3 hub = (nodes[wh.inner].p + nodes[wh.outer].p) * 0.5;
+    V3 at = hub - jackOut(k) * (wh.width * 0.5 + 0.12);
+    at.y = hub.y - jackDrop(k);
+    return at;
+}
+
+void Car::placeJack(const World& world, int k) {
+    const V3 at = jackPoint(k);
+    jackPlaced = true, jackWheel = k, jackHeight = 0, jackWorked = false;
+    jackBase = at.y - world.height(at.x, at.z) - 0.01;  // (the saddle wound up to just under it)
+}
+
 V3 Car::spareAxis() const {
     const Frame f = frame();
     return spec->spareFlat ? f.up : -f.fwd;

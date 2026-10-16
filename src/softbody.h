@@ -398,8 +398,15 @@ public:
     int jackWheel = -1;         // which wheel the jack is under
     double jackHeight = 0;      // how far up the jack has lifted (m)
     bool jackWorked = false;    // it's been raised since it went under (so once it's down again, it comes out)
-    double jackBase = 0;        // where its saddle met the axle when it went under (m over the ground)
+    double jackBase = 0;        // where its saddle met the axle or arm when it went under (m over the ground)
     void setJack(bool has);     // called when the jack mod is fitted
+    // Where a jack goes under a corner: the axle tube (a live axle) or the lower arm (independent
+    // suspension), just inboard of the tire. The point where the saddle touches, world; the jack
+    // stands on the ground below it.
+    V3 jackPoint(int wheel) const;
+    double jackDrop(int wheel) const;   // how far that point is under the hub (m)
+    V3 jackOut(int wheel) const;        // level, outward from the car at that corner: the way the jack's handle points
+    void placeJack(const World& world, int wheel);  // the jack goes under this corner, saddle just touching
     // Multiplayer: a remote car is another player's, moved by the network (no physics
     // here, it just pushes back). netId is the same on every machine.
     bool remote = false;

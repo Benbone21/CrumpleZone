@@ -327,9 +327,7 @@ SCENARIO(fieldRepair, "recovery/trail-repair", "A Bronco with a flat, a snapped 
     ctx.check("the corner has to be up: it says so", prompt.find("JACK") != std::string::npos, prompt);
     // Jack the corner (by hand here: the jack's own test is tires/swap).
     auto lift = [&](int k) {
-        const Wheel& wh = c.wheels[k];
-        const V3 hub = (c.nodes[wh.inner].p + c.nodes[wh.outer].p) * 0.5;
-        c.jackPlaced = true, c.jackWheel = k, c.jackHeight = 0, c.jackBase = hub.y - ctx.sim.world.height(hub.x, hub.z) - 0.02;
+        c.placeJack(ctx.sim.world, k);
         ctx.runUntil(6, [&] { return Interact::cornerLifted(ctx.sim, c, k); }, [&] { c.jackHeight += 0.14 * Ctx::kFrame, c.wake(); });
         return Interact::cornerLifted(ctx.sim, c, k);
     };
