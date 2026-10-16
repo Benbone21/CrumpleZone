@@ -2053,6 +2053,8 @@ void Sim::setup() {
     const auto& cat = vehicleCatalog();
     cars.clear();
     ropes.clear();
+    setAnchors.clear();
+    refillAnchors();
     cars.reserve(kMaxBodies);
     colorIndex = 0;
     // You in the first of the lineup, the others parked beside you (on the proving ground's
@@ -2072,6 +2074,7 @@ void Sim::setup() {
 void Sim::setupEmpty() {
     cars.clear();
     ropes.clear();
+    setAnchors.clear();
     cars.reserve(kMaxBodies);
     colorIndex = 0;
     player = 0;
@@ -2164,6 +2167,7 @@ void Sim::wrapAround() {
         if (r.a.kind != ANCHOR_CAR) r.a.p += d;
         if (r.b.kind != ANCHOR_CAR) r.b.p += d;
     }
+    for (SetAnchor& sa : setAnchors) sa.p += d;
     wrapShift += dx;
 }
 
@@ -2834,6 +2838,7 @@ void Sim::pilotStep(int i, double dt) {
 void Sim::respawnPlayer() {
     Car& c = cars[player];
     dropRopes(player);
+    refillAnchors();  // (a full reset: sandbox gear comes back too)
     c.respawn(c.spawnPos, c.spawnYaw);
     if (!c.isProp()) c.setDown(world);
     accum = 0;

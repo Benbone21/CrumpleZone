@@ -1,5 +1,6 @@
 // Gear: off-road recovery kit: traction boards, winch, winch hook, shackles, straps,
-// tree savers and ground anchors. (Built with the model kit: see modelkit.h.)
+// tree savers, ground anchors and the anchor gear the winch uses (stakes, bolts, pickets, a chain
+// sling). (Built with the model kit: see modelkit.h.)
 #include <algorithm>
 #include <cmath>
 #include <functional>
@@ -1250,5 +1251,249 @@ Reg groundAnchor({"ground_anchor", "GROUND ANCHOR", "RECOVERY", "What you set up
                        {choice("soil", "SOIL", 0, {"LOAM", "DARK", "SAND"}), choice("tyre", "TYRE", 1, {"CAR", "4X4"}), paintParam(8, "strap", "STRAP"), num("wear", "WEAR", 0.3, 0, 1, 0.05)},
                        [](B& b, const P& p) { deadmanTyre(b, p.i("soil"), p.i("tyre"), paint(p.i("strap")), p("wear")); }},
                   }});
+
+// ---- 8. Anchor gear: what the winch's line is set to (anchors.h) ---------------------------------
+// Origin on the ground at the anchor point, pull toward +X; the eye the line ties to is ~10 cm up.
+
+V3 snowCol(int i) {
+    static const V3 c[] = {V3(0.86, 0.88, 0.92), V3(0.72, 0.79, 0.88), V3(0.80, 0.77, 0.70)};
+    return c[std::clamp(i, 0, 2)];
+}
+
+// A bow shackle through an eye at `eye` (ring axis along z): the bow out toward the pull.
+void shackleThrough(B& b, const V3& eye, double s, const V3& col, double wear) {
+    b.push();
+    b.move(eye.x, eye.y - 0.0105 * s, 0);
+    b.scale(s);
+    b.yaw(180);
+    b.move(-0.04, 0, 0);
+    bowShackle(b, col, kGalv, wear, false, 1.0, true);
+    b.pop();
+}
+
+// A plate anchor (a pull-pal, a deadman): a steel plate dug in at a slant, its front edge and the
+// pad-eye out of the ground, the spoil heaped over the rest.
+void plateStake(B& b, int finish, double wear, const V3& soil) {
+    static const V3 fin[] = {V3(0.42, 0.43, 0.44), V3(0.90, 0.68, 0.06), V3(0.62, 0.10, 0.07)};
+    const V3 sc = mix(fin[std::clamp(finish, 0, 2)], kRust, wear * 0.4);
+    b.push();
+    b.move(-0.30, -0.16, 0);
+    b.pitch(24);
+    b.style(sc, finish ? PAINT : METAL);
+    b.extrudeUp({V2(0, -0.17), V2(0.5, -0.10), V2(0.5, 0.10), V2(0, 0.17)}, 0.012, 0);
+    b.color(sc * 0.78);  // a stiffening rib along the middle
+    b.extrudeUp({V2(0.04, -0.016), V2(0.48, -0.016), V2(0.48, 0.016), V2(0.04, 0.016)}, 0.03, 0.012);
+    b.color(sc);
+    b.extrude({V2(0.40, 0.012), V2(0.53, 0.012), V2(0.54, 0.06), V2(0.48, 0.1), V2(0.40, 0.06)}, 0.014, 0);  // the pad-eye lug
+    b.style(kSteel * 0.85, METAL);
+    ringAxis(b, V3(0.5, 0.078, 0), 'z', 0.026, 0.0065, 14, 5);
+    b.pop();
+    soilMound(b, V3(-0.17, 0, 0), V3(0.26, 0.055, 0.2), 71, soil, 2);
+    soilMound(b, V3(0.0, 0, 0.17), V3(0.12, 0.03, 0.09), 72, soil);
+    soilMound(b, V3(0.0, 0, -0.17), V3(0.12, 0.03, 0.09), 73, soil);
+    shackleThrough(b, V3(0.145, 0.108, 0), 1.0, paint(0), wear);
+}
+
+// A steel stake driven in leaning back from the pull: a mushroomed head, a welded eye, a shackle.
+void drivenStake(B& b, int finish, double lean, double wear, const V3& soil) {
+    static const V3 fin[] = {V3(0.42, 0.43, 0.44), V3(0.62, 0.10, 0.07), V3(0.90, 0.68, 0.06)};
+    const V3 sc = mix(fin[std::clamp(finish, 0, 2)], kRust, wear * 0.35);
+    const double a = rad(lean), r = 0.0165;
+    const V3 d(-std::sin(a), std::cos(a), 0);
+    const V3 p0 = d * -0.5, p1 = d * 0.3;
+    b.style(sc, finish ? PAINT : METAL);
+    b.cyl(p0, p1, r, 10);
+    b.cone(p0 - d * 0.07, p0, 0.0, r, 10);
+    b.style(kSteel * 0.75, METAL);  // the head, mushroomed by the sledge
+    b.cone(p1, p1 + d * 0.014, r, 0.0235, 10);
+    b.cyl(p1 + d * 0.014, p1 + d * 0.03, 0.0235, 10);
+    const V3 e = d * 0.17 + V3(r + 0.036 - 0.004, 0, 0);  // the eye, welded on the pull side
+    b.style(kSteel * 0.8, METAL);
+    ringAxis(b, e, 'z', 0.036, 0.0085, 14, 5);
+    b.style(kDark * 1.6, METAL);
+    b.box(d * 0.17 + V3(r, 0, 0), V3(0.014, 0.03, 0.02));  // the weld
+    shackleThrough(b, e + V3(0.036 - 0.01, 0, 0), 1.0, paint(0), wear);
+    soilMound(b, V3(0.0, 0, 0), V3(0.13, 0.04, 0.12), 74, soil);
+    soilMound(b, V3(-0.07, 0, 0.06), V3(0.07, 0.03, 0.06), 75, soil);
+}
+
+Reg groundStake({"ground_stake", "GROUND STAKE", "RECOVERY", "A stake or plate anchor set in loose ground for the winch line when there is no tree: origin at ground, pull toward +X; gear you carry", 0.6,
+                 {
+                     {"PLATE ANCHOR", "A pull-pal plate dug in at a slant, a pad-eye and a shackle",
+                      {choice("finish", "PLATE", 0, {"RAW STEEL", "YELLOW", "RED"}), num("wear", "WEAR", 0.3, 0, 1, 0.05), choice("soil", "SOIL", 0, {"LOAM", "DARK", "SAND"})},
+                      [](B& b, const P& p) { plateStake(b, p.i("finish"), p("wear"), soilCol(p.i("soil"))); }},
+                     {"DRIVEN STAKE", "A steel stake sledged in leaning back, a welded eye and a shackle",
+                      {choice("finish", "STAKE", 0, {"RAW STEEL", "RED", "YELLOW"}), num("lean", "LEAN", 20, 0, 35, 1), num("wear", "WEAR", 0.3, 0, 1, 0.05), choice("soil", "SOIL", 0, {"LOAM", "DARK", "SAND"})},
+                      [](B& b, const P& p) { drivenStake(b, p.i("finish"), p("lean"), p("wear"), soilCol(p.i("soil"))); }},
+                 }});
+
+// ---- Rock bolt: drilled into bare rock ----
+
+// The pale scar where the drill bit chewed the rock, and the dust round the hole.
+void drillScar(B& b, double R, uint32_t seed) {
+    b.style(V3(0.66, 0.62, 0.55), ROCK);
+    b.blob(V3(0, 0.002, 0), V3(R, 0.008, R * 0.92), 0.25, seed, 1, 0.6, 0.0);
+    b.style(V3(0.58, 0.54, 0.48), MATTE);
+    for (int i = 0; i < 5; i++) {
+        const double a = rad(72 * i + 20 * hash01(seed, i)), rr = R * (0.75 + 0.35 * hash01(seed, 9 + i));
+        b.blob(V3(rr * std::cos(a), 0.002, rr * std::sin(a)), V3(0.018, 0.006, 0.014), 0.3, seed + i, 0, 0.5, 0.0);
+    }
+}
+
+// An eye bolt in an expansion sleeve: washer, nut, the forged eye, a shackle.
+void eyeBolt(B& b, double wear, const V3& shackleCol) {
+    drillScar(b, 0.15, 31);
+    b.style(mix(kGalv, kRust, wear * 0.5), METAL);
+    b.cyl(V3(0, 0.001, 0), V3(0, 0.009, 0), 0.042, 14);
+    hexBolt(b, V3(0, 0.009, 0), 'y', 0.03, 0.024);
+    b.style(mix(kGalv, kRust, wear * 0.3) * 0.95, METAL);
+    b.cyl(V3(0, 0.033, 0), V3(0, 0.062, 0), 0.0135, 10);
+    ringAxis(b, V3(0, 0.092, 0), 'z', 0.034, 0.0095, 16, 6);
+    shackleThrough(b, V3(0.03, 0.092, 0), 0.9, shackleCol, wear);
+}
+
+// A pad-eye plate bolted down with four anchors, a welded lug and a shackle.
+void padEye(B& b, double wear, const V3& shackleCol, bool painted) {
+    drillScar(b, 0.2, 47);
+    const V3 sc = mix(painted ? V3(0.62, 0.10, 0.07) : kSteel * 0.9, kRust, wear * 0.4);
+    b.style(sc, painted ? PAINT : METAL);
+    b.box(V3(0, 0.006, 0), V3(0.15, 0.012, 0.15), 0.003);
+    for (int sx = -1; sx <= 1; sx += 2)
+        for (int sz = -1; sz <= 1; sz += 2) {
+            b.style(kGalv, METAL);
+            hexBolt(b, V3(sx * 0.052, 0.012, sz * 0.052), 'y', 0.0105, 0.012);
+        }
+    b.style(sc * 0.9, painted ? PAINT : METAL);
+    b.extrude({V2(-0.04, 0.012), V2(0.04, 0.012), V2(0.035, 0.07), V2(0.0, 0.09), V2(-0.035, 0.07)}, 0.016, 0);
+    b.style(kSteel * 0.75, METAL);
+    ringAxis(b, V3(0, 0.07, 0), 'z', 0.0235, 0.007, 14, 5);
+    shackleThrough(b, V3(0.0, 0.07, 0), 0.8, shackleCol, wear);
+}
+
+Reg rockBolt({"rock_bolt", "ROCK BOLT", "RECOVERY", "An eye bolt or pad-eye drilled into bare rock for the winch line; used up (left in the rock); origin at ground, pull toward +X; gear you carry", 0.3,
+              {
+                  {"EYE BOLT", "A forged eye bolt in an expansion sleeve, a shackle through it",
+                   {paintParam(0, "shackle", "SHACKLE"), num("wear", "WEAR", 0.3, 0, 1, 0.05)},
+                   [](B& b, const P& p) { eyeBolt(b, p("wear"), paint(p.i("shackle"))); }},
+                  {"PAD-EYE", "A plate bolted down with four anchors, a welded lug and a shackle",
+                   {paintParam(8, "shackle", "SHACKLE"), choice("finish", "PLATE", 0, {"RAW STEEL", "RED"}), num("wear", "WEAR", 0.3, 0, 1, 0.05)},
+                   [](B& b, const P& p) { padEye(b, p("wear"), paint(p.i("shackle")), p.i("finish") == 1); }},
+              }});
+
+// ---- Ice anchor: a snow picket or an ice screw ----
+
+// A snow picket (an aluminium angle) buried at a slant, a cable loop through its top.
+void snowPicket(B& b, double lean, double wear, const V3& snow) {
+    const double a = rad(lean);
+    const V3 d(-std::sin(a), std::cos(a), 0);
+    const V3 p0 = d * -0.45, p1 = d * 0.3;
+    const V3 al = mix(V3(0.70, 0.72, 0.75), kRust, wear * 0.15);
+    b.style(al, METAL);
+    b.beam(p0, p1, 0.056, 0.004, V3(0, 0, 1), 0.001);  // the angle section: two flanges
+    b.beam(p0, p1, 0.004, 0.056, V3(0, 0, 1), 0.001);
+    b.style(al * 0.7, METAL);  // the lightening holes
+    for (int i = 0; i < 3; i++) b.box(d * (0.08 + 0.07 * i) + V3(0.001, 0, 0), V3(0.012, 0.03, 0.012));
+    // The cable loop through the top hole, and a carabiner on it.
+    const V3 top = d * 0.25;
+    std::vector<V3> loop = {top + V3(0.01, 0, 0), top + V3(0.07, 0.015, 0.02), top + V3(0.13, 0.0, 0.0), top + V3(0.07, -0.01, -0.02)};
+    b.style(V3(0.26, 0.27, 0.28), METAL);
+    b.tube(spline(loop, 3), 0.0035, 5, true);
+    b.style(V3(0.78, 0.80, 0.82), METAL);
+    ringAxis(b, V3(0.12, 0.075, 0), 'z', 0.028, 0.0065, 14, 5);
+    b.style(snow * 0.97, MATTE);
+    b.blob(V3(0.02, 0, 0), V3(0.22, 0.06, 0.2), 0.25, 61, 2, 0.45, 0.0);
+    b.blob(V3(-0.1, 0, 0.1), V3(0.1, 0.04, 0.09), 0.3, 62, 1, 0.5, 0.0);
+}
+
+// A tubular ice screw wound in, its folded hanger and a clip, the crank handle laid beside it.
+void iceScrew(B& b, double wear, const V3& ice) {
+    b.style(V3(0.74, 0.76, 0.78), METAL);
+    b.cyl(V3(0, 0.0, 0), V3(0, 0.07, 0), 0.0125, 12);
+    b.style(V3(0.30, 0.31, 0.33), METAL);
+    b.cyl(V3(0, 0.07, 0), V3(0, 0.082, 0), 0.0185, 12);
+    // The hanger: a folded lug on top, a ring through it.
+    b.style(V3(0.78, 0.30, 0.10), PAINT);
+    b.extrude({V2(-0.03, 0.082), V2(0.03, 0.082), V2(0.03, 0.12), V2(0.0, 0.14), V2(-0.03, 0.12)}, 0.01, 0);
+    b.style(V3(0.78, 0.80, 0.82), METAL);
+    ringAxis(b, V3(0.0, 0.118, 0), 'z', 0.026, 0.0055, 14, 5);
+    shackleThrough(b, V3(0.026, 0.118, 0), 0.8, mix(V3(0.78, 0.30, 0.10), kRust, wear * 0.2), wear);
+    // The crank, laid on the ice.
+    b.style(V3(0.30, 0.31, 0.33), METAL);
+    b.tube({V3(-0.12, 0.012, 0.22), V3(-0.12, 0.012, 0.06), V3(-0.15, 0.012, 0.02), V3(-0.25, 0.012, 0.02)}, 0.0075, 6);
+    // The crust cracked round the hole, chips of ice.
+    b.style(ice, MATTE);
+    b.blob(V3(0, 0.003, 0), V3(0.12, 0.012, 0.11), 0.3, 63, 1, 0.6, 0.0);
+    for (int i = 0; i < 6; i++) {
+        const double ang = rad(60 * i + 15), rr = 0.1 + 0.07 * hash01(64, i);
+        b.blob(V3(rr * std::cos(ang), 0.003, rr * std::sin(ang)), V3(0.02, 0.008, 0.016), 0.3, 65 + i, 0, 0.5, 0.0);
+    }
+}
+
+Reg iceAnchor({"ice_anchor", "ICE ANCHOR", "RECOVERY", "A snow picket or an ice screw for the winch line on snow and ice; used up (left in); origin at ground, pull toward +X; gear you carry", 0.5,
+               {
+                   {"SNOW PICKET", "An aluminium picket buried at a slant, a cable loop and a clip",
+                    {num("lean", "LEAN", 30, 0, 45, 1), num("wear", "WEAR", 0.3, 0, 1, 0.05), choice("snow", "SNOW", 0, {"FRESH", "BLUE", "DIRTY"})},
+                    [](B& b, const P& p) { snowPicket(b, p("lean"), p("wear"), snowCol(p.i("snow"))); }},
+                   {"ICE SCREW", "A tubular screw wound into the ice, a hanger, a clip and the crank beside it",
+                    {num("wear", "WEAR", 0.3, 0, 1, 0.05), choice("ice", "ICE", 0, {"FRESH", "BLUE", "DIRTY"})},
+                    [](B& b, const P& p) { iceScrew(b, p("wear"), snowCol(p.i("ice"))); }},
+               }});
+
+// ---- Chain sling: choked round a boulder ----
+
+// Chain links along a path: heavier than chainRun's, and cheap (a diamond for each link).
+void towChain(B& b, const std::vector<V3>& poly, double wear, uint32_t seed) {
+    const double pitch = 0.072;
+    std::vector<double> cum(poly.size(), 0.0);
+    for (size_t i = 1; i < poly.size(); i++) cum[i] = cum[i - 1] + len(poly[i] - poly[i - 1]);
+    int k = 0;
+    for (double s = pitch * 0.5; s < cum.back() - pitch * 0.2; s += pitch, k++) {
+        size_t i = 1;
+        while (i + 1 < poly.size() && cum[i] < s) i++;
+        const double f = (s - cum[i - 1]) / std::max(1e-9, cum[i] - cum[i - 1]);
+        const V3 pt = poly[i - 1] + (poly[i] - poly[i - 1]) * f, d = norm(poly[i] - poly[i - 1]);
+        b.push();
+        b.move(pt);
+        b.yaw(std::atan2(-d.z, d.x) * 180 / kPi);
+        b.pitch(std::asin(std::clamp(d.y, -1.0, 1.0)) * 180 / kPi);
+        b.roll((k & 1) ? 90 : 0);
+        b.style(mix(kSteel * 0.55, kRust, wear * hash01(seed, k)), METAL);
+        b.tube(stadium(V3(), V3(1, 0, 0), V3(0, 1, 0), 0.098, 0.05, 1), 0.0105, 4, true);
+        b.pop();
+    }
+}
+
+// A chain choked once round the boulder's belly, its two ends to a master ring and a shackle.
+void chainChoker(B& b, double R, double wear, const V3& shackleCol) {
+    const double yc = std::max(0.2, 0.45 * R), Rc = 0.9 * R, xm = Rc + 0.3;
+    const double phi = leaveAngle(Rc, xm);
+    std::vector<V3> path;
+    path.push_back(V3(xm - 0.04, yc, 0.012));
+    const int n = std::max(10, (int)(R * 40));
+    for (int i = 0; i <= n; i++) {
+        const double a = rad(phi + (360 - 2 * phi) * i / n);
+        path.push_back(V3(Rc * std::cos(a), yc, Rc * std::sin(a)));
+    }
+    path.push_back(V3(xm - 0.04, yc, -0.012));
+    towChain(b, path, wear, 300);
+    b.style(kSteel * 0.8, METAL);
+    ringAxis(b, V3(xm, yc, 0), 'z', 0.05, 0.0105, 16, 5);
+    shackleThrough(b, V3(xm + 0.05, yc, 0), 1.5, shackleCol, wear);
+}
+
+Reg chainSling({"chain_sling", "CHAIN SLING", "RECOVERY", "Choked round a boulder to winch from it: +X is the pull direction, `radius` the boulder's; carried, comes off with the line", 1.5,
+                {
+                    {"CHAIN CHOKER", "Tow chain once round the rock, a master ring and a shackle",
+                     {num("radius", "BOULDER RADIUS", 0.6, 0.3, 1.5, 0.05), paintParam(0, "shackle", "SHACKLE"), num("wear", "WEAR", 0.3, 0, 1, 0.05)},
+                     [](B& b, const P& p) { chainChoker(b, p("radius"), p("wear"), paint(p.i("shackle"))); }},
+                    {"WEB CHOKER", "A wide recovery web round the rock, a steel ring through its eyes",
+                     {num("radius", "BOULDER RADIUS", 0.6, 0.3, 1.5, 0.05), paintParam(4, "paint", "WEB"), num("wear", "WEAR", 0.3, 0, 1, 0.05)},
+                     [](B& b, const P& p) {
+                         b.push();
+                         b.move(0, std::max(0.2, 0.45 * p("radius")) - kTreeY, 0);
+                         webTreeSaver(b, paint(p.i("paint")), p("radius") * 0.9, false, 1, kSteel * 0.8, p("wear"));
+                         b.pop();
+                     }},
+                }});
 
 }  // namespace

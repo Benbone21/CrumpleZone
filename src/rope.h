@@ -3,6 +3,7 @@
 #pragma once
 #include <cstdint>
 
+#include "anchors.h"
 #include "mathx.h"
 
 enum RopeKind { ROPE_WINCH, ROPE_STRAP };
@@ -38,6 +39,11 @@ struct WinchTarget {
     double dist = 0;    // from the winch's fairlead
     bool inArc = true;  // within the fairlead's reach (not behind the truck)
     const char* what = "";
+    // What it takes (anchors.h): a target you can't use stays listed, greyed, with `why`.
+    AnchorGear gear = GEAR_COUNT;  // the gear it would use (GEAR_COUNT: none: a vehicle)
+    bool usable = true;
+    const char* why = "";
+    bool set = false;              // a stake you left there already: free to use again
 };
 
 // Real-world numbers the recovery gear is built from.

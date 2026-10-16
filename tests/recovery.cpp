@@ -407,7 +407,7 @@ SCENARIO(towingHealthy, "recovery/healthy-car-tow", "A running unattended truck 
 SCENARIO(winchSpeedControl, "recovery/winch-speed-control", "Faster drum speeds scale line travel but preserve rated stall pull and payout bounds") {
     Car& c = ctx.add(bronco(), -50, -50, 0);
     ctx.focus(c); ctx.run(0.5);
-    RopeEnd anchor; anchor.kind = ANCHOR_STAKE; anchor.p = c.hookPoint(0) + V3(14, 0, 0);
+    RopeEnd anchor; anchor.kind = ANCHOR_TREE; anchor.p = c.hookPoint(0) + V3(14, 0, 0);  // (any fixed point: a stake needs ground it takes, and this is the pad's pavement)
     ctx.sim.hookWinchTo(0, anchor);
     ctx.check("fixed anchor connected", ctx.sim.ropes.size() == 1);
     if (ctx.sim.ropes.empty()) return;

@@ -376,6 +376,7 @@ Main menu → MODE switches between **SANDBOX** (every part on every vehicle, an
 - **Rewards**: a job done pays $1,200 (everyone on it is paid); a level's medals pay $400 / $800 / $1,500 the first time, and a level's first gold brings one of the best parts.
 - **The shop**: at a repair station, the garage sells everyday parts and serious ones (dearer); the very best (race slicks, the big-power engines) aren't sold. B (pad: Y) buys the part shown.
 - **Fitting**: the garage fits only parts you own, and only at a repair station. A part, once owned, fits every vehicle that offers it.
+- **Anchor gear**: you start with 2 tree straps, 1 chain sling and 2 ground stakes; stakes, rock bolts and ice anchors are used up (see Winch and Anchor gear below). The rack sells all five kinds.
 - **Tools and repair parts**: you start with a lug wrench and a jack. Caches hold more tools and spare parts, and each station has a rack beside the shed: walk up and hold E to buy a socket set, a hammer, a CV axle... (see Trail repairs below).
 
 Each player's career is their own (`~/.config/crumplezone/career.txt`, and a garage of its own, `garage-career.txt`) and comes with them into anyone's game; a cache opened in a session counts for everyone there.
@@ -463,7 +464,20 @@ Players join normally: `./crumplezone --join YOUR_SERVER_IP:27015`. The server r
 
 The idea: trucks break, and your buddies get you home. (Until multiplayer lands, a buddy is any other truck: Tab into it and drive.)
 
-- **Winch (V, Z, Shift+Z):** the Bronco, 4Runner and rock buggy carry a 9,500 lb winch, the side-by-side a 4,500 lb one (20 kN), with 30 m of line and a 30 m extension (60 m total). V opens a pointer/controller picker for trees, boulders, vehicle recovery points and ground anchors. The default 4x speed reels in at about 0.52 m/s unloaded; -/= or Settings → WINCH SPEED adjusts 0.1–20x (up to 2.6 m/s). Speed falls under load, the drum stalls at rated pull, and the line breaks past about 90 kN.
+- **Winch (V, Z, Shift+Z):** the Bronco, 4Runner and rock buggy carry a 9,500 lb winch, the side-by-side a 4,500 lb one (20 kN), with 30 m of line and a 30 m extension (60 m total). V opens a pointer/controller picker for trees, boulders, vehicle recovery points and ground anchors (what each takes is under **Anchor gear** below). The default 4x speed reels in at about 0.52 m/s unloaded; -/= or Settings → WINCH SPEED adjusts 0.1–20x (up to 2.6 m/s). Speed falls under load, the drum stalls at rated pull, and the line breaks past about 90 kN.
+
+- **Anchor gear:** what the winch line ties to depends on what you carry. Every target in reach stays listed; one you can't use is greyed with the reason ("NO GROUND STAKES LEFT", "CAN'T STAKE ON ROCK: NEEDS A ROCK BOLT", "TOO DEEP TO STAKE"), and the auto-pick (V with no choice) skips it. The HUD line above the fuel gauge shows the counts: `STRAPS 3 SLING 2 STAKES 4 BOLTS 2 ICE 2`. All the numbers are in `src/anchors.h`.
+
+  | Gear | Works on | Used up? |
+  |---|---|---|
+  | TREE STRAP | trees, stumps, poles at least 0.15 m through | no: comes back when the line comes off |
+  | CHAIN SLING | boulders at least 0.45 m in radius (rock slabs aren't anchors) | no: comes back |
+  | GROUND STAKE | dirt, grass, gravel, sand, mud with under 15 cm of water on it | yes: left in the ground (a line back to the same stake is free) |
+  | ROCK BOLT | bare rock | yes |
+  | ICE ANCHOR | snow and ice | yes |
+  | Another vehicle | always | no gear |
+
+  Nothing sets on pavement or scree, or under more than 15 cm of water. Sandbox starts with 3 straps, 2 slings, 4 stakes, 2 bolts and 2 ice anchors, and a repair station (park on the pad) or a full reset (R R) refills them free. A career starts with 2 / 1 / 2 / 0 / 0 (saved with the career as `stock N ANCHOR:...`); buy more off a station's rack on foot, or find them in supply caches (bolts and ice anchors are scarce).
 
 - **Tow strap (O):** click your front/rear recovery point, then the other vehicle's front/rear point within 9 m. The 9 m kinetic strap breaks at 130 kN. An unattended vehicle rolls in neutral with both brakes released and steers to follow. See [engine audio, recovery and gearing](docs/recovery-audio.md) for controls, audio previews and validation.
 

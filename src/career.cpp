@@ -59,6 +59,10 @@ std::vector<std::string> cacheGear(int i) {
     if (i < 5) g.push_back(toolKey(tools[i]));
     g.push_back(repairPartKey(parts[i % 6]));
     if (i % 3 == 2) g.push_back(repairPartKey(parts[(i + 2) % 6]));
+    // And anchor gear: a stake in a third of them, the scarce kinds where the ground calls for them.
+    if (i % 3 == 0) g.push_back(anchors::gearKey(GEAR_STAKE));
+    if (i == 2 || i == 6) g.push_back(anchors::gearKey(GEAR_ICE));
+    if (i == 3 || i == 7) g.push_back(anchors::gearKey(GEAR_BOLT));
     return g;
 }
 
@@ -151,7 +155,7 @@ bool Career::buy(int vehicle, int slot, int option, std::string& why) {
 }
 
 std::string Career::grant(const std::string& key) {
-    if (key.rfind("REPAIR:", 0) == 0) {
+    if (key.rfind("REPAIR:", 0) == 0 || key.rfind("ANCHOR:", 0) == 0) {
         stock[key]++;
         return key.substr(7);
     }
@@ -190,6 +194,25 @@ void Career::usePart(RepairPart p) {
     if (it != stock.end() && --it->second <= 0) stock.erase(it);
 }
 
+AnchorStock Career::anchorStock() const {
+    AnchorStock a;
+    if (!on) return a;
+    for (int g = 0; g < GEAR_COUNT; g++) {
+        auto it = stock.find(anchors::gearKey((AnchorGear)g));
+        a.n[g] = it == stock.end() ? 0 : it->second;
+    }
+    a.refills = false;
+    return a;
+}
+
+void Career::setAnchorStock(const AnchorStock& a) {
+    for (int g = 0; g < GEAR_COUNT; g++) {
+        const std::string k = anchors::gearKey((AnchorGear)g);
+        if (a.n[g] > 0) stock[k] = a.n[g];
+        else stock.erase(k);
+    }
+}
+
 const std::vector<ShopItem>& stationRack() {
     static const std::vector<ShopItem> r = [] {
         std::vector<ShopItem> v;
@@ -197,6 +220,7 @@ const std::vector<ShopItem>& stationRack() {
         const int partPrice[PART_COUNT] = {160, 240, 300, 90, 190, 40};
         for (int t = 0; t < TOOL_COUNT; t++) v.push_back({toolKey((Tool)t), toolPrice[t], toolModel((Tool)t)});
         for (int p = 0; p < PART_COUNT; p++) v.push_back({repairPartKey((RepairPart)p), partPrice[p], p == PART_TIRE ? "" : repairPartModel((RepairPart)p)});
+        for (int g = 0; g < GEAR_COUNT; g++) v.push_back({anchors::gearKey((AnchorGear)g), anchors::kPrice[g], anchors::gearModel((AnchorGear)g)});
         return v;
     }();
     return r;
@@ -248,6 +272,9 @@ void Career::startFresh() {
     owned.clear(), opened.clear(), claimed.clear(), stock.clear();
     // You set out with what's in any truck: a lug wrench and a jack.
     owned.insert(toolKey(TOOL_LUG_WRENCH)), owned.insert(toolKey(TOOL_JACK));
+    AnchorStock a;
+    a.fill(anchors::kCareerStart);
+    setAnchorStock(a);
 }
 
 bool Career::load(const std::string& path) {
@@ -268,6 +295,12 @@ bool Career::load(const std::string& path) {
             const size_t sp2 = v.find(' ');
             if (sp2 != std::string::npos) stock[v.substr(sp2 + 1)] = std::atoi(v.substr(0, sp2).c_str());
         }
+    }
+    // A career from before anchor gear: the starting set (a strap and a sling are never used up, so none means none yet).
+    if (!stock.count(anchors::gearKey(GEAR_STRAP)) && !stock.count(anchors::gearKey(GEAR_SLING))) {
+        AnchorStock a;
+        a.fill(anchors::kCareerStart);
+        setAnchorStock(a);
     }
     return true;
 }

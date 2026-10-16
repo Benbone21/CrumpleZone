@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "anchors.h"
 #include "fixes.h"
 #include "mathx.h"
 
@@ -46,7 +47,7 @@ struct Career {
     std::set<std::string> owned;    // part keys
     std::set<std::string> opened;   // caches: "MAP:ID"
     std::set<std::string> claimed;  // medals paid: "LEVEL:NAME:MEDAL"
-    std::map<std::string, int> stock;  // trail-repair parts you carry: "REPAIR:CV AXLE" -> how many (tools are owned keys)
+    std::map<std::string, int> stock;  // trail-repair parts and anchor gear you carry: "REPAIR:CV AXLE", "ANCHOR:GROUND STAKE" -> how many (tools are owned keys)
 
     static constexpr int kStartCash = 1000, kJobPay = 1200;
 
@@ -66,6 +67,9 @@ struct Career {
     Kit kit() const;
     // One repair part used.
     void usePart(RepairPart p);
+    // The anchor gear you carry (anchors.h), and putting back what the winch has used. Sandbox: the sandbox set.
+    AnchorStock anchorStock() const;
+    void setAnchorStock(const AnchorStock& a);
     // Buys something off a station's rack: false (and why) if it can't.
     bool buyGear(const ShopItem& it, std::string& why);
 

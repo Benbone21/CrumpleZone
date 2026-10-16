@@ -584,7 +584,20 @@ public:
     // standing, offered as a ground anchor too (buried in loose ground, a bolt in rock).
     std::vector<WinchTarget> winchTargets(int car, const V3* look = nullptr) const;
     std::string hookWinchTo(int car, const RopeEnd& anchor);
-    bool dropWinch(int car);           // unhooks the car's winch line (false if none)
+    bool dropWinch(int car, bool say = true);  // unhooks the car's winch line (false if none); say: announce the strap or sling coming back
+    // Anchor gear (anchors.h): what you carry, and the stakes you've left in the ground.
+    // Hooking to a stake, bolt or picket uses one up; a strap or sling comes back when the line comes off.
+    AnchorStock anchorStock;
+    std::vector<SetAnchor> setAnchors;
+    struct AnchorUse {
+        AnchorGear gear = GEAR_COUNT;  // the gear it takes (GEAR_COUNT: a vehicle needs none)
+        bool ok = true;
+        const char* why = "";          // not ok: why
+        int reuse = -1;                // a stake already set there (setAnchors index)
+    };
+    AnchorUse anchorUse(const RopeEnd& e, int exceptCar = -1) const;  // what hooking a line to `e` takes (ignoring car `exceptCar`'s own line)
+    int anchorsFree(AnchorGear g, int exceptCar = -1) const;           // carried and not in use on a line
+    void refillAnchors();                                              // sandbox: a full set again (a repair station, a respawn)
     std::string hookStrap(int car);    // straps the car to the nearest other vehicle, or unhooks it
     bool dropStrap(int car);
     std::vector<WinchTarget> strapTargets(int car, int hook) const;

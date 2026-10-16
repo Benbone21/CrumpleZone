@@ -789,6 +789,24 @@ void drawRecovery(Renderer& r, const Sim& sim, float u) {
     }
 }
 
+// The anchor gear on you (anchors.h), small, above the fuel gauge: only in a truck with a winch.
+void drawAnchors(Renderer& r, const Sim& sim, float u, int W, int H) {
+    const Car& car = sim.cars[sim.player];
+    if (car.isProp() || !(car.spec->extras & EXTRA_WINCH)) return;
+    const float s = px(1.1f * u);
+    const std::string line = anchors::hudLine(sim.anchorStock);
+    const float w = r.textWidth(line, s), x = W - w - 26 * u, y = H - 272 * u;
+    pill(r, x - 8 * u, y - 5 * u, w + 16 * u, 8 * s + 10 * u, 0, 0, 0, 0.5f);
+    // (The HUD's amber; red for a kind you've run out of.)
+    float cx = x;
+    for (int g = 0; g < GEAR_COUNT; g++) {
+        const std::string part = std::string(anchors::gearShort((AnchorGear)g)) + " " + std::to_string(sim.anchorStock.n[g]) + (g + 1 < GEAR_COUNT ? " " : "");
+        const bool none = sim.anchorStock.n[g] <= 0;
+        r.text(cx, y, s, part, none ? 0.75f : 1.0f, none ? 0.45f : 0.75f, none ? 0.4f : 0.3f);
+        cx += r.textWidth(part, s);
+    }
+}
+
 // Repair station status while parked on (or rolling onto) a pad.
 void drawStation(Renderer& r, const Sim& sim, float u, int W, int H) {
     const Car& car = sim.cars[sim.player];
@@ -1224,7 +1242,8 @@ void drawWinchAim(Renderer& r, const Sim& sim, const WinchAim& aim, const View& 
         float sx, sy;
         if (!project(view, t.at, sx, sy)) continue;
         const bool on = k == aim.sel;
-        const float cr = t.inArc ? 0.55f : 0.5f, cg = t.inArc ? 1.0f : 0.5f, cb = t.inArc ? 0.6f : 0.52f;
+        // (A target you can't use stays listed, greyed: the reason is on its label.)
+        const float cr = !t.usable ? 0.62f : t.inArc ? 0.55f : 0.5f, cg = !t.usable ? 0.58f : t.inArc ? 1.0f : 0.5f, cb = !t.usable ? 0.58f : t.inArc ? 0.6f : 0.52f;
         const float d = (on ? 7 : 4) * u;
         r.tri(sx, sy - d, sx + d, sy, sx, sy + d, cr, cg, cb, on ? 1.0f : 0.8f);
         r.tri(sx, sy - d, sx, sy + d, sx - d, sy, cr, cg, cb, on ? 1.0f : 0.8f);
@@ -1244,6 +1263,7 @@ void drawWinchAim(Renderer& r, const Sim& sim, const WinchAim& aim, const View& 
         std::snprintf(buf, sizeof buf, "%s  %.0f M%s", t.what, t.dist, t.inArc ? "" : "  (BEHIND THE WINCH)");
         const float ts = px(1.8f * u);
         label(r, sx - r.textWidth(buf, ts) / 2, sy + b + 6 * u, ts, buf, cr, cg, cb);
+        if (!t.usable) label(r, sx - r.textWidth(t.why, ts) / 2, sy + b + 6 * u + 8 * ts + 4 * u, ts, t.why, 1.0f, 0.55f, 0.4f);
     }
     const char* stage = aim.kind == ROPE_WINCH ? "WINCH: CHOOSE AN ANCHOR" : aim.sourceHook < 0 ? "STRAP: CHOOSE YOUR FRONT OR REAR POINT" : "STRAP: CHOOSE THE OTHER VEHICLE'S POINT (9 M)";
     centeredPill(r, W / 2.0f, H - 139 * u, px(1.5f * u), stage, 0.02f, 0.02f, 0.03f, 0.95f, 1.0f, 0.75f, 0.3f);
@@ -1334,6 +1354,7 @@ void drawHud(Renderer& r, const Sim& sim, const View& view, HudState& hud, const
     drawDriveline(r, car, u, W, H);
     drawVehicleCard(r, car, u, H);
     drawRecovery(r, sim, u);
+    drawAnchors(r, sim, u, W, H);
     drawStation(r, sim, u, W, H);
     drawPlayers(r, sim, net, view, u, W, H);
     drawWinchAim(r, sim, aim, view, u, W, H);
@@ -1577,6 +1598,7 @@ int main(int argc, char** argv) {
     if (scripted || !career.load(Career::defaultPath())) career.startFresh();
     std::vector<CacheSpot> caches;  // this map's supply caches (a career's)
     int cachesMap = -1;
+    AnchorStock anchorSeen;  // the career's anchor gear as the sim last had it
     auto fitGarage = [&]() {
         for (Car& c : sim.cars)
             if (!c.isProp() && c.spec->model >= 0 && !garage.fitted[c.spec->model].stock()) {
@@ -1764,6 +1786,7 @@ int main(int argc, char** argv) {
             return;
         }
         if (!t.inArc) { hud.toast("THAT'S BEHIND THE WINCH: TURN TO FACE IT"); return; }
+        if (winchAim.kind == ROPE_WINCH && !t.usable) { hud.toast(t.why); return; }
         const std::string message = winchAim.kind == ROPE_WINCH ? sim.hookWinchTo(sim.player, t.end)
             : sim.hookStrapTo(sim.player, winchAim.sourceHook, t.end);
         hud.toast(message);
@@ -2161,6 +2184,7 @@ int main(int argc, char** argv) {
                     const Car& pc = sim.cars[sim.player];
                     if (!pc.isProp() && pc.spec->model >= 0) sim.swapPlayerVehicle(garage.spec(pc.spec->model));
                     cachesMap = -1;  // (the crates go out, or stay out of the way)
+                    if (!career.on) sim.anchorStock = AnchorStock();
                     hud.toast(career.on ? "CAREER: FACTORY PARTS. FIND, WIN AND BUY THE REST" : "SANDBOX: EVERY PART ON EVERY VEHICLE");
                 }
                 break;
@@ -3225,6 +3249,17 @@ int main(int argc, char** argv) {
                 if (job.done && jobBanner <= 0) jobOn = false;
             }
             jobBanner = std::max(0.0, jobBanner - dt);
+            {  // Anchor gear. A career's stock is the truth (bought, found): the sim's counts follow it, and what the winch
+               // uses goes back into it. Sandbox is the sim's own set, refilled at a station.
+                if (!career.on) sim.anchorStock.refills = true;
+                else if (sim.anchorStock.refills || career.anchorStock() != anchorSeen) {  // (a new sim has refills set)
+                    sim.anchorStock = anchorSeen = career.anchorStock();
+                } else if (sim.anchorStock != anchorSeen) {
+                    career.setAnchorStock(sim.anchorStock);
+                    anchorSeen = sim.anchorStock;
+                    if (!scripted) career.save(Career::defaultPath());
+                }
+            }
             // Exploring: places found (you, in the truck or on foot).
             discoverCheck -= dt;
             if (discoverCheck <= 0 && !playback.active()) {

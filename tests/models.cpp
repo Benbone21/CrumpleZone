@@ -59,7 +59,7 @@ SCENARIO(modelsBuild, "models/build", "Every design of every model builds: sound
             ctx.check(tag + "builds something", m.triangles() > 0);
             ctx.check(tag + "sound", sound(m, why), why);
             ctx.check(tag + "within budget", m.triangles() <= budgetFor(d.id), std::to_string(m.triangles()) + " > " + std::to_string(budgetFor(d.id)));
-            const bool hangs = d.id == "tree_saver" || d.id == "fp_hand";  // (round a trunk at waist height; in your hand)
+            const bool hangs = d.id == "tree_saver" || d.id == "chain_sling" || d.id == "fp_hand";  // (round a trunk or boulder at belt height; in your hand)
             ctx.check(tag + "stands on the ground", hangs || (m.lo.y > -0.6 && m.lo.y < 0.25), std::to_string(m.lo.y));
             const double big = std::max({size.x, size.y, size.z});
             ctx.check(tag + "about the size it says", big > d.size * 0.25 && big < d.size * 4 + 1, std::to_string(big) + " m against " + std::to_string(d.size));

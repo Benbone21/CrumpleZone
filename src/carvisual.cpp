@@ -2,6 +2,8 @@
 #include "carvisual.h"
 
 #include "bodyshell.h"
+#include "modelkit.h"
+#include "scenery.h"
 
 #include <map>
 #include <string>
@@ -1692,9 +1694,27 @@ void buildRunningGear(const Car& car, std::vector<Vtx>& out) {
     // (Prop shafts, half shafts and the differentials are models too: carparts.h.)
 }
 
+namespace {
+// A model drawn round a trunk or boulder: built for its radius (to 2 cm), kept until the lab changes the picks.
+const mk::Mesh& radiusModel(const char* id, double r) {
+    static std::map<std::pair<std::string, int>, mk::Mesh> cache;
+    static uint64_t version = 0;
+    if (version != mk::picksVersion()) cache.clear(), version = mk::picksVersion();
+    const int q = (int)std::lround(r * 50);
+    auto it = cache.find({id, q});
+    if (it == cache.end()) it = cache.emplace(std::make_pair(std::string(id), q), mk::modelMesh(id, {{"radius", q / 50.0}})).first;
+    return it->second;
+}
+double yawToward(const V3& from, const V3& to) { return std::atan2(-(to.z - from.z), to.x - from.x); }
+}  // namespace
+
 // Winch lines and tow straps: a sagging line when slack, straight when loaded, with a
-// shackle at each truck and a tree saver or sling at a fixed anchor.
+// shackle at each truck and, at a fixed anchor, its gear (anchors.h): a tree strap round the
+// trunk, a chain sling round the boulder, a stake, a bolt or a picket in the ground. The ones
+// left in the ground stay drawn after the line comes off.
 void buildRopes(const Sim& sim, std::vector<Vtx>& out) {
+    for (const SetAnchor& sa : sim.setAnchors)
+        appendModel(out, mk::modelMesh(anchors::gearModel(sa.gear)), V3(sa.p.x, sim.world.height(sa.p.x, sa.p.z), sa.p.z), sa.yaw);
     for (const Rope& r : sim.ropes) {
         auto at = [&](const RopeEnd& e) { return e.kind == ANCHOR_CAR ? sim.cars[e.car].hookPoint(e.hook) : e.p; };
         const V3 a = at(r.a), b = at(r.b);
@@ -1712,10 +1732,33 @@ void buildRopes(const Sim& sim, std::vector<Vtx>& out) {
             prev = p;
         }
         for (const RopeEnd* e : {&r.a, &r.b}) {
-            const V3 p = at(*e);
+            const V3 p = at(*e), to = at(e == &r.a ? r.b : r.a);
             if (e->kind == ANCHOR_CAR) blob(out, p, 0.025, V3(0.55, 0.55, 0.57), SM_METAL);  // shackle
-            else if (e->kind == ANCHOR_STAKE) tube(out, p - V3(0, 0.3, 0), p + V3(0, 0.25, 0), 0.04, 6, V3(0.25, 0.25, 0.27), SM_METAL);
-            else blob(out, p, 0.05, V3(0.95, 0.6, 0.08), SM_MATTE);  // tree saver / sling
+            else if (e->kind == ANCHOR_STAKE) {
+                bool left = false;  // (a stake you left in the ground is drawn above)
+                for (const SetAnchor& sa : sim.setAnchors) left |= std::hypot(sa.p.x - p.x, sa.p.z - p.z) < 0.3;
+                if (left) continue;
+                anchors::GroundRule gr = anchors::groundRule(sim.world.surfaceAt(p.x, p.z), 0);  // (another player's: whatever it's in)
+                appendModel(out, mk::modelMesh(anchors::gearModel(gr.gear == GEAR_COUNT ? GEAR_STAKE : gr.gear)), V3(p.x, sim.world.height(p.x, p.z), p.z), yawToward(p, to));
+            } else if (e->kind == ANCHOR_TREE) {  // the strap round the trunk this is tied to
+                const Pole* tree = nullptr;
+                double best = 0.05;
+                for (const Pole& pl : sim.world.poles) {
+                    const double d = std::fabs(std::hypot(pl.x - p.x, pl.z - p.z) - pl.r);
+                    if (pl.r >= anchors::kTreeMinR && d < best && p.y > pl.y0 && p.y < pl.y1) best = d, tree = &pl;
+                }
+                if (tree) appendModel(out, radiusModel("tree_saver", tree->r), V3(tree->x, p.y - 0.42, tree->z), yawToward(V3(tree->x, 0, tree->z), to));
+                else blob(out, p, 0.05, V3(0.95, 0.6, 0.08), SM_MATTE);
+            } else {  // the chain sling round the boulder
+                const Rock* rock = nullptr;
+                double best = 0.3;
+                for (const Rock& rk : sim.world.rocks) {
+                    const double d = std::fabs(len(p - rk.c) - rk.r * 0.75);
+                    if (rk.r >= anchors::kBoulderMinR && d < best) best = d, rock = &rk;
+                }
+                if (rock) appendModel(out, radiusModel("chain_sling", rock->r), V3(rock->c.x, sim.world.height(rock->c.x, rock->c.z), rock->c.z), yawToward(rock->c, to));
+                else blob(out, p, 0.05, V3(0.95, 0.6, 0.08), SM_MATTE);
+            }
         }
     }
 }
