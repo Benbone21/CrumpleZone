@@ -53,7 +53,7 @@ class PauseMenu {
 public:
     enum Action { NONE, RESUME, DRIVE, GARAGE, CONTROLS, RESET, QUIT, CHANGED, LOAD_MAP, HOST, JOIN, LEAVE, PILOT_GO, PILOT_STOP,
                   FREE_DRIVE, PLAY_LEVEL, EDIT_LEVEL, EDITOR, LEVEL_RESTART, LEVEL_QUIT, MAIN_MENU, JOB_START, JOB_STOP, MEET_UP,
-                  CANCEL_JOIN, MODEL_LAB };
+                  CANCEL_JOIN, MODEL_LAB, NEW_SECTION };
     struct Result {
         Action action = NONE;
         int vehicle = 0;  // for DRIVE; the map for LOAD_MAP
@@ -100,9 +100,13 @@ public:
     struct LevelInfo {
         std::string name, about;
         std::vector<std::string> lines;  // mode, map, rules, medals, best
+        bool section = false;            // a hand-made obstacle section (the levels page can show just those)
     };
     std::vector<LevelInfo> levels;
     int levelPick = 0;
+    bool levelSections = false;  // the levels page shows only the obstacle sections
+    std::vector<int> visibleLevels() const;  // indices into `levels` the page shows
+    int shownLevel() const;                  // the one picked, or the first showing (-1: none)
     bool levelActive = false;  // playing one: the pause page offers restart / quit
     bool netClient = false;    // in someone else's session: the host picks the level
 

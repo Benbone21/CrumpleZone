@@ -25,6 +25,36 @@ const char* levelModeName(int mode) {
     return mode >= 0 && mode < LEVEL_MODE_COUNT ? names[mode] : "?";
 }
 
+namespace {
+const char* kKindNames[SK_COUNT] = {"LEDGES", "CLIMB", "BOULDERS", "BOG", "CROSSING", "SHELF", "TWISTER", "TIMBER", "DUNES", "DROP", "GAP", "CUSTOM"};
+const char* kTestNames[ST_COUNT] = {"SKILL", "PROBLEM-SOLVING", "COMMITMENT", "ATTRITION", "CO-OP"};
+const char* kKitNames[SKIT_COUNT] = {"4L", "LOCKERS", "AIR DOWN", "WINCH", "BUDDY"};
+// (In the file: one word each.)
+const char* kTestTokens[ST_COUNT] = {"SKILL", "PROBLEM", "COMMIT", "ATTRITION", "COOP"};
+const char* kKitTokens[SKIT_COUNT] = {"4L", "LOCKERS", "AIRDOWN", "WINCH", "BUDDY"};
+}  // namespace
+
+const char* sectionKindName(int kind) { return kind >= 0 && kind < SK_COUNT ? kKindNames[kind] : "?"; }
+const char* sectionTestName(int bit) { return bit >= 0 && bit < ST_COUNT ? kTestNames[bit] : "?"; }
+const char* sectionKitName(int bit) { return bit >= 0 && bit < SKIT_COUNT ? kKitNames[bit] : "?"; }
+
+std::string sectionBitsText(int bits, bool kit) {
+    std::string r;
+    for (int k = 0; k < 5; k++)
+        if (bits >> k & 1) r += (r.empty() ? "" : ",") + std::string(kit ? kKitTokens[k] : kTestTokens[k]);
+    return r.empty() ? std::string("-") : r;
+}
+
+int sectionBitsParse(const std::string& list, bool kit) {
+    int bits = 0;
+    std::istringstream ts(list);
+    std::string t;
+    while (std::getline(ts, t, ','))
+        for (int k = 0; k < 5; k++)
+            if (t == (kit ? kKitTokens[k] : kTestTokens[k])) bits |= 1 << k;
+    return bits;
+}
+
 // ---- Applying ----------------------------------------------------------------------------
 
 void placeObject(const LevelObject& o, World& w) {
@@ -60,7 +90,13 @@ void applyLevel(const Level& lv, World& w) {
         if (s.first >= 0 && s.first < n * n) w.setCellSurface(s.first, (uint8_t)(s.second >> 8), (uint8_t)(s.second & 0xff));
     for (const auto& wt : lv.water)
         if (wt.first >= 0 && wt.first < n * n) w.setCellWater(wt.first, wt.second);
+    for (const auto& f : lv.flow)
+        if (f.first >= 0 && f.first < n * n && !w.flowX.empty()) w.flowX[f.first] = f.second.first, w.flowZ[f.first] = f.second.second;
     for (const LevelObject& o : lv.objects) placeObject(o, w);
+    if (lv.section.on) {  // (a section's canvas is cleared: the bushes have no entry in `removed`)
+        const SectionInfo& c = lv.section;
+        w.bushes.erase(std::remove_if(w.bushes.begin(), w.bushes.end(), [&](const Bush& b) { return c.outside(b.p.x, b.p.z) < 26; }), w.bushes.end());
+    }
     if (lv.hasStart) {
         w.spawn = V3(lv.start.x, w.height(lv.start.x, lv.start.z), lv.start.z);
         w.spawnYaw = lv.startYaw;
@@ -105,6 +141,10 @@ void addGateMarkers(const Level& lv, World& w) {
 //   about Twelve rock ledges up a boulder gully...
 //   map 3                  mode sprint      laps 1     vehicle 2 (-1 any)
 //   time 10.5              resets 1         damage 40  limit 0     medals 60 90 150
+//   #section KIND DIFFICULTY TESTS KIT   (a section: see SectionInfo; comments to an older build)
+//   #canvas X Z HEADINGDEG LENGTH HALF   (its cleared ground)
+//   #stamp GENERATOR SEED                (if it began as a generated one)
+//   #flow I J0 FX,FZ ...                 (current in the water: like water, a run of cells; a comment to older builds)
 //   start X Z YAWDEG
 //   gate X Z YAWDEG WIDTH  (in order; one per line)
 //   rock X Z RX RY RZ TOP SEED TINT
@@ -155,6 +195,12 @@ std::string saveLevelText(const Level& lv) {
     o << "laps " << lv.laps << '\n' << "vehicle " << lv.vehicle << '\n' << "time " << num(lv.timeOfDay) << '\n';
     o << "resets " << (lv.resets ? 1 : 0) << '\n' << "damage " << num(lv.maxDamage, 1) << '\n' << "limit " << num(lv.timeLimit, 1) << '\n';
     o << "medals " << num(lv.medals[0], 1) << ' ' << num(lv.medals[1], 1) << ' ' << num(lv.medals[2], 1) << '\n';
+    if (lv.section.on) {
+        const SectionInfo& c = lv.section;
+        o << "#section " << sectionKindName(c.kind) << ' ' << c.difficulty << ' ' << sectionBitsText(c.tests, false) << ' ' << sectionBitsText(c.kit, true) << '\n';
+        o << "#canvas " << num(c.x) << ' ' << num(c.z) << ' ' << num(c.heading / kDeg, 1) << ' ' << num(c.length, 1) << ' ' << num(c.half, 1) << '\n';
+        if (c.gen >= 0) o << "#stamp " << c.gen << ' ' << c.genSeed << '\n';
+    }
     if (lv.hasStart) o << "start " << num(lv.start.x) << ' ' << num(lv.start.z) << ' ' << num(lv.startYaw / kDeg, 1) << '\n';
     for (const Gate& g : lv.gates) o << "gate " << num(g.p.x) << ' ' << num(g.p.z) << ' ' << num(g.yaw / kDeg, 1) << ' ' << num(g.width, 1) << '\n';
     for (const LevelObject& b : lv.objects) {
@@ -187,6 +233,13 @@ std::string saveLevelText(const Level& lv) {
         return std::string(b);
     });
     writeRuns(o, "water", lv.water, n, [](float h) { return h < -1e8f ? std::string("-1") : num(h); });
+    // (A current only where there's water.)
+    std::map<int, std::pair<float, float>> flow;
+    for (const auto& f : lv.flow) {
+        const auto wt = lv.water.find(f.first);
+        if (wt != lv.water.end() && wt->second > -1e8f && (f.second.first != 0 || f.second.second != 0)) flow.insert(f);
+    }
+    writeRuns(o, "#flow", flow, n, [](const std::pair<float, float>& f) { return num(f.first) + "," + num(f.second); });
     return o.str();
 }
 
@@ -205,7 +258,44 @@ bool parseLevelText(const std::string& text, Level& lv, std::string* error) {
     while (std::getline(in, line)) {
         lineNo++;
         if (!line.empty() && line.back() == '\r') line.pop_back();
-        if (line.empty() || line[0] == '#') continue;
+        if (line.empty()) continue;
+        if (line[0] == '#') {  // (comments; except a section's own lines, which an older build skips like any other)
+            if (line.rfind("#flow ", 0) == 0) {  // #flow I J0 FX,FZ FX,FZ ...
+                std::istringstream fs(line);
+                std::string tag, v;
+                int i = 0, j = 0;
+                fs >> tag >> i >> j;
+                if (i < 0 || j < 0 || i >= gridN || j >= gridN) return fail("CELL OFF THE MAP");
+                while (fs >> v && j < gridN) {
+                    float fx = 0, fz = 0;
+                    if (std::sscanf(v.c_str(), "%f,%f", &fx, &fz) == 2) out.flow[i * gridN + j] = {fx, fz};
+                    j++;
+                }
+                continue;
+            }
+            if (line.rfind("#section ", 0) == 0 || line.rfind("#canvas ", 0) == 0 || line.rfind("#stamp ", 0) == 0) {
+                std::istringstream cs(line);
+                std::string tag, a, b, c;
+                cs >> tag;
+                SectionInfo& sc = out.section;
+                if (tag == "#section") {
+                    cs >> a >> sc.difficulty >> b >> c;
+                    sc.on = true;
+                    sc.kind = SK_CUSTOM;
+                    for (int k = 0; k < SK_COUNT; k++)
+                        if (a == kKindNames[k]) sc.kind = k;
+                    sc.difficulty = std::min(std::max(sc.difficulty, 1), 5);
+                    sc.tests = sectionBitsParse(b, false), sc.kit = sectionBitsParse(c, true);
+                } else if (tag == "#canvas") {
+                    double hd = 0;
+                    cs >> sc.x >> sc.z >> hd >> sc.length >> sc.half;
+                    sc.heading = hd * kDeg;
+                } else {
+                    cs >> sc.gen >> sc.genSeed;
+                }
+            }
+            continue;
+        }
         if (!header) {
             if (line.rfind("CRUMPLEZONE LEVEL", 0) != 0) return fail("NOT A CRUMPLE ZONE LEVEL");
             header = true;
@@ -345,11 +435,11 @@ std::vector<std::string> levelFolders() { return {userLevelFolder(), "levels"}; 
 
 namespace {
 
-std::vector<std::string> filesIn(const std::string& dir) {
+std::vector<std::string> filesIn(const std::string& dir, const std::string& ext = ".czl") {
     std::vector<std::string> out;
 #ifdef _WIN32
     WIN32_FIND_DATAA fd;
-    HANDLE h = FindFirstFileA((dir + "\\*.czl").c_str(), &fd);
+    HANDLE h = FindFirstFileA((dir + "\\*" + ext).c_str(), &fd);
     if (h != INVALID_HANDLE_VALUE) {
         do out.push_back(dir + "/" + fd.cFileName);
         while (FindNextFileA(h, &fd));
@@ -359,7 +449,7 @@ std::vector<std::string> filesIn(const std::string& dir) {
     if (DIR* d = opendir(dir.c_str())) {
         while (dirent* e = readdir(d)) {
             const std::string n = e->d_name;
-            if (n.size() > 4 && n.compare(n.size() - 4, 4, ".czl") == 0) out.push_back(dir + "/" + n);
+            if (n.size() > ext.size() && n.compare(n.size() - ext.size(), ext.size(), ext) == 0) out.push_back(dir + "/" + n);
         }
         closedir(d);
     }
@@ -369,6 +459,8 @@ std::vector<std::string> filesIn(const std::string& dir) {
 }
 
 }  // namespace
+
+std::vector<std::string> listLevelFiles(const std::string& dir, const std::string& ext) { return filesIn(dir, ext); }
 
 std::vector<Level> listLevels() {
     std::vector<Level> out = builtinLevels();

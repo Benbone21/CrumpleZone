@@ -94,6 +94,7 @@ struct Options {
     int lamps = -1;               // --lamps 0-3: headlight switch (LampMode: auto, low, high, off)
     std::string level;            // --level NAME: play the level whose name has NAME in it
     bool editor = false;          // --editor: open the world editor on the map
+    bool newSection = false;      // --new-section: the editor, on a new obstacle section
     bool lab = false;             // --lab: the model lab (lab.h) instead of the game
     std::string labModel;         // --lab-model ID: start on that model
     int labDesign = -1;           // --lab-design N: just that design
@@ -325,6 +326,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--lamps") o.lamps = std::atoi(next().c_str());
         else if (a == "--level") o.level = next();
         else if (a == "--editor") o.editor = true;
+        else if (a == "--new-section") o.newSection = true;
         else if (a == "--lab") o.lab = true;
         else if (a == "--lab-model") o.lab = true, o.labModel = next();
         else if (a == "--lab-design") o.lab = true, o.labDesign = std::atoi(next().c_str());
@@ -1909,6 +1911,12 @@ int main(int argc, char** argv) {
             li.lines.push_back(rules);
             if (lv.medals[0] > 0)
                 li.lines.push_back("GOLD " + formatRaceTime(lv.medals[0]) + "   SILVER " + formatRaceTime(lv.medals[1]) + "   BRONZE " + formatRaceTime(lv.medals[2]));
+            if (lv.section.on) {  // (a hand-made obstacle section: drive it from the entry to the exit)
+                const SectionInfo& sc = lv.section;
+                li.section = true;
+                li.lines.insert(li.lines.begin(), std::string("SECTION: ") + sectionKindName(sc.kind) + "  -  DIFFICULTY " + std::to_string(sc.difficulty) + " OF 5");
+                li.lines.push_back("TESTS " + sectionBitsText(sc.tests, false) + "   KIT " + sectionBitsText(sc.kit, true));
+            }
             const auto b = bestTimes.find(lv.name);
             li.lines.push_back(b != bestTimes.end() ? "YOUR BEST " + formatRaceTime(b->second) : lv.builtin ? "BY CRUMPLE ZONE" : "YOURS: " + lv.file);
             menu.levels.push_back(li);
@@ -2102,7 +2110,7 @@ int main(int argc, char** argv) {
     Editor editor;
     Level lastEdited;
     bool haveEdited = false;
-    auto openEditor = [&](const Level& base) {
+    auto openEditor = [&](const Level& base, bool newSection = false) {
         if (net.active()) {
             hud.toast("THE EDITOR IS OFFLINE ONLY: LEAVE THE SESSION FIRST");
             return;
@@ -2110,8 +2118,11 @@ int main(int argc, char** argv) {
         run.stop();
         levelHours = -1;
         stopPilot();
-        sim.world = World(base.map);
-        editor.open(sim.world, renderer, base);
+        if (newSection) editor.newSection(sim.world, renderer);  // (a fresh proving ground, the canvas cleared)
+        else {
+            sim.world = World(base.map);
+            editor.open(sim.world, renderer, base);
+        }
         drawnWorld = sim.world.stamp;
         sim.paused = true;
         fx.clear();
@@ -2233,6 +2244,11 @@ int main(int argc, char** argv) {
                     openEditor(l);
                 }
                 break;
+            case PauseMenu::NEW_SECTION: {
+                closeMenu();
+                openEditor(Level(), true);
+                break;
+            }
             case PauseMenu::MODEL_LAB: {  // the model lab (lab.h), then back here with the picks drawn
                 SDL_SetRelativeMouseMode(0);
                 LabOptions lo;
@@ -2336,7 +2352,9 @@ int main(int argc, char** argv) {
     if (opt.hostPort > 0) startHost(opt.hostPort);
     else if (!opt.join.empty()) startJoin(opt.join);
     // Launched plainly (no map, spawn, session or test asked for): the title screen first.
-    if (opt.editor) {
+    if (opt.newSection) {
+        openEditor(Level(), true);
+    } else if (opt.editor) {
         Level l;
         l.map = sim.world.map;
         l.name = "UNTITLED";
@@ -3400,6 +3418,44 @@ int main(int argc, char** argv) {
             coop.waypoint = c + V3(-150, 0, 200);
             coop.mapOpen = opt.camera != 5;
             coop.say("ON MY WAY, HANG TIGHT", "YOU", net);
+        }
+        if (editor.active && scripted && opt.script.rfind("editsection", 0) == 0 && frame == 3) {
+            // (Screenshots: the section editor: a fresh canvas, its page, a stamped rock wall, a slab ledge and the slope readout.)
+            EditCore& ed = editor.core;
+            const SectionInfo c = ed.level.section;
+            const V3 f(std::cos(c.heading), 0, -std::sin(c.heading)), e = ed.level.start;
+            if (opt.script == "editsection-save") {  // (a saved section to play: XDG_CONFIG_HOME says where)
+                ed.settings("demo", [](Level& l) {
+                    l.name = "ROCK WALL V4";
+                    l.section.kind = SK_LEDGES, l.section.difficulty = 4;
+                    l.section.tests = ST_SKILL | ST_COMMIT, l.section.kit = SKIT_4L | SKIT_LOCKERS;
+                });
+                ed.stampSection(SEC_ROCK_WALL, 3);
+                std::string err;
+                std::printf("saved: %d %s | %s\n", (int)ed.save(userLevelFolder() + "/rock_wall_v4.czl", &err), err.c_str(), ed.saveNote.c_str());
+            } else if (opt.script == "editsection-meta") {
+                editor.setTool(Editor::SECTION);
+                ed.settings("demo", [](Level& l) {
+                    l.name = "ROCK WALL V4";
+                    l.section.kind = SK_LEDGES, l.section.difficulty = 4;
+                    l.section.tests = ST_SKILL | ST_COMMIT, l.section.kit = SKIT_4L | SKIT_LOCKERS | SKIT_AIRDOWN;
+                });
+                ed.stampSection(SEC_ROCK_WALL, 3);
+            } else if (opt.script == "editsection-wall") {
+                editor.setTool(Editor::OBJECTS);
+                ed.stampSection(SEC_ROCK_WALL, 3);
+                editor.setCamera(e + f * 28 + V3(0, 9, 0), c.heading, -0.38);
+            } else if (opt.script == "editsection-ledge") {
+                editor.setTool(Editor::OBJECTS);
+                editor.setLedge(2, 3.0);
+                const V3 l(-f.z, 0, f.x);
+                editor.placeLedge(e + f * 30 + l * -6, e + f * 30 + l * 6);
+                editor.placeLedge(e + f * 40 + l * -6, e + f * 40 + l * 6);
+                editor.setLedge(4, 3.0);
+                editor.placeLedge(e + f * 52 + l * -6, e + f * 52 + l * 6);
+                editor.setCamera(e + f * 8 + V3(0, 7, 0), c.heading, -0.3);
+                editor.setMouse(W * 0.5f, H * 0.62f);
+            }
         }
         if (editor.active && scripted && opt.script == "editdemo" && frame == 5) {
             // (Screenshots: a few edits in front of the camera, through the editor's core.)

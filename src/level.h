@@ -12,6 +12,8 @@
 // own from the levels folders (levelFolders). In multiplayer the host sends the level's text
 // to everyone, so a level made on one machine plays on all of them.
 #pragma once
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <map>
 #include <string>
@@ -44,8 +46,41 @@ struct LevelObject {
     std::string name;  // station
 };
 
+// An obstacle section authored in the editor (sections.h, sectionfile.h): a strip of ground with an
+// entry (the course start) and an exit (the last gate), made on a cleared canvas and saved with what
+// it tests and what kit it wants, for the stitcher to place anywhere later. The file keeps these in
+// "#section" comment lines (the loader of an older build skips comments), so a section opens as an
+// ordinary level anywhere.
+enum SectionKind { SK_LEDGES, SK_CLIMB, SK_BOULDERS, SK_BOG, SK_CROSSING, SK_SHELF, SK_TWISTER, SK_TIMBER, SK_DUNES, SK_DROP, SK_GAP, SK_CUSTOM, SK_COUNT };
+enum SectionTest { ST_SKILL = 1, ST_PROBLEM = 2, ST_COMMIT = 4, ST_ATTRITION = 8, ST_COOP = 16, ST_COUNT = 5 };  // bits of `tests`
+enum SectionKit { SKIT_4L = 1, SKIT_LOCKERS = 2, SKIT_AIRDOWN = 4, SKIT_WINCH = 8, SKIT_BUDDY = 16, SKIT_COUNT = 5 };  // bits of `kit`
+const char* sectionKindName(int kind);     // "LEDGES"
+const char* sectionTestName(int bit);      // bit index 0..4: "PROBLEM-SOLVING"
+const char* sectionKitName(int bit);       // bit index 0..4: "AIR DOWN"
+// As the files write them: "SKILL,COMMIT" ("-" none), and back.
+std::string sectionBitsText(int bits, bool kit);
+int sectionBitsParse(const std::string& list, bool kit);
+
+struct SectionInfo {
+    bool on = false;
+    int kind = SK_CUSTOM, difficulty = 3;   // difficulty 1..5
+    int tests = 0, kit = 0;
+    // The canvas: a rectangle of cleared ground, `length` m along `heading` from its back-centre
+    // (x, z), `half` m either side. The entry (the start) and the exit (the last gate) are
+    // inside it; the section's local frame is the entry's (u along the heading, v to the left).
+    double x = 0, z = 0, heading = 0, length = 260, half = 45;
+    int gen = -1;           // the generator it was stamped from (SectionType), if any
+    uint32_t genSeed = 0;
+    // How far (wx, wz) is outside the canvas (negative inside).
+    double outside(double wx, double wz) const {
+        const double dx = wx - x, dz = wz - z, u = dx * std::cos(heading) - dz * std::sin(heading), v = dx * std::sin(heading) + dz * std::cos(heading);
+        return std::max(std::max(-u, u - length), std::fabs(v) - half);
+    }
+};
+
 struct Level {
     std::string name = "UNTITLED", about, author, file;
+    SectionInfo section;
     int map = MAP_FRONTIER;
     int mode = LEVEL_FREE;
     int laps = 1;
@@ -63,6 +98,7 @@ struct Level {
     std::map<int, float> heights;
     std::map<int, uint16_t> surfaces;  // surface << 8 | paint
     std::map<int, float> water;
+    std::map<int, std::pair<float, float>> flow;  // current in the water there (world x, z m/s): a stamped river keeps its own ("#flow" comment lines)
     std::vector<LevelObject> objects;
     std::vector<V3> removed;           // base-map objects taken out: (x, 0, z), each the nearest within 1.5 m
 
@@ -86,6 +122,8 @@ bool saveLevelFile(const Level& lv, const std::string& path, std::string* error 
 // game's own folder (./levels). New levels are saved to the first.
 std::vector<std::string> levelFolders();
 std::string userLevelFolder();
+// The files in a folder ending in `ext` (".czl"), sorted, as "dir/name.czl".
+std::vector<std::string> listLevelFiles(const std::string& dir, const std::string& ext);
 // The game's levels, then every .czl in the folders.
 std::vector<Level> listLevels();
 const std::vector<Level>& builtinLevels();
