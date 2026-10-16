@@ -171,6 +171,11 @@ exit banks** (about 1:1), length, water depth, ruts, or no momentum (a tight ent
 
 ### 3.2 What the world can and can't express (from a code audit)
 
+- **Vehicle lineup:** the Civic, UTV and rock buggy are **no longer offered in the game**
+  (`listedVehicles()` in `src/vehicles.h`: Blazer, Bronco, 4Runner, Tacoma, Jesko). Their numbers in §3.1
+  (the buggy columns) and the UTV/Civic remarks below are history; §3.3 is the capability table for the
+  current lineup. They are still in the vehicle catalog, and the garage still offers their parts to the
+  other trucks.
 - **Terrain:** a 1 m grid, bilinear; contact samples one point under each wheel; no max-slope clamp.
   It **can't make crisp lips**. Existing maps make square ledges with **rock boxes**
   (`Box.rock = true`): `addSteps` in `backcountry.cpp`, `staircase` in `frontier.cpp`.
@@ -196,6 +201,209 @@ exit banks** (about 1:1), length, water depth, ruts, or no momentum (a tight ent
   tires slide first on normal ground (see the camber table).
 - **Damage:** a Bronco dropped flat 5 m onto rock breaks parts or kinks the frame; at 8 m tires pop.
   There's no test of a 5–10 m cliff fall onto terrain. `engineDead` and `maxDamage` end a level run.
+
+### 3.3 Capability table: the listed vehicles
+
+§3.1 was measured on the rock buggy and the Bronco. The game now offers only the Blazer, Bronco,
+4Runner, Tacoma and Jesko (`listedVehicles()`), so this section redoes the table for the four
+overlanders. The Jesko is at the bottom. Measured with `prototypes/sections/capability.cpp` (over 4,000
+scripted runs, physics of commit `91faf6d`, same blank rock/dirt/grass test region as `probe.cpp`, scripted
+controls only; this is physics measurement, not gameplay validation). The build and run recipe is in the
+file header.
+
+**Common conditions.** 4L (4L LOCK on the 4Runner), traction control off, every fitted locker engaged
+(a locker that is low-range-only goes in because we are in 4L). "Normal" pressure is what the truck is
+sold with (Blazer 32, Bronco 35, 4Runner 35, Tacoma 30 psi); "aired" is the game's minimum, 12 psi.
+"Stock" is the catalog truck (the 4Runner's stock is the as-built lifted truck: 35s, snorkel, winch).
+
+#### Setups used
+
+The garage offers every vehicle's parts on every vehicle (`modOptions`), including the unlisted
+buggy's and UTV's. I only used each truck's own parts and picked by **ledge ablation** (6 to 8 variants
+per truck, 3 to 9 tries each). Differences between the top variants are within noise, so the choice is
+"best of a flat top", not a clear winner, except where noted.
+
+| Truck | Stock | Set up (what I fitted) | What I tried and rejected |
+|---|---|---|---|
+| Blazer | 350 2-bbl, leaf springs, 0.385 m A/T tires, **no lockers**, open diffs, NP205 low 1.96 | **ZZ4 crate 350** (355 hp), **4 in lift and 35s** (0.445 m mud tires), **4.56 gears and lockers** (front and rear), 12 psi | 454 big block (same ledge result, +70 kg); lift alone or lockers alone (a little worse than the full set) |
+| Bronco | 2.7 twin-turbo V6, 33s (0.415 m A/T), rear e-locker only, front locker is a garage part | **Raptor 3.0 V6 swap**, **3 in lift and 37s** (0.47 m mud tires), **4.70 and lockers** (front and rear), sway bar disconnected, 12 psi | Stage 1 tune and no engine part (equal within noise); Sasquatch 35s (ledges about 0.1 m worse but **better on side slopes**, see the camber table); the 7-speed crawler box (6.59 first, no lockers) did as well on ledges (usual 0.55 to 0.75 in 9 tries) and snapped 5x fewer shafts, but has no lockers for the twister or slabs |
+| 4Runner | as built: supercharged 3.4 V6, 35s (0.445 m A/T), snorkel, rear e-locker (4L only), 4L LOCK | as built **plus 4.88 and lockers** (ARB front and rear, any range), sway pins pulled, 12 psi | 37s and long travel, the 4.7:1 crawl box, the 1GR swaps. **Nothing beat stock**: more torque or lower gearing snaps the axle shafts |
+| Tacoma | 3.5 V6, 265/70R16 A/T (0.389 m), rear e-locker (4L only) | **Magnuson supercharger**, **long travel and 35s** (0.445 m mud tires), **crawl box** (4.88 gears, 4.3:1 low, front ARB locker), 12 psi | 3 in lift and 33s (worse), lockers without the crawl box (equal), tune only (equal) |
+
+"Set up, normal pressure" below means the same parts at the pressure the truck is sold with.
+
+#### 1. Max square ledge (rock box across the lane, rock surface)
+
+A 16 m long rock box, `H` high, the truck crawls at it from 12 m back. Because the result is chaotic near
+the limit, each height was tried at **nine crawl speeds** (0.5 to 2.0 m/s; heights up to 0.40 m: three
+speeds). "Cleared" means the centre of mass ends 5 m past the face. Three numbers per cell, in metres:
+**solid** = every try cleared (and every lower height too); **usual** = at least 60% of tries cleared;
+**best** = the highest height any single try cleared (can be one lucky run).
+
+| Truck | Stock, normal psi | Stock, 12 psi | Set up, normal psi | Set up, 12 psi |
+|---|---|---|---|---|
+| Blazer | 0.40 / 0.40 / 0.60 | 0.40 / 0.45 / 0.55 | 0.40 / 0.45 / 0.65 | **0.50 / 0.75 / 0.85** |
+| Bronco | 0.40 / 0.40 / 0.50 | 0.40 / 0.45 / 0.60 | 0.40 / 0.45 / 0.75 | **0.50 / 0.65 / 0.85** |
+| 4Runner | 0.35 / 0.35 / 0.65 | 0.40 / 0.45 / 0.70 | 0.35 / 0.35 / 0.55 | 0.40 / 0.45 / 0.65 |
+| Tacoma | 0.30 / 0.30 / 0.45 | 0.45 / 0.50 / 0.50 | 0.35 / 0.40 / 0.60 | 0.45 / 0.60 / 0.70 |
+
+Share of tries that cleared, by height (the shape of the cliff; 0.40 m and below were three tries):
+
+| Truck | Setup | psi | 0.40 | 0.45 | 0.50 | 0.55 | 0.60 | 0.65 | 0.70 | 0.75 | 0.80 | 0.85 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Blazer | stock | normal | 100% | 44% | 22% | 0% | 11% | 0% | 0% | 0% | 0% | 0% |
+| Blazer | stock | 12 | 100% | 78% | 56% | 44% | 0% | 0% | 0% | 0% | 0% | 0% |
+| Blazer | set up | normal | 100% | 78% | 56% | 56% | 11% | 22% | 0% | 0% | 0% | 0% |
+| Blazer | set up | 12 | 100% | 100% | 100% | 78% | 78% | 89% | 78% | 67% | 11% | 22% |
+| Bronco | stock | normal | 100% | 44% | 33% | 0% | 0% | 0% | 0% | 0% | 0% | 0% |
+| Bronco | stock | 12 | 100% | 89% | 11% | 22% | 11% | 0% | 0% | 0% | 0% | 0% |
+| Bronco | set up | normal | 100% | 78% | 33% | 33% | 0% | 0% | 0% | 22% | 0% | 0% |
+| Bronco | set up | 12 | 100% | 100% | 100% | 89% | 89% | 89% | 56% | 44% | 0% | 11% |
+| 4Runner | stock | normal | 33% | 22% | 11% | 22% | 0% | 11% | 0% | 0% | 0% | 0% |
+| 4Runner | stock | 12 | 100% | 67% | 56% | 44% | 44% | 33% | 22% | 0% | 0% | 0% |
+| 4Runner | set up | normal | 33% | 22% | 0% | 11% | 0% | 0% | 0% | 0% | 0% | 0% |
+| 4Runner | set up | 12 | 100% | 67% | 56% | 44% | 44% | 22% | 0% | 0% | 0% | 0% |
+| Tacoma | stock | normal | 33% | 11% | 0% | 0% | 0% | 0% | 0% | 0% | 0% | 0% |
+| Tacoma | stock | 12 | 100% | 100% | 67% | 0% | 0% | 0% | 0% | 0% | 0% | 0% |
+| Tacoma | set up | normal | 67% | 22% | 11% | 22% | 11% | 0% | 0% | 0% | 0% | 0% |
+| Tacoma | set up | 12 | 100% | 100% | 67% | 78% | 67% | 33% | 11% | 0% | 0% | 0% |
+
+(The Bronco's stock-aired "usual 0.45" reproduces the 0.45 m of §3.1.) Failed tries at the face often
+end with one or two snapped axle shafts (11 to 31 of the 93 runs in each set-up cell, almost none in the
+stock cells except the 4Runner: the failure cost is real).
+
+**Takeaway for templates:** at normal pressure nothing is reliable above **0.40 m** (Tacoma 0.30, 4Runner
+0.35), even set up. Airing down adds +0.05 to +0.2 m ("usual") to a stock truck, and **the set-up parts pay
+off only when aired**: usual +0.3 m for the Blazer, +0.2 m for the Bronco, +0.1 m for the Tacoma, 0 for the
+4Runner. So a 0.45–0.50 m ledge needs air; 0.55–0.65 m needs air and a set-up Blazer, Bronco or Tacoma
+(0.75 m: set-up Blazer, and only just); treat **0.85 m and up as a wall** (the single best try anywhere was
+0.85 m). Use the "solid" column for "this must pass" and the "best" column plus 0.05 m for "this must fail".
+
+#### 2. Grid wall angle (4 m high, rock surface)
+
+Height reached in metres; "over" = over the top. Crawl at 1.2 m/s, 60 s, one run each. "Set up" is the
+12 psi set-up truck (the best setup); "stock" is stock parts at normal pressure.
+
+| Truck | | 35° | 45° | 55° | 65° | 75° |
+|---|---|---|---|---|---|---|
+| Blazer | set up, 12 psi | over | over | 0 | 0 | 0 |
+| Blazer | stock, normal | **2.4 (stalls)** | 0 | 0 | 0 | 0 |
+| Bronco | set up, 12 psi | over | over | 0.7 | 0 | 0 |
+| Bronco | stock, normal | over | 0.8 | 0.2 | 0 | 0 |
+| 4Runner | set up, 12 psi | over | **0.5** | 0 | 0 | 0 |
+| 4Runner | stock, normal | over | 0.4 | 0 | 0 | 0 |
+| Tacoma | set up, 12 psi | over | **0.5** | 0 | 0 | 0 |
+| Tacoma | stock, normal | over | 0.2 | 0 | 0 | 0 |
+
+(Stock aired: Blazer 35° over, 45° 0.05 m; Bronco 45° 3.95 m, 55° 0.3 m, close to §3.1; 4Runner
+and Tacoma as set up.)
+
+**Takeaway:** **≥ 65° seals for all four** (0 m), as in §3.1; 55° is a seal for everything except a set-up
+Bronco (0.7 m). A 45° face is **not a wall for a Bronco or a set-up Blazer** (they go over 4 m of it) but
+is for the 4Runner and Tacoma (they stop at about 0.5 m).
+
+#### 3. Off-camber side slope (drive along it at 1.5 m/s for 30 s)
+
+A slope falling 40 m to the side, driven along its middle. "slides N" = metres of lateral drift (**about
+38–40 means it slid to the bottom of the slope**, unrecoverable). Stock = normal pressure, factory lockers
+in. Set up = 12 psi, sway bar off, lockers in. One run each; cells that change when the speed is 1.0 or
+2.0 m/s are marked with ~.
+
+| Truck | | Dirt 25° | 30° | 35° | 40° | Rock 25° | 30° | 35° | 40° |
+|---|---|---|---|---|---|---|---|---|---|
+| Blazer | stock | ok | slides 37 | slides 40 | slides 38 | ok | slides 34 | slides 38 | slides 38 |
+| Blazer | set up | ok | ok | ok~ | **rolls** | ok | ok | slides 7~ | slides 41 |
+| Bronco | stock | ok | ok | slides 20 | **rolls** | ok | ok | slides 40 | **rolls** |
+| Bronco | set up (37s) | ok | **slides 12** | **slides 18** | **rolls** | ok | **slides 19** | slides 13~ | **rolls** |
+| Bronco | set up (Sasquatch 35s) | ok | ok | ok | **rolls** | ok | ok | ok | slides 39 |
+| 4Runner | stock | ok | slides 16 | slides 20 | slides 38 | ok | slides 8~ | slides 38 | **rolls** |
+| 4Runner | set up | ok | ok | ok | **rolls** | ok | ok | ok | slides 38 |
+| Tacoma | stock | ok | ok~ | slides 18 | **rolls** | ok | ok~ | slides 40 | slides 38 |
+| Tacoma | set up | ok | ok | ok | **rolls** | ok | ok | ok~ | slides 38 |
+
+Two more facts behind the stock rows:
+- **The rear locker decides the stock 30° case.** Without it (rear locker left out), stock Bronco slides
+  12 m on 30° dirt (§3.1's number), stock Tacoma 20 m, stock 4Runner 17 m (rock 30°: 10 m). With it, the Bronco
+  and Tacoma hold 30°. The Blazer has no locker at all.
+- **Stock parts but aired, sway bar off, lockers in** hold 30° on every truck, and 35° on the Bronco and
+  4Runner (both surfaces) and the Tacoma (dirt only; the Blazer slides at 35°), so most of the "set up" gain on
+  slopes is pressure, the sway bar and the lockers, not the parts. The 4Runner's e-locker (engaged in these runs)
+  doesn't save the stock truck at 30°.
+
+**Takeaway:** the tier gap is **30° (stock slides or holds depending on the rear locker) vs 35° (set up
+holds)**; **40° is never survivable** (rolls on dirt, slides on rock). A 32–36° shelf with a drop below is a
+real commitment test for a set-up truck. **The Bronco's tall mud tires (37s) lose side grip** (they slide at
+30°); a Bronco that is set up for ledges is the *worst* set-up truck on a shelf road.
+
+#### 4. Max slab angle on rock (straight climb, grid slope 14 m long)
+
+Highest angle climbed to the top (14 m of slope, then flat) at all of 0.7, 1.2 and 2.0 m/s (angles from 35° up
+were retried at those speeds); the bracket says what happened one step higher.
+
+| Truck | Stock, normal psi | Stock, 12 psi | Set up, normal psi | Set up, 12 psi |
+|---|---|---|---|---|
+| Blazer | **30** (35 only at 0.7 m/s) | 35 (40 only at 0.7) | 30 (35 only at 0.7) | 35 (40 at 0.7 and 1.2, not 2.0) |
+| Bronco | 35 (40 only at 0.7) | 40 (42 at 1.2; 45 fails, 9.7 of 9.9 m at 0.7) | 35 (40 only at 0.7) | **45** (50 stops at 1.8 m) |
+| 4Runner | 35 | 40 (42 stops at 5 m) | 35 | 40 (42 at 1.2; 45 stops at 0.5 m) |
+| Tacoma | 35 | 35 (40 at 1.2 and 2.0; 7 of 9 m at 0.7) | 35 | 40 (42 stops at 0.9 m) |
+
+Slower climbs go higher on the margin. **Tires popped** on the top crest in 21 of 112 aired slab runs
+(8 of 112 at normal pressure), mostly on the gentle 20–30° slabs: a cost for airing down over a lip.
+
+**Takeaway:** a slab "needs ~15 psi" at **38–40°** (everything stops at 40° at normal pressure and
+climbs it aired, except the Blazer, which needs a set-up and slow). 30–35° is free; 42–45° is for a
+set-up Bronco only; 50° stops everything.
+
+#### 5. Wading depth before hydrolock
+
+The intake is the highest engine node (a snorkelled truck: the roof line less 0.15 m). The pit is 14 m of
+flat water with 1:3 banks, driven through at 2 m/s (also 0.5 and 4 m/s for everything but the 4Runner;
+the limit moves by at most 0.05 m).
+
+| Truck | Intake at rest, stock / set up (m above ground) | Deepest dry crossing, stock | set up | Hydrolocks at |
+|---|---|---|---|---|
+| Blazer | 1.32 / 1.49 | 1.35 | 1.50 | 1.40 / 1.55 |
+| Bronco | 1.16 / 1.29 | 1.20–1.25 | 1.30–1.40 | 1.25–1.30 / 1.35–1.45 |
+| 4Runner | **1.74** (snorkel) / 1.74 | 1.85 | 1.85 | 1.90 |
+| Tacoma | 1.20 / 1.31 | 1.25 | 1.35 | 1.30 / 1.40 |
+
+**Takeaway:** wading depth is **the intake height at rest plus 0.03–0.10 m** (the body floats a little).
+Only the 4Runner's snorkel is out of the normal range: stock trucks drown at **1.25–1.4 m**, a lift and a
+tall engine buy about +0.1–0.15 m, the 4Runner doesn't drown until **1.9 m**. A crossing of 1.55–1.8 m is a
+"needs the 4Runner" test (or a tow, or scouting on foot); up to about 1.15 m is safe for every truck.
+
+#### 6. The Jesko (cheap checks only; stock, rear-drive, no low range, normal pressure)
+
+| Test | Result |
+|---|---|
+| Ledge | clears 0.10 m on every try; **0.15 m stops it** |
+| Wall (4 m, rock) | **0 m at 35°** already; can't climb a 35° grid slope at all |
+| Slab | **0 m even at 20°** on rock |
+| Side slope | dirt: ok at 25°, slides off at 30°; rock: ok at 30°, slides at 35° |
+| Wading | intake 0.65 m; hydrolocks at **0.8 m** (0.5–0.7 m doesn't drown it, but it stalls in the pit and can't drive out) |
+
+**Takeaway:** the Jesko can't do anything the sections are for. Give it a bypass road, or let it be a
+spectator (0.10 m ledge, 25° side slope, 0.7 m water; it climbed none of the rock slopes tried, 20° and up).
+
+#### Surprises and caveats
+
+- **The 4Runner is no better set up.** Its stock truck (35s, lift, snorkel) is already at the plateau, and
+  the crawl box, 37s and the bigger engine make ledges *worse* (more torque and lower gearing snaps the shafts:
+  `shaftLimit` 10,000 N·m). At normal pressure it solidly climbs only 0.35 m, no better than the 1972 Blazer, and
+  it stops at a 45° wall and slab.
+- **A set-up 1972 Blazer is the best ledge truck** (usual 0.75 m aired) and goes over a 45° wall, level with
+  the Bronco, while the stock Blazer (no lockers, open diffs) is the weakest truck at normal pressure: it stalls
+  2.4 m up a 35° grid wall and can't climb a 35° slab (only at 0.7 m/s).
+- **The Bronco's ledge setup (37s, lift) is the worst for side slopes**, and the Sasquatch 35s is the
+  best. There is no one "best setup" per truck; the doc reports the ledge/slab setup and flags the exception.
+- **Noise.** Ledge numbers are **very noisy near the limit** (a 0.50 m ledge can clear at 2.0 m/s and
+  fail at 0.7, and clear again at 0.55); trust the share-of-tries table, not one run. The "best" column is one
+  lucky try. Wall and camber are one run each: borderline cells (marked ~) flip with the crawl speed; slab
+  35°/40° cells flip for the Blazer and Bronco. Wading is repeatable to 0.05 m. Walls, 65° and up, are not
+  noisy (0 m everywhere).
+- **Failure costs show up.** Snapped axle shafts (ledge, wall, slab 25–35°), popped tires aired down on
+  crests, and tires and shafts lost on the 40° side slope. The probes record them as `SHAFTS-BROKEN` and
+  `TIRES-POPPED` on every `CAP` line.
 
 ---
 
