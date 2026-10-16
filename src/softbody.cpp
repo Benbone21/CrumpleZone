@@ -2199,25 +2199,35 @@ void Sim::wrapAround() {
     wrapShift += dx;
 }
 
-// A jack under a corner: its saddle (under the axle or lower arm, just inboard of the tire)
-// pushes the hub up (never pulls), stiff and damped, as high as it's been worked (interact.cpp),
-// so the corner rises off the ground and stays there.
+// A jack under a corner: its saddle meets the frame's jack pad (Car::jackPoint: a plate welded under the rail
+// beside the wheel well; a unibody's hub), and pushes up on the rail nodes round it (never pulls), stiff and
+// damped, as high as it's been worked (interact.cpp), so the corner of the body rises and the suspension
+// droops until the tire is off the ground, and stays there.
 void Sim::jackForces() {
     for (Car& c : cars) {
-        if (c.remote || c.sleeping || !c.jackPlaced || c.jackWheel < 0 || c.jackWheel >= (int)c.wheels.size()) continue;
+        if (c.remote || !c.jackPlaced || c.jackWheel < 0 || c.jackWheel >= (int)c.wheels.size()) continue;
         const Wheel& wh = c.wheels[c.jackWheel];
         if (wh.detached) continue;
-        Node* hub[2] = {&c.nodes[wh.inner], &c.nodes[wh.outer]};
-        // The saddle's under the axle or arm just inboard of the tire (Car::jackPoint): it
-        // stands on the ground there, and the hub rides as far above it as it did going under.
-        const V3 foot = c.jackPoint(c.jackWheel);
-        const double top = world.height(foot.x, foot.z) + c.jackBase + c.jackHeight + c.jackDrop(c.jackWheel);
-        for (Node* n : hub) {
-            const double gap = top - n->p.y;
-            if (gap <= 0) continue;
-            const double f = 1.5e5 * gap - 4000 * n->v.y;
-            if (f > 0) n->f.y += std::min(f, 3e4);
+        const Car::JackNodes jn = c.jackNodes(c.jackWheel);
+        // The saddle stands on the ground at its foot, as high above it as it was going under plus what's been worked.
+        const double top = c.jackFoot.y + c.jackBase + c.jackHeight;
+        V3 at, vel;
+        for (int i = 0; i < 4; i++) {
+            if (jn.n[i] < 0) continue;
+            at += c.nodes[jn.n[i]].p * jn.w[i];
+            vel += c.nodes[jn.n[i]].v * jn.w[i];
         }
+        const double gap = top - at.y;
+        if (c.sleeping) {  // (a sleeping car holds still on its jack; one the jack has been wound up under wakes)
+            if (gap > 0.02) c.wake();
+            else continue;
+        }
+        if (gap <= 0) continue;
+        const double f = 1.0e6 * gap - 15000 * vel.y;
+        if (f <= 0) continue;
+        const double push = std::min(f, 8e4);
+        for (int i = 0; i < 4; i++)
+            if (jn.n[i] >= 0) c.nodes[jn.n[i]].f.y += push * jn.w[i];
     }
 }
 

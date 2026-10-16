@@ -58,7 +58,7 @@ bool jackUp(Ctx& ctx, Interact& ia, Walker& wk, Car& c, int k) {
     standAt(w, c, wk, stow, 1.0);
     if (holdOn(ctx, ia, wk, stow, 4) != "GOT THE JACK") return false;
     letGo(ctx, ia, wk);
-    const V3 spot = Interact::jackSpot(ctx.sim, c, k) + V3(0, 0.3, 0);
+    const V3 spot = Interact::jackAim(ctx.sim, c, k);
     standAt(w, c, wk, hubOf(c, k), 1.1);
     if (holdOn(ctx, ia, wk, spot, 4) != "JACK UNDER") return false;
     letGo(ctx, ia, wk);
@@ -122,7 +122,7 @@ SCENARIO(tireSwap, "tires/swap", "A flat on the Bronco: on foot, take the flat o
     said = holdOn(ctx, ia, wk, hub2, 14);
     ctx.check("the spare goes on", said == "WHEEL ON" && c.wheels[k].mounted && !c.wheels[k].popped && !wk.carrying, said);
     letGo(ctx, ia, wk);
-    const V3 jack = Interact::jackSpot(ctx.sim, c, k) + V3(0, 0.3, 0);
+    const V3 jack = Interact::jackAim(ctx.sim, c, k);
     ctx.check("the jack comes down", holdOn(ctx, ia, wk, jack, 8) == "JACK DOWN");
     letGo(ctx, ia, wk);
     const std::string out = holdOn(ctx, ia, wk, jack, 3);
@@ -310,8 +310,9 @@ SCENARIO(tirePressure, "tires/pressure", "Airing changes pressure at stopped veh
     ctx.check("missing wheels keep the bare hub radius", wh.loadedRadius(12, 35) == kBareHubR);
 }
 
-// A jack goes under the corner's axle tube or lower arm, just inboard of its tire (Car::jackPoint), handle out.
-SCENARIO(tireJackSpots, "tires/jack-spots", "Every listed vehicle, every corner: the jack's spot is by that wheel (within 0.8 m, outside the middle third of the car), under the axle or arm and above the ground, its handle pointing out") {
+// A jack goes under the truck's frame: its saddle meets the jack pad welded under the rail's outside edge, just beside the wheel well
+// (behind a front wheel, ahead of a rear one: Car::jackPoint), handle out. (A unibody has no rail: its axle or arm, as before.)
+SCENARIO(tireJackSpots, "tires/jack-spots", "Every listed vehicle, every corner: a truck's jack point is on its frame rail's jack pad, outside the wheel well (clear of the tire's footprint along the car) and within 1.2 m of the hub, over the ground, its handle pointing out; a unibody's is under the axle or arm") {
     const std::vector<int>& list = listedVehicles();
     std::vector<int> cars;
     for (int i = 0; i < (int)list.size(); i++) cars.push_back((int)(&ctx.add(vehicleCatalog()[list[i]], -200 + 25 * i, -50, 0) - ctx.sim.cars.data()));
@@ -320,26 +321,50 @@ SCENARIO(tireJackSpots, "tires/jack-spots", "Every listed vehicle, every corner:
         const Car& c = ctx.sim.cars[ci];
         const std::string who = c.spec->id;
         const Frame fr = c.frame();
-        int bad = 0, outside = 0, under = 0, handle = 0;
+        const bool rail = !c.ladder.empty();
+        int near = 0, clear = 0, onRail = 0, under = 0, handle = 0, ground = 0, other = 0;
         std::string detail;
         double track = 0;
         for (int k = 0; k < (int)c.wheels.size(); k++) track = std::max(track, std::fabs(dot(hubOf(c, k) - fr.com, fr.left)));
         track *= 2;
         for (int k = 0; k < (int)c.wheels.size(); k++) {
-            const V3 hub = hubOf(c, k), spot = Interact::jackSpot(ctx.sim, c, k), point = c.jackPoint(k);
-            const double near = len(V3(spot.x - hub.x, 0, spot.z - hub.z));
-            const double lat = dot(spot - fr.com, fr.left), hubLat = dot(hub - fr.com, fr.left);
-            bad += near > 0.8;
-            outside += std::fabs(lat) > track / 6 && lat * hubLat > 0;
-            under += point.y < hub.y - 0.03 && point.y > spot.y + 0.05;
+            const Wheel& wh = c.wheels[k];
+            const V3 hub = hubOf(c, k), point = c.jackPoint(k), spot = Interact::jackSpot(ctx.sim, c, k);
+            const double along = dot(point - hub, fr.fwd);
+            near += std::fabs(along) < 1.2 && len(V3(point.x - hub.x, 0, point.z - hub.z)) < 1.2;
+            clear += !rail || std::fabs(along) > wh.R;  // (outside the tire's footprint: not in the well)
+            ground += spot.y < point.y - 0.05 && std::fabs(spot.x - point.x) < 0.02 && std::fabs(spot.z - point.z) < 0.02;
+            if (rail) {
+                // On the rail: the pad is under its outside edge (across, between the rail's inside face and a pad's width past the outside one),
+                // its underside a pad's depth under the rail's underside.
+                const int side = c.restLocal[wh.inner].z > 0 ? 1 : -1;
+                const double x = c.jackPadX(k);
+                const V3 ob = c.railPoint(side, x, 1), ib = c.railPoint(side, x, 0);
+                V3 o = ob - ib;
+                const double w = len(o);
+                o = o / w;
+                const double lat = dot(point - ib, o), drop = dot(ob - point, fr.up);
+                const bool ok = lat > 0 && lat < w + 0.06 && std::fabs(dot(point - ob, fr.fwd)) < 0.02;
+                onRail += ok;
+                under += drop > 0.005 && drop < 0.04;
+                if (!ok) detail += " wheel " + std::to_string(k) + " is off its rail (" + std::to_string(lat) + " across, " + std::to_string(w) + " wide);";
+            } else {
+                under += point.y < hub.y - 0.03 && point.y > spot.y + 0.05;
+                onRail++;
+            }
             const Placed jack = Interact::jackModel(ctx.sim, c, k);
             handle += std::fabs(dot(jack.ax[0], c.jackOut(k))) > 0.99 && jack.p.x == jack.p.x;
-            if (near > 0.8) detail += " wheel " + std::to_string(k) + " is " + std::to_string(near) + " m off;";
+            // Its own side, outside the middle third (the old rule: it is not under the middle of the car).
+            const double lat2 = dot(point - fr.com, fr.left), hubLat = dot(hub - fr.com, fr.left);
+            other += std::fabs(lat2) > track / 6 && lat2 * hubLat > 0;
         }
         const int n = (int)c.wheels.size();
-        ctx.check(who + ": each jack spot is by its wheel", bad == 0, detail);
-        ctx.check(who + ": ...on its own side, outside the middle third", outside == n, std::to_string(outside) + " of " + std::to_string(n));
-        ctx.check(who + ": ...the saddle under the axle or arm, over the ground", under == n, std::to_string(under) + " of " + std::to_string(n));
+        ctx.check(who + ": each jack point is by its wheel (within 1.2 m)", near == n, std::to_string(near) + " of " + std::to_string(n));
+        ctx.check(who + ": ...outside the wheel well (clear of the tire's footprint)", clear == n, std::to_string(clear) + " of " + std::to_string(n));
+        ctx.check(who + ": ...on the frame rail's jack pad" + (rail ? "" : " (a unibody: n/a)"), onRail == n, detail + std::to_string(onRail) + " of " + std::to_string(n));
+        ctx.check(who + ": ...the saddle under the rail (a pad's depth)" + (rail ? "" : " / under the axle or arm"), under == n, std::to_string(under) + " of " + std::to_string(n));
+        ctx.check(who + ": ...on its own side, outside the middle third", other == n, std::to_string(other) + " of " + std::to_string(n));
+        ctx.check(who + ": ...the jack stands on the ground below it", ground == n, std::to_string(ground) + " of " + std::to_string(n));
         ctx.check(who + ": ...the handle along the way out", handle == n, std::to_string(handle) + " of " + std::to_string(n));
     }
 }

@@ -26,27 +26,33 @@ V3 hubOf(const Car& c, const Wheel& wh) { return (c.nodes[wh.inner].p + c.nodes[
 }  // namespace
 
 V3 Interact::jackSpot(const Sim& sim, const Car& c, int k) {
-    V3 at = c.jackPoint(k);
+    V3 at = c.jackPlaced && c.jackWheel == k ? c.jackFoot : c.jackPoint(k);
     at.y = sim.world.height(at.x, at.z);
     return at;
 }
 
+V3 Interact::jackAim(const Sim& sim, const Car& c, int k) {
+    // Where you look to work it: the middle of the jack, between its saddle and its standing bar out past the body.
+    return jackSpot(sim, c, k) + c.jackOut(k) * (c.jackReach(k) * 0.8) + V3(0, 0.3, 0);
+}
+
 Placed Interact::jackModel(const Sim& sim, const Car& c, int k) {
-    // Each design's handle is on a different end of it, and the saddle sits at its own height.
-    double handle = -1, saddle0 = 0.30;  // (+1: the crank is on the model's +X end; -1: the lever or bar is on its -X end)
+    // Each design's handle is on a different end of it, the saddle sits at its own height, and it lifts so far.
+    double handle = -1, saddle0 = 0.30, range = 0.75;  // (+1: the crank is on the model's +X end; -1: the lever or bar is on its -X end)
     if (const mk::ModelDef* d = mk::findModel("jack")) {
         const std::string& n = d->variants[mk::pickedVariant(*d)].name;
-        if (n == "SCISSOR JACK") handle = 1, saddle0 = 0.12;
-        else if (n == "BOTTLE JACK") saddle0 = 0.26;
+        if (n == "SCISSOR JACK") handle = 1, saddle0 = 0.12, range = 0.35;
+        else if (n == "BOTTLE JACK") saddle0 = 0.26, range = 0.35;
     }
     const V3 out = c.jackOut(k), foot = jackSpot(sim, c, k);
     Placed pl;
     pl.id = "jack", pl.oriented = true;
     pl.ax[0] = out * handle, pl.ax[1] = V3(0, 1, 0), pl.ax[2] = cross(pl.ax[0], pl.ax[1]);
-    const double saddle = c.jackBase + c.jackHeight, lift = clampd((saddle - saddle0) / 0.35, 0, 1);
+    const double saddle = c.jackBase + c.jackHeight, lift = clampd((saddle - saddle0) / range, 0, 1);
     pl.p = foot;
-    pl.p.y += std::max(-0.08, saddle - (saddle0 + 0.35 * lift));  // (a low car: the jack's foot sunk a little; never gapped)
-    pl.set = {{"lift", lift}};
+    pl.p.y += std::max(-0.08, saddle - (saddle0 + range * lift));  // (a low car: the jack's foot sunk a little; never gapped)
+    // (The saddle is at the pad, the bar it climbs out past the body's side: `reach` is the lifting arm's length.)
+    pl.set = {{"lift", lift}, {"reach", c.jackReach(k)}};
     return pl;
 }
 
@@ -158,13 +164,13 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
                     if (c.wheels[k].detached) continue;
                     InteractOption p;
                     p.car = ci, p.wheel = k, p.kind = IA_PLACE_JACK, p.hold = kPlaceJack, p.prompt = "PUT THE JACK UNDER THIS CORNER";
-                    p.at = jackSpot(sim, c, k) + V3(0, 0.3, 0);
+                    p.at = jackAim(sim, c, k);
                     consider(p);
                 }
             if (c.jackPlaced && !busy && c.jackWheel >= 0 && c.jackWheel < (int)c.wheels.size()) {
                 InteractOption j;
                 j.car = ci, j.wheel = c.jackWheel;
-                j.at = jackSpot(sim, c, c.jackWheel) + V3(0, 0.3, 0);
+                j.at = jackAim(sim, c, c.jackWheel);
                 if (c.jackWorked && c.jackHeight <= 0.005) j.kind = IA_REMOVE_JACK, j.hold = kRemoveJack, j.prompt = "TAKE THE JACK OUT";
                 else if (!cornerLifted(sim, c, c.jackWheel) && c.jackHeight < kJackMax) j.kind = IA_RAISE_JACK, j.continuous = true, j.prompt = "RAISE THE JACK";
                 else j.kind = IA_LOWER_JACK, j.continuous = true, j.prompt = "LOWER THE JACK";

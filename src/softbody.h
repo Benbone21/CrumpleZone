@@ -327,6 +327,8 @@ public:
     std::vector<int> ladder;
     int ladderStations = 0;
     std::vector<int> bodyMountBeams;
+    std::vector<int> crossStations;  // the stations (ladder index / 8) a crossmember ties the rails at, front to back
+    std::vector<int> skidNodes;      // the transfer case's skid plate: three frame nodes across the frame (empty without one)
     double mass = 0;
     double wheelbase = 2.5;
     double frontShare = 0.5;  // share of the weight on the front axle (at rest, from the build)
@@ -421,14 +423,27 @@ public:
     int jackWheel = -1;         // which wheel the jack is under
     double jackHeight = 0;      // how far up the jack has lifted (m)
     bool jackWorked = false;    // it's been raised since it went under (so once it's down again, it comes out)
-    double jackBase = 0;        // where its saddle met the axle or arm when it went under (m over the ground)
+    double jackBase = 0;        // where its saddle met the frame's jack pad when it went under (m over the ground)
+    V3 jackFoot;                // where the jack's foot stands (world, set when it goes under)
     void setJack(bool has);     // called when the jack mod is fitted
-    // Where a jack goes under a corner: the axle tube (a live axle) or the lower arm (independent
-    // suspension), just inboard of the tire. The point where the saddle touches, world; the jack
-    // stands on the ground below it.
+    // A point on a ladder rail now (world): side -1 / +1 is the rail on the car's -z / +z (in its own build frame), corner 0..3 the rail
+    // section's inner bottom, outer bottom, inner top, outer top, xRest a place along the car (rest frame x), the stations either
+    // side blended. (No ladder: the car's centre.)
+    V3 railPoint(int side, double xRest, int corner) const;
+    // Where a jack goes under a corner: the frame's jack pad (carframe.h), a plate welded under the rail's outside edge
+    // just inboard of the wheel well (behind a front wheel, ahead of a rear one), not in the well and not under the axle.
+    // Where the saddle touches it (world), the pad's underside.
     V3 jackPoint(int wheel) const;
+    double jackPadX(int wheel) const;   // where along the car the pad is (rest x): clear of the tire's footprint, inboard of the well
     double jackDrop(int wheel) const;   // how far that point is under the hub (m)
     V3 jackOut(int wheel) const;        // level, outward from the car at that corner: the way the jack's handle points
+    double jackReach(int wheel) const;  // how far out from the pad the jack stands (m): past the body's side, its arm reaching in
+    // The rail nodes the saddle lifts, and their shares (the two stations round the pad, bottom corners).
+    struct JackNodes {
+        int n[4] = {-1, -1, -1, -1};
+        double w[4] = {0, 0, 0, 0};
+    };
+    JackNodes jackNodes(int wheel) const;
     void placeJack(const World& world, int wheel);  // the jack goes under this corner, saddle just touching
     // Multiplayer: a remote car is another player's, moved by the network (no physics
     // here, it just pushes back). netId is the same on every machine.

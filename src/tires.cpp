@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdio>
 
+#include "carframe.h"
 #include "softbody.h"
 
 std::string WheelItem::sizeName() const {
@@ -95,27 +96,88 @@ V3 Car::jackOut(int k) const {
     return len(out) > 1e-6 ? norm(out) : V3(1, 0, 0);
 }
 
-double Car::jackDrop(int k) const {
+V3 Car::railPoint(int side, double xRest, int corner) const {
+    if (ladderStations < 2 || ladder.empty()) return frame().com;
+    auto at = [&](int st) { return nodes[ladder[st * 8 + (side > 0 ? 4 : 0) + corner]].p; };
+    auto xs = [&](int st) { return restLocal[ladder[st * 8]].x; };
+    int s0 = 0;  // (the stations run front to back: x falls)
+    while (s0 + 2 < ladderStations && xs(s0 + 1) > xRest) s0++;
+    const double x0 = xs(s0), x1 = xs(s0 + 1);
+    const double t = clampd((x0 - xRest) / std::max(1e-6, x0 - x1), 0, 1);
+    return at(s0) * (1 - t) + at(s0 + 1) * t;
+}
+
+// Where along the car (rest x) the pad sits: just inboard of the wheel well, behind a front wheel and ahead of a rear one.
+double Car::jackPadX(int k) const {
     const Wheel& wh = wheels[k];
-    for (const Axle& ax : axles)
-        if ((ax.wheel[0] == k || ax.wheel[1] == k) && !ax.housing.empty()) return 0.05;  // (under the axle tube's belly)
-    const V3 hub = (nodes[wh.inner].p + nodes[wh.outer].p) * 0.5;
-    const double arm = wh.lower >= 0 ? hub.y - nodes[wh.lower].p.y : 0.12;  // (the lower ball joint, or the arm's pivot)
-    return clampd(arm, 0.08, 0.2) + 0.025;
+    double mid = 0;
+    for (const Wheel& w : wheels) mid += restLocal[w.inner].x / (double)wheels.size();
+    const double hub = restLocal[wh.inner].x;
+    const double R = std::max(wh.R, spec->wellTireRadius);
+    return hub + (hub > mid ? -1.0 : 1.0) * (R + 0.16);
+}
+
+Car::JackNodes Car::jackNodes(int k) const {
+    JackNodes j;
+    if (ladder.empty()) {  // (a unibody: the hub, as before)
+        j.n[0] = wheels[k].inner, j.n[1] = wheels[k].outer, j.w[0] = j.w[1] = 0.5;
+        return j;
+    }
+    const double x = jackPadX(k);
+    auto xs = [&](int st) { return restLocal[ladder[st * 8]].x; };
+    int s0 = 0;
+    while (s0 + 2 < ladderStations && xs(s0 + 1) > x) s0++;
+    const double t = clampd((xs(s0) - x) / std::max(1e-6, xs(s0) - xs(s0 + 1)), 0, 1);
+    const int side = restLocal[wheels[k].inner].z > 0 ? 1 : 0;
+    for (int i = 0; i < 2; i++)
+        for (int c = 0; c < 2; c++) {  // (the inner bottom corner takes a third, the outer two)
+            j.n[i * 2 + c] = ladder[(s0 + i) * 8 + side * 4 + c];
+            j.w[i * 2 + c] = (i ? t : 1 - t) * (c ? 0.7 : 0.3);
+        }
+    return j;
 }
 
 V3 Car::jackPoint(int k) const {
     const Wheel& wh = wheels[k];
-    const V3 hub = (nodes[wh.inner].p + nodes[wh.outer].p) * 0.5;
-    V3 at = hub - jackOut(k) * (wh.width * 0.5 + 0.12);
-    at.y = hub.y - jackDrop(k);
-    return at;
+    if (ladder.empty()) {  // a unibody has no rail: under the axle or the lower arm, inboard of the tire
+        const V3 hub = (nodes[wh.inner].p + nodes[wh.outer].p) * 0.5;
+        double drop = 0.05;
+        bool live = false;
+        for (const Axle& ax : axles) live |= (ax.wheel[0] == k || ax.wheel[1] == k) && !ax.housing.empty();
+        if (!live) {
+            const double arm = wh.lower >= 0 ? hub.y - nodes[wh.lower].p.y : 0.12;
+            drop = clampd(arm, 0.08, 0.2) + 0.025;
+        }
+        V3 at = hub - jackOut(k) * (wh.width * 0.5 + 0.12);
+        at.y = hub.y - drop;
+        return at;
+    }
+    const int side = restLocal[wh.inner].z > 0 ? 1 : -1;
+    const double x = jackPadX(k);
+    const V3 outer = railPoint(side, x, 1), inner = railPoint(side, x, 0);
+    V3 out = outer - inner;
+    out.y = 0;
+    out = len(out) > 1e-6 ? norm(out) : jackOut(k);
+    return outer + out * kJackPadOut - frame().up * kJackPadDepth;
+}
+
+double Car::jackDrop(int k) const {
+    const Wheel& wh = wheels[k];
+    return (nodes[wh.inner].p.y + nodes[wh.outer].p.y) * 0.5 - jackPoint(k).y;
+}
+
+double Car::jackReach(int k) const {
+    if (ladder.empty()) return 0.10;
+    const double lat = std::fabs(dot(jackPoint(k) - frame().com, frame().left));
+    return clampd(spec->width * 0.5 + 0.05 - lat, 0.15, 0.9);
 }
 
 void Car::placeJack(const World& world, int k) {
     const V3 at = jackPoint(k);
     jackPlaced = true, jackWheel = k, jackHeight = 0, jackWorked = false;
-    jackBase = at.y - world.height(at.x, at.z) - 0.01;  // (the saddle wound up to just under it)
+    jackFoot = at;
+    jackFoot.y = world.height(at.x, at.z);
+    jackBase = at.y - jackFoot.y - 0.01;  // (the saddle wound up to just under it)
 }
 
 V3 Car::spareAxis() const {
