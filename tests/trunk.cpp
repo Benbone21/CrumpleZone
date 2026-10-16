@@ -101,7 +101,7 @@ SCENARIO(trunkGate, "trunk/gate", "The back opens on its real hinges (Blazer and
         ctx.run(2.5);
         ctx.check(tag + "shut again", c.gateShut(), "share " + std::to_string(c.gate.share) + " dir " + std::to_string(c.gate.dir));
         ctx.check(tag + "latched again", latched(c) && !c.panels[c.gatePanel()].hand);
-        ctx.metric(tag + "the cargo deck slid back in", trunk::slide(c), "m", 0, 0.001);
+        ctx.metric(tag + "the cargo deck slid back in", trunk::slide(c), "m", -trunk::kOver - 0.001, -trunk::kOver + 0.001);
         ctx.metric(tag + "the gate home against the body", swing(c), "m", 0, 0.06);
     }
     // A pickup's gate: no panel, a drawn gate and the same open and shut.
@@ -134,7 +134,7 @@ SCENARIO(trunkLayout, "trunk/layout", "Everything you carry is laid out inside t
         ctx.check(tag + "has a cargo area", trunk::cargoBox(c, box));
         double minX = 1e9, maxX = -1e9;
         for (int n = 0; n < c.bodyNodes; n++) minX = std::min(minX, (double)c.restLocal[n].x), maxX = std::max(maxX, (double)c.restLocal[n].x);
-        ctx.check(tag + "the cargo area is inside the body", box.lo.x >= minX && box.hi.x <= maxX && box.hi.z <= vs->width * 0.5 && box.lo.z >= -vs->width * 0.5 && box.hi.z > box.lo.z + 0.8);
+        ctx.check(tag + "the cargo area is inside the body", box.lo.x + (c.gatePanel() >= 0 ? trunk::kOver : 0) >= minX && box.hi.x <= maxX && box.hi.z <= vs->width * 0.5 && box.lo.z >= -vs->width * 0.5 && box.hi.z > box.lo.z + 0.8);
         struct Case {
             const char* name;
             TrunkStock stock;
@@ -162,13 +162,44 @@ SCENARIO(trunkLayout, "trunk/layout", "Everything you carry is laid out inside t
                     if (slots[a].item == slots[b].item) continue;
                     const double ox = std::min(slots[a].hi.x, slots[b].hi.x) - std::max(slots[a].lo.x, slots[b].lo.x);
                     const double oz = std::min(slots[a].hi.z, slots[b].hi.z) - std::max(slots[a].lo.z, slots[b].lo.z);
-                    if (ox > 0.002 && oz > 0.002) overlaps++;
+                    if (ox > 1e-6 && oz > 1e-6) overlaps++;
                 }
             ctx.check(tag + cs.name + ": nothing lies on anything else", overlaps == 0, std::to_string(overlaps) + " overlaps");
             // It's all model-able: each item has a model.
             bool models = true;
             for (const TrunkItem& it : items) models &= mk::findModel(it.model) != nullptr;
             ctx.check(tag + cs.name + ": every item has a model", models);
+            // Every kind of thing is drawn: a slot of its own, built (as the renderer builds it: bare, the picked
+            // variant) to something you can see, the size the layout took it for, and inside the cargo box.
+            int unseen = 0, empty = 0, misfit = 0, hidden = 0, outside = 0;
+            std::string which;
+            for (size_t k = 0; k < items.size(); k++) {
+                if (copies[k] < 1) unseen++, which += " " + items[k].name;
+                const mk::ModelDef* d = mk::findModel(items[k].model);
+                mk::Mesh m;
+                if (d) {
+                    const int variant = mk::pickedVariant(*d);
+                    mk::P p = mk::pickedParams(*d, variant);
+                    p.v["bare"] = 1;
+                    mk::build(*d, variant, p, m);
+                    m.finish();
+                }
+                if (m.triangles() < 8) empty++, which += " " + items[k].name + "(empty)";
+                for (const TrunkSlot& s : slots) {
+                    if (s.item != (int)k) continue;
+                    const double ex = std::max(m.hi.x - m.lo.x, m.hi.z - m.lo.z) * s.scale, got = std::max(s.hi.x - s.lo.x, s.hi.z - s.lo.z);
+                    const double eh = std::max(m.hi.y - m.lo.y, 0.0) * s.scale, gh = s.hi.y - s.lo.y;
+                    misfit += !(std::fabs(std::max(ex, eh) - std::max(got, gh)) < 0.002);  // (the longest side of its bounds, turned or not)
+                    hidden += !(s.scale > 0.05);
+                    outside += !(s.lo.x >= box.lo.x && s.hi.x <= box.hi.x && s.lo.y >= box.lo.y && s.hi.y <= box.hi.y && s.lo.z >= box.lo.z && s.hi.z <= box.hi.z);
+                }
+            }
+            ctx.check(tag + cs.name + ": every kind has a slot and builds to something", unseen == 0 && empty == 0, which);
+            ctx.check(tag + cs.name + ": each slot is the bare model's own size (not a stand's)", misfit == 0, std::to_string(misfit) + " slots");
+            ctx.check(tag + cs.name + ": nothing shrunk to a speck, nothing outside the box", hidden == 0 && outside == 0, std::to_string(hidden) + " tiny, " + std::to_string(outside) + " outside");
+            double smallest = 1e9;
+            for (const TrunkSlot& s : slots) smallest = std::min(smallest, std::max(s.hi.x - s.lo.x, std::max(s.hi.y - s.lo.y, s.hi.z - s.lo.z)));
+            ctx.metric(tag + cs.name + ": the smallest thing's longest side", smallest, "m", 0.04, 2.0);
         }
         // It rides with the body: where a slot is in the truck's own frame doesn't change as it drives.
         const TrunkStock st = fullStock(2);
@@ -285,4 +316,76 @@ SCENARIO(trunkTake, "trunk/take", "Open the back, hold E on a tool, a part, an a
     Walker beside;
     beside.p = j.frame().com + V3(0, 0, 2.5);
     ctx.check("no back to open: the kit rides within reach of it", !j.hasGate() && trunk::kitInReach(ctx.sim, beside.p));
+}
+
+// What the renderer is handed for the back (trunk::models), as scenery.cpp's placedMesh builds each one: the picked variant,
+// the placed model's own params, and "bare" when it's set.
+static mk::Mesh drawnMesh(const Placed& pl) {
+    mk::Mesh m;
+    if (const mk::ModelDef* d = mk::findModel(pl.id)) {
+        const int variant = mk::pickedVariant(*d);
+        mk::P p = mk::pickedParams(*d, variant);
+        for (const auto& kv : pl.set) p.v[kv.first] = kv.second;
+        if (pl.bare) p.v["bare"] = 1;
+        mk::build(*d, variant, p, m);
+        m.finish();
+    }
+    return m;
+}
+
+SCENARIO(trunkDrawn, "trunk/drawn", "With the back open, every kind of thing in the truck (the sandbox's endless kit, a full career kit, a thin one) reaches the renderer: a placed model of its own that builds to a real mesh, lit, scaled, inside the cargo box; one in your hands leaves only its own place empty") {
+    const char* ids[] = {"blazer", "bronco", "4runner", "tacoma"};
+    TrunkStock endless;
+    endless.kit.unlimited = true;
+    const TrunkStock thin = fullStock(1), full9 = fullStock(9), full4 = fullStock(4);
+    for (int i = 0; i < 4; i++) {
+        Car& c = ctx.add(*byId(ids[i]), -140, -50 + 14 * i, 0);
+        ctx.focus(c);
+        c.chains = 2;
+        c.setJack(true);
+        ctx.run(1.0);
+        c.setGate(true);
+        ctx.run(2.5);
+        const std::string tag = std::string(ids[i]) + ": ";
+        ctx.check(tag + "the back is open", c.gateOpen());
+        trunk::Box box;
+        trunk::cargoBox(c, box);
+        struct Case {
+            const char* name;
+            const TrunkStock* stock;
+            TrunkRef hand;
+        };
+        const Case cases[] = {{"sandbox", &endless, TrunkRef()}, {"full career", &full9, TrunkRef()}, {"thin career", &thin, TrunkRef()}, {"sandbox, hammer in hand", &endless, TrunkRef{TK_TOOL, TOOL_HAMMER}}, {"full career, a stake in hand", &full4, TrunkRef{TK_GEAR, GEAR_STAKE}}};
+        for (const Case& cs : cases) {
+            const TrunkStock st = *cs.stock;
+            std::vector<Placed> out;
+            trunk::models(ctx.sim, ctx.sim.player, st, cs.hand, false, false, out);
+            const std::vector<TrunkItem> whole = trunk::wholeLoad(c, st, true, cs.hand, false, false);
+            const std::vector<TrunkItem> inside = trunk::contents(c, st, true, cs.hand, false, false);
+            int missing = 0, empty = 0, dark = 0, flat = 0;
+            std::string which;
+            for (const TrunkItem& it : inside) {  // (what's lying there: every kind, bar the one in your hands if it was the last)
+                int n = 0;
+                for (const Placed& pl : out) n += pl.id == it.model;
+                if (n < 1) missing++, which += " " + it.name;
+            }
+            ctx.check(tag + cs.name + ": every kind in the inventory is drawn", missing == 0 && !inside.empty(), which);
+            ctx.check(tag + cs.name + ": the inventory is every kind there is", (int)whole.size() == (c.chains > 0 ? 1 : 0) + 1 + (TOOL_COUNT - 1) + PART_COUNT + GEAR_COUNT);
+            for (const Placed& pl : out) {
+                if (pl.id == "bed_gate" || pl.id == "cargo_mat") continue;
+                if (drawnMesh(pl).triangles() < 8) empty++, which += " " + pl.id;
+                dark += !pl.sunlit;
+                flat += !(pl.scale.x > 0.05 && pl.scale.y > 0.05 && pl.scale.z > 0.05) || !pl.oriented;
+            }
+            ctx.check(tag + cs.name + ": each drawn thing builds to a mesh", empty == 0, which);
+            ctx.check(tag + cs.name + ": lit, scaled, standing (not zero, not in the shade of the roof)", dark == 0 && flat == 0, std::to_string(dark) + " shaded, " + std::to_string(flat) + " flat");
+            // The held thing leaves its place empty and nothing else.
+            int held = 0;
+            for (const Placed& pl : out) held += cs.hand.any() && pl.id == trunk::model(cs.hand);
+            const TrunkItem* h = nullptr;
+            for (const TrunkItem& it : whole)
+                if (it.ref == cs.hand) h = &it;
+            if (h) ctx.check(tag + cs.name + ": what's in your hands is out of the back", held == trunk::copiesShown(*h), std::to_string(held) + " drawn");
+        }
+    }
 }
