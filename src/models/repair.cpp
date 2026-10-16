@@ -806,8 +806,10 @@ void crossWrench(B& b, const P& p) {
     const V3 dirs[4] = {V3(1, 0, 0), V3(0, 0, 1), V3(-1, 0, 0), V3(0, 0, -1)};
     for (int k = 0; k < 4; k++) {
         setFin(b, fin, w);
-        rodAB(b, dirs[k] * 0.02, dirs[k] * (arm - sl + 0.004), 0.0085, 0.001, 8);
-        socketAB(b, dirs[k] * (arm - sl), dirs[k] * arm, rs[k], rs[k] * 0.72, 10);
+        // (Each socket stands on its arm's end, open side down: the way it goes onto a nut.)
+        const V3 at = dirs[k] * (arm - rs[k]);
+        rodAB(b, dirs[k] * 0.02, at, 0.0085, 0.001, 8);
+        socketAB(b, at + V3(0, 0.013, 0), at + V3(0, 0.013 - sl, 0), rs[k], rs[k] * 0.72, 10);
     }
     // The grip sleeve on the butt arm.
     b.style(paint(p.i("grip")), MATTE);
@@ -830,11 +832,11 @@ void lWrench(B& b, const P& p) {
     std::vector<V3> path = {V3(xb - 0.002, 0, 0)};
     for (int k = 0; k <= 6; k++) {
         const double t = 90.0 * k / 6 * DEG;
-        path.push_back(V3(xb + R * std::sin(t), 0, R - R * std::cos(t)));
+        path.push_back(V3(xb + R * std::sin(t), -(R - R * std::cos(t)), 0));
     }
-    path.push_back(V3(xb + R, 0, R + 0.03));
+    path.push_back(V3(xb + R, -(R + 0.03), 0));
     b.tube(path, r, 10, false, true);
-    socketAB(b, V3(xb + R, 0, 0.082), V3(xb + R, 0, 0.134), 0.0152, 0.011, 14);
+    socketAB(b, V3(xb + R, -0.082, 0), V3(xb + R, -0.134, 0), 0.0152, 0.011, 14);  // (open side down, like the rest)
     // The spade: flat, with a hubcap-lifting lip.
     b.extrudeUp({V2(-0.18, -0.0085), V2(-0.215, -0.0155), V2(-0.255, -0.0165), V2(-0.276, -0.011), V2(-0.279, -0.003), V2(-0.262, 0.001), V2(-0.262, 0.0075), V2(-0.25, 0.0095), V2(-0.215, 0.0105), V2(-0.18, 0.0085)}, 0.0075, -0.00375);
     // A dipped grip over the long leg.
@@ -872,7 +874,7 @@ void breakerBar(B& b, const P& p) {
     grease(b, V3(xh - 0.03, 0.01, 0), V3(xh - 0.2, 0.01, 0), 0.0028, 7, w, 31, 0.008);
 }
 
-Reg lugWrench({"lug_wrench", "LUG WRENCH", "REPAIR", "Hand tool: wheel nuts on and off; held in the right hand, grip at the origin", 0.45,
+Reg lugWrench({"lug_wrench", "LUG WRENCH", "REPAIR", "Hand tool: wheel nuts on and off; grip at the origin, the working socket at the +X end, open side down (-Y)", 0.45,
                {
                    {"4-WAY CROSS", "Chrome cross wrench, four sockets, one grip sleeve", {finParam(0), paintParam(8, "grip", "GRIP SLEEVE"), wearParam()}, lifted(crossWrench)},
                    {"FACTORY L", "Bent bar, socket on the short leg, hubcap spade", {finParam(2), paintParam(3, "grip", "GRIP DIP"), wearParam()}, lifted(lWrench)},
