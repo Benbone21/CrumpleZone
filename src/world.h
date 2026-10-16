@@ -57,6 +57,21 @@ struct Prop {
     float col[3] = {0, 0, 0};  // signs: the difficulty color
 };
 
+// A code-made model (modelkit.h, src/models/) placed on the map: drawn only; whatever is solid
+// about it is added separately as boxes or poles. Drawn as picked in the model lab.
+struct Placed {
+    std::string id;
+    V3 p;                    // its origin, on the ground
+    double yaw = 0;          // facing (radians, 0 = +X)
+    V3 scale{1, 1, 1};       // (front, up, left)
+    std::vector<std::pair<std::string, double>> set;  // its own params: a sign's rating, a crate opened
+    int variant = -1;        // (the model lab: this design, not the picked one)
+    bool oriented = false;   // turned any way at all (things in your hands): its front, up and left
+    V3 ax[3];
+    bool bare = false;       // a part fitted in a car (carparts.h): built without the stand it's shown on (cached)
+    bool sunlit = false;     // lit as if out in the sun, whatever shades it (a truck's load, under its roof: trunk.h)
+};
+
 // A repair station: a concrete pad under an open shed. Park on it, stop, and the crew
 // fixes whatever is broken.
 struct Station {
@@ -112,6 +127,12 @@ inline double surfaceGrip(Surface s) { return surfaceInfo(s).grip; }
 
 enum MapId { MAP_PROVING_GROUND, MAP_MOUNTAIN, MAP_FREEWAY, MAP_FRONTIER, MAP_BACKCOUNTRY, MAP_COUNT };
 const char* mapName(int map);  // as the menu shows it
+// The maps on offer (menus, hosting, the editor): just the proving ground, where everything in
+// the game is laid out to look at and try, while the world is rebuilt. (The others are still
+// built here, for the tests and --map.)
+const std::vector<int>& listedMaps();
+bool mapListed(int map);
+int nextListedMap(int map, int dir);  // the next one on the list (from any map)
 
 // Catmull-Rom spline through control points, sampled every ~2 m.
 std::vector<V3> splinePoints(const std::vector<V3>& pts, bool closed);
@@ -165,6 +186,25 @@ public:
     std::vector<Bush> bushes;
     std::vector<Water> waters;
     std::vector<Prop> fixtures;  // fences, cabins, signs, tables, stumps
+    std::vector<Placed> models;  // code-made models (modelkit.h)
+    // Names shown over things when you're near (the proving ground's model yard).
+    struct Tag {
+        std::string text;
+        V3 p;
+    };
+    std::vector<Tag> tags;
+    // Whether the proving ground gets its showcase, the model yard and the section park (everything
+    // the game makes, laid out to look at and try): the game turns it on; the tests keep the pad as
+    // it always was. (Per thread: the tests build both kinds side by side.)
+    static inline thread_local bool withShowcase = false;
+    // The park's obstacle sections (sections.h), in the order they're driven: where each starts.
+    struct SectionSpot {
+        std::string name;
+        int type = 0;         // SectionType
+        V3 entry, exit;       // on the ground
+        double heading = 0;   // radians, the game's yaw
+    };
+    std::vector<SectionSpot> sections;
     std::vector<Station> stations;
     // Water surface height at (x, z), or -1e9 where there's none.
     double waterLevel(double x, double z) const {
@@ -246,6 +286,8 @@ private:
     void buildFreeway();
     void buildFrontier();
     void buildBackcountry();
+    void buildModelYard();   // every model laid out on the proving ground (world.cpp)
+    void buildSectionPark(); // the obstacle sections laid out outside the loop road (world.cpp)
     void buildMountain();
     double mountainHeight(double x, double z) const;
     void scatterScenery(uint32_t seed);  // bushes and rocks between the trees
@@ -273,6 +315,12 @@ public:
     // A repair station on flat ground at p: the pad, the open drive-through shed (its
     // corner posts are solid) and its sign.
     void addStation(V3 p, double yaw, const char* name);
+    // Puts a code-made model (modelkit.h) here, if there is one by that id: whether there was.
+    // (Map builders use it to draw a model over the plain boxes that stood in for it, keeping
+    // the boxes as its collider.)
+    bool placeModel(const std::string& id, V3 p, double yaw, std::vector<std::pair<std::string, double>> set = {}, V3 scale = V3(1, 1, 1));
+    // ...and hides boxes [from, end) behind it if it was placed.
+    bool standIn(size_t fromBox, const std::string& id, V3 p, double yaw, std::vector<std::pair<std::string, double>> set = {});
 
     // ---- Editing: level files and the world editor ------------------------------------
     // The terrain is a 1 m grid of cells over the whole map (gridSize() a side); each has

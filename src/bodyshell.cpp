@@ -159,8 +159,13 @@ const Style* styleFor(const VehicleSpec& vs) {
     // a cab with a gently curved roof, then the bed: slab sides up to a rail at the cab's
     // belt line, square at the tailgate; wheel arches with a squarish flare.
     static const Style tacoma{4, 0.20, 0.05, 0.08, 0.12, 0.04, 0.06, 0.06, 0.02, 0.02, 0.012, 0.06, 0.03, 2.6, 0.07};
+    // 1972 K5 Blazer: a long box with a flat hood and a flat roof, softly rounded corners,
+    // round wheel openings, an upright windshield and tailgate, the removable top over the
+    // back half, a crease along the side at the belt.
+    static const Style blazer{5, 0.06, 0.05, 0.02, 0.08, 0.03, 0.035, 0.045, 0.006, 0.012, 0.010, 0.0, 0.0, 2.2, 0.035};
     const std::string id = vs.id;
-    return id == "4runner"  ? &runner
+    return id == "blazer" ? &blazer
+           : id == "4runner"  ? &runner
            : id == "bronco" ? &bronco
            : id == "civic"  ? &civic
            : id == "tacoma" ? &tacoma
@@ -362,6 +367,10 @@ void shellArch(const VehicleSpec& vs, double& centerY, double& radius) {
         // Snug round arches over the 185/60R14s.
         centerY = vs.wheelRadius + 0.012;
         radius = vs.wheelRadius + 0.05;
+    } else if (id == "blazer") {
+        // Round openings cut well up into the fenders (room for ~33s), from just below the rocker.
+        centerY = vs.layerY[0] - 0.08;
+        radius = 0.47;
     } else if (id == "tacoma") {
         // Tall openings with room over the 265/70R16s (a ~13 cm gap), raised with the body.
         centerY = vs.layerY[0] - 0.08;

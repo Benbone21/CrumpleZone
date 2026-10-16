@@ -1,6 +1,7 @@
 // Driver-visible gear controls and coast-down regressions, using the real drivetrain.
 #include "harness.h"
 #include "../src/gamepad.h"
+#include "../src/mods.h"
 
 VEHICLE_SCENARIO(manualNeutral, "drivetrain/manual-neutral", "Manual R-N-1 selection, free revs, pedal release and independent brake controls") {
     Car& c = ctx.add(spec, -60, -50, 0);
@@ -25,7 +26,10 @@ VEHICLE_SCENARIO(manualNeutral, "drivetrain/manual-neutral", "Manual R-N-1 selec
     ctx.check("manual controller pedals preserve reverse", p.gear == -1 && p.throttle == 0.7 && p.brake == 0.2);
     ctx.check("E from reverse selects neutral", c.shift(1) && c.gear == 0);
     ctx.run(spec.shiftTime + 0.1);
-    ctx.launch(c, 10);
+    // (Rolling at 10 m/s, or slower where first gear can't take it: a granny-geared truck box
+    // tops out first well under 36 km/h.)
+    const double firstTop = 0.6 * spec.redline * 2 * M_PI / 60 / (spec.gears[0] * spec.finalDrive) * spec.wheelRadius;
+    ctx.launch(c, std::min(10.0, firstTop));
     c.gear = 0;  // launch() normally picks a suitable forward gear for its speed
     ctx.run(0.05, [&] { c.throttle = c.brake = c.handbrake = 0; });
     ctx.check("reverse cannot engage while rolling at speed", !c.shift(-1) && c.gear == 0);
@@ -90,4 +94,78 @@ SCENARIO(converterShift, "drivetrain/converter-shift", "An automatic unlocks its
     for (const Wheel& wh : c.wheels) if (c.wheelPowered(wh)) { omega += wh.sideOmega; count++; }
     const double turbine = omega / count * c.spec->gears[2] * c.spec->finalDrive * 60 / (2 * M_PI);
     ctx.check("unlocked converter keeps engine speed independent of turbine", c.rpm > turbine + 300);
+}
+
+// ---- Low range with a big engine swap ------------------------------------------------------
+namespace {
+int partIndex(int vehicle, int slot, const std::string& name) {
+    const auto& o = modOptions(vehicle, slot);
+    for (int i = 0; i < (int)o.size(); i++)
+        if (o[i].name.find(name) != std::string::npos) return i;
+    return 0;
+}
+int lowMode(const VehicleSpec& s) {
+    const auto& m = driveModes(s.transfer);
+    for (int i = (int)m.size() - 1; i >= 0; i--)
+        if (m[i].low) return i;
+    return -1;
+}
+int shaftsGone(const Car& c) {
+    int n = 0;
+    for (const Wheel& w : c.wheels) n += w.shaftBroken;
+    for (const Beam& b : c.beams) n += b.type == BEAM_SHAFT && b.broken;
+    return n;
+}
+}  // namespace
+
+// The garage's biggest engine on every low-range truck: into 4L at idle, then away gently,
+// then a stab of the pedal. The engine's torque arrives over ~0.15 s, so the half shafts are
+// not rung by a step (a spring's first swing is twice the steady torque): nothing snaps.
+SCENARIO(lowRangeSwap, "drivetrain/low-range-swap", "Every low-range truck with the biggest engine swap: into 4L at idle, away gently, then a stab of the pedal: no shaft or CV snaps") {
+    int lane = 0;
+    for (int v : listedVehicles()) {
+        const VehicleSpec& stock = vehicleCatalog()[v];
+        if (stock.lowRange <= 0 || lowMode(stock) < 0) continue;
+        ModSet ms;
+        ms.pick[MOD_ENGINE] = partIndex(v, MOD_ENGINE, "BLOWN 6.2");  // the buggy's 820 N*m supercharged LS
+        const VehicleSpec& spec = tunedSpec(v, ms);
+        Car& c = ctx.add(spec, -60, -50 - 12 * lane++, 0);
+        ctx.focus(c);
+        ctx.run(1.5);
+        c.setDriveMode(lowMode(spec));
+        ctx.run(1.0, [&] { c.throttle = 0; });
+        ctx.check(std::string(spec.id) + ": idling in 4L breaks nothing", shaftsGone(c) == 0);
+        ctx.run(4, [&] { c.throttle = 0.3; });
+        ctx.check(std::string(spec.id) + ": pulling away gently in 4L breaks nothing", shaftsGone(c) == 0 && speedKmh(c) > 3);
+        ctx.run(0.5, [&] { c.throttle = 0; });
+        ctx.run(2, [&] { c.throttle = 1; });
+        ctx.check(std::string(spec.id) + ": a stab to the floor in 4L breaks nothing", shaftsGone(c) == 0);
+    }
+    ctx.check("some low-range trucks were tried", lane >= 3);
+}
+
+// The 4Runner as the career garage builds it: the LS7 on the Blazer's four-speed manual (6.55 first,
+// 4.56 axles) in 4L is 77:1. The pedal hitting the floor used to snap the front CVs within 20 ms.
+SCENARIO(lowRangeCrawler, "drivetrain/low-range-crawler", "4Runner with LS7 and the Blazer's manual box in 4L: the floored pedal ramps in; a stuck tire still snaps a shaft") {
+    ModSet ms;
+    ms.pick[MOD_ENGINE] = partIndex(3, MOD_ENGINE, "7.0 LS7");
+    ms.pick[MOD_TRANSMISSION] = partIndex(3, MOD_TRANSMISSION, "4.56 GEARS AND LOCKERS");
+    const VehicleSpec& spec = tunedSpec(3, ms);
+    ctx.check("(the 77:1 stack is in)", spec.gears[0] * spec.finalDrive * spec.lowRange > 70);
+    Car& c = ctx.add(spec, -60, -50, 0);
+    Car& stuck = ctx.add(spec, -60, -65, 0);
+    ctx.focus(c);
+    ctx.run(1.5);
+    c.setDriveMode(lowMode(spec));
+    stuck.setDriveMode(lowMode(spec));
+    ctx.run(2, [&] { c.throttle = 1; });
+    ctx.check("floored from rest: nothing snaps", shaftsGone(c) == 0);
+    ctx.metric("front shaft load against its limit", [&] {
+        double m = 0;
+        for (const Wheel& w : c.wheels) m = std::max(m, w.shaftLoad / (spec.shaftLimit * (w.front ? 0.65 : 1.0)));
+        return m;
+    }(), "share", 0, 1);
+    // Legitimate breakage stays: flat out against a held brake (a tire that can't turn).
+    ctx.run(3, [&] { stuck.throttle = 1; stuck.brake = 1; });
+    ctx.check("flat out against the brakes still snaps a shaft", shaftsGone(stuck) > 0);
 }

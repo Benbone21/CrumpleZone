@@ -6,6 +6,8 @@
 #include <vector>
 
 #include "render.h"
+#include "keybinds.h"
+#include "sdl_min.h"
 
 struct Settings {
     float ambience = 0.6f;      // outdoor wind, foliage, birds and night insects
@@ -15,8 +17,10 @@ struct Settings {
     float fovDeg = 66;          // vertical field of view of the chase and orbit cameras
     bool fullscreen = false, vsync = true, showFps = false;
     int physicsThreads = 0;     // 0 AUTO; 1 serial; otherwise up to the available logical CPUs
+    bool steeringAssist = true; // limit steering angle at high speeds (false = simulation mode)
     int map = 0;                // the map you were on last
     bool realRecovery = true;   // damage stays until a repair station (or arcade: T fixes it)
+    bool career = false;        // career (start stock, find, win and buy parts) or sandbox (every part)
     double winchSpeed = 4.0;    // saved gameplay speed multiplier; 1x is rated line speed
     int fuelMode = 2;           // 0 off, 1 real use, 2 fast (4x: so a session's driving matters)
     std::string playerName;     // shown to the others in multiplayer (default: your login)
@@ -33,6 +37,7 @@ struct Settings {
     int padSteering = 1, padDeadzone = 1, padRumble = 1;
     RenderSettings gfx;
     bool adaptiveQuality = true;  // auto-scale quality to maintain framerate
+    Keybinds keys;
 
     bool load(const std::string& path);
     bool save(const std::string& path) const;
@@ -48,7 +53,7 @@ class PauseMenu {
 public:
     enum Action { NONE, RESUME, DRIVE, GARAGE, CONTROLS, RESET, QUIT, CHANGED, LOAD_MAP, HOST, JOIN, LEAVE, PILOT_GO, PILOT_STOP,
                   FREE_DRIVE, PLAY_LEVEL, EDIT_LEVEL, EDITOR, LEVEL_RESTART, LEVEL_QUIT, MAIN_MENU, JOB_START, JOB_STOP, MEET_UP,
-                  CANCEL_JOIN };
+                  CANCEL_JOIN, MODEL_LAB, NEW_SECTION };
     struct Result {
         Action action = NONE;
         int vehicle = 0;  // for DRIVE; the map for LOAD_MAP
@@ -81,6 +86,7 @@ public:
     bool joining = false;
     std::string joinError;
     int pageNow() const { return page; }
+    bool listeningForKey() const { return open && listening >= 0; }  // the next key press is a binding, not a command
     bool netActive = false;
     std::string padName;  // the connected controller (settings page), set by the game
     bool shift = false;  // a shift key is down (typing ':' in an address)
@@ -94,9 +100,13 @@ public:
     struct LevelInfo {
         std::string name, about;
         std::vector<std::string> lines;  // mode, map, rules, medals, best
+        bool section = false;            // a hand-made obstacle section (the levels page can show just those)
     };
     std::vector<LevelInfo> levels;
     int levelPick = 0;
+    bool levelSections = false;  // the levels page shows only the obstacle sections
+    std::vector<int> visibleLevels() const;  // indices into `levels` the page shows
+    int shownLevel() const;                  // the one picked, or the first showing (-1: none)
     bool levelActive = false;  // playing one: the pause page offers restart / quit
     bool netClient = false;    // in someone else's session: the host picks the level
 
@@ -133,7 +143,9 @@ private:
         float x, y, w, h, barX, barW;
         int row;
     };
-    int page = 0;  // 0 main (or the title), 1 settings, 2 multiplayer, 3 autopilot, 4 levels, 5 jobs, 6 controller
+    int listening = -1;  // keybinds page: the KeyAction waiting for a key press (-1: none)
+    std::string keyNote; // keybinds page: why the last key was refused
+    int page = 0;  // 0 main (or the title), 1 settings, 2 multiplayer, 3 autopilot, 4 levels, 5 jobs, 6 controller, 7 keybinds
     int sel = 0;
     int dragSlider = -1;
     float fade = 0;

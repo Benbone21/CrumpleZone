@@ -156,7 +156,8 @@ VEHICLE_SCENARIO(accel, "dynamics/acceleration", "Full throttle from rest on the
     // with 5.38 axles). Side-by-side: ~4 s (Can-Am claims 0-60 mph in under 4 s for the Turbo RR).
     // (Engines run ~15% over the factory figures, see vehicles.cpp: a little quicker.)
     // Tacoma TRD Off-Road V6 automatic: 0-60 mph in 8.3 s (Edmunds), so ~8.8 s to 100.
-    static const Range expect[] = {{8.5, 11.0}, {2.4, 3.4}, {5.6, 7.2}, {8.5, 11.0}, {4.2, 6.4}, {3.3, 5.0}, {7.6, 10.0}};
+    static const Range expect[] = {{8.5, 11.0}, {2.4, 3.4}, {5.6, 7.2}, {8.5, 11.0}, {4.2, 6.4}, {3.3, 5.0}, {7.6, 10.0}, {10.0, 14.5}};
+    // (1972 K5 Blazer 350 four-speed: 0-60 mph in ~11.5 s in period road tests: ~12.5 s to 100.)
     Car& c = ctx.add(spec, kLaneStartX, kLaneZ, 0);
     ctx.focus(c);
     ctx.run(1.0);
@@ -210,7 +211,8 @@ VEHICLE_SCENARIO(braking, "dynamics/braking", "Full brakes from 100 km/h: stoppi
     // published figure, and no ABS (Can-Am's and Polaris's spec sheets list none): on pavement its
     // 32 in all-terrains lock and slide, ~0.8 g, so ~45-50 m (estimate; the earlier ~39 m assumed ABS).
     // Tacoma TRD Off-Road 124-135 ft from 60 mph (two Edmunds tests): ~40.5-44 m from 100.
-    static const Range expect[] = {{38, 49}, {27, 35}, {39, 50}, {40, 52}, {40, 56}, {38, 52}, {39, 50}};
+    static const Range expect[] = {{38, 49}, {27, 35}, {39, 50}, {40, 52}, {40, 56}, {38, 52}, {39, 50}, {45, 62}};
+    // (Blazer: front discs, rear drums, no ABS, tall tread: ~160-180 ft from 60 mph in period tests.)
     const Range& r = expect[vehicleIndex(spec)];
     ctx.metric("100-0 km/h stopping distance", dist, "m", r.lo, r.hi);
     // (The buggy dives ~5 degrees and the rear axle unloads: it wanders a little more than the rest.)
@@ -224,7 +226,8 @@ VEHICLE_SCENARIO(skidpad, "dynamics/skidpad", "Holds a 30 m circle, speeding up 
     // EF Civic on period-size street tires: ~0.8 g (estimate), Jesko well over 1.1 g, Bronco ~0.70 g, 2002 4Runner ~0.68 g.
     // Rock buggy ~0.6 g (tall, soft mud tires on 40s), side-by-side ~0.8 g (estimate).
     // Tacoma TRD Off-Road on all-terrains ~0.70 g (estimate: mid-size off-road pickups test 0.68-0.73).
-    static const Range expect[] = {{0.75, 0.90}, {1.08, 1.45}, {0.62, 0.78}, {0.60, 0.76}, {0.50, 0.72}, {0.70, 0.92}, {0.62, 0.78}};
+    static const Range expect[] = {{0.75, 0.90}, {1.08, 1.45}, {0.62, 0.78}, {0.60, 0.76}, {0.50, 0.72}, {0.70, 0.92}, {0.62, 0.78}, {0.52, 0.70}};
+    // (Blazer: tall, soft and on 1970s truck tires: ~0.6 g, estimate.)
     const double R = 30;
     Car& c = ctx.add(spec, -40, -100, 0);
     ctx.focus(c);
@@ -316,7 +319,8 @@ VEHICLE_SCENARIO(turningCircle, "dynamics/turning-circle", "Full lock at a walk:
     // isn't published (wide front tires, little lock: ~11-12 m, estimate).
     // Buggy and side-by-side: not published for these builds (estimates: the buggy's steering
     // front axle on 40s turns about like a full-size truck; a Maverick X3 class UTV ~10-11 m).
-    static const Range expect[] = {{9.3, 10.8}, {10.0, 12.5}, {10.5, 12.5}, {11.0, 12.4}, {10.0, 15.0}, {8.5, 13.0}, {11.8, 13.5}};
+    static const Range expect[] = {{9.3, 10.8}, {10.0, 12.5}, {10.5, 12.5}, {11.0, 12.4}, {10.0, 15.0}, {8.5, 13.0}, {11.8, 13.5}, {10.5, 13.0}};
+    // (Blazer 4x4: ~37 ft (11.3 m) curb to curb, GM's 1972 truck data book figure for the 104 in wheelbase.)
     Car& c = ctx.add(spec, -100, -50, 0);
     ctx.focus(c);
     ctx.run(1.0);
@@ -521,7 +525,7 @@ VEHICLE_SCENARIO(torsion, "structure/torsion", "Twisting rig in free fall: torsi
     // Real cars: roughly 10-35 kNm/deg (older or open bodies lower, modern unibodies higher).
     // (Unibody Civic, carbon tub Jesko, body-on-frame Bronco and 4Runner, tube chassis and cage for the buggy and UTV.)
     // (The Tacoma's cab and bed are separate boxes on a long, partly open frame: softer.)
-    static const Range expect[] = {{12, 55}, {15, 80}, {6, 36}, {6, 36}, {15, 60}, {6, 30}, {4, 30}};
+    static const Range expect[] = {{12, 55}, {15, 80}, {6, 36}, {6, 36}, {15, 60}, {6, 30}, {4, 30}, {3, 30}};  // (Blazer: an open C-channel frame and an open-backed tub)
     Car& c = rigInAir(ctx, spec);
     Section f = sectionAt(c, axleX(c, true)), r = sectionAt(c, axleX(c, false));
     auto roll = [&](const Section& s) {
@@ -736,6 +740,9 @@ VEHICLE_SCENARIO(clearanceAngles, "structure/clearance", "Ground clearance and a
         // (the old 85 ceiling was an estimate). Approach and breakover: estimates.
         {{0.30, 0.46}, {40, 85}, {35, 90}, {25, 55}},
         {{0.22, 0.26}, {29, 35}, {21.5, 26}, {19, 24}},
+        // 1972 K5 Blazer 4x4: ~8.5 in under the diffs on 10-15s; ~35 / ~24 / ~24 degrees (ESTIMATES from its
+        // overhangs: chrome bumpers 0.80 m ahead of and 0.95 m behind the axles).
+        {{0.19, 0.28}, {28, 46}, {18, 32}, {17, 30}},
     };
     Car& c = ctx.add(spec, -100, -50, 0);
     ctx.focus(c);
@@ -783,7 +790,7 @@ VEHICLE_SCENARIO(tiltTable, "structure/tilt-table", "Tipped sideways on a tilt t
     // NHTSA 3 stars (1.13-1.24 on the SSF-only scale; the rating now adds a dynamic test);
     // 2001 4Runner 4x4 2 stars (1.04-1.12) stock, and this one sits 2 in higher on 35s with a
     // roof basket; Tacoma 4x4 Double Cab 3 stars.
-    static const Range ssfRange[] = {{1.30, 1.55}, {1.60, 2.10}, {1.08, 1.24}, {0.92, 1.10}, {1.00, 1.60}, {1.00, 1.55}, {1.05, 1.24}};  // (buggy, UTV: estimates from track and CG)
+    static const Range ssfRange[] = {{1.30, 1.55}, {1.60, 2.10}, {1.08, 1.24}, {0.92, 1.10}, {1.00, 1.60}, {1.00, 1.55}, {1.05, 1.24}, {0.95, 1.18}};  // (buggy, UTV: estimates from track and CG)
     VehicleSpec deck = spec;
     deck.tireGrip = 2.5;  // a tilt table's grippy deck: the tires don't slide off it first
     Car& c = ctx.add(deck, -100, -50, 0);
@@ -818,7 +825,10 @@ VEHICLE_SCENARIO(tiltTable, "structure/tilt-table", "Tipped sideways on a tilt t
     ctx.metric("static stability factor (track / 2 CG height)", ssf, "", e.lo, e.hi);
     // (Real tilt-table ratios run ~85-97% of the SSF. The bound over it allows for the
     // track and CG height being read at rest, at the hub centres.)
-    ctx.metric("tilt angle when the uphill wheels lift", lift * 180 / M_PI, "deg", std::atan(0.8 * ssf) * 180 / M_PI, std::atan(1.02 * ssf) * 180 / M_PI);
+    // (Leaf packs at both ends: the axles shift a few cm downhill on their shackles under the
+    // side load, which widens the track on that side a little more.)
+    const double over = spec.leafFront && spec.leafSprings ? 1.05 : 1.02;
+    ctx.metric("tilt angle when the uphill wheels lift", lift * 180 / M_PI, "deg", std::atan(0.8 * ssf) * 180 / M_PI, std::atan(over * ssf) * 180 / M_PI);
 }
 
 VEHICLE_SCENARIO(weight, "structure/weight", "Curb weight, front/rear split and center of gravity height against real vehicles") {
@@ -835,6 +845,7 @@ VEHICLE_SCENARIO(weight, "structure/weight", "Curb weight, front/rear split and 
         {{1750, 1880}, {52, 57}, {0.68, 0.84}},      // Rock buggy (estimate): ~1,800 kg (Ultra4 cars race at 3,800-4,500 lb), ~54/46, CG under the cage
         {{770, 830}, {42, 47}, {0.52, 0.66}},        // Side-by-side: ~800 kg with fluids (Maverick X3 / RZR class), engine behind the seats: ~44/56
         {{1990, 2110}, {53, 58}, {0.66, 0.85}},      // Tacoma TRD Off-Road Double Cab: 2,016-2,059 kg, ~55/45 empty
+        {{1730, 1900}, {51, 59}, {0.68, 0.88}},      // 1972 K5 Blazer 350 4x4 with the top: ~4,000 lb, ~55/45 (estimate)
     };
     Car& c = ctx.add(spec, kLaneStartX, kLaneZ, 0);
     ctx.focus(c);
@@ -1196,10 +1207,60 @@ std::string slug(const std::string& s) {
     return out;
 }
 
+// Every other vehicle's parts on this one (the universal garage): each builds, settles on its
+// wheels in one piece and drives off. (The full drive-to-80 check is for the car's own parts.)
+void swapScenario(Ctx& ctx, int vehicle, int slot) {
+    int bad = 0, total = 0;
+    std::string worst;
+    // (A car parked well away to be the player: the sim never removes the player's only car,
+    // and one left in the lane would be in the next one's way.)
+    ctx.add(vehicleCatalog()[0], kLaneStartX, kLaneZ + 60, 0);
+    ctx.sim.player = (int)ctx.sim.cars.size() - 1;
+    for (int o = modOwnCount(vehicle, slot); o < (int)modOptions(vehicle, slot).size(); o++) {
+        ModSet ms;
+        ms.pick[slot] = o;
+        const VehicleSpec& spec = tunedSpec(vehicle, ms);
+        const int before = (int)ctx.sim.cars.size();
+        // (Each on its own patch of ground: the ruts the last ones dug stay in it.)
+        const int n = o - modOwnCount(vehicle, slot);
+        Car& c = ctx.add(spec, kLaneStartX + 9.0 * (n % 12), kLaneZ + 7.0 * (n / 12), 0);
+        const int idx = (int)ctx.sim.cars.size() - 1;
+        ctx.run(1.5);
+        const V3 p0 = c.frame().com;
+        ctx.run(2.0, [&] {
+            c.throttle = 0.5;
+            c.brake = c.handbrake = 0;
+        });
+        Car& cc = ctx.sim.cars[idx];
+        const Frame f = cc.frame();
+        bool finite = true;
+        for (const Node& n : cc.nodes) finite &= std::isfinite(n.p.x) && std::isfinite(n.p.y) && std::isfinite(n.p.z);
+        // (It may rub, struggle or barely move: a 40 in tire on a Civic or a 1.6 in a 2 t truck do. It
+        // must not blow apart or fall over.)
+        const bool ok = finite && f.up.y > 0.85;
+        total++;
+        if (!ok) {
+            bad++;
+            worst += (worst.empty() ? "" : "; ") + modOptions(vehicle, slot)[o].name + (finite ? "" : " (blew up)") +
+                     (f.up.y > 0.85 ? "" : " (tipped)") + (cc.damage < 0.01 ? "" : " (damaged)") + (len(f.com - p0) > 1.0 ? "" : " (didn't move)");
+        }
+        ctx.sim.removeCar(idx);
+        ctx.sim.looseWheels.clear();  // (a wheel it shed would be under the next one)
+        (void)before;
+    }
+    ctx.metric("parts from other vehicles that don't work on it", bad, "of " + std::to_string(total), 0, 0);
+    if (!worst.empty()) ctx.note(worst), ctx.check("(" + worst + ")", true);
+}
+
 int modScenarios = [] {
     for (int v = 0; v < (int)vehicleCatalog().size(); v++)
         for (int k = 0; k < MOD_SLOTS; k++)
-            for (int o = 1; o < (int)modOptions(v, k).size(); o++)
+            scenarioRegistry().push_back({std::string("garage/swaps/") + vehicleCatalog()[v].id + "/" + slug(modSlotName(k)),
+                                          "Every other vehicle's parts in this slot: each builds, settles in one piece and drives",
+                                          [v, k](Ctx& c) { swapScenario(c, v, k); }});
+    for (int v = 0; v < (int)vehicleCatalog().size(); v++)
+        for (int k = 0; k < MOD_SLOTS; k++)
+            for (int o = 1; o < modOwnCount(v, k); o++)  // (its own parts; everyone else's: garage/swaps)
                 scenarioRegistry().push_back({std::string("mods/") + vehicleCatalog()[v].id + "/" + slug(modSlotName(k)) + "/" +
                                                   slug(modOptions(v, k)[o].name),
                                               "Fitted next to a stock car: sits level, right ride height, drives, the expected effect",

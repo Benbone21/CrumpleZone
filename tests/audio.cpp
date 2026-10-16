@@ -1,7 +1,9 @@
 // Offline audio checks: no device, speakers or window required.
 #include "../src/audio.h"
+#include "../src/mods.h"
 #include "../src/softbody.h"
 #include "../src/sdl_min.h"
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <chrono>
@@ -135,6 +137,7 @@ int main() {
         double energy = 0;
         for (int i = 0; i < 12000; i++) { const float s = engine.sample(input, 1.0f / 48000); finiteEngines &= std::isfinite(s); energy += s * s; }
         finiteEngines &= energy > 0.1;
+        if (energy <= 0.1) std::printf("  %s energy %.3f\n", v.id, energy);
     }
     check("shared engine synth covers all seven vehicle voices", finiteEngines);
     bool clean = true, responds = true;
@@ -218,6 +221,120 @@ int main() {
         device.stop();
         SDL_Quit();
         check("SDL callback starts, mixes nearby engines and shuts down", started);
+    }
+    {
+        // Every engine in the garage sounds like itself: its spectrum at idle and at 3,000 rpm
+        // under load (48 bands, 40 Hz to 8 kHz) differs from every other engine's, even ones
+        // with the same cylinder count (exhaust, cam, intake, valvetrain, its own pulses).
+        struct Engine { std::string name; EngineInput in; float idle; };
+        std::vector<Engine> engines;
+        for (int v = 0; v < (int)vehicleCatalog().size(); v++)
+            for (int o = 0; o < (int)modOptions(v, MOD_ENGINE).size(); o++) {
+                ModSet ms; ms.pick[MOD_ENGINE] = o;
+                const VehicleSpec& s = tunedSpec(v, ms);
+                bool seen = false;
+                for (const Engine& e : engines) seen |= e.name == s.engineName;
+                if (seen) continue;
+                EngineInput in{0, 0, 0, s.cylinders, (int)s.induction, (float)s.displacement, (float)s.redline, s.flatPlane};
+                in.voice = voiceFor(s);
+                engines.push_back({s.engineName, in, (float)s.idleRpm});
+            }
+        const int kBands = 48;
+        auto spectrum = [&](EngineInput in, float rpm, float load) {
+            EngineSynth synth;
+            in.rpm = rpm, in.load = load, in.boost = load;
+            const int n = 48000, skip = 12000;
+            std::vector<float> x(n);
+            for (int i = 0; i < skip; i++) synth.sample(in, 1.0f / 48000);
+            for (int i = 0; i < n; i++) x[i] = synth.sample(in, 1.0f / 48000);
+            std::vector<double> band(kBands);
+            double total = 1e-12;
+            for (int b = 0; b < kBands; b++) {
+                const double f = 40 * std::pow(200.0, (b + 0.5) / kBands), w = 2 * M_PI * f / 48000, c = 2 * std::cos(w);
+                double s0 = 0, s1 = 0, s2 = 0;
+                for (int i = 0; i < n; i++) s0 = x[i] + c * s1 - s2, s2 = s1, s1 = s0;
+                band[b] = s1 * s1 + s2 * s2 - c * s1 * s2;
+                total += band[b];
+            }
+            for (double& v : band) v = std::log10(v / total + 1e-9);
+            return band;
+        };
+        std::vector<std::vector<double>> idle, load;
+        for (const Engine& e : engines) idle.push_back(spectrum(e.in, e.idle, 0.05f)), load.push_back(spectrum(e.in, 3000, 0.8f));
+        double closest = 1e9;
+        std::string pair;
+        for (size_t a = 0; a < engines.size(); a++)
+            for (size_t b = a + 1; b < engines.size(); b++) {
+                double d = 0;
+                for (int k = 0; k < kBands; k++) d += std::fabs(idle[a][k] - idle[b][k]) + std::fabs(load[a][k] - load[b][k]);
+                d /= 2 * kBands;
+                if (d < closest) closest = d, pair = engines[a].name + " / " + engines[b].name;
+            }
+        std::printf("  %zu engines; the closest two: %s (%.3f)\n", engines.size(), pair.c_str(), closest);
+        if (std::getenv("TONE_DEBUG")) {
+            std::vector<std::pair<double, std::string>> all;
+            std::vector<std::vector<double>> idle0, load0;
+            for (const Engine& e : engines) {
+                EngineInput plain = e.in;
+                plain.voice = EngineTone{};
+                idle0.push_back(spectrum(plain, e.idle, 0.05f)), load0.push_back(spectrum(plain, 3000, 0.8f));
+            }
+            double closest0 = 1e9;
+            for (size_t a = 0; a < engines.size(); a++)
+                for (size_t b = a + 1; b < engines.size(); b++) {
+                    double d = 0, d0 = 0;
+                    for (int k = 0; k < kBands; k++) d += std::fabs(idle[a][k] - idle[b][k]) + std::fabs(load[a][k] - load[b][k]),
+                                                      d0 += std::fabs(idle0[a][k] - idle0[b][k]) + std::fabs(load0[a][k] - load0[b][k]);
+                    all.push_back({d / (2 * kBands), engines[a].name + " / " + engines[b].name});
+                    closest0 = std::min(closest0, d0 / (2 * kBands));
+                }
+            std::sort(all.begin(), all.end());
+            for (int k = 0; k < 8; k++) std::printf("    %.3f %s\n", all[k].first, all[k].second.c_str());
+            std::printf("  without the voices (cylinders, size and induction only): closest %.3f\n", closest0);
+        }
+        check("every engine in the garage has its own sound", engines.size() > 20 && closest > 0.09);
+        // A big block roars and rumbles: louder than a little four, with far more of its sound
+        // down low (under 200 Hz), idling and pulling.
+        auto find = [&](const char* name) -> const Engine* {
+            for (const Engine& e : engines)
+                if (std::string(e.name).find(name) != std::string::npos) return &e;
+            return nullptr;
+        };
+        auto character = [&](const Engine& e, float rpm, float load, double& rmsOut) {
+            EngineSynth synth;
+            EngineInput in = e.in;
+            in.rpm = rpm, in.load = load, in.boost = load;
+            const int n = 48000;
+            std::vector<float> x(n);
+            for (int i = 0; i < 12000; i++) synth.sample(in, 1.0f / 48000);
+            double e2 = 0;
+            for (int i = 0; i < n; i++) x[i] = synth.sample(in, 1.0f / 48000), e2 += x[i] * x[i];
+            rmsOut = std::sqrt(e2 / n);
+            // (Under 90 Hz, below any of these engines' firing notes at 3,000 rpm: the thump of
+            // its uneven pulses, the deep end of its pipe.)
+            const float a = 1 - std::exp(-2 * (float)M_PI * 90 / 48000);
+            double low = 0, l1 = 0, l2 = 0;
+            for (float v : x) l1 += (v - l1) * a, l2 += (l1 - l2) * a, low += l2 * l2;
+            return low / std::max(1e-12, e2);
+        };
+        const Engine *bigBlock = find("454"), *four = find("SOHC D16A6");
+        if (bigBlock && four) {
+            double rBig, rFour, rBigIdle, rFourIdle;
+            const double lowBig = character(*bigBlock, 3000, 0.8f, rBig), lowFour = character(*four, 3000, 0.8f, rFour);
+            const double lowBigIdle = character(*bigBlock, bigBlock->idle, 0.05f, rBigIdle), lowFourIdle = character(*four, four->idle, 0.05f, rFourIdle);
+            std::printf("  454 vs Civic D16: pulling rms %.3f vs %.3f, under 90 Hz %.0f%% vs %.0f%%; idling rms %.3f vs %.3f, under 90 Hz %.0f%% vs %.0f%%\n", rBig, rFour,
+                        lowBig * 100, lowFour * 100, rBigIdle, rFourIdle, lowBigIdle * 100, lowFourIdle * 100);
+            if (std::getenv("TONE_DEBUG"))
+                for (const char* name : {"350 V8 2", "350 V8 4", "ZZ4", "LS7", "6.2L LS V8", "5.0L TWIN-TURBO V8", "900CC TURBO I3", "2GR-FKS"})
+                    if (const Engine* e = find(name)) {
+                        double r, ri;
+                        const double lo = character(*e, 3000, 0.8f, r), loI = character(*e, e->idle, 0.05f, ri);
+                        std::printf("    %-28s pulling rms %.3f low %.0f%%, idling rms %.3f low %.0f%%\n", e->name.c_str(), r, lo * 100, ri, loI * 100);
+                    }
+            check("the 454 big block roars and rumbles: louder and deeper than a little four", rBig > rFour * 1.3 && lowBig > lowFour * 1.5 && rBigIdle > rFourIdle * 1.3);
+        } else {
+            check("the 454 big block and the Civic's D16 are in the garage", false);
+        }
     }
     return failures ? 1 : 0;
 }

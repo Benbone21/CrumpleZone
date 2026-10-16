@@ -137,12 +137,12 @@ scenario finishes, you can drive around in the aftermath.
 
 | Key | Action |
 | --- | --- |
-| Esc | Pause menu: resume, pick a car, garage, settings, controls, reset, quit |
+| Esc | Pause menu: resume, pick a car, garage, settings, controls, reset, quit. The driving keys can be remapped under Settings → Controller → Keyboard keybinds (Esc always opens the menu; the steering-assist toggle is F4) |
 | W / S or ↑ / ↓ | Throttle / brake (hold S when stopped to reverse) |
 | A / D or ← / → | Steer. Keys are all or nothing, so full steer is as much as the tires can hold at your speed, on that surface (full lock when parking, a few degrees at 130 km/h), plus room to catch a slide |
 | Space | Handbrake |
 | 1 2 3 4 5 6 7 | Become the Civic / Jesko / Bronco / 4Runner / rock buggy / side-by-side / Tacoma (repaired, in place) |
-| G | Garage: W/S pick engine, suspension or transmission, A/D change the part, Enter fits it |
+| G | Garage: W/S pick engine, suspension, transmission, wheels or tires, A/D change the part, Enter fits it (career: B buys it, at a repair station) |
 | Q / E | Shift down / up (R, N, 1…; switches to manual). In manual W is gas, S is brake |
 | Shift+M | Manual / automatic gearbox |
 | Shift+L | Headlights: AUTO (on at dusk) / LOW BEAM / HIGH BEAM / OFF |
@@ -212,7 +212,7 @@ Picking a winch anchor or tow-strap point: right stick aims the crosshair, A sel
 
 ## Main menu and levels
 
-Launched plainly, the game opens on the main menu, a screen of its own (no world behind it): free drive (pick map and vehicle), levels, multiplayer, world editor, garage, settings. Levels are races (laps through gates) and sprints (start to finish through gates) with medal times, damage/time limits and a no-repairs rule. Seven come with the game (Frontier GP, The Wall, Mesa Climb, Snake River Ford, Summit Run, Widowmaker, Boulder Gully); your own are `.czl` files in `~/.config/crumplezone/levels` or `./levels`. `--level NAME` starts one. In multiplayer the host picks the level and everyone gets it (edits and all), starts together, and sees a live leaderboard.
+Launched plainly, the game opens on the main menu, a screen of its own (no world behind it): free drive (pick map and vehicle), mode (sandbox or career), levels, multiplayer, world editor, garage, settings. Levels are races (laps through gates) and sprints (start to finish through gates) with medal times, damage/time limits and a no-repairs rule. Seven come with the game (Frontier GP, The Wall, Mesa Climb, Snake River Ford, Summit Run, Widowmaker, Boulder Gully); your own are `.czl` files in `~/.config/crumplezone/levels` or `./levels`. `--level NAME` starts one. In multiplayer the host picks the level and everyone gets it (edits and all), starts together, and sees a live leaderboard.
 
 ## Playing together
 
@@ -294,6 +294,9 @@ The Tacoma is a stock 3rd-gen TRD Off-Road: cab and open bed as separate boxes o
 long frame, Bilstein shocks, a rear e-locker that only works in 4L, a skid plate and
 all-terrains. Its garage takes it to a TRD Pro, a long-travel build or a 6-speed manual.
 
+### 1972 Chevy Blazer (K5)
+Key 8. The first-generation K5: a 104 in wheelbase box with a white removable hardtop, a 350 small block (165 hp / 280 lb-ft net, carbureted), the SM465 four-speed with its 6.55:1 "granny" first, an NP205 transfer case (2H, 4H, 4L), and leaf springs at both ends with the front axle steering on kingpins. Front discs, rear drums, no ABS, open diffs. About 1,850 kg. Garage: 350 four-barrel, 454 big block, ZZ4 crate; 4 in lift and 35s, soft trail leaves; TH350 automatic, 4.56 gears and lockers.
+
 ## How a vehicle is built
 
 - **Body structure.** A lattice of nodes and beams that is held in shape by a stiff
@@ -358,6 +361,25 @@ all-terrains. Its garage takes it to a TRD Pro, a long-travel build or a 6-speed
 - **Stability control.** Above ~10 km/h, if the truck yaws faster than the steering
   asks (or its rear slides), it brakes the outside front wheel and trims the
   throttle, as real ESC does. It's off in low range and with traction control off.
+
+### The garage: anything on anything
+G opens the garage. Five sections: ENGINE, SUSPENSION, TRANSMISSION, WHEELS, TIRES. Each lists the car's own parts first, then every other vehicle's: the Jesko's V8 in the Blazer, the buggy's gearbox in the Civic, the Bronco's wheels on the Jesko. A part from another vehicle goes on whole (its stock engine, gearbox, suspension tuning or wheels, then that vehicle's mod on top). Suspension swaps bring the springs, dampers, bars and travel but keep the car's own layout; wheels too big for the wells come with the lift to clear them. A swapped engine keeps its own sound.
+
+Tires: street, semi-slick, race slick, all-terrain, mud-terrain and winter, each with its own grip on every surface and its own look. Race slicks have the most grip on dry pavement and almost none in mud, snow or wet; mud tires clear mud; winter tires hold snow and ice.
+
+**Snow chains** aren't a tire: the off-roaders carry four in the back. On foot (J), hold E at the back of the truck to take one, hold E at a tire (stopped) to wrap it on, and hold E again to take it off. Chained tires grip ice, packed snow and mud far better and skate on pavement; keep under ~50 km/h on them: past 60 for a couple of seconds they snap.
+
+### Career: start stock, earn the rest
+Main menu → MODE switches between **SANDBOX** (every part on every vehicle, any time: the garage above) and **CAREER**. A career starts every vehicle on its factory parts with $1,000; the rest you find, win or buy:
+
+- **Supply caches**: three by the proving ground's model yard (and ten each on the Frontier and in the Backcountry, off the map list for now), out where it takes some getting to (the top of THE WALL, the summit, the wallow, the old mine, the cliff overlook...). A green marker shows the ones within ~250 m. On foot (J), hold E at the crate: its part or its cash is yours. The best finds are at the hardest places (the 454 big block at the top of THE WALL, race slicks at the summit, the LS7 at the cliff overlook).
+- **Rewards**: a job done pays $1,200 (everyone on it is paid); a level's medals pay $400 / $800 / $1,500 the first time, and a level's first gold brings one of the best parts.
+- **The shop**: at a repair station, the garage sells everyday parts and serious ones (dearer); the very best (race slicks, the big-power engines) aren't sold. B (pad: Y) buys the part shown.
+- **Fitting**: the garage fits only parts you own, and only at a repair station. A part, once owned, fits every vehicle that offers it.
+- **Anchor gear**: you start with 2 tree straps, 1 chain sling and 2 ground stakes; stakes, rock bolts and ice anchors are used up (see Winch and Anchor gear below). The rack sells all five kinds.
+- **Tools and repair parts**: you start with a lug wrench and a jack. Caches hold more tools and spare parts, and each station has a rack beside the shed: walk up and hold E to buy a socket set, a hammer, a CV axle... (see Trail repairs below).
+
+Each player's career is their own (`~/.config/crumplezone/career.txt`, and a garage of its own, `garage-career.txt`) and comes with them into anyone's game; a cache opened in a session counts for everyone there.
 
 ## Damage
 
@@ -442,7 +464,20 @@ Players join normally: `./crumplezone --join YOUR_SERVER_IP:27015`. The server r
 
 The idea: trucks break, and your buddies get you home. (Until multiplayer lands, a buddy is any other truck: Tab into it and drive.)
 
-- **Winch (V, Z, Shift+Z):** the Bronco, 4Runner and rock buggy carry a 9,500 lb winch, the side-by-side a 4,500 lb one (20 kN), with 30 m of line and a 30 m extension (60 m total). V opens a pointer/controller picker for trees, boulders, vehicle recovery points and ground anchors. The default 4x speed reels in at about 0.52 m/s unloaded; -/= or Settings → WINCH SPEED adjusts 0.1–20x (up to 2.6 m/s). Speed falls under load, the drum stalls at rated pull, and the line breaks past about 90 kN.
+- **Winch (V, Z, Shift+Z):** the Bronco, 4Runner and rock buggy carry a 9,500 lb winch, the side-by-side a 4,500 lb one (20 kN), with 30 m of line and a 30 m extension (60 m total). V opens a pointer/controller picker for trees, boulders, vehicle recovery points and ground anchors (what each takes is under **Anchor gear** below). The default 4x speed reels in at about 0.52 m/s unloaded; -/= or Settings → WINCH SPEED adjusts 0.1–20x (up to 2.6 m/s). Speed falls under load, the drum stalls at rated pull, and the line breaks past about 90 kN.
+
+- **Anchor gear:** what the winch line ties to depends on what you carry. Every target in reach stays listed; one you can't use is greyed with the reason ("NO GROUND STAKES LEFT", "CAN'T STAKE ON ROCK: NEEDS A ROCK BOLT", "TOO DEEP TO STAKE"), and the auto-pick (V with no choice) skips it. The HUD line above the fuel gauge shows the counts: `STRAPS 3 SLING 2 STAKES 4 BOLTS 2 ICE 2`. All the numbers are in `src/anchors.h`.
+
+  | Gear | Works on | Used up? |
+  |---|---|---|
+  | TREE STRAP | trees, stumps, poles at least 0.15 m through | no: comes back when the line comes off |
+  | CHAIN SLING | boulders at least 0.45 m in radius (rock slabs aren't anchors) | no: comes back |
+  | GROUND STAKE | dirt, grass, gravel, sand, mud with under 15 cm of water on it | yes: left in the ground (a line back to the same stake is free) |
+  | ROCK BOLT | bare rock | yes |
+  | ICE ANCHOR | snow and ice | yes |
+  | Another vehicle | always | no gear |
+
+  Nothing sets on pavement or scree, or under more than 15 cm of water. Sandbox starts with 3 straps, 2 slings, 4 stakes, 2 bolts and 2 ice anchors, and a repair station (park on the pad) or a full reset (R R) refills them free. A career starts with 2 / 1 / 2 / 0 / 0 (saved with the career as `stock N ANCHOR:...`); buy more off a station's rack on foot, or find them in supply caches (bolts and ice anchors are scarce).
 
 - **Tow strap (O):** click your front/rear recovery point, then the other vehicle's front/rear point within 9 m. The 9 m kinetic strap breaks at 130 kN. An unattended vehicle rolls in neutral with both brakes released and steers to follow. See [engine audio, recovery and gearing](docs/recovery-audio.md) for controls, audio previews and validation.
 
@@ -450,12 +485,13 @@ The idea: trucks break, and your buddies get you home. (Until multiplayer lands,
   - Mountain: Trailhead Garage (in the lot), Crawl Park Pit (by the dome), Halfway Hut (a pull-off on the summit trail, where the Widowmaker Spur leaves it).
   - Backcountry: Trailhead Camp, Sawmill Camp, Far Side Camp and Pass Hut.
   - Proving ground: the shop beside the spawn.
+- **Trail repairs (on foot, hold E):** walk up to what's broken and fix it yourself, with your own tools and a spare part: a CV axle (socket set and hammer, the corner jacked up), a tie rod (wrenches and hammer), a bent control arm or sway bar link (socket set or wrenches, pry bar), a drive shaft (wrenches), a new tire on the rim (tire irons, jacked up), a flooded engine (socket set and spark plugs). The prompt says what you're missing. Wheels come off and on with the lug wrench once the corner's jacked: take the jack out of the back, put it under the corner, then hold E on it to raise it (and again to lower it). Chains and the jack ride in their own places in the back, apart from the spare. The work shows in first person: the wrench round the lug nuts, the wheel sliding off its studs, the chain wrapping round the tread, the hammer at the hub, the new part going in. In sandbox you have every tool and endless parts.
 - **Real or arcade (Settings → Recovery):** in Real (the default) damage stays until a station fixes it: T only puts you back on your wheels and R tows you to the start as you are. Arcade keeps the old instant repair.
 - **Compass (top):** headings, the nearest repair station and the summit, with distances.
 
 ## Maps
 
-Pick the map in the pause menu (Esc). The game remembers it. From the command line: `--map 0` proving ground, `1` mountain, `2` freeway, `3` Frontier, `4` Backcountry.
+The map list has just the **proving ground** for now: it's where everything in the game is laid out to look at and try while the world is rebuilt. The other maps are still in the code (the tests use them) and `--map N` still loads one: `1` mountain, `2` freeway, `3` Frontier, `4` Backcountry. (The seeded Wilderness map, 5, was removed for now; an old settings file or `--map 5` loads the proving ground. Commit `c735d9e` has the generator.)
 
 ### Backcountry
 
@@ -552,6 +588,7 @@ Top speeds on it (`freeway/top-speed`): Jesko ~413 km/h (drag-limited, 9th gear,
 
 **The grid test pad** has:
 
+- **the model yard** (south-west of the spawn): every model in the game in the design picked in the model lab, in rows by kind, its name over it as you walk up; the solid ones are solid. Three supply caches stand beside it (career). The **model lab** (main menu → MODEL LAB, or `crumplezone --lab`) shows each model's designs side by side as the game draws them: pick one, tweak its settings, or flag it for a redo with a note; the picks save to `assets/models/choices.txt` and the game uses them. `build/modelsheet` (make build/modelsheet) draws contact sheets of every model to `build/review/models/`.
 - a concrete crash wall about 115 m ahead of spawn
 - a kicker and landing ramp
 - a row of poles
@@ -682,6 +719,8 @@ The HUD stays out of the way:
 Help only appears when you press H.
 
 ## Effects and sound
+
+**Engine sounds.** Every engine has its own voice (EngineTone in `src/engineaudio.h`): its exhaust (the pipe's resonance, how open it is), a big cam's lope at idle, its intake or carb roar, valvetrain tick, a thin-to-deep timbre, pops on the overrun, and small cylinder-to-cylinder differences of its own. So two V6s or two V8s don't sound alike, and each changes as the revs sweep its harmonics across its exhaust's resonances.
 
 - Tire smoke on pavement and dust on grass
 - Skid marks, and tire tracks pressed into loose ground (see Surfaces and tires)

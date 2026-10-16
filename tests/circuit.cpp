@@ -161,3 +161,59 @@ SCENARIO(circuitJeskoKeys, "frontier/circuit-jesko-keys", "Jesko on the keyboard
     ctx.metric("lap time", L.time, "s", 45, 60);
     ctx.metric("furthest off the racing line", L.worstOff, "m", 0, 6);
 }
+
+SCENARIO(circuitBanking, "frontier/circuit-banking", "The Frontier circuit's fast corners are banked (outside of the turn up, 6-16 degrees), eased in and out gently; the slow ones and the straights are flat") {
+    ctx.sim.world = World(MAP_FRONTIER);
+    const World& w = ctx.sim.world;
+    const std::vector<V3>& t = frontierTrack();
+    const int n = (int)t.size();
+    double steepest = 0, wrongWay = 0, straightMax = 0, twist = 0;
+    int banked = 0;
+    // How far each point is from a bend (points, ~2 m apart): a banked corner's transition runs
+    // ~40 m out onto the straight either side of it.
+    auto turnAt = [&](int k) {
+        const V3 p = t[k], c = t[(k + 6) % n], d = t[(k - 6 + n) % n];
+        const V3 u = norm(V3(p.x - d.x, 0, p.z - d.z)), v = norm(V3(c.x - p.x, 0, c.z - p.z));
+        return u.x * v.z - u.z * v.x;
+    };
+    std::vector<int> fromBend(n, n);
+    for (int k = 0; k < n; k++)
+        if (std::fabs(turnAt(k)) >= 0.01)
+            for (int o = -30; o <= 30; o++) fromBend[((k + o) % n + n) % n] = std::min(fromBend[((k + o) % n + n) % n], std::abs(o));
+    double prevSlope = 0;
+    for (int k = 0; k <= n; k++) {
+        const V3 a = t[(k - 2 + n) % n], b = t[(k + 2) % n], p = t[k % n];
+        const V3 fwd = norm(V3(b.x - a.x, 0, b.z - a.z)), left(-fwd.z, 0, fwd.x);
+        const double slope = (w.height(p.x + left.x * 4.5, p.z + left.z * 4.5) - w.height(p.x - left.x * 4.5, p.z - left.z * 4.5)) / 9.0;
+        // The road's twist: how fast the banking comes in or goes, per metre of track.
+        if (k > 0) twist = std::max(twist, std::fabs(std::atan(slope) - std::atan(prevSlope)) * 180 / M_PI / std::max(0.5, len(t[k % n] - t[k - 1])));
+        prevSlope = slope;
+    }
+    for (int k = 0; k < n; k++) {
+        const V3 a = t[(k - 2 + n) % n], b = t[(k + 2) % n], p = t[k];
+        const V3 fwd = norm(V3(b.x - a.x, 0, b.z - a.z)), left(-fwd.z, 0, fwd.x);
+        // Which way it turns here (+ left), and the surface's slope across it (+ up to the left).
+        const V3 c = t[(k + 6) % n], d = t[(k - 6 + n) % n];
+        const V3 u = norm(V3(p.x - d.x, 0, p.z - d.z)), v = norm(V3(c.x - p.x, 0, c.z - p.z));
+        const double turn = u.x * v.z - u.z * v.x;  // (+: turning toward `left`)
+        const double hl = w.height(p.x + left.x * 4.5, p.z + left.z * 4.5), hr = w.height(p.x - left.x * 4.5, p.z - left.z * 4.5);
+        const double slope = (hl - hr) / 9.0;
+        if (std::fabs(turn) > 0.08) {
+            if (std::fabs(slope) > std::tan(4 * M_PI / 180)) {
+                banked++;
+                // The outside of the turn up: a left turn's right side higher (slope < 0).
+                if (slope * turn > 0) wrongWay = std::max(wrongWay, std::fabs(slope));
+            }
+            steepest = std::max(steepest, std::fabs(slope));
+        } else if (fromBend[k] > 22) {
+            straightMax = std::max(straightMax, std::fabs(slope));
+        }
+    }
+    ctx.metric("steepest banking", std::atan(steepest) * 180 / M_PI, "deg", 12, 17);
+    ctx.metric("points in a banked corner (~2 m apart)", banked, "", 60, 2000);
+    ctx.metric("banking the wrong way (inside up)", std::atan(wrongWay) * 180 / M_PI, "deg", 0, 1);
+    ctx.metric("cross-slope on the straights (past the transitions)", std::atan(straightMax) * 180 / M_PI, "deg", 0, 3.5);
+    // (At 130 km/h, 0.3 deg/m is the road rolling ~11 deg a second under the car. At 0.7, coming
+    // off the 16 degree corner, a Jesko on slicks lifted a wheel and rocked.)
+    ctx.metric("steepest twist in a transition", twist, "deg/m", 0, 0.35);
+}

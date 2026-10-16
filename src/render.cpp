@@ -9,6 +9,7 @@
 
 #include "carvisual.h"
 #include "scenery.h"
+#include "treefade.h"
 #include "font.h"
 #include "groundtex.h"
 #include "fx.h"
@@ -42,6 +43,9 @@ uniform vec4 uLampPos[16];                   // lens center, beam (1 low, 2 high
 uniform vec4 uLampDir[16];                   // beam axis (the car's forward), range (m)
 uniform vec4 uLampUp[16];                    // the car's up, peak intensity
 float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+// Ordered dither (4x4 Bayer) at a pixel, 0..1: a fade of f drops the pixels whose threshold is under f (screen door).
+const int kBayer[16] = int[](0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5);
+float ditherAt(vec2 fc){ ivec2 p = ivec2(fc) & 3; return (float(kBayer[p.x + p.y * 4]) + 0.5) / 16.0; }
 float vnoise(vec2 p){
   vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
   return mix(mix(hash(i), hash(i+vec2(1,0)), f.x), mix(hash(i+vec2(0,1)), hash(i+vec2(1,1)), f.x), f.y);
@@ -243,6 +247,8 @@ uniform int uMap;                 // 0 proving ground, 1 mountain, 2 freeway
 uniform sampler2D uTerrainTex;    // per meter: height, grass, paint
 uniform float uTerrainN;          // texels per side
 uniform vec2 uRockSnow;           // heights where bare rock, then snow, take over
+uniform int uTreeFadeN;           // see-through trees: this many, each (x, z, reach, fade 0..1)
+uniform vec4 uTreeFade[24];
 )";
 
 // The procedural ground: the look the terrain had before photo-scanned materials, and still has for
@@ -412,6 +418,17 @@ void main(){
   vec3 n = normalize(vNrm);
   vec3 base = vCol.rgb;
   int mat = int(vCol.a + 0.5);
+  bool sunlit = mat >= 100;  // (a cargo model inside a body's shadow: Placed::sunlit)
+  if (sunlit) mat -= 100;
+  if (uTreeFadeN > 0 && (mat == 13 || mat == 15)) {  // a tree the camera sees through: its leaves (and the snow on them) dither away; trunks and limbs never do
+    float fade = 0.0;
+    for (int i = 0; i < uTreeFadeN; i++) {
+      vec4 t = uTreeFade[i];
+      vec2 d = vPos.xz - t.xy;
+      if (dot(d, d) < t.z * t.z) fade = max(fade, t.w);
+    }
+    if (fade > ditherAt(gl_FragCoord.xy)) discard;
+  }
   float specK = 0.04, specP = 16.0;
   if (mat == 7) {
     terrainProcedural(n, base, specK, specP);
@@ -454,6 +471,7 @@ void main(){
 
   vec3 lin = pow(base, vec3(2.2));
   float sh = shadowAt(vPos, n);
+  if (sunlit) sh = max(sh, 0.85);
   float diff = max(dot(n, uSun), 0.0);
   vec3 amb = ambientAt(n);
   vec3 V = normalize(uCam - vPos);
@@ -517,7 +535,7 @@ uniform int uVehicle;  // catalog body style: EF, Jesko, Bronco, 4Runner
 // y up, z across) and these are its lines: floor, belt, roof, hood front | front x,
 // half width, windshield base x, roof front x | B-pillar x, C-pillar x, liftgate
 // bottom y, liftgate half width | trim top y, roof tuck, rear x, liftgate top x.
-uniform int uShell;      // 1 4Runner, 2 Bronco, 3 Civic, 4 Tacoma (uShD.w: its cab's back x)
+uniform int uShell;      // 1 4Runner, 2 Bronco, 3 Civic, 4 Tacoma (uShD.w: its cab's back x), 5 K5 Blazer
 uniform vec4 uShA, uShB, uShC, uShD;
 uniform vec4 uShE;       // front door's front edge x, gate top y, bumper top y, wheel opening top y
 out vec4 oCol;
@@ -649,6 +667,25 @@ void main(){
     } else if (region == 3) {
       // The back glass in the cab's back wall (a slider in the middle).
       win = rbox(P.zy, vec2(0.0, 0.5 * (shB + 0.08 + shT - 0.13)), vec2(0.56, 0.5 * (shT - 0.13 - shB - 0.08)), 0.05);
+    }
+  }
+  if (uShell == 5) {
+    win = 1.0;
+    if (region == 1) {
+      // 1972 K5 Blazer: the door glass (with its vent wing up front) behind a thin A pillar,
+      // then the long quarter window in the removable top, back to near the tailgate.
+      float yc = 0.5 * (shYlo + shYhi), yh = 0.5 * (shYhi - shYlo);
+      float w1 = rbox(P.xy, vec2(0.5 * (shXB + shAx), yc), vec2(0.5 * (shAx - shXB) - 0.05, yh), 0.03);
+      w1 = max(w1, P.x - (shAx - 0.06));
+      float w2 = rbox(P.xy, vec2(0.5 * (shXB + shXr) - 0.05, yc + 0.01), vec2(0.5 * (shXB - shXr) - 0.2, yh - 0.01), 0.08);
+      win = min(w1, w2);
+    } else if (region == 2) {
+      float zRef = shW2 - 0.07, zLim = zRef - shTuck * (P.y - shB) / max(0.1, shT - shB);
+      float u = abs(P.z) / max(0.1, zLim) * zRef;
+      win = rbox(vec2(u, P.y), vec2(0.0, 0.5 * (shB + 0.05 + shT - 0.06)), vec2(zRef, 0.5 * (shT - 0.06 - shB - 0.05)), 0.03);
+    } else if (region == 3) {
+      // The tailgate's roll-down glass.
+      win = rbox(P.zy, vec2(0.0, 0.5 * (shB + 0.06 + shT - 0.08)), vec2(shW2 - 0.17, 0.5 * (shT - 0.08 - shB - 0.06)), 0.05);
     }
   }
   bool isWindow = region >= 1 && region <= 3 && win < 0.0;
@@ -1091,6 +1128,113 @@ void main(){
     }
   }
 
+  if (uShell == 5) {
+    // 1972 K5 Blazer: a full-width egg-crate grille between round headlamps in square chrome
+    // bezels, amber parking lamps under them, the bowtie in the middle; chrome bumpers; a
+    // crease with a chrome molding down the side; side markers; the white removable top;
+    // vertical tail lamps in the rear corners; CHEVROLET across the tailgate.
+    base = uPaint;
+    kind = 0;
+    float fw = max(fwidth(P.x) + fwidth(P.y) + fwidth(P.z), 1e-4);
+    float az = abs(P.z);
+    vec3 top = uTrim.rgb;                                   // the hardtop's color (white)
+    // (Its own bumper line: the chrome bars sit at the frame, ~0.53-0.70 m up; the physics
+    // bumper panel here reaches much higher.)
+    float bumpLo = shF - 0.02, bumpHi = shF + 0.16;
+    float gBot = bumpHi + 0.03, gTop = shHood - 0.04;       // grille opening
+    float lampY = 0.5 * (gBot + gTop) + 0.02, lampZ = shW2 - 0.22;
+    float crease = shB - 0.17;                              // the side's body line
+    if (region == 7 || region == 8) {
+      base = vec3(region == 8 ? 0.025 : 0.05);
+      kind = 5;
+    } else if (region == 0) {
+      if (P.y < shF + 0.04) { base = vec3(0.04); kind = 1; }  // rocker
+      // The crease: a light edge over a shadow, with a slim chrome molding on it.
+      base = mix(base, base * 1.18, lineAt(P.y, crease + 0.012, 0.006, fw));
+      base = mix(base, base * 0.6, lineAt(P.y, crease - 0.006, 0.005, fw));
+      if (abs(P.y - crease) < 0.008 && P.x > shXr + 0.12 && P.x < shXf - 0.12) { base = vec3(0.75); kind = 2; }
+      if (P.y > shF + 0.02 && P.y < shB + 0.01) {
+        float seam = max(lineAt(P.x, shXE, 0.004, fw), lineAt(P.x, shXB, 0.004, fw));
+        base = mix(base, vec3(0.012), seam * 0.9);
+        // Chrome push-button handle near the door's back edge.
+        if (rbox(P.xy, vec2(shXB + 0.12, shB - 0.07), vec2(0.07, 0.015), 0.008) < 0.0) { base = vec3(0.8); kind = 2; }
+      }
+      // BLAZER on the front fender, above the crease behind the wheel.
+      if (P.x > shXE + 0.12 && P.x < shXE + 0.48 && abs(P.y - (crease + 0.07)) < 0.018 && fract((P.x - shXE) * 16.0) > 0.3) { base = vec3(0.8); kind = 2; }
+      // Side markers: amber at the front corners, red at the back.
+      if (P.x > shXf - 0.16 && P.x < shXf - 0.06 && abs(P.y - (crease - 0.08)) < 0.025) kind = 8;
+      if (P.x < shXr + 0.16 && P.x > shXr + 0.06 && abs(P.y - (crease - 0.08)) < 0.025) kind = 4;
+      // Tail lamps wrapping onto the sides at the rear corners.
+      if (P.x < shXr + 0.03 && P.y > bumpHi + 0.06 && P.y < bumpHi + 0.34) kind = 4;
+      // The top's lower edge where it bolts on behind the doors.
+      if (P.x < shXB - 0.01 && P.y > shB - 0.02) base = top;
+    } else if (region == 1) {
+      // Body color ahead of the B pillar (the door frame chrome), the white top behind it.
+      if (P.x < shXB + 0.03) base = top;
+      if (win < 0.014) { base = P.x > shXB + 0.03 ? vec3(0.75) : vec3(0.025); kind = P.x > shXB + 0.03 ? 2 : 1; }  // chrome frames, rubber on the top
+      if (abs(P.x - (shAx - 0.30)) < 0.008 && P.y > shYlo && P.y < shYhi) { base = vec3(0.7); kind = 2; }  // vent wing post
+    } else if (region == 4) {
+      base = top;  // the removable hardtop, the whole roof
+      if (lineAt(P.x, shXrf - 0.03, 0.004, fw) > 0.5) base = vec3(0.02);  // its seam at the windshield header
+    } else if (region == 2) {
+      if (win < 0.014) { base = vec3(0.7); kind = 2; }  // chrome reveal molding
+      if (P.y < shB + 0.05) { base = vec3(0.03); kind = 1; }  // cowl
+    } else if (region == 3) {
+      base = top;
+      if (win < 0.014) { base = vec3(0.02); kind = 1; }
+    } else if (region == 10) {
+      float seam = max(lineAt(P.x, shXf - 0.08, 0.004, fw), lineAt(az, shW2 - 0.05, 0.004, fw));
+      base = mix(base, vec3(0.012), seam * 0.9);
+      base = mix(base, base * 1.12, lineAt(az, 0.30, 0.01, fw) * step(shXa + 0.15, P.x));  // the hood's two raised ribs
+      if (P.x < shXa + 0.06) { base = vec3(0.03); kind = 1; }  // cowl vent
+    } else if (region == 5) {
+      if (P.y < bumpHi && P.y > bumpLo) { base = vec3(0.82, 0.82, 0.84); kind = 2; }  // chrome front bumper
+      else if (P.y < gBot) { base = P.y < bumpLo ? vec3(0.03) : uPaint * 0.9; kind = P.y < bumpLo ? 1 : 0; }  // valance; under it, dark
+      if (P.y > gBot && P.y < gTop && az < shW2 - 0.04) {
+        base = vec3(0.78); kind = 2;  // chrome surround
+        if (P.y > gBot + 0.025 && P.y < gTop - 0.025 && az < shW2 - 0.07) {
+          // Egg-crate: wide cells, a strong horizontal bar through the middle.
+          kind = 7;
+          base = vec3(0.025);
+          float cx = fract(P.z * 9.0), cy = fract((P.y - gBot) * 14.0);
+          if (cx < 0.12 || cy < 0.18) { base = vec3(0.62); kind = 2; }
+          if (abs(P.y - lampY) < 0.012) { base = vec3(0.8); kind = 2; }
+        }
+        // Bowtie in the middle of the bar.
+        if (abs(P.y - lampY) < 0.03 - 0.25 * max(0.0, az - 0.035) && az < 0.07) { base = vec3(0.85, 0.68, 0.25); kind = 2; }
+        // Round headlamps in square chrome bezels.
+        vec2 q = vec2(az - lampZ, P.y - lampY);
+        float bez = max(abs(q.x), abs(q.y)) - 0.105;
+        if (bez < 0.0) { base = vec3(0.8); kind = 2; }
+        if (length(q) < 0.085) kind = 3;
+        else if (length(q) < 0.095) { base = vec3(0.6); kind = 2; }
+        // Amber parking lamps below them.
+        if (rbox(vec2(az, P.y), vec2(lampZ, gBot + 0.05), vec2(0.07, 0.022), 0.008) < 0.0) kind = 8;
+      }
+      float plate = rbox(P.zy, vec2(0.0, 0.5 * (bumpLo + bumpHi)), vec2(0.15, 0.06), 0.01);
+      if (plate < 0.0) { base = vec3(0.9, 0.88, 0.8); kind = 1; }
+    } else if (region == 6) {
+      if (P.y < bumpHi && P.y > bumpLo) { base = vec3(0.82, 0.82, 0.84); kind = 2; }  // chrome rear bumper
+      else if (P.y < bumpLo) { base = vec3(0.03); kind = 1; }
+      float seam = P.y > shLiftY ? lineAt(az, shLiftZ, 0.004, fw) : 0.0;
+      seam = max(seam, az < shLiftZ ? lineAt(P.y, shLiftY, 0.004, fw) : 0.0);
+      base = mix(base, vec3(0.012), seam * 0.9);
+      // CHEVROLET pressed across the tailgate: nine letter blocks.
+      float lx = (P.z + 0.45) / 0.10;
+      if (abs(P.y - (shB - 0.16)) < 0.03 && lx > 0.0 && lx < 9.0 && fract(lx) > 0.15 && fract(lx) < 0.85) base = uPaint * 0.72;
+      // Tail lamps: tall rectangles in the corners, a white reversing lamp at the bottom.
+      if (az > shW2 - 0.17 && az < shW2 - 0.02 && P.y > bumpHi + 0.06 && P.y < bumpHi + 0.34) kind = P.y < bumpHi + 0.11 ? 3 : 4;
+      if (P.y > shB - 0.02) base = top;  // the top over the tailgate glass
+      float plate = rbox(P.zy, vec2(0.0, bumpHi + 0.12), vec2(0.15, 0.065), 0.01);
+      if (plate < 0.0) { base = vec3(0.9, 0.88, 0.8); kind = 1; }
+    }
+    if (kind == 7) k = P.y * 2.2;
+    if (kind == 3) {
+      j = (P.z > 0.0 ? W - 0.55 : 0.55) + (P.z > 0.0 ? -(az - lampZ) : (az - lampZ)) * 3.0;
+      k = uBody.z + (P.y - lampY) * 3.0 / 2.2;
+    }
+  }
+
   vec3 lin = pow(base, vec3(2.2));
   float sh = shadowAt(vPos, n);
   float ndl = max(dot(n, uSun), 0.0);
@@ -1321,11 +1465,15 @@ void main(){
   oCol = finishColor(col, vPos, 1.0);
 })";
 
-// Water: rippling surface reflecting the sky, a hot sun glint, the lake bed showing
-// through the shallows (depth from the terrain texture), foam where it meets the shore.
+// Water: the lake bed seen through it (the framebuffer behind, dimmed and tinted by how far
+// the light goes through: depth from the terrain texture), clear and blue-green over gravel,
+// brown and soon opaque over mud; the sky and a sun glint on rippling normals by Fresnel;
+// a flow-stretched current; foam and a fading edge where it meets the shore. Dual-source
+// blending: oCol is what the surface adds, oKeep how much of the bed shows through, per channel.
 const char* kWaterFSBody = R"(
 in vec3 vPos; in vec3 vNrm; in vec4 vCol; in vec4 vLight; in vec3 vLocal;
-out vec4 oCol;
+layout(location = 0, index = 0) out vec4 oCol;
+layout(location = 0, index = 1) out vec4 oKeep;
 uniform sampler2D uTerrainTex; uniform float uTerrainN;
 float groundAt(vec2 xz){
   vec2 g = xz + 600.0;
@@ -1335,47 +1483,115 @@ float groundAt(vec2 xz){
   float c = texelFetch(uTerrainTex, i + ivec2(0, 1), 0).r, d = texelFetch(uTerrainTex, i + ivec2(1, 1), 0).r;
   return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
-float wave(vec2 p){
+// Value noise and its slope, for ripple normals without finite differences.
+vec3 vnd(vec2 p){
+  vec2 i = floor(p), f = fract(p), u = f * f * (3.0 - 2.0 * f), du = 6.0 * f * (1.0 - f);
+  float a = hash(i), b = hash(i + vec2(1.0, 0.0)), c = hash(i + vec2(0.0, 1.0)), d = hash(i + vec2(1.0, 1.0));
+  float k1 = b - a, k2 = c - a, k4 = a - b - c + d;
+  return vec3(a + k1 * u.x + k2 * u.y + k4 * u.x * u.y, du.x * (k1 + k4 * u.y), du.y * (k2 + k4 * u.x));
+}
+// Surface slope: a long swell, ripples and fine chop, each scrolling its own way (rotated
+// against each other so no lattice shows), fading out with distance. fd: downstream (zero:
+// still water); streaks lengthen along it.
+vec2 ripples(vec2 p, vec2 fd, float dist, float rough){
   float t = uTime;
-  return vnoise(p * 0.5 + t * vec2(0.2, 0.06)) * 0.6 + vnoise(p * 1.4 - t * vec2(0.12, 0.22)) * 0.3 + vnoise(p * 3.7 + t * vec2(0.3, -0.15)) * 0.06;
+  if (dot(fd, fd) > 0.01) {  // current: stretch the pattern along it
+    vec2 pp = vec2(-fd.y, fd.x), pe = vec2(dot(p, fd) * 0.5, dot(p, pp));
+    vec3 g1 = vnd(pe * 0.55 + vec2(0.0, t * 0.05)), g2 = vnd(pe * vec2(1.4, 2.6) + vec2(7.1, 3.3)), g3 = vnd(pe * vec2(3.0, 7.0) + vec2(1.7, 9.2));
+    vec2 gq = g1.yz * 0.55 * 0.55 + g2.yz * vec2(1.4, 2.6) * 0.20 + g3.yz * vec2(3.0, 7.0) * 0.06 * clamp(14.0 / (dist + 6.0), 0.0, 1.0);
+    return (fd * gq.x * 0.5 + pp * gq.y) * rough;
+  }
+  vec3 g1 = vnd(p * 0.42 + t * vec2(0.09, 0.035));
+  vec3 g2 = vnd(mat2(0.8, 0.6, -0.6, 0.8) * p * 1.7 - t * vec2(0.14, 0.27));
+  vec3 g3 = vnd(mat2(0.6, -0.8, 0.8, 0.6) * p * 5.3 + t * vec2(0.45, -0.31));
+  vec2 gr = g1.yz * 0.42 * 0.55 + (mat2(0.8, -0.6, 0.6, 0.8) * g2.yz) * 1.7 * 0.20 + (mat2(0.6, 0.8, -0.8, 0.6) * g3.yz) * 5.3 * 0.05 * clamp(14.0 / (dist + 6.0), 0.0, 1.0);
+  return gr * rough;
 }
 void main(){
-  float depth = vPos.y - groundAt(vPos.xz);
+  float gy = groundAt(vPos.xz);
+  float depth = vPos.y - gy;
   if (depth < 0.0) discard;
   vec2 p = vPos.xz;
-  const float e = 0.06;
-  // A river's current: the ripples drift downstream (two staggered phases, blended, so
-  // the pattern never smears out).
-  vec2 flow = vCol.rg;
-  float ph0 = fract(uTime * 0.2), ph1 = fract(uTime * 0.2 + 0.5), wb = abs(1.0 - 2.0 * ph0);
-  vec2 o0 = flow * ph0 * 5.0, o1 = flow * ph1 * 5.0 + vec2(13.7, 4.1);
-  float h0 = mix(wave(p - o1), wave(p - o0), wb), hx = mix(wave(p + vec2(e, 0.0) - o1), wave(p + vec2(e, 0.0) - o0), wb),
-        hz = mix(wave(p + vec2(0.0, e) - o1), wave(p + vec2(0.0, e) - o0), wb);
-  vec3 n = normalize(vec3(-(hx - h0) / e * 0.05, 1.0, -(hz - h0) / e * 0.05));
-  vec3 V = normalize(uCam - vPos);
-  float fres = 0.02 + 0.98 * pow(1.0 - max(dot(n, V), 0.0), 5.0);
-  vec3 r = reflect(-V, n);
-  vec3 refl = skyColor(vec3(r.x, max(r.y, 0.02), r.z), 3);
-  // Low in the reflection the far shore and its trees, not sky.
-  refl = mix(refl, vec3(0.035, 0.05, 0.035), smoothstep(0.16, 0.02, r.y) * 0.85);
+  vec3 Vv = uCam - vPos;
+  float dist = length(Vv);
+  vec3 V = Vv / dist;
   float sh = shadowAt(vPos, vec3(0, 1, 0));
+  vec3 irr = ambientAt(vec3(0, 1, 0)) + sh * kSunCol * 0.55;
+  // What it flows over: the share of mud round here (a few taps, so the change is gradual).
+  ivec2 ti = clamp(ivec2(floor(p + 600.5)), ivec2(2), ivec2(int(uTerrainN) - 3));
+  float mud = 0.0;
+  for (int k = 0; k < 4; k++) {
+    ivec2 o = ti + ivec2((k & 1) * 4 - 2, (k >> 1) * 4 - 2);
+    mud += 1.0 - step(0.5, abs(texelFetch(uTerrainTex, o, 0).b - 8.0));
+  }
+  float murk = smoothstep(0.2, 0.8, mud * 0.25);
+  vec2 flow = vCol.rg;
+  float fl = length(flow);
+  vec2 fd = fl > 0.1 ? flow / fl : vec2(0.0);
+  float rough = (1.0 + 0.5 * min(fl, 2.0)) * (1.0 - 0.45 * murk);
+  vec2 sl;
+  float wb = 0.0, ph0 = 0.0, ph1 = 0.0;
+  vec2 o0 = vec2(0.0), o1 = vec2(13.7, 4.1);
+  if (fl > 0.1) {  // two staggered phases of the pattern, blended, so it drifts without smearing
+    ph0 = fract(uTime * 0.2), ph1 = fract(uTime * 0.2 + 0.5), wb = abs(1.0 - 2.0 * ph0);
+    o0 = flow * ph0 * 5.0, o1 = flow * ph1 * 5.0 + vec2(13.7, 4.1);
+    sl = mix(ripples(p - o1, fd, dist, rough), ripples(p - o0, fd, dist, rough), wb);
+  } else sl = ripples(p, fd, dist, rough);
+  sl *= 0.26 / (1.0 + dist / 60.0);
+  vec3 n = normalize(vec3(-sl.x, 1.0, -sl.y));
+  bool under = V.y < 0.0;  // camera below the surface
+  if (under) n.y = -n.y, V.y = -V.y;
+  float ndv = max(dot(n, V), 0.0);
+  float fres = (0.02 + 0.98 * pow(1.0 - ndv, 5.0)) * (1.0 - 0.6 * murk);  // (a muddy skin reflects less)
+  vec3 r = reflect(-V, n);
+  r.y = abs(r.y);
+  vec3 refl = skyColor(vec3(r.x, max(r.y, 0.02), r.z), 3);
+  // Low in the reflection the banks and the trees on them, not sky: the ground rising
+  // along the reflected ray (a few coarse steps), and a band round the horizon.
+  float occ = smoothstep(0.35, 0.03, r.y) * 0.7;
+  vec2 rd = r.xz / max(length(r.xz), 1e-3);
+  for (int k = 0; k < 6; k++) {
+    float s = 2.5 * exp2(float(k));
+    ivec2 gi = clamp(ivec2(floor(p + rd * s + 600.5)), ivec2(0), ivec2(int(uTerrainN) - 1));
+    occ = max(occ, smoothstep(0.0, 3.0, texelFetch(uTerrainTex, gi, 0).r - (vPos.y + r.y / max(length(r.xz), 0.05) * s)) * 0.85);
+  }
+  refl = mix(refl, vec3(0.035, 0.05, 0.03) * (ambientAt(vec3(0, 1, 0)) + 0.4 * sh * kSunCol), occ);
   vec3 H = normalize(V + uSun);
   vec3 lspec, lamp = lampLight(vPos, n, V, 400.0, 0.0, lspec);
-  vec3 glint = kSunSpec * pow(max(dot(n, H), 0.0), 500.0) * 30.0 * sh + lspec * 3.0;  // sun, moon and headlamps on the ripples
-  vec3 body = mix(vec3(0.05, 0.09, 0.07), vec3(0.008, 0.03, 0.035), smoothstep(0.0, 2.0, depth));
-  vec3 col = mix(body * (ambientAt(vec3(0, 1, 0)) + sh * kSunCol * 0.25 + lamp * 0.3), refl, fres) + glint;
-  float alpha = mix(smoothstep(0.0, 1.6, depth) * 0.88, 1.0, fres);
-  float foam = (1.0 - smoothstep(0.0, 0.1, depth)) * (0.4 + 0.6 * vnoise(p * 5.0 + uTime * 0.7));
-  // Over a mud bed (swamp, delta, the Muddy) the water is murky brown and its edge doesn't froth.
-  float mudBed = 1.0 - step(0.5, abs(texture(uTerrainTex, (p + 600.0 + 0.5) / uTerrainN).b - 8.0));
-  col = mix(col, vec3(0.045, 0.034, 0.02) * (ambientAt(vec3(0, 1, 0)) + sh * kSunCol * 0.3), mudBed * (1.0 - fres) * 0.6);
-  foam *= 1.0 - 0.8 * mudBed;
+  float nh = max(dot(n, H), 0.0);
+  vec3 glint = kSunSpec * (pow(nh, 700.0) * 45.0 + pow(nh, 70.0) * 0.9) * sh * (1.0 - 0.7 * murk) + lspec * 3.0;  // sun, moon and headlamps on the ripples
+  // The light through the water: red goes first, then green; mud stops all of it within a half metre.
+  vec3 sigma = mix(vec3(0.60, 0.16, 0.10), vec3(3.4, 3.0, 2.6), murk);
+  float vy = max(V.y, 0.0), cosr = sqrt(max(1.0 - (1.0 - vy * vy) / 1.78, 0.04));  // (the ray bent into the water)
+  float path = min(depth, 8.0) / cosr;
+  vec3 T = exp(-sigma * path);
+  vec3 body = mix(vec3(0.020, 0.080, 0.085), vec3(0.080, 0.046, 0.020), murk) * (irr + lamp * 0.3);
+  vec3 col = refl * fres + body * (1.0 - T) * (1.0 - fres) + glint;
+  vec3 keep = T * (1.0 - fres);
+  // Soft shore: fades in over the first hand's depth; a fringe of foam that laps in and out.
+  float edge = smoothstep(0.0, 0.12, depth);
+  col *= edge;
+  keep = 1.0 - edge * (1.0 - keep);
+  // (Foam by distance to the shore, not depth: a beach is a hand deep for metres.)
+  float foam = 0.0;
+  if (depth < 0.2) {
+    vec2 gd = vec2(groundAt(p + vec2(0.75, 0.0)) - groundAt(p - vec2(0.75, 0.0)), groundAt(p + vec2(0.0, 0.75)) - groundAt(p - vec2(0.0, 0.75))) / 1.5;
+    float dd = depth / max(length(gd), 0.03);  // metres to where the water ends
+    float lap = 0.22 + 0.12 * sin(uTime * 1.1 + vnoise(p * 0.7) * 6.28);
+    foam = (1.0 - smoothstep(lap * 0.3, lap + 0.1, dd)) * smoothstep(0.3, 0.7, vnoise(p * 7.0 + uTime * 0.35));
+    foam += (1.0 - smoothstep(0.0, 0.1, dd)) * 0.5;  // the wet line itself
+  }
   // White water where it runs fast and shallow.
-  float fast = smoothstep(0.9, 2.2, length(flow)) * (1.0 - smoothstep(0.3, 1.2, depth));
+  float fast = smoothstep(0.9, 2.2, fl) * (1.0 - smoothstep(0.3, 1.2, depth));
   foam = max(foam, fast * smoothstep(0.45, 0.8, mix(vnoise((p - o1) * 2.3), vnoise((p - o0) * 2.3), wb)));
-  col = mix(col, vec3(0.75, 0.78, 0.76) * (ambientAt(vec3(0, 1, 0)) + sh * kSunCol * 0.6), foam * 0.6);
-  alpha = max(alpha, foam * 0.7);
-  oCol = finishColor(col, vPos, alpha);
+  foam *= 1.0 - 0.8 * murk;
+  foam = clamp(foam, 0.0, 1.0) * 0.8;
+  col = mix(col, vec3(0.8, 0.84, 0.84) * (irr * 0.7 + 0.05), foam);
+  keep *= 1.0 - foam;
+  if (under) { col = body * 1.5 + refl * 0.04; keep = vec3(0.45, 0.6, 0.62) * edge + (1.0 - edge); }  // from below: a green-blue ceiling
+  float cov = max(1.0 - dot(keep, vec3(0.3333)), 0.02);
+  oCol = vec4(applyFog(col / cov, vPos) * cov, 1.0);
+  oKeep = vec4(keep, 1.0);
 })";
 
 // ---- Post-processing (full-screen triangle) ----
@@ -1618,11 +1834,11 @@ struct MeshOut {
         quad(p[2], p[6], p[7], p[3], col, mat);
     }
     // Ring between radii r0 and r1 at axial z, facing +z (facing = 1) or -z.
-    void annulus(double r0, double r1, double z, int segs, int facing, const V3& col, int mat) {
+    void annulus(double r0, double r1, double z, int segs, int facing, const V3& col, int mat, const V3& at = V3()) {
         for (int s = 0; s < segs; s++) {
             double a0 = 2 * M_PI * s / segs, a1 = 2 * M_PI * (s + 1) / segs;
-            V3 p0(std::cos(a0) * r0, std::sin(a0) * r0, z), p1(std::cos(a1) * r0, std::sin(a1) * r0, z);
-            V3 q0(std::cos(a0) * r1, std::sin(a0) * r1, z), q1(std::cos(a1) * r1, std::sin(a1) * r1, z);
+            V3 p0 = at + V3(std::cos(a0) * r0, std::sin(a0) * r0, z), p1 = at + V3(std::cos(a1) * r0, std::sin(a1) * r0, z);
+            V3 q0 = at + V3(std::cos(a0) * r1, std::sin(a0) * r1, z), q1 = at + V3(std::cos(a1) * r1, std::sin(a1) * r1, z);
             if (facing > 0) quad(p0, q0, q1, p1, col, mat);
             else quad(p0, p1, q1, q0, col, mat);
         }
@@ -1942,6 +2158,8 @@ void Renderer::updateObjects(const World& world) {
     if (pq) props.ensureLoaded(pq);
     props.setWorld(world, pq);
     const ScanCover cover = props.cover(pq);
+    scanCover_ = cover;
+    treeFade_.assign(world.trees.size(), 0.0f);
     propsApplied = settings.props;
     buildBoxes(world);
     {
@@ -2260,7 +2478,18 @@ void Renderer::buildFigures() {
                 for (int k : s > 0 ? order : order) v.push_back(vtx(q[k], n, (float)col.x, (float)col.y, (float)col.z, SM_CONCRETE));
             }
     };
+    for (const Placed& pl : frameModels)  // (a car's parts are cached by key; the jack, whose own param moves every frame, is not)
+        appendPlaced(v, pl, pl.bare || pl.variant >= 0 ? placedMesh(pl) : pl.set.empty() ? mk::modelMesh(pl.id) : mk::modelMesh(pl.id, pl.set));
+    const bool modelled = mk::findModel("person") != nullptr;
     for (const Figure& fg : figures) {
+        if (modelled) {  // the picked person (modelkit.h), posed for this frame
+            int jacket = 0;
+            double best = 1e9;
+            for (int i = 0; i < (int)mk::paintNames().size(); i++)
+                if (len(mk::paint(i) - fg.col) < best) best = len(mk::paint(i) - fg.col), jacket = i;
+            appendModel(v, mk::modelMesh("person", {{"swing", std::sin(fg.stride)}, {"jacket", jacket}}), fg.p, fg.yaw);
+            continue;
+        }
         const V3 f(std::cos(fg.yaw), 0, -std::sin(fg.yaw)), l(-f.z, 0, f.x), up(0, 1, 0);
         const V3 ax[3] = {f, up, l};
         const V3 skin(0.85, 0.66, 0.5), pants(0.22, 0.24, 0.3), boots(0.18, 0.13, 0.1);
@@ -2300,7 +2529,8 @@ void Renderer::buildWheelStyle(int style) {
     // Road wheel: low-profile tire on a big five-spoke alloy. Off-road wheel: a tall
     // all-terrain tire (35x12.50R17 proportions) with tread blocks and raised white
     // letters, on an eight-spoke rim.
-    const bool offroad = style == WHEEL_OFFROAD_BRONZE || style == WHEEL_OFFROAD_BLACK;
+    const bool steelWheel = style == WHEEL_STEEL;
+    const bool offroad = style == WHEEL_OFFROAD_BRONZE || style == WHEEL_OFFROAD_BLACK || steelWheel;
     const bool cover = style == WHEEL_HONDA_COVER, forged = style == WHEEL_FORGED;
     const int segs = 48;
     const double rimR = offroad ? 0.158 : cover ? 0.197 : forged ? 0.23 : 0.215;
@@ -2380,13 +2610,24 @@ void Renderer::buildWheelStyle(int style) {
 
     tireVertexCount[style] = (int)v.size();
     // Rim: barrel, outer lip, dished spokes, hub with lug nuts and a center cap.
-    const V3 alloy = forged ? V3(0.12, 0.13, 0.15) : cover ? V3(0.55, 0.56, 0.58) : style == WHEEL_OFFROAD_BRONZE ? V3(0.36, 0.27, 0.16)
+    const V3 alloy = steelWheel ? V3(0.86, 0.86, 0.83) : forged ? V3(0.12, 0.13, 0.15) : cover ? V3(0.55, 0.56, 0.58) : style == WHEEL_OFFROAD_BRONZE ? V3(0.36, 0.27, 0.16)
                    : style == WHEEL_OFFROAD_BLACK  ? V3(0.05, 0.05, 0.055)
                                                    : V3(0.62, 0.63, 0.66);
     const int rimMat = offroad || forged || cover ? SM_MATTE : SM_METAL;
     const V3 dark(0.12, 0.12, 0.13), chrome(0.85, 0.85, 0.87);
-    const int spokes = offroad ? 8 : forged ? 10 : cover ? 12 : 5;
+    const int spokes = steelWheel ? 0 : offroad ? 8 : forged ? 10 : cover ? 12 : 5;
     m.barrel(rimR, -0.104, 0.1, segs, true, offroad ? alloy * 0.7 : V3(0.3, 0.3, 0.32), rimMat);
+    if (steelWheel) {
+        // Pressed steel: a dished center disc welded in the barrel, a ring of round vent
+        // holes, painted white; a small chrome "dog dish" cap over the lugs.
+        m.annulus(0.075, rimR - 0.012, 0.072, segs, 1, alloy, SM_MATTE);
+        m.barrel(rimR - 0.012, 0.072, 0.095, segs, false, alloy, SM_MATTE);
+        for (int hole = 0; hole < 6; hole++) {
+            const double a = 2 * M_PI * hole / 6, hr = 0.022, rr = 0.5 * (0.075 + rimR - 0.012);
+            m.annulus(0.0, hr, 0.0735, 12, 1, V3(0.02, 0.02, 0.02), SM_MATTE, V3(std::cos(a) * rr, std::sin(a) * rr, 0));
+        }
+        m.annulus(0.0, 0.075, 0.074, 24, 1, V3(0.9, 0.9, 0.92), SM_CHROME);
+    }
     m.annulus(rimR - 0.012, rimR + 0.006, 0.104, segs, 1, alloy, rimMat);
     m.barrel(rimR - 0.012, 0.085, 0.104, segs, true, alloy, rimMat);
     if (offroad) m.annulus(rimR - 0.012, rimR - 0.004, 0.108, segs, 1, V3(0.02, 0.02, 0.02), SM_MATTE);  // dark beauty ring
@@ -2403,17 +2644,17 @@ void Renderer::buildWheelStyle(int style) {
         }
         m.hexa(p, alloy, rimMat);
     }
-    const double hubZ = offroad ? 0.08 : 0.06;
+    const double hubZ = steelWheel ? 0.076 : offroad ? 0.08 : 0.06;
     m.annulus(0.0, 0.058, hubZ, 20, 1, alloy, rimMat);
     m.barrel(0.058, 0.035, hubZ, 20, false, alloy, rimMat);
-    const V3 cap = offroad ? V3(0.03, 0.03, 0.03) : chrome;
+    const V3 cap = steelWheel ? chrome : offroad ? V3(0.03, 0.03, 0.03) : chrome;
     m.annulus(0.0, 0.026, hubZ + 0.01, 12, 1, cap, SM_CHROME);
     m.barrel(0.026, hubZ, hubZ + 0.01, 12, false, cap, SM_CHROME);
     if (cover) { // period Honda wheel cover, radial cooling slots and raised center
         m.annulus(0.0, rimR * 0.71, 0.100, segs, 1, alloy, SM_MATTE);
         m.annulus(rimR * 0.88, rimR, 0.100, segs, 1, alloy, SM_MATTE);
     }
-    const int lugs = offroad ? 6 : cover ? 4 : forged ? 1 : 5;
+    const int lugs = steelWheel ? 0 : offroad ? 6 : cover ? 4 : forged ? 1 : 5;
     for (int l = 0; l < lugs; l++) {
         double a = 2 * M_PI * (l + 0.5) / lugs;
         V3 c(std::cos(a) * 0.04, std::sin(a) * 0.04, 0);
@@ -2440,8 +2681,226 @@ void Renderer::buildWheelStyle(int style) {
     wheelVertexCount[style] = (int)v.size();
 }
 
+// One tread on one wheel style: the tire alone, built (like the wheel) for R = 0.32 and a
+// half-width of 0.12, its bead on that style's rim.
+void Renderer::buildTire(int style, int tread) {
+    const bool offStyle = style == WHEEL_OFFROAD_BRONZE || style == WHEEL_OFFROAD_BLACK || style == WHEEL_STEEL;
+    const double rimR = offStyle ? 0.158 : style == WHEEL_HONDA_COVER ? 0.197 : style == WHEEL_FORGED ? 0.23 : 0.215;
+    const bool knobby = tread == TIRE_ALL_TERRAIN || tread == TIRE_MUD_TERRAIN || tread == TIRE_SNOW || tread == TIRE_CHAINS;
+    const bool slick = tread == TIRE_RACE_SLICK;
+    std::vector<Vtx> v;
+    MeshOut m{v};
+    const int segs = 48;
+    // The carcass: a rounded profile from bead to bead. Knobby tires have a tall, rounded
+    // sidewall and their tread blocks stand on it; road tires a low, square shoulder.
+    static const double road[][2] = {{0.212, 0.104}, {0.23, 0.117}, {0.27, 0.122}, {0.302, 0.114}, {0.316, 0.098},
+                                     {0.32, 0.07},   {0.32, 0.0},   {0.32, -0.07}, {0.316, -0.098}, {0.302, -0.114},
+                                     {0.27, -0.122}, {0.23, -0.117}, {0.212, -0.104}};
+    static const double tall[][2] = {{0.155, 0.108}, {0.18, 0.122}, {0.23, 0.13},  {0.28, 0.126}, {0.305, 0.112},
+                                     {0.312, 0.09},  {0.312, 0.0},  {0.312, -0.09}, {0.305, -0.112}, {0.28, -0.126},
+                                     {0.23, -0.13},  {0.18, -0.122}, {0.155, -0.108}};
+    const int np = 13;
+    double prof[13][2];
+    for (int k = 0; k < np; k++) {
+        const double (*src)[2] = knobby ? tall : road;
+        const double r0 = knobby ? 0.155 : 0.212, rOut = knobby ? 0.312 : 0.32;
+        prof[k][0] = rimR + (src[k][0] - r0) * (rOut - rimR) / (rOut - r0);
+        prof[k][1] = src[k][1];
+        if (slick && (k == 4 || k == 8)) prof[k][0] += 0.003;  // (a squarer shoulder: all contact patch)
+    }
+    auto profNormal = [&](int k) {
+        int a = std::max(0, k - 1), b = std::min(np - 1, k + 1);
+        double tr = prof[b][0] - prof[a][0], tz = prof[b][1] - prof[a][1];
+        double l = std::sqrt(tr * tr + tz * tz);
+        return std::make_pair(-tz / l, tr / l);
+    };
+    const V3 rubber = slick ? V3(0.075, 0.075, 0.078) : V3(0.06, 0.06, 0.06);  // (a slick's scrubbed, greyer face)
+    for (int sg = 0; sg < segs; sg++) {
+        double a0 = 2 * M_PI * sg / segs, a1 = 2 * M_PI * (sg + 1) / segs;
+        for (int k = 0; k + 1 < np; k++) {
+            auto P = [&](double a, int pk) { return V3(std::cos(a) * prof[pk][0], std::sin(a) * prof[pk][0], prof[pk][1]); };
+            auto N = [&](double a, int pk) {
+                auto nn = profNormal(pk);
+                return V3(std::cos(a) * nn.first, std::sin(a) * nn.first, nn.second);
+            };
+            V3 p[4] = {P(a0, k), P(a1, k), P(a1, k + 1), P(a0, k + 1)};
+            V3 n[4] = {N(a0, k), N(a1, k), N(a1, k + 1), N(a0, k + 1)};
+            const int order[6] = {0, 2, 1, 0, 3, 2};
+            for (int o : order) v.push_back(vtx(p[o], n[o], (float)rubber.x, (float)rubber.y, (float)rubber.z, SM_TIRE));
+        }
+    }
+    // A raised block of tread: centred at angle a, half-angle `half`, from radius r0 up to r1, z0..z1.
+    auto block = [&](double a, double half, double r0, double r1, double z0, double z1, const V3& col = V3(0.06, 0.06, 0.06)) {
+        V3 p[8];
+        for (int b = 0; b < 8; b++) {
+            double aa = a + ((b & 1) ? half : -half), r = (b & 2) ? r1 : r0, z = (b & 4) ? z1 : z0;
+            p[b] = V3(std::cos(aa) * r, std::sin(aa) * r, z);
+        }
+        m.hexa(p, col, SM_TIRE);
+    };
+    // A dark band around the tread at z: a groove's shadow (road tires).
+    auto groove = [&](double z, double w) {
+        for (int sg = 0; sg < segs; sg++) {
+            double a0 = 2 * M_PI * sg / segs, a1 = 2 * M_PI * (sg + 1) / segs, r = 0.3205;
+            V3 p0(std::cos(a0) * r, std::sin(a0) * r, z - w), p1(std::cos(a1) * r, std::sin(a1) * r, z - w);
+            V3 q0(std::cos(a0) * r, std::sin(a0) * r, z + w), q1(std::cos(a1) * r, std::sin(a1) * r, z + w);
+            m.quad(p0, q0, q1, p1, V3(0.012, 0.012, 0.012), SM_MATTE);
+        }
+    };
+    if (tread == TIRE_STREET) {
+        for (double z : {-0.062, -0.022, 0.022, 0.062}) groove(z, 0.0045);
+        // Sipes across the shoulders.
+        for (int b = 0; b < 60; b++) {
+            const double a = 2 * M_PI * b / 60;
+            for (int sd = -1; sd <= 1; sd += 2) block(a, 0.004, 0.3195, 0.3215, sd > 0 ? 0.075 : -0.105, sd > 0 ? 0.105 : -0.075, V3(0.015, 0.015, 0.015));
+        }
+    } else if (tread == TIRE_SEMI_SLICK) {
+        for (double z : {-0.038, 0.038}) groove(z, 0.005);
+    } else if (slick) {
+        // A colored band round the sidewall (a race tire's compound marking).
+        for (int sg = 0; sg < segs; sg++) {
+            double a0 = 2 * M_PI * sg / segs, a1 = 2 * M_PI * (sg + 1) / segs;
+            const double r0 = 0.262, r1 = 0.274, z = 0.1225;
+            V3 p0(std::cos(a0) * r0, std::sin(a0) * r0, z), p1(std::cos(a1) * r0, std::sin(a1) * r0, z);
+            V3 q0(std::cos(a0) * r1, std::sin(a0) * r1, z), q1(std::cos(a1) * r1, std::sin(a1) * r1, z);
+            m.quad(p0, q0, q1, p1, V3(0.95, 0.78, 0.08), SM_MATTE);
+        }
+    } else if (tread == TIRE_ALL_TERRAIN || tread == TIRE_CHAINS) {
+        // Two staggered rows of blocks, and shoulder lugs wrapping onto the sidewalls.
+        const int blocks = 36;
+        for (int b = 0; b < blocks; b++) {
+            double a = 2 * M_PI * b / blocks, h = M_PI / blocks * 0.62;
+            for (int side = -1; side <= 1; side += 2) {
+                double shift = side * 0.25 * (2 * M_PI / blocks);
+                block(a + shift, h, 0.309, 0.322, side > 0 ? 0.004 : -0.052, side > 0 ? 0.052 : -0.004);
+                double zs = side * 0.118;
+                block(a + shift + side * 0.03, h * 0.8, 0.27, 0.312, std::min(zs, zs + side * 0.016), std::max(zs, zs + side * 0.016));
+            }
+        }
+        if (style == WHEEL_OFFROAD_BRONZE) {  // raised white letters
+            const V3 white(0.82, 0.82, 0.8);
+            for (int arc = 0; arc < 2; arc++)
+                for (int c = 0; c < 15; c++) {
+                    double a = (arc ? M_PI : 0) + 0.55 + c * 0.13, h = 0.035 * ((c % 3) ? 1.0 : 0.6);
+                    V3 p[8];
+                    for (int b = 0; b < 8; b++) {
+                        double aa = a + ((b & 1) ? h : -h), r = (b & 2) ? 0.255 : 0.215, z = (b & 4) ? 0.133 : 0.127;
+                        p[b] = V3(std::cos(aa) * r, std::sin(aa) * r, z);
+                    }
+                    m.hexa(p, white, SM_MATTE);
+                }
+        }
+    } else if (tread == TIRE_MUD_TERRAIN) {
+        // Big lugs with wide voids between them, angled in a V, standing proud; heavy shoulder
+        // lugs down the sidewall.
+        const int blocks = 20;
+        for (int b = 0; b < blocks; b++) {
+            double a = 2 * M_PI * b / blocks, h = M_PI / blocks * 0.52;
+            for (int side = -1; side <= 1; side += 2) {
+                double shift = side * 0.3 * (2 * M_PI / blocks);
+                block(a + shift, h, 0.306, 0.330, side > 0 ? 0.008 : -0.062, side > 0 ? 0.062 : -0.008);
+                double zs = side * 0.116;
+                block(a + shift + side * 0.05, h * 0.9, 0.24, 0.318, std::min(zs, zs + side * 0.022), std::max(zs, zs + side * 0.022));
+            }
+        }
+    } else if (tread == TIRE_SNOW) {
+        // Many small siped blocks in three staggered rows.
+        const int blocks = 52;
+        for (int b = 0; b < blocks; b++) {
+            double a = 2 * M_PI * b / blocks, h = M_PI / blocks * 0.66;
+            const double zs[3][2] = {{-0.10, -0.038}, {-0.03, 0.03}, {0.038, 0.10}};
+            for (int row = 0; row < 3; row++) {
+                double shift = (row - 1) * 0.33 * (2 * M_PI / blocks);
+                block(a + shift, h, 0.306, 0.326, zs[row][0], zs[row][1]);
+                // Two sipes across each block: thin dark slots.
+                for (double d : {-0.4, 0.4}) block(a + shift + d * h, 0.0025, 0.3255, 0.3268, zs[row][0] + 0.004, zs[row][1] - 0.004, V3(0.012, 0.012, 0.012));
+            }
+        }
+        // The mountain-snowflake mark on the outer sidewall, four times round.
+        for (int mk = 0; mk < 4; mk++) {
+            const double a = mk * M_PI / 2 + 0.4;
+            for (int spoke = 0; spoke < 3; spoke++) {
+                const double b = spoke * M_PI / 3;
+                const V3 c(std::cos(a) * 0.255, std::sin(a) * 0.255, 0.131);
+                const V3 d(std::cos(b) * 0.016, std::sin(b) * 0.016, 0);
+                V3 p[8];
+                const V3 side = norm(cross(d, V3(0, 0, 1))) * 0.0025;
+                for (int q = 0; q < 8; q++) p[q] = c + ((q & 1) ? d : d * -1.0) + ((q & 2) ? side : side * -1.0) + V3(0, 0, (q & 4) ? 0.002 : 0.0);
+                m.hexa(p, V3(0.85, 0.86, 0.88), SM_MATTE);
+            }
+        }
+    }
+    GenVertexArrays(1, &tireVao[style][tread]);
+    GenBuffers(1, &tireVbo[style][tread]);
+    setupVtxVao(tireVao[style][tread], tireVbo[style][tread]);
+    BufferData(GL_ARRAY_BUFFER, v.size() * sizeof(Vtx), v.data(), GL_STATIC_DRAW);
+    treadVertexCount[style][tread] = (int)v.size();
+}
+
+// Snow chains: cross links over the tread every few inches, and a side chain round each
+// shoulder holding them. (Drawn on a chained wheel with the tire's own matrix.)
+void Renderer::buildChains() {
+    std::vector<Vtx> v;
+    const V3 steel(0.55, 0.56, 0.58);
+    // A link from a to b: an oval loop of round wire, each turned a quarter from the last.
+    int linkN = 0;
+    auto link = [&](const V3& a, const V3& b, double r) {
+        const V3 d = b - a, c = (a + b) * 0.5;
+        const double L = len(d);
+        if (L < 1e-6) return;
+        const V3 ax = d / L, ref = std::fabs(ax.z) < 0.9 ? V3(0, 0, 1) : V3(1, 0, 0), ay = norm(cross(ref, ax)), az = cross(ax, ay);
+        const V3 side = linkN++ % 2 ? ay : az;
+        const double hl = L * 0.62, hw = std::max(r * 2.4, L * 0.3), wire = r * 0.85;
+        const int n = 8, sides = 3;
+        V3 p[n];
+        for (int i = 0; i < n; i++) {
+            const double t = 2 * M_PI * i / n;
+            p[i] = c + ax * (std::cos(t) * hl) + side * (std::sin(t) * hw);
+        }
+        auto ring = [&](int i, int j, V3& at, V3& nn) {
+            const V3 T = norm(p[(i + 1) % n] - p[(i + n - 1) % n]);
+            V3 out = p[i] - c;
+            out = norm(out - T * dot(out, T));
+            const V3 o2 = cross(T, out);
+            const double t = 2 * M_PI * j / sides;
+            nn = out * std::cos(t) + o2 * std::sin(t);
+            at = p[i] + nn * wire;
+        };
+        for (int i = 0; i < n; i++)
+            for (int j = 0; j < sides; j++) {
+                V3 q[4], nq[4];
+                ring(i, j, q[0], nq[0]), ring((i + 1) % n, j, q[1], nq[1]), ring((i + 1) % n, j + 1, q[2], nq[2]), ring(i, j + 1, q[3], nq[3]);
+                for (int k : {0, 1, 2, 0, 2, 3}) v.push_back(vtx(q[k], nq[k], (float)steel.x, (float)steel.y, (float)steel.z, SM_METAL));
+            }
+    };
+    // In order round the tire, so drawing the first part of it shows a chain part wrapped on.
+    const int cross = 14, segs = 56;
+    for (int k = 0; k < segs; k++) {
+        for (int sd = -1; sd <= 1; sd += 2) {
+            const double a0 = 2 * M_PI * k / segs, a1 = 2 * M_PI * (k + 1) / segs, r = 0.30, z = sd * 0.124;
+            link(V3(std::cos(a0) * r, std::sin(a0) * r, z), V3(std::cos(a1) * r, std::sin(a1) * r, z), 0.0045);
+        }
+        if (k % (segs / cross)) continue;
+        // A zig of links across the tread from one side chain to the other.
+        const double a = 2 * M_PI * k / segs;
+        for (int j = 0; j < 6; j++) {
+            const double z0 = -0.118 + 0.236 * j / 6, z1 = -0.118 + 0.236 * (j + 1) / 6, wob = (j % 2 ? 1 : -1) * 0.015;
+            const double r = 0.326;
+            link(V3(std::cos(a + wob) * r, std::sin(a + wob) * r, z0), V3(std::cos(a - wob) * r, std::sin(a - wob) * r, z1), 0.004);
+        }
+    }
+    GenVertexArrays(1, &chainVao);
+    GenBuffers(1, &chainVbo);
+    setupVtxVao(chainVao, chainVbo);
+    BufferData(GL_ARRAY_BUFFER, v.size() * sizeof(Vtx), v.data(), GL_STATIC_DRAW);
+    chainVertexCount = (int)v.size();
+}
+
 void Renderer::buildWheel() {
     for (int st = 0; st < WHEEL_STYLES; st++) buildWheelStyle(st);
+    for (int st = 0; st < WHEEL_STYLES; st++)
+        for (int tt = 0; tt < TIRE_TYPES; tt++) buildTire(st, tt);
+    buildChains();
     std::vector<Vtx> cal;
 
     // Parts that don't spin: brake caliper straddling the disc, and the hub carrier.
@@ -2524,37 +2983,59 @@ void Renderer::drawWheels(const Sim& sim, GLuint prog) {
     for (const Car& car : sim.cars) {
         if (car.wheels.empty()) continue;
         Frame fr = car.frame();
+        // The car's own tread on this wheel (and chains over it when they're on).
+        const int tread = std::min(std::max(car.spec->tireType, 0), TIRE_TYPES - 1);
+        auto drawTread = [&](int st, const M4& tm, double chain) {  // (chain: how much of one is wrapped on, 0..1)
+            uniformM4(prog, "uModel", tm);
+            BindVertexArray(tireVao[st][tread]);
+            DrawArrays(GL_TRIANGLES, 0, treadVertexCount[st][tread]);
+            if (chain > 0) {
+                BindVertexArray(chainVao);
+                DrawArrays(GL_TRIANGLES, 0, chain >= 1 ? chainVertexCount : (int)(chainVertexCount * chain / 3) * 3);
+            }
+        };
+        const int ci = (int)(&car - sim.cars.data());
         for (const Wheel& wh : car.wheels) {
+            // The wheel you're working on (handwork.h): slid out along its axle, a chain going on or off.
+            const bool worked = wheelWork.car == ci && wheelWork.wheel == (int)(&wh - car.wheels.data());
+            const V3 slide = worked ? norm(car.nodes[wh.outer].p - car.nodes[wh.inner].p) * wheelWork.out : V3();
+            const double chain = worked && wheelWork.chain >= 0 ? wheelWork.chain : wh.chained ? 1.0 : 0.0;
+            auto wm = [&](bool spin, double rs = 1.0, double vs = 0.0, double ws = 1.0) {
+                M4 m = wheelMatrix(car, wh, fr.up, spin, rs, vs, ws);
+                m.m[12] += (float)slide.x, m.m[13] += (float)slide.y, m.m[14] += (float)slide.z;
+                return m;
+            };
             const int st = std::min(std::max(wh.mounted ? wh.item.style : car.spec->wheelStyle, 0), WHEEL_STYLES - 1);
             BindVertexArray(wheelVao[st]);
             if (!wh.mounted) {
                 // Nothing on the hub but its rotor (the caliper below) and the studs: a sliver of rim face.
-                uniformM4(prog, "uModel", wheelMatrix(car, wh, fr.up, true, kBareHubR / wh.R));
+                uniformM4(prog, "uModel", wm(true, kBareHubR / wh.R));
                 DrawArrays(GL_TRIANGLES, tireVertexCount[st], wheelVertexCount[st] - tireVertexCount[st]);
             } else if (wh.debeaded) {  // the rim alone, the tire gone
-                uniformM4(prog, "uModel", wheelMatrix(car, wh, fr.up, true));
+                uniformM4(prog, "uModel", wm(true));
                 DrawArrays(GL_TRIANGLES, tireVertexCount[st], wheelVertexCount[st] - tireVertexCount[st]);
             } else if (wh.popped) {
                 // Smooth deflation animation: interpolate between inflated and flat
                 const double flatScale = (wh.rimR + 0.015) / wh.R;
                 double scale = (1.0 - wh.poppedAnim) * 1.0 + wh.poppedAnim * flatScale;
-                uniformM4(prog, "uModel", wheelMatrix(car, wh, fr.up, true, scale));
-                DrawArrays(GL_TRIANGLES, 0, tireVertexCount[st]);
-                uniformM4(prog, "uModel", wheelMatrix(car, wh, fr.up, true));
+                const M4 tm = wm(true, scale);
+                drawTread(st, tm, chain);
+                BindVertexArray(wheelVao[st]);
+                uniformM4(prog, "uModel", wm(true));
                 DrawArrays(GL_TRIANGLES, tireVertexCount[st], wheelVertexCount[st] - tireVertexCount[st]);
             } else {
                 // Match load-dependent sidewall sag; keep the rim full size and
                 // the compressed axis stationary while the tread rotates.
                 const double vertical = wh.loadedRadius(car.tirePsi, car.spec->tirePsi, car.spec->tireSoft) / wh.R;
                 const double bulge = 1 + 0.3 * (1 - vertical);
-                uniformM4(prog, "uModel", wheelMatrix(car, wh, fr.up, true, 1.0, vertical, bulge));
-                DrawArrays(GL_TRIANGLES, 0, tireVertexCount[st]);
-                uniformM4(prog, "uModel", wheelMatrix(car, wh, fr.up, true));
+                drawTread(st, wm(true, 1.0, vertical, bulge), chain);
+                BindVertexArray(wheelVao[st]);
+                uniformM4(prog, "uModel", wm(true));
                 DrawArrays(GL_TRIANGLES, tireVertexCount[st], wheelVertexCount[st] - tireVertexCount[st]);
             }
             BindVertexArray(caliperVao);
             // (The off-road rim is smaller for its tire: its brake is too.)
-            uniformM4(prog, "uModel", wheelMatrix(car, wh, fr.up, false, st == WHEEL_OFFROAD_BRONZE || st == WHEEL_OFFROAD_BLACK ? 0.72 : st == WHEEL_HONDA_COVER ? 0.82 : 1.0));
+            uniformM4(prog, "uModel", wheelMatrix(car, wh, fr.up, false, st == WHEEL_OFFROAD_BRONZE || st == WHEEL_OFFROAD_BLACK || st == WHEEL_STEEL ? 0.72 : st == WHEEL_HONDA_COVER ? 0.82 : 1.0));
             DrawArrays(GL_TRIANGLES, 0, caliperVertexCount);
         }
         // The spare where it rides (gone when it's been taken).
@@ -2634,7 +3115,7 @@ void Renderer::prepareCars(const Sim& sim, DebugView debug) {
         CarLamps& lamps = carLampState[ci];
         carLamps(car, t, beam, lamps);
         if (debug != DEBUG_BEAMS_ONLY) {
-            evalBody(car, t, dyn, opaque, glass);
+            if (debug != DEBUG_PARTS) evalBody(car, t, dyn, opaque, glass);
             const size_t first = partVerts.size();
             evalParts(car, t, partVerts);
             // Lamps modelled as glowing parts (the Jesko's LED strips, the 4Runner's bumper
@@ -2767,6 +3248,9 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
 
     // Scanned props: rebuild the scenery if their quality changed, pick the scatter round the camera.
     if (settings.props != propsApplied) updateObjects(sim.world);
+    static const bool noSeeThrough = std::getenv("CZ_NO_SEETHROUGH") != nullptr;  // (for comparing screenshots)
+    const SeeThrough seeThrough{view.eye, view.focus, view.hasFocus && !noSeeThrough, noSeeThrough ? 0.0f : view.fadeNear};
+    props.setSeeThrough(seeThrough);
     props.beginFrame(sim.world, view.eye, M4(), propsOk ? settings.props : 0, view.time);
 
     M4 proj = perspective(view.fovy, (float)view.width / std::max(1, view.height), 0.05f, 6000.0f);
@@ -2934,7 +3418,37 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         BindVertexArray(figVao);
         DrawArrays(GL_TRIANGLES, 0, figVertexCount);
     }
+    // The code-made trees the camera sees through (close to it, or across the line to the car) dither away:
+    // the few most hidden go to the shader as (x, z, reach, fade).
+    {
+        const SeeThrough& st = seeThrough;
+        float list[24 * 4];
+        int n = 0;
+        const double dt = clampd(view.time - fadeTime_, 0.0, 0.1);
+        fadeTime_ = view.time;
+        if (treeFade_.size() == sim.world.trees.size() && (st.nearScale > 0 || st.hasFocus))
+            for (size_t i = 0; i < sim.world.trees.size(); i++) {
+                const Tree& t = sim.world.trees[i];
+                if ((t.kind == 0 && scanCover_.pines) || (t.kind == 2 && scanCover_.snags)) continue;
+                float& f = treeFade_[i];
+                const bool far = std::fabs(t.base.x - st.eye.x) > 40 || std::fabs(t.base.z - st.eye.z) > 40;
+                f = far ? 0.0f : treefade::ease(f, treefade::target(st, t.base, t.height, t.radius), dt);
+                if (f < 0.02f) continue;
+                int at = n;
+                if (n < 24) n++;
+                else {  // (full: replace the least hidden if this one is more)
+                    at = 0;
+                    for (int k = 1; k < 24; k++)
+                        if (list[k * 4 + 3] < list[at * 4 + 3]) at = k;
+                    if (list[at * 4 + 3] >= f) continue;
+                }
+                list[at * 4] = (float)t.base.x, list[at * 4 + 1] = (float)t.base.z, list[at * 4 + 2] = (float)(t.radius * 1.1 + 0.4), list[at * 4 + 3] = f;
+            }
+        Uniform1i(uniformLocation(progLit, "uTreeFadeN"), n);
+        if (n) Uniform4fv(uniformLocation(progLit, "uTreeFade"), n, list);
+    }
     drawBatches(treeVao, treeBatches, vp, false);
+    Uniform1i(uniformLocation(progLit, "uTreeFadeN"), 0);
     drawBatches(sceneryVao, sceneryBatches, vp, false);
     props.draw(vp, [&](GLuint prog) {
         setLighting(prog);
@@ -2988,7 +3502,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         uniformM4(progWater, "uModel", m4identity());
         bindTerrainTex(progWater);
         Enable(GL_BLEND);
-        BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        BlendFunc(GL_ONE, 0x88F9);  // GL_SRC1_COLOR: dual-source, the surface's light plus the bed dimmed per channel
         DepthMask(0);
         BindVertexArray(waterVao);
         DrawArrays(GL_TRIANGLES, 0, waterVertexCount);
@@ -3007,7 +3521,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         Disable(GL_BLEND);
     }
 
-    if (debug != DEBUG_OFF) {
+    if (debug != DEBUG_OFF && debug != DEBUG_PARTS) {
         // X-ray: beams colored by what they are (body shell dim, frame orange, engine
         // yellow, suspension cyan, springs magenta, steering blue, drive shafts white).
         // Beams-only: colored by strain (blue = compressed, green = relaxed, red =

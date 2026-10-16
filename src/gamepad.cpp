@@ -169,6 +169,7 @@ void Logic::update(const Raw& raw, Mode ctx, double dt) {
             in.handbrake = D(B_A) || D(B_B);
             in.interact = D(B_X);  // (on foot; driving, X is the gear down tap above)
             in.drop = P(B_B);
+            in.inventory = P(B_Y);  // (driving, Y is the gear up tap above)
             flick_ = false;
         }
         in.steerStick = std::fabs(L.x) > 0;
@@ -222,6 +223,7 @@ void Logic::update(const Raw& raw, Mode ctx, double dt) {
     }
     if (P(B_A)) tap(SC_RETURN);
     if (P(B_B) || P(B_START)) tap(SC_ESCAPE);
+    if (P(B_Y)) tap(SC_B);  // (the garage: buy the part, at a station in a career)
 }
 
 bool Logic::apply(Car& c, double dt) {
@@ -313,7 +315,7 @@ std::vector<std::pair<std::string, std::string>> helpRows(Style s) {
         {"LEFT STICK", "STEER (FULL LOCK CRAWLING, GENTLE AT SPEED)"},
         {rt + " / " + lt, "THROTTLE / BRAKE (" + lt + " AT A STOP: REVERSE)"},
         {n(B_A) + " OR " + n(B_B), "HANDBRAKE"},
-        {n(B_X) + " / " + n(B_Y), "SHIFT DOWN / UP (MANUAL)"},
+        {n(B_X) + " / " + n(B_Y), "SHIFT DOWN / UP (ON FOOT: HOLD " + n(B_X) + " TO WORK, " + n(B_Y) + " INVENTORY)"},
         {"RIGHT STICK", "LOOK AROUND (RECENTRES ON ITS OWN)"},
         {"R3 (HOLD)", "LOOK BACK (LET GO: RESET THE VIEW)"},
         {n(B_RB), "CAMERA: CHASE / ORBIT / COCKPIT / DRONE"},

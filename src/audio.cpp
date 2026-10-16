@@ -35,7 +35,7 @@ void Audio::setNearbyEngines(const Sim& sim, const V3& listener, const V3& right
         out.engine = EngineInput{(float)(c.engineDead || sim.paused ? 0 : c.rpm) * timeScale,
             (float)clampd(c.throttle * c.tcCut, 0, 1), (float)c.boost,
             v.cylinders, (int)v.induction, (float)v.displacement, (float)v.redline, v.flatPlane,
-            (uint8_t)engineSamples::forVehicle(v)};
+            (uint8_t)engineSamples::forVehicle(v), voiceFor(v)};
         out.gain = (float)(0.55 / (1 + distance * distance / 144));
         out.pan = (float)clampd(distance > 1e-6 ? dot(offset / distance, right) : 0, -1, 1);
         distances[slot] = distance;
@@ -153,8 +153,9 @@ void Audio::render(float* out, int frames) {
     const float hissSmooth = 1.0f - std::exp(-dt * 100.0f);
     const float hissLowA = 1.0f - std::exp(-2 * (float)M_PI * std::min(1500.0f, 0.10f / dt) * dt);
     const float hissHighA = 1.0f - std::exp(-2 * (float)M_PI * std::min(3200.0f, 0.20f / dt) * dt);
+    const EngineTone voice{vExhaust_, vMuffler_, vLope_, vIntake_, vMech_, vRasp_, vCrackle_, vSeed_, vRumble_, vRoar_};
     const EngineInput engineInput{tRpm, tLoad, tBoost, (int)cyl_, (int)induction_, (float)liters_, (float)redline_, (bool)flatPlane_,
-                                 (uint8_t)std::clamp((int)recording_, 0, engineSamples::kBanks - 1)};
+                                 (uint8_t)std::clamp((int)recording_, 0, engineSamples::kBanks - 1), voice};
     const auto* localBank = recordings_.bank(engineInput.recording);
     updateRemoteVoices();
     const float smooth = 1.0f - std::exp(-dt * 30.0f);
@@ -248,7 +249,7 @@ void Audio::render(float* out, int frames) {
     // Leave space for engine detail during hard acceleration and impacts.
     const float duck = 1 - 0.25f * level(tLoad) - 0.25f * std::min(1.0f, thumpEnv_);
     const float mv = level(musicVol_) * duck;
-    music_.render(out, frames, musicMap_, mv);
+    music_.render(out, frames, musicMap_, mv, musicBiome_);
     ambience_.render(out, frames, rate_, {(int)ambienceMap_, (float)hours_, level(ambienceVol_) * sceneGain, exposure});
     const float volumeA = 1 - std::exp(-dt / 0.025f);
     for (int i = 0; i < frames; i++) {

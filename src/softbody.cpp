@@ -45,16 +45,24 @@ double tireCurve(double s, double bite, double keep) {
 // Each tread on each surface, against its grip on dry pavement (PAVED, GRASS, DIRT, ROCK,
 // SCREE, GRAVEL, SAND, MUD, SNOW, ICE, WET). Semi-slicks have no voids for water, mud or
 // snow to go; knobbly tires bite into loose stuff; big mud lugs clear mud but have less
-// rubber on ice and wet pavement.
-const double kTreadGrip[4][SURF_COUNT] = {
+// rubber on ice and wet pavement. A race slick is all rubber: on loose ground it rolls on
+// top like a ball bearing, and water can't get out from under it. A winter tire's soft,
+// siped blocks hold snow (snow grips snow) and its sipes' edges ice. Chains dig into ice,
+// packed snow and mud, but on pavement only the links touch: steel on asphalt.
+// (The tire's own peak grip, VehicleSpec::tireGrip, is on top of this.)
+const double kTreadGrip[TIRE_TYPES][SURF_COUNT] = {
     {1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 0.95, 0.85, 0.90, 1.00, 1.00},  // street
     {1.00, 0.75, 0.80, 0.95, 0.80, 0.80, 0.70, 0.50, 0.55, 0.80, 0.72},  // semi-slick
     {1.00, 1.08, 1.08, 1.00, 1.08, 1.08, 1.10, 1.20, 1.15, 1.00, 0.95},  // all-terrain
     {1.00, 1.12, 1.12, 1.00, 1.12, 1.10, 1.08, 1.45, 1.05, 0.90, 0.88},  // mud-terrain
+    {1.00, 0.55, 0.62, 0.92, 0.55, 0.60, 0.50, 0.32, 0.30, 0.55, 0.50},  // race slick
+    {1.00, 1.04, 1.04, 0.96, 1.04, 1.04, 1.00, 1.05, 1.55, 1.75, 1.05},  // snow (winter)
+    {1.00, 1.12, 1.18, 0.88, 1.22, 1.18, 0.92, 1.42, 1.95, 3.20, 0.95},  // chains
 };
 // How stiff the tread is (how quickly grip builds with slip): a semi-slick's shallow
-// tread barely squirms, tall lugs do.
-const double kTreadBite[4] = {1.0, 1.4, 1.0, 0.85};
+// tread barely squirms, a slick not at all; tall lugs and soft winter blocks do; chains
+// bite at once.
+const double kTreadBite[TIRE_TYPES] = {1.0, 1.4, 1.0, 0.85, 1.7, 0.9, 1.25};
 
 const V3 kPalette[] = {
     {0.80, 0.16, 0.10}, {0.14, 0.34, 0.78}, {0.90, 0.72, 0.16}, {0.88, 0.88, 0.86}, {0.16, 0.55, 0.30},
@@ -457,6 +465,7 @@ void Car::computeForces(double h, const World& w) {
         }
     }
 
+    gateServo(h);
     engineBlockContact(h);
     panelBodyContact(h);
     wheelBodyContact(h);
@@ -882,18 +891,24 @@ bool Car::wheelPowered(const Wheel& wh) const {
 
 // Applies a pure torque to a set of nodes: forces F_i = alpha x d_i that sum to zero and
 // whose moment is exactly `torque` (alpha = I^-1 torque, I = the set's geometric inertia).
-void Car::applyTorque(const std::vector<int>& set, const V3& torque) {
+void Car::applyTorque(const std::vector<int>& set, const V3& torque, bool byMass) {
     if (dot(torque, torque) < 1e-12 || set.size() < 3) return;
+    // byMass: spin the set as the rigid piece it is (each node pushed in proportion to its
+    // mass, about the centre of mass), so the moment turns it without bending it.
     V3 c;
-    for (int i : set) c += nodes[i].p;
-    c = c / (double)set.size();
+    double M = 0;
+    for (int i : set) {
+        const double m = byMass ? nodes[i].m : 1.0;
+        c += nodes[i].p * m, M += m;
+    }
+    c = c / M;
     M3 I;
     for (int i : set) {
         V3 d = nodes[i].p - c;
-        double dd = dot(d, d);
-        I.c[0] += V3(dd - d.x * d.x, -d.y * d.x, -d.z * d.x);
-        I.c[1] += V3(-d.x * d.y, dd - d.y * d.y, -d.z * d.y);
-        I.c[2] += V3(-d.x * d.z, -d.y * d.z, dd - d.z * d.z);
+        double dd = dot(d, d), m = byMass ? nodes[i].m : 1.0;
+        I.c[0] += V3(dd - d.x * d.x, -d.y * d.x, -d.z * d.x) * m;
+        I.c[1] += V3(-d.x * d.y, dd - d.y * d.y, -d.z * d.y) * m;
+        I.c[2] += V3(-d.x * d.z, -d.y * d.z, dd - d.z * d.z) * m;
     }
     double tr = I.c[0].x + I.c[1].y + I.c[2].z;
     if (tr < 1e-6) return;
@@ -901,7 +916,7 @@ void Car::applyTorque(const std::vector<int>& set, const V3& torque) {
     I.c[1].y += tr * 1e-3;
     I.c[2].z += tr * 1e-3;
     V3 alpha = inverseSym(I) * torque;
-    for (int i : set) nodes[i].f += cross(alpha, nodes[i].p - c);
+    for (int i : set) nodes[i].f += cross(alpha, nodes[i].p - c) * (byMass ? nodes[i].m : 1.0);
 }
 
 // Points sampled on a skin triangle for the tire to meet (barycentric weights): the
@@ -1043,6 +1058,8 @@ void Car::wheelBodyContact(double h) {
         }
     }
 }
+
+constexpr double kShaftBuildRate = 20;  // per second: torque at the hubs, in multiples of the weakest shaft's limit
 
 void Car::wheelStep(double h, const World& w) {
     // Half shafts. A wheel spun or stopped from outside (a test, a reset, the network)
@@ -1190,7 +1207,26 @@ void Car::wheelStep(double h, const World& w) {
         }
     if (tcOn && brake < 0.05 && gear != 0) dragAssist = clampd(dragAssist + h * 20.0 * (maxDrag - 0.1), 0.0, 0.35);
     else dragAssist = 0;
-    double thr = shiftTimer > 0 || engineDead ? 0.0 : std::max(throttle * tcCut, dragAssist);
+    // A stab of the pedal doesn't put the engine's whole torque on the shafts in one 0.5 ms
+    // step: the manifold fills and the revs build. Fed in as a step, it rings the half shafts
+    // (a spring: the first swing is twice the steady torque) and, through a crawler's 70:1
+    // stack, snaps a CV axle the instant the pedal reaches the floor with nothing for the tires
+    // to have done yet. So the torque at the hubs can build no faster than
+    // kShaftBuildRate x the weakest shaft's limit per second (a 13 kN*m demand on a 6.5 kN*m CV
+    // takes 0.1 s). Where full throttle can't overload a shaft, which is every stock truck,
+    // it's untouched.
+    // Lifting off, or a shift's cut, is immediate.
+    {
+        const double pedal = std::max(throttle * tcCut, dragAssist);
+        double rise = 1e9;
+        if (spec->shaftLimit > 0) {
+            const double demand = peakTorque(*spec) * std::fabs(ratio) * 0.92 / std::max(nd, 1);
+            const double weakest = 0.65 * spec->shaftLimit;
+            if (demand > weakest) rise = kShaftBuildRate * weakest / demand;
+        }
+        throttleFill = pedal > throttleFill ? std::min(pedal, throttleFill + h * rise) : pedal;
+    }
+    double thr = shiftTimer > 0 || engineDead ? 0.0 : throttleFill;
     // Speed limiter (the ECU): eases the throttle off over the last 3 km/h. (On the road
     // speed it filters, ~0.3 s: a live axle hopping on its springs mustn't pulse the throttle.)
     if (spec->speedLimit > 0 && nd) {
@@ -1428,14 +1464,21 @@ void Car::wheelStep(double h, const World& w) {
             // sooner in a fast corner and the rim is closer to the rocks.
             const double psiDrop = spec->tirePsi - tirePsi;
             const SurfaceInfo& si = surfaceInfo(ct.surface);
-            const int tread = std::min(std::max(spec->tireType, 0), 3);
+            // Chains over the tire: they do the gripping. Run fast on them and they let go: they
+            // snap after ~2 s over 60 km/h (they're rated for ~50).
+            if (wh.chained) {
+                const double v = std::fabs(wh.omega) * R;
+                wh.chainStrain = v > 16.7 ? wh.chainStrain + (float)h : std::max(0.0f, wh.chainStrain - (float)h);
+                if (wh.chainStrain > 2.0f) wh.chained = false, wh.chainStrain = 0, chainsSnapped++;
+            }
+            const int tread = wh.chained ? (int)TIRE_CHAINS : std::min(std::max(spec->tireType, 0), TIRE_TYPES - 1);
             double grip = si.grip * kTreadGrip[tread][ct.surface];
             if (ct.surface != SURF_PAVED && ct.surface != SURF_WET && ct.surface != SURF_ICE) grip *= (1 + 0.012 * psiDrop) * spec->looseGrip;
             // Mud packed into the tread turns it into a slick.
-            grip *= 1 - (tread == TIRE_MUD_TERRAIN ? 0.25 : 0.4) * wh.clog;
+            grip *= 1 - (tread == TIRE_MUD_TERRAIN ? 0.25 : tread == TIRE_CHAINS ? 0.15 : tread == TIRE_RACE_SLICK ? 0.5 : 0.4) * wh.clog;
             // Standing water: past ~80 km/h the tread can't push it out of the way fast
             // enough and the tire rides up on it (aquaplaning).
-            if (ct.surface == SURF_WET) grip *= 1 - (tread == TIRE_SEMI_SLICK ? 0.6 : 0.45) * smoothstep(22, 40, len(vc));
+            if (ct.surface == SURF_WET) grip *= 1 - (tread == TIRE_RACE_SLICK ? 0.75 : tread == TIRE_SEMI_SLICK ? 0.6 : tread == TIRE_SNOW ? 0.35 : 0.45) * smoothstep(22, 40, len(vc));
             const double bite = si.bite * kTreadBite[tread];
             wh.bite = (float)bite;
             const double tireK = wh.radialK(tirePsi, spec->tirePsi, spec->tireSoft);
@@ -1554,15 +1597,40 @@ void Car::wheelStep(double h, const World& w) {
                 if (ct.surface == SURF_MUD) wh.clog = (float)std::min(1.0, wh.clog + h * roll * (mudLugs ? 0.03 : 0.06));
                 wh.clog = (float)std::max(0.0, wh.clog - h * wh.clog * (std::max(0.0, roll - 6) * (mudLugs ? 0.5 : 0.2) + (ct.surface == SURF_MUD ? 0 : roll * 0.03)));
             }
-            a.f += F * 0.5;
-            b.f += F * 0.5;
+            // An independent corner's knuckle is one rigid piece: the road's push goes into all of
+            // it (by mass), plus the moment of it acting at the hub. Pushed into the two hub nodes
+            // alone, the knuckle's own beams had to carry it out to the ball joints and steering
+            // arm, and flexed: the wheel toed in and out as the cornering load rocked from side
+            // to side. On grippy tires that fed the body's roll: the Jesko on race slicks rocked
+            // itself into a 3 Hz wobble at 80 mph. (A live axle's assembly is the whole housing,
+            // both wheels: there the push stays at the hub.)
+            const bool independent = (wh.front ? spec->frontSusp : spec->rearSusp) != SOLID_AXLE;
+            V3 extraTau;
+            if (independent && !wh.detached && wh.assembly.size() >= 3) {
+                double M = 0;
+                V3 cm;
+                for (int i : wh.assembly) M += nodes[i].m, cm += nodes[i].p * nodes[i].m;
+                cm = cm / M;
+                // (The ground's push straight up stays at the hub: it's the tire's spring.)
+                const V3 Fn = F - Ft;
+                a.f += Fn * 0.5;
+                b.f += Fn * 0.5;
+                for (int i : wh.assembly) nodes[i].f += Ft * (nodes[i].m / M);
+                extraTau = cross(c - cm, Ft);  // (the force acts at the hub, not the assembly's centre of mass)
+            } else {
+                a.f += F * 0.5;
+                b.f += F * 0.5;
+            }
             // The road pushes on the tire at the ground, not at the hub: the extra moment
             // (cornering force times wheel radius) leans on the knuckle and the suspension,
             // which is what rolls the body. Its part along the axle spins the wheel instead.
             V3 arm = -n * (R - pen);
             V3 tau = cross(arm, Ft);
             tau -= axis * dot(tau, axis);
-            if (!wh.detached) applyTorque(wh.assembly, tau);
+            tau += extraTau - axis * dot(extraTau, axis);
+            // (On a knuckle, spread by mass, so it turns it as the one rigid piece it is: spread
+            // evenly, its light ball-joint nodes took as much as the heavy hub and it bent instead.)
+            if (!wh.detached) applyTorque(wh.assembly, tau, independent);
             // The studs carry the moment of a sideways shove at the tread (a curb or a rock's
             // edge levering the wheel off its hub face); squeezed straight in on its face (lying
             // on its side) the hub takes it. As the sideways force at the tread that would make
@@ -1966,6 +2034,10 @@ void Car::updateStats() {
         else if (hinges > 0 && othersLeft == 0) p.state = 1;
         else if (hinges == 0 && othersLeft * 3 < holding) p.state = 1;  // hanging by a clip or two
         else p.state = 0;
+        if (p.hand) {  // opened by hand (trunk.cpp): that's using it, not damage, while a hinge holds
+            if (hingesLeft > 0) p.state = 0;
+            else p.hand = false;
+        }
         if (p.state != 0)  // an open door's frame swings away from its seal
             for (int pi : p.pins)
                 if (pins[pi].kind == PIN_SEAL) pins[pi].broken = true;
@@ -2007,14 +2079,19 @@ void Sim::setup() {
     const auto& cat = vehicleCatalog();
     cars.clear();
     ropes.clear();
+    setAnchors.clear();
+    refillAnchors();
     cars.reserve(kMaxBodies);
     colorIndex = 0;
-    // You in the Civic, the others parked beside you (on the proving ground's pad, or at
-    // the mountain's trailhead).
+    // You in the first of the lineup, the others parked beside you (on the proving ground's
+    // pad, or at the mountain's trailhead).
+    std::vector<int> order = lineup;
+    if (order.empty())
+        for (int i = 0; i < (int)cat.size(); i++) order.push_back(i);
     auto at = [&](const V3& p) { return V3(p.x, world.map == MAP_PROVING_GROUND ? 0.02 : world.clearY(p.x, p.z) + 0.05, p.z); };
-    addCar(cat[0], at(world.spawn), world.spawnYaw, nextColor());
-    for (size_t k = 0; k < world.parking.size() && k + 1 < cat.size(); k++)
-        addCar(cat[k + 1], at(world.parking[k]), world.parkingYaw, nextColor());
+    addCar(cat[order[0]], at(world.spawn), world.spawnYaw, nextColor());
+    for (size_t k = 0; k < world.parking.size() && k + 1 < order.size(); k++)
+        addCar(cat[order[k + 1]], at(world.parking[k]), world.parkingYaw, nextColor());
     for (size_t i = 1; i < cars.size(); i++) cars[i].handbrake = 1;
     player = 0;
     if (world.crashProps) placeProps();
@@ -2023,6 +2100,7 @@ void Sim::setup() {
 void Sim::setupEmpty() {
     cars.clear();
     ropes.clear();
+    setAnchors.clear();
     cars.reserve(kMaxBodies);
     colorIndex = 0;
     player = 0;
@@ -2076,6 +2154,8 @@ int Sim::advance(double realDt, int maxSubsteps) {
         n++;
     }
     if (n == maxSubsteps) accum = 0;  // can't keep up: slow down rather than spiral
+    for (Car& c : cars)
+        if (c.gate.dir != 0) c.gateStep(realDt * timeScale);
     wrapAround();
     return n;
 }
@@ -2115,7 +2195,30 @@ void Sim::wrapAround() {
         if (r.a.kind != ANCHOR_CAR) r.a.p += d;
         if (r.b.kind != ANCHOR_CAR) r.b.p += d;
     }
+    for (SetAnchor& sa : setAnchors) sa.p += d;
     wrapShift += dx;
+}
+
+// A jack under a corner: its saddle (under the axle or lower arm, just inboard of the tire)
+// pushes the hub up (never pulls), stiff and damped, as high as it's been worked (interact.cpp),
+// so the corner rises off the ground and stays there.
+void Sim::jackForces() {
+    for (Car& c : cars) {
+        if (c.remote || c.sleeping || !c.jackPlaced || c.jackWheel < 0 || c.jackWheel >= (int)c.wheels.size()) continue;
+        const Wheel& wh = c.wheels[c.jackWheel];
+        if (wh.detached) continue;
+        Node* hub[2] = {&c.nodes[wh.inner], &c.nodes[wh.outer]};
+        // The saddle's under the axle or arm just inboard of the tire (Car::jackPoint): it
+        // stands on the ground there, and the hub rides as far above it as it did going under.
+        const V3 foot = c.jackPoint(c.jackWheel);
+        const double top = world.height(foot.x, foot.z) + c.jackBase + c.jackHeight + c.jackDrop(c.jackWheel);
+        for (Node* n : hub) {
+            const double gap = top - n->p.y;
+            if (gap <= 0) continue;
+            const double f = 1.5e5 * gap - 4000 * n->v.y;
+            if (f > 0) n->f.y += std::min(f, 3e4);
+        }
+    }
 }
 
 void Sim::substep() {
@@ -2184,6 +2287,7 @@ void Sim::substep() {
     }
 
     if (!ropes.empty()) ropeForces();
+    jackForces();
     if (!looseWheels.empty()) looseWheelForces();
 
     for (int i = 0; i < N; i++) {
@@ -2547,7 +2651,10 @@ void Sim::aiDrive(int self, double dt) {
     // ---- Speed: bends ahead, then car following ------------------------------
     // Tall, heavy vehicles corner more gently.
     // (A tube-frame buggy's 40 in tires and long travel top out at ~0.6 g: it drives the loop gently.)
-    const double height = spec->layerY.back(), aLat = std::min(clampd(6.5 - 3.0 * (height - 1.4) - (c.mass - 1300) / 800, 3.2, 5.5), spec->openFrame && spec->wheelRadius > 0.45 ? 3.3 : 9.0);
+    // (And on old or soft tires, gentler again: what's left of the grip, against ~0.72 for a
+    // modern all-terrain.)
+    const double tireK = std::min(1.0, spec->tireGrip * spec->lateralGrip / 0.72);
+    const double height = spec->layerY.back(), aLat = std::min(clampd(6.5 - 3.0 * (height - 1.4) - (c.mass - 1300) / 800, 3.2, 5.5) * tireK, spec->openFrame && spec->wheelRadius > 0.45 ? 3.3 : 9.0);
     const double decel = aLat * 0.75;
     auto bendSpeed = [&](int from) {  // max speed for the ~10 m of road starting at `from`
         double seg = 0;
@@ -2667,12 +2774,12 @@ void Sim::drive(bool up, bool down, bool left, bool right, bool hb, double dt) {
     // go is as quick as ever.)
     double rate = (target == 0 || target * c.steerInput < 0) ? 5.0 : 2.5 * std::min(1.0, 40.0 / std::max(1.0, speed));
     c.steerInput += clampd(target - c.steerInput, -rate * dt, rate * dt);
-    // Keys are all or nothing, so full key steers to what the tires can hold at this
-    // speed (a driver's hands would): the road-wheel angle for ~85% of the car's grip on
-    // this surface (downforce included), plus the tires' slip, plus however far the car is
-    // already sliding so there's lock left to catch it. At parking speeds that's full lock;
-    // at 130 km/h a few degrees.
-    {
+    if (steeringAssist) {
+        // Steering assist: full key steers to what the tires can hold at this speed (a driver's
+        // hands would): the road-wheel angle for ~85% of the car's grip on this surface
+        // (downforce included), plus the tires' slip, plus however far the car is already
+        // sliding so there's lock left to catch it. At parking speeds that's full lock; at
+        // 130 km/h a few degrees.
         double grip = 0;
         int n = 0;
         for (const Wheel& wh : c.wheels)
@@ -2687,6 +2794,9 @@ void Sim::drive(bool up, bool down, bool left, bool right, bool hb, double dt) {
         const double catchLock = c.steerInput * beta > 0 ? std::fabs(beta) : 0.0;
         const double limit = std::atan(c.wheelbase * aMax / std::max(1.0, speed * speed)) + 0.045 + catchLock;
         c.steer = c.steerInput * std::min(0.6, limit);
+    } else {
+        // Simulation mode: full lock at all speeds (0.6 rad = 34 degrees).
+        c.steer = c.steerInput * 0.6;
     }
 
     c.throttle = c.brake = 0;
@@ -2759,6 +2869,7 @@ void Sim::pilotStep(int i, double dt) {
 void Sim::respawnPlayer() {
     Car& c = cars[player];
     dropRopes(player);
+    refillAnchors();  // (a full reset: sandbox gear comes back too)
     c.respawn(c.spawnPos, c.spawnYaw);
     if (!c.isProp()) c.setDown(world);
     accum = 0;

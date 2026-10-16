@@ -6,11 +6,12 @@ CXXFLAGS ?= -O2 -march=native
 CXXFLAGS += -std=c++17 -Wall -Wextra
 LDLIBS   := -l:libSDL2-2.0.so.0 -lpthread -lm
 
-PHYS     := src/perf.cpp src/physics_workers.cpp src/collision.cpp src/props.cpp src/jobs.cpp src/walker.cpp src/softbody.cpp src/recovery.cpp src/net.cpp src/level.cpp src/levels_builtin.cpp src/levelrun.cpp src/editcore.cpp src/autopilot.cpp src/pilotsense.cpp src/carbuild.cpp src/world.cpp src/mountain.cpp src/freeway.cpp src/frontier.cpp src/backcountry.cpp src/vehicles.cpp src/mods.cpp src/gamepad.cpp src/platform.cpp src/tires.cpp src/interact.cpp src/vtools.cpp
-SCEN     := tests/perf.cpp tests/drivetrain.cpp tests/net_state.cpp tests/collision.cpp tests/props.cpp tests/jobs.cpp tests/walker.cpp tests/editor.cpp tests/levels.cpp tests/circuit.cpp tests/frontier.cpp tests/backcountry.cpp tests/freeway.cpp tests/surfaces.cpp tests/handling.cpp tests/harness.cpp tests/scenarios.cpp tests/components.cpp tests/offroad.cpp tests/recovery.cpp tests/net.cpp tests/autopilot.cpp tests/nearby.cpp tests/gamepad.cpp tests/tires.cpp tests/vtools.cpp
-GAME_SRC := src/main.cpp src/gamepad_sdl.cpp src/editor.cpp src/coop.cpp src/gl.cpp src/gpu.cpp src/render.cpp src/carvisual.cpp src/bodyshell.cpp src/scenery.cpp src/menu.cpp src/fx.cpp src/engine_samples.cpp src/engineaudio.cpp src/audio.cpp src/music.cpp src/ambience.cpp src/daylight.cpp src/lights.cpp src/groundtex.cpp src/groundshader.cpp src/propdraw.cpp $(PHYS) $(SCEN)
+MODELS   := $(sort $(wildcard src/models/*.cpp))
+PHYS     := src/modelkit.cpp $(MODELS) src/perf.cpp src/physics_workers.cpp src/collision.cpp src/props.cpp src/jobs.cpp src/walker.cpp src/softbody.cpp src/recovery.cpp src/net.cpp src/level.cpp src/levels_builtin.cpp src/levelrun.cpp src/editcore.cpp src/autopilot.cpp src/pilotsense.cpp src/carbuild.cpp src/world.cpp src/sections.cpp src/mountain.cpp src/freeway.cpp src/frontier.cpp src/backcountry.cpp src/vehicles.cpp src/mods.cpp src/gamepad.cpp src/platform.cpp src/tires.cpp src/interact.cpp src/fixes.cpp src/carparts.cpp src/vtools.cpp src/keybinds.cpp src/career.cpp src/anchors.cpp src/biome.cpp src/handwork.cpp src/sectionfile.cpp src/trunk.cpp
+SCEN     := tests/perf.cpp tests/drivetrain.cpp tests/net_state.cpp tests/collision.cpp tests/props.cpp tests/jobs.cpp tests/walker.cpp tests/editor.cpp tests/levels.cpp tests/circuit.cpp tests/frontier.cpp tests/backcountry.cpp tests/freeway.cpp tests/surfaces.cpp tests/handling.cpp tests/harness.cpp tests/scenarios.cpp tests/components.cpp tests/offroad.cpp tests/recovery.cpp tests/net.cpp tests/autopilot.cpp tests/nearby.cpp tests/gamepad.cpp tests/tires.cpp tests/vtools.cpp tests/simulation.cpp tests/vehicle_physics.cpp tests/dynamics.cpp tests/extreme.cpp tests/environment.cpp tests/towing.cpp tests/keybinds.cpp tests/treads.cpp tests/wobble.cpp tests/career.cpp tests/models.cpp tests/carparts.cpp tests/sections.cpp tests/anchors.cpp tests/music.cpp tests/trunk.cpp
+GAME_SRC := src/main.cpp src/lab.cpp src/gamepad_sdl.cpp src/editor.cpp src/coop.cpp src/gl.cpp src/gpu.cpp src/render.cpp src/carvisual.cpp src/bodyshell.cpp src/scenery.cpp src/menu.cpp src/fx.cpp src/engine_samples.cpp src/engineaudio.cpp src/audio.cpp src/music.cpp src/ambience.cpp src/daylight.cpp src/lights.cpp src/groundtex.cpp src/groundshader.cpp src/propdraw.cpp $(PHYS) $(SCEN)
 GAME_OBJ := $(patsubst %.cpp,build/%.o,$(GAME_SRC))
-TEST_OBJ := $(patsubst %.cpp,build/%.o,tests/run_tests.cpp $(PHYS) $(SCEN))
+TEST_OBJ := $(patsubst %.cpp,build/%.o,tests/run_tests.cpp $(PHYS) $(SCEN) src/music.cpp)
 HEADERS  := $(wildcard src/*.h tests/*.h)
 
 all: crumplezone
@@ -57,8 +58,16 @@ build/test_render: build/tests/render.o $(filter-out build/src/main.o,$(GAME_OBJ
 build/test_audio: build/tests/audio.o build/tests/engine_samples.o build/tests/soundscape.o build/src/audio.o build/src/engineaudio.o build/src/engine_samples.o build/src/music.o build/src/ambience.o $(patsubst %.cpp,build/%.o,$(PHYS))
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDLIBS)
 
+# Contact sheets of the code-made models: build/modelsheet [--out DIR] [id ...].
+build/modelsheet: build/tools/modelsheet.o build/src/modelkit.o build/src/platform.o $(patsubst %.cpp,build/%.o,$(MODELS))
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lm
+
 # Silent audition files: build/engine_preview [output directory].
 build/soundscape_preview: build/tools/soundscape_preview.o build/src/music.o build/src/ambience.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lm
+
+# One WAV per biome's music, plus the maps' own pieces to compare levels with: build/biome_preview [directory [seconds [seed]]].
+build/biome_preview: build/tools/biome_preview.o build/src/music.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lm
 
 build/engine_preview: build/tools/engine_preview.o build/src/engineaudio.o build/src/engine_samples.o $(patsubst %.cpp,build/%.o,$(PHYS))
@@ -68,7 +77,7 @@ build/engine_preview: build/tools/engine_preview.o build/src/engineaudio.o build
 build/win/bench_sim.exe: build/win/obj/tools/bench_sim.o $(patsubst %.cpp,build/win/obj/%.o,$(PHYS))
 	$(WINCXX) $(WINFLAGS) -o $@ $^ -lws2_32 -liphlpapi -static -static-libgcc -static-libstdc++
 
-build/win/run_tests.exe: build/win/obj/tests/run_tests.o $(patsubst %.cpp,build/win/obj/%.o,$(PHYS) $(SCEN))
+build/win/run_tests.exe: build/win/obj/tests/run_tests.o $(patsubst %.cpp,build/win/obj/%.o,$(PHYS) $(SCEN) src/music.cpp)
 	$(WINCXX) $(WINFLAGS) -o $@ $^ -lws2_32 -liphlpapi -static -static-libgcc -static-libstdc++
 
 build/win/test_audio.exe: build/win/obj/tests/audio.o build/win/obj/tests/engine_samples.o build/win/obj/tests/soundscape.o build/win/obj/src/audio.o build/win/obj/src/engineaudio.o build/win/obj/src/engine_samples.o build/win/obj/src/music.o build/win/obj/src/ambience.o $(patsubst %.cpp,build/win/obj/%.o,$(PHYS))
@@ -111,6 +120,7 @@ windows: build/win/CrumpleZone/crumplezone.exe
 	cp -r assets/ground build/win/CrumpleZone/assets/
 	if [ -d assets/audio ]; then cp -r assets/audio build/win/CrumpleZone/assets/; fi
 	if [ -f assets/props/props.txt ]; then cp -r assets/props build/win/CrumpleZone/assets/; fi
+	if [ -d assets/models ]; then cp -r assets/models build/win/CrumpleZone/assets/; fi
 	cd build/win && rm -f CrumpleZone-windows.zip && zip -qr CrumpleZone-windows.zip CrumpleZone
 
 # Windows installer (NSIS): build/win/CrumpleZone-setup.exe from the windows build. Needs makensis (apt: nsis).
@@ -142,6 +152,7 @@ mac: build/mac/crumplezone
 	cp -R assets/ground $(MACAPP)/Contents/Resources/assets/
 	if [ -d assets/audio ]; then cp -R assets/audio $(MACAPP)/Contents/Resources/assets/; fi
 	if [ -f assets/props/props.txt ]; then cp -R assets/props $(MACAPP)/Contents/Resources/assets/; fi
+	if [ -d assets/models ]; then cp -R assets/models $(MACAPP)/Contents/Resources/assets/; fi
 	cp -R $(MACSDL)/SDL2.framework $(MACAPP)/Contents/Frameworks/
 	cp README.md $(MACAPP)/Contents/Resources/README.md
 	printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>\n<key>CFBundleName</key><string>Crumple Zone</string>\n<key>CFBundleDisplayName</key><string>Crumple Zone</string>\n<key>CFBundleIdentifier</key><string>io.github.benbone21.crumplezone</string>\n<key>CFBundleExecutable</key><string>crumplezone</string>\n<key>CFBundlePackageType</key><string>APPL</string>\n<key>CFBundleShortVersionString</key><string>$(VERSION)</string>\n<key>CFBundleVersion</key><string>$(VERSION)</string>\n<key>LSMinimumSystemVersion</key><string>11.0</string>\n<key>LSApplicationCategoryType</key><string>public.app-category.simulation-games</string>\n<key>NSHighResolutionCapable</key><true/>\n</dict></plist>\n' > $(MACAPP)/Contents/Info.plist
@@ -163,7 +174,7 @@ mac-dmg: mac
 build/mac/bench_sim: build/mac/obj/tools/bench_sim.o $(patsubst %.cpp,build/mac/obj/%.o,$(PHYS))
 	$(MACCXX) $(MACFLAGS) -o $@ $^
 
-build/mac/run_tests: build/mac/obj/tests/run_tests.o $(patsubst %.cpp,build/mac/obj/%.o,$(PHYS) $(SCEN))
+build/mac/run_tests: build/mac/obj/tests/run_tests.o $(patsubst %.cpp,build/mac/obj/%.o,$(PHYS) $(SCEN) src/music.cpp)
 	$(MACCXX) $(MACFLAGS) -o $@ $^
 
 build/mac/test_audio: build/mac/obj/tests/audio.o build/mac/obj/tests/engine_samples.o build/mac/obj/tests/soundscape.o build/mac/obj/src/audio.o build/mac/obj/src/engineaudio.o build/mac/obj/src/engine_samples.o build/mac/obj/src/music.o build/mac/obj/src/ambience.o $(patsubst %.cpp,build/mac/obj/%.o,$(PHYS))
@@ -184,6 +195,7 @@ deb: crumplezone
 	mkdir -p $(DEBROOT)/opt/crumplezone/assets && cp -r assets/ground $(DEBROOT)/opt/crumplezone/assets/
 	if [ -d assets/audio ]; then cp -r assets/audio $(DEBROOT)/opt/crumplezone/assets/; fi
 	if [ -f assets/props/props.txt ]; then cp -r assets/props $(DEBROOT)/opt/crumplezone/assets/; fi
+	if [ -d assets/models ]; then cp -r assets/models $(DEBROOT)/opt/crumplezone/assets/; fi
 	ln -s /opt/crumplezone/crumplezone $(DEBROOT)/usr/games/crumplezone
 	cp README.md $(DEBROOT)/usr/share/doc/crumplezone/README.md
 	printf '[Desktop Entry]\nType=Application\nName=Crumple Zone\nComment=Soft-body driving: crash it, crawl it, race it\nExec=/usr/games/crumplezone\nTerminal=false\nCategories=Game;Simulation;\n' > $(DEBROOT)/usr/share/applications/crumplezone.desktop
@@ -193,9 +205,9 @@ deb: crumplezone
 # ---- Props: the offline baker for the Poly Haven scans (Linux; needs ImageMagick's `convert`) ----
 #   make bake PROPSRC=/path/to/polyhaven/models   ->  assets/props/ (committed; the game reads it)
 PROPSRC ?= assets/source/polyhaven/models
-build/bakeprops: tools/bakeprops.cpp src/props.cpp src/props.h src/third_party/cgltf.h src/third_party/stb_image.h
+build/bakeprops: tools/bakeprops.cpp src/props.cpp src/props.h src/platform.cpp src/third_party/cgltf.h src/third_party/stb_image.h
 	@mkdir -p build
-	$(CXX) $(CXXFLAGS) -fopenmp -o $@ tools/bakeprops.cpp src/props.cpp -lm
+	$(CXX) $(CXXFLAGS) -fopenmp -o $@ tools/bakeprops.cpp src/props.cpp src/platform.cpp -lm  # (platform.cpp: exeDir)
 
 bake: build/bakeprops
 	./build/bakeprops --src $(PROPSRC) --out assets/props $(BAKEARGS)

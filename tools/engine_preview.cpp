@@ -1,8 +1,10 @@
 // Offline engine audition: write WAV files, never open a sound device.
 #include "../src/engineaudio.h"
 #include "../src/engine_samples.h"
+#include "../src/mods.h"
 #include "../src/vehicles.h"
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -30,10 +32,22 @@ int main(int argc, char** argv) {
     const int count = recordings.load(argc > 2 ? argv[2] : "assets/audio/engines", &errors);
     std::printf("Recorded banks loaded: %d; absent banks remain procedural\n", count);
     for (const auto& error : errors) std::fprintf(stderr, "%s\n", error.c_str());
-    for (const auto& v : vehicleCatalog()) {
+    // Every engine in the garage (each vehicle's own and its swaps), once each.
+    std::vector<VehicleSpec> engines;
+    for (int vi = 0; vi < (int)vehicleCatalog().size(); vi++)
+        for (int o = 0; o < modOwnCount(vi, MOD_ENGINE); o++) {
+            ModSet ms;
+            ms.pick[MOD_ENGINE] = o;
+            const VehicleSpec& s = tunedSpec(vi, ms);
+            bool seen = false;
+            for (const VehicleSpec& e : engines) seen |= std::string(e.engineName) == s.engineName;
+            if (!seen) engines.push_back(s);
+        }
+    for (const auto& v : engines) {
         EngineVoice synth;
         EngineInput in{(float)v.idleRpm, 0, 0, v.cylinders, (int)v.induction, (float)v.displacement, (float)v.redline, v.flatPlane};
         in.recording = (uint8_t)engineSamples::forVehicle(v);
+        in.voice = voiceFor(v);
         const auto* bank = recordings.bank(in.recording);
         std::vector<float> samples(12 * 48000);
         double energy = 0, sum = 0; float peak = 0;
@@ -50,12 +64,14 @@ int main(int argc, char** argv) {
             peak = std::max(peak, std::fabs(samples[i])); energy += samples[i] * samples[i]; sum += samples[i];
         }
         const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-        const std::string path = out + "/" + v.id + ".wav";
-        std::printf("%s: %s\n", v.id, bank ? engineSamples::key(in.recording) : "PROCEDURAL FALLBACK");
+        std::string name = std::string(v.id) + "-" + v.engineName;
+        for (char& ch : name) ch = std::isalnum((unsigned char)ch) ? (char)std::tolower((unsigned char)ch) : '-';
+        const std::string path = out + "/" + name + ".wav";
+
         if (!wav(path, samples)) return 1;
-        std::printf("%s: RMS %.4f peak %.4f DC %.6f CPU %.2f%% of one core\n", v.id, std::sqrt(energy / samples.size()), peak, sum / samples.size(), seconds / 12 * 100);
+        std::printf("%s: RMS %.4f peak %.4f DC %.6f CPU %.2f%% of one core\n", name.c_str(), std::sqrt(energy / samples.size()), peak, sum / samples.size(), seconds / 12 * 100);
         combined.insert(combined.end(), samples.begin(), samples.end());
         combined.resize(combined.size() + 24000, 0);
     }
-    return wav(out + "/all-vehicles.wav", combined) ? 0 : 1;
+    return wav(out + "/all-engines.wav", combined) ? 0 : 1;
 }

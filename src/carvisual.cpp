@@ -2,6 +2,8 @@
 #include "carvisual.h"
 
 #include "bodyshell.h"
+#include "modelkit.h"
+#include "scenery.h"
 
 #include <map>
 #include <string>
@@ -584,7 +586,8 @@ void buildExtras(const Car& car, PartBuilder& pb) {
     }
     const V3 trim(vs.trimColor[0], vs.trimColor[1], vs.trimColor[2]);
     const V3 steel(0.035, 0.035, 0.038);  // black powder-coated steel
-    const V3 rimCol = vs.wheelStyle == WHEEL_OFFROAD_BRONZE ? V3(0.36, 0.27, 0.16)
+    const V3 rimCol = vs.wheelStyle == WHEEL_STEEL ? V3(0.86, 0.86, 0.83)
+                    : vs.wheelStyle == WHEEL_OFFROAD_BRONZE ? V3(0.36, 0.27, 0.16)
                     : vs.wheelStyle == WHEEL_OFFROAD_BLACK  ? V3(0.05, 0.05, 0.055)
                                                             : V3(0.3, 0.3, 0.32);
     const double floorY = vs.layerY[0];
@@ -1061,59 +1064,8 @@ void buildParts(const Car& car, PartBuilder& pb) {
     const double cabFront = hasCabin ? xAt(gi0) : L / 4, cabRear = hasCabin ? xAt(gi1 + 1) : -L / 4;
     const double beltY = hasCabin ? vs.layerY[gk0] : vs.layerY[1];
 
-    // Engine and gearbox, built in the block's own axes and bound to its physics nodes,
-    // so they rock on the mounts and get shoved back in a crash.
+    // (The engine and gearbox are models on the block's nodes: carparts.h.)
     const V3 eng(vs.engineX, vs.engineY, vs.engineZ);
-    if (car.engineNodes.size() >= 12) {
-        const V3 ca = vs.transverse ? V3(0, 0, 1) : V3(1, 0, 0), up(0, 1, 0), ac = cross(ca, up);
-        const double hl = vs.engineLen / 2, hh = vs.engineHgt / 2, hw = vs.engineWid / 2;
-        const V3 castIron(0.20, 0.20, 0.21), alloy(0.52, 0.53, 0.55);
-        const V3 coverCol(vs.coverColor[0], vs.coverColor[1], vs.coverColor[2]);
-        pb.current = ON_ENGINE;
-        pb.obox(eng - up * (hh * 0.15), ca, up, ac, hl * 0.92, hh * 0.6, hw * 0.78, castIron, SM_METAL);  // block
-        pb.obox(eng - up * (hh * 0.86), ca, up, ac, hl * 0.82, hh * 0.15, hw * 0.62, kBlack, SM_MATTE);   // oil pan
-        if (vs.engineWid > 0.58) {
-            // V engine: two banks of heads and covers, intake plenum in the valley.
-            for (int sd = -1; sd <= 1; sd += 2) {
-                V3 bu = norm(up + ac * (0.6 * sd)), bc = norm(cross(ca, bu));
-                V3 hc = eng + up * (hh * 0.42) + ac * (sd * hw * 0.55);
-                pb.obox(hc, ca, bu, bc, hl * 0.88, hh * 0.2, hw * 0.3, alloy, SM_METAL);
-                pb.obox(hc + bu * (hh * 0.26), ca, bu, bc, hl * 0.84, hh * 0.07, hw * 0.25, coverCol, SM_PAINT);
-                for (int k = 0; k < 4; k++) {  // exhaust headers down the outside
-                    V3 port = hc - bc * (hw * 0.3 * -sd) + ca * (hl * (-0.6 + 0.4 * k)) - up * 0.03;
-                    pb.cylinder(port, port + ac * (sd * 0.08) - up * 0.16, 0.022, 6, kMetal, SM_METAL, false);
-                }
-            }
-            pb.obox(eng + up * (hh * 0.72), ca, up, ac, hl * 0.72, hh * 0.16, hw * 0.24, alloy, SM_METAL);
-            pb.cylinder(eng + up * (hh * 0.8) + ca * (hl * 0.7), eng + up * (hh * 0.85) + ca * (hl * 1.05), 0.06, 10, kBlack,
-                        SM_MATTE);  // throttle body
-        } else {
-            pb.obox(eng + up * (hh * 0.55), ca, up, ac, hl * 0.9, hh * 0.22, hw * 0.55, alloy, SM_METAL);          // head
-            pb.obox(eng + up * (hh * 0.87), ca, up, ac, hl * 0.84, hh * 0.08, hw * 0.42, coverCol, SM_PAINT);     // valve cover
-            pb.obox(eng + up * (hh * 0.45) + ac * (hw * 0.9), ca, up, ac, hl * 0.78, hh * 0.1, hw * 0.12, alloy, SM_METAL);
-            for (int k = 0; k < 4; k++) {
-                V3 port = eng + up * (hh * 0.5) + ca * (hl * (-0.66 + 0.44 * k));
-                pb.cylinder(port + ac * (hw * 0.5), port + ac * (hw * 0.85) + up * 0.02, 0.025, 6, alloy, SM_METAL, false);  // intake runners
-                pb.cylinder(port - ac * (hw * 0.5), port - ac * (hw * 0.82) - up * 0.14, 0.022, 6, kMetal, SM_METAL, false);  // exhaust headers
-            }
-        }
-        // Accessory drive on the front of the crank: pulleys, alternator, belt.
-        V3 front = eng + ca * (hl * 0.93);
-        V3 crankP = front - up * (hh * 0.45), pumpP = front + up * (hh * 0.25), altP = front + up * (hh * 0.15) + ac * (hw * 0.62);
-        pb.cylinder(crankP, crankP + ca * 0.05, 0.085, 14, kMetal, SM_METAL);
-        pb.cylinder(pumpP, pumpP + ca * 0.04, 0.06, 12, kMetal, SM_METAL);
-        pb.cylinder(altP - ca * 0.14, altP + ca * 0.02, 0.065, 12, alloy, SM_METAL);
-        pb.cylinder(altP + ca * 0.02, altP + ca * 0.05, 0.035, 10, kMetal, SM_METAL);
-        for (const auto& pr : {std::make_pair(crankP, pumpP), std::make_pair(pumpP, altP), std::make_pair(altP, crankP)})
-            pb.cylinder(pr.first + ca * 0.025, pr.second + ca * 0.025, 0.012, 4, kBlack, SM_MATTE, false);
-        // Gearbox: bell housing then the tapering case, down to the output.
-        pb.current = ON_GEARBOX;
-        V3 rear = eng - ca * hl - up * (hh * 0.15), tail = eng - ca * (hl + vs.gearboxLen) - up * (hh * 0.2);
-        V3 mid = rear + (tail - rear) * 0.32;
-        pb.cylinder(rear, mid, hh * 0.78, 14, alloy, SM_METAL);
-        pb.cylinder(mid, tail, hh * 0.45, 12, alloy, SM_METAL);
-        pb.current = ON_BODY;
-    }
     const double ey = eng.y;
     {
         // Radiator behind the grille, kept under the (sometimes very low) nose.
@@ -1542,35 +1494,6 @@ void evalParts(const Car& car, const VisualTemplate& t, std::vector<Vtx>& out) {
 
 namespace {
 
-// A coil spring around a damper between two points (lower = moving end).
-void coilOver(std::vector<Vtx>& out, const V3& lower, const V3& upper, double coilR, const V3& springCol, const V3& bodyCol) {
-    V3 axis = upper - lower;
-    double L = len(axis);
-    if (L < 1e-6) return;
-    V3 d = axis / L;
-    tube(out, lower, lower + d * (L * 0.5), coilR * 0.22, 6, kChrome, SM_CHROME);   // piston rod
-    tube(out, lower + d * (L * 0.42), upper, coilR * 0.5, 8, bodyCol, SM_METAL);    // damper body
-    tube(out, lower + d * 0.04, lower + d * 0.07, coilR * 1.25, 8, bodyCol, SM_METAL);  // spring seats
-    tube(out, upper - d * 0.07, upper - d * 0.04, coilR * 1.25, 8, bodyCol, SM_METAL);
-    V3 t1 = norm(cross(d, std::fabs(d.y) < 0.9 ? V3(0, 1, 0) : V3(1, 0, 0))), t2 = cross(d, t1);
-    const int turns = 6, perTurn = 9;
-    double a0 = 0.07, a1 = L - 0.07;
-    V3 prev = lower + d * a0 + t1 * coilR;
-    for (int k = 1; k <= turns * perTurn; k++) {
-        double f = (double)k / (turns * perTurn), ang = 2 * M_PI * turns * f;
-        V3 p = lower + d * (a0 + f * (a1 - a0)) + (t1 * std::cos(ang) + t2 * std::sin(ang)) * coilR;
-        tube(out, prev, p, coilR * 0.15, 4, springCol, SM_PAINT);
-        prev = p;
-    }
-}
-
-// A link with a rubber bushing at the body end and a ball joint at the other.
-void link(std::vector<Vtx>& out, const V3& joint, const V3& body, double r, const V3& col) {
-    tube(out, joint, body, r, 6, col, SM_METAL);
-    blob(out, joint, r * 1.5, kDarkGrey, SM_METAL);
-    tube(out, body - norm(body - joint) * 0.03, body + norm(body - joint) * 0.01, r * 2.0, 8, kBlack, SM_MATTE);
-}
-
 }  // namespace
 
 // Frame rails and crossmembers under the floor, between the axles (ahead of and behind
@@ -1652,56 +1575,15 @@ void buildFrameRails(const Car& car, std::vector<Vtx>& out) {
 void buildRunningGear(const Car& car, std::vector<Vtx>& out) {
     if (car.wheels.empty()) return;
     const VehicleSpec& vs = *car.spec;
-    const V3 armCol(0.17, 0.17, 0.18), knuckleCol(0.36, 0.36, 0.37), springCol(0.75, 0.12, 0.08), damperCol(0.25, 0.25, 0.27),
-        bootCol(0.05, 0.05, 0.05), housingCol(0.15, 0.15, 0.16);
+    const V3 armCol(0.17, 0.17, 0.18), knuckleCol(0.36, 0.36, 0.37), damperCol(0.25, 0.25, 0.27),
+        housingCol(0.15, 0.15, 0.16);
     const double sz = vs.wheelRadius / 0.32;
     auto P = [&](int n) { return car.nodes[n].p; };
     Frame fr = car.frame();
 
     buildFrameRails(car, out);
 
-    // Suspension links (arms, tie rods, trailing links, panhard rods).
-    for (const SuspLink& l : car.links) {
-        const Beam& b = car.beams[l.beam];
-        if (b.broken || l.kind == LINK_BUSHING) continue;
-        bool aBody = b.a < car.frameNodes;
-        V3 body = aBody ? P(b.a) : P(b.b), joint = aBody ? P(b.b) : P(b.a);
-        switch (l.kind) {
-        case LINK_LOWER_ARM: link(out, joint, body, 0.018 * sz, armCol); break;
-        case LINK_UPPER_ARM: link(out, joint, body, 0.015 * sz, armCol); break;
-        case LINK_TIE_ROD:
-            tube(out, joint, body, 0.011 * sz, 6, kMetal, SM_METAL);
-            blob(out, joint, 0.02 * sz, kDarkGrey, SM_METAL);
-            tube(out, body + norm(joint - body) * 0.01, body + norm(joint - body) * 0.09, 0.024 * sz, 8, bootCol, SM_MATTE);  // rack boot
-            break;
-        case LINK_TOE_LINK: link(out, joint, body, 0.011 * sz, kMetal); break;
-        case LINK_TRAILING: link(out, joint, body, 0.024 * sz, armCol); break;
-        case LINK_PANHARD: link(out, joint, body, 0.02 * sz, armCol); break;
-        case LINK_LEAF: {
-            // Leaf spring: the pack from the front eye to the seat on the tube, on to the rear
-            // eye, and the shackle from there up to its hanger. Leaves stacked under the main
-            // one, each a little shorter.
-            const Wheel* w = l.wheel >= 0 ? &car.wheels[l.wheel] : nullptr;
-            const V3 front = body, seat = joint, rearEye = seat + (seat - front);
-            const V3 up = fr.up;
-            for (int leaf = 0; leaf < 4; leaf++) {
-                const double f = 1.0 - 0.18 * leaf;
-                const V3 drop = up * (-0.011 * leaf);
-                tube(out, seat + (front - seat) * f + drop, seat + drop, 0.0065, 4, kDarkGrey, SM_METAL);
-                tube(out, seat + drop, seat + (rearEye - seat) * f + drop, 0.0065, 4, kDarkGrey, SM_METAL);
-            }
-            blob(out, front, 0.022, kBlack, SM_MATTE);  // eye bushings
-            blob(out, rearEye, 0.022, kBlack, SM_MATTE);
-            if (w && w->shackle >= 0) {
-                tube(out, rearEye, P(w->shackle), 0.012, 6, kMetal, SM_METAL);
-                blob(out, P(w->shackle), 0.02, kBlack, SM_MATTE);
-            }
-            tube(out, seat + up * 0.02, seat - up * 0.10, 0.007, 4, kMetal, SM_METAL);  // U-bolts
-            break;
-        }
-        default: break;
-        }
-    }
+    // (Arms, tie rods, trailing links, leaf packs and coil-overs are models on their beams: carparts.h.)
 
     for (size_t wi = 0; wi < car.wheels.size(); wi++) {
         const Wheel& wh = car.wheels[wi];
@@ -1748,15 +1630,13 @@ void buildRunningGear(const Car& car, std::vector<Vtx>& out) {
         if (wh.spring >= 0 && !car.beams[wh.spring].broken) {
             const Beam& sp = car.beams[wh.spring];
             bool aBody = sp.a < car.frameNodes;
-            V3 lower = aBody ? P(sp.b) : P(sp.a), upper = aBody ? P(sp.a) : P(sp.b);
+            V3 upper = aBody ? P(sp.a) : P(sp.b);
             if (wh.shackle >= 0) {
                 // On leaf springs the leaf is the spring: just the shock, from below the tube
                 // up to the frame.
                 const V3 bottom = P(wh.lower), mid = bottom + (upper - bottom) * 0.55;
                 tube(out, bottom, mid, 0.026, 8, damperCol, SM_METAL);
                 tube(out, mid, upper, 0.011, 6, kMetal, SM_METAL);
-            } else {
-                coilOver(out, lower, upper, 0.055 * sz, springCol, damperCol);
             }
         }
         (void)hub;
@@ -1768,16 +1648,14 @@ void buildRunningGear(const Car& car, std::vector<Vtx>& out) {
         const Wheel& wr = car.wheels[ax.wheel[1]];
         SuspensionType st = ax.front ? vs.frontSusp : vs.rearSusp;
         if (st == SOLID_AXLE && !ax.housing.empty()) {
-            // Axle tubes out to the hubs, the diff "pumpkin" and its pinion snout.
+            // Axle tubes out to the hubs.
             // Real sizes (Dana 44: 3 in tubes, a ~10.5 in cover), not scaled with the tires.
-            V3 diff = P(ax.housing[0]), pin = P(ax.housing[1]);
+            V3 diff = P(ax.housing[0]);
             // (A steering axle's tubes end at the kingpins, which turn with the knuckles.)
             auto tubeEnd = [&](const Wheel& w) { return w.tieRod >= 0 ? (P(w.lower) + P(w.top)) * 0.5 : P(w.inner); };
             if (!wl.detached) tube(out, diff, tubeEnd(wl), kAxleTubeR, 10, housingCol, SM_METAL);
             if (!wr.detached) tube(out, diff, tubeEnd(wr), kAxleTubeR, 10, housingCol, SM_METAL);
-            V3 lat = norm(tubeEnd(wr) - tubeEnd(wl));
-            tube(out, diff - lat * 0.12, diff + lat * 0.12, kAxleDiffR, 12, housingCol, SM_METAL);
-            tube(out, diff, pin, 0.055, 10, housingCol, SM_METAL);
+            // (The pumpkin and its pinion snout are the differential model: carparts.h.)
             for (const Wheel* w : {&wl, &wr})
                 if (!w->detached && w->tieRod < 0) tube(out, P(w->lower), P(w->inner), 0.03, 6, housingCol, SM_METAL);  // link bracket
         }
@@ -1812,35 +1690,31 @@ void buildRunningGear(const Car& car, std::vector<Vtx>& out) {
                 tube(out, a + d * 0.3, a + d * 0.42, 0.045 * sz, 8, kMetal, SM_METAL);  // pinion housing
             }
         }
-        // Differential on the body (independent suspension).
-        if (ax.housing.empty() && ax.diffNode >= 0 && ax.diffNode != car.gearboxOut && (wl.driven || wr.driven)) {
-            V3 c = P(ax.diffNode), lat = norm(P(wr.inner) - P(wl.inner));
-            tube(out, c - lat * 0.12, c + lat * 0.12, 0.11 * sz, 12, housingCol, SM_METAL);
-            tube(out, c, c + fr.fwd * (ax.front ? -0.16 : 0.16), 0.055 * sz, 8, housingCol, SM_METAL);
-        }
     }
-
-    // Driveline: prop shafts with universal joints, half shafts with CV boots.
-    for (const Beam& b : car.beams) {
-        if (b.type != BEAM_SHAFT || b.broken) continue;
-        V3 a = P(b.a), c = P(b.b), d = c - a;
-        bool toWheel = false;
-        for (const Wheel& w : car.wheels) toWheel |= b.a == w.inner || b.b == w.inner;
-        if (toWheel) {
-            tube(out, a, c, 0.018 * sz, 6, kMetal, SM_METAL);
-            tube(out, a + d * 0.06, a + d * 0.2, 0.038 * sz, 8, bootCol, SM_MATTE);
-            tube(out, a + d * 0.8, a + d * 0.94, 0.038 * sz, 8, bootCol, SM_MATTE);
-        } else {
-            tube(out, a, c, 0.035, 8, kDarkGrey, SM_METAL);
-            blob(out, a + d * 0.03, 0.04, kMetal, SM_METAL);
-            blob(out, c - d * 0.03, 0.04, kMetal, SM_METAL);
-        }
-    }
+    // (Prop shafts, half shafts and the differentials are models too: carparts.h.)
 }
 
+namespace {
+// A model drawn round a trunk or boulder: built for its radius (to 2 cm), kept until the lab changes the picks.
+const mk::Mesh& radiusModel(const char* id, double r) {
+    static std::map<std::pair<std::string, int>, mk::Mesh> cache;
+    static uint64_t version = 0;
+    if (version != mk::picksVersion()) cache.clear(), version = mk::picksVersion();
+    const int q = (int)std::lround(r * 50);
+    auto it = cache.find({id, q});
+    if (it == cache.end()) it = cache.emplace(std::make_pair(std::string(id), q), mk::modelMesh(id, {{"radius", q / 50.0}})).first;
+    return it->second;
+}
+double yawToward(const V3& from, const V3& to) { return std::atan2(-(to.z - from.z), to.x - from.x); }
+}  // namespace
+
 // Winch lines and tow straps: a sagging line when slack, straight when loaded, with a
-// shackle at each truck and a tree saver or sling at a fixed anchor.
+// shackle at each truck and, at a fixed anchor, its gear (anchors.h): a tree strap round the
+// trunk, a chain sling round the boulder, a stake, a bolt or a picket in the ground. The ones
+// left in the ground stay drawn after the line comes off.
 void buildRopes(const Sim& sim, std::vector<Vtx>& out) {
+    for (const SetAnchor& sa : sim.setAnchors)
+        appendModel(out, mk::modelMesh(anchors::gearModel(sa.gear)), V3(sa.p.x, sim.world.height(sa.p.x, sa.p.z), sa.p.z), sa.yaw);
     for (const Rope& r : sim.ropes) {
         auto at = [&](const RopeEnd& e) { return e.kind == ANCHOR_CAR ? sim.cars[e.car].hookPoint(e.hook) : e.p; };
         const V3 a = at(r.a), b = at(r.b);
@@ -1858,10 +1732,33 @@ void buildRopes(const Sim& sim, std::vector<Vtx>& out) {
             prev = p;
         }
         for (const RopeEnd* e : {&r.a, &r.b}) {
-            const V3 p = at(*e);
+            const V3 p = at(*e), to = at(e == &r.a ? r.b : r.a);
             if (e->kind == ANCHOR_CAR) blob(out, p, 0.025, V3(0.55, 0.55, 0.57), SM_METAL);  // shackle
-            else if (e->kind == ANCHOR_STAKE) tube(out, p - V3(0, 0.3, 0), p + V3(0, 0.25, 0), 0.04, 6, V3(0.25, 0.25, 0.27), SM_METAL);
-            else blob(out, p, 0.05, V3(0.95, 0.6, 0.08), SM_MATTE);  // tree saver / sling
+            else if (e->kind == ANCHOR_STAKE) {
+                bool left = false;  // (a stake you left in the ground is drawn above)
+                for (const SetAnchor& sa : sim.setAnchors) left |= std::hypot(sa.p.x - p.x, sa.p.z - p.z) < 0.3;
+                if (left) continue;
+                anchors::GroundRule gr = anchors::groundRule(sim.world.surfaceAt(p.x, p.z), 0);  // (another player's: whatever it's in)
+                appendModel(out, mk::modelMesh(anchors::gearModel(gr.gear == GEAR_COUNT ? GEAR_STAKE : gr.gear)), V3(p.x, sim.world.height(p.x, p.z), p.z), yawToward(p, to));
+            } else if (e->kind == ANCHOR_TREE) {  // the strap round the trunk this is tied to
+                const Pole* tree = nullptr;
+                double best = 0.05;
+                for (const Pole& pl : sim.world.poles) {
+                    const double d = std::fabs(std::hypot(pl.x - p.x, pl.z - p.z) - pl.r);
+                    if (pl.r >= anchors::kTreeMinR && d < best && p.y > pl.y0 && p.y < pl.y1) best = d, tree = &pl;
+                }
+                if (tree) appendModel(out, radiusModel("tree_saver", tree->r), V3(tree->x, p.y - 0.42, tree->z), yawToward(V3(tree->x, 0, tree->z), to));
+                else blob(out, p, 0.05, V3(0.95, 0.6, 0.08), SM_MATTE);
+            } else {  // the chain sling round the boulder
+                const Rock* rock = nullptr;
+                double best = 0.3;
+                for (const Rock& rk : sim.world.rocks) {
+                    const double d = std::fabs(len(p - rk.c) - rk.r * 0.75);
+                    if (rk.r >= anchors::kBoulderMinR && d < best) best = d, rock = &rk;
+                }
+                if (rock) appendModel(out, radiusModel("chain_sling", rock->r), V3(rock->c.x, sim.world.height(rock->c.x, rock->c.z), rock->c.z), yawToward(rock->c, to));
+                else blob(out, p, 0.05, V3(0.95, 0.6, 0.08), SM_MATTE);
+            }
         }
     }
 }

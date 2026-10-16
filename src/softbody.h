@@ -138,6 +138,8 @@ struct Wheel {
     Surface surface = SURF_PAVED;
     bool detached = false;
     bool popped = false;    // blown tire: runs on the rim
+    bool chained = false;   // snow chains fitted over the tire (on foot: interact.h)
+    float chainStrain = 0;  // s driven too fast on them: past ~2 s they snap
     double poppedAnim = 0;  // deflation animation: 0 = inflated, 1 = fully flat
     bool shaftBroken = false;  // its axle shaft / CV snapped: the hub freewheels
     // The wheel bolted on (tires.h): what it is, and whether it's there at all. Off (its
@@ -217,6 +219,9 @@ struct Panel {
     std::vector<int8_t> outside;     // per panel node: came to the body from outside (only those are held out)
     std::vector<int> checks;         // its opening stops (PIN_CHECK pins, not in `pins`)
     int state = 0;                   // 0 shut, 1 hanging open on its hinges, 2 torn off
+    // By hand (Car::setGate): its latches off, and the sheet driven round its hinges.
+    bool hand = false;
+    double handSign = 0;             // which way round the hinge line it opens (+-1)
 };
 
 // One axle: its two wheels, anti-roll bar, and where its differential pushes back.
@@ -359,6 +364,7 @@ public:
     double govKmh = 0;          // the speed limiter's filtered road speed
     V3 escFwd;
     double dragAssist = 0;      // throttle opened to stop engine braking locking the driven wheels
+    double throttleFill = 0;    // the throttle the engine has built up to (see wheelStep)
     double engineHealth = 1;    // drops as the engine bay is crushed
     bool engineDead = false;
     double fuel = -1;           // L in the tank (-1: full; filled when first driven)
@@ -375,22 +381,55 @@ public:
     bool hasSpare = false;
     std::vector<int> spareNodes;
     std::vector<double> spareWeights;
+    std::vector<double> spareShift;  // kg taken off each node with the spare (put back when one's stowed)
     V3 spareAt() const;          // where it is (world)
     V3 spareAxis() const;        // its axle (world)
+    // Where the snow chains (STOW_CHAINS) and the jack (STOW_JACK) ride: in the back by the
+    // tailgate, either side, apart from the spare so each is its own thing to reach for.
+    enum Stow { STOW_CHAINS, STOW_JACK };
+    V3 stowAt(Stow what) const;
+    // The back gate (trunk.h): a tailgate or liftgate panel opened by hand on its real hinges (its
+    // latches let go and the sheet is driven round the hinge line, held there like a gas strut, so
+    // a bump rattles it), or, on a pickup, a drawn gate with no panel under it.
+    struct Gate {
+        double share = 0;  // 0 shut .. 1 open
+        int dir = 0;       // +1 opening, -1 closing
+        double jam = 0;    // s spent closing against something
+    } gate;
+    static constexpr double kGateTime = 1.1;    // s to swing it
+    static constexpr double kGateAngle = 1.40;  // rad open (80 degrees: short of the check strap)
+    int gatePanel() const;     // the LIFTGATE / TAILGATE panel (-1: none)
+    bool bedGate() const;      // a pickup: the gate is drawn (trunk.h), not a panel
+    bool hasGate() const { return gatePanel() >= 0 || bedGate(); }
+    bool gateOpen() const;     // open enough to reach in (or torn off)
+    bool gateShut() const;
+    void setGate(bool open);   // starts it swinging
+    bool gateCarried() const;  // the spare rides the gate's carrier: it swings away with it
+    V3 gateSwung(const V3& p, bool point) const;  // a point (or direction) on the gate, turned as far as it's open
+    void gateStep(double dt);  // per frame: the swing, and latching it again when it's home
     double winchSpeed = 1.0;    // multiplier of the rated line speed (0.1-20); game preference starts at 4x
     bool swayDisconnected = false;  // front anti-roll bar unhooked
     int shaftsBroken = 0;       // axle shafts snapped since last read (for the HUD)
     int airing = 0;             // tire valves: -1 letting air out, +1 pumping up (held key)
     int station = -1;           // repair station it's parked at (-1 = none)
     double repairTime = 0;      // s spent waiting on the pad
-    int fieldHelper = -1;       // vehicle parked alongside doing trail repairs (-1 none)
-    double fieldTime = 0;       // s of trail repairs done
     // The jack: a tool the player can place under a wheel to lift it off the ground.
+    int chains = 0;             // snow chains in the back (VehicleSpec::snowChains, back after a rebuild)
+    int chainsSnapped = 0;      // chains that broke from too much speed (the HUD counts these)
     bool hasJack = false;       // the "jack and recovery straps" mod
     bool jackPlaced = false;    // the jack is currently under the car
     int jackWheel = -1;         // which wheel the jack is under
     double jackHeight = 0;      // how far up the jack has lifted (m)
+    bool jackWorked = false;    // it's been raised since it went under (so once it's down again, it comes out)
+    double jackBase = 0;        // where its saddle met the axle or arm when it went under (m over the ground)
     void setJack(bool has);     // called when the jack mod is fitted
+    // Where a jack goes under a corner: the axle tube (a live axle) or the lower arm (independent
+    // suspension), just inboard of the tire. The point where the saddle touches, world; the jack
+    // stands on the ground below it.
+    V3 jackPoint(int wheel) const;
+    double jackDrop(int wheel) const;   // how far that point is under the hub (m)
+    V3 jackOut(int wheel) const;        // level, outward from the car at that corner: the way the jack's handle points
+    void placeJack(const World& world, int wheel);  // the jack goes under this corner, saddle just touching
     // Multiplayer: a remote car is another player's, moved by the network (no physics
     // here, it just pushes back). netId is the same on every machine.
     bool remote = false;
@@ -506,6 +545,7 @@ private:
     void poleEdgeContacts(double h, const World& w);
     void engineBlockContact(double h);
     void panelBodyContact(double h);
+    void gateServo(double h);  // the back gate driven round its hinges (trunk.cpp)
 public:
     bool wheelPowered(const Wheel& wh) const;  // driven, attached, and its shafts are intact
     // 4x4 controls. setDriveMode/setLocker only change state; the caller decides when the
@@ -520,7 +560,7 @@ public:
     // if it's wired to it).
     bool lockerAllowed(bool front) const;
 private:
-    void applyTorque(const std::vector<int>& set, const V3& torque);
+    void applyTorque(const std::vector<int>& set, const V3& torque, bool byMass = false);
     void chassisForces(double h);
     void chassisGroupForces(ChassisFrame& cf, double h);
     void releaseFromFrame(const Beam& b);
@@ -567,6 +607,7 @@ public:
     // Winch lines and tow straps (recovery.cpp).
     std::vector<Rope> ropes;
     bool realRecovery = true;          // damage stays until a repair station fixes it
+    bool steeringAssist = true;        // limit steering angle at high speeds (false = simulation mode)
     std::vector<std::string> events;   // things the HUD should announce (it clears them)
     std::string hookWinch(int car);    // hooks the car's winch to the best anchor ahead, or unhooks it
     // Everything within the winch line's reach, nearest first.
@@ -574,7 +615,20 @@ public:
     // standing, offered as a ground anchor too (buried in loose ground, a bolt in rock).
     std::vector<WinchTarget> winchTargets(int car, const V3* look = nullptr) const;
     std::string hookWinchTo(int car, const RopeEnd& anchor);
-    bool dropWinch(int car);           // unhooks the car's winch line (false if none)
+    bool dropWinch(int car, bool say = true);  // unhooks the car's winch line (false if none); say: announce the strap or sling coming back
+    // Anchor gear (anchors.h): what you carry, and the stakes you've left in the ground.
+    // Hooking to a stake, bolt or picket uses one up; a strap or sling comes back when the line comes off.
+    AnchorStock anchorStock;
+    std::vector<SetAnchor> setAnchors;
+    struct AnchorUse {
+        AnchorGear gear = GEAR_COUNT;  // the gear it takes (GEAR_COUNT: a vehicle needs none)
+        bool ok = true;
+        const char* why = "";          // not ok: why
+        int reuse = -1;                // a stake already set there (setAnchors index)
+    };
+    AnchorUse anchorUse(const RopeEnd& e, int exceptCar = -1) const;  // what hooking a line to `e` takes (ignoring car `exceptCar`'s own line)
+    int anchorsFree(AnchorGear g, int exceptCar = -1) const;           // carried and not in use on a line
+    void refillAnchors();                                              // sandbox: a full set again (a repair station, a respawn)
     std::string hookStrap(int car);    // straps the car to the nearest other vehicle, or unhooks it
     bool dropStrap(int car);
     std::vector<WinchTarget> strapTargets(int car, int hook) const;
@@ -599,6 +653,9 @@ public:
     void wrapAround();
 
     void setup();
+    // The vehicles setup() puts out, you in the first (empty: the whole catalog in order, you
+    // in the Civic: what the tests expect). The game sets listedVehicles().
+    std::vector<int> lineup;
     void setupEmpty();  // just the world (for tests)
     // Runs every AI driver (and the player's autopilot) for one frame.
     void updateAI(double dt);
@@ -644,5 +701,6 @@ private:
     int trafficDir = 1;
     void collide(Car& A, Car& B);
     void ropeForces();
+    void jackForces();
     void pointsVsSkin(Car& A, Car& B);
 };

@@ -309,6 +309,13 @@ const char* anchorName(AnchorKind k) {
     return k == ANCHOR_TREE ? "TREE" : k == ANCHOR_ROCK ? "BOULDER" : k == ANCHOR_STAKE ? "GROUND ANCHOR" : "VEHICLE";
 }
 
+// What a target is called: the gear it takes where it's open ground.
+const char* groundName(AnchorGear g, bool set) {
+    static const char* fresh[] = {"TREE STRAP", "CHAIN SLING", "GROUND STAKE", "ROCK BOLT", "ICE ANCHOR"};
+    static const char* left[] = {"TREE STRAP", "CHAIN SLING", "GROUND STAKE (SET)", "ROCK BOLT (SET)", "ICE ANCHOR (SET)"};
+    return g == GEAR_COUNT ? "GROUND" : (set ? left : fresh)[g];
+}
+
 }  // namespace
 
 int Sim::ropeOn(int car, int kind) const {
@@ -350,6 +357,44 @@ void Sim::carRemoved(int car) {
     }
 }
 
+// ---- Anchor gear (anchors.h) ----------------------------------------------------------
+
+int Sim::anchorsFree(AnchorGear g, int exceptCar) const {
+    int used = 0;  // (a strap or sling is out on every line tied to a tree or boulder)
+    if (!anchors::usedUp(g))
+        for (const Rope& r : ropes)
+            if (r.kind == ROPE_WINCH && r.a.kind == ANCHOR_CAR && r.a.car != exceptCar && r.a.car >= 0 && r.a.car < (int)cars.size() && !cars[r.a.car].remote &&
+                r.b.kind == (g == GEAR_STRAP ? ANCHOR_TREE : ANCHOR_ROCK))
+                used++;
+    return anchorStock.n[g] - used;
+}
+
+Sim::AnchorUse Sim::anchorUse(const RopeEnd& e, int exceptCar) const {
+    AnchorUse u;
+    switch (e.kind) {
+        case ANCHOR_CAR: return u;
+        case ANCHOR_TREE: u.gear = GEAR_STRAP; break;
+        case ANCHOR_ROCK: u.gear = GEAR_SLING; break;
+        case ANCHOR_STAKE: {
+            // Open ground: what sets there depends on what it is, and how deep the water is on it.
+            const double water = world.waterLevel(e.p.x, e.p.z) - world.height(e.p.x, e.p.z);
+            const anchors::GroundRule gr = anchors::groundRule(world.surfaceAt(e.p.x, e.p.z), water);
+            if (gr.gear == GEAR_COUNT) return u.ok = false, u.why = gr.why, u;
+            u.gear = gr.gear;
+            for (int i = 0; i < (int)setAnchors.size(); i++)  // (one you left there already is free)
+                if (setAnchors[i].gear == u.gear && std::hypot(setAnchors[i].p.x - e.p.x, setAnchors[i].p.z - e.p.z) < anchors::kSetReuse) return u.reuse = i, u;
+            if (anchorsFree(u.gear, exceptCar) <= 0) u.ok = false, u.why = gr.needs;
+            return u;
+        }
+    }
+    if (anchorsFree(u.gear, exceptCar) <= 0) u.ok = false, u.why = u.gear == GEAR_STRAP ? "NEEDS A TREE STRAP" : "NEEDS A CHAIN SLING";
+    return u;
+}
+
+void Sim::refillAnchors() {
+    if (anchorStock.refills) anchorStock.fill(anchors::kSandboxStart);
+}
+
 std::vector<WinchTarget> Sim::winchTargets(int ci, const V3* look) const {
     std::vector<WinchTarget> out;
     const Car& c = cars[ci];
@@ -371,10 +416,12 @@ std::vector<WinchTarget> Sim::winchTargets(int ci, const V3* look) const {
         // The line runs out through the fairlead: straight ahead to ~75 degrees either side.
         t.inArc = dot(norm(V3(d.x, 0, d.z)), fwd) > 0.26;
         t.what = what;
+        const AnchorUse use = anchorUse(e, ci);
+        t.gear = use.gear, t.usable = use.ok, t.why = use.why, t.set = use.reuse >= 0;
         out.push_back(t);
     };
     for (const Pole& pl : world.poles) {
-        if (pl.r < 0.15) continue;  // fence and sign posts would pull out
+        if (pl.r < anchors::kTreeMinR) continue;  // fence and sign posts would pull out
         const double dx = pl.x - p.x, dz = pl.z - p.z;
         if (dx * dx + dz * dz > reach * reach) continue;
         RopeEnd e;
@@ -385,7 +432,7 @@ std::vector<WinchTarget> Sim::winchTargets(int ci, const V3* look) const {
         consider(e, pl.r > 0.2 ? "TREE" : "STUMP");
     }
     for (const Rock& rk : world.rocks) {
-        if (rk.r < 0.45) continue;  // too small: it would just roll toward you
+        if (rk.r < anchors::kBoulderMinR) continue;  // too small: it would just roll toward you
         if (len(rk.c - p) > reach + rk.r) continue;
         RopeEnd e;
         e.kind = ANCHOR_ROCK;
@@ -404,27 +451,44 @@ std::vector<WinchTarget> Sim::winchTargets(int ci, const V3* look) const {
             consider(e, h ? "TRUCK (REAR)" : "TRUCK (FRONT)");
         }
     }
-    // Anywhere else: a buried anchor in loose ground (a spare tire or a pull-pal dug in), or
-    // a bolt drilled into bare rock (or a stake in the verge beside a road). One straight
-    // ahead, and one wherever the driver is looking or standing.
+    // Anywhere else: a stake in loose ground (a pull-pal or a deadman dug in), a bolt drilled
+    // into bare rock, a picket in snow or ice. One straight ahead, and one wherever the driver
+    // is looking or standing, and every one already left in the ground. What the spot takes
+    // (anchors.h groundRule) says whether it can be used, and why not.
+    auto nearSet = [&](const V3& q) {
+        for (const SetAnchor& sa : setAnchors)
+            if (std::hypot(sa.p.x - q.x, sa.p.z - q.z) < anchors::kSetReuse) return true;
+        return false;
+    };
     auto ground = [&](const V3& q) {
-        if (world.waterLevel(q.x, q.z) > world.height(q.x, q.z) + 0.3) return;  // not under water
-        const Surface s = world.surfaceAt(q.x, q.z);
+        if (nearSet(q)) return;
         RopeEnd e;
         e.kind = ANCHOR_STAKE;
         e.p = V3(q.x, world.height(q.x, q.z) + 0.1, q.z);
-        consider(e, s == SURF_ROCK || s == SURF_PAVED || s == SURF_WET ? "ROCK ANCHOR" : "GROUND ANCHOR");
+        const double water = world.waterLevel(q.x, q.z) - world.height(q.x, q.z);
+        consider(e, groundName(anchors::groundRule(world.surfaceAt(q.x, q.z), water).gear, false));
     };
     ground(p + fwd * 14);
     if (look) ground(*look);
+    for (const SetAnchor& sa : setAnchors) {
+        RopeEnd e;
+        e.kind = ANCHOR_STAKE;
+        e.p = sa.p;
+        consider(e, groundName(sa.gear, true));
+    }
     std::sort(out.begin(), out.end(), [](const WinchTarget& x, const WinchTarget& y) { return x.dist < y.dist; });
     return out;
 }
 
-bool Sim::dropWinch(int ci) {
+bool Sim::dropWinch(int ci, bool say) {
     for (int r = 0; r < (int)ropes.size(); r++)
         if (ropes[r].kind == ROPE_WINCH && ropes[r].a.car == ci) {
+            const AnchorKind k = ropes[r].b.kind;
             ropes.erase(ropes.begin() + r);
+            if (k == ANCHOR_TREE || k == ANCHOR_ROCK) {  // (the strap or sling comes off with the line)
+                const AnchorGear g = k == ANCHOR_TREE ? GEAR_STRAP : GEAR_SLING;
+                if (say && ci == player) events.push_back(std::string(anchors::gearName(g)) + " BACK: " + std::to_string(anchorsFree(g)) + " CARRIED");
+            }
             return true;
         }
     return false;
@@ -441,13 +505,18 @@ std::string Sim::hookWinch(int ci) {
     const WinchTarget* best = nullptr;
     double bestScore = 1e18;
     const std::vector<WinchTarget> ts = winchTargets(ci);
+    const char* refused = nullptr;  // why the nearest one in front can't be used
     for (const WinchTarget& t : ts) {
         if (!t.inArc) continue;
+        if (!t.usable) {
+            if (!refused) refused = t.why;
+            continue;
+        }
         const double ahead = dot(norm(V3(t.at.x - p.x, 0, t.at.z - p.z)), fwd);
         const double score = t.dist * (2.2 - ahead) + (t.end.kind == ANCHOR_STAKE ? 1e6 : 0);
         if (score < bestScore) bestScore = score, best = &t;
     }
-    if (!best) return "NOTHING TO WINCH TO AHEAD";
+    if (!best) return refused ? refused : "NOTHING TO WINCH TO AHEAD";
     return hookWinchTo(ci, best->end);
 }
 
@@ -462,7 +531,9 @@ std::string Sim::hookWinchTo(int ci, const RopeEnd& best) {
     if (!std::isfinite(len(delta)) || len(delta) < 1.5 || len(delta) > recovery::kWinchReach) return "ANCHOR OUT OF LINE REACH";
     const V3 fwd = c.frame().fwd;
     if (dot(norm(V3(delta.x, 0, delta.z)), norm(V3(fwd.x, 0, fwd.z))) <= 0.26) return "THAT'S BEHIND THE WINCH: TURN TO FACE IT";
-    dropWinch(ci);
+    AnchorUse use = anchorUse(best, ci);
+    if (!use.ok) return use.why;
+    dropWinch(ci, false);
     const V3 p = c.hookPoint(0);
     Rope r;
     r.kind = ROPE_WINCH;
@@ -470,6 +541,7 @@ std::string Sim::hookWinchTo(int ci, const RopeEnd& best) {
     r.a.car = ci;
     r.a.hook = 0;
     r.b = best;
+    if (use.reuse >= 0) r.b.p = setAnchors[use.reuse].p;  // (back on the stake you left)
     r.maxLen = recovery::kWinchReach;
     r.length = std::min(r.maxLen, len(endPoint(cars, r.b) - p) + 0.4);
     r.k = 2.5e5;
@@ -478,8 +550,14 @@ std::string Sim::hookWinchTo(int ci, const RopeEnd& best) {
     r.stallN = c.spec->winchPull > 0 ? c.spec->winchPull : recovery::kWinchStall;
     ropes.push_back(r);
     if (best.kind == ANCHOR_CAR) cars[best.car].wake();
+    if (best.kind == ANCHOR_STAKE && use.reuse < 0 && !c.remote) {  // a stake, bolt or picket: set, and left
+        anchorStock.n[use.gear]--;
+        setAnchors.push_back({r.b.p, use.gear, std::atan2(-(p.z - r.b.p.z), p.x - r.b.p.x)});
+        events.push_back(std::string(anchors::gearName(use.gear)) + " SET: " + std::to_string(anchorStock.n[use.gear]) + " LEFT");
+    }
     char buf[96];
-    std::snprintf(buf, sizeof buf, "WINCH HOOKED TO %s %.0f M AWAY  (Z REEL IN, SHIFT+Z PAY OUT)", anchorName(best.kind), r.length);
+    std::snprintf(buf, sizeof buf, "WINCH HOOKED TO %s %.0f M AWAY  (Z REEL IN, SHIFT+Z PAY OUT)",
+                  best.kind == ANCHOR_STAKE ? groundName(use.gear, false) : anchorName(best.kind), r.length);
     return buf;
 }
 
@@ -655,6 +733,7 @@ void Sim::updateTrail(double dt) {
             const double rate = c.airing < 0 ? 5.0 : st >= 0 ? 8.0 : 2.0;
             c.tirePsi = clampd(c.tirePsi + c.airing * rate * dt, 12, 40);
         }
+        if (st >= 0 && speed < 0.5 && i == player) refillAnchors();  // (sandbox: the shop restocks your anchor gear)
         // The shop's pump: fills the tank (and the spare can) while you're on its pad.
         if (st >= 0 && speed < 0.5 && c.fuel >= 0) {
             c.fuel = std::min(c.spec->fuelCapacity, c.fuel + 3.0 * dt);
@@ -665,44 +744,7 @@ void Sim::updateTrail(double dt) {
             c.swayDisconnected = false;
             if (i == player) events.push_back("FRONT SWAY BAR RECONNECTED (OVER 30 KM/H)");
         }
-        // Trail repairs: stopped beside another vehicle (anyone's), its crew and kit fix
-        // what can be fixed out here.
-        c.fieldHelper = -1;
-        if (st < 0 && speed < 0.5 && c.needsFieldRepair()) {
-            const V3 me = c.frame().com;
-            double best = 7.5;
-            for (int o = 0; o < (int)cars.size(); o++) {
-                if (o == i || cars[o].isProp()) continue;
-                const Frame of = cars[o].frame();
-                const double d = len(of.com - me);
-                if (d < best && len(of.vel) < 0.8) best = d, c.fieldHelper = o;
-            }
-        }
-        if (c.fieldHelper >= 0) {
-            // The helper vehicle's kit is used for the repairs
-            Car& helper = cars[c.fieldHelper];
-            if (!helper.repairKit.hasSpareParts()) {
-                c.fieldTime = 0;
-                if (i == player) events.push_back("HELPER TRUCK HAS NO SPARE PARTS LEFT");
-                continue;
-            }
-            c.fieldTime += dt;
-            if (c.fieldTime >= c.fieldRepairSeconds()) {
-                c.fieldRepair();
-                c.fieldTime = 0;
-                if (i == player) {
-                    if (c.needsFieldRepair()) {
-                        events.push_back("TRAIL REPAIRS DONE (SOME PARTS MISSING, DAMAGE REMAINS)");
-                    } else if (c.needsRepair()) {
-                        events.push_back("TRAIL REPAIRS DONE (BODYWORK STILL NEEDS A STATION)");
-                    } else {
-                        events.push_back("TRAIL REPAIRS DONE");
-                    }
-                }
-            }
-        } else {
-            c.fieldTime = 0;
-        }
+        // (Trail repairs are hands-on now: on foot, with your own tools and parts. fixes.h)
         // Repair stations: park on the pad and wait.
         c.station = st;
         if (st >= 0 && speed < 0.5 && c.needsRepair()) {

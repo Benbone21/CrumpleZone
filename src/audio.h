@@ -21,7 +21,10 @@ public:
     void setEngine(float rpm, float load) { rpm_ = rpm; load_ = load; }
     // The engine's voice (from the vehicle spec): cylinder count, displacement in liters,
     // induction (0 natural, 1 turbo, 2 supercharger), flat-plane crank, redline.
-    void setVoice(int cylinders, float liters, int induction, bool flatPlane, float redline) {
+    void setVoice(int cylinders, float liters, int induction, bool flatPlane, float redline, const EngineTone& voice = EngineTone{}) {
+        vExhaust_ = voice.exhaustHz, vMuffler_ = voice.muffler, vLope_ = voice.lope, vIntake_ = voice.intake;
+        vMech_ = voice.mech, vRasp_ = voice.rasp, vCrackle_ = voice.crackle, vSeed_ = voice.seed;
+        vRumble_ = voice.rumble, vRoar_ = voice.roar;
         cyl_ = cylinders;
         liters_ = liters;
         induction_ = induction;
@@ -41,9 +44,12 @@ public:
         ambienceMap_ = map; hours_ = hours; ambienceVol_ = volume; exposure_ = exposure;
     }
     // Background music: which map's piece, and its volume (0 = off). Changing map crossfades.
-    void setMusic(int map, float volume) {
+    // `biome` (biome.h, 0 = the map's own piece) picks that country's music instead; it should
+    // already be steadied (BiomeTracker).
+    void setMusic(int map, float volume, int biome = 0) {
         musicMap_ = map;
         musicVol_ = volume;
+        musicBiome_ = biome;
     }
     void impact(float strength);  // 0..1
     void glass(float strength);   // window shattering, 0..1
@@ -64,13 +70,16 @@ private:
     std::atomic<int> recording_{0};
     std::atomic<bool> flatPlane_{false};
     std::atomic<float> liters_{1.6f}, redline_{6500}, boost_{0};
+    // The engine's voice (EngineTone), a field at a time for the audio thread.
+    std::atomic<float> vExhaust_{0}, vMuffler_{0.35f}, vLope_{0}, vIntake_{0.4f}, vMech_{0.25f}, vRasp_{0.3f}, vCrackle_{0}, vRumble_{0}, vRoar_{0.3f};
+    std::atomic<uint32_t> vSeed_{0};
     std::atomic<float> pendingImpact_{0}, pendingGlass_{0}, pendingPop_{0};
     std::atomic<float> sceneGain_{1}, localGain_{1};
     std::atomic<int> ambienceMap_{-1};
     std::atomic<float> hours_{10}, ambienceVol_{0}, exposure_{1};
     Ambience ambience_;
     float sMaster_ = 0.8f, sLocalGain_ = 1, sExposure_ = 1, cabinLowL_ = 0, cabinLowR_ = 0;
-    std::atomic<int> musicMap_{-1};
+    std::atomic<int> musicMap_{-1}, musicBiome_{0};
     std::atomic<float> musicVol_{0};
     Music music_;  // audio thread only (after start)
 

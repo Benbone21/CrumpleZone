@@ -105,6 +105,8 @@ V3 pointVel(const Row& q, const V3& o, const V3& p) {
 
 void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col) {
     spec = &vs;
+    chains = vs.snowChains;
+    gate = Gate();  // (a rebuilt body has its gate shut and latched: trunk.h)
     buildCount++;
     nodes.clear();
     beams.clear();
@@ -900,14 +902,20 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                     P.coil = frameNode(G.coil, 2.0);
                 } else if (st == TWIST_BEAM) {
                     P.coil = frameNode(V3(xw + 0.08, R * 0.75 + 0.05 + 0.32 * sizeK, s * (az - 0.16)), 2.0);
-                } else if (!front && vs.leafSprings) {  // SOLID_AXLE on leaf springs
+                } else if (front ? vs.leafFront : vs.leafSprings) {  // SOLID_AXLE on leaf springs
                     // The leaf rides on the tube (spring over axle), its eyes a little above the
                     // seat: the front one on a hanger, the rear on a shackle hanging from the frame.
                     // (The coil-over's top here is where the leaf's own rate pushes from: straight
                     // up over the seat.)
-                    const double zl = s * (az - 0.20), ys = R + 0.10;
-                    P.trail = frameNode(V3(xw + vs.leafHalf, ys + 0.05, zl), 2.5);
-                    P.shackle = frameNode(V3(xw - vs.leafHalf - 0.03, ys + 0.05 + 0.10, zl), 2.0);
+                    // (A steered axle's packs ride further in, under the frame rails, clear of the
+                    // tires as they swing to full lock.)
+                    const double zl = s * (front ? std::min(az - 0.20, std::max(vs.railSpacing * 0.5, az - 0.40)) : az - 0.20), ys = R + 0.10;
+                    const double lh = front ? vs.leafHalfFront : vs.leafHalf;
+                    // (A steered front axle: the fixed eye a little below the seat. Then as the body
+                    // rolls the axle swings to steer out of the turn just enough to cancel the steering
+                    // linkage's own bump steer; with the eye above it the truck wandered on the freeway.)
+                    P.trail = frameNode(V3(xw + lh, ys + (front ? -0.025 : 0.05), zl), 2.5);
+                    P.shackle = frameNode(V3(xw - lh - 0.03, ys + 0.05 + 0.10, zl), 2.0);
                     P.coil = frameNode(V3(xw - 0.06, ys + 0.30, zl), 2.0);
                     P.stop = frameNode(V3(xw, R + 0.31 * sizeK, s * (az - tireWidth(ax) / 2)), 2.0);
                 } else {  // SOLID_AXLE (links run toward the middle of the car)
@@ -924,7 +932,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 }
             }
             if (st == SOLID_AXLE) {
-                const bool leaf = !front && vs.leafSprings;
+                const bool leaf = front ? vs.leafFront : vs.leafSprings;
                 const double dir = front ? -1.0 : 1.0;
                 // (On leaves, the stand-in for their resistance to wind-up pulls from under the
                 // housing: the leaves themselves sit on top of it.)
@@ -1269,7 +1277,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
             int pinion = addNode(V3(xw + dir * 0.20, R + 0.02, 0), am * 0.10, false);
             int dtop = addNode(V3(xw, R + 0.14, 0), am * 0.06, false);
             axle.housing = {diff, pinion, dtop};
-            const bool leafAxle = !front && vs.leafSprings;
+            const bool leafAxle = front ? vs.leafFront : vs.leafSprings;
             int dbot = -1;  // (leaf springs: under the diff, where the wind-up stand-in pulls)
             if (leafAxle) {
                 dbot = addNode(V3(xw, R - 0.12, 0), am * 0.04, false);
@@ -1288,7 +1296,8 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 nodes[wh.outer].m += am * 0.03;
                 // Spring seat behind and link bracket ahead of the tube: the housing is a
                 // solid 3D piece, so the wheels can't toe in or out.
-                seat[sIdx] = addNode(V3(xw - dir * 0.06, R + vs.axleSeat, s * (az - 0.20)), am * 0.07, false);
+                const double seatZ = steered && vs.leafFront ? std::min(az - 0.20, std::max(vs.railSpacing * 0.5, az - 0.40)) : az - 0.20;  // (under the leaf: see the pick-ups)
+                seat[sIdx] = addNode(V3(xw - dir * 0.06, R + vs.axleSeat, s * seatZ), am * 0.07, false);
                 lowMount[sIdx] = addNode(V3(xw + dir * 0.12, R - 0.12, s * (az - 0.30)), am * 0.07, false);
                 wh.top = seat[sIdx];
                 wh.lower = lowMount[sIdx];
@@ -1305,7 +1314,16 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                     int kpLow = addNode(V3(xw, R - 0.13, s * (az - 0.06)), am * 0.03 + 3.0, false);
                     int kpUp = addNode(V3(xw - 0.035, R + 0.17, s * (az - 0.09)), am * 0.03 + 3.0, false);
                     int arm = addNode(V3(xw + dir * 0.17, R - 0.05, s * (az - 0.26)), am * 0.02 + 1.5, false);
-                    int rack = addNode(V3(xw + dir * 0.17, R - 0.05, s * 0.30), am * 0.02 + 1.5, false);
+                    // The tie rod's fixed end: square to the steering arm at straight ahead (forward
+                    // and inboard of the arm's end), so the arm can swing well past full lock before
+                    // it lines up with the rod. (Run straight across to the middle of the axle, the rod
+                    // started 40 degrees off the arm: the inside wheel reached that fold near full lock
+                    // and could snap over it and jam a few degrees off straight.)
+                    const V3 armEnd(xw + dir * 0.17, R - 0.05, s * (az - 0.26)), kpMid(xw, R - 0.05, s * (az - 0.06));
+                    const V3 armDir = norm(armEnd - kpMid), perp = norm(V3(-armDir.z, 0, armDir.x));
+                    V3 rackAt = armEnd + perp * 0.28;
+                    if (std::fabs(rackAt.z) > std::fabs(armEnd.z)) rackAt = armEnd - perp * 0.28;  // (the inboard side)
+                    int rack = addNode(rackAt, am * 0.02 + 1.5, false);
                     knuckle[sIdx] = {wh.inner, wh.outer, kpLow, kpUp, arm};
                     steerNodes[sIdx] = {kpLow, kpUp, arm, rack};
                     mine = {seat[sIdx], lowMount[sIdx], kpLow, kpUp};
@@ -1369,7 +1387,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                     as.nodes.push_back(tube);
                 }
             }
-            const bool leaf = !front && vs.leafSprings;
+            const bool leaf = front ? vs.leafFront : vs.leafSprings;
             for (int sIdx = 0; sIdx < 2; sIdx++) {
                 Wheel& wh = wheels[axle.wheel[sIdx]];
                 wh.assembly = as.nodes;
@@ -1517,7 +1535,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                 sp.c = cWheel / (mr * mr);
                 double preload = mCorner * g / mr / sp.k;
                 // (A multi-leaf spring: interleaf friction ~8% of the corner's weight.)
-                if (!wh.front && vs.leafSprings) sp.friction = (float)(0.08 * mCorner * g / mr);
+                if (wh.front ? vs.leafFront : vs.leafSprings) sp.friction = (float)(0.08 * mCorner * g / mr);
                 double L = sp.L0;
                 wh.motionRatio = mr;
                 wh.springRest = L;

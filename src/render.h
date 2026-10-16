@@ -30,6 +30,7 @@ enum ShaderMat {
     SM_ROCK = 12,
     SM_FOLIAGE = 13,
     SM_WOOD = 14,
+    SM_SNOWLEAF = 15,  // (matte; snow on a tree's foliage, which fades with it)
 };
 
 struct View {
@@ -37,6 +38,11 @@ struct View {
     float fovy = 1.15f;
     int width = 1, height = 1;
     float time = 0;  // seconds, drives the drifting clouds
+    // See-through trees (treefade.h): trees in the way dissolve. `focus` is what to keep in sight (the car, in
+    // the chase and orbit views); `fadeNear` scales how far from the camera they dissolve (0 off, 1 chase).
+    V3 focus;
+    bool hasFocus = false;
+    float fadeNear = 0;
 };
 
 // Graphics options (the pause menu's GRAPHICS section).
@@ -53,7 +59,7 @@ struct RenderSettings {
     float blur = 0;             // 0..1: blurs the scene behind a menu
 };
 
-enum DebugView { DEBUG_OFF, DEBUG_XRAY, DEBUG_BEAMS_ONLY, DEBUG_VIEW_COUNT };
+enum DebugView { DEBUG_OFF, DEBUG_XRAY, DEBUG_BEAMS_ONLY, DEBUG_PARTS, DEBUG_VIEW_COUNT };  // (parts: no body skin, to see the engine and running gear)
 
 class Renderer {
 public:
@@ -72,6 +78,15 @@ public:
         double stride = 0;  // walk cycle phase (radians), legs and arms swing with it
     };
     std::vector<Figure> figures;
+    // Code-made models (modelkit.h) drawn this frame only: a jack under a wheel, the tools in
+    // your hands (handwork.h)...
+    std::vector<Placed> frameModels;
+    // A wheel being worked on this frame: slid out along its axle (coming off), and its snow
+    // chain part wrapped (0..1; -1 as it is).
+    struct WheelWork {
+        int car = -1, wheel = -1;
+        double out = 0, chain = -1;
+    } wheelWork;
     // A wheel in your arms, drawn this frame (first person: low in front of the eye).
     struct Carried {
         bool on = false;
@@ -143,7 +158,13 @@ private:
     int boxVertexCount = 0;
     GLuint treeVao = 0, treeVbo = 0;
     int treeVertexCount = 0;
+    ScanCover scanCover_;           // what the scanned props draw instead of the code-made meshes
+    std::vector<float> treeFade_;   // per tree (World::trees): how much of it the camera hides now (treefade.h)
+    double fadeTime_ = 0;
     GLuint wheelVao[WHEEL_STYLES] = {}, wheelVbo[WHEEL_STYLES] = {}, caliperVao = 0, caliperVbo = 0;
+    // Each tread on each wheel style (the tire alone: the rim is the wheel's), and snow chains.
+    GLuint tireVao[WHEEL_STYLES][TIRE_TYPES] = {}, tireVbo[WHEEL_STYLES][TIRE_TYPES] = {}, chainVao = 0, chainVbo = 0;
+    int treadVertexCount[WHEEL_STYLES][TIRE_TYPES] = {}, chainVertexCount = 0;
     int tireVertexCount[WHEEL_STYLES] = {}, wheelVertexCount[WHEEL_STYLES] = {}, caliperVertexCount = 0;
     GLuint dynVao = 0, dynVbo = 0;  // per-frame lit geometry: car parts and running gear
     GLuint lineVao = 0, lineVbo = 0;
@@ -174,6 +195,8 @@ private:
     void buildBoxes(const World& world);
     void buildWheel();
     void buildWheelStyle(int style);
+    void buildTire(int style, int tread);
+    void buildChains();
     void buildFont();
     void buildBackdrop(const World& world, std::vector<Vtx>& verts, std::vector<unsigned>& idx);
     void ensureShadows(int size);

@@ -108,8 +108,19 @@ void raiseBody(VehicleSpec& vs, double dy) {
     for (MassItem& it : vs.items) it.y += dy;
 }
 
+EngineTone voiceFor(const VehicleSpec& vs) {
+    EngineTone e = vs.voice;
+    if (!e.seed) {  // (from its name: two engines never sound quite alike)
+        uint32_t h = 2166136261u;
+        for (const char* c = vs.engineName; c && *c; c++) h = (h ^ (uint8_t)*c) * 16777619u;
+        e.seed = h ? h : 1;
+    }
+    return e;
+}
+
 const char* tireTypeName(int t) {
-    return t == TIRE_SEMI_SLICK ? "SEMI-SLICK" : t == TIRE_ALL_TERRAIN ? "ALL-TERRAIN" : t == TIRE_MUD_TERRAIN ? "MUD-TERRAIN" : "STREET";
+    return t == TIRE_SEMI_SLICK ? "SEMI-SLICK" : t == TIRE_ALL_TERRAIN ? "ALL-TERRAIN" : t == TIRE_MUD_TERRAIN ? "MUD-TERRAIN"
+           : t == TIRE_RACE_SLICK ? "RACE SLICK" : t == TIRE_SNOW ? "SNOW" : t == TIRE_CHAINS ? "CHAINED" : "STREET";
 }
 
 const std::vector<DriveMode>& driveModes(TransferCase t) {
@@ -138,6 +149,34 @@ const std::vector<DriveMode>& driveModes(TransferCase t) {
 }
 
 int defaultDriveMode(TransferCase t) { return t == XFER_NONE || t == XFER_PART_TIME_BASIC ? 0 : 1; }
+
+const std::vector<int>& listedVehicles() {
+    static const std::vector<int> l = [] {
+        std::vector<int> out;
+        const auto& cat = vehicleCatalog();
+        for (const char* id : {"blazer", "bronco", "4runner", "tacoma", "jesko"})
+            for (int i = 0; i < (int)cat.size(); i++)
+                if (std::string(cat[i].id) == id) out.push_back(i);
+        return out;
+    }();
+    return l;
+}
+
+bool vehicleListed(int v) {
+    for (int k : listedVehicles())
+        if (k == v) return true;
+    return false;
+}
+
+int nextListedVehicle(int v, int dir) {
+    const std::vector<int>& l = listedVehicles();
+    int at = -1;
+    for (int i = 0; i < (int)l.size(); i++)
+        if (l[i] == v) at = i;
+    if (at < 0) return l[0];
+    const int n = (int)l.size();
+    return l[((at + dir) % n + n) % n];
+}
 
 const std::vector<VehicleSpec>& vehicleCatalog() {
     // Six vehicles (two of them crawl specials), built from their published specs (dimensions, weights,
@@ -293,7 +332,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         jesko.hubMass = 17;
         jesko.frontSusp = WISHBONE;
         jesko.rearSusp = WISHBONE;
-        jesko.rideFreqFront = 2.1;  // stiff track springs
+        jesko.rideFreqFront = 2.1;  // stiff track springs (editor-ui's 2.3 / 2.45 / 0.50 made it scrape and wander at 250+ km/h: freeway/top-speed)
         jesko.rideFreqRear = 2.25;
         jesko.dampingRatio = 0.48;
         // Koenigsegg's Triplex: a third, horizontal damper and spring across each axle that
@@ -302,11 +341,11 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         jesko.heaveRate = 150000;
         jesko.heaveGap = 0.008;
         jesko.heaveDamping = 22000;  // well damped: it mustn't bounce the car off a kerb
-        jesko.arbFront = 16000;  // roll stiffness biased to the heavy rear (42/58)
-        jesko.arbRear = 18000;
+        jesko.arbFront = 18000;  // very stiff anti-roll bars for high-speed cornering
+        jesko.arbRear = 20000;
         jesko.tireGrip = 1.32;  // Michelin Cup 2 R
         jesko.tireType = TIRE_SEMI_SLICK;
-        jesko.lateralGrip = 1.0;  // semi-slick Cup 2 R: corners as hard as it brakes (~1.2 g at skidpad speed)
+        jesko.lateralGrip = 1.0;  // semi-slick Cup 2 R: corners as hard as it brakes (~1.2 g at skidpad speed; editor-ui's 1.15 spun it off the freeway at 330 km/h)
         jesko.drive = VehicleSpec::RWD;
         jesko.diffFront = DIFF_OPEN;
         jesko.diffRear = DIFF_LSD;  // electronic differential
@@ -1085,6 +1124,159 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         tacoma.coverColor[0] = 0.08f, tacoma.coverColor[1] = 0.08f, tacoma.coverColor[2] = 0.09f;
         v.push_back(tacoma);
 
+        // ---- 1972 Chevrolet K5 Blazer 4x4 (first generation, 1969-72) ----------------------
+        // The short, square two-door: a full-length box on a ladder frame with a removable
+        // fiberglass/steel hardtop over the back, a 350 small-block V8, the SM465 four-speed
+        // ("granny" first), an NP205 gear-drive transfer case, a Dana 44 front and a GM 12-bolt
+        // rear, both on multi-leaf springs, the front one steering on kingpins. 104 in
+        // wheelbase, 177.5 x 79 in (GM specs for 1969-72). 1972 SAE net ratings for the
+        // two-barrel 350: 165 hp at 4,000 rpm, 280 lb-ft at 2,400. ~4,000 lb with the top on.
+        VehicleSpec blazer = bronco;
+        blazer.name = "CHEVY BLAZER";
+        blazer.id = "blazer";
+        blazer.blurb = "1972 K5 4X4  350 V8  SM465 4-SPEED  NP205";
+        // Nose and front wheels, the cab (two long doors), the back under the hardtop.
+        blazer.profile = {
+            "#WW#####WW#",
+            "###########",
+            "...GGGGGGGG",
+        };
+        // 4,509 x 2,007 mm (with the mirrors folded: the body ~1,980), ~1,770 mm tall with the top.
+        blazer.layerY = {0.53, 0.99, 1.32, 1.80};  // (the 4x4's floor sits high over the frame and the leaf packs)
+        blazer.length = 4.509;
+        blazer.width = 1.98;
+        blazer.wheelbase = 2.642;  // 104 in
+        blazer.frontOverhang = 0.80;
+        blazer.outerCellWidth = 0;
+        blazer.topLine = {1.18, 1.25, 1.30};  // a long, flat hood, nearly level to the cowl
+        blazer.bumperLift = 0.10;
+        blazer.bumperLiftRear = 0.10;
+        blazer.cornerRound = 0.04;  // a box
+        blazer.roofTuck = 0.06;
+        blazer.rakeFront = 0.26;    // a near-vertical windshield
+        blazer.rakeRear = 0.02;     // the tailgate glass, upright
+        blazer.liftgate = false;    // a drop-down tailgate with a roll-down window
+        blazer.doors = 2;
+        blazer.doorLength = 1.25;
+        blazer.bodyWidth.clear();
+        // ~4,000 lb (1,815 kg) with the hardtop and a full tank, about 55/45 (ESTIMATE from
+        // period road tests: the iron V8 and the front axle over the front wheels).
+        blazer.structureMass = 380;  // the steel body tub (the frame is its own, below)
+        blazer.panelMass = 150;      // thick 1970s sheet metal
+        blazer.items = {
+            {"radiator and core support", 30, 1.82, 0.88, 0},   {"battery", 25, 1.55, 1.00, -0.55},
+            {"front bumper (chrome)", 30, 2.20, 0.62, 0},       {"steering box and drag link", 22, 1.75, 0.70, -0.45},
+            {"front prop shaft", 10, 0.90, 0.52, 0.1},          {"rear prop shaft", 15, -0.45, 0.52, 0},
+            {"dashboard and heater", 32, 0.80, 1.10, 0},        {"front bucket seats", 44, 0.05, 0.98, 0},
+            {"rear bench seat", 32, -0.95, 0.96, 0},            {"floor mats, trim, wiring", 30, -0.10, 0.70, 0},
+            {"fuel tank (117 L, full)", 85, -1.20, 0.58, 0.40}, {"exhaust", 28, -0.30, 0.40, 0.35},
+            {"spare wheel on the swing-away carrier", 38, -2.42, 1.11, 0},  // (a big tire doesn't fit inside, on the side wall where the factory put it)
+            {"rear bumper (chrome)", 22, -2.22, 0.62, 0},        {"hardtop", 45, -0.70, 1.72, 0},
+            {"brakes", 22, 0.0, 0.50, 0},                       {"tailgate", 25, -2.20, 0.95, 0},
+        };
+        blazer.engineMass = 240;   // cast-iron small block with its accessories
+        blazer.gearboxMass = 110;  // SM465 (~70 kg, cast iron) and the NP205 (~40 kg)
+        blazer.transverse = false;
+        blazer.engineX = 1.35;
+        blazer.engineY = 1.02;
+        blazer.engineZ = 0;
+        blazer.engineLen = 0.68;
+        blazer.engineWid = 0.66;
+        blazer.engineHgt = 0.64;
+        blazer.gearboxLen = 0.90;
+        blazer.induction = VehicleSpec::NATURAL;
+        blazer.turboLag = 0;
+        blazer.displacement = 5.7;
+        blazer.cylinders = 8;
+        blazer.bodyStiffness = 0.95;   // an open-backed tub (the top is bolted on)
+        blazer.bodyStrength = 0.85;    // mild steel, thick
+        blazer.frameStrength = 2.6;
+        blazer.panelStrength = 1.5;
+        blazer.pinStrength = 1.8;
+        // Ladder frame: C-channel rails, riveted crossmembers (ESTIMATE: ~7 x 2.5 in, 3/16 in).
+        blazer.railSpacing = 0.86;
+        blazer.railHeight = 0.18;
+        blazer.railWidth = 0.065;
+        blazer.frameMass = 170;
+        blazer.frameStiffness = 0.12;  // an open C: it twists
+        blazer.railYield = 0.010;
+        blazer.bodyMounts = 8;
+        blazer.skidDrop = 0.20;        // the NP205 and its crossmember hang low
+        // 10-15LT on 15 x 7 steel wheels: ~30.5 x 10 in (ESTIMATE between the G78-15 base tire
+        // and the optional 10-15 the off-road package listed).
+        blazer.wheelRadius = 0.385;
+        blazer.wheelWidth = 0.255;
+        blazer.wellTireRadius = 0.42;  // ~33s before they rub
+        blazer.wellTireWidth = 0.29;
+        blazer.rimRadius = 0.191;      // 15 in
+        blazer.trackFront = 1.638;     // 64.5 in
+        blazer.trackRear = 1.600;      // 63 in
+        blazer.wheelMass = 27;
+        blazer.hubMass = 25;           // locking hubs and the brake
+        blazer.axleMass = 110;         // Dana 44 front / 12-bolt rear, and half the leaf packs
+        blazer.frontSusp = SOLID_AXLE;
+        blazer.rearSusp = SOLID_AXLE;
+        blazer.leafFront = true;       // multi-leaf packs at both ends, the front axle steering
+        blazer.leafSprings = true;
+        blazer.leafHalfFront = 0.58;   // 46 in front springs (ESTIMATE)
+        blazer.leafHalf = 0.70;        // 52 in rear springs (ESTIMATE)
+        blazer.linkLength = 0.70;
+        blazer.upperLink = 0;
+        blazer.rideFreqFront = 1.45;   // stiff front leaves: the V8 sits on them
+        blazer.rideFreqRear = 1.45;
+        blazer.dampingRatio = 0.30;    // 1970s shocks
+        blazer.arbFront = 6000;        // a thin front bar
+        blazer.arbRear = 0;
+        // Wheel travel (ESTIMATE): leaf packs, ~20 cm front, ~22 cm rear.
+        blazer.bumpFront = 0.08, blazer.droopFront = 0.11;
+        blazer.bumpRear = 0.09, blazer.droopRear = 0.13;
+        blazer.swayDisconnect = 0;
+        blazer.tirePsi = 32;
+        blazer.wheelLoss = true;
+        blazer.spareFlat = false;
+        blazer.lugShear = 105000;      // eight 1/2 in studs
+        blazer.tireType = TIRE_ALL_TERRAIN;
+        blazer.tireGrip = 0.90;        // bias-ply-era tread
+        blazer.lateralGrip = 0.74;     // ~0.63 g on the skidpad: 1970s light-truck tires
+        blazer.drive = VehicleSpec::AWD;
+        blazer.diffFront = blazer.diffRear = DIFF_OPEN;
+        blazer.transfer = XFER_PART_TIME_BASIC;  // NP205: 2H, 4H, 4L (locking hubs in front)
+        blazer.lockerRear = false;
+        blazer.lockerFront = false;
+        blazer.frontLockerLowOnly = false;
+        blazer.rearLockerLowOnly = false;
+        blazer.shaftLimit = 9500;      // Dana 44 front shafts and the 12-bolt's C-clip rears
+        blazer.lowRange = 1.96;        // NP205
+        blazer.brakeFront = 3300;      // 11.86 in discs (power front discs from 1971)
+        blazer.brakeRear = 1300;       // 11 in drums (behind a proportioning valve: the fronts lock first)
+        blazer.absEnabled = false;
+        blazer.tractionFitted = false;
+        blazer.dragArea = 1.75;        // Cd ~0.55 x 3.2 m^2 (a brick)
+        // 165 hp at 4,000 rpm, 280 lb-ft (380 N*m) at 2,400 (SAE net, 1972 2-bbl 350); the curve
+        // between is the small block's (estimate).
+        blazer.torque = {{0, 250}, {800, 300}, {1200, 335}, {1800, 365}, {2400, 380}, {3000, 370}, {3600, 345}, {4000, 320}, {4400, 285}, {4800, 240}};
+        blazer.idleRpm = 650;
+        blazer.redline = 4800;
+        blazer.speedLimit = 150;
+        blazer.gears = {6.55, 3.58, 1.70, 1.00};  // SM465
+        blazer.reverseRatio = 6.09;
+        blazer.finalDrive = 3.73;
+        blazer.shiftTime = 0.45;       // a long-throw truck box, double-clutched if you like
+        blazer.stallRpm = 0;           // a clutch, not a converter
+        blazer.lockupGear = 0;
+        blazer.engineName = "350 V8 2-BARREL";
+        blazer.gearboxName = "SM465 4-SPEED MANUAL";
+        blazer.lampStyle = LAMP_ROUND;
+        blazer.grilleStyle = GRILLE_WIDE;
+        blazer.extras = EXTRA_SPARE;  // the spare on a swing-away carrier behind the tailgate
+        // Ochre with the white hardtop, the classic two-tone.
+        blazer.paintColor[0] = 0.66f, blazer.paintColor[1] = 0.44f, blazer.paintColor[2] = 0.12f;
+        blazer.trimColor[0] = 0.93f, blazer.trimColor[1] = 0.93f, blazer.trimColor[2] = 0.90f;  // the white hardtop (its shell paints it)
+        blazer.trimTop = 0;
+        blazer.wheelStyle = WHEEL_STEEL;
+        blazer.coverColor[0] = 0.92f, blazer.coverColor[1] = 0.92f, blazer.coverColor[2] = 0.90f;  // the white top
+        v.push_back(blazer);
+
         // EF Civic Si: the Rio Red hatch in bringatrailer.com/listing/1990-honda-civic-si-5/.
         // Honda's D16A6 rating: 108 hp / 100 lb-ft; 185/60R14 tires, discs/drums,
         // double wishbones and a five-speed. Internal mass placement and CG are estimates.
@@ -1163,6 +1355,20 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         ef.wheelStyle = WHEEL_HONDA_COVER;
         ef.extras = EXTRA_LIP_SPOILER;
 
+        // Each engine's sound (engineaudio.h): the exhaust pipe's note (Hz), how open it is, cam,
+        // intake, valvetrain, timbre, pops, the burble of big uneven pulses, and the roar under load.
+        auto voice = [&](const char* id, float pipeHz, float muffler, float lope, float intake, float mech, float rasp, float crackle, float rumble, float roar) {
+            for (VehicleSpec& s : v)
+                if (std::string(s.id) == id) s.voice = EngineTone{pipeHz, muffler, lope, intake, mech, rasp, crackle, 0, rumble, roar};
+        };
+        voice("civic", 260, 0.30f, 0.0f, 0.55f, 0.35f, 0.60f, 0.0f, 0.0f, 0.20f);    // a little SOHC four: buzzy, intake-y, quiet pipe
+        voice("jesko", 340, 0.75f, 0.0f, 0.50f, 0.20f, 0.70f, 0.35f, 0.0f, 0.60f);   // flat-plane V8 through a short race exhaust: a howl
+        voice("bronco", 150, 0.30f, 0.0f, 0.30f, 0.20f, 0.35f, 0.0f, 0.05f, 0.30f);  // twin-turbo V6: muted, turbo hiss, a modern box
+        voice("4runner", 165, 0.40f, 0.0f, 0.45f, 0.35f, 0.40f, 0.0f, 0.05f, 0.30f); // 5VZ V6 with the blower whine
+        voice("buggy", 95, 0.92f, 0.35f, 0.55f, 0.30f, 0.30f, 0.50f, 0.60f, 0.85f);  // LS V8 out of short open headers: loud, lumpy, poppy
+        voice("utv", 300, 0.62f, 0.0f, 0.60f, 0.55f, 0.85f, 0.30f, 0.15f, 0.50f);    // Rotax turbo triple: raspy, clattery, braps
+        voice("tacoma", 175, 0.25f, 0.0f, 0.35f, 0.25f, 0.40f, 0.0f, 0.0f, 0.20f);   // 2GR V6: smooth and quiet
+        voice("blazer", 105, 0.38f, 0.15f, 0.60f, 0.40f, 0.12f, 0.15f, 0.55f, 0.55f); // carbureted small block on dual exhaust: deep, a little lope, a rumble
         for (size_t i = 0; i < v.size(); i++) v[i].model = (int)i;
         // Engines tuned ~15% over their factory ratings: rated torque is the crank's, and
         // with the drivetrain's spinning mass counted the stock figures felt flat in the game.
@@ -1176,6 +1382,11 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         v[4].fuelCapacity = 95;                         // rock buggy: a 25 gal fuel cell
         v[5].fuelCapacity = 40;                         // UTV: 10.6 gal (Maverick X3)
         v[6].fuelCapacity = 80, v[6].jerryCan = 20;     // Tacoma: 21.1 gal
+        v[7].fuelCapacity = 117;                        // Blazer: 31 gal
+        // A set of snow chains in the back of each off-roader (a pair per axle).
+        for (const char* id : {"bronco", "4runner", "buggy", "utv", "tacoma", "blazer"})
+            for (VehicleSpec& s : v)
+                if (std::string(s.id) == id) s.snowChains = 4;
         return v;
     }();
     return catalog;

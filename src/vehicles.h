@@ -1,6 +1,7 @@
 // Vehicle definitions. Each vehicle's body is described by a side-profile map
 // that the soft-body builder turns into a node/beam lattice.
 #pragma once
+#include "engineaudio.h"
 #include <string>
 #include <vector>
 
@@ -40,7 +41,11 @@ enum TransferCase {
 
 // One position of the transfer-case lever.
 // Tire tread: how it gets on with each surface (on top of the spec's pavement grip).
-enum TireType { TIRE_STREET, TIRE_SEMI_SLICK, TIRE_ALL_TERRAIN, TIRE_MUD_TERRAIN };
+enum TireType { TIRE_STREET, TIRE_SEMI_SLICK, TIRE_ALL_TERRAIN, TIRE_MUD_TERRAIN,
+                TIRE_RACE_SLICK,  // no tread at all: the most rubber on dry pavement, nothing to bite with off it
+                TIRE_SNOW,        // winter tire: soft compound, siped blocks: grips snow and ice
+                TIRE_CHAINS,      // snow chains over the tire: they cut into ice, snow and mud, skate on pavement
+                TIRE_TYPES };
 const char* tireTypeName(int t);
 
 struct DriveMode {
@@ -71,7 +76,9 @@ enum BodyExtra : unsigned {
 };
 
 // Wheel and tire look.
-enum WheelStyle { WHEEL_ALLOY = 0, WHEEL_OFFROAD_BRONZE = 1, WHEEL_OFFROAD_BLACK = 2, WHEEL_HONDA_COVER = 3, WHEEL_FORGED = 4, WHEEL_STYLES };
+enum WheelStyle { WHEEL_ALLOY = 0, WHEEL_OFFROAD_BRONZE = 1, WHEEL_OFFROAD_BLACK = 2, WHEEL_HONDA_COVER = 3, WHEEL_FORGED = 4,
+                  WHEEL_STEEL = 5,  // 1970s painted steel wheel, chrome dog-dish cap, on a tall tire
+                  WHEEL_STYLES };
 
 // Headlamp and grille shapes (body shader).
 enum LampStyle { LAMP_RECT = 0, LAMP_ROUND = 1, LAMP_SLIM = 2 };
@@ -110,6 +117,7 @@ struct VehicleSpec {
     bool tractionFitted = true;  // has traction control at all (the driver can still switch it off)
     int cylinders = 4;
     bool flatPlane = false;        // flat-plane crank V8: even firing, a high-pitched howl
+    EngineTone voice;             // its own sound (engineaudio.h); voiceFor() fills its seed
     enum Induction { NATURAL, TURBO, SUPERCHARGER } induction = TURBO;
     double displacement = 1.5;     // liters, also sets the procedural engine voice
 
@@ -172,6 +180,10 @@ struct VehicleSpec {
     // the front half pivots on a hanger, the rear swings on a shackle. No links, no panhard.
     bool leafSprings = false;
     double leafHalf = 0.70;        // spring eye to the axle seat (m), each side
+    // The front axle on leaves too (a steered solid axle: the 1970s 4x4s): fixed eye ahead,
+    // shackle behind, the same way round as the rear.
+    bool leafFront = false;
+    double leafHalfFront = 0.60;
     double rideFreqFront = 1.5, rideFreqRear = 1.6;  // body bounce frequency on its springs (Hz)
     double dampingRatio = 0.35;
     double arbFront = 0, arbRear = 0;
@@ -202,6 +214,7 @@ struct VehicleSpec {
     double fuelCapacity = 50;     // L in a full tank
     double jerryCan = 0;          // L in the spare can it carries (0: none)
     int tireType = TIRE_STREET;
+    int snowChains = 0;           // chains carried, one per tire (fitted on foot: interact.h)
     double tireGrip = 1.1;    // peak friction coefficient on pavement
     double lateralGrip = 1.0; // cornering grip as a share of braking/traction grip (blocky off-road treads squirm)
     enum Drive { RWD, FWD, AWD } drive;
@@ -251,15 +264,22 @@ struct VehicleSpec {
     int wheelStyle = WHEEL_ALLOY;
     // Set on tuned copies (see mods.h): which catalog vehicle, and the mods fitted.
     int model = -1;
-    int mods[3] = {0, 0, 0};
+    int mods[5] = {0, 0, 0, 0, 0};  // the garage's pick in each slot (mods.h ModSlot)
+    int engineOrigin = -1;          // the catalog vehicle whose engine is fitted (-1: its own): picks its recorded sound
     std::string modSummary;  // "STAGE 1 / COILOVERS / STOCK" (empty when stock)
 
     enum Finish { PAINT, MATTE, CONCRETE } finish = PAINT;
     double contactScale = 1.0;  // < 1 for soft things (foam) that cushion impacts
 };
 
-// Drivable vehicles (keys 1-6).
+// Drivable vehicles.
 const std::vector<VehicleSpec>& vehicleCatalog();
+// The ones the game offers (the vehicle menu, keys 1-5, spawning), in that order: the
+// overlanders first, then the Jesko. The Civic, the UTV and the buggy stay in the catalog
+// (the tests drive them, old levels may name them) but aren't offered.
+const std::vector<int>& listedVehicles();
+bool vehicleListed(int v);
+int nextListedVehicle(int v, int dir);  // the next one on the list (from any vehicle)
 // Body lattice: x (m, + forward) of node column i (fractional i interpolates).
 double latticeX(const VehicleSpec& vs, double i);
 // Node columns the axles sit on (from the runs of 'W' in the bottom layer).
@@ -270,6 +290,8 @@ int doorCells(const VehicleSpec& vs);
 bool hasRearDoors(const VehicleSpec& vs);
 // Peak power (W) and the rpm it's made at.
 double peakPower(const VehicleSpec& vs, double* atRpm = nullptr);
+// The engine's voice with its seed (from its name: each engine its own small differences).
+EngineTone voiceFor(const VehicleSpec& vs);
 double peakTorque(const VehicleSpec& vs, double* atRpm = nullptr);
 // Moves the body (and everything on it) up by dy relative to the wheels: lift kits, lowering.
 void raiseBody(VehicleSpec& vs, double dy);

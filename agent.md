@@ -10,7 +10,7 @@ work, the wheel-swap feature, releases): `docs/handoff.md`.**
 ```bash
 make                                   # builds ./crumplezone (needs g++ and the libsdl2-2.0-0 runtime; no -dev packages)
 ./crumplezone --player 3               # start next to car 3 of those parked at the start (0 Civic, 1 Jesko, 2 Bronco, 3 4Runner)
-./crumplezone --resume-model 4         # be vehicle 4, 5 or 6 (the rock buggy, the side-by-side, the Tacoma); keys 1-7 do it in the game
+./crumplezone --resume-model 7         # be catalog vehicle 7 (the Blazer); keys 1-5 pick the listed ones (Blazer, Bronco, 4Runner, Tacoma, Jesko)
 make build/run_tests
 nice -n 15 ./build/run_tests --jobs 6  # every scenario in parallel, about 6 min; writes build/test_report.html
 ./build/run_tests -v damage/           # one group, verbose (filter = substring of the scenario name)
@@ -54,6 +54,7 @@ Without `--time`, captures start at 10:00 with the clock running.
 | `src/bodyshell.cpp` | Sculpted body shells (`ShellLines` + a per-car `Style`), bound to the physics cells so they dent and their panels open. Pickups (`ShellLines::bed`): behind `xCab` each section is the U of the bed |
 | `src/render.cpp` | GL renderer. The body shader draws lamps, grilles, door seams and two-tone trim from lattice coordinates. Wheel meshes come in a style per `WheelStyle`. The pipeline is HDR: the scene renders into an RGBA16F target (MSAA), then `postProcess()` runs SAO, the bloom chain and the ACES composite. There are two shadow cascades. Sky, clouds and fog live in `kCommonFS`; everything outputs linear HDR. Scenery-only terrain (crags and the backdrop range) comes from `sceneryHeight()` |
 | `src/main.cpp` | Window, input, camera, HUD, garage UI, command-line flags |
+| `src/keybinds.h/.cpp` | Remappable keyboard keys, with no SDL or GL: `Keybinds::gameKey()` turns a physical key into the default key of the action it is bound to (the key switch in main.cpp is written against the defaults; pad taps skip it). Esc is always the menu. Settings lines `key_*`. Rebinding page: pause menu page 7 (Settings -> CONTROLLER -> KEYBOARD KEYBINDS). `--press FRAME:SC,...` taps keys in a scripted run |
 | `src/music.h/.cpp` | Generative background music, one style per map (`Style`, indexed by `World::map`; later maps reuse them in turn, and the Backcountry (map 4) takes MOUNTAIN's). Seeded progressions, motif-based melodies, sections of 30–90 s; band-limited synths, Karplus-Strong plucks, an FDN reverb. `Audio` mixes it in the callback; volume is `Settings::music` x master. Offline review: `build/review/music/musictest.cpp` (WAVs, spectrograms, `layers`, `trace`, `soak`) |
 | `src/daylight.h/.cpp` | Time of day: `computeDaylight(hours)` gives the sun, moon and key-light directions, light and sky colors, exposure and the star sphere's turn; `kKeys` holds the sky keyframes by sun height. The game runs the clock (`dayHours` in main.cpp; setting TIME OF DAY: the cycle at a day length, or a fixed time; `--time H` holds it) and hands `Renderer::daylight` the result; in multiplayer the host's clock goes out as `MSG_CLOCK` |
 | `src/lights.h/.cpp` | Vehicle lamps: where each model's head and tail lamps sit (from the shell lines the body shader uses), the body node each rides on, and whether it survived (`carLamps`). The renderer turns the nearest 8 cars' headlamps into spot lights (`lampLight()` in `kCommonFS`, evaluated in every lit shader) and feeds the body shader `uLampOn/uLampOk/uReverse`. Shift+L is the player's switch (`LampMode`) |
@@ -71,6 +72,7 @@ Without `--time`, captures start at 10:00 with the clock running.
 | `src/mountain.cpp` | The mountain map: massif, spiral summit trail, valley loop, trailhead, crawl park, creek, the Widowmaker Spur and Boulder Gully, repair stations, scenery. `mountainFeature(name)` gives feature positions for tests (spur, pinnacle, gully, gullytop, halfway, garage, pit, whoops...) |
 | `src/rope.h`, `src/recovery.cpp` | Winch lines and tow straps (`Sim::ropes`, forces in `Sim::ropeForces` at 2 kHz, spread over the chassis by `Car::pullHook`), anchors, towed-car behaviour (`Sim::drive`), tire airing, sway-bar reconnect, repair stations (`Sim::updateTrail`, run by `advance`), `placeUpright`/`rotateRigid` |
 | `tests/recovery.cpp` | Winching, strap tow, repair, righting |
+| `src/anchors.h/.cpp`, `tests/anchors.cpp` | Anchor gear: which gear each anchor takes (`groundRule` by surface and water depth), counts and prices (all constants in `namespace anchors`), the career/sandbox starting sets. `Sim::anchorStock` (carried), `setAnchors` (stakes left in the ground), `anchorUse`, `anchorsFree`; `WinchTarget::usable/why`. Career keeps it in `Career::stock` as `ANCHOR:...`; main.cpp copies it to the sim (a sim with `refills` set is a sandbox's) |
 | `src/net.h/.cpp` | Multiplayer (`NetSession`): TCP for reliable messages (join, spawn/despawn, lines), UDP for vehicle states (20 Hz, fragmented, node offsets from the rigid rest shape as int16 mm). The host relays. Each machine owns and simulates its own cars; others' are `Car::remote` (kinematic: positions from the network, they only push back). `send()` diffs cars (`netId`, `buildCount`) and ropes (`Rope::netId`) each frame, so game code doesn't call into it |
 | `src/server_main.cpp` | Dedicated multiplayer server: headless process that hosts a session without a player vehicle. Parses args (`--port`, `--map`, `--name`, `--players`), creates `World` + `Sim`, hosts `NetSession`, loops on `receive()`/`send()`. Built with `make build/crumplezone-server` |
 | `src/autopilot.h/.cpp` | Route planning (A* on a 2 m grid, cached per `World::stamp`: slope, surface, how tall the rocks/logs/ledges in each cell stand), seeing (`sense`: ~50 candidate lines rolled out over the scene, scored), drive setup (`setUp`: transfer case, lockers, sway bar, tire pressure), driving, unsticking. `Car::pilot`, run by `Sim::pilotStep` from `Sim::drive` |
@@ -79,6 +81,7 @@ Without `--time`, captures start at 10:00 with the clock running.
 | `src/gamepad.h/.cpp`, `src/gamepad_sdl.cpp` | Game controllers (Xbox / PlayStation / generic, SDL2 GameController API; declarations in `sdl_min.h`). `gamepad.cpp` has no SDL or GL (it's in `PHYS`, so the tests link it): radial deadzone and curves, speed-sensitive steering (`steerLimit` mirrors the key limit in `Sim::drive`; change one and change the other), trigger pedals with the keyboard's brake-to-reverse (`pedals`), the bindings (`Logic::update`: button presses come out as `Tap`s, i.e. the key the keyboard would press, which main.cpp feeds into its one key switch; held controls are `Intent`), `Logic::apply` (puts analog steering/pedals on the car after `Sim::drive`; centred pad = keyboard path untouched), `Rumbler`, glyph names (`pad::hint`, `helpRows`). `gamepad_sdl.cpp` is `pad::Device`: hot-plug, polling, rumble; it's the only file that calls SDL controller functions. In main.cpp every pad hunk is fenced with `// ---- gamepad`. Game flags: `--no-pad` / `CZ_NO_PAD=1` (use them in every automated launch; the pad is also ignored when the window lacks focus and in scripted `--shot-frames` runs). Settings: `padSteering/padDeadzone/padRumble` (CONTROLLER page under SETTINGS) |
 | `src/platform.h` | Linux/Windows differences (config folder, mkdir). Sockets are wrapped at the top of `net.cpp` |
 | `tests/autopilot.cpp` | Autopilot routes and drives |
+| `tests/keybinds.cpp` | Esc maps to the menu (synthetic SDL key events, rebinding, the pad's Start), swap and settings load rules |
 | `tests/gamepad.cpp` | Controller logic with synthetic input: shaping, steer ratio, pedals and reverse, bindings, rumble, a Bronco's 80 km/h lane change and a 4L crawl on the pad |
 | `tests/net.cpp` | Host + client sims in one process over loopback sockets |
 | `src/scenery.cpp` | Meshes for trees (pine, broadleaf, snag), boulders, rock slabs, logs and bushes. Rocks hug their colliders. Each builder skips what the scanned props cover (`ScanCover`) |
@@ -135,6 +138,27 @@ Without `--time`, captures start at 10:00 with the clock running.
 - **Style:** match the surrounding code. Short comments explain *why* in plain words, with real-world figures where they matter.
 
 ## Open work
+
+- **Models and the model lab (2026-10-16):** everything the game draws that isn't a vehicle
+  body is a code-made model in `src/models/*.cpp`, built with the kit in `src/modelkit.h`
+  (frame: +X front, +Y up, +Z left, origin on the ground; read `docs/model-brief.md` before
+  adding one). Each has 2-3 designs; the owner picks in the lab (`crumplezone --lab`, title
+  menu MODEL LAB) and the picks live in `assets/models/choices.txt` (status `redo` with a
+  `note`: do those designs again). `make build/modelsheet && build/modelsheet [id]` draws
+  contact sheets to `build/review/models/` without the game; `tests/models.cpp` checks
+  budgets, soundness, ground contact and the per-copy settings (`rating`, `open`, `lift`,
+  `swing`, `width`, `length`, `span`, `snow`, `dry`). Placement: `World::models` /
+  `placeModel` / `standIn` (draws a model over the boxes that stood in for it, keeping them
+  as its collider); scenery.cpp falls back to the old code-made props if a model is missing.
+- **Map list is just the proving ground** (owner's call, 2026-10-16: another agent is doing
+  world gen). `listedMaps()` in world.cpp; the other maps still build for the tests and
+  `--map`. (The seeded Wilderness map, number 5, was removed 2026-10-16: see commit c735d9e; a saved or `--map` 5 falls back to the proving ground.) The proving ground carries the **model yard** (`World::buildModelYard`, game
+  only: `World::withShowcase`, off in the tests, which drive over that corner). The same flag lays
+  out the **section park** (`World::buildSectionPark`, `src/sections.*`) north-west of the loop road.
+- **Hands-on repairs** (`fixes.h`, `interact.cpp`, `handwork.cpp`): the parked-alongside
+  field repair is gone. Tools and repair parts are career keys (`TOOL:`, `REPAIR:` in
+  `Career::owned` / `stock`); sandbox has everything. `--script work-wheel|work-chain|work-fix`
+  stages a first-person job for screenshots.
 
 - **Release integration (2026-10-14):** all available branch work is merged into `main` for
   `v0.1.9`; read `docs/release-merge-0.1.9.md` and the new handoff first. Release defaults
@@ -336,3 +360,31 @@ Without `--time`, captures start at 10:00 with the clock running.
   - Joining no longer blocks the frame: `NetSession::beginJoin`/`pollJoin` (join() loops over them). While `net.joining()`, main skips `net.receive`/`send`.
   - Settings: `session`, `maxplayers`; the join address no longer defaults to 127.0.0.1.
   - Tests: `net/lan-discovery`, `net/async-join`. Suite: 423/436; the 13 failures are physics WIP (tires/*, axle-landing, buggy/UTV rows, rock-hits/4runner, weights, frontier/current, engine/performance on a busy CPU).
+
+- **2026-10-15, Claude: input fix, `editor-ui` merged (branch `inputfix`)**
+  - Esc stopped opening the pause menu in OpenCode's `editor-ui` build, and its DualSense wasn't found. Root cause and fix: `docs/input-fix.md`. Short version: the keybinds commit moved the menu key (and the gear, winch, strap and assist keys) out of the event loop, to a check on `e` after the loop, which is only the last event of the frame (a tap is down + up, so it was missed). The controller was never broken: that branch is ~130 commits behind `main` and had none of `gamepad.cpp`.
+  - Merged `editor-ui` (4b48b76) into `main`'s architecture: editor fixes, six physics test suites, steering assist toggle (default key F4; P is the pause), keybinds (new `src/keybinds.*`, page 7 of the pause menu, `key_*` settings lines). Esc always opens the menu; the pad's Start is never remapped.
+  - Left out: the Chevy Blazer (154fcfd; being redone elsewhere) and the Jesko springs/`lateralGrip` retune (broke `freeway/top-speed/koenigsegg jesko` on `main`'s physics; the anti-roll bar change stayed).
+  - Controller: `main`'s GameController code is intact; added `SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS`. Hot-plug checked offscreen with an SDL virtual controller. The DualSense itself was not connected during this work, so a real BT pairing was not re-checked.
+  - Tests: `keybinds/*` (3 new), OpenCode's six suites (28 scenarios; `simulation/tire-heat` zigzag lowered from 0.3 to 0.2 rad because it assumed the Jesko retune, the Blazer rows removed from `vehicle-physics/` and `extreme/offroad`). Suite before the merge: 458/471; after: 489/502. The same 13 fail in both (frontier/current, backcountry/autopilot-far, freeway/top-speed/turbo utv, structure/weight jesko and tacoma, components/axle-landing, tire-into-fender buggy and UTV, structure/rock-hits/4runner, offroad/whoops, tires/swap, shear, debead). Windows cross-build (`make windows`) builds.
+
+- **2026-10-15, Claude: Blazer, universal garage, tires and chains, engine voices, banked circuit (branch `blazer-garage`, from main + `inputfix`)**
+  - 1972 K5 Blazer (catalog 7, key 8) from GM's figures; its own shell (`uShell == 5`: egg-crate grille, round lamps in square bezels, white top, chrome bumpers) and `WHEEL_STEEL`. `leafFront`: a steered solid axle on leaf packs.
+  - Steering bug on every steered solid axle (the buggy too, and why OpenCode's Blazer wouldn't turn): the tie rods ran straight across, 40 degrees off the steering arm, so the inside wheel could snap over the fold near full lock and jam. Now square to the arm. The traffic AI corners gentler on low-grip tires.
+  - Garage (`mods.cpp` universal()): ENGINE, SUSPENSION, TRANSMISSION, WHEELS, TIRES; own parts first (`modOwnCount`), then every other vehicle's (stock part + that vehicle's mod). `garage/swaps/*` builds and drives every swap.
+  - Tire types: + `TIRE_RACE_SLICK`, `TIRE_SNOW`, `TIRE_CHAINS` (grip row for chained wheels); per-tread tire meshes (`Renderer::buildTire`) and a chain mesh. Chains: `Car::chains`, `Wheel::chained`, on-foot IA_TAKE/FIT/REMOVE/STOW_CHAIN; they snap after ~2 s over 60 km/h. tests/treads.cpp.
+  - Engine voices: `EngineTone` per engine, used by `EngineSynth`; test_audio checks the garage's 28 engines are all apart.
+  - Frontier circuit: banking per corner (`kTrackBank`), eased in and out; `frontier/circuit-banking`.
+  - Suite: 575/588; the 13 failures are main's.
+
+- **2026-10-15, Claude: Jesko wobble, engine sounds, career mode (branch `blazer-garage`)**
+  - Jesko on race slicks: a ~3 Hz roll/yaw wobble at 80 mph that went on for seconds. The tread force went into the two hub nodes alone and its ground moment was spread evenly over the knuckle (`applyTorque` by node count), so the knuckle bent and the wheels toed in and out with the rocking load; grippy tires fed it back into the roll. Independent corners now take the tread force (not the normal force) on the whole knuckle by mass and the moment by mass (`applyTorque(..., byMass)`); live axles unchanged. Bracing the pickups was tried and dropped (it broke the UTV and the Bronco's lane change). Frontier bank transitions eased over ~50 m. Tests: `dynamics/roll-settle`, twist rate in `frontier/circuit-banking`.
+  - Engine sounds: `EngineTone` gained `rumble` (per-cylinder pulse strength, a once-a-cycle thump) and `roar` (pulse-gated exhaust noise through the pipe's resonance under load); the shared combustion note is now only the base; loudness grows with displacement. Every garage engine has its own pipe note (`exhaustHz`). `build/engine_preview` renders every garage engine. test_audio: closest pair 0.111 (was 0.058); the 454 louder and deeper than the Civic's D16.
+  - Career (`src/career.*`): `Settings::career` (title-page MODE row), `career.txt` and `garage-career.txt`. Part keys (`modPartKey`: `SLOT:vehicle:option` from the new `ModOption::fromVehicle/fromOption`, or `TIRES:TREAD`). Tiers by part (engines by power), shop prices, caches per map (`cacheSpots`, crates added as world boxes by main, opened with `IA_OPEN_CACHE`, `cache MAP ID` game message), job and medal pay. Garage: locked parts shown with a price or "find it", ENTER refuses locked parts and fitting away from a station, B / pad Y buys. HUD: cash and cache markers. `--career` for scripted runs (a fresh career, nothing saved). Net: `SpecId` sends all five garage slots (kVersion 4). Tests: `career/*` (5).
+
+- **2026-10-16, Claude: anchor gear (v1, tunable)**
+  - Winch anchors are carried items now (`src/anchors.h`): tree strap and chain sling come back with the line, ground stakes, rock bolts and ice anchors are used up and left in the ground (a line to a stake you left is free). No stakes on rock, scree, pavement, ice, snow or under 15 cm of water; rock takes a bolt, snow and ice a picket.
+  - Starting sets: career 2 straps / 1 sling / 2 stakes / 0 / 0 (`stock N ANCHOR:...`, bought off the station rack, found in caches); sandbox 3 / 2 / 4 / 2 / 2, refilled free at a station or a full reset. Old career saves get the career set on load.
+  - Targets you can't use stay listed greyed with the reason; `hookWinch` skips them; HUD line above the fuel gauge.
+  - Models: `ground_stake`, `rock_bolt`, `ice_anchor`, `chain_sling` (gear_recovery.cpp); `buildRopes` draws them (and `tree_saver` round the trunk) at the anchor.
+  - Open: prices, whether sandbox should be limited, whether more than one strap is ever useful (one line out at a time).

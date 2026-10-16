@@ -157,7 +157,7 @@ std::vector<uint8_t> frame(MsgType t, const Writer& w) {
 // Which catalog vehicle (and mods) or prop a spec is, so another machine can build it.
 struct SpecId {
     uint8_t kind = 0;  // 0 vehicle, 1 crash box, 2 barrier, 255 unknown
-    uint8_t model = 0, mods[3] = {0, 0, 0};
+    uint8_t model = 0, mods[MOD_SLOTS] = {0, 0, 0, 0, 0};  // (every garage slot: engine .. tires)
 };
 SpecId specId(const VehicleSpec* s) {
     SpecId id;
@@ -166,7 +166,7 @@ SpecId specId(const VehicleSpec* s) {
     const auto& cat = vehicleCatalog();
     if (s->model >= 0) {
         id.model = (uint8_t)s->model;
-        for (int k = 0; k < 3; k++) id.mods[k] = (uint8_t)s->mods[k];
+        for (int k = 0; k < MOD_SLOTS; k++) id.mods[k] = (uint8_t)s->mods[k];
         return id;
     }
     for (size_t k = 0; k < cat.size(); k++)
@@ -179,7 +179,7 @@ const VehicleSpec* specFrom(const SpecId& id) {
     if (id.kind == 2) return &barrierSpec();
     if (id.kind != 0 || id.model >= vehicleCatalog().size()) return nullptr;
     ModSet m;
-    for (int k = 0; k < 3; k++) m.pick[k] = id.mods[k];
+    for (int k = 0; k < MOD_SLOTS; k++) m.pick[k] = id.mods[k];
     return &tunedSpec(id.model, m);
 }
 
@@ -645,7 +645,7 @@ std::vector<uint8_t> NetSession::spawnMsg(const Car& c) const {
     w.put<uint32_t>(c.netId);
     w.put<uint8_t>(id.kind);
     w.put<uint8_t>(id.model);
-    for (int k = 0; k < 3; k++) w.put<uint8_t>(id.mods[k]);
+    for (int k = 0; k < MOD_SLOTS; k++) w.put<uint8_t>(id.mods[k]);
     w.v3(c.color);
     const double yaw = std::atan2(-fr.fwd.z, fr.fwd.x);
     const Quat rot = c.chassis.nodes.empty() ? Quat::axisAngle(V3(0, 1, 0), yaw) : c.chassis.rot;
@@ -711,7 +711,7 @@ void NetSession::apply(Sim& sim, const std::vector<uint8_t>& msg) {
             SpecId id;
             id.kind = r.get<uint8_t>();
             id.model = r.get<uint8_t>();
-            for (int k = 0; k < 3; k++) id.mods[k] = r.get<uint8_t>();
+            for (int k = 0; k < MOD_SLOTS; k++) id.mods[k] = r.get<uint8_t>();
             const V3 color = r.v3(), pos = r.v3();
             const double yaw = r.get<float>();
             const uint8_t lamps = r.get<uint8_t>();

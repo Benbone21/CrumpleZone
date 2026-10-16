@@ -2,6 +2,8 @@
 // its wheels.
 #include <cmath>
 
+#include "../src/interact.h"
+#include "../src/walker.h"
 #include "harness.h"
 
 namespace {
@@ -271,37 +273,80 @@ SCENARIO(rebuildOnSlope, "recovery/rebuild-on-slope", "Repaired in place on a 26
         }
 }
 
-// Trail repairs: a buddy's truck parked alongside fixes tires, shafts, steering and a
-// flooded engine; dents stay for a repair station.
-SCENARIO(fieldRepair, "recovery/trail-repair", "A Bronco with a flat, a snapped shaft, bent steering and a flooded engine gets fixed by a 4Runner parked alongside") {
+// Trail repairs are hands-on (fixes.h): on foot at the broken corner, with your own tools and
+// a spare part. A truck parked alongside no longer fixes anything by itself.
+SCENARIO(fieldRepair, "recovery/trail-repair", "A Bronco with a flat, a snapped CV axle, a bent tie rod and a flooded engine: nothing gets fixed by a truck parked alongside; on foot, short of tools it can't be; with the tools and the parts each is fixed by hand, jacked up where it needs it") {
     Car& b = ctx.add(bronco(), -60, -30, 0);
     ctx.focus(b);
     ctx.run(1.0);
     const int bi = indexOf(ctx, b);
-    auto breakIt = [&](Car& c) {
-        c.wheels[0].popped = true;
-        c.wheels[2].shaftBroken = true;
-        c.wheels[1].tieOffset = 0.01;
-        c.hydrolocked = c.engineDead = true;
+    b.wheels[0].popped = true;
+    b.wheels[2].shaftBroken = true;
+    b.wheels[1].tieOffset = 0.01;
+    b.hydrolocked = b.engineDead = true;
+    ctx.add(runner(), -60, -25, 0);
+    ctx.run(10.0, [&] { ctx.sim.cars[bi].handbrake = 1; });
+    Car& c = ctx.sim.cars[bi];
+    ctx.check("a truck parked alongside fixes nothing", c.wheels[0].popped && c.wheels[2].shaftBroken && c.hydrolocked);
+    const std::vector<Fix> fixes = fixesFor(c);
+    ctx.check("four repairs to do", fixes.size() == 4, std::to_string(fixes.size()));
+    Walker wk;
+    wk.exitCar(ctx.sim.world, c);
+    Interact ia;
+    // Hold E at a fix until it's done (or give up); the walker stands just off it.
+    auto workOn = [&](Fix::Kind kind, double secs, std::string& prompt) {
+        std::string said;
+        V3 at;
+        for (const Fix& f : fixesFor(c))
+            if (f.kind == kind) at = f.at;
+        V3 out = at - c.frame().com;
+        out.y = 0;
+        const V3 q = at + norm(out) * 1.0;
+        wk.p = V3(q.x, ctx.sim.world.height(q.x, q.z), q.z);
+        for (double t = 0; t < secs && said.empty(); t += Ctx::kFrame) {
+            const V3 eye = wk.p + V3(0, 1.6, 0);
+            said = ia.update(ctx.sim, wk, eye, at - eye, true, Ctx::kFrame);
+            prompt = ia.current.prompt;
+            ctx.run(Ctx::kFrame);
+        }
+        const V3 eye = wk.p + V3(0, 1.6, 0);
+        ia.update(ctx.sim, wk, eye, V3(1, 0, 0), false, Ctx::kFrame);  // (let go)
+        return said;
     };
-    breakIt(b);
-    // Alone: nothing happens.
-    ctx.run(8.0, [&] { ctx.sim.cars[bi].handbrake = 1; });
-    ctx.check("alone, nothing gets fixed", ctx.sim.cars[bi].wheels[0].popped && ctx.sim.cars[bi].hydrolocked);
-    const double need = ctx.sim.cars[bi].fieldRepairSeconds();
-    ctx.metric("trail repair time", need, "s", 30, 120);
-    // A buddy pulls up alongside.
-    Car& helper = ctx.add(runner(), -60, -25, 0);
-    (void)helper;
-    ctx.run(need + 3, [&] { ctx.sim.cars[bi].handbrake = 1; });
-    const Car& f = ctx.sim.cars[bi];
-    bool tires = true;
-    for (const Wheel& wh : f.wheels) tires &= !wh.popped && !wh.shaftBroken && std::fabs(wh.tieOffset) < 1e-6;
-    ctx.check("tire, shaft and steering fixed", tires);
-    ctx.check("engine runs again", !f.hydrolocked && !f.engineDead);
+    // A career with no tools but the lug wrench and the jack, and no parts.
+    ia.kit.unlimited = false;
+    ia.kit.tools[TOOL_LUG_WRENCH] = ia.kit.tools[TOOL_JACK] = true;
+    std::string prompt;
+    ctx.check("no socket set: the CV axle can't be done", workOn(Fix::CV_AXLE, 6, prompt).empty() && c.wheels[2].shaftBroken, prompt);
+    ctx.check("...and it says what's missing", prompt.find("SOCKET SET") != std::string::npos && prompt.find("HAMMER") != std::string::npos, prompt);
+    for (int t = 0; t < TOOL_COUNT; t++) ia.kit.tools[t] = true;
+    workOn(Fix::CV_AXLE, 6, prompt);
+    ctx.check("tools but no part: it says so", prompt.find("NO CV AXLE") != std::string::npos, prompt);
+    for (int p = 0; p < PART_COUNT; p++) ia.kit.parts[p] = 1;
+    workOn(Fix::CV_AXLE, 6, prompt);
+    ctx.check("the corner has to be up: it says so", prompt.find("JACK") != std::string::npos, prompt);
+    // Jack the corner (by hand here: the jack's own test is tires/swap).
+    auto lift = [&](int k) {
+        c.placeJack(ctx.sim.world, k);
+        ctx.runUntil(6, [&] { return Interact::cornerLifted(ctx.sim, c, k); }, [&] { c.jackHeight += 0.14 * Ctx::kFrame, c.wake(); });
+        return Interact::cornerLifted(ctx.sim, c, k);
+    };
+    ctx.check("the CV corner jacks up", lift(2));
+    ctx.check("the CV axle goes in", workOn(Fix::CV_AXLE, 8, prompt) == "CV AXLE FITTED" && !c.wheels[2].shaftBroken, prompt);
+    ctx.check("...and uses the part", ia.usedPart == PART_CV_AXLE);
+    ia.usedPart = -1;
+    c.jackPlaced = false, c.jackHeight = 0;
+    ctx.run(1.0);
+    ctx.check("the tie rod (no jack needed)", workOn(Fix::TIE_ROD, 8, prompt) == "TIE ROD FITTED" && std::fabs(c.wheels[1].tieOffset) < 1e-9, prompt);
+    ctx.check("the spark plugs: the water out", workOn(Fix::SPARK_PLUGS, 8, prompt) == "SPARK PLUGS FITTED" && !c.hydrolocked && !c.engineDead, prompt);
+    ctx.check("the flat corner jacks up", lift(0));
+    ctx.check("a new tire on the rim", workOn(Fix::NEW_TIRE, 8, prompt) == "TIRE FITTED" && !c.wheels[0].popped, prompt);
+    c.jackPlaced = false, c.jackHeight = 0;
+    ctx.run(2.0);
+    ctx.check("nothing left to fix out here", fixesFor(c).empty() && !c.needsFieldRepair());
     int powered = 0;
-    for (const Wheel& wh : f.wheels) powered += f.wheelPowered(wh);
-    ctx.metric("driven wheels after the repair", powered, "", 4, 4);
+    for (const Wheel& wh : c.wheels) powered += c.wheelPowered(wh);
+    ctx.metric("driven wheels after the repairs", powered, "", 4, 4);
 }
 
 SCENARIO(recoveryPicking, "recovery/pointer-picking", "Pointing at front/rear vehicle areas selects those recovery points; empty space selects nothing") {
@@ -360,7 +405,7 @@ SCENARIO(towingHealthy, "recovery/healthy-car-tow", "A running unattended truck 
 SCENARIO(winchSpeedControl, "recovery/winch-speed-control", "Faster drum speeds scale line travel but preserve rated stall pull and payout bounds") {
     Car& c = ctx.add(bronco(), -50, -50, 0);
     ctx.focus(c); ctx.run(0.5);
-    RopeEnd anchor; anchor.kind = ANCHOR_STAKE; anchor.p = c.hookPoint(0) + V3(14, 0, 0);
+    RopeEnd anchor; anchor.kind = ANCHOR_TREE; anchor.p = c.hookPoint(0) + V3(14, 0, 0);  // (any fixed point: a stake needs ground it takes, and this is the pad's pavement)
     ctx.sim.hookWinchTo(0, anchor);
     ctx.check("fixed anchor connected", ctx.sim.ropes.size() == 1);
     if (ctx.sim.ropes.empty()) return;

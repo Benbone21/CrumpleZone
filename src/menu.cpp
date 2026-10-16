@@ -67,6 +67,7 @@ bool Settings::load(const std::string& path) {
         else if (k == "vsync") vsync = v != 0;
         else if (k == "adaptive") adaptiveQuality = v != 0;
         else if (k == "fps") showFps = v != 0;
+        else if (k == "steeringassist") steeringAssist = v != 0;
         else if (k == "shadows") gfx.shadows = std::min(std::max((int)v, 0), 3);
         else if (k == "msaa") gfx.msaa = (int)v;
         else if (k == "ao") gfx.ao = v != 0;
@@ -76,8 +77,9 @@ bool Settings::load(const std::string& path) {
         else if (k == "grass") gfx.grass = v != 0;
         else if (k == "ground") gfx.ground = std::min(std::max((int)v, 0), 3);
         else if (k == "props") gfx.props = std::min(std::max((int)v, 0), 3);
-        else if (k == "map") map = std::min(std::max((int)v, 0), MAP_COUNT - 1);
+        else if (k == "map") map = v >= 0 && v < MAP_COUNT ? (int)v : MAP_PROVING_GROUND;  // (a number no map has any more: the proving ground)
         else if (k == "recovery") realRecovery = v != 0;
+        else if (k == "career") career = v != 0;
         else if (k == "fuel") fuelMode = std::min(std::max((int)v, 0), 2);
         else if (k == "pilotspeed") pilotSpeed = std::min(std::max(v, 5.0f), 100.0f);
         else if (k == "pilotroute") pilotRoute = std::min(std::max((int)v, 0), 2);
@@ -87,8 +89,10 @@ bool Settings::load(const std::string& path) {
         else if (k == "padsteer") padSteering = std::min(std::max((int)v, 0), 2);
         else if (k == "paddead") padDeadzone = std::min(std::max((int)v, 0), 2);
         else if (k == "padrumble") padRumble = std::min(std::max((int)v, 0), 2);
+        else if (keys.loadSetting(k, std::atoi(text))) {}
     }
     std::fclose(f);
+    keys.sanitize();
     return true;
 }
 
@@ -97,11 +101,11 @@ bool Settings::save(const std::string& path) const {
     if (!dir.empty()) makeDir(dir);
     FILE* f = std::fopen(path.c_str(), "w");
     if (!f) return false;
-    std::fprintf(f, "mph %d\nvolume %.2f\nfov %.0f\nfullscreen %d\nvsync %d\nfps %d\n", mph, volume, fovDeg, fullscreen,
-                 vsync, showFps);
+    std::fprintf(f, "mph %d\nvolume %.2f\nfov %.0f\nfullscreen %d\nvsync %d\nfps %d\nsteeringassist %d\n", mph, volume,
+                 fovDeg, fullscreen, vsync, showFps, steeringAssist);
     std::fprintf(f, "shadows %d\nmsaa %d\nao %d\nbloom %d\nclouds %d\nscale %.2f\ngrass %d\nmap %d\n", gfx.shadows,
                  gfx.msaa, gfx.ao, gfx.bloom, gfx.clouds, gfx.renderScale, gfx.grass, map);
-    std::fprintf(f, "recovery %d\nmusic %.2f\nambience %.2f\nfuel %d\n", realRecovery, music, ambience, fuelMode);
+    std::fprintf(f, "recovery %d\nmusic %.2f\nambience %.2f\nfuel %d\ncareer %d\n", realRecovery, music, ambience, fuelMode, career);
     std::fprintf(f, "ground %d\nprops %d\n", gfx.ground, gfx.props);
     std::fprintf(f, "physicsthreads %d\n", physicsThreads);
     std::fprintf(f, "adaptive %d\n", adaptiveQuality);
@@ -113,6 +117,8 @@ bool Settings::save(const std::string& path) const {
     std::fprintf(f, "pilotdest %d\npilotspeed %.0f\npilotroute %d\n", pilotDest, pilotSpeed, pilotRoute);
     std::fprintf(f, "timeofday %d\ndaylength %.0f\nclock %.2f\n", timeOfDay, dayMinutes, clockHours);
     std::fprintf(f, "padsteer %d\npaddead %d\npadrumble %d\n", padSteering, padDeadzone, padRumble);
+    for (int a = 0; a < KA_COUNT; a++) std::fprintf(f, "%s %d\n", settingsName((KeyAction)a), keys.code[a]);
+
     std::fclose(f);
     return true;
 }
@@ -174,9 +180,10 @@ enum Id {
     RESUME_ROW = 100, VEHICLE_ROW, MAP_ROW, GARAGE_ROW, SETTINGS_ROW, CONTROLS_ROW, RESET_ROW, QUIT_ROW, BACK_ROW,
     MULTI_ROW, NAME_ROW, HOST_ROW, ADDRESS_ROW, JOIN_ROW, LEAVE_ROW, FOUND_ROW0, FOUND_ROW5 = FOUND_ROW0 + 5,
     PILOT_ROW, DEST_ROW, PSPEED_ROW, PROUTE_ROW, PGO_ROW, PSTOP_ROW,
-    FREEDRIVE_ROW, LEVELS_ROW, LEVEL_PICK, LEVEL_PLAY, LEVEL_EDIT, EDITOR_ROW, LRESTART_ROW, LQUIT_ROW, MAINMENU_ROW,
+    FREEDRIVE_ROW, MODE_ROW, LEVELS_ROW, LEVEL_SHOW, LEVEL_PICK, LEVEL_PLAY, LEVEL_EDIT, EDITOR_ROW, SECTION_ROW, LAB_ROW, LRESTART_ROW, LQUIT_ROW, MAINMENU_ROW,
     JOBS_ROW, JOB_PICK, JOB_GO, JOB_STOP_ROW, MEET_ROW, CONTROLLER_ROW,
     SESSION_ROW, HMAP_ROW, HMAX_ROW, CANCEL_ROW,
+    STEERING, KEYBINDS_ROW, KEYS_RESET, KEY_ROW0, KEY_ROWN = KEY_ROW0 + KA_COUNT,
 };
 const char* kOffOn[2] = {"OFF", "ON"};
 
@@ -210,15 +217,19 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
                           : mapPick == MAP_FREEWAY ? "THREE LANES EACH WAY THAT NEVER END: TOP SPEED"
                           : mapPick == MAP_FRONTIER ? "DESERT, RIVERS, LAKES, A RANGE, A RACE CIRCUIT, A RALLY STAGE"
                           : mapPick == MAP_BACKCOUNTRY ? "TRAILS TO CRAWL, MUD, FORD AND EXPLORE WITH BUDDIES"
-                                                    : "TEST PAD, CRASH WALL, RAMPS, HILL ROADS";
+                                                    : "EVERYTHING IN THE GAME, LAID OUT TO LOOK AT AND TRY";
     if (page == 0 && title) {
         const auto& cat = vehicleCatalog();
         button(FREEDRIVE_ROW, "FREE DRIVE", "THIS MAP, THIS VEHICLE:");
-        choice(VEHICLE_ROW, "VEHICLE", cat[vehicle].name, (int)cat.size(), cat[vehicle].blurb);
-        choice(MAP_ROW, "MAP", mapName(mapPick), MAP_COUNT, mapHint);
+        choice(MODE_ROW, "MODE", s.career ? "CAREER" : "SANDBOX", 2,
+               s.career ? "START STOCK: FIND, WIN AND BUY BETTER PARTS" : "EVERY PART ON EVERY VEHICLE, ANY TIME");
+        choice(VEHICLE_ROW, "VEHICLE", cat[vehicle].name, (int)listedVehicles().size(), cat[vehicle].blurb);
+        choice(MAP_ROW, "MAP", mapName(mapPick), (int)listedMaps().size(), mapHint);
         button(LEVELS_ROW, "LEVELS", std::to_string(levels.size()) + " RACES, CLIMBS AND WORLDS");
         button(MULTI_ROW, "MULTIPLAYER", netActive ? netStatus : "HOST OR JOIN A GAME");
         button(EDITOR_ROW, "WORLD EDITOR", "BUILD YOUR OWN WORLDS AND LEVELS");
+        button(SECTION_ROW, "NEW SECTION", "HAND-BUILD AN OBSTACLE SECTION (DEV)");
+        button(LAB_ROW, "MODEL LAB", "PICK, TWEAK OR REDO THE GAME'S MODELS");
         button(GARAGE_ROW, "GARAGE", "ENGINE, SUSPENSION, GEARBOX");
         button(SETTINGS_ROW, "SETTINGS", "UNITS, GRAPHICS, SOUND");
         button(CONTROLS_ROW, "CONTROLS");
@@ -232,14 +243,25 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
         choice(PADDEAD, "STICK DEADZONE", pad::kDeadzoneNames[std::min(std::max(s.padDeadzone, 0), 2)], 3,
                "RAISE IT IF THE CAR DRIFTS WITH YOUR HANDS OFF");
         choice(PADRUMBLE, "RUMBLE", pad::kRumbleNames[std::min(std::max(s.padRumble, 0), 2)], 3, "BUMPS, SLIDES AND THE REV LIMITER");
+        button(KEYBINDS_ROW, "KEYBOARD KEYBINDS", "REMAP THE DRIVING KEYS");
+        button(BACK_ROW, "BACK");
+        return r;
+    }
+    if (page == 7) {  // the keyboard's remappable keys (the controller has its own fixed layout)
+        header(listening >= 0 ? "PRESS THE NEW KEY  (ESC CANCELS)" : keyNote.empty() ? "ENTER ON A ROW, THEN PRESS A KEY" : keyNote.c_str());
+        for (int a = 0; a < KA_COUNT; a++)
+            button(KEY_ROW0 + a, actionLabel((KeyAction)a), listening == a ? "PRESS A KEY..." : keyName(s.keys.key((KeyAction)a)));
+        button(KEYS_RESET, "RESET TO DEFAULTS", s.keys.isDefault() ? "" : "W A S D, SPACE, E Q, ESC...");
         button(BACK_ROW, "BACK");
         return r;
     }
     if (page == 4) {
-        header(levels.empty() ? "NO LEVELS" : (std::to_string(levels.size()) + " LEVELS").c_str());
-        if (!levels.empty()) {
-            const int k = std::min(std::max(levelPick, 0), (int)levels.size() - 1);
-            choice(LEVEL_PICK, "LEVEL", levels[k].name, (int)levels.size(), levels[k].about);
+        const std::vector<int> vis = visibleLevels();
+        header(levels.empty() ? "NO LEVELS" : vis.empty() ? "NO SECTIONS YET: MAIN MENU > NEW SECTION" : (std::to_string(vis.size()) + (levelSections ? " SECTIONS" : " LEVELS")).c_str());
+        choice(LEVEL_SHOW, "SHOW", levelSections ? "SECTIONS" : "ALL", 2, "SECTIONS: THE OBSTACLE SECTIONS YOU BUILT");
+        if (!vis.empty()) {
+            const int k = shownLevel();
+            choice(LEVEL_PICK, "LEVEL", levels[k].name, (int)vis.size(), levels[k].about);
             for (const std::string& line : levels[k].lines) r.push_back({HEADER, "", "", "", 0}), r.back().label = line, r.back().id = -1;
             button(LEVEL_PLAY, "PLAY", netClient ? "THE HOST PICKS THE LEVEL" : netActive ? "EVERYONE IN THE SESSION PLAYS IT" : "");
             if (!netClient) button(LEVEL_EDIT, "OPEN IN THE EDITOR", "CHANGE IT, OR START YOURS FROM IT");
@@ -266,8 +288,8 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
             button(LRESTART_ROW, "RESTART LEVEL", "OR R TWICE");
             button(LQUIT_ROW, "QUIT LEVEL", "BACK TO FREE DRIVE");
         }
-        choice(VEHICLE_ROW, "VEHICLE", cat[vehicle].name, (int)cat.size(), cat[vehicle].blurb);
-        choice(MAP_ROW, "MAP", mapName(mapPick), MAP_COUNT, mapHint);
+        choice(VEHICLE_ROW, "VEHICLE", cat[vehicle].name, (int)listedVehicles().size(), cat[vehicle].blurb);
+        choice(MAP_ROW, "MAP", mapName(mapPick), (int)listedMaps().size(), mapHint);
         button(LEVELS_ROW, "LEVELS", levelActive ? "PICK ANOTHER" : "RACES, CLIMBS AND WORLDS");
         button(JOBS_ROW, "JOBS", jobActive ? jobStatus : "RECOVERIES, CONVOYS, SCOUTING");
         button(GARAGE_ROW, "GARAGE", "ENGINE, SUSPENSION, GEARBOX");
@@ -339,7 +361,7 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
             const size_t c1 = r.size();
             const std::string me = s.playerName.empty() ? std::string("PLAYER") : s.playerName;
             text(SESSION_ROW, "GAME NAME", s.sessionName, "TYPE IT", me + "'S GAME");
-            choice(HMAP_ROW, "MAP", mapName(mapPick), MAP_COUNT);
+            choice(HMAP_ROW, "MAP", mapName(mapPick), (int)listedMaps().size());
             choice(HMAX_ROW, "PLAYERS", "UP TO " + std::to_string(std::min(std::max(s.maxPlayers, 2), 8)), 7);
             button(HOST_ROW, "START HOSTING");
             info("FRIENDS ON YOUR NETWORK WILL SEE IT");
@@ -376,6 +398,8 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
     choice(UNITS, "SPEED UNITS", s.mph ? "MPH" : "KM/H", 2);
     choice(RECOVERY, "RECOVERY", s.realRecovery ? "REAL" : "ARCADE", 2,
            s.realRecovery ? "DAMAGE STAYS: TOW OR DRIVE TO A REPAIR STATION" : "T FIXES EVERYTHING WHERE YOU ARE");
+    choice(STEERING, "STEERING ASSIST", kOffOn[s.steeringAssist], 2,
+           s.steeringAssist ? "LIMITS TURNING AT HIGH SPEED (SAFE)" : "FULL LOCK AT ALL SPEEDS (SIMULATION)");
     {
         static const char* fuel[3] = {"OFF", "REAL", "FAST"};
         choice(FUEL, "FUEL", fuel[std::min(std::max(s.fuelMode, 0), 2)], 3);
@@ -421,7 +445,7 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
         choice(PHYSICSTHREADS, "PHYSICS THREADS", value, available + 1,
                "1: SINGLE THREAD. ALL: USE EVERY CPU THREAD. MORE MAY NOT BE FASTER.");
     }
-    button(CONTROLLER_ROW, "CONTROLLER", "STEERING, DEADZONE, RUMBLE");
+    button(CONTROLLER_ROW, "CONTROLLER", "STEERING, DEADZONE, RUMBLE, KEYBINDS");
     button(BACK_ROW, "BACK");
     return r;
 }
@@ -444,10 +468,12 @@ void PauseMenu::showTitle(int currentVehicle, int currentMap) {
 }
 
 void PauseMenu::show(int currentVehicle, int currentMap) {
-    mapPick = currentMap;
+    mapPick = mapListed(currentMap) ? currentMap : nextListedMap(currentMap, 0);
     open = true;
     title = false;
     page = 0;
+    listening = -1;
+    keyNote.clear();
     sel = 0;
     fade = 0;
     dragSlider = -1;
@@ -517,10 +543,13 @@ PauseMenu::Result PauseMenu::activate(int row, Settings& s) {
         case JOB_PICK:
         case JOB_GO: return netClient ? Result{} : Result{JOB_START, jobPick};
         case JOB_STOP_ROW: return {JOB_STOP};
+        case LEVEL_SHOW: levelSections = !levelSections, levelPick = std::max(0, shownLevel()); return {};
         case LEVEL_PICK:
-        case LEVEL_PLAY: return netClient ? Result{} : Result{PLAY_LEVEL, levelPick};
-        case LEVEL_EDIT: return {EDIT_LEVEL, levelPick};
+        case LEVEL_PLAY: return netClient || shownLevel() < 0 ? Result{} : Result{PLAY_LEVEL, shownLevel()};
+        case LEVEL_EDIT: return shownLevel() < 0 ? Result{} : Result{EDIT_LEVEL, shownLevel()};
         case EDITOR_ROW: return {EDITOR};
+        case SECTION_ROW: return {NEW_SECTION};
+        case LAB_ROW: return {MODEL_LAB};
         case LRESTART_ROW: return {LEVEL_RESTART};
         case LQUIT_ROW: return {LEVEL_QUIT};
         case MAINMENU_ROW: return {MAIN_MENU};
@@ -533,6 +562,8 @@ PauseMenu::Result PauseMenu::activate(int row, Settings& s) {
         case DEST_ROW: return {PILOT_GO};
         case PSTOP_ROW: return {PILOT_STOP};
         case CONTROLS_ROW: return {CONTROLS};
+        case KEYBINDS_ROW: listening = -1, keyNote.clear(); goPage(7, KEY_ROW0); return {};
+        case KEYS_RESET: s.keys.resetDefaults(); listening = -1, keyNote.clear(); return {CHANGED};
         case RESET_ROW: return {RESET};
         case QUIT_ROW: return {QUIT};
         case BACK_ROW:
@@ -540,8 +571,14 @@ PauseMenu::Result PauseMenu::activate(int row, Settings& s) {
                 goPage(1, CONTROLLER_ROW);
                 return {};
             }
+            if (page == 7) {
+                listening = -1, keyNote.clear();
+                goPage(6, KEYBINDS_ROW);
+                return {};
+            }
             goPage(0, page == 2 ? MULTI_ROW : page == 3 ? PILOT_ROW : page == 4 ? LEVELS_ROW : page == 5 ? JOBS_ROW : SETTINGS_ROW); return {};
         case HOST_ROW: return {HOST};
+        case KEY_ROW0 ... KEY_ROWN - 1: listening = it.id - KEY_ROW0, keyNote.clear(); return {};
         case JOIN_ROW:
         case ADDRESS_ROW:
             if (s.joinAddress.empty()) return {};
@@ -565,6 +602,19 @@ PauseMenu::Result PauseMenu::activate(int row, Settings& s) {
     return {};
 }
 
+std::vector<int> PauseMenu::visibleLevels() const {
+    std::vector<int> vis;
+    for (int k = 0; k < (int)levels.size(); k++)
+        if (!levelSections || levels[k].section) vis.push_back(k);
+    return vis;
+}
+
+int PauseMenu::shownLevel() const {
+    const std::vector<int> vis = visibleLevels();
+    if (vis.empty()) return -1;
+    return std::find(vis.begin(), vis.end(), levelPick) != vis.end() ? levelPick : vis[0];
+}
+
 PauseMenu::Result PauseMenu::change(int row, int dir, Settings& s) {
     std::vector<Row> r = rows(s);
     if (row < 0 || row >= (int)r.size()) return {};
@@ -574,15 +624,24 @@ PauseMenu::Result PauseMenu::change(int row, int dir, Settings& s) {
     auto cycle = [&](int cur) { return (cur + dir + it.count) % it.count; };
     RenderSettings& g = s.gfx;
     switch (it.id) {
-        case VEHICLE_ROW: vehicle = cycle(vehicle); return {};
+        case VEHICLE_ROW: vehicle = nextListedVehicle(vehicle, dir); return {};
         case MAP_ROW:
-        case HMAP_ROW: mapPick = cycle(mapPick); return {};
+        case HMAP_ROW: mapPick = nextListedMap(mapPick, dir); return {};
         case HMAX_ROW: s.maxPlayers = 2 + cycle(std::min(std::max(s.maxPlayers, 2), 8) - 2); break;
-        case LEVEL_PICK: levelPick = cycle(std::min(std::max(levelPick, 0), it.count - 1)); return {};
+        case LEVEL_SHOW: levelSections = !levelSections, levelPick = std::max(0, shownLevel()); return {};
+        case LEVEL_PICK: {  // (among the ones showing)
+            const std::vector<int> vis = visibleLevels();
+            if (vis.empty()) return {};
+            const int at = (int)(std::find(vis.begin(), vis.end(), shownLevel()) - vis.begin());
+            levelPick = vis[(at + dir + (int)vis.size()) % (int)vis.size()];
+            return {};
+        }
         case JOB_PICK: jobPick = cycle(std::min(std::max(jobPick, 0), it.count - 1)); return {};
         case UNITS: s.mph = !s.mph; break;
         case RECOVERY: s.realRecovery = !s.realRecovery; break;
+        case MODE_ROW: s.career = !s.career; break;
         case FUEL: s.fuelMode = cycle(std::min(std::max(s.fuelMode, 0), 2)); break;
+        case STEERING: s.steeringAssist = !s.steeringAssist; break;
         case TIMEOFDAY: {
             const int t = cycle(todIndex(s));
             s.timeOfDay = t < 5 ? (int)TOD_CYCLE : t - 4;
@@ -656,6 +715,31 @@ PauseMenu::Result PauseMenu::key(int sc, Settings& s) {
         return best >= 0;
     };
     if (page == 2 && joining && (sc == SC_ESCAPE || sc == SC_BACKSPACE)) return {CANCEL_JOIN};
+    if (page == 7 && listening >= 0) {  // the keybinds page waiting for a key: this press is the binding
+        const KeyAction a = (KeyAction)listening;
+        if (sc == SC_ESCAPE && a != KA_MENU) {  // (Esc is never a binding: it cancels. The MENU row can be put back to Esc with Backspace)
+            listening = -1;
+            keyNote.clear();
+            return {};
+        }
+        if (sc == SC_ESCAPE || sc == SC_BACKSPACE) {  // (MENU: back to Esc alone)
+            if (a == KA_MENU) s.keys.bind(a, SC_ESCAPE);
+            listening = -1;
+            keyNote.clear();
+            return {CHANGED};
+        }
+        if (!bindable(sc)) {
+            keyNote = "THAT KEY CAN'T BE USED";
+            return {};
+        }
+        if (!s.keys.bind(a, sc)) {
+            keyNote = "KEY IN USE: PICK A FREE KEY FOR THE MENU";
+            return {};
+        }
+        listening = -1;
+        keyNote.clear();
+        return {CHANGED};
+    }
     // Typing into a text field: letters, digits, '.', '-', ':' (shift + ';'); backspace.
     {
         std::vector<Row> r = rows(s);
@@ -928,7 +1012,7 @@ void PauseMenu::draw(Renderer& r, const Settings& s, int W, int H, double dt) {
     pill(r, x, y, w, h, 0.03f, 0.035f, 0.045f, (this->title ? 0.82f : 0.9f) * a);
     r.rect(x + pad, y + pad + 8 * title + 8 * u, w - 2 * pad, 2 * u, 1.0f, 0.75f, 0.3f, 0.8f * a);
     label(r, x + pad, y + pad, title,
-          page == 0 ? (this->title ? "MAIN MENU" : "PAUSED") : page == 1 ? "SETTINGS" : page == 3 ? "AUTOPILOT" : page == 4 ? "LEVELS" : page == 5 ? "JOBS" : "CONTROLLER",
+          page == 0 ? (this->title ? "MAIN MENU" : "PAUSED") : page == 1 ? "SETTINGS" : page == 3 ? "AUTOPILOT" : page == 4 ? "LEVELS" : page == 5 ? "JOBS" : page == 7 ? "KEYBINDS" : "CONTROLLER",
           1.0f, 0.75f, 0.3f, a);
     if (page == 0 && !this->title) {
         const char* tag = "CRUMPLE ZONE";

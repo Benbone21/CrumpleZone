@@ -1,8 +1,12 @@
 #include "thread_cache.h"
 #include "world.h"
 
-#include "props.h"
+#include "modelkit.h"
 
+#include "props.h"
+#include "sections.h"
+
+#include <algorithm>
 #include <atomic>
 
 namespace {
@@ -55,6 +59,27 @@ V3 World::courseStart(int surface) const {
     for (int k = 0; k < kStrips; k++)
         if (kCourse[k] == surface) return V3(kCourseX0 - 6, 0, kCourseZ0 + k * kStrip + 4.0);
     return V3(kCourseX0 - 6, 0, kCourseZ0 + 4.0);
+}
+
+const std::vector<int>& listedMaps() {
+    static const std::vector<int> m = {MAP_PROVING_GROUND};
+    return m;
+}
+
+bool mapListed(int map) {
+    for (int m : listedMaps())
+        if (m == map) return true;
+    return false;
+}
+
+int nextListedMap(int map, int dir) {
+    const std::vector<int>& l = listedMaps();
+    int at = -1;
+    for (int i = 0; i < (int)l.size(); i++)
+        if (l[i] == map) at = i;
+    if (at < 0) return l[0];
+    const int n = (int)l.size();
+    return l[((at + dir) % n + n) % n];
 }
 
 const char* mapName(int map) {
@@ -353,6 +378,95 @@ void World::buildProvingGround() {
 
     bakeTerrain();
     scatterScenery(777);
+    if (withShowcase) buildModelYard(), buildSectionPark();
+}
+
+// The model yard, south-west on the pad: everything the game draws (the designs picked in the
+// model lab), in rows by kind, each with its name over it and the solid ones solid, to walk
+// round, drive into and try out.
+void World::buildModelYard() {
+    const double x0 = -32, x1 = -128, z0 = -30;  // rows run west from x0, stepping south from z0
+    double x = x0, z = z0, rowDepth = 0;
+    std::string cat;
+    // Shown smaller than they're used, so they fit in the yard: (id, settings).
+    auto settingsFor = [](const std::string& id) -> std::vector<std::pair<std::string, double>> {
+        if (id == "sign_gantry") return {{"span", 16}};
+        if (id == "race_gate") return {{"width", 10}};
+        if (id == "guardrail") return {{"length", 8}};
+        if (id == "jersey_barrier") return {{"length", 6}};
+        return {};
+    };
+    auto see = [](const std::string& id) { return id != "fp_hand" && id != "lug_nut"; };
+    // Things to walk through or round rather than bump into.
+    auto ghost = [](const std::string& id) {
+        return id == "repair_shed" || id == "fire_tower" || id == "race_gate" || id == "sign_gantry" || id == "mine_portal" || id == "tent" ||
+               id == "person" || id == "campfire" || id == "tree_saver" || id == "ground_anchor" || id.rfind("tree_", 0) == 0 || id == "bush" ||
+               id == "lamp_post" || id == "marker_post" || id == "trail_sign" || id == "map_board";
+    };
+    for (const mk::ModelDef& d : mk::catalog()) {
+        if (!see(d.id)) continue;
+        const std::vector<std::pair<std::string, double>> set = settingsFor(d.id);
+        const mk::Mesh m = set.empty() ? mk::modelMesh(d.id) : mk::modelMesh(d.id, set);
+        if (m.v.empty()) continue;
+        // Facing north, toward the spawn (front +X to world +Z, its left +Z to world -X): its
+        // width across the row is its z extent, its depth its x extent.
+        const double yaw = -M_PI / 2;
+        const double wx = std::max(1.0, m.hi.z - m.lo.z), dz = std::max(1.0, m.hi.x - m.lo.x);
+        if (d.category != cat || x - wx < x1) {  // a new row for each kind, and when a row's full
+            if (!cat.empty()) z -= rowDepth + 5, x = x0, rowDepth = 0;
+            cat = d.category;
+        }
+        const double cx = x - wx / 2, cz = z - dz / 2;  // (the fronts in a line at z)
+        const double gy = height(cx, cz);
+        Placed pl;
+        pl.id = d.id, pl.yaw = yaw, pl.set = set;
+        pl.p = V3(cx + (m.lo.z + m.hi.z) / 2, gy, cz - (m.lo.x + m.hi.x) / 2);
+        models.push_back(pl);
+        tags.push_back({d.title, V3(cx, gy + std::min(m.hi.y, 7.0) + 0.5, cz)});
+        if (!ghost(d.id) && m.hi.y > 0.25) {  // its bounds as a collider
+            addBox(V3(cx, gy + (m.lo.y + m.hi.y) / 2, cz), V3((m.hi.x - m.lo.x) / 2 * 0.95, (m.hi.y - m.lo.y) / 2, (m.hi.z - m.lo.z) / 2 * 0.95), yaw, 0, 0,
+                   V3(0.5, 0.5, 0.5));
+            boxes.back().hidden = true;
+        }
+        x -= wx + 2.5;
+        rowDepth = std::max(rowDepth, dz);
+    }
+    buildGrid();
+}
+
+// The section park, out beyond the loop road in the north-west where the land is open: two strips
+// of ground, each section's cleared ground next to the last. The west strip runs north (-Z) and the
+// north strip carries on east, so driving the sections in order goes round the corner. The dunes, a
+// field 440 m long, have the band of open ground south of the loop road to themselves, driven east.
+// Each has its name over its entry and is a place on the compass and map. Seed 1 of each.
+void World::buildSectionPark() {
+    struct Strip {
+        double x, z, heading;  // where the first section's cleared ground starts, and which way the strip runs
+        std::vector<SectionType> types;
+    };
+    const double gap = 28;  // between one section's cleared ground and the next (more than the blend)
+    const Strip strips[] = {
+        {-465, 300, M_PI / 2, {SEC_STEEP_HILL, SEC_MUD_PIT, SEC_ROCKY_RIVER}},
+        {-500, -455, 0, {SEC_ROCK_WALL, SEC_CLIFF_SHELF, SEC_TIMBER}},
+        {-240, 460, 0, {SEC_DUNES}},  // (its middle line is z 460: the field fills the band south of the loop road)
+    };
+    for (const Strip& s : strips) {
+        const V3 dir(std::cos(s.heading), 0, -std::sin(s.heading));
+        double along = 0;  // from the strip's start
+        for (SectionType t : s.types) {
+            const SectionFootprint fp = sectionFootprint(t);
+            SectionFrame f;
+            f.entry = V3(s.x, 0, s.z) + dir * (along + fp.apron);
+            f.entry.y = height(f.entry.x, f.entry.z);
+            f.heading = s.heading;
+            const SectionBuilt b = buildSection(*this, t, 1, f);
+            sections.push_back({sectionName(t), (int)t, b.entry, b.exit, s.heading});
+            tags.push_back({sectionName(t), b.entry + V3(0, 5, 0)});
+            along += fp.length + 2 * fp.apron + gap;
+        }
+    }
+    // (In the order of the section types, whichever strip they're on: --spawn-section N and the tests count that way.)
+    std::stable_sort(sections.begin(), sections.end(), [](const SectionSpot& a, const SectionSpot& b) { return a.type < b.type; });
 }
 
 // Bushes round the groves and boulders out in the meadows (the proving ground's hills).
@@ -802,6 +916,20 @@ void World::addStation(V3 p, double yaw, const char* name) {
             const V3 q = p + fwd * (5.0 * a) + side * (3.7 * b);
             poles.push_back({q.x, q.z, p.y - 0.5, p.y + 4.6, 0.11});
         }
+}
+
+bool World::placeModel(const std::string& id, V3 p, double yaw, std::vector<std::pair<std::string, double>> set, V3 scale) {
+    if (!mk::findModel(id)) return false;
+    Placed pl;
+    pl.id = id, pl.p = p, pl.yaw = yaw, pl.scale = scale, pl.set = std::move(set);
+    models.push_back(pl);
+    return true;
+}
+
+bool World::standIn(size_t fromBox, const std::string& id, V3 p, double yaw, std::vector<std::pair<std::string, double>> set) {
+    if (!placeModel(id, p, yaw, std::move(set))) return false;
+    for (size_t i = fromBox; i < boxes.size(); i++) boxes[i].hidden = true;
+    return true;
 }
 
 void World::addBox(V3 c, V3 h, double yaw, double pitch, double roll, V3 col) {

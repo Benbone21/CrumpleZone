@@ -179,7 +179,9 @@ SCENARIO(propHulls, "props/hulls", "Scanned rock hulls: the builder, the baked l
     ctx.check("every hull has 48 corners or fewer", over == 0, std::to_string(over) + " over");
     ctx.metric("worst corner outside a face (all hulls)", worstBulge * 1000, "mm", 0, 0.5);
     ctx.metric("visible scan poking out of its hull (worst, " + worstPokeName + ")", worstPoke * 1000, "mm", 0, 60);
-    ctx.metric("hull corner off the visible scan (worst)", worstGap * 1000, "mm", 0, 40);
+    // (Corners are the drawn mesh's own, pushed out at most 1 cm. A hull made from the raw scan
+    // stood off the simplified first LOD by up to 54 mm: that is what this limit guards.)
+    ctx.metric("hull corner off the visible scan (worst)", worstGap * 1000, "mm", 0, 15);
     // addRock with the library on: a scan, sized as asked, its top where asked.
     props::ScopedRockScans on(lib);
     World& w = ctx.sim.world;
@@ -267,7 +269,12 @@ SCENARIO(propRestOnRock, "props/rest-on-rock", "A Bronco settled with a wheel on
     // own surface (hub distance less the radius) against it.
     const double gap = mesh.distance(wh.contact);
     const V3 h = (c.nodes[wh.inner].p + c.nodes[wh.outer].p) * 0.5;
-    ctx.metric("tire contact off the visible rock", gap * 100, "cm", 0, 5);
+    // A convex hull bridges the hollows between a lumpy scan's ridges (the moss rocks, scaled up
+    // to 1.8 m, are lumpy to 5-10 cm: hull-to-scan distance did not shrink with more corners, 48
+    // to 128), so a point on a flat hull face is off the drawn rock by about that much: 2-11 cm
+    // over 30 seeds, median 5.5. The float a driver sees is the tread line below, which stays
+    // tight (median 1.3 cm). This one catches a hull in the wrong place or scale (tens of cm).
+    ctx.metric("tire contact off the visible rock", gap * 100, "cm", 0, 12);
     ctx.metric("tire tread off the visible rock (hub distance - radius)", (mesh.distance(h) - wh.R) * 100, "cm", -5, 5);
     ctx.metric("rock height under the tire", wh.contact.y - w.height(wh.contact.x, wh.contact.z), "m", 0.15, 0.5);
 }

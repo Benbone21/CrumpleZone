@@ -41,9 +41,14 @@ namespace {
 const std::vector<V3> kTrackCorners = {{160, 45, -118}, {190, 90, 30},   {110, 28, 95},   {140, 60, 175},  {20, 20, 190},
                                        {-5, 75, 60},    {-90, 38, 125},  {-205, 32, 160}, {-268, 120, 40}, {-258, 45, -118}};
 constexpr double kTrackHalf = 6.5;
+// Banking (degrees) in each corner above: the fast ones are banked so they can be taken
+// faster (the outside of the turn raised), the slow and technical ones are flat.
+const double kTrackBank[] = {0, 14, 0, 8, 0, 12, 0, 0, 16, 6};
 // Points every ~2 m along it, starting halfway down the paddock straight; `apex` gets the
 // middle of each corner's arc.
-std::vector<V3> trackPoints(std::vector<V3>* apex = nullptr) {
+// `bank` gets each point's banking as a cross-slope: metres up per metre left of the line
+// (a left-hander's outside is on the right, so it's negative there).
+std::vector<V3> trackPoints(std::vector<V3>* apex = nullptr, std::vector<double>* bank = nullptr) {
     const std::vector<V3>& v = kTrackCorners;
     const int n = (int)v.size();
     auto flat = [](const V3& p) { return V3(p.x, 0, p.z); };
@@ -68,9 +73,10 @@ std::vector<V3> trackPoints(std::vector<V3>* apex = nullptr) {
         A.sweep = sgn * turn;
     }
     std::vector<V3> out;
+    std::vector<double> slope;  // the banking each point asks for (smoothed in and out below)
     auto line = [&](const V3& from, const V3& to) {
         const int steps = std::max(1, (int)std::round(len(to - from) / 2.0));
-        for (int k = 0; k < steps; k++) out.push_back(from + (to - from) * ((double)k / steps));
+        for (int k = 0; k < steps; k++) out.push_back(from + (to - from) * ((double)k / steps)), slope.push_back(0);
     };
     const V3 mid = (arcs[n - 1].b + arcs[0].a) * 0.5;
     if (apex) apex->clear();
@@ -78,15 +84,33 @@ std::vector<V3> trackPoints(std::vector<V3>* apex = nullptr) {
     for (int i = 0; i < n; i++) {
         const Arc& A = arcs[i];
         const int steps = std::max(2, (int)std::round(A.r * std::fabs(A.sweep) / 2.0));
+        const double cross = -(A.sweep > 0 ? 1 : -1) * std::tan(kTrackBank[i % 10] * M_PI / 180);
         for (int k = 0; k < steps; k++) {
             const double ang = A.a0 + A.sweep * k / steps;
             out.push_back(A.c + V3(std::cos(ang), 0, std::sin(ang)) * A.r);
+            slope.push_back(cross);
         }
         if (apex) {
             const double ang = A.a0 + A.sweep * 0.5;
             apex->push_back(A.c + V3(std::cos(ang), 0, std::sin(ang)) * A.r);
         }
         line(A.b, i + 1 < n ? arcs[i + 1].a : mid);
+    }
+    if (bank) {
+        // Eased in and out over ~50 m either side of each corner (a cosine window), as a real
+        // banked turn's transitions are. (Over 20 m, the road untwisted 16 degrees in a second
+        // at 130 km/h coming off the fast banked corner: a car lifted a wheel and rocked.)
+        const int m = (int)out.size(), win = 26;
+        bank->assign(m, 0);
+        for (int k = 0; k < m; k++) {
+            double sum = 0, wsum = 0;
+            for (int o = -win; o <= win; o++) {
+                const double w = 0.5 + 0.5 * std::cos(M_PI * o / (win + 1));
+                sum += w * slope[((k + o) % m + m) % m];
+                wsum += w;
+            }
+            (*bank)[k] = sum / wsum;
+        }
     }
     return out;
 }
@@ -324,7 +348,8 @@ void World::buildFrontier() {
     std::vector<uint8_t> keep(N, 0);
 
     // ---- Paths: the circuit, the rally stage, the summit trail ----------------------------
-    const std::vector<V3> track = trackPoints(), rally = splinePoints(kRallyCtl, true), trail = summitTrail(*this);
+    std::vector<double> trackBank;
+    const std::vector<V3> track = trackPoints(nullptr, &trackBank), rally = splinePoints(kRallyCtl, true), trail = summitTrail(*this);
     gSummit = trail.back();
     struct PathDef {
         const std::vector<V3>* pts;
@@ -333,10 +358,11 @@ void World::buildFrontier() {
         uint8_t paint;
         int window;      // smoothing of its height profile (samples ~2 m apart)
         double maxGrade; // steepest it may run (cut and fill where the land's steeper)
+        const std::vector<double>* bank = nullptr;  // its banking at each point (cross-slope), if any
     };
     const PathDef paths[] = {{&rally, true, kRallyHalf, 10, PAINT_GRAVEL, 12, 0.3},
                              {&trail, false, kTrailHalf, 9, PAINT_TRAIL, 4, 0.2},
-                             {&track, true, kTrackHalf, 14, PAINT_TRACK, 25, 0.12}};
+                             {&track, true, kTrackHalf, 14, PAINT_TRACK, 25, 0.12, &trackBank}};
     std::vector<float> edge(N, 1e9f), pathY(N, 0);
     std::vector<uint8_t> pathPaint(N, 0);
     for (const PathDef& p : paths) {
@@ -381,9 +407,15 @@ void World::buildFrontier() {
                     const int id = i * hN + j;
                     if (dd - p.half >= edge[id]) continue;
                     edge[id] = (float)(dd - p.half);
-                    pathY[id] = (float)(a.y + (b.y - a.y) * t);
+                    const double lat = (dx * (z - a.z) - dz * (x - a.x)) / L;
+                    double y = a.y + (b.y - a.y) * t;
+                    if (p.bank) {  // banked: the surface tilts across, the outside of the turn up (on into the verge)
+                        const double cs = (*p.bank)[s] + ((*p.bank)[(s + 1) % n] - (*p.bank)[s]) * t;
+                        y += cs * clampd(lat, -p.half - 4, p.half + 4);
+                    }
+                    pathY[id] = (float)y;
                     pathPaint[id] = p.paint;
-                    roadLat[id] = (float)((dx * (z - a.z) - dz * (x - a.x)) / L);
+                    roadLat[id] = (float)lat;
                     roadAlong[id] = (float)(along + L * t);
                 }
             along += L;

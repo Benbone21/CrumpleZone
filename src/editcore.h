@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "level.h"
+#include "sections.h"
 
 enum BrushOp { BRUSH_RAISE, BRUSH_LOWER, BRUSH_SMOOTH, BRUSH_FLATTEN };
 
@@ -92,6 +93,8 @@ public:
 
     // Objects. add returns its index in level.objects.
     int addObject(const LevelObject& o);
+    // Several at once (one undo step, one rebuild): a row of ledge slabs.
+    void addObjects(const std::vector<LevelObject>& objs, const std::string& what);
     void setObject(int k, const LevelObject& o, const std::string& mergeKey = "");
     void removeObject(int k);
     // Takes a base-map object out (records it in level.removed).
@@ -110,6 +113,17 @@ public:
     void setGate(int k, const Gate& g, const std::string& mergeKey = "");
     void removeGate(int k);
     void moveGate(int k, int dir);             // earlier (-1) or later (+1) in the order
+    // ---- Sections (sectionfile.h) -------------------------------------------------------
+    // Makes the level a new section on `canvas` (the world must be the proving ground, plain): flattens
+    // and clears the canvas and its blend, puts the entry (the start) near the back and the exit (a
+    // gate) near the far end, in sprint mode. Not undoable: it's where you start from.
+    void newSection(const SectionInfo& canvas);
+    // Stamps generated section `type` (a SectionType) with `seed` into the canvas at the entry, as the
+    // starting point to edit by hand: its ground, and its rocks, slabs, trees and logs as the level's
+    // own objects. One undo step. Returns how many objects it made (-1: no section here).
+    int stampSection(int type, uint32_t seed);
+    // After a save: what went wrong with the section file, or "" (the level itself saved).
+    std::string saveNote;
     // Level settings: fn changes the level (its name, mode, rules...), as one undo step.
     template <typename F>
     void settings(const std::string& key, F fn) {
@@ -186,6 +200,7 @@ private:
     Level metaOf();
     void restoreMeta(const Level& m);
     void syncSpawn();
+    void clearBushes();  // a section's canvas has none (they're scenery the level can't take out)
     void markCell(int id);
     void trim();
 };

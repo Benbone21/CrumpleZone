@@ -14,7 +14,7 @@
 
 class Editor {
 public:
-    enum Tool { SCULPT, PAINT, WATER, OBJECTS, COURSE, SETTINGS, TOOL_COUNT };
+    enum Tool { SCULPT, PAINT, WATER, OBJECTS, COURSE, SETTINGS, SECTION, TOOL_COUNT };
     bool active = false;
     EditCore core;
     // Set when the player asks to try the level (the game plays core.level, then may come back).
@@ -24,6 +24,16 @@ public:
 
     // Starts editing `lv`. The world must be the plain map (World(lv.map)).
     void open(World& w, Renderer& r, const Level& lv);
+    // Starts a new obstacle section on a fresh proving ground: the canvas flattened and cleared, the
+    // entry and exit set (EditCore::newSection). `w` is replaced.
+    void newSection(World& w, Renderer& r);
+    // The camera (for screenshots); and which tool is up.
+    void setCamera(const V3& at, double yawRad, double pitchRad) { eye = at, yaw = yawRad, pitch = pitchRad; }
+    void setTool(Tool t) { tool = t, sel = EditPick(); }
+    void setMouse(float x, float y) { mx = x, my = y; }
+    void setLedge(int riseIdx, double depth) { ledgeRise = riseIdx, ledgeDepth = depth, objKind = OBJ_KIND_COUNT; }
+    // A row of rock slabs along the line a-b (the slab-ledge brush).
+    void placeLedge(const V3& a, const V3& b);
     void close() { active = false; }
     // An SDL event (mouse in window coordinates; `scale` turns them into drawable pixels).
     void handleEvent(const SDL_Event& e, float scale);
@@ -54,9 +64,20 @@ private:
     double floodDepth = 1.0;
     int objKind = OBJ_ROCK;
     double rockSize = 1.2, treeHeight = 10, boxLen = 6, boxWidth = 4, boxHeight = 0.6, boxPitch = 0, objYaw = 0, logR = 0.3, logLen = 6;
+    double objOffset = 0;
     int treeKind = 0;
     bool slab = false;
     uint32_t nextSeed = 1;
+    // Section authoring: grid snap for what's placed (0 off, then 0.5 / 1 / 2 m); the slab-ledge brush
+    // (drag a line: a row of rock slabs along it, `ledgeRise` high, `ledgeDepth` deep); the generator to stamp.
+    int snapIdx = 0;
+    int ledgeRise = 2;
+    double ledgeDepth = 3.0;
+    bool ledgeOn = false;
+    V3 ledgeA;
+    int genType = 3;
+    uint32_t genSeed = 3;
+    bool confirmNew = false;
     double gateWidth = 14;
     EditPick sel;                  // selected object / gate
     bool dragging = false;         // moving the selection
@@ -93,6 +114,8 @@ private:
     void save();
     void openFile(const Level& lv);
     void settingChange(int row, int dir);
+    void sectionAction(int code);
+    V3 snapped(const V3& p) const;
     LevelObject makeObject(const V3& at) const;
     void drawWorldMarks(Renderer& r);
     void drawToolbar(Renderer& r, float u);
