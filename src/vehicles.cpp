@@ -1232,7 +1232,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         blazer.extras = 0;
         // Ochre with the white hardtop, the classic two-tone.
         blazer.paintColor[0] = 0.66f, blazer.paintColor[1] = 0.44f, blazer.paintColor[2] = 0.12f;
-        blazer.trimColor[0] = blazer.trimColor[1] = blazer.trimColor[2] = 0;
+        blazer.trimColor[0] = 0.93f, blazer.trimColor[1] = 0.93f, blazer.trimColor[2] = 0.90f;  // the white hardtop (its shell paints it)
         blazer.trimTop = 0;
         blazer.wheelStyle = WHEEL_STEEL;
         blazer.coverColor[0] = 0.92f, blazer.coverColor[1] = 0.92f, blazer.coverColor[2] = 0.90f;  // the white top

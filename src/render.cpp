@@ -517,7 +517,7 @@ uniform int uVehicle;  // catalog body style: EF, Jesko, Bronco, 4Runner
 // y up, z across) and these are its lines: floor, belt, roof, hood front | front x,
 // half width, windshield base x, roof front x | B-pillar x, C-pillar x, liftgate
 // bottom y, liftgate half width | trim top y, roof tuck, rear x, liftgate top x.
-uniform int uShell;      // 1 4Runner, 2 Bronco, 3 Civic, 4 Tacoma (uShD.w: its cab's back x)
+uniform int uShell;      // 1 4Runner, 2 Bronco, 3 Civic, 4 Tacoma (uShD.w: its cab's back x), 5 K5 Blazer
 uniform vec4 uShA, uShB, uShC, uShD;
 uniform vec4 uShE;       // front door's front edge x, gate top y, bumper top y, wheel opening top y
 out vec4 oCol;
@@ -649,6 +649,25 @@ void main(){
     } else if (region == 3) {
       // The back glass in the cab's back wall (a slider in the middle).
       win = rbox(P.zy, vec2(0.0, 0.5 * (shB + 0.08 + shT - 0.13)), vec2(0.56, 0.5 * (shT - 0.13 - shB - 0.08)), 0.05);
+    }
+  }
+  if (uShell == 5) {
+    win = 1.0;
+    if (region == 1) {
+      // 1972 K5 Blazer: the door glass (with its vent wing up front) behind a thin A pillar,
+      // then the long quarter window in the removable top, back to near the tailgate.
+      float yc = 0.5 * (shYlo + shYhi), yh = 0.5 * (shYhi - shYlo);
+      float w1 = rbox(P.xy, vec2(0.5 * (shXB + shAx), yc), vec2(0.5 * (shAx - shXB) - 0.05, yh), 0.03);
+      w1 = max(w1, P.x - (shAx - 0.06));
+      float w2 = rbox(P.xy, vec2(0.5 * (shXB + shXr) - 0.05, yc + 0.01), vec2(0.5 * (shXB - shXr) - 0.2, yh - 0.01), 0.08);
+      win = min(w1, w2);
+    } else if (region == 2) {
+      float zRef = shW2 - 0.07, zLim = zRef - shTuck * (P.y - shB) / max(0.1, shT - shB);
+      float u = abs(P.z) / max(0.1, zLim) * zRef;
+      win = rbox(vec2(u, P.y), vec2(0.0, 0.5 * (shB + 0.05 + shT - 0.06)), vec2(zRef, 0.5 * (shT - 0.06 - shB - 0.05)), 0.03);
+    } else if (region == 3) {
+      // The tailgate's roll-down glass.
+      win = rbox(P.zy, vec2(0.0, 0.5 * (shB + 0.06 + shT - 0.08)), vec2(shW2 - 0.17, 0.5 * (shT - 0.08 - shB - 0.06)), 0.05);
     }
   }
   bool isWindow = region >= 1 && region <= 3 && win < 0.0;
@@ -1088,6 +1107,113 @@ void main(){
     if (kind == 3) {
       j = (P.z / max(0.1, shW2) * 0.5 + 0.5) * W;
       k = uBody.z + (P.y - lampY) / 0.15;
+    }
+  }
+
+  if (uShell == 5) {
+    // 1972 K5 Blazer: a full-width egg-crate grille between round headlamps in square chrome
+    // bezels, amber parking lamps under them, the bowtie in the middle; chrome bumpers; a
+    // crease with a chrome molding down the side; side markers; the white removable top;
+    // vertical tail lamps in the rear corners; CHEVROLET across the tailgate.
+    base = uPaint;
+    kind = 0;
+    float fw = max(fwidth(P.x) + fwidth(P.y) + fwidth(P.z), 1e-4);
+    float az = abs(P.z);
+    vec3 top = uTrim.rgb;                                   // the hardtop's color (white)
+    // (Its own bumper line: the chrome bars sit at the frame, ~0.53-0.70 m up; the physics
+    // bumper panel here reaches much higher.)
+    float bumpLo = shF - 0.02, bumpHi = shF + 0.16;
+    float gBot = bumpHi + 0.03, gTop = shHood - 0.04;       // grille opening
+    float lampY = 0.5 * (gBot + gTop) + 0.02, lampZ = shW2 - 0.22;
+    float crease = shB - 0.17;                              // the side's body line
+    if (region == 7 || region == 8) {
+      base = vec3(region == 8 ? 0.025 : 0.05);
+      kind = 5;
+    } else if (region == 0) {
+      if (P.y < shF + 0.04) { base = vec3(0.04); kind = 1; }  // rocker
+      // The crease: a light edge over a shadow, with a slim chrome molding on it.
+      base = mix(base, base * 1.18, lineAt(P.y, crease + 0.012, 0.006, fw));
+      base = mix(base, base * 0.6, lineAt(P.y, crease - 0.006, 0.005, fw));
+      if (abs(P.y - crease) < 0.008 && P.x > shXr + 0.12 && P.x < shXf - 0.12) { base = vec3(0.75); kind = 2; }
+      if (P.y > shF + 0.02 && P.y < shB + 0.01) {
+        float seam = max(lineAt(P.x, shXE, 0.004, fw), lineAt(P.x, shXB, 0.004, fw));
+        base = mix(base, vec3(0.012), seam * 0.9);
+        // Chrome push-button handle near the door's back edge.
+        if (rbox(P.xy, vec2(shXB + 0.12, shB - 0.07), vec2(0.07, 0.015), 0.008) < 0.0) { base = vec3(0.8); kind = 2; }
+      }
+      // BLAZER on the front fender, above the crease behind the wheel.
+      if (P.x > shXE + 0.12 && P.x < shXE + 0.48 && abs(P.y - (crease + 0.07)) < 0.018 && fract((P.x - shXE) * 16.0) > 0.3) { base = vec3(0.8); kind = 2; }
+      // Side markers: amber at the front corners, red at the back.
+      if (P.x > shXf - 0.16 && P.x < shXf - 0.06 && abs(P.y - (crease - 0.08)) < 0.025) kind = 8;
+      if (P.x < shXr + 0.16 && P.x > shXr + 0.06 && abs(P.y - (crease - 0.08)) < 0.025) kind = 4;
+      // Tail lamps wrapping onto the sides at the rear corners.
+      if (P.x < shXr + 0.03 && P.y > bumpHi + 0.06 && P.y < bumpHi + 0.34) kind = 4;
+      // The top's lower edge where it bolts on behind the doors.
+      if (P.x < shXB - 0.01 && P.y > shB - 0.02) base = top;
+    } else if (region == 1) {
+      // Body color ahead of the B pillar (the door frame chrome), the white top behind it.
+      if (P.x < shXB + 0.03) base = top;
+      if (win < 0.014) { base = P.x > shXB + 0.03 ? vec3(0.75) : vec3(0.025); kind = P.x > shXB + 0.03 ? 2 : 1; }  // chrome frames, rubber on the top
+      if (abs(P.x - (shAx - 0.30)) < 0.008 && P.y > shYlo && P.y < shYhi) { base = vec3(0.7); kind = 2; }  // vent wing post
+    } else if (region == 4) {
+      base = top;  // the removable hardtop, the whole roof
+      if (lineAt(P.x, shXrf - 0.03, 0.004, fw) > 0.5) base = vec3(0.02);  // its seam at the windshield header
+    } else if (region == 2) {
+      if (win < 0.014) { base = vec3(0.7); kind = 2; }  // chrome reveal molding
+      if (P.y < shB + 0.05) { base = vec3(0.03); kind = 1; }  // cowl
+    } else if (region == 3) {
+      base = top;
+      if (win < 0.014) { base = vec3(0.02); kind = 1; }
+    } else if (region == 10) {
+      float seam = max(lineAt(P.x, shXf - 0.08, 0.004, fw), lineAt(az, shW2 - 0.05, 0.004, fw));
+      base = mix(base, vec3(0.012), seam * 0.9);
+      base = mix(base, base * 1.12, lineAt(az, 0.30, 0.01, fw) * step(shXa + 0.15, P.x));  // the hood's two raised ribs
+      if (P.x < shXa + 0.06) { base = vec3(0.03); kind = 1; }  // cowl vent
+    } else if (region == 5) {
+      if (P.y < bumpHi && P.y > bumpLo) { base = vec3(0.82, 0.82, 0.84); kind = 2; }  // chrome front bumper
+      else if (P.y < gBot) { base = P.y < bumpLo ? vec3(0.03) : uPaint * 0.9; kind = P.y < bumpLo ? 1 : 0; }  // valance; under it, dark
+      if (P.y > gBot && P.y < gTop && az < shW2 - 0.04) {
+        base = vec3(0.78); kind = 2;  // chrome surround
+        if (P.y > gBot + 0.025 && P.y < gTop - 0.025 && az < shW2 - 0.07) {
+          // Egg-crate: wide cells, a strong horizontal bar through the middle.
+          kind = 7;
+          base = vec3(0.025);
+          float cx = fract(P.z * 9.0), cy = fract((P.y - gBot) * 14.0);
+          if (cx < 0.12 || cy < 0.18) { base = vec3(0.62); kind = 2; }
+          if (abs(P.y - lampY) < 0.012) { base = vec3(0.8); kind = 2; }
+        }
+        // Bowtie in the middle of the bar.
+        if (abs(P.y - lampY) < 0.03 - 0.25 * max(0.0, az - 0.035) && az < 0.07) { base = vec3(0.85, 0.68, 0.25); kind = 2; }
+        // Round headlamps in square chrome bezels.
+        vec2 q = vec2(az - lampZ, P.y - lampY);
+        float bez = max(abs(q.x), abs(q.y)) - 0.105;
+        if (bez < 0.0) { base = vec3(0.8); kind = 2; }
+        if (length(q) < 0.085) kind = 3;
+        else if (length(q) < 0.095) { base = vec3(0.6); kind = 2; }
+        // Amber parking lamps below them.
+        if (rbox(vec2(az, P.y), vec2(lampZ, gBot + 0.05), vec2(0.07, 0.022), 0.008) < 0.0) kind = 8;
+      }
+      float plate = rbox(P.zy, vec2(0.0, 0.5 * (bumpLo + bumpHi)), vec2(0.15, 0.06), 0.01);
+      if (plate < 0.0) { base = vec3(0.9, 0.88, 0.8); kind = 1; }
+    } else if (region == 6) {
+      if (P.y < bumpHi && P.y > bumpLo) { base = vec3(0.82, 0.82, 0.84); kind = 2; }  // chrome rear bumper
+      else if (P.y < bumpLo) { base = vec3(0.03); kind = 1; }
+      float seam = P.y > shLiftY ? lineAt(az, shLiftZ, 0.004, fw) : 0.0;
+      seam = max(seam, az < shLiftZ ? lineAt(P.y, shLiftY, 0.004, fw) : 0.0);
+      base = mix(base, vec3(0.012), seam * 0.9);
+      // CHEVROLET pressed across the tailgate: nine letter blocks.
+      float lx = (P.z + 0.45) / 0.10;
+      if (abs(P.y - (shB - 0.16)) < 0.03 && lx > 0.0 && lx < 9.0 && fract(lx) > 0.15 && fract(lx) < 0.85) base = uPaint * 0.72;
+      // Tail lamps: tall rectangles in the corners, a white reversing lamp at the bottom.
+      if (az > shW2 - 0.17 && az < shW2 - 0.02 && P.y > bumpHi + 0.06 && P.y < bumpHi + 0.34) kind = P.y < bumpHi + 0.11 ? 3 : 4;
+      if (P.y > shB - 0.02) base = top;  // the top over the tailgate glass
+      float plate = rbox(P.zy, vec2(0.0, bumpHi + 0.12), vec2(0.15, 0.065), 0.01);
+      if (plate < 0.0) { base = vec3(0.9, 0.88, 0.8); kind = 1; }
+    }
+    if (kind == 7) k = P.y * 2.2;
+    if (kind == 3) {
+      j = (P.z > 0.0 ? W - 0.55 : 0.55) + (P.z > 0.0 ? -(az - lampZ) : (az - lampZ)) * 3.0;
+      k = uBody.z + (P.y - lampY) * 3.0 / 2.2;
     }
   }
 

@@ -825,7 +825,10 @@ VEHICLE_SCENARIO(tiltTable, "structure/tilt-table", "Tipped sideways on a tilt t
     ctx.metric("static stability factor (track / 2 CG height)", ssf, "", e.lo, e.hi);
     // (Real tilt-table ratios run ~85-97% of the SSF. The bound over it allows for the
     // track and CG height being read at rest, at the hub centres.)
-    ctx.metric("tilt angle when the uphill wheels lift", lift * 180 / M_PI, "deg", std::atan(0.8 * ssf) * 180 / M_PI, std::atan(1.02 * ssf) * 180 / M_PI);
+    // (Leaf packs at both ends: the axles shift a few cm downhill on their shackles under the
+    // side load, which widens the track on that side a little more.)
+    const double over = spec.leafFront && spec.leafSprings ? 1.05 : 1.02;
+    ctx.metric("tilt angle when the uphill wheels lift", lift * 180 / M_PI, "deg", std::atan(0.8 * ssf) * 180 / M_PI, std::atan(over * ssf) * 180 / M_PI);
 }
 
 VEHICLE_SCENARIO(weight, "structure/weight", "Curb weight, front/rear split and center of gravity height against real vehicles") {
