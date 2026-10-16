@@ -1447,11 +1447,15 @@ void main(){
   oCol = finishColor(col, vPos, 1.0);
 })";
 
-// Water: rippling surface reflecting the sky, a hot sun glint, the lake bed showing
-// through the shallows (depth from the terrain texture), foam where it meets the shore.
+// Water: the lake bed seen through it (the framebuffer behind, dimmed and tinted by how far
+// the light goes through: depth from the terrain texture), clear and blue-green over gravel,
+// brown and soon opaque over mud; the sky and a sun glint on rippling normals by Fresnel;
+// a flow-stretched current; foam and a fading edge where it meets the shore. Dual-source
+// blending: oCol is what the surface adds, oKeep how much of the bed shows through, per channel.
 const char* kWaterFSBody = R"(
 in vec3 vPos; in vec3 vNrm; in vec4 vCol; in vec4 vLight; in vec3 vLocal;
-out vec4 oCol;
+layout(location = 0, index = 0) out vec4 oCol;
+layout(location = 0, index = 1) out vec4 oKeep;
 uniform sampler2D uTerrainTex; uniform float uTerrainN;
 float groundAt(vec2 xz){
   vec2 g = xz + 600.0;
@@ -1461,47 +1465,115 @@ float groundAt(vec2 xz){
   float c = texelFetch(uTerrainTex, i + ivec2(0, 1), 0).r, d = texelFetch(uTerrainTex, i + ivec2(1, 1), 0).r;
   return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
-float wave(vec2 p){
+// Value noise and its slope, for ripple normals without finite differences.
+vec3 vnd(vec2 p){
+  vec2 i = floor(p), f = fract(p), u = f * f * (3.0 - 2.0 * f), du = 6.0 * f * (1.0 - f);
+  float a = hash(i), b = hash(i + vec2(1.0, 0.0)), c = hash(i + vec2(0.0, 1.0)), d = hash(i + vec2(1.0, 1.0));
+  float k1 = b - a, k2 = c - a, k4 = a - b - c + d;
+  return vec3(a + k1 * u.x + k2 * u.y + k4 * u.x * u.y, du.x * (k1 + k4 * u.y), du.y * (k2 + k4 * u.x));
+}
+// Surface slope: a long swell, ripples and fine chop, each scrolling its own way (rotated
+// against each other so no lattice shows), fading out with distance. fd: downstream (zero:
+// still water); streaks lengthen along it.
+vec2 ripples(vec2 p, vec2 fd, float dist, float rough){
   float t = uTime;
-  return vnoise(p * 0.5 + t * vec2(0.2, 0.06)) * 0.6 + vnoise(p * 1.4 - t * vec2(0.12, 0.22)) * 0.3 + vnoise(p * 3.7 + t * vec2(0.3, -0.15)) * 0.06;
+  if (dot(fd, fd) > 0.01) {  // current: stretch the pattern along it
+    vec2 pp = vec2(-fd.y, fd.x), pe = vec2(dot(p, fd) * 0.5, dot(p, pp));
+    vec3 g1 = vnd(pe * 0.55 + vec2(0.0, t * 0.05)), g2 = vnd(pe * vec2(1.4, 2.6) + vec2(7.1, 3.3)), g3 = vnd(pe * vec2(3.0, 7.0) + vec2(1.7, 9.2));
+    vec2 gq = g1.yz * 0.55 * 0.55 + g2.yz * vec2(1.4, 2.6) * 0.20 + g3.yz * vec2(3.0, 7.0) * 0.06 * clamp(14.0 / (dist + 6.0), 0.0, 1.0);
+    return (fd * gq.x * 0.5 + pp * gq.y) * rough;
+  }
+  vec3 g1 = vnd(p * 0.42 + t * vec2(0.09, 0.035));
+  vec3 g2 = vnd(mat2(0.8, 0.6, -0.6, 0.8) * p * 1.7 - t * vec2(0.14, 0.27));
+  vec3 g3 = vnd(mat2(0.6, -0.8, 0.8, 0.6) * p * 5.3 + t * vec2(0.45, -0.31));
+  vec2 gr = g1.yz * 0.42 * 0.55 + (mat2(0.8, -0.6, 0.6, 0.8) * g2.yz) * 1.7 * 0.20 + (mat2(0.6, 0.8, -0.8, 0.6) * g3.yz) * 5.3 * 0.05 * clamp(14.0 / (dist + 6.0), 0.0, 1.0);
+  return gr * rough;
 }
 void main(){
-  float depth = vPos.y - groundAt(vPos.xz);
+  float gy = groundAt(vPos.xz);
+  float depth = vPos.y - gy;
   if (depth < 0.0) discard;
   vec2 p = vPos.xz;
-  const float e = 0.06;
-  // A river's current: the ripples drift downstream (two staggered phases, blended, so
-  // the pattern never smears out).
-  vec2 flow = vCol.rg;
-  float ph0 = fract(uTime * 0.2), ph1 = fract(uTime * 0.2 + 0.5), wb = abs(1.0 - 2.0 * ph0);
-  vec2 o0 = flow * ph0 * 5.0, o1 = flow * ph1 * 5.0 + vec2(13.7, 4.1);
-  float h0 = mix(wave(p - o1), wave(p - o0), wb), hx = mix(wave(p + vec2(e, 0.0) - o1), wave(p + vec2(e, 0.0) - o0), wb),
-        hz = mix(wave(p + vec2(0.0, e) - o1), wave(p + vec2(0.0, e) - o0), wb);
-  vec3 n = normalize(vec3(-(hx - h0) / e * 0.05, 1.0, -(hz - h0) / e * 0.05));
-  vec3 V = normalize(uCam - vPos);
-  float fres = 0.02 + 0.98 * pow(1.0 - max(dot(n, V), 0.0), 5.0);
-  vec3 r = reflect(-V, n);
-  vec3 refl = skyColor(vec3(r.x, max(r.y, 0.02), r.z), 3);
-  // Low in the reflection the far shore and its trees, not sky.
-  refl = mix(refl, vec3(0.035, 0.05, 0.035), smoothstep(0.16, 0.02, r.y) * 0.85);
+  vec3 Vv = uCam - vPos;
+  float dist = length(Vv);
+  vec3 V = Vv / dist;
   float sh = shadowAt(vPos, vec3(0, 1, 0));
+  vec3 irr = ambientAt(vec3(0, 1, 0)) + sh * kSunCol * 0.55;
+  // What it flows over: the share of mud round here (a few taps, so the change is gradual).
+  ivec2 ti = clamp(ivec2(floor(p + 600.5)), ivec2(2), ivec2(int(uTerrainN) - 3));
+  float mud = 0.0;
+  for (int k = 0; k < 4; k++) {
+    ivec2 o = ti + ivec2((k & 1) * 4 - 2, (k >> 1) * 4 - 2);
+    mud += 1.0 - step(0.5, abs(texelFetch(uTerrainTex, o, 0).b - 8.0));
+  }
+  float murk = smoothstep(0.2, 0.8, mud * 0.25);
+  vec2 flow = vCol.rg;
+  float fl = length(flow);
+  vec2 fd = fl > 0.1 ? flow / fl : vec2(0.0);
+  float rough = (1.0 + 0.5 * min(fl, 2.0)) * (1.0 - 0.45 * murk);
+  vec2 sl;
+  float wb = 0.0, ph0 = 0.0, ph1 = 0.0;
+  vec2 o0 = vec2(0.0), o1 = vec2(13.7, 4.1);
+  if (fl > 0.1) {  // two staggered phases of the pattern, blended, so it drifts without smearing
+    ph0 = fract(uTime * 0.2), ph1 = fract(uTime * 0.2 + 0.5), wb = abs(1.0 - 2.0 * ph0);
+    o0 = flow * ph0 * 5.0, o1 = flow * ph1 * 5.0 + vec2(13.7, 4.1);
+    sl = mix(ripples(p - o1, fd, dist, rough), ripples(p - o0, fd, dist, rough), wb);
+  } else sl = ripples(p, fd, dist, rough);
+  sl *= 0.26 / (1.0 + dist / 60.0);
+  vec3 n = normalize(vec3(-sl.x, 1.0, -sl.y));
+  bool under = V.y < 0.0;  // camera below the surface
+  if (under) n.y = -n.y, V.y = -V.y;
+  float ndv = max(dot(n, V), 0.0);
+  float fres = (0.02 + 0.98 * pow(1.0 - ndv, 5.0)) * (1.0 - 0.6 * murk);  // (a muddy skin reflects less)
+  vec3 r = reflect(-V, n);
+  r.y = abs(r.y);
+  vec3 refl = skyColor(vec3(r.x, max(r.y, 0.02), r.z), 3);
+  // Low in the reflection the banks and the trees on them, not sky: the ground rising
+  // along the reflected ray (a few coarse steps), and a band round the horizon.
+  float occ = smoothstep(0.35, 0.03, r.y) * 0.7;
+  vec2 rd = r.xz / max(length(r.xz), 1e-3);
+  for (int k = 0; k < 6; k++) {
+    float s = 2.5 * exp2(float(k));
+    ivec2 gi = clamp(ivec2(floor(p + rd * s + 600.5)), ivec2(0), ivec2(int(uTerrainN) - 1));
+    occ = max(occ, smoothstep(0.0, 3.0, texelFetch(uTerrainTex, gi, 0).r - (vPos.y + r.y / max(length(r.xz), 0.05) * s)) * 0.85);
+  }
+  refl = mix(refl, vec3(0.035, 0.05, 0.03) * (ambientAt(vec3(0, 1, 0)) + 0.4 * sh * kSunCol), occ);
   vec3 H = normalize(V + uSun);
   vec3 lspec, lamp = lampLight(vPos, n, V, 400.0, 0.0, lspec);
-  vec3 glint = kSunSpec * pow(max(dot(n, H), 0.0), 500.0) * 30.0 * sh + lspec * 3.0;  // sun, moon and headlamps on the ripples
-  vec3 body = mix(vec3(0.05, 0.09, 0.07), vec3(0.008, 0.03, 0.035), smoothstep(0.0, 2.0, depth));
-  vec3 col = mix(body * (ambientAt(vec3(0, 1, 0)) + sh * kSunCol * 0.25 + lamp * 0.3), refl, fres) + glint;
-  float alpha = mix(smoothstep(0.0, 1.6, depth) * 0.88, 1.0, fres);
-  float foam = (1.0 - smoothstep(0.0, 0.1, depth)) * (0.4 + 0.6 * vnoise(p * 5.0 + uTime * 0.7));
-  // Over a mud bed (swamp, delta, the Muddy) the water is murky brown and its edge doesn't froth.
-  float mudBed = 1.0 - step(0.5, abs(texture(uTerrainTex, (p + 600.0 + 0.5) / uTerrainN).b - 8.0));
-  col = mix(col, vec3(0.045, 0.034, 0.02) * (ambientAt(vec3(0, 1, 0)) + sh * kSunCol * 0.3), mudBed * (1.0 - fres) * 0.6);
-  foam *= 1.0 - 0.8 * mudBed;
+  float nh = max(dot(n, H), 0.0);
+  vec3 glint = kSunSpec * (pow(nh, 700.0) * 45.0 + pow(nh, 70.0) * 0.9) * sh * (1.0 - 0.7 * murk) + lspec * 3.0;  // sun, moon and headlamps on the ripples
+  // The light through the water: red goes first, then green; mud stops all of it within a half metre.
+  vec3 sigma = mix(vec3(0.60, 0.16, 0.10), vec3(3.4, 3.0, 2.6), murk);
+  float vy = max(V.y, 0.0), cosr = sqrt(max(1.0 - (1.0 - vy * vy) / 1.78, 0.04));  // (the ray bent into the water)
+  float path = min(depth, 8.0) / cosr;
+  vec3 T = exp(-sigma * path);
+  vec3 body = mix(vec3(0.020, 0.080, 0.085), vec3(0.080, 0.046, 0.020), murk) * (irr + lamp * 0.3);
+  vec3 col = refl * fres + body * (1.0 - T) * (1.0 - fres) + glint;
+  vec3 keep = T * (1.0 - fres);
+  // Soft shore: fades in over the first hand's depth; a fringe of foam that laps in and out.
+  float edge = smoothstep(0.0, 0.12, depth);
+  col *= edge;
+  keep = 1.0 - edge * (1.0 - keep);
+  // (Foam by distance to the shore, not depth: a beach is a hand deep for metres.)
+  float foam = 0.0;
+  if (depth < 0.2) {
+    vec2 gd = vec2(groundAt(p + vec2(0.75, 0.0)) - groundAt(p - vec2(0.75, 0.0)), groundAt(p + vec2(0.0, 0.75)) - groundAt(p - vec2(0.0, 0.75))) / 1.5;
+    float dd = depth / max(length(gd), 0.03);  // metres to where the water ends
+    float lap = 0.22 + 0.12 * sin(uTime * 1.1 + vnoise(p * 0.7) * 6.28);
+    foam = (1.0 - smoothstep(lap * 0.3, lap + 0.1, dd)) * smoothstep(0.3, 0.7, vnoise(p * 7.0 + uTime * 0.35));
+    foam += (1.0 - smoothstep(0.0, 0.1, dd)) * 0.5;  // the wet line itself
+  }
   // White water where it runs fast and shallow.
-  float fast = smoothstep(0.9, 2.2, length(flow)) * (1.0 - smoothstep(0.3, 1.2, depth));
+  float fast = smoothstep(0.9, 2.2, fl) * (1.0 - smoothstep(0.3, 1.2, depth));
   foam = max(foam, fast * smoothstep(0.45, 0.8, mix(vnoise((p - o1) * 2.3), vnoise((p - o0) * 2.3), wb)));
-  col = mix(col, vec3(0.75, 0.78, 0.76) * (ambientAt(vec3(0, 1, 0)) + sh * kSunCol * 0.6), foam * 0.6);
-  alpha = max(alpha, foam * 0.7);
-  oCol = finishColor(col, vPos, alpha);
+  foam *= 1.0 - 0.8 * murk;
+  foam = clamp(foam, 0.0, 1.0) * 0.8;
+  col = mix(col, vec3(0.8, 0.84, 0.84) * (irr * 0.7 + 0.05), foam);
+  keep *= 1.0 - foam;
+  if (under) { col = body * 1.5 + refl * 0.04; keep = vec3(0.45, 0.6, 0.62) * edge + (1.0 - edge); }  // from below: a green-blue ceiling
+  float cov = max(1.0 - dot(keep, vec3(0.3333)), 0.02);
+  oCol = vec4(applyFog(col / cov, vPos) * cov, 1.0);
+  oKeep = vec4(keep, 1.0);
 })";
 
 // ---- Post-processing (full-screen triangle) ----
@@ -3377,7 +3449,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         uniformM4(progWater, "uModel", m4identity());
         bindTerrainTex(progWater);
         Enable(GL_BLEND);
-        BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        BlendFunc(GL_ONE, 0x88F9);  // GL_SRC1_COLOR: dual-source, the surface's light plus the bed dimmed per channel
         DepthMask(0);
         BindVertexArray(waterVao);
         DrawArrays(GL_TRIANGLES, 0, waterVertexCount);
