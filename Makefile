@@ -38,6 +38,10 @@ build/crumplezone-dev: $(GAME_OBJ)
 build/run_tests: $(TEST_OBJ)
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -lm
 
+# Dedicated multiplayer server (headless, no SDL/OpenGL).
+build/crumplezone-server: build/src/server_main.o $(PHYS)
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -lm
+
 # CPU-only workload; args: car count, separated|pileup, 2 kHz steps.
 build/bench_sim: build/tools/bench_sim.o $(patsubst %.cpp,build/%.o,$(PHYS))
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -lm

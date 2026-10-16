@@ -427,6 +427,17 @@ Up to 8 players on one map. One of you hosts; the rest join.
   - Name tags float over the others' trucks, the compass points to them, and the player list (top right) shows everyone's ping.
   - The host's parked trucks and crash props are shared. The host picks the map and the time of day (its clock goes out every second), and there's no pausing or slow motion while you're in a session.
 
+### Dedicated Server
+
+For internet play or persistent sessions, run a dedicated server instead of having one player host:
+
+```bash
+make build/crumplezone-server
+./build/crumplezone-server --port 27015 --map 1 --name "My Session"
+```
+
+Players join normally: `./crumplezone --join YOUR_SERVER_IP:27015`. The server runs headless (no window), accepts up to 8 players, and maintains the shared world. It works over the internet when port 27015 is open on the server. Options: `--port`, `--map`, `--name`, `--players`, `--help`.
+
 ## Recovery
 
 The idea: trucks break, and your buddies get you home. (Until multiplayer lands, a buddy is any other truck: Tab into it and drive.)
