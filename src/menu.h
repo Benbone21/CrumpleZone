@@ -6,6 +6,8 @@
 #include <vector>
 
 #include "render.h"
+#include "keybinds.h"
+#include "sdl_min.h"
 
 struct Settings {
     float ambience = 0.6f;      // outdoor wind, foliage, birds and night insects
@@ -15,6 +17,7 @@ struct Settings {
     float fovDeg = 66;          // vertical field of view of the chase and orbit cameras
     bool fullscreen = false, vsync = true, showFps = false;
     int physicsThreads = 0;     // 0 AUTO; 1 serial; otherwise up to the available logical CPUs
+    bool steeringAssist = true; // limit steering angle at high speeds (false = simulation mode)
     int map = 0;                // the map you were on last
     bool realRecovery = true;   // damage stays until a repair station (or arcade: T fixes it)
     double winchSpeed = 4.0;    // saved gameplay speed multiplier; 1x is rated line speed
@@ -33,6 +36,7 @@ struct Settings {
     int padSteering = 1, padDeadzone = 1, padRumble = 1;
     RenderSettings gfx;
     bool adaptiveQuality = true;  // auto-scale quality to maintain framerate
+    Keybinds keys;
 
     bool load(const std::string& path);
     bool save(const std::string& path) const;
@@ -81,6 +85,7 @@ public:
     bool joining = false;
     std::string joinError;
     int pageNow() const { return page; }
+    bool listeningForKey() const { return open && listening >= 0; }  // the next key press is a binding, not a command
     bool netActive = false;
     std::string padName;  // the connected controller (settings page), set by the game
     bool shift = false;  // a shift key is down (typing ':' in an address)
@@ -133,7 +138,9 @@ private:
         float x, y, w, h, barX, barW;
         int row;
     };
-    int page = 0;  // 0 main (or the title), 1 settings, 2 multiplayer, 3 autopilot, 4 levels, 5 jobs, 6 controller
+    int listening = -1;  // keybinds page: the KeyAction waiting for a key press (-1: none)
+    std::string keyNote; // keybinds page: why the last key was refused
+    int page = 0;  // 0 main (or the title), 1 settings, 2 multiplayer, 3 autopilot, 4 levels, 5 jobs, 6 controller, 7 keybinds
     int sel = 0;
     int dragSlider = -1;
     float fade = 0;

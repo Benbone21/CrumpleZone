@@ -2667,12 +2667,12 @@ void Sim::drive(bool up, bool down, bool left, bool right, bool hb, double dt) {
     // go is as quick as ever.)
     double rate = (target == 0 || target * c.steerInput < 0) ? 5.0 : 2.5 * std::min(1.0, 40.0 / std::max(1.0, speed));
     c.steerInput += clampd(target - c.steerInput, -rate * dt, rate * dt);
-    // Keys are all or nothing, so full key steers to what the tires can hold at this
-    // speed (a driver's hands would): the road-wheel angle for ~85% of the car's grip on
-    // this surface (downforce included), plus the tires' slip, plus however far the car is
-    // already sliding so there's lock left to catch it. At parking speeds that's full lock;
-    // at 130 km/h a few degrees.
-    {
+    if (steeringAssist) {
+        // Steering assist: full key steers to what the tires can hold at this speed (a driver's
+        // hands would): the road-wheel angle for ~85% of the car's grip on this surface
+        // (downforce included), plus the tires' slip, plus however far the car is already
+        // sliding so there's lock left to catch it. At parking speeds that's full lock; at
+        // 130 km/h a few degrees.
         double grip = 0;
         int n = 0;
         for (const Wheel& wh : c.wheels)
@@ -2687,6 +2687,9 @@ void Sim::drive(bool up, bool down, bool left, bool right, bool hb, double dt) {
         const double catchLock = c.steerInput * beta > 0 ? std::fabs(beta) : 0.0;
         const double limit = std::atan(c.wheelbase * aMax / std::max(1.0, speed * speed)) + 0.045 + catchLock;
         c.steer = c.steerInput * std::min(0.6, limit);
+    } else {
+        // Simulation mode: full lock at all speeds (0.6 rad = 34 degrees).
+        c.steer = c.steerInput * 0.6;
     }
 
     c.throttle = c.brake = 0;

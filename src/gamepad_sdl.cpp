@@ -31,6 +31,10 @@ struct Device::Impl {
 
 bool Device::start() {
     if (started_) return true;
+    // Keep the pad's events coming when the window is behind another one (the game still ignores
+    // the pad's *input* unless it has the focus, in read()): otherwise a pad switched on while the
+    // window is being focused, or a Bluetooth reconnect during an alt-tab, can be missed.
+    SDL_SetHintWithPriority("SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS", "1", 0);
     if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) != 0) return false;
     impl_ = new Impl();
     started_ = true;

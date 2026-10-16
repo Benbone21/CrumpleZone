@@ -44,6 +44,8 @@ void* SDL_GL_GetProcAddress(const char* proc);
 void SDL_GL_GetDrawableSize(SDL_Window* window, int* w, int* h);
 void SDL_GetWindowSize(SDL_Window* window, int* w, int* h);
 int SDL_PollEvent(SDL_Event* event);
+int SDL_PushEvent(SDL_Event* event);
+int SDL_SetHintWithPriority(const char* name, const char* value, int priority);  // (priority 0: a default, the player's environment variables still win)
 int SDL_SetRelativeMouseMode(int enabled);  // SDL_bool: the mouse turns the view, no cursor
 const uint8_t* SDL_GetKeyboardState(int* numkeys);
 uint64_t SDL_GetPerformanceCounter(void);
@@ -136,7 +138,7 @@ enum {
     SC_A = 4, SC_C = 6, SC_D = 7, SC_H = 11, SC_I = 12, SC_J = 13, SC_K = 14, SC_N = 17, SC_P = 19, SC_R = 21, SC_S = 22, SC_T = 23, SC_U = 24, SC_W = 26, SC_X = 27,
     SC_1 = 30, SC_2 = 31, SC_3 = 32, SC_4 = 33, SC_5 = 34, SC_6 = 35, SC_7 = 36, SC_BACKSPACE = 42, SC_DELETE = 76,
     SC_ESCAPE = 41, SC_TAB = 43, SC_SPACE = 44, SC_LEFTBRACKET = 47, SC_RIGHTBRACKET = 48,
-    SC_F2 = 59, SC_F3 = 60, SC_F5 = 62, SC_F10 = 67, SC_F11 = 68, SC_RIGHT = 79, SC_LEFT = 80, SC_DOWN = 81, SC_UP = 82,
+    SC_F2 = 59, SC_F3 = 60, SC_F4 = 61, SC_F5 = 62, SC_F10 = 67, SC_F11 = 68, SC_RIGHT = 79, SC_LEFT = 80, SC_DOWN = 81, SC_UP = 82,
     SC_B = 5, SC_E = 8, SC_F = 9, SC_G = 10, SC_L = 15, SC_M = 16, SC_Q = 20, SC_RETURN = 40, SC_KP_ENTER = 88,
     SC_MINUS = 45, SC_EQUALS = 46, SC_O = 18, SC_V = 25, SC_Y = 28, SC_Z = 29, SC_9 = 38, SC_0 = 39, SC_LSHIFT = 225, SC_RSHIFT = 229,
 };

@@ -137,7 +137,7 @@ scenario finishes, you can drive around in the aftermath.
 
 | Key | Action |
 | --- | --- |
-| Esc | Pause menu: resume, pick a car, garage, settings, controls, reset, quit |
+| Esc | Pause menu: resume, pick a car, garage, settings, controls, reset, quit. The driving keys can be remapped under Settings → Controller → Keyboard keybinds (Esc always opens the menu; the steering-assist toggle is F4) |
 | W / S or ↑ / ↓ | Throttle / brake (hold S when stopped to reverse) |
 | A / D or ← / → | Steer. Keys are all or nothing, so full steer is as much as the tires can hold at your speed, on that surface (full lock when parking, a few degrees at 130 km/h), plus room to catch a slide |
 | Space | Handbrake |
