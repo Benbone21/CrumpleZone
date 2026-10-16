@@ -634,7 +634,12 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         runner.lockerRear = true;          // factory rear e-locker option
         runner.frontLockerLowOnly = false;
         runner.rearLockerLowOnly = true;   // Toyota's e-locker only engages in 4L
-        runner.shaftLimit = 10000;         // beefed up for offroad abuse
+        // A shaft has to carry what its tire can put into it: tractive force x tire radius (a front tire on a
+        // ledge face carries 10 to 22 kN and grips at mu ~0.8 to 1). The IFS CVs are 65% of this, less at lock.
+        // At 10,000 the 4Runner's snapped at 14.6 kN of traction on its 35s (13.8 on the 37s), the Tacoma's
+        // hold 18.4 on its 265s and the Bronco's 20.4: the same flat-out ledge crawl lost a 4Runner CV in 9 of
+        // 24 runs against 2 and 3 for them. 13,000 (the Bronco's) holds 18 kN on the 37s, as the Bronco does.
+        runner.shaftLimit = 13000;         // beefed up for offroad abuse
         runner.lowRange = 2.566;
         // 319 mm vented discs, 4-piston calipers: two ~43 mm pistons a side, pads (mu ~0.4) at
         // ~0.13 m, ~30 N*m per bar; a panic stop puts ~140 bar in (ESTIMATES): ~4.2 kN*m. That

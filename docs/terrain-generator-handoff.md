@@ -370,7 +370,7 @@ pops, `softbody.cpp` rim strike: rim touched at more than `7 m/s * (psi+5)/(stoc
   5-step box staircase (steps of 0.2, 0.3, 0.4 m at 1.0, 1.5, 2.0 m/s; both pops were the Blazer at 2.0 m/s
   on 0.3 and 0.4 m steps, none at 1.5 m/s or less). Capping the throttle at 0.6 removed them. Real drivers
   feather it.
-- *The 4Runner's shafts are the same story.* A solid-axle shaft takes `shaftLimit` (10,000 N·m); the 4Runner's
+- *The 4Runner's shafts are the same story.* (Since re-set: `shaftLimit` is now 13,000, the Bronco's, so its CVs hold 18 kN of traction on the 37s as the Bronco's do; at 10,000 the same flat-out ledge crawl, 24 runs at 0.3 to 0.6 m, head on and at 25 degrees, lost a front CV in 9 against 2 for the Bronco and 3 for the Tacoma, and after it 1. The figures below are from before.) A solid-axle shaft took `shaftLimit` (10,000 N·m); the 4Runner's
   independent front CVs take 65% of it, less with steering lock (snaps seen at 5.1 to 6.5 kN·m). The load is the
   tire's traction torque, `Fx * R`: a front tire carrying 11 to 20 kN on a ledge face and gripping at
   mu 1.2 on rock is 6 kN·m, so the front CVs go the moment one tire takes the whole front axle's load flat
