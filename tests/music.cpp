@@ -14,17 +14,17 @@
 
 namespace {
 
-struct Level {
+struct Loudness {
     double rms = 0;
     float peak = 0;
     bool finite = true;
     uint64_t hash = 1469598103934665603ull;
 };
 
-Level renderPiece(int map, int biome, int seconds, uint32_t seed = 701) {
+Loudness renderPiece(int map, int biome, int seconds, uint32_t seed = 701) {
     Music music;
     music.setSeed(seed);
-    Level lv;
+    Loudness lv;
     std::vector<float> block(1024);
     double e = 0;
     long n = 0;
@@ -186,11 +186,11 @@ SCENARIO(biomeHysteresis, "music/biome-hysteresis", "A new biome has to hold bef
 }
 
 SCENARIO(biomeMusic, "music/biome-pieces", "Each biome's music renders finite, audible, unclipped, at the level of the maps' own, and differs from the rest") {
-    const Level own = renderPiece(0, 0, 30);
+    const Loudness own = renderPiece(0, 0, 30);
     ctx.check("the map's own piece is audible", own.finite && own.rms > 0.03);
     std::vector<uint64_t> hashes{own.hash};
     for (int b = 1; b < BIOME_COUNT; b++) {
-        const Level lv = renderPiece(0, b, 30);
+        const Loudness lv = renderPiece(0, b, 30);
         const std::string tag = std::string(biomeName(b)) + ": ";
         ctx.check(tag + "finite", lv.finite);
         ctx.check(tag + "audible", lv.rms > 0.03, std::to_string(lv.rms));
