@@ -18,6 +18,7 @@
 
 #include "net.h"
 #include "softbody.h"
+#include "vehicles.h"
 #include "world.h"
 
 namespace {
@@ -78,7 +79,9 @@ int main(int argc, char** argv) {
 
     // Create the world and parked vehicles
     Sim sim;
+    World::withShowcase = true;  // (the same proving ground the players' games build: the model yard, the section park)
     sim.world = World(opts.map);
+    sim.lineup = listedVehicles();
     sim.setup();
 
     // Host the session
