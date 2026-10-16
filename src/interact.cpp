@@ -58,7 +58,7 @@ bool Interact::cornerLifted(const Sim& sim, const Car& c, int k) {
     return hub.y - wh.R - ground > 0.05;
 }
 
-InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, const V3& look, const std::vector<InteractSpot>* spots, const Kit& kit, const TrunkStock* own) {
+InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, const V3& look, const std::vector<InteractSpot>* spots, const Kit& kit, const TrunkStock* own, const PartHit* hover) {
     InteractOption best;
     double bestScore = 1e9;
     const V3 chest = wk.p + V3(0, 1.0, 0);
@@ -259,7 +259,12 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
                 o.prompt = f.what;
                 if (!miss.empty()) o.blocked = true, o.prompt += ": " + miss;
                 else if (!kit.unlimited) o.prompt += " (" + std::to_string(kit.parts[f.part]) + " " + repairPartName(f.part) + (kit.parts[f.part] == 1 ? ")" : "S)");
-                consider(o);
+                if (hover && hover->ok && hover->car == ci && partMatchesFix(hover->tag, f)) {  // the part you're looking at decides
+                    o.at = hover->at;
+                    consider(o, kReach, -1.0);
+                } else {
+                    consider(o);
+                }
             }
     }
     if (!hands && spots)
@@ -282,7 +287,7 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
 }
 
 std::string Interact::update(Sim& sim, Walker& wk, const V3& eye, const V3& look, bool holdE, double dt) {
-    InteractOption o = pick(sim, wk, eye, look, &spots, kit, trunkOn ? &own : nullptr);
+    InteractOption o = pick(sim, wk, eye, look, &spots, kit, trunkOn ? &own : nullptr, hover.ok ? &hover : nullptr);
     if (!holdE) waitRelease = false;
     // Working the jack: it goes on while E is held, whatever it turns into on the way.
     if (holdE && progress > 0 && current.continuous && o.car == current.car) o = current;

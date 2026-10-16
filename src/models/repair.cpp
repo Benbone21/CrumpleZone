@@ -1865,4 +1865,32 @@ Reg cvAxleReg({"cv_axle", "CV AXLE", "REPAIR", "Spare part: half shaft with two 
                    {"HEAVY DUTY", "Chromoly shaft (gold) with blue anodised joints", {num("length", "LENGTH", 0.68, 0.60, 0.80), wearParam(0.0)}, lifted(cvHeavy)},
                }});
 
+// ======================================================================================
+// 11. TORN END
+// ======================================================================================
+
+// The jagged end of a snapped tube (carparts.h caps a broken shaft, arm or spring's cut with it): origin on the
+// break, the tube behind it (-X), the teeth of torn steel pointing +X. 5 cm radius: it is scaled to the tube.
+void tornEnd(B& b, const P&) {
+    const double R = 0.05;
+    const int n = 13;
+    // The hollow of the tube, dark; a ring of bright bare metal where it twisted off.
+    b.style(V3(0.05, 0.045, 0.04), MATTE);
+    b.cyl(V3(-0.002, 0, 0), V3(0.004, 0, 0), R * 0.84, 14, true);
+    b.style(V3(0.74, 0.72, 0.68), METAL);
+    b.cyl(V3(-0.010, 0, 0), V3(0.0, 0, 0), R * 1.04, 14, false);
+    for (int i = 0; i < n; i++) {
+        const double a0 = 6.2832 * i / n, a1 = 6.2832 * (i + 1) / n, am = (a0 + a1) * 0.5 + 0.35 * (hash01(77, i) - 0.5);
+        const double h = R * (0.35 + 1.15 * hash01(91, i)), lean = R * 0.45 * (hash01(13, i) - 0.3);  // (some lean in or out)
+        const V3 p0(0, std::cos(a0) * R * 1.04, std::sin(a0) * R * 1.04), p1(0, std::cos(a1) * R * 1.04, std::sin(a1) * R * 1.04);
+        const double ra = R * 1.04 + lean;
+        const V3 tip(h, std::cos(am) * ra * 0.95, std::sin(am) * ra * 0.95);
+        b.tri(p0, tip, p1);
+        b.tri(p0, p1, tip);  // (a thin sheet: seen from either side)
+    }
+}
+
+Reg tornEndReg({"torn_end", "TORN END", "REPAIR", "Jagged cap for the cut end of a broken shaft, arm or spring (carparts.h); origin on the break, teeth point +X, 5 cm radius", 0.2,
+                {{"TORN STEEL", "A ring of ragged teeth, bright where the metal tore", {}, lifted(tornEnd)}}});
+
 }  // namespace

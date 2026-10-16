@@ -63,6 +63,8 @@ struct Fix {
     std::string what;     // "REPLACE THE CV AXLE"
 };
 
+// A beam that has taken a permanent set (it was bent, not broken).
+bool beamBent(const Beam& b);
 // Every repair the car needs that can be done out here (the corner's, the engine's, the
 // shafts'). Body damage is a station's job.
 std::vector<Fix> fixesFor(const Car& c);

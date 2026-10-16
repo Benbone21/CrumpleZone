@@ -12,7 +12,7 @@ const char* const kPartModels[PART_COUNT] = {"tire_part", "cv_axle", "drive_shaf
 
 V3 hubOf(const Car& c, const Wheel& wh) { return (c.nodes[wh.inner].p + c.nodes[wh.outer].p) * 0.5; }
 
-bool bent(const Beam& b) { return !b.broken && std::fabs(b.L0 - b.Lorig) > 0.005 * b.Lorig; }
+bool bent(const Beam& b) { return beamBent(b); }
 
 // The corner a beam belongs to: the nearest hub within reach of its middle (-1 none).
 int cornerOf(const Car& c, const Beam& b) {
@@ -29,6 +29,7 @@ int cornerOf(const Car& c, const Beam& b) {
 
 }  // namespace
 
+bool beamBent(const Beam& b) { return !b.broken && std::fabs(b.L0 - b.Lorig) > 0.005 * b.Lorig; }
 const char* toolName(Tool t) { return kToolNames[t]; }
 const char* toolModel(Tool t) { return kToolModels[t]; }
 const char* repairPartName(RepairPart p) { return kPartNames[p]; }
