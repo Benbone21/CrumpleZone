@@ -647,3 +647,26 @@ Wilderness map removed from the game (2026-10-16); see commit c735d9e for the ol
   (chase and orbit views), dissolve with an ordered dither in the shader (no sorting; shadows stay). The scanned
   trees and snags carry the fade in the instance extras (`propdraw.cpp`); the code-made ones get a small uniform
   list (`render.cpp`, `uTreeFade`). `CZ_NO_SEETHROUGH=1` turns it off for comparing screenshots.
+
+## 10. Cliff shelf: wall clipping, rocks and slabs (2026-10-16)
+
+- **What clipped:** the tires, not the body or the camera. Scripted Blazer hugging the wall: body nodes stop at the
+  wall (<= 2 cm of shell inside, <= 5 cm after a 10 m/s hit) and the chase camera stays 2 m+ off it, but a tire's
+  surface was 10-14 cm inside the terrain. `World::contact` holds a wheel up by the height and normal under its
+  hub alone, and the 1 m grid fills the road/wall corner into a ~50 degree ramp, so the sidewall sank into the foot of the wall.
+- **Not done in the physics:** sampling the tire's own surface against steep cells (a patch tried in `World::contact`)
+  halves the sink but changes every trajectory that touches a bank (`backcountry/autopilot-far` then gets stuck on a pole
+  by chance), and cells under 53 degrees, where the shelf's foot is, are exactly the ones it would have to cover.
+- **The fix is in the section:** the cliff stands 0.6 m back from the road's edge and a row of steep (74 deg) rock slabs
+  stands at its foot (the toe), so tires meet boxes, which collide exactly. A 56 degree toe was tried and let a
+  hugging truck ride up it and roll; keep it steep.
+- **The line:** `SectionBuilt::line` is a marked way through (cliff shelf only), a metre apart. 2.6 m is kept clear to
+  its sides (no rock over 0.24 m in it, no step over 0.45 m on any of 7 lanes); `tests/sections.cpp` samples that and
+  `sections/cliff-shelf-drive` drives it with a set-up Blazer.
+- **What is on it:** ~115 rock slabs (toe, a table with 10 degree ramps, an 18 degree off-camber run, a 3-up/3-down staircase of
+  0.25-0.30 m steps on 2.8 m treads (1.2 m treads stopped a stock Blazer), a straddle pair), ~150 hull rocks laid out like the river's
+  (mixed sizes, clustered, thickest where you drive; big ones beside the line, two boulder chokes), a curb of perched stones
+  on the lip, and 0.1-0.35 m bumps over 2-8 m from noise (flat at the ends and under the set pieces).
+- **Measured passability (crawl, 4L):** the set-up Blazer (ZZ4, 4 in lift and 35s, 4.56 and lockers, 12 psi) got through
+  at 1.0, 1.5 and 2.5 m/s and with the line 0.3 m off; a stock Blazer (no lockers) at 1.0 and 1.5 m/s mostly (it slides off the
+  off-camber run past ~20 degrees and falls at 2.5 m/s). Off the lip is a long way down.

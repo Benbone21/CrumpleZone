@@ -13,6 +13,7 @@
 #include "../src/level.h"
 #include "../src/sectionfile.h"
 #include "../src/sections.h"
+#include "../src/mods.h"
 #include "harness.h"
 
 namespace {
@@ -38,6 +39,38 @@ bool drivable(const World& w, const V3& p, std::string& why) {
         if (insideBox(b, V3(p.x, h + 0.5, p.z))) return why = "inside a box", false;
     if (w.clearY(p.x, p.z) > h + 0.3) return why = "something solid on it", false;
     return true;
+}
+
+
+// The highest solid under (x, z), looking down from y0: a small sphere resting on terrain, a slab or a rock.
+double solidTop(const World& w, double x, double z, double y0) {
+    Contact ct;
+    for (double y = y0; y > y0 - 4; y -= 0.03)
+        if (w.contact(V3(x, y, z), 0.03, nullptr, 0, ct)) return y - 0.03;
+    return y0 - 4;
+}
+
+// The marked line's corridor (2.6 m wide): along every lane the surface has no step over 0.45 m between samples 0.2 m
+// apart, and the lanes stay with the line's height (no drop inside it). Returns the worst step.
+double corridorWorstStep(const World& w, const std::vector<V3>& line, double& worstDrop, double* at = nullptr) {
+    double worst = 0;
+    worstDrop = 0;
+    for (int li = -3; li <= 3; li++) {
+        const double off = li * (1.3 / 3);
+        double prev = 1e9;
+        for (size_t k = 0; k + 1 < line.size(); k++) {
+            const V3 a = line[k], b = line[k + 1];
+            const V3 d = norm(V3(b.x - a.x, 0, b.z - a.z));
+            for (double t = 0; t < 1.0; t += 0.2) {
+                const V3 p = a + (b - a) * t;
+                const double y = solidTop(w, p.x + d.z * off, p.z - d.x * off, p.y + 2.0);
+                if (prev < 1e8 && std::fabs(y - prev) > worst) worst = std::fabs(y - prev), at ? *at = k + t + li * 1000 : 0;
+                worstDrop = std::max(worstDrop, p.y - y);
+                prev = y;
+            }
+        }
+    }
+    return worst;
 }
 
 // The frame for a test: the section centred on (-300, -300), running along `heading`.
@@ -132,7 +165,20 @@ void checkSection(Ctx& ctx, SectionType t) {
                 ctx.check(tag + ": starts and ends on firm ground", bog == 0, std::to_string(bog) + " sandy spots");
                 break;
             }
-            case SEC_CLIFF_SHELF: ctx.check(tag + ": a real drop", lo < b.entry.y - 15, std::to_string(b.entry.y - lo)); break;
+            case SEC_CLIFF_SHELF: {
+                ctx.check(tag + ": a real drop", lo < b.entry.y - 15, std::to_string(b.entry.y - lo));
+                ctx.check(tag + ": rock slabs to drive (toe, ramps, stairs, off-camber, straddle)", slabs >= 100, std::to_string(slabs));
+                int hulls = 0;
+                for (const Rock& rk : w.rocks) hulls += outsideOf(fp, f, rk.c.x, rk.c.z) < 0;
+                ctx.check(tag + ": boulders and talus", hulls >= 120, std::to_string(hulls));
+                ctx.check(tag + ": a marked line, entry to exit", b.line.size() > 150 && std::hypot(b.line[0].x - b.entry.x, b.line[0].z - b.entry.z) < 1.0);
+                double drop = 0;
+                double at = 0;
+                const double step = corridorWorstStep(w, b.line, drop, &at);
+                ctx.check(tag + ": the line's 2.6 m corridor has no step over 0.45 m", step <= 0.45, std::to_string(step) + " at " + std::to_string(at));
+                ctx.check(tag + ": the corridor keeps to the road (no drop inside it)", drop < 1.3, std::to_string(drop));
+                break;
+            }
             case SEC_TIMBER:
                 ctx.check(tag + ": trees, with some in the track", trees > 250 && track >= 4 && !w.logs.empty(), std::to_string(trees) + " trees, " + std::to_string(track) + " in the track");
                 ctx.check(tag + ": trunks stand back 2 m from the track's edge", tooClose == 0, std::to_string(tooClose) + " trees too close");
@@ -150,6 +196,51 @@ SCENARIO(sectionRockyRiver, "sections/rocky-river", "The rocky river builds at f
 SCENARIO(sectionRockWall, "sections/rock-wall", "The rock wall builds at four headings: finite, ends drivable, only its own ground changed, its slab boxes") { checkSection(ctx, SEC_ROCK_WALL); }
 SCENARIO(sectionDunes, "sections/dunes", "The dunes build at four headings: finite, ends drivable, only their own ground changed, sand and relief") { checkSection(ctx, SEC_DUNES); }
 SCENARIO(sectionCliffShelf, "sections/cliff-shelf", "The cliff shelf builds at four headings: finite, ends drivable, only its own ground changed, a drop") { checkSection(ctx, SEC_CLIFF_SHELF); }
+// The set-up Blazer (garage parts, 4L, both lockers, 12 psi) follows the cliff shelf's marked line at a crawl: through the
+// rocks, up the slab ramps and stairs, across the off-camber slabs and the straddle pair, to the end.
+SCENARIO(sectionCliffShelfDrive, "sections/cliff-shelf-drive", "A set-up Blazer in 4L with lockers drives the cliff shelf's marked line at 1.5 m/s: no fall, no stall") {
+    const SectionFrame f = testFrame(ctx.sim.world, SEC_CLIFF_SHELF, 0);
+    const SectionBuilt b = buildSection(ctx.sim.world, SEC_CLIFF_SHELF, 1, f);
+    ctx.sim.world.buildGrid();
+    const int v = 7;
+    ModSet m;
+    auto pick = [&](int slot, const char* name) {
+        const auto& o = modOptions(v, slot);
+        for (int i = 0; i < (int)o.size(); i++)
+            if (o[i].name == name) m.pick[slot] = i;
+    };
+    pick(MOD_ENGINE, "ZZ4 CRATE 350"), pick(MOD_SUSPENSION, "4 IN LIFT AND 35S"), pick(MOD_TRANSMISSION, "4.56 GEARS AND LOCKERS");
+    static VehicleSpec spec;
+    spec = tunedSpec(v, m);
+    const V3 p0 = b.line[3], p1 = b.line[4];
+    Car& c = ctx.add(spec, p0.x, p0.z, std::atan2(-(p1.z - p0.z), p1.x - p0.x) * 180 / M_PI);
+    ctx.focus(c);
+    ctx.run(1.0);
+    c.setDriveMode((int)driveModes(spec.transfer).size() - 1);
+    c.setLocker(true, true), c.setLocker(false, true);
+    c.tirePsi = 12;
+    c.tractionControl = false;
+    size_t seg = 3;
+    double lastBest = 0, tBest = ctx.t, minUp = 1;
+    bool fell = false;
+    ctx.runUntil(300, [&] { return seg + 8 >= b.line.size() || fell || ctx.t - tBest > 15; }, [&] {
+        const Frame fr = c.frame();
+        while (seg + 1 < b.line.size() && dot(fr.com - b.line[seg], norm(V3(b.line[seg + 1].x - b.line[seg].x, 0, b.line[seg + 1].z - b.line[seg].z))) > 1.0) seg++;
+        const V3 d = b.line[std::min(seg + 5, b.line.size() - 1)] - fr.com;
+        c.steer = clampd(std::atan2(dot(d, fr.left), std::max(dot(d, fr.fwd), 0.5)) * 1.5, -0.55, 0.55);
+        const double vel = dot(fr.vel, fr.fwd);
+        c.throttle = clampd(0.3 + (1.5 - vel) * 0.9, 0, 1);
+        c.brake = vel > 2.5 ? 0.3 : 0;
+        minUp = std::min(minUp, fr.up.y);
+        fell |= fr.com.y < b.line[seg].y - 6;
+        if (seg > lastBest + 0.4) lastBest = seg, tBest = ctx.t;
+    });
+    ctx.check("did not fall", !fell);
+    ctx.check("got to the end of the line", seg + 8 >= b.line.size(), "reached " + std::to_string(seg) + " of " + std::to_string(b.line.size()) + " m");
+    ctx.metric("worst lean", std::acos(clampd(minUp, -1, 1)) * 180 / M_PI, "deg", 0, 40);
+    ctx.metric("damage", c.damage * 100, "%", 0, 5);
+}
+
 SCENARIO(sectionTimber, "sections/timber", "The timber track builds at four headings: finite, ends drivable, only its own ground changed, trees in the track and logs") { checkSection(ctx, SEC_TIMBER); }
 
 SCENARIO(sectionSameSeed, "sections/same-seed", "The same seed builds the same section; another seed a different one") {

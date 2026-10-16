@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <vector>
 
 // Calibration (from the handoff's probes): grid walls >= 65 deg seal a chokepoint even for the rock
@@ -65,10 +66,18 @@ constexpr double kDuneRepose = 32;   // sand holds no steeper than this (degrees
 constexpr double kDuneHardpan = 0.7, kDunePatch = 0.5;  // hollows lower than this above the floor (m) are hard ground where the patch noise tops that
 constexpr int kDuneSmooth = 2, kDuneRelax = 60;  // passes rounding the crests, passes settling the slopes
 
-// Cliff shelf: a one-truck shelf cut into a cliff, a real drop off the edge, rocks and dips.
-constexpr Range kShelfHalf = {1.7, 2.0}, kShelfTilt = {5, 10};  // 3.4-4 m of road; leans you toward the drop
+// Cliff shelf: a one-truck shelf cut into a cliff, a real drop off the edge, fallen rock and talus, rock slabs to
+// climb, a line through it all. The terrain's 1 m grid fills the corner where a road meets a wall into a gentler ramp
+// than the face, and a wheel is held up by the ground under its hub alone, so tires sank 10 cm into the foot of a bare
+// wall (measured): the cliff stands back from the road's edge and rock slabs lean against its foot (the toe), which the
+// tires meet exactly.
+constexpr Range kShelfHalf = {2.05, 2.35}, kShelfTilt = {4, 8};  // 4.1-4.7 m of road, 0.4 of it under the toe; leans you toward the drop
 constexpr double kShelfDrop = 22, kShelfCliffMax = 24, kShelfEase = 40;
-constexpr int kShelfRocks = 18;
+constexpr double kShelfLine = 1.3;  // the line through it keeps 2.6 m clear (a Blazer is 2.0 with its mirrors)
+constexpr double kShelfBack = 0.6;  // the cliff's foot stands this far behind the road's edge (the toe fills the gap)
+constexpr double kShelfToe = 0.4, kShelfToeDeg = 74;  // the toe slabs' base stands this far in from the road's edge, 74 deg (steep: not a ramp)
+constexpr double kShelfRockTop = 0.24;  // a rock in the line stands no higher than this
+
 
 // Timber: a forest track blocked by standing trees and windfall.
 constexpr double kTimberHalf = 1.9;
@@ -130,6 +139,7 @@ struct Canvas {
     Rng rng;
     std::vector<Cell> cells;
     std::vector<LevelObject>* rec;  // (the editor: also keep what's stood up)
+    std::vector<V3> line;           // the marked way through, if the section has one (world coordinates, ~1 m apart)
 
     Canvas(World& w, SectionType t, uint32_t seed, const SectionFrame& fr, std::vector<LevelObject>* record = nullptr)
         : w(w), fp(sectionFootprint(t)), f(fr), dx(std::cos(fr.heading)), dz(-std::sin(fr.heading)), px(std::sin(fr.heading)), pz(std::cos(fr.heading)),
@@ -576,20 +586,36 @@ void dunes(Canvas& c) {
 // ---- 6. CLIFF SHELF ------------------------------------------------------------------------------
 void cliffShelf(Canvas& c) {
     const uint32_t seed = c.seed;
-    const double half = c.rng.range(kShelfHalf);  // 3.4-4 m of road: a truck is ~1.9
-    const double tilt = std::tan(c.rng.range(kShelfTilt) * M_PI / 180);  // leans you toward the drop (+v)
+    const double half = c.rng.range(kShelfHalf);
+    const double tiltDeg = c.rng.range(kShelfTilt), tilt = std::tan(tiltDeg * M_PI / 180);  // leans you toward the drop (+v)
     const double L = c.fp.length;
     auto curve = [&](double u) { return 5 * std::sin(u * 0.05 + seed) * smoothstep(0, kShelfEase, u); };  // (eases onto the line from the entry)
+    // Where the set pieces stand along the shelf (u): the road under them is kept nearly level.
+    struct Zone {
+        double a, b;
+    };
+    const Zone chokeA = {24, 36}, table = {40, 53}, camber = {74, 93}, chokeB = {98, 110}, stairs = {112, 133}, straddle = {138, 152};
+    const Zone zones[] = {chokeA, table, camber, chokeB, stairs, straddle};
+    auto zoneMask = [&](double u) {
+        double m = 0;
+        for (const Zone& z : zones) m = std::max(m, smoothstep(z.a - 3, z.a, u) * smoothstep(z.b + 3, z.b, u));
+        return m;
+    };
     c.each(-c.fp.apron, L + c.fp.apron, -c.fp.half, c.fp.half, [&](int id, double u, double v) {
         const double fade = smoothstep(-c.fp.apron, 10, u) * smoothstep(L + c.fp.apron, L - 10, u);
         const double lat = v - curve(u);  // + toward the drop
         double h;
-        if (lat < -half) {  // cliff above (~69 deg), levelling off on top
-            const double raw = 0.3 + (-lat - half) * 2.6 + 3 * (valueNoise(u * 0.1, v * 0.1) - 0.5);
+        if (lat < -half - kShelfBack) {  // cliff above (~69 deg), levelling off on top (rough above, clean at the foot)
+            const double d = -lat - half - kShelfBack;
+            const double raw = 0.3 + d * 2.6 + 3 * (valueNoise(u * 0.1, v * 0.1) - 0.5) * smoothstep(0, 3, d);
             h = raw < kShelfCliffMax ? raw : kShelfCliffMax + 0.1 * (raw - kShelfCliffMax);
-        } else if (lat <= half) {
+        } else if (lat <= half) {  // (the road runs under the toe to the cliff's foot)
             h = -tilt * (lat + half);                                                                              // the road
-            h -= 0.32 * std::pow(std::max(0.0, std::sin(u * 0.42 + 3 * valueNoise(u * 0.05, seed))), 6);           // dips
+            // bumps and dips, 0.1-0.35 m over 2-8 m, from seeded noise; flat at both ends and under the set pieces
+            const double ox = (seed % 997) * 7.1, oz = (seed % 991) * 3.3;
+            const double rough = 0.20 * (2 * valueNoise(u * 0.125 + ox, lat * 0.08 + oz) - 1) + 0.16 * (2 * valueNoise(u * 0.25 + ox + 40, lat * 0.12 + oz) - 1) +
+                                 0.08 * (2 * valueNoise(u * 0.5 + ox + 80, lat * 0.2 + oz) - 1);
+            h += rough * smoothstep(8, 26, u) * smoothstep(L - 8, L - 26, u) * (1 - zoneMask(u));
         } else h = -tilt * 2 * half - (lat - half) * 2.8 + 2 * (valueNoise(u * 0.1, v * 0.1) - 0.5);               // the drop
         h = std::max(h, -kShelfDrop + 4 * valueNoise(u * 0.03, v * 0.03));                                         // valley floor
         const double base = c.getH(id);
@@ -597,12 +623,184 @@ void cliffShelf(Canvas& c) {
         if (fade > 0.5) c.paint(id, std::fabs(lat) <= half ? SURF_GRAVEL : SURF_ROCK);
     });
     c.commit();
-    // Rocks on the road: some fallen from above narrow it to barely a truck.
-    for (int k = 0; k < kShelfRocks; k++) {
-        const double u = c.rng.range(10, L - 10), big = c.rng() < 0.3;
-        const double r = big ? c.rng.range(0.6, 0.9) : c.rng.range(0.2, 0.4);
-        const double lat = big ? -half + r * 0.4 : c.rng.range(-half, half);
-        c.rock(u, curve(u) + lat, V3(r, r * 0.7, r * 0.9), r * 0.6, seed * 17 + k);
+
+    // ---- The line: where a truck goes, 2.6 m clear to either side of it (see kShelfLine). It wanders a little
+    // across the road, and the two boulder chokes push it to one side then the other. ----
+    auto bump = [](double u, double at, double w) { return std::exp(-sq((u - at) / w)); };
+    auto lineLat = [&](double u) { return 0.10 + 0.15 * std::sin(u * 0.09 + seed) + 0.25 * bump(u, 30, 5) - 0.25 * bump(u, 104, 5); };
+    auto ground = [&](double u, double v) {  // the finished ground's height above the section's plane
+        const V3 p = c.at(u, v);
+        return c.w.height(p.x, p.z) - p.y;
+    };
+    auto yawAt = [&](double u) { return -std::atan((curve(u + 0.5) - curve(u - 0.5)) / 1.0); };  // along the shelf here
+    // A slab by its top face: the point of it at (u, lat) and that point's height, its half sizes along (hx) and
+    // across (hz), and half its thickness (th) below the top; turned yaw about up, tipped pitch (up along the shelf)
+    // and roll (the top falls toward the drop). Its colour is a rock: `warm` leans rusty, else grey.
+    auto slabTop = [&](double u, double lat, double topY, double hx, double hz, double th, double yaw, double pitch, double roll, double warm) {
+        V3 n = rotateAxis(rotateAxis(V3(0, 1, 0), V3(1, 0, 0), roll), V3(0, 0, 1), pitch);
+        n = rotateAxis(n, V3(0, 1, 0), yaw);
+        const double g = c.rng.range(0.9, 1.08);
+        const V3 col = (V3(0.31, 0.29, 0.27) * (1 - warm) + V3(0.52, 0.31, 0.23) * warm) * g;
+        c.slab(u - n.x * th, topY - n.y * th, curve(u) + lat - n.z * th, V3(hx, th, hz), yaw, pitch, roll, col);
+    };
+    const double bedRoll = std::atan(tilt);  // the road's own cross-slope (a slab lying on it has this roll)
+    auto warm = [&]() { return sq(c.rng()); };  // (mostly grey, some rusty, all shades between)
+
+    // ---- The toe: slabs leaning against the cliff all along the shelf, from just below the road up to where they meet the face
+    // (2 m up): a ledge of rock along the foot, steep, so a tire meets a wall and not a ramp to climb (a 56 deg toe let a truck ride up
+    // it and roll). ----
+    {
+        const double rho = kShelfToeDeg * M_PI / 180, th = 0.9;
+        for (double u = -8; u < L + 8; u += 2.2) {
+            const double uc = u + c.rng.range(-0.15, 0.15), hx = 1.3 + c.rng.range(0, 0.15), hz = c.rng.range(0.7, 1.25);  // (a ledge of ragged height)
+            const double latB = -half + kShelfToe + c.rng.range(-0.04, 0.06);
+            const double yB = ground(uc, curve(uc) + latB) - 0.45;  // (below the road: it stands on the dips too)
+            const double ro = rho + c.rng.range(-0.04, 0.04);
+            // the face's middle: up the slope from the base, and its centre top-down by hz
+            slabTop(uc, latB - std::cos(ro) * hz, yB + std::sin(ro) * hz, hx, hz, th, yawAt(uc) + c.rng.range(-0.09, 0.09), 0, ro, warm());
+        }
+    }
+
+    // ---- Rock: fallen boulders, talus, perched stones. Never in the line's corridor (but pebbles). ----
+    uint32_t rockN = 0;
+    auto corridorFree = [&](double u, double lat, double rh) {
+        for (double uu = u - rh; uu <= u + rh + 1e-9; uu += 0.5) {
+            const double w = std::sqrt(std::max(0.0, rh * rh - sq(uu - u))), l = lineLat(uu);
+            if (lat + w > l - kShelfLine && lat - w < l + kShelfLine) return false;
+        }
+        return true;
+    };
+    // A hull rock: r its biggest radius across, `flat` how squat (height/width), buried a third. In the line's corridor it
+    // stays a rock a truck climbs (0.34 m or less over the ground, so the line has no step over the 0.45 limit); bigger
+    // ones keep out of it.
+    auto stone = [&](double u, double lat, double r, double flat) {
+        const double rh = r * 1.12;
+        double ry = r * flat;
+        const double lift = c.rng.range(1.0, 1.35);
+        if (ry * lift > 0.2 && !corridorFree(u, lat, rh)) {
+            if (ry * lift > kShelfRockTop && r < 0.9) ry = kShelfRockTop / lift;  // (squatter, to fit)
+            else if (ry * lift > kShelfRockTop) return false;
+        }
+        c.rock(u, curve(u) + lat, V3(r * c.rng.range(0.85, 1.0), ry, r * c.rng.range(0.8, 1.0)), ry * lift, seed * 7919 + rockN++, (float)c.rng.range(0.85, 1.05));
+        return true;
+    };
+    // Boulders in the chokes: a pair against the wall and a stone or two on the lip, their edges 0.1 m off the line's corridor.
+    for (const Zone& z : {chokeA, chokeB})
+        for (int k = 0; k < 3; k++) {
+            const double u = z.a + 2 + k * (z.b - z.a - 4) / 2 + c.rng.range(-1, 1);
+            const double r = c.rng.range(0.55, 0.75), flat = c.rng.range(0.7, 0.9), l = lineLat(u);
+            stone(u, l - kShelfLine - 0.1 - r * 1.12 + c.rng.range(-0.15, 0.0), r, flat);      // against the wall
+            if (k != 1) stone(u + c.rng.range(-1, 1), l + kShelfLine + 0.1 + 0.25 + c.rng.range(0, 0.2), c.rng.range(0.28, 0.4), c.rng.range(0.7, 0.9));  // on the lip
+        }
+    // Talus heaped along the wall's foot: small stones all along, three heaps of bigger ones.
+    for (double u = 12; u < L - 12; u += c.rng.range(0.8, 2.0)) {
+        if (zoneMask(u) > 0.5) continue;
+        const double r = c.rng.range(0.15, 0.42) * (c.rng() < 0.15 ? 1.5 : 1.0);
+        stone(u, -half + kShelfToe + c.rng.range(0.0, 0.5) + r * 0.6, r, c.rng.range(0.55, 0.85));
+    }
+    for (double hu : {17.0, 62.0, 160.0}) {
+        for (int k = 0; k < 9; k++) {
+            const double r = c.rng.range(0.2, 0.55);
+            stone(hu + c.rng.range(-3.5, 3.5), -half + kShelfToe + c.rng.range(0.0, 0.9) + r * 0.5, r, c.rng.range(0.55, 0.85));
+        }
+    }
+    // Fallen from above, strewn over the road the way the river's boulders are: mixed sizes (0.25-1.4 m radius, mostly small),
+    // in clusters, thickest where you drive. Rocks in the line are low ones; the big ones lie beside it.
+    {
+        double cl[10];
+        for (int k = 0; k < 10; k++) cl[k] = 22 + k * 14.5 + c.rng.range(-4, 4);  // (spread along it, not at the entry)
+        int placed = 0;
+        for (int k = 0; k < 6000 && placed < 150; k++) {
+            const double u = c.rng.range(12, L - 12), lat = c.rng.range(-half + 0.5, half - 0.3);
+            if (zoneMask(u) > 0.3) continue;
+            double near = 0;
+            for (double x : cl) near = std::max(near, bump(u, x, 6));
+            const double mid = bump(lat - lineLat(u), 0, 1.4);
+            if (c.rng() > 0.10 + 0.40 * near * (0.4 + 0.6 * mid) + 0.1 * mid) continue;
+            if (mid > 0.37 && c.rng() > 0.4) continue;  // (thinner in the line itself: it's a way through)
+            const double q = c.rng(), r = q < 0.6 ? c.rng.range(0.25, 0.5) : q < 0.9 ? c.rng.range(0.5, 0.85) : c.rng.range(0.9, 1.4);
+            placed += stone(u, lat, r, c.rng.range(0.55, 0.8));
+        }
+    }
+    // Stones perched on the drop's edge.
+    // (Close enough together to catch a wheel: the first thing a sliding truck meets.)
+    for (double u = 4; u < L - 6; u += c.rng.range(1.6, 3.4)) {
+        if (zoneMask(u) > 0.5 && (u < straddle.a || u > straddle.b)) continue;
+        const double r = c.rng.range(0.2, 0.42);
+        stone(u, half - 0.1 + c.rng.range(-0.1, 0.2), r, c.rng.range(0.7, 1.0));
+    }
+
+    // ---- Slabs to drive. ----
+    const double slopeA = std::atan(c.slope);  // the plane's tilt along the shelf: slabs on the road lie parallel to it
+    // A slab whose top runs from (ua, rise above the road there) to (ub, rise there), `w` either side of lat: how the table's
+    // ramps and platforms and the staircase's treads are laid, so each meets the next at the height asked.
+    auto flat = [&](double ua, double ra, double ub, double rb, double lat, double w, double yaw, double warmth) {
+        const double ya = ground(ua, curve(ua) + lat) + ra, yb = ground(ub, curve(ub) + lat) + rb, d = ub - ua;
+        slabTop(0.5 * (ua + ub), lat, 0.5 * (ya + yb), 0.5 * std::hypot(d, yb - ya) + 0.06, w, 0.5, yaw, std::atan2(yb - ya, d), bedRoll, warmth);
+    };
+    // A table: up a tilted slab, across a flat one, down another (the ramps are 10 deg; their low ends are in the road, so
+    // there is no lip).
+    {
+        const double rise = 0.55, w = 1.55, run = rise / std::tan(10 * M_PI / 180), platform = 3.6;
+        const double lat = lineLat(table.a + 7), yaw = yawAt(table.a + 7);
+        double u = table.a;
+        flat(u, 0, u + run, rise, lat, w, yaw, warm());
+        u += run;
+        flat(u - 0.1, rise, u + platform, rise, lat, w, yaw, warm());
+        u += platform;
+        flat(u, rise, u + run, 0, lat, w, yaw, warm());
+    }
+    // The off-camber run: slabs whose tilt grows toward the drop, a long one at 18 deg (the road itself leans 4-8; a stock Blazer slides off past ~20 on rock), then
+    // eases back. Each lies flush with the road at its low edge (the line's drop side) so the step from one to the next is
+    // at most ~0.25 m on the line and the truck is tipped toward the drop for ~8 m.
+    {
+        const double deg[] = {6, 10, 13, 16, 18, 18, 18, 16, 13, 10, 6};
+        const int n = 11;
+        const double len = (camber.b - camber.a) / n;
+        for (int k = 0; k < n; k++) {
+            const double u = camber.a + (k + 0.5) * len, lat = lineLat(u), th = deg[k] * M_PI / 180;
+            const double latH = lat + 1.2;  // the hinge: the truck's drop-side edge
+            const double latLo = -half - 0.3, latHi = latH + 0.3, latC = 0.5 * (latLo + latHi), w = 0.5 * (latHi - latLo);
+            // the top's centre line: through the hinge at the road's height, rising toward the wall
+            const double topY = ground(u, curve(u) + latH) + std::tan(th) * (latH - latC);
+            slabTop(u, latC, topY, len * 0.5 + 0.12, w, 0.6, yawAt(u), slopeA, th, warm());
+        }
+    }
+    // A staircase: three steps up, a platform, three down. Each step 0.25-0.30 m; the treads are 2.8 m (a wheelbase) so one axle
+    // takes a step at a time (1.2 m treads stopped a stock Blazer at the first step).
+    {
+        const double lat = lineLat(stairs.a + 6), yaw = yawAt(stairs.a + 6), w = 1.55, tread = 2.8;
+        double u = stairs.a, y = 0;
+        double rises[3];
+        for (double& r : rises) r = c.rng.range(0.25, 0.30);
+        for (int k = 0; k < 3; k++) {  // up
+            y += rises[k];
+            flat(u - 0.15, y, u + tread, y, lat, w, yaw + c.rng.range(-0.03, 0.03), warm());
+            u += tread;
+        }
+        flat(u - 0.15, y, u + 2.4, y, lat, w, yaw, warm());  // the platform
+        u += 2.4;
+        for (int k = 2; k >= 0; k--) {  // down
+            y -= rises[k];
+            flat(u - 0.15, y, u + tread, y, lat, w, yaw + c.rng.range(-0.03, 0.03), warm());
+            u += tread;
+        }
+    }
+    // A pair of slabs side by side with a gap between them, 0.3 m proud (ramped on and off, 0.9 m each): a wheel on each, the gap between.
+    {
+        const double lat = lineLat(straddle.a + 6), yaw = yawAt(straddle.a + 6), ramp = 0.9;
+        for (int side : {-1, 1}) {
+            const double l = lat + side * 0.95, yw = yaw + c.rng.range(-0.015, 0.015);
+            flat(straddle.a, 0, straddle.a + ramp, 0.3, l, 0.62, yw, warm());
+            flat(straddle.a + ramp - 0.05, 0.3, straddle.b - 2 - ramp, 0.3, l, 0.62, yw, warm());
+            flat(straddle.b - 2 - ramp, 0.3, straddle.b - 2, 0, l, 0.62, yw, warm());
+        }
+    }
+
+    // The line, one point a metre, on the finished ground.
+    for (double u = 0; u <= L; u += 1) {
+        const V3 p = c.at(u, curve(u) + lineLat(u));
+        c.line.push_back(V3(p.x, c.w.height(p.x, p.z), p.z));
     }
 }
 
@@ -712,6 +910,7 @@ SectionBuilt buildSection(World& w, SectionType t, uint32_t seed, const SectionF
         default: break;
     }
     SectionBuilt out;
+    out.line = c.line;
     const double L = sectionLength(t);
     // (The shelf's line wanders, and ends a little off the heading.)
     const double exitV = t == SEC_CLIFF_SHELF ? 5 * std::sin(L * 0.05 + seed) : 0;
