@@ -105,13 +105,13 @@ V3 Editor::snapped(const V3& p) const {
 
 void Editor::newSection(World& w, Renderer& r) {
     rend = &r;
-    w = World(MAP_PROVING_GROUND);
     Level l;
-    l.map = MAP_PROVING_GROUND;
+    l.map = MAP_WILDS;  // (open country, nothing laid out on it: what you make here looks the way it plays)
     l.name = uniqueSectionName();
     l.mode = LEVEL_SPRINT;
+    w = levelWorld(l);
     open(w, r, l);
-    core.newSection(defaultSectionCanvas());
+    core.newSection(wildsSectionCanvas());
     const SectionInfo& c = core.level.section;
     const V3 f(std::cos(c.heading), 0, -std::sin(c.heading));
     yaw = c.heading, pitch = -0.55;
@@ -404,7 +404,7 @@ void Editor::save() {
 void Editor::openFile(const Level& lv) {
     // A fresh copy of its map, then the level on it.
     World& w = *core.world;
-    w = World(lv.map);
+    w = levelWorld(lv);
     Level l = lv;
     if (l.builtin) l.builtin = false, l.file.clear(), l.name = l.name + " (MINE)";
     open(w, *rend, l);

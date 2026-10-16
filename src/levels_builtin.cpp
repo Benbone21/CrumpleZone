@@ -3,6 +3,7 @@
 #include <cmath>
 
 #include "level.h"
+#include "sections.h"
 
 namespace {
 
@@ -41,6 +42,75 @@ Gate gateAt(const V3& p, const V3& toward, double width) {
     g.yaw = yawAlong(p, toward);
     g.width = width;
     return g;
+}
+
+// The obstacle sections as levels of their own, each on clean open country of its biome (levelWorld): the start 22 m
+// before the entry (on the section's flat run-in), gates every ~40 m along the line the generator marks, the last at the exit.
+struct SectionLevel {
+    SectionType type;
+    const char* name;
+    const char* about;
+    double hours;
+    int vehicle;
+    double gateWidth;
+};
+const SectionLevel kSectionLevels[] = {
+    {SEC_STEEP_HILL, "STEEP HILL", "A LOOSE SCREE CLIMB UP A GULLY, ROCK LEDGES ACROSS IT NEAR THE TOP. 4L, GOOD TIRES", 10, -1, 12},
+    {SEC_MUD_PIT, "MUD PIT", "A LONG PIT OF STANDING WATER AND MUD, A STEEP BANK OUT. LOCKERS, AIR DOWN", 7.5, -1, 12},
+    {SEC_ROCKY_RIVER, "ROCKY RIVER", "A CURRENT ACROSS THE TRAIL, BOULDERS EVERYWHERE. PICK YOUR LINE", 14, -1, 12},
+    {SEC_ROCK_WALL, "ROCK WALL", "SANDSTONE LEDGES UP A SLOT CANYON. 4L, LOCK IT UP", 16.5, -1, 9},
+    {SEC_DUNES, "DUNES", "440 M OF SAND RIDGES: KEEP YOUR SPEED UP AND AIR DOWN", 11, -1, 20},
+    {SEC_CLIFF_SHELF, "CLIFF SHELF", "A ONE-TRUCK SHELF CUT INTO A CLIFF, A 22 M DROP OFF THE EDGE", 17, -1, 8},
+    {SEC_TIMBER, "TIMBER", "A FOREST TRACK CHOKED WITH STANDING TREES AND WINDFALL. A WINCH HELPS", 13, -1, 8},
+};
+
+void sectionLevels(std::vector<Level>& out) {
+    for (const SectionLevel& sl : kSectionLevels) {
+        Level lv;
+        lv.name = sl.name, lv.about = sl.about;
+        lv.map = MAP_WILDS, lv.terrain = wildsKindForSection(sl.type);
+        lv.mode = LEVEL_SPRINT, lv.vehicle = sl.vehicle, lv.timeOfDay = sl.hours;
+        const double L = sectionLength(sl.type);
+        // The section's entry sits in the middle of the map, heading east: clear country all round it.
+        const V3 entry(-L / 2, 0, 0);
+        setLiveSection(lv, sl.type, 1, entry, 0);
+        lv.section.kind = sl.type == SEC_STEEP_HILL ? SK_CLIMB : sl.type == SEC_MUD_PIT ? SK_BOG : sl.type == SEC_ROCKY_RIVER ? SK_CROSSING
+                         : sl.type == SEC_ROCK_WALL ? SK_LEDGES : sl.type == SEC_DUNES ? SK_DUNES : sl.type == SEC_CLIFF_SHELF ? SK_SHELF : SK_TIMBER;
+        lv.section.difficulty = sl.type == SEC_DUNES ? 2 : sl.type == SEC_CLIFF_SHELF || sl.type == SEC_ROCK_WALL ? 4 : 3;
+        // Where the line runs, from the section itself (built on a world of its own, once).
+        SectionBuilt b;
+        const World w = levelWorld(lv, &b);
+        (void)w;
+        const std::vector<V3>& line = b.line;
+        const int n = (int)line.size();
+        auto dirAt = [&](int k) {
+            const V3 a = line[std::max(0, k - 2)], c = line[std::min(n - 1, k + 2)];
+            return yawAlong(a, c);
+        };
+        // The start: on the run-in, in line with the way in.
+        const double heading = 0;
+        const V3 dir(std::cos(heading), 0, -std::sin(heading));
+        lv.hasStart = true;
+        lv.start = entry - dir * 22;
+        lv.startYaw = heading;
+        double acc = 0;
+        double next = 0;
+        for (int k = 0; k < n; k++) {
+            if (k > 0) acc += std::hypot(line[k].x - line[k - 1].x, line[k].z - line[k - 1].z);
+            if (k == n - 1 || (acc >= next && acc + 25 < L)) {
+                Gate g;
+                g.p = line[k];
+                g.yaw = dirAt(k);
+                g.width = sl.gateWidth;
+                lv.gates.push_back(g);
+                next = acc + 40;
+            }
+        }
+        // (The first is at the entry; the last at the exit.)
+        lv.medals[0] = std::round(L / 7.0), lv.medals[1] = std::round(L / 4.5), lv.medals[2] = std::round(L / 2.8);
+        lv.builtin = true;
+        out.push_back(lv);
+    }
 }
 
 std::vector<Level> build() {
@@ -170,6 +240,7 @@ std::vector<Level> build() {
         lv.builtin = true;
         out.push_back(lv);
     }
+    sectionLevels(out);
     for (Level& lv : out) lv.author = "CRUMPLE ZONE";
     return out;
 }

@@ -8,6 +8,7 @@
 #include <sstream>
 
 #include "platform.h"
+#include "sections.h"
 #include "world.h"
 
 #ifdef _WIN32
@@ -56,6 +57,73 @@ int sectionBitsParse(const std::string& list, bool kit) {
 }
 
 // ---- Applying ----------------------------------------------------------------------------
+
+int wildsKindForSection(int type) {
+    switch (type) {
+        case SEC_STEEP_HILL: return WILDS_UPLAND;
+        case SEC_MUD_PIT: return WILDS_WETLAND;
+        case SEC_ROCKY_RIVER: return WILDS_MEADOW;
+        case SEC_ROCK_WALL: return WILDS_CANYON;
+        case SEC_DUNES: return WILDS_DESERT;
+        case SEC_CLIFF_SHELF: return WILDS_CANYON;
+        case SEC_TIMBER: return WILDS_FOREST;
+        default: return WILDS_MEADOW;
+    }
+}
+
+int wildsKindForKind(int kind) {
+    switch (kind) {
+        case SK_CLIMB: return WILDS_UPLAND;
+        case SK_BOG: return WILDS_WETLAND;
+        case SK_LEDGES: case SK_SHELF: return WILDS_CANYON;
+        case SK_DUNES: return WILDS_DESERT;
+        case SK_TIMBER: return WILDS_FOREST;
+        default: return WILDS_MEADOW;
+    }
+}
+
+void setLiveSection(Level& lv, int type, uint32_t seed, const V3& entry, double heading) {
+    const SectionFootprint fp = sectionFootprint((SectionType)type);
+    SectionInfo& c = lv.section;
+    c.on = c.live = true;
+    c.gen = type, c.genSeed = seed;
+    c.heading = heading;
+    c.x = entry.x - std::cos(heading) * fp.apron, c.z = entry.z + std::sin(heading) * fp.apron;  // (the canvas starts an apron back)
+    c.length = fp.length + 2 * fp.apron, c.half = fp.half;
+}
+
+SectionBuilt standLiveSection(const Level& lv, World& w) {
+    SectionBuilt out;
+    const SectionInfo& c = lv.section;
+    if (!c.live || c.gen < 0 || c.gen >= SEC_COUNT) return out;
+    const SectionType t = (SectionType)c.gen;
+    const SectionFootprint fp = sectionFootprint(t);
+    SectionFrame f;
+    f.heading = c.heading;
+    f.keepCountry = true;
+    f.entry = V3(c.x + std::cos(c.heading) * fp.apron, 0, c.z - std::sin(c.heading) * fp.apron);
+    f.entry.y = w.height(f.entry.x, f.entry.z);
+    out = buildSection(w, t, c.genSeed, f);
+    // The run-in stays clear (room for a spawn pad and a straight run): 34 m back from the entry, 5 m either side.
+    const double ch = std::cos(c.heading), sh = std::sin(c.heading);
+    clearObjectsWhere(w, [&](double x, double z) {
+        const double u = (x - f.entry.x) * ch - (z - f.entry.z) * sh, v = (x - f.entry.x) * sh + (z - f.entry.z) * ch;
+        return u > -34 && u < 2 && std::fabs(v) < 5;
+    });
+    w.buildGrid();
+    w.sections.push_back({sectionName(t), (int)t, out.entry, out.exit, c.heading});  // (the music and the compass know where it is)
+    return out;
+}
+
+World levelWorld(const Level& lv, SectionBuilt* built) {
+    const int was = World::wildsKind;
+    World::wildsKind = lv.terrain;
+    World w(lv.map);
+    World::wildsKind = was;
+    const SectionBuilt b = standLiveSection(lv, w);
+    if (built) *built = b;
+    return w;
+}
 
 void placeObject(const LevelObject& o, World& w) {
     switch (o.kind) {
@@ -145,6 +213,8 @@ void addGateMarkers(const Level& lv, World& w) {
 //   #section KIND DIFFICULTY TESTS KIT   (a section: see SectionInfo; comments to an older build)
 //   #canvas X Z HEADINGDEG LENGTH HALF   (its cleared ground)
 //   #stamp GENERATOR SEED                (if it began as a generated one)
+//   #generate GENERATOR SEED             (a section made by the generator and kept as that: built when the level loads, no cells)
+//   terrain KIND                         (map 5, the open country: which WildsKind it is)
 //   #flow I J0 FX,FZ ...                 (current in the water: like water, a run of cells; a comment to older builds)
 //   start X Z YAWDEG
 //   gate X Z YAWDEG WIDTH  (in order; one per line)
@@ -192,7 +262,9 @@ std::string saveLevelText(const Level& lv) {
     if (!lv.about.empty()) o << "about " << lv.about << '\n';
     if (!lv.author.empty()) o << "author " << lv.author << '\n';
     static const char* modes[LEVEL_MODE_COUNT] = {"free", "race", "sprint"};
-    o << "map " << lv.map << '\n' << "mode " << modes[std::min(std::max(lv.mode, 0), LEVEL_MODE_COUNT - 1)] << '\n';
+    o << "map " << lv.map << '\n';
+    if (lv.map == MAP_WILDS) o << "terrain " << lv.terrain << '\n';
+    o << "mode " << modes[std::min(std::max(lv.mode, 0), LEVEL_MODE_COUNT - 1)] << '\n';
     o << "laps " << lv.laps << '\n' << "vehicle " << lv.vehicle << '\n' << "time " << num(lv.timeOfDay) << '\n';
     o << "resets " << (lv.resets ? 1 : 0) << '\n' << "damage " << num(lv.maxDamage, 1) << '\n' << "limit " << num(lv.timeLimit, 1) << '\n';
     o << "medals " << num(lv.medals[0], 1) << ' ' << num(lv.medals[1], 1) << ' ' << num(lv.medals[2], 1) << '\n';
@@ -200,7 +272,8 @@ std::string saveLevelText(const Level& lv) {
         const SectionInfo& c = lv.section;
         o << "#section " << sectionKindName(c.kind) << ' ' << c.difficulty << ' ' << sectionBitsText(c.tests, false) << ' ' << sectionBitsText(c.kit, true) << '\n';
         o << "#canvas " << num(c.x) << ' ' << num(c.z) << ' ' << num(c.heading / kDeg, 1) << ' ' << num(c.length, 1) << ' ' << num(c.half, 1) << '\n';
-        if (c.gen >= 0) o << "#stamp " << c.gen << ' ' << c.genSeed << '\n';
+        if (c.live) o << "#generate " << c.gen << ' ' << c.genSeed << '\n';
+        else if (c.gen >= 0) o << "#stamp " << c.gen << ' ' << c.genSeed << '\n';
     }
     if (lv.hasStart) o << "start " << num(lv.start.x) << ' ' << num(lv.start.z) << ' ' << num(lv.startYaw / kDeg, 1) << '\n';
     for (const Gate& g : lv.gates) o << "gate " << num(g.p.x) << ' ' << num(g.p.z) << ' ' << num(g.yaw / kDeg, 1) << ' ' << num(g.width, 1) << '\n';
@@ -276,7 +349,7 @@ bool parseLevelText(const std::string& text, Level& lv, std::string* error) {
                 }
                 continue;
             }
-            if (line.rfind("#section ", 0) == 0 || line.rfind("#canvas ", 0) == 0 || line.rfind("#stamp ", 0) == 0) {
+            if (line.rfind("#section ", 0) == 0 || line.rfind("#canvas ", 0) == 0 || line.rfind("#stamp ", 0) == 0 || line.rfind("#generate ", 0) == 0) {
                 std::istringstream cs(line);
                 std::string tag, a, b, c;
                 cs >> tag;
@@ -295,6 +368,7 @@ bool parseLevelText(const std::string& text, Level& lv, std::string* error) {
                     sc.heading = hd * kDeg;
                 } else {
                     cs >> sc.gen >> sc.genSeed;
+                    if (tag == "#generate") sc.live = true;
                 }
             }
             continue;
@@ -317,6 +391,7 @@ bool parseLevelText(const std::string& text, Level& lv, std::string* error) {
         else if (tag == "about") out.about = rest();
         else if (tag == "author") out.author = rest();
         else if (tag == "map") ls >> out.map;
+        else if (tag == "terrain") ls >> out.terrain;
         else if (tag == "mode") {
             std::string m;
             ls >> m;
@@ -398,6 +473,12 @@ bool parseLevelText(const std::string& text, Level& lv, std::string* error) {
     }
     if (!header) return fail("EMPTY");
     if (out.map < 0 || out.map >= MAP_COUNT) return fail("NO SUCH MAP");
+    out.terrain = std::min(std::max(out.terrain, 0), (int)WILDS_COUNT - 1);
+    if (out.section.live && (out.section.gen < 0 || out.section.gen >= SEC_COUNT)) out.section.live = false;
+    // Sections (the editor's, and the generator's first prototypes) were laid on the proving ground, whose course, props, model yard and
+    // section park stood all round them: they sit on the open country now, whose land far from the pad is the same (so their edits still fit it).
+    const bool prototype = out.author == "GENERATOR" && out.about.find("PROTOTYPE") != std::string::npos;
+    if (out.map == MAP_PROVING_GROUND && (out.section.on || prototype)) out.map = MAP_WILDS, out.terrain = WILDS_MEADOW;
     out.laps = std::max(1, out.laps);
     out.file = lv.file;
     lv = out;
@@ -471,7 +552,11 @@ std::vector<Level> listLevels() {
     for (const std::string& dir : levelFolders())
         for (const std::string& path : filesIn(dir)) {
             Level lv;
-            if (loadLevelFile(path, lv)) out.push_back(lv);
+            if (!loadLevelFile(path, lv)) continue;
+            // The generator's first prototypes (a stamped section, its start on a cliff) are superseded by the section levels the game ships:
+            // left off the list (the files stay where they are, and still load by path).
+            if (lv.author == "GENERATOR" && lv.about.find("PROTOTYPE") != std::string::npos) continue;
+            out.push_back(lv);
         }
     return out;
 }

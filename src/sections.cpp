@@ -175,7 +175,7 @@ struct Canvas {
                 k.id = id, k.u = (float)u, k.v = (float)v, k.wgt = (float)(d <= 0 ? 1.0 : smoothstep(fp.blend, 0, d));
                 k.orig = w.cellHeight(id);
                 k.h = (float)(land(u, v, seed) * smoothstep(kPadFlat - 3, kPadFlat + 17, u) * smoothstep(fp.length - kPadFlat + 3, fp.length - kPadFlat - 17, u));  // (flat for the pad's 15 m at both ends)
-                if (k.wgt > 0.5f) k.surf = SURF_GRASS, k.paint = PAINT_NONE;
+                if (k.wgt > 0.5f && !fr.keepCountry) k.surf = SURF_GRASS, k.paint = PAINT_NONE;  // (on country of its own the ground keeps its own kind: sand stays sand)
                 cells.push_back(k);
             }
     }
@@ -204,13 +204,70 @@ struct Canvas {
     }
     void water(int i, double level, double fu = 0, double fv = 0) { cells[i].water = (float)level, cells[i].fu = (float)fu, cells[i].fv = (float)fv; }
 
-    // Takes the ground (everything standing on it goes), then blends this over it.
+    // Takes the ground (everything standing on it goes), then blends this over it. With f.keepCountry only the section's own
+    // ground is cleared: what grows in the blend (the country round it) stays, and is set down on the new ground after.
+    struct Seat {
+        int kind, i;   // 0 rock, 1 tree, 2 pole, 3 bush, 4 log
+        double y;      // the ground there before
+    };
+    std::vector<Seat> ring;
     void clearGround() {
+        const bool keep = f.keepCountry;
         clearObjectsWhere(w, [&](double x, double z) {
             double u, v;
             local(x, z, u, v);
-            return outside(u, v) < fp.blend + 1;
+            return outside(u, v) < (keep ? 0.5 : fp.blend + 1);
         });
+        if (!keep) return;
+        auto inRing = [&](double x, double z) {
+            double u, v;
+            local(x, z, u, v);
+            return outside(u, v) < fp.blend + 1;
+        };
+        for (int i = 0; i < (int)w.rocks.size(); i++)
+            if (inRing(w.rocks[i].c.x, w.rocks[i].c.z)) ring.push_back({0, i, w.height(w.rocks[i].c.x, w.rocks[i].c.z)});
+        for (int i = 0; i < (int)w.trees.size(); i++)
+            if (inRing(w.trees[i].base.x, w.trees[i].base.z)) ring.push_back({1, i, w.height(w.trees[i].base.x, w.trees[i].base.z)});
+        for (int i = 0; i < (int)w.poles.size(); i++)
+            if (inRing(w.poles[i].x, w.poles[i].z)) ring.push_back({2, i, w.height(w.poles[i].x, w.poles[i].z)});
+        for (int i = 0; i < (int)w.bushes.size(); i++)
+            if (inRing(w.bushes[i].p.x, w.bushes[i].p.z)) ring.push_back({3, i, w.height(w.bushes[i].p.x, w.bushes[i].p.z)});
+        for (int i = 0; i < (int)w.logs.size(); i++) {
+            const V3 m = (w.logs[i].a + w.logs[i].b) * 0.5;
+            if (inRing(m.x, m.z)) ring.push_back({4, i, w.height(m.x, m.z)});
+        }
+    }
+    // What stood in the blend moves with the ground under it.
+    void reseat() {
+        for (const Seat& s : ring) {
+            const double dy = [&] {
+                switch (s.kind) {
+                    case 0: return w.height(w.rocks[s.i].c.x, w.rocks[s.i].c.z) - s.y;
+                    case 1: return w.height(w.trees[s.i].base.x, w.trees[s.i].base.z) - s.y;
+                    case 2: return w.height(w.poles[s.i].x, w.poles[s.i].z) - s.y;
+                    case 3: return w.height(w.bushes[s.i].p.x, w.bushes[s.i].p.z) - s.y;
+                    default: {
+                        const V3 m = (w.logs[s.i].a + w.logs[s.i].b) * 0.5;
+                        return w.height(m.x, m.z) - s.y;
+                    }
+                }
+            }();
+            if (std::fabs(dy) < 1e-4) continue;
+            switch (s.kind) {
+                case 0: {
+                    Rock& r = w.rocks[s.i];
+                    for (V3& q : r.v) q.y += dy;
+                    r.c.y += dy, r.origin.y += dy;
+                    for (size_t f = 0; f < r.f.size(); f++) r.fd[f] = dot(r.fn[f], r.v[r.f[f][0]]);
+                    break;
+                }
+                case 1: w.trees[s.i].base.y += dy; break;
+                case 2: w.poles[s.i].y0 += dy, w.poles[s.i].y1 += dy; break;
+                case 3: w.bushes[s.i].p.y += dy; break;
+                default: w.logs[s.i].a.y += dy, w.logs[s.i].b.y += dy; break;
+            }
+        }
+        ring.clear();
     }
     void commit() {
         for (const Cell& k : cells) {
@@ -223,6 +280,7 @@ struct Canvas {
                 w.flowX[k.id] = (float)(k.fu * dx + k.fv * px), w.flowZ[k.id] = (float)(k.fu * dz + k.fv * pz);
             }
         }
+        reseat();
     }
 
     // ---- Objects (after commit(): they sit on the finished ground) ------------------------------

@@ -40,6 +40,8 @@ struct SectionFile {
 // The proving ground's canvas for new sections: a patch of open ground in the north-west, clear of
 // the spawn pad, the loop road, the courses, the model yard and the section park.
 SectionInfo defaultSectionCanvas();
+// The same for the open country (MAP_WILDS), where the editor makes new sections now: clear ground in the middle of the map, all round it.
+SectionInfo wildsSectionCanvas();
 
 // A section in its frame, from a level made in the editor on `w` (the world the level is on). Needs
 // lv.section.on, a start (the entry) and a gate (the exit).

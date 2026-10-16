@@ -136,13 +136,21 @@ const SurfaceInfo& surfaceInfo(Surface s);
 // Tire grip on each surface, as a share of dry pavement.
 inline double surfaceGrip(Surface s) { return surfaceInfo(s).grip; }
 
-enum MapId { MAP_PROVING_GROUND, MAP_MOUNTAIN, MAP_FREEWAY, MAP_FRONTIER, MAP_BACKCOUNTRY, MAP_COUNT };
+// MAP_WILDS is the clean ground that obstacle-section levels are set in: natural country with nothing laid out on it (no
+// course, pad, yard or park), dressed as one of the WildsKinds (World::wildsKind when it's built). Not on the map list: only levels use it.
+enum MapId { MAP_PROVING_GROUND, MAP_MOUNTAIN, MAP_FREEWAY, MAP_FRONTIER, MAP_BACKCOUNTRY, MAP_WILDS, MAP_COUNT };
+// What the wilds look like: which ground and growth surround the obstacle (the section's biome, biome.h).
+enum WildsKind { WILDS_MEADOW, WILDS_DESERT, WILDS_FOREST, WILDS_CANYON, WILDS_WETLAND, WILDS_UPLAND, WILDS_COUNT };
+const char* wildsKindName(int kind);
 const char* mapName(int map);  // as the menu shows it
+// The map whose music and ambience a map uses (the wilds sound like the proving ground's open country).
+inline int soundMap(int map) { return map == MAP_WILDS ? (int)MAP_PROVING_GROUND : map; }
 // The maps on offer (menus, hosting, the editor): just the proving ground, where everything in
 // the game is laid out to look at and try, while the world is rebuilt. (The others are still
 // built here, for the tests and --map.)
 const std::vector<int>& listedMaps();
 bool mapListed(int map);
+inline bool mapForLevels(int map) { return map == MAP_WILDS || mapListed(map); }  // (levels can be on a listed map or on the wilds)
 int nextListedMap(int map, int dir);  // the next one on the list (from any map)
 
 // Catmull-Rom spline through control points, sampled every ~2 m.
@@ -208,6 +216,8 @@ public:
     // the game makes, laid out to look at and try): the game turns it on; the tests keep the pad as
     // it always was. (Per thread: the tests build both kinds side by side.)
     static inline thread_local bool withShowcase = false;
+    // The WildsKind the next MAP_WILDS is built as (a level's `terrain`: see levelWorld in level.h). Per thread, like withShowcase.
+    static inline thread_local int wildsKind = WILDS_MEADOW;
     // The park's obstacle sections (sections.h), in the order they're driven: where each starts.
     struct SectionSpot {
         std::string name;
@@ -299,6 +309,7 @@ private:
     void buildFreeway();
     void buildFrontier();
     void buildBackcountry();
+    void buildWilds();       // the clean open country for obstacle sections (world.cpp)
     void buildModelYard();   // every model laid out on the proving ground (world.cpp)
     void buildSectionPark(); // the obstacle sections laid out outside the loop road (world.cpp)
     void buildMountain();

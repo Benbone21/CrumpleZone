@@ -2003,7 +2003,7 @@ int main(int argc, char** argv) {
     std::map<std::string, double> bestTimes;  // this session's best finish per level
     auto refreshLevels = [&]() {
         levelList = listLevels();
-        levelList.erase(std::remove_if(levelList.begin(), levelList.end(), [](const Level& lv) { return !mapListed(lv.map); }), levelList.end());  // (on maps taken off the list)
+        levelList.erase(std::remove_if(levelList.begin(), levelList.end(), [](const Level& lv) { return !mapForLevels(lv.map); }), levelList.end());  // (on maps taken off the list)
         menu.levels.clear();
         for (const Level& lv : levelList) {
             PauseMenu::LevelInfo li;
@@ -2038,7 +2038,7 @@ int main(int argc, char** argv) {
         me.pilot.active = false;
         me.ai = false;
         const int model = lv.vehicle >= 0 && lv.vehicle < (int)vehicleCatalog().size() ? lv.vehicle : std::max(0, me.spec->model);
-        sim.world = World(lv.map);
+        sim.world = levelWorld(lv);
         applyLevel(lv, sim.world);
         addGateMarkers(lv, sim.world);
         // Just you on the grid (and the other players, in a session).
@@ -2237,9 +2237,9 @@ int main(int argc, char** argv) {
         run.stop();
         levelHours = -1;
         stopPilot();
-        if (newSection) editor.newSection(sim.world, renderer);  // (a fresh proving ground, the canvas cleared)
+        if (newSection) editor.newSection(sim.world, renderer);  // (a fresh open country, the canvas cleared)
         else {
-            sim.world = World(base.map);
+            sim.world = levelWorld(base);
             editor.open(sim.world, renderer, base);
         }
         drawnWorld = sim.world.stamp;
@@ -3660,7 +3660,7 @@ int main(int argc, char** argv) {
                 static BiomeTracker biomes;
                 const V3 at = walker.active ? walker.p : fr.com;
                 biomes.update(sim.world, at.x, at.z, dt);
-                audio.setMusic(sim.world.map, settings.music, biomes.current);  // master volume applies to the whole mix
+                audio.setMusic(soundMap(sim.world.map), settings.music, biomes.current);  // master volume applies to the whole mix
             }
             audio.setSpeed(sim.paused ? 0 : (float)len(fr.vel));
             float amp = (float)clampd(std::log10(1.0 + impact / 50.0) / 3.5, 0, 1);
@@ -3864,7 +3864,7 @@ int main(int argc, char** argv) {
         view.height = H;
         if (audioOn) audio.setNearbyEngines(sim, view.eye, norm(cross(view.target - view.eye, view.up)),
                                            (float)std::max(0.35, sim.timeScale));
-        if (audioOn) audio.setEnvironment(sim.world.map, (float)dayHours, settings.ambience,
+        if (audioOn) audio.setEnvironment(soundMap(sim.world.map), (float)dayHours, settings.ambience,
                                          !walker.active && cam.mode == 2 ? 0.3f : 1.0f);
         lastView = view;
         if (winchAim.on) winchAim.update(sim, view);

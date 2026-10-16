@@ -83,7 +83,12 @@ int nextListedMap(int map, int dir) {
 }
 
 const char* mapName(int map) {
-    return map == MAP_MOUNTAIN ? "MOUNTAIN" : map == MAP_FREEWAY ? "FREEWAY" : map == MAP_FRONTIER ? "FRONTIER" : map == MAP_BACKCOUNTRY ? "BACKCOUNTRY" : "PROVING GROUND";
+    return map == MAP_MOUNTAIN ? "MOUNTAIN" : map == MAP_FREEWAY ? "FREEWAY" : map == MAP_FRONTIER ? "FRONTIER" : map == MAP_BACKCOUNTRY ? "BACKCOUNTRY" : map == MAP_WILDS ? "OPEN COUNTRY" : "PROVING GROUND";
+}
+
+const char* wildsKindName(int kind) {
+    static const char* names[WILDS_COUNT] = {"MEADOW", "DESERT", "FOREST", "CANYON", "WETLAND", "UPLAND"};
+    return kind >= 0 && kind < WILDS_COUNT ? names[kind] : "MEADOW";
 }
 
 std::vector<V3> splinePoints(const std::vector<V3>& pts, bool closed) {
@@ -356,6 +361,7 @@ World::World(int m) : map(m) {
     else if (map == MAP_FREEWAY) buildFreeway();
     else if (map == MAP_FRONTIER) buildFrontier();
     else if (map == MAP_BACKCOUNTRY) buildBackcountry();
+    else if (map == MAP_WILDS) buildWilds();
     else buildProvingGround();
     buildGrid();
 }
@@ -536,6 +542,156 @@ void World::scatterScenery(uint32_t seed) {
         RoadInfo r = roadAt(x, z);
         if (std::fabs(r.lateral) < 18 && r.lateral != 0) continue;
         double rr = 0.5 + rnd() * rnd() * 1.6, flat = 0.55 + 0.4 * rnd();
+        addRock(x, z, V3(rr, rr * flat, rr * (0.75 + 0.3 * rnd())), rr * flat * (0.5 + 0.6 * rnd()), rng, (float)(0.85 + rnd() * 0.3));
+    }
+}
+
+// The wilds: open country with nothing laid out on it, for obstacle sections to sit in (levels.h: levelWorld).
+// Rolling land, uneven underfoot, and the ground and growth of one WildsKind all the way out (so a section's
+// own ground, which blends back into what it finds, meets country of its own kind): meadow and groves, sand
+// and scrub, deep pine woods, terraced red rock, marsh, scree uplands. The meadow's land is the proving
+// ground's own far out (the same hills), so levels made on the old map's open ground still sit right on it.
+void World::buildWilds() {
+    map = MAP_WILDS;
+    crashProps = false;
+    const int kind = std::min(std::max(wildsKind, 0), (int)WILDS_COUNT - 1);
+    hN = (int)(2 * kHalfSize / kRes) + 1;
+    const int N = hN * hN;
+    auto X = [&](int i) { return -kHalfSize + i * kRes; };
+    // How much of the hills each kind keeps (sand is flat, the uplands rough).
+    static const double kHillAmp[WILDS_COUNT] = {1.0, 0.5, 1.0, 0.9, 0.45, 1.4};
+    const double amp = kHillAmp[kind];
+    hgrid.resize(N);
+    for (int i = 0; i < hN; i++)
+        for (int j = 0; j < hN; j++) {
+            const double x = X(i), z = X(j);
+            const double hills = 9.0 * std::sin(x * 0.012 + 0.7) * std::cos(z * 0.010 - 0.3) + 4.0 * std::sin(x * 0.027 + z * 0.021 + 1.3) +
+                                 1.6 * std::sin(x * 0.061 - z * 0.047) * std::cos(z * 0.053 + x * 0.013);
+            // (Calmer through the middle, where the sections lie: the ground there is for a run-in, not for hills.)
+            const double calm = 0.35 + 0.65 * smoothstep(70, 200, std::hypot(x * 0.45, z * 1.5));
+            double h = hills * amp * calm + 6.0 * smoothstep(100, 240, std::hypot(x, z));
+            if (kind == WILDS_DESERT) h += 3.0 * (fbmNoise(x * 0.006 + 4.0, z * 0.006 - 2.0, 3) - 0.5);  // long swells of sand
+            if (kind == WILDS_CANYON) {  // mesas: flat-topped, with cliffs round them, left out of the middle where the sections are
+                const double rim = fbmNoise(x * 0.0065 + 11.0, z * 0.0065 - 4.0, 3) + 0.012 * (valueNoise(x * 0.05, z * 0.05) - 0.5);
+                h += 17.0 * smoothstep(0.545, 0.556, rim) * smoothstep(170, 260, std::hypot(x, z));
+            }
+            // Uneven underfoot: bumps a few metres across.
+            const double bump = kind == WILDS_DESERT ? 0.3 : kind == WILDS_UPLAND ? 0.8 : 0.5;
+            h += bump * (fbmNoise(x * 0.09 + 5.0, z * 0.09 + 1.0, 2) - 0.5) + 0.5 * bump * (valueNoise(x * 0.31, z * 0.27) - 0.5);
+            // Hills close in far out, and keep you on the map.
+            const double d = std::hypot(std::max(0.0, std::fabs(x) - 470), std::max(0.0, std::fabs(z) - 470));
+            h += 0.0045 * d * d + 0.02 * d;
+            hgrid[i * hN + j] = (float)h;
+        }
+    roadLat.assign(N, 0);
+    roadAlong.assign(N, 0);
+    roadNear.assign(N, 0);
+    surf.assign(N, SURF_GRASS);
+    paint.assign(N, PAINT_NONE);
+    auto slopeAt = [&](int i, int j) {
+        const double hx = gridAt(std::min(i + 1, hN - 1), j) - gridAt(std::max(i - 1, 0), j);
+        const double hz = gridAt(i, std::min(j + 1, hN - 1)) - gridAt(i, std::max(j - 1, 0));
+        return std::sqrt(hx * hx + hz * hz) / (2 * kRes);
+    };
+    // The ground: what it's made of, kind by kind.
+    for (int i = 0; i < hN; i++)
+        for (int j = 0; j < hN; j++) {
+            const double x = X(i), z = X(j);
+            const int id = i * hN + j;
+            const double n1 = fbmNoise(x * 0.011 + 3.0, z * 0.011 - 2.0, 3), n2 = fbmNoise(x * 0.034 + 9.0, z * 0.034 + 1.0, 2);
+            const double slope = slopeAt(i, j);
+            switch (kind) {
+                case WILDS_DESERT:  // hard dry ground with drifts of sand where the noise runs high
+                    if (n1 + 0.25 * (n2 - 0.5) > 0.5) surf[id] = SURF_SAND, paint[id] = PAINT_SAND;
+                    else surf[id] = SURF_DIRT, paint[id] = PAINT_DESERT;
+                    break;
+                case WILDS_CANYON:  // red rock on the risers and slabs, dry dirt on the treads
+                    if (slope > 0.22 || n1 > 0.64) surf[id] = SURF_ROCK, paint[id] = PAINT_REDROCK;
+                    else surf[id] = SURF_DIRT, paint[id] = PAINT_DESERT;
+                    break;
+                case WILDS_WETLAND:  // wet ground in the flat low spots (not in the middle, where the section's own mud is)
+                    if (n1 < 0.34 && slope < 0.09 && std::hypot(x, z * 2.2) > 200) surf[id] = SURF_MUD, paint[id] = PAINT_MUD;
+                    break;
+                case WILDS_UPLAND:  // scree on the steeper ground and in patches
+                    if (slope > 0.3 || (n1 > 0.64 && n2 > 0.45)) surf[id] = SURF_SCREE, paint[id] = PAINT_SCREE;
+                    break;
+                default: break;
+            }
+        }
+    spawn = V3(0, height(0, 0), 0);
+    spawnYaw = 0;
+
+    // ---- Growth ----
+    uint32_t rng = 4242 + (uint32_t)kind * 977;
+    auto rnd = [&]() {
+        rng ^= rng << 13;
+        rng ^= rng >> 17;
+        rng ^= rng << 5;
+        return (rng & 0xFFFFFF) / double(0x1000000);
+    };
+    auto cellOf2 = [&](double v) { return std::min(std::max((int)std::lround((v + kHalfSize) / kRes), 0), hN - 1); };
+    auto wet = [&](double x, double z) { return surf[cellOf2(x) * hN + cellOf2(z)] == SURF_MUD; };
+    auto grove = [](double x, double z) { return 0.5 + 0.25 * std::sin(x * 0.021 + 1.7) * std::cos(z * 0.017 - 0.4) + 0.25 * std::sin((x + z) * 0.013); };
+    int treeMax = 0, bushMax = 0, rockMax = 0;
+    switch (kind) {
+        case WILDS_MEADOW: treeMax = 650, bushMax = 1000, rockMax = 140; break;
+        case WILDS_DESERT: treeMax = 45, bushMax = 420, rockMax = 90; break;
+        case WILDS_FOREST: treeMax = 6500, bushMax = 1500, rockMax = 140; break;
+        case WILDS_CANYON: treeMax = 260, bushMax = 260, rockMax = 420; break;
+        case WILDS_WETLAND: treeMax = 1300, bushMax = 1500, rockMax = 50; break;
+        case WILDS_UPLAND: treeMax = 380, bushMax = 260, rockMax = 300; break;
+    }
+    for (int attempt = 0; attempt < 600000 && (int)trees.size() < treeMax; attempt++) {
+        const double x = (rnd() * 2 - 1) * 500, z = (rnd() * 2 - 1) * 500;
+        // (The woods are thickest round the middle, where you'll be, and thin out toward the rim.)
+        if ((kind == WILDS_FOREST || kind == WILDS_WETLAND) && rnd() > 1 - 0.85 * smoothstep(160, 470, std::hypot(x, z))) continue;
+        const int i = cellOf2(x), j = cellOf2(z);
+        const double slope = slopeAt(i, j);
+        if (slope > (kind == WILDS_CANYON ? 0.2 : 0.5)) continue;
+        double p = 1;
+        const double wood = fbmNoise(x * 0.010 + 7.0, z * 0.010 - 3.0, 3);
+        int tk = rnd() < 0.7 ? 0 : (rnd() < 0.85 ? 1 : 2);
+        double hMin = 6, hMax = 13;
+        switch (kind) {
+            case WILDS_MEADOW: p = grove(x, z) * grove(x, z) * 1.3; break;
+            case WILDS_FOREST:
+                p = 0.1 + 0.9 * smoothstep(0.34, 0.5, wood);
+                tk = rnd() < 0.8 ? 0 : (rnd() < 0.8 ? 1 : 2);
+                hMin = 8, hMax = 17;
+                break;
+            case WILDS_UPLAND: p = 0.05 + 0.5 * smoothstep(0.5, 0.65, wood); tk = rnd() < 0.88 ? 0 : 2, hMin = 5, hMax = 11; break;
+            case WILDS_DESERT: tk = rnd() < 0.7 ? 2 : 1, hMin = 3.5, hMax = 6.5; break;
+            case WILDS_CANYON: tk = rnd() < 0.6 ? 0 : (rnd() < 0.5 ? 1 : 2), hMin = 3.5, hMax = 7; break;
+            case WILDS_WETLAND:
+                p = 0.1 + 0.9 * smoothstep(0.4, 0.55, wood);
+                tk = rnd() < 0.2 ? 0 : (rnd() < 0.8 ? 1 : 2);
+                hMin = 6, hMax = 12;
+                break;
+        }
+        if (rnd() > p || wet(x, z)) continue;
+        const double th = hMin + rnd() * (hMax - hMin);
+        addTree(x, z, th, tk, (float)(0.8 + rnd() * 0.4));
+    }
+    auto clearOfTrees = [&](double x, double z, double d) {
+        for (const Tree& t : trees)
+            if ((t.base.x - x) * (t.base.x - x) + (t.base.z - z) * (t.base.z - z) < d * d) return false;
+        return true;
+    };
+    // Bushes: most at the edges of the woods, a few out in the open (more in the marsh, fewer in the sand).
+    const double bushOpen = kind == WILDS_WETLAND ? 0.3 : kind == WILDS_DESERT ? 0.6 : 0.08;
+    for (int attempt = 0; attempt < 40000 && (int)bushes.size() < bushMax; attempt++) {
+        const double x = (rnd() * 2 - 1) * 510, z = (rnd() * 2 - 1) * 510;
+        const bool nearWood = kind == WILDS_DESERT ? false : !clearOfTrees(x, z, 14);
+        if (rnd() > (nearWood ? 0.8 : bushOpen)) continue;
+        bushes.push_back({V3(x, height(x, z), z), 0.5 + rnd() * 0.9, (float)(0.8 + rnd() * 0.4)});
+    }
+    // Boulders, clear of the trees; in the canyon and the uplands they gather at the feet of the steeper ground.
+    for (int attempt = 0; attempt < 60000 && (int)rocks.size() < rockMax; attempt++) {
+        const double x = (rnd() * 2 - 1) * 500, z = (rnd() * 2 - 1) * 500;
+        if (wet(x, z) || !clearOfTrees(x, z, kind == WILDS_FOREST ? 6 : 14)) continue;
+        if ((kind == WILDS_CANYON || kind == WILDS_UPLAND) && slopeAt(cellOf2(x), cellOf2(z)) < 0.1 && rnd() < 0.8) continue;
+        const double big = kind == WILDS_CANYON ? 2.0 : 1.6;
+        const double rr = 0.5 + rnd() * rnd() * big, flat = 0.55 + 0.4 * rnd();
         addRock(x, z, V3(rr, rr * flat, rr * (0.75 + 0.3 * rnd())), rr * flat * (0.5 + 0.6 * rnd()), rng, (float)(0.85 + rnd() * 0.3));
     }
 }

@@ -26,6 +26,9 @@ enum SectionType {
 struct SectionFrame {
     V3 entry;             // on the ground there (its y is what heights are measured from)
     double heading = 0;   // radians, the game's yaw: 0 = +X, pi/2 = -Z (any angle works; boxes turn with it)
+    // Set where the section is stamped on country of its own (MAP_WILDS levels): the ground's own surface and the growth in the blend
+    // round the section stay (growth is set down on the blended ground), instead of grass and a cleared ring.
+    bool keepCountry = false;
 };
 
 // Where it ended up, once built.
