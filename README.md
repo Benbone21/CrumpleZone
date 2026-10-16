@@ -32,7 +32,7 @@ make
 | `--physics-threads auto\|all\|N` | Override the saved physics thread budget: AUTO, every logical CPU, or a number. 1 runs serially |
 | `--spawn X,Z[,HEADING]` | Start somewhere else; for example, `--spawn 300,0,-80` puts you on the loop road |
 | `--scenario NAME` | Play one of the test scenarios (see Testing) |
-| `--host [PORT]` | Host a multiplayer session (default port 27015) |
+| `--host [PORT]` | Host a multiplayer session on any port from 1024 to 65535, for this run (without it: the PORT on the Multiplayer page, 27015 until you change it) |
 | `--join HOST[:PORT]` | Join one |
 | `--name NAME` | Your name in multiplayer |
 | `--password PASSWORD` | The password of the game you host, and the one you offer when you join (also the PASSWORD field on the Multiplayer page) |
@@ -227,7 +227,7 @@ Launched plainly, the game opens on the main menu, a screen of its own (no world
 - **Exploring:** every named place on a map starts undiscovered ("?" on the map); get within 30 m to find it. Your discoveries are kept between sessions.
 - **Fuel:** engines burn fuel for the power they make (setting FUEL: OFF / REAL / FAST, default FAST: 4x). Run dry and the engine dies. Shops fill the tank and the spare can; the Bronco and 4Runner carry a 20 L can.
 
-- **Finding games:** Menu > Multiplayer > JOIN lists games hosted on your local network. It asks every network adapter's subnet (UDP 27016) and also listens for hosts announcing themselves (UDP 27017), so either direction getting through a firewall is enough. Pick one to join, or type an address. On Windows, allow the game through the firewall on **Private networks** the first time you host or search (ports 27015-27017).
+- **Finding games:** Menu > Multiplayer > JOIN lists games hosted on your local network. It asks every network adapter's subnet (UDP 27016) and also listens for hosts announcing themselves (UDP 27017), so either direction getting through a firewall is enough. Pick one to join, or type an address. On Windows, allow the game through the firewall on **Private networks** the first time you host or search (your game port, 27015 by default, and UDP 27016 and 27017 for finding games).
 
 ## World editor
 
@@ -437,13 +437,14 @@ Esc → Autopilot picks where and how; U starts and stops it (steering or the pe
 Up to 8 players on one map. One of you hosts; the rest join.
 
 - **From the menu:** Main menu (or Esc) → Multiplayer. The page has two halves:
-  - **HOST A GAME** (left): name your game, pick the map and how many players (2-8), START HOSTING. Friends on your network see it in their list; the hosting card shows your address for anyone who has to type it.
-  - **JOIN A GAME** (right): games hosted on your network show up by themselves (game name, host, map, players); pick one. Games on another network: type the address and JOIN THAT ADDRESS. A card says while it connects (Esc cancels) and says why if it can't.
+  - **HOST A GAME** (left): name your game, pick the map, how many players (2-8) and the **PORT** (click it or arrow down to it, type digits; 1024 to 65535, default 27015; remembered), START HOSTING. Friends on your network see it in their list; the hosting card shows your address for anyone who has to type it.
+  - **JOIN A GAME** (right): games hosted on your network show up by themselves (game name, host, map, players); pick one. Games on another network: type the address (`IP`, or `IP:PORT` if the host picked another port) and JOIN THAT ADDRESS. Games found in the list are joined on whatever port their host announced. A card says while it connects (Esc cancels) and says why if it can't.
   - In a game, the same page shows who's in it with their pings, MEET UP, and LEAVE (STOP HOSTING for the host).
 - **From the command line:**
-  - Host: `./crumplezone --map 1 --host` (port 27015 by default, or `--host 27100`)
-  - Join: `./crumplezone --join 192.168.1.20` (or `HOST:PORT`), with `--name YOURNAME` if you like
-- **Over the internet**, the host needs TCP and UDP port 27015 forwarded on their router. On a LAN it just works. Set a **password** (PASSWORD on the Multiplayer page, or `--password`) before you open a game to the internet: players must know it to join, and it is never sent over the network (only a proof of it). Nothing else in the game is encrypted, so for anything private use a VPN such as WireGuard or Tailscale.
+  - Host: `./crumplezone --map 1 --host` (the menu's port, 27015 unless you changed it), or `--host 28123` for this run only
+  - Join: `./crumplezone --join 192.168.1.20` (port 27015) or `--join 192.168.1.20:28123` (or `HOST:PORT`), with `--name YOURNAME` if you like
+- **Any port works**, so two games on one machine, or a router that already uses 27015, are fine: host on one (say `PORT`), and tell your friends `IP:PORT`. Hosting needs 1024 or above; joining takes any. If the port is taken, the game says "PORT N IS IN USE: PICK ANOTHER IN THE MULTIPLAYER MENU".
+- **Over the internet**, the host needs TCP and UDP `PORT` (27015 unless you picked another) forwarded on their router. On a LAN it just works. Finding games on the LAN uses fixed UDP 27016 and 27017 whatever the game port is (LAN only: nothing to forward); a found game announces its real port. Set a **password** (PASSWORD on the Multiplayer page, or `--password`) before you open a game to the internet: players must know it to join, and it is never sent over the network (only a proof of it). Nothing else in the game is encrypted, so for anything private use a VPN such as WireGuard or Tailscale.
 - **How it plays:**
   - Your own truck runs on your machine, so driving has no lag. The others see it, dents and all, about 0.1 s behind (about 40 KB/s per moving truck).
   - Other players' trucks are solid: you can bump them, winch to them, and strap them (V, O). A line between two players' trucks pulls on each truck on its owner's machine, so a buddy can tow you to a repair station while you steer.
@@ -460,13 +461,15 @@ echo 'a long random password' > ~/cz-password && chmod 600 ~/cz-password
 ./build/crumplezone-server --port 27015 --map 1 --name "My Session" --password-file ~/cz-password
 ```
 
-Players join with `./crumplezone --join YOUR_SERVER_IP:27015 --password 'a long random password'` (or the PASSWORD field on the Multiplayer page, then type the address). The server runs headless (no window), has 7 guest slots, keeps the shared world (parked trucks, crash props, everyone's vehicles for whoever joins later) and runs no physics of its own. It needs only TCP and UDP port 27015 open. Options: `--port`, `--map`, `--name`, `--players`, `--password` / `--password-file` / the `CZ_PASSWORD` variable, `--bind IP`, `--lan`, `--help`.
+`--port` takes any port from 1024 to 65535 (27015 if you leave it out); `CZ_PORT=28123` in the environment does the same (the option wins), which suits a systemd unit. Anything else is refused with a message (`--port 80` and `--port 99999` both are).
+
+Players join with `./crumplezone --join YOUR_SERVER_IP:PORT --password 'a long random password'` (or the PASSWORD field on the Multiplayer page, then type the address). The server runs headless (no window), has 7 guest slots, keeps the shared world (parked trucks, crash props, everyone's vehicles for whoever joins later) and runs no physics of its own. It needs only TCP and UDP `PORT` (27015 by default) open. Options: `--port` (or `CZ_PORT`), `--map`, `--name`, `--players`, `--password` / `--password-file` / the `CZ_PASSWORD` variable, `--bind IP`, `--lan`, `--help`.
 
 Run it safely (details and a hardened systemd unit in [docs/multiplayer.md](docs/multiplayer.md); what is checked and why in [docs/server-security.md](docs/server-security.md)):
 
 - **Use a password.** Without `--password` anyone who can reach the port can join (the server warns). Prefer `--password-file` or `CZ_PASSWORD` to `--password` (which shows in `ps`).
 - **Never as root.** The server refuses to start as root (`--allow-root` overrides, don't). A dedicated user, or systemd `DynamicUser=yes`.
-- **Firewall: only the game port**, TCP and UDP 27015. Nothing else needs to be reachable; the LAN discovery ports (UDP 27016/27017) are off on the server.
+- **Firewall: only the game port**, TCP and UDP `PORT` (27015 by default). Nothing else needs to be reachable; the LAN discovery ports (UDP 27016/27017, fixed, LAN only) are off on the server unless `--lan`.
 - The server drops connections that stay silent, flood, send malformed or oversized messages, or guess passwords (five wrong guesses lock an address out for a minute).
 - Traffic is **not encrypted**. For privacy, put the server behind a VPN and `--bind` it to the VPN address.
 

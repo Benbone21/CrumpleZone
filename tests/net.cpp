@@ -471,3 +471,142 @@ SCENARIO(netAsyncJoin, "net/async-join", "Joining without freezing the game: beg
     a.close();
     host.close();
 }
+
+// ---- Any port --------------------------------------------------------------------------
+
+namespace {
+// A port nothing is listening on right now (the OS picks it; asked for and given back).
+int freePort() {
+    NetSession probe;
+    for (int p = 28123 + (int)(getpid() % 500);; p += 7)
+        if (probe.host(p, "PROBE", MAP_PROVING_GROUND)) {
+            probe.close();
+            return p;
+        }
+}
+}  // namespace
+
+SCENARIO(netPortParse, "net/port-parse", "Ports and addresses: IP, IP:PORT and HOST:PORT parse; no port means 27015; bad, out-of-range and extra-colon forms are refused with a reason") {
+    std::string host, why;
+    int port = 0;
+    auto ok = [&](const std::string& a, const std::string& wantHost, int wantPort) {
+        host.clear(), port = 0;
+        const bool good = net::parseAddress(a, host, port, &why);
+        ctx.check("'" + a + "' parses as " + wantHost + ":" + std::to_string(wantPort), good && host == wantHost && port == wantPort, host + ":" + std::to_string(port));
+    };
+    auto bad = [&](const std::string& a, const char* about) {
+        why.clear();
+        ctx.check("'" + a + "' is refused (" + about + ")", !net::parseAddress(a, host, port, &why) && !why.empty());
+    };
+    ok("1.2.3.4", "1.2.3.4", net::kDefaultPort);
+    ok("1.2.3.4:28123", "1.2.3.4", 28123);
+    ok("play.example.org", "play.example.org", net::kDefaultPort);
+    ok("play.example.org:7", "play.example.org", 7);  // (joining takes any port a host could have forwarded)
+    ok("localhost:65535", "localhost", 65535);
+    ok("  10.0.0.5:2000 ", "10.0.0.5", 2000);
+    ok("1.2.3.4:07015", "1.2.3.4", 7015);
+    bad("", "empty");
+    bad(":28123", "no host");
+    bad("1.2.3.4:", "empty port");
+    bad("1.2.3.4:0", "port 0");
+    bad("1.2.3.4:65536", "too high");
+    bad("1.2.3.4:99999", "too high");
+    bad("1.2.3.4:123456", "six digits");
+    bad("1.2.3.4:-5", "negative");
+    bad("1.2.3.4:+5", "sign");
+    bad("1.2.3.4:80x", "junk");
+    bad("1.2.3.4:abc", "text");
+    bad("1.2.3.4:28123:5", "extra colon");
+    bad("::1", "IPv6");
+    bad("[::1]:28123", "IPv6");
+    ctx.check("parsePort: digits only", net::parsePort("28123") == 28123 && net::parsePort("1") == 1 && net::parsePort("65535") == 65535);
+    ctx.check("parsePort: out of range or junk", net::parsePort("0") < 0 && net::parsePort("65536") < 0 && net::parsePort("") < 0 && net::parsePort(" 5") < 0 &&
+                                                     net::parsePort("5 ") < 0 && net::parsePort("0x50") < 0 && net::parsePort("99999") < 0);
+    ctx.check("hosting wants 1024 and up", net::parsePort("1023", net::kMinHostPort) < 0 && net::parsePort("80", net::kMinHostPort) < 0 &&
+                                               net::parsePort("1024", net::kMinHostPort) == 1024 && net::parsePort("27015", net::kMinHostPort) == 27015);
+    NetSession s;
+    ctx.check("joining a bad port fails before connecting, saying why", !s.beginJoin("127.0.0.1:99999", "X") && s.error.find("port") != std::string::npos, s.error);
+    ctx.check("joining with extra colons fails the same way", !s.beginJoin("127.0.0.1:1:2", "X") && !s.error.empty(), s.error);
+}
+
+SCENARIO(netCustomPort, "net/custom-port", "A host on a port other than 27015: a client joins it by IP:PORT, a second host on that port is told it is in use, and the LAN list shows it and joins on it") {
+    const int port = freePort();
+    ctx.check("(not the default)", port != net::kDefaultPort);
+    Car& hostCar = ctx.add(vehicleCatalog()[2], 10, -8, 0);
+    ctx.focus(hostCar);
+    NetSession host;
+    ctx.check("host opens a session on a custom port", host.host(port, "HOSTY", MAP_PROVING_GROUND), host.error);
+    ctx.check("and reports it", host.port() == port);
+    host.adopt(ctx.sim);
+
+    NetSession clash;
+    ctx.check("a second host on the same port fails", !clash.host(port, "CLASH", MAP_PROVING_GROUND), "");
+    ctx.check("and knows it is the port that is taken", clash.portInUse && clash.error.find(std::to_string(port)) != std::string::npos &&
+                                                         clash.error.find("in use") != std::string::npos, clash.error);
+    NetSession elsewhere;
+    ctx.check("another port is fine (no flag left over)", elsewhere.host(port + 1, "OTHER", MAP_PROVING_GROUND) && !elsewhere.portInUse, elsewhere.error);
+    elsewhere.close();
+
+    // The LAN list: the host announces its real port, and the row joins on it.
+    net::Finder finder;
+    double t = 0;
+    auto pump = [&](double secs, const std::function<bool()>& until) {
+        for (double end = t + secs; t < end; t += 0.01) {
+            finder.poll(t);
+            host.receive(ctx.sim, t);
+            if (until && until()) return true;
+            usleep(10000);
+        }
+        return false;
+    };
+    auto mine = [&]() -> const net::FoundHost* {
+        for (const net::FoundHost& h : finder.hosts)
+            if (h.address.size() > std::to_string(port).size() && h.address.compare(h.address.size() - std::to_string(port).size() - 1, std::string::npos, ":" + std::to_string(port)) == 0)
+                return &h;
+        return nullptr;
+    };
+    ctx.check("the list finds it", pump(3.0, [&] { return mine() != nullptr; }));
+    const net::FoundHost* h = mine();
+    if (!h) return;
+    ctx.check("the announced address carries the real port, not 27015", h->address.find(":27015") == std::string::npos, h->address);
+    std::string hostName;
+    int p = 0;
+    ctx.check("and parses back to it", net::parseAddress(h->address, hostName, p) && p == port, h->address);
+
+    // Joining on exactly that address (what the list's row does).
+    Sim sim2;
+    sim2.world = World(MAP_PROVING_GROUND);
+    sim2.setupEmpty();
+    sim2.addCar(vehicleCatalog()[3], V3(-30, 0.5, -30), 0, V3(0.2, 0.2, 0.2));
+    sim2.player = 0;
+    NetSession client;
+    ctx.check("join starts", client.beginJoin(h->address, "LISTED"), client.error);
+    int st = 0;
+    pump(5.0, [&] {
+        st = client.pollJoin();
+        return st != 0;
+    });
+    ctx.check("joined through the list's address", st == 1 && client.self == 1, client.error);
+    if (st == 1) client.adopt(sim2);
+    client.close();
+
+    // And by hand, IP:PORT and HOST:PORT, with the join loop.
+    for (const char* hostText : {"127.0.0.1", "localhost"}) {
+        NetSession typed;
+        bool joined = false, done = false;
+        std::thread joiner([&] {
+            joined = typed.join(std::string(hostText) + ":" + std::to_string(port), "TYPED", 3.0);
+            done = true;
+        });
+        for (int k = 0; k < 400 && !done; k++) {
+            host.receive(ctx.sim, t += 0.005);
+            usleep(5000);
+        }
+        joiner.join();
+        ctx.check(std::string("typing ") + hostText + ":" + std::to_string(port) + " joins", joined, typed.error);
+        typed.close();
+    }
+    NetSession wrong;
+    ctx.check("the next port up has no game: refused, not hanging", !wrong.join("127.0.0.1:" + std::to_string(port + 2), "LOST", 1.0) && !wrong.error.empty(), wrong.error);
+    host.close();
+}

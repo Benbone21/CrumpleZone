@@ -8,6 +8,7 @@
 #include <cstring>
 
 #include "gamepad.h"
+#include "net.h"
 #include "rope.h"
 #include "hudkit.h"
 #include "platform.h"
@@ -68,6 +69,10 @@ bool Settings::load(const std::string& path) {
         else if (k == "fov") fovDeg = std::min(std::max(v, 50.0f), 100.0f);
         else if (k == "fullscreen") fullscreen = v != 0;
         else if (k == "maxplayers") maxPlayers = std::min(std::max((int)v, 2), 8);
+        else if (k == "hostport") {  // (out of range, or not a number: the default)
+            const int p = net::parsePort(text, net::kMinHostPort);
+            hostPort = p > 0 ? p : net::kDefaultPort;
+        }
         else if (k == "vsync") vsync = v != 0;
         else if (k == "adaptive") adaptiveQuality = v != 0;
         else if (k == "fps") showFps = v != 0;
@@ -118,7 +123,7 @@ bool Settings::save(const std::string& path) const {
     if (!joinAddress.empty()) std::fprintf(f, "join %s\n", joinAddress.c_str());
     if (!sessionName.empty()) std::fprintf(f, "session %s\n", sessionName.c_str());
     if (!netPassword.empty()) std::fprintf(f, "netpassword %s\n", netPassword.c_str());
-    std::fprintf(f, "maxplayers %d\n", maxPlayers);
+    std::fprintf(f, "maxplayers %d\nhostport %d\n", maxPlayers, hostPort >= net::kMinHostPort && hostPort <= net::kMaxPort ? hostPort : net::kDefaultPort);
     std::fprintf(f, "pilotdest %d\npilotspeed %.0f\npilotroute %d\n", pilotDest, pilotSpeed, pilotRoute);
     std::fprintf(f, "timeofday %d\ndaylength %.0f\nclock %.2f\n", timeOfDay, dayMinutes, clockHours);
     std::fprintf(f, "padsteer %d\npaddead %d\npadrumble %d\n", padSteering, padDeadzone, padRumble);
@@ -187,7 +192,7 @@ enum Id {
     PILOT_ROW, DEST_ROW, PSPEED_ROW, PROUTE_ROW, PGO_ROW, PSTOP_ROW,
     FREEDRIVE_ROW, MODE_ROW, LEVELS_ROW, LEVEL_SHOW, LEVEL_PICK, LEVEL_PLAY, LEVEL_EDIT, EDITOR_ROW, SECTION_ROW, LAB_ROW, LRESTART_ROW, LQUIT_ROW, MAINMENU_ROW,
     JOBS_ROW, JOB_PICK, JOB_GO, JOB_STOP_ROW, MEET_ROW, CONTROLLER_ROW,
-    SESSION_ROW, HMAP_ROW, HMAX_ROW, CANCEL_ROW, PASSWORD_ROW,
+    SESSION_ROW, HMAP_ROW, HMAX_ROW, CANCEL_ROW, PASSWORD_ROW, PORT_ROW,
     STEERING, KEYBINDS_ROW, KEYS_RESET, KEY_ROW0, KEY_ROWN = KEY_ROW0 + KA_COUNT,
 };
 const char* kOffOn[2] = {"OFF", "ON"};
@@ -340,7 +345,8 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
             } else {
                 info("COULDN'T JOIN " + joinLabel);
                 info(joinError);
-                info("IS THE GAME STILL HOSTED? ON ANOTHER NETWORK, THE HOST MAY NEED TO FORWARD PORT 27015");
+                info("IS THE GAME STILL HOSTED? ON ANOTHER NETWORK, THE HOST MAY NEED TO FORWARD PORT " +
+                     std::to_string(joinPort > 0 ? joinPort : net::kDefaultPort) + " (TCP AND UDP)");
                 button(CANCEL_ROW, "OK");
             }
             inCol(1, c1);
@@ -351,10 +357,11 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
             for (const std::string& line : sessionLines) info(line);
             if (netHost && !localIps.empty()) {
                 std::string ips;
-                for (const std::string& ip : localIps) ips += (ips.empty() ? "" : "  OR  ") + ip;
+                for (const std::string& ip : localIps) ips += (ips.empty() ? "" : "  OR  ") + ip + (sessionPort > 0 && sessionPort != net::kDefaultPort ? ":" + std::to_string(sessionPort) : "");
                 info("FRIENDS ON YOUR NETWORK SEE THIS GAME IN THEIR JOIN LIST");
                 info("OR THEY TYPE YOUR ADDRESS: " + ips);
             }
+            if (netHost && sessionPort > 0) info("OVER THE INTERNET, FORWARD PORT " + std::to_string(sessionPort) + " (TCP AND UDP)");
             button(MEET_ROW, "MEET UP", "YOUR TRUCK TO A BUDDY'S (AGAIN: THE NEXT ONE)");
             button(LEAVE_ROW, netHost ? "STOP HOSTING" : "LEAVE THE GAME", netHost ? "EVERYONE ELSE IS DROPPED" : "");
             inCol(1, c1);
@@ -369,9 +376,18 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
             text(SESSION_ROW, "GAME NAME", s.sessionName, "TYPE IT", me + "'S GAME");
             choice(HMAP_ROW, "MAP", mapName(mapPick), (int)listedMaps().size());
             choice(HMAX_ROW, "PLAYERS", "UP TO " + std::to_string(std::min(std::max(s.maxPlayers, 2), 8)), 7);
+            {
+                const std::string shown = portEdited ? portText : std::to_string(s.hostPort);
+                text(PORT_ROW, "PORT", shown, "DEFAULT " + std::to_string(net::kDefaultPort), "DEFAULT " + std::to_string(net::kDefaultPort));
+            }
             button(HOST_ROW, "START HOSTING");
-            info("FRIENDS ON YOUR NETWORK WILL SEE IT");
-            info("IN THEIR JOIN LIST");
+            if (portEdited && net::parsePort(portText, net::kMinHostPort) < 0) {
+                info("PORT: " + std::to_string(net::kMinHostPort) + " TO " + std::to_string(net::kMaxPort));
+                info("(DEFAULT " + std::to_string(net::kDefaultPort) + ")");
+            } else {
+                info("FRIENDS ON YOUR NETWORK WILL SEE IT");
+                info("IN THEIR JOIN LIST");
+            }
             inCol(1, c1);
         }
         {
@@ -390,7 +406,7 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
                 button(FOUND_ROW0 + k, g.session.c_str(), g.ok ? g.host + "  " + g.map + "  " + g.players : g.why);
                 r.back().dim = !g.ok;
             }
-            text(ADDRESS_ROW, "ADDRESS", s.joinAddress, "IP:PORT", "TYPE AN IP");
+            text(ADDRESS_ROW, "ADDRESS", s.joinAddress, "IP OR IP:PORT", "TYPE AN IP:PORT");
             button(JOIN_ROW, "JOIN THAT ADDRESS");
             inCol(2, c2);
         }
@@ -480,6 +496,7 @@ void PauseMenu::show(int currentVehicle, int currentMap) {
     page = 0;
     listening = -1;
     keyNote.clear();
+    portEdited = portFresh = false;
     sel = 0;
     fade = 0;
     dragSlider = -1;
@@ -527,6 +544,7 @@ PauseMenu::Result PauseMenu::activate(int row, Settings& s) {
     const Row& it = r[row];
     auto goPage = [&](int p, int id) {
         page = p;
+        portEdited = portFresh = false;
         hits.clear();
         dragSlider = -1;
         std::vector<Row> nr = rows(s);
@@ -583,7 +601,14 @@ PauseMenu::Result PauseMenu::activate(int row, Settings& s) {
                 return {};
             }
             goPage(0, page == 2 ? MULTI_ROW : page == 3 ? PILOT_ROW : page == 4 ? LEVELS_ROW : page == 5 ? JOBS_ROW : SETTINGS_ROW); return {};
-        case HOST_ROW: return {HOST};
+        case HOST_ROW:
+            if (portEdited && net::parsePort(portText, net::kMinHostPort) < 0) {  // (a half-typed port: back to it)
+                for (int k = 0; k < (int)r.size(); k++)
+                    if (r[k].id == PORT_ROW) sel = k;
+                return {};
+            }
+            portEdited = portFresh = false;
+            return {HOST};
         case KEY_ROW0 ... KEY_ROWN - 1: listening = it.id - KEY_ROW0, keyNote.clear(); return {};
         case JOIN_ROW:
         case ADDRESS_ROW:
@@ -596,6 +621,7 @@ PauseMenu::Result PauseMenu::activate(int row, Settings& s) {
         case CANCEL_ROW: return {CANCEL_JOIN};
         case NAME_ROW:
         case PASSWORD_ROW:
+        case PORT_ROW:
         case SESSION_ROW: moveSel(1, s); return {};
     }
     if (it.id >= FOUND_ROW0 && it.id <= FOUND_ROW5 && it.id - FOUND_ROW0 < (int)found.size()) {  // a game found on the network
@@ -751,7 +777,11 @@ PauseMenu::Result PauseMenu::key(int sc, Settings& s) {
     {
         std::vector<Row> r = rows(s);
         if (sel >= 0 && sel < (int)r.size() && r[sel].kind == TEXT) {
-            std::string& field = r[sel].id == NAME_ROW ? s.playerName : r[sel].id == SESSION_ROW ? s.sessionName : r[sel].id == PASSWORD_ROW ? s.netPassword : s.joinAddress;
+            const bool isPort = r[sel].id == PORT_ROW;
+            if (isPort && !portEdited) portText = std::to_string(s.hostPort), portEdited = portFresh = true;
+            if (isPort && portFresh && sc >= SC_1 && sc <= SC_1 + 9) portText.clear();  // (a digit over the number shown replaces it)
+            if (isPort && (portFresh && (sc == SC_BACKSPACE || (sc >= SC_1 && sc <= SC_1 + 9)))) portFresh = false;
+            std::string& field = isPort ? portText : r[sel].id == NAME_ROW ? s.playerName : r[sel].id == SESSION_ROW ? s.sessionName : r[sel].id == PASSWORD_ROW ? s.netPassword : s.joinAddress;
             char ch = 0;
             if (sc == SC_SPACE && r[sel].id == SESSION_ROW && !field.empty()) ch = ' ';
             if (sc >= SC_A && sc <= SC_A + 25) ch = (char)('A' + (sc - SC_A));
@@ -761,12 +791,20 @@ PauseMenu::Result PauseMenu::key(int sc, Settings& s) {
             else if (sc == 45) ch = shift ? '_' : '-';
             else if (sc == 51 && shift) ch = ':';
             if (r[sel].id == ADDRESS_ROW && ch >= 'A' && ch <= 'Z') ch = (char)(ch - 'A' + 'a');
-            if (ch && field.size() < (r[sel].id == NAME_ROW ? 16u : r[sel].id == SESSION_ROW ? 24u : r[sel].id == PASSWORD_ROW ? 32u : 60u)) {
+            if (isPort && !(ch >= '0' && ch <= '9')) ch = 0;  // (digits only)
+            // (Whatever the port field holds becomes the setting once it's a good port.)
+            auto portTyped = [&] {
+                const int p = net::parsePort(portText, net::kMinHostPort);
+                if (p > 0) s.hostPort = p;
+            };
+            if (ch && field.size() < (isPort ? 5u : r[sel].id == NAME_ROW ? 16u : r[sel].id == SESSION_ROW ? 24u : r[sel].id == PASSWORD_ROW ? 32u : 60u)) {
                 field += ch;
+                if (isPort) portTyped();
                 return {CHANGED};
             }
             if (sc == SC_BACKSPACE && !field.empty()) {
                 field.pop_back();
+                if (isPort) portTyped();
                 return {CHANGED};
             }
             if (sc == SC_UP) moveSel(-1, s);

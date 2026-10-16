@@ -148,6 +148,47 @@ int main() {
             throw std::runtime_error("adaptive toggle did not persist");
         std::remove(settingsPath);
         std::puts("PASS adaptive menu: independent toggle and persistence");
+        {  // the multiplayer page's PORT field: digits only, saved, and the default shown
+            Settings ps;
+            if (ps.hostPort != 27015) throw std::runtime_error("host port should default to 27015");
+            PauseMenu portMenu;
+            portMenu.showMultiplayer(0, 0);
+            bool onPort = false;
+            for (int row = 0; row < 12 && !onPort; row++) {  // (down through the cards, typing 28123 on each row: only PORT takes it)
+                for (int sc : std::initializer_list<int>{SC_1 + 1, SC_1 + 7, SC_1 + 0, SC_1 + 1, SC_1 + 2}) portMenu.key(sc, ps);
+                if (ps.hostPort == 28123) onPort = true;
+                else portMenu.key(SC_DOWN, ps);
+            }
+            if (!onPort) throw std::runtime_error("the PORT row cannot be reached, or typing in it does not reach the setting");
+            portMenu.key(SC_A, ps);  // letters ignored
+            portMenu.key(SC_BACKSPACE, ps);
+            portMenu.key(SC_BACKSPACE, ps);
+            portMenu.key(SC_BACKSPACE, ps);  // "2812" is a port; "281" and "28" are below 1024: the setting stays the last good one
+            if (ps.hostPort != 2812) throw std::runtime_error("a half-typed port must not change the setting");
+            portMenu.key(SC_1 + 8, ps);
+            portMenu.key(SC_1 + 8, ps);
+            portMenu.key(SC_1 + 8, ps);  // "28999"
+            if (ps.hostPort != 28999) throw std::runtime_error("port retyped");
+            if (!ps.save(settingsPath) || !loaded.load(settingsPath) || loaded.hostPort != 28999) throw std::runtime_error("host port did not persist");
+            std::remove(settingsPath);
+            if (FILE* f = std::fopen(settingsPath, "w")) {
+                std::fputs("hostport 80\n", f);
+                std::fclose(f);
+            }
+            Settings low;
+            low.hostPort = 31000;
+            low.load(settingsPath);
+            if (low.hostPort != 27015) throw std::runtime_error("an out-of-range hostport should fall back to the default");
+            if (FILE* f = std::fopen(settingsPath, "w")) {
+                std::fputs("hostport 70000\nhostport abc\n", f);
+                std::fclose(f);
+            }
+            low.hostPort = 31000;
+            low.load(settingsPath);
+            if (low.hostPort != 27015) throw std::runtime_error("a garbage hostport should fall back to the default");
+            std::remove(settingsPath);
+            std::puts("PASS multiplayer menu: PORT field digits only, saved, out-of-range falls back to 27015");
+        }
         PauseMenu ambientMenu;
         ambientMenu.showPage(1, 0, 0);
         bool foundAmbience = false;

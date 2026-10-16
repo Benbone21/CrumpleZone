@@ -74,6 +74,32 @@ version"). What changed on the wire: a password handshake, a secret in every dat
 strict checks on everything received. The full review, with every finding and its fix, is in
 [server-security.md](server-security.md).
 
+## Any port
+
+Nothing is tied to 27015; it is only the default. A host (the game's, or the dedicated server)
+listens for TCP and UDP on **one game port of your choice, 1024 to 65535**. The wire protocol
+did not change (still **5**): the port is not sent anywhere but in the join address and in
+what a host announces on the LAN.
+
+| | Pick the port | Default |
+|---|---|---|
+| Game, from the menu | Multiplayer page, HOST card, **PORT** (digits only; kept in `settings.txt` as `hostport`) | 27015 |
+| Game, command line | `--host PORT` (this run only; `--host` alone uses the menu's port) | the menu's |
+| Dedicated server | `--port PORT`, or `CZ_PORT=PORT` in the environment (`--port` wins) | 27015 |
+| Joining | `IP`, `IP:PORT` or `HOST:PORT` in the ADDRESS field or `--join` (IPv4 only: one `:` at most) | 27015 |
+
+- Hosting below 1024 is refused (it needs root; the server won't run as root). A port that is
+  not a plain number from 1024 to 65535 is refused with a message, not quietly replaced.
+  Joining takes any port 1 to 65535, since a host may reach you through a forward.
+- If the port is taken (another game, another server) hosting fails with
+  "PORT N IS IN USE: PICK ANOTHER IN THE MULTIPLAYER MENU"; the server prints the same and exits.
+- Games in the JOIN list are joined on the port their host announces; you type a port only for a
+  game on another network.
+- Open or forward **the chosen port**, TCP and UDP (`PORT` below; 27015 if you left the default).
+- **LAN discovery is separate and fixed**: UDP 27016 ("who's hosting?") and 27017
+  (announcements), LAN only. Nothing to forward for them; a host's announcement carries its real
+  game port. They are off on the dedicated server unless you start it with `--lan`.
+
 ## A password
 
 Set one whenever the game is reachable from outside your own network.
@@ -109,31 +135,35 @@ For private play use a VPN (WireGuard, Tailscale) and `--bind` the server to its
 ```bash
 make build/crumplezone-server
 CZ_PASSWORD='a long random password' ./build/crumplezone-server --port 27015 --map 1 --name "Friends"
+# any other port: --port 28123, or CZ_PORT=28123 ./build/crumplezone-server ...
 ```
 
 - **Not as root.** It refuses to start as root (`--allow-root` overrides: don't). Make a user for it.
-- **Firewall: only the game port**, TCP and UDP 27015. The LAN-discovery ports (UDP 27016/27017)
-  are off on the server (`--lan` turns them on, for a server on your own network).
+- **Firewall: only the game port**, TCP and UDP `PORT` (27015 unless you chose another). The
+  LAN-discovery ports (UDP 27016/27017, fixed) are off on the server (`--lan` turns them on, for
+  a server on your own network).
+- `--port` takes 1024 to 65535 and refuses anything else (`--port 80`, `--port 99999`, `--port abc`)
+  with a message and exit code 2; so does a bad `CZ_PORT`.
 - It never writes a file and needs nothing from the network but those two sockets.
 
 Firewall examples (the server is IPv4 only; keep your SSH rule or you lock yourself out):
 
 ```bash
-# ufw
+# ufw (PORT = your game port, 27015 by default)
 sudo ufw default deny incoming && sudo ufw allow OpenSSH
-sudo ufw allow 27015/tcp && sudo ufw allow 27015/udp && sudo ufw enable
+sudo ufw allow PORT/tcp && sudo ufw allow PORT/udp && sudo ufw enable
 ```
 
 ```nft
-# /etc/nftables.conf (the same, with a limit on new connections to the game port)
+# /etc/nftables.conf (the same, with a limit on new connections to the game port; PORT = 27015 by default)
 table inet filter {
   chain input {
     type filter hook input priority 0; policy drop;
     ct state established,related accept
     iif lo accept
     tcp dport 22 accept
-    tcp dport 27015 ct state new limit rate 30/second burst 60 packets accept
-    udp dport 27015 accept
+    tcp dport PORT ct state new limit rate 30/second burst 60 packets accept
+    udp dport PORT accept
   }
 }
 ```
@@ -150,6 +180,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
+# The port: --port N below, or drop it and use Environment=CZ_PORT=28123 (27015 if neither)
 ExecStart=/opt/crumplezone/crumplezone-server --port 27015 --map 1 --name "Friends" --password-file ${CREDENTIALS_DIRECTORY}/password
 LoadCredential=password:/etc/crumplezone/password
 Restart=on-failure
@@ -194,11 +225,11 @@ journalctl -u crumplezone -f     # joins, leaves, "[net] ..." lines for what was
 systemd-analyze security crumplezone
 ```
 
-Players: `./crumplezone --join SERVER_IP:27015 --password 'the password'`.
+Players: `./crumplezone --join SERVER_IP:PORT --password 'the password'` (`:PORT` may be left off for 27015).
 
 ## Tests
 
 `./build/run_tests --jobs 4 net/` runs the multiplayer tests, including the hostile-peer ones
-(`net/sec-*`, in `tests/net_security.cpp`): wrong and right passwords, connection floods,
+(`net/sec-*`, in `tests/net_security.cpp`; `net/port-parse` and `net/custom-port` are the any-port ones): wrong and right passwords, connection floods,
 slow connections, forged and mangled messages, forged datagrams, oversized levels, and a
 fuzzer that throws thousands of random and mutated messages at a host and a client.

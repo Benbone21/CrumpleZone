@@ -28,6 +28,7 @@ struct Settings {
     std::string sessionName;    // the game you host, as others' lists show it ("" = "<NAME>'S GAME")
     std::string netPassword;    // asked of whoever joins your game, and offered to the one you join ("" = none)
     int maxPlayers = 8;         // the most in a game you host (2..8)
+    int hostPort = 27015;       // the port you host on, TCP and UDP (1024..65535; net::kDefaultPort)
     int pilotDest = 0;          // autopilot: which place (index into the menu's list)
     float pilotSpeed = 30;      // km/h
     int pilotRoute = 1;         // 0 roads only, 1 roads and trails, 2 anywhere
@@ -75,6 +76,8 @@ public:
     };
     std::vector<FoundGame> found;
     double searching = 0;                 // s the list has been looking (for the "can't see it?" help)
+    int sessionPort = 0;                  // hosting: the port it's on (for what to tell friends)
+    int joinPort = 0;                     // joining: the port being tried (for the failed card's help)
     std::string joinPick;                 // set when one is picked (JOIN then goes there)
     std::string joinLabel;                // what JOIN connects to (for the connecting card)
     // HOST: this machine's addresses (to give a friend on another network).
@@ -148,6 +151,8 @@ private:
     std::string keyNote; // keybinds page: why the last key was refused
     int page = 0;  // 0 main (or the title), 1 settings, 2 multiplayer, 3 autopilot, 4 levels, 5 jobs, 6 controller, 7 keybinds
     int sel = 0;
+    std::string portText;      // the HOST card's PORT field while it's being typed in (it can be a half-typed number)
+    bool portEdited = false, portFresh = false;  // (fresh: untouched, the first digit replaces it)
     int dragSlider = -1;
     float fade = 0;
     float caret = 0;  // text-field cursor blink

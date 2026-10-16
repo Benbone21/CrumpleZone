@@ -35,6 +35,7 @@ static bool wouldBlock() {
     const int e = WSAGetLastError();
     return e == WSAEWOULDBLOCK || e == WSAEINPROGRESS;
 }
+static bool addrInUse() { return WSAGetLastError() == WSAEADDRINUSE; }
 static void nonBlocking(int fd) {
     u_long one = 1;
     ioctlsocket((SOCKET)fd, FIONBIO, &one);
@@ -63,6 +64,7 @@ static int newSocket(int type) { return (int)socket(AF_INET, type, 0); }
 #define MSG_NOSIGNAL 0  // macOS uses the per-socket SO_NOSIGPIPE option instead.
 #endif
 static void closeSock(int fd) { ::close(fd); }
+static bool addrInUse() { return errno == EADDRINUSE; }
 static bool wouldBlock() { return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINPROGRESS; }
 static void nonBlocking(int fd) {
     fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
@@ -280,6 +282,36 @@ void eraseCar(Sim& sim, int i) {
 
 namespace net {
 
+int parsePort(const std::string& s, int minPort) {
+    if (s.empty() || s.size() > 5) return -1;
+    int v = 0;
+    for (char ch : s) {
+        if (ch < '0' || ch > '9') return -1;
+        v = v * 10 + (ch - '0');
+    }
+    return v >= std::max(minPort, 1) && v <= kMaxPort ? v : -1;
+}
+
+bool parseAddress(const std::string& address, std::string& host, int& port, std::string* why) {
+    auto no = [&](const std::string& m) {
+        if (why) *why = m;
+        return false;
+    };
+    size_t a = address.find_first_not_of(" \t"), b = address.find_last_not_of(" \t");
+    const std::string s = a == std::string::npos ? "" : address.substr(a, b - a + 1);
+    if (s.empty()) return no("no address");
+    const size_t colon = s.find(':');
+    if (colon != std::string::npos && s.find(':', colon + 1) != std::string::npos) return no("one ':' only: IPv6 isn't supported (use IP:PORT) in " + s);
+    host = colon == std::string::npos ? s : s.substr(0, colon);
+    port = kDefaultPort;
+    if (colon != std::string::npos) {
+        port = parsePort(s.substr(colon + 1));
+        if (port < 0) return no("no good port in " + s + " (1 to 65535)");
+    }
+    if (host.empty()) return no("no address");
+    return true;
+}
+
 std::string sanitize(const std::string& s, size_t maxLen) {
     std::string o;
     for (unsigned char ch : s)
@@ -447,6 +479,7 @@ void NetSession::close() {
 
 bool NetSession::host(int port, const std::string& name, int m, int maxP, const std::string& session) {
     close();
+    portInUse = false;
     netInit();
     listenFd = newSocket(SOCK_STREAM);
     udpFd = newSocket(SOCK_DGRAM);
@@ -463,8 +496,11 @@ bool NetSession::host(int port, const std::string& name, int m, int maxP, const 
     }
     if (port <= 0 || port > 65535 || listenFd < 0 || udpFd < 0 || bind(listenFd, (sockaddr*)&a, sizeof a) < 0 || listen(listenFd, 32) < 0 ||
         bind(udpFd, (sockaddr*)&a, sizeof a) < 0) {
-        error = std::string("can't open port ") + std::to_string(port) + ": " + std::strerror(errno);
+        const int e = errno;
+        const bool inUse = port > 0 && port <= 65535 && addrInUse();
+        error = inUse ? "port " + std::to_string(port) + " is in use" : std::string("can't open port ") + std::to_string(port) + ": " + std::strerror(e);
         close();
+        portInUse = inUse;
         return false;
     }
     nonBlocking(listenFd);
@@ -519,15 +555,10 @@ bool NetSession::join(const std::string& address, const std::string& name, doubl
 bool NetSession::beginJoin(const std::string& address, const std::string& name, double timeout) {
     close();
     netInit();
-    std::string hostName = address;
-    int port = net::kDefaultPort;
-    const size_t colon = address.rfind(':');
-    if (colon != std::string::npos) {
-        hostName = address.substr(0, colon);
-        port = std::atoi(address.c_str() + colon + 1);
-    }
-    if (port <= 0 || port > 65535) {
-        error = "no good port in " + address;
+    std::string hostName, why;
+    int port = 0;
+    if (!net::parseAddress(address, hostName, port, &why)) {
+        error = why;
         return false;
     }
     addrinfo hints{}, *res = nullptr;

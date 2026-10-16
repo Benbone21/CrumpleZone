@@ -19,7 +19,11 @@
 #include "softbody.h"
 
 namespace net {
-constexpr int kDefaultPort = 27015;
+constexpr int kDefaultPort = 27015;    // TCP and UDP: only the default; a host can use any port from kMinHostPort up
+constexpr int kMinHostPort = 1024;     // (below it needs root; hosting there is refused)
+constexpr int kMaxPort = 65535;
+// The two LAN-only ports are fixed (every game and finder must agree on them: a host's real game
+// port is in what it announces).
 constexpr int kDiscoveryPort = 27016;  // UDP: "who's hosting?" on the local network
 constexpr int kBeaconPort = 27017;     // UDP: hosts also announce themselves here every couple of seconds
 constexpr int kMaxPeers = 8;
@@ -50,6 +54,12 @@ struct Bucket {
     }
 };
 
+// "28123" -> 28123. -1 unless it's 1 to 5 plain digits making minPort..65535 (no sign, space or junk).
+// Joining takes any port (minPort 1); hosting wants kMinHostPort.
+int parsePort(const std::string& s, int minPort = 1);
+// "HOST" or "HOST:PORT" (a name or an IPv4 address) -> host and port (kDefaultPort with none).
+// False, and `why`, if there is no host, a second ':' (IPv6 isn't supported), or a bad port.
+bool parseAddress(const std::string& address, std::string& host, int& port, std::string* why = nullptr);
 // Text from the network, fit for the HUD font: printable ASCII only, at most `maxLen` long.
 std::string sanitize(const std::string& s, size_t maxLen);
 // HMAC-SHA-256 (the password proof), 32 bytes.
@@ -162,6 +172,8 @@ public:
     void close();
     bool active() const { return role != OFF; }
     int playerCount() const;
+    int port() const { return hostPort; }  // host: the game port it listens on (0: not hosting)
+    bool portInUse = false;                // host() failed because the port is taken
 
     // Makes the local sim part of the session. A client keeps only its own vehicle (the
     // host's parked trucks and crash props are the shared ones) and parks it beside the

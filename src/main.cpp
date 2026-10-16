@@ -91,7 +91,7 @@ struct Options {
     int resumeModel = -1;  // --resume-model: the vehicle to be in (after a reload)
     double spawnX = 0, spawnZ = 0, spawnHeading = 0;  // heading in degrees, 0 = +X
     int spawnSection = -1;        // --spawn-section N: start at the Nth obstacle section's entry (0-based, proving ground)
-    int hostPort = -1;            // --host [PORT]: open a multiplayer session
+    int hostPort = -1;            // --host [PORT]: open a multiplayer session (0: on the port in the settings)
     std::string join;             // --join HOST[:PORT]
     std::string name;             // --name NAME (multiplayer)
     std::string password;         // --password PASSWORD: for the game you host, and for the one you join
@@ -329,9 +329,25 @@ Options parseArgs(int argc, char** argv) {
         }
         else if (a == "--spawn-section") o.spawnSection = std::atoi(next().c_str());
         else if (a == "--host") {
-            o.hostPort = net::kDefaultPort;
-            if (i + 1 < argc && std::isdigit((unsigned char)argv[i + 1][0])) o.hostPort = std::atoi(argv[++i]);
-        } else if (a == "--join") o.join = next();
+            o.hostPort = 0;
+            if (i + 1 < argc && std::strncmp(argv[i + 1], "--", 2) != 0) {  // (a port, for this run only)
+                o.hostPort = net::parsePort(argv[i + 1], net::kMinHostPort);
+                if (o.hostPort < 0) {
+                    std::fprintf(stderr, "bad --host port \"%s\": a number from %d to %d (default: the PORT in the Multiplayer menu, %d)\n", argv[i + 1],
+                                 net::kMinHostPort, net::kMaxPort, net::kDefaultPort);
+                    std::exit(2);
+                }
+                i++;
+            }
+        } else if (a == "--join") {
+            o.join = next();
+            std::string host, why;
+            int port = 0;
+            if (!net::parseAddress(o.join, host, port, &why)) {
+                std::fprintf(stderr, "bad --join address: %s (use HOST or HOST:PORT)\n", why.c_str());
+                std::exit(2);
+            }
+        }
         else if (a == "--name") o.name = next();
         else if (a == "--password") o.password = next();
         else if (a == "--resume-model") o.resumeModel = std::atoi(next().c_str());
@@ -1943,6 +1959,7 @@ int main(int argc, char** argv) {
             hud.toast("HOSTING " + session + " ON " + mapName(sim.world.map) + ": FRIENDS ON YOUR NETWORK SEE IT IN JOIN");
             std::printf("hosting %s on port %d\n", mapName(sim.world.map), port);
         } else {
+            if (net.portInUse) net.error = "PORT " + std::to_string(port) + " IS IN USE: PICK ANOTHER IN THE MULTIPLAYER MENU";
             hud.toast("CAN'T HOST: " + net.error);
             std::printf("can't host: %s\n", net.error.c_str());
         }
@@ -1953,6 +1970,10 @@ int main(int argc, char** argv) {
         menu.joining = true;
         menu.joinLabel = label.empty() ? address : label;
         menu.joinError.clear();
+        {
+            std::string h;
+            if (!net::parseAddress(address, h, menu.joinPort)) menu.joinPort = net::kDefaultPort;  // (for the failed card's port help)
+        }
         net.password = !opt.password.empty() ? opt.password : settings.netPassword;
         if (net.beginJoin(address, settings.playerName)) {
             joinState = 1;
@@ -2293,7 +2314,7 @@ int main(int argc, char** argv) {
                     saveSettings();
                 }
                 closeMenu();
-                startHost(net::kDefaultPort);
+                startHost(settings.hostPort);
                 if (run.active() && net.role == NetSession::HOST) net.setLevel(saveLevelText(run.level));  // they join into it
                 break;
             case PauseMenu::JOIN:  // (a game from the network list, or the typed address)
@@ -2448,7 +2469,7 @@ int main(int argc, char** argv) {
     } else if (opt.menu >= 0) {
         openMenu();
     }
-    if (opt.hostPort > 0) startHost(opt.hostPort);
+    if (opt.hostPort >= 0) startHost(opt.hostPort > 0 ? opt.hostPort : settings.hostPort);
     else if (!opt.join.empty()) startJoin(opt.join);
     // Launched plainly (no map, spawn, session or test asked for): the title screen first.
     if (opt.newSection) {
@@ -2467,7 +2488,7 @@ int main(int argc, char** argv) {
             if (levelList[k].name.find(want) != std::string::npos) found = k;
         if (found >= 0) playLevel(levelList[found]);
         else std::printf("no level matches '%s'\n", opt.level.c_str());
-    } else if (!scripted && opt.scenario.empty() && opt.map < 0 && !opt.spawnSet && opt.hostPort <= 0 && opt.join.empty() && opt.menu < 0 && opt.resumeModel < 0) {
+    } else if (!scripted && opt.scenario.empty() && opt.map < 0 && !opt.spawnSet && opt.hostPort < 0 && opt.join.empty() && opt.menu < 0 && opt.resumeModel < 0) {
         openMenu();
         menu.showTitle(std::max(0, sim.cars[sim.player].spec->model), sim.world.map);
     }
@@ -4070,6 +4091,7 @@ int main(int argc, char** argv) {
             menu.jobStatus = jobOn ? jobStatus(job, sim, sim.cars[sim.player].frame().com) : "";
             menu.netClient = net.role == NetSession::CLIENT;
             menu.netHost = net.role == NetSession::HOST;
+            menu.sessionPort = menu.netHost ? net.port() : 0;
             menu.netStatus = !menu.netActive ? "OFFLINE"
                              : net.role == NetSession::HOST
                                  ? "HOSTING: " + std::to_string(net.playerCount()) + (net.playerCount() == 1 ? " PLAYER" : " PLAYERS")

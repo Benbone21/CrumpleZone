@@ -10,8 +10,8 @@ join a new host (and the reverse) with "different game version".
 
 | What | Port | Notes |
 |---|---|---|
-| Reliable messages (hello, spawns, lines, chatter, level) | **TCP 27015** | on every interface, or one with `--bind IP` |
-| Vehicle states | **UDP 27015** | same port number, same interfaces |
+| Reliable messages (hello, spawns, lines, chatter, level) | **TCP 27015** (or the `--port` you chose) | on every interface, or one with `--bind IP` |
+| Vehicle states | **UDP 27015** (same) | same port number, same interfaces |
 | LAN discovery (answers "who's hosting?") and announcements | UDP 27016 / 27017 | **off** on the dedicated server unless `--lan`; on in the game's own host, answered only to the local network |
 
 IPv4 only. Nothing is encrypted. A probe that connects and says nothing gets nothing back

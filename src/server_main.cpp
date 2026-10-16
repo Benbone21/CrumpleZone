@@ -2,7 +2,7 @@
 // Hosts a multiplayer session without a window or player vehicle.
 // Clients connect via --join HOST:PORT [--password PASSWORD].
 //
-// Usage: crumplezone-server --port 27015 --map 1 [--name "My Session"] [--players 8] [--password SECRET]
+// Usage: crumplezone-server [--port PORT (27015, or CZ_PORT)] --map 1 [--name "My Session"] [--players 8] [--password SECRET]
 //
 // The server hosts the session, relays vehicle states between clients, and keeps the shared
 // world (parked vehicles, crash props, everyone's vehicles for whoever joins later). It runs
@@ -35,7 +35,7 @@ void handleSignal(int /*sig*/) {
 }
 
 struct Options {
-    int port = 27015;
+    int port = net::kDefaultPort;
     int map = 1;  // mountain
     std::string name = "Crumple Zone Server";
     int maxPlayers = 8;
@@ -44,14 +44,29 @@ struct Options {
     bool bad = false;
 };
 
+// A port for the game (TCP and UDP): 1024 to 65535, plain digits.
+bool takePort(const char* what, const std::string& text, int& port, bool quiet = false) {
+    const int p = net::parsePort(text, net::kMinHostPort);
+    if (p < 0) {
+        if (!quiet) fprintf(stderr, "bad %s \"%s\": the port must be a number from %d to %d (default %d)\n", what, text.c_str(), net::kMinHostPort, net::kMaxPort,
+                net::kDefaultPort);
+        return false;
+    }
+    port = p;
+    return true;
+}
+
 Options parseArgs(int argc, char** argv) {
     Options opts;
     if (const char* env = std::getenv("CZ_PASSWORD")) opts.password = env;  // (not in `ps`, unlike --password)
+    const char* env = std::getenv("CZ_PORT");
+    bool envBad = env && *env && !takePort("CZ_PORT", env, opts.port, true);  // (--port overrides it, so it's only a problem if nothing does)
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
         const bool more = i + 1 < argc;
         if (arg == "--port" && more) {
-            opts.port = atoi(argv[++i]);
+            if (!takePort("--port", argv[++i], opts.port)) opts.bad = true;
+            else envBad = false;
         } else if (arg == "--map" && more) {
             opts.map = atoi(argv[++i]);
         } else if (arg == "--name" && more) {
@@ -70,7 +85,8 @@ Options parseArgs(int argc, char** argv) {
             opts.allowRoot = true;
         } else if (arg == "--help") {
             printf("Usage: crumplezone-server [OPTIONS]\n");
-            printf("  --port PORT      TCP/UDP port (default 27015)\n");
+            printf("  --port PORT      TCP/UDP game port, any from %d to %d (default %d; or the CZ_PORT variable)\n", net::kMinHostPort, net::kMaxPort,
+                   net::kDefaultPort);
             printf("  --map MAP        Map number: 0 proving ground, 1 mountain,\n");
             printf("                   2 freeway, 3 frontier, 4 backcountry (default 1)\n");
             printf("  --name NAME      Session name in lobby (default \"Crumple Zone Server\")\n");
@@ -89,6 +105,7 @@ Options parseArgs(int argc, char** argv) {
             opts.bad = true;
         }
     }
+    if (envBad) takePort("CZ_PORT", env, opts.port), opts.bad = true;  // (says why)
     return opts;
 }
 
@@ -107,8 +124,8 @@ int main(int argc, char** argv) {
         while (!line.empty() && (line.back() == '\r' || line.back() == '\n' || line.back() == ' ')) line.pop_back();
         opts.password = line;
     }
-    if (opts.port < 1 || opts.port > 65535 || opts.map < 0 || opts.map >= MAP_COUNT || opts.maxPlayers < 2 || opts.maxPlayers > net::kMaxPeers) {
-        fprintf(stderr, "bad option: port 1..65535, map 0..%d, players 2..%d\n", MAP_COUNT - 1, net::kMaxPeers);
+    if (opts.map < 0 || opts.map >= MAP_COUNT || opts.maxPlayers < 2 || opts.maxPlayers > net::kMaxPeers) {
+        fprintf(stderr, "bad option: map 0..%d, players 2..%d\n", MAP_COUNT - 1, net::kMaxPeers);
         return 2;
     }
     if (geteuid() == 0 && !opts.allowRoot) {
@@ -151,7 +168,8 @@ int main(int argc, char** argv) {
     net.discovery = opts.lan;
     net.bindAddress = opts.bind;
     if (!net.host(opts.port, "SERVER", opts.map, opts.maxPlayers, sessionName)) {
-        fprintf(stderr, "Failed to host on port %d: %s\n", opts.port, net.error.c_str());
+        if (net.portInUse) fprintf(stderr, "Port %d is in use: pick another with --port PORT (or CZ_PORT)\n", opts.port);
+        else fprintf(stderr, "Failed to host on port %d: %s\n", opts.port, net.error.c_str());
         return 1;
     }
     net.adopt(sim);  // (so what the guests spawn is kept, and told to whoever joins later)
