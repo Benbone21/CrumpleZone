@@ -60,6 +60,7 @@ struct Options {
     // Scripted capture (for testing): fixed 60 Hz steps, writes PPM screenshots.
     std::string shotPrefix;
     std::set<int> shotFrames;
+    std::map<int, std::vector<int>> press;  // --press FRAME:SCANCODE,...: tap these keys on those frames (testing the key path)
     std::string script;  // "", "drive", "left"
     int camera = 0;
     int debug = 0;
@@ -269,6 +270,12 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--shot-frames") {
             std::string s = next();
             for (char* t = std::strtok(&s[0], ","); t; t = std::strtok(nullptr, ",")) o.shotFrames.insert(std::atoi(t));
+        } else if (a == "--press") {
+            std::string s = next();
+            for (char* t = std::strtok(&s[0], ","); t; t = std::strtok(nullptr, ",")) {
+                int f = 0, sc = 0;
+                if (std::sscanf(t, "%d:%d", &f, &sc) == 2) o.press[f].push_back(sc);
+            }
         } else if (a == "--script") o.script = next();
         else if (a == "--camera") o.camera = std::atoi(next().c_str());
         else if (a == "--debug-view") o.debug = std::atoi(next().c_str());
@@ -1601,6 +1608,7 @@ int main(int argc, char** argv) {
         SDL_GL_SetSwapInterval(settings.vsync && opt.vsync && !scripted ? 1 : 0);
         sim.realRecovery = settings.realRecovery;
         for (Car& c : sim.cars) if (!c.remote) c.winchSpeed = settings.winchSpeed;
+        sim.steeringAssist = settings.steeringAssist;
     };
     auto saveSettings = [&]() {
         if (!scripted) settings.save(settingsPath);
@@ -2257,6 +2265,22 @@ int main(int argc, char** argv) {
             return SDL_PollEvent(&ev) != 0;
         };
 
+        if (!opt.press.empty()) {  // (testing: real key events through SDL's queue, a press and its release in one frame)
+            static bool menuWas = false;
+            if (menu.open != menuWas) std::printf("press-test: frame %d menu %s\n", frame, menu.open ? "OPEN" : "CLOSED");
+            menuWas = menu.open;
+            const auto it = opt.press.find(frame);
+            if (it != opt.press.end())
+                for (int sc : it->second)
+                    for (int down = 1; down >= 0; down--) {
+                        SDL_Event ke;
+                        std::memset(&ke, 0, sizeof ke);
+                        ke.type = down ? SDL_KEYDOWN : SDL_KEYUP;
+                        ke.padding[12] = (uint8_t)down;
+                        std::memcpy(ke.padding + 16, &sc, 4);
+                        SDL_PushEvent(&ke);
+                    }
+        }
         SDL_Event e;
         while (nextEvent(e)) {
             {  // ---- gamepad: hot-plug and buttons; the keyboard and mouse take the HUD hints back ----
@@ -2342,6 +2366,9 @@ int main(int argc, char** argv) {
                         break;
                     }
                     if (evKeyRepeat(e)) break;
+                    // The key as the in-game switch knows it: the player's keyboard bindings turned back into
+                    // the default keys the switch is written against (a gamepad press already is one).
+                    const int gsc = settings.keys.gameKey(evKeyScancode(e), fromPad);
                     if (garageUI.open) {
                         const auto sc = evKeyScancode(e);
                         int& pk = garageUI.pick.pick[garageUI.slot];
@@ -2364,7 +2391,7 @@ int main(int argc, char** argv) {
                         break;
                     }
                     if (winchAim.on) {  // recovery picker owns keyboard confirmation/cancel
-                        const int sc = evKeyScancode(e);
+                        const int sc = gsc;
                         if (sc == SC_BACKSPACE && winchAim.kind == ROPE_STRAP && winchAim.sourceHook >= 0) {
                             winchAim.sourceHook = -1;
                             winchAim.update(sim, lastView);
@@ -2383,10 +2410,17 @@ int main(int argc, char** argv) {
                         coop.draft.clear();
                         break;
                     }
-                    switch (evKeyScancode(e)) {
-                        case SC_ESCAPE:
+                    switch (gsc) {
+                        case SC_ESCAPE:  // (the pause menu: Esc on the keyboard, Start on the pad, the MENU key if rebound)
                             if (hud.showHelp) hud.showHelp = false;
                             else openMenu();
+                            break;
+                        case SC_F4:  // steering assist (rebindable)
+                            sim.steeringAssist = !sim.steeringAssist;
+                            settings.steeringAssist = sim.steeringAssist;
+                            saveSettings();
+                            hud.toast(sim.steeringAssist ? "STEERING ASSIST ON (LIMITED AT HIGH SPEED)"
+                                                         : "STEERING ASSIST OFF (FULL LOCK AT ALL SPEEDS)");
                             break;
                         case SC_R:
                             // R: fixed up where it stands. R twice quickly: back to where it started
@@ -2420,7 +2454,7 @@ int main(int argc, char** argv) {
                         case SC_MINUS:
                         case SC_EQUALS: {  // winch speed
                             Car& c = sim.cars[sim.player];
-                            settings.winchSpeed = recovery::adjustWinchSpeed(settings.winchSpeed, evKeyScancode(e) == SC_EQUALS ? 1 : -1);
+                            settings.winchSpeed = recovery::adjustWinchSpeed(settings.winchSpeed, gsc == SC_EQUALS ? 1 : -1);
                             for (Car& car : sim.cars) if (!car.remote) car.winchSpeed = settings.winchSpeed;
                             char t[64];
                             std::snprintf(t, sizeof t, "WINCH SPEED %.2gX (UP TO %.2f M/S)", c.winchSpeed, recovery::kWinchSpeed * c.winchSpeed);
@@ -2519,7 +2553,7 @@ int main(int argc, char** argv) {
                         case SC_5:
                         case SC_6:
                         case SC_7: {
-                            size_t idx = evKeyScancode(e) - SC_1;
+                            size_t idx = gsc - SC_1;
                             if (idx < vehicleCatalog().size()) {
                                 sim.swapPlayerVehicle(garage.spec((int)idx));
                                 hud.toast(std::string("NOW DRIVING ") + vehicleCatalog()[idx].name);
@@ -2537,7 +2571,7 @@ int main(int argc, char** argv) {
                         case SC_Q: {
                             if (cam.mode == 3 || walker.active) break;  // (flying the drone / on foot: Q E aren't the gears)
                             Car& c = sim.cars[sim.player];
-                            if (c.shift(evKeyScancode(e) == SC_E ? 1 : -1) && !c.manualShift) {
+                            if (c.shift(gsc == SC_E ? 1 : -1) && !c.manualShift) {
                                 c.manualShift = true;  // taking over the gears switches to manual
                                 hud.toast("MANUAL SHIFTING (SHIFT+M FOR AUTOMATIC)");
                             }
@@ -2581,7 +2615,7 @@ int main(int argc, char** argv) {
                         }
                         case SC_F:
                         case SC_B: {  // lockers (on foot, F: the fuel can)
-                            if (walker.active && evKeyScancode(e) == SC_F) {
+                            if (walker.active && gsc == SC_F) {
                                 {  // pour your truck's spare can into the nearest vehicle
                                     Car& mine = sim.cars[sim.player];
                                     if (mine.jerry <= 0.5) {
@@ -2619,7 +2653,7 @@ int main(int argc, char** argv) {
                                 }
                             }
                             Car& c = sim.cars[sim.player];
-                            const bool front = evKeyScancode(e) == SC_F;
+                            const bool front = gsc == SC_F;
                             const char* which = front ? "FRONT" : "REAR";
                             if (c.isProp() || !(front ? c.spec->lockerFront : c.spec->lockerRear)) {
                                 hud.toast(std::string("NO ") + which + " LOCKER" + (front && c.spec->transfer != XFER_NONE ? " (GARAGE: LOCKERS)" : ""));
@@ -2718,8 +2752,10 @@ int main(int argc, char** argv) {
         }
 
         const uint8_t* keys = SDL_GetKeyboardState(nullptr);
-        bool up = keys[SC_W] || keys[SC_UP], down = keys[SC_S] || keys[SC_DOWN];
-        bool left = keys[SC_A] || keys[SC_LEFT], right = keys[SC_D] || keys[SC_RIGHT], hb = keys[SC_SPACE];
+        const Keybinds& kb = settings.keys;
+        bool up = keys[kb.key(KA_THROTTLE)] || keys[SC_UP], down = keys[kb.key(KA_BRAKE)] || keys[SC_DOWN];
+        bool left = keys[kb.key(KA_STEER_LEFT)] || keys[SC_LEFT], right = keys[kb.key(KA_STEER_RIGHT)] || keys[SC_RIGHT];
+        bool hb = keys[kb.key(KA_HANDBRAKE)];
         const bool shiftHeld = keys[SC_LSHIFT] || keys[SC_RSHIFT];
         int winch = keys[SC_Z] ? (shiftHeld ? -1 : 1) : 0;
         int airing = keys[SC_9] ? -1 : keys[SC_0] ? 1 : 0;

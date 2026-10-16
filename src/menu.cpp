@@ -67,6 +67,7 @@ bool Settings::load(const std::string& path) {
         else if (k == "vsync") vsync = v != 0;
         else if (k == "adaptive") adaptiveQuality = v != 0;
         else if (k == "fps") showFps = v != 0;
+        else if (k == "steeringassist") steeringAssist = v != 0;
         else if (k == "shadows") gfx.shadows = std::min(std::max((int)v, 0), 3);
         else if (k == "msaa") gfx.msaa = (int)v;
         else if (k == "ao") gfx.ao = v != 0;
@@ -87,8 +88,10 @@ bool Settings::load(const std::string& path) {
         else if (k == "padsteer") padSteering = std::min(std::max((int)v, 0), 2);
         else if (k == "paddead") padDeadzone = std::min(std::max((int)v, 0), 2);
         else if (k == "padrumble") padRumble = std::min(std::max((int)v, 0), 2);
+        else if (keys.loadSetting(k, std::atoi(text))) {}
     }
     std::fclose(f);
+    keys.sanitize();
     return true;
 }
 
@@ -97,8 +100,8 @@ bool Settings::save(const std::string& path) const {
     if (!dir.empty()) makeDir(dir);
     FILE* f = std::fopen(path.c_str(), "w");
     if (!f) return false;
-    std::fprintf(f, "mph %d\nvolume %.2f\nfov %.0f\nfullscreen %d\nvsync %d\nfps %d\n", mph, volume, fovDeg, fullscreen,
-                 vsync, showFps);
+    std::fprintf(f, "mph %d\nvolume %.2f\nfov %.0f\nfullscreen %d\nvsync %d\nfps %d\nsteeringassist %d\n", mph, volume,
+                 fovDeg, fullscreen, vsync, showFps, steeringAssist);
     std::fprintf(f, "shadows %d\nmsaa %d\nao %d\nbloom %d\nclouds %d\nscale %.2f\ngrass %d\nmap %d\n", gfx.shadows,
                  gfx.msaa, gfx.ao, gfx.bloom, gfx.clouds, gfx.renderScale, gfx.grass, map);
     std::fprintf(f, "recovery %d\nmusic %.2f\nambience %.2f\nfuel %d\n", realRecovery, music, ambience, fuelMode);
@@ -113,6 +116,8 @@ bool Settings::save(const std::string& path) const {
     std::fprintf(f, "pilotdest %d\npilotspeed %.0f\npilotroute %d\n", pilotDest, pilotSpeed, pilotRoute);
     std::fprintf(f, "timeofday %d\ndaylength %.0f\nclock %.2f\n", timeOfDay, dayMinutes, clockHours);
     std::fprintf(f, "padsteer %d\npaddead %d\npadrumble %d\n", padSteering, padDeadzone, padRumble);
+    for (int a = 0; a < KA_COUNT; a++) std::fprintf(f, "%s %d\n", settingsName((KeyAction)a), keys.code[a]);
+
     std::fclose(f);
     return true;
 }
@@ -177,6 +182,7 @@ enum Id {
     FREEDRIVE_ROW, LEVELS_ROW, LEVEL_PICK, LEVEL_PLAY, LEVEL_EDIT, EDITOR_ROW, LRESTART_ROW, LQUIT_ROW, MAINMENU_ROW,
     JOBS_ROW, JOB_PICK, JOB_GO, JOB_STOP_ROW, MEET_ROW, CONTROLLER_ROW,
     SESSION_ROW, HMAP_ROW, HMAX_ROW, CANCEL_ROW,
+    STEERING, KEYBINDS_ROW, KEYS_RESET, KEY_ROW0, KEY_ROWN = KEY_ROW0 + KA_COUNT,
 };
 const char* kOffOn[2] = {"OFF", "ON"};
 
@@ -232,6 +238,15 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
         choice(PADDEAD, "STICK DEADZONE", pad::kDeadzoneNames[std::min(std::max(s.padDeadzone, 0), 2)], 3,
                "RAISE IT IF THE CAR DRIFTS WITH YOUR HANDS OFF");
         choice(PADRUMBLE, "RUMBLE", pad::kRumbleNames[std::min(std::max(s.padRumble, 0), 2)], 3, "BUMPS, SLIDES AND THE REV LIMITER");
+        button(KEYBINDS_ROW, "KEYBOARD KEYBINDS", "REMAP THE DRIVING KEYS");
+        button(BACK_ROW, "BACK");
+        return r;
+    }
+    if (page == 7) {  // the keyboard's remappable keys (the controller has its own fixed layout)
+        header(listening >= 0 ? "PRESS THE NEW KEY  (ESC CANCELS)" : keyNote.empty() ? "ENTER ON A ROW, THEN PRESS A KEY" : keyNote.c_str());
+        for (int a = 0; a < KA_COUNT; a++)
+            button(KEY_ROW0 + a, actionLabel((KeyAction)a), listening == a ? "PRESS A KEY..." : keyName(s.keys.key((KeyAction)a)));
+        button(KEYS_RESET, "RESET TO DEFAULTS", s.keys.isDefault() ? "" : "W A S D, SPACE, E Q, ESC...");
         button(BACK_ROW, "BACK");
         return r;
     }
@@ -376,6 +391,8 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
     choice(UNITS, "SPEED UNITS", s.mph ? "MPH" : "KM/H", 2);
     choice(RECOVERY, "RECOVERY", s.realRecovery ? "REAL" : "ARCADE", 2,
            s.realRecovery ? "DAMAGE STAYS: TOW OR DRIVE TO A REPAIR STATION" : "T FIXES EVERYTHING WHERE YOU ARE");
+    choice(STEERING, "STEERING ASSIST", kOffOn[s.steeringAssist], 2,
+           s.steeringAssist ? "LIMITS TURNING AT HIGH SPEED (SAFE)" : "FULL LOCK AT ALL SPEEDS (SIMULATION)");
     {
         static const char* fuel[3] = {"OFF", "REAL", "FAST"};
         choice(FUEL, "FUEL", fuel[std::min(std::max(s.fuelMode, 0), 2)], 3);
@@ -421,7 +438,7 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
         choice(PHYSICSTHREADS, "PHYSICS THREADS", value, available + 1,
                "1: SINGLE THREAD. ALL: USE EVERY CPU THREAD. MORE MAY NOT BE FASTER.");
     }
-    button(CONTROLLER_ROW, "CONTROLLER", "STEERING, DEADZONE, RUMBLE");
+    button(CONTROLLER_ROW, "CONTROLLER", "STEERING, DEADZONE, RUMBLE, KEYBINDS");
     button(BACK_ROW, "BACK");
     return r;
 }
@@ -448,6 +465,8 @@ void PauseMenu::show(int currentVehicle, int currentMap) {
     open = true;
     title = false;
     page = 0;
+    listening = -1;
+    keyNote.clear();
     sel = 0;
     fade = 0;
     dragSlider = -1;
@@ -533,6 +552,8 @@ PauseMenu::Result PauseMenu::activate(int row, Settings& s) {
         case DEST_ROW: return {PILOT_GO};
         case PSTOP_ROW: return {PILOT_STOP};
         case CONTROLS_ROW: return {CONTROLS};
+        case KEYBINDS_ROW: listening = -1, keyNote.clear(); goPage(7, KEY_ROW0); return {};
+        case KEYS_RESET: s.keys.resetDefaults(); listening = -1, keyNote.clear(); return {CHANGED};
         case RESET_ROW: return {RESET};
         case QUIT_ROW: return {QUIT};
         case BACK_ROW:
@@ -540,8 +561,14 @@ PauseMenu::Result PauseMenu::activate(int row, Settings& s) {
                 goPage(1, CONTROLLER_ROW);
                 return {};
             }
+            if (page == 7) {
+                listening = -1, keyNote.clear();
+                goPage(6, KEYBINDS_ROW);
+                return {};
+            }
             goPage(0, page == 2 ? MULTI_ROW : page == 3 ? PILOT_ROW : page == 4 ? LEVELS_ROW : page == 5 ? JOBS_ROW : SETTINGS_ROW); return {};
         case HOST_ROW: return {HOST};
+        case KEY_ROW0 ... KEY_ROWN - 1: listening = it.id - KEY_ROW0, keyNote.clear(); return {};
         case JOIN_ROW:
         case ADDRESS_ROW:
             if (s.joinAddress.empty()) return {};
@@ -583,6 +610,7 @@ PauseMenu::Result PauseMenu::change(int row, int dir, Settings& s) {
         case UNITS: s.mph = !s.mph; break;
         case RECOVERY: s.realRecovery = !s.realRecovery; break;
         case FUEL: s.fuelMode = cycle(std::min(std::max(s.fuelMode, 0), 2)); break;
+        case STEERING: s.steeringAssist = !s.steeringAssist; break;
         case TIMEOFDAY: {
             const int t = cycle(todIndex(s));
             s.timeOfDay = t < 5 ? (int)TOD_CYCLE : t - 4;
@@ -656,6 +684,31 @@ PauseMenu::Result PauseMenu::key(int sc, Settings& s) {
         return best >= 0;
     };
     if (page == 2 && joining && (sc == SC_ESCAPE || sc == SC_BACKSPACE)) return {CANCEL_JOIN};
+    if (page == 7 && listening >= 0) {  // the keybinds page waiting for a key: this press is the binding
+        const KeyAction a = (KeyAction)listening;
+        if (sc == SC_ESCAPE && a != KA_MENU) {  // (Esc is never a binding: it cancels. The MENU row can be put back to Esc with Backspace)
+            listening = -1;
+            keyNote.clear();
+            return {};
+        }
+        if (sc == SC_ESCAPE || sc == SC_BACKSPACE) {  // (MENU: back to Esc alone)
+            if (a == KA_MENU) s.keys.bind(a, SC_ESCAPE);
+            listening = -1;
+            keyNote.clear();
+            return {CHANGED};
+        }
+        if (!bindable(sc)) {
+            keyNote = "THAT KEY CAN'T BE USED";
+            return {};
+        }
+        if (!s.keys.bind(a, sc)) {
+            keyNote = "KEY IN USE: PICK A FREE KEY FOR THE MENU";
+            return {};
+        }
+        listening = -1;
+        keyNote.clear();
+        return {CHANGED};
+    }
     // Typing into a text field: letters, digits, '.', '-', ':' (shift + ';'); backspace.
     {
         std::vector<Row> r = rows(s);
@@ -928,7 +981,7 @@ void PauseMenu::draw(Renderer& r, const Settings& s, int W, int H, double dt) {
     pill(r, x, y, w, h, 0.03f, 0.035f, 0.045f, (this->title ? 0.82f : 0.9f) * a);
     r.rect(x + pad, y + pad + 8 * title + 8 * u, w - 2 * pad, 2 * u, 1.0f, 0.75f, 0.3f, 0.8f * a);
     label(r, x + pad, y + pad, title,
-          page == 0 ? (this->title ? "MAIN MENU" : "PAUSED") : page == 1 ? "SETTINGS" : page == 3 ? "AUTOPILOT" : page == 4 ? "LEVELS" : page == 5 ? "JOBS" : "CONTROLLER",
+          page == 0 ? (this->title ? "MAIN MENU" : "PAUSED") : page == 1 ? "SETTINGS" : page == 3 ? "AUTOPILOT" : page == 4 ? "LEVELS" : page == 5 ? "JOBS" : page == 7 ? "KEYBINDS" : "CONTROLLER",
           1.0f, 0.75f, 0.3f, a);
     if (page == 0 && !this->title) {
         const char* tag = "CRUMPLE ZONE";

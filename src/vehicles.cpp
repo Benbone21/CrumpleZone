@@ -293,7 +293,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         jesko.hubMass = 17;
         jesko.frontSusp = WISHBONE;
         jesko.rearSusp = WISHBONE;
-        jesko.rideFreqFront = 2.1;  // stiff track springs
+        jesko.rideFreqFront = 2.1;  // stiff track springs (editor-ui's 2.3 / 2.45 / 0.50 made it scrape and wander at 250+ km/h: freeway/top-speed)
         jesko.rideFreqRear = 2.25;
         jesko.dampingRatio = 0.48;
         // Koenigsegg's Triplex: a third, horizontal damper and spring across each axle that
@@ -302,11 +302,11 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         jesko.heaveRate = 150000;
         jesko.heaveGap = 0.008;
         jesko.heaveDamping = 22000;  // well damped: it mustn't bounce the car off a kerb
-        jesko.arbFront = 16000;  // roll stiffness biased to the heavy rear (42/58)
-        jesko.arbRear = 18000;
+        jesko.arbFront = 18000;  // very stiff anti-roll bars for high-speed cornering
+        jesko.arbRear = 20000;
         jesko.tireGrip = 1.32;  // Michelin Cup 2 R
         jesko.tireType = TIRE_SEMI_SLICK;
-        jesko.lateralGrip = 1.0;  // semi-slick Cup 2 R: corners as hard as it brakes (~1.2 g at skidpad speed)
+        jesko.lateralGrip = 1.0;  // semi-slick Cup 2 R: corners as hard as it brakes (~1.2 g at skidpad speed; editor-ui's 1.15 spun it off the freeway at 330 km/h)
         jesko.drive = VehicleSpec::RWD;
         jesko.diffFront = DIFF_OPEN;
         jesko.diffRear = DIFF_LSD;  // electronic differential

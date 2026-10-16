@@ -29,6 +29,8 @@ enum {
     B_SAVE = 500, B_OPEN, B_PLAY, B_UNDO, B_REDO, B_EXIT, B_NEWMAP,
     B_RAD_DN = 600, B_RAD_UP, B_STR_DN, B_STR_UP, B_SOFT, B_DEPTH_DN, B_DEPTH_UP, B_DRY,
     B_SIZE_DN, B_SIZE_UP, B_TREE, B_YAW_DN, B_YAW_UP, B_PITCH_DN, B_PITCH_UP, B_SLAB, B_W_DN, B_W_UP, B_LEN_DN, B_LEN_UP,
+    B_OFFSET_DN, B_OFFSET_UP,
+    B_OBJPROP = 900,    // + property index for object editor
     B_GATEW_DN, B_GATEW_UP, B_DELETE, B_EARLIER, B_LATER,
     B_SET = 700,             // + settings row (click selects it)
     B_FILE = 800,            // + file index
@@ -134,11 +136,7 @@ void Editor::wheel(int dy) {
         fileSel = std::min(std::max(fileSel - dy, 0), std::max(0, (int)files.size() - 1));
         return;
     }
-    if (tool == SCULPT || tool == PAINT || (tool == WATER)) {
-        radius = clampd(radius * std::pow(1.12, dy), 1.0, 60.0);
-        return;
-    }
-    // Otherwise: fly in the direction looked.
+    // Mouse wheel zooms (flies in the direction looked).
     const View v = view(W, H);
     eye += norm(v.target - v.eye) * (dy * 4.0);
 }
@@ -175,7 +173,10 @@ LevelObject Editor::makeObject(const V3& at) const {
             break;
         case OBJ_STATION: o.name = "REPAIR SHOP"; break;
     }
-    return core.grounded(o);
+    o = core.grounded(o);
+    // Apply vertical offset (positive = up into the sky, negative = down into the ground).
+    o.p.y += objOffset;
+    return o;
 }
 
 void Editor::click() {
@@ -381,27 +382,47 @@ void Editor::key(int sc) {
         else if (sc == SC_RETURN && setRow == 0) typing = true;
         return;
     }
-    // Turning the selection or the next thing placed.
-    const double turn = shift ? M_PI / 36 : M_PI / 12;
+    // Q/E: brush/object size (Shift+Q/E: turn the selection).
     if (sc == SC_Q || sc == SC_E) {
-        const double d = sc == SC_Q ? turn : -turn;
-        if (tool == OBJECTS && sel.kind == EditPick::OBJECT) {
-            LevelObject o = core.level.objects[sel.index];
-            if (o.kind == OBJ_LOG) {
-                const V3 m = (o.p + o.p2) * 0.5, half = o.p2 - m;
-                const V3 r(half.x * std::cos(d) + half.z * std::sin(d), 0, -half.x * std::sin(d) + half.z * std::cos(d));
-                o.p = m - r, o.p2 = m + r;
+        if (shift) {
+            // Shift+Q/E: turn the selection or the next thing placed.
+            const double turn = M_PI / 12;
+            const double d = sc == SC_Q ? turn : -turn;
+            if (tool == OBJECTS && sel.kind == EditPick::OBJECT) {
+                LevelObject o = core.level.objects[sel.index];
+                if (o.kind == OBJ_LOG) {
+                    const V3 m = (o.p + o.p2) * 0.5, half = o.p2 - m;
+                    const V3 r(half.x * std::cos(d) + half.z * std::sin(d), 0, -half.x * std::sin(d) + half.z * std::cos(d));
+                    o.p = m - r, o.p2 = m + r;
+                }
+                o.yaw += d;
+                core.setObject(sel.index, core.grounded(o), "turn");
+            } else if (tool == COURSE && sel.kind == EditPick::GATE) {
+                Gate g = core.level.gates[sel.index];
+                g.yaw += d;
+                core.setGate(sel.index, g, "turn");
+            } else if (tool == COURSE && sel.kind == EditPick::START) {
+                core.setStart(core.level.start.x, core.level.start.z, core.level.startYaw + d);
+            } else {
+                objYaw += d;
             }
-            o.yaw += d;
-            core.setObject(sel.index, core.grounded(o), "turn");
-        } else if (tool == COURSE && sel.kind == EditPick::GATE) {
-            Gate g = core.level.gates[sel.index];
-            g.yaw += d;
-            core.setGate(sel.index, g, "turn");
-        } else if (tool == COURSE && sel.kind == EditPick::START) {
-            core.setStart(core.level.start.x, core.level.start.z, core.level.startYaw + d);
         } else {
-            objYaw += d;
+            // Q/E: brush size (sculpt/paint/water) or object size.
+            if (tool == SCULPT || tool == PAINT || tool == WATER) {
+                radius = clampd(radius * (sc == SC_Q ? 0.85 : 1.18), 1.0, 60.0);
+            } else if (tool == OBJECTS) {
+                if (objKind == OBJ_ROCK) {
+                    rockSize = clampd(rockSize * (sc == SC_Q ? 0.85 : 1.15), 0.3, 4.0);
+                } else if (objKind == OBJ_TREE) {
+                    treeHeight = clampd(treeHeight * (sc == SC_Q ? 0.85 : 1.15), 3.0, 30.0);
+                } else if (objKind == OBJ_LOG) {
+                    logR = clampd(logR * (sc == SC_Q ? 0.85 : 1.15), 0.1, 0.8);
+                } else if (objKind == OBJ_BOX) {
+                    boxLen = clampd(boxLen * (sc == SC_Q ? 0.85 : 1.15), 0.5, 40.0);
+                    boxWidth = clampd(boxWidth * (sc == SC_Q ? 0.85 : 1.15), 0.5, 30.0);
+                    boxHeight = clampd(boxHeight * (sc == SC_Q ? 0.85 : 1.15), 0.1, 4.0);
+                }
+            }
         }
     }
 }
@@ -452,6 +473,31 @@ void Editor::doButton(int id) {
     }
     if (id >= B_FILE && id < B_FILE + (int)files.size()) {
         openFile(files[id - B_FILE]);
+        return;
+    }
+    // Object editor properties.
+    if (id >= B_OBJPROP && sel.kind == EditPick::OBJECT && sel.index < (int)core.level.objects.size()) {
+        LevelObject ob = core.level.objects[sel.index];
+        const int prop = id - B_OBJPROP;
+        switch (prop) {
+            case 1: ob.p.x -= 0.5; break;
+            case 2: ob.p.x += 0.5; break;
+            case 3: ob.p.y -= 0.5; break;
+            case 4: ob.p.y += 0.5; break;
+            case 5: ob.p.z -= 0.5; break;
+            case 6: ob.p.z += 0.5; break;
+            case 7: ob.size.z = clampd(ob.size.z - 0.25, 0.25, 15.0); break;
+            case 8: ob.size.z = clampd(ob.size.z + 0.25, 0.25, 15.0); break;
+            case 9: ob.size.y = clampd(ob.size.y - 0.25, 0.05, 5.0); break;
+            case 10: ob.size.y = clampd(ob.size.y + 0.25, 0.05, 5.0); break;
+            case 11: ob.size.x = clampd(ob.size.x - 0.25, 0.25, 20.0); break;
+            case 12: ob.size.x = clampd(ob.size.x + 0.25, 0.25, 20.0); break;
+            case 13: ob.yaw -= M_PI / 36; break;
+            case 14: ob.yaw += M_PI / 36; break;
+            case 15: ob.pitch = clampd(ob.pitch - M_PI / 36, -0.6, 0.6); break;
+            case 16: ob.pitch = clampd(ob.pitch + M_PI / 36, -0.6, 0.6); break;
+        }
+        core.setObject(sel.index, ob, "edit");
         return;
     }
     auto bump = [](double& v, double f, double lo, double hi) { v = clampd(v * f, lo, hi); };
@@ -528,6 +574,12 @@ void Editor::doButton(int id) {
             if (objKind == OBJ_LOG) bump(logLen, 1.2, 1, 20);
             else bump(boxLen, 1.2, 0.5, 40);
             break;
+        case B_OFFSET_DN:
+            objOffset = clampd(objOffset - 0.5, -5.0, 15.0);
+            break;
+        case B_OFFSET_UP:
+            objOffset = clampd(objOffset + 0.5, -5.0, 15.0);
+            break;
         case B_GATEW_DN:
         case B_GATEW_UP: {
             gateWidth = clampd(gateWidth + (id == B_GATEW_UP ? 2 : -2), 4, 40);
@@ -567,7 +619,7 @@ void Editor::update(double dt, const uint8_t* keys, Renderer& r, int w, int h) {
     toastTime = std::max(0.0, toastTime - dt);
     shift = keys[SC_LSHIFT] || keys[SC_RSHIFT];
     ctrl = keys[224] || keys[228];
-    // Fly (WASD, Q/E down/up unless turning something; faster with shift and higher up).
+    // Fly (WASD, Q/E turn, Space up, Shift fast, higher = faster).
     if (!typing && !fileOpen && !ctrl && tool != SETTINGS) {
         const double ground = core.world->height(eye.x, eye.z);
         const double speed = (12 + std::max(0.0, eye.y - ground) * 0.8) * (shift ? 3 : 1);
@@ -575,15 +627,10 @@ void Editor::update(double dt, const uint8_t* keys, Renderer& r, int w, int h) {
         V3 move;
         if (keys[SC_W] || keys[SC_UP]) move += f;
         if (keys[SC_S] || keys[SC_DOWN]) move -= f;
-        if (keys[SC_A] || keys[SC_LEFT]) move += l;
-        if (keys[SC_D] || keys[SC_RIGHT]) move -= l;
-        const bool turning = (tool == OBJECTS && sel.kind == EditPick::OBJECT) || (tool == COURSE && sel.kind != EditPick::NONE);
-        if (!turning) {
-            if (keys[SC_E] || keys[SC_SPACE]) move.y += 1;
-            if (keys[SC_Q]) move.y -= 1;
-        } else if (keys[SC_SPACE]) {
-            move.y += 1;
-        }
+        if (keys[SC_A] || keys[SC_LEFT]) move -= l;
+        if (keys[SC_D] || keys[SC_RIGHT]) move += l;
+        if (keys[SC_E] || keys[SC_SPACE]) move.y += 1;
+        if (keys[SC_Q]) move.y -= 1;
         if (len(move) > 0) eye += norm(move) * (speed * dt);
         eye.y = std::max(eye.y, core.world->height(eye.x, eye.z) + 1.5);
         eye.x = clampd(eye.x, -World::kHalfSize + 5, World::kHalfSize - 5);
@@ -828,13 +875,28 @@ void Editor::drawOptions(Renderer& r, float u) {
                 y += bh + 4 * u;
             }
             row("TURN", std::to_string((int)std::lround(std::fmod(objYaw * 180 / M_PI + 3600, 360))) + " DEG", B_YAW_DN, B_YAW_UP);
-            if (sel.kind != EditPick::NONE) {
+            row("OFFSET (UP/DOWN)", fmt1(objOffset, " M"), B_OFFSET_DN, B_OFFSET_UP);
+            if (sel.kind == EditPick::OBJECT && sel.index < (int)core.level.objects.size()) {
+                // Object editor panel.
+                const LevelObject& ob = core.level.objects[sel.index];
+                note("EDITING: " + std::string(kObjNames[ob.kind]));
+                row("POS X", fmt1(ob.p.x, " M"), B_OBJPROP + 1, B_OBJPROP + 2);
+                row("POS Y", fmt1(ob.p.y, " M"), B_OBJPROP + 3, B_OBJPROP + 4);
+                row("POS Z", fmt1(ob.p.z, " M"), B_OBJPROP + 5, B_OBJPROP + 6);
+                if (ob.kind == OBJ_BOX) {
+                    row("SIZE W", fmt1(ob.size.z * 2, " M"), B_OBJPROP + 7, B_OBJPROP + 8);
+                    row("SIZE H", fmt1(ob.size.y * 2, " M"), B_OBJPROP + 9, B_OBJPROP + 10);
+                    row("SIZE D", fmt1(ob.size.x * 2, " M"), B_OBJPROP + 11, B_OBJPROP + 12);
+                }
+                row("ROT YAW", std::to_string((int)std::lround(std::fmod(ob.yaw * 180 / M_PI + 3600, 360))) + " DEG", B_OBJPROP + 13, B_OBJPROP + 14);
+                row("ROT PITCH", std::to_string((int)std::lround(std::fmod(ob.pitch * 180 / M_PI + 3600, 360))) + " DEG", B_OBJPROP + 15, B_OBJPROP + 16);
                 button(r, x, y, w, bh, "DELETE SELECTED (DEL)", B_DELETE, false, u);
                 y += bh + 4 * u;
             }
             y += 6 * u;
             note("CLICK: PLACE   CLICK ONE: SELECT");
-            note("DRAG: MOVE   Q E: TURN");
+            note("DRAG: MOVE   Q E: SIZE   SHIFT+Q E: TURN");
+            note("OFFSET ROW: PLACE IN SKY OR UNDERGROUND");
             note("DEL: DELETE (THE MAP'S OWN TOO)");
             break;
         case COURSE: {
@@ -902,7 +964,7 @@ void Editor::drawStatus(Renderer& r, float u) {
                   mapName(l.map), levelModeName(l.mode), core.cellEdits(), l.objects.size(), l.gates.size(),
                   core.canUndo() ? core.undoName().c_str() : "-");
     r.text(12 * u, y + 7 * u, s, buf, 0.9f, 0.91f, 0.94f, 1);
-    const char* keys = "WASD FLY  Q E DOWN UP  RIGHT-DRAG LOOK  SHIFT FAST  1-6 TOOLS  CTRL+Z/Y UNDO/REDO  CTRL+S SAVE  F5 PLAY  ESC EXIT";
+    const char* keys = "WASD FLY  MOUSE WHEEL ZOOM  Q E SIZE/UP DOWN  RIGHT-DRAG LOOK  SHIFT FAST  1-6 TOOLS  CTRL+Z/Y UNDO/REDO  CTRL+S SAVE  F5 PLAY  ESC EXIT";
     const float ks = px(1.0f * u);
     r.rect(W - r.textWidth(keys, ks) - 20 * u, y - 8 * ks - 10 * u, r.textWidth(keys, ks) + 20 * u, 8 * ks + 10 * u, 0, 0, 0, 0.45f);
     r.text(W - r.textWidth(keys, ks) - 10 * u, y - 8 * ks - 5 * u, ks, keys, 0.7f, 0.72f, 0.76f, 1);
