@@ -1581,7 +1581,7 @@ void buildRunningGear(const Car& car, std::vector<Vtx>& out) {
     auto P = [&](int n) { return car.nodes[n].p; };
     Frame fr = car.frame();
 
-    buildFrameRails(car, out);
+    if (car.ladder.empty()) buildFrameRails(car, out);  // (a ladder frame is models now: carframe.h)
 
     // (Arms, tie rods, trailing links, leaf packs and coil-overs are models on their beams: carparts.h.)
 

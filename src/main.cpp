@@ -44,6 +44,7 @@
 #include "pilotsense.h"
 #include "platform.h"
 #include "props.h"
+#include "carframe.h"
 #include "carparts.h"
 #include "handwork.h"
 #include "lab.h"
@@ -3108,16 +3109,16 @@ int main(int argc, char** argv) {
             }
             if (opt.script.rfind("work-", 0) == 0) {  // screenshots of hands-on work: a wheel off, a chain on, a CV axle in
                 Car& c = sim.cars[sim.player];
-                const int k = opt.script == "work-chain" ? 0 : 2;
+                const int k = std::getenv("CZ_WORK_WHEEL") ? std::atoi(std::getenv("CZ_WORK_WHEEL")) : opt.script == "work-chain" ? 0 : 2;  // (CZ_WORK_WHEEL: which corner)
                 if (frame == 20) c.handbrake = 1, getOut();
                 if (frame == 30 && k < (int)c.wheels.size()) {
                     const Wheel& wh = c.wheels[k];
                     const V3 hub = (c.nodes[wh.inner].p + c.nodes[wh.outer].p) * 0.5, out = norm(c.nodes[wh.outer].p - c.nodes[wh.inner].p);
                     if (opt.script == "work-chain") walker.holdingChain = true;
                     else if (std::getenv("CZ_WORK_PLACE")) walker.holdingJack = true;  // (the jack still in your arms: the placing job)
-                    else c.placeJack(sim.world, k), c.jackWorked = true, c.jackHeight = std::getenv("CZ_JACK_H") ? std::atof(std::getenv("CZ_JACK_H")) : 0.12;
+                    else c.placeJack(sim.world, k), c.wake(), c.jackWorked = true, c.jackHeight = std::getenv("CZ_JACK_H") ? std::atof(std::getenv("CZ_JACK_H")) : 0.12;
                     if (opt.script == "work-fix") c.wheels[k].shaftBroken = true;
-                    const V3 aim = opt.script == "work-fix" ? hub + (c.frame().com - hub) * 0.25 : std::getenv("CZ_WORK_PLACE") ? Interact::jackSpot(sim, c, k) + V3(0, 0.3, 0) : hub;
+                    const V3 aim = opt.script == "work-fix" ? hub + (c.frame().com - hub) * 0.25 : std::getenv("CZ_WORK_PLACE") || opt.script == "work-jack" ? Interact::jackAim(sim, c, k) : hub;
                     walker.p = hub + out * 1.0 - c.frame().fwd * 0.3;
                     walker.p.y = sim.world.height(walker.p.x, walker.p.z);
                     const V3 d = norm(aim - (walker.p + V3(0, 1.62, 0)));
@@ -3808,7 +3809,7 @@ int main(int argc, char** argv) {
                 double e[3] = {1, 0.3, 0};
                 std::sscanf(wc, "%lf,%lf,%lf", e, e + 1, e + 2);
                 const Car& wc0 = sim.cars[sim.player];
-                const int k = opt.script == "work-chain" ? 0 : 2;
+                const int k = std::getenv("CZ_WORK_WHEEL") ? std::atoi(std::getenv("CZ_WORK_WHEEL")) : opt.script == "work-chain" ? 0 : 2;
                 if (k < (int)wc0.wheels.size()) {
                     const Wheel& wh = wc0.wheels[k];
                     const V3 hub = (wc0.nodes[wh.inner].p + wc0.nodes[wh.outer].p) * 0.5, out = norm(wc0.nodes[wh.outer].p - wc0.nodes[wh.inner].p);
@@ -3927,7 +3928,11 @@ int main(int argc, char** argv) {
                 if (away < 40) near.push_back({away, &c});
             }
             std::sort(near.begin(), near.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
-            for (size_t i = 0; i < near.size() && i < 8; i++) carPartModels(*near[i].second, renderer.frameModels, i < 4 && near[i].first < 20 ? PARTS_ALL : PARTS_BIG);
+            for (size_t i = 0; i < near.size() && i < 8; i++) {
+                const int level = i < 4 && near[i].first < 20 ? PARTS_ALL : PARTS_BIG;
+                carPartModels(*near[i].second, renderer.frameModels, level);
+                carFrameModels(*near[i].second, renderer.frameModels, level);  // (a ladder frame's rails, crossmembers, brackets and jack pads: carframe.h)
+            }
         }
         // The work in your hands (first person): tools, the hand, a part going in; a wheel or
         // chain being moved (handwork.h).
