@@ -208,3 +208,149 @@ SCENARIO(lowRangeBuggyEngines, "drivetrain/low-range-buggy-engines", "4Runner (l
         lane++;
     }
 }
+
+namespace {
+// The sandbox garage's 4Runner as the player has it: the 1GR swap, long travel and 37s, the crawl box.
+const VehicleSpec& sandboxRunner() {
+    const int v = 3;
+    ModSet ms;
+    ms.pick[MOD_ENGINE] = partIndex(v, MOD_ENGINE, "1GR SWAP");
+    ms.pick[MOD_SUSPENSION] = partIndex(v, MOD_SUSPENSION, "LONG TRAVEL AND 37S");
+    ms.pick[MOD_TRANSMISSION] = partIndex(v, MOD_TRANSMISSION, "CRAWL BOX");
+    return tunedSpec(v, ms);
+}
+int frontShaftsGone(const Car& c) {
+    int n = 0;
+    for (const Wheel& w : c.wheels) n += w.front && w.shaftBroken;
+    return n;
+}
+}  // namespace
+
+// The 4Runner's front CVs (65% of the 13,000 N*m axle shaft, less at lock) carry what a front tire can put into them:
+// tire load x grip x radius, and a front tire on a ledge face carries 10 to 22 kN. At 10,000 they held 14 kN of traction
+// on the 37s (the Tacoma's hold 16 on its 35s, the Bronco's 18 on 37s) and the sandbox truck lost a CV in 4 of these 12
+// ledge crawls (9 of 24 with 2.0 m/s too). Square ledges across the lane, flat out in 4L with both lockers at 12 psi,
+// head on and at 25 degrees; and the bumpy dirt (the whoops lane) at 35 km/h in 4H. Nothing may break.
+SCENARIO(runnerFrontDurability, "drivetrain/4runner-front-durability", "Sandbox 4Runner (1GR, long travel 37s, crawl box) crawls 0.4 to 0.6 m ledges head on and at 25 degrees and drives bumpy dirt at 35 km/h: no CV snaps, no tie rod or arm bends") {
+    const VehicleSpec& spec = sandboxRunner();
+    ctx.check("(the 37s and the crawl box are in)", spec.wheelRadius > 0.46 && spec.lowRange > 4);
+    ctx.sim.world = World(MAP_PROVING_GROUND);
+    World& w = ctx.sim.world;
+    struct Run {
+        Car* c;
+        double z, v;
+    };
+    std::vector<Run> runs;
+    const double faceX = -112;
+    int lane = 0;
+    for (double ang : {0.0, 25.0})
+        for (double H : {0.4, 0.5, 0.6})
+            for (double v : {1.0, 1.5}) {
+                const double z = -170 + 14 * lane++;
+                w.addBox(V3(faceX + 8, w.height(faceX + 8, z) + H / 2, z), V3(8, H / 2, 5), 0, 0, 0, V3(0.4, 0.38, 0.35));
+                w.boxes.back().rock = true;
+                runs.push_back({nullptr, z, v});
+                (void)ang;
+            }
+    w.buildGrid();
+    lane = 0;
+    for (double ang : {0.0, 25.0})
+        for (int k = 0; k < 6; k++) {
+            Run& r = runs[lane++];
+            const double a = ang * M_PI / 180;
+            r.c = &ctx.add(spec, faceX - 12 * std::cos(a), r.z + 12 * std::sin(a), -ang);
+        }
+    ctx.focus(*runs[0].c);
+    ctx.run(1.0);
+    for (Run& r : runs) {
+        r.c->setDriveMode(lowMode(spec));
+        r.c->setLocker(true, true), r.c->setLocker(false, true);
+        r.c->tractionControl = false;
+        r.c->tirePsi = 12;
+    }
+    double worstFront = 0;
+    ctx.run(30, [&] {
+        for (Run& r : runs) {
+            Car& c = *r.c;
+            const Frame fr = c.frame();
+            const V3 d = V3(fr.com.x + 6, fr.com.y, r.z) - fr.com;
+            c.steer = clampd(std::atan2(dot(d, fr.left), std::max(dot(d, fr.fwd), 0.5)) * 1.5, -0.55, 0.55);
+            const double vel = dot(fr.vel, fr.fwd);
+            c.throttle = clampd(0.3 + (r.v - vel) * 0.9, 0, 1);  // (flat out at the ledge: a keyboard's W)
+            c.brake = vel > r.v + 1.0 ? 0.3 : 0;
+            c.handbrake = 0;
+            for (const Wheel& wh : c.wheels)
+                if (wh.front) worstFront = std::max(worstFront, wh.shaftLoad / (spec.shaftLimit * 0.65 * (1 - 0.35 * clampd(std::fabs(c.steer) / 0.6, 0, 1))));
+        }
+    });
+    int lost = 0, bent = 0, cleared = 0;
+    for (const Run& r : runs) {
+        lost += frontShaftsGone(*r.c) > 0;
+        cleared += r.c->frame().com.x > faceX + 4;
+        for (const Wheel& wh : r.c->wheels) bent += std::fabs(wh.tieOffset) > 0.002;
+    }
+    ctx.check("no ledge crawl loses a front CV", lost == 0, std::to_string(lost) + " of " + std::to_string(runs.size()) + " lost one");
+    ctx.check("no tie rod bends on them", bent == 0, std::to_string(bent));
+    ctx.metric("ledges climbed (of 12)", cleared, "", 8, 12);
+    ctx.metric("worst front CV load against its limit (1 snaps)", worstFront, "share", 0, 1);
+
+    // Bumpy dirt: the whoops lane (0.55 m bumps every 9 m), 4H at 35 km/h.
+    ctx.sim.cars.clear();
+    ctx.sim.ropes.clear();
+    ctx.sim.player = 0;
+    ctx.sim.world = World(MAP_MOUNTAIN);
+    const V3 f = mountainFeature("whoops");
+    Car& c = ctx.add(spec, f.x, f.z - 45, -90);
+    ctx.focus(c);
+    ctx.run(1.0);
+    c.setDriveMode(1);  // 4H (the centre diff free)
+    double tOut = -1;
+    ctx.runUntil(60, [&] { return tOut > 0; }, [&] {
+        const Frame fr = c.frame();
+        const V3 d = V3(f.x, fr.com.y, fr.com.z + 8) - fr.com;
+        c.steer = clampd(std::atan2(dot(d, fr.left), std::max(dot(d, fr.fwd), 0.5)), -0.3, 0.3);
+        const double kmh = len(fr.vel) * 3.6;
+        c.throttle = clampd(0.3 + (35 - kmh) * 0.2, 0, 1);
+        c.brake = kmh > 43 ? 0.3 : 0;
+        if (fr.com.z > f.z + 130) tOut = ctx.t;
+    });
+    ctx.check("through the whoops", tOut > 0);
+    ctx.check("bumpy dirt breaks nothing: no shaft, no CV", shaftsGone(c) == 0);
+    bool bentParts = false;
+    for (const Wheel& wh : c.wheels) bentParts |= std::fabs(wh.tieOffset) > 0.002;
+    for (const Axle& ax : c.axles) bentParts |= std::fabs(ax.arbBend) > 0.005;
+    ctx.check("...and bends no tie rod or sway bar", !bentParts);
+}
+
+// ...but a CV is still a fuse: the sandbox 4Runner in 4L with both lockers, full lock and the pedal on the floor on the
+// slickrock dome (the lockers bind, a loaded front tire grips) snaps one, as the Bronco does (offroad/shaft-break);
+// and flat out against a held brake in the 77:1 stack still does (drivetrain/low-range-crawler).
+SCENARIO(runnerFrontAbuse, "drivetrain/4runner-front-abuse", "Sandbox 4Runner flat out at full lock with both lockers in 4L on the rock dome: a CV still snaps and that wheel freewheels") {
+    const VehicleSpec& spec = sandboxRunner();
+    ctx.sim.world = World(MAP_MOUNTAIN);
+    const V3 dome = mountainFeature("dome");
+    Car& c = ctx.add(spec, dome.x, dome.z - 22, -90);
+    ctx.focus(c);
+    ctx.run(1.0);
+    c.setDriveMode(lowMode(spec));
+    c.setLocker(true, true), c.setLocker(false, true);
+    c.tractionControl = false;
+    c.tirePsi = 15;
+    ctx.runUntil(60, [&] { return shaftsGone(c) > 0; }, [&] {
+        c.steer = 0.6 * ((int)(ctx.t / 6) % 2 ? -1 : 1);
+        c.throttle = 1;
+        c.brake = c.handbrake = 0;
+    });
+    ctx.check("a shaft snaps", shaftsGone(c) > 0);
+    bool freewheels = false;
+    for (const Wheel& wh : c.wheels)
+        if (wh.shaftBroken) freewheels = !c.wheelPowered(wh);
+    ctx.check("that wheel gets no drive", freewheels);
+
+    // And no tougher than the other independent fronts: the traction a front CV holds (its limit over the tire radius) is
+    // between the Tacoma's and the Bronco's, on the stock tires and on the 37s.
+    auto holds = [](const VehicleSpec& s) { return s.shaftLimit * 0.65 / s.wheelRadius / 1000; };
+    const double lo = holds(vehicleCatalog()[6]), hi = holds(vehicleCatalog()[2]);
+    ctx.metric("stock 4Runner CVs: traction held (Tacoma's to the Bronco's)", holds(vehicleCatalog()[3]), "kN", lo * 0.95, hi * 1.05);
+    ctx.metric("sandbox 4Runner CVs on the 37s: traction held", holds(spec), "kN", lo * 0.9, hi * 1.05);
+}
