@@ -32,8 +32,9 @@ void triC(B& b, const V3& a, const V3& bb, const V3& c, const V3& na, const V3& 
 }
 
 // Snow on the tops: every triangle from `from` on that faces up becomes a white matte skin
-// (costs no triangles). thr: how flat a face must be.
-void snowTops(B& b, size_t from, double thr, uint32_t seed) {
+// (costs no triangles). thr: how flat a face must be. leafy: the snow is on foliage, so it fades with it
+// (a snag's or trunk's snow doesn't: only leaves dissolve for the camera).
+void snowTops(B& b, size_t from, double thr, uint32_t seed, bool leafy = false) {
     auto& v = b.out().v;
     for (size_t i = from; i + 2 < v.size(); i += 3) {
         const V3 p0(v[i].p[0], v[i].p[1], v[i].p[2]), p1(v[i + 1].p[0], v[i + 1].p[1], v[i + 1].p[2]), p2(v[i + 2].p[0], v[i + 2].p[1], v[i + 2].p[2]);
@@ -47,7 +48,7 @@ void snowTops(B& b, size_t from, double thr, uint32_t seed) {
         const double s = 0.9 + 0.1 * R01(seed + 5, (int)(i / 3));
         for (int k = 0; k < 3; k++) {
             v[i + k].c[0] = (float)(SNOW.x * s), v[i + k].c[1] = (float)(SNOW.y * s), v[i + k].c[2] = (float)(SNOW.z * s);
-            v[i + k].mat = MATTE;
+            v[i + k].mat = leafy ? SNOWLEAF : MATTE;
         }
     }
 }
@@ -130,7 +131,7 @@ void tier(B& b, const Bough& t, uint32_t seed, int idx, const V3& top, const V3&
             c0 = mix(c0, SNOW * 0.9, cover * (0.5 + 0.9 * R01(s + 3, i)));
             c1 = mix(c1, SNOW * 0.9, cover * (0.5 + 0.9 * R01(s + 3, k)));
             ca = SNOW;
-            b.mat(MATTE);
+            b.mat(SNOWLEAF);
         }
         triC(b, e[i], A, e[k], n0, norm(n0 + n1 + UP * 1.5), n1, c0, ca, c1);
         b.mat(FOLIAGE);
@@ -319,7 +320,7 @@ void oakCrown(B& b, uint32_t sd, int season, bool snow, double wide, double ytop
         leafPalette(0, season, sd, (int)k, A, B);
         leafBlob(b, V3(L[k].x, L[k].y, L[k].z), V3(L[k].rx * wide, L[k].ry, L[k].rx * wide), sd * 7 + (uint32_t)k, A, B, 0.2, 0);
     }
-    if (snow) snowTops(b, from, 0.45, sd);
+    if (snow) snowTops(b, from, 0.45, sd, true);
 }
 
 void oak(B& b, const P& p) {
@@ -351,7 +352,7 @@ void poplar(B& b, const P& p) {
         const double x = (R01(sd, k) - 0.5) * 0.4 + lean * 0.05 * ys[k], z = (R01(sd, k + 10) - 0.5) * 0.4;
         leafBlob(b, V3(x, ys[k], z), V3(rs[k], ry[k], rs[k] * 0.95), sd * 11 + (uint32_t)k, A, B, 0.2, 0);
     }
-    if (p.i("snow")) snowTops(b, from, 0.45, sd);
+    if (p.i("snow")) snowTops(b, from, 0.45, sd, true);
 }
 
 void willow(B& b, const P& p) {
@@ -369,7 +370,7 @@ void willow(B& b, const P& p) {
         leafPalette(2, season, sd, k, A, B);
         leafBlob(b, V3(bx[k], by[k], bz[k]), V3(br[k], br[k] * 0.62, br[k]), sd * 5 + (uint32_t)k, A, B, 0.18, 0);
     }
-    if (p.i("snow")) snowTops(b, from, 0.45, sd);
+    if (p.i("snow")) snowTops(b, from, 0.45, sd, true);
     // Long curtains of leaves hanging from the crown.
     b.mat(FOLIAGE);
     const int strands = 14;

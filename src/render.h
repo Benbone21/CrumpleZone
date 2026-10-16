@@ -30,6 +30,7 @@ enum ShaderMat {
     SM_ROCK = 12,
     SM_FOLIAGE = 13,
     SM_WOOD = 14,
+    SM_SNOWLEAF = 15,  // (matte; snow on a tree's foliage, which fades with it)
 };
 
 struct View {

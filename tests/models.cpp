@@ -109,6 +109,32 @@ SCENARIO(modelsInstance, "models/instance", "The settings the game sets per copy
         }
 }
 
+SCENARIO(modelsTreeTrunks, "models/tree-trunks", "See-through trees dissolve only FOLIAGE (and snow on it): every tree design's trunk is wood at its foot, nothing leafy sits where the collision pole is, and snags have no foliage") {
+    for (const char* id : {"tree_pine", "tree_broadleaf", "tree_snag"}) {
+        const mk::ModelDef* d = mk::findModel(id);
+        if (!d) continue;
+        for (int v = 0; v < (int)d->variants.size(); v++)
+            for (int snow = 0; snow < 2; snow++) {
+                mk::P p;
+                p.v["snow"] = snow;
+                mk::Mesh m;
+                mk::build(*d, v, p, m);
+                int woodFoot = 0, leafyAtPole = 0, leafy = 0;
+                for (const mk::MVert& q : m.v) {
+                    const bool leaf = q.mat == mk::FOLIAGE || q.mat == mk::SNOWLEAF;
+                    leafy += leaf;
+                    if (q.p[1] < 0.5 && q.mat == mk::WOOD) woodFoot++;
+                    if (q.p[1] < 1.2 && std::hypot(q.p[0], q.p[2]) < 0.4 && leaf) leafyAtPole++;
+                }
+                const std::string tag = std::string(id) + " " + (char)('A' + v) + (snow ? " snowy" : "") + ": ";
+                ctx.check(tag + "trunk is wood at the foot", woodFoot > 0, std::to_string(woodFoot));
+                ctx.check(tag + "no foliage where the pole is", leafyAtPole == 0, std::to_string(leafyAtPole));
+                if (std::string(id) == "tree_snag") ctx.check(tag + "no foliage at all", leafy == 0, std::to_string(leafy));
+                else ctx.check(tag + "has foliage to fade", leafy > 0);
+            }
+    }
+}
+
 SCENARIO(modelsPicks, "models/picks", "The model lab's picks save and load: the design, its status and note, its tweaks; the game builds the picked design") {
     const mk::ModelDef* d = nullptr;
     for (const mk::ModelDef& m : mk::catalog())

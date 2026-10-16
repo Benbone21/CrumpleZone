@@ -4,11 +4,12 @@
 // frustum culling and far billboards for the trees.
 //
 // What it draws, per map:
-//   pines -> fir/pine saplings scaled to Tree::height; dead snags -> dead_tree_trunk;
-//   logs -> dead_tree_trunk_02 fitted to the capsule; bushes -> shrubs; scanned rocks
-//   (Rock::scan) with the very frame their hull was placed with; cliff faces on steep
-//   ground; and visual-only scatter near the camera (grass, ferns, stumps, branches) kept off
-//   trails, water and pads. The code-made meshes skip whatever this covers (ScanCover).
+//   scanned rocks (Rock::scan) with the very frame their hull was placed with, and cliff faces
+//   on steep ground. The code-made meshes skip whatever this covers (ScanCover).
+//   The vegetation paths below (pines -> fir/pine saplings, snags, logs, bushes -> shrubs, and
+//   visual-only scatter near the camera: grass, ferns, stumps, branches) wake up only if
+//   assets/props has those models: the baker leaves them out unless run with --plants, so the
+//   game's own code-made trees, bushes, logs and stumps are what you see.
 // Quality (RenderSettings::props): 0 off (all code-made), 1 low, 2 high, 3 ultra: LOD
 // distances, the billboard distance, scatter reach and density, texture size.
 #pragma once

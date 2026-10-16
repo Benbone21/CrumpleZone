@@ -1,7 +1,11 @@
 // Offline baker: Poly Haven glTF scans -> game-ready props in assets/props/.
 //
 //   make bake                       (needs ImageMagick's `convert`; Linux)
-//   build/bakeprops --src DIR --out assets/props [--only NAME] [--no-tex]
+//   build/bakeprops --src DIR --out assets/props [--only NAME] [--no-tex] [--plants]
+//
+// The vegetation scans (trees, shrubs, ferns, grass, branches, logs, stumps) are left out unless
+// --plants is given: the game's own code-made trees, bushes, logs and stumps are what it draws.
+// Rocks and cliff faces are always baked.
 //
 // Solid scans (rocks, stumps, logs, cliffs) are simplified by quadric edge collapse to three
 // levels of detail, each given a fresh box-projected atlas, and the diffuse, normal and
@@ -45,6 +49,7 @@ namespace {
 
 std::string gSrc = "assets/source/polyhaven/models", gOut = "assets/props";
 bool gNoTex = false;
+bool gPlants = false;  // --plants: bake the vegetation too (off: only rocks and cliffs)
 
 // ---------------------------------------------------------------------------------------
 // Images
@@ -1549,8 +1554,9 @@ int main(int argc, char** argv) {
         else if (a == "--out" && i + 1 < argc) gOut = argv[++i];
         else if (a == "--only" && i + 1 < argc) only = argv[++i];
         else if (a == "--no-tex") gNoTex = true;
+        else if (a == "--plants") gPlants = true;
         else {
-            std::fprintf(stderr, "usage: bakeprops [--src DIR] [--out DIR] [--only NAME] [--no-tex]\n");
+            std::fprintf(stderr, "usage: bakeprops [--src DIR] [--out DIR] [--only NAME] [--no-tex] [--plants]\n");
             return 1;
         }
     }
@@ -1563,9 +1569,10 @@ int main(int argc, char** argv) {
         if (old.load(gOut)) hulls = old;
     }
     auto matches = [&](const char* name) { return only.empty() || only == name || std::string(name).find(only) != std::string::npos; };
+    auto wanted = [&](int kind) { return gPlants || kind == props::KIND_ROCK || kind == props::KIND_CLIFF; };
     int skipped = 0;
     for (const Unit& u : kUnits) {
-        if (!matches(u.name)) continue;
+        if (!matches(u.name) || !wanted(u.kind)) continue;
         props::Model m;
         for (size_t i = 0; i < hulls.hulls.size(); i++)
             if (hulls.hulls[i].name == u.name) hulls.hulls.erase(hulls.hulls.begin() + i--);
@@ -1576,7 +1583,7 @@ int main(int argc, char** argv) {
         if (!props::saveModel(gOut + "/" + u.name + ".prop", m)) return 1;
     }
     for (const Card& c : kCards) {
-        if (!matches(c.name)) continue;
+        if (!matches(c.name) || !wanted(c.kind)) continue;
         props::Model m;
         if (!bakeCard(c, m)) {
             skipped++;
@@ -1589,6 +1596,7 @@ int main(int argc, char** argv) {
         FILE* f = std::fopen((gOut + "/props.txt").c_str(), "w");
         if (!f) return 1;
         auto put = [&](const char* name, int kind) {
+            if (!wanted(kind)) return;
             if (FILE* t = std::fopen((gOut + "/" + name + ".prop").c_str(), "rb")) {
                 std::fclose(t);
                 std::fprintf(f, "%s %d\n", name, kind);

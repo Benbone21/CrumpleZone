@@ -64,7 +64,7 @@ uniform sampler2D uDiff, uNorm, uArm;
 uniform int uAlpha, uFoliage, uHasNorm, uHasArm;
 uniform float uCutoff;
 void main(){
-  if (vExtra.w > ditherAt(gl_FragCoord.xy)) discard;  // a tree the camera sees through (the extra's w: how much is hidden)
+  if (uFoliage == 1 && vExtra.w > ditherAt(gl_FragCoord.xy)) discard;  // a tree the camera sees through: its leaves only, never the trunk (the extra's w: how much is hidden)
   vec4 d = texture(uDiff, vUv);
   if (uAlpha == 1 && d.a < uCutoff) discard;
   vec3 N = normalize(vNrm);
@@ -759,7 +759,7 @@ void PropRenderer::beginFrame(const World& w, const V3& eyePos, const M4& viewPr
     time = t;
     if (world != &w) world = &w;
     // Scatter cells round the camera: make the new ones, drop the far ones.
-    if (quality > 0 && loaded()) {
+    if (quality > 0 && loaded() && (!scatterGrass.empty() || !scatterFern.empty() || !scatterLitter.empty())) {
         const double reach = kScatterReach[quality];
         const int c0x = (int)std::floor((eye.x - reach) / kScatterCell), c1x = (int)std::floor((eye.x + reach) / kScatterCell);
         const int c0z = (int)std::floor((eye.z - reach) / kScatterCell), c1z = (int)std::floor((eye.z + reach) / kScatterCell);
