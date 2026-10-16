@@ -6,6 +6,39 @@
 #include <vector>
 
 #include "render.h"
+#include "sdl_min.h"
+
+// Menu row IDs
+enum {
+    // Settings page.
+    UNITS = 1, VOLUME, FOV, RECOVERY, STEERING, MUSIC, TIMEOFDAY,
+    QUALITY = 10, SHADOWS, AA, AO, BLOOM, CLOUDS, GRASS, SCALE,
+    FULLSCREEN = 20, VSYNC, FPS,
+    // Main page and navigation.
+    RESUME_ROW = 100, VEHICLE_ROW, MAP_ROW, GARAGE_ROW, SETTINGS_ROW, CONTROLS_ROW, RESET_ROW, QUIT_ROW, BACK_ROW,
+    MULTI_ROW, NAME_ROW, HOST_ROW, ADDRESS_ROW, JOIN_ROW, LEAVE_ROW,
+    PILOT_ROW, DEST_ROW, PSPEED_ROW, PROUTE_ROW, PGO_ROW, PSTOP_ROW,
+    FREEDRIVE_ROW, LEVELS_ROW, LEVEL_PICK, LEVEL_PLAY, LEVEL_EDIT, EDITOR_ROW, LRESTART_ROW, LQUIT_ROW, MAINMENU_ROW,
+    // Keybinds page.
+    KEYBINDS_ROW,
+    KEY_THROTTLE, KEY_BRAKE, KEY_STEER_LEFT, KEY_STEER_RIGHT, KEY_HANDBRAKE,
+    KEY_GEAR_UP, KEY_GEAR_DOWN, KEY_MENU, KEY_STEER_ASSIST, KEY_WINCH, KEY_STRAP,
+};
+
+// Remappable keybinds. Each entry stores an SDL scancode (or 0 = unbound).
+struct Keybinds {
+    int throttle = SC_W;
+    int brake = SC_S;
+    int steerLeft = SC_A;
+    int steerRight = SC_D;
+    int handbrake = SC_SPACE;
+    int gearUp = SC_E;
+    int gearDown = SC_Q;
+    int menu = SC_ESCAPE;
+    int steeringAssist = SC_P;
+    int winch = SC_V;
+    int strap = SC_O;
+};
 
 struct Settings {
     bool mph = false;           // speed in mph instead of km/h
@@ -25,6 +58,7 @@ struct Settings {
     float dayMinutes = 24;      // real minutes for a whole day when it runs
     float clockHours = 10;      // where the clock is (kept between sessions)
     RenderSettings gfx;
+    Keybinds keys;
 
     bool load(const std::string& path);
     bool save(const std::string& path) const;
@@ -93,6 +127,7 @@ private:
         float x, y, w, h, barX, barW;
         int row;
     };
+    std::vector<Row> keybindsRows(const Settings& s) const;
     int page = 0;  // 0 main (or the title), 1 settings, 2 multiplayer, 3 autopilot, 4 levels
     int sel = 0;
     int dragSlider = -1;

@@ -1897,10 +1897,6 @@ int main(int argc, char** argv) {
                         }
                     }
                     switch (evKeyScancode(e)) {
-                        case SC_ESCAPE:
-                            if (hud.showHelp) hud.showHelp = false;
-                            else openMenu();
-                            break;
                         case SC_R:
                             // R: fixed up where it stands. R twice quickly: back to where it started
                             // (in a level: back to the grid, the attempt starts again).
@@ -1920,15 +1916,6 @@ int main(int argc, char** argv) {
                                 sim.recoverPlayer();
                                 hud.toast("REPAIRED (R TWICE: BACK TO THE START)");
                             }
-                            break;
-                        case SC_S:
-                            sim.steeringAssist = !sim.steeringAssist;
-                            settings.steeringAssist = sim.steeringAssist;
-                            saveSettings();
-                            if (sim.steeringAssist)
-                                hud.toast("STEERING ASSIST ON (LIMITED AT HIGH SPEED)");
-                            else
-                                hud.toast("STEERING ASSIST OFF (FULL LOCK AT ALL SPEEDS)");
                             break;
                         case SC_T:
                             if (sim.realRecovery) {
@@ -2032,15 +2019,6 @@ int main(int argc, char** argv) {
                             break;
                         }
                         case SC_G: openGarage(); break;
-                        case SC_E:
-                        case SC_Q: {
-                            Car& c = sim.cars[sim.player];
-                            if (c.shift(evKeyScancode(e) == SC_E ? 1 : -1) && !c.manualShift) {
-                                c.manualShift = true;  // taking over the gears switches to manual
-                                hud.toast("MANUAL SHIFTING (M FOR AUTOMATIC)");
-                            }
-                            break;
-                        }
                         case SC_M: {
                             Car& c = sim.cars[sim.player];
                             c.manualShift = !c.manualShift;
@@ -2160,9 +2138,48 @@ int main(int argc, char** argv) {
             }
         }
 
+        // Remappable keys (can't be in the switch because they're not compile-time constants).
+        if (e.type == SDL_KEYDOWN && !evKeyRepeat(e) && !menu.open && !garageUI.open && !winchAim.on && !editor.active) {
+            int sc = evKeyScancode(e);
+            if (sc == settings.keys.gearUp || sc == settings.keys.gearDown) {
+                Car& c = sim.cars[sim.player];
+                if (c.shift(sc == settings.keys.gearUp ? 1 : -1) && !c.manualShift) {
+                    c.manualShift = true;
+                    hud.toast("MANUAL SHIFTING (M FOR AUTOMATIC)");
+                }
+            } else if (sc == settings.keys.winch) {
+                const Car& c = sim.cars[sim.player];
+                if (sim.dropWinch(sim.player)) hud.toast("WINCH LINE UNHOOKED AND SPOOLED");
+                else if (c.isProp() || !(c.spec->extras & EXTRA_WINCH)) hud.toast("NO WINCH ON THIS TRUCK");
+                else {
+                    winchAim = WinchAim();
+                    winchAim.on = true;
+                    winchAim.targets = sim.winchTargets(sim.player);
+                    winchAim.refresh = 0.3;
+                    winchAim.pickCentered(lastView);
+                }
+            } else if (sc == settings.keys.strap) {
+                const std::string m = sim.hookStrap(sim.player);
+                if (!m.empty()) hud.toast(m);
+            } else if (sc == settings.keys.steeringAssist) {
+                sim.steeringAssist = !sim.steeringAssist;
+                settings.steeringAssist = sim.steeringAssist;
+                saveSettings();
+                if (sim.steeringAssist)
+                    hud.toast("STEERING ASSIST ON (LIMITED AT HIGH SPEED)");
+                else
+                    hud.toast("STEERING ASSIST OFF (FULL LOCK AT ALL SPEEDS)");
+            } else if (sc == settings.keys.menu) {
+                if (hud.showHelp) hud.showHelp = false;
+                else openMenu();
+            }
+        }
+
         const uint8_t* keys = SDL_GetKeyboardState(nullptr);
-        bool up = keys[SC_W] || keys[SC_UP], down = keys[SC_S] || keys[SC_DOWN];
-        bool left = keys[SC_A] || keys[SC_LEFT], right = keys[SC_D] || keys[SC_RIGHT], hb = keys[SC_SPACE];
+        const Keybinds& kb = settings.keys;
+        bool up = keys[kb.throttle] || keys[SC_UP], down = keys[kb.brake] || keys[SC_DOWN];
+        bool left = keys[kb.steerLeft] || keys[SC_LEFT], right = keys[kb.steerRight] || keys[SC_RIGHT];
+        bool hb = keys[kb.handbrake];
         const bool shiftHeld = keys[SC_LSHIFT] || keys[SC_RSHIFT];
         int winch = keys[SC_Z] ? (shiftHeld ? -1 : 1) : 0;
         int airing = keys[SC_9] ? -1 : keys[SC_0] ? 1 : 0;

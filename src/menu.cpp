@@ -64,6 +64,17 @@ bool Settings::load(const std::string& path) {
         else if (k == "timeofday") timeOfDay = std::min(std::max((int)v, 0), TOD_COUNT - 1);
         else if (k == "daylength") dayMinutes = std::min(std::max(v, 1.0f), 240.0f);
         else if (k == "clock") clockHours = std::fmod(std::max(v, 0.0f), 24.0f);
+        else if (k == "throttle") keys.throttle = std::atoi(text);
+        else if (k == "brake") keys.brake = std::atoi(text);
+        else if (k == "steerleft") keys.steerLeft = std::atoi(text);
+        else if (k == "steerright") keys.steerRight = std::atoi(text);
+        else if (k == "handbrake") keys.handbrake = std::atoi(text);
+        else if (k == "gearup") keys.gearUp = std::atoi(text);
+        else if (k == "geardown") keys.gearDown = std::atoi(text);
+        else if (k == "menu") keys.menu = std::atoi(text);
+        else if (k == "steeringassist") keys.steeringAssist = std::atoi(text);
+        else if (k == "winch") keys.winch = std::atoi(text);
+        else if (k == "strap") keys.strap = std::atoi(text);
     }
     std::fclose(f);
     return true;
@@ -83,6 +94,10 @@ bool Settings::save(const std::string& path) const {
     if (!joinAddress.empty()) std::fprintf(f, "join %s\n", joinAddress.c_str());
     std::fprintf(f, "pilotdest %d\npilotspeed %.0f\npilotroute %d\n", pilotDest, pilotSpeed, pilotRoute);
     std::fprintf(f, "timeofday %d\ndaylength %.0f\nclock %.2f\n", timeOfDay, dayMinutes, clockHours);
+    std::fprintf(f, "throttle %d\nbrake %d\nsteerleft %d\nsteerright %d\nhandbrake %d\n", keys.throttle, keys.brake,
+                 keys.steerLeft, keys.steerRight, keys.handbrake);
+    std::fprintf(f, "gearup %d\ngeardown %d\nmenu %d\nsteeringassist %d\nwinch %d\nstrap %d\n", keys.gearUp,
+                 keys.gearDown, keys.menu, keys.steeringAssist, keys.winch, keys.strap);
     std::fclose(f);
     return true;
 }
@@ -132,17 +147,6 @@ int presetOf(const RenderSettings& g) {
 // ---- Rows ------------------------------------------------------------------------
 
 namespace {
-enum Id {
-    // Settings page.
-    UNITS = 1, VOLUME, FOV, RECOVERY, STEERING, MUSIC, TIMEOFDAY,
-    QUALITY = 10, SHADOWS, AA, AO, BLOOM, CLOUDS, GRASS, SCALE,
-    FULLSCREEN = 20, VSYNC, FPS,
-    // Main page and navigation.
-    RESUME_ROW = 100, VEHICLE_ROW, MAP_ROW, GARAGE_ROW, SETTINGS_ROW, CONTROLS_ROW, RESET_ROW, QUIT_ROW, BACK_ROW,
-    MULTI_ROW, NAME_ROW, HOST_ROW, ADDRESS_ROW, JOIN_ROW, LEAVE_ROW,
-    PILOT_ROW, DEST_ROW, PSPEED_ROW, PROUTE_ROW, PGO_ROW, PSTOP_ROW,
-    FREEDRIVE_ROW, LEVELS_ROW, LEVEL_PICK, LEVEL_PLAY, LEVEL_EDIT, EDITOR_ROW, LRESTART_ROW, LQUIT_ROW, MAINMENU_ROW,
-};
 const char* kOffOn[2] = {"OFF", "ON"};
 
 std::string pct(float v) { return std::to_string((int)std::lround(v * 100)) + "%"; }
@@ -281,10 +285,11 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
     choice(FULLSCREEN, "FULLSCREEN", kOffOn[s.fullscreen], 2);
     choice(VSYNC, "VSYNC", kOffOn[s.vsync], 2);
     choice(FPS, "SHOW FPS", kOffOn[s.showFps], 2);
-    button(BACK_ROW, "BACK");
-    return r;
+if (page == 5) {
+    return keybindsRows(s);
 }
-
+    button(BACK_ROW, "BACK");
+}
 void PauseMenu::showMultiplayer(int currentVehicle, int currentMap) {
     show(currentVehicle, currentMap);
     page = 2;
@@ -361,7 +366,7 @@ PauseMenu::Result PauseMenu::activate(int row, Settings& s) {
         case PGO_ROW:
         case DEST_ROW: return {PILOT_GO};
         case PSTOP_ROW: return {PILOT_STOP};
-        case CONTROLS_ROW: return {CONTROLS};
+        case CONTROLS_ROW: goPage(5, KEY_THROTTLE); return {};
         case RESET_ROW: return {RESET};
         case QUIT_ROW: return {QUIT};
         case BACK_ROW: goPage(0, page == 2 ? MULTI_ROW : page == 3 ? PILOT_ROW : page == 4 ? LEVELS_ROW : SETTINGS_ROW); return {};
@@ -434,6 +439,31 @@ PauseMenu::Result PauseMenu::setSlider(int row, float frac, Settings& s) {
 
 PauseMenu::Result PauseMenu::key(int sc, Settings& s) {
     if (!open) return {};
+    // Keybinds page: bind the pressed key to the selected action.
+    {
+        std::vector<Row> r = rows(s);
+        if (page == 5 && sel >= 0 && sel < (int)r.size()) {
+            const Row& row = r[sel];
+            if (row.kind == BUTTON && row.id >= KEY_THROTTLE && row.id <= KEY_STRAP) {
+                // Skip modifier keys and arrow keys for most bindings (they're used for navigation).
+                if (sc == SC_LSHIFT || sc == SC_RSHIFT || sc == SC_TAB) return {};
+                switch (row.id) {
+                    case KEY_THROTTLE: s.keys.throttle = sc; break;
+                    case KEY_BRAKE: s.keys.brake = sc; break;
+                    case KEY_STEER_LEFT: s.keys.steerLeft = sc; break;
+                    case KEY_STEER_RIGHT: s.keys.steerRight = sc; break;
+                    case KEY_HANDBRAKE: s.keys.handbrake = sc; break;
+                    case KEY_GEAR_UP: s.keys.gearUp = sc; break;
+                    case KEY_GEAR_DOWN: s.keys.gearDown = sc; break;
+                    case KEY_MENU: s.keys.menu = sc; break;
+                    case KEY_STEER_ASSIST: s.keys.steeringAssist = sc; break;
+                    case KEY_WINCH: s.keys.winch = sc; break;
+                    case KEY_STRAP: s.keys.strap = sc; break;
+                }
+                return {CHANGED};
+            }
+        }
+    }
     // Typing into a text field: letters, digits, '.', '-', ':' (shift + ';'); backspace.
     {
         std::vector<Row> r = rows(s);
