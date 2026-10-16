@@ -1396,15 +1396,26 @@ Reg coilover({"coilover", "COILOVER", "PARTS", "Career upgrade: coilover shock a
               }});
 
 // ---- leaf_pack -------------------------------------------------------------------------------
+// +X is the front (the eye on the frame hanger), the rear eye hangs from a shackle; the main leaf is
+// on top with the shorter ones stacked under it. The origin is the axle tube's axis: the pack sits
+// on the tube (spring over axle), clamped by U-bolts round it. `camber` is how much higher the
+// middle of the stack is than its ends: positive is the free arch (the lab's), negative is the
+// way a truck sits when the hangers are above the axle (carparts.cpp fits it to the car's nodes).
+
+constexpr double kTubeR = 0.04;                  // the axle tube it clamps to (softbody.h kAxleTubeR)
+constexpr double kLeafLift = kTubeR + 0.012;     // the stack's underside at its middle: tube, then a saddle
+constexpr double kShackleLen = 0.075;            // rear eye to the frame pin
 
 struct LeafPack {
     int n = 7;                 // leaves
     double h1 = 0.65;          // main leaf half length
-    double base = 0.045;       // top surface at the main leaf's ends
+    double base = 0.045;       // top surface at the main leaf's ends (set by fit())
     double camber = 0.1, dc = 0.002;  // arch height; extra arch per leaf down the stack
     double tC = 0.009, tE = 0.009;    // leaf thickness centre / end
     double wz = 0.065;         // leaf width
     double pitch() const { return tC + dc; }
+    // The underside of the stack at the middle sits on the tube whatever the arch.
+    void fit() { base = kLeafLift - camber + n * tC; }
     double halfLen(int k) const { return n <= 1 ? h1 : h1 * (1.0 - 0.75 * k / (double)std::max(1, n - 1) * (n > 3 ? 1.0 : 0.82)); }
     double camberK(int k) const { return camber + k * dc; }
     double topCentre(int k) const { return base + camber + k * (dc - pitch()); }
@@ -1442,26 +1453,46 @@ void leafEye(B& b, double x, double y, double wz, const V3& col, Mat mat) {
     zcyl(b, x, y, -wz / 2 - 0.012, wz / 2 + 0.012, 0.0085, 6, true);
 }
 
-void leafHardware(B& b, const LeafPack& L, const V3& metal, double pad) {
+// The rear eye hangs from the frame by a shackle: two plates up to a pin through the hanger.
+void leafShackle(B& b, double x, double ye, double wz, const V3& metal) {
+    b.style(metal, METAL);
+    for (int s = -1; s <= 1; s += 2) b.box(V3(x, ye + kShackleLen / 2, s * (wz / 2 + 0.016)), V3(0.026, kShackleLen + 0.022, 0.008), 0.004);
+    zcyl(b, x, ye + kShackleLen, -wz / 2 - 0.024, wz / 2 + 0.024, 0.008, 6);
+    b.style(V3(0.1, 0.1, 0.11), METAL);
+    for (int s = -1; s <= 1; s += 2) nut(b, V3(x, ye + kShackleLen, s * (wz / 2 + 0.028)), 2, 0.022, 0.008);
+}
+
+// The front eye bolts into a hanger bracket: cheeks either side, up to the frame.
+void leafHanger(B& b, double x, double ye, double wz, const V3& metal) {
+    b.style(metal, METAL);
+    for (int s = -1; s <= 1; s += 2) b.box(V3(x, ye + 0.03, s * (wz / 2 + 0.016)), V3(0.05, 0.082, 0.008), 0.004);
+    b.box(V3(x, ye + 0.07, 0), V3(0.05, 0.012, wz + 0.05), 0.003);
+    b.style(V3(0.1, 0.1, 0.11), METAL);
+    for (int s = -1; s <= 1; s += 2) nut(b, V3(x, ye, s * (wz / 2 + 0.028)), 2, 0.024, 0.008);
+}
+
+void leafHardware(B& b, const LeafPack& L, const V3& metal) {
     const double wz = L.wz;
     const int last = L.n - 1;
     const double yt0 = L.top(0, 0), yb0 = L.top(last, 0) - L.thick(last, 0);
-    // Axle pad on top, plate underneath, two U-bolts and the centre bolt.
+    // Saddle on the tube, pad on top of the stack, a plate under the tube, two U-bolts round the
+    // tube and the stack, and the centre bolt.
     b.style(metal, METAL);
+    b.box(V3(0, yb0 - 0.006, 0), V3(0.2, 0.012, 0.09), 0.003);
     b.box(V3(0, yt0 + 0.008, 0), V3(0.2, 0.016, 0.09), 0.003);
-    b.box(V3(0, yb0 - 0.008, 0), V3(0.2, 0.016, 0.1), 0.003);
+    const double yPlate = -kTubeR - 0.008;  // (its middle)
+    b.box(V3(0, yPlate, 0), V3(0.2, 0.016, 0.1), 0.003);
     for (int s = -1; s <= 1; s += 2) {
         const double x = s * 0.075;
-        const double yTop = yt0 + 0.016 + 0.022, yBot = yb0 - 0.016 - 0.03;
+        const double yTop = yt0 + 0.016 + 0.022, yBot = yPlate - 0.008 - 0.025;
         const double z = 0.0475;
         b.style(V3(0.32, 0.32, 0.34), METAL);
         b.tube({V3(x, yBot, z), V3(x, yTop - 0.012, z), V3(x, yTop, z - 0.012), V3(x, yTop, -z + 0.012), V3(x, yTop - 0.012, -z), V3(x, yBot, -z)}, 0.0075, 6);
         b.style(V3(0.1, 0.1, 0.11), METAL);
-        for (int t = -1; t <= 1; t += 2) nut(b, V3(x, yb0 - 0.016 - 0.007, t * z), 1, 0.022, 0.012);
+        for (int t = -1; t <= 1; t += 2) nut(b, V3(x, yPlate - 0.008 - 0.007, t * z), 1, 0.022, 0.012);
     }
     b.style(V3(0.1, 0.1, 0.11), METAL);
     nut(b, V3(0, yt0 + 0.022, 0), 1, 0.03, 0.014);
-    b.cyl(V3(0, yb0 - 0.016, 0), V3(0, yb0 - 0.04, 0), 0.008, 6);
     // Rebound clips.
     static const double cx[] = {0.24, 0.38};
     for (double x0 : cx)
@@ -1477,7 +1508,14 @@ void leafHardware(B& b, const LeafPack& L, const V3& metal, double pad) {
             for (int t = -1; t <= 1; t += 2) b.box(V3(x, (yt + yb) / 2 - 0.003, t * (wz / 2 + 0.005)), V3(0.032, yt - yb + 0.01, 0.006));
             b.box(V3(x, yb - 0.003, 0), V3(0.032, 0.006, wz + 0.016));
         }
-    (void)pad;
+}
+
+// On its own (the lab) the pack rests on its U-bolts, with a stub of the axle tube through them.
+void leafStand(B& b, const P& p) {
+    if (bare(p)) return;
+    b.style(V3(0.15, 0.15, 0.16), METAL);
+    zcyl(b, 0, 0, -0.22, 0.22, kTubeR, 12);
+    b.move(0, kTubeR + 0.008 + 0.008 + 0.025, 0);
 }
 
 LeafPack leafOpts(const P& p) {
@@ -1490,6 +1528,7 @@ LeafPack leafOpts(const P& p) {
 void leafClassic(B& b, const P& p) {
     LeafPack L = leafOpts(p);
     L.dc = 0.0025;
+    L.fit();
     const int fin = p.i("finish");
     V3 col(0.11, 0.11, 0.12), edge(0.36, 0.36, 0.38);
     Mat mat = PAINT;
@@ -1499,7 +1538,9 @@ void leafClassic(B& b, const P& p) {
     const double ye = L.base - 0.015;
     leafEye(b, L.h1 + 0.012, ye, L.wz, col, mat);
     leafEye(b, -L.h1 - 0.012, ye, L.wz, col, mat);
-    leafHardware(b, L, V3(0.2, 0.2, 0.21), 0);
+    leafHanger(b, L.h1 + 0.012, ye, L.wz, V3(0.2, 0.2, 0.21));
+    leafShackle(b, -L.h1 - 0.012, ye, L.wz, V3(0.2, 0.2, 0.21));
+    leafHardware(b, L, V3(0.2, 0.2, 0.21));
     if (fin == 1) {
         b.style(V3(0.4, 0.18, 0.06), MATTE);
         for (int i = 0; i < 14; i++) {
@@ -1507,6 +1548,7 @@ void leafClassic(B& b, const P& p) {
             b.box(V3(x, L.top(0, x) + 0.002, (hash01(8, i) - 0.5) * 0.04), V3(0.02 + 0.03 * hash01(9, i), 0.004, 0.02));
         }
     }
+    leafStand(b, p);
 }
 
 void leafParabolic(B& b, const P& p) {
@@ -1518,6 +1560,7 @@ void leafParabolic(B& b, const P& p) {
     L.tE = 0.0045;
     L.wz = 0.075;
     L.h1 = 0.64;
+    L.fit();
     const V3 col = paint(p.i("paint")) * 0.6, edge = paint(p.i("paint"));
     leafStack(b, L, col, PAINT, edge);
     // Spacer pads between the leaves out toward the ends.
@@ -1531,30 +1574,18 @@ void leafParabolic(B& b, const P& p) {
     const double ye = L.base - 0.01;
     leafEye(b, L.h1 + 0.012, ye, L.wz, col, PAINT);
     leafEye(b, -L.h1 - 0.012, ye, L.wz, col, PAINT);
-    // Shackle plates on the front eye and a hanger bracket on the back one.
-    b.style(V3(0.35, 0.35, 0.37), METAL);
-    for (int s = -1; s <= 1; s += 2) {
-        b.box(V3(L.h1 + 0.052, ye + 0.012, s * (L.wz / 2 + 0.014)), V3(0.1, 0.034, 0.008), 0.004);
-        b.box(V3(-L.h1 - 0.012, ye + 0.03, s * (L.wz / 2 + 0.017)), V3(0.05, 0.075, 0.008), 0.004);
-    }
-    b.style(V3(0.1, 0.1, 0.11), METAL);
-    for (int s = -1; s <= 1; s += 2) {
-        nut(b, V3(L.h1 + 0.01, ye, s * (L.wz / 2 + 0.022)), 2, 0.026, 0.01);
-        nut(b, V3(L.h1 + 0.092, ye + 0.012, s * (L.wz / 2 + 0.022)), 2, 0.026, 0.01);
-        nut(b, V3(-L.h1 - 0.012, ye, s * (L.wz / 2 + 0.024)), 2, 0.026, 0.01);
-    }
-    b.style(V3(0.32, 0.32, 0.34), METAL);
-    zcyl(b, L.h1 + 0.092, ye + 0.012, -L.wz / 2 - 0.02, L.wz / 2 + 0.02, 0.009, 6);
-    b.box(V3(-L.h1 - 0.012, ye + 0.075, 0), V3(0.06, 0.012, L.wz + 0.05), 0.003);
-    leafHardware(b, L, V3(0.36, 0.36, 0.38), 1);
+    leafHanger(b, L.h1 + 0.012, ye, L.wz, V3(0.35, 0.35, 0.37));
+    leafShackle(b, -L.h1 - 0.012, ye, L.wz, V3(0.35, 0.35, 0.37));
+    leafHardware(b, L, V3(0.36, 0.36, 0.38));
+    leafStand(b, p);
 }
 
 Reg leafPack({"leaf_pack", "LEAF PACK", "PARTS", "Career upgrade: leaf spring pack", 1.3,
               {
-                  {"CLASSIC MULTI-LEAF", "Stacked steel leaves, rolled eyes, U-bolts and rebound clips",
-                   {num("leaves", "LEAVES", 7, 3, 10, 1), num("camber", "ARCH", 0.1, 0.05, 0.14, 0.01), choice("finish", "FINISH", 0, {"BLACK", "RUSTY", "BARE STEEL"})}, leafClassic},
-                  {"PARABOLIC TAPER", "Three tapered leaves on rubber spacers, with shackle and hanger",
-                   {num("leaves", "LEAVES", 3, 2, 5, 1), num("camber", "ARCH", 0.1, 0.05, 0.14, 0.01), paintParam(9)}, leafParabolic},
+                  {"CLASSIC MULTI-LEAF", "Stacked steel leaves, rolled eyes, U-bolts, rebound clips, hanger and shackle",
+                   {num("leaves", "LEAVES", 7, 3, 10, 1), num("camber", "ARCH", 0.1, -0.2, 0.14, 0.01), choice("finish", "FINISH", 0, {"BLACK", "RUSTY", "BARE STEEL"})}, leafClassic},
+                  {"PARABOLIC TAPER", "Three tapered leaves on rubber spacers, with hanger and shackle",
+                   {num("leaves", "LEAVES", 3, 2, 5, 1), num("camber", "ARCH", 0.1, -0.2, 0.14, 0.01), paintParam(9)}, leafParabolic},
               }});
 
 // ---- supply_crate ------------------------------------------------------------------------------
