@@ -524,7 +524,7 @@ public:
     // if it's wired to it).
     bool lockerAllowed(bool front) const;
 private:
-    void applyTorque(const std::vector<int>& set, const V3& torque);
+    void applyTorque(const std::vector<int>& set, const V3& torque, bool byMass = false);
     void chassisForces(double h);
     void chassisGroupForces(ChassisFrame& cf, double h);
     void releaseFromFrame(const Beam& b);

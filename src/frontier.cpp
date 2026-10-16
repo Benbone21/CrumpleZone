@@ -97,9 +97,10 @@ std::vector<V3> trackPoints(std::vector<V3>* apex = nullptr, std::vector<double>
         line(A.b, i + 1 < n ? arcs[i + 1].a : mid);
     }
     if (bank) {
-        // Eased in and out over ~20 m either side of each corner (a cosine window), as a real
-        // banked turn's transitions are.
-        const int m = (int)out.size(), win = 10;
+        // Eased in and out over ~50 m either side of each corner (a cosine window), as a real
+        // banked turn's transitions are. (Over 20 m, the road untwisted 16 degrees in a second
+        // at 130 km/h coming off the fast banked corner: a car lifted a wheel and rocked.)
+        const int m = (int)out.size(), win = 26;
         bank->assign(m, 0);
         for (int k = 0; k < m; k++) {
             double sum = 0, wsum = 0;

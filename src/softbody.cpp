@@ -890,18 +890,24 @@ bool Car::wheelPowered(const Wheel& wh) const {
 
 // Applies a pure torque to a set of nodes: forces F_i = alpha x d_i that sum to zero and
 // whose moment is exactly `torque` (alpha = I^-1 torque, I = the set's geometric inertia).
-void Car::applyTorque(const std::vector<int>& set, const V3& torque) {
+void Car::applyTorque(const std::vector<int>& set, const V3& torque, bool byMass) {
     if (dot(torque, torque) < 1e-12 || set.size() < 3) return;
+    // byMass: spin the set as the rigid piece it is (each node pushed in proportion to its
+    // mass, about the centre of mass), so the moment turns it without bending it.
     V3 c;
-    for (int i : set) c += nodes[i].p;
-    c = c / (double)set.size();
+    double M = 0;
+    for (int i : set) {
+        const double m = byMass ? nodes[i].m : 1.0;
+        c += nodes[i].p * m, M += m;
+    }
+    c = c / M;
     M3 I;
     for (int i : set) {
         V3 d = nodes[i].p - c;
-        double dd = dot(d, d);
-        I.c[0] += V3(dd - d.x * d.x, -d.y * d.x, -d.z * d.x);
-        I.c[1] += V3(-d.x * d.y, dd - d.y * d.y, -d.z * d.y);
-        I.c[2] += V3(-d.x * d.z, -d.y * d.z, dd - d.z * d.z);
+        double dd = dot(d, d), m = byMass ? nodes[i].m : 1.0;
+        I.c[0] += V3(dd - d.x * d.x, -d.y * d.x, -d.z * d.x) * m;
+        I.c[1] += V3(-d.x * d.y, dd - d.y * d.y, -d.z * d.y) * m;
+        I.c[2] += V3(-d.x * d.z, -d.y * d.z, dd - d.z * d.z) * m;
     }
     double tr = I.c[0].x + I.c[1].y + I.c[2].z;
     if (tr < 1e-6) return;
@@ -909,7 +915,7 @@ void Car::applyTorque(const std::vector<int>& set, const V3& torque) {
     I.c[1].y += tr * 1e-3;
     I.c[2].z += tr * 1e-3;
     V3 alpha = inverseSym(I) * torque;
-    for (int i : set) nodes[i].f += cross(alpha, nodes[i].p - c);
+    for (int i : set) nodes[i].f += cross(alpha, nodes[i].p - c) * (byMass ? nodes[i].m : 1.0);
 }
 
 // Points sampled on a skin triangle for the tire to meet (barycentric weights): the
@@ -1569,15 +1575,40 @@ void Car::wheelStep(double h, const World& w) {
                 if (ct.surface == SURF_MUD) wh.clog = (float)std::min(1.0, wh.clog + h * roll * (mudLugs ? 0.03 : 0.06));
                 wh.clog = (float)std::max(0.0, wh.clog - h * wh.clog * (std::max(0.0, roll - 6) * (mudLugs ? 0.5 : 0.2) + (ct.surface == SURF_MUD ? 0 : roll * 0.03)));
             }
-            a.f += F * 0.5;
-            b.f += F * 0.5;
+            // An independent corner's knuckle is one rigid piece: the road's push goes into all of
+            // it (by mass), plus the moment of it acting at the hub. Pushed into the two hub nodes
+            // alone, the knuckle's own beams had to carry it out to the ball joints and steering
+            // arm, and flexed: the wheel toed in and out as the cornering load rocked from side
+            // to side. On grippy tires that fed the body's roll: the Jesko on race slicks rocked
+            // itself into a 3 Hz wobble at 80 mph. (A live axle's assembly is the whole housing,
+            // both wheels: there the push stays at the hub.)
+            const bool independent = (wh.front ? spec->frontSusp : spec->rearSusp) != SOLID_AXLE;
+            V3 extraTau;
+            if (independent && !wh.detached && wh.assembly.size() >= 3) {
+                double M = 0;
+                V3 cm;
+                for (int i : wh.assembly) M += nodes[i].m, cm += nodes[i].p * nodes[i].m;
+                cm = cm / M;
+                // (The ground's push straight up stays at the hub: it's the tire's spring.)
+                const V3 Fn = F - Ft;
+                a.f += Fn * 0.5;
+                b.f += Fn * 0.5;
+                for (int i : wh.assembly) nodes[i].f += Ft * (nodes[i].m / M);
+                extraTau = cross(c - cm, Ft);  // (the force acts at the hub, not the assembly's centre of mass)
+            } else {
+                a.f += F * 0.5;
+                b.f += F * 0.5;
+            }
             // The road pushes on the tire at the ground, not at the hub: the extra moment
             // (cornering force times wheel radius) leans on the knuckle and the suspension,
             // which is what rolls the body. Its part along the axle spins the wheel instead.
             V3 arm = -n * (R - pen);
             V3 tau = cross(arm, Ft);
             tau -= axis * dot(tau, axis);
-            if (!wh.detached) applyTorque(wh.assembly, tau);
+            tau += extraTau - axis * dot(extraTau, axis);
+            // (On a knuckle, spread by mass, so it turns it as the one rigid piece it is: spread
+            // evenly, its light ball-joint nodes took as much as the heavy hub and it bent instead.)
+            if (!wh.detached) applyTorque(wh.assembly, tau, independent);
             // The studs carry the moment of a sideways shove at the tread (a curb or a rock's
             // edge levering the wheel off its hub face); squeezed straight in on its face (lying
             // on its side) the hub takes it. As the sideways force at the tread that would make
