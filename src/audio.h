@@ -44,9 +44,12 @@ public:
         ambienceMap_ = map; hours_ = hours; ambienceVol_ = volume; exposure_ = exposure;
     }
     // Background music: which map's piece, and its volume (0 = off). Changing map crossfades.
-    void setMusic(int map, float volume) {
+    // `biome` (biome.h, 0 = the map's own piece) picks that country's music instead; it should
+    // already be steadied (BiomeTracker).
+    void setMusic(int map, float volume, int biome = 0) {
         musicMap_ = map;
         musicVol_ = volume;
+        musicBiome_ = biome;
     }
     void impact(float strength);  // 0..1
     void glass(float strength);   // window shattering, 0..1
@@ -76,7 +79,7 @@ private:
     std::atomic<float> hours_{10}, ambienceVol_{0}, exposure_{1};
     Ambience ambience_;
     float sMaster_ = 0.8f, sLocalGain_ = 1, sExposure_ = 1, cabinLowL_ = 0, cabinLowR_ = 0;
-    std::atomic<int> musicMap_{-1};
+    std::atomic<int> musicMap_{-1}, musicBiome_{0};
     std::atomic<float> musicVol_{0};
     Music music_;  // audio thread only (after start)
 

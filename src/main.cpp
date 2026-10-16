@@ -24,6 +24,7 @@
 #include <map>
 
 #include "audio.h"
+#include "biome.h"
 #include "jobs.h"
 #include "career.h"
 #include "interact.h"
@@ -3364,7 +3365,12 @@ int main(int argc, char** argv) {
             audio.setBoost(vs.induction == VehicleSpec::TURBO ? (float)car.boost : 0.0f);
             audio.setTires(sim.paused ? 0 : slip);
             audio.setVolume(settings.volume, menu.open ? 0.35f : 1.0f);
-            audio.setMusic(sim.world.map, settings.music);  // master volume applies to the whole mix
+            {  // the music follows the country under you (steadied, so a border doesn't flip it back and forth)
+                static BiomeTracker biomes;
+                const V3 at = walker.active ? walker.p : fr.com;
+                biomes.update(sim.world, at.x, at.z, dt);
+                audio.setMusic(sim.world.map, settings.music, biomes.current);  // master volume applies to the whole mix
+            }
             audio.setSpeed(sim.paused ? 0 : (float)len(fr.vel));
             float amp = (float)clampd(std::log10(1.0 + impact / 50.0) / 3.5, 0, 1);
             if (amp > 0.08) audio.impact(amp);

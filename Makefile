@@ -7,11 +7,11 @@ CXXFLAGS += -std=c++17 -Wall -Wextra
 LDLIBS   := -l:libSDL2-2.0.so.0 -lpthread -lm
 
 MODELS   := $(sort $(wildcard src/models/*.cpp))
-PHYS     := src/modelkit.cpp $(MODELS) src/perf.cpp src/physics_workers.cpp src/collision.cpp src/props.cpp src/jobs.cpp src/walker.cpp src/softbody.cpp src/recovery.cpp src/net.cpp src/level.cpp src/levels_builtin.cpp src/levelrun.cpp src/editcore.cpp src/autopilot.cpp src/pilotsense.cpp src/carbuild.cpp src/world.cpp src/sections.cpp src/mountain.cpp src/freeway.cpp src/frontier.cpp src/backcountry.cpp src/vehicles.cpp src/mods.cpp src/gamepad.cpp src/platform.cpp src/tires.cpp src/interact.cpp src/fixes.cpp src/carparts.cpp src/vtools.cpp src/keybinds.cpp src/career.cpp
-SCEN     := tests/perf.cpp tests/drivetrain.cpp tests/net_state.cpp tests/collision.cpp tests/props.cpp tests/jobs.cpp tests/walker.cpp tests/editor.cpp tests/levels.cpp tests/circuit.cpp tests/frontier.cpp tests/backcountry.cpp tests/freeway.cpp tests/surfaces.cpp tests/handling.cpp tests/harness.cpp tests/scenarios.cpp tests/components.cpp tests/offroad.cpp tests/recovery.cpp tests/net.cpp tests/autopilot.cpp tests/nearby.cpp tests/gamepad.cpp tests/tires.cpp tests/vtools.cpp tests/simulation.cpp tests/vehicle_physics.cpp tests/dynamics.cpp tests/extreme.cpp tests/environment.cpp tests/towing.cpp tests/keybinds.cpp tests/treads.cpp tests/wobble.cpp tests/career.cpp tests/models.cpp tests/carparts.cpp tests/sections.cpp
+PHYS     := src/modelkit.cpp $(MODELS) src/perf.cpp src/physics_workers.cpp src/collision.cpp src/props.cpp src/jobs.cpp src/walker.cpp src/softbody.cpp src/recovery.cpp src/net.cpp src/level.cpp src/levels_builtin.cpp src/levelrun.cpp src/editcore.cpp src/autopilot.cpp src/pilotsense.cpp src/carbuild.cpp src/world.cpp src/sections.cpp src/biome.cpp src/mountain.cpp src/freeway.cpp src/frontier.cpp src/backcountry.cpp src/vehicles.cpp src/mods.cpp src/gamepad.cpp src/platform.cpp src/tires.cpp src/interact.cpp src/fixes.cpp src/carparts.cpp src/vtools.cpp src/keybinds.cpp src/career.cpp
+SCEN     := tests/perf.cpp tests/drivetrain.cpp tests/net_state.cpp tests/collision.cpp tests/props.cpp tests/jobs.cpp tests/walker.cpp tests/editor.cpp tests/levels.cpp tests/circuit.cpp tests/frontier.cpp tests/backcountry.cpp tests/freeway.cpp tests/surfaces.cpp tests/handling.cpp tests/harness.cpp tests/scenarios.cpp tests/components.cpp tests/offroad.cpp tests/recovery.cpp tests/net.cpp tests/autopilot.cpp tests/nearby.cpp tests/gamepad.cpp tests/tires.cpp tests/vtools.cpp tests/simulation.cpp tests/vehicle_physics.cpp tests/dynamics.cpp tests/extreme.cpp tests/environment.cpp tests/towing.cpp tests/keybinds.cpp tests/treads.cpp tests/wobble.cpp tests/career.cpp tests/models.cpp tests/carparts.cpp tests/sections.cpp tests/music.cpp
 GAME_SRC := src/main.cpp src/lab.cpp src/handwork.cpp src/gamepad_sdl.cpp src/editor.cpp src/coop.cpp src/gl.cpp src/gpu.cpp src/render.cpp src/carvisual.cpp src/bodyshell.cpp src/scenery.cpp src/menu.cpp src/fx.cpp src/engine_samples.cpp src/engineaudio.cpp src/audio.cpp src/music.cpp src/ambience.cpp src/daylight.cpp src/lights.cpp src/groundtex.cpp src/groundshader.cpp src/propdraw.cpp $(PHYS) $(SCEN)
 GAME_OBJ := $(patsubst %.cpp,build/%.o,$(GAME_SRC))
-TEST_OBJ := $(patsubst %.cpp,build/%.o,tests/run_tests.cpp $(PHYS) $(SCEN))
+TEST_OBJ := $(patsubst %.cpp,build/%.o,tests/run_tests.cpp $(PHYS) $(SCEN) src/music.cpp)
 HEADERS  := $(wildcard src/*.h tests/*.h)
 
 all: crumplezone
@@ -66,6 +66,10 @@ build/modelsheet: build/tools/modelsheet.o build/src/modelkit.o build/src/platfo
 build/soundscape_preview: build/tools/soundscape_preview.o build/src/music.o build/src/ambience.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lm
 
+# One WAV per biome's music, plus the maps' own pieces to compare levels with: build/biome_preview [directory [seconds [seed]]].
+build/biome_preview: build/tools/biome_preview.o build/src/music.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lm
+
 build/engine_preview: build/tools/engine_preview.o build/src/engineaudio.o build/src/engine_samples.o $(patsubst %.cpp,build/%.o,$(PHYS))
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -lm
 
@@ -73,7 +77,7 @@ build/engine_preview: build/tools/engine_preview.o build/src/engineaudio.o build
 build/win/bench_sim.exe: build/win/obj/tools/bench_sim.o $(patsubst %.cpp,build/win/obj/%.o,$(PHYS))
 	$(WINCXX) $(WINFLAGS) -o $@ $^ -lws2_32 -liphlpapi -static -static-libgcc -static-libstdc++
 
-build/win/run_tests.exe: build/win/obj/tests/run_tests.o $(patsubst %.cpp,build/win/obj/%.o,$(PHYS) $(SCEN))
+build/win/run_tests.exe: build/win/obj/tests/run_tests.o $(patsubst %.cpp,build/win/obj/%.o,$(PHYS) $(SCEN) src/music.cpp)
 	$(WINCXX) $(WINFLAGS) -o $@ $^ -lws2_32 -liphlpapi -static -static-libgcc -static-libstdc++
 
 build/win/test_audio.exe: build/win/obj/tests/audio.o build/win/obj/tests/engine_samples.o build/win/obj/tests/soundscape.o build/win/obj/src/audio.o build/win/obj/src/engineaudio.o build/win/obj/src/engine_samples.o build/win/obj/src/music.o build/win/obj/src/ambience.o $(patsubst %.cpp,build/win/obj/%.o,$(PHYS))
@@ -170,7 +174,7 @@ mac-dmg: mac
 build/mac/bench_sim: build/mac/obj/tools/bench_sim.o $(patsubst %.cpp,build/mac/obj/%.o,$(PHYS))
 	$(MACCXX) $(MACFLAGS) -o $@ $^
 
-build/mac/run_tests: build/mac/obj/tests/run_tests.o $(patsubst %.cpp,build/mac/obj/%.o,$(PHYS) $(SCEN))
+build/mac/run_tests: build/mac/obj/tests/run_tests.o $(patsubst %.cpp,build/mac/obj/%.o,$(PHYS) $(SCEN) src/music.cpp)
 	$(MACCXX) $(MACFLAGS) -o $@ $^
 
 build/mac/test_audio: build/mac/obj/tests/audio.o build/mac/obj/tests/engine_samples.o build/mac/obj/tests/soundscape.o build/mac/obj/src/audio.o build/mac/obj/src/engineaudio.o build/mac/obj/src/engine_samples.o build/mac/obj/src/music.o build/mac/obj/src/ambience.o $(patsubst %.cpp,build/mac/obj/%.o,$(PHYS))
