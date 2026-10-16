@@ -77,7 +77,7 @@ bool Settings::load(const std::string& path) {
         else if (k == "grass") gfx.grass = v != 0;
         else if (k == "ground") gfx.ground = std::min(std::max((int)v, 0), 3);
         else if (k == "props") gfx.props = std::min(std::max((int)v, 0), 3);
-        else if (k == "map") map = std::min(std::max((int)v, 0), MAP_COUNT - 1);
+        else if (k == "map") map = v >= 0 && v < MAP_COUNT ? (int)v : MAP_PROVING_GROUND;  // (a number no map has any more: the proving ground)
         else if (k == "recovery") realRecovery = v != 0;
         else if (k == "career") career = v != 0;
         else if (k == "fuel") fuelMode = std::min(std::max((int)v, 0), 2);

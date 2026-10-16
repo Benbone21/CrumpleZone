@@ -14,7 +14,6 @@ constexpr Habitat habitats[] = {
     {0.040f, 0.002f, 0, 0},        // freeway
     {0.055f, 0.016f, 0.45f, 0.6f}, // frontier
     {0.030f, 0.040f, 1, 1},        // forest / backcountry
-    {0.045f, 0.030f, 0.8f, 0.7f},  // wilderness
 };
 }
 float Ambience::random() {
@@ -23,9 +22,9 @@ float Ambience::random() {
 }
 void Ambience::render(float* out, int frames, int rate, const AmbienceInput& input) {
     if (!out || frames <= 0 || rate < 8000 || rate > 192000) return;
-    const float wanted = input.map >= 0 && input.map < 6 ? safe(input.volume, 0, 0, 1) : 0;
+    const float wanted = input.map >= 0 && input.map < (int)(sizeof habitats / sizeof habitats[0]) ? safe(input.volume, 0, 0, 1) : 0;
     if (wanted == 0 && volume_ < 1e-6f) { volume_ = 0; return; }
-    const Habitat habitat = input.map >= 0 && input.map < 6 ? habitats[input.map] : Habitat{};
+    const Habitat habitat = input.map >= 0 && input.map < (int)(sizeof habitats / sizeof habitats[0]) ? habitats[input.map] : Habitat{};
     const float hours = safe(input.hours, 10, 0, 24);
     // Smooth sunrise/sunset, with a little more birdsong near dawn and dusk.
     const float daylight = std::clamp(std::min((hours - 5) / 2, (21 - hours) / 2), 0.0f, 1.0f);

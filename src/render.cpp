@@ -2264,7 +2264,7 @@ void Renderer::updateTerrainRegion(const World& world, int i0, int j0, int i1, i
 }
 void Renderer::buildTerrain(const World& world) {
     // 1 m on the mountain (its crawl features are small), 2 m on the proving ground.
-    const double spacing = world.map == MAP_MOUNTAIN || world.map == MAP_FRONTIER || world.map == MAP_BACKCOUNTRY || world.map == MAP_WILDERNESS ? 1.0 : 2.0, half = World::kHalfSize;
+    const double spacing = world.map == MAP_MOUNTAIN || world.map == MAP_FRONTIER || world.map == MAP_BACKCOUNTRY ? 1.0 : 2.0, half = World::kHalfSize;
     const int n = (int)(2 * half / spacing) + 1;
     terrainSpacing = spacing;
     terrainMeshN = n;
@@ -3259,7 +3259,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     // whose forest climbs to ~175 m.
     if (mapId == MAP_MOUNTAIN) Uniform2f(uniformLocation(progLit, "uRockSnow"), 165.0f, 205.0f);
     else if (mapId == MAP_FRONTIER) Uniform2f(uniformLocation(progLit, "uRockSnow"), 125.0f, 400.0f);  // (its snow is painted on)
-    else if (mapId == MAP_BACKCOUNTRY || mapId == MAP_WILDERNESS) Uniform2f(uniformLocation(progLit, "uRockSnow"), 105.0f, 400.0f);  // (its snow is painted on)
+    else if (mapId == MAP_BACKCOUNTRY) Uniform2f(uniformLocation(progLit, "uRockSnow"), 105.0f, 400.0f);  // (its snow is painted on)
     else Uniform2f(uniformLocation(progLit, "uRockSnow"), 60.0f, 240.0f);
     // The ground: photo-scanned materials where they're loaded, else the procedural look.
     int gq = std::min(std::max(settings.ground, 0), 3);
@@ -3283,7 +3283,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         float rs[2];
         if (mapId == MAP_MOUNTAIN) rs[0] = 165.0f, rs[1] = 205.0f;
         else if (mapId == MAP_FRONTIER) rs[0] = 125.0f, rs[1] = 400.0f;
-        else if (mapId == MAP_BACKCOUNTRY || mapId == MAP_WILDERNESS) rs[0] = 105.0f, rs[1] = 400.0f;
+        else if (mapId == MAP_BACKCOUNTRY) rs[0] = 105.0f, rs[1] = 400.0f;
         else rs[0] = 60.0f, rs[1] = 240.0f;
         Uniform2f(uniformLocation(progTerrain, "uRockSnow"), rs[0], rs[1]);
         ActiveTexture(GL_TEXTURE0 + 3);

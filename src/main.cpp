@@ -1500,7 +1500,7 @@ int main(int argc, char** argv) {
     if (opt.mph) settings.mph = true;
     if (!mapListed(settings.map)) settings.map = MAP_PROVING_GROUND;  // (a map that's been taken off the list)
     World::withShowcase = opt.scenario.empty();  // (the model yard and section park laid out on the proving ground: not under a test's replay)
-    if (opt.map >= 0) settings.map = std::min(opt.map, MAP_COUNT - 1);
+    if (opt.map >= 0) settings.map = opt.map < MAP_COUNT ? opt.map : MAP_PROVING_GROUND;  // (--map with no such map: the proving ground)
     if (!opt.scenario.empty()) settings.map = MAP_PROVING_GROUND;  // the tests are built for it
     if (opt.lab) settings.map = MAP_PROVING_GROUND;                // (the model lab builds its own studio)
     if (opt.fullscreen) settings.fullscreen = true;

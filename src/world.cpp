@@ -82,7 +82,7 @@ int nextListedMap(int map, int dir) {
 }
 
 const char* mapName(int map) {
-    return map == MAP_MOUNTAIN ? "MOUNTAIN" : map == MAP_FREEWAY ? "FREEWAY" : map == MAP_FRONTIER ? "FRONTIER" : map == MAP_BACKCOUNTRY ? "BACKCOUNTRY" : map == MAP_WILDERNESS ? "WILDERNESS" : "PROVING GROUND";
+    return map == MAP_MOUNTAIN ? "MOUNTAIN" : map == MAP_FREEWAY ? "FREEWAY" : map == MAP_FRONTIER ? "FRONTIER" : map == MAP_BACKCOUNTRY ? "BACKCOUNTRY" : "PROVING GROUND";
 }
 
 std::vector<V3> splinePoints(const std::vector<V3>& pts, bool closed) {
@@ -330,12 +330,11 @@ void World::addLake(double x, double z, double r, double depth) {
     waters.push_back({x, z, r * 1.15, level});
 }
 
-World::World(int m, uint32_t sd) : map(m), seed(sd ? sd : 1) {
+World::World(int m) : map(m) {
     if (map == MAP_MOUNTAIN) buildMountain();
     else if (map == MAP_FREEWAY) buildFreeway();
     else if (map == MAP_FRONTIER) buildFrontier();
     else if (map == MAP_BACKCOUNTRY) buildBackcountry();
-    else if (map == MAP_WILDERNESS) buildWilderness();
     else buildProvingGround();
     buildGrid();
 }

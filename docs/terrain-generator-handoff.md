@@ -625,3 +625,4 @@ every asset.
   library dropped), so it is now out of date. Use it only for `export/...` levels until the
   stitcher reads sections straight from the library.
 
+Wilderness map removed from the game (2026-10-16); see commit c735d9e for the old seeded generator.

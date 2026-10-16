@@ -71,21 +71,6 @@ struct Placed {
     bool bare = false;       // a part fitted in a car (carparts.h): built without the stand it's shown on (cached)
 };
 
-// A named place on a generated map (the Wilderness): where it is, and whether a career's
-// supply cache lies there (its tier: 1 everyday .. 3 the best; 0 cash; -1 none).
-struct Landmark {
-    std::string name;
-    V3 p;
-    int cache = -1;
-};
-
-// A generated map's road or trail: its centre line (~1 m apart) and what it's called.
-struct Route {
-    std::string name;
-    std::vector<V3> pts;
-    bool road = false;  // a road (else a trail)
-};
-
 // A repair station: a concrete pad under an open shed. Park on it, stop, and the crew
 // fixes whatever is broken.
 struct Station {
@@ -139,7 +124,7 @@ const SurfaceInfo& surfaceInfo(Surface s);
 // Tire grip on each surface, as a share of dry pavement.
 inline double surfaceGrip(Surface s) { return surfaceInfo(s).grip; }
 
-enum MapId { MAP_PROVING_GROUND, MAP_MOUNTAIN, MAP_FREEWAY, MAP_FRONTIER, MAP_BACKCOUNTRY, MAP_WILDERNESS, MAP_COUNT };
+enum MapId { MAP_PROVING_GROUND, MAP_MOUNTAIN, MAP_FREEWAY, MAP_FRONTIER, MAP_BACKCOUNTRY, MAP_COUNT };
 const char* mapName(int map);  // as the menu shows it
 // The maps on offer (menus, hosting, the editor): just the proving ground, where everything in
 // the game is laid out to look at and try, while the world is rebuilt. (The others are still
@@ -245,9 +230,6 @@ public:
     double frontierHeight(double x, double z) const;  // the Frontier's land before anything's carved into it
 
     int map = MAP_PROVING_GROUND;
-    uint32_t seed = 1;           // a generated map's seed (the same seed: the same world)
-    std::vector<Landmark> landmarks;  // a generated map's named places (autopilot, discovery, caches)
-    std::vector<Route> routes;        // ...and its roads and trails
     V3 spawn;                    // where the player starts (on the ground)
     double spawnYaw = 0;
     std::vector<V3> parking;     // where the other vehicles start, facing parkingYaw
@@ -274,8 +256,7 @@ public:
     };
     void solidsNear(double x0, double z0, double x1, double z1, NearbySolids& out) const;
 
-    // `seed` picks which world a generated map (the Wilderness) is; the others ignore it.
-    explicit World(int map = MAP_PROVING_GROUND, uint32_t seed = 1);
+    explicit World(int map = MAP_PROVING_GROUND);
     double height(double x, double z) const;  // terrain only (baked grid, bilinear)
     V3 normal(double x, double z) const;
     RoadInfo roadAt(double x, double z) const;
@@ -304,7 +285,6 @@ private:
     void buildFreeway();
     void buildFrontier();
     void buildBackcountry();
-    void buildWilderness();  // wilderness.cpp: generated from `seed`
     void buildModelYard();   // every model laid out on the proving ground (world.cpp)
     void buildSectionPark(); // the obstacle sections laid out outside the loop road (world.cpp)
     void buildMountain();

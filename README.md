@@ -477,7 +477,7 @@ The idea: trucks break, and your buddies get you home. (Until multiplayer lands,
 
 ## Maps
 
-The map list has just the **proving ground** for now: it's where everything in the game is laid out to look at and try while the world is rebuilt. The other maps are still in the code (the tests use them) and `--map N` still loads one: `1` mountain, `2` freeway, `3` Frontier, `4` Backcountry, `5` Wilderness (unfinished).
+The map list has just the **proving ground** for now: it's where everything in the game is laid out to look at and try while the world is rebuilt. The other maps are still in the code (the tests use them) and `--map N` still loads one: `1` mountain, `2` freeway, `3` Frontier, `4` Backcountry. (The seeded Wilderness map, 5, was removed for now; an old settings file or `--map 5` loads the proving ground. Commit `c735d9e` has the generator.)
 
 ### Backcountry
 
