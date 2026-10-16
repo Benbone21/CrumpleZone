@@ -137,6 +137,7 @@ int main() {
         double energy = 0;
         for (int i = 0; i < 12000; i++) { const float s = engine.sample(input, 1.0f / 48000); finiteEngines &= std::isfinite(s); energy += s * s; }
         finiteEngines &= energy > 0.1;
+        if (energy <= 0.1) std::printf("  %s energy %.3f\n", v.id, energy);
     }
     check("shared engine synth covers all seven vehicle voices", finiteEngines);
     bool clean = true, responds = true;
@@ -291,7 +292,49 @@ int main() {
             for (int k = 0; k < 8; k++) std::printf("    %.3f %s\n", all[k].first, all[k].second.c_str());
             std::printf("  without the voices (cylinders, size and induction only): closest %.3f\n", closest0);
         }
-        check("every engine in the garage has its own sound", engines.size() > 20 && closest > 0.05);
+        check("every engine in the garage has its own sound", engines.size() > 20 && closest > 0.09);
+        // A big block roars and rumbles: louder than a little four, with far more of its sound
+        // down low (under 200 Hz), idling and pulling.
+        auto find = [&](const char* name) -> const Engine* {
+            for (const Engine& e : engines)
+                if (std::string(e.name).find(name) != std::string::npos) return &e;
+            return nullptr;
+        };
+        auto character = [&](const Engine& e, float rpm, float load, double& rmsOut) {
+            EngineSynth synth;
+            EngineInput in = e.in;
+            in.rpm = rpm, in.load = load, in.boost = load;
+            const int n = 48000;
+            std::vector<float> x(n);
+            for (int i = 0; i < 12000; i++) synth.sample(in, 1.0f / 48000);
+            double e2 = 0;
+            for (int i = 0; i < n; i++) x[i] = synth.sample(in, 1.0f / 48000), e2 += x[i] * x[i];
+            rmsOut = std::sqrt(e2 / n);
+            // (Under 90 Hz, below any of these engines' firing notes at 3,000 rpm: the thump of
+            // its uneven pulses, the deep end of its pipe.)
+            const float a = 1 - std::exp(-2 * (float)M_PI * 90 / 48000);
+            double low = 0, l1 = 0, l2 = 0;
+            for (float v : x) l1 += (v - l1) * a, l2 += (l1 - l2) * a, low += l2 * l2;
+            return low / std::max(1e-12, e2);
+        };
+        const Engine *bigBlock = find("454"), *four = find("SOHC D16A6");
+        if (bigBlock && four) {
+            double rBig, rFour, rBigIdle, rFourIdle;
+            const double lowBig = character(*bigBlock, 3000, 0.8f, rBig), lowFour = character(*four, 3000, 0.8f, rFour);
+            const double lowBigIdle = character(*bigBlock, bigBlock->idle, 0.05f, rBigIdle), lowFourIdle = character(*four, four->idle, 0.05f, rFourIdle);
+            std::printf("  454 vs Civic D16: pulling rms %.3f vs %.3f, under 90 Hz %.0f%% vs %.0f%%; idling rms %.3f vs %.3f, under 90 Hz %.0f%% vs %.0f%%\n", rBig, rFour,
+                        lowBig * 100, lowFour * 100, rBigIdle, rFourIdle, lowBigIdle * 100, lowFourIdle * 100);
+            if (std::getenv("TONE_DEBUG"))
+                for (const char* name : {"350 V8 2", "350 V8 4", "ZZ4", "LS7", "6.2L LS V8", "5.0L TWIN-TURBO V8", "900CC TURBO I3", "2GR-FKS"})
+                    if (const Engine* e = find(name)) {
+                        double r, ri;
+                        const double lo = character(*e, 3000, 0.8f, r), loI = character(*e, e->idle, 0.05f, ri);
+                        std::printf("    %-28s pulling rms %.3f low %.0f%%, idling rms %.3f low %.0f%%\n", e->name.c_str(), r, lo * 100, ri, loI * 100);
+                    }
+            check("the 454 big block roars and rumbles: louder and deeper than a little four", rBig > rFour * 1.3 && lowBig > lowFour * 1.5 && rBigIdle > rFourIdle * 1.3);
+        } else {
+            check("the 454 big block and the Civic's D16 are in the garage", false);
+        }
     }
     return failures ? 1 : 0;
 }

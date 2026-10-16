@@ -94,6 +94,10 @@ float EngineSynth::sample(const EngineInput& input, float dt) {
         auto next = [&]() { r ^= r << 13; r ^= r >> 17; r ^= r << 5; return (r & 0xFFFF) / 65535.0f; };
         pulseA1_ = 0.03f + 0.08f * next(), pulseA2_ = 0.02f + 0.06f * next();
         pulseP1_ = next(), pulseP2_ = next();
+        // Each cylinder's own pulse strength: big, uneven pulses (long unequal headers, a lumpy
+        // cam) are a big V8's burble; a smooth modern engine's are nearly all alike.
+        const float spread = 0.02f + 0.55f * std::clamp(tone.rumble, 0.0f, 1.0f);
+        for (float& g : cylGain_) g = 1 + spread * (2 * next() - 1);
     }
     if (controlTick_-- <= 0) {
         controlTick_ = 63;
@@ -128,6 +132,10 @@ float EngineSynth::sample(const EngineInput& input, float dt) {
     if (level < kLevels - 1) raw += (combustion(level + 1) - raw) * blend;
     // Its own cylinder-to-cylinder differences (and the lope's).
     raw *= (1 + pulseA1_ * (float)std::sin(kTau * (cycle_ + pulseP1_)) + pulseA2_ * (float)std::sin(2 * kTau * (cycle_ + pulseP2_))) * lopeGain_;
+    // ...and each firing's own strength (eased from one to the next: no clicks).
+    const float rumble = std::clamp(tone.rumble, 0.0f, 1.0f), roarK = std::clamp(tone.roar, 0.0f, 1.0f);
+    cylGainS_ += (cylGain_[std::min(11, (int)(cycle_ * cylinders_))] - cylGainS_) * 0.12f;
+    raw *= cylGainS_;
     engLp_ += (raw - engLp_) * exhaustRate_;
     engLp2_ += (engLp_ - engLp2_) * exhaustRate_;
     // Off the throttle at high revs: pops and bangs out of an open exhaust (unburnt fuel
@@ -140,14 +148,27 @@ float EngineSynth::sample(const EngineInput& input, float dt) {
         pop = popLp_ * popEnv_ * popAmp_ * tone.crackle;
         popEnv_ *= std::exp(-dt / 0.012f);
     }
-    const float body = exhaust_.run(raw + pop * 3.0f), body2 = exhaust2_.run(raw), intake = intake_.run(raw);
     breath_ += (n - breath_) * breathRate_;
     breathLow_ += (breath_ - breathLow_) * (breathRate_ * 0.15f);
+    // The roar: exhaust gas rushing out with every pulse, louder the harder and faster it's
+    // worked, through the pipe's own resonance (an open, big-bore pipe the most).
+    pulseEnv_ += (std::max(raw, 0.0f) - pulseEnv_) * 0.08f;
+    roarLp_ += (n - roarLp_) * exhaustRate_;
+    roarLp2_ += (roarLp_ - roarLp2_) * exhaustRate_;
+    const float worked = (0.25f + 0.75f * sLoad_) * (0.35f + 0.65f * std::min(sRpm_ / redline, 1.0f));
+    const float roar = roarLp2_ * pulseEnv_ * roarK * worked * (0.6f + 0.8f * muffler) * 2.2f;
+    // The thump: a big engine's uneven pulses felt as much as heard, once a cycle (half the
+    // crank speed), fading as it revs out.
+    const float size = std::clamp(liters / 5.0f, 0.3f, 1.5f);
+    const float thump = (float)std::sin(kTau * cycle_) * rumble * size * 0.24f * (1 - 0.6f * std::min(sRpm_ / redline, 1.0f)) * (0.6f + 0.4f * sLoad_);
+    const float body = exhaust_.run(raw + pop * 3.0f + roar), body2 = exhaust2_.run(raw + roar * 0.5f), intake = intake_.run(raw);
     // Air stays below the combustion note. No white-noise clicks at each firing
     // event and no loud continuous turbo sine.
-    float engine = (engLp2_ * 0.70f + body * (0.35f + 0.25f * muffler) + body2 * (0.06f + 0.18f * rasp) * (0.4f + 0.6f * muffler) +
-                    intake * (0.12f + 0.20f * sLoad_) * (0.5f + 1.3f * tone.intake) + raw * 0.06f * rasp) *
-                   (0.29f + 0.36f * sLoad_) * (0.85f + 0.04f * liters) * (0.85f + 0.35f * muffler);
+    // (The shared combustion note is only the base: the pipe, the intake and the rasp on top of
+    // it are what make two engines of the same size sound nothing alike.)
+    float engine = (engLp2_ * 0.45f + body * (0.30f + 0.70f * muffler) + body2 * (0.04f + 0.40f * rasp) * (0.4f + 0.6f * muffler) +
+                    intake * (0.08f + 0.25f * sLoad_) * (0.3f + 2.2f * tone.intake) + raw * 0.14f * rasp * rasp + thump) *
+                   (0.29f + 0.36f * sLoad_) * (0.70f + 0.09f * liters) * (0.85f + 0.35f * muffler);  // (a big engine is a loud one)
     // The valvetrain: a tick at every valve event, louder up the revs.
     tickPhase_ += cycleHz * cylinders_ * 2 * dt;
     if (tickPhase_ >= 1) tickPhase_ -= std::floor(tickPhase_), tickEnv_ = 1;

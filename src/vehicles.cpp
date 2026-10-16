@@ -1327,19 +1327,20 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         ef.wheelStyle = WHEEL_HONDA_COVER;
         ef.extras = EXTRA_LIP_SPOILER;
 
-        // Each engine's sound (engineaudio.h): exhaust, cam, intake, valvetrain, timbre.
-        auto voice = [&](const char* id, float muffler, float lope, float intake, float mech, float rasp, float crackle) {
+        // Each engine's sound (engineaudio.h): the exhaust pipe's note (Hz), how open it is, cam,
+        // intake, valvetrain, timbre, pops, the burble of big uneven pulses, and the roar under load.
+        auto voice = [&](const char* id, float pipeHz, float muffler, float lope, float intake, float mech, float rasp, float crackle, float rumble, float roar) {
             for (VehicleSpec& s : v)
-                if (std::string(s.id) == id) s.voice = EngineTone{0, muffler, lope, intake, mech, rasp, crackle, 0};
+                if (std::string(s.id) == id) s.voice = EngineTone{pipeHz, muffler, lope, intake, mech, rasp, crackle, 0, rumble, roar};
         };
-        voice("civic", 0.30f, 0.0f, 0.55f, 0.35f, 0.60f, 0.0f);   // a little SOHC four: buzzy, intake-y, quiet pipe
-        voice("jesko", 0.75f, 0.0f, 0.50f, 0.20f, 0.70f, 0.35f);  // flat-plane V8 through a short race exhaust: a howl
-        voice("bronco", 0.30f, 0.0f, 0.30f, 0.20f, 0.35f, 0.0f);  // twin-turbo V6: muted, turbo hiss, a modern box
-        voice("4runner", 0.40f, 0.0f, 0.45f, 0.35f, 0.40f, 0.0f); // 5VZ V6 with the blower whine
-        voice("buggy", 0.92f, 0.35f, 0.55f, 0.30f, 0.30f, 0.50f); // LS V8 out of short open headers: loud, lumpy, poppy
-        voice("utv", 0.62f, 0.0f, 0.60f, 0.55f, 0.85f, 0.30f);    // Rotax turbo triple: raspy, clattery, braps
-        voice("tacoma", 0.25f, 0.0f, 0.35f, 0.25f, 0.40f, 0.0f);  // 2GR V6: smooth and quiet
-        voice("blazer", 0.38f, 0.15f, 0.60f, 0.40f, 0.12f, 0.15f); // carbureted small block on dual exhaust: deep, a little lope
+        voice("civic", 260, 0.30f, 0.0f, 0.55f, 0.35f, 0.60f, 0.0f, 0.0f, 0.20f);    // a little SOHC four: buzzy, intake-y, quiet pipe
+        voice("jesko", 340, 0.75f, 0.0f, 0.50f, 0.20f, 0.70f, 0.35f, 0.0f, 0.60f);   // flat-plane V8 through a short race exhaust: a howl
+        voice("bronco", 150, 0.30f, 0.0f, 0.30f, 0.20f, 0.35f, 0.0f, 0.05f, 0.30f);  // twin-turbo V6: muted, turbo hiss, a modern box
+        voice("4runner", 165, 0.40f, 0.0f, 0.45f, 0.35f, 0.40f, 0.0f, 0.05f, 0.30f); // 5VZ V6 with the blower whine
+        voice("buggy", 95, 0.92f, 0.35f, 0.55f, 0.30f, 0.30f, 0.50f, 0.60f, 0.85f);  // LS V8 out of short open headers: loud, lumpy, poppy
+        voice("utv", 300, 0.62f, 0.0f, 0.60f, 0.55f, 0.85f, 0.30f, 0.15f, 0.50f);    // Rotax turbo triple: raspy, clattery, braps
+        voice("tacoma", 175, 0.25f, 0.0f, 0.35f, 0.25f, 0.40f, 0.0f, 0.0f, 0.20f);   // 2GR V6: smooth and quiet
+        voice("blazer", 105, 0.38f, 0.15f, 0.60f, 0.40f, 0.12f, 0.15f, 0.55f, 0.55f); // carbureted small block on dual exhaust: deep, a little lope, a rumble
         for (size_t i = 0; i < v.size(); i++) v[i].model = (int)i;
         // Engines tuned ~15% over their factory ratings: rated torque is the crank's, and
         // with the drivetrain's spinning mass counted the stock figures felt flat in the game.

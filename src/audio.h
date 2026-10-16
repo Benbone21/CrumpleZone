@@ -24,6 +24,7 @@ public:
     void setVoice(int cylinders, float liters, int induction, bool flatPlane, float redline, const EngineTone& voice = EngineTone{}) {
         vExhaust_ = voice.exhaustHz, vMuffler_ = voice.muffler, vLope_ = voice.lope, vIntake_ = voice.intake;
         vMech_ = voice.mech, vRasp_ = voice.rasp, vCrackle_ = voice.crackle, vSeed_ = voice.seed;
+        vRumble_ = voice.rumble, vRoar_ = voice.roar;
         cyl_ = cylinders;
         liters_ = liters;
         induction_ = induction;
@@ -67,7 +68,7 @@ private:
     std::atomic<bool> flatPlane_{false};
     std::atomic<float> liters_{1.6f}, redline_{6500}, boost_{0};
     // The engine's voice (EngineTone), a field at a time for the audio thread.
-    std::atomic<float> vExhaust_{0}, vMuffler_{0.35f}, vLope_{0}, vIntake_{0.4f}, vMech_{0.25f}, vRasp_{0.3f}, vCrackle_{0};
+    std::atomic<float> vExhaust_{0}, vMuffler_{0.35f}, vLope_{0}, vIntake_{0.4f}, vMech_{0.25f}, vRasp_{0.3f}, vCrackle_{0}, vRumble_{0}, vRoar_{0.3f};
     std::atomic<uint32_t> vSeed_{0};
     std::atomic<float> pendingImpact_{0}, pendingGlass_{0}, pendingPop_{0};
     std::atomic<float> sceneGain_{1}, localGain_{1};

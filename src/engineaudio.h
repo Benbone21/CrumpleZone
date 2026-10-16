@@ -13,6 +13,8 @@ struct EngineTone {
     float rasp = 0.3f;     // 0 deep and round .. 1 thin and raspy (small cylinders, high revs)
     float crackle = 0;     // pops and bangs off the throttle at high revs, 0..1
     uint32_t seed = 0;     // its own cylinder-to-cylinder differences
+    float rumble = 0;      // big, uneven exhaust pulses: a big V8's burble and chest thump, 0..1
+    float roar = 0.3f;     // exhaust gas roaring through the pipes under load, 0..1
 };
 
 struct EngineInput {
@@ -43,9 +45,10 @@ private:
     float dcIn_ = 0, dcOut_ = 0;
     // Its own character (EngineTone): cylinder-to-cylinder differences, the cam's lope from one
     // cycle to the next, the valvetrain's tick, pops on the overrun.
-    uint32_t seed_ = 0;
+    uint32_t seed_ = 0xFFFFFFFFu;  // (none yet: set up on the first sample)
     float pulseA1_ = 0, pulseA2_ = 0, pulseP1_ = 0, pulseP2_ = 0;
     float lopeGain_ = 1, tickEnv_ = 0, popEnv_ = 0, popAmp_ = 0, popLp_ = 0;
+    float cylGain_[12] = {}, cylGainS_ = 1, roarLp_ = 0, roarLp2_ = 0, pulseEnv_ = 0;
     double prevCycle_ = 0, tickPhase_ = 0;
     float sampleDt_ = -1, smooth_ = 0, breathRate_ = 0, wobbleRate_ = 0, bovDecay_ = 0, dcRate_ = 0, exhaustRate_ = 0;
     uint32_t rng_ = 0x12345678;
