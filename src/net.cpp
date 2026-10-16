@@ -1,3 +1,6 @@
+#ifdef _WIN32
+#define _CRT_RAND_S  // (rand_s: the secrets come from the system's generator)
+#endif
 #include "thread_cache.h"
 // Multiplayer session: see net.h.
 #include "net.h"
@@ -6,6 +9,7 @@
 #include <chrono>
 #include <cerrno>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 
 #include "mods.h"
@@ -96,11 +100,20 @@ enum MsgType : uint8_t {
     MSG_LEVEL,        // u32 serial, u16 part, u16 parts, bytes: the level's text, in parts
     MSG_GAME,         // u8 player, str: race chatter
     MSG_LAMPS,        // u32 car id, u8 LampMode: reliable, also while the car sleeps
+    MSG_CHALLENGE,    // host -> client: 16 random bytes; answer with MSG_AUTH (only if there's a password)
+    MSG_AUTH,         // client -> host: HMAC-SHA-256(password, those 16 bytes)
 };
+// (WELCOME: u8 id, u8 map, u64 the guest's datagram secret.)
 enum DgramType : uint8_t { DG_SNAP = 1, DG_HELLO = 2 };
 constexpr uint16_t kMagic = 0xC27A;
-constexpr size_t kDgramHeader = 2 + 1 + 1 + 4 + 4 + 1 + 1;
+// ... and the u64 secret of whoever the datagram is for (told in the welcome): anyone else's is dropped.
+constexpr size_t kDgramHeader = 2 + 1 + 1 + 4 + 4 + 1 + 1 + 8;
+constexpr size_t kTokenAt = 2 + 1 + 1 + 4 + 4 + 1 + 1;
 constexpr size_t kChunk = 1150;
+constexpr int kMaxFragments = 32;  // (a state is a few KB: more is garbage)
+constexpr double kPosLimit = 5.0e4;  // m: nothing in any world is further out than this
+constexpr size_t kMaxPending = 8192, kMaxPendingBytes = 32u << 20;
+constexpr size_t kMaxOut = 16u << 20;  // queued for one peer that isn't reading
 
 struct Writer {
     std::vector<uint8_t> b;
@@ -144,6 +157,48 @@ struct Reader {
     }
 };
 
+// ---- Checks on what comes in ----------------------------------------------------------
+
+bool okNum(double v, double lim) { return std::isfinite(v) && std::fabs(v) <= lim; }
+bool okPos(const V3& p) { return okNum(p.x, kPosLimit) && okNum(p.y, kPosLimit) && okNum(p.z, kPosLimit); }
+
+double clockNow() { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
+
+void randomBytes(uint8_t* out, size_t n) {
+    size_t got = 0;
+#ifdef _WIN32
+    while (got < n) {
+        unsigned int v = 0;
+        if (rand_s(&v) != 0) break;
+        for (int k = 0; k < 4 && got < n; k++) out[got++] = (uint8_t)(v >> (8 * k));
+    }
+#else
+    if (FILE* f = std::fopen("/dev/urandom", "rb")) {
+        got = std::fread(out, 1, n, f);
+        std::fclose(f);
+    }
+#endif
+    for (uint64_t mix = (uint64_t)std::chrono::steady_clock::now().time_since_epoch().count(); got < n; got++, mix = mix * 6364136223846793005ull + 1442695040888963407ull)
+        out[got] = (uint8_t)(mix >> 33);  // (no system generator: better than nothing)
+}
+
+bool sameBytes(const uint8_t* a, const uint8_t* b, size_t n) {  // (in constant time)
+    uint8_t d = 0;
+    for (size_t i = 0; i < n; i++) d |= a[i] ^ b[i];
+    return d == 0;
+}
+
+sockaddr_in udpAddress(uint32_t ip, uint16_t port) {
+    sockaddr_in a{};
+    a.sin_family = AF_INET;
+    a.sin_addr.s_addr = htonl(ip);
+    a.sin_port = htons(port);
+    return a;
+}
+
+// Race chatter only the host may say: a guest sending these is lying about who's in charge.
+bool hostOnlyChatter(const std::string& t) { return t.rfind("job", 0) == 0 || t.rfind("restart", 0) == 0; }
+
 std::vector<uint8_t> frame(MsgType t, const Writer& w) {
     std::vector<uint8_t> m;
     const uint16_t len = (uint16_t)(w.b.size() + 1);
@@ -179,7 +234,11 @@ const VehicleSpec* specFrom(const SpecId& id) {
     if (id.kind == 2) return &barrierSpec();
     if (id.kind != 0 || id.model >= vehicleCatalog().size()) return nullptr;
     ModSet m;
-    for (int k = 0; k < MOD_SLOTS; k++) m.pick[k] = id.mods[k];
+    for (int k = 0; k < MOD_SLOTS; k++) {
+        // (Each pick must be a real option: tunedSpec keeps a spec for every combination it's asked for.)
+        if (id.mods[k] >= modOptions(id.model, k).size()) return nullptr;
+        m.pick[k] = id.mods[k];
+    }
     return &tunedSpec(id.model, m);
 }
 
@@ -217,17 +276,102 @@ void eraseCar(Sim& sim, int i) {
 
 }  // namespace
 
-// ---- Connection and remote-vehicle state ----------------------------------------
+// ---- Text and proofs from the network -----------------------------------------------
 
-struct NetSession::Conn {
-    int fd = -1;
-    int peer = -1;
-    bool hello = false;
-    std::vector<uint8_t> in, out;
-    sockaddr_in udp{};
-    bool udpKnown = false;
-    double pingSent = 0;
+namespace net {
+
+std::string sanitize(const std::string& s, size_t maxLen) {
+    std::string o;
+    for (unsigned char ch : s)
+        if (ch >= 32 && ch <= 126) o += (char)ch;  // (the HUD font has nothing else: controls and bytes above ASCII go)
+    const size_t a = o.find_first_not_of(' ');
+    if (a == std::string::npos) return "";
+    o.erase(0, a);
+    o.resize(std::min(o.size(), maxLen));
+    o.erase(o.find_last_not_of(' ') + 1);
+    return o;
+}
+
+namespace {
+struct Sha256 {
+    uint32_t h[8] = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
+    uint8_t buf[64];
+    size_t fill = 0;
+    uint64_t total = 0;
+    static uint32_t rotr(uint32_t x, int n) { return (x >> n) | (x << (32 - n)); }
+    void block(const uint8_t* p) {
+        static const uint32_t K[64] = {
+            0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be,
+            0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa,
+            0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85,
+            0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3,
+            0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f,
+            0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2};
+        uint32_t w[64];
+        for (int i = 0; i < 16; i++) w[i] = (uint32_t)p[i * 4] << 24 | (uint32_t)p[i * 4 + 1] << 16 | (uint32_t)p[i * 4 + 2] << 8 | p[i * 4 + 3];
+        for (int i = 16; i < 64; i++) {
+            const uint32_t s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >> 3);
+            const uint32_t s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >> 10);
+            w[i] = w[i - 16] + s0 + w[i - 7] + s1;
+        }
+        uint32_t v[8];
+        std::memcpy(v, h, sizeof v);
+        for (int i = 0; i < 64; i++) {
+            const uint32_t t1 = v[7] + (rotr(v[4], 6) ^ rotr(v[4], 11) ^ rotr(v[4], 25)) + ((v[4] & v[5]) ^ (~v[4] & v[6])) + K[i] + w[i];
+            const uint32_t t2 = (rotr(v[0], 2) ^ rotr(v[0], 13) ^ rotr(v[0], 22)) + ((v[0] & v[1]) ^ (v[0] & v[2]) ^ (v[1] & v[2]));
+            std::memmove(v + 1, v, 7 * sizeof(uint32_t));
+            v[4] += t1;
+            v[0] = t1 + t2;
+        }
+        for (int i = 0; i < 8; i++) h[i] += v[i];
+    }
+    void add(const uint8_t* p, size_t n) {
+        total += n;
+        while (n) {
+            const size_t k = std::min(n, sizeof buf - fill);
+            std::memcpy(buf + fill, p, k);
+            fill += k, p += k, n -= k;
+            if (fill == sizeof buf) block(buf), fill = 0;
+        }
+    }
+    std::vector<uint8_t> finish() {
+        const uint64_t bits = total * 8;
+        const uint8_t one = 0x80, zero = 0;
+        add(&one, 1);
+        while (fill != 56) add(&zero, 1);
+        uint8_t len[8];
+        for (int i = 0; i < 8; i++) len[i] = (uint8_t)(bits >> (56 - 8 * i));
+        add(len, 8);
+        std::vector<uint8_t> out(32);
+        for (int i = 0; i < 32; i++) out[i] = (uint8_t)(h[i / 4] >> (24 - 8 * (i % 4)));
+        return out;
+    }
 };
+}  // namespace
+
+std::vector<uint8_t> hmacSha256(const std::string& key, const std::vector<uint8_t>& data) {
+    std::vector<uint8_t> k(key.begin(), key.end());
+    if (k.size() > 64) {
+        Sha256 h;
+        h.add(k.data(), k.size());
+        k = h.finish();
+    }
+    k.resize(64, 0);
+    uint8_t ipad[64], opad[64];
+    for (int i = 0; i < 64; i++) ipad[i] = k[i] ^ 0x36, opad[i] = k[i] ^ 0x5c;
+    Sha256 in;
+    in.add(ipad, 64);
+    in.add(data.data(), data.size());
+    const std::vector<uint8_t> inner = in.finish();
+    Sha256 out;
+    out.add(opad, 64);
+    out.add(inner.data(), inner.size());
+    return out.finish();
+}
+
+}  // namespace net
+
+// ---- Connection and remote-vehicle state ----------------------------------------
 
 struct NetSession::Snap {
     double t = 0;
@@ -291,6 +435,7 @@ void NetSession::close() {
     knownCars.clear();
     knownRopes.clear();
     pending.clear();
+    pendingBytes = 0;
     players.assign(net::kMaxPeers, NetPlayer());
     role = OFF;
     self = -1;
@@ -311,7 +456,12 @@ bool NetSession::host(int port, const std::string& name, int m, int maxP, const 
     a.sin_family = AF_INET;
     a.sin_addr.s_addr = INADDR_ANY;
     a.sin_port = htons((uint16_t)port);
-    if (listenFd < 0 || udpFd < 0 || bind(listenFd, (sockaddr*)&a, sizeof a) < 0 || listen(listenFd, 8) < 0 ||
+    if (!bindAddress.empty() && inet_pton(AF_INET, bindAddress.c_str(), &a.sin_addr) != 1) {
+        error = "can't listen on " + bindAddress;
+        close();
+        return false;
+    }
+    if (port <= 0 || port > 65535 || listenFd < 0 || udpFd < 0 || bind(listenFd, (sockaddr*)&a, sizeof a) < 0 || listen(listenFd, 32) < 0 ||
         bind(udpFd, (sockaddr*)&a, sizeof a) < 0) {
         error = std::string("can't open port ") + std::to_string(port) + ": " + std::strerror(errno);
         close();
@@ -322,7 +472,7 @@ bool NetSession::host(int port, const std::string& name, int m, int maxP, const 
     hostPort = port;
     // Listen for "who's hosting?" from the local network (if the port's taken, say by another
     // game hosted on this machine, it just can't be found that way: typing the address works).
-    findFd = newSocket(SOCK_DGRAM);
+    findFd = discovery ? newSocket(SOCK_DGRAM) : -1;
     if (findFd >= 0) {
         setsockopt(findFd, SOL_SOCKET, SO_REUSEADDR, (const char*)&one, sizeof one);
         sockaddr_in fa{};
@@ -338,7 +488,10 @@ bool NetSession::host(int port, const std::string& name, int m, int maxP, const 
         }
     }
     maxPlayers = std::min(std::max(maxP, 2), net::kMaxPeers);
-    sessionName = session;
+    sessionName = net::sanitize(session, 40);
+    strikes.clear();
+    log.clear();
+    refused = 0;
     sessionId = (uint32_t)std::chrono::steady_clock::now().time_since_epoch().count() * 2654435761u ^ (uint32_t)port;
     if (!sessionId) sessionId = 1;
     nextBeacon = 0;
@@ -346,7 +499,7 @@ bool NetSession::host(int port, const std::string& name, int m, int maxP, const 
     self = 0;
     map = m;
     players[0].active = true;
-    players[0].name = name;
+    players[0].name = net::sanitize(name, net::kMaxNameLen);
     return true;
 }
 
@@ -363,10 +516,6 @@ bool NetSession::join(const std::string& address, const std::string& name, doubl
     }
 }
 
-namespace {
-double clockNow() { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
-}  // namespace
-
 bool NetSession::beginJoin(const std::string& address, const std::string& name, double timeout) {
     close();
     netInit();
@@ -376,6 +525,10 @@ bool NetSession::beginJoin(const std::string& address, const std::string& name, 
     if (colon != std::string::npos) {
         hostName = address.substr(0, colon);
         port = std::atoi(address.c_str() + colon + 1);
+    }
+    if (port <= 0 || port > 65535) {
+        error = "no good port in " + address;
+        return false;
     }
     addrinfo hints{}, *res = nullptr;
     hints.ai_family = AF_INET;
@@ -391,7 +544,8 @@ bool NetSession::beginJoin(const std::string& address, const std::string& name, 
     connect(connectFd, (sockaddr*)&addr, sizeof addr);
     hostUdp = new sockaddr_in(addr);
     joinAddress = address;
-    joinName = name;
+    joinName = net::sanitize(name, net::kMaxNameLen);
+    if (joinName.empty()) joinName = "PLAYER";
     joinTimeout = timeout;
     joinStage = 1;
     joinT0 = clockNow();
@@ -474,13 +628,17 @@ int NetSession::pollJoin() {
 // ---- Reliable messages ------------------------------------------------------------
 
 void NetSession::sendTo(Conn& c, const std::vector<uint8_t>& msg) {
+    if (c.out.size() + msg.size() > kMaxOut) {  // not reading what we send: that's enough of them
+        if (role == HOST) violation(&c, "not reading");
+        return;
+    }
     c.out.insert(c.out.end(), msg.begin(), msg.end());
     flush(c);
 }
 
 void NetSession::broadcast(const std::vector<uint8_t>& msg, Conn* except) {
     for (Conn* c : conns)
-        if (c != except && (role == CLIENT || c->hello)) sendTo(*c, msg);
+        if (c != except && !c->kill && (role == CLIENT || c->hello)) sendTo(*c, msg);
 }
 
 void NetSession::flush(Conn& c) {
@@ -492,13 +650,33 @@ void NetSession::flush(Conn& c) {
     }
 }
 
+void NetSession::note(const std::string& what) {
+    if (!logRate.take(clockNow(), 1, 2, 10)) return;
+    log.push_back(what);
+    if (log.size() > 64) log.erase(log.begin(), log.begin() + (log.size() - 64));
+}
+
+// Host: a guest said something it may not, or too much: it gets no more of our time.
+void NetSession::violation(Conn* c, const std::string& why) {
+    if (!c || c->kill) return;
+    refused++;
+    c->kill = true;
+    c->killT = clockNow();
+    c->in.clear();
+    note((c->peer >= 0 ? players[c->peer].name : std::string("?")) + " DROPPED: " + why);
+}
+
 void NetSession::readTcp(Conn& c) {
     uint8_t buf[16384];
-    for (;;) {
-        const int n = (int)recv(c.fd, (char*)buf, sizeof buf, 0);
+    // (At most this much a call: what's left waits for the next frame.)
+    size_t budget = role == HOST ? 131072 : 4u << 20;
+    while (budget > 0 && c.fd >= 0) {
+        const int n = (int)recv(c.fd, (char*)buf, (int)std::min(sizeof buf, budget), 0);
         if (n > 0) {
             bytesIn += n;
-            c.in.insert(c.in.end(), buf, buf + n);
+            budget -= std::min((size_t)n, budget);
+            if (!c.kill) c.in.insert(c.in.end(), buf, buf + n);
+            c.lastRx = clockNow();
             continue;
         }
         if (n == 0 || !wouldBlock()) {
@@ -508,69 +686,241 @@ void NetSession::readTcp(Conn& c) {
         break;
     }
     size_t at = 0;
-    while (c.in.size() - at >= 3) {
+    const bool guest = role == HOST;
+    // (What a guest may send is small: before it's in, smaller still.)
+    const size_t biggest = !guest ? 65535 : c.hello ? 1024 : 256;
+    while (!c.kill && c.in.size() - at >= 2) {
         const size_t len = c.in[at] | (c.in[at + 1] << 8);
+        if (len > biggest || (guest && len == 0)) {
+            if (guest) violation(&c, "message size " + std::to_string(len));
+            else at = c.in.size();
+            break;
+        }
         if (c.in.size() - at - 2 < len) break;
+        if (guest) {
+            const double now = clockNow();
+            if (!c.msgs.take(now, 1, 150, 300) || !c.bytes.take(now, (double)len + 2, 65536, 262144)) {
+                violation(&c, "sending too much");
+                break;
+            }
+        }
         std::vector<uint8_t> msg(c.in.begin() + at + 2, c.in.begin() + at + 2 + len);
         at += 2 + len;
         handle(lastSim, &c, msg);
+        if (role == OFF) break;
     }
-    c.in.erase(c.in.begin(), c.in.begin() + at);
+    if (at) c.in.erase(c.in.begin(), c.in.begin() + std::min(at, c.in.size()));
+}
+
+void NetSession::admit(Conn& c, const std::string& name) {
+    int id = -1;
+    for (int k = 1; k < net::kMaxPeers && id < 0; k++)
+        if (!players[k].active) id = k;
+    if (playerCount() >= maxPlayers) id = -1;
+    if (id < 0) {
+        Writer w;
+        w.str("session full");
+        sendTo(c, frame(MSG_REJECT, w));
+        c.kill = true, c.killT = clockNow();
+        return;
+    }
+    // (One name per player: a second DRIVER is DRIVER2.)
+    const std::string base = name.empty() ? "PLAYER" : name;
+    std::string unique = base;
+    for (int n = 2;; n++) {
+        bool taken = false;
+        for (const NetPlayer& p : players) taken |= p.active && p.name == unique;
+        if (!taken) break;
+        const std::string tail = std::to_string(n);
+        unique = base.substr(0, net::kMaxNameLen - tail.size()) + tail;
+    }
+    c.hello = true;
+    c.peer = id;
+    randomBytes((uint8_t*)&c.token, sizeof c.token);
+    c.token |= 1;
+    players[id].active = true;
+    players[id].name = unique;
+    if (lastSim) welcome(*lastSim, c);
+    Writer w;
+    w.put<uint8_t>((uint8_t)id);
+    w.str(unique);
+    broadcast(frame(MSG_PLAYER, w), &c);
+    events.push_back(unique + " JOINED");
 }
 
 void NetSession::handle(Sim* sim, Conn* from, const std::vector<uint8_t>& msg) {
-    if (msg.empty()) return;
+    if (msg.empty() || role == OFF) return;
     Reader r{msg.data() + 1, msg.size() - 1};
     const uint8_t type = msg[0];
-    switch (type) {
-        case MSG_HELLO: {  // host
-            if (role != HOST || from->hello) return;
+    if (events.size() > 64) events.erase(events.begin(), events.begin() + (events.size() - 64));
+    if (gameIn.size() > 256) gameIn.erase(gameIn.begin(), gameIn.begin() + (gameIn.size() - 256));
+
+    // ---- Host: a guest's word. Before the hello (and the password) it may say only that.
+    if (role == HOST) {
+        if (!from || from->kill) return;
+        const double now = clockNow();
+        if (type == MSG_HELLO) {
+            if (from->hello || from->challenged) return violation(from, "a second hello");
             const uint16_t ver = r.get<uint16_t>();
-            const std::string name = r.str();
-            int id = -1;
-            for (int k = 1; k < net::kMaxPeers && id < 0; k++)
-                if (!players[k].active) id = k;
-            if (playerCount() >= maxPlayers) id = -1;
-            if (ver != net::kVersion || id < 0) {
+            const std::string name = net::sanitize(r.str(), net::kMaxNameLen);
+            if (!r.ok) return violation(from, "a bad hello");
+            if (ver != net::kVersion) {
                 Writer w;
-                w.str(ver != net::kVersion ? "different game version" : "session full");
+                w.str("different game version");
                 sendTo(*from, frame(MSG_REJECT, w));
+                from->kill = true, from->killT = now;
                 return;
             }
-            from->hello = true;
-            from->peer = id;
-            players[id].active = true;
-            players[id].name = name;
-            if (sim) welcome(*sim, *from);
+            if (!password.empty()) {  // prove it: HMAC of a challenge only we know
+                from->challenged = true;
+                from->name = name;
+                randomBytes(from->nonce, sizeof from->nonce);
+                Writer w;
+                w.b.insert(w.b.end(), from->nonce, from->nonce + sizeof from->nonce);
+                sendTo(*from, frame(MSG_CHALLENGE, w));
+                return;
+            }
+            return admit(*from, name);
+        }
+        if (type == MSG_AUTH) {
+            if (!from->challenged || from->hello) return violation(from, "an unasked password");
+            std::vector<uint8_t> proof(32);
+            for (uint8_t& b : proof) b = r.get<uint8_t>();
+            if (!r.ok) return violation(from, "a bad password message");
+            const std::vector<uint8_t> want = net::hmacSha256(password, std::vector<uint8_t>(from->nonce, from->nonce + sizeof from->nonce));
+            if (!sameBytes(proof.data(), want.data(), 32)) {
+                Strike& st = strikes[from->ip];
+                if (strikes.size() > 1024) strikes.clear();  // (a spray of addresses: forget them all rather than grow)
+                if (++st.fails >= 5) st.until = now + 60, st.fails = 0;  // five wrong in a row: a minute away
+                Writer w;
+                w.str("wrong password");
+                sendTo(*from, frame(MSG_REJECT, w));
+                from->kill = true, from->killT = now;
+                note("WRONG PASSWORD FROM " + std::to_string(from->ip >> 24) + "." + std::to_string((from->ip >> 16) & 255) + "." +
+                     std::to_string((from->ip >> 8) & 255) + "." + std::to_string(from->ip & 255));
+                refused++;
+                return;
+            }
+            from->challenged = false;
+            return admit(*from, from->name);
+        }
+        if (!from->hello) return violation(from, "talking before saying hello");
+        switch (type) {
+            case MSG_PING: {
+                Writer w;
+                w.put<double>(r.get<double>());
+                sendTo(*from, frame(MSG_PONG, w));
+                return;
+            }
+            case MSG_PONG: {
+                double rtt = now - r.get<double>();
+                if (!r.ok) return;
+                if (!std::isfinite(rtt)) rtt = 0;
+                rtt = clampd(rtt, 0, 10);
+                players[from->peer].ping = rtt;
+                Writer w;
+                w.put<uint8_t>((uint8_t)from->peer);
+                w.put<float>((float)rtt);
+                broadcast(frame(MSG_RTT, w));
+                return;
+            }
+            case MSG_GAME: {
+                r.get<uint8_t>();  // (who it says it is from: it's from the guest)
+                const std::string text = net::sanitize(r.str(), 255);
+                if (!r.ok) return violation(from, "a bad chatter message");
+                if (!from->games.take(now, 1, 30, 60)) return;
+                if (hostOnlyChatter(text)) return note(players[from->peer].name + " SENT A HOST'S MESSAGE");
+                Writer w;
+                w.put<uint8_t>((uint8_t)from->peer);
+                w.str(text);
+                broadcast(frame(MSG_GAME, w), from);
+                gameIn.push_back({from->peer, text});
+                return;
+            }
+            case MSG_SPAWN:
+            case MSG_DESPAWN:
+            case MSG_ROPE:
+            case MSG_UNROPE:
+            case MSG_LAMPS: {
+                // (Building a vehicle or a line costs the most to everyone: those are rationed.)
+                if (type == MSG_SPAWN && !from->spawns.take(now, 1, 3, 12)) return;
+                if ((type == MSG_ROPE || type == MSG_UNROPE) && !from->ropes.take(now, 1, 6, 12)) return;
+                if (sim && adopted && apply(*sim, msg, from->peer)) {
+                    std::vector<uint8_t> framed = {(uint8_t)(msg.size() & 255), (uint8_t)(msg.size() >> 8)};  // (as the others read it: length first)
+                    framed.insert(framed.end(), msg.begin(), msg.end());
+                    broadcast(framed, from);
+                }
+                return;
+            }
+            default:  // the host's own words, from a guest, or nothing we know
+                return violation(from, "message type " + std::to_string(type));
+        }
+    }
+
+    // ---- Guest: the host's word.
+    switch (type) {
+        case MSG_CHALLENGE: {
+            if (role != CLIENT || self >= 0 || !from) return;
+            uint8_t nonce[16];
+            for (uint8_t& b : nonce) b = r.get<uint8_t>();
+            if (!r.ok) return;
+            if (password.empty()) {
+                error = "this game needs a password";
+                role = OFF;
+                return;
+            }
             Writer w;
-            w.put<uint8_t>((uint8_t)id);
-            w.str(name);
-            broadcast(frame(MSG_PLAYER, w), from);
-            events.push_back(name + " JOINED");
+            const std::vector<uint8_t> proof = net::hmacSha256(password, std::vector<uint8_t>(nonce, nonce + sizeof nonce));
+            w.b.insert(w.b.end(), proof.begin(), proof.end());
+            sendTo(*from, frame(MSG_AUTH, w));
             return;
         }
-        case MSG_WELCOME: {  // client
-            self = r.get<uint8_t>();
-            map = r.get<uint8_t>();
+        case MSG_WELCOME: {
+            if (role != CLIENT || self >= 0) return;
+            const int id = r.get<uint8_t>(), m = r.get<uint8_t>();
+            const uint64_t token = r.get<uint64_t>();
+            if (!r.ok || id < 1 || id >= net::kMaxPeers || m >= MAP_COUNT) {
+                error = "the host's welcome made no sense";
+                role = OFF;
+                return;
+            }
+            self = id;
+            map = m;
+            udpToken = token;
             return;
         }
-        case MSG_REJECT:
-            error = "rejected: " + r.str();
+        case MSG_REJECT: {
+            if (role != CLIENT || self >= 0) return;
+            error = "rejected: " + net::sanitize(r.str(), 60);
             role = OFF;
             return;
+        }
         case MSG_PING: {
+            if (!from) return;
             Writer w;
             w.put<double>(r.get<double>());
             sendTo(*from, frame(MSG_PONG, w));
             return;
         }
-        case MSG_LEVEL: {  // client
+        case MSG_LEVEL: {
             if (role != CLIENT) return;
             const uint32_t serial = r.get<uint32_t>();
             const uint16_t part = r.get<uint16_t>(), parts = r.get<uint16_t>();
-            if (part == 0 || serial != levelInSerial) levelIn.clear(), levelInSerial = serial;
+            if (!r.ok || parts == 0 || parts > 200 || part >= parts) return;
+            if (part == 0) levelIn.clear(), levelInSerial = serial, levelInNext = 0;
+            if (serial != levelInSerial || part != levelInNext) {  // lost the thread: wait for a part 0
+                levelIn.clear();
+                levelInNext = 0xffff;
+                return;
+            }
+            levelInNext = part + 1;
             if (r.at < r.n) levelIn.append((const char*)r.p + r.at, r.n - r.at);
-            if (part + 1 >= parts) {
+            if (levelIn.size() > net::kMaxLevelBytes) {
+                levelIn.clear();
+                levelInNext = 0xffff;
+                return;
+            }
+            if (part + 1 == parts) {
                 levelText = levelIn;
                 levelSerial = serial;
                 levelFresh = true;
@@ -579,50 +929,48 @@ void NetSession::handle(Sim* sim, Conn* from, const std::vector<uint8_t>& msg) {
             return;
         }
         case MSG_GAME: {
-            int who = r.get<uint8_t>();
-            const std::string text = r.str();
-            if (role == HOST && from) {  // a client's: it's theirs, whatever it says
-                who = from->peer;
-                Writer w;
-                w.put<uint8_t>((uint8_t)who);
-                w.str(text);
-                broadcast(frame(MSG_GAME, w), from);
-            }
+            const int who = r.get<uint8_t>();
+            const std::string text = net::sanitize(r.str(), 255);
+            if (!r.ok || who >= net::kMaxPeers || who == self || (who != 0 && hostOnlyChatter(text))) return;
             gameIn.push_back({who, text});
             return;
         }
-        case MSG_CLOCK:  // client
+        case MSG_CLOCK: {
             if (role != CLIENT) return;
-            dayHours = r.get<float>();
-            dayRate = r.get<float>();
+            const double hours = r.get<float>(), rate = r.get<float>();
+            if (!r.ok || !okNum(hours, 1e6) || !okNum(rate, 1e3)) return;
+            dayHours = std::fmod(std::max(0.0, hours), 24.0);
+            dayRate = rate;
             dayFresh = true;
             return;
+        }
         case MSG_PONG: {
-            const double rtt = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count() - r.get<double>();
-            const int who = role == HOST ? from->peer : self;
-            if (who >= 0 && who < net::kMaxPeers) players[who].ping = rtt;
-            if (role == HOST) {
-                Writer w;
-                w.put<uint8_t>((uint8_t)who);
-                w.put<float>((float)rtt);
-                broadcast(frame(MSG_RTT, w));
-            }
+            double rtt = clockNow() - r.get<double>();
+            if (!r.ok) return;
+            if (!std::isfinite(rtt)) rtt = 0;
+            if (self >= 0 && self < net::kMaxPeers) players[self].ping = clampd(rtt, 0, 10);
             return;
         }
+        case MSG_HELLO:  // (what only a host hears)
+        case MSG_AUTH:
+            return;
         default:
             break;
     }
-    // Everything else concerns the world: the host passes it on to the others, and it's
-    // applied once the sim has joined the session.
-    if (role == HOST && from) broadcast(msg, from);
-    if (sim && adopted) apply(*sim, msg);
-    else pending.push_back(msg);
+    // Everything else concerns the world: applied once the sim has joined the session.
+    if (sim && adopted) {
+        apply(*sim, msg, -1);
+    } else if (role == CLIENT && pending.size() < kMaxPending && pendingBytes + msg.size() <= kMaxPendingBytes) {
+        pending.push_back(msg);
+        pendingBytes += msg.size();
+    }
 }
 
 void NetSession::welcome(Sim& sim, Conn& c) {
     Writer w;
     w.put<uint8_t>((uint8_t)c.peer);
     w.put<uint8_t>((uint8_t)map);
+    w.put<uint64_t>(c.token);
     sendTo(c, frame(MSG_WELCOME, w));
     for (int k = 0; k < net::kMaxPeers; k++)
         if (players[k].active && k != c.peer) {
@@ -679,32 +1027,40 @@ std::vector<uint8_t> NetSession::ropeMsg(const Sim& sim, const Rope& r) const {
     return frame(MSG_ROPE, w);
 }
 
-void NetSession::apply(Sim& sim, const std::vector<uint8_t>& msg) {
+bool NetSession::apply(Sim& sim, const std::vector<uint8_t>& msg, int from) {
+    if (msg.empty()) return false;
     Reader r{msg.data() + 1, msg.size() - 1};
-    switch (msg[0]) {
+    const uint8_t type = msg[0];
+    if (from >= 0 && type != MSG_SPAWN && type != MSG_DESPAWN && type != MSG_ROPE && type != MSG_UNROPE && type != MSG_LAMPS) return false;  // (a guest has no other say)
+    // A vehicle or line must belong to some player but me; from a guest, to that guest.
+    auto ownerOk = [&](uint32_t netId) {
+        const uint32_t o = ownerOf(netId);
+        return netId && o < (uint32_t)net::kMaxPeers && (int)o != self && (from < 0 || (int)o == from);
+    };
+    switch (type) {
         case MSG_PLAYER: {
             const int id = r.get<uint8_t>();
-            const std::string name = r.str();
-            if (id >= 0 && id < net::kMaxPeers && id != self) {
-                if (!players[id].active) events.push_back(name + " IS HERE");
-                players[id].active = true;
-                players[id].name = name;
-            }
-            return;
+            const std::string name = net::sanitize(r.str(), net::kMaxNameLen);
+            if (!r.ok || id < 0 || id >= net::kMaxPeers || id == self) return false;
+            if (!players[id].active) events.push_back(name + " IS HERE");
+            players[id].active = true;
+            players[id].name = name;
+            return true;
         }
         case MSG_LEFT: {
             const int id = r.get<uint8_t>();
-            if (id < 0 || id >= net::kMaxPeers) return;
+            if (!r.ok || id < 0 || id >= net::kMaxPeers || id == self) return false;
             events.push_back(players[id].name + " LEFT");
             players[id] = NetPlayer();
             removeCars(sim, id);
-            return;
+            return true;
         }
         case MSG_RTT: {
             const int id = r.get<uint8_t>();
             const float p = r.get<float>();
-            if (id >= 0 && id < net::kMaxPeers && id != self) players[id].ping = p;
-            return;
+            if (!r.ok || id < 0 || id >= net::kMaxPeers || id == self || !std::isfinite(p)) return false;
+            players[id].ping = clampd(p, 0, 10);
+            return true;
         }
         case MSG_SPAWN: {
             const uint32_t netId = r.get<uint32_t>();
@@ -712,15 +1068,23 @@ void NetSession::apply(Sim& sim, const std::vector<uint8_t>& msg) {
             id.kind = r.get<uint8_t>();
             id.model = r.get<uint8_t>();
             for (int k = 0; k < MOD_SLOTS; k++) id.mods[k] = r.get<uint8_t>();
-            const V3 color = r.v3(), pos = r.v3();
+            V3 color = r.v3();
+            const V3 pos = r.v3();
             const double yaw = r.get<float>();
             const uint8_t lamps = r.get<uint8_t>();
             const uint32_t build = r.get<uint32_t>();
+            if (!r.ok || !ownerOk(netId) || !okPos(pos) || !okNum(yaw, 1e4) || !okNum(color.x, 1e3) || !okNum(color.y, 1e3) || !okNum(color.z, 1e3))
+                return false;
             const VehicleSpec* spec = specFrom(id);
-            if (!r.ok || !spec || ownerOf(netId) == self) return;
+            if (!spec) return false;
+            color = V3(clampd(color.x, 0, 1), clampd(color.y, 0, 1), clampd(color.z, 0, 1));
             int i = findCar(sim, netId);
+            if (i >= 0 && !sim.cars[i].remote) return false;  // (never my own vehicles)
             if (i < 0) {
-                if ((int)sim.cars.size() >= Sim::kMaxBodies) return;
+                if ((int)sim.cars.size() >= Sim::kMaxBodies) return false;
+                int theirs = 0;
+                for (const Car& c : sim.cars) theirs += c.remote && ownerOf(c.netId) == ownerOf(netId);
+                if (ownerOf(netId) != 0 && theirs >= net::kMaxCarsPerPlayer) return false;  // (the host's own are the world's)
                 sim.addCar(*spec, pos, yaw, color);
                 i = (int)sim.cars.size() - 1;
             } else {
@@ -740,64 +1104,84 @@ void NetSession::apply(Sim& sim, const std::vector<uint8_t>& msg) {
                 rm->playbackNow = -1;
                 for (auto& assembly : rm->assemblies) assembly.active = false;
             }
-            return;
+            return true;
         }
         case MSG_LAMPS: {
             const uint32_t id = r.get<uint32_t>();
             const uint8_t mode = r.get<uint8_t>();
             const int i = findCar(sim, id);
-            if (r.ok && mode < 4 && i >= 0 && sim.cars[i].remote) sim.cars[i].lampMode = mode;
-            return;
+            if (!r.ok || !ownerOk(id) || mode >= 4 || i < 0 || !sim.cars[i].remote) return false;
+            sim.cars[i].lampMode = mode;
+            return true;
         }
         case MSG_DESPAWN: {
             const uint32_t netId = r.get<uint32_t>();
+            if (!r.ok || !ownerOk(netId)) return false;
             const int i = findCar(sim, netId);
-            if (i >= 0 && sim.cars[i].remote) eraseCar(sim, i);
+            if (i < 0 || !sim.cars[i].remote) return false;
+            eraseCar(sim, i);
             for (size_t k = 0; k < remotes.size(); k++)
                 if (remotes[k]->netId == netId) {
                     delete remotes[k];
                     remotes.erase(remotes.begin() + k);
                     break;
                 }
-            return;
+            return true;
         }
         case MSG_ROPE: {
             Rope rp;
             rp.netId = r.get<uint32_t>();
-            rp.kind = (RopeKind)r.get<uint8_t>();
-            bool ok = true;
+            const uint8_t kind = r.get<uint8_t>();
+            bool ok = kind <= ROPE_STRAP;
+            rp.kind = (RopeKind)std::min<uint8_t>(kind, ROPE_STRAP);
             for (RopeEnd* e : {&rp.a, &rp.b}) {
-                e->kind = (AnchorKind)r.get<uint8_t>();
+                const uint8_t ak = r.get<uint8_t>();
                 const uint32_t car = r.get<uint32_t>();
                 e->hook = r.get<uint8_t>();
                 e->p = r.v3();
+                ok &= ak <= ANCHOR_STAKE;
+                e->kind = (AnchorKind)std::min<uint8_t>(ak, ANCHOR_STAKE);
                 if (e->kind == ANCHOR_CAR) {
-                    e->car = findCar(sim, car);
-                    ok &= e->car >= 0;
+                    e->car = car ? findCar(sim, car) : -1;
+                    ok &= e->car >= 0 && !sim.cars[e->car].isProp() && e->hook <= 1;
+                } else {
+                    e->hook = 0;
+                    ok &= okPos(e->p);
                 }
             }
             float v[6];
             for (float& x : v) x = r.get<float>();
             rp.length = v[0], rp.maxLen = v[1], rp.k = v[2], rp.c = v[3], rp.breakN = v[4], rp.stallN = v[5];
-            if (!r.ok || !ok) return;
-            for (const Rope& o : sim.ropes)
-                if (o.netId == rp.netId) return;
+            // (A line's numbers all have a sane range; the winch's maths divides by some of them.)
+            ok &= okNum(v[0], 200) && v[0] >= 0 && okNum(v[1], 200) && v[1] >= 0.5 && okNum(v[2], 2e6) && v[2] >= 0 && okNum(v[3], 2e5) && v[3] >= 0 &&
+                  okNum(v[4], 2e6) && v[4] >= 1 && okNum(v[5], 1e6) && v[5] >= (rp.kind == ROPE_WINCH ? 1 : 0);  // (a strap has no stall)
+            // The line belongs to whoever works it (end a: a vehicle that's theirs), and to nobody else.
+            ok &= r.ok && ownerOk(rp.netId) && rp.a.kind == ANCHOR_CAR && rp.a.car >= 0 && ownerOf(sim.cars[rp.a.car].netId) == ownerOf(rp.netId);
+            ok &= !(rp.b.kind == ANCHOR_CAR && rp.b.car == rp.a.car);
+            if (!ok) return false;
+            int theirs = 0;
+            for (const Rope& o : sim.ropes) {
+                if (o.netId == rp.netId) return false;
+                theirs += o.netId && ownerOf(o.netId) == ownerOf(rp.netId);
+            }
+            if (theirs >= net::kMaxRopesPerPlayer || sim.ropes.size() >= 64) return false;
             sim.ropes.push_back(rp);
             knownRopes.push_back(rp.netId);
-            return;
+            return true;
         }
         case MSG_UNROPE: {
             const uint32_t netId = r.get<uint32_t>();
+            if (!r.ok || !ownerOk(netId)) return false;
             knownRopes.erase(std::remove(knownRopes.begin(), knownRopes.end(), netId), knownRopes.end());
             for (size_t k = 0; k < sim.ropes.size(); k++)
                 if (sim.ropes[k].netId == netId) {
                     sim.ropes.erase(sim.ropes.begin() + k);
-                    break;
+                    return true;
                 }
-            return;
+            return false;
         }
         default:
-            return;
+            return false;
     }
 }
 
@@ -814,18 +1198,67 @@ void NetSession::removeCars(Sim& sim, int owner) {
 }
 
 void NetSession::accept() {
-    for (;;) {
+    const double now = clockNow();
+    for (int k = 0; k < 64; k++) {  // (a frame's worth: a flood waits its turn in the backlog)
         sockaddr_in a{};
         socklen_t al = sizeof a;
         const int fd = (int)::accept(listenFd, (sockaddr*)&a, &al);
         if (fd < 0) return;
+        const uint32_t ip = ntohl(a.sin_addr.s_addr);
+        auto turnAway = [&](const char* why) {
+            closeSock(fd);
+            refused++;
+            note(std::string("TURNED AWAY ") + std::to_string(ip >> 24) + "." + std::to_string((ip >> 16) & 255) + "." + std::to_string((ip >> 8) & 255) + "." +
+                 std::to_string(ip & 255) + ": " + why);
+        };
+        const auto strike = strikes.find(ip);
+        if (strike != strikes.end() && strike->second.until > now) {
+            turnAway("locked out after wrong passwords");
+            continue;
+        }
+        int theirs = 0;
+        for (const Conn* c : conns) theirs += c->ip == ip;
+        if (theirs >= net::kMaxConnsPerIp) {
+            turnAway("too many connections from there");
+            continue;
+        }
+        if ((int)conns.size() >= net::kMaxConns) {
+            // Full: whoever's been sitting without a hello the longest makes room (a real player
+            // says hello at once; a flood of idle connections shouldn't keep the real ones out).
+            size_t oldest = conns.size();
+            for (size_t i = 0; i < conns.size(); i++)
+                if (!conns[i]->hello && now - conns[i]->born > 1.0 && (oldest == conns.size() || conns[i]->born < conns[oldest]->born)) oldest = i;
+            if (oldest == conns.size()) {
+                turnAway("full");
+                continue;
+            }
+            refused++;
+            dropConn(oldest);
+        }
         nonBlocking(fd);
         int one = 1;
         setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (const char*)&one, sizeof one);
         Conn* c = new Conn;
         c->fd = fd;
+        c->ip = ip;
+        c->born = c->lastRx = now;
         conns.push_back(c);
     }
+}
+
+NetSession::Conn* NetSession::fakeConn(int peer, bool hello) {
+    Conn* c = new Conn;
+    c->peer = peer;
+    c->hello = hello;
+    c->born = c->lastRx = clockNow();
+    if (hello && peer >= 0 && peer < net::kMaxPeers) {
+        players[peer].active = true;
+        players[peer].name = "FAKE" + std::to_string(peer);
+        randomBytes((uint8_t*)&c->token, sizeof c->token);
+        c->token |= 1;
+    }
+    conns.push_back(c);
+    return c;
 }
 
 void NetSession::dropConn(size_t i) {
@@ -873,6 +1306,7 @@ void NetSession::adopt(Sim& sim) {
     adopted = true;
     for (const auto& m : pending) apply(sim, m);
     pending.clear();
+    pendingBytes = 0;
     if (role == CLIENT) {
         // Then my vehicle beside the spawn, in my slot or the first one along that's clear
         // of everything already there (the host's parked trucks, the other players): two
@@ -959,23 +1393,30 @@ void NetSession::sendSnapshot(Sim& sim, const Car& c, double now) {
     const size_t total = data.size(), frags = (total + kChunk - 1) / kChunk;
     seq++;
     for (size_t f = 0; f < frags; f++) {
-        Writer d;
-        d.put<uint16_t>(kMagic);
-        d.put<uint8_t>(DG_SNAP);
-        d.put<uint8_t>((uint8_t)self);
-        d.put<uint32_t>(c.netId);
-        d.put<uint32_t>(seq);
-        d.put<uint8_t>((uint8_t)f);
-        d.put<uint8_t>((uint8_t)frags);
-        const size_t a = f * kChunk, b = std::min(total, a + kChunk);
-        d.b.insert(d.b.end(), data.begin() + a, data.begin() + b);
+        auto datagram = [&](uint64_t token) {
+            Writer d;
+            d.put<uint16_t>(kMagic);
+            d.put<uint8_t>(DG_SNAP);
+            d.put<uint8_t>((uint8_t)self);
+            d.put<uint32_t>(c.netId);
+            d.put<uint32_t>(seq);
+            d.put<uint8_t>((uint8_t)f);
+            d.put<uint8_t>((uint8_t)frags);
+            d.put<uint64_t>(token);
+            const size_t a = f * kChunk, b = std::min(total, a + kChunk);
+            d.b.insert(d.b.end(), data.begin() + a, data.begin() + b);
+            return d.b;
+        };
         if (role == CLIENT && hostUdp) {
-            const int n = (int)sendto(udpFd, (const char*)d.b.data(), (int)d.b.size(), 0, (sockaddr*)hostUdp, sizeof(sockaddr_in));
+            const std::vector<uint8_t> d = datagram(udpToken);
+            const int n = (int)sendto(udpFd, (const char*)d.data(), (int)d.size(), 0, (sockaddr*)hostUdp, sizeof(sockaddr_in));
             if (n > 0) bytesOut += n;
         } else {
             for (Conn* cn : conns)
-                if (cn->udpKnown) {
-                    const int n = (int)sendto(udpFd, (const char*)d.b.data(), (int)d.b.size(), 0, (sockaddr*)&cn->udp, sizeof cn->udp);
+                if (cn->udpKnown && cn->hello && !cn->kill) {
+                    const std::vector<uint8_t> d = datagram(cn->token);
+                    const sockaddr_in to = udpAddress(cn->udpIp, cn->udpPort);
+                    const int n = (int)sendto(udpFd, (const char*)d.data(), (int)d.size(), 0, (const sockaddr*)&to, sizeof to);
                     if (n > 0) bytesOut += n;
                 }
         }
@@ -984,44 +1425,76 @@ void NetSession::sendSnapshot(Sim& sim, const Car& c, double now) {
 
 void NetSession::readUdp(Sim& sim, double now) {
     uint8_t buf[2048];
-    for (;;) {
+    for (int k = 0; k < 1024; k++) {  // (a frame's worth; the rest waits, or the kernel drops it)
         sockaddr_in from{};
         socklen_t fl = sizeof from;
         const int n = (int)recvfrom(udpFd, (char*)buf, sizeof buf, 0, (sockaddr*)&from, &fl);
         if (n <= 0) return;
         bytesIn += n;
-        if ((size_t)n < kDgramHeader) continue;
-        Reader h{buf, (size_t)n};
-        if (h.get<uint16_t>() != kMagic) continue;
-        const uint8_t type = h.get<uint8_t>(), peer = h.get<uint8_t>();
-        const uint32_t netId = h.get<uint32_t>(), sq = h.get<uint32_t>();
-        const uint8_t frag = h.get<uint8_t>(), frags = h.get<uint8_t>();
-        if (type == DG_HELLO) {
-            if (role == HOST) {  // a client's UDP address: answer so it knows we heard
-                for (Conn* c : conns)
-                    if (c->peer == peer && c->hello) {
-                        c->udp = from;
-                        c->udpKnown = true;
-                        sendto(udpFd, (const char*)buf, n, 0, (sockaddr*)&from, fl);
-                    }
-            } else {
-                udpReady = true;
-            }
-            continue;
-        }
-        if (type != DG_SNAP || frags == 0 || frag >= frags || peer == self) continue;
-        if (role == HOST)  // pass it on to everyone else
-            for (Conn* c : conns)
-                if (c->udpKnown && c->peer != peer) sendto(udpFd, (const char*)buf, n, 0, (sockaddr*)&c->udp, sizeof c->udp);
-        if (role == CLIENT) udpReady = true;
-        if (!adopted) continue;
-        takeFragment(sim, netId, sq, frag, frags, buf + kDgramHeader, n - kDgramHeader, now);
+        onDatagram(sim, buf, (size_t)n, ntohl(from.sin_addr.s_addr), ntohs(from.sin_port), now);
     }
+}
+
+// One datagram, from ip:port (host byte order). It must carry the secret of whoever it's for:
+// the host told each guest theirs in the welcome, so a stranger's packet (a scan, a forged
+// state, a forged address for a guest) is dropped here, unanswered.
+void NetSession::onDatagram(Sim& sim, const uint8_t* buf, size_t n, uint32_t ip, uint16_t port, double now) {
+    if (n < kDgramHeader || n > kDgramHeader + kChunk) return;
+    Reader h{buf, n};
+    if (h.get<uint16_t>() != kMagic) return;
+    const uint8_t type = h.get<uint8_t>(), peer = h.get<uint8_t>();
+    const uint32_t netId = h.get<uint32_t>(), sq = h.get<uint32_t>();
+    const uint8_t frag = h.get<uint8_t>(), frags = h.get<uint8_t>();
+    const uint64_t token = h.get<uint64_t>();
+    if (type != DG_SNAP && type != DG_HELLO) return;
+    const size_t size = n - kDgramHeader;
+    // A state's piece: a real size, in a real place, from the player the vehicle belongs to.
+    auto piece = [&] {
+        return frags >= 1 && frags <= kMaxFragments && frag < frags && size >= 1 && size <= kChunk && (frag + 1 == frags || size == kChunk) &&
+               peer < net::kMaxPeers && ownerOf(netId) == peer;
+    };
+    if (role == HOST) {
+        Conn* guest = nullptr;
+        for (Conn* c : conns)
+            if (c->hello && !c->kill && c->peer == peer) guest = c;
+        if (!guest || peer == 0 || !sameBytes((const uint8_t*)&token, (const uint8_t*)&guest->token, sizeof token)) return;
+        if (type == DG_HELLO) {  // the guest's UDP address (what a NAT made of it): say we heard, with just the header
+            guest->udpIp = ip, guest->udpPort = port;
+            guest->udpKnown = true;
+            const sockaddr_in to = udpAddress(guest->udpIp, guest->udpPort);
+            sendto(udpFd, (const char*)buf, (int)kDgramHeader, 0, (const sockaddr*)&to, sizeof to);
+            return;
+        }
+        const double t = clockNow();
+        if (!guest->udpKnown || !guest->dgrams.take(t, 1, 300, 600) || !guest->dgramBytes.take(t, (double)n, 600000, 1200000)) return;
+        if (!piece()) return;
+        const int ci = findCar(sim, netId);
+        if (!adopted || ci < 0 || !sim.cars[ci].remote) return;
+        for (Conn* c : conns)  // pass it on to everyone else, in their own envelope
+            if (c->udpKnown && c->hello && !c->kill && c->peer != peer) {
+                uint8_t out[2048];
+                std::memcpy(out, buf, n);
+                std::memcpy(out + kTokenAt, &c->token, sizeof c->token);
+                const sockaddr_in to = udpAddress(c->udpIp, c->udpPort);
+                sendto(udpFd, (const char*)out, (int)n, 0, (const sockaddr*)&to, sizeof to);
+            }
+        takeFragment(sim, netId, sq, frag, frags, buf + kDgramHeader, size, now);
+        return;
+    }
+    if (role != CLIENT || token != udpToken || !udpToken) return;
+    if (type == DG_HELLO) {  // the host heard us
+        udpReady = true;
+        return;
+    }
+    if (!piece() || peer == self) return;
+    udpReady = true;
+    if (!adopted) return;
+    takeFragment(sim, netId, sq, frag, frags, buf + kDgramHeader, size, now);
 }
 
 void NetSession::takeFragment(Sim& sim, uint32_t netId, uint32_t sequence, uint8_t fragment, uint8_t fragments,
                               const uint8_t* data, size_t size, double now) {
-    if (!fragments || fragment >= fragments || size > kChunk || (fragment + 1 < fragments && size != kChunk)) return;
+    if (!fragments || fragments > kMaxFragments || fragment >= fragments || size > kChunk || (fragment + 1 < fragments && size != kChunk)) return;
     if (findCar(sim, netId) < 0) return;
     Remote* remote = remoteFor(netId);
     Remote::Assembly* slot = nullptr;
@@ -1065,31 +1538,48 @@ void NetSession::takeSnapshot(Sim& sim, uint32_t netId, const std::vector<uint8_
     s.steer = r.get<float>();
     s.brake = r.get<uint8_t>() / 255.0f;
     s.damage = r.get<float>();
-    s.status = r.get<uint8_t>();
+    s.status = r.get<uint8_t>() & 3;
     s.rpm = r.get<float>();
     s.load = r.get<float>();
     s.boost = r.get<float>();
     s.gear = r.get<int8_t>();
     const int nw = r.get<uint8_t>();
+    if (nw != (int)car.wheels.size()) return;  // a rebuilt spec on the way
     for (int k = 0; k < nw; k++) {
         s.wheelAngle.push_back(r.get<float>());
         s.wheelOmega.push_back(r.get<float>());
         s.wheelFlags.push_back(r.get<uint8_t>());
     }
     const int nn = r.get<uint16_t>();
-    if (nn != (int)car.nodes.size() || nw != (int)car.wheels.size()) return;  // a rebuilt spec on the way
+    if (nn != (int)car.nodes.size()) return;
     s.local.resize(nn);
     for (int k = 0; k < nn; k++) {
         const double x = r.get<int16_t>() * 0.001, y = r.get<int16_t>() * 0.001, z = r.get<int16_t>() * 0.001;
         s.local[k] = V3(x, y, z);
     }
     const int nr = r.get<uint8_t>();
+    if (nr > 8) return;
     for (int k = 0; k < nr; k++) {
         const uint32_t id = r.get<uint32_t>();
         s.ropeLen.push_back({id, r.get<float>()});
     }
-    if (!r.ok || !std::isfinite(s.t + s.com.x + s.com.y + s.com.z + s.vel.x + s.vel.y + s.vel.z +
-        s.rot.w + s.rot.x + s.rot.y + s.rot.z + s.rpm + s.load + s.boost) || s.t <= rm->newestT) return;
+    // Every number is finite and plausible (a NaN or a million kilometers would wreck the physics
+    // of whoever's near it); anything else and the whole state is thrown away.
+    bool sane = r.ok && okNum(s.t, 1e8) && okPos(s.com) && okNum(s.vel.x, 1000) && okNum(s.vel.y, 1000) && okNum(s.vel.z, 1000) &&
+                okNum(s.rot.w, 1e3) && okNum(s.rot.x, 1e3) && okNum(s.rot.y, 1e3) && okNum(s.rot.z, 1e3) && okNum(s.steer, 100) &&
+                okNum(s.damage, 100) && okNum(s.rpm, 1e5) && okNum(s.load, 100) && okNum(s.boost, 100);
+    for (int k = 0; sane && k < nw; k++) sane = okNum(s.wheelAngle[k], 1e7) && okNum(s.wheelOmega[k], 1e4);
+    for (const auto& rl : s.ropeLen) sane = sane && okNum(rl.second, 1e3);
+    const double rotLen = std::sqrt(s.rot.w * s.rot.w + s.rot.x * s.rot.x + s.rot.y * s.rot.y + s.rot.z * s.rot.z);
+    if (!sane || rotLen < 0.01 || s.t <= rm->newestT) return;
+    s.rot = Quat{s.rot.w / rotLen, s.rot.x / rotLen, s.rot.y / rotLen, s.rot.z / rotLen};
+    s.steer = clampd(s.steer, -2, 2);
+    s.damage = clampd(s.damage, 0, 1);
+    s.rpm = clampd(s.rpm, 0, 20000);
+    s.load = clampd(s.load, 0, 1);
+    s.boost = clampd(s.boost, 0, 10);
+    s.gear = (int8_t)std::min(std::max((int)s.gear, -1), (int)car.spec->gears.size());  // (it indexes the gear table)
+    for (float& o : s.wheelOmega) o = (float)clampd(o, -3000, 3000);
     const double offset = now - s.t;
     if (!rm->clockSet) {
         rm->clockOffset = offset;
@@ -1190,9 +1680,9 @@ void NetSession::applyRemotes(Sim& sim, double now) {
         c.hydrolocked = (s.status >> 1) & 1;
         c.sleeping = false;
         c.updateBounds();
-        for (const auto& rl : s.ropeLen)
+        for (const auto& rl : s.ropeLen)  // (only the winch lines this vehicle works)
             for (Rope& rp : sim.ropes)
-                if (rp.netId == rl.first) rp.length = rl.second;
+                if (rp.netId == rl.first && rp.kind == ROPE_WINCH && rp.a.kind == ANCHOR_CAR && rp.a.car == ci) rp.length = clampd(rl.second, 0.6, rp.maxLen);
     }
 }
 
@@ -1202,15 +1692,22 @@ void NetSession::receive(Sim& sim, double now) {
     if (role == OFF) return;
     lastSim = &sim;
     if (sessionStart < 0) sessionStart = now;
+    const double wall = clockNow();
     if (role == HOST) accept();
     for (size_t i = 0; i < conns.size();) {
-        readTcp(*conns[i]);
+        Conn& c = *conns[i];
+        if (role == HOST && !c.kill) {  // nobody sits on a slot saying nothing
+            if (!c.hello && wall - c.born > handshakeSecs) violation(&c, "no hello in time");
+            else if (wall - c.lastRx > idleSecs) violation(&c, "silent");
+        }
+        readTcp(c);
         if (role == OFF) return;
-        if (conns[i]->fd < 0) {
+        if (c.kill) flush(c);
+        if (c.fd < 0 || (c.kill && wall - c.killT > 0.5)) {  // (a refused guest gets half a second to read why)
             dropConn(i);
             if (role == OFF) return;
         } else {
-            flush(*conns[i]);
+            flush(c);
             i++;
         }
     }
@@ -1225,6 +1722,7 @@ void NetSession::receive(Sim& sim, double now) {
         d.put<uint8_t>(DG_HELLO);
         d.put<uint8_t>((uint8_t)self);
         d.put<uint32_t>(0), d.put<uint32_t>(0), d.put<uint8_t>(0), d.put<uint8_t>(1);
+        d.put<uint64_t>(udpToken);
         sendto(udpFd, (const char*)d.b.data(), (int)d.b.size(), 0, (sockaddr*)hostUdp, sizeof(sockaddr_in));
     }
     if (now >= nextPing) {
@@ -1330,6 +1828,10 @@ void NetSession::sendLevel(Conn* to) {
 
 void NetSession::setLevel(const std::string& text) {
     if (role != HOST) return;
+    if (text.size() > net::kMaxLevelBytes) {
+        events.push_back("THAT LEVEL IS TOO BIG TO SHARE");
+        return;
+    }
     levelText = text;
     levelSerial++;
     sendLevel(nullptr);
@@ -1354,13 +1856,14 @@ std::string NetSession::hostInfo(bool v2) const {
         std::snprintf(head, sizeof head, "CZHOST %d %d %d %d ", (int)net::kVersion, hostPort, map, playerCount());
         return head + players[0].name.substr(0, 40);
     }
-    std::snprintf(head, sizeof head, "CZHOST2 %d %d %d %d %d %u\n", (int)net::kVersion, hostPort, map, playerCount(), maxPlayers, sessionId);
+    std::snprintf(head, sizeof head, "CZHOST2 %d %d %d %d %d %u %d\n", (int)net::kVersion, hostPort, map, playerCount(), maxPlayers, sessionId, password.empty() ? 0 : 1);
     return head + sessionName.substr(0, 40) + "\n" + players[0].name.substr(0, 40);
 }
 
 void NetSession::answerFinders(double now) {
     if (findFd < 0) return;
     char buf[256];
+    std::vector<net::LocalAddress> local;
     for (int k = 0; k < 16; k++) {
         sockaddr_in from{};
         socklen_t fl = sizeof from;
@@ -1368,6 +1871,14 @@ void NetSession::answerFinders(double now) {
         if (n <= 0) break;
         buf[n] = 0;
         if (std::strncmp(buf, "CZFIND", 6) != 0) continue;
+        // Only the local network is answered (a forged "from" on the internet would turn this
+        // into a way to send our reply, bigger than the question, at someone else), and at
+        // most a few a second.
+        const uint32_t ip = ntohl(from.sin_addr.s_addr);
+        if (local.empty()) local = net::localAddresses();
+        bool onLan = (ip >> 24) == 127;
+        for (const net::LocalAddress& la : local) onLan |= (ip & la.mask) == (la.addr & la.mask);
+        if (!onLan || !findRate.take(clockNow(), 1, 20, 40)) continue;
         const std::string reply = hostInfo(std::strncmp(buf, "CZFIND2", 7) == 0);
         sendto(findFd, reply.data(), (int)reply.size(), 0, (sockaddr*)&from, sizeof from);
     }
@@ -1398,6 +1909,7 @@ std::vector<LocalAddress> localAddresses() {
         if ((ip >> 16) == 0xA9FE) return;  // (169.254: a link-local address, no network behind it)
         LocalAddress la;
         la.addr = ip;
+        la.mask = mask;
         la.broadcast = ip | ~mask;
         char b[20];
         std::snprintf(b, sizeof b, "%u.%u.%u.%u", ip >> 24, (ip >> 16) & 255, (ip >> 8) & 255, ip & 255);
@@ -1454,16 +1966,18 @@ void Finder::close() {
 // One answer or announcement, from `fromIp` (host byte order).
 void Finder::take(const char* buf, uint32_t fromIp, double now) {
     FoundHost h;
-    int ver = 0, port = 0, mp = 0, pl = 0, mx = kMaxPeers, used = 0;
+    int ver = 0, port = 0, mp = 0, pl = 0, mx = kMaxPeers, used = 0, locked = 0;
     unsigned id = 0;
     if (std::strncmp(buf, "CZHOST2 ", 8) == 0) {
-        if (std::sscanf(buf + 8, "%d %d %d %d %d %u%n", &ver, &port, &mp, &pl, &mx, &id, &used) < 6) return;
+        const int got = std::sscanf(buf + 8, "%d %d %d %d %d %u %d%n", &ver, &port, &mp, &pl, &mx, &id, &locked, &used);
+        if (got < 6) return;
         const char* p = std::strchr(buf + 8, '\n');
         if (p) {
             const char* q = std::strchr(p + 1, '\n');
             h.session = q ? std::string(p + 1, q) : std::string(p + 1);
             h.name = q ? std::string(q + 1) : "";
         }
+        h.locked = got >= 7 && locked != 0;
     } else if (std::strncmp(buf, "CZHOST ", 7) == 0) {
         if (std::sscanf(buf + 7, "%d %d %d %d %n", &ver, &port, &mp, &pl, &used) < 4) return;
         h.name = used > 0 ? std::string(buf + 7 + used) : "";
@@ -1474,13 +1988,16 @@ void Finder::take(const char* buf, uint32_t fromIp, double now) {
     char ip[32];
     std::snprintf(ip, sizeof ip, "%u.%u.%u.%u:%d", fromIp >> 24, (fromIp >> 16) & 255, (fromIp >> 8) & 255, fromIp & 255, port);
     h.address = ip;
-    h.map = mp, h.players = pl, h.maxPlayers = std::min(std::max(mx, 2), kMaxPeers), h.version = ver, h.id = id, h.seen = now;
+    // (Whatever was on the network said it: names fit the HUD font, counts fit the game.)
+    h.session = sanitize(h.session, 40), h.name = sanitize(h.name, 40);
+    h.map = std::min(std::max(mp, 0), 255), h.players = std::min(std::max(pl, 0), kMaxPeers), h.maxPlayers = std::min(std::max(mx, 2), kMaxPeers);
+    h.version = ver, h.id = id, h.seen = now;
     const bool loop = (fromIp >> 24) == 127;
     // The same game heard twice (over the network and on this machine, or on two adapters):
     // one row, at its network address (that's the one to give a friend).
     auto it = std::find_if(hosts.begin(), hosts.end(), [&](const FoundHost& o) { return o.address == h.address || (h.id && o.id == h.id); });
     if (it == hosts.end()) {
-        hosts.push_back(h);
+        if (hosts.size() < 64) hosts.push_back(h);  // (anyone can send these: a flood of made-up games is not a list)
         return;
     }
     const bool wasLoop = it->address.compare(0, 4, "127.") == 0;

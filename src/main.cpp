@@ -93,6 +93,7 @@ struct Options {
     int hostPort = -1;            // --host [PORT]: open a multiplayer session
     std::string join;             // --join HOST[:PORT]
     std::string name;             // --name NAME (multiplayer)
+    std::string password;         // --password PASSWORD: for the game you host, and for the one you join
     double timeHours = -1;        // --time H: hold the clock at H hours (0..24), e.g. 21.5
     int lamps = -1;               // --lamps 0-3: headlight switch (LampMode: auto, low, high, off)
     std::string level;            // --level NAME: play the level whose name has NAME in it
@@ -331,6 +332,7 @@ Options parseArgs(int argc, char** argv) {
             if (i + 1 < argc && std::isdigit((unsigned char)argv[i + 1][0])) o.hostPort = std::atoi(argv[++i]);
         } else if (a == "--join") o.join = next();
         else if (a == "--name") o.name = next();
+        else if (a == "--password") o.password = next();
         else if (a == "--resume-model") o.resumeModel = std::atoi(next().c_str());
         else if (a == "--time") o.timeHours = std::fmod(std::max(0.0, std::atof(next().c_str())), 24.0);
         else if (a == "--lamps") o.lamps = std::atoi(next().c_str());
@@ -342,7 +344,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--lab-design") o.lab = true, o.labDesign = std::atoi(next().c_str());
         else if (a == "--help" || a == "-h") {
             std::puts("usage: crumplezone [--fullscreen] [--size WxH] [--no-audio] [--no-vsync] [--no-pad] [--spawn X,Z[,HEADING]] [--spawn-section N] [--scenario NAME]\n"
-                      "                   [--map N] [--host [PORT]] [--join HOST[:PORT]] [--name NAME] [--time HOURS] [--level NAME]\n"
+                      "                   [--map N] [--host [PORT]] [--join HOST[:PORT]] [--name NAME] [--password PASSWORD] [--time HOURS] [--level NAME]\n"
                       "                   [--physics-threads auto|all|N] [--lab [--lab-model ID]]");
             std::exit(0);
         }
@@ -1934,6 +1936,7 @@ int main(int argc, char** argv) {
     auto startHost = [&](int port) {
         const std::string session = !settings.sessionName.empty() ? settings.sessionName
                                     : (settings.playerName.empty() ? std::string("PLAYER") : settings.playerName) + "'S GAME";
+        net.password = !opt.password.empty() ? opt.password : settings.netPassword;
         if (net.host(port, settings.playerName, sim.world.map, settings.maxPlayers, session)) {
             net.adopt(sim);
             hud.toast("HOSTING " + session + " ON " + mapName(sim.world.map) + ": FRIENDS ON YOUR NETWORK SEE IT IN JOIN");
@@ -1949,6 +1952,7 @@ int main(int argc, char** argv) {
         menu.joining = true;
         menu.joinLabel = label.empty() ? address : label;
         menu.joinError.clear();
+        net.password = !opt.password.empty() ? opt.password : settings.netPassword;
         if (net.beginJoin(address, settings.playerName)) {
             joinState = 1;
         } else {
@@ -1960,6 +1964,7 @@ int main(int argc, char** argv) {
     };
     // ---- end multiplayer joining
     auto startJoin = [&](const std::string& address) {
+        net.password = !opt.password.empty() ? opt.password : settings.netPassword;
         if (!net.join(address, settings.playerName)) {
             hud.toast("CAN'T JOIN: " + net.error);
             std::printf("can't join %s: %s\n", address.c_str(), net.error.c_str());
@@ -3252,7 +3257,7 @@ int main(int argc, char** argv) {
                 if (m.text.rfind("fuel ", 0) == 0) {  // a buddy poured their can into one of mine
                     unsigned id = 0;
                     double liters = 0;
-                    if (std::sscanf(m.text.c_str(), "fuel %u %lf", &id, &liters) == 2)
+                    if (std::sscanf(m.text.c_str(), "fuel %u %lf", &id, &liters) == 2 && std::isfinite(liters) && liters > 0 && liters <= 60)  // (a can holds a few liters: not whatever a buddy typed)
                         for (Car& c : sim.cars)
                             if (c.netId == id && !c.remote) {
                                 if (c.fuel < 0) c.fuel = c.spec->fuelCapacity;
@@ -4006,10 +4011,10 @@ int main(int argc, char** argv) {
                     for (std::string* t : {&g.host, &g.session})
                         for (char& ch : *t) ch = (char)std::toupper((unsigned char)ch);
                     g.map = mapName(fh.map);
-                    g.players = std::to_string(fh.players) + "/" + std::to_string(fh.maxPlayers);
+                    g.players = std::to_string(fh.players) + "/" + std::to_string(fh.maxPlayers) + (fh.locked ? "  PASSWORD" : "");
                     g.address = fh.address;
                     g.ok = fh.joinable();
-                    g.why = fh.version != net::kVersion ? "A DIFFERENT VERSION OF THE GAME" : "FULL: " + g.players;
+                    g.why = fh.version != net::kVersion ? "A DIFFERENT VERSION OF THE GAME" : "FULL: " + std::to_string(fh.players) + "/" + std::to_string(fh.maxPlayers);
                     menu.found.push_back(g);
                 }
             } else if (!menu.found.empty() || menu.pageNow() != 2 || menu.searching > 0) {

@@ -35,6 +35,7 @@ make
 | `--host [PORT]` | Host a multiplayer session (default port 27015) |
 | `--join HOST[:PORT]` | Join one |
 | `--name NAME` | Your name in multiplayer |
+| `--password PASSWORD` | The password of the game you host, and the one you offer when you join (also the PASSWORD field on the Multiplayer page) |
 | `--time HOURS` | Hold the clock at a time of day, e.g. `--time 21.5` (for screenshots) |
 
 **Hot reload (Linux):** leave the game running while you rebuild (`make`). When the new
@@ -442,7 +443,7 @@ Up to 8 players on one map. One of you hosts; the rest join.
 - **From the command line:**
   - Host: `./crumplezone --map 1 --host` (port 27015 by default, or `--host 27100`)
   - Join: `./crumplezone --join 192.168.1.20` (or `HOST:PORT`), with `--name YOURNAME` if you like
-- **Over the internet**, the host needs TCP and UDP port 27015 forwarded on their router. On a LAN it just works.
+- **Over the internet**, the host needs TCP and UDP port 27015 forwarded on their router. On a LAN it just works. Set a **password** (PASSWORD on the Multiplayer page, or `--password`) before you open a game to the internet: players must know it to join, and it is never sent over the network (only a proof of it). Nothing else in the game is encrypted, so for anything private use a VPN such as WireGuard or Tailscale.
 - **How it plays:**
   - Your own truck runs on your machine, so driving has no lag. The others see it, dents and all, about 0.1 s behind (about 40 KB/s per moving truck).
   - Other players' trucks are solid: you can bump them, winch to them, and strap them (V, O). A line between two players' trucks pulls on each truck on its owner's machine, so a buddy can tow you to a repair station while you steer.
@@ -455,10 +456,19 @@ For internet play or persistent sessions, run a dedicated server instead of havi
 
 ```bash
 make build/crumplezone-server
-./build/crumplezone-server --port 27015 --map 1 --name "My Session"
+echo 'a long random password' > ~/cz-password && chmod 600 ~/cz-password
+./build/crumplezone-server --port 27015 --map 1 --name "My Session" --password-file ~/cz-password
 ```
 
-Players join normally: `./crumplezone --join YOUR_SERVER_IP:27015`. The server runs headless (no window), accepts up to 8 players, and maintains the shared world. It works over the internet when port 27015 is open on the server. Options: `--port`, `--map`, `--name`, `--players`, `--help`.
+Players join with `./crumplezone --join YOUR_SERVER_IP:27015 --password 'a long random password'` (or the PASSWORD field on the Multiplayer page, then type the address). The server runs headless (no window), has 7 guest slots, keeps the shared world (parked trucks, crash props, everyone's vehicles for whoever joins later) and runs no physics of its own. It needs only TCP and UDP port 27015 open. Options: `--port`, `--map`, `--name`, `--players`, `--password` / `--password-file` / the `CZ_PASSWORD` variable, `--bind IP`, `--lan`, `--help`.
+
+Run it safely (details and a hardened systemd unit in [docs/multiplayer.md](docs/multiplayer.md); what is checked and why in [docs/server-security.md](docs/server-security.md)):
+
+- **Use a password.** Without `--password` anyone who can reach the port can join (the server warns). Prefer `--password-file` or `CZ_PASSWORD` to `--password` (which shows in `ps`).
+- **Never as root.** The server refuses to start as root (`--allow-root` overrides, don't). A dedicated user, or systemd `DynamicUser=yes`.
+- **Firewall: only the game port**, TCP and UDP 27015. Nothing else needs to be reachable; the LAN discovery ports (UDP 27016/27017) are off on the server.
+- The server drops connections that stay silent, flood, send malformed or oversized messages, or guess passwords (five wrong guesses lock an address out for a minute).
+- Traffic is **not encrypted**. For privacy, put the server behind a VPN and `--bind` it to the VPN address.
 
 ## Recovery
 

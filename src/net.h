@@ -9,8 +9,10 @@
 // go over TCP; vehicle states over UDP, played back ~0.1 s behind so they stay smooth.
 // Plain POSIX sockets, nothing else.
 #pragma once
+#include <algorithm>
 #include <cstdint>
 #include <deque>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -21,9 +23,37 @@ constexpr int kDefaultPort = 27015;
 constexpr int kDiscoveryPort = 27016;  // UDP: "who's hosting?" on the local network
 constexpr int kBeaconPort = 27017;     // UDP: hosts also announce themselves here every couple of seconds
 constexpr int kMaxPeers = 8;
-constexpr uint16_t kVersion = 4;  // every garage slot (wheels and tires too) in a car's spec
+constexpr uint16_t kVersion = 5;  // 5: passwords, a secret in every datagram, strict checks (4: every garage slot in a car's spec)
 constexpr double kSendRate = 20;      // vehicle states per second
 constexpr double kPlaybackDelay = 0.1; // s behind the newest state received
+
+// What a host puts up with (docs/server-security.md): connections, silence, size.
+constexpr int kMaxConns = 24;          // TCP connections held at once, in the session or not
+constexpr int kMaxConnsPerIp = 8;      // (a household behind one address can fill the game)
+constexpr double kHandshakeSecs = 8;   // to say hello (and give the password) before being dropped
+constexpr double kIdleSecs = 30;       // without a word from a player before they're dropped
+constexpr size_t kMaxLevelBytes = 8u << 20;  // a level's text
+constexpr size_t kMaxNameLen = 16;     // a player's name
+constexpr int kMaxCarsPerPlayer = 6;   // vehicles one guest can have in the session
+constexpr int kMaxRopesPerPlayer = 6;
+
+// A token bucket: `rate` a second, up to `burst` at once.
+struct Bucket {
+    double tokens = -1, t = 0;
+    bool take(double now, double cost, double rate, double burst) {
+        if (tokens < 0) tokens = burst, t = now;
+        tokens = std::min(burst, tokens + (now - t) * rate);
+        t = now;
+        if (tokens < cost) return false;
+        tokens -= cost;
+        return true;
+    }
+};
+
+// Text from the network, fit for the HUD font: printable ASCII only, at most `maxLen` long.
+std::string sanitize(const std::string& s, size_t maxLen);
+// HMAC-SHA-256 (the password proof), 32 bytes.
+std::vector<uint8_t> hmacSha256(const std::string& key, const std::vector<uint8_t>& data);
 }  // namespace net
 
 // Finds games hosted on the local network, two ways, so either direction getting through is
@@ -37,6 +67,7 @@ struct FoundHost {
     std::string name;     // the host player's name
     std::string session;  // the game's name ("" from an older version: use the host's name)
     int map = 0, players = 0, maxPlayers = kMaxPeers;
+    bool locked = false;     // needs a password
     int version = kVersion;  // a different one can't be joined
     uint32_t id = 0;         // the session (the same game heard on two addresses is one row)
     double seen = 0;
@@ -57,7 +88,7 @@ private:
 // address: "192.168.8.112" and 192.168.8.255.
 struct LocalAddress {
     std::string ip;
-    uint32_t addr = 0, broadcast = 0;  // host byte order
+    uint32_t addr = 0, broadcast = 0, mask = 0;  // host byte order
 };
 std::vector<LocalAddress> localAddresses();
 }  // namespace net
@@ -93,6 +124,21 @@ public:
         std::string text;
     };
     std::vector<GameMsg> gameIn;
+
+    // A shared secret. Host: if set, guests must prove they know it (an HMAC of a fresh
+    // challenge; the password itself never goes over the wire). Client: what to offer. Kept
+    // across close(); set it before host() / join().
+    std::string password;
+    // Host: also answer "who's hosting?" on the local network and announce itself there. A
+    // public server turns this off (it would answer anyone, with more bytes than they asked
+    // with); a game on your own network keeps it on. Set before host().
+    bool discovery = true;
+    // Host: the local address to listen on ("" = every interface).
+    std::string bindAddress;
+    // Host: what went wrong or was refused (a flood, a wrong password, a malformed message),
+    // for a server's log. Newest last, capped.
+    std::vector<std::string> log;
+    int refused = 0;  // connections turned away or dropped for the limits and for garbage
 
     NetSession();
     ~NetSession();
@@ -137,8 +183,30 @@ public:
     static int ownerOf(uint32_t netId) { return (int)(netId >> 16); }
 
 private:
-    struct Conn;
-    friend struct NetSessionTest;  // Socket-free wire/playback regression tests.
+    // One TCP connection: the host's, from a client; or, on a client, to the host.
+    struct Conn {
+        int fd = -1;
+        int peer = -1;
+        bool hello = false;
+        // Host: a guest that's said something it shouldn't (or been refused) stays only long
+        // enough for its last words to go out, hearing nothing.
+        bool kill = false;
+        double killT = 0;
+        bool challenged = false;  // host: waiting for the password's proof
+        uint8_t nonce[16] = {};
+        std::string name;         // (said in the hello; the guest is let in once the proof is right)
+        uint64_t token = 0;       // host: the secret that goes in this guest's datagrams
+        uint32_t ip = 0;          // host: where it came from (host byte order)
+        double born = 0, lastRx = 0;
+        net::Bucket msgs, bytes, spawns, ropes, games, dgrams, dgramBytes;
+        std::vector<uint8_t> in, out;
+        uint32_t udpIp = 0;       // host: its UDP address, once it has said hello there
+        uint16_t udpPort = 0;
+        bool udpKnown = false;
+        double pingSent = 0;
+    };
+    friend struct NetSessionTest;     // Socket-free wire/playback regression tests.
+    friend struct NetSessionSecTest;  // And the hostile-input ones.
     struct Snap;
     struct Remote;
     int listenFd = -1, udpFd = -1;
@@ -152,6 +220,14 @@ private:
     void answerFinders(double now);
     std::string hostInfo(bool v2) const;
     std::vector<Conn*> conns;   // host: one per client; client: just the host
+    uint64_t udpToken = 0;      // client: the secret the host gave us for datagrams
+    struct Strike {
+        int fails = 0;
+        double until = 0;
+    };
+    std::map<uint32_t, Strike> strikes;  // host: wrong passwords, by address (host byte order)
+    net::Bucket logRate, findRate;       // (a flood must not become a flood of log, or of answers)
+    double handshakeSecs = net::kHandshakeSecs, idleSecs = net::kIdleSecs;
     void* hostUdp = nullptr;    // client: the host's UDP address (sockaddr_in)
     bool udpReady = false;      // client: the host has heard our UDP
     double nextUdpHello = 0, nextPing = 0, lastSend = -1, sessionStart = -1;
@@ -166,6 +242,7 @@ private:
     std::vector<uint32_t> knownRopes;   // lines everyone knows about
     std::vector<Remote*> remotes;
     std::vector<std::vector<uint8_t>> pending;  // reliable messages read before adopt()
+    size_t pendingBytes = 0;
     bool adopted = false;
 
     void accept();
@@ -175,8 +252,15 @@ private:
     void sendTo(Conn& c, const std::vector<uint8_t>& msg);
     void broadcast(const std::vector<uint8_t>& msg, Conn* except = nullptr);
     void handle(Sim* sim, Conn* from, const std::vector<uint8_t>& msg);
-    void apply(Sim& sim, const std::vector<uint8_t>& msg);
+    // Applies a world message. `from` is the guest it came from (host: its player number; the
+    // vehicles and lines in it must be that guest's own), or -1 from the host. False: refused.
+    bool apply(Sim& sim, const std::vector<uint8_t>& msg, int from = -1);
     void readUdp(Sim& sim, double now);
+    void onDatagram(Sim& sim, const uint8_t* buf, size_t n, uint32_t ip, uint16_t port, double now);
+    void admit(Conn& c, const std::string& name);  // host: let a guest in
+    void violation(Conn* c, const std::string& why);  // host: drop this guest after garbage
+    void note(const std::string& what);
+    Conn* fakeConn(int peer, bool hello);  // (tests: a guest without a socket)
     void sendSnapshot(Sim& sim, const Car& c, double now);
     std::vector<uint8_t> snapshotMsg(const Sim& sim, const Car& c, double now) const;
     void takeSnapshot(Sim& sim, uint32_t netId, const std::vector<uint8_t>& data, double now);
@@ -190,6 +274,7 @@ private:
     void sendLevel(Conn* to);  // the level's text, in parts (to one client, or everyone)
     std::string levelIn;       // client: parts so far
     uint32_t levelInSerial = 0;
+    uint16_t levelInNext = 0;  // client: the part we expect next
     Remote* remoteFor(uint32_t netId);
     void removeCars(Sim& sim, int owner);
     Sim* lastSim = nullptr;

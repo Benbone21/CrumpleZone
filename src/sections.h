@@ -32,7 +32,7 @@ struct SectionFrame {
 struct SectionBuilt {
     V3 entry, exit;       // the trail's two ends, on the finished ground
     double exitHeading = 0;
-    std::vector<V3> line;  // the line meant to be driven, entry to exit about every 2 m, on the finished ground (empty from a hand-made section)
+    std::vector<V3> line;  // a way through on the finished ground, entry to exit, 1-2 m apart: the line meant to be driven (the cliff shelf's has 2.6 m clear to each side, steps under 0.4 m); empty from a hand-made section
 };
 
 // The ground a section takes over: from `apron` m before the entry to `apron` m past the exit
