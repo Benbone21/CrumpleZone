@@ -13,9 +13,9 @@ namespace {
 
 const double kDeg = M_PI / 180;
 
-// The proving ground's open ground in the north-west (found by looking: 320 x 150 m round it holds no
+// The proving ground's open ground in the north-east (found by search: 340 x 170 m round it holds no
 // road, course, yard, park section or water, and the pad is 175 m out from the spawn).
-constexpr double kCanvasX = -310, kCanvasZ = 465, kCanvasLength = 260, kCanvasHalf = 45;
+constexpr double kCanvasX = 240, kCanvasZ = -450, kCanvasLength = 260, kCanvasHalf = 45;
 
 // Bilinear sample of a grid of nu x nv at (u, v) in the frame (clamped to the edge).
 double sampleGrid(const SectionFile& s, const std::vector<float>& g, double u, double v) {

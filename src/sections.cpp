@@ -24,7 +24,7 @@ struct Spec {
 };
 constexpr Spec kSpecs[SEC_COUNT] = {
     {"STEEP HILL", 140, 28}, {"MUD PIT", 150, 30}, {"ROCKY RIVER", 140, 32}, {"ROCK WALL", 150, 34},
-    {"DUNES", 170, 32},      {"CLIFF SHELF", 180, 33}, {"TIMBER", 140, 30},
+    {"DUNES", 440, 80},      {"CLIFF SHELF", 180, 33}, {"TIMBER", 140, 30},
 };
 constexpr double kApron = 20;        // flat run-in and run-out inside the cleared ground
 constexpr double kBlend = 24;        // the ground blends back to its surroundings over this far
@@ -41,7 +41,9 @@ constexpr int kHillLedges = 3, kHillRocks = 14;
 // Mud pit: a long pit, floor 0.3-1.5 m (varying), standing water, a steep exit bank.
 constexpr double kMudStart = 40, kMudHalf = 7.5, kMudDepthMin = 0.3, kMudDepthVar = 1.2, kMudWater = -0.12;
 constexpr double kMudBankIn = 3.0, kMudBankOut = 1.1;  // entry gentle (3 m), exit 1:1
+constexpr double kNearH = 10;  // (that height, for the timber and the mud pit's tree walls)
 constexpr Range kMudLen = {42, 56};
+constexpr double kMudClear = 3.5;  // trunks stand this far back from the mud's edge (and so from the trail, the camera's room)
 
 // Rocky river: a channel across the trail, knee-to-thigh deep, a current, boulders everywhere.
 constexpr double kRiverAt = 65;  // the channel's middle
@@ -57,9 +59,11 @@ constexpr double kWallSqueezeAfter = 2, kWallSqueezeLen = 8, kWallSqueezeHalf = 
 constexpr double kWallRimSlope = 0.12, kWallFadeIn = 36;  // the land rises this much per m beyond the canyon's walls; the walls fade in over kWallFadeIn m
 constexpr Range kWallSlabHx = {1.3, 2.4}, kWallSlabHz = {0.8, 1.4}, kWallSlabTh = {0.45, 0.8};
 
-// Dunes: ridges with gentle windward backs and steep slip faces.
-constexpr Range kDuneAngle = {-0.5, 0.5}, kDuneAmp = {4, 6.5};
-constexpr double kDuneRamp = 30;  // flat at the ends
+// Dunes: a sea of sand (duneHeight below): ridges with gentle windward backs and steep slip faces.
+constexpr Range kDuneWind = {18, 38}, kDuneSpacing = {125, 150}, kDuneCrest = {18, 21};  // degrees from the heading; m; m
+constexpr double kDuneRepose = 32;   // sand holds no steeper than this (degrees): the field is relaxed to it
+constexpr double kDuneHardpan = 0.7, kDunePatch = 0.5;  // hollows lower than this above the floor (m) are hard ground where the patch noise tops that
+constexpr int kDuneSmooth = 2, kDuneRelax = 60;  // passes rounding the crests, passes settling the slopes
 
 // Cliff shelf: a one-truck shelf cut into a cliff, a real drop off the edge, rocks and dips.
 constexpr Range kShelfHalf = {1.7, 2.0}, kShelfTilt = {5, 10};  // 3.4-4 m of road; leans you toward the drop
@@ -68,6 +72,8 @@ constexpr int kShelfRocks = 18;
 
 // Timber: a forest track blocked by standing trees and windfall.
 constexpr double kTimberHalf = 1.9;
+constexpr double kTimberClear = 4.2;  // trunks start this far from the centre line: 2 m from the track's edge, room for a truck, its mirrors and the camera
+constexpr double kTimberNear = 6.0;  // within this far of the trunks' line the trees stay under kNearH tall, so crowns don't close over the track
 constexpr Range kTimberLog = {9, 14}, kTimberLogR = {0.32, 0.45};
 
 struct Rng {
@@ -232,7 +238,11 @@ struct Canvas {
         w.addTree(p.x, p.z, h, kind, tint);
     }
     // Forest outside |v| > clear (dense when `wall`: trunks too close to drive between).
-    void forest(double clear, double density, bool wall, double u0, double u1, double perM2 = kForestPerM2) {
+    // Trees within `lowBand` m of `clear` stay under `lowH` tall (their crowns reach less far over the track).
+    void forestLow(double clear, double density, bool wall, double lowBand, double lowH) {
+        forest(clear, density, wall, -fp.apron, fp.length + fp.apron, kForestPerM2, lowBand, lowH);
+    }
+    void forest(double clear, double density, bool wall, double u0, double u1, double perM2 = kForestPerM2, double lowBand = 0, double lowH = 17) {
         const int attempts = (int)((u1 - u0) * 2 * (fp.half - 1) * perM2);
         for (int k = 0; k < attempts; k++) {
             const double u = rng.range(u0, u1), v = rng.range(-(fp.half - 1), fp.half - 1);
@@ -244,7 +254,8 @@ struct Canvas {
             const V3 p = at(u, v);
             if (w.waterLevel(p.x, p.z) > w.height(p.x, p.z) - 0.2) continue;
             const int kind = rng() < 0.75 ? 0 : (rng() < 0.8 ? 1 : 2);
-            tree(u, v, rng.range(8, 17), kind, (float)rng.range(0.8, 1.15));
+            const double hi = lat < clear + lowBand ? lowH : 17;
+            tree(u, v, rng.range(std::min(8.0, hi - 1), hi), kind, (float)rng.range(0.8, 1.15));
         }
     }
     void forest(double clear, double density, bool wall) { forest(clear, density, wall, -fp.apron, fp.length + fp.apron); }
@@ -317,8 +328,9 @@ void mudPit(Canvas& c) {
         c.paint(id, SURF_MUD);
     });
     c.commit();
-    c.forest(half + 2, 0.15, true, xa - 6, xb + 6, 1.0);  // dense timber both sides: no driving round
-    c.forest(5, 0.05, false);
+    // Dense timber both sides (no driving round), its trunks 3.5 m back from the mud and its crowns kept low near it.
+    c.forest(half + kMudClear, 0.15, true, xa - 6, xb + 6, 1.0, 6.0, kNearH);
+    c.forest(half + kMudClear, 0.05, false, -c.fp.apron, c.fp.length + c.fp.apron, kForestPerM2, 6.0, kNearH);
 }
 
 // ---- 3. ROCKY RIVER ------------------------------------------------------------------------------
@@ -491,20 +503,73 @@ void rockWall(Canvas& c) {
 }
 
 // ---- 5. DUNES ------------------------------------------------------------------------------------
+// Heights over the whole field come from duneHeight; the cells are then rounded off a little and settled
+// to the angle of repose, so the slip faces are as steep as sand stands and nothing is steeper.
 void dunes(Canvas& c) {
     const uint32_t seed = c.seed;
-    const double ang = c.rng.range(kDuneAngle), amp = c.rng.range(kDuneAmp), L = c.fp.length, hw = c.fp.half;
-    c.each(-c.fp.apron, L + c.fp.apron, -hw, hw, [&](int id, double u, double v) {
-        // (Flat at both ends so the section starts and ends on firm ground, and the field fades at its sides.)
-        const double fade = smoothstep(0, kDuneRamp, u) * smoothstep(L, L - kDuneRamp, u) * smoothstep(hw, hw - 14, std::fabs(v));
-        if (fade <= 0) return;
-        const double p = std::cos(ang) * u + std::sin(ang) * v + 18 * std::sin(0.013 * v + seed);
-        // Asymmetric ridge: gentle windward back, steep slip face.
-        const double ph = std::fmod(p * 0.035 + 1000, 1.0), ridge = ph < 0.8 ? ph / 0.8 : (1 - ph) / 0.2;
-        const double h = amp * std::pow(ridge, 1.6) * (0.6 + 0.6 * valueNoise(u * 0.015, v * 0.015)) + 1.0 * valueNoise(u * 0.07, v * 0.07);
-        c.setH(id, c.getH(id) * (1 - fade) + h * fade);
-        if (fade > 0.3) c.paint(id, SURF_SAND);
+    const double L = c.fp.length, hw = c.fp.half;
+    DuneParams P;
+    P.windDeg = c.rng.range(kDuneWind), P.spacing = c.rng.range(kDuneSpacing), P.crestMax = c.rng.range(kDuneCrest);
+    P.subSpacing = P.spacing * 0.5, P.halfU = L / 2, P.halfV = hw - 12;
+    auto edgeD = [&](double u, double v) { return std::cbrt(std::pow(std::fabs((u - L / 2) / P.halfU), 3) + std::pow(std::fabs(v / P.halfV), 3)); };
+    // The cells of the cleared ground, and where each one's neighbours are.
+    std::vector<int> mine;
+    std::vector<float> above;  // each one's dune height over its hollow floor
+    std::vector<int> at(c.w.gridSize() * c.w.gridSize(), -1);
+    c.each(-c.fp.apron, L + c.fp.apron, -hw, hw, [&](int i, double u, double v) {
+        at[c.cells[i].id] = (int)mine.size(), mine.push_back(i);
+        const double wgt = smoothstep(1.0, 0.62, edgeD(u, v));  // (the dunes fade into the rolling country round the ends and sides)
+        double ab = 0;
+        const double h = duneHeight(u - L / 2, v, P, seed, &ab);
+        above.push_back((float)ab);
+        c.setH(i, c.getH(i) * (1 - wgt) + h * wgt);
     });
+    const int n = c.w.gridSize();
+    const int off[8] = {1, -1, n, -n, n + 1, n - 1, -n + 1, -n - 1};
+    std::vector<float> tmp(mine.size());
+    // Rounded crests and toes (a 3x3 kernel), then the repose: sand slides off anything steeper than kDuneRepose.
+    for (int pass = 0; pass < kDuneSmooth; pass++) {
+        for (size_t m = 0; m < mine.size(); m++) {
+            const int id = c.cells[mine[m]].id;
+            double sum = c.cells[mine[m]].h * 0.4, wsum = 0.4;
+            for (int k = 0; k < 8; k++) {
+                const int j = at[id + off[k]];
+                if (j < 0) continue;
+                const double wk = k < 4 ? 0.1 : 0.05;
+                sum += c.cells[mine[j]].h * wk, wsum += wk;
+            }
+            tmp[m] = (float)(sum / wsum);
+        }
+        for (size_t m = 0; m < mine.size(); m++) c.cells[mine[m]].h = tmp[m];
+    }
+    // (Each pair of neighbours in place, sweeping the field forward then back, so a slope settles in a few passes.)
+    const double tanR = std::tan(kDuneRepose * M_PI / 180);
+    const int fwd[4] = {1, n, n + 1, n - 1};
+    for (int pass = 0; pass < kDuneRelax; pass++)
+        for (size_t mm = 0; mm < mine.size(); mm++) {
+            const size_t m = pass & 1 ? mine.size() - 1 - mm : mm;
+            Canvas::Cell& a = c.cells[mine[m]];
+            for (int k = 0; k < 4; k++) {
+                const int j = at[a.id + fwd[k]];
+                if (j < 0) continue;
+                Canvas::Cell& b = c.cells[mine[j]];
+                const double lim = tanR * (k == 0 || k == 1 ? 1.0 : 1.4142), diff = a.h - b.h;
+                if (std::fabs(diff) > lim) {
+                    const float move = (float)((std::fabs(diff) - lim) * 0.5 * (diff > 0 ? 1 : -1));
+                    a.h -= move, b.h += move;
+                }
+            }
+        }
+    // Sand over the field; its rim and both ends are firm desert floor (never start on sand: cars bog), and
+    // so are patches of the hollows.
+    const double ox = (seed % 997) * 13.1 + 31, oz = (seed % 991) * 7.7 + 17;
+    for (size_t m = 0; m < mine.size(); m++) {
+        Canvas::Cell& k = c.cells[mine[m]];
+        const double d = edgeD(k.u, k.v);
+        if (d > 0.93) c.surface(mine[m], SURF_DIRT, PAINT_DESERT);
+        else if (above[m] < kDuneHardpan && fbmNoise(k.u * 0.022 + ox, k.v * 0.022 + oz, 2) > kDunePatch) c.surface(mine[m], SURF_DIRT, PAINT_DESERT);
+        else c.paint(mine[m], SURF_SAND);
+    }
     c.commit();
 }
 
@@ -545,7 +610,7 @@ void cliffShelf(Canvas& c) {
 void timber(Canvas& c) {
     trail(c, kTimberHalf, 6, [](double) { return 0.0; }, [](double) { return SURF_DIRT; });
     c.commit();
-    c.forest(2.6, 0.5, true);  // a wall of trunks either side
+    c.forestLow(kTimberClear, 0.5, true, kTimberNear, kNearH);  // a wall of trunks either side, back from the track
     for (int k = 0; k < 4; k++) c.tree(30 + 25 * k + c.rng.range(-5, 5), c.rng.range(-1.0, 1.0), c.rng.range(12, 18), 0);  // trees growing in the track
     for (int k = 0; k < 3; k++) {  // windfall across it: too big to climb in a truck
         const double u = 42 + 25 * k + c.rng.range(-4, 4), a = c.rng.range(-0.4, 0.4), len = c.rng.range(kTimberLog), r = c.rng.range(kTimberLogR);
@@ -561,6 +626,69 @@ void timber(Canvas& c) {
 }
 
 }  // namespace
+
+// ---- Dunes as a height function ------------------------------------------------------------------
+// Summed directional waveforms. The dominant one is a transverse-ridge wave running along the wind (so
+// the ridges lie across it): a sawtooth with a long gentle windward back, a short slip face at the
+// angle of repose and a flat hollow before the next. Its phase is bent by a second, longer wave at
+// another angle (the ridges become crescents and sinuous linguoid ridges) and by low-frequency noise
+// (a domain warp: crests meander and merge). Crest height swells to the middle of the field and
+// dwindles toward its edge. Two smoother, smaller waves run over it at slight angles (swells, then
+// whoops) and the floor between the dunes undulates.
+double duneHeight(double u, double v, const DuneParams& P, uint32_t seed, double* aboveFloor) {
+    if (aboveFloor) *aboveFloor = 0;
+    const double ox = (seed % 997) * 13.1 + 200, oz = (seed % 991) * 7.7 + 200;
+    auto signedNoise = [&](double x, double z, int oct) { return clampd((fbmNoise(x + ox, z + oz, oct) - 0.5) * 3.4, -1, 1); };
+    const double du = std::fabs(u / P.halfU), dv = std::fabs(v / P.halfV);
+    const double d = std::cbrt(du * du * du + dv * dv * dv);
+    const double eEdge = smoothstep(1.0, 0.4, d), eCore = smoothstep(0.95, 0.25, d);
+    if (eEdge <= 0) return 0;
+    const double th = P.windDeg * M_PI / 180;
+    const double a2 = th + P.bendDeg * M_PI / 180, k2 = 2 * M_PI / P.bendLength;
+    const double bendPh = (seed % 13) * 0.7;
+    // Where a wave's crests are: along its direction, plus the meander and the bending wave.
+    auto phaseAt = [&](double dir, double spacing, double warpAmp, double bendAmp, double x, double z) {
+        const double warp = warpAmp * signedNoise(x / P.warpScale, z / P.warpScale, 2);
+        const double bend = bendAmp * std::sin(k2 * (x * std::cos(a2) + z * std::sin(a2)) + bendPh);
+        return (x * std::cos(dir) + z * std::sin(dir) + warp + bend) / spacing;
+    };
+    // Ridges: a sawtooth wave across the wind. A ridge's height is that where its back begins (found by stepping
+    // upwind from here), so it's the same all across the ridge's profile and the slopes aren't bent by the field's
+    // swelling or the noise. The back's and the slip's lengths follow from that height and the real spacing of the
+    // crests here (the phase gradient), so the slopes come out right wherever the warp squeezes them.
+    auto ridges = [&](double dir, double spacing, double warpAmp, double bendAmp, double heightFrac, double windward, double slipAngle, double noiseScale, double noiseAt) {
+        const double tW = std::tan(windward * M_PI / 180), tS = std::tan(slipAngle * M_PI / 180);
+        const double ph = phaseAt(dir, spacing, warpAmp, bendAmp, u, v);
+        const double gx = phaseAt(dir, spacing, warpAmp, bendAmp, u + 1, v) - ph, gz = phaseAt(dir, spacing, warpAmp, bendAmp, u, v + 1) - ph;
+        const double g = std::max(std::hypot(gx, gz), 0.25 / spacing);  // crests per metre, across them
+        const double phi = ph - std::floor(ph);
+        const double back0 = std::min(phi / g, 1.5 * spacing);          // metres up the wind to where this ridge's back begins
+        const double u0 = u - std::cos(dir) * back0, v0 = v - std::sin(dir) * back0;
+        const double e0 = std::cbrt(std::pow(std::fabs(u0 / P.halfU), 3) + std::pow(std::fabs(v0 / P.halfV), 3));
+        const double base = P.crestMin * smoothstep(1.0, 0.5, e0) + (P.crestMax - P.crestMin) * smoothstep(0.92, 0.3, e0);
+        const double crest = base * heightFrac * (0.86 + 0.28 * signedNoise(u0 / noiseScale + noiseAt, v0 / noiseScale + noiseAt * 0.45, 2));
+        const double A = std::min(crest, 0.9 / (g * (1 / tW + 1 / tS)));  // (a crest the spacing has no room for is cut down to size)
+        const double back = A * g / tW, slip = A * g / tS;
+        double prof = 0;
+        if (phi < back) {
+            const double t = phi / back;
+            prof = 0.8 * t + 0.2 * t * t * (3 - 2 * t);
+        } else if (phi < back + slip) prof = 1 - (phi - back) / slip;
+        return A * prof * smoothstep(1.0, 0.94, d);  // (nothing's left of a ridge at the very rim: the sand there settles)
+    };
+    const double bendAmp = P.bend * (0.65 + 0.35 * signedNoise(u / 400 + 7, v / 400 + 3, 2));
+    const double big = ridges(th, P.spacing, P.warp, bendAmp, 1.0, P.windwardDeg, P.slipDeg, 190, 11);
+    const double mid = ridges(th + 0.12, P.subSpacing, P.warp * 0.8, P.bend * 0.5, P.sub, P.windwardDeg * 0.8, P.slipDeg * 0.95, 120, 3);
+    // Small lopsided swells over the lot (a cosine with its phase pushed along itself), far gentler than the slip faces.
+    const double baseHere = P.crestMin * eEdge + (P.crestMax - P.crestMin) * eCore;
+    const double p3 = 2 * M_PI * phaseAt(th - 0.15, P.subSpacing * 0.45, P.warp * 0.5, P.bend * 0.3, u, v);
+    const double small = P.sub * 0.25 * baseHere * (0.7 + 0.6 * signedNoise(u / 80 + 9, v / 80 + 1, 2)) * 0.5 * (1 - std::cos(p3 + 0.5 * std::sin(p3)));
+    const double dunes = big + mid + small;
+    // The hollows' floor: a slow swell (and a long wave across it).
+    const double floorH = P.swell * eEdge * (0.7 * signedNoise(u / 210 + 1, v / 210 + 4, 3) + 0.3 * std::sin(2 * M_PI * (u * std::sin(th) - v * std::cos(th)) / 410 + (seed % 7)));
+    if (aboveFloor) *aboveFloor = dunes;
+    return floorH + dunes;
+}
 
 namespace {
 const Spec& specOf(SectionType t) { return kSpecs[std::min((int)t, (int)SEC_COUNT - 1)]; }

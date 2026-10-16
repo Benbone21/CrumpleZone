@@ -24,7 +24,7 @@ namespace {
 
 // ---- Shaders ---------------------------------------------------------------------------
 // Instanced props: per instance a model -> world affine (three rows) and extras (tint, wind
-// phase, snow, -). Normals go through the cofactor matrix, so stretched rocks still shade
+// phase, snow, hidden). Normals go through the cofactor matrix, so stretched rocks still shade
 // right. Leaves sway with the wind, more toward the top.
 const char* kPropVS = R"(#version 330 core
 layout(location=0) in vec3 aPos;
@@ -64,6 +64,7 @@ uniform sampler2D uDiff, uNorm, uArm;
 uniform int uAlpha, uFoliage, uHasNorm, uHasArm;
 uniform float uCutoff;
 void main(){
+  if (vExtra.w > ditherAt(gl_FragCoord.xy)) discard;  // a tree the camera sees through (the extra's w: how much is hidden)
   vec4 d = texture(uDiff, vUv);
   if (uAlpha == 1 && d.a < uCutoff) discard;
   vec3 N = normalize(vNrm);
@@ -553,11 +554,13 @@ void PropRenderer::setWorld(const World& w, int q) {
             const double s = t.height / models[m].height, sw = s * (0.85 + 0.3 * hashf(h, 2));
             yawAxes(hashf(h, 3) * 2 * M_PI, sw, s, sw, ax);
             addInstance(statics, m, ax, t.base - V3(0, 0.05, 0), t.tint, snowy ? 1.0f : 0.0f, h, true, true, (float)t.height);
+            statics.back().fades = true;
         } else if (t.kind == 2 && cv.snags) {
             const int m = snagModels[hash32(h) % snagModels.size()];
             const double s = t.height / models[m].height;
             yawAxes(hashf(h, 3) * 2 * M_PI, s, s, s, ax);
             addInstance(statics, m, ax, t.base - V3(0, 0.1, 0), t.tint, snowy ? 1.0f : 0.0f, h, false, true, (float)t.height);
+            statics.back().fades = true;
         }
     }
     // Logs: the fallen trunk fitted to the capsule (its long axis is the model's x).
@@ -749,6 +752,9 @@ void PropRenderer::beginFrame(const World& w, const V3& eyePos, const M4& viewPr
     const auto t0 = std::chrono::steady_clock::now();
     stats = PropStats();
     quality = std::min(std::max(q, 0), 3);
+    frameNo++;
+    fadeDt = std::min(0.1, std::max(0.0, (double)t - lastFadeTime));
+    lastFadeTime = t;
     eye = eyePos;
     time = t;
     if (world != &w) world = &w;
@@ -783,7 +789,21 @@ void PropRenderer::select(const float pl[6][4], bool useBillboards, int lodBias,
     bbData.resize(models.size());
     for (auto& v : bbData) v.clear();
     const double bbDist = kBillboardDist[quality];
-    auto put = [&](const Inst& in, bool scatterInst) {
+    // How much of a tree the camera hides (eased from frame to frame; an instance not seen last frame starts at its target).
+    const double dt = fadeDt;
+    auto hidden = [&](Inst& in) {
+        if (shadowPass || !in.fades || (see.nearScale <= 0 && !see.hasFocus)) return 0.0f;
+        float target = 0;
+        if (std::fabs(in.c.x - eye.x) < 40 && std::fabs(in.c.z - eye.z) < 40) {
+            const Model& g = models[in.model];
+            const double sx = std::hypot(in.m[0], in.m[8]);
+            target = treefade::target(see, V3(in.m[3], in.m[7], in.m[11]), g.height * in.m[5], g.radius * sx);
+        }
+        in.fadeNow = in.fadeFrame + 1 >= frameNo ? treefade::ease(in.fadeNow, target, dt) : target;
+        in.fadeFrame = frameNo;
+        return in.fadeNow;
+    };
+    auto put = [&](const Inst& in, bool scatterInst, float fade) {
         const double dist = len(in.c - eye);
         if (in.tree && useBillboards && dist > bbDist) {
             std::vector<float>& v = bbData[in.model];
@@ -810,15 +830,16 @@ void PropRenderer::select(const float pl[6][4], bool useBillboards, int lodBias,
             bi = it->second;
         std::vector<float>& d = buckets[bi].data;
         d.insert(d.end(), in.m, in.m + 12);
-        d.insert(d.end(), in.extra, in.extra + 4);
+        d.insert(d.end(), in.extra, in.extra + 3);
+        d.push_back(fade);
     };
     for (const Cell& c : cells) {
         if (c.inst.empty() || !boxIn(pl, c.mn, c.mx)) continue;
         for (int i : c.inst) {
-            const Inst& in = statics[i];
+            Inst& in = statics[i];
             if (shadowPass && !in.shadow) continue;
             if (!sphereIn(pl, in.c, in.r)) continue;
-            put(in, false);
+            put(in, false, hidden(in));
         }
     }
     if (!shadowPass || lodBias == 0)
@@ -826,7 +847,7 @@ void PropRenderer::select(const float pl[6][4], bool useBillboards, int lodBias,
             for (const Inst& in : kv.second) {
                 if (shadowPass && !in.shadow) continue;
                 if (!sphereIn(pl, in.c, in.r)) continue;
-                put(in, true);
+                put(in, true, 0.0f);
                 if (!shadowPass) stats.scatter++;
             }
 }

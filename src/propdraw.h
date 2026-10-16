@@ -20,6 +20,7 @@
 #include "gl.h"
 #include "mathx.h"
 #include "props.h"
+#include "treefade.h"
 #include "world.h"
 
 // What the scans draw instead of the code-made scenery meshes.
@@ -51,6 +52,8 @@ public:
     ScanCover cover(int quality) const;
     // The map's static instances (trees, snags, logs, bushes, scanned rocks, cliffs).
     void setWorld(const World& world, int quality);
+    // Per frame, before beginFrame: the camera trees dissolve for (treefade.h).
+    void setSeeThrough(const SeeThrough& s) { see = s; }
     // Per frame, before any pass: picks LODs, culls against the view and updates the scatter.
     void beginFrame(const World& world, const V3& eye, const M4& viewProj, int quality, float time);
     // Shadow pass into the bound depth target (the caller sets polygon offset). `cascade`
@@ -96,6 +99,9 @@ private:
         float size;    // what the LOD distances scale with (m)
         bool tree;     // far billboard
         bool shadow;   // casts shadows
+        bool fades = false;   // dissolves when the camera is in it or it's in the way (trees and snags)
+        float fadeNow = 0;    // how much of it is hidden now, and the frame that was worked out in
+        unsigned fadeFrame = 0;
     };
     struct Cell {
         V3 mn, mx;
@@ -117,6 +123,9 @@ private:
     int quality = 2;
     float time = 0;
     V3 eye;
+    SeeThrough see;
+    unsigned frameNo = 0;
+    double fadeDt = 0, lastFadeTime = 0;
     // Scatter: visual-only clumps round the camera, by 12 m cell (made when the camera
     // comes near, dropped when it leaves).
     std::map<long long, std::vector<Inst>> scatter;

@@ -45,6 +45,22 @@ struct SectionFootprint {
     double blend;
 };
 
+// A dune field as a height function: summed directional waveforms (see sections.cpp). (u, v) are metres
+// from the field's centre (u along the section); the result is the sand's height above the hollows. Any
+// generator wanting dunes (another map, a biome) can call it per cell.
+struct DuneParams {
+    double windDeg = 28;                   // the wind's heading from +u; the main ridges run across it
+    double spacing = 135;                  // crest to crest of the main ridges (m)
+    double crestMax = 19, crestMin = 10;    // the tallest crest (in the middle), the smallest (at the edge)
+    double sub = 0.4, subSpacing = 68;      // a second set of dunes at half the spacing: height as a fraction of the main ones', spacing (m); small swells over both
+    double windwardDeg = 12.5, slipDeg = 32;  // the profile's slopes: a long gentle back, a short slip face at the angle of repose
+    double halfU = 240, halfV = 80;        // the field's extent: the dunes die away at this superellipse
+    double warp = 30, warpScale = 200;     // meander: domain-warp displacement and feature size (m)
+    double bend = 30, bendLength = 340, bendDeg = 64;  // a second, longer wave (direction from the wind) that bends the ridges into crescents
+    double swell = 2.4;                    // undulation of the hollows' floor (m)
+};
+double duneHeight(double u, double v, const DuneParams& p, uint32_t seed, double* aboveFloor = nullptr);  // (aboveFloor: the dunes alone, without the hollows' own swell)
+
 const char* sectionName(SectionType t);  // "ROCK WALL"
 double sectionLength(SectionType t);     // entry to exit (m)
 SectionFootprint sectionFootprint(SectionType t);
