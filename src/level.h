@@ -71,6 +71,9 @@ struct SectionInfo {
     double x = 0, z = 0, heading = 0, length = 260, half = 45;
     int gen = -1;           // the generator it was stamped from (SectionType), if any
     uint32_t genSeed = 0;
+    // A generated section kept as just its recipe (gen, genSeed, entry and heading from the canvas), built when the level's world is:
+    // it saves as one "#generate" line instead of the megabyte of cells it comes to. (levelWorld puts it on the ground.)
+    bool live = false;
     // How far (wx, wz) is outside the canvas (negative inside).
     double outside(double wx, double wz) const {
         const double dx = wx - x, dz = wz - z, u = dx * std::cos(heading) - dz * std::sin(heading), v = dx * std::sin(heading) + dz * std::cos(heading);
@@ -82,6 +85,7 @@ struct Level {
     std::string name = "UNTITLED", about, author, file;
     SectionInfo section;
     int map = MAP_FRONTIER;
+    int terrain = 0;          // MAP_WILDS only: its WildsKind, the country round the level
     int mode = LEVEL_FREE;
     int laps = 1;
     int vehicle = -1;         // the vehicle it's for (-1: your choice)
@@ -106,7 +110,19 @@ struct Level {
     bool hasJob() const { return mode != LEVEL_FREE && !gates.empty(); }
 };
 
-// Puts a level's edits on a freshly built World(level.map), then rebuilds its lookups.
+struct SectionBuilt;  // (sections.h)
+// The world a level is played on, before its edits: its map (as its terrain asks, on the wilds) with its live section, if it has one,
+// built on it. Use this, not World(level.map), to make the world for applyLevel.
+World levelWorld(const Level& lv, SectionBuilt* built = nullptr);  // (`built`: where its live section ended up)
+// A live section's recipe as the canvas of a section `type` whose entry is at `entry`, heading `heading`: set into `lv.section`.
+void setLiveSection(Level& lv, int type, uint32_t seed, const V3& entry, double heading);
+// Builds a live section on `w` (levelWorld does): where it ended up. Not a live section: an empty result.
+SectionBuilt standLiveSection(const Level& lv, World& w);
+// The country round each kind of obstacle section (a WildsKind), and what a section kind (SK_) is like for files that name only that.
+int wildsKindForSection(int sectionType);
+int wildsKindForKind(int sectionKind);
+
+// Puts a level's edits on the world made by levelWorld(level), then rebuilds its lookups.
 void applyLevel(const Level& lv, World& w);
 // Adds one object to the world (as applyLevel does).
 void placeObject(const LevelObject& o, World& w);

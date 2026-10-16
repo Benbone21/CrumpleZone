@@ -55,6 +55,12 @@ SectionInfo defaultSectionCanvas() {
     return c;
 }
 
+SectionInfo wildsSectionCanvas() {
+    SectionInfo c;
+    c.x = -kCanvasLength / 2, c.z = 0, c.heading = 0, c.length = kCanvasLength, c.half = kCanvasHalf;
+    return c;
+}
+
 // ---- Level -> section --------------------------------------------------------------------
 
 bool extractSection(const World& w, const Level& lv, SectionFile& out, std::string* error) {

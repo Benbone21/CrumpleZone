@@ -494,7 +494,7 @@ void authorSection(World& w, EditCore& ed) {
 SCENARIO(sectionMeta, "sections/meta", "A section's type, difficulty, tests and kit save in comment lines and load back; old levels load as they did") {
     Level lv;
     lv.name = "WALL TEST";
-    lv.map = MAP_PROVING_GROUND, lv.mode = LEVEL_SPRINT;
+    lv.map = MAP_WILDS, lv.mode = LEVEL_SPRINT;  // (sections are on the open country; the older ones, on the proving ground, are moved there when they load: levels/legacy)
     lv.hasStart = true, lv.start = V3(-250, 0, 450);
     lv.gates.push_back({V3(-100, 0, 450), 0.0, 14});
     lv.section = defaultSectionCanvas();
@@ -522,9 +522,9 @@ SCENARIO(sectionMeta, "sections/meta", "A section's type, difficulty, tests and 
     for (const Level& g : builtinLevels()) {
         Level r;
         ships++;
-        if (!parseLevelText(saveLevelText(g), r) || r.section.on || saveLevelText(r) != saveLevelText(g)) bad++;
+        if (!parseLevelText(saveLevelText(g), r) || r.section.on != g.section.on || saveLevelText(r) != saveLevelText(g)) bad++;
     }
-    ctx.check("the game's levels load unchanged", ships > 0 && bad == 0, std::to_string(bad) + " of " + std::to_string(ships));
+    ctx.check("the game's levels load unchanged (the section levels as the sections they are)", ships > 0 && bad == 0, std::to_string(bad) + " of " + std::to_string(ships));
     Level older;
     ctx.check("a file from before sections", parseLevelText("CRUMPLEZONE LEVEL 1\nname OLD ONE\nabout FROM THE PAST\nmap 0\nmode sprint\nstart 1 2 90\ngate 5 6 0 12\nheights 600 600 1.5 2.5\n# a comment\n", older, &err), err);
     ctx.check("with its things", older.name == "OLD ONE" && older.hasStart && older.gates.size() == 1 && older.heights.size() == 2 && !older.section.on);

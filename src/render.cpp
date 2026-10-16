@@ -2178,7 +2178,7 @@ double sceneryHeight(const World& world, double x, double z) {
 }  // namespace
 
 void Renderer::setWorld(const World& world) {
-    mapId = world.map;
+    mapId = world.map == MAP_WILDS ? (int)MAP_FREEWAY : world.map;  // (the wilds are painted as the freeway's meadows are: land and paints, no pad or road)
     buildTerrain(world);
     updateObjects(world);
     updateWater(world);
@@ -2387,8 +2387,8 @@ void Renderer::updateTerrainRegion(const World& world, int i0, int j0, int i1, i
     props.terrainChanged(-half + i0, -half + j0, -half + i1, -half + j1);  // (grass doesn't grow on a new trail)
 }
 void Renderer::buildTerrain(const World& world) {
-    // 1 m on the mountain (its crawl features are small), 2 m on the proving ground.
-    const double spacing = world.map == MAP_MOUNTAIN || world.map == MAP_FRONTIER || world.map == MAP_BACKCOUNTRY ? 1.0 : 2.0, half = World::kHalfSize;
+    // 1 m on the mountain (its crawl features are small) and the wilds (the sections' steps), 2 m on the proving ground.
+    const double spacing = world.map == MAP_MOUNTAIN || world.map == MAP_FRONTIER || world.map == MAP_BACKCOUNTRY || world.map == MAP_WILDS ? 1.0 : 2.0, half = World::kHalfSize;
     const int n = (int)(2 * half / spacing) + 1;
     terrainSpacing = spacing;
     terrainMeshN = n;
