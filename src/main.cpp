@@ -43,6 +43,7 @@
 #include "pilotsense.h"
 #include "platform.h"
 #include "props.h"
+#include "carparts.h"
 #include "handwork.h"
 #include "lab.h"
 #include "modelkit.h"
@@ -2660,7 +2661,7 @@ int main(int argc, char** argv) {
                             hud.photo = !hud.photo;
                             break;
                         case SC_N: {
-                            static const char* names[] = {"BEAM VIEW OFF", "BEAM VIEW: X-RAY", "BEAM VIEW: BEAMS ONLY"};
+                            static const char* names[] = {"BEAM VIEW OFF", "BEAM VIEW: X-RAY", "BEAM VIEW: BEAMS ONLY", "BEAM VIEW: PARTS"};
                             debug = (DebugView)((debug + 1) % DEBUG_VIEW_COUNT);
                             hud.toast(names[debug]);
                             break;
@@ -3581,6 +3582,19 @@ int main(int argc, char** argv) {
             };
             if (c.chains > 0) stowed("chain_bundle", c.stowAt(Car::STOW_CHAINS));
             if (c.hasJack && !c.jackPlaced && !walker.holdingJack) stowed("jack", c.stowAt(Car::STOW_JACK));
+        }
+        // What's under the car: the engine, gearbox, diffs, shafts, arms and springs, as models on the
+        // physics nodes (carparts.h). A car's parts are ~80k vertices: the nearest four get them all (within
+        // 20 m), the nearest eight the big ones (to 40 m).
+        {
+            std::vector<std::pair<double, const Car*>> near;
+            for (const Car& c : sim.cars) {
+                if (c.isProp() || c.nodes.empty()) continue;
+                const double away = len(c.nodes[0].p - view.eye);
+                if (away < 40) near.push_back({away, &c});
+            }
+            std::sort(near.begin(), near.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+            for (size_t i = 0; i < near.size() && i < 8; i++) carPartModels(*near[i].second, renderer.frameModels, i < 4 && near[i].first < 20 ? PARTS_ALL : PARTS_BIG);
         }
         // The work in your hands (first person): tools, the hand, a part going in; a wheel or
         // chain being moved (handwork.h).

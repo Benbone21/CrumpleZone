@@ -2386,7 +2386,8 @@ void Renderer::buildFigures() {
                 for (int k : s > 0 ? order : order) v.push_back(vtx(q[k], n, (float)col.x, (float)col.y, (float)col.z, SM_CONCRETE));
             }
     };
-    for (const Placed& pl : frameModels) appendPlaced(v, pl, pl.set.empty() ? mk::modelMesh(pl.id) : mk::modelMesh(pl.id, pl.set));
+    for (const Placed& pl : frameModels)  // (a car's parts are cached by key; the jack, whose own param moves every frame, is not)
+        appendPlaced(v, pl, pl.bare || pl.variant >= 0 ? placedMesh(pl) : pl.set.empty() ? mk::modelMesh(pl.id) : mk::modelMesh(pl.id, pl.set));
     const bool modelled = mk::findModel("person") != nullptr;
     for (const Figure& fg : figures) {
         if (modelled) {  // the picked person (modelkit.h), posed for this frame
@@ -3022,7 +3023,7 @@ void Renderer::prepareCars(const Sim& sim, DebugView debug) {
         CarLamps& lamps = carLampState[ci];
         carLamps(car, t, beam, lamps);
         if (debug != DEBUG_BEAMS_ONLY) {
-            evalBody(car, t, dyn, opaque, glass);
+            if (debug != DEBUG_PARTS) evalBody(car, t, dyn, opaque, glass);
             const size_t first = partVerts.size();
             evalParts(car, t, partVerts);
             // Lamps modelled as glowing parts (the Jesko's LED strips, the 4Runner's bumper
@@ -3395,7 +3396,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         Disable(GL_BLEND);
     }
 
-    if (debug != DEBUG_OFF) {
+    if (debug != DEBUG_OFF && debug != DEBUG_PARTS) {
         // X-ray: beams colored by what they are (body shell dim, frame orange, engine
         // yellow, suspension cyan, springs magenta, steering blue, drive shafts white).
         // Beams-only: colored by strain (blue = compressed, green = relaxed, red =

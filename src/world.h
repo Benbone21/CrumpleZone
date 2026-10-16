@@ -68,6 +68,7 @@ struct Placed {
     int variant = -1;        // (the model lab: this design, not the picked one)
     bool oriented = false;   // turned any way at all (things in your hands): its front, up and left
     V3 ax[3];
+    bool bare = false;       // a part fitted in a car (carparts.h): built without the stand it's shown on (cached)
 };
 
 // A named place on a generated map (the Wilderness): where it is, and whether a career's

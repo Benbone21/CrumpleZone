@@ -53,7 +53,7 @@ struct RenderSettings {
     float blur = 0;             // 0..1: blurs the scene behind a menu
 };
 
-enum DebugView { DEBUG_OFF, DEBUG_XRAY, DEBUG_BEAMS_ONLY, DEBUG_VIEW_COUNT };
+enum DebugView { DEBUG_OFF, DEBUG_XRAY, DEBUG_BEAMS_ONLY, DEBUG_PARTS, DEBUG_VIEW_COUNT };  // (parts: no body skin, to see the engine and running gear)
 
 class Renderer {
 public:

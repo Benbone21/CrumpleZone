@@ -18,7 +18,8 @@ void buildPropMesh(const World& world, std::vector<Vtx>& out);   // fences, cabi
 // to `yaw`, scaled along (front, up, left).
 // `tint` multiplies its colours (a tree a shade darker or lighter than the next).
 void appendModel(std::vector<Vtx>& out, const mk::Mesh& m, const V3& p, double yaw, const V3& scale = V3(1, 1, 1), float tint = 1);
-// ...or turned any way: its front, up and left (orthonormal) in the world.
+// ...or turned any way: its front, up and left (orthonormal) in the world, scaled along them.
+void appendModel(std::vector<Vtx>& out, const mk::Mesh& m, const V3& p, const V3 axes[3], const V3& scale);
 void appendModel(std::vector<Vtx>& out, const mk::Mesh& m, const V3& p, const V3 axes[3], double scale = 1);
 // A placed model, whichever way it's placed.
 void appendPlaced(std::vector<Vtx>& out, const Placed& pl, const mk::Mesh& m);

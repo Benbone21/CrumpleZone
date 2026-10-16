@@ -12,6 +12,10 @@ namespace {
 
 const double PI = 3.14159265358979;
 
+// A part fitted in a car (carparts.cpp sets "bare"): no stand, skid or timber under it, and built about
+// its own axis at the origin.
+bool bare(const P& p) { return p("bare") > 0.5; }
+
 // ---- Shared helpers -----------------------------------------------------------------------
 
 // A cylinder along X / Z.
@@ -371,15 +375,18 @@ Eng v8Opts(const P& p, double wear = 0) {
 
 void v8Stand(B& b, const P& p) {
     const Eng e = v8Opts(p);
+    if (bare(p)) return v8(b, e);
     engineStand(b, 0.5, -0.335, V3(0.2, 0.22, 0.26), [&] { v8(b, e); });
 }
 void v8Skid(B& b, const P& p) {
     const Eng e = v8Opts(p);
+    if (bare(p)) return v8(b, e);
     engineSkid(b, V3(0.85, 0.62, 0.1), [&] { v8(b, e); }, 0.263, {V2(0.27, -0.14), V2(0.335, 0.0), V2(0.32, 0.14), V2(0.22, 0.30), V2(0.07, 0.345)});
 }
 void v8Junk(B& b, const P& p) {
     Eng e = v8Opts(p, p("wear"));
     e.seed = (uint32_t)p.i("seed");
+    if (bare(p)) return v8(b, e);
     engineGround(b, [&] { v8(b, e); });
 }
 
@@ -596,27 +603,33 @@ Eng optsFor(const P& p, double wear = 0) {
 
 void v6Stand(B& b, const P& p) {
     const Eng e = optsFor(p);
+    if (bare(p)) return v6(b, e);
     engineStand(b, 0.5, -0.30, V3(0.2, 0.22, 0.26), [&] { v6(b, e); });
 }
 void v6Skid(B& b, const P& p) {
     const Eng e = optsFor(p);
+    if (bare(p)) return v6(b, e);
     engineSkid(b, V3(0.85, 0.62, 0.1), [&] { v6(b, e); }, 0.232, {V2(0.255, -0.14), V2(0.30, 0.0), V2(0.28, 0.14), V2(0.17, 0.30), V2(0.06, 0.37)}, 0.8);
 }
 void v6Junk(B& b, const P& p) {
     const Eng e = optsFor(p, p("wear"));
+    if (bare(p)) return v6(b, e);
     engineGround(b, [&] { v6(b, e); }, 0.75);
 }
 
 void i4Stand(B& b, const P& p) {
     const Eng e = optsFor(p);
+    if (bare(p)) return i4(b, e);
     engineStand(b, 0.46, -0.27, V3(0.2, 0.22, 0.26), [&] { i4(b, e); });
 }
 void i4Skid(B& b, const P& p) {
     const Eng e = optsFor(p);
+    if (bare(p)) return i4(b, e);
     engineSkid(b, V3(0.85, 0.62, 0.1), [&] { i4(b, e); }, 0.222, {V2(0.2, -0.14), V2(0.23, 0.0), V2(0.21, 0.16), V2(0.15, 0.31), V2(0.05, 0.4)}, 0.7);
 }
 void i4Junk(B& b, const P& p) {
     const Eng e = optsFor(p, p("wear"));
+    if (bare(p)) return i4(b, e);
     engineGround(b, [&] { i4(b, e); }, 0.65);
 }
 
@@ -690,11 +703,13 @@ void manualAlu(B& b, const P& p) {
     const V3 c = gbFinish(p.i("finish"), fm);
     const V3 steel(0.33, 0.33, 0.35);
     const double Y0 = 0.245;
-    gbRails(b, -0.12, 0.42, 0.07);
-    b.style(V3(0.5, 0.38, 0.23), WOOD);
-    b.box(V3(0.02, 0.05, 0), V3(0.22, 0.1, 0.18));  // block under the case
+    if (!bare(p)) {
+        gbRails(b, -0.12, 0.42, 0.07);
+        b.style(V3(0.5, 0.38, 0.23), WOOD);
+        b.box(V3(0.02, 0.05, 0), V3(0.22, 0.1, 0.18));  // block under the case
+    }
     b.push();
-    b.move(0, Y0, 0);
+    b.move(0, bare(p) ? 0 : Y0, 0);
     b.style(c, fm);
     bellHousing(b, 0.18, 0.22, 0.2, 0.135, 8);
     b.box(V3(0.27, -0.06, -0.185), V3(0.14, 0.14, 0.07), 0.02);   // starter pocket
@@ -752,11 +767,13 @@ void manualIron(B& b, const P& p) {
     const V3 c = gbFinish(p.i("finish"), fm);
     const V3 steel(0.3, 0.3, 0.32);
     const double Y0 = 0.24;
-    gbRails(b, -0.1, 0.4, 0.07);
-    b.style(V3(0.5, 0.38, 0.23), WOOD);
-    b.box(V3(0.05, 0.05, 0), V3(0.22, 0.1, 0.18));
+    if (!bare(p)) {
+        gbRails(b, -0.1, 0.4, 0.07);
+        b.style(V3(0.5, 0.38, 0.23), WOOD);
+        b.box(V3(0.05, 0.05, 0), V3(0.22, 0.1, 0.18));
+    }
     b.push();
-    b.move(0, Y0, 0);
+    b.move(0, bare(p) ? 0 : Y0, 0);
     b.style(c, fm);
     bellHousing(b, 0.16, 0.22, 0.19, 0.125, 8);
     for (int s = -1; s <= 1; s += 2) b.box(V3(0.26, 0.0, s * 0.2), V3(0.04, 0.2, 0.025));   // cast bell lugs
@@ -811,9 +828,9 @@ void autoClassic(B& b, const P& p) {
     const V3 c = gbFinish(p.i("finish"), fm);
     const V3 steel(0.3, 0.3, 0.32), dark(0.07, 0.07, 0.075);
     const double Y0 = 0.245;
-    gbRails(b, -0.1, 0.42, 0.07);
+    if (!bare(p)) gbRails(b, -0.1, 0.42, 0.07);
     b.push();
-    b.move(0, Y0, 0);
+    b.move(0, bare(p) ? 0 : Y0, 0);
     b.style(c, fm);
     bellHousing(b, 0.18, 0.22, 0.2, 0.14, 8);
     b.box(V3(0.27, -0.06, -0.185), V3(0.14, 0.14, 0.07), 0.02);   // starter pocket
@@ -871,9 +888,9 @@ void autoModern(B& b, const P& p) {
     const V3 c = gbFinish(p.i("finish"), fm);
     const V3 steel(0.3, 0.3, 0.32), dark(0.06, 0.06, 0.065);
     const double Y0 = 0.245;
-    gbRails(b, -0.14, 0.42, 0.065);
+    if (!bare(p)) gbRails(b, -0.14, 0.42, 0.065);
     b.push();
-    b.move(0, Y0, 0);
+    b.move(0, bare(p) ? 0 : Y0, 0);
     b.style(c, fm);
     bellHousing(b, 0.14, 0.26, 0.2, 0.15, 8);
     b.box(V3(0.27, -0.06, -0.185), V3(0.14, 0.14, 0.07), 0.02);
@@ -946,9 +963,9 @@ void transferGear(B& b, const P& p) {
     const V3 c = gbFinish(p.i("finish"), fm);
     const V3 steel(0.3, 0.3, 0.32);
     const double Y0 = 0.21;
-    gbRails(b, -0.2, 0.2, 0.07, 0.11);
+    if (!bare(p)) gbRails(b, -0.2, 0.2, 0.07, 0.11);
     b.push();
-    b.move(0, Y0, 0);
+    b.move(0, bare(p) ? 0 : Y0, 0);
     b.style(c, fm);
     b.box(V3(0.0, 0, 0), V3(0.31, 0.27, 0.27), 0.05);
     for (int s = -1; s <= 1; s += 2) {
@@ -1000,9 +1017,9 @@ void transferChain(B& b, const P& p) {
     const V3 c = gbFinish(p.i("finish"), fm);
     const V3 steel(0.3, 0.3, 0.32);
     const double Y0 = 0.19;
-    gbRails(b, -0.25, 0.2, 0.07, 0.11);
+    if (!bare(p)) gbRails(b, -0.25, 0.2, 0.07, 0.11);
     b.push();
-    b.move(0, Y0, 0);
+    b.move(0, bare(p) ? 0 : Y0, 0);
     b.style(c, fm);
     b.box(V3(0.0, 0, 0), V3(0.34, 0.24, 0.23), 0.055);
     b.box(V3(0.0, 0, 0), V3(0.355, 0.25, 0.014), 0.004);   // the seam flange between the halves
@@ -1076,13 +1093,19 @@ void diffAxle(B& b, const P& p) {
     const V3 col = paint(p.i("paint"));
     const V3 steel(0.24, 0.24, 0.255);
     const double Y0 = 0.17;
-    b.style(V3(0.45, 0.35, 0.22), WOOD);
-    for (int s = -1; s <= 1; s += 2) b.box(V3(0, 0.0625, s * 0.27), V3(0.14, 0.125, 0.1), 0.006);
+    if (!bare(p)) {
+        b.style(V3(0.45, 0.35, 0.22), WOOD);
+        for (int s = -1; s <= 1; s += 2) b.box(V3(0, 0.0625, s * 0.27), V3(0.14, 0.125, 0.1), 0.006);
+    }
     b.push();
-    b.move(0, Y0, 0);
+    b.move(0, bare(p) ? 0 : Y0, 0);
     b.style(steel, METAL);
     for (int s = -1; s <= 1; s += 2) {
         b.cone(V3(0, 0, s * 0.12), V3(0, 0, s * 0.2), 0.082, 0.05, 12, false);
+        if (bare(p)) {  // (the car's own tubes go on from here)
+            b.cyl(V3(0, 0, s * 0.2), V3(0, 0, s * 0.27), 0.05, 12, true);
+            continue;
+        }
         b.cyl(V3(0, 0, s * 0.2), V3(0, 0, s * 0.35), 0.05, 12, true);
         // Bearing flange at the end, axle stub beyond.
         b.cyl(V3(0, 0, s * 0.35), V3(0, 0, s * 0.364), 0.09, 12);
@@ -1131,7 +1154,7 @@ void diffAxle(B& b, const P& p) {
         b.style(V3(0.1, 0.28, 0.6), PAINT);
         b.box(V3(-0.035, 0.03, 0.19), V3(0.05, 0.07, 0.03), 0.006);
         b.style(V3(0.05, 0.05, 0.055), MATTE);
-        b.tube({V3(-0.035, 0.05, 0.19), V3(-0.06, 0.09, 0.2), V3(-0.07, 0.06, 0.26), V3(-0.065, 0.055, 0.34)}, 0.007, 5);
+        b.tube({V3(-0.035, 0.05, 0.19), V3(-0.06, 0.09, 0.2), V3(-0.07, 0.06, 0.26), V3(-0.065, 0.055, bare(p) ? 0.27 : 0.34)}, 0.007, 5);
     }
     // Breather.
     b.style(V3(0.05, 0.05, 0.055), MATTE);
@@ -1146,9 +1169,9 @@ void diffAxle(B& b, const P& p) {
 void diffBare(B& b, const P& p) {
     const V3 col = paint(p.i("paint"));
     const double Y0 = 0.18;
-    gbRails(b, -0.3, 0.1, 0.03, 0.09);
+    if (!bare(p)) gbRails(b, -0.3, 0.1, 0.03, 0.09);
     b.push();
-    b.move(0, Y0, 0);
+    b.move(0, bare(p) ? 0 : Y0, 0);
     // Cast bowl, open to the front.
     b.style(col, PAINT);
     xlathe(b, V3(-0.19, 0, 0), {V2(0.05, 0), V2(0.07, 0.03), V2(0.12, 0.1), V2(0.15, 0.17), V2(0.15, 0.245), V2(0.122, 0.245), V2(0.122, 0.17), V2(0.1, 0.1), V2(0.04, 0.03), V2(0.05, 0)}, 18);

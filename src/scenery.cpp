@@ -378,35 +378,57 @@ void appendModel(std::vector<Vtx>& out, const mk::Mesh& m, const V3& p, double y
     }
 }
 
-void appendModel(std::vector<Vtx>& out, const mk::Mesh& m, const V3& p, const V3 a[3], double s) {
-    out.reserve(out.size() + m.v.size());
+void appendModel(std::vector<Vtx>& out, const mk::Mesh& m, const V3& p, const V3 a[3], const V3& s) {
+    // (A car's parts are a few hundred thousand vertices a frame: the turn and scale as float matrices.)
+    const bool flat = s.x == 1 && s.y == 1 && s.z == 1;
+    const float P[9] = {(float)(a[0].x * s.x), (float)(a[1].x * s.y), (float)(a[2].x * s.z),
+                        (float)(a[0].y * s.x), (float)(a[1].y * s.y), (float)(a[2].y * s.z),
+                        (float)(a[0].z * s.x), (float)(a[1].z * s.y), (float)(a[2].z * s.z)};
+    const float N[9] = {(float)(a[0].x / s.x), (float)(a[1].x / s.y), (float)(a[2].x / s.z),
+                        (float)(a[0].y / s.x), (float)(a[1].y / s.y), (float)(a[2].y / s.z),
+                        (float)(a[0].z / s.x), (float)(a[1].z / s.y), (float)(a[2].z / s.z)};
+    const float px = (float)p.x, py = (float)p.y, pz = (float)p.z;
+    size_t at = out.size();
+    out.resize(at + m.v.size());
     for (const mk::MVert& q : m.v) {
-        const V3 w = p + (a[0] * q.p[0] + a[1] * q.p[1] + a[2] * q.p[2]) * s;
-        const V3 n = norm(a[0] * q.n[0] + a[1] * q.n[1] + a[2] * q.n[2]);
-        out.push_back(Vtx{{(float)w.x, (float)w.y, (float)w.z}, {(float)n.x, (float)n.y, (float)n.z}, {q.c[0], q.c[1], q.c[2], (float)q.mat}});
+        Vtx& o = out[at++];
+        o.p[0] = px + P[0] * q.p[0] + P[1] * q.p[1] + P[2] * q.p[2];
+        o.p[1] = py + P[3] * q.p[0] + P[4] * q.p[1] + P[5] * q.p[2];
+        o.p[2] = pz + P[6] * q.p[0] + P[7] * q.p[1] + P[8] * q.p[2];
+        float nx = N[0] * q.n[0] + N[1] * q.n[1] + N[2] * q.n[2], ny = N[3] * q.n[0] + N[4] * q.n[1] + N[5] * q.n[2],
+              nz = N[6] * q.n[0] + N[7] * q.n[1] + N[8] * q.n[2];
+        if (!flat) {
+            const float l = 1.0f / std::sqrt(std::max(1e-12f, nx * nx + ny * ny + nz * nz));
+            nx *= l, ny *= l, nz *= l;
+        }
+        o.n[0] = nx, o.n[1] = ny, o.n[2] = nz;
+        o.c[0] = q.c[0], o.c[1] = q.c[1], o.c[2] = q.c[2], o.c[3] = (float)q.mat;
     }
 }
 
+void appendModel(std::vector<Vtx>& out, const mk::Mesh& m, const V3& p, const V3 a[3], double s) { appendModel(out, m, p, a, V3(s, s, s)); }
+
 void appendPlaced(std::vector<Vtx>& out, const Placed& pl, const mk::Mesh& m) {
-    if (pl.oriented) appendModel(out, m, pl.p, pl.ax, pl.scale.x);
+    if (pl.oriented) appendModel(out, m, pl.p, pl.ax, pl.scale);
     else appendModel(out, m, pl.p, pl.yaw, pl.scale);
 }
 
 const mk::Mesh& placedMesh(const Placed& pl) {
-    if (pl.set.empty() && pl.variant < 0) return mk::modelMesh(pl.id);
+    if (pl.set.empty() && pl.variant < 0 && !pl.bare) return mk::modelMesh(pl.id);
     static std::map<std::string, mk::Mesh> built;  // (cleared with the picks: see the lab)
     static uint64_t builtFor = 0;
     if (builtFor != mk::picksVersion()) built.clear(), builtFor = mk::picksVersion();
-    std::string key = pl.id + "#" + std::to_string(pl.variant);
+    std::string key = pl.id + "#" + std::to_string(pl.variant) + (pl.bare ? "|bare" : "");
     for (const auto& kv : pl.set) key += "|" + kv.first + "=" + std::to_string(kv.second);
     auto it = built.find(key);
     if (it != built.end()) return it->second;
     mk::Mesh& m = built[key];
-    if (pl.variant < 0) m = mk::modelMesh(pl.id, pl.set);
-    else if (const mk::ModelDef* d = mk::findModel(pl.id)) {
-        mk::P p = mk::pickedParams(*d, pl.variant);
+    if (const mk::ModelDef* d = mk::findModel(pl.id)) {
+        const int variant = pl.variant < 0 ? mk::pickedVariant(*d) : pl.variant;
+        mk::P p = mk::pickedParams(*d, variant);
         for (const auto& kv : pl.set) p.v[kv.first] = kv.second;
-        mk::build(*d, pl.variant, p, m);
+        if (pl.bare) p.v["bare"] = 1;
+        mk::build(*d, variant, p, m);
     }
     return m;
 }
