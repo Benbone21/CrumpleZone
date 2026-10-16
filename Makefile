@@ -201,9 +201,9 @@ deb: crumplezone
 # ---- Props: the offline baker for the Poly Haven scans (Linux; needs ImageMagick's `convert`) ----
 #   make bake PROPSRC=/path/to/polyhaven/models   ->  assets/props/ (committed; the game reads it)
 PROPSRC ?= assets/source/polyhaven/models
-build/bakeprops: tools/bakeprops.cpp src/props.cpp src/props.h src/third_party/cgltf.h src/third_party/stb_image.h
+build/bakeprops: tools/bakeprops.cpp src/props.cpp src/props.h src/platform.cpp src/third_party/cgltf.h src/third_party/stb_image.h
 	@mkdir -p build
-	$(CXX) $(CXXFLAGS) -fopenmp -o $@ tools/bakeprops.cpp src/props.cpp -lm
+	$(CXX) $(CXXFLAGS) -fopenmp -o $@ tools/bakeprops.cpp src/props.cpp src/platform.cpp -lm  # (platform.cpp: exeDir)
 
 bake: build/bakeprops
 	./build/bakeprops --src $(PROPSRC) --out assets/props $(BAKEARGS)
