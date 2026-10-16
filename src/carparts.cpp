@@ -290,22 +290,44 @@ struct Maker {
         }
     }
 
-    // Leaf packs: from the front eye over the seat on the tube to the rear eye.
+    // Leaf packs: the front eye on its hanger node, the rear eye hanging from the shackle node, the
+    // middle clamped on the axle tube (spring over axle). The hangers sit above the axle, so the pack
+    // is arched ends-up; the model's arch is fitted so the eyes land on their mounts (in 1 cm steps:
+    // each is a mesh).
     void leaves() {
+        static const double stackT[2] = {0.009, 0.016}, eyeDrop[2] = {0.015, 0.01}, eyeHalf[2] = {0.662, 0.652};
+        static const double lift = 0.052, shackle = 0.075;  // (parts.cpp: the stack's underside above the tube's axis; the shackle's length)
+        const mk::ModelDef* def = mk::findModel("leaf_pack");
+        if (!def) return;
+        const int v = pickedOf("leaf_pack"), k = std::min(v, 1);
+        const int leaves = std::max(2, mk::pickedParams(*def, v).i("leaves"));
         for (const SuspLink& l : c.links) {
             if (l.kind != LINK_LEAF || l.wheel < 0) continue;
+            const Wheel& wh = c.wheels[l.wheel];
             const Beam& b = c.beams[l.beam];
-            if (b.broken) continue;
+            if (b.broken || wh.shackle < 0) continue;
             const bool aBody = b.a < c.frameNodes;
             const V3 front = aBody ? P(b.a) : P(b.b), seat = aBody ? P(b.b) : P(b.a);
-            const double half = len(front - seat);
-            if (half < 0.2) continue;
-            const Bnd s = bounds("leaf_pack");
-            const V3 X = norm(front - seat);
-            V3 Y = fr.up - X * dot(fr.up, X);
-            Y = norm(Y);
-            put("leaf_pack", seat - Y * 0.1, X, Y, V3(half / 0.65, 1, 1));
-            (void)s;
+            const V3 rear = P(wh.shackle) - fr.up * shackle;  // (the eye hangs under the frame pin)
+            const double span = len(front - rear);
+            if (span < 0.4) continue;
+            V3 X = norm(front - rear), Y = fr.up - X * dot(fr.up, X);
+            Y = len(Y) > 1e-6 ? norm(Y) : norm(cross(cross(X, kUp), X));
+            // The tube under its middle: the point on the housing's line nearest the eyes' middle.
+            const V3 mid = (front + rear) * 0.5;
+            V3 tube = seat - Y * 0.06;
+            for (const Axle& ax : c.axles) {
+                if (ax.housing.empty() || (ax.wheel[0] != l.wheel && ax.wheel[1] != l.wheel)) continue;
+                const V3 a = P(ax.housing[0]), z = (wh.tieRod >= 0 ? (P(wh.lower) + P(wh.top)) * 0.5 : P(wh.inner)) - a;
+                const double zz = dot(z, z);
+                tube = a + z * (zz > 1e-9 ? clampTo(dot(mid - a, z) / zz, 0, 1) : 0);
+            }
+            // The eyes' height over the tube, across the chord: the arch that puts them there.
+            const V3 at = tube + X * dot(mid - tube, X);
+            const double rise = dot(mid - at, Y);
+            const double camber = clampTo(std::round((lift + leaves * stackT[k] - eyeDrop[k] - rise) * 100) / 100, -0.3, 0.14);
+            const double eyeY = lift - camber + leaves * stackT[k] - eyeDrop[k];
+            put("leaf_pack", at + Y * (rise - eyeY), X, Y, V3(span * 0.5 / eyeHalf[k], 1, 1), -1, {{"camber", camber}});
         }
     }
 };
