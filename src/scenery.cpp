@@ -409,8 +409,11 @@ void appendModel(std::vector<Vtx>& out, const mk::Mesh& m, const V3& p, const V3
 void appendModel(std::vector<Vtx>& out, const mk::Mesh& m, const V3& p, const V3 a[3], double s) { appendModel(out, m, p, a, V3(s, s, s)); }
 
 void appendPlaced(std::vector<Vtx>& out, const Placed& pl, const mk::Mesh& m) {
+    const size_t at = out.size();
     if (pl.oriented) appendModel(out, m, pl.p, pl.ax, pl.scale);
     else appendModel(out, m, pl.p, pl.yaw, pl.scale);
+    if (pl.sunlit)  // (material + 100: the lit shader skips the shadow)
+        for (size_t i = at; i < out.size(); i++) out[i].c[3] += 100.0f;
 }
 
 const mk::Mesh& placedMesh(const Placed& pl) {

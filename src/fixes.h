@@ -42,6 +42,9 @@ struct Kit {
     bool unlimited = true;           // sandbox: every tool, endless parts
     bool tools[TOOL_COUNT] = {};
     int parts[PART_COUNT] = {};
+    // Yours, but in a truck that's shut or too far off (trunk.h): what the job says is missing.
+    bool stowedTools[TOOL_COUNT] = {};
+    bool stowedParts[PART_COUNT] = {};
     bool has(Tool t) const { return unlimited || tools[t]; }
     bool hasPart(RepairPart p) const { return unlimited || parts[p] > 0; }
 };

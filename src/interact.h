@@ -12,6 +12,7 @@
 
 #include "fixes.h"
 #include "softbody.h"
+#include "trunk.h"
 
 struct Walker;
 
@@ -35,6 +36,10 @@ enum InteractKind {
     IA_STOW_CHAIN,    // put the chain you carry back in the truck
     IA_OPEN_CACHE,    // open a supply cache (career.h)
     IA_FIX,           // a repair (fixes.h): a CV axle, a tie rod, a new tire...
+    IA_OPEN_GATE,     // the tailgate / liftgate / bed gate (trunk.h)
+    IA_CLOSE_GATE,
+    IA_TAKE_ITEM,     // a tool, part or anchor out of the open back, into your hands
+    IA_STOW_ITEM,     // ...and back in
 };
 
 // Something out in the world to open (a career supply cache): where, and what to call it.
@@ -53,11 +58,14 @@ struct InteractOption {
     bool continuous = false;  // goes on as long as E is held (the jack)
     bool blocked = false;     // can't yet: the prompt says what's missing
     Fix fix{Fix::CV_AXLE};    // (IA_FIX)
-    bool same(const InteractOption& o) const { return kind == o.kind && car == o.car && wheel == o.wheel && loose == o.loose && spot == o.spot; }
+    TrunkRef item;            // (IA_TAKE_ITEM, IA_STOW_ITEM)
+    bool same(const InteractOption& o) const { return kind == o.kind && car == o.car && wheel == o.wheel && loose == o.loose && spot == o.spot && item == o.item; }
 };
 
 struct Interact {
-    Kit kit;                 // your tools and parts (set by the game; sandbox: everything)
+    Kit kit;                 // the tools and parts you can use now (set by the game; sandbox: everything; trunk.h: within reach of the open back)
+    TrunkStock own;          // everything you own (the back's contents)
+    bool trunkOn = false;    // the game has set `own`: trucks with a back have to be opened (else the old way: the kit's on you)
     InteractOption current;  // what E does now (kind IA_NONE: nothing in reach)
     int usedPart = -1;       // set when a repair used a part (RepairPart): the game takes it from here
     bool waitRelease = false;  // a held job finished: E has to be let go before the next
@@ -69,8 +77,9 @@ struct Interact {
 
     // The job in front of you: the nearest thing to where you're looking, within reach
     // (2.5 m) and no more than ~35 degrees off your line of sight.
+    // `own`: everything you own, if the trucks' backs are in play (trunk.h).
     static InteractOption pick(const Sim& sim, const Walker& wk, const V3& eye, const V3& look, const std::vector<InteractSpot>* spots = nullptr,
-                               const Kit& kit = Kit());
+                               const Kit& kit = Kit(), const TrunkStock* own = nullptr);
     // Once a frame on foot: finds the job, runs the hold, and does it when the hold is done.
     // Returns what to announce ("" most frames).
     std::string update(Sim& sim, Walker& wk, const V3& eye, const V3& look, bool holdE, double dt);

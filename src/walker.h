@@ -5,6 +5,7 @@
 #include <optional>
 
 #include "softbody.h"
+#include "trunk.h"
 
 struct Walker {
     bool active = false;
@@ -20,6 +21,9 @@ struct Walker {
     // A tool in your hand (the jack): placed and used to lift a vehicle corner.
     bool holdingJack = false;
     bool holdingChain = false;  // a snow chain off the truck, to wrap a tire in
+    // A tool, part or anchor out of the back (trunk.h): it's still in your kit, just in your hand
+    // (and usable far from the truck); getting in or putting it back lays it in the back again.
+    TrunkRef hand;
 
     // Steps (dt, ~60 Hz): `fwd`/`side` (-1..1) move relative to `viewYaw` (the camera's
     // heading), `run` faster, `jump` once when grounded.

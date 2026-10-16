@@ -8,7 +8,7 @@ const char* const kToolNames[TOOL_COUNT] = {"LUG WRENCH", "WRENCHES", "SOCKET SE
 const char* const kToolModels[TOOL_COUNT] = {"lug_wrench", "wrench", "ratchet", "hammer", "pry_bar", "tire_iron", "jack"};
 const char* const kToolA[TOOL_COUNT] = {"A LUG WRENCH", "WRENCHES", "A SOCKET SET", "A HAMMER", "A PRY BAR", "TIRE IRONS", "A JACK"};
 const char* const kPartNames[PART_COUNT] = {"TIRE", "CV AXLE", "DRIVE SHAFT", "TIE ROD", "CONTROL ARM", "SPARK PLUGS"};
-const char* const kPartModels[PART_COUNT] = {"", "cv_axle", "drive_shaft", "tie_rod", "control_arm", "spark_plug"};
+const char* const kPartModels[PART_COUNT] = {"tire_part", "cv_axle", "drive_shaft", "tie_rod", "control_arm", "spark_plug"};
 
 V3 hubOf(const Car& c, const Wheel& wh) { return (c.nodes[wh.inner].p + c.nodes[wh.outer].p) * 0.5; }
 
@@ -103,10 +103,11 @@ std::string missingFor(const Fix& f, const Kit& kit, bool cornerLifted) {
     if (f.lifted && !cornerLifted && !kit.has(TOOL_JACK)) need.push_back(TOOL_JACK);
     if (!need.empty()) {
         std::string s = "NEEDS ";
-        for (size_t i = 0; i < need.size(); i++) s += (i ? (i + 1 == need.size() ? " AND " : ", ") : "") + std::string(kToolA[need[i]]);
-        return s;
+        bool stowed = false;
+        for (size_t i = 0; i < need.size(); i++) s += (i ? (i + 1 == need.size() ? " AND " : ", ") : "") + std::string(kToolA[need[i]]), stowed |= kit.stowedTools[need[i]];
+        return stowed ? s + " (IN THE TRUCK: OPEN THE BACK)" : s;
     }
-    if (!kit.hasPart(f.part)) return std::string("NO ") + kPartNames[f.part] + ": FIND OR BUY ONE";
+    if (!kit.hasPart(f.part)) return kit.stowedParts[f.part] ? std::string("THE ") + kPartNames[f.part] + " IS IN THE TRUCK" : std::string("NO ") + kPartNames[f.part] + ": FIND OR BUY ONE";
     if (f.lifted && !cornerLifted) return "JACK THIS CORNER UP FIRST";
     return "";
 }

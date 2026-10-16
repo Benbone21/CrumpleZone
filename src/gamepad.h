@@ -109,6 +109,7 @@ struct Intent {
     // On foot.
     bool interact = false;       // X held: the hold-E job in front of you
     bool drop = false;           // B pressed: put down what you carry
+    bool inventory = false;      // Y pressed (on foot): the list of what's in the truck
 };
 
 class Logic {
