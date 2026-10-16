@@ -26,6 +26,7 @@ struct Settings {
     std::string playerName;     // shown to the others in multiplayer (default: your login)
     std::string joinAddress;    // the last address you typed to join
     std::string sessionName;    // the game you host, as others' lists show it ("" = "<NAME>'S GAME")
+    std::string netPassword;    // asked of whoever joins your game, and offered to the one you join ("" = none)
     int maxPlayers = 8;         // the most in a game you host (2..8)
     int pilotDest = 0;          // autopilot: which place (index into the menu's list)
     float pilotSpeed = 30;      // km/h

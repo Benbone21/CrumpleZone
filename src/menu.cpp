@@ -47,6 +47,10 @@ bool Settings::load(const std::string& path) {
             joinAddress = text == std::string("127.0.0.1") ? "" : text;  // (the old default: not something you typed)
             continue;
         }
+        if (k == "netpassword") {
+            netPassword = std::string(text).substr(0, 32);
+            continue;
+        }
         if (k == "session") {  // (the rest of the line: it can have spaces)
             const char* p = std::strstr(line, "session");
             std::string v = p ? p + 7 : "";
@@ -113,6 +117,7 @@ bool Settings::save(const std::string& path) const {
     if (!playerName.empty()) std::fprintf(f, "name %s\n", playerName.c_str());
     if (!joinAddress.empty()) std::fprintf(f, "join %s\n", joinAddress.c_str());
     if (!sessionName.empty()) std::fprintf(f, "session %s\n", sessionName.c_str());
+    if (!netPassword.empty()) std::fprintf(f, "netpassword %s\n", netPassword.c_str());
     std::fprintf(f, "maxplayers %d\n", maxPlayers);
     std::fprintf(f, "pilotdest %d\npilotspeed %.0f\npilotroute %d\n", pilotDest, pilotSpeed, pilotRoute);
     std::fprintf(f, "timeofday %d\ndaylength %.0f\nclock %.2f\n", timeOfDay, dayMinutes, clockHours);
@@ -182,7 +187,7 @@ enum Id {
     PILOT_ROW, DEST_ROW, PSPEED_ROW, PROUTE_ROW, PGO_ROW, PSTOP_ROW,
     FREEDRIVE_ROW, MODE_ROW, LEVELS_ROW, LEVEL_SHOW, LEVEL_PICK, LEVEL_PLAY, LEVEL_EDIT, EDITOR_ROW, SECTION_ROW, LAB_ROW, LRESTART_ROW, LQUIT_ROW, MAINMENU_ROW,
     JOBS_ROW, JOB_PICK, JOB_GO, JOB_STOP_ROW, MEET_ROW, CONTROLLER_ROW,
-    SESSION_ROW, HMAP_ROW, HMAX_ROW, CANCEL_ROW,
+    SESSION_ROW, HMAP_ROW, HMAX_ROW, CANCEL_ROW, PASSWORD_ROW,
     STEERING, KEYBINDS_ROW, KEYS_RESET, KEY_ROW0, KEY_ROWN = KEY_ROW0 + KA_COUNT,
 };
 const char* kOffOn[2] = {"OFF", "ON"};
@@ -357,6 +362,7 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
             return r;
         }
         text(NAME_ROW, "YOUR NAME", s.playerName, "TYPE IT", "PLAYER");
+        text(PASSWORD_ROW, "PASSWORD", std::string(s.netPassword.size(), '*'), "TYPE IT", "NONE");  // (to host with, and to join with)
         {
             const size_t c1 = r.size();
             const std::string me = s.playerName.empty() ? std::string("PLAYER") : s.playerName;
@@ -589,6 +595,7 @@ PauseMenu::Result PauseMenu::activate(int row, Settings& s) {
         case MEET_ROW: return {MEET_UP};
         case CANCEL_ROW: return {CANCEL_JOIN};
         case NAME_ROW:
+        case PASSWORD_ROW:
         case SESSION_ROW: moveSel(1, s); return {};
     }
     if (it.id >= FOUND_ROW0 && it.id <= FOUND_ROW5 && it.id - FOUND_ROW0 < (int)found.size()) {  // a game found on the network
@@ -744,7 +751,7 @@ PauseMenu::Result PauseMenu::key(int sc, Settings& s) {
     {
         std::vector<Row> r = rows(s);
         if (sel >= 0 && sel < (int)r.size() && r[sel].kind == TEXT) {
-            std::string& field = r[sel].id == NAME_ROW ? s.playerName : r[sel].id == SESSION_ROW ? s.sessionName : s.joinAddress;
+            std::string& field = r[sel].id == NAME_ROW ? s.playerName : r[sel].id == SESSION_ROW ? s.sessionName : r[sel].id == PASSWORD_ROW ? s.netPassword : s.joinAddress;
             char ch = 0;
             if (sc == SC_SPACE && r[sel].id == SESSION_ROW && !field.empty()) ch = ' ';
             if (sc >= SC_A && sc <= SC_A + 25) ch = (char)('A' + (sc - SC_A));
@@ -754,7 +761,7 @@ PauseMenu::Result PauseMenu::key(int sc, Settings& s) {
             else if (sc == 45) ch = shift ? '_' : '-';
             else if (sc == 51 && shift) ch = ':';
             if (r[sel].id == ADDRESS_ROW && ch >= 'A' && ch <= 'Z') ch = (char)(ch - 'A' + 'a');
-            if (ch && field.size() < (r[sel].id == NAME_ROW ? 16u : r[sel].id == SESSION_ROW ? 24u : 60u)) {
+            if (ch && field.size() < (r[sel].id == NAME_ROW ? 16u : r[sel].id == SESSION_ROW ? 24u : r[sel].id == PASSWORD_ROW ? 32u : 60u)) {
                 field += ch;
                 return {CHANGED};
             }
@@ -1082,7 +1089,7 @@ void PauseMenu::drawMulti(Renderer& r, const Settings& s, int W, int H, float a)
     int k = 0;
     if (top0 > 0) {
         const float nameW = std::min(totalW, 620 * u);
-        pill(r, x0, y - 4 * u, nameW, base.rowH + 8 * u, 0.03f, 0.035f, 0.045f, 0.85f * a);
+        pill(r, x0, y - 4 * u, nameW, top0 + 8 * u, 0.03f, 0.035f, 0.045f, 0.85f * a);  // (the name, and the password)
         for (; k < n && rs[k].col == 0; k++) y += drawRow(r, rs[k], k, x0, nameW, y, base);
         y += 12 * u;
     }

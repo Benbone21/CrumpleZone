@@ -54,19 +54,25 @@ bool Job::parse(const std::string& s, Job& out) {
     }
     f.push_back(cur);
     if (f.size() < 11 || f[0] != "job") return false;
+    // (This comes off the network: the kind and the count index tables and loops, the numbers
+    // are positions. Anything out of range is not a job.)
     Job j;
     j.kind = std::atoi(f[1].c_str());
-    j.title = f[2], j.about = f[3];
+    if (j.kind < 0 || j.kind >= JOB_KIND_COUNT) return false;
+    j.title = f[2].substr(0, 60), j.about = f[3].substr(0, 120);
     j.target = V3(std::atof(f[4].c_str()), std::atof(f[5].c_str()), std::atof(f[6].c_str()));
-    j.targetName = f[7];
+    j.targetName = f[7].substr(0, 40);
     j.vehicle = std::atoi(f[8].c_str());
     j.wreckId = (uint32_t)std::strtoul(f[9].c_str(), nullptr, 10);
     const int n = std::atoi(f[10].c_str());
-    if ((int)f.size() < 11 + n * 3) return false;
+    if (n < 0 || n > 32 || f.size() < 11 + (size_t)n * 3) return false;
     for (int k = 0; k < n; k++) {
         j.spots.push_back(V3(std::atof(f[11 + k * 3].c_str()), 0, std::atof(f[12 + k * 3].c_str())));
-        j.spotNames.push_back(f[13 + k * 3]);
+        j.spotNames.push_back(f[13 + k * 3].substr(0, 40));
     }
+    if (!(std::fabs(j.target.x) < 1e5 && std::fabs(j.target.y) < 1e5 && std::fabs(j.target.z) < 1e5)) return false;  // (NaN fails too)
+    for (const V3& p : j.spots)
+        if (!(std::fabs(p.x) < 1e5 && std::fabs(p.z) < 1e5)) return false;
     j.visited.assign(j.spots.size(), false);
     out = j;
     return true;

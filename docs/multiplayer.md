@@ -66,3 +66,139 @@ so a real host/client session cannot be verified here. Release CI now includes n
 Windows loopback networking, state/playback, worker and audio tests. That workflow was
 edited locally and has not been run from this session. Final full-suite results are in
 `docs/performance.md`.
+
+# Hosting for the internet, safely (2026-10-16)
+
+Protocol **5**. Both ends must be this build (older builds are refused with "different game
+version"). What changed on the wire: a password handshake, a secret in every datagram, and
+strict checks on everything received. The full review, with every finding and its fix, is in
+[server-security.md](server-security.md).
+
+## A password
+
+Set one whenever the game is reachable from outside your own network.
+
+- Game: Multiplayer page, **PASSWORD** (used for the game you host and the ones you join), or
+  `--password SECRET` on the command line (`--host`, `--join`).
+- Dedicated server: `--password-file FILE` (first line), the `CZ_PASSWORD` environment
+  variable, or `--password SECRET` (visible to other users in `ps`; avoid).
+- A host without a password lets anyone in (LAN play is unchanged). A host with one sends a
+  fresh random challenge to each joiner, who answers with HMAC-SHA-256 of it under the
+  password; the password itself is never sent, and the answer is compared in constant time.
+  Five wrong answers from one address lock that address out for a minute.
+- The game remembers the menu's password in `settings.txt` (your config folder), as plain text;
+  `--password` is not saved.
+- Use a long random one: `head -c 24 /dev/urandom | base64 > cz-password`. The in-game field
+  accepts letters, digits and `. - _ :` (32 characters at most); anything can be given with
+  `--password`.
+
+## What a server defends against
+
+Silent connections (dropped after 8 s without a hello, 30 s without a word), floods (24
+connections, 8 per address), oversized or too-frequent messages, malformed messages (any
+number, index, count or float out of range drops the message, or the guest), forged player,
+vehicle or line ids, host-only messages sent by guests (welcome, reject, level, clock, who
+joined, "job done", "restart"), spawn floods (6 vehicles and 6 lines per guest) and unknown
+datagram senders (every datagram carries a secret told in the welcome).
+
+It does **not** encrypt anything. Anyone on the network path can read or alter a session.
+For private play use a VPN (WireGuard, Tailscale) and `--bind` the server to its address.
+
+## Running the dedicated server
+
+```bash
+make build/crumplezone-server
+CZ_PASSWORD='a long random password' ./build/crumplezone-server --port 27015 --map 1 --name "Friends"
+```
+
+- **Not as root.** It refuses to start as root (`--allow-root` overrides: don't). Make a user for it.
+- **Firewall: only the game port**, TCP and UDP 27015. The LAN-discovery ports (UDP 27016/27017)
+  are off on the server (`--lan` turns them on, for a server on your own network).
+- It never writes a file and needs nothing from the network but those two sockets.
+
+Firewall examples (the server is IPv4 only; keep your SSH rule or you lock yourself out):
+
+```bash
+# ufw
+sudo ufw default deny incoming && sudo ufw allow OpenSSH
+sudo ufw allow 27015/tcp && sudo ufw allow 27015/udp && sudo ufw enable
+```
+
+```nft
+# /etc/nftables.conf (the same, with a limit on new connections to the game port)
+table inet filter {
+  chain input {
+    type filter hook input priority 0; policy drop;
+    ct state established,related accept
+    iif lo accept
+    tcp dport 22 accept
+    tcp dport 27015 ct state new limit rate 30/second burst 60 packets accept
+    udp dport 27015 accept
+  }
+}
+```
+
+### systemd
+
+`/etc/systemd/system/crumplezone.service` (put the binary at `/opt/crumplezone/crumplezone-server`
+and the password in `/etc/crumplezone/password`, mode 600, owned by root):
+
+```ini
+[Unit]
+Description=Crumple Zone dedicated server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/opt/crumplezone/crumplezone-server --port 27015 --map 1 --name "Friends" --password-file ${CREDENTIALS_DIRECTORY}/password
+LoadCredential=password:/etc/crumplezone/password
+Restart=on-failure
+RestartSec=3
+
+# A throwaway user, no privileges, no files but its own
+DynamicUser=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateUsers=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_INET
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+# And a ceiling, so a bug can't take the machine with it
+MemoryMax=1G
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload && sudo systemctl enable --now crumplezone
+journalctl -u crumplezone -f     # joins, leaves, "[net] ..." lines for what was refused
+systemd-analyze security crumplezone
+```
+
+Players: `./crumplezone --join SERVER_IP:27015 --password 'the password'`.
+
+## Tests
+
+`./build/run_tests --jobs 4 net/` runs the multiplayer tests, including the hostile-peer ones
+(`net/sec-*`, in `tests/net_security.cpp`): wrong and right passwords, connection floods,
+slow connections, forged and mangled messages, forged datagrams, oversized levels, and a
+fuzzer that throws thousands of random and mutated messages at a host and a client.
