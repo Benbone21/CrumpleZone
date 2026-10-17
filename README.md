@@ -233,12 +233,12 @@ Launched plainly, the game opens on the main menu, a screen of its own (no world
 
 Build your own worlds and levels: title screen → WORLD EDITOR (a new level on the map picked), Levels → OPEN IN THE EDITOR (the game's levels open as your copy), or F2 while driving. `--editor` opens it on launch.
 
-- **Fly:** WASD, Q/E down/up (Space up), right-drag to look, Shift fast, wheel to fly forward.
-- **1 Sculpt:** raise, lower, smooth, flatten (to the height you click) with a round brush; wheel or [ ] sizes it, Shift is fine.
+- **Fly:** WASD, Space up, Shift+wheel up/down, right-drag to look, Shift fast, wheel to fly forward.
+- **1 Sculpt:** raise, lower, smooth, flatten (to the height you click) with a round brush; Q/E, [ ] or Ctrl+wheel sizes it (every brush tool), - and = set the strength, Shift is fine.
 - **2 Paint:** grass, dirt, mud, sand, desert sand, gravel, rock, red rock, scree, snow, ice, concrete, tarmac, wet tarmac. It drives like it looks.
 - **3 Water:** click in a hollow to fill it (dig a basin first); Shift+click dries.
-- **4 Objects:** rocks, ramps/blocks (tilt them; rock slabs grip like rock), logs, trees, repair shops. Click to place, click one to select and drag it, Q/E turn, Delete removes (the map's own objects too).
-- **5 Course:** the first click sets the start (facing the way you look), then each click adds a gate; drag to move, Q/E turn, [ ] width; the last gate is the finish.
+- **4 Objects:** rocks, ramps/blocks (tilt them; rock slabs grip like rock), logs, trees, repair shops. Click to place, click one to select and drag it, Q/E size, Shift+Q/E turn, Delete removes (the map's own objects too).
+- **5 Course:** the first click sets the start (facing the way you look), then each click adds a gate; drag to move, Shift+Q/E turn, [ ] width; the last gate is the finish.
 - **6 Settings:** name, mode (free drive / race / sprint), laps, vehicle, time of day, repairs, damage and time limits, medal times.
 - Ctrl+Z / Ctrl+Y undo and redo, Ctrl+S saves to `~/.config/crumplezone/levels`, F5 plays it (F2 brings you back), Esc leaves. Offline only.
 
