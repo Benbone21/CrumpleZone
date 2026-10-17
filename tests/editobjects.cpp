@@ -522,7 +522,7 @@ SCENARIO(editorMapProps, "editor/map-props", "The map's cabins, fences, signs, t
 SCENARIO(editorSaveFlow, "editor/save-flow", "Saving never refuses: an unnamed level asks for a name (with a default that clashes with nothing), SAVE AS asks again, leaving with unsaved work asks SAVE / DISCARD / CANCEL, and what's saved reopens the same") {
     // (Everything under a scratch config folder: nothing of the player's is touched.)
     makeDir("build/test-config");
-    setenv("XDG_CONFIG_HOME", "build/test-config", 1);
+    setEnvVar("XDG_CONFIG_HOME", "build/test-config");
     const std::string levels = userLevelFolder();
     makeDir(configDir());
     makeDir(levels);
@@ -640,7 +640,7 @@ SCENARIO(editorSaveFlow, "editor/save-flow", "Saving never refuses: an unnamed l
     ef.escape();
     ctx.check("Esc in the name box cancels leaving too", ef.stage == SaveFlow::IDLE && ef.done == SaveFlow::NOTHING && ee.unsaved());
     for (const std::string& f : listLevelFiles(levels, ".czl")) std::remove(f.c_str());
-    unsetenv("XDG_CONFIG_HOME");
+    setEnvVar("XDG_CONFIG_HOME", nullptr);
 }
 
 SCENARIO(editorFreeHeight, "editor/free-height", "Any object can float or sink and stays exactly there (save, load, undo, terrain edits nearby); rocks stack on rocks; SNAP TO GROUND sits one back down; scaling shows at once for code-made rocks too") {

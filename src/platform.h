@@ -23,6 +23,16 @@ inline std::string configDir() {
 #endif
 }
 
+// Sets (value) or removes (nullptr) an environment variable; setenv/unsetenv are POSIX only.
+inline void setEnvVar(const char* name, const char* value) {
+#ifdef _WIN32
+    _putenv_s(name, value ? value : "");  // (an empty value removes it)
+#else
+    if (value) setenv(name, value, 1);
+    else unsetenv(name);
+#endif
+}
+
 // Makes a folder (its parent must exist); fine if it already does.
 inline void makeDir(const std::string& path) {
 #ifdef _WIN32
