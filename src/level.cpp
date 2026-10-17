@@ -244,6 +244,7 @@ void placeObject(const LevelObject& obj, World& w) {
             if (o.name == "trail_sign") set = {{"rating", (double)o.sub}};
             else if (o.name == "cairn" || o.name == "stump") set = {{"seed", (double)o.sub}};
             w.placeModel(o.name, at, o.yaw, set, sc);
+            w.models.back().variant = o.variant;
             V3 ax[3];
             frameOf(o.yaw, o.pitch, o.roll, ax);
             const bool tipped = std::fabs(o.pitch) > 1e-6 || std::fabs(o.roll) > 1e-6;
@@ -262,7 +263,13 @@ void placeObject(const LevelObject& obj, World& w) {
                 } else if (o.name == "stump") w.poles.push_back({at.x, at.z, at.y - 0.3, at.y + 0.6 * sc.y, 0.35 * sc.x});
             }
             if (modelSolid(o.name) || (tipped && poled)) {
-                const mk::Mesh& m = mk::modelMesh(o.name);
+                mk::Mesh m;  // (the design it shows, which may differ in size)
+                if (const mk::ModelDef* d = mk::findModel(o.name)) {
+                    const int v = o.variant >= 0 ? std::min(o.variant, (int)d->variants.size() - 1) : mk::variantFor(*d, mk::placementKey(o.name, at.x, at.z));
+                    mk::P p = mk::pickedParams(*d, v);
+                    for (const auto& kv : set) p.v[kv.first] = kv.second;
+                    mk::build(*d, v, p, m);
+                }
                 if (!m.v.empty()) {
                     const V3 lo(m.lo.x * sc.x, m.lo.y * sc.y, m.lo.z * sc.z), hi(m.hi.x * sc.x, m.hi.y * sc.y, m.hi.z * sc.z);
                     const V3 mid = (lo + hi) * 0.5, half = (hi - lo) * 0.5;
@@ -455,6 +462,7 @@ std::string saveLevelText(const Level& lv) {
             case OBJ_MODEL:  // (a comment line: an older build skips it, and the level without the structure still plays)
                 o << "#model " << num(b.p.x) << ' ' << num(b.p.z) << ' ' << num(b.yaw / kDeg, 2) << ' ' << num(b.size.x, 3) << ' ' << num(b.size.y, 3) << ' ' << num(b.size.z, 3) << ' '
                   << num(b.lift, 3) << ' ' << b.sub << ' ' << b.name << '\n';
+                if (b.variant >= 0) o << "#modelvariant " << b.variant << '\n';  // (an older build skips it and picks by position)
                 if (std::fabs(b.pitch) > 1e-6 || std::fabs(b.roll) > 1e-6) o << "#modelpose " << num(b.pitch / kDeg, 3) << ' ' << num(b.roll / kDeg, 3) << '\n';  // (tipped; an older build skips it)
                 break;
             case OBJ_FENCE: o << "#fence " << num(b.p.x) << ' ' << num(b.p.z) << ' ' << num(b.p2.x) << ' ' << num(b.p2.z) << '\n'; break;
@@ -534,6 +542,14 @@ bool parseLevelText(const std::string& text, Level& lv, std::string* error) {
                 const size_t a = b.name.find_first_not_of(' ');
                 b.name = a == std::string::npos ? std::string() : b.name.substr(a);
                 if (!ms.fail() || ms.eof()) out.objects.push_back(b);
+                continue;
+            }
+            if (line.rfind("#modelvariant ", 0) == 0) {  // #modelvariant N: the design of the structure on the line before
+                std::istringstream vs(line);
+                std::string tag;
+                int v = -1;
+                vs >> tag >> v;
+                if (!vs.fail() && !out.objects.empty() && out.objects.back().kind == OBJ_MODEL) out.objects.back().variant = v;
                 continue;
             }
             if (line.rfind("#modelpose ", 0) == 0) {  // #modelpose PITCHDEG ROLLDEG: the structure on the line before, tipped

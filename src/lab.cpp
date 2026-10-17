@@ -173,13 +173,24 @@ struct Lab {
     }
     double paramValue(const mk::Param& q) { return mk::pickedParams(model(), focus)(q.key); }
 
-    void useThis() {
+    // The game uses every design not left out here; this leaves the one in focus out, or puts it back (never the last one).
+    void toggleThis() {
         Choice& c = choice();
-        c.pick = focus;
-        c.status = mk::LIKED;
+        const char tag = (char)('A' + focus);
+        if (c.off.count(focus)) c.off.erase(focus), say(std::string(1, tag) + " IS BACK IN THE GAME");
+        else if (c.off.size() + 1 >= model().variants.size()) return say("THE GAME NEEDS AT LEAST ONE DESIGN");
+        else c.off.insert(focus), say(std::string(1, tag) + " IS LEFT OUT OF THE GAME");
+        if (c.status == mk::NEW) c.status = mk::LIKED;
         rebuild();
         save();
-        say(std::string("THE GAME USES ") + (char)('A' + focus) + ": " + model().variants[focus].name);
+    }
+    void keepAll() {
+        Choice& c = choice();
+        c.off.clear();
+        if (c.status != mk::REDO) c.status = mk::LIKED;
+        rebuild();
+        save();
+        say("ALL " + std::to_string(model().variants.size()) + " DESIGNS ARE IN THE GAME");
     }
     void redo() {
         Choice& c = choice();
@@ -221,7 +232,7 @@ struct Lab {
             auto it = mk::choices().find(mk::catalog()[order[s]].id);
             if (it == mk::choices().end() || it->second.status != mk::LIKED) return select(s);
         }
-        say("EVERY MODEL IS PICKED");
+        say("EVERY MODEL IS SEEN");
     }
 
     // ---- Camera ----
@@ -298,7 +309,7 @@ struct Lab {
             liked += st == mk::LIKED, redoN += st == mk::REDO, fresh += st == mk::NEW;
         }
         char sum[96];
-        std::snprintf(sum, sizeof sum, "%d PICKED  %d REDO  %d TO SEE", liked, redoN, fresh);
+        std::snprintf(sum, sizeof sum, "%d SEEN  %d REDO  %d TO SEE", liked, redoN, fresh);
         text(16 * u, 44 * u, 1.5f, sum, 0.75f, 0.78f, 0.82f);
         // Rows: category headers and models.
         struct Row { bool header; int idx; std::string cat; };
@@ -332,7 +343,7 @@ struct Lab {
                         cb = st == mk::LIKED ? 0.4f : st == mk::REDO ? 0.25f : 0.5f;
             r.rect(22 * u, y + 6 * u, 8 * u, 8 * u, cr, cg, cb, 1);
             text(38 * u, y + 5 * u, 1.5f, d.title, 1, 1, 1, k == sel ? 1.0f : 0.85f);
-            if (st == mk::LIKED && it->second.pick >= 0) text(LW - 30 * u, y + 5 * u, 1.5f, std::string(1, (char)('A' + it->second.pick)), 0.4f, 0.9f, 0.5f);
+            if (st == mk::LIKED && !it->second.off.empty()) text(LW - 44 * u, y + 5 * u, 1.5f, std::to_string(d.variants.size() - it->second.off.size()) + "/" + std::to_string(d.variants.size()), 0.4f, 0.9f, 0.5f);
             hits.push_back({8 * u, y, LW - 16 * u, rowH, [this, k](float) { select(k); }});
         }
     }
@@ -349,7 +360,6 @@ struct Lab {
         y += wrap(x0 + pad, y, w, 1.5f, d.use, 0.8f, 0.82f, 0.85f) + 8 * u;
         // Designs.
         const int n = (int)d.variants.size();
-        const int picked = hasChoice() ? choice().pick : 0;
         const int status = hasChoice() ? choice().status : mk::NEW;
         const float bw = std::min(64 * u, (w - (n - 1) * 6 * u) / std::max(1, n));
         for (int v = 0; v < n; v++) {
@@ -359,17 +369,17 @@ struct Lab {
                 focus = v;
                 if (!compare) rebuild();
             }, on);
-            if (v == picked && status == mk::LIKED) r.rect(bx, y + 27 * u, bw, 3 * u, 0.3f, 0.9f, 0.4f, 1);
+            r.rect(bx, y + 27 * u, bw, 3 * u, mk::variantIncluded(d, v) ? 0.3f : 0.9f, mk::variantIncluded(d, v) ? 0.9f : 0.3f, mk::variantIncluded(d, v) ? 0.4f : 0.25f, 1);
         }
         y += 38 * u;
         const mk::Variant& var = d.variants[focus];
         text(x0 + pad, y, 2, var.name, 0.98f, 0.82f, 0.3f);
         y += 20 * u;
         y += wrap(x0 + pad, y, w, 1.5f, var.blurb, 0.8f, 0.82f, 0.85f) + 6 * u;
-        if (status == mk::LIKED && picked == focus) text(x0 + pad, y, 1.5f, "THE GAME USES THIS ONE", 0.4f, 0.9f, 0.5f);
-        else if (status == mk::LIKED) text(x0 + pad, y, 1.5f, std::string("THE GAME USES ") + (char)('A' + picked), 0.6f, 0.65f, 0.7f);
-        else if (status == mk::REDO) text(x0 + pad, y, 1.5f, "FLAGGED FOR A REDO", 0.95f, 0.4f, 0.3f);
-        else text(x0 + pad, y, 1.5f, "NOT PICKED YET", 0.6f, 0.65f, 0.7f);
+        const bool in = mk::variantIncluded(d, focus);
+        if (status == mk::REDO) text(x0 + pad, y, 1.5f, "FLAGGED FOR A REDO", 0.95f, 0.4f, 0.3f);
+        else if (in) text(x0 + pad, y, 1.5f, "IN THE GAME (ALL SHARE THE WORLD)", 0.4f, 0.9f, 0.5f);
+        else text(x0 + pad, y, 1.5f, "LEFT OUT OF THE GAME", 0.95f, 0.45f, 0.3f);
         y += 22 * u;
         // Settings.
         const auto& tweaks = hasChoice() ? choice().tweaks : std::map<int, std::map<std::string, double>>();
@@ -409,7 +419,9 @@ struct Lab {
         // Actions.
         y = std::max(y + 6 * u, (float)H - 210 * u);
         const float half = (w - 8 * u) / 2;
-        button(x0 + pad, y, w, 30 * u, "USE THIS DESIGN  (ENTER)", 0.25f, 0.7f, 0.35f, [this] { useThis(); }, true);
+        const bool inNow = mk::variantIncluded(d, focus);
+        button(x0 + pad, y, half, 30 * u, inNow ? "OUT  (ENTER)" : "BACK IN  (ENTER)", inNow ? 0.8f : 0.25f, inNow ? 0.5f : 0.7f, inNow ? 0.25f : 0.35f, [this] { toggleThis(); }, true);
+        button(x0 + pad + half + 8 * u, y, half, 30 * u, "KEEP ALL  (K)", 0.25f, 0.7f, 0.35f, [this] { keepAll(); }, true);
         y += 36 * u;
         button(x0 + pad, y, half, 28 * u, "REDO IT  (R)", 0.85f, 0.3f, 0.25f, [this] { redo(); }, true);
         button(x0 + pad + half + 8 * u, y, half, 28 * u, "NOTE  (N)", 0.4f, 0.45f, 0.55f, [this] { startNote(); }, true);
@@ -434,7 +446,6 @@ struct Lab {
     void drawLabels(const View& v) {
         if (!compare) return;
         const ModelDef& d = model();
-        const int picked = hasChoice() && choice().status == mk::LIKED ? choice().pick : -1;
         for (int k = 0; k < (int)slot.size() && k < (int)d.variants.size(); k++) {
             float sx, sy;
             if (!project(v, slot[k], sx, sy)) continue;
@@ -443,7 +454,8 @@ struct Lab {
             const bool on = k == focus;
             r.rect(sx - w / 2, y, w, 22 * u, on ? 0.3f : 0.05f, on ? 0.5f : 0.06f, on ? 0.75f : 0.08f, 0.85f);
             text(sx - w / 2 + 8 * u, y + 5 * u, 1.6f, tag, 1, 1, 1);
-            if (k == picked) text(sx - tw("IN GAME", 1.3f) / 2, y + 26 * u, 1.3f, "IN GAME", 0.4f, 0.95f, 0.5f);
+            const bool in = mk::variantIncluded(d, k);
+            text(sx - tw(in ? "IN GAME" : "LEFT OUT", 1.3f) / 2, y + 26 * u, 1.3f, in ? "IN GAME" : "LEFT OUT", in ? 0.4f : 0.95f, in ? 0.95f : 0.45f, in ? 0.5f : 0.3f);
             const int kk = k;
             hits.push_back({sx - w / 2, y, w, 22 * u, [this, kk](float) { focus = kk; }});
         }
@@ -451,7 +463,7 @@ struct Lab {
 
     void drawHints() {
         const char* h = typing ? "TYPE A NOTE FOR THE NEXT ROUND" :
-                                 "DRAG: TURN   WHEEL: ZOOM   SPACE: ALL / ONE   1-4: DESIGN   UP/DOWN: MODEL   TAB: NEXT UNPICKED   T: SPIN   L: NIGHT   ESC: QUIT";
+                                 "DRAG: TURN   WHEEL: ZOOM   SPACE: ALL / ONE   1-4: DESIGN   UP/DOWN: MODEL   TAB: NEXT UNSEEN   T: SPIN   L: NIGHT   ESC: QUIT";
         const float cx = LW + (W - LW - RW) / 2, room = W - LW - RW - 24 * u;
         const float s = std::min(1.4f, room / std::max(1.0f, tw(h, 1.0f)));
         const float w = tw(h, s) + 20 * u;
@@ -492,11 +504,12 @@ struct Lab {
             break;
         case SC_SPACE: compare = !compare, rebuild(); break;
         case SC_TAB: nextNew(SDL_GetKeyboardState(nullptr)[SC_LSHIFT] ? -1 : 1); break;
-        case SC_RETURN: case SC_KP_ENTER: if (!repeat) useThis(); break;
+        case SC_RETURN: case SC_KP_ENTER: if (!repeat) toggleThis(); break;
         case SC_R: if (!repeat) redo(); break;
         case SC_N: if (!repeat) startNote(); break;
         case SC_BACKSPACE: case SC_DELETE: if (!repeat) resetTweaks(); break;
         case SC_X: reroll(); break;
+        case SC_K: keepAll(); break;
         case SC_T: orbit = !orbit; break;
         case SC_L: night = !night; break;
         case SC_F: figure = !figure, rebuild(); break;
@@ -522,6 +535,7 @@ struct Lab {
         picksPath = mk::choicesPath();
         mk::loadChoices(picksPath);
         std::printf("model lab: %zu models; picks in %s\n", order.size(), picksPath.empty() ? "(nowhere: no assets folder)" : picksPath.c_str());
+        r.frameModels.clear();
         sim.world = studioWorld();
         r.setWorld(sim.world);
         int start = 0;
@@ -620,6 +634,8 @@ struct Lab {
             camera(v);
             v.time = (float)(now / (double)freq);
             r.figures.clear();
+            r.frameModels.clear();  // (the game's jack, car parts and frame, left from its last frame, aren't part of the display)
+            r.xrayRange = 0, r.wheelWork = Renderer::WheelWork(), r.carried.on = false;
             r.drawScene(sim, v, DEBUG_OFF, nullptr);
             hits.clear();
             drawLabels(v);

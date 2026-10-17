@@ -412,18 +412,29 @@ void appendPlaced(std::vector<Vtx>& out, const Placed& pl, const mk::Mesh& m) {
         for (size_t i = at; i < out.size(); i++) out[i].c[3] += add;
 }
 
+int placedVariant(const Placed& pl) {
+    const mk::ModelDef* d = mk::findModel(pl.id);
+    if (!d) return 0;
+    if (pl.variant >= 0) return std::min(pl.variant, std::max(0, (int)d->variants.size() - 1));
+    if (pl.bare || d->variants.size() < 2) return mk::pickedVariant(*d);
+    return mk::variantFor(*d, mk::placementKey(pl.id, pl.p.x, pl.p.z));
+}
+
 const mk::Mesh& placedMesh(const Placed& pl) {
-    if (pl.set.empty() && pl.variant < 0 && !pl.bare) return mk::modelMesh(pl.id);
+    if (pl.set.empty() && pl.variant < 0 && !pl.bare) {
+        const mk::ModelDef* d = mk::findModel(pl.id);
+        if (!d || d->variants.size() < 2) return mk::modelMesh(pl.id);
+    }
     static std::map<std::string, mk::Mesh> built;  // (cleared with the picks: see the lab)
     static uint64_t builtFor = 0;
     if (builtFor != mk::picksVersion()) built.clear(), builtFor = mk::picksVersion();
-    std::string key = pl.id + "#" + std::to_string(pl.variant) + (pl.bare ? "|bare" : "");
+    const int variant = placedVariant(pl);
+    std::string key = pl.id + "#" + std::to_string(variant) + (pl.bare ? "|bare" : "");
     for (const auto& kv : pl.set) key += "|" + kv.first + "=" + std::to_string(kv.second);
     auto it = built.find(key);
     if (it != built.end()) return it->second;
     mk::Mesh& m = built[key];
     if (const mk::ModelDef* d = mk::findModel(pl.id)) {
-        const int variant = pl.variant < 0 ? mk::pickedVariant(*d) : pl.variant;
         mk::P p = mk::pickedParams(*d, variant);
         for (const auto& kv : pl.set) p.v[kv.first] = kv.second;
         if (pl.bare) p.v["bare"] = 1;

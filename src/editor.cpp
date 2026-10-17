@@ -1,3 +1,4 @@
+#include "scenery.h"
 #include "editor.h"
 
 #include <algorithm>
@@ -433,7 +434,16 @@ void Editor::buildPalette() {
                                           {"lamp_post", "LAMP POST"},  {"trail_sign", "TRAIL SIGN"},  {"map_board", "MAP BOARD"}, {"marker_post", "MARKER POST"},
                                           {"sign_gantry", "SIGN GANTRY"}};
     for (const auto& st : structures)
-        if (mk::findModel(st[0])) add(st[1], 7, modelProto(st[0]), std::string("model:") + st[0]);
+        if (const mk::ModelDef* d = mk::findModel(st[0])) {
+            add(st[1], 7, modelProto(st[0]), std::string("model:") + st[0]);  // (as is: one of its designs by where it stands)
+            if (d->variants.size() > 1)
+                for (int v = 0; v < (int)d->variants.size(); v++) {  // each design in use, placed as that one
+                    if (!mk::variantIncluded(*d, v)) continue;
+                    LevelObject o = modelProto(st[0]);
+                    o.variant = v;
+                    add(std::string(st[1]) + ": " + d->variants[v].name, 7, o, std::string("model:") + st[0] + "#" + std::to_string(v));
+                }
+        }
     {
         PalEntry e;
         e.name = "SLAB LEDGE", e.tab = "LEDGE", e.icon = "box:slab", e.ledge = true;
@@ -513,7 +523,12 @@ const mk::Mesh& Editor::iconMesh(const PalEntry& e) {
             mk::build(*d, kind, mk::defaults(d->variants[kind]), m);
         }
     } else if (k.rfind("model:", 0) == 0) {
-        m = mk::modelMesh(k.substr(6));
+        const size_t hash = k.find('#');  // model:ID#N: that design
+        const mk::ModelDef* d = mk::findModel(k.substr(6, hash == std::string::npos ? std::string::npos : hash - 6));
+        if (d && hash != std::string::npos) {
+            const int v = std::clamp(std::atoi(k.c_str() + hash + 1), 0, (int)d->variants.size() - 1);
+            mk::build(*d, v, mk::pickedParams(*d, v), m);
+        } else m = mk::modelMesh(k.substr(6));
     } else {
         mk::B b(m);
         if (k == "log") {
@@ -570,7 +585,9 @@ LevelObject Editor::makeObject(const V3& at, double rise) const {
             return o;
         }
         case OBJ_MODEL: {  // (its middle at the mouse, not its origin: some stand off to one side of theirs)
-            const mk::Mesh& m = mk::modelMesh(o.name);
+            Placed shown;
+            shown.id = o.name, shown.variant = o.variant;
+            const mk::Mesh& m = o.variant >= 0 ? placedMesh(shown) : mk::modelMesh(o.name);
             if (m.v.empty()) break;
             V3 ax[3];
             frameOf(o.yaw, o.pitch, o.roll, ax);
@@ -1972,7 +1989,7 @@ void Editor::update(double dt, const uint8_t* keys, Renderer& r, int w, int h) {
     if (tool == OBJECTS && !pointer && !ledgeBrush && haveHit && !overUi && proto.kind == OBJ_MODEL && mk::findModel(proto.name)) {
         const LevelObject g = makeObject(snapped(placeAt), placeRise());  // (where a click puts it: its middle at the mouse)
         Placed pl;
-        pl.id = g.name, pl.p = V3(g.p.x, core.world->height(g.p.x, g.p.z) + g.lift, g.p.z), pl.yaw = g.yaw;
+        pl.id = g.name, pl.p = V3(g.p.x, core.world->height(g.p.x, g.p.z) + g.lift, g.p.z), pl.yaw = g.yaw, pl.variant = g.variant;
         pl.scale = V3(g.size.x > 0 ? g.size.x : 1, g.size.y > 0 ? g.size.y : 1, g.size.z > 0 ? g.size.z : 1);
         if (std::fabs(g.pitch) > 1e-6 || std::fabs(g.roll) > 1e-6) pl.oriented = true, frameOf(g.yaw, g.pitch, g.roll, pl.ax);
         ghostModels.push_back(pl);
