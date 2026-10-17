@@ -69,8 +69,8 @@ SCENARIO(netEngineState, "net/state-engine-lamps", "Engine telemetry, smooth con
     NetSessionTest::take(receiver, ctx.sim, NetSessionTest::state(sender, origin, 0.05), 0.05);
     NetSessionTest::play(receiver, ctx.sim, 0.125);
     ctx.check("RPM and steering interpolated between packets", std::fabs(remote.rpm - 4000) < 0.01 && std::fabs(remote.steer - 0.2) < 1e-6);
-    ctx.check("engine load and boost transmitted", std::fabs(remote.throttle - 0.48) < 1e-6 && std::fabs(remote.boost - 0.4) < 1e-6);
-    ctx.check("reverse gear and damage transmitted", remote.gear == -1 && std::fabs(remote.damage - 0.3) < 1e-6);
+    ctx.check("engine load and boost transmitted", std::fabs(remote.throttle - 0.48) < 1e-4 && std::fabs(remote.boost - 0.4) < 1e-4);  // (16 bits each)
+    ctx.check("reverse gear and damage transmitted", remote.gear == -1 && std::fabs(remote.damage - 0.3) < 1e-4);
     bool switches = true;
     for (int mode : {LAMPS_HIGH, LAMPS_LOW, LAMPS_OFF, LAMPS_AUTO}) {
         car.lampMode = (uint8_t)mode;
@@ -121,7 +121,7 @@ SCENARIO(netJitter, "net/state-jitter", "Variable latency and reordered states d
     ctx.metric("worst backward jump from jitter", worstReverse, "m", 0, 1e-5);
     ctx.metric("largest move at 120 Hz and 10 m/s", maxStep, "m", 0.05, 0.15);
     ctx.metric("largest wheel animation step", maxAngleStep, "rad", 0.1, 0.3);
-    NetSessionTest::play(receiver, ctx.sim, 2.4);  // Just past the extrapolation limit.
+    NetSessionTest::play(receiver, ctx.sim, 2.6);  // Just past the coasting limit (behind the view delay).
     const V3 frozen = ctx.sim.cars[0].frame().com;
     ctx.sim.advance(1.0 / 60, 1000);
     ctx.check("prolonged packet loss stops remote coasting", len(ctx.sim.cars[0].frame().com - frozen) < 1e-9);

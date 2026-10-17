@@ -1854,6 +1854,7 @@ int main(int argc, char** argv) {
     // Time of day: the clock (hours) carries on from last time; --time holds it still.
     double dayHours = opt.timeHours >= 0 ? opt.timeHours : settings.clockHours;
     double levelHours = -1;  // the playing level's own hour (-1: none)
+    bool dayFromHost = false;  // in someone else's game: the sky is theirs (and our own clock waits in settings)
     int lampMode = opt.lamps >= 0 && opt.lamps < LAMP_MODES ? opt.lamps : LAMPS_AUTO;  // the player's headlight switch
     auto applySettings = [&]() {
         const int threads = resolvePhysicsThreads(settings.physicsThreads);
@@ -4586,19 +4587,23 @@ int main(int argc, char** argv) {
         view.time = (float)clock;
         {
             // Time of day: the clock runs (a whole day in settings.dayMinutes) unless it's
-            // held at a fixed time; in multiplayer the host's clock rules.
+            // held at a fixed time; in multiplayer the host's (or the server's) clock rules,
+            // and ours, and the setting, come back when we leave.
             double dayRate = 0;  // clock hours per real second
-            if (net.role == NetSession::CLIENT && net.dayHours >= 0) {
-                if (net.dayFresh) dayHours = net.dayHours, net.dayFresh = false;
-                dayRate = net.dayRate;
+            const bool fromHost = net.role == NetSession::CLIENT && net.dayHours >= 0;
+            if (dayFromHost && !fromHost) dayHours = settings.clockHours;
+            dayFromHost = fromHost;
+            if (fromHost) {
+                dayHours = net.dayHours;  // (run on to this moment by the session: everyone's sky agrees)
+                net.dayFresh = false;
             } else if (opt.timeHours >= 0) dayHours = opt.timeHours;
             else if (editor.active && editor.core.level.timeOfDay >= 0) dayHours = editor.core.level.timeOfDay;  // the editor shows the level's light
             else if (levelHours >= 0 && settings.timeOfDay != TOD_CYCLE) dayHours = levelHours;  // a level's hour holds over a fixed setting (with the cycle it starts there and runs)
             else if (settings.timeOfDay != TOD_CYCLE) dayHours = timeOfDayHours(settings.timeOfDay);
             else dayRate = clockAdvance(1.0, settings.dayMinutes);
             if (!sim.paused) dayHours = std::fmod(dayHours + dayRate * dt * sim.timeScale, 24.0);
-            settings.clockHours = (float)dayHours;
-            if (net.role == NetSession::HOST) net.dayHours = dayHours, net.dayRate = dayRate;
+            if (!fromHost) settings.clockHours = (float)dayHours;
+            if (net.role == NetSession::HOST) net.dayHours = dayHours, net.dayRate = sim.paused ? 0 : dayRate * sim.timeScale;
             renderer.daylight = computeDaylight(dayHours);
             // Each owner's switch is carried reliably, including OFF and high beams.
             renderer.carBeams.assign(sim.cars.size(), 0);
