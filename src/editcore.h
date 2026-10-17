@@ -87,7 +87,8 @@ struct EditPick {
 
 // What can be done to an object (EditCore::transformed): turn it, tip it, lift it, scale it as a whole, stretch it along one of
 // its own axes (rock: along, up, across; box: its extents; log: length, thickness; tree: height; model: front, up, left).
-enum ObjOp { OP_YAW, OP_PITCH, OP_ROLL, OP_LIFT, OP_SCALE, OP_STRETCH_X, OP_STRETCH_Y, OP_STRETCH_Z };
+enum ObjOp { OP_YAW, OP_PITCH, OP_ROLL, OP_LIFT, OP_SCALE, OP_STRETCH_X, OP_STRETCH_Y, OP_STRETCH_Z, OP_SEAT };
+// (OP_SEAT: sit it back on the ground, as placed; the others raise or lower it by any amount, in the air or in the ground, and it stays.)
 
 // An object's outline for drawing over the view: its edges, and for the convex ones (rocks, blocks) its faces.
 struct Shape {
@@ -179,7 +180,11 @@ public:
     // Applies an op to objects: each about itself, except a turn of several, which swings them all round their middle.
     void transformObjects(const std::vector<int>& ks, ObjOp op, double amount, const std::string& key = "xform");
     // One object after an op (it must be normalized: see below), re-grounded; the pure part of transformObjects.
-    LevelObject transformed(LevelObject o, ObjOp op, double amount) const;
+    LevelObject transformed(LevelObject o, ObjOp op, double amount);
+    // The first solid thing (a rock's hull, a solid box, a log) along a ray, skipping some level objects: where, and the surface normal.
+    bool rayObjects(const V3& o, const V3& d, double tMax, const std::vector<int>& skip, V3& p, V3& n) const;
+    // How much of rock `o` shows above the ground at its place when it sits on that ground, buried a little (its default).
+    double seatedTop(LevelObject o);
     // Object k with everything an op needs made explicit: a rock left to chance pinned as it was built, a box's height off the ground.
     LevelObject normalized(int k) const;
     // The same object moved by (dx, dz).

@@ -3894,6 +3894,26 @@ int main(int argc, char** argv) {
                 else editor.selectObjects({ks[4], ks[3]});
             }
             if (editor.active && frame == 8 && mode == "delete") editor.applyKey(SC_DELETE);
+            if (editor.active && frame == 5 && mode == "stack") {
+                const V3 c = (ed.level.hasStart ? ed.level.start : sim.world.spawn);
+                editor.setPalette(editor.findPalette("BOULDER"));
+                for (int k = 0; k < 6; k++) editor.applyKey(SC_EQUALS);  // (a big one to stack on)
+                const LevelObject big = editor.makeForScript(V3(c.x + 7, 0, c.z - 3));
+                ed.addObject(big);
+                editor.setPalette(editor.findPalette(std::getenv("CZ_PAL") ? std::getenv("CZ_PAL") : "ROCK"));
+            }
+            if (editor.active && frame == 9 && mode == "stack") {
+                const V3 c = (ed.level.hasStart ? ed.level.start : sim.world.spawn);
+                const Rock& r = sim.world.rocks.back();
+                float sx, sy;
+                if (editor.project(r.c + V3(0, r.r * 0.55, 0), sx, sy, W, H)) editor.setMouse(sx, sy);
+                (void)c;
+            }
+            if (editor.active && frame == 5 && (mode == "save" || mode == "ask")) {
+                ed.brush(BRUSH_RAISE, -10, 10, 6, 1.0);
+                if (mode == "save") editor.applyKey(SC_S, false, true);
+                else editor.applyKey(SC_ESCAPE);
+            }
             if (editor.active && frame == 12 && (mode == "playtest" || mode == "back")) editor.requestPlay(true);
             if (!editor.active && editorSuspended && frame == 50 && mode == "back") returnToEditor();
         }

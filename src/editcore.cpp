@@ -1031,14 +1031,28 @@ bool EditCore::rockToObject(const Rock& r, LevelObject& o) const {
         o.top = at.y - w.height(at.x, at.z) + topY;
         return true;
     }
-    // A code-made rock: the box round it, level (its shape is the seed's, so it won't be the same lumps).
+    // A code-made rock: a level rock whose box is the same as this one's (its lumps are the seed's, not these). The size is fitted:
+    // build it, see how wide it comes out, and correct, so that pinning a rock never changes how big it looks.
     if (r.v.empty()) return false;
     V3 lo(1e9, 1e9, 1e9), hi(-1e9, -1e9, -1e9);
     for (const V3& p : r.v) lo = V3(std::min(lo.x, p.x), std::min(lo.y, p.y), std::min(lo.z, p.z)), hi = V3(std::max(hi.x, p.x), std::max(hi.y, p.y), std::max(hi.z, p.z));
-    const V3 c = (lo + hi) * 0.5;
-    o.size = (hi - lo) * 0.5 * 0.9;
+    const V3 c = (lo + hi) * 0.5, want = (hi - lo) * 0.5;
+    o.size = want;
     o.p = V3(c.x, 0, c.z);
     o.top = hi.y - w.height(c.x, c.z);
+    World& tw = const_cast<World&>(w);  // (builds a rock and takes it away again)
+    for (int it = 0; it < 4; it++) {
+        const size_t n = tw.rocks.size();
+        placeObject(o, tw);
+        V3 l2(1e9, 1e9, 1e9), h2(-1e9, -1e9, -1e9);
+        for (const V3& p : tw.rocks.back().v) l2 = V3(std::min(l2.x, p.x), std::min(l2.y, p.y), std::min(l2.z, p.z)), h2 = V3(std::max(h2.x, p.x), std::max(h2.y, p.y), std::max(h2.z, p.z));
+        tw.rocks.resize(n);
+        const V3 got = (h2 - l2) * 0.5;
+        o.size = V3(o.size.x * want.x / std::max(got.x, 1e-3), o.size.y * want.y / std::max(got.y, 1e-3), o.size.z * want.z / std::max(got.z, 1e-3));
+        o.top += hi.y - h2.y;
+        // (the rock's middle may sit off the box's: slide it so the boxes meet)
+        o.p.x += c.x - (l2.x + h2.x) * 0.5, o.p.z += c.z - (l2.z + h2.z) * 0.5;
+    }
     return true;
 }
 
@@ -1237,7 +1251,41 @@ LevelObject EditCore::movedBy(LevelObject o, double dx, double dz) const {
     return grounded(o);
 }
 
-LevelObject EditCore::transformed(LevelObject o, ObjOp op, double a) const {
+bool EditCore::rayObjects(const V3& o, const V3& d, double tMax, const std::vector<int>& skip, V3& p, V3& n) const {
+    if (!world) return false;
+    const World& w = *world;
+    auto skipped = [&](int kind, int i) {
+        const int ow = ownerOf(kind, i);
+        return ow >= 0 && std::find(skip.begin(), skip.end(), ow) != skip.end();
+    };
+    double best = tMax;
+    bool got = false;
+    auto take = [&](const objshape::Hit& h) {
+        if (h.t >= best) return;
+        best = h.t, p = h.p, n = h.n, got = true;
+    };
+    objshape::Hit h;
+    for (int i = 0; i < (int)w.rocks.size(); i++)
+        if (!skipped(0, i) && objshape::rayRock(w.rocks[i], o, d, best, h)) take(h);
+    for (int i = 0; i < (int)w.logs.size(); i++)
+        if (!skipped(2, i) && objshape::rayLog(w.logs[i], o, d, best, h)) take(h);
+    for (int i = 0; i < (int)w.boxes.size(); i++)
+        if (w.boxes[i].solid && !skipped(3, i) && objshape::rayBox(w.boxes[i], o, d, best, h)) take(h);
+    return got;
+}
+
+double EditCore::seatedTop(LevelObject o) {
+    World& w = *world;
+    o.kind = OBJ_ROCK, o.top = 0, o.sub = 1;
+    const size_t n = w.rocks.size();
+    placeObject(o, w);
+    double lo = 1e9, hi = -1e9;
+    for (const V3& v : w.rocks.back().v) lo = std::min(lo, v.y), hi = std::max(hi, v.y);
+    w.rocks.resize(n);
+    return 0.85 * (hi - lo);
+}
+
+LevelObject EditCore::transformed(LevelObject o, ObjOp op, double a) {
     const World& w = *world;
     switch (o.kind) {
         case OBJ_ROCK:
@@ -1251,6 +1299,7 @@ LevelObject EditCore::transformed(LevelObject o, ObjOp op, double a) const {
                 case OP_STRETCH_X: o.size.x *= a; break;
                 case OP_STRETCH_Y: o.size.y *= a, o.top *= a; break;
                 case OP_STRETCH_Z: o.size.z *= a; break;
+                case OP_SEAT: o.top = seatedTop(o); break;
             }
             o.size = V3(clampd(o.size.x, 0.15, 14), clampd(o.size.y, 0.1, 10), clampd(o.size.z, 0.15, 14));
             return o;
@@ -1264,6 +1313,7 @@ LevelObject EditCore::transformed(LevelObject o, ObjOp op, double a) const {
                 case OP_STRETCH_X: o.size.x *= a; break;
                 case OP_STRETCH_Y: o.size.y *= a; break;
                 case OP_STRETCH_Z: o.size.z *= a; break;
+                case OP_SEAT: o.lift = 0; break;
             }
             o.size = V3(clampd(o.size.x, 0.05, 60), clampd(o.size.y, 0.03, 20), clampd(o.size.z, 0.05, 60));
             return grounded(o);
@@ -1285,6 +1335,11 @@ LevelObject EditCore::transformed(LevelObject o, ObjOp op, double a) const {
                 case OP_STRETCH_X: half = half * a; break;
                 case OP_STRETCH_Y:
                 case OP_STRETCH_Z: r *= a; break;
+                case OP_SEAT: {  // each end lying on the ground it's over
+                    const double ra = clampd(r, 0.05, 2.0);
+                    o.p.y = w.height(o.p.x, o.p.z) + ra, o.p2.y = w.height(o.p2.x, o.p2.z) + ra;
+                    return o;
+                }
             }
             const double L = len(half);
             if (L < 0.5) half = half * (0.5 / std::max(L, 1e-6));
@@ -1310,6 +1365,7 @@ LevelObject EditCore::transformed(LevelObject o, ObjOp op, double a) const {
         case OBJ_BUSH:
             switch (op) {
                 case OP_LIFT: o.lift += a; break;
+                case OP_SEAT: o.lift = 0; break;
                 case OP_SCALE:
                 case OP_STRETCH_X:
                 case OP_STRETCH_Y:
@@ -1321,6 +1377,7 @@ LevelObject EditCore::transformed(LevelObject o, ObjOp op, double a) const {
         case OBJ_TREE:
             switch (op) {
                 case OP_LIFT: o.lift += a; break;
+                case OP_SEAT: o.lift = 0; break;
                 case OP_SCALE:
                 case OP_STRETCH_Y: o.size.y *= a; break;
                 default: break;
@@ -1335,6 +1392,7 @@ LevelObject EditCore::transformed(LevelObject o, ObjOp op, double a) const {
             switch (op) {
                 case OP_YAW: o.yaw += a; break;
                 case OP_LIFT: o.lift += a; break;
+                case OP_SEAT: o.lift = 0; break;
                 case OP_SCALE: s = s * a; break;
                 case OP_STRETCH_X: s.x *= a; break;
                 case OP_STRETCH_Y: s.y *= a; break;
@@ -1368,7 +1426,7 @@ void EditCore::moveObjects(const std::vector<int>& ks, double dx, double dz, con
 }
 
 void EditCore::transformObjects(const std::vector<int>& ks, ObjOp op, double amount, const std::string& key) {
-    static const char* names[] = {"TURN", "TIP", "ROLL", "RAISE", "SCALE", "STRETCH", "STRETCH", "STRETCH"};
+    static const char* names[] = {"TURN", "TIP", "ROLL", "RAISE", "SCALE", "STRETCH", "STRETCH", "STRETCH", "SEAT"};
     std::vector<int> v;
     for (int k : ks)
         if (k >= 0 && k < (int)level.objects.size()) v.push_back(k);

@@ -640,3 +640,144 @@ SCENARIO(editorSaveFlow, "editor/save-flow", "Saving never refuses: an unnamed l
     for (const std::string& f : listLevelFiles(levels, ".czl")) std::remove(f.c_str());
     unsetenv("XDG_CONFIG_HOME");
 }
+
+SCENARIO(editorFreeHeight, "editor/free-height", "Any object can float or sink and stays exactly there (save, load, undo, terrain edits nearby); rocks stack on rocks; SNAP TO GROUND sits one back down; scaling shows at once for code-made rocks too") {
+    props::ScopedRockScans scans(&props::sharedHullLibrary());
+    World w(MAP_PROVING_GROUND);
+    Level lv;
+    lv.map = MAP_PROVING_GROUND;
+    EditCore ed;
+    ed.begin(w, lv);
+    const props::HullLibrary& lib = props::sharedHullLibrary();
+    if (!ctx.check("rock scans loaded", lib.loaded())) return;
+    auto lowY = [](const Rock& r) {
+        double m = 1e9;
+        for (const V3& v : r.v) m = std::min(m, v.y);
+        return m;
+    };
+    auto highY = [](const Rock& r) {
+        double m = -1e9;
+        for (const V3& v : r.v) m = std::max(m, v.y);
+        return m;
+    };
+    LevelObject a;
+    a.kind = OBJ_ROCK, a.p = V3(-300, 0, 250), a.size = lib.hulls[3].half() * 2.0, a.top = a.size.y * 1.7, a.sub = 1, a.scan = 3, a.seed = 1;
+    const int ka = ed.addObject(a);
+    const Rock under = w.rocks.back();
+    const double g = w.height(-300, 250);
+    ctx.check("it sits in the ground", lowY(under) < g + 0.05 && highY(under) > g + 0.5);
+    // Stacking: a ray from above onto it meets its top; a second rock placed there rests on that surface.
+    V3 p, n;
+    const bool hit = ed.rayObjects(V3(-300, g + 40, 250), V3(0, -1, 0), 1e9, {}, p, n);
+    ctx.check("a ray from above meets the rock's top surface", hit && n.y > 0.25 && p.y > g + 0.5 && p.y <= highY(under) + 1e-6);
+    ctx.check("...but not when that rock is the one being dragged", !ed.rayObjects(V3(-300, g + 40, 250), V3(0, -1, 0), 1e9, {ka}, p, n));
+    ed.rayObjects(V3(-300, g + 40, 250), V3(0, -1, 0), 1e9, {}, p, n);
+    LevelObject b = a;
+    b.p = V3(p.x, 0, p.z), b.size = lib.hulls[3].half() * 1.2, b.scan = 3, b.top = b.size.y * 1.7 + (p.y - g);
+    const int kb = ed.addObject(b);
+    const Rock stacked = w.rocks.back();
+    ctx.check("the second rock rests on the first, not in the ground", lowY(stacked) > g + 0.4 && lowY(stacked) < p.y + 0.05 && highY(stacked) > p.y + 0.3 && lowY(stacked) > p.y - 0.4 * (highY(stacked) - lowY(stacked)),
+              "g " + std::to_string(g) + " surface " + std::to_string(p.y) + " low " + std::to_string(lowY(stacked)) + " high " + std::to_string(highY(stacked)));
+    // Floating and sinking, exactly, through everything that rebuilds the world.
+    ed.transformObjects({kb}, OP_LIFT, 3.0);
+    const double topAir = ed.level.objects[kb].top;
+    ed.transformObjects({kb}, OP_LIFT, -9.0);
+    const double sunk = ed.level.objects[kb].top;
+    ctx.metric("raised 3 m then lowered 9 m: 6 m down, exactly", topAir - sunk, "m", 8.999, 9.001);
+    ctx.check("lowered below the ground it's buried, and the world agrees", highY(w.rocks.back()) < g + 0.01);
+    ed.transformObjects({kb}, OP_LIFT, 12.0);
+    ctx.check("floating well over the ground", lowY(w.rocks.back()) > g + 3);
+    const double floatTop = ed.level.objects[kb].top;
+    ed.brush(BRUSH_RAISE, -290, 250, 6, 0.5);  // (terrain edited beside it)
+    ctx.check("terrain edits nearby don't change what was set", ed.level.objects[kb].top == floatTop);
+    Level back = roundTrip(ed.level);
+    ctx.check("saved and loaded: the same offset", std::fabs(back.objects[kb].top - floatTop) < 1e-3);
+    World pw = playWorldOf(back);
+    ctx.metric("played back: floating where the editor had it", lowY(pw.rocks.back()) - lowY(w.rocks.back()), "m", -0.02, 0.02);
+    ed.undo();
+    ed.redo();
+    ctx.check("undo and redo leave it where it was", ed.level.objects[kb].top == floatTop);
+    // Boxes, trees, structures, bushes: a lift, any size, the same.
+    LevelObject bx;
+    bx.kind = OBJ_BOX, bx.p = V3(-320, 0, 250), bx.size = V3(2, 0.4, 1), bx.col[0] = 0.5f;
+    const int kx = ed.addObject(ed.grounded(bx));
+    LevelObject tr;
+    tr.kind = OBJ_TREE, tr.p = V3(-330, 0, 250), tr.size = V3(0, 8, 0);
+    const int kt = ed.addObject(tr);
+    LevelObject bu;
+    bu.kind = OBJ_BUSH, bu.p = V3(-340, 0, 250), bu.size = V3(1, 0, 0), bu.col[0] = 1;
+    const int ku = ed.addObject(bu);
+    LevelObject st;
+    st.kind = OBJ_MODEL, st.name = "outhouse", st.p = V3(-350, 0, 250), st.size = V3(1, 1, 1);
+    const int ks = ed.addObject(st);
+    ed.transformObjects({kx, kt, ku, ks}, OP_LIFT, 4.0);
+    const double boxY = w.boxes[w.boxes.size() - 2].c.y;  // (the model's collider is the last)
+    (void)boxY;
+    ctx.check("a box floats", ed.level.objects[kx].p.y > w.height(-320, 250) + 4 && std::fabs(ed.level.objects[kx].lift - 4) < 1e-6);
+    ctx.check("a tree, a bush and a structure float", std::fabs(ed.level.objects[kt].lift - 4) < 1e-6 && std::fabs(ed.level.objects[ku].lift - 4) < 1e-6 && std::fabs(ed.level.objects[ks].lift - 4) < 1e-6 &&
+                                                       w.bushes.back().p.y > w.height(-340, 250) + 3.9);
+    ed.transformObjects({kx, kt, ku, ks}, OP_LIFT, -6.0);
+    ctx.check("and sink", ed.level.objects[kt].lift < -1.9 && w.trees.back().base.y < w.height(-330, 250));
+    ed.brush(BRUSH_RAISE, -320, 250, 5, 1.0);
+    ctx.check("a box's height isn't redone by terrain edits", std::fabs(ed.level.objects[kx].lift + 2) < 1e-6);
+    // Snap to ground: back as placed.
+    ed.transformObjects({kb, kx, kt, ku, ks}, OP_SEAT, 0);
+    ctx.check("boxes, trees, bushes and structures sit on the ground again", ed.level.objects[kx].lift == 0 && ed.level.objects[kt].lift == 0 && ed.level.objects[ku].lift == 0 && ed.level.objects[ks].lift == 0);
+    const Rock seated = w.rocks.back();
+    const double gb = w.height(ed.level.objects[kb].p.x, ed.level.objects[kb].p.z);
+    ctx.check("a rock sits in the ground a little, its top above it", lowY(seated) < gb && lowY(seated) > gb - 0.5 * (highY(seated) - lowY(seated)) && highY(seated) > gb + 0.5 * (highY(seated) - lowY(seated)),
+              "gb " + std::to_string(gb) + " low " + std::to_string(lowY(seated)) + " high " + std::to_string(highY(seated)));
+    // Scaling shows at once on code-made rocks too (scans off), and the collider is that hull.
+    {
+        props::ScopedRockScans off(nullptr);
+        World cw(MAP_PROVING_GROUND);
+        EditCore ec;
+        ec.begin(cw, lv);
+        LevelObject c;
+        c.kind = OBJ_ROCK, c.p = V3(-300, 0, 250), c.size = V3(1.5, 1, 1.2), c.top = 0.9, c.seed = 7;
+        const int kc = ec.addObject(c);
+        auto ext = [&](const Rock& r) {
+            double lo = 1e9, hi = -1e9;
+            for (const V3& v : r.v) lo = std::min(lo, v.x), hi = std::max(hi, v.x);
+            return hi - lo;
+        };
+        const double e0 = ext(cw.rocks.back());
+        ec.transformObjects({kc}, OP_SCALE, 1.0);  // (pinned as it was built: the same width)
+        ctx.metric("pinning a code-made rock keeps its width", ext(cw.rocks.back()) / e0, "x", 0.9, 1.1);
+        ec.transformObjects({kc}, OP_SCALE, 2.0);
+        ctx.metric("a code-made rock scaled 2x is twice as wide", ext(cw.rocks.back()) / e0, "x", 1.8, 2.2);
+    }
+}
+
+SCENARIO(editorLiveSection, "editor/live-section", "Editing a built-in section level (its rocks come from the generator): they become level objects you can move, and it saves and plays back the same") {
+    const Level* sec = nullptr;
+    for (const Level& l : builtinLevels())
+        if (l.section.on && l.section.live) {
+            sec = &l;
+            break;
+        }
+    if (!ctx.check("a built-in live section level exists", sec != nullptr)) return;
+    Level own = *sec;
+    own.builtin = false, own.file.clear(), own.name += " (MINE)";  // (as the editor opens it)
+    World w = levelWorld(own);
+    EditCore ed;
+    ed.begin(w, own);
+    const size_t rocks0 = w.rocks.size();
+    ctx.check("the section has rocks the level doesn't list", rocks0 > 0 && ed.level.objects.empty());
+    // Pick one of them the way a click does: a ray down onto its middle.
+    const V3 c = w.rocks[rocks0 / 2].c;
+    const EditPick pk = ed.pick(V3(c.x, c.y + 40, c.z), V3(0, -1, 0), 1e9, true);
+    ctx.check("a click on it picks it", pk.kind == EditPick::BASE && pk.baseKind == 0, pk.name);
+    const std::vector<int> ks = ed.adopt({pk});
+    ctx.check("it became a level object", ks.size() == 1 && ks[0] >= 0 && ed.level.objects.size() == 1 && w.rocks.size() == rocks0);
+    ed.moveObjects(ks, 6, 0);
+    ed.transformObjects(ks, OP_SCALE, 1.4);
+    ed.transformObjects(ks, OP_LIFT, 1.0);
+    Level back = roundTrip(ed.level);
+    World pw = levelWorld(back);
+    applyLevel(back, pw);
+    ctx.check("saved and played: the same number of rocks, one of them moved", back.section.live && pw.rocks.size() == w.rocks.size());
+    double gap = 1e9;
+    for (const Rock& r : pw.rocks) gap = std::min(gap, len(r.c - w.rocks.back().c));
+    ctx.metric("the moved, scaled, raised rock plays where the editor shows it", gap, "m", 0, 0.1);
+}
