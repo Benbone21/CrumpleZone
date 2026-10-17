@@ -1519,7 +1519,9 @@ uniform vec4 uLook;     // x height scale, y width scale, z 1: plain blades (the
 uniform vec2 uRockSnow;
 uniform int uPushN;
 uniform vec4 uPush[8];  // vehicles as capsules: (x, z, radius) of one end, then (x, z) of the other
-out vec3 vPos; out vec3 vN; out vec3 vC0; out vec3 vC1; out vec3 vC2; out vec2 vT;
+uniform vec3 uSun; uniform float uClouds;       // (the shadows are worked out here, a few times a blade instead of at every pixel)
+uniform sampler2DShadow uShadow0, uShadow1; uniform mat4 uLightVP0, uLightVP1; uniform vec4 uShadowCfg;
+out vec3 vPos; out vec3 vN; out vec3 vC0; out vec3 vC1; out vec3 vC2; out vec2 vT; out float vSh;
 float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float vnoise(vec2 p){
   vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
@@ -1537,7 +1539,29 @@ float hs(vec2 c, uint s){  // integer hash of a cell and a salt: sin() hashes re
   return float(h & 0xFFFFFFu) / 16777216.0;
 }
 vec4 tx(ivec2 i){ return texelFetch(uTerrainTex, clamp(i, ivec2(0), ivec2(int(uTerrainN) - 1)), 0); }
-void gone(){ vPos = vec3(0.0); vN = vec3(0.0, 1.0, 0.0); vC0 = vC1 = vC2 = vec3(0.0); vT = vec2(0.0, 2.0); gl_Position = vec4(2.0, 2.0, 2.0, 1.0); }
+float grassShadow(vec3 p){
+  float sh = 1.0;
+  if (uShadowCfg.x > 0.5) {
+    vec3 q = p + vec3(0.0, 0.035, 0.0);
+    vec4 L0 = uLightVP0 * vec4(q, 1.0);
+    vec3 c0 = L0.xyz / L0.w * 0.5 + 0.5;
+    float e0 = max(abs(c0.x - 0.5), abs(c0.y - 0.5));
+    float far = 1.0;
+    if (e0 > 0.42) {
+      vec4 L1 = uLightVP1 * vec4(q, 1.0);
+      vec3 c1 = L1.xyz / L1.w * 0.5 + 0.5;
+      if (max(abs(c1.x - 0.5), abs(c1.y - 0.5)) < 0.5 && c1.z < 1.0) far = texture(uShadow1, vec3(c1.xy, c1.z - 0.0004));
+    }
+    sh = far;
+    if (e0 < 0.5 && c0.z < 1.0) sh = mix(texture(uShadow0, vec3(c0.xy, c0.z - 0.00012)), far, smoothstep(0.42, 0.5, e0));
+  }
+  if (uClouds > 0.5) {
+    vec2 w = p.xz + uSun.xz / max(uSun.y, 0.2) * (1800.0 - p.y);
+    sh *= 1.0 - 0.65 * smoothstep(0.50, 0.78, fbm(w * 0.00045 + vec2(uTime * 0.004, uTime * 0.0015), 3));
+  }
+  return sh;
+}
+void gone(){ vSh = 1.0; vPos = vec3(0.0); vN = vec3(0.0, 1.0, 0.0); vC0 = vC1 = vC2 = vec3(0.0); vT = vec2(0.0, 2.0); gl_Position = vec4(2.0, 2.0, 2.0, 1.0); }
 void main(){
   int id = gl_VertexID, k = id % 7, blade = id / 7;
   int tuft = gl_InstanceID;
@@ -1548,6 +1572,10 @@ void main(){
   float share = smoothstep(uRing.x, uRing.y, dist) * (1.0 - smoothstep(uRing.z, uRing.w, dist));
   float grow = smoothstep(0.0, 0.3, share - hs(cell, 3u));
   if (grow <= 0.0) { gone(); return; }
+  {  // Out of the view sideways (the height hardly matters for that): gone before any texture or noise work.
+    vec4 c0 = uVP * vec4(base.x, uCam.y - 1.0, base.y, 1.0);
+    if (c0.w < -2.0 || abs(c0.x) > c0.w + 2.5 * uVP[0][0] + 2.0) { gone(); return; }
+  }
   // The four terrain texels round the tuft: height and slope, how thick it grows, paint, water.
   vec2 g = base + 600.0;
   ivec2 i0 = ivec2(floor(g));
@@ -1575,7 +1603,7 @@ void main(){
   // How thick: the world's density, clumped (patches and gaps), thinner where the ground shows through.
   float clump = smoothstep(0.25, 0.75, fbm(base * 0.45 + 2.0, 2));
   float d = dens * (0.7 + 0.8 * clump) * (1.0 - 0.8 * bald) * (1.0 - 0.3 * smoothstep(0.35, 0.65, n1) * (1.0 - dry))
-          * (1.0 - 0.5 * dry) * (1.0 - 0.9 * forest) * (1.0 - steep) * (1.0 - 0.7 * high) * (1.0 - snow) * (1.0 + 0.5 * wet);
+          * (1.0 - 0.5 * dry) * (1.0 - 0.75 * forest) * (1.0 - steep) * (1.0 - 0.7 * high) * (1.0 - snow) * (1.0 + 0.5 * wet);
   float e = d - hs(cell, 4u);
   if (e <= 0.0) { gone(); return; }
   grow *= smoothstep(0.0, 0.2, e);
@@ -1651,6 +1679,7 @@ void main(){
   float gh = gy + dot(slope, off) - 0.02;
   vec3 p = vec3(bp.x + hz.x + wdv.x * w0 * wv * sd, gh + up, bp.y + hz.y + wdv.y * w0 * wv * sd);
   vPos = p;
+  vSh = grassShadow(vec3(bp.x, gh + 0.05 + up * 0.5, bp.y));
   vN = normalize(vec3(-ld.x, 0.4 + 1.6 * lean * t, -ld.y));
   vC0 = body0 * (0.85 + 0.3 * wr); vC1 = body1 * (0.85 + 0.3 * hr); vC2 = headAt > 1.0 ? vC1 : head;
   vT = vec2(t, headAt);
@@ -1658,7 +1687,7 @@ void main(){
 })";
 
 const char* kGrassFSBody = R"(
-in vec3 vPos; in vec3 vN; in vec3 vC0; in vec3 vC1; in vec3 vC2; in vec2 vT;
+in vec3 vPos; in vec3 vN; in vec3 vC0; in vec3 vC1; in vec3 vC2; in vec2 vT; in float vSh;
 out vec4 oCol;
 void main(){
   float t = vT.x;
@@ -1668,7 +1697,7 @@ void main(){
   vec3 n = normalize(vN);
   if (dot(n, V) < 0.0) n = -n;                       // (a blade has two faces: the one you see)
   n = normalize(mix(n, vec3(0, 1, 0), 0.5));
-  float sh = shadowAt(vPos, vec3(0, 1, 0));
+  float sh = vSh;
   float ao = mix(0.25, 1.0, smoothstep(0.0, 0.6, t));   // dark down at the root
   float lit = max(dot(n, uSun) * 0.6 + 0.4, 0.0);
   float through = pow(max(dot(-V, uSun), 0.0), 3.0) * 0.45 * smoothstep(0.1, 0.8, t);  // the sun shining through the blades
@@ -3764,8 +3793,8 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         struct GrassRing { float cell; int side, blades; bool plain; float in0, in1, out0, out1, height, width; bool heads; };
         static const GrassRing kRings[3][3] = {
             {{0.50f, 56, 5, true, -2, -1, 7, 12, 1.0f, 1.4f, false}, {1.00f, 72, 4, true, 7, 12, 24, 34, 1.0f, 2.2f, false}, {0, 0, 0, true, 0, 0, 0, 0, 0, 0, false}},
-            {{0.36f, 80, 6, false, -2, -1, 8.5f, 13.5f, 1.0f, 1.0f, true}, {0.70f, 96, 6, false, 8.5f, 13.5f, 22, 32, 1.0f, 1.6f, true}, {1.30f, 108, 5, true, 22, 32, 50, 68, 1.0f, 2.4f, false}},
-            {{0.28f, 104, 8, false, -2, -1, 9, 14, 1.0f, 1.0f, true}, {0.55f, 124, 7, false, 9, 14, 24, 34, 1.0f, 1.5f, true}, {1.00f, 140, 6, true, 24, 34, 54, 72, 1.0f, 2.2f, false}},
+            {{0.36f, 80, 6, false, -2, -1, 8.5f, 13.5f, 1.0f, 1.0f, true}, {0.62f, 108, 6, false, 8.5f, 13.5f, 22, 32, 1.05f, 1.9f, true}, {1.20f, 116, 5, true, 22, 32, 50, 68, 1.0f, 3.0f, false}},
+            {{0.30f, 96, 7, false, -2, -1, 9, 14, 1.0f, 1.0f, true}, {0.52f, 132, 6, false, 9, 14, 24, 34, 1.05f, 1.8f, true}, {0.95f, 152, 5, true, 24, 34, 54, 72, 1.0f, 2.8f, false}},
         };
         setLighting(progGrass);
         bindTerrainTex(progGrass);
@@ -3814,11 +3843,8 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
             BeginQuery(GL_TIME_ELAPSED, grassQuery_[f]);
             grassQueryUsed_[f] = true;
         }
-        static const int dbgMask = std::getenv("CZ_GRASS_MASK") ? std::atoi(std::getenv("CZ_GRASS_MASK")) : 7;  // DBG
-        int dbgRing = -1;  // DBG
         for (const GrassRing& r : kRings[std::min(settings.grass, 3) - 1]) {
-            dbgRing++;  // DBG
-            if (!r.side || !(dbgMask >> dbgRing & 1)) continue;
+            if (!r.side) continue;  // (the setting's unused ring)
             Uniform1i(uniformLocation(progGrass, "uSide"), r.side);
             Uniform1i(uniformLocation(progGrass, "uBlades"), r.blades);
             Uniform1f(uniformLocation(progGrass, "uCell"), r.cell);
