@@ -32,18 +32,20 @@ struct Gate {
 };
 
 // Something placed in the world.
-enum LevelObjectKind { OBJ_ROCK, OBJ_BOX, OBJ_LOG, OBJ_TREE, OBJ_STATION, OBJ_KIND_COUNT };
+enum LevelObjectKind { OBJ_ROCK, OBJ_BOX, OBJ_LOG, OBJ_TREE, OBJ_STATION, OBJ_MODEL, OBJ_KIND_COUNT };
 struct LevelObject {
     int kind = OBJ_ROCK;
     V3 p;              // position (rock, tree, station: on the ground at x, z; box: its center)
-    V3 size;           // rock: half-sizes (along, up, across); box: half extents; log: (r, 0, 0)
+    V3 size;           // rock: half-sizes (along, up, across); box: half extents; log: (r, 0, 0); model: its scale (front, up, left)
     V3 p2;             // log: the other end
     double yaw = 0, pitch = 0, roll = 0;  // radians
     double top = 0;    // rock: how much shows above the ground
     uint32_t seed = 1; // rock: its shape
-    int sub = 0;       // tree: 0 pine, 1 broadleaf, 2 dead; box: 1 = rock slab
+    int sub = 0;       // tree: 0 pine, 1 broadleaf, 2 dead; box: 1 = rock slab; rock: 1 = placed in a pose (yaw, pitch, roll), not left to chance
     float col[3] = {0.6f, 0.6f, 0.6f};
-    std::string name;  // station
+    std::string name;  // station; model: its id (modelkit.h)
+    double lift = 0;   // box, tree, model: how far it stands above where the ground would put it (m; negative sinks it)
+    int scan = -1;     // rock in a pose: which scanned rock (index into the hull library); -1 whichever fits its proportions
 };
 
 // An obstacle section authored in the editor (sections.h, sectionfile.h): a strip of ground with an
@@ -104,7 +106,7 @@ struct Level {
     std::map<int, float> water;
     std::map<int, std::pair<float, float>> flow;  // current in the water there (world x, z m/s): a stamped river keeps its own ("#flow" comment lines)
     std::vector<LevelObject> objects;
-    std::vector<V3> removed;           // base-map objects taken out: (x, 0, z), each the nearest within 1.5 m
+    std::vector<V3> removed;           // base-map objects taken out: (x, kind, z), each the nearest within 1.5 m (kind: 0 any, else 1 + EditPick::baseKind)
 
     bool builtin = false;
     bool hasJob() const { return mode != LEVEL_FREE && !gates.empty(); }

@@ -8,6 +8,7 @@
 // on a fresh World(level.map), so what you see in the editor is what the level plays like.
 #pragma once
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <map>
 #include <string>
@@ -45,12 +46,26 @@ struct EditPick {
     enum Kind { NONE, OBJECT, BASE, GATE, START };
     Kind kind = NONE;
     int index = -1;     // OBJECT: into level.objects; GATE: into level.gates; BASE: into its world list
-    int baseKind = -1;  // BASE: 0 rock, 1 tree, 2 log, 3 box, 4 fixture
+    int baseKind = -1;  // BASE: 0 rock, 1 tree, 2 log, 3 box, 4 fixture (5: a model the level placed)
     V3 at;              // where it stands (on the ground); for BASE, where removeNear will find it
     double t = 1e18;    // distance along the ray
     std::string name;   // "ROCK", "GATE 3", ...
     bool operator==(const EditPick& o) const { return kind == o.kind && index == o.index && baseKind == o.baseKind; }
     bool operator!=(const EditPick& o) const { return !(*this == o); }
+};
+
+// What can be done to an object (EditCore::transformed): turn it, tip it, lift it, scale it as a whole, stretch it along one of
+// its own axes (rock: along, up, across; box: its extents; log: length, thickness; tree: height; model: front, up, left).
+enum ObjOp { OP_YAW, OP_PITCH, OP_ROLL, OP_LIFT, OP_SCALE, OP_STRETCH_X, OP_STRETCH_Y, OP_STRETCH_Z };
+
+// An object's outline for drawing over the view: its edges, and for the convex ones (rocks, blocks) its faces.
+struct Shape {
+    std::vector<std::pair<V3, V3>> edges;
+    std::vector<std::array<V3, 3>> tris;
+    void add(const Shape& o) {
+        edges.insert(edges.end(), o.edges.begin(), o.edges.end());
+        tris.insert(tris.end(), o.tris.begin(), o.tris.end());
+    }
 };
 
 class EditCore {
@@ -106,6 +121,30 @@ public:
     // A copy of an object with its height worked out for where it stands now (boxes sit
     // on the ground, logs lie on it).
     LevelObject grounded(LevelObject o) const;
+    // The map's own objects become the level's, so they can be moved, turned, scaled and deleted like the ones you place:
+    // each is taken out of the map (level.removed, with its kind) and put back as an equal LevelObject. One undo step.
+    // Returns their object indices, in order (-1 for one that can't be: a cabin, a fence...). Picks that already are objects pass through.
+    std::vector<int> adopt(const std::vector<EditPick>& picks);
+    bool canAdopt(const EditPick& p) const;
+    // Deletes a set of objects and the map's own as one undo step.
+    void removePicks(const std::vector<EditPick>& picks);
+    // Moves objects by (dx, dz) on the ground, keeping how high each stands above it. One undo step (quick repeats merge on `key`).
+    void moveObjects(const std::vector<int>& ks, double dx, double dz, const std::string& key = "move");
+    // Applies an op to objects: each about itself, except a turn of several, which swings them all round their middle.
+    void transformObjects(const std::vector<int>& ks, ObjOp op, double amount, const std::string& key = "xform");
+    // One object after an op (it must be normalized: see below), re-grounded; the pure part of transformObjects.
+    LevelObject transformed(LevelObject o, ObjOp op, double amount) const;
+    // Object k with everything an op needs made explicit: a rock left to chance pinned as it was built, a box's height off the ground.
+    LevelObject normalized(int k) const;
+    // The same object moved by (dx, dz).
+    LevelObject movedBy(LevelObject o, double dx, double dz) const;
+    // A rock of the world as an equal level object (a scanned one exactly; a code-made one by its bounds).
+    bool rockToObject(const Rock& r, LevelObject& o) const;
+    // The world's parts (baseKind, index) that object k made.
+    std::vector<std::pair<int, int>> partsOf(int k) const;
+    // The outline of a part of the world, and of an object that isn't placed yet (a ghost; the world is left as it was).
+    Shape shapeOf(int baseKind, int index) const;
+    Shape previewShape(const LevelObject& o);
 
     // The course.
     void setStart(double x, double z, double yaw);
@@ -132,6 +171,26 @@ public:
         fn(level);
         endEdit();
     }
+
+    // ---- Trying the level out ------------------------------------------------------------
+    // Where a playtest starts: `here` (on the ground at `at`, facing `yaw`), else the level's start, else the map's own spawn.
+    struct PlaySpot {
+        V3 p;
+        double yaw = 0;
+        bool here = false, fromStart = false;  // fromStart: the level has a start (so a pad is built there)
+    };
+    PlaySpot playSpot(bool here, const V3& at, double yaw) const;
+    // The level to play: as it is now (a copy; the edits stay in the editor). Testing from here, a free drive.
+    Level levelToPlay(bool here) const;
+    // Back to editing after a playtest, on a fresh plain map `w` (levelWorld(level)): the level, its undo history and
+    // everything else are as they were left, and the world is rebuilt from them. (No reload from disk: unsaved work stays.)
+    void resume(World& w);
+
+    // ---- Recovery copies -----------------------------------------------------------------
+    // Where the level's recovery copy goes in `dir`, and writing it there (the level's own file is never touched).
+    std::string autosavePath(const std::string& dir) const;
+    bool autosave(const std::string& dir, std::string* err = nullptr);
+    int autosavedChanges = -1;  // the `changes` count the recovery copy has
 
     // ---- Undo -------------------------------------------------------------------------
     bool undo();
@@ -181,11 +240,12 @@ private:
         std::vector<Box> boxes;
         std::vector<Prop> fixtures;
         std::vector<Station> stations;
+        std::vector<Placed> models;
         V3 spawn;
         double spawnYaw = 0;
     } base;
-    int baseCount[5] = {0, 0, 0, 0, 0};       // after removals: rocks, trees, logs, boxes, fixtures
-    std::vector<int> owner[5];                // world index -> level object (-1 the map's)
+    int baseCount[6] = {0, 0, 0, 0, 0, 0};    // after removals: rocks, trees, logs, boxes, fixtures, models
+    std::vector<int> owner[6];                // world index -> level object (-1 the map's)
     std::vector<Entry> history, future;
     Entry pending;
     std::map<int, size_t> pendingCells;       // (id * 4 + what) -> index in pending.cells
@@ -203,6 +263,10 @@ private:
     void clearBushes();  // a section's canvas has none (they're scenery the level can't take out)
     void markCell(int id);
     void trim();
+    void applyCells(World& w);
+    void replaceObjects(const std::vector<std::pair<int, LevelObject>>& set, const std::string& what, const std::string& key);
+    int resolveBase(const EditPick& p) const;
+    bool baseToObject(const EditPick& p, LevelObject& o, V3& key) const;
 };
 
 // A file name for a level name ("Dune Run!" -> "dune_run").

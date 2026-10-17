@@ -239,12 +239,15 @@ Rock& addScannedRock(World& w, const props::HullLibrary& lib, double x, double z
         if (!dup) pick.push_back(c);
         if (pick.size() == 4) break;
     }
-    const Cand& c = pick[std::min((size_t)(rnd() * pick.size()), pick.size() - 1)];
+    Cand c = pick[std::min((size_t)(rnd() * pick.size()), pick.size() - 1)];
+    const bool forced = pose && pose->scan >= 0 && pose->scan < (int)lib.hulls.size();
+    if (forced) c = {0, pose->scan, false};  // (a picked scan: its own way round, sized exactly as asked)
     const props::RockHull& hull = lib.hulls[c.i];
     const V3 h = hull.half(), mid((hull.bmin[0] + hull.bmax[0]) * 0.5, (hull.bmin[1] + hull.bmax[1]) * 0.5, (hull.bmin[2] + hull.bmax[2]) * 0.5);
     const double wantX = c.swap ? radii.z : radii.x, wantZ = c.swap ? radii.x : radii.z;
-    const V3 scale(wantX / std::max(h.x, 1e-3) * (0.94 + 0.12 * rnd()), radii.y / std::max(h.y, 1e-3) * (0.94 + 0.12 * rnd()),
-                   wantZ / std::max(h.z, 1e-3) * (0.94 + 0.12 * rnd()));
+    V3 scale(wantX / std::max(h.x, 1e-3) * (0.94 + 0.12 * rnd()), radii.y / std::max(h.y, 1e-3) * (0.94 + 0.12 * rnd()),
+             wantZ / std::max(h.z, 1e-3) * (0.94 + 0.12 * rnd()));
+    if (forced) scale = V3(wantX / std::max(h.x, 1e-3), radii.y / std::max(h.y, 1e-3), wantZ / std::max(h.z, 1e-3));
     const double yaw = rnd() * 2 * M_PI, tipX = (rnd() - 0.5) * 0.2, tipZ = (rnd() - 0.5) * 0.2;
     // Model axes in the world: scaled, tipped, turned.
     V3 ax[3] = {V3(scale.x, 0, 0), V3(0, scale.y, 0), V3(0, 0, scale.z)};
@@ -1303,21 +1306,30 @@ void World::addTree(double x, double z, double treeHeight, int kind, float tint)
 
 void World::addLog(V3 a, V3 b, double r) { logs.push_back({a, b, r}); }
 
-std::string World::removeNear(double x, double z, double r) {
+std::string World::removeNear(double x, double z, double r, int onlyKind) {
     double best = r;
     int kind = -1, idx = -1;
     auto consider = [&](double d, int k, int i) {
         if (d < best) best = d, kind = k, idx = i;
     };
-    for (int i = 0; i < (int)rocks.size(); i++) consider(std::max(0.0, std::hypot(rocks[i].c.x - x, rocks[i].c.z - z) - rocks[i].r * 0.5), 0, i);
-    for (int i = 0; i < (int)trees.size(); i++) consider(std::hypot(trees[i].base.x - x, trees[i].base.z - z), 1, i);
-    for (int i = 0; i < (int)logs.size(); i++) {
-        const V3 m = (logs[i].a + logs[i].b) * 0.5;
-        consider(std::hypot(m.x - x, m.z - z), 2, i);
-    }
-    for (int i = 0; i < (int)boxes.size(); i++)
-        if (!boxes[i].hidden) consider(std::hypot(boxes[i].c.x - x, boxes[i].c.z - z), 3, i);
-    for (int i = 0; i < (int)fixtures.size(); i++) consider(std::hypot(fixtures[i].a.x - x, fixtures[i].a.z - z), 4, i);
+    const bool any = onlyKind < 0 || onlyKind > 4;
+    if (any || onlyKind == 0)
+        for (int i = 0; i < (int)rocks.size(); i++) {
+            const double d = std::hypot(rocks[i].c.x - x, rocks[i].c.z - z);
+            consider(any ? std::max(0.0, d - rocks[i].r * 0.5) : d, 0, i);
+        }
+    if (any || onlyKind == 1)
+        for (int i = 0; i < (int)trees.size(); i++) consider(std::hypot(trees[i].base.x - x, trees[i].base.z - z), 1, i);
+    if (any || onlyKind == 2)
+        for (int i = 0; i < (int)logs.size(); i++) {
+            const V3 m = (logs[i].a + logs[i].b) * 0.5;
+            consider(std::hypot(m.x - x, m.z - z), 2, i);
+        }
+    if (any || onlyKind == 3)
+        for (int i = 0; i < (int)boxes.size(); i++)
+            if (!boxes[i].hidden) consider(std::hypot(boxes[i].c.x - x, boxes[i].c.z - z), 3, i);
+    if (any || onlyKind == 4)
+        for (int i = 0; i < (int)fixtures.size(); i++) consider(std::hypot(fixtures[i].a.x - x, fixtures[i].a.z - z), 4, i);
     switch (kind) {
         case 0: rocks.erase(rocks.begin() + idx); return "ROCK";
         case 1: {

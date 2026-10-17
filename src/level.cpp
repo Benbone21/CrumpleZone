@@ -8,6 +8,7 @@
 #include <mutex>
 #include <sstream>
 
+#include "modelkit.h"
 #include "platform.h"
 #include "sections.h"
 #include "spawnpad.h"
@@ -127,10 +128,19 @@ World levelWorld(const Level& lv, SectionBuilt* built) {
     return w;
 }
 
+// A placed model's collider: the box round its mesh (hidden: the model is what's drawn). Not for the things that are only for show.
+static bool modelSolid(const std::string& id) {
+    static const char* soft[] = {"campfire", "trail_sign", "marker_post", "map_board", "bush", "person", "race_gate", "spawn_pad", "tent", "cairn", "stump"};
+    for (const char* n : soft)
+        if (id == n) return false;
+    return true;
+}
+
 void placeObject(const LevelObject& o, World& w) {
     switch (o.kind) {
         case OBJ_ROCK: {
-            const RockPose pose{o.yaw, o.pitch, o.roll};  // (sub 1: placed, not left to chance)
+            RockPose pose{o.yaw, o.pitch, o.roll};  // (sub 1: placed, not left to chance)
+            pose.scan = o.scan;
             Rock& r = w.addRock(o.p.x, o.p.z, o.size, o.top, o.seed, o.col[0], o.sub == 1 ? &pose : nullptr);
             (void)r;
             break;
@@ -140,7 +150,14 @@ void placeObject(const LevelObject& o, World& w) {
             w.boxes.back().rock = o.sub == 1;
             break;
         case OBJ_LOG: w.addLog(o.p, o.p2, o.size.x); break;
-        case OBJ_TREE: w.addTree(o.p.x, o.p.z, std::max(1.0, o.size.y), o.sub, o.col[0]); break;
+        case OBJ_TREE: {
+            w.addTree(o.p.x, o.p.z, std::max(1.0, o.size.y), o.sub, o.col[0]);
+            if (o.lift != 0) {  // (raised or sunk: the trunk goes with it)
+                w.trees.back().base.y += o.lift;
+                w.poles.back().y0 += o.lift, w.poles.back().y1 += o.lift;
+            }
+            break;
+        }
         case OBJ_STATION: {
             // (The station keeps a pointer to its name: levels' names live as long as the game.)
             // (Worlds are built on several threads at once in the test runner: the list is shared.)
@@ -155,12 +172,29 @@ void placeObject(const LevelObject& o, World& w) {
             w.addStation(V3(o.p.x, w.height(o.p.x, o.p.z), o.p.z), o.yaw, name);
             break;
         }
+        case OBJ_MODEL: {  // a code-made structure: drawn as the model, solid as the box round it
+            if (!mk::findModel(o.name)) break;
+            const V3 sc(o.size.x > 0 ? o.size.x : 1, o.size.y > 0 ? o.size.y : 1, o.size.z > 0 ? o.size.z : 1);
+            const V3 at(o.p.x, w.height(o.p.x, o.p.z) + o.lift, o.p.z);
+            w.placeModel(o.name, at, o.yaw, {}, sc);
+            if (modelSolid(o.name)) {
+                const mk::Mesh& m = mk::modelMesh(o.name);
+                if (!m.v.empty()) {
+                    const V3 lo(m.lo.x * sc.x, m.lo.y * sc.y, m.lo.z * sc.z), hi(m.hi.x * sc.x, m.hi.y * sc.y, m.hi.z * sc.z);
+                    const V3 mid = (lo + hi) * 0.5, half = (hi - lo) * 0.5;
+                    const V3 cx = rotateAxis(V3(mid.x, 0, mid.z), V3(0, 1, 0), o.yaw);
+                    w.addBox(at + V3(cx.x, mid.y, cx.z), V3(std::max(0.05, half.x), std::max(0.05, half.y), std::max(0.05, half.z)), o.yaw, 0, 0, V3(0.5, 0.5, 0.5));
+                    w.boxes.back().hidden = true;
+                }
+            }
+            break;
+        }
         default: break;
     }
 }
 
 void applyLevel(const Level& lv, World& w) {
-    for (const V3& r : lv.removed) w.removeNear(r.x, r.z, 1.5);
+    for (const V3& r : lv.removed) w.removeNear(r.x, r.z, 1.5, (int)std::lround(r.y) - 1);
     const int n = w.gridSize();
     for (const auto& h : lv.heights)
         if (h.first >= 0 && h.first < n * n) w.setCellHeight(h.first, h.second);
@@ -292,24 +326,41 @@ std::string saveLevelText(const Level& lv) {
             case OBJ_ROCK:
                 o << "rock " << num(b.p.x) << ' ' << num(b.p.z) << ' ' << num(b.size.x, 3) << ' ' << num(b.size.y, 3) << ' ' << num(b.size.z, 3) << ' '
                   << num(b.top, 3) << ' ' << b.seed << ' ' << num(b.col[0], 2);
-                if (b.sub == 1) o << ' ' << num(b.yaw, 4) << ' ' << num(b.pitch, 4) << ' ' << num(b.roll, 4);  // (a rock set in place: its pose)
+                if (b.sub == 1) {  // (a rock set in place: its pose, and which scan; an older build reads just the pose)
+                    o << ' ' << num(b.yaw, 4) << ' ' << num(b.pitch, 4) << ' ' << num(b.roll, 4);
+                    if (b.scan >= 0) o << ' ' << b.scan;
+                }
                 o << '\n';
                 break;
             case OBJ_BOX:
                 o << "box " << num(b.p.x) << ' ' << num(b.p.y) << ' ' << num(b.p.z) << ' ' << num(b.size.x, 3) << ' ' << num(b.size.y, 3) << ' '
-                  << num(b.size.z, 3) << ' ' << num(b.yaw / kDeg, 1) << ' ' << num(b.pitch / kDeg, 1) << ' ' << num(b.roll / kDeg, 1) << ' '
-                  << num(b.col[0], 2) << ' ' << num(b.col[1], 2) << ' ' << num(b.col[2], 2) << ' ' << b.sub << '\n';
+                  << num(b.size.z, 3) << ' ' << num(b.yaw / kDeg, 2) << ' ' << num(b.pitch / kDeg, 2) << ' ' << num(b.roll / kDeg, 2) << ' '
+                  << num(b.col[0], 2) << ' ' << num(b.col[1], 2) << ' ' << num(b.col[2], 2) << ' ' << b.sub;
+                if (b.lift != 0) o << ' ' << num(b.lift, 3);  // (optional, last: an older build stops after the slab flag)
+                o << '\n';
                 break;
             case OBJ_LOG:
                 o << "log " << num(b.p.x) << ' ' << num(b.p.y) << ' ' << num(b.p.z) << ' ' << num(b.p2.x) << ' ' << num(b.p2.y) << ' ' << num(b.p2.z) << ' '
                   << num(b.size.x, 3) << '\n';
                 break;
-            case OBJ_TREE: o << "tree " << num(b.p.x) << ' ' << num(b.p.z) << ' ' << num(b.size.y, 1) << ' ' << b.sub << ' ' << num(b.col[0], 2) << '\n'; break;
-            case OBJ_STATION: o << "station " << num(b.p.x) << ' ' << num(b.p.z) << ' ' << num(b.yaw / kDeg, 1) << ' ' << b.name << '\n'; break;
+            case OBJ_TREE:
+                o << "tree " << num(b.p.x) << ' ' << num(b.p.z) << ' ' << num(b.size.y, 2) << ' ' << b.sub << ' ' << num(b.col[0], 2);
+                if (b.lift != 0) o << ' ' << num(b.lift, 3);
+                o << '\n';
+                break;
+            case OBJ_MODEL:  // (a comment line: an older build skips it, and the level without the structure still plays)
+                o << "#model " << num(b.p.x) << ' ' << num(b.p.z) << ' ' << num(b.yaw / kDeg, 2) << ' ' << num(b.size.x, 3) << ' ' << num(b.size.y, 3) << ' ' << num(b.size.z, 3) << ' '
+                  << num(b.lift, 3) << ' ' << b.name << '\n';
+                break;
+            case OBJ_STATION: o << "station " << num(b.p.x) << ' ' << num(b.p.z) << ' ' << num(b.yaw / kDeg, 2) << ' ' << b.name << '\n'; break;
             default: break;
         }
     }
-    for (const V3& r : lv.removed) o << "remove " << num(r.x) << ' ' << num(r.z) << '\n';
+    for (const V3& r : lv.removed) {
+        o << "remove " << num(r.x) << ' ' << num(r.z);
+        if (r.y > 0.5) o << ' ' << (int)std::lround(r.y) - 1;  // (which kind of thing; an older build takes the nearest of any)
+        o << '\n';
+    }
     // (The grid is the same size on every map.)
     const int n = World(MAP_FREEWAY).gridSize();
     writeRuns(o, "heights", lv.heights, n, [](float h) { return num(h); });
@@ -356,6 +407,20 @@ bool parseLevelText(const std::string& text, Level& lv, std::string* error) {
                     if (std::sscanf(v.c_str(), "%f,%f", &fx, &fz) == 2) out.flow[i * gridN + j] = {fx, fz};
                     j++;
                 }
+                continue;
+            }
+            if (line.rfind("#model ", 0) == 0) {  // #model X Z YAWDEG SX SY SZ LIFT ID
+                std::istringstream ms(line);
+                std::string tag;
+                LevelObject b;
+                b.kind = OBJ_MODEL;
+                double yaw = 0;
+                ms >> tag >> b.p.x >> b.p.z >> yaw >> b.size.x >> b.size.y >> b.size.z >> b.lift;
+                b.yaw = yaw * kDeg;
+                std::getline(ms, b.name);
+                const size_t a = b.name.find_first_not_of(' ');
+                b.name = a == std::string::npos ? std::string() : b.name.substr(a);
+                if (!ms.fail() || ms.eof()) out.objects.push_back(b);
                 continue;
             }
             if (line.rfind("#section ", 0) == 0 || line.rfind("#canvas ", 0) == 0 || line.rfind("#stamp ", 0) == 0 || line.rfind("#generate ", 0) == 0) {
@@ -430,13 +495,23 @@ bool parseLevelText(const std::string& text, Level& lv, std::string* error) {
             LevelObject b;
             b.kind = OBJ_ROCK;
             ls >> b.p.x >> b.p.z >> b.size.x >> b.size.y >> b.size.z >> b.top >> b.seed >> b.col[0];
-            if (ls >> b.yaw >> b.pitch >> b.roll) b.sub = 1;  // (optional: a pose)
+            if (ls >> b.yaw >> b.pitch >> b.roll) {  // (optional: a pose, then which scan)
+                b.sub = 1;
+                int sc = -1;
+                if (ls >> sc) b.scan = sc;
+            }
+            ls.clear();
             out.objects.push_back(b);
         } else if (tag == "box") {
             LevelObject b;
             b.kind = OBJ_BOX;
             ls >> b.p.x >> b.p.y >> b.p.z >> b.size.x >> b.size.y >> b.size.z >> b.yaw >> b.pitch >> b.roll >> b.col[0] >> b.col[1] >> b.col[2] >> b.sub;
             b.yaw *= kDeg, b.pitch *= kDeg, b.roll *= kDeg;
+            if (!ls.fail()) {
+                double lift = 0;
+                if (ls >> lift) b.lift = lift;
+                ls.clear();
+            }
             out.objects.push_back(b);
         } else if (tag == "log") {
             LevelObject b;
@@ -447,6 +522,11 @@ bool parseLevelText(const std::string& text, Level& lv, std::string* error) {
             LevelObject b;
             b.kind = OBJ_TREE;
             ls >> b.p.x >> b.p.z >> b.size.y >> b.sub >> b.col[0];
+            if (!ls.fail()) {
+                double lift = 0;
+                if (ls >> lift) b.lift = lift;
+                ls.clear();
+            }
             out.objects.push_back(b);
         } else if (tag == "station") {
             LevelObject b;
@@ -458,6 +538,9 @@ bool parseLevelText(const std::string& text, Level& lv, std::string* error) {
         } else if (tag == "remove") {
             V3 r;
             ls >> r.x >> r.z;
+            int kind = -1;
+            if (ls >> kind) r.y = kind + 1;
+            ls.clear();
             out.removed.push_back(r);
         } else if (tag == "heights" || tag == "surfaces" || tag == "water") {
             int i = 0, j = 0;
