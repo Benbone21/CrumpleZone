@@ -1986,28 +1986,37 @@ int main(int argc, char** argv) {
     };
     // ---- multiplayer: joining without freezing (the menu shows a CONNECTING card meanwhile)
     int joinState = 0;  // 0 not joining, 1 connecting, 2 it failed (the card says why)
+    // It failed: the card says why; over a missing or wrong password it asks for the password right there.
+    auto joinFailed = [&]() {
+        joinState = 2;
+        menu.joinError = net.passwordIssue == NetSession::PW_NEEDED ? "THIS GAME NEEDS A PASSWORD" : net.passwordIssue == NetSession::PW_WRONG ? "WRONG PASSWORD" : net.error;
+        for (char& ch : menu.joinError) ch = (char)std::toupper((unsigned char)ch);
+        menu.joinNeedsPw = net.passwordIssue != NetSession::PW_OK;
+        if (menu.joinNeedsPw) menu.askPassword(settings);
+    };
     auto beginJoin = [&](const std::string& address, const std::string& label) {
         menu.joining = true;
         menu.joinLabel = label.empty() ? address : label;
+        menu.joinAddr = address;
         menu.joinError.clear();
+        menu.joinNeedsPw = false;
         {
             std::string h;
             if (!net::parseAddress(address, h, menu.joinPort)) menu.joinPort = net::kDefaultPort;  // (for the failed card's port help)
         }
-        net.password = !opt.password.empty() ? opt.password : settings.netPassword;
+        settings.joinAddress = address;  // (the last server, whether typed or picked from the list)
+        net.password = net::joinPassword(opt.password, settings.joinPassword);
         peerAddress = address;
         if (net.beginJoin(address, settings.playerName)) {
             joinState = 1;
         } else {
-            joinState = 2;
-            menu.joinError = net.error;
+            joinFailed();
         }
-        for (char& ch : menu.joinError) ch = (char)std::toupper((unsigned char)ch);
         std::printf("joining %s\n", address.c_str());
     };
     // ---- end multiplayer joining
     auto startJoin = [&](const std::string& address) {
-        net.password = !opt.password.empty() ? opt.password : settings.netPassword;
+        net.password = net::joinPassword(opt.password, settings.joinPassword);
         peerAddress = address;
         if (!net.join(address, settings.playerName)) {
             hud.toast("CAN'T JOIN: " + net.error);
@@ -2729,6 +2738,7 @@ int main(int argc, char** argv) {
         padLogic.update(padDev.read((SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS) != 0), padCtx, dt);
         size_t padTap = 0;
         bool fromPad = false;
+        if (menu.open) SDL_StartTextInput();  // (passwords are typed as text; the model lab stops it on its way out)
         auto nextEvent = [&](SDL_Event& ev) {
             fromPad = false;
             padShift = false;
@@ -2838,6 +2848,9 @@ int main(int argc, char** argv) {
             }
             switch (e.type) {
                 case SDL_QUIT: running = false; break;
+                case SDL_TEXTINPUT:
+                    if (menu.open) handleMenu(menu.textInput(evText(e).c_str(), settings));
+                    break;
                 case SDL_KEYDOWN: {
                     if (settings.keys.matches(KA_DEV_MENU, evKeyScancode(e), shiftDown()) && !fromPad && !evKeyRepeat(e) && !inv.open && !garageUI.open && !winchAim.on && !menu.title &&
                         !menu.listeningForKey()) {  // the dev menu (devmenu.h): F12 opens and closes it, whatever DEV HOTKEYS says
@@ -3474,9 +3487,7 @@ int main(int argc, char** argv) {
                     hud.toast("JOINED " + net.ownerName(0) + "'S GAME ON " + mapName(net.map));
                     std::printf("joined (player %d)\n", net.self);
                 } else if (st < 0) {
-                    joinState = 2;
-                    menu.joinError = net.error;
-                    for (char& ch : menu.joinError) ch = (char)std::toupper((unsigned char)ch);
+                    joinFailed();
                     std::printf("can't join: %s\n", net.error.c_str());
                 }
             }

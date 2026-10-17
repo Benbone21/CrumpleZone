@@ -288,6 +288,32 @@ SCENARIO(netSecPassword, "net/sec-password", "A password-protected host: the wro
     host.close();
 }
 
+SCENARIO(netSecMenuPassword, "net/sec-menu-password", "Joining the way the menu does (the typed password through net::joinPassword): the right one gets in, none or a wrong one says which, so the card can ask again, and the command line's wins") {
+    Car& hostCar = ctx.add(vehicleCatalog()[2], 10, -8, 0);
+    ctx.focus(hostCar);
+    NetSession host;
+    host.password = "Tr1cky/Pass word!";
+    host.discovery = false;
+    const int port = testPort() + 8;
+    ctx.check("host opens a session", host.host(port, "HOSTY", MAP_PROVING_GROUND), host.error);
+    host.adopt(ctx.sim);
+    Rig rig(ctx.sim, host);
+
+    ctx.check("the command line's password wins over the typed one", net::joinPassword("CLI", "typed") == "CLI" && net::joinPassword("", "typed") == "typed" && net::joinPassword("", "").empty());
+    NetSession none, wrong, right;
+    Sim sn, sw, sr;
+    std::string why;
+    none.password = net::joinPassword("", "");
+    ctx.check("no password: refused as NEEDED", !joinClient(rig, none, sn, port, "NONE", &why) && none.passwordIssue == NetSession::PW_NEEDED, why);
+    wrong.password = net::joinPassword("", "tr1cky/Pass word!");  // (the case matters)
+    ctx.check("a wrong password: refused as WRONG", !joinClient(rig, wrong, sw, port, "WRONG", &why) && wrong.passwordIssue == NetSession::PW_WRONG, why);
+    // Retry on the same session object, as the card does: a fresh password, same address.
+    wrong.password = net::joinPassword("", "Tr1cky/Pass word!");
+    ctx.check("RETRY with the right one gets in", joinClient(rig, wrong, sw, port, "WRONG", &why) && wrong.passwordIssue == NetSession::PW_OK, why);
+    ctx.check("(and is a player)", host.playerCount() == 2);
+    host.close();
+}
+
 #ifdef HAVE_RAW_SOCKETS
 SCENARIO(netSecFlood, "net/sec-flood", "A flood of connections is capped per address and overall, a real player still gets in, and silent connections are dropped") {
     Car& hostCar = ctx.add(vehicleCatalog()[2], 10, -8, 0);

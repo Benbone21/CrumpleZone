@@ -62,6 +62,8 @@ int parsePort(const std::string& s, int minPort = 1);
 bool parseAddress(const std::string& address, std::string& host, int& port, std::string* why = nullptr);
 // Text from the network, fit for the HUD font: printable ASCII only, at most `maxLen` long.
 std::string sanitize(const std::string& s, size_t maxLen);
+// The password a join offers: the command line's if given, else the one typed in the menu.
+inline std::string joinPassword(const std::string& fromCommandLine, const std::string& typed) { return fromCommandLine.empty() ? typed : fromCommandLine; }
 // HMAC-SHA-256 (the password proof), 32 bytes.
 std::vector<uint8_t> hmacSha256(const std::string& key, const std::vector<uint8_t>& data);
 }  // namespace net
@@ -139,6 +141,8 @@ public:
     // challenge; the password itself never goes over the wire). Client: what to offer. Kept
     // across close(); set it before host() / join().
     std::string password;
+    // Client: why a join failed over the password (the menu then asks for it again).
+    enum PasswordIssue { PW_OK, PW_NEEDED, PW_WRONG } passwordIssue = PW_OK;
     // Host: also answer "who's hosting?" on the local network and announce itself there. A
     // public server turns this off (it would answer anyone, with more bytes than they asked
     // with); a game on your own network keeps it on. Set before host().
