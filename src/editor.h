@@ -83,6 +83,9 @@ public:
     // A row of rock slabs along the line a-b (the slab-ledge brush).
     void placeLedge(const V3& a, const V3& b);
     void close() { active = false; }
+    // QA scripts (main.cpp --script edqa): where a world point is on the screen, and a one-line dump of the editor's state.
+    bool project(const V3& p, float& sx, float& sy) const;
+    std::string debugState() const;
     // An SDL event (mouse in window coordinates; `scale` turns them into drawable pixels).
     void handleEvent(const SDL_Event& e, float scale);
     // Every frame: flies the camera, keeps brushing while the button's held, and catches the
