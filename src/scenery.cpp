@@ -1,5 +1,4 @@
 #include "scenery.h"
-#include "plants.h"
 
 #include "forest.h"
 #include "meshopt.h"
@@ -253,13 +252,6 @@ void buildRockMesh(const World& world, std::vector<Vtx>& v, const ScanCover& ski
     }
     for (const Box& b : world.boxes)
         if (b.rock) slab(v, b);
-    int logSeed = 0;
-    for (const Log& g : world.logs) {
-        if (skip.logs) break;
-        mk::Mesh m;
-        forest::logMesh(world, g, (uint32_t)++logSeed, m);
-        appendModel(v, m, V3(), 0.0);  // (built where it lies)
-    }
 }
 
 void buildBushMesh(const World& world, std::vector<Vtx>& v, const ScanCover& skip) {
@@ -317,20 +309,19 @@ void buildBushMesh(const World& world, std::vector<Vtx>& v, const ScanCover& ski
                 }
             }
     }
+    // The fallen logs (each its own mesh, built where it lies).
+    int logSeed = 0;
+    for (const Log& g : world.logs) {
+        if (skip.logs) break;
+        mk::Mesh m;
+        forest::logMesh(world, g, (uint32_t)++logSeed, m);
+        appendModel(v, m, V3(), 0.0);
+    }
+    // The bushes are instances of the "bush" model (forest::buildBushes): only without it are they made here, as blobs.
     int seed = 0;
-    const bool bushModel = mk::findModel("bush") != nullptr;
     for (const Bush& b : world.bushes) {
-        if (skip.bushes) break;
+        if (skip.bushes || mk::findModel("bush")) break;
         seed++;
-        if (bushModel) {  // the picked model, made 0.8 m in radius
-            Placed pl;
-            pl.id = "bush";
-            pl.variant = plantKindOf(b.kind);  // (the design of that kind: plants.h)
-            pl.set = {{"seed", 1 + seed % 6}, {"dry", seed % 7 == 0 ? 1 : 0}};
-            const double k = b.r / 0.8;
-            appendModel(v, placedMesh(pl), b.p, seed * 2.39996, V3(k, k * (0.8 + 0.4 * latticeHash(seed, 2)), k), (float)(0.85 + 0.15 * b.tint));
-            continue;
-        }
         const int n = 3 + seed % 3;
         for (int k = 0; k < n; k++) {
             double a = k * 2.39996 + seed, d = b.r * 0.45 * latticeHash(seed, k);

@@ -139,6 +139,7 @@ public:
     };
     const GeometryStats& geometryStats() const { return geometryStats_; }
     double grassGpuMs() const { return grassGpuMs_; }  // (CZ_BENCH: the grass pass on the GPU, a few frames late)
+    const VegStats& vegStats() const { return vegStats_; }  // (trees, bushes, logs and grass: what they sent the GPU last frame)
     // Frame timing (frameprof.h): the stage `p` starts now, on the CPU (frameProfile()) and, with gpuTiming, on the GPU
     // (a timestamp query). gpuFrameBegin() at the top of each frame reads back a frame from a few frames ago.
     bool gpuTiming = false;
@@ -161,7 +162,7 @@ private:
     bool propsOk = false;     // its shaders built
     int propsApplied = -1;    // the props quality the scenery was last built for
     uint64_t treeSig_ = 0, scenerySig_ = 0, bushSig_ = 0;  // what the tree, scenery and bush meshes were last built from (unchanged: not rebuilt; an editor drag moves one thing)
-    GLuint bushVao = 0, bushVbo = 0;  // bushes and reeds (apart from the scenery: they seldom change when it does)
+    GLuint bushVao = 0, bushVbo = 0;  // reeds and logs (apart from the scenery: they seldom change when it does; the bushes themselves are instanced)
     int bushVertexCount = 0;
     GroundTextures groundTex;
     bool groundFailed = false;  // the textures couldn't be loaded: stay procedural
@@ -186,6 +187,7 @@ private:
     std::vector<TerrainChunk> terrainChunks;
     std::vector<StaticBatch> boxBatches, sceneryBatches, bushBatches;
     GeometryStats geometryStats_;
+    VegStats vegStats_;
     GLuint grassQuery_[4] = {};
     int grassQueryFrame_ = 0;
     bool grassQueryUsed_[4] = {};
@@ -204,11 +206,13 @@ private:
     int gpuMarkFrame_ = 0;
     void uploadBatches(GLuint& vao, GLuint& vbo, std::vector<Vtx>& vertices, std::vector<StaticBatch>& batches);
     void drawBatches(GLuint vao, const std::vector<StaticBatch>& batches, const M4& vp, bool shadow);
-    void drawBushes(const M4& vp, const V3& eye, bool shadow);  // (the bush batches within sight: small things, not drawn far off)
+    void drawBushes(const M4& vp, const V3& eye, bool shadow, VegStats::Pass& stats);  // (the reed and log batches within sight: small things, not drawn far off)
     void drawTerrain(const M4& vp, const View& view);
     GLuint boxVao = 0, boxVbo = 0;
     int boxVertexCount = 0;
-    TreeDraw trees_;                // the forest, instanced (treedraw.h)
+    TreeDraw trees_, bushes_;       // the forest and the bushes, instanced (treedraw.h)
+    // How far the vegetation's detail reaches (its LOD distances and reaches), by the scenery quality.
+    double vegDetail() const { static const double k[4] = {0.6, 0.7, 1.0, 1.3}; return k[std::min(std::max(settings.props, 0), 3)]; }
     GLuint progTree = 0, progTreeDepth = 0;
     int treeVertexCount = 0;
     ScanCover scanCover_;           // what the scanned props draw instead of the code-made meshes
