@@ -8,6 +8,7 @@
 #include <sstream>
 
 #include "platform.h"
+#include "spawnpad.h"
 #include "world.h"
 
 #ifdef _WIN32
@@ -101,6 +102,7 @@ void applyLevel(const Level& lv, World& w) {
     if (lv.hasStart) {
         w.spawn = V3(lv.start.x, w.height(lv.start.x, lv.start.z), lv.start.z);
         w.spawnYaw = lv.startYaw;
+        w.spawn = addSpawnPad(w, w.spawn, lv.startYaw, 8, 2).p;  // (a slab to start on, the grid and a ramp ahead)
     }
     w.buildGrid();
 }

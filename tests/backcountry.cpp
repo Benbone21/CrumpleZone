@@ -321,7 +321,7 @@ bool pilotRun(Ctx& ctx, Car& c, const V3& goal, double kmh, double maxS, int rou
 SCENARIO(backcountryPilotFar, "backcountry/autopilot-far", "Autopilot plans the Bronco's way from the trailhead to Far Side Camp, across the ford, and drives it") {
     ctx.sim.world = World(MAP_BACKCOUNTRY);
     const V3 s = ctx.sim.world.spawn;
-    Car& c = ctx.add(bBronco(), s.x, s.z, 0);
+    Car& c = ctx.add(bBronco(), s.x, s.z, ctx.sim.world.spawnYaw * 180 / M_PI);  // (facing off its spawn pad)
     ctx.focus(c);
     ctx.run(1.0);
     double worst = 0;
@@ -344,7 +344,7 @@ SCENARIO(backcountryCreekCivic, "backcountry/creek-civic", "A Civic can't get up
 SCENARIO(backcountryRoutes, "backcountry/routes", "The autopilot can plan a way from the trailhead to every named place (the far ones too: the fire tower, the cabin, the pass hut, the wreck, the mine)") {
     ctx.sim.world = World(MAP_BACKCOUNTRY);
     const V3 s = ctx.sim.world.spawn;
-    Car& c = ctx.add(bBronco(), s.x, s.z, 0);
+    Car& c = ctx.add(bBronco(), s.x, s.z, ctx.sim.world.spawnYaw * 180 / M_PI);
     ctx.focus(c);
     ctx.run(0.5);
     for (const char* f : {"creekfoot", "mine", "slab", "deepbank", "fordbank", "hilltop", "mudstart", "bog3", "washmid", "dunering", "shelf", "overlook", "wreck", "snowcorner", "towerlook",

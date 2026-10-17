@@ -362,7 +362,7 @@ SCENARIO(dome, "offroad/slickrock", "Low range climbs the slickrock dome (sticky
 SCENARIO(mountainMap, "maps/mountain", "The mountain map: trucks start at the trailhead and settle; the trail, park and creek are where they should be") {
     ctx.sim.world = World(MAP_MOUNTAIN);
     const World& w = ctx.sim.world;
-    ctx.check("spawn on gravel", w.surfaceAt(w.spawn.x, w.spawn.z) == SURF_GRAVEL);
+    ctx.check("spawn on its concrete spawn pad", w.surfaceAt(w.spawn.x, w.spawn.z) == SURF_PAVED);
     ctx.check("slickrock is rock", w.surfaceAt(mountainFeature("dome").x, mountainFeature("dome").z) == SURF_ROCK);
     ctx.check("valley loop for traffic", w.loopLength > 1000);
     ctx.metric("boulders", (double)w.rocks.size(), "", 1500, 4500);
