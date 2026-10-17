@@ -48,6 +48,7 @@ enum {
     B_NUDGE = 1120,          // + 0 west, 1 east, 2 north, 3 south (camera-relative: -x, +x, ahead, back)
     B_PALTAB = 1200,         // + tab, to 1219
     B_PAL_PREV = 1230, B_PAL_NEXT,
+    B_SEAT = 1238,
     B_ASK_SAVE = 1240, B_ASK_DISCARD, B_ASK_CANCEL, B_NAME_OK, B_NAME_CANCEL, B_SAVEAS,
     B_PAL = 2000,            // + palette index
 };
@@ -106,6 +107,8 @@ std::string uniqueSectionName() {
 }
 
 }  // namespace
+
+bool Editor::project(const V3& p, float& sx, float& sy, int w, int h) const { return screenPoint(view(w, h), w, h, p, sx, sy); }
 
 V3 Editor::snapped(const V3& p) const {
     const double s = kSnaps[snapIdx];
@@ -482,9 +485,17 @@ const mk::Mesh& Editor::iconMesh(const PalEntry& e) {
     return iconMeshes.emplace(e.icon, std::move(m)).first->second;
 }
 
-LevelObject Editor::makeObject(const V3& at) const {
+double Editor::placeRise() const {
+    if (!placeOn) return 0;
+    const V3 sp = snapped(placeAt);
+    return std::max(0.0, placeAt.y - core.world->height(sp.x, sp.z));
+}
+
+LevelObject Editor::makeObject(const V3& at, double rise) const {
     LevelObject o = proto;
     o.p = V3(at.x, 0, at.z);
+    if (o.kind == OBJ_ROCK) o.top += rise;  // (on top of something: the same burial, higher)
+    else if (o.kind != OBJ_LOG) o.lift += rise;
     switch (o.kind) {
         case OBJ_ROCK:
             o.seed = nextSeed;
@@ -496,7 +507,7 @@ LevelObject Editor::makeObject(const V3& at) const {
             const V3 f(std::cos(proto.yaw) * std::cos(proto.pitch), std::sin(proto.pitch), -std::sin(proto.yaw) * std::cos(proto.pitch));
             const V3 a = V3(at.x, 0, at.z) - V3(f.x, 0, f.z) * hl, b = V3(at.x, 0, at.z) + V3(f.x, 0, f.z) * hl;
             const World& w = *core.world;
-            const double mid = (w.height(a.x, a.z) + w.height(b.x, b.z)) / 2 + r + proto.lift;
+            const double mid = (w.height(a.x, a.z) + w.height(b.x, b.z)) / 2 + r + proto.lift + rise;
             o.p = V3(a.x, mid - f.y * hl, a.z), o.p2 = V3(b.x, mid + f.y * hl, b.z);
             o.size = V3(r, 0, 0);
             o.yaw = o.pitch = 0, o.lift = 0;
@@ -557,7 +568,7 @@ void Editor::click() {
                     }
                     sel = selection.empty() ? EditPick() : selection.back();
                     dragging = !selection.empty() && isSelected(hover);
-                    dragFrom = hit, dragApplied = V3();
+                    dragStarted = false, dragApplied = V3();
                     if (!selection.empty())
                         say(selection.size() > 1 ? std::to_string(selection.size()) + " SELECTED: DRAG TO MOVE, DELETE" : std::string(hover.kind == EditPick::BASE ? "THE MAP'S " : "") + hover.name + ": DRAG TO MOVE, KEYS TURN AND SCALE");
                 } else if (haveHit) {  // empty space: a box to select what's inside
@@ -568,7 +579,7 @@ void Editor::click() {
             }
             if (haveHit) {
                 sel = EditPick();
-                LevelObject o = makeObject(snapped(hit));
+                LevelObject o = makeObject(snapped(placeAt), placeRise());
                 core.addObject(o);
                 nextSeed = nextSeed * 1103515245u + 12345u;
                 say(std::string("PLACED ") + (palPick >= 0 && palPick < (int)palette.size() ? palette[palPick].name : std::string("OBJECT")) + "  (CTRL+Z UNDOES)", 1.6);
@@ -950,6 +961,7 @@ void Editor::objectKey(int sc) {
         case SC_PAGEUP_: applyOp(OP_LIFT, shift ? 1.0 : 0.25, "lift"); return;
         case SC_Z:
         case SC_PAGEDOWN_: applyOp(OP_LIFT, shift ? -1.0 : -0.25, "lift"); return;
+        case SC_B: applyOp(OP_SEAT, 0, "seat"); return;
         case SC_EQUALS: applyOp(OP_SCALE, grow, "scale"); return;
         case SC_MINUS: applyOp(OP_SCALE, 1 / grow, "scale"); return;
         case SC_T: applyOp(OP_STRETCH_X, grow, "stretchx"); return;
@@ -975,7 +987,7 @@ void Editor::objectKey(int sc) {
 void Editor::applyOp(ObjOp op, double amount, const std::string& key) {
     if (tool != OBJECTS) return;
     buildPalette();
-    static const char* names[] = {"TURN", "TIP", "ROLL", "RAISE", "SCALE", "STRETCH", "STRETCH", "STRETCH"};
+    static const char* names[] = {"TURN", "TIP", "ROLL", "RAISE", "SCALE", "STRETCH", "STRETCH", "STRETCH", "SEAT"};
     if (!selection.empty()) {
         core.beginEdit(names[op], key);
         const std::vector<int> ks = selectedObjects();
@@ -1246,6 +1258,7 @@ void Editor::doButton(int id) {
             flow.requestLeave(core, SaveFlow::NEWMAP);  // (unsaved work asks first)
             afterFlow();
             break;
+        case B_SEAT: applyOp(OP_SEAT, 0, "seat"); break;
         case B_SAVEAS:
             flow.requestSave(core, true);
             afterFlow();
@@ -1343,6 +1356,7 @@ void Editor::update(double dt, const uint8_t* keys, Renderer& r, int w, int h) {
         shift = keys[SC_LSHIFT] || keys[SC_RSHIFT];
         ctrl = keys[224] || keys[228];
     }
+    alt = keys[226] || keys[230];
     // Fly (WASD, Space up, Shift fast, higher = faster; Shift+wheel is up / down).
     if (!typing && !fileOpen && flow.stage == SaveFlow::IDLE && !ctrl && tool != SETTINGS) {
         const double ground = core.world->height(eye.x, eye.z);
@@ -1370,6 +1384,15 @@ void Editor::update(double dt, const uint8_t* keys, Renderer& r, int w, int h) {
         const bool wanted = tool == OBJECTS ? (p.kind == EditPick::OBJECT || p.kind == EditPick::BASE) : (p.kind == EditPick::GATE || p.kind == EditPick::START);
         if (wanted) hover = p;
     }
+    // Where a click would put something: the ground at the mouse, or the top of an object in the way (so rocks stack).
+    placeAt = hit, placeOn = false;
+    if (tool == OBJECTS && haveHit && !overUi) {
+        std::vector<int> skip;
+        for (const EditPick& p : selection)
+            if (p.kind == EditPick::OBJECT) skip.push_back(p.index);
+        V3 pp, nn;
+        if (core.rayObjects(o, d, hitT - 0.02, skip, pp, nn) && nn.y > 0.25) placeAt = pp, placeOn = true;
+    }
     // Where the middle of the view meets the ground (a playtest "from here" starts there).
     {
         V3 co, cd;
@@ -1384,15 +1407,19 @@ void Editor::update(double dt, const uint8_t* keys, Renderer& r, int w, int h) {
     // Holding the button.
     if (lmb && stroke) applyBrush(dt);
     if (lmb && dragging && haveHit && tool == OBJECTS && !selection.empty()) {
-        // (Moving the selection: by how far the mouse has come on the ground, on the snap grid, keeping each one's height over it.)
-        double dx = hit.x - dragFrom.x, dz = hit.z - dragFrom.z;
+        // (Moving the selection: by how far the mouse has come, on the snap grid; over another object it rides on its surface,
+        // and with Alt held it keeps its height. Each keeps its own height over where it stands.)
+        if (!dragStarted) dragFrom = placeAt, dragRide = placeRise(), dragApplied = V3(), dragStarted = true;
+        double dx = placeAt.x - dragFrom.x, dz = placeAt.z - dragFrom.z;
         const double sn = kSnaps[snapIdx];
         if (sn > 0) dx = std::round(dx / sn) * sn, dz = std::round(dz / sn) * sn;
         const double ix = dx - dragApplied.x, iz = dz - dragApplied.z;
-        if (std::fabs(ix) > 1e-6 || std::fabs(iz) > 1e-6) {
+        const double ride = alt ? dragRide : placeRise(), dl = ride - dragRide;
+        if (std::fabs(ix) > 1e-6 || std::fabs(iz) > 1e-6 || std::fabs(dl) > 1e-3) {
             core.beginEdit("MOVE", "drag");
             const std::vector<int> ks = selectedObjects();
-            core.moveObjects(ks, ix, iz, "drag");
+            if (std::fabs(ix) > 1e-6 || std::fabs(iz) > 1e-6) core.moveObjects(ks, ix, iz, "drag");
+            if (std::fabs(dl) > 1e-3) core.transformObjects(ks, OP_LIFT, dl, "drag"), dragRide = ride;
             core.endEdit();
             dragApplied.x = dx, dragApplied.z = dz;
         }
@@ -1605,7 +1632,7 @@ void Editor::drawWorldMarks(Renderer& r) {
             tag(at + V3(0, 3, 0), (selection.size() > 1 ? std::to_string(selection.size()) + " SELECTED" : nm + " (SELECTED)"), 1.0f, 0.85f, 0.3f);
         }
         if (!pointer && !ledgeBrush && haveHit && !overUi && !marquee) {
-            const Shape ghost = core.previewShape(makeObject(snapped(hit)));
+            const Shape ghost = core.previewShape(makeObject(snapped(placeAt), placeRise()));
             drawShape(r, ghost, true, 0.5f, 0.85f, 1.0f, 0.42f, 2.0f * u);
         }
         if (marquee) {
@@ -1678,7 +1705,7 @@ void Editor::drawOptions(Renderer& r, float u) {
     // (Drawn in two passes: the panel's height isn't known till the end, so draw into a
     // scratch list of rows first. Simpler: a fixed tall panel per tool.)
     const float panelH = tool == PAINT ? 640 * u : tool == SCULPT ? 560 * u : tool == WATER ? (waterMode == 1 ? 520 * u : 330 * u)
-                         : tool == SETTINGS ? 420 * u : tool == OBJECTS ? (selection.empty() ? 470.0f : 540.0f) * u : tool == SECTION ? 600 * u : 300 * u;
+                         : tool == SETTINGS ? 420 * u : tool == OBJECTS ? (selection.empty() ? 520.0f : 590.0f) * u : tool == SECTION ? 600 * u : 300 * u;
     pill(r, x - 8 * u, top - 6 * u, w + 16 * u, panelH, 0, 0, 0, 0.55f);
     label(r, x, y, px(1.6f * u), kToolNames[tool], 1.0f, 0.75f, 0.3f, 1);
     y += 8 * px(1.6f * u) + 6 * u;
@@ -1861,14 +1888,19 @@ void Editor::drawOptions(Renderer& r, float u) {
                 button(r, x, y, w, bh, "DELETE SELECTED  (DEL)", B_DELETE, false, u);
                 y += bh + 4 * u;
             }
+            if (!selection.empty() || !pointer) {
+                button(r, x, y, w, bh, "SNAP TO GROUND  (B)", B_SEAT, false, u);
+                y += bh + 4 * u;
+            }
             row("GRID SNAP", kSnaps[snapIdx] > 0 ? fmt1(kSnaps[snapIdx], " M") : "OFF", B_SNAP_DN, B_SNAP_UP);
             y += 2 * u;
             if (pointer) {
                 note("CLICK: SELECT   SHIFT+CLICK: ADD");
                 note("DRAG EMPTY GROUND: BOX SELECT");
-                note("DRAG A SELECTED ONE: MOVE (GROUP TOO)");
+                note("DRAG ONE: MOVE (IT RIDES ON ROCKS)");
+                note("ALT+DRAG: KEEP ITS HEIGHT");
             } else {
-                note("CLICK THE GROUND: PLACE THE GHOST");
+                note("CLICK: PLACE (ON TOP OF A ROCK: STACKS)");
             }
             note("Q E  SIZE   SHIFT+Q E OR , .  TURN");
             note("R F  TIP   C V  ROLL   Z X  LOWER, RAISE");

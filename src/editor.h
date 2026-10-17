@@ -59,7 +59,10 @@ public:
     void setPalette(int index);
     void setPointer(bool on) { pointer = on; }
     int paletteSize() const;
-    LevelObject makeForScript(const V3& at) { return makeObject(at); }
+    bool project(const V3& p, float& sx, float& sy, int w, int h) const;  // where a world point is on the screen (for scripts)
+    LevelObject makeForScript(const V3& at, double rise = 0) { return makeObject(at, rise); }
+    // For tests and scripts: where the mouse's ray puts a placement (rests on an object if one is in the way).
+    V3 placement() const { return placeAt; }
     int findPalette(const std::string& name);  // the first entry whose name has this in it (-1: none)
     void requestPlay(bool here);               // as the buttons: TEST FROM HERE / FROM START
     const char* paletteName(int index) const;
@@ -133,6 +136,10 @@ private:
     bool marquee = false;              // dragging a box over the view to select what's inside
     float marqueeX = 0, marqueeY = 0;
     V3 dragFrom;                       // where the drag began on the ground
+    V3 placeAt;                        // where a click puts things: the ground at the mouse, or the top of an object in the way
+    bool placeOn = false;              // ...it's an object's surface
+    bool dragStarted = false, alt = false;
+    double dragRide = 0;
     V3 viewHit;                        // where the middle of the view meets the ground
     bool haveViewHit = false;
     bool scriptMods = false;
@@ -191,7 +198,8 @@ private:
     void settingChange(int row, int dir);
     void sectionAction(int code);
     V3 snapped(const V3& p) const;
-    LevelObject makeObject(const V3& at) const;
+    LevelObject makeObject(const V3& at, double rise = 0) const;  // rise: how far over the ground it's set (on top of another object)
+    double placeRise() const;
     void buildPalette();
     void choose(int index);
     const mk::Mesh& iconMesh(const PalEntry& e);
