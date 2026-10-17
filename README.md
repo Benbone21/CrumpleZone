@@ -138,7 +138,7 @@ scenario finishes, you can drive around in the aftermath.
 
 | Key | Action |
 | --- | --- |
-| Esc | Pause menu: resume, pick a car, garage, settings, controls, reset, quit. The driving keys can be remapped under Settings → Controller → Keyboard keybinds (Esc always opens the menu; the steering-assist toggle is F4) |
+| Esc | Pause menu: resume, pick a car, garage, settings, controls, reset, quit. Every key can be remapped under Esc → Settings → Controls → Keyboard keybinds (Esc always opens the menu; the steering-assist toggle is F4) |
 | W / S or ↑ / ↓ | Throttle / brake (hold S when stopped to reverse) |
 | A / D or ← / → | Steer. Keys are all or nothing, so full steer is as much as the tires can hold at your speed, on that surface (full lock when parking, a few degrees at 130 km/h), plus room to catch a slide |
 | Space | Handbrake |
@@ -167,13 +167,17 @@ scenario finishes, you can drive around in the aftermath.
 | J | Get out of / into the vehicle |
 | I | On foot: the truck's inventory |
 | F12 | **Dev menu** (below) |
-| ` | Flip the keyboard between GAMEPLAY KEYS and DEV KEYS (below) |
+| Grave (the key under Esc) | Flip the keyboard between GAMEPLAY KEYS and DEV KEYS (below) |
+
+### Keybinds
+
+Esc → Settings → Controls → Keyboard keybinds lists every keyboard action in groups (DRIVING, RECOVERY, ON FOOT, CAMERA AND VIEW, GAME, DEV): W S or the wheel scrolls, Enter or a click picks a row, then press the new key (Shift+key makes a combo like the lights' Shift+L; Esc cancels; Backspace clears it). A key another action has in the same place (the truck, or on foot) is swapped over to the old key; the same key may do different jobs in the truck and on foot (E, G, F) and a dev tool may share a key with a gameplay action (the key mode decides). RESET ALL TO DEFAULTS puts the game's keys back. Layouts are the `key_*` lines of `settings.txt` (Shift combos add 4096 to the key code). Every hint and the controls overlay (H) show the keys as you set them. The table with each action's default is `kInfo` in `src/keybinds.cpp`; to make a saved layout the new defaults, run F12 → TOOLS → EXPORT KEYBINDS AS DEFAULTS (it writes `build/keybinds-defaults.txt`, the first two fields of every row) and paste it over the table's.
 
 ### Dev menu and dev keys
 
 The test and debug tools are not loose keys any more. **F12** (or Esc → DEV MENU) opens the dev menu, which works with the mouse, keyboard and controller: SPAWN VEHICLE (swap the one you drive for the Blazer, Bronco, 4Runner, Tacoma or Jesko), SPAWN AHEAD (parked or AI vehicles, remove this one), TELEPORT (map spawn, each obstacle section, any place), WORLD (time of day, slow motion, reload the map), VEHICLE (repair, respawn, flip upright, refuel), VIEW (beam views, FPS counter) and TOOLS (level editor, new section, model lab, reload the new build, a scenario's checks list). Teleport, reload the map and refuel are refused in a multiplayer session; the rest does for guests what the old keys did.
 
-For quick testing the old keys come back in **DEV KEYS** mode: press **`** (the grave key) to flip between DEV KEYS and GAMEPLAY KEYS (a DEV KEYS tag shows top left; the mode is saved, GAMEPLAY by default; also Esc → Settings → DEV HOTKEYS, or the dev menu). In DEV KEYS mode: 1-7 swap vehicle (Blazer, Bronco, 4Runner, Tacoma, Jesko first), I parked vehicle ahead, K AI traffic, Delete remove vehicle, N beam view, [ ] slow motion, F2 editor here, F3 FPS, F5 load the new build, J a scenario's checks list. In GAMEPLAY KEYS mode they do nothing (I is the truck inventory on foot, J gets out/in). Which side a key is on is a table in `src/devmenu.cpp`.
+For quick testing the old keys come back in **DEV KEYS** mode: press the **grave key** (under Esc) to flip between DEV KEYS and GAMEPLAY KEYS (a DEV KEYS tag shows top left; the mode is saved, GAMEPLAY by default; also Esc → Settings → DEV HOTKEYS, or the dev menu). In DEV KEYS mode: 1-7 swap vehicle (Blazer, Bronco, 4Runner, Tacoma, Jesko first), I parked vehicle ahead, K AI traffic, Delete remove vehicle, N beam view, [ ] slow motion, F2 editor here, F3 FPS, F5 load the new build, J a scenario's checks list. In GAMEPLAY KEYS mode they do nothing (I is the truck inventory on foot, J gets out/in). 
 
 ## Controller
 

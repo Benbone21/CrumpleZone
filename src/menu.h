@@ -142,6 +142,7 @@ public:
     Result mouseMove(float x, float y, bool held, Settings& s);
     Result mouseDown(float x, float y, Settings& s);
     void mouseUp() { dragSlider = -1; }
+    void wheel(int dir, const Settings& s) { moveSel(dir, s); }  // (the mouse wheel: up the rows)
     void draw(Renderer& r, const Settings& s, int W, int H, double dt);
 
 private:
@@ -160,10 +161,11 @@ private:
         float x, y, w, h, barX, barW;
         int row;
     };
+    int scroll = 0;                      // keybinds page: the first row showing
     int devGroup = 0;                    // dev page 9: which group
     int devSection = 0, devPlace = 0;    // the TELEPORT page's pickers
     bool devFromPause = false;           // the dev menu was opened from the pause menu's row (BACK returns there)
-    std::vector<devmenu::Item> devItems() const;  // the rows of the group shown (the scenario one only while a scenario plays)
+    std::vector<devmenu::Item> devItems(const Keybinds& kb) const;  // the rows of the group shown (the scenario one only while a scenario plays)
     int listening = -1;  // keybinds page: the KeyAction waiting for a key press (-1: none)
     std::string keyNote; // keybinds page: why the last key was refused
     int page = 0;  // 0 main (or the title), 1 settings, 2 multiplayer, 3 autopilot, 4 levels, 5 jobs, 6 controller, 7 keybinds, 8 dev menu, 9 one dev group

@@ -5,8 +5,6 @@
 
 namespace devmenu {
 
-static_assert(kMenuKey == SC_F12, "the dev menu key");
-
 const char* groupName(Group g) {
     static const char* const n[G_COUNT] = {"SPAWN VEHICLE", "SPAWN AHEAD", "TELEPORT", "WORLD", "VEHICLE", "VIEW", "TOOLS"};
     return g >= 0 && g < G_COUNT ? n[g] : "";
@@ -15,68 +13,31 @@ const char* groupName(Group g) {
 const char* groupHint(Group g) {
     static const char* const n[G_COUNT] = {"DRIVE A DIFFERENT VEHICLE", "PARKED OR AI VEHICLES IN FRONT OF YOU", "SPAWN, SECTIONS, PLACES",
                                            "TIME OF DAY, SLOW MOTION, RELOAD THE MAP", "REPAIR, FLIP, REFUEL", "BEAM VIEWS, FPS",
-                                           "EDITOR, MODEL LAB, RELOAD"};
+                                           "EDITOR, MODEL LAB, RELOAD, EXPORT KEYBINDS"};
     return g >= 0 && g < G_COUNT ? n[g] : "";
 }
 
-namespace {
-// Which key does what on each side of the DEV KEYS / GAMEPLAY KEYS toggle. A key is a dev key while it has a row here
-// (in DEV KEYS mode the row's action runs and the gameplay action is skipped; in GAMEPLAY mode the row is ignored and the
-// key's gameplay action in main.cpp's key switch runs, or nothing if it has none). Moving a key to the gameplay side is
-// deleting its row; moving one to the dev side is adding a row.
-//   when: 0 always, 1 only while driving (on foot it keeps its gameplay job), 2 only while a scenario plays
-struct KeyRow {
-    int key;
-    Action dev;
-    int when;
-    const char* gameplay;  // what it does in GAMEPLAY mode (for people: the help text and the tests)
-};
-const KeyRow kKeys[] = {
-    {SC_1, {SWAP_VEHICLE, 0}, 0, ""}, {SC_2, {SWAP_VEHICLE, 1}, 0, ""}, {SC_3, {SWAP_VEHICLE, 2}, 0, ""}, {SC_4, {SWAP_VEHICLE, 3}, 0, ""},
-    {SC_5, {SWAP_VEHICLE, 4}, 0, ""}, {SC_6, {SWAP_VEHICLE, 5}, 0, ""}, {SC_7, {SWAP_VEHICLE, 6}, 0, ""},
-    {SC_I, {SPAWN_PARKED, -1}, 1, "TRUCK INVENTORY (ON FOOT)"},
-    {SC_K, {SPAWN_TRAFFIC, 0}, 0, ""},
-    {SC_DELETE, {REMOVE_VEHICLE, 0}, 0, ""},
-    {SC_BACKSPACE, {REMOVE_VEHICLE, 0}, 0, ""},
-    {SC_LEFTBRACKET, {TIME_SLOWER, 0}, 0, ""},
-    {SC_RIGHTBRACKET, {TIME_FASTER, 0}, 0, ""},
-    {SC_N, {BEAM_VIEW, -1}, 0, ""},
-    {SC_F3, {FPS, 0}, 0, ""},
-    {SC_F2, {EDITOR, 0}, 0, ""},
-    {SC_F5, {RELOAD, 0}, 0, ""},
-    {SC_J, {SCENARIO_CHECKS, 0}, 2, "GET OUT / IN"},
-};
-}  // namespace
-
-Action hotkeyAction(int sc, const KeyCtx& ctx) {
-    for (const KeyRow& k : kKeys)
-        if (k.key == sc && (k.when == 0 || (k.when == 1 && !ctx.onFoot) || (k.when == 2 && ctx.scenario))) return k.dev;
-    return {};
-}
-
-const char* gameplayJob(int sc) {
-    for (const KeyRow& k : kKeys)
-        if (k.key == sc) return k.gameplay;
-    return "";
-}
-
-Action fromKey(int sc, bool devHotkeys, const KeyCtx& ctx) { return devHotkeys ? hotkeyAction(sc, ctx) : Action(); }
-
-std::string hotkeyName(const Action& a) {
-    switch (a.act) {
-        case SWAP_VEHICLE: return std::string("KEY ") + (char)('1' + a.arg);
-        case SPAWN_PARKED: return a.arg < 0 ? "KEY I" : "";
-        case SPAWN_TRAFFIC: return "KEY K";
-        case REMOVE_VEHICLE: return "KEY DEL";
-        case TIME_SLOWER: return "KEY [";
-        case TIME_FASTER: return "KEY ]";
-        case BEAM_VIEW: return a.arg < 0 ? "KEY N" : "";
-        case FPS: return "KEY F3";
-        case EDITOR: return "KEY F2";
-        case RELOAD: return "KEY F5";
-        case SCENARIO_CHECKS: return "KEY J";
-        default: return "";
+Action forKeyAction(KeyAction a) {
+    if (a >= KA_DEV_VEHICLE1 && a <= KA_DEV_VEHICLE5) return {SWAP_VEHICLE, a - KA_DEV_VEHICLE1};
+    switch (a) {
+        case KA_DEV_SPAWN: return {SPAWN_PARKED, -1};
+        case KA_DEV_TRAFFIC: return {SPAWN_TRAFFIC, 0};
+        case KA_DEV_REMOVE: return {REMOVE_VEHICLE, 0};
+        case KA_DEV_SLOWER: return {TIME_SLOWER, 0};
+        case KA_DEV_FASTER: return {TIME_FASTER, 0};
+        case KA_DEV_BEAM: return {BEAM_VIEW, -1};
+        case KA_DEV_FPS: return {FPS, 0};
+        case KA_DEV_EDITOR: return {EDITOR, 0};
+        case KA_DEV_RELOAD: return {RELOAD, 0};
+        case KA_DEV_SCENARIO: return {SCENARIO_CHECKS, 0};
+        default: return {};
     }
+}
+
+int keyActionOf(const Action& act) {
+    for (int a = KA_DEV_VEHICLE1; a <= KA_DEV_SCENARIO; a++)
+        if (forKeyAction((KeyAction)a) == act) return a;
+    return -1;
 }
 
 bool offlineOnly(Act a) {
@@ -90,11 +51,13 @@ bool offlineOnly(Act a) {
     }
 }
 
-std::vector<Item> items(Group g) {
+std::vector<Item> items(Group g, const Keybinds* kb) {
     std::vector<Item> r;
+    auto bound = [&](KeyAction ka) { return kb ? "KEY " + kb->name(ka) : std::string(); };
     auto add = [&](Act a, int arg, const std::string& label, const std::string& hint = "") {
         const Action act{a, arg};
-        r.push_back({act, label, hint.empty() ? hotkeyName(act) : hint});
+        const int ka = keyActionOf(act);
+        r.push_back({act, label, !hint.empty() ? hint : ka >= 0 ? bound((KeyAction)ka) : std::string()});
     };
     const auto& cat = vehicleCatalog();
     const auto& listed = listedVehicles();
@@ -105,7 +68,7 @@ std::vector<Item> items(Group g) {
         case G_SPAWN_AHEAD:
             for (int k = 0; k < (int)listed.size(); k++) add(SPAWN_PARKED, k, std::string("PARKED ") + cat[listed[k]].name);
             add(SPAWN_PARKED, -1, "PARKED: NEXT ON THE LIST");
-            add(SPAWN_TRAFFIC, 0, "AI TRAFFIC: NEXT ON THE LIST", "KEY K");
+            add(SPAWN_TRAFFIC, 0, "AI TRAFFIC: NEXT ON THE LIST");
             add(REMOVE_VEHICLE, 0, "REMOVE THIS VEHICLE");
             break;
         case G_TELEPORT:
@@ -121,14 +84,14 @@ std::vector<Item> items(Group g) {
             add(RESET_WORLD, 0, "RESET THE WORLD", "RELOADS THE MAP");
             break;
         case G_VEHICLE:
-            add(REPAIR, 0, "REPAIR WHERE IT STANDS", "KEY R");
-            add(RESPAWN, 0, "RESPAWN AT THE START", "KEY R R");
-            add(FLIP_UPRIGHT, 0, "FLIP UPRIGHT", "KEY T");
+            add(REPAIR, 0, "REPAIR WHERE IT STANDS", bound(KA_REPAIR));
+            add(RESPAWN, 0, "RESPAWN AT THE START", kb ? bound(KA_REPAIR) + " TWICE" : std::string());
+            add(FLIP_UPRIGHT, 0, "FLIP UPRIGHT", bound(KA_FLIP));
             add(REFUEL, 0, "REFUEL", "TANK AND SPARE CAN");
             break;
         case G_VIEW: {
             static const char* const v[4] = {"BEAM VIEW: OFF", "BEAM VIEW: X-RAY", "BEAM VIEW: BEAMS ONLY", "BEAM VIEW: PARTS"};  // (DebugView, render.h)
-            for (int k = 0; k < 4; k++) add(BEAM_VIEW, k, v[k], k == 1 ? "KEY N CYCLES THEM" : "");
+            for (int k = 0; k < 4; k++) add(BEAM_VIEW, k, v[k], k == 1 && kb ? bound(KA_DEV_BEAM) + " CYCLES THEM" : "");
             add(FPS, 0, "FRAME RATE COUNTER");
             break;
         }
@@ -138,14 +101,17 @@ std::vector<Item> items(Group g) {
             add(MODEL_LAB, 0, "MODEL LAB", "THE MODEL YARD");
             add(RELOAD, 0, "RELOAD THE NEW BUILD");
             add(SCENARIO_CHECKS, 0, "SCENARIO CHECKS LIST", "WHILE A SCENARIO PLAYS");
+            add(EXPORT_KEYBINDS, 0, "EXPORT KEYBINDS AS DEFAULTS", "WRITES BUILD/KEYBINDS-DEFAULTS.TXT");
             break;
         default: break;
     }
     return r;
 }
 
-bool dispatchKey(int sc, bool devHotkeys, const KeyCtx& ctx, Handler h, void* user) {
-    const Action a = fromKey(sc, devHotkeys, ctx);
+bool dispatchKey(const Keybinds& kb, int sc, bool shift, bool devKeys, unsigned contexts, Handler h, void* user) {
+    const Keybinds::Press p = kb.resolve(sc, shift, false, contexts, devKeys);
+    if (p.action < 0 || !isDevAction((KeyAction)p.action)) return false;
+    const Action a = forKeyAction((KeyAction)p.action);
     if (!a) return false;
     h(user, a);
     return true;

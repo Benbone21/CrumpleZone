@@ -169,7 +169,7 @@ SCENARIO(throttleSettings, "throttle/settings", "The throttle lines round-trip t
         if (!f) return;
         std::fputs("mph 1\nvolume 0.50\n", f);
         std::fputs(a.saveText().c_str(), f);
-        for (int k = 0; k < KA_COUNT; k++) std::fprintf(f, "%s %d\n", settingsName((KeyAction)k), ka.key((KeyAction)k));
+        for (int k = 0; k < KA_COUNT; k++) std::fprintf(f, "%s %d\n", settingsName((KeyAction)k), ka.saveValue((KeyAction)k));
         std::fclose(f);
     }
     auto load = [&](const char* file, Tuning& t, Keybinds& kb) {
