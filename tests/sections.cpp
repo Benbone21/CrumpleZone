@@ -722,13 +722,17 @@ SCENARIO(sectionLocalFrame, "sections/local-frame", "Author, save, place at anot
         for (const LevelObject& o : sf.objects)
             if (o.kind == OBJ_BOX && std::fabs(o.size.x - 1.5) < 1e-6 && std::fabs(o.size.y - 0.3) < 1e-6) mine = &o;
         bool found = false;
+        double off = 1e9;
         if (mine) {
             const V3 want = sectionToWorld(f, mine->p);
+            // (a slab's height is an offset from the ground it lands on: it sits on the placed ground, which matches the authored ground only within `tol`; in place across, and that close up)
             for (const Box& bx : p.boxes)
-                if (len(bx.c - want) < 0.02 && std::fabs(bx.h.x - 1.5) < 1e-6)
+                if (std::fabs(bx.h.x - 1.5) < 1e-6) off = std::min(off, len(bx.c - want));
+            for (const Box& bx : p.boxes)
+                if (std::hypot(bx.c.x - want.x, bx.c.z - want.z) < 0.02 && std::fabs(bx.c.y - want.y) < std::max(0.02, fr.tol * 2.5) && std::fabs(bx.h.x - 1.5) < 1e-6)
                     found = std::fabs(dot(bx.ax[0], V3(std::cos(mine->yaw + f.heading), 0, -std::sin(mine->yaw + f.heading))) - 1) < 1e-3 && bx.rock;
         }
-        ctx.check(tag + ": the hand-made slab, in place and turned", found);
+        ctx.check(tag + ": the hand-made slab, in place and turned", found, std::to_string(off));
         ctx.check(tag + ": its log", p.logs.size() >= 1);
         // The water pool: level above the entry as it was.
         const V3 pool = sectionToWorld(f, V3(180, 0, 26));

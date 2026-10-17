@@ -163,7 +163,7 @@ public:
     // index, or -1 if the pick isn't a map repair shop.
     int adoptBase(const EditPick& p);
     // A copy of an object with its height worked out for where it stands now (boxes sit
-    // on the ground, logs lie on it).
+    // on the ground plus their lift, logs lie on it plus theirs) and kept as that offset (rel).
     LevelObject grounded(LevelObject o) const;
     // The map's own objects become the level's, so they can be moved, turned, scaled and deleted like the ones you place:
     // each is taken out of the map (level.removed, with its kind) and put back as an equal LevelObject. One undo step.
@@ -177,7 +177,9 @@ public:
     void removePicks(const std::vector<EditPick>& picks);
     // Moves objects by (dx, dz) on the ground, keeping how high each stands above it. One undo step (quick repeats merge on `key`).
     void moveObjects(const std::vector<int>& ks, double dx, double dz, const std::string& key = "move");
-    // Applies an op to objects: each about itself, except a turn of several, which swings them all round their middle.
+    // Applies an op to objects: each about itself, except a turn or a scale of several, which swing or spread them all round their middle.
+    // Heights are offsets from the ground (LevelObject::rel), so sculpting carries every object along; tipping a block keeps the height it was set
+    // at. A rock stacked on another keeps the rise it was given (its `top`); it doesn't follow if the lower rock is moved, but it's never re-seated into it.
     void transformObjects(const std::vector<int>& ks, ObjOp op, double amount, const std::string& key = "xform");
     // One object after an op (it must be normalized: see below), re-grounded; the pure part of transformObjects.
     LevelObject transformed(LevelObject o, ObjOp op, double amount);

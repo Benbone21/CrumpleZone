@@ -46,7 +46,18 @@ struct LevelObject {
     std::string name;  // station; model: its id (modelkit.h)
     double lift = 0;   // box, tree, model: how far it stands above where the ground would put it (m; negative sinks it)
     int scan = -1;     // rock in a pose: which scanned rock (index into the hull library); -1 whichever fits its proportions
+    // Box, log: how high it stands. Not `rel`: p.y (and p2.y) are absolute (an older file, a generator's slab). `rel`: the height is an
+    // offset from the ground under it, so sculpting carries it along: a box's `lift` over where its footprint would rest it, a log's
+    // `lift` and `lift2` (p and p2 ends) over lying on the ground at each end. (p.y and p2.y are then only what that came to when last placed.)
+    bool rel = false;
+    double lift2 = 0;
 };
+
+// Box, log: makes the height an offset from the ground (rel), from the absolute p.y / p2.y; and back, working p.y / p2.y out from the offsets.
+void settleObject(const World& w, LevelObject& o);
+void resolveObject(const World& w, LevelObject& o);
+// Where a box's centre is when it rests on the ground at its place (no lift): flat, down to the lowest ground under it; tipped, the low end's top edge on the ground.
+double boxRestY(const World& w, const LevelObject& o);
 
 // An obstacle section authored in the editor (sections.h, sectionfile.h): a strip of ground with an
 // entry (the course start) and an exit (the last gate), made on a cleared canvas and saved with what
