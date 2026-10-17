@@ -1,6 +1,14 @@
 #include "perf.h"
 #include <algorithm>
 #include <cmath>
+#include <cctype>
+#include <cstring>
+#include <thread>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 void AdaptiveQuality::init(const RenderSettings& settings, float targetFps) {
     targetMs_ = 1000.0f / (std::isfinite(targetFps) && targetFps > 0 ? targetFps : 60);
@@ -137,3 +145,115 @@ int presetOf(const RenderSettings& g) {
     return Q_CUSTOM;
 }
 
+
+// ---- First-launch detection ------------------------------------------------------------------------------------
+
+namespace {
+// Lowercase substrings of "vendor renderer", first match wins (so the specific entries come before the general ones).
+// With two patterns, both must be present.
+struct RendererRule {
+    const char* a;
+    const char* b;
+    int preset;
+};
+const RendererRule kRenderers[] = {
+    // software and virtual renderers
+    {"llvmpipe", nullptr, Q_POTATO}, {"softpipe", nullptr, Q_POTATO}, {"swiftshader", nullptr, Q_POTATO},
+    {"microsoft basic render", nullptr, Q_POTATO}, {"basic render driver", nullptr, Q_POTATO}, {"gdi generic", nullptr, Q_POTATO},
+    {"software rasterizer", nullptr, Q_POTATO}, {"swrast", nullptr, Q_POTATO}, {"videocore", nullptr, Q_POTATO}, {"v3d", nullptr, Q_POTATO},
+    // phones and tablets
+    {"adreno", nullptr, Q_LOW}, {"mali", nullptr, Q_LOW}, {"powervr", nullptr, Q_LOW},
+    // Apple silicon: shared memory, but strong
+    {"apple", "ultra", Q_HIGH}, {"apple", "max", Q_HIGH}, {"apple", "pro", Q_HIGH}, {"apple", nullptr, Q_MEDIUM},
+    // Intel: Arc cards are discrete, the rest is on the CPU
+    {"arc(tm) a", nullptr, Q_HIGH}, {"arc a", nullptr, Q_HIGH}, {"arc(tm) b", nullptr, Q_HIGH}, {"arc b", nullptr, Q_HIGH}, {"arc pro", nullptr, Q_HIGH},
+    {"intel", "arc", Q_MEDIUM}, {"intel", "iris xe", Q_MEDIUM}, {"intel", "iris(r) xe", Q_MEDIUM}, {"intel", nullptr, Q_LOW},
+    // NVIDIA
+    {"geforce mx", nullptr, Q_LOW}, {"geforce", nullptr, Q_HIGH}, {"quadro", nullptr, Q_HIGH}, {"rtx", nullptr, Q_HIGH},
+    {"titan", nullptr, Q_HIGH}, {"nvidia", nullptr, Q_HIGH},
+    // AMD: cards first, then the APUs' integrated graphics
+    {"radeon rx", nullptr, Q_HIGH}, {"radeon pro", nullptr, Q_HIGH}, {"radeon vii", nullptr, Q_HIGH}, {"rx vega", nullptr, Q_HIGH},
+    {"780m", nullptr, Q_MEDIUM}, {"760m", nullptr, Q_MEDIUM}, {"680m", nullptr, Q_MEDIUM}, {"660m", nullptr, Q_MEDIUM},
+    {"radeon hd", nullptr, Q_LOW}, {"vega", nullptr, Q_LOW}, {"radeon(tm) graphics", nullptr, Q_LOW}, {"radeon graphics", nullptr, Q_LOW},
+    {"radeon", nullptr, Q_MEDIUM},
+};
+
+std::string lowered(const std::string& s) {
+    std::string r = s;
+    for (char& c : r) c = (char)std::tolower((unsigned char)c);
+    return r;
+}
+const int kLadder[5] = {Q_POTATO, Q_LOW, Q_MEDIUM, Q_HIGH, Q_ULTRA};
+int ladderOf(int preset) {
+    for (int k = 0; k < 5; k++)
+        if (kLadder[k] == preset) return k;
+    return 2;
+}
+}  // namespace
+
+int presetForRenderer(const std::string& vendor, const std::string& renderer) {
+    const std::string text = lowered(vendor + " " + renderer);
+    for (const RendererRule& r : kRenderers)
+        if (text.find(r.a) != std::string::npos && (!r.b || text.find(r.b) != std::string::npos)) return r.preset;
+    return Q_MEDIUM;
+}
+
+int guessPreset(const HardwareInfo& hw) {
+    int p = presetForRenderer(hw.vendor, hw.renderer);
+    if (p == Q_POTATO) return p;
+    auto cap = [&](int limit) { if (ladderOf(p) > ladderOf(limit)) p = limit; };
+    if (hw.vramMb >= 0 && hw.vramMb < 2048) cap(Q_LOW);
+    else if (hw.vramMb >= 0 && hw.vramMb < 4096) cap(Q_MEDIUM);
+    if (hw.cores > 0 && hw.cores <= 2) cap(Q_LOW);
+    else if (hw.cores > 0 && hw.cores < 4) cap(Q_MEDIUM);
+    if (hw.ramMb > 0 && hw.ramMb < 4096) cap(Q_LOW);
+    else if (hw.ramMb > 0 && hw.ramMb < 8192) cap(Q_MEDIUM);
+    return p;
+}
+
+void queryHardware(HardwareInfo& hw) {
+    hw.cores = (int)std::thread::hardware_concurrency();
+#ifdef _WIN32
+    MEMORYSTATUSEX m;
+    m.dwLength = sizeof m;
+    hw.ramMb = GlobalMemoryStatusEx(&m) ? (long)(m.ullTotalPhys >> 20) : 0;
+#else
+    const long pages = sysconf(_SC_PHYS_PAGES), size = sysconf(_SC_PAGESIZE);
+    hw.ramMb = pages > 0 && size > 0 ? (long)((double)pages * size / (1 << 20)) : 0;
+#endif
+}
+
+void QualityProbe::start(int preset, float targetFps) {
+    level_ = std::min(ladderOf(preset), (int)ladderOf(Q_HIGH));
+    targetMs_ = 1000.0f / (std::isfinite(targetFps) && targetFps > 0 ? targetFps : 60);
+    active_ = true, wentDown_ = wentUp_ = false;
+    rounds_ = count_ = 0, elapsedMs_ = 0, settleMs_ = kSettleMs;
+}
+
+int QualityProbe::preset() const { return kLadder[level_]; }
+
+QualityProbe::Step QualityProbe::feed(float ms) {
+    if (!active_ || !std::isfinite(ms) || ms <= 0 || ms > 250) return NONE;  // (a load or a hitch isn't the preset's cost)
+    if (settleMs_ > 0) {
+        settleMs_ -= ms;
+        return NONE;
+    }
+    if (count_ < 512) samples_[count_++] = ms;
+    elapsedMs_ += ms;
+    if (elapsedMs_ < kMeasureMs || count_ < 15) return NONE;
+    std::nth_element(samples_, samples_ + count_ / 2, samples_ + count_);
+    const float median = samples_[count_ / 2];
+    ++rounds_, count_ = 0, elapsedMs_ = 0, settleMs_ = kSettleMs;
+    const bool slow = median > targetMs_ * 1.15f, roomy = median < targetMs_ * 0.7f;
+    if (slow && level_ > 0) {
+        --level_;
+        if (wentUp_ || rounds_ >= kMaxRounds) return active_ = false, DONE;  // (the step up was too much: back, and stop)
+        wentDown_ = true;
+        return CHANGED;
+    }
+    if (!slow && roomy && !wentDown_ && level_ < ladderOf(Q_HIGH) && rounds_ < kMaxRounds) {
+        ++level_, wentUp_ = true;
+        return CHANGED;
+    }
+    return active_ = false, DONE;
+}

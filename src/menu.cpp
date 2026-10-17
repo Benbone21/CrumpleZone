@@ -27,6 +27,7 @@ std::string Settings::defaultPath() {
 bool Settings::load(const std::string& path) {
     FILE* f = std::fopen(path.c_str(), "r");
     if (!f) return false;
+    gfxChosen = true;  // (a file from before the detection: its graphics are the player's)
     char line[256];
     while (std::fgets(line, sizeof line, f)) {
         char key[64], text[192] = "";
@@ -86,6 +87,7 @@ bool Settings::load(const std::string& path) {
             hostPort = p > 0 ? p : net::kDefaultPort;
         }
         else if (k == "vsync") vsync = v != 0;
+        else if (k == "gfxchosen") gfxChosen = v != 0;
         else if (k == "adaptive") adaptiveQuality = v != 0;
         else if (k == "devhotkeys") devHotkeys = v != 0;
         else if (k == "fps") showFps = v != 0;
@@ -135,7 +137,7 @@ bool Settings::save(const std::string& path) const {
     std::fprintf(f, "recovery %d\nmusic %.2f\nambience %.2f\nfuel %d\ncareer %d\n", realRecovery, music, ambience, fuelMode, career);
     std::fprintf(f, "ground %d\nprops %d\ndrawdistance %.0f\nsharpen %d\nfpstarget %d\n", gfx.ground, gfx.props, gfx.drawDistance, gfx.sharpen, fpsTarget);
     std::fprintf(f, "physicsthreads %d\n", physicsThreads);
-    std::fprintf(f, "adaptive %d\ndevhotkeys %d\n", adaptiveQuality, devHotkeys);
+    std::fprintf(f, "adaptive %d\ndevhotkeys %d\ngfxchosen %d\n", adaptiveQuality, devHotkeys, gfxChosen);
     std::fprintf(f, "winchspeed %.2f\n", winchSpeed);
     if (!playerName.empty()) std::fprintf(f, "name %s\n", playerName.c_str());
     if (!joinAddress.empty()) std::fprintf(f, "join %s\n", joinAddress.c_str());
@@ -174,7 +176,7 @@ namespace {
 enum Id {
     // Settings page.
     UNITS = 1, VOLUME, FOV, RECOVERY, MUSIC, TIMEOFDAY, FUEL, AMBIENCE,
-    ADAPTIVE = 9, QUALITY = 10, SHADOWS, AA, AO, BLOOM, CLOUDS, GRASS, SCALE, SCENERY,
+    ADAPTIVE = 9, QUALITY = 10, SHADOWS, AA, AO, BLOOM, CLOUDS, GRASS, SCALE, SCENERY, DETECT_ROW = 19,
     FULLSCREEN = 20, VSYNC, FPS, PHYSICSTHREADS, WINCHSPEED, FPSTARGET,
     PADSTEER = 30, PADDEAD, PADRUMBLE, THROTTLECAP, THROTTLERESP, THROTTLEPAD,
     // Main page and navigation.
@@ -479,6 +481,7 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
     choice(WINCHSPEED, "WINCH SPEED", speed, 11, "1X: RATED SPEED. 4X: DEFAULT. UP TO 20X. " + s.keys.name(KA_WINCH_SLOWER) + " AND " + s.keys.name(KA_WINCH_FASTER) + " CHANGE IT WHILE DRIVING.");
     header("GRAPHICS");
     choice(QUALITY, "QUALITY", presetName(presetOf(s.gfx)), 5, "POTATO: FOR THE WEAKEST LAPTOPS. HALF RESOLUTION, NO SHADOWS, 300 M OF VIEW");
+    button(DETECT_ROW, "DETECT AUTOMATICALLY", "PICK QUALITY FOR THIS COMPUTER: TESTS A FEW SECONDS OF DRIVING");
     choice(ADAPTIVE, "ADAPTIVE QUALITY", kOffOn[s.adaptiveQuality], 2, "AUTO-SCALE GRAPHICS TO MAINTAIN FRAMERATE");
     choice(FPSTARGET, "FPS TARGET", s.fpsTarget > 0 ? std::to_string(s.fpsTarget) + " FPS" : std::string("UNCAPPED"), 4,
            "WHAT ADAPTIVE QUALITY AIMS FOR. WITH VSYNC OFF, ALSO THE FRAME CAP");
@@ -650,6 +653,7 @@ PauseMenu::Result PauseMenu::activate(int row, Settings& s) {
         case DEVSEC_ROW: return {DEV_RUN, devmenu::TELEPORT_SECTION, std::min(std::max(devSection, 0), std::max(0, it.count - 1))};
         case DEVPLACE_ROW: return {DEV_RUN, devmenu::TELEPORT_PLACE, std::min(std::max(devPlace, 0), std::max(0, it.count - 1))};
         case KEYBINDS_ROW: listening = -1, keyNote.clear(); goPage(7, KEY_ROW0); return {};
+        case DETECT_ROW: return {DETECT_GFX};
         case KEYS_RESET: s.keys.resetDefaults(); listening = -1, keyNote.clear(); return {CHANGED};
         case RESET_ROW: return {RESET};
         case QUIT_ROW: return {QUIT};
@@ -745,6 +749,7 @@ PauseMenu::Result PauseMenu::change(int row, int dir, Settings& s) {
     std::vector<Row> r = rows(s);
     if (row < 0 || row >= (int)r.size()) return {};
     const Row& it = r[row];
+    if (it.id >= QUALITY && it.id <= SCENERY) s.gfxChosen = true;  // (touched the graphics: no first-launch detection over it)
     if (it.kind == SLIDER) return setSlider(row, it.frac + (float)dir / (it.count - 1), s);
     if (it.kind != CHOICE) return {};
     auto cycle = [&](int cur) { return (cur + dir + it.count) % it.count; };

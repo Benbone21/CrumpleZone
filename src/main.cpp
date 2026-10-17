@@ -1596,7 +1596,7 @@ int main(int argc, char** argv) {
     // Settings from last time (scripted captures use the defaults, so they're repeatable).
     Settings settings;
     const std::string settingsPath = Settings::defaultPath();
-    if (!scripted) settings.load(settingsPath);
+    const bool settingsLoaded = !scripted && settings.load(settingsPath);
     if (opt.physicsThreads >= 0) settings.physicsThreads = opt.physicsThreads;
     if (!opt.name.empty()) settings.playerName = opt.name;
     if (settings.playerName.empty()) {
@@ -1606,6 +1606,7 @@ int main(int argc, char** argv) {
         if (settings.playerName.size() > 16) settings.playerName.resize(16);
     }
     if (opt.quality >= 0) applyPreset(settings.gfx, opt.quality);
+    const bool autoDetect = !scripted && opt.quality < 0 && shouldAutoDetect(settingsLoaded, settings.gfxChosen);
     if (opt.ground >= 0) settings.gfx.ground = std::min(opt.ground, 3);
     if (opt.props >= 0) settings.gfx.props = std::min(opt.props, 3);
     if (opt.grass >= 0) settings.gfx.grass = std::min(opt.grass, 3);
@@ -1673,6 +1674,17 @@ int main(int argc, char** argv) {
     }
     const char* glRenderer = (const char*)gl::GetString(GL_RENDERER);
     const char* glVendor = (const char*)gl::GetString(GL_VENDOR);
+    HardwareInfo hardware;  // (for the first-launch guess and DETECT AUTOMATICALLY)
+    hardware.vendor = glVendor ? glVendor : "", hardware.renderer = glRenderer ? glRenderer : "";
+    queryHardware(hardware);
+    {
+        GLint kb[4] = {-1, 0, 0, 0};
+        if (hardware.vendor.find("NVIDIA") != std::string::npos) gl::GetIntegerv(0x9047 /* GPU_MEMORY_INFO_DEDICATED_VIDMEM_NVX */, kb);
+        if (kb[0] > 0 && hardware.vendor.find("NVIDIA") != std::string::npos) hardware.vramMb = kb[0] / 1024;
+    }
+    std::printf("hardware: %d cores, %ld MB RAM, VRAM %ld MB, guess %s\n", hardware.cores, hardware.ramMb, hardware.vramMb,
+                presetName(guessPreset(hardware)));
+    if (autoDetect) applyPreset(settings.gfx, guessPreset(hardware));
     // Honor the saved setting on every GPU; vendor names do not establish driver performance. VSync asks for adaptive
     // sync first (a frame that misses the refresh shows at once, torn, instead of waiting a whole refresh and halving
     // the frame rate), plain vsync where the driver hasn't got it.
@@ -1868,6 +1880,16 @@ int main(int argc, char** argv) {
     };
     auto saveSettings = [&]() {
         if (!scripted) settings.save(settingsPath);
+    };
+    // Graphics detection (perf.h): the hardware guess is on already (first launch) or applied here (the button); the probe then
+    // measures a few seconds of the running game and steps the preset toward the FPS target.
+    QualityProbe probe;
+    bool probePending = autoDetect;  // (waits for the world to be drawing)
+    auto startProbe = [&]() {
+        probe.start(guessPreset(hardware), settings.fpsTarget > 0 ? (float)settings.fpsTarget : 60.0f);
+        applyPreset(settings.gfx, probe.preset());
+        applySettings();
+        hud.toast(std::string("DETECTING GRAPHICS: ") + presetName(probe.preset()) + "?");
     };
     applySettings();
     gKeys = &settings.keys;
@@ -2398,7 +2420,13 @@ int main(int argc, char** argv) {
                 }
                 break;
             case PauseMenu::QUIT: running = false; break;
+            case PauseMenu::DETECT_GFX:
+                saveSettings();
+                if (!menu.title) closeMenu();  // (the game runs while it measures)
+                startProbe();
+                break;
             case PauseMenu::CHANGED:
+                if (probe.active() && presetOf(settings.gfx) != probe.preset()) probe.cancel(), probePending = false;  // (you picked one yourself)
                 applySettings();
                 saveSettings();
                 if (settings.career != career.on) {  // career <-> sandbox: each has its own garage
@@ -4583,7 +4611,21 @@ int main(int argc, char** argv) {
         if (!menu.open && menuBlur < 0.01f) menuBlur = 0;
         // Keep saved/menu choices separate from temporary runtime reductions.
         // Scripted captures stay deterministic unless adaptation is explicitly requested.
-        if (settings.adaptiveQuality && !menu.open && !garageUI.open && !editor.active && (!scripted || opt.adaptive == 1)) {
+        if (probePending && frame > 90 && !probe.active()) probePending = false, startProbe();
+        if (probe.active() && !garageUI.open && !editor.active) {
+            const QualityProbe::Step step = probe.feed((float)frameTimeMs);
+            if (step != QualityProbe::NONE) {
+                applyPreset(settings.gfx, probe.preset());
+                applySettings();
+                if (step == QualityProbe::DONE) {
+                    settings.gfxChosen = true;
+                    saveSettings();
+                    std::printf("graphics detected: %s\n", presetName(probe.preset()));
+                    hud.toast(std::string("GRAPHICS: ") + presetName(probe.preset()) + ". CHANGE IT IN SETTINGS");
+                }
+            }
+        }
+        if (settings.adaptiveQuality && !probe.active() && !menu.open && !garageUI.open && !editor.active && (!scripted || opt.adaptive == 1)) {
             adaptiveQuality.evaluate((float)frameTimeMs, adaptiveSettings);
         } else {
             adaptiveQuality.reset(settings.gfx);
