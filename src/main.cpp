@@ -3504,9 +3504,9 @@ int main(int argc, char** argv) {
                     if (frame == 200 && std::getenv("CZ_INV_CLOSE")) closeInventory();
                 }
             }
-            if (opt.script == "winch" || opt.script == "strap") {  // screenshots of the recovery gear
-                if (frame == 20) std::printf("%s\n", (opt.script == "winch" ? sim.hookWinch(sim.player) : sim.hookStrap(sim.player)).c_str());
-                winch = opt.script == "winch" && frame > 20 ? 1 : 0;
+            if (opt.script == "winch" || opt.script == "winchout" || opt.script == "strap") {  // screenshots of the recovery gear
+                if (frame == 20) std::printf("%s\n", (opt.script == "strap" ? sim.hookStrap(sim.player) : sim.hookWinch(sim.player)).c_str());
+                winch = frame <= 20 ? 0 : opt.script == "winch" ? 1 : opt.script == "winchout" ? -1 : 0;  // (winchout: paying out, the slack line)
                 up = opt.script == "strap" && frame > 40;
                 sim.setWinch(sim.player, winch);
             }

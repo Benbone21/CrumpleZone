@@ -659,6 +659,9 @@ public:
     int pickRecoveryTarget(const std::vector<WinchTarget>& targets, const V3& eye, const V3& ray, double cone) const;
     void setWinch(int car, int dir);   // +1 reel in, -1 pay out, 0 hold
     int ropeOn(int car, int kind = -1) const;  // index of a line on that car (-1 none)
+    // Where a line lies, end a to end b: sagging with its slack, and along the ground where it gets
+    // there (`lift`: how far above it), so paid-out line lies on the ground rather than through it.
+    std::vector<V3> ropePath(const Rope& r, double lift = 0) const;
     void dropRopes(int car);
     void carRemoved(int car);          // call BEFORE erasing cars[car]: drops its lines, shifts the line ends and every autopilot's followCar
     // Takes cars[i] out (a vehicle, not a prop, and not another player's) and fixes the player index. False if refused.
