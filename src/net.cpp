@@ -1486,7 +1486,7 @@ NetSession::Remote* NetSession::remoteFor(uint32_t netId) {
 // whole (3 x i16 mm a node) or, against a state the receiver has, a bit a node that moved
 // at least net::kDentStep mm and how far, in a few bits each. Then the winch lines' lengths.
 namespace {
-constexpr double kPosScale = 1024, kVelScale = 32, kRotLimit = 0.70711;
+constexpr double kPosScale = 1024, kVelScale = 128, kRotLimit = 0.70711;
 void putVar(Writer& w, int v) {
     uint32_t z = ((uint32_t)v << 1) ^ (uint32_t)(v >> 31);
     while (z >= 0x80) w.put<uint8_t>((uint8_t)(z | 0x80)), z >>= 7;
@@ -1575,7 +1575,7 @@ std::vector<uint8_t> NetSession::encodeState(const Snap& s, const Stream::Sent* 
     w.put<uint32_t>(base ? base->seq : 0);
     for (double v : {s.com.x, s.com.y, s.com.z}) w.put<int32_t>(quant<int32_t>(v, kPosScale, -kPosLimit, kPosLimit));
     putRot(w, s.rot);
-    for (double v : {s.vel.x, s.vel.y, s.vel.z}) w.put<int16_t>(quant<int16_t>(v, kVelScale, -1000, 1000));
+    for (double v : {s.vel.x, s.vel.y, s.vel.z}) w.put<int16_t>(quant<int16_t>(v, kVelScale, -255, 255));
     w.put<int16_t>(quant<int16_t>(s.steer, 16000, -2, 2));
     w.put<uint8_t>(quant<uint8_t>(s.brake, 255, 0, 1));
     w.put<uint16_t>(quant<uint16_t>(s.damage, 65535, 0, 1));
@@ -1982,8 +1982,10 @@ void NetSession::applyRemotes(Sim& sim, double now) {
     // sender needs (so their trucks stay where they were relative to each other).
     const double shared = sharedTime(now);
     double need = net::kPlaybackDelay;
+    bool any = false;
     for (const Remote* rm : remotes)
-        if (!rm->buf.empty() && shared - rm->newestArrival < 3) need = std::max(need, rm->late.need());
+        if (!rm->buf.empty() && shared - rm->newestArrival < 3) need = std::max(need, rm->late.need()), any = true;
+    if (!any && !view.started()) return;  // (start where the first states say, not at a guess)
     const bool had = view.started();
     const double before = view.render;
     view.step(shared, need);
@@ -1993,6 +1995,7 @@ void NetSession::applyRemotes(Sim& sim, double now) {
         if (ci < 0 || rm->buf.empty()) continue;
         Car& c = sim.cars[ci];
         if (!c.remote) continue;
+        const double frameDt = dt;
         while (rm->buf.size() > 2 && rm->buf[1].t < t - 0.5) rm->buf.pop_front();
         const V3 rc = restCom(c);
         V3 com;
@@ -2032,25 +2035,32 @@ void NetSession::applyRemotes(Sim& sim, double now) {
             rm->ease = rm->lastShown + rm->lastVel * dt - com;
             if (len(rm->ease) > 3) rm->ease = V3();
         }
-        rm->ease = rm->ease * std::exp(-dt / 0.15);
+        rm->ease = jumped ? V3() : rm->ease * std::exp(-dt / 0.15);
         if (len(rm->ease) < 1e-4) rm->ease = V3();
         rm->coastedTo = t > newest ? newest : -1;
         rm->lastShown = com + rm->ease, rm->lastVel = vel, rm->shown = true;
-        for (size_t i = 0; i < c.nodes.size(); i++) {
-            c.nodes[i].p = now0[i] + rm->ease;
-            c.nodes[i].v = jumped || stopped ? vel : (now0[i] - prev[i]) / 0.05;
+        // (One of ours is in a crash with it: it's on our physics till they part, then eased back.)
+        const bool held = c.heldHere > 0 && !jumped;
+        if (jumped) c.heldHere = 0, c.handBack = false, c.shoveV = c.shoveP = V3();
+        if (c.handBack) c.handBackTo(now0, vel);
+        c.settleShove(vel, frameDt);
+        for (size_t i = 0; i < c.nodes.size() && !held; i++) {
+            c.nodes[i].p = now0[i] + rm->ease + c.shoveP;
+            c.nodes[i].v = (jumped || stopped ? vel : (now0[i] - prev[i]) / 0.05) + c.shoveV;
             c.nodes[i].f = V3();
         }
-        if (!c.chassis.nodes.empty()) c.chassis.rot = rot;
+        if (!held && !c.chassis.nodes.empty()) c.chassis.rot = rot;
         const Snap& s = rm->buf[std::min(idx + (alpha > 0.5), rm->buf.size() - 1)];
         const Snap& a = rm->buf[idx];
         const Snap& b = rm->buf[std::min(idx + 1, rm->buf.size() - 1)];
         auto blend = [alpha](double x, double y) { return x + (y - x) * alpha; };
         for (size_t k = 0; k < c.wheels.size() && k < s.wheelAngle.size(); k++) {
             Wheel& wh = c.wheels[k];
-            wh.angle = blend(a.wheelAngle[k], b.wheelAngle[k]);
-            wh.omega = blend(a.wheelOmega[k], b.wheelOmega[k]);
-            if (&a == &b) wh.angle += wh.omega * clampd(t - a.t, 0, 0.25);
+            if (!held) {
+                wh.angle = blend(a.wheelAngle[k], b.wheelAngle[k]);
+                wh.omega = blend(a.wheelOmega[k], b.wheelOmega[k]);
+                if (&a == &b) wh.angle += wh.omega * clampd(t - a.t, 0, 0.25);
+            }
             wh.popped = s.wheelFlags[k] & 1;
             wh.detached = (s.wheelFlags[k] >> 1) & 1;
             wh.shaftBroken = (s.wheelFlags[k] >> 2) & 1;
