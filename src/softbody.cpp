@@ -871,7 +871,7 @@ void Car::setLocker(bool front, bool on) {
 }
 
 bool Car::wheelPowered(const Wheel& wh) const {
-    if (!wh.driven || wh.detached || wh.shaftBroken) return false;
+    if (!wh.driven || wh.detached || wh.shaftBroken || !wh.mounted) return false;  // (a bare hub: no wheel to drive)
     if (wh.front && !frontEngaged()) return false;  // 2H: the front hubs freewheel
     for (int bi : wh.shafts)
         if (bi >= 0 && beams[bi].broken) return false;
@@ -881,7 +881,7 @@ bool Car::wheelPowered(const Wheel& wh) const {
         // or a missing wheel on the other side leaves this one with nothing.
         for (const Wheel& other : wheels) {
             if (&other == &wh || other.front != wh.front) continue;
-            if (other.detached || other.shaftBroken) return false;
+            if (other.detached || other.shaftBroken || !other.mounted) return false;
             for (int bi : other.shafts)
                 if (bi >= 0 && beams[bi].broken) return false;
         }

@@ -23,7 +23,119 @@ std::string withSize(const char* what, const WheelItem& it) { return std::string
 
 V3 hubOf(const Car& c, const Wheel& wh) { return (c.nodes[wh.inner].p + c.nodes[wh.outer].p) * 0.5; }
 
+CornerNow cornerNow(const Sim& sim, const Car& c, int k) {
+    CornerNow n;
+    if (k < 0 || k >= (int)c.wheels.size()) return n;
+    const Wheel& wh = c.wheels[k];
+    n.lifted = Interact::cornerLifted(sim, c, k);
+    n.jackUp = c.jackPlaced && c.jackWheel == k && c.jackHeight > 0;
+    n.wheelOn = wh.mounted;
+    n.wheelGood = wh.mounted && !wh.popped && !wh.debeaded;
+    return n;
+}
+
+std::string cornerName(const Car& c, int k) { return std::string(c.wheels[k].front ? "FRONT " : "REAR ") + (c.wheels[k].left ? "LEFT" : "RIGHT"); }
+
+// The job record for a repair (made when its first step's done).
+Car::FieldJob& jobFor(Car& c, const Fix& f) {
+    const int ji = fieldJobOf(c, f);
+    if (ji >= 0) return c.fieldJobs[ji];
+    Car::FieldJob j;
+    j.kind = f.kind, j.wheel = f.wheel, j.axle = f.axle, j.beam = f.beam;
+    c.fieldJobs.push_back(j);
+    return c.fieldJobs.back();
+}
+
+int handTool(const Walker& wk) { return wk.hand.kind == TK_TOOL ? wk.hand.id : -1; }
+int handPart(const Walker& wk) { return wk.hand.kind == TK_PART ? wk.hand.id : -1; }
+
+RepairChecklist tireChecklist(const WheelItem& it) {
+    RepairChecklist l;
+    l.title = "NEW TIRE ON THE WHEEL";
+    const std::vector<RepairStep> st = tireSteps();
+    for (int i = 0; i < (int)st.size(); i++) l.rows.push_back(st[i].label), l.done.push_back(i < it.tireWork || !it.popped);
+    l.next = it.popped ? std::min(it.tireWork, (int)st.size() - 1) : -1;
+    return l;
+}
+
 }  // namespace
+
+RepairPlan Interact::planFor(const Sim& sim, const Car& c, int kind, int wheel, const Car::FieldJob* job) {
+    return planRepair(kind, jobJacks(kind, wheel), jobWheelOff(c, kind, wheel), job ? job->done : 0, job && job->fixed, cornerNow(sim, c, wheel));
+}
+
+RepairChecklist Interact::checklistFor(const Sim& sim, const Car& c, int kind, int wheel, int axle, const Car::FieldJob* job) {
+    RepairChecklist l;
+    l.title = jobName(kind);
+    if (wheel >= 0 && wheel < (int)c.wheels.size()) l.title += ", " + cornerName(c, wheel);
+    else if (axle >= 0 && axle < (int)c.axles.size()) l.title += c.axles[axle].front ? ", FRONT" : ", REAR";
+    const RepairPlan p = planFor(sim, c, kind, wheel, job);
+    for (size_t i = 0; i < p.steps.size(); i++) l.rows.push_back(p.steps[i].label), l.done.push_back(p.done[i]);
+    l.next = p.next;
+    return l;
+}
+
+InteractOption Interact::fixOption(const Sim& sim, const Walker& wk, int ci, const Fix& f, const Kit& kit, const TrunkStock* own) {
+    InteractOption o;
+    const Car& c = sim.cars[ci];
+    const int ji = fieldJobOf(c, f);
+    const RepairPlan p = planFor(sim, c, f.kind, f.wheel, ji >= 0 ? &c.fieldJobs[ji] : nullptr);
+    if (p.next < 0) return o;
+    const RepairStep& st = p.steps[p.next];
+    o.car = ci, o.wheel = f.wheel, o.kind = IA_FIX, o.fix = f, o.at = f.at, o.step = p.next, o.tool = st.tool, o.part = st.part, o.hold = st.hold;
+    const std::string what = std::string(jobName(f.kind)) + ": ";
+    switch (st.type) {
+    case RepairStep::JACK:
+        o.blocked = true;
+        o.prompt = what + (kit.has(TOOL_JACK) || c.hasJack || c.jackPlaced ? "JACK THIS CORNER UP FIRST" : "JACK THIS CORNER UP FIRST: NEEDS A JACK");
+        break;
+    case RepairStep::WHEEL_OFF: {  // (the wheel jobs: the lug wrench within reach, as ever)
+        o.kind = IA_REMOVE_WHEEL, o.hold = kRemoveWheel, o.prompt = what + "TAKE THE WHEEL OFF (LUG WRENCH)";
+        const std::string miss = stepMissing(st, kit, nullptr, -1, -1);
+        if (!miss.empty()) o.blocked = true, o.prompt = what + miss;
+        break;
+    }
+    case RepairStep::WORK: {
+        o.prompt = what + st.verb + (st.tool >= 0 ? std::string(" (") + toolName((Tool)st.tool) + ")" : "");
+        const std::string miss = st.ground ? std::string(st.verb) : stepMissing(st, kit, own ? &own->kit : nullptr, handTool(wk), handPart(wk));
+        if (!miss.empty()) o.blocked = true, o.prompt = what + miss;
+        break;
+    }
+    default:
+        o.blocked = true, o.prompt = what + st.verb;
+        break;
+    }
+    if (st.end && f.beam >= 0 && f.beam < (int)c.beams.size()) {  // a shaft's ends: each one where it bolts on
+        const Beam& b = c.beams[f.beam];
+        const V3 pa = c.nodes[b.a].p, pb = c.nodes[b.b].p;
+        const bool aFront = dot(pa - pb, c.frame().fwd) > 0;
+        const V3 end = (st.end == 1) == aFront ? pa : pb;
+        o.at = end + ((pa + pb) * 0.5 - end) * 0.12, o.atEnd = true;
+    }
+    return o;
+}
+
+std::string Interact::pruneJobs(Sim& sim) {
+    std::string said;
+    for (Car& c : sim.cars) {
+        if (c.remote || c.fieldJobs.empty()) continue;
+        const std::vector<Fix> fixes = fixesFor(c);
+        for (size_t i = 0; i < c.fieldJobs.size();) {
+            Car::FieldJob& j = c.fieldJobs[i];
+            bool drop = j.wheel >= (int)c.wheels.size() || (j.wheel >= 0 && c.wheels[j.wheel].detached);
+            bool open = false;
+            for (const Fix& f : fixes) open |= fieldJobOf(c, f) == (int)i;
+            if (!drop) {
+                if (j.fixed && open) j.fixed = false, j.done = 0;  // (broken again)
+                if (j.kind != Fix::NEW_TIRE && !j.fixed && !open) drop = true;  // fixed some other way (a station, R)
+                else if (planFor(sim, c, j.kind, j.wheel, &j).next < 0) drop = true, said = std::string(jobName(j.kind)) + ": ALL DONE";
+            }
+            if (drop) c.fieldJobs.erase(c.fieldJobs.begin() + i);
+            else i++;
+        }
+    }
+    return said;
+}
 
 V3 Interact::jackSpot(const Sim& sim, const Car& c, int k) {
     V3 at = c.jackPlaced && c.jackWheel == k ? c.jackFoot : c.jackPoint(k);
@@ -174,7 +286,10 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
                 if (c.jackWorked && c.jackHeight <= 0.005) j.kind = IA_REMOVE_JACK, j.hold = kRemoveJack, j.prompt = "TAKE THE JACK OUT";
                 else if (!cornerLifted(sim, c, c.jackWheel) && c.jackHeight < kJackMax) j.kind = IA_RAISE_JACK, j.continuous = true, j.prompt = "RAISE THE JACK";
                 else j.kind = IA_LOWER_JACK, j.continuous = true, j.prompt = "LOWER THE JACK";
-                consider(j);
+                bool working = false;  // (a repair still to do at this corner: the work beside it wins over letting it down)
+                if (j.kind == IA_LOWER_JACK && !busy)
+                    for (const Fix& f : fixesFor(c)) working |= f.wheel == c.jackWheel;
+                consider(j, kReach, working ? 0.25 : 0);
             }
         }
         // The back (trunk.h): E at it opens the inventory (invmenu.h), where you take what you need and put it back.
@@ -203,24 +318,32 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
                     o.kind = IA_FIT_WHEEL, o.hold = kFitWheel, o.prompt = withSize("FIT THE WHEEL", *wk.carrying);
                     needs(o, {TOOL_LUG_WRENCH}, true, lifted);
                     consider(o);
+                } else if (!wh.mounted && !busy) {  // a repair under way here: what the bare hub's waiting for
+                    for (const Car::FieldJob& j : c.fieldJobs) {
+                        if (j.wheel != k) continue;
+                        const RepairPlan p = planFor(sim, c, j.kind, j.wheel, &j);
+                        if (p.next < 0) continue;
+                        const RepairStep& st = p.steps[p.next];
+                        if (st.type == RepairStep::WHEEL_ON) o.prompt = std::string(jobName(j.kind)) + ": PICK THE WHEEL UP AND PUT IT BACK ON";
+                        else if (st.ground) o.prompt = std::string(jobName(j.kind)) + ": " + st.verb;
+                        else continue;
+                        o.kind = IA_FIT_WHEEL, o.hold = kFitWheel, o.blocked = true;
+                        consider(o);
+                        break;
+                    }
                 } else if (wh.mounted && wh.debeaded && tireInHands) {
                     o.kind = IA_RESEAT_TIRE, o.hold = kReseatTire, o.prompt = "PUT THE TIRE BACK ON THE RIM";
                     needs(o, {TOOL_TIRE_IRONS}, false, lifted);
                     consider(o);
                 }
             }
-        // Repairs (fixes.h): your tools and a part.
+        // Repairs (fixes.h): in order, a step at a time, each with the right thing in your hand.
         if (!busy)
             for (const Fix& f : fixesFor(c)) {
-                InteractOption o;
-                o.car = ci, o.wheel = f.wheel, o.kind = IA_FIX, o.fix = f, o.at = f.at, o.hold = f.hold;
-                const bool lifted = f.wheel >= 0 && cornerLifted(sim, c, f.wheel);
-                const std::string miss = missingFor(f, kit, lifted);
-                o.prompt = f.what;
-                if (!miss.empty()) o.blocked = true, o.prompt += ": " + miss;
-                else if (!kit.unlimited) o.prompt += " (" + std::to_string(kit.parts[f.part]) + " " + repairPartName(f.part) + (kit.parts[f.part] == 1 ? ")" : "S)");
+                InteractOption o = fixOption(sim, wk, ci, f, kit, own);
+                if (o.kind == IA_NONE) continue;
                 if (hover && hover->ok && hover->car == ci && partMatchesFix(hover->tag, f)) {  // the part you're looking at decides
-                    o.at = hover->at;
+                    if (!o.atEnd) o.at = hover->at;  // (a shaft's end is still where you work it)
                     consider(o, kReach, -1.0);
                 } else {
                     consider(o);
@@ -242,11 +365,74 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
             o.kind = IA_PICK_UP, o.loose = li, o.hold = kPickUp, o.at = lw.p;
             o.prompt = withSize(lw.item.tireOnly ? "PICK UP THE TIRE" : "PICK UP THE WHEEL", lw.item);
             consider(o);
+            // A flat off the truck, lying there: a new tire on it, a step at a time (the tire irons or the tire in your hand).
+            if (lw.item.popped && !lw.item.tireOnly) {
+                const std::vector<RepairStep> steps = tireSteps();
+                const int idx = std::max(0, std::min(lw.item.tireWork, (int)steps.size() - 1));
+                const RepairStep& st = steps[idx];
+                const std::string miss = stepMissing(st, kit, own ? &own->kit : nullptr, handTool(wk), handPart(wk));
+                const bool forIt = own ? handTool(wk) == TOOL_TIRE_IRONS || handPart(wk) == PART_TIRE : miss.empty();
+                if (forIt) {
+                    InteractOption t;
+                    t.kind = IA_TIRE_WORK, t.loose = li, t.step = idx, t.tool = st.tool, t.part = st.part, t.hold = st.hold;
+                    t.at = lw.p + V3(0, 0.1, 0);
+                    t.prompt = std::string("NEW TIRE: ") + st.verb + (st.tool >= 0 ? std::string(" (") + toolName((Tool)st.tool) + ")" : "");
+                    if (!miss.empty()) t.blocked = true, t.prompt = "NEW TIRE: " + miss;
+                    consider(t, kReach, -0.3);
+                }
+            }
         }
     return best;
 }
 
 std::string Interact::update(Sim& sim, Walker& wk, const V3& eye, const V3& look, bool holdE, double dt) {
+    std::string said = run(sim, wk, eye, look, holdE, dt);
+    const std::string done = pruneJobs(sim);
+    if (!done.empty()) toSay = done;  // (after whatever the step itself says)
+    // The checklist: the repair you're on, else the part you're looking at, else the nearest under way.
+    checklist = RepairChecklist();
+    const InteractOption& o = current;
+    const Car* oc = o.car >= 0 && o.car < (int)sim.cars.size() ? &sim.cars[o.car] : nullptr;
+    if ((o.kind == IA_TIRE_WORK || o.kind == IA_PICK_UP) && o.loose >= 0 && o.loose < (int)sim.looseWheels.size()) {
+        const WheelItem& it = sim.looseWheels[o.loose].item;
+        if (it.popped && !it.tireOnly) checklist = tireChecklist(it);
+    } else if (oc && (o.kind == IA_FIX || (o.kind == IA_REMOVE_WHEEL && o.step >= 0))) {
+        const int ji = fieldJobOf(*oc, o.fix);
+        checklist = checklistFor(sim, *oc, o.fix.kind, o.fix.wheel, o.fix.axle, ji >= 0 ? &oc->fieldJobs[ji] : nullptr);
+    } else if (oc && o.wheel >= 0) {
+        for (const Car::FieldJob& j : oc->fieldJobs)
+            if (j.wheel == o.wheel) {
+                checklist = checklistFor(sim, *oc, j.kind, j.wheel, j.axle, &j);
+                break;
+            }
+        if (!checklist.any())
+            for (const Fix& f : fixesFor(*oc))
+                if (f.wheel == o.wheel) {
+                    checklist = checklistFor(sim, *oc, f.kind, f.wheel, f.axle, nullptr);
+                    break;
+                }
+    }
+    if (!checklist.any() && hover.ok && hover.car >= 0 && hover.car < (int)sim.cars.size())
+        for (const Fix& f : fixesFor(sim.cars[hover.car]))
+            if (partMatchesFix(hover.tag, f)) {
+                const Car& hc = sim.cars[hover.car];
+                const int ji = fieldJobOf(hc, f);
+                checklist = checklistFor(sim, hc, f.kind, f.wheel, f.axle, ji >= 0 ? &hc.fieldJobs[ji] : nullptr);
+                break;
+            }
+    if (!checklist.any()) {
+        double best = 12;
+        for (const Car& c : sim.cars) {
+            if (c.remote || c.fieldJobs.empty()) continue;
+            const double d = len(c.frame().com - wk.p);
+            if (d < best) best = d, checklist = checklistFor(sim, c, c.fieldJobs[0].kind, c.fieldJobs[0].wheel, c.fieldJobs[0].axle, &c.fieldJobs[0]);
+        }
+    }
+    if (said.empty()) said = toSay, toSay.clear();
+    return said;
+}
+
+std::string Interact::run(Sim& sim, Walker& wk, const V3& eye, const V3& look, bool holdE, double dt) {
     InteractOption o = pick(sim, wk, eye, look, &spots, kit, trunkOn ? &own : nullptr, hover.ok ? &hover : nullptr);
     if (!holdE) waitRelease = false;
     // Working the jack: it goes on while E is held, whatever it turns into on the way.
@@ -279,6 +465,7 @@ std::string Interact::update(Sim& sim, Walker& wk, const V3& eye, const V3& look
     }
     if (progress < o.hold) return "";
     progress = 0;
+    if (o.kind == IA_FIX || o.kind == IA_TIRE_WORK) waitRelease = true;  // (a step at a time: let go before the next)
     return perform(sim, wk, o);
 }
 
@@ -300,10 +487,18 @@ std::string Interact::perform(Sim& sim, Walker& wk, const InteractOption& o) {
             if (!sim.stowSpare(o.car, *wk.carrying)) return "STOP THE TRUCK FIRST";
             wk.carrying.reset();
             return "SPARE STOWED";
-        case IA_REMOVE_WHEEL:
+        case IA_REMOVE_WHEEL: {
             if (!sim.removeWheel(o.car, o.wheel, it)) return "STOP THE TRUCK FIRST";
             wk.carrying = it;
+            Car& c = sim.cars[o.car];
+            if (o.step >= 0) jobFor(c, o.fix);  // (a repair's step: it's under way)
+            if (it.popped) {  // a flat off: a new tire's under way
+                Fix t{Fix::NEW_TIRE};
+                t.wheel = o.wheel;
+                jobFor(c, t);
+            }
             return "WHEEL OFF";
+        }
         case IA_FIT_WHEEL:
         case IA_RESEAT_TIRE:
             if (!sim.fitWheel(o.car, o.wheel, *wk.carrying)) return "STOP THE TRUCK FIRST";
@@ -378,13 +573,45 @@ std::string Interact::perform(Sim& sim, Walker& wk, const InteractOption& o) {
         case IA_STOW_ITEM:
             wk.hand = TrunkRef();
             return "PUT THE " + trunk::name(o.item) + " BACK";
-        case IA_FIX: {
+        case IA_FIX: {  // a repair's work step, in its turn (fixes.h)
             Car& c = sim.cars[o.car];
             if (len(c.frame().vel) > 0.5) return "STOP THE TRUCK FIRST";
-            if (!applyFix(c, o.fix)) return "";
-            if (wk.hand.kind == TK_PART && wk.hand.id == o.fix.part) wk.hand = TrunkRef();  // (the part in your hand was the one)
-            usedPart = o.fix.part;
-            return std::string(repairPartName(o.fix.part)) + " FITTED";
+            const std::vector<RepairStep> steps = repairSteps(o.fix.kind, jobJacks(o.fix.kind, o.fix.wheel), jobWheelOff(c, o.fix.kind, o.fix.wheel));
+            if (o.step < 0 || o.step >= (int)steps.size() || steps[o.step].type != RepairStep::WORK) return "";
+            int w = 0;
+            for (int i = 0; i < o.step; i++) w += steps[i].type == RepairStep::WORK;
+            Car::FieldJob& job = jobFor(c, o.fix);
+            if (job.done != w) return "";  // (not its turn)
+            const RepairStep& st = steps[o.step];
+            if (st.part >= 0) {
+                if (wk.hand.kind == TK_PART && wk.hand.id == st.part) wk.hand = TrunkRef();  // (the part in your hand went in)
+                usedPart = st.part;
+            }
+            job.done++;
+            if (st.fixes) {
+                applyFix(c, o.fix);
+                job.fixed = true;
+                return std::string(st.label) + ": " + jobName(o.fix.kind) + " FIXED";
+            }
+            c.wake();
+            return st.label;
+        }
+        case IA_TIRE_WORK: {  // a new tire onto a wheel lying there
+            if (o.loose < 0 || o.loose >= (int)sim.looseWheels.size()) return "";
+            WheelItem& lw = sim.looseWheels[o.loose].item;
+            const std::vector<RepairStep> steps = tireSteps();
+            if (!lw.popped || lw.tireWork != o.step || o.step < 0 || o.step >= (int)steps.size()) return "";
+            const RepairStep& st = steps[o.step];
+            if (st.part >= 0) {
+                if (wk.hand.kind == TK_PART && wk.hand.id == st.part) wk.hand = TrunkRef();
+                usedPart = st.part;
+            }
+            lw.tireWork++;
+            if (st.fixes) {
+                lw.popped = false, lw.tireWork = 0;
+                return "NEW TIRE ON: PUT THE WHEEL BACK ON";
+            }
+            return st.label;
         }
         default:
             return "";

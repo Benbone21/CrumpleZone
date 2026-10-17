@@ -536,6 +536,14 @@ public:
     // wrecked engine need a station.
     bool needsFieldRepair() const;
     double fieldRepairSeconds() const;
+    // A hands-on repair under way (fixes.h): which one (Fix::Kind and what it's on) and how many of its work
+    // steps are done. Kept while you walk off and come back; dropped once it's finished (or fixed some other way).
+    struct FieldJob {
+        int kind = 0, wheel = -1, axle = -1, beam = -1;
+        int done = 0;        // work steps done
+        bool fixed = false;  // the part's whole again (what's left: the wheel back on, the jack down)
+    };
+    std::vector<FieldJob> fieldJobs;
     void fieldRepair();
 
     // Repair kit: parts carried for trail-side field repairs. Consumed when fixing damage.

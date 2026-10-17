@@ -17,6 +17,7 @@ struct WheelItem {
     bool popped = false;                         // a blown tire
     bool tireOnly = false;                       // just the tire: it rolled off its rim
     int style = 0;                               // the rim (WheelStyle), for drawing
+    int tireWork = 0;                            // a new tire going on it, off the truck (fixes.h tireSteps): steps done
     std::string from;                            // the vehicle (spec id) it came off
     // "35 in", for prompts.
     std::string sizeName() const;

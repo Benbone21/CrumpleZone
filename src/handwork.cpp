@@ -210,35 +210,53 @@ Handwork handwork(const Sim& sim, const Walker& wk, const Interact& ia, const V3
     }
     case IA_FIX: {
         const Fix& f = o.fix;
-        const int n = std::max(1, (int)f.tools.size());
         // At a corner the work's done at the hub (the axle nut, the knuckle behind it), where you
-        // can see it, the tool coaxial with it; anywhere else where the fix is (a plug points up).
+        // can see it, the tool coaxial with it; anywhere else where the step is (a plug points up,
+        // a shaft's ends). One step, one tool, worked slowly for the whole hold; or the new part going in.
         V3 work = o.at, workAxis = toward;
         if (f.kind == Fix::SPARK_PLUGS) workAxis = kUp;
-        if (car && wh) {
+        if (car && wh && !o.atEnd) {
             WheelItem item = wh->item;
             if (!wh->mounted) item.style = car->spec->wheelStyle;
             const Lugs lugs(*car, *wh, item, false);
             work = lugs.hubFace();
             workAxis = lugs.out;
         }
-        if (t < 0.7) {
-            const double k = t / 0.7 * n, seg = 0.7 * o.hold / n;
-            const Tool tool = f.tools[std::min(n - 1, (int)k)];
-            const double s = frac(k), local = s * seg;
-            switch (tool) {
-            case TOOL_HAMMER: sc.tap(toolId(tool), work, flat(workAxis), local / 0.6 * M_PI * 2); break;
-            case TOOL_PRY_BAR:
-            case TOOL_TIRE_IRONS: sc.lever(toolId(tool), work, flat(workAxis), local / 1.1 * M_PI * 2); break;
-            default: sc.turn(toolId(tool), work, workAxis, local, true, toward); break;
-            }
-        } else {
+        if (o.part >= 0) {
             // The new part, from outboard of the work into place along the stud.
-            const double s = smooth((t - 0.7) / 0.3);
+            const double s = smooth(std::min(1.0, t / 0.8));
             V3 along = R;
             if (car && wh) along = norm(car->nodes[wh->outer].p - car->nodes[wh->inner].p);
             const V3 at = lerp(work + norm(workAxis + kUp * 0.3) * 0.45, work, s);
-            sc.put(repairPartModel(f.part), at, along, kUp);
+            sc.put(repairPartModel((RepairPart)o.part), at, along, kUp);
+        } else if (o.tool >= 0) {
+            const Tool tool = (Tool)o.tool;
+            switch (tool) {
+            case TOOL_HAMMER: sc.tap(toolId(tool), work, flat(workAxis), secs / 0.8 * M_PI * 2); break;
+            case TOOL_PRY_BAR:
+            case TOOL_TIRE_IRONS: sc.lever(toolId(tool), work, flat(workAxis), secs / 1.4 * M_PI * 2); break;
+            default: {  // (undoing comes before the part, doing up after it)
+                bool on = false;
+                if (car) {
+                    const std::vector<RepairStep> st = repairSteps(f.kind, jobJacks(f.kind, f.wheel), jobWheelOff(*car, f.kind, f.wheel));
+                    for (int i = 0; i < o.step && i < (int)st.size(); i++) on |= st[i].part >= 0;
+                }
+                sc.turn(toolId(tool), work, workAxis, secs * 0.75, !on, toward);
+                break;
+            }
+            }
+        }  // (no tool: the engine cranked over on the starter)
+        break;
+    }
+    case IA_TIRE_WORK: {
+        if (o.loose < 0 || o.loose >= (int)sim.looseWheels.size()) break;
+        const LooseWheel& lw = sim.looseWheels[o.loose];
+        const V3 rim = lw.p + kUp * (lw.item.rimR * 0.9);  // (the bead at the top of the rim)
+        if (o.part >= 0) {
+            const double s = smooth(std::min(1.0, t / 0.8));
+            sc.put(repairPartModel((RepairPart)o.part), lerp(rim + toward * 0.4 + kUp * 0.3, lw.p, s), lw.axis(), kUp);
+        } else if (o.tool >= 0) {
+            sc.lever(toolId((Tool)o.tool), rim, toward, secs / 1.4 * M_PI * 2);
         }
         break;
     }
