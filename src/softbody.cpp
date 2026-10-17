@@ -2901,6 +2901,13 @@ void Sim::towPlayerHome() {
     accum = 0;
 }
 
+void Sim::teleportPlayer(double x, double z, double yaw) {
+    Car& c = cars[player];
+    dropRopes(player);
+    c.placeUpright(world, x, z, yaw);
+    accum = 0;
+}
+
 void Sim::recoverPlayer() {
     Car& c = cars[player];
     dropRopes(player);

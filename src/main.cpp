@@ -67,6 +67,10 @@ namespace {
 
 const double kTimeScales[] = {1.0, 0.5, 0.25, 0.1, 0.03};
 
+// The player's bindings, for the hints that name a key (they show the CURRENT binding, never a fixed letter).
+const Keybinds* gKeys = nullptr;
+std::string K(KeyAction a) { return gKeys ? gKeys->name(a) : keyName(defaultKey(a)); }
+
 struct Options {
     int physicsThreads = -1;  // -1 saved setting; 0 automatic; otherwise a CPU thread budget
     int width = 1600, height = 900;
@@ -656,6 +660,7 @@ struct HudState {
     std::vector<Toast> toasts;
     bool photo = false;     // F10: everything hidden, for pictures
     bool newBuild = false;  // the game's been rebuilt since it started: F5 reloads it
+    bool devHotkeys = false;  // (the setting: which key the NEW BUILD pill names)
     double bestKmh = 0;     // freeway: fastest so far
     // The Frontier's race circuit: time on the lap running (-1: not on one), the last and
     // the best, and which side of the start line you were on.
@@ -847,7 +852,7 @@ void drawRecovery(Renderer& r, const Sim& sim, float u) {
         char hint[96];
         const double speed = sim.cars[sim.player].winchSpeed;
         if (pad::ui.last) std::snprintf(hint, sizeof hint, "%s + RT REEL IN   %s + LT PAY OUT   RIGHT STICK UP DOWN: SPEED %.2gX   %s + D-PAD UP: UNHOOK", pad::hint("", pad::B_LB), pad::hint("", pad::B_LB), speed, pad::hint("", pad::B_LB));
-        else std::snprintf(hint, sizeof hint, "Z REEL IN   SHIFT+Z PAY OUT   - = SPEED %.2gX   V UNHOOK", speed);
+        else std::snprintf(hint, sizeof hint, "%s REEL IN   %s PAY OUT   %s %s SPEED %.2gX   %s UNHOOK", K(KA_WINCH_IN).c_str(), K(KA_WINCH_OUT).c_str(), K(KA_WINCH_SLOWER).c_str(), K(KA_WINCH_FASTER).c_str(), speed, K(KA_WINCH).c_str());
         r.text(x + 8 * u, y + h + 4 * u, sm, hint, 0.8f, 0.82f, 0.86f, 0.9f);
     }
 }
@@ -874,7 +879,7 @@ void drawAnchors(Renderer& r, const Sim& sim, float u, int W, int H) {
 void drawStation(Renderer& r, const Sim& sim, float u, int W, int H) {
     const Car& car = sim.cars[sim.player];
     if (car.station < 0 && !car.isProp() && car.needsFieldRepair() && len(car.frame().vel) < 0.5) {  // (fixes.h: hands-on)
-        centeredPill(r, W / 2.0f, H - 70 * u, px(1.5f * u), "SOMETHING'S BROKEN: GET OUT (J) AND FIX IT, OR GET TO A REPAIR STATION", 0.08f, 0.05f, 0.02f, 0.95f, 1.0f, 0.75f, 0.4f);
+        centeredPill(r, W / 2.0f, H - 70 * u, px(1.5f * u), ("SOMETHING'S BROKEN: GET OUT (" + K(KA_GET_IN_OUT) + ") AND FIX IT, OR GET TO A REPAIR STATION"), 0.08f, 0.05f, 0.02f, 0.95f, 1.0f, 0.75f, 0.4f);
         return;
     }
     if (car.station < 0 || car.isProp()) return;
@@ -1081,7 +1086,7 @@ void drawLevelHud(Renderer& r, const LevelRun& run, const Sim& sim, const View& 
         r.text(W / 2.0f - bw / 2, H * 0.3f, bs, run.banner, 1.0f, 0.85f, 0.4f, a);
     }
     if (run.state == LevelRun::FINISHED || run.state == LevelRun::OUT) {
-        const char* hint = lv.resets || run.state == LevelRun::OUT ? "R TWICE: TRY AGAIN    ESC: LEVELS" : "R TWICE: TRY AGAIN    ESC: LEVELS";
+        const std::string hint = K(KA_REPAIR) + " TWICE: TRY AGAIN    " + K(KA_MENU) + ": LEVELS";
         r.text(W / 2.0f - r.textWidth(hint, s) / 2, H * 0.3f + 70 * u, s, hint, 0.9f, 0.9f, 0.92f, 0.9f);
     }
     // Everyone (multiplayer).
@@ -1107,34 +1112,35 @@ void drawLevelHud(Renderer& r, const LevelRun& run, const Sim& sim, const View& 
 }
 
 void drawHelp(Renderer& r, float u, int W, int H, bool mph) {
-    const char* keys[][2] = {
-        {"W S", "DRIVE / BRAKE / REVERSE"}, {"A D", "STEER"},
-        {"SPACE", "HANDBRAKE"},               {"R", "REPAIR IN PLACE (R R: RESPAWN)"},
-        {"T", "BACK ON ITS WHEELS"},          {"TAB", "NEXT VEHICLE (ON FOOT: TRUCK INVENTORY, I)"},
-        {"V", "WINCH: HOOK / UNHOOK"},        {"Z", "WINCH IN (SHIFT+Z: OUT, - = SPEED)"},
-        {"O", "TOW STRAP: CLICK YOUR POINT, THEN THEIRS"},   {"Y", "FRONT SWAY BAR DISCONNECT"},
-        {"9 0", "AIR DOWN / UP (STOPPED)"},       {"8", "THROTTLE LIMIT: 100 50 25 10% (FOR CRAWLING)"},
-        {"1 - 5", "BLAZER BRONCO 4RUNNER TACOMA JESKO"}, {"G", "GARAGE: ENGINE, SUSPENSION, GEARBOX"},
-        {"Q E", "SHIFT DOWN / UP (R N 1...)"},           {"SHIFT+M", "MANUAL / AUTOMATIC"},
-        {"M", "MAP (WAYPOINTS, PINGS)"},      {"ENTER", "CHAT"},
+    // (The keys are the current bindings: what the player set under Settings > Controls > Keyboard keybinds.)
+    const std::string sp = " ";
+    const std::vector<std::pair<std::string, std::string>> keys = {
+        {K(KA_THROTTLE) + sp + K(KA_BRAKE), "DRIVE / BRAKE / REVERSE"}, {K(KA_STEER_LEFT) + sp + K(KA_STEER_RIGHT), "STEER"},
+        {K(KA_HANDBRAKE), "HANDBRAKE"},                                  {K(KA_REPAIR), "REPAIR IN PLACE (TWICE: RESPAWN)"},
+        {K(KA_FLIP), "BACK ON ITS WHEELS"},                              {K(KA_NEXT_VEHICLE), "NEXT VEHICLE (ON FOOT: TRUCK INVENTORY, " + K(KA_INVENTORY) + ")"},
+        {K(KA_WINCH), "WINCH: HOOK / UNHOOK"},                           {K(KA_WINCH_IN) + " / " + K(KA_WINCH_OUT), "WINCH IN / OUT (" + K(KA_WINCH_SLOWER) + " " + K(KA_WINCH_FASTER) + " = SPEED)"},
+        {K(KA_STRAP), "TOW STRAP: CLICK YOUR POINT, THEN THEIRS"},       {K(KA_SWAY), "FRONT SWAY BAR DISCONNECT"},
+        {K(KA_AIR_DOWN) + sp + K(KA_AIR_UP), "AIR DOWN / UP (STOPPED)"}, {K(KA_THROTTLE_CAP), "THROTTLE LIMIT: 100 50 25 10% (FOR CRAWLING)"},
+        {K(KA_GARAGE), "GARAGE: ENGINE, SUSPENSION, GEARBOX"},
+        {K(KA_GEAR_DOWN) + sp + K(KA_GEAR_UP), "SHIFT DOWN / UP (R N 1...)"}, {K(KA_MANUAL), "MANUAL / AUTOMATIC"},
+        {K(KA_MAP), "MAP (WAYPOINTS, PINGS)"},                           {K(KA_CHAT), "CHAT"},
         {"MIDDLE CLICK", "PING: GO HERE (SHIFT: HELP)"},
-        {"J", "GET OUT / IN (ON FOOT: V WINCH, F FUEL CAN)"},
-        {"L", mph ? "4X4: 2H 4H 4L (LOW: BELOW 5 MPH)" : "4X4: 2H 4H 4L (LOW: BELOW 8 KM/H)"},
-        {"SHIFT+L", "LIGHTS: AUTO, LOW, HIGH, OFF"},
-        {"F B", "FRONT / REAR LOCKER"},       {"I", "SPAWN PARKED VEHICLE"},
-        {"K", "SPAWN AI TRAFFIC"},            {"U", "AUTOPILOT (ESC > AUTOPILOT: WHERE)"},
-        {"DEL", "REMOVE VEHICLE"},            {"C", "CAMERA"},
-        {"MOUSE", "LOOK / ZOOM"},             {"N", "BEAM VIEW"},
-        {"[ ]", "SLOW MOTION"},               {"P", "PAUSE"},
-        {"X", "TRACTION CONTROL"},            {"F11", "FULLSCREEN"},
-        {"F3", "DEBUG SCREEN (SHIFT: GRAPH)"},                        {"F10", "HIDE THE HUD (PHOTOS)"},                        {"ESC", "MENU: CARS, SETTINGS, QUIT"},
-        {"H", "CLOSE"},
+        {K(KA_GET_IN_OUT), "GET OUT / IN (ON FOOT: " + K(KA_WINCH) + " WINCH, " + K(KA_FUEL_CAN) + " FUEL CAN)"},
+        {K(KA_TRANSFER), mph ? "4X4: 2H 4H 4L (LOW: BELOW 5 MPH)" : "4X4: 2H 4H 4L (LOW: BELOW 8 KM/H)"},
+        {K(KA_LIGHTS), "LIGHTS: AUTO, LOW, HIGH, OFF"},
+        {K(KA_LOCK_FRONT) + sp + K(KA_LOCK_REAR), "FRONT / REAR LOCKER"}, {K(KA_AUTOPILOT), "AUTOPILOT (ESC > AUTOPILOT: WHERE)"},
+        {K(KA_CAMERA), "CAMERA"},                                        {"MOUSE", "LOOK / ZOOM"},
+        {K(KA_PAUSE), "PAUSE"},                                          {K(KA_TRACTION), "TRACTION CONTROL"},
+        {K(KA_FULLSCREEN), "FULLSCREEN"},                                {K(KA_PHOTO), "HIDE THE HUD (PHOTOS)"},
+        {K(KA_DEBUG_INFO), "DEBUG SCREEN (SHIFT: GRAPH)"},
+        {K(KA_DEV_MENU), "DEV MENU: SPAWN, TELEPORT, DEBUG"},            {K(KA_MENU), "MENU: CARS, SETTINGS, QUIT"},
+        {K(KA_HELP), "CLOSE"},
     };
-    const int n = sizeof(keys) / sizeof(keys[0]), rows = (n + 1) / 2;
+    const int n = (int)keys.size(), rows = (n + 1) / 2;
     float s = px(1.4f * u), lh = 8 * s + 6 * u, keyW = 0, descW = 0;
     for (auto& k : keys) {
-        keyW = std::max(keyW, r.textWidth(k[0], s));
-        descW = std::max(descW, r.textWidth(k[1], s));
+        keyW = std::max(keyW, r.textWidth(k.first, s));
+        descW = std::max(descW, r.textWidth(k.second, s));
     }
     float colW = keyW + 14 * u + descW + 28 * u, pad = 18 * u;
     float w = colW * 2 + 2 * pad - 28 * u, h = rows * lh + 8 * s * 1.5f + 3 * pad;
@@ -1143,8 +1149,8 @@ void drawHelp(Renderer& r, float u, int W, int H, bool mph) {
     label(r, x + pad, y + pad, px(2.0f * u), "CONTROLS", 1.0f, 0.75f, 0.3f);
     for (int k = 0; k < n; k++) {
         float cx = x + pad + (k / rows) * colW, cy = y + pad * 2 + 8 * s * 1.5f + (k % rows) * lh;
-        r.text(cx, cy, s, keys[k][0], 1.0f, 0.75f, 0.3f);
-        r.text(cx + keyW + 14 * u, cy, s, keys[k][1], 0.9f, 0.91f, 0.93f);
+        r.text(cx, cy, s, keys[k].first, 1.0f, 0.75f, 0.3f);
+        r.text(cx + keyW + 14 * u, cy, s, keys[k].second, 0.9f, 0.91f, 0.93f);
     }
 }
 
@@ -1183,9 +1189,9 @@ void drawScenarioStatus(Renderer& r, const Playback& pb, HudState& hud, float u,
     }
     char buf[200];
     if (pb.done)
-        std::snprintf(buf, sizeof(buf), "%s  %s  %d/%d   J: DETAILS", pb.scenario->name.c_str(), pb.passed() ? "PASSED" : "FAILED", ok, total);
+        std::snprintf(buf, sizeof(buf), "%s  %s  %d/%d   F12: DETAILS", pb.scenario->name.c_str(), pb.passed() ? "PASSED" : "FAILED", ok, total);
     else
-        std::snprintf(buf, sizeof(buf), "%s  %.1f S  %d/%d   J: DETAILS", pb.scenario->name.c_str(), c.t, ok, total);
+        std::snprintf(buf, sizeof(buf), "%s  %.1f S  %d/%d   F12: DETAILS", pb.scenario->name.c_str(), c.t, ok, total);
     float s = px(1.4f * u);
     bool good = pb.passed();
     centeredPill(r, W / 2.0f, 12 * u, s, buf, pb.done ? (good ? 0.05f : 0.5f) : 0.02f, pb.done ? (good ? 0.35f : 0.05f) : 0.02f,
@@ -1496,7 +1502,7 @@ void drawHud(Renderer& r, const Sim& sim, const View& view, HudState& hud, const
         y += 20 * u;
     }
     if (hud.newBuild) {
-        centeredPill(r, W / 2.0f, y, px(1.5f * u), "NEW BUILD READY: PRESS F5 TO LOAD IT (SAME MAP, VEHICLE AND SPOT)", 0.02f, 0.06f, 0.03f, 1,
+        centeredPill(r, W / 2.0f, y, px(1.5f * u), "NEW BUILD READY: PRESS " + K(KA_DEV_RELOAD) + " TO LOAD IT (SAME MAP, VEHICLE AND SPOT)", 0.02f, 0.06f, 0.03f, 1,
                      0.45f, 1.0f, 0.55f);
         y += 22 * u;
     }
@@ -1516,7 +1522,7 @@ void drawHud(Renderer& r, const Sim& sim, const View& view, HudState& hud, const
     if (hud.hintTime > 0 && !hud.showHelp) {
         float a = (float)std::min(1.0, hud.hintTime);
         const std::string line = pad::ui.last ? std::string(pad::hint("", pad::B_LB)) + " + " + pad::hint("", pad::B_START) + ": CONTROLS   " + pad::hint("", pad::B_START) + ": MENU"
-                                              : "H: CONTROLS   ESC: MENU";
+                                              : K(KA_HELP) + ": CONTROLS   " + K(KA_MENU) + ": MENU";
         centeredPill(r, W / 2.0f, y, px(1.4f * u), line, 0.02f, 0.02f, 0.03f, a, 0.9f, 0.9f, 0.92f);
     }
     if (hud.showFps && !hud.debugOn) {
@@ -1527,6 +1533,10 @@ void drawHud(Renderer& r, const Sim& sim, const View& view, HudState& hud, const
         std::snprintf(buf, sizeof(buf), "PHYSICS %.1f MS  DRAW CPU %.1f MS", hud.physicsMs, hud.drawCpuMs);
         r.text(W - r.textWidth(buf, px(1.0f * u)) - 10 * u, 8 * u + 8 * px(1.3f * u) + 8 * px(1.0f * u) + 8 * u,
                px(1.0f * u), buf, 0.7f, 0.75f, 0.8f);
+    }
+    if (hud.devHotkeys) {  // the key mode: 1-7, I, K, N... are the dev tools (` flips back)
+        const float ds = px(1.2f * u);
+        centeredPill(r, 10 * u + (r.textWidth("DEV KEYS", ds) + 14 * ds) / 2, 8 * u, ds, "DEV KEYS", 0.35f, 0.18f, 0.0f, 1, 1.0f, 0.75f, 0.3f);
     }
     if (hud.showHelp) pad::ui.last ? drawPadHelp(r, u, W, H) : drawHelp(r, u, W, H, mph);
 }
@@ -1813,6 +1823,7 @@ int main(int argc, char** argv) {
         if (!scripted) settings.save(settingsPath);
     };
     applySettings();
+    gKeys = &settings.keys;
     auto openGarage = [&]() {
         const Car& c = sim.cars[sim.player];
         if (c.isProp() || c.spec->model < 0) return false;
@@ -1850,8 +1861,10 @@ int main(int argc, char** argv) {
     double padRumbleTimer = 0;
     float padRumbleSent[2] = {0, 0};  // (the last rumble command, so a pulse goes out the frame it changes)
     if (opt.pad && !scripted && !std::getenv("CZ_NO_PAD")) padDev.start();
+    int shiftForce = -1;  // a key press resolved to an action: whether its default is a Shift combo (Shift+L: the lights), whatever Shift is doing
     auto shiftDown = [&]() {
         const uint8_t* ks = SDL_GetKeyboardState(nullptr);
+        if (shiftForce >= 0) return shiftForce != 0;
         return padShift || ks[SC_LSHIFT] || ks[SC_RSHIFT];
     };
     auto confirmWinch = [&]() {
@@ -2199,7 +2212,7 @@ int main(int argc, char** argv) {
             closeInventory();
             return;
         }
-        if (!trunk::kitInReach(sim, walker.p)) hud.toast("WALK UP TO THE BACK OF YOUR TRUCK AND PRESS E");
+        if (!trunk::kitInReach(sim, walker.p)) hud.toast("WALK UP TO THE BACK OF YOUR TRUCK AND PRESS " + K(KA_INTERACT));
         else inv.show(sim.player);
     };
     // A choice in the menu (a slot): the same jobs as taking from the bed.
@@ -2296,9 +2309,16 @@ int main(int argc, char** argv) {
         l.name = "UNTITLED";
         return l;
     };
+    std::function<void(const devmenu::Action&)> runDev;  // the dev tools, one place for the menu and the hotkeys (set below, where its state lives)
     auto handleMenu = [&](PauseMenu::Result res) {
         switch (res.action) {
             case PauseMenu::NONE: break;
+            case PauseMenu::DEV_RUN: {
+                const devmenu::Action da{(devmenu::Act)res.vehicle, res.arg};
+                if (da.act != devmenu::MODEL_LAB) closeMenu();  // (the lab comes back to the menu)
+                runDev(da);
+                break;
+            }
             case PauseMenu::RESUME: closeMenu(); break;
             case PauseMenu::DRIVE:
                 closeMenu();
@@ -2553,6 +2573,138 @@ int main(int argc, char** argv) {
     int frame = 0;
     double benchDraw = 0;
     size_t spawnType = 0, trafficType = 0;
+    // The dev tools (devmenu.h): what the old test keys did, now also what the dev menu's entries do.
+    runDev = [&](const devmenu::Action& da) {
+        using namespace devmenu;
+        if (net.active() && offlineOnly(da.act)) {
+            hud.toast("OFFLINE ONLY: LEAVE THE SESSION FIRST");
+            return;
+        }
+        const std::vector<int>& listed = listedVehicles();
+        auto vehicleName = [&](int k) { return std::string(vehicleCatalog()[listed[k]].name); };
+        auto toSpot = [&](double x, double z, const std::string& what) {
+            if (walker.active) getIn();
+            if (walker.active) return;  // (nobody to drive there)
+            const Frame f = sim.cars[sim.player].frame();
+            sim.teleportPlayer(x, z, std::atan2(-f.fwd.z, f.fwd.x));
+            cam.initialized = false;
+            hud.toast("AT " + what);
+        };
+        switch (da.act) {
+            case NONE: break;
+            case SWAP_VEHICLE:
+                if (da.arg >= 0 && da.arg < (int)listed.size()) {  // (the listed vehicles, in order: 1 the Blazer)
+                    sim.swapPlayerVehicle(garage.spec(listed[da.arg]));
+                    hud.toast("NOW DRIVING " + vehicleName(da.arg));
+                }
+                break;
+            case SPAWN_PARKED: {
+                const size_t k = da.arg >= 0 ? (size_t)da.arg : spawnType;
+                if (k >= listed.size()) break;
+                hud.toast(sim.spawnAhead(garage.spec(listed[k])) ? "SPAWNED " + vehicleName((int)k) : std::string("VEHICLE LIMIT REACHED"));
+                if (da.arg < 0) spawnType = (spawnType + 1) % listed.size();
+                break;
+            }
+            case SPAWN_TRAFFIC:
+                hud.toast(sim.spawnTraffic(garage.spec(listed[trafficType])) ? "AI " + vehicleName((int)trafficType) + " ON THE LOOP ROAD"
+                                                                              : std::string("VEHICLE LIMIT REACHED"));
+                trafficType = (trafficType + 1) % listed.size();
+                break;
+            case REMOVE_VEHICLE: hud.toast(sim.removeCar(sim.player) ? "VEHICLE REMOVED" : "KEEP ONE LOCAL VEHICLE"); break;
+            case TELEPORT_SPAWN:
+                if (walker.active) getIn();
+                if (walker.active) break;
+                sim.towPlayerHome();
+                cam.initialized = false;
+                hud.toast("AT THE MAP SPAWN");
+                break;
+            case TELEPORT_SECTION:
+                if (da.arg >= 0 && da.arg < (int)sim.world.sections.size()) {
+                    const World::SectionSpot& sp = sim.world.sections[da.arg];
+                    if (walker.active) getIn();
+                    if (walker.active) break;
+                    sim.teleportPlayer(sp.spawn.x, sp.spawn.z, sp.spawnYaw);
+                    cam.initialized = false;
+                    hud.toast("AT " + sp.name);
+                }
+                break;
+            case TELEPORT_PLACE: {
+                int k = 0;
+                for (const Place& pl : pilotPlaces(sim, net)) {
+                    if (pl.kind != 0) continue;
+                    if (k++ == da.arg) {
+                        toSpot(pl.p.x, pl.p.z, pl.name);
+                        break;
+                    }
+                }
+                break;
+            }
+            case TIME_OF_DAY:
+                if (net.role == NetSession::CLIENT) {
+                    hud.toast("THE HOST'S CLOCK RULES IN MULTIPLAYER");
+                    break;
+                }
+                settings.timeOfDay = std::min(std::max(da.arg, 0), (int)TOD_COUNT - 1);
+                saveSettings();
+                hud.toast(da.arg == TOD_CYCLE ? "THE CLOCK RUNS" : std::string("TIME: ") + timeOfDayName(settings.timeOfDay));
+                break;
+            case TIME_SLOWER:
+                if (net.active()) break;  // everyone shares one clock
+                timeScaleIdx = std::min(timeScaleIdx + 1, 4); sim.timeScale = kTimeScales[timeScaleIdx];
+                break;
+            case TIME_FASTER:
+                if (net.active()) break;
+                timeScaleIdx = std::max(timeScaleIdx - 1, 0); sim.timeScale = kTimeScales[timeScaleIdx];
+                break;
+            case RESET_WORLD:
+                run.stop();
+                levelHours = -1;
+                loadMap(sim.world.map);
+                hud.toast("WORLD RESET");
+                break;
+            case REPAIR: sim.recoverPlayer(); hud.toast("REPAIRED"); break;
+            case RESPAWN: sim.respawnPlayer(); hud.toast("RESPAWNED AT THE START"); break;
+            case FLIP_UPRIGHT: sim.rightPlayer(); hud.toast("BACK ON ITS WHEELS"); break;
+            case REFUEL: {
+                Car& c = sim.cars[sim.player];
+                if (c.isProp()) break;
+                c.fuel = c.spec->fuelCapacity;
+                if (c.spec->jerryCan > 0) c.jerry = c.spec->jerryCan;
+                hud.toast("REFUELED");
+                break;
+            }
+            case BEAM_VIEW: {
+                static const char* names[] = {"BEAM VIEW OFF", "BEAM VIEW: X-RAY", "BEAM VIEW: BEAMS ONLY", "BEAM VIEW: PARTS"};
+                debug = da.arg < 0 ? (DebugView)((debug + 1) % DEBUG_VIEW_COUNT) : (DebugView)std::min(da.arg, (int)DEBUG_VIEW_COUNT - 1);
+                hud.toast(names[debug]);
+                break;
+            }
+            case FPS: dbg.toggle(shiftDown()); break;  // the F3 debug screen (Shift: its frame graph); the small FPS counter stays in the settings
+            case EDITOR:  // free driving: opens the editor here (in a playtest, F1 is the way back)
+                if (editorSuspended && !editor.active) hud.toast(K(KA_PLAYTEST_BACK) + ": BACK TO THE EDITOR");
+                else openEditor(editorKeyLevel(), false, true);
+                break;
+            case MODEL_LAB: handleMenu(PauseMenu::Result{PauseMenu::MODEL_LAB}); break;
+            case NEW_SECTION: openEditor(Level(), true); break;
+            case RELOAD:  // load the new build (see BuildWatch)
+                if (editorSuspended) hud.toast("NO RELOADING DURING A PLAYTEST: " + K(KA_PLAYTEST_BACK) + " BACK TO THE EDITOR FIRST");  // (a reload would lose the editor and its unsaved edits)
+                else if (hud.newBuild) reload = true, running = false;
+                else hud.toast(watch.exe.empty() ? "RELOADING ISN'T AVAILABLE HERE" : "NO NEW BUILD YET");
+                break;
+            case SCENARIO_CHECKS:
+                if (playback.active()) hud.scenarioDetail = !hud.scenarioDetail;
+                break;
+            case EXPORT_KEYBINDS: {  // the saved layout as the new defaults (keybinds.h): the text to paste over kInfo's first two fields
+                makeDir("build");
+                const std::string text = settings.keys.exportDefaults();
+                FILE* f = std::fopen("build/keybinds-defaults.txt", "w");
+                if (f) std::fputs(text.c_str(), f), std::fclose(f);
+                std::fputs(text.c_str(), stdout);
+                hud.toast(f ? "KEYBINDS WRITTEN TO BUILD/KEYBINDS-DEFAULTS.TXT" : "COULDN'T WRITE BUILD/KEYBINDS-DEFAULTS.TXT");
+                break;
+            }
+        }
+    };
 
     while (running) {
         uint64_t now = SDL_GetPerformanceCounter();
@@ -2560,6 +2712,7 @@ int main(int argc, char** argv) {
         double dt = scripted ? 1.0 / 60.0 : std::min(0.1, frameTimeMs / 1000.0);
         last = now;
         if (dt > 0) fps += ((float)(1.0 / dt) - fps) * 0.05f;
+        hud.devHotkeys = settings.devHotkeys;
         hud.newBuild = watch.poll() && !editorSuspended;  // (not during a playtest: the editor would be lost)
         if (hud.newBuild && std::getenv("CZ_AUTORELOAD")) reload = true, running = false;  // (testing the reload)
 
@@ -2606,6 +2759,7 @@ int main(int argc, char** argv) {
         }
         SDL_Event e;
         while (nextEvent(e)) {
+            shiftForce = -1;
             {  // ---- gamepad: hot-plug and buttons; the keyboard and mouse take the HUD hints back ----
                 std::string padToast;
                 if (!fromPad && padDev.handleEvent(e, padToast)) {
@@ -2624,7 +2778,7 @@ int main(int argc, char** argv) {
                 float mx, my;
                 if (e.type == SDL_KEYDOWN) {
                     const int sc = evKeyScancode(e);
-                    if ((sc == SC_ESCAPE || (sc == SC_M && !shiftDown())) && !evKeyRepeat(e)) {
+                    if ((sc == SC_ESCAPE || settings.keys.actionFor(sc, shiftDown(), KCTX_ANY, false) == KA_MAP) && !evKeyRepeat(e)) {
                         coop.mapOpen = false;
                         continue;
                     }
@@ -2682,6 +2836,22 @@ int main(int argc, char** argv) {
             switch (e.type) {
                 case SDL_QUIT: running = false; break;
                 case SDL_KEYDOWN: {
+                    if (settings.keys.matches(KA_DEV_MENU, evKeyScancode(e), shiftDown()) && !fromPad && !evKeyRepeat(e) && !inv.open && !garageUI.open && !winchAim.on && !menu.title &&
+                        !menu.listeningForKey()) {  // the dev menu (devmenu.h): F12 opens and closes it, whatever DEV HOTKEYS says
+                        if (menu.devOpen()) closeMenu();
+                        else {
+                            const bool fromPause = menu.onPausePage();
+                            if (!menu.open) openMenu();
+                            menu.showDev(std::max(0, sim.cars[sim.player].spec->model), sim.world.map, fromPause);
+                        }
+                        break;
+                    }
+                    if (settings.keys.matches(KA_DEV_TOGGLE, evKeyScancode(e), shiftDown()) && !fromPad && !evKeyRepeat(e) && !menu.open && !inv.open && !garageUI.open && !winchAim.on) {
+                        settings.devHotkeys = !settings.devHotkeys;  // DEV KEYS <-> GAMEPLAY KEYS (devmenu.h has the table)
+                        saveSettings();
+                        hud.toast(settings.devHotkeys ? "DEV KEYS: THE DEV KEYS ARE TOOLS (" + K(KA_DEV_TOGGLE) + " FOR GAMEPLAY KEYS)" : "GAMEPLAY KEYS (" + K(KA_DEV_TOGGLE) + " FOR DEV KEYS)");
+                        break;
+                    }
                     if (menu.open) {  // the menu takes every key (repeats too: hold to slide)
                         const uint8_t* ks = SDL_GetKeyboardState(nullptr);
                         menu.shift = ks[SC_LSHIFT] || ks[SC_RSHIFT];
@@ -2695,7 +2865,7 @@ int main(int argc, char** argv) {
                         else if (k == SC_A || k == SC_LEFT) inv.move(-1, 0);
                         else if (k == SC_D || k == SC_RIGHT) inv.move(1, 0);
                         else if (evKeyRepeat(e)) {
-                        } else if (k == SC_ESCAPE || k == SC_TAB || k == SC_I || k == SC_Q) closeInventory();
+                        } else if (k == SC_ESCAPE || k == SC_TAB || k == SC_Q || settings.keys.matches(KA_INVENTORY, k, false) || settings.keys.matches(KA_NEXT_VEHICLE, k, false)) closeInventory();
                         else if (k == SC_E || k == SC_RETURN || k == SC_KP_ENTER) {
                             if (inv.sel != INV_NONE) inventoryChoose(inv.sel);
                         }
@@ -2704,7 +2874,10 @@ int main(int argc, char** argv) {
                     if (evKeyRepeat(e)) break;
                     // The key as the in-game switch knows it: the player's keyboard bindings turned back into
                     // the default keys the switch is written against (a gamepad press already is one).
-                    const int gsc = settings.keys.gameKey(evKeyScancode(e), fromPad);
+                    const unsigned kctx = (walker.active ? KCTX_FOOT : KCTX_DRIVE) | (playback.active() ? KCTX_SCENARIO : 0u);
+                    const Keybinds::Press kh = settings.keys.resolve(evKeyScancode(e), shiftDown(), fromPad, kctx, settings.devHotkeys);
+                    const int gsc = kh.key;
+                    if (!fromPad && kh.action >= 0) shiftForce = kh.shift ? 1 : 0;  // (the switch asks shiftDown(): the action's own answer)
                     if (garageUI.open) {
                         const auto sc = evKeyScancode(e);
                         int& pk = garageUI.pick.pick[garageUI.slot];
@@ -2741,7 +2914,7 @@ int main(int argc, char** argv) {
                             sim.swapPlayerVehicle(garage.spec(garageUI.vehicle));
                             garageUI.open = false;
                             hud.toast(garageUI.pick.stock() ? "BACK TO STOCK" : "MODS FITTED");
-                        } else if (sc == SC_G || sc == SC_ESCAPE) {
+                        } else if (kh.action == KA_GARAGE || sc == SC_ESCAPE) {
                             garageUI.open = false;
                             if (garageFromMenu) openMenu();  // back where you came from
                         }
@@ -2763,11 +2936,15 @@ int main(int argc, char** argv) {
                         if (sc == SC_V || sc == SC_O || sc == SC_RETURN || sc == SC_KP_ENTER) confirmWinch();
                         break;
                     }
-                    if ((evKeyScancode(e) == SC_RETURN || evKeyScancode(e) == SC_KP_ENTER) && !winchAim.on) {
+                    if (kh.action == KA_CHAT && !winchAim.on) {
                         coop.typing = true;
                         coop.draft.clear();
                         break;
                     }
+                    if (kh.action >= 0 && isDevAction((KeyAction)kh.action) &&  // (the dev tools: DEV KEYS mode only, resolve left them out otherwise; the dev menu has them all)
+                        devmenu::dispatchKey(settings.keys, evKeyScancode(e), shiftDown(), settings.devHotkeys, kctx,
+                                             [](void* fn, const devmenu::Action& a) { (*static_cast<std::function<void(const devmenu::Action&)>*>(fn))(a); }, &runDev))
+                        break;
                     switch (gsc) {
                         case SC_ESCAPE:  // (the pause menu: Esc on the keyboard, Start on the pad, the MENU key if rebound)
                             if (hud.showHelp) hud.showHelp = false;
@@ -2798,11 +2975,11 @@ int main(int argc, char** argv) {
                                 hud.toast("RESPAWNED AT THE START");
                             } else if (!run.repairsAllowed()) {
                                 hud.confirmReset = 0.45;
-                                hud.toast("NO REPAIRS ON THIS LEVEL: R TWICE TO START AGAIN");
+                                hud.toast("NO REPAIRS ON THIS LEVEL: " + K(KA_REPAIR) + " TWICE TO START AGAIN");
                             } else {
                                 hud.confirmReset = 0.45;
                                 sim.recoverPlayer();
-                                hud.toast("REPAIRED (R TWICE: BACK TO THE START)");
+                                hud.toast("REPAIRED (" + K(KA_REPAIR) + " TWICE: BACK TO THE START)");
                             }
                             break;
                         case SC_T:
@@ -2875,37 +3052,20 @@ int main(int argc, char** argv) {
                         case SC_F10:
                             hud.photo = !hud.photo;
                             break;
-                        case SC_N: {
-                            static const char* names[] = {"BEAM VIEW OFF", "BEAM VIEW: X-RAY", "BEAM VIEW: BEAMS ONLY", "BEAM VIEW: PARTS"};
-                            debug = (DebugView)((debug + 1) % DEBUG_VIEW_COUNT);
-                            hud.toast(names[debug]);
-                            break;
-                        }
                         case SC_H: hud.showHelp = !hud.showHelp; break;
+                        case SC_F3: runDev({devmenu::FPS, 0}); break;  // the debug info screen (always on)
+                        case SC_F5: runDev({devmenu::RELOAD, 0}); break;  // load the new build (always on)
                         case SC_F1:  // leaves a playtest for the editor
                             if (editorSuspended && !editor.active && !returnToEditor()) hud.toast("CAN'T GO BACK TO THE EDITOR HERE");
                             break;
-                        case SC_F2:  // free driving: opens the editor here (in a playtest, F1 is the way back)
-                            if (editorSuspended && !editor.active) hud.toast("F1: BACK TO THE EDITOR");
-                            else openEditor(editorKeyLevel(), false, true);
-                            break;
                         case SC_J:
-                            if (playback.active()) {  // (a scenario: J opens its checks list)
-                                hud.scenarioDetail = !hud.scenarioDetail;
-                                break;
-                            }
-                            if (walker.active && walker.carrying) hud.toast("PUT THE WHEEL DOWN FIRST (G)");
+                            if (playback.active()) break;  // (a scenario: J is its checks list, a dev key)
+                            if (walker.active && walker.carrying) hud.toast("PUT THE WHEEL DOWN FIRST (" + K(KA_PUT_DOWN) + ")");
                             else if (walker.active) getIn();
                             else getOut();
                             break;
-                        case SC_F3: dbg.toggle(shiftDown()); break;
-                        case SC_F5:  // load the new build (see BuildWatch)
-                            if (editorSuspended) hud.toast("NO RELOADING DURING A PLAYTEST: F1 BACK TO THE EDITOR FIRST");  // (a reload would lose the editor and its unsaved edits)
-                            else if (hud.newBuild) reload = true, running = false;
-                            else hud.toast(watch.exe.empty() ? "RELOADING ISN'T AVAILABLE HERE" : "NO NEW BUILD YET");
-                            break;
                         case SC_P:
-                            if (net.active()) hud.toast("NO PAUSING IN MULTIPLAYER (ESC STILL OPENS THE MENU)");
+                            if (net.active()) hud.toast("NO PAUSING IN MULTIPLAYER (" + K(KA_MENU) + " STILL OPENS THE MENU)");
                             else sim.paused = !sim.paused;
                             break;
                         case SC_X: {
@@ -2915,26 +3075,11 @@ int main(int argc, char** argv) {
                                       : c.tractionControl ? "TRACTION CONTROL ON" : "TRACTION CONTROL OFF");
                             break;
                         }
-                        case SC_1:
-                        case SC_2:
-                        case SC_3:
-                        case SC_4:
-                        case SC_5:
-                        case SC_6:
-                        case SC_7: {
-                            const size_t k = gsc - SC_1;  // (the listed vehicles, in order: 1 the Blazer)
-                            if (k < listedVehicles().size()) {
-                                const int idx = listedVehicles()[k];
-                                sim.swapPlayerVehicle(garage.spec(idx));
-                                hud.toast(std::string("NOW DRIVING ") + vehicleCatalog()[idx].name);
-                            }
-                            break;
-                        }
                         case SC_G:
                             if (walker.active) {
                                 if (walker.carrying) Interact::drop(sim, walker, lastView.target - lastView.eye);  // (on foot: put down what you carry)
                                 else if (walker.holdingJack) Interact::dropJack(sim, walker);  // (put the jack down)
-                                else if (walker.hand.any()) hud.toast("PUT IT BACK IN THE TRUCK: PRESS E AT ITS BACK");
+                                else if (walker.hand.any()) hud.toast("PUT IT BACK IN THE TRUCK: PRESS " + K(KA_INTERACT) + " AT ITS BACK");
                             }
                             else openGarage();
                             break;
@@ -2944,7 +3089,7 @@ int main(int argc, char** argv) {
                             Car& c = sim.cars[sim.player];
                             if (c.shift(gsc == SC_E ? 1 : -1) && !c.manualShift) {
                                 c.manualShift = true;  // taking over the gears switches to manual
-                                hud.toast("MANUAL SHIFTING (SHIFT+M FOR AUTOMATIC)");
+                                hud.toast("MANUAL SHIFTING (" + K(KA_MANUAL) + " FOR AUTOMATIC)");
                             }
                             break;
                         }
@@ -2968,7 +3113,7 @@ int main(int argc, char** argv) {
                             Car& c = sim.cars[sim.player];
                             const auto& modes = driveModes(c.isProp() ? XFER_NONE : c.spec->transfer);
                             if (modes.empty() || !c.mode()) {
-                                hud.toast("NO TRANSFER CASE ON THIS CAR (SHIFT+L: LIGHTS)");
+                                hud.toast("NO TRANSFER CASE ON THIS CAR (" + K(KA_LIGHTS) + ": LIGHTS)");
                                 break;
                             }
                             const int next = (c.driveMode + 1) % (int)modes.size();
@@ -3032,7 +3177,7 @@ int main(int argc, char** argv) {
                                 c.setLocker(front, false);
                                 hud.toast(std::string(which) + " LOCKER OFF");
                             } else if (front && !c.frontEngaged()) {
-                                hud.toast("SHIFT INTO 4WD (L) TO LOCK THE FRONT");
+                                hud.toast("SHIFT INTO 4WD (" + K(KA_TRANSFER) + ") TO LOCK THE FRONT");
                             } else if (len(c.frame().vel) > 30 / 3.6) {
                                 hud.toast("SLOW DOWN TO ENGAGE THE LOCKER");
                             } else {
@@ -3041,21 +3186,8 @@ int main(int argc, char** argv) {
                             }
                             break;
                         }
-                        case SC_I:
-                            if (walker.active) {
-                                toggleInventory();
-                                break;
-                            }
-                            hud.toast(sim.spawnAhead(garage.spec(listedVehicles()[spawnType]))
-                                          ? std::string("SPAWNED ") + vehicleCatalog()[listedVehicles()[spawnType]].name
-                                          : std::string("VEHICLE LIMIT REACHED"));
-                            spawnType = (spawnType + 1) % listedVehicles().size();
-                            break;
-                        case SC_K:
-                            hud.toast(sim.spawnTraffic(garage.spec(listedVehicles()[trafficType]))
-                                          ? std::string("AI ") + vehicleCatalog()[listedVehicles()[trafficType]].name + " ON THE LOOP ROAD"
-                                          : std::string("VEHICLE LIMIT REACHED"));
-                            trafficType = (trafficType + 1) % listedVehicles().size();
+                        case SC_I:  // (driving, I is a dev key: spawn a parked vehicle)
+                            if (walker.active) toggleInventory();
                             break;
                         case SC_U: {  // autopilot on (to the place picked in the menu) or off
                             Car& c = sim.cars[sim.player];
@@ -3063,16 +3195,6 @@ int main(int argc, char** argv) {
                             else startPilot();
                             break;
                         }
-                        case SC_DELETE:
-                        case SC_BACKSPACE:
-                            hud.toast(sim.removeCar(sim.player) ? "VEHICLE REMOVED" : "KEEP ONE LOCAL VEHICLE");
-                            break;
-                        case SC_LEFTBRACKET:
-                            if (net.active()) break;  // everyone shares one clock
-                            timeScaleIdx = std::min(timeScaleIdx + 1, 4); sim.timeScale = kTimeScales[timeScaleIdx]; break;
-                        case SC_RIGHTBRACKET:
-                            if (net.active()) break;
-                            timeScaleIdx = std::max(timeScaleIdx - 1, 0); sim.timeScale = kTimeScales[timeScaleIdx]; break;
                         case SC_F11: {
                             settings.fullscreen = !settings.fullscreen;
                             applySettings();
@@ -3135,18 +3257,19 @@ int main(int argc, char** argv) {
                     break;
                 case SDL_MOUSEWHEEL:
                     if (!menu.open) cam.dist = clampd(cam.dist * std::pow(0.88, evWheelY(e)), 3.0, 60.0);
+                    else if (evWheelY(e) != 0) menu.wheel(evWheelY(e) > 0 ? -1 : 1, settings);
                     break;
             }
         }
 
         const uint8_t* keys = SDL_GetKeyboardState(nullptr);
         const Keybinds& kb = settings.keys;
-        bool up = keys[kb.key(KA_THROTTLE)] || keys[SC_UP], down = keys[kb.key(KA_BRAKE)] || keys[SC_DOWN];
-        bool left = keys[kb.key(KA_STEER_LEFT)] || keys[SC_LEFT], right = keys[kb.key(KA_STEER_RIGHT)] || keys[SC_RIGHT];
-        bool hb = keys[kb.key(KA_HANDBRAKE)];
         const bool shiftHeld = keys[SC_LSHIFT] || keys[SC_RSHIFT];
-        int winch = keys[SC_Z] ? (shiftHeld ? -1 : 1) : 0;
-        int airing = keys[SC_9] ? -1 : keys[SC_0] ? 1 : 0;
+        bool up = kb.held(KA_THROTTLE, keys, shiftHeld) || keys[SC_UP], down = kb.held(KA_BRAKE, keys, shiftHeld) || keys[SC_DOWN];
+        bool left = kb.held(KA_STEER_LEFT, keys, shiftHeld) || keys[SC_LEFT], right = kb.held(KA_STEER_RIGHT, keys, shiftHeld) || keys[SC_RIGHT];
+        bool hb = kb.held(KA_HANDBRAKE, keys, shiftHeld);
+        int winch = kb.held(KA_WINCH_OUT, keys, shiftHeld) ? -1 : kb.held(KA_WINCH_IN, keys, shiftHeld) ? 1 : 0;
+        int airing = kb.held(KA_AIR_DOWN, keys, shiftHeld) ? -1 : kb.held(KA_AIR_UP, keys, shiftHeld) ? 1 : 0;
         if (cam.mode == 3 && !menu.open && !editor.active && !coop.typing && !coop.mapOpen) {
             // The drone: the keys fly the camera; the truck waits on its handbrake.
             const double speed = (8 + std::max(0.0, cam.droneEye.y - sim.world.height(cam.droneEye.x, cam.droneEye.z)) * 0.6) * (shiftHeld ? 3 : 1);
@@ -3156,8 +3279,8 @@ int main(int argc, char** argv) {
             if (down) m -= f;
             if (left) m += l;
             if (right) m -= l;
-            if (keys[SC_E]) m.y += 1;
-            if (keys[SC_Q]) m.y -= 1;
+            if (kb.held(KA_GEAR_UP, keys, shiftHeld)) m.y += 1;
+            if (kb.held(KA_GEAR_DOWN, keys, shiftHeld)) m.y -= 1;
             if (padCtx == pad::Mode::Drive) m += f * (double)padLogic.in.walkForward + l * (double)padLogic.in.walkTurn;  // (gamepad: left stick flies)
             if (len(m) > 0) cam.droneEye += norm(m) * (speed * dt);
             cam.droneEye.y = std::max(cam.droneEye.y, sim.world.height(cam.droneEye.x, cam.droneEye.z) + 0.5);
@@ -3432,7 +3555,7 @@ int main(int argc, char** argv) {
                 walker.step(sim.world, sim, dt, still ? 0 : (up ? 1 : 0) - (down ? 1 : 0), still ? 0 : (left ? 1 : 0) - (right ? 1 : 0), shiftHeld && !still, hb && !still, viewYaw);
                 {  // hands on: hold E (pad: X) for the job in front of you
                     const uint8_t* ks = SDL_GetKeyboardState(nullptr);
-                    const bool holdE = (!menu.open && !inv.open && ks[SC_E]) || (padCtx == pad::Mode::Drive && padLogic.in.interact) || scriptE;
+                    const bool holdE = (!menu.open && !inv.open && settings.keys.held(KA_INTERACT, ks, ks[SC_LSHIFT] || ks[SC_RSHIFT])) || (padCtx == pad::Mode::Drive && padLogic.in.interact) || scriptE;
                     interact.spots.clear();  // (a career's supply caches in reach: E opens one)
                     if (career.on) {
                         for (const CacheSpot& c : caches)
@@ -3506,7 +3629,7 @@ int main(int argc, char** argv) {
                     if (padCtx == pad::Mode::Drive && padLogic.in.drop) {
                         if (walker.carrying) Interact::drop(sim, walker, lastView.target - lastView.eye);
                         else if (walker.holdingJack) Interact::dropJack(sim, walker);
-                        else if (walker.hand.any()) hud.toast("PUT IT BACK IN THE TRUCK: PRESS X AT ITS BACK");
+                        else if (walker.hand.any()) hud.toast("PUT IT BACK IN THE TRUCK: PRESS " + K(KA_INTERACT) + " AT ITS BACK");
                     }
                 }
                 up = down = left = right = false;
@@ -4447,7 +4570,7 @@ int main(int argc, char** argv) {
             const bool padNow = pad::ui.last && padDev.connected();
             if (interact.current.kind != IA_NONE && !inv.open) {
                 const bool tap = interact.current.hold <= 0 && !interact.current.continuous;  // (E opens a menu: no holding)
-                const std::string line = std::string(padNow ? (tap ? "X  " : "HOLD X  ") : (tap ? "E  " : "HOLD E  ")) + interact.current.prompt;
+                const std::string line = std::string(padNow ? (tap ? "X  " : "HOLD X  ") : (tap ? K(KA_INTERACT) + "  " : "HOLD " + K(KA_INTERACT) + "  ")) + interact.current.prompt;
                 const float ps = tap ? px(1.8f * u) : s;  // (E at the back is the way in to everything: say it big)
                 centeredPill(renderer, W / 2.0f, H / 2.0f + 40 * u, ps, line, 0, 0, 0, 0.6f, 1.0f, 0.85f, 0.45f);
                 if (interact.progress > 0) {
@@ -4467,7 +4590,7 @@ int main(int argc, char** argv) {
                     for (const Fix& f : fixesFor(sim.cars[ph.car]))
                         if (partMatchesFix(ph.tag, f)) {
                             const std::string miss = missingFor(f, interact.kit, f.wheel >= 0 && Interact::cornerLifted(sim, sim.cars[ph.car], f.wheel));
-                            hint = std::string(len(ph.at - (walker.p + V3(0, 1.0, 0))) > 2.5 ? "GET CLOSER, THEN HOLD E: " : "HOLD E: ") + f.what + (miss.empty() ? "" : " (" + miss + ")");
+                            hint = std::string(len(ph.at - (walker.p + V3(0, 1.0, 0))) > 2.5 ? "GET CLOSER, THEN HOLD " + K(KA_INTERACT) + ": " : "HOLD " + K(KA_INTERACT) + ": ") + f.what + (miss.empty() ? "" : " (" + miss + ")");
                             break;
                         }
                 if (!hint.empty()) {
@@ -4477,7 +4600,7 @@ int main(int argc, char** argv) {
                 centeredPill(renderer, W / 2.0f, y, ls, ph.tag.label(), 0, 0, 0, 1.0f, cr, cg, cb);
             }
             if (walker.hand.any() && !walker.carrying && !inv.open) {
-                const std::string line = "IN YOUR HAND: " + trunk::name(walker.hand) + (padNow ? "   (X AT THE BACK OF YOUR TRUCK: PUT IT BACK)" : "   (E AT THE BACK OF YOUR TRUCK: PUT IT BACK)");
+                const std::string line = "IN YOUR HAND: " + trunk::name(walker.hand) + (padNow ? "   (X AT THE BACK OF YOUR TRUCK: PUT IT BACK)" : "   (" + K(KA_INTERACT) + " AT THE BACK OF YOUR TRUCK: PUT IT BACK)");
                 centeredPill(renderer, W / 2.0f, H - 110 * u, px(1.2f * u), line, 0, 0, 0, 0.55f, 0.9f, 0.92f, 0.95f);
             }
             if (walker.carrying) {
@@ -4489,7 +4612,7 @@ int main(int argc, char** argv) {
         if (showHud && run.active()) drawLevelHud(renderer, run, sim, view, W, H);
         if (editorSuspended && !editor.active && !hud.photo) {  // a playtest: the way back, always on screen
             const float u = std::max(0.75f, H / 720.0f), s = px(1.5f * u);
-            const std::string t = "PLAYTEST   F1: BACK TO THE EDITOR";
+            const std::string t = "PLAYTEST   " + K(KA_PLAYTEST_BACK) + ": BACK TO THE EDITOR";
             const float w = r_textW(renderer, t, s) + 28 * u;
             pill(renderer, 12 * u, 12 * u, w, 8 * s + 18 * u, 0.30f, 0.17f, 0.02f, 0.92f);
             label(renderer, 26 * u, 21 * u, s, t, 1.0f, 0.88f, 0.45f, 1);
@@ -4541,6 +4664,14 @@ int main(int argc, char** argv) {
                 for (const Place& pl : pilotPlaces(sim, net)) menu.pilotPlaces.push_back(pl.name);
                 menu.pilotActive = pc.pilot.active || pc.ai;
                 menu.pilotStatus = pc.ai ? "CRUISING THE LOOP ROAD" : pc.pilot.active ? "DRIVING: " + pc.pilot.status : "OFF";
+            }
+            if (menu.devOpen()) {  // (the dev menu's TELEPORT lists)
+                menu.devScenario = playback.active();
+                menu.devSections.clear();
+                for (const World::SectionSpot& sp : sim.world.sections) menu.devSections.push_back(sp.name);
+                menu.devPlaces.clear();
+                for (const Place& pl : pilotPlaces(sim, net))
+                    if (pl.kind == 0) menu.devPlaces.push_back(pl.name);
             }
             menu.netActive = net.active() && !net.joining();
             menu.levelActive = run.active();
