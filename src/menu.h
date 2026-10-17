@@ -29,6 +29,8 @@ struct Settings {
     std::string joinAddress;    // the last address you typed to join
     std::string sessionName;    // the game you host, as others' lists show it ("" = "<NAME>'S GAME")
     std::string netPassword;    // asked of whoever joins your game, and offered to the one you join ("" = none)
+    std::string joinPassword;   // offered to the game you join (kept in settings.txt, as plain text, only with rememberPassword)
+    bool rememberPassword = false;
     int maxPlayers = 8;         // the most in a game you host (2..8)
     int hostPort = 27015;       // the port you host on, TCP and UDP (1024..65535; net::kDefaultPort)
     int pilotDest = 0;          // autopilot: which place (index into the menu's list)
@@ -85,6 +87,11 @@ public:
     int joinPort = 0;                     // joining: the port being tried (for the failed card's help)
     std::string joinPick;                 // set when one is picked (JOIN then goes there)
     std::string joinLabel;                // what JOIN connects to (for the connecting card)
+    std::string joinAddr;                 // the address being tried (RETRY goes back to it)
+    bool joinNeedsPw = false;             // the failed card asks for the password (none, or the wrong one)
+    bool showPw = false;                  // the join password shows as typed, not as stars
+    void askPassword(const Settings& s);  // joining failed over the password: the card asks again, cursor in the field
+    Result textInput(const char* utf8, Settings& s);  // typed text (a password: any case, any symbol)
     // HOST: this machine's addresses (to give a friend on another network).
     std::vector<std::string> localIps;
     // In a session: who's in it (a line each), and whether we host it.

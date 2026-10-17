@@ -52,6 +52,18 @@ bool Settings::load(const std::string& path) {
             netPassword = std::string(text).substr(0, 32);
             continue;
         }
+        if (k == "rememberpw") {
+            rememberPassword = std::atoi(text) != 0;
+            continue;
+        }
+        if (k == "joinpassword") {  // (the rest of the line)
+            const char* p = std::strstr(line, "joinpassword");
+            std::string v = p ? p + 12 : "";
+            while (!v.empty() && (v[0] == ' ' || v[0] == '\t')) v.erase(v.begin());
+            while (!v.empty() && (v.back() == '\n' || v.back() == '\r')) v.pop_back();
+            joinPassword = v.substr(0, 64);
+            continue;
+        }
         if (k == "session") {  // (the rest of the line: it can have spaces)
             const char* p = std::strstr(line, "session");
             std::string v = p ? p + 7 : "";
@@ -126,6 +138,10 @@ bool Settings::save(const std::string& path) const {
     if (!joinAddress.empty()) std::fprintf(f, "join %s\n", joinAddress.c_str());
     if (!sessionName.empty()) std::fprintf(f, "session %s\n", sessionName.c_str());
     if (!netPassword.empty()) std::fprintf(f, "netpassword %s\n", netPassword.c_str());
+    if (rememberPassword) {  // (plain text, like the rest of this file; only when asked)
+        std::fprintf(f, "rememberpw 1\n");
+        if (!joinPassword.empty()) std::fprintf(f, "joinpassword %s\n", joinPassword.c_str());
+    }
     std::fprintf(f, "maxplayers %d\nhostport %d\n", maxPlayers, hostPort >= net::kMinHostPort && hostPort <= net::kMaxPort ? hostPort : net::kDefaultPort);
     std::fprintf(f, "pilotdest %d\npilotspeed %.0f\npilotroute %d\n", pilotDest, pilotSpeed, pilotRoute);
     std::fprintf(f, "timeofday %d\ndaylength %.0f\nclock %.2f\n", timeOfDay, dayMinutes, clockHours);
@@ -197,7 +213,7 @@ enum Id {
     PILOT_ROW, DEST_ROW, PSPEED_ROW, PROUTE_ROW, PGO_ROW, PSTOP_ROW,
     FREEDRIVE_ROW, MODE_ROW, LEVELS_ROW, LEVEL_SHOW, LEVEL_PICK, LEVEL_PLAY, LEVEL_EDIT, EDITOR_ROW, SECTION_ROW, LAB_ROW, LRESTART_ROW, LQUIT_ROW, MAINMENU_ROW, EDITBACK_ROW,
     JOBS_ROW, JOB_PICK, JOB_GO, JOB_STOP_ROW, MEET_ROW, CONTROLLER_ROW,
-    SESSION_ROW, HMAP_ROW, HMAX_ROW, CANCEL_ROW, PASSWORD_ROW, PORT_ROW,
+    SESSION_ROW, HMAP_ROW, HMAX_ROW, CANCEL_ROW, PASSWORD_ROW, PORT_ROW, JPASS_ROW, SHOWPW_ROW, REMEMBER_ROW, RETRY_ROW,
     STEERING, KEYBINDS_ROW, KEYS_RESET, KEY_ROW0, KEY_ROWN = KEY_ROW0 + KA_COUNT,
     DEV_ROW, DEVHOT_ROW, DEVGROUP0, DEVGROUP_N = DEVGROUP0 + devmenu::G_COUNT, DEVITEM0, DEVITEM_N = DEVITEM0 + 40, DEVSEC_ROW, DEVPLACE_ROW,
 };
@@ -388,6 +404,13 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
             } else {
                 info("COULDN'T JOIN " + joinLabel);
                 info(joinError);
+                if (joinNeedsPw) {
+                    text(JPASS_ROW, "PASSWORD", showPw ? s.joinPassword : std::string(s.joinPassword.size(), '*'), "TYPE IT", "TYPE THE PASSWORD");
+                    button(RETRY_ROW, "RETRY", "JOIN AGAIN WITH THAT PASSWORD");
+                    button(CANCEL_ROW, "CANCEL");
+                    inCol(1, c1);
+                    return r;
+                }
                 info("IS THE GAME STILL HOSTED? ON ANOTHER NETWORK, THE HOST MAY NEED TO FORWARD PORT " +
                      std::to_string(joinPort > 0 ? joinPort : net::kDefaultPort) + " (TCP AND UDP)");
                 button(CANCEL_ROW, "OK");
@@ -412,7 +435,7 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
             return r;
         }
         text(NAME_ROW, "YOUR NAME", s.playerName, "TYPE IT", "PLAYER");
-        text(PASSWORD_ROW, "PASSWORD", std::string(s.netPassword.size(), '*'), "TYPE IT", "NONE");  // (to host with, and to join with)
+        text(PASSWORD_ROW, "HOST PASSWORD", std::string(s.netPassword.size(), '*'), "TYPE IT", "NONE");  // (to host with; joining has its own, on the JOIN card)
         {
             const size_t c1 = r.size();
             const std::string me = s.playerName.empty() ? std::string("PLAYER") : s.playerName;
@@ -450,6 +473,9 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
                 r.back().dim = !g.ok;
             }
             text(ADDRESS_ROW, "ADDRESS", s.joinAddress, "IP OR IP:PORT", "TYPE AN IP:PORT");
+            text(JPASS_ROW, "PASSWORD", showPw ? s.joinPassword : std::string(s.joinPassword.size(), '*'), "IF THE GAME HAS ONE", "NONE");
+            choice(SHOWPW_ROW, "SHOW PASSWORD", kOffOn[showPw], 2);
+            choice(REMEMBER_ROW, "REMEMBER PASSWORD", kOffOn[s.rememberPassword], 2, s.rememberPassword ? "KEPT AS PLAIN TEXT IN SETTINGS.TXT" : "NOT SAVED");
             button(JOIN_ROW, "JOIN THAT ADDRESS");
             inCol(2, c2);
         }
@@ -694,6 +720,16 @@ PauseMenu::Result PauseMenu::activate(int row, Settings& s) {
         case LEAVE_ROW: return {LEAVE};
         case MEET_ROW: return {MEET_UP};
         case CANCEL_ROW: return {CANCEL_JOIN};
+        case RETRY_ROW:
+            joinPick = joinAddr;
+            return {JOIN};
+        case JPASS_ROW:
+            if (joining) {
+                joinPick = joinAddr;
+                return {JOIN};
+            }
+            moveSel(1, s);
+            return {};
         case NAME_ROW:
         case PASSWORD_ROW:
         case PORT_ROW:
@@ -746,6 +782,8 @@ PauseMenu::Result PauseMenu::change(int row, int dir, Settings& s) {
         case VEHICLE_ROW: vehicle = nextListedVehicle(vehicle, dir); return {};
         case MAP_ROW:
         case HMAP_ROW: mapPick = nextListedMap(mapPick, dir); return {};
+        case SHOWPW_ROW: showPw = !showPw; return {};
+        case REMEMBER_ROW: s.rememberPassword = !s.rememberPassword; return {CHANGED};
         case HMAX_ROW: s.maxPlayers = 2 + cycle(std::min(std::max(s.maxPlayers, 2), 8) - 2); break;
         case LEVEL_SHOW: levelSections = !levelSections, levelPick = std::max(0, shownLevel()); return {};
         case LEVEL_PICK: {  // (among the ones showing)
@@ -818,6 +856,25 @@ PauseMenu::Result PauseMenu::setSlider(int row, float frac, Settings& s) {
     return {CHANGED};
 }
 
+void PauseMenu::askPassword(const Settings& s) {
+    joinNeedsPw = true;
+    const std::vector<Row> r = rows(s);
+    for (int k = 0; k < (int)r.size(); k++)
+        if (r[k].id == JPASS_ROW) sel = k;
+}
+
+PauseMenu::Result PauseMenu::textInput(const char* utf8, Settings& s) {
+    if (!open || !utf8) return {};
+    const std::vector<Row> r = rows(s);
+    if (sel < 0 || sel >= (int)r.size() || (r[sel].id != PASSWORD_ROW && r[sel].id != JPASS_ROW)) return {};
+    std::string& field = r[sel].id == PASSWORD_ROW ? s.netPassword : s.joinPassword;
+    const size_t cap = r[sel].id == PASSWORD_ROW ? 32 : 64;
+    bool any = false;
+    for (const char* p = utf8; *p; p++)
+        if ((unsigned char)*p >= 33 && (unsigned char)*p < 127 && field.size() < cap) field += *p, any = true;  // (printable ASCII: spaces stay out, the file is read by word)
+    return {any ? CHANGED : NONE};
+}
+
 PauseMenu::Result PauseMenu::key(int sc, Settings& s) {
     if (!open) return {};
     // The multiplayer page: left and right go between the HOST and JOIN cards (except on a
@@ -875,7 +932,7 @@ PauseMenu::Result PauseMenu::key(int sc, Settings& s) {
             if (isPort && !portEdited) portText = std::to_string(s.hostPort), portEdited = portFresh = true;
             if (isPort && portFresh && sc >= SC_1 && sc <= SC_1 + 9) portText.clear();  // (a digit over the number shown replaces it)
             if (isPort && (portFresh && (sc == SC_BACKSPACE || (sc >= SC_1 && sc <= SC_1 + 9)))) portFresh = false;
-            std::string& field = isPort ? portText : r[sel].id == NAME_ROW ? s.playerName : r[sel].id == SESSION_ROW ? s.sessionName : r[sel].id == PASSWORD_ROW ? s.netPassword : s.joinAddress;
+            std::string& field = isPort ? portText : r[sel].id == NAME_ROW ? s.playerName : r[sel].id == SESSION_ROW ? s.sessionName : r[sel].id == PASSWORD_ROW ? s.netPassword : r[sel].id == JPASS_ROW ? s.joinPassword : s.joinAddress;
             char ch = 0;
             if (sc == SC_SPACE && r[sel].id == SESSION_ROW && !field.empty()) ch = ' ';
             if (sc >= SC_A && sc <= SC_A + 25) ch = (char)('A' + (sc - SC_A));
@@ -884,6 +941,7 @@ PauseMenu::Result PauseMenu::key(int sc, Settings& s) {
             else if (sc == 55) ch = '.';
             else if (sc == 45) ch = shift ? '_' : '-';
             else if (sc == 51 && shift) ch = ':';
+            if (r[sel].id == PASSWORD_ROW || r[sel].id == JPASS_ROW) ch = 0;  // (passwords come through textInput: case and symbols)
             if (r[sel].id == ADDRESS_ROW && ch >= 'A' && ch <= 'Z') ch = (char)(ch - 'A' + 'a');
             if (isPort && !(ch >= '0' && ch <= '9')) ch = 0;  // (digits only)
             // (Whatever the port field holds becomes the setting once it's a good port.)

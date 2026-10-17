@@ -554,6 +554,7 @@ bool NetSession::join(const std::string& address, const std::string& name, doubl
 
 bool NetSession::beginJoin(const std::string& address, const std::string& name, double timeout) {
     close();
+    passwordIssue = PW_OK;
     netInit();
     std::string hostName, why;
     int port = 0;
@@ -897,6 +898,7 @@ void NetSession::handle(Sim* sim, Conn* from, const std::vector<uint8_t>& msg) {
             if (!r.ok) return;
             if (password.empty()) {
                 error = "this game needs a password";
+                passwordIssue = PW_NEEDED;
                 role = OFF;
                 return;
             }
@@ -922,7 +924,9 @@ void NetSession::handle(Sim* sim, Conn* from, const std::vector<uint8_t>& msg) {
         }
         case MSG_REJECT: {
             if (role != CLIENT || self >= 0) return;
-            error = "rejected: " + net::sanitize(r.str(), 60);
+            const std::string why = net::sanitize(r.str(), 60);
+            error = "rejected: " + why;
+            if (why == "wrong password") passwordIssue = PW_WRONG;
             role = OFF;
             return;
         }
