@@ -3,17 +3,42 @@
 #include <algorithm>
 #include <cmath>
 
+#include "gamepad.h"
 #include "walker.h"
 
 namespace {
 
 int groupOf(TrunkRef r) { return r.kind == TK_JACK || r.kind == TK_TOOL ? 0 : r.kind == TK_PART ? 1 : 2; }
 
-const char* const kHeads[3] = {"TOOLS", "REPAIR PARTS", "RECOVERY AND ANCHOR GEAR"};
-
 int whole(float x) { return std::max(1, (int)std::lround(x)); }
 
 }  // namespace
+
+std::vector<std::string> invWrap(const std::string& t, float s, float w) {
+    std::vector<std::string> out;
+    std::string line;
+    size_t i = 0;
+    while (i < t.size()) {
+        size_t j = t.find(' ', i);
+        if (j == std::string::npos) j = t.size();
+        const std::string word = t.substr(i, j - i);
+        if (!line.empty() && (float)(line.size() + 1 + word.size()) * 6 * s > w) out.push_back(line), line.clear();
+        line += (line.empty() ? "" : " ") + word;
+        i = j + 1;
+    }
+    if (!line.empty()) out.push_back(line);
+    return out;
+}
+
+std::string InvMenu::blurb(const InvSlot& s) {
+    const size_t colon = s.desc.find(": ");
+    return colon == std::string::npos ? s.desc : s.desc.substr(colon + 2);
+}
+
+std::string InvMenu::keys(bool padLast) {
+    if (padLast) return std::string("D-PAD: MOVE   ") + pad::hint("", pad::B_B) + ": CLOSE";
+    return "WASD: MOVE   ESC: CLOSE";
+}
 
 std::string InvMenu::describe(TrunkRef r) {
     switch (r.kind) {
@@ -106,134 +131,76 @@ void InvMenu::show(int ci) {
 
 void InvMenu::refresh(const Sim& sim, const TrunkStock& own, const Walker& wk) {
     if (!open || car < 0 || car >= (int)sim.cars.size()) return;
-    const Car& c = sim.cars[car];
     TrunkRef was;
     if (const InvSlot* s = chosen()) was = s->ref;
     slots = build(sim, car, own, wk);
     holding = wk.hand.any() || wk.holdingJack || wk.holdingChain;
-    heldName = wk.holdingJack ? trunk::name({TK_JACK, 0}) : wk.holdingChain ? trunk::name({TK_CHAINS, 0}) : wk.hand.any() ? trunk::name(wk.hand) : "";
-    heldModel = wk.holdingJack ? "jack" : wk.holdingChain ? "chain_bundle" : wk.hand.any() ? trunk::model(wk.hand) : "";
-    gate = c.hasGate() ? trunk::gateName(c) : "TRUNK";
-    canShut = c.hasGate() && c.gateOpen() && c.gate.dir == 0;
-    if (sel >= 0) {  // (the card moved, or went: follow it)
+    if (sel >= 0) {  // (the slot moved, or went: follow it)
         int at = -1;
         for (int i = 0; i < (int)slots.size(); i++)
             if (was.any() && slots[i].ref == was) at = i;
         sel = at >= 0 ? at : std::min(sel, (int)slots.size() - 1);
     }
-    if (sel == INV_PUT_BACK && !holding) sel = INV_NONE;
-    if (sel == INV_SHUT && !canShut) sel = INV_NONE;
-    if (sel == INV_NONE) sel = holding ? INV_PUT_BACK : slots.empty() ? INV_NONE : 0;
+    if (sel == INV_NONE) {  // (first up: what you hold, else the first slot)
+        for (int i = 0; i < (int)slots.size() && sel == INV_NONE; i++)
+            if (slots[i].inHand) sel = i;
+        if (sel == INV_NONE && !slots.empty()) sel = 0;
+    }
 }
 
-InvLayout InvMenu::layout(int W, int H, float u) const {
+InvLayout InvMenu::layout(int W, int H, float u, bool padLast) const {
     InvLayout L;
     L.u = u;
-    L.titleScale = whole(2.2f * u);
-    L.smallScale = whole(1.2f * u);
-    L.bodyScale = whole(1.7f * u);
-    int per[3] = {0, 0, 0};
-    for (const InvSlot& s : slots) per[s.group]++;
-    int cols = 5;
-    for (int g = 0; g < 3; g++) cols = std::max(cols, std::min(per[g], 7));
-    const float gap = 8 * u, pad = 20 * u;
-    const float cardW = std::min(158 * u, ((float)W - 2 * pad - 2 * 16 * u - (cols - 1) * gap) / cols);
+    L.slot = std::max(32.0f, std::round(50 * u));
+    const float gap = std::max(3.0f, std::round(4 * u)), pad = std::max(8.0f, std::round(10 * u)), sp = std::max(5.0f, std::round(7 * u));
+    const float gridW = kInvCols * L.slot + (kInvCols - 1) * gap, innerW = gridW;
+    L.titleScale = whole(1.7f * u);
+    L.bodyScale = whole(1.0f * u);
     size_t longest = 8;
     for (const InvSlot& s : slots) longest = std::max(longest, s.name.size());
-    L.nameScale = std::max(1, (int)std::floor((cardW - 8 * u) / (6.0f * (float)longest)));
-    const float iconH = cardW * 0.62f;
-    const float cardH = iconH + 8.0f * L.nameScale + 14 * u;
-    const float headH = 8.0f * whole(1.5f * u) + 10 * u;
-    const float titleH = 8.0f * L.titleScale + 8 * u;
-    const float descH = 8.0f * L.bodyScale * 2 + 16 * u;
-    const float footH = 8.0f * L.bodyScale + 4 * u;
-    int groups = 0;
-    for (int g = 0; g < 3; g++) groups += per[g] > 0;
-    const float w = cols * cardW + (cols - 1) * gap + 2 * pad;
-    const float h = pad + titleH + 10 * u + groups * (headH + cardH + gap + 4 * u) + descH + 8 * u + footH + pad * 0.8f;
-    L.panel = {((float)W - w) / 2, std::max(8 * u, ((float)H - h) / 2), w, h};
+    L.nameScale = std::max(1, std::min(whole(1.7f * u), (int)std::floor(innerW / (6.0f * (float)longest))));
+    L.descLines = 1;
+    for (const InvSlot& s : slots) L.descLines = std::max(L.descLines, (int)invWrap(blurb(s), (float)L.bodyScale, innerW).size());
+    const int rows = std::max(1, ((int)slots.size() + kInvCols - 1) / kInvCols);
+    const float titleH = 8.0f * L.titleScale, bs = 8.0f * L.bodyScale, ls = bs + std::max(1.0f, std::round(2 * u));
+    const float gridH = rows * L.slot + (rows - 1) * gap;
+    const float descH = 8.0f * L.nameScale + std::max(2.0f, std::round(3 * u)) + L.descLines * ls + ls + 2 * std::max(3.0f, std::round(4 * u));  // (name, blurb, the state / key line)
+    const int keyLines = (int)invWrap(keys(padLast), (float)L.bodyScale, innerW).size();
+    const float footH = keyLines * ls;
+    const float w = innerW + 2 * pad, h = pad + titleH + sp + gridH + sp + descH + sp + footH + pad;
+    L.panel = {std::round(((float)W - w) / 2), std::max(4.0f, std::round(((float)H - h) / 2)), w, h};
     const float x0 = L.panel.x + pad;
     float y = L.panel.y + pad;
-    L.title = {x0, y, w - 2 * pad, titleH};
-    // The buttons sit on the title row's right: SHUT, and PUT BACK to its left.
-    const float bh = titleH + 4 * u, bs = 8.0f * L.bodyScale;
-    float bx = L.panel.x + w - pad;
-    if (canShut) {
-        const float bw = (std::string("C  SHUT THE ") + gate).size() * 6.0f * L.bodyScale + 24 * u;
-        bx -= bw;
-        L.shut = {bx, y - 2 * u, bw, bh};
-        bx -= gap;
-    }
-    if (holding) {
-        const float bw = (std::string("PUT BACK  ") + heldName).size() * 6.0f * L.bodyScale + 24 * u + bh;
-        bx -= bw;
-        L.putBack = {bx, y - 2 * u, bw, bh};
-    }
-    (void)bs;
-    y += titleH + 10 * u;
+    L.title = {x0, y, innerW, titleH};
+    y += titleH + sp;
     L.cards.assign(slots.size(), InvRect());
-    for (int g = 0; g < 3; g++) {
-        if (!per[g]) continue;
-        L.heads.push_back({kHeads[g], x0, y});
-        y += headH;
-        int k = 0;
-        for (int i = 0; i < (int)slots.size(); i++) {
-            if (slots[i].group != g) continue;
-            L.cards[i] = {x0 + (k % cols) * (cardW + gap), y + (k / cols) * (cardH + gap), cardW, cardH};
-            k++;
-        }
-        y += ((k + cols - 1) / cols) * (cardH + gap) + 4 * u;
-    }
-    L.iconArea = {0, 0, cardW, iconH};
-    L.desc = {x0, y, w - 2 * pad, descH};
-    y += descH + 8 * u;
-    L.foot = {x0, y, w - 2 * pad, footH};
+    for (int i = 0; i < (int)slots.size(); i++) L.cards[i] = {x0 + (i % kInvCols) * (L.slot + gap), y + (i / kInvCols) * (L.slot + gap), L.slot, L.slot};
+    y += gridH + sp;
+    L.desc = {x0, y, innerW, descH};
+    y += descH + sp;
+    L.foot = {x0, y, innerW, footH};
     return L;
 }
 
-void InvMenu::move(const InvLayout& lay, int dx, int dy) {
-    struct Node {
-        int id;
-        InvRect r;
-    };
-    std::vector<Node> nodes;
-    if (holding && lay.putBack.w > 0) nodes.push_back({INV_PUT_BACK, lay.putBack});
-    if (canShut && lay.shut.w > 0) nodes.push_back({INV_SHUT, lay.shut});
-    for (int i = 0; i < (int)slots.size() && i < (int)lay.cards.size(); i++) nodes.push_back({i, lay.cards[i]});
-    if (nodes.empty()) return;
-    const Node* from = nullptr;
-    for (const Node& n : nodes)
-        if (n.id == sel) from = &n;
-    if (!from) {
-        sel = nodes.front().id;
+void InvMenu::move(int dx, int dy) {
+    const int n = (int)slots.size();
+    if (n == 0) return;
+    if (sel < 0 || sel >= n) {
+        sel = 0;
         return;
     }
-    const Node* best = nullptr;
-    float bestScore = 1e9f;
-    for (const Node& n : nodes) {
-        if (&n == from) continue;
-        const float ddx = n.r.cx() - from->r.cx(), ddy = n.r.cy() - from->r.cy();
-        const float along = dx != 0 ? ddx * dx : ddy * dy, across = dx != 0 ? std::fabs(ddy) : std::fabs(ddx);
-        if (along < 4) continue;  // (not that way)
-        const float score = along + across * 2.5f;
-        if (score < bestScore) bestScore = score, best = &n;
-    }
-    if (best) sel = best->id;
-    else if (dx != 0) {  // (off the end of a row: wrap round it)
-        const Node* far = nullptr;
-        float fs = -1;
-        for (const Node& n : nodes) {
-            if (std::fabs(n.r.cy() - from->r.cy()) > 4) continue;
-            const float v = (n.r.cx() - from->r.cx()) * -dx;
-            if (v > fs) fs = v, far = &n;
-        }
-        if (far) sel = far->id;
+    const int rows = (n + kInvCols - 1) / kInvCols;
+    int col = sel % kInvCols, row = sel / kInvCols;
+    if (dx) sel = (sel + dx + n) % n;
+    if (dy) {
+        const int from = row;
+        row = (row + dy + rows) % rows;
+        sel = row * kInvCols + col;
+        if (sel >= n) sel = dy < 0 ? sel - kInvCols : from < rows - 1 ? n - 1 : col;  // (the short last row: down lands on its last slot, from it wraps to the top; up lands on the row above)
     }
 }
 
 int InvMenu::hit(const InvLayout& lay, float x, float y) const {
-    if (holding && lay.putBack.w > 0 && lay.putBack.has(x, y)) return INV_PUT_BACK;
-    if (canShut && lay.shut.w > 0 && lay.shut.has(x, y)) return INV_SHUT;
     for (int i = 0; i < (int)lay.cards.size() && i < (int)slots.size(); i++)
         if (lay.cards[i].has(x, y)) return i;
     return INV_NONE;
@@ -244,19 +211,6 @@ std::string InvMenu::choose(Interact& ia, Sim& sim, Walker& wk, const TrunkStock
     if (car < 0 || car >= (int)sim.cars.size()) {
         closed = true;
         return "";
-    }
-    if (what == INV_SHUT) {
-        if (!canShut) return "";
-        InteractOption o;
-        o.kind = IA_CLOSE_GATE, o.car = car;
-        const std::string said = ia.perform(sim, wk, o);
-        closed = said.find("STOP") == std::string::npos;
-        return said;
-    }
-    if (what == INV_PUT_BACK) {
-        const std::string said = ia.putBackInBack(sim, wk, car);
-        closed = !said.empty();
-        return said;
     }
     if (what < 0 || what >= (int)slots.size()) return "";
     const InvSlot& s = slots[what];

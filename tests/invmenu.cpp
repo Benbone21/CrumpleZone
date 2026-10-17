@@ -1,5 +1,5 @@
-// The inventory menu (src/invmenu.*): E at the back opens it, every kind in the back gets a card with a model to draw, a
-// description and a count, it lays out readably at 720p and 1080p, and what it takes and puts back is what the bed's
+// The inventory menu (src/invmenu.*): E at the back opens it, every kind in the back gets a slot in a compact five-column grid with a model to draw, a
+// description and a count, it lays out small and readable at 720p and 1080p, and what it takes and puts back is what the bed's
 // own take was (Interact::takeFromBack / putBackInBack).
 #include <cmath>
 #include <set>
@@ -92,7 +92,7 @@ SCENARIO(invmenuSlots, "invmenu/slots", "A full load (career and sandbox, SUVs, 
     }
 }
 
-SCENARIO(invmenuLayout, "invmenu/layout", "The menu lays out inside a 1280x720 and a 1920x1080 window with a full load: panel on screen, cards in the panel and clear of each other, the icons big enough to see and the names whole-number text that fits its card; the mouse finds each card and the keys reach every one of them") {
+SCENARIO(invmenuLayout, "invmenu/layout", "The menu is a compact grid, five slots across and as many rows as the load needs, with the gate left shut: inside a 1280x720 and a 1920x1080 window with a full load the panel is on screen and well under a quarter of it, the slots are small squares (64-80 px at 1080p), in the panel and clear of each other, the name and description fit the strip; the mouse finds each slot and the keys reach every one of them, and the held thing's slot is the one chosen first") {
     Car& c = ctx.add(*byId("blazer"), -140, -50, 0);
     ctx.focus(c);
     c.chains = 3;
@@ -106,33 +106,40 @@ SCENARIO(invmenuLayout, "invmenu/layout", "The menu lays out inside a 1280x720 a
         InvMenu m;
         m.show(ctx.sim.player);
         m.refresh(ctx.sim, st, wk);
-        c.setGate(true);
-        ctx.run(2.5);
-        m.refresh(ctx.sim, st, wk);
-        ctx.check(heldKind ? "holding: PUT BACK is offered and chosen first" : "empty-handed: the first card is chosen", heldKind ? m.holding && m.sel == INV_PUT_BACK : !m.holding && m.sel == 0);
-        ctx.check("the open gate can be shut from the menu", m.canShut && m.gate == "TAILGATE");
+        ctx.run(0.5);
+        ctx.check("the gate stays shut", c.gateShut() && c.gate.dir == 0);
+        ctx.check(heldKind ? "holding: the hammer's slot is chosen first" : "empty-handed: the first slot is chosen", heldKind ? m.holding && m.slots[m.sel].inHand && m.slots[m.sel].ref == TrunkRef{TK_TOOL, TOOL_HAMMER} : !m.holding && m.sel == 0);
         const int sizes[2][2] = {{1280, 720}, {1920, 1080}};
         for (const auto& wh : sizes) {
             const int W = wh[0], H = wh[1];
             const float u = std::max(0.75f, H / 720.0f);
             const std::string tag = std::to_string(W) + "x" + std::to_string(H) + (heldKind ? " holding" : "") + ": ";
-            const InvLayout L = m.layout(W, H, u);
-            ctx.check(tag + "the panel is on screen", L.panel.x >= 0 && L.panel.y >= 0 && L.panel.x + L.panel.w <= W && L.panel.y + L.panel.h <= H, std::to_string(L.panel.h) + " high");
-            int outside = 0, clash = 0, tiny = 0, wide = 0;
-            for (size_t i = 0; i < L.cards.size(); i++) {
-                const InvRect& a = L.cards[i];
-                outside += !(a.x >= L.panel.x && a.y >= L.panel.y && a.x + a.w <= L.panel.x + L.panel.w && a.y + a.h <= L.panel.y + L.panel.h);
-                for (size_t j = i + 1; j < L.cards.size(); j++) clash += overlap(a, L.cards[j]);
-                tiny += !(L.iconArea.h * 1.0f >= 88 * u * 0.9f);
-                wide += (float)m.slots[i].name.size() * 6 * L.nameScale > a.w;
-                // the mouse finds it
-                if (m.hit(L, a.cx(), a.cy()) != (int)i) clash++;
+            for (int pad = 0; pad < 2; pad++) {
+                const InvLayout L = m.layout(W, H, u, pad);
+                const std::string t2 = tag + (pad ? "pad: " : "");
+                ctx.check(t2 + "the panel is on screen", L.panel.x >= 0 && L.panel.y >= 0 && L.panel.x + L.panel.w <= W && L.panel.y + L.panel.h <= H, std::to_string(L.panel.h) + " high");
+                ctx.metric(t2 + "the panel's share of the screen", L.panel.w * L.panel.h / ((float)W * H), "", 0.02, 0.2);
+                ctx.check(t2 + "desc and keys are inside the panel", L.desc.y + L.desc.h <= L.panel.y + L.panel.h && L.foot.y + L.foot.h <= L.panel.y + L.panel.h && L.desc.y >= L.cards.back().y + L.slot);
+                int outside = 0, clash = 0, notSquare = 0, wide = 0, longestDesc = 0;
+                std::set<float> cols;
+                for (size_t i = 0; i < L.cards.size(); i++) {
+                    const InvRect& a = L.cards[i];
+                    outside += !(a.x >= L.panel.x && a.y >= L.panel.y && a.x + a.w <= L.panel.x + L.panel.w && a.y + a.h <= L.panel.y + L.panel.h);
+                    for (size_t j = i + 1; j < L.cards.size(); j++) clash += overlap(a, L.cards[j]);
+                    notSquare += std::fabs(a.w - a.h) > 0.01f || std::fabs(a.w - L.slot) > 0.01f;
+                    wide += (float)m.slots[i].name.size() * 6 * L.nameScale > L.desc.w;
+                    longestDesc = std::max(longestDesc, (int)invWrap(InvMenu::blurb(m.slots[i]), (float)L.bodyScale, L.desc.w).size());
+                    cols.insert(a.x);
+                    if (m.hit(L, a.cx(), a.cy()) != (int)i) clash++;
+                }
+                ctx.check(t2 + "every slot is a square inside the panel, clear of the others, and found by the mouse", outside == 0 && clash == 0 && notSquare == 0);
+                ctx.check(t2 + "five columns, rows to fit", (int)cols.size() == kInvCols && L.cards.back().y > L.cards.front().y && (int)((L.cards.back().y - L.cards.front().y) / (L.slot + 1) + 1.01f) == ((int)m.slots.size() + kInvCols - 1) / kInvCols, std::to_string(cols.size()));
+                ctx.metric(t2 + "slot side in px at 1080p-equivalent", L.slot / u * 1.5f, "px", 64, 80);
+                ctx.check(t2 + "names and descriptions fit the strip", wide == 0 && longestDesc <= L.descLines);
+                ctx.check(t2 + "text is whole-number scale, readable", L.bodyScale >= 1 && L.nameScale >= 1 && L.titleScale >= 2 * (int)std::floor(u * 0.75));
             }
-            ctx.check(tag + "every card is inside the panel, clear of the others, and found by the mouse", outside == 0 && clash == 0);
-            ctx.check(tag + "icons at least " + std::to_string((int)(88 * u * 0.9f)) + " px", tiny == 0, std::to_string(L.iconArea.h));
-            ctx.check(tag + "names are whole-number text that fits the card, at least double size", wide == 0 && L.nameScale >= (int)std::floor(2 * u * 0.75), "scale " + std::to_string(L.nameScale));
-            ctx.check(tag + "description, keys and buttons are inside the panel", L.desc.y + L.desc.h <= L.panel.y + L.panel.h && L.foot.y + L.foot.h <= L.panel.y + L.panel.h && L.shut.x + L.shut.w <= L.panel.x + L.panel.w && (!m.holding || L.putBack.x >= L.panel.x));
-            // The keys reach every card.
+            const InvLayout L = m.layout(W, H, u);
+            // The keys reach every slot.
             std::set<int> reached = {m.sel};
             std::vector<int> todo = {m.sel};
             while (!todo.empty()) {
@@ -141,18 +148,25 @@ SCENARIO(invmenuLayout, "invmenu/layout", "The menu lays out inside a 1280x720 a
                 for (int d = 0; d < 4; d++) {
                     InvMenu k = m;
                     k.sel = at;
-                    k.move(L, d == 0 ? 1 : d == 1 ? -1 : 0, d == 2 ? 1 : d == 3 ? -1 : 0);
+                    k.move(d == 0 ? 1 : d == 1 ? -1 : 0, d == 2 ? 1 : d == 3 ? -1 : 0);
                     if (reached.insert(k.sel).second) todo.push_back(k.sel);
                 }
             }
-            int cards = 0;
-            for (int id : reached) cards += id >= 0;
-            ctx.check(tag + "the keys reach every card", cards == (int)m.slots.size(), std::to_string(cards) + " of " + std::to_string(m.slots.size()));
+            ctx.check(tag + "the keys reach every slot", reached.size() == m.slots.size() && !reached.count(INV_NONE), std::to_string(reached.size()) + " of " + std::to_string(m.slots.size()));
+            // Up and down stay in their column, wrap round the grid and never land on nothing.
+            InvMenu k = m;
+            k.sel = 0;
+            k.move(0, -1);
+            ctx.check(tag + "up from the top wraps to the bottom, in a real slot", k.sel > 0 && k.sel < (int)k.slots.size() && k.sel / kInvCols == ((int)k.slots.size() - 1) / kInvCols - (k.sel % kInvCols > ((int)k.slots.size() - 1) % kInvCols ? 1 : 0));
+            k.sel = 14;
+            k.move(0, 1);
+            ctx.check(tag + "down into the short last row lands on its end", k.sel == (int)k.slots.size() - 1, std::to_string(k.sel));
+            (void)L;
         }
     }
 }
 
-SCENARIO(invmenuTake, "invmenu/take", "Choosing a card takes that thing into your hands exactly as lifting it out of the bed does (a tool, part or anchor in the hand, the jack held, a chain off the stack); choosing another swaps; PUT BACK and choosing what you hold both put it back and the counts are what they were; E at the back asks for the menu") {
+SCENARIO(invmenuTake, "invmenu/take", "Choosing a slot takes that thing into your hands exactly as lifting it out of the bed does (a tool, part or anchor in the hand, the jack held, a chain off the stack); choosing another swaps; PUT BACK and choosing what you hold both put it back and the counts are what they were; E at the back asks for the menu with the gate shut") {
     Car& c = ctx.add(*byId("blazer"), -120, -50, 0);
     ctx.focus(c);
     c.chains = 3;
@@ -165,11 +179,11 @@ SCENARIO(invmenuTake, "invmenu/take", "Choosing a card takes that thing into you
     ia.own = fullStock(3);
     standBehind(ctx.sim.world, c, wk, 1.5);
     const int ci = ctx.sim.player;
-    // E at the shut back: the gate opens, the menu is asked for, once.
+    // E at the shut back: the menu is asked for, once, and the gate stays shut.
     const V3 eye = wk.p + V3(0, 1.62, 0), gate = trunk::gateAt(c);
     ia.kit = trunk::reachKit(ia.own.kit, false, wk.hand, wk.holdingJack);
     ia.update(ctx.sim, wk, eye, gate - eye, true, Ctx::kFrame);
-    ctx.check("E at the shut tailgate: the menu is asked for and the gate swings", ia.openedInventory == ci && c.gate.dir == 1);
+    ctx.check("E at the shut tailgate: the menu is asked for and the gate stays shut", ia.openedInventory == ci && c.gateShut() && c.gate.dir == 0);
     ia.openedInventory = -1;
     ia.update(ctx.sim, wk, eye, gate - eye, true, Ctx::kFrame);
     ctx.check("...and not again while E is held", ia.openedInventory < 0);
@@ -177,7 +191,7 @@ SCENARIO(invmenuTake, "invmenu/take", "Choosing a card takes that thing into you
     ctx.run(2.0);
     ia.kit = trunk::reachKit(ia.own.kit, trunk::kitInReach(ctx.sim, wk.p), wk.hand, wk.holdingJack);
     ia.update(ctx.sim, wk, eye, gate - eye, true, Ctx::kFrame);
-    ctx.check("E at the open tailgate asks for the menu too", ia.openedInventory == ci);
+    ctx.check("E again asks for the menu again", ia.openedInventory == ci && c.gateShut());
     ia.openedInventory = -1;
     ia.update(ctx.sim, wk, eye, gate - eye, false, Ctx::kFrame);
 
@@ -195,13 +209,9 @@ SCENARIO(invmenuTake, "invmenu/take", "Choosing a card takes that thing into you
         const bool onlyThat = (s.ref.kind == TK_JACK) == wk.holdingJack && (s.ref.kind == TK_CHAINS) == wk.holdingChain && ((s.ref.kind == TK_JACK || s.ref.kind == TK_CHAINS) == !wk.hand.any());
         ctx.check(tag + "in your hands and nothing else, as the bed's take leaves it", inHand && onlyThat && said.rfind("GOT", 0) == 0 && closed, said);
         m.refresh(ctx.sim, ia.own, wk);
-        ctx.check(tag + "the menu now offers to put it back, and marks the card", m.holding && m.slots[i].inHand && !m.slots[i].takable);
+        ctx.check(tag + "the menu now offers to put it back, and marks the slot", m.holding && m.slots[i].inHand && !m.slots[i].takable);
         ctx.check(tag + "one fewer in the back", snapshot(c, ctx.sim, ia.own, wk) != base);
-        if (i % 2) {  // put back by choosing the card of the thing in hand
-            m.choose(ia, ctx.sim, wk, ia.own, i, closed);
-        } else {  // put back by the PUT BACK button
-            m.choose(ia, ctx.sim, wk, ia.own, INV_PUT_BACK, closed);
-        }
+        m.choose(ia, ctx.sim, wk, ia.own, i, closed);  // (put back by choosing the slot of the thing in hand)
         m.refresh(ctx.sim, ia.own, wk);
         ctx.check(tag + "put back: hands empty, the counts what they were", !wk.hand.any() && !wk.holdingJack && !wk.holdingChain && snapshot(c, ctx.sim, ia.own, wk) == base && closed && !m.holding, snapshot(c, ctx.sim, ia.own, wk));
     }
@@ -222,9 +232,9 @@ SCENARIO(invmenuTake, "invmenu/take", "Choosing a card takes that thing into you
     m.choose(ia, ctx.sim, wk, ia.own, idx({TK_GEAR, GEAR_STAKE}), closed);
     m.refresh(ctx.sim, ia.own, wk);
     ctx.check("chain then a stake: the stake's in hand, the chain's back (3 again)", wk.hand == TrunkRef{TK_GEAR, GEAR_STAKE} && !wk.holdingChain && c.chains == 3);
-    m.choose(ia, ctx.sim, wk, ia.own, INV_PUT_BACK, closed);
+    m.choose(ia, ctx.sim, wk, ia.own, idx({TK_GEAR, GEAR_STAKE}), closed);
     ctx.check("and back", !wk.hand.any() && snapshot(c, ctx.sim, ia.own, wk) == base);
-    // A jack under the truck is a card that can't be taken, marked; a thing that's out working shows it.
+    // A jack under the truck is a slot that can't be taken, marked; a thing that's out working shows it.
     c.placeJack(ctx.sim.world, 0);
     m.refresh(ctx.sim, ia.own, wk);
     const InvSlot& jack = m.slots[idx({TK_JACK, 0})];
@@ -235,14 +245,10 @@ SCENARIO(invmenuTake, "invmenu/take", "Choosing a card takes that thing into you
     c.wheels[0].chained = true;
     c.chains = 2;
     m.refresh(ctx.sim, ia.own, wk);
-    ctx.check("a chain rigged on a tire: the chains card says so", m.slots[idx({TK_CHAINS, 0})].state == "1 ON TIRES");
+    ctx.check("a chain rigged on a tire: the chains slot says so", m.slots[idx({TK_CHAINS, 0})].state == "1 ON TIRES");
     ctx.sim.setAnchors.push_back(SetAnchor{V3(0, 0, 0), GEAR_STAKE, 0});
     m.refresh(ctx.sim, ia.own, wk);
-    ctx.check("a stake set in the ground: the stakes card says so", m.slots[idx({TK_GEAR, GEAR_STAKE})].state == "1 SET OUT");
-    // Shut from the menu.
-    m.choose(ia, ctx.sim, wk, ia.own, INV_SHUT, closed);
-    ctx.check("SHUT: the gate closes and the menu is done", closed && c.gate.dir == -1);
-    // Shut: nothing can be taken.
-    ctx.run(3.0);
-    ctx.check("shut: the back is closed to the menu", !trunk::backOpen(c) && ia.takeFromBack(ctx.sim, wk, ci, ia.own, {TK_TOOL, TOOL_HAMMER}).find("OPEN") != std::string::npos);
+    ctx.check("a stake set in the ground: the stakes slot says so", m.slots[idx({TK_GEAR, GEAR_STAKE})].state == "1 SET OUT");
+    ctx.run(2.0);
+    ctx.check("through all of it the gate never moved", c.gateShut() && c.gate.dir == 0 && c.gate.share == 0);
 }
