@@ -13,10 +13,11 @@
 
 namespace {
 
-// What a model may cost (triangles): things placed by the thousand are cheap.
+// What a model may cost (triangles): things placed by the thousand are cheap. (Trees are drawn
+// instanced, built once each: the full model can afford more, its far copy, below, can't.)
 size_t budgetFor(const std::string& id) {
     static const std::map<std::string, size_t> b = {
-        {"tree_pine", 220}, {"tree_broadleaf", 260}, {"tree_snag", 120}, {"bush", 80}, {"stump", 80},
+        {"tree_pine", 700}, {"tree_broadleaf", 420}, {"tree_snag", 220}, {"bush", 80}, {"stump", 80},
         {"marker_post", 100}, {"cairn", 250}, {"trail_sign", 400}, {"person", 2500},
         {"repair_shed", 12000}, {"fire_tower", 12000}, {"sign_gantry", 12000}, {"race_gate", 12000},
         {"cabin", 6500}, {"chain_bundle", 2600}, {"crate_engine_v8", 2600}, {"wreck_pickup", 10000}, {"ore_cart", 5000}, {"mine_portal", 6000}, {"jersey_barrier", 6000}, {"guardrail", 6000},
@@ -62,6 +63,14 @@ SCENARIO(modelsBuild, "models/build", "Every design of every model builds: sound
             ctx.check(tag + "builds something", m.triangles() > 0);
             ctx.check(tag + "sound", sound(m, why), why);
             ctx.check(tag + "within budget", m.triangles() <= budgetFor(d.id), std::to_string(m.triangles()) + " > " + std::to_string(budgetFor(d.id)));
+            static const std::map<std::string, size_t> farBudget = {{"tree_pine", 220}, {"tree_broadleaf", 260}, {"tree_snag", 120}};
+            if (farBudget.count(d.id)) {  // (the far copy most of a forest is drawn with: forest.h)
+                mk::P far;
+                far.v["lod"] = 2;
+                mk::Mesh f;
+                mk::build(d, v, far, f);
+                ctx.check(tag + "far copy within budget", f.triangles() <= farBudget.at(d.id), std::to_string(f.triangles()) + " > " + std::to_string(farBudget.at(d.id)));
+            }
             const bool hangs = d.id == "tree_saver" || d.id == "chain_sling" || d.id == "fp_hand";  // (round a trunk or boulder at belt height; in your hand)
             ctx.check(tag + "stands on the ground", hangs || (m.lo.y > -0.6 && m.lo.y < 0.25), std::to_string(m.lo.y));
             const double big = std::max({size.x, size.y, size.z});

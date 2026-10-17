@@ -96,8 +96,13 @@ unsigned TreeDraw::draw(const M4& vp, const V3& eye, int lodBias) {
     const int L = forest::kLods;
     static const int forced = std::getenv("CZ_TREE_LOD") ? std::clamp(std::atoi(std::getenv("CZ_TREE_LOD")), 0, L - 1) : -1;  // (screenshots of one LOD)
     for (auto& b : buckets_) b.clear();
-    for (const Cell& c : cells_) {
-        if (!c.bounds.visible(vp)) continue;
+    // (nearest cells first, and the near LODs drawn first: what's in front fills the depth first, so less is shaded behind it)
+    order_.clear();
+    for (int k = 0; k < (int)cells_.size(); k++)
+        if (cells_[k].bounds.visible(vp)) order_.push_back({cells_[k].bounds.distance(eye), k});
+    std::sort(order_.begin(), order_.end());
+    for (const auto& ok : order_) {
+        const Cell& c = cells_[ok.second];
         for (int i : c.inst) {
             const forest::Inst& in = inst_[i];
             const double d = std::hypot(in.x - eye.x, in.z - eye.z);
@@ -113,14 +118,15 @@ unsigned TreeDraw::draw(const M4& vp, const V3& eye, int lodBias) {
         size_t at;
     };
     std::vector<Run> runs;
-    for (int b = 0; b < (int)buckets_.size(); b++) {
-        if (buckets_[b].empty()) continue;
-        runs.push_back({b, (int)buckets_[b].size(), data_.size() / 8});
-        for (int i : buckets_[b]) {
-            const forest::Inst& in = inst_[i];
-            data_.insert(data_.end(), {in.x, in.y, in.z, in.yaw, in.scale, in.tint, in.warm, 0.0f});
+    for (int l = 0; l < L; l++)
+        for (int b = l; b < (int)buckets_.size(); b += L) {
+            if (buckets_[b].empty()) continue;
+            runs.push_back({b, (int)buckets_[b].size(), data_.size() / 8});
+            for (int i : buckets_[b]) {
+                const forest::Inst& in = inst_[i];
+                data_.insert(data_.end(), {in.x, in.y, in.z, in.yaw, in.scale, in.tint, in.warm, 0.0f});
+            }
         }
-    }
     if (runs.empty()) return 0;
     BindVertexArray(vao_);
     BindBuffer(GL_ARRAY_BUFFER, instVbo_);

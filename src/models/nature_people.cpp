@@ -122,7 +122,7 @@ struct Bough {
 // stick out of the cone part way down (the boughs of the tier, layered), and its rim hangs in tips.
 void tier(B& b, const Bough& t, uint32_t seed, int idx, const V3& top, const V3& edgeTop, const V3& under, bool snow, double cover = 0.55) {
     const uint32_t s = seed * 131u + (uint32_t)idx * 17u;
-    const int sides = t.lod >= 2 ? std::max(5, t.sides * 2 / 3) : t.sides;
+    const int sides = t.lod >= 2 ? std::max(5, t.sides / 2 + 1) : t.sides;
     std::vector<V3> e(sides);
     std::vector<V3> d(sides);
     const double phase = R01(s, 99) * 6.2832;

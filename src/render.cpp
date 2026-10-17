@@ -3447,7 +3447,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         }
         UseProgram(progTreeDepth);
         uniformM4(progTreeDepth, "uLightVP", lightVP[c]);
-        geometryStats_.shadowSceneryVertices += trees_.draw(lightVP[c], view.eye, c);
+        geometryStats_.shadowSceneryVertices += trees_.draw(lightVP[c], view.eye, 1 + c);  // (shadows from the lighter copies)
         UseProgram(progDepth);
         drawBatches(sceneryVao, sceneryBatches, lightVP[c], true);
         drawBatches(bushVao, bushBatches, lightVP[c], true);

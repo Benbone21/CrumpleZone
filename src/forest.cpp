@@ -18,7 +18,7 @@ const char* modelId(int kind) {
 double modelHeight(int kind) { return kind == 2 ? 8.0 : 10.0; }
 
 double lodReach(int lod) {
-    static const double reach[kLods] = {70, 160, 1e9};
+    static const double reach[kLods] = {30, 75, 1e9};
     return reach[std::clamp(lod, 0, kLods - 1)];
 }
 

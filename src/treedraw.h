@@ -39,5 +39,6 @@ private:
     std::vector<Cell> cells_;
     std::vector<std::vector<int>> buckets_;  // per (shape, LOD): the trees a pass draws
     std::vector<float> data_;
+    std::vector<std::pair<double, int>> order_;  // the cells in view, nearest first
     size_t meshVerts_ = 0, baked_ = 0;
 };
