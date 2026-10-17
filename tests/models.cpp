@@ -3,7 +3,10 @@
 // model lab's picks save and load.
 #include <cmath>
 #include <cstdio>
+#include <atomic>
 #include <map>
+#include <thread>
+#include <vector>
 
 #include "../src/modelkit.h"
 #include "harness.h"
@@ -158,4 +161,22 @@ SCENARIO(modelsPicks, "models/picks", "The model lab's picks save and load: the 
     std::remove(path.c_str());
     mk::choices() = saved;
     mk::forgetMeshes();
+}
+
+// Worlds are built on several threads at once (the test runner does; a server could): the shared mesh cache must hand out
+// whole meshes, never one that another thread is still filling in (that corrupted the heap, in a world's model yard).
+SCENARIO(modelsThreads, "models/threads", "Several threads asking the shared mesh cache for the same models at once all get whole meshes") {
+    std::atomic<int> bad{0};
+    std::vector<std::thread> pool;
+    for (int t = 0; t < 6; t++)
+        pool.emplace_back([&] {
+            for (const mk::ModelDef& d : mk::catalog()) {
+                const mk::Mesh copy = mk::modelMesh(d.id);
+                mk::Mesh fresh;
+                mk::build(d, mk::pickedVariant(d), mk::pickedParams(d, mk::pickedVariant(d)), fresh);
+                if (copy.v.size() != fresh.v.size()) bad++;
+            }
+        });
+    for (std::thread& th : pool) th.join();
+    ctx.check("every copy is whole", bad == 0, std::to_string(bad.load()) + " models came back part-built");
 }
