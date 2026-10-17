@@ -150,8 +150,7 @@ void World::buildFreeway() {
             t.base.x += k * kPeriod;
             if (std::fabs(t.base.x) > kHalfSize - 2) continue;
             t.base.y = height(t.base.x, t.base.z) - 0.2;
-            trees.push_back(t);
-            poles.push_back({t.base.x, t.base.z, t.base.y - 0.5, t.base.y + t.height * 0.6, t.kind == 1 ? 0.3 : 0.22});
+            plant(t);
         }
         for (Bush b : oneBushes) {
             b.p.x += k * kPeriod;

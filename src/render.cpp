@@ -1962,6 +1962,8 @@ bool Renderer::init(const World& world, std::string& err) {
     progLit = linkProgram(kLitVS, header + kCommonFS + kLitIns + kTerrainProcFS + kLitFSBody, err);
     progCar = linkProgram(kCarVS, header + kCommonFS + kCarFSBody, err);
     progDepth = linkProgram(kDepthVS, kDepthFS, err);
+    progTree = linkProgram(kTreeVS, header + kCommonFS + kLitIns + kTerrainProcFS + kLitFSBody, err);
+    progTreeDepth = linkProgram(kTreeDepthVS, kDepthFS, err);
     progLine = linkProgram(kLineVS, kLineFS, err);
     progXray = linkProgram(kXrayVS, kXrayFS, err);
     progSky = linkProgram(kSkyVS, header + kCommonFS + kSkyFSBody, err);
@@ -1989,7 +1991,7 @@ bool Renderer::init(const World& world, std::string& err) {
         }
     }
     if (!progLit || !progDepth || !progLine || !progXray || !progSky || !progHud || !progFx || !progCar || !progAO || !progDown ||
-        !progUp || !progComposite || !progGrass || !progWater)
+        !progUp || !progComposite || !progGrass || !progWater || !progTree || !progTreeDepth)
         return false;
     // (Scanned props: if their shaders won't build, the scenery stays code-made.)
     {
@@ -2300,10 +2302,8 @@ void Renderer::updateObjects(const World& world) {
     for (const Tree& t : world.trees) ts.vec(t.base), ts.num(t.height), ts.num(t.radius), ts.num(t.kind), ts.num(t.tint);
     if (ts.h != treeSig_ || treeVertexCount == 0) {
         treeSig_ = ts.h;
-        std::vector<Vtx> v;
-        buildTreeMesh(world, v, cover);
-        uploadBatches(treeVao, treeVbo, v, treeBatches);
-        treeVertexCount = (int)v.size();
+        trees_.build(world, cover.pines, cover.snags);
+        treeVertexCount = (int)trees_.meshVertices();
     }
     Sig bs = sceneryBase(world, pq, cover);
     for (const Bush& b : world.bushes) bs.vec(b.p), bs.num(b.r), bs.num(b.tint), bs.num(b.kind);
@@ -3456,7 +3456,10 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
             BindVertexArray(figVao);
             DrawArrays(GL_TRIANGLES, 0, figVertexCount);
         }
-        drawBatches(treeVao, treeBatches, lightVP[c], true);
+        UseProgram(progTreeDepth);
+        uniformM4(progTreeDepth, "uLightVP", lightVP[c]);
+        geometryStats_.shadowSceneryVertices += trees_.draw(lightVP[c], view.eye, 1 + c);  // (shadows from the lighter copies)
+        UseProgram(progDepth);
         drawBatches(sceneryVao, sceneryBatches, lightVP[c], true);
         drawBushes(lightVP[c], view.eye, true);
         drawCarBodies(sim, progDepth, false);
@@ -3629,11 +3632,14 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
                 }
                 list[at * 4] = (float)t.base.x, list[at * 4 + 1] = (float)t.base.z, list[at * 4 + 2] = (float)(t.radius * 1.1 + 0.4), list[at * 4 + 3] = f;
             }
-        Uniform1i(uniformLocation(progLit, "uTreeFadeN"), n);
-        if (n) Uniform4fv(uniformLocation(progLit, "uTreeFade"), n, list);
+        setLighting(progTree);
+        bindTerrainTex(progTree);
+        Uniform1i(uniformLocation(progTree, "uMap"), mapId);
+        Uniform1i(uniformLocation(progTree, "uTreeFadeN"), n);
+        if (n) Uniform4fv(uniformLocation(progTree, "uTreeFade"), n, list);
     }
-    drawBatches(treeVao, treeBatches, vp, false);
-    Uniform1i(uniformLocation(progLit, "uTreeFadeN"), 0);
+    geometryStats_.sceneryVertices += trees_.draw(vp, view.eye);
+    UseProgram(progLit);
     drawBatches(sceneryVao, sceneryBatches, vp, false);
     drawBushes(vp, view.eye, false);
     props.draw(vp, [&](GLuint prog) {

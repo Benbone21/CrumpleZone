@@ -1,6 +1,7 @@
 #include "thread_cache.h"
 #include "world.h"
 
+#include "forest.h"
 #include "modelkit.h"
 
 #include "props.h"
@@ -877,10 +878,7 @@ void World::bakeTerrain() {
         t.height = 6 + rnd() * 7;
         t.radius = t.height * (0.22 + rnd() * 0.08);
         t.tint = (float)(0.8 + rnd() * 0.4);
-        trees.push_back(t);
-        // Trunk collider.
-        double hh = t.height * 0.3;
-        poles.push_back({t.base.x, t.base.z, t.base.y - 0.5, t.base.y + 2 * hh, 0.22});
+        plant(t);
     }
     for (int id = 0; id < hN * hN; id++) {
         if (dist[id] >= blend) continue;
@@ -1333,8 +1331,14 @@ void World::addTree(double x, double z, double treeHeight, int kind, float tint)
     t.radius = treeHeight * (kind == 1 ? 0.32 : 0.25);
     t.tint = tint;
     t.kind = kind;
+    plant(t);
+}
+
+void World::plant(Tree t) {
+    // Its design settled (forest.h), and a trunk that stops what the drawn one would: as thick as the model's 1 m up.
+    if (t.design < 0) t.design = forest::designFor(t.kind, (uint32_t)trees.size() + 1, t.base.x, t.base.z, t.height);
+    poles.push_back({t.base.x, t.base.z, t.base.y - 0.5, t.base.y + t.height * 0.6, forest::trunkRadius(t.kind, t.design, t.height)});
     trees.push_back(t);
-    poles.push_back({x, z, t.base.y - 0.5, t.base.y + treeHeight * 0.6, kind == 1 ? 0.3 : 0.22});
 }
 
 void World::addLog(V3 a, V3 b, double r) { logs.push_back({a, b, r}); }

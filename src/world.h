@@ -130,6 +130,7 @@ struct Tree {
     double height, radius;
     float tint;
     int kind = 0;  // 0 pine, 1 broadleaf, 2 dead snag
+    int design = -1;  // its model's variant (forest.h designFor; -1: worked out when drawn)
 };
 
 enum Surface : uint8_t {
@@ -386,6 +387,7 @@ public:
     void setCellWater(int id, float level);   // -1e9: dry
     // A tree (with its trunk to hit) and a log, as the maps add them.
     void addTree(double x, double z, double height, int kind, float tint = 1);
+    void plant(Tree t);  // a tree made up elsewhere (base, height, radius, tint, kind): its design settled, its trunk's Pole stood up
     void addLog(V3 a, V3 b, double r);
     // Removes whatever object is nearest (x, z) within r: rocks, trees, logs, boxes,
     // stations. Returns what it removed ("" nothing).

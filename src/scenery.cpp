@@ -1,6 +1,8 @@
 #include "scenery.h"
 #include "plants.h"
 
+#include "forest.h"
+
 #include <array>
 #include <cmath>
 #include <map>
@@ -209,89 +211,6 @@ void slab(std::vector<Vtx>& out, const Box& b) {
 
 }  // namespace
 
-void buildTreeMesh(const World& world, std::vector<Vtx>& v, const ScanCover& skip) {
-    const int sides = 10;
-    auto put = [&](const V3& p, const V3& n, const V3& c, int mat) { v.push_back(vert(p, n, c, mat)); };
-    int seed = 0;
-    for (const Tree& t : world.trees) {
-        double h = t.height, R = t.radius;
-        seed++;
-        if ((t.kind == 0 && skip.pines) || (t.kind == 2 && skip.snags)) continue;
-        double turn = latticeHash(seed, 7) * 6.2832;
-        // The picked model (modelkit.h), when there is one: a handful of seeds, with and
-        // without snow, scaled to the tree (made 10 m tall; snags 8 m).
-        static const char* const kTreeModel[3] = {"tree_pine", "tree_broadleaf", "tree_snag"};
-        if (t.kind >= 0 && t.kind < 3 && mk::findModel(kTreeModel[t.kind])) {
-            Placed pl;
-            pl.id = kTreeModel[t.kind];
-            const bool snow = world.surfaceAt(t.base.x, t.base.z) == SURF_SNOW;
-            pl.set = {{"seed", 1 + seed % 6}, {"snow", snow ? 1 : 0}};
-            const double k = h / (t.kind == 2 ? 8.0 : 10.0);
-            appendModel(v, placedMesh(pl), t.base, turn, V3(k, k, k), (float)(0.85 + 0.15 * t.tint));
-            continue;
-        }
-        if (t.kind == 1) {  // broadleaf: a forked trunk under a lumpy crown
-            const V3 bark(0.28, 0.23, 0.18);
-            V3 top = t.base + V3(0, h * 0.55, 0);
-            tube(v, t.base, top, 0.26, 0.14, 7, bark, SM_MATTE);
-            for (int k = 0; k < 3; k++) {
-                double a = turn + k * 2.1;
-                tube(v, top - V3(0, h * 0.08, 0), top + V3(std::cos(a) * R * 0.45, h * 0.18, std::sin(a) * R * 0.45), 0.11, 0.05, 5,
-                     bark, SM_MATTE);
-            }
-            const int clumps = 6 + seed % 3;
-            for (int k = 0; k < clumps; k++) {
-                double a = turn + k * 2.39996, d = R * (0.25 + 0.45 * latticeHash(seed, k + 40));
-                V3 c = t.base + V3(std::cos(a) * d, h * (0.62 + 0.22 * latticeHash(seed, k + 80)), std::sin(a) * d);
-                double cr = R * (0.45 + 0.2 * latticeHash(seed, k + 120));
-                V3 green = V3(0.16, 0.29, 0.07) * (t.tint * (0.85 + 0.3 * latticeHash(seed, k)));
-                blob(v, c, V3(cr, cr * 0.8, cr), 0.18, seed * 1.3 + k, 1, 0.25, green, SM_FOLIAGE);
-            }
-            continue;
-        }
-        if (t.kind == 2) {  // dead snag: grey trunk and a few bare branches
-            const V3 grey(0.42, 0.39, 0.35);
-            tube(v, t.base, t.base + V3(0, h, 0), 0.22, 0.04, 7, grey, SM_MATTE);
-            for (int k = 0; k < 6; k++) {
-                double a = turn + k * 2.6, y = h * (0.35 + 0.1 * k), L = h * (0.28 - 0.03 * k);
-                V3 from = t.base + V3(0, y, 0);
-                tube(v, from, from + V3(std::cos(a) * L, L * 0.7, std::sin(a) * L), 0.06, 0.015, 4, grey, SM_MATTE);
-            }
-            continue;
-        }
-        // Pine: tapering trunk, four drooping tiers of boughs (ragged cones), darker and
-        // bluer low down. One standing in snow carries it on its boughs.
-        const bool snowy = world.surfaceAt(t.base.x, t.base.z) == SURF_SNOW;
-        tube(v, t.base, t.base + V3(0, h * 0.5, 0), 0.22, 0.1, 6, V3(0.30, 0.22, 0.15), SM_MATTE);
-        const double tiers[4][3] = {{0.18, 0.55, 1.0}, {0.36, 0.72, 0.8}, {0.54, 0.88, 0.6}, {0.70, 1.02, 0.38}};
-        for (int c = 0; c < 4; c++) {
-            V3 apex = t.base + V3(0, h * tiers[c][1], 0);
-            double y0 = h * tiers[c][0], r = R * tiers[c][2] * 1.05;
-            V3 green = V3(0.10 + 0.03 * c, 0.20 + 0.045 * c, 0.09 + 0.012 * c) * t.tint;
-            V3 under = V3(0.05, 0.10, 0.05) * t.tint;
-            for (int s = 0; s < sides; s++) {
-                double a0 = turn + 2 * M_PI * s / sides, a1 = turn + 2 * M_PI * (s + 1) / sides;
-                double r0 = r * (0.8 + 0.35 * latticeHash(seed * 31 + c, s)), r1 = r * (0.8 + 0.35 * latticeHash(seed * 31 + c, (s + 1) % sides));
-                V3 d0(std::cos(a0), 0, std::sin(a0)), d1(std::cos(a1), 0, std::sin(a1));
-                V3 p0 = t.base + V3(0, y0 - 0.12 * r0, 0) + d0 * r0, p1 = t.base + V3(0, y0 - 0.12 * r1, 0) + d1 * r1;
-                V3 n0 = norm(d0 + V3(0, 0.75, 0)), n1 = norm(d1 + V3(0, 0.75, 0)), na = norm((d0 + d1) * 0.3 + V3(0, 1, 0));
-                put(p0, n0, green, SM_FOLIAGE), put(apex, na, green * 1.25, SM_FOLIAGE), put(p1, n1, green, SM_FOLIAGE);
-                V3 hub = t.base + V3(0, y0 + 0.25 * r, 0);
-                put(p1, V3(0, -1, 0), under, SM_FOLIAGE), put(hub, V3(0, -1, 0), under, SM_FOLIAGE), put(p0, V3(0, -1, 0), under, SM_FOLIAGE);
-                if (snowy) {
-                    // Snow lying on the bough: a white skin over the top of the cone, a few
-                    // centimetres proud of it, its lower edge ragged where it's sliding off.
-                    const double f0 = 0.18 + 0.22 * latticeHash(seed * 17 + c, s), f1 = 0.18 + 0.22 * latticeHash(seed * 17 + c, (s + 1) % sides);
-                    const V3 lift(0, 0.06 + 0.02 * r, 0), snow(0.80, 0.83, 0.88);
-                    const V3 q0 = p0 + (apex - p0) * f0 + lift, q1 = p1 + (apex - p1) * f1 + lift;
-                    put(q0, norm(n0 + V3(0, 0.6, 0)), snow * 0.92, SM_SNOWLEAF), put(apex + lift, V3(0, 1, 0), snow, SM_SNOWLEAF),
-                        put(q1, norm(n1 + V3(0, 0.6, 0)), snow * 0.92, SM_SNOWLEAF);
-                }
-            }
-        }
-    }
-}
-
 void buildRockMesh(const World& world, std::vector<Vtx>& v, const ScanCover& skip) {
     for (const Rock& k : world.rocks) {
         if (k.scan >= 0 && skip.rocks) continue;
@@ -330,13 +249,12 @@ void buildRockMesh(const World& world, std::vector<Vtx>& v, const ScanCover& ski
     }
     for (const Box& b : world.boxes)
         if (b.rock) slab(v, b);
+    int logSeed = 0;
     for (const Log& g : world.logs) {
         if (skip.logs) break;
-        tube(v, g.a, g.b, g.r, g.r * 0.92, 12, V3(0.33, 0.25, 0.17), SM_MATTE, true, V3(0.62, 0.50, 0.34));
-        // A couple of snapped-off branch stubs.
-        V3 mid = (g.a + g.b) * 0.5, ax = norm(g.b - g.a);
-        V3 side = norm(cross(ax, V3(0, 1, 0)));
-        tube(v, mid + ax * 1.2, mid + ax * 1.5 + side * 0.4 + V3(0, 0.35, 0), g.r * 0.35, g.r * 0.15, 5, V3(0.33, 0.25, 0.17), SM_MATTE);
+        mk::Mesh m;
+        forest::logMesh(world, g, (uint32_t)++logSeed, m);
+        appendModel(v, m, V3(), 0.0);  // (built where it lies)
     }
 }
 
