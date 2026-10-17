@@ -1656,6 +1656,7 @@ void NetSession::applyRemotes(Sim& sim, double now) {
         const double target = now - rm->clockOffset - net::kPlaybackDelay;
         if (rm->playbackNow < 0) rm->playbackTime = target;
         else rm->playbackTime += clampd(target - rm->playbackTime, 0, std::max(0.0, now - rm->playbackNow) * 1.1);
+        const double frameDt = rm->playbackNow < 0 ? 0.0 : std::max(0.0, now - rm->playbackNow);
         rm->playbackNow = now;
         const double t = rm->playbackTime;
         while (rm->buf.size() > 2 && rm->buf[1].t < t - 0.5) rm->buf.pop_front();
@@ -1689,21 +1690,28 @@ void NetSession::applyRemotes(Sim& sim, double now) {
         // A jump (put back on its wheels, towed home) is a teleport, not a speed.
         const bool jumped = len((now0[0] - prev[0]) / 0.05 - vel) > 25;
         const bool stopped = t >= rm->buf.back().t + 0.25;
-        for (size_t i = 0; i < c.nodes.size(); i++) {
-            c.nodes[i].p = now0[i];
-            c.nodes[i].v = jumped || stopped ? vel : (now0[i] - prev[i]) / 0.05;
+        // (One of ours is in a crash with it: it's on our physics till they part, then eased back.)
+        const bool held = c.heldHere > 0 && !jumped;
+        if (jumped) c.heldHere = 0, c.handBack = false, c.shoveV = c.shoveP = V3();
+        if (c.handBack) c.handBackTo(now0, vel);
+        c.settleShove(vel, frameDt);
+        for (size_t i = 0; i < c.nodes.size() && !held; i++) {
+            c.nodes[i].p = now0[i] + c.shoveP;
+            c.nodes[i].v = (jumped || stopped ? vel : (now0[i] - prev[i]) / 0.05) + c.shoveV;
             c.nodes[i].f = V3();
         }
-        if (!c.chassis.nodes.empty()) c.chassis.rot = rot;
+        if (!held && !c.chassis.nodes.empty()) c.chassis.rot = rot;
         const Snap& s = rm->buf[std::min(idx + (alpha > 0.5), rm->buf.size() - 1)];
         const Snap& a = rm->buf[idx];
         const Snap& b = rm->buf[std::min(idx + 1, rm->buf.size() - 1)];
         auto blend = [alpha](double x, double y) { return x + (y - x) * alpha; };
         for (size_t k = 0; k < c.wheels.size() && k < s.wheelAngle.size(); k++) {
             Wheel& wh = c.wheels[k];
-            wh.angle = blend(a.wheelAngle[k], b.wheelAngle[k]);
-            wh.omega = blend(a.wheelOmega[k], b.wheelOmega[k]);
-            if (&a == &b) wh.angle += wh.omega * clampd(t - a.t, 0, 0.25);
+            if (!held) {
+                wh.angle = blend(a.wheelAngle[k], b.wheelAngle[k]);
+                wh.omega = blend(a.wheelOmega[k], b.wheelOmega[k]);
+                if (&a == &b) wh.angle += wh.omega * clampd(t - a.t, 0, 0.25);
+            }
             wh.popped = s.wheelFlags[k] & 1;
             wh.detached = (s.wheelFlags[k] >> 1) & 1;
             wh.shaftBroken = (s.wheelFlags[k] >> 2) & 1;

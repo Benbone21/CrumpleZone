@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "daylight.h"
+#include "frameprof.h"
 #include "gl.h"
 #include "treedraw.h"
 #include "visibility.h"
@@ -60,8 +61,15 @@ struct RenderSettings {
     int ground = 2;             // terrain materials: 0 procedural, 1 photo-scanned (one tap), 2 full, 3 full + more layers
     int props = 2;              // scanned props (propdraw.h): 0 off (code-made scenery), 1 low, 2 high, 3 ultra
     float renderScale = 1.0f;   // scene resolution relative to the window, 0.5 .. 2
+    float drawDistance = 0;     // m: nothing drawn past it, fog thickening to hide the edge (0: everything, to the horizon)
+    bool sharpen = false;       // sharpen the scene as it's scaled to the window (for a low render scale)
     float blur = 0;             // 0..1: blurs the scene behind a menu
 };
+
+// Linked shader programs cached on disk (render.cpp): "" turns it off (the default; scripted runs leave it so).
+void setShaderCacheDir(const std::string& dir);
+struct ShaderCacheStats { int hits = 0, compiled = 0; };
+extern ShaderCacheStats gShaderCacheStats;
 
 enum DebugView { DEBUG_OFF, DEBUG_XRAY, DEBUG_BEAMS_ONLY, DEBUG_PARTS, DEBUG_VIEW_COUNT };  // (parts: no body skin, to see the engine and running gear)
 
@@ -131,6 +139,13 @@ public:
     };
     const GeometryStats& geometryStats() const { return geometryStats_; }
     double grassGpuMs() const { return grassGpuMs_; }  // (CZ_BENCH: the grass pass on the GPU, a few frames late)
+    // Frame timing (frameprof.h): the stage `p` starts now, on the CPU (frameProfile()) and, with gpuTiming, on the GPU
+    // (a timestamp query). gpuFrameBegin() at the top of each frame reads back a frame from a few frames ago.
+    bool gpuTiming = false;
+    bool syncTiming = false;  // (--bench-sync: wait for the GPU at each mark, so the CPU times are each stage's whole cost)
+    void passMark(FramePass p);
+    void preload(const World& world);  // (after init and settings: loads what the first frame would)
+    void gpuFrameBegin();
 
 private:
     struct CarSlot {
@@ -175,6 +190,18 @@ private:
     int grassQueryFrame_ = 0;
     bool grassQueryUsed_[4] = {};
     double grassGpuMs_ = 0;
+    struct GpuMarks {
+        static const int kMax = 48;
+        GLuint q[kMax] = {};
+        uint8_t pass[kMax] = {};
+        int n = 0;
+    };
+    GpuMarks gpuMarks_[4];
+    // AO, bloom and clouds ease in and out over ~0.6 s when they're switched (adaptive quality: no pops); -1 = not yet drawn.
+    float fadeAO_ = -1, fadeBloom_ = -1, fadeClouds_ = -1;
+    double fadeClock_ = 0;
+    float farZ_ = 6000;  // this frame's far plane (a draw distance brings it in)
+    int gpuMarkFrame_ = 0;
     void uploadBatches(GLuint& vao, GLuint& vbo, std::vector<Vtx>& vertices, std::vector<StaticBatch>& batches);
     void drawBatches(GLuint vao, const std::vector<StaticBatch>& batches, const M4& vp, bool shadow);
     void drawBushes(const M4& vp, const V3& eye, bool shadow);  // (the bush batches within sight: small things, not drawn far off)
@@ -239,6 +266,7 @@ private:
     void buildFont();
     void buildBackdrop(const World& world, std::vector<Vtx>& verts, std::vector<unsigned>& idx);
     void ensureShadows(int size);
+    void ensureGround(int quality);
     void ensureTargets(int w, int h, int samples);
     void postProcess(const View& view, const M4& proj);
     void prepareCars(const Sim& sim, DebugView debug);
