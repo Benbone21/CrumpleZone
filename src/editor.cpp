@@ -112,6 +112,17 @@ V3 Editor::snapped(const V3& p) const {
     return s > 0 ? V3(std::round(p.x / s) * s, p.y, std::round(p.z / s) * s) : p;
 }
 
+bool Editor::project(const V3& p, float& sx, float& sy) const { return screenPoint(view(W, H), W, H, p, sx, sy); }
+
+std::string Editor::debugState() const {
+    std::string s = std::string("tool=") + kToolNames[tool] + " pointer=" + (pointer ? "1" : "0") + " pal=" + (palPick >= 0 && palPick < (int)palette.size() ? palette[palPick].name : "?") +
+                    " cells=" + std::to_string(core.cellEdits()) + " radius=" + std::to_string(radius) + " op=" + std::to_string((int)op) + " unsaved=" + (core.unsaved() ? "1" : "0") + " objs=" + std::to_string(core.level.objects.size()) + " removed=" + std::to_string(core.level.removed.size()) + " sel=[";
+    for (const EditPick& p : selection) s += std::to_string(p.kind) + ":" + std::to_string(p.index) + ":" + std::to_string(p.baseKind) + ":" + p.name + " ";
+    s += "] hover=" + std::to_string(hover.kind) + ":" + std::to_string(hover.index) + ":" + hover.name + " eye=" + std::to_string(eye.x) + "," + std::to_string(eye.y) + "," + std::to_string(eye.z) +
+         " ground=" + (haveHit ? std::to_string(hit.x) + "," + std::to_string(hit.y) + "," + std::to_string(hit.z) : std::string("none")) + " overUi=" + (overUi ? "1" : "0") + " mouse=" + std::to_string((int)mx) + "," + std::to_string((int)my) + " WH=" + std::to_string(W) + "x" + std::to_string(H) + " fileOpen=" + (fileOpen ? "1" : "0") + " files=" + std::to_string(files.size()) + " fileSel=" + std::to_string(fileSel) + " flow=" + std::to_string((int)flow.stage) + " toast=\"" + toast + "\" undo=" + core.undoName();
+    return s;
+}
+
 void Editor::newSection(World& w, Renderer& r) {
     rend = &r;
     Level l;

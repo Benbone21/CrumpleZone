@@ -20,7 +20,10 @@
 
 #include <chrono>
 #include <csignal>
+#include <filesystem>
+#include <fstream>
 #include <functional>
+#include <sstream>
 #include <map>
 
 #include "audio.h"
@@ -3896,6 +3899,195 @@ int main(int argc, char** argv) {
             if (editor.active && frame == 8 && mode == "delete") editor.applyKey(SC_DELETE);
             if (editor.active && frame == 12 && (mode == "playtest" || mode == "back")) editor.requestPlay(true);
             if (!editor.active && editorSuspended && frame == 50 && mode == "back") returnToEditor();
+        }
+        if (scripted && opt.script == "edqa") {
+            // (QA driver: CZ_EDQA names a file of commands, one per frame, run with --script edqa --shot-frames 99999 (`shot` takes one, `quit` ends). For checking the
+            // editor the way a user does it, offscreen: menu_edit NAME / menu_real_edit N / menu_new / menu_section / menu_back / f2 / play_level NAME, tool N, ptr, pal NAME,
+            // cam / camat x z dist high yawdeg / camobj k, mouse fx fy / mousepx dx dy / mouseobj k / mousebase kind idx / mousepoint x y z, down, up, wheel, key NAME [shift] [ctrl],
+            // keys letters, save / saveas / undo / redo / play [start], and the dumps: state, world, objs [a [b]], rocksnear x z r, pals, models, levels, carpos, autosaves.)
+            static std::vector<std::string> cmds;
+            static size_t ci = 0;
+            static int waitN = 0;
+            static float qx = 0, qy = 0;
+            static bool loaded = false;
+            if (!loaded) {
+                loaded = true;
+                std::ifstream f(std::getenv("CZ_EDQA") ? std::getenv("CZ_EDQA") : "/dev/null");
+                for (std::string ln; std::getline(f, ln);)
+                    if (!ln.empty() && ln[0] != '#') cmds.push_back(ln);
+            }
+            auto keyCode = [](const std::string& n) -> int {
+                if (n.size() == 1 && n[0] >= 'a' && n[0] <= 'z') return 4 + (n[0] - 'a');
+                if (n.size() == 1 && n[0] >= '1' && n[0] <= '9') return 30 + (n[0] - '1');
+                if (n == "0") return 39;
+                static const std::map<std::string, int> m = {{"return", 40}, {"esc", 41}, {"backspace", 42}, {"tab", 43}, {"space", 44}, {"minus", 45}, {"equals", 46}, {"lbracket", 47}, {"rbracket", 48},
+                    {"comma", 54}, {"period", 55}, {"f2", 59}, {"f3", 60}, {"f5", 62}, {"f6", 63}, {"pgup", 75}, {"delete", 76}, {"pgdn", 78}, {"right", 79}, {"left", 80}, {"down", 81}, {"up", 82}};
+                const auto it = m.find(n);
+                return it == m.end() ? std::atoi(n.c_str()) : it->second;
+            };
+            auto mouseEv = [&](uint32_t type, int button, float x, float y) {
+                SDL_Event e;
+                std::memset(&e, 0, sizeof(e));
+                e.type = type;
+                int32_t xi = (int32_t)x, yi = (int32_t)y;
+                if (type == SDL_MOUSEMOTION) std::memcpy(e.padding + 20, &xi, 4), std::memcpy(e.padding + 24, &yi, 4);
+                else e.padding[16] = (uint8_t)button, std::memcpy(e.padding + 20, &xi, 4), std::memcpy(e.padding + 24, &yi, 4);
+                editor.handleEvent(e, 1.0f);
+            };
+            auto objPoint = [&](int k, V3& at) {  // the middle of what level object k made in the world
+                const auto parts = editor.core.partsOf(k);
+                if (parts.empty()) return false;
+                const World& w = sim.world;
+                const auto pr = parts[0];
+                if (pr.first == 0) { double hi = -1e9; for (const V3& v : w.rocks[pr.second].v) hi = std::max(hi, v.y); at = w.rocks[pr.second].c; at.y = at.y * 0.3 + hi * 0.7; }
+                else if (pr.first == 1) at = w.trees[pr.second].base + V3(0, w.trees[pr.second].height * 0.4, 0);
+                else if (pr.first == 2) at = (w.logs[pr.second].a + w.logs[pr.second].b) * 0.5;
+                else if (pr.first == 3) at = w.boxes[pr.second].c;
+                else if (pr.first == 4) at = w.fixtures[pr.second].a + V3(0, 1, 0);
+                else if (pr.first == 5) at = w.models[pr.second].p + V3(0, 1, 0);
+                else at = w.bushes[pr.second].p + V3(0, 0.5, 0);
+                return true;
+            };
+            if (waitN > 0) waitN--;
+            else if (ci < cmds.size()) {
+                std::istringstream is(cmds[ci++]);
+                std::string c;
+                is >> c;
+                std::vector<std::string> a;
+                for (std::string t; is >> t;) a.push_back(t);
+                auto num = [&](size_t i, double d = 0) { return i < a.size() ? std::atof(a[i].c_str()) : d; };
+                auto rest = [&](size_t from) { std::string r; for (size_t i = from; i < a.size(); i++) r += (i > from ? " " : "") + a[i]; return r; };
+                EditCore& ed = editor.core;
+                std::printf("[edqa %d] %s   (last frame %.0f ms)\n", frame, cmds[ci - 1].c_str(), frameTimeMs);
+                if (c == "wait") waitN = (int)num(0);
+                else if (c == "quit") running = false;
+                else if (c == "shot") opt.shotFrames.insert(frame + 1);
+                else if (c == "state") std::printf("  %s\n", editor.active ? editor.debugState().c_str() : "(editor not active)");
+                else if (c == "world") std::printf("  world: rocks %zu trees %zu logs %zu boxes %zu fixtures %zu models %zu bushes %zu map %d paused %d\n", sim.world.rocks.size(), sim.world.trees.size(), sim.world.logs.size(), sim.world.boxes.size(), sim.world.fixtures.size(), sim.world.models.size(), sim.world.bushes.size(), sim.world.map, (int)sim.paused);
+                else if (c == "levels") {
+                    refreshLevels();
+                    for (size_t k = 0; k < levelList.size(); k++) std::printf("  level %zu: %s%s map %d objs %zu\n", k, levelList[k].name.c_str(), levelList[k].builtin ? " (builtin)" : "", levelList[k].map, levelList[k].objects.size());
+                } else if (c == "menu_edit") {  // the LEVELS list -> EDIT: by name substring, as the menu's result
+                    refreshLevels();
+                    std::string want = rest(0);
+                    for (char& ch : want) ch = (char)std::toupper((unsigned char)ch);
+                    int found = -1;
+                    for (int k = 0; k < (int)levelList.size() && found < 0; k++)
+                        if (levelList[k].name.find(want) != std::string::npos) found = k;
+                    std::printf("  menu edit %d\n", found);
+                    if (found >= 0) {
+                        PauseMenu::Result r;
+                        r.action = PauseMenu::EDIT_LEVEL, r.vehicle = found;
+                        handleMenu(r);
+                    }
+                } else if (c == "menu_new") { PauseMenu::Result r; r.action = PauseMenu::EDITOR; handleMenu(r); }
+                else if (c == "menu_section") { PauseMenu::Result r; r.action = PauseMenu::NEW_SECTION; handleMenu(r); }
+                else if (c == "menu_back") { PauseMenu::Result r; r.action = PauseMenu::EDITOR_BACK; handleMenu(r); }
+                else if (c == "f2") { if (!returnToEditor()) openEditor(editorKeyLevel()); }
+                else if (c == "play_level") { refreshLevels(); std::string want = rest(0); for (char& ch : want) ch = (char)std::toupper((unsigned char)ch); for (int k = 0; k < (int)levelList.size(); k++) if (levelList[k].name.find(want) != std::string::npos) { playLevel(levelList[k]); break; } }
+                else if (c == "tool") editor.setTool((Editor::Tool)std::max(0, (int)num(0) - 1));
+                else if (c == "ptr") editor.setPointer(num(0, 1) != 0);
+                else if (c == "pal") editor.setPalette(std::max(0, editor.findPalette(rest(0))));
+                else if (c == "cam") editor.setCamera(V3(num(0), num(1), num(2)), num(3) * M_PI / 180, num(4) * M_PI / 180);
+                else if (c == "camat") {  // camera `dist` back from a ground point, `high` up, looking at it: camat x z dist high yawdeg
+                    const double yw = num(4) * M_PI / 180, dist = num(2), hi = num(3);
+                    const V3 g(num(0), sim.world.height(num(0), num(1)), num(1));
+                    editor.setCamera(g + V3(-std::cos(yw) * dist, hi, std::sin(yw) * dist), yw, -std::atan2(hi, dist));
+                } else if (c == "camobj") {  // camera looking at level object k from `dist` behind and `high` up (facing yaw deg)
+                    V3 at;
+                    if (objPoint((int)num(0), at)) {
+                        const double yw = num(3) * M_PI / 180, dist = num(1), hi = num(2);
+                        editor.setCamera(at + V3(-std::cos(yw) * dist, hi, std::sin(yw) * dist), yw, -std::atan2(hi, dist));
+                    } else std::printf("  no parts for object %d\n", (int)num(0));
+                } else if (c == "mouse") { qx = (float)(num(0) * W), qy = (float)(num(1) * H); mouseEv(SDL_MOUSEMOTION, 0, qx, qy); }
+                else if (c == "mousepx") { qx += (float)num(0), qy += (float)num(1); mouseEv(SDL_MOUSEMOTION, 0, qx, qy); }
+                else if (c == "down") mouseEv(SDL_MOUSEBUTTONDOWN, a.empty() ? 1 : (int)num(0), qx, qy);
+                else if (c == "up") mouseEv(SDL_MOUSEBUTTONUP, a.empty() ? 1 : (int)num(0), qx, qy);
+                else if (c == "mouseobj" || c == "mousebase" || c == "mousepoint") {  // aim the mouse: at level object k, at a world part (kind idx), or a world point
+                    V3 at;
+                    bool ok = false;
+                    if (c == "mouseobj") ok = objPoint((int)num(0), at);
+                    else if (c == "mousepoint") at = V3(num(0), num(1), num(2)), ok = true;
+                    else {
+                        const World& w = sim.world;
+                        const int k = (int)num(0), i = (int)num(1);
+                        ok = true;
+                        if (k == 0 && i < (int)w.rocks.size()) { double hi = -1e9; for (const V3& v : w.rocks[i].v) hi = std::max(hi, v.y); at = w.rocks[i].c; at.y = at.y * 0.3 + hi * 0.7; }
+                        else if (k == 1 && i < (int)w.trees.size()) at = w.trees[i].base + V3(0, w.trees[i].height * 0.4, 0);
+                        else if (k == 2 && i < (int)w.logs.size()) at = (w.logs[i].a + w.logs[i].b) * 0.5;
+                        else if (k == 3 && i < (int)w.boxes.size()) at = w.boxes[i].c;
+                        else if (k == 4 && i < (int)w.fixtures.size()) at = w.fixtures[i].a + V3(0, 1, 0);
+                        else ok = false;
+                    }
+                    float sx, sy;
+                    if (ok && editor.project(at, sx, sy)) qx = sx, qy = sy, mouseEv(SDL_MOUSEMOTION, 0, qx, qy), std::printf("  mouse at %.0f,%.0f for (%.1f %.1f %.1f)\n", sx, sy, at.x, at.y, at.z);
+                    else std::printf("  can't aim (off screen or no such part)\n");
+                } else if (c == "key") {
+                    bool sh = false, ct = false;
+                    for (size_t i = 1; i < a.size(); i++) sh |= a[i] == "shift", ct |= a[i] == "ctrl";
+                    editor.applyKey(keyCode(a.empty() ? "" : a[0]), sh, ct);
+                } else if (c == "keys") {  // a string of letters typed one per call (names, prompts)
+                    for (char ch : rest(0)) editor.applyKey(ch == '_' ? 44 : ch >= 'a' && ch <= 'z' ? 4 + (ch - 'a') : ch >= '1' && ch <= '9' ? 30 + (ch - '1') : ch == '0' ? 39 : 0);
+                } else if (c == "wheel") { SDL_Event e; std::memset(&e, 0, sizeof(e)); e.type = SDL_MOUSEWHEEL; int32_t dy = (int32_t)num(0); std::memcpy(e.padding + 20, &dy, 4); editor.handleEvent(e, 1.0f); }
+                else if (c == "objs") {
+                    for (size_t k = a.empty() ? 0 : (size_t)num(0); k < (a.empty() ? ed.level.objects.size() : std::min(ed.level.objects.size(), (size_t)num(1, num(0)) + 1)); k++) {
+                        const LevelObject& o = ed.level.objects[k];
+                        std::printf("  obj %zu kind %d p(%.2f %.2f %.2f) p2(%.2f %.2f %.2f) size(%.2f %.2f %.2f) yaw %.2f pitch %.2f roll %.2f top %.2f lift %.2f sub %d\n", k, o.kind, o.p.x, o.p.y, o.p.z, o.p2.x, o.p2.y, o.p2.z, o.size.x, o.size.y, o.size.z, o.yaw, o.pitch, o.roll, o.top, o.lift, o.sub);
+                        V3 at;
+                        const auto parts = ed.partsOf((int)k);
+                        for (const auto& pr : parts) {
+                            if (pr.first == 0) { const Rock& r = sim.world.rocks[pr.second]; double lo = 1e9, hi = -1e9; for (const V3& v : r.v) lo = std::min(lo, v.y), hi = std::max(hi, v.y); std::printf("    world rock %d c(%.2f %.2f %.2f) r %.2f y %.2f..%.2f ground %.2f\n", pr.second, r.c.x, r.c.y, r.c.z, r.r, lo, hi, sim.world.height(r.c.x, r.c.z)); }
+                            else if (pr.first == 3) { const Box& b = sim.world.boxes[pr.second]; std::printf("    world box %d c(%.2f %.2f %.2f) half(%.2f %.2f %.2f)\n", pr.second, b.c.x, b.c.y, b.c.z, b.h.x, b.h.y, b.h.z); }
+                            else if (pr.first == 2) { const Log& l = sim.world.logs[pr.second]; std::printf("    world log %d a(%.2f %.2f %.2f) b(%.2f %.2f %.2f) r %.2f\n", pr.second, l.a.x, l.a.y, l.a.z, l.b.x, l.b.y, l.b.z, l.r); }
+                            else if (pr.first == 1) { const Tree& t = sim.world.trees[pr.second]; std::printf("    world tree %d base(%.2f %.2f %.2f) h %.2f ground %.2f\n", pr.second, t.base.x, t.base.y, t.base.z, t.height, sim.world.height(t.base.x, t.base.z)); }
+                            else std::printf("    world part %d:%d\n", pr.first, pr.second);
+                        }
+                        (void)at;
+                    }
+                } else if (c == "menu_real_edit") {  // the real menu: LEVELS page, pick a level by index, DOWN to OPEN IN THE EDITOR, RETURN
+                    refreshLevels();
+                    openMenu();
+                    menu.showPage(4, 0, sim.world.map);
+                    menu.levelPick = (int)num(0);
+                    for (int i = 0; i < 3; i++) handleMenu(menu.key(81, settings));
+                    handleMenu(menu.key(40, settings));
+                    std::printf("  menu open %d editor active %d\n", (int)menu.open, (int)editor.active);
+                } else if (c == "models") {  // the world's placed models by id, how many of each
+                    std::map<std::string, int> ids;
+                    for (const Placed& pl : sim.world.models) ids[pl.id]++;
+                    for (const auto& kv : ids) std::printf("  model %s x%d\n", kv.first.c_str(), kv.second);
+                    std::map<int, int> fk;
+                    for (const Prop& f : sim.world.fixtures) fk[(int)f.kind]++;
+                    for (const auto& kv : fk) std::printf("  fixture kind %d x%d\n", kv.first, kv.second);
+                } else if (c == "autosavedir") {
+                    editor.autosaveDir = userLevelFolder() + "/autosave";
+                } else if (c == "autosavenow") {
+                    editor.autosaveNow();
+                } else if (c == "pals") {
+                    for (int k = 0; k < editor.paletteSize(); k++) std::printf("  pal %d %s\n", k, editor.paletteName(k));
+                } else if (c == "rocksnear") {  // base rocks near a ground point: rocksnear x z r
+                    int n = 0;
+                    for (size_t i = 0; i < sim.world.rocks.size() && n < 12; i++) {
+                        const Rock& r = sim.world.rocks[i];
+                        if (std::hypot(r.c.x - num(0), r.c.z - num(1)) < num(2)) std::printf("  rock %zu c(%.1f %.1f %.1f) r %.2f\n", i, r.c.x, r.c.y, r.c.z, r.r), n++;
+                    }
+                } else if (c == "save") { editor.applyKey(keyCode("s"), false, true); }
+                else if (c == "saveas") { editor.applyKey(keyCode("s"), true, true); }
+                else if (c == "undo") { editor.applyKey(keyCode("z"), false, true); }
+                else if (c == "redo") { editor.applyKey(keyCode("y"), false, true); }
+                else if (c == "play") editor.requestPlay(a.empty() || a[0] != "start");
+                else if (c == "place") {  // place the palette entry at a ground point (as a click would); place x z
+                    ed.addObject(editor.makeForScript(V3(num(0), 0, num(1))));
+                } else if (c == "carpos") {
+                    const Car& pc = sim.cars[sim.player];
+                    std::printf("  car at %.1f %.1f %.1f editorActive %d suspended %d\n", pc.frame().com.x, pc.frame().com.y, pc.frame().com.z, (int)editor.active, (int)editorSuspended);
+                } else if (c == "autosaves") {
+                    int n = 0;
+                    std::error_code ec;
+                    for (const auto& de : std::filesystem::directory_iterator(userLevelFolder() + "/autosave", ec)) std::printf("  autosave %s %lld bytes\n", de.path().c_str(), (long long)de.file_size()), n++;
+                    std::printf("  %d autosave files\n", n);
+                } else std::printf("  ?? unknown command\n");
+            }
         }
         if (editor.active) {
             editor.update(dt, keys, renderer, W, H);
