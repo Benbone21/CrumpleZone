@@ -224,7 +224,7 @@ bool sameObject(const LevelObject& a, const LevelObject& b) {
     auto eq = [](const V3& p, const V3& q) { return p.x == q.x && p.y == q.y && p.z == q.z; };
     return a.kind == b.kind && eq(a.p, b.p) && eq(a.size, b.size) && eq(a.p2, b.p2) && a.yaw == b.yaw && a.pitch == b.pitch &&
            a.roll == b.roll && a.top == b.top && a.seed == b.seed && a.sub == b.sub && a.col[0] == b.col[0] && a.col[1] == b.col[1] &&
-           a.col[2] == b.col[2] && a.name == b.name && a.lift == b.lift && a.scan == b.scan;
+           a.col[2] == b.col[2] && a.name == b.name && a.lift == b.lift && a.lift2 == b.lift2 && a.rel == b.rel && a.scan == b.scan;
 }
 
 bool sameObjects(const Level& a, const Level& b) {
@@ -446,7 +446,12 @@ void EditCore::rebuildObjects() {
     baseCount[3] = (int)w.boxes.size(), baseCount[4] = (int)w.fixtures.size(), baseCount[5] = (int)w.models.size(), baseCount[6] = (int)w.bushes.size();
     for (int k = 0; k < 7; k++) owner[k].assign(baseCount[k], -1);
     for (int k = 0; k < (int)level.objects.size(); k++) {
-        const LevelObject& o = level.objects[k];
+        LevelObject& o = level.objects[k];
+        // A box or log's height is an offset from the ground (an absolute one, from an older file or a generator, becomes that now).
+        if (o.kind == OBJ_BOX || o.kind == OBJ_LOG) {
+            if (o.rel) resolveObject(w, o);
+            else settleObject(w, o);
+        }
         const size_t sz[7] = {w.rocks.size(), w.trees.size(), w.logs.size(), w.boxes.size(), w.fixtures.size(), w.models.size(), w.bushes.size()};
         placeObject(o, w);
         const size_t now[7] = {w.rocks.size(), w.trees.size(), w.logs.size(), w.boxes.size(), w.fixtures.size(), w.models.size(), w.bushes.size()};
@@ -510,8 +515,13 @@ void EditCore::endEdit() {
         bool hit = false;
         const double half = World::kHalfSize;
         for (const LevelObject& o : level.objects) {
-            const double i = o.p.x + half, j = o.p.z + half, m = std::max(3.0, std::max(o.size.x, o.size.z) + 2);
-            if (!r.empty() && i + m >= r.i0 && i - m <= r.i1 && j + m >= r.j0 && j - m <= r.j1) hit = true;
+            // (a log rests on the ground at its two ends; a box on its footprint)
+            const double m = o.kind == OBJ_LOG ? 3.0 : std::max(3.0, std::max(o.size.x, o.size.z) + 2);
+            for (const V3* e : {&o.p, &o.p2}) {
+                if (e == &o.p2 && o.kind != OBJ_LOG) break;
+                const double i = e->x + half, j = e->z + half;
+                if (!r.empty() && i + m >= r.i0 && i - m <= r.i1 && j + m >= r.j0 && j - m <= r.j1) hit = true;
+            }
         }
         if (hit) rebuildObjects();
     }
@@ -898,38 +908,10 @@ int EditCore::drain(double cx, double cz) {
 // ---- Objects ---------------------------------------------------------------------------
 
 LevelObject EditCore::grounded(LevelObject o) const {
-    const World& w = *world;
     switch (o.kind) {
-        case OBJ_BOX: {
-            V3 ax[3] = {V3(1, 0, 0), V3(0, 1, 0), V3(0, 0, 1)};
-            for (V3& a : ax) {
-                a = rotateAxis(a, V3(1, 0, 0), o.roll);
-                a = rotateAxis(a, V3(0, 0, 1), o.pitch);
-                a = rotateAxis(a, V3(0, 1, 0), o.yaw);
-            }
-            if (std::fabs(o.pitch) < 1e-3 && std::fabs(o.roll) < 1e-3) {
-                // Flat: down to the lowest ground under it, so no corner hangs in the air.
-                double g = w.height(o.p.x, o.p.z);
-                for (int a = -1; a <= 1; a += 2)
-                    for (int b = -1; b <= 1; b += 2) {
-                        const V3 c = o.p + ax[0] * (a * o.size.x) + ax[2] * (b * o.size.z);
-                        g = std::min(g, w.height(c.x, c.z));
-                    }
-                o.p.y = g + o.size.y;
-            } else {
-                // Tipped (a ramp): the low end's top edge meets the ground.
-                const double s = o.pitch >= 0 ? -1 : 1;
-                const V3 off = ax[0] * (s * o.size.x) + ax[1] * o.size.y;
-                o.p.y = w.height(o.p.x + off.x, o.p.z + off.z) - off.y;
-            }
-            o.p.y += o.lift;
-            break;
-        }
-        case OBJ_LOG:
-            o.p.y = w.height(o.p.x, o.p.z) + o.size.x;
-            o.p2.y = w.height(o.p2.x, o.p2.z) + o.size.x;
-            break;
-        default: o.p.y = w.height(o.p.x, o.p.z); break;
+        case OBJ_BOX:
+        case OBJ_LOG: resolveObject(*world, o); break;  // (boxes sit on the ground plus their lift, logs lie on it plus theirs)
+        default: o.p.y = world->height(o.p.x, o.p.z); break;
     }
     return o;
 }
@@ -1108,6 +1090,7 @@ bool EditCore::baseToObject(const EditPick& p, LevelObject& o, V3& key) const {
         case 2: {
             const Log& g = w.logs[i];
             o.kind = OBJ_LOG, o.p = g.a, o.p2 = g.b, o.size = V3(g.r, 0, 0);
+            settleObject(w, o);
             const V3 m = (g.a + g.b) * 0.5;
             key = V3(m.x, 3, m.z);
             return true;
@@ -1125,9 +1108,7 @@ bool EditCore::baseToObject(const EditPick& p, LevelObject& o, V3& key) const {
             boxAxes(o.yaw, o.pitch, o.roll, chk);
             for (int a = 0; a < 3; a++)
                 if (len(chk[a] - b.ax[a]) > 1e-3) return false;  // (a tilt this can't say)
-            LevelObject g = o;
-            g.lift = 0;
-            o.lift = b.c.y - grounded(g).p.y;
+            settleObject(w, o);
             key = V3(b.c.x, 4, b.c.z);
             return true;
         }
@@ -1228,11 +1209,9 @@ LevelObject EditCore::normalized(int k) const {
                 break;
             }
     }
-    if (o.kind == OBJ_BOX) {
-        LevelObject g = o;
-        g.lift = 0;
-        o.lift = o.p.y - grounded(g).p.y;
-        if (std::fabs(o.lift) < 1e-6) o.lift = 0;
+    if (o.kind == OBJ_BOX || o.kind == OBJ_LOG) {  // (standing where the ground is now)
+        if (o.rel) resolveObject(*world, o);
+        else settleObject(*world, o);
     }
     return o;
 }
@@ -1245,6 +1224,7 @@ LevelObject EditCore::movedBy(LevelObject o, double dx, double dz) const {
             e->x += dx, e->z += dz;
             e->y = w.height(e->x, e->z) + clear;
         }
+        settleObject(w, o);
         return o;
     }
     o.p.x += dx, o.p.z += dz;
@@ -1303,11 +1283,22 @@ LevelObject EditCore::transformed(LevelObject o, ObjOp op, double a) {
             }
             o.size = V3(clampd(o.size.x, 0.15, 14), clampd(o.size.y, 0.1, 10), clampd(o.size.z, 0.15, 14));
             return o;
-        case OBJ_BOX:
+        case OBJ_BOX: {
+            // Tipping turns it about its middle and leaves it at the height it was set: the offset is worked out afresh for the new tilt
+            // (a block resting on the ground stays resting, as a ramp does).
+            auto tip = [&](double& angle) {
+                const double keep = grounded(o).p.y;
+                angle = clampd(angle + a, -1.3, 1.3);
+                if (std::fabs(o.lift) > 1e-6) {
+                    LevelObject g = o;
+                    g.lift = 0;
+                    o.lift = keep - boxRestY(w, g);
+                }
+            };
             switch (op) {
                 case OP_YAW: o.yaw += a; break;
-                case OP_PITCH: o.pitch = clampd(o.pitch + a, -1.3, 1.3); break;
-                case OP_ROLL: o.roll = clampd(o.roll + a, -1.3, 1.3); break;
+                case OP_PITCH: tip(o.pitch); break;
+                case OP_ROLL: tip(o.roll); break;
                 case OP_LIFT: o.lift += a; break;
                 case OP_SCALE: o.size = o.size * a; break;
                 case OP_STRETCH_X: o.size.x *= a; break;
@@ -1317,6 +1308,7 @@ LevelObject EditCore::transformed(LevelObject o, ObjOp op, double a) {
             }
             o.size = V3(clampd(o.size.x, 0.05, 60), clampd(o.size.y, 0.03, 20), clampd(o.size.z, 0.05, 60));
             return grounded(o);
+        }
         case OBJ_LOG: {
             V3 m = (o.p + o.p2) * 0.5, half = (o.p2 - o.p) * 0.5;
             double r = o.size.x;
@@ -1337,14 +1329,15 @@ LevelObject EditCore::transformed(LevelObject o, ObjOp op, double a) {
                 case OP_STRETCH_Z: r *= a; break;
                 case OP_SEAT: {  // each end lying on the ground it's over
                     const double ra = clampd(r, 0.05, 2.0);
-                    o.p.y = w.height(o.p.x, o.p.z) + ra, o.p2.y = w.height(o.p2.x, o.p2.z) + ra;
-                    return o;
+                    o.size.x = ra, o.lift = o.lift2 = 0;
+                    return grounded(o);
                 }
             }
             const double L = len(half);
             if (L < 0.5) half = half * (0.5 / std::max(L, 1e-6));
             if (L > 40) half = half * (40 / L);
             o.p = m - half, o.p2 = m + half, o.size.x = clampd(r, 0.05, 2.0);
+            settleObject(w, o);  // (each end's clearance over the ground it's over, from where they ended up)
             return o;
         }
         case OBJ_FENCE: {
@@ -1431,7 +1424,7 @@ void EditCore::transformObjects(const std::vector<int>& ks, ObjOp op, double amo
     for (int k : ks)
         if (k >= 0 && k < (int)level.objects.size()) v.push_back(k);
     if (v.empty()) return;
-    // Turning several: they swing round their middle, each also turning in place.
+    // Turning or scaling several: they swing (or spread) round their middle, each also turning (or growing) in place.
     V3 c;
     for (int k : v) c += isSpan(level.objects[k].kind) ? (level.objects[k].p + level.objects[k].p2) * 0.5 : level.objects[k].p;
     c = c * (1.0 / v.size());
@@ -1448,11 +1441,18 @@ void EditCore::transformObjects(const std::vector<int>& ks, ObjOp op, double amo
                 const World& w = *world;
                 const double ca = o.p.y - w.height(o.p.x, o.p.z), cb = o.p2.y - w.height(o.p2.x, o.p2.z);
                 o.p = V3(a.x, w.height(a.x, a.z) + ca, a.z), o.p2 = V3(b.x, w.height(b.x, b.z) + cb, b.z);
+                settleObject(w, o);
             } else {
                 const V3 q = swing(o.p);
                 o = movedBy(o, q.x - o.p.x, q.z - o.p.z);
                 o = transformed(o, op, amount);
             }
+        } else if (op == OP_SCALE && v.size() > 1) {
+            // Scaling several: the group grows as a whole, each object's place scaled about the middle as well as its size.
+            const V3 m = isSpan(o.kind) ? (o.p + o.p2) * 0.5 : o.p;
+            const V3 q = c + (m - c) * amount;
+            o = movedBy(o, q.x - m.x, q.z - m.z);
+            o = transformed(o, op, amount);
         } else {
             o = transformed(o, op, amount);
         }

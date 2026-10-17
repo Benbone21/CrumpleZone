@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <sstream>
 
 #include "../src/editcore.h"
 #include "../src/platform.h"
@@ -780,4 +781,180 @@ SCENARIO(editorLiveSection, "editor/live-section", "Editing a built-in section l
     double gap = 1e9;
     for (const Rock& r : pw.rocks) gap = std::min(gap, len(r.c - w.rocks.back().c));
     ctx.metric("the moved, scaled, raised rock plays where the editor shows it", gap, "m", 0, 0.1);
+}
+
+SCENARIO(editorHeightModel, "editor/height-model", "Every object's height is an offset from the ground: sculpting carries blocks and logs along, tipping keeps a block's height, a scaled group grows as a whole, and it all saves, loads (old files too) and stacks") {
+    World w(MAP_PROVING_GROUND);
+    Level lv;
+    lv.map = MAP_PROVING_GROUND;
+    EditCore ed;
+    ed.begin(w, lv);
+    // A seated block, a floating block, a log and a rock, side by side; then the ground comes up under all of them.
+    LevelObject b;
+    b.kind = OBJ_BOX, b.p = V3(-340, 0, 250), b.size = V3(2, 0.4, 1), b.col[0] = b.col[1] = b.col[2] = 0.6f;
+    const int kb = ed.addObject(ed.grounded(b));
+    LevelObject f = b;
+    f.p = V3(-340, 0, 262), f.lift = 1.5;
+    const int kf = ed.addObject(ed.grounded(f));
+    LevelObject g;
+    g.kind = OBJ_LOG, g.p = V3(-352, 0, 250), g.p2 = V3(-346, 0, 250), g.size = V3(0.3, 0, 0);
+    const int kg = ed.addObject(ed.grounded(g));
+    LevelObject r;
+    r.kind = OBJ_ROCK, r.p = V3(-360, 0, 250), r.size = V3(1.5, 1, 1.2), r.top = 1, r.seed = 5, r.sub = 1;
+    ed.addObject(r);
+    // (how far a block hangs above where it would rest on the ground under its footprint)
+    auto boxOver = [&](int k) { return ed.level.objects[k].p.y - boxRestY(w, ed.level.objects[k]); };
+    ctx.metric("a seated block rests on the ground", boxOver(kb), "m", -0.01, 0.01);
+    ctx.metric("a floating block hangs 1.5 m up", boxOver(kf), "m", 1.49, 1.51);
+    ed.brush(BRUSH_RAISE, -345, 252, 14, 2.5);
+    ctx.check("the ground came up a good way", w.height(-340, 250) > 1);
+    // (the world's boxes are the level's, in order: the map has none here)
+    const Box* wb = nullptr;
+    for (const Box& x : w.boxes)
+        if (!x.hidden && std::fabs(x.c.x + 340) < 0.01 && std::fabs(x.c.z - 250) < 0.01) wb = &x;
+    ctx.check("the world has the block", wb != nullptr);
+    if (wb) ctx.metric("raise the ground under a block: it rides up with it", wb->c.y - boxRestY(w, ed.level.objects[kb]), "m", -0.01, 0.01);
+    if (wb) ctx.check("...and its underside is on the ground, not in it", std::fabs(wb->c.y - 0.4 - ([&] {
+        double m = 1e9;
+        for (int a = -1; a <= 1; a += 2)
+            for (int c = -1; c <= 1; c += 2) m = std::min(m, w.height(-340 + 2 * a, 250 + 1 * c));
+        return m;
+    })()) < 0.01);
+    ctx.metric("the floating block floats just as high over the new ground", boxOver(kf), "m", 1.49, 1.51);
+    const Log lg = w.logs.back();
+    ctx.metric("a log's low end lies on the raised ground", lg.a.y - w.height(lg.a.x, lg.a.z) - 0.3, "m", -0.01, 0.01);
+    ctx.metric("and its other end", lg.b.y - w.height(lg.b.x, lg.b.z) - 0.3, "m", -0.01, 0.01);
+    ed.undo();
+    ctx.metric("undoing the sculpt brings the block back down", boxOver(kb), "m", -0.01, 0.01);
+    ed.redo();
+    ctx.metric("and redo up again", boxOver(kb), "m", -0.01, 0.01);
+    // A log with a slope: each end keeps its own clearance over the ground it's over.
+    ed.transformObjects({kg}, OP_LIFT, 1.0);
+    ed.brush(BRUSH_RAISE, -352, 250, 3, 3.0);  // (more ground under one end only)
+    const Log lg2 = w.logs.back();
+    ctx.metric("a raised log keeps its clearance at the end the ground came up under", lg2.a.y - w.height(lg2.a.x, lg2.a.z) - 1.3, "m", -0.02, 0.02);
+    ctx.metric("and at the other end", lg2.b.y - w.height(lg2.b.x, lg2.b.z) - 1.3, "m", -0.02, 0.02);
+    // Tipping a block keeps the height it was set (about its middle), floating or not.
+    const double y0 = ed.level.objects[kf].p.y;
+    ed.transformObjects({kf}, OP_PITCH, 0.5);
+    ctx.metric("tipping a floating block leaves its middle where it was", ed.level.objects[kf].p.y - y0, "m", -1e-6, 1e-6);
+    ctx.check("and it did tip", std::fabs(ed.level.objects[kf].pitch - 0.5) < 1e-9);
+    ed.transformObjects({kf}, OP_ROLL, 0.3);
+    ctx.metric("rolling it too", ed.level.objects[kf].p.y - y0, "m", -1e-6, 1e-6);
+    ed.transformObjects({kf}, OP_PITCH, -0.5);
+    ed.transformObjects({kf}, OP_ROLL, -0.3);
+    ctx.metric("and back flat: the same height, so the same offset", boxOver(kf), "m", 1.49, 1.51);
+    const double seatedY = ed.level.objects[kb].p.y;
+    ed.transformObjects({kb}, OP_PITCH, 0.3);
+    ctx.check("a seated block stays seated as it tips (the low end's top edge on the ground)", ed.level.objects[kb].lift == 0 && std::fabs(ed.level.objects[kb].p.y - seatedY) < 1.0);
+    ed.transformObjects({kb}, OP_PITCH, -0.3);
+    // A group scaled grows as a whole: spacing scales about the middle too.
+    {
+        World gw(MAP_PROVING_GROUND);
+        EditCore eg;
+        eg.begin(gw, lv);
+        std::vector<int> ks;
+        for (int i = 0; i < 3; i++) {
+            LevelObject o;
+            o.kind = OBJ_ROCK, o.p = V3(-300 + 4 * i, 0, 250), o.size = V3(1, 0.8, 1), o.top = 0.8, o.seed = 3 + i, o.sub = 1;
+            ks.push_back(eg.addObject(o));
+        }
+        LevelObject l;
+        l.kind = OBJ_LOG, l.p = V3(-302, 0, 256), l.p2 = V3(-298, 0, 256), l.size = V3(0.3, 0, 0);
+        ks.push_back(eg.addObject(eg.grounded(l)));
+        const V3 c0(-296, 0, 250 + 6.0 / 4);  // (the middle of the four places: rocks at -300 -296 -292, log at -300)
+        V3 mid;
+        for (int k : ks) mid += eg.level.objects[k].kind == OBJ_LOG ? (eg.level.objects[k].p + eg.level.objects[k].p2) * 0.5 : eg.level.objects[k].p;
+        mid = mid * (1.0 / ks.size());
+        (void)c0;
+        const double d0 = eg.level.objects[ks[2]].p.x - eg.level.objects[ks[0]].p.x, s0 = eg.level.objects[ks[0]].size.x;
+        eg.transformObjects(ks, OP_SCALE, 1.5);
+        ctx.metric("a scaled group: the spacing grows with it", (eg.level.objects[ks[2]].p.x - eg.level.objects[ks[0]].p.x) / d0, "x", 1.499, 1.501);
+        ctx.metric("and each rock's size", eg.level.objects[ks[0]].size.x / s0, "x", 1.499, 1.501);
+        V3 mid2;
+        for (int k : ks) mid2 += eg.level.objects[k].kind == OBJ_LOG ? (eg.level.objects[k].p + eg.level.objects[k].p2) * 0.5 : eg.level.objects[k].p;
+        mid2 = mid2 * (1.0 / ks.size());
+        ctx.metric("about the group's middle", std::hypot(mid2.x - mid.x, mid2.z - mid.z), "m", 0, 0.01);
+        const Log& sl = gw.logs.back();
+        ctx.metric("the log is as much longer", len(sl.b - sl.a), "m", 5.9, 6.1);
+        ctx.metric("one object alone still scales about itself", [&] {
+            const double x0 = eg.level.objects[ks[1]].p.x;
+            eg.transformObjects({ks[1]}, OP_SCALE, 2.0);
+            return eg.level.objects[ks[1]].p.x - x0;
+        }(), "m", -1e-6, 1e-6);
+    }
+    // Saved and played: the same offsets, on the sculpted ground.
+    Level back = roundTrip(ed.level);
+    ctx.check("saved and loaded: heights are offsets", back.objects[kb].rel && back.objects[kf].rel && back.objects[kg].rel);
+    ctx.check("...the same offsets", std::fabs(back.objects[kf].lift - ed.level.objects[kf].lift) < 2e-3 && std::fabs(back.objects[kg].lift - ed.level.objects[kg].lift) < 2e-3 &&
+                                          std::fabs(back.objects[kg].lift2 - ed.level.objects[kg].lift2) < 2e-3);
+    World pw = playWorldOf(back);
+    const Log& pl = pw.logs.back();
+    ctx.metric("played back: the log is where the editor has it", std::max(len(pl.a - w.logs.back().a), len(pl.b - w.logs.back().b)), "m", 0, 0.02);
+    double gap = 1e9;
+    auto floater = [&](const World& ww) {
+        for (const Box& x : ww.boxes)
+            if (!x.hidden && std::fabs(x.c.x + 340) < 0.01 && std::fabs(x.c.z - 262) < 0.01) return x.c.y;
+        return -1e9;
+    };
+    gap = std::fabs(floater(pw) - floater(w));
+    ctx.metric("played back: the floating block is where the editor has it", gap, "m", 0, 0.02);
+    // An older file: absolute box and log heights (no offsets). They load as they stood, become offsets, and then follow the sculpting.
+    {
+        World ow(MAP_PROVING_GROUND);
+        LevelObject probe;
+        probe.kind = OBJ_BOX, probe.p = V3(-340, 0, 250), probe.size = V3(2, 0.4, 1);
+        const double gh = boxRestY(ow, probe) - 0.4, gl = ow.height(-352, 250), gl2 = ow.height(-346, 250);  // (gh: where the block's underside rests)
+        std::ostringstream t;
+        t << "CRUMPLEZONE LEVEL 1\nname OLD\nmap " << MAP_PROVING_GROUND << "\n";
+        t << "box -340 " << gh + 3.0 + 0.4 << " 250 2 0.4 1 0 0 0 0.6 0.6 0.6 0\n";
+        t << "log -352 " << gl + 2.0 + 0.3 << " 250 -346 " << gl2 + 2.0 + 0.3 << " 250 0.3\n";
+        Level old;
+        std::string why;
+        const bool ok = parseLevelText(t.str(), old, &why);
+        ctx.check("an old-format level reads", ok && old.objects.size() == 2 && !old.objects[0].rel && !old.objects[1].rel, why);
+        World pw0 = playWorldOf(old);
+        ctx.metric("played as it always was: the block 3 m up", pw0.boxes.back().c.y - gh - 0.4, "m", 2.99, 3.01);
+        World ew(MAP_PROVING_GROUND);
+        EditCore eo;
+        eo.begin(ew, old);
+        ctx.check("opened in the editor: offsets, converted", eo.level.objects[0].rel && eo.level.objects[1].rel && std::fabs(eo.level.objects[0].lift - 3.0) < 1e-3 && std::fabs(eo.level.objects[1].lift - 2.0) < 1e-3 &&
+                                                                  std::fabs(eo.level.objects[1].lift2 - 2.0) < 1e-3);
+        eo.brush(BRUSH_RAISE, -345, 250, 12, 2.0);
+        const double up = ew.height(-340, 250) - gh;
+        ctx.check("the ground came up", up > 0.5);
+        const Box* ob = nullptr;
+        for (const Box& x : ew.boxes)
+            if (!x.hidden && std::fabs(x.c.x + 340) < 0.01) ob = &x;
+        if (ob) ctx.metric("an old floating block rides the sculpting", ob->c.y - (boxRestY(ew, probe) + 3.0), "m", -0.01, 0.01);
+        ctx.metric("an old log too", ew.logs.back().a.y - (ew.height(-352, 250) + 0.3 + 2.0), "m", -0.01, 0.01);
+        Level again = roundTrip(eo.level);
+        ctx.check("and it saves in the new form", again.objects[0].rel && again.objects[1].rel);
+    }
+    // Stacking: a rock resting on another keeps its rise through rebuilds; it doesn't follow if the lower rock moves, but is never seated into it.
+    {
+        World sw(MAP_PROVING_GROUND);
+        EditCore es;
+        es.begin(sw, lv);
+        LevelObject a;
+        a.kind = OBJ_ROCK, a.p = V3(-300, 0, 250), a.size = V3(1.6, 1.0, 1.4), a.top = 1.4, a.seed = 9, a.sub = 1;
+        const int ka = es.addObject(a);
+        const double g0 = sw.height(-300, 250);
+        LevelObject u = a;
+        u.size = V3(0.8, 0.5, 0.7), u.top = 0.7 + 1.4, u.seed = 10;
+        const int ku = es.addObject(u);
+        auto low = [&](const Rock& rk) {
+            double m = 1e9;
+            for (const V3& v : rk.v) m = std::min(m, v.y);
+            return m;
+        };
+        const double lowU = low(sw.rocks.back());
+        ctx.check("the upper rock rests above the ground, on the other", lowU > g0 + 0.5);
+        es.moveObjects({ka}, 10, 0);
+        ctx.metric("the lower rock moved away: the upper one stays where it was (it doesn't follow)", low(sw.rocks.back()) - lowU, "m", -1e-6, 1e-6);
+        es.moveObjects({ka}, -10, 0);
+        es.brush(BRUSH_RAISE, -300, 250, 6, 1.0);
+        ctx.check("the ground rises under both: the upper stays as far above its ground, not seated into the lower", std::fabs(es.level.objects[ku].top - u.top) < 1e-9 && low(sw.rocks.back()) > lowU + 0.9);
+        (void)ku;
+    }
 }

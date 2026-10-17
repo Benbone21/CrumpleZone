@@ -136,7 +136,57 @@ static bool modelSolid(const std::string& id) {
     return true;
 }
 
-void placeObject(const LevelObject& o, World& w) {
+double boxRestY(const World& w, const LevelObject& o) {
+    V3 ax[3] = {V3(1, 0, 0), V3(0, 1, 0), V3(0, 0, 1)};
+    for (V3& a : ax) {
+        a = rotateAxis(a, V3(1, 0, 0), o.roll);
+        a = rotateAxis(a, V3(0, 0, 1), o.pitch);
+        a = rotateAxis(a, V3(0, 1, 0), o.yaw);
+    }
+    if (std::fabs(o.pitch) < 1e-3 && std::fabs(o.roll) < 1e-3) {
+        // Flat: down to the lowest ground under it, so no corner hangs in the air.
+        double g = w.height(o.p.x, o.p.z);
+        for (int a = -1; a <= 1; a += 2)
+            for (int b = -1; b <= 1; b += 2) {
+                const V3 c = o.p + ax[0] * (a * o.size.x) + ax[2] * (b * o.size.z);
+                g = std::min(g, w.height(c.x, c.z));
+            }
+        return g + o.size.y;
+    }
+    // Tipped (a ramp): the low end's top edge meets the ground.
+    const double s = o.pitch >= 0 ? -1 : 1;
+    const V3 off = ax[0] * (s * o.size.x) + ax[1] * o.size.y;
+    return w.height(o.p.x + off.x, o.p.z + off.z) - off.y;
+}
+
+void resolveObject(const World& w, LevelObject& o) {
+    if (o.kind == OBJ_BOX) {
+        o.p.y = boxRestY(w, o) + o.lift;
+        o.rel = true;
+    } else if (o.kind == OBJ_LOG) {
+        o.p.y = w.height(o.p.x, o.p.z) + o.size.x + o.lift;
+        o.p2.y = w.height(o.p2.x, o.p2.z) + o.size.x + o.lift2;
+        o.rel = true;
+    }
+}
+
+void settleObject(const World& w, LevelObject& o) {
+    if (o.kind == OBJ_BOX) {
+        o.lift = o.p.y - boxRestY(w, o);
+        if (std::fabs(o.lift) < 1e-6) o.lift = 0;
+        o.rel = true;
+    } else if (o.kind == OBJ_LOG) {
+        o.lift = o.p.y - w.height(o.p.x, o.p.z) - o.size.x;
+        o.lift2 = o.p2.y - w.height(o.p2.x, o.p2.z) - o.size.x;
+        if (std::fabs(o.lift) < 1e-6) o.lift = 0;
+        if (std::fabs(o.lift2) < 1e-6) o.lift2 = 0;
+        o.rel = true;
+    }
+}
+
+void placeObject(const LevelObject& obj, World& w) {
+    LevelObject o = obj;
+    if (o.rel) resolveObject(w, o);  // (its height follows the ground it's on)
     switch (o.kind) {
         case OBJ_ROCK: {
             RockPose pose{o.yaw, o.pitch, o.roll};  // (sub 1: placed, not left to chance)
@@ -364,12 +414,14 @@ std::string saveLevelText(const Level& lv) {
                 o << "box " << num(b.p.x) << ' ' << num(b.p.y) << ' ' << num(b.p.z) << ' ' << num(b.size.x, 3) << ' ' << num(b.size.y, 3) << ' '
                   << num(b.size.z, 3) << ' ' << num(b.yaw / kDeg, 2) << ' ' << num(b.pitch / kDeg, 2) << ' ' << num(b.roll / kDeg, 2) << ' '
                   << num(b.col[0], 2) << ' ' << num(b.col[1], 2) << ' ' << num(b.col[2], 2) << ' ' << b.sub;
-                if (b.lift != 0) o << ' ' << num(b.lift, 3);  // (optional, last: an older build stops after the slab flag)
+                if (b.lift != 0 || b.rel) o << ' ' << num(b.lift, 3);  // (optional, last: an older build stops after the slab flag; having it says the height is an offset from the ground)
                 o << '\n';
                 break;
             case OBJ_LOG:
                 o << "log " << num(b.p.x) << ' ' << num(b.p.y) << ' ' << num(b.p.z) << ' ' << num(b.p2.x) << ' ' << num(b.p2.y) << ' ' << num(b.p2.z) << ' '
-                  << num(b.size.x, 3) << '\n';
+                  << num(b.size.x, 3);
+                if (b.rel) o << ' ' << num(b.lift, 3) << ' ' << num(b.lift2, 3);  // (each end's clearance; an older build stops after the radius)
+                o << '\n';
                 break;
             case OBJ_TREE:
                 o << "tree " << num(b.p.x) << ' ' << num(b.p.z) << ' ' << num(b.size.y, 2) << ' ' << b.sub << ' ' << num(b.col[0], 2);
@@ -566,7 +618,7 @@ bool parseLevelText(const std::string& text, Level& lv, std::string* error) {
             b.yaw *= kDeg, b.pitch *= kDeg, b.roll *= kDeg;
             if (!ls.fail()) {
                 double lift = 0;
-                if (ls >> lift) b.lift = lift;
+                if (ls >> lift) b.lift = lift, b.rel = true;  // (the lift says the height is an offset from the ground; without it p.y is absolute)
                 ls.clear();
             }
             out.objects.push_back(b);
@@ -574,6 +626,11 @@ bool parseLevelText(const std::string& text, Level& lv, std::string* error) {
             LevelObject b;
             b.kind = OBJ_LOG;
             ls >> b.p.x >> b.p.y >> b.p.z >> b.p2.x >> b.p2.y >> b.p2.z >> b.size.x;
+            if (!ls.fail()) {
+                double l1 = 0, l2 = 0;
+                if (ls >> l1 >> l2) b.lift = l1, b.lift2 = l2, b.rel = true;
+                ls.clear();
+            }
             out.objects.push_back(b);
         } else if (tag == "tree") {
             LevelObject b;
