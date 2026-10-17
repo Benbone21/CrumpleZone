@@ -262,12 +262,13 @@ void addGateMarkers(const Level& lv, World& w) {
 //   #flow I J0 FX,FZ ...                 (current in the water: like water, a run of cells; a comment to older builds)
 //   start X Z YAWDEG
 //   gate X Z YAWDEG WIDTH  (in order; one per line)
-//   rock X Z RX RY RZ TOP SEED TINT
-//   box X Y Z HX HY HZ YAWDEG PITCHDEG ROLLDEG R G B SLAB
+//   rock X Z RX RY RZ TOP SEED TINT [YAW PITCH ROLL [SCAN]]   (the pose: radians; SCAN: which scanned rock, else the nearest fit)
+//   box X Y Z HX HY HZ YAWDEG PITCHDEG ROLLDEG R G B SLAB [LIFT]   (LIFT: m above where the ground puts it)
 //   log AX AY AZ BX BY BZ R
-//   tree X Z HEIGHT KIND TINT
+//   tree X Z HEIGHT KIND TINT [LIFT]
 //   station X Z YAWDEG NAME...
-//   remove X Z
+//   #model X Z YAWDEG SX SY SZ LIFT ID  (a code-made structure: a comment, so an older build skips it)
+//   remove X Z [KIND]                    (KIND: 0 rock 1 tree 2 log 3 box 4 fixture; without it, the nearest of any)
 //   heights I J0 H H H ...   (a run of cells along j from (I, J0), meters)
 //   surfaces I J0 SSPP SSPP ...  (hex: surface, paint)
 //   water I J0 L L L ...     (-1 for dry)

@@ -55,7 +55,7 @@ class PauseMenu {
 public:
     enum Action { NONE, RESUME, DRIVE, GARAGE, CONTROLS, RESET, QUIT, CHANGED, LOAD_MAP, HOST, JOIN, LEAVE, PILOT_GO, PILOT_STOP,
                   FREE_DRIVE, PLAY_LEVEL, EDIT_LEVEL, EDITOR, LEVEL_RESTART, LEVEL_QUIT, MAIN_MENU, JOB_START, JOB_STOP, MEET_UP,
-                  CANCEL_JOIN, MODEL_LAB, NEW_SECTION };
+                  CANCEL_JOIN, MODEL_LAB, NEW_SECTION, EDITOR_BACK };
     struct Result {
         Action action = NONE;
         int vehicle = 0;  // for DRIVE; the map for LOAD_MAP
@@ -92,6 +92,7 @@ public:
     int pageNow() const { return page; }
     bool listeningForKey() const { return open && listening >= 0; }  // the next key press is a binding, not a command
     bool netActive = false;
+    bool editorSuspended = false;  // a level from the editor is being tried: BACK TO THE EDITOR is offered
     std::string padName;  // the connected controller (settings page), set by the game
     bool shift = false;  // a shift key is down (typing ':' in an address)
     void showMultiplayer(int currentVehicle, int currentMap);  // opens straight onto that page

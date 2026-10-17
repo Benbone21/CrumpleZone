@@ -397,3 +397,30 @@ SCENARIO(editorPlaytest, "editor/playtest", "A playtest starts where asked (here
     ctx.check("it reads back the same level", loadLevelFile(ed.autosavePath("build/test-autosave/rec"), rec) && rec.objects.size() == ed.level.objects.size() && rec.hasStart == ed.level.hasStart);
     ctx.check("the level's own file isn't touched", ed.level.file == "build/test-autosave/mine.czl" && ed.unsaved());
 }
+
+SCENARIO(editorGroup, "editor/group", "Several objects move together, turn about their middle and delete as one step") {
+    World w(MAP_PROVING_GROUND);
+    Level lv;
+    lv.map = MAP_PROVING_GROUND;
+    EditCore ed;
+    ed.begin(w, lv);
+    LevelObject a, b;
+    a.kind = b.kind = OBJ_TREE, a.size = b.size = V3(0, 9, 0);
+    a.p = V3(-300, 0, 250), b.p = V3(-290, 0, 250);
+    const int ka = ed.addObject(a), kb = ed.addObject(b);
+    ed.moveObjects({ka, kb}, 3, -2);
+    ctx.check("both moved together", std::fabs(ed.level.objects[ka].p.x + 297) < 1e-9 && std::fabs(ed.level.objects[kb].p.x + 287) < 1e-9 && std::fabs(ed.level.objects[ka].p.z - 248) < 1e-9);
+    ed.transformObjects({ka, kb}, OP_YAW, M_PI / 2);  // a quarter turn about the middle, (-292, 248)
+    const V3 pa = ed.level.objects[ka].p, pb = ed.level.objects[kb].p;
+    ctx.metric("the pair is still 10 m apart", len(V3(pa.x - pb.x, 0, pa.z - pb.z)), "m", 9.99, 10.01);
+    ctx.metric("and still centred where it was", std::hypot((pa.x + pb.x) / 2 + 292, (pa.z + pb.z) / 2 - 248), "m", 0, 0.01);
+    ctx.check("and now lined up across, not along", std::fabs(pa.x - pb.x) < 1e-6 && std::fabs(pa.z - pb.z) > 9.9);
+    // A moved group is one undo step per drag (merged), a delete of two is one step.
+    EditPick p1, p2;
+    p1.kind = p2.kind = EditPick::OBJECT;
+    p1.index = ka, p2.index = kb;
+    ed.removePicks({p1, p2});
+    ctx.check("both deleted", ed.level.objects.empty());
+    ed.undo();
+    ctx.check("one undo: both back", ed.level.objects.size() == 2);
+}

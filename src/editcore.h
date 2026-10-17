@@ -126,6 +126,9 @@ public:
     // Returns their object indices, in order (-1 for one that can't be: a cabin, a fence...). Picks that already are objects pass through.
     std::vector<int> adopt(const std::vector<EditPick>& picks);
     bool canAdopt(const EditPick& p) const;
+    int resolveIndex(const EditPick& p) const { return resolveBase(p); }  // a map pick's index in the world now
+    // The map's own object as the level object it would become (for showing its size and pose).
+    bool asObject(const EditPick& p, LevelObject& o) const { V3 k; return baseToObject(p, o, k); }
     // Deletes a set of objects and the map's own as one undo step.
     void removePicks(const std::vector<EditPick>& picks);
     // Moves objects by (dx, dz) on the ground, keeping how high each stands above it. One undo step (quick repeats merge on `key`).

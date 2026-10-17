@@ -6,6 +6,7 @@
 #include <deque>
 
 #include "modelkit.h"
+#include "platform.h"
 #include "props.h"
 #include "sectionfile.h"
 
@@ -206,9 +207,14 @@ void boxEdges(const Box& b, Shape& s, bool faces) {
     if (!faces) return;
     // (Two triangles a face; the centre decides which way is out.)
     static const int quads[6][4] = {{0, 2, 6, 4}, {1, 3, 7, 5}, {0, 1, 5, 4}, {2, 3, 7, 6}, {0, 1, 3, 2}, {4, 5, 7, 6}};
+    auto face = [&](const V3& a, const V3& b2, const V3& c2) {
+        const V3 n = cross(b2 - a, c2 - a);
+        if (dot(n, (a + b2 + c2) * (1.0 / 3) - b.c) < 0) s.tris.push_back({a, c2, b2});
+        else s.tris.push_back({a, b2, c2});
+    };
     for (const auto& q : quads) {
-        s.tris.push_back({c[q[0]], c[q[1]], c[q[2]]});
-        s.tris.push_back({c[q[0]], c[q[2]], c[q[3]]});
+        face(c[q[0]], c[q[1]], c[q[2]]);
+        face(c[q[0]], c[q[2]], c[q[3]]);
     }
 }
 
@@ -310,6 +316,8 @@ std::string EditCore::autosavePath(const std::string& dir) const { return dir + 
 
 bool EditCore::autosave(const std::string& dir, std::string* err) {
     if (dir.empty()) return false;
+    const size_t slash = dir.find_last_of("/\\");
+    if (slash != std::string::npos) makeDir(configDir()), makeDir(dir.substr(0, slash));  // (levels/, then levels/autosave/ in saveLevelFile)
     Level out = level;
     out.builtin = false;
     if (!saveLevelFile(out, autosavePath(dir), err)) return false;
@@ -1240,6 +1248,12 @@ Shape EditCore::previewShape(const LevelObject& o) {
     Shape s;
     if (!world) return s;
     World& w = *world;
+    if (o.kind == OBJ_STATION) {  // (not placed even for a moment: a station keeps its name for good)
+        Prop f;
+        f.kind = PROP_GARAGE, f.a = V3(o.p.x, w.height(o.p.x, o.p.z), o.p.z), f.yaw = o.yaw;
+        boxEdges(shedBox(f), s, false);
+        return s;
+    }
     const size_t n[8] = {w.rocks.size(), w.trees.size(), w.poles.size(), w.logs.size(), w.boxes.size(), w.fixtures.size(), w.stations.size(), w.models.size()};
     placeObject(o, w);
     for (size_t i = n[0]; i < w.rocks.size(); i++) s.add(shapeOf(0, (int)i));

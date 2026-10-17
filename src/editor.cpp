@@ -3,9 +3,11 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 
 #include "hudkit.h"
+#include "props.h"
 #include "levelrun.h"
 #include "sectionfile.h"
 #include "vehicles.h"
@@ -19,28 +21,29 @@ const char* kToolHints[Editor::TOOL_COUNT] = {"RAISE, LOWER, SMOOTH, FLATTEN THE
                                               "FLOOD A HOLLOW, OR DRY IT", "ROCKS, TREES, LOGS, RAMPS, SHOPS",
                                               "START AND GATES", "NAME, MODE, RULES, MEDALS", "TYPE, DIFFICULTY, KIT, STAMP A GENERATOR"};
 const char* kOpNames[4] = {"RAISE", "LOWER", "SMOOTH", "FLATTEN"};
-const char* kObjNames[OBJ_KIND_COUNT + 1] = {"ROCK", "RAMP / BLOCK", "LOG", "TREE", "REPAIR SHOP", "SLAB LEDGE"};
-const int K_LEDGE = OBJ_KIND_COUNT;  // (the objects tool's extra brush: a row of rock slabs along a dragged line)
+const char* kObjNames[OBJ_KIND_COUNT] = {"ROCK", "RAMP / BLOCK", "LOG", "TREE", "REPAIR SHOP", "STRUCTURE"};
+const int SC_PAGEUP_ = 75, SC_PAGEDOWN_ = 78, SC_F6_ = 63, SC_COMMA_ = 54, SC_PERIOD_ = 55;
 const double kRisers[5] = {0.3, 0.45, 0.6, 0.9, 1.2};  // m: the step a ledge makes (a notch step stays under 0.4)
 const double kSnaps[4] = {0, 0.5, 1, 2};               // m
 const char* kTestShort[ST_COUNT] = {"SKILL", "PROBLEMS", "COMMITMENT", "ATTRITION", "CO-OP"};
-const char* kTreeNames[3] = {"PINE", "BROADLEAF", "DEAD SNAG"};
 
 // Button ids.
 enum {
     B_TOOL = 100,            // + tool
     B_OP = 200,              // + brush op
     B_MAT = 300,             // + material
-    B_OBJ = 400,             // + object kind
-    B_SAVE = 500, B_OPEN, B_PLAY, B_UNDO, B_REDO, B_EXIT, B_NEWMAP, B_NEWSEC,
+    B_SAVE = 500, B_OPEN, B_PLAY, B_UNDO, B_REDO, B_EXIT, B_NEWMAP, B_NEWSEC, B_PLAY_START,
     B_RAD_DN = 600, B_RAD_UP, B_STR_DN, B_STR_UP, B_SOFT, B_DEPTH_DN, B_DEPTH_UP, B_DRY,
-    B_SIZE_DN, B_SIZE_UP, B_TREE, B_YAW_DN, B_YAW_UP, B_PITCH_DN, B_PITCH_UP, B_SLAB, B_W_DN, B_W_UP, B_LEN_DN, B_LEN_UP,
-    B_OFFSET_DN, B_OFFSET_UP, B_SNAP_DN, B_SNAP_UP, B_RISE_DN, B_RISE_UP, B_LDEPTH_DN, B_LDEPTH_UP,
-    B_OBJPROP = 900,    // + property index for object editor
-    B_GATEW_DN, B_GATEW_UP, B_DELETE, B_EARLIER, B_LATER,
+    B_TREE, B_SNAP_DN, B_SNAP_UP, B_RISE_DN, B_RISE_UP, B_LDEPTH_DN, B_LDEPTH_UP,
     B_SET = 700,             // + settings row (click selects it)
     B_FILE = 800,            // + file index
-    B_SEC = 1000,            // + section page action (SecAct)
+    B_GATEW_DN = 900, B_GATEW_UP, B_DELETE, B_EARLIER, B_LATER, B_POINTER,
+    B_SEC = 1000,            // + section page action (SecAct); to 1099
+    B_XF = 1100,             // + op * 2 (+ 1 to raise it): the transform rows, to 1115
+    B_NUDGE = 1120,          // + 0 west, 1 east, 2 north, 3 south (camera-relative: -x, +x, ahead, back)
+    B_PALTAB = 1200,         // + tab, to 1219
+    B_PAL_PREV = 1230, B_PAL_NEXT,
+    B_PAL = 2000,            // + palette index
 };
 
 // The section page's actions.
@@ -127,6 +130,12 @@ void Editor::open(World& w, Renderer& r, const Level& lv) {
     wantPlay = wantClose = false;
     fileOpen = typing = confirmClose = false;
     sel = EditPick();
+    selection.clear();
+    marquee = dragging = false;
+    pointer = false;
+    buildPalette();
+    choose(palPick);
+    lastAuto = clock;
     // Start above the level's start (or the map's spawn), looking ahead and down.
     const V3 s = lv.hasStart ? lv.start : w.spawn;
     yaw = lv.hasStart ? lv.startYaw : w.spawnYaw;
@@ -137,6 +146,45 @@ void Editor::open(World& w, Renderer& r, const Level& lv) {
     core.dirtyCells.clear();
     core.dirtyWater = core.dirtyObjects = false;
     say("WORLD EDITOR: " + lv.name, 4);
+}
+
+void Editor::resume(World& w, Renderer& r) {
+    rend = &r;
+    core.resume(w);
+    active = true;
+    wantPlay = wantClose = false;
+    fileOpen = typing = confirmClose = marquee = dragging = false;
+    sel = EditPick();
+    selection.clear();
+    r.setWorld(w);
+    core.dirtyCells.clear();
+    core.dirtyWater = core.dirtyObjects = false;
+    say("BACK IN THE EDITOR: YOUR EDITS ARE HERE" + std::string(core.unsaved() ? " (NOT SAVED YET: CTRL+S)" : ""), 4);
+}
+
+void Editor::autosaveNow() {
+    if (autosaveDir.empty() || !core.started() || !core.unsaved() || core.autosavedChanges == core.changes) return;
+    core.autosave(autosaveDir);
+    lastAuto = clock;
+}
+
+// Asks for a playtest. From here: where the middle of the view meets the ground, facing the way the camera faces. From the start:
+// the level's start (on its spawn pad); a level without one says so, rather than dropping you somewhere on the map.
+void Editor::requestPlay(bool here) {
+    if (!here) {
+        if (!core.level.hasStart) {
+            say("NO START YET: SET ONE WITH THE COURSE TOOL (5), OR TEST FROM HERE (F5)", 5);
+            return;
+        }
+        if (core.level.mode != LEVEL_FREE && core.level.gates.empty()) {
+            say("A RACE OR SPRINT NEEDS GATES (COURSE TOOL), OR SET THE MODE TO FREE DRIVE. TEST FROM HERE (F5) WORKS ANYWAY", 5);
+            return;
+        }
+    }
+    spot = core.playSpot(here, haveViewHit ? viewHit : eye, yaw);
+    playHere = here;
+    autosaveNow();
+    wantPlay = true;
 }
 
 void Editor::ray(float sx, float sy, V3& o, V3& d) const {
@@ -206,42 +254,237 @@ void Editor::wheel(int dy) {
     eye += norm(v.target - v.eye) * (dy * 4.0);
 }
 
-LevelObject Editor::makeObject(const V3& at) const {
+// ---- The object palette --------------------------------------------------------------------
+
+namespace {
+
+// "rock_moss1_a" -> "MOSS 1 A"
+std::string prettyName(std::string n) {
+    for (const char* pre : {"rock_", "nama_"})
+        if (n.rfind(pre, 0) == 0 && n.size() > 5) {
+            if (std::string(pre) == "nama_") n = "n_" + n.substr(5);
+            else n = n.substr(5);
+        }
+    std::string out;
+    for (size_t i = 0; i < n.size(); i++) {
+        const char c = n[i];
+        if (c == '_') out += ' ';
+        else {
+            if (i > 0 && std::isdigit((unsigned char)c) && std::isalpha((unsigned char)n[i - 1])) out += ' ';
+            out += (char)std::toupper((unsigned char)c);
+        }
+    }
+    return out;
+}
+
+LevelObject rockProto(double a, double b, double c, double buried = 0.78) {
     LevelObject o;
-    o.kind = objKind;
+    o.kind = OBJ_ROCK, o.sub = 1, o.size = V3(a, b, c), o.top = 2 * b * buried, o.col[0] = 1.0f;
+    return o;
+}
+
+LevelObject boxProto(double len, double thick, double wid, bool slab, double pitch = 0) {
+    LevelObject o;
+    o.kind = OBJ_BOX, o.size = V3(len / 2, thick / 2, wid / 2), o.pitch = pitch, o.sub = slab ? 1 : 0;
+    o.col[0] = slab ? 0.55f : 0.62f, o.col[1] = slab ? 0.5f : 0.6f, o.col[2] = slab ? 0.45f : 0.56f;
+    return o;
+}
+
+LevelObject logProto(double len, double r) {
+    LevelObject o;
+    o.kind = OBJ_LOG, o.size = V3(r, len / 2, 0);
+    return o;
+}
+
+LevelObject treeProto(int kind, double h) {
+    LevelObject o;
+    o.kind = OBJ_TREE, o.sub = kind, o.size = V3(0, h, 0), o.col[0] = 1.0f;
+    return o;
+}
+
+LevelObject modelProto(const std::string& id) {
+    LevelObject o;
+    o.kind = OBJ_MODEL, o.name = id, o.size = V3(1, 1, 1);
+    return o;
+}
+
+}  // namespace
+
+void Editor::buildPalette() {
+    if (!palette.empty()) return;
+    tabs = {"POINTER", "ROCKS", "SCANS", "BLOCKS", "LOGS", "TREES", "BUILD", "LEDGE"};
+    auto add = [&](const std::string& name, int tab, const LevelObject& o, const std::string& icon) {
+        PalEntry e;
+        e.name = name, e.tab = tabs[tab], e.proto = o, e.icon = icon;
+        palette.push_back(e);
+    };
+    // Rocks that fit a size (the scan nearest those proportions), and every scanned rock as itself.
+    add("SMALL ROCK", 1, rockProto(0.6, 0.45, 0.55), "auto:0");
+    add("ROCK", 1, rockProto(1.2, 0.85, 1.05), "auto:1");
+    add("BOULDER", 1, rockProto(2.2, 1.5, 1.9), "auto:2");
+    add("BIG BOULDER", 1, rockProto(3.6, 2.4, 3.1), "auto:3");
+    add("FLAT ROCK", 1, rockProto(1.9, 0.4, 1.5), "auto:4");
+    add("TALL ROCK", 1, rockProto(0.9, 2.0, 0.9), "auto:5");
+    const props::HullLibrary& lib = props::sharedHullLibrary();
+    for (int i = 0; i < (int)lib.hulls.size(); i++) {
+        LevelObject o;
+        o.kind = OBJ_ROCK, o.sub = 1, o.scan = i, o.size = lib.hulls[i].half(), o.top = o.size.y * 1.7, o.col[0] = 1.0f;
+        add(prettyName(lib.hulls[i].name), 2, o, "scan:" + lib.hulls[i].name);
+    }
+    add("CONCRETE BLOCK", 3, boxProto(4, 0.8, 2.5, false), "box:block");
+    add("ROCK SLAB", 3, boxProto(5, 0.6, 3.5, true), "box:slab");
+    add("RAMP", 3, boxProto(8, 0.5, 4, false, 0.22), "box:ramp");
+    add("STEEP RAMP", 3, boxProto(6, 0.5, 4, false, 0.45), "box:ramp");
+    add("WALL", 3, boxProto(8, 2.2, 0.6, false), "box:wall");
+    add("ROCK WALL", 3, boxProto(8, 2.5, 1.2, true), "box:rockwall");
+    add("SHORT LOG", 4, logProto(3.5, 0.25), "log");
+    add("LOG", 4, logProto(6, 0.3), "log");
+    add("LONG LOG", 4, logProto(10, 0.35), "log");
+    add("THICK LOG", 4, logProto(6, 0.55), "log");
+    add("YOUNG PINE", 5, treeProto(0, 6), "model:tree_pine");
+    add("PINE", 5, treeProto(0, 12), "model:tree_pine");
+    add("TALL PINE", 5, treeProto(0, 19), "model:tree_pine");
+    add("BROADLEAF", 5, treeProto(1, 10), "model:tree_broadleaf");
+    add("BIG BROADLEAF", 5, treeProto(1, 15), "model:tree_broadleaf");
+    add("DEAD SNAG", 5, treeProto(2, 10), "model:tree_snag");
+    {
+        LevelObject o;
+        o.kind = OBJ_STATION, o.name = "REPAIR SHOP";
+        add("REPAIR SHOP", 6, o, "model:repair_shed");
+    }
+    static const char* structures[][2] = {{"cabin", "CABIN"},          {"outhouse", "OUTHOUSE"},       {"tent", "TENT"},          {"picnic_table", "PICNIC TABLE"},
+                                          {"woodpile", "WOODPILE"},    {"campfire", "CAMPFIRE"},       {"stump", "TREE STUMP"},   {"cairn", "CAIRN"},
+                                          {"fire_tower", "FIRE TOWER"}, {"mine_portal", "MINE PORTAL"}, {"ore_cart", "ORE CART"}, {"wreck_pickup", "WRECKED PICKUP"},
+                                          {"oil_drum", "OIL DRUM"},    {"traffic_cone", "TRAFFIC CONE"}, {"jersey_barrier", "BARRIER"}, {"guardrail", "GUARDRAIL"},
+                                          {"lamp_post", "LAMP POST"},  {"trail_sign", "TRAIL SIGN"},  {"map_board", "MAP BOARD"}, {"marker_post", "MARKER POST"},
+                                          {"sign_gantry", "SIGN GANTRY"}};
+    for (const auto& st : structures)
+        if (mk::findModel(st[0])) add(st[1], 6, modelProto(st[0]), std::string("model:") + st[0]);
+    {
+        PalEntry e;
+        e.name = "SLAB LEDGE", e.tab = "LEDGE", e.icon = "box:slab", e.ledge = true;
+        palette.push_back(e);
+    }
+    proto = palette[1].proto;
+    palPick = 1;
+}
+
+int Editor::findPalette(const std::string& name) {
+    buildPalette();
+    for (int i = 0; i < (int)palette.size(); i++)
+        if (palette[i].name.find(name) != std::string::npos) return i;
+    return -1;
+}
+
+int Editor::paletteSize() const { return (int)palette.size(); }
+const char* Editor::paletteName(int i) const { return i >= 0 && i < (int)palette.size() ? palette[i].name.c_str() : ""; }
+
+void Editor::choose(int index) {
+    buildPalette();
+    if (index < 0 || index >= (int)palette.size()) return;
+    palPick = index;
+    const PalEntry& e = palette[index];
+    ledgeBrush = e.ledge;
+    pointer = false;
+    selection.clear();
+    sel = EditPick();
+    if (!e.ledge) proto = e.proto;
+    for (int t = 0; t < (int)tabs.size(); t++)
+        if (tabs[t] == e.tab) palTab = t, palPage = 0;
+    // (The page that holds it.)
+    int n = 0;
+    for (int i = 0; i < index; i++) n += palette[i].tab == e.tab;
+    palPage = n / 8;
+}
+
+void Editor::setPalette(int index) { choose(index); }
+
+// The picture on a card: the model itself where there is one, else a small mesh built for it.
+const mk::Mesh& Editor::iconMesh(const PalEntry& e) {
+    auto it = iconMeshes.find(e.icon);
+    if (it != iconMeshes.end()) return it->second;
+    mk::Mesh m;
+    auto fromProp = [&](const std::string& name) {
+        props::Model pm;
+        if (props::assetDir().empty() || !props::loadModel(props::assetDir() + "/" + name + ".prop", pm) || pm.lods.empty()) return false;
+        const props::Lod& lod = pm.lods.back();
+        for (const props::Sub& sub : lod.subs)
+            for (size_t i = 0; i + 2 < sub.idx.size(); i += 3)
+                for (int k = 0; k < 3; k++) {
+                    const props::Vert& v = sub.v[sub.idx[i + k]];
+                    mk::MVert mv;
+                    for (int c = 0; c < 3; c++) mv.p[c] = v.p[c], mv.n[c] = v.n[c];
+                    mv.c[0] = 0.27f, mv.c[1] = 0.245f, mv.c[2] = 0.22f;
+                    mv.mat = mk::ROCK;
+                    m.v.push_back(mv);
+                }
+        return true;
+    };
+    const std::string& k = e.icon;
+    if (k.rfind("scan:", 0) == 0) {
+        fromProp(k.substr(5));
+    } else if (k.rfind("auto:", 0) == 0) {  // (the scan nearest those proportions)
+        const props::HullLibrary& lib = props::sharedHullLibrary();
+        double best = 1e9;
+        int bi = 0;
+        for (int i = 0; i < (int)lib.hulls.size(); i++) {
+            const V3 h = lib.hulls[i].half();
+            const double sc = std::fabs(std::log((h.x / h.y) / (e.proto.size.x / e.proto.size.y))) + std::fabs(std::log((h.z / h.y) / (e.proto.size.z / e.proto.size.y)));
+            if (sc < best) best = sc, bi = i;
+        }
+        if (!lib.hulls.empty()) fromProp(lib.hulls[bi].name);
+    } else if (k.rfind("model:", 0) == 0) {
+        m = mk::modelMesh(k.substr(6));
+    } else {
+        mk::B b(m);
+        if (k == "log") {
+            b.color(0.42, 0.3, 0.18).mat(mk::WOOD);
+            b.cyl(V3(-1.6, 0.3, 0), V3(1.6, 0.3, 0), 0.3, 14);
+        } else if (k == "box:block") {
+            b.color(0.62, 0.6, 0.56).mat(mk::CONCRETE);
+            b.box(V3(0, 0.4, 0), V3(2.4, 0.8, 1.5), 0.04);
+        } else if (k == "box:slab") {
+            b.color(0.55, 0.5, 0.45).mat(mk::ROCK);
+            b.box(V3(0, 0.3, 0), V3(2.6, 0.6, 1.8), 0.1);
+        } else if (k == "box:ramp") {
+            b.color(0.62, 0.6, 0.56).mat(mk::CONCRETE);
+            b.beam(V3(-1.6, 0.05, 0), V3(1.6, 0.9, 0), 1.6, 0.18);
+            b.box(V3(1.55, 0.4, 0), V3(0.2, 0.8, 1.6));
+        } else if (k == "box:wall") {
+            b.color(0.62, 0.6, 0.56).mat(mk::CONCRETE);
+            b.box(V3(0, 0.9, 0), V3(3.2, 1.8, 0.4), 0.03);
+        } else {
+            b.color(0.55, 0.5, 0.45).mat(mk::ROCK);
+            b.box(V3(0, 0.9, 0), V3(3.2, 1.8, 0.8), 0.1);
+        }
+    }
+    m.finish();
+    return iconMeshes.emplace(e.icon, std::move(m)).first->second;
+}
+
+LevelObject Editor::makeObject(const V3& at) const {
+    LevelObject o = proto;
     o.p = V3(at.x, 0, at.z);
-    o.yaw = objYaw;
-    switch (objKind) {
+    switch (o.kind) {
         case OBJ_ROCK:
-            o.size = V3(rockSize * 1.15, rockSize * 0.8, rockSize);
-            o.top = rockSize * 0.7;
             o.seed = nextSeed;
-            o.col[0] = 1.0f;
-            break;
-        case OBJ_BOX:
-            o.size = V3(boxLen / 2, boxHeight / 2, boxWidth / 2);
-            o.pitch = boxPitch;
-            o.sub = slab ? 1 : 0;
-            o.col[0] = slab ? 0.55f : 0.62f, o.col[1] = slab ? 0.5f : 0.6f, o.col[2] = slab ? 0.45f : 0.56f;
+            o.sub = 1;
             break;
         case OBJ_LOG: {
-            const V3 f(std::cos(objYaw), 0, -std::sin(objYaw));
-            o.p = V3(at.x, 0, at.z) - f * (logLen / 2);
-            o.p2 = V3(at.x, 0, at.z) + f * (logLen / 2);
-            o.size = V3(logR, 0, 0);
-            break;
+            // The ends: along the log's turn and tilt either way from `at`, each lying on the ground it's over (plus the lift).
+            const double r = proto.size.x, hl = proto.size.y;
+            const V3 f(std::cos(proto.yaw) * std::cos(proto.pitch), std::sin(proto.pitch), -std::sin(proto.yaw) * std::cos(proto.pitch));
+            const V3 a = V3(at.x, 0, at.z) - V3(f.x, 0, f.z) * hl, b = V3(at.x, 0, at.z) + V3(f.x, 0, f.z) * hl;
+            const World& w = *core.world;
+            const double mid = (w.height(a.x, a.z) + w.height(b.x, b.z)) / 2 + r + proto.lift;
+            o.p = V3(a.x, mid - f.y * hl, a.z), o.p2 = V3(b.x, mid + f.y * hl, b.z);
+            o.size = V3(r, 0, 0);
+            o.yaw = o.pitch = 0, o.lift = 0;
+            return o;
         }
-        case OBJ_TREE:
-            o.size = V3(0, treeHeight, 0);
-            o.sub = treeKind;
-            o.col[0] = 1.0f;
-            break;
-        case OBJ_STATION: o.name = "REPAIR SHOP"; break;
+        default: break;
     }
-    o = core.grounded(o);
-    // Apply vertical offset (positive = up into the sky, negative = down into the ground).
-    o.p.y += objOffset;
-    return o;
+    return core.grounded(o);
 }
 
 void Editor::click() {
@@ -267,28 +510,36 @@ void Editor::click() {
             break;
         }
         case OBJECTS:
-            if (objKind == K_LEDGE) {  // (drag a line: the row of slabs goes along it)
+            if (ledgeBrush) {  // (drag a line: the row of slabs goes along it)
                 if (haveHit) ledgeOn = true, ledgeA = snapped(hit);
                 break;
             }
-            if (hover.kind == EditPick::OBJECT || hover.kind == EditPick::BASE) {
-                sel = hover;
-                if (sel.kind == EditPick::BASE) {  // a map's repair shop: picked up to move like your own
-                    const int k = core.adoptBase(sel);
-                    if (k >= 0) sel.kind = EditPick::OBJECT, sel.index = k, sel.baseKind = -1;
+            if (pointer) {
+                if (hover.kind == EditPick::OBJECT || hover.kind == EditPick::BASE) {
+                    const bool already = isSelected(hover);
+                    if (shift) {
+                        if (already) selection.erase(std::remove(selection.begin(), selection.end(), hover), selection.end());
+                        else selection.push_back(hover);
+                    } else if (!already) {
+                        selection.assign(1, hover);
+                    }
+                    sel = selection.empty() ? EditPick() : selection.back();
+                    dragging = !selection.empty() && isSelected(hover);
+                    dragFrom = hit, dragApplied = V3();
+                    if (!selection.empty())
+                        say(selection.size() > 1 ? std::to_string(selection.size()) + " SELECTED: DRAG TO MOVE, DELETE" : std::string(hover.kind == EditPick::BASE ? "THE MAP'S " : "") + hover.name + ": DRAG TO MOVE, KEYS TURN AND SCALE");
+                } else if (haveHit) {  // empty space: a box to select what's inside
+                    if (!shift) selection.clear(), sel = EditPick();
+                    marquee = true, marqueeX = mx, marqueeY = my;
                 }
-                if (sel.kind == EditPick::OBJECT) {
-                    dragging = true;
-                    const LevelObject& o = core.level.objects[sel.index];
-                    dragOffset = V3(o.p.x - hit.x, 0, o.p.z - hit.z);
-                }
-                say(sel.kind == EditPick::BASE ? "THE MAP'S OWN " + sel.name + ": DELETE TAKES IT OUT" : sel.name + ": DRAG TO MOVE, Q E TURN, DELETE");
-            } else if (haveHit) {
+                break;
+            }
+            if (haveHit) {
                 sel = EditPick();
                 LevelObject o = makeObject(snapped(hit));
-                const int k = core.addObject(o);
+                core.addObject(o);
                 nextSeed = nextSeed * 1103515245u + 12345u;
-                sel.kind = EditPick::OBJECT, sel.index = k, sel.name = kObjNames[objKind];
+                say(std::string("PLACED ") + (palPick >= 0 && palPick < (int)palette.size() ? palette[palPick].name : std::string("OBJECT")) + "  (CTRL+Z UNDOES)", 1.6);
             }
             break;
         case COURSE:
@@ -322,6 +573,10 @@ void Editor::click() {
 }
 
 void Editor::release() {
+    if (marquee) {
+        marquee = false;
+        if (std::fabs(mx - marqueeX) > 4 && std::fabs(my - marqueeY) > 4) selectInBox(std::min(mx, marqueeX), std::min(my, marqueeY), std::max(mx, marqueeX), std::max(my, marqueeY), shift);
+    }
     if (ledgeOn) {
         ledgeOn = false;
         if (haveHit) placeLedge(ledgeA, snapped(hit));
@@ -401,7 +656,35 @@ void Editor::save() {
     }
 }
 
-void Editor::openFile(const Level& lv) {
+// The open list: the game's and the player's levels, and first any recovery copy newer than the level it came from.
+void Editor::refreshRecoveries() {
+    files = listLevels();
+    fileRecovery.assign(files.size(), false);
+    if (autosaveDir.empty()) return;
+    namespace fs = std::filesystem;
+    std::vector<Level> rec;
+    for (const std::string& path : listLevelFiles(autosaveDir, ".czl")) {
+        Level l;
+        if (!loadLevelFile(path, l)) continue;
+        std::error_code ec;
+        const std::string saved = userLevelFolder() + "/" + levelFileName(l.name) + ".czl";
+        const auto at = fs::last_write_time(path, ec);
+        const bool exists = fs::exists(saved, ec);
+        if (exists && !ec && fs::last_write_time(saved, ec) >= at) continue;  // (what was saved is the later work)
+        l.file = saved;
+        l.builtin = false;
+        rec.push_back(l);
+    }
+    files.insert(files.begin(), rec.begin(), rec.end());
+    fileRecovery.insert(fileRecovery.begin(), rec.size(), true);
+}
+
+void Editor::openFile(int index) {
+    if (index < 0 || index >= (int)files.size()) return;
+    openLevel(files[index], index < (int)fileRecovery.size() && fileRecovery[index]);
+}
+
+void Editor::openLevel(const Level& lv, bool recovered) {
     // A fresh copy of its map, then the level on it.
     World& w = *core.world;
     w = levelWorld(lv);
@@ -409,18 +692,24 @@ void Editor::openFile(const Level& lv) {
     if (l.builtin) l.builtin = false, l.file.clear(), l.name = l.name + " (MINE)";
     open(w, *rend, l);
     fileOpen = false;
+    if (recovered) {  // (it's unsaved work: saving writes the level's own file, which is still the old one)
+        core.changes = 1;
+        say("RECOVERED FROM THE AUTOSAVE: CTRL+S TO KEEP IT", 6);
+    }
 }
 
 void Editor::key(int sc) {
     const uint8_t* ks = SDL_GetKeyboardState(nullptr);
-    shift = ks[SC_LSHIFT] || ks[SC_RSHIFT];
-    ctrl = ks[224] || ks[228];
+    if (!scriptMods) {
+        shift = ks[SC_LSHIFT] || ks[SC_RSHIFT];
+        ctrl = ks[224] || ks[228];
+    }
     // The open dialog.
     if (fileOpen) {
         if (sc == SC_ESCAPE) fileOpen = false;
         else if (sc == SC_UP || sc == SC_W) fileSel = std::max(0, fileSel - 1);
         else if (sc == SC_DOWN || sc == SC_S) fileSel = std::min((int)files.size() - 1, fileSel + 1);
-        else if ((sc == SC_RETURN || sc == SC_KP_ENTER) && fileSel >= 0 && fileSel < (int)files.size()) openFile(files[fileSel]);
+        else if ((sc == SC_RETURN || sc == SC_KP_ENTER) && fileSel >= 0 && fileSel < (int)files.size()) openFile(fileSel);
         return;
     }
     // Typing the name.
@@ -439,7 +728,7 @@ void Editor::key(int sc) {
     }
     if (ctrl && sc == SC_Z) {
         say(core.undo() ? "UNDONE" : "NOTHING TO UNDO", 1.2);
-        sel = EditPick();
+        sel = EditPick(), selection.clear();
         return;
     }
     if (ctrl && sc == SC_Y) {
@@ -452,13 +741,13 @@ void Editor::key(int sc) {
     }
     if (sc >= SC_1 && sc < SC_1 + TOOL_COUNT) {
         tool = (Tool)(sc - SC_1);
-        sel = EditPick();
+        sel = EditPick(), selection.clear();
         return;
     }
     switch (sc) {
         case SC_ESCAPE:
-            if (sel.kind != EditPick::NONE) {
-                sel = EditPick();
+            if (sel.kind != EditPick::NONE || !selection.empty()) {
+                sel = EditPick(), selection.clear();
                 return;
             }
             if (core.unsaved() && !confirmClose) {
@@ -471,13 +760,21 @@ void Editor::key(int sc) {
         case SC_TAB:
             if (tool == SCULPT) op = (BrushOp)((op + 1) % 4);
             else if (tool == PAINT) material = (material + 1) % (int)paintMaterials().size();
-            else if (tool == OBJECTS) objKind = (objKind + 1) % (OBJ_KIND_COUNT + 1);
+            else if (tool == OBJECTS) {  // pointer <-> placing
+                buildPalette();
+                pointer = !pointer;
+                ledgeBrush = !pointer && palette[palPick].ledge;
+                if (!pointer) choose(palPick);
+                else palTab = 0;
+                say(pointer ? "POINTER: SELECT, MOVE AND CHANGE WHAT'S THERE (TAB: BACK TO PLACING)" : "PLACING (TAB: POINTER)", 2);
+            }
             return;
         case SC_LEFTBRACKET: radius = std::max(1.0, radius / 1.2), gateWidth = std::max(4.0, gateWidth - 1); return;
         case SC_RIGHTBRACKET: radius = std::min(60.0, radius * 1.2), gateWidth = std::min(40.0, gateWidth + 1); return;
         case SC_DELETE:
         case SC_BACKSPACE: doButton(B_DELETE); return;
         case SC_F5: doButton(B_PLAY); return;
+        case SC_F6_: doButton(B_PLAY_START); return;
         case SC_F3: doButton(B_OPEN); return;
         default: break;
     }
@@ -489,49 +786,206 @@ void Editor::key(int sc) {
         else if (sc == SC_RETURN && setRow == 0) typing = true;
         return;
     }
-    // Q/E: brush/object size (Shift+Q/E: turn the selection).
+    if (tool == OBJECTS) {
+        objectKey(sc);
+        return;
+    }
+    // Q/E: brush size (Shift+Q/E: turn the selected gate or the start).
     if (sc == SC_Q || sc == SC_E) {
         if (shift) {
-            // Shift+Q/E: turn the selection or the next thing placed.
             const double turn = M_PI / 12;
             const double d = sc == SC_Q ? turn : -turn;
-            if (tool == OBJECTS && sel.kind == EditPick::OBJECT) {
-                LevelObject o = core.level.objects[sel.index];
-                if (o.kind == OBJ_LOG) {
-                    const V3 m = (o.p + o.p2) * 0.5, half = o.p2 - m;
-                    const V3 r(half.x * std::cos(d) + half.z * std::sin(d), 0, -half.x * std::sin(d) + half.z * std::cos(d));
-                    o.p = m - r, o.p2 = m + r;
-                }
-                o.yaw += d;
-                core.setObject(sel.index, core.grounded(o), "turn");
-            } else if (tool == COURSE && sel.kind == EditPick::GATE) {
+            if (tool == COURSE && sel.kind == EditPick::GATE) {
                 Gate g = core.level.gates[sel.index];
                 g.yaw += d;
                 core.setGate(sel.index, g, "turn");
             } else if (tool == COURSE && sel.kind == EditPick::START) {
                 core.setStart(core.level.start.x, core.level.start.z, core.level.startYaw + d);
-            } else {
-                objYaw += d;
             }
-        } else {
-            // Q/E: brush size (sculpt/paint/water) or object size.
-            if (tool == SCULPT || tool == PAINT || tool == WATER) {
-                radius = clampd(radius * (sc == SC_Q ? 0.85 : 1.18), 1.0, 60.0);
-            } else if (tool == OBJECTS) {
-                if (objKind == OBJ_ROCK) {
-                    rockSize = clampd(rockSize * (sc == SC_Q ? 0.85 : 1.15), 0.3, 4.0);
-                } else if (objKind == OBJ_TREE) {
-                    treeHeight = clampd(treeHeight * (sc == SC_Q ? 0.85 : 1.15), 3.0, 30.0);
-                } else if (objKind == OBJ_LOG) {
-                    logR = clampd(logR * (sc == SC_Q ? 0.85 : 1.15), 0.1, 0.8);
-                } else if (objKind == OBJ_BOX) {
-                    boxLen = clampd(boxLen * (sc == SC_Q ? 0.85 : 1.15), 0.5, 40.0);
-                    boxWidth = clampd(boxWidth * (sc == SC_Q ? 0.85 : 1.15), 0.5, 30.0);
-                    boxHeight = clampd(boxHeight * (sc == SC_Q ? 0.85 : 1.15), 0.1, 4.0);
-                }
-            }
+        } else if (tool == SCULPT || tool == PAINT || tool == WATER) {
+            radius = clampd(radius * (sc == SC_Q ? 0.85 : 1.18), 1.0, 60.0);
         }
     }
+}
+
+// The object keys: with something selected they change it, else the ghost that the next click places.
+//   Shift+Q E or , .   turn          R F   tip        C V   roll       Z X or PgDn PgUp   lower, raise
+//   - =   scale it all               T G   longer, shorter    Y H   taller, thinner    U J   wider, narrower
+//   Ctrl+arrows   nudge the selection (Shift: a metre)   Shift: coarser steps   Delete   delete
+void Editor::objectKey(int sc) {
+    const double k = shift ? 3.0 : 1.0;
+    const double yawStep = (shift ? 15.0 : 5.0) * M_PI / 180, tipStep = 5.0 * M_PI / 180 * k, grow = shift ? 1.4 : 1.1;
+    switch (sc) {
+        case SC_Q:
+            if (shift) applyOp(OP_YAW, M_PI / 12, "yaw");
+            return;
+        case SC_E:
+            if (shift) applyOp(OP_YAW, -M_PI / 12, "yaw");
+            return;
+        case SC_COMMA_: applyOp(OP_YAW, yawStep, "yaw"); return;
+        case SC_PERIOD_: applyOp(OP_YAW, -yawStep, "yaw"); return;
+        case SC_R: applyOp(OP_PITCH, tipStep, "pitch"); return;
+        case SC_F: applyOp(OP_PITCH, -tipStep, "pitch"); return;
+        case SC_C: applyOp(OP_ROLL, tipStep, "roll"); return;
+        case SC_V: applyOp(OP_ROLL, -tipStep, "roll"); return;
+        case SC_X:
+        case SC_PAGEUP_: applyOp(OP_LIFT, shift ? 1.0 : 0.25, "lift"); return;
+        case SC_Z:
+        case SC_PAGEDOWN_: applyOp(OP_LIFT, shift ? -1.0 : -0.25, "lift"); return;
+        case SC_EQUALS: applyOp(OP_SCALE, grow, "scale"); return;
+        case SC_MINUS: applyOp(OP_SCALE, 1 / grow, "scale"); return;
+        case SC_T: applyOp(OP_STRETCH_X, grow, "stretchx"); return;
+        case SC_G: applyOp(OP_STRETCH_X, 1 / grow, "stretchx"); return;
+        case SC_Y: applyOp(OP_STRETCH_Y, grow, "stretchy"); return;
+        case SC_H: applyOp(OP_STRETCH_Y, 1 / grow, "stretchy"); return;
+        case SC_U: applyOp(OP_STRETCH_Z, grow, "stretchz"); return;
+        case SC_J: applyOp(OP_STRETCH_Z, 1 / grow, "stretchz"); return;
+        case SC_LEFT:
+        case SC_RIGHT:
+        case SC_UP:
+        case SC_DOWN:
+            if (ctrl) {
+                const double step = shift ? 1.0 : 0.25;
+                nudge(sc == SC_RIGHT ? step : sc == SC_LEFT ? -step : 0, sc == SC_UP ? step : sc == SC_DOWN ? -step : 0);
+            }
+            return;
+        default: return;
+    }
+}
+
+// What the object keys and buttons change: the selection (adopting the map's own among it), else the ghost.
+void Editor::applyOp(ObjOp op, double amount, const std::string& key) {
+    if (tool != OBJECTS) return;
+    buildPalette();
+    static const char* names[] = {"TURN", "TIP", "ROLL", "RAISE", "SCALE", "STRETCH", "STRETCH", "STRETCH"};
+    if (!selection.empty()) {
+        core.beginEdit(names[op], key);
+        const std::vector<int> ks = selectedObjects();
+        core.transformObjects(ks, op, amount, key);
+        core.endEdit();
+        return;
+    }
+    if (pointer || ledgeBrush) {
+        say("SELECT SOMETHING FIRST (CLICK IT, OR DRAG A BOX OVER SEVERAL)", 2);
+        return;
+    }
+    if (proto.kind == OBJ_LOG) {  // (the ghost log: its half-length and radius, turn, tilt and lift)
+        switch (op) {
+            case OP_YAW: proto.yaw += amount; break;
+            case OP_PITCH: proto.pitch = clampd(proto.pitch + amount, -1.2, 1.2); break;
+            case OP_LIFT: proto.lift += amount; break;
+            case OP_SCALE: proto.size.x *= amount, proto.size.y *= amount; break;
+            case OP_STRETCH_X: proto.size.y *= amount; break;
+            case OP_STRETCH_Y:
+            case OP_STRETCH_Z: proto.size.x *= amount; break;
+            default: break;
+        }
+        proto.size.x = clampd(proto.size.x, 0.05, 2.0), proto.size.y = clampd(proto.size.y, 0.25, 20);
+    } else {
+        proto = core.transformed(proto, op, amount);
+    }
+}
+
+void Editor::nudge(double right, double ahead) {
+    if (selection.empty()) return;
+    const V3 f(std::cos(yaw), 0, -std::sin(yaw)), rt(-f.z, 0, f.x);
+    const V3 d = rt * right + f * ahead;
+    core.beginEdit("NUDGE", "nudge");
+    const std::vector<int> ks = selectedObjects();
+    core.moveObjects(ks, d.x, d.z, "nudge");
+    core.endEdit();
+}
+
+void Editor::deleteSelection() {
+    if (selection.empty()) {
+        say("NOTHING SELECTED: POINTER (TAB), THEN CLICK IT", 2);
+        return;
+    }
+    const size_t n = selection.size();
+    core.removePicks(selection);
+    selection.clear();
+    sel = EditPick();
+    say(n > 1 ? "DELETED " + std::to_string(n) + " OBJECTS" : "DELETED", 1.5);
+}
+
+void Editor::selectObjects(const std::vector<int>& ks) {
+    selection.clear();
+    for (int k : ks)
+        if (k >= 0 && k < (int)core.level.objects.size()) {
+            EditPick p;
+            p.kind = EditPick::OBJECT, p.index = k;
+            p.name = kObjNames[std::min(std::max(core.level.objects[k].kind, 0), OBJ_KIND_COUNT - 1)];
+            selection.push_back(p);
+        }
+    sel = selection.empty() ? EditPick() : selection.back();
+}
+
+bool Editor::isSelected(const EditPick& p) const {
+    for (const EditPick& q : selection)
+        if (q == p) return true;
+    return false;
+}
+
+std::vector<int> Editor::selectedObjects() {
+    bool base = false;
+    for (const EditPick& p : selection) base |= p.kind == EditPick::BASE;
+    if (base) {
+        const std::vector<int> ks = core.adopt(selection);
+        std::vector<EditPick> next;
+        int lost = 0;
+        for (size_t i = 0; i < selection.size(); i++) {
+            if (ks[i] < 0) {
+                lost++;
+                continue;
+            }
+            EditPick o;
+            o.kind = EditPick::OBJECT, o.index = ks[i];
+            o.name = kObjNames[std::min(std::max(core.level.objects[ks[i]].kind, 0), OBJ_KIND_COUNT - 1)];
+            next.push_back(o);
+        }
+        selection = next;
+        if (lost) say(std::to_string(lost) + " OF THEM CAN'T BE MOVED (CABINS, FENCES...): ONLY DELETED", 3);
+    }
+    sel = selection.empty() ? EditPick() : selection.back();
+    std::vector<int> out;
+    for (const EditPick& p : selection)
+        if (p.kind == EditPick::OBJECT) out.push_back(p.index);
+    return out;
+}
+
+// Selects what's inside a box on the screen: the level's objects and the map's own (a thing counts if its middle is inside).
+void Editor::selectInBox(float x0, float y0, float x1, float y1, bool add) {
+    const View v = view(W, H);
+    const World& w = *core.world;
+    std::vector<EditPick> found;
+    auto inside = [&](const V3& p) {
+        float sx, sy;
+        return screenPoint(v, W, H, p, sx, sy) && sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1;
+    };
+    auto take = [&](int baseKind, int index, const V3& at, const V3& look, const std::string& name) {
+        if (found.size() > 800 || !inside(look)) return;
+        EditPick p;
+        const int ow = core.ownerOf(baseKind, index);
+        p.kind = ow >= 0 ? EditPick::OBJECT : EditPick::BASE;
+        p.index = ow >= 0 ? ow : index, p.baseKind = ow >= 0 ? -1 : baseKind, p.at = at, p.name = name;
+        if (ow >= 0 && std::find(found.begin(), found.end(), p) != found.end()) return;
+        if (ow < 0 && !core.canAdopt(p) && baseKind != 4) return;
+        found.push_back(p);
+    };
+    for (int i = 0; i < (int)w.rocks.size(); i++) take(0, i, w.rocks[i].c, w.rocks[i].c, "ROCK");
+    for (int i = 0; i < (int)w.trees.size(); i++) take(1, i, w.trees[i].base, w.trees[i].base + V3(0, w.trees[i].height * 0.4, 0), "TREE");
+    for (int i = 0; i < (int)w.logs.size(); i++) take(2, i, (w.logs[i].a + w.logs[i].b) * 0.5, (w.logs[i].a + w.logs[i].b) * 0.5, "LOG");
+    for (int i = 0; i < (int)w.boxes.size(); i++)
+        if (!w.boxes[i].hidden) take(3, i, w.boxes[i].c, w.boxes[i].c, w.boxes[i].rock ? "ROCK SLAB" : "BLOCK");
+    for (int i = 0; i < (int)w.fixtures.size(); i++)
+        if (w.fixtures[i].kind == PROP_GARAGE) take(4, i, w.fixtures[i].a, w.fixtures[i].a + V3(0, 2, 0), "REPAIR SHOP");
+    for (int i = 0; i < (int)w.models.size(); i++)
+        if (core.ownerOf(5, i) >= 0) take(5, i, w.models[i].p, w.models[i].p + V3(0, 1, 0), "STRUCTURE");
+    if (!add) selection.clear();
+    for (const EditPick& p : found)
+        if (!isSelected(p)) selection.push_back(p);
+    sel = selection.empty() ? EditPick() : selection.back();
+    say(selection.empty() ? "NOTHING IN THAT BOX" : std::to_string(selection.size()) + " SELECTED: DRAG TO MOVE, KEYS CHANGE THEM, DELETE", 2.5);
 }
 
 void Editor::settingChange(int row, int dir) {
@@ -592,13 +1046,13 @@ void Editor::sectionAction(int code) {
 void Editor::doButton(int id) {
     if (id != B_NEWSEC) confirmNew = false;
     confirmClose = false;
-    if (id >= B_SEC) {
+    if (id >= B_SEC && id < B_SEC + 100) {
         sectionAction(id - B_SEC);
         return;
     }
     if (id >= B_TOOL && id < B_TOOL + TOOL_COUNT) {
         tool = (Tool)(id - B_TOOL);
-        sel = EditPick();
+        sel = EditPick(), selection.clear();
         return;
     }
     if (id >= B_OP && id < B_OP + 4) {
@@ -609,9 +1063,40 @@ void Editor::doButton(int id) {
         material = id - B_MAT;
         return;
     }
-    if (id >= B_OBJ && id < B_OBJ + OBJ_KIND_COUNT + 1) {
-        objKind = id - B_OBJ;
-        sel = EditPick();
+    if (id >= B_PAL && id < B_PAL + 1000) {
+        choose(id - B_PAL);
+        return;
+    }
+    if (id >= B_PALTAB && id < B_PALTAB + 20) {
+        buildPalette();
+        const int t = id - B_PALTAB;
+        if (t == 0) {
+            pointer = true, ledgeBrush = false, palTab = 0;
+        } else {
+            for (int i = 0; i < (int)palette.size(); i++)
+                if (palette[i].tab == tabs[t]) {
+                    choose(i);
+                    break;
+                }
+        }
+        return;
+    }
+    if (id == B_PAL_PREV || id == B_PAL_NEXT) {
+        palPage = std::max(0, palPage + (id == B_PAL_NEXT ? 1 : -1));
+        return;
+    }
+    if (id >= B_XF && id < B_XF + 16) {
+        static const double steps[8] = {M_PI / 12, M_PI / 36, M_PI / 36, 0.25, 1.1, 1.1, 1.1, 1.1};
+        const int op = (id - B_XF) / 2;
+        const bool up = (id - B_XF) % 2 == 1;
+        const double st = steps[op];
+        const bool factor = op >= OP_SCALE;
+        applyOp((ObjOp)op, factor ? (up ? st : 1 / st) : (up ? st : -st), "btn" + std::to_string(op));
+        return;
+    }
+    if (id >= B_NUDGE && id < B_NUDGE + 4) {
+        const int k = id - B_NUDGE;
+        nudge(k == 0 ? -0.5 : k == 1 ? 0.5 : 0, k == 2 ? 0.5 : k == 3 ? -0.5 : 0);
         return;
     }
     if (id >= B_SET && id < B_SET + 11) {
@@ -621,39 +1106,14 @@ void Editor::doButton(int id) {
         return;
     }
     if (id >= B_FILE && id < B_FILE + (int)files.size()) {
-        openFile(files[id - B_FILE]);
-        return;
-    }
-    // Object editor properties.
-    if (id >= B_OBJPROP && sel.kind == EditPick::OBJECT && sel.index < (int)core.level.objects.size()) {
-        LevelObject ob = core.level.objects[sel.index];
-        const int prop = id - B_OBJPROP;
-        switch (prop) {
-            case 1: ob.p.x -= 0.5; break;
-            case 2: ob.p.x += 0.5; break;
-            case 3: ob.p.y -= 0.5; break;
-            case 4: ob.p.y += 0.5; break;
-            case 5: ob.p.z -= 0.5; break;
-            case 6: ob.p.z += 0.5; break;
-            case 7: ob.size.z = clampd(ob.size.z - 0.25, 0.25, 15.0); break;
-            case 8: ob.size.z = clampd(ob.size.z + 0.25, 0.25, 15.0); break;
-            case 9: ob.size.y = clampd(ob.size.y - 0.25, 0.05, 5.0); break;
-            case 10: ob.size.y = clampd(ob.size.y + 0.25, 0.05, 5.0); break;
-            case 11: ob.size.x = clampd(ob.size.x - 0.25, 0.25, 20.0); break;
-            case 12: ob.size.x = clampd(ob.size.x + 0.25, 0.25, 20.0); break;
-            case 13: ob.yaw -= M_PI / 36; break;
-            case 14: ob.yaw += M_PI / 36; break;
-            case 15: ob.pitch = clampd(ob.pitch - M_PI / 36, -0.6, 0.6); break;
-            case 16: ob.pitch = clampd(ob.pitch + M_PI / 36, -0.6, 0.6); break;
-        }
-        core.setObject(sel.index, ob, "edit");
+        openFile(id - B_FILE);
         return;
     }
     auto bump = [](double& v, double f, double lo, double hi) { v = clampd(v * f, lo, hi); };
     switch (id) {
         case B_SAVE: save(); break;
         case B_OPEN:
-            files = listLevels();
+            refreshRecoveries();
             fileSel = 0;
             fileOpen = true;
             break;
@@ -677,14 +1137,9 @@ void Editor::doButton(int id) {
             sel = EditPick();
             newSection(*core.world, *rend);
             break;
-        case B_PLAY:
-            if (core.level.mode != LEVEL_FREE && (!core.level.hasStart || core.level.gates.empty())) {
-                say("A RACE OR SPRINT NEEDS A START AND GATES (COURSE TOOL), OR SET THE MODE TO FREE DRIVE", 4);
-                break;
-            }
-            wantPlay = true;
-            break;
-        case B_UNDO: say(core.undo() ? "UNDONE " : "NOTHING TO UNDO", 1.2), sel = EditPick(); break;
+        case B_PLAY: requestPlay(true); break;
+        case B_PLAY_START: requestPlay(false); break;
+        case B_UNDO: say(core.undo() ? "UNDONE " : "NOTHING TO UNDO", 1.2), sel = EditPick(), selection.clear(); break;
         case B_REDO: say(core.redo() ? "REDONE" : "NOTHING TO REDO", 1.2); break;
         case B_EXIT:
             if (core.unsaved() && !confirmClose) {
@@ -704,40 +1159,7 @@ void Editor::doButton(int id) {
         case B_DRY:
             if (haveHit) core.dry(hit.x, hit.z, radius);
             break;
-        case B_SIZE_DN:
-            if (objKind == OBJ_ROCK) bump(rockSize, 1 / 1.15, 0.3, 4);
-            else if (objKind == OBJ_TREE) bump(treeHeight, 1 / 1.15, 3, 30);
-            else if (objKind == OBJ_LOG) bump(logR, 1 / 1.15, 0.1, 0.8);
-            else if (objKind == OBJ_BOX) bump(boxHeight, 1 / 1.25, 0.1, 4);
-            break;
-        case B_SIZE_UP:
-            if (objKind == OBJ_ROCK) bump(rockSize, 1.15, 0.3, 4);
-            else if (objKind == OBJ_TREE) bump(treeHeight, 1.15, 3, 30);
-            else if (objKind == OBJ_LOG) bump(logR, 1.15, 0.1, 0.8);
-            else if (objKind == OBJ_BOX) bump(boxHeight, 1.25, 0.1, 4);
-            break;
-        case B_TREE: treeKind = (treeKind + 1) % 3; break;
-        case B_YAW_DN: objYaw -= M_PI / 12; break;
-        case B_YAW_UP: objYaw += M_PI / 12; break;
-        case B_PITCH_DN: boxPitch = clampd(boxPitch - M_PI / 36, -0.6, 0.6); break;
-        case B_PITCH_UP: boxPitch = clampd(boxPitch + M_PI / 36, -0.6, 0.6); break;
-        case B_SLAB: slab = !slab; break;
-        case B_W_DN: bump(boxWidth, 1 / 1.2, 0.5, 30); break;
-        case B_W_UP: bump(boxWidth, 1.2, 0.5, 30); break;
-        case B_LEN_DN:
-            if (objKind == OBJ_LOG) bump(logLen, 1 / 1.2, 1, 20);
-            else bump(boxLen, 1 / 1.2, 0.5, 40);
-            break;
-        case B_LEN_UP:
-            if (objKind == OBJ_LOG) bump(logLen, 1.2, 1, 20);
-            else bump(boxLen, 1.2, 0.5, 40);
-            break;
-        case B_OFFSET_DN:
-            objOffset = clampd(objOffset - 0.5, -5.0, 15.0);
-            break;
-        case B_OFFSET_UP:
-            objOffset = clampd(objOffset + 0.5, -5.0, 15.0);
-            break;
+        case B_TREE: break;
         case B_SNAP_DN: snapIdx = (snapIdx + 3) % 4; break;
         case B_SNAP_UP: snapIdx = (snapIdx + 1) % 4; break;
         case B_RISE_DN: ledgeRise = std::max(0, ledgeRise - 1); break;
@@ -755,8 +1177,7 @@ void Editor::doButton(int id) {
             break;
         }
         case B_DELETE:
-            if (sel.kind == EditPick::OBJECT) core.removeObject(sel.index), say("DELETED");
-            else if (sel.kind == EditPick::BASE) say(core.removeBase(sel) ? "TOOK THE MAP'S " + sel.name + " OUT" : "THAT ONE CAN'T BE TAKEN OUT");
+            if (tool == OBJECTS) deleteSelection();
             else if (sel.kind == EditPick::GATE) core.removeGate(sel.index), say("GATE DELETED");
             sel = EditPick();
             break;
@@ -781,8 +1202,10 @@ void Editor::update(double dt, const uint8_t* keys, Renderer& r, int w, int h) {
     clock += dt;
     core.clock = clock;
     toastTime = std::max(0.0, toastTime - dt);
-    shift = keys[SC_LSHIFT] || keys[SC_RSHIFT];
-    ctrl = keys[224] || keys[228];
+    if (!scriptMods) {
+        shift = keys[SC_LSHIFT] || keys[SC_RSHIFT];
+        ctrl = keys[224] || keys[228];
+    }
     // Fly (WASD, Q/E turn, Space up, Shift fast, higher = faster).
     if (!typing && !fileOpen && !ctrl && tool != SETTINGS) {
         const double ground = core.world->height(eye.x, eye.z);
@@ -793,8 +1216,9 @@ void Editor::update(double dt, const uint8_t* keys, Renderer& r, int w, int h) {
         if (keys[SC_S] || keys[SC_DOWN]) move -= f;
         if (keys[SC_A] || keys[SC_LEFT]) move -= l;
         if (keys[SC_D] || keys[SC_RIGHT]) move += l;
-        if (keys[SC_E] || keys[SC_SPACE]) move.y += 1;
-        if (keys[SC_Q]) move.y -= 1;
+        const bool objTurn = tool == OBJECTS && shift;  // (Shift+Q E turn the object: they don't fly the camera too)
+        if (keys[SC_SPACE] || (keys[SC_E] && !objTurn)) move.y += 1;
+        if (keys[SC_Q] && !objTurn) move.y -= 1;
         if (len(move) > 0) eye += norm(move) * (speed * dt);
         eye.y = std::max(eye.y, core.world->height(eye.x, eye.z) + 1.5);
         eye.x = clampd(eye.x, -World::kHalfSize + 5, World::kHalfSize - 5);
@@ -806,31 +1230,59 @@ void Editor::update(double dt, const uint8_t* keys, Renderer& r, int w, int h) {
     haveHit = core.rayGround(o, d, 2000, hit);
     const double hitT = haveHit ? len(hit - o) : 1e9;
     hover = EditPick();
-    if (tool == OBJECTS || tool == COURSE) {
+    if ((tool == OBJECTS && pointer && !marquee && !overUi) || tool == COURSE) {  // (placing: a click always places, so nothing is "under" the mouse)
         const EditPick p = core.pick(o, d, hitT, tool == OBJECTS);
         const bool wanted = tool == OBJECTS ? (p.kind == EditPick::OBJECT || p.kind == EditPick::BASE) : (p.kind == EditPick::GATE || p.kind == EditPick::START);
         if (wanted) hover = p;
     }
+    // Where the middle of the view meets the ground (a playtest "from here" starts there).
+    {
+        V3 co, cd;
+        ray(W / 2.0f, H / 2.0f, co, cd);
+        haveViewHit = core.rayGround(co, cd, 3000, viewHit);
+        if (!haveViewHit) {
+            const V3 f(std::cos(yaw), 0, -std::sin(yaw));
+            viewHit = eye + f * 20;
+            viewHit.y = core.world->height(viewHit.x, viewHit.z);
+        }
+    }
     // Holding the button.
     if (lmb && stroke) applyBrush(dt);
-    if (lmb && dragging && haveHit) {
-        if (sel.kind == EditPick::OBJECT && sel.index < (int)core.level.objects.size()) {
-            LevelObject ob = core.level.objects[sel.index];
-            const V3 to = snapped(V3(hit.x + dragOffset.x, 0, hit.z + dragOffset.z));
-            if (ob.kind == OBJ_LOG) {
-                const V3 m = (ob.p + ob.p2) * 0.5, sh = V3(to.x - m.x, 0, to.z - m.z);
-                ob.p += sh, ob.p2 += sh;
-            } else {
-                ob.p.x = to.x, ob.p.z = to.z;
-            }
-            core.setObject(sel.index, core.grounded(ob), "drag");
-        } else if (sel.kind == EditPick::GATE && sel.index < (int)core.level.gates.size()) {
+    if (lmb && dragging && haveHit && tool == OBJECTS && !selection.empty()) {
+        // (Moving the selection: by how far the mouse has come on the ground, on the snap grid, keeping each one's height over it.)
+        double dx = hit.x - dragFrom.x, dz = hit.z - dragFrom.z;
+        const double sn = kSnaps[snapIdx];
+        if (sn > 0) dx = std::round(dx / sn) * sn, dz = std::round(dz / sn) * sn;
+        const double ix = dx - dragApplied.x, iz = dz - dragApplied.z;
+        if (std::fabs(ix) > 1e-6 || std::fabs(iz) > 1e-6) {
+            core.beginEdit("MOVE", "drag");
+            const std::vector<int> ks = selectedObjects();
+            core.moveObjects(ks, ix, iz, "drag");
+            core.endEdit();
+            dragApplied.x = dx, dragApplied.z = dz;
+        }
+    } else if (lmb && dragging && haveHit) {
+        if (sel.kind == EditPick::GATE && sel.index < (int)core.level.gates.size()) {
             Gate g = core.level.gates[sel.index];
             g.p = V3(hit.x + dragOffset.x, 0, hit.z + dragOffset.z);
             core.setGate(sel.index, g, "drag");
         } else if (sel.kind == EditPick::START) {
             core.setStart(hit.x + dragOffset.x, hit.z + dragOffset.z, core.level.startYaw);
         }
+    }
+    // The ghost of a structure, drawn as itself (the game puts it in the renderer's models for the frame).
+    ghostModels.clear();
+    if (tool == OBJECTS && !pointer && !ledgeBrush && haveHit && !overUi && proto.kind == OBJ_MODEL && mk::findModel(proto.name)) {
+        const V3 at = snapped(hit);
+        Placed pl;
+        pl.id = proto.name, pl.p = V3(at.x, core.world->height(at.x, at.z) + proto.lift, at.z), pl.yaw = proto.yaw;
+        pl.scale = V3(proto.size.x > 0 ? proto.size.x : 1, proto.size.y > 0 ? proto.size.y : 1, proto.size.z > 0 ? proto.size.z : 1);
+        ghostModels.push_back(pl);
+    }
+    // Recovery copy: every minute there are unsaved changes the copy doesn't have.
+    if (!autosaveDir.empty() && core.unsaved() && core.autosavedChanges != core.changes && clock - lastAuto > 60 && !lmb) {
+        lastAuto = clock;
+        core.autosave(autosaveDir);
     }
     // Catch the picture up.
     if (!core.dirtyCells.empty()) {
@@ -948,27 +1400,79 @@ void Editor::drawWorldMarks(Renderer& r) {
         tag(V3(g.p.x, std::max(ya, yb) + 5, g.p.z),
             core.level.section.on && last ? "EXIT" : last && core.level.mode != LEVEL_FREE ? std::to_string(k + 1) + " FINISH" : std::to_string(k + 1), cr, cg, cb);
     }
-    // Hovered / selected objects.
-    auto mark = [&](const EditPick& p, bool selected) {
-        if (p.kind != EditPick::OBJECT && p.kind != EditPick::BASE) return;
-        tag(p.at + V3(0, 2.5, 0), (p.kind == EditPick::BASE ? "MAP " : "") + p.name + (selected ? " (SELECTED)" : ""), selected ? 1.0f : 0.8f,
-            selected ? 0.85f : 0.9f, selected ? 0.3f : 1.0f);
-        for (int k = 0; k < 24; k++) {
-            const double a = 2 * M_PI * k / 24;
-            const double x = p.at.x + std::cos(a) * 1.8, z = p.at.z + std::sin(a) * 1.8;
-            dotAt(V3(x, w.height(x, z) + 0.2, z), 4 * u, selected ? 1.0f : 0.8f, selected ? 0.8f : 0.9f, selected ? 0.3f : 1.0f, 0.9f);
+    // What's picked or about to be: the outline of each selected object (amber), of the one under the mouse (white), and the ghost
+    // of what the next click places (a translucent shape, lying on the ground at the mouse, as it will be placed).
+    if (tool == OBJECTS) {
+        auto outline = [&](const EditPick& p, float cr, float cg, float cb, float size) {
+            Shape sh;
+            if (p.kind == EditPick::OBJECT && p.index < (int)core.level.objects.size()) {
+                for (const auto& part : core.partsOf(p.index)) sh.add(core.shapeOf(part.first, part.second));
+                if (sh.edges.empty()) {  // (a station's pieces are fixtures; anything left without a shape: a ring)
+                    const LevelObject& ob = core.level.objects[p.index];
+                    sh.edges.push_back({ob.p, ob.p + V3(0, 2, 0)});
+                }
+            } else if (p.kind == EditPick::BASE) {
+                sh = core.shapeOf(p.baseKind, core.resolveIndex(p));
+            }
+            drawShape(r, sh, false, cr, cg, cb, 1, size);
+        };
+        for (const EditPick& p : selection) outline(p, 1.0f, 0.8f, 0.25f, 4 * u);
+        if (hover.kind != EditPick::NONE && !isSelected(hover)) outline(hover, 1.0f, 1.0f, 1.0f, 3 * u);
+        if (!selection.empty()) {
+            const EditPick& p = selection.back();
+            std::string nm = p.name;
+            V3 at = p.at;
+            if (p.kind == EditPick::OBJECT && p.index < (int)core.level.objects.size()) {
+                const LevelObject& ob = core.level.objects[p.index];
+                at = ob.kind == OBJ_LOG ? (ob.p + ob.p2) * 0.5 : ob.p;
+                nm = kObjNames[std::min(std::max(ob.kind, 0), OBJ_KIND_COUNT - 1)];
+            }
+            tag(at + V3(0, 3, 0), (selection.size() > 1 ? std::to_string(selection.size()) + " SELECTED" : nm + " (SELECTED)"), 1.0f, 0.85f, 0.3f);
         }
-    };
-    if (sel.kind == EditPick::OBJECT && sel.index < (int)core.level.objects.size()) {
-        EditPick p = sel;
-        const LevelObject& ob = core.level.objects[sel.index];
-        p.at = ob.kind == OBJ_LOG ? (ob.p + ob.p2) * 0.5 : ob.p;
-        p.name = kObjNames[ob.kind];
-        mark(p, true);
-    } else if (sel.kind == EditPick::BASE) {
-        mark(sel, true);
+        if (!pointer && !ledgeBrush && haveHit && !overUi && !marquee) {
+            const Shape ghost = core.previewShape(makeObject(snapped(hit)));
+            drawShape(r, ghost, true, 0.5f, 0.85f, 1.0f, 0.42f, 2.0f * u);
+        }
+        if (marquee) {
+            const float x0 = std::min(mx, marqueeX), y0 = std::min(my, marqueeY), x1 = std::max(mx, marqueeX), y1 = std::max(my, marqueeY);
+            r.rect(x0, y0, x1 - x0, y1 - y0, 1, 0.8f, 0.3f, 0.10f);
+            const float t = std::max(1.0f, u);
+            r.rect(x0, y0, x1 - x0, t, 1, 0.8f, 0.3f, 0.9f), r.rect(x0, y1 - t, x1 - x0, t, 1, 0.8f, 0.3f, 0.9f);
+            r.rect(x0, y0, t, y1 - y0, 1, 0.8f, 0.3f, 0.9f), r.rect(x1 - t, y0, t, y1 - y0, 1, 0.8f, 0.3f, 0.9f);
+        }
     }
-    if (hover != sel) mark(hover, false);
+}
+
+// An outline drawn over the view: its edges as dots, and (for the ghost) its faces turned toward the eye, see-through.
+void Editor::drawShape(Renderer& r, const Shape& sh, bool fill, float cr, float cg, float cb, float a, float size) {
+    const View v = view(W, H);
+    if (fill) {
+        const V3 light = norm(V3(-0.4, 0.8, 0.45));
+        for (const auto& t : sh.tris) {
+            const V3 n = norm(cross(t[1] - t[0], t[2] - t[0]));
+            if (dot(n, (t[0] + t[1] + t[2]) * (1.0 / 3) - v.eye) >= 0) continue;  // (a back face)
+            float sx[3], sy[3];
+            bool ok = true;
+            for (int k = 0; k < 3; k++) ok &= screenPoint(v, W, H, t[k], sx[k], sy[k]);
+            if (!ok) continue;
+            const float lit = 0.55f + 0.45f * (float)std::max(0.0, dot(n, light));
+            r.tri(sx[0], sy[0], sx[1], sy[1], sx[2], sy[2], cr * lit, cg * lit, cb * lit, a);
+        }
+    }
+    // The edges as thin lines (each a strip of two triangles, `size` pixels across).
+    const float half = std::max(0.8f, size * 0.4f);
+    for (const auto& e : sh.edges) {
+        float ax, ay, bx, by;
+        if (!screenPoint(v, W, H, e.first, ax, ay) || !screenPoint(v, W, H, e.second, bx, by)) continue;
+        const float dx = bx - ax, dy = by - ay, l = std::sqrt(dx * dx + dy * dy);
+        if (l < 0.5f) {
+            r.rect(ax - half, ay - half, 2 * half, 2 * half, cr, cg, cb, 0.95f);
+            continue;
+        }
+        const float nx = -dy / l * half, ny = dx / l * half;
+        r.tri(ax - nx, ay - ny, ax + nx, ay + ny, bx + nx, by + ny, cr, cg, cb, 0.95f);
+        r.tri(ax - nx, ay - ny, bx + nx, by + ny, bx - nx, by - ny, cr, cg, cb, 0.95f);
+    }
 }
 
 void Editor::drawToolbar(Renderer& r, float u) {
@@ -978,14 +1482,15 @@ void Editor::drawToolbar(Renderer& r, float u) {
     for (int t = 0; t < TOOL_COUNT; t++) y = button(r, x, y, w, bh, std::to_string(t + 1) + "  " + kToolNames[t], B_TOOL + t, tool == t, u);
     // File and history.
     y += 14 * u;
-    pill(r, x - 6 * u, y - 6 * u, w + 12 * u, (bh + 4 * u) * 8 + 8 * u, 0, 0, 0, 0.55f);
+    pill(r, x - 6 * u, y - 6 * u, w + 12 * u, (bh + 4 * u) * 9 + 8 * u, 0, 0, 0, 0.55f);
     y = button(r, x, y, w, bh, "SAVE", B_SAVE, false, u);
     y = button(r, x, y, w, bh, "OPEN...", B_OPEN, false, u);
     y = button(r, x, y, w, bh, std::string("NEW: ") + mapName(nextListedMap(newMap, 1)), B_NEWMAP, false, u);
     y = button(r, x, y, w, bh, confirmNew ? "SURE? CLICK AGAIN" : "NEW SECTION", B_NEWSEC, confirmNew, u);
     y = button(r, x, y, w, bh, "UNDO", B_UNDO, false, u);
     y = button(r, x, y, w, bh, "REDO", B_REDO, false, u);
-    y = button(r, x, y, w, bh, "PLAY IT", B_PLAY, false, u);
+    y = button(r, x, y, w, bh, "TEST HERE  F5", B_PLAY, false, u);
+    y = button(r, x, y, w, bh, "TEST START F6", B_PLAY_START, false, u);
     button(r, x, y, w, bh, confirmClose ? "EXIT: SURE?" : "EXIT", B_EXIT, confirmClose, u);
 }
 
@@ -996,7 +1501,7 @@ void Editor::drawOptions(Renderer& r, float u) {
     std::vector<std::string> info;
     // (Drawn in two passes: the panel's height isn't known till the end, so draw into a
     // scratch list of rows first. Simpler: a fixed tall panel per tool.)
-    const float panelH = tool == PAINT ? 560 * u : tool == SETTINGS ? 420 * u : tool == OBJECTS ? 470 * u : tool == SECTION ? 600 * u : 300 * u;
+    const float panelH = tool == PAINT ? 560 * u : tool == SETTINGS ? 420 * u : tool == OBJECTS ? (selection.empty() ? 470.0f : 540.0f) * u : tool == SECTION ? 600 * u : 300 * u;
     pill(r, x - 8 * u, top - 6 * u, w + 16 * u, panelH, 0, 0, 0, 0.55f);
     label(r, x, y, px(1.6f * u), kToolNames[tool], 1.0f, 0.75f, 0.3f, 1);
     y += 8 * px(1.6f * u) + 6 * u;
@@ -1052,10 +1557,9 @@ void Editor::drawOptions(Renderer& r, float u) {
             note("A BASIN WITH SCULPT > LOWER FIRST)");
             note("SHIFT+CLICK: DRY");
             break;
-        case OBJECTS:
-            for (int k = 0; k < OBJ_KIND_COUNT + 1; k++) button(r, x + (k % 2) * (half + 4 * u), y + (k / 2) * (bh + 4 * u), half, bh, kObjNames[k], B_OBJ + k, objKind == k, u);
-            y += 3 * (bh + 4 * u) + 6 * u;
-            if (objKind == K_LEDGE) {
+        case OBJECTS: {
+            buildPalette();
+            if (ledgeBrush) {
                 const double rise = kRisers[ledgeRise];
                 row("RISER", fmt1(rise, " M"), B_RISE_DN, B_RISE_UP);
                 row("DEPTH", fmt1(ledgeDepth, " M"), B_LDEPTH_DN, B_LDEPTH_UP);
@@ -1069,50 +1573,101 @@ void Editor::drawOptions(Renderer& r, float u) {
                 note("UNDO TAKES THE WHOLE ROW BACK");
                 break;
             }
-            if (objKind == OBJ_ROCK) row("SIZE", fmt1(rockSize * 2, " M"), B_SIZE_DN, B_SIZE_UP);
-            if (objKind == OBJ_TREE) {
-                row("HEIGHT", fmt1(treeHeight, " M"), B_SIZE_DN, B_SIZE_UP);
-                button(r, x, y, w, bh, std::string("KIND: ") + kTreeNames[treeKind], B_TREE, false, u);
-                y += bh + 4 * u;
+            // What the rows change: the selected object (or a group), else the ghost.
+            LevelObject tgt;
+            bool haveTgt = false;
+            std::string head;
+            if (selection.size() == 1) {
+                const EditPick& p = selection[0];
+                if (p.kind == EditPick::OBJECT && p.index < (int)core.level.objects.size()) tgt = core.level.objects[p.index], haveTgt = true;
+                else if (p.kind == EditPick::BASE) haveTgt = core.asObject(p, tgt);
+                head = std::string(p.kind == EditPick::BASE ? "THE MAP'S " : "") + (haveTgt ? kObjNames[std::min(std::max(tgt.kind, 0), OBJ_KIND_COUNT - 1)] : p.name.c_str());
+            } else if (selection.size() > 1) {
+                head = std::to_string(selection.size()) + " OBJECTS";
+            } else if (!pointer) {
+                tgt = proto, haveTgt = true;
+                head = "PLACING: " + (palPick < (int)palette.size() ? palette[palPick].name : std::string());
+            } else {
+                head = "NOTHING SELECTED";
             }
-            if (objKind == OBJ_LOG) {
-                row("THICKNESS", fmt1(logR * 2, " M"), B_SIZE_DN, B_SIZE_UP);
-                row("LENGTH", fmt1(logLen, " M"), B_LEN_DN, B_LEN_UP);
-            }
-            if (objKind == OBJ_BOX) {
-                row("LENGTH", fmt1(boxLen, " M"), B_LEN_DN, B_LEN_UP);
-                row("WIDTH", fmt1(boxWidth, " M"), B_W_DN, B_W_UP);
-                row("THICKNESS", fmt1(boxHeight, " M"), B_SIZE_DN, B_SIZE_UP);
-                row("TILT (RAMP)", std::to_string((int)std::lround(boxPitch * 180 / M_PI)) + " DEG", B_PITCH_DN, B_PITCH_UP);
-                button(r, x, y, w, bh, slab ? "ROCK SLAB (GRIPS LIKE ROCK)" : "CONCRETE BLOCK", B_SLAB, false, u);
-                y += bh + 4 * u;
-            }
-            row("TURN", std::to_string((int)std::lround(std::fmod(objYaw * 180 / M_PI + 3600, 360))) + " DEG", B_YAW_DN, B_YAW_UP);
-            row("OFFSET (UP/DOWN)", fmt1(objOffset, " M"), B_OFFSET_DN, B_OFFSET_UP);
-            row("GRID SNAP", kSnaps[snapIdx] > 0 ? fmt1(kSnaps[snapIdx], " M") : "OFF", B_SNAP_DN, B_SNAP_UP);
-            if (sel.kind == EditPick::OBJECT && sel.index < (int)core.level.objects.size()) {
-                // Object editor panel.
-                const LevelObject& ob = core.level.objects[sel.index];
-                note("EDITING: " + std::string(kObjNames[ob.kind]));
-                row("POS X", fmt1(ob.p.x, " M"), B_OBJPROP + 1, B_OBJPROP + 2);
-                row("POS Y", fmt1(ob.p.y, " M"), B_OBJPROP + 3, B_OBJPROP + 4);
-                row("POS Z", fmt1(ob.p.z, " M"), B_OBJPROP + 5, B_OBJPROP + 6);
-                if (ob.kind == OBJ_BOX) {
-                    row("SIZE W", fmt1(ob.size.z * 2, " M"), B_OBJPROP + 7, B_OBJPROP + 8);
-                    row("SIZE H", fmt1(ob.size.y * 2, " M"), B_OBJPROP + 9, B_OBJPROP + 10);
-                    row("SIZE D", fmt1(ob.size.x * 2, " M"), B_OBJPROP + 11, B_OBJPROP + 12);
+            r.text(x, y, s, head, 1.0f, 0.85f, 0.4f, 1);
+            y += 8 * s + 6 * u;
+            auto deg = [](double rad) { return std::to_string((int)std::lround(std::fmod(rad * 180 / M_PI + 3600 + 180, 360) - 180)) + " DEG"; };
+            auto xf = [&](ObjOp op, const char* name, const std::string& val) { row(name, val, B_XF + op * 2, B_XF + op * 2 + 1); };
+            if (haveTgt && selection.size() <= 1) {
+                double yawV = tgt.yaw, pitchV = tgt.pitch, liftV = tgt.lift;
+                if (tgt.kind == OBJ_LOG && !selection.empty() && len(tgt.p2 - tgt.p) > 1e-6) {
+                    const V3 hv = tgt.p2 - tgt.p;
+                    yawV = std::atan2(-hv.z, hv.x), pitchV = std::asin(clampd(hv.y / len(hv), -1, 1));
                 }
-                row("ROT YAW", std::to_string((int)std::lround(std::fmod(ob.yaw * 180 / M_PI + 3600, 360))) + " DEG", B_OBJPROP + 13, B_OBJPROP + 14);
-                row("ROT PITCH", std::to_string((int)std::lround(std::fmod(ob.pitch * 180 / M_PI + 3600, 360))) + " DEG", B_OBJPROP + 15, B_OBJPROP + 16);
-                button(r, x, y, w, bh, "DELETE SELECTED (DEL)", B_DELETE, false, u);
+                if (tgt.kind == OBJ_ROCK) liftV = tgt.top;
+                const bool isModel = tgt.kind == OBJ_MODEL;
+                auto pct = [](double v) { return std::to_string((int)std::lround(v * 100)) + "%"; };
+                switch (tgt.kind) {
+                    case OBJ_ROCK:
+                        xf(OP_YAW, "TURN", deg(yawV)), xf(OP_PITCH, "TIP", deg(pitchV)), xf(OP_ROLL, "ROLL", deg(tgt.roll));
+                        xf(OP_LIFT, "SHOWS ABOVE GROUND", fmt1(liftV, " M")), xf(OP_SCALE, "SCALE ALL", "");
+                        xf(OP_STRETCH_X, "ALONG", fmt1(tgt.size.x * 2, " M")), xf(OP_STRETCH_Y, "HEIGHT", fmt1(tgt.size.y * 2, " M")), xf(OP_STRETCH_Z, "ACROSS", fmt1(tgt.size.z * 2, " M"));
+                        break;
+                    case OBJ_BOX:
+                        xf(OP_YAW, "TURN", deg(yawV)), xf(OP_PITCH, "TILT (RAMP)", deg(pitchV)), xf(OP_ROLL, "ROLL", deg(tgt.roll));
+                        xf(OP_LIFT, "RAISE", fmt1(liftV, " M")), xf(OP_SCALE, "SCALE ALL", "");
+                        xf(OP_STRETCH_X, "LENGTH", fmt1(tgt.size.x * 2, " M")), xf(OP_STRETCH_Y, "THICKNESS", fmt1(tgt.size.y * 2, " M")), xf(OP_STRETCH_Z, "WIDTH", fmt1(tgt.size.z * 2, " M"));
+                        break;
+                    case OBJ_LOG: {
+                        const bool ghostLog = selection.empty();
+                        xf(OP_YAW, "TURN", deg(yawV)), xf(OP_PITCH, "TILT", deg(pitchV));
+                        xf(OP_LIFT, "RAISE", ghostLog ? fmt1(tgt.lift, " M") : "");
+                        xf(OP_SCALE, "SCALE ALL", "");
+                        xf(OP_STRETCH_X, "LENGTH", ghostLog ? fmt1(tgt.size.y * 2, " M") : fmt1(len(tgt.p2 - tgt.p), " M"));
+                        xf(OP_STRETCH_Y, "THICKNESS", fmt1(tgt.size.x * 2, " M"));
+                        break;
+                    }
+                    case OBJ_TREE:
+                        xf(OP_LIFT, "RAISE", fmt1(tgt.lift, " M")), xf(OP_SCALE, "SCALE ALL", ""), xf(OP_STRETCH_Y, "HEIGHT", fmt1(tgt.size.y, " M"));
+                        if (selection.empty()) {
+                            // (the ghost tree's kind is the palette's: pine, broadleaf, snag)
+                        }
+                        break;
+                    case OBJ_STATION: xf(OP_YAW, "TURN", deg(yawV)); break;
+                    case OBJ_MODEL:
+                        xf(OP_YAW, "TURN", deg(yawV)), xf(OP_LIFT, "RAISE", fmt1(liftV, " M")), xf(OP_SCALE, "SCALE ALL", "");
+                        xf(OP_STRETCH_X, "LENGTH", pct(tgt.size.x)), xf(OP_STRETCH_Y, "HEIGHT", pct(tgt.size.y)), xf(OP_STRETCH_Z, "WIDTH", pct(tgt.size.z));
+                        break;
+                    default: break;
+                }
+                (void)isModel;
+            } else if (selection.size() > 1) {
+                xf(OP_YAW, "TURN TOGETHER", ""), xf(OP_LIFT, "RAISE", ""), xf(OP_SCALE, "SCALE EACH", "");
+            }
+            if (!selection.empty()) {
+                const float qw = (w - 3 * 4 * u) / 4;
+                r.text(x, y + (bh - 8 * s) / 2, s, "MOVE", 0.85f, 0.86f, 0.9f, 1);
+                (void)qw;
+                y += 0;
+                const char* lbl[4] = {"LEFT", "RIGHT", "FAR", "NEAR"};
+                const float bx = x + 52 * u, bw = (w - 52 * u - 3 * 4 * u) / 4;
+                for (int k = 0; k < 4; k++) button(r, bx + k * (bw + 4 * u), y, bw, bh, lbl[k], B_NUDGE + k, false, u);
+                y += bh + 4 * u;
+                button(r, x, y, w, bh, "DELETE SELECTED  (DEL)", B_DELETE, false, u);
                 y += bh + 4 * u;
             }
-            y += 6 * u;
-            note("CLICK: PLACE   CLICK ONE: SELECT");
-            note("DRAG: MOVE   Q E: SIZE   SHIFT+Q E: TURN");
-            note("OFFSET ROW: PLACE IN SKY OR UNDERGROUND");
-            note("DEL: DELETE (THE MAP'S OWN TOO)");
+            row("GRID SNAP", kSnaps[snapIdx] > 0 ? fmt1(kSnaps[snapIdx], " M") : "OFF", B_SNAP_DN, B_SNAP_UP);
+            y += 2 * u;
+            if (pointer) {
+                note("CLICK: SELECT   SHIFT+CLICK: ADD");
+                note("DRAG EMPTY GROUND: BOX SELECT");
+                note("DRAG A SELECTED ONE: MOVE (GROUP TOO)");
+            } else {
+                note("CLICK THE GROUND: PLACE THE GHOST");
+            }
+            note("SHIFT+Q E OR , .  TURN   R F  TIP");
+            note("C V  ROLL   Z X  LOWER, RAISE   - =  SCALE");
+            note("T G  LONGER   Y H  TALLER   U J  WIDER");
+            note("CTRL+ARROWS  NUDGE   SHIFT  COARSER");
+            note("TAB  POINTER / PLACING   DEL  DELETE");
             break;
+        }
         case COURSE: {
             const int n = (int)core.level.gates.size();
             note(core.level.section.on ? (core.level.hasStart ? std::to_string(n) + (n == 1 ? " GATE: THE LAST IS THE EXIT" : " GATES: THE LAST IS THE EXIT") : "FIRST CLICK: THE ENTRY")
@@ -1208,6 +1763,65 @@ void Editor::drawOptions(Renderer& r, float u) {
     if (mx >= x - 8 * u && my >= top - 6 * u && my < top - 6 * u + panelH) overUi = true;
 }
 
+// The palette: a strip along the bottom, tabs over a row of cards (each with the model as its picture).
+void Editor::drawPalette(Renderer& r, float u) {
+    buildPalette();
+    const float s = px(1.0f * u), x0 = 156 * u, x1 = W - 310 * u, statusTop = H - (8 * px(1.2f * u) + 14 * u);
+    const float cardW = 88 * u, cardH = 92 * u, tabH = 22 * u, gap = 4 * u;
+    const float stripH = tabH + cardH + 14 * u, y0 = statusTop - 2 * (8 * px(1.2f * u) + 6 * u) - 14 * u - stripH;
+    pill(r, x0 - 6 * u, y0 - 4 * u, x1 - x0 + 12 * u, stripH + 8 * u, 0, 0, 0, 0.6f);
+    // Tabs.
+    const float tw = std::min(92 * u, (x1 - x0) / (float)tabs.size());
+    for (int t = 0; t < (int)tabs.size(); t++) {
+        const bool on = pointer ? t == 0 : tabs[t] == (palPick < (int)palette.size() ? palette[palPick].tab : std::string()) && !pointer;
+        button(r, x0 + t * tw, y0, tw - gap, tabH, tabs[t], B_PALTAB + t, on, u);
+    }
+    const float cy = y0 + tabH + 6 * u;
+    if (pointer) {
+        r.text(x0 + 8 * u, cy + 6 * u, s, "POINTER: SELECT, MOVE AND CHANGE ANYTHING IN THE WORLD, THE MAP'S OWN TOO", 0.9f, 0.9f, 0.95f, 1);
+        r.text(x0 + 8 * u, cy + 24 * u, s, "CLICK AN OBJECT, OR DRAG A BOX OVER SEVERAL (SHIFT ADDS). DRAG ONE TO MOVE IT; THE KEYS AT THE RIGHT TURN,", 0.7f, 0.72f, 0.76f, 1);
+        r.text(x0 + 8 * u, cy + 38 * u, s, "TIP, RAISE, SCALE AND STRETCH IT. DEL DELETES. PICK A TAB ABOVE (OR TAB) TO PLACE NEW THINGS.", 0.7f, 0.72f, 0.76f, 1);
+        if (mx >= x0 - 6 * u && mx < x1 + 6 * u && my >= y0 - 4 * u && my < y0 + stripH + 4 * u) overUi = true;
+        return;
+    }
+    std::vector<int> idx;
+    const std::string& tabName = palette[palPick].tab;
+    for (int i = 0; i < (int)palette.size(); i++)
+        if (palette[i].tab == tabName) idx.push_back(i);
+    const float arrowW = 20 * u;
+    const int per = std::max(1, (int)((x1 - x0 - 2 * arrowW - 2 * gap) / (cardW + gap)));
+    const int pages = std::max(1, ((int)idx.size() + per - 1) / per);
+    palPage = std::min(palPage, pages - 1);
+    if (pages > 1) {
+        button(r, x0, cy, arrowW, cardH, "<", B_PAL_PREV, false, u);
+        button(r, x1 - arrowW, cy, arrowW, cardH, ">", B_PAL_NEXT, false, u);
+        const std::string pg = std::to_string(palPage + 1) + "/" + std::to_string(pages);
+        r.text(x1 - arrowW + (arrowW - r.textWidth(pg, s)) / 2, cy + cardH + 2 * u, s, pg, 0.7f, 0.72f, 0.76f, 1);
+    }
+    for (int k = 0; k < per; k++) {
+        const int at = palPage * per + k;
+        if (at >= (int)idx.size()) break;
+        const int pi = idx[at];
+        const PalEntry& e = palette[pi];
+        const float cx = x0 + arrowW + gap + k * (cardW + gap);
+        const bool on = pi == palPick, hot = mx >= cx && mx < cx + cardW && my >= cy && my < cy + cardH;
+        pill(r, cx, cy, cardW, cardH, on ? 0.17f : hot ? 0.13f : 0.075f, on ? 0.15f : hot ? 0.12f : 0.085f, on ? 0.09f : hot ? 0.1f : 0.10f, 0.96f);
+        if (on) {
+            const float t = std::max(2.0f, std::round(2 * u));
+            r.rect(cx, cy, cardW, t, 1, 0.75f, 0.3f, 1), r.rect(cx, cy + cardH - t, cardW, t, 1, 0.75f, 0.3f, 1);
+            r.rect(cx, cy, t, cardH, 1, 0.75f, 0.3f, 1), r.rect(cx + cardW - t, cy, t, cardH, 1, 0.75f, 0.3f, 1);
+        }
+        const float side = cardH - 22 * u;
+        r.icon(e.icon, iconMesh(e), cx + (cardW - side) / 2, cy + 3 * u, side, side);
+        std::string nm = e.name;
+        while (!nm.empty() && r.textWidth(nm, s) > cardW - 6 * u) nm.pop_back();
+        r.text(cx + (cardW - r.textWidth(nm, s)) / 2, cy + cardH - 14 * u, s, nm, on ? 1.0f : 0.85f, on ? 0.85f : 0.86f, on ? 0.5f : 0.9f, 1);
+        buttons.push_back({cx, cy, cardW, cardH, B_PAL + pi});
+        if (hot) overUi = true;
+    }
+    if (mx >= x0 - 6 * u && mx < x1 + 6 * u && my >= y0 - 4 * u && my < y0 + stripH + 4 * u) overUi = true;
+}
+
 void Editor::drawStatus(Renderer& r, float u) {
     const float s = px(1.2f * u), h = 8 * s + 14 * u, y = H - h;
     r.rect(0, y, (float)W, h, 0, 0, 0, 0.6f);
@@ -1217,7 +1831,7 @@ void Editor::drawStatus(Renderer& r, float u) {
                   mapName(l.map), levelModeName(l.mode), core.cellEdits(), l.objects.size(), l.gates.size(),
                   core.canUndo() ? core.undoName().c_str() : "-");
     r.text(12 * u, y + 7 * u, s, buf, 0.9f, 0.91f, 0.94f, 1);
-    const char* keys = "WASD FLY  MOUSE WHEEL ZOOM  Q E SIZE/UP DOWN  RIGHT-DRAG LOOK  SHIFT FAST  1-7 TOOLS  CTRL+Z/Y UNDO/REDO  CTRL+S SAVE  F5 PLAY  ESC EXIT";
+    const char* keys = "WASD FLY  Q E DOWN/UP  WHEEL ZOOM  RIGHT-DRAG LOOK  SHIFT FAST  1-7 TOOLS  CTRL+Z/Y UNDO/REDO  CTRL+S SAVE  F5 TEST HERE  F6 TEST FROM START  ESC EXIT";
     const float ks = px(1.0f * u);
     r.rect(W - r.textWidth(keys, ks) - 20 * u, y - 8 * ks - 10 * u, r.textWidth(keys, ks) + 20 * u, 8 * ks + 10 * u, 0, 0, 0, 0.45f);
     r.text(W - r.textWidth(keys, ks) - 10 * u, y - 8 * ks - 5 * u, ks, keys, 0.7f, 0.72f, 0.76f, 1);
@@ -1260,7 +1874,8 @@ void Editor::drawFiles(Renderer& r, float u) {
         if (on) r.rect(x + 8 * u, ry, w - 16 * u, rowH, 1, 1, 1, 0.1f);
         buttons.push_back({x + 8 * u, ry, w - 16 * u, rowH, B_FILE + i});
         if (mx >= x + 8 * u && mx < x + w - 8 * u && my >= ry && my < ry + rowH) fileSel = i;
-        r.text(x + 16 * u, ry + (rowH - 8 * s) / 2, s, lv.name, 1, 1, 1, 1);
+        const bool recovered = i < (int)fileRecovery.size() && fileRecovery[i];
+        r.text(x + 16 * u, ry + (rowH - 8 * s) / 2, s, recovered ? "RECOVER AUTOSAVE: " + lv.name : lv.name, recovered ? 1.0f : 1, recovered ? 0.8f : 1, recovered ? 0.4f : 1, 1);
         const std::string tagText = std::string(mapName(lv.map)) + "  " + levelModeName(lv.mode) + (lv.section.on ? std::string("  SECTION ") + sectionKindName(lv.section.kind) + " " + std::to_string(lv.section.difficulty) : std::string()) +
                                    (lv.builtin ? "  (GAME'S: OPENS A COPY)" : "");
         r.text(x + w - 16 * u - r.textWidth(tagText, px(1.0f * u)), ry + (rowH - 8 * px(1.0f * u)) / 2, px(1.0f * u), tagText, 0.6f, 0.62f, 0.66f, 1);
@@ -1276,6 +1891,7 @@ void Editor::draw(Renderer& r, int w, int h, double) {
     drawWorldMarks(r);
     drawToolbar(r, u);
     drawOptions(r, u);
+    if (tool == OBJECTS) drawPalette(r, u);
     drawStatus(r, u);
     if (fileOpen) {
         buttons.clear();  // (only the dialog takes clicks)
