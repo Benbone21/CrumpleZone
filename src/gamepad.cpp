@@ -246,7 +246,7 @@ bool Logic::apply(Car& c, double dt) {
     if (in.throttle > 0 || in.brake > 0) {
         const Frame fr = c.frame();
         const Pedals p = pedals(in.throttle, in.brake, dot(fr.vel, fr.fwd), c.gear, c.manualShift);
-        c.throttle = p.throttle;
+        c.throttle = p.throttle * tune.throttleScale;
         c.brake = p.brake;
         c.gear = p.gear;
         did = true;

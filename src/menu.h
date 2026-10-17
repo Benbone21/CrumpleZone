@@ -8,6 +8,7 @@
 #include "render.h"
 #include "devmenu.h"
 #include "keybinds.h"
+#include "throttle.h"
 #include "sdl_min.h"
 
 struct Settings {
@@ -42,6 +43,7 @@ struct Settings {
     bool adaptiveQuality = true;  // auto-scale quality to maintain framerate
     bool devHotkeys = false;      // the debug and test keys (1-7, I, K, N, DEL, [ ], F2, F3, F5) work directly; OFF: only through the dev menu (F12)
     Keybinds keys;
+    throttle::Tuning throttle;  // the throttle limit (throttle.h): the keyboard's cap, its ramp, whether the pad obeys it
 
     bool load(const std::string& path);
     bool save(const std::string& path) const;
