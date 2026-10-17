@@ -4,6 +4,7 @@
 #include <cmath>
 #include <set>
 
+#include "../src/bodyshell.h"
 #include "../src/interact.h"
 #include "../src/modelkit.h"
 #include "../src/walker.h"
@@ -118,6 +119,30 @@ SCENARIO(trunkGate, "trunk/gate", "The gate (nothing opens it in play now) still
     ctx.check("tacoma: gate up", t.gateShut());
     trunk::bedGatePlace(t, t.frame(), at, ax, width);
     ctx.check("tacoma: and stands upright when shut", ax[1].y > 0.95);
+    // Shut, it closes the bed's mouth: edge to edge between the walls, up to the rail, its face flush with the walls' ends.
+    double height = 0;
+    BedMouth m;
+    ctx.check("tacoma: a bed mouth", bedMouth(*t.spec, m));
+    trunk::bedGatePlace(t, t.frame(), at, ax, width, &height);
+    ctx.check("tacoma: the gate spans the bed between its walls", std::fabs(width - 2 * m.inner) < 0.05 && m.inner > 0.6, "width " + std::to_string(width) + " inner " + std::to_string(m.inner));
+    ctx.check("tacoma: and rises to the rail", std::fabs(height - (m.railY - m.floorY)) < 0.03, "height " + std::to_string(height));
+    const double depth = dot(at - trunk::world(t, t.frame(), V3(m.x, m.floorY, 0)), t.frame().fwd);
+    ctx.check("tacoma: its face is flush with the walls' ends", depth > 0.04 && depth < 0.09, "hinge " + std::to_string(depth) + " m in from the end");
+    // The shell's tail is the U of the floor and walls: no triangle across the bed's open mouth.
+    VisualTemplate vt;
+    ctx.check("tacoma: a body shell", buildBodyShell(t, vt));
+    int across = 0;
+    for (const VisualTemplate::Face& f : vt.faces) {
+        V3 c;
+        bool rear = true;
+        for (int k = 0; k < 4; k++) {
+            const V3 q(vt.rvStatic[f.rv[k]].lat[0], vt.rvStatic[f.rv[k]].lat[1], vt.rvStatic[f.rv[k]].lat[2]);
+            c += q * 0.25;
+            rear &= q.x < m.x + 1e-4;
+        }
+        if (rear && c.y > m.floorY + 0.03 && std::fabs(c.z) < m.inner - 0.12) across++;
+    }
+    ctx.check("tacoma: the bed's mouth is open (nothing drawn across it)", across == 0, std::to_string(across) + " faces");
 }
 
 SCENARIO(trunkTake, "trunk/take", "Your kit is within reach at your own truck's back (gate shut) and not far off; take a tool, a part, an anchor, the jack, the chains out of it: it's in your hands and not in the back; put back, the counts are what they were") {

@@ -21,3 +21,10 @@ void shellArch(const VehicleSpec& vs, double& centerY, double& radius);
 double shellArchHeight(const VehicleSpec& vs, double d);
 // Whether this vehicle is drawn with a sculpted shell.
 bool hasBodyShell(const VehicleSpec& vs);
+
+// A pickup's bed at its open end (rest frame, m): the end of the walls, the floor, the rail's top
+// and the half-width between the walls. False for anything without a bed.
+struct BedMouth {
+    double x, floorY, railY, inner;
+};
+bool bedMouth(const VehicleSpec& vs, BedMouth& m);
