@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <map>
 
 #include "carvisual.h"
@@ -1516,6 +1517,7 @@ const char* kGrassVS = R"(#version 330 core
 uniform sampler2D uTerrainTex; uniform float uTerrainN;
 uniform mat4 uVP; uniform vec3 uCam; uniform float uTime;
 uniform int uSide; uniform int uBlades; uniform int uMap;
+uniform vec3 uTile;     // this draw's tufts: a run of the ring's grid from (x, z), x wide
 uniform float uCell;
 uniform vec4 uRing;     // this ring comes in over x..y metres from the camera, and goes out over z..w
 uniform vec4 uLook;     // x height scale, y width scale, z 1: plain blades (the far rings), w 1: seed heads and flowers
@@ -1568,7 +1570,8 @@ void gone(){ vSh = 1.0; vPos = vec3(0.0); vN = vec3(0.0, 1.0, 0.0); vC0 = vC1 = 
 void main(){
   int id = gl_VertexID, k = id % 7, blade = id / 7;
   int tuft = gl_InstanceID;
-  vec2 cell = floor(uCam.xz / uCell) + vec2(tuft % uSide, tuft / uSide) - float(uSide / 2);
+  int tw = int(uTile.z + 0.5);
+  vec2 cell = floor(uCam.xz / uCell) + uTile.xy + vec2(tuft % tw, tuft / tw) - float(uSide / 2);
   vec2 base = (cell + vec2(hs(cell, 1u), hs(cell, 2u))) * uCell;
   float dist = length(base - uCam.xz);
   // This ring's share of the ground here against the rings either side: a tuft is there while its own roll is under the share.
@@ -2108,7 +2111,7 @@ bool Renderer::init(const World& world, std::string& err) {
     progLit = linkProgram(kLitVS, header + kCommonFS + kLitIns + kTerrainProcFS + kLitFSBody, err);
     progCar = linkProgram(kCarVS, header + kCommonFS + kCarFSBody, err);
     progDepth = linkProgram(kDepthVS, kDepthFS, err);
-    progTree = linkProgram(kTreeVS, header + kCommonFS + kLitIns + kTerrainProcFS + kLitFSBody, err);
+    progTree = linkProgram(kTreeVS, header + kCommonFS + kLitIns + kTreeFSBody, err);
     progTreeDepth = linkProgram(kTreeDepthVS, kDepthFS, err);
     progLine = linkProgram(kLineVS, kLineFS, err);
     progXray = linkProgram(kXrayVS, kXrayFS, err);
@@ -2465,13 +2468,19 @@ void Renderer::updateObjects(const World& world) {
     for (const Tree& t : world.trees) ts.vec(t.base), ts.num(t.height), ts.num(t.radius), ts.num(t.kind), ts.num(t.tint);
     if (ts.h != treeSig_ || treeVertexCount == 0) {
         treeSig_ = ts.h;
-        trees_.build(world, cover.pines, cover.snags);
+        forest::Set set;
+        forest::build(world, cover.pines, cover.snags, set);
+        trees_.build(set);
         treeVertexCount = (int)trees_.meshVertices();
     }
     Sig bs = sceneryBase(world, pq, cover);
     for (const Bush& b : world.bushes) bs.vec(b.p), bs.num(b.r), bs.num(b.tint), bs.num(b.kind);
+    for (const Log& g : world.logs) bs.vec(g.a), bs.vec(g.b), bs.num(g.r);
     if (bs.h != bushSig_ || bushVertexCount == 0) {
         bushSig_ = bs.h;
+        forest::Set set;
+        if (!cover.bushes) forest::buildBushes(world, set);
+        bushes_.build(set);
         std::vector<Vtx> v;
         buildBushMesh(world, v, cover);
         uploadBatches(bushVao, bushVbo, v, bushBatches);
@@ -2531,14 +2540,15 @@ void Renderer::drawBatches(GLuint vao, const std::vector<StaticBatch>& batches, 
     }
 }
 
-// Bushes are small and many: the batches (64 m squares) nearer than 300 m, and for shadows 80 m (a bush's shadow past that is a speck).
-void Renderer::drawBushes(const M4& vp, const V3& eye, bool shadow) {
-    const double reach = shadow ? 80 : 300;
+// Reeds and logs are small and many: the batches (64 m squares) nearer than 300 m, and for shadows 80 m (a reed's shadow past that is a speck).
+void Renderer::drawBushes(const M4& vp, const V3& eye, bool shadow, VegStats::Pass& stats) {
+    const double reach = (shadow ? 80 : 300) * vegDetail();
     BindVertexArray(bushVao);
     for (const auto& batch : bushBatches) {
         if (batch.bounds.distance(eye) > reach || !batch.bounds.visible(vp)) continue;
         DrawArrays(GL_TRIANGLES, batch.first, batch.count);
         (shadow ? geometryStats_.shadowSceneryVertices : geometryStats_.sceneryVertices) += batch.count;
+        stats.add(1, batch.count / 3);
     }
 }
 
@@ -3603,6 +3613,10 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     M4 proj = perspective(view.fovy, (float)view.width / std::max(1, view.height), 0.05f, 6000.0f);
     M4 vp = proj * lookAt(view.eye, view.target, view.up);
     geometryStats_ = {};
+    vegStats_ = {};
+    static const bool timed = std::getenv("CZ_BENCH") != nullptr;
+    static const char* noVegEnv = std::getenv("CZ_NO_VEG");  // (timing: the frame without the trees and bushes; "shadow" or "main": that pass only)
+    static const bool noVeg = noVegEnv && std::strcmp(noVegEnv, "shadow") != 0, noVegShadow = noVegEnv && std::strcmp(noVegEnv, "main") != 0;
 
     // Shadow passes.
     for (int c = 0; sq && c < 2; c++) {
@@ -3621,10 +3635,16 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         }
         UseProgram(progTreeDepth);
         uniformM4(progTreeDepth, "uLightVP", lightVP[c]);
-        geometryStats_.shadowSceneryVertices += trees_.draw(lightVP[c], view.eye, 1 + c);  // (shadows from the lighter copies)
+        if (!noVegShadow) {
+            if (timed) vegTimer_[1 + c].begin();
+            // (shadows from the lighter copies; a bush's only near the eye: further off it's a speck)
+            geometryStats_.shadowSceneryVertices += trees_.draw({lightVP[c], view.eye, vegDetail(), 1 + c, true, 1}, &vegStats_.treesShadow);
+            geometryStats_.shadowSceneryVertices += bushes_.draw({lightVP[c], view.eye, vegDetail(), 0, true, 0.5}, &vegStats_.bushesShadow);
+            if (timed) vegTimer_[1 + c].end(), vegStats_.shadowGpuMs += vegTimer_[1 + c].ms;
+        }
         UseProgram(progDepth);
         drawBatches(sceneryVao, sceneryBatches, lightVP[c], true);
-        drawBushes(lightVP[c], view.eye, true);
+        if (!noVegShadow) drawBushes(lightVP[c], view.eye, true, vegStats_.logsShadow);
         drawCarBodies(sim, progDepth, false);
         BindVertexArray(dynVao);
         DrawArrays(GL_TRIANGLES, 0, (GLsizei)partVerts.size());
@@ -3801,10 +3821,17 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         Uniform1i(uniformLocation(progTree, "uTreeFadeN"), n);
         if (n) Uniform4fv(uniformLocation(progTree, "uTreeFade"), n, list);
     }
-    geometryStats_.sceneryVertices += trees_.draw(vp, view.eye);
+    if (!noVeg) {
+        if (timed) vegTimer_[0].begin();
+        const forest::View tv{vp, view.eye, vegDetail(), 0, false, 1};
+        geometryStats_.sceneryVertices += trees_.draw(tv, &vegStats_.trees);
+        Uniform1i(uniformLocation(progTree, "uTreeFadeN"), 0);  // (the see-through trees' leaves only)
+        geometryStats_.sceneryVertices += bushes_.draw(tv, &vegStats_.bushes);
+        if (timed) vegTimer_[0].end(), vegStats_.gpuMs = vegTimer_[0].ms;
+    }
     UseProgram(progLit);
     drawBatches(sceneryVao, sceneryBatches, vp, false);
-    drawBushes(vp, view.eye, false);
+    if (!noVeg) drawBushes(vp, view.eye, false, vegStats_.logs);
     props.draw(vp, [&](GLuint prog) {
         setLighting(prog);
         Uniform1i(uniformLocation(prog, "uMap"), mapId);
@@ -3852,7 +3879,6 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         Uniform1i(uniformLocation(progGrass, "uPushN"), pushN);
         if (pushN) Uniform4fv(uniformLocation(progGrass, "uPush"), pushN * 2, push);
         BindVertexArray(grassVao);
-        static const bool timed = std::getenv("CZ_BENCH") != nullptr;
         if (timed) {
             if (!grassQuery_[0]) GenQueries(4, grassQuery_);
             const int f = grassQueryFrame_ = (grassQueryFrame_ + 1) % 4, old = (f + 1) % 4;  // (the one begun three frames back is done by now)
@@ -3872,9 +3898,43 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
             Uniform1f(uniformLocation(progGrass, "uCell"), r.cell);
             Uniform4f(uniformLocation(progGrass, "uRing"), r.in0, r.in1, r.out0, r.out1);
             Uniform4f(uniformLocation(progGrass, "uLook"), r.height, r.width, r.plain ? 1.0f : 0.0f, r.heads ? 1.0f : 0.0f);
-            // (indices: plain blades, 3 triangles of 9 indices from the first; full ones, 5 of 15, after them)
-            DrawElementsInstanced(GL_TRIANGLES, r.blades * (r.plain ? 9 : 15), GL_UNSIGNED_SHORT,
-                                  (const void*)(uintptr_t)(r.plain ? 0 : 8 * 9 * 2), r.side * r.side);
+            // The ring's grid in tiles: only those in view and in the ring's reach are drawn (a row's run of them at once).
+            const int T = 8, ts = (r.side + T - 1) / T;
+            const double c0x = (std::floor(view.eye.x / r.cell) - r.side / 2) * r.cell, c0z = (std::floor(view.eye.z / r.cell) - r.side / 2) * r.cell;
+            const GLint tileAt = uniformLocation(progGrass, "uTile");
+            for (int tz = 0; tz < T; tz++) {
+                int runX = -1;
+                for (int tx = 0; tx <= T; tx++) {
+                    bool in = false;
+                    if (tx < T && tx * ts < r.side && tz * ts < r.side) {
+                        // (a cell's margin round it: the shader finds the camera's cell itself; tufts sit anywhere in theirs)
+                        const double x0 = c0x + (tx * ts - 1) * r.cell, x1 = c0x + (std::min(r.side, tx * ts + ts) + 1) * r.cell;
+                        const double z0 = c0z + (tz * ts - 1) * r.cell, z1 = c0z + (std::min(r.side, tz * ts + ts) + 1) * r.cell;
+                        const double nx = std::max({x0 - view.eye.x, 0.0, view.eye.x - x1}), nz = std::max({z0 - view.eye.z, 0.0, view.eye.z - z1});
+                        const double fx = std::max(std::fabs(x0 - view.eye.x), std::fabs(x1 - view.eye.x)), fz = std::max(std::fabs(z0 - view.eye.z), std::fabs(z1 - view.eye.z));
+                        if (std::hypot(nx, nz) < r.out1 && std::hypot(fx, fz) > r.in0) {
+                            double lo = 1e9, hi = -1e9;
+                            for (int k = 0; k < 9; k++) {
+                                const double y = sim.world.height(x0 + (x1 - x0) * (k % 3) * 0.5, z0 + (z1 - z0) * (k / 3) * 0.5);
+                                lo = std::min(lo, y), hi = std::max(hi, y);
+                            }
+                            RenderBounds b;
+                            b.add(V3(x0, lo - 3.0, z0)), b.add(V3(x1, hi + 3.0, z1));  // (a blade stands under 2 m; the ground between the samples)
+                            in = b.visible(vp);
+                        }
+                    }
+                    if (in && runX < 0) runX = tx;
+                    if (!in && runX >= 0) {
+                        const int ix = runX * ts, w = std::min(r.side, tx * ts) - ix, iz = tz * ts, h = std::min(r.side - iz, ts);
+                        Uniform3f(tileAt, (float)ix, (float)iz, (float)w);
+                        // (indices: plain blades, 3 triangles of 9 indices from the first; full ones, 5 of 15, after them)
+                        DrawElementsInstanced(GL_TRIANGLES, r.blades * (r.plain ? 9 : 15), GL_UNSIGNED_SHORT,
+                                              (const void*)(uintptr_t)(r.plain ? 0 : 8 * 9 * 2), w * h);
+                        vegStats_.grass.add(1, (long long)r.blades * (r.plain ? 3 : 5) * w * h, w * h);
+                        runX = -1;
+                    }
+                }
+            }
         }
         if (timed) EndQuery(GL_TIME_ELAPSED);
         setLighting(progLit);
