@@ -1932,6 +1932,10 @@ void Car::updateTris() {
     }
 }
 
+// A panel whose structure is pushed in this far (m, on average) is caved in (under kPanelScuff
+// it's a scuff, nothing); each counts this share of the damage, to at most kPanelShareMax.
+constexpr double kPanelScuff = 0.02, kPanelCaved = 0.12, kPanelShare = 0.01, kPanelShareMax = 0.05;
+
 void Car::updateStats() {
     double sum = 0;
     int n = 0;
@@ -1952,7 +1956,31 @@ void Car::updateStats() {
             sum += std::min(1.0, std::fabs(b.L0 - b.Lorig) / b.Lorig * 8);
         }
     }
-    damage = n ? std::min(1.0, sum / n) : 0;
+    // The panels count a little too: each door, hood or fender pushed in (the body under it
+    // dented, by the chassis' rest shape) or torn off adds up to a percent, a few at most, so
+    // a caved-in door shows but a car that's all dents and no bent structure isn't a wreck.
+    double dents = 0;
+    if (chassisRest0.size() == chassis.rest.size() && !chassis.rest.empty()) {
+        V3 shift;
+        for (size_t k = 0; k < chassis.rest.size(); k++) shift += chassis.rest[k] - chassisRest0[k];
+        shift = shift / (double)chassis.rest.size();
+        for (const Panel& p : panels) {
+            if (p.state == 2) {
+                dents += 1;
+                continue;
+            }
+            double d = 0;
+            int m = 0;
+            for (int i : p.bodyNodes) {
+                const int k = i < (int)chassis.slot.size() ? chassis.slot[i] : -1;
+                if (k < 0) continue;
+                d += len(chassis.rest[k] - chassisRest0[k] - shift);
+                m++;
+            }
+            if (m) dents += clampd((d / m - kPanelScuff) / (kPanelCaved - kPanelScuff), 0, 1);
+        }
+    }
+    damage = n ? std::min(1.0, sum / n + std::min(kPanelShareMax, kPanelShare * dents)) : 0;
 
     for (Wheel& wh : wheels) {
         bool attached = false;
