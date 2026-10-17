@@ -27,6 +27,7 @@ const Info kInfo[KA_COUNT] = {
     {SC_F4, "STEERING ASSIST", "key_steeringassist", false},
     {SC_V, "WINCH", "key_winch", false},
     {SC_O, "TOW STRAP", "key_strap", false},
+    {SC_8, "THROTTLE LIMIT", "key_throttlecap", false},
 };
 }  // namespace
 
@@ -138,6 +139,20 @@ bool Keybinds::loadSetting(const std::string& name, int value) {
 }
 
 void Keybinds::sanitize() {
+    // (A settings file from before the throttle limit key, with that key bound to something else:
+    // the new action moves aside rather than throw away every binding.)
+    for (int a = 0; a < KA_COUNT; a++)
+        if (a != KA_THROTTLE_CAP && code[a] == code[KA_THROTTLE_CAP]) {
+            for (int f : {64, 65, 66}) {  // F7 F8 F9 (not the dev menu's F12)
+                bool used = false;
+                for (int b = 0; b < KA_COUNT; b++) used |= code[b] == f;
+                if (!used) {
+                    code[KA_THROTTLE_CAP] = f;
+                    break;
+                }
+            }
+            break;
+        }
     bool bad = false;
     for (int a = 0; a < KA_COUNT && !bad; a++) {
         if (!bindable(code[a]) && !(a == KA_MENU && code[a] == SC_ESCAPE)) bad = true;
