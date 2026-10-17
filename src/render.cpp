@@ -1,5 +1,11 @@
 #include "render.h"
 #include "watermesh.h"
+#include "texcomp.h"
+
+// Render targets and data textures in the VRAM report (texcomp.h); no mips on purpose.
+static void noteRT(const char* name, const char* fmt, int w, int h, int bytesPerTexel, int mips = 0, bool runtime = true) {
+    texcomp::note(name, fmt, w, h, mips, (size_t)w * h * bytesPerTexel * (mips > 1 ? 4 : 3) / 3, runtime);
+}
 #include <stdexcept>
 
 #include <algorithm>
@@ -2329,6 +2335,7 @@ void Renderer::ensureShadows(int size) {
         }
         BindTexture(GL_TEXTURE_2D, shadowTex[c]);
         TexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, size, size, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+        noteRT(c ? "shadow cascade 1" : "shadow cascade 0", "D24", size, size, 4);
         TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
@@ -2417,6 +2424,11 @@ void Renderer::ensureTargets(int w, int h, int samples) {
     aoW = std::max(1, w / 2), aoH = std::max(1, h / 2);
     aoTex = makeTex(aoW, aoH, GL_R8, GL_RED, GL_UNSIGNED_BYTE, GL_LINEAR);
     aoFbo = makeFbo(aoTex);
+    noteRT("scene color", "RGBA16F", w, h, 8), noteRT("scene depth", "D32F", w, h, 4), noteRT("ambient occlusion", "R8", aoW, aoH, 1);
+    if (targetSamples) texcomp::note("MSAA buffers", "RGBA16F+D32F", w, h, 0, (size_t)w * h * 12 * targetSamples, true);
+    size_t bloomBytes = 0;
+    for (int l = 0; l < kBloomLevels; l++) bloomBytes += (size_t)std::max(1, w >> (l + 1)) * std::max(1, h >> (l + 1)) * 4;
+    texcomp::note("bloom chain", "R11G11B10F", w / 2, h / 2, 0, bloomBytes, true);
     for (int l = 0; l < kBloomLevels; l++) {
         bloomW[l] = std::max(1, w >> (l + 1));
         bloomH[l] = std::max(1, h >> (l + 1));
@@ -2718,6 +2730,7 @@ void Renderer::updateWater(const World& world) {
     if (!terrainTex) GenTextures(1, &terrainTex);
     BindTexture(GL_TEXTURE_2D, terrainTex);
     TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, n, n, 0, GL_RGBA, GL_FLOAT, data.data());
+    noteRT("terrain height map", "RGBA32F", n, n, 16, 0, true);  // (data, read texel by texel: exact, no mips)
     TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -3372,6 +3385,7 @@ void Renderer::buildFont() {
     BindTexture(GL_TEXTURE_2D, fontTex);
     PixelStorei(GL_UNPACK_ALIGNMENT, 1);
     TexImage2D(GL_TEXTURE_2D, 0, GL_R8, W, H, 0, GL_RED, GL_UNSIGNED_BYTE, px.data());
+    noteRT("font", "R8", W, H, 1, 0, false);  // (pixel-exact: uncompressed, no mips)
     TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -4161,6 +4175,10 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
 
 void Renderer::ensureGround(int gq) {
     if (!gq || groundFailed) return;
+    {
+        static int lastAniso = -1;  // (anisotropy follows the ground quality: 4x, 8x, 16x)
+        if (gq != lastAniso) texcomp::setQuality(gq), lastAniso = gq;
+    }
     const int want = gq >= 2 ? 1024 : 512;
     if (groundTex.ok() && groundSize == want) return;
     std::string gerr;
@@ -4361,6 +4379,7 @@ GLuint Renderer::iconTexture(const std::string& key, const mk::Mesh& mesh) {
     }
     BindTexture(GL_TEXTURE_2D, it.tex);
     GenerateMipmap(GL_TEXTURE_2D);
+    noteRT(("icon " + key).c_str(), "RGBA8", N, N, 4, texenc::mipCount(N, N));
     BindFramebuffer(GL_FRAMEBUFFER, (GLuint)prevFbo);
     Viewport(prevVp[0], prevVp[1], prevVp[2], prevVp[3]);
     DepthFunc(GL_LEQUAL);

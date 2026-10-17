@@ -1,9 +1,11 @@
 #include "propdraw.h"
+#include "texcomp.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <set>
 #include <thread>
@@ -75,8 +77,9 @@ void main(){
     if (dot(T, T) > 1e-10) {
       T = normalize(T);
       vec3 B = cross(N, T) * (vTan.w < 0.0 ? -1.0 : 1.0);
-      vec3 t = texture(uNorm, vUv).xyz * 2.0 - 1.0;
-      n = normalize(T * t.x + B * t.y + N * max(t.z, 0.05));
+      vec2 t = texture(uNorm, vUv).xy * 2.0 - 1.0;  // (BC5: two channels; Z is rebuilt)
+      float tz = sqrt(max(1.0 - dot(t, t), 0.0025));
+      n = normalize(T * t.x + B * t.y + N * tz);
     }
   }
   float ao = 1.0, rough = 0.85;
@@ -223,6 +226,13 @@ struct Decoded {
     int w = 0, h = 0;
     std::vector<uint8_t> px;
     bool alpha = false;  // a real alpha channel (PNG)
+    texenc::Encoded enc;  // mips, in the upload format (made on the decode threads)
+};
+// What a texture is for: colour (sRGB), a normal map (RG; the shader rebuilds Z), or data (roughness, occlusion).
+enum Role { ROLE_COLOR, ROLE_NORMAL, ROLE_DATA };
+struct Want {
+    Role role;
+    float cutoff;
 };
 
 void decode(const std::string& dir, Decoded& d, int maxSize) {
@@ -250,64 +260,56 @@ void decode(const std::string& dir, Decoded& d, int maxSize) {
     }
 }
 
-// Uploads with mipmaps. Cut-out textures keep their coverage down the mip chain (each level's
-// alpha is scaled so as many texels pass the cutoff as at the top), so leaves don't thin away
-// into the distance.
-GLuint upload(const Decoded& d, bool srgb, float cutoff) {
-    GLuint t = 0;
-    GenTextures(1, &t);
-    BindTexture(GL_TEXTURE_2D, t);
-    PixelStorei(GL_UNPACK_ALIGNMENT, 4);
-    const GLenum internal = srgb ? GL_SRGB8_ALPHA8 : GL_RGBA8;
-    TexImage2D(GL_TEXTURE_2D, 0, internal, d.w, d.h, 0, GL_RGBA, GL_UNSIGNED_BYTE, d.px.data());
-    if (d.alpha) {
-        auto coverage = [&](const std::vector<uint8_t>& px, float scale) {
-            size_t n = 0;
-            for (size_t i = 3; i < px.size(); i += 4) n += px[i] * scale > cutoff * 255.0f;
-            return (double)n / std::max<size_t>(1, px.size() / 4);
-        };
-        const double want = coverage(d.px, 1.0f);
-        std::vector<uint8_t> cur = d.px;
-        int w = d.w, h = d.h, level = 0;
-        while (w > 1 || h > 1) {
-            const int w2 = std::max(1, w / 2), h2 = std::max(1, h / 2);
-            std::vector<uint8_t> o((size_t)w2 * h2 * 4);
-            for (int y = 0; y < h2; y++)
-                for (int x = 0; x < w2; x++) {
-                    const int x0 = std::min(2 * x, w - 1), x1 = std::min(2 * x + 1, w - 1), y0 = std::min(2 * y, h - 1), y1 = std::min(2 * y + 1, h - 1);
-                    const uint8_t* q[4] = {&cur[((size_t)y0 * w + x0) * 4], &cur[((size_t)y0 * w + x1) * 4], &cur[((size_t)y1 * w + x0) * 4], &cur[((size_t)y1 * w + x1) * 4]};
-                    // Colour weighted by coverage, so the empty texels' colour doesn't bleed in.
-                    int asum = q[0][3] + q[1][3] + q[2][3] + q[3][3];
-                    for (int k = 0; k < 3; k++) {
-                        int s = 0;
-                        for (int j = 0; j < 4; j++) s += asum ? q[j][k] * q[j][3] : q[j][k];
-                        o[((size_t)y * w2 + x) * 4 + k] = (uint8_t)(asum ? s / asum : s / 4);
-                    }
-                    o[((size_t)y * w2 + x) * 4 + 3] = (uint8_t)((asum + 2) / 4);
+// The mip chain: cut-out textures keep their coverage down it (each level's alpha is scaled so as
+// many texels pass the cutoff as at the top), so leaves don't thin away into the distance.
+std::vector<std::vector<uint8_t>> cutoutChain(const Decoded& d, float cutoff) {
+    auto coverage = [&](const std::vector<uint8_t>& px, float scale) {
+        size_t n = 0;
+        for (size_t i = 3; i < px.size(); i += 4) n += px[i] * scale > cutoff * 255.0f;
+        return (double)n / std::max<size_t>(1, px.size() / 4);
+    };
+    const double want = coverage(d.px, 1.0f);
+    std::vector<std::vector<uint8_t>> levels{d.px};
+    std::vector<uint8_t> cur = d.px;
+    int w = d.w, h = d.h;
+    while (w > 1 || h > 1) {
+        const int w2 = std::max(1, w / 2), h2 = std::max(1, h / 2);
+        std::vector<uint8_t> o((size_t)w2 * h2 * 4);
+        for (int y = 0; y < h2; y++)
+            for (int x = 0; x < w2; x++) {
+                const int x0 = std::min(2 * x, w - 1), x1 = std::min(2 * x + 1, w - 1), y0 = std::min(2 * y, h - 1), y1 = std::min(2 * y + 1, h - 1);
+                const uint8_t* q[4] = {&cur[((size_t)y0 * w + x0) * 4], &cur[((size_t)y0 * w + x1) * 4], &cur[((size_t)y1 * w + x0) * 4], &cur[((size_t)y1 * w + x1) * 4]};
+                // Colour weighted by coverage, so the empty texels' colour doesn't bleed in.
+                int asum = q[0][3] + q[1][3] + q[2][3] + q[3][3];
+                for (int k = 0; k < 3; k++) {
+                    int s = 0;
+                    for (int j = 0; j < 4; j++) s += asum ? q[j][k] * q[j][3] : q[j][k];
+                    o[((size_t)y * w2 + x) * 4 + k] = (uint8_t)(asum ? s / asum : s / 4);
                 }
-            // The alpha scale that keeps the coverage.
-            float lo = 0.5f, hi = 8.0f;
-            for (int it = 0; it < 14; it++) {
-                const float mid = (lo + hi) * 0.5f;
-                (coverage(o, mid) < want ? lo : hi) = mid;
+                o[((size_t)y * w2 + x) * 4 + 3] = (uint8_t)((asum + 2) / 4);
             }
-            std::vector<uint8_t> up = o;
-            for (size_t i = 3; i < up.size(); i += 4) up[i] = (uint8_t)std::min(255.0f, up[i] * hi);
-            level++;
-            TexImage2D(GL_TEXTURE_2D, level, internal, w2, h2, 0, GL_RGBA, GL_UNSIGNED_BYTE, up.data());
-            cur.swap(o);
-            w = w2, h = h2;
+        // The alpha scale that keeps the coverage.
+        float lo = 0.5f, hi = 8.0f;
+        for (int it = 0; it < 14; it++) {
+            const float mid = (lo + hi) * 0.5f;
+            (coverage(o, mid) < want ? lo : hi) = mid;
         }
-    } else {
-        GenerateMipmap(GL_TEXTURE_2D);
+        std::vector<uint8_t> up = o;
+        for (size_t i = 3; i < up.size(); i += 4) up[i] = (uint8_t)std::min(255.0f, up[i] * hi);
+        levels.push_back(std::move(up));
+        cur.swap(o);
+        w = w2, h = h2;
     }
-    TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-    const float aniso = maxTextureAnisotropy();
-    if (aniso > 1) TexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, std::min(aniso, 8.0f));
-    return t;
+    return levels;
+}
+
+// Mips and block compression (BC1 colour, BC3 with alpha, BC5 normals), on a decode thread.
+void encodeTex(Decoded& d, const Want& w) {
+    const bool srgb = w.role == ROLE_COLOR;
+    auto levels = d.alpha ? cutoutChain(d, w.cutoff) : texenc::mipChain(d.px.data(), d.w, d.h, srgb);
+    const texenc::Kind kind = w.role == ROLE_NORMAL ? texenc::Kind::Normal2 : w.role == ROLE_DATA ? texenc::Kind::Data : d.alpha ? texenc::Kind::ColorAlpha : texenc::Kind::Color;
+    d.enc = texcomp::make(kind, srgb, levels, d.w, d.h);
+    std::vector<uint8_t>().swap(d.px);
 }
 
 bool startsWith(const std::string& s, const char* p) { return s.compare(0, std::strlen(p), p) == 0; }
@@ -363,14 +365,14 @@ bool PropRenderer::ensureLoaded(int q) {
     }
     // Textures: every file once, decoded on a few threads.
     std::vector<Decoded> dec;
-    std::map<std::string, std::pair<bool, float>> want;  // file -> (sRGB, alpha cutoff)
+    std::map<std::string, Want> want;  // file -> its role, alpha cutoff
     for (const props::Model& m : src) {
         for (const props::Material& mt : m.mats)
             for (int k = 0; k < 3; k++)
-                if (!mt.tex[k].empty()) want[mt.tex[k]] = {k == 0, mt.alphaMode ? mt.cutoff : 0.5f};
+                if (!mt.tex[k].empty()) want[mt.tex[k]] = {k == 0 ? ROLE_COLOR : k == 1 ? ROLE_NORMAL : ROLE_DATA, mt.alphaMode ? mt.cutoff : 0.5f};
         if (m.kind == props::KIND_TREE) {
-            want[m.name + "_bb_d.png"] = {true, 0.5f};
-            want[m.name + "_bb_n.jpg"] = {false, 0.5f};
+            want[m.name + "_bb_d.png"] = {ROLE_COLOR, 0.5f};
+            want[m.name + "_bb_n.jpg"] = {ROLE_DATA, 0.5f};  // (billboard normals use all three channels)
         }
     }
     for (const auto& w : want) {
@@ -379,12 +381,17 @@ bool PropRenderer::ensureLoaded(int q) {
         dec.push_back(d);
     }
     const int maxSize = kTexSize[std::min(std::max(q, 1), 3)];
+    const auto t0 = std::chrono::steady_clock::now();
+    texcomp::s3tcAvailable();  // (asks GL: here, not on the threads)
     {
         std::vector<std::thread> pool;
         const int nt = 4;
         for (int t = 0; t < nt; t++)
             pool.emplace_back([&, t] {
-                for (size_t i = t; i < dec.size(); i += nt) decode(dir, dec[i], maxSize);
+                for (size_t i = t; i < dec.size(); i += nt) {
+                    decode(dir, dec[i], maxSize);
+                    if (dec[i].w) encodeTex(dec[i], want.at(dec[i].file));
+                }
             });
         for (std::thread& t : pool) t.join();
     }
@@ -393,9 +400,11 @@ bool PropRenderer::ensureLoaded(int q) {
             std::fprintf(stderr, "props: missing texture %s\n", d.file.c_str());
             continue;
         }
-        const auto& w = want[d.file];
-        texCache[d.file] = upload(d, w.first, w.second);
+        texCache[d.file] = texcomp::upload2D(d.enc, "prop " + d.file);
     }
+    if (std::getenv("CZ_TEXSTATS"))
+        std::fprintf(stderr, "texstats: %zu prop textures, %.0f ms (decode, mips, encode, upload)\n", dec.size(),
+                     std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
     loadedQuality = q;
     // Meshes.
     for (props::Model& m : src) {
