@@ -40,6 +40,8 @@ int SDL_GL_SetAttribute(int attr, int value);
 SDL_GLContext SDL_GL_CreateContext(SDL_Window* window);
 void SDL_GL_DeleteContext(SDL_GLContext context);
 int SDL_GL_SetSwapInterval(int interval);
+int SDL_GL_GetSwapInterval(void);
+void SDL_Delay(uint32_t ms);
 void SDL_GL_SwapWindow(SDL_Window* window);
 void* SDL_GL_GetProcAddress(const char* proc);
 void SDL_GL_GetDrawableSize(SDL_Window* window, int* w, int* h);

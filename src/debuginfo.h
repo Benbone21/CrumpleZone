@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "frameprof.h"
 #include "softbody.h"
 
 class LevelRun;
@@ -62,6 +63,7 @@ struct DebugInputs {
     double simSeconds = 0;              // physics time since the map was loaded
     FrameHistory::Stats frame;
     double physicsMs = 0, drawCpuMs = 0;  // smoothed
+    const FrameProfile* profile = nullptr;  // the frame's stages (CPU, and GPU when timer queries report)
     int substeps = 0;                   // physics steps taken last frame
     int physicsThreads = 1, physicsThreadLimit = 1;
     int width = 0, height = 0;

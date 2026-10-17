@@ -177,6 +177,19 @@ void gatherLeft(const DebugInputs& in, DebugColumn& L) {
     L.add(f.fps >= 55 ? DT_GOOD : f.fps >= 30 ? DT_WARN : DT_BAD, "%.0f FPS  AVG %.0f  1%% LOW %.0f  (%.1f MS, WORST %.1f)", f.fps, f.avgFps, f.lowFps, f.avgMs, f.worstMs);
     L.add(DT_TEXT, "SIM %.2f MS  DRAW CPU %.2f MS  %d STEPS AT %.0f HZ", in.physicsMs, in.drawCpuMs, in.substeps, 1.0 / sim.h);
     L.add(DT_TEXT, "PHYSICS THREADS %d OF %d   %dx%d", in.physicsThreads, in.physicsThreadLimit, in.width, in.height);
+    if (in.profile) {  // where the frame goes, two stages a line: CPU ms (/ GPU ms where the GPU works in it)
+        const FrameProfile& fp = *in.profile;
+        L.add(DT_DIM, "STAGE MS  CPU%s", fp.gpuValid ? " / GPU" : "  (NO GPU TIMERS)");
+        char half[2][48];
+        for (int i = 0; i < FP_COUNT; i += 2) {
+            for (int k = 0; k < 2; k++) {
+                const FramePass p = (FramePass)(i + k);
+                if (fp.gpuValid && framePassDraws(p)) std::snprintf(half[k], sizeof half[k], "%-10s %5.2f / %5.2f", framePassName(p), fp.cpu[p], fp.gpu[p]);
+                else std::snprintf(half[k], sizeof half[k], "%-10s %5.2f", framePassName(p), fp.cpu[p]);
+            }
+            L.add(DT_TEXT, "  %-26s %s", half[0], half[1]);
+        }
+    }
     if (*in.gpu) L.add(DT_DIM, "%.52s", in.gpu);
     if (in.terrainFullTris) {
         L.add(DT_TEXT, "RENDER %.2fX  SHADOWS %d  MSAA %d", in.renderScale, in.shadows, in.msaa);
