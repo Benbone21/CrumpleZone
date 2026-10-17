@@ -294,7 +294,7 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
     if (page == 0) {
         const auto& cat = vehicleCatalog();
         button(RESUME_ROW, "RESUME");
-        if (editorSuspended) button(EDITBACK_ROW, "BACK TO THE EDITOR", "F2: YOUR EDITS ARE KEPT");
+        if (editorSuspended) button(EDITBACK_ROW, "BACK TO THE EDITOR", "F1: YOUR EDITS ARE KEPT");
         if (levelActive) {
             button(LRESTART_ROW, "RESTART LEVEL", "OR R TWICE");
             button(LQUIT_ROW, "QUIT LEVEL", "BACK TO FREE DRIVE");

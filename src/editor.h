@@ -83,7 +83,7 @@ public:
         scriptMods = false, shift = ctrl = false;
     }
     // Scripts: Shift / Ctrl kept down (for mouse gestures) until released.
-    void holdMods(bool shiftDown, bool ctrlDown) { holdShift = shiftDown, holdCtrl = ctrlDown; }
+    void holdMods(bool shiftDown, bool ctrlDown, bool altDown = false) { holdShift = shiftDown, holdCtrl = ctrlDown, holdAlt = altDown; }
     // The brush, set from outside (screenshots, scripts).
     void setBrush(BrushShape sh, BrushFall fl, BrushStyle st, double r, double dens = 0.5, double str = 1.0) {
         shape = sh, fall = fl, style = st, radius = r, density = dens, strength = str;
@@ -152,10 +152,25 @@ private:
     V3 placeAt;                        // where a click puts things: the ground at the mouse, or the top of an object in the way
     bool placeOn = false;              // ...it's an object's surface
     bool dragStarted = false, alt = false;
+    // Axis locks (Shift X, Alt Y, Ctrl Z): a left-drag of the selection moves along one world axis, driven by the mouse going up and down; a right-drag
+    // turns it about that axis (none: about Y). The line through the object shows which.
+    EditAxis lockPrev = AXIS_NONE;     // the lock last frame of the move drag (a change carries on from where it is)
+    double lockAcc = 0, lockApplied = 0;  // metres the mouse has asked along the axis, and what's been moved
+    float lockLastY = 0;
+    bool moveEdit = false;             // the move drag's undo step is open
+    bool lockBlock = false;            // the press was Shift on an object that wasn't selected (adding it): no X lock for this drag
+    bool shiftToggle = false;          // the press was Shift on a selected object: it comes out of the selection on release if it was only a click
+    EditPick togglePick;
+    bool rotCand = false, rotating = false, rotEdit = false;  // right button down on an object; turning it (once the mouse has moved); the undo step is open
+    DragGate rpress;
+    float rotLastX = 0;
+    EditAxis axisShown = AXIS_NONE;    // the line to draw this frame, and whether it's only the preview (modifier held over the selection)
+    bool axisPreview = false;
+    std::string axisNote;              // "MOVE: X AXIS" / "TURN: ABOUT Z" for the status line
     double dragRide = 0;
     V3 viewHit;                        // where the middle of the view meets the ground
     bool haveViewHit = false;
-    bool scriptMods = false, holdShift = false, holdCtrl = false;
+    bool scriptMods = false, holdShift = false, holdCtrl = false, holdAlt = false;
     DragGate press;                    // the left button went down on something draggable: a drag once the mouse has moved
     V3 pressAt;                        // ...where the ground was under it, and how far over the ground it rode
     double pressRide = 0;
@@ -235,6 +250,11 @@ private:
     void objectKey(int sc);
     void selectInBox(float x0, float y0, float x1, float y1, bool add);
     bool isSelected(const EditPick& p) const;
+    EditAxis moveLockAxis() const;     // what the modifiers say to a left-drag of the selection
+    EditAxis turnAxis() const;         // ...and to a right-drag
+    Shape shapeOfPick(const EditPick& p) const;
+    bool selMiddle(V3& c, double& radius) const;  // the middle of the selection and how far it reaches
+    void endRotate();
     void panelRect(float x, float y, float w, float h) { uiRects.push_back({x, y, x + w, y + h}); }
     void clippedTri(Renderer& r, const float* px, const float* py, float cr, float cg, float cb, float a);  // (a triangle minus the panels)
     void drawShape(Renderer& r, const Shape& s, bool fill, float cr, float cg, float cb, float a, float size);

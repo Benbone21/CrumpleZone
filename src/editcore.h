@@ -104,6 +104,18 @@ struct DragGate {
 enum ObjOp { OP_YAW, OP_PITCH, OP_ROLL, OP_LIFT, OP_SCALE, OP_STRETCH_X, OP_STRETCH_Y, OP_STRETCH_Z, OP_SEAT };
 // (OP_SEAT: sit it back on the ground, as placed; the others raise or lower it by any amount, in the air or in the ground, and it stays.)
 
+// A world axis: what Shift (X), Alt (Y) and Ctrl (Z) lock a drag to, and what a right-drag turns about.
+enum EditAxis { AXIS_NONE, AXIS_X, AXIS_Y, AXIS_Z };
+V3 axisDir(EditAxis a);
+const char* axisName(EditAxis a);  // "X"
+// An axis-locked move is driven by the mouse going up and down: how far along the axis (m) for a mouse move of `dy` px (down is +), given the axis'
+// vertical run on the screen (`sy` px per metre, down is +) and the screen's px per metre there (`pxPerM`). The thing follows the mouse; an axis that
+// is nearly edge-on to the view (it runs less than 0.3 of the scale up or down the screen) falls back to mouse-up = +axis at that rate.
+double axisDragMetres(double sy, double pxPerM, double dy);
+// Which way a sideways mouse move turns an object about `axis` so the side facing the camera follows it (+1 or -1; +1 when the turn
+// is in the screen's plane). `toCam`: unit vector from the object to the camera; `right`: the camera's right.
+double turnSign(EditAxis axis, const V3& toCam, const V3& right);
+
 // An object's outline for drawing over the view: its edges, and for the convex ones (rocks, blocks) its faces.
 struct Shape {
     std::vector<std::pair<V3, V3>> edges;
@@ -197,6 +209,15 @@ public:
     // Heights are offsets from the ground (LevelObject::rel), so sculpting carries every object along; tipping a block keeps the height it was set
     // at. A rock stacked on another keeps the rise it was given (its `top`); it doesn't follow if the lower rock is moved, but it's never re-seated into it.
     void transformObjects(const std::vector<int>& ks, ObjOp op, double amount, const std::string& key = "xform");
+    // Turns objects about a world axis through each one's middle (a right-drag): Y is the same as a turn (a group swings round its middle); X and Z tip
+    // and roll rocks, blocks and logs (each in place; other kinds only turn about Y). Returns false if none of them can turn about that axis.
+    bool rotateObjects(const std::vector<int>& ks, EditAxis axis, double angle, const std::string& key = "rotate");
+    // One object turned that way (normalized, re-grounded); the pure part of rotateObjects.
+    LevelObject rotated(LevelObject o, EditAxis axis, double angle);
+    static bool canRotate(int objKind, EditAxis axis);
+    // Moves objects `amount` m along a world axis, as a locked drag does: X, Z on the ground (heights are kept as offsets from it), Y up or down
+    // (it stays there: a rock's `top`, a block's or tree's `lift`, a log's two lifts).
+    void moveAlong(const std::vector<int>& ks, EditAxis axis, double amount, const std::string& key = "drag");
     // One object after an op (it must be normalized: see below), re-grounded; the pure part of transformObjects.
     LevelObject transformed(LevelObject o, ObjOp op, double amount);
     // The first solid thing (a rock's hull, a solid box, a log) along a ray, skipping some level objects: where, and the surface normal.

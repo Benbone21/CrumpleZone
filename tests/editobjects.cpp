@@ -1157,3 +1157,104 @@ SCENARIO(editorNameReplace, "editor/name-prefill", "The suggested save name is s
     f.type('Z');
     ctx.check("and then typing appends", f.text == sug.substr(0, sug.size() - 1) + "Z", f.text);
 }
+
+SCENARIO(editorAxisLocks, "editor/axis-locks", "An axis-locked move changes only that coordinate (Y: the height, which saves and loads); a turn about X, Y or Z sets yaw, pitch or roll as the world axis says, for each kind; a whole drag is one undo step") {
+    World w(MAP_MOUNTAIN);
+    Level lv;
+    lv.map = MAP_MOUNTAIN;
+    EditCore ed;
+    ed.begin(w, lv);
+    LevelObject rock, box, log, tree;
+    rock.kind = OBJ_ROCK, rock.p = V3(30, 0, -300), rock.size = V3(1.5, 1, 1.2), rock.top = 1.2, rock.seed = 5, rock.sub = 1;
+    box.kind = OBJ_BOX, box.p = V3(40, 0, -300), box.size = V3(2, 0.4, 1), box.col[0] = 0.6f;
+    log.kind = OBJ_LOG, log.p = V3(50, 0, -306), log.p2 = V3(50, 0, -294), log.size = V3(0.3, 0, 0);
+    tree.kind = OBJ_TREE, tree.p = V3(60, 0, -300), tree.size = V3(0, 9, 0);
+    LevelObject flat = ed.grounded(box);
+    flat.p = V3(70, 0, -300);
+    const int kr = ed.addObject(rock), kb = ed.addObject(ed.grounded(box)), kl = ed.addObject(ed.grounded(log)), kt = ed.addObject(tree), kf = ed.addObject(ed.grounded(flat));
+    const std::vector<int> all = {kr, kb, kl, kt};
+    // Moves: X changes x only, Z changes z only.
+    const LevelObject r0 = ed.level.objects[kr], b0 = ed.level.objects[kb], l0 = ed.level.objects[kl];
+    ed.moveAlong(all, AXIS_X, 3.0);
+    ctx.check("an X move changes only x", std::fabs(ed.level.objects[kr].p.x - r0.p.x - 3) < 1e-9 && std::fabs(ed.level.objects[kr].p.z - r0.p.z) < 1e-9 &&
+                                          std::fabs(ed.level.objects[kb].p.x - b0.p.x - 3) < 1e-9 && std::fabs(ed.level.objects[kb].p.z - b0.p.z) < 1e-9 &&
+                                          std::fabs(ed.level.objects[kl].p2.x - l0.p2.x - 3) < 1e-9 && std::fabs(ed.level.objects[kl].p2.z - l0.p2.z) < 1e-9);
+    ed.moveAlong(all, AXIS_Z, -2.0);
+    ctx.check("a Z move changes only z", std::fabs(ed.level.objects[kb].p.z - b0.p.z + 2) < 1e-9 && std::fabs(ed.level.objects[kb].p.x - b0.p.x - 3) < 1e-9 && std::fabs(ed.level.objects[kt].p.z + 302) < 1e-9);
+    ctx.check("a locked move keeps the height over the ground", std::fabs(ed.level.objects[kb].lift - b0.lift) < 1e-6 && std::fabs(ed.level.objects[kr].top - r0.top) < 1e-9);
+    // Y: up and down, in the air, and it stays (save, load).
+    ed.moveAlong(all, AXIS_Y, 2.5);
+    ed.moveAlong({kb}, AXIS_Y, -0.5);
+    const Level back = roundTrip(ed.level);
+    ctx.check("a Y move changes the height, not x or z", std::fabs(ed.level.objects[kb].p.x - b0.p.x - 3) < 1e-9 && std::fabs(ed.level.objects[kb].p.z - b0.p.z + 2) < 1e-9 &&
+                                                        std::fabs(ed.level.objects[kb].lift - 2.0) < 1e-6 && std::fabs(ed.level.objects[kr].top - r0.top - 2.5) < 1e-9);
+    auto find = [&](int kind, double x) -> const LevelObject* {  // (the file lists them by kind: find them by what they are)
+        for (const LevelObject& q : back.objects)
+            if (q.kind == kind && std::fabs((q.kind == OBJ_LOG ? q.p2.x : q.p.x) - x) < 0.5) return &q;
+        return nullptr;
+    };
+    const LevelObject *bb = find(OBJ_BOX, 43), *br = find(OBJ_ROCK, 33), *bl = find(OBJ_LOG, 53), *bt = find(OBJ_TREE, 63);
+    ctx.check("the height survives save and load", bb && br && bl && bt && std::fabs(bb->lift - 2.0) < 1e-2 && std::fabs(br->top - r0.top - 2.5) < 1e-2 &&
+                                                   std::fabs(bl->lift - l0.lift - 2.5) < 1e-2 && std::fabs(bt->lift - 2.5) < 1e-2);
+    ed.moveAlong(all, AXIS_Y, -10.0);
+    ctx.check("...and it can go under the ground too", ed.level.objects[kb].lift < -7 && ed.level.objects[kr].top < 0);
+    // Turns. A block turned about a world axis through its middle: yaw about Y, roll about X, pitch about Z (the code's names for those turns).
+    const double a = 0.5;
+    ed.rotateObjects({kf}, AXIS_Y, a);
+    LevelObject o = ed.level.objects[kf];
+    ctx.check("about Y: yaw only", std::fabs(o.yaw - a) < 1e-9 && std::fabs(o.pitch) < 1e-9 && std::fabs(o.roll) < 1e-9);
+    ed.rotateObjects({kf}, AXIS_Y, -a);
+    ed.rotateObjects({kf}, AXIS_X, a);
+    o = ed.level.objects[kf];
+    ctx.check("about X: roll", std::fabs(o.roll - a) < 1e-6 && std::fabs(o.yaw) < 1e-6 && std::fabs(o.pitch) < 1e-6, std::to_string(o.roll));
+    ed.rotateObjects({kf}, AXIS_X, -a);
+    ed.rotateObjects({kf}, AXIS_Z, a);
+    o = ed.level.objects[kf];
+    ctx.check("about Z: pitch", std::fabs(o.pitch - a) < 1e-6 && std::fabs(o.yaw) < 1e-6 && std::fabs(o.roll) < 1e-6, std::to_string(o.pitch));
+    // A turned block turned again: the world axis, not its own (the result is the old axes turned by the rotation).
+    ed.rotateObjects({kf}, AXIS_Z, -a);
+    ed.rotateObjects({kf}, AXIS_Y, 0.7);
+    const LevelObject before = ed.level.objects[kf];
+    ed.rotateObjects({kf}, AXIS_X, 0.4);
+    const LevelObject after = ed.level.objects[kf];
+    auto axes = [](const LevelObject& q, V3 ax[3]) {
+        V3 v[3] = {V3(1, 0, 0), V3(0, 1, 0), V3(0, 0, 1)};
+        for (int i = 0; i < 3; i++) {
+            v[i] = rotateAxis(v[i], V3(1, 0, 0), q.roll);
+            v[i] = rotateAxis(v[i], V3(0, 0, 1), q.pitch);
+            ax[i] = rotateAxis(v[i], V3(0, 1, 0), q.yaw);
+        }
+    };
+    V3 a0[3], a1[3];
+    axes(before, a0), axes(after, a1);
+    double worst = 0;
+    for (int i = 0; i < 3; i++) worst = std::max(worst, len(rotateAxis(a0[i], V3(1, 0, 0), 0.4) - a1[i]));
+    ctx.metric("a turn about world X acts on the turned block's axes", worst, "", 0, 1e-6);
+    // Rocks do the same; a log tips about the world axis; a tree only turns about Y (nothing to do about X).
+    ed.rotateObjects({kr}, AXIS_Z, 0.3);
+    ctx.check("a rock pitches about Z", std::fabs(ed.level.objects[kr].pitch - 0.3) < 1e-6 && ed.level.objects[kr].sub == 1);
+    ed.rotateObjects({kl}, AXIS_X, 0.3);
+    const LevelObject lg = ed.level.objects[kl];
+    ctx.check("a log along Z swings about X: its ends change height", std::fabs(lg.p.y - lg.p2.y) > 1 && std::fabs(lg.p.x - lg.p2.x) < 1e-6, std::to_string(lg.p.y - lg.p2.y));
+    const bool tx = ed.rotateObjects({kt}, AXIS_X, 0.3), tz = ed.rotateObjects({kt}, AXIS_Z, 0.3);
+    ctx.check("a tree can't tip about X or Z", !tx && !tz, std::to_string(ed.level.objects[kt].kind));
+    ctx.check("...but it turns about Y", EditCore::canRotate(OBJ_TREE, AXIS_Y) == false && EditCore::canRotate(OBJ_BOX, AXIS_Y));
+    // A whole drag (many small steps) is one undo step.
+    const LevelObject s0 = ed.level.objects[kf];
+    const std::string top0 = ed.undoName();
+    ed.beginEdit("TURN", "turn");
+    for (int i = 0; i < 20; i++) ed.rotateObjects({kf, kr}, i % 2 ? AXIS_X : AXIS_Y, 0.05, "turn");
+    ed.endEdit();
+    ctx.check("the drag changed it", std::fabs(ed.level.objects[kf].yaw - s0.yaw) > 0.1 || std::fabs(ed.level.objects[kf].roll - s0.roll) > 0.1);
+    ed.undo();
+    const LevelObject s1 = ed.level.objects[kf];
+    ctx.check("one undo puts it all back", sameFields(s0, s1) && ed.undoName() == top0, ed.undoName());
+    // The mouse side: the moved thing follows the mouse; an edge-on axis gives mouse-up = +axis; the turn goes the way the near side is pulled.
+    ctx.check("axis pointing up the screen: mouse up goes +", axisDragMetres(-40, 100, -20) > 0 && axisDragMetres(-40, 100, 20) < 0);
+    ctx.check("axis pointing down the screen: mouse down goes +", axisDragMetres(40, 100, 20) > 0 && axisDragMetres(40, 100, -20) < 0);
+    ctx.metric("it follows the mouse pixel for pixel", axisDragMetres(-40, 100, -20) * -40, "px", -20.01, -19.99);
+    ctx.check("edge-on axis: mouse up is +axis", axisDragMetres(2, 100, -10) > 0 && axisDragMetres(-2, 100, -10) > 0 && axisDragMetres(0, 100, 10) < 0);
+    ctx.check("turning about Y: sideways to the right turns it so the facing side goes right", turnSign(AXIS_Y, V3(-1, 0, 0), V3(0, 0, 1)) > 0);
+    ctx.check("a turn in the screen's plane falls back to +", turnSign(AXIS_X, V3(-1, 0, 0), V3(0, 0, 1)) > 0);
+    ctx.check("the other way round it flips", turnSign(AXIS_Z, V3(-1, 0, 0), V3(0, 1, 0)) != turnSign(AXIS_Z, V3(1, 0, 0), V3(0, 1, 0)));
+}

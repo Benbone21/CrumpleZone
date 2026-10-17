@@ -2003,7 +2003,7 @@ int main(int argc, char** argv) {
     };
     refreshLevelsLater = refreshLevels;
     auto runSlot = [&]() { return net.active() ? std::max(0, net.self) : 0; };
-    bool editorSuspended = false;  // the editor is waiting while its level is tried out (F2 comes back to it)
+    bool editorSuspended = false;  // the editor is waiting while its level is tried out (F1 comes back to it)
     auto playLevel = [&](const Level& lv, const EditCore::PlaySpot* spot = nullptr) {
         editorSuspended = false;
         Car& me = sim.cars[sim.player];
@@ -2524,7 +2524,7 @@ int main(int argc, char** argv) {
         double dt = scripted ? 1.0 / 60.0 : std::min(0.1, frameTimeMs / 1000.0);
         last = now;
         if (dt > 0) fps += ((float)(1.0 / dt) - fps) * 0.05f;
-        hud.newBuild = watch.poll();
+        hud.newBuild = watch.poll() && !editorSuspended;  // (not during a playtest: the editor would be lost)
         if (hud.newBuild && std::getenv("CZ_AUTORELOAD")) reload = true, running = false;  // (testing the reload)
 
         // ---- gamepad: what the pad is doing this frame (its presses are fed in as keys below) ----
@@ -2841,8 +2841,12 @@ int main(int argc, char** argv) {
                             break;
                         }
                         case SC_H: hud.showHelp = !hud.showHelp; break;
-                        case SC_F2:
-                            if (!returnToEditor()) openEditor(editorKeyLevel(), false, true);
+                        case SC_F1:  // leaves a playtest for the editor
+                            if (editorSuspended && !editor.active && !returnToEditor()) hud.toast("CAN'T GO BACK TO THE EDITOR HERE");
+                            break;
+                        case SC_F2:  // free driving: opens the editor here (in a playtest, F1 is the way back)
+                            if (editorSuspended && !editor.active) hud.toast("F1: BACK TO THE EDITOR");
+                            else openEditor(editorKeyLevel(), false, true);
                             break;
                         case SC_J:
                             if (playback.active()) {  // (a scenario: J opens its checks list)
@@ -2858,7 +2862,8 @@ int main(int argc, char** argv) {
                             saveSettings();
                             break;
                         case SC_F5:  // load the new build (see BuildWatch)
-                            if (hud.newBuild) reload = true, running = false;
+                            if (editorSuspended) hud.toast("NO RELOADING DURING A PLAYTEST: F1 BACK TO THE EDITOR FIRST");  // (a reload would lose the editor and its unsaved edits)
+                            else if (hud.newBuild) reload = true, running = false;
                             else hud.toast(watch.exe.empty() ? "RELOADING ISN'T AVAILABLE HERE" : "NO NEW BUILD YET");
                             break;
                         case SC_P:
@@ -3929,7 +3934,7 @@ int main(int argc, char** argv) {
             // (QA driver: CZ_EDQA names a file of commands, one per frame, run with --script edqa --shot-frames 99999 (`shot` takes one, `quit` ends). For checking the
             // editor the way a user does it, offscreen: menu_edit NAME / menu_real_edit N / menu_new / menu_section / menu_back / f2 / play_level NAME, tool N, ptr, pal NAME,
             // cam / camat x z dist high yawdeg / camobj k, mouse fx fy / mousepx dx dy / mouseobj k / mousebase kind idx / mousepoint x y z, down, up, wheel, key NAME [shift] [ctrl],
-            // hold [shift] [ctrl], gates, keys letters, save / saveas / undo / redo / play [start], and the dumps: state, world, objs [a [b]], rocksnear x z r, pals, models, levels, carpos, autosaves.)
+            // hold [shift] [ctrl] [alt] (right button: down 3 / up 3), gates, keys letters, save / saveas / undo / redo / play [start], and the dumps: state, world, objs [a [b]], rocksnear x z r, pals, models, levels, carpos, autosaves.)
             static std::vector<std::string> cmds;
             static size_t ci = 0;
             static int waitN = 0;
@@ -3946,7 +3951,7 @@ int main(int argc, char** argv) {
                 if (n.size() == 1 && n[0] >= '1' && n[0] <= '9') return 30 + (n[0] - '1');
                 if (n == "0") return 39;
                 static const std::map<std::string, int> m = {{"return", 40}, {"esc", 41}, {"backspace", 42}, {"tab", 43}, {"space", 44}, {"minus", 45}, {"equals", 46}, {"lbracket", 47}, {"rbracket", 48},
-                    {"comma", 54}, {"period", 55}, {"f2", 59}, {"f3", 60}, {"f5", 62}, {"f6", 63}, {"pgup", 75}, {"delete", 76}, {"pgdn", 78}, {"right", 79}, {"left", 80}, {"down", 81}, {"up", 82}};
+                    {"comma", 54}, {"period", 55}, {"f1", 58}, {"f2", 59}, {"f3", 60}, {"f5", 62}, {"f6", 63}, {"pgup", 75}, {"delete", 76}, {"pgdn", 78}, {"right", 79}, {"left", 80}, {"down", 81}, {"up", 82}};
                 const auto it = m.find(n);
                 return it == m.end() ? std::atoi(n.c_str()) : it->second;
             };
@@ -4008,12 +4013,13 @@ int main(int argc, char** argv) {
                 } else if (c == "menu_new") { PauseMenu::Result r; r.action = PauseMenu::EDITOR; handleMenu(r); }
                 else if (c == "menu_section") { PauseMenu::Result r; r.action = PauseMenu::NEW_SECTION; handleMenu(r); }
                 else if (c == "menu_back") { PauseMenu::Result r; r.action = PauseMenu::EDITOR_BACK; handleMenu(r); }
+                else if (c == "f1") returnToEditor();
                 else if (c == "f2") { if (!returnToEditor()) openEditor(editorKeyLevel(), false, true); }
                 else if (c == "play_level") { refreshLevels(); std::string want = rest(0); for (char& ch : want) ch = (char)std::toupper((unsigned char)ch); for (int k = 0; k < (int)levelList.size(); k++) if (levelList[k].name.find(want) != std::string::npos) { playLevel(levelList[k]); break; } }
                 else if (c == "tool") editor.setTool((Editor::Tool)std::max(0, (int)num(0) - 1));
                 else if (c == "ptr") editor.setPointer(num(0, 1) != 0);
                 else if (c == "gates") { std::printf("  start %d (%.1f %.1f) yaw %.2f\n", (int)ed.level.hasStart, ed.level.start.x, ed.level.start.z, ed.level.startYaw); for (size_t k = 0; k < ed.level.gates.size(); k++) std::printf("  gate %zu (%.1f %.1f) yaw %.2f width %.1f\n", k + 1, ed.level.gates[k].p.x, ed.level.gates[k].p.z, ed.level.gates[k].yaw, ed.level.gates[k].width); }
-                else if (c == "hold") { bool sh = false, ct = false; for (const std::string& t : a) sh |= t == "shift", ct |= t == "ctrl"; editor.holdMods(sh, ct); }  // keep Shift / Ctrl down for what follows (`hold` alone lets go)
+                else if (c == "hold") { bool sh = false, ct = false, al = false; for (const std::string& t : a) sh |= t == "shift", ct |= t == "ctrl", al |= t == "alt"; editor.holdMods(sh, ct, al); }  // keep Shift / Ctrl down for what follows (`hold` alone lets go)
                 else if (c == "pal") editor.setPalette(std::max(0, editor.findPalette(rest(0))));
                 else if (c == "cam") editor.setCamera(V3(num(0), num(1), num(2)), num(3) * M_PI / 180, num(4) * M_PI / 180);
                 else if (c == "camat") {  // camera `dist` back from a ground point, `high` up, looking at it: camat x z dist high yawdeg
@@ -4129,7 +4135,7 @@ int main(int argc, char** argv) {
                 if (!discard) editor.autosaveNow();
                 lastEdited = discard ? editor.reverted : editor.core.level;
                 haveEdited = true;
-                editor.close();  // (the editor keeps its state: F2 comes back to it)
+                editor.close();  // (the editor keeps its state: F1 comes back to it)
                 sim.paused = false;
                 if (discard || !play) {
                     // Back to driving: on the world as edited, or on the level as last saved when the edits were discarded.
@@ -4401,7 +4407,7 @@ int main(int argc, char** argv) {
         if (showHud && run.active()) drawLevelHud(renderer, run, sim, view, W, H);
         if (editorSuspended && !editor.active && !hud.photo) {  // a playtest: the way back, always on screen
             const float u = std::max(0.75f, H / 720.0f), s = px(1.5f * u);
-            const std::string t = "PLAYTEST   F2: BACK TO THE EDITOR";
+            const std::string t = "PLAYTEST   F1: BACK TO THE EDITOR";
             const float w = r_textW(renderer, t, s) + 28 * u;
             pill(renderer, 12 * u, 12 * u, w, 8 * s + 18 * u, 0.30f, 0.17f, 0.02f, 0.92f);
             label(renderer, 26 * u, 21 * u, s, t, 1.0f, 0.88f, 0.45f, 1);
