@@ -644,6 +644,7 @@ struct HudState {
     std::vector<Toast> toasts;
     bool photo = false;     // F10: everything hidden, for pictures
     bool newBuild = false;  // the game's been rebuilt since it started: F5 reloads it
+    bool devHotkeys = false;  // (the setting: which key the NEW BUILD pill names)
     double bestKmh = 0;     // freeway: fastest so far
     // The Frontier's race circuit: time on the lap running (-1: not on one), the last and
     // the best, and which side of the start line you were on.
@@ -1093,20 +1094,18 @@ void drawHelp(Renderer& r, float u, int W, int H, bool mph) {
         {"V", "WINCH: HOOK / UNHOOK"},        {"Z", "WINCH IN (SHIFT+Z: OUT, - = SPEED)"},
         {"O", "TOW STRAP: CLICK YOUR POINT, THEN THEIRS"},   {"Y", "FRONT SWAY BAR DISCONNECT"},
         {"9 0", "AIR DOWN / UP (STOPPED)"},
-        {"1 - 5", "BLAZER BRONCO 4RUNNER TACOMA JESKO"}, {"G", "GARAGE: ENGINE, SUSPENSION, GEARBOX"},
+        {"G", "GARAGE: ENGINE, SUSPENSION, GEARBOX"},
         {"Q E", "SHIFT DOWN / UP (R N 1...)"},           {"SHIFT+M", "MANUAL / AUTOMATIC"},
         {"M", "MAP (WAYPOINTS, PINGS)"},      {"ENTER", "CHAT"},
         {"MIDDLE CLICK", "PING: GO HERE (SHIFT: HELP)"},
         {"J", "GET OUT / IN (ON FOOT: V WINCH, F FUEL CAN)"},
         {"L", mph ? "4X4: 2H 4H 4L (LOW: BELOW 5 MPH)" : "4X4: 2H 4H 4L (LOW: BELOW 8 KM/H)"},
         {"SHIFT+L", "LIGHTS: AUTO, LOW, HIGH, OFF"},
-        {"F B", "FRONT / REAR LOCKER"},       {"I", "SPAWN PARKED VEHICLE"},
-        {"K", "SPAWN AI TRAFFIC"},            {"U", "AUTOPILOT (ESC > AUTOPILOT: WHERE)"},
-        {"DEL", "REMOVE VEHICLE"},            {"C", "CAMERA"},
-        {"MOUSE", "LOOK / ZOOM"},             {"N", "BEAM VIEW"},
-        {"[ ]", "SLOW MOTION"},               {"P", "PAUSE"},
-        {"X", "TRACTION CONTROL"},            {"F11", "FULLSCREEN"},
-        {"F3", "FPS"},                        {"F10", "HIDE THE HUD (PHOTOS)"},                        {"ESC", "MENU: CARS, SETTINGS, QUIT"},
+        {"F B", "FRONT / REAR LOCKER"},       {"U", "AUTOPILOT (ESC > AUTOPILOT: WHERE)"},
+        {"C", "CAMERA"},                      {"MOUSE", "LOOK / ZOOM"},
+        {"P", "PAUSE"},                       {"X", "TRACTION CONTROL"},
+        {"F11", "FULLSCREEN"},                {"F10", "HIDE THE HUD (PHOTOS)"},
+        {"F12", "DEV MENU: SPAWN, TELEPORT, DEBUG"}, {"ESC", "MENU: CARS, SETTINGS, QUIT"},
         {"H", "CLOSE"},
     };
     const int n = sizeof(keys) / sizeof(keys[0]), rows = (n + 1) / 2;
@@ -1162,9 +1161,9 @@ void drawScenarioStatus(Renderer& r, const Playback& pb, HudState& hud, float u,
     }
     char buf[200];
     if (pb.done)
-        std::snprintf(buf, sizeof(buf), "%s  %s  %d/%d   J: DETAILS", pb.scenario->name.c_str(), pb.passed() ? "PASSED" : "FAILED", ok, total);
+        std::snprintf(buf, sizeof(buf), "%s  %s  %d/%d   F12: DETAILS", pb.scenario->name.c_str(), pb.passed() ? "PASSED" : "FAILED", ok, total);
     else
-        std::snprintf(buf, sizeof(buf), "%s  %.1f S  %d/%d   J: DETAILS", pb.scenario->name.c_str(), c.t, ok, total);
+        std::snprintf(buf, sizeof(buf), "%s  %.1f S  %d/%d   F12: DETAILS", pb.scenario->name.c_str(), c.t, ok, total);
     float s = px(1.4f * u);
     bool good = pb.passed();
     centeredPill(r, W / 2.0f, 12 * u, s, buf, pb.done ? (good ? 0.05f : 0.5f) : 0.02f, pb.done ? (good ? 0.35f : 0.05f) : 0.02f,
@@ -1475,7 +1474,8 @@ void drawHud(Renderer& r, const Sim& sim, const View& view, HudState& hud, const
         y += 20 * u;
     }
     if (hud.newBuild) {
-        centeredPill(r, W / 2.0f, y, px(1.5f * u), "NEW BUILD READY: PRESS F5 TO LOAD IT (SAME MAP, VEHICLE AND SPOT)", 0.02f, 0.06f, 0.03f, 1,
+        centeredPill(r, W / 2.0f, y, px(1.5f * u), hud.devHotkeys ? "NEW BUILD READY: PRESS F5 TO LOAD IT (SAME MAP, VEHICLE AND SPOT)"
+                                                  : "NEW BUILD READY: F12 DEV MENU > TOOLS > RELOAD (OR DEV HOTKEYS ON: F5)", 0.02f, 0.06f, 0.03f, 1,
                      0.45f, 1.0f, 0.55f);
         y += 22 * u;
     }
@@ -1506,6 +1506,10 @@ void drawHud(Renderer& r, const Sim& sim, const View& view, HudState& hud, const
         std::snprintf(buf, sizeof(buf), "PHYSICS %.1f MS  DRAW CPU %.1f MS", hud.physicsMs, hud.drawCpuMs);
         r.text(W - r.textWidth(buf, px(1.0f * u)) - 10 * u, 8 * u + 8 * px(1.3f * u) + 8 * px(1.0f * u) + 8 * u,
                px(1.0f * u), buf, 0.7f, 0.75f, 0.8f);
+    }
+    if (hud.devHotkeys) {  // the key mode: 1-7, I, K, N... are the dev tools (` flips back)
+        const float ds = px(1.2f * u);
+        centeredPill(r, 10 * u + (r.textWidth("DEV KEYS", ds) + 14 * ds) / 2, 8 * u, ds, "DEV KEYS", 0.35f, 0.18f, 0.0f, 1, 1.0f, 0.75f, 0.3f);
     }
     if (hud.showHelp) pad::ui.last ? drawPadHelp(r, u, W, H) : drawHelp(r, u, W, H, mph);
 }
@@ -2260,9 +2264,16 @@ int main(int argc, char** argv) {
         l.name = "UNTITLED";
         return l;
     };
+    std::function<void(const devmenu::Action&)> runDev;  // the dev tools, one place for the menu and the hotkeys (set below, where its state lives)
     auto handleMenu = [&](PauseMenu::Result res) {
         switch (res.action) {
             case PauseMenu::NONE: break;
+            case PauseMenu::DEV_RUN: {
+                const devmenu::Action da{(devmenu::Act)res.vehicle, res.arg};
+                if (da.act != devmenu::MODEL_LAB) closeMenu();  // (the lab comes back to the menu)
+                runDev(da);
+                break;
+            }
             case PauseMenu::RESUME: closeMenu(); break;
             case PauseMenu::DRIVE:
                 closeMenu();
@@ -2517,6 +2528,132 @@ int main(int argc, char** argv) {
     int frame = 0;
     double benchDraw = 0;
     size_t spawnType = 0, trafficType = 0;
+    // The dev tools (devmenu.h): what the old test keys did, now also what the dev menu's entries do.
+    runDev = [&](const devmenu::Action& da) {
+        using namespace devmenu;
+        if (net.active() && offlineOnly(da.act)) {
+            hud.toast("OFFLINE ONLY: LEAVE THE SESSION FIRST");
+            return;
+        }
+        const std::vector<int>& listed = listedVehicles();
+        auto vehicleName = [&](int k) { return std::string(vehicleCatalog()[listed[k]].name); };
+        auto toSpot = [&](double x, double z, const std::string& what) {
+            if (walker.active) getIn();
+            if (walker.active) return;  // (nobody to drive there)
+            const Frame f = sim.cars[sim.player].frame();
+            sim.teleportPlayer(x, z, std::atan2(-f.fwd.z, f.fwd.x));
+            cam.initialized = false;
+            hud.toast("AT " + what);
+        };
+        switch (da.act) {
+            case NONE: break;
+            case SWAP_VEHICLE:
+                if (da.arg >= 0 && da.arg < (int)listed.size()) {  // (the listed vehicles, in order: 1 the Blazer)
+                    sim.swapPlayerVehicle(garage.spec(listed[da.arg]));
+                    hud.toast("NOW DRIVING " + vehicleName(da.arg));
+                }
+                break;
+            case SPAWN_PARKED: {
+                const size_t k = da.arg >= 0 ? (size_t)da.arg : spawnType;
+                if (k >= listed.size()) break;
+                hud.toast(sim.spawnAhead(garage.spec(listed[k])) ? "SPAWNED " + vehicleName((int)k) : std::string("VEHICLE LIMIT REACHED"));
+                if (da.arg < 0) spawnType = (spawnType + 1) % listed.size();
+                break;
+            }
+            case SPAWN_TRAFFIC:
+                hud.toast(sim.spawnTraffic(garage.spec(listed[trafficType])) ? "AI " + vehicleName((int)trafficType) + " ON THE LOOP ROAD"
+                                                                              : std::string("VEHICLE LIMIT REACHED"));
+                trafficType = (trafficType + 1) % listed.size();
+                break;
+            case REMOVE_VEHICLE: hud.toast(sim.removeCar(sim.player) ? "VEHICLE REMOVED" : "KEEP ONE LOCAL VEHICLE"); break;
+            case TELEPORT_SPAWN:
+                if (walker.active) getIn();
+                if (walker.active) break;
+                sim.towPlayerHome();
+                cam.initialized = false;
+                hud.toast("AT THE MAP SPAWN");
+                break;
+            case TELEPORT_SECTION:
+                if (da.arg >= 0 && da.arg < (int)sim.world.sections.size()) {
+                    const World::SectionSpot& sp = sim.world.sections[da.arg];
+                    if (walker.active) getIn();
+                    if (walker.active) break;
+                    sim.teleportPlayer(sp.spawn.x, sp.spawn.z, sp.spawnYaw);
+                    cam.initialized = false;
+                    hud.toast("AT " + sp.name);
+                }
+                break;
+            case TELEPORT_PLACE: {
+                int k = 0;
+                for (const Place& pl : pilotPlaces(sim, net)) {
+                    if (pl.kind != 0) continue;
+                    if (k++ == da.arg) {
+                        toSpot(pl.p.x, pl.p.z, pl.name);
+                        break;
+                    }
+                }
+                break;
+            }
+            case TIME_OF_DAY:
+                if (net.role == NetSession::CLIENT) {
+                    hud.toast("THE HOST'S CLOCK RULES IN MULTIPLAYER");
+                    break;
+                }
+                settings.timeOfDay = std::min(std::max(da.arg, 0), (int)TOD_COUNT - 1);
+                saveSettings();
+                hud.toast(da.arg == TOD_CYCLE ? "THE CLOCK RUNS" : std::string("TIME: ") + timeOfDayName(settings.timeOfDay));
+                break;
+            case TIME_SLOWER:
+                if (net.active()) break;  // everyone shares one clock
+                timeScaleIdx = std::min(timeScaleIdx + 1, 4); sim.timeScale = kTimeScales[timeScaleIdx];
+                break;
+            case TIME_FASTER:
+                if (net.active()) break;
+                timeScaleIdx = std::max(timeScaleIdx - 1, 0); sim.timeScale = kTimeScales[timeScaleIdx];
+                break;
+            case RESET_WORLD:
+                run.stop();
+                levelHours = -1;
+                loadMap(sim.world.map);
+                hud.toast("WORLD RESET");
+                break;
+            case REPAIR: sim.recoverPlayer(); hud.toast("REPAIRED"); break;
+            case RESPAWN: sim.respawnPlayer(); hud.toast("RESPAWNED AT THE START"); break;
+            case FLIP_UPRIGHT: sim.rightPlayer(); hud.toast("BACK ON ITS WHEELS"); break;
+            case REFUEL: {
+                Car& c = sim.cars[sim.player];
+                if (c.isProp()) break;
+                c.fuel = c.spec->fuelCapacity;
+                if (c.spec->jerryCan > 0) c.jerry = c.spec->jerryCan;
+                hud.toast("REFUELED");
+                break;
+            }
+            case BEAM_VIEW: {
+                static const char* names[] = {"BEAM VIEW OFF", "BEAM VIEW: X-RAY", "BEAM VIEW: BEAMS ONLY", "BEAM VIEW: PARTS"};
+                debug = da.arg < 0 ? (DebugView)((debug + 1) % DEBUG_VIEW_COUNT) : (DebugView)std::min(da.arg, (int)DEBUG_VIEW_COUNT - 1);
+                hud.toast(names[debug]);
+                break;
+            }
+            case FPS:
+                settings.showFps = hud.showFps = !hud.showFps;
+                saveSettings();
+                break;
+            case EDITOR:  // free driving: opens the editor here (in a playtest, F1 is the way back)
+                if (editorSuspended && !editor.active) hud.toast("F1: BACK TO THE EDITOR");
+                else openEditor(editorKeyLevel(), false, true);
+                break;
+            case MODEL_LAB: handleMenu(PauseMenu::Result{PauseMenu::MODEL_LAB}); break;
+            case NEW_SECTION: openEditor(Level(), true); break;
+            case RELOAD:  // load the new build (see BuildWatch)
+                if (editorSuspended) hud.toast("NO RELOADING DURING A PLAYTEST: F1 BACK TO THE EDITOR FIRST");  // (a reload would lose the editor and its unsaved edits)
+                else if (hud.newBuild) reload = true, running = false;
+                else hud.toast(watch.exe.empty() ? "RELOADING ISN'T AVAILABLE HERE" : "NO NEW BUILD YET");
+                break;
+            case SCENARIO_CHECKS:
+                if (playback.active()) hud.scenarioDetail = !hud.scenarioDetail;
+                break;
+        }
+    };
 
     while (running) {
         uint64_t now = SDL_GetPerformanceCounter();
@@ -2524,6 +2661,7 @@ int main(int argc, char** argv) {
         double dt = scripted ? 1.0 / 60.0 : std::min(0.1, frameTimeMs / 1000.0);
         last = now;
         if (dt > 0) fps += ((float)(1.0 / dt) - fps) * 0.05f;
+        hud.devHotkeys = settings.devHotkeys;
         hud.newBuild = watch.poll() && !editorSuspended;  // (not during a playtest: the editor would be lost)
         if (hud.newBuild && std::getenv("CZ_AUTORELOAD")) reload = true, running = false;  // (testing the reload)
 
@@ -2646,6 +2784,22 @@ int main(int argc, char** argv) {
             switch (e.type) {
                 case SDL_QUIT: running = false; break;
                 case SDL_KEYDOWN: {
+                    if (evKeyScancode(e) == SC_F12 && !fromPad && !evKeyRepeat(e) && !inv.open && !garageUI.open && !winchAim.on && !menu.title &&
+                        !menu.listeningForKey()) {  // the dev menu (devmenu.h): F12 opens and closes it, whatever DEV HOTKEYS says
+                        if (menu.devOpen()) closeMenu();
+                        else {
+                            const bool fromPause = menu.onPausePage();
+                            if (!menu.open) openMenu();
+                            menu.showDev(std::max(0, sim.cars[sim.player].spec->model), sim.world.map, fromPause);
+                        }
+                        break;
+                    }
+                    if (evKeyScancode(e) == devmenu::kModeKey && !fromPad && !evKeyRepeat(e) && !menu.open && !inv.open && !garageUI.open && !winchAim.on) {
+                        settings.devHotkeys = !settings.devHotkeys;  // DEV KEYS <-> GAMEPLAY KEYS (devmenu.h has the table)
+                        saveSettings();
+                        hud.toast(settings.devHotkeys ? "DEV KEYS: 1-7 I K N DEL [ ] F2 F3 F5 ARE TOOLS (BACKTICK FOR GAMEPLAY KEYS)" : "GAMEPLAY KEYS (BACKTICK FOR DEV KEYS)");
+                        break;
+                    }
                     if (menu.open) {  // the menu takes every key (repeats too: hold to slide)
                         const uint8_t* ks = SDL_GetKeyboardState(nullptr);
                         menu.shift = ks[SC_LSHIFT] || ks[SC_RSHIFT];
@@ -2731,6 +2885,13 @@ int main(int argc, char** argv) {
                         coop.typing = true;
                         coop.draft.clear();
                         break;
+                    }
+                    {  // the debug and test keys: they work when DEV HOTKEYS is ON, and are in the dev menu either way
+                        devmenu::KeyCtx kc;
+                        kc.onFoot = walker.active;
+                        kc.scenario = playback.active();
+                        if (devmenu::dispatchKey(gsc, settings.devHotkeys, kc, [](void* fn, const devmenu::Action& a) { (*static_cast<std::function<void(const devmenu::Action&)>*>(fn))(a); }, &runDev))
+                            break;
                     }
                     switch (gsc) {
                         case SC_ESCAPE:  // (the pause menu: Esc on the keyboard, Start on the pad, the MENU key if rebound)
@@ -2834,37 +2995,15 @@ int main(int argc, char** argv) {
                         case SC_F10:
                             hud.photo = !hud.photo;
                             break;
-                        case SC_N: {
-                            static const char* names[] = {"BEAM VIEW OFF", "BEAM VIEW: X-RAY", "BEAM VIEW: BEAMS ONLY", "BEAM VIEW: PARTS"};
-                            debug = (DebugView)((debug + 1) % DEBUG_VIEW_COUNT);
-                            hud.toast(names[debug]);
-                            break;
-                        }
                         case SC_H: hud.showHelp = !hud.showHelp; break;
                         case SC_F1:  // leaves a playtest for the editor
                             if (editorSuspended && !editor.active && !returnToEditor()) hud.toast("CAN'T GO BACK TO THE EDITOR HERE");
                             break;
-                        case SC_F2:  // free driving: opens the editor here (in a playtest, F1 is the way back)
-                            if (editorSuspended && !editor.active) hud.toast("F1: BACK TO THE EDITOR");
-                            else openEditor(editorKeyLevel(), false, true);
-                            break;
                         case SC_J:
-                            if (playback.active()) {  // (a scenario: J opens its checks list)
-                                hud.scenarioDetail = !hud.scenarioDetail;
-                                break;
-                            }
+                            if (playback.active()) break;  // (a scenario: J is its checks list, a dev key)
                             if (walker.active && walker.carrying) hud.toast("PUT THE WHEEL DOWN FIRST (G)");
                             else if (walker.active) getIn();
                             else getOut();
-                            break;
-                        case SC_F3:
-                            settings.showFps = hud.showFps = !hud.showFps;
-                            saveSettings();
-                            break;
-                        case SC_F5:  // load the new build (see BuildWatch)
-                            if (editorSuspended) hud.toast("NO RELOADING DURING A PLAYTEST: F1 BACK TO THE EDITOR FIRST");  // (a reload would lose the editor and its unsaved edits)
-                            else if (hud.newBuild) reload = true, running = false;
-                            else hud.toast(watch.exe.empty() ? "RELOADING ISN'T AVAILABLE HERE" : "NO NEW BUILD YET");
                             break;
                         case SC_P:
                             if (net.active()) hud.toast("NO PAUSING IN MULTIPLAYER (ESC STILL OPENS THE MENU)");
@@ -2875,21 +3014,6 @@ int main(int argc, char** argv) {
                             c.tractionControl = !c.tractionControl;
                             hud.toast(!c.spec->tractionFitted ? "NO TRACTION CONTROL ON THIS CAR"
                                       : c.tractionControl ? "TRACTION CONTROL ON" : "TRACTION CONTROL OFF");
-                            break;
-                        }
-                        case SC_1:
-                        case SC_2:
-                        case SC_3:
-                        case SC_4:
-                        case SC_5:
-                        case SC_6:
-                        case SC_7: {
-                            const size_t k = gsc - SC_1;  // (the listed vehicles, in order: 1 the Blazer)
-                            if (k < listedVehicles().size()) {
-                                const int idx = listedVehicles()[k];
-                                sim.swapPlayerVehicle(garage.spec(idx));
-                                hud.toast(std::string("NOW DRIVING ") + vehicleCatalog()[idx].name);
-                            }
                             break;
                         }
                         case SC_G:
@@ -3003,21 +3127,8 @@ int main(int argc, char** argv) {
                             }
                             break;
                         }
-                        case SC_I:
-                            if (walker.active) {
-                                toggleInventory();
-                                break;
-                            }
-                            hud.toast(sim.spawnAhead(garage.spec(listedVehicles()[spawnType]))
-                                          ? std::string("SPAWNED ") + vehicleCatalog()[listedVehicles()[spawnType]].name
-                                          : std::string("VEHICLE LIMIT REACHED"));
-                            spawnType = (spawnType + 1) % listedVehicles().size();
-                            break;
-                        case SC_K:
-                            hud.toast(sim.spawnTraffic(garage.spec(listedVehicles()[trafficType]))
-                                          ? std::string("AI ") + vehicleCatalog()[listedVehicles()[trafficType]].name + " ON THE LOOP ROAD"
-                                          : std::string("VEHICLE LIMIT REACHED"));
-                            trafficType = (trafficType + 1) % listedVehicles().size();
+                        case SC_I:  // (driving, I is a dev key: spawn a parked vehicle)
+                            if (walker.active) toggleInventory();
                             break;
                         case SC_U: {  // autopilot on (to the place picked in the menu) or off
                             Car& c = sim.cars[sim.player];
@@ -3025,16 +3136,6 @@ int main(int argc, char** argv) {
                             else startPilot();
                             break;
                         }
-                        case SC_DELETE:
-                        case SC_BACKSPACE:
-                            hud.toast(sim.removeCar(sim.player) ? "VEHICLE REMOVED" : "KEEP ONE LOCAL VEHICLE");
-                            break;
-                        case SC_LEFTBRACKET:
-                            if (net.active()) break;  // everyone shares one clock
-                            timeScaleIdx = std::min(timeScaleIdx + 1, 4); sim.timeScale = kTimeScales[timeScaleIdx]; break;
-                        case SC_RIGHTBRACKET:
-                            if (net.active()) break;
-                            timeScaleIdx = std::max(timeScaleIdx - 1, 0); sim.timeScale = kTimeScales[timeScaleIdx]; break;
                         case SC_F11: {
                             settings.fullscreen = !settings.fullscreen;
                             applySettings();
@@ -4459,6 +4560,14 @@ int main(int argc, char** argv) {
                 for (const Place& pl : pilotPlaces(sim, net)) menu.pilotPlaces.push_back(pl.name);
                 menu.pilotActive = pc.pilot.active || pc.ai;
                 menu.pilotStatus = pc.ai ? "CRUISING THE LOOP ROAD" : pc.pilot.active ? "DRIVING: " + pc.pilot.status : "OFF";
+            }
+            if (menu.devOpen()) {  // (the dev menu's TELEPORT lists)
+                menu.devScenario = playback.active();
+                menu.devSections.clear();
+                for (const World::SectionSpot& sp : sim.world.sections) menu.devSections.push_back(sp.name);
+                menu.devPlaces.clear();
+                for (const Place& pl : pilotPlaces(sim, net))
+                    if (pl.kind == 0) menu.devPlaces.push_back(pl.name);
             }
             menu.netActive = net.active() && !net.joining();
             menu.levelActive = run.active();

@@ -75,6 +75,7 @@ bool Settings::load(const std::string& path) {
         }
         else if (k == "vsync") vsync = v != 0;
         else if (k == "adaptive") adaptiveQuality = v != 0;
+        else if (k == "devhotkeys") devHotkeys = v != 0;
         else if (k == "fps") showFps = v != 0;
         else if (k == "steeringassist") steeringAssist = v != 0;
         else if (k == "shadows") gfx.shadows = std::min(std::max((int)v, 0), 3);
@@ -117,7 +118,7 @@ bool Settings::save(const std::string& path) const {
     std::fprintf(f, "recovery %d\nmusic %.2f\nambience %.2f\nfuel %d\ncareer %d\n", realRecovery, music, ambience, fuelMode, career);
     std::fprintf(f, "ground %d\nprops %d\n", gfx.ground, gfx.props);
     std::fprintf(f, "physicsthreads %d\n", physicsThreads);
-    std::fprintf(f, "adaptive %d\n", adaptiveQuality);
+    std::fprintf(f, "adaptive %d\ndevhotkeys %d\n", adaptiveQuality, devHotkeys);
     std::fprintf(f, "winchspeed %.2f\n", winchSpeed);
     if (!playerName.empty()) std::fprintf(f, "name %s\n", playerName.c_str());
     if (!joinAddress.empty()) std::fprintf(f, "join %s\n", joinAddress.c_str());
@@ -194,6 +195,7 @@ enum Id {
     JOBS_ROW, JOB_PICK, JOB_GO, JOB_STOP_ROW, MEET_ROW, CONTROLLER_ROW,
     SESSION_ROW, HMAP_ROW, HMAX_ROW, CANCEL_ROW, PASSWORD_ROW, PORT_ROW,
     STEERING, KEYBINDS_ROW, KEYS_RESET, KEY_ROW0, KEY_ROWN = KEY_ROW0 + KA_COUNT,
+    DEV_ROW, DEVHOT_ROW, DEVGROUP0, DEVGROUP_N = DEVGROUP0 + devmenu::G_COUNT, DEVITEM0, DEVITEM_N = DEVITEM0 + 40, DEVSEC_ROW, DEVPLACE_ROW,
 };
 const char* kOffOn[2] = {"OFF", "ON"};
 
@@ -244,6 +246,31 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
         button(SETTINGS_ROW, "SETTINGS", "UNITS, GRAPHICS, SOUND");
         button(CONTROLS_ROW, "CONTROLS");
         button(QUIT_ROW, "QUIT GAME");
+        return r;
+    }
+    if (page == 8) {  // the dev menu: the groups
+        header("TEST AND DEBUG TOOLS");
+        choice(DEVHOT_ROW, "DEV HOTKEYS", kOffOn[s.devHotkeys], 2,
+               s.devHotkeys ? "ON: DEV KEYS (1-7 I K N DEL [ ] F2 F3 F5 ARE TOOLS). BACKTICK KEY TOGGLES" : "OFF: GAMEPLAY KEYS, THE TOOLS ONLY HERE. BACKTICK KEY TOGGLES");
+        for (int g = 0; g < devmenu::G_COUNT; g++) button(DEVGROUP0 + g, devmenu::groupName((devmenu::Group)g), devmenu::groupHint((devmenu::Group)g));
+        button(BACK_ROW, devFromPause ? "BACK" : "CLOSE");
+        return r;
+    }
+    if (page == 9) {  // one group
+        const std::vector<devmenu::Item> its = devItems();
+        header(devmenu::groupHint((devmenu::Group)devGroup));
+        for (int k = 0; k < (int)its.size() && k < DEVITEM_N - DEVITEM0; k++) button(DEVITEM0 + k, its[k].label.c_str(), its[k].hint);
+        if (devGroup == devmenu::G_TELEPORT) {
+            if (!devSections.empty()) {
+                const int n = (int)devSections.size();
+                choice(DEVSEC_ROW, "SECTION", devSections[std::min(std::max(devSection, 0), n - 1)], n, "A D PICKS ONE, ENTER GOES THERE (AT ITS START PAD)");
+            }
+            if (!devPlaces.empty()) {
+                const int n = (int)devPlaces.size();
+                choice(DEVPLACE_ROW, "PLACE", devPlaces[std::min(std::max(devPlace, 0), n - 1)], n, "A D PICKS ONE, ENTER GOES THERE");
+            }
+        }
+        button(BACK_ROW, "BACK");
         return r;
     }
     if (page == 6) {
@@ -308,6 +335,7 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
         button(MULTI_ROW, "MULTIPLAYER", netActive ? netStatus : "HOST OR JOIN A GAME");
         button(SETTINGS_ROW, "SETTINGS", "UNITS, GRAPHICS, SOUND");
         button(CONTROLS_ROW, "CONTROLS");
+        button(DEV_ROW, "DEV MENU", "F12: SPAWN, TELEPORT, DEBUG VIEWS");
         button(MAINMENU_ROW, "MAIN MENU");
         button(QUIT_ROW, "QUIT GAME");
         return r;
@@ -468,9 +496,24 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
         choice(PHYSICSTHREADS, "PHYSICS THREADS", value, available + 1,
                "1: SINGLE THREAD. ALL: USE EVERY CPU THREAD. MORE MAY NOT BE FASTER.");
     }
+    choice(DEVHOT_ROW, "DEV HOTKEYS", kOffOn[s.devHotkeys], 2, "TEST KEYS (1-7 I K N DEL [ ] F2 F3 F5). BACKTICK FLIPS IT. F12: THE DEV MENU");
     button(CONTROLLER_ROW, "CONTROLLER", "STEERING, DEADZONE, RUMBLE, KEYBINDS");
     button(BACK_ROW, "BACK");
     return r;
+}
+
+std::vector<devmenu::Item> PauseMenu::devItems() const {
+    std::vector<devmenu::Item> r;
+    for (const devmenu::Item& it : devmenu::items((devmenu::Group)devGroup))
+        if (it.action.act != devmenu::SCENARIO_CHECKS || devScenario) r.push_back(it);
+    return r;
+}
+
+void PauseMenu::showDev(int currentVehicle, int currentMap, bool fromPause) {
+    show(currentVehicle, currentMap);
+    page = 8;
+    devFromPause = fromPause;
+    sel = 1;  // (row 0 is the header)
 }
 
 void PauseMenu::showMultiplayer(int currentVehicle, int currentMap) {
@@ -588,11 +631,24 @@ PauseMenu::Result PauseMenu::activate(int row, Settings& s) {
         case DEST_ROW: return {PILOT_GO};
         case PSTOP_ROW: return {PILOT_STOP};
         case CONTROLS_ROW: return {CONTROLS};
+        case DEV_ROW: devFromPause = true; goPage(8, DEVGROUP0); return {};
+        case DEVHOT_ROW: return change(row, 1, s);
+        case DEVSEC_ROW: return {DEV_RUN, devmenu::TELEPORT_SECTION, std::min(std::max(devSection, 0), std::max(0, it.count - 1))};
+        case DEVPLACE_ROW: return {DEV_RUN, devmenu::TELEPORT_PLACE, std::min(std::max(devPlace, 0), std::max(0, it.count - 1))};
         case KEYBINDS_ROW: listening = -1, keyNote.clear(); goPage(7, KEY_ROW0); return {};
         case KEYS_RESET: s.keys.resetDefaults(); listening = -1, keyNote.clear(); return {CHANGED};
         case RESET_ROW: return {RESET};
         case QUIT_ROW: return {QUIT};
         case BACK_ROW:
+            if (page == 9) {
+                goPage(8, DEVGROUP0 + devGroup);
+                return {};
+            }
+            if (page == 8) {
+                if (!devFromPause) return {RESUME};
+                goPage(0, DEV_ROW);
+                return {};
+            }
             if (page == 6) {
                 goPage(1, CONTROLLER_ROW);
                 return {};
@@ -625,6 +681,17 @@ PauseMenu::Result PauseMenu::activate(int row, Settings& s) {
         case PASSWORD_ROW:
         case PORT_ROW:
         case SESSION_ROW: moveSel(1, s); return {};
+    }
+    if (it.id >= DEVGROUP0 && it.id < DEVGROUP_N) {
+        devGroup = it.id - DEVGROUP0;
+        goPage(9, DEVITEM0);
+        return {};
+    }
+    if (it.id >= DEVITEM0 && it.id < DEVITEM_N) {
+        const std::vector<devmenu::Item> its = devItems();
+        const int k = it.id - DEVITEM0;
+        if (k < (int)its.size()) return {DEV_RUN, (int)its[k].action.act, its[k].action.arg};
+        return {};
     }
     if (it.id >= FOUND_ROW0 && it.id <= FOUND_ROW5 && it.id - FOUND_ROW0 < (int)found.size()) {  // a game found on the network
         const FoundGame& g = found[it.id - FOUND_ROW0];
@@ -691,6 +758,9 @@ PauseMenu::Result PauseMenu::change(int row, int dir, Settings& s) {
             break;
         }
         case ADAPTIVE: s.adaptiveQuality = !s.adaptiveQuality; break;
+        case DEVHOT_ROW: s.devHotkeys = !s.devHotkeys; break;
+        case DEVSEC_ROW: devSection = cycle(std::min(std::max(devSection, 0), it.count - 1)); return {};
+        case DEVPLACE_ROW: devPlace = cycle(std::min(std::max(devPlace, 0), it.count - 1)); return {};
         case SHADOWS: g.shadows = cycle(std::min(std::max(g.shadows, 0), 3)); break;
         case AA: g.msaa = kMsaa[cycle(msaaIndex(g.msaa))]; break;
         case AO: g.ao = !g.ao; break;
@@ -930,8 +1000,8 @@ float PauseMenu::drawRow(Renderer& r, const Row& row, int k, float x, float w, f
             while (!hint.empty() && r.textWidth(hint, small) > maxW) hint.pop_back();
             r.text(x + pad + 6 * u, cy + rowH, small, hint, 0.6f, 0.62f, 0.66f, a);
         }
-        if ((row.id == VEHICLE_ROW || row.id == MAP_ROW || row.id == DEST_ROW || row.id == LEVEL_PICK) && on && !this->title) {
-            const std::string go = std::string(pad::hint("ENTER", pad::B_A)) + (row.id == MAP_ROW ? " TO LOAD" : row.id == DEST_ROW ? " TO GO" : row.id == LEVEL_PICK ? " TO PLAY" : " TO DRIVE");
+        if ((row.id == VEHICLE_ROW || row.id == MAP_ROW || row.id == DEST_ROW || row.id == LEVEL_PICK || row.id == DEVSEC_ROW || row.id == DEVPLACE_ROW) && on && !this->title) {
+            const std::string go = std::string(pad::hint("ENTER", pad::B_A)) + (row.id == MAP_ROW ? " TO LOAD" : row.id == DEST_ROW || row.id == DEVSEC_ROW || row.id == DEVPLACE_ROW ? " TO GO" : row.id == LEVEL_PICK ? " TO PLAY" : " TO DRIVE");
             r.text(valueX - r.textWidth(go, small) - 12 * u, cy + (rowH - 8 * small) / 2, small, go, 1.0f, 0.75f, 0.3f, a);
         }
     }
@@ -1059,7 +1129,7 @@ void PauseMenu::draw(Renderer& r, const Settings& s, int W, int H, double dt) {
     pill(r, x, y, w, h, 0.03f, 0.035f, 0.045f, (this->title ? 0.82f : 0.9f) * a);
     r.rect(x + pad, y + pad + 8 * title + 8 * u, w - 2 * pad, 2 * u, 1.0f, 0.75f, 0.3f, 0.8f * a);
     label(r, x + pad, y + pad, title,
-          page == 0 ? (this->title ? "MAIN MENU" : "PAUSED") : page == 1 ? "SETTINGS" : page == 3 ? "AUTOPILOT" : page == 4 ? "LEVELS" : page == 5 ? "JOBS" : page == 7 ? "KEYBINDS" : "CONTROLLER",
+          page == 0 ? (this->title ? "MAIN MENU" : "PAUSED") : page == 1 ? "SETTINGS" : page == 3 ? "AUTOPILOT" : page == 4 ? "LEVELS" : page == 5 ? "JOBS" : page == 7 ? "KEYBINDS" : page == 8 ? "DEV MENU" : page == 9 ? devmenu::groupName((devmenu::Group)devGroup) : "CONTROLLER",
           1.0f, 0.75f, 0.3f, a);
     if (page == 0 && !this->title) {
         const char* tag = "CRUMPLE ZONE";
@@ -1072,10 +1142,11 @@ void PauseMenu::draw(Renderer& r, const Settings& s, int W, int H, double dt) {
     for (int k = 0; k < (int)rs.size(); k++) cy += drawRow(r, rs[k], k, x, w, cy, st);
     std::string keys = page == 0 && this->title ? "W S SELECT   A D CHANGE   ENTER OK"
                        : page == 0                ? "W S SELECT   A D CHANGE   ENTER OK   ESC RESUME"
+                       : page == 8 && !devFromPause ? "W S SELECT   A D CHANGE   ENTER OK   ESC OR F12 CLOSE"
                                                   : "W S SELECT   A D CHANGE   ENTER OK   ESC BACK";
     if (pad::ui.last) {  // the controller was the last thing used
         keys = "D-PAD SELECT   LEFT RIGHT CHANGE   " + std::string(pad::hint("", pad::B_A)) + " OK";
-        if (!(page == 0 && this->title)) keys += "   " + std::string(pad::hint("", pad::B_B)) + (page == 0 ? " RESUME" : " BACK");
+        if (!(page == 0 && this->title)) keys += "   " + std::string(pad::hint("", pad::B_B)) + (page == 0 || (page == 8 && !devFromPause) ? " RESUME" : " BACK");
     }
     r.text(x + (w - r.textWidth(keys, small)) / 2, y + h - pad - 8 * small + 6 * u, small, keys, 0.55f, 0.57f, 0.62f, a);
 }

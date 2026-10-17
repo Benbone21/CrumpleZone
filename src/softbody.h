@@ -683,6 +683,7 @@ public:
     void recoverPlayer();   // rebuilt like new where it stands (arcade)
     void rightPlayer();     // put back on its wheels where it is, damage and all
     void towPlayerHome();   // carried back to its spawn point, damage and all
+    void teleportPlayer(double x, double z, double yaw);  // set down upright at x, z facing yaw (the dev menu), damage and all
     // Replaces the player's car with another vehicle type, in place.
     void swapPlayerVehicle(const VehicleSpec& vs);
     // Adds a parked vehicle a few meters ahead of the player; returns false when full.

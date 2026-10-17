@@ -40,6 +40,7 @@ bool bindable(int sc) {
     if (sc == SC_ESCAPE || sc == SC_RETURN || sc == SC_KP_ENTER || sc == SC_TAB) return false;
     if (sc >= SC_RIGHT && sc <= SC_UP) return false;  // arrows: the second set of driving keys
     if (sc >= 224) return false;                      // ctrl, shift, alt, gui
+    if (sc == SC_F12 || sc == 53) return false;       // the dev menu's key, and the dev keys / gameplay keys toggle (`)
     return true;
 }
 

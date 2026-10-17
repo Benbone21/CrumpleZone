@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "render.h"
+#include "devmenu.h"
 #include "keybinds.h"
 #include "sdl_min.h"
 
@@ -39,6 +40,7 @@ struct Settings {
     int padSteering = 1, padDeadzone = 1, padRumble = 1;
     RenderSettings gfx;
     bool adaptiveQuality = true;  // auto-scale quality to maintain framerate
+    bool devHotkeys = false;      // the debug and test keys (1-7, I, K, N, DEL, [ ], F2, F3, F5) work directly; OFF: only through the dev menu (F12)
     Keybinds keys;
 
     bool load(const std::string& path);
@@ -55,10 +57,11 @@ class PauseMenu {
 public:
     enum Action { NONE, RESUME, DRIVE, GARAGE, CONTROLS, RESET, QUIT, CHANGED, LOAD_MAP, HOST, JOIN, LEAVE, PILOT_GO, PILOT_STOP,
                   FREE_DRIVE, PLAY_LEVEL, EDIT_LEVEL, EDITOR, LEVEL_RESTART, LEVEL_QUIT, MAIN_MENU, JOB_START, JOB_STOP, MEET_UP,
-                  CANCEL_JOIN, MODEL_LAB, NEW_SECTION, EDITOR_BACK };
+                  CANCEL_JOIN, MODEL_LAB, NEW_SECTION, EDITOR_BACK, DEV_RUN };
     struct Result {
         Action action = NONE;
-        int vehicle = 0;  // for DRIVE; the map for LOAD_MAP
+        int vehicle = 0;  // for DRIVE; the map for LOAD_MAP; DEV_RUN: the devmenu::Act
+        int arg = 0;      // DEV_RUN: its argument
     };
 
     bool open = false;
@@ -122,6 +125,13 @@ public:
     std::string jobStatus;
 
     void showTitle(int currentVehicle, int currentMap);
+    // The dev menu (devmenu.h): pages 8 (the groups) and 9 (one group's rows). The game fills the lists before drawing.
+    void showDev(int currentVehicle, int currentMap, bool fromPause = false);  // opens straight onto the groups
+    bool devOpen() const { return open && page >= 8; }
+    bool onPausePage() const { return open && !title && page == 0; }
+    std::vector<std::string> devSections;  // the map's obstacle sections (TELEPORT)
+    std::vector<std::string> devPlaces;    // and its places
+    bool devScenario = false;              // a scenario is playing (its checks list is offered)
 
     void show(int currentVehicle, int currentMap);
     void close() { open = false; dragSlider = -1; }
@@ -148,9 +158,13 @@ private:
         float x, y, w, h, barX, barW;
         int row;
     };
+    int devGroup = 0;                    // dev page 9: which group
+    int devSection = 0, devPlace = 0;    // the TELEPORT page's pickers
+    bool devFromPause = false;           // the dev menu was opened from the pause menu's row (BACK returns there)
+    std::vector<devmenu::Item> devItems() const;  // the rows of the group shown (the scenario one only while a scenario plays)
     int listening = -1;  // keybinds page: the KeyAction waiting for a key press (-1: none)
     std::string keyNote; // keybinds page: why the last key was refused
-    int page = 0;  // 0 main (or the title), 1 settings, 2 multiplayer, 3 autopilot, 4 levels, 5 jobs, 6 controller, 7 keybinds
+    int page = 0;  // 0 main (or the title), 1 settings, 2 multiplayer, 3 autopilot, 4 levels, 5 jobs, 6 controller, 7 keybinds, 8 dev menu, 9 one dev group
     int sel = 0;
     std::string portText;      // the HOST card's PORT field while it's being typed in (it can be a half-typed number)
     bool portEdited = false, portFresh = false;  // (fresh: untouched, the first digit replaces it)
