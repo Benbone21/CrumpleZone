@@ -1,6 +1,7 @@
 #include "jobs.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <sstream>
@@ -45,6 +46,14 @@ std::string Job::text() const {
     return o.str();
 }
 
+// A plain decimal number ("nan"/"inf" are not: Windows' atof reads them as 0, glibc's as NaN).
+static bool plainNumber(const std::string& s) {
+    if (s.empty() || s.size() > 32) return false;
+    for (char c : s)
+        if (!std::isdigit((unsigned char)c) && c != '-' && c != '+' && c != '.' && c != 'e' && c != 'E') return false;
+    return true;
+}
+
 bool Job::parse(const std::string& s, Job& out) {
     std::vector<std::string> f;
     std::string cur;
@@ -66,6 +75,10 @@ bool Job::parse(const std::string& s, Job& out) {
     j.wreckId = (uint32_t)std::strtoul(f[9].c_str(), nullptr, 10);
     const int n = std::atoi(f[10].c_str());
     if (n < 0 || n > 32 || f.size() < 11 + (size_t)n * 3) return false;
+    for (int k : {4, 5, 6})
+        if (!plainNumber(f[k])) return false;
+    for (int k = 0; k < n; k++)
+        if (!plainNumber(f[11 + k * 3]) || !plainNumber(f[12 + k * 3])) return false;
     for (int k = 0; k < n; k++) {
         j.spots.push_back(V3(std::atof(f[11 + k * 3].c_str()), 0, std::atof(f[12 + k * 3].c_str())));
         j.spotNames.push_back(f[13 + k * 3].substr(0, 40));
