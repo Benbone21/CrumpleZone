@@ -38,7 +38,7 @@ struct LevelObject {
     V3 p;              // position (rock, tree, station: on the ground at x, z; box: its center)
     V3 size;           // rock: half-sizes (along, up, across); box: half extents; log: (r, 0, 0); model: its scale (front, up, left); bush: (r, 0, 0)
     V3 p2;             // log, fence: the other end
-    double yaw = 0, pitch = 0, roll = 0;  // radians
+    double yaw = 0, pitch = 0, roll = 0;  // radians (box, posed rock, model: the frame frameOf makes; a model tipped saves a #modelpose line)
     double top = 0;    // rock: how much shows above the ground
     uint32_t seed = 1; // rock: its shape
     int sub = 0;       // model: its one setting (a trail sign's rating, a cairn's or stump's shape); tree: 0 pine, 1 broadleaf, 2 dead; box: 1 = rock slab; rock: 1 = placed in a pose (yaw, pitch, roll), not left to chance
@@ -52,6 +52,11 @@ struct LevelObject {
     bool rel = false;
     double lift2 = 0;
 };
+
+// An orientation as its frame, the three axes it turns x, y and z into: R = Ry(yaw) Rz(pitch) Rx(roll), as blocks, posed rocks and tipped
+// structures take it. And back (made orthonormal first); pointing straight up or down (pitch +-90 deg) the yaw is free, and `yawHint` is kept.
+void frameOf(double yaw, double pitch, double roll, V3 ax[3]);
+void anglesOf(const V3 ax[3], double& yaw, double& pitch, double& roll, double yawHint = 0);
 
 // Box, log: makes the height an offset from the ground (rel), from the absolute p.y / p2.y; and back, working p.y / p2.y out from the offsets.
 void settleObject(const World& w, LevelObject& o);

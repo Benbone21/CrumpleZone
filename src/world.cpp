@@ -268,6 +268,7 @@ Rock& addScannedRock(World& w, const props::HullLibrary& lib, double x, double z
     k.scan = c.i;
     for (int a = 0; a < 3; a++) k.axis[a] = ax[a];
     k.origin = at - (ax[0] * mid.x + ax[1] * mid.y + ax[2] * mid.z);
+    k.at = at;
     for (const V3& p : hull.v) k.v.push_back(at + local(p));
     k.f = hull.f;
     for (const auto& f : k.f) {
@@ -322,6 +323,7 @@ Rock& World::addRock(double x, double z, const V3& radii, double top, uint32_t s
     k.tint = tint;
     k.seed = seed;
     k.f = convexHull(pts);
+    k.at = origin;
     for (const V3& q : pts) k.v.push_back(origin + q);
     for (const auto& f : k.f) {
         V3 nrm = norm(cross(k.v[f[1]] - k.v[f[0]], k.v[f[2]] - k.v[f[0]]));
@@ -1276,6 +1278,7 @@ void World::setCellSurface(int id, uint8_t surface, uint8_t paintLook) {
     }
     surf[id] = surface;
     paint[id] = paintLook;
+    cellEdits++;
 }
 
 void World::setCellWater(int id, float level) {
@@ -1291,6 +1294,7 @@ void World::setCellWater(int id, float level) {
         }
     }
     waterY[id] = level;
+    cellEdits++;
 }
 
 void World::addTree(double x, double z, double treeHeight, int kind, float tint) {

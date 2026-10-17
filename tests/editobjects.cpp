@@ -1158,103 +1158,503 @@ SCENARIO(editorNameReplace, "editor/name-prefill", "The suggested save name is s
     ctx.check("and then typing appends", f.text == sug.substr(0, sug.size() - 1) + "Z", f.text);
 }
 
-SCENARIO(editorAxisLocks, "editor/axis-locks", "An axis-locked move changes only that coordinate (Y: the height, which saves and loads); a turn about X, Y or Z sets yaw, pitch or roll as the world axis says, for each kind; a whole drag is one undo step") {
-    World w(MAP_MOUNTAIN);
+// ---- Dragging with the mouse: the gizmo's maths, driven through the editor's own camera ---------------------------------------------
+
+namespace {
+
+int modelPart(const EditCore& ed, int k) {  // (a structure's drawn part; its collider comes first)
+    for (const auto& pr : ed.partsOf(k))
+        if (pr.first == 5) return pr.second;
+    return -1;
+}
+
+// Where level object k's first part is in the world, as a point that moves rigidly with it: a rock's turning point, a block's middle,
+// a structure's origin, a tree's base, a log's middle.
+V3 anchorOf(const EditCore& ed, const World& w, int k) {
+    const auto parts = ed.partsOf(k);
+    if (parts.empty()) return V3(1e9, 1e9, 1e9);
+    if (modelPart(ed, k) >= 0) return w.models[modelPart(ed, k)].p;
+    const int i = parts[0].second;
+    switch (parts[0].first) {
+        case 0: return w.rocks[i].at;
+        case 1: return w.trees[i].base;
+        case 2: return (w.logs[i].a + w.logs[i].b) * 0.5;
+        case 3: return w.boxes[i].c;
+        default: return V3(1e9, 1e9, 1e9);
+    }
+}
+
+
+// A camera looking at `at` from `dist` away, its yaw and pitch (degrees; pitch down < 0).
+EditCam camOn(const V3& at, double yawDeg, double pitchDeg, double dist) {
+    EditCam c;
+    c.yaw = yawDeg * M_PI / 180, c.pitch = pitchDeg * M_PI / 180;
+    c.eye = at - c.forward() * dist;
+    return c;
+}
+
+double frameGap(const V3 a[3], const V3 b[3]) {
+    double g = 0;
+    for (int i = 0; i < 3; i++) g = std::max(g, len(a[i] - b[i]));
+    return g;
+}
+
+void frameOfObject(const LevelObject& o, V3 ax[3]) {
+    if (o.kind == OBJ_LOG) {  // (a log: its length is its x; the rest doesn't matter)
+        ax[0] = norm(o.p2 - o.p), ax[1] = ax[2] = V3();
+        return;
+    }
+    frameOf(o.yaw, o.pitch, o.roll, ax);
+}
+
+// A hill on the proving ground (clear of its own things) to drag across.
+void raiseHill(EditCore& ed, double x, double z) {
+    for (int i = 0; i < 6; i++) ed.brush(BRUSH_RAISE, x, z, 16, 1.2);
+    ed.brush(BRUSH_RAISE, x + 9, z - 6, 6, 1.5);
+}
+
+// The most open spot of the proving ground's (nothing within 80 m that a ray could hit first), made lumpy: what a drag rides over.
+V3 lumpyClearing(EditCore& ed, const World& w) {
+    V3 best;
+    double bestGap = -1;
+    const double lim = World::kHalfSize - 150;
+    for (double x = -lim; x <= lim; x += 50)
+        for (double z = -lim; z <= lim; z += 50) {
+            double gap = 1e9;
+            for (const Tree& t : w.trees) gap = std::min(gap, std::hypot(t.base.x - x, t.base.z - z));
+            for (const Rock& r : w.rocks) gap = std::min(gap, std::hypot(r.c.x - x, r.c.z - z));
+            for (const Box& b : w.boxes) gap = std::min(gap, std::hypot(b.c.x - x, b.c.z - z) - b.bound);
+            for (const Placed& m : w.models) gap = std::min(gap, std::hypot(m.p.x - x, m.p.z - z) - 5);
+            if (gap > bestGap) bestGap = gap, best = V3(x, 0, z);
+        }
+    for (int i = 0; i < 2; i++) ed.brush(BRUSH_ROUGHEN, best.x, best.z, 45, 0.4);
+    for (int i = 0; i < 3; i++) ed.brush(BRUSH_RAISE, best.x + 20, best.z - 15, 14, 0.8);
+    return best;
+}
+
+}  // namespace
+
+SCENARIO(editorDragAnchor, "editor/drag-anchor", "A dragged object's grabbed point stays under the mouse (within 1.5 px) as it rides over a hill, seen from high, low, far and straight down, for a block, a scanned rock and a structure; a group keeps its spacing; one undo puts it back") {
+    props::ScopedRockScans scans(&props::sharedHullLibrary());
+    World w(MAP_PROVING_GROUND);
     Level lv;
-    lv.map = MAP_MOUNTAIN;
+    lv.map = MAP_PROVING_GROUND;
     EditCore ed;
     ed.begin(w, lv);
-    LevelObject rock, box, log, tree;
-    rock.kind = OBJ_ROCK, rock.p = V3(30, 0, -300), rock.size = V3(1.5, 1, 1.2), rock.top = 1.2, rock.seed = 5, rock.sub = 1;
-    box.kind = OBJ_BOX, box.p = V3(40, 0, -300), box.size = V3(2, 0.4, 1), box.col[0] = 0.6f;
-    log.kind = OBJ_LOG, log.p = V3(50, 0, -306), log.p2 = V3(50, 0, -294), log.size = V3(0.3, 0, 0);
-    tree.kind = OBJ_TREE, tree.p = V3(60, 0, -300), tree.size = V3(0, 9, 0);
-    LevelObject flat = ed.grounded(box);
-    flat.p = V3(70, 0, -300);
-    const int kr = ed.addObject(rock), kb = ed.addObject(ed.grounded(box)), kl = ed.addObject(ed.grounded(log)), kt = ed.addObject(tree), kf = ed.addObject(ed.grounded(flat));
-    const std::vector<int> all = {kr, kb, kl, kt};
-    // Moves: X changes x only, Z changes z only.
-    const LevelObject r0 = ed.level.objects[kr], b0 = ed.level.objects[kb], l0 = ed.level.objects[kl];
-    ed.moveAlong(all, AXIS_X, 3.0);
-    ctx.check("an X move changes only x", std::fabs(ed.level.objects[kr].p.x - r0.p.x - 3) < 1e-9 && std::fabs(ed.level.objects[kr].p.z - r0.p.z) < 1e-9 &&
-                                          std::fabs(ed.level.objects[kb].p.x - b0.p.x - 3) < 1e-9 && std::fabs(ed.level.objects[kb].p.z - b0.p.z) < 1e-9 &&
-                                          std::fabs(ed.level.objects[kl].p2.x - l0.p2.x - 3) < 1e-9 && std::fabs(ed.level.objects[kl].p2.z - l0.p2.z) < 1e-9);
-    ed.moveAlong(all, AXIS_Z, -2.0);
-    ctx.check("a Z move changes only z", std::fabs(ed.level.objects[kb].p.z - b0.p.z + 2) < 1e-9 && std::fabs(ed.level.objects[kb].p.x - b0.p.x - 3) < 1e-9 && std::fabs(ed.level.objects[kt].p.z + 302) < 1e-9);
-    ctx.check("a locked move keeps the height over the ground", std::fabs(ed.level.objects[kb].lift - b0.lift) < 1e-6 && std::fabs(ed.level.objects[kr].top - r0.top) < 1e-9);
-    // Y: up and down, in the air, and it stays (save, load).
-    ed.moveAlong(all, AXIS_Y, 2.5);
-    ed.moveAlong({kb}, AXIS_Y, -0.5);
-    const Level back = roundTrip(ed.level);
-    ctx.check("a Y move changes the height, not x or z", std::fabs(ed.level.objects[kb].p.x - b0.p.x - 3) < 1e-9 && std::fabs(ed.level.objects[kb].p.z - b0.p.z + 2) < 1e-9 &&
-                                                        std::fabs(ed.level.objects[kb].lift - 2.0) < 1e-6 && std::fabs(ed.level.objects[kr].top - r0.top - 2.5) < 1e-9);
-    auto find = [&](int kind, double x) -> const LevelObject* {  // (the file lists them by kind: find them by what they are)
-        for (const LevelObject& q : back.objects)
-            if (q.kind == kind && std::fabs((q.kind == OBJ_LOG ? q.p2.x : q.p.x) - x) < 0.5) return &q;
-        return nullptr;
+    const V3 spot = lumpyClearing(ed, w);
+    const double X = spot.x, Z = spot.z;
+    const props::HullLibrary& lib = props::sharedHullLibrary();
+    LevelObject box, rock, cabin;
+    box.kind = OBJ_BOX, box.p = V3(X, 0, Z), box.size = V3(2, 0.6, 1.2), box.col[0] = 0.6f;
+    rock.kind = OBJ_ROCK, rock.p = V3(X, 0, Z), rock.sub = 1, rock.seed = 4, rock.yaw = 0.7, rock.pitch = 0.4, rock.roll = 0.3;
+    if (lib.loaded()) rock.scan = 3, rock.size = lib.hulls[3].half() * 1.6;
+    else rock.size = V3(1.4, 0.9, 1.1);
+    rock.top = rock.size.y * 1.2;
+    cabin.kind = OBJ_MODEL, cabin.name = "cabin", cabin.p = V3(X, 0, Z), cabin.size = V3(1, 1, 1), cabin.yaw = 0.5;
+    struct View3 {
+        const char* name;
+        double yaw, pitch, dist, stepX, stepY;  // (the mouse's step a frame, px)
     };
-    const LevelObject *bb = find(OBJ_BOX, 43), *br = find(OBJ_ROCK, 33), *bl = find(OBJ_LOG, 53), *bt = find(OBJ_TREE, 63);
-    ctx.check("the height survives save and load", bb && br && bl && bt && std::fabs(bb->lift - 2.0) < 1e-2 && std::fabs(br->top - r0.top - 2.5) < 1e-2 &&
-                                                   std::fabs(bl->lift - l0.lift - 2.5) < 1e-2 && std::fabs(bt->lift - 2.5) < 1e-2);
-    ed.moveAlong(all, AXIS_Y, -10.0);
-    ctx.check("...and it can go under the ground too", ed.level.objects[kb].lift < -7 && ed.level.objects[kr].top < 0);
-    // Turns. A block turned about a world axis through its middle: yaw about Y, roll about X, pitch about Z (the code's names for those turns).
-    const double a = 0.5;
-    ed.rotateObjects({kf}, AXIS_Y, a);
-    LevelObject o = ed.level.objects[kf];
-    ctx.check("about Y: yaw only", std::fabs(o.yaw - a) < 1e-9 && std::fabs(o.pitch) < 1e-9 && std::fabs(o.roll) < 1e-9);
-    ed.rotateObjects({kf}, AXIS_Y, -a);
-    ed.rotateObjects({kf}, AXIS_X, a);
-    o = ed.level.objects[kf];
-    ctx.check("about X: roll", std::fabs(o.roll - a) < 1e-6 && std::fabs(o.yaw) < 1e-6 && std::fabs(o.pitch) < 1e-6, std::to_string(o.roll));
-    ed.rotateObjects({kf}, AXIS_X, -a);
-    ed.rotateObjects({kf}, AXIS_Z, a);
-    o = ed.level.objects[kf];
-    ctx.check("about Z: pitch", std::fabs(o.pitch - a) < 1e-6 && std::fabs(o.yaw) < 1e-6 && std::fabs(o.roll) < 1e-6, std::to_string(o.pitch));
-    // A turned block turned again: the world axis, not its own (the result is the old axes turned by the rotation).
-    ed.rotateObjects({kf}, AXIS_Z, -a);
-    ed.rotateObjects({kf}, AXIS_Y, 0.7);
-    const LevelObject before = ed.level.objects[kf];
-    ed.rotateObjects({kf}, AXIS_X, 0.4);
-    const LevelObject after = ed.level.objects[kf];
-    auto axes = [](const LevelObject& q, V3 ax[3]) {
-        V3 v[3] = {V3(1, 0, 0), V3(0, 1, 0), V3(0, 0, 1)};
-        for (int i = 0; i < 3; i++) {
-            v[i] = rotateAxis(v[i], V3(1, 0, 0), q.roll);
-            v[i] = rotateAxis(v[i], V3(0, 0, 1), q.pitch);
-            ax[i] = rotateAxis(v[i], V3(0, 1, 0), q.yaw);
+    const View3 views[] = {{"high", 30, -40, 30, 14, 6}, {"low", 200, -15, 14, 12, -2}, {"far", 120, -25, 90, 5, 2}, {"straight down", 0, -86, 40, 10, 9}};
+    const LevelObject* kinds[] = {&box, &rock, &cabin};
+    const char* kindName[] = {"block", "scanned rock", "structure"};
+    for (int ki = 0; ki < 3; ki++) {
+        double worst = 0, climbed = 0;
+        int misses = 0;
+        const int k = ed.addObject(ed.grounded(*kinds[ki]));
+        for (const View3& vw : views) {
+            V3 mid;
+            double rad = 1;
+            ed.middleOf({k}, mid, &rad);
+            const EditCam cam = camOn(mid, vw.yaw, vw.pitch, vw.dist);
+            double sx, sy;
+            cam.project(mid + V3(0, rad * 0.25, 0), sx, sy);  // (its upper half: a lump in front may hide its foot)
+            V3 o, d, g;
+            cam.ray(sx, sy, o, d);
+            const EditPick p = ed.pick(o, d, ed.rayGround(o, d, 3000, g) ? len(g - o) : 1e9, true, false);
+            if (!ctx.check(std::string(kindName[ki]) + ", " + vw.name + ": the press lands on it", p.kind == EditPick::OBJECT && p.index == k, std::to_string(p.kind) + ":" + std::to_string(p.index) + " " + p.name + " t " + std::to_string(p.t) + " ground " + std::to_string(len(g - o)))) continue;
+            const V3 grab = o + d * p.t, a0 = anchorOf(ed, w, k);
+            const LevelObject from = ed.normalized(k);
+            const V3 f0 = ed.footOf(from);
+            const double ride0 = ed.rideAt(f0.x, f0.z, {k});
+            double t = p.t, lo = 1e9, hi = -1e9;
+            ed.beginEdit("MOVE");
+            for (int step = 1; step <= 16; step++) {
+                const double cx = sx + vw.stepX * step, cy = sy + vw.stepY * step;
+                cam.ray(cx, cy, o, d);
+                const EditCore::Slide sl = ed.slideUnder(from, grab, o, d, {k}, ride0, t);
+                if (!sl.ok) {
+                    misses++;
+                    continue;
+                }
+                t = sl.t;
+                ed.putObjects({{k, ed.slid(from, sl.dx, sl.dz, sl.ride)}}, "MOVE");
+                const V3 now = grab + (anchorOf(ed, w, k) - a0);  // (the grabbed point, carried by the object as it was rebuilt)
+                double gx, gy;
+                if (!cam.project(now, gx, gy)) {
+                    misses++;
+                    continue;
+                }
+                worst = std::max(worst, std::hypot(gx - cx, gy - cy));
+                lo = std::min(lo, now.y), hi = std::max(hi, now.y);
+            }
+            ed.endEdit();
+            climbed = std::max(climbed, hi - lo);
+            ed.undo();
         }
-    };
-    V3 a0[3], a1[3];
-    axes(before, a0), axes(after, a1);
-    double worst = 0;
-    for (int i = 0; i < 3; i++) worst = std::max(worst, len(rotateAxis(a0[i], V3(1, 0, 0), 0.4) - a1[i]));
-    ctx.metric("a turn about world X acts on the turned block's axes", worst, "", 0, 1e-6);
-    // Rocks do the same; a log tips about the world axis; a tree only turns about Y (nothing to do about X).
-    ed.rotateObjects({kr}, AXIS_Z, 0.3);
-    ctx.check("a rock pitches about Z", std::fabs(ed.level.objects[kr].pitch - 0.3) < 1e-6 && ed.level.objects[kr].sub == 1);
-    ed.rotateObjects({kl}, AXIS_X, 0.3);
-    const LevelObject lg = ed.level.objects[kl];
-    ctx.check("a log along Z swings about X: its ends change height", std::fabs(lg.p.y - lg.p2.y) > 1 && std::fabs(lg.p.x - lg.p2.x) < 1e-6, std::to_string(lg.p.y - lg.p2.y));
-    const bool tx = ed.rotateObjects({kt}, AXIS_X, 0.3), tz = ed.rotateObjects({kt}, AXIS_Z, 0.3);
-    ctx.check("a tree can't tip about X or Z", !tx && !tz, std::to_string(ed.level.objects[kt].kind));
-    ctx.check("...but it turns about Y", EditCore::canRotate(OBJ_TREE, AXIS_Y) == false && EditCore::canRotate(OBJ_BOX, AXIS_Y));
-    // A whole drag (many small steps) is one undo step.
-    const LevelObject s0 = ed.level.objects[kf];
-    const std::string top0 = ed.undoName();
-    ed.beginEdit("TURN", "turn");
-    for (int i = 0; i < 20; i++) ed.rotateObjects({kf, kr}, i % 2 ? AXIS_X : AXIS_Y, 0.05, "turn");
+        ctx.metric(std::string(kindName[ki]) + ": worst gap between the grabbed point and the mouse", worst, "px", 0, 1.5);
+        ctx.metric(std::string(kindName[ki]) + ": how far it rose and fell on the way (the lumps)", climbed, "m", 0.3, 100);
+        ctx.check(std::string(kindName[ki]) + ": the ray always found its place", misses == 0, std::to_string(misses));
+        ed.undo();  // (the add)
+    }
+    // A group: the grabbed one stays under the mouse, the other keeps its place beside it (riding its own ground).
+    const int kb = ed.addObject(ed.grounded(box));
+    LevelObject r2 = rock;
+    r2.p = V3(X - 5, 0, Z + 3);
+    const int kr = ed.addObject(r2);
+    const LevelObject fb = ed.normalized(kb), fr = ed.normalized(kr);
+    const EditCam cam = camOn(fb.p, 30, -35, 28);
+    double sx, sy;
+    cam.project(fb.p, sx, sy);
+    V3 o, d, g;
+    cam.ray(sx, sy, o, d);
+    const EditPick p = ed.pick(o, d, ed.rayGround(o, d, 3000, g) ? len(g - o) : 1e9, true, false);
+    const V3 grab = o + d * p.t;
+    const std::string undo0 = ed.undoName();
+    ed.beginEdit("MOVE");
+    double spread = 0, t = p.t;
+    for (int step = 1; step <= 12; step++) {
+        cam.ray(sx + 15 * step, sy + 4 * step, o, d);
+        const EditCore::Slide sl = ed.slideUnder(fb, grab, o, d, {kb, kr}, 0, t);
+        if (!sl.ok) continue;
+        t = sl.t;
+        ed.putObjects({{kb, ed.slid(fb, sl.dx, sl.dz, sl.ride)}, {kr, ed.slid(fr, sl.dx, sl.dz, sl.ride)}}, "MOVE");
+        const V3 db = ed.level.objects[kb].p - fb.p, dr = ed.level.objects[kr].p - fr.p;
+        spread = std::max(spread, std::hypot(db.x - dr.x, db.z - dr.z));
+    }
     ed.endEdit();
-    ctx.check("the drag changed it", std::fabs(ed.level.objects[kf].yaw - s0.yaw) > 0.1 || std::fabs(ed.level.objects[kf].roll - s0.roll) > 0.1);
+    ctx.metric("a group moves together (plan offset kept)", spread, "m", 0, 1e-9);
+    ctx.check("the drag moved them", len(ed.level.objects[kb].p - fb.p) > 3);
     ed.undo();
-    const LevelObject s1 = ed.level.objects[kf];
-    ctx.check("one undo puts it all back", sameFields(s0, s1) && ed.undoName() == top0, ed.undoName());
-    // The mouse side: the moved thing follows the mouse; an edge-on axis gives mouse-up = +axis; the turn goes the way the near side is pulled.
-    ctx.check("axis pointing up the screen: mouse up goes +", axisDragMetres(-40, 100, -20) > 0 && axisDragMetres(-40, 100, 20) < 0);
-    ctx.check("axis pointing down the screen: mouse down goes +", axisDragMetres(40, 100, 20) > 0 && axisDragMetres(40, 100, -20) < 0);
-    ctx.metric("it follows the mouse pixel for pixel", axisDragMetres(-40, 100, -20) * -40, "px", -20.01, -19.99);
-    ctx.check("edge-on axis: mouse up is +axis", axisDragMetres(2, 100, -10) > 0 && axisDragMetres(-2, 100, -10) > 0 && axisDragMetres(0, 100, 10) < 0);
-    ctx.check("turning about Y: sideways to the right turns it so the facing side goes right", turnSign(AXIS_Y, V3(-1, 0, 0), V3(0, 0, 1)) > 0);
-    ctx.check("a turn in the screen's plane falls back to +", turnSign(AXIS_X, V3(-1, 0, 0), V3(0, 0, 1)) > 0);
-    ctx.check("the other way round it flips", turnSign(AXIS_Z, V3(-1, 0, 0), V3(0, 1, 0)) != turnSign(AXIS_Z, V3(1, 0, 0), V3(0, 1, 0)));
+    ctx.check("one undo puts the whole drag back", len(ed.level.objects[kb].p - fb.p) < 1e-9 && len(ed.level.objects[kr].p - fr.p) < 1e-9 && ed.undoName() == undo0, ed.undoName());
+}
+
+SCENARIO(editorDragRide, "editor/drag-ride", "Dragged over a block a rock climbs onto it and comes down past it; it never jumps at the start of a drag; the sky leaves it where it was") {
+    World w(MAP_PROVING_GROUND);
+    Level lv;
+    lv.map = MAP_PROVING_GROUND;
+    EditCore ed;
+    ed.begin(w, lv);
+    const double X = -300, Z = 250;
+    LevelObject slab, rock;
+    slab.kind = OBJ_BOX, slab.p = V3(X + 10, 0, Z), slab.size = V3(3, 0.8, 3), slab.col[0] = 0.6f;
+    rock.kind = OBJ_ROCK, rock.p = V3(X, 0, Z), rock.size = V3(0.8, 0.6, 0.7), rock.top = 0.9, rock.sub = 1, rock.seed = 3;
+    const int ks = ed.addObject(ed.grounded(slab)), kr = ed.addObject(rock);
+    const LevelObject from = ed.normalized(kr);
+    const V3 a0 = anchorOf(ed, w, kr);
+    const EditCam cam = camOn(a0 + V3(10, 0, 0), 90, -30, 30);  // (looking along -z at the line from the rock over the slab)
+    double sx, sy;
+    cam.project(a0, sx, sy);
+    V3 o, d, g;
+    cam.ray(sx, sy, o, d);
+    const EditPick p = ed.pick(o, d, ed.rayGround(o, d, 3000, g) ? len(g - o) : 1e9, true, false);
+    if (!ctx.check("the press lands on the rock", p.kind == EditPick::OBJECT && p.index == kr)) return;
+    const V3 grab = o + d * p.t;
+    const EditCore::Slide still = ed.slideUnder(from, grab, o, d, {kr}, 0, p.t);
+    ctx.check("not moved yet: not moved", still.ok && std::hypot(still.dx, still.dz) < 1e-4 && std::fabs(still.rise) < 1e-4, std::to_string(still.dx) + " " + std::to_string(still.dz));
+    // Across: the grabbed point follows the mouse over to the slab's middle, and on past it.
+    // (The mouse where the grabbed point shows with the rock on the slab's top: aimed at the slab's face, the rock waits at its edge.)
+    double over = 0, past = 0;
+    double sxs, sys;
+    cam.project(V3(X + 10, grab.y + 1.6, Z), sxs, sys);
+    double t = p.t;
+    for (int step = 1; step <= 30; step++) {
+        const double f = step / 15.0;
+        cam.ray(sx + (sxs - sx) * f, sy + (sys - sy) * f, o, d);
+        const EditCore::Slide sl = ed.slideUnder(from, grab, o, d, {kr}, 0, t);
+        if (!sl.ok) continue;
+        t = sl.t;
+        if (step == 15) {
+            const V3 f = ed.footOf(from);
+            over = sl.ride - (w.boxes[ed.partsOf(ks)[0].second].c.y + 0.8 - w.height(f.x + sl.dx, f.z + sl.dz));  // (how far from the slab's top there)
+        }
+        if (step == 30) past = sl.ride;
+    }
+    ctx.metric("over the slab's middle it rides on its top (how far off it)", over, "m", -0.01, 0.01);
+    ctx.metric("past it, back on the ground", past, "m", -0.01, 0.01);
+    // The sky: no place for it.
+    ctx.check("a ray into the sky finds nowhere (it stays put)", !ed.slideUnder(from, grab, cam.eye, V3(0, 1, 0), {kr}, 0, t).ok);
+}
+
+SCENARIO(editorDragAxis, "editor/drag-axis", "Held to an axis (Shift X, Ctrl Z, Space Y) the grabbed point follows the mouse along that world line exactly, nothing else changes, and Y floats or sinks and stays through save and load for every kind") {
+    World w(MAP_PROVING_GROUND);
+    Level lv;
+    lv.map = MAP_PROVING_GROUND;
+    EditCore ed;
+    ed.begin(w, lv);
+    const double X = -300, Z = 250;
+    raiseHill(ed, X + 4, Z);
+    LevelObject box;
+    box.kind = OBJ_BOX, box.p = V3(X, 0, Z), box.size = V3(2, 0.6, 1.2), box.col[0] = 0.6f;
+    const int kb = ed.addObject(ed.grounded(box));
+    const EditCam cam = camOn(ed.normalized(kb).p, 35, -32, 26);
+    for (EditAxis ax : {AXIS_X, AXIS_Y, AXIS_Z}) {
+        const V3 A = axisDir(ax), c0 = anchorOf(ed, w, kb);
+        double sx, sy;
+        cam.project(c0 + V3(0, 0.6, 0), sx, sy);  // (its top)
+        V3 o, d, g;
+        cam.ray(sx, sy, o, d);
+        const EditPick p = ed.pick(o, d, ed.rayGround(o, d, 3000, g) ? len(g - o) : 1e9, true, false);
+        if (!ctx.check(std::string("the press lands on it (") + axisName(ax) + ")", p.kind == EditPick::OBJECT && p.index == kb)) continue;
+        const V3 grab = o + d * p.t;
+        double s0 = 0;
+        lineUnderMouse(cam, sx, sy, grab, A, s0);
+        const LevelObject from = ed.normalized(kb);
+        double worstPx = 0, worstM = 0, other = 0, worstFoot = 0;
+        ed.beginEdit("MOVE");
+        for (double want : {1.5, 3.7, -2.2, 0.4}) {
+            double cx, cy;
+            cam.project(grab + A * want, cx, cy);  // (the mouse where that point of the line is on the screen)
+            double s = 0;
+            if (!lineUnderMouse(cam, cx, cy, grab, A, s)) continue;
+            s -= s0;
+            {  // (and off the line: the foot of the square from the mouse to it)
+                double ax2, ay2, bx2, by2, s2, fx, fy;
+                cam.project(grab, ax2, ay2), cam.project(grab + A, bx2, by2);
+                const double nx = -(by2 - ay2), ny = bx2 - ax2, nl = std::hypot(nx, ny);
+                if (lineUnderMouse(cam, cx + nx / nl * 40, cy + ny / nl * 40, grab, A, s2) && cam.project(grab + A * (s2 - s0), fx, fy))
+                    worstFoot = std::max(worstFoot, std::hypot(fx - cx, fy - cy));
+            }
+            ed.putObjects({{kb, ed.translated(from, A * s)}}, "MOVE");
+            const V3 moved = anchorOf(ed, w, kb) - c0;
+            double gx, gy;
+            cam.project(grab + moved, gx, gy);
+            worstPx = std::max(worstPx, std::hypot(gx - cx, gy - cy));
+            worstM = std::max(worstM, std::fabs(s - want));
+            other = std::max(other, len(moved - A * dot(moved, A)));
+        }
+        ed.endEdit();
+        ctx.metric(std::string("along ") + axisName(ax) + ": the grabbed point to the mouse", worstPx, "px", 0, 0.5);
+        ctx.metric(std::string("along ") + axisName(ax) + ": the distance asked to the distance gone", worstM, "m", 0, 1e-6);
+        ctx.metric(std::string("along ") + axisName(ax) + ": movement off the axis", other, "m", 0, 1e-6);
+        ctx.metric(std::string("along ") + axisName(ax) + ": the mouse 40 px off the line: the point stays at its foot", worstFoot, "px", 0, 0.5);
+        ed.undo();
+    }
+    // Y for every kind: up 2.5 m, and it stays (the height is an offset from the ground, saved).
+    LevelObject rock, log, tree, cabin, bush;
+    rock.kind = OBJ_ROCK, rock.p = V3(X + 20, 0, Z), rock.size = V3(1, 0.7, 0.9), rock.top = 0.9, rock.sub = 1, rock.seed = 5;
+    log.kind = OBJ_LOG, log.p = V3(X + 30, 0, Z - 4), log.p2 = V3(X + 30, 0, Z + 4), log.size = V3(0.3, 0, 0);
+    tree.kind = OBJ_TREE, tree.p = V3(X + 40, 0, Z), tree.size = V3(0, 9, 0);
+    cabin.kind = OBJ_MODEL, cabin.name = "cabin", cabin.p = V3(X + 50, 0, Z), cabin.size = V3(1, 1, 1);
+    bush.kind = OBJ_BUSH, bush.p = V3(X + 60, 0, Z), bush.size = V3(1.2, 0, 0);
+    std::vector<int> ks = {kb, ed.addObject(rock), ed.addObject(ed.grounded(log)), ed.addObject(tree), ed.addObject(cabin), ed.addObject(bush)};
+    std::vector<V3> before;
+    for (int k : ks) before.push_back(anchorOf(ed, w, k));
+    std::vector<std::pair<int, LevelObject>> set;
+    for (int k : ks) set.push_back({k, ed.translated(ed.normalized(k), V3(0, 2.5, 0))});
+    ed.putObjects(set, "MOVE");
+    double worst = 0;
+    for (size_t i = 0; i < ks.size(); i++)
+        if (before[i].x < 1e8) worst = std::max(worst, len(anchorOf(ed, w, ks[i]) - before[i] - V3(0, 2.5, 0)));
+    ctx.metric("Y: each rose exactly 2.5 m", worst, "m", 0, 1e-6);
+    // Through the file, and a level built from it.
+    const Level back = roundTrip(ed.level);
+    World w2 = playWorldOf(back);
+    EditCore ed2;
+    World plain(MAP_PROVING_GROUND);
+    ed2.begin(plain, back);
+    double gap = 0;
+    for (size_t i = 0; i < ks.size(); i++) {
+        const V3 now = anchorOf(ed, w, ks[i]);
+        double best = 1e9;
+        for (int k2 = 0; k2 < (int)back.objects.size(); k2++) best = std::min(best, len(anchorOf(ed2, plain, k2) - now));
+        if (now.x < 1e8) gap = std::max(gap, best);
+    }
+    ctx.metric("saved and loaded: each stands where it was put", gap, "m", 0, 0.02);
+    (void)w2;
+}
+
+SCENARIO(editorTurnFree, "editor/turn-free", "A free turn (any composition of turns) is exactly the turns times how it stood, for code-made and scanned rocks, blocks, logs and structures; it keeps its turning point; it reads back the same from yaw, pitch, roll, the file and the world (render frame and collider)") {
+    const props::HullLibrary& lib = props::sharedHullLibrary();
+    for (int scanned = 0; scanned < 2; scanned++) {
+        props::ScopedRockScans scans(scanned && lib.loaded() ? &lib : nullptr);
+        World w(MAP_PROVING_GROUND);
+        Level lv;
+        lv.map = MAP_PROVING_GROUND;
+        EditCore ed;
+        ed.begin(w, lv);
+        const double X = -300, Z = 250;
+        LevelObject rock, box, log, cabin;
+        rock.kind = OBJ_ROCK, rock.p = V3(X, 0, Z), rock.size = V3(1.6, 0.8, 1.1), rock.top = 1.0, rock.sub = 1, rock.seed = 7, rock.yaw = 0.3;
+        if (scanned) rock.scan = 3, rock.size = lib.hulls[3].half() * 1.5;
+        box.kind = OBJ_BOX, box.p = V3(X + 12, 0, Z), box.size = V3(2, 0.5, 1), box.col[0] = 0.6f, box.yaw = 0.2;
+        log.kind = OBJ_LOG, log.p = V3(X + 24, 0, Z - 4), log.p2 = V3(X + 24, 0, Z + 4), log.size = V3(0.3, 0, 0);
+        cabin.kind = OBJ_MODEL, cabin.name = "cabin", cabin.p = V3(X + 40, 0, Z), cabin.size = V3(1, 1, 1), cabin.yaw = -0.4;
+        const std::vector<int> ks = {ed.addObject(rock), ed.addObject(ed.grounded(box)), ed.addObject(ed.grounded(log)), ed.addObject(cabin)};
+        const char* names[] = {"rock", "block", "log", "structure"};
+        // A trackball's worth of turns: each frame a little about Y and a little about a tilted view axis, composed.
+        uint32_t seed = 12345;
+        auto rnd = [&]() {
+            seed = seed * 1664525u + 1013904223u;
+            return (seed >> 8) / double(1 << 24) - 0.5;
+        };
+        Quat q;
+        for (int i = 0; i < 40; i++) q = Quat::axisAngle(V3(0, 1, 0), rnd() * 0.3) * Quat::axisAngle(norm(V3(rnd(), 0.2 * rnd(), rnd())), rnd() * 0.3) * q;
+        q.normalize();
+        for (size_t i = 0; i < ks.size(); i++) {
+            const std::string nm = std::string(scanned ? "scanned " : "") + names[i];
+            const LevelObject from = ed.normalized(ks[i]);
+            const V3 pivot = anchorOf(ed, w, ks[i]);
+            V3 f0[3], want[3], got[3];
+            frameOfObject(from, f0);
+            for (int j = 0; j < 3; j++) want[j] = q.rotate(f0[j]);
+            if (from.kind == OBJ_LOG) want[1] = want[2] = V3();
+            const LevelObject turned = ed.rotatedAbout(from, q, pivot);
+            frameOfObject(turned, got);
+            ctx.metric(nm + ": its frame is the turn times how it stood", frameGap(got, want), "", 0, 1e-6);
+            ed.putObjects({{ks[i], turned}}, "TURN");
+            ctx.metric(nm + ": it turns about its turning point (that stays put)", len(anchorOf(ed, w, ks[i]) - pivot), "m", 0, 1e-6);
+            // The world: a block's collider, a structure's drawn frame and its collider, a rock's drawn frame and hull.
+            const auto parts = ed.partsOf(ks[i]);
+            if (from.kind == OBJ_BOX) ctx.metric(nm + ": the collider's axes", frameGap(w.boxes[parts[0].second].ax, want), "", 0, 1e-6);
+            if (from.kind == OBJ_MODEL) {
+                const Placed& pl = w.models[modelPart(ed, ks[i])];
+                ctx.check(nm + ": drawn in its own frame", pl.oriented && frameGap(pl.ax, want) < 1e-6);
+                bool box = false;
+                for (const Box& b : w.boxes)
+                    if (b.hidden && frameGap(b.ax, want) < 1e-6) box = true;
+                ctx.check(nm + ": its collider turned with it", box);
+            }
+            if (from.kind == OBJ_ROCK) {
+                const Rock& r = w.rocks[parts[0].second];
+                if (scanned) {
+                    const V3 ax[3] = {norm(r.axis[0]), norm(r.axis[1]), norm(r.axis[2])};
+                    ctx.metric(nm + ": the scan is drawn in that frame", frameGap(ax, want), "", 0, 1e-6);
+                    const props::RockHull& h = lib.hulls[r.scan];
+                    double off = 0;
+                    for (size_t v = 0; v < h.v.size() && v < r.v.size(); v++) off = std::max(off, len(r.origin + r.axis[0] * h.v[v].x + r.axis[1] * h.v[v].y + r.axis[2] * h.v[v].z - r.v[v]));
+                    ctx.metric(nm + ": and collides as it's drawn (hull = scan in that frame)", off, "m", 0, 1e-6);
+                }
+            }
+            // Back from the file.
+            const Level back = roundTrip(ed.level);
+            V3 fb[3];
+            frameOfObject(back.objects[i], fb);
+            ctx.metric(nm + ": saved and loaded, the same frame", frameGap(fb, got), "", 0, 2e-3);
+        }
+    }
+    // Gimbal: a block stood on end, then turned about X and Y: still exactly the product (yaw is free up there; roll takes it).
+    World w(MAP_PROVING_GROUND);
+    Level lv;
+    lv.map = MAP_PROVING_GROUND;
+    EditCore ed;
+    ed.begin(w, lv);
+    LevelObject box;
+    box.kind = OBJ_BOX, box.p = V3(-300, 0, 250), box.size = V3(2, 0.5, 1), box.col[0] = 0.6f, box.yaw = 0.6;
+    const int k = ed.addObject(ed.grounded(box));
+    const LevelObject from = ed.normalized(k);
+    double worst = 0;
+    for (double extra : {0.0, 0.3, -1.1}) {
+        const Quat q = Quat::axisAngle(V3(0, 1, 0), extra) * Quat::axisAngle(V3(1, 0, 0), extra * 0.5) * Quat::axisAngle(V3(0, 0, 1), M_PI / 2);
+        const LevelObject o = ed.rotatedAbout(from, q, from.p);
+        V3 f0[3], got[3], want[3];
+        frameOf(from.yaw, from.pitch, from.roll, f0);
+        frameOf(o.yaw, o.pitch, o.roll, got);
+        for (int j = 0; j < 3; j++) want[j] = q.rotate(f0[j]);
+        worst = std::max(worst, frameGap(got, want));
+    }
+    ctx.metric("stood on end (pitch 90): still the exact turn", worst, "", 0, 1e-6);
+}
+
+SCENARIO(editorTurnAxis, "editor/turn-axis", "A turn held to one world axis turns about that axis only; a group turns about its middle as one rigid thing; trees stay upright; one undo; Esc's cancel leaves no step and keeps redo") {
+    World w(MAP_PROVING_GROUND);
+    Level lv;
+    lv.map = MAP_PROVING_GROUND;
+    EditCore ed;
+    ed.begin(w, lv);
+    const double X = -300, Z = 250;
+    LevelObject box, rock, tree;
+    box.kind = OBJ_BOX, box.p = V3(X, 0, Z), box.size = V3(2, 0.5, 1), box.col[0] = 0.6f, box.yaw = 0.4, box.pitch = 0.2;
+    rock.kind = OBJ_ROCK, rock.p = V3(X + 6, 0, Z + 2), rock.size = V3(1.2, 0.8, 1), rock.top = 1.0, rock.sub = 1, rock.seed = 2, rock.roll = 0.5;
+    tree.kind = OBJ_TREE, tree.p = V3(X - 5, 0, Z - 3), tree.size = V3(0, 9, 0);
+    const int kb = ed.addObject(ed.grounded(box)), kr = ed.addObject(rock), kt = ed.addObject(tree);
+    // One axis at a time: the frame turns about that world axis only (what lies along the axis doesn't move).
+    for (EditAxis ax : {AXIS_X, AXIS_Y, AXIS_Z}) {
+        const V3 A = axisDir(ax);
+        const LevelObject from = ed.normalized(kb);
+        const Quat q = Quat::axisAngle(A, 0.7);
+        const LevelObject o = ed.rotatedAbout(from, q, from.p);
+        V3 f0[3], f1[3];
+        frameOf(from.yaw, from.pitch, from.roll, f0);
+        frameOf(o.yaw, o.pitch, o.roll, f1);
+        double gap = 0, along = 0;
+        for (int j = 0; j < 3; j++) gap = std::max(gap, len(f1[j] - rotateAxis(f0[j], A, 0.7))), along = std::max(along, std::fabs(dot(f1[j], A) - dot(f0[j], A)));
+        ctx.metric(std::string("about ") + axisName(ax) + ": exactly that turn", gap, "", 0, 1e-6);
+        ctx.metric(std::string("about ") + axisName(ax) + ": nothing along the axis changes", along, "", 0, 1e-6);
+        ctx.check(std::string("about ") + axisName(ax) + ": its middle stays put", len(o.p - from.p) < 1e-9);
+    }
+    // A group: about its middle, rigidly.
+    const std::vector<int> ks = {kb, kr, kt};
+    V3 mid;
+    ctx.check("the group has a middle", ed.middleOf(ks, mid));
+    std::vector<LevelObject> from;
+    std::vector<V3> at0;
+    for (int k : ks) from.push_back(ed.normalized(k)), at0.push_back(anchorOf(ed, w, k));
+    const Quat q = Quat::axisAngle(V3(0, 1, 0), 0.9) * Quat::axisAngle(V3(1, 0, 0), 0.25);
+    const std::string undo0 = ed.undoName();
+    ed.beginEdit("TURN");
+    for (int step = 1; step <= 10; step++) {  // (a drag: each frame from how they stood)
+        const Quat qs = Quat::axisAngle(V3(0, 1, 0), 0.09 * step) * Quat::axisAngle(V3(1, 0, 0), 0.025 * step);
+        std::vector<std::pair<int, LevelObject>> set;
+        for (size_t i = 0; i < ks.size(); i++) set.push_back({ks[i], ed.rotatedAbout(from[i], qs, mid)});
+        ed.putObjects(set, "TURN");
+    }
+    ed.endEdit();
+    const V3 b1 = anchorOf(ed, w, kb), r1 = anchorOf(ed, w, kr);
+    ctx.metric("the block went round the middle", len(b1 - (mid + q.rotate(at0[0] - mid))), "m", 0, 1e-6);
+    ctx.metric("the rock went round the middle", len(r1 - (mid + q.rotate(at0[1] - mid))), "m", 0, 1e-6);
+    ctx.metric("...and they kept their distance", std::fabs(len(b1 - r1) - len(at0[0] - at0[1])), "m", 0, 1e-6);
+    const LevelObject& t1 = ed.level.objects[kt];
+    const Quat twist = Quat::axisAngle(V3(0, 1, 0), 0.9);
+    const V3 tw = mid + twist.rotate(V3(at0[2].x, mid.y, at0[2].z) - mid);
+    ctx.check("the tree went round about the vertical only, still standing on the ground", std::hypot(t1.p.x - tw.x, t1.p.z - tw.z) < 1e-6 && std::fabs(t1.lift) < 1e-6,
+              std::to_string(t1.p.x - tw.x) + " " + std::to_string(t1.lift));
+    ctx.check("the drag is one undo step", ed.undoName() == "TURN");
+    ed.undo();
+    ctx.check("...and one undo puts all three back", ed.undoName() == undo0 && len(anchorOf(ed, w, kb) - at0[0]) < 1e-9 && len(anchorOf(ed, w, kr) - at0[1]) < 1e-9);
+    // Cancel (Esc): everything back, no step, redo kept.
+    ed.redo();
+    ed.undo();
+    const bool redo = ed.canRedo();
+    const Level before = ed.level;
+    ed.beginEdit("MOVE");
+    ed.putObjects({{kb, ed.translated(ed.normalized(kb), V3(3, 1, 0))}}, "MOVE");
+    ed.cancelEdit();
+    ctx.check("a cancelled drag puts it back", sameFields(ed.level.objects[kb], before.objects[kb]) && len(anchorOf(ed, w, kb) - at0[0]) < 1e-9);
+    ctx.check("...leaves no undo step, and redo is still there", ed.undoName() == undo0 && ed.canRedo() == redo && !ed.editing());
+}
+
+SCENARIO(editorModelPose, "editor/model-pose", "A tipped structure saves its tilt on a line an older build skips, loads it back, and is drawn and collides tipped; upright ones save as before") {
+    World w(MAP_PROVING_GROUND);
+    Level lv;
+    lv.map = MAP_PROVING_GROUND;
+    EditCore ed;
+    ed.begin(w, lv);
+    LevelObject cabin;
+    cabin.kind = OBJ_MODEL, cabin.name = "cabin", cabin.p = V3(-300, 0, 250), cabin.size = V3(1, 1, 1), cabin.yaw = 0.3;
+    const int k = ed.addObject(cabin);
+    std::string text = saveLevelText(ed.level);
+    ctx.check("upright: no pose line", text.find("#modelpose") == std::string::npos);
+    ed.transformObjects({k}, OP_PITCH, 0.4);
+    ed.transformObjects({k}, OP_ROLL, -0.25);
+    text = saveLevelText(ed.level);
+    ctx.check("tipped (R F, C V): a pose line", text.find("#modelpose") != std::string::npos);
+    Level back;
+    parseLevelText(text, back);
+    ctx.check("it loads back tipped", back.objects.size() == 1 && std::fabs(back.objects[0].pitch - 0.4) < 1e-3 && std::fabs(back.objects[0].roll + 0.25) < 1e-3);
+    const World pw = playWorldOf(back);
+    bool drawn = false;
+    for (const Placed& pl : pw.models)
+        if (pl.id == "cabin" && pl.oriented) drawn = true;
+    ctx.check("played: drawn tipped", drawn);
 }

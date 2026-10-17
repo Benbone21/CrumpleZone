@@ -2255,9 +2255,34 @@ double sceneryHeight(const World& world, double x, double z) {
 void Renderer::setWorld(const World& world) {
     mapId = world.map == MAP_WILDS ? (int)MAP_FREEWAY : world.map;  // (the wilds are painted as the freeway's meadows are: land and paints, no pad or road)
     buildTerrain(world);
+    treeSig_ = scenerySig_ = bushSig_ = 0;  // (a new world: everything is built afresh)
     updateObjects(world);
     updateWater(world);
 }
+
+namespace {
+// A running hash of what a mesh is built from (FNV-1a over the values).
+struct Sig {
+    uint64_t h = 1469598103934665603ull;
+    void bytes(const void* p, size_t n) {
+        const unsigned char* c = (const unsigned char*)p;
+        for (size_t i = 0; i < n; i++) h = (h ^ c[i]) * 1099511628211ull;
+    }
+    void num(double v) { bytes(&v, sizeof v); }
+    void vec(const V3& v) { num(v.x), num(v.y), num(v.z); }
+    void str(const std::string& t) { bytes(t.data(), t.size()), num((double)t.size()); }
+};
+// What every scenery mesh shares: the world, its hand-edited cells, the props quality and what the scans cover.
+Sig sceneryBase(const World& w, int props, const ScanCover& c) {
+    Sig s;
+    const void* wp = &w;
+    s.bytes(&wp, sizeof wp);
+    s.num((double)w.map), s.num((double)w.cellEdits), s.num(props);
+    s.num(c.pines), s.num(c.snags), s.num(c.rocks), s.num(c.logs), s.num(c.bushes);
+    for (const Water& wt : w.waters) s.num(wt.x), s.num(wt.z), s.num(wt.r), s.num(wt.y);
+    return s;
+}
+}  // namespace
 
 void Renderer::updateObjects(const World& world) {
     // The scanned props first: whatever they cover, the code-made meshes leave out.
@@ -2269,18 +2294,45 @@ void Renderer::updateObjects(const World& world) {
     treeFade_.assign(world.trees.size(), 0.0f);
     propsApplied = settings.props;
     buildBoxes(world);
-    {
+    // (The trees and the rest of the scenery are only rebuilt when something they're made from changed: moving a block in the
+    // editor leaves the forest alone, so a drag keeps up with the mouse.)
+    Sig ts = sceneryBase(world, pq, cover);
+    for (const Tree& t : world.trees) ts.vec(t.base), ts.num(t.height), ts.num(t.radius), ts.num(t.kind), ts.num(t.tint);
+    if (ts.h != treeSig_ || treeVertexCount == 0) {
+        treeSig_ = ts.h;
         std::vector<Vtx> v;
         buildTreeMesh(world, v, cover);
         uploadBatches(treeVao, treeVbo, v, treeBatches);
         treeVertexCount = (int)v.size();
     }
-    std::vector<Vtx> v;
-    buildRockMesh(world, v, cover);
-    buildBushMesh(world, v, cover);
-    buildPropMesh(world, v);
-    uploadBatches(sceneryVao, sceneryVbo, v, sceneryBatches);
-    sceneryVertexCount = (int)v.size();
+    Sig bs = sceneryBase(world, pq, cover);
+    for (const Bush& b : world.bushes) bs.vec(b.p), bs.num(b.r), bs.num(b.tint);
+    if (bs.h != bushSig_ || bushVertexCount == 0) {
+        bushSig_ = bs.h;
+        std::vector<Vtx> v;
+        buildBushMesh(world, v, cover);
+        uploadBatches(bushVao, bushVbo, v, bushBatches);
+        bushVertexCount = (int)v.size();
+    }
+    Sig ss = sceneryBase(world, pq, cover);
+    for (const Rock& k : world.rocks) ss.vec(k.c), ss.num(k.r), ss.num(k.tint), ss.num(k.scan), ss.num((double)k.v.size()), ss.vec(k.v.empty() ? V3() : k.v[0]);
+    for (const Box& b : world.boxes)
+        if (b.rock) ss.vec(b.c), ss.vec(b.h), ss.vec(b.ax[0]), ss.vec(b.ax[1]);
+    for (const Log& g : world.logs) ss.vec(g.a), ss.vec(g.b), ss.num(g.r);
+    for (const Prop& f : world.fixtures) ss.num(f.kind), ss.vec(f.a), ss.vec(f.b), ss.num(f.yaw), ss.num(f.col[0]), ss.num(f.col[1]), ss.num(f.col[2]);
+    for (const Placed& m : world.models) {
+        ss.str(m.id), ss.vec(m.p), ss.num(m.yaw), ss.vec(m.scale), ss.num(m.variant), ss.num(m.oriented), ss.num(m.wear);
+        for (int i = 0; i < 3; i++) ss.vec(m.ax[i]);
+        for (const auto& kv : m.set) ss.str(kv.first), ss.num(kv.second);
+    }
+    if (ss.h != scenerySig_ || sceneryVertexCount == 0) {
+        scenerySig_ = ss.h;
+        std::vector<Vtx> v;
+        buildRockMesh(world, v, cover);
+        buildPropMesh(world, v);
+        uploadBatches(sceneryVao, sceneryVbo, v, sceneryBatches);
+        sceneryVertexCount = (int)v.size();
+    }
 }
 
 // Reorder complete triangles into spatial bins. Bounds include all three
@@ -3395,6 +3447,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         }
         drawBatches(treeVao, treeBatches, lightVP[c], true);
         drawBatches(sceneryVao, sceneryBatches, lightVP[c], true);
+        drawBatches(bushVao, bushBatches, lightVP[c], true);
         drawCarBodies(sim, progDepth, false);
         BindVertexArray(dynVao);
         DrawArrays(GL_TRIANGLES, 0, (GLsizei)partVerts.size());
@@ -3571,6 +3624,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     drawBatches(treeVao, treeBatches, vp, false);
     Uniform1i(uniformLocation(progLit, "uTreeFadeN"), 0);
     drawBatches(sceneryVao, sceneryBatches, vp, false);
+    drawBatches(bushVao, bushBatches, vp, false);
     props.draw(vp, [&](GLuint prog) {
         setLighting(prog);
         Uniform1i(uniformLocation(prog, "uMap"), mapId);

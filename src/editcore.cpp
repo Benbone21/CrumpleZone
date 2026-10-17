@@ -126,6 +126,11 @@ Box modelBox(const Placed& pl) {
     if (m.v.empty()) return obb(pl.p, V3(0.3, 0.3, 0.3), pl.yaw);
     const V3 lo(m.lo.x * pl.scale.x, m.lo.y * pl.scale.y, m.lo.z * pl.scale.z), hi(m.hi.x * pl.scale.x, m.hi.y * pl.scale.y, m.hi.z * pl.scale.z);
     const V3 mid = (lo + hi) * 0.5, half = (hi - lo) * 0.5;
+    if (pl.oriented) {  // (tipped: its own frame)
+        Box b = obb(pl.p + pl.ax[0] * mid.x + pl.ax[1] * mid.y + pl.ax[2] * mid.z, V3(std::max(0.05, half.x), std::max(0.05, half.y), std::max(0.05, half.z)), 0);
+        for (int i = 0; i < 3; i++) b.ax[i] = pl.ax[i];
+        return b;
+    }
     const V3 cx = rotateAxis(V3(mid.x, 0, mid.z), V3(0, 1, 0), pl.yaw);
     return obb(pl.p + V3(cx.x, mid.y, cx.z), V3(std::max(0.05, half.x), std::max(0.05, half.y), std::max(0.05, half.z)), pl.yaw);
 }
@@ -1401,6 +1406,8 @@ LevelObject EditCore::transformed(LevelObject o, ObjOp op, double a) {
             V3 s(o.size.x > 0 ? o.size.x : 1, o.size.y > 0 ? o.size.y : 1, o.size.z > 0 ? o.size.z : 1);
             switch (op) {
                 case OP_YAW: o.yaw += a; break;
+                case OP_PITCH: o.pitch += a; break;
+                case OP_ROLL: o.roll += a; break;
                 case OP_LIFT: o.lift += a; break;
                 case OP_SEAT: o.lift = 0; break;
                 case OP_SCALE: s = s * a; break;
@@ -1481,76 +1488,305 @@ void EditCore::transformObjects(const std::vector<int>& ks, ObjOp op, double amo
 V3 axisDir(EditAxis a) { return a == AXIS_X ? V3(1, 0, 0) : a == AXIS_Y ? V3(0, 1, 0) : a == AXIS_Z ? V3(0, 0, 1) : V3(0, 0, 0); }
 const char* axisName(EditAxis a) { return a == AXIS_X ? "X" : a == AXIS_Y ? "Y" : a == AXIS_Z ? "Z" : "-"; }
 
-double axisDragMetres(double sy, double pxPerM, double dy) {
-    const double edge = 0.3 * std::max(pxPerM, 1e-6);
-    if (std::fabs(sy) >= edge) return dy / sy;
-    return -dy / edge;
+// ---- Dragging with the mouse ---------------------------------------------------------------------
+
+void EditCam::ray(double sx, double sy, V3& o, V3& d) const {
+    const V3 f = forward(), rt = right(), up = cross(rt, f);
+    const double k = std::tan(fovy / 2);
+    const double dx = (sx - W / 2.0) / (H / 2.0) * k, dy = (H / 2.0 - sy) / (H / 2.0) * k;
+    o = eye;
+    d = norm(f + rt * dx + up * dy);
 }
 
-double turnSign(EditAxis axis, const V3& toCam, const V3& right) {
-    const double c = dot(cross(axisDir(axis), toCam), right);
-    return c < -0.2 ? -1 : 1;
-}
-
-bool EditCore::canRotate(int kind, EditAxis axis) {
-    if (axis == AXIS_X || axis == AXIS_Z) return kind == OBJ_ROCK || kind == OBJ_BOX || kind == OBJ_LOG;
-    return kind != OBJ_TREE && kind != OBJ_BUSH;
-}
-
-LevelObject EditCore::rotated(LevelObject o, EditAxis axis, double a) {
-    if (axis != AXIS_X && axis != AXIS_Z) return transformed(o, OP_YAW, a);
-    if (!canRotate(o.kind, axis)) return o;
-    const V3 k = axisDir(axis);
-    const World& w = *world;
-    if (o.kind == OBJ_LOG) {
-        V3 half = (o.p2 - o.p) * 0.5;
-        const V3 m = (o.p + o.p2) * 0.5;
-        half = rotateAxis(half, k, a);
-        const double L = len(half);
-        if (L > 1e-6) half = half * (clampd(L, 0.5, 40) / L);
-        o.p = m - half, o.p2 = m + half;
-        settleObject(w, o);
-        return o;
-    }
-    // Rock, block: the orientation (yaw, pitch, roll) turned about the world axis, and read back.
-    V3 ax[3];
-    boxAxes(o.yaw, o.pitch, o.roll, ax);
-    for (V3& v : ax) v = rotateAxis(v, k, a);
-    const double keep = o.kind == OBJ_BOX ? grounded(o).p.y : 0;
-    o.pitch = std::asin(clampd(ax[0].y, -1, 1));
-    o.yaw = std::atan2(-ax[0].z, ax[0].x);
-    const V3 a1 = rotateAxis(rotateAxis(V3(0, 1, 0), V3(0, 0, 1), o.pitch), V3(0, 1, 0), o.yaw);
-    o.roll = std::atan2(dot(cross(a1, ax[1]), ax[0]), dot(a1, ax[1]));
-    if (o.kind == OBJ_ROCK) {
-        o.sub = 1;
-        return o;
-    }
-    if (std::fabs(o.lift) > 1e-6) {  // (a floating block keeps the height it was set at, as tipping it with R F does; one resting stays resting)
-        LevelObject g = o;
-        g.lift = 0;
-        o.lift = keep - boxRestY(w, g);
-        if (std::fabs(o.lift) < 1e-6) o.lift = 0;
-    }
-    return grounded(o);
-}
-
-bool EditCore::rotateObjects(const std::vector<int>& ks, EditAxis axis, double angle, const std::string& key) {
-    if (axis != AXIS_X && axis != AXIS_Z) {
-        transformObjects(ks, OP_YAW, angle, key);
-        return true;
-    }
-    std::vector<std::pair<int, LevelObject>> set;
-    for (int k : ks)
-        if (k >= 0 && k < (int)level.objects.size() && canRotate(level.objects[k].kind, axis)) set.push_back({k, rotated(normalized(k), axis, angle)});
-    if (set.empty()) return false;
-    replaceObjects(set, axis == AXIS_X ? "TIP" : "ROLL", key);
+bool EditCam::project(const V3& p, double& sx, double& sy) const {
+    const V3 f = forward(), rt = right(), up = cross(rt, f), d = p - eye;
+    const double z = dot(d, f);
+    if (z < 0.05) return false;
+    const double k = 1.0 / std::tan(fovy / 2);
+    sx = W / 2.0 + dot(d, rt) / z * k * H / 2.0;
+    sy = H / 2.0 - dot(d, up) / z * k * H / 2.0;
     return true;
 }
 
-void EditCore::moveAlong(const std::vector<int>& ks, EditAxis axis, double amount, const std::string& key) {
-    if (axis == AXIS_X) moveObjects(ks, amount, 0, key);
-    else if (axis == AXIS_Z) moveObjects(ks, 0, amount, key);
-    else if (axis == AXIS_Y) transformObjects(ks, OP_LIFT, amount, key);
+double EditCam::pxPerMetre(const V3& p) const { return H / 2.0 / std::tan(fovy / 2) / std::max(0.3, dot(p - eye, forward())); }
+
+bool rayLineClosest(const V3& o, const V3& d, const V3& p, const V3& a, double& s) {
+    const V3 w0 = o - p;
+    const double b = dot(d, a), dd = dot(d, w0), e = dot(a, w0), den = 1 - b * b;
+    if (den < 1e-5) return false;
+    if ((b * e - dd) / den <= 0) return false;  // (the nearest point of the ray is behind the eye)
+    s = (e - b * dd) / den;
+    return true;
+}
+
+bool lineUnderMouse(const EditCam& cam, double sx, double sy, const V3& p, const V3& a, double& s) {
+    const double k = std::max(0.05, 0.1 * len(p - cam.eye));
+    double ax, ay, bx, by;
+    if (!cam.project(p, ax, ay) || !cam.project(p + a * k, bx, by)) return false;
+    const double dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+    if (l2 < 4) return false;  // (under 2 px for a tenth of the way to it: pointing at the eye)
+    const double u = ((sx - ax) * dx + (sy - ay) * dy) / l2;
+    V3 o, d;
+    cam.ray(ax + dx * u, ay + dy * u, o, d);
+    return rayLineClosest(o, d, p, a, s);
+}
+
+bool EditCore::turnsFreely(int kind) { return kind == OBJ_ROCK || kind == OBJ_BOX || kind == OBJ_LOG || kind == OBJ_MODEL; }
+bool EditCore::turnsAboutY(int kind) { return turnsFreely(kind) || kind == OBJ_STATION || kind == OBJ_FENCE; }
+bool EditCore::canLift(int kind) { return kind != OBJ_STATION && kind != OBJ_FENCE; }
+
+V3 EditCore::footOf(const LevelObject& o) const {
+    const World& w = *world;
+    switch (o.kind) {
+        case OBJ_ROCK: return V3(o.p.x, w.height(o.p.x, o.p.z) + o.top, o.p.z);
+        case OBJ_BOX: return grounded(o).p;
+        case OBJ_LOG: return (o.p + o.p2) * 0.5;
+        case OBJ_FENCE: return V3((o.p.x + o.p2.x) / 2, (w.height(o.p.x, o.p.z) + w.height(o.p2.x, o.p2.z)) / 2, (o.p.z + o.p2.z) / 2);
+        case OBJ_STATION: return V3(o.p.x, w.height(o.p.x, o.p.z), o.p.z);
+        default: return V3(o.p.x, w.height(o.p.x, o.p.z) + o.lift, o.p.z);
+    }
+}
+
+double EditCore::rideAt(double x, double z, const std::vector<int>& skip) const {
+    if (!world) return 0;
+    const double g = world->height(x, z);
+    V3 p, n;
+    if (rayObjects(V3(x, g + 60, z), V3(0, -1, 0), 60, skip, p, n) && n.y > 0.25) return std::max(0.0, p.y - g);
+    return 0;
+}
+
+EditCore::Slide EditCore::slideUnder(const LevelObject& lead, const V3& grab, const V3& o, const V3& d, const std::vector<int>& skip, double ride0, double near,
+                                     double snap) const {
+    Slide out;
+    if (!world) return out;
+    const World& w = *world;
+    const V3 foot0 = footOf(lead);
+    const V3 off(grab.x - foot0.x, 0, grab.z - foot0.z);  // (the grabbed point from the lead's middle, in plan)
+    const bool lifts = canLift(lead.kind);
+    // What it could ride on: the solid things whose plan circle comes near the line its middle sweeps as the grabbed point runs down the ray.
+    struct Cand {
+        int kind, index;  // (0 rock, 2 log, 3 box)
+        double t0, t1;    // where along the ray its middle is over it
+    };
+    std::vector<Cand> cand;
+    if (lifts) {
+        const double ox = o.x - off.x, oz = o.z - off.z, hx = d.x, hz = d.z, hh = hx * hx + hz * hz;
+        double t0 = 0, t1 = 0;
+        auto near2 = [&](double cx, double cz, double r) {
+            r += 0.05;
+            if (hh < 1e-12) {  // (straight down: the middle stays put)
+                t0 = -1e18, t1 = 1e18;
+                return std::hypot(ox - cx, oz - cz) < r;
+            }
+            const double tc = ((cx - ox) * hx + (cz - oz) * hz) / hh, off2 = std::hypot(ox + hx * tc - cx, oz + hz * tc - cz);
+            if (off2 >= r) return false;
+            const double half = std::sqrt(r * r - off2 * off2) / std::sqrt(hh);
+            t0 = tc - half, t1 = tc + half;
+            return t1 > 0;
+        };
+        auto mine = [&](int kind, int i) {
+            const int ow = ownerOf(kind, i);
+            return ow >= 0 && std::find(skip.begin(), skip.end(), ow) != skip.end();
+        };
+        for (int i = 0; i < (int)w.rocks.size(); i++)
+            if (near2(w.rocks[i].c.x, w.rocks[i].c.z, w.rocks[i].r) && !mine(0, i)) cand.push_back({0, i, t0, t1});
+        for (int i = 0; i < (int)w.logs.size(); i++) {
+            const Log& g = w.logs[i];
+            if (near2((g.a.x + g.b.x) / 2, (g.a.z + g.b.z) / 2, len(g.b - g.a) / 2 + g.r) && !mine(2, i)) cand.push_back({2, i, t0, t1});
+        }
+        for (int i = 0; i < (int)w.boxes.size(); i++)
+            if (w.boxes[i].solid && near2(w.boxes[i].c.x, w.boxes[i].c.z, w.boxes[i].bound) && !mine(3, i)) cand.push_back({3, i, t0, t1});
+    }
+    auto rideHere = [&](double x, double z, double t) {
+        if (cand.empty()) return 0.0;
+        const double g = w.height(x, z);
+        const V3 from(x, g + 60, z), down(0, -1, 0);
+        double best = 60;
+        V3 n;
+        objshape::Hit h;
+        for (const Cand& c : cand) {
+            if (t < c.t0 - 0.5 || t > c.t1 + 0.5) continue;  // (not over it here)
+            bool hit = false;
+            if (c.kind == 0) hit = objshape::rayRock(w.rocks[c.index], from, down, best, h);
+            else if (c.kind == 2) hit = objshape::rayLog(w.logs[c.index], from, down, best, h);
+            else hit = objshape::rayBox(w.boxes[c.index], from, down, best, h);
+            if (hit) best = h.t, n = h.n;
+        }
+        return best < 60 && n.y > 0.25 ? std::max(0.0, 60 - best) : 0.0;
+    };
+    // How far the grabbed point is above (+) or below its place if the mouse ray put it `t` along: the root is where it sits on the ray.
+    auto at = [&](double dx, double dz, double t, Slide& sl) {
+        const V3 f = footOf(movedBy(lead, dx, dz));
+        sl.dx = dx, sl.dz = dz;
+        sl.ride = lifts ? rideHere(f.x, f.z, t) - ride0 : 0;
+        sl.rise = f.y - foot0.y + sl.ride;
+    };
+    auto gap = [&](double t, Slide& sl) {
+        const V3 x = o + d * t;
+        at(x.x - grab.x, x.z - grab.z, t, sl);
+        sl.t = t;
+        return x.y - (grab.y + sl.rise);
+    };
+    Slide tmp;
+    std::vector<double> roots;
+    double t = 0.2, f0 = gap(t, tmp);
+    while (t < 3000 && roots.size() < 32) {
+        const double t1 = t + std::max(0.1, t * 0.01), f1 = gap(t1, tmp);
+        if ((f0 > 0) != (f1 > 0)) {
+            double a = t, b = t1, fa = f0;
+            for (int k = 0; k < 40; k++) {
+                const double m = (a + b) / 2, fm = gap(m, tmp);
+                if ((fm > 0) == (fa > 0)) a = m, fa = fm;
+                else b = m;
+            }
+            roots.push_back((a + b) / 2);
+        }
+        t = t1, f0 = f1;
+    }
+    if (roots.empty()) return out;
+    double best = roots[0];
+    for (double r : roots)
+        if (std::fabs(r - near) < std::fabs(best - near)) best = r;
+    gap(best, out);
+    out.ok = true;
+    if (snap > 0) {  // (the lead's middle on the grid: the grabbed point leaves the mouse by up to half a step)
+        const double nx = std::round((foot0.x + out.dx) / snap) * snap, nz = std::round((foot0.z + out.dz) / snap) * snap;
+        cand.clear();  // (off the ray's line: ask everything)
+        const V3 f = footOf(movedBy(lead, nx - foot0.x, nz - foot0.z));
+        out.dx = nx - foot0.x, out.dz = nz - foot0.z;
+        out.ride = lifts ? rideAt(f.x, f.z, skip) - ride0 : 0;
+        out.rise = f.y - foot0.y + out.ride;
+    }
+    return out;
+}
+
+LevelObject EditCore::slid(const LevelObject& o, double dx, double dz, double rise) {
+    LevelObject m = movedBy(o, dx, dz);
+    if (std::fabs(rise) > 1e-9 && canLift(o.kind)) m = transformed(m, OP_LIFT, rise);
+    return m;
+}
+
+LevelObject EditCore::translated(LevelObject o, const V3& d) const {
+    const World& w = *world;
+    const double g0 = w.height(o.p.x, o.p.z);
+    switch (o.kind) {
+        case OBJ_BOX:
+            o.p += d;
+            settleObject(w, o);
+            return o;
+        case OBJ_LOG:
+            o.p += d, o.p2 += d;
+            settleObject(w, o);
+            return o;
+        case OBJ_FENCE:
+            o.p.x += d.x, o.p.z += d.z, o.p2.x += d.x, o.p2.z += d.z;
+            return o;
+        default: {
+            o.p.x += d.x, o.p.z += d.z;
+            const double g1 = w.height(o.p.x, o.p.z), up = d.y - (g1 - g0);  // (what it rises over the ground there)
+            o.p.y = g1;
+            if (o.kind == OBJ_ROCK) o.top += up;
+            else if (canLift(o.kind)) o.lift += up;
+            return o;
+        }
+    }
+}
+
+V3 EditCore::rockAt(const LevelObject& o) {
+    World& w = *world;
+    const size_t n = w.rocks.size();
+    placeObject(o, w);
+    const V3 at = w.rocks.size() > n ? w.rocks.back().at : V3(o.p.x, w.height(o.p.x, o.p.z), o.p.z);
+    w.rocks.resize(n);
+    return at;
+}
+
+namespace {
+double turnedYaw(const Quat& q, double yaw) {  // (the heading after the turn, for things that stay upright)
+    const V3 f = q.rotate(V3(std::cos(yaw), 0, -std::sin(yaw)));
+    return std::hypot(f.x, f.z) > 1e-6 ? std::atan2(-f.z, f.x) : yaw;
+}
+void turnFrame(LevelObject& o, const Quat& q) {
+    V3 ax[3];
+    frameOf(o.yaw, o.pitch, o.roll, ax);
+    for (V3& a : ax) a = q.rotate(a);
+    anglesOf(ax, o.yaw, o.pitch, o.roll, o.yaw);
+}
+}  // namespace
+
+LevelObject EditCore::rotatedAbout(LevelObject o, const Quat& qq, const V3& c, const V3* bodyAt) {
+    const World& w = *world;
+    // (Things that stay upright take only the turn about the vertical: the twist of q about Y. Tipped right over, none.)
+    Quat q = qq;
+    if (!turnsFreely(o.kind)) {
+        q = std::hypot(qq.w, qq.y) > 1e-6 ? Quat{qq.w, 0, qq.y, 0} : Quat();
+        q.normalize();
+    }
+    auto spin = [&](const V3& x) { return c + q.rotate(x - c); };
+    switch (o.kind) {
+        case OBJ_BOX:
+            o.p = spin(o.p);
+            turnFrame(o, q);
+            settleObject(w, o);  // (it stays exactly where the turn put it: the offset over the ground is worked out for the new tilt)
+            return o;
+        case OBJ_LOG:
+            o.p = spin(o.p), o.p2 = spin(o.p2);
+            settleObject(w, o);
+            return o;
+        case OBJ_ROCK: {
+            const V3 at = bodyAt ? *bodyAt : rockAt(o), to = spin(at);
+            turnFrame(o, q);
+            o.sub = 1;
+            o.p = V3(to.x, w.height(to.x, to.z), to.z);
+            o.top = 0;
+            o.top = to.y - rockAt(o).y;  // (`top` is the rock's highest point over the ground: whatever turning it brought up)
+            return o;
+        }
+        case OBJ_STATION: {
+            const V3 to = spin(V3(o.p.x, w.height(o.p.x, o.p.z), o.p.z));
+            o.p = V3(to.x, w.height(to.x, to.z), to.z);
+            o.yaw = turnedYaw(q, o.yaw);
+            return o;
+        }
+        case OBJ_FENCE: {
+            const V3 a = spin(o.p), b = spin(o.p2);
+            o.p.x = a.x, o.p.z = a.z, o.p2.x = b.x, o.p2.z = b.z;
+            return o;
+        }
+        default: {  // a structure (turned in its frame), or a tree or bush (upright, turning about Y round the pivot): its origin goes round, and stands that high
+            const V3 to = spin(V3(o.p.x, w.height(o.p.x, o.p.z) + o.lift, o.p.z));
+            const double g = w.height(to.x, to.z);
+            o.p = V3(to.x, g, to.z);
+            if (o.kind == OBJ_MODEL) turnFrame(o, q), o.lift = to.y - g;  // (where the turn put it; an upright thing keeps its footing)
+            return o;
+        }
+    }
+}
+
+bool EditCore::middleOf(const std::vector<int>& ks, V3& mid, double* radius) const {
+    V3 lo(1e18, 1e18, 1e18), hi(-1e18, -1e18, -1e18);
+    for (int k : ks)
+        for (const auto& part : partsOf(k)) {
+            const Shape sh = shapeOf(part.first, part.second);
+            for (const auto& e : sh.edges)
+                for (const V3* q : {&e.first, &e.second}) lo = V3(std::min(lo.x, q->x), std::min(lo.y, q->y), std::min(lo.z, q->z)), hi = V3(std::max(hi.x, q->x), std::max(hi.y, q->y), std::max(hi.z, q->z));
+        }
+    if (lo.x > hi.x) return false;
+    mid = (lo + hi) * 0.5;
+    if (radius) *radius = len(hi - lo) / 2;
+    return true;
+}
+
+void EditCore::putObjects(const std::vector<std::pair<int, LevelObject>>& set, const std::string& what, const std::string& key) { replaceObjects(set, what, key); }
+
+void EditCore::cancelEdit() {
+    if (depth <= 0) return;
+    depth = 0;
+    for (auto it = pending.cells.rbegin(); it != pending.cells.rend(); ++it) setCell(it->id, it->what, it->worldOld, it->hadOld, it->lvOld);
+    if (pending.meta) restoreMeta(pending.before);
+    else if (!pending.cells.empty() && !level.objects.empty()) rebuildObjects();
+    pending = Entry();
+    pendingCells.clear();
 }
 
 // ---- Outlines ----------------------------------------------------------------------------------
