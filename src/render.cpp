@@ -1,8 +1,8 @@
 #include "render.h"
 #include "texcomp.h"
 
-static // Render targets and data textures in the VRAM report (texcomp.h); no mips on purpose.
-void noteRT(const char* name, const char* fmt, int w, int h, int bytesPerTexel, int mips = 0, bool runtime = true) {
+// Render targets and data textures in the VRAM report (texcomp.h); no mips on purpose.
+static void noteRT(const char* name, const char* fmt, int w, int h, int bytesPerTexel, int mips = 0, bool runtime = true) {
     texcomp::note(name, fmt, w, h, mips, (size_t)w * h * bytesPerTexel * (mips > 1 ? 4 : 3) / 3, runtime);
 }
 #include <stdexcept>

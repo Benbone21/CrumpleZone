@@ -81,6 +81,7 @@ texenc::Encoded make(texenc::Kind kind, bool srgb, const std::vector<std::vector
 
 void setQuality(int q) {
     aniso = q <= 1 ? 4.0f : q == 2 ? 8.0f : 16.0f;
+    if (const char* e = std::getenv("CZ_ANISO")) aniso = (float)std::atof(e);  // (for comparisons)
     for (const Held& h : held()) {
         BindTexture(h.target, h.tex);
         applyAniso(h.target);
