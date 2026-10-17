@@ -25,6 +25,7 @@ enum KeyAction {
     KA_STEER_ASSIST,
     KA_WINCH,
     KA_STRAP,
+    KA_THROTTLE_CAP,
     KA_COUNT
 };
 

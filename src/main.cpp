@@ -43,6 +43,7 @@
 #include "level.h"
 #include "levelrun.h"
 #include "menu.h"
+#include "throttle.h"
 #include "mods.h"
 #include "net.h"
 #include "pilotsense.h"
@@ -90,6 +91,8 @@ struct Options {
     bool career = false;          // --career: career mode (a fresh one when scripted)
     bool photo = false;           // --photo: no HUD (screenshots; F10 in the game)
     bool mph = false;             // --mph
+    double throttleCap = -1;      // --throttle PCT[,RESPONSE[,PAD]]: the throttle limit (testing)
+    int throttleResp = 0, throttlePad = 0;
     int map = -1;                 // --map N: 0 proving ground, 1 mountain
     double orbitYaw = 0, orbitPitch = 0.2, orbitDist = 7.5;  // degrees, degrees, meters
     bool spawnSet = false;
@@ -314,6 +317,10 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--adaptive") o.adaptive = std::atoi(next().c_str());
         else if (a == "--photo") o.photo = true;
         else if (a == "--mph") o.mph = true;
+        else if (a == "--throttle") {
+            std::string v = next();
+            std::sscanf(v.c_str(), "%lf,%d,%d", &o.throttleCap, &o.throttleResp, &o.throttlePad);
+        }
         else if (a == "--career") o.career = true;
         else if (a == "--map") o.map = std::atoi(next().c_str());
         else if (a == "--mods") {
@@ -654,6 +661,7 @@ struct HudState {
     double confirmReset = 0;  // R just pressed: a second press within this long respawns at the start
     double hintTime = 7.0;  // "press H for controls" fades out after this
     float needle = 0;       // smoothed tach position 0..1
+    float throttleCap = 1;  // the throttle limit (settings): shown by the gear when it's under 100%
     void toast(const std::string& text) {
         for (Toast& t : toasts)
             if (t.text == text) {
@@ -712,6 +720,13 @@ void drawGauges(Renderer& r, const Car& car, HudState& hud, float u, int W, int 
     float gs = px(2.2f * u), gw = 12 * gs * 0.5f + 8 * u, gh = 8 * gs + 6 * u, gy = cy + R - gh - 2 * u;
     pill(r, cx - gw / 2, gy, gw, gh, 0.0f, 0.0f, 0.0f, 0.55f);
     r.text(cx - r.textWidth(gear, gs) / 2, gy + 3 * u + gs * 0.5f, gs, gear, 1.0f, 0.72f, 0.25f);
+    if (hud.throttleCap < 0.995f && !car.isProp()) {  // the throttle limit, under the gear box
+        const std::string txt = "THROTTLE " + throttle::percent(hud.throttleCap);
+        const float ts2 = px(1.0f * u);
+        const float tw2 = r.textWidth(txt, ts2);
+        pill(r, cx - tw2 / 2 - 4 * u, gy + gh + 1 * u, tw2 + 8 * u, 8 * ts2 + 4 * u, 0.0f, 0.0f, 0.0f, 0.5f);
+        r.text(cx - tw2 / 2, gy + gh + 3 * u, ts2, txt, 1.0f, 0.75f, 0.2f, 0.9f);
+    }
     // Indicator lights above the hub.
     float is = px(1.0f * u), iy = cy - 26 * u;
     std::vector<std::pair<std::string, std::array<float, 3>>> lights;
@@ -1092,7 +1107,7 @@ void drawHelp(Renderer& r, float u, int W, int H, bool mph) {
         {"T", "BACK ON ITS WHEELS"},          {"TAB", "NEXT VEHICLE (ON FOOT: TRUCK INVENTORY, I)"},
         {"V", "WINCH: HOOK / UNHOOK"},        {"Z", "WINCH IN (SHIFT+Z: OUT, - = SPEED)"},
         {"O", "TOW STRAP: CLICK YOUR POINT, THEN THEIRS"},   {"Y", "FRONT SWAY BAR DISCONNECT"},
-        {"9 0", "AIR DOWN / UP (STOPPED)"},
+        {"9 0", "AIR DOWN / UP (STOPPED)"},       {"8", "THROTTLE LIMIT: 100 50 25 10% (FOR CRAWLING)"},
         {"1 - 5", "BLAZER BRONCO 4RUNNER TACOMA JESKO"}, {"G", "GARAGE: ENGINE, SUSPENSION, GEARBOX"},
         {"Q E", "SHIFT DOWN / UP (R N 1...)"},           {"SHIFT+M", "MANUAL / AUTOMATIC"},
         {"M", "MAP (WAYPOINTS, PINGS)"},      {"ENTER", "CHAT"},
@@ -1561,6 +1576,10 @@ int main(int argc, char** argv) {
     if (opt.props >= 0) settings.gfx.props = std::min(opt.props, 3);
     if (opt.adaptive >= 0) settings.adaptiveQuality = opt.adaptive != 0;
     if (opt.mph) settings.mph = true;
+    if (opt.throttleCap > 0) {
+        settings.throttle.loadSetting("throttlecap", opt.throttleCap), settings.throttle.loadSetting("throttleresp", opt.throttleResp);
+        settings.throttle.loadSetting("throttlepad", opt.throttlePad);
+    }
     if (!mapListed(settings.map)) settings.map = MAP_PROVING_GROUND;  // (a map that's been taken off the list)
     World::withShowcase = opt.scenario.empty();  // (the model yard and section park laid out on the proving ground: not under a test's replay)
     if (opt.map >= 0) settings.map = opt.map < MAP_COUNT ? opt.map : MAP_PROVING_GROUND;  // (--map with no such map: the proving ground)
@@ -1652,6 +1671,7 @@ int main(int argc, char** argv) {
     fitGarage();
     GarageUI garageUI;
     Playback playback;
+    throttle::Pedal throttlePedal;
     if (!opt.scenario.empty()) {
         const Scenario* found = nullptr;
         for (const Scenario& sc : scenarioRegistry())
@@ -2533,7 +2553,7 @@ int main(int argc, char** argv) {
                  : coop.mapOpen                                                           ? pad::Mode::Map
                  : winchAim.on                                                            ? pad::Mode::Aim
                                                                                           : pad::Mode::Drive;
-        padLogic.tune = {settings.padSteering, settings.padDeadzone, settings.padRumble};
+        padLogic.tune = {settings.padSteering, settings.padDeadzone, settings.padRumble, settings.throttle.padScale()};
         padLogic.update(padDev.read((SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS) != 0), padCtx, dt);
         size_t padTap = 0;
         bool fromPad = false;
@@ -2736,6 +2756,11 @@ int main(int argc, char** argv) {
                         case SC_ESCAPE:  // (the pause menu: Esc on the keyboard, Start on the pad, the MENU key if rebound)
                             if (hud.showHelp) hud.showHelp = false;
                             else openMenu();
+                            break;
+                        case SC_8:  // the throttle limit: 100 50 25 10 % (rebindable)
+                            settings.throttle.cyclePreset();
+                            saveSettings();
+                            hud.toast("THROTTLE " + throttle::percent(settings.throttle.cap));
                             break;
                         case SC_F4:  // steering assist (rebindable)
                             sim.steeringAssist = !sim.steeringAssist;
@@ -3482,6 +3507,14 @@ int main(int argc, char** argv) {
                 }
             }
             if (!sim.paused) sim.drive(up, down, left, right, hb, dt);
+            {  // ---- the throttle limit: W gives the cap, built up over the response time (throttle.h; the pad is shaped in padLogic.apply) ----
+                Car& kc = sim.cars[sim.player];
+                if (!sim.paused) {
+                    if (!playback.active() && !kc.ai && !kc.remote && !kc.pilot.active) kc.throttle = throttlePedal.step(kc.throttle > 0.5, settings.throttle, dt);
+                    else throttlePedal.reset();
+                }
+                hud.throttleCap = settings.throttle.cap;
+            }
             {  // ---- gamepad: analog steering and pedals on top of the keyboard path ----
                 Car& pc = sim.cars[sim.player];
                 if (padDrives && !sim.paused && !pc.ai && !pc.pilot.active) padLogic.apply(pc, dt);

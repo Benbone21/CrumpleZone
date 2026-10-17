@@ -36,6 +36,7 @@ struct Tuning {
     int steering = 1;  // 0 SOFT, 1 NORMAL, 2 SHARP
     int deadzone = 1;  // 0 SMALL, 1 MEDIUM, 2 LARGE
     int rumble = 1;    // 0 OFF, 1 LOW, 2 HIGH
+    float throttleScale = 1;  // the throttle limit when it applies to the pad (throttle.h): RT's throttle is scaled by it
 };
 extern const char* const kSteeringNames[3];
 extern const char* const kDeadzoneNames[3];

@@ -7,6 +7,7 @@
 
 #include "render.h"
 #include "keybinds.h"
+#include "throttle.h"
 #include "sdl_min.h"
 
 struct Settings {
@@ -40,6 +41,7 @@ struct Settings {
     RenderSettings gfx;
     bool adaptiveQuality = true;  // auto-scale quality to maintain framerate
     Keybinds keys;
+    throttle::Tuning throttle;  // the throttle limit (throttle.h): the keyboard's cap, its ramp, whether the pad obeys it
 
     bool load(const std::string& path);
     bool save(const std::string& path) const;

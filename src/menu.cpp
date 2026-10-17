@@ -98,6 +98,7 @@ bool Settings::load(const std::string& path) {
         else if (k == "padsteer") padSteering = std::min(std::max((int)v, 0), 2);
         else if (k == "paddead") padDeadzone = std::min(std::max((int)v, 0), 2);
         else if (k == "padrumble") padRumble = std::min(std::max((int)v, 0), 2);
+        else if (throttle.loadSetting(k, v)) {}
         else if (keys.loadSetting(k, std::atoi(text))) {}
     }
     std::fclose(f);
@@ -127,6 +128,7 @@ bool Settings::save(const std::string& path) const {
     std::fprintf(f, "pilotdest %d\npilotspeed %.0f\npilotroute %d\n", pilotDest, pilotSpeed, pilotRoute);
     std::fprintf(f, "timeofday %d\ndaylength %.0f\nclock %.2f\n", timeOfDay, dayMinutes, clockHours);
     std::fprintf(f, "padsteer %d\npaddead %d\npadrumble %d\n", padSteering, padDeadzone, padRumble);
+    std::fputs(throttle.saveText().c_str(), f);
     for (int a = 0; a < KA_COUNT; a++) std::fprintf(f, "%s %d\n", settingsName((KeyAction)a), keys.code[a]);
 
     std::fclose(f);
@@ -185,7 +187,7 @@ enum Id {
     UNITS = 1, VOLUME, FOV, RECOVERY, MUSIC, TIMEOFDAY, FUEL, AMBIENCE,
     ADAPTIVE = 9, QUALITY = 10, SHADOWS, AA, AO, BLOOM, CLOUDS, GRASS, SCALE, SCENERY,
     FULLSCREEN = 20, VSYNC, FPS, PHYSICSTHREADS, WINCHSPEED,
-    PADSTEER = 30, PADDEAD, PADRUMBLE,
+    PADSTEER = 30, PADDEAD, PADRUMBLE, THROTTLECAP, THROTTLERESP, THROTTLEPAD,
     // Main page and navigation.
     RESUME_ROW = 100, VEHICLE_ROW, MAP_ROW, GARAGE_ROW, SETTINGS_ROW, CONTROLS_ROW, RESET_ROW, QUIT_ROW, BACK_ROW,
     MULTI_ROW, NAME_ROW, HOST_ROW, ADDRESS_ROW, JOIN_ROW, LEAVE_ROW, FOUND_ROW0, FOUND_ROW5 = FOUND_ROW0 + 5,
@@ -253,6 +255,12 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
         choice(PADDEAD, "STICK DEADZONE", pad::kDeadzoneNames[std::min(std::max(s.padDeadzone, 0), 2)], 3,
                "RAISE IT IF THE CAR DRIFTS WITH YOUR HANDS OFF");
         choice(PADRUMBLE, "RUMBLE", pad::kRumbleNames[std::min(std::max(s.padRumble, 0), 2)], 3, "HITS, LANDINGS, BREAKS, REV LIMITER");
+        header(("THROTTLE LIMIT: " + keyName(s.keys.key(KA_THROTTLE_CAP)) + " CYCLES 100 50 25 10% WHILE DRIVING").c_str());
+        slider(THROTTLECAP, "KEYBOARD THROTTLE", throttle::percent(s.throttle.cap), (s.throttle.cap - throttle::kMinCap) / (1 - throttle::kMinCap), 20);
+        static const char* respHint[3] = {"W IS AT THE LIMIT AT ONCE", "W BUILDS UP OVER ABOUT 0.4 S", "W BUILDS UP OVER ABOUT 1.2 S"};
+        const int resp = std::min(std::max(s.throttle.response, 0), 2);
+        choice(THROTTLERESP, "THROTTLE RESPONSE", throttle::kResponseNames[resp], 3, respHint[resp]);
+        choice(THROTTLEPAD, "APPLIES TO PAD", kOffOn[s.throttle.padToo], 2, "THE LIMIT ALSO SCALES THE TRIGGER (OFF: KEYBOARD ONLY)");
         button(KEYBINDS_ROW, "KEYBOARD KEYBINDS", "REMAP THE DRIVING KEYS");
         button(BACK_ROW, "BACK");
         return r;
@@ -468,7 +476,7 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
         choice(PHYSICSTHREADS, "PHYSICS THREADS", value, available + 1,
                "1: SINGLE THREAD. ALL: USE EVERY CPU THREAD. MORE MAY NOT BE FASTER.");
     }
-    button(CONTROLLER_ROW, "CONTROLLER", "STEERING, DEADZONE, RUMBLE, KEYBINDS");
+    button(CONTROLLER_ROW, "CONTROLS", "THROTTLE LIMIT, CONTROLLER, KEYBINDS");
     button(BACK_ROW, "BACK");
     return r;
 }
@@ -706,6 +714,8 @@ PauseMenu::Result PauseMenu::change(int row, int dir, Settings& s) {
         case PADSTEER: s.padSteering = cycle(std::min(std::max(s.padSteering, 0), 2)); break;
         case PADDEAD: s.padDeadzone = cycle(std::min(std::max(s.padDeadzone, 0), 2)); break;
         case PADRUMBLE: s.padRumble = cycle(std::min(std::max(s.padRumble, 0), 2)); break;
+        case THROTTLERESP: s.throttle.response = cycle(std::min(std::max(s.throttle.response, 0), 2)); break;
+        case THROTTLEPAD: s.throttle.padToo = !s.throttle.padToo; break;
         default: return {};
     }
     return {CHANGED};
@@ -722,6 +732,7 @@ PauseMenu::Result PauseMenu::setSlider(int row, float frac, Settings& s) {
         case AMBIENCE: s.ambience = frac; break;
         case FOV: s.fovDeg = 50 + 50 * frac; break;
         case SCALE: s.gfx.renderScale = 0.5f + 1.5f * frac; break;
+        case THROTTLECAP: s.throttle.cap = throttle::kMinCap + (1 - throttle::kMinCap) * frac; break;
         case PSPEED_ROW: s.pilotSpeed = 5 + 95 * frac; break;
         default: return {};
     }
@@ -1059,7 +1070,7 @@ void PauseMenu::draw(Renderer& r, const Settings& s, int W, int H, double dt) {
     pill(r, x, y, w, h, 0.03f, 0.035f, 0.045f, (this->title ? 0.82f : 0.9f) * a);
     r.rect(x + pad, y + pad + 8 * title + 8 * u, w - 2 * pad, 2 * u, 1.0f, 0.75f, 0.3f, 0.8f * a);
     label(r, x + pad, y + pad, title,
-          page == 0 ? (this->title ? "MAIN MENU" : "PAUSED") : page == 1 ? "SETTINGS" : page == 3 ? "AUTOPILOT" : page == 4 ? "LEVELS" : page == 5 ? "JOBS" : page == 7 ? "KEYBINDS" : "CONTROLLER",
+          page == 0 ? (this->title ? "MAIN MENU" : "PAUSED") : page == 1 ? "SETTINGS" : page == 3 ? "AUTOPILOT" : page == 4 ? "LEVELS" : page == 5 ? "JOBS" : page == 7 ? "KEYBINDS" : "CONTROLS",
           1.0f, 0.75f, 0.3f, a);
     if (page == 0 && !this->title) {
         const char* tag = "CRUMPLE ZONE";
