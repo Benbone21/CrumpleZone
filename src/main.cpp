@@ -3899,6 +3899,7 @@ int main(int argc, char** argv) {
         }
         if (editor.active) {
             editor.update(dt, keys, renderer, W, H);
+            if (editor.takeSaved()) refreshLevels();  // (a level just saved is on the menu's list at once)
             drawnWorld = sim.world.stamp;  // (it redraws what it changes itself)
             sim.paused = true;
             if (editor.wantPlay || editor.wantClose) {
@@ -4348,6 +4349,7 @@ int main(int argc, char** argv) {
         if (c.spec->model >= 0) resume.insert(resume.end(), {"--resume-model", std::to_string(c.spec->model)});
     }
     if (opt.timeHours < 0) saveSettings();  // (the clock carries on next time, and after a reload)
+    if (editor.started()) editor.autosaveNow();  // (closing the game with unsaved edits, in the editor or while testing them: a recovery copy)
     playback.stop();
     net.close();
     audio.stop();

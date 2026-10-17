@@ -2,10 +2,13 @@
 // reach the world and the saved file, clicks that land on the shape and not the sphere round it, playtests and recovery copies.
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <fstream>
 
 #include "../src/editcore.h"
 #include "../src/platform.h"
 #include "../src/props.h"
+#include "../src/saveflow.h"
 #include "harness.h"
 
 namespace {
@@ -512,4 +515,128 @@ SCENARIO(editorMapProps, "editor/map-props", "The map's cabins, fences, signs, t
     while (ed.canUndo()) ed.undo();
     size_t hiddenBack = std::count_if(w.boxes.begin(), w.boxes.end(), [](const Box& b) { return b.hidden; });
     ctx.check("everything undone: the map as built", ed.level.objects.empty() && ed.level.removed.empty() && w.fixtures.size() == fixtures0 && w.poles.size() == poles0 && hiddenBack == hidden0 && w.bushes.size() == bushes0);
+}
+
+SCENARIO(editorSaveFlow, "editor/save-flow", "Saving never refuses: an unnamed level asks for a name (with a default that clashes with nothing), SAVE AS asks again, leaving with unsaved work asks SAVE / DISCARD / CANCEL, and what's saved reopens the same") {
+    // (Everything under a scratch config folder: nothing of the player's is touched.)
+    makeDir("build/test-config");
+    setenv("XDG_CONFIG_HOME", "build/test-config", 1);
+    const std::string levels = userLevelFolder();
+    makeDir(configDir());
+    makeDir(levels);
+    for (const std::string& f : listLevelFiles(levels, ".czl")) std::remove(f.c_str());
+    World w(MAP_PROVING_GROUND);
+    Level lv;
+    lv.map = MAP_PROVING_GROUND;
+    EditCore ed;
+    ed.begin(w, lv);
+    ed.brush(BRUSH_RAISE, -200, 200, 8, 2.0);
+    LevelObject r;
+    r.kind = OBJ_ROCK, r.p = V3(-300, 0, 250), r.size = V3(1.5, 1, 1.2), r.top = 1, r.seed = 5, r.sub = 1;
+    ed.addObject(r);
+    ed.setStart(-250, 240, 0.5);
+    SaveFlow flow;
+    // The default name: the map's, and a number no file has.
+    const std::string d1 = SaveFlow::defaultName(ed, levels);
+    ctx.check("the default name has the map's name and a number", d1.find(mapName(MAP_PROVING_GROUND)) == 0 && d1.back() == '1', d1);
+    {
+        std::ofstream f(levels + "/" + levelFileName(d1) + ".czl");
+        f << "CRUMPLEZONE LEVEL 1\nname X\nmap 0\n";
+    }
+    const std::string d2 = SaveFlow::defaultName(ed, levels);
+    ctx.check("with that file there, the next default is the next number", d2 != d1 && d2.back() == '2', d2);
+    std::remove((levels + "/" + levelFileName(d1) + ".czl").c_str());
+    // Ctrl+S on the unnamed level: a prompt, prefilled, not a refusal.
+    flow.requestSave(ed, false);
+    ctx.check("the unnamed level asks for a name", flow.stage == SaveFlow::NAMING && flow.text == d1 && !flow.saved);
+    flow.text.clear();
+    for (char c : std::string("CLIFF SIDE 1")) flow.type(c);
+    flow.enter(ed);
+    ctx.check("Enter saves it under that name", flow.stage == SaveFlow::IDLE && flow.saved && !ed.unsaved() && ed.level.name == "CLIFF SIDE 1");
+    const std::string path = levels + "/cliff_side_1.czl";
+    Level back;
+    ctx.check("the file is there and reads back the same level", loadLevelFile(path, back) && back.objects.size() == ed.level.objects.size() && back.hasStart && back.heights.size() == ed.level.heights.size() &&
+                                                                  back.name == "CLIFF SIDE 1");
+    bool listed = false;
+    for (const std::string& f : listLevelFiles(levels, ".czl")) listed |= f.find("cliff_side_1.czl") != std::string::npos;
+    bool inList = false;
+    for (const Level& l : listLevels()) inList |= l.name == "CLIFF SIDE 1";
+    ctx.check("the level lists have it at once", listed && inList);
+    // Saved and named: Ctrl+S just saves.
+    ed.brush(BRUSH_RAISE, -150, 150, 5, 1.0);
+    flow.requestSave(ed, false);
+    ctx.check("a named, saved level saves with no question", flow.stage == SaveFlow::IDLE && flow.saved && !ed.unsaved());
+    // SAVE AS: asks, prefilled with the current name; a new name makes a second file and the first stays.
+    flow.requestSave(ed, true);
+    ctx.check("SAVE AS asks, with the current name in the box", flow.stage == SaveFlow::NAMING && flow.text == "CLIFF SIDE 1");
+    flow.text = "CLIFF SIDE 2";
+    flow.enter(ed);
+    ctx.check("SAVE AS writes the new file and the old one stays", flow.saved && ed.level.name == "CLIFF SIDE 2" && loadLevelFile(levels + "/cliff_side_2.czl", back) && loadLevelFile(path, back));
+    // A taken name asks before replacing.
+    flow.requestSave(ed, true);
+    flow.text = "CLIFF SIDE 1";
+    flow.enter(ed);
+    ctx.check("a taken name asks again before it replaces", flow.stage == SaveFlow::NAMING && !flow.saved && flow.replaceOk);
+    flow.enter(ed);
+    ctx.check("and then replaces it", flow.stage == SaveFlow::IDLE && flow.saved);
+    // A built-in level's copy (as the editor opens it: renamed, no file) just saves.
+    Level own = builtinLevels().front();
+    own.builtin = false, own.file.clear(), own.name += " (MINE)";
+    World bw = levelWorld(own);
+    EditCore eb;
+    eb.begin(bw, own);
+    eb.brush(BRUSH_RAISE, -200, 200, 5, 1.0);
+    SaveFlow fb;
+    fb.requestSave(eb, false);
+    ctx.check("a built-in level's own copy saves with Ctrl+S, no extra steps", fb.stage == SaveFlow::IDLE && fb.saved && !eb.unsaved() && !eb.level.file.empty());
+    // Open it again the same way: the name's taken by the first copy, so it asks (and offers a free name) rather than overwrite.
+    EditCore eb2;
+    World bw2 = levelWorld(own);
+    eb2.begin(bw2, own);
+    eb2.brush(BRUSH_RAISE, -200, 200, 5, 2.0);
+    SaveFlow fb2;
+    fb2.requestSave(eb2, false);
+    ctx.check("a second copy of it asks instead of overwriting the first", fb2.stage == SaveFlow::NAMING);
+    // Leaving with unsaved work.
+    SaveFlow lf;
+    ed.brush(BRUSH_RAISE, -100, 100, 5, 1.0);
+    ctx.check("there's unsaved work", ed.unsaved());
+    lf.requestLeave(ed, SaveFlow::LEAVE);
+    ctx.check("leaving asks", lf.stage == SaveFlow::ASKING && lf.done == SaveFlow::NOTHING);
+    lf.choose(ed, SaveFlow::CANCEL);
+    ctx.check("CANCEL stays, and nothing is lost", lf.stage == SaveFlow::IDLE && lf.done == SaveFlow::NOTHING && ed.unsaved());
+    lf.requestLeave(ed, SaveFlow::LEAVE);
+    lf.choose(ed, SaveFlow::DISCARD);
+    ctx.check("DISCARD leaves without saving", lf.done == SaveFlow::LEAVE && ed.unsaved() && !lf.saved);
+    lf = SaveFlow();
+    lf.requestLeave(ed, SaveFlow::LEAVE);
+    lf.choose(ed, SaveFlow::SAVE);
+    ctx.check("SAVE saves, then leaves", lf.saved && lf.done == SaveFlow::LEAVE && !ed.unsaved());
+    lf = SaveFlow();
+    lf.requestLeave(ed, SaveFlow::OPEN, 3);
+    ctx.check("nothing unsaved: leaving or opening goes straight on", lf.stage == SaveFlow::IDLE && lf.done == SaveFlow::OPEN && lf.doneArg == 3);
+    // An unnamed level, leaving: SAVE asks for the name first, then leaves.
+    EditCore eu;
+    World uw(MAP_PROVING_GROUND);
+    eu.begin(uw, lv);
+    eu.brush(BRUSH_RAISE, -200, 200, 8, 1.0);
+    SaveFlow uf;
+    uf.requestLeave(eu, SaveFlow::LEAVE);
+    uf.choose(eu, SaveFlow::SAVE);
+    ctx.check("SAVE on an unnamed level asks its name before leaving", uf.stage == SaveFlow::NAMING && uf.done == SaveFlow::NOTHING);
+    uf.text = "UNNAMED NO MORE";
+    uf.enter(eu);
+    ctx.check("then it saves and leaves", uf.saved && uf.done == SaveFlow::LEAVE && !eu.unsaved());
+    // Esc in the name box cancels the whole thing.
+    SaveFlow ef;
+    EditCore ee;
+    World ew(MAP_PROVING_GROUND);
+    ee.begin(ew, lv);
+    ee.brush(BRUSH_RAISE, -200, 200, 8, 1.0);
+    ef.requestLeave(ee, SaveFlow::LEAVE);
+    ef.choose(ee, SaveFlow::SAVE);
+    ef.escape();
+    ctx.check("Esc in the name box cancels leaving too", ef.stage == SaveFlow::IDLE && ef.done == SaveFlow::NOTHING && ee.unsaved());
+    for (const std::string& f : listLevelFiles(levels, ".czl")) std::remove(f.c_str());
+    unsetenv("XDG_CONFIG_HOME");
 }

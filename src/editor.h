@@ -11,6 +11,7 @@
 
 #include "editcore.h"
 #include "render.h"
+#include "saveflow.h"
 #include "sdl_min.h"
 
 class Editor {
@@ -35,6 +36,12 @@ public:
     // Back after a playtest: `w` is the level's plain map again (levelWorld(core.level)); everything else is as it was left.
     void resume(World& w, Renderer& r);
     bool started() const { return core.started(); }
+    // True once after the level was saved (the game refreshes its level lists).
+    bool takeSaved() {
+        const bool s = savedPing;
+        savedPing = false;
+        return s;
+    }
     // Where the middle of the view meets the ground, and the way the camera faces (a playtest from here starts there).
     V3 viewPoint() const { return haveViewHit ? viewHit : eye; }
     double heading() const { return yaw; }
@@ -131,6 +138,8 @@ private:
     bool scriptMods = false;
     double lastAuto = 0;
     std::map<std::string, mk::Mesh> iconMeshes;
+    SaveFlow flow;                     // the save prompts: a name, or SAVE / DISCARD / CANCEL
+    bool savedPing = false;
     std::vector<bool> fileRecovery;    // per files[i]: a recovery copy (opened as an unsaved edit of the saved level)
     // Section authoring: grid snap for what's placed (0 off, then 0.5 / 1 / 2 m); the slab-ledge brush
     // (drag a line: a row of rock slabs along it, `ledgeRise` high, `ledgeDepth` deep); the generator to stamp.
@@ -198,6 +207,10 @@ private:
     void drawPalette(Renderer& r, float u);
     void refreshRecoveries();
     void openFile(int index);
+    void doOpen(int index);
+    void afterFlow();
+    void flowKey(int sc);
+    void drawFlow(Renderer& r, float u);
     void drawWorldMarks(Renderer& r);
     void drawToolbar(Renderer& r, float u);
     void drawOptions(Renderer& r, float u);

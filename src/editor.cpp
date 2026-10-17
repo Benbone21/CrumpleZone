@@ -48,6 +48,7 @@ enum {
     B_NUDGE = 1120,          // + 0 west, 1 east, 2 north, 3 south (camera-relative: -x, +x, ahead, back)
     B_PALTAB = 1200,         // + tab, to 1219
     B_PAL_PREV = 1230, B_PAL_NEXT,
+    B_ASK_SAVE = 1240, B_ASK_DISCARD, B_ASK_CANCEL, B_NAME_OK, B_NAME_CANCEL, B_SAVEAS,
     B_PAL = 2000,            // + palette index
 };
 
@@ -704,25 +705,62 @@ void Editor::brushKey(int sc) {
     say(std::string("BRUSH: ") + brushShapeName(shape) + ", " + brushFallName(fall) + " EDGE, " + brushStyleName(style), 1.2);
 }
 
+static char keyChar(int sc) {
+    if (sc >= SC_A && sc <= SC_A + 25) return (char)('A' + (sc - SC_A));
+    if (sc >= SC_1 && sc <= SC_1 + 8) return (char)('1' + (sc - SC_1));
+    if (sc == SC_0) return '0';
+    if (sc == SC_SPACE) return ' ';
+    if (sc == SC_MINUS) return '-';
+    return 0;
+}
+
+// Ctrl+S: saves it, asking for a name first if it hasn't one (SAVE AS: always asks).
 void Editor::save() {
-    if (core.level.name.empty() || core.level.name == "UNTITLED") {
-        say("NAME IT FIRST: SETTINGS (6), THE NAME ROW");
-        tool = SETTINGS;
-        setRow = 0;
-        return;
+    flow.requestSave(core, false);
+    afterFlow();
+}
+
+// What the save prompts decided: tell the player, and go on to what was asked (leave, open another level, start a new one).
+void Editor::afterFlow() {
+    if (!flow.note.empty()) say(flow.note, flow.stage != SaveFlow::IDLE ? 30 : 4);
+    flow.note.clear();
+    if (flow.saved) {
+        savedPing = true;
+        flow.saved = false;
+        lastAuto = clock;
     }
-    std::string path = core.level.file;
-    if (path.empty() || core.level.builtin || path.find(userLevelFolder()) != 0) path = userLevelFolder() + "/" + levelFileName(core.level.name) + ".czl";
-    std::string err;
-    if (core.save(path, &err)) {
-        core.level.file = path;
-        core.level.builtin = false;
-        if (core.level.section.on && core.saveNote.empty()) say("SAVED " + path + " AND ITS SECTION FILE (.CZS)", 4);
-        else if (!core.saveNote.empty()) say("SAVED " + path + ", BUT " + core.saveNote, 6);
-        else say("SAVED " + path);
-    } else {
-        say("CAN'T SAVE: " + err, 4);
+    const SaveFlow::After a = flow.done;
+    const int arg = flow.doneArg;
+    flow.done = SaveFlow::NOTHING;
+    if (flow.stage == SaveFlow::IDLE && toastTime > 25) toastTime = 4;
+    if (a == SaveFlow::LEAVE) wantClose = true;
+    else if (a == SaveFlow::OPEN) doOpen(arg);
+    else if (a == SaveFlow::NEWMAP) {
+        newMap = nextListedMap(newMap, 1);
+        Level l;
+        l.map = newMap;
+        l.name = "UNTITLED";
+        World& w = *core.world;
+        w = World(newMap);
+        open(w, *rend, l);
+        say(std::string("NEW LEVEL ON ") + mapName(newMap));
     }
+}
+
+// The keys while a prompt is up: the name, or SAVE / DISCARD / CANCEL.
+void Editor::flowKey(int sc) {
+    if (flow.stage == SaveFlow::NAMING) {
+        const char ch = keyChar(sc);
+        if (ch) flow.type(ch);
+        else if (sc == SC_BACKSPACE) flow.backspace();
+        else if (sc == SC_RETURN || sc == SC_KP_ENTER) flow.enter(core);
+        else if (sc == SC_ESCAPE) flow.escape();
+    } else if (flow.stage == SaveFlow::ASKING) {
+        if (sc == SC_S || sc == SC_RETURN || sc == SC_KP_ENTER) flow.choose(core, SaveFlow::SAVE);
+        else if (sc == SC_D) flow.choose(core, SaveFlow::DISCARD);
+        else if (sc == SC_ESCAPE || sc == SC_C) flow.choose(core, SaveFlow::CANCEL);
+    }
+    afterFlow();
 }
 
 // The open list: the game's and the player's levels, and first any recovery copy newer than the level it came from.
@@ -750,6 +788,13 @@ void Editor::refreshRecoveries() {
 
 void Editor::openFile(int index) {
     if (index < 0 || index >= (int)files.size()) return;
+    fileOpen = false;
+    flow.requestLeave(core, SaveFlow::OPEN, index);  // (unsaved work asks first)
+    afterFlow();
+}
+
+void Editor::doOpen(int index) {
+    if (index < 0 || index >= (int)files.size()) return;
     openLevel(files[index], index < (int)fileRecovery.size() && fileRecovery[index]);
 }
 
@@ -772,6 +817,10 @@ void Editor::key(int sc) {
     if (!scriptMods) {
         shift = ks[SC_LSHIFT] || ks[SC_RSHIFT];
         ctrl = ks[224] || ks[228];
+    }
+    if (flow.stage != SaveFlow::IDLE) {
+        flowKey(sc);
+        return;
     }
     // The open dialog.
     if (fileOpen) {
@@ -805,7 +854,8 @@ void Editor::key(int sc) {
         return;
     }
     if (ctrl && sc == SC_S) {
-        save();
+        if (shift) flow.requestSave(core, true), afterFlow();  // SAVE AS
+        else save();
         return;
     }
     if (sc >= SC_1 && sc < SC_1 + TOOL_COUNT) {
@@ -819,12 +869,8 @@ void Editor::key(int sc) {
                 sel = EditPick(), selection.clear();
                 return;
             }
-            if (core.unsaved() && !confirmClose) {
-                confirmClose = true;
-                say("NOT SAVED: CTRL+S TO SAVE, ESC AGAIN TO LEAVE ANYWAY", 4);
-                return;
-            }
-            wantClose = true;
+            flow.requestLeave(core, SaveFlow::LEAVE);
+            afterFlow();
             return;
         case SC_TAB:
             if (tool == SCULPT) op = (BrushOp)((op + (shift ? BRUSH_OP_COUNT - 1 : 1)) % BRUSH_OP_COUNT);
@@ -1196,17 +1242,28 @@ void Editor::doButton(int id) {
             fileSel = 0;
             fileOpen = true;
             break;
-        case B_NEWMAP: {
-            newMap = nextListedMap(newMap, 1);
-            Level l;
-            l.map = newMap;
-            l.name = "UNTITLED";
-            World& w = *core.world;
-            w = World(newMap);
-            open(w, *rend, l);
-            say(std::string("NEW LEVEL ON ") + mapName(newMap));
+        case B_NEWMAP:
+            flow.requestLeave(core, SaveFlow::NEWMAP);  // (unsaved work asks first)
+            afterFlow();
             break;
-        }
+        case B_SAVEAS:
+            flow.requestSave(core, true);
+            afterFlow();
+            break;
+        case B_ASK_SAVE:
+        case B_ASK_DISCARD:
+        case B_ASK_CANCEL:
+            flow.choose(core, id == B_ASK_SAVE ? SaveFlow::SAVE : id == B_ASK_DISCARD ? SaveFlow::DISCARD : SaveFlow::CANCEL);
+            afterFlow();
+            break;
+        case B_NAME_OK:
+            flow.enter(core);
+            afterFlow();
+            break;
+        case B_NAME_CANCEL:
+            flow.escape();
+            afterFlow();
+            break;
         case B_NEWSEC:
             if (core.unsaved() && !confirmNew) {
                 confirmNew = true;
@@ -1221,12 +1278,8 @@ void Editor::doButton(int id) {
         case B_UNDO: say(core.undo() ? "UNDONE " : "NOTHING TO UNDO", 1.2), sel = EditPick(), selection.clear(); break;
         case B_REDO: say(core.redo() ? "REDONE" : "NOTHING TO REDO", 1.2); break;
         case B_EXIT:
-            if (core.unsaved() && !confirmClose) {
-                confirmClose = true;
-                say("NOT SAVED: SAVE FIRST, OR CLICK EXIT AGAIN", 4);
-                return;
-            }
-            wantClose = true;
+            flow.requestLeave(core, SaveFlow::LEAVE);
+            afterFlow();
             break;
         case B_RAD_DN: radius = brushStep(radius, -1); break;
         case B_RAD_UP: radius = brushStep(radius, 1); break;
@@ -1291,7 +1344,7 @@ void Editor::update(double dt, const uint8_t* keys, Renderer& r, int w, int h) {
         ctrl = keys[224] || keys[228];
     }
     // Fly (WASD, Space up, Shift fast, higher = faster; Shift+wheel is up / down).
-    if (!typing && !fileOpen && !ctrl && tool != SETTINGS) {
+    if (!typing && !fileOpen && flow.stage == SaveFlow::IDLE && !ctrl && tool != SETTINGS) {
         const double ground = core.world->height(eye.x, eye.z);
         const double speed = (12 + std::max(0.0, eye.y - ground) * 0.8) * (shift ? 3 : 1);
         const V3 f(std::cos(yaw), 0, -std::sin(yaw)), l(-f.z, 0, f.x);
@@ -1604,8 +1657,9 @@ void Editor::drawToolbar(Renderer& r, float u) {
     for (int t = 0; t < TOOL_COUNT; t++) y = button(r, x, y, w, bh, std::to_string(t + 1) + "  " + kToolNames[t], B_TOOL + t, tool == t, u);
     // File and history.
     y += 14 * u;
-    pill(r, x - 6 * u, y - 6 * u, w + 12 * u, (bh + 4 * u) * 9 + 8 * u, 0, 0, 0, 0.55f);
-    y = button(r, x, y, w, bh, "SAVE", B_SAVE, false, u);
+    pill(r, x - 6 * u, y - 6 * u, w + 12 * u, (bh + 4 * u) * 10 + 8 * u, 0, 0, 0, 0.55f);
+    y = button(r, x, y, w, bh, "SAVE  CTRL+S", B_SAVE, false, u);
+    y = button(r, x, y, w, bh, "SAVE AS", B_SAVEAS, false, u);
     y = button(r, x, y, w, bh, "OPEN...", B_OPEN, false, u);
     y = button(r, x, y, w, bh, std::string("NEW: ") + mapName(nextListedMap(newMap, 1)), B_NEWMAP, false, u);
     y = button(r, x, y, w, bh, confirmNew ? "SURE? CLICK AGAIN" : "NEW SECTION", B_NEWSEC, confirmNew, u);
@@ -2013,6 +2067,35 @@ void Editor::drawStatus(Renderer& r, float u) {
     }
 }
 
+// The save prompts: over everything else, taking all clicks.
+void Editor::drawFlow(Renderer& r, float u) {
+    buttons.clear();
+    r.rect(0, 0, (float)W, (float)H, 0, 0, 0, 0.45f);
+    const float w = 520 * u, x = (W - w) / 2, s = px(1.4f * u), bh = 30 * u;
+    overUi = true;
+    if (flow.stage == SaveFlow::NAMING) {
+        const float h = 168 * u, y = (H - h) / 2;
+        pill(r, x, y, w, h, 0.03f, 0.035f, 0.045f, 0.97f);
+        label(r, x + 16 * u, y + 14 * u, px(2.0f * u), "NAME THE LEVEL", 1.0f, 0.75f, 0.3f, 1);
+        const float fy = y + 56 * u;
+        r.rect(x + 16 * u, fy, w - 32 * u, 34 * u, 1, 1, 1, 0.1f);
+        const std::string t = flow.text + (std::fmod(clock, 1.0) < 0.5 ? "_" : " ");
+        r.text(x + 26 * u, fy + (34 * u - 8 * s) / 2, s, t, 1, 1, 1, 1);
+        r.text(x + 16 * u, fy + 44 * u, px(1.1f * u), "TYPE A NAME, ENTER SAVES IT, ESC CANCELS", 0.65f, 0.67f, 0.72f, 1);
+        button(r, x + w - 16 * u - 230 * u, y + h - 16 * u - bh, 110 * u, bh, "SAVE", B_NAME_OK, true, u);
+        button(r, x + w - 16 * u - 110 * u, y + h - 16 * u - bh, 110 * u, bh, "CANCEL", B_NAME_CANCEL, false, u);
+    } else if (flow.stage == SaveFlow::ASKING) {
+        const float h = 150 * u, y = (H - h) / 2;
+        pill(r, x, y, w, h, 0.03f, 0.035f, 0.045f, 0.97f);
+        label(r, x + 16 * u, y + 14 * u, px(2.0f * u), "UNSAVED CHANGES", 1.0f, 0.75f, 0.3f, 1);
+        r.text(x + 16 * u, y + 52 * u, px(1.2f * u), core.level.name + " HAS CHANGES THAT ARE NOT SAVED.", 0.85f, 0.86f, 0.9f, 1);
+        const float bw = (w - 32 * u - 2 * 8 * u) / 3, by = y + h - 16 * u - bh;
+        button(r, x + 16 * u, by, bw, bh, "SAVE (S)", B_ASK_SAVE, true, u);
+        button(r, x + 16 * u + bw + 8 * u, by, bw, bh, "DISCARD (D)", B_ASK_DISCARD, false, u);
+        button(r, x + 16 * u + 2 * (bw + 8 * u), by, bw, bh, "CANCEL (ESC)", B_ASK_CANCEL, false, u);
+    }
+}
+
 void Editor::drawFiles(Renderer& r, float u) {
     const float w = 560 * u, x = (W - w) / 2, rowH = 26 * u, s = px(1.3f * u);
     const int show = std::min((int)files.size(), 14);
@@ -2052,4 +2135,5 @@ void Editor::draw(Renderer& r, int w, int h, double) {
         buttons.clear();  // (only the dialog takes clicks)
         drawFiles(r, u);
     }
+    if (flow.stage != SaveFlow::IDLE) drawFlow(r, u);
 }
