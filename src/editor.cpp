@@ -131,7 +131,7 @@ std::string Editor::debugState() const {
                     " cells=" + std::to_string(core.cellEdits()) + " radius=" + std::to_string(radius) + " op=" + std::to_string((int)op) + " unsaved=" + (core.unsaved() ? "1" : "0") + " objs=" + std::to_string(core.level.objects.size()) + " removed=" + std::to_string(core.level.removed.size()) + (boxAll ? " box=ALL" : " box=OBJ") + " sel=[";
     for (const EditPick& p : selection) s += std::to_string(p.kind) + ":" + std::to_string(p.index) + ":" + std::to_string(p.baseKind) + ":" + p.name + " ";
     s += "] hover=" + std::to_string(hover.kind) + ":" + std::to_string(hover.index) + ":" + hover.name + " eye=" + std::to_string(eye.x) + "," + std::to_string(eye.y) + "," + std::to_string(eye.z) +
-         " ground=" + (haveHit ? std::to_string(hit.x) + "," + std::to_string(hit.y) + "," + std::to_string(hit.z) : std::string("none")) + " overUi=" + (overUi ? "1" : "0") + " mouse=" + std::to_string((int)mx) + "," + std::to_string((int)my) + " WH=" + std::to_string(W) + "x" + std::to_string(H) + " fileOpen=" + (fileOpen ? "1" : "0") + " files=" + std::to_string(files.size()) + " fileSel=" + std::to_string(fileSel) + " flow=" + std::to_string((int)flow.stage) + " toast=\"" + toast + "\" undo=" + core.undoName();
+         " ground=" + (haveHit ? std::to_string(hit.x) + "," + std::to_string(hit.y) + "," + std::to_string(hit.z) : std::string("none")) + " overUi=" + (overUi ? "1" : "0") + " mouse=" + std::to_string((int)mx) + "," + std::to_string((int)my) + " WH=" + std::to_string(W) + "x" + std::to_string(H) + " fileOpen=" + (fileOpen ? "1" : "0") + " files=" + std::to_string(files.size()) + " fileSel=" + std::to_string(fileSel) + " flow=" + std::to_string((int)flow.stage) + " toast=\"" + toast + "\" undo=" + core.undoName() + " hot=" + std::to_string((int)hot) + " press=" + std::to_string((int)pressHandle) + " drag=" + std::to_string((int)drag.kind) + ":" + axisName(drag.axis);
     return s;
 }
 
@@ -221,14 +221,13 @@ void Editor::requestPlay(bool here) {
     wantPlay = true;
 }
 
-void Editor::ray(float sx, float sy, V3& o, V3& d) const {
-    const View v = view(W, H);
-    const V3 f = norm(v.target - v.eye), rt = norm(cross(f, v.up)), up = cross(rt, f);
-    const double k = std::tan(v.fovy / 2);
-    const double dx = (sx - W / 2.0) / (H / 2.0) * k, dy = (H / 2.0 - sy) / (H / 2.0) * k;
-    o = v.eye;
-    d = norm(f + rt * dx + up * dy);
+EditCam Editor::cam() const {
+    EditCam c;
+    c.eye = eye, c.yaw = yaw, c.pitch = pitch, c.fovy = view(W, H).fovy, c.W = W, c.H = H;
+    return c;
 }
+
+void Editor::ray(float sx, float sy, V3& o, V3& d) const { cam().ray(sx, sy, o, d); }
 
 View Editor::view(int w, int h) const {
     View v;
@@ -248,7 +247,7 @@ void Editor::handleEvent(const SDL_Event& e, float scale) {
         case SDL_KEYDOWN: key(evKeyScancode(e)); break;
         case SDL_MOUSEMOTION:
             mx = evMotionX(e) * scale, my = evMotionY(e) * scale;
-            if (rmb && !rotCand) {  // (right-drag on empty ground or sky looks round; on an object it turns that: update())
+            if (rmb && !rmbTurn && !rmbEaten) {  // (right-drag on empty ground or sky looks round; on an object it turns that: update())
                 yaw -= evMotionXrel(e) * 0.004;
                 pitch = clampd(pitch - evMotionYrel(e) * 0.004, -1.5, 1.2);
             }
@@ -257,15 +256,26 @@ void Editor::handleEvent(const SDL_Event& e, float scale) {
             mx = evButtonX(e) * scale, my = evButtonY(e) * scale;
             if (evButton(e) == 3) {
                 rmb = true;
-                // Right button on an object: a drag turns it (it's selected by the press if it wasn't; on the selection, all of it turns).
-                rotCand = !lmb && !overUi && !fileOpen && flow.stage == SaveFlow::IDLE && tool == OBJECTS && pointer && !ledgeBrush &&
-                          (hover.kind == EditPick::OBJECT || hover.kind == EditPick::BASE);
-                if (rotCand) {
+                if (lmb && tool == OBJECTS && (dragging || drag.kind != DRAG_NONE)) {  // (during a left drag: cancels it, and does nothing more till it's let go)
+                    cancelDrag();
+                    dragging = false, rmbEaten = true, rmbTurn = false;
+                    break;
+                }
+                // Right button on an object or a gizmo handle: a drag turns it (an object is selected by the press if it wasn't; on the selection, all of it turns).
+                const bool can = !overUi && !fileOpen && flow.stage == SaveFlow::IDLE && tool == OBJECTS && pointer && !ledgeBrush;
+                rHandle = can && !selection.empty() && !shift && !ctrl ? gizmoHit(mx, my) : H_NONE;
+                rmbTurn = can && (rHandle != H_NONE || hover.kind == EditPick::OBJECT || hover.kind == EditPick::BASE);
+                if (rmbTurn) {
                     rpress.press(mx, my);
-                    if (!isSelected(hover)) selection.assign(1, hover), sel = hover;
+                    if (rHandle == H_NONE && !isSelected(hover)) selection.assign(1, hover), sel = hover;
                 }
             }
             if (evButton(e) == 1) {
+                if (rmb && (rmbTurn || drag.kind != DRAG_NONE)) {  // (during a turn: cancels it)
+                    cancelDrag();
+                    rmbTurn = false, rmbEaten = true;
+                    return;
+                }
                 for (const Button& b : buttons)
                     if (mx >= b.x && mx < b.x + b.w && my >= b.y && my < b.y + b.h) {
                         doButton(b.id);
@@ -277,7 +287,10 @@ void Editor::handleEvent(const SDL_Event& e, float scale) {
             }
             break;
         case SDL_MOUSEBUTTONUP:
-            if (evButton(e) == 3) rmb = false, rotCand = false, endRotate();
+            if (evButton(e) == 3) {
+                rmb = false, rmbEaten = false, rmbTurn = false;
+                if (drag.kind != DRAG_NONE && drag.rmb) endDrag(false);
+            }
             if (evButton(e) == 1 && lmb) {
                 lmb = false;
                 release();
@@ -547,6 +560,16 @@ LevelObject Editor::makeObject(const V3& at, double rise) const {
             o.yaw = o.pitch = 0, o.lift = 0;
             return o;
         }
+        case OBJ_MODEL: {  // (its middle at the mouse, not its origin: some stand off to one side of theirs)
+            const mk::Mesh& m = mk::modelMesh(o.name);
+            if (m.v.empty()) break;
+            V3 ax[3];
+            frameOf(o.yaw, o.pitch, o.roll, ax);
+            const V3 sc(o.size.x > 0 ? o.size.x : 1, o.size.y > 0 ? o.size.y : 1, o.size.z > 0 ? o.size.z : 1);
+            const V3 mid = ax[0] * ((m.lo.x + m.hi.x) * 0.5 * sc.x) + ax[2] * ((m.lo.z + m.hi.z) * 0.5 * sc.z);
+            o.p.x -= mid.x, o.p.z -= mid.z;
+            break;
+        }
         default: break;
     }
     return core.grounded(o);
@@ -554,8 +577,20 @@ LevelObject Editor::makeObject(const V3& at, double rise) const {
 
 void Editor::click() {
     press.press(mx, my);
-    pressPending = true;  // (where the ground was under it is worked out next frame, once the selection says what to see through)
     shiftToggle = lockBlock = false;
+    pressHandle = H_NONE, pressHasGrab = false;
+    if (tool == OBJECTS && pointer && !ledgeBrush) {
+        // (What's under the mouse now, exactly: the gizmo's handles first, then the object and the point on it that the drag will hold under the mouse.)
+        V3 o, d, g;
+        ray(mx, my, o, d);
+        if (!selection.empty() && !shift && !ctrl && (pressHandle = gizmoHit(mx, my)) != H_NONE) {  // (Shift or Ctrl: a selection click, not the gizmo's)
+            dragging = true;
+            return;
+        }
+        const double ht = core.rayGround(o, d, 2000, g) ? len(g - o) : 1e9;
+        const EditPick p = core.pick(o, d, ht, true, false);
+        if (p.kind == EditPick::OBJECT || p.kind == EditPick::BASE) hover = p, pressGrab = o + d * p.t, pressHasGrab = true;
+    }
     const bool onSelection = (hover.kind == EditPick::OBJECT || hover.kind == EditPick::BASE) && isSelected(hover);
     // Ctrl+drag: a box select that starts anywhere, on an object too (Shift as well adds); but starting on the selection, Ctrl is the Z lock of moving it.
     if (tool == OBJECTS && pointer && !ledgeBrush && ctrl && !onSelection) {
@@ -613,7 +648,6 @@ void Editor::click() {
                     }
                     sel = selection.empty() ? EditPick() : selection.back();
                     dragging = !selection.empty() && isSelected(hover);
-                    dragStarted = false, dragApplied = V3();
                     if (!selection.empty())
                         say(selection.size() > 1 ? std::to_string(selection.size()) + " SELECTED: DRAG TO MOVE, DELETE" : std::string(hover.kind == EditPick::BASE ? "THE MAP'S " : "") + hover.name + ": DRAG TO MOVE, KEYS TURN AND SCALE");
                 } else if (haveHit) {  // empty space: a box to select what's inside
@@ -680,13 +714,8 @@ void Editor::release() {
             sel = selection.empty() ? EditPick() : selection.back();
         }
     }
-    if (moveEdit) core.endEdit(), moveEdit = false;
+    if (drag.kind != DRAG_NONE && !drag.rmb) endDrag(false);
     dragging = false;
-}
-
-void Editor::endRotate() {
-    if (rotEdit) core.endEdit();
-    rotEdit = rotating = false;
 }
 
 // A row of rock slabs along the line a-b, their tops `rise` m over the ground at the line, the ledge
@@ -940,6 +969,10 @@ void Editor::key(int sc) {
         sel = EditPick(), selection.clear();
         return;
     }
+    if (drag.kind != DRAG_NONE) {  // (during a drag only Esc does anything: it puts everything back where it was)
+        if (sc == SC_ESCAPE && cancelDrag()) dragging = rmbTurn = false, rmbEaten = rmb;
+        return;
+    }
     switch (sc) {
         case SC_ESCAPE:
             if (sel.kind != EditPick::NONE || !selection.empty()) {
@@ -1087,16 +1120,402 @@ void Editor::applyOp(ObjOp op, double amount, const std::string& key) {
     }
 }
 
-// Dragging the selection: Shift locks it to the X axis, Ctrl to Z, Alt to Y (Shift only if the press found it already selected: Shift+click adds).
-EditAxis Editor::moveLockAxis() const {
-    if (shift && !lockBlock) return AXIS_X;
+// ---- Dragging objects (see ObjDrag) and the gizmo ---------------------------------------------------
+
+namespace {
+EditAxis handleAxis(int h) { return h == 1 || h == 4 ? AXIS_X : h == 2 || h == 5 ? AXIS_Y : h == 3 || h == 6 ? AXIS_Z : AXIS_NONE; }
+const float kAxisCol[3][3] = {{1.0f, 0.33f, 0.3f}, {0.45f, 0.95f, 0.35f}, {0.32f, 0.58f, 1.0f}};  // X red, Y green, Z blue
+double segDist(double px, double py, double ax, double ay, double bx, double by) {
+    const double dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+    const double t = l2 > 1e-9 ? clampd(((px - ax) * dx + (py - ay) * dy) / l2, 0, 1) : 0;
+    return std::hypot(px - ax - dx * t, py - ay - dy * t);
+}
+void ringBasis(int a, V3& e1, V3& e2) {  // (two axes across axis a)
+    e1 = a == 0 ? V3(0, 1, 0) : a == 1 ? V3(0, 0, 1) : V3(1, 0, 0);
+    e2 = a == 0 ? V3(0, 0, 1) : a == 1 ? V3(1, 0, 0) : V3(0, 1, 0);
+}
+}  // namespace
+
+// What the keys hold a drag to: Shift X, Ctrl Z, Space or Alt Y (Shift only if the press found it already selected: Shift+click adds).
+EditAxis Editor::heldAxis(bool right) const {
+    if (shift && (right || !lockBlock)) return AXIS_X;
     if (ctrl) return AXIS_Z;
-    if (alt) return AXIS_Y;
+    if (yKey) return AXIS_Y;
     return AXIS_NONE;
 }
 
-// Turning it with the right button: Shift about X (tip), Ctrl about Z (roll), Alt or nothing about Y (turn).
-EditAxis Editor::turnAxis() const { return shift ? AXIS_X : ctrl ? AXIS_Z : AXIS_Y; }
+void Editor::startDrag(bool right) {
+    const Handle h = right ? rHandle : pressHandle;
+    const DragGate& g = right ? rpress : press;
+    drag = ObjDrag();
+    drag.right = right || h >= H_RING_X;
+    drag.rmb = right;
+    drag.handle = h;
+    drag.selBefore = selection;
+    core.beginEdit(drag.right ? "TURN" : "MOVE");  // (no merge key: two drags are two steps)
+    const bool group = selection.size() > 1;
+    // (The map's own among them are only taken over if the drag can change them: a lone tree doesn't turn.)
+    std::function<bool(const LevelObject&)> wants;
+    if (drag.right) wants = [group](const LevelObject& o) { return group || (o.kind != OBJ_TREE && o.kind != OBJ_BUSH); };
+    V3 mid;
+    double rad;
+    const bool haveMid = selMiddle(mid, rad);
+    drag.ks = selectedObjects(wants);
+    for (int k : drag.ks) {
+        drag.from.push_back(core.normalized(k));
+        drag.upright |= !EditCore::turnsFreely(drag.from.back().kind);
+    }
+    // The one grabbed: what the press ray hits (the objects haven't moved yet).
+    V3 o, d, gp;
+    ray(g.x0, g.y0, o, d);
+    const EditPick p = core.pick(o, d, core.rayGround(o, d, 2000, gp) ? len(gp - o) : 1e9, true, false);
+    for (size_t i = 0; i < drag.ks.size(); i++)
+        if (p.kind == EditPick::OBJECT && p.index == drag.ks[i]) drag.lead = (int)i;
+    drag.grab = !right && h == H_NONE && pressHasGrab ? pressGrab : haveMid ? mid : eye;
+    drag.start = drag.grab;
+    drag.pivot = haveMid ? mid : drag.grab;
+    if (drag.ks.size() == 1 && !EditCore::turnsFreely(drag.from[0].kind)) drag.pivot = core.footOf(drag.from[0]);  // (an upright thing turns on the spot)
+    drag.t = len(drag.grab - eye);
+    const EditAxis ax = h != H_NONE ? handleAxis(h) : heldAxis(drag.right);
+    restage(drag.right ? (ax == AXIS_NONE ? DRAG_TURN : DRAG_TURN_AXIS) : (ax == AXIS_NONE ? DRAG_MOVE : DRAG_AXIS), ax);
+}
+
+void Editor::restage(DragKind kind, EditAxis axis) {
+    const bool midway = drag.kind != DRAG_NONE;
+    if (midway) {  // (carry on from where things are)
+        for (size_t i = 0; i < drag.ks.size(); i++) drag.from[i] = core.normalized(drag.ks[i]);
+        drag.grab += drag.moved;
+        drag.pivot += drag.moved;
+    }
+    drag.kind = kind, drag.axis = axis;
+    drag.moved = V3(), drag.amount = 0, drag.q = Quat(), drag.accA = drag.accB = 0, drag.swept = 0;
+    // (At the start, from where the button went down: the few pixels past the drag threshold count too, so the grabbed point keeps up.)
+    const DragGate& g = drag.rmb ? rpress : press;
+    drag.x0 = drag.lastX = midway ? mx : g.x0, drag.y0 = drag.lastY = midway ? my : g.y0;
+    drag.last.clear();
+    drag.rockAt.assign(drag.ks.size(), V3());
+    if (kind == DRAG_TURN || kind == DRAG_TURN_AXIS)
+        for (size_t i = 0; i < drag.ks.size(); i++)
+            if (drag.from[i].kind == OBJ_ROCK) drag.rockAt[i] = core.rockAt(drag.from[i]);
+    V3 o, d;
+    ray(mx, my, o, d);
+    const EditCam c = cam();
+    if (kind == DRAG_MOVE) {
+        // (Midway, after a held axis took the grabbed point off the mouse's ray: onto it, where it is now, so the thing doesn't jump. At the
+        // start it's the point pressed on, and the first frame brings that under the mouse however far it went past the drag threshold.)
+        if (midway) drag.grab = o + d * std::max(0.3, dot(drag.grab - o, d));
+        drag.t = len(drag.grab - o);
+        if (!drag.from.empty()) {
+            const V3 f = core.footOf(drag.from[drag.lead]);
+            drag.ride0 = core.rideAt(f.x, f.z, drag.ks);
+        }
+    } else if (kind == DRAG_AXIS) {
+        // (An axis pointing at the eye can't be followed along the ray: then the mouse's up and down drives it.)
+        drag.screen = std::fabs(dot(norm(drag.grab - o), axisDir(axis))) > 0.97 || !lineUnderMouse(c, drag.x0, drag.y0, drag.grab, axisDir(axis), drag.s0);
+    } else if (kind == DRAG_TURN_AXIS) {
+        // Round an axis that points at the eye: go round its middle on the screen. Else the side facing you follows the mouse.
+        const V3 A = axisDir(axis), toCam = norm(eye - drag.pivot), v = cross(A, toCam);
+        double cx, cy;
+        drag.sweep = len(v) < 0.34 && c.project(drag.pivot, cx, cy);
+        if (drag.sweep) {
+            drag.sense = dot(A, toCam) > 0 ? 1 : -1;  // (a + turn about an axis pointing at you is anticlockwise)
+            drag.phi = std::atan2(-(drag.y0 - cy), drag.x0 - cx);
+        } else {
+            const double r = std::min(1.0, 0.3 * len(eye - drag.pivot));
+            const V3 p1 = drag.pivot + toCam * r, p2 = p1 + norm(v) * (0.05 * r);
+            double ax, ay, bx, by;
+            drag.slideDir = axis == AXIS_Y ? V3(1, 0, 0) : V3(0, -1, 0);
+            if (c.project(p1, ax, ay) && c.project(p2, bx, by) && std::hypot(bx - ax, by - ay) > 1e-6) drag.slideDir = norm(V3(bx - ax, by - ay, 0));
+        }
+    }
+}
+
+void Editor::dragFrame() {
+    // What the keys (or the handle) want now: a change starts a new stage from where things are.
+    const EditAxis ax = drag.handle != H_NONE ? handleAxis(drag.handle) : heldAxis(drag.right);
+    const DragKind want = drag.right ? (ax == AXIS_NONE ? DRAG_TURN : DRAG_TURN_AXIS) : (ax == AXIS_NONE ? DRAG_MOVE : DRAG_AXIS);
+    if (want != drag.kind || ax != drag.axis) restage(want, ax);
+    if (drag.ks.empty()) {
+        dragNote = "TREES AND BUSHES STAY UPRIGHT";
+        return;
+    }
+    V3 o, d;
+    ray(mx, my, o, d);
+    const EditCam c = cam();
+    const double sn = kSnaps[snapIdx], step = M_PI / 12;
+    char sig[200] = "", note[96] = "";
+    std::vector<std::pair<int, LevelObject>> set;
+    switch (drag.kind) {
+        case DRAG_MOVE: {
+            const EditCore::Slide sl = core.slideUnder(drag.from[drag.lead], drag.grab, o, d, drag.ks, drag.ride0, drag.t, sn);
+            if (sl.ok) {  // (the sky: it stays where it was)
+                drag.t = sl.t;
+                drag.moved = V3(sl.dx, sl.rise, sl.dz);
+                std::snprintf(sig, sizeof sig, "m %.7f %.7f %.7f", sl.dx, sl.dz, sl.ride);
+                if (drag.last != sig)
+                    for (size_t i = 0; i < drag.ks.size(); i++) set.push_back({drag.ks[i], core.slid(drag.from[i], sl.dx, sl.dz, sl.ride)});
+            }
+            const V3 tot = drag.grab + drag.moved - drag.start;
+            std::snprintf(note, sizeof note, "MOVE  %.2f M", std::hypot(tot.x, tot.z));
+            break;
+        }
+        case DRAG_AXIS: {
+            const V3 A = axisDir(drag.axis);
+            double s = drag.amount;
+            if (drag.screen) s = (drag.y0 - my) / c.pxPerMetre(drag.grab) * (drag.axis == AXIS_Y || dot(A, c.forward()) > 0 ? 1 : -1);  // (mouse up: up, or away)
+            else if (lineUnderMouse(c, mx, my, drag.grab, A, s)) s -= drag.s0;
+            else s = drag.amount;
+            s = clampd(s, -2000, 2000);
+            if (sn > 0) {  // (X, Z: its middle on the grid; Y: in steps)
+                const double c0 = drag.axis == AXIS_Y ? 0 : dot(core.footOf(drag.from[drag.lead]), A);
+                s = std::round((c0 + s) / sn) * sn - c0;
+            }
+            drag.amount = s, drag.moved = A * s;
+            std::snprintf(sig, sizeof sig, "a %.7f", s);
+            if (drag.last != sig)
+                for (size_t i = 0; i < drag.ks.size(); i++) set.push_back({drag.ks[i], core.translated(drag.from[i], drag.moved)});
+            std::snprintf(note, sizeof note, "MOVE %s  %+.2f M", axisName(drag.axis), s);
+            break;
+        }
+        case DRAG_TURN: {
+            const double dx = mx - drag.lastX, dy = my - drag.lastY;
+            drag.lastX = mx, drag.lastY = my;
+            // Sideways turns it about the vertical (the side facing you follows the mouse); up and down tips it about the view's sideways axis (up: away).
+            if (sn > 0) {  // (on the snap: whole 15 degree steps about Y and the world axis nearest the view's sideways one)
+                const V3 rt = c.right(), tilt = std::fabs(rt.x) > std::fabs(rt.z) ? V3(rt.x > 0 ? 1 : -1, 0, 0) : V3(0, 0, rt.z > 0 ? 1 : -1);
+                drag.accA += dx * kTurnPerPx, drag.accB += dy * kTurnPerPx;
+                for (; drag.accA >= step; drag.accA -= step) drag.q = Quat::axisAngle(V3(0, 1, 0), step) * drag.q;
+                for (; drag.accA <= -step; drag.accA += step) drag.q = Quat::axisAngle(V3(0, 1, 0), -step) * drag.q;
+                for (; drag.accB >= step; drag.accB -= step) drag.q = Quat::axisAngle(tilt, step) * drag.q;
+                for (; drag.accB <= -step; drag.accB += step) drag.q = Quat::axisAngle(tilt, -step) * drag.q;
+            } else if (dx != 0 || dy != 0) {
+                drag.q = Quat::axisAngle(V3(0, 1, 0), dx * kTurnPerPx) * Quat::axisAngle(c.right(), dy * kTurnPerPx) * drag.q;
+            }
+            drag.q.normalize();
+            std::snprintf(note, sizeof note, "TURN FREE  %.0f DEG", 2 * std::acos(std::min(1.0, std::fabs(drag.q.w))) * 180 / M_PI);
+            break;
+        }
+        case DRAG_TURN_AXIS: {
+            double th;
+            if (drag.sweep) {
+                double cx, cy;
+                if (c.project(drag.pivot, cx, cy) && std::hypot(mx - cx, my - cy) > 2) {
+                    const double phi = std::atan2(-(my - cy), mx - cx);
+                    drag.swept += wrapAngle(phi - drag.phi);
+                    drag.phi = phi;
+                }
+                th = drag.swept * drag.sense;
+            } else {
+                th = ((mx - drag.x0) * drag.slideDir.x + (my - drag.y0) * drag.slideDir.y) * kTurnPerPx;
+            }
+            if (sn > 0) th = std::round(th / step) * step;
+            drag.amount = th;
+            drag.q = Quat::axisAngle(axisDir(drag.axis), th);
+            std::snprintf(note, sizeof note, "TURN ABOUT %s  %+.0f DEG", axisName(drag.axis), th * 180 / M_PI);
+            break;
+        }
+        default: break;
+    }
+    if (drag.kind == DRAG_TURN || drag.kind == DRAG_TURN_AXIS) {
+        std::snprintf(sig, sizeof sig, "q %.9f %.9f %.9f %.9f", drag.q.w, drag.q.x, drag.q.y, drag.q.z);
+        if (drag.last != sig)
+            for (size_t i = 0; i < drag.ks.size(); i++)
+                set.push_back({drag.ks[i], core.rotatedAbout(drag.from[i], drag.q, drag.pivot, drag.from[i].kind == OBJ_ROCK ? &drag.rockAt[i] : nullptr)});
+    }
+    if (!set.empty()) {
+        core.putObjects(set, drag.right ? "TURN" : "MOVE");
+        drag.last = sig;
+    }
+    dragNote = note;
+    if (sn > 0) dragNote += drag.right ? "  (SNAP 15 DEG)" : "  (SNAP)";
+    if (drag.upright && (drag.kind == DRAG_TURN || (drag.kind == DRAG_TURN_AXIS && drag.axis != AXIS_Y))) dragNote += "  TREES STAY UPRIGHT, SHOPS AND FENCES ONLY TURN";
+}
+
+void Editor::endDrag(bool cancel) {
+    if (drag.kind == DRAG_NONE) return;
+    if (cancel) {
+        core.cancelEdit();
+        selection = drag.selBefore;
+        sel = selection.empty() ? EditPick() : selection.back();
+        say("CANCELLED: PUT BACK", 1.2);
+    } else {
+        core.endEdit();
+    }
+    drag = ObjDrag();
+    dragNote.clear();
+}
+
+bool Editor::cancelDrag() {
+    if (drag.kind == DRAG_NONE) return false;
+    endDrag(true);
+    return true;
+}
+
+bool Editor::gizmoAt(V3& c, double& arrowM, double& ringM) const {
+    if (tool != OBJECTS || !pointer || ledgeBrush || selection.empty() || marquee) return false;
+    double rad;
+    if (drag.kind == DRAG_TURN || drag.kind == DRAG_TURN_AXIS) c = drag.pivot;
+    else if (!selMiddle(c, rad)) return false;
+    const EditCam cm = cam();
+    double sx, sy;
+    if (!cm.project(c, sx, sy)) return false;
+    const float u = std::max(0.75f, H / 720.0f);
+    const double pm = cm.pxPerMetre(c);
+    arrowM = 92 * u / pm, ringM = 62 * u / pm;
+    return true;
+}
+
+Editor::Handle Editor::gizmoHit(float x, float y) const {
+    V3 c;
+    double La, Rr;
+    if (overUi || !gizmoAt(c, La, Rr)) return H_NONE;
+    const EditCam cm = cam();
+    const float u = std::max(0.75f, H / 720.0f);
+    Handle best = H_NONE;
+    double bestD = 9 * u;
+    for (int a = 0; a < 3; a++) {  // the arrows' outer part (inside it, the object and the rings)
+        const V3 A = axisDir((EditAxis)(a + 1));
+        double ax, ay, bx, by;
+        if (!cm.project(c + A * (La * 0.62), ax, ay) || !cm.project(c + A * (La * 1.2), bx, by) || std::hypot(bx - ax, by - ay) < 10 * u) continue;
+        const double dd = segDist(x, y, ax, ay, bx, by);
+        if (dd < bestD) bestD = dd, best = (Handle)(H_ARROW_X + a);
+    }
+    if (best != H_NONE) return best;
+    // The rings, but not where one seen edge-on crosses the middle: there a click is for the object.
+    bestD = 6 * u;
+    double cx, cy;
+    cm.project(c, cx, cy);
+    const double inner = 0.55 * Rr * cm.pxPerMetre(c);
+    for (int a = 0; a < 3; a++) {
+        if (std::fabs(dot(axisDir((EditAxis)(a + 1)), norm(eye - c))) < 0.12) continue;  // (edge-on: a line, not a ring)
+        V3 e1, e2;
+        ringBasis(a, e1, e2);
+        double px = 0, py = 0;
+        bool prev = false;
+        for (int k = 0; k <= 48; k++) {
+            const double th = 2 * M_PI * k / 48;
+            double qx, qy;
+            const bool ok = cm.project(c + (e1 * std::cos(th) + e2 * std::sin(th)) * Rr, qx, qy);
+            if (ok && prev && std::hypot((px + qx) / 2 - cx, (py + qy) / 2 - cy) > inner) {
+                const double dd = segDist(x, y, px, py, qx, qy);
+                if (dd < bestD) bestD = dd, best = (Handle)(H_RING_X + a);
+            }
+            px = qx, py = qy, prev = ok;
+        }
+    }
+    return best;
+}
+
+bool Editor::grabPoint(float& sx, float& sy) const {
+    double x, y;
+    if ((drag.kind != DRAG_MOVE && drag.kind != DRAG_AXIS) || !cam().project(drag.grab + drag.moved, x, y)) return false;
+    sx = (float)x, sy = (float)y;
+    return true;
+}
+
+bool Editor::handlePoint(int h, float& sx, float& sy) const {
+    V3 c;
+    double La, Rr;
+    if (h < H_ARROW_X || h > H_RING_Z || !gizmoAt(c, La, Rr)) return false;
+    const EditCam cm = cam();
+    double x, y;
+    if (h <= H_ARROW_Z) {
+        if (!cm.project(c + axisDir(handleAxis(h)) * (La * 0.9), x, y)) return false;
+        sx = (float)x, sy = (float)y;
+        return true;
+    }
+    // (A ring: its point farthest out on the screen, on the near side.)
+    double cx, cy, best = -1;
+    cm.project(c, cx, cy);
+    V3 e1, e2;
+    ringBasis(h - H_RING_X, e1, e2);
+    for (int k = 0; k < 48; k++) {
+        const V3 p = c + (e1 * std::cos(2 * M_PI * k / 48) + e2 * std::sin(2 * M_PI * k / 48)) * Rr;
+        if (dot(p - c, eye - c) < 0 || !cm.project(p, x, y)) continue;
+        if (std::hypot(x - cx, y - cy) > best) best = std::hypot(x - cx, y - cy), sx = (float)x, sy = (float)y;
+    }
+    return best > 0;
+}
+
+void Editor::seg(Renderer& r, float ax, float ay, float bx, float by, float width, float cr, float cg, float cb, float a) {
+    const float dx = bx - ax, dy = by - ay, l = std::sqrt(dx * dx + dy * dy), half = std::max(0.6f, width / 2);
+    if (l < 0.01f) return;
+    const float nx = -dy / l * half, ny = dx / l * half;
+    const float qx1[3] = {ax - nx, ax + nx, bx + nx}, qy1[3] = {ay - ny, ay + ny, by + ny}, qx2[3] = {ax - nx, bx + nx, bx - nx}, qy2[3] = {ay - ny, by + ny, by - ny};
+    clippedTri(r, qx1, qy1, cr, cg, cb, a);
+    clippedTri(r, qx2, qy2, cr, cg, cb, a);
+}
+
+void Editor::drawGizmo(Renderer& r, float u) {
+    V3 c;
+    double La, Rr;
+    if (!gizmoAt(c, La, Rr)) return;
+    const EditCam cm = cam();
+    const V3 toCam = norm(eye - c);
+    // A world line drawn as screen segments (the parts behind the eye left out).
+    auto line3 = [&](const V3& a, const V3& b, int n, float wd, float cr, float cg, float cb, float al) {
+        double px = 0, py = 0;
+        bool prev = false;
+        for (int k = 0; k <= n; k++) {
+            double qx, qy;
+            const bool ok = cm.project(a + (b - a) * ((double)k / n), qx, qy);
+            if (ok && prev) seg(r, (float)px, (float)py, (float)qx, (float)qy, wd, cr, cg, cb, al);
+            px = qx, py = qy, prev = ok;
+        }
+    };
+    const bool moving = drag.kind == DRAG_MOVE || drag.kind == DRAG_AXIS, turning = drag.kind == DRAG_TURN || drag.kind == DRAG_TURN_AXIS;
+    // The axis a drag is held to: a long line through the middle, in its colour.
+    if (drag.kind == DRAG_AXIS || drag.kind == DRAG_TURN_AXIS) {
+        const int a = drag.axis - 1;
+        const V3 A = axisDir(drag.axis);
+        const double L = std::max(40.0, len(eye - c) * 1.5);
+        line3(c - A * L, c + A * L, 160, 2.5f * u, kAxisCol[a][0], kAxisCol[a][1], kAxisCol[a][2], 0.9f);
+    }
+    double cx, cy;
+    cm.project(c, cx, cy);
+    if (drag.kind == DRAG_TURN) {  // the trackball: a circle round it on the screen
+        const float R = (float)(Rr * cm.pxPerMetre(c)) + 12 * u;
+        for (int k = 0; k < 64; k++) {
+            const float a0 = (float)(2 * M_PI * k / 64), a1 = (float)(2 * M_PI * (k + 1) / 64);
+            seg(r, (float)cx + R * std::cos(a0), (float)cy + R * std::sin(a0), (float)cx + R * std::cos(a1), (float)cy + R * std::sin(a1), 2 * u, 1, 1, 1, 0.75f);
+        }
+    }
+    for (int a = 0; a < 3; a++) {
+        const EditAxis ea = (EditAxis)(a + 1);
+        const V3 A = axisDir(ea);
+        float cr = kAxisCol[a][0], cg = kAxisCol[a][1], cb = kAxisCol[a][2];
+        // The ring: turn about this axis (its far half faint).
+        const bool ringOn = hot == H_RING_X + a || (drag.kind == DRAG_TURN_AXIS && drag.axis == ea);
+        if (!moving && (!turning || ringOn || drag.kind == DRAG_TURN)) {
+            const float rr = ringOn ? 1.0f : cr, rg = ringOn ? 0.9f : cg, rb = ringOn ? 0.35f : cb;
+            const float face = ringOn ? 1.0f : (float)smoothstep(0.05, 0.3, std::fabs(dot(A, toCam)));  // (edge-on it's a line through the object: faint)
+            V3 e1, e2;
+            ringBasis(a, e1, e2);
+            for (int k = 0; k < 48; k++) {
+                const double t0 = 2 * M_PI * k / 48, t1 = 2 * M_PI * (k + 1) / 48;
+                const V3 p0 = c + (e1 * std::cos(t0) + e2 * std::sin(t0)) * Rr, p1 = c + (e1 * std::cos(t1) + e2 * std::sin(t1)) * Rr;
+                const bool front = dot((p0 + p1) * 0.5 - c, toCam) >= -0.05 * Rr;
+                line3(p0, p1, 1, (ringOn ? 4.0f : 2.2f) * u, rr, rg, rb, (front ? (drag.kind == DRAG_TURN ? 0.45f : 0.9f) : 0.25f) * face);
+            }
+        }
+        // The arrow: move along it.
+        const bool arrowOn = hot == H_ARROW_X + a || (drag.kind == DRAG_AXIS && drag.axis == ea);
+        if (turning || drag.kind == DRAG_MOVE || (drag.kind == DRAG_AXIS && !arrowOn)) continue;
+        double ax, ay, bx, by, tx, ty;
+        if (!cm.project(c + A * (La * 0.2), ax, ay) || !cm.project(c + A * La, bx, by) || !cm.project(c + A * (La * 1.22), tx, ty)) continue;
+        if (std::hypot(tx - ax, ty - ay) < 10 * u) continue;  // (pointing at you: nothing to grab)
+        if (arrowOn) cr = 1.0f, cg = 0.9f, cb = 0.35f;
+        const float al = 1.0f;
+        seg(r, (float)ax, (float)ay, (float)bx, (float)by, (arrowOn ? 5.0f : 3.4f) * u, cr, cg, cb, al);
+        const double hx = tx - bx, hy = ty - by, hl = std::max(1e-6, std::hypot(hx, hy)), w = 7.0 * u;
+        const float tipX[3] = {(float)tx, (float)(bx - hy / hl * w), (float)(bx + hy / hl * w)}, tipY[3] = {(float)ty, (float)(by + hx / hl * w), (float)(by - hx / hl * w)};
+        clippedTri(r, tipX, tipY, cr, cg, cb, al);
+        static const char* nm[3] = {"X", "Y", "Z"};
+        const float s = px(1.1f * u);
+        label(r, (float)tx + (float)(hx / hl) * 8 * u - 3 * u, (float)ty + (float)(hy / hl) * 8 * u - 4 * u, s, nm[a], cr, cg, cb, al);
+    }
+    r.rect((float)cx - 3 * u, (float)cy - 3 * u, 6 * u, 6 * u, 1, 1, 1, 0.9f);
+}
 
 Shape Editor::shapeOfPick(const EditPick& p) const {
     Shape sh;
@@ -1112,31 +1531,27 @@ Shape Editor::shapeOfPick(const EditPick& p) const {
     return sh;
 }
 
-// The middle of the selection (one object: the middle of its outline; several: the mean of where they stand) and how far it reaches.
+// The middle of the selection: the middle of the box round its outlines (what a turn goes about, where the gizmo sits), and how far it reaches.
+// (A very big selection: the box round where they stand.)
 bool Editor::selMiddle(V3& c, double& radius) const {
     c = V3(), radius = 2;
-    if (selection.empty()) return false;
-    if (selection.size() == 1) {
-        const Shape sh = shapeOfPick(selection[0]);
-        V3 lo(1e9, 1e9, 1e9), hi(-1e9, -1e9, -1e9);
-        for (const auto& e : sh.edges)
-            for (const V3* q : {&e.first, &e.second}) lo = V3(std::min(lo.x, q->x), std::min(lo.y, q->y), std::min(lo.z, q->z)), hi = V3(std::max(hi.x, q->x), std::max(hi.y, q->y), std::max(hi.z, q->z));
-        if (lo.x > hi.x) return false;
-        c = (lo + hi) * 0.5, radius = std::max(1.0, len(hi - lo) / 2);
-        return true;
-    }
-    std::vector<V3> at;
+    V3 lo(1e18, 1e18, 1e18), hi(-1e18, -1e18, -1e18);
+    auto take = [&](const V3& q) { lo = V3(std::min(lo.x, q.x), std::min(lo.y, q.y), std::min(lo.z, q.z)), hi = V3(std::max(hi.x, q.x), std::max(hi.y, q.y), std::max(hi.z, q.z)); };
     for (const EditPick& p : selection) {
+        if (selection.size() <= 300) {
+            const Shape sh = shapeOfPick(p);
+            for (const auto& e : sh.edges) take(e.first), take(e.second);
+            continue;
+        }
         V3 q = p.at;
         if (p.kind == EditPick::OBJECT && p.index < (int)core.level.objects.size()) {
             const LevelObject& ob = core.level.objects[p.index];
             q = (ob.kind == OBJ_LOG || ob.kind == OBJ_FENCE) ? (ob.p + ob.p2) * 0.5 : ob.p;
         }
-        q.y = core.world->height(q.x, q.z) + 1;
-        at.push_back(q), c += q;
+        take(V3(q.x, core.world->height(q.x, q.z) + 1, q.z));
     }
-    c = c * (1.0 / at.size());
-    for (const V3& q : at) radius = std::max(radius, len(q - c));
+    if (lo.x > hi.x) return false;
+    c = (lo + hi) * 0.5, radius = std::max(1.0, len(hi - lo) / 2);
     return true;
 }
 
@@ -1472,9 +1887,11 @@ void Editor::update(double dt, const uint8_t* keys, Renderer& r, int w, int h) {
         shift = keys[SC_LSHIFT] || keys[SC_RSHIFT] || holdShift;
         ctrl = keys[224] || keys[228] || holdCtrl;
     }
-    alt = keys[226] || keys[230] || holdAlt;
-    axisShown = AXIS_NONE, axisPreview = false;
-    axisNote.clear();
+    alt = keys[226] || keys[230];
+    // (Holding an object, Space is the Y key, not up: Alt+drag is the window manager's on most Linux desktops.)
+    const bool holding = tool == OBJECTS && ((lmb && dragging) || (rmb && rmbTurn) || drag.kind != DRAG_NONE);
+    yKey = alt || holdY || (holding && keys[SC_SPACE]);
+    if (drag.kind == DRAG_NONE) dragNote.clear();
     // Fly (WASD, Space up, Shift fast, higher = faster; Shift+wheel is up / down).
     if (!typing && !fileOpen && flow.stage == SaveFlow::IDLE && !ctrl && tool != SETTINGS) {
         const double ground = core.world->height(eye.x, eye.z);
@@ -1485,7 +1902,7 @@ void Editor::update(double dt, const uint8_t* keys, Renderer& r, int w, int h) {
         if (keys[SC_S] || keys[SC_DOWN]) move -= f;
         if (keys[SC_A] || keys[SC_LEFT]) move -= l;
         if (keys[SC_D] || keys[SC_RIGHT]) move += l;
-        if (keys[SC_SPACE]) move.y += 1;
+        if (keys[SC_SPACE] && !holding) move.y += 1;
         if (len(move) > 0) eye += norm(move) * (speed * dt);
         eye.y = std::max(eye.y, core.world->height(eye.x, eye.z) + 1.5);
         eye.x = clampd(eye.x, -World::kHalfSize + 5, World::kHalfSize - 5);
@@ -1497,7 +1914,9 @@ void Editor::update(double dt, const uint8_t* keys, Renderer& r, int w, int h) {
     haveHit = core.rayGround(o, d, 2000, hit);
     const double hitT = haveHit ? len(hit - o) : 1e9;
     hover = EditPick();
-    if ((tool == OBJECTS && pointer && !marquee && !overUi) || tool == COURSE) {  // (placing: a click always places, so nothing is "under" the mouse)
+    hot = drag.kind == DRAG_NONE && !lmb && !rmb && !shift && !ctrl ? gizmoHit(mx, my) : H_NONE;  // (a gizmo handle under the mouse takes the click, not what's behind it)
+    if (hot != H_NONE) dragNote = hot >= H_RING_X ? std::string("DRAG: TURN ABOUT ") + axisName(handleAxis(hot)) : std::string("DRAG: MOVE ALONG ") + axisName(handleAxis(hot));
+    if (((tool == OBJECTS && pointer && !marquee && !overUi && drag.kind == DRAG_NONE) || tool == COURSE) && hot == H_NONE) {  // (placing: a click always places, so nothing is "under" the mouse)
         const EditPick p = core.pick(o, d, hitT, tool == OBJECTS, tool == COURSE);  // (gates and the start are the course tool's: in the objects tool the ray goes through them)
         const bool wanted = tool == OBJECTS ? (p.kind == EditPick::OBJECT || p.kind == EditPick::BASE) : (p.kind == EditPick::GATE || p.kind == EditPick::START);
         if (wanted) hover = p;
@@ -1510,16 +1929,6 @@ void Editor::update(double dt, const uint8_t* keys, Renderer& r, int w, int h) {
     if (tool == OBJECTS && haveHit && !overUi) {
         V3 pp, nn;
         if (core.rayObjects(o, d, hitT - 0.02, skip, pp, nn) && nn.y > 0.25) placeAt = pp, placeOn = true;
-    }
-    if (pressPending) {  // the same for where the button went down, seeing through the selection (so a drag begins from the ground or what's under it, not the top of the thing itself)
-        pressPending = false;
-        V3 po, pd, ph, pp, nn;
-        ray(press.x0, press.y0, po, pd);
-        pressAt = placeAt, pressRide = 0;
-        if (core.rayGround(po, pd, 2000, ph)) {
-            pressAt = ph;
-            if (core.rayObjects(po, pd, len(ph - po) - 0.02, skip, pp, nn) && nn.y > 0.25) pressAt = pp, pressRide = std::max(0.0, pp.y - core.world->height(snapped(pp).x, snapped(pp).z));
-        }
     }
     // Where the middle of the view meets the ground (a playtest "from here" starts there).
     {
@@ -1535,52 +1944,12 @@ void Editor::update(double dt, const uint8_t* keys, Renderer& r, int w, int h) {
     // Holding the button.
     if (lmb && stroke) applyBrush(dt);
     const float dragPx = 5.0f * std::max(1.0f, H / 720.0f);
-    const bool dragNow = lmb && dragging && press.moved(mx, my, dragPx);  // (a click that jitters by a pixel stays a click: nothing moves)
-    const EditAxis lock = dragNow && tool == OBJECTS && !selection.empty() ? moveLockAxis() : AXIS_NONE;
-    if (dragNow && (haveHit || lock != AXIS_NONE) && tool == OBJECTS && !selection.empty()) {
-        // (Moving the selection: by how far the mouse has come, on the snap grid; over another object it rides on its surface. Each keeps its own
-        // height over where it stands. With a lock (Shift X, Ctrl Z, Alt Y) it goes along that world axis only, by the mouse's up and down. The whole
-        // drag is one undo step.)
-        if (!dragStarted) {
-            dragFrom = pressAt, dragRide = pressRide, dragApplied = V3(), dragStarted = true, lockPrev = AXIS_NONE;
-            core.beginEdit("MOVE");  // (no merge key: two drags are two steps)
-            moveEdit = true;
-        }
-        const double sn = kSnaps[snapIdx];
-        if (lock != lockPrev) {  // (a modifier pressed or let go mid-drag: carry on from where it is)
-            lockPrev = lock;
-            lockLastY = my, lockAcc = lockApplied = 0;
-            if (lock == AXIS_NONE) dragFrom = placeAt, dragRide = placeRise(), dragApplied = V3();
-        }
-        if (lock != AXIS_NONE) {
-            V3 c;
-            double rad;
-            selMiddle(c, rad);
-            const View v = view(W, H);
-            const V3 f = norm(v.target - v.eye), rt = norm(cross(f, v.up)), up = cross(rt, f), A = axisDir(lock);
-            const double d = std::max(0.5, dot(c - eye, f)), F = (H / 2.0) / std::tan(v.fovy / 2.0);
-            const double sy = -F * (dot(A, up) * d - dot(c - eye, up) * dot(A, f)) / (d * d);  // (px down the screen per metre along the axis)
-            lockAcc += axisDragMetres(sy, F / d, my - lockLastY);
-            lockLastY = my;
-            const double target = sn > 0 ? std::round(lockAcc / sn) * sn : lockAcc, inc = target - lockApplied;
-            if (std::fabs(inc) > 1e-6) {
-                core.moveAlong(selectedObjects(), lock, inc, "drag");
-                lockApplied = target;
-            }
-        } else {
-            double dx = placeAt.x - dragFrom.x, dz = placeAt.z - dragFrom.z;
-            if (sn > 0) dx = std::round(dx / sn) * sn, dz = std::round(dz / sn) * sn;
-            const double ix = dx - dragApplied.x, iz = dz - dragApplied.z;
-            const double ride = placeRise(), dl = ride - dragRide;
-            if (std::fabs(ix) > 1e-6 || std::fabs(iz) > 1e-6 || std::fabs(dl) > 1e-3) {
-                const std::vector<int> ks = selectedObjects();
-                if (std::fabs(ix) > 1e-6 || std::fabs(iz) > 1e-6) core.moveObjects(ks, ix, iz, "drag");
-                if (std::fabs(dl) > 1e-3) core.transformObjects(ks, OP_LIFT, dl, "drag"), dragRide = ride;
-                dragApplied.x = dx, dragApplied.z = dz;
-            }
-        }
-        if (lock != AXIS_NONE) axisShown = lock, axisNote = std::string("MOVE: ") + axisName(lock) + " AXIS";
-    } else if (dragNow && haveHit) {
+    if (drag.kind == DRAG_NONE && tool == OBJECTS && !selection.empty()) {  // (a press becomes a drag once the mouse has gone a few pixels)
+        if (lmb && dragging && press.moved(mx, my, dragPx)) startDrag(false);
+        else if (rmb && rmbTurn && !rmbEaten && rpress.moved(mx, my, dragPx)) startDrag(true);
+    }
+    if (drag.kind != DRAG_NONE) dragFrame();
+    else if (lmb && dragging && haveHit && press.moved(mx, my, dragPx)) {  // the course: a gate or the start
         if (sel.kind == EditPick::GATE && sel.index < (int)core.level.gates.size()) {
             Gate g = core.level.gates[sel.index];
             g.p = V3(hit.x + dragOffset.x, 0, hit.z + dragOffset.z);
@@ -1589,48 +1958,14 @@ void Editor::update(double dt, const uint8_t* keys, Renderer& r, int w, int h) {
             core.setStart(hit.x + dragOffset.x, hit.z + dragOffset.z, core.level.startYaw);
         }
     }
-    // Right button on an object, moved past the threshold: turn it with the mouse's sideways motion, about Y (or X with Shift, Z with Ctrl; Alt is Y too).
-    if (rmb && rotCand && tool == OBJECTS && !selection.empty()) {
-        if (!rotating && rpress.moved(mx, my, dragPx)) {
-            rotating = true, rotLastX = mx;
-            core.beginEdit("TURN");
-            rotEdit = true;
-        }
-        if (rotating) {
-            const EditAxis ax = turnAxis();
-            const double dx = mx - rotLastX;
-            rotLastX = mx;
-            axisShown = ax;
-            axisNote = std::string("TURN: ABOUT ") + axisName(ax);
-            if (dx != 0) {
-                V3 c;
-                double rad;
-                selMiddle(c, rad);
-                const View v = view(W, H);
-                const V3 rt = norm(cross(norm(v.target - v.eye), v.up));
-                const double ang = dx * kTurnPerPx * turnSign(ax, norm(eye - c), rt);
-                auto wants = [&](const LevelObject& o) {
-                    if (ax == AXIS_Y && selection.size() > 1) return true;
-                    return objectsDiffer(core.rotated(o, ax, 0.1), o);
-                };
-                if (!core.rotateObjects(selectedObjects(wants), ax, ang, "turn")) say("THAT ONLY TURNS ABOUT Y (ALT, OR NO KEY)", 1.5);
-            }
-        }
-    } else if (rotating) {
-        endRotate();
-    }
-    // The modifier held over the selection, before any drag: show which axis it would bind.
-    if (axisShown == AXIS_NONE && tool == OBJECTS && pointer && !selection.empty() && !marquee && !rmb && hover.kind != EditPick::NONE && isSelected(hover) && !overUi) {
-        const EditAxis a = shift ? AXIS_X : ctrl ? AXIS_Z : alt ? AXIS_Y : AXIS_NONE;
-        if (a != AXIS_NONE) axisShown = a, axisPreview = true;
-    }
     // The ghost of a structure, drawn as itself (the game puts it in the renderer's models for the frame).
     ghostModels.clear();
     if (tool == OBJECTS && !pointer && !ledgeBrush && haveHit && !overUi && proto.kind == OBJ_MODEL && mk::findModel(proto.name)) {
-        const V3 at = snapped(hit);
+        const LevelObject g = makeObject(snapped(placeAt), placeRise());  // (where a click puts it: its middle at the mouse)
         Placed pl;
-        pl.id = proto.name, pl.p = V3(at.x, core.world->height(at.x, at.z) + proto.lift, at.z), pl.yaw = proto.yaw;
-        pl.scale = V3(proto.size.x > 0 ? proto.size.x : 1, proto.size.y > 0 ? proto.size.y : 1, proto.size.z > 0 ? proto.size.z : 1);
+        pl.id = g.name, pl.p = V3(g.p.x, core.world->height(g.p.x, g.p.z) + g.lift, g.p.z), pl.yaw = g.yaw;
+        pl.scale = V3(g.size.x > 0 ? g.size.x : 1, g.size.y > 0 ? g.size.y : 1, g.size.z > 0 ? g.size.z : 1);
+        if (std::fabs(g.pitch) > 1e-6 || std::fabs(g.roll) > 1e-6) pl.oriented = true, frameOf(g.yaw, g.pitch, g.roll, pl.ax);
         ghostModels.push_back(pl);
     }
     // Recovery copy: every minute there are unsaved changes the copy doesn't have.
@@ -1803,16 +2138,7 @@ void Editor::drawWorldMarks(Renderer& r) {
         auto outline = [&](const EditPick& p, float cr, float cg, float cb, float size) { drawShape(r, shapeOfPick(p), false, cr, cg, cb, 1, size); };
         for (const EditPick& p : selection) outline(p, 1.0f, 0.8f, 0.25f, 4 * u);
         if (hover.kind != EditPick::NONE && !isSelected(hover)) outline(hover, 1.0f, 1.0f, 1.0f, 3 * u);
-        if (axisShown != AXIS_NONE && !selection.empty()) {  // the axis line through the middle of what's being moved or turned: X red, Y green, Z blue
-            V3 c;
-            double rad;
-            if (selMiddle(c, rad)) {
-                const V3 d = axisDir(axisShown);
-                const double L = rad * 1.4 + 2.5;
-                const float cr = axisShown == AXIS_X ? 1.0f : 0.25f, cg = axisShown == AXIS_Y ? 0.9f : 0.3f, cb = axisShown == AXIS_Z ? 1.0f : 0.3f;
-                line(c - d * L, c + d * L, 80, (axisPreview ? 3 : 5) * u, cr, cg, cb, axisPreview ? 0.5f : 1.0f);
-            }
-        }
+        drawGizmo(r, std::max(0.75f, H / 720.0f));
         if (!selection.empty()) {
             const EditPick& p = selection.back();
             std::string nm = p.name;
@@ -2135,7 +2461,8 @@ void Editor::drawOptions(Renderer& r, float u) {
                         break;
                     case OBJ_BUSH: xf(OP_LIFT, "RAISE", fmt1(tgt.lift, " M")), xf(OP_SCALE, "SIZE", fmt1(tgt.size.x * 2, " M")); break;
                     case OBJ_MODEL:
-                        xf(OP_YAW, "TURN", deg(yawV)), xf(OP_LIFT, "RAISE", fmt1(liftV, " M")), xf(OP_SCALE, "SCALE ALL", scaleText());
+                        xf(OP_YAW, "TURN", deg(yawV)), xf(OP_PITCH, "TIP", deg(pitchV)), xf(OP_ROLL, "ROLL", deg(tgt.roll));
+                        xf(OP_LIFT, "RAISE", fmt1(liftV, " M")), xf(OP_SCALE, "SCALE ALL", scaleText());
                         xf(OP_STRETCH_X, "LENGTH", pct(tgt.size.x)), xf(OP_STRETCH_Y, "HEIGHT", pct(tgt.size.y)), xf(OP_STRETCH_Z, "WIDTH", pct(tgt.size.z));
                         break;
                     default: break;
@@ -2167,11 +2494,14 @@ void Editor::drawOptions(Renderer& r, float u) {
                 y += bh + 6 * u;
                 note("CLICK: SELECT   SHIFT+CLICK: ADD");
                 note("DRAG EMPTY GROUND, OR CTRL+DRAG: BOX SELECT");
-                note("DRAG ONE: MOVE (IT RIDES ON ROCKS)");
-                note("SELECTED, DRAG WITH SHIFT: X ONLY, CTRL: Z,");
-                note("ALT: Y (UP AND DOWN). MOUSE UP DOWN DRIVES IT");
-                note("RIGHT-DRAG IT: TURN. WITH SHIFT: TIP ABOUT X,");
-                note("CTRL: ROLL ABOUT Z, ALT: TURN ABOUT Y");
+                note("DRAG IT: MOVE (IT STAYS UNDER THE MOUSE,");
+                note("RIDING THE GROUND AND ROCKS). HOLD SHIFT: X");
+                note("ONLY, CTRL: Z, SPACE (OR ALT): Y, UP AND DOWN");
+                note("RIGHT-DRAG IT: TURN ANY WAY (SIDEWAYS: ABOUT");
+                note("UP, UP AND DOWN: TIP). SHIFT, CTRL, SPACE:");
+                note("ONLY ABOUT X, Z, Y. OR DRAG THE GIZMO'S");
+                note("ARROWS (MOVE) AND RINGS (TURN). GRID SNAP: 15");
+                note("DEG TURNS. ESC OR THE OTHER BUTTON CANCELS");
             } else {
                 note("CLICK: PLACE (ON TOP OF A ROCK: STACKS)");
             }
@@ -2349,14 +2679,19 @@ void Editor::drawStatus(Renderer& r, float u) {
                   mapName(l.map), levelModeName(l.mode), core.cellEdits(), l.objects.size(), l.gates.size(),
                   core.canUndo() ? core.undoName().c_str() : "-");
     r.text(12 * u, y + 7 * u, s, buf, 0.9f, 0.91f, 0.94f, 1);
-    const char* keys = "WASD FLY  SPACE OR SHIFT+WHEEL UP DOWN  WHEEL ZOOM  Q E SIZE  RIGHT-DRAG LOOK/TURN  SHIFT FAST  1-7 TOOLS  CTRL+Z/Y UNDO/REDO  CTRL+S SAVE  F5 TEST HERE  F6 TEST START  ESC EXIT";
+    const char* keys = tool == OBJECTS && pointer ? "DRAG: MOVE  RIGHT-DRAG: TURN  + SHIFT X  CTRL Z  SPACE Y  ESC CANCELS  WASD FLY  RIGHT-DRAG GROUND: LOOK  CTRL+Z/Y UNDO/REDO  CTRL+S SAVE  F5 TEST"
+                                                  : "WASD FLY  SPACE OR SHIFT+WHEEL UP DOWN  WHEEL ZOOM  Q E SIZE  RIGHT-DRAG LOOK/TURN  SHIFT FAST  1-7 TOOLS  CTRL+Z/Y UNDO/REDO  CTRL+S SAVE  F5 TEST HERE  F6 TEST START  ESC EXIT";
     const float ks = px(1.0f * u);
     r.rect(W - r.textWidth(keys, ks) - 20 * u, y - 8 * ks - 10 * u, r.textWidth(keys, ks) + 20 * u, 8 * ks + 10 * u, 0, 0, 0, 0.45f);
     panelRect(W - r.textWidth(keys, ks) - 20 * u, y - 8 * ks - 10 * u, r.textWidth(keys, ks) + 20 * u, 8 * ks + 10 * u);
     r.text(W - r.textWidth(keys, ks) - 10 * u, y - 8 * ks - 5 * u, ks, keys, 0.7f, 0.72f, 0.76f, 1);
-    if (!axisNote.empty()) {
-        const V3 col = axisNote.find(" X") != std::string::npos ? V3(1, 0.4, 0.4) : axisNote.find(" Y") != std::string::npos ? V3(0.4, 1, 0.5) : V3(0.5, 0.65, 1);
-        centeredPill(r, W / 2.0f, 16 * u, px(1.6f * u), axisNote, 0, 0, 0, 0.8f, (float)col.x, (float)col.y, (float)col.z);
+    if (!dragNote.empty() && !overUi) {  // what the drag is doing (or what the handle under the mouse would), by the mouse
+        const EditAxis a = drag.kind != DRAG_NONE ? drag.axis : handleAxis(hot);
+        const float* col = a != AXIS_NONE ? kAxisCol[a - 1] : nullptr;
+        const float ps = px(1.3f * u), tw = r.textWidth(dragNote, ps), ph = 8 * ps + 12 * u;
+        const float x = std::min(mx + 20 * u, W - tw - 24 * u), y = std::min(my + 22 * u, H - ph - 40 * u);
+        pill(r, x, y, tw + 20 * u, ph, 0, 0, 0, 0.78f);
+        label(r, x + 10 * u, y + 6 * u, ps, dragNote, col ? col[0] : 1.0f, col ? col[1] : 0.9f, col ? col[2] : 0.6f, 1);
     }
     if (toastTime > 0 && !toast.empty()) centeredPill(r, W / 2.0f, y - 40 * u, px(1.4f * u), toast, 0, 0, 0, (float)std::min(1.0, toastTime * 2), 1, 0.85f, 0.5f);
     if (haveHit) {

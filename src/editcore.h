@@ -104,17 +104,29 @@ struct DragGate {
 enum ObjOp { OP_YAW, OP_PITCH, OP_ROLL, OP_LIFT, OP_SCALE, OP_STRETCH_X, OP_STRETCH_Y, OP_STRETCH_Z, OP_SEAT };
 // (OP_SEAT: sit it back on the ground, as placed; the others raise or lower it by any amount, in the air or in the ground, and it stays.)
 
-// A world axis: what Shift (X), Alt (Y) and Ctrl (Z) lock a drag to, and what a right-drag turns about.
+// A world axis: what a drag is held to (Shift X, Space or Alt Y, Ctrl Z, or a gizmo handle), moving along it or turning about it.
 enum EditAxis { AXIS_NONE, AXIS_X, AXIS_Y, AXIS_Z };
 V3 axisDir(EditAxis a);
 const char* axisName(EditAxis a);  // "X"
-// An axis-locked move is driven by the mouse going up and down: how far along the axis (m) for a mouse move of `dy` px (down is +), given the axis'
-// vertical run on the screen (`sy` px per metre, down is +) and the screen's px per metre there (`pxPerM`). The thing follows the mouse; an axis that
-// is nearly edge-on to the view (it runs less than 0.3 of the scale up or down the screen) falls back to mouse-up = +axis at that rate.
-double axisDragMetres(double sy, double pxPerM, double dy);
-// Which way a sideways mouse move turns an object about `axis` so the side facing the camera follows it (+1 or -1; +1 when the turn
-// is in the screen's plane). `toCam`: unit vector from the object to the camera; `right`: the camera's right.
-double turnSign(EditAxis axis, const V3& toCam, const V3& right);
+
+// The editor's camera as the mouse sees it (no GL: the tests drive drags through it): the ray through a pixel, and where a point lands on
+// the screen. The same maths as the view the editor draws.
+struct EditCam {
+    V3 eye;
+    double yaw = 0, pitch = 0, fovy = 1.1;  // yaw 0 looks +x (the car convention), pitch down < 0
+    int W = 1280, H = 720;
+    V3 forward() const { return V3(std::cos(yaw) * std::cos(pitch), std::sin(pitch), -std::sin(yaw) * std::cos(pitch)); }
+    V3 right() const { return norm(cross(forward(), V3(0, 1, 0))); }
+    V3 up() const { return cross(right(), forward()); }
+    void ray(double sx, double sy, V3& o, V3& d) const;
+    bool project(const V3& p, double& sx, double& sy) const;  // false behind the eye
+    double pxPerMetre(const V3& p) const;                     // how many pixels a metre across the view is at p
+};
+// Where the mouse ray (o, d unit) passes nearest the line p + a s (a unit): that s. False when they're nearly parallel, or it's behind the eye.
+bool rayLineClosest(const V3& o, const V3& d, const V3& p, const V3& a, double& s);
+// An axis drag: the point s of the line p + a s that shows where the mouse (sx, sy) is, or, off the line, at the foot of the square from the
+// mouse to it on the screen (as a gizmo's arrow is dragged). False when the line points at the eye (it's a dot on the screen).
+bool lineUnderMouse(const EditCam& cam, double sx, double sy, const V3& p, const V3& a, double& s);
 
 // An object's outline for drawing over the view: its edges, and for the convex ones (rocks, blocks) its faces.
 struct Shape {
@@ -209,15 +221,43 @@ public:
     // Heights are offsets from the ground (LevelObject::rel), so sculpting carries every object along; tipping a block keeps the height it was set
     // at. A rock stacked on another keeps the rise it was given (its `top`); it doesn't follow if the lower rock is moved, but it's never re-seated into it.
     void transformObjects(const std::vector<int>& ks, ObjOp op, double amount, const std::string& key = "xform");
-    // Turns objects about a world axis through each one's middle (a right-drag): Y is the same as a turn (a group swings round its middle); X and Z tip
-    // and roll rocks, blocks and logs (each in place; other kinds only turn about Y). Returns false if none of them can turn about that axis.
-    bool rotateObjects(const std::vector<int>& ks, EditAxis axis, double angle, const std::string& key = "rotate");
-    // One object turned that way (normalized, re-grounded); the pure part of rotateObjects.
-    LevelObject rotated(LevelObject o, EditAxis axis, double angle);
-    static bool canRotate(int objKind, EditAxis axis);
-    // Moves objects `amount` m along a world axis, as a locked drag does: X, Z on the ground (heights are kept as offsets from it), Y up or down
-    // (it stays there: a rock's `top`, a block's or tree's `lift`, a log's two lifts).
-    void moveAlong(const std::vector<int>& ks, EditAxis axis, double amount, const std::string& key = "drag");
+    // ---- Dragging with the mouse (the editor's gizmo, and its modifier keys). A drag works each frame from the objects as they were when it
+    // began (normalized), never from last frame's, so nothing drifts; the editor keeps it one undo step (beginEdit ... endEdit, or cancelEdit).
+    // Rocks, blocks, logs and structures turn freely in 3D; repair shops and fences only about Y; trees and bushes stay as they are (upright).
+    static bool turnsFreely(int objKind);
+    static bool turnsAboutY(int objKind);
+    static bool canLift(int objKind);  // (it can stand off the ground: everything but repair shops and fences)
+    // A slide over the ground that keeps `grab` (a point on `lead`, the object grabbed, when the slide began) exactly under the mouse ray
+    // (o, d): the grabbed point stays on the ray while the object rides the ground (its own way: a block on its footprint, a log on its two
+    // ends) and climbs onto the tops of other things (not those in `skip`) `ride` m higher than it stood (ride0: what it stood on then).
+    // `near`: where along the ray it was last frame (of the places the ray could put it, the one nearest that: no jumping to a far hill).
+    // `snap` > 0 puts the lead's middle on that grid instead (the rest follow). Not ok: the ray finds nowhere (the sky).
+    struct Slide {
+        double dx = 0, dz = 0, ride = 0, t = 0;
+        double rise = 0;  // how much higher the grabbed point ends up (the ground it rides, plus `ride`)
+        bool ok = false;
+    };
+    Slide slideUnder(const LevelObject& lead, const V3& grab, const V3& o, const V3& d, const std::vector<int>& skip, double ride0, double near, double snap = 0) const;
+    // How high the tops of things (not those in `skip`) stand over the ground at (x, z), within 60 m (0: nothing there).
+    double rideAt(double x, double z, const std::vector<int>& skip) const;
+    // An object (normalized) slid (dx, dz) over the ground and raised `rise` (riding on something).
+    LevelObject slid(const LevelObject& o, double dx, double dz, double rise);
+    // An object (normalized) moved by exactly `d` (an axis drag): it lands where it's put, in the air or the ground, and that height is kept as
+    // its offset from the ground there. (A repair shop or a fence stays on the ground.)
+    LevelObject translated(LevelObject o, const V3& d) const;
+    // An object (normalized) turned by q about `pivot`, as a rigid body: where it is and which way it faces (an upright kind moves round the
+    // pivot and only takes the turn about Y). `bodyAt`: a rock's turning point (rockAt), if known.
+    LevelObject rotatedAbout(LevelObject o, const Quat& q, const V3& pivot, const V3* bodyAt = nullptr);
+    // Where a posed rock's turning point is in the world (as it would be built).
+    V3 rockAt(const LevelObject& o);
+    // The middle of what some objects made in the world (their outlines' box): what a turn goes about. (0: none.)
+    bool middleOf(const std::vector<int>& ks, V3& mid, double* radius = nullptr) const;
+    // The point of an object that the slide's ground-following is measured by (its middle, on its ground).
+    V3 footOf(const LevelObject& o) const;
+    // Puts several objects in at once (one rebuild), as one undo step or inside the one that's open.
+    void putObjects(const std::vector<std::pair<int, LevelObject>>& set, const std::string& what, const std::string& key = "");
+    // Drops the edit that's open (all of it, however deep), putting the level and world back as they were before it: a drag cancelled.
+    void cancelEdit();
     // One object after an op (it must be normalized: see below), re-grounded; the pure part of transformObjects.
     LevelObject transformed(LevelObject o, ObjOp op, double amount);
     // The first solid thing (a rock's hull, a solid box, a log) along a ray, skipping some level objects: where, and the surface normal.

@@ -136,6 +136,20 @@ static bool modelSolid(const std::string& id) {
     return true;
 }
 
+void frameOf(double yaw, double pitch, double roll, V3 ax[3]) {
+    const V3 e[3] = {V3(1, 0, 0), V3(0, 1, 0), V3(0, 0, 1)};
+    for (int i = 0; i < 3; i++) ax[i] = rotateAxis(rotateAxis(rotateAxis(e[i], V3(1, 0, 0), roll), V3(0, 0, 1), pitch), V3(0, 1, 0), yaw);
+}
+
+void anglesOf(const V3 in[3], double& yaw, double& pitch, double& roll, double yawHint) {
+    const V3 a0 = norm(in[0]), a1 = norm(in[1] - a0 * dot(in[1], a0));
+    pitch = std::asin(clampd(a0.y, -1, 1));
+    yaw = std::hypot(a0.x, a0.z) > 1e-7 ? std::atan2(-a0.z, a0.x) : yawHint;
+    const double cy = std::cos(yaw), sy = std::sin(yaw), cp = std::cos(pitch), sp = std::sin(pitch);
+    const V3 up0(-cy * sp, cp, sy * sp);  // (where y goes before the roll)
+    roll = std::atan2(dot(cross(up0, a1), a0), dot(up0, a1));
+}
+
 double boxRestY(const World& w, const LevelObject& o) {
     V3 ax[3] = {V3(1, 0, 0), V3(0, 1, 0), V3(0, 0, 1)};
     for (V3& a : ax) {
@@ -230,19 +244,29 @@ void placeObject(const LevelObject& obj, World& w) {
             if (o.name == "trail_sign") set = {{"rating", (double)o.sub}};
             else if (o.name == "cairn" || o.name == "stump") set = {{"seed", (double)o.sub}};
             w.placeModel(o.name, at, o.yaw, set, sc);
-            // (What a map's own versions stand on: signs and posts are poles, a map board has two.)
-            if (o.name == "trail_sign" || o.name == "marker_post") w.poles.push_back({at.x, at.z, at.y - 0.4, at.y + (o.name == "marker_post" ? 1.2 : 2.0) * sc.y, 0.07});
-            else if (o.name == "map_board") {
-                const V3 side(std::sin(o.yaw), 0, std::cos(o.yaw));
-                for (int k = -1; k <= 1; k += 2) w.poles.push_back({at.x + side.x * 0.8 * sc.z * k, at.z + side.z * 0.8 * sc.z * k, at.y - 0.4, at.y + 2.0 * sc.y, 0.07});
-            } else if (o.name == "stump") w.poles.push_back({at.x, at.z, at.y - 0.3, at.y + 0.6 * sc.y, 0.35 * sc.x});
-            if (modelSolid(o.name)) {
+            V3 ax[3];
+            frameOf(o.yaw, o.pitch, o.roll, ax);
+            const bool tipped = std::fabs(o.pitch) > 1e-6 || std::fabs(o.roll) > 1e-6;
+            if (tipped) {  // (turned any way at all: drawn in its frame)
+                Placed& pl = w.models.back();
+                pl.oriented = true;
+                for (int i = 0; i < 3; i++) pl.ax[i] = ax[i];
+            }
+            // (What a map's own versions stand on: signs and posts are poles, a map board has two. Tipped over, the box round it instead.)
+            const bool poled = o.name == "trail_sign" || o.name == "marker_post" || o.name == "map_board" || o.name == "stump";
+            if (!tipped) {
+                if (o.name == "trail_sign" || o.name == "marker_post") w.poles.push_back({at.x, at.z, at.y - 0.4, at.y + (o.name == "marker_post" ? 1.2 : 2.0) * sc.y, 0.07});
+                else if (o.name == "map_board") {
+                    const V3 side(std::sin(o.yaw), 0, std::cos(o.yaw));
+                    for (int k = -1; k <= 1; k += 2) w.poles.push_back({at.x + side.x * 0.8 * sc.z * k, at.z + side.z * 0.8 * sc.z * k, at.y - 0.4, at.y + 2.0 * sc.y, 0.07});
+                } else if (o.name == "stump") w.poles.push_back({at.x, at.z, at.y - 0.3, at.y + 0.6 * sc.y, 0.35 * sc.x});
+            }
+            if (modelSolid(o.name) || (tipped && poled)) {
                 const mk::Mesh& m = mk::modelMesh(o.name);
                 if (!m.v.empty()) {
                     const V3 lo(m.lo.x * sc.x, m.lo.y * sc.y, m.lo.z * sc.z), hi(m.hi.x * sc.x, m.hi.y * sc.y, m.hi.z * sc.z);
                     const V3 mid = (lo + hi) * 0.5, half = (hi - lo) * 0.5;
-                    const V3 cx = rotateAxis(V3(mid.x, 0, mid.z), V3(0, 1, 0), o.yaw);
-                    w.addBox(at + V3(cx.x, mid.y, cx.z), V3(std::max(0.05, half.x), std::max(0.05, half.y), std::max(0.05, half.z)), o.yaw, 0, 0, V3(0.5, 0.5, 0.5));
+                    w.addBox(at + ax[0] * mid.x + ax[1] * mid.y + ax[2] * mid.z, V3(std::max(0.05, half.x), std::max(0.05, half.y), std::max(0.05, half.z)), o.yaw, o.pitch, o.roll, V3(0.5, 0.5, 0.5));
                     w.boxes.back().hidden = true;
                 }
             }
@@ -431,6 +455,7 @@ std::string saveLevelText(const Level& lv) {
             case OBJ_MODEL:  // (a comment line: an older build skips it, and the level without the structure still plays)
                 o << "#model " << num(b.p.x) << ' ' << num(b.p.z) << ' ' << num(b.yaw / kDeg, 2) << ' ' << num(b.size.x, 3) << ' ' << num(b.size.y, 3) << ' ' << num(b.size.z, 3) << ' '
                   << num(b.lift, 3) << ' ' << b.sub << ' ' << b.name << '\n';
+                if (std::fabs(b.pitch) > 1e-6 || std::fabs(b.roll) > 1e-6) o << "#modelpose " << num(b.pitch / kDeg, 3) << ' ' << num(b.roll / kDeg, 3) << '\n';  // (tipped; an older build skips it)
                 break;
             case OBJ_FENCE: o << "#fence " << num(b.p.x) << ' ' << num(b.p.z) << ' ' << num(b.p2.x) << ' ' << num(b.p2.z) << '\n'; break;
             case OBJ_BUSH: o << "#bush " << num(b.p.x) << ' ' << num(b.p.z) << ' ' << num(b.size.x, 3) << ' ' << num(b.col[0], 2) << ' ' << num(b.lift, 3) << '\n'; break;
@@ -509,6 +534,14 @@ bool parseLevelText(const std::string& text, Level& lv, std::string* error) {
                 const size_t a = b.name.find_first_not_of(' ');
                 b.name = a == std::string::npos ? std::string() : b.name.substr(a);
                 if (!ms.fail() || ms.eof()) out.objects.push_back(b);
+                continue;
+            }
+            if (line.rfind("#modelpose ", 0) == 0) {  // #modelpose PITCHDEG ROLLDEG: the structure on the line before, tipped
+                std::istringstream ps(line);
+                std::string tag;
+                double pd = 0, rd = 0;
+                ps >> tag >> pd >> rd;
+                if (!ps.fail() && !out.objects.empty() && out.objects.back().kind == OBJ_MODEL) out.objects.back().pitch = pd * kDeg, out.objects.back().roll = rd * kDeg;
                 continue;
             }
             if (line.rfind("#fence ", 0) == 0) {  // #fence AX AZ BX BZ

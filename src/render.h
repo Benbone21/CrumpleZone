@@ -142,6 +142,9 @@ private:
     PropRenderer props;
     bool propsOk = false;     // its shaders built
     int propsApplied = -1;    // the props quality the scenery was last built for
+    uint64_t treeSig_ = 0, scenerySig_ = 0, bushSig_ = 0;  // what the tree, scenery and bush meshes were last built from (unchanged: not rebuilt; an editor drag moves one thing)
+    GLuint bushVao = 0, bushVbo = 0;  // bushes and reeds (apart from the scenery: they seldom change when it does)
+    int bushVertexCount = 0;
     GroundTextures groundTex;
     bool groundFailed = false;  // the textures couldn't be loaded: stay procedural
     int groundSize = 0;         // texels a side of what's loaded
@@ -163,7 +166,7 @@ private:
     };
     struct StaticBatch { RenderBounds bounds; int first = 0, count = 0; };
     std::vector<TerrainChunk> terrainChunks;
-    std::vector<StaticBatch> boxBatches, treeBatches, sceneryBatches;
+    std::vector<StaticBatch> boxBatches, treeBatches, sceneryBatches, bushBatches;
     GeometryStats geometryStats_;
     void uploadBatches(GLuint& vao, GLuint& vbo, std::vector<Vtx>& vertices, std::vector<StaticBatch>& batches);
     void drawBatches(GLuint vao, const std::vector<StaticBatch>& batches, const M4& vp, bool shadow);

@@ -40,6 +40,7 @@ struct Rock {
     // axes scaled), which the renderer draws the scan's mesh with. -1: a code-made rock.
     int scan = -1;
     V3 axis[3], origin;
+    V3 at;  // the point its pose turns it about (code-made: the middle of its points; scanned: the scan's middle)
 };
 
 // Fallen log: a capsule from a to b.
@@ -371,7 +372,8 @@ public:
     int cellIndex(double x, double z) const;  // the cell under (x, z), -1 off the map
     V3 cellCenter(int id) const;              // (x, its height, z)
     float cellHeight(int id) const { return hgrid[id]; }
-    void setCellHeight(int id, float h) { hgrid[id] = h; }
+    void setCellHeight(int id, float h) { hgrid[id] = h, cellEdits++; }
+    uint64_t cellEdits = 0;  // counts the cells changed by hand (heights, surfaces, water): what's cached about how they look is stale
     uint8_t cellSurface(int id) const;
     uint8_t cellPaint(int id) const;
     void setCellSurface(int id, uint8_t surface, uint8_t paintLook);

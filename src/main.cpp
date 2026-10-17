@@ -3934,7 +3934,7 @@ int main(int argc, char** argv) {
             // (QA driver: CZ_EDQA names a file of commands, one per frame, run with --script edqa --shot-frames 99999 (`shot` takes one, `quit` ends). For checking the
             // editor the way a user does it, offscreen: menu_edit NAME / menu_real_edit N / menu_new / menu_section / menu_back / f2 / play_level NAME, tool N, ptr, pal NAME,
             // cam / camat x z dist high yawdeg / camobj k, mouse fx fy / mousepx dx dy / mouseobj k / mousebase kind idx / mousepoint x y z, down, up, wheel, key NAME [shift] [ctrl],
-            // hold [shift] [ctrl] [alt] (right button: down 3 / up 3), gates, keys letters, save / saveas / undo / redo / play [start], and the dumps: state, world, objs [a [b]], rocksnear x z r, pals, models, levels, carpos, autosaves.)
+            // hold [shift] [ctrl] [space|alt] (right button: down 3 / up 3), mousehandle x|y|z [ring] (the gizmo), drag (what it's doing), gates, keys letters, save / saveas / undo / redo / play [start], and the dumps: state, world, objs [a [b]], rocksnear x z r, pals, models, levels, carpos, autosaves.)
             static std::vector<std::string> cmds;
             static size_t ci = 0;
             static int waitN = 0;
@@ -4019,7 +4019,7 @@ int main(int argc, char** argv) {
                 else if (c == "tool") editor.setTool((Editor::Tool)std::max(0, (int)num(0) - 1));
                 else if (c == "ptr") editor.setPointer(num(0, 1) != 0);
                 else if (c == "gates") { std::printf("  start %d (%.1f %.1f) yaw %.2f\n", (int)ed.level.hasStart, ed.level.start.x, ed.level.start.z, ed.level.startYaw); for (size_t k = 0; k < ed.level.gates.size(); k++) std::printf("  gate %zu (%.1f %.1f) yaw %.2f width %.1f\n", k + 1, ed.level.gates[k].p.x, ed.level.gates[k].p.z, ed.level.gates[k].yaw, ed.level.gates[k].width); }
-                else if (c == "hold") { bool sh = false, ct = false, al = false; for (const std::string& t : a) sh |= t == "shift", ct |= t == "ctrl", al |= t == "alt"; editor.holdMods(sh, ct, al); }  // keep Shift / Ctrl down for what follows (`hold` alone lets go)
+                else if (c == "hold") { bool sh = false, ct = false, al = false; for (const std::string& t : a) sh |= t == "shift", ct |= t == "ctrl", al |= t == "alt" || t == "space"; editor.holdMods(sh, ct, al); }  // keep Shift / Ctrl / the Y key down for what follows (`hold` alone lets go)
                 else if (c == "pal") editor.setPalette(std::max(0, editor.findPalette(rest(0))));
                 else if (c == "cam") editor.setCamera(V3(num(0), num(1), num(2)), num(3) * M_PI / 180, num(4) * M_PI / 180);
                 else if (c == "camat") {  // camera `dist` back from a ground point, `high` up, looking at it: camat x z dist high yawdeg
@@ -4055,6 +4055,15 @@ int main(int argc, char** argv) {
                     float sx, sy;
                     if (ok && editor.project(at, sx, sy)) qx = sx, qy = sy, mouseEv(SDL_MOUSEMOTION, 0, qx, qy), std::printf("  mouse at %.0f,%.0f for (%.1f %.1f %.1f)\n", sx, sy, at.x, at.y, at.z);
                     else std::printf("  can't aim (off screen or no such part)\n");
+                } else if (c == "mousehandle") {  // aim the mouse at a gizmo handle: mousehandle x|y|z [ring]
+                    const int h = (a.empty() ? 1 : a[0] == "y" ? 2 : a[0] == "z" ? 3 : 1) + (a.size() > 1 && a[1] == "ring" ? 3 : 0);
+                    float sx, sy;
+                    if (editor.handlePoint(h, sx, sy)) qx = sx, qy = sy, mouseEv(SDL_MOUSEMOTION, 0, qx, qy), std::printf("  mouse at %.0f,%.0f on handle %d\n", sx, sy, h);
+                    else std::printf("  no such handle showing\n");
+                } else if (c == "drag") {
+                    float gx = 0, gy = 0;
+                    const bool g = editor.grabPoint(gx, gy);
+                    std::printf("  drag: %s  mouse %.0f,%.0f%s\n", editor.dragStatus().c_str(), qx, qy, g ? (" grabbed point " + std::to_string((int)std::lround(gx)) + "," + std::to_string((int)std::lround(gy))).c_str() : "");
                 } else if (c == "key") {
                     bool sh = false, ct = false;
                     for (size_t i = 1; i < a.size(); i++) sh |= a[i] == "shift", ct |= a[i] == "ctrl";
