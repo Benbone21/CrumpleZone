@@ -84,7 +84,8 @@ bool Settings::load(const std::string& path) {
         else if (k == "bloom") gfx.bloom = v != 0;
         else if (k == "clouds") gfx.clouds = v != 0;
         else if (k == "scale") gfx.renderScale = std::min(std::max(v, 0.5f), 2.0f);
-        else if (k == "grass") gfx.grass = v != 0;
+        else if (k == "grass") gfx.grass = v != 0 ? 2 : 0;  // (before it had levels: on is medium)
+        else if (k == "grassq") gfx.grass = std::min(std::max((int)v, 0), 3);
         else if (k == "ground") gfx.ground = std::min(std::max((int)v, 0), 3);
         else if (k == "props") gfx.props = std::min(std::max((int)v, 0), 3);
         else if (k == "map") map = v >= 0 && v < MAP_COUNT ? (int)v : MAP_PROVING_GROUND;  // (a number no map has any more: the proving ground)
@@ -114,7 +115,7 @@ bool Settings::save(const std::string& path) const {
     if (!f) return false;
     std::fprintf(f, "mph %d\nvolume %.2f\nfov %.0f\nfullscreen %d\nvsync %d\nfps %d\nsteeringassist %d\n", mph, volume,
                  fovDeg, fullscreen, vsync, showFps, steeringAssist);
-    std::fprintf(f, "shadows %d\nmsaa %d\nao %d\nbloom %d\nclouds %d\nscale %.2f\ngrass %d\nmap %d\n", gfx.shadows,
+    std::fprintf(f, "shadows %d\nmsaa %d\nao %d\nbloom %d\nclouds %d\nscale %.2f\ngrassq %d\nmap %d\n", gfx.shadows,
                  gfx.msaa, gfx.ao, gfx.bloom, gfx.clouds, gfx.renderScale, gfx.grass, map);
     std::fprintf(f, "recovery %d\nmusic %.2f\nambience %.2f\nfuel %d\ncareer %d\n", realRecovery, music, ambience, fuelMode, career);
     std::fprintf(f, "ground %d\nprops %d\n", gfx.ground, gfx.props);
@@ -141,14 +142,15 @@ bool Settings::save(const std::string& path) const {
 namespace {
 struct Preset {
     int shadows, msaa;
-    bool ao, bloom, clouds, grass;
+    bool ao, bloom, clouds;
+    int grass;  // RenderSettings::grass
     int scenery;  // photo-scanned ground and props (RenderSettings::ground and ::props)
 };
 const Preset kPresets[4] = {
-    {1, 0, false, false, false, false, 1},  // LOW
-    {2, 2, false, true, true, true, 2},     // MEDIUM
-    {3, 4, true, true, true, true, 2},      // HIGH
-    {3, 8, true, true, true, true, 3},      // ULTRA
+    {1, 0, false, false, false, 1, 1},  // LOW
+    {2, 2, false, true, true, 2, 2},    // MEDIUM
+    {3, 4, true, true, true, 2, 2},     // HIGH
+    {3, 8, true, true, true, 3, 3},     // ULTRA
 };
 const int kMsaa[4] = {0, 2, 4, 8};
 int msaaIndex(int samples) {
@@ -488,7 +490,10 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
     choice(AO, "AMBIENT OCCLUSION", kOffOn[s.gfx.ao], 2);
     choice(BLOOM, "BLOOM", kOffOn[s.gfx.bloom], 2);
     choice(CLOUDS, "CLOUDS", kOffOn[s.gfx.clouds], 2);
-    choice(GRASS, "GRASS", kOffOn[s.gfx.grass], 2);
+    {
+        static const char* grass[4] = {"OFF", "LOW", "MEDIUM", "HIGH"};
+        choice(GRASS, "GRASS", grass[std::min(std::max(s.gfx.grass, 0), 3)], 4, "HOW DENSE AND FAR THE GRASS GROWS");
+    }
     {
         // Photo-scanned ground materials and props together (OFF: the code-made look).
         static const char* scenery[5] = {"OFF", "LOW", "HIGH", "ULTRA", "CUSTOM"};
@@ -778,7 +783,7 @@ PauseMenu::Result PauseMenu::change(int row, int dir, Settings& s) {
         case AO: g.ao = !g.ao; break;
         case BLOOM: g.bloom = !g.bloom; break;
         case CLOUDS: g.clouds = !g.clouds; break;
-        case GRASS: g.grass = !g.grass; break;
+        case GRASS: g.grass = cycle(std::min(std::max(g.grass, 0), 3)); break;
         case SCENERY: g.ground = g.props = cycle(g.ground == g.props ? std::min(std::max(g.ground, 0), 3) : 2); break;
         case FULLSCREEN: s.fullscreen = !s.fullscreen; break;
         case VSYNC: s.vsync = !s.vsync; break;

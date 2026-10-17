@@ -55,7 +55,7 @@ struct RenderSettings {
     bool ao = true;             // screen-space ambient occlusion
     bool bloom = true;
     bool clouds = true;
-    bool grass = true;          // grass blades round the camera
+    int grass = 2;              // grass round the camera: 0 off, 1 low, 2 medium, 3 high
     int ground = 2;             // terrain materials: 0 procedural, 1 photo-scanned (one tap), 2 full, 3 full + more layers
     int props = 2;              // scanned props (propdraw.h): 0 off (code-made scenery), 1 low, 2 high, 3 ultra
     float renderScale = 1.0f;   // scene resolution relative to the window, 0.5 .. 2
@@ -128,6 +128,7 @@ public:
         unsigned sceneryVertices = 0, shadowSceneryVertices = 0;
     };
     const GeometryStats& geometryStats() const { return geometryStats_; }
+    double grassGpuMs() const { return grassGpuMs_; }  // (CZ_BENCH: the grass pass on the GPU, a few frames late)
 
 private:
     struct CarSlot {
@@ -148,7 +149,7 @@ private:
     GroundTextures groundTex;
     bool groundFailed = false;  // the textures couldn't be loaded: stay procedural
     int groundSize = 0;         // texels a side of what's loaded
-    GLuint progAO = 0, progDown = 0, progUp = 0, progComposite = 0, postVao = 0, progGrass = 0;
+    GLuint progAO = 0, progDown = 0, progUp = 0, progComposite = 0, postVao = 0, progGrass = 0, grassVao = 0, grassIbo = 0;
     GLuint sceneryVao = 0, sceneryVbo = 0, terrainTex = 0, waterVao = 0, waterVbo = 0, progWater = 0;
     int waterVertexCount = 0;
     int sceneryVertexCount = 0, terrainGridN = 0, mapId = 0, terrainMeshN = 0;
@@ -168,6 +169,10 @@ private:
     std::vector<TerrainChunk> terrainChunks;
     std::vector<StaticBatch> boxBatches, treeBatches, sceneryBatches, bushBatches;
     GeometryStats geometryStats_;
+    GLuint grassQuery_[4] = {};
+    int grassQueryFrame_ = 0;
+    bool grassQueryUsed_[4] = {};
+    double grassGpuMs_ = 0;
     void uploadBatches(GLuint& vao, GLuint& vbo, std::vector<Vtx>& vertices, std::vector<StaticBatch>& batches);
     void drawBatches(GLuint vao, const std::vector<StaticBatch>& batches, const M4& vp, bool shadow);
     void drawTerrain(const M4& vp, const View& view);
