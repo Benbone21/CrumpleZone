@@ -2299,6 +2299,8 @@ bool Renderer::init(const World& world, std::string& err) {
                 if (plain) for (unsigned short i : plainTris) idx.push_back(o + i);
                 else for (unsigned short i : fullTris) idx.push_back(o + i);
             }
+        for (int b = 0; b < 8; b++)  // (single: the base's corners and the tip)
+            for (unsigned short i : {0, 1, 6}) idx.push_back((unsigned short)(b * 7 + i));
         GenVertexArrays(1, &grassVao);
         GenBuffers(1, &grassIbo);
         BindVertexArray(grassVao);
@@ -3906,11 +3908,13 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     UseProgram(progLit);
     if (settings.grass > 0) {
         // The grass: rings of tufts, finer near the camera (one grid each), as many as the setting allows.
-        struct GrassRing { float cell; int side, blades; bool plain; float in0, in1, out0, out1, height, width; bool heads; };
+        // (blades: 0 full, curved in five triangles with any seed head or flower; 1 plain, three (heads and flowers stay full);
+        // 2 one triangle, base to tip. Further rings: fewer, wider and plainer blades on a coarser grid.)
+        struct GrassRing { float cell; int side, blades, shape; float in0, in1, out0, out1, height, width; bool heads; };
         static const GrassRing kRings[3][3] = {
-            {{0.50f, 56, 5, true, -2, -1, 7, 12, 1.0f, 1.4f, false}, {1.00f, 72, 4, true, 7, 12, 24, 34, 1.0f, 2.2f, false}, {0, 0, 0, true, 0, 0, 0, 0, 0, 0, false}},
-            {{0.36f, 80, 6, false, -2, -1, 8.5f, 13.5f, 1.0f, 1.0f, true}, {0.62f, 108, 6, false, 8.5f, 13.5f, 22, 32, 1.05f, 1.9f, true}, {1.20f, 116, 5, true, 22, 32, 50, 68, 1.0f, 3.0f, false}},
-            {{0.30f, 96, 7, false, -2, -1, 9, 14, 1.0f, 1.0f, true}, {0.52f, 132, 6, false, 9, 14, 24, 34, 1.05f, 1.8f, true}, {0.95f, 152, 5, true, 24, 34, 54, 72, 1.0f, 2.8f, false}},
+            {{0.50f, 56, 5, 1, -2, -1, 7, 12, 1.0f, 1.4f, false}, {1.00f, 72, 3, 2, 7, 12, 24, 34, 1.0f, 2.9f, false}, {0, 0, 0, 1, 0, 0, 0, 0, 0, 0, false}},
+            {{0.36f, 80, 6, 0, -2, -1, 8.5f, 13.5f, 1.0f, 1.0f, true}, {0.62f, 108, 6, 0, 8.5f, 13.5f, 22, 32, 1.05f, 1.9f, true}, {1.20f, 106, 3, 2, 22, 32, 46, 62, 1.0f, 4.2f, false}},
+            {{0.30f, 96, 7, 0, -2, -1, 9, 14, 1.0f, 1.0f, true}, {0.52f, 132, 6, 0, 9, 14, 24, 34, 1.05f, 1.8f, true}, {0.95f, 152, 4, 2, 24, 34, 54, 72, 1.0f, 3.6f, false}},
         };
         setLighting(progGrass);
         bindTerrainTex(progGrass);
@@ -3965,7 +3969,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
             Uniform1i(uniformLocation(progGrass, "uBlades"), r.blades);
             Uniform1f(uniformLocation(progGrass, "uCell"), r.cell);
             Uniform4f(uniformLocation(progGrass, "uRing"), r.in0, r.in1, r.out0, r.out1);
-            Uniform4f(uniformLocation(progGrass, "uLook"), r.height, r.width, r.plain ? 1.0f : 0.0f, r.heads ? 1.0f : 0.0f);
+            Uniform4f(uniformLocation(progGrass, "uLook"), r.height, r.width, r.shape ? 1.0f : 0.0f, r.heads ? 1.0f : 0.0f);
             // The ring's grid in tiles: only those in view and in the ring's reach are drawn (a row's run of them at once).
             const int T = 8, ts = (r.side + T - 1) / T;
             const double c0x = (std::floor(view.eye.x / r.cell) - r.side / 2) * r.cell, c0z = (std::floor(view.eye.z / r.cell) - r.side / 2) * r.cell;
@@ -3995,10 +3999,11 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
                     if (!in && runX >= 0) {
                         const int ix = runX * ts, w = std::min(r.side, tx * ts) - ix, iz = tz * ts, h = std::min(r.side - iz, ts);
                         Uniform3f(tileAt, (float)ix, (float)iz, (float)w);
-                        // (indices: plain blades, 3 triangles of 9 indices from the first; full ones, 5 of 15, after them)
-                        DrawElementsInstanced(GL_TRIANGLES, r.blades * (r.plain ? 9 : 15), GL_UNSIGNED_SHORT,
-                                              (const void*)(uintptr_t)(r.plain ? 0 : 8 * 9 * 2), w * h);
-                        vegStats_.grass.add(1, (long long)r.blades * (r.plain ? 3 : 5) * w * h, w * h);
+                        // (indices: plain blades, 3 triangles of 9 indices from the first; full ones, 5 of 15, after them; then single ones, 1 of 3)
+                        static const int kTris[3] = {5, 3, 1};
+                        static const uintptr_t kAt[3] = {8 * 9 * 2, 0, (8 * 9 + 8 * 15) * 2};
+                        DrawElementsInstanced(GL_TRIANGLES, r.blades * kTris[r.shape] * 3, GL_UNSIGNED_SHORT, (const void*)kAt[r.shape], w * h);
+                        vegStats_.grass.add(1, (long long)r.blades * kTris[r.shape] * w * h, w * h);
                         runX = -1;
                     }
                 }
