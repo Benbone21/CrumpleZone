@@ -435,7 +435,18 @@ SCENARIO(netSecHostOnly, "net/sec-host-only", "A guest can't send the host's mes
         i.read();
         uint8_t type = 0;
         std::vector<uint8_t> body;
-        ctx.check("another version is told so, then dropped", i.next(type, body) && type == REJECT && rawDropped(rig, i));
+        const bool told = i.next(type, body) && type == REJECT;
+        const std::string why(body.begin() + std::min<size_t>(1, body.size()), body.end());
+        ctx.check("another version is told so, then dropped", told && rawDropped(rig, i));
+        ctx.check("in plain words: what to update to", why.find("version mismatch") != std::string::npos && why.find("older") != std::string::npos, why);
+        Raw old;
+        old.open(port);
+        old.send(helloOf(net::kVersion - 1, "OLD"));
+        rig.pump(100);
+        old.read();
+        const bool oldTold = old.next(type, body) && type == REJECT;
+        const std::string oldWhy(body.begin() + std::min<size_t>(1, body.size()), body.end());
+        ctx.check("an older game is told to update, and to what", oldTold && oldWhy == std::string("version mismatch: update to ") + net::kRelease + " or newer", oldWhy);
         Raw j;
         j.open(port);
         std::vector<uint8_t> noise(3000);
@@ -724,16 +735,16 @@ SCENARIO(netSecFuzz, "net/sec-fuzz", "Thousands of random, truncated, oversized,
     }
     seeds.push_back({DESPAWN, 1, 0, 1, 0});
     seeds.push_back({UNROPE, 1, 0, 1, 0});
-    seeds.push_back({GAME, 0, 5, 'c', 'h', 'a', 't', ' '});
+    seeds.push_back({GAME, 0, 5, 'c', 'h', 'a', 't', ' ', 0, 0, 0, 0, 0, 0, 0xf0, 0x3f});  // (said at 1.0 on the shared clock)
     seeds.push_back({PING, 0, 0, 0, 0, 0, 0, 0, 0});
-    seeds.push_back({PONG, 0, 0, 0, 0, 0, 0, 0, 0});
+    seeds.push_back({PONG, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xf0, 0x3f});
     seeds.push_back({HELLO, 5, 0, 3, 'A', 'B', 'C'});
     seeds.push_back({AUTH, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32});
     seeds.push_back({WELCOME, 1, 0, 1, 2, 3, 4, 5, 6, 7, 8});
     seeds.push_back({PLAYER, 2, 3, 'B', 'O', 'B'});
     seeds.push_back({LEFT, 2});
     seeds.push_back({RTT, 2, 0, 0, 0x80, 0x3f});
-    seeds.push_back({CLOCK, 0, 0, 0xc0, 0x41, 0, 0, 0x80, 0x3f});
+    seeds.push_back({CLOCK, 0, 0, 0, 0, 0, 0, 0xf0, 0x3f, 0, 0, 0xc0, 0x41, 0, 0, 0x80, 0x3f});  // (at 1.0: 24 h, 1 h/s)
     seeds.push_back({LEVEL, 1, 0, 0, 0, 0, 0, 1, 0, 'a', 'b'});
     seeds.push_back({REJECT, 2, 'N', 'O'});
     seeds.push_back({CHALLENGE, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16});
@@ -906,13 +917,14 @@ SCENARIO(netSecFuzz, "net/sec-fuzz", "Thousands of random, truncated, oversized,
             Car& src = origin.cars[0];
             src.netId = base | 1;
             std::vector<uint8_t> st = T::state(enc[0], origin, src, 0.5 + 0.05 * k);
-            static const size_t floatAt[] = {12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 57, 62, 66, 70, 76, 80, 85, 89};
+            // (Where the numbers are: the base, the center, the turn, the speed, the controls and engine, each wheel's angle and spin.)
+            static const size_t floatAt[] = {12, 16, 20, 24, 28, 29, 35, 41, 44, 47, 49, 51, 55, 59, 62, 66, 69, 76};
             for (int j = 0, n = (int)fz.below(3); j < n; j++) {
                 const float v = special();
                 const size_t at = floatAt[fz.below(sizeof floatAt / sizeof *floatAt)];
                 if (at + 4 <= st.size()) std::memcpy(&st[at], &v, 4);
             }
-            if (fz.below(6) == 0) st[74] = (uint8_t)fz.rng();  // gear
+            if (fz.below(6) == 0) st[53] = (uint8_t)fz.rng();  // gear
             T::snapshot(rx, target, base | 1, st);
             stated++;
             T::play(rx, target, 0.6 + 0.05 * k);

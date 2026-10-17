@@ -160,7 +160,7 @@ SCENARIO(netTwoPlayers, "net/two-players", "Host and client over loopback: each 
     const double t0 = ctx.t;
     const uint64_t out0 = client.bytesOut;
     ctx.run(2.0, frameBoth);
-    ctx.metric("client upload for one truck", (client.bytesOut - out0) / (ctx.t - t0) / 1024, "KB/s", 5, 120);
+    ctx.metric("client upload for one truck", (client.bytesOut - out0) / (ctx.t - t0) / 1024, "KB/s", 0.5, 20);  // (only the dents that moved: a whole state is ~3 KB, 60 KB/s)
 
     // The client leaves: its truck and the strap go away on the host.
     client.close();

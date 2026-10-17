@@ -56,8 +56,8 @@ SCENARIO(netEngineState, "net/state-engine-lamps", "Engine telemetry, smooth con
     NetSessionTest::take(receiver, ctx.sim, NetSessionTest::state(sender, origin, 0.05), 0.05);
     NetSessionTest::play(receiver, ctx.sim, 0.125);
     ctx.check("RPM and steering interpolated between packets", std::fabs(remote.rpm - 4000) < 0.01 && std::fabs(remote.steer - 0.2) < 1e-6);
-    ctx.check("engine load and boost transmitted", std::fabs(remote.throttle - 0.48) < 1e-6 && std::fabs(remote.boost - 0.4) < 1e-6);
-    ctx.check("reverse gear and damage transmitted", remote.gear == -1 && std::fabs(remote.damage - 0.3) < 1e-6);
+    ctx.check("engine load and boost transmitted", std::fabs(remote.throttle - 0.48) < 1e-4 && std::fabs(remote.boost - 0.4) < 1e-4);  // (16 bits each)
+    ctx.check("reverse gear and damage transmitted", remote.gear == -1 && std::fabs(remote.damage - 0.3) < 1e-4);
     bool switches = true;
     for (int mode : {LAMPS_HIGH, LAMPS_LOW, LAMPS_OFF, LAMPS_AUTO}) {
         car.lampMode = (uint8_t)mode;

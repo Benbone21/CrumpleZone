@@ -106,11 +106,10 @@ enum MsgType : uint8_t {
     MSG_AUTH,         // client -> host: HMAC-SHA-256(password, those 16 bytes)
 };
 // (WELCOME: u8 id, u8 map, u64 the guest's datagram secret.)
-enum DgramType : uint8_t { DG_SNAP = 1, DG_HELLO = 2 };
+enum DgramType : uint8_t { DG_SNAP = 1, DG_HELLO = 2, DG_ACK = 3 };  // (an ack: u32 netId, u32 seq, ...: states we have, to tell the next against)
 constexpr uint16_t kMagic = 0xC27A;
 // ... and the u64 secret of whoever the datagram is for (told in the welcome): anyone else's is dropped.
 constexpr size_t kDgramHeader = 2 + 1 + 1 + 4 + 4 + 1 + 1 + 8;
-constexpr size_t kTokenAt = 2 + 1 + 1 + 4 + 4 + 1 + 1;
 constexpr size_t kChunk = 1150;
 constexpr int kMaxFragments = 32;  // (a state is a few KB: more is garbage)
 constexpr double kPosLimit = 5.0e4;  // m: nothing in any world is further out than this
@@ -464,6 +463,8 @@ void Timeline::step(double shared, double need) {
 
 struct NetSession::Snap {
     double t = 0;
+    uint32_t build = 0;
+    std::vector<int16_t> q;  // the dents as sent (mm; `local` is these in m)
     V3 com, vel;
     Quat rot;
     std::vector<V3> local;  // node offsets from the rigid rest shape
@@ -481,6 +482,7 @@ struct NetSession::Remote {
     std::deque<Snap> buf;
     double newestT = -1, newestArrival = 0;  // (shared clock)
     net::Lateness late;
+    std::deque<std::pair<uint32_t, std::vector<int16_t>>> got;  // the dents of the last states taken (seq): what the sender tells the next against
     // Easing out a coast that guessed wrong: what's added to where the states say it is.
     V3 ease, lastShown, lastVel;
     bool shown = false;
@@ -542,6 +544,8 @@ void NetSession::close() {
     dayHours = -1, dayRate = 0, dayFresh = false;
     heldGame.clear();
     heldWorld.clear();
+    upStreams.clear();
+    upAcks.clear();
 }
 
 bool NetSession::host(int port, const std::string& name, int m, int maxP, const std::string& session) {
@@ -940,7 +944,9 @@ void NetSession::handle(Sim* sim, Conn* from, const std::vector<uint8_t>& msg) {
                 w.put<uint8_t>((uint8_t)from->peer);
                 w.str(text);
                 w.put<double>(said);
-                broadcast(frame(MSG_GAME, w), from);
+                const auto m = frame(MSG_GAME, w);
+                for (Conn* c : conns)
+                    if (c != from && c->hello && !c->kill && worthTelling(*c, from->peer, text)) sendTo(*c, m);
                 hold(sim, heldGame, said, {}, from->peer, text);
                 return;
             }
@@ -1473,80 +1479,289 @@ NetSession::Remote* NetSession::remoteFor(uint32_t netId) {
     return r;
 }
 
-std::vector<uint8_t> NetSession::snapshotMsg(const Sim& sim, const Car& c, double now) const {
-    Writer w;
+// ---- A vehicle's state on the wire ------------------------------------------------------
+// f64 shared time, u32 build, u32 the state it's told against (0: whole), then everything
+// quantized: the center in 1/1024 m, the turn as its three smallest parts (the fourth follows),
+// the speed in 1/32 m/s, the controls and engine in 8 or 16 bits, each wheel, and the dents:
+// whole (3 x i16 mm a node) or, against a state the receiver has, a bit a node that moved
+// at least net::kDentStep mm and how far, in a few bits each. Then the winch lines' lengths.
+namespace {
+constexpr double kPosScale = 1024, kVelScale = 32, kRotLimit = 0.70711;
+void putVar(Writer& w, int v) {
+    uint32_t z = ((uint32_t)v << 1) ^ (uint32_t)(v >> 31);
+    while (z >= 0x80) w.put<uint8_t>((uint8_t)(z | 0x80)), z >>= 7;
+    w.put<uint8_t>((uint8_t)z);
+}
+int getVar(Reader& r) {
+    uint32_t z = 0;
+    for (int sh = 0; sh < 35 && r.ok; sh += 7) {
+        const uint8_t b = r.get<uint8_t>();
+        z |= (uint32_t)(b & 0x7f) << sh;
+        if (!(b & 0x80)) return (int)(z >> 1) ^ -(int)(z & 1);
+    }
+    r.ok = false;
+    return 0;
+}
+template <class T> T quant(double v, double scale, double lo, double hi) { return (T)std::lround(clampd(v, lo, hi) * scale); }
+void putRot(Writer& w, const Quat& q) {
+    const double c[4] = {q.w, q.x, q.y, q.z};
+    int big = 0;
+    for (int i = 1; i < 4; i++)
+        if (std::fabs(c[i]) > std::fabs(c[big])) big = i;
+    const double sign = c[big] < 0 ? -1 : 1;
+    w.put<uint8_t>((uint8_t)big);
+    for (int i = 0; i < 4; i++)
+        if (i != big) w.put<int16_t>(quant<int16_t>(c[i] * sign, 32767 / kRotLimit, -kRotLimit, kRotLimit));
+}
+Quat getRot(Reader& r) {
+    const int big = r.get<uint8_t>();
+    if (big > 3) r.ok = false;
+    double c[4], sq = 0;
+    for (int i = 0; i < 4; i++)
+        if (i != big) c[i] = r.get<int16_t>() * (kRotLimit / 32767), sq += c[i] * c[i];
+    c[std::min(std::max(big, 0), 3)] = std::sqrt(std::max(0.0, 1 - sq));
+    Quat q{c[0], c[1], c[2], c[3]};
+    q.normalize();
+    return q;
+}
+}  // namespace
+
+NetSession::Stream& NetSession::streamFor(std::vector<Stream>& v, uint32_t netId) {
+    for (Stream& st : v)
+        if (st.netId == netId) return st;
+    v.push_back(Stream());
+    v.back().netId = netId;
+    return v.back();
+}
+
+NetSession::Snap NetSession::makeSnap(const Sim& sim, const Car& c, double now) const {
+    Snap s;
     const Frame fr = c.frame();
-    const Quat rot = c.chassis.nodes.empty() ? Quat::axisAngle(V3(0, 1, 0), std::atan2(-fr.fwd.z, fr.fwd.x)) : c.chassis.rot;
-    w.put<double>(sharedTime(now));
-    w.put<uint32_t>((uint32_t)c.buildCount);
-    w.v3(fr.com);
-    w.put<float>((float)rot.w), w.put<float>((float)rot.x), w.put<float>((float)rot.y), w.put<float>((float)rot.z);
-    w.v3(fr.vel);
-    w.put<float>((float)c.steer);
-    w.put<uint8_t>((uint8_t)std::lround(clampd(std::max(c.brake, c.handbrake * 0.6), 0, 1) * 255));
-    w.put<float>((float)c.damage);
-    w.put<uint8_t>((uint8_t)(c.engineDead | (c.hydrolocked << 1)));
-    w.put<float>((float)c.rpm);
-    w.put<float>((float)clampd(c.throttle * c.tcCut, 0, 1));
-    w.put<float>((float)c.boost);
-    w.put<int8_t>((int8_t)c.gear);
-    w.put<uint8_t>((uint8_t)c.wheels.size());
+    s.t = sharedTime(now);
+    s.build = (uint32_t)c.buildCount;
+    s.rot = c.chassis.nodes.empty() ? Quat::axisAngle(V3(0, 1, 0), std::atan2(-fr.fwd.z, fr.fwd.x)) : c.chassis.rot;
+    s.com = fr.com, s.vel = fr.vel;
+    s.steer = (float)c.steer;
+    s.brake = (float)clampd(std::max(c.brake, c.handbrake * 0.6), 0, 1);
+    s.damage = (float)c.damage;
+    s.status = (uint8_t)(c.engineDead | (c.hydrolocked << 1));
+    s.rpm = (float)c.rpm;
+    s.load = (float)clampd(c.throttle * c.tcCut, 0, 1);
+    s.boost = (float)c.boost;
+    s.gear = (int8_t)c.gear;
     for (const Wheel& wh : c.wheels) {
-        w.put<float>((float)wh.angle);
-        w.put<float>((float)wh.omega);
-        w.put<uint8_t>((uint8_t)(wh.popped | (wh.detached << 1) | (wh.shaftBroken << 2) | (!wh.mounted << 3)));  // (a wheel off its hub for a repair: others see the bare hub)
+        s.wheelAngle.push_back((float)wh.angle);
+        s.wheelOmega.push_back((float)wh.omega);
+        s.wheelFlags.push_back((uint8_t)(wh.popped | (wh.detached << 1) | (wh.shaftBroken << 2) | (!wh.mounted << 3)));  // (a wheel off its hub for a repair: others see the bare hub)
     }
     const V3 rc = restCom(c);
-    w.put<uint16_t>((uint16_t)c.nodes.size());
+    s.q.resize(c.nodes.size() * 3);
     for (size_t i = 0; i < c.nodes.size(); i++) {
-        const V3 d = rot.unrotate(c.nodes[i].p - fr.com) + rc - c.restLocal[i];
-        for (double v : {d.x, d.y, d.z}) w.put<int16_t>((int16_t)std::lround(clampd(v, -32.7, 32.7) * 1000));
+        const V3 d = s.rot.unrotate(c.nodes[i].p - fr.com) + rc - c.restLocal[i];
+        s.q[i * 3] = quant<int16_t>(d.x, 1000, -32.7, 32.7), s.q[i * 3 + 1] = quant<int16_t>(d.y, 1000, -32.7, 32.7), s.q[i * 3 + 2] = quant<int16_t>(d.z, 1000, -32.7, 32.7);
     }
     // The winch lines this vehicle works: how much line is out.
-    std::vector<const Rope*> mine;
     for (const Rope& r : sim.ropes)
-        if (r.netId && r.kind == ROPE_WINCH && r.a.kind == ANCHOR_CAR && &sim.cars[r.a.car] == &c) mine.push_back(&r);
-    w.put<uint8_t>((uint8_t)mine.size());
-    for (const Rope* r : mine) {
-        w.put<uint32_t>(r->netId);
-        w.put<float>((float)r->length);
+        if (r.netId && r.kind == ROPE_WINCH && r.a.kind == ANCHOR_CAR && &sim.cars[r.a.car] == &c && s.ropeLen.size() < 8) s.ropeLen.push_back({r.netId, (float)r.length});
+    return s;
+}
+
+std::vector<uint8_t> NetSession::encodeState(const Snap& s, const Stream::Sent* base, std::vector<int16_t>& sentQ) {
+    Writer w;
+    const size_t nn = s.q.size() / 3;
+    if (base && base->q.size() != s.q.size()) base = nullptr;  // (rebuilt: a whole one)
+    w.put<double>(s.t);
+    w.put<uint32_t>(s.build);
+    w.put<uint32_t>(base ? base->seq : 0);
+    for (double v : {s.com.x, s.com.y, s.com.z}) w.put<int32_t>(quant<int32_t>(v, kPosScale, -kPosLimit, kPosLimit));
+    putRot(w, s.rot);
+    for (double v : {s.vel.x, s.vel.y, s.vel.z}) w.put<int16_t>(quant<int16_t>(v, kVelScale, -1000, 1000));
+    w.put<int16_t>(quant<int16_t>(s.steer, 16000, -2, 2));
+    w.put<uint8_t>(quant<uint8_t>(s.brake, 255, 0, 1));
+    w.put<uint16_t>(quant<uint16_t>(s.damage, 65535, 0, 1));
+    w.put<uint8_t>(s.status);
+    w.put<uint16_t>(quant<uint16_t>(s.rpm, 3, 0, 20000));
+    w.put<uint16_t>(quant<uint16_t>(s.load, 65535, 0, 1));
+    w.put<uint16_t>(quant<uint16_t>(s.boost, 6000, 0, 10));
+    w.put<int8_t>(s.gear);
+    w.put<uint8_t>((uint8_t)s.wheelAngle.size());
+    for (size_t k = 0; k < s.wheelAngle.size(); k++) {
+        w.put<float>(s.wheelAngle[k]);
+        w.put<int16_t>(quant<int16_t>(s.wheelOmega[k], 10, -3000, 3000));
+        w.put<uint8_t>(s.wheelFlags[k]);
+    }
+    w.put<uint16_t>((uint16_t)nn);
+    sentQ = s.q;
+    if (base) {
+        const size_t mask = w.b.size();
+        w.b.resize(mask + (nn + 7) / 8, 0);
+        for (size_t i = 0; i < nn; i++) {
+            int d[3], most = 0;
+            for (int k = 0; k < 3; k++) d[k] = s.q[i * 3 + k] - base->q[i * 3 + k], most = std::max(most, std::abs(d[k]));
+            if (most < net::kDentStep) {  // (hasn't moved: the receiver keeps what it has)
+                for (int k = 0; k < 3; k++) sentQ[i * 3 + k] = base->q[i * 3 + k];
+                continue;
+            }
+            w.b[mask + i / 8] |= (uint8_t)(1 << (i % 8));
+            for (int k = 0; k < 3; k++) putVar(w, d[k]);
+        }
+    } else {
+        for (int16_t v : s.q) w.put<int16_t>(v);
+    }
+    w.put<uint8_t>((uint8_t)s.ropeLen.size());
+    for (const auto& rl : s.ropeLen) {
+        w.put<uint32_t>(rl.first);
+        w.put<float>(rl.second);
     }
     return w.b;
 }
 
-void NetSession::sendSnapshot(Sim& sim, const Car& c, double now) {
-    const std::vector<uint8_t> data = snapshotMsg(sim, c, now);
-    // Split into datagrams.
+std::vector<uint8_t> NetSession::snapshotMsg(const Sim& sim, const Car& c, double now) const {
+    std::vector<int16_t> sentQ;
+    return encodeState(makeSnap(sim, c, now), nullptr, sentQ);
+}
+
+void NetSession::sendState(Conn* to, Stream& st, const Snap& s, uint32_t netId) {
+    const std::vector<uint8_t> data = nextState(st, s);
+    sendDatagrams(to, netId, data);
+}
+
+std::vector<uint8_t> NetSession::nextStateOf(Stream& st, const Sim& sim, const Car& c, double now) { return nextState(st, makeSnap(sim, c, now)); }
+std::vector<int16_t> NetSession::dentsOf(const Sim& sim, const Car& c) const { return makeSnap(sim, c, 0).q; }
+const std::vector<int16_t>* NetSession::lastTaken(uint32_t& sequence) const {
+    if (remotes.empty() || remotes[0]->got.empty()) return nullptr;
+    sequence = remotes[0]->got.back().first;
+    return &remotes[0]->got.back().second;
+}
+
+std::vector<uint8_t> NetSession::nextState(Stream& st, const Snap& s) {
+    const Stream::Sent* base = nullptr;
+    for (const Stream::Sent& x : st.sent)
+        if (st.acked && x.seq == st.acked) base = &x;
+    std::vector<int16_t> sentQ;
+    const std::vector<uint8_t> data = encodeState(s, base, sentQ);
+    if (++seq == 0) seq = 1;  // (0 means "no state")
+    st.sent.push_back({seq, std::move(sentQ)});
+    while (st.sent.size() > (size_t)net::kStreamKeep) st.sent.pop_front();
+    bool still = false;
+    for (const Stream::Sent& x : st.sent) still |= x.seq == st.acked;
+    if (!still) st.acked = 0;  // (fell out of what we remember: a whole one next)
+    st.lastStamp = s.t;
+    return data;  // (as `seq`)
+}
+
+void NetSession::sendDatagrams(Conn* to, uint32_t netId, const std::vector<uint8_t>& data) {
     const size_t total = data.size(), frags = (total + kChunk - 1) / kChunk;
-    seq++;
+    if (frags > (size_t)kMaxFragments) return;
+    const uint64_t token = to ? to->token : udpToken;
+    sockaddr_in addr = to ? udpAddress(to->udpIp, to->udpPort) : sockaddr_in{};
+    if (!to) {
+        if (!hostUdp) return;
+        addr = *(const sockaddr_in*)hostUdp;
+    }
     for (size_t f = 0; f < frags; f++) {
-        auto datagram = [&](uint64_t token) {
+        Writer d;
+        d.put<uint16_t>(kMagic);
+        d.put<uint8_t>(DG_SNAP);
+        d.put<uint8_t>((uint8_t)ownerOf(netId));
+        d.put<uint32_t>(netId);
+        d.put<uint32_t>(seq);
+        d.put<uint8_t>((uint8_t)f);
+        d.put<uint8_t>((uint8_t)frags);
+        d.put<uint64_t>(token);
+        const size_t a = f * kChunk, b = std::min(total, a + kChunk);
+        d.b.insert(d.b.end(), data.begin() + a, data.begin() + b);
+        const int n = (int)sendto(udpFd, (const char*)d.b.data(), (int)d.b.size(), 0, (const sockaddr*)&addr, sizeof addr);
+        if (n > 0) bytesOut += n;
+    }
+}
+
+// Host: how often a vehicle at `at` is worth telling `to` about: every state near any of its
+// vehicles, less often further off (it's a speck there), twice a second across the map.
+double NetSession::relevantEvery(const Sim& sim, const Conn& to, const V3& at) const {
+    double d2 = 1e18;
+    for (const Car& c : sim.cars)
+        if (c.remote && ownerOf(c.netId) == to.peer) {
+            const V3 d = c.frame().com - at;
+            d2 = std::min(d2, d.x * d.x + d.z * d.z);
+        }
+    if (d2 > 1e17) return 0;  // (nothing of theirs yet: everything)
+    const double d = std::sqrt(d2);
+    return d < 150 ? 0 : d < 400 ? 0.1 : d < 800 ? 0.2 : 0.5;
+}
+
+// Host: chatter only for some: fuel poured into a vehicle goes to its owner; where a player
+// on foot is goes out ten times a second near them, less often far off (a dot on the map).
+bool NetSession::worthTelling(Conn& to, int fromPeer, const std::string& text) {
+    if (text.rfind("fuel ", 0) == 0) return ownerOf((uint32_t)std::strtoul(text.c_str() + 5, nullptr, 10)) == to.peer;
+    if (text.rfind("walk ", 0) == 0 && lastSim && fromPeer >= 0 && fromPeer < net::kMaxPeers) {
+        double x = 0, y = 0, z = 0;
+        if (std::sscanf(text.c_str() + 5, "%lf %lf %lf", &x, &y, &z) != 3 || !okNum(x, kPosLimit) || !okNum(z, kPosLimit)) return true;
+        const double every = relevantEvery(*lastSim, to, V3(x, y, z)) * 5;  // (0, 0.5, 1 or 2.5 s: a walker is forgotten after 2 s unheard)
+        double& last = to.walkSent[fromPeer];
+        if (last != 0 && curNow >= last && curNow - last < std::min(every, 1.5) - 0.01) return false;
+        last = curNow;
+    }
+    return true;
+}
+
+void NetSession::relayState(Sim& sim, uint32_t netId, const Snap& s) {
+    for (Conn* cn : conns)
+        if (cn->udpKnown && cn->hello && !cn->kill && cn->peer != ownerOf(netId)) {
+            Stream& st = streamFor(cn->streams, netId);
+            if (st.lastStamp >= 0 && s.t - st.lastStamp < relevantEvery(sim, *cn, s.com) - 0.01) continue;
+            sendState(cn, st, s, netId);
+        }
+}
+
+void NetSession::sendSnapshot(Sim& sim, const Car& c, double now) {
+    const Snap s = makeSnap(sim, c, now);
+    if (role == CLIENT) {
+        sendState(nullptr, streamFor(upStreams, c.netId), s, c.netId);
+        return;
+    }
+    relayState(sim, c.netId, s);
+}
+
+// "We have these": u32 netId, u32 seq, as many as fit, to whoever sent them.
+void NetSession::sendAcks() {
+    auto out = [&](std::vector<std::pair<uint32_t, uint32_t>>& acks, uint64_t token, const sockaddr_in& to) {
+        while (!acks.empty()) {
             Writer d;
             d.put<uint16_t>(kMagic);
-            d.put<uint8_t>(DG_SNAP);
-            d.put<uint8_t>((uint8_t)self);
-            d.put<uint32_t>(c.netId);
-            d.put<uint32_t>(seq);
-            d.put<uint8_t>((uint8_t)f);
-            d.put<uint8_t>((uint8_t)frags);
+            d.put<uint8_t>(DG_ACK);
+            d.put<uint8_t>((uint8_t)std::max(0, self));
+            d.put<uint32_t>(0), d.put<uint32_t>(0), d.put<uint8_t>(0), d.put<uint8_t>(1);
             d.put<uint64_t>(token);
-            const size_t a = f * kChunk, b = std::min(total, a + kChunk);
-            d.b.insert(d.b.end(), data.begin() + a, data.begin() + b);
-            return d.b;
-        };
-        if (role == CLIENT && hostUdp) {
-            const std::vector<uint8_t> d = datagram(udpToken);
-            const int n = (int)sendto(udpFd, (const char*)d.data(), (int)d.size(), 0, (sockaddr*)hostUdp, sizeof(sockaddr_in));
-            if (n > 0) bytesOut += n;
-        } else {
-            for (Conn* cn : conns)
-                if (cn->udpKnown && cn->hello && !cn->kill) {
-                    const std::vector<uint8_t> d = datagram(cn->token);
-                    const sockaddr_in to = udpAddress(cn->udpIp, cn->udpPort);
-                    const int n = (int)sendto(udpFd, (const char*)d.data(), (int)d.size(), 0, (const sockaddr*)&to, sizeof to);
-                    if (n > 0) bytesOut += n;
-                }
+            const size_t n = std::min<size_t>(acks.size(), kChunk / 8);
+            for (size_t k = 0; k < n; k++) d.put<uint32_t>(acks[k].first), d.put<uint32_t>(acks[k].second);
+            acks.erase(acks.begin(), acks.begin() + n);
+            const int sent = (int)sendto(udpFd, (const char*)d.b.data(), (int)d.b.size(), 0, (const sockaddr*)&to, sizeof to);
+            if (sent > 0) bytesOut += sent;
         }
+    };
+    if (role == CLIENT) {
+        if (hostUdp && udpToken) out(upAcks, udpToken, *(const sockaddr_in*)hostUdp);
+        upAcks.clear();
+        return;
+    }
+    for (Conn* c : conns) {
+        if (c->udpKnown && c->hello && !c->kill) out(c->acks, c->token, udpAddress(c->udpIp, c->udpPort));
+        c->acks.clear();
+    }
+}
+
+void NetSession::takeAcks(std::vector<Stream>& v, const uint8_t* p, size_t n) {
+    for (size_t at = 0; at + 8 <= n; at += 8) {
+        uint32_t netId, sq;
+        std::memcpy(&netId, p + at, 4);
+        std::memcpy(&sq, p + at + 4, 4);
+        for (Stream& st : v)
+            if (st.netId == netId) {
+                bool known = false;
+                for (const Stream::Sent& x : st.sent) known |= x.seq == sq;
+                if (known && (!st.acked || (int32_t)(sq - st.acked) > 0)) st.acked = sq;  // (only one we sent, and newer)
+            }
     }
 }
 
@@ -1573,7 +1788,7 @@ void NetSession::onDatagram(Sim& sim, const uint8_t* buf, size_t n, uint32_t ip,
     const uint32_t netId = h.get<uint32_t>(), sq = h.get<uint32_t>();
     const uint8_t frag = h.get<uint8_t>(), frags = h.get<uint8_t>();
     const uint64_t token = h.get<uint64_t>();
-    if (type != DG_SNAP && type != DG_HELLO) return;
+    if (type != DG_SNAP && type != DG_HELLO && type != DG_ACK) return;
     const size_t size = n - kDgramHeader;
     // A state's piece: a real size, in a real place, from the player the vehicle belongs to.
     auto piece = [&] {
@@ -1594,23 +1809,23 @@ void NetSession::onDatagram(Sim& sim, const uint8_t* buf, size_t n, uint32_t ip,
         }
         const double t = clockNow();
         if (!guest->udpKnown || !guest->dgrams.take(t, 1, 300, 600) || !guest->dgramBytes.take(t, (double)n, 600000, 1200000)) return;
+        if (type == DG_ACK) {
+            if (size % 8 == 0) takeAcks(guest->streams, buf + kDgramHeader, size);
+            return;
+        }
         if (!piece()) return;
         const int ci = findCar(sim, netId);
         if (!adopted || ci < 0 || !sim.cars[ci].remote) return;
-        for (Conn* c : conns)  // pass it on to everyone else, in their own envelope
-            if (c->udpKnown && c->hello && !c->kill && c->peer != peer) {
-                uint8_t out[2048];
-                std::memcpy(out, buf, n);
-                std::memcpy(out + kTokenAt, &c->token, sizeof c->token);
-                const sockaddr_in to = udpAddress(c->udpIp, c->udpPort);
-                sendto(udpFd, (const char*)out, (int)n, 0, (const sockaddr*)&to, sizeof to);
-            }
-        takeFragment(sim, netId, sq, frag, frags, buf + kDgramHeader, size, now);
+        takeFragment(sim, netId, sq, frag, frags, buf + kDgramHeader, size, now);  // (whole, it goes on to the others it matters to: takeSnapshot)
         return;
     }
     if (role != CLIENT || token != udpToken || !udpToken) return;
     if (type == DG_HELLO) {  // the host heard us
         udpReady = true;
+        return;
+    }
+    if (type == DG_ACK) {
+        if (size % 8 == 0) takeAcks(upStreams, buf + kDgramHeader, size);
         return;
     }
     if (!piece() || peer == self) return;
@@ -1643,12 +1858,12 @@ void NetSession::takeFragment(Sim& sim, uint32_t netId, uint32_t sequence, uint8
     slot->got[fragment] = 1;
     if (fragment + 1 == fragments) slot->data.resize((size_t)fragment * kChunk + size);
     if (++slot->count == fragments) {
-        takeSnapshot(sim, netId, slot->data, now);
+        takeSnapshot(sim, netId, slot->data, now, sequence);
         slot->active = false;
     }
 }
 
-void NetSession::takeSnapshot(Sim& sim, uint32_t netId, const std::vector<uint8_t>& data, double now) {
+void NetSession::takeSnapshot(Sim& sim, uint32_t netId, const std::vector<uint8_t>& data, double now, uint32_t sequence) {
     // A whole state: decode it. Also exercised without sockets by the regression tests.
     const int ci = findCar(sim, netId);
     if (ci < 0 || !sim.cars[ci].remote) return;
@@ -1657,39 +1872,59 @@ void NetSession::takeSnapshot(Sim& sim, uint32_t netId, const std::vector<uint8_
     Reader r{data.data(), data.size()};
     Snap s;
     s.t = r.get<double>();
-    const uint32_t build = r.get<uint32_t>();
-    if (build != (uint32_t)car.buildCount) return;
-    s.com = r.v3();
-    s.rot.w = r.get<float>(), s.rot.x = r.get<float>(), s.rot.y = r.get<float>(), s.rot.z = r.get<float>();
-    s.vel = r.v3();
-    s.steer = r.get<float>();
+    s.build = r.get<uint32_t>();
+    if (s.build != (uint32_t)car.buildCount) return;
+    const uint32_t baseSeq = r.get<uint32_t>();
+    const std::vector<int16_t>* base = nullptr;
+    if (baseSeq) {
+        for (const auto& g : rm->got)
+            if (g.first == baseSeq) base = &g.second;
+        if (!base) return;  // (told against one we never had: the sender hears what we do have)
+    }
+    for (double* v : {&s.com.x, &s.com.y, &s.com.z}) *v = r.get<int32_t>() / kPosScale;
+    s.rot = getRot(r);
+    for (double* v : {&s.vel.x, &s.vel.y, &s.vel.z}) *v = r.get<int16_t>() / kVelScale;
+    s.steer = r.get<int16_t>() / 16000.0f;
     s.brake = r.get<uint8_t>() / 255.0f;
-    s.damage = r.get<float>();
+    s.damage = r.get<uint16_t>() / 65535.0f;
     s.status = r.get<uint8_t>() & 3;
-    s.rpm = r.get<float>();
-    s.load = r.get<float>();
-    s.boost = r.get<float>();
+    s.rpm = r.get<uint16_t>() / 3.0f;
+    s.load = r.get<uint16_t>() / 65535.0f;
+    s.boost = r.get<uint16_t>() / 6000.0f;
     s.gear = r.get<int8_t>();
     const int nw = r.get<uint8_t>();
     if (nw != (int)car.wheels.size()) return;  // a rebuilt spec on the way
     for (int k = 0; k < nw; k++) {
         s.wheelAngle.push_back(r.get<float>());
-        s.wheelOmega.push_back(r.get<float>());
+        s.wheelOmega.push_back(r.get<int16_t>() / 10.0f);
         s.wheelFlags.push_back(r.get<uint8_t>());
     }
     const int nn = r.get<uint16_t>();
-    if (nn != (int)car.nodes.size()) return;
-    s.local.resize(nn);
-    for (int k = 0; k < nn; k++) {
-        const double x = r.get<int16_t>() * 0.001, y = r.get<int16_t>() * 0.001, z = r.get<int16_t>() * 0.001;
-        s.local[k] = V3(x, y, z);
+    if (nn != (int)car.nodes.size() || (base && base->size() != (size_t)nn * 3)) return;
+    s.q.resize((size_t)nn * 3);
+    if (base) {
+        const size_t mask = r.at;
+        r.at += (nn + 7) / 8;
+        if (r.at > r.n) return;
+        for (int i = 0; i < nn && r.ok; i++)
+            for (int k = 0; k < 3; k++) {
+                int v = (*base)[i * 3 + k];
+                if (data[mask + i / 8] & (1 << (i % 8))) v += getVar(r);
+                if (v < -32768 || v > 32767) return;
+                s.q[i * 3 + k] = (int16_t)v;
+            }
+    } else {
+        for (int16_t& v : s.q) v = r.get<int16_t>();
     }
+    s.local.resize(nn);
+    for (int k = 0; k < nn; k++) s.local[k] = V3(s.q[k * 3], s.q[k * 3 + 1], s.q[k * 3 + 2]) * 0.001;
     const int nr = r.get<uint8_t>();
     if (nr > 8) return;
     for (int k = 0; k < nr; k++) {
         const uint32_t id = r.get<uint32_t>();
         s.ropeLen.push_back({id, r.get<float>()});
     }
+    if (r.at != r.n) r.ok = false;  // (nothing after it either)
     // Every number is finite and plausible (a NaN or a million kilometers would wreck the physics
     // of whoever's near it); anything else and the whole state is thrown away.
     bool sane = r.ok && okNum(s.t, 1e8) && okPos(s.com) && okNum(s.vel.x, 1000) && okNum(s.vel.y, 1000) && okNum(s.vel.z, 1000) &&
@@ -1728,6 +1963,15 @@ void NetSession::takeSnapshot(Sim& sim, uint32_t netId, const std::vector<uint8_
     }
     rm->newestT = s.t;
     rm->newestArrival = shared;
+    if (sequence) {  // (the next can be told against this one: say we have it)
+        rm->got.push_back({sequence, s.q});
+        while (rm->got.size() > (size_t)net::kStreamKeep + 8) rm->got.pop_front();
+        if (role == CLIENT) upAcks.push_back({netId, sequence});
+        else
+            for (Conn* c : conns)
+                if (c->peer == ownerOf(netId) && c->hello && c->acks.size() < 256) c->acks.push_back({netId, sequence});
+    }
+    if (role == HOST && ownerOf(netId) != self) relayState(sim, netId, s);  // (on to the other guests, each told against what they have)
     rm->buf.push_back(std::move(s));
     while (rm->buf.size() > 30) rm->buf.pop_front();
 }
@@ -1893,6 +2137,7 @@ void NetSession::receive(Sim& sim, double now) {
     if (role == CLIENT) runDay();
     if (adopted) applyRemotes(sim, now);
     release(&sim);
+    sendAcks();
 }
 
 void NetSession::sendClock(Conn* to) {
@@ -1911,6 +2156,7 @@ void NetSession::runDay() {
     if (dayBase < 0 || !clock.synced) return;
     dayHours = std::fmod(dayBase + dayRate * (sharedTime(curNow) - dayStamp), 24.0);
     if (dayHours < 0) dayHours += 24.0;
+    if (!(dayHours >= 0 && dayHours < 24)) dayHours = 0;  // (-1e-17 + 24 is 24)
 }
 
 double NetSession::sharedTime(double now) const {
@@ -2016,6 +2262,12 @@ void NetSession::send(Sim& sim, double now) {
     // On the beat, not a frame late each time (20 a second at any frame rate, not 15 at 60 fps).
     lastSend = lastSend < 0 || now - lastSend > 2 * interval ? now : lastSend + interval;
     if (role == CLIENT && (!udpReady || !clock.synced)) return;  // (a state stamped by a clock we don't know yet would be wrong)
+    // (Streams of vehicles that have gone go too.)
+    auto prune = [&](std::vector<Stream>& v) {
+        v.erase(std::remove_if(v.begin(), v.end(), [&](const Stream& st) { return findCar(sim, st.netId) < 0; }), v.end());
+    };
+    prune(upStreams);
+    for (Conn* cn : conns) prune(cn->streams);
     for (const Car& c : sim.cars)
         if (!c.remote && (!c.sleeping || slowTick)) sendSnapshot(sim, c, now);
 }
@@ -2052,8 +2304,13 @@ void NetSession::sendGame(const std::string& text) {
     w.put<uint8_t>((uint8_t)std::max(0, self));
     w.str(text);
     w.put<double>(sharedTime(curNow));
-    if (role == HOST) broadcast(frame(MSG_GAME, w));
-    else if (!conns.empty()) sendTo(*conns[0], frame(MSG_GAME, w));
+    if (role == HOST) {
+        const auto m = frame(MSG_GAME, w);
+        for (Conn* c : conns)
+            if (c->hello && !c->kill && worthTelling(*c, 0, text)) sendTo(*c, m);
+    } else if (!conns.empty()) {
+        sendTo(*conns[0], frame(MSG_GAME, w));
+    }
 }
 
 // ---- Finding games on the local network -------------------------------------------------

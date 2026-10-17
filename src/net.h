@@ -38,6 +38,8 @@ constexpr double kSendRate = 20;      // vehicle states per second
 constexpr double kPlaybackDelay = 0.1; // s: the least the others are shown behind the shared clock (two states)
 constexpr double kMaxDelay = 1.0;      // s: and the most, however bad the line
 constexpr double kMaxCoast = 0.25;     // s: a vehicle whose states stop coming coasts this long, then holds
+constexpr int kDentStep = 2;           // mm: a dent that moved less than this since the receiver's state isn't sent again
+constexpr int kStreamKeep = 32;        // states a sender remembers per receiver (1.6 s): an answer older than that gets a whole one
 
 // What a host puts up with (docs/server-security.md): connections, silence, size.
 constexpr int kMaxConns = 24;          // TCP connections held at once, in the session or not
@@ -254,6 +256,19 @@ public:
     static int ownerOf(uint32_t netId) { return (int)(netId >> 16); }
 
 private:
+    // One vehicle's states to one receiver: what was sent lately (the dents as the receiver
+    // will have them), so the next can say only what changed since the newest it has heard.
+    struct Stream {
+        uint32_t netId = 0;
+        struct Sent {
+            uint32_t seq;
+            std::vector<int16_t> q;
+        };
+        std::deque<Sent> sent;
+        uint32_t acked = 0;     // the newest the receiver says it has (0: none)
+        double lastStamp = -1;  // (shared clock) of the last one sent: far vehicles go less often
+    };
+    static Stream& streamFor(std::vector<Stream>& v, uint32_t netId);
     // One TCP connection: the host's, from a client; or, on a client, to the host.
     struct Conn {
         int fd = -1;
@@ -271,6 +286,9 @@ private:
         double born = 0, lastRx = 0;
         net::Bucket msgs, bytes, spawns, ropes, games, dgrams, dgramBytes;
         std::vector<uint8_t> in, out;
+        std::vector<Stream> streams;  // host: every vehicle's states to this guest
+        double walkSent[net::kMaxPeers] = {};  // host: when each player on foot was last told to it (0: never)
+        std::vector<std::pair<uint32_t, uint32_t>> acks;  // host: states of this guest's vehicles to say we have (id, seq)
         uint32_t udpIp = 0;       // host: its UDP address, once it has said hello there
         uint16_t udpPort = 0;
         bool udpKnown = false;
@@ -278,6 +296,7 @@ private:
     };
     friend struct NetSessionTest;     // Socket-free wire/playback regression tests.
     friend struct NetSessionSecTest;  // And the hostile-input ones.
+    friend struct NetSessionTimeTest;  // And the clock, timeline and delta ones (simulated latency and loss).
     struct Snap;
     struct Remote;
     net::ClockSync clock;       // client: the host's clock
@@ -354,8 +373,25 @@ private:
     void note(const std::string& what);
     Conn* fakeConn(int peer, bool hello);  // (tests: a guest without a socket)
     void sendSnapshot(Sim& sim, const Car& c, double now);
-    std::vector<uint8_t> snapshotMsg(const Sim& sim, const Car& c, double now) const;
-    void takeSnapshot(Sim& sim, uint32_t netId, const std::vector<uint8_t>& data, double now);
+    Snap makeSnap(const Sim& sim, const Car& c, double now) const;
+    // A state on the wire: whole, or (with `base`, a state the receiver has) only the dents
+    // that moved more than net::kDentStep from it. `sentQ`: the dents as the receiver will have them.
+    static std::vector<uint8_t> encodeState(const Snap& s, const Stream::Sent* base, std::vector<int16_t>& sentQ);
+    std::vector<uint8_t> snapshotMsg(const Sim& sim, const Car& c, double now) const;  // (whole: tests)
+    void sendState(Conn* to, Stream& st, const Snap& s, uint32_t netId);  // to a guest, or (null) to the host
+    std::vector<uint8_t> nextState(Stream& st, const Snap& s);  // (the next one on that stream, numbered `seq`)
+    std::vector<uint8_t> nextStateOf(Stream& st, const Sim& sim, const Car& c, double now);  // (tests: the same for one of my vehicles)
+    std::vector<int16_t> dentsOf(const Sim& sim, const Car& c) const;
+    const std::vector<int16_t>* lastTaken(uint32_t& sequence) const;  // (tests: the dents of the newest state taken, and its number)
+    bool worthTelling(Conn& to, int fromPeer, const std::string& text);
+    void sendDatagrams(Conn* to, uint32_t netId, const std::vector<uint8_t>& data);
+    void relayState(Sim& sim, uint32_t netId, const Snap& s);  // host: a guest's state, on to the others it matters to
+    double relevantEvery(const Sim& sim, const Conn& to, const V3& at) const;  // host: how often a vehicle there is worth telling `to` about
+    std::vector<Stream> upStreams;  // client: my vehicles' states to the host
+    std::vector<std::pair<uint32_t, uint32_t>> upAcks;  // client: states the host sent that we have
+    void sendAcks();
+    void takeAcks(std::vector<Stream>& v, const uint8_t* p, size_t n);
+    void takeSnapshot(Sim& sim, uint32_t netId, const std::vector<uint8_t>& data, double now, uint32_t sequence = 0);
     void takeFragment(Sim& sim, uint32_t netId, uint32_t sequence, uint8_t fragment, uint8_t fragments,
                       const uint8_t* data, size_t size, double now);
     void applyRemotes(Sim& sim, double now);
