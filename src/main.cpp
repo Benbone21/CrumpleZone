@@ -50,6 +50,7 @@
 #include "handwork.h"
 #include "lab.h"
 #include "modelkit.h"
+#include "objshape.h"
 #include "render.h"
 #include "perf.h"
 #include "sdl_min.h"
@@ -473,7 +474,13 @@ struct WinchAim {
         if (kind == ROPE_WINCH) {
             for (double d = 0.5; d < recovery::kWinchReach + 20; d += 0.5) {
                 const V3 q = v.eye + dir * d;
-                if (q.y <= sim.world.height(q.x, q.z)) { look = q; hasLook = true; break; }
+                if (q.y <= sim.world.height(q.x, q.z)) {
+                    look = q, hasLook = true;
+                    // (A boulder, log or trunk in the way is what you're looking at, not the ground behind it: no stake or bolt through it.)
+                    objshape::WorldHit solid;
+                    if (objshape::rayWorld(sim.world, v.eye, dir, d, solid)) hasLook = false;
+                    break;
+                }
             }
             targets = sim.winchTargets(sim.player, hasLook ? &look : nullptr);
         } else if (sourceHook < 0) {
@@ -2156,7 +2163,7 @@ int main(int argc, char** argv) {
         if (!trunk::kitInReach(sim, walker.p)) hud.toast("WALK UP TO THE BACK OF YOUR TRUCK AND PRESS E");
         else inv.show(sim.player);
     };
-    // A choice in the menu (a card, PUT BACK, SHUT): the same jobs as taking from the bed.
+    // A choice in the menu (a slot): the same jobs as taking from the bed.
     auto inventoryChoose = [&](int what) {
         bool closed = false;
         const std::string said = inv.choose(interact, sim, walker, TrunkStock{career.kit(), sim.anchorStock}, what, closed);
@@ -2639,16 +2646,14 @@ int main(int argc, char** argv) {
                     }
                     if (inv.open) {  // the inventory takes every key
                         const int k = evKeyScancode(e);  // (the physical key: WASD are held actions in the game's own switch)
-                        if (k == SC_W || k == SC_UP) inv.move(invLay, 0, -1);
-                        else if (k == SC_S || k == SC_DOWN) inv.move(invLay, 0, 1);
-                        else if (k == SC_A || k == SC_LEFT) inv.move(invLay, -1, 0);
-                        else if (k == SC_D || k == SC_RIGHT) inv.move(invLay, 1, 0);
+                        if (k == SC_W || k == SC_UP) inv.move(0, -1);
+                        else if (k == SC_S || k == SC_DOWN) inv.move(0, 1);
+                        else if (k == SC_A || k == SC_LEFT) inv.move(-1, 0);
+                        else if (k == SC_D || k == SC_RIGHT) inv.move(1, 0);
                         else if (evKeyRepeat(e)) {
                         } else if (k == SC_ESCAPE || k == SC_TAB || k == SC_I || k == SC_Q) closeInventory();
                         else if (k == SC_E || k == SC_RETURN || k == SC_KP_ENTER) {
                             if (inv.sel != INV_NONE) inventoryChoose(inv.sel);
-                        } else if (k == SC_C || k == SC_B) {
-                            if (inv.canShut) inventoryChoose(INV_SHUT);
                         }
                         break;
                     }
@@ -3235,7 +3240,7 @@ int main(int argc, char** argv) {
                     }
                 }
             }
-            if (opt.script == "trunk" || opt.script == "inventory") {  // screenshots of the cargo (the gate, what rides in the back, taking things out) and of the inventory menu
+            if (opt.script == "trunk" || opt.script == "inventory") {  // screenshots of the back of your truck (shut, E prompt) and of its inventory menu
                 Car& c = sim.cars[sim.player];
                 const Frame fr = c.frame();
                 const V3 fl = norm(V3(fr.fwd.x, 0, fr.fwd.z));
@@ -3248,14 +3253,9 @@ int main(int argc, char** argv) {
                     const V3 d = norm(at - (walker.p + V3(0, 1.62, 0)));
                     footYaw = std::atan2(-d.z, d.x), footPitch = std::asin(d.y);
                 };
-                auto slotOf = [&](TrunkRef r) {  // which card a thing has in the menu
-                    for (int i = 0; i < (int)inv.slots.size(); i++)
-                        if (inv.slots[i].ref == r) return i;
-                    return -1;
-                };
                 auto envInt = [](const char* name, int def) { return std::getenv(name) ? std::atoi(std::getenv(name)) : def; };
                 scriptE = false;
-                if (opt.script == "inventory") {  // E at the back (CZ_INV_TAKE=card: take it and open it again; CZ_INV_SEL=card: the one chosen; CZ_INV_PAD=1: the pad's hints)
+                {  // E at the back (CZ_INV_TAKE=slot: take it and open it again; CZ_INV_SEL=slot: the one chosen; CZ_INV_PAD=1: the pad's hints)
                     if (frame == 20) c.handbrake = 1, getOut();
                     if (frame == 24) stand(std::getenv("CZ_INV_BEHIND") ? std::atof(std::getenv("CZ_INV_BEHIND")) : 1.9), look(trunk::gateAt(c));
                     if (frame >= 24 && !inv.open && frame < 400) look(trunk::gateAt(c));
@@ -3264,30 +3264,6 @@ int main(int argc, char** argv) {
                     if (frame >= 100 && inv.open && std::getenv("CZ_INV_SEL")) inv.sel = envInt("CZ_INV_SEL", 0);
                     if (frame == 100 && std::getenv("CZ_INV_PAD")) pad::ui.last = true;
                     if (frame == 200 && std::getenv("CZ_INV_CLOSE")) closeInventory();
-                } else {
-                    if (frame == 20) c.handbrake = 1, getOut();
-                    if (frame >= 24 && frame < 140) {  // the closed back, then E at it: the gate swings open and so does the inventory
-                        if (frame == 24) stand(1.9);
-                        if (frame < 100) look(trunk::gateAt(c));
-                        scriptE = frame == 40 && c.gateShut();
-                        if (frame == 100) closeInventory();
-                    } else if (frame >= 140 && frame < 175) {  // the open back, and a step closer to look in
-                        double behind = 1.7, rise = 0, aside = 0;  // (CZ_TRUNKCAM=behind,rise,aside: a look from another spot)
-                        if (const char* e = std::getenv("CZ_TRUNKCAM")) std::sscanf(e, "%lf,%lf,%lf", &behind, &rise, &aside);
-                        if (frame == 140 || rise != 0 || aside != 0) stand(behind), walker.p += V3(-fl.z, 0, fl.x) * aside, walker.p.y += rise;
-                        look(trunk::cargoCenter(c));
-                    } else if (frame >= 175 && frame < 270) {  // the hi-lift jack: chosen in the menu, and it's in your hands
-                        look(trunk::cargoCenter(c));
-                        if (frame == 180) inv.show(sim.player), inv.refresh(sim, interact.own, walker);
-                        if (frame == 185 && inv.open) inventoryChoose(slotOf({TK_JACK, 0}));
-                    } else if (frame >= 270 && frame < 330) {  // ...and back it goes
-                        look(trunk::cargoCenter(c));
-                        if (frame == 275) interact.putBackInBack(sim, walker, sim.player);
-                    } else if (frame >= 330 && frame < 420) {  // a ground stake
-                        look(trunk::cargoCenter(c));
-                        if (frame == 335) inv.show(sim.player), inv.refresh(sim, interact.own, walker);
-                        if (frame == 340 && inv.open) inventoryChoose(slotOf({TK_GEAR, GEAR_STAKE}));
-                    }
                 }
             }
             if (opt.script == "winch" || opt.script == "strap") {  // screenshots of the recovery gear
@@ -3435,7 +3411,7 @@ int main(int argc, char** argv) {
                         interact.trunkOn = !onYou;
                         const bool reach = onYou || trunk::kitInReach(sim, walker.p);
                         interact.kit = onYou ? have : trunk::reachKit(have, reach, hd, walker.holdingJack);
-                        if (inv.open && (inv.car < 0 || inv.car >= (int)sim.cars.size() || !trunk::backOpen(sim.cars[std::max(inv.car, 0)]) || len(walker.p - trunk::gateAt(sim.cars[std::max(inv.car, 0)])) > trunk::kReach)) closeInventory();  // (walked off, or shut it)
+                        if (inv.open && (inv.car < 0 || inv.car >= (int)sim.cars.size() || len(walker.p - trunk::gateAt(sim.cars[std::max(inv.car, 0)])) > trunk::kReach)) closeInventory();  // (walked off)
                         if (padCtx == pad::Mode::Drive && padLogic.in.inventory) toggleInventory();
                     }
                     interact.hover = PartHit();  // the car part under the crosshair (carparts.h), nearest car part wins
@@ -3778,6 +3754,59 @@ int main(int argc, char** argv) {
                 editor.setMouse(W * 0.5f, H * 0.62f);
             }
         }
+        if (editor.active && scripted && opt.script == "editbrush") {
+            // (Screenshots: the brush cursor at one cell and at 30 m, a patterned one, what the pattern brushes leave, and draining water.)
+            EditCore& ed = editor.core;
+            const V3 c(-200, 0, 200);
+            auto cam = [&](double back, double up, double ahead) { editor.setCamera(c + V3(-back, 0, 0) + V3(0, sim.world.height(c.x, c.z) + up, 0), 0, -std::atan2(up, ahead)); };
+            auto find = [&](int surface) {
+                for (int k = 0; k < (int)paintMaterials().size(); k++)
+                    if (paintMaterials()[k].surface == surface) return k;
+                return 0;
+            };
+            if (frame == 2) {
+                editor.setTool(Editor::SCULPT);
+                cam(10, 9, 12);
+                editor.setMouse(W * 0.5f, H * 0.55f);
+                editor.setBrush(SHAPE_ROUND, FALL_SMOOTH, STYLE_SOLID, 0.5);
+            }
+            if (frame == 8) editor.setBrush(SHAPE_ROUND, FALL_SMOOTH, STYLE_SOLID, 3);
+            if (frame == 14) cam(25, 28, 30), editor.setBrush(SHAPE_ROUND, FALL_SMOOTH, STYLE_SOLID, 24);
+            if (frame == 20) editor.setBrush(SHAPE_SQUARE, FALL_HARD, STYLE_SPLATTER, 24, 0.55);
+            if (frame == 26) {  // (what the pattern brushes leave)
+                editor.setTool(Editor::PAINT);
+                cam(30, 32, 34);
+                const double ox[6] = {-30, 0, 30, -30, 0, 30}, oz[6] = {-18, -18, -18, 18, 18, 18};
+                const int mats[6] = {find(SURF_MUD), find(SURF_SAND), find(SURF_GRAVEL), find(SURF_SNOW), find(SURF_ROCK), find(SURF_MUD)};
+                const BrushStyle st[6] = {STYLE_NOISE, STYLE_SPLATTER, STYLE_STRIPES, STYLE_SPECKLE, STYLE_SOLID, STYLE_SPLATTER};
+                const BrushShape sh[6] = {SHAPE_ROUND, SHAPE_ROUND, SHAPE_SQUARE, SHAPE_ROUND, SHAPE_DIAMOND, SHAPE_SQUARE};
+                for (int k = 0; k < 6; k++) {
+                    Brush b;
+                    b.shape = sh[k], b.style = st[k], b.radius = 13, b.density = k == 5 ? 0.35 : 0.55, b.fall = k == 4 ? FALL_HARD : FALL_SMOOTH, b.seed = 5 + k * 3;
+                    b.angle = 0.6;
+                    ed.paint(b, c.x + 30 + ox[k], c.z + oz[k], mats[k]);
+                    if (k == 5) {  // (a second, lighter coat over the splatter: opacity)
+                        b.style = STYLE_SOLID, b.strength = 0.3, b.radius = 8, b.seed = 99, b.fall = FALL_HARD;
+                        ed.paint(b, c.x + 30 + ox[k], c.z + oz[k], find(SURF_ICE));
+                    }
+                }
+                editor.setMaterial(find(SURF_GRAVEL));
+                editor.setBrush(SHAPE_ROUND, FALL_SMOOTH, STYLE_NOISE, 10, 0.5, 0.8);
+                editor.setMouse(W * 0.5f, H * 0.2f);
+            }
+            if (frame == 32) {  // (a pool, half of it drained, and the drain brush up)
+                editor.setTool(Editor::WATER);
+                cam(30, 32, 34);
+                ed.brush(BRUSH_LOWER, c.x + 25, c.z, 14, 2.5);
+                ed.flood(c.x + 25, c.z, 1.2, 40);
+                Brush b;
+                b.radius = 7, b.fall = FALL_HARD, b.style = STYLE_SPLATTER, b.density = 0.6;
+                ed.dryBrush(b, c.x + 25, c.z + 2);
+                editor.setWaterMode(1);
+                editor.setBrush(SHAPE_ROUND, FALL_HARD, STYLE_SPLATTER, 9, 0.6);
+                editor.setMouse(W * 0.5f, H * 0.5f);
+            }
+        }
         if (editor.active && scripted && opt.script == "editdemo" && frame == 5) {
             // (Screenshots: a few edits in front of the camera, through the editor's core.)
             const View v = editor.view(W, H);
@@ -3818,6 +3847,7 @@ int main(int argc, char** argv) {
                 if (std::getenv("CZ_PAL")) editor.setPalette(std::max(0, editor.findPalette(std::getenv("CZ_PAL"))));
                 look(std::getenv("CZ_DIST") ? std::atof(std::getenv("CZ_DIST")) : 26, std::getenv("CZ_HIGH") ? std::atof(std::getenv("CZ_HIGH")) : 14);
                 editor.setMouse(W * 0.5f, H * 0.58f);
+                if (mode == "paint") editor.setTool(Editor::PAINT);
             }
             if (editor.active && frame == 5 && (mode == "xform" || mode == "group" || mode == "playtest" || mode == "back")) {
                 const V3 c = (ed.level.hasStart ? ed.level.start : sim.world.spawn);
@@ -4028,13 +4058,11 @@ int main(int argc, char** argv) {
         if (mk::findModel("jack"))
             for (const Car& c : sim.cars)
                 if (c.jackPlaced && c.jackWheel >= 0 && c.jackWheel < (int)c.wheels.size()) renderer.frameModels.push_back(Interact::jackModel(sim, c, c.jackWheel));
-        // What rides in the back (trunk.h): your load laid out in the cargo area of a truck with its back
-        // open (a pickup's bed always), and a pickup's gate.
-        const TrunkStock ownStock{career.kit(), sim.anchorStock};
+        // A pickup's tailgate (trunk.h): a drawn panel, shut.
         for (int i = 0; i < (int)sim.cars.size(); i++) {
             const Car& c = sim.cars[i];
-            if (c.isProp() || c.nodes.empty() || !c.hasGate() || len(c.nodes[0].p - view.eye) > 30) continue;
-            trunk::models(sim, i, ownStock, walker.active ? walker.hand : TrunkRef(), walker.active && walker.holdingJack, walker.active && walker.holdingChain, renderer.frameModels);
+            if (c.isProp() || c.nodes.empty() || !c.bedGate() || len(c.nodes[0].p - view.eye) > 30) continue;
+            trunk::gateModels(sim, i, renderer.frameModels);
         }
         // What rides in the back of a truck with no cargo area to open: the chains in their bag, the jack (while they're there).
         for (const Car& c : sim.cars) {
@@ -4269,8 +4297,9 @@ int main(int argc, char** argv) {
         }
         if (inv.open && walker.active && !menu.open && !hud.photo) {  // the truck's inventory (over the rest of the HUD)
             const float u = std::max(0.75f, H / 720.0f);
-            invLay = inv.layout(W, H, u);
-            drawInvMenu(renderer, inv, invLay, W, H, pad::ui.last && padDev.connected());
+            const bool padNow = pad::ui.last && padDev.connected();
+            invLay = inv.layout(W, H, u, padNow);
+            drawInvMenu(renderer, inv, invLay, W, H, padNow);
         }
         if (garageUI.open) drawGarage(renderer, garageUI, garage, career, sim.stationAt(sim.cars[sim.player].frame().com), sim, std::max(0.75f, H / 720.0f), W, H);
         menu.draw(renderer, settings, W, H, dt);

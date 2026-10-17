@@ -64,6 +64,12 @@ public:
         key(sc);
         scriptMods = false, shift = ctrl = false;
     }
+    // The brush, set from outside (screenshots, scripts).
+    void setBrush(BrushShape sh, BrushFall fl, BrushStyle st, double r, double dens = 0.5, double str = 1.0) {
+        shape = sh, fall = fl, style = st, radius = r, density = dens, strength = str;
+    }
+    void setMaterial(int m) { material = m; }
+    void setWaterMode(int m) { waterMode = m; }
     // A row of rock slabs along the line a-b (the slab-ledge brush).
     void placeLedge(const V3& a, const V3& b);
     void close() { active = false; }
@@ -92,7 +98,16 @@ private:
     double radius = 8, strength = 0.5, flatY = 0;
     bool flatSet = false;
     int material = 0;
-    bool softPaint = true;
+    // The brush (terrain, paint and drain share it): shape, falloff, pattern, how much of it the pattern covers.
+    BrushShape shape = SHAPE_ROUND;
+    BrushFall fall = FALL_SMOOTH;
+    BrushStyle style = STYLE_SOLID;
+    double density = 0.5;
+    int terraceIdx = 1;            // terrace step: 0.25 / 0.5 / 1 / 2 m
+    int waterMode = 0;             // 0 fill a hollow, 1 drain under the brush, 2 drain a whole pool
+    uint32_t strokeSeed = 1, brushTick = 0;
+    V3 seedAt;                     // where the pattern last got a new seed (paint sprays as you drag)
+    double seedClock = 0, strokeAngle = 0;  // (and when; which way stripes run, fixed for the stroke)
     double floodDepth = 1.0;
     // Objects: the palette entry the next click places (the ghost), as it will be placed (`proto`: turned, tipped, scaled, stretched),
     // or the pointer for selecting, moving and changing what's there. The palette is built on first use (buildPalette).
@@ -160,6 +175,8 @@ private:
     void wheel(int dy);
     void doButton(int id);
     void applyBrush(double dt);
+    Brush curBrush() const;
+    void brushKey(int sc);         // B F N shape, falloff, pattern; - = strength; , . density; wheel + Ctrl size
     void save();
     void openLevel(const Level& lv, bool recovered);
     void settingChange(int row, int dir);

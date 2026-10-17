@@ -393,6 +393,16 @@ double shellArchHeight(const VehicleSpec& vs, double d) {
 
 bool hasBodyShell(const VehicleSpec& vs) { return styleFor(vs) != nullptr; }
 
+bool bedMouth(const VehicleSpec& vs, BedMouth& m) {
+    const Style* style = styleFor(vs);
+    if (!style) return false;
+    const ShellLines L(vs, *style);
+    if (!L.bed) return false;
+    m.x = L.xr, m.floorY = L.bedY, m.railY = L.railY;
+    m.inner = L.halfWidth(L.xr + 0.02) - style->sideBow - L.railW - 0.01;  // (the inside face of the wall, as bedSection draws it)
+    return true;
+}
+
 bool buildBodyShell(const Car& car, VisualTemplate& t) {
     const VehicleSpec& vs = *car.spec;
     const Style* style = styleFor(vs);
@@ -468,6 +478,45 @@ bool buildBodyShell(const Car& car, VisualTemplate& t) {
         std::vector<int> loop;
         for (int j = 0; j < NS; j++) loop.push_back(vid(i, j, 1));
         for (int j = NS - 2; j >= 1; j--) loop.push_back(vid(i, j, -1));
+        if (end < 0 && L.bed) {
+            // A pickup's tail is a U (floor and walls round the open bed): fanned from a centre it
+            // would lay triangles across the bed's mouth, so ear-clip it and leave the bed open.
+            std::vector<int> rest = loop;
+            auto area2 = [&](int a, int b, int c) {  // twice the signed area in the (z, y) plane
+                return (pos[b].z - pos[a].z) * (pos[c].y - pos[a].y) - (pos[c].z - pos[a].z) * (pos[b].y - pos[a].y);
+            };
+            double wind = 0;
+            for (size_t k = 0; k < rest.size(); k++) wind += area2(rest[0], rest[k], rest[(k + 1) % rest.size()]);
+            const double sg = wind < 0 ? -1 : 1;
+            auto inside = [&](int a, int b, int c, int p) {
+                return sg * area2(a, b, p) > 1e-9 && sg * area2(b, c, p) > 1e-9 && sg * area2(c, a, p) > 1e-9;
+            };
+            auto tri = [&](int a, int b, int c) {
+                const V3 nrm = cross(pos[b] - pos[a], pos[c] - pos[a]);
+                if (len(nrm) < 1e-12) return;
+                raw.push_back(nrm.x * end < 0 ? RawFace{{a, c, b, b}, SEG_SIDE, true, end} : RawFace{{a, b, c, c}, SEG_SIDE, true, end});
+            };
+            int guard = 4 * (int)rest.size() * (int)rest.size();
+            for (size_t i = 0; rest.size() > 3 && guard-- > 0; i++) {
+                const size_t n = rest.size(), k = i % n;
+                const int a = rest[(k + n - 1) % n], b = rest[k], c = rest[(k + 1) % n];
+                const double ar = sg * area2(a, b, c);
+                bool ear = ar > 1e-9;
+                for (size_t m = 0; ear && m < n; m++) {
+                    const int p = rest[m];
+                    if (p != a && p != b && p != c && inside(a, b, c, p)) ear = false;
+                }
+                if (ar <= 1e-9 && std::fabs(ar) <= 1e-9) {  // a collinear point: drop it
+                    rest.erase(rest.begin() + k);
+                    continue;
+                }
+                if (!ear) continue;
+                tri(a, b, c);
+                rest.erase(rest.begin() + k);
+            }
+            if (rest.size() == 3) tri(rest[0], rest[1], rest[2]);
+            continue;
+        }
         V3 c;
         for (int v : loop) c += pos[v];
         c = c / (double)loop.size();
@@ -623,6 +672,10 @@ bool buildBodyShell(const Car& car, VisualTemplate& t) {
                           (float)fd.first.x, (float)rd.first.x, (float)liftY,  (float)liftZ,
                           (float)trimY,     (float)L.tuck,    (float)L.xr,     (float)(L.bed ? L.xCab : L.xr + L.rakeR)};  // (a pickup: its cab's back)
     std::copy(sp, sp + 16, t.shellParam);
+    if (L.bed && pLift < 0) {  // (no gate panel: the lamps sit on the walls' ends, outboard of the drawn gate, and the chrome step bumper ends a hand below the floor)
+        BedMouth bm;
+        if (bedMouth(vs, bm)) t.shellParam[10] = (float)(bm.floorY - 0.15), t.shellParam[11] = (float)(bm.inner + 0.01);
+    }
     t.shellParam[16] = (float)fd.second.x;                                  // front door's rear edge (B pillar)
     t.shellParam[17] = (float)(pLift >= 0 ? box[gateName].second.y : L.T);  // gate top
     t.shellParam[18] = (float)bumperTop;

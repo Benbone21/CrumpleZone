@@ -15,7 +15,7 @@ constexpr double kTakeJack = 0.6, kStowJack = 0.6, kPlaceJack = 1.0, kRemoveJack
 constexpr double kJackRate = 0.14;  // m/s the saddle moves while E is held
 constexpr double kTakeChain = 0.6, kFitChain = 3.0, kRemoveChain = 2.0, kStowChain = 0.6;
 constexpr double kOpenCache = 1.5;  // prise the lid off a supply cache
-constexpr double kOpenGate = 0.5, kTakeItem = 0.5, kStowItem = 0.5;  // the back, and things in and out of it
+constexpr double kTakeItem = 0.5, kStowItem = 0.5;  // the back, and things in and out of it
 constexpr double kReach = 2.5;           // m from your chest
 constexpr double kCone = 35 * M_PI / 180;  // off your line of sight
 
@@ -179,24 +179,11 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
         }
         // The back (trunk.h): E at it opens the inventory (invmenu.h), where you take what you need and put it back.
         if (trunkCar && !wk.carrying.has_value()) {
-            const bool moving = len(c.frame().vel) > 0.5;
             InteractOption g;
             g.car = ci, g.at = trunk::gateAt(c), g.kind = IA_OPEN_INVENTORY;
             const bool held = wk.hand.any() || wk.holdingJack || wk.holdingChain;
-            if (!c.hasGate()) {
-                g.prompt = held ? "TRUNK: PUT THE " + (wk.holdingJack ? std::string("JACK") : wk.holdingChain ? std::string("SNOW CHAIN") : trunk::name(wk.hand)) + " BACK" : "OPEN THE TRUNK";
-            } else if (c.gate.dir == 0) {
-                const std::string gate = trunk::gateName(c);
-                if (c.gateShut()) {
-                    g.prompt = "OPEN THE " + gate;
-                    if (moving) g.blocked = true, g.prompt += ": STOP THE TRUCK FIRST";
-                } else {
-                    g.prompt = held ? gate + ": PUT THE " + (wk.holdingJack ? std::string("JACK") : wk.holdingChain ? std::string("SNOW CHAIN") : trunk::name(wk.hand)) + " BACK" : gate + ": INVENTORY";
-                }
-            } else {
-                g.kind = IA_NONE;  // (swinging)
-            }
-            if (g.kind != IA_NONE) consider(g, 3.2);
+            g.prompt = held ? "INVENTORY: PUT THE " + (wk.holdingJack ? std::string("JACK") : wk.holdingChain ? std::string("SNOW CHAIN") : trunk::name(wk.hand)) + " BACK" : "INVENTORY";
+            consider(g, 3.2);
         }
         // Wheels off and on (a lug wrench, the corner up off the ground).
         if (c.spec->wheelLoss)
@@ -380,19 +367,7 @@ std::string Interact::perform(Sim& sim, Walker& wk, const InteractOption& o) {
             wk.holdingJack = true;
             return "GOT THE JACK";
         }
-        case IA_OPEN_GATE:
-        case IA_CLOSE_GATE: {
-            Car& c = sim.cars[o.car];
-            if (len(c.frame().vel) > 0.5) return "STOP THE TRUCK FIRST";
-            c.setGate(o.kind == IA_OPEN_GATE);
-            return std::string(trunk::gateName(c)) + (o.kind == IA_OPEN_GATE ? " OPEN" : " SHUT");
-        }
         case IA_OPEN_INVENTORY: {
-            Car& c = sim.cars[o.car];
-            if (c.hasGate() && c.gateShut()) {
-                if (len(c.frame().vel) > 0.5) return "STOP THE TRUCK FIRST";
-                c.setGate(true);
-            }
             openedInventory = o.car;
             waitRelease = true;  // (E is let go before it does anything else)
             return "";
@@ -450,7 +425,6 @@ std::string Interact::putBackInBack(Sim& sim, Walker& wk, int car) {
 std::string Interact::takeFromBack(Sim& sim, Walker& wk, int car, const TrunkStock& stock, TrunkRef ref) {
     if (car < 0 || car >= (int)sim.cars.size() || wk.carrying.has_value()) return "";
     const Car& c = sim.cars[car];
-    if (!trunk::backOpen(c)) return "OPEN THE BACK FIRST";
     const bool inHand = (ref.kind == TK_JACK && wk.holdingJack) || (ref.kind == TK_CHAINS && wk.holdingChain) || (ref.any() && wk.hand == ref);
     if (inHand) return putBackInBack(sim, wk, car);  // (the one you hold: back it goes)
     const bool holding = wk.hand.any() || wk.holdingJack || wk.holdingChain;

@@ -17,7 +17,38 @@
 #include "level.h"
 #include "sections.h"
 
-enum BrushOp { BRUSH_RAISE, BRUSH_LOWER, BRUSH_SMOOTH, BRUSH_FLATTEN };
+enum BrushOp { BRUSH_RAISE, BRUSH_LOWER, BRUSH_SMOOTH, BRUSH_FLATTEN, BRUSH_ROUGHEN, BRUSH_TERRACE, BRUSH_OP_COUNT };
+
+// ---- The brush: one mask for every tool ----------------------------------------------------
+// Terrain, surface paint, colour paint and the water drain all ask brushMask() how much of the brush
+// reaches a cell. It is deterministic (the same brush and cell always give the same answer: the
+// patterns hang on the world, not the cursor), so undo, redo and level files stay consistent.
+enum BrushShape { SHAPE_ROUND, SHAPE_SQUARE, SHAPE_DIAMOND, SHAPE_COUNT };
+enum BrushFall { FALL_HARD, FALL_SMOOTH, FALL_LINEAR, FALL_COUNT };
+enum BrushStyle { STYLE_SOLID, STYLE_SPLATTER, STYLE_SPECKLE, STYLE_NOISE, STYLE_STRIPES, STYLE_COUNT };
+const char* brushShapeName(int shape);
+const char* brushFallName(int fall);
+const char* brushStyleName(int style);
+
+struct Brush {
+    BrushShape shape = SHAPE_ROUND;
+    BrushFall fall = FALL_SMOOTH;
+    BrushStyle style = STYLE_SOLID;
+    double radius = 8;      // m (round: radius; square: half side; diamond: tip). 0.5 is one grid cell.
+    double strength = 1;    // 0..1: paint's opacity (terrain takes its rate from the caller's `amount`)
+    double density = 0.5;   // 0..1: how much of the brush the pattern covers (splatter, speckle, noise, stripes)
+    double angle = 0;       // radians: which way the stripes run
+    uint32_t seed = 1;      // changes the pattern (new dabs, new mottling)
+};
+constexpr double kBrushMin = 0.5, kBrushMax = 100;
+// The next size up (dir +1) or down (-1) from `r` in the brush size ladder (about x1.4 a step, from
+// one cell to 100 m).
+double brushStep(double r, int dir);
+// How much of the brush (0..1) reaches the point (x, z) when it is centered on (cx, cz). Cells sit
+// on whole meters; under 1 m radius the center snaps to the nearest cell so the brush is that one cell.
+double brushMask(const Brush& b, double cx, double cz, double x, double z);
+// Coherent noise, 0..1, for patterns (value noise, `scale` m between lattice points).
+double brushNoise(double x, double z, double scale, uint32_t seed);
 
 // A paint material: how it drives (surface) and how it looks (paint), and a swatch color
 // for the editor's UI.
@@ -91,7 +122,10 @@ public:
 
     // Terrain brush at (cx, cz), radius r (m). RAISE/LOWER: `amount` meters at the center;
     // SMOOTH/FLATTEN: the share (0..1) of the way to go this time; FLATTEN goes to `target`.
+    // ROUGHEN: bumps up to `amount` m of noise per pass; TERRACE: steps `target` m high (share `amount`).
     void brush(BrushOp op, double cx, double cz, double r, double amount, double target = 0);
+    // The same with a full brush (shape, falloff, splatter...) centered on (cx, cz).
+    void brush(BrushOp op, const Brush& b, double cx, double cz, double amount, double target = 0);
     // A straight ramp of ground from a to b (their heights: a.y, b.y), `width` across, with
     // shoulders blending into the land around it.
     void ramp(const V3& a, const V3& b, double width);
@@ -100,11 +134,20 @@ public:
     void levelPad(const V3& c, double yaw, double hl, double hw, double y, double margin);
     // Paints a material (index into paintMaterials) within r; soft edges dither.
     void paint(double cx, double cz, double r, int material, bool soft);
+    // Paints with a full brush: a cell takes the material when the brush's mask (times its opacity)
+    // beats that cell's dither, so soft edges and light strokes speckle and fill in as you go over them.
+    void paint(const Brush& b, double cx, double cz, int material);
     // Fills the hollow at (cx, cz) with water to `depth` above the ground there (or above the
     // water already there), spreading over lower ground no further than maxR. Returns how many
     // cells it wet; spilled is set if it ran up to maxR (it would have kept going).
     int flood(double cx, double cz, double depth, double maxR, bool* spilled = nullptr);
     void dry(double cx, double cz, double r);   // takes water away within r
+    // Takes water away where the brush reaches (mask of one half or more: clean edges, no ragged
+    // fringe). Returns how many cells it dried.
+    int dryBrush(const Brush& b, double cx, double cz);
+    // Drains the whole body of water at (cx, cz) (or within 3 m of it): every connected wet cell,
+    // shallow edges and any left under raised ground included. Returns how many cells it dried.
+    int drain(double cx, double cz);
 
     // Objects. add returns its index in level.objects.
     int addObject(const LevelObject& o);

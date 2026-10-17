@@ -224,6 +224,9 @@ P pickedParams(const ModelDef& def, int variant);
 const Mesh& modelMesh(const std::string& id);
 Mesh modelMesh(const std::string& id, const std::vector<std::pair<std::string, double>>& over);
 void forgetMeshes();  // after picks change
+// A path for the next build on this thread to follow (a chain sling or strap round a boulder's cross-section), in
+// the model's own frame: x out of the thing it's tied to, z across, y 0. Empty (the default): the model's own shape.
+std::vector<V3>& pathHint();
 uint64_t picksVersion();  // goes up whenever the picks (or the meshes built from them) change
 
 }  // namespace mk

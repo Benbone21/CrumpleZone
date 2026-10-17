@@ -6,6 +6,7 @@
 #include <deque>
 
 #include "modelkit.h"
+#include "objshape.h"
 #include "platform.h"
 #include "props.h"
 #include "sectionfile.h"
@@ -49,17 +50,6 @@ namespace {
 
 const double kMinHeight = -60, kMaxHeight = 500;
 
-uint32_t hashCell(int id) {
-    uint32_t h = (uint32_t)id * 2654435761u;
-    h ^= h >> 15;
-    h *= 0x2c1b3c6du;
-    h ^= h >> 12;
-    return h;
-}
-
-// Smooth brush falloff: 1 at the center, 0 at the rim.
-double falloff(double d, double r) { return d >= r ? 0.0 : 0.5 * (1 + std::cos(M_PI * d / r)); }
-
 // Closest approach of the ray o + t d (t >= 0, |d| = 1) to the segment a-b: the distance, and t.
 double raySegment(const V3& o, const V3& d, const V3& a, const V3& b, double& t) {
     const V3 u = b - a, w = o - a;
@@ -83,44 +73,7 @@ bool raySphere(const V3& o, const V3& d, const V3& c, double r, double& t) {
     return true;
 }
 
-bool rayBox(const V3& o, const V3& d, const Box& b, double& t) {
-    double t0 = 0, t1 = 1e18;
-    const V3 p = b.c - o;
-    const double h[3] = {b.h.x, b.h.y, b.h.z};
-    for (int k = 0; k < 3; k++) {
-        const double e = dot(b.ax[k], p), f = dot(b.ax[k], d);
-        if (std::fabs(f) > 1e-12) {
-            double a = (e + h[k]) / f, c = (e - h[k]) / f;
-            if (a > c) std::swap(a, c);
-            t0 = std::max(t0, a), t1 = std::min(t1, c);
-            if (t0 > t1) return false;
-        } else if (-e - h[k] > 0 || -e + h[k] < 0) {
-            return false;
-        }
-    }
-    t = t0;
-    return true;
-}
-
 // ---- Exact ray tests (what a click can land on is the object itself, not a sphere round it) ----
-
-// The ray against a rock's convex hull (its outward face planes): the slab test over every face.
-bool rayHull(const V3& o, const V3& d, const Rock& r, double& t) {
-    double t0 = 0, t1 = 1e18;
-    for (size_t i = 0; i < r.fn.size(); i++) {
-        const double den = dot(r.fn[i], d), num = r.fd[i] - dot(r.fn[i], o);
-        if (std::fabs(den) < 1e-12) {
-            if (num < 0) return false;
-        } else if (den < 0) {
-            t0 = std::max(t0, num / den);
-        } else {
-            t1 = std::min(t1, num / den);
-        }
-        if (t0 > t1) return false;
-    }
-    t = t0;
-    return true;
-}
 
 // The ray against an upright cone (axis through x0, z0; circular section R at y0 narrowing to nothing at y1). The distance from the axis
 // less the section's radius is convex along the ray, so its dip below zero is found by ternary search.
@@ -242,6 +195,122 @@ bool sameObjects(const Level& a, const Level& b) {
 }
 
 }  // namespace
+
+// ---- The brush mask -----------------------------------------------------------------------
+
+const char* brushShapeName(int s) {
+    static const char* n[SHAPE_COUNT] = {"ROUND", "SQUARE", "DIAMOND"};
+    return n[std::min(std::max(s, 0), (int)SHAPE_COUNT - 1)];
+}
+const char* brushFallName(int f) {
+    static const char* n[FALL_COUNT] = {"HARD", "SMOOTH", "LINEAR"};
+    return n[std::min(std::max(f, 0), (int)FALL_COUNT - 1)];
+}
+const char* brushStyleName(int s) {
+    static const char* n[STYLE_COUNT] = {"SOLID", "SPLATTER", "SPECKLE", "NOISE", "STRIPES"};
+    return n[std::min(std::max(s, 0), (int)STYLE_COUNT - 1)];
+}
+
+double brushStep(double r, int dir) {
+    static const double ladder[] = {0.5, 1, 1.5, 2, 3, 4, 6, 8, 11, 16, 22, 32, 45, 64, 80, 100};
+    const int n = (int)(sizeof ladder / sizeof ladder[0]);
+    int at = 0;
+    for (int k = 1; k < n; k++)
+        if (std::fabs(std::log(ladder[k] / r)) < std::fabs(std::log(ladder[at] / r))) at = k;
+    return ladder[std::min(std::max(at + dir, 0), n - 1)];
+}
+
+namespace {
+
+// A hash of a lattice point and a seed, 0..1.
+double hash01(int ix, int iz, uint32_t seed) {
+    uint32_t h = (uint32_t)ix * 374761393u + (uint32_t)iz * 668265263u + seed * 2246822519u;
+    h = (h ^ (h >> 13)) * 1274126177u;
+    h ^= h >> 16;
+    h *= 0x85ebca6bu;
+    h ^= h >> 13;
+    return (h & 0xffffff) / 16777216.0;
+}
+
+double valueNoise(double x, double z, uint32_t seed) {
+    const double fx = std::floor(x), fz = std::floor(z);
+    const int ix = (int)fx, iz = (int)fz;
+    const double tx = x - fx, tz = z - fz, sx = tx * tx * (3 - 2 * tx), sz = tz * tz * (3 - 2 * tz);
+    const double a = hash01(ix, iz, seed), b = hash01(ix + 1, iz, seed), c = hash01(ix, iz + 1, seed), d = hash01(ix + 1, iz + 1, seed);
+    return (a + (b - a) * sx) + ((c + (d - c) * sx) - (a + (b - a) * sx)) * sz;
+}
+
+// How far (0 at the center, 1 at the rim) a point is from the center, in the brush's shape.
+double shapeDist(BrushShape s, double dx, double dz, double r) {
+    switch (s) {
+        case SHAPE_SQUARE: return std::max(std::fabs(dx), std::fabs(dz)) / r;
+        case SHAPE_DIAMOND: return (std::fabs(dx) + std::fabs(dz)) / r;
+        default: return std::hypot(dx, dz) / r;
+    }
+}
+
+double fallOf(BrushFall f, double q) {  // q: 0..1 from the center
+    switch (f) {
+        case FALL_HARD: return 1.0;
+        case FALL_LINEAR: return 1.0 - q;
+        default: return 0.5 * (1 + std::cos(M_PI * q));
+    }
+}
+
+}  // namespace
+
+double brushNoise(double x, double z, double scale, uint32_t seed) {
+    return 0.65 * valueNoise(x / scale, z / scale, seed) + 0.35 * valueNoise(x / scale * 2.3 + 19.7, z / scale * 2.3 - 7.1, seed + 101);
+}
+
+double brushMask(const Brush& b, double cx, double cz, double x, double z) {
+    const double R = std::max(b.radius, 0.5);
+    if (R < 1.0) cx = std::round(cx), cz = std::round(cz);  // (one cell: the one the cursor is over)
+    const double dx = x - cx, dz = z - cz;
+    // Distance as a share of the rim; the falloff reaches zero half a cell past it so the rim cells still count.
+    const double edge = shapeDist(b.shape, dx, dz, R);
+    if (edge > 1.0 + 1e-9) return 0;
+    const double q = R < 1.0 ? 0 : shapeDist(b.shape, dx, dz, R + 0.5);
+    const double fall = fallOf(b.fall, std::min(q, 1.0));
+    if (fall <= 0) return 0;
+    const double dens = clampd(b.density, 0, 1);
+    switch (b.style) {
+        case STYLE_SOLID: return fall;
+        case STYLE_SPECKLE: return hash01((int)std::lround(x), (int)std::lround(z), b.seed) < dens * (0.3 + 0.7 * fall) ? fall : 0;
+        case STYLE_NOISE: {
+            // Mottled blotches, a few meters across (bigger on bigger brushes).
+            const double n = brushNoise(x, z, clampd(R * 0.3, 1.5, 9), b.seed);
+            const double t = 0.5 + (0.5 - dens) * 0.42;
+            return fall * smoothstep(t - 0.06, t + 0.06, n);
+        }
+        case STYLE_STRIPES: {
+            const double period = clampd(R * 0.35, 2.0, 10.0);
+            double u = (x * std::cos(b.angle) + z * std::sin(b.angle)) / period;
+            u -= std::floor(u);
+            if (u >= dens) return 0;
+            const double soft = std::min(0.15, dens / 2);
+            return fall * smoothstep(0, soft, u) * (1 - smoothstep(dens - soft, dens, u));
+        }
+        case STYLE_SPLATTER: {
+            // Round dabs scattered over a jittered lattice; farther from the middle, fewer of them.
+            const double dab = clampd(R * 0.2, 0.8, 8), sp = dab * 1.3;
+            const int gx = (int)std::floor(x / sp), gz = (int)std::floor(z / sp);
+            double best = 0;
+            for (int a = -1; a <= 1; a++)
+                for (int c = -1; c <= 1; c++) {
+                    const int lx = gx + a, lz = gz + c;
+                    const double px = (lx + 0.15 + 0.7 * hash01(lx, lz, b.seed)) * sp, pz = (lz + 0.15 + 0.7 * hash01(lx, lz, b.seed + 1)) * sp;
+                    const double cq = std::min(1.0, shapeDist(b.shape, px - cx, pz - cz, R + 0.5));
+                    if (hash01(lx, lz, b.seed + 2) >= dens * (0.35 + 0.65 * fallOf(b.fall == FALL_HARD ? FALL_LINEAR : b.fall, cq))) continue;
+                    const double rad = dab * (0.55 + 0.5 * hash01(lx, lz, b.seed + 3)) * (0.7 + 0.5 * dens);
+                    const double d = std::hypot(x - px, z - pz);
+                    if (d < rad) best = std::max(best, 1 - smoothstep(0.65, 1.0, d / rad));
+                }
+            return best;
+        }
+        default: return fall;
+    }
+}
 
 // ---- Starting --------------------------------------------------------------------------
 
@@ -527,11 +596,19 @@ void EditCore::touchWater(int id, float lvl) {
 // ---- Terrain ---------------------------------------------------------------------------
 
 void EditCore::brush(BrushOp op, double cx, double cz, double r, double amount, double target) {
+    Brush b;
+    b.radius = r;
+    brush(op, b, cx, cz, amount, target);
+}
+
+void EditCore::brush(BrushOp op, const Brush& b, double cx, double cz, double amount, double target) {
     if (!world) return;
+    static const char* names[BRUSH_OP_COUNT] = {"RAISE", "LOWER", "SMOOTH", "FLATTEN", "ROUGHEN", "TERRACE"};
     const bool own = !editing();
-    if (own) beginEdit(op == BRUSH_RAISE ? "RAISE" : op == BRUSH_LOWER ? "LOWER" : op == BRUSH_SMOOTH ? "SMOOTH" : "FLATTEN");
+    if (own) beginEdit(names[op]);
     const int n = world->gridSize();
-    const double half = World::kHalfSize;
+    const double half = World::kHalfSize, r = std::max(b.radius, 0.5);
+    if (r < 1.0) cx = std::round(cx), cz = std::round(cz);
     const int i0 = std::max(1, (int)std::floor(cx + half - r)), i1 = std::min(n - 2, (int)std::ceil(cx + half + r));
     const int j0 = std::max(1, (int)std::floor(cz + half - r)), j1 = std::min(n - 2, (int)std::ceil(cz + half + r));
     if (i0 > i1 || j0 > j1) {
@@ -541,25 +618,29 @@ void EditCore::brush(BrushOp op, double cx, double cz, double r, double amount, 
     // Smoothing reads the heights before this pass (a box blur a few cells wide).
     std::vector<float> blurred;
     const int k = std::max(1, std::min(6, (int)std::lround(r / 6)));
+    const int Hh = j1 - j0 + 1;
     if (op == BRUSH_SMOOTH) {
-        const int W = i1 - i0 + 1, Hh = j1 - j0 + 1;
+        const int W = i1 - i0 + 1;
         blurred.assign((size_t)W * Hh, 0);
         for (int i = i0; i <= i1; i++)
             for (int j = j0; j <= j1; j++) {
+                if (brushMask(b, cx, cz, i - half, j - half) <= 0) continue;
                 double s = 0;
                 int c = 0;
                 for (int a = -k; a <= k; a++)
-                    for (int b = -k; b <= k; b++) {
-                        const int ii = std::min(std::max(i + a, 0), n - 1), jj = std::min(std::max(j + b, 0), n - 1);
+                    for (int bb = -k; bb <= k; bb++) {
+                        const int ii = std::min(std::max(i + a, 0), n - 1), jj = std::min(std::max(j + bb, 0), n - 1);
                         s += world->cellHeight(ii * n + jj);
                         c++;
                     }
                 blurred[(size_t)(i - i0) * Hh + (j - j0)] = (float)(s / c);
             }
     }
+    const double step = std::max(0.05, target);
+    const double bump = clampd(r * 0.12, 1.5, 6.0);  // roughen: how wide the bumps are
     for (int i = i0; i <= i1; i++)
         for (int j = j0; j <= j1; j++) {
-            const double x = i - half, z = j - half, d = std::hypot(x - cx, z - cz), f = falloff(d, r);
+            const double x = i - half, z = j - half, f = brushMask(b, cx, cz, x, z);
             if (f <= 0) continue;
             const int id = i * n + j;
             const double h = world->cellHeight(id);
@@ -568,7 +649,10 @@ void EditCore::brush(BrushOp op, double cx, double cz, double r, double amount, 
                 case BRUSH_RAISE: nh = h + amount * f; break;
                 case BRUSH_LOWER: nh = h - amount * f; break;
                 case BRUSH_FLATTEN: nh = h + (target - h) * std::min(1.0, amount * f); break;
-                case BRUSH_SMOOTH: nh = h + (blurred[(size_t)(i - i0) * (j1 - j0 + 1) + (j - j0)] - h) * std::min(1.0, amount * f); break;
+                case BRUSH_SMOOTH: nh = h + (blurred[(size_t)(i - i0) * Hh + (j - j0)] - h) * std::min(1.0, amount * f); break;
+                case BRUSH_ROUGHEN: nh = h + amount * f * (brushNoise(x, z, bump, 77 + b.seed) * 2 - 1); break;
+                case BRUSH_TERRACE: nh = h + (std::round(h / step) * step - h) * std::min(1.0, amount * f); break;
+                default: break;
             }
             if (std::fabs(nh - h) > 1e-5) touchHeight(id, (float)nh);
         }
@@ -621,6 +705,13 @@ void EditCore::levelPad(const V3& c, double yaw, double hl, double hw, double y,
 }
 
 void EditCore::paint(double cx, double cz, double r, int material, bool soft) {
+    Brush b;
+    b.radius = r;
+    b.fall = soft ? FALL_SMOOTH : FALL_HARD;
+    paint(b, cx, cz, material);
+}
+
+void EditCore::paint(const Brush& b, double cx, double cz, int material) {
     if (!world) return;
     const std::vector<PaintMaterial>& mats = paintMaterials();
     const PaintMaterial& m = mats[std::min(std::max(material, 0), (int)mats.size() - 1)];
@@ -628,14 +719,16 @@ void EditCore::paint(double cx, double cz, double r, int material, bool soft) {
     const bool own = !editing();
     if (own) beginEdit(std::string("PAINT ") + m.name);
     const int n = world->gridSize();
-    const double half = World::kHalfSize;
+    const double half = World::kHalfSize, r = std::max(b.radius, 0.5);
+    if (r < 1.0) cx = std::round(cx), cz = std::round(cz);
     for (int i = std::max(0, (int)std::floor(cx + half - r)); i <= std::min(n - 1, (int)std::ceil(cx + half + r)); i++)
         for (int j = std::max(0, (int)std::floor(cz + half - r)); j <= std::min(n - 1, (int)std::ceil(cz + half + r)); j++) {
+            const double f = brushMask(b, cx, cz, i - half, j - half);
+            if (f <= 0) continue;
             const int id = i * n + j;
-            const double d = std::hypot(i - half - cx, j - half - cz);
-            // Soft edges: the outer quarter of the brush paints a ragged fringe.
-            const double edge = soft ? r * (0.72 + 0.28 * (hashCell(id) & 0xffff) / 65535.0) : r;
-            if (d > edge) continue;
+            // Dithered coverage: the full-strength core is solid, the rest speckles in with the brush's mask and opacity.
+            const double cover = clampd(b.strength, 0, 1) * std::min(1.0, f * 2);
+            if (cover < 1.0 && hash01(i, j, b.seed * 31 + 7) >= cover) continue;
             if ((uint16_t)(world->cellSurface(id) << 8 | world->cellPaint(id)) != sp || !level.surfaces.count(id)) touchSurface(id, sp);
         }
     if (own) endEdit();
@@ -698,6 +791,65 @@ void EditCore::dry(double cx, double cz, double r) {
             if (worldCell(id, 2) > -1e8) touchWater(id, -1e9f);
         }
     if (own) endEdit();
+}
+
+int EditCore::dryBrush(const Brush& b, double cx, double cz) {
+    if (!world || !world->hasWater()) return 0;
+    const bool own = !editing();
+    if (own) beginEdit("DRAIN");
+    const int n = world->gridSize();
+    const double half = World::kHalfSize, r = std::max(b.radius, 0.5);
+    if (r < 1.0) cx = std::round(cx), cz = std::round(cz);
+    int count = 0;
+    for (int i = std::max(0, (int)std::floor(cx + half - r)); i <= std::min(n - 1, (int)std::ceil(cx + half + r)); i++)
+        for (int j = std::max(0, (int)std::floor(cz + half - r)); j <= std::min(n - 1, (int)std::ceil(cz + half + r)); j++) {
+            const int id = i * n + j;
+            if (worldCell(id, 2) <= -1e8 || brushMask(b, cx, cz, i - half, j - half) < 0.5) continue;
+            touchWater(id, -1e9f);
+            count++;
+        }
+    if (own) endEdit();
+    return count;
+}
+
+int EditCore::drain(double cx, double cz) {
+    if (!world || !world->hasWater()) return 0;
+    const int n = world->gridSize();
+    const double half = World::kHalfSize;
+    // The wet cell nearest the click, within 3 m.
+    int start = -1;
+    double best = 1e9;
+    for (int i = std::max(0, (int)std::lround(cx + half) - 3); i <= std::min(n - 1, (int)std::lround(cx + half) + 3); i++)
+        for (int j = std::max(0, (int)std::lround(cz + half) - 3); j <= std::min(n - 1, (int)std::lround(cz + half) + 3); j++) {
+            const double d = std::hypot(i - half - cx, j - half - cz);
+            if (d < best && d <= 3.5 && worldCell(i * n + j, 2) > -1e8) best = d, start = i * n + j;
+        }
+    if (start < 0) return 0;
+    const bool own = !editing();
+    if (own) beginEdit("DRAIN POOL");
+    std::vector<uint8_t> seen((size_t)n * n, 0);
+    std::deque<int> q;
+    q.push_back(start);
+    seen[start] = 1;
+    int count = 0;
+    while (!q.empty() && count < 800000) {
+        const int id = q.front();
+        q.pop_front();
+        touchWater(id, -1e9f);
+        count++;
+        const int i = id / n, j = id % n;
+        for (int a = -1; a <= 1; a++)
+            for (int c = -1; c <= 1; c++) {
+                const int ni = i + a, nj = j + c;
+                if (ni < 0 || nj < 0 || ni >= n || nj >= n) continue;
+                const int nid = ni * n + nj;
+                if (seen[nid]) continue;
+                seen[nid] = 1;
+                if (worldCell(nid, 2) > -1e8) q.push_back(nid);
+            }
+    }
+    if (own) endEdit();
+    return count;
 }
 
 // ---- Objects ---------------------------------------------------------------------------
@@ -1559,7 +1711,7 @@ EditPick EditCore::pick(const V3& o, const V3& d, double hitT, bool includeBase)
     // (Each is tested as its real shape: a ray past a rock's corner but through its bounding sphere is a miss.)
     for (int i = 0; i < (int)w.rocks.size(); i++) {
         const Rock& r = w.rocks[i];
-        if (raySphere(o, d, r.c, r.r + 0.01, t) && t < best.t && rayHull(o, d, r, t)) consider(t, EditPick::BASE, i, 0, r.c, "ROCK");
+        if (objshape::Hit h; objshape::rayRock(r, o, d, best.t, h)) consider(h.t, EditPick::BASE, i, 0, r.c, "ROCK");
     }
     for (int i = 0; i < (int)w.trees.size(); i++) {
         const Tree& tr = w.trees[i];
@@ -1567,12 +1719,12 @@ EditPick EditCore::pick(const V3& o, const V3& d, double hitT, bool includeBase)
     }
     for (int i = 0; i < (int)w.logs.size(); i++) {
         const Log& g = w.logs[i];
-        if (raySegment(o, d, g.a, g.b, t) < g.r) consider(t, EditPick::BASE, i, 2, (g.a + g.b) * 0.5, "LOG");
+        if (objshape::Hit h; objshape::rayLog(g, o, d, best.t, h)) consider(h.t, EditPick::BASE, i, 2, (g.a + g.b) * 0.5, "LOG");
     }
     for (int i = 0; i < (int)w.boxes.size(); i++) {
         const Box& b = w.boxes[i];
         if (b.hidden) continue;
-        if (rayBox(o, d, b, t)) consider(t, EditPick::BASE, i, 3, b.c, b.rock ? "ROCK SLAB" : "BLOCK");
+        if (objshape::Hit h; objshape::rayBox(b, o, d, best.t, h)) consider(h.t, EditPick::BASE, i, 3, b.c, b.rock ? "ROCK SLAB" : "BLOCK");
     }
     for (int i = 0; i < (int)w.fixtures.size(); i++) {
         const Prop& f = w.fixtures[i];
@@ -1581,16 +1733,16 @@ EditPick EditCore::pick(const V3& o, const V3& d, double hitT, bool includeBase)
         if (f.kind == PROP_FENCE) {
             if (raySegment(o, d, f.a + V3(0, 0.6, 0), f.b + V3(0, 0.6, 0), t) < 0.45) consider(t, EditPick::BASE, i, 4, f.a, name);
         } else if (f.kind == PROP_GARAGE) {
-            if (rayBox(o, d, shedBox(f), t)) consider(t, EditPick::BASE, i, 4, f.a, name);
+            if (objshape::Hit h; objshape::rayBox(shedBox(f), o, d, best.t, h)) consider(h.t, EditPick::BASE, i, 4, f.a, name);
         } else if (f.kind == PROP_CABIN) {
-            if (rayBox(o, d, obb(f.a + V3(0, 2.2, 0), V3(3.4, 2.2, 2.7), f.yaw), t)) consider(t, EditPick::BASE, i, 4, f.a, name);
+            if (objshape::Hit h; objshape::rayBox(obb(f.a + V3(0, 2.2, 0), V3(3.4, 2.2, 2.7), f.yaw), o, d, best.t, h)) consider(h.t, EditPick::BASE, i, 4, f.a, name);
         } else if (raySegment(o, d, f.a, f.a + V3(0, 1.6, 0), t) < 0.45) {
             consider(t, EditPick::BASE, i, 4, f.a, name);
         }
     }
     for (int i = 0; i < (int)w.models.size(); i++) {
         if (ownerOf(5, i) < 0) continue;  // (only the structures you put there)
-        if (rayBox(o, d, modelBox(w.models[i]), t)) consider(t, EditPick::BASE, i, 5, w.models[i].p, "STRUCTURE");
+        if (objshape::Hit h; objshape::rayBox(modelBox(w.models[i]), o, d, best.t, h)) consider(h.t, EditPick::BASE, i, 5, w.models[i].p, "STRUCTURE");
     }
     for (int k = 0; k < (int)level.gates.size(); k++) {
         const Gate& g = level.gates[k];
