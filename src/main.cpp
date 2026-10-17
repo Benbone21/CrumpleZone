@@ -26,6 +26,7 @@
 #include <sstream>
 #include <map>
 
+#include "allocstat.h"
 #include "audio.h"
 #include "biome.h"
 #include "jobs.h"
@@ -2731,6 +2732,10 @@ int main(int argc, char** argv) {
         }
     };
 
+    // CZ_ALLOC=1 (with --shot-frames): heap allocations per frame on this thread after frame 60; CZ_ALLOC_TRACE=1 adds the top call sites.
+    const bool allocWatch = std::getenv("CZ_ALLOC") != nullptr;
+    std::vector<uint64_t> allocFrames;
+    uint64_t allocLast = 0, allocAllLast = 0, allocAllSum = 0;
     while (running) {
         uint64_t now = SDL_GetPerformanceCounter();
         const double frameTimeMs = 1000.0 * (double)(now - last) / freq;
@@ -4867,7 +4872,22 @@ int main(int argc, char** argv) {
             if (frame >= *opt.shotFrames.rbegin()) running = false;
         }
         SDL_GL_SwapWindow(win);
+        if (allocWatch) {
+            const uint64_t n = allocstat::count(), all = allocstat::countAll();
+            if (frame == 60 && std::getenv("CZ_ALLOC_TRACE")) allocstat::trace(true);
+            if (frame > 60) allocFrames.push_back(n - allocLast), allocAllSum += all - allocAllLast;
+            allocLast = n, allocAllLast = all;
+        }
         frame++;
+    }
+    if (allocWatch && !allocFrames.empty()) {
+        std::vector<uint64_t> v = allocFrames;
+        std::sort(v.begin(), v.end());
+        uint64_t sum = 0;
+        for (uint64_t x : v) sum += x;
+        std::printf("allocs: %zu frames, main thread %.1f/frame (median %llu, p95 %llu, max %llu), all threads %.1f/frame\n", v.size(), (double)sum / v.size(),
+                    (unsigned long long)v[v.size() / 2], (unsigned long long)v[v.size() * 95 / 100], (unsigned long long)v.back(), (double)allocAllSum / v.size());
+        allocstat::dump(stdout, 40);
     }
 
     // Where to pick up after a reload.
