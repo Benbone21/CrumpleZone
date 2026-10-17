@@ -445,10 +445,24 @@ public:
     };
     JackNodes jackNodes(int wheel) const;
     void placeJack(const World& world, int wheel);  // the jack goes under this corner, saddle just touching
-    // Multiplayer: a remote car is another player's, moved by the network (no physics
-    // here, it just pushes back). netId is the same on every machine.
+    // Multiplayer: a remote car is another player's, moved by the network (its owner bends
+    // it; here it only pushes back). netId is the same on every machine.
     bool remote = false;
     uint32_t netId = 0;
+    // A remote car one of ours crashes into is simulated here, as a whole soft body, through
+    // the hit and a little after: here it was a wall (moved by its states, it couldn't be
+    // pushed or bent, so whoever hit it took the whole crash, and their states showed them
+    // stopping dead, so it was hardly touched on its owner's machine). Its owner still bends it
+    // for real (that machine runs the same crash) and its damage still comes from there.
+    // Handed back, it's eased onto its states: shoveP / shoveV are added to where they put it
+    // until they catch up (the network playback calls settleShove).
+    double heldHere = 0;     // s left on our physics
+    bool handBack = false;   // just let go: the playback works out the ease from here
+    V3 shoveV, shoveP;
+    V3 shoveNetVel;
+    void holdHere();         // takes it on: the shape it's in is its rest shape here
+    void handBackTo(const std::vector<V3>& statePos, const V3& stateVel);  // where its states put it now
+    void settleShove(const V3& netVel, double dt);
     int buildCount = 0;         // bumped by every build() (a respawn or repair)
     // Recovery points, front and rear: the frame nodes a line pulls on, and where the
     // shackle sits (rest position in the car's frame).

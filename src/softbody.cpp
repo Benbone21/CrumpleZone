@@ -2253,7 +2253,8 @@ void Sim::substep() {
     needsContact.assign(N, 0);
     for (Car& c : cars) {
         if (c.remote) {  // another player's: moved by the network, it only pushes back
-            for (Node& n : c.nodes) n.f = V3();
+            if (c.heldHere <= 0)
+                for (Node& n : c.nodes) n.f = V3();
             continue;
         }
         // Someone working a parked car's pedals or wheel wakes it too. (The player's car and
@@ -2269,11 +2270,11 @@ void Sim::substep() {
         if (!(cars[pair.first].sleeping && cars[pair.second].sleeping))
             needsContact[pair.first] = needsContact[pair.second] = 1;
     for (int i = 0; i < N; i++)
-        if ((!cars[i].remote && !cars[i].sleeping) || needsContact[i]) forceCars.push_back(i);
+        if ((!cars[i].remote && !cars[i].sleeping) || cars[i].heldHere > 0 || needsContact[i]) forceCars.push_back(i);
     auto forces = [&](int index) {
         const int i = forceCars[index];
         Car& c = cars[i];
-        if (!c.remote && !c.sleeping) c.computeForces(h, world);
+        if ((!c.remote && !c.sleeping) || c.heldHere > 0) c.computeForces(h, world);
         if (needsContact[i]) c.prepareContact(stepCount);
     };
     // A few cars cost less than waking the pool at 2 kHz. Pileups also benefit because
@@ -2286,14 +2287,43 @@ void Sim::substep() {
             if (cars[i].wheels[k].shed) {
                 const bool tire = cars[i].wheels[k].shed == 2;
                 cars[i].wheels[k].shed = 0;
-                shedWheel(i, k, tire);
+                if (!cars[i].remote) shedWheel(i, k, tire);  // (a remote's comes off on its owner's machine)
             }
 
+    // (A held remote's own forces, so the hit can be told from them below.)
+    CZ_THREAD_CACHE(std::vector<V3>, ownForce);
+    ownForce.assign(N, V3());
+    for (int i = 0; i < N; i++)
+        if (cars[i].remote && cars[i].heldHere > 0)
+            for (const Node& n : cars[i].nodes) ownForce[i] += n.f;
     for (const auto& pair : contactPairs) {
         const int i = pair.first, j = pair.second;
         // Sleeping bodies still push back (they act as static supports); the forces
         // they receive are discarded until they wake.
         if (!(cars[i].sleeping && cars[j].sleeping)) collide(cars[i], cars[j]);
+    }
+
+    // Another player's vehicle one of ours crashes into runs on our physics from here (it
+    // takes this step's push already), until a little after the hit. (Only a hit: leaning
+    // on it, or pushed along together after, it's moved by its states again.)
+    for (const auto& pair : contactPairs) {
+        Car& a = cars[pair.first];
+        Car& b = cars[pair.second];
+        if (a.remote == b.remote) continue;
+        Car& r = a.remote ? a : b;
+        V3 F = ownForce[a.remote ? pair.first : pair.second] * -1.0;
+        for (const Node& n : r.nodes) F += n.f;
+        if (len(F) < 2 * 9.81 * r.mass) continue;
+        // (And coming together: two wrecks tangled at rest press on each other hard too.)
+        auto vel = [](const Car& c) {
+            V3 p;
+            double m = 0;
+            for (const Node& n : c.nodes) p += n.v * n.m, m += n.m;
+            return m > 0 ? p / m : V3();
+        };
+        if (r.heldHere <= 0 && len(vel(a) - vel(b)) < 1.0) continue;
+        if (r.heldHere <= 0) r.holdHere();
+        r.heldHere = 0.4;
     }
 
     if (!ropes.empty()) ropeForces();
@@ -2302,8 +2332,16 @@ void Sim::substep() {
 
     for (int i = 0; i < N; i++) {
         Car& c = cars[i];
-        if (c.remote) {  // coasts along on the velocities its owner last sent
-            for (Node& n : c.nodes) n.p += n.v * h;
+        if (c.remote && c.heldHere > 0) {  // ours for now
+            c.integrate(h);
+            c.updateBounds();
+            c.heldHere -= h;
+            if (c.heldHere <= 0) c.handBack = true;
+            continue;
+        }
+        if (c.remote) {  // coasts along on the velocities its owner last sent (and any ease)
+            for (Node& n : c.nodes) n.p += (n.v + c.shoveV) * h;
+            c.shoveP += c.shoveV * h;
             c.updateBounds();
             continue;
         }
@@ -2322,6 +2360,54 @@ void Sim::substep() {
         }
     }
     if (!looseWheels.empty()) looseWheelStep();
+}
+
+void Car::holdHere() {
+    // Its states carry the owner's dents in the shape, not in the beams: made the rest shape
+    // here, so they don't spring back out. (Only the bent ones: springs keep their preload.)
+    for (Beam& b : beams) {
+        if (b.broken || b.type == BEAM_SPRING || b.type == BEAM_BUMPSTOP) continue;
+        const double L = len(nodes[b.a].p - nodes[b.b].p);
+        if (std::fabs(L - b.L0) > b.yieldStrain * b.L0) b.L0 = L;
+    }
+    shoveV = shoveP = V3();
+    sleeping = false;
+    stillTime = 0;
+    if (grid) grid->stamp = -1;
+    nodeGridStamp = -1;
+}
+
+void Car::handBackTo(const std::vector<V3>& statePos, const V3& stateVel) {
+    handBack = false;
+    V3 here, there, vel;
+    double M = 0;
+    for (size_t i = 0; i < nodes.size() && i < statePos.size(); i++) {
+        here += nodes[i].p * nodes[i].m;
+        there += statePos[i] * nodes[i].m;
+        vel += nodes[i].v * nodes[i].m;
+        M += nodes[i].m;
+    }
+    if (M <= 0) return;
+    shoveP = (here - there) / M;
+    const V3 dv = vel / M - stateVel;
+    shoveV = V3(dv.x, 0, dv.z);
+    shoveNetVel = stateVel;
+}
+
+// The owner's states catching up with a shove: as they show the car picking up speed the
+// shove's way, that much of it has got there (and its lead on the states eases out after).
+// Owner and here disagree on the details, so what's left fades out within a second.
+void Car::settleShove(const V3& netVel, double dt) {
+    const V3 dv = netVel - shoveNetVel;
+    shoveNetVel = netVel;
+    const double s2 = dot(shoveV, shoveV);
+    if (s2 < 1e-10 && dot(shoveP, shoveP) < 1e-10) {
+        shoveV = shoveP = V3();
+        return;
+    }
+    if (s2 > 1e-10) shoveV *= 1 - clampd(dot(V3(dv.x, 0, dv.z), shoveV) / s2, 0, 1);
+    shoveV *= std::max(0.0, 1 - dt / 0.6);
+    shoveP *= std::max(0.0, 1 - dt / 0.6);
 }
 
 void Sim::collide(Car& A, Car& B) {
@@ -2366,6 +2452,12 @@ void Car::prepareContact(long step) {
             const V3& p = nodes[i].p;
             nodeGrid->insert(i, p - reach, p + reach);
         }
+        // The ladder frame and the engine block: what a bumper finds behind the sheet metal.
+        for (const std::vector<int>* hard : {&ladder, &engineNodes})
+            for (int i : *hard) {
+                const V3& p = nodes[i].p;
+                nodeGrid->insert(i, p - reach, p + reach);
+            }
         nodeGridStamp = step;
     }
 }
@@ -2463,11 +2555,15 @@ void Sim::pointsVsSkin(Car& A, Car& B) {
     // crumpled into each other the faces fold away. Any node that gets close to one of
     // B's *interior* nodes (not on the skin) is inside B, so push it back out. Skin
     // nodes are left alone so touching bodies don't hover apart.
-    const double rr = 0.36;  // contact distance between node centers
+    // The ladder frame's rails and the engine block are hard points too (or one truck's nose
+    // folds up round the other's frame horns as if they weren't there, and only the bodies
+    // crush): a rail corner reaches about half its section.
+    const double rrBody = 0.36, rrHard = 0.12;  // contact distance between node centers
     for (Node& na : A.nodes) {
         if (!na.collide || !inBounds(na.p)) continue;
         for (int j : B.nodeGrid->query(na.p)) {
             Node& nb = B.nodes[j];
+            const double rr = j < B.bodyNodes ? rrBody : rrHard;
             V3 d = na.p - nb.p;
             double dist2 = dot(d, d);
             if (dist2 >= rr * rr || dist2 < 1e-12) continue;
