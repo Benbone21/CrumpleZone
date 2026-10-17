@@ -52,7 +52,7 @@ Download from the [releases page](https://github.com/Benbone21/crumplezone/relea
 | `CrumpleZone-<version>-windows-setup.exe` | Windows 10/11, 64-bit | Run it to install (no admin needed; Start menu and desktop shortcuts). Unsigned: Windows may say "unknown publisher" (More info > Run anyway). `make windows-installer` builds it (needs `nsis`). |
 | `CrumpleZone-<version>-linux.deb` | Debian 13+ / Ubuntu 24.04+, amd64 | `sudo apt install ./CrumpleZone-<version>-linux.deb`, then run `crumplezone` or pick Crumple Zone from the games menu. It installs to `/opt/crumplezone`. |
 
-`.github/workflows/release.yml` builds all three on every push to `sync` or `main` (kept as workflow artifacts, as a build check). Pushing a version tag (`git tag v0.2.0 && git push origin v0.2.0`) also publishes them as a release, with notes from `docs/releases/<tag>.md`.
+`.github/workflows/release.yml` builds all three on every push to `sync` or `main` (kept as workflow artifacts, as a build check). Pushing a version tag (`git tag v0.2.0 && git push origin v0.2.0`; the Mac job is skipped on a tag unless the repository variable `RELEASE_MAC` is `true`, so that release has the .deb and .exe) also publishes them as a release, with notes from `docs/releases/<tag>.md`.
 
 ## Windows
 
