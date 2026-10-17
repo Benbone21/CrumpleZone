@@ -2780,20 +2780,7 @@ void Renderer::buildBackdrop(const World& world, std::vector<Vtx>& verts, std::v
 
 void Renderer::buildBoxes(const World& world) {
     std::vector<Vtx> v;
-    for (const Box& b : world.boxes) {
-        if (b.hidden || b.rock) continue;  // rock slabs are drawn with the rocks
-        double he[3] = {b.h.x, b.h.y, b.h.z};
-        for (int axis = 0; axis < 3; axis++)
-            for (int s = -1; s <= 1; s += 2) {
-                int u = (axis + 1) % 3, w = (axis + 2) % 3;
-                V3 n = b.ax[axis] * s;
-                V3 c = b.c + n * he[axis];
-                V3 du = b.ax[u] * he[u], dw = b.ax[w] * he[w];
-                V3 q[4] = {c - du - dw, c + du - dw, c + du + dw, c - du + dw};
-                const int order[6] = {0, 1, 2, 0, 2, 3};
-                for (int k : order) v.push_back(vtx(q[k], n, b.col[0], b.col[1], b.col[2], SM_CONCRETE));
-            }
-    }
+    buildBoxMesh(world, v);
     uploadBatches(boxVao, boxVbo, v, boxBatches);
     boxVertexCount = (int)v.size();
 }
