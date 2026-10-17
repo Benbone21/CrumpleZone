@@ -102,13 +102,53 @@ build/src/buildinfo.o: CXXFLAGS += -DCZ_GIT='"$(GITID)"'
 FORCE:
 .PHONY: FORCE
 
+# ---- Release builds: LTO, optional PGO (dev builds above stay plain and fast) ----------
+#   make build/rel/crumplezone       ->  generic x86-64-v2, -flto, -fno-plt, stripped (also build/rel/{bench_sim,run_tests,...})
+#   tools/pgo.sh linux && make PGO=use build/rel/crumplezone   ->  the same, profile-guided (see tools/pgo.sh)
+# No -ffast-math: the sim and the net sync must stay bit-identical across builds and platforms.
+LTOJ     ?= auto
+RELARCH  ?= -march=x86-64-v2 -mtune=generic
+PGODIR   ?= $(CURDIR)/build/pgo
+PGO      ?=
+ifeq ($(PGO),gen)
+PGOFLAGS := -fprofile-generate=$(PGODIR) -fprofile-update=prefer-atomic
+else ifeq ($(PGO),use)
+PGOFLAGS := -fprofile-use=$(PGODIR) -fprofile-partial-training -Wno-missing-profile -Wno-coverage-mismatch
+else
+PGOFLAGS :=
+endif
+RELFLAGS := -O2 $(RELARCH) -flto=$(LTOJ) -fno-plt $(PGOFLAGS) -std=c++17 -Wall -Wextra
+RELLD    := -s
+REL_GAME := $(patsubst %.cpp,build/rel/%.o,$(GAME_SRC))
+REL_PHYS := $(patsubst %.cpp,build/rel/%.o,$(PHYS))
+REL_TEST := $(patsubst %.cpp,build/rel/%.o,tests/run_tests.cpp $(PHYS) $(SCEN) src/music.cpp)
+
+build/rel/%.o: %.cpp $(HEADERS)
+	@mkdir -p $(dir $@)
+	$(CXX) $(RELFLAGS) -c -o $@ $<
+build/rel/src/buildinfo.o: build/buildid.txt
+build/rel/src/buildinfo.o: RELFLAGS += -DCZ_GIT='"$(GITID)"'
+
+build/rel/crumplezone: $(REL_GAME)
+	$(CXX) $(RELFLAGS) $(RELLD) -o $@ $^ $(LDLIBS)
+build/rel/run_tests: $(REL_TEST)
+	$(CXX) $(RELFLAGS) $(RELLD) -o $@ $^ -lpthread -lm
+build/rel/bench_sim: build/rel/tools/bench_sim.o $(REL_PHYS)
+	$(CXX) $(RELFLAGS) $(RELLD) -o $@ $^ -lpthread -lm
+build/rel/test_render: build/rel/tests/render.o $(filter-out build/rel/src/main.o,$(REL_GAME))
+	$(CXX) $(RELFLAGS) $(RELLD) -o $@ $^ $(LDLIBS)
+build/rel/test_audio: build/rel/tests/audio.o build/rel/tests/engine_samples.o build/rel/tests/soundscape.o build/rel/src/audio.o build/rel/src/engineaudio.o build/rel/src/engine_samples.o build/rel/src/music.o build/rel/src/ambience.o $(REL_PHYS)
+	$(CXX) $(RELFLAGS) $(RELLD) -o $@ $^ $(LDLIBS)
+
 # ---- Windows build: cross-compiled with mingw-w64 (posix threads) ------------------
 #   make windows   ->  build/win/CrumpleZone/ (crumplezone.exe + SDL2.dll) and build/win/CrumpleZone-windows.zip
 # Needs: the g++-mingw-w64-x86-64-posix package, and SDL2.dll (the official SDL2 x64
 # Windows runtime) in $(WINSDL).
 WINCXX   ?= x86_64-w64-mingw32-g++-posix
 WINSDL   ?= third_party/sdl2-win64
-WINFLAGS := -O2 -march=x86-64-v2 -mtune=generic -std=gnu++17 -Wall -D_WIN32_WINNT=0x0601
+# LTO always (every Windows build is a release); PGO as for Linux (tools/pgo.sh windows: trained under wine, since gcc profiles are not portable across compiler builds), -s strips the link.
+WINPGO   := $(if $(filter use,$(PGO)),-fprofile-use=$(PGODIR)/win -fprofile-partial-training -Wno-missing-profile -Wno-coverage-mismatch,$(if $(filter gen,$(PGO)),-fprofile-generate=$(PGODIR)/win -fprofile-update=prefer-atomic))
+WINFLAGS := -O2 -march=x86-64-v2 -mtune=generic -flto=$(LTOJ) $(WINPGO) -std=gnu++17 -Wall -D_WIN32_WINNT=0x0601
 WIN_OBJ  := $(patsubst %.cpp,build/win/obj/%.o,$(GAME_SRC))
 
 build/win/obj/%.o: %.cpp $(HEADERS)
@@ -117,7 +157,7 @@ build/win/obj/%.o: %.cpp $(HEADERS)
 
 build/win/CrumpleZone/crumplezone.exe: $(WIN_OBJ)
 	@mkdir -p $(dir $@)
-	$(WINCXX) $(WINFLAGS) -mwindows -o $@ $^ $(WINSDL)/SDL2.dll -lws2_32 -liphlpapi -static -static-libgcc -static-libstdc++
+	$(WINCXX) $(WINFLAGS) -mwindows -s -o $@ $^ $(WINSDL)/SDL2.dll -lws2_32 -liphlpapi -static -static-libgcc -static-libstdc++
 
 windows: build/win/CrumpleZone/crumplezone.exe
 	cp $(WINSDL)/SDL2.dll build/win/CrumpleZone/
@@ -146,7 +186,8 @@ windows-installer: windows
 VERSION  ?= 0.2.0
 MACCXX   ?= clang++
 MACSDL   ?= third_party/sdl2-mac
-MACFLAGS := -O2 -std=c++17 -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -Wall
+MACLTO   ?= -flto=thin
+MACFLAGS := -O2 $(MACLTO) -std=c++17 -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -Wall
 MAC_OBJ  := $(patsubst %.cpp,build/mac/obj/%.o,$(GAME_SRC))
 MACAPP   := build/mac/CrumpleZone.app
 
@@ -199,9 +240,9 @@ build/mac/test_render: build/mac/obj/tests/render.o $(filter-out build/mac/obj/s
 # Installs to /opt/crumplezone (the game finds assets/ beside its executable), with
 # /usr/games/crumplezone and a desktop menu entry. Settings stay in ~/.config/crumplezone.
 DEBROOT := build/deb/root
-deb: crumplezone
+deb: build/rel/crumplezone
 	rm -rf $(DEBROOT) && mkdir -p $(DEBROOT)/DEBIAN $(DEBROOT)/opt/crumplezone $(DEBROOT)/usr/games $(DEBROOT)/usr/share/applications $(DEBROOT)/usr/share/doc/crumplezone
-	install -m755 crumplezone $(DEBROOT)/opt/crumplezone/crumplezone
+	install -m755 build/rel/crumplezone $(DEBROOT)/opt/crumplezone/crumplezone
 	strip $(DEBROOT)/opt/crumplezone/crumplezone
 	mkdir -p $(DEBROOT)/opt/crumplezone/assets && cp -r assets/ground $(DEBROOT)/opt/crumplezone/assets/
 	if [ -d assets/audio ]; then cp -r assets/audio $(DEBROOT)/opt/crumplezone/assets/; fi
