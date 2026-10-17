@@ -122,6 +122,7 @@ public:
     void flushHud(int width, int height);
 
     std::vector<unsigned char> readPixels(int width, int height);
+    int badScenePixels();  // (tests) pixels of the last frame's linear HDR scene, before bloom, that are NaN, infinite or negative
     const PropStats& propStats() const { return props.stats; }
     struct GeometryStats {
         unsigned terrainTriangles = 0, terrainFullTriangles = 0;

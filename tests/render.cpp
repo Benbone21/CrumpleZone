@@ -262,6 +262,28 @@ int main() {
         if (!renderer.geometryStats().terrainTriangles)
             throw std::runtime_error("editor updates lost terrain batches");
         std::puts("PASS culling rejects world behind camera; editor updates retain terrain and scenery batches");
+        {  // Night, MSAA: thin leaves, needles and blades only partly over a pixel must not shade to NaN (it blooms into coloured sparks).
+            const View keep = view;
+            const int msaa = renderer.settings.msaa;
+            renderer.daylight = computeDaylight(23);
+            renderer.settings.msaa = 4;
+            view.width = 480; view.height = 270;
+            int bad = 0;
+            for (int k = 0; k < 8; k++) {
+                const double a = k * M_PI / 4;
+                view.eye = V3(40, sim.world.height(40, 40) + 1.6, 40);
+                view.target = view.eye + V3(std::cos(a) * 10, -1.5, std::sin(a) * 10);
+                renderer.drawScene(sim, view, DEBUG_OFF, nullptr);
+                clean();
+                bad += renderer.badScenePixels();
+            }
+            std::printf("Render check: night scene, %d bad HDR pixels\n", bad);
+            if (bad) throw std::runtime_error("NaN, infinite or negative pixels in the night scene");
+            renderer.daylight = computeDaylight(10);
+            renderer.settings.msaa = msaa;
+            view = keep;
+            std::puts("PASS night scene under MSAA: no NaN or negative pixels to bloom");
+        }
         // Render photo ground with extension support hidden, to exercise actual texture setup.
         gl::GetStringi = noExtensions;
         GroundTextures fallbackGround;
