@@ -1,4 +1,5 @@
 #include "render.h"
+#include "watermesh.h"
 #include <stdexcept>
 
 #include <algorithm>
@@ -2683,46 +2684,8 @@ void Renderer::drawTerrain(const M4& vp, const View& view) {
 }
 
 void Renderer::updateWater(const World& world) {
-    // Lakes: a disc of rings at the water level (the shader cuts it at the shore). Maps
-    // with rivers keep water on the height grid: a sheet of quads over every wet cell (2 m),
-    // carrying the current in the color (for the ripples to drift).
     std::vector<Vtx> wv;
-    if (!world.waterY.empty()) {
-        const int n = world.gridSize(), step = 2;
-        auto lvl = [&](int i, int j) { return world.waterY[std::min(i, n - 1) * n + std::min(j, n - 1)]; };
-        for (int i = 0; i + step < n; i += step)
-            for (int j = 0; j + step < n; j += step) {
-                float c[4] = {lvl(i, j), lvl(i + step, j), lvl(i + step, j + step), lvl(i, j + step)};
-                float top = -1e9f;
-                for (float v : c) top = std::max(top, v);
-                if (top < -1e8f) continue;
-                for (float& v : c)
-                    if (v < -1e8f) v = top;  // a dry corner: carry the level over (the shader cuts at the shore)
-                const int ci[4][2] = {{i, j}, {i + step, j}, {i + step, j + step}, {i, j + step}};
-                V3 q[4];
-                float fx[4], fz[4];
-                for (int k = 0; k < 4; k++) {
-                    const double x = -World::kHalfSize + ci[k][0], z = -World::kHalfSize + ci[k][1];
-                    q[k] = V3(x, c[k], z);
-                    const V3 fl = world.waterFlow(x, z);
-                    fx[k] = (float)fl.x, fz[k] = (float)fl.z;
-                }
-                for (int k : {0, 1, 2, 0, 2, 3}) wv.push_back(vtx(q[k], V3(0, 1, 0), fx[k], fz[k], 0, 0));
-            }
-    } else {
-        for (const Water& wt : world.waters) {
-            const int rings = 24, segs = 96;
-            auto P = [&](int ri, int si) {
-                double rr = (wt.r + 1.0) * ri / rings, a = 2 * M_PI * si / segs;
-                return V3(wt.x + rr * std::cos(a), wt.y, wt.z + rr * std::sin(a));
-            };
-            for (int ri = 0; ri < rings; ri++)
-                for (int si = 0; si < segs; si++) {
-                    V3 q[4] = {P(ri, si), P(ri + 1, si), P(ri + 1, si + 1), P(ri, si + 1)};
-                    for (int k : {0, 1, 2, 0, 2, 3}) wv.push_back(vtx(q[k], V3(0, 1, 0), 0, 0, 0, 0));
-                }
-        }
-    }
+    buildWaterMesh(world, wv);
     uploadStatic(waterVao, waterVbo, wv);
     waterVertexCount = (int)wv.size();
 
