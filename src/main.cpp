@@ -89,6 +89,7 @@ struct Options {
     double eyeX = 0, eyeZ = 0, eyeH = 1, eyeYaw = 0, eyePitch = 0;
     bool orbitSet = false, showHelp = false, showGarage = false;
     int mods[5] = {-1, -1, -1, -1, -1};  // --mods E,S,T[,W,R]: fit these to the player's car (testing)
+    std::string clipboard;        // --clipboard TEXT: put this on the system clipboard first (testing paste); a --press scancode over 1000 is that key with Ctrl held
     int menu = -1;                // --menu P: open the pause menu on page P (testing)
     int quality = -1;             // --quality 0-3: graphics preset (testing)
     int ground = -1;              // --ground 0-3: terrain materials (testing; see RenderSettings::ground)
@@ -264,7 +265,7 @@ struct BuildWatch {
     void exec(int argc, char** argv, const std::vector<std::string>& extra) {
 #ifndef _WIN32
         static const std::set<std::string> withValue = {"--map", "--player", "--spawn", "--resume-model", "--scenario", "--script",
-                                                        "--shot-prefix", "--shot-frames", "--menu", "--orbit", "--spawn-section", "--eye"};
+                                                        "--shot-prefix", "--shot-frames", "--clipboard", "--menu", "--orbit", "--spawn-section", "--eye"};
         static const std::set<std::string> flags = {"--garage", "--show-help", "--debug-screen", "--debug-graph"};
         std::vector<std::string> args = {exe};
         for (int i = 1; i < argc; i++) {
@@ -318,6 +319,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--scenario") o.scenario = next();
         else if (a == "--show-help") o.showHelp = true;
         else if (a == "--garage") o.showGarage = true;
+        else if (a == "--clipboard") o.clipboard = next();
         else if (a == "--menu") o.menu = std::atoi(next().c_str());
         else if (a == "--quality") o.quality = std::atoi(next().c_str());
         else if (a == "--ground") o.ground = std::atoi(next().c_str());
@@ -1606,10 +1608,21 @@ int main(int argc, char** argv) {
     if (opt.lab) settings.map = MAP_PROVING_GROUND;                // (the model lab builds its own studio)
     if (opt.fullscreen) settings.fullscreen = true;
 
+    {  // (the system clipboard for every text field: Ctrl+V pastes, Ctrl+C copies)
+        te::clipboardGetHook = [] {
+            char* t = SDL_GetClipboardText();
+            std::string s = t ? t : "";
+            if (t) SDL_free(t);
+            return s;
+        };
+        te::clipboardSetHook = [](const std::string& s) { SDL_SetClipboardText(s.c_str()); };
+    }
+    static bool testCtrl = false;
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | (opt.audio ? (uint32_t)SDL_INIT_AUDIO : 0u)) != 0) {
         fail(std::string("SDL_Init failed: ") + SDL_GetError());
         return 1;
     }
+    if (!opt.clipboard.empty()) SDL_SetClipboardText(opt.clipboard.c_str());
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
@@ -2738,7 +2751,14 @@ int main(int argc, char** argv) {
         padLogic.update(padDev.read((SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS) != 0), padCtx, dt);
         size_t padTap = 0;
         bool fromPad = false;
-        if (menu.open) SDL_StartTextInput();  // (passwords are typed as text; the model lab stops it on its way out)
+        testCtrl = false;
+        {  // (text fields take typed text through SDL's text input; the model lab has its own)
+            static bool textOn = false;
+            const bool want = menu.open || coop.typing || (editor.active && editor.wantsText());
+            if (want) SDL_StartTextInput();
+            else if (textOn) SDL_StopTextInput();
+            textOn = want;
+        }
         auto nextEvent = [&](SDL_Event& ev) {
             fromPad = false;
             padShift = false;
@@ -2760,7 +2780,9 @@ int main(int argc, char** argv) {
             menuWas = menu.open;
             const auto it = opt.press.find(frame);
             if (it != opt.press.end())
-                for (int sc : it->second)
+                for (int sc0 : it->second) {
+                    const int sc = sc0 % 1000;
+                    if (sc0 >= 1000) testCtrl = true;  // (Ctrl held for this press: SDL's keyboard state isn't fed by pushed events)
                     for (int down = 1; down >= 0; down--) {
                         SDL_Event ke;
                         std::memset(&ke, 0, sizeof ke);
@@ -2769,6 +2791,7 @@ int main(int argc, char** argv) {
                         std::memcpy(ke.padding + 16, &sc, 4);
                         SDL_PushEvent(&ke);
                     }
+                }
         }
         SDL_Event e;
         while (nextEvent(e)) {
@@ -2783,7 +2806,12 @@ int main(int argc, char** argv) {
                 if (!fromPad && (e.type == SDL_KEYDOWN || e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEWHEEL)) pad::ui.last = false;
             }
             if (!editor.active && !menu.open && coop.typing && e.type == SDL_KEYDOWN) {
-                coop.typeKey(evKeyScancode(e), shiftDown(), myName(), net);
+                const uint8_t* ks = SDL_GetKeyboardState(nullptr);
+                coop.typeKey(evKeyScancode(e), shiftDown(), ks[224] || ks[228] || testCtrl, myName(), net);
+                continue;
+            }
+            if (!editor.active && !menu.open && coop.typing && e.type == SDL_TEXTINPUT) {
+                coop.typeText(evText(e).c_str());
                 continue;
             }
             if (!editor.active && !menu.open && coop.mapOpen && e.type != SDL_QUIT) {
@@ -2849,7 +2877,11 @@ int main(int argc, char** argv) {
             switch (e.type) {
                 case SDL_QUIT: running = false; break;
                 case SDL_TEXTINPUT:
-                    if (menu.open) handleMenu(menu.textInput(evText(e).c_str(), settings));
+                    if (menu.open) {
+                        const uint8_t* ks = SDL_GetKeyboardState(nullptr);
+                        menu.ctrl = ks[224] || ks[228] || testCtrl;
+                        handleMenu(menu.textInput(evText(e).c_str(), settings));
+                    }
                     break;
                 case SDL_KEYDOWN: {
                     if (settings.keys.matches(KA_DEV_MENU, evKeyScancode(e), shiftDown()) && !fromPad && !evKeyRepeat(e) && !inv.open && !garageUI.open && !winchAim.on && !menu.title &&
@@ -2871,6 +2903,7 @@ int main(int argc, char** argv) {
                     if (menu.open) {  // the menu takes every key (repeats too: hold to slide)
                         const uint8_t* ks = SDL_GetKeyboardState(nullptr);
                         menu.shift = ks[SC_LSHIFT] || ks[SC_RSHIFT];
+                        menu.ctrl = ks[224] || ks[228] || testCtrl;
                         handleMenu(menu.key(evKeyScancode(e), settings));
                         break;
                     }
@@ -2954,7 +2987,7 @@ int main(int argc, char** argv) {
                     }
                     if (kh.action == KA_CHAT && !winchAim.on) {
                         coop.typing = true;
-                        coop.draft.clear();
+                        coop.draft.clear(), coop.draftEd.reset();
                         break;
                     }
                     if (kh.action >= 0 && isDevAction((KeyAction)kh.action) &&  // (the dev tools: DEV KEYS mode only, resolve left them out otherwise; the dev menu has them all)

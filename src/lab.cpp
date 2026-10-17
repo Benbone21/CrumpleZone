@@ -16,6 +16,7 @@
 #include "scenery.h"
 #include "sdl_min.h"
 #include "softbody.h"
+#include "textedit.h"
 
 namespace {
 
@@ -77,6 +78,7 @@ struct Lab {
     float pressX = 0, pressY = 0, mouseX = 0, mouseY = 0;
     bool typing = false;
     std::string draft;
+    te::Edit draftEd;
     std::string toast;
     double toastT = 0;
     int W = 1280, H = 720;
@@ -201,6 +203,7 @@ struct Lab {
     void startNote() {
         typing = true;
         draft = hasChoice() ? choice().note : "";
+        draftEd.reset();
         SDL_StartTextInput();
     }
     void endNote(bool keep) {
@@ -436,7 +439,7 @@ struct Lab {
             r.rect(x0 + pad - 4 * u, y - 4 * u, w + 8 * u, 64 * u, 0.12f, 0.14f, 0.18f, 1);
             text(x0 + pad, y, 1.4f, "WHAT SHOULD CHANGE?  ENTER: SAVE  ESC: CANCEL", 0.98f, 0.82f, 0.3f);
             const bool blink = (SDL_GetPerformanceCounter() / (SDL_GetPerformanceFrequency() / 2)) % 2;
-            wrap(x0 + pad, y + 16 * u, w, 1.5f, draft + (blink ? "_" : " "), 1, 1, 1);
+            wrap(x0 + pad, y + 16 * u, w, 1.5f, te::withCursor(draft, draftEd, blink), 1, 1, 1);
         } else if (hasChoice() && !choice().note.empty()) {
             text(x0 + pad, y, 1.4f, "NOTE:", 0.98f, 0.82f, 0.3f);
             wrap(x0 + pad, y + 14 * u, w, 1.5f, choice().note, 0.9f, 0.9f, 0.9f);
@@ -479,9 +482,10 @@ struct Lab {
     // ---- Input ----
     void key(int sc, bool repeat) {
         if (typing) {
+            const uint8_t* ks = SDL_GetKeyboardState(nullptr);
+            if (te::key(draft, draftEd, sc, ks[224] || ks[228], ks[SC_LSHIFT] || ks[SC_RSHIFT], {te::Kind::Note, 240}).handled) return;
             if (sc == SC_RETURN || sc == SC_KP_ENTER) endNote(true);
             else if (sc == SC_ESCAPE) endNote(false);
-            else if (sc == SC_BACKSPACE && !draft.empty()) draft.pop_back();
             return;
         }
         const int n = (int)model().variants.size();
@@ -570,8 +574,7 @@ struct Lab {
                 case SDL_QUIT: running = false; break;
                 case SDL_TEXTINPUT:
                     if (typing) {
-                        for (char ch : evText(e))
-                            if ((unsigned char)ch >= 32 && (unsigned char)ch < 127 && draft.size() < 240) draft += (char)std::toupper((unsigned char)ch);
+                        te::insert(draft, draftEd, evText(e), {te::Kind::Note, 240});
                     }
                     break;
                 case SDL_KEYDOWN:

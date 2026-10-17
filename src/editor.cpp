@@ -246,6 +246,7 @@ View Editor::view(int w, int h) const {
 void Editor::handleEvent(const SDL_Event& e, float scale) {
     switch (e.type) {
         case SDL_KEYDOWN: key(evKeyScancode(e)); break;
+        case SDL_TEXTINPUT: textInput(evText(e)); break;
         case SDL_MOUSEMOTION:
             mx = evMotionX(e) * scale, my = evMotionY(e) * scale;
             if (rmb && !rmbTurn && !rmbEaten) {  // (right-drag on empty ground or sky looks round; on an object it turns that: update())
@@ -829,15 +830,6 @@ void Editor::brushKey(int sc) {
     say(std::string("BRUSH: ") + brushShapeName(shape) + ", " + brushFallName(fall) + " EDGE, " + brushStyleName(style), 1.2);
 }
 
-static char keyChar(int sc) {
-    if (sc >= SC_A && sc <= SC_A + 25) return (char)('A' + (sc - SC_A));
-    if (sc >= SC_1 && sc <= SC_1 + 8) return (char)('1' + (sc - SC_1));
-    if (sc == SC_0) return '0';
-    if (sc == SC_SPACE) return ' ';
-    if (sc == SC_MINUS) return '-';
-    return 0;
-}
-
 // Ctrl+S: saves it, asking for a name first if it hasn't one (SAVE AS: always asks).
 void Editor::save() {
     flow.requestSave(core, false);
@@ -879,9 +871,9 @@ void Editor::afterFlow() {
 // The keys while a prompt is up: the name, or SAVE / DISCARD / CANCEL.
 void Editor::flowKey(int sc) {
     if (flow.stage == SaveFlow::NAMING) {
-        const char ch = keyChar(sc);
-        if (ch) flow.type(ch);
-        else if (sc == SC_BACKSPACE) flow.backspace();
+        if (flow.fresh) te::selectAll(flow.text, flowEd);  // (the suggestion, selected: typing replaces it)
+        const te::KeyResult kr = te::key(flow.text, flowEd, sc, ctrl, shift, {te::Kind::Level, 28});
+        if (kr.handled) flow.fresh = false, flow.replaceOk = flow.replaceOk && !kr.changed;
         else if (sc == SC_RETURN || sc == SC_KP_ENTER) flow.enter(core);
         else if (sc == SC_ESCAPE) flow.escape();
     } else if (flow.stage == SaveFlow::ASKING) {
@@ -964,16 +956,10 @@ void Editor::key(int sc) {
     }
     // Typing the name.
     if (typing) {
-        std::string& n = core.level.name;
-        char ch = 0;
-        if (sc >= SC_A && sc <= SC_A + 25) ch = (char)('A' + (sc - SC_A));
-        else if (sc >= SC_1 && sc <= SC_1 + 8) ch = (char)('1' + (sc - SC_1));
-        else if (sc == SC_0) ch = '0';
-        else if (sc == SC_SPACE) ch = ' ';
-        else if (sc == SC_MINUS) ch = '-';
-        if (ch && n.size() < 28) core.settings("name", [&](Level& l) { l.name += ch; });
-        else if (sc == SC_BACKSPACE && !n.empty()) core.settings("name", [](Level& l) { l.name.pop_back(); });
-        else if (sc == SC_RETURN || sc == SC_KP_ENTER || sc == SC_ESCAPE) typing = false;
+        std::string n = core.level.name;
+        const te::KeyResult kr = te::key(n, nameEd, sc, ctrl, shift, {te::Kind::Level, 28});
+        if (kr.changed) core.settings("name", [&](Level& l) { l.name = n; });
+        else if (!kr.handled && (sc == SC_RETURN || sc == SC_KP_ENTER || sc == SC_ESCAPE)) typing = false;
         return;
     }
     if (ctrl && sc == SC_Z) {
@@ -1034,7 +1020,7 @@ void Editor::key(int sc) {
         else if (sc == SC_DOWN) setRow = std::min(10, setRow + 1);
         else if (sc == SC_LEFT) settingChange(setRow, -1);
         else if (sc == SC_RIGHT) settingChange(setRow, 1);
-        else if (sc == SC_RETURN && setRow == 0) typing = true;
+        else if (sc == SC_RETURN && setRow == 0) startTyping();
         return;
     }
     if (tool == SCULPT || tool == PAINT || tool == WATER) brushKey(sc);
@@ -1704,7 +1690,7 @@ void Editor::sectionAction(int code) {
     if (!core.level.section.on) return;
     auto step = [&](int cur, int dir, int n) { return ((cur + dir) % n + n) % n; };
     switch (code) {
-        case S_NAME: typing = true; return;
+        case S_NAME: startTyping(); return;
         case S_KIND_DN:
         case S_KIND_UP: core.settings("seckind", [&](Level& l) { l.section.kind = step(l.section.kind, code == S_KIND_UP ? 1 : -1, SK_COUNT); }); return;
         case S_DIFF_DN:
@@ -1791,7 +1777,7 @@ void Editor::doButton(int id) {
     }
     if (id >= B_SET && id < B_SET + 11) {
         setRow = id - B_SET;
-        if (setRow == 0) typing = true;
+        if (setRow == 0) startTyping();
         else settingChange(setRow, 1);
         return;
     }
@@ -2571,7 +2557,7 @@ void Editor::drawOptions(Renderer& r, float u) {
             const Level& l = core.level;
             const auto& cat = vehicleCatalog();
             const std::string rows[11][2] = {
-                {"NAME", l.name + (typing && std::fmod(clock, 1.0) < 0.5 ? "_" : "")},
+                {"NAME", (typing ? te::withCursor(l.name, nameEd, std::fmod(clock, 1.0) < 0.5) : l.name)},
                 {"MODE", levelModeName(l.mode)},
                 {"LAPS", std::to_string(l.laps)},
                 {"VEHICLE", l.vehicle >= 0 && l.vehicle < (int)cat.size() ? cat[l.vehicle].name : "ANY"},
@@ -2606,7 +2592,7 @@ void Editor::drawOptions(Renderer& r, float u) {
                 note("CLEARED CANVAS, WITH AN ENTRY AND AN EXIT.");
                 break;
             }
-            const std::string nm = core.level.name + (typing && std::fmod(clock, 1.0) < 0.5 ? "_" : "");
+            const std::string nm = (typing ? te::withCursor(core.level.name, nameEd, std::fmod(clock, 1.0) < 0.5) : core.level.name);
             button(r, x, y, w, bh, "NAME: " + nm, B_SEC + S_NAME, typing, u);
             y += bh + 4 * u;
             row("TYPE", sectionKindName(c.kind), B_SEC + S_KIND_DN, B_SEC + S_KIND_UP);
@@ -2754,8 +2740,10 @@ void Editor::drawFlow(Renderer& r, float u) {
         label(r, x + 16 * u, y + 14 * u, px(2.0f * u), "NAME THE LEVEL", 1.0f, 0.75f, 0.3f, 1);
         const float fy = y + 56 * u;
         r.rect(x + 16 * u, fy, w - 32 * u, 34 * u, 1, 1, 1, 0.1f);
-        if (flow.fresh && !flow.text.empty()) r.rect(x + 24 * u, fy + 5 * u, r.textWidth(flow.text, s) + 4 * u, 24 * u, 0.3f, 0.5f, 0.95f, 0.75f);  // (the suggestion, selected: typing replaces it)
-        const std::string t = flow.text + (!flow.fresh && std::fmod(clock, 1.0) < 0.5 ? "_" : " ");
+        size_t sf = 0, st = flow.text.size();
+        if ((flow.fresh && !flow.text.empty()) || (!flow.fresh && te::selection(flow.text, flowEd, sf, st)))  // (selected: the suggestion, or what was picked; typing replaces it)
+            r.rect(x + 26 * u + sf * 6 * s - 2 * u, fy + 5 * u, (st - sf) * 6 * s + 4 * u, 24 * u, 0.3f, 0.5f, 0.95f, 0.75f);
+        const std::string t = flow.fresh ? flow.text + " " : te::withCursor(flow.text, flowEd, std::fmod(clock, 1.0) < 0.5);
         r.text(x + 26 * u, fy + (34 * u - 8 * s) / 2, s, t, 1, 1, 1, 1);
         r.text(x + 16 * u, fy + 44 * u, px(1.1f * u), flow.fresh ? "TYPE TO REPLACE THE NAME, BACKSPACE EDITS IT, ENTER SAVES, ESC CANCELS" : "TYPE A NAME, ENTER SAVES IT, ESC CANCELS", 0.65f, 0.67f, 0.72f, 1);
         button(r, x + w - 16 * u - 230 * u, y + h - 16 * u - bh, 110 * u, bh, "SAVE", B_NAME_OK, true, u);
@@ -2813,4 +2801,17 @@ void Editor::draw(Renderer& r, int w, int h, double) {
         drawFiles(r, u);
     }
     if (flow.stage != SaveFlow::IDLE) drawFlow(r, u);
+}
+
+// Typed or pasted text (SDL_TEXTINPUT) into the field that has focus.
+void Editor::textInput(const std::string& utf8) {
+    if (flow.stage == SaveFlow::NAMING) {
+        if (flow.fresh) te::selectAll(flow.text, flowEd);
+        const bool was = flow.fresh;
+        if (te::insert(flow.text, flowEd, utf8, {te::Kind::Level, 28}) || was) flow.fresh = false, flow.replaceOk = false;
+        afterFlow();
+    } else if (typing && flow.stage == SaveFlow::IDLE) {
+        std::string n = core.level.name;
+        if (te::insert(n, nameEd, utf8, {te::Kind::Level, 28})) core.settings("name", [&](Level& l) { l.name = n; });
+    }
 }

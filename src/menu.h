@@ -3,6 +3,7 @@
 // Settings persist in ~/.config/crumplezone/settings.txt.
 #pragma once
 #include <string>
+#include "textedit.h"
 #include <vector>
 
 #include "render.h"
@@ -106,7 +107,8 @@ public:
     bool netActive = false;
     bool editorSuspended = false;  // a level from the editor is being tried: BACK TO THE EDITOR is offered
     std::string padName;  // the connected controller (settings page), set by the game
-    bool shift = false;  // a shift key is down (typing ':' in an address)
+    bool shift = false;  // a shift key is down (extending a selection)
+    bool ctrl = false;   // a control key is down (Ctrl+V pastes into the field)
     void showMultiplayer(int currentVehicle, int currentMap);  // opens straight onto that page
     void showPage(int page, int currentVehicle, int currentMap);  // (2 multiplayer, 3 autopilot)
     // Autopilot page: the places it can drive to (set by the game), and its state.
@@ -179,6 +181,10 @@ private:
     int sel = 0;
     std::string portText;      // the HOST card's PORT field while it's being typed in (it can be a half-typed number)
     bool portEdited = false, portFresh = false;  // (fresh: untouched, the first digit replaces it)
+    te::Edit ted;              // the cursor and selection in the text field that has focus
+    int tedRow = -1;           // ...which field that is (a row id)
+    bool textField(int id, Settings& s, std::string*& v, te::Rules& r);  // the text a field row edits, and what it takes
+    void focusText(int id, Settings& s);                                 // a new field gets the cursor at its end (the port: its number selected)
     int dragSlider = -1;
     float fade = 0;
     float caret = 0;  // text-field cursor blink
