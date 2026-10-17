@@ -3531,6 +3531,7 @@ void Renderer::drawCarBodies(const Sim& sim, GLuint prog, bool glassPass) {
 }
 
 void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effects* effects) {
+    passMark(FP_OPAQUE);
     buildFigures();
     prepareCars(sim, debug);
 
@@ -3594,6 +3595,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     Disable(GL_CULL_FACE);
 
     // Scanned props: rebuild the scenery if their quality changed, pick the scatter round the camera.
+    passMark(FP_PROPS);
     if (settings.props != propsApplied) updateObjects(sim.world);
     static const bool noSeeThrough = std::getenv("CZ_NO_SEETHROUGH") != nullptr;  // (for comparing screenshots)
     const SeeThrough seeThrough{view.eye, view.focus, view.hasFocus && !noSeeThrough, noSeeThrough ? 0.0f : view.fadeNear};
@@ -3605,6 +3607,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     geometryStats_ = {};
 
     // Shadow passes.
+    passMark(FP_SHADOWS);
     for (int c = 0; sq && c < 2; c++) {
         BindFramebuffer(GL_FRAMEBUFFER, shadowFbo[c]);
         Viewport(0, 0, shadowSize, shadowSize);
@@ -3634,6 +3637,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     }
 
     // Main pass, into the HDR target.
+    passMark(FP_SKY);
     BindFramebuffer(GL_FRAMEBUFFER, targetSamples ? msFbo : sceneFbo);
     Viewport(0, 0, targetW, targetH);
     ClearColor(kFog[0], kFog[1], kFog[2], 1);
@@ -3697,6 +3701,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         Uniform1i(uniformLocation(prog, "uTerrainTex"), 2);
         Uniform1f(uniformLocation(prog, "uTerrainN"), (float)terrainGridN);
     };
+    passMark(FP_TERRAIN);
     setLighting(progLit);
     uniformM4(progLit, "uModel", m4identity());
     bindTerrainTex(progLit);
@@ -3763,12 +3768,14 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
             DrawArrays(GL_TRIANGLES, 0, (GLsizei)rutVerts.size());
         }
     }
+    passMark(FP_OPAQUE);
     UseProgram(progLit);
     drawBatches(boxVao, boxBatches, vp, false);
     if (figVertexCount > 0) {
         BindVertexArray(figVao);
         DrawArrays(GL_TRIANGLES, 0, figVertexCount);
     }
+    passMark(FP_VEG);
     // The code-made trees the camera sees through (close to it, or across the line to the car) dither away:
     // the few most hidden go to the shader as (x, z, reach, fade).
     {
@@ -3802,13 +3809,17 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         if (n) Uniform4fv(uniformLocation(progTree, "uTreeFade"), n, list);
     }
     geometryStats_.sceneryVertices += trees_.draw(vp, view.eye);
+    passMark(FP_PROPS);
     UseProgram(progLit);
     drawBatches(sceneryVao, sceneryBatches, vp, false);
+    passMark(FP_VEG);
     drawBushes(vp, view.eye, false);
+    passMark(FP_PROPS);
     props.draw(vp, [&](GLuint prog) {
         setLighting(prog);
         Uniform1i(uniformLocation(prog, "uMap"), mapId);
     });
+    passMark(FP_VEG);
     UseProgram(progLit);
     if (settings.grass > 0) {
         // The grass: rings of tufts, finer near the camera (one grid each), as many as the setting allows.
@@ -3879,6 +3890,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         if (timed) EndQuery(GL_TIME_ELAPSED);
         setLighting(progLit);
     }
+    passMark(FP_OPAQUE);
     BindVertexArray(dynVao);
     DrawArrays(GL_TRIANGLES, 0, (GLsizei)partVerts.size());
     drawWheels(sim, progLit);
@@ -3886,6 +3898,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     setLighting(progCar);
     drawCarBodies(sim, progCar, false);
 
+    passMark(FP_FX);
     if (effects) {
         fxVerts.clear();
         effects->buildSkids(view.eye, fxVerts);
@@ -4004,8 +4017,45 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         DrawArrays(GL_POINTS, (GLint)lineCount, (GLsizei)(lineVerts.size() - lineCount));
         Enable(GL_DEPTH_TEST);
     }
+    passMark(FP_POST);
     postProcess(view, proj);
+    passMark(FP_PROPS);
     props.endFrame();
+}
+
+void Renderer::passMark(FramePass p) {
+    if (syncTiming) Finish();
+    frameProfile().enter(p);
+    if (!gpuTiming) return;
+    GpuMarks& m = gpuMarks_[gpuMarkFrame_];
+    if (m.n >= GpuMarks::kMax) return;
+    if (!m.q[0]) GenQueries(GpuMarks::kMax, m.q);
+    QueryCounter(m.q[m.n], GL_TIMESTAMP);
+    m.pass[m.n++] = (uint8_t)p;
+}
+
+// The slot about to be reused was filled four frames ago: its timestamps are in by now (if not, that frame goes unread
+// rather than stalling on the GPU). Each stage's GPU time is from its mark to the next.
+void Renderer::gpuFrameBegin() {
+    gpuMarkFrame_ = (gpuMarkFrame_ + 1) % 4;
+    GpuMarks& m = gpuMarks_[gpuMarkFrame_];
+    if (m.n >= 2) {
+        GLint ready = 0;
+        GetQueryObjectiv(m.q[m.n - 1], GL_QUERY_RESULT_AVAILABLE, &ready);
+        if (ready) {
+            double ms[FP_COUNT];
+            for (int i = 0; i < FP_COUNT; i++) ms[i] = framePassDraws((FramePass)i) ? 0 : -1;
+            GLuint64 prev = 0;
+            for (int k = 0; k < m.n; k++) {
+                GLuint64 t = 0;
+                GetQueryObjectui64v(m.q[k], GL_QUERY_RESULT, &t);
+                if (k && t >= prev && framePassDraws((FramePass)m.pass[k - 1])) ms[m.pass[k - 1]] += (t - prev) / 1e6;
+                prev = t;
+            }
+            frameProfile().setGpu(ms);
+        }
+    }
+    m.n = 0;
 }
 
 void Renderer::text(float x, float y, float s, const std::string& str, float r, float g, float b, float a) {

@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "daylight.h"
+#include "frameprof.h"
 #include "gl.h"
 #include "treedraw.h"
 #include "visibility.h"
@@ -131,6 +132,12 @@ public:
     };
     const GeometryStats& geometryStats() const { return geometryStats_; }
     double grassGpuMs() const { return grassGpuMs_; }  // (CZ_BENCH: the grass pass on the GPU, a few frames late)
+    // Frame timing (frameprof.h): the stage `p` starts now, on the CPU (frameProfile()) and, with gpuTiming, on the GPU
+    // (a timestamp query). gpuFrameBegin() at the top of each frame reads back a frame from a few frames ago.
+    bool gpuTiming = false;
+    bool syncTiming = false;  // (--bench-sync: wait for the GPU at each mark, so the CPU times are each stage's whole cost)
+    void passMark(FramePass p);
+    void gpuFrameBegin();
 
 private:
     struct CarSlot {
@@ -175,6 +182,14 @@ private:
     int grassQueryFrame_ = 0;
     bool grassQueryUsed_[4] = {};
     double grassGpuMs_ = 0;
+    struct GpuMarks {
+        static const int kMax = 48;
+        GLuint q[kMax] = {};
+        uint8_t pass[kMax] = {};
+        int n = 0;
+    };
+    GpuMarks gpuMarks_[4];
+    int gpuMarkFrame_ = 0;
     void uploadBatches(GLuint& vao, GLuint& vbo, std::vector<Vtx>& vertices, std::vector<StaticBatch>& batches);
     void drawBatches(GLuint vao, const std::vector<StaticBatch>& batches, const M4& vp, bool shadow);
     void drawBushes(const M4& vp, const V3& eye, bool shadow);  // (the bush batches within sight: small things, not drawn far off)
