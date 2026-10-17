@@ -641,8 +641,7 @@ void World::buildMountain() {
         t.height = t.kind == 1 ? rng.range(7, 12) : t.kind == 2 ? rng.range(6, 10) : rng.range(8, 17) * (1 - 0.35 * smoothstep(110, 178, y));
         t.radius = t.kind == 1 ? t.height * rng.range(0.32, 0.42) : t.height * rng.range(0.2, 0.27);
         t.tint = (float)rng.range(0.8, 1.2);
-        trees.push_back(t);
-        poles.push_back({x, z, t.base.y - 0.5, t.base.y + t.height * 0.6, t.kind == 1 ? 0.3 : 0.22});
+        plant(t);
     }
     // Fallen trees and stumps in the woods.
     const size_t crawlLogs = logs.size();

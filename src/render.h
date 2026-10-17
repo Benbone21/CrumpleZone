@@ -5,6 +5,7 @@
 
 #include "daylight.h"
 #include "gl.h"
+#include "treedraw.h"
 #include "visibility.h"
 #include "groundtex.h"
 #include "lights.h"
@@ -166,14 +167,15 @@ private:
     };
     struct StaticBatch { RenderBounds bounds; int first = 0, count = 0; };
     std::vector<TerrainChunk> terrainChunks;
-    std::vector<StaticBatch> boxBatches, treeBatches, sceneryBatches, bushBatches;
+    std::vector<StaticBatch> boxBatches, sceneryBatches, bushBatches;
     GeometryStats geometryStats_;
     void uploadBatches(GLuint& vao, GLuint& vbo, std::vector<Vtx>& vertices, std::vector<StaticBatch>& batches);
     void drawBatches(GLuint vao, const std::vector<StaticBatch>& batches, const M4& vp, bool shadow);
     void drawTerrain(const M4& vp, const View& view);
     GLuint boxVao = 0, boxVbo = 0;
     int boxVertexCount = 0;
-    GLuint treeVao = 0, treeVbo = 0;
+    TreeDraw trees_;                // the forest, instanced (treedraw.h)
+    GLuint progTree = 0, progTreeDepth = 0;
     int treeVertexCount = 0;
     ScanCover scanCover_;           // what the scanned props draw instead of the code-made meshes
     std::vector<float> treeFade_;   // per tree (World::trees): how much of it the camera hides now (treefade.h)

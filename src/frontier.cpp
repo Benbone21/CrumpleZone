@@ -1156,8 +1156,7 @@ void World::buildFrontier() {
         t.height = t.kind == 0 ? 9 + rnd() * 9 : 7 + rnd() * 7;
         t.radius = t.height * (t.kind == 0 ? 0.2 + rnd() * 0.06 : 0.26 + rnd() * 0.08);
         t.tint = (float)(0.8 + rnd() * 0.4);
-        trees.push_back(t);
-        poles.push_back({x, z, t.base.y - 0.5, t.base.y + t.height * 0.6, t.kind == 1 ? 0.3 : 0.22});
+        plant(t);
     }
     for (int attempt = 0; attempt < 20000 && bushes.size() < 1200; attempt++) {
         const double x = (rnd() * 2 - 1) * 510, z = (rnd() * 2 - 1) * 510;
@@ -1209,8 +1208,7 @@ void World::buildFrontier() {
         t.height = hgt;
         t.radius = hgt * (kind == 0 ? 0.2 + rnd2() * 0.06 : 0.26 + rnd2() * 0.08);
         t.tint = (float)tint;
-        trees.push_back(t);
-        poles.push_back({x, z, t.base.y - 0.5, t.base.y + t.height * 0.6, kind == 1 ? 0.3 : 0.22});
+        World::plant(t);
     };
     {
         // The swamp: dark, mossy broadleaf on the hummocks, drowned snags standing in the

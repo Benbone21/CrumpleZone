@@ -98,49 +98,90 @@ void limb(B& b, const std::vector<V3>& pts, const std::vector<double>& rad, int 
     }
 }
 
+// Roots flaring out of a trunk base: pointed cones sunk into the ground.
+void roots(B& b, uint32_t sd, int n, double r, double len0, int sides = 4) {
+    for (int k = 0; k < n; k++) {
+        const double a = 2 * M_PI * k / n + R01(sd, k + 200) * 0.8, L = len0 * (0.8 + 0.5 * R01(sd, k + 210));
+        const V3 d(std::cos(a), 0, std::sin(a));
+        b.cone(d * (r * 0.6) + V3(0, 0.55, 0), d * (r + L) + V3(0, -0.12, 0), r * 0.38, 0.0, sides, false);
+    }
+}
+
 // ---- Conifer boughs ----------------------------------------------------------------------
 
 struct Bough {
     double cx = 0, cz = 0, edgeY = 0, apexY = 0, r = 1;
     int sides = 9;
     double rag = 0.4, droop = 0.25, apexDx = 0, apexDz = 0;
+    double band = 0, shade = 1;  // a ring `band` of the way up from the rim to the apex, `shade` darker (in under the tier above: tiers read as layers)
+    int lod = 0;  // far copies (the "lod" param, forest.h): 1 no underside or sprigs, 2 fewer sides, no tips or band either
 };
 
 // One drooping tier of boughs: a ragged cone (top surface), its dark underside, and (with
-// snow) a white skin over the upper part of the top surface, ragged where it slides off.
-void tier(B& b, const Bough& t, uint32_t seed, int idx, const V3& top, const V3& edgeTop, const V3&, bool snow, double cover = 0.55) {
+// snow) a white skin over the upper part of the top surface, ragged where it slides off. Sprigs
+// stick out of the cone part way down (the boughs of the tier, layered), and its rim hangs in tips.
+void tier(B& b, const Bough& t, uint32_t seed, int idx, const V3& top, const V3& edgeTop, const V3& under, bool snow, double cover = 0.55) {
     const uint32_t s = seed * 131u + (uint32_t)idx * 17u;
-    std::vector<V3> e(t.sides);
-    std::vector<V3> d(t.sides);
+    const int sides = t.lod >= 2 ? std::max(5, t.sides * 2 / 3) : t.sides;
+    std::vector<V3> e(sides);
+    std::vector<V3> d(sides);
     const double phase = R01(s, 99) * 6.2832;
-    for (int i = 0; i < t.sides; i++) {
-        const double a = phase + 2 * M_PI * i / t.sides + (R01(s, i + 40) - 0.5) * 0.35;
+    // (the tier's rim tilts a little: no two tiers hang level)
+    const double tilt = 0.12 * t.r * R01(s, 98), tiltA = R01(s, 97) * 6.2832;
+    for (int i = 0; i < sides; i++) {
+        const double a = phase + 2 * M_PI * i / sides + (R01(s, i + 40) - 0.5) * 0.35;
         d[i] = V3(std::cos(a), 0, std::sin(a));
         const double rr = t.r * (1 + t.rag * ((i & 1) ? 0.3 : -0.28) + t.rag * 0.5 * (R01(s, i) - 0.5));
-        e[i] = V3(t.cx, t.edgeY - t.droop * rr * (0.25 + 0.75 * R01(s, i + 20)), t.cz) + d[i] * rr;
+        e[i] = V3(t.cx, t.edgeY - t.droop * rr * (0.25 + 0.75 * R01(s, i + 20)) + tilt * std::cos(a - tiltA), t.cz) + d[i] * rr;
     }
     const V3 A(t.cx + t.apexDx, t.apexY, t.cz + t.apexDz), H(t.cx, t.edgeY + 0.2 * t.r, t.cz);
     const double steep = std::max(0.3, (t.apexY - t.edgeY) / t.r);
-    for (int i = 0; i < t.sides; i++) {
-        const int k = (i + 1) % t.sides;
+    for (int i = 0; i < sides; i++) {
+        const int k = (i + 1) % sides;
         const V3 n0 = norm(d[i] * (steep * 0.75) + UP), n1 = norm(d[k] * (steep * 0.75) + UP);
         const double sh0 = 0.9 + 0.2 * R01(s, i + 60), sh1 = 0.9 + 0.2 * R01(s, k + 60);
         // Snow lies on the top surface: white matte at the apex fading to the ragged edge.
-        V3 c0 = edgeTop * sh0, c1 = edgeTop * sh1, ca = top;
+        V3 c0 = edgeTop * sh0, c1 = edgeTop * sh1, ca = top, cm = edgeTop * t.shade;
         if (snow) {
             c0 = mix(c0, SNOW * 0.9, cover * (0.5 + 0.9 * R01(s + 3, i)));
             c1 = mix(c1, SNOW * 0.9, cover * (0.5 + 0.9 * R01(s + 3, k)));
-            ca = SNOW;
+            ca = SNOW, cm = mix(cm, SNOW * 0.85, std::min(1.0, cover * 1.4));
             b.mat(SNOWLEAF);
         }
-        triC(b, e[i], A, e[k], n0, norm(n0 + n1 + UP * 1.5), n1, c0, ca, c1);
+        const V3 na = norm(n0 + n1 + UP * 1.5);
+        if (t.band > 0 && t.lod < 2) {
+            const V3 m0 = e[i] + (A - e[i]) * t.band, m1 = e[k] + (A - e[k]) * t.band;
+            const V3 nm0 = norm(n0 + na), nm1 = norm(n1 + na);
+            triC(b, e[i], m0, m1, n0, nm0, nm1, c0, cm, cm);
+            triC(b, e[i], m1, e[k], n0, nm1, n1, c0, cm, c1);
+            triC(b, m0, A, m1, nm0, na, nm1, cm, ca, cm);
+        } else {
+            triC(b, e[i], A, e[k], n0, na, n1, c0, ca, c1);
+        }
         b.mat(FOLIAGE);
+        if (t.lod >= 2) continue;
         // A dangling bough tip hung from the rim between the two points.
         const V3 dm = norm(d[i] + d[k]);
         const double rm = (len(V3(e[i].x - t.cx, 0, e[i].z - t.cz)) + len(V3(e[k].x - t.cx, 0, e[k].z - t.cz))) * 0.5;
         const V3 tip = V3(t.cx, std::min(e[i].y, e[k].y) - 0.18 * t.r - t.droop * 0.4 * t.r * (0.6 + 0.8 * R01(s, i + 70)), t.cz) + dm * (rm * (1.02 + 0.12 * R01(s, i + 80)));
         const V3 fn = norm(dm * 1.0 + UP * 0.3);
         triC(b, e[i], tip, e[k], norm(n0 * 0.5 + fn), fn, norm(n1 * 0.5 + fn), edgeTop * 0.8 * sh0, edgeTop * 0.62, edgeTop * 0.8 * sh1);
+        if (t.lod >= 1) continue;
+        // The underside: dark, up to the trunk (seen from under the boughs, and between the tiers).
+        const V3 dn = norm(V3(0, -1, 0) + (d[i] + d[k]) * 0.25);
+        triC(b, e[k], H, e[i], dn, V3(0, -1, 0), dn, under * (0.9 + 0.2 * R01(s, i + 110)), under * 0.7, under * (0.9 + 0.2 * R01(s, k + 110)));
+        // A sprig out of the cone part way down, lit on top (the bough under the needles), drooping.
+        if (t.r > 0.45 && R01(s, i + 120) < 0.8) {
+            const double f = 0.42 + 0.22 * R01(s, i + 130), w = 0.18 + 0.12 * R01(s, i + 140);
+            const V3 m0 = A + (e[i] - A) * f, m1 = A + (e[k] - A) * f;
+            const V3 p0 = m0 + (m1 - m0) * (0.5 - w), p1 = m0 + (m1 - m0) * (0.5 + w);
+            const V3 st = (m0 + m1) * 0.5 + dm * (t.r * (0.22 + 0.14 * R01(s, i + 150))) - UP * (t.r * (0.08 + 0.2 * t.droop));
+            const V3 sn = norm(dm * (steep * 0.5) + UP);
+            V3 cs = edgeTop * (1.05 + 0.15 * R01(s, i + 160)), cb = mix(edgeTop, top, f) * 0.85;
+            if (snow) cs = mix(cs, SNOW * 0.9, cover * 0.8), cb = mix(cb, SNOW * 0.85, cover * 0.6), b.mat(SNOWLEAF);
+            triC(b, p0, st, p1, sn, norm(sn + dm * 0.5), sn, cb, cs, cb);
+            b.mat(FOLIAGE);
+        }
     }
 }
 
@@ -155,27 +196,52 @@ double pathX(const std::vector<V3>& pts, double y, bool z = false) {
 
 const V3 BARK_LO(0.24, 0.17, 0.12), BARK_HI(0.34, 0.25, 0.17);
 
+// A conifer's trunk: flared roots at the foot, a little crooked, rough bark, and a few bare dead
+// limbs low down where the tiers have died back (they read as dark sticks under the boughs).
+std::vector<V3> conTrunk(B& b, uint32_t sd, double r0, double top, int deadLimbs, double limbY0, double limbY1, int lod) {
+    const double lx = (R01(sd, 300) - 0.5) * 0.16, lz = (R01(sd, 301) - 0.5) * 0.16;
+    const std::vector<V3> tr = {V3(0, -0.15, 0), V3(0, 0.45, 0), V3(lx * 0.3, 1.6, lz * 0.3), V3(lx, 0.42 * top, lz), V3(lx * 0.5, 0.72 * top, lz * 0.5), V3(0, top, 0)};
+    b.style(BARK_LO, WOOD);
+    limb(b, tr, {r0, r0 * 0.68, r0 * 0.54, r0 * 0.36, r0 * 0.2, 0.02}, 7 - 2 * std::min(lod, 1) - (lod >= 2), BARK_LO * 0.9, BARK_HI, false, sd, 0.16);
+    if (lod >= 1) return tr;
+    b.color(BARK_LO * 0.85);
+    roots(b, sd, 5, r0 * 0.7, r0 * 0.95, 4);
+    for (int k = 0; k < deadLimbs; k++) {
+        const double y = limbY0 + (limbY1 - limbY0) * (k + R01(sd, k + 310)) / deadLimbs, a = k * 2.4 + R01(sd, k + 320) * 1.2;
+        const double L = 0.35 + 0.5 * R01(sd, k + 330);
+        const V3 o(pathX(tr, y), y, pathX(tr, y, true)), dir(std::cos(a), -0.1 + 0.3 * R01(sd, k + 340), std::sin(a));
+        b.color(mix(BARK_LO, V3(0.36, 0.32, 0.27), 0.5));
+        b.cone(o, o + dir * L, 0.035, 0.006, 3, false);
+    }
+    return tr;
+}
+
 // Classic tiered fir: drooping, ragged tiers, darker and bluer low down.
 void pineClassic(B& b, const P& p) {
     const uint32_t sd = (uint32_t)p.i("seed");
     const int N = std::clamp(p.i("tiers"), 5, 10);
     const bool snow = p.i("snow") != 0;
     const double droop = p("droop"), fat = p("width");
-    b.style(BARK_LO, WOOD);
-    limb(b, {V3(0, -0.15, 0), V3(0, 1.6, 0), V3(0, 6, 0)}, {0.34, 0.14, 0.05}, 6, BARK_LO, BARK_HI, false, sd, 0.12);
+    const int lod = p.i("lod");
+    conTrunk(b, sd, 0.3, 9.4, 4, 0.9, 2.2, lod);
     b.mat(FOLIAGE);
     for (int k = 0; k < N; k++) {
         const double t = N > 1 ? (double)k / (N - 1) : 0;
         Bough g;
-        g.edgeY = 1.25 + t * 6.7;
+        g.edgeY = 1.75 + t * 6.2;
         g.apexY = (k == N - 1) ? 10.0 : g.edgeY + 3.1 - 0.9 * t;
         g.r = (2.1 - 1.7 * t) * fat * (0.92 + 0.16 * R01(sd, k));
-        g.sides = 8 + (int)std::lround(4 * (1 - t));
+        g.sides = 9 + (int)std::lround(4 * (1 - t));
         g.rag = 0.55;
         g.droop = droop;
+        g.apexDx = (R01(sd, k + 400) - 0.5) * 0.2, g.apexDz = (R01(sd, k + 410) - 0.5) * 0.2;
+        g.lod = lod;
+        if (k < N - 1) g.band = std::clamp(0.95 * 6.2 / (N - 1) / (g.apexY - g.edgeY), 0.2, 0.6), g.shade = 0.6;
         const V3 lowC(0.08, 0.19, 0.16), highC(0.18, 0.35, 0.11);
-        const V3 c = mix(lowC, highC, t);
-        tier(b, g, sd, k, c * 1.2, c * 0.9, c * 0.38, snow, 0.5 + 0.1 * (1 - t));
+        // (each tier a shade off the next: some sunnier, some bluer)
+        const double j = R01(sd, k + 420) - 0.5;
+        const V3 c = mix(lowC, highC, t) * (0.94 + 0.12 * R01(sd, k + 430)) + V3(0.02 * j, 0.01 * j, -0.015 * j);
+        tier(b, g, sd, k, c * 1.2, c * 1.05, c * 0.45, snow, 0.5 + 0.1 * (1 - t));
     }
 }
 
@@ -185,8 +251,8 @@ void pineSpruce(B& b, const P& p) {
     const int N = std::clamp(p.i("tiers"), 7, 14);
     const bool snow = p.i("snow") != 0;
     const double fat = p("width");
-    b.style(BARK_LO * 0.9, WOOD);
-    limb(b, {V3(0, -0.15, 0), V3(0, 1.5, 0), V3(0, 7, 0)}, {0.3, 0.12, 0.04}, 5, BARK_LO, BARK_HI, false, sd, 0.1);
+    const int lod = p.i("lod");
+    conTrunk(b, sd, 0.26, 9.6, 3, 0.7, 1.6, lod);
     b.mat(FOLIAGE);
     for (int k = 0; k < N; k++) {
         const double t = (double)k / (N - 1);
@@ -194,11 +260,14 @@ void pineSpruce(B& b, const P& p) {
         g.edgeY = 1.0 + t * 7.6;
         g.apexY = (k == N - 1) ? 10.0 : g.edgeY + 2.3 - 0.5 * t;
         g.r = (1.25 - 1.0 * t) * fat * (0.9 + 0.2 * R01(sd, k));
-        g.sides = 8;
+        g.sides = 9;
         g.rag = 0.5;
         g.droop = 0.55;
+        g.apexDx = (R01(sd, k + 400) - 0.5) * 0.12, g.apexDz = (R01(sd, k + 410) - 0.5) * 0.12;
+        g.lod = lod;
+        if (k < N - 1) g.band = std::clamp(0.95 * 7.6 / (N - 1) / (g.apexY - g.edgeY), 0.2, 0.6), g.shade = 0.66;
         const V3 lowC(0.08, 0.19, 0.17), highC(0.15, 0.31, 0.18);
-        const V3 c = mix(lowC, highC, t);
+        const V3 c = mix(lowC, highC, t) * (0.94 + 0.12 * R01(sd, k + 430));
         tier(b, g, sd, k, c * 1.15, c * 0.85, c * 0.4, snow, 0.5 + 0.1 * (1 - t));
     }
 }
@@ -209,12 +278,15 @@ void pineLodgepole(B& b, const P& p) {
     const uint32_t sd = (uint32_t)p.i("seed");
     const bool snow = p.i("snow") != 0;
     const double lean = p("lean");
+    const int lod = p.i("lod");
     const std::vector<V3> trunk = {V3(0, -0.15, 0), V3(0.10 * lean, 2.5, 0.05 * lean), V3(0.30 * lean, 5.2, -0.10 * lean), V3(0.24 * lean, 7.8, 0.03), V3(0.05 * lean, 10.0, 0)};
     b.style(V3(0.30, 0.23, 0.18), WOOD);
-    limb(b, trunk, {0.2, 0.15, 0.105, 0.065, 0.012}, 5, V3(0.26, 0.20, 0.16), V3(0.42, 0.28, 0.16), false, sd, 0.18);
+    limb(b, trunk, {0.2, 0.15, 0.105, 0.065, 0.012}, lod ? 4 : 5, V3(0.26, 0.20, 0.16), V3(0.42, 0.28, 0.16), false, sd, 0.18);
+    b.color(0.24, 0.19, 0.15);
+    if (!lod) roots(b, sd, 4, 0.16, 0.28, 3);
     // Dead branch stubs on the bare lower trunk.
     b.color(0.27, 0.21, 0.16);
-    for (int k = 0; k < 5; k++) {
+    for (int k = 0; k < (lod ? 0 : 5); k++) {
         const double y = 1.2 + k * 1.1 + R01(sd, k) * 0.4, a = R01(sd, k + 10) * 6.28, L = 0.3 + 0.35 * R01(sd, k + 20);
         const V3 o(pathX(trunk, y), y, pathX(trunk, y, true)), dir(std::cos(a), 0.15 + 0.25 * R01(sd, k + 30), std::sin(a));
         b.cone(o, o + dir * L, 0.04, 0.008, 3, false);
@@ -238,8 +310,9 @@ void pineLodgepole(B& b, const P& p) {
         g.droop = 0.5;
         g.apexDx = -std::cos(a) * 0.15;
         g.apexDz = -std::sin(a) * 0.15;
+        g.lod = lod;
         const V3 c = needles * (0.85 + 0.3 * R01(sd, k + 100));
-        if (off > 0.45) {  // a bare branch out to the tuft
+        if (off > 0.45 && lod < 2) {  // a bare branch out to the tuft
             b.style(V3(0.27, 0.21, 0.16), WOOD);
             const V3 o(pathX(trunk, y - 0.4), y - 0.4, pathX(trunk, y - 0.4, true));
             b.cone(o, V3(g.cx, g.edgeY + 0.1, g.cz), 0.05, 0.02, 4, false);
@@ -249,7 +322,7 @@ void pineLodgepole(B& b, const P& p) {
     }
     // The leader.
     Bough g;
-    g.cx = trunk.back().x, g.cz = 0, g.edgeY = 8.7, g.apexY = 10.0, g.r = 0.5, g.sides = 6, g.rag = 0.5, g.droop = 0.4;
+    g.cx = trunk.back().x, g.cz = 0, g.edgeY = 8.7, g.apexY = 10.0, g.r = 0.5, g.sides = 6, g.rag = 0.5, g.droop = 0.4, g.lod = lod;
     tier(b, g, sd, 30, needles * 1.3, needles, needles * 0.4, snow, 0.55);
 }
 
@@ -290,7 +363,7 @@ void leafBlob(B& b, const V3& c, const V3& r, uint32_t seed, const V3& colA, con
 // kind: 0 oak, 1 aspen, 2 willow. season: 0 green, 1 late summer, 2 autumn.
 void leafPalette(int kind, int season, uint32_t seed, int blobIdx, V3& A, V3& B) {
     if (kind == 0) A = V3(0.12, 0.25, 0.07), B = V3(0.21, 0.37, 0.09);
-    if (kind == 1) A = V3(0.24, 0.38, 0.10), B = V3(0.40, 0.52, 0.13);
+    if (kind == 1) A = V3(0.17, 0.31, 0.09), B = V3(0.29, 0.43, 0.12);
     if (kind == 2) A = V3(0.20, 0.34, 0.10), B = V3(0.36, 0.48, 0.14);
     if (season == 1) {
         A = mix(A, V3(0.34, 0.34, 0.07), 0.55);
@@ -305,52 +378,100 @@ void leafPalette(int kind, int season, uint32_t seed, int blobIdx, V3& A, V3& B)
     }
 }
 
-void oakCrown(B& b, uint32_t sd, int season, bool snow, double wide, double ytop) {
-    const size_t from = b.out().v.size();
-    struct Lump { double x, y, z, rx, ry; };
-    std::vector<Lump> L;
-    L.push_back({0, ytop - 2.0, 0, 2.3, 1.9});
-    for (int k = 0; k < 6; k++) {
-        const double a = k * 1.047 + R01(sd, k) * 0.5, d = (2.0 + 0.5 * R01(sd, k + 9)) * wide;
-        L.push_back({std::cos(a) * d, ytop - 3.4 + 1.1 * R01(sd, k + 20) - 0.2 * (k & 1), std::sin(a) * d, 1.6 + 0.4 * R01(sd, k + 30), 1.4 + 0.3 * R01(sd, k + 40)});
-    }
-    L.push_back({0.4, ytop - 0.9, -0.2, 1.4, 1.1});
-    for (size_t k = 0; k < L.size(); k++) {
-        V3 A, B;
-        leafPalette(0, season, sd, (int)k, A, B);
-        leafBlob(b, V3(L[k].x, L[k].y, L[k].z), V3(L[k].rx * wide, L[k].ry, L[k].rx * wide), sd * 7 + (uint32_t)k, A, B, 0.2, 0);
-    }
-    if (snow) snowTops(b, from, 0.45, sd, true);
+// A leaf lobe's two colours: the kind's palette, each lobe a shade off the next (sunnier on top).
+void lobePalette(int kind, int season, uint32_t sd, int k, double up, V3& A, V3& B) {
+    leafPalette(kind, season, sd, k, A, B);
+    const double j = R01(sd + 31, k) - 0.5, lit = 0.92 + 0.12 * up + 0.1 * R01(sd + 37, k);
+    A = (A + V3(0.03 * j, 0.015 * j, -0.01 * j)) * lit, B = (B + V3(0.03 * j, 0.015 * j, -0.01 * j)) * lit;
 }
 
+// A spreading oak: a stout flared trunk forking at about 3 m into three or four limbs, each forking
+// again; the crown is clumps of leaves at the ends of the limbs, round a high middle.
 void oak(B& b, const P& p) {
     const uint32_t sd = (uint32_t)p.i("seed");
     const int season = p.i("season");
     const double wide = p("width");
-    b.style(V3(0.27, 0.21, 0.16), WOOD);
-    limb(b, {V3(0, -0.15, 0), V3(0, 0.9, 0), V3(0, 3.1, 0)}, {0.62, 0.40, 0.32}, 6, V3(0.22, 0.17, 0.13), V3(0.32, 0.25, 0.19), false, sd, 0.15);
-    for (int k = 0; k < 3; k++) {
-        const double a = R01(sd, k + 50) * 0.8 + k * 2.1;
-        limb(b, {V3(0, 2.9, 0), V3(std::cos(a) * 1.7 * wide, 5.7 + 0.5 * R01(sd, k + 60), std::sin(a) * 1.7 * wide)}, {0.26, 0.12}, 4, V3(0.30, 0.23, 0.17), V3(0.33, 0.26, 0.19), false, sd + (uint32_t)k, 0.1);
+    const bool snow = p.i("snow") != 0;
+    const int lod = p.i("lod");
+    const V3 barkLo(0.21, 0.16, 0.12), barkHi(0.33, 0.26, 0.20);
+    b.style(barkLo, WOOD);
+    const V3 fork(0.08, 2.9, 0.04);
+    limb(b, {V3(0, -0.15, 0), V3(0, 0.6, 0), V3(0.03, 1.8, 0.02), fork}, {0.46, 0.31, 0.27, 0.25}, lod ? 5 : 7, barkLo, barkHi, false, sd, 0.18);
+    b.color(barkLo * 0.95);
+    if (!lod) roots(b, sd, 5, 0.34, 0.5, 4);
+    struct Lump { V3 c; double rx, ry; };
+    std::vector<Lump> L;
+    const int nl = 3 + (int)(sd % 2);
+    for (int k = 0; k < nl; k++) {
+        const double a = 2 * M_PI * k / nl + (R01(sd, k + 50) - 0.5) * 0.9, out = (2.0 + 0.5 * R01(sd, k + 55)) * wide;
+        const V3 dir(std::cos(a), 0, std::sin(a)), side(-dir.z, 0, dir.x);
+        const V3 m = fork + dir * (out * 0.45) + V3(0, 1.3 + 0.3 * R01(sd, k + 60), 0);
+        const V3 e = fork + dir * out + V3(0, 2.7 + 0.7 * R01(sd, k + 65), 0);
+        limb(b, {fork - dir * 0.05, m, e}, {0.22, 0.15, 0.08}, lod ? 4 : 5, barkLo * 1.1, barkHi, false, sd + (uint32_t)k * 7, 0.12);
+        // A fork off the limb, out to one side.
+        const double sgn = (k & 1) ? 1 : -1;
+        const V3 f = m + norm(dir * 0.6 + side * sgn) * (1.1 * wide) + V3(0, 1.0 + 0.4 * R01(sd, k + 70), 0);
+        if (!lod) limb(b, {m, f}, {0.1, 0.045}, 4, barkLo * 1.1, barkHi, false, sd + (uint32_t)k * 7 + 3, 0.1);
+        const double big = lod >= 2 ? 1.12 : 1.0;  // (far: the side clumps left out, the end ones a little bigger)
+        L.push_back({e + V3(0, 0.6, 0), (1.7 + 0.35 * R01(sd, k + 30)) * big, (1.35 + 0.3 * R01(sd, k + 40)) * big});
+        if (lod < 2) L.push_back({f + V3(0, 0.3, 0), 1.2 + 0.3 * R01(sd, k + 80), 1.0 + 0.25 * R01(sd, k + 90)});
     }
-    oakCrown(b, sd, season, p.i("snow") != 0, wide, 10.0);
+    // The middle and top of the crown, over the fork.
+    L.push_back({V3(0, 7.6, 0), 2.1, 1.7});
+    L.push_back({V3(0.4, 8.7, -0.2), 1.5, 1.2});
+    if (lod < 2) L.push_back({V3(-0.5 * wide, 6.4, 0.6 * wide), 1.5, 1.2});
+    const size_t from = b.out().v.size();
+    for (size_t k = 0; k < L.size(); k++) {
+        V3 A, B;
+        lobePalette(0, season, sd, (int)k, (L[k].c.y - 6.0) / 3.0, A, B);
+        const V3 c(L[k].c.x, std::min(L[k].c.y, 9.0), L[k].c.z);
+        leafBlob(b, c, V3(L[k].rx * wide, L[k].ry, L[k].rx * wide), sd * 7 + (uint32_t)k, A, B, 0.22, 0);
+    }
+    if (snow) snowTops(b, from, 0.45, sd, true);
 }
 
 void poplar(B& b, const P& p) {
     const uint32_t sd = (uint32_t)p.i("seed");
     const int season = p.i("season");
     const double lean = p("lean");
+    const int lod = p.i("lod");
+    // Pale aspen bark, darker at the foot, with the black scars where branches fell.
+    const std::vector<V3> tr = {V3(0, -0.15, 0), V3(0, 0.5, 0), V3(0.03 * lean, 1.6, 0), V3(0.1 * lean, 4.2, 0), V3(0.2 * lean, 7.5, 0)};
     b.style(V3(0.62, 0.60, 0.52), WOOD);
-    limb(b, {V3(0, -0.15, 0), V3(0, 1.6, 0), V3(0.1 * lean, 4.2, 0)}, {0.30, 0.2, 0.1}, 5, V3(0.52, 0.5, 0.43), V3(0.66, 0.64, 0.56), false, sd, 0.12);
+    limb(b, tr, {0.26, 0.19, 0.16, 0.1, 0.04}, lod ? 4 : 6, V3(0.40, 0.38, 0.33), V3(0.70, 0.68, 0.60), false, sd, 0.1);
+    b.color(0.42, 0.40, 0.35);
+    if (!lod) roots(b, sd, 4, 0.18, 0.25, 3);
+    b.color(0.10, 0.09, 0.08);
+    for (int k = 0; k < (lod ? 0 : 7); k++) {
+        const double y = 0.8 + 3.0 * (k + R01(sd, k + 500)) / 7, a = R01(sd, k + 510) * 6.2832;
+        const double r = (y < 1.6 ? lerp(0.19, 0.16, (y - 0.5) / 1.1) : lerp(0.16, 0.1, (y - 1.6) / 2.6)) + 0.012;
+        const V3 o(pathX(tr, y), y, pathX(tr, y, true)), d(std::cos(a), 0, std::sin(a)), t(-std::sin(a), 0, std::cos(a));
+        const double w = 0.05 + 0.04 * R01(sd, k + 520);
+        b.tri(o + d * r - t * w, o + d * r + UP * 0.05, o + d * r + t * w);
+        b.tri(o + d * r - t * w, o + d * r + t * w, o + d * r - UP * 0.06);
+    }
+    // A few thin branches up into the crown.
+    b.style(V3(0.55, 0.53, 0.46), WOOD);
+    for (int k = 0; k < (lod ? 0 : 3); k++) {
+        const double y = 4.0 + 0.9 * k, a = k * 2.1 + R01(sd, k + 530);
+        const V3 o(pathX(tr, y), y, pathX(tr, y, true));
+        b.cone(o, o + V3(std::cos(a) * 0.8, 1.1, std::sin(a) * 0.8), 0.05, 0.015, 3, false);
+    }
     const size_t from = b.out().v.size();
     const double ys[] = {3.9, 5.0, 6.3, 7.6, 8.8, 9.6};
     const double rs[] = {0.9, 1.25, 1.35, 1.2, 0.95, 0.6};
     const double ry[] = {1.2, 1.5, 1.6, 1.5, 1.3, 0.55};
     for (int k = 0; k < 6; k++) {
         V3 A, B;
-        leafPalette(1, season, sd, k, A, B);
+        lobePalette(1, season, sd, k, k / 5.0, A, B);
         const double x = (R01(sd, k) - 0.5) * 0.4 + lean * 0.05 * ys[k], z = (R01(sd, k + 10) - 0.5) * 0.4;
         leafBlob(b, V3(x, ys[k], z), V3(rs[k], ry[k], rs[k] * 0.95), sd * 11 + (uint32_t)k, A, B, 0.2, 0);
+        // A smaller clump hung off the side of each.
+        if (k < 5 && lod < 2) {
+            const double a = R01(sd, k + 540) * 6.2832, o = rs[k] * 0.8;
+            lobePalette(1, season, sd, k + 10, k / 5.0, A, B);
+            leafBlob(b, V3(x + std::cos(a) * o, ys[k] - 0.3, z + std::sin(a) * o), V3(rs[k] * 0.55, ry[k] * 0.5, rs[k] * 0.55), sd * 13 + (uint32_t)k, A, B, 0.2, 0);
+        }
     }
     if (p.i("snow")) snowTops(b, from, 0.45, sd, true);
 }
@@ -373,7 +494,7 @@ void willow(B& b, const P& p) {
     if (p.i("snow")) snowTops(b, from, 0.45, sd, true);
     // Long curtains of leaves hanging from the crown.
     b.mat(FOLIAGE);
-    const int strands = 14;
+    const int strands = p.i("lod") >= 2 ? 8 : 14;
     for (int k = 0; k < strands; k++) {
         const double a = 2 * M_PI * k / strands + R01(sd, k) * 0.3;
         const double R = 1.9 + 1.0 * R01(sd, k + 10), top = 6.9 - 0.2 * R01(sd, k + 20), bot = std::max(0.7, top - (3.2 + 2.6 * drop) * (0.7 + 0.5 * R01(sd, k + 30)) - 1.0 * drop);
@@ -405,37 +526,60 @@ Reg treeBroadleaf({"tree_broadleaf", "BROADLEAF TREE", "NATURE AND PEOPLE", "Dec
                         willow},
                    }});
 
-// Roots flaring out of a trunk base: pointed cones sunk into the ground.
-void roots(B& b, uint32_t sd, int n, double r, double len0, int sides = 4) {
+// ---- Snags -------------------------------------------------------------------------------
+
+// Bark still clinging to a dead trunk: dark plates round it between y0 and y1, ragged at the edges.
+void barkPlates(B& b, uint32_t sd, const std::vector<V3>& tr, const std::vector<double>& rad, double y0, double y1, int n, const V3& col) {
+    auto radAt = [&](double y) {
+        for (size_t i = 0; i + 1 < tr.size(); i++)
+            if (y <= tr[i + 1].y || i + 2 == tr.size()) return lerp(rad[i], rad[i + 1], clamp01((y - tr[i].y) / std::max(1e-6, tr[i + 1].y - tr[i].y)));
+        return rad.back();
+    };
     for (int k = 0; k < n; k++) {
-        const double a = 2 * M_PI * k / n + R01(sd, k + 200) * 0.8, L = len0 * (0.8 + 0.5 * R01(sd, k + 210));
-        const V3 d(std::cos(a), 0, std::sin(a));
-        b.cone(d * (r * 0.6) + V3(0, 0.55, 0), d * (r + L) + V3(0, -0.12, 0), r * 0.38, 0.0, sides, false);
+        const double a = R01(sd, k + 600) * 6.2832, ya = y0 + (y1 - y0) * R01(sd, k + 610), h = 0.4 + 0.9 * R01(sd, k + 620);
+        const double yb = std::min(y1, ya + h), w = 0.35 + 0.35 * R01(sd, k + 630);
+        auto at = [&](double y, double da) {
+            const double r = radAt(y) * 1.06 + 0.012;
+            return V3(pathX(tr, y) + std::cos(a + da) * r, y, pathX(tr, y, true) + std::sin(a + da) * r);
+        };
+        b.color(col * (0.85 + 0.3 * R01(sd, k + 640)));
+        b.quad(at(ya, -w), at(ya, w), at(yb, w * 0.7), at(yb - 0.15, -w * 0.8));
     }
 }
-
-// ---- Snags -------------------------------------------------------------------------------
 
 void snagGrey(B& b, const P& p) {
     const uint32_t sd = (uint32_t)p.i("seed");
     const bool snow = p.i("snow") != 0;
+    const int lod = p.i("lod");
     const V3 lo(0.34, 0.31, 0.27), hi(0.62, 0.59, 0.54);
     b.style(lo, WOOD);
-    const std::vector<V3> tr = {V3(0, -0.15, 0), V3(0.04, 2.7, 0), V3(-0.06, 5.5, 0.05), V3(0.05, 8.0, 0)};
-    limb(b, tr, {0.32, 0.22, 0.15, 0.05}, 5, lo * 1.15, hi * 0.95, true, sd, 0.12, V3(0.66, 0.6, 0.5));
+    const std::vector<V3> tr = {V3(0, -0.15, 0), V3(0, 0.6, 0), V3(0.04, 2.7, 0), V3(-0.06, 5.5, 0.05), V3(0.05, 8.0, 0)};
+    const std::vector<double> rad = {0.32, 0.25, 0.2, 0.14, 0.05};
+    limb(b, tr, rad, lod ? 4 : 6, lo * 1.05, hi * 0.95, true, sd, 0.14, V3(0.66, 0.6, 0.5));
     b.color(lo * 1.1);
-    roots(b, sd, 3, 0.3, 0.45, 3);
+    if (!lod) roots(b, sd, 4, 0.28, 0.5, 3);
+    // The last of the bark, dark and low down; the wood above it bleached.
+    if (!lod) barkPlates(b, sd, tr, rad, 0.2, 3.2, 7, V3(0.22, 0.18, 0.14));
+    b.style(lo, WOOD);
     const int nb = p.i("branches");
     for (int k = 0; k < nb; k++) {
         const double y = 2.9 + k * (3.6 / std::max(1, nb)) + 0.3 * R01(sd, k), a = k * 2.4 + R01(sd, k + 10), L = 1.9 - 0.18 * k + 0.4 * R01(sd, k + 20);
         const V3 o(pathX(tr, y), y, pathX(tr, y, true)), dir(std::cos(a), 0.0, std::sin(a));
         const V3 m = o + dir * (L * 0.55) + V3(0, 0.45 * L, 0), e = o + dir * L + V3(0, 0.55 * L + 0.2, 0);
         const bool broken = k % 3 == 1;
-        limb(b, {o - dir * 0.05, m, broken ? m + (e - m) * 0.55 : e}, {0.09, 0.05, broken ? 0.035 : 0.012}, 3, lo * 1.1, hi * 0.9, broken, sd + (uint32_t)k, 0.1, V3(0.66, 0.6, 0.5));
-        if (!broken && k % 2 == 0) {
+        limb(b, {o - dir * 0.05, m, broken ? m + (e - m) * 0.55 : e}, {0.09, 0.05, broken ? 0.035 : 0.012}, lod ? 3 : 4, lo * 1.1, hi * 0.9, broken, sd + (uint32_t)k, 0.1, V3(0.66, 0.6, 0.5), broken ? std::vector<double>{0.05, -0.04, 0.08, -0.02} : std::vector<double>{});
+        if (!broken && !lod) {
             b.color(hi * 0.85);
             b.cone(m, m + V3(-dir.z * 0.7, 0.45, dir.x * 0.7), 0.03, 0.0, 3, false);
+            b.cone(m + (e - m) * 0.6, m + (e - m) * 0.6 + V3(dir.z * 0.45, 0.35, -dir.x * 0.45), 0.02, 0.0, 3, false);
         }
+    }
+    // Snapped-off stubs where the lower branches were.
+    b.color(lo * 1.15);
+    for (int k = 0; k < (lod ? 0 : 4); k++) {
+        const double y = 1.4 + 0.45 * k + 0.2 * R01(sd, k + 650), a = R01(sd, k + 660) * 6.2832;
+        const V3 o(pathX(tr, y), y, pathX(tr, y, true)), dir(std::cos(a), 0.15, std::sin(a));
+        b.cone(o, o + dir * (0.18 + 0.15 * R01(sd, k + 670)), 0.045, 0.025, 3, false);
     }
     if (snow) {
         // A cap of snow on the broken top and along the branches' upper faces.
@@ -450,7 +594,7 @@ void snagBurnt(B& b, const P& p) {
     const V3 lo(0.09, 0.08, 0.075), hi(0.05, 0.045, 0.045);
     b.style(lo, WOOD);
     const std::vector<V3> tr = {V3(0, -0.15, 0), V3(0.03, 3.0, 0), V3(-0.04, 5.8, 0.03), V3(0.0, 7.4, 0)};
-    limb(b, tr, {0.44, 0.31, 0.22, 0.14}, 6, mix(lo, V3(0.32, 0.31, 0.3), ash), hi, true, sd, 0.2, V3(0.14, 0.1, 0.07), {0, -0.9, -0.1, -1.2, -0.05, -0.5}, 0.25);
+    limb(b, tr, {0.38, 0.27, 0.2, 0.13}, 6, mix(lo, V3(0.32, 0.31, 0.3), ash), hi, true, sd, 0.2, V3(0.14, 0.1, 0.07), {0, -0.9, -0.1, -1.2, -0.05, -0.5}, 0.25);
     b.style(hi * 1.2, WOOD);
     roots(b, sd, 4, 0.4, 0.6, 4);
     // Ash-grey streaks where the char has flaked.
@@ -458,7 +602,7 @@ void snagBurnt(B& b, const P& p) {
     for (int k = 0; k < 2; k++) {
         const double a = k * 2.1 + 0.4, y0 = 0.6 + 1.7 * k, y1 = y0 + 1.5;
         const V3 d(std::cos(a), 0, std::sin(a)), t(-std::sin(a), 0, std::cos(a));
-        const V3 p0 = d * (pathX({V3(0, 0, 0), V3(0, 7.4, 0)}, y0) + (0.44 - 0.3 * y0 / 7.4) * 1.02) + V3(0, y0, 0), p1 = d * ((0.44 - 0.3 * y1 / 7.4) * 0.97) + V3(0, y1, 0);
+        const V3 p0 = d * (pathX({V3(0, 0, 0), V3(0, 7.4, 0)}, y0) + (0.38 - 0.25 * y0 / 7.4) * 1.02) + V3(0, y0, 0), p1 = d * ((0.38 - 0.25 * y1 / 7.4) * 0.97) + V3(0, y1, 0);
         b.quad(p0 - t * 0.09, p0 + t * 0.09, p1 + t * 0.06, p1 - t * 0.06);
     }
     for (int k = 0; k < 4; k++) {
@@ -482,7 +626,7 @@ void snagBroken(B& b, const P& p) {
     const V3 lo(0.32, 0.27, 0.21), hi(0.50, 0.44, 0.36);
     b.style(lo, WOOD);
     const std::vector<V3> tr = {V3(0, -0.15, 0), V3(0, 2.5, 0), V3(0.03, height - 1.4, 0), V3(0.03, height, 0)};
-    limb(b, tr, {0.56, 0.4, 0.31, 0.27}, 6, lo, hi, true, sd, 0.14, V3(0.66, 0.54, 0.38), {0, -1.5, -0.3, -1.1, -0.6, -1.3}, 0.3);
+    limb(b, tr, {0.44, 0.32, 0.26, 0.23}, 6, lo, hi, true, sd, 0.14, V3(0.66, 0.54, 0.38), {0, -1.5, -0.3, -1.1, -0.6, -1.3}, 0.3);
     b.color(lo * 0.9);
     roots(b, sd, 4, 0.5, 0.6, 4);
     // A long splinter peeled off and hanging from the break.
@@ -493,7 +637,7 @@ void snagBroken(B& b, const P& p) {
     {
         const double a = 0.6;
         const V3 d(std::cos(a), 0, std::sin(a)), t(-std::sin(a), 0, std::cos(a));
-        const V3 p0 = d * 0.43 + V3(0, 1.8, 0), p1 = d * 0.35 + V3(0, 4.3, 0);
+        const V3 p0 = d * 0.335 + V3(0, 1.8, 0), p1 = d * 0.3 + V3(0, 4.3, 0);
         b.quad(p0 - t * 0.14, p0 + t * 0.14, p1 + t * 0.1, p1 - t * 0.1);
     }
     b.style(lo * 1.1, WOOD);

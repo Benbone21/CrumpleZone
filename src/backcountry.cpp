@@ -826,8 +826,7 @@ void World::buildBackcountry() {
                     t.height = t.kind == 0 ? 10 + rnd() * 8 : 8 + rnd() * 6;
                     t.radius = t.height * (t.kind == 0 ? 0.2 + rnd() * 0.06 : 0.26 + rnd() * 0.08);
                     t.tint = (float)(0.8 + rnd() * 0.4);
-                    trees.push_back(t);
-                    poles.push_back({q.x, q.z, t.base.y - 0.5, t.base.y + t.height * 0.6, t.kind == 1 ? 0.3 : 0.22});
+                    plant(t);
                 }
             }
         }
@@ -1088,9 +1087,8 @@ void World::buildBackcountry() {
         // a scorched snag beside it
         Tree t;
         t.base = V3(w.x + 4.5, y - 0.2, w.z - 3.5);
-        t.height = 9, t.radius = 2, t.tint = 0.5f, t.kind = 2;
-        trees.push_back(t);
-        poles.push_back({t.base.x, t.base.z, t.base.y - 0.5, t.base.y + 5, 0.22});
+        t.height = 9, t.radius = 2, t.tint = 0.5f, t.kind = 2, t.design = 1;  // (burnt)
+        plant(t);
         cairn(w + V3(-6, 0, 4));
     }
     // PASS HUT's neighbourhood and the snow poles along the pass and the first of the tower road.
@@ -1150,8 +1148,7 @@ void World::buildBackcountry() {
         t.height *= 1 - 0.3 * smoothstep(40, 80, h);
         t.radius = t.height * (t.kind == 0 ? 0.2 + rnd() * 0.06 : 0.26 + rnd() * 0.08);
         t.tint = (float)(0.8 + rnd() * 0.4);
-        trees.push_back(t);
-        poles.push_back({x, z, t.base.y - 0.5, t.base.y + t.height * 0.6, t.kind == 1 ? 0.3 : 0.22});
+        plant(t);
     }
     // Fallen logs, stumps, bushes.
     for (int attempt = 0; attempt < 30000 && logs.size() < 200; attempt++) {
