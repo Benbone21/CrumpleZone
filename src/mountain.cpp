@@ -705,7 +705,9 @@ void World::buildMountain() {
         if (!clearOfPaths(x, z, 2.5)) continue;
         double y = groundAt(x, z);
         if (y > 165 || rng() > 0.55 * (1 - smoothstep(100, 165, y))) continue;
-        bushes.push_back({V3(x, y, z), rng.range(0.45, 1.3), (float)rng.range(0.75, 1.2)});
+        const double u = rng.range(0, 1), forest = fbmNoise(x * 0.012 + 7, z * 0.012 - 3, 3);
+        const int habitat = y > 118 ? HAB_UPLAND : forest > 0.5 ? HAB_FOREST : HAB_MEADOW;
+        bushes.push_back(growBush(V3(x, y, z), habitat, forest > 0.36, u, (float)rng.range(0.75, 1.2)));
     }
 
     // ---- The trailhead: fence, cabin, trail map, lane signs, picnic tables ----

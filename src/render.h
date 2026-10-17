@@ -170,6 +170,7 @@ private:
     GeometryStats geometryStats_;
     void uploadBatches(GLuint& vao, GLuint& vbo, std::vector<Vtx>& vertices, std::vector<StaticBatch>& batches);
     void drawBatches(GLuint vao, const std::vector<StaticBatch>& batches, const M4& vp, bool shadow);
+    void drawBushes(const M4& vp, const V3& eye, bool shadow);  // (the bush batches within sight: small things, not drawn far off)
     void drawTerrain(const M4& vp, const View& view);
     GLuint boxVao = 0, boxVbo = 0;
     int boxVertexCount = 0;

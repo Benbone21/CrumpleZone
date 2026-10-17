@@ -367,6 +367,12 @@ LevelObject treeProto(int kind, double h) {
     return o;
 }
 
+LevelObject plantProto(int kind, double r) {
+    LevelObject o;
+    o.kind = OBJ_BUSH, o.sub = kind, o.size = V3(r, 0, 0), o.col[0] = 1.0f;
+    return o;
+}
+
 LevelObject modelProto(const std::string& id) {
     LevelObject o;
     o.kind = OBJ_MODEL, o.name = id, o.size = V3(1, 1, 1);
@@ -377,7 +383,7 @@ LevelObject modelProto(const std::string& id) {
 
 void Editor::buildPalette() {
     if (!palette.empty()) return;
-    tabs = {"POINTER", "ROCKS", "SCANS", "BLOCKS", "LOGS", "TREES", "BUILD", "LEDGE"};
+    tabs = {"POINTER", "ROCKS", "SCANS", "BLOCKS", "LOGS", "TREES", "PLANTS", "BUILD", "LEDGE"};
     auto add = [&](const std::string& name, int tab, const LevelObject& o, const std::string& icon) {
         PalEntry e;
         e.name = name, e.tab = tabs[tab], e.proto = o, e.icon = icon;
@@ -412,15 +418,13 @@ void Editor::buildPalette() {
     add("BROADLEAF", 5, treeProto(1, 10), "model:tree_broadleaf");
     add("BIG BROADLEAF", 5, treeProto(1, 15), "model:tree_broadleaf");
     add("DEAD SNAG", 5, treeProto(2, 10), "model:tree_snag");
-    for (const auto& b : {std::pair<const char*, double>{"BUSH", 0.9}, {"BIG BUSH", 1.6}}) {
-        LevelObject o;
-        o.kind = OBJ_BUSH, o.size = V3(b.second, 0, 0), o.col[0] = 1.0f;
-        add(b.first, 5, o, "model:bush");
-    }
+    // Plants: every kind (plants.h) at its usual size, and the leafy bush again big.
+    for (int k = 0; k < BUSH_KIND_COUNT; k++) add(plantInfo(k).name, 6, plantProto(k, plantInfo(k).rDefault), "plant:" + std::to_string(k));
+    add("BIG BUSH", 6, plantProto(BUSH_LEAFY, 1.6), "plant:0");
     {
         LevelObject o;
         o.kind = OBJ_STATION, o.name = "REPAIR SHOP";
-        add("REPAIR SHOP", 6, o, "model:repair_shed");
+        add("REPAIR SHOP", 7, o, "model:repair_shed");
     }
     static const char* structures[][2] = {{"cabin", "CABIN"},          {"outhouse", "OUTHOUSE"},       {"tent", "TENT"},          {"picnic_table", "PICNIC TABLE"},
                                           {"woodpile", "WOODPILE"},    {"campfire", "CAMPFIRE"},       {"stump", "TREE STUMP"},   {"cairn", "CAIRN"},
@@ -429,7 +433,7 @@ void Editor::buildPalette() {
                                           {"lamp_post", "LAMP POST"},  {"trail_sign", "TRAIL SIGN"},  {"map_board", "MAP BOARD"}, {"marker_post", "MARKER POST"},
                                           {"sign_gantry", "SIGN GANTRY"}};
     for (const auto& st : structures)
-        if (mk::findModel(st[0])) add(st[1], 6, modelProto(st[0]), std::string("model:") + st[0]);
+        if (mk::findModel(st[0])) add(st[1], 7, modelProto(st[0]), std::string("model:") + st[0]);
     {
         PalEntry e;
         e.name = "SLAB LEDGE", e.tab = "LEDGE", e.icon = "box:slab", e.ledge = true;
@@ -503,6 +507,11 @@ const mk::Mesh& Editor::iconMesh(const PalEntry& e) {
             if (sc < best) best = sc, bi = i;
         }
         if (!lib.hulls.empty()) fromProp(lib.hulls[bi].name);
+    } else if (k.rfind("plant:", 0) == 0) {  // (a design of the bush model, at the size the card places)
+        if (const mk::ModelDef* d = mk::findModel("bush")) {
+            const int kind = std::min(std::max(std::atoi(k.c_str() + 6), 0), (int)d->variants.size() - 1);
+            mk::build(*d, kind, mk::defaults(d->variants[kind]), m);
+        }
     } else if (k.rfind("model:", 0) == 0) {
         m = mk::modelMesh(k.substr(6));
     } else {

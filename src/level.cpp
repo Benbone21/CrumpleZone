@@ -288,7 +288,7 @@ void placeObject(const LevelObject& obj, World& w) {
             }
             break;
         }
-        case OBJ_BUSH: w.bushes.push_back({V3(o.p.x, w.height(o.p.x, o.p.z) + o.lift, o.p.z), std::max(0.2, o.size.x), o.col[0]}); break;
+        case OBJ_BUSH: w.bushes.push_back({V3(o.p.x, w.height(o.p.x, o.p.z) + o.lift, o.p.z), std::max(0.2, o.size.x), o.col[0], plantKindOf(o.sub)}); break;
         default: break;
     }
 }
@@ -368,7 +368,7 @@ void addGateMarkers(const Level& lv, World& w) {
 //   tree X Z HEIGHT KIND TINT [LIFT]
 //   station X Z YAWDEG NAME...
 //   #model X Z YAWDEG SX SY SZ LIFT SUB ID  (a code-made structure: a comment, so an older build skips it)
-//   #fence AX AZ BX BZ, #bush X Z R TINT [LIFT]  (likewise)
+//   #fence AX AZ BX BZ, #bush X Z R TINT [LIFT [KIND]]  (likewise; KIND: plants.h, left out for the round leafy shrub, which is all an older file has)
 //   remove X Z [KIND]                    (KIND: 0 rock 1 tree 2 log 3 box 4 fixture; without it, the nearest of any)
 //   heights I J0 H H H ...   (a run of cells along j from (I, J0), meters)
 //   surfaces I J0 SSPP SSPP ...  (hex: surface, paint)
@@ -458,7 +458,7 @@ std::string saveLevelText(const Level& lv) {
                 if (std::fabs(b.pitch) > 1e-6 || std::fabs(b.roll) > 1e-6) o << "#modelpose " << num(b.pitch / kDeg, 3) << ' ' << num(b.roll / kDeg, 3) << '\n';  // (tipped; an older build skips it)
                 break;
             case OBJ_FENCE: o << "#fence " << num(b.p.x) << ' ' << num(b.p.z) << ' ' << num(b.p2.x) << ' ' << num(b.p2.z) << '\n'; break;
-            case OBJ_BUSH: o << "#bush " << num(b.p.x) << ' ' << num(b.p.z) << ' ' << num(b.size.x, 3) << ' ' << num(b.col[0], 2) << ' ' << num(b.lift, 3) << '\n'; break;
+            case OBJ_BUSH: o << "#bush " << num(b.p.x) << ' ' << num(b.p.z) << ' ' << num(b.size.x, 3) << ' ' << num(b.col[0], 2) << ' ' << num(b.lift, 3) << (b.sub ? " " + std::to_string(plantKindOf(b.sub)) : std::string()) << '\n'; break;
             case OBJ_STATION: o << "station " << num(b.p.x) << ' ' << num(b.p.z) << ' ' << num(b.yaw / kDeg, 2) << ' ' << b.name << '\n'; break;
             default: break;
         }
@@ -562,6 +562,8 @@ bool parseLevelText(const std::string& text, Level& lv, std::string* error) {
                 if (bs.fail()) continue;
                 double lift = 0;
                 if (bs >> lift) b.lift = lift;
+                int kind = 0;
+                if (bs >> kind) b.sub = plantKindOf(kind);
                 out.objects.push_back(b);
                 continue;
             }

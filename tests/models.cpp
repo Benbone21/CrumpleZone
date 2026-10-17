@@ -16,7 +16,7 @@ namespace {
 // What a model may cost (triangles): things placed by the thousand are cheap.
 size_t budgetFor(const std::string& id) {
     static const std::map<std::string, size_t> b = {
-        {"tree_pine", 220}, {"tree_broadleaf", 260}, {"tree_snag", 120}, {"bush", 80}, {"stump", 80},
+        {"tree_pine", 220}, {"tree_broadleaf", 260}, {"tree_snag", 120}, {"bush", 130}, {"stump", 80},
         {"marker_post", 100}, {"cairn", 250}, {"trail_sign", 400}, {"person", 2500},
         {"repair_shed", 12000}, {"fire_tower", 12000}, {"sign_gantry", 12000}, {"race_gate", 12000},
         {"cabin", 6500}, {"chain_bundle", 2600}, {"crate_engine_v8", 2600}, {"wreck_pickup", 10000}, {"ore_cart", 5000}, {"mine_portal", 6000}, {"jersey_barrier", 6000}, {"guardrail", 6000},

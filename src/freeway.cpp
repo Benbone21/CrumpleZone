@@ -142,7 +142,8 @@ void World::buildFreeway() {
     for (int k = 0; k < 140; k++) {
         const double x = (rnd() - 0.5) * kPeriod, z = (rnd() * 2 - 1) * 400;
         if (std::fabs(z) < 22 || (z > 20 && z < 80 && std::fabs(x) < 40)) continue;
-        oneBushes.push_back({V3(x, 0, z), 0.5 + rnd() * 0.9, (float)(0.8 + rnd() * 0.4)});
+        const double u = rnd();
+        oneBushes.push_back(growBush(V3(x, 0, z), HAB_MEADOW, false, u, (float)(0.8 + rnd() * 0.4)));
     }
     for (int k = -2; k <= 2; k++) {
         for (Tree t : oneTrees) {

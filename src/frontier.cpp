@@ -1165,7 +1165,9 @@ void World::buildFrontier() {
         if (keep[id] || waterY[id] > -1e8 || paint[id] != PAINT_NONE || hgrid[id] > 120) continue;
         const double dw = desertness(x, z);
         if (dw > 0.5 && rnd() > 0.2) continue;  // scrub in the desert, sparse
-        bushes.push_back({V3(x, hgrid[id], z), 0.4 + rnd() * 0.9, dw > 0.5 ? 0.7f : (float)(0.8 + rnd() * 0.4)});
+        const double u = rnd(), m = mountainness(z);
+        const int habitat = dw > 0.5 ? HAB_DESERT : m > 0.2 ? (hgrid[id] > 70 ? HAB_UPLAND : HAB_FOREST) : HAB_MEADOW;
+        bushes.push_back(growBush(V3(x, hgrid[id], z), habitat, m > 0.05, u, dw > 0.5 ? 0.7f : (float)(0.8 + rnd() * 0.4)));
     }
     // Signs at the features.
     auto sign = [&](double x, double z, double yaw, float r, float g, float b) {
@@ -1237,7 +1239,8 @@ void World::buildFrontier() {
             const double x = 160 + rnd2() * 335, z = -500 + rnd2() * 180;
             const int id = at(x, z);
             if (swamp[id] < 0.4 || keep[id] || hgrid[id] < kBayouY + 0.15 || rnd2() > 0.35) continue;
-            bushes.push_back({V3(x, hgrid[id], z), 0.5 + rnd2() * 1.0, (float)(0.65 + rnd2() * 0.25)});
+            const double u = rnd2();
+            bushes.push_back(growBush(V3(x, hgrid[id], z), HAB_WETLAND, false, u, (float)(0.65 + rnd2() * 0.25)));
         }
         // Fallen logs alongside the trail and out in the water, and stumps by it.
         for (int k = 0, placed = 0; k < 400 && placed < 34; k++) {

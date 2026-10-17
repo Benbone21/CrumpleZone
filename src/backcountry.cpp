@@ -1178,7 +1178,20 @@ void World::buildBackcountry() {
         if (keep[id] || waterY[id] > -1e8 || paint[id] != PAINT_NONE || surf[id] != SURF_GRASS || hgrid[id] > 70) continue;
         const double forest = fbmNoise(x * 0.010 + 7.0, z * 0.010 - 3.0, 3);
         if (rnd() > 0.15 + 0.6 * smoothstep(0.3, 0.55, forest)) continue;
-        bushes.push_back({V3(x, hgrid[id], z), between(0.4, 1.3), (float)between(0.75, 1.2)});
+        const double u = between(0, 1);
+        const int habitat = hgrid[id] > 45 ? HAB_UPLAND : forest > 0.5 ? HAB_FOREST : HAB_MEADOW;
+        bushes.push_back(growBush(V3(x, hgrid[id], z), habitat, forest > 0.38, u, (float)between(0.75, 1.2)));
+    }
+    // More of the small plants on the forest floor, from hashes of the spot (nothing after moves).
+    const size_t shrubs = bushes.size();
+    for (int i = 0; i < 60000 && bushes.size() < shrubs + shrubs / 3; i++) {
+        const double x = (plantRoll(i, 7, 41) * 2 - 1) * 515, z = (plantRoll(i, 11, 42) * 2 - 1) * 515;
+        const int id = at(x, z);
+        if (keep[id] || waterY[id] > -1e8 || paint[id] != PAINT_NONE || surf[id] != SURF_GRASS || hgrid[id] > 70) continue;
+        const double forest = fbmNoise(x * 0.010 + 7.0, z * 0.010 - 3.0, 3);
+        if (plantRoll(x, z, 43) > 0.15 + 0.6 * smoothstep(0.3, 0.55, forest)) continue;
+        const int habitat = hgrid[id] > 45 ? HAB_UPLAND : forest > 0.5 ? HAB_FOREST : HAB_MEADOW;
+        bushes.push_back(growBush(V3(x, hgrid[id], z), habitat, forest > 0.38, plantRoll(x, z, 44), (float)(0.75 + plantRoll(x, z, 45) * 0.45)));
     }
 
     // ---- Stations, start ----------------------------------------------------------------------

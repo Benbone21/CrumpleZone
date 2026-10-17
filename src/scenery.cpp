@@ -1,4 +1,5 @@
 #include "scenery.h"
+#include "plants.h"
 
 #include <array>
 #include <cmath>
@@ -402,6 +403,7 @@ void buildBushMesh(const World& world, std::vector<Vtx>& v, const ScanCover& ski
         if (bushModel) {  // the picked model, made 0.8 m in radius
             Placed pl;
             pl.id = "bush";
+            pl.variant = plantKindOf(b.kind);  // (the design of that kind: plants.h)
             pl.set = {{"seed", 1 + seed % 6}, {"dry", seed % 7 == 0 ? 1 : 0}};
             const double k = b.r / 0.8;
             appendModel(v, placedMesh(pl), b.p, seed * 2.39996, V3(k, k * (0.8 + 0.4 * latticeHash(seed, 2)), k), (float)(0.85 + 0.15 * b.tint));

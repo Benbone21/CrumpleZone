@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "mathx.h"
+#include "plants.h"
 
 // Oriented static box (ramps, walls, poles, bumps).
 struct Box {
@@ -111,7 +112,12 @@ struct Bush {
     V3 p;
     double r;
     float tint;
+    int kind = 0;  // PlantKind (plants.h): 0 the round leafy shrub, then sage, juniper, ferns, reeds, cacti...
 };
+
+// A bush of the kind that grows in `habitat` (plants.h): `u` in [0, 1) sizes it within its kind's range, `edge`: at the edge of a wood.
+// The kind comes from a hash of the spot, not from the map's random numbers (so a scatter's layout doesn't depend on the kinds).
+Bush growBush(const V3& p, int habitat, bool edge, double u, float tint);
 
 // Vertical cylinder obstacle: poles and tree trunks. Cars test both their nodes and
 // their panel edges against these, so thin obstacles can't slip between nodes.
