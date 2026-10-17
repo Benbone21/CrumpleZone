@@ -23,7 +23,7 @@ const char* kToolHints[Editor::TOOL_COUNT] = {"RAISE, LOWER, SMOOTH, FLATTEN, RO
 const char* kOpNames[BRUSH_OP_COUNT] = {"RAISE", "LOWER", "SMOOTH", "FLATTEN", "ROUGHEN", "TERRACE"};
 const double kTerraces[4] = {0.25, 0.5, 1, 2};  // m: terrace step heights
 const char* kWaterModes[3] = {"FILL HOLLOW", "DRAIN BRUSH", "DRAIN WHOLE POOL"};
-const char* kObjNames[OBJ_KIND_COUNT] = {"ROCK", "RAMP / BLOCK", "LOG", "TREE", "REPAIR SHOP", "STRUCTURE"};
+const char* kObjNames[OBJ_KIND_COUNT] = {"ROCK", "RAMP / BLOCK", "LOG", "TREE", "REPAIR SHOP", "STRUCTURE", "FENCE", "BUSH"};
 const int SC_PAGEUP_ = 75, SC_PAGEDOWN_ = 78, SC_F6_ = 63, SC_COMMA_ = 54, SC_PERIOD_ = 55;
 const double kRisers[5] = {0.3, 0.45, 0.6, 0.9, 1.2};  // m: the step a ledge makes (a notch step stays under 0.4)
 const double kSnaps[4] = {0, 0.5, 1, 2};               // m
@@ -361,6 +361,11 @@ void Editor::buildPalette() {
     add("BROADLEAF", 5, treeProto(1, 10), "model:tree_broadleaf");
     add("BIG BROADLEAF", 5, treeProto(1, 15), "model:tree_broadleaf");
     add("DEAD SNAG", 5, treeProto(2, 10), "model:tree_snag");
+    for (const auto& b : {std::pair<const char*, double>{"BUSH", 0.9}, {"BIG BUSH", 1.6}}) {
+        LevelObject o;
+        o.kind = OBJ_BUSH, o.size = V3(b.second, 0, 0), o.col[0] = 1.0f;
+        add(b.first, 5, o, "model:bush");
+    }
     {
         LevelObject o;
         o.kind = OBJ_STATION, o.name = "REPAIR SHOP";
@@ -1036,7 +1041,7 @@ void Editor::selectInBox(float x0, float y0, float x1, float y1, bool add) {
         p.kind = ow >= 0 ? EditPick::OBJECT : EditPick::BASE;
         p.index = ow >= 0 ? ow : index, p.baseKind = ow >= 0 ? -1 : baseKind, p.at = at, p.name = name;
         if (ow >= 0 && std::find(found.begin(), found.end(), p) != found.end()) return;
-        if (ow < 0 && !core.canAdopt(p) && baseKind != 4) return;
+        if (ow < 0 && !core.canAdopt(p)) return;
         found.push_back(p);
     };
     for (int i = 0; i < (int)w.rocks.size(); i++) take(0, i, w.rocks[i].c, w.rocks[i].c, "ROCK");
@@ -1044,8 +1049,11 @@ void Editor::selectInBox(float x0, float y0, float x1, float y1, bool add) {
     for (int i = 0; i < (int)w.logs.size(); i++) take(2, i, (w.logs[i].a + w.logs[i].b) * 0.5, (w.logs[i].a + w.logs[i].b) * 0.5, "LOG");
     for (int i = 0; i < (int)w.boxes.size(); i++)
         if (!w.boxes[i].hidden) take(3, i, w.boxes[i].c, w.boxes[i].c, w.boxes[i].rock ? "ROCK SLAB" : "BLOCK");
-    for (int i = 0; i < (int)w.fixtures.size(); i++)
-        if (w.fixtures[i].kind == PROP_GARAGE) take(4, i, w.fixtures[i].a, w.fixtures[i].a + V3(0, 2, 0), "REPAIR SHOP");
+    for (int i = 0; i < (int)w.fixtures.size(); i++) {
+        const Prop& f = w.fixtures[i];
+        take(4, i, f.a, f.kind == PROP_FENCE ? (f.a + f.b) * 0.5 + V3(0, 0.6, 0) : f.a + V3(0, f.kind == PROP_GARAGE ? 2 : 1, 0), f.kind == PROP_GARAGE ? "REPAIR SHOP" : f.kind == PROP_FENCE ? "FENCE" : "PROP");
+    }
+    for (int i = 0; i < (int)w.bushes.size(); i++) take(6, i, w.bushes[i].p, w.bushes[i].p + V3(0, w.bushes[i].r * 0.5, 0), "BUSH");
     for (int i = 0; i < (int)w.models.size(); i++)
         if (core.ownerOf(5, i) >= 0) take(5, i, w.models[i].p, w.models[i].p + V3(0, 1, 0), "STRUCTURE");
     if (!add) selection.clear();
@@ -1538,7 +1546,7 @@ void Editor::drawWorldMarks(Renderer& r) {
             V3 at = p.at;
             if (p.kind == EditPick::OBJECT && p.index < (int)core.level.objects.size()) {
                 const LevelObject& ob = core.level.objects[p.index];
-                at = ob.kind == OBJ_LOG ? (ob.p + ob.p2) * 0.5 : ob.p;
+                at = (ob.kind == OBJ_LOG || ob.kind == OBJ_FENCE) ? (ob.p + ob.p2) * 0.5 : ob.p;
                 nm = kObjNames[std::min(std::max(ob.kind, 0), OBJ_KIND_COUNT - 1)];
             }
             tag(at + V3(0, 3, 0), (selection.size() > 1 ? std::to_string(selection.size()) + " SELECTED" : nm + " (SELECTED)"), 1.0f, 0.85f, 0.3f);
@@ -1773,6 +1781,10 @@ void Editor::drawOptions(Renderer& r, float u) {
                         }
                         break;
                     case OBJ_STATION: xf(OP_YAW, "TURN", deg(yawV)); break;
+                    case OBJ_FENCE:
+                        xf(OP_YAW, "TURN", deg(std::atan2(-(tgt.p2.z - tgt.p.z), tgt.p2.x - tgt.p.x))), xf(OP_STRETCH_X, "LENGTH", fmt1(len(tgt.p2 - tgt.p), " M"));
+                        break;
+                    case OBJ_BUSH: xf(OP_LIFT, "RAISE", fmt1(tgt.lift, " M")), xf(OP_SCALE, "SIZE", fmt1(tgt.size.x * 2, " M")); break;
                     case OBJ_MODEL:
                         xf(OP_YAW, "TURN", deg(yawV)), xf(OP_LIFT, "RAISE", fmt1(liftV, " M")), xf(OP_SCALE, "SCALE ALL", "");
                         xf(OP_STRETCH_X, "LENGTH", pct(tgt.size.x)), xf(OP_STRETCH_Y, "HEIGHT", pct(tgt.size.y)), xf(OP_STRETCH_Z, "WIDTH", pct(tgt.size.z));

@@ -77,7 +77,7 @@ struct EditPick {
     enum Kind { NONE, OBJECT, BASE, GATE, START };
     Kind kind = NONE;
     int index = -1;     // OBJECT: into level.objects; GATE: into level.gates; BASE: into its world list
-    int baseKind = -1;  // BASE: 0 rock, 1 tree, 2 log, 3 box, 4 fixture (5: a model the level placed)
+    int baseKind = -1;  // BASE: 0 rock, 1 tree, 2 log, 3 box, 4 fixture (5: a model the level placed; 6: a bush)
     V3 at;              // where it stands (on the ground); for BASE, where removeNear will find it
     double t = 1e18;    // distance along the ray
     std::string name;   // "ROCK", "GATE 3", ...
@@ -287,11 +287,12 @@ private:
         std::vector<Prop> fixtures;
         std::vector<Station> stations;
         std::vector<Placed> models;
+        std::vector<Bush> bushes;
         V3 spawn;
         double spawnYaw = 0;
     } base;
-    int baseCount[6] = {0, 0, 0, 0, 0, 0};    // after removals: rocks, trees, logs, boxes, fixtures, models
-    std::vector<int> owner[6];                // world index -> level object (-1 the map's)
+    int baseCount[7] = {0, 0, 0, 0, 0, 0, 0}; // after removals: rocks, trees, logs, boxes, fixtures, models, bushes
+    std::vector<int> owner[7];                // world index -> level object (-1 the map's)
     std::vector<Entry> history, future;
     Entry pending;
     std::map<int, size_t> pendingCells;       // (id * 4 + what) -> index in pending.cells

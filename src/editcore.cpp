@@ -130,6 +130,48 @@ Box modelBox(const Placed& pl) {
     return obb(pl.p + V3(cx.x, mid.y, cx.z), V3(std::max(0.05, half.x), std::max(0.05, half.y), std::max(0.05, half.z)), pl.yaw);
 }
 
+// The ray against an ellipsoid (centre c, horizontal radius rx, vertical ry).
+bool rayEllipsoid(const V3& o, const V3& d, const V3& c, double rx, double ry, double& t) {
+    const double k = rx / ry;
+    const V3 q(o.x - c.x, (o.y - c.y) * k, o.z - c.z), e(d.x, d.y * k, d.z);
+    const double a = dot(e, e), b = dot(q, e), cc = dot(q, q) - rx * rx;
+    const double disc = b * b - a * cc;
+    if (disc < 0 || a < 1e-12) return false;
+    const double t0 = (-b - std::sqrt(disc)) / a, t1 = (-b + std::sqrt(disc)) / a;
+    if (t1 < 0) return false;
+    t = std::max(0.0, t0);
+    return true;
+}
+
+// The model a map fixture is drawn as (scenery.cpp's choice), with the one setting it has (a sign's rating, a cairn's or stump's shape).
+bool propAsModel(const Prop& p, int index, Placed& pl, int& sub) {
+    const int seed = index + 1;
+    pl = Placed();
+    pl.p = p.a, pl.yaw = p.yaw, sub = 0;
+    switch (p.kind) {
+        case PROP_CABIN: pl.id = "cabin"; break;
+        case PROP_TABLE: pl.id = "picnic_table"; break;
+        case PROP_MAPBOARD: pl.id = "map_board"; break;
+        case PROP_MARKER: pl.id = "marker_post"; break;
+        case PROP_CAIRN: pl.id = "cairn", sub = 1 + seed % 9; break;
+        case PROP_SIGN: pl.id = "trail_sign", sub = p.col[1] > 0.4 ? 0 : p.col[2] > 0.5 ? 1 : p.col[0] > 0.5 ? 3 : 2; break;
+        case PROP_STUMP:
+            pl.id = "stump", sub = 1 + seed % 6;
+            pl.scale = V3(p.b.x / 0.35, p.b.y / 0.6, p.b.x / 0.35);
+            break;
+        default: return false;
+    }
+    return mk::findModel(pl.id) != nullptr;
+}
+
+inline bool isSpan(int kind) { return kind == OBJ_LOG || kind == OBJ_FENCE; }  // (an object that runs from p to p2)
+
+// A fence: a thin band along it, upright.
+Box fenceBox(const Prop& f) {
+    const V3 d = f.b - f.a;
+    return obb((f.a + f.b) * 0.5 + V3(0, 0.6, 0), V3(std::max(0.1, std::hypot(d.x, d.z) / 2), 0.7, 0.14), std::atan2(-d.z, d.x));
+}
+
 // A repair shed: its pad and the shed over it (the posts are at +-5 m along, +-3.7 m across).
 Box shedBox(const Prop& f) { return obb(f.a + V3(0, 2.5, 0), V3(5.4, 2.5, 4.0), f.yaw); }
 
@@ -330,7 +372,7 @@ void EditCore::applyCells(World& w) {
 void EditCore::begin(World& w, const Level& lv) {
     world = &w;
     base.rocks = w.rocks, base.trees = w.trees, base.poles = w.poles, base.logs = w.logs;
-    base.boxes = w.boxes, base.fixtures = w.fixtures, base.stations = w.stations, base.models = w.models;
+    base.boxes = w.boxes, base.fixtures = w.fixtures, base.stations = w.stations, base.models = w.models, base.bushes = w.bushes;
     base.spawn = w.spawn, base.spawnYaw = w.spawnYaw;
     level = lv;
     level.map = w.map;
@@ -397,17 +439,18 @@ bool EditCore::autosave(const std::string& dir, std::string* err) {
 void EditCore::rebuildObjects() {
     World& w = *world;
     w.rocks = base.rocks, w.trees = base.trees, w.poles = base.poles, w.logs = base.logs;
-    w.boxes = base.boxes, w.fixtures = base.fixtures, w.stations = base.stations, w.models = base.models;
+    w.boxes = base.boxes, w.fixtures = base.fixtures, w.stations = base.stations, w.models = base.models, w.bushes = base.bushes;
+    if (level.section.on) clearBushes();  // (a section's canvas is cleared of them)
     for (const V3& r : level.removed) w.removeNear(r.x, r.z, 1.5, (int)std::lround(r.y) - 1);
     baseCount[0] = (int)w.rocks.size(), baseCount[1] = (int)w.trees.size(), baseCount[2] = (int)w.logs.size();
-    baseCount[3] = (int)w.boxes.size(), baseCount[4] = (int)w.fixtures.size(), baseCount[5] = (int)w.models.size();
-    for (int k = 0; k < 6; k++) owner[k].assign(baseCount[k], -1);
+    baseCount[3] = (int)w.boxes.size(), baseCount[4] = (int)w.fixtures.size(), baseCount[5] = (int)w.models.size(), baseCount[6] = (int)w.bushes.size();
+    for (int k = 0; k < 7; k++) owner[k].assign(baseCount[k], -1);
     for (int k = 0; k < (int)level.objects.size(); k++) {
         const LevelObject& o = level.objects[k];
-        const size_t sz[6] = {w.rocks.size(), w.trees.size(), w.logs.size(), w.boxes.size(), w.fixtures.size(), w.models.size()};
+        const size_t sz[7] = {w.rocks.size(), w.trees.size(), w.logs.size(), w.boxes.size(), w.fixtures.size(), w.models.size(), w.bushes.size()};
         placeObject(o, w);
-        const size_t now[6] = {w.rocks.size(), w.trees.size(), w.logs.size(), w.boxes.size(), w.fixtures.size(), w.models.size()};
-        for (int q = 0; q < 6; q++)
+        const size_t now[7] = {w.rocks.size(), w.trees.size(), w.logs.size(), w.boxes.size(), w.fixtures.size(), w.models.size(), w.bushes.size()};
+        for (int q = 0; q < 7; q++)
             for (size_t i = sz[q]; i < now[q]; i++) owner[q].push_back(k);
     }
     w.buildGrid();
@@ -415,7 +458,7 @@ void EditCore::rebuildObjects() {
 }
 
 int EditCore::ownerOf(int baseKind, int index) const {
-    if (baseKind < 0 || baseKind >= 6 || index < 0 || index >= (int)owner[baseKind].size()) return -1;
+    if (baseKind < 0 || baseKind >= 7 || index < 0 || index >= (int)owner[baseKind].size()) return -1;
     return owner[baseKind][index];
 }
 
@@ -891,7 +934,7 @@ LevelObject EditCore::grounded(LevelObject o) const {
     return o;
 }
 
-static const char* kObjectNames[OBJ_KIND_COUNT] = {"ROCK", "BLOCK", "LOG", "TREE", "REPAIR SHOP", "STRUCTURE"};
+static const char* kObjectNames[OBJ_KIND_COUNT] = {"ROCK", "BLOCK", "LOG", "TREE", "REPAIR SHOP", "STRUCTURE", "FENCE", "BUSH"};
 
 void EditCore::addObjects(const std::vector<LevelObject>& objs, const std::string& what) {
     if (!world || objs.empty()) return;
@@ -1025,6 +1068,7 @@ int EditCore::resolveBase(const EditPick& p) const {
         case 2: for (int i = 0; i < (int)w.logs.size(); i++) test(i, (w.logs[i].a + w.logs[i].b) * 0.5); break;
         case 3: for (int i = 0; i < (int)w.boxes.size(); i++) if (!w.boxes[i].hidden) test(i, w.boxes[i].c); break;
         case 4: for (int i = 0; i < (int)w.fixtures.size(); i++) test(i, w.fixtures[i].a); break;
+        case 6: for (int i = 0; i < (int)w.bushes.size(); i++) test(i, w.bushes[i].p); break;
         default: break;
     }
     return best;
@@ -1075,11 +1119,29 @@ bool EditCore::baseToObject(const EditPick& p, LevelObject& o, V3& key) const {
         }
         case 4: {
             const Prop& f = w.fixtures[i];
-            if (f.kind != PROP_GARAGE) return false;
-            o.kind = OBJ_STATION, o.p = V3(f.a.x, w.height(f.a.x, f.a.z), f.a.z), o.yaw = f.yaw;
-            for (const Station& st : w.stations)
-                if (std::hypot(st.p.x - f.a.x, st.p.z - f.a.z) < 0.05) o.name = st.name;
             key = V3(f.a.x, 5, f.a.z);
+            if (f.kind == PROP_GARAGE) {
+                o.kind = OBJ_STATION, o.p = V3(f.a.x, w.height(f.a.x, f.a.z), f.a.z), o.yaw = f.yaw;
+                for (const Station& st : w.stations)
+                    if (std::hypot(st.p.x - f.a.x, st.p.z - f.a.z) < 0.05) o.name = st.name;
+                return true;
+            }
+            if (f.kind == PROP_FENCE) {
+                o.kind = OBJ_FENCE, o.p = f.a, o.p2 = f.b;
+                return true;
+            }
+            Placed pl;
+            int sub;
+            if (!propAsModel(f, i, pl, sub)) return false;
+            o.kind = OBJ_MODEL, o.name = pl.id, o.sub = sub, o.yaw = f.yaw, o.size = pl.scale, o.p = V3(f.a.x, 0, f.a.z);
+            o.lift = f.a.y - w.height(f.a.x, f.a.z);
+            return true;
+        }
+        case 6: {
+            const Bush& b = w.bushes[i];
+            o.kind = OBJ_BUSH, o.p = V3(b.p.x, 0, b.p.z), o.size = V3(b.r, 0, 0), o.col[0] = b.tint;
+            o.lift = b.p.y - w.height(b.p.x, b.p.z);
+            key = V3(b.p.x, 7, b.p.z);
             return true;
         }
         default: return false;
@@ -1127,7 +1189,7 @@ void EditCore::removePicks(const std::vector<EditPick>& picks) {
     std::vector<V3> keys;
     for (const EditPick& p : picks) {
         if (p.kind == EditPick::OBJECT && p.index >= 0 && p.index < (int)level.objects.size()) objs.push_back(p.index);
-        else if (p.kind == EditPick::BASE && p.baseKind >= 0 && p.baseKind < 5) keys.push_back(V3(p.at.x, p.baseKind + 1, p.at.z));
+        else if (p.kind == EditPick::BASE && p.baseKind >= 0 && (p.baseKind < 5 || p.baseKind == 6)) keys.push_back(V3(p.at.x, p.baseKind + 1, p.at.z));
     }
     if (objs.empty() && keys.empty()) return;
     std::sort(objs.begin(), objs.end());
@@ -1163,7 +1225,7 @@ LevelObject EditCore::normalized(int k) const {
 
 LevelObject EditCore::movedBy(LevelObject o, double dx, double dz) const {
     const World& w = *world;
-    if (o.kind == OBJ_LOG) {  // each end keeps its clearance over the ground it was on
+    if (isSpan(o.kind)) {  // each end keeps its clearance over the ground it was on
         for (V3* e : {&o.p, &o.p2}) {
             const double clear = e->y - w.height(e->x, e->z);
             e->x += dx, e->z += dz;
@@ -1230,6 +1292,32 @@ LevelObject EditCore::transformed(LevelObject o, ObjOp op, double a) const {
             o.p = m - half, o.p2 = m + half, o.size.x = clampd(r, 0.05, 2.0);
             return o;
         }
+        case OBJ_FENCE: {
+            const V3 m = (o.p + o.p2) * 0.5;
+            V3 half = (o.p2 - o.p) * 0.5;
+            switch (op) {
+                case OP_YAW: half = V3(half.x * std::cos(a) + half.z * std::sin(a), half.y, -half.x * std::sin(a) + half.z * std::cos(a)); break;
+                case OP_SCALE:
+                case OP_STRETCH_X: half = half * a; break;
+                default: break;
+            }
+            const double L = len(half);
+            if (L < 0.5) half = half * (0.5 / std::max(L, 1e-6));
+            if (L > 60) half = half * (60 / L);
+            o.p = m - half, o.p2 = m + half;
+            return o;
+        }
+        case OBJ_BUSH:
+            switch (op) {
+                case OP_LIFT: o.lift += a; break;
+                case OP_SCALE:
+                case OP_STRETCH_X:
+                case OP_STRETCH_Y:
+                case OP_STRETCH_Z: o.size.x *= a; break;
+                default: break;
+            }
+            o.size.x = clampd(o.size.x, 0.2, 6);
+            return o;
         case OBJ_TREE:
             switch (op) {
                 case OP_LIFT: o.lift += a; break;
@@ -1287,7 +1375,7 @@ void EditCore::transformObjects(const std::vector<int>& ks, ObjOp op, double amo
     if (v.empty()) return;
     // Turning several: they swing round their middle, each also turning in place.
     V3 c;
-    for (int k : v) c += level.objects[k].kind == OBJ_LOG ? (level.objects[k].p + level.objects[k].p2) * 0.5 : level.objects[k].p;
+    for (int k : v) c += isSpan(level.objects[k].kind) ? (level.objects[k].p + level.objects[k].p2) * 0.5 : level.objects[k].p;
     c = c * (1.0 / v.size());
     std::vector<std::pair<int, LevelObject>> set;
     for (int k : v) {
@@ -1297,7 +1385,7 @@ void EditCore::transformObjects(const std::vector<int>& ks, ObjOp op, double amo
                 const double x = p.x - c.x, z = p.z - c.z;
                 return V3(c.x + x * std::cos(amount) + z * std::sin(amount), p.y, c.z - x * std::sin(amount) + z * std::cos(amount));
             };
-            if (o.kind == OBJ_LOG) {
+            if (isSpan(o.kind)) {
                 const V3 a = swing(o.p), b = swing(o.p2);
                 const World& w = *world;
                 const double ca = o.p.y - w.height(o.p.x, o.p.z), cb = o.p2.y - w.height(o.p2.x, o.p2.z);
@@ -1319,7 +1407,7 @@ void EditCore::transformObjects(const std::vector<int>& ks, ObjOp op, double amo
 
 std::vector<std::pair<int, int>> EditCore::partsOf(int k) const {
     std::vector<std::pair<int, int>> out;
-    for (int q = 0; q < 6; q++)
+    for (int q = 0; q < 7; q++)
         for (int i = 0; i < (int)owner[q].size(); i++)
             if (owner[q][i] == k) out.push_back({q, i});
     return out;
@@ -1382,10 +1470,21 @@ Shape EditCore::shapeOf(int baseKind, int index) const {
         case 4: {
             if (index >= (int)w.fixtures.size()) break;
             const Prop& f = w.fixtures[index];
+            Placed pl;
+            int sub;
             if (f.kind == PROP_GARAGE) boxEdges(shedBox(f), s, false);
-            else if (f.kind == PROP_CABIN) boxEdges(obb(f.a + V3(0, 2.2, 0), V3(3.4, 2.2, 2.7), f.yaw), s, false);
-            else if (f.kind == PROP_FENCE) s.edges.push_back({f.a + V3(0, 0.6, 0), f.b + V3(0, 0.6, 0)});
+            else if (f.kind == PROP_FENCE) boxEdges(fenceBox(f), s, false);
+            else if (propAsModel(f, index, pl, sub)) boxEdges(modelBox(pl), s, false);
             else s.edges.push_back({f.a, f.a + V3(0, 1.6, 0)});
+            break;
+        }
+        case 6: {
+            if (index >= (int)w.bushes.size()) break;
+            const Bush& b = w.bushes[index];
+            const V3 c = b.p + V3(0, b.r * 0.55, 0);
+            ringEdges(s, c, V3(1, 0, 0), V3(0, 0, 1), b.r, 14);
+            ringEdges(s, c, V3(1, 0, 0), V3(0, 0.65, 0), b.r, 14);
+            ringEdges(s, c, V3(0, 0, 1), V3(0, 0.65, 0), b.r, 14);
             break;
         }
         case 5:
@@ -1406,7 +1505,7 @@ Shape EditCore::previewShape(const LevelObject& o) {
         boxEdges(shedBox(f), s, false);
         return s;
     }
-    const size_t n[8] = {w.rocks.size(), w.trees.size(), w.poles.size(), w.logs.size(), w.boxes.size(), w.fixtures.size(), w.stations.size(), w.models.size()};
+    const size_t n[9] = {w.rocks.size(), w.trees.size(), w.poles.size(), w.logs.size(), w.boxes.size(), w.fixtures.size(), w.stations.size(), w.models.size(), w.bushes.size()};
     placeObject(o, w);
     for (size_t i = n[0]; i < w.rocks.size(); i++) s.add(shapeOf(0, (int)i));
     for (size_t i = n[1]; i < w.trees.size(); i++) s.add(shapeOf(1, (int)i));
@@ -1414,6 +1513,8 @@ Shape EditCore::previewShape(const LevelObject& o) {
     for (size_t i = n[4]; i < w.boxes.size(); i++) s.add(shapeOf(3, (int)i));
     for (size_t i = n[5]; i < w.fixtures.size(); i++) s.add(shapeOf(4, (int)i));
     for (size_t i = n[7]; i < w.models.size(); i++) s.add(shapeOf(5, (int)i));
+    for (size_t i = n[8]; i < w.bushes.size(); i++) s.add(shapeOf(6, (int)i));
+    w.bushes.resize(n[8]);
     w.rocks.resize(n[0]), w.trees.resize(n[1]), w.poles.resize(n[2]), w.logs.resize(n[3]);
     w.boxes.resize(n[4]), w.fixtures.resize(n[5]), w.stations.resize(n[6]), w.models.resize(n[7]);
     return s;
@@ -1594,7 +1695,7 @@ int EditCore::stampSection(int type, uint32_t seed) {
     // The level's own objects there go too (the generator clears what stands on its ground).
     level.objects.erase(std::remove_if(level.objects.begin(), level.objects.end(),
                                        [&](const LevelObject& o) {
-                                           const V3 at = o.kind == OBJ_LOG ? (o.p + o.p2) * 0.5 : o.p;
+                                           const V3 at = isSpan(o.kind) ? (o.p + o.p2) * 0.5 : o.p;
                                            return inFootprint(at.x, at.z);
                                        }),
                         level.objects.end());
@@ -1730,15 +1831,21 @@ EditPick EditCore::pick(const V3& o, const V3& d, double hitT, bool includeBase)
         const Prop& f = w.fixtures[i];
         static const char* names[] = {"FENCE", "CABIN", "SIGN", "TRAIL MAP", "TABLE", "STUMP", "REPAIR SHOP", "MARKER", "CAIRN"};
         const std::string name = names[std::min((int)f.kind, 8)];
+        Placed pl;
+        int sub;
         if (f.kind == PROP_FENCE) {
-            if (raySegment(o, d, f.a + V3(0, 0.6, 0), f.b + V3(0, 0.6, 0), t) < 0.45) consider(t, EditPick::BASE, i, 4, f.a, name);
+            if (objshape::Hit h; objshape::rayBox(fenceBox(f), o, d, best.t, h)) consider(h.t, EditPick::BASE, i, 4, f.a, name);
         } else if (f.kind == PROP_GARAGE) {
             if (objshape::Hit h; objshape::rayBox(shedBox(f), o, d, best.t, h)) consider(h.t, EditPick::BASE, i, 4, f.a, name);
-        } else if (f.kind == PROP_CABIN) {
-            if (objshape::Hit h; objshape::rayBox(obb(f.a + V3(0, 2.2, 0), V3(3.4, 2.2, 2.7), f.yaw), o, d, best.t, h)) consider(h.t, EditPick::BASE, i, 4, f.a, name);
-        } else if (raySegment(o, d, f.a, f.a + V3(0, 1.6, 0), t) < 0.45) {
+        } else if (propAsModel(f, i, pl, sub)) {
+            if (objshape::Hit h; objshape::rayBox(modelBox(pl), o, d, best.t, h)) consider(h.t, EditPick::BASE, i, 4, f.a, name);
+        } else if (raySegment(o, d, f.a, f.a + V3(0, 1.6, 0), t) < 0.3) {
             consider(t, EditPick::BASE, i, 4, f.a, name);
         }
+    }
+    for (int i = 0; i < (int)w.bushes.size(); i++) {
+        const Bush& b = w.bushes[i];
+        if (rayEllipsoid(o, d, b.p + V3(0, b.r * 0.55, 0), b.r, b.r * 0.65, t)) consider(t, EditPick::BASE, i, 6, b.p, "BUSH");
     }
     for (int i = 0; i < (int)w.models.size(); i++) {
         if (ownerOf(5, i) < 0) continue;  // (only the structures you put there)

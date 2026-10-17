@@ -31,8 +31,8 @@ double maxVertexGap(const Rock& a, const Rock& b) {
 
 bool sameFields(const LevelObject& a, const LevelObject& b) {
     auto close = [](const V3& p, const V3& q) { return len(p - q) < 0.01; };
-    const bool flat = a.kind == OBJ_ROCK || a.kind == OBJ_TREE || a.kind == OBJ_STATION || a.kind == OBJ_MODEL;  // (their height isn't saved: the ground gives it)
-    return a.kind == b.kind && close(flat ? V3(a.p.x, 0, a.p.z) : a.p, flat ? V3(b.p.x, 0, b.p.z) : b.p) && close(a.p2, b.p2) && close(a.size, b.size) && std::fabs(a.yaw - b.yaw) < 2e-3 &&
+    const bool flat = a.kind == OBJ_ROCK || a.kind == OBJ_TREE || a.kind == OBJ_STATION || a.kind == OBJ_MODEL || a.kind == OBJ_BUSH || a.kind == OBJ_FENCE;  // (their height isn't saved: the ground gives it)
+    return a.kind == b.kind && close(flat ? V3(a.p.x, 0, a.p.z) : a.p, flat ? V3(b.p.x, 0, b.p.z) : b.p) && close(a.kind == OBJ_FENCE ? V3(a.p2.x, 0, a.p2.z) : a.p2, b.kind == OBJ_FENCE ? V3(b.p2.x, 0, b.p2.z) : b.p2) && close(a.size, b.size) && std::fabs(a.yaw - b.yaw) < 2e-3 &&
            std::fabs(a.pitch - b.pitch) < 2e-3 && std::fabs(a.roll - b.roll) < 2e-3 && std::fabs(a.top - b.top) < 1e-2 &&
            std::fabs(a.lift - b.lift) < 1e-2 && a.sub == b.sub && a.scan == b.scan && a.name == b.name;
 }
@@ -423,4 +423,93 @@ SCENARIO(editorGroup, "editor/group", "Several objects move together, turn about
     ctx.check("both deleted", ed.level.objects.empty());
     ed.undo();
     ctx.check("one undo: both back", ed.level.objects.size() == 2);
+}
+
+SCENARIO(editorMapProps, "editor/map-props", "The map's cabins, fences, signs, tables, stumps and bushes are movable like the rest: their colliders go and come with them, undo, and the file keeps them") {
+    World w(MAP_MOUNTAIN);
+    Level lv;
+    lv.map = MAP_MOUNTAIN;
+    EditCore ed;
+    ed.begin(w, lv);
+    auto find = [&](PropKind k) {
+        for (int i = 0; i < (int)w.fixtures.size(); i++)
+            if (w.fixtures[i].kind == k) return i;
+        return -1;
+    };
+    auto pick = [&](int baseKind, int index, const V3& at) {
+        EditPick p;
+        p.kind = EditPick::BASE, p.baseKind = baseKind, p.index = index, p.at = at;
+        return p;
+    };
+    const int ic = find(PROP_CABIN), iff = find(PROP_FENCE), is = find(PROP_SIGN), it = find(PROP_TABLE);
+    if (!ctx.check("the mountain has a cabin, fence, sign and table", ic >= 0 && iff >= 0 && is >= 0 && it >= 0)) return;
+    const Prop cabin = w.fixtures[ic], fence = w.fixtures[iff], sign = w.fixtures[is], table = w.fixtures[it];
+    const size_t hidden0 = std::count_if(w.boxes.begin(), w.boxes.end(), [](const Box& b) { return b.hidden; });
+    const size_t poles0 = w.poles.size(), fixtures0 = w.fixtures.size(), bushes0 = w.bushes.size();
+    ctx.check("the map has bushes", bushes0 > 0);
+    const std::vector<int> ks = ed.adopt({pick(4, ic, cabin.a), pick(4, iff, fence.a), pick(4, is, sign.a), pick(4, it, table.a), pick(6, 0, w.bushes[0].p)});
+    bool all = true;
+    for (int k : ks) all &= k >= 0;
+    ctx.check("all five became level objects", all && ed.level.objects.size() == 5);
+    ctx.check("the world's fixtures are the same in number (they're models and a fence now)", w.fixtures.size() == fixtures0 - 3 && w.models.size() > 0 && w.bushes.size() == bushes0,
+              std::to_string(w.fixtures.size()) + " of " + std::to_string(fixtures0));
+    const size_t hiddenNow = std::count_if(w.boxes.begin(), w.boxes.end(), [](const Box& b) { return b.hidden; });
+    ctx.check("the cabin's and table's collider box and the fence's rail box are still there once each", hiddenNow >= hidden0 - 3);
+    // Move them all 20 m: the old collider spots are empty, the new ones are not.
+    ed.moveObjects(ks, 20, 0);
+    auto boxAt = [&](double x, double z, double dy) {
+        for (const Box& b : w.boxes)
+            if (b.hidden && std::hypot(b.c.x - x, b.c.z - z) < 0.5 && std::fabs(b.c.y - (w.height(x, z) + dy)) < 1.2) return true;
+        return false;
+    };
+    ctx.check("the cabin's collider moved with it", !boxAt(cabin.a.x, cabin.a.z, 1.7) && boxAt(cabin.a.x + 20, cabin.a.z, 1.7));
+    auto poleNear = [&](double x, double z) {
+        for (const Pole& p : w.poles)
+            if (std::hypot(p.x - x, p.z - z) < 0.1) return true;
+        return false;
+    };
+    ctx.check("the sign's pole moved with it", !poleNear(sign.a.x, sign.a.z) && poleNear(sign.a.x + 20, sign.a.z));
+    const V3 fd = fence.b - fence.a;
+    const double fL = std::hypot(fd.x, fd.z);
+    const V3 post = fence.a + fd * (fL > 3 ? 2.5 / fL : 0.5);  // (the second post: the ends are shared with the next fence)
+    ctx.check("the fence's posts moved with it", !poleNear(post.x, post.z) && poleNear(post.x + 20, post.z));
+    ctx.metric("poles: same number after the move", (double)w.poles.size() - (double)poles0, "", -3, 8);
+    bool bushMoved = false;
+    for (const Bush& b : w.bushes) bushMoved |= std::hypot(b.p.x - (ed.level.objects[ks[4]].p.x), b.p.z - ed.level.objects[ks[4]].p.z) < 0.01;
+    ctx.check("the bush moved", bushMoved);
+    // Turn and scale the cabin; it's a model with a new yaw and size.
+    ed.transformObjects({ks[0]}, OP_YAW, 0.8);
+    ed.transformObjects({ks[0]}, OP_SCALE, 1.5);
+    bool turned = false;
+    for (const Placed& m : w.models) turned |= m.id == "cabin" && std::fabs(m.scale.x - 1.5) < 1e-6 && std::fabs(m.yaw - (cabin.yaw + 0.8)) < 1e-6;
+    ctx.check("the cabin turned and grew", turned);
+    // Picking: the cabin's own shape, the bush's.
+    const V3 cc = ed.level.objects[ks[0]].p;
+    const EditPick pc = ed.pick(V3(cc.x, cc.y + 40, cc.z), V3(0, -1, 0), 1e9, true);
+    ctx.check("a ray down onto the moved cabin picks it", pc.kind == EditPick::OBJECT && pc.index == ks[0]);
+    // Save and load: the same objects, and the world played from the file is as the editor's.
+    Level back = roundTrip(ed.level);
+    bool same = back.objects.size() == ed.level.objects.size() && back.removed.size() == ed.level.removed.size();
+    for (size_t i = 0; same && i < back.objects.size(); i++) same &= sameFields(back.objects[i], ed.level.objects[i]);
+    std::string which;
+    for (size_t i = 0; i < back.objects.size() && i < ed.level.objects.size(); i++)
+        if (!sameFields(back.objects[i], ed.level.objects[i])) which += std::to_string(i) + "(kind " + std::to_string(ed.level.objects[i].kind) + ") ";
+    ctx.check("saved and loaded: the same objects", same, which);
+    World q = playWorldOf(back);
+    ctx.check("played back: the same fixtures, models and bushes", q.fixtures.size() == w.fixtures.size() && q.models.size() == w.models.size() && q.bushes.size() == w.bushes.size());
+    // Delete a map cabin outright: its collider box goes with it (it used to stay, invisible).
+    const int ic2 = [&] {
+        for (int i = 0; i < (int)w.fixtures.size(); i++)
+            if (w.fixtures[i].kind == PROP_TABLE) return i;
+        return -1;
+    }();
+    if (ic2 >= 0) {
+        const Prop t2 = w.fixtures[ic2];
+        const bool had = boxAt(t2.a.x, t2.a.z, 0.4);
+        ed.removePicks({pick(4, ic2, t2.a)});
+        ctx.check("deleting a table takes its collider with it", !had || !boxAt(t2.a.x, t2.a.z, 0.4));
+    }
+    while (ed.canUndo()) ed.undo();
+    size_t hiddenBack = std::count_if(w.boxes.begin(), w.boxes.end(), [](const Box& b) { return b.hidden; });
+    ctx.check("everything undone: the map as built", ed.level.objects.empty() && ed.level.removed.empty() && w.fixtures.size() == fixtures0 && w.poles.size() == poles0 && hiddenBack == hidden0 && w.bushes.size() == bushes0);
 }

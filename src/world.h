@@ -381,6 +381,6 @@ public:
     void addLog(V3 a, V3 b, double r);
     // Removes whatever object is nearest (x, z) within r: rocks, trees, logs, boxes,
     // stations. Returns what it removed ("" nothing).
-    // onlyKind: only that kind of thing counts (0 rock, 1 tree, 2 log, 3 box, 4 fixture) and distance is to its centre; -1 any.
+    // onlyKind: only that kind of thing counts (0 rock, 1 tree, 2 log, 3 box, 4 fixture, 6 bush) and distance is to its centre; -1 any.
     std::string removeNear(double x, double z, double r, int onlyKind = -1);
 };

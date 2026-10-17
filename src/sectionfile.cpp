@@ -103,15 +103,15 @@ bool extractSection(const World& w, const Level& lv, SectionFile& out, std::stri
             }
         }
     for (const LevelObject& o : lv.objects) {
-        const V3 at = o.kind == OBJ_LOG ? (o.p + o.p2) * 0.5 : o.p;
+        const V3 at = (o.kind == OBJ_LOG || o.kind == OBJ_FENCE) ? (o.p + o.p2) * 0.5 : o.p;
         if (c.outside(at.x, at.z) > 0) {
             s.dropped++;
             continue;
         }
         LevelObject q = o;
         q.p = sectionToLocal(f, o.p);
-        if (o.kind == OBJ_LOG) q.p2 = sectionToLocal(f, o.p2);
-        if (o.kind == OBJ_ROCK || o.kind == OBJ_TREE || o.kind == OBJ_STATION) q.p.y = 0;  // (they stand on the ground)
+        if (o.kind == OBJ_LOG || o.kind == OBJ_FENCE) q.p2 = sectionToLocal(f, o.p2);
+        if (o.kind == OBJ_ROCK || o.kind == OBJ_TREE || o.kind == OBJ_STATION || o.kind == OBJ_BUSH || o.kind == OBJ_MODEL) q.p.y = 0;  // (they stand on the ground)
         q.yaw = wrapAngle(o.yaw - f.heading);
         s.objects.push_back(q);
     }
@@ -172,7 +172,7 @@ SectionBuilt placeSection(World& w, const SectionFile& s, const SectionFrame& f)
     for (const LevelObject& o : s.objects) {
         LevelObject q = o;
         q.p = sectionToWorld(f, o.p);
-        if (o.kind == OBJ_LOG) q.p2 = sectionToWorld(f, o.p2);
+        if (o.kind == OBJ_LOG || o.kind == OBJ_FENCE) q.p2 = sectionToWorld(f, o.p2);
         q.yaw = o.yaw + f.heading;
         placeObject(q, w);
     }

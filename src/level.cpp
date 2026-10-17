@@ -176,7 +176,16 @@ void placeObject(const LevelObject& o, World& w) {
             if (!mk::findModel(o.name)) break;
             const V3 sc(o.size.x > 0 ? o.size.x : 1, o.size.y > 0 ? o.size.y : 1, o.size.z > 0 ? o.size.z : 1);
             const V3 at(o.p.x, w.height(o.p.x, o.p.z) + o.lift, o.p.z);
-            w.placeModel(o.name, at, o.yaw, {}, sc);
+            std::vector<std::pair<std::string, double>> set;
+            if (o.name == "trail_sign") set = {{"rating", (double)o.sub}};
+            else if (o.name == "cairn" || o.name == "stump") set = {{"seed", (double)o.sub}};
+            w.placeModel(o.name, at, o.yaw, set, sc);
+            // (What a map's own versions stand on: signs and posts are poles, a map board has two.)
+            if (o.name == "trail_sign" || o.name == "marker_post") w.poles.push_back({at.x, at.z, at.y - 0.4, at.y + (o.name == "marker_post" ? 1.2 : 2.0) * sc.y, 0.07});
+            else if (o.name == "map_board") {
+                const V3 side(std::sin(o.yaw), 0, std::cos(o.yaw));
+                for (int k = -1; k <= 1; k += 2) w.poles.push_back({at.x + side.x * 0.8 * sc.z * k, at.z + side.z * 0.8 * sc.z * k, at.y - 0.4, at.y + 2.0 * sc.y, 0.07});
+            } else if (o.name == "stump") w.poles.push_back({at.x, at.z, at.y - 0.3, at.y + 0.6 * sc.y, 0.35 * sc.x});
             if (modelSolid(o.name)) {
                 const mk::Mesh& m = mk::modelMesh(o.name);
                 if (!m.v.empty()) {
@@ -189,6 +198,23 @@ void placeObject(const LevelObject& o, World& w) {
             }
             break;
         }
+        case OBJ_FENCE: {  // split rails on posts every 2.5 m, as the maps build them
+            V3 a(o.p.x, w.height(o.p.x, o.p.z), o.p.z), b(o.p2.x, w.height(o.p2.x, o.p2.z), o.p2.z);
+            Prop f;
+            f.kind = PROP_FENCE, f.a = a, f.b = b;
+            w.fixtures.push_back(f);
+            const V3 d = b - a;
+            const double L = std::hypot(d.x, d.z), yaw = std::atan2(-d.z, d.x);
+            if (L < 0.1) break;
+            w.addBox((a + b) * 0.5 + V3(0, 0.62, 0), V3(L / 2, 0.3, 0.06), yaw, std::atan2(d.y, L), 0, V3(0.4, 0.3, 0.2));
+            w.boxes.back().hidden = true;
+            for (double t = 0; t <= L + 0.01; t += 2.5) {
+                const V3 q = a + d * (t / L);
+                w.poles.push_back({q.x, q.z, q.y - 0.4, q.y + 1.1, 0.08});
+            }
+            break;
+        }
+        case OBJ_BUSH: w.bushes.push_back({V3(o.p.x, w.height(o.p.x, o.p.z) + o.lift, o.p.z), std::max(0.2, o.size.x), o.col[0]}); break;
         default: break;
     }
 }
@@ -204,11 +230,11 @@ void applyLevel(const Level& lv, World& w) {
         if (wt.first >= 0 && wt.first < n * n) w.setCellWater(wt.first, wt.second);
     for (const auto& f : lv.flow)
         if (f.first >= 0 && f.first < n * n && !w.flowX.empty()) w.flowX[f.first] = f.second.first, w.flowZ[f.first] = f.second.second;
-    for (const LevelObject& o : lv.objects) placeObject(o, w);
-    if (lv.section.on) {  // (a section's canvas is cleared: the bushes have no entry in `removed`)
+    if (lv.section.on) {  // (a section's canvas is cleared: the bushes have no entry in `removed`; the level's own bushes come after)
         const SectionInfo& c = lv.section;
         w.bushes.erase(std::remove_if(w.bushes.begin(), w.bushes.end(), [&](const Bush& b) { return c.outside(b.p.x, b.p.z) < 26; }), w.bushes.end());
     }
+    for (const LevelObject& o : lv.objects) placeObject(o, w);
     if (lv.hasStart) {
         w.spawn = V3(lv.start.x, w.height(lv.start.x, lv.start.z), lv.start.z);
         w.spawnYaw = lv.startYaw;
@@ -267,7 +293,8 @@ void addGateMarkers(const Level& lv, World& w) {
 //   log AX AY AZ BX BY BZ R
 //   tree X Z HEIGHT KIND TINT [LIFT]
 //   station X Z YAWDEG NAME...
-//   #model X Z YAWDEG SX SY SZ LIFT ID  (a code-made structure: a comment, so an older build skips it)
+//   #model X Z YAWDEG SX SY SZ LIFT SUB ID  (a code-made structure: a comment, so an older build skips it)
+//   #fence AX AZ BX BZ, #bush X Z R TINT [LIFT]  (likewise)
 //   remove X Z [KIND]                    (KIND: 0 rock 1 tree 2 log 3 box 4 fixture; without it, the nearest of any)
 //   heights I J0 H H H ...   (a run of cells along j from (I, J0), meters)
 //   surfaces I J0 SSPP SSPP ...  (hex: surface, paint)
@@ -351,8 +378,10 @@ std::string saveLevelText(const Level& lv) {
                 break;
             case OBJ_MODEL:  // (a comment line: an older build skips it, and the level without the structure still plays)
                 o << "#model " << num(b.p.x) << ' ' << num(b.p.z) << ' ' << num(b.yaw / kDeg, 2) << ' ' << num(b.size.x, 3) << ' ' << num(b.size.y, 3) << ' ' << num(b.size.z, 3) << ' '
-                  << num(b.lift, 3) << ' ' << b.name << '\n';
+                  << num(b.lift, 3) << ' ' << b.sub << ' ' << b.name << '\n';
                 break;
+            case OBJ_FENCE: o << "#fence " << num(b.p.x) << ' ' << num(b.p.z) << ' ' << num(b.p2.x) << ' ' << num(b.p2.z) << '\n'; break;
+            case OBJ_BUSH: o << "#bush " << num(b.p.x) << ' ' << num(b.p.z) << ' ' << num(b.size.x, 3) << ' ' << num(b.col[0], 2) << ' ' << num(b.lift, 3) << '\n'; break;
             case OBJ_STATION: o << "station " << num(b.p.x) << ' ' << num(b.p.z) << ' ' << num(b.yaw / kDeg, 2) << ' ' << b.name << '\n'; break;
             default: break;
         }
@@ -418,10 +447,37 @@ bool parseLevelText(const std::string& text, Level& lv, std::string* error) {
                 double yaw = 0;
                 ms >> tag >> b.p.x >> b.p.z >> yaw >> b.size.x >> b.size.y >> b.size.z >> b.lift;
                 b.yaw = yaw * kDeg;
+                {  // (the setting, a number, before the id; a file from before it has just the id)
+                    const std::streampos at = ms.tellg();
+                    int sub = 0;
+                    if (ms >> sub) b.sub = sub;
+                    else ms.clear(), ms.seekg(at);
+                }
                 std::getline(ms, b.name);
                 const size_t a = b.name.find_first_not_of(' ');
                 b.name = a == std::string::npos ? std::string() : b.name.substr(a);
                 if (!ms.fail() || ms.eof()) out.objects.push_back(b);
+                continue;
+            }
+            if (line.rfind("#fence ", 0) == 0) {  // #fence AX AZ BX BZ
+                std::istringstream fs(line);
+                std::string tag;
+                LevelObject b;
+                b.kind = OBJ_FENCE;
+                fs >> tag >> b.p.x >> b.p.z >> b.p2.x >> b.p2.z;
+                if (!fs.fail()) out.objects.push_back(b);
+                continue;
+            }
+            if (line.rfind("#bush ", 0) == 0) {  // #bush X Z R TINT [LIFT]
+                std::istringstream bs(line);
+                std::string tag;
+                LevelObject b;
+                b.kind = OBJ_BUSH;
+                bs >> tag >> b.p.x >> b.p.z >> b.size.x >> b.col[0];
+                if (bs.fail()) continue;
+                double lift = 0;
+                if (bs >> lift) b.lift = lift;
+                out.objects.push_back(b);
                 continue;
             }
             if (line.rfind("#section ", 0) == 0 || line.rfind("#canvas ", 0) == 0 || line.rfind("#stamp ", 0) == 0 || line.rfind("#generate ", 0) == 0) {
