@@ -25,7 +25,7 @@ devmenu::Action press(const Keybinds& kb, int sc, bool devKeys, unsigned context
     return r.got.empty() ? devmenu::Action() : r.got[0];
 }
 
-const int kDevKeys[] = {SC_1, SC_2, SC_3, SC_4, SC_5, SC_I, SC_K, SC_N, SC_DELETE, SC_LEFTBRACKET, SC_RIGHTBRACKET, SC_F2, SC_F3, SC_F5};
+const int kDevKeys[] = {SC_1, SC_2, SC_3, SC_4, SC_5, SC_I, SC_K, SC_N, SC_DELETE, SC_LEFTBRACKET, SC_RIGHTBRACKET, SC_F2};
 
 }  // namespace
 
@@ -42,10 +42,14 @@ SCENARIO(devKeysOff, "devmenu/hotkeys-off", "With the GAMEPLAY KEYS mode (DEV HO
     ctx.check("DEV KEYS: I spawns the next parked vehicle, K AI traffic, N cycles the beam view",
               press(kb, SC_I, true).act == devmenu::SPAWN_PARKED && press(kb, SC_I, true).arg == -1 && press(kb, SC_K, true).act == devmenu::SPAWN_TRAFFIC &&
                   press(kb, SC_N, true).act == devmenu::BEAM_VIEW && press(kb, SC_N, true).arg == -1);
-    ctx.check("DEV KEYS: DEL removes a vehicle, [ ] slow motion, F2 the editor, F3 the FPS counter, F5 the reload",
+    ctx.check("DEV KEYS: DEL removes a vehicle, [ ] slow motion, F2 the editor",
               press(kb, SC_DELETE, true).act == devmenu::REMOVE_VEHICLE && press(kb, SC_LEFTBRACKET, true).act == devmenu::TIME_SLOWER &&
-                  press(kb, SC_RIGHTBRACKET, true).act == devmenu::TIME_FASTER && press(kb, SC_F2, true).act == devmenu::EDITOR && press(kb, SC_F3, true).act == devmenu::FPS &&
-                  press(kb, SC_F5, true).act == devmenu::RELOAD);
+                  press(kb, SC_RIGHTBRACKET, true).act == devmenu::TIME_FASTER && press(kb, SC_F2, true).act == devmenu::EDITOR);
+    ctx.check("F3 (debug info) and F5 (load the new build) are always on, not dev keys: the same key press in either mode",
+              !press(kb, SC_F3, true) && !press(kb, SC_F5, true) && kb.resolve(SC_F3, false, false, KCTX_DRIVE, false).action == KA_DEBUG_INFO &&
+                  kb.resolve(SC_F3, false, false, KCTX_DRIVE, false).key == SC_F3 && kb.resolve(SC_F5, false, false, KCTX_DRIVE, false).action == KA_DEV_RELOAD &&
+                  kb.resolve(SC_F5, false, false, KCTX_DRIVE, false).key == SC_F5 && !isDevAction(KA_DEBUG_INFO) && !isDevAction(KA_DEV_RELOAD) &&
+                  devmenu::forKeyAction(KA_DEBUG_INFO).act == devmenu::FPS && devmenu::forKeyAction(KA_DEV_RELOAD).act == devmenu::RELOAD);
     ctx.check("I on foot is the truck inventory, never a spawn (even in DEV KEYS mode)", !press(kb, SC_I, true, KCTX_FOOT) &&
                                                                                           kb.resolve(SC_I, false, false, KCTX_FOOT, true).action == KA_INVENTORY);
     ctx.check("J: the scenario's checks list only while one plays and in DEV KEYS mode; otherwise get out / in",

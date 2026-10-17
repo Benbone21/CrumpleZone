@@ -66,16 +66,18 @@ const Info kInfo[KA_COUNT] = {
     {SC_C, false, "CAMERA", "key_camera", KG_VIEW, ANY, false, false},
     {SC_M, false, "MAP", "key_map", KG_VIEW, ANY, false, false},
     {SC_F10, false, "HIDE THE HUD (PHOTOS)", "key_photo", KG_VIEW, ANY, false, false},
+    {SC_F3, false, "DEBUG INFO", "key_devfps", KG_VIEW, ANY, false, false},
     // GAME
     {SC_ESCAPE, false, "MENU", "key_menu", KG_GAME, ANY, false, false},
     {SC_P, false, "PAUSE", "key_pause", KG_GAME, ANY, false, false},
     {SC_H, false, "CONTROLS OVERLAY", "key_help", KG_GAME, ANY, false, false},
     {SC_F11, false, "FULLSCREEN", "key_fullscreen", KG_GAME, ANY, false, false},
     {SC_RETURN, false, "CHAT", "key_chat", KG_GAME, ANY, false, false},
-    // DEV (the first three always work; the rest only in DEV KEYS mode)
+    // DEV (the first four always work; the rest only in DEV KEYS mode)
     {SC_F12, false, "DEV MENU", "key_devmenu", KG_DEV, ANY, false, false},
     {GRAVE, false, "DEV KEYS / GAMEPLAY KEYS", "key_devtoggle", KG_DEV, ANY, false, false},
     {SC_F1, false, "PLAYTEST: BACK TO THE EDITOR", "key_playtestback", KG_DEV, ANY, false, false},
+    {SC_F5, false, "LOAD THE NEW BUILD", "key_devreload", KG_DEV, ANY, false, false},
     {SC_1, false, "SWAP TO VEHICLE 1", "key_devvehicle1", KG_DEV, ANY, false, true},
     {SC_2, false, "SWAP TO VEHICLE 2", "key_devvehicle2", KG_DEV, ANY, false, true},
     {SC_3, false, "SWAP TO VEHICLE 3", "key_devvehicle3", KG_DEV, ANY, false, true},
@@ -85,11 +87,9 @@ const Info kInfo[KA_COUNT] = {
     {SC_K, false, "SPAWN AI TRAFFIC", "key_devtraffic", KG_DEV, ANY, false, true},
     {SC_DELETE, false, "REMOVE THIS VEHICLE", "key_devremove", KG_DEV, ANY, false, true},
     {SC_N, false, "BEAM VIEW", "key_devbeam", KG_DEV, ANY, false, true},
-    {SC_F3, false, "FPS COUNTER", "key_devfps", KG_DEV, ANY, false, true},
     {SC_LEFTBRACKET, false, "SLOW MOTION: SLOWER", "key_devslower", KG_DEV, ANY, false, true},
     {SC_RIGHTBRACKET, false, "SLOW MOTION: FASTER", "key_devfaster", KG_DEV, ANY, false, true},
     {SC_F2, false, "LEVEL EDITOR HERE", "key_deveditor", KG_DEV, ANY, false, true},
-    {SC_F5, false, "LOAD THE NEW BUILD", "key_devreload", KG_DEV, ANY, false, true},
     {SC_J, false, "SCENARIO CHECKS LIST", "key_devscenario", KG_DEV, SCN, false, true},
 };
 static_assert(sizeof kInfo / sizeof kInfo[0] == KA_COUNT, "one kInfo row per KeyAction");

@@ -26,7 +26,7 @@ Action forKeyAction(KeyAction a) {
         case KA_DEV_SLOWER: return {TIME_SLOWER, 0};
         case KA_DEV_FASTER: return {TIME_FASTER, 0};
         case KA_DEV_BEAM: return {BEAM_VIEW, -1};
-        case KA_DEV_FPS: return {FPS, 0};
+        case KA_DEBUG_INFO: return {FPS, 0};
         case KA_DEV_EDITOR: return {EDITOR, 0};
         case KA_DEV_RELOAD: return {RELOAD, 0};
         case KA_DEV_SCENARIO: return {SCENARIO_CHECKS, 0};
@@ -37,6 +37,8 @@ Action forKeyAction(KeyAction a) {
 int keyActionOf(const Action& act) {
     for (int a = KA_DEV_VEHICLE1; a <= KA_DEV_SCENARIO; a++)
         if (forKeyAction((KeyAction)a) == act) return a;
+    for (KeyAction a : {KA_DEBUG_INFO, KA_DEV_RELOAD})  // (always on: not dev-gated, still a menu entry's key)
+        if (forKeyAction(a) == act) return a;
     return -1;
 }
 
@@ -92,7 +94,7 @@ std::vector<Item> items(Group g, const Keybinds* kb) {
         case G_VIEW: {
             static const char* const v[4] = {"BEAM VIEW: OFF", "BEAM VIEW: X-RAY", "BEAM VIEW: BEAMS ONLY", "BEAM VIEW: PARTS"};  // (DebugView, render.h)
             for (int k = 0; k < 4; k++) add(BEAM_VIEW, k, v[k], k == 1 && kb ? bound(KA_DEV_BEAM) + " CYCLES THEM" : "");
-            add(FPS, 0, "FRAME RATE COUNTER");
+            add(FPS, 0, "DEBUG INFO");
             break;
         }
         case G_TOOLS:

@@ -39,7 +39,7 @@ make
 | `--time HOURS` | Hold the clock at a time of day, e.g. `--time 21.5` (for screenshots) |
 
 **Hot reload (Linux):** leave the game running while you rebuild (`make`). When the new
-`./crumplezone` lands, the HUD says NEW BUILD READY; press F5 (in DEV KEYS mode, or F12 → TOOLS → RELOAD) and the game restarts on
+`./crumplezone` lands, the HUD says NEW BUILD READY; press F5 (always on; or F12 → TOOLS → RELOAD) and the game restarts on
 it, on the same map, in the same vehicle (with its garage parts), at the same spot.
 
 ## Releases
@@ -177,7 +177,7 @@ Esc → Settings → Controls → Keyboard keybinds lists every keyboard action 
 
 The test and debug tools are not loose keys any more. **F12** (or Esc → DEV MENU) opens the dev menu, which works with the mouse, keyboard and controller: SPAWN VEHICLE (swap the one you drive for the Blazer, Bronco, 4Runner, Tacoma or Jesko), SPAWN AHEAD (parked or AI vehicles, remove this one), TELEPORT (map spawn, each obstacle section, any place), WORLD (time of day, slow motion, reload the map), VEHICLE (repair, respawn, flip upright, refuel), VIEW (beam views, FPS counter) and TOOLS (level editor, new section, model lab, reload the new build, a scenario's checks list). Teleport, reload the map and refuel are refused in a multiplayer session; the rest does for guests what the old keys did.
 
-For quick testing the old keys come back in **DEV KEYS** mode: press the **grave key** (under Esc) to flip between DEV KEYS and GAMEPLAY KEYS (a DEV KEYS tag shows top left; the mode is saved, GAMEPLAY by default; also Esc → Settings → DEV HOTKEYS, or the dev menu). In DEV KEYS mode: 1-7 swap vehicle (Blazer, Bronco, 4Runner, Tacoma, Jesko first), I parked vehicle ahead, K AI traffic, Delete remove vehicle, N beam view, [ ] slow motion, F2 editor here, F3 FPS, F5 load the new build, J a scenario's checks list. In GAMEPLAY KEYS mode they do nothing (I is the truck inventory on foot, J gets out/in). 
+For quick testing the old keys come back in **DEV KEYS** mode: press the **grave key** (under Esc) to flip between DEV KEYS and GAMEPLAY KEYS (a DEV KEYS tag shows top left; the mode is saved, GAMEPLAY by default; also Esc → Settings → DEV HOTKEYS, or the dev menu). In DEV KEYS mode: 1-7 swap vehicle (Blazer, Bronco, 4Runner, Tacoma, Jesko first), I parked vehicle ahead, K AI traffic, Delete remove vehicle, N beam view, [ ] slow motion, F2 editor here, J a scenario's checks list. F3 (debug info), F5 (load the new build), F1 (back from a playtest), F12 and the grave key work in both modes. In GAMEPLAY KEYS mode they do nothing (I is the truck inventory on foot, J gets out/in). 
 
 ## Controller
 

@@ -1495,8 +1495,7 @@ void drawHud(Renderer& r, const Sim& sim, const View& view, HudState& hud, const
         y += 20 * u;
     }
     if (hud.newBuild) {
-        centeredPill(r, W / 2.0f, y, px(1.5f * u), hud.devHotkeys ? "NEW BUILD READY: PRESS F5 TO LOAD IT (SAME MAP, VEHICLE AND SPOT)"
-                                                  : "NEW BUILD READY: F12 DEV MENU > TOOLS > RELOAD (OR DEV HOTKEYS ON: F5)", 0.02f, 0.06f, 0.03f, 1,
+        centeredPill(r, W / 2.0f, y, px(1.5f * u), "NEW BUILD READY: PRESS " + K(KA_DEV_RELOAD) + " TO LOAD IT (SAME MAP, VEHICLE AND SPOT)", 0.02f, 0.06f, 0.03f, 1,
                      0.45f, 1.0f, 0.55f);
         y += 22 * u;
     }
@@ -3040,6 +3039,8 @@ int main(int argc, char** argv) {
                             hud.photo = !hud.photo;
                             break;
                         case SC_H: hud.showHelp = !hud.showHelp; break;
+                        case SC_F3: runDev({devmenu::FPS, 0}); break;  // the debug info screen (always on)
+                        case SC_F5: runDev({devmenu::RELOAD, 0}); break;  // load the new build (always on)
                         case SC_F1:  // leaves a playtest for the editor
                             if (editorSuspended && !editor.active && !returnToEditor()) hud.toast("CAN'T GO BACK TO THE EDITOR HERE");
                             break;

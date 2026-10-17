@@ -71,6 +71,7 @@ enum KeyAction {
     KA_CAMERA,
     KA_MAP,
     KA_PHOTO,
+    KA_DEBUG_INFO,  // F3: the debug info screen (was the FPS counter)
     // GAME
     KA_MENU,
     KA_PAUSE,
@@ -81,6 +82,7 @@ enum KeyAction {
     KA_DEV_MENU,
     KA_DEV_TOGGLE,
     KA_PLAYTEST_BACK,
+    KA_DEV_RELOAD,  // F5: load the new build (always on, like the menu key)
     KA_DEV_VEHICLE1,
     KA_DEV_VEHICLE2,
     KA_DEV_VEHICLE3,
@@ -90,11 +92,9 @@ enum KeyAction {
     KA_DEV_TRAFFIC,
     KA_DEV_REMOVE,
     KA_DEV_BEAM,
-    KA_DEV_FPS,
     KA_DEV_SLOWER,
     KA_DEV_FASTER,
     KA_DEV_EDITOR,
-    KA_DEV_RELOAD,
     KA_DEV_SCENARIO,
     KA_COUNT
 };

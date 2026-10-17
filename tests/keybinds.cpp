@@ -183,9 +183,9 @@ SCENARIO(keysContexts, "keybinds/contexts", "One key may do different jobs in th
     ctx.check("...and nothing clashes after", !anyClash(a) && !anyClash(b));
     Keybinds c;
     ctx.check("a dev tool and a gameplay action may share a key (the mode decides); two dev tools may not",
-              c.bind(KA_DEV_BEAM, SC_C) && c.key(KA_CAMERA) == SC_C && c.bind(KA_DEV_FPS, SC_C) && c.key(KA_DEV_BEAM) == SC_F3 && !anyClash(c));
+              c.bind(KA_DEV_BEAM, SC_C) && c.key(KA_CAMERA) == SC_C && c.bind(KA_DEV_REMOVE, SC_C) && c.key(KA_DEV_BEAM) == SC_DELETE && !anyClash(c));
     ctx.check("DEV KEYS mode: C is the dev tool; GAMEPLAY KEYS mode: the camera",
-              c.resolve(SC_C, false, false, KCTX_DRIVE, true).action == KA_DEV_FPS && c.resolve(SC_C, false, false, KCTX_DRIVE, false).action == KA_CAMERA);
+              c.resolve(SC_C, false, false, KCTX_DRIVE, true).action == KA_DEV_REMOVE && c.resolve(SC_C, false, false, KCTX_DRIVE, false).action == KA_CAMERA);
 }
 
 SCENARIO(keysShiftAndHeld, "keybinds/shift-and-held", "Shift combos bind, show and persist; held actions read the keyboard state with Shift in mind") {
