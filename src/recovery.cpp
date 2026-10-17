@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <string>
 
+#include "objshape.h"
 #include "softbody.h"
 
 // ---- Recovery points --------------------------------------------------------
@@ -436,9 +437,11 @@ std::vector<WinchTarget> Sim::winchTargets(int ci, const V3* look) const {
         if (len(rk.c - p) > reach + rk.r) continue;
         RopeEnd e;
         e.kind = ANCHOR_ROCK;
-        const V3 toward = norm(p - rk.c);
-        e.p = rk.c + toward * (rk.r * 0.75);
-        e.p.y = std::max(e.p.y, world.height(e.p.x, e.p.z) + 0.2);
+        // The sling goes round the rock as it really is: its cross-section at a height that holds, tied on at the
+        // point nearest the winch (on the strap, a hair off the stone), not somewhere inside its bounding sphere.
+        const objshape::Wrap wr = objshape::wrapRockForPull(world, rk, p);
+        if (!wr.ok) continue;
+        e.p = wr.attach;
         consider(e, "BOULDER");
     }
     for (int o = 0; o < (int)cars.size(); o++) {

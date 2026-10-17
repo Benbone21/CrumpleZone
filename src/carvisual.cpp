@@ -3,8 +3,10 @@
 
 #include "bodyshell.h"
 #include "modelkit.h"
+#include "objshape.h"
 #include "scenery.h"
 
+#include <array>
 #include <map>
 #include <string>
 #include <set>
@@ -1706,6 +1708,20 @@ const mk::Mesh& radiusModel(const char* id, double r) {
     return it->second;
 }
 double yawToward(const V3& from, const V3& to) { return std::atan2(-(to.z - from.z), to.x - from.x); }
+// A sling round a boulder, built for that rock's outline at the height it's tied (kept while the line is on).
+const mk::Mesh& rockSlingModel(const char* id, int rock, const objshape::Wrap& wr) {
+    static std::map<std::array<long, 4>, mk::Mesh> cache;
+    static uint64_t version = 0;
+    if (version != mk::picksVersion() || cache.size() > 16) cache.clear(), version = mk::picksVersion();
+    const std::array<long, 4> key = {rock, std::lround(wr.attach.x * 100), std::lround(wr.attach.y * 100), std::lround(wr.attach.z * 100)};
+    auto it = cache.find(key);
+    if (it == cache.end()) {
+        mk::pathHint() = objshape::localPath(wr, 0.09);
+        it = cache.emplace(key, mk::modelMesh(id, {})).first;
+        mk::pathHint().clear();
+    }
+    return it->second;
+}
 }  // namespace
 
 // Winch lines and tow straps: a sagging line when slack, straight when loaded, with a
@@ -1749,14 +1765,10 @@ void buildRopes(const Sim& sim, std::vector<Vtx>& out) {
                 }
                 if (tree) appendModel(out, radiusModel("tree_saver", tree->r), V3(tree->x, p.y - 0.42, tree->z), yawToward(V3(tree->x, 0, tree->z), to));
                 else blob(out, p, 0.05, V3(0.95, 0.6, 0.08), SM_MATTE);
-            } else {  // the chain sling round the boulder
-                const Rock* rock = nullptr;
-                double best = 0.3;
-                for (const Rock& rk : sim.world.rocks) {
-                    const double d = std::fabs(len(p - rk.c) - rk.r * 0.75);
-                    if (rk.r >= anchors::kBoulderMinR && d < best) best = d, rock = &rk;
-                }
-                if (rock) appendModel(out, radiusModel("chain_sling", rock->r), V3(rock->c.x, sim.world.height(rock->c.x, rock->c.z), rock->c.z), yawToward(rock->c, to));
+            } else {  // the chain sling round the boulder: its cross-section at the height the line is tied, tight on the stone
+                const int ri = objshape::rockAt(sim.world, p, 0.06);
+                const objshape::Wrap wr = ri >= 0 ? objshape::wrapRock(sim.world.rocks[ri], p.y, p) : objshape::Wrap();
+                if (wr.ok) appendModel(out, rockSlingModel("chain_sling", ri, wr), wr.attach, std::atan2(-wr.out.z, wr.out.x));
                 else blob(out, p, 0.05, V3(0.95, 0.6, 0.08), SM_MATTE);
             }
         }
