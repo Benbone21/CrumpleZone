@@ -1,6 +1,7 @@
 // The mesh simplifier (meshopt.h): flat things come down to their fewest triangles, hidden faces go, and nothing that
 // shows changes (outline, area, colours, normals).
 #include <cmath>
+#include <map>
 #include <set>
 
 #include "../src/meshopt.h"
@@ -185,11 +186,36 @@ SCENARIO(meshoptHidden, "meshopt/hidden", "Faces inside closed convex parts go; 
     {
         mk::Mesh m;
         mk::B b(m);
-        grid(b, 1, 2, -1);
-        b.box(V3(0, 1, 0), V3(1, 1, 1));
+        b.box(V3(0, -2, 0), V3(1, 1, 1));
+        b.box(V3(3, 1, 0), V3(1, 1, 1));
         MeshOptOptions o;
         o.groundMin = [](double, double, double, double) { return -0.5; };
         const MeshOptStats s = optimizeMesh(m, o);
-        ctx.check("a face under the ground is buried", m.triangles() == 12 && s.buried == 2, std::to_string(m.triangles()));
+        ctx.check("a bottom under the ground is buried (only)", m.triangles() == 22 && s.buried == 2, std::to_string(m.triangles()));
     }
+}
+
+SCENARIO(meshoptBudgets, "meshopt/budgets", "The code-made scenery as the game builds it: nothing left to merge or hide, and within its triangle budget") {
+    // (Each design's most, at its defaults: a few percent over what they are now, so a model that grows shows up here.)
+    static const std::map<std::string, size_t> budget = {
+        {"spawn_pad", 170},     {"repair_shed", 10100}, {"cabin", 5500},       {"trail_sign", 290},   {"map_board", 1480},  {"marker_post", 84},
+        {"cairn", 240},         {"guardrail", 1800},    {"jersey_barrier", 540}, {"sign_gantry", 5500}, {"race_gate", 1830}, {"fire_tower", 6150},
+        {"picnic_table", 1140}, {"outhouse", 1630},     {"tent", 1170},        {"woodpile", 1550},    {"mine_portal", 2470}, {"ore_cart", 2950},
+        {"wreck_pickup", 8250}, {"oil_drum", 900},      {"traffic_cone", 220}, {"lamp_post", 930},    {"campfire", 1710},  {"person", 2290},
+    };
+    int checked = 0;
+    for (const mk::ModelDef& d : mk::catalog()) {
+        if (!mk::simplified(d)) continue;
+        size_t most = 0, waste = 0;
+        for (int v = 0; v < (int)d.variants.size(); v++) {
+            mk::Mesh m;
+            mk::build(d, v, mk::defaults(d.variants[v]), m);
+            most = std::max(most, m.triangles());
+            waste += analyzeMesh(m).wasted();
+        }
+        ctx.check(d.id + ": nothing left to simplify", waste == 0, std::to_string(waste) + " triangles");
+        auto it = budget.find(d.id);
+        if (it != budget.end()) ctx.check(d.id + ": within " + std::to_string(it->second) + " triangles", most <= it->second, std::to_string(most)), checked++;
+    }
+    ctx.check("every budget has its model", checked == (int)budget.size(), std::to_string(checked));
 }

@@ -58,8 +58,15 @@ build/test_render: build/tests/render.o $(filter-out build/src/main.o,$(GAME_OBJ
 build/test_audio: build/tests/audio.o build/tests/engine_samples.o build/tests/soundscape.o build/src/audio.o build/src/engineaudio.o build/src/engine_samples.o build/src/music.o build/src/ambience.o $(patsubst %.cpp,build/%.o,$(PHYS))
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDLIBS)
 
+# Every mesh the game builds, what's wasted in it (meshopt.h): SDL_VIDEODRIVER=offscreen build/meshaudit [--fast].
+build/meshaudit: build/tools/meshaudit.o $(filter-out build/src/main.o,$(GAME_OBJ))
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDLIBS)
+
+meshaudit: build/meshaudit
+	SDL_VIDEODRIVER=offscreen ./build/meshaudit
+
 # Contact sheets of the code-made models: build/modelsheet [--out DIR] [id ...].
-build/modelsheet: build/tools/modelsheet.o build/src/modelkit.o build/src/platform.o $(patsubst %.cpp,build/%.o,$(MODELS))
+build/modelsheet: build/tools/modelsheet.o build/src/modelkit.o build/src/meshopt.o build/src/platform.o $(patsubst %.cpp,build/%.o,$(MODELS))
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lm
 
 # Silent audition files: build/engine_preview [output directory].
@@ -234,4 +241,4 @@ run: crumplezone
 clean:
 	rm -rf build crumplezone
 
-.PHONY: windows windows-installer mac mac-dmg deb all test run clean bake
+.PHONY: windows windows-installer mac mac-dmg deb all test run clean bake meshaudit

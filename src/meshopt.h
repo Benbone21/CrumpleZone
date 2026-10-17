@@ -2,7 +2,7 @@
 // modelkit.h and the renderer's Vtx lists are) goes in, a soup comes out, never with more triangles:
 //   - degenerate triangles (two corners in one place, or no width) and repeated copies of a triangle go;
 //   - faces hidden inside other parts go: wholly inside a closed convex part (a box inside a box), or lying on its surface
-//     facing in (the bottom of a box stood on another); with `groundMin`, wholly under the ground too;
+//     facing in (the bottom of a box stood on another); with `groundMin`, a bottom wholly under the ground too;
 //   - flat regions (joined edge to edge, one plane, one material, one colour, one normal) are cut again from their
 //     outline into the fewest triangles: a flat rectangle made of 50 is 2.
 // Nothing is merged across a change of colour, material or normal, and a corner another face still uses stays (no
@@ -29,7 +29,7 @@ struct MeshOptOptions {
     bool coplanar = true;    // merge flat regions
     double weldEps = 1e-5;   // m: corners closer than this are one (world-sized meshes in floats: 1e-4)
     // Optional: the lowest the ground gets over the rectangle x0..x1, z0..z1 (with whatever margin the caller wants);
-    // a triangle wholly below it is buried.
+    // a downward-facing triangle wholly below it is buried.
     std::function<double(double x0, double z0, double x1, double z1)> groundMin;
 };
 
