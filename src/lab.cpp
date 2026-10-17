@@ -540,6 +540,7 @@ struct Lab {
         mk::loadChoices(picksPath);
         std::printf("model lab: %zu models; picks in %s\n", order.size(), picksPath.empty() ? "(nowhere: no assets folder)" : picksPath.c_str());
         r.frameModels.clear();
+        r.carModels.clear();
         sim.world = studioWorld();
         r.setWorld(sim.world);
         int start = 0;
@@ -638,6 +639,7 @@ struct Lab {
             v.time = (float)(now / (double)freq);
             r.figures.clear();
             r.frameModels.clear();  // (the game's jack, car parts and frame, left from its last frame, aren't part of the display)
+            r.carModels.clear();
             r.xrayRange = 0, r.wheelWork = Renderer::WheelWork(), r.carried.on = false;
             r.drawScene(sim, v, DEBUG_OFF, nullptr);
             hits.clear();

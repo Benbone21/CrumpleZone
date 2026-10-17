@@ -85,10 +85,11 @@ struct VisualTemplate {
 // Built once per vehicle type (cached).
 const VisualTemplate& visualTemplate(const Car& car);
 
-// Per-frame evaluation. Indices are appended for visible faces; glass faces go in both lists.
-void evalBody(const Car& car, const VisualTemplate& t, std::vector<BodyDynamic>& dyn, std::vector<unsigned>& opaque,
-              std::vector<unsigned>& glass);
-void evalParts(const Car& car, const VisualTemplate& t, std::vector<Vtx>& out);
+// Evaluation from node positions P (the car's nodes, in whatever frame the result is wanted in). Indices are
+// appended for visible faces; glass faces go in both lists.
+void evalBody(const Car& car, const std::vector<V3>& P, const VisualTemplate& t, std::vector<BodyDynamic>& dyn,
+              std::vector<unsigned>& opaque, std::vector<unsigned>& glass);
+void evalParts(const std::vector<V3>& P, const VisualTemplate& t, std::vector<Vtx>& out);
 // Suspension arms, coil-overs, drive shafts and differentials from the live physics.
 void buildRunningGear(const Car& car, std::vector<Vtx>& out);
 // The frame rails and crossmembers under the floor (part of the running gear).

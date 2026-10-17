@@ -1404,7 +1404,7 @@ const VisualTemplate& visualTemplate(const Car& car) {
     return t;
 }
 
-void evalBody(const Car& car, const VisualTemplate& t, std::vector<BodyDynamic>& dyn, std::vector<unsigned>& opaque,
+void evalBody(const Car& car, const std::vector<V3>& P, const VisualTemplate& t, std::vector<BodyDynamic>& dyn, std::vector<unsigned>& opaque,
               std::vector<unsigned>& glass) {
     CZ_THREAD_CACHE(std::vector<V3>, pos);
     CZ_THREAD_CACHE(std::vector<V3>, nrm);
@@ -1414,10 +1414,10 @@ void evalBody(const Car& car, const VisualTemplate& t, std::vector<BodyDynamic>&
         V3 p;
         if (!t.sculptBind.empty()) {
             const auto& b=t.sculptBind[v];
-            for(int k=0;k<8;k++)p+=car.nodes[b.n[k]].p*b.w[k];
-            if(b.normalOffset!=0)p+=norm(cross(car.nodes[b.n[1]].p-car.nodes[b.n[0]].p,car.nodes[b.n[2]].p-car.nodes[b.n[0]].p))*b.normalOffset;
+            for(int k=0;k<8;k++)p+=P[b.n[k]]*b.w[k];
+            if(b.normalOffset!=0)p+=norm(cross(P[b.n[1]]-P[b.n[0]],P[b.n[2]]-P[b.n[0]]))*b.normalOffset;
         } else {
-            for (int k = t.wStart[v]; k < t.wStart[v + 1]; k++) p += car.nodes[t.wNode[k]].p * t.wVal[k];
+            for (int k = t.wStart[v]; k < t.wStart[v + 1]; k++) p += P[t.wNode[k]] * t.wVal[k];
         }
         pos[v] = p;
     }
@@ -1434,9 +1434,9 @@ void evalBody(const Car& car, const VisualTemplate& t, std::vector<BodyDynamic>&
             if (pnl >= 0) {
                 const Panel& p = car.panels[pnl];
                 for (size_t k = 0; k < p.bodyNodes.size(); k++)
-                    if (p.bodyNodes[k] == n) return car.nodes[p.panelNodes[k]].p;
+                    if (p.bodyNodes[k] == n) return P[p.panelNodes[k]];
             }
-            return car.nodes[n].p;
+            return P[n];
         };
         for (int k = 0; k < 2; k++) {
             const Tri& tr = car.tris[sq.tri + k];
@@ -1475,15 +1475,15 @@ void evalBody(const Car& car, const VisualTemplate& t, std::vector<BodyDynamic>&
     }
 }
 
-void evalParts(const Car& car, const VisualTemplate& t, std::vector<Vtx>& out) {
+void evalParts(const std::vector<V3>& P, const VisualTemplate& t, std::vector<Vtx>& out) {
     const size_t triCount = t.partBind.size() / 3;
     for (size_t tri = 0; tri < triCount; tri++) {
         V3 p[3];
         for (int c = 0; c < 3; c++) {
             const VisualTemplate::Bind& b = t.partBind[tri * 3 + c];
-            for (int k = 0; k < 8; k++) p[c] += car.nodes[b.n[k]].p * b.w[k];
+            for (int k = 0; k < 8; k++) p[c] += P[b.n[k]] * b.w[k];
             if (b.normalOffset != 0)
-                p[c] += norm(cross(car.nodes[b.n[1]].p-car.nodes[b.n[0]].p,car.nodes[b.n[2]].p-car.nodes[b.n[0]].p))*b.normalOffset;
+                p[c] += norm(cross(P[b.n[1]]-P[b.n[0]],P[b.n[2]]-P[b.n[0]]))*b.normalOffset;
         }
         V3 n = norm(cross(p[1] - p[0], p[2] - p[0]));
         const float* col = &t.partColor[tri * 4];

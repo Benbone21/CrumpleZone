@@ -17,7 +17,11 @@ V3 turn(const V3& p) { return V3(-p.z, p.x, -p.y); }
 struct Mesh {
     std::vector<BodyDynamic> vertices;
     std::vector<unsigned> opaque, glass;
-    Mesh(const Car& c, const VisualTemplate& t) { evalBody(c,t,vertices,opaque,glass); }
+    Mesh(const Car& c, const VisualTemplate& t) {
+        std::vector<V3> P;
+        for (const Node& n : c.nodes) P.push_back(n.p);
+        evalBody(c,P,t,vertices,opaque,glass);
+    }
 };
 Car factoryCar() {
     Car c;
