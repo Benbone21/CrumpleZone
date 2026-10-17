@@ -206,10 +206,13 @@ void Editor::wheel(int dy) {
         fileSel = std::min(std::max(fileSel - dy, 0), std::max(0, (int)files.size() - 1));
         return;
     }
-    // Ctrl+wheel: brush size; Shift+wheel: strength (sculpt, paint, water).
-    if ((tool == SCULPT || tool == PAINT || tool == WATER) && dy != 0 && (ctrl || shift)) {
-        if (ctrl) radius = brushStep(radius, dy > 0 ? 1 : -1);
-        else strength = clampd(strength + (dy > 0 ? 0.1 : -0.1), 0.1, 1.0);
+    // Ctrl+wheel: brush size (sculpt, paint, water); Shift+wheel: the camera up / down (strength is - =).
+    if (ctrl && dy != 0 && (tool == SCULPT || tool == PAINT || tool == WATER)) {
+        radius = brushStep(radius, dy > 0 ? 1 : -1);
+        return;
+    }
+    if (shift && dy != 0) {
+        eye.y = std::max(eye.y + dy * 3.0, core.world->height(eye.x, eye.z) + 1.5);
         return;
     }
     // Mouse wheel zooms (flies in the direction looked).
@@ -551,9 +554,10 @@ void Editor::key(int sc) {
         return;
     }
     if (tool == SCULPT || tool == PAINT || tool == WATER) brushKey(sc);
-    // Q/E: brush/object size (Shift+Q/E: turn the selection).
+    // Q/E: brush/object size (Shift+Q/E: turn the selection; never the camera, that's Space and Shift+wheel).
     if (sc == SC_Q || sc == SC_E) {
-        if (shift) {
+        const bool brushTool = tool == SCULPT || tool == PAINT || tool == WATER;
+        if (shift && !brushTool) {
             // Shift+Q/E: turn the selection or the next thing placed.
             const double turn = M_PI / 12;
             const double d = sc == SC_Q ? turn : -turn;
@@ -577,7 +581,7 @@ void Editor::key(int sc) {
             }
         } else {
             // Q/E: brush size (sculpt/paint/water) or object size.
-            if (tool == SCULPT || tool == PAINT || tool == WATER) {
+            if (brushTool) {
                 radius = brushStep(radius, sc == SC_Q ? -1 : 1);
             } else if (tool == OBJECTS) {
                 if (objKind == OBJ_ROCK) {
@@ -855,7 +859,7 @@ void Editor::update(double dt, const uint8_t* keys, Renderer& r, int w, int h) {
     toastTime = std::max(0.0, toastTime - dt);
     shift = keys[SC_LSHIFT] || keys[SC_RSHIFT];
     ctrl = keys[224] || keys[228];
-    // Fly (WASD, Q/E turn, Space up, Shift fast, higher = faster).
+    // Fly (WASD, Space up, Shift fast, higher = faster; Shift+wheel is up / down).
     if (!typing && !fileOpen && !ctrl && tool != SETTINGS) {
         const double ground = core.world->height(eye.x, eye.z);
         const double speed = (12 + std::max(0.0, eye.y - ground) * 0.8) * (shift ? 3 : 1);
@@ -865,8 +869,7 @@ void Editor::update(double dt, const uint8_t* keys, Renderer& r, int w, int h) {
         if (keys[SC_S] || keys[SC_DOWN]) move -= f;
         if (keys[SC_A] || keys[SC_LEFT]) move -= l;
         if (keys[SC_D] || keys[SC_RIGHT]) move += l;
-        if (keys[SC_E] || keys[SC_SPACE]) move.y += 1;
-        if (keys[SC_Q]) move.y -= 1;
+        if (keys[SC_SPACE]) move.y += 1;
         if (len(move) > 0) eye += norm(move) * (speed * dt);
         eye.y = std::max(eye.y, core.world->height(eye.x, eye.z) + 1.5);
         eye.x = clampd(eye.x, -World::kHalfSize + 5, World::kHalfSize - 5);
@@ -1146,8 +1149,8 @@ void Editor::drawOptions(Renderer& r, float u) {
             if (op == BRUSH_TERRACE) row("STEP", fmt1(kTerraces[terraceIdx], " M"), B_TERR_DN, B_TERR_UP);
             y += 6 * u;
             note("HOLD LEFT BUTTON: BRUSH   SHIFT: FINE");
-            note("CTRL+WHEEL OR [ ] OR Q E: SIZE");
-            note("SHIFT+WHEEL OR - =: STRENGTH");
+            note("Q E OR [ ] OR CTRL+WHEEL: SIZE");
+            note("- =: STRENGTH   SHIFT+WHEEL: CAMERA UP DOWN");
             note(brushKeys);
             note("TAB: NEXT BRUSH  FLATTEN: TO CLICKED HEIGHT");
             note("ROUGHEN: BUMPS  TERRACE: LEVEL STEPS");
@@ -1163,8 +1166,8 @@ void Editor::drawOptions(Renderer& r, float u) {
             brushRows(true, "OPACITY");
             y += 6 * u;
             note("HOLD LEFT BUTTON TO PAINT. TAB: NEXT");
-            note("CTRL+WHEEL OR [ ] OR Q E: SIZE");
-            note("SHIFT+WHEEL OR - =: OPACITY");
+            note("Q E OR [ ] OR CTRL+WHEEL: SIZE");
+            note("- =: OPACITY   SHIFT+WHEEL: CAMERA UP DOWN");
             note(brushKeys);
             note("SPLATTER: SCATTERED DABS. NOISE: MOTTLED");
             note("IT DRIVES LIKE IT LOOKS: MUD BOGS,");
@@ -1186,7 +1189,7 @@ void Editor::drawOptions(Renderer& r, float u) {
                 brushRows(false, "");
                 y += 6 * u;
                 note("HOLD LEFT BUTTON: DRAIN UNDER THE BRUSH");
-                note("CTRL+WHEEL OR [ ] OR Q E: SIZE");
+                note("Q E OR [ ] OR CTRL+WHEEL: SIZE");
                 note(brushKeys);
             } else {
                 note("CLICK ON WATER: THE WHOLE POOL DRAINS,");
@@ -1278,7 +1281,7 @@ void Editor::drawOptions(Renderer& r, float u) {
             note("CLICK THE GROUND: NEW GATE, FACING");
             note("THE WAY YOU LOOK (AFTER THE SELECTED)");
             note("DRAG A GATE OR THE START TO MOVE IT");
-            note("Q E: TURN IT    [ ]: WIDTH");
+            note("SHIFT+Q E: TURN IT    [ ]: WIDTH");
             note("THE LAST GATE IS THE FINISH (A RACE:");
             note("THE START/FINISH LINE, LAPPED)");
             break;
@@ -1358,7 +1361,7 @@ void Editor::drawStatus(Renderer& r, float u) {
                   mapName(l.map), levelModeName(l.mode), core.cellEdits(), l.objects.size(), l.gates.size(),
                   core.canUndo() ? core.undoName().c_str() : "-");
     r.text(12 * u, y + 7 * u, s, buf, 0.9f, 0.91f, 0.94f, 1);
-    const char* keys = "WASD FLY  WHEEL ZOOM  CTRL+WHEEL BRUSH SIZE  Q E SIZE/UP DOWN  RIGHT-DRAG LOOK  SHIFT FAST  1-7 TOOLS  CTRL+Z/Y UNDO/REDO  CTRL+S SAVE  F5 PLAY  ESC EXIT";
+    const char* keys = "WASD FLY  SPACE OR SHIFT+WHEEL UP DOWN  WHEEL ZOOM  Q E BRUSH SIZE  RIGHT-DRAG LOOK  SHIFT FAST  1-7 TOOLS  CTRL+Z/Y UNDO/REDO  CTRL+S SAVE  F5 PLAY  ESC EXIT";
     const float ks = px(1.0f * u);
     r.rect(W - r.textWidth(keys, ks) - 20 * u, y - 8 * ks - 10 * u, r.textWidth(keys, ks) + 20 * u, 8 * ks + 10 * u, 0, 0, 0, 0.45f);
     r.text(W - r.textWidth(keys, ks) - 10 * u, y - 8 * ks - 5 * u, ks, keys, 0.7f, 0.72f, 0.76f, 1);
