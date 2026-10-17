@@ -39,6 +39,7 @@ enum InteractKind {
     IA_FIX,           // a repair (fixes.h): a CV axle, a tie rod, a new tire...
     IA_OPEN_GATE,     // the tailgate / liftgate / bed gate (trunk.h)
     IA_CLOSE_GATE,
+    IA_OPEN_INVENTORY,  // E at the back of your truck: what it carries, as a menu (invmenu.h); a shut gate swings open with it
     IA_TAKE_ITEM,     // a tool, part or anchor out of the open back, into your hands
     IA_STOW_ITEM,     // ...and back in
 };
@@ -73,6 +74,7 @@ struct Interact {
     double progress = 0;     // s held on it so far
     std::vector<InteractSpot> spots;  // things out in the world to open (set by the game)
     std::string openedSpot;           // set when one's been opened (its id): the game takes it from here
+    int openedInventory = -1;         // set when E opened a truck's inventory (its car): the game shows the menu
     PartHit hover;                    // the car part under the crosshair (set by the game each frame): its repair, if any, is the one picked
     double share() const { return current.hold > 0 ? std::min(1.0, progress / current.hold) : 0; }
     static constexpr double kJackMax = 0.45;  // m the saddle can rise above where it met the pad (the hi-lift's bar is 1.2 m)
@@ -85,6 +87,15 @@ struct Interact {
     // Once a frame on foot: finds the job, runs the hold, and does it when the hold is done.
     // Returns what to announce ("" most frames).
     std::string update(Sim& sim, Walker& wk, const V3& eye, const V3& look, bool holdE, double dt);
+    // A job done (the hold's end; the inventory menu's own choices too): what to announce.
+    std::string perform(Sim& sim, Walker& wk, const InteractOption& o);
+    // The back's jobs, for the pick and the inventory menu alike: take `it` out of car `ci`'s back (kind IA_NONE:
+    // none left to take), or put back what's in your hands (IA_NONE: nothing, or no room for it).
+    static InteractOption takeOption(const Car& c, int ci, const TrunkItem& it);
+    static InteractOption stowOption(const Car& c, int ci, const Walker& wk);
+    // The menu's choices: put what you hold back and take `ref` (the same job as picking it from the bed), or just put it back.
+    std::string takeFromBack(Sim& sim, Walker& wk, int car, const TrunkStock& stock, TrunkRef ref);
+    std::string putBackInBack(Sim& sim, Walker& wk, int car);
     // Puts down what you carry, stood on its tread in front of you (G). False if empty-handed.
     static bool drop(Sim& sim, Walker& wk, const V3& look);
     // Drops the jack you're holding.

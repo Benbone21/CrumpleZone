@@ -1,4 +1,5 @@
 #pragma once
+#include <map>
 #include <string>
 #include <vector>
 
@@ -7,6 +8,7 @@
 #include "visibility.h"
 #include "groundtex.h"
 #include "lights.h"
+#include "modelkit.h"
 #include "propdraw.h"
 #include "softbody.h"
 
@@ -112,6 +114,10 @@ public:
     // Ring segment from angle a0 to a1 (radians, 0 = right, clockwise on screen).
     void arc(float cx, float cy, float r0, float r1, float a0, float a1, float r, float g, float b, float a, int segs = 32);
     float textWidth(const std::string& s, float scale) const { return s.size() * 6 * scale; }
+    // A model's picture on the HUD (for menus): the mesh, lit from the front-left above and turned three-quarters, fitted and
+    // centred in the rect; drawn in order with whatever else is queued. It's rendered once to a small texture of its own, when
+    // the HUD is flushed, and kept under `key` (the model lab's picks changing draws it again). `a` fades it, `shade` darkens it.
+    void icon(const std::string& key, const mk::Mesh& mesh, float x, float y, float w, float h, float a = 1, float shade = 1);
     void flushHud(int width, int height);
 
     std::vector<unsigned char> readPixels(int width, int height);
@@ -198,6 +204,19 @@ private:
     std::vector<std::pair<const void*, GLuint>> templateVbos;
     std::vector<Vtx> partVerts, lineVerts, fxVerts;
     std::vector<float> hudVerts;
+    struct IconDraw {
+        std::string key;
+        const mk::Mesh* mesh;
+        size_t vert;  // where its six vertices start in hudVerts (in vertices)
+    };
+    std::vector<IconDraw> iconDraws;
+    struct IconTex {
+        uint64_t picks = 0;
+        GLuint tex = 0;
+    };
+    std::map<std::string, IconTex> iconCache;
+    GLuint progIcon = 0, progIconMesh = 0, iconVao = 0, iconVbo = 0;
+    GLuint iconTexture(const std::string& key, const mk::Mesh& mesh);
 
     void buildTerrain(const World& world);
     void buildBoxes(const World& world);

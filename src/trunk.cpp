@@ -649,6 +649,8 @@ void models(const Sim& sim, int ci, const TrunkStock& own, TrunkRef inHand, bool
     }
 }
 
+bool backOpen(const Car& c) { return !c.hasGate() || c.gateOpen() || c.gate.dir > 0; }
+
 bool kitInReach(const Sim& sim, const V3& at) {
     for (const Car& c : sim.cars) {
         if (c.remote || c.isProp() || c.ai) continue;
