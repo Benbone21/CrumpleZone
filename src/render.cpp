@@ -1431,6 +1431,75 @@ in vec2 vUv; in vec4 vCol; out vec4 oCol;
 uniform sampler2D uFont;
 void main(){ oCol = vec4(vCol.rgb, vCol.a * texture(uFont, vUv).r); })";
 
+// A picture drawn on the HUD: the texture (premultiplied alpha), tinted by the vertex colour.
+const char* kIconFS = R"(#version 330 core
+in vec2 vUv; in vec4 vCol; out vec4 oCol;
+uniform sampler2D uFont;
+void main(){ vec4 t = texture(uFont, vUv); oCol = vec4(t.rgb * vCol.rgb, t.a) * vCol.a; })";
+
+// A model's thumbnail (Renderer::iconTexture): orthographic, lit by a key, a fill and a rim light fixed to the camera, with
+// a sky-and-ground reflection for the metals; out comes sRGB.
+const char* kIconMeshVS = R"(#version 330 core
+layout(location=0) in vec3 aPos;
+layout(location=1) in vec3 aNrm;
+layout(location=2) in vec4 aCol;
+uniform vec3 uC, uR, uU, uF;
+uniform vec3 uOff;      // the picture's middle in view space
+uniform vec2 uScale;    // 1 / half-size across, 1 / half-depth
+out vec3 vN; out vec4 vCol; out vec3 vP;
+void main(){
+  vec3 q = aPos - uC;
+  vec3 v = vec3(dot(q, uR), dot(q, uU), dot(q, uF));
+  gl_Position = vec4((v.x - uOff.x) * uScale.x, (v.y - uOff.y) * uScale.x, (v.z - uOff.z) * uScale.y, 1.0);
+  vN = aNrm; vCol = aCol; vP = q;
+})";
+const char* kIconMeshFS = R"(#version 330 core
+in vec3 vN; in vec4 vCol; in vec3 vP; out vec4 oCol;
+uniform vec3 uR, uU, uF;
+vec3 sky(vec3 d){  // a studio: bright above, a warm floor, a soft window to the front-left
+  float h = d.y * 0.5 + 0.5;
+  vec3 c = mix(vec3(0.16, 0.15, 0.14), vec3(0.78, 0.84, 0.95), smoothstep(0.15, 0.95, h));
+  vec3 win = normalize(-uR * 0.6 + uU * 0.5 - uF * 0.7);
+  c += vec3(1.0, 0.97, 0.9) * pow(max(dot(d, win), 0.0), 18.0) * 1.2;
+  return c;
+}
+void main(){
+  vec3 n = normalize(vN);
+  vec3 nv = vec3(dot(n, uR), dot(n, uU), -dot(n, uF));   // camera space, +z toward the viewer
+  float m = vCol.a;
+  vec3 alb = max(vCol.rgb, vec3(0.07));   // (black rubber and steel still read on a dark card)
+  if (m > 7.5 && m < 8.5) alb = mix(alb, vec3(0.62, 0.64, 0.68), 0.30);
+  vec3 V = -uF;
+  vec3 key = normalize(vec3(-0.55, 0.7, 0.55)), fill = normalize(vec3(0.75, 0.1, 0.45)), rim = normalize(vec3(0.3, 0.55, -0.75));
+  float dk = max(dot(nv, key), 0.0), df = max(dot(nv, fill), 0.0), dr = max(dot(nv, rim), 0.0);
+  float hemi = n.y * 0.5 + 0.5;
+  vec3 amb = mix(vec3(0.20, 0.19, 0.18), vec3(0.34, 0.37, 0.43), hemi);
+  vec3 diff = amb + vec3(1.05, 1.0, 0.92) * dk + vec3(0.35, 0.4, 0.5) * df;
+  vec3 col = alb * diff;
+  vec3 R = reflect(-V, n);
+  float fres = pow(1.0 - max(dot(n, V), 0.0), 4.0);
+  vec3 H = normalize(key + vec3(0, 0, 1));
+  float sp = pow(max(dot(nv, H), 0.0), 40.0);
+  if (m > 10.5 && m < 11.5) {            // chrome
+    col = sky(R) * mix(vec3(0.9), alb * 1.1, 0.35) + sp * 0.5;
+  } else if (m > 7.5 && m < 8.5) {       // bare steel
+    col = alb * (amb * 0.6 + vec3(0.75) * dk + 0.2 * df) * 0.55 + sky(R) * alb * 0.75 + sp * alb * 0.6;
+  } else if (m > 3.5 && m < 4.5) {       // paint
+    col += sky(R) * 0.10 * (0.4 + 2.0 * fres) + sp * 0.35;
+  } else if (m > 8.5 && m < 9.5) {       // tire rubber
+    col += sp * 0.06;
+  } else if (m > 5.5 && m < 6.5) {       // glow
+    col = alb * 1.4;
+  } else if (m > 4.5 && m < 5.5) {       // glass
+    col = mix(col, sky(R) * 0.6, 0.45 + fres) + sp * 0.4;
+  } else {
+    col += sp * 0.05 + alb * dr * 0.1;
+  }
+  col += vec3(0.5, 0.55, 0.65) * dr * (0.18 + 0.5 * fres);   // the rim light edges it off the card
+  col = col / (1.0 + col * 0.35);
+  oCol = vec4(pow(clamp(col, 0.0, 1.0), vec3(1.0 / 2.2)), 1.0);
+})";
+
 // Grass: tufts of blades on a world-aligned grid round the camera, made entirely in the
 // vertex shader from gl_VertexID (5 blades of 3 vertices per tuft). Height and how
 // thick the grass grows come from the terrain texture; far tufts shrink away.
@@ -1897,6 +1966,12 @@ bool Renderer::init(const World& world, std::string& err) {
     progXray = linkProgram(kXrayVS, kXrayFS, err);
     progSky = linkProgram(kSkyVS, header + kCommonFS + kSkyFSBody, err);
     progHud = linkProgram(kHudVS, kHudFS, err);
+    {  // (menu pictures: if their shaders won't build, the cards go without)
+        std::string ierr;
+        progIcon = linkProgram(kHudVS, kIconFS, ierr);
+        progIconMesh = linkProgram(kIconMeshVS, kIconMeshFS, ierr);
+        if (!progIcon || !progIconMesh) std::fprintf(stderr, "icon shaders: %s\n", ierr.c_str()), progIcon = progIconMesh = 0;
+    }
     progFx = linkProgram(kFxVS, header + kCommonFS + kFxFSBody, err);
     progAO = linkProgram(kPostVS, kAOFS, err);
     progDown = linkProgram(kPostVS, kDownFS, err);
@@ -3679,23 +3754,169 @@ void Renderer::arc(float cx, float cy, float r0, float r1, float a0, float a1, f
     }
 }
 
+void Renderer::icon(const std::string& key, const mk::Mesh& mesh, float x, float y, float w, float h, float a, float shade) {
+    if (!progIcon || mesh.v.empty()) return;
+    iconDraws.push_back({key, &mesh, hudVerts.size() / 8});
+    // (Textures run bottom-up: the picture's top is v = 1.)
+    const float q[6][4] = {{x, y, 0, 1}, {x + w, y, 1, 1}, {x + w, y + h, 1, 0}, {x, y, 0, 1}, {x + w, y + h, 1, 0}, {x, y + h, 0, 0}};
+    for (const auto& p : q) hudVerts.insert(hudVerts.end(), {p[0], p[1], p[2], p[3], shade, shade, shade, a});
+}
+
+// Draws a model once into a texture of its own: 4x multisampled at 256 x 256, resolved, mipmapped.
+GLuint Renderer::iconTexture(const std::string& key, const mk::Mesh& mesh) {
+    const uint64_t picks = mk::picksVersion();
+    IconTex& it = iconCache[key];
+    if (it.tex && it.picks == picks) return it.tex;
+    if (!progIconMesh || mesh.v.empty()) return 0;
+    constexpr int N = 256;
+    // The view: from the front and a little to one side, above; the long way across the frame whatever the model's shape.
+    V3 lo(1e9, 1e9, 1e9), hi(-1e9, -1e9, -1e9);
+    for (const mk::MVert& v : mesh.v) {
+        lo = V3(std::min(lo.x, (double)v.p[0]), std::min(lo.y, (double)v.p[1]), std::min(lo.z, (double)v.p[2]));
+        hi = V3(std::max(hi.x, (double)v.p[0]), std::max(hi.y, (double)v.p[1]), std::max(hi.z, (double)v.p[2]));
+    }
+    const V3 c = (lo + hi) * 0.5, ext = hi - lo;
+    const double flat = ext.y / std::max(1e-6, std::max(ext.x, ext.z));  // (a coil or a tire lies flat: look down on it more)
+    const double az = 0.62, el = flat < 0.35 ? 0.78 : flat > 1.6 ? 0.30 : 0.52;
+    const V3 eye = norm(V3(std::cos(el) * std::cos(az), std::sin(el), std::cos(el) * std::sin(az)));
+    const V3 F = eye * -1.0, R = norm(cross(F, V3(0, 1, 0))), U = cross(R, F);
+    double x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9, z0 = 1e9, z1 = -1e9;
+    for (const mk::MVert& v : mesh.v) {
+        const V3 q = V3(v.p[0], v.p[1], v.p[2]) - c;
+        const double px = dot(q, R), py = dot(q, U), pz = dot(q, F);
+        x0 = std::min(x0, px), x1 = std::max(x1, px), y0 = std::min(y0, py), y1 = std::max(y1, py), z0 = std::min(z0, pz), z1 = std::max(z1, pz);
+    }
+    const double half = std::max(x1 - x0, y1 - y0) * 0.5 * 1.12 + 1e-6, hz = (z1 - z0) * 0.5 * 1.1 + 1e-6;
+    std::vector<Vtx> verts;
+    verts.reserve(mesh.v.size());
+    for (const mk::MVert& v : mesh.v) verts.push_back(Vtx{{v.p[0], v.p[1], v.p[2]}, {v.n[0], v.n[1], v.n[2]}, {v.c[0], v.c[1], v.c[2], (float)v.mat}});
+    GLint prevFbo = 0, prevVp[4] = {};
+    GetIntegerv(0x8CA6 /*GL_FRAMEBUFFER_BINDING*/, &prevFbo);
+    GetIntegerv(0x0BA2 /*GL_VIEWPORT*/, prevVp);
+    GLuint msFb = 0, msRb[2] = {}, outFb = 0;
+    if (!it.tex) GenTextures(1, &it.tex);
+    BindTexture(GL_TEXTURE_2D, it.tex);
+    TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, N, N, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    GenFramebuffers(1, &outFb);
+    BindFramebuffer(GL_FRAMEBUFFER, outFb);
+    FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, it.tex, 0);
+    GLint maxSamples = 0;
+    GetIntegerv(GL_MAX_SAMPLES, &maxSamples);
+    const int samples = std::min(4, (int)maxSamples);
+    bool multi = samples > 1;
+    if (multi) {
+        GenRenderbuffers(2, msRb);
+        BindRenderbuffer(GL_RENDERBUFFER, msRb[0]);
+        RenderbufferStorageMultisample(GL_RENDERBUFFER, samples, GL_RGBA8, N, N);
+        BindRenderbuffer(GL_RENDERBUFFER, msRb[1]);
+        RenderbufferStorageMultisample(GL_RENDERBUFFER, samples, GL_DEPTH_COMPONENT24, N, N);
+        GenFramebuffers(1, &msFb);
+        BindFramebuffer(GL_FRAMEBUFFER, msFb);
+        FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, msRb[0]);
+        FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, msRb[1]);
+        multi = CheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+    }
+    if (!multi) {  // (no multisampling here: the texture itself, with a depth buffer of its own)
+        if (msFb) DeleteFramebuffers(1, &msFb), msFb = 0;
+        if (msRb[0]) DeleteRenderbuffers(2, msRb), msRb[0] = msRb[1] = 0;
+        GenRenderbuffers(1, &msRb[1]);
+        BindRenderbuffer(GL_RENDERBUFFER, msRb[1]);
+        RenderbufferStorageMultisample(GL_RENDERBUFFER, 0, GL_DEPTH_COMPONENT24, N, N);
+        BindFramebuffer(GL_FRAMEBUFFER, outFb);
+        FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, msRb[1]);
+    }
+    BindFramebuffer(GL_FRAMEBUFFER, multi ? msFb : outFb);
+    Viewport(0, 0, N, N);
+    Disable(GL_BLEND);
+    Disable(GL_CULL_FACE);
+    Enable(GL_DEPTH_TEST);
+    DepthFunc(GL_LESS);
+    DepthMask(1);
+    ClearColor(0, 0, 0, 0);
+    Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    if (!iconVao) {
+        GenVertexArrays(1, &iconVao);
+        GenBuffers(1, &iconVbo);
+        setupVtxVao(iconVao, iconVbo);
+    }
+    BindVertexArray(iconVao);
+    BindBuffer(GL_ARRAY_BUFFER, iconVbo);
+    BufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(Vtx), verts.data(), GL_STREAM_DRAW);
+    UseProgram(progIconMesh);
+    Uniform3f(uniformLocation(progIconMesh, "uC"), (float)c.x, (float)c.y, (float)c.z);
+    Uniform3f(uniformLocation(progIconMesh, "uR"), (float)R.x, (float)R.y, (float)R.z);
+    Uniform3f(uniformLocation(progIconMesh, "uU"), (float)U.x, (float)U.y, (float)U.z);
+    Uniform3f(uniformLocation(progIconMesh, "uF"), (float)F.x, (float)F.y, (float)F.z);
+    Uniform3f(uniformLocation(progIconMesh, "uOff"), (float)((x0 + x1) * 0.5), (float)((y0 + y1) * 0.5), (float)((z0 + z1) * 0.5));
+    Uniform2f(uniformLocation(progIconMesh, "uScale"), (float)(1.0 / half), (float)(1.0 / hz));
+    DrawArrays(GL_TRIANGLES, 0, (GLsizei)verts.size());
+    if (multi) {
+        BindFramebuffer(GL_READ_FRAMEBUFFER, msFb);
+        BindFramebuffer(GL_DRAW_FRAMEBUFFER, outFb);
+        BlitFramebuffer(0, 0, N, N, 0, 0, N, N, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    }
+    BindTexture(GL_TEXTURE_2D, it.tex);
+    GenerateMipmap(GL_TEXTURE_2D);
+    BindFramebuffer(GL_FRAMEBUFFER, (GLuint)prevFbo);
+    Viewport(prevVp[0], prevVp[1], prevVp[2], prevVp[3]);
+    DepthFunc(GL_LEQUAL);
+    if (msFb) DeleteFramebuffers(1, &msFb);
+    DeleteFramebuffers(1, &outFb);
+    GLuint rbs[2] = {msRb[0], msRb[1]};
+    DeleteRenderbuffers(2, rbs);
+    it.picks = picks;
+    return it.tex;
+}
+
 void Renderer::flushHud(int width, int height) {
-    if (hudVerts.empty()) return;
+    if (hudVerts.empty()) {
+        iconDraws.clear();
+        return;
+    }
+    std::vector<GLuint> tex;  // (the pictures are drawn first: they take a render target of their own)
+    for (const IconDraw& d : iconDraws) tex.push_back(iconTexture(d.key, *d.mesh));
     Disable(GL_DEPTH_TEST);
     Enable(GL_BLEND);
     BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    UseProgram(progHud);
-    Uniform2f(uniformLocation(progHud, "uScreen"), (float)width, (float)height);
     ActiveTexture(GL_TEXTURE0);
-    BindTexture(GL_TEXTURE_2D, fontTex);
-    Uniform1i(uniformLocation(progHud, "uFont"), 0);
     BindVertexArray(hudVao);
     BindBuffer(GL_ARRAY_BUFFER, hudVbo);
     BufferData(GL_ARRAY_BUFFER, hudVerts.size() * sizeof(float), hudVerts.data(), GL_STREAM_DRAW);
-    DrawArrays(GL_TRIANGLES, 0, (GLsizei)(hudVerts.size() / 8));
+    const size_t total = hudVerts.size() / 8;
+    size_t from = 0;
+    auto run = [&](size_t upTo) {
+        if (upTo <= from) return;
+        UseProgram(progHud);
+        Uniform2f(uniformLocation(progHud, "uScreen"), (float)width, (float)height);
+        BindTexture(GL_TEXTURE_2D, fontTex);
+        Uniform1i(uniformLocation(progHud, "uFont"), 0);
+        DrawArrays(GL_TRIANGLES, (GLint)from, (GLsizei)(upTo - from));
+        from = upTo;
+    };
+    for (size_t i = 0; i < iconDraws.size(); i++) {
+        run(iconDraws[i].vert);
+        if (!tex[i]) {
+            from = iconDraws[i].vert + 6;
+            continue;
+        }
+        UseProgram(progIcon);
+        Uniform2f(uniformLocation(progIcon, "uScreen"), (float)width, (float)height);
+        BindTexture(GL_TEXTURE_2D, tex[i]);
+        Uniform1i(uniformLocation(progIcon, "uFont"), 0);
+        BlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+        DrawArrays(GL_TRIANGLES, (GLint)iconDraws[i].vert, 6);
+        BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        from = iconDraws[i].vert + 6;
+    }
+    run(total);
     Disable(GL_BLEND);
     Enable(GL_DEPTH_TEST);
     hudVerts.clear();
+    iconDraws.clear();
 }
 
 std::vector<unsigned char> Renderer::readPixels(int width, int height) {

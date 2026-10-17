@@ -1,8 +1,8 @@
 // The truck's cargo: open the tailgate (or the liftgate; a pickup's gate drops), and what you
 // carry is laid out in the back as its own model: the jack, the snow chains, your tools, spare
 // parts and anchor gear, on a shelf-packed grid in the cargo area, riding the body nodes so it
-// moves with the truck. With the back open you look at a thing and hold E to take it into your
-// hands; hold E at the open back with something in your hands to put it back.
+// moves with the truck. E at the back opens the inventory (invmenu.h): pick a thing there to take it
+// into your hands, or put back what you hold.
 //
 // The rules (everything you can tune is here):
 //  - Your kit (tools and repair parts) is usable while you hold the thing, or within kReach of
@@ -122,6 +122,10 @@ bool bedGatePlace(const Car& c, const Frame& fr, V3& at, V3 ax[3], double& width
 // The back's picture: every drawn copy as a placed model (a car with a back that's open, or a
 // pickup's bed), and a pickup's gate. Only your own trucks show a load.
 void models(const Sim& sim, int car, const TrunkStock& own, TrunkRef inHand, bool holdingJack, bool holdingChain, std::vector<Placed>& out);
+
+// Whether the back is open to put things in and take them out: the gate's open or swinging open (the inventory
+// menu stays up through it); a vehicle with no gate has nothing to open.
+bool backOpen(const Car& c);
 
 // Whether your kit is within reach: carried things aside, you're at your own truck's open back
 // (within kReach) or at a truck with nothing to open.

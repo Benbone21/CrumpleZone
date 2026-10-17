@@ -236,7 +236,7 @@ SCENARIO(trunkLayout, "trunk/layout", "Everything you carry is laid out inside t
     }
 }
 
-SCENARIO(trunkTake, "trunk/take", "Open the back, hold E on a tool, a part, an anchor, the jack, the chains: it's in your hands and not in the back; put back at the open back, the counts are what they were. Shut, none of it can be taken") {
+SCENARIO(trunkTake, "trunk/take", "E at the back opens it (and its inventory); take a tool, a part, an anchor, the jack, the chains out of it: it's in your hands and not in the back; put back, the counts are what they were. Shut, none of it can be taken") {
     Car& c = ctx.add(*byId("blazer"), -120, -50, 0);
     ctx.focus(c);
     c.chains = 3;
@@ -252,13 +252,17 @@ SCENARIO(trunkTake, "trunk/take", "Open the back, hold E on a tool, a part, an a
     // Shut: the only thing to do is open it.
     ia.kit = trunk::reachKit(ia.own.kit, trunk::kitInReach(ctx.sim, wk.p), wk.hand, wk.holdingJack);
     InteractOption o = Interact::pick(ctx.sim, wk, wk.p + V3(0, 1.62, 0), gate - (wk.p + V3(0, 1.62, 0)), nullptr, ia.kit, &ia.own);
-    ctx.check("shut: looking at the back offers to open it", o.kind == IA_OPEN_GATE, o.prompt);
+    ctx.check("shut: looking at the back offers to open it (E, no holding)", o.kind == IA_OPEN_INVENTORY && o.hold <= 0 && o.prompt == "OPEN THE TAILGATE", o.prompt);
     ctx.check("shut: your kit isn't within reach", !trunk::kitInReach(ctx.sim, wk.p) && !ia.kit.has(TOOL_HAMMER) && !ia.kit.hasPart(PART_CV_AXLE));
     const V3 mid = trunk::cargoCenter(c);
     o = Interact::pick(ctx.sim, wk, wk.p + V3(0, 1.62, 0), mid - (wk.p + V3(0, 1.62, 0)), nullptr, ia.kit, &ia.own);
     ctx.check("shut: nothing in the back can be taken", o.kind != IA_TAKE_ITEM && o.kind != IA_TAKE_JACK && o.kind != IA_TAKE_CHAIN, o.prompt);
-    std::string said = holdOn(ctx, ia, wk, gate, 3);
-    ctx.check("hold E: it opens", said == "TAILGATE OPEN", said);
+    const int ci = ctx.sim.player;
+    std::string said = holdOn(ctx, ia, wk, gate, 0.3);
+    ctx.check("E: the gate swings open and the inventory is asked for", ia.openedInventory == ci && c.gate.dir == 1, said);
+    ia.openedInventory = -1;
+    holdOn(ctx, ia, wk, gate, 0.5);
+    ctx.check("...once: E held on doesn't ask again", ia.openedInventory < 0);
     letGo(ctx, ia, wk);
     ctx.run(2.0);
     ctx.check("open: the kit is within reach (within 8 m)", c.gateOpen() && trunk::kitInReach(ctx.sim, wk.p) && trunk::reachKit(ia.own.kit, true, TrunkRef(), false).has(TOOL_HAMMER));
@@ -276,25 +280,12 @@ SCENARIO(trunkTake, "trunk/take", "Open the back, hold E on a tool, a part, an a
             return s + "chains=" + std::to_string(c.chains);
         };
         const std::string before = snapshot();
-        const Frame fr = c.frame();
-        V3 at;
-        const std::vector<TrunkItem> now = trunk::wholeLoad(c, ia.own, true, wk.hand, wk.holdingJack, wk.holdingChain);
-        const std::vector<TrunkSlot> slots = trunk::layout(c, now);
-        int idx = -1;
-        for (int k = 0; k < (int)now.size(); k++)
-            if (now[k].ref == it.ref) idx = k;
-        if (idx < 0 || !trunk::aimAt(c, fr, now, slots, idx, at)) {
-            ctx.check(tag + "found in the back", false);
-            continue;
-        }
-        said = holdOn(ctx, ia, wk, at, 3);
-        letGo(ctx, ia, wk);
+        said = ia.takeFromBack(ctx.sim, wk, ci, ia.own, it.ref);  // (the inventory menu's choice)
         const bool inHand = it.ref.kind == TK_JACK ? wk.holdingJack : it.ref.kind == TK_CHAINS ? wk.holdingChain : wk.hand == it.ref;
         ctx.check(tag + "taken into your hands", inHand && said.rfind("GOT", 0) == 0, said);
         const std::string held = snapshot();
         ctx.check(tag + "and one fewer in the back", held != before, held);
-        said = holdOn(ctx, ia, wk, trunk::cargoCenter(c), 3);
-        letGo(ctx, ia, wk);
+        said = ia.putBackInBack(ctx.sim, wk, ci);
         const bool empty = !wk.hand.any() && !wk.holdingJack && !wk.holdingChain;
         ctx.check(tag + "put back at the open back", empty && snapshot() == before, said + " / " + snapshot());
     }

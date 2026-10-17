@@ -28,6 +28,7 @@
 #include "jobs.h"
 #include "career.h"
 #include "interact.h"
+#include "invdraw.h"
 #include "walker.h"
 #include "coop.h"
 #include "editor.h"
@@ -836,48 +837,6 @@ void drawAnchors(Renderer& r, const Sim& sim, float u, int W, int H) {
         r.text(cx, y, s, part, none ? 0.75f : 1.0f, none ? 0.45f : 0.75f, none ? 0.4f : 0.3f);
         cx += r.textWidth(part, s);
     }
-}
-
-// On foot at the open back: everything in the truck (trunk.h), a line each, grouped. In your hands: marked.
-void drawInventory(Renderer& r, const Sim& sim, const TrunkStock& own, const Walker& wk, float u, int W, int H) {
-    const Car& car = sim.cars[sim.player];
-    const std::vector<TrunkItem> items = trunk::contents(car, own, true, TrunkRef(), false);
-    struct Row {
-        std::string text;
-        bool head;
-        bool held;
-    };
-    std::vector<Row> rows;
-    static const char* heads[] = {"TOOLS", "REPAIR PARTS", "ANCHOR GEAR", "RECOVERY AND SNOW"};
-    for (int grp = 0; grp < 4; grp++) {
-        std::vector<Row> g;
-        for (const TrunkItem& it : items) {
-            const int k = it.ref.kind;
-            if ((grp == 0 && k != TK_TOOL) || (grp == 1 && k != TK_PART) || (grp == 2 && k != TK_GEAR) || (grp == 3 && k != TK_CHAINS && k != TK_JACK)) continue;
-            g.push_back({trunk::lineFor(it), false, it.ref == wk.hand});
-        }
-        if (grp == 3 && car.jackPlaced) g.push_back({"HI-LIFT JACK (UNDER THE TRUCK)", false, false});
-        if (g.empty()) continue;
-        rows.push_back({heads[grp], true, false});
-        rows.insert(rows.end(), g.begin(), g.end());
-    }
-    if (rows.empty()) rows.push_back({"NOTHING IN THE BACK", false, false});
-    const float s = px(1.3f * u), lh = 11 * s;
-    float w = r.textWidth("TRUCK INVENTORY", px(1.6f * u));
-    for (const Row& row : rows) w = std::max(w, r.textWidth(row.text + (row.held ? "  (IN YOUR HAND)" : ""), s));
-    w += 40 * u;
-    const float h = lh * (float)rows.size() + 34 * u + 10 * s + 40 * u;
-    const float x = 30 * u, y = std::max(70.0f * u, (H - h) / 2);
-    pill(r, x, y, w, h, 0.02f, 0.03f, 0.04f, 0.78f);
-    label(r, x + 16 * u, y + 12 * u, px(1.6f * u), "TRUCK INVENTORY", 1.0f, 0.75f, 0.3f);
-    float yy = y + 34 * u + 10 * s;
-    for (const Row& row : rows) {
-        if (row.head) r.text(x + 16 * u, yy, s, row.text, 0.55f, 0.62f, 0.7f);
-        else r.text(x + 26 * u, yy, s, row.text + (row.held ? "  (IN YOUR HAND)" : ""), row.held ? 1.0f : 0.92f, row.held ? 0.75f : 0.93f, row.held ? 0.3f : 0.95f);
-        yy += lh;
-    }
-    (void)W;
-    r.text(x + 16 * u, y + h - 24 * u, px(1.1f * u), pad::ui.last ? "Y: CLOSE" : "TAB OR I: CLOSE", 0.65f, 0.68f, 0.72f);
 }
 
 // Repair station status while parked on (or rolling onto) a pad.
@@ -2172,20 +2131,33 @@ int main(int argc, char** argv) {
     // ---- On foot ----
     Walker walker;
     Interact interact;  // on foot: the hold-E jobs (the spare, the wheels)
-    bool invOpen = false;  // on foot at the open back: the list of what's in the truck (TAB / I)
+    InvMenu inv;           // on foot at the back of your truck: its inventory (E, or TAB / I) (invmenu.h)
+    InvLayout invLay;      // ...as last drawn (the mouse and keys work from it)
     double walkSend = 0, carCamDist = 7.5;
     // On foot you see through your own eyes: the mouse turns your head (no button needed)
     // and the keys walk where you look.
     double footYaw = 0, footPitch = 0;
     bool scriptE = false;  // (--script work-*: E held)
     bool mouseLook = false;
+    auto closeInventory = [&]() {
+        if (!inv.open) return;
+        inv.close();
+        interact.waitRelease = true;  // (E, if it's still down, is let go before it opens the menu again)
+    };
     auto toggleInventory = [&]() {
-        if (invOpen) {
-            invOpen = false;
+        if (inv.open) {
+            closeInventory();
             return;
         }
-        if (!trunk::kitInReach(sim, walker.p)) hud.toast("OPEN THE BACK OF YOUR TRUCK (HOLD E AT IT) TO SEE WHAT'S IN IT");
-        else invOpen = true;
+        if (!trunk::kitInReach(sim, walker.p)) hud.toast("WALK UP TO THE BACK OF YOUR TRUCK AND PRESS E");
+        else inv.show(sim.player);
+    };
+    // A choice in the menu (a card, PUT BACK, SHUT): the same jobs as taking from the bed.
+    auto inventoryChoose = [&](int what) {
+        bool closed = false;
+        const std::string said = inv.choose(interact, sim, walker, TrunkStock{career.kit(), sim.anchorStock}, what, closed);
+        if (!said.empty()) hud.toast(said);
+        if (closed) closeInventory();
     };
     auto getOut = [&]() {
         Car& c = sim.cars[sim.player];
@@ -2204,7 +2176,7 @@ int main(int argc, char** argv) {
     };
     auto getIn = [&]() {
         walker.hand = TrunkRef();  // (a tool in your hand goes back in the truck with you)
-        invOpen = false;
+        inv.close();
         if (walker.carrying) Interact::drop(sim, walker, V3(std::cos(walker.yaw), 0, -std::sin(walker.yaw)));  // (whisked away: it's left there)
         else if (walker.holdingJack) Interact::dropJack(sim, walker);  // (put the jack down)
         const int k = walker.carToEnter(sim);
@@ -2519,7 +2491,7 @@ int main(int argc, char** argv) {
 
         // ---- gamepad: what the pad is doing this frame (its presses are fed in as keys below) ----
         padCtx = editor.active || coop.typing || playback.active() || !padDev.connected() ? pad::Mode::Off
-                 : menu.open || garageUI.open                                             ? pad::Mode::Menu
+                 : menu.open || garageUI.open || inv.open                                 ? pad::Mode::Menu
                  : coop.mapOpen                                                           ? pad::Mode::Map
                  : winchAim.on                                                            ? pad::Mode::Aim
                                                                                           : pad::Mode::Drive;
@@ -2640,6 +2612,21 @@ int main(int argc, char** argv) {
                         const uint8_t* ks = SDL_GetKeyboardState(nullptr);
                         menu.shift = ks[SC_LSHIFT] || ks[SC_RSHIFT];
                         handleMenu(menu.key(evKeyScancode(e), settings));
+                        break;
+                    }
+                    if (inv.open) {  // the inventory takes every key
+                        const int k = evKeyScancode(e);  // (the physical key: WASD are held actions in the game's own switch)
+                        if (k == SC_W || k == SC_UP) inv.move(invLay, 0, -1);
+                        else if (k == SC_S || k == SC_DOWN) inv.move(invLay, 0, 1);
+                        else if (k == SC_A || k == SC_LEFT) inv.move(invLay, -1, 0);
+                        else if (k == SC_D || k == SC_RIGHT) inv.move(invLay, 1, 0);
+                        else if (evKeyRepeat(e)) {
+                        } else if (k == SC_ESCAPE || k == SC_TAB || k == SC_I || k == SC_Q) closeInventory();
+                        else if (k == SC_E || k == SC_RETURN || k == SC_KP_ENTER) {
+                            if (inv.sel != INV_NONE) inventoryChoose(inv.sel);
+                        } else if (k == SC_C || k == SC_B) {
+                            if (inv.canShut) inventoryChoose(INV_SHUT);
+                        }
                         break;
                     }
                     if (evKeyRepeat(e)) break;
@@ -2868,7 +2855,7 @@ int main(int argc, char** argv) {
                             if (walker.active) {
                                 if (walker.carrying) Interact::drop(sim, walker, lastView.target - lastView.eye);  // (on foot: put down what you carry)
                                 else if (walker.holdingJack) Interact::dropJack(sim, walker);  // (put the jack down)
-                                else if (walker.hand.any()) hud.toast("PUT IT BACK IN THE TRUCK: HOLD E AT THE OPEN BACK");
+                                else if (walker.hand.any()) hud.toast("PUT IT BACK IN THE TRUCK: PRESS E AT ITS BACK");
                             }
                             else openGarage();
                             break;
@@ -3017,7 +3004,12 @@ int main(int argc, char** argv) {
                     break;
                 }
                 case SDL_MOUSEMOTION:
-                    if (menu.open) {
+                    if (inv.open) {  // (a pointer: hovering a card chooses it)
+                        float mx, my;
+                        toDrawable(evMotionX(e), evMotionY(e), mx, my);
+                        const int h = inv.hit(invLay, mx, my);
+                        if (h != INV_NONE) inv.sel = h;
+                    } else if (menu.open) {
                         float mx, my;
                         toDrawable(evMotionX(e), evMotionY(e), mx, my);
                         handleMenu(menu.mouseMove(mx, my, evMotionState(e) & 1, settings));
@@ -3038,6 +3030,14 @@ int main(int argc, char** argv) {
                     }
                     break;
                 case SDL_MOUSEBUTTONDOWN:
+                    if (inv.open) {
+                        float mx, my;
+                        toDrawable(evButtonX(e), evButtonY(e), mx, my);
+                        const int h = inv.hit(invLay, mx, my);
+                        if (evButton(e) == 1 && h != INV_NONE) inv.sel = h, inventoryChoose(h);
+                        else if (evButton(e) == 3 || (evButton(e) == 1 && !invLay.panel.has(mx, my))) closeInventory();
+                        break;
+                    }
                     if (!menu.open && winchAim.on && evButton(e) == 3) winchAim.on = false;  // right click: cancel
                     if (menu.open && evButton(e) == 1) {
                         float mx, my;
@@ -3212,7 +3212,7 @@ int main(int argc, char** argv) {
                     }
                 }
             }
-            if (opt.script == "trunk") {  // screenshots of the cargo: the gate, what rides in the back, taking things out, the list
+            if (opt.script == "trunk" || opt.script == "inventory") {  // screenshots of the cargo (the gate, what rides in the back, taking things out) and of the inventory menu
                 Car& c = sim.cars[sim.player];
                 const Frame fr = c.frame();
                 const V3 fl = norm(V3(fr.fwd.x, 0, fr.fwd.z));
@@ -3225,37 +3225,46 @@ int main(int argc, char** argv) {
                     const V3 d = norm(at - (walker.p + V3(0, 1.62, 0)));
                     footYaw = std::atan2(-d.z, d.x), footPitch = std::asin(d.y);
                 };
-                auto itemAim = [&](TrunkRef r, V3& at) {  // where an item of the back lies
-                    const TrunkStock st{career.kit(), sim.anchorStock};
-                    const std::vector<TrunkItem> items = trunk::wholeLoad(c, st, true, walker.hand, walker.holdingJack, walker.holdingChain);
-                    const std::vector<TrunkSlot> slots = trunk::layout(c, items);
-                    for (int i = 0; i < (int)items.size(); i++)
-                        if (items[i].ref == r) return trunk::aimAt(c, fr, items, slots, i, at);
-                    return false;
+                auto slotOf = [&](TrunkRef r) {  // which card a thing has in the menu
+                    for (int i = 0; i < (int)inv.slots.size(); i++)
+                        if (inv.slots[i].ref == r) return i;
+                    return -1;
                 };
-                V3 at;
-                if (frame == 20) c.handbrake = 1, getOut();
+                auto envInt = [](const char* name, int def) { return std::getenv(name) ? std::atoi(std::getenv(name)) : def; };
                 scriptE = false;
-                if (frame >= 24 && frame < 140) {  // the closed back, then hold E: it opens
-                    if (frame == 24) stand(1.9);
-                    look(trunk::gateAt(c));
-                    scriptE = frame > 40 && c.gateShut();
-                } else if (frame >= 140 && frame < 175) {  // the open back, and a step closer to look in
-                    double behind = 1.7, rise = 0, aside = 0;  // (CZ_TRUNKCAM=behind,rise,aside: a look from another spot)
-                    if (const char* e = std::getenv("CZ_TRUNKCAM")) std::sscanf(e, "%lf,%lf,%lf", &behind, &rise, &aside);
-                    if (frame == 140 || rise != 0 || aside != 0) stand(behind), walker.p += V3(-fl.z, 0, fl.x) * aside, walker.p.y += rise;
-                    look(trunk::cargoCenter(c));
-                } else if (frame >= 175 && frame < 270) {  // the hi-lift jack: hold E, and it's in your hands
-                    if (itemAim({TK_JACK, 0}, at) || walker.holdingJack) look(walker.holdingJack ? trunk::cargoCenter(c) : at);
-                    scriptE = frame > 180 && !walker.holdingJack;
-                } else if (frame >= 270 && frame < 330) {  // ...and back it goes
-                    look(trunk::cargoCenter(c));
-                    scriptE = frame > 275 && walker.holdingJack;
-                } else if (frame >= 330 && frame < 420) {  // a ground stake
-                    if (itemAim({TK_GEAR, GEAR_STAKE}, at)) look(at);
-                    scriptE = frame > 335 && !walker.hand.any();
-                } else if (frame == 420) {
-                    invOpen = true;
+                if (opt.script == "inventory") {  // E at the back (CZ_INV_TAKE=card: take it and open it again; CZ_INV_SEL=card: the one chosen; CZ_INV_PAD=1: the pad's hints)
+                    if (frame == 20) c.handbrake = 1, getOut();
+                    if (frame == 24) stand(std::getenv("CZ_INV_BEHIND") ? std::atof(std::getenv("CZ_INV_BEHIND")) : 1.9), look(trunk::gateAt(c));
+                    if (frame >= 24 && !inv.open && frame < 400) look(trunk::gateAt(c));
+                    scriptE = (frame == 44 || frame == 120) && !inv.open;
+                    if (frame == 90 && inv.open && envInt("CZ_INV_TAKE", -1) >= 0) inventoryChoose(envInt("CZ_INV_TAKE", 0));
+                    if (frame >= 100 && inv.open && std::getenv("CZ_INV_SEL")) inv.sel = envInt("CZ_INV_SEL", 0);
+                    if (frame == 100 && std::getenv("CZ_INV_PAD")) pad::ui.last = true;
+                    if (frame == 200 && std::getenv("CZ_INV_CLOSE")) closeInventory();
+                } else {
+                    if (frame == 20) c.handbrake = 1, getOut();
+                    if (frame >= 24 && frame < 140) {  // the closed back, then E at it: the gate swings open and so does the inventory
+                        if (frame == 24) stand(1.9);
+                        if (frame < 100) look(trunk::gateAt(c));
+                        scriptE = frame == 40 && c.gateShut();
+                        if (frame == 100) closeInventory();
+                    } else if (frame >= 140 && frame < 175) {  // the open back, and a step closer to look in
+                        double behind = 1.7, rise = 0, aside = 0;  // (CZ_TRUNKCAM=behind,rise,aside: a look from another spot)
+                        if (const char* e = std::getenv("CZ_TRUNKCAM")) std::sscanf(e, "%lf,%lf,%lf", &behind, &rise, &aside);
+                        if (frame == 140 || rise != 0 || aside != 0) stand(behind), walker.p += V3(-fl.z, 0, fl.x) * aside, walker.p.y += rise;
+                        look(trunk::cargoCenter(c));
+                    } else if (frame >= 175 && frame < 270) {  // the hi-lift jack: chosen in the menu, and it's in your hands
+                        look(trunk::cargoCenter(c));
+                        if (frame == 180) inv.show(sim.player), inv.refresh(sim, interact.own, walker);
+                        if (frame == 185 && inv.open) inventoryChoose(slotOf({TK_JACK, 0}));
+                    } else if (frame >= 270 && frame < 330) {  // ...and back it goes
+                        look(trunk::cargoCenter(c));
+                        if (frame == 275) interact.putBackInBack(sim, walker, sim.player);
+                    } else if (frame >= 330 && frame < 420) {  // a ground stake
+                        look(trunk::cargoCenter(c));
+                        if (frame == 335) inv.show(sim.player), inv.refresh(sim, interact.own, walker);
+                        if (frame == 340 && inv.open) inventoryChoose(slotOf({TK_GEAR, GEAR_STAKE}));
+                    }
                 }
             }
             if (opt.script == "winch" || opt.script == "strap") {  // screenshots of the recovery gear
@@ -3369,10 +3378,11 @@ int main(int argc, char** argv) {
                 // On foot: the keys walk you; the truck sits on its handbrake.
                 const V3 vf = norm(V3(lastView.target.x - lastView.eye.x, 0, lastView.target.z - lastView.eye.z));
                 const double viewYaw = std::atan2(-vf.z, vf.x);
-                walker.step(sim.world, sim, dt, (up ? 1 : 0) - (down ? 1 : 0), (left ? 1 : 0) - (right ? 1 : 0), shiftHeld, hb, viewYaw);
+                const bool still = inv.open;  // (the menu is up: you stand and look at it)
+                walker.step(sim.world, sim, dt, still ? 0 : (up ? 1 : 0) - (down ? 1 : 0), still ? 0 : (left ? 1 : 0) - (right ? 1 : 0), shiftHeld && !still, hb && !still, viewYaw);
                 {  // hands on: hold E (pad: X) for the job in front of you
                     const uint8_t* ks = SDL_GetKeyboardState(nullptr);
-                    const bool holdE = (!menu.open && ks[SC_E]) || (padCtx == pad::Mode::Drive && padLogic.in.interact) || scriptE;
+                    const bool holdE = (!menu.open && !inv.open && ks[SC_E]) || (padCtx == pad::Mode::Drive && padLogic.in.interact) || scriptE;
                     interact.spots.clear();  // (a career's supply caches in reach: E opens one)
                     if (career.on) {
                         for (const CacheSpot& c : caches)
@@ -3402,7 +3412,7 @@ int main(int argc, char** argv) {
                         interact.trunkOn = !onYou;
                         const bool reach = onYou || trunk::kitInReach(sim, walker.p);
                         interact.kit = onYou ? have : trunk::reachKit(have, reach, hd, walker.holdingJack);
-                        if (invOpen && !reach) invOpen = false;  // (walked off, or shut it)
+                        if (inv.open && (inv.car < 0 || inv.car >= (int)sim.cars.size() || !trunk::backOpen(sim.cars[std::max(inv.car, 0)]) || len(walker.p - trunk::gateAt(sim.cars[std::max(inv.car, 0)])) > trunk::kReach)) closeInventory();  // (walked off, or shut it)
                         if (padCtx == pad::Mode::Drive && padLogic.in.inventory) toggleInventory();
                     }
                     interact.hover = PartHit();  // the car part under the crosshair (carparts.h), nearest car part wins
@@ -3415,6 +3425,11 @@ int main(int argc, char** argv) {
                     }
                     const std::string said = interact.update(sim, walker, lastView.eye, lastView.target - lastView.eye, holdE, dt);
                     if (!said.empty()) hud.toast(said);
+                    if (interact.openedInventory >= 0) {  // E at the back
+                        inv.show(interact.openedInventory);
+                        interact.openedInventory = -1;
+                    }
+                    if (inv.open) inv.refresh(sim, interact.own, walker);
                     if (interact.usedPart >= 0) {  // a repair used a part
                         if (career.on) {
                             career.usePart((RepairPart)interact.usedPart);
@@ -3441,7 +3456,7 @@ int main(int argc, char** argv) {
                     if (padCtx == pad::Mode::Drive && padLogic.in.drop) {
                         if (walker.carrying) Interact::drop(sim, walker, lastView.target - lastView.eye);
                         else if (walker.holdingJack) Interact::dropJack(sim, walker);
-                        else if (walker.hand.any()) hud.toast("PUT IT BACK IN THE TRUCK: HOLD " + std::string("X") + " AT THE OPEN BACK");
+                        else if (walker.hand.any()) hud.toast("PUT IT BACK IN THE TRUCK: PRESS X AT ITS BACK");
                     }
                 }
                 up = down = left = right = false;
@@ -3854,7 +3869,7 @@ int main(int argc, char** argv) {
         }
         {
             // The mouse is yours to look with on foot; anywhere else it's a pointer.
-            const bool want = walker.active && !menu.open && !editor.active && !winchAim.on && cam.mode != 3;
+            const bool want = walker.active && !menu.open && !inv.open && !editor.active && !winchAim.on && cam.mode != 3;
             if (want != mouseLook) {
                 SDL_SetRelativeMouseMode(want ? 1 : 0);
                 mouseLook = want;
@@ -3998,16 +4013,18 @@ int main(int argc, char** argv) {
             const float u = std::max(0.75f, H / 720.0f), s = px(1.4f * u);
             renderer.rect(W / 2.0f - 2 * u, H / 2.0f - 2 * u, 4 * u, 4 * u, 1, 1, 1, 0.8f);
             const bool padNow = pad::ui.last && padDev.connected();
-            if (interact.current.kind != IA_NONE) {
-                const std::string line = std::string(padNow ? "HOLD X  " : "HOLD E  ") + interact.current.prompt;
-                centeredPill(renderer, W / 2.0f, H / 2.0f + 40 * u, s, line, 0, 0, 0, 0.6f, 1.0f, 0.85f, 0.45f);
+            if (interact.current.kind != IA_NONE && !inv.open) {
+                const bool tap = interact.current.hold <= 0 && !interact.current.continuous;  // (E opens a menu: no holding)
+                const std::string line = std::string(padNow ? (tap ? "X  " : "HOLD X  ") : (tap ? "E  " : "HOLD E  ")) + interact.current.prompt;
+                const float ps = tap ? px(1.8f * u) : s;  // (E at the back is the way in to everything: say it big)
+                centeredPill(renderer, W / 2.0f, H / 2.0f + 40 * u, ps, line, 0, 0, 0, 0.6f, 1.0f, 0.85f, 0.45f);
                 if (interact.progress > 0) {
                     const float bw = 220 * u, bx = W / 2.0f - bw / 2, by = H / 2.0f + 40 * u + 8 * s + 14 * u;
                     renderer.rect(bx, by, bw, 5 * u, 0, 0, 0, 0.6f);
                     renderer.rect(bx, by, bw * (float)interact.share(), 5 * u, 1.0f, 0.75f, 0.3f, 0.95f);
                 }
             }
-            if (interact.hover.ok && !walker.carrying) {  // the part under the crosshair: its name and how it is, and the repair that goes with it
+            if (interact.hover.ok && !walker.carrying && !inv.open) {  // the part under the crosshair: its name and how it is, and the repair that goes with it
                 const PartHit& ph = interact.hover;
                 const bool bad = ph.tag.state == PS_BROKEN, hurt = ph.tag.state != PS_OK;
                 const float cr = bad ? 1.0f : hurt ? 1.0f : 0.85f, cg = bad ? 0.42f : hurt ? 0.7f : 0.95f, cb = bad ? 0.32f : hurt ? 0.3f : 0.85f;
@@ -4027,11 +4044,10 @@ int main(int argc, char** argv) {
                 }
                 centeredPill(renderer, W / 2.0f, y, ls, ph.tag.label(), 0, 0, 0, 1.0f, cr, cg, cb);
             }
-            if (walker.hand.any() && !walker.carrying) {
-                const std::string line = "IN YOUR HAND: " + trunk::name(walker.hand) + (padNow ? "   (PUT IT BACK AT THE OPEN BACK: X)" : "   (PUT IT BACK AT THE OPEN BACK: E)");
+            if (walker.hand.any() && !walker.carrying && !inv.open) {
+                const std::string line = "IN YOUR HAND: " + trunk::name(walker.hand) + (padNow ? "   (X AT THE BACK OF YOUR TRUCK: PUT IT BACK)" : "   (E AT THE BACK OF YOUR TRUCK: PUT IT BACK)");
                 centeredPill(renderer, W / 2.0f, H - 110 * u, px(1.2f * u), line, 0, 0, 0, 0.55f, 0.9f, 0.92f, 0.95f);
             }
-            if (invOpen) drawInventory(renderer, sim, TrunkStock{career.kit(), sim.anchorStock}, walker, u, W, H);
             if (walker.carrying) {
                 const std::string line = "CARRYING A " + walker.carrying->sizeName() + (walker.carrying->tireOnly ? "" : " WHEEL") +
                                          (walker.carrying->popped ? " (FLAT)" : "") + (padNow ? "   B: PUT IT DOWN" : "   G: PUT IT DOWN");
@@ -4147,6 +4163,11 @@ int main(int argc, char** argv) {
                 menu.searching = 0;
             }
             // ---- end multiplayer page
+        }
+        if (inv.open && walker.active && !menu.open && !hud.photo) {  // the truck's inventory (over the rest of the HUD)
+            const float u = std::max(0.75f, H / 720.0f);
+            invLay = inv.layout(W, H, u);
+            drawInvMenu(renderer, inv, invLay, W, H, pad::ui.last && padDev.connected());
         }
         if (garageUI.open) drawGarage(renderer, garageUI, garage, career, sim.stationAt(sim.cars[sim.player].frame().com), sim, std::max(0.75f, H / 720.0f), W, H);
         menu.draw(renderer, settings, W, H, dt);

@@ -102,7 +102,7 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
     for (int ci = 0; ci < (int)sim.cars.size(); ci++) {
         const Car& c = sim.cars[ci];
         if (c.remote || c.isProp()) continue;
-        const bool trunkCar = own && !c.ai && c.hasGate();  // (its chains, jack and your kit are in the back: below)
+        const bool trunkCar = own && !c.ai && (c.hasGate() || ci == sim.player);  // (its chains, jack and your kit are in the back: the inventory, below)
         if (c.spec->wheelLoss) {
             // Snow chains: in the back on one side (the jack's on the other), onto a tire, off
             // again, back in.
@@ -177,59 +177,26 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
                 consider(j);
             }
         }
-        // The back (trunk.h): open and shut it; with it open, take what lies in it, put things back.
-        if (trunkCar) {
+        // The back (trunk.h): E at it opens the inventory (invmenu.h), where you take what you need and put it back.
+        if (trunkCar && !wk.carrying.has_value()) {
             const bool moving = len(c.frame().vel) > 0.5;
-            const bool primary = ci == sim.player;
             InteractOption g;
-            g.car = ci, g.at = trunk::gateAt(c);
-            if (!wk.carrying.has_value() && c.gate.dir == 0) {
-                if (c.gateShut()) g.kind = IA_OPEN_GATE, g.hold = kOpenGate, g.prompt = std::string("OPEN THE ") + trunk::gateName(c);
-                else if (c.gateOpen()) g.kind = IA_CLOSE_GATE, g.hold = kOpenGate, g.prompt = std::string("CLOSE THE ") + trunk::gateName(c);
-                if (g.kind != IA_NONE) {
+            g.car = ci, g.at = trunk::gateAt(c), g.kind = IA_OPEN_INVENTORY;
+            const bool held = wk.hand.any() || wk.holdingJack || wk.holdingChain;
+            if (!c.hasGate()) {
+                g.prompt = held ? "TRUNK: PUT THE " + (wk.holdingJack ? std::string("JACK") : wk.holdingChain ? std::string("SNOW CHAIN") : trunk::name(wk.hand)) + " BACK" : "OPEN THE TRUNK";
+            } else if (c.gate.dir == 0) {
+                const std::string gate = trunk::gateName(c);
+                if (c.gateShut()) {
+                    g.prompt = "OPEN THE " + gate;
                     if (moving) g.blocked = true, g.prompt += ": STOP THE TRUCK FIRST";
-                    consider(g, 3.2, g.kind == IA_CLOSE_GATE ? 0.12 : 0);  // (shutting it: aiming at a thing inside beats the gate it's behind)
+                } else {
+                    g.prompt = held ? gate + ": PUT THE " + (wk.holdingJack ? std::string("JACK") : wk.holdingChain ? std::string("SNOW CHAIN") : trunk::name(wk.hand)) + " BACK" : gate + ": INVENTORY";
                 }
+            } else {
+                g.kind = IA_NONE;  // (swinging)
             }
-            if (c.gateOpen() && c.gate.dir == 0 && len(trunk::cargoCenter(c) - chest) < 6) {
-                const Frame fr = c.frame();
-                const std::vector<TrunkItem> items = trunk::wholeLoad(c, *own, primary, wk.hand, wk.holdingJack, wk.holdingChain);
-                const std::vector<TrunkSlot> slots = trunk::layout(c, items);
-                if (!busy && !wk.hand.any())  // (hands full of a tool: put it back first)
-                    for (int i = 0; i < (int)items.size(); i++) {
-                        InteractOption o;
-                        o.car = ci;
-                        if (!trunk::aimAt(c, fr, items, slots, i, o.at)) continue;  // (none of it lying there)
-                        o.item = items[i].ref;
-                        const std::string& nm = items[i].name;
-                        switch (items[i].ref.kind) {
-                            case TK_JACK: o.kind = IA_TAKE_JACK, o.hold = kTakeJack, o.prompt = "TAKE THE " + nm; break;
-                            case TK_CHAINS: o.kind = IA_TAKE_CHAIN, o.hold = kTakeChain, o.prompt = "TAKE A SNOW CHAIN (" + std::to_string(c.chains) + " LEFT)"; break;
-                            default:
-                                o.kind = IA_TAKE_ITEM, o.hold = kTakeItem, o.prompt = "TAKE THE " + nm;
-                                const int left = items[i].count - items[i].taken;
-                                if (!items[i].endless && left > 1) o.prompt += " (" + std::to_string(left) + " IN THE BACK)";
-                        }
-                        consider(o, trunk::kReachIn, 0, 0.02);  // (where you point picks it: the near one doesn't win)
-                    }
-                // Put it back: look anywhere over the open cargo area.
-                InteractOption o;
-                o.car = ci;
-                if (wk.holdingJack) o.kind = IA_STOW_JACK, o.hold = kStowJack, o.prompt = "PUT THE JACK BACK";
-                else if (wk.holdingChain && c.chains < std::max(c.spec->snowChains, 4)) o.kind = IA_STOW_CHAIN, o.hold = kStowChain, o.prompt = "PUT THE CHAIN BACK";
-                else if (wk.hand.any() && !busy) o.kind = IA_STOW_ITEM, o.hold = kStowItem, o.item = wk.hand, o.prompt = "PUT THE " + trunk::name(wk.hand) + " BACK";
-                trunk::Box box;
-                if (o.kind != IA_NONE && dir.y < -0.02 && trunk::cargoBox(c, box)) {
-                    const V3 mid = trunk::cargoCenter(c);
-                    const double t = (mid.y - eye.y) / dir.y;
-                    const V3 hit = eye + dir * t, d = hit - mid;
-                    const V3 fl = norm(V3(fr.fwd.x, 0, fr.fwd.z)), sd = V3(-fl.z, 0, fl.x);
-                    if (t > 0 && std::fabs(dot(d, fl)) < (box.hi.x - box.lo.x) * 0.5 + 0.15 && std::fabs(dot(d, sd)) < (box.hi.z - box.lo.z) * 0.5 + 0.15) {
-                        o.at = hit;
-                        consider(o, trunk::kReachIn, -0.5);  // (it's what you're pointing at)
-                    }
-                }
-            }
+            if (g.kind != IA_NONE) consider(g, 3.2);
         }
         // Wheels off and on (a lug wrench, the corner up off the ground).
         if (c.spec->wheelLoss)
@@ -325,6 +292,10 @@ std::string Interact::update(Sim& sim, Walker& wk, const V3& eye, const V3& look
     }
     if (progress < o.hold) return "";
     progress = 0;
+    return perform(sim, wk, o);
+}
+
+std::string Interact::perform(Sim& sim, Walker& wk, const InteractOption& o) {
     WheelItem it;
     switch (o.kind) {  // (what fills your arms puts down whatever's in your hand)
         case IA_TAKE_SPARE: case IA_REMOVE_WHEEL: case IA_PICK_UP: case IA_TAKE_CHAIN: case IA_REMOVE_CHAIN: case IA_TAKE_JACK: case IA_REMOVE_JACK:
@@ -416,6 +387,16 @@ std::string Interact::update(Sim& sim, Walker& wk, const V3& eye, const V3& look
             c.setGate(o.kind == IA_OPEN_GATE);
             return std::string(trunk::gateName(c)) + (o.kind == IA_OPEN_GATE ? " OPEN" : " SHUT");
         }
+        case IA_OPEN_INVENTORY: {
+            Car& c = sim.cars[o.car];
+            if (c.hasGate() && c.gateShut()) {
+                if (len(c.frame().vel) > 0.5) return "STOP THE TRUCK FIRST";
+                c.setGate(true);
+            }
+            openedInventory = o.car;
+            waitRelease = true;  // (E is let go before it does anything else)
+            return "";
+        }
         case IA_TAKE_ITEM:
             wk.hand = o.item;
             return "GOT THE " + trunk::name(o.item);
@@ -433,6 +414,57 @@ std::string Interact::update(Sim& sim, Walker& wk, const V3& eye, const V3& look
         default:
             return "";
     }
+}
+
+
+InteractOption Interact::takeOption(const Car& c, int ci, const TrunkItem& it) {
+    InteractOption o;
+    if (it.count - it.taken <= 0) return o;
+    o.car = ci, o.item = it.ref;
+    switch (it.ref.kind) {
+        case TK_JACK: o.kind = IA_TAKE_JACK, o.hold = kTakeJack, o.prompt = "TAKE THE " + it.name; break;
+        case TK_CHAINS: o.kind = IA_TAKE_CHAIN, o.hold = kTakeChain, o.prompt = "TAKE A SNOW CHAIN (" + std::to_string(c.chains) + " LEFT)"; break;
+        default:
+            o.kind = IA_TAKE_ITEM, o.hold = kTakeItem, o.prompt = "TAKE THE " + it.name;
+            if (!it.endless && it.count - it.taken > 1) o.prompt += " (" + std::to_string(it.count - it.taken) + " IN THE BACK)";
+    }
+    return o;
+}
+
+InteractOption Interact::stowOption(const Car& c, int ci, const Walker& wk) {
+    InteractOption o;
+    o.car = ci;
+    if (wk.carrying.has_value()) return o;
+    if (wk.holdingJack) o.kind = IA_STOW_JACK, o.hold = kStowJack, o.prompt = "PUT THE JACK BACK";
+    else if (wk.holdingChain && c.chains < std::max(c.spec->snowChains, 4)) o.kind = IA_STOW_CHAIN, o.hold = kStowChain, o.prompt = "PUT THE CHAIN BACK";
+    else if (wk.hand.any() && !wk.holdingChain) o.kind = IA_STOW_ITEM, o.hold = kStowItem, o.item = wk.hand, o.prompt = "PUT THE " + trunk::name(wk.hand) + " BACK";
+    return o;
+}
+
+std::string Interact::putBackInBack(Sim& sim, Walker& wk, int car) {
+    if (car < 0 || car >= (int)sim.cars.size()) return "";
+    const InteractOption o = stowOption(sim.cars[car], car, wk);
+    return o.kind == IA_NONE ? "" : perform(sim, wk, o);
+}
+
+std::string Interact::takeFromBack(Sim& sim, Walker& wk, int car, const TrunkStock& stock, TrunkRef ref) {
+    if (car < 0 || car >= (int)sim.cars.size() || wk.carrying.has_value()) return "";
+    const Car& c = sim.cars[car];
+    if (!trunk::backOpen(c)) return "OPEN THE BACK FIRST";
+    const bool inHand = (ref.kind == TK_JACK && wk.holdingJack) || (ref.kind == TK_CHAINS && wk.holdingChain) || (ref.any() && wk.hand == ref);
+    if (inHand) return putBackInBack(sim, wk, car);  // (the one you hold: back it goes)
+    const bool holding = wk.hand.any() || wk.holdingJack || wk.holdingChain;
+    if (holding) {
+        putBackInBack(sim, wk, car);
+        if (wk.hand.any() || wk.holdingJack || wk.holdingChain) return "PUT WHAT YOU HOLD BACK FIRST";
+    }
+    for (const TrunkItem& it : trunk::wholeLoad(c, stock, car == sim.player, wk.hand, wk.holdingJack, wk.holdingChain)) {
+        if (it.ref != ref) continue;
+        const InteractOption o = takeOption(c, car, it);
+        if (o.kind == IA_NONE) return it.ref.kind == TK_JACK ? "THE JACK IS OUT ALREADY" : "NONE LEFT IN THE BACK";
+        return perform(sim, wk, o);
+    }
+    return "";
 }
 
 bool Interact::drop(Sim& sim, Walker& wk, const V3& look) {
