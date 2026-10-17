@@ -3725,6 +3725,59 @@ int main(int argc, char** argv) {
                 editor.setMouse(W * 0.5f, H * 0.62f);
             }
         }
+        if (editor.active && scripted && opt.script == "editbrush") {
+            // (Screenshots: the brush cursor at one cell and at 30 m, a patterned one, what the pattern brushes leave, and draining water.)
+            EditCore& ed = editor.core;
+            const V3 c(-200, 0, 200);
+            auto cam = [&](double back, double up, double ahead) { editor.setCamera(c + V3(-back, 0, 0) + V3(0, sim.world.height(c.x, c.z) + up, 0), 0, -std::atan2(up, ahead)); };
+            auto find = [&](int surface) {
+                for (int k = 0; k < (int)paintMaterials().size(); k++)
+                    if (paintMaterials()[k].surface == surface) return k;
+                return 0;
+            };
+            if (frame == 2) {
+                editor.setTool(Editor::SCULPT);
+                cam(10, 9, 12);
+                editor.setMouse(W * 0.5f, H * 0.55f);
+                editor.setBrush(SHAPE_ROUND, FALL_SMOOTH, STYLE_SOLID, 0.5);
+            }
+            if (frame == 8) editor.setBrush(SHAPE_ROUND, FALL_SMOOTH, STYLE_SOLID, 3);
+            if (frame == 14) cam(25, 28, 30), editor.setBrush(SHAPE_ROUND, FALL_SMOOTH, STYLE_SOLID, 24);
+            if (frame == 20) editor.setBrush(SHAPE_SQUARE, FALL_HARD, STYLE_SPLATTER, 24, 0.55);
+            if (frame == 26) {  // (what the pattern brushes leave)
+                editor.setTool(Editor::PAINT);
+                cam(30, 32, 34);
+                const double ox[6] = {-30, 0, 30, -30, 0, 30}, oz[6] = {-18, -18, -18, 18, 18, 18};
+                const int mats[6] = {find(SURF_MUD), find(SURF_SAND), find(SURF_GRAVEL), find(SURF_SNOW), find(SURF_ROCK), find(SURF_MUD)};
+                const BrushStyle st[6] = {STYLE_NOISE, STYLE_SPLATTER, STYLE_STRIPES, STYLE_SPECKLE, STYLE_SOLID, STYLE_SPLATTER};
+                const BrushShape sh[6] = {SHAPE_ROUND, SHAPE_ROUND, SHAPE_SQUARE, SHAPE_ROUND, SHAPE_DIAMOND, SHAPE_SQUARE};
+                for (int k = 0; k < 6; k++) {
+                    Brush b;
+                    b.shape = sh[k], b.style = st[k], b.radius = 13, b.density = k == 5 ? 0.35 : 0.55, b.fall = k == 4 ? FALL_HARD : FALL_SMOOTH, b.seed = 5 + k * 3;
+                    b.angle = 0.6;
+                    ed.paint(b, c.x + 30 + ox[k], c.z + oz[k], mats[k]);
+                    if (k == 5) {  // (a second, lighter coat over the splatter: opacity)
+                        b.style = STYLE_SOLID, b.strength = 0.3, b.radius = 8, b.seed = 99, b.fall = FALL_HARD;
+                        ed.paint(b, c.x + 30 + ox[k], c.z + oz[k], find(SURF_ICE));
+                    }
+                }
+                editor.setMaterial(find(SURF_GRAVEL));
+                editor.setBrush(SHAPE_ROUND, FALL_SMOOTH, STYLE_NOISE, 10, 0.5, 0.8);
+                editor.setMouse(W * 0.5f, H * 0.2f);
+            }
+            if (frame == 32) {  // (a pool, half of it drained, and the drain brush up)
+                editor.setTool(Editor::WATER);
+                cam(30, 32, 34);
+                ed.brush(BRUSH_LOWER, c.x + 25, c.z, 14, 2.5);
+                ed.flood(c.x + 25, c.z, 1.2, 40);
+                Brush b;
+                b.radius = 7, b.fall = FALL_HARD, b.style = STYLE_SPLATTER, b.density = 0.6;
+                ed.dryBrush(b, c.x + 25, c.z + 2);
+                editor.setWaterMode(1);
+                editor.setBrush(SHAPE_ROUND, FALL_HARD, STYLE_SPLATTER, 9, 0.6);
+                editor.setMouse(W * 0.5f, H * 0.5f);
+            }
+        }
         if (editor.active && scripted && opt.script == "editdemo" && frame == 5) {
             // (Screenshots: a few edits in front of the camera, through the editor's core.)
             const View v = editor.view(W, H);

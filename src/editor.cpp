@@ -15,10 +15,12 @@ using namespace hud;
 namespace {
 
 const char* kToolNames[Editor::TOOL_COUNT] = {"SCULPT", "PAINT", "WATER", "OBJECTS", "COURSE", "SETTINGS", "SECTION"};
-const char* kToolHints[Editor::TOOL_COUNT] = {"RAISE, LOWER, SMOOTH, FLATTEN THE GROUND", "PAINT MUD, SAND, SNOW, ROCK...",
-                                              "FLOOD A HOLLOW, OR DRY IT", "ROCKS, TREES, LOGS, RAMPS, SHOPS",
+const char* kToolHints[Editor::TOOL_COUNT] = {"RAISE, LOWER, SMOOTH, FLATTEN, ROUGHEN, TERRACE", "PAINT MUD, SAND, SNOW, ROCK...",
+                                              "FLOOD A HOLLOW, OR DRAIN IT", "ROCKS, TREES, LOGS, RAMPS, SHOPS",
                                               "START AND GATES", "NAME, MODE, RULES, MEDALS", "TYPE, DIFFICULTY, KIT, STAMP A GENERATOR"};
-const char* kOpNames[4] = {"RAISE", "LOWER", "SMOOTH", "FLATTEN"};
+const char* kOpNames[BRUSH_OP_COUNT] = {"RAISE", "LOWER", "SMOOTH", "FLATTEN", "ROUGHEN", "TERRACE"};
+const double kTerraces[4] = {0.25, 0.5, 1, 2};  // m: terrace step heights
+const char* kWaterModes[3] = {"FILL HOLLOW", "DRAIN BRUSH", "DRAIN WHOLE POOL"};
 const char* kObjNames[OBJ_KIND_COUNT + 1] = {"ROCK", "RAMP / BLOCK", "LOG", "TREE", "REPAIR SHOP", "SLAB LEDGE"};
 const int K_LEDGE = OBJ_KIND_COUNT;  // (the objects tool's extra brush: a row of rock slabs along a dragged line)
 const double kRisers[5] = {0.3, 0.45, 0.6, 0.9, 1.2};  // m: the step a ledge makes (a notch step stays under 0.4)
@@ -33,9 +35,12 @@ enum {
     B_MAT = 300,             // + material
     B_OBJ = 400,             // + object kind
     B_SAVE = 500, B_OPEN, B_PLAY, B_UNDO, B_REDO, B_EXIT, B_NEWMAP, B_NEWSEC,
-    B_RAD_DN = 600, B_RAD_UP, B_STR_DN, B_STR_UP, B_SOFT, B_DEPTH_DN, B_DEPTH_UP, B_DRY,
+    B_RAD_DN = 600, B_RAD_UP, B_STR_DN, B_STR_UP, B_DEPTH_DN, B_DEPTH_UP,
     B_SIZE_DN, B_SIZE_UP, B_TREE, B_YAW_DN, B_YAW_UP, B_PITCH_DN, B_PITCH_UP, B_SLAB, B_W_DN, B_W_UP, B_LEN_DN, B_LEN_UP,
     B_OFFSET_DN, B_OFFSET_UP, B_SNAP_DN, B_SNAP_UP, B_RISE_DN, B_RISE_UP, B_LDEPTH_DN, B_LDEPTH_UP,
+    B_BR = 650,              // brush rows: shape, falloff, pattern, density, terrace step (each < and >)
+    B_SHAPE_DN = 650, B_SHAPE_UP, B_FALL_DN, B_FALL_UP, B_STYLE_DN, B_STYLE_UP, B_DENS_DN, B_DENS_UP, B_TERR_DN, B_TERR_UP,
+    B_WMODE = 670,           // + water mode
     B_OBJPROP = 900,    // + property index for object editor
     B_GATEW_DN, B_GATEW_UP, B_DELETE, B_EARLIER, B_LATER,
     B_SET = 700,             // + settings row (click selects it)
@@ -201,6 +206,12 @@ void Editor::wheel(int dy) {
         fileSel = std::min(std::max(fileSel - dy, 0), std::max(0, (int)files.size() - 1));
         return;
     }
+    // Ctrl+wheel: brush size; Shift+wheel: strength (sculpt, paint, water).
+    if ((tool == SCULPT || tool == PAINT || tool == WATER) && dy != 0 && (ctrl || shift)) {
+        if (ctrl) radius = brushStep(radius, dy > 0 ? 1 : -1);
+        else strength = clampd(strength + (dy > 0 ? 0.1 : -0.1), 0.1, 1.0);
+        return;
+    }
     // Mouse wheel zooms (flies in the direction looked).
     const View v = view(W, H);
     eye += norm(v.target - v.eye) * (dy * 4.0);
@@ -251,19 +262,31 @@ void Editor::click() {
         case PAINT:
             core.beginEdit(tool == SCULPT ? std::string(kOpNames[op]) : std::string("PAINT ") + paintMaterials()[material].name);
             stroke = true;
+            strokeSeed = strokeSeed * 1664525u + 1013904223u;  // (a new scatter each stroke)
+            brushTick = 0, seedAt = hit, seedClock = clock;
+            strokeAngle = std::round((M_PI / 2 - yaw) / (M_PI / 12)) * (M_PI / 12);
             if (tool == SCULPT && op == BRUSH_FLATTEN) flatY = hit.y, flatSet = true;
             applyBrush(1.0 / 60);
             break;
         case WATER: {
             if (!haveHit) break;
-            if (shift) {
-                core.dry(hit.x, hit.z, radius);
-                say("DRIED");
+            const int mode = shift && waterMode == 0 ? 1 : waterMode;  // (Shift+click fills as a drain)
+            if (mode == 1) {
+                core.beginEdit("DRAIN");
+                stroke = true;
+                strokeSeed = strokeSeed * 1664525u + 1013904223u;
+                strokeAngle = std::round((M_PI / 2 - yaw) / (M_PI / 12)) * (M_PI / 12);
+                applyBrush(1.0 / 60);
+                break;
+            }
+            if (mode == 2) {
+                const int n = core.drain(hit.x, hit.z);
+                say(n ? "DRAINED THE POOL: " + std::to_string(n) + " CELLS" : "NO WATER THERE (CLICK ON THE WATER)");
                 break;
             }
             bool spilled = false;
             const int n = core.flood(hit.x, hit.z, floodDepth, std::max(radius * 4, 40.0), &spilled);
-            say(spilled ? "IT RAN OUT OVER LOWER GROUND (" + std::to_string(n) + " CELLS): DIG A DEEPER HOLLOW" : "FLOODED " + std::to_string(n) + " CELLS");
+            say(spilled ? "IT RAN OUT OVER LOWER GROUND (" + std::to_string(n) + " CELLS): DIG A DEEPER HOLLOW, OR DRAIN IT AND TRY AGAIN" : "FLOODED " + std::to_string(n) + " CELLS");
             break;
         }
         case OBJECTS:
@@ -365,19 +388,57 @@ void Editor::placeLedge(const V3& a, const V3& b) {
     say("LEDGE: " + std::to_string(count) + " SLABS, " + fmt1(rise, " M") + " RISE" + (rise > 0.4 ? " (OVER THE 0.4 M NOTCH STEP)" : ""));
 }
 
+Brush Editor::curBrush() const {
+    Brush b;
+    b.shape = shape, b.fall = fall, b.style = style, b.radius = radius, b.strength = strength, b.density = density;
+    b.angle = lmb && stroke ? strokeAngle : std::round((M_PI / 2 - yaw) / (M_PI / 12)) * (M_PI / 12);
+    b.seed = strokeSeed * 7919u + brushTick;
+    return b;
+}
+
 void Editor::applyBrush(double dt) {
     if (!haveHit) return;
+    Brush b = curBrush();
     if (tool == SCULPT) {
         const double rate = strength * 4.0;  // m/s at full strength
+        const double fine = shift ? 0.25 : 1;
         switch (op) {
-            case BRUSH_RAISE: core.brush(BRUSH_RAISE, hit.x, hit.z, radius, rate * dt * (shift ? 0.25 : 1)); break;
-            case BRUSH_LOWER: core.brush(BRUSH_LOWER, hit.x, hit.z, radius, rate * dt * (shift ? 0.25 : 1)); break;
-            case BRUSH_SMOOTH: core.brush(BRUSH_SMOOTH, hit.x, hit.z, radius, std::min(1.0, strength * dt * 6)); break;
-            case BRUSH_FLATTEN: core.brush(BRUSH_FLATTEN, hit.x, hit.z, radius, std::min(1.0, strength * dt * 8), flatSet ? flatY : hit.y); break;
+            case BRUSH_RAISE:
+            case BRUSH_LOWER: core.brush(op, b, hit.x, hit.z, rate * dt * fine); break;
+            case BRUSH_SMOOTH: core.brush(op, b, hit.x, hit.z, std::min(1.0, strength * dt * 6)); break;
+            case BRUSH_FLATTEN: core.brush(op, b, hit.x, hit.z, std::min(1.0, strength * dt * 8), flatSet ? flatY : hit.y); break;
+            case BRUSH_ROUGHEN: core.brush(op, b, hit.x, hit.z, rate * dt * 0.5 * fine); break;
+            case BRUSH_TERRACE: core.brush(op, b, hit.x, hit.z, std::min(1.0, strength * dt * 8), kTerraces[terraceIdx]); break;
+            default: break;
         }
     } else if (tool == PAINT) {
-        core.paint(hit.x, hit.z, radius, material, softPaint);
+        // A patterned or light brush sprays: a new scatter once you've moved a bit (or held a moment), so
+        // dragging builds the coverage up; a solid hard brush needs none.
+        const bool spray = style != STYLE_SOLID || fall != FALL_HARD || strength < 1;
+        if (spray && (len(hit - seedAt) > std::max(1.0, radius * 0.35) || clock - seedClock > 0.3)) {
+            brushTick++, seedAt = hit, seedClock = clock;
+            b.seed = strokeSeed * 7919u + brushTick;
+        }
+        core.paint(b, hit.x, hit.z, material);
+    } else if (tool == WATER) {
+        core.dryBrush(b, hit.x, hit.z);
     }
+}
+
+// B shape, F falloff, N pattern, - = strength, , . density (sculpt, paint, water drain).
+void Editor::brushKey(int sc) {
+    auto step = [&](int cur, int n) { return (cur + (shift ? n - 1 : 1)) % n; };
+    switch (sc) {
+        case SC_B: shape = (BrushShape)step(shape, SHAPE_COUNT); break;
+        case SC_F: fall = (BrushFall)step(fall, FALL_COUNT); break;
+        case SC_N: style = (BrushStyle)step(style, STYLE_COUNT); break;
+        case SC_MINUS: strength = clampd(strength - 0.1, 0.1, 1.0); break;
+        case SC_EQUALS: strength = clampd(strength + 0.1, 0.1, 1.0); break;
+        case 54: density = clampd(density - 0.1, 0.1, 1.0); break;  // (comma, period)
+        case 55: density = clampd(density + 0.1, 0.1, 1.0); break;
+        default: return;
+    }
+    say(std::string("BRUSH: ") + brushShapeName(shape) + ", " + brushFallName(fall) + " EDGE, " + brushStyleName(style), 1.2);
 }
 
 void Editor::save() {
@@ -469,12 +530,12 @@ void Editor::key(int sc) {
             wantClose = true;
             return;
         case SC_TAB:
-            if (tool == SCULPT) op = (BrushOp)((op + 1) % 4);
+            if (tool == SCULPT) op = (BrushOp)((op + (shift ? BRUSH_OP_COUNT - 1 : 1)) % BRUSH_OP_COUNT);
             else if (tool == PAINT) material = (material + 1) % (int)paintMaterials().size();
             else if (tool == OBJECTS) objKind = (objKind + 1) % (OBJ_KIND_COUNT + 1);
             return;
-        case SC_LEFTBRACKET: radius = std::max(1.0, radius / 1.2), gateWidth = std::max(4.0, gateWidth - 1); return;
-        case SC_RIGHTBRACKET: radius = std::min(60.0, radius * 1.2), gateWidth = std::min(40.0, gateWidth + 1); return;
+        case SC_LEFTBRACKET: radius = brushStep(radius, -1), gateWidth = std::max(4.0, gateWidth - 1); return;
+        case SC_RIGHTBRACKET: radius = brushStep(radius, 1), gateWidth = std::min(40.0, gateWidth + 1); return;
         case SC_DELETE:
         case SC_BACKSPACE: doButton(B_DELETE); return;
         case SC_F5: doButton(B_PLAY); return;
@@ -489,6 +550,7 @@ void Editor::key(int sc) {
         else if (sc == SC_RETURN && setRow == 0) typing = true;
         return;
     }
+    if (tool == SCULPT || tool == PAINT || tool == WATER) brushKey(sc);
     // Q/E: brush/object size (Shift+Q/E: turn the selection).
     if (sc == SC_Q || sc == SC_E) {
         if (shift) {
@@ -516,7 +578,7 @@ void Editor::key(int sc) {
         } else {
             // Q/E: brush size (sculpt/paint/water) or object size.
             if (tool == SCULPT || tool == PAINT || tool == WATER) {
-                radius = clampd(radius * (sc == SC_Q ? 0.85 : 1.18), 1.0, 60.0);
+                radius = brushStep(radius, sc == SC_Q ? -1 : 1);
             } else if (tool == OBJECTS) {
                 if (objKind == OBJ_ROCK) {
                     rockSize = clampd(rockSize * (sc == SC_Q ? 0.85 : 1.15), 0.3, 4.0);
@@ -601,8 +663,12 @@ void Editor::doButton(int id) {
         sel = EditPick();
         return;
     }
-    if (id >= B_OP && id < B_OP + 4) {
+    if (id >= B_OP && id < B_OP + BRUSH_OP_COUNT) {
         op = (BrushOp)(id - B_OP);
+        return;
+    }
+    if (id >= B_WMODE && id < B_WMODE + 3) {
+        waterMode = id - B_WMODE;
         return;
     }
     if (id >= B_MAT && id < B_MAT + (int)paintMaterials().size()) {
@@ -694,16 +760,22 @@ void Editor::doButton(int id) {
             }
             wantClose = true;
             break;
-        case B_RAD_DN: bump(radius, 1 / 1.2, 1, 60); break;
-        case B_RAD_UP: bump(radius, 1.2, 1, 60); break;
+        case B_RAD_DN: radius = brushStep(radius, -1); break;
+        case B_RAD_UP: radius = brushStep(radius, 1); break;
+        case B_SHAPE_DN:
+        case B_SHAPE_UP: shape = (BrushShape)((shape + (id == B_SHAPE_UP ? 1 : SHAPE_COUNT - 1)) % SHAPE_COUNT); break;
+        case B_FALL_DN:
+        case B_FALL_UP: fall = (BrushFall)((fall + (id == B_FALL_UP ? 1 : FALL_COUNT - 1)) % FALL_COUNT); break;
+        case B_STYLE_DN:
+        case B_STYLE_UP: style = (BrushStyle)((style + (id == B_STYLE_UP ? 1 : STYLE_COUNT - 1)) % STYLE_COUNT); break;
+        case B_DENS_DN: density = clampd(density - 0.1, 0.1, 1.0); break;
+        case B_DENS_UP: density = clampd(density + 0.1, 0.1, 1.0); break;
+        case B_TERR_DN: terraceIdx = std::max(0, terraceIdx - 1); break;
+        case B_TERR_UP: terraceIdx = std::min(3, terraceIdx + 1); break;
         case B_STR_DN: strength = clampd(strength - 0.1, 0.1, 1.0); break;
         case B_STR_UP: strength = clampd(strength + 0.1, 0.1, 1.0); break;
-        case B_SOFT: softPaint = !softPaint; break;
         case B_DEPTH_DN: floodDepth = clampd(floodDepth - 0.25, 0.25, 6.0); break;
         case B_DEPTH_UP: floodDepth = clampd(floodDepth + 0.25, 0.25, 6.0); break;
-        case B_DRY:
-            if (haveHit) core.dry(hit.x, hit.z, radius);
-            break;
         case B_SIZE_DN:
             if (objKind == OBJ_ROCK) bump(rockSize, 1 / 1.15, 0.3, 4);
             else if (objKind == OBJ_TREE) bump(treeHeight, 1 / 1.15, 3, 30);
@@ -906,15 +978,55 @@ void Editor::drawWorldMarks(Renderer& r) {
             }
         }
     }
-    // The brush ring, lying on the ground.
+    // The brush cursor, lying on the ground: its outline in the brush's shape (dotted for a pattern), a ring
+    // where a soft edge is half strength, and for a pattern the cells it reaches.
     if (haveHit && (tool == SCULPT || tool == PAINT || tool == WATER)) {
-        const int n = 72;
-        const float cr = tool == PAINT ? paintMaterials()[material].col[0] : 1.0f, cg = tool == PAINT ? paintMaterials()[material].col[1] : 0.75f,
-                    cb = tool == PAINT ? paintMaterials()[material].col[2] : 0.3f;
-        for (int k = 0; k < n; k++) {
-            const double a = 2 * M_PI * k / n;
-            const double x = hit.x + std::cos(a) * radius, z = hit.z + std::sin(a) * radius;
-            dotAt(V3(x, w.height(x, z) + 0.15, z), 4 * u, cr, cg, cb, 0.95f);
+        const bool fill = tool == WATER && waterMode != 1 && !shift;
+        float cr = 1.0f, cg = 0.75f, cb = 0.3f;
+        if (tool == PAINT) cr = paintMaterials()[material].col[0], cg = paintMaterials()[material].col[1], cb = paintMaterials()[material].col[2];
+        if (tool == WATER) cr = fill ? 0.35f : 0.4f, cg = fill ? 0.7f : 0.9f, cb = fill ? 1.0f : 0.95f;
+        // How many pixels a meter is where the brush is: the dots grow with it so the pattern reads near and far.
+        float pxm = 6 * u, ax, ay, bx2, by2, cx2, cy2;
+        if (screenPoint(v, W, H, hit, ax, ay) && screenPoint(v, W, H, hit + V3(1, 0, 0), bx2, by2) && screenPoint(v, W, H, hit + V3(0, 0, 1), cx2, cy2))
+            pxm = std::max(std::hypot(bx2 - ax, by2 - ay), std::hypot(cx2 - ax, cy2 - ay));
+        const float ringDot = clampd(pxm * 0.8, 4 * u, 9 * u), cellDot = pxm;
+        auto onGround = [&](double x, double z, float size, float al) { dotAt(V3(x, w.height(x, z) + 0.15, z), size, cr, cg, cb, al); };
+        auto outline = [&](BrushShape sh, double R, double cx, double cz, bool dotted, float size, float al) {
+            const int n = std::min(240, std::max(32, (int)(R * 6)));
+            for (int k = 0; k < n; k++) {
+                if (dotted && (k & 1)) continue;
+                const double t = (double)k / n;
+                double ox, oz;
+                if (sh == SHAPE_ROUND) {
+                    ox = std::cos(2 * M_PI * t) * R, oz = std::sin(2 * M_PI * t) * R;
+                } else {  // (walk the four sides: the square's corners, or the diamond's tips)
+                    const double u4 = t * 4, f = u4 - std::floor(u4);
+                    const int side = (int)u4, nx = (side + 1) % 4;
+                    const double cxs[4] = {1, 1, -1, -1}, czs[4] = {-1, 1, 1, -1}, txs[4] = {1, 0, -1, 0}, tzs[4] = {0, 1, 0, -1};
+                    const double* px = sh == SHAPE_SQUARE ? cxs : txs;
+                    const double* pz = sh == SHAPE_SQUARE ? czs : tzs;
+                    ox = (px[side] + (px[nx] - px[side]) * f) * R, oz = (pz[side] + (pz[nx] - pz[side]) * f) * R;
+                }
+                onGround(cx + ox, cz + oz, size, al);
+            }
+        };
+        if (fill) {  // (filling floods from a point: a small ring)
+            outline(SHAPE_ROUND, 2, hit.x, hit.z, false, ringDot, 0.95f);
+        } else {
+            const Brush b = curBrush();
+            const double R = std::max(radius, 0.5), bx = R < 1 ? std::round(hit.x) : hit.x, bz = R < 1 ? std::round(hit.z) : hit.z;
+            if (R < 1) {  // one grid cell: its square
+                outline(SHAPE_SQUARE, 0.5, bx, bz, false, std::max(3 * u, std::min(ringDot, pxm * 0.3f)), 0.95f);
+            } else {
+                outline(shape, R, bx, bz, style != STYLE_SOLID, ringDot, 0.95f);
+                if (fall != FALL_HARD) outline(shape, R * 0.5, bx, bz, true, ringDot * 0.7f, 0.5f);  // (half strength about here)
+            }
+            if (style != STYLE_SOLID) {  // the cells it reaches
+                const int st = std::max(1, (int)std::lround(R / 12));
+                for (int ix = (int)std::floor(bx - R); ix <= (int)std::ceil(bx + R); ix += st)
+                    for (int iz = (int)std::floor(bz - R); iz <= (int)std::ceil(bz + R); iz += st)
+                        if (brushMask(b, hit.x, hit.z, ix, iz) >= 0.5) onGround(ix, iz, clampd(cellDot * st * 0.6, 3 * u, 16 * u), 0.55f);
+            }
         }
         dotAt(V3(hit.x, hit.y + 0.15, hit.z), 6 * u, 1, 1, 1, 0.9f);
     }
@@ -996,7 +1108,8 @@ void Editor::drawOptions(Renderer& r, float u) {
     std::vector<std::string> info;
     // (Drawn in two passes: the panel's height isn't known till the end, so draw into a
     // scratch list of rows first. Simpler: a fixed tall panel per tool.)
-    const float panelH = tool == PAINT ? 560 * u : tool == SETTINGS ? 420 * u : tool == OBJECTS ? 470 * u : tool == SECTION ? 600 * u : 300 * u;
+    const float panelH = tool == PAINT ? 640 * u : tool == SCULPT ? 560 * u : tool == WATER ? (waterMode == 1 ? 520 * u : 330 * u)
+                         : tool == SETTINGS ? 420 * u : tool == OBJECTS ? 470 * u : tool == SECTION ? 600 * u : 300 * u;
     pill(r, x - 8 * u, top - 6 * u, w + 16 * u, panelH, 0, 0, 0, 0.55f);
     label(r, x, y, px(1.6f * u), kToolNames[tool], 1.0f, 0.75f, 0.3f, 1);
     y += 8 * px(1.6f * u) + 6 * u;
@@ -1014,17 +1127,30 @@ void Editor::drawOptions(Renderer& r, float u) {
         r.text(x, y, s, t, 0.62f, 0.64f, 0.68f, 1);
         y += 8 * s + 6 * u;
     };
+    // The brush rows every ground tool shares: shape, edge, pattern (and how much it covers), size, strength.
+    auto brushRows = [&](bool withStrength, const char* strengthName) {
+        row("SHAPE", brushShapeName(shape), B_SHAPE_DN, B_SHAPE_UP);
+        row("EDGE", brushFallName(fall), B_FALL_DN, B_FALL_UP);
+        row("PATTERN", brushStyleName(style), B_STYLE_DN, B_STYLE_UP);
+        if (style != STYLE_SOLID) row("COVERAGE", std::to_string((int)std::lround(density * 100)) + "%", B_DENS_DN, B_DENS_UP);
+        row("RADIUS", radius < 1 ? std::string("1 CELL") : fmt1(radius, " M"), B_RAD_DN, B_RAD_UP);
+        if (withStrength) row(strengthName, std::to_string((int)std::lround(strength * 100)) + "%", B_STR_DN, B_STR_UP);
+    };
+    const char* brushKeys = "B F N: SHAPE EDGE PATTERN   , . COVERAGE";
     switch (tool) {
         case SCULPT:
-            for (int k = 0; k < 4; k++) button(r, x + (k % 2) * (half + 4 * u), y + (k / 2) * (bh + 4 * u), half, bh, kOpNames[k], B_OP + k, op == k, u);
-            y += 2 * (bh + 4 * u) + 6 * u;
-            row("SIZE", fmt1(radius, " M"), B_RAD_DN, B_RAD_UP);
-            row("STRENGTH", std::to_string((int)std::lround(strength * 100)) + "%", B_STR_DN, B_STR_UP);
+            for (int k = 0; k < BRUSH_OP_COUNT; k++)
+                button(r, x + (k % 2) * (half + 4 * u), y + (k / 2) * (bh + 4 * u), half, bh, kOpNames[k], B_OP + k, op == k, u);
+            y += (BRUSH_OP_COUNT / 2) * (bh + 4 * u) + 6 * u;
+            brushRows(true, "STRENGTH");
+            if (op == BRUSH_TERRACE) row("STEP", fmt1(kTerraces[terraceIdx], " M"), B_TERR_DN, B_TERR_UP);
             y += 6 * u;
-            note("HOLD LEFT BUTTON: BRUSH");
-            note("WHEEL OR [ ]: SIZE   TAB: NEXT BRUSH");
-            note("SHIFT: FINE");
-            note("FLATTEN: TO THE HEIGHT YOU CLICK");
+            note("HOLD LEFT BUTTON: BRUSH   SHIFT: FINE");
+            note("CTRL+WHEEL OR [ ] OR Q E: SIZE");
+            note("SHIFT+WHEEL OR - =: STRENGTH");
+            note(brushKeys);
+            note("TAB: NEXT BRUSH  FLATTEN: TO CLICKED HEIGHT");
+            note("ROUGHEN: BUMPS  TERRACE: LEVEL STEPS");
             break;
         case PAINT: {
             const auto& m = paintMaterials();
@@ -1034,23 +1160,38 @@ void Editor::drawOptions(Renderer& r, float u) {
                 r.rect(bx, by + 3 * u, 18 * u, bh - 6 * u, m[k].col[0], m[k].col[1], m[k].col[2], 1);
             }
             y += ((int)m.size() + 1) / 2 * (bh + 4 * u) + 6 * u;
-            row("SIZE", fmt1(radius, " M"), B_RAD_DN, B_RAD_UP);
-            button(r, x, y, w, bh, softPaint ? "EDGES: SOFT (SPECKLED)" : "EDGES: HARD", B_SOFT, false, u);
-            y += bh + 10 * u;
+            brushRows(true, "OPACITY");
+            y += 6 * u;
             note("HOLD LEFT BUTTON TO PAINT. TAB: NEXT");
+            note("CTRL+WHEEL OR [ ] OR Q E: SIZE");
+            note("SHIFT+WHEEL OR - =: OPACITY");
+            note(brushKeys);
+            note("SPLATTER: SCATTERED DABS. NOISE: MOTTLED");
             note("IT DRIVES LIKE IT LOOKS: MUD BOGS,");
             note("SAND SINKS, ICE SLIDES.");
             break;
         }
         case WATER:
-            row("DEPTH", fmt1(floodDepth, " M"), B_DEPTH_DN, B_DEPTH_UP);
-            row("DRY SIZE", fmt1(radius, " M"), B_RAD_DN, B_RAD_UP);
-            button(r, x, y, w, bh, "DRY UNDER THE MOUSE", B_DRY, false, u);
-            y += bh + 10 * u;
-            note("CLICK IN A HOLLOW: FILLS IT THIS DEEP");
-            note("(IT SPREADS OVER LOWER GROUND, SO DIG");
-            note("A BASIN WITH SCULPT > LOWER FIRST)");
-            note("SHIFT+CLICK: DRY");
+            for (int k = 0; k < 2; k++) button(r, x + k * (half + 4 * u), y, half, bh, k ? kWaterModes[1] : kWaterModes[0], B_WMODE + k, waterMode == k, u);
+            y += bh + 4 * u;
+            y = button(r, x, y, w, bh, kWaterModes[2], B_WMODE + 2, waterMode == 2, u) + 6 * u;
+            if (waterMode == 0) {
+                row("DEPTH", fmt1(floodDepth, " M"), B_DEPTH_DN, B_DEPTH_UP);
+                y += 6 * u;
+                note("CLICK IN A HOLLOW: FILLS IT THIS DEEP");
+                note("(IT SPREADS OVER LOWER GROUND, SO DIG");
+                note("A BASIN WITH SCULPT > LOWER FIRST)");
+                note("SHIFT+CLICK: DRAIN WITH THE BRUSH");
+            } else if (waterMode == 1) {
+                brushRows(false, "");
+                y += 6 * u;
+                note("HOLD LEFT BUTTON: DRAIN UNDER THE BRUSH");
+                note("CTRL+WHEEL OR [ ] OR Q E: SIZE");
+                note(brushKeys);
+            } else {
+                note("CLICK ON WATER: THE WHOLE POOL DRAINS,");
+                note("SHALLOW EDGES TOO. CTRL+Z BRINGS IT BACK.");
+            }
             break;
         case OBJECTS:
             for (int k = 0; k < OBJ_KIND_COUNT + 1; k++) button(r, x + (k % 2) * (half + 4 * u), y + (k / 2) * (bh + 4 * u), half, bh, kObjNames[k], B_OBJ + k, objKind == k, u);
@@ -1217,7 +1358,7 @@ void Editor::drawStatus(Renderer& r, float u) {
                   mapName(l.map), levelModeName(l.mode), core.cellEdits(), l.objects.size(), l.gates.size(),
                   core.canUndo() ? core.undoName().c_str() : "-");
     r.text(12 * u, y + 7 * u, s, buf, 0.9f, 0.91f, 0.94f, 1);
-    const char* keys = "WASD FLY  MOUSE WHEEL ZOOM  Q E SIZE/UP DOWN  RIGHT-DRAG LOOK  SHIFT FAST  1-7 TOOLS  CTRL+Z/Y UNDO/REDO  CTRL+S SAVE  F5 PLAY  ESC EXIT";
+    const char* keys = "WASD FLY  WHEEL ZOOM  CTRL+WHEEL BRUSH SIZE  Q E SIZE/UP DOWN  RIGHT-DRAG LOOK  SHIFT FAST  1-7 TOOLS  CTRL+Z/Y UNDO/REDO  CTRL+S SAVE  F5 PLAY  ESC EXIT";
     const float ks = px(1.0f * u);
     r.rect(W - r.textWidth(keys, ks) - 20 * u, y - 8 * ks - 10 * u, r.textWidth(keys, ks) + 20 * u, 8 * ks + 10 * u, 0, 0, 0, 0.45f);
     r.text(W - r.textWidth(keys, ks) - 10 * u, y - 8 * ks - 5 * u, ks, keys, 0.7f, 0.72f, 0.76f, 1);
