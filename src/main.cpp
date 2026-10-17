@@ -33,7 +33,9 @@
 #include "interact.h"
 #include "invdraw.h"
 #include "walker.h"
+#include "buildinfo.h"
 #include "coop.h"
+#include "debugscreen.h"
 #include "editor.h"
 #include "fx.h"
 #include "gamepad.h"
@@ -90,6 +92,7 @@ struct Options {
     int adaptive = -1;            // --adaptive 0/1: auto-scale quality (default: on)
     bool career = false;          // --career: career mode (a fresh one when scripted)
     bool photo = false;           // --photo: no HUD (screenshots; F10 in the game)
+    int debugScreen = 0;          // --debug-screen [graph]: F3 (and Shift+F3) already pressed
     bool mph = false;             // --mph
     double throttleCap = -1;      // --throttle PCT[,RESPONSE[,PAD]]: the throttle limit (testing)
     int throttleResp = 0, throttlePad = 0;
@@ -257,7 +260,7 @@ struct BuildWatch {
 #ifndef _WIN32
         static const std::set<std::string> withValue = {"--map", "--player", "--spawn", "--resume-model", "--scenario", "--script",
                                                         "--shot-prefix", "--shot-frames", "--menu", "--orbit", "--spawn-section", "--eye"};
-        static const std::set<std::string> flags = {"--garage", "--show-help"};
+        static const std::set<std::string> flags = {"--garage", "--show-help", "--debug-screen", "--debug-graph"};
         std::vector<std::string> args = {exe};
         for (int i = 1; i < argc; i++) {
             const std::string a = argv[i];
@@ -316,6 +319,8 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--props") o.props = std::atoi(next().c_str());
         else if (a == "--adaptive") o.adaptive = std::atoi(next().c_str());
         else if (a == "--photo") o.photo = true;
+        else if (a == "--debug-screen") o.debugScreen = 1;
+        else if (a == "--debug-graph") o.debugScreen = 2;
         else if (a == "--mph") o.mph = true;
         else if (a == "--throttle") {
             std::string v = next();
@@ -656,6 +661,7 @@ struct HudState {
     // the best, and which side of the start line you were on.
     double lapTime = -1, lastLap = 0, bestLap = 0, lapSide = 0;
     bool showHelp = false, showFps = false, scenarioDetail = false;
+    bool debugOn = false;   // F3: the debug screen is up (it has the FPS, and the players list, in it)
     std::string gpu;        // the graphics card drawing it (GL_RENDERER), shown with the FPS
     double physicsMs = 0, drawCpuMs = 0;
     double confirmReset = 0;  // R just pressed: a second press within this long respawns at the start
@@ -1121,7 +1127,7 @@ void drawHelp(Renderer& r, float u, int W, int H, bool mph) {
         {"MOUSE", "LOOK / ZOOM"},             {"N", "BEAM VIEW"},
         {"[ ]", "SLOW MOTION"},               {"P", "PAUSE"},
         {"X", "TRACTION CONTROL"},            {"F11", "FULLSCREEN"},
-        {"F3", "FPS"},                        {"F10", "HIDE THE HUD (PHOTOS)"},                        {"ESC", "MENU: CARS, SETTINGS, QUIT"},
+        {"F3", "DEBUG SCREEN (SHIFT: GRAPH)"},                        {"F10", "HIDE THE HUD (PHOTOS)"},                        {"ESC", "MENU: CARS, SETTINGS, QUIT"},
         {"H", "CLOSE"},
     };
     const int n = sizeof(keys) / sizeof(keys[0]), rows = (n + 1) / 2;
@@ -1413,7 +1419,7 @@ void drawHud(Renderer& r, const Sim& sim, const View& view, HudState& hud, const
     drawRecovery(r, sim, u);
     drawAnchors(r, sim, u, W, H);
     drawStation(r, sim, u, W, H);
-    drawPlayers(r, sim, net, view, u, W, H);
+    if (!hud.debugOn) drawPlayers(r, sim, net, view, u, W, H);  // (F3 lists them itself)
     drawWinchAim(r, sim, aim, view, u, W, H);
     drawPilot(r, sim, view, u, W, H);
     drawCaches(r, career, caches, view, u, W, H);
@@ -1513,7 +1519,7 @@ void drawHud(Renderer& r, const Sim& sim, const View& view, HudState& hud, const
                                               : "H: CONTROLS   ESC: MENU";
         centeredPill(r, W / 2.0f, y, px(1.4f * u), line, 0.02f, 0.02f, 0.03f, a, 0.9f, 0.9f, 0.92f);
     }
-    if (hud.showFps) {
+    if (hud.showFps && !hud.debugOn) {
         std::snprintf(buf, sizeof(buf), "%d FPS", (int)std::lround(fps));
         label(r, W - r.textWidth(buf, px(1.3f * u)) - 10 * u, 8 * u, px(1.3f * u), buf, 0.8f, 0.9f, 0.8f);
         // (Which chip draws it: on a laptop with two, the built-in one is far slower.)
@@ -1742,10 +1748,17 @@ int main(int argc, char** argv) {
     DebugView debug = (DebugView)(opt.debug % DEBUG_VIEW_COUNT);
     bool dragging = false;
     HudState hud;
+    DebugScreen dbg;  // F3
+    const std::string buildText = buildDescription();
+    std::string peerAddress;  // the game joined, for the debug screen
+    double dbgSimSeconds = 0, dbgMsSum = 0;  // (the screen's own CPU time, for CZ_BENCH)
+    int dbgMsN = 0;
+    int dbgSubsteps = 0;
     hud.gpu = gpuName;
     hud.photo = opt.photo;
     if (scripted) hud.hintTime = 0;
     hud.showHelp = opt.showHelp;
+    if (opt.debugScreen) dbg.toggle(opt.debugScreen == 2);
     if (opt.mods[0] >= 0 && sim.cars[sim.player].spec->model >= 0) {
         int v = sim.cars[sim.player].spec->model;
         ModSet ms;
@@ -1928,6 +1941,7 @@ int main(int argc, char** argv) {
         renderer.setWorld(sim.world);
         drawnWorld = sim.world.stamp;
         hud.bestKmh = 0;
+        dbgSimSeconds = 0;
         wrapSeen = sim.wrapShift = 0;
         fx.clear();
         cam.initialized = false;
@@ -1965,6 +1979,7 @@ int main(int argc, char** argv) {
             if (!net::parseAddress(address, h, menu.joinPort)) menu.joinPort = net::kDefaultPort;  // (for the failed card's port help)
         }
         net.password = !opt.password.empty() ? opt.password : settings.netPassword;
+        peerAddress = address;
         if (net.beginJoin(address, settings.playerName)) {
             joinState = 1;
         } else {
@@ -1977,6 +1992,7 @@ int main(int argc, char** argv) {
     // ---- end multiplayer joining
     auto startJoin = [&](const std::string& address) {
         net.password = !opt.password.empty() ? opt.password : settings.netPassword;
+        peerAddress = address;
         if (!net.join(address, settings.playerName)) {
             hud.toast("CAN'T JOIN: " + net.error);
             std::printf("can't join %s: %s\n", address.c_str(), net.error.c_str());
@@ -2882,10 +2898,7 @@ int main(int argc, char** argv) {
                             else if (walker.active) getIn();
                             else getOut();
                             break;
-                        case SC_F3:
-                            settings.showFps = hud.showFps = !hud.showFps;
-                            saveSettings();
-                            break;
+                        case SC_F3: dbg.toggle(shiftDown()); break;
                         case SC_F5:  // load the new build (see BuildWatch)
                             if (editorSuspended) hud.toast("NO RELOADING DURING A PLAYTEST: F1 BACK TO THE EDITOR FIRST");  // (a reload would lose the editor and its unsaved edits)
                             else if (hud.newBuild) reload = true, running = false;
@@ -3705,6 +3718,7 @@ int main(int argc, char** argv) {
             }
         }
         if (!(playback.active() && !playback.done) && !net.joining()) net.send(sim, (double)(SDL_GetPerformanceCounter()) / freq);
+        dbgSimSeconds += simDt, dbgSubsteps = (int)std::lround(simDt / sim.h);
         FxEvents events = fx.update(sim, simDt);
 
         Car& car = sim.cars[sim.player];
@@ -4392,6 +4406,41 @@ int main(int argc, char** argv) {
         if (editor.active && !menu.open) editor.draw(renderer, W, H, dt);
         else if (!menu.open && !hud.photo) drawHud(renderer, sim, view, hud, &playback, net, winchAim, W, H, fps, dt, settings.mph, career, caches);
         const bool showHud = !menu.open && !editor.active && !hud.photo;
+        hud.debugOn = dbg.on;
+        if (dbg.on && showHud) {  // F3: gathered and painted only while it's up
+            if (dbg.tick(frameTimeMs, dt)) {
+                const Car& pc = sim.cars[sim.player];
+                const V3 at = walker.active ? walker.p : pc.frame().com;
+                dbg.biome = biomeAt(sim.world, at.x, at.z);
+                const std::vector<Place> spots = pilotPlaces(sim, net);
+                double best = 1e18;
+                dbg.place[0] = 0, dbg.placeDist = 0;
+                for (const Place& pl : spots) {
+                    if (pl.kind != 0) continue;
+                    const double d = std::hypot(pl.p.x - at.x, pl.p.z - at.z);
+                    if (d < best) best = d, dbg.placeDist = d, std::snprintf(dbg.place, sizeof dbg.place, "%s", pl.name.c_str());
+                }
+            }
+            DebugInputs di;
+            di.sim = &sim, di.walker = &walker, di.run = &run, di.net = &net, di.peer = peerAddress.c_str();
+            di.camMode = cam.mode, di.mph = settings.mph, di.playtest = editorSuspended, di.throttleCap = hud.throttleCap;
+            di.dayHours = dayHours, di.simSeconds = dbgSimSeconds, di.frame = dbg.history.stats();
+            di.physicsMs = hud.physicsMs, di.drawCpuMs = hud.drawCpuMs, di.substeps = dbgSubsteps;
+            di.physicsThreads = sim.physicsThreads(), di.physicsThreadLimit = physicsThreadLimit();
+            di.width = W, di.height = H, di.gpu = hud.gpu.c_str(), di.build = buildText.c_str();
+            const Renderer::GeometryStats& gs = renderer.geometryStats();
+            di.terrainTris = gs.terrainTriangles, di.terrainFullTris = gs.terrainFullTriangles;
+            di.terrainChunks = gs.terrainChunks, di.terrainVisible = gs.terrainVisibleChunks;
+            di.sceneryVerts = gs.sceneryVertices, di.shadowVerts = gs.shadowSceneryVertices;
+            const PropStats& dps = renderer.propStats();
+            di.propDraws = dps.draws, di.propInstances = dps.instances, di.propBillboards = dps.billboards, di.propTris = dps.tris, di.propGpuMs = dps.gpuMs;
+            di.renderScale = renderer.settings.renderScale, di.shadows = renderer.settings.shadows, di.msaa = renderer.settings.msaa;
+            dbg.readSlow(di, dt);
+            const bool corner = jobOn || career.on || editorSuspended;  // (their panels sit in the top left)
+            const uint64_t dbgStart = SDL_GetPerformanceCounter();
+            dbg.draw(renderer, di, W, H, corner ? 60 * std::max(0.75f, H / 720.0f) : 0);
+            if (frame >= 40) dbgMsSum += (double)(SDL_GetPerformanceCounter() - dbgStart) * 1000 / freq, dbgMsN++;  // (CZ_BENCH prints it)
+        }
         if (showHud && walker.active && cam.mode != 3) {  // on foot: a crosshair, the job in front of you, what you carry
             const float u = std::max(0.75f, H / 720.0f), s = px(1.4f * u);
             renderer.rect(W / 2.0f - 2 * u, H / 2.0f - 2 * u, 4 * u, 4 * u, 1, 1, 1, 0.8f);
@@ -4581,6 +4630,7 @@ int main(int argc, char** argv) {
                 std::printf("bench: adaptive %d, scale %.2f, shadows %d, MSAA %d, AO %d, ground %d, props %d\n",
                             settings.adaptiveQuality, renderer.settings.renderScale, renderer.settings.shadows,
                             renderer.settings.msaa, renderer.settings.ao, renderer.settings.ground, renderer.settings.props);
+                if (dbgMsN) std::printf("bench: debug screen %.3f ms/frame CPU (gather + queue) over %d frames\n", dbgMsSum / dbgMsN, dbgMsN);
                 const PropStats& ps = renderer.propStats();
                 std::printf("bench: props %.2f ms GPU (timer queries), %.2f ms CPU (%.2f ms culling/LODs); main %d draws, %d instances, %d billboards, %d scatter, %.0fk tris; "
                             "shadows %d draws, %d instances, %.0fk tris\n",

@@ -60,7 +60,7 @@ Download from the [releases page](https://github.com/Benbone21/crumplezone/relea
 
 The executable requests the high-performance NVIDIA/AMD GPU on hybrid laptops. Windows can override that request: if **F3** shows the integrated GPU, select `crumplezone.exe` in Windows **Settings → System → Display → Graphics**, choose **High performance**, and restart the game. [NVIDIA explains the Windows GPU preference override here](https://nvidia.custhelp.com/app/answers/detail/a_id/5035).
 
-F3 shows the active GPU, FPS, physics time and CPU time submitting the scene. If physics time rises with more cars, lower the car count; if rendering is expensive, lower the graphics preset or render scale. The draw CPU number includes time blocked by the graphics driver and is not a measurement of GPU execution time. Adaptive quality targets 60 FPS by temporarily reducing render scale and effects; it preserves your saved graphics choices, restores detail when frame times allow, and can be disabled under Settings. It cannot guarantee 60 FPS when physics or other CPU work is the bottleneck. Windows writes the driver version, active GPU, physics thread count, HDR target and shader errors to `%APPDATA%\crumplezone\graphics.log` on each launch.
+F3 opens the debug screen: the active GPU, FPS (average and 1% low), physics time and CPU time submitting the scene, with your position, the vehicle and its wheels, and the network; Shift+F3 adds a frame-time graph. If physics time rises with more cars, lower the car count; if rendering is expensive, lower the graphics preset or render scale. The draw CPU number includes time blocked by the graphics driver and is not a measurement of GPU execution time. Adaptive quality targets 60 FPS by temporarily reducing render scale and effects; it preserves your saved graphics choices, restores detail when frame times allow, and can be disabled under Settings. It cannot guarantee 60 FPS when physics or other CPU work is the bottleneck. Windows writes the driver version, active GPU, physics thread count, HDR target and shader errors to `%APPDATA%\crumplezone\graphics.log` on each launch.
 
 Set **PHYSICS THREADS** in **Esc → Settings** to AUTO or any count up to all logical CPUs (hardware threads), including counts above four. It saves between launches and applies immediately. AUTO uses the conservative tested budget of up to four threads; choosing the highest count, marked ALL, permits the whole CPU. More threads can cost more than they save in small scenes, so compare physics time with F3. The budget includes the main thread; small workloads still run serially. Car forces and collision geometry preparation share this budget for larger scenes. Car-to-car contact forces stay in their original order, at the same 2,000 Hz timestep. Collision bounds use a spatial sweep, and stationary supports reuse their triangle grids. HDR anti-aliasing is applied to the scene once; unsupported multisample targets fall back to fewer samples. See [performance measurements and verification](docs/performance.md).
 
@@ -170,7 +170,7 @@ scenario finishes, you can drive around in the aftermath.
 | X | Traction control on/off |
 | F11 | Fullscreen |
 | H | Controls overlay |
-| F3 | Show FPS |
+| F3 | Debug screen (FPS, timings, position, vehicle, wheels, network); Shift+F3 adds a frame-time graph |
 | F5 | Load the new build when the HUD says one is ready (see Build and run) |
 | J | Expand the checks list while a scenario plays |
 
