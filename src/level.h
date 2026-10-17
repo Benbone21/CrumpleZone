@@ -41,7 +41,7 @@ struct LevelObject {
     double yaw = 0, pitch = 0, roll = 0;  // radians (box, posed rock, model: the frame frameOf makes; a model tipped saves a #modelpose line)
     double top = 0;    // rock: how much shows above the ground
     uint32_t seed = 1; // rock: its shape
-    int sub = 0;       // model: its one setting (a trail sign's rating, a cairn's or stump's shape); tree: 0 pine, 1 broadleaf, 2 dead; box: 1 = rock slab; rock: 1 = placed in a pose (yaw, pitch, roll), not left to chance
+    int sub = 0;       // bush: its kind (plants.h); model: its one setting (a trail sign's rating, a cairn's or stump's shape); tree: 0 pine, 1 broadleaf, 2 dead; box: 1 = rock slab; rock: 1 = placed in a pose (yaw, pitch, roll), not left to chance
     float col[3] = {0.6f, 0.6f, 0.6f};
     std::string name;  // station; model: its id (modelkit.h)
     double lift = 0;   // box, tree, model: how far it stands above where the ground would put it (m; negative sinks it)

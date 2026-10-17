@@ -505,6 +505,15 @@ void World::buildSectionPark() {
     std::stable_sort(sections.begin(), sections.end(), [](const SectionSpot& a, const SectionSpot& b) { return a.type < b.type; });
 }
 
+Bush growBush(const V3& p, int habitat, bool edge, double u, float tint) {
+    Bush b;
+    b.p = p;
+    b.kind = plantKindFor(habitat, edge, plantRoll(p.x, p.z, 1));
+    b.r = plantRadius(b.kind, u);
+    b.tint = tint;
+    return b;
+}
+
 // Bushes round the groves and boulders out in the meadows (the proving ground's hills).
 void World::scatterScenery(uint32_t seed) {
     uint32_t rng = seed;
@@ -543,7 +552,8 @@ void World::scatterScenery(uint32_t seed) {
         if (!offRoad(x, z, 12) || !dry(x, z, 2)) continue;
         bool nearWood = !clearOfTrees(x, z, 14);
         if (rnd() > (nearWood ? 0.8 : 0.08)) continue;
-        bushes.push_back({V3(x, height(x, z), z), 0.5 + rnd() * 0.9, (float)(0.8 + rnd() * 0.4)});
+        const double u = rnd();
+        bushes.push_back(growBush(V3(x, height(x, z), z), HAB_MEADOW, nearWood, u, (float)(0.8 + rnd() * 0.4)));
     }
     // Boulders in the meadows, clear of the trees (and the paths to them) and the roads.
     for (int attempt = 0; attempt < 20000 && rocks.size() < 140; attempt++) {
@@ -693,7 +703,17 @@ void World::buildWilds() {
         const double x = (rnd() * 2 - 1) * 510, z = (rnd() * 2 - 1) * 510;
         const bool nearWood = kind == WILDS_DESERT ? false : !clearOfTrees(x, z, 14);
         if (rnd() > (nearWood ? 0.8 : bushOpen)) continue;
-        bushes.push_back({V3(x, height(x, z), z), 0.5 + rnd() * 0.9, (float)(0.8 + rnd() * 0.4)});
+        const double u = rnd();
+        bushes.push_back(growBush(V3(x, height(x, z), z), (int)kind, nearWood, u, (float)(0.8 + rnd() * 0.4)));  // (a habitat for each WildsKind)
+    }
+    // Undergrowth: more of the same (ferns in the woods, flowers and stones in the meadows, scrub in the sand), from hashes of the spot so none
+    // of the random numbers the rocks use move.
+    const size_t shrubs = bushes.size(), undergrowth = shrubs * 2 / 5;
+    for (int i = 0; i < 60000 && bushes.size() < shrubs + undergrowth; i++) {
+        const double x = (plantRoll(i, 7, 21) * 2 - 1) * 510, z = (plantRoll(i, 11, 22) * 2 - 1) * 510;
+        const bool nearWood = kind == WILDS_DESERT ? false : !clearOfTrees(x, z, 14);
+        if (plantRoll(x, z, 23) > (nearWood ? 0.8 : bushOpen)) continue;
+        bushes.push_back(growBush(V3(x, height(x, z), z), (int)kind, nearWood, plantRoll(x, z, 24), (float)(0.8 + plantRoll(x, z, 25) * 0.4)));
     }
     // Boulders, clear of the trees; in the canyon and the uplands they gather at the feet of the steeper ground.
     for (int attempt = 0; attempt < 60000 && (int)rocks.size() < rockMax; attempt++) {

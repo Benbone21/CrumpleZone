@@ -1178,7 +1178,9 @@ void World::buildBackcountry() {
         if (keep[id] || waterY[id] > -1e8 || paint[id] != PAINT_NONE || surf[id] != SURF_GRASS || hgrid[id] > 70) continue;
         const double forest = fbmNoise(x * 0.010 + 7.0, z * 0.010 - 3.0, 3);
         if (rnd() > 0.15 + 0.6 * smoothstep(0.3, 0.55, forest)) continue;
-        bushes.push_back({V3(x, hgrid[id], z), between(0.4, 1.3), (float)between(0.75, 1.2)});
+        const double u = between(0, 1);
+        const int habitat = hgrid[id] > 45 ? HAB_UPLAND : forest > 0.5 ? HAB_FOREST : HAB_MEADOW;
+        bushes.push_back(growBush(V3(x, hgrid[id], z), habitat, forest > 0.38, u, (float)between(0.75, 1.2)));
     }
 
     // ---- Stations, start ----------------------------------------------------------------------

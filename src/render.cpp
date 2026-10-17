@@ -2306,7 +2306,7 @@ void Renderer::updateObjects(const World& world) {
         treeVertexCount = (int)v.size();
     }
     Sig bs = sceneryBase(world, pq, cover);
-    for (const Bush& b : world.bushes) bs.vec(b.p), bs.num(b.r), bs.num(b.tint);
+    for (const Bush& b : world.bushes) bs.vec(b.p), bs.num(b.r), bs.num(b.tint), bs.num(b.kind);
     if (bs.h != bushSig_ || bushVertexCount == 0) {
         bushSig_ = bs.h;
         std::vector<Vtx> v;
@@ -2363,6 +2363,17 @@ void Renderer::drawBatches(GLuint vao, const std::vector<StaticBatch>& batches, 
     BindVertexArray(vao);
     for (const auto& batch : batches) {
         if (!batch.bounds.visible(vp)) continue;
+        DrawArrays(GL_TRIANGLES, batch.first, batch.count);
+        (shadow ? geometryStats_.shadowSceneryVertices : geometryStats_.sceneryVertices) += batch.count;
+    }
+}
+
+// Bushes are small and many: the batches (64 m squares) nearer than 300 m, and for shadows 80 m (a bush's shadow past that is a speck).
+void Renderer::drawBushes(const M4& vp, const V3& eye, bool shadow) {
+    const double reach = shadow ? 80 : 300;
+    BindVertexArray(bushVao);
+    for (const auto& batch : bushBatches) {
+        if (batch.bounds.distance(eye) > reach || !batch.bounds.visible(vp)) continue;
         DrawArrays(GL_TRIANGLES, batch.first, batch.count);
         (shadow ? geometryStats_.shadowSceneryVertices : geometryStats_.sceneryVertices) += batch.count;
     }
@@ -3447,7 +3458,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         }
         drawBatches(treeVao, treeBatches, lightVP[c], true);
         drawBatches(sceneryVao, sceneryBatches, lightVP[c], true);
-        drawBatches(bushVao, bushBatches, lightVP[c], true);
+        drawBushes(lightVP[c], view.eye, true);
         drawCarBodies(sim, progDepth, false);
         BindVertexArray(dynVao);
         DrawArrays(GL_TRIANGLES, 0, (GLsizei)partVerts.size());
@@ -3624,7 +3635,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     drawBatches(treeVao, treeBatches, vp, false);
     Uniform1i(uniformLocation(progLit, "uTreeFadeN"), 0);
     drawBatches(sceneryVao, sceneryBatches, vp, false);
-    drawBatches(bushVao, bushBatches, vp, false);
+    drawBushes(vp, view.eye, false);
     props.draw(vp, [&](GLuint prog) {
         setLighting(prog);
         Uniform1i(uniformLocation(prog, "uMap"), mapId);

@@ -1149,7 +1149,7 @@ bool EditCore::baseToObject(const EditPick& p, LevelObject& o, V3& key) const {
         }
         case 6: {
             const Bush& b = w.bushes[i];
-            o.kind = OBJ_BUSH, o.p = V3(b.p.x, 0, b.p.z), o.size = V3(b.r, 0, 0), o.col[0] = b.tint;
+            o.kind = OBJ_BUSH, o.p = V3(b.p.x, 0, b.p.z), o.size = V3(b.r, 0, 0), o.col[0] = b.tint, o.sub = plantKindOf(b.kind);
             o.lift = b.p.y - w.height(b.p.x, b.p.z);
             key = V3(b.p.x, 7, b.p.z);
             return true;
@@ -1867,10 +1867,11 @@ Shape EditCore::shapeOf(int baseKind, int index) const {
         case 6: {
             if (index >= (int)w.bushes.size()) break;
             const Bush& b = w.bushes[index];
-            const V3 c = b.p + V3(0, b.r * 0.55, 0);
-            ringEdges(s, c, V3(1, 0, 0), V3(0, 0, 1), b.r, 14);
-            ringEdges(s, c, V3(1, 0, 0), V3(0, 0.65, 0), b.r, 14);
-            ringEdges(s, c, V3(0, 0, 1), V3(0, 0.65, 0), b.r, 14);
+            const PlantInfo& pi = plantInfo(b.kind);
+            const V3 c = b.p + V3(0, b.r * pi.cy, 0);
+            ringEdges(s, c, V3(1, 0, 0), V3(0, 0, 1), b.r * pi.rx, 14);
+            ringEdges(s, c, V3(1, 0, 0), V3(0, pi.ry / pi.rx, 0), b.r * pi.rx, 14);
+            ringEdges(s, c, V3(0, 0, 1), V3(0, pi.ry / pi.rx, 0), b.r * pi.rx, 14);
             break;
         }
         case 5:
@@ -2204,7 +2205,7 @@ std::vector<EditPick> EditCore::pickInside(const std::function<bool(const V3&)>&
         if (!everything && ownerOf(4, i) < 0) continue;
         take(4, i, f.a, f.kind == PROP_FENCE ? (f.a + f.b) * 0.5 + V3(0, 0.6, 0) : f.a + V3(0, f.kind == PROP_GARAGE ? 2 : 1, 0), f.kind == PROP_GARAGE ? "REPAIR SHOP" : f.kind == PROP_FENCE ? "FENCE" : "PROP");
     }
-    for (int i = 0; i < (int)w.bushes.size(); i++) take(6, i, w.bushes[i].p, w.bushes[i].p + V3(0, w.bushes[i].r * 0.5, 0), "BUSH");
+    for (int i = 0; i < (int)w.bushes.size(); i++) take(6, i, w.bushes[i].p, w.bushes[i].p + V3(0, w.bushes[i].r * plantInfo(w.bushes[i].kind).cy * 0.9, 0), plantInfo(w.bushes[i].kind).name);
     for (int i = 0; i < (int)w.models.size(); i++)
         if (ownerOf(5, i) >= 0) take(5, i, w.models[i].p, w.models[i].p + V3(0, 1, 0), "STRUCTURE");
     return found;
@@ -2266,7 +2267,8 @@ EditPick EditCore::pick(const V3& o, const V3& d, double hitT, bool includeBase,
     }
     for (int i = 0; i < (int)w.bushes.size(); i++) {
         const Bush& b = w.bushes[i];
-        if (rayEllipsoid(o, d, b.p + V3(0, b.r * 0.55, 0), b.r, b.r * 0.65, t)) consider(t, EditPick::BASE, i, 6, b.p, "BUSH");
+        const PlantInfo& pi = plantInfo(b.kind);
+        if (rayEllipsoid(o, d, b.p + V3(0, b.r * pi.cy, 0), b.r * pi.rx, b.r * pi.ry, t)) consider(t, EditPick::BASE, i, 6, b.p, pi.name);
     }
     for (int i = 0; i < (int)w.models.size(); i++) {
         if (ownerOf(5, i) < 0) continue;  // (only the structures you put there)
