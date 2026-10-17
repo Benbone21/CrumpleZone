@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -206,7 +207,7 @@ P defaults(const Variant& v);
 // ---- Picks from the model lab -------------------------------------------------------
 enum Status { NEW = 0, LIKED = 1, REDO = 2 };
 struct Choice {
-    int pick = 0;          // the variant the game uses
+    std::set<int> off;     // designs left out of the game (the game uses every other one; none: all of them)
     int status = NEW;
     std::string note;      // what to change (for a redo)
     std::map<int, std::map<std::string, double>> tweaks;  // per variant: params moved off their defaults
@@ -216,7 +217,12 @@ std::map<std::string, Choice>& choices();
 std::string choicesPath();
 bool loadChoices(const std::string& path);
 bool saveChoices(const std::string& path);
-// The variant picked for `id` and its params (picks loaded on first use).
+// The game uses every design not left out: a placed copy takes one by a hash of where it stands (the same on every peer, the
+// server and after a save/load). pickedVariant: the first one in use, for the things that aren't placed (a part, a held tool).
+bool variantIncluded(const ModelDef& def, int variant);
+int variantFor(const ModelDef& def, uint32_t key);  // (of the designs in use; `key` from placementKey or a seed)
+uint32_t placementKey(const std::string& id, double x, double z);
+// The first design in use for `id` and its params (picks loaded on first use).
 int pickedVariant(const ModelDef& def);
 P pickedParams(const ModelDef& def, int variant);
 // The picked mesh for a model, cached ("" or unknown id: an empty mesh). `over`: params to

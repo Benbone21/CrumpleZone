@@ -158,15 +158,15 @@ SCENARIO(modelsPicks, "models/picks", "The model lab's picks save and load: the 
     auto saved = mk::choices();
     mk::choices().clear();
     mk::Choice& c = mk::choices()[d->id];
-    c.pick = 1, c.status = mk::REDO, c.note = "MAKE IT TALLER", c.tweaks[1][q.key] = tweak;
+    c.off = {0}, c.status = mk::REDO, c.note = "MAKE IT TALLER", c.tweaks[1][q.key] = tweak;
     const std::string path = "build/test-model-picks.txt";
     ctx.check("saves", mk::saveChoices(path));
     mk::choices().clear();
     ctx.check("loads", mk::loadChoices(path));
     const mk::Choice& back = mk::choices()[d->id];
-    ctx.check("the same picks", back.pick == 1 && back.status == mk::REDO && back.note == "MAKE IT TALLER" && back.tweaks.count(1) &&
+    ctx.check("the same picks", back.off == std::set<int>{0} && back.status == mk::REDO && back.note == "MAKE IT TALLER" && back.tweaks.count(1) &&
                                     std::fabs(back.tweaks.at(1).at(q.key) - tweak) < 1e-6);
-    ctx.check("the game builds the picked design, tweaked", mk::pickedVariant(*d) == 1 && std::fabs(mk::pickedParams(*d, 1)(q.key) - tweak) < 1e-6);
+    ctx.check("the game skips the design left out and builds the others, tweaked", mk::pickedVariant(*d) == 1 && !mk::variantIncluded(*d, 0) && std::fabs(mk::pickedParams(*d, 1)(q.key) - tweak) < 1e-6);
     std::remove(path.c_str());
     mk::choices() = saved;
     mk::forgetMeshes();
@@ -188,4 +188,54 @@ SCENARIO(modelsThreads, "models/threads", "Several threads asking the shared mes
         });
     for (std::thread& th : pool) th.join();
     ctx.check("every copy is whole", bad == 0, std::to_string(bad.load()) + " models came back part-built");
+}
+
+SCENARIO(modelsAllVariants, "models/all-variants", "The game uses every design of a model not left out, chosen by where each copy stands; an old picks file leaves them all in") {
+    const mk::ModelDef* d = nullptr;
+    for (const mk::ModelDef& m : mk::catalog())
+        if (m.variants.size() >= 3 && (!d || m.variants.size() > d->variants.size())) d = &m;
+    ctx.check("a model with several designs", d != nullptr);
+    if (!d) return;
+    const int n = (int)d->variants.size();
+    auto saved = mk::choices();
+    mk::choices().clear();
+    auto tally = [&](std::vector<int>& seen) {
+        seen.assign(n, 0);
+        for (int i = 0; i < 4000; i++) {
+            const double x = (i % 80) * 3.7 - 100, z = (i / 80) * 4.3 - 90;
+            const uint32_t k = mk::placementKey(d->id, x, z);
+            const int v = mk::variantFor(*d, k);
+            if (v != mk::variantFor(*d, mk::placementKey(d->id, x, z))) return false;  // (the same again)
+            seen[v]++;
+        }
+        return true;
+    };
+    std::vector<int> seen;
+    ctx.check("deterministic per placement", tally(seen));
+    bool all = true;
+    for (int v = 0; v < n; v++) all &= seen[v] > 4000 / n / 2;
+    ctx.check("with nothing left out every design turns up, about evenly", all);
+    // One left out never appears; the others still all do.
+    mk::choices()[d->id].off = {1};
+    tally(seen);
+    all = seen[1] == 0;
+    for (int v = 0; v < n; v++) all &= v == 1 || seen[v] > 0;
+    ctx.check("a design left out never appears; the rest do", all && !mk::variantIncluded(*d, 1) && mk::pickedVariant(*d) == 0);
+    // Round trip, and an older file with a single pick.
+    const std::string path = "build/test-model-variants.txt";
+    ctx.check("saves", mk::saveChoices(path));
+    mk::choices().clear();
+    ctx.check("loads", mk::loadChoices(path));
+    ctx.check("the same design left out", mk::choices()[d->id].off == std::set<int>{1});
+    if (FILE* f = std::fopen(path.c_str(), "w")) {
+        std::fprintf(f, "[%s]\npick = %s\nstatus = liked\n", d->id.c_str(), d->variants[n - 1].name.c_str());
+        std::fclose(f);
+    }
+    ctx.check("loads an old file", mk::loadChoices(path));
+    all = true;
+    for (int v = 0; v < n; v++) all &= mk::variantIncluded(*d, v);
+    ctx.check("its single pick leaves every design in", all && mk::choices()[d->id].status == mk::LIKED);
+    std::remove(path.c_str());
+    mk::choices() = saved;
+    mk::forgetMeshes();
 }

@@ -655,7 +655,11 @@ bool loadChoices(const std::string& path) {
         const size_t eq = line.find('=');
         if (eq == std::string::npos) continue;
         const std::string key = trim(line.substr(0, eq)), val = trim(line.substr(eq + 1));
-        if (key == "pick") c.pick = std::max(0, variantByName(*d, val));
+        if (key == "pick") continue;  // (an older file's single pick: the lab now leaves designs out instead; all of them stay in)
+        if (key == "exclude") {
+            const int v = variantByName(*d, val);
+            if (v >= 0) c.off.insert(v);
+        }
         else if (key == "status") c.status = val == "liked" ? LIKED : val == "redo" ? REDO : NEW;
         else if (key == "note") c.note = val;
     }
@@ -672,14 +676,15 @@ bool saveChoices(const std::string& path) {
     FILE* f = std::fopen(tmp.c_str(), "w");
     if (!f) return false;
     std::fprintf(f, "# Crumple Zone model picks, written by the model lab (crumplezone --lab).\n"
-                    "# pick: the design the game uses. status: new, liked, or redo (with a note on what to change).\n"
+                    "# exclude: a design the game leaves out (the game uses all the others). status: new, liked, or redo (with a note on what to change).\n"
                     "# tweak <design>: settings moved off their defaults.\n\n");
     for (const ModelDef& d : catalog()) {
         auto it = choices().find(d.id);
         if (it == choices().end()) continue;
         const Choice& c = it->second;
         std::fprintf(f, "[%s]\n", d.id.c_str());
-        if (c.pick >= 0 && c.pick < (int)d.variants.size()) std::fprintf(f, "pick = %s\n", d.variants[c.pick].name.c_str());
+        for (int v : c.off)
+            if (v >= 0 && v < (int)d.variants.size() && c.off.size() < d.variants.size()) std::fprintf(f, "exclude = %s\n", d.variants[v].name.c_str());
         std::fprintf(f, "status = %s\n", c.status == LIKED ? "liked" : c.status == REDO ? "redo" : "new");
         if (!c.note.empty()) std::fprintf(f, "note = %s\n", c.note.c_str());
         for (const auto& tv : c.tweaks) {
@@ -698,12 +703,36 @@ bool saveChoices(const std::string& path) {
     return ok && std::rename(tmp.c_str(), path.c_str()) == 0;
 }
 
-int pickedVariant(const ModelDef& def) {
+bool variantIncluded(const ModelDef& def, int variant) {
     std::lock_guard<std::recursive_mutex> lk(picksLock());
     if (!loaded) loadChoices(choicesPath());
+    if (variant < 0 || variant >= (int)def.variants.size()) return false;
     auto it = choices().find(def.id);
-    const int v = it == choices().end() ? 0 : it->second.pick;
-    return std::clamp(v, 0, std::max(0, (int)def.variants.size() - 1));
+    // (Leaving every design out isn't a thing: then they all stay in.)
+    return it == choices().end() || !it->second.off.count(variant) || it->second.off.size() >= def.variants.size();
+}
+
+int pickedVariant(const ModelDef& def) {
+    for (int v = 0; v < (int)def.variants.size(); v++)
+        if (variantIncluded(def, v)) return v;
+    return 0;
+}
+
+uint32_t placementKey(const std::string& id, double x, double z) {
+    uint32_t h = 2166136261u;
+    for (char ch : id) h = (h ^ (uint8_t)ch) * 16777619u;
+    for (int32_t q : {(int32_t)std::lround(x * 100), (int32_t)std::lround(z * 100)}) h = (h ^ (uint32_t)q) * 16777619u, h ^= h >> 15;
+    return h;
+}
+
+int variantFor(const ModelDef& def, uint32_t key) {
+    std::lock_guard<std::recursive_mutex> lk(picksLock());
+    int in[64], n = 0;
+    for (int v = 0; v < (int)def.variants.size() && n < 64; v++)
+        if (variantIncluded(def, v)) in[n++] = v;
+    if (n == 0) return 0;
+    key ^= key >> 16, key *= 0x7feb352dU, key ^= key >> 15, key *= 0x846ca68bU, key ^= key >> 16;
+    return in[key % (uint32_t)n];
 }
 
 P pickedParams(const ModelDef& def, int variant) {

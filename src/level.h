@@ -45,6 +45,7 @@ struct LevelObject {
     float col[3] = {0.6f, 0.6f, 0.6f};
     std::string name;  // station; model: its id (modelkit.h)
     double lift = 0;   // box, tree, model: how far it stands above where the ground would put it (m; negative sinks it)
+    int variant = -1;  // model: this design (editor palette), else one in use by where it stands (modelkit.h)
     int scan = -1;     // rock in a pose: which scanned rock (index into the hull library); -1 whichever fits its proportions
     // Box, log: how high it stands. Not `rel`: p.y (and p2.y) are absolute (an older file, a generator's slab). `rel`: the height is an
     // offset from the ground under it, so sculpting carries it along: a box's `lift` over where its footprint would rest it, a log's

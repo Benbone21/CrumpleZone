@@ -25,9 +25,9 @@ double lodReach(int lod) {
 int designFor(int kind, uint32_t seed, double x, double z, double height) {
     const mk::ModelDef* d = mk::findModel(modelId(kind));
     if (!d) return 0;
-    const int picked = mk::pickedVariant(*d);
-    if (picked != 0 || d->variants.size() < 3) return picked;
+    if (d->variants.size() < 3) return mk::variantFor(*d, (uint32_t)seed);
     const double r = latticeHash((int)(seed % 1000003), 31), stand = valueNoise(x * 0.018 + 11.3, z * 0.018 - 4.1);
+    const int v = [&] {
     switch (kind) {
         case 0:  // firs; tall spruce among the tallest, a stand of scraggly lodgepole here and there
             if (r < 0.08 + 0.4 * smoothstep(12.5, 17.0, height)) return 1;
@@ -38,6 +38,9 @@ int designFor(int kind, uint32_t seed, double x, double z, double height) {
         default:  // grey snags; one in four snapped off, the odd burnt one
             return r < 0.25 ? 2 : r < 0.35 ? 1 : 0;
     }
+    }();
+    // (A design left out in the lab: another in use by the same dice.)
+    return mk::variantIncluded(*d, v) ? v : mk::variantFor(*d, (uint32_t)seed);
 }
 
 namespace {

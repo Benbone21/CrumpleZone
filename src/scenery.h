@@ -23,3 +23,5 @@ void appendModel(std::vector<Vtx>& out, const mk::Mesh& m, const V3& p, const V3
 void appendPlaced(std::vector<Vtx>& out, const Placed& pl, const mk::Mesh& m);
 // The mesh for a placed model: the picked one, or (with its own params) built once per set.
 const mk::Mesh& placedMesh(const Placed& pl);
+// Which design a placed model shows: its own (editor, lab), else a fitted part (bare) the first in use, else one of those in use by where it stands.
+int placedVariant(const Placed& pl);
