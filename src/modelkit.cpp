@@ -752,6 +752,11 @@ const Mesh& modelMesh(const std::string& id) {
     return m;
 }
 
+std::vector<V3>& pathHint() {
+    static thread_local std::vector<V3> hint;
+    return hint;
+}
+
 Mesh modelMesh(const std::string& id, const std::vector<std::pair<std::string, double>>& over) {
     Mesh m;
     if (const ModelDef* d = findModel(id)) {

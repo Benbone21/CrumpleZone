@@ -977,11 +977,13 @@ const double kTreeY = 0.42;
 double leaveAngle(double Rc, double xm) { return std::acos(std::min(0.98, Rc / xm)) * 180 / kPi; }
 
 // Webbing strap (optionally over a padded sleeve) with sewn eyes, joined by a shackle or a ring.
-void webTreeSaver(B& b, const V3& col, double R, bool pad, int join, const V3& joinCol, double wear) {
-    const double t = 0.007, h = 0.045, yc = kTreeY;
+// (`outline`: not round a trunk but along a path in the model's own frame, x out of the thing at the shackle, z across, y 0: a
+// boulder's cross-section, mk::pathHint. The two ends of the path are the strap's tails.)
+void webTreeSaver(B& b, const V3& col, double R, bool pad, int join, const V3& joinCol, double wear, const std::vector<V3>* outline = nullptr) {
+    const double t = 0.007, h = 0.045, yc = outline ? 0.0 : kTreeY;
     const V3 c = mix(col, kDirt, wear * 0.3);
     double Rin = R + 0.002;
-    if (pad) {
+    if (pad && !outline) {
         const double ph = 0.16, pt = 0.014;
         b.style(mix(V3(0.20, 0.21, 0.19), kDirt, wear * 0.3), MATTE);
         std::vector<P2> circ = arcPlan(Rin + pt / 2, 0, 360, 28);
@@ -997,15 +999,22 @@ void webTreeSaver(B& b, const V3& col, double R, bool pad, int join, const V3& j
         b.box(V3(-(Rin + pt + 0.001), yc, 0), V3(0.004, ph * 0.92, 0.07));
         Rin += pt + 0.001;
     }
-    const double Rc = Rin + t / 2, xm = Rc + 0.17;
+    const double Rc = Rin + t / 2, xm = outline ? 0.17 : Rc + 0.17;
     const double phi = leaveAngle(Rc, xm);
+    std::vector<P2> plan;
+    if (outline) {
+        for (const V3& q : *outline) plan.push_back({q.x, q.z});
+    } else {
+        plan = arcPlan(Rc, phi, 360 - phi, 24);
+    }
     b.style(c, MATTE);
-    bandLoop(b, arcPlan(Rc, phi, 360 - phi, 24), false, t, yc - h / 2, yc + h / 2);
+    bandLoop(b, plan, false, t, yc - h / 2, yc + h / 2);
     b.color(c * 0.6);
-    for (int e = -1; e <= 1; e += 2) bandLoop(b, arcPlan(Rc, phi, 360 - phi, 24), false, t + 0.004, yc + e * (h / 2 - 0.0125), yc + e * (h / 2 - 0.0085));
+    for (int e = -1; e <= 1; e += 2) bandLoop(b, plan, false, t + 0.004, yc + e * (h / 2 - 0.0125), yc + e * (h / 2 - 0.0085));
     const double ex = xm - 0.035;
     for (int s = -1; s <= 1; s += 2) {
-        const V3 T(Rc * std::cos(rad(phi)), yc, s * Rc * std::sin(rad(phi))), E(ex, yc, s * 0.012);
+        const P2 tp = s > 0 ? plan.front() : plan.back();
+        const V3 T(tp.x, yc, tp.z), E(ex, yc, s * 0.012);
         b.color(c);
         b.beam(T, E, t, h, V3(0, 1, 0));
         b.color(c * 0.6);
@@ -1479,14 +1488,20 @@ void towChain(B& b, const std::vector<V3>& poly, double wear, uint32_t seed) {
 
 // A chain choked once round the boulder's belly, its two ends to a master ring and a shackle.
 void chainChoker(B& b, double R, double wear, const V3& shackleCol) {
-    const double yc = std::max(0.2, 0.45 * R), Rc = 0.9 * R, xm = Rc + 0.3;
+    const std::vector<V3>& outline = mk::pathHint();  // (along a boulder's cross-section, not round a circle: see webTreeSaver)
+    const bool along = outline.size() >= 3;
+    const double yc = along ? 0.0 : std::max(0.2, 0.45 * R), Rc = 0.9 * R, xm = along ? 0.16 : Rc + 0.3;
     const double phi = leaveAngle(Rc, xm);
     std::vector<V3> path;
     path.push_back(V3(xm - 0.04, yc, 0.012));
-    const int n = std::max(10, (int)(R * 40));
-    for (int i = 0; i <= n; i++) {
-        const double a = rad(phi + (360 - 2 * phi) * i / n);
-        path.push_back(V3(Rc * std::cos(a), yc, Rc * std::sin(a)));
+    if (along) {
+        for (const V3& q : outline) path.push_back(V3(q.x, yc, q.z));
+    } else {
+        const int n = std::max(10, (int)(R * 40));
+        for (int i = 0; i <= n; i++) {
+            const double a = rad(phi + (360 - 2 * phi) * i / n);
+            path.push_back(V3(Rc * std::cos(a), yc, Rc * std::sin(a)));
+        }
     }
     path.push_back(V3(xm - 0.04, yc, -0.012));
     towChain(b, path, wear, 300);
@@ -1503,9 +1518,11 @@ Reg chainSling({"chain_sling", "CHAIN SLING", "RECOVERY", "Choked round a boulde
                     {"WEB CHOKER", "A wide recovery web round the rock, a steel ring through its eyes",
                      {num("radius", "BOULDER RADIUS", 0.6, 0.3, 1.5, 0.05), paintParam(4, "paint", "WEB"), num("wear", "WEAR", 0.3, 0, 1, 0.05)},
                      [](B& b, const P& p) {
+                         const std::vector<V3>& outline = mk::pathHint();
+                         const bool along = outline.size() >= 3;
                          b.push();
-                         b.move(0, std::max(0.2, 0.45 * p("radius")) - kTreeY, 0);
-                         webTreeSaver(b, paint(p.i("paint")), p("radius") * 0.9, false, 1, kSteel * 0.8, p("wear"));
+                         if (!along) b.move(0, std::max(0.2, 0.45 * p("radius")) - kTreeY, 0);
+                         webTreeSaver(b, paint(p.i("paint")), p("radius") * 0.9, false, 1, kSteel * 0.8, p("wear"), along ? &outline : nullptr);
                          b.pop();
                      }},
                 }});

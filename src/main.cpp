@@ -50,6 +50,7 @@
 #include "handwork.h"
 #include "lab.h"
 #include "modelkit.h"
+#include "objshape.h"
 #include "render.h"
 #include "perf.h"
 #include "sdl_min.h"
@@ -473,7 +474,13 @@ struct WinchAim {
         if (kind == ROPE_WINCH) {
             for (double d = 0.5; d < recovery::kWinchReach + 20; d += 0.5) {
                 const V3 q = v.eye + dir * d;
-                if (q.y <= sim.world.height(q.x, q.z)) { look = q; hasLook = true; break; }
+                if (q.y <= sim.world.height(q.x, q.z)) {
+                    look = q, hasLook = true;
+                    // (A boulder, log or trunk in the way is what you're looking at, not the ground behind it: no stake or bolt through it.)
+                    objshape::WorldHit solid;
+                    if (objshape::rayWorld(sim.world, v.eye, dir, d, solid)) hasLook = false;
+                    break;
+                }
             }
             targets = sim.winchTargets(sim.player, hasLook ? &look : nullptr);
         } else if (sourceHook < 0) {
