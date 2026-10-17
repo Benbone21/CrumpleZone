@@ -45,7 +45,7 @@ bool SaveFlow::writeNow(EditCore& core) {
 }
 
 void SaveFlow::requestSave(EditCore& core, bool saveAs, After then, int thenArg) {
-    saved = false;
+    saved = discarded = false;
     done = NOTHING;
     after = then, arg = thenArg;
     if (!saveAs && !needsName(core, dir())) {
@@ -61,7 +61,7 @@ void SaveFlow::requestSave(EditCore& core, bool saveAs, After then, int thenArg)
 }
 
 void SaveFlow::requestLeave(EditCore& core, After then, int thenArg) {
-    saved = false;
+    saved = discarded = false;
     done = NOTHING;
     if (!core.unsaved()) {
         finish(then, thenArg);
@@ -120,6 +120,7 @@ void SaveFlow::choose(EditCore& core, Choice c) {
     }
     if (c == DISCARD) {
         note = "DISCARDED";
+        discarded = true;
         finish(after, arg);
         return;
     }

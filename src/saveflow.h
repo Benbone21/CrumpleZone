@@ -22,6 +22,7 @@ struct SaveFlow {
     After done = NOTHING;
     int doneArg = -1;
     bool saved = false;     // a file was written by this step (the level lists need a refresh)
+    bool discarded = false; // DISCARD was chosen (the editor throws the edits and their recovery copy away, then does what was asked)
 
     // A name for a level that hasn't one: the map's (or the section's) name and the first number that isn't a file in `dir`.
     static std::string defaultName(const EditCore& core, const std::string& dir);

@@ -242,6 +242,10 @@ public:
     std::string autosavePath(const std::string& dir) const;
     bool autosave(const std::string& dir, std::string* err = nullptr);
     int autosavedChanges = -1;  // the `changes` count the recovery copy has
+    // Throwing the unsaved edits away: the recovery copies go (never the saved .czl) and this returns the level as last saved (its
+    // file as it is on disk), else as it was opened: the plain map or built-in level it came from. `dir` "": no recovery copies.
+    Level discard(const std::string& dir);
+    Level origin;               // the level as it was opened (begin), or as setOrigin says
 
     // ---- Undo -------------------------------------------------------------------------
     bool undo();

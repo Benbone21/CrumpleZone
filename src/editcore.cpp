@@ -376,6 +376,7 @@ void EditCore::begin(World& w, const Level& lv) {
     base.spawn = w.spawn, base.spawnYaw = w.spawnYaw;
     level = lv;
     level.map = w.map;
+    origin = level;
     applyCells(w);
     rebuildObjects();
     if (level.section.on) clearBushes();
@@ -421,6 +422,15 @@ Level EditCore::levelToPlay(bool here) const {
     Level l = level;
     if (here) l.mode = LEVEL_FREE;  // (a run needs its grid and its start: from here it's the world, with the course in view)
     return l;
+}
+
+Level EditCore::discard(const std::string& dir) {
+    Level back;
+    if (level.file.empty() || level.builtin || !loadLevelFile(level.file, back)) back = origin;
+    if (!dir.empty())
+        for (const std::string* n : {&level.name, &origin.name, &back.name}) std::remove((dir + "/" + levelFileName(*n) + ".czl").c_str());
+    autosavedChanges = -1;
+    return back;
 }
 
 std::string EditCore::autosavePath(const std::string& dir) const { return dir + "/" + levelFileName(level.name) + ".czl"; }

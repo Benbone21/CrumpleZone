@@ -30,11 +30,17 @@ public:
     std::vector<Placed> ghostModels;
     // Set when the editor is closed (the game puts the player back on the world as edited).
     bool wantClose = false;
+    // With wantClose: DISCARD was chosen, so the game drives `reverted` (the level as last saved, or the plain one it came from),
+    // not the edits. (The recovery copy of the edits is gone too.)
+    bool discarded = false;
+    Level reverted;
 
     // Starts editing `lv`. The world must be the plain map (World(lv.map)).
     void open(World& w, Renderer& r, const Level& lv);
     // Back after a playtest: `w` is the level's plain map again (levelWorld(core.level)); everything else is as it was left.
     void resume(World& w, Renderer& r);
+    // Puts the camera above and behind `at`, looking the way `yaw` faces (F2 from driving: the editor opens where you are).
+    void lookFrom(const V3& at, double yawRad);
     bool started() const { return core.started(); }
     // True once after the level was saved (the game refreshes its level lists).
     bool takeSaved() {

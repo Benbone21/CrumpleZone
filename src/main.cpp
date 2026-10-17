@@ -2216,7 +2216,7 @@ int main(int argc, char** argv) {
     if (!scripted) editor.autosaveDir = userLevelFolder() + "/autosave";  // (recovery copies; never from the scripted runs)
     Level lastEdited;
     bool haveEdited = false;
-    auto openEditor = [&](const Level& base, bool newSection = false) {
+    auto openEditor = [&](const Level& base, bool newSection = false, bool atPlayer = false) {
         if (net.active()) {
             hud.toast("THE EDITOR IS OFFLINE ONLY: LEAVE THE SESSION FIRST");
             return;
@@ -2228,6 +2228,11 @@ int main(int argc, char** argv) {
         else {
             sim.world = levelWorld(base);
             editor.open(sim.world, renderer, base);
+            if (atPlayer) {  // (F2 from driving: the camera starts above and behind you, looking the way you face)
+                const Frame pf = sim.cars[sim.player].frame();
+                if (walker.active) editor.lookFrom(walker.p, walker.yaw);
+                else editor.lookFrom(pf.com, std::atan2(-pf.fwd.z, pf.fwd.x));
+            }
         }
         drawnWorld = sim.world.stamp;
         sim.paused = true;
@@ -2837,7 +2842,7 @@ int main(int argc, char** argv) {
                         }
                         case SC_H: hud.showHelp = !hud.showHelp; break;
                         case SC_F2:
-                            if (!returnToEditor()) openEditor(editorKeyLevel());
+                            if (!returnToEditor()) openEditor(editorKeyLevel(), false, true);
                             break;
                         case SC_J:
                             if (playback.active()) {  // (a scenario: J opens its checks list)
@@ -4003,7 +4008,7 @@ int main(int argc, char** argv) {
                 } else if (c == "menu_new") { PauseMenu::Result r; r.action = PauseMenu::EDITOR; handleMenu(r); }
                 else if (c == "menu_section") { PauseMenu::Result r; r.action = PauseMenu::NEW_SECTION; handleMenu(r); }
                 else if (c == "menu_back") { PauseMenu::Result r; r.action = PauseMenu::EDITOR_BACK; handleMenu(r); }
-                else if (c == "f2") { if (!returnToEditor()) openEditor(editorKeyLevel()); }
+                else if (c == "f2") { if (!returnToEditor()) openEditor(editorKeyLevel(), false, true); }
                 else if (c == "play_level") { refreshLevels(); std::string want = rest(0); for (char& ch : want) ch = (char)std::toupper((unsigned char)ch); for (int k = 0; k < (int)levelList.size(); k++) if (levelList[k].name.find(want) != std::string::npos) { playLevel(levelList[k]); break; } }
                 else if (c == "tool") editor.setTool((Editor::Tool)std::max(0, (int)num(0) - 1));
                 else if (c == "ptr") editor.setPointer(num(0, 1) != 0);
@@ -4118,21 +4123,22 @@ int main(int argc, char** argv) {
                 const bool play = editor.wantPlay, here = editor.playHere;
                 EditCore::PlaySpot spot = editor.spot;
                 if (!play) spot = editor.core.playSpot(true, editor.viewPoint(), editor.heading());  // (leaving: you're where you were looking, unless there's a start)
-                editor.autosaveNow();
-                lastEdited = editor.core.level;
+                const bool discard = !play && editor.discarded;  // (DISCARD: the saved level, not the edits)
+                if (!discard) editor.autosaveNow();
+                lastEdited = discard ? editor.reverted : editor.core.level;
                 haveEdited = true;
                 editor.close();  // (the editor keeps its state: F2 comes back to it)
                 sim.paused = false;
-                if (play) {
-                    playLevel(editor.core.levelToPlay(here), here ? &spot : nullptr);
-                } else {
-                    // Back to driving, on the world as edited.
+                if (discard || !play) {
+                    // Back to driving: on the world as edited, or on the level as last saved when the edits were discarded.
                     Level free = lastEdited;
                     free.mode = LEVEL_FREE;
                     playLevel(free, free.hasStart ? nullptr : &spot);
+                } else {
+                    playLevel(editor.core.levelToPlay(here), here ? &spot : nullptr);
                 }
-                editorSuspended = true;
-                hud.toast(play ? (here ? "TESTING FROM HERE" : "TESTING " + lastEdited.name) : "DRIVING THE EDITED WORLD");
+                editorSuspended = !discard;  // (discarded: nothing to come back to, F2 opens the saved level fresh)
+                hud.toast(discard ? "EDITS DISCARDED: DRIVING " + lastEdited.name : play ? (here ? "TESTING FROM HERE" : "TESTING " + lastEdited.name) : "DRIVING THE EDITED WORLD");
             }
         }
         if (walker.active) {  // the camera follows you on foot

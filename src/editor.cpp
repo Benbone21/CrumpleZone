@@ -147,7 +147,7 @@ void Editor::open(World& w, Renderer& r, const Level& lv) {
     rend = &r;
     core.begin(w, lv);
     active = true;
-    wantPlay = wantClose = false;
+    wantPlay = wantClose = discarded = false;
     fileOpen = typing = confirmClose = false;
     sel = EditPick();
     selection.clear();
@@ -168,11 +168,16 @@ void Editor::open(World& w, Renderer& r, const Level& lv) {
     say("WORLD EDITOR: " + lv.name, 4);
 }
 
+void Editor::lookFrom(const V3& at, double yawRad) {
+    yaw = yawRad, pitch = -0.55;
+    eye = V3(at.x, at.y + 22, at.z) - V3(std::cos(yaw), 0, -std::sin(yaw)) * 30;
+}
+
 void Editor::resume(World& w, Renderer& r) {
     rend = &r;
     core.resume(w);
     active = true;
-    wantPlay = wantClose = false;
+    wantPlay = wantClose = discarded = false;
     fileOpen = typing = confirmClose = marquee = dragging = false;
     sel = EditPick();
     selection.clear();
@@ -751,6 +756,11 @@ void Editor::afterFlow() {
         flow.saved = false;
         lastAuto = clock;
     }
+    if (flow.discarded) {  // (the edits go, and their recovery copy; what's asked for next starts from the saved level)
+        flow.discarded = false;
+        reverted = core.discard(autosaveDir);
+        discarded = true;
+    }
     const SaveFlow::After a = flow.done;
     const int arg = flow.doneArg;
     flow.done = SaveFlow::NOTHING;
@@ -830,6 +840,9 @@ void Editor::openLevel(const Level& lv, bool recovered) {
     fileOpen = false;
     if (recovered) {  // (it's unsaved work: saving writes the level's own file, which is still the old one)
         core.changes = 1;
+        core.origin = Level();  // (what discarding goes back to: the saved file if there is one, else the plain level)
+        core.origin.map = l.map, core.origin.terrain = l.terrain, core.origin.name = l.name;
+        if (l.section.live) core.origin.section = l.section;
         say("RECOVERED FROM THE AUTOSAVE: CTRL+S TO KEEP IT", 6);
     }
 }
