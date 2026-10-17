@@ -8,6 +8,7 @@
 #include <map>
 #include <mutex>
 
+#include "bodyshell.h"
 #include "modelkit.h"
 
 // ---- The back gate ---------------------------------------------------------------------------
@@ -171,6 +172,7 @@ namespace {
 
 constexpr double kBedDepth = 1.60;    // a pickup's bed (its gate is drawn at the front of this)
 constexpr double kHalfWidth = 0.28;   // of the body width: between the wheel wells
+constexpr double kGateT = 0.05;      // a pickup's tailgate: its thickness (models/cargo.cpp)
 constexpr double kLiner = 0.014;      // m a pickup's bed carpet stands over its floor
 
 }  // namespace
@@ -316,15 +318,17 @@ const char* gateName(const Car& c) {
     return pi >= 0 && !std::strcmp(c.panels[pi].name, "LIFTGATE") ? "LIFTGATE" : "TAILGATE";
 }
 
-bool bedGatePlace(const Car& c, const Frame& fr, V3& at, V3 ax[3], double& width) {
-    Box b;
-    if (!c.bedGate() || !cargoBox(c, b)) return false;
+bool bedGatePlace(const Car& c, const Frame& fr, V3& at, V3 ax[3], double& width, double* height) {
+    BedMouth m;
+    if (!c.bedGate() || c.restLocal.empty() || !bedMouth(*c.spec, m)) return false;
     const double s = c.gate.share, phi = (s * s * (3 - 2 * s)) * (M_PI / 2) * 0.985;
     const V3 e0(std::cos(phi), std::sin(phi), 0), e1(-std::sin(phi), std::cos(phi), 0), e2(0, 0, 1);
-    at = world(c, fr, V3(b.lo.x - 0.035, b.lo.y, 0));
+    // Shut it closes the bed's mouth: its outside flush with the walls' ends, edge to edge between them, up to the rail.
+    at = world(c, fr, V3(m.x + kGateT + 0.012, m.floorY + kLiner, 0));
     const V3* e[3] = {&e0, &e1, &e2};
     for (int a = 0; a < 3; a++) ax[a] = fr.fwd * e[a]->x + fr.up * e[a]->y - fr.left * e[a]->z;
-    width = (b.hi.z - b.lo.z) + 0.1;
+    width = 2 * m.inner + 0.01;
+    if (height) *height = m.railY - m.floorY - kLiner - 0.004;
     return true;
 }
 
@@ -332,12 +336,12 @@ void gateModels(const Sim& sim, int ci, std::vector<Placed>& out) {
     const Car& c = sim.cars[ci];
     if (c.isProp() || !c.hasGate()) return;
     V3 at, ax[3];
-    double width = 1.2;
-    if (!bedGatePlace(c, c.frame(), at, ax, width) || !mk::findModel("bed_gate")) return;
+    double width = 1.2, height = 0.33;
+    if (!bedGatePlace(c, c.frame(), at, ax, width, &height) || !mk::findModel("bed_gate")) return;
     Placed pl;
     pl.id = "bed_gate", pl.p = at, pl.oriented = true;
     for (int a = 0; a < 3; a++) pl.ax[a] = ax[a];
-    pl.set = {{"width", width}, {"r", clampd(c.color.x, 0, 1)}, {"g", clampd(c.color.y, 0, 1)}, {"b", clampd(c.color.z, 0, 1)}};
+    pl.set = {{"width", width}, {"height", height}, {"r", clampd(c.color.x, 0, 1)}, {"g", clampd(c.color.y, 0, 1)}, {"b", clampd(c.color.z, 0, 1)}};
     out.push_back(pl);
 }
 

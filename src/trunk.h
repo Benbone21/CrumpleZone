@@ -78,8 +78,8 @@ V3 gateAt(const Car& c);
 const char* gateName(const Car& c);  // "TAILGATE" / "LIFTGATE"
 
 // A pickup's drawn gate: its placement for the gate's current angle (the model stands on its
-// hinge line, `width` m across).
-bool bedGatePlace(const Car& c, const Frame& fr, V3& at, V3 ax[3], double& width);
+// hinge line, `width` m across, `height` m tall).
+bool bedGatePlace(const Car& c, const Frame& fr, V3& at, V3 ax[3], double& width, double* height = nullptr);
 // ...as a placed model (shut: nothing opens it any more); anything else adds nothing.
 void gateModels(const Sim& sim, int car, std::vector<Placed>& out);
 
