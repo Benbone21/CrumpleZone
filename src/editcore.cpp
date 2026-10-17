@@ -1478,6 +1478,81 @@ void EditCore::transformObjects(const std::vector<int>& ks, ObjOp op, double amo
     replaceObjects(set, names[op], key);
 }
 
+V3 axisDir(EditAxis a) { return a == AXIS_X ? V3(1, 0, 0) : a == AXIS_Y ? V3(0, 1, 0) : a == AXIS_Z ? V3(0, 0, 1) : V3(0, 0, 0); }
+const char* axisName(EditAxis a) { return a == AXIS_X ? "X" : a == AXIS_Y ? "Y" : a == AXIS_Z ? "Z" : "-"; }
+
+double axisDragMetres(double sy, double pxPerM, double dy) {
+    const double edge = 0.3 * std::max(pxPerM, 1e-6);
+    if (std::fabs(sy) >= edge) return dy / sy;
+    return -dy / edge;
+}
+
+double turnSign(EditAxis axis, const V3& toCam, const V3& right) {
+    const double c = dot(cross(axisDir(axis), toCam), right);
+    return c < -0.2 ? -1 : 1;
+}
+
+bool EditCore::canRotate(int kind, EditAxis axis) {
+    if (axis == AXIS_X || axis == AXIS_Z) return kind == OBJ_ROCK || kind == OBJ_BOX || kind == OBJ_LOG;
+    return kind != OBJ_TREE && kind != OBJ_BUSH;
+}
+
+LevelObject EditCore::rotated(LevelObject o, EditAxis axis, double a) {
+    if (axis != AXIS_X && axis != AXIS_Z) return transformed(o, OP_YAW, a);
+    if (!canRotate(o.kind, axis)) return o;
+    const V3 k = axisDir(axis);
+    const World& w = *world;
+    if (o.kind == OBJ_LOG) {
+        V3 half = (o.p2 - o.p) * 0.5;
+        const V3 m = (o.p + o.p2) * 0.5;
+        half = rotateAxis(half, k, a);
+        const double L = len(half);
+        if (L > 1e-6) half = half * (clampd(L, 0.5, 40) / L);
+        o.p = m - half, o.p2 = m + half;
+        settleObject(w, o);
+        return o;
+    }
+    // Rock, block: the orientation (yaw, pitch, roll) turned about the world axis, and read back.
+    V3 ax[3];
+    boxAxes(o.yaw, o.pitch, o.roll, ax);
+    for (V3& v : ax) v = rotateAxis(v, k, a);
+    const double keep = o.kind == OBJ_BOX ? grounded(o).p.y : 0;
+    o.pitch = std::asin(clampd(ax[0].y, -1, 1));
+    o.yaw = std::atan2(-ax[0].z, ax[0].x);
+    const V3 a1 = rotateAxis(rotateAxis(V3(0, 1, 0), V3(0, 0, 1), o.pitch), V3(0, 1, 0), o.yaw);
+    o.roll = std::atan2(dot(cross(a1, ax[1]), ax[0]), dot(a1, ax[1]));
+    if (o.kind == OBJ_ROCK) {
+        o.sub = 1;
+        return o;
+    }
+    if (std::fabs(o.lift) > 1e-6) {  // (a floating block keeps the height it was set at, as tipping it with R F does; one resting stays resting)
+        LevelObject g = o;
+        g.lift = 0;
+        o.lift = keep - boxRestY(w, g);
+        if (std::fabs(o.lift) < 1e-6) o.lift = 0;
+    }
+    return grounded(o);
+}
+
+bool EditCore::rotateObjects(const std::vector<int>& ks, EditAxis axis, double angle, const std::string& key) {
+    if (axis != AXIS_X && axis != AXIS_Z) {
+        transformObjects(ks, OP_YAW, angle, key);
+        return true;
+    }
+    std::vector<std::pair<int, LevelObject>> set;
+    for (int k : ks)
+        if (k >= 0 && k < (int)level.objects.size() && canRotate(level.objects[k].kind, axis)) set.push_back({k, rotated(normalized(k), axis, angle)});
+    if (set.empty()) return false;
+    replaceObjects(set, axis == AXIS_X ? "TIP" : "ROLL", key);
+    return true;
+}
+
+void EditCore::moveAlong(const std::vector<int>& ks, EditAxis axis, double amount, const std::string& key) {
+    if (axis == AXIS_X) moveObjects(ks, amount, 0, key);
+    else if (axis == AXIS_Z) moveObjects(ks, 0, amount, key);
+    else if (axis == AXIS_Y) transformObjects(ks, OP_LIFT, amount, key);
+}
+
 // ---- Outlines ----------------------------------------------------------------------------------
 
 std::vector<std::pair<int, int>> EditCore::partsOf(int k) const {
