@@ -7,9 +7,9 @@ CXXFLAGS += -std=c++17 -Wall -Wextra
 LDLIBS   := -l:libSDL2-2.0.so.0 -lpthread -lm
 
 MODELS   := $(sort $(wildcard src/models/*.cpp))
-PHYS     := src/modelkit.cpp $(MODELS) src/perf.cpp src/physics_workers.cpp src/collision.cpp src/props.cpp src/jobs.cpp src/walker.cpp src/softbody.cpp src/recovery.cpp src/net.cpp src/level.cpp src/levels_builtin.cpp src/levelrun.cpp src/editcore.cpp src/saveflow.cpp src/autopilot.cpp src/pilotsense.cpp src/carbuild.cpp src/world.cpp src/spawnpad.cpp src/sections.cpp src/mountain.cpp src/freeway.cpp src/frontier.cpp src/backcountry.cpp src/vehicles.cpp src/mods.cpp src/gamepad.cpp src/platform.cpp src/tires.cpp src/interact.cpp src/fixes.cpp src/carparts.cpp src/carframe.cpp src/vtools.cpp src/keybinds.cpp src/devmenu.cpp src/career.cpp src/anchors.cpp src/biome.cpp src/handwork.cpp src/sectionfile.cpp src/trunk.cpp src/invmenu.cpp src/objshape.cpp src/bodyshell.cpp src/throttle.cpp
-SCEN     := tests/perf.cpp tests/drivetrain.cpp tests/net_state.cpp tests/collision.cpp tests/props.cpp tests/jobs.cpp tests/walker.cpp tests/editor.cpp tests/levels.cpp tests/circuit.cpp tests/frontier.cpp tests/backcountry.cpp tests/freeway.cpp tests/surfaces.cpp tests/handling.cpp tests/harness.cpp tests/scenarios.cpp tests/components.cpp tests/offroad.cpp tests/recovery.cpp tests/net.cpp tests/autopilot.cpp tests/nearby.cpp tests/gamepad.cpp tests/tires.cpp tests/vtools.cpp tests/simulation.cpp tests/vehicle_physics.cpp tests/dynamics.cpp tests/extreme.cpp tests/environment.cpp tests/towing.cpp tests/keybinds.cpp tests/devmenu.cpp tests/treads.cpp tests/wobble.cpp tests/career.cpp tests/models.cpp tests/carparts.cpp tests/sections.cpp tests/anchors.cpp tests/music.cpp tests/trunk.cpp tests/net_security.cpp tests/carframe.cpp tests/spawnpads.cpp tests/invmenu.cpp tests/rumble.cpp tests/editbrush.cpp tests/objshape.cpp tests/editobjects.cpp tests/throttle.cpp
-GAME_SRC := src/main.cpp src/lab.cpp src/gamepad_sdl.cpp src/editor.cpp src/coop.cpp src/gl.cpp src/gpu.cpp src/render.cpp src/carvisual.cpp src/scenery.cpp src/menu.cpp src/fx.cpp src/engine_samples.cpp src/engineaudio.cpp src/audio.cpp src/music.cpp src/ambience.cpp src/daylight.cpp src/lights.cpp src/groundtex.cpp src/groundshader.cpp src/propdraw.cpp src/invdraw.cpp $(PHYS) $(SCEN)
+PHYS     := src/modelkit.cpp $(MODELS) src/perf.cpp src/physics_workers.cpp src/collision.cpp src/props.cpp src/jobs.cpp src/walker.cpp src/softbody.cpp src/recovery.cpp src/net.cpp src/level.cpp src/levels_builtin.cpp src/levelrun.cpp src/editcore.cpp src/saveflow.cpp src/autopilot.cpp src/pilotsense.cpp src/carbuild.cpp src/world.cpp src/spawnpad.cpp src/sections.cpp src/mountain.cpp src/freeway.cpp src/frontier.cpp src/backcountry.cpp src/vehicles.cpp src/mods.cpp src/gamepad.cpp src/platform.cpp src/tires.cpp src/interact.cpp src/fixes.cpp src/carparts.cpp src/carframe.cpp src/vtools.cpp src/keybinds.cpp src/devmenu.cpp src/career.cpp src/anchors.cpp src/biome.cpp src/handwork.cpp src/sectionfile.cpp src/trunk.cpp src/invmenu.cpp src/objshape.cpp src/bodyshell.cpp src/throttle.cpp src/debuginfo.cpp
+SCEN     := tests/perf.cpp tests/drivetrain.cpp tests/net_state.cpp tests/collision.cpp tests/props.cpp tests/jobs.cpp tests/walker.cpp tests/editor.cpp tests/levels.cpp tests/circuit.cpp tests/frontier.cpp tests/backcountry.cpp tests/freeway.cpp tests/surfaces.cpp tests/handling.cpp tests/harness.cpp tests/scenarios.cpp tests/components.cpp tests/offroad.cpp tests/recovery.cpp tests/net.cpp tests/autopilot.cpp tests/nearby.cpp tests/gamepad.cpp tests/tires.cpp tests/vtools.cpp tests/simulation.cpp tests/vehicle_physics.cpp tests/dynamics.cpp tests/extreme.cpp tests/environment.cpp tests/towing.cpp tests/keybinds.cpp tests/devmenu.cpp tests/treads.cpp tests/wobble.cpp tests/career.cpp tests/models.cpp tests/carparts.cpp tests/sections.cpp tests/anchors.cpp tests/music.cpp tests/trunk.cpp tests/net_security.cpp tests/carframe.cpp tests/spawnpads.cpp tests/invmenu.cpp tests/rumble.cpp tests/editbrush.cpp tests/objshape.cpp tests/editobjects.cpp tests/throttle.cpp tests/f3info.cpp
+GAME_SRC := src/main.cpp src/lab.cpp src/gamepad_sdl.cpp src/editor.cpp src/coop.cpp src/gl.cpp src/gpu.cpp src/render.cpp src/carvisual.cpp src/scenery.cpp src/menu.cpp src/fx.cpp src/engine_samples.cpp src/engineaudio.cpp src/audio.cpp src/music.cpp src/ambience.cpp src/daylight.cpp src/lights.cpp src/groundtex.cpp src/groundshader.cpp src/propdraw.cpp src/invdraw.cpp src/debugscreen.cpp src/buildinfo.cpp $(PHYS) $(SCEN)
 GAME_OBJ := $(patsubst %.cpp,build/%.o,$(GAME_SRC))
 TEST_OBJ := $(patsubst %.cpp,build/%.o,tests/run_tests.cpp $(PHYS) $(SCEN) src/music.cpp)
 HEADERS  := $(wildcard src/*.h tests/*.h)
@@ -90,6 +90,17 @@ build/test_jesko_visual: build/tests/jesko_visual.o build/src/carvisual.o $(pats
 build/%.o: %.cpp $(HEADERS)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
+
+# The commit the F3 screen reports: build/buildid.txt is rewritten only when it changes, so buildinfo.o (and the relink)
+# only follow a new commit.
+GITID := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+build/buildid.txt: FORCE
+	@mkdir -p build
+	@echo '$(GITID)' | cmp -s - $@ || echo '$(GITID)' > $@
+build/src/buildinfo.o: build/buildid.txt
+build/src/buildinfo.o: CXXFLAGS += -DCZ_GIT='"$(GITID)"'
+FORCE:
+.PHONY: FORCE
 
 # ---- Windows build: cross-compiled with mingw-w64 (posix threads) ------------------
 #   make windows   ->  build/win/CrumpleZone/ (crumplezone.exe + SDL2.dll) and build/win/CrumpleZone-windows.zip

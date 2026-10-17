@@ -72,7 +72,7 @@ builds the CPU-only Windows equivalent, which needs no SDL DLL or display.
   to avoid repeatedly asking the driver for the same names. The cache resets on GL loading.
 - Windows records stdout/stderr in `%APPDATA%\crumplezone\graphics.log`, including the
   GPU, driver/OpenGL version, thread count, target size/MSAA and shader errors.
-- F3 shows physics and scene submission CPU time. Driver stalls count toward draw CPU
+- F3 (the debug screen) shows physics and scene submission CPU time, FPS, memory and render counts. Driver stalls count toward draw CPU
   time; it is not GPU timer-query time.
 
 ### GPU compatibility review (2026-10-14)

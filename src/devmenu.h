@@ -35,7 +35,7 @@ enum Act {
     FLIP_UPRIGHT,     // back on its wheels, damage stays (T)
     REFUEL,           // full tank and spare can
     BEAM_VIEW,        // arg: DebugView, or -1 the next one (key N)
-    FPS,              // the frame counter (key F3)
+    FPS,              // the debug screen (key F3; Shift: its frame graph)
     EDITOR,           // the level editor, here (key F2)
     MODEL_LAB,        // the model yard
     NEW_SECTION,      // a fresh obstacle section in the editor
