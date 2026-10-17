@@ -513,6 +513,12 @@ struct Lab {
             std::fprintf(stderr, "model lab: no models\n");
             return 1;
         }
+        // Approvals need a crisp, true picture: the lab may be entered from a menu (menu blur still up) or
+        // while adaptive quality has the scale or MSAA down, so take the settings as they'd be at their best.
+        const RenderSettings entered = r.settings;
+        r.settings.blur = 0, r.settings.renderScale = std::max(1.0f, r.settings.renderScale);
+        r.settings.msaa = std::max(4, r.settings.msaa);
+        struct Restore { Renderer& r; RenderSettings s; ~Restore() { r.settings = s; } } restore{r, entered};
         picksPath = mk::choicesPath();
         mk::loadChoices(picksPath);
         std::printf("model lab: %zu models; picks in %s\n", order.size(), picksPath.empty() ? "(nowhere: no assets folder)" : picksPath.c_str());
