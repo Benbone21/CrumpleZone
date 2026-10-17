@@ -5,6 +5,10 @@
 #include <cstdio>
 #include <deque>
 
+#include "modelkit.h"
+#include "objshape.h"
+#include "platform.h"
+#include "props.h"
 #include "sectionfile.h"
 
 // ---- Materials ---------------------------------------------------------------------------
@@ -69,30 +73,158 @@ bool raySphere(const V3& o, const V3& d, const V3& c, double r, double& t) {
     return true;
 }
 
-bool rayBox(const V3& o, const V3& d, const Box& b, double& t) {
-    double t0 = 0, t1 = 1e18;
-    const V3 p = b.c - o;
-    const double h[3] = {b.h.x, b.h.y, b.h.z};
-    for (int k = 0; k < 3; k++) {
-        const double e = dot(b.ax[k], p), f = dot(b.ax[k], d);
-        if (std::fabs(f) > 1e-12) {
-            double a = (e + h[k]) / f, c = (e - h[k]) / f;
-            if (a > c) std::swap(a, c);
-            t0 = std::max(t0, a), t1 = std::min(t1, c);
-            if (t0 > t1) return false;
-        } else if (-e - h[k] > 0 || -e + h[k] < 0) {
-            return false;
-        }
+// ---- Exact ray tests (what a click can land on is the object itself, not a sphere round it) ----
+
+// The ray against an upright cone (axis through x0, z0; circular section R at y0 narrowing to nothing at y1). The distance from the axis
+// less the section's radius is convex along the ray, so its dip below zero is found by ternary search.
+bool rayCone(const V3& o, const V3& d, double x0, double z0, double y0, double y1, double R, double& t) {
+    double ta = 0, tb = 1e4;
+    if (std::fabs(d.y) > 1e-9) {
+        double a = (y0 - o.y) / d.y, b = (y1 - o.y) / d.y;
+        if (a > b) std::swap(a, b);
+        ta = std::max(0.0, a), tb = std::min(tb, b);
+    } else if (o.y < y0 || o.y > y1) {
+        return false;
     }
-    t = t0;
+    if (ta > tb) return false;
+    auto f = [&](double tt) {
+        const V3 q = o + d * tt;
+        return std::hypot(q.x - x0, q.z - z0) - R * clampd((y1 - q.y) / (y1 - y0), 0, 1);
+    };
+    double lo = ta, hi = tb;
+    for (int k = 0; k < 60; k++) {
+        const double m1 = lo + (hi - lo) / 3, m2 = hi - (hi - lo) / 3;
+        (f(m1) < f(m2) ? hi : lo) = (f(m1) < f(m2) ? m2 : m1);
+    }
+    const double tm = (lo + hi) / 2;
+    if (f(tm) > 0) return false;
+    if (f(ta) <= 0) {
+        t = ta;
+        return true;
+    }
+    lo = ta, hi = tm;
+    for (int k = 0; k < 40; k++) {
+        const double m = (lo + hi) / 2;
+        (f(m) > 0 ? lo : hi) = m;
+    }
+    t = hi;
     return true;
+}
+
+// An oriented box standing on `at` (yaw about up, local frame as World::addBox's).
+Box obb(const V3& c, const V3& half, double yaw) {
+    Box b;
+    b.c = c, b.h = half;
+    b.ax[0] = rotateAxis(V3(1, 0, 0), V3(0, 1, 0), yaw), b.ax[1] = V3(0, 1, 0), b.ax[2] = rotateAxis(V3(0, 0, 1), V3(0, 1, 0), yaw);
+    b.bound = len(half);
+    return b;
+}
+
+// The box round a placed model's mesh.
+Box modelBox(const Placed& pl) {
+    const mk::Mesh& m = mk::modelMesh(pl.id);
+    if (m.v.empty()) return obb(pl.p, V3(0.3, 0.3, 0.3), pl.yaw);
+    const V3 lo(m.lo.x * pl.scale.x, m.lo.y * pl.scale.y, m.lo.z * pl.scale.z), hi(m.hi.x * pl.scale.x, m.hi.y * pl.scale.y, m.hi.z * pl.scale.z);
+    const V3 mid = (lo + hi) * 0.5, half = (hi - lo) * 0.5;
+    const V3 cx = rotateAxis(V3(mid.x, 0, mid.z), V3(0, 1, 0), pl.yaw);
+    return obb(pl.p + V3(cx.x, mid.y, cx.z), V3(std::max(0.05, half.x), std::max(0.05, half.y), std::max(0.05, half.z)), pl.yaw);
+}
+
+// The ray against an ellipsoid (centre c, horizontal radius rx, vertical ry).
+bool rayEllipsoid(const V3& o, const V3& d, const V3& c, double rx, double ry, double& t) {
+    const double k = rx / ry;
+    const V3 q(o.x - c.x, (o.y - c.y) * k, o.z - c.z), e(d.x, d.y * k, d.z);
+    const double a = dot(e, e), b = dot(q, e), cc = dot(q, q) - rx * rx;
+    const double disc = b * b - a * cc;
+    if (disc < 0 || a < 1e-12) return false;
+    const double t0 = (-b - std::sqrt(disc)) / a, t1 = (-b + std::sqrt(disc)) / a;
+    if (t1 < 0) return false;
+    t = std::max(0.0, t0);
+    return true;
+}
+
+// The model a map fixture is drawn as (scenery.cpp's choice), with the one setting it has (a sign's rating, a cairn's or stump's shape).
+bool propAsModel(const Prop& p, int index, Placed& pl, int& sub) {
+    const int seed = index + 1;
+    pl = Placed();
+    pl.p = p.a, pl.yaw = p.yaw, sub = 0;
+    switch (p.kind) {
+        case PROP_CABIN: pl.id = "cabin"; break;
+        case PROP_TABLE: pl.id = "picnic_table"; break;
+        case PROP_MAPBOARD: pl.id = "map_board"; break;
+        case PROP_MARKER: pl.id = "marker_post"; break;
+        case PROP_CAIRN: pl.id = "cairn", sub = 1 + seed % 9; break;
+        case PROP_SIGN: pl.id = "trail_sign", sub = p.col[1] > 0.4 ? 0 : p.col[2] > 0.5 ? 1 : p.col[0] > 0.5 ? 3 : 2; break;
+        case PROP_STUMP:
+            pl.id = "stump", sub = 1 + seed % 6;
+            pl.scale = V3(p.b.x / 0.35, p.b.y / 0.6, p.b.x / 0.35);
+            break;
+        default: return false;
+    }
+    return mk::findModel(pl.id) != nullptr;
+}
+
+inline bool isSpan(int kind) { return kind == OBJ_LOG || kind == OBJ_FENCE; }  // (an object that runs from p to p2)
+
+// A fence: a thin band along it, upright.
+Box fenceBox(const Prop& f) {
+    const V3 d = f.b - f.a;
+    return obb((f.a + f.b) * 0.5 + V3(0, 0.6, 0), V3(std::max(0.1, std::hypot(d.x, d.z) / 2), 0.7, 0.14), std::atan2(-d.z, d.x));
+}
+
+// A repair shed: its pad and the shed over it (the posts are at +-5 m along, +-3.7 m across).
+Box shedBox(const Prop& f) { return obb(f.a + V3(0, 2.5, 0), V3(5.4, 2.5, 4.0), f.yaw); }
+
+// A tree: its trunk, and its crown (a cone for a pine, a ball for a broadleaf; a dead snag is all trunk).
+bool rayTree(const V3& o, const V3& d, const Tree& tr, double& tBest) {
+    bool hit = false;
+    double t;
+    const double trunk = tr.kind == 1 ? 0.34 : 0.28;
+    if (raySegment(o, d, tr.base, tr.base + V3(0, tr.height * (tr.kind == 2 ? 0.95 : 0.6), 0), t) < trunk) hit = true, tBest = t;
+    if (tr.kind == 0 && rayCone(o, d, tr.base.x, tr.base.z, tr.base.y + tr.height * 0.18, tr.base.y + tr.height, tr.height * 0.17, t)) {
+        if (!hit || t < tBest) tBest = t;
+        hit = true;
+    }
+    if (tr.kind == 1 && raySphere(o, d, tr.base + V3(0, tr.height * 0.64, 0), tr.height * 0.28, t)) {
+        if (!hit || t < tBest) tBest = t;
+        hit = true;
+    }
+    return hit;
+}
+
+// Outlines.
+void boxEdges(const Box& b, Shape& s, bool faces) {
+    V3 c[8];
+    for (int k = 0; k < 8; k++) c[k] = b.c + b.ax[0] * ((k & 1 ? 1 : -1) * b.h.x) + b.ax[1] * ((k & 2 ? 1 : -1) * b.h.y) + b.ax[2] * ((k & 4 ? 1 : -1) * b.h.z);
+    for (int k = 0; k < 8; k++)
+        for (int bit = 1; bit < 8; bit <<= 1)
+            if (!(k & bit)) s.edges.push_back({c[k], c[k | bit]});
+    if (!faces) return;
+    // (Two triangles a face; the centre decides which way is out.)
+    static const int quads[6][4] = {{0, 2, 6, 4}, {1, 3, 7, 5}, {0, 1, 5, 4}, {2, 3, 7, 6}, {0, 1, 3, 2}, {4, 5, 7, 6}};
+    auto face = [&](const V3& a, const V3& b2, const V3& c2) {
+        const V3 n = cross(b2 - a, c2 - a);
+        if (dot(n, (a + b2 + c2) * (1.0 / 3) - b.c) < 0) s.tris.push_back({a, c2, b2});
+        else s.tris.push_back({a, b2, c2});
+    };
+    for (const auto& q : quads) {
+        face(c[q[0]], c[q[1]], c[q[2]]);
+        face(c[q[0]], c[q[2]], c[q[3]]);
+    }
+}
+
+void ringEdges(Shape& s, const V3& c, const V3& u, const V3& v, double r, int n = 14) {
+    for (int k = 0; k < n; k++) {
+        const double a0 = 2 * M_PI * k / n, a1 = 2 * M_PI * (k + 1) / n;
+        s.edges.push_back({c + u * (std::cos(a0) * r) + v * (std::sin(a0) * r), c + u * (std::cos(a1) * r) + v * (std::sin(a1) * r)});
+    }
 }
 
 bool sameObject(const LevelObject& a, const LevelObject& b) {
     auto eq = [](const V3& p, const V3& q) { return p.x == q.x && p.y == q.y && p.z == q.z; };
     return a.kind == b.kind && eq(a.p, b.p) && eq(a.size, b.size) && eq(a.p2, b.p2) && a.yaw == b.yaw && a.pitch == b.pitch &&
            a.roll == b.roll && a.top == b.top && a.seed == b.seed && a.sub == b.sub && a.col[0] == b.col[0] && a.col[1] == b.col[1] &&
-           a.col[2] == b.col[2] && a.name == b.name;
+           a.col[2] == b.col[2] && a.name == b.name && a.lift == b.lift && a.scan == b.scan;
 }
 
 bool sameObjects(const Level& a, const Level& b) {
@@ -100,7 +232,7 @@ bool sameObjects(const Level& a, const Level& b) {
     for (size_t k = 0; k < a.objects.size(); k++)
         if (!sameObject(a.objects[k], b.objects[k])) return false;
     for (size_t k = 0; k < a.removed.size(); k++)
-        if (a.removed[k].x != b.removed[k].x || a.removed[k].z != b.removed[k].z) return false;
+        if (a.removed[k].x != b.removed[k].x || a.removed[k].z != b.removed[k].z || a.removed[k].y != b.removed[k].y) return false;
     return true;
 }
 
@@ -224,13 +356,7 @@ double brushMask(const Brush& b, double cx, double cz, double x, double z) {
 
 // ---- Starting --------------------------------------------------------------------------
 
-void EditCore::begin(World& w, const Level& lv) {
-    world = &w;
-    base.rocks = w.rocks, base.trees = w.trees, base.poles = w.poles, base.logs = w.logs;
-    base.boxes = w.boxes, base.fixtures = w.fixtures, base.stations = w.stations;
-    base.spawn = w.spawn, base.spawnYaw = w.spawnYaw;
-    level = lv;
-    level.map = w.map;
+void EditCore::applyCells(World& w) {
     // The cells, as applyLevel puts them (the objects come next, from the map's own).
     const int n = w.gridSize();
     for (const auto& h : level.heights)
@@ -241,6 +367,16 @@ void EditCore::begin(World& w, const Level& lv) {
         if (wt.first >= 0 && wt.first < n * n) w.setCellWater(wt.first, wt.second);
     for (const auto& f : level.flow)
         if (f.first >= 0 && f.first < n * n && !w.flowX.empty()) w.flowX[f.first] = f.second.first, w.flowZ[f.first] = f.second.second;
+}
+
+void EditCore::begin(World& w, const Level& lv) {
+    world = &w;
+    base.rocks = w.rocks, base.trees = w.trees, base.poles = w.poles, base.logs = w.logs;
+    base.boxes = w.boxes, base.fixtures = w.fixtures, base.stations = w.stations, base.models = w.models, base.bushes = w.bushes;
+    base.spawn = w.spawn, base.spawnYaw = w.spawnYaw;
+    level = lv;
+    level.map = w.map;
+    applyCells(w);
     rebuildObjects();
     if (level.section.on) clearBushes();
     syncSpawn();
@@ -250,25 +386,71 @@ void EditCore::begin(World& w, const Level& lv) {
     pendingCells.clear();
     depth = 0;
     changes = savedChanges = 0;
+    autosavedChanges = -1;
+    const int n = w.gridSize();
     dirtyCells.add(0, 0);
     dirtyCells.add(n - 1, n - 1);
     dirtyWater = dirtyObjects = true;
 }
 
+void EditCore::resume(World& w) {
+    world = &w;
+    applyCells(w);
+    rebuildObjects();
+    if (level.section.on) clearBushes();
+    syncSpawn();
+    const int n = w.gridSize();
+    dirtyCells.add(0, 0);
+    dirtyCells.add(n - 1, n - 1);
+    dirtyWater = dirtyObjects = true;
+}
+
+EditCore::PlaySpot EditCore::playSpot(bool here, const V3& at, double yaw) const {
+    PlaySpot s;
+    if (here) {
+        s.here = true, s.p = V3(at.x, world ? world->height(at.x, at.z) : at.y, at.z), s.yaw = yaw;
+    } else if (level.hasStart) {
+        s.fromStart = true, s.p = level.start, s.yaw = level.startYaw;
+    } else if (world) {
+        s.p = world->spawn, s.yaw = world->spawnYaw;
+    }
+    return s;
+}
+
+Level EditCore::levelToPlay(bool here) const {
+    Level l = level;
+    if (here) l.mode = LEVEL_FREE;  // (a run needs its grid and its start: from here it's the world, with the course in view)
+    return l;
+}
+
+std::string EditCore::autosavePath(const std::string& dir) const { return dir + "/" + levelFileName(level.name) + ".czl"; }
+
+bool EditCore::autosave(const std::string& dir, std::string* err) {
+    if (dir.empty()) return false;
+    const size_t slash = dir.find_last_of("/\\");
+    if (slash != std::string::npos) makeDir(configDir()), makeDir(dir.substr(0, slash));  // (levels/, then levels/autosave/ in saveLevelFile)
+    Level out = level;
+    out.builtin = false;
+    if (!saveLevelFile(out, autosavePath(dir), err)) return false;
+    autosavedChanges = changes;
+    return true;
+}
+
 void EditCore::rebuildObjects() {
     World& w = *world;
     w.rocks = base.rocks, w.trees = base.trees, w.poles = base.poles, w.logs = base.logs;
-    w.boxes = base.boxes, w.fixtures = base.fixtures, w.stations = base.stations;
-    for (const V3& r : level.removed) w.removeNear(r.x, r.z, 1.5);
+    w.boxes = base.boxes, w.fixtures = base.fixtures, w.stations = base.stations, w.models = base.models, w.bushes = base.bushes;
+    if (level.section.on) clearBushes();  // (a section's canvas is cleared of them)
+    for (const V3& r : level.removed) w.removeNear(r.x, r.z, 1.5, (int)std::lround(r.y) - 1);
     baseCount[0] = (int)w.rocks.size(), baseCount[1] = (int)w.trees.size(), baseCount[2] = (int)w.logs.size();
-    baseCount[3] = (int)w.boxes.size(), baseCount[4] = (int)w.fixtures.size();
-    for (int k = 0; k < 5; k++) owner[k].assign(baseCount[k], -1);
+    baseCount[3] = (int)w.boxes.size(), baseCount[4] = (int)w.fixtures.size(), baseCount[5] = (int)w.models.size(), baseCount[6] = (int)w.bushes.size();
+    for (int k = 0; k < 7; k++) owner[k].assign(baseCount[k], -1);
     for (int k = 0; k < (int)level.objects.size(); k++) {
         const LevelObject& o = level.objects[k];
-        const size_t sz[5] = {w.rocks.size(), w.trees.size(), w.logs.size(), w.boxes.size(), w.fixtures.size()};
+        const size_t sz[7] = {w.rocks.size(), w.trees.size(), w.logs.size(), w.boxes.size(), w.fixtures.size(), w.models.size(), w.bushes.size()};
         placeObject(o, w);
-        const size_t now[5] = {w.rocks.size(), w.trees.size(), w.logs.size(), w.boxes.size(), w.fixtures.size()};
-        for (int q = 0; q < 5; q++)
+        const size_t now[7] = {w.rocks.size(), w.trees.size(), w.logs.size(), w.boxes.size(), w.fixtures.size(), w.models.size(), w.bushes.size()};
+        for (int q = 0; q < 7; q++)
             for (size_t i = sz[q]; i < now[q]; i++) owner[q].push_back(k);
     }
     w.buildGrid();
@@ -276,7 +458,7 @@ void EditCore::rebuildObjects() {
 }
 
 int EditCore::ownerOf(int baseKind, int index) const {
-    if (baseKind < 0 || baseKind >= 5 || index < 0 || index >= (int)owner[baseKind].size()) return -1;
+    if (baseKind < 0 || baseKind >= 7 || index < 0 || index >= (int)owner[baseKind].size()) return -1;
     return owner[baseKind][index];
 }
 
@@ -740,6 +922,7 @@ LevelObject EditCore::grounded(LevelObject o) const {
                 const V3 off = ax[0] * (s * o.size.x) + ax[1] * o.size.y;
                 o.p.y = w.height(o.p.x + off.x, o.p.z + off.z) - off.y;
             }
+            o.p.y += o.lift;
             break;
         }
         case OBJ_LOG:
@@ -751,7 +934,7 @@ LevelObject EditCore::grounded(LevelObject o) const {
     return o;
 }
 
-static const char* kObjectNames[OBJ_KIND_COUNT] = {"ROCK", "BLOCK", "LOG", "TREE", "REPAIR SHOP"};
+static const char* kObjectNames[OBJ_KIND_COUNT] = {"ROCK", "BLOCK", "LOG", "TREE", "REPAIR SHOP", "STRUCTURE", "FENCE", "BUSH"};
 
 void EditCore::addObjects(const std::vector<LevelObject>& objs, const std::string& what) {
     if (!world || objs.empty()) return;
@@ -794,7 +977,7 @@ bool EditCore::removeBase(const EditPick& p) {
     if (!world || p.kind != EditPick::BASE) return false;
     beginEdit("DELETE MAP " + p.name);
     touchMeta();
-    level.removed.push_back(V3(p.at.x, 0, p.at.z));
+    level.removed.push_back(V3(p.at.x, p.baseKind + 1, p.at.z));
     const int before = baseCount[p.baseKind];
     rebuildObjects();
     const bool gone = baseCount[p.baseKind] < before;
@@ -814,11 +997,527 @@ int EditCore::adoptBase(const EditPick& p) {
         if (std::hypot(st.p.x - f.a.x, st.p.z - f.a.z) < 0.05) o.name = st.name;
     beginEdit("MOVE MAP " + p.name);
     touchMeta();
-    level.removed.push_back(V3(f.a.x, 0, f.a.z));
+    level.removed.push_back(V3(f.a.x, 4 + 1, f.a.z));
     level.objects.push_back(o);
     rebuildObjects();
     endEdit();
     return (int)level.objects.size() - 1;
+}
+
+// ---- Making the map's own objects the level's ---------------------------------------------------
+
+bool EditCore::rockToObject(const Rock& r, LevelObject& o) const {
+    const World& w = *world;
+    o = LevelObject();
+    o.kind = OBJ_ROCK, o.sub = 1, o.seed = r.seed, o.col[0] = r.tint;
+    const props::HullLibrary* lib = props::activeRockScans();
+    if (r.scan >= 0 && lib && r.scan < (int)lib->hulls.size()) {
+        const props::RockHull& h = lib->hulls[r.scan];
+        const V3 half = h.half(), mid((h.bmin[0] + h.bmax[0]) * 0.5, (h.bmin[1] + h.bmax[1]) * 0.5, (h.bmin[2] + h.bmax[2]) * 0.5);
+        const double s0 = len(r.axis[0]), s1 = len(r.axis[1]), s2 = len(r.axis[2]);
+        if (s0 < 1e-9 || s1 < 1e-9 || s2 < 1e-9) return false;
+        const V3 f0 = r.axis[0] * (1 / s0), f1 = r.axis[1] * (1 / s1);
+        o.pitch = std::asin(clampd(f0.y, -1, 1));
+        o.yaw = std::atan2(-f0.z, f0.x);
+        const double cy = std::cos(o.yaw), sy = std::sin(o.yaw), cp = std::cos(o.pitch), sp = std::sin(o.pitch);
+        const V3 up0(-cy * sp, cp, sy * sp);
+        o.roll = std::atan2(dot(cross(up0, f1), f0), dot(up0, f1));
+        o.size = V3(s0 * half.x, s1 * half.y, s2 * half.z);
+        o.scan = r.scan;
+        const V3 at = r.origin + r.axis[0] * mid.x + r.axis[1] * mid.y + r.axis[2] * mid.z;
+        double topY = -1e9;
+        for (const V3& p : h.v) topY = std::max(topY, r.axis[0].y * (p.x - mid.x) + r.axis[1].y * (p.y - mid.y) + r.axis[2].y * (p.z - mid.z));
+        o.p = V3(at.x, 0, at.z);
+        o.top = at.y - w.height(at.x, at.z) + topY;
+        return true;
+    }
+    // A code-made rock: the box round it, level (its shape is the seed's, so it won't be the same lumps).
+    if (r.v.empty()) return false;
+    V3 lo(1e9, 1e9, 1e9), hi(-1e9, -1e9, -1e9);
+    for (const V3& p : r.v) lo = V3(std::min(lo.x, p.x), std::min(lo.y, p.y), std::min(lo.z, p.z)), hi = V3(std::max(hi.x, p.x), std::max(hi.y, p.y), std::max(hi.z, p.z));
+    const V3 c = (lo + hi) * 0.5;
+    o.size = (hi - lo) * 0.5 * 0.9;
+    o.p = V3(c.x, 0, c.z);
+    o.top = hi.y - w.height(c.x, c.z);
+    return true;
+}
+
+// Rebuilds a box's axes from yaw, pitch, roll (as World::addBox does), for checking a conversion.
+static void boxAxes(double yaw, double pitch, double roll, V3 ax[3]) {
+    V3 a[3] = {V3(1, 0, 0), V3(0, 1, 0), V3(0, 0, 1)};
+    for (V3& v : a) {
+        v = rotateAxis(v, V3(1, 0, 0), roll);
+        v = rotateAxis(v, V3(0, 0, 1), pitch);
+        v = rotateAxis(v, V3(0, 1, 0), yaw);
+    }
+    for (int i = 0; i < 3; i++) ax[i] = a[i];
+}
+
+int EditCore::resolveBase(const EditPick& p) const {
+    const World& w = *world;
+    auto near2 = [&](const V3& a) { return std::hypot(a.x - p.at.x, a.z - p.at.z); };
+    int best = -1;
+    double bd = 1.0;
+    auto test = [&](int i, const V3& a) {
+        const double d = near2(a);
+        if (d < bd) bd = d, best = i;
+    };
+    switch (p.baseKind) {
+        case 0: for (int i = 0; i < (int)w.rocks.size(); i++) test(i, w.rocks[i].c); break;
+        case 1: for (int i = 0; i < (int)w.trees.size(); i++) test(i, w.trees[i].base); break;
+        case 2: for (int i = 0; i < (int)w.logs.size(); i++) test(i, (w.logs[i].a + w.logs[i].b) * 0.5); break;
+        case 3: for (int i = 0; i < (int)w.boxes.size(); i++) if (!w.boxes[i].hidden) test(i, w.boxes[i].c); break;
+        case 4: for (int i = 0; i < (int)w.fixtures.size(); i++) test(i, w.fixtures[i].a); break;
+        case 6: for (int i = 0; i < (int)w.bushes.size(); i++) test(i, w.bushes[i].p); break;
+        default: break;
+    }
+    return best;
+}
+
+bool EditCore::baseToObject(const EditPick& p, LevelObject& o, V3& key) const {
+    const World& w = *world;
+    const int i = resolveBase(p);
+    if (i < 0) return false;
+    o = LevelObject();
+    switch (p.baseKind) {
+        case 0:
+            if (!rockToObject(w.rocks[i], o)) return false;
+            key = V3(w.rocks[i].c.x, 1, w.rocks[i].c.z);
+            return true;
+        case 1: {
+            const Tree& t = w.trees[i];
+            o.kind = OBJ_TREE, o.p = V3(t.base.x, 0, t.base.z), o.size = V3(0, t.height, 0), o.sub = t.kind, o.col[0] = t.tint;
+            o.lift = t.base.y - (w.height(t.base.x, t.base.z) - 0.2);
+            key = V3(t.base.x, 2, t.base.z);
+            return true;
+        }
+        case 2: {
+            const Log& g = w.logs[i];
+            o.kind = OBJ_LOG, o.p = g.a, o.p2 = g.b, o.size = V3(g.r, 0, 0);
+            const V3 m = (g.a + g.b) * 0.5;
+            key = V3(m.x, 3, m.z);
+            return true;
+        }
+        case 3: {
+            const Box& b = w.boxes[i];
+            if (!b.solid) return false;
+            o.kind = OBJ_BOX, o.p = b.c, o.size = b.h, o.sub = b.rock ? 1 : 0;
+            o.col[0] = b.col[0], o.col[1] = b.col[1], o.col[2] = b.col[2];
+            o.pitch = std::asin(clampd(b.ax[0].y, -1, 1));
+            o.yaw = std::atan2(-b.ax[0].z, b.ax[0].x);
+            V3 a1 = rotateAxis(rotateAxis(V3(0, 1, 0), V3(0, 0, 1), o.pitch), V3(0, 1, 0), o.yaw);
+            o.roll = std::atan2(dot(cross(a1, b.ax[1]), b.ax[0]), dot(a1, b.ax[1]));
+            V3 chk[3];
+            boxAxes(o.yaw, o.pitch, o.roll, chk);
+            for (int a = 0; a < 3; a++)
+                if (len(chk[a] - b.ax[a]) > 1e-3) return false;  // (a tilt this can't say)
+            LevelObject g = o;
+            g.lift = 0;
+            o.lift = b.c.y - grounded(g).p.y;
+            key = V3(b.c.x, 4, b.c.z);
+            return true;
+        }
+        case 4: {
+            const Prop& f = w.fixtures[i];
+            key = V3(f.a.x, 5, f.a.z);
+            if (f.kind == PROP_GARAGE) {
+                o.kind = OBJ_STATION, o.p = V3(f.a.x, w.height(f.a.x, f.a.z), f.a.z), o.yaw = f.yaw;
+                for (const Station& st : w.stations)
+                    if (std::hypot(st.p.x - f.a.x, st.p.z - f.a.z) < 0.05) o.name = st.name;
+                return true;
+            }
+            if (f.kind == PROP_FENCE) {
+                o.kind = OBJ_FENCE, o.p = f.a, o.p2 = f.b;
+                return true;
+            }
+            Placed pl;
+            int sub;
+            if (!propAsModel(f, i, pl, sub)) return false;
+            o.kind = OBJ_MODEL, o.name = pl.id, o.sub = sub, o.yaw = f.yaw, o.size = pl.scale, o.p = V3(f.a.x, 0, f.a.z);
+            o.lift = f.a.y - w.height(f.a.x, f.a.z);
+            return true;
+        }
+        case 6: {
+            const Bush& b = w.bushes[i];
+            o.kind = OBJ_BUSH, o.p = V3(b.p.x, 0, b.p.z), o.size = V3(b.r, 0, 0), o.col[0] = b.tint;
+            o.lift = b.p.y - w.height(b.p.x, b.p.z);
+            key = V3(b.p.x, 7, b.p.z);
+            return true;
+        }
+        default: return false;
+    }
+}
+
+bool EditCore::canAdopt(const EditPick& p) const {
+    if (!world || p.kind != EditPick::BASE) return false;
+    LevelObject o;
+    V3 key;
+    return baseToObject(p, o, key);
+}
+
+std::vector<int> EditCore::adopt(const std::vector<EditPick>& picks) {
+    std::vector<int> out(picks.size(), -1);
+    if (!world) return out;
+    // (Read them all before changing anything: the world's indices move once one is taken out.)
+    std::vector<std::pair<LevelObject, V3>> made(picks.size());
+    int need = 0;
+    for (size_t i = 0; i < picks.size(); i++) {
+        if (picks[i].kind == EditPick::OBJECT) out[i] = picks[i].index;
+        else if (picks[i].kind == EditPick::BASE && baseToObject(picks[i], made[i].first, made[i].second)) need++, out[i] = -2;
+    }
+    if (!need) {
+        for (int& k : out)
+            if (k == -2) k = -1;
+        return out;
+    }
+    beginEdit("MAKE MAP OBJECTS MINE");
+    touchMeta();
+    for (size_t i = 0; i < picks.size(); i++)
+        if (out[i] == -2) {
+            level.removed.push_back(made[i].second);
+            level.objects.push_back(made[i].first);
+            out[i] = (int)level.objects.size() - 1;
+        }
+    rebuildObjects();
+    endEdit();
+    return out;
+}
+
+void EditCore::removePicks(const std::vector<EditPick>& picks) {
+    if (!world || picks.empty()) return;
+    std::vector<int> objs;
+    std::vector<V3> keys;
+    for (const EditPick& p : picks) {
+        if (p.kind == EditPick::OBJECT && p.index >= 0 && p.index < (int)level.objects.size()) objs.push_back(p.index);
+        else if (p.kind == EditPick::BASE && p.baseKind >= 0 && (p.baseKind < 5 || p.baseKind == 6)) keys.push_back(V3(p.at.x, p.baseKind + 1, p.at.z));
+    }
+    if (objs.empty() && keys.empty()) return;
+    std::sort(objs.begin(), objs.end());
+    objs.erase(std::unique(objs.begin(), objs.end()), objs.end());
+    beginEdit(objs.size() + keys.size() > 1 ? "DELETE " + std::to_string(objs.size() + keys.size()) + " OBJECTS" : "DELETE");
+    touchMeta();
+    for (auto it = objs.rbegin(); it != objs.rend(); ++it) level.objects.erase(level.objects.begin() + *it);
+    for (const V3& k : keys) level.removed.push_back(k);
+    rebuildObjects();
+    endEdit();
+}
+
+// ---- Moving, turning, scaling ------------------------------------------------------------------
+
+LevelObject EditCore::normalized(int k) const {
+    LevelObject o = level.objects[k];
+    if (o.kind == OBJ_ROCK && o.sub != 1) {  // left to chance: pin it as it was built
+        for (int i = 0; i < (int)owner[0].size() && i < (int)world->rocks.size(); i++)
+            if (owner[0][i] == k) {
+                LevelObject f;
+                if (rockToObject(world->rocks[i], f)) f.seed = o.seed, f.col[0] = o.col[0], o = f;
+                break;
+            }
+    }
+    if (o.kind == OBJ_BOX) {
+        LevelObject g = o;
+        g.lift = 0;
+        o.lift = o.p.y - grounded(g).p.y;
+        if (std::fabs(o.lift) < 1e-6) o.lift = 0;
+    }
+    return o;
+}
+
+LevelObject EditCore::movedBy(LevelObject o, double dx, double dz) const {
+    const World& w = *world;
+    if (isSpan(o.kind)) {  // each end keeps its clearance over the ground it was on
+        for (V3* e : {&o.p, &o.p2}) {
+            const double clear = e->y - w.height(e->x, e->z);
+            e->x += dx, e->z += dz;
+            e->y = w.height(e->x, e->z) + clear;
+        }
+        return o;
+    }
+    o.p.x += dx, o.p.z += dz;
+    return grounded(o);
+}
+
+LevelObject EditCore::transformed(LevelObject o, ObjOp op, double a) const {
+    const World& w = *world;
+    switch (o.kind) {
+        case OBJ_ROCK:
+            o.sub = 1;
+            switch (op) {
+                case OP_YAW: o.yaw += a; break;
+                case OP_PITCH: o.pitch += a; break;
+                case OP_ROLL: o.roll += a; break;
+                case OP_LIFT: o.top += a; break;
+                case OP_SCALE: o.size = o.size * a, o.top *= a; break;
+                case OP_STRETCH_X: o.size.x *= a; break;
+                case OP_STRETCH_Y: o.size.y *= a, o.top *= a; break;
+                case OP_STRETCH_Z: o.size.z *= a; break;
+            }
+            o.size = V3(clampd(o.size.x, 0.15, 14), clampd(o.size.y, 0.1, 10), clampd(o.size.z, 0.15, 14));
+            return o;
+        case OBJ_BOX:
+            switch (op) {
+                case OP_YAW: o.yaw += a; break;
+                case OP_PITCH: o.pitch = clampd(o.pitch + a, -1.3, 1.3); break;
+                case OP_ROLL: o.roll = clampd(o.roll + a, -1.3, 1.3); break;
+                case OP_LIFT: o.lift += a; break;
+                case OP_SCALE: o.size = o.size * a; break;
+                case OP_STRETCH_X: o.size.x *= a; break;
+                case OP_STRETCH_Y: o.size.y *= a; break;
+                case OP_STRETCH_Z: o.size.z *= a; break;
+            }
+            o.size = V3(clampd(o.size.x, 0.05, 60), clampd(o.size.y, 0.03, 20), clampd(o.size.z, 0.05, 60));
+            return grounded(o);
+        case OBJ_LOG: {
+            V3 m = (o.p + o.p2) * 0.5, half = (o.p2 - o.p) * 0.5;
+            double r = o.size.x;
+            switch (op) {
+                case OP_YAW: half = V3(half.x * std::cos(a) + half.z * std::sin(a), half.y, -half.x * std::sin(a) + half.z * std::cos(a)); break;
+                case OP_PITCH: {
+                    const double hor = std::hypot(half.x, half.z), L = std::hypot(hor, half.y);
+                    const double e = clampd(std::atan2(half.y, hor) + a, -1.3, 1.3);
+                    const V3 u = hor > 1e-6 ? V3(half.x / hor, 0, half.z / hor) : V3(1, 0, 0);
+                    half = u * (L * std::cos(e)) + V3(0, L * std::sin(e), 0);
+                    break;
+                }
+                case OP_ROLL: break;
+                case OP_LIFT: m.y += a; break;
+                case OP_SCALE: half = half * a, r *= a; break;
+                case OP_STRETCH_X: half = half * a; break;
+                case OP_STRETCH_Y:
+                case OP_STRETCH_Z: r *= a; break;
+            }
+            const double L = len(half);
+            if (L < 0.5) half = half * (0.5 / std::max(L, 1e-6));
+            if (L > 40) half = half * (40 / L);
+            o.p = m - half, o.p2 = m + half, o.size.x = clampd(r, 0.05, 2.0);
+            return o;
+        }
+        case OBJ_FENCE: {
+            const V3 m = (o.p + o.p2) * 0.5;
+            V3 half = (o.p2 - o.p) * 0.5;
+            switch (op) {
+                case OP_YAW: half = V3(half.x * std::cos(a) + half.z * std::sin(a), half.y, -half.x * std::sin(a) + half.z * std::cos(a)); break;
+                case OP_SCALE:
+                case OP_STRETCH_X: half = half * a; break;
+                default: break;
+            }
+            const double L = len(half);
+            if (L < 0.5) half = half * (0.5 / std::max(L, 1e-6));
+            if (L > 60) half = half * (60 / L);
+            o.p = m - half, o.p2 = m + half;
+            return o;
+        }
+        case OBJ_BUSH:
+            switch (op) {
+                case OP_LIFT: o.lift += a; break;
+                case OP_SCALE:
+                case OP_STRETCH_X:
+                case OP_STRETCH_Y:
+                case OP_STRETCH_Z: o.size.x *= a; break;
+                default: break;
+            }
+            o.size.x = clampd(o.size.x, 0.2, 6);
+            return o;
+        case OBJ_TREE:
+            switch (op) {
+                case OP_LIFT: o.lift += a; break;
+                case OP_SCALE:
+                case OP_STRETCH_Y: o.size.y *= a; break;
+                default: break;
+            }
+            o.size.y = clampd(o.size.y, 2, 45);
+            return o;
+        case OBJ_STATION:
+            if (op == OP_YAW) o.yaw += a;
+            return o;
+        case OBJ_MODEL: {
+            V3 s(o.size.x > 0 ? o.size.x : 1, o.size.y > 0 ? o.size.y : 1, o.size.z > 0 ? o.size.z : 1);
+            switch (op) {
+                case OP_YAW: o.yaw += a; break;
+                case OP_LIFT: o.lift += a; break;
+                case OP_SCALE: s = s * a; break;
+                case OP_STRETCH_X: s.x *= a; break;
+                case OP_STRETCH_Y: s.y *= a; break;
+                case OP_STRETCH_Z: s.z *= a; break;
+                default: break;
+            }
+            o.size = V3(clampd(s.x, 0.2, 8), clampd(s.y, 0.2, 8), clampd(s.z, 0.2, 8));
+            return o;
+        }
+        default: break;
+    }
+    (void)w;
+    return o;
+}
+
+void EditCore::replaceObjects(const std::vector<std::pair<int, LevelObject>>& set, const std::string& what, const std::string& key) {
+    if (!world || set.empty()) return;
+    beginEdit(what, key);
+    touchMeta();
+    for (const auto& s : set)
+        if (s.first >= 0 && s.first < (int)level.objects.size()) level.objects[s.first] = s.second;
+    rebuildObjects();
+    endEdit();
+}
+
+void EditCore::moveObjects(const std::vector<int>& ks, double dx, double dz, const std::string& key) {
+    std::vector<std::pair<int, LevelObject>> set;
+    for (int k : ks)
+        if (k >= 0 && k < (int)level.objects.size()) set.push_back({k, movedBy(normalized(k), dx, dz)});
+    replaceObjects(set, "MOVE", key);
+}
+
+void EditCore::transformObjects(const std::vector<int>& ks, ObjOp op, double amount, const std::string& key) {
+    static const char* names[] = {"TURN", "TIP", "ROLL", "RAISE", "SCALE", "STRETCH", "STRETCH", "STRETCH"};
+    std::vector<int> v;
+    for (int k : ks)
+        if (k >= 0 && k < (int)level.objects.size()) v.push_back(k);
+    if (v.empty()) return;
+    // Turning several: they swing round their middle, each also turning in place.
+    V3 c;
+    for (int k : v) c += isSpan(level.objects[k].kind) ? (level.objects[k].p + level.objects[k].p2) * 0.5 : level.objects[k].p;
+    c = c * (1.0 / v.size());
+    std::vector<std::pair<int, LevelObject>> set;
+    for (int k : v) {
+        LevelObject o = normalized(k);
+        if (op == OP_YAW && v.size() > 1) {
+            auto swing = [&](V3 p) {
+                const double x = p.x - c.x, z = p.z - c.z;
+                return V3(c.x + x * std::cos(amount) + z * std::sin(amount), p.y, c.z - x * std::sin(amount) + z * std::cos(amount));
+            };
+            if (isSpan(o.kind)) {
+                const V3 a = swing(o.p), b = swing(o.p2);
+                const World& w = *world;
+                const double ca = o.p.y - w.height(o.p.x, o.p.z), cb = o.p2.y - w.height(o.p2.x, o.p2.z);
+                o.p = V3(a.x, w.height(a.x, a.z) + ca, a.z), o.p2 = V3(b.x, w.height(b.x, b.z) + cb, b.z);
+            } else {
+                const V3 q = swing(o.p);
+                o = movedBy(o, q.x - o.p.x, q.z - o.p.z);
+                o = transformed(o, op, amount);
+            }
+        } else {
+            o = transformed(o, op, amount);
+        }
+        set.push_back({k, o});
+    }
+    replaceObjects(set, names[op], key);
+}
+
+// ---- Outlines ----------------------------------------------------------------------------------
+
+std::vector<std::pair<int, int>> EditCore::partsOf(int k) const {
+    std::vector<std::pair<int, int>> out;
+    for (int q = 0; q < 7; q++)
+        for (int i = 0; i < (int)owner[q].size(); i++)
+            if (owner[q][i] == k) out.push_back({q, i});
+    return out;
+}
+
+Shape EditCore::shapeOf(int baseKind, int index) const {
+    Shape s;
+    if (!world || index < 0) return s;
+    const World& w = *world;
+    switch (baseKind) {
+        case 0: {
+            if (index >= (int)w.rocks.size()) break;
+            const Rock& r = w.rocks[index];
+            std::vector<std::pair<int, int>> seen;
+            for (const auto& f : r.f) {
+                s.tris.push_back({r.v[f[0]], r.v[f[1]], r.v[f[2]]});
+                for (int e = 0; e < 3; e++) {
+                    int a = f[e], b = f[(e + 1) % 3];
+                    if (a > b) std::swap(a, b);
+                    seen.push_back({a, b});
+                }
+            }
+            std::sort(seen.begin(), seen.end());
+            seen.erase(std::unique(seen.begin(), seen.end()), seen.end());
+            for (const auto& e : seen) s.edges.push_back({r.v[e.first], r.v[e.second]});
+            break;
+        }
+        case 1: {
+            if (index >= (int)w.trees.size()) break;
+            const Tree& t = w.trees[index];
+            s.edges.push_back({t.base, t.base + V3(0, t.height * (t.kind == 2 ? 0.95 : 0.6), 0)});
+            if (t.kind == 0) {
+                const V3 b = t.base + V3(0, t.height * 0.18, 0), apex = t.base + V3(0, t.height, 0);
+                ringEdges(s, b, V3(1, 0, 0), V3(0, 0, 1), t.height * 0.17, 16);
+                for (int k = 0; k < 4; k++) s.edges.push_back({b + V3(std::cos(k * M_PI / 2), 0, std::sin(k * M_PI / 2)) * (t.height * 0.17), apex});
+            } else if (t.kind == 1) {
+                const V3 c = t.base + V3(0, t.height * 0.64, 0);
+                const double r = t.height * 0.28;
+                ringEdges(s, c, V3(1, 0, 0), V3(0, 0, 1), r, 16);
+                ringEdges(s, c, V3(1, 0, 0), V3(0, 1, 0), r, 16);
+                ringEdges(s, c, V3(0, 0, 1), V3(0, 1, 0), r, 16);
+            }
+            break;
+        }
+        case 2: {
+            if (index >= (int)w.logs.size()) break;
+            const Log& g = w.logs[index];
+            const V3 ax = norm(g.b - g.a), u = norm(cross(ax, std::fabs(ax.y) < 0.9 ? V3(0, 1, 0) : V3(1, 0, 0))), v = cross(ax, u);
+            ringEdges(s, g.a, u, v, g.r, 10);
+            ringEdges(s, g.b, u, v, g.r, 10);
+            for (int k = 0; k < 4; k++) {
+                const V3 off = u * (std::cos(k * M_PI / 2) * g.r) + v * (std::sin(k * M_PI / 2) * g.r);
+                s.edges.push_back({g.a + off, g.b + off});
+            }
+            break;
+        }
+        case 3:
+            if (index < (int)w.boxes.size() && !w.boxes[index].hidden) boxEdges(w.boxes[index], s, true);
+            break;
+        case 4: {
+            if (index >= (int)w.fixtures.size()) break;
+            const Prop& f = w.fixtures[index];
+            Placed pl;
+            int sub;
+            if (f.kind == PROP_GARAGE) boxEdges(shedBox(f), s, false);
+            else if (f.kind == PROP_FENCE) boxEdges(fenceBox(f), s, false);
+            else if (propAsModel(f, index, pl, sub)) boxEdges(modelBox(pl), s, false);
+            else s.edges.push_back({f.a, f.a + V3(0, 1.6, 0)});
+            break;
+        }
+        case 6: {
+            if (index >= (int)w.bushes.size()) break;
+            const Bush& b = w.bushes[index];
+            const V3 c = b.p + V3(0, b.r * 0.55, 0);
+            ringEdges(s, c, V3(1, 0, 0), V3(0, 0, 1), b.r, 14);
+            ringEdges(s, c, V3(1, 0, 0), V3(0, 0.65, 0), b.r, 14);
+            ringEdges(s, c, V3(0, 0, 1), V3(0, 0.65, 0), b.r, 14);
+            break;
+        }
+        case 5:
+            if (index < (int)w.models.size()) boxEdges(modelBox(w.models[index]), s, false);
+            break;
+        default: break;
+    }
+    return s;
+}
+
+Shape EditCore::previewShape(const LevelObject& o) {
+    Shape s;
+    if (!world) return s;
+    World& w = *world;
+    if (o.kind == OBJ_STATION) {  // (not placed even for a moment: a station keeps its name for good)
+        Prop f;
+        f.kind = PROP_GARAGE, f.a = V3(o.p.x, w.height(o.p.x, o.p.z), o.p.z), f.yaw = o.yaw;
+        boxEdges(shedBox(f), s, false);
+        return s;
+    }
+    const size_t n[9] = {w.rocks.size(), w.trees.size(), w.poles.size(), w.logs.size(), w.boxes.size(), w.fixtures.size(), w.stations.size(), w.models.size(), w.bushes.size()};
+    placeObject(o, w);
+    for (size_t i = n[0]; i < w.rocks.size(); i++) s.add(shapeOf(0, (int)i));
+    for (size_t i = n[1]; i < w.trees.size(); i++) s.add(shapeOf(1, (int)i));
+    for (size_t i = n[3]; i < w.logs.size(); i++) s.add(shapeOf(2, (int)i));
+    for (size_t i = n[4]; i < w.boxes.size(); i++) s.add(shapeOf(3, (int)i));
+    for (size_t i = n[5]; i < w.fixtures.size(); i++) s.add(shapeOf(4, (int)i));
+    for (size_t i = n[7]; i < w.models.size(); i++) s.add(shapeOf(5, (int)i));
+    for (size_t i = n[8]; i < w.bushes.size(); i++) s.add(shapeOf(6, (int)i));
+    w.bushes.resize(n[8]);
+    w.rocks.resize(n[0]), w.trees.resize(n[1]), w.poles.resize(n[2]), w.logs.resize(n[3]);
+    w.boxes.resize(n[4]), w.fixtures.resize(n[5]), w.stations.resize(n[6]), w.models.resize(n[7]);
+    return s;
 }
 
 // ---- The course ------------------------------------------------------------------------
@@ -996,7 +1695,7 @@ int EditCore::stampSection(int type, uint32_t seed) {
     // The level's own objects there go too (the generator clears what stands on its ground).
     level.objects.erase(std::remove_if(level.objects.begin(), level.objects.end(),
                                        [&](const LevelObject& o) {
-                                           const V3 at = o.kind == OBJ_LOG ? (o.p + o.p2) * 0.5 : o.p;
+                                           const V3 at = isSpan(o.kind) ? (o.p + o.p2) * 0.5 : o.p;
                                            return inFootprint(at.x, at.z);
                                        }),
                         level.objects.end());
@@ -1110,37 +1809,47 @@ EditPick EditCore::pick(const V3& o, const V3& d, double hitT, bool includeBase)
         best.kind = kind, best.index = index, best.baseKind = baseKind, best.at = at, best.t = t, best.name = name;
     };
     double t;
+    // (Each is tested as its real shape: a ray past a rock's corner but through its bounding sphere is a miss.)
     for (int i = 0; i < (int)w.rocks.size(); i++) {
         const Rock& r = w.rocks[i];
-        if (raySphere(o, d, r.c, r.r * 0.85, t)) consider(t, EditPick::BASE, i, 0, r.c, "ROCK");
+        if (objshape::Hit h; objshape::rayRock(r, o, d, best.t, h)) consider(h.t, EditPick::BASE, i, 0, r.c, "ROCK");
     }
     for (int i = 0; i < (int)w.trees.size(); i++) {
         const Tree& tr = w.trees[i];
-        const double dist = raySegment(o, d, tr.base, tr.base + V3(0, tr.height * 0.9, 0), t);
-        if (dist < std::max(0.6, tr.radius * 0.55)) consider(t, EditPick::BASE, i, 1, tr.base, "TREE");
+        if (rayTree(o, d, tr, t)) consider(t, EditPick::BASE, i, 1, tr.base, "TREE");
     }
     for (int i = 0; i < (int)w.logs.size(); i++) {
         const Log& g = w.logs[i];
-        if (raySegment(o, d, g.a, g.b, t) < g.r + 0.2) consider(t, EditPick::BASE, i, 2, (g.a + g.b) * 0.5, "LOG");
+        if (objshape::Hit h; objshape::rayLog(g, o, d, best.t, h)) consider(h.t, EditPick::BASE, i, 2, (g.a + g.b) * 0.5, "LOG");
     }
     for (int i = 0; i < (int)w.boxes.size(); i++) {
         const Box& b = w.boxes[i];
         if (b.hidden) continue;
-        if (rayBox(o, d, b, t)) consider(t, EditPick::BASE, i, 3, b.c, b.rock ? "ROCK SLAB" : "BLOCK");
+        if (objshape::Hit h; objshape::rayBox(b, o, d, best.t, h)) consider(h.t, EditPick::BASE, i, 3, b.c, b.rock ? "ROCK SLAB" : "BLOCK");
     }
     for (int i = 0; i < (int)w.fixtures.size(); i++) {
         const Prop& f = w.fixtures[i];
         static const char* names[] = {"FENCE", "CABIN", "SIGN", "TRAIL MAP", "TABLE", "STUMP", "REPAIR SHOP", "MARKER", "CAIRN"};
         const std::string name = names[std::min((int)f.kind, 8)];
+        Placed pl;
+        int sub;
         if (f.kind == PROP_FENCE) {
-            if (raySegment(o, d, f.a + V3(0, 0.6, 0), f.b + V3(0, 0.6, 0), t) < 0.8) consider(t, EditPick::BASE, i, 4, f.a, name);
+            if (objshape::Hit h; objshape::rayBox(fenceBox(f), o, d, best.t, h)) consider(h.t, EditPick::BASE, i, 4, f.a, name);
         } else if (f.kind == PROP_GARAGE) {
-            // (A map's own repair shop goes as a whole: the station, the shed and its posts.)
-            if (raySphere(o, d, f.a + V3(0, 2.5, 0), 5.5, t)) consider(t, EditPick::BASE, i, 4, f.a, name);
-        } else {
-            const double r = f.kind == PROP_CABIN ? 4.0 : 1.4;
-            if (raySphere(o, d, f.a + V3(0, r * 0.6, 0), r, t)) consider(t, EditPick::BASE, i, 4, f.a, name);
+            if (objshape::Hit h; objshape::rayBox(shedBox(f), o, d, best.t, h)) consider(h.t, EditPick::BASE, i, 4, f.a, name);
+        } else if (propAsModel(f, i, pl, sub)) {
+            if (objshape::Hit h; objshape::rayBox(modelBox(pl), o, d, best.t, h)) consider(h.t, EditPick::BASE, i, 4, f.a, name);
+        } else if (raySegment(o, d, f.a, f.a + V3(0, 1.6, 0), t) < 0.3) {
+            consider(t, EditPick::BASE, i, 4, f.a, name);
         }
+    }
+    for (int i = 0; i < (int)w.bushes.size(); i++) {
+        const Bush& b = w.bushes[i];
+        if (rayEllipsoid(o, d, b.p + V3(0, b.r * 0.55, 0), b.r, b.r * 0.65, t)) consider(t, EditPick::BASE, i, 6, b.p, "BUSH");
+    }
+    for (int i = 0; i < (int)w.models.size(); i++) {
+        if (ownerOf(5, i) < 0) continue;  // (only the structures you put there)
+        if (objshape::Hit h; objshape::rayBox(modelBox(w.models[i]), o, d, best.t, h)) consider(h.t, EditPick::BASE, i, 5, w.models[i].p, "STRUCTURE");
     }
     for (int k = 0; k < (int)level.gates.size(); k++) {
         const Gate& g = level.gates[k];

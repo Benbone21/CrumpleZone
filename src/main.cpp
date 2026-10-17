@@ -2000,7 +2000,9 @@ int main(int argc, char** argv) {
     };
     refreshLevelsLater = refreshLevels;
     auto runSlot = [&]() { return net.active() ? std::max(0, net.self) : 0; };
-    auto playLevel = [&](const Level& lv) {
+    bool editorSuspended = false;  // the editor is waiting while its level is tried out (F2 comes back to it)
+    auto playLevel = [&](const Level& lv, const EditCore::PlaySpot* spot = nullptr) {
+        editorSuspended = false;
         Car& me = sim.cars[sim.player];
         me.pilot.active = false;
         me.ai = false;
@@ -2036,13 +2038,14 @@ int main(int argc, char** argv) {
             run.stop();
             V3 p = lv.hasStart ? lv.start : sim.world.spawn;
             double yaw = lv.hasStart ? lv.startYaw : sim.world.spawnYaw;
-            if (lv.hasStart) LevelRun::gridSlot(lv, runSlot(), p, yaw);
+            if (spot && spot->here) p = spot->p, yaw = spot->yaw;  // (a playtest from where the editor's camera looked)
+            else if (lv.hasStart) LevelRun::gridSlot(lv, runSlot(), p, yaw);
             else if (!sim.world.spawnSlot(runSlot(), p, yaw)) p += V3(std::sin(yaw), 0, std::cos(yaw)) * (6.5 * runSlot());  // (each player their own place on the pad)
             Car& c = sim.cars[sim.player];
             c.respawn(V3(p.x, sim.world.clearY(p.x, p.z) + 0.05, p.z), yaw);
             c.setDown(sim.world);
             c.spawnPos = c.frame().com, c.spawnYaw = yaw;
-            hud.toast(lv.name + ": FREE DRIVE");
+            hud.toast(spot && spot->here ? lv.name + ": FROM HERE" : lv.name + ": FREE DRIVE");
         }
         if (net.role == NetSession::HOST) net.setLevel(saveLevelText(lv));
     };
@@ -2207,6 +2210,7 @@ int main(int argc, char** argv) {
     };
     // ---- The world editor (offline) ----
     Editor editor;
+    if (!scripted) editor.autosaveDir = userLevelFolder() + "/autosave";  // (recovery copies; never from the scripted runs)
     Level lastEdited;
     bool haveEdited = false;
     auto openEditor = [&](const Level& base, bool newSection = false) {
@@ -2225,6 +2229,20 @@ int main(int argc, char** argv) {
         drawnWorld = sim.world.stamp;
         sim.paused = true;
         fx.clear();
+    };
+    // Back to the editor after a playtest: its camera, undo history and unsaved edits as they were (nothing reloaded from disk).
+    auto returnToEditor = [&]() -> bool {
+        if (!editorSuspended || !editor.started() || editor.core.level.map != sim.world.map || net.active()) return false;
+        run.stop();
+        levelHours = -1;
+        stopPilot();
+        sim.world = levelWorld(editor.core.level);
+        editor.resume(sim.world, renderer);
+        drawnWorld = sim.world.stamp;
+        sim.paused = true;
+        fx.clear();
+        editorSuspended = false;
+        return true;
     };
     auto editorKeyLevel = [&]() {  // what F2 edits: the last edited level, or the one being played, or a new one here
         if (haveEdited && lastEdited.map == sim.world.map) return lastEdited;
@@ -2343,6 +2361,10 @@ int main(int argc, char** argv) {
                     if (l.builtin) l.builtin = false, l.file.clear(), l.name += " (MINE)";  // (the game's: edit a copy)
                     openEditor(l);
                 }
+                break;
+            case PauseMenu::EDITOR_BACK:
+                closeMenu();
+                if (!returnToEditor()) hud.toast("NOTHING TO GO BACK TO");
                 break;
             case PauseMenu::NEW_SECTION: {
                 closeMenu();
@@ -2812,7 +2834,7 @@ int main(int argc, char** argv) {
                         }
                         case SC_H: hud.showHelp = !hud.showHelp; break;
                         case SC_F2:
-                            openEditor(editorKeyLevel());
+                            if (!returnToEditor()) openEditor(editorKeyLevel());
                             break;
                         case SC_J:
                             if (playback.active()) {  // (a scenario: J opens its checks list)
@@ -3812,24 +3834,93 @@ int main(int argc, char** argv) {
             ed.addGate({c - f * 10, yaw, 12});
             ed.addGate({c + f * 25, yaw, 12});
         }
+        if (scripted && opt.script == "edobj") {
+            // (Screenshots of the object tools: CZ_EDOBJ=palette | ghost | xform | group | playtest | back; CZ_PAL names the palette entry.)
+            const std::string mode = std::getenv("CZ_EDOBJ") ? std::getenv("CZ_EDOBJ") : "palette";
+            EditCore& ed = editor.core;
+            auto look = [&](double dist, double h) {  // the camera over the middle of the scene
+                const V3 c = editor.core.level.hasStart ? editor.core.level.start : sim.world.spawn;
+                editor.setCamera(V3(c.x, c.y, c.z) + V3(-dist, h, 0), 0, -0.45);
+            };
+            if (editor.active && frame == 3) {
+                editor.setTool(Editor::OBJECTS);
+                if (std::getenv("CZ_PAL")) editor.setPalette(std::max(0, editor.findPalette(std::getenv("CZ_PAL"))));
+                look(std::getenv("CZ_DIST") ? std::atof(std::getenv("CZ_DIST")) : 26, std::getenv("CZ_HIGH") ? std::atof(std::getenv("CZ_HIGH")) : 14);
+                editor.setMouse(W * 0.5f, H * 0.58f);
+                if (mode == "paint") editor.setTool(Editor::PAINT);
+            }
+            if (editor.active && frame == 5 && (mode == "xform" || mode == "group" || mode == "playtest" || mode == "back")) {
+                const V3 c = (ed.level.hasStart ? ed.level.start : sim.world.spawn);
+                auto put = [&](int pal, double dx, double dz, std::vector<int>& ks) {
+                    editor.setPalette(pal);
+                    ks.push_back(ed.addObject(editor.makeForScript(V3(c.x + dx, 0, c.z + dz))));
+                };
+                std::vector<int> ks;
+                put(editor.findPalette(std::getenv("CZ_PAL") ? std::getenv("CZ_PAL") : "MOSS 1 A"), 4, -4, ks);
+                put(editor.findPalette("PINE"), 6, 8, ks);
+                put(editor.findPalette("LOG"), 2, 3, ks);
+                put(editor.findPalette("CABIN"), 14, 6, ks);
+                put(editor.findPalette("RAMP"), 8, -10, ks);
+                editor.setPointer(true);
+                editor.selectObjects({ks[0]});
+                if (mode == "xform") {
+                    editor.applyKey(SC_R, false, false);  // tip
+                    editor.applyKey(SC_R, false, false);
+                    editor.applyKey(SC_C, false, false);  // roll
+                    editor.applyKey(SC_E, true, false);   // turn
+                    editor.applyKey(SC_T, false, false);  // longer
+                    editor.applyKey(SC_T, false, false);
+                    editor.applyKey(SC_Y, false, false);  // taller
+                    editor.applyKey(SC_EQUALS, false, false);
+                    editor.applyKey(SC_X, false, false);  // raise
+                }
+                if (mode == "group") editor.selectObjects(ks);
+                if (mode == "playtest" || mode == "back") {
+                    ed.setStart(c.x - 20, c.z, 0);
+                    editor.setCamera(V3(c.x + 30, sim.world.height(c.x + 30, c.z + 30) + 6, c.z + 30), 2.3, -0.2);
+                }
+            }
+            if (editor.active && frame == 5 && (mode == "hover" || mode == "delete")) {
+                const V3 c = (ed.level.hasStart ? ed.level.start : sim.world.spawn);
+                std::vector<int> ks;
+                for (const char* nm : {"MOSS 1 A", "PINE", "LOG", "CABIN", "RAMP"}) {
+                    editor.setPalette(editor.findPalette(nm));
+                    const double dx = std::string(nm) == "CABIN" ? 14 : std::string(nm) == "RAMP" ? 8 : std::string(nm) == "PINE" ? 6 : std::string(nm) == "LOG" ? 2 : 4;
+                    const double dz = std::string(nm) == "CABIN" ? 6 : std::string(nm) == "RAMP" ? -10 : std::string(nm) == "PINE" ? 8 : std::string(nm) == "LOG" ? 3 : -4;
+                    ks.push_back(ed.addObject(editor.makeForScript(V3(c.x + dx, 0, c.z + dz))));
+                }
+                editor.setPointer(true);
+                if (mode == "hover") editor.setMouse(W * 0.595f, H * 0.30f);
+                else editor.selectObjects({ks[4], ks[3]});
+            }
+            if (editor.active && frame == 8 && mode == "delete") editor.applyKey(SC_DELETE);
+            if (editor.active && frame == 12 && (mode == "playtest" || mode == "back")) editor.requestPlay(true);
+            if (!editor.active && editorSuspended && frame == 50 && mode == "back") returnToEditor();
+        }
         if (editor.active) {
             editor.update(dt, keys, renderer, W, H);
+            if (editor.takeSaved()) refreshLevels();  // (a level just saved is on the menu's list at once)
             drawnWorld = sim.world.stamp;  // (it redraws what it changes itself)
             sim.paused = true;
             if (editor.wantPlay || editor.wantClose) {
-                const bool play = editor.wantPlay;
+                const bool play = editor.wantPlay, here = editor.playHere;
+                EditCore::PlaySpot spot = editor.spot;
+                if (!play) spot = editor.core.playSpot(true, editor.viewPoint(), editor.heading());  // (leaving: you're where you were looking, unless there's a start)
+                editor.autosaveNow();
                 lastEdited = editor.core.level;
                 haveEdited = true;
-                editor.close();
+                editor.close();  // (the editor keeps its state: F2 comes back to it)
                 sim.paused = false;
-                if (play) playLevel(lastEdited);
-                else {
+                if (play) {
+                    playLevel(editor.core.levelToPlay(here), here ? &spot : nullptr);
+                } else {
                     // Back to driving, on the world as edited.
                     Level free = lastEdited;
                     free.mode = LEVEL_FREE;
-                    playLevel(free);
+                    playLevel(free, free.hasStart ? nullptr : &spot);
                 }
-                hud.toast(play ? "PLAYING " + lastEdited.name + "   (F2: BACK TO THE EDITOR)" : "DRIVING THE EDITED WORLD   (F2: BACK TO THE EDITOR)");
+                editorSuspended = true;
+                hud.toast(play ? (here ? "TESTING FROM HERE" : "TESTING " + lastEdited.name) : "DRIVING THE EDITED WORLD");
             }
         }
         if (walker.active) {  // the camera follows you on foot
@@ -3964,6 +4055,7 @@ int main(int argc, char** argv) {
         for (const RemoteWalker& rw : coop.walkers) renderer.figures.push_back({rw.p, rw.yaw, V3(0.2, 0.6, 0.95), rw.stride});
         // A jack under a wheel: on the ground under its axle or arm, handle out, raised as far as it's been worked.
         renderer.frameModels.clear();
+        if (editor.active) renderer.frameModels.insert(renderer.frameModels.end(), editor.ghostModels.begin(), editor.ghostModels.end());
         if (mk::findModel("jack"))
             for (const Car& c : sim.cars)
                 if (c.jackPlaced && c.jackWheel >= 0 && c.jackWheel < (int)c.wheels.size()) renderer.frameModels.push_back(Interact::jackModel(sim, c, c.jackWheel));
@@ -4087,6 +4179,13 @@ int main(int argc, char** argv) {
             }
         }
         if (showHud && run.active()) drawLevelHud(renderer, run, sim, view, W, H);
+        if (editorSuspended && !editor.active && !hud.photo) {  // a playtest: the way back, always on screen
+            const float u = std::max(0.75f, H / 720.0f), s = px(1.5f * u);
+            const std::string t = "PLAYTEST   F2: BACK TO THE EDITOR";
+            const float w = r_textW(renderer, t, s) + 28 * u;
+            pill(renderer, 12 * u, 12 * u, w, 8 * s + 18 * u, 0.30f, 0.17f, 0.02f, 0.92f);
+            label(renderer, 26 * u, 21 * u, s, t, 1.0f, 0.88f, 0.45f, 1);
+        }
         if (showHud && jobOn) {  // the job: what to do next, and where
             const float u = std::max(0.75f, H / 720.0f), s = px(1.2f * u);
             const V3 me = walker.active ? walker.p : sim.cars[sim.player].frame().com;
@@ -4137,6 +4236,7 @@ int main(int argc, char** argv) {
             }
             menu.netActive = net.active() && !net.joining();
             menu.levelActive = run.active();
+            menu.editorSuspended = editorSuspended;
             menu.jobActive = jobOn && !job.done;
             menu.jobStatus = jobOn ? jobStatus(job, sim, sim.cars[sim.player].frame().com) : "";
             menu.netClient = net.role == NetSession::CLIENT;
@@ -4249,6 +4349,7 @@ int main(int argc, char** argv) {
         if (c.spec->model >= 0) resume.insert(resume.end(), {"--resume-model", std::to_string(c.spec->model)});
     }
     if (opt.timeHours < 0) saveSettings();  // (the clock carries on next time, and after a reload)
+    if (editor.started()) editor.autosaveNow();  // (closing the game with unsaved edits, in the editor or while testing them: a recovery copy)
     playback.stop();
     net.close();
     audio.stop();

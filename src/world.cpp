@@ -239,12 +239,15 @@ Rock& addScannedRock(World& w, const props::HullLibrary& lib, double x, double z
         if (!dup) pick.push_back(c);
         if (pick.size() == 4) break;
     }
-    const Cand& c = pick[std::min((size_t)(rnd() * pick.size()), pick.size() - 1)];
+    Cand c = pick[std::min((size_t)(rnd() * pick.size()), pick.size() - 1)];
+    const bool forced = pose && pose->scan >= 0 && pose->scan < (int)lib.hulls.size();
+    if (forced) c = {0, pose->scan, false};  // (a picked scan: its own way round, sized exactly as asked)
     const props::RockHull& hull = lib.hulls[c.i];
     const V3 h = hull.half(), mid((hull.bmin[0] + hull.bmax[0]) * 0.5, (hull.bmin[1] + hull.bmax[1]) * 0.5, (hull.bmin[2] + hull.bmax[2]) * 0.5);
     const double wantX = c.swap ? radii.z : radii.x, wantZ = c.swap ? radii.x : radii.z;
-    const V3 scale(wantX / std::max(h.x, 1e-3) * (0.94 + 0.12 * rnd()), radii.y / std::max(h.y, 1e-3) * (0.94 + 0.12 * rnd()),
-                   wantZ / std::max(h.z, 1e-3) * (0.94 + 0.12 * rnd()));
+    V3 scale(wantX / std::max(h.x, 1e-3) * (0.94 + 0.12 * rnd()), radii.y / std::max(h.y, 1e-3) * (0.94 + 0.12 * rnd()),
+             wantZ / std::max(h.z, 1e-3) * (0.94 + 0.12 * rnd()));
+    if (forced) scale = V3(wantX / std::max(h.x, 1e-3), radii.y / std::max(h.y, 1e-3), wantZ / std::max(h.z, 1e-3));
     const double yaw = rnd() * 2 * M_PI, tipX = (rnd() - 0.5) * 0.2, tipZ = (rnd() - 0.5) * 0.2;
     // Model axes in the world: scaled, tipped, turned.
     V3 ax[3] = {V3(scale.x, 0, 0), V3(0, scale.y, 0), V3(0, 0, scale.z)};
@@ -1303,22 +1306,35 @@ void World::addTree(double x, double z, double treeHeight, int kind, float tint)
 
 void World::addLog(V3 a, V3 b, double r) { logs.push_back({a, b, r}); }
 
-std::string World::removeNear(double x, double z, double r) {
+std::string World::removeNear(double x, double z, double r, int onlyKind) {
     double best = r;
     int kind = -1, idx = -1;
     auto consider = [&](double d, int k, int i) {
         if (d < best) best = d, kind = k, idx = i;
     };
-    for (int i = 0; i < (int)rocks.size(); i++) consider(std::max(0.0, std::hypot(rocks[i].c.x - x, rocks[i].c.z - z) - rocks[i].r * 0.5), 0, i);
-    for (int i = 0; i < (int)trees.size(); i++) consider(std::hypot(trees[i].base.x - x, trees[i].base.z - z), 1, i);
-    for (int i = 0; i < (int)logs.size(); i++) {
-        const V3 m = (logs[i].a + logs[i].b) * 0.5;
-        consider(std::hypot(m.x - x, m.z - z), 2, i);
-    }
-    for (int i = 0; i < (int)boxes.size(); i++)
-        if (!boxes[i].hidden) consider(std::hypot(boxes[i].c.x - x, boxes[i].c.z - z), 3, i);
-    for (int i = 0; i < (int)fixtures.size(); i++) consider(std::hypot(fixtures[i].a.x - x, fixtures[i].a.z - z), 4, i);
+    const bool any = onlyKind < 0 || onlyKind > 6;
+    if (any || onlyKind == 0)
+        for (int i = 0; i < (int)rocks.size(); i++) {
+            const double d = std::hypot(rocks[i].c.x - x, rocks[i].c.z - z);
+            consider(any ? std::max(0.0, d - rocks[i].r * 0.5) : d, 0, i);
+        }
+    if (any || onlyKind == 1)
+        for (int i = 0; i < (int)trees.size(); i++) consider(std::hypot(trees[i].base.x - x, trees[i].base.z - z), 1, i);
+    if (any || onlyKind == 2)
+        for (int i = 0; i < (int)logs.size(); i++) {
+            const V3 m = (logs[i].a + logs[i].b) * 0.5;
+            consider(std::hypot(m.x - x, m.z - z), 2, i);
+        }
+    if (any || onlyKind == 3)
+        for (int i = 0; i < (int)boxes.size(); i++)
+            if (!boxes[i].hidden) consider(std::hypot(boxes[i].c.x - x, boxes[i].c.z - z), 3, i);
+    if (any || onlyKind == 4)
+        for (int i = 0; i < (int)fixtures.size(); i++) consider(std::hypot(fixtures[i].a.x - x, fixtures[i].a.z - z), 4, i);
+    if (any || onlyKind == 6)  // (a bush counts only when asked for by kind: in an old file's "any" it would steal the removal)
+        if (onlyKind == 6)
+            for (int i = 0; i < (int)bushes.size(); i++) consider(std::hypot(bushes[i].p.x - x, bushes[i].p.z - z), 6, i);
     switch (kind) {
+        case 6: bushes.erase(bushes.begin() + idx); return "BUSH";
         case 0: rocks.erase(rocks.begin() + idx); return "ROCK";
         case 1: {
             const Tree t = trees[idx];
@@ -1354,6 +1370,41 @@ std::string World::removeNear(double x, double z, double r) {
                             }
                     }
                 return "REPAIR SHOP";
+            }
+            // What a map stood under it: the cabin's and table's collision box, a fence's rail box and posts, a sign's pole(s), a stump's.
+            auto dropPole = [&](double px, double pz) {
+                for (size_t k = 0; k < poles.size(); k++)
+                    if (std::hypot(poles[k].x - px, poles[k].z - pz) < 0.06) {
+                        poles.erase(poles.begin() + k);
+                        return;
+                    }
+            };
+            auto dropBox = [&](const V3& c) {
+                for (size_t k = 0; k < boxes.size(); k++)
+                    if (boxes[k].hidden && std::hypot(boxes[k].c.x - c.x, boxes[k].c.z - c.z) < 0.06 && std::fabs(boxes[k].c.y - c.y) < 0.06) {
+                        boxes.erase(boxes.begin() + k);
+                        return;
+                    }
+            };
+            switch (f.kind) {
+                case PROP_CABIN: dropBox(V3(f.a.x, f.a.y + 1.7, f.a.z)); break;
+                case PROP_TABLE: dropBox(V3(f.a.x, f.a.y + 0.4, f.a.z)); break;
+                case PROP_FENCE: {
+                    const V3 d = f.b - f.a;
+                    const double L = std::hypot(d.x, d.z);
+                    dropBox((f.a + f.b) * 0.5 + V3(0, 0.62, 0));
+                    if (L > 0.1)
+                        for (double t = 0; t <= L + 0.01; t += 2.5) dropPole(f.a.x + d.x * (t / L), f.a.z + d.z * (t / L));
+                    return "FENCE";
+                }
+                case PROP_SIGN: dropPole(f.a.x, f.a.z); break;
+                case PROP_MAPBOARD: {
+                    const V3 side(std::sin(f.yaw), 0, std::cos(f.yaw));
+                    for (int k = -1; k <= 1; k += 2) dropPole(f.a.x + side.x * 0.8 * k, f.a.z + side.z * 0.8 * k);
+                    break;
+                }
+                case PROP_STUMP: dropPole(f.a.x, f.a.z); break;
+                default: break;
             }
             return "PROP";
         }

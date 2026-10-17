@@ -21,6 +21,7 @@ struct Box {
 // `yaw` (radians, the game's: 0 = +X, pi/2 = -Z) climbing `pitch`, and the rock is rolled `roll` about that axis (right-handed).
 struct RockPose {
     double yaw = 0, pitch = 0, roll = 0;
+    int scan = -1;  // with scanned rocks on: exactly this one of the library (its own proportions; the half-sizes just scale it), not whichever fits
 };
 
 // Boulder: an irregular convex rock (the hull of points scattered over a squashed,
@@ -380,5 +381,6 @@ public:
     void addLog(V3 a, V3 b, double r);
     // Removes whatever object is nearest (x, z) within r: rocks, trees, logs, boxes,
     // stations. Returns what it removed ("" nothing).
-    std::string removeNear(double x, double z, double r);
+    // onlyKind: only that kind of thing counts (0 rock, 1 tree, 2 log, 3 box, 4 fixture, 6 bush) and distance is to its centre; -1 any.
+    std::string removeNear(double x, double z, double r, int onlyKind = -1);
 };
