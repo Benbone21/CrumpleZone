@@ -27,6 +27,7 @@ const char* kObjNames[OBJ_KIND_COUNT] = {"ROCK", "RAMP / BLOCK", "LOG", "TREE", 
 const int SC_PAGEUP_ = 75, SC_PAGEDOWN_ = 78, SC_F6_ = 63, SC_COMMA_ = 54, SC_PERIOD_ = 55;
 const double kRisers[5] = {0.3, 0.45, 0.6, 0.9, 1.2};  // m: the step a ledge makes (a notch step stays under 0.4)
 const double kSnaps[4] = {0, 0.5, 1, 2};               // m
+const size_t kBoxMax = 3000;                           // most a box select takes
 const char* kTestShort[ST_COUNT] = {"SKILL", "PROBLEMS", "COMMITMENT", "ATTRITION", "CO-OP"};
 
 // Button ids.
@@ -48,7 +49,7 @@ enum {
     B_NUDGE = 1120,          // + 0 west, 1 east, 2 north, 3 south (camera-relative: -x, +x, ahead, back)
     B_PALTAB = 1200,         // + tab, to 1219
     B_PAL_PREV = 1230, B_PAL_NEXT,
-    B_SEAT = 1238,
+    B_SEAT = 1238, B_BOXMODE,
     B_ASK_SAVE = 1240, B_ASK_DISCARD, B_ASK_CANCEL, B_NAME_OK, B_NAME_CANCEL, B_SAVEAS,
     B_PAL = 2000,            // + palette index
 };
@@ -97,6 +98,13 @@ const char* slopeNote(double deg, float& r, float& g, float& b) {
     return "SEALS THE PASS (65+ STOPS EVEN THE ROCK BUGGY)";
 }
 
+// (Does an edit change anything about this object?)
+bool objectsDiffer(const LevelObject& a, const LevelObject& b) {
+    auto far = [](const V3& p, const V3& q) { return len(p - q) > 1e-6; };
+    return far(a.p, b.p) || far(a.p2, b.p2) || far(a.size, b.size) || std::fabs(a.yaw - b.yaw) > 1e-9 || std::fabs(a.pitch - b.pitch) > 1e-9 || std::fabs(a.roll - b.roll) > 1e-9 ||
+           std::fabs(a.top - b.top) > 1e-6 || std::fabs(a.lift - b.lift) > 1e-6;
+}
+
 std::string uniqueSectionName() {
     for (int n = 1; n < 1000; n++) {
         const std::string name = "MY SECTION " + std::to_string(n);
@@ -119,7 +127,7 @@ bool Editor::project(const V3& p, float& sx, float& sy) const { return screenPoi
 
 std::string Editor::debugState() const {
     std::string s = std::string("tool=") + kToolNames[tool] + " pointer=" + (pointer ? "1" : "0") + " pal=" + (palPick >= 0 && palPick < (int)palette.size() ? palette[palPick].name : "?") +
-                    " cells=" + std::to_string(core.cellEdits()) + " radius=" + std::to_string(radius) + " op=" + std::to_string((int)op) + " unsaved=" + (core.unsaved() ? "1" : "0") + " objs=" + std::to_string(core.level.objects.size()) + " removed=" + std::to_string(core.level.removed.size()) + " sel=[";
+                    " cells=" + std::to_string(core.cellEdits()) + " radius=" + std::to_string(radius) + " op=" + std::to_string((int)op) + " unsaved=" + (core.unsaved() ? "1" : "0") + " objs=" + std::to_string(core.level.objects.size()) + " removed=" + std::to_string(core.level.removed.size()) + (boxAll ? " box=ALL" : " box=OBJ") + " sel=[";
     for (const EditPick& p : selection) s += std::to_string(p.kind) + ":" + std::to_string(p.index) + ":" + std::to_string(p.baseKind) + ":" + p.name + " ";
     s += "] hover=" + std::to_string(hover.kind) + ":" + std::to_string(hover.index) + ":" + hover.name + " eye=" + std::to_string(eye.x) + "," + std::to_string(eye.y) + "," + std::to_string(eye.z) +
          " ground=" + (haveHit ? std::to_string(hit.x) + "," + std::to_string(hit.y) + "," + std::to_string(hit.z) : std::string("none")) + " overUi=" + (overUi ? "1" : "0") + " mouse=" + std::to_string((int)mx) + "," + std::to_string((int)my) + " WH=" + std::to_string(W) + "x" + std::to_string(H) + " fileOpen=" + (fileOpen ? "1" : "0") + " files=" + std::to_string(files.size()) + " fileSel=" + std::to_string(fileSel) + " flow=" + std::to_string((int)flow.stage) + " toast=\"" + toast + "\" undo=" + core.undoName();
@@ -535,6 +543,13 @@ LevelObject Editor::makeObject(const V3& at, double rise) const {
 }
 
 void Editor::click() {
+    press.press(mx, my);
+    pressPending = true;  // (where the ground was under it is worked out next frame, once the selection says what to see through)
+    if (tool == OBJECTS && pointer && !ledgeBrush && ctrl) {  // Ctrl+drag: a box select that starts anywhere, on an object too (Shift as well adds)
+        if (!shift) selection.clear(), sel = EditPick();
+        marquee = true, marqueeX = mx, marqueeY = my;
+        return;
+    }
     if (!haveHit && hover.kind == EditPick::NONE) return;
     switch (tool) {
         case SCULPT:
@@ -1013,8 +1028,13 @@ void Editor::applyOp(ObjOp op, double amount, const std::string& key) {
     buildPalette();
     static const char* names[] = {"TURN", "TIP", "ROLL", "RAISE", "SCALE", "STRETCH", "STRETCH", "STRETCH", "SEAT"};
     if (!selection.empty()) {
+        // (The map's own among them are only taken over if this would change them: a key that does nothing to a rock leaves it the map's.)
+        auto wants = [&](const LevelObject& o) {
+            if (op == OP_YAW && selection.size() > 1) return true;  // (they swing round their middle)
+            return objectsDiffer(core.transformed(o, op, amount), o);
+        };
         core.beginEdit(names[op], key);
-        const std::vector<int> ks = selectedObjects();
+        const std::vector<int> ks = selectedObjects(wants);
         core.transformObjects(ks, op, amount, key);
         core.endEdit();
         return;
@@ -1080,16 +1100,19 @@ bool Editor::isSelected(const EditPick& p) const {
     return false;
 }
 
-std::vector<int> Editor::selectedObjects() {
+std::vector<int> Editor::selectedObjects(const std::function<bool(const LevelObject&)>& wants) {
     bool base = false;
     for (const EditPick& p : selection) base |= p.kind == EditPick::BASE;
     if (base) {
-        const std::vector<int> ks = core.adopt(selection);
+        std::vector<char> left;
+        const std::vector<int> ks = core.adopt(selection, wants, &left);
         std::vector<EditPick> next;
         int lost = 0;
+        const bool one = selection.size() == 1 && scaleKey == selection[0];
         for (size_t i = 0; i < selection.size(); i++) {
             if (ks[i] < 0) {
-                lost++;
+                if (left[i]) next.push_back(selection[i]);  // (the map's own still: nothing changed it)
+                else lost++;
                 continue;
             }
             EditPick o;
@@ -1098,6 +1121,7 @@ std::vector<int> Editor::selectedObjects() {
             next.push_back(o);
         }
         selection = next;
+        if (one && selection.size() == 1) scaleKey = selection[0];  // (it's the level's now: the same one, for SCALE ALL's reading)
         if (lost) say(std::to_string(lost) + " OF THEM CAN'T BE MOVED (CABINS, FENCES...): ONLY DELETED", 3);
     }
     sel = selection.empty() ? EditPick() : selection.back();
@@ -1107,42 +1131,26 @@ std::vector<int> Editor::selectedObjects() {
     return out;
 }
 
-// Selects what's inside a box on the screen: the level's objects and the map's own (a thing counts if its middle is inside).
+
+
+// Selects what's inside a box on the screen: the level's objects and the map's own rocks, trees, logs and bushes (a thing counts if its
+// middle is inside). The map's infrastructure (blocks, repair shops, cabins, fences...) only with BOX: EVERYTHING.
 void Editor::selectInBox(float x0, float y0, float x1, float y1, bool add) {
     const View v = view(W, H);
-    const World& w = *core.world;
-    std::vector<EditPick> found;
     auto inside = [&](const V3& p) {
         float sx, sy;
         return screenPoint(v, W, H, p, sx, sy) && sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1;
     };
-    auto take = [&](int baseKind, int index, const V3& at, const V3& look, const std::string& name) {
-        if (found.size() > 800 || !inside(look)) return;
-        EditPick p;
-        const int ow = core.ownerOf(baseKind, index);
-        p.kind = ow >= 0 ? EditPick::OBJECT : EditPick::BASE;
-        p.index = ow >= 0 ? ow : index, p.baseKind = ow >= 0 ? -1 : baseKind, p.at = at, p.name = name;
-        if (ow >= 0 && std::find(found.begin(), found.end(), p) != found.end()) return;
-        if (ow < 0 && !core.canAdopt(p)) return;
-        found.push_back(p);
-    };
-    for (int i = 0; i < (int)w.rocks.size(); i++) take(0, i, w.rocks[i].c, w.rocks[i].c, "ROCK");
-    for (int i = 0; i < (int)w.trees.size(); i++) take(1, i, w.trees[i].base, w.trees[i].base + V3(0, w.trees[i].height * 0.4, 0), "TREE");
-    for (int i = 0; i < (int)w.logs.size(); i++) take(2, i, (w.logs[i].a + w.logs[i].b) * 0.5, (w.logs[i].a + w.logs[i].b) * 0.5, "LOG");
-    for (int i = 0; i < (int)w.boxes.size(); i++)
-        if (!w.boxes[i].hidden) take(3, i, w.boxes[i].c, w.boxes[i].c, w.boxes[i].rock ? "ROCK SLAB" : "BLOCK");
-    for (int i = 0; i < (int)w.fixtures.size(); i++) {
-        const Prop& f = w.fixtures[i];
-        take(4, i, f.a, f.kind == PROP_FENCE ? (f.a + f.b) * 0.5 + V3(0, 0.6, 0) : f.a + V3(0, f.kind == PROP_GARAGE ? 2 : 1, 0), f.kind == PROP_GARAGE ? "REPAIR SHOP" : f.kind == PROP_FENCE ? "FENCE" : "PROP");
-    }
-    for (int i = 0; i < (int)w.bushes.size(); i++) take(6, i, w.bushes[i].p, w.bushes[i].p + V3(0, w.bushes[i].r * 0.5, 0), "BUSH");
-    for (int i = 0; i < (int)w.models.size(); i++)
-        if (core.ownerOf(5, i) >= 0) take(5, i, w.models[i].p, w.models[i].p + V3(0, 1, 0), "STRUCTURE");
+    bool capped = false;
+    const std::vector<EditPick> found = core.pickInside(inside, boxAll, kBoxMax, &capped);
     if (!add) selection.clear();
     for (const EditPick& p : found)
         if (!isSelected(p)) selection.push_back(p);
     sel = selection.empty() ? EditPick() : selection.back();
-    say(selection.empty() ? "NOTHING IN THAT BOX" : std::to_string(selection.size()) + " SELECTED: DRAG TO MOVE, KEYS CHANGE THEM, DELETE", 2.5);
+    say(selection.empty() ? (boxAll ? "NOTHING IN THAT BOX" : "NOTHING IN THAT BOX (BOX: OBJECTS ONLY SKIPS THE MAP'S BLOCKS AND SHOPS)")
+                          : capped ? "SELECTED " + std::to_string(selection.size()) + " (MAX): BOX A SMALLER AREA FOR THE REST"
+                                   : std::to_string(selection.size()) + " SELECTED: DRAG TO MOVE, KEYS CHANGE THEM, DELETE",
+        capped ? 4.0 : 2.5);
 }
 
 void Editor::settingChange(int row, int dir) {
@@ -1283,6 +1291,10 @@ void Editor::doButton(int id) {
             afterFlow();
             break;
         case B_SEAT: applyOp(OP_SEAT, 0, "seat"); break;
+        case B_BOXMODE:
+            boxAll = !boxAll;
+            say(boxAll ? "BOX SELECT TAKES EVERYTHING, THE MAP'S BLOCKS AND SHOPS TOO" : "BOX SELECT TAKES OBJECTS AND THE MAP'S ROCKS, TREES, LOGS AND BUSHES", 2.5);
+            break;
         case B_SAVEAS:
             flow.requestSave(core, true);
             afterFlow();
@@ -1377,8 +1389,8 @@ void Editor::update(double dt, const uint8_t* keys, Renderer& r, int w, int h) {
     core.clock = clock;
     toastTime = std::max(0.0, toastTime - dt);
     if (!scriptMods) {
-        shift = keys[SC_LSHIFT] || keys[SC_RSHIFT];
-        ctrl = keys[224] || keys[228];
+        shift = keys[SC_LSHIFT] || keys[SC_RSHIFT] || holdShift;
+        ctrl = keys[224] || keys[228] || holdCtrl;
     }
     alt = keys[226] || keys[230];
     // Fly (WASD, Space up, Shift fast, higher = faster; Shift+wheel is up / down).
@@ -1404,18 +1416,28 @@ void Editor::update(double dt, const uint8_t* keys, Renderer& r, int w, int h) {
     const double hitT = haveHit ? len(hit - o) : 1e9;
     hover = EditPick();
     if ((tool == OBJECTS && pointer && !marquee && !overUi) || tool == COURSE) {  // (placing: a click always places, so nothing is "under" the mouse)
-        const EditPick p = core.pick(o, d, hitT, tool == OBJECTS);
+        const EditPick p = core.pick(o, d, hitT, tool == OBJECTS, tool == COURSE);  // (gates and the start are the course tool's: in the objects tool the ray goes through them)
         const bool wanted = tool == OBJECTS ? (p.kind == EditPick::OBJECT || p.kind == EditPick::BASE) : (p.kind == EditPick::GATE || p.kind == EditPick::START);
         if (wanted) hover = p;
     }
     // Where a click would put something: the ground at the mouse, or the top of an object in the way (so rocks stack).
     placeAt = hit, placeOn = false;
+    std::vector<int> skip;
+    for (const EditPick& p : selection)
+        if (p.kind == EditPick::OBJECT) skip.push_back(p.index);
     if (tool == OBJECTS && haveHit && !overUi) {
-        std::vector<int> skip;
-        for (const EditPick& p : selection)
-            if (p.kind == EditPick::OBJECT) skip.push_back(p.index);
         V3 pp, nn;
         if (core.rayObjects(o, d, hitT - 0.02, skip, pp, nn) && nn.y > 0.25) placeAt = pp, placeOn = true;
+    }
+    if (pressPending) {  // the same for where the button went down, seeing through the selection (so a drag begins from the ground or what's under it, not the top of the thing itself)
+        pressPending = false;
+        V3 po, pd, ph, pp, nn;
+        ray(press.x0, press.y0, po, pd);
+        pressAt = placeAt, pressRide = 0;
+        if (core.rayGround(po, pd, 2000, ph)) {
+            pressAt = ph;
+            if (core.rayObjects(po, pd, len(ph - po) - 0.02, skip, pp, nn) && nn.y > 0.25) pressAt = pp, pressRide = std::max(0.0, pp.y - core.world->height(snapped(pp).x, snapped(pp).z));
+        }
     }
     // Where the middle of the view meets the ground (a playtest "from here" starts there).
     {
@@ -1430,10 +1452,12 @@ void Editor::update(double dt, const uint8_t* keys, Renderer& r, int w, int h) {
     }
     // Holding the button.
     if (lmb && stroke) applyBrush(dt);
-    if (lmb && dragging && haveHit && tool == OBJECTS && !selection.empty()) {
+    const float dragPx = 5.0f * std::max(1.0f, H / 720.0f);
+    const bool dragNow = lmb && dragging && press.moved(mx, my, dragPx);  // (a click that jitters by a pixel stays a click: nothing moves)
+    if (dragNow && haveHit && tool == OBJECTS && !selection.empty()) {
         // (Moving the selection: by how far the mouse has come, on the snap grid; over another object it rides on its surface,
         // and with Alt held it keeps its height. Each keeps its own height over where it stands.)
-        if (!dragStarted) dragFrom = placeAt, dragRide = placeRise(), dragApplied = V3(), dragStarted = true;
+        if (!dragStarted) dragFrom = pressAt, dragRide = pressRide, dragApplied = V3(), dragStarted = true;
         double dx = placeAt.x - dragFrom.x, dz = placeAt.z - dragFrom.z;
         const double sn = kSnaps[snapIdx];
         if (sn > 0) dx = std::round(dx / sn) * sn, dz = std::round(dz / sn) * sn;
@@ -1447,7 +1471,7 @@ void Editor::update(double dt, const uint8_t* keys, Renderer& r, int w, int h) {
             core.endEdit();
             dragApplied.x = dx, dragApplied.z = dz;
         }
-    } else if (lmb && dragging && haveHit) {
+    } else if (dragNow && haveHit) {
         if (sel.kind == EditPick::GATE && sel.index < (int)core.level.gates.size()) {
             Gate g = core.level.gates[sel.index];
             g.p = V3(hit.x + dragOffset.x, 0, hit.z + dragOffset.z);
@@ -1502,7 +1526,10 @@ void Editor::drawWorldMarks(Renderer& r) {
     const float u = std::max(0.75f, H / 720.0f), s = px(1.3f * u);
     auto dotAt = [&](const V3& p, float size, float cr, float cg, float cb, float a) {
         float sx, sy;
-        if (screenPoint(v, W, H, p, sx, sy)) r.rect(sx - size / 2, sy - size / 2, size, size, cr, cg, cb, a);
+        if (!screenPoint(v, W, H, p, sx, sy)) return;
+        for (const auto& ur : uiPrev)
+            if (sx >= ur[0] && sx < ur[2] && sy >= ur[1] && sy < ur[3]) return;
+        r.rect(sx - size / 2, sy - size / 2, size, size, cr, cg, cb, a);
     };
     auto line = [&](const V3& a, const V3& b, int n, float size, float cr, float cg, float cb, float al) {
         for (int k = 0; k <= n; k++) dotAt(a + (b - a) * ((double)k / n), size, cr, cg, cb, al);
@@ -1669,6 +1696,52 @@ void Editor::drawWorldMarks(Renderer& r) {
     }
 }
 
+// A triangle of the world marks without the parts under the panels (last frame's: the translucent backing would show them through).
+void Editor::clippedTri(Renderer& r, const float* px, const float* py, float cr, float cg, float cb, float a) {
+    typedef std::vector<std::array<float, 2>> Poly;
+    Poly start = {{px[0], py[0]}, {px[1], py[1]}, {px[2], py[2]}};
+    // Cut `in` by the line coord(p) = at, keeping the side where (coord < at) == below.
+    auto cut = [](const Poly& in, int axis, float at, bool below) {
+        Poly out;
+        for (size_t i = 0; i < in.size(); i++) {
+            const auto &p = in[i], &q = in[(i + 1) % in.size()];
+            const bool pin = below ? p[axis] <= at : p[axis] >= at, qin = below ? q[axis] <= at : q[axis] >= at;
+            if (pin) out.push_back(p);
+            if (pin != qin) {
+                const float t = (at - p[axis]) / (q[axis] - p[axis]);
+                out.push_back({p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t});
+            }
+        }
+        return out;
+    };
+    std::vector<Poly> pieces = {start};
+    for (const auto& ur : uiPrev) {  // (each piece minus the rect: what's left of it, right of it, above it and below it)
+        std::vector<Poly> next;
+        for (const Poly& pc : pieces) {
+            float lo[2] = {1e9f, 1e9f}, hi[2] = {-1e9f, -1e9f};
+            for (const auto& v : pc)
+                for (int k = 0; k < 2; k++) lo[k] = std::min(lo[k], v[k]), hi[k] = std::max(hi[k], v[k]);
+            if (hi[0] <= ur[0] || lo[0] >= ur[2] || hi[1] <= ur[1] || lo[1] >= ur[3]) {
+                next.push_back(pc);
+                continue;
+            }
+            Poly rest = pc;
+            for (Poly part : {cut(rest, 0, ur[0], true), cut(rest, 0, ur[2], false)}) {
+                if (part.size() >= 3) next.push_back(part);
+            }
+            rest = cut(cut(rest, 0, ur[0], false), 0, ur[2], true);
+            if (rest.size() >= 3) {
+                const Poly top = cut(rest, 1, ur[1], true), bottom = cut(rest, 1, ur[3], false);
+                if (top.size() >= 3) next.push_back(top);
+                if (bottom.size() >= 3) next.push_back(bottom);
+            }
+        }
+        pieces.swap(next);
+    }
+    for (const Poly& pc : pieces)
+        for (size_t i = 1; i + 1 < pc.size(); i++) r.tri(pc[0][0], pc[0][1], pc[i][0], pc[i][1], pc[i + 1][0], pc[i + 1][1], cr, cg, cb, a);
+}
+
 // An outline drawn over the view: its edges as dots, and (for the ghost) its faces turned toward the eye, see-through.
 void Editor::drawShape(Renderer& r, const Shape& sh, bool fill, float cr, float cg, float cb, float a, float size) {
     const View v = view(W, H);
@@ -1682,7 +1755,7 @@ void Editor::drawShape(Renderer& r, const Shape& sh, bool fill, float cr, float 
             for (int k = 0; k < 3; k++) ok &= screenPoint(v, W, H, t[k], sx[k], sy[k]);
             if (!ok) continue;
             const float lit = 0.55f + 0.45f * (float)std::max(0.0, dot(n, light));
-            r.tri(sx[0], sy[0], sx[1], sy[1], sx[2], sy[2], cr * lit, cg * lit, cb * lit, a);
+            clippedTri(r, sx, sy, cr * lit, cg * lit, cb * lit, a);
         }
     }
     // The edges as thin lines (each a strip of two triangles, `size` pixels across).
@@ -1692,12 +1765,14 @@ void Editor::drawShape(Renderer& r, const Shape& sh, bool fill, float cr, float 
         if (!screenPoint(v, W, H, e.first, ax, ay) || !screenPoint(v, W, H, e.second, bx, by)) continue;
         const float dx = bx - ax, dy = by - ay, l = std::sqrt(dx * dx + dy * dy);
         if (l < 0.5f) {
-            r.rect(ax - half, ay - half, 2 * half, 2 * half, cr, cg, cb, 0.95f);
+            const float qx[3] = {ax - half, ax + half, ax + half}, qy[3] = {ay - half, ay - half, ay + half}, qx2[3] = {ax - half, ax + half, ax - half}, qy2[3] = {ay - half, ay + half, ay + half};
+            clippedTri(r, qx, qy, cr, cg, cb, 0.95f), clippedTri(r, qx2, qy2, cr, cg, cb, 0.95f);
             continue;
         }
         const float nx = -dy / l * half, ny = dx / l * half;
-        r.tri(ax - nx, ay - ny, ax + nx, ay + ny, bx + nx, by + ny, cr, cg, cb, 0.95f);
-        r.tri(ax - nx, ay - ny, bx + nx, by + ny, bx - nx, by - ny, cr, cg, cb, 0.95f);
+        const float qx1[3] = {ax - nx, ax + nx, bx + nx}, qy1[3] = {ay - ny, ay + ny, by + ny}, qx2[3] = {ax - nx, bx + nx, bx - nx}, qy2[3] = {ay - ny, by + ny, by - ny};
+        clippedTri(r, qx1, qy1, cr, cg, cb, 0.95f);
+        clippedTri(r, qx2, qy2, cr, cg, cb, 0.95f);
     }
 }
 
@@ -1705,10 +1780,12 @@ void Editor::drawToolbar(Renderer& r, float u) {
     const float x = 12 * u, w = 128 * u, bh = 28 * u;
     float y = 12 * u;
     pill(r, x - 6 * u, y - 6 * u, w + 12 * u, (bh + 4 * u) * TOOL_COUNT + 8 * u, 0, 0, 0, 0.55f);
+    panelRect(x - 6 * u, y - 6 * u, w + 12 * u, (bh + 4 * u) * TOOL_COUNT + 8 * u);
     for (int t = 0; t < TOOL_COUNT; t++) y = button(r, x, y, w, bh, std::to_string(t + 1) + "  " + kToolNames[t], B_TOOL + t, tool == t, u);
     // File and history.
     y += 14 * u;
     pill(r, x - 6 * u, y - 6 * u, w + 12 * u, (bh + 4 * u) * 10 + 8 * u, 0, 0, 0, 0.55f);
+    panelRect(x - 6 * u, y - 6 * u, w + 12 * u, (bh + 4 * u) * 10 + 8 * u);
     y = button(r, x, y, w, bh, "SAVE  CTRL+S", B_SAVE, false, u);
     y = button(r, x, y, w, bh, "SAVE AS", B_SAVEAS, false, u);
     y = button(r, x, y, w, bh, "OPEN...", B_OPEN, false, u);
@@ -1728,8 +1805,10 @@ void Editor::drawOptions(Renderer& r, float u) {
     std::vector<std::string> info;
     // (Drawn in two passes: the panel's height isn't known till the end, so draw into a
     // scratch list of rows first. Simpler: a fixed tall panel per tool.)
-    const float panelH = tool == PAINT ? 640 * u : tool == SCULPT ? 560 * u : tool == WATER ? (waterMode == 1 ? 520 * u : 330 * u)
+    // (The backing is as tall as the rows were last frame; the first frame, a guess.)
+    const float guessH = tool == PAINT ? 640 * u : tool == SCULPT ? 560 * u : tool == WATER ? (waterMode == 1 ? 520 * u : 330 * u)
                          : tool == SETTINGS ? 420 * u : tool == OBJECTS ? (selection.empty() ? 520.0f : 590.0f) * u : tool == SECTION ? 600 * u : 300 * u;
+    const float panelH = optionsH > 0 ? optionsH : guessH;
     pill(r, x - 8 * u, top - 6 * u, w + 16 * u, panelH, 0, 0, 0, 0.55f);
     label(r, x, y, px(1.6f * u), kToolNames[tool], 1.0f, 0.75f, 0.3f, 1);
     y += 8 * px(1.6f * u) + 6 * u;
@@ -1850,6 +1929,29 @@ void Editor::drawOptions(Renderer& r, float u) {
             y += 8 * s + 6 * u;
             auto deg = [](double rad) { return std::to_string((int)std::lround(std::fmod(rad * 180 / M_PI + 3600 + 180, 360) - 180)) + " DEG"; };
             auto xf = [&](ObjOp op, const char* name, const std::string& val) { row(name, val, B_XF + op * 2, B_XF + op * 2 + 1); };
+            // SCALE ALL reads against the size when this was selected (the ghost: against the palette's), as 1.00X.
+            auto sizeOf = [&](const LevelObject& o) {
+                switch (o.kind) {
+                    case OBJ_LOG: return std::sqrt(std::max(1e-9, o.size.x * (selection.empty() ? o.size.y : len(o.p2 - o.p) / 2)));
+                    case OBJ_TREE: return std::max(1e-9, o.size.y);
+                    case OBJ_BUSH: return std::max(1e-9, o.size.x);
+                    default: return std::cbrt(std::max(1e-9, o.size.x * o.size.y * o.size.z));
+                }
+            };
+            auto scaleText = [&]() -> std::string {
+                if (!haveTgt || selection.size() > 1) return "";
+                double ratio = 1;
+                if (selection.empty()) {
+                    if (palPick >= 0 && palPick < (int)palette.size() && palette[palPick].proto.kind == tgt.kind) ratio = sizeOf(tgt) / sizeOf(palette[palPick].proto);
+                } else {
+                    if (scaleKey != selection[0]) scaleKey = selection[0], scaleBase = sizeOf(tgt);
+                    ratio = sizeOf(tgt) / scaleBase;
+                }
+                char b[24];
+                std::snprintf(b, sizeof b, "%.2fX", ratio);
+                return b;
+            };
+            if (selection.empty()) scaleKey = EditPick();
             if (haveTgt && selection.size() <= 1) {
                 double yawV = tgt.yaw, pitchV = tgt.pitch, liftV = tgt.lift;
                 if (tgt.kind == OBJ_LOG && !selection.empty() && len(tgt.p2 - tgt.p) > 1e-6) {
@@ -1862,25 +1964,25 @@ void Editor::drawOptions(Renderer& r, float u) {
                 switch (tgt.kind) {
                     case OBJ_ROCK:
                         xf(OP_YAW, "TURN", deg(yawV)), xf(OP_PITCH, "TIP", deg(pitchV)), xf(OP_ROLL, "ROLL", deg(tgt.roll));
-                        xf(OP_LIFT, "SHOWS ABOVE GROUND", fmt1(liftV, " M")), xf(OP_SCALE, "SCALE ALL", "");
+                        xf(OP_LIFT, "SHOWS ABOVE GROUND", fmt1(liftV, " M")), xf(OP_SCALE, "SCALE ALL", scaleText());
                         xf(OP_STRETCH_X, "ALONG", fmt1(tgt.size.x * 2, " M")), xf(OP_STRETCH_Y, "HEIGHT", fmt1(tgt.size.y * 2, " M")), xf(OP_STRETCH_Z, "ACROSS", fmt1(tgt.size.z * 2, " M"));
                         break;
                     case OBJ_BOX:
                         xf(OP_YAW, "TURN", deg(yawV)), xf(OP_PITCH, "TILT (RAMP)", deg(pitchV)), xf(OP_ROLL, "ROLL", deg(tgt.roll));
-                        xf(OP_LIFT, "RAISE", fmt1(liftV, " M")), xf(OP_SCALE, "SCALE ALL", "");
+                        xf(OP_LIFT, "RAISE", fmt1(liftV, " M")), xf(OP_SCALE, "SCALE ALL", scaleText());
                         xf(OP_STRETCH_X, "LENGTH", fmt1(tgt.size.x * 2, " M")), xf(OP_STRETCH_Y, "THICKNESS", fmt1(tgt.size.y * 2, " M")), xf(OP_STRETCH_Z, "WIDTH", fmt1(tgt.size.z * 2, " M"));
                         break;
                     case OBJ_LOG: {
                         const bool ghostLog = selection.empty();
                         xf(OP_YAW, "TURN", deg(yawV)), xf(OP_PITCH, "TILT", deg(pitchV));
                         xf(OP_LIFT, "RAISE", ghostLog ? fmt1(tgt.lift, " M") : "");
-                        xf(OP_SCALE, "SCALE ALL", "");
+                        xf(OP_SCALE, "SCALE ALL", scaleText());
                         xf(OP_STRETCH_X, "LENGTH", ghostLog ? fmt1(tgt.size.y * 2, " M") : fmt1(len(tgt.p2 - tgt.p), " M"));
                         xf(OP_STRETCH_Y, "THICKNESS", fmt1(tgt.size.x * 2, " M"));
                         break;
                     }
                     case OBJ_TREE:
-                        xf(OP_LIFT, "RAISE", fmt1(tgt.lift, " M")), xf(OP_SCALE, "SCALE ALL", ""), xf(OP_STRETCH_Y, "HEIGHT", fmt1(tgt.size.y, " M"));
+                        xf(OP_LIFT, "RAISE", fmt1(tgt.lift, " M")), xf(OP_SCALE, "SCALE ALL", scaleText()), xf(OP_STRETCH_Y, "HEIGHT", fmt1(tgt.size.y, " M"));
                         if (selection.empty()) {
                             // (the ghost tree's kind is the palette's: pine, broadleaf, snag)
                         }
@@ -1891,7 +1993,7 @@ void Editor::drawOptions(Renderer& r, float u) {
                         break;
                     case OBJ_BUSH: xf(OP_LIFT, "RAISE", fmt1(tgt.lift, " M")), xf(OP_SCALE, "SIZE", fmt1(tgt.size.x * 2, " M")); break;
                     case OBJ_MODEL:
-                        xf(OP_YAW, "TURN", deg(yawV)), xf(OP_LIFT, "RAISE", fmt1(liftV, " M")), xf(OP_SCALE, "SCALE ALL", "");
+                        xf(OP_YAW, "TURN", deg(yawV)), xf(OP_LIFT, "RAISE", fmt1(liftV, " M")), xf(OP_SCALE, "SCALE ALL", scaleText());
                         xf(OP_STRETCH_X, "LENGTH", pct(tgt.size.x)), xf(OP_STRETCH_Y, "HEIGHT", pct(tgt.size.y)), xf(OP_STRETCH_Z, "WIDTH", pct(tgt.size.z));
                         break;
                     default: break;
@@ -1919,8 +2021,10 @@ void Editor::drawOptions(Renderer& r, float u) {
             row("GRID SNAP", kSnaps[snapIdx] > 0 ? fmt1(kSnaps[snapIdx], " M") : "OFF", B_SNAP_DN, B_SNAP_UP);
             y += 2 * u;
             if (pointer) {
+                button(r, x, y, w, bh, boxAll ? "BOX: EVERYTHING" : "BOX: OBJECTS ONLY", B_BOXMODE, boxAll, u);
+                y += bh + 6 * u;
                 note("CLICK: SELECT   SHIFT+CLICK: ADD");
-                note("DRAG EMPTY GROUND: BOX SELECT");
+                note("DRAG EMPTY GROUND, OR CTRL+DRAG: BOX SELECT");
                 note("DRAG ONE: MOVE (IT RIDES ON ROCKS)");
                 note("ALT+DRAG: KEEP ITS HEIGHT");
             } else {
@@ -2025,7 +2129,9 @@ void Editor::drawOptions(Renderer& r, float u) {
         }
         default: break;
     }
-    if (mx >= x - 8 * u && my >= top - 6 * u && my < top - 6 * u + panelH) overUi = true;
+    optionsH = y - top + 8 * u;
+    panelRect(x - 8 * u, top - 6 * u, w + 16 * u, optionsH);
+    if (mx >= x - 8 * u && my >= top - 6 * u && my < top - 6 * u + optionsH) overUi = true;
 }
 
 // The palette: a strip along the bottom, tabs over a row of cards (each with the model as its picture).
@@ -2033,8 +2139,9 @@ void Editor::drawPalette(Renderer& r, float u) {
     buildPalette();
     const float s = px(1.0f * u), x0 = 156 * u, x1 = W - 310 * u, statusTop = H - (8 * px(1.2f * u) + 14 * u);
     const float cardW = 88 * u, cardH = 92 * u, tabH = 22 * u, gap = 4 * u;
-    const float stripH = tabH + cardH + 14 * u, y0 = statusTop - 2 * (8 * px(1.2f * u) + 6 * u) - 14 * u - stripH;
+    const float stripH = pointer ? tabH + 62 * u : tabH + cardH + 14 * u, y0 = statusTop - 2 * (8 * px(1.2f * u) + 6 * u) - 14 * u - stripH;
     pill(r, x0 - 6 * u, y0 - 4 * u, x1 - x0 + 12 * u, stripH + 8 * u, 0, 0, 0, 0.6f);
+    panelRect(x0 - 6 * u, y0 - 4 * u, x1 - x0 + 12 * u, stripH + 8 * u);
     // Tabs.
     const float tw = std::min(92 * u, (x1 - x0) / (float)tabs.size());
     for (int t = 0; t < (int)tabs.size(); t++) {
@@ -2044,8 +2151,8 @@ void Editor::drawPalette(Renderer& r, float u) {
     const float cy = y0 + tabH + 6 * u;
     if (pointer) {
         r.text(x0 + 8 * u, cy + 6 * u, s, "POINTER: SELECT, MOVE AND CHANGE ANYTHING IN THE WORLD, THE MAP'S OWN TOO", 0.9f, 0.9f, 0.95f, 1);
-        r.text(x0 + 8 * u, cy + 24 * u, s, "CLICK AN OBJECT, OR DRAG A BOX OVER SEVERAL (SHIFT ADDS). DRAG ONE TO MOVE IT; THE KEYS AT THE RIGHT TURN,", 0.7f, 0.72f, 0.76f, 1);
-        r.text(x0 + 8 * u, cy + 38 * u, s, "TIP, RAISE, SCALE AND STRETCH IT. DEL DELETES. PICK A TAB ABOVE (OR TAB) TO PLACE NEW THINGS.", 0.7f, 0.72f, 0.76f, 1);
+        r.text(x0 + 8 * u, cy + 24 * u, s, "CLICK AN OBJECT, OR DRAG A BOX OVER SEVERAL (CTRL+DRAG STARTS ONE ANYWHERE, SHIFT ADDS).", 0.7f, 0.72f, 0.76f, 1);
+        r.text(x0 + 8 * u, cy + 38 * u, s, "DRAG ONE TO MOVE IT. THE KEYS AT THE RIGHT TURN, TIP, RAISE, SCALE, STRETCH. DEL DELETES. TAB: PLACE THINGS.", 0.7f, 0.72f, 0.76f, 1);
         if (mx >= x0 - 6 * u && mx < x1 + 6 * u && my >= y0 - 4 * u && my < y0 + stripH + 4 * u) overUi = true;
         return;
     }
@@ -2090,6 +2197,7 @@ void Editor::drawPalette(Renderer& r, float u) {
 void Editor::drawStatus(Renderer& r, float u) {
     const float s = px(1.2f * u), h = 8 * s + 14 * u, y = H - h;
     r.rect(0, y, (float)W, h, 0, 0, 0, 0.6f);
+    panelRect(0, y, (float)W, h);
     const Level& l = core.level;
     char buf[256];
     std::snprintf(buf, sizeof buf, "%s%s  -  %s  -  %s  -  %zu CELLS, %zu OBJECTS, %zu GATES  -  UNDO: %s", l.name.c_str(), core.unsaved() ? " *" : "",
@@ -2099,6 +2207,7 @@ void Editor::drawStatus(Renderer& r, float u) {
     const char* keys = "WASD FLY  SPACE OR SHIFT+WHEEL UP DOWN  WHEEL ZOOM  Q E SIZE  RIGHT-DRAG LOOK  SHIFT FAST  1-7 TOOLS  CTRL+Z/Y UNDO/REDO  CTRL+S SAVE  F5 TEST HERE  F6 TEST START  ESC EXIT";
     const float ks = px(1.0f * u);
     r.rect(W - r.textWidth(keys, ks) - 20 * u, y - 8 * ks - 10 * u, r.textWidth(keys, ks) + 20 * u, 8 * ks + 10 * u, 0, 0, 0, 0.45f);
+    panelRect(W - r.textWidth(keys, ks) - 20 * u, y - 8 * ks - 10 * u, r.textWidth(keys, ks) + 20 * u, 8 * ks + 10 * u);
     r.text(W - r.textWidth(keys, ks) - 10 * u, y - 8 * ks - 5 * u, ks, keys, 0.7f, 0.72f, 0.76f, 1);
     if (toastTime > 0 && !toast.empty()) centeredPill(r, W / 2.0f, y - 40 * u, px(1.4f * u), toast, 0, 0, 0, (float)std::min(1.0, toastTime * 2), 1, 0.85f, 0.5f);
     if (haveHit) {
@@ -2135,9 +2244,10 @@ void Editor::drawFlow(Renderer& r, float u) {
         label(r, x + 16 * u, y + 14 * u, px(2.0f * u), "NAME THE LEVEL", 1.0f, 0.75f, 0.3f, 1);
         const float fy = y + 56 * u;
         r.rect(x + 16 * u, fy, w - 32 * u, 34 * u, 1, 1, 1, 0.1f);
-        const std::string t = flow.text + (std::fmod(clock, 1.0) < 0.5 ? "_" : " ");
+        if (flow.fresh && !flow.text.empty()) r.rect(x + 24 * u, fy + 5 * u, r.textWidth(flow.text, s) + 4 * u, 24 * u, 0.3f, 0.5f, 0.95f, 0.75f);  // (the suggestion, selected: typing replaces it)
+        const std::string t = flow.text + (!flow.fresh && std::fmod(clock, 1.0) < 0.5 ? "_" : " ");
         r.text(x + 26 * u, fy + (34 * u - 8 * s) / 2, s, t, 1, 1, 1, 1);
-        r.text(x + 16 * u, fy + 44 * u, px(1.1f * u), "TYPE A NAME, ENTER SAVES IT, ESC CANCELS", 0.65f, 0.67f, 0.72f, 1);
+        r.text(x + 16 * u, fy + 44 * u, px(1.1f * u), flow.fresh ? "TYPE TO REPLACE THE NAME, BACKSPACE EDITS IT, ENTER SAVES, ESC CANCELS" : "TYPE A NAME, ENTER SAVES IT, ESC CANCELS", 0.65f, 0.67f, 0.72f, 1);
         button(r, x + w - 16 * u - 230 * u, y + h - 16 * u - bh, 110 * u, bh, "SAVE", B_NAME_OK, true, u);
         button(r, x + w - 16 * u - 110 * u, y + h - 16 * u - bh, 110 * u, bh, "CANCEL", B_NAME_CANCEL, false, u);
     } else if (flow.stage == SaveFlow::ASKING) {
@@ -2181,6 +2291,7 @@ void Editor::draw(Renderer& r, int w, int h, double) {
     W = w, H = h;
     buttons.clear();
     overUi = false;
+    uiPrev = uiRects, uiRects.clear();
     const float u = std::max(0.75f, H / 720.0f);
     drawWorldMarks(r);
     drawToolbar(r, u);

@@ -1160,15 +1160,22 @@ bool EditCore::canAdopt(const EditPick& p) const {
     return baseToObject(p, o, key);
 }
 
-std::vector<int> EditCore::adopt(const std::vector<EditPick>& picks) {
+std::vector<int> EditCore::adopt(const std::vector<EditPick>& picks, const std::function<bool(const LevelObject&)>& wants, std::vector<char>* left) {
     std::vector<int> out(picks.size(), -1);
+    if (left) left->assign(picks.size(), 0);
     if (!world) return out;
     // (Read them all before changing anything: the world's indices move once one is taken out.)
     std::vector<std::pair<LevelObject, V3>> made(picks.size());
     int need = 0;
     for (size_t i = 0; i < picks.size(); i++) {
         if (picks[i].kind == EditPick::OBJECT) out[i] = picks[i].index;
-        else if (picks[i].kind == EditPick::BASE && baseToObject(picks[i], made[i].first, made[i].second)) need++, out[i] = -2;
+        else if (picks[i].kind == EditPick::BASE && baseToObject(picks[i], made[i].first, made[i].second)) {
+            if (wants && !wants(made[i].first)) {
+                if (left) (*left)[i] = 1;
+            } else {
+                need++, out[i] = -2;
+            }
+        }
     }
     if (!need) {
         for (int& k : out)
@@ -1857,7 +1864,42 @@ bool EditCore::rayGround(const V3& o, const V3& d, double maxT, V3& hit) const {
     return false;
 }
 
-EditPick EditCore::pick(const V3& o, const V3& d, double hitT, bool includeBase) const {
+std::vector<EditPick> EditCore::pickInside(const std::function<bool(const V3&)>& inside, bool everything, size_t cap, bool* capped) const {
+    std::vector<EditPick> found;
+    if (capped) *capped = false;
+    if (!world) return found;
+    const World& w = *world;
+    auto take = [&](int baseKind, int index, const V3& at, const V3& look, const std::string& name) {
+        if (!inside(look)) return;
+        EditPick p;
+        const int ow = ownerOf(baseKind, index);
+        p.kind = ow >= 0 ? EditPick::OBJECT : EditPick::BASE;
+        p.index = ow >= 0 ? ow : index, p.baseKind = ow >= 0 ? -1 : baseKind, p.at = at, p.name = name;
+        if (ow >= 0 && std::find(found.begin(), found.end(), p) != found.end()) return;
+        if (ow < 0 && !canAdopt(p)) return;
+        if (found.size() >= cap) {
+            if (capped) *capped = true;
+            return;
+        }
+        found.push_back(p);
+    };
+    for (int i = 0; i < (int)w.rocks.size(); i++) take(0, i, w.rocks[i].c, w.rocks[i].c, "ROCK");
+    for (int i = 0; i < (int)w.trees.size(); i++) take(1, i, w.trees[i].base, w.trees[i].base + V3(0, w.trees[i].height * 0.4, 0), "TREE");
+    for (int i = 0; i < (int)w.logs.size(); i++) take(2, i, (w.logs[i].a + w.logs[i].b) * 0.5, (w.logs[i].a + w.logs[i].b) * 0.5, "LOG");
+    for (int i = 0; i < (int)w.boxes.size(); i++)
+        if (!w.boxes[i].hidden && (everything || w.boxes[i].rock || ownerOf(3, i) >= 0)) take(3, i, w.boxes[i].c, w.boxes[i].c, w.boxes[i].rock ? "ROCK SLAB" : "BLOCK");
+    for (int i = 0; i < (int)w.fixtures.size(); i++) {
+        const Prop& f = w.fixtures[i];
+        if (!everything && ownerOf(4, i) < 0) continue;
+        take(4, i, f.a, f.kind == PROP_FENCE ? (f.a + f.b) * 0.5 + V3(0, 0.6, 0) : f.a + V3(0, f.kind == PROP_GARAGE ? 2 : 1, 0), f.kind == PROP_GARAGE ? "REPAIR SHOP" : f.kind == PROP_FENCE ? "FENCE" : "PROP");
+    }
+    for (int i = 0; i < (int)w.bushes.size(); i++) take(6, i, w.bushes[i].p, w.bushes[i].p + V3(0, w.bushes[i].r * 0.5, 0), "BUSH");
+    for (int i = 0; i < (int)w.models.size(); i++)
+        if (ownerOf(5, i) >= 0) take(5, i, w.models[i].p, w.models[i].p + V3(0, 1, 0), "STRUCTURE");
+    return found;
+}
+
+EditPick EditCore::pick(const V3& o, const V3& d, double hitT, bool includeBase, bool course) const {
     EditPick best;
     best.t = hitT + 0.5;  // (things standing on the ground count up to where the ray meets it)
     if (!world) return best;
@@ -1919,7 +1961,7 @@ EditPick EditCore::pick(const V3& o, const V3& d, double hitT, bool includeBase)
         if (ownerOf(5, i) < 0) continue;  // (only the structures you put there)
         if (objshape::Hit h; objshape::rayBox(modelBox(w.models[i]), o, d, best.t, h)) consider(h.t, EditPick::BASE, i, 5, w.models[i].p, "STRUCTURE");
     }
-    for (int k = 0; k < (int)level.gates.size(); k++) {
+    for (int k = 0; course && k < (int)level.gates.size(); k++) {
         const Gate& g = level.gates[k];
         const V3 f(std::cos(g.yaw), 0, -std::sin(g.yaw)), l(-f.z, 0, f.x);
         const V3 pa = g.p + l * (g.width / 2), pb = g.p - l * (g.width / 2);
@@ -1932,7 +1974,7 @@ EditPick EditCore::pick(const V3& o, const V3& d, double hitT, bool includeBase)
         if (raySegment(o, d, V3(g.p.x, w.height(g.p.x, g.p.z) + 0.3, g.p.z), V3(g.p.x, w.height(g.p.x, g.p.z) + 0.3, g.p.z) + f * 3, t) < 1.2) tt = std::min(tt, t);
         if (tt < 1e17) consider(tt, EditPick::GATE, k, -1, g.p, "GATE " + std::to_string(k + 1));
     }
-    if (level.hasStart && raySphere(o, d, V3(level.start.x, w.height(level.start.x, level.start.z) + 0.8, level.start.z), 2.6, t))
+    if (course && level.hasStart && raySphere(o, d, V3(level.start.x, w.height(level.start.x, level.start.z) + 0.8, level.start.z), 2.6, t))
         consider(t, EditPick::START, 0, -1, level.start, "START");
     if (best.kind == EditPick::OBJECT && best.index >= 0 && best.index < (int)level.objects.size()) {
         best.at = level.objects[best.index].p;

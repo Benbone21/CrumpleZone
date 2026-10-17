@@ -1035,3 +1035,125 @@ SCENARIO(editorHeightModel, "editor/height-model", "Every object's height is an 
         (void)ku;
     }
 }
+
+SCENARIO(editorCourseNotInObjects, "editor/pick-course", "In the objects tool a ray goes through gates and the start marker to the rock behind; the course tool still picks them") {
+    World w(MAP_PROVING_GROUND);
+    Level lv;
+    lv.map = MAP_PROVING_GROUND;
+    EditCore ed;
+    ed.begin(w, lv);
+    const double gx = 60, gz = 40;
+    ed.setStart(gx - 30, gz + 20, 0);
+    Gate g;
+    g.p = V3(gx, 0, gz), g.yaw = 0, g.width = 14;
+    ed.addGate(g);
+    // A rock 10 m past the gate's right post, and one 8 m past the start marker, each aimed at along the ground level through them.
+    LevelObject a, b;
+    a.kind = OBJ_ROCK, a.p = V3(gx + 10, 0, gz + 7), a.size = V3(1.6, 1.2, 1.4), a.top = 1.5, a.seed = 3;
+    b.kind = OBJ_ROCK, b.p = V3(gx - 22, 0, gz + 20), b.size = V3(1.6, 1.2, 1.4), b.top = 1.5, b.seed = 4;
+    const int ka = ed.addObject(a), kb = ed.addObject(b);
+    const Rock ra = w.rocks[w.rocks.size() - 2], rb = w.rocks.back();
+    const V3 oa(gx - 40, ra.c.y + 0.7, gz + 7);
+    const V3 da = norm(V3(ra.c.x, ra.c.y + 0.7, ra.c.z) - oa);
+    const EditPick g1 = ed.pick(oa, da, 1e9, true, true);
+    ctx.check("the course tool's ray meets the gate post first", g1.kind == EditPick::GATE, g1.name);
+    const EditPick g2 = ed.pick(oa, da, 1e9, true, false);
+    ctx.check("the objects tool's ray goes through it to the rock", g2.kind == EditPick::OBJECT && g2.index == ka, g2.name);
+    const V3 ob(gx - 22 - 30, rb.c.y + 0.7, gz + 20);
+    const V3 db = norm(V3(rb.c.x, rb.c.y + 0.7, rb.c.z) - ob);
+    const EditPick s1 = ed.pick(ob, db, 1e9, true, true);
+    ctx.check("the course tool's ray meets the start marker first", s1.kind == EditPick::START, s1.name);
+    const EditPick s2 = ed.pick(ob, db, 1e9, true, false);
+    ctx.check("the objects tool's ray goes through it too", s2.kind == EditPick::OBJECT && s2.index == kb, s2.name);
+    const EditPick s3 = ed.pick(ob, db, 1e9, false, true);
+    ctx.check("a plain pick still finds the start", s3.kind == EditPick::START);
+}
+
+SCENARIO(editorDragGate, "editor/drag-threshold", "A press only becomes a drag after the pointer moves a few pixels, and stays one") {
+    DragGate d;
+    d.press(300, 200);
+    ctx.check("no movement is a click", !d.moved(300, 200, 5));
+    ctx.check("a pixel of jitter is a click", !d.moved(301, 199, 5));
+    ctx.check("three pixels is still a click", !d.moved(302, 202, 5));
+    ctx.check("five pixels is a drag", d.moved(305, 200, 5));
+    ctx.check("and back at the start it is still a drag", d.moved(300, 200, 5));
+    d.press(10, 10);
+    ctx.check("a new press starts over", !d.moved(10, 11, 5));
+}
+
+SCENARIO(editorBoxSelect, "editor/box-select", "Box select takes the level's objects and the map's own rocks, trees, logs and bushes, not its blocks and shops unless asked; adopting only takes what an edit changes") {
+    int mapsWithInfra = 0;
+    for (int m = 0; m < MAP_COUNT; m++) {
+        World w((MapId)m);
+        Level lv;
+        lv.map = (MapId)m;
+        EditCore ed;
+        ed.begin(w, lv);
+        size_t blocks = 0, fixtures = 0;
+        for (const Box& b : w.boxes) blocks += !b.hidden && !b.rock;
+        for (const Prop& f : w.fixtures) fixtures += f.kind == PROP_GARAGE || f.kind == PROP_CABIN;
+        const auto all = [](const V3&) { return true; };
+        const std::vector<EditPick> some = ed.pickInside(all, false, 100000), every = ed.pickInside(all, true, 100000);
+        int infraSome = 0;
+        for (const EditPick& p : some) infraSome += p.kind == EditPick::BASE && (p.baseKind == 4 || (p.baseKind == 3 && !w.boxes[p.index].rock));
+        ctx.check(std::string("objects only skips the map's blocks and shops: ") + mapName((MapId)m), infraSome == 0, std::to_string(infraSome));
+        ctx.check(std::string("everything is a superset: ") + mapName((MapId)m), every.size() >= some.size());
+        if (blocks + fixtures > 0) {
+            mapsWithInfra++;
+            ctx.check(std::string("everything takes some of them: ") + mapName((MapId)m), every.size() > some.size(), std::to_string(every.size()) + " vs " + std::to_string(some.size()));
+        }
+        bool capped = false;
+        const std::vector<EditPick> few = ed.pickInside(all, true, 5, &capped);
+        ctx.check(std::string("the cap holds and says so: ") + mapName((MapId)m), few.size() <= 5 && (every.size() <= 5 || capped));
+    }
+    ctx.check("some map has blocks or shops to test with", mapsWithInfra > 0);
+    // A level's own objects are always taken.
+    World w(MAP_MOUNTAIN);
+    Level lv;
+    lv.map = MAP_MOUNTAIN;
+    EditCore ed;
+    ed.begin(w, lv);
+    LevelObject r;
+    r.kind = OBJ_ROCK, r.p = V3(30, 0, -300), r.size = V3(1.5, 1, 1.2), r.top = 1.2, r.seed = 5;
+    const int k = ed.addObject(r);
+    const V3 c = w.rocks.back().c;
+    const auto near = [&](const V3& p) { return len(p - c) < 0.5; };
+    const std::vector<EditPick> mine = ed.pickInside(near, false, 100);
+    ctx.check("the level's own rock is taken", mine.size() == 1 && mine[0].kind == EditPick::OBJECT && mine[0].index == k);
+    // Adopting only takes what the edit changes: a lift of nothing, so it stays the map's; a scale takes it.
+    const Rock mr = w.rocks[w.rocks.size() / 3];
+    EditPick bp;
+    bp.kind = EditPick::BASE, bp.baseKind = 0, bp.index = (int)(w.rocks.size() / 3), bp.at = mr.c, bp.name = "ROCK";
+    ctx.check("a map rock can be adopted", ed.canAdopt(bp));
+    const size_t objs0 = ed.level.objects.size(), removed0 = ed.level.removed.size();
+    std::vector<char> left;
+    const std::vector<int> none = ed.adopt({bp}, [&](const LevelObject& o) { return std::fabs(ed.transformed(o, OP_LIFT, 0).top - o.top) > 1e-9; }, &left);
+    ctx.check("an edit that changes nothing leaves it the map's", none.size() == 1 && none[0] == -1 && left[0] == 1 && ed.level.objects.size() == objs0 && ed.level.removed.size() == removed0);
+    const std::vector<int> took = ed.adopt({bp}, [&](const LevelObject& o) { return std::fabs(ed.transformed(o, OP_SCALE, 1.1).size.x - o.size.x) > 1e-9; }, &left);
+    ctx.check("one that does change it takes it", took.size() == 1 && took[0] >= 0 && ed.level.objects.size() == objs0 + 1 && ed.level.removed.size() == removed0 + 1);
+}
+
+SCENARIO(editorNameReplace, "editor/name-prefill", "The suggested save name is selected: the first key replaces it, Backspace edits it") {
+    World w(MAP_MOUNTAIN);
+    Level lv;
+    lv.map = MAP_MOUNTAIN;
+    EditCore ed;
+    ed.begin(w, lv);
+    LevelObject r;
+    r.kind = OBJ_ROCK, r.p = V3(30, 0, -300), r.size = V3(1.5, 1, 1.2), r.top = 1.2, r.seed = 5;
+    ed.addObject(r);
+    SaveFlow f;
+    f.folder = "/tmp/claude-1000/-home-bread-Documents-GitHub-MemeNG/974f9a4d-9df0-4dc6-906e-0a5ec985ab51/scratchpad/edpick/levels";
+    f.requestSave(ed, false);
+    ctx.check("it asks, with a suggestion selected", f.stage == SaveFlow::NAMING && f.fresh && !f.text.empty());
+    f.type('A');
+    f.type('B');
+    ctx.check("typing replaces the suggestion", f.text == "AB" && !f.fresh, f.text);
+    f.escape();
+    f.requestSave(ed, false);
+    const std::string sug = f.text;
+    f.backspace();
+    ctx.check("Backspace edits the suggestion instead", f.text == sug.substr(0, sug.size() - 1) && !f.fresh, f.text);
+    f.type('Z');
+    ctx.check("and then typing appends", f.text == sug.substr(0, sug.size() - 1) + "Z", f.text);
+}

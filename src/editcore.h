@@ -9,7 +9,9 @@
 #pragma once
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -83,6 +85,18 @@ struct EditPick {
     std::string name;   // "ROCK", "GATE 3", ...
     bool operator==(const EditPick& o) const { return kind == o.kind && index == o.index && baseKind == o.baseKind; }
     bool operator!=(const EditPick& o) const { return !(*this == o); }
+};
+
+// A mouse press that only becomes a drag once the pointer has moved a few pixels (so a click that jitters by one stays a click).
+struct DragGate {
+    float x0 = 0, y0 = 0;
+    bool armed = false;
+    void press(float x, float y) { x0 = x, y0 = y, armed = false; }
+    // True once the pointer is `px` or more from where it went down (and stays true until the next press).
+    bool moved(float x, float y, float px) {
+        if (!armed && std::hypot(x - x0, y - y0) >= px) armed = true;
+        return armed;
+    }
 };
 
 // What can be done to an object (EditCore::transformed): turn it, tip it, lift it, scale it as a whole, stretch it along one of
@@ -168,7 +182,9 @@ public:
     // The map's own objects become the level's, so they can be moved, turned, scaled and deleted like the ones you place:
     // each is taken out of the map (level.removed, with its kind) and put back as an equal LevelObject. One undo step.
     // Returns their object indices, in order (-1 for one that can't be: a cabin, a fence...). Picks that already are objects pass through.
-    std::vector<int> adopt(const std::vector<EditPick>& picks);
+    // `wants` (optional) is asked of each map pick's would-be object: one it says no to is left the map's own (and stays -1 in the result;
+    // `left`, if given, marks those 1), so an edit that would change nothing about it doesn't take it over.
+    std::vector<int> adopt(const std::vector<EditPick>& picks, const std::function<bool(const LevelObject&)>& wants = nullptr, std::vector<char>* left = nullptr);
     bool canAdopt(const EditPick& p) const;
     int resolveIndex(const EditPick& p) const { return resolveBase(p); }  // a map pick's index in the world now
     // The map's own object as the level object it would become (for showing its size and pose).
@@ -263,8 +279,13 @@ public:
     // ---- Looking --------------------------------------------------------------------------
     // Where a ray from o along d (unit) first meets the ground, within maxT.
     bool rayGround(const V3& o, const V3& d, double maxT, V3& hit) const;
-    // The nearest object, gate or start marker on the ray (and in front of hitT, the ground).
-    EditPick pick(const V3& o, const V3& d, double hitT, bool base = true) const;
+    // Everything whose middle `inside` accepts (a box on the screen): the level's objects, and the map's own rocks, slabs, trees, logs and
+    // bushes. The map's infrastructure (plain blocks, repair shops, cabins, fences, signs...) only when `everything`. At most `cap`
+    // (`capped` says it stopped there). Map picks are BASE picks that canAdopt.
+    std::vector<EditPick> pickInside(const std::function<bool(const V3&)>& inside, bool everything, size_t cap, bool* capped = nullptr) const;
+    // The nearest object, gate or start marker on the ray (and in front of hitT, the ground). `course`: gates and the start marker
+    // count (the COURSE tool); the objects tool passes false and its rays go through them.
+    EditPick pick(const V3& o, const V3& d, double hitT, bool base = true, bool course = true) const;
     // Which level object a world rock/tree/log/box/fixture index belongs to (-1: the map's own).
     int ownerOf(int baseKind, int index) const;
     // How many cells, objects... the level changes (for the status bar).
