@@ -1,4 +1,5 @@
 // Levels: the file format, putting edits on a map, the game's own levels, and playing one.
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -171,6 +172,16 @@ SCENARIO(levelRunRace, "levels/run-race", "A two-lap race round a square: gates 
     ctx.check("others on the board", run.board.size() == 3);
 }
 
+// How far (x, z) is outside any of the world's spawn pads, ramp included (negative on one).
+static double outsidePads(const World& w, double x, double z) {
+    double best = 1e9;
+    for (const SpawnPad& pd : w.spawnPads) {
+        const double dx = x - pd.p.x, dz = z - pd.p.z, u = dx * std::cos(pd.yaw) - dz * std::sin(pd.yaw), v = dx * std::sin(pd.yaw) + dz * std::cos(pd.yaw);
+        best = std::min(best, std::max(std::max(-pd.back - u, u - pd.front - pd.ramp), std::fabs(v) - pd.half));
+    }
+    return best;
+}
+
 // The obstacle sections as levels of their own: on open country, with nothing of the proving ground round them.
 SCENARIO(levelSections, "levels/sections", "Each section level is on the clean open country: no course, pad, road, yard or park near it, its start on flat clear ground, no seam at its canvas edge") {
     int found = 0;
@@ -185,16 +196,17 @@ SCENARIO(levelSections, "levels/sections", "Each section level is on the clean o
         bool paved = false;
         for (double x = -590; x <= 590 && !paved; x += 10)
             for (double z = -590; z <= 590; z += 10)
-                if (w.surfaceAt(x, z) == SURF_PAVED || w.courseSurface(x, z) >= 0 || w.roadAt(x, z).paint == PAINT_ROAD || w.roadAt(x, z).paint == PAINT_PAD) {
+                if (outsidePads(w, x, z) > 1 && (w.surfaceAt(x, z) == SURF_PAVED || w.roadAt(x, z).paint == PAINT_PAD) || w.courseSurface(x, z) >= 0 || w.roadAt(x, z).paint == PAINT_ROAD) {
                     paved = true;
                     break;
                 }
-        ctx.check(n + ": no pad, course or road anywhere", !paved);
+        ctx.check(n + ": no pad, course or road anywhere (but its own start's slab)", !paved);
+        ctx.check(n + ": one spawn pad, at the start", w.spawnPads.size() == 1 && outsidePads(w, lv.start.x, lv.start.z) < 0);
         int solidBoxes = 0;
         for (const Box& b : w.boxes)
             if (!b.rock && !b.hidden) solidBoxes++;
         ctx.check(n + ": no ramps, walls or poles of the test course", solidBoxes == 0 && w.loopRoad.empty() && w.stations.empty() && w.fixtures.empty());
-        ctx.check(n + ": no model yard or park", w.models.empty() && w.tags.empty() && w.sections.size() == 1 && w.parking.empty());
+        ctx.check(n + ": no model yard or park", std::all_of(w.models.begin(), w.models.end(), [](const Placed& m) { return m.id == "spawn_pad"; }) && w.tags.empty() && w.sections.size() == 1 && w.parking.empty());
         // The start: dry, on the ground, flat for the run onto the entry, and clear of trunks and rocks along it.
         const V3 s = lv.start;
         const V3 fwd(std::cos(lv.startYaw), 0, -std::sin(lv.startYaw));
@@ -231,7 +243,7 @@ SCENARIO(levelSections, "levels/sections", "Each section level is on the clean o
         const double beyond = sectionFootprint((SectionType)c.gen).blend + 3;
         for (double x = -590; x <= 590; x += 7)
             for (double z = -590; z <= 590; z += 7)
-                if (c.outside(x, z) > beyond) changed = std::max(changed, std::fabs(w.height(x, z) - plain.height(x, z)));
+                if (c.outside(x, z) > beyond && outsidePads(w, x, z) > 25) changed = std::max(changed, std::fabs(w.height(x, z) - plain.height(x, z)));
         ctx.check(n + ": nothing changed beyond the blend", changed < 1e-4, std::to_string(changed));
         // The same level through its text (what the host sends): no megabyte of cells, and it builds the same section.
         const std::string text = saveLevelText(lv);
