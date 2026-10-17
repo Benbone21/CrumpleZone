@@ -1846,6 +1846,7 @@ int main(int argc, char** argv) {
     pad::Mode padCtx = pad::Mode::Off;
     bool padShift = false, padRumbling = false;  // (padShift: the key press being handled carries Shift)
     double padRumbleTimer = 0;
+    float padRumbleSent[2] = {0, 0};  // (the last rumble command, so a pulse goes out the frame it changes)
     if (opt.pad && !scripted && !std::getenv("CZ_NO_PAD")) padDev.start();
     auto shiftDown = [&]() {
         const uint8_t* ks = SDL_GetKeyboardState(nullptr);
@@ -3606,26 +3607,10 @@ int main(int argc, char** argv) {
             sim.events.clear();
             for (const std::string& ev : net.events) hud.toast(ev);
             net.events.clear();
-            {  // ---- gamepad rumble: only while the player is on the pad (the last thing they used) ----
-                const bool want = pad::ui.last && padDev.connected() && padCtx == pad::Mode::Drive && !walker.active && !sim.paused && settings.padRumble > 0 &&
-                                  (SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS) && sim.player >= 0 && sim.player < (int)sim.cars.size();
-                if (want) {
-                    const pad::RumbleOut ro = rumbler.update(sim.cars[sim.player], settings.padRumble, dt);
-                    if ((padRumbleTimer -= dt) <= 0) {
-                        padRumbleTimer = 0.1;
-                        padDev.rumble(ro.low, ro.high);
-                        padRumbling = ro.low > 0.01f || ro.high > 0.01f;
-                    }
-                } else if (padRumbling) {
-                    padDev.rumble(0, 0);
-                    padRumbling = false;
-                    rumbler.reset();
-                }
-            }
         }
 
         // Reset anything that exploded numerically; track damage and crash energy.
-        double impact = 0;
+        double impact = 0, playerImpact = 0;
         for (int i = 0; i < (int)sim.cars.size(); i++) {
             Car& c = sim.cars[i];
             if (!c.finite()) {
@@ -3634,11 +3619,31 @@ int main(int argc, char** argv) {
             }
             if (!c.remote) c.updateStats();
             impact += c.impactEnergy;
+            if (i == sim.player) playerImpact = c.impactEnergy;
             c.impactEnergy = 0;
         }
         for (int i = 0; i < (int)sim.cars.size(); i++) {
             Car& c = sim.cars[i];
             if (!c.remote) c.lampMode = (uint8_t)(i == sim.player ? lampMode : c.ai || c.pilot.active ? LAMPS_AUTO : LAMPS_OFF);
+        }
+        {  // ---- gamepad rumble: only while the player is on the pad (the last thing they used); pulses, so sent as they change ----
+            const bool want = pad::ui.last && padDev.connected() && padCtx == pad::Mode::Drive && !walker.active && !sim.paused && settings.padRumble > 0 &&
+                              (SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS) && sim.player >= 0 && sim.player < (int)sim.cars.size();
+            if (want) {
+                const pad::RumbleOut ro = rumbler.update(sim.cars[sim.player], settings.padRumble, dt, playerImpact);
+                const bool on = ro.low > 0.01f || ro.high > 0.01f;
+                padRumbleTimer -= dt;
+                if (on != padRumbling || (on && (padRumbleTimer <= 0 || std::fabs(ro.low - padRumbleSent[0]) > 0.04f || std::fabs(ro.high - padRumbleSent[1]) > 0.04f))) {
+                    padRumbleTimer = 0.1;  // (a pulse is cut short on the pad itself after 160 ms, so a lost frame can't leave it buzzing)
+                    padDev.rumble(ro.low, ro.high);
+                    padRumbleSent[0] = ro.low, padRumbleSent[1] = ro.high;
+                    padRumbling = on;
+                }
+            } else {
+                if (padRumbling) padDev.rumble(0, 0);
+                padRumbling = false;
+                rumbler.reset();
+            }
         }
         if (!(playback.active() && !playback.done) && !net.joining()) net.send(sim, (double)(SDL_GetPerformanceCounter()) / freq);
         FxEvents events = fx.update(sim, simDt);

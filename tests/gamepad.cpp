@@ -276,7 +276,7 @@ SCENARIO(padCrawl, "gamepad/crawl-4l", "A Bronco in 4L on the pad: a light RT cr
     ctx.check("no damage crawling", c.damage < 0.02);
 }
 
-SCENARIO(padRumble, "gamepad/rumble", "Rumble stays quiet cruising, thumps on a wall hit, and is silent when switched off") {
+SCENARIO(padRumble, "gamepad/rumble", "Rumble stays quiet cruising, thumps on a wall hit, and is silent when switched off (more in rumble/)") {
     pad::Rumbler on, off;
     Car& c = ctx.add(bronco(), 70, 0, 0);  // the crash wall is at x = 114
     ctx.sim.player = (int)(&c - ctx.sim.cars.data());
@@ -285,7 +285,8 @@ SCENARIO(padRumble, "gamepad/rumble", "Rumble stays quiet cruising, thumps on a 
     ctx.launch(c, 14);
     double cruise = 0, hit = 0, silent = 0;
     ctx.run(4.0, [&] {
-        const pad::RumbleOut a = on.update(c, 2, Ctx::kFrame), b = off.update(c, 0, Ctx::kFrame);
+        const pad::RumbleOut a = on.update(c, 2, Ctx::kFrame, c.impactEnergy), b = off.update(c, 0, Ctx::kFrame, c.impactEnergy);
+        c.impactEnergy = 0;
         silent = std::max(silent, (double)std::max(b.low, b.high));
         if (c.frame().com.x < 104) cruise = std::max(cruise, (double)std::max(a.low, a.high));
         else hit = std::max(hit, (double)a.low);
