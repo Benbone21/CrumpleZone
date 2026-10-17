@@ -69,15 +69,23 @@ bool extractSection(const World& w, const Level& lv, SectionFile& out, std::stri
         return false;
     };
     if (!lv.section.on) return fail("NOT A SECTION");
-    if (!lv.hasStart) return fail("NO ENTRY: SET THE START (COURSE TOOL)");
-    if (lv.gates.empty()) return fail("NO EXIT: ADD A GATE AT THE FAR END (COURSE TOOL)");
     const SectionInfo& c = lv.section;
+    // The entry: the start the author set. A generated section (the built-in levels and their copies) has its own entry, an apron
+    // into the canvas; its start is a pad out on the run-in before that, a little behind the canvas, so that isn't the entry.
+    V3 entryAt = lv.start;
+    if (c.live && c.gen >= 0 && c.gen < SEC_COUNT) {
+        const double ap = sectionFootprint((SectionType)c.gen).apron;
+        entryAt = V3(c.x + std::cos(c.heading) * ap, 0, c.z - std::sin(c.heading) * ap);
+    } else if (!lv.hasStart) {
+        return fail("NO ENTRY: SET THE START (COURSE TOOL)");
+    }
+    if (lv.gates.empty()) return fail("NO EXIT: ADD A GATE AT THE FAR END (COURSE TOOL)");
     SectionFrame f;
-    f.entry = V3(lv.start.x, w.height(lv.start.x, lv.start.z), lv.start.z);
+    f.entry = V3(entryAt.x, w.height(entryAt.x, entryAt.z), entryAt.z);
     f.heading = c.heading;
     // Where the entry sits in the canvas (u from the canvas's back edge).
-    const double cu = (lv.start.x - c.x) * std::cos(c.heading) - (lv.start.z - c.z) * std::sin(c.heading);
-    if (cu < 0 || cu > c.length || c.outside(lv.start.x, lv.start.z) > 0) return fail("THE ENTRY IS OUTSIDE THE CANVAS");
+    const double cu = (entryAt.x - c.x) * std::cos(c.heading) - (entryAt.z - c.z) * std::sin(c.heading);
+    if (cu < 0 || cu > c.length || c.outside(entryAt.x, entryAt.z) > 0) return fail("THE ENTRY IS OUTSIDE THE CANVAS");
     SectionFile s;
     s.name = lv.name, s.about = lv.about, s.author = lv.author;
     s.info = c;

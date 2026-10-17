@@ -9,6 +9,7 @@
 #include "../src/platform.h"
 #include "../src/props.h"
 #include "../src/saveflow.h"
+#include "../src/sectionfile.h"
 #include "harness.h"
 
 namespace {
@@ -780,4 +781,80 @@ SCENARIO(editorLiveSection, "editor/live-section", "Editing a built-in section l
     double gap = 1e9;
     for (const Rock& r : pw.rocks) gap = std::min(gap, len(r.c - w.rocks.back().c));
     ctx.metric("the moved, scaled, raised rock plays where the editor shows it", gap, "m", 0, 0.1);
+}
+
+SCENARIO(editorDiscard, "editor/discard", "DISCARD throws the unsaved edits away: the level goes back to what was last saved (or the plain level it came from), the recovery copy goes, the saved file stays") {
+    // (Its own folders: scenarios run side by side, and the save-flow one owns the config folder.)
+    makeDir("build/test-edflow");
+    const std::string levels = "build/test-edflow/discard", autos = levels + "/autosave";
+    makeDir(levels);
+    makeDir(autos);
+    for (const std::string& f : listLevelFiles(levels, ".czl")) std::remove(f.c_str());
+    for (const std::string& f : listLevelFiles(autos, ".czl")) std::remove(f.c_str());
+    World w(MAP_PROVING_GROUND);
+    Level lv;
+    lv.map = MAP_PROVING_GROUND, lv.name = "DISCARD ME";
+    EditCore ed;
+    ed.begin(w, lv);
+    LevelObject r;
+    r.kind = OBJ_ROCK, r.p = V3(-300, 0, 250), r.size = V3(1.5, 1, 1.2), r.top = 1, r.seed = 5, r.sub = 1;
+    ed.addObject(r);
+    ctx.check("saved once, with a rock", ed.save(levels + "/discard_me.czl") && ed.level.objects.size() == 1 && !ed.unsaved() && !ed.level.file.empty());
+    SaveFlow flow;
+    // More edits, a recovery copy of them, then DISCARD.
+    r.p = V3(-310, 0, 250);
+    ed.addObject(r);
+    ed.autosave(autos);
+    ctx.check("two rocks, unsaved, with a recovery copy", ed.level.objects.size() == 2 && ed.unsaved() && !listLevelFiles(autos, ".czl").empty());
+    flow.requestLeave(ed, SaveFlow::LEAVE);
+    ctx.check("leaving asks", flow.stage == SaveFlow::ASKING && !flow.discarded);
+    flow.choose(ed, SaveFlow::DISCARD);
+    ctx.check("DISCARD says so", flow.discarded && flow.done == SaveFlow::LEAVE);
+    const Level back = ed.discard(autos);
+    ctx.check("what's driven is the last saved level: one rock", back.objects.size() == 1 && back.name == "DISCARD ME");
+    ctx.check("the recovery copy is gone", listLevelFiles(autos, ".czl").empty());
+    Level onDisk;
+    ctx.check("the saved file is still there, with its one rock", loadLevelFile(levels + "/discard_me.czl", onDisk) && onDisk.objects.size() == 1);
+    // Never saved: back to the plain level, and no recovery copy left.
+    Level fresh;
+    fresh.map = MAP_PROVING_GROUND, fresh.name = "NEVER SAVED";
+    World w2(MAP_PROVING_GROUND);
+    EditCore e2;
+    e2.begin(w2, fresh);
+    e2.addObject(r);
+    e2.brush(BRUSH_RAISE, -200, 200, 8, 1.0);
+    e2.autosave(autos);
+    ctx.check("a recovery copy of the new level", listLevelFiles(autos, ".czl").size() == 1);
+    const Level plain = e2.discard(autos);
+    ctx.check("never saved: the plain level comes back, no edits", plain.objects.empty() && plain.heights.empty() && plain.name == "NEVER SAVED" && listLevelFiles(autos, ".czl").empty());
+    for (const std::string& f : listLevelFiles(levels, ".czl")) std::remove(f.c_str());
+}
+
+SCENARIO(editorBuiltinSectionFile, "editor/builtin-section-file", "An unmodified copy of any built-in section level saves its section file with no warning: its entry is the generator's, not the start pad out on the run-in") {
+    makeDir("build/test-edflow");
+    const std::string dir = "build/test-edflow/sections";
+    makeDir(dir);
+    int n = 0;
+    for (const Level& l : builtinLevels()) {
+        if (!l.section.on || !l.section.live) continue;
+        n++;
+        Level own = l;
+        own.builtin = false, own.file.clear(), own.name += " (MINE)";
+        World w = levelWorld(own);
+        EditCore ed;
+        ed.begin(w, own);
+        const std::string path = dir + "/" + levelFileName(own.name) + ".czl";
+        ctx.check(l.name + ": saves", ed.save(path));
+        ctx.check(l.name + ": no section-file warning", ed.saveNote.empty(), ed.saveNote);
+        SectionFile sf;
+        std::string why;
+        ctx.check(l.name + ": extracts", extractSection(w, ed.level, sf, &why), why);
+        // The frame's entry is the section's own, an apron in; the first gate sits on it and the exit is the length on.
+        const double ap = sectionFootprint((SectionType)l.section.gen).apron;
+        ctx.check(l.name + ": the canvas starts an apron before the entry", std::fabs(sf.u0 + ap) < 1.5, std::to_string(sf.u0));
+        ctx.check(l.name + ": the first gate is at the entry", !sf.gates.empty() && std::fabs(sf.gates.front().p.x) < 1.5);
+        std::remove(path.c_str());
+        std::remove(sectionPathFor(path).c_str());
+    }
+    ctx.check("all seven checked", n == SEC_COUNT, std::to_string(n));
 }
