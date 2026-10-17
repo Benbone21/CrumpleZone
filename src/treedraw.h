@@ -26,17 +26,6 @@ struct VegStats {
     };
     Pass trees, bushes, logs, grass;                 // the main pass
     Pass treesShadow, bushesShadow, logsShadow;      // both shadow cascades
-    double gpuMs = 0, shadowGpuMs = 0;               // (CZ_BENCH) the trees and bushes on the GPU, main pass and shadows, a few frames late
-};
-
-// A GPU timer (CZ_BENCH): what's drawn between begin and end, read back three frames later.
-struct GpuTimer {
-    GLuint q[4] = {};
-    bool used[4] = {};
-    int f = 0;
-    double ms = 0;
-    void begin();
-    void end();
 };
 
 class TreeDraw {

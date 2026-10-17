@@ -94,20 +94,6 @@ namespace {
 constexpr int kInstFloats = 12;
 }
 
-void GpuTimer::begin() {
-    if (!q[0]) GenQueries(4, q);
-    f = (f + 1) % 4;
-    const int old = (f + 1) % 4;  // (the one begun three frames back is done by now)
-    if (used[old]) {
-        GLuint64 ns = 0;
-        GetQueryObjectui64v(q[old], GL_QUERY_RESULT, &ns);
-        ms = ns / 1e6;
-        used[old] = false;
-    }
-    BeginQuery(GL_TIME_ELAPSED, q[f]);
-    used[f] = true;
-}
-void GpuTimer::end() { EndQuery(GL_TIME_ELAPSED); }
 
 void TreeDraw::build(const forest::Set& set) {
     set_ = set;

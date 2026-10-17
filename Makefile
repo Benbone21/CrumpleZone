@@ -7,8 +7,8 @@ CXXFLAGS += -std=c++17 -Wall -Wextra
 LDLIBS   := -l:libSDL2-2.0.so.0 -lpthread -lm
 
 MODELS   := $(sort $(wildcard src/models/*.cpp))
-PHYS     := src/modelkit.cpp $(MODELS) src/perf.cpp src/physics_workers.cpp src/collision.cpp src/props.cpp src/jobs.cpp src/walker.cpp src/softbody.cpp src/recovery.cpp src/net.cpp src/level.cpp src/levels_builtin.cpp src/levelrun.cpp src/editcore.cpp src/saveflow.cpp src/textedit.cpp src/autopilot.cpp src/pilotsense.cpp src/carbuild.cpp src/world.cpp src/spawnpad.cpp src/sections.cpp src/mountain.cpp src/freeway.cpp src/frontier.cpp src/backcountry.cpp src/vehicles.cpp src/mods.cpp src/gamepad.cpp src/platform.cpp src/tires.cpp src/interact.cpp src/fixes.cpp src/carparts.cpp src/carframe.cpp src/vtools.cpp src/keybinds.cpp src/devmenu.cpp src/career.cpp src/anchors.cpp src/biome.cpp src/plants.cpp src/handwork.cpp src/sectionfile.cpp src/trunk.cpp src/invmenu.cpp src/objshape.cpp src/bodyshell.cpp src/throttle.cpp src/debuginfo.cpp src/forest.cpp
-SCEN     := tests/perf.cpp tests/drivetrain.cpp tests/net_state.cpp tests/collision.cpp tests/props.cpp tests/jobs.cpp tests/walker.cpp tests/editor.cpp tests/levels.cpp tests/circuit.cpp tests/frontier.cpp tests/backcountry.cpp tests/freeway.cpp tests/surfaces.cpp tests/handling.cpp tests/harness.cpp tests/scenarios.cpp tests/components.cpp tests/offroad.cpp tests/recovery.cpp tests/net.cpp tests/autopilot.cpp tests/nearby.cpp tests/gamepad.cpp tests/tires.cpp tests/vtools.cpp tests/simulation.cpp tests/vehicle_physics.cpp tests/dynamics.cpp tests/extreme.cpp tests/environment.cpp tests/towing.cpp tests/keybinds.cpp tests/devmenu.cpp tests/treads.cpp tests/wobble.cpp tests/career.cpp tests/models.cpp tests/carparts.cpp tests/sections.cpp tests/anchors.cpp tests/music.cpp tests/trunk.cpp tests/fieldrepair.cpp tests/net_security.cpp tests/carframe.cpp tests/spawnpads.cpp tests/invmenu.cpp tests/rumble.cpp tests/editbrush.cpp tests/objshape.cpp tests/editobjects.cpp tests/throttle.cpp tests/f3info.cpp tests/plants.cpp tests/forest.cpp tests/grass.cpp tests/textedit.cpp
+PHYS     := src/modelkit.cpp $(MODELS) src/perf.cpp src/physics_workers.cpp src/collision.cpp src/props.cpp src/jobs.cpp src/walker.cpp src/softbody.cpp src/recovery.cpp src/net.cpp src/level.cpp src/levels_builtin.cpp src/levelrun.cpp src/editcore.cpp src/saveflow.cpp src/textedit.cpp src/autopilot.cpp src/pilotsense.cpp src/carbuild.cpp src/world.cpp src/spawnpad.cpp src/sections.cpp src/mountain.cpp src/freeway.cpp src/frontier.cpp src/backcountry.cpp src/vehicles.cpp src/mods.cpp src/gamepad.cpp src/platform.cpp src/tires.cpp src/interact.cpp src/fixes.cpp src/carparts.cpp src/carframe.cpp src/vtools.cpp src/keybinds.cpp src/devmenu.cpp src/career.cpp src/anchors.cpp src/biome.cpp src/plants.cpp src/handwork.cpp src/sectionfile.cpp src/trunk.cpp src/invmenu.cpp src/objshape.cpp src/bodyshell.cpp src/throttle.cpp src/debuginfo.cpp src/forest.cpp src/meshopt.cpp src/frameprof.cpp
+SCEN     := tests/perf.cpp tests/drivetrain.cpp tests/net_state.cpp tests/collision.cpp tests/props.cpp tests/jobs.cpp tests/walker.cpp tests/editor.cpp tests/levels.cpp tests/circuit.cpp tests/frontier.cpp tests/backcountry.cpp tests/freeway.cpp tests/surfaces.cpp tests/handling.cpp tests/harness.cpp tests/scenarios.cpp tests/components.cpp tests/offroad.cpp tests/recovery.cpp tests/net.cpp tests/autopilot.cpp tests/nearby.cpp tests/gamepad.cpp tests/tires.cpp tests/vtools.cpp tests/simulation.cpp tests/vehicle_physics.cpp tests/dynamics.cpp tests/extreme.cpp tests/environment.cpp tests/towing.cpp tests/keybinds.cpp tests/devmenu.cpp tests/treads.cpp tests/wobble.cpp tests/career.cpp tests/models.cpp tests/carparts.cpp tests/sections.cpp tests/anchors.cpp tests/music.cpp tests/trunk.cpp tests/fieldrepair.cpp tests/net_security.cpp tests/carframe.cpp tests/spawnpads.cpp tests/invmenu.cpp tests/rumble.cpp tests/editbrush.cpp tests/objshape.cpp tests/editobjects.cpp tests/throttle.cpp tests/f3info.cpp tests/plants.cpp tests/forest.cpp tests/grass.cpp tests/textedit.cpp tests/winch_payout.cpp tests/meshopt.cpp tests/frameprof.cpp
 GAME_SRC := src/main.cpp src/lab.cpp src/gamepad_sdl.cpp src/editor.cpp src/coop.cpp src/gl.cpp src/gpu.cpp src/render.cpp src/carvisual.cpp src/scenery.cpp src/menu.cpp src/fx.cpp src/engine_samples.cpp src/engineaudio.cpp src/audio.cpp src/music.cpp src/ambience.cpp src/daylight.cpp src/lights.cpp src/groundtex.cpp src/groundshader.cpp src/propdraw.cpp src/invdraw.cpp src/debugscreen.cpp src/buildinfo.cpp $(PHYS) $(SCEN) src/treedraw.cpp
 GAME_OBJ := $(patsubst %.cpp,build/%.o,$(GAME_SRC))
 TEST_OBJ := $(patsubst %.cpp,build/%.o,tests/run_tests.cpp $(PHYS) $(SCEN) src/music.cpp)
@@ -58,8 +58,15 @@ build/test_render: build/tests/render.o $(filter-out build/src/main.o,$(GAME_OBJ
 build/test_audio: build/tests/audio.o build/tests/engine_samples.o build/tests/soundscape.o build/src/audio.o build/src/engineaudio.o build/src/engine_samples.o build/src/music.o build/src/ambience.o $(patsubst %.cpp,build/%.o,$(PHYS))
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDLIBS)
 
+# Every mesh the game builds, what's wasted in it (meshopt.h): SDL_VIDEODRIVER=offscreen build/meshaudit [--fast].
+build/meshaudit: build/tools/meshaudit.o $(filter-out build/src/main.o,$(GAME_OBJ))
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDLIBS)
+
+meshaudit: build/meshaudit
+	SDL_VIDEODRIVER=offscreen ./build/meshaudit
+
 # Contact sheets of the code-made models: build/modelsheet [--out DIR] [id ...].
-build/modelsheet: build/tools/modelsheet.o build/src/modelkit.o build/src/platform.o $(patsubst %.cpp,build/%.o,$(MODELS))
+build/modelsheet: build/tools/modelsheet.o build/src/modelkit.o build/src/meshopt.o build/src/platform.o $(patsubst %.cpp,build/%.o,$(MODELS))
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lm
 
 # Silent audition files: build/engine_preview [output directory].
@@ -234,4 +241,4 @@ run: crumplezone
 clean:
 	rm -rf build crumplezone
 
-.PHONY: windows windows-installer mac mac-dmg deb all test run clean bake
+.PHONY: windows windows-installer mac mac-dmg deb all test run clean bake meshaudit
