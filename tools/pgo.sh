@@ -2,7 +2,7 @@
 # Profile-guided optimization for the release builds (opt-in; nothing else depends on it).
 #   tools/pgo.sh linux     profile build/rel, then: make PGO=use build/rel/crumplezone   (or: make PGO=use deb)
 #   tools/pgo.sh rebase    point a profile trained in another checkout path at this one (the Linux CI job)
-#   tools/pgo.sh windows   same for the mingw build (trained under wine), then: make PGO=use windows
+#   tools/pgo.sh windows   experimental (wine-trained): changes the sim bit state on Windows, so release.yml does not use it
 # Steps: build the instrumented binaries (PGO=gen), run a fixed training workload (the CPU sim, a test subset, two short
 # offscreen game renders), then leave the profile in build/pgo and the instrumented objects removed. Exit status 0 only
 # if the profile is complete; on ANY failure it cleans up and exits 1, and the caller builds without PGO (never a blocker).

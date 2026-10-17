@@ -22,8 +22,8 @@ env:
   VERSION: ${{ (startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/V')) && github.ref_name || '0.0.0-dev' }}
 
 jobs:
-  # Opt-in PGO: build instrumented, run a fixed training workload (tools/pgo.sh), hand the profile to linux and windows.
-  # Never blocks a release: if this job fails, those jobs find no profile and build plain LTO.
+  # Opt-in PGO: build instrumented, run a fixed training workload (tools/pgo.sh), hand the profile to the linux job.
+  # Never blocks a release: if this job fails, the linux job finds no profile and build plain LTO.
   profile:
     runs-on: ubuntu-24.04
     continue-on-error: true
@@ -66,24 +66,18 @@ jobs:
         with: { name: linux, path: out/* }
 
   windows:
-    needs: profile
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        continue-on-error: true
-        with: { name: pgo-profile, path: build/pgo }
       - name: Toolchain
         run: sudo apt-get update -q && sudo apt-get install -y -q g++-mingw-w64-x86-64-posix zip nsis
       - name: Cross-compile and build the installer
         run: |
           V="${VERSION#[vV]}"
-          # LTO always; PGO from the Linux-trained profile (mingw consumes it: tools/pgo.sh windows renames it to the Windows
-          # object names), dropping back to plain LTO if the profile is missing or the build rejects it.
-          PGO=""; if tools/pgo.sh windows; then PGO=use; fi
-          WINT="build/win/bench_sim.exe build/win/run_tests.exe build/win/test_audio.exe build/win/test_visibility.exe"
-          make -j"$(nproc)" PGO=$PGO windows-installer VERSION="$V" && make -j"$(nproc)" PGO=$PGO $WINT || {
-            echo "::warning::PGO build failed, building without it"; rm -rf build/win; make -j"$(nproc)" windows-installer VERSION="$V"; make -j"$(nproc)" $WINT; }
+          # LTO always (the Makefile's WINFLAGS). Windows PGO is NOT used: tools/pgo.sh windows (wine-trained) works, but it changed
+          # the sim's bit-exact state vs the plain build, which the Linux PGO and every LTO build do not.
+          make -j"$(nproc)" windows-installer VERSION="$V"
+          make -j"$(nproc)" build/win/bench_sim.exe build/win/run_tests.exe build/win/test_audio.exe build/win/test_visibility.exe
           mkdir -p build/win/cpu-tests
           cp build/win/bench_sim.exe build/win/run_tests.exe build/win/test_audio.exe build/win/test_visibility.exe third_party/sdl2-win64/SDL2.dll build/win/cpu-tests/
           x86_64-w64-mingw32-objdump -p build/win/CrumpleZone/crumplezone.exe > build/win/imports.txt
