@@ -57,6 +57,7 @@ void SaveFlow::requestSave(EditCore& core, bool saveAs, After then, int thenArg)
     replaceOk = false;
     const std::string& cur = core.level.name;
     text = saveAs && !cur.empty() && cur != "UNTITLED" ? cur : defaultName(core, dir());
+    fresh = true;
     note = "NAME THE LEVEL: ENTER SAVES, ESC CANCELS";
 }
 
@@ -72,13 +73,15 @@ void SaveFlow::requestLeave(EditCore& core, After then, int thenArg) {
 }
 
 void SaveFlow::type(char ch) {
-    if (stage != NAMING || text.size() >= 28) return;
+    if (stage != NAMING) return;
+    if (fresh) text.clear(), fresh = false;
+    if (text.size() >= 28) return;
     text += ch;
     replaceOk = false;
 }
 
 void SaveFlow::backspace() {
-    if (stage == NAMING && !text.empty()) text.pop_back(), replaceOk = false;
+    if (stage == NAMING && !text.empty()) text.pop_back(), replaceOk = false, fresh = false;
 }
 
 bool SaveFlow::commit(EditCore& core, const std::string& typed) {

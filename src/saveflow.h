@@ -17,6 +17,7 @@ struct SaveFlow {
     std::string note;       // what to tell the player (a toast), set by every step
     After after = NOTHING;
     int arg = -1;           // OPEN: which file
+    bool fresh = false;     // the box holds a suggestion, shown selected: the first key typed replaces it (Backspace edits it)
     bool replaceOk = false; // the typed name is taken, and Enter again replaces it
     // Set when the step is finished: what to do now (the editor does it and clears it).
     After done = NOTHING;

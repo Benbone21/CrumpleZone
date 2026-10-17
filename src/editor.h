@@ -5,6 +5,8 @@
 // The working state (and undo) is EditCore (editcore.h); this is its camera, mouse and
 // keyboard, and what's drawn over the view. The game hands it the events while it's open.
 #pragma once
+#include <array>
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -70,10 +72,12 @@ public:
     void selectObjects(const std::vector<int>& ks);
     // For screenshots: the ghost's transform and the hand-held keys' effect.
     void applyKey(int sc, bool shiftHeld = false, bool ctrlHeld = false) {
-        scriptMods = true, shift = shiftHeld, ctrl = ctrlHeld;
+        scriptMods = true, shift = shiftHeld || holdShift, ctrl = ctrlHeld || holdCtrl;
         key(sc);
         scriptMods = false, shift = ctrl = false;
     }
+    // Scripts: Shift / Ctrl kept down (for mouse gestures) until released.
+    void holdMods(bool shiftDown, bool ctrlDown) { holdShift = shiftDown, holdCtrl = ctrlDown; }
     // The brush, set from outside (screenshots, scripts).
     void setBrush(BrushShape sh, BrushFall fl, BrushStyle st, double r, double dens = 0.5, double str = 1.0) {
         shape = sh, fall = fl, style = st, radius = r, density = dens, strength = str;
@@ -145,7 +149,16 @@ private:
     double dragRide = 0;
     V3 viewHit;                        // where the middle of the view meets the ground
     bool haveViewHit = false;
-    bool scriptMods = false;
+    bool scriptMods = false, holdShift = false, holdCtrl = false;
+    DragGate press;                    // the left button went down on something draggable: a drag once the mouse has moved
+    V3 pressAt;                        // ...where the ground was under it, and how far over the ground it rode
+    double pressRide = 0;
+    bool pressPending = false;
+    bool boxAll = false;               // box select takes the map's infrastructure too (blocks, repair shops, cabins...)
+    EditPick scaleKey;                 // SCALE ALL shows the size against how it was when this was selected
+    double scaleBase = 1;
+    std::vector<std::array<float, 4>> uiRects, uiPrev;  // the panels drawn (this frame, last): the world marks stay off them
+    float optionsH = 0;                // the options panel's height last frame
     double lastAuto = 0;
     std::map<std::string, mk::Mesh> iconMeshes;
     SaveFlow flow;                     // the save prompts: a name, or SAVE / DISCARD / CANCEL
@@ -207,13 +220,17 @@ private:
     void choose(int index);
     const mk::Mesh& iconMesh(const PalEntry& e);
     // Selection and the ops on it (or, with nothing selected in placing mode, on the ghost).
-    std::vector<int> selectedObjects();    // adopts the map's own among them first (one undo step with the op that follows)
+    // The selection as level objects, adopting the map's own among them first (one undo step with the op that follows); `wants`
+    // leaves the ones the op would not change as the map's own.
+    std::vector<int> selectedObjects(const std::function<bool(const LevelObject&)>& wants = nullptr);
     void applyOp(ObjOp op, double amount, const std::string& key);
     void nudge(double dx, double dz);
     void deleteSelection();
     void objectKey(int sc);
     void selectInBox(float x0, float y0, float x1, float y1, bool add);
     bool isSelected(const EditPick& p) const;
+    void panelRect(float x, float y, float w, float h) { uiRects.push_back({x, y, x + w, y + h}); }
+    void clippedTri(Renderer& r, const float* px, const float* py, float cr, float cg, float cb, float a);  // (a triangle minus the panels)
     void drawShape(Renderer& r, const Shape& s, bool fill, float cr, float cg, float cb, float a, float size);
     void drawPalette(Renderer& r, float u);
     void refreshRecoveries();

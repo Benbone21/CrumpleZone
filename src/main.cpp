@@ -3924,7 +3924,7 @@ int main(int argc, char** argv) {
             // (QA driver: CZ_EDQA names a file of commands, one per frame, run with --script edqa --shot-frames 99999 (`shot` takes one, `quit` ends). For checking the
             // editor the way a user does it, offscreen: menu_edit NAME / menu_real_edit N / menu_new / menu_section / menu_back / f2 / play_level NAME, tool N, ptr, pal NAME,
             // cam / camat x z dist high yawdeg / camobj k, mouse fx fy / mousepx dx dy / mouseobj k / mousebase kind idx / mousepoint x y z, down, up, wheel, key NAME [shift] [ctrl],
-            // keys letters, save / saveas / undo / redo / play [start], and the dumps: state, world, objs [a [b]], rocksnear x z r, pals, models, levels, carpos, autosaves.)
+            // hold [shift] [ctrl], gates, keys letters, save / saveas / undo / redo / play [start], and the dumps: state, world, objs [a [b]], rocksnear x z r, pals, models, levels, carpos, autosaves.)
             static std::vector<std::string> cmds;
             static size_t ci = 0;
             static int waitN = 0;
@@ -4007,6 +4007,8 @@ int main(int argc, char** argv) {
                 else if (c == "play_level") { refreshLevels(); std::string want = rest(0); for (char& ch : want) ch = (char)std::toupper((unsigned char)ch); for (int k = 0; k < (int)levelList.size(); k++) if (levelList[k].name.find(want) != std::string::npos) { playLevel(levelList[k]); break; } }
                 else if (c == "tool") editor.setTool((Editor::Tool)std::max(0, (int)num(0) - 1));
                 else if (c == "ptr") editor.setPointer(num(0, 1) != 0);
+                else if (c == "gates") { std::printf("  start %d (%.1f %.1f) yaw %.2f\n", (int)ed.level.hasStart, ed.level.start.x, ed.level.start.z, ed.level.startYaw); for (size_t k = 0; k < ed.level.gates.size(); k++) std::printf("  gate %zu (%.1f %.1f) yaw %.2f width %.1f\n", k + 1, ed.level.gates[k].p.x, ed.level.gates[k].p.z, ed.level.gates[k].yaw, ed.level.gates[k].width); }
+                else if (c == "hold") { bool sh = false, ct = false; for (const std::string& t : a) sh |= t == "shift", ct |= t == "ctrl"; editor.holdMods(sh, ct); }  // keep Shift / Ctrl down for what follows (`hold` alone lets go)
                 else if (c == "pal") editor.setPalette(std::max(0, editor.findPalette(rest(0))));
                 else if (c == "cam") editor.setCamera(V3(num(0), num(1), num(2)), num(3) * M_PI / 180, num(4) * M_PI / 180);
                 else if (c == "camat") {  // camera `dist` back from a ground point, `high` up, looking at it: camat x z dist high yawdeg
