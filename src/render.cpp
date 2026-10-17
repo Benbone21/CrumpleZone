@@ -1501,67 +1501,208 @@ void main(){
 })";
 
 // Grass: tufts of blades on a world-aligned grid round the camera, made entirely in the
-// vertex shader from gl_VertexID (5 blades of 3 vertices per tuft). Height and how
-// thick the grass grows come from the terrain texture; far tufts shrink away.
+// vertex shader (one instance a tuft, 7 vertices a blade: base, two joints, a tip, so the
+// blade curves and tapers). A few rings of coarser and coarser grids, each fading into the
+// next by thinning (a tuft shrinks away as its ring's weight drops under its own roll), so
+// there is no ring edge to see. The terrain texture gives the ground, how thick the grass
+// grows and the water; the ground shader's own noise says where it is dry, bald, under
+// trees, on bare rock. What grows: meadow grass, tall grass with seed heads, flowers in
+// patches, golden dry grass, short alpine grass, sedges at the water. Wind sways it and
+// vehicles push it down and aside.
 const char* kGrassVS = R"(#version 330 core
 uniform sampler2D uTerrainTex; uniform float uTerrainN;
 uniform mat4 uVP; uniform vec3 uCam; uniform float uTime;
-uniform int uSide; uniform float uCell;
-out vec3 vPos; out vec3 vCol; out float vTip;
-float h1(vec2 p){  // integer hash: sin() hashes repeat at these coordinates
-  uvec2 q = uvec2(ivec2(floor(p * 16.0)) + 1000000);
-  uint h = (q.x * 1597334677u) ^ (q.y * 3812015801u);
+uniform int uSide; uniform int uBlades; uniform int uMap;
+uniform float uCell;
+uniform vec4 uRing;     // this ring comes in over x..y metres from the camera, and goes out over z..w
+uniform vec4 uLook;     // x height scale, y width scale, z 1: plain blades (the far rings), w 1: seed heads and flowers
+uniform vec2 uRockSnow;
+uniform int uPushN;
+uniform vec4 uPush[8];  // vehicles as capsules: (x, z, radius) of one end, then (x, z) of the other
+uniform vec3 uSun; uniform float uClouds;       // (the shadows are worked out here, a few times a blade instead of at every pixel)
+uniform sampler2DShadow uShadow0, uShadow1; uniform mat4 uLightVP0, uLightVP1; uniform vec4 uShadowCfg;
+out vec3 vPos; out vec3 vN; out vec3 vC0; out vec3 vC1; out vec3 vC2; out vec2 vT; out float vSh;
+float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float vnoise(vec2 p){
+  vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
+  return mix(mix(hash(i), hash(i+vec2(1,0)), f.x), mix(hash(i+vec2(0,1)), hash(i+vec2(1,1)), f.x), f.y);
+}
+float fbm(vec2 p, int oct){
+  float s = 0.0, a = 0.5;
+  for (int i = 0; i < oct; i++) { s += a * vnoise(p); p = mat2(1.6, 1.2, -1.2, 1.6) * p; a *= 0.5; }
+  return s;
+}
+float hs(vec2 c, uint s){  // integer hash of a cell and a salt: sin() hashes repeat at these coordinates
+  uvec2 q = uvec2(ivec2(c) + 1000000);
+  uint h = (q.x * 1597334677u) ^ (q.y * 3812015801u) ^ (s * 2246822519u + 374761393u);
   h ^= h >> 16; h *= 0x7feb352du; h ^= h >> 15; h *= 0x846ca68bu; h ^= h >> 16;
   return float(h & 0xFFFFFFu) / 16777216.0;
 }
-vec4 texel(vec2 xz){ ivec2 i = clamp(ivec2(floor(xz + 600.0)), ivec2(0), ivec2(int(uTerrainN) - 2)); return texelFetch(uTerrainTex, i, 0); }
-float heightAt(vec2 xz){
-  vec2 g = xz + 600.0;
-  ivec2 i = clamp(ivec2(floor(g)), ivec2(0), ivec2(int(uTerrainN) - 2));
-  vec2 f = g - vec2(i);
-  float a = texelFetch(uTerrainTex, i, 0).r, b = texelFetch(uTerrainTex, i + ivec2(1, 0), 0).r;
-  float c = texelFetch(uTerrainTex, i + ivec2(0, 1), 0).r, d = texelFetch(uTerrainTex, i + ivec2(1, 1), 0).r;
-  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
-}
-void main(){
-  int id = gl_VertexID, corner = id % 3, blade = (id / 3) % 5, tuft = id / 15;
-  vec2 cell = floor(uCam.xz / uCell) + vec2(tuft % uSide, tuft / uSide) - float(uSide / 2);
-  vec2 base = (cell + vec2(h1(cell), h1(cell + 17.3))) * uCell;
-  float dens = texel(base).g;
-  float reach = float(uSide) * uCell * 0.5;
-  float fade = 1.0 - smoothstep(reach * 0.6, reach * 0.95, length(base - uCam.xz));
-  float bh = (dens > h1(cell + 5.1) ? 1.0 : 0.0) * fade * (0.14 + 0.2 * h1(cell + float(blade) * 2.3));
-  float ang = h1(cell + float(blade) * 3.7) * 6.2832;
-  vec2 dir = vec2(cos(ang), sin(ang));
-  vec2 bp = base + (vec2(h1(cell + float(blade)), h1(cell + float(blade) + 9.0)) - 0.5) * 0.4;
-  float gy = heightAt(bp) - 0.02;
-  vec2 side = vec2(-dir.y, dir.x) * 0.022;
-  vec2 sway = vec2(sin(uTime * 1.7 + bp.x * 0.35 + bp.y * 0.2), cos(uTime * 1.3 + bp.y * 0.3)) * 0.04;
-  vec3 p = corner == 0 ? vec3(bp.x - side.x, gy, bp.y - side.y)
-         : corner == 1 ? vec3(bp.x + side.x, gy, bp.y + side.y)
-                       : vec3(bp.x + (dir.x * 0.35 + sway.x) * bh, gy + bh, bp.y + (dir.y * 0.35 + sway.y) * bh);
-  vTip = corner == 2 ? 1.0 : 0.0;
-  vCol = mix(vec3(0.15, 0.25, 0.06), vec3(0.36, 0.40, 0.13), h1(cell + float(blade) * 1.3));
-  // Wildflowers: one tuft in a dozen carries a bloom on its tallest blade.
-  if (blade == 0 && h1(cell + 33.0) < 0.08 && corner == 2) {
-    float k = h1(cell + 44.0);
-    vCol = k < 0.35 ? vec3(0.95, 0.80, 0.15) : k < 0.6 ? vec3(0.92, 0.92, 0.88) : k < 0.85 ? vec3(0.55, 0.35, 0.80) : vec3(0.85, 0.22, 0.15);
-    vTip = 1.6;
+vec4 tx(ivec2 i){ return texelFetch(uTerrainTex, clamp(i, ivec2(0), ivec2(int(uTerrainN) - 1)), 0); }
+float grassShadow(vec3 p){
+  float sh = 1.0;
+  if (uShadowCfg.x > 0.5) {
+    vec3 q = p + vec3(0.0, 0.035, 0.0);
+    vec4 L0 = uLightVP0 * vec4(q, 1.0);
+    vec3 c0 = L0.xyz / L0.w * 0.5 + 0.5;
+    float e0 = max(abs(c0.x - 0.5), abs(c0.y - 0.5));
+    float far = 1.0;
+    if (e0 > 0.42) {
+      vec4 L1 = uLightVP1 * vec4(q, 1.0);
+      vec3 c1 = L1.xyz / L1.w * 0.5 + 0.5;
+      if (max(abs(c1.x - 0.5), abs(c1.y - 0.5)) < 0.5 && c1.z < 1.0) far = texture(uShadow1, vec3(c1.xy, c1.z - 0.0004));
+    }
+    sh = far;
+    if (e0 < 0.5 && c0.z < 1.0) sh = mix(texture(uShadow0, vec3(c0.xy, c0.z - 0.00012)), far, smoothstep(0.42, 0.5, e0));
   }
+  if (uClouds > 0.5) {
+    vec2 w = p.xz + uSun.xz / max(uSun.y, 0.2) * (1800.0 - p.y);
+    sh *= 1.0 - 0.65 * smoothstep(0.50, 0.78, fbm(w * 0.00045 + vec2(uTime * 0.004, uTime * 0.0015), 3));
+  }
+  return sh;
+}
+void gone(){ vSh = 1.0; vPos = vec3(0.0); vN = vec3(0.0, 1.0, 0.0); vC0 = vC1 = vC2 = vec3(0.0); vT = vec2(0.0, 2.0); gl_Position = vec4(2.0, 2.0, 2.0, 1.0); }
+void main(){
+  int id = gl_VertexID, k = id % 7, blade = id / 7;
+  int tuft = gl_InstanceID;
+  vec2 cell = floor(uCam.xz / uCell) + vec2(tuft % uSide, tuft / uSide) - float(uSide / 2);
+  vec2 base = (cell + vec2(hs(cell, 1u), hs(cell, 2u))) * uCell;
+  float dist = length(base - uCam.xz);
+  // This ring's share of the ground here against the rings either side: a tuft is there while its own roll is under the share.
+  float share = smoothstep(uRing.x, uRing.y, dist) * (1.0 - smoothstep(uRing.z, uRing.w, dist));
+  float grow = smoothstep(0.0, 0.3, share - hs(cell, 3u));
+  if (grow <= 0.0) { gone(); return; }
+  {  // Out of the view sideways (the height hardly matters for that): gone before any texture or noise work.
+    vec4 c0 = uVP * vec4(base.x, uCam.y - 1.0, base.y, 1.0);
+    if (c0.w < -2.0 || abs(c0.x) > c0.w + 2.5 * uVP[0][0] + 2.0) { gone(); return; }
+  }
+  // The four terrain texels round the tuft: height and slope, how thick it grows, paint, water.
+  vec2 g = base + 600.0;
+  ivec2 i0 = ivec2(floor(g));
+  vec2 f = g - vec2(i0);
+  vec4 t00 = tx(i0), t10 = tx(i0 + ivec2(1, 0)), t01 = tx(i0 + ivec2(0, 1)), t11 = tx(i0 + ivec2(1, 1));
+  float dens = mix(mix(t00.g, t10.g, f.x), mix(t01.g, t11.g, f.x), f.y);
+  float paint = max(max(t00.b, t10.b), max(t01.b, t11.b));
+  if (dens < 0.02 || paint > 0.5) { gone(); return; }
+  float gy = mix(mix(t00.r, t10.r, f.x), mix(t01.r, t11.r, f.x), f.y);
+  vec2 slope = vec2(mix(t10.r - t00.r, t11.r - t01.r, f.y), mix(t01.r - t00.r, t11.r - t10.r, f.x));
+  vec4 clip = uVP * vec4(base.x, gy + 0.4, base.y, 1.0);
+  if (clip.w < -0.3 || abs(clip.x) > clip.w + 1.2 * uVP[0][0] || abs(clip.y) > clip.w + 1.2 * uVP[1][1]) { gone(); return; }
+  // The ground shader's own noise: what it makes of the meadow here.
+  float n1 = fbm(base * 0.02, 4);
+  float dry = smoothstep(0.6, 0.8, fbm(base * 0.006 + 3.1, 3));
+  float bald = smoothstep(0.60, 0.80, fbm(base * 0.30 + 9.0, 3));
+  bool meadow = uMap == 0 || uMap == 2;
+  float forest = meadow ? 0.0 : smoothstep(0.40, 0.65, fbm(base * 0.012 + vec2(7.0, -3.0), 3)) * smoothstep(6.0, 22.0, gy);
+  float ny = inversesqrt(1.0 + dot(slope, slope));
+  float steep = meadow ? smoothstep(0.84, 0.62, ny + 0.14 * (n1 - 0.5)) : smoothstep(0.72, 0.55, ny + 0.14 * (n1 - 0.5));
+  float high = smoothstep(uRockSnow.x, uRockSnow.x + 90.0, gy + 30.0 * n1);
+  float snow = smoothstep(uRockSnow.y, uRockSnow.y + 50.0, gy + 70.0 * n1) * smoothstep(0.5, 0.75, ny);
+  float wl = t00.a;
+  float wet = wl > -500.0 ? 1.0 - smoothstep(0.4, 3.5, gy - wl) : 0.0;
+  // How thick: the world's density, clumped (patches and gaps), thinner where the ground shows through.
+  float clump = smoothstep(0.25, 0.75, fbm(base * 0.45 + 2.0, 2));
+  float d = dens * (0.7 + 0.8 * clump) * (1.0 - 0.8 * bald) * (1.0 - 0.3 * smoothstep(0.35, 0.65, n1) * (1.0 - dry))
+          * (1.0 - 0.5 * dry) * (1.0 - 0.75 * forest) * (1.0 - steep) * (1.0 - 0.7 * high) * (1.0 - snow) * (1.0 + 0.5 * wet);
+  float e = d - hs(cell, 4u);
+  if (e <= 0.0) { gone(); return; }
+  grow *= smoothstep(0.0, 0.2, e);
+  // What kind of grass.
+  float tallN = smoothstep(0.55, 0.72, fbm(base * 0.045 + 20.0, 2)) * (1.0 - wet) * (1.0 - high);
+  float flowers = smoothstep(0.58, 0.78, fbm(base * 0.07 + 50.0, 2)) * (1.0 - dry * 0.7) * (1.0 - wet) * (1.0 - high);
+  float tuftH = 0.42 * (0.7 + 0.6 * clump) * (1.0 + 0.9 * tallN + 0.7 * wet) * mix(1.0, 0.7, dry) * mix(1.0, 0.5, high);
+  vec3 body0 = mix(vec3(0.11, 0.23, 0.04), vec3(0.30, 0.24, 0.09), dry);
+  vec3 body1 = mix(vec3(0.34, 0.50, 0.11), vec3(0.74, 0.60, 0.28), dry);
+  body0 = mix(body0, vec3(0.11, 0.18, 0.07), high); body1 = mix(body1, vec3(0.30, 0.42, 0.20), high);
+  body0 = mix(body0, vec3(0.05, 0.14, 0.04), wet); body1 = mix(body1, vec3(0.26, 0.40, 0.10), wet);
+  float tint = hs(cell, 5u);
+  body1 = mix(body1, body1 * vec3(1.3, 1.12, 0.5), tint * 0.6 * (1.0 - wet));      // some tufts yellower
+  float bright = 0.8 + 0.4 * clump + 0.15 * (hs(cell, 6u) - 0.5);
+  body0 *= bright; body1 *= bright;
+  // This blade.
+  uint sb = 100u + uint(blade) * 8u;
+  float rr = sqrt(hs(cell, sb)) * uCell * 0.7, ra = hs(cell, sb + 1u) * 6.2832;
+  vec2 off = vec2(cos(ra), sin(ra)) * rr;
+  vec2 bp = base + off;
+  vec2 out2 = off / max(length(off), 1e-3);
+  float la = hs(cell, sb + 2u) * 6.2832;
+  vec2 ld = normalize(mix(out2, vec2(cos(la), sin(la)), 0.45) + vec2(1e-4));
+  float hr = hs(cell, sb + 3u), wr = hs(cell, sb + 4u), kr = hs(cell, sb + 5u);
+  float lean = 0.25 + 0.6 * hs(cell, sb + 6u) + 0.35 * tallN + 0.25 * wet;
+  float len = tuftH * (0.55 + 0.7 * hr) * uLook.x * grow;
+  float w0 = 0.021 * uLook.y * (0.8 + 0.5 * wr) * mix(1.0, 0.7, wet);
+  // 0 blade, 1 seed head (tall grass, sedge), 2 flower.
+  float tA = 0.38, tB = 0.72;
+  vec4 wd4 = vec4(1.0, 0.86, 0.5, 0.0);
+  vec3 head = vec3(0.0);
+  float headAt = 2.0;
+  if (uLook.w > 0.5) {
+    float fl = hs(cell, 7u);
+    if (blade == 0 && fl < 0.01 + 0.4 * flowers) {  // a flower on a stem over the tuft
+      float hue = hs(floor(base * 0.02), 8u);
+      head = hue < 0.28 ? vec3(0.95, 0.80, 0.12) : hue < 0.55 ? vec3(0.92, 0.92, 0.86) : hue < 0.78 ? vec3(0.58, 0.36, 0.82) : hue < 0.92 ? vec3(0.95, 0.45, 0.60) : vec3(0.88, 0.22, 0.14);
+      len *= 1.25 + 0.5 * hs(cell, 9u); lean *= 0.5;
+      tA = 0.80; tB = 0.92; wd4 = vec4(0.45, 0.35, 2.2, 0.0); headAt = tA;
+    } else if (kr < 0.4 * tallN + 0.2 * wet * (1.0 - tallN)) {  // an ear of seed
+      head = wet > 0.5 ? vec3(0.30, 0.18, 0.08) : vec3(0.62, 0.50, 0.24) * (0.85 + 0.3 * hs(cell, 9u));
+      tA = 0.66; tB = 0.84; wd4 = vec4(0.7, 0.5, 1.5, 0.0); headAt = tA;
+    }
+  }
+  bool plain = uLook.z > 0.5 && headAt > 1.0;
+  if (plain) { tA = 0.45; wd4 = vec4(1.0, 0.7, 0.0, 0.0); }
+  // Where on the blade this vertex is.
+  float t = k < 2 ? 0.0 : k < 4 ? tA : k < 6 ? tB : 1.0;
+  float wv = k < 2 ? wd4.x : k < 4 ? wd4.y : k < 6 ? wd4.z : 0.0;
+  float sd = k == 6 ? 0.0 : (k % 2 == 0 ? -1.0 : 1.0);
+  // Vehicles push it down and aside.
+  vec2 push = vec2(0.0); float squash = 0.0;
+  for (int c = 0; c < uPushN; c++) {
+    vec4 a = uPush[2 * c], b = uPush[2 * c + 1];
+    vec2 ab = b.xy - a.xy;
+    vec2 q = a.xy + ab * clamp(dot(bp - a.xy, ab) / max(dot(ab, ab), 1e-4), 0.0, 1.0);
+    vec2 dv = bp - q;
+    float dl = length(dv);
+    float fp = 1.0 - smoothstep(a.z * 0.6, a.z + 0.8, dl);
+    push += dv / max(dl, 1e-3) * fp;
+    squash = max(squash, fp);
+  }
+  len *= 1.0 - 0.6 * squash;
+  // Wind: gust fronts crossing the ground, a flutter on top; taller blades give more.
+  float gust = 0.5 + 0.5 * sin(dot(bp, vec2(0.07, 0.045)) - uTime * 0.85 + 1.7 * sin(dot(bp, vec2(-0.03, 0.05)) + uTime * 0.31));
+  vec2 wdir = vec2(0.82, 0.57);
+  float flutter = sin(uTime * 3.1 + bp.x * 3.7 + bp.y * 2.9 + float(blade) * 1.7) * 0.03;
+  vec2 sway = (wdir * (0.03 + 0.14 * gust) + vec2(-wdir.y, wdir.x) * flutter) * len;
+  // The blade is a curve: up and over toward its lean, with the sway and any push on top.
+  vec2 hz = ld * (lean * len * t * t) + (sway + push * len * 0.95) * t * t;
+  float up = len * (t - 0.18 * lean * t * t) * (1.0 - 0.5 * squash * t);
+  vec2 wdv = vec2(-ld.y, ld.x);
+  float gh = gy + dot(slope, off) - 0.02;
+  vec3 p = vec3(bp.x + hz.x + wdv.x * w0 * wv * sd, gh + up, bp.y + hz.y + wdv.y * w0 * wv * sd);
   vPos = p;
-  gl_Position = bh > 0.0 ? uVP * vec4(p, 1.0) : vec4(2.0, 2.0, 2.0, 1.0);
+  vSh = grassShadow(vec3(bp.x, gh + 0.05 + up * 0.5, bp.y));
+  vN = normalize(vec3(-ld.x, 0.4 + 1.6 * lean * t, -ld.y));
+  vC0 = body0 * (0.85 + 0.3 * wr); vC1 = body1 * (0.85 + 0.3 * hr); vC2 = headAt > 1.0 ? vC1 : head;
+  vT = vec2(t, headAt);
+  gl_Position = uVP * vec4(p, 1.0);
 })";
 
 const char* kGrassFSBody = R"(
-in vec3 vPos; in vec3 vCol; in float vTip;
+in vec3 vPos; in vec3 vN; in vec3 vC0; in vec3 vC1; in vec3 vC2; in vec2 vT; in float vSh;
 out vec4 oCol;
 void main(){
-  vec3 lin = pow(vCol, vec3(2.2));
-  float sh = shadowAt(vPos, vec3(0, 1, 0));
+  float t = vT.x;
+  float hm = smoothstep(vT.y - 0.02, vT.y + 0.03, t);
+  vec3 lin = pow(mix(mix(vC0, vC1, smoothstep(0.0, 0.9, t)), vC2, hm), vec3(2.2));
   vec3 V = normalize(uCam - vPos);
-  float through = pow(max(dot(-V, uSun), 0.0), 4.0) * 0.4;
-  vec3 lspec, lamp = lampLight(vPos, vec3(0, 1, 0), V, 8.0, 0.6, lspec);  // blades face every way: mostly wrapped
-  vec3 col = lin * (ambientAt(vec3(0, 1, 0)) * (0.45 + 0.55 * vTip) + ((0.55 + through) * sh * kSunCol + lamp) * (0.4 + 0.6 * vTip));
+  vec3 n = normalize(vN);
+  if (dot(n, V) < 0.0) n = -n;                       // (a blade has two faces: the one you see)
+  n = normalize(mix(n, vec3(0, 1, 0), 0.5));
+  float sh = vSh;
+  float ao = mix(0.25, 1.0, smoothstep(0.0, 0.6, t));   // dark down at the root
+  float lit = max(dot(n, uSun) * 0.6 + 0.4, 0.0);
+  float through = pow(max(dot(-V, uSun), 0.0), 3.0) * 0.45 * smoothstep(0.1, 0.8, t);  // the sun shining through the blades
+  vec3 lspec, lamp = lampLight(vPos, n, V, 8.0, 0.6, lspec);
+  vec3 col = lin * (ambientAt(n) * ao + ((lit + through) * sh * kSunCol + lamp) * mix(0.4, 1.0, ao));
   oCol = finishColor(col, vPos, 1.0);
 })";
 
@@ -2027,6 +2168,23 @@ bool Renderer::init(const World& world, std::string& err) {
     EnableVertexAttribArray(2);
 
     GenVertexArrays(1, &postVao);
+    {  // The grass's blades: no vertex data at all, only which vertices (blade * 7 + corner) make the triangles.
+        std::vector<unsigned short> idx;
+        for (int plain = 1; plain >= 0; plain--)
+            for (int b = 0; b < 8; b++) {
+                const unsigned short o = (unsigned short)(b * 7);
+                const unsigned short plainTris[9] = {0, 1, 2, 1, 3, 2, 2, 3, 6};
+                const unsigned short fullTris[15] = {0, 1, 2, 1, 3, 2, 2, 3, 4, 3, 5, 4, 4, 5, 6};
+                if (plain) for (unsigned short i : plainTris) idx.push_back(o + i);
+                else for (unsigned short i : fullTris) idx.push_back(o + i);
+            }
+        GenVertexArrays(1, &grassVao);
+        GenBuffers(1, &grassIbo);
+        BindVertexArray(grassVao);
+        BindBuffer(GL_ELEMENT_ARRAY_BUFFER, grassIbo);
+        BufferData(GL_ELEMENT_ARRAY_BUFFER, idx.size() * sizeof(unsigned short), idx.data(), GL_STATIC_DRAW);
+        BindVertexArray(0);
+    }
     ensureShadows(2048);
     if (CheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
         err += "shadow framebuffer incomplete";
@@ -3647,14 +3805,73 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         Uniform1i(uniformLocation(prog, "uMap"), mapId);
     });
     UseProgram(progLit);
-    if (settings.grass) {
+    if (settings.grass > 0) {
+        // The grass: rings of tufts, finer near the camera (one grid each), as many as the setting allows.
+        struct GrassRing { float cell; int side, blades; bool plain; float in0, in1, out0, out1, height, width; bool heads; };
+        static const GrassRing kRings[3][3] = {
+            {{0.50f, 56, 5, true, -2, -1, 7, 12, 1.0f, 1.4f, false}, {1.00f, 72, 4, true, 7, 12, 24, 34, 1.0f, 2.2f, false}, {0, 0, 0, true, 0, 0, 0, 0, 0, 0, false}},
+            {{0.36f, 80, 6, false, -2, -1, 8.5f, 13.5f, 1.0f, 1.0f, true}, {0.62f, 108, 6, false, 8.5f, 13.5f, 22, 32, 1.05f, 1.9f, true}, {1.20f, 116, 5, true, 22, 32, 50, 68, 1.0f, 3.0f, false}},
+            {{0.30f, 96, 7, false, -2, -1, 9, 14, 1.0f, 1.0f, true}, {0.52f, 132, 6, false, 9, 14, 24, 34, 1.05f, 1.8f, true}, {0.95f, 152, 5, true, 24, 34, 54, 72, 1.0f, 2.8f, false}},
+        };
         setLighting(progGrass);
         bindTerrainTex(progGrass);
-        const int side = 200;
-        Uniform1i(uniformLocation(progGrass, "uSide"), side);
-        Uniform1f(uniformLocation(progGrass, "uCell"), 0.6f);
-        BindVertexArray(postVao);
-        DrawArrays(GL_TRIANGLES, 0, side * side * 15);
+        Uniform1i(uniformLocation(progGrass, "uMap"), mapId);
+        if (mapId == MAP_MOUNTAIN) Uniform2f(uniformLocation(progGrass, "uRockSnow"), 165.0f, 205.0f);
+        else if (mapId == MAP_FRONTIER) Uniform2f(uniformLocation(progGrass, "uRockSnow"), 125.0f, 400.0f);
+        else if (mapId == MAP_BACKCOUNTRY) Uniform2f(uniformLocation(progGrass, "uRockSnow"), 105.0f, 400.0f);
+        else Uniform2f(uniformLocation(progGrass, "uRockSnow"), 60.0f, 240.0f);
+        // Vehicles near the camera, each as a capsule along its wheels, for the grass to bend away from.
+        float push[32] = {};
+        int pushN = 0;
+        {
+            struct Near { double d; float v[8]; };
+            std::vector<Near> near;
+            for (const Car& car : sim.cars) {
+                if (car.wheels.empty()) continue;
+                const Frame fr = car.frame();
+                const double d = std::hypot(fr.com.x - view.eye.x, fr.com.z - view.eye.z);
+                if (d > 70) continue;
+                double lo = 1e9, hi = -1e9, side = 0;
+                for (const Wheel& wh : car.wheels) {
+                    const V3 c = (car.nodes[wh.inner].p + car.nodes[wh.outer].p) * 0.5 - fr.com;
+                    lo = std::min(lo, dot(c, fr.fwd)), hi = std::max(hi, dot(c, fr.fwd));
+                    side = std::max(side, std::fabs(dot(c, fr.left)));
+                }
+                if (lo > hi) continue;
+                const V3 a = fr.com + fr.fwd * (lo - 0.8), b = fr.com + fr.fwd * (hi + 0.8);
+                near.push_back({d, {(float)a.x, (float)a.z, (float)side + 0.45f, 0, (float)b.x, (float)b.z, 0, 0}});
+            }
+            std::sort(near.begin(), near.end(), [](const Near& x, const Near& y) { return x.d < y.d; });
+            for (size_t i = 0; i < near.size() && i < 4; i++, pushN++) std::copy(near[i].v, near[i].v + 8, push + 8 * i);
+        }
+        Uniform1i(uniformLocation(progGrass, "uPushN"), pushN);
+        if (pushN) Uniform4fv(uniformLocation(progGrass, "uPush"), pushN * 2, push);
+        BindVertexArray(grassVao);
+        static const bool timed = std::getenv("CZ_BENCH") != nullptr;
+        if (timed) {
+            if (!grassQuery_[0]) GenQueries(4, grassQuery_);
+            const int f = grassQueryFrame_ = (grassQueryFrame_ + 1) % 4, old = (f + 1) % 4;  // (the one begun three frames back is done by now)
+            if (grassQueryUsed_[old]) {
+                GLuint64 ns = 0;
+                GetQueryObjectui64v(grassQuery_[old], GL_QUERY_RESULT, &ns);
+                grassGpuMs_ = ns / 1e6;
+                grassQueryUsed_[old] = false;
+            }
+            BeginQuery(GL_TIME_ELAPSED, grassQuery_[f]);
+            grassQueryUsed_[f] = true;
+        }
+        for (const GrassRing& r : kRings[std::min(settings.grass, 3) - 1]) {
+            if (!r.side) continue;  // (the setting's unused ring)
+            Uniform1i(uniformLocation(progGrass, "uSide"), r.side);
+            Uniform1i(uniformLocation(progGrass, "uBlades"), r.blades);
+            Uniform1f(uniformLocation(progGrass, "uCell"), r.cell);
+            Uniform4f(uniformLocation(progGrass, "uRing"), r.in0, r.in1, r.out0, r.out1);
+            Uniform4f(uniformLocation(progGrass, "uLook"), r.height, r.width, r.plain ? 1.0f : 0.0f, r.heads ? 1.0f : 0.0f);
+            // (indices: plain blades, 3 triangles of 9 indices from the first; full ones, 5 of 15, after them)
+            DrawElementsInstanced(GL_TRIANGLES, r.blades * (r.plain ? 9 : 15), GL_UNSIGNED_SHORT,
+                                  (const void*)(uintptr_t)(r.plain ? 0 : 8 * 9 * 2), r.side * r.side);
+        }
+        if (timed) EndQuery(GL_TIME_ELAPSED);
         setLighting(progLit);
     }
     BindVertexArray(dynVao);

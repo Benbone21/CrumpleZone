@@ -41,7 +41,7 @@ bool AdaptiveQuality::adjust(RenderSettings& s, bool improve) {
         else if (s.msaa < maximum_.msaa) s.msaa = std::min(maximum_.msaa, s.msaa == 0 ? 2 : s.msaa < 4 ? 4 : 8);
         else if (!s.bloom && maximum_.bloom) s.bloom = true;
         else if (!s.ao && maximum_.ao) s.ao = true;
-        else if (!s.grass && maximum_.grass) s.grass = true;
+        else if (s.grass < maximum_.grass) ++s.grass;
         else if (!s.clouds && maximum_.clouds) s.clouds = true;
         else if (s.ground < maximum_.ground) ++s.ground;
         else if (s.props < maximum_.props) ++s.props;
@@ -52,7 +52,7 @@ bool AdaptiveQuality::adjust(RenderSettings& s, bool improve) {
         else if (s.props > 0) --s.props;
         else if (s.ground > 0) --s.ground;
         else if (s.clouds) s.clouds = false;
-        else if (s.grass) s.grass = false;
+        else if (s.grass > 0) --s.grass;
         else if (s.ao) s.ao = false;
         else if (s.bloom) s.bloom = false;
         else if (s.msaa > 0) s.msaa = s.msaa > 4 ? 4 : s.msaa > 2 ? 2 : 0;

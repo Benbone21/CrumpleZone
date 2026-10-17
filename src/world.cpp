@@ -939,6 +939,7 @@ float World::grassDensity(double x, double z) const {
     if (r.near && r.paint != PAINT_NONE) return 0;
     double h = height(x, z);
     float d = (float)(0.35 + 0.65 * fbmNoise(x * 0.03 + 11.0, z * 0.03 - 4.0, 3));
+    if (r.near) d *= (float)smoothstep(kRoadHalfWidth + 1.5, kRoadHalfWidth + 4.5, std::fabs(r.lateral));  // thins out toward the verge
     if (map == MAP_PROVING_GROUND) d *= (float)smoothstep(kPadRadius + 2, kPadRadius + 12, std::sqrt(x * x + z * z));
     return d * (float)(1 - smoothstep(120, 190, h));  // thins out up the mountains
 }

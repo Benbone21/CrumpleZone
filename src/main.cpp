@@ -93,6 +93,7 @@ struct Options {
     int quality = -1;             // --quality 0-3: graphics preset (testing)
     int ground = -1;              // --ground 0-3: terrain materials (testing; see RenderSettings::ground)
     int props = -1;               // --props 0-3: scanned props (testing; see RenderSettings::props)
+    int grass = -1;               // --grass 0-3: the grass level (testing; see RenderSettings::grass)
     int adaptive = -1;            // --adaptive 0/1: auto-scale quality (default: on)
     bool career = false;          // --career: career mode (a fresh one when scripted)
     bool photo = false;           // --photo: no HUD (screenshots; F10 in the game)
@@ -321,6 +322,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--quality") o.quality = std::atoi(next().c_str());
         else if (a == "--ground") o.ground = std::atoi(next().c_str());
         else if (a == "--props") o.props = std::atoi(next().c_str());
+        else if (a == "--grass") o.grass = std::atoi(next().c_str());
         else if (a == "--adaptive") o.adaptive = std::atoi(next().c_str());
         else if (a == "--photo") o.photo = true;
         else if (a == "--debug-screen") o.debugScreen = 1;
@@ -1590,6 +1592,7 @@ int main(int argc, char** argv) {
     if (opt.quality >= 0) applyPreset(settings.gfx, opt.quality);
     if (opt.ground >= 0) settings.gfx.ground = std::min(opt.ground, 3);
     if (opt.props >= 0) settings.gfx.props = std::min(opt.props, 3);
+    if (opt.grass >= 0) settings.gfx.grass = std::min(opt.grass, 3);
     if (opt.adaptive >= 0) settings.adaptiveQuality = opt.adaptive != 0;
     if (opt.mph) settings.mph = true;
     if (opt.throttleCap > 0) {
@@ -4758,18 +4761,20 @@ int main(int argc, char** argv) {
         static const bool bench = std::getenv("CZ_BENCH") != nullptr;
         static double benchSum = 0;
         static int benchN = 0;
-        if (bench && scripted && frame >= 40) benchSum += benchDraw, benchN++;
+        static double benchGrass = 0;
+        if (bench && scripted && frame >= 40) benchSum += benchDraw, benchGrass += renderer.grassGpuMs(), benchN++;
         if (scripted && opt.shotFrames.count(frame)) {
             if (bench && benchN) {
                 std::printf("bench: scene %.2f ms/frame over %d frames\n", 1000.0 * benchSum / benchN, benchN);
+                std::printf("bench: grass %.2f ms GPU (timer query)\n", benchGrass / benchN);
                 const auto& geometry = renderer.geometryStats();
                 std::printf("bench: terrain %u/%u triangles, %u/%u visible chunks; scenery %u vertices, shadows %u vertices\n",
                             geometry.terrainTriangles, geometry.terrainFullTriangles,
                             geometry.terrainVisibleChunks, geometry.terrainChunks,
                             geometry.sceneryVertices, geometry.shadowSceneryVertices);
-                std::printf("bench: adaptive %d, scale %.2f, shadows %d, MSAA %d, AO %d, ground %d, props %d\n",
+                std::printf("bench: adaptive %d, scale %.2f, shadows %d, MSAA %d, AO %d, ground %d, props %d, grass %d\n",
                             settings.adaptiveQuality, renderer.settings.renderScale, renderer.settings.shadows,
-                            renderer.settings.msaa, renderer.settings.ao, renderer.settings.ground, renderer.settings.props);
+                            renderer.settings.msaa, renderer.settings.ao, renderer.settings.ground, renderer.settings.props, renderer.settings.grass);
                 if (dbgMsN) std::printf("bench: debug screen %.3f ms/frame CPU (gather + queue) over %d frames\n", dbgMsSum / dbgMsN, dbgMsN);
                 const PropStats& ps = renderer.propStats();
                 std::printf("bench: props %.2f ms GPU (timer queries), %.2f ms CPU (%.2f ms culling/LODs); main %d draws, %d instances, %d billboards, %d scatter, %.0fk tris; "
