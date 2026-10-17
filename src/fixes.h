@@ -10,8 +10,8 @@
 
 enum Tool {
     TOOL_LUG_WRENCH,  // wheels off and on
-    TOOL_WRENCH,      // spanners: tie rods, drive shafts, sway bar links
-    TOOL_RATCHET,     // a socket set: CV axles, control arms, spark plugs
+    TOOL_WRENCH,      // spanners: tie rods, sway bar links
+    TOOL_RATCHET,     // a socket set: CV axles, control arms, drive shafts, spark plugs
     TOOL_HAMMER,      // persuasion: CV axles out of hubs, tie-rod ends out of knuckles
     TOOL_PRY_BAR,     // control arms back into place
     TOOL_TIRE_IRONS,  // a tire off and on its rim
@@ -73,3 +73,47 @@ std::vector<Fix> fixesFor(const Car& c);
 std::string missingFor(const Fix& f, const Kit& kit, bool cornerLifted);
 // Does it (and uses the part). False if it no longer applies.
 bool applyFix(Car& c, const Fix& f);
+
+// A repair is done in order, a step at a time, each a hold of E with the right thing in your hand (interact.h):
+// at a corner the jack goes under its frame pad and the corner comes up, the wheel comes off (a truck's: wheelLoss),
+// then the work on the part (the old one out, the new one in, bolted up: the last bolt is what fixes it), then the
+// wheel goes back on and the jack comes down. A tie rod, a sway bar link, a drive shaft, the plugs: just the work.
+struct RepairStep {
+    enum Type { JACK, WHEEL_OFF, WORK, WHEEL_ON, LOWER } type = WORK;
+    const char* label = "";  // the checklist's line: "OLD AXLE OUT"
+    const char* verb = "";   // the prompt's: "KNOCK THE OLD AXLE OUT"
+    int tool = -1;           // the Tool in your hand for it (-1: none)
+    int part = -1;           // ...or the new RepairPart: it goes in (and is used up) here
+    double hold = 4;         // s of work
+    bool fixes = false;      // the step that makes the part whole again
+    int end = 0;             // where: 0 at the fix, 1 / 2 the front / back end of a shaft
+    bool ground = false;     // done on the wheel that came off, lying on the ground (the tire)
+};
+const char* jobName(int kind);  // "CV AXLE", "SWAY BAR LINK"
+// Whether a job needs the corner up / the wheel off (the wheel only comes off a truck that loses wheels).
+bool jobJacks(int kind, int wheel);
+bool jobWheelOff(const Car& c, int kind, int wheel);
+std::vector<RepairStep> repairSteps(int kind, bool jack, bool wheelOff);
+// A new tire on a wheel off the truck (WheelItem::tireWork counts them): old tire off, new one on, bead seated and aired.
+std::vector<RepairStep> tireSteps();
+
+// How the corner is now, for the steps the jack and the wheel are.
+struct CornerNow {
+    bool lifted = false;    // off the ground (Interact::cornerLifted)
+    bool jackUp = false;    // a jack under it, not let down
+    bool wheelOn = true;    // a wheel bolted to the hub
+    bool wheelGood = true;  // ...with its tire up (not flat)
+};
+// Where a job is: each step done or not, and the next one (-1: all done). `done`: its work steps done.
+struct RepairPlan {
+    std::vector<RepairStep> steps;
+    std::vector<bool> done;
+    int next = -1;
+};
+RepairPlan planRepair(int kind, bool jack, bool wheelOff, int done, bool fixed, const CornerNow& now);
+// The job under way for this fix (an index into c.fieldJobs, -1: none yet).
+int fieldJobOf(const Car& c, const Fix& f);
+// What's missing in your hand for a step: "" if you have it. `own`: everything you own, when the kit rides in
+// the truck's back (trunk.h: it has to be in your hand); null: the kit's on you (the old way). `handTool`,
+// `handPart`: what you hold (-1 none).
+std::string stepMissing(const RepairStep& st, const Kit& kit, const Kit* own, int handTool, int handPart);

@@ -467,17 +467,18 @@ SCENARIO(tireWrenchAxis, "tires/wrench-axis", "The wrench, ratchet and spanner a
     // The socket set and spanners in a repair.
     ia.current.kind = IA_FIX;
     ia.current.fix = Fix{Fix::CV_AXLE};
-    ia.current.fix.tools = {TOOL_RATCHET, TOOL_WRENCH};
     ia.current.fix.part = PART_CV_AXLE;
     ia.current.fix.wheel = k;
-    ia.current.hold = 5;
+    ia.current.hold = 4.5;
     int fixCoaxial = 0, fixTotal = 0;
-    for (double s = 0.1; s < 3.4; s += 0.1) {
-        ia.progress = s;
-        const char* id = s < 1.75 ? "ratchet" : "wrench";
-        const V3 up = frame(s, id);
-        fixTotal++;
-        fixCoaxial += std::fabs(dot(up, axle)) > 0.999;
+    for (int tool : {TOOL_RATCHET, TOOL_WRENCH}) {  // (a repair's step: one tool for the whole hold)
+        ia.current.tool = tool;
+        for (double s = 0.1; s < 3.4; s += 0.2) {
+            ia.progress = s;
+            const V3 up = frame(s, tool == TOOL_RATCHET ? "ratchet" : "wrench");
+            fixTotal++;
+            fixCoaxial += std::fabs(dot(up, axle)) > 0.999;
+        }
     }
     ctx.check("the ratchet and the spanner work along the axle", fixCoaxial == fixTotal && fixTotal > 20, std::to_string(fixCoaxial) + " of " + std::to_string(fixTotal));
 }

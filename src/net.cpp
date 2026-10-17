@@ -1407,7 +1407,7 @@ std::vector<uint8_t> NetSession::snapshotMsg(const Sim& sim, const Car& c, doubl
     for (const Wheel& wh : c.wheels) {
         w.put<float>((float)wh.angle);
         w.put<float>((float)wh.omega);
-        w.put<uint8_t>((uint8_t)(wh.popped | (wh.detached << 1) | (wh.shaftBroken << 2)));
+        w.put<uint8_t>((uint8_t)(wh.popped | (wh.detached << 1) | (wh.shaftBroken << 2) | (!wh.mounted << 3)));  // (a wheel off its hub for a repair: others see the bare hub)
     }
     const V3 rc = restCom(c);
     w.put<uint16_t>((uint16_t)c.nodes.size());
@@ -1707,6 +1707,7 @@ void NetSession::applyRemotes(Sim& sim, double now) {
             wh.popped = s.wheelFlags[k] & 1;
             wh.detached = (s.wheelFlags[k] >> 1) & 1;
             wh.shaftBroken = (s.wheelFlags[k] >> 2) & 1;
+            wh.mounted = !((s.wheelFlags[k] >> 3) & 1);
         }
         c.steer = c.rackSteer = blend(a.steer, b.steer);
         c.brake = blend(a.brake, b.brake);

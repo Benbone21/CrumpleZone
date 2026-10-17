@@ -313,18 +313,36 @@ SCENARIO(fieldRepair, "recovery/trail-repair", "A Bronco with a flat, a snapped 
         ia.update(ctx.sim, wk, eye, V3(1, 0, 0), false, Ctx::kFrame);  // (let go)
         return said;
     };
+    // Hold E on a spot (a wheel lying there, a hub) until something's said.
+    auto holdAt = [&](const V3& at, double secs) {
+        std::string said;
+        for (double t = 0; t < secs && said.empty(); t += Ctx::kFrame) {
+            const V3 eye = wk.p + V3(0, 1.6, 0);
+            said = ia.update(ctx.sim, wk, eye, at - eye, true, Ctx::kFrame);
+            ctx.run(Ctx::kFrame);
+        }
+        ia.update(ctx.sim, wk, wk.p + V3(0, 1.6, 0), V3(1, 0, 0), false, Ctx::kFrame);
+        return said;
+    };
+    // The wheel lying by the truck picked up and bolted back on corner k.
+    auto refit = [&](int k) {
+        if (ctx.sim.looseWheels.empty()) return false;
+        const V3 lw = ctx.sim.looseWheels.back().p;
+        wk.p = V3(lw.x + 0.9, ctx.sim.world.height(lw.x + 0.9, lw.z), lw.z);
+        holdAt(lw, 2);
+        const Wheel& wh = c.wheels[k];
+        const V3 hub = (c.nodes[wh.inner].p + c.nodes[wh.outer].p) * 0.5;
+        V3 out = hub - c.frame().com;
+        out.y = 0;
+        const V3 q = hub + norm(out) * 0.9;
+        wk.p = V3(q.x, ctx.sim.world.height(q.x, q.z), q.z);
+        return holdAt(hub, 8) == "WHEEL ON";
+    };
     // A career with no tools but the lug wrench and the jack, and no parts.
     ia.kit.unlimited = false;
     ia.kit.tools[TOOL_LUG_WRENCH] = ia.kit.tools[TOOL_JACK] = true;
     std::string prompt;
-    ctx.check("no socket set: the CV axle can't be done", workOn(Fix::CV_AXLE, 6, prompt).empty() && c.wheels[2].shaftBroken, prompt);
-    ctx.check("...and it says what's missing", prompt.find("SOCKET SET") != std::string::npos && prompt.find("HAMMER") != std::string::npos, prompt);
-    for (int t = 0; t < TOOL_COUNT; t++) ia.kit.tools[t] = true;
-    workOn(Fix::CV_AXLE, 6, prompt);
-    ctx.check("tools but no part: it says so", prompt.find("NO CV AXLE") != std::string::npos, prompt);
-    for (int p = 0; p < PART_COUNT; p++) ia.kit.parts[p] = 1;
-    workOn(Fix::CV_AXLE, 6, prompt);
-    ctx.check("the corner has to be up: it says so", prompt.find("JACK") != std::string::npos, prompt);
+    ctx.check("the CV axle: the corner up first", workOn(Fix::CV_AXLE, 6, prompt).empty() && c.wheels[2].shaftBroken && prompt.find("JACK") != std::string::npos, prompt);
     // Jack the corner (by hand here: the jack's own test is tires/swap).
     auto lift = [&](int k) {
         c.placeJack(ctx.sim.world, k);
@@ -332,15 +350,39 @@ SCENARIO(fieldRepair, "recovery/trail-repair", "A Bronco with a flat, a snapped 
         return Interact::cornerLifted(ctx.sim, c, k);
     };
     ctx.check("the CV corner jacks up", lift(2));
-    ctx.check("the CV axle goes in", workOn(Fix::CV_AXLE, 8, prompt) == "CV AXLE FITTED" && !c.wheels[2].shaftBroken, prompt);
+    ctx.check("then the wheel off", workOn(Fix::CV_AXLE, 8, prompt) == "WHEEL OFF" && !c.wheels[2].mounted, prompt);
+    Interact::drop(ctx.sim, wk, V3(1, 0, 0));
+    ctx.check("no socket set: the CV axle can't be done", workOn(Fix::CV_AXLE, 6, prompt).empty() && c.wheels[2].shaftBroken, prompt);
+    ctx.check("...and it says what's missing", prompt.find("SOCKET SET") != std::string::npos, prompt);
+    for (int t = 0; t < TOOL_COUNT; t++) ia.kit.tools[t] = true;
+    ctx.check("the axle nut off", workOn(Fix::CV_AXLE, 8, prompt) == "AXLE NUT OFF", prompt);
+    ctx.check("the old axle out", workOn(Fix::CV_AXLE, 8, prompt) == "OLD AXLE OUT", prompt);
+    workOn(Fix::CV_AXLE, 6, prompt);
+    ctx.check("tools but no part: it says so", prompt.find("NO CV AXLE") != std::string::npos, prompt);
+    for (int p = 0; p < PART_COUNT; p++) ia.kit.parts[p] = 1;
+    ctx.check("the new axle in", workOn(Fix::CV_AXLE, 8, prompt) == "NEW AXLE IN" && c.wheels[2].shaftBroken, prompt);
     ctx.check("...and uses the part", ia.usedPart == PART_CV_AXLE);
     ia.usedPart = -1;
+    ctx.check("the CV axle bolted up: fixed", workOn(Fix::CV_AXLE, 8, prompt) == "AXLE NUT TORQUED: CV AXLE FIXED" && !c.wheels[2].shaftBroken, prompt);
+    ctx.check("the wheel back on", refit(2));
     c.jackPlaced = false, c.jackHeight = 0;
     ctx.run(1.0);
-    ctx.check("the tie rod (no jack needed)", workOn(Fix::TIE_ROD, 8, prompt) == "TIE ROD FITTED" && std::fabs(c.wheels[1].tieOffset) < 1e-9, prompt);
-    ctx.check("the spark plugs: the water out", workOn(Fix::SPARK_PLUGS, 8, prompt) == "SPARK PLUGS FITTED" && !c.hydrolocked && !c.engineDead, prompt);
+    ctx.check("the CV job's done", c.fieldJobs.empty() || (ia.update(ctx.sim, wk, wk.p, V3(1, 0, 0), false, Ctx::kFrame), c.fieldJobs.empty()));
+    std::string said;
+    for (int i = 0; i < 4 && said.find("FIXED") == std::string::npos; i++) said = workOn(Fix::TIE_ROD, 8, prompt);
+    ctx.check("the tie rod (no jack needed), four steps", said == "NUTS TIGHT: TIE ROD FIXED" && std::fabs(c.wheels[1].tieOffset) < 1e-9, said + " / " + prompt);
+    said.clear();
+    for (int i = 0; i < 3 && said.find("FIXED") == std::string::npos; i++) said = workOn(Fix::SPARK_PLUGS, 8, prompt);
+    ctx.check("the spark plugs: the water out", said == "NEW PLUGS IN: SPARK PLUGS FIXED" && !c.hydrolocked && !c.engineDead, said + " / " + prompt);
     ctx.check("the flat corner jacks up", lift(0));
-    ctx.check("a new tire on the rim", workOn(Fix::NEW_TIRE, 8, prompt) == "TIRE FITTED" && !c.wheels[0].popped, prompt);
+    ctx.check("the flat off", workOn(Fix::NEW_TIRE, 8, prompt) == "WHEEL OFF", prompt);
+    Interact::drop(ctx.sim, wk, V3(1, 0, 0));
+    const V3 flat = ctx.sim.looseWheels.back().p;
+    wk.p = V3(flat.x + 0.9, ctx.sim.world.height(flat.x + 0.9, flat.z), flat.z);
+    said.clear();
+    for (int i = 0; i < 3 && ctx.sim.looseWheels.back().item.popped; i++) said = holdAt(flat, 8);
+    ctx.check("a new tire on the rim, on the ground", !ctx.sim.looseWheels.back().item.popped, said);
+    ctx.check("...and back on", refit(0) && !c.wheels[0].popped);
     c.jackPlaced = false, c.jackHeight = 0;
     ctx.run(2.0);
     ctx.check("nothing left to fix out here", fixesFor(c).empty() && !c.needsFieldRepair());

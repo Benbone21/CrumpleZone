@@ -83,7 +83,7 @@ std::vector<Fix> fixesFor(const Car& c) {
         if (ax.propShaft >= 0 && ax.propShaft < (int)c.beams.size() && c.beams[ax.propShaft].broken) {
             const Beam& b = c.beams[ax.propShaft];
             Fix f{Fix::DRIVE_SHAFT};
-            f.axle = a, f.beam = ax.propShaft, f.part = PART_DRIVE_SHAFT, f.tools = {TOOL_WRENCH}, f.hold = 4;
+            f.axle = a, f.beam = ax.propShaft, f.part = PART_DRIVE_SHAFT, f.tools = {TOOL_RATCHET}, f.hold = 4;
             f.at = (c.nodes[b.a].p + c.nodes[b.b].p) * 0.5, f.what = "REPLACE THE DRIVE SHAFT";
             out.push_back(f);
         }
@@ -156,4 +156,137 @@ bool applyFix(Car& c, const Fix& f) {
     }
     c.wake();
     return true;
+}
+
+const char* jobName(int kind) {
+    static const char* const n[] = {"CV AXLE", "DRIVE SHAFT", "TIE ROD", "CONTROL ARM", "SWAY BAR LINK", "NEW TIRE", "SPARK PLUGS"};
+    return kind >= 0 && kind <= Fix::SPARK_PLUGS ? n[kind] : "REPAIR";
+}
+
+bool jobJacks(int kind, int wheel) { return wheel >= 0 && (kind == Fix::CV_AXLE || kind == Fix::CONTROL_ARM || kind == Fix::NEW_TIRE); }
+bool jobWheelOff(const Car& c, int kind, int wheel) { return jobJacks(kind, wheel) && c.spec->wheelLoss; }
+
+std::vector<RepairStep> tireSteps() {
+    std::vector<RepairStep> s(3);
+    s[0].label = "OLD TIRE OFF", s[0].verb = "LEVER THE OLD TIRE OFF THE RIM", s[0].tool = TOOL_TIRE_IRONS, s[0].hold = 5;
+    s[1].label = "NEW TIRE ON", s[1].verb = "WORK THE NEW TIRE ON", s[1].part = PART_TIRE, s[1].hold = 4;
+    s[2].label = "BEAD SEATED, AIRED UP", s[2].verb = "SEAT THE BEAD AND AIR IT UP", s[2].tool = TOOL_TIRE_IRONS, s[2].hold = 4, s[2].fixes = true;
+    return s;
+}
+
+std::vector<RepairStep> repairSteps(int kind, bool jack, bool wheelOff) {
+    std::vector<RepairStep> s;
+    auto step = [&](RepairStep::Type t, const char* label, const char* verb = "", int tool = -1, int part = -1, double hold = 4, bool fixes = false, int end = 0) {
+        RepairStep r;
+        r.type = t, r.label = label, r.verb = verb, r.tool = tool, r.part = part, r.hold = hold, r.fixes = fixes, r.end = end;
+        s.push_back(r);
+    };
+    const auto W = RepairStep::WORK;
+    if (jack) step(RepairStep::JACK, "JACKED UP", "JACK THIS CORNER UP");
+    if (wheelOff) step(RepairStep::WHEEL_OFF, "WHEEL OFF", "TAKE THE WHEEL OFF", TOOL_LUG_WRENCH);
+    switch (kind) {
+    case Fix::CV_AXLE:
+        step(W, "AXLE NUT OFF", "UNDO THE AXLE NUT", TOOL_RATCHET, -1, 4.5);
+        step(W, "OLD AXLE OUT", "KNOCK THE OLD AXLE OUT", TOOL_HAMMER, -1, 4);
+        step(W, "NEW AXLE IN", "FIT THE NEW CV AXLE", -1, PART_CV_AXLE, 3.5);
+        step(W, "AXLE NUT TORQUED", "TORQUE THE AXLE NUT", TOOL_RATCHET, -1, 4.5, true);
+        break;
+    case Fix::CONTROL_ARM:
+        step(W, "ARM UNBOLTED", "UNBOLT THE BENT ARM", TOOL_RATCHET, -1, 5);
+        step(W, "OLD ARM OUT", "LEVER THE OLD ARM OUT", TOOL_PRY_BAR, -1, 3.5);
+        step(W, "NEW ARM IN", "FIT THE NEW CONTROL ARM", -1, PART_CONTROL_ARM, 3.5);
+        step(W, "ARM BOLTED UP", "BOLT THE NEW ARM UP", TOOL_RATCHET, -1, 5, true);
+        break;
+    case Fix::TIE_ROD:
+        step(W, "NUTS OFF", "UNDO THE TIE ROD NUTS", TOOL_WRENCH, -1, 4);
+        step(W, "TAPER KNOCKED LOOSE", "KNOCK THE TAPER LOOSE", TOOL_HAMMER, -1, 3);
+        step(W, "NEW TIE ROD IN", "FIT THE NEW TIE ROD", -1, PART_TIE_ROD, 3);
+        step(W, "NUTS TIGHT", "TIGHTEN THE TIE ROD NUTS", TOOL_WRENCH, -1, 4, true);
+        break;
+    case Fix::SWAY_BAR:
+        step(W, "LINK OFF", "UNDO THE SWAY BAR LINK", TOOL_WRENCH, -1, 4);
+        step(W, "NEW LINK IN", "FIT THE NEW LINK", -1, PART_CONTROL_ARM, 3);
+        step(W, "BAR LINED UP", "LEVER THE BAR INTO LINE", TOOL_PRY_BAR, -1, 3);
+        step(W, "LINK TIGHT", "TIGHTEN THE LINK", TOOL_WRENCH, -1, 4, true);
+        break;
+    case Fix::DRIVE_SHAFT:
+        step(W, "FRONT END UNBOLTED", "UNBOLT THE FRONT END", TOOL_RATCHET, -1, 5, false, 1);
+        step(W, "BACK END UNBOLTED", "UNBOLT THE BACK END", TOOL_RATCHET, -1, 5, false, 2);
+        step(W, "NEW SHAFT IN", "FIT THE NEW DRIVE SHAFT", -1, PART_DRIVE_SHAFT, 4);
+        step(W, "BOTH ENDS BOLTED", "BOLT BOTH ENDS UP", TOOL_RATCHET, -1, 6, true);
+        break;
+    case Fix::SPARK_PLUGS:
+        step(W, "PLUGS OUT", "PULL THE PLUGS", TOOL_RATCHET, -1, 4);
+        step(W, "WATER CRANKED OUT", "CRANK THE WATER OUT", -1, -1, 3);
+        step(W, "NEW PLUGS IN", "PUT THE NEW PLUGS IN", -1, PART_SPARK_PLUGS, 4, true);
+        break;
+    case Fix::NEW_TIRE:
+        if (wheelOff) {  // (the tire's work is on the wheel once it's off, on the ground: tireSteps)
+            step(W, "NEW TIRE ON THE RIM", "PUT A NEW TIRE ON THE WHEEL YOU TOOK OFF", -1, -1, 0, true);
+            s.back().ground = true;
+        } else {
+            for (const RepairStep& t : tireSteps()) s.push_back(t);
+        }
+        break;
+    }
+    if (wheelOff) step(RepairStep::WHEEL_ON, "WHEEL BACK ON", "PUT THE WHEEL BACK ON", TOOL_LUG_WRENCH);
+    if (jack) step(RepairStep::LOWER, "JACK DOWN", "LET THE JACK DOWN");
+    return s;
+}
+
+RepairPlan planRepair(int kind, bool jack, bool wheelOff, int done, bool fixed, const CornerNow& now) {
+    RepairPlan p;
+    p.steps = repairSteps(kind, jack, wheelOff);
+    p.done.assign(p.steps.size(), false);
+    int nWork = 0;
+    for (const RepairStep& st : p.steps) nWork += st.type == RepairStep::WORK;
+    // A tire off the truck: its work is done once a good wheel is back on the hub (or the spare is).
+    if (kind == Fix::NEW_TIRE && wheelOff) done = now.wheelOn && now.wheelGood ? nWork : 0, fixed = done > 0;
+    const bool worked = fixed || done >= nWork;
+    const bool back = now.wheelOn && (kind != Fix::NEW_TIRE || now.wheelGood);  // (a flat back on is no new tire)
+    int w = 0;
+    for (size_t i = 0; i < p.steps.size(); i++) {
+        const RepairStep& st = p.steps[i];
+        bool d = false;
+        switch (st.type) {
+        case RepairStep::JACK: d = worked || now.lifted; break;
+        case RepairStep::WHEEL_OFF: d = worked || !now.wheelOn; break;
+        case RepairStep::WORK: d = w++ < done || worked; break;
+        case RepairStep::WHEEL_ON: d = worked && back; break;
+        case RepairStep::LOWER: d = worked && (!wheelOff || back) && !now.jackUp; break;
+        }
+        p.done[i] = d;
+        if (!d && p.next < 0) p.next = (int)i;
+    }
+    return p;
+}
+
+int fieldJobOf(const Car& c, const Fix& f) {
+    for (int i = 0; i < (int)c.fieldJobs.size(); i++) {
+        const Car::FieldJob& j = c.fieldJobs[i];
+        if (j.kind == f.kind && j.wheel == f.wheel && j.axle == f.axle && (f.kind == Fix::CV_AXLE || f.kind == Fix::NEW_TIRE || j.beam == f.beam)) return i;
+    }
+    return -1;
+}
+
+std::string stepMissing(const RepairStep& st, const Kit& kit, const Kit* own, int handTool, int handPart) {
+    if (st.tool >= 0) {
+        const Tool t = (Tool)st.tool;
+        if (own) {
+            if (handTool == t) return "";
+            return own->has(t) ? std::string("NEEDS THE ") + kToolNames[t] + " (GET IT FROM THE BACK)" : std::string("NEEDS ") + kToolA[t];
+        }
+        if (kit.has(t)) return "";
+        return std::string("NEEDS ") + kToolA[t] + (kit.stowedTools[t] ? " (IN THE TRUCK: OPEN THE BACK)" : "");
+    }
+    if (st.part >= 0) {
+        const RepairPart p = (RepairPart)st.part;
+        if (own) {
+            if (handPart == p && own->hasPart(p)) return "";
+            return own->hasPart(p) ? std::string("NEEDS THE NEW ") + kPartNames[p] + " (GET IT FROM THE BACK)" : std::string("NO ") + kPartNames[p] + ": FIND OR BUY ONE";
+        }
+        if (kit.hasPart(p)) return "";
+        return kit.stowedParts[p] ? std::string("THE ") + kPartNames[p] + " IS IN THE TRUCK" : std::string("NO ") + kPartNames[p] + ": FIND OR BUY ONE";
+    }
+    return "";
 }

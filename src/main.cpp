@@ -3356,14 +3356,29 @@ int main(int argc, char** argv) {
                     if (opt.script == "work-chain") walker.holdingChain = true;
                     else if (std::getenv("CZ_WORK_PLACE")) walker.holdingJack = true;  // (the jack still in your arms: the placing job)
                     else c.placeJack(sim.world, k), c.wake(), c.jackWorked = true, c.jackHeight = std::getenv("CZ_JACK_H") ? std::atof(std::getenv("CZ_JACK_H")) : 0.12;
-                    if (opt.script == "work-fix") c.wheels[k].shaftBroken = true;
-                    const V3 aim = opt.script == "work-fix" ? hub + (c.frame().com - hub) * 0.25 : std::getenv("CZ_WORK_PLACE") || opt.script == "work-jack" ? Interact::jackAim(sim, c, k) : hub;
+                    if (opt.script == "work-fix" || opt.script == "work-repair") c.wheels[k].shaftBroken = true;
+                    if (opt.script == "work-repair") c.jackHeight = 0.3, walker.hand = TrunkRef{TK_TOOL, TOOL_HAMMER};  // (up, the wheel comes off below)
+                    const V3 aim = opt.script == "work-fix" || opt.script == "work-repair" ? hub + (c.frame().com - hub) * 0.25 : std::getenv("CZ_WORK_PLACE") || opt.script == "work-jack" ? Interact::jackAim(sim, c, k) : hub;
                     walker.p = hub + out * 1.0 - c.frame().fwd * 0.3;
                     walker.p.y = sim.world.height(walker.p.x, walker.p.z);
                     const V3 d = norm(aim - (walker.p + V3(0, 1.62, 0)));
                     footYaw = std::atan2(-d.z, d.x), footPitch = std::asin(d.y);
                 }
-                scriptE = frame > 70;
+                // work-repair: a CV axle job half done (the corner up, the wheel off and laid down, the axle nut off): the next step's prompt and the checklist (CZ_WORK_E: and the work)
+                if (opt.script == "work-repair" && frame >= 40 && frame < 70 && k < (int)c.wheels.size() && c.wheels[k].mounted) {
+                    WheelItem it;
+                    if (sim.removeWheel(sim.player, k, it)) {
+                        const Wheel& wh = c.wheels[k];
+                        const V3 hub = (c.nodes[wh.inner].p + c.nodes[wh.outer].p) * 0.5, out = norm(c.nodes[wh.outer].p - c.nodes[wh.inner].p);
+                        sim.dropWheel(it, hub + out * 0.9 + c.frame().fwd * 1.1, c.frame().fwd);
+                    }
+                    if (!c.wheels[k].mounted && c.fieldJobs.empty()) {
+                        Car::FieldJob j;
+                        j.kind = Fix::CV_AXLE, j.wheel = k, j.done = 1;
+                        c.fieldJobs.push_back(j);
+                    }
+                }
+                scriptE = opt.script == "work-repair" ? frame > 70 && std::getenv("CZ_WORK_E") : frame > 70;
             }
             if (opt.script == "damage") {  // screenshots of broken parts: CZ_BREAK=cv:fl,tie:fr,bend:fl,shaft:f,spring:rl,leaf:rr,flood (corner = front/rear + left/right),
                 // CZ_STAND=fwd,left (m from the car's middle, default 2.6,1.9) and CZ_LOOKAT=fwd,left,up (m, default the front axle at hub height)
@@ -4609,11 +4624,14 @@ int main(int argc, char** argv) {
                 const float ls = px(1.8f * u);
                 float y = H / 2.0f - 44 * u - 12 * ls;
                 std::string hint;
-                if (!(interact.current.kind == IA_FIX && partMatchesFix(ph.tag, interact.current.fix)) && ph.car >= 0 && ph.car < (int)sim.cars.size())
+                const bool onIt = (interact.current.kind == IA_FIX || (interact.current.kind == IA_REMOVE_WHEEL && interact.current.step >= 0)) && partMatchesFix(ph.tag, interact.current.fix);
+                if (!onIt && ph.car >= 0 && ph.car < (int)sim.cars.size())
                     for (const Fix& f : fixesFor(sim.cars[ph.car]))
-                        if (partMatchesFix(ph.tag, f)) {
-                            const std::string miss = missingFor(f, interact.kit, f.wheel >= 0 && Interact::cornerLifted(sim, sim.cars[ph.car], f.wheel));
-                            hint = std::string(len(ph.at - (walker.p + V3(0, 1.0, 0))) > 2.5 ? "GET CLOSER, THEN HOLD " + K(KA_INTERACT) + ": " : "HOLD " + K(KA_INTERACT) + ": ") + f.what + (miss.empty() ? "" : " (" + miss + ")");
+                        if (partMatchesFix(ph.tag, f)) {  // (its next step, as the job would put it)
+                            const InteractOption fo = Interact::fixOption(sim, walker, ph.car, f, interact.kit, interact.trunkOn ? &interact.own : nullptr);
+                            if (fo.kind == IA_NONE) break;
+                            const std::string far = len(ph.at - (walker.p + V3(0, 1.0, 0))) > 2.5 ? "GET CLOSER: " : "";
+                            hint = far + (fo.blocked ? fo.prompt : "HOLD " + K(KA_INTERACT) + ": " + fo.prompt);
                             break;
                         }
                 if (!hint.empty()) {
@@ -4621,6 +4639,22 @@ int main(int argc, char** argv) {
                     y -= 15 * s;
                 }
                 centeredPill(renderer, W / 2.0f, y, ls, ph.tag.label(), 0, 0, 0, 1.0f, cr, cg, cb);
+            }
+            if (interact.checklist.any() && !inv.open) {  // the repair under way: its steps, in order, top right
+                const RepairChecklist& cl = interact.checklist;
+                const float cs = px(1.3f * u), lh = 8 * cs + 5 * u;
+                float bw = r_textW(renderer, cl.title, cs);
+                for (const std::string& row : cl.rows) bw = std::max(bw, r_textW(renderer, "[X] " + row, cs));
+                bw += 28 * u;
+                const float bx = W - bw - 14 * u, by = H * 0.2f;
+                pill(renderer, bx, by, bw, 16 * u + lh * (float)(cl.rows.size() + 1), 0, 0, 0, 0.55f);
+                renderer.text(bx + 14 * u, by + 8 * u, cs, cl.title, 1.0f, 0.62f, 0.25f, 1);
+                for (size_t i = 0; i < cl.rows.size(); i++) {
+                    const bool d = cl.done[i], nx = (int)i == cl.next;
+                    const float yy = by + 8 * u + lh * (float)(i + 1);
+                    const float cr = d ? 0.55f : nx ? 1.0f : 0.8f, cg = d ? 0.85f : nx ? 0.85f : 0.8f, cb = d ? 0.55f : nx ? 0.45f : 0.82f;
+                    renderer.text(bx + 14 * u, yy, cs, std::string(d ? "[X] " : "[ ] ") + cl.rows[i], cr, cg, cb, d ? 0.75f : 1.0f);
+                }
             }
             if (walker.hand.any() && !walker.carrying && !inv.open) {
                 const std::string line = "IN YOUR HAND: " + trunk::name(walker.hand) + (padNow ? "   (X AT THE BACK OF YOUR TRUCK: PUT IT BACK)" : "   (" + K(KA_INTERACT) + " AT THE BACK OF YOUR TRUCK: PUT IT BACK)");

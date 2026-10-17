@@ -40,6 +40,16 @@ enum InteractKind {
     IA_OPEN_INVENTORY,  // E at the back of your truck: what it carries, as a menu (invmenu.h)
     IA_TAKE_ITEM,     // a tool, part or anchor out of the open back, into your hands
     IA_STOW_ITEM,     // ...and back in
+    IA_TIRE_WORK,     // a new tire onto a wheel lying on the ground (fixes.h tireSteps), a step at a time
+};
+
+// The repair in progress, as the on-foot checklist shows it: "CV AXLE, FRONT LEFT" and its steps.
+struct RepairChecklist {
+    std::string title;
+    std::vector<std::string> rows;
+    std::vector<bool> done;
+    int next = -1;  // the row that's next (-1: all done)
+    bool any() const { return !rows.empty(); }
 };
 
 // Something out in the world to open (a career supply cache): where, and what to call it.
@@ -57,9 +67,12 @@ struct InteractOption {
     std::string prompt;  // "TAKE THE SPARE (35 IN)"
     bool continuous = false;  // goes on as long as E is held (the jack)
     bool blocked = false;     // can't yet: the prompt says what's missing
-    Fix fix{Fix::CV_AXLE};    // (IA_FIX)
+    Fix fix{Fix::CV_AXLE};    // (IA_FIX; IA_REMOVE_WHEEL as a repair's step)
+    int step = -1;            // (IA_FIX, IA_TIRE_WORK) which of the repair's steps (fixes.h); IA_REMOVE_WHEEL: >= 0 for a repair's
+    int tool = -1, part = -1; // ...what it's done with (for the work's look: handwork.h)
+    bool atEnd = false;       // (IA_FIX) at one end of a shaft: there, wherever on it you look
     TrunkRef item;            // (IA_TAKE_ITEM, IA_STOW_ITEM)
-    bool same(const InteractOption& o) const { return kind == o.kind && car == o.car && wheel == o.wheel && loose == o.loose && spot == o.spot && item == o.item; }
+    bool same(const InteractOption& o) const { return kind == o.kind && car == o.car && wheel == o.wheel && loose == o.loose && spot == o.spot && item == o.item && step == o.step; }
 };
 
 struct Interact {
@@ -74,6 +87,8 @@ struct Interact {
     std::string openedSpot;           // set when one's been opened (its id): the game takes it from here
     int openedInventory = -1;         // set when E opened a truck's inventory (its car): the game shows the menu
     PartHit hover;                    // the car part under the crosshair (set by the game each frame): its repair, if any, is the one picked
+    std::string toSay;                // a job finished: said once the step's own words are
+    RepairChecklist checklist;        // the repair you're on (or the nearest one under way), for the HUD: set by update
     double share() const { return current.hold > 0 ? std::min(1.0, progress / current.hold) : 0; }
     static constexpr double kJackMax = 0.45;  // m the saddle can rise above where it met the pad (the hi-lift's bar is 1.2 m)
 
@@ -82,9 +97,18 @@ struct Interact {
     // `own`: everything you own, if the trucks' backs are in play (trunk.h).
     static InteractOption pick(const Sim& sim, const Walker& wk, const V3& eye, const V3& look, const std::vector<InteractSpot>* spots = nullptr,
                                const Kit& kit = Kit(), const TrunkStock* own = nullptr, const PartHit* hover = nullptr);
+    // A repair's next step as an option (fixes.h): the work, the wheel off, or what stands in the way ("JACK THIS
+    // CORNER UP FIRST", "NEEDS THE SOCKET SET: GET IT FROM THE BACK"). kind IA_NONE: nothing left to do here.
+    static InteractOption fixOption(const Sim& sim, const Walker& wk, int car, const Fix& f, const Kit& kit, const TrunkStock* own);
+    // Where a repair on car `c` is (its job record, or null for one not started).
+    static RepairPlan planFor(const Sim& sim, const Car& c, int kind, int wheel, const Car::FieldJob* job);
+    static RepairChecklist checklistFor(const Sim& sim, const Car& c, int kind, int wheel, int axle, const Car::FieldJob* job);
+    // Drops the jobs that are done (or were fixed some other way: a station, R). Returns what to announce.
+    static std::string pruneJobs(Sim& sim);
     // Once a frame on foot: finds the job, runs the hold, and does it when the hold is done.
     // Returns what to announce ("" most frames).
     std::string update(Sim& sim, Walker& wk, const V3& eye, const V3& look, bool holdE, double dt);
+    std::string run(Sim& sim, Walker& wk, const V3& eye, const V3& look, bool holdE, double dt);  // (update, less the checklist)
     // A job done (the hold's end; the inventory menu's own choices too): what to announce.
     std::string perform(Sim& sim, Walker& wk, const InteractOption& o);
     // The back's jobs, for the pick and the inventory menu alike: take `it` out of car `ci`'s back (kind IA_NONE:
