@@ -184,7 +184,7 @@ void bushFlowering(B& b, const P& p) {
         // The blooms sit all over the upper half.
         for (int f = 0; f < (k == 0 ? 6 : 4); f++) {
             V3 pt, n;
-            onTop(c, rad * 0.97, R01(sd, k * 9 + f + 100) * 6.28, 0.12 + 0.85 * R01(sd, k * 9 + f + 140), pt, n);
+            onTop(c, rad * 0.86, R01(sd, k * 9 + f + 100) * 6.28, 0.12 + 0.85 * R01(sd, k * 9 + f + 140), pt, n);
             fleck(b, pt, n, 0.09 + 0.05 * R01(sd, k * 9 + f + 180), flower * (0.85 + 0.3 * R01(sd, f + 30 + k)), sd + (uint32_t)(f + 9 * k));
         }
     }
@@ -352,7 +352,7 @@ void bushHeather(B& b, const P& p) {
         leafBlob(b, c, rad, sd * 5 + (uint32_t)k, A, B, 0.3, 0, 0.1);
         for (int f = 0; f < (k == 0 ? 6 : 3); f++) {
             V3 pt, n;
-            onTop(c, rad * 0.97, R01(sd, k * 7 + f + 100) * 6.28, 0.35 + 0.6 * R01(sd, k * 7 + f + 140), pt, n);
+            onTop(c, rad * 0.86, R01(sd, k * 7 + f + 100) * 6.28, 0.35 + 0.6 * R01(sd, k * 7 + f + 140), pt, n);
             fleck(b, pt, n, 0.075 + 0.04 * R01(sd, k * 7 + f), flower * (0.8 + 0.4 * R01(sd, f + 60 + k)), sd + (uint32_t)(f + 7 * k));
         }
     }
@@ -363,19 +363,22 @@ void bushHeather(B& b, const P& p) {
 void bushTumble(B& b, const P& p) {
     const uint32_t sd = (uint32_t)p.i("seed");
     const bool dry = p.i("dry") != 0;
-    const V3 A = dryMix(V3(0.36, 0.27, 0.15), dry, V3(0.50, 0.48, 0.42)), B = dryMix(V3(0.62, 0.50, 0.30), dry, V3(0.74, 0.70, 0.60));
+    const V3 A = dryMix(V3(0.40, 0.31, 0.18), dry, V3(0.55, 0.52, 0.45)), B = dryMix(V3(0.64, 0.52, 0.32), dry, V3(0.74, 0.70, 0.60));
     b.mat(FOLIAGE);
-    // A ball of twigs: a dark core for depth, and twigs radiating from it all round, bowed and crossing.
-    leafBlob(b, V3(0, 0.4, 0), V3(0.36, 0.33, 0.35), sd, A * 0.75, B * 0.9, 0.3, 0, 0.12);
-    for (int k = 0; k < 22; k++) {
-        const double a = k * 2.399 + R01(sd, k) * 0.7, el = std::asin(-0.35 + 1.3 * ((k * 0.618 + R01(sd, k + 10) * 0.3) - std::floor(k * 0.618 + R01(sd, k + 10) * 0.3))), L = 0.17 + 0.16 * R01(sd, k + 20);
-        const V3 dir(std::cos(a) * std::cos(el), std::sin(el), std::sin(a) * std::cos(el)), o = V3(0, 0.4, 0) + dir * 0.27;
-        const V3 tip = o + dir * L;
-        if (tip.y < 0.06) continue;
+    // An open tangle: thin twigs crossing through the middle in every direction, nothing solid inside.
+    const V3 mid(0, 0.42, 0);
+    for (int k = 0; k < 13; k++) {
+        const double a = k * 2.399 + R01(sd, k) * 0.7, el = std::asin(-0.8 + 1.6 * ((k * 0.618 + R01(sd, k + 10) * 0.2) - std::floor(k * 0.618 + R01(sd, k + 10) * 0.2)));
+        const V3 dir(std::cos(a) * std::cos(el), std::sin(el), std::sin(a) * std::cos(el));
+        const double L = 0.42 + 0.1 * R01(sd, k + 20);
+        const V3 off((R01(sd, k + 30) - 0.5) * 0.14, (R01(sd, k + 40) - 0.5) * 0.14, (R01(sd, k + 50) - 0.5) * 0.14);
+        V3 p0 = mid + off - dir * L, p1 = mid + off + dir * L;
+        if (p0.y < 0.04) p0.y = 0.04;
+        if (p1.y < 0.04) p1.y = 0.04;
         const size_t from = b.out().v.size();
-        b.color(mix(A, B, R01(sd, k + 30)));
-        b.cone(o, tip, 0.035, 0.0, 3, false);
-        dapple(b, from, 0.4, 0.5, A * 0.8, B * 1.05, sd + (uint32_t)k, 0.6);
+        b.color(mix(A, B, R01(sd, k + 60)));
+        b.cone(p0, p1, 0.024, 0.024, 3, false);
+        dapple(b, from, 0.42, 0.5, A * 0.8, B * 1.05, sd + (uint32_t)k, 0.6);
     }
 }
 

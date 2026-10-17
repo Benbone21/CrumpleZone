@@ -555,6 +555,15 @@ void World::scatterScenery(uint32_t seed) {
         const double u = rnd();
         bushes.push_back(growBush(V3(x, height(x, z), z), HAB_MEADOW, nearWood, u, (float)(0.8 + rnd() * 0.4)));
     }
+    // More of the small plants, from hashes of the spot (the boulders' random numbers don't move).
+    const size_t shrubs = bushes.size();
+    for (int i = 0; i < 40000 && bushes.size() < shrubs + shrubs * 2 / 3; i++) {
+        const double x = (plantRoll(i, 7, 31) * 2 - 1) * 510, z = (plantRoll(i, 11, 32) * 2 - 1) * 510;
+        if (!offRoad(x, z, 12) || !dry(x, z, 2)) continue;
+        const bool nearWood = !clearOfTrees(x, z, 14);
+        if (plantRoll(x, z, 33) > (nearWood ? 0.8 : 0.12)) continue;
+        bushes.push_back(growBush(V3(x, height(x, z), z), HAB_MEADOW, nearWood, plantRoll(x, z, 34), (float)(0.8 + plantRoll(x, z, 35) * 0.4)));
+    }
     // Boulders in the meadows, clear of the trees (and the paths to them) and the roads.
     for (int attempt = 0; attempt < 20000 && rocks.size() < 140; attempt++) {
         double x = (rnd() * 2 - 1) * 500, z = (rnd() * 2 - 1) * 500;
@@ -708,7 +717,7 @@ void World::buildWilds() {
     }
     // Undergrowth: more of the same (ferns in the woods, flowers and stones in the meadows, scrub in the sand), from hashes of the spot so none
     // of the random numbers the rocks use move.
-    const size_t shrubs = bushes.size(), undergrowth = shrubs * 2 / 5;
+    const size_t shrubs = bushes.size(), undergrowth = shrubs * 7 / 10;
     for (int i = 0; i < 60000 && bushes.size() < shrubs + undergrowth; i++) {
         const double x = (plantRoll(i, 7, 21) * 2 - 1) * 510, z = (plantRoll(i, 11, 22) * 2 - 1) * 510;
         const bool nearWood = kind == WILDS_DESERT ? false : !clearOfTrees(x, z, 14);
