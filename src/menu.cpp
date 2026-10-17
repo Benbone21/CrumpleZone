@@ -252,7 +252,7 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
                "HOW QUICKLY THE STICK TURNS THE WHEELS: SOFT IS GENTLE NEAR THE CENTRE");
         choice(PADDEAD, "STICK DEADZONE", pad::kDeadzoneNames[std::min(std::max(s.padDeadzone, 0), 2)], 3,
                "RAISE IT IF THE CAR DRIFTS WITH YOUR HANDS OFF");
-        choice(PADRUMBLE, "RUMBLE", pad::kRumbleNames[std::min(std::max(s.padRumble, 0), 2)], 3, "BUMPS, SLIDES AND THE REV LIMITER");
+        choice(PADRUMBLE, "RUMBLE", pad::kRumbleNames[std::min(std::max(s.padRumble, 0), 2)], 3, "HITS, LANDINGS, BREAKS, REV LIMITER");
         button(KEYBINDS_ROW, "KEYBOARD KEYBINDS", "REMAP THE DRIVING KEYS");
         button(BACK_ROW, "BACK");
         return r;

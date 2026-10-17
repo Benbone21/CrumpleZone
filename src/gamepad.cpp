@@ -256,37 +256,82 @@ bool Logic::apply(Car& c, double dt) {
 
 // ---- Rumble ---------------------------------------------------------------------------------
 
-RumbleOut Rumbler::update(const Car& c, int level, double dt) {
+RumbleOut Rumbler::update(const Car& c, int level, double dt, double impactJ) {
     if (level <= 0 || dt <= 0 || dt > 0.25) {
-        have_ = false;
+        reset();
         return {};
     }
-    const Frame f = c.frame();
-    if (!have_) {
-        have_ = true;
-        vx_ = f.vel.x, vy_ = f.vel.y, vz_ = f.vel.z;
-        return {};
+    // Parts breaking: a flag that wasn't set last frame. (A different or rebuilt car just sets the baseline.)
+    std::vector<uint8_t> flags(c.wheels.size());
+    int panels = 0;
+    for (size_t i = 0; i < c.wheels.size(); i++) {
+        const Wheel& w = c.wheels[i];
+        flags[i] = (uint8_t)(w.shaftBroken | w.debeaded << 1 | w.popped << 2 | (!w.mounted || w.detached) << 3);
     }
-    const double dvx = f.vel.x - vx_, dvy = f.vel.y - vy_, dvz = f.vel.z - vz_;
-    vx_ = f.vel.x, vy_ = f.vel.y, vz_ = f.vel.z;
-    const double a = std::sqrt(dvx * dvx + dvy * dvy + dvz * dvz) / dt;  // m/s^2
-    base_ += (a - base_) * std::min(1.0, dt * 3.0);                       // what driving normally asks of it
-    const double spike = std::max(0.0, a - base_ - 30.0);               // a hit: well past 3 g more than usual
-    impact_ = std::max(impact_ - dt * 3.5, std::min(1.0, spike / 150.0));
-    const double speed = len(f.vel);
-    rough_ += (std::fabs(dvy) / dt - rough_) * std::min(1.0, dt * 4.0);
-    const double rough = std::min(1.0, std::max(0.0, rough_ - 3.0) / 20.0) * std::min(1.0, speed / 8.0);
-    double sliding = 0;
-    for (const Wheel& w : c.wheels)
-        if (w.load > 50 && !w.popped) sliding = std::max(sliding, std::min(1.0, std::max(0.0, w.slip * (double)w.bite - 0.18) / 0.35));
-    sliding *= std::min(1.0, std::max(speed, 3.0 * (c.throttle > 0.3)) / 3.0);  // (not for a tire just sitting there)
-    slide_ += (sliding - slide_) * std::min(1.0, dt * 10.0);
-    const double limiter = c.spec->redline > 0 && c.rpm > c.spec->redline * 0.985 && c.throttle > 0.5 ? 1.0 : 0.0;
+    for (const Panel& p : c.panels) panels += p.state;
+    if (car_ != &c || build_ != c.buildCount || flags_.size() != flags.size()) {
+        car_ = &c, build_ = c.buildCount, flags_ = flags, panels_ = panels, chains_ = c.chainsSnapped, dead_ = c.engineDead;
+        armed_ = true, bumpWin_ = 0;
+    }
+    for (size_t i = 0; i < flags.size(); i++) {
+        const uint8_t fresh = flags[i] & ~flags_[i];
+        if (fresh & 8) pulse(1.0, 0.8, 0.14, 2.5);       // the wheel came off
+        else if (fresh & 1) pulse(0.9, 0.9, 0.12, 2.5);  // a shaft snapped
+        else if (fresh & 2) pulse(0.7, 0.6, 0.1, 3);     // the tire rolled off its rim
+        else if (fresh & 4) pulse(0.6, 0.5, 0.08, 3.5);  // a tire blew
+    }
+    if (panels > panels_) pulse(0.4, 0.35, 0.06, 4);
+    if (c.chainsSnapped > chains_) pulse(0.45, 0.5, 0.06, 4);
+    if (c.engineDead && !dead_) pulse(0.8, 0.6, 0.12, 2.5);
+    flags_ = flags, panels_ = panels, chains_ = c.chainsSnapped, dead_ = c.engineDead;
+
+    // A hit: scaled by how much it bent (a bump in the road bends nothing).
+    if (impactJ > 100) {
+        const double s = std::min(1.0, std::max(0.15, 0.25 + 0.375 * std::log10(impactJ / 150)));
+        pulse(s, s * 0.5, 0.04 + 0.1 * s, 3);
+    }
+
+    // The suspension: how far into its bump stops the worst corner is (a landing, a big hit), and, smoothed, how fast it
+    // is moving (washboard barely, rock and whoops properly).
+    double depth = 0, rate = 0;
+    bool rock = false;
+    for (const Wheel& w : c.wheels) {
+        rock |= w.load > 50 && (w.surface == SURF_ROCK || w.surface == SURF_SCREE);
+        for (int bi : {w.spring, w.bumpStop}) {
+            if (bi < 0) continue;
+            const Beam& b = c.beams[bi];
+            if (b.minL <= 0) continue;
+            const V3 d = c.nodes[b.b].p - c.nodes[b.a].p;
+            const double L = len(d);
+            depth = std::max(depth, b.minL + 0.01 - L);
+            if (bi == w.spring && L > 1e-6) rate = std::max(rate, std::fabs(dot(c.nodes[b.b].v - c.nodes[b.a].v, d / L)));
+        }
+    }
+    if (depth < 0.01) armed_ = true;
+    if (armed_ && depth > 0.022) armed_ = false, bumpWin_ = 0.1;  // (onto the stops: one pulse per bottoming-out)
+    if (bumpWin_ > 0) {
+        bumpWin_ -= dt;
+        const double s = 0.35 + 0.65 * std::min(1.0, std::max(0.0, depth - 0.022) / 0.05);
+        pulse(s, s * 0.6, 0.06, 3);
+    }
+    speed_ += (rate - speed_) * std::min(1.0, dt / 0.12);
+    const double dead = rock ? 0.55 : 0.9;  // (rock is rough at a crawl; dirt only when it's really bad)
+    if ((tickWait_ -= dt) <= 0 && speed_ > dead) {  // really rough ground: a light tick, a few a second at most
+        high_.hit(0.2 + 0.25 * std::min(1.0, (speed_ - dead) / 1.6), 0.03, 10);
+        tickWait_ = 0.3;
+    }
+
+    // The engine hitting its limiter: a tick per bounce, not a buzz.
+    limiter_ = c.spec->redline > 0 && c.rpm > c.spec->redline * 0.985 && c.throttle > 0.5 ? limiter_ + dt : 0;
+    if ((limitWait_ -= dt) <= 0 && limiter_ > 0.05) {
+        high_.hit(0.35, 0.03, 10);
+        limitWait_ = 0.3;
+    }
+
+    low_.step(dt), high_.step(dt);
     const double scale = level >= 2 ? 1.0 : 0.5;
-    RumbleOut o;
-    o.low = (float)(std::min(1.0, impact_ + rough * 0.35) * scale);
-    o.high = (float)(std::min(1.0, slide_ * 0.5 + limiter * 0.35 + rough * 0.15) * scale);
-    return o;
+    auto out = [&](float v) { return v > 0.02f ? (float)(scale * (0.3 + 0.7 * v)) : 0.0f; };  // (every pulse is strong enough to feel)
+    return {out(low_.v), out(high_.v)};
 }
 
 // ---- Names ----------------------------------------------------------------------------------

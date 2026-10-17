@@ -10,6 +10,7 @@
 // button press becomes the same key press the keyboard would give, so every action is handled by
 // the one existing switch; sticks and triggers are analog and set the car directly.
 #pragma once
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <utility>
@@ -136,17 +137,43 @@ private:
 struct RumbleOut {
     float low = 0, high = 0;  // 0..1: the heavy (low-frequency) and light motors
 };
-// Light feedback from the car: impacts, rough ground, the tires sliding, the engine on its
-// limiter. `level` is Tuning::rumble (0 OFF, 1 LOW, 2 HIGH).
+// Rumble is an event signal, not a hum: silent at idle and cruising (road, gravel, dirt), a
+// short pulse for a hit (`impactJ`: the deformation energy the car took this frame), a hard
+// landing or the suspension bottoming out, a part breaking (shaft, tire, wheel, panel, engine),
+// the engine on its limiter, and a sparse light tick on really rough ground only (a deadband on
+// the smoothed suspension speed). `level` is Tuning::rumble (0 OFF, 1 LOW, 2 HIGH).
 class Rumbler {
 public:
-    RumbleOut update(const Car& c, int level, double dt);
+    RumbleOut update(const Car& c, int level, double dt, double impactJ = 0);
     void reset() { *this = Rumbler(); }
 
 private:
-    bool have_ = false;
-    double vx_ = 0, vy_ = 0, vz_ = 0;
-    double base_ = 0, rough_ = 0, impact_ = 0, slide_ = 0;
+    struct Env {  // a pulse: held a moment at its peak, then dying away
+        float v = 0;
+        double hold = 0, decay = 3;
+        void hit(double x, double holdFor, double decayRate) {
+            if (x < v) return;
+            v = (float)x, hold = std::max(hold, holdFor), decay = decayRate;
+        }
+        void step(double dt) {
+            if (hold > 0) hold -= dt;
+            else v = (float)std::max(0.0, v - decay * dt);
+        }
+    } low_, high_;
+    void pulse(double low, double high, double holdFor, double decayRate) {
+        low_.hit(low, holdFor, decayRate);
+        high_.hit(high, holdFor, decayRate);
+    }
+    const Car* car_ = nullptr;  // ...whose state the break flags below belong to
+    int build_ = -1;
+    std::vector<uint8_t> flags_;  // per wheel: shaft snapped, debeaded, popped, off its hub
+    int panels_ = 0, chains_ = 0;
+    bool dead_ = false;
+    double speed_ = 0;     // suspension speed (m/s), smoothed
+    double tickWait_ = 0;  // the next rough-ground tick is allowed after this long
+    double bumpWin_ = 0;   // after a bottoming-out starts, the window in which its peak is still rising
+    bool armed_ = true;    // ...and the suspension has to come off its stops before the next one
+    double limiter_ = 0, limitWait_ = 0;
 };
 
 // ---- Names for the HUD ---------------------------------------------------------------------
