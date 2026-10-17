@@ -178,26 +178,21 @@ bool loadModel(const std::string& path, Model& m) {
 }
 
 std::string assetDir() {
-    static bool done = false;
-    static std::string found;
-    if (done) return found;
-    done = true;
-    if (const char* env = std::getenv("CZ_PROPS_DIR")) {  // (testing: another bake)
-        found = env;
-        return found;
-    }
-    std::vector<std::string> bases = {"."};
-    if (const std::string exe = exeDir(); !exe.empty()) bases.push_back(exe), bases.push_back(exe + "/../Resources");  // (../Resources: inside a macOS .app)
-    const char* rel[] = {"/assets/props", "/../assets/props", "/../../assets/props", "/../../../assets/props"};
-    for (const std::string& b : bases)
-        for (const char* r : rel) {
-            const std::string dir = b + r;
-            if (FILE* f = std::fopen((dir + "/rocks.hull").c_str(), "rb")) {
-                std::fclose(f);
-                found = dir;
-                return found;
+    static const std::string found = [] {  // (made once, thread-safely: worlds are built on several threads)
+        if (const char* env = std::getenv("CZ_PROPS_DIR")) return std::string(env);  // (testing: another bake)
+        std::vector<std::string> bases = {"."};
+        if (const std::string exe = exeDir(); !exe.empty()) bases.push_back(exe), bases.push_back(exe + "/../Resources");  // (../Resources: inside a macOS .app)
+        const char* rel[] = {"/assets/props", "/../assets/props", "/../../assets/props", "/../../../assets/props"};
+        for (const std::string& b : bases)
+            for (const char* r : rel) {
+                const std::string dir = b + r;
+                if (FILE* f = std::fopen((dir + "/rocks.hull").c_str(), "rb")) {
+                    std::fclose(f);
+                    return dir;
+                }
             }
-        }
+        return std::string();
+    }();
     return found;
 }
 

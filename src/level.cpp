@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <mutex>
 #include <sstream>
 
 #include "platform.h"
@@ -142,9 +143,16 @@ void placeObject(const LevelObject& o, World& w) {
         case OBJ_TREE: w.addTree(o.p.x, o.p.z, std::max(1.0, o.size.y), o.sub, o.col[0]); break;
         case OBJ_STATION: {
             // (The station keeps a pointer to its name: levels' names live as long as the game.)
+            // (Worlds are built on several threads at once in the test runner: the list is shared.)
             static std::vector<std::string*> names;
-            names.push_back(new std::string(o.name.empty() ? "REPAIR SHOP" : o.name));
-            w.addStation(V3(o.p.x, w.height(o.p.x, o.p.z), o.p.z), o.yaw, names.back()->c_str());
+            static std::mutex namesLock;
+            const char* name;
+            {
+                std::lock_guard<std::mutex> lk(namesLock);
+                names.push_back(new std::string(o.name.empty() ? "REPAIR SHOP" : o.name));
+                name = names.back()->c_str();
+            }
+            w.addStation(V3(o.p.x, w.height(o.p.x, o.p.z), o.p.z), o.yaw, name);
             break;
         }
         default: break;
@@ -327,8 +335,7 @@ bool parseLevelText(const std::string& text, Level& lv, std::string* error) {
     std::string line;
     int lineNo = 0;
     bool header = false;
-    static int gridN = 0;
-    if (!gridN) gridN = World(MAP_FREEWAY).gridSize();
+    static const int gridN = World(MAP_FREEWAY).gridSize();  // (made once, thread-safely)
     auto fail = [&](const std::string& why) {
         if (error) *error = "LINE " + std::to_string(lineNo) + ": " + why;
         return false;

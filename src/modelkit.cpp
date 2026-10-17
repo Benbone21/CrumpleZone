@@ -7,11 +7,21 @@
 #include <cstdio>
 #include <cstring>
 #include <memory>
+#include <mutex>
 
 #include "font.h"
 #include "platform.h"
 
 namespace mk {
+
+namespace {
+// The picks and the mesh cache are shared by every thread that builds a world (the test runner builds several at once; a
+// server may too). One lock covers loading the picks, the cache and the lookups on them. Recursive: loadChoices drops the cache.
+std::recursive_mutex& picksLock() {
+    static std::recursive_mutex m;
+    return m;
+}
+}  // namespace
 
 // ---- Mesh, params, catalog ----------------------------------------------------------
 
@@ -134,6 +144,8 @@ struct Ico {
 
 const Ico& ico(int sub) {
     static std::unique_ptr<Ico> cache[4];
+    static std::mutex made;  // (builders run on several threads; each table is made once and never changes)
+    std::lock_guard<std::mutex> lk(made);
     sub = std::clamp(sub, 0, 3);
     if (cache[sub]) return *cache[sub];
     Ico m;
@@ -569,6 +581,7 @@ std::map<std::string, Choice>& choices() {
 }
 
 std::string choicesPath() {
+    std::lock_guard<std::recursive_mutex> lk(picksLock());
     static std::string found;
     if (!found.empty()) return found;
     if (const char* env = std::getenv("CZ_MODEL_PICKS")) return found = env;
@@ -604,6 +617,7 @@ bool loaded = false;
 }  // namespace
 
 bool loadChoices(const std::string& path) {
+    std::lock_guard<std::recursive_mutex> lk(picksLock());
     loaded = true;
     FILE* f = path.empty() ? nullptr : std::fopen(path.c_str(), "r");
     if (!f) return false;
@@ -685,6 +699,7 @@ bool saveChoices(const std::string& path) {
 }
 
 int pickedVariant(const ModelDef& def) {
+    std::lock_guard<std::recursive_mutex> lk(picksLock());
     if (!loaded) loadChoices(choicesPath());
     auto it = choices().find(def.id);
     const int v = it == choices().end() ? 0 : it->second.pick;
@@ -692,6 +707,7 @@ int pickedVariant(const ModelDef& def) {
 }
 
 P pickedParams(const ModelDef& def, int variant) {
+    std::lock_guard<std::recursive_mutex> lk(picksLock());
     if (!loaded) loadChoices(choicesPath());
     P p;
     if (def.variants.empty()) return p;
@@ -715,10 +731,17 @@ std::map<std::string, Mesh>& meshCache() {
 namespace {
 uint64_t version = 1;
 }
-void forgetMeshes() { meshCache().clear(), version++; }
+void forgetMeshes() {
+    std::lock_guard<std::recursive_mutex> lk(picksLock());
+    meshCache().clear(), version++;
+}
 uint64_t picksVersion() { return version; }
 
 const Mesh& modelMesh(const std::string& id) {
+    // (Locked for the whole build: another thread must not copy a mesh that's still being filled in. And the picks are loaded
+    // first: loading them drops the cache, which would pull `m` out from under us.)
+    std::lock_guard<std::recursive_mutex> lk(picksLock());
+    if (!loaded) loadChoices(choicesPath());
     auto it = meshCache().find(id);
     if (it != meshCache().end()) return it->second;
     Mesh& m = meshCache()[id];

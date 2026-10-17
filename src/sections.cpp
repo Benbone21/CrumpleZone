@@ -854,7 +854,12 @@ void dunes(Canvas& c) {
         c.setH(i, c.getH(i) * (1 - wgt) + h * wgt);
     });
     const int n = c.w.gridSize();
-    const int off[8] = {1, -1, n, -n, n + 1, n - 1, -n + 1, -n - 1};
+    const int off[8][2] = {{0, 1}, {0, -1}, {1, 0}, {-1, 0}, {1, 1}, {1, -1}, {-1, 1}, {-1, -1}};  // (cell steps, +1 in the id = j)
+    // The field cell next to grid cell `id` (-1: none; the map's edge is no neighbour, and a row's end doesn't wrap to the next).
+    auto next = [&](int id, const int (&d)[2]) {
+        const int i = id / n + d[0], j = id % n + d[1];
+        return i < 0 || j < 0 || i >= n || j >= n ? -1 : at[i * n + j];
+    };
     std::vector<float> tmp(mine.size());
     // Rounded crests and toes (a 3x3 kernel), then the repose: sand slides off anything steeper than kDuneRepose.
     for (int pass = 0; pass < kDuneSmooth; pass++) {
@@ -862,7 +867,7 @@ void dunes(Canvas& c) {
             const int id = c.cells[mine[m]].id;
             double sum = c.cells[mine[m]].h * 0.4, wsum = 0.4;
             for (int k = 0; k < 8; k++) {
-                const int j = at[id + off[k]];
+                const int j = next(id, off[k]);
                 if (j < 0) continue;
                 const double wk = k < 4 ? 0.1 : 0.05;
                 sum += c.cells[mine[j]].h * wk, wsum += wk;
@@ -873,13 +878,13 @@ void dunes(Canvas& c) {
     }
     // (Each pair of neighbours in place, sweeping the field forward then back, so a slope settles in a few passes.)
     const double tanR = std::tan(kDuneRepose * M_PI / 180);
-    const int fwd[4] = {1, n, n + 1, n - 1};
+    const int fwd[4][2] = {{0, 1}, {1, 0}, {1, 1}, {1, -1}};
     for (int pass = 0; pass < kDuneRelax; pass++)
         for (size_t mm = 0; mm < mine.size(); mm++) {
             const size_t m = pass & 1 ? mine.size() - 1 - mm : mm;
             Canvas::Cell& a = c.cells[mine[m]];
             for (int k = 0; k < 4; k++) {
-                const int j = at[a.id + fwd[k]];
+                const int j = next(a.id, fwd[k]);
                 if (j < 0) continue;
                 Canvas::Cell& b = c.cells[mine[j]];
                 const double lim = tanR * (k == 0 || k == 1 ? 1.0 : 1.4142), diff = a.h - b.h;
