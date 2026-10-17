@@ -118,4 +118,10 @@ jobs:
           cd dist
           for file in "${files[@]}"; do test -s "$file"; done
           sha256sum "${files[@]}" > SHA256SUMS
-          gh release create "$RELEASE_TAG" --verify-tag --title "Crumple Zone ${V}" --notes-file "../docs/releases/${RELEASE_TAG}.md" "${files[@]}" SHA256SUMS
+          # An existing release (a tag release made without the Mac files) just gets them added, with the
+          # checksums replaced by the full set; otherwise the release is created.
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${files[@]}" SHA256SUMS --clobber
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --title "Crumple Zone ${V}" --notes-file "../docs/releases/${RELEASE_TAG}.md" "${files[@]}" SHA256SUMS
+          fi

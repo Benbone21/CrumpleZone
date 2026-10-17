@@ -3,6 +3,9 @@
 #   (a check that every platform still builds; nothing is published).
 # - On a version tag (v1.2.3): also publishes them as a GitHub release, with the notes in
 #   docs/releases/<tag>.md when it exists (else GitHub writes them from the commits).
+#   The mac job is skipped on a pushed tag unless the repository variable RELEASE_MAC is "true"
+#   (Settings > Variables); the release then has the .deb and .exe only. To add the Mac files
+#   later: run this workflow by hand (Run workflow) on the tag, or use release-recovery.yml.
 name: release
 
 on:
@@ -102,6 +105,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Windows audio regression checks failed" }
 
   mac:
+    if: github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/') || vars.RELEASE_MAC == 'true'
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -178,7 +182,8 @@ jobs:
         with: { name: mac-smoke, path: "out-shot*\nshot.log", if-no-files-found: ignore }
 
   publish:
-    if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/V')
+    # mac may be skipped (see above); a failed or cancelled job still blocks the release.
+    if: ${{ !cancelled() && !failure() && (startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/V')) }}
     needs: [linux, windows, windows-cpu, mac]
     runs-on: ubuntu-24.04
     steps:
@@ -191,9 +196,15 @@ jobs:
         run: |
           V="${VERSION#[vV]}"
           ls -la dist
-          files=("dist/CrumpleZone-${V}-windows-setup.exe" "dist/CrumpleZone-${V}-linux.deb" "dist/CrumpleZone-${V}-mac.dmg" "dist/CrumpleZone-${V}-mac.zip")
-          for file in "${files[@]}"; do test -s "$file"; done
-          (cd dist && sha256sum "CrumpleZone-${V}-windows-setup.exe" "CrumpleZone-${V}-linux.deb" "CrumpleZone-${V}-mac.dmg" "CrumpleZone-${V}-mac.zip" > SHA256SUMS)
+          # Always the .exe and .deb; the Mac files only when the mac job built them (both or neither).
+          names=("CrumpleZone-${V}-windows-setup.exe" "CrumpleZone-${V}-linux.deb")
+          if [ -e "dist/CrumpleZone-${V}-mac.dmg" ] || [ -e "dist/CrumpleZone-${V}-mac.zip" ]; then
+            names+=("CrumpleZone-${V}-mac.dmg" "CrumpleZone-${V}-mac.zip")
+          fi
+          for name in "${names[@]}"; do test -s "dist/$name"; done
+          (cd dist && sha256sum "${names[@]}" > SHA256SUMS)
+          files=()
+          for name in "${names[@]}"; do files+=("dist/$name"); done
           files+=("dist/SHA256SUMS")
           notes=(--generate-notes)
           if [ -f "docs/releases/${GITHUB_REF_NAME}.md" ]; then notes=(--notes-file "docs/releases/${GITHUB_REF_NAME}.md"); fi
