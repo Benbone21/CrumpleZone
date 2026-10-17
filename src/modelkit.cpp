@@ -1,4 +1,5 @@
 #include "modelkit.h"
+#include "meshopt.h"
 
 #include <algorithm>
 #include <array>
@@ -82,7 +83,19 @@ void build(const ModelDef& def, int variant, const P& p, Mesh& out) {
     for (const auto& kv : p.v) full.v[kv.first] = kv.second;
     B b(out);
     if (var.build) var.build(b, full);
+    if (simplifyModels() && simplified(def)) optimizeMesh(out);
     out.finish();
+}
+
+bool simplified(const ModelDef& def) {
+    static const std::set<std::string> own = {"tree_pine", "tree_broadleaf", "tree_snag", "bush", "stump",  // (plants and trees)
+                                              "drive_shaft", "tie_rod", "control_arm", "cv_axle", "torn_end", "bed_gate", "tire_part"};  // (a car's)
+    return def.category != "PARTS" && !own.count(def.id);
+}
+
+bool& simplifyModels() {
+    static bool on = true;
+    return on;
 }
 
 // ---- Helpers ----------------------------------------------------------------------------

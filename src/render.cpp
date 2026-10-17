@@ -13,6 +13,8 @@
 #include "font.h"
 #include "groundtex.h"
 #include "fx.h"
+#include "platform.h"
+#include <cstring>
 
 using namespace gl;
 
@@ -29,6 +31,7 @@ uniform sampler2DShadow uShadow0, uShadow1;  // near and far cascade
 uniform mat4 uLightVP0, uLightVP1;
 uniform vec4 uShadowCfg;                     // on, PCF taps, -, -
 uniform float uTime, uClouds;
+uniform float uFogFar;  // (a short draw distance: the fog closes in to hide where the world stops; 0 off)
 // Time of day (daylight.h). uSun is the key light that shades and casts the shadows: the
 // sun by day, the moon by night; uSunDir is where the sun really is.
 uniform vec3 uKeyCol, uAmbSky, uAmbGround;
@@ -71,9 +74,9 @@ float pcf(sampler2DShadow tex, vec3 c, float radius, float rot){
 // the camera's target, blended into a coarse far one that reaches the treeline.
 // Shade from the clouds overhead: the same cloud layer the sky draws, traced toward the sun.
 float cloudShadow(vec3 p){
-  if (uClouds < 0.5) return 1.0;
+  if (uClouds <= 0.0) return 1.0;
   vec2 w = p.xz + uSun.xz / max(uSun.y, 0.2) * (1800.0 - p.y);
-  float cov = smoothstep(0.50, 0.78, fbm(w * 0.00045 + vec2(uTime * 0.004, uTime * 0.0015), 3));
+  float cov = smoothstep(0.50, 0.78, fbm(w * 0.00045 + vec2(uTime * 0.004, uTime * 0.0015), 3)) * uClouds;
   return 1.0 - 0.65 * cov;
 }
 float shadowMap(vec3 p, vec3 n){
@@ -161,10 +164,10 @@ vec3 skyColor(vec3 d, int oct){
     c = c * (1.0 - cover) + moon;
   }
   float cl = 0.0;
-  if (oct > 0 && uClouds > 0.5 && d.y > 0.0) {
+  if (oct > 0 && uClouds > 0.0 && d.y > 0.0) {
     vec2 p = (uCam.xz + d.xz * (1800.0 / max(d.y, 0.04))) * 0.00045 + vec2(uTime * 0.004, uTime * 0.0015);
     float n = fbm(p, oct), n2 = fbm(p + uSun.xz * 0.05, max(oct - 2, 1));
-    float cov = smoothstep(0.50, 0.78, n) * smoothstep(0.02, 0.22, d.y);
+    float cov = smoothstep(0.50, 0.78, n) * smoothstep(0.02, 0.22, d.y) * uClouds;
     float lit = clamp(0.62 + (n - n2) * 2.4, 0.25, 1.0);  // edges facing the key light (moonlit at night)
     vec3 cc = mix(uCloudDark, uCloudLit, lit) + uSunGlow * pow(sd, 12.0) * 0.8
             + vec3(0.10, 0.12, 0.16) * moonLit * uNight * pow(md, 12.0);
@@ -221,7 +224,10 @@ vec3 applyFog(vec3 col, vec3 pos){
   float fog = 1.0 - exp(-0.0007 * exp(-b * max(uCam.y, 0.0)) * dist * k);
   vec3 dir = d / max(dist, 1e-3);
   vec3 fc = skyColor(vec3(dir.x, max(dir.y, 0.02) * 0.3, dir.z), 0);
-  return mix(col, fc, fog);
+  col = mix(col, fc, fog);
+  // (Past the draw distance there's only sky: the land fades into the sky behind it, so the edge doesn't show.)
+  if (uFogFar > 0.0) col = mix(col, skyColor(vec3(dir.x, max(dir.y, 0.0), dir.z), 0), smoothstep(uFogFar * 0.45, uFogFar * 0.97, dist));
+  return col;
 }
 vec4 finishColor(vec3 col, vec3 pos, float alpha){ return vec4(applyFog(col, pos), alpha); }
 )";
@@ -1558,9 +1564,9 @@ float grassShadow(vec3 p){
     sh = far;
     if (e0 < 0.5 && c0.z < 1.0) sh = mix(texture(uShadow0, vec3(c0.xy, c0.z - 0.00012)), far, smoothstep(0.42, 0.5, e0));
   }
-  if (uClouds > 0.5) {
+  if (uClouds > 0.0) {
     vec2 w = p.xz + uSun.xz / max(uSun.y, 0.2) * (1800.0 - p.y);
-    sh *= 1.0 - 0.65 * smoothstep(0.50, 0.78, fbm(w * 0.00045 + vec2(uTime * 0.004, uTime * 0.0015), 3));
+    sh *= 1.0 - 0.65 * uClouds * smoothstep(0.50, 0.78, fbm(w * 0.00045 + vec2(uTime * 0.004, uTime * 0.0015), 3));
   }
   return sh;
 }
@@ -1924,6 +1930,7 @@ in vec2 vUv; out vec4 oCol;
 uniform sampler2D uScene, uBloom, uAO, uDepth;
 uniform float uBloomK, uAOK, uBlur, uBlurNorm, uExposure, uNight;
 uniform vec2 uAOTexel, uNearFar;
+uniform vec3 uSharpen;  // (x: strength, 0 off; yz: the scene's texel) a low render scale, sharpened as it's scaled up
 float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float linZ(vec2 uv){
   float d = texture(uDepth, uv).r * 2.0 - 1.0, n = uNearFar.x, f = uNearFar.y;
@@ -1943,6 +1950,12 @@ float aoAt(vec2 uv){  // depth-aware 3x3 blur of the half-res AO
 vec3 aces(vec3 x){ return clamp(x * (2.51 * x + 0.03) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
 void main(){
   vec3 c = texture(uScene, vUv).rgb;
+  if (uSharpen.x > 0.0) {  // (contrast-limited: the cross of neighbours pulls it apart, held within their range so edges don't ring)
+    vec3 n0 = texture(uScene, vUv + vec2(uSharpen.y, 0.0)).rgb, n1 = texture(uScene, vUv - vec2(uSharpen.y, 0.0)).rgb;
+    vec3 n2 = texture(uScene, vUv + vec2(0.0, uSharpen.z)).rgb, n3 = texture(uScene, vUv - vec2(0.0, uSharpen.z)).rgb;
+    vec3 lo = min(min(min(n0, n1), min(n2, n3)), c), hi = max(max(max(n0, n1), max(n2, n3)), c);
+    c = clamp(c + (c - 0.25 * (n0 + n1 + n2 + n3)) * uSharpen.x, lo, hi);
+  }
   if (any(isnan(c)) || any(isinf(c))) c = vec3(0.0);
   if (uAOK > 0.0) c *= mix(1.0, aoAt(vUv), uAOK);
   vec3 b = texture(uBloom, vUv).rgb;
@@ -1975,7 +1988,104 @@ GLuint compileShader(GLenum type, const char* src, std::string& err) {
     return s;
 }
 
+// ---- Linked programs kept on disk (shaderCacheDir()/<hash>.bin): the second launch skips compiling. The key is the
+// sources and the driver (vendor, renderer, version); a binary the driver turns down is compiled afresh and replaced.
+namespace {
+std::string gShaderCacheDir;
+int gBinaryFormats = -1;  // (-1: not asked yet)
+uint64_t fnv(uint64_t h, const char* p, size_t n) {
+    for (size_t i = 0; i < n; i++) h = (h ^ (unsigned char)p[i]) * 1099511628211ull;
+    return h;
+}
+bool binariesOk() {
+    if (gShaderCacheDir.empty() || !GetProgramBinary || !ProgramBinary || !ProgramParameteri) return false;
+    if (gBinaryFormats < 0) {
+        gBinaryFormats = 0;
+        GLint major = 0, minor = 0;
+        GetIntegerv(0x821B, &major), GetIntegerv(0x821C, &minor);  // GL_MAJOR_VERSION, GL_MINOR_VERSION
+        bool ext = major > 4 || (major == 4 && minor >= 1);
+        GLint count = 0;
+        GetIntegerv(GL_NUM_EXTENSIONS, &count);
+        for (GLint i = 0; i < count && !ext; i++) {
+            const char* name = (const char*)GetStringi(GL_EXTENSIONS, (GLuint)i);
+            ext = name && !std::strcmp(name, "GL_ARB_get_program_binary");
+        }
+        if (ext) GetIntegerv(GL_NUM_PROGRAM_BINARY_FORMATS, &gBinaryFormats);
+        std::printf("shader cache: %d binary formats%s\n", gBinaryFormats, gBinaryFormats > 0 ? "" : " (compiling every launch)");
+    }
+    return gBinaryFormats > 0;
+}
+std::string shaderCachePath(const std::string& vs, const std::string& fs) {
+    uint64_t h = 1469598103934665603ull;
+    h = fnv(h, vs.data(), vs.size()), h = fnv(h, "|", 1), h = fnv(h, fs.data(), fs.size());
+    for (GLenum e : {GL_VENDOR, GL_RENDERER, GL_VERSION}) {
+        const char* t = (const char*)GetString(e);
+        if (t) h = fnv(h, t, std::strlen(t));
+    }
+    char name[40];
+    std::snprintf(name, sizeof name, "/%016llx.bin", (unsigned long long)h);
+    return gShaderCacheDir + name;
+}
+GLuint loadCachedProgram(const std::string& path) {
+    FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) return 0;
+    uint32_t format = 0;
+    std::vector<char> data;
+    if (std::fread(&format, 4, 1, f) == 1) {
+        std::fseek(f, 0, SEEK_END);
+        const long n = std::ftell(f) - 4;
+        if (n > 0 && n < (64 << 20)) {
+            data.resize((size_t)n);
+            std::fseek(f, 4, SEEK_SET);
+            if (std::fread(data.data(), 1, data.size(), f) != data.size()) data.clear();
+        }
+    }
+    std::fclose(f);
+    if (data.empty()) return 0;
+    GLuint p = CreateProgram();
+    ProgramBinary(p, format, data.data(), (GLsizei)data.size());
+    GLint ok = 0;
+    GetProgramiv(p, GL_LINK_STATUS, &ok);
+    if (ok) return p;
+    DeleteProgram(p);  // (a new driver, or a corrupt file: compiled again below, and the file replaced)
+    return 0;
+}
+void saveCachedProgram(GLuint p, const std::string& path) {
+    GLint n = 0;
+    GetProgramiv(p, GL_PROGRAM_BINARY_LENGTH, &n);
+    if (n <= 0) return;
+    std::vector<char> data((size_t)n);
+    GLenum format = 0;
+    GLsizei got = 0;
+    GetProgramBinary(p, n, &got, &format, data.data());
+    if (got <= 0) return;
+    makeDir(gShaderCacheDir);
+    const std::string tmp = path + ".tmp";
+    FILE* f = std::fopen(tmp.c_str(), "wb");
+    if (!f) return;
+    const uint32_t fmt = format;
+    const bool ok = std::fwrite(&fmt, 4, 1, f) == 1 && std::fwrite(data.data(), 1, (size_t)got, f) == (size_t)got;
+    std::fclose(f);
+    if (ok) {
+        std::remove(path.c_str());  // (Windows won't rename over a file)
+        std::rename(tmp.c_str(), path.c_str());
+    } else std::remove(tmp.c_str());
+}
+}  // namespace
+
+}  // namespace
+void setShaderCacheDir(const std::string& dir) { gShaderCacheDir = dir; }
+ShaderCacheStats gShaderCacheStats;
+namespace {
+
 GLuint linkProgram(const std::string& vsSrc, const std::string& fsSrc, std::string& err) {
+    const bool cache = binariesOk();
+    const std::string path = cache ? shaderCachePath(vsSrc, fsSrc) : std::string();
+    if (cache)
+        if (GLuint p = loadCachedProgram(path)) {
+            gShaderCacheStats.hits++;
+            return p;
+        }
     const char* vs = vsSrc.c_str();
     const char* fs = fsSrc.c_str();
     GLuint v = compileShader(GL_VERTEX_SHADER, vs, err);
@@ -1984,6 +2094,7 @@ GLuint linkProgram(const std::string& vsSrc, const std::string& fsSrc, std::stri
     GLuint p = CreateProgram();
     AttachShader(p, v);
     AttachShader(p, f);
+    if (cache) ProgramParameteri(p, GL_PROGRAM_BINARY_RETRIEVABLE_HINT, 1);
     LinkProgram(p);
     DeleteShader(v);
     DeleteShader(f);
@@ -1995,6 +2106,8 @@ GLuint linkProgram(const std::string& vsSrc, const std::string& fsSrc, std::stri
         err += log;
         return 0;
     }
+    gShaderCacheStats.compiled++;
+    if (cache) saveCachedProgram(p, path);
     return p;
 }
 
@@ -2320,9 +2433,10 @@ void Renderer::postProcess(const View& view, const M4& proj) {
     Disable(GL_DEPTH_TEST);
     Disable(GL_BLEND);
     BindVertexArray(postVao);
-    const float nearZ = 0.05f, farZ = 6000.0f;
+    const float nearZ = 0.05f, farZ = farZ_;
 
-    if (rs.ao) {
+    const bool ao = fadeAO_ > 0, bloom = fadeBloom_ > 0;
+    if (ao) {
         BindFramebuffer(GL_FRAMEBUFFER, aoFbo);
         Viewport(0, 0, aoW, aoH);
         UseProgram(progAO);
@@ -2338,7 +2452,7 @@ void Renderer::postProcess(const View& view, const M4& proj) {
         DrawArrays(GL_TRIANGLES, 0, 3);
     }
 
-    const bool chain = rs.bloom || rs.blur > 0;
+    const bool chain = bloom || rs.blur > 0;
     if (chain) {
         UseProgram(progDown);
         Uniform1i(uniformLocation(progDown, "uSrc"), 0);
@@ -2379,14 +2493,15 @@ void Renderer::postProcess(const View& view, const M4& proj) {
     ActiveTexture(GL_TEXTURE0);
     // The chain sums kBloomLevels blurred copies: normalize it here.
     // (More glow round the lamps at night, when the eye is open wide.)
-    Uniform1f(uniformLocation(progComposite, "uBloomK"), rs.bloom && rs.blur <= 0 ? 0.08f * (1 + 0.8f * daylight.night) / kBloomLevels : 0.0f);
+    Uniform1f(uniformLocation(progComposite, "uBloomK"), bloom && rs.blur <= 0 ? fadeBloom_ * 0.08f * (1 + 0.8f * daylight.night) / kBloomLevels : 0.0f);
     Uniform1f(uniformLocation(progComposite, "uNight"), daylight.night);
     Uniform1f(uniformLocation(progComposite, "uBlur"), chain ? rs.blur : 0.0f);
     Uniform1f(uniformLocation(progComposite, "uBlurNorm"), 0.8f / kBloomLevels);
-    Uniform1f(uniformLocation(progComposite, "uAOK"), rs.ao ? 0.75f : 0.0f);
+    Uniform1f(uniformLocation(progComposite, "uAOK"), ao ? 0.75f * fadeAO_ : 0.0f);
     Uniform1f(uniformLocation(progComposite, "uExposure"), daylight.exposure);
     Uniform2f(uniformLocation(progComposite, "uAOTexel"), 1.0f / aoW, 1.0f / aoH);
     Uniform2f(uniformLocation(progComposite, "uNearFar"), nearZ, farZ);
+    Uniform3f(uniformLocation(progComposite, "uSharpen"), rs.sharpen ? 0.8f : 0.0f, 1.0f / w, 1.0f / h);
     DrawArrays(GL_TRIANGLES, 0, 3);
     Enable(GL_DEPTH_TEST);
 }
@@ -2547,10 +2662,18 @@ void Renderer::drawTerrain(const M4& vp, const View& view) {
     geometryStats_.terrainChunks = (unsigned)terrainChunks.size();
     // Keep collision-scale detail nearby; select distance from the nearest point
     // of the chunk, not its center, to protect terrain under the camera.
-    for (const auto& chunk : terrainChunks) {
+    // Nearest first, so a hill hides the land behind it before that's shaded.
+    static std::vector<std::pair<float, int>> terrainOrder_;  // (kept: no allocation a frame)
+    terrainOrder_.clear();
+    for (size_t i = 0; i < terrainChunks.size(); i++) {
+        const auto& chunk = terrainChunks[i];
         geometryStats_.terrainFullTriangles += chunk.count[0] / 3;
-        if (!chunk.bounds.visible(vp)) continue;
-        const double distance = chunk.bounds.distance(view.eye);
+        if (chunk.bounds.visible(vp)) terrainOrder_.push_back({(float)chunk.bounds.distance(view.eye), (int)i});
+    }
+    std::sort(terrainOrder_.begin(), terrainOrder_.end());
+    for (const auto& o : terrainOrder_) {
+        const auto& chunk = terrainChunks[o.second];
+        const double distance = o.first;
         const int lod = distance < 100 ? 0 : distance < 220 ? 1 : distance < 450 ? 2 : 3;
         DrawElements(GL_TRIANGLES, chunk.count[lod], GL_UNSIGNED_INT,
                      reinterpret_cast<const void*>((uintptr_t)chunk.first[lod] * sizeof(unsigned)));
@@ -2780,20 +2903,7 @@ void Renderer::buildBackdrop(const World& world, std::vector<Vtx>& verts, std::v
 
 void Renderer::buildBoxes(const World& world) {
     std::vector<Vtx> v;
-    for (const Box& b : world.boxes) {
-        if (b.hidden || b.rock) continue;  // rock slabs are drawn with the rocks
-        double he[3] = {b.h.x, b.h.y, b.h.z};
-        for (int axis = 0; axis < 3; axis++)
-            for (int s = -1; s <= 1; s += 2) {
-                int u = (axis + 1) % 3, w = (axis + 2) % 3;
-                V3 n = b.ax[axis] * s;
-                V3 c = b.c + n * he[axis];
-                V3 du = b.ax[u] * he[u], dw = b.ax[w] * he[w];
-                V3 q[4] = {c - du - dw, c + du - dw, c + du + dw, c - du + dw};
-                const int order[6] = {0, 1, 2, 0, 2, 3};
-                for (int k : order) v.push_back(vtx(q[k], n, b.col[0], b.col[1], b.col[2], SM_CONCRETE));
-            }
-    }
+    buildBoxMesh(world, v);
     uploadBatches(boxVao, boxVbo, v, boxBatches);
     boxVertexCount = (int)v.size();
 }
@@ -3531,6 +3641,7 @@ void Renderer::drawCarBodies(const Sim& sim, GLuint prog, bool glassPass) {
 }
 
 void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effects* effects) {
+    passMark(FP_OPAQUE);
     buildFigures();
     prepareCars(sim, debug);
 
@@ -3564,6 +3675,12 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         }
     }
 
+    {  // (switched effects ease rather than pop)
+        const float step = (float)clampd(view.time - fadeClock_, 0.0, 0.1) / 0.6f;
+        fadeClock_ = view.time;
+        auto ease = [&](float& f, bool on) { f = f < 0 ? (on ? 1.0f : 0.0f) : on ? std::min(1.0f, f + step) : std::max(0.0f, f - step); };
+        ease(fadeAO_, settings.ao), ease(fadeBloom_, settings.bloom), ease(fadeClouds_, settings.clouds);
+    }
     static const int kShadowRes[4] = {0, 1024, 2048, 4096}, kShadowTaps[4] = {0, 5, 9, 16};
     const int sq = std::min(std::max(settings.shadows, 0), 3);
     if (sq) ensureShadows(kShadowRes[sq]);
@@ -3594,17 +3711,20 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     Disable(GL_CULL_FACE);
 
     // Scanned props: rebuild the scenery if their quality changed, pick the scatter round the camera.
+    passMark(FP_PROPS);
     if (settings.props != propsApplied) updateObjects(sim.world);
     static const bool noSeeThrough = std::getenv("CZ_NO_SEETHROUGH") != nullptr;  // (for comparing screenshots)
     const SeeThrough seeThrough{view.eye, view.focus, view.hasFocus && !noSeeThrough, noSeeThrough ? 0.0f : view.fadeNear};
     props.setSeeThrough(seeThrough);
     props.beginFrame(sim.world, view.eye, M4(), propsOk ? settings.props : 0, view.time);
 
-    M4 proj = perspective(view.fovy, (float)view.width / std::max(1, view.height), 0.05f, 6000.0f);
+    farZ_ = settings.drawDistance > 0 ? std::max(150.0f, settings.drawDistance) : 6000.0f;  // (a draw distance: everything past it is clipped)
+    M4 proj = perspective(view.fovy, (float)view.width / std::max(1, view.height), 0.05f, farZ_);
     M4 vp = proj * lookAt(view.eye, view.target, view.up);
     geometryStats_ = {};
 
     // Shadow passes.
+    passMark(FP_SHADOWS);
     for (int c = 0; sq && c < 2; c++) {
         BindFramebuffer(GL_FRAMEBUFFER, shadowFbo[c]);
         Viewport(0, 0, shadowSize, shadowSize);
@@ -3634,6 +3754,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     }
 
     // Main pass, into the HDR target.
+    passMark(FP_SKY);
     BindFramebuffer(GL_FRAMEBUFFER, targetSamples ? msFbo : sceneFbo);
     Viewport(0, 0, targetW, targetH);
     ClearColor(kFog[0], kFog[1], kFog[2], 1);
@@ -3647,7 +3768,8 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         uniformV3(prog, "uCam", view.eye);
         Uniform3f(uniformLocation(prog, "uFog"), kFog[0], kFog[1], kFog[2]);
         Uniform1f(uniformLocation(prog, "uTime"), view.time);
-        Uniform1f(uniformLocation(prog, "uClouds"), settings.clouds ? 1.0f : 0.0f);
+        Uniform1f(uniformLocation(prog, "uClouds"), fadeClouds_);
+        Uniform1f(uniformLocation(prog, "uFogFar"), settings.drawDistance > 0 ? farZ_ : 0.0f);
         const Daylight& d = daylight;
         const std::pair<const char*, V3> sky[] = {
             {"uKeyCol", d.keyCol},     {"uAmbSky", d.ambSky},       {"uAmbGround", d.ambGround}, {"uSunDir", d.sunDir},
@@ -3707,68 +3829,14 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     else if (mapId == MAP_FRONTIER) Uniform2f(uniformLocation(progLit, "uRockSnow"), 125.0f, 400.0f);  // (its snow is painted on)
     else if (mapId == MAP_BACKCOUNTRY) Uniform2f(uniformLocation(progLit, "uRockSnow"), 105.0f, 400.0f);  // (its snow is painted on)
     else Uniform2f(uniformLocation(progLit, "uRockSnow"), 60.0f, 240.0f);
-    // The ground: photo-scanned materials where they're loaded, else the procedural look.
-    int gq = std::min(std::max(settings.ground, 0), 3);
-    if (gq && !groundFailed) {
-        const int want = gq >= 2 ? 1024 : 512;
-        if (!groundTex.ok() || groundSize != want) {
-            std::string gerr;
-            if (loadGroundTextures(groundTex, want, gerr)) groundSize = want;
-            else {
-                std::fprintf(stderr, "ground textures: %s (staying procedural)\n", gerr.c_str());
-                groundFailed = true;
-            }
-        }
-    }
-    if (groundFailed || !groundTex.ok()) gq = 0;
-    if (gq) {
-        setLighting(progTerrain);
-        uniformM4(progTerrain, "uModel", m4identity());
-        bindTerrainTex(progTerrain);
-        Uniform1i(uniformLocation(progTerrain, "uMap"), mapId);
-        float rs[2];
-        if (mapId == MAP_MOUNTAIN) rs[0] = 165.0f, rs[1] = 205.0f;
-        else if (mapId == MAP_FRONTIER) rs[0] = 125.0f, rs[1] = 400.0f;
-        else if (mapId == MAP_BACKCOUNTRY) rs[0] = 105.0f, rs[1] = 400.0f;
-        else rs[0] = 60.0f, rs[1] = 240.0f;
-        Uniform2f(uniformLocation(progTerrain, "uRockSnow"), rs[0], rs[1]);
-        ActiveTexture(GL_TEXTURE0 + 3);
-        BindTexture(GL_TEXTURE_2D_ARRAY, groundTex.albedo);
-        ActiveTexture(GL_TEXTURE0 + 4);
-        BindTexture(GL_TEXTURE_2D_ARRAY, groundTex.normal);
-        ActiveTexture(GL_TEXTURE0);
-        Uniform1i(uniformLocation(progTerrain, "uGroundA"), 3);
-        Uniform1i(uniformLocation(progTerrain, "uGroundB"), 4);
-        Uniform1i(uniformLocation(progTerrain, "uGroundQ"), gq);
-    } else {
-        UseProgram(progLit);
-    }
-    drawTerrain(vp, view);
-    if (effects) {
-        // The ground shoved up beside tire tracks and round sunk tires, painted like the
-        // terrain under it.
-        static GLuint rutVao = 0, rutVbo = 0;
-        static std::vector<Vtx> rutVerts;
-        if (!rutVao) {
-            GenVertexArrays(1, &rutVao);
-            GenBuffers(1, &rutVbo);
-            setupVtxVao(rutVao, rutVbo);
-        }
-        rutVerts.clear();
-        effects->buildRutWalls(sim, view.eye, rutVerts);
-        if (!rutVerts.empty()) {
-            BindBuffer(GL_ARRAY_BUFFER, rutVbo);
-            BufferData(GL_ARRAY_BUFFER, rutVerts.size() * sizeof(Vtx), rutVerts.data(), GL_STREAM_DRAW);
-            BindVertexArray(rutVao);
-            DrawArrays(GL_TRIANGLES, 0, (GLsizei)rutVerts.size());
-        }
-    }
+    passMark(FP_OPAQUE);
     UseProgram(progLit);
     drawBatches(boxVao, boxBatches, vp, false);
     if (figVertexCount > 0) {
         BindVertexArray(figVao);
         DrawArrays(GL_TRIANGLES, 0, figVertexCount);
     }
+    passMark(FP_VEG);
     // The code-made trees the camera sees through (close to it, or across the line to the car) dither away:
     // the few most hidden go to the shader as (x, z, reach, fade).
     {
@@ -3802,13 +3870,17 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         if (n) Uniform4fv(uniformLocation(progTree, "uTreeFade"), n, list);
     }
     geometryStats_.sceneryVertices += trees_.draw(vp, view.eye);
+    passMark(FP_PROPS);
     UseProgram(progLit);
     drawBatches(sceneryVao, sceneryBatches, vp, false);
+    passMark(FP_VEG);
     drawBushes(vp, view.eye, false);
+    passMark(FP_PROPS);
     props.draw(vp, [&](GLuint prog) {
         setLighting(prog);
         Uniform1i(uniformLocation(prog, "uMap"), mapId);
     });
+    passMark(FP_VEG);
     UseProgram(progLit);
     if (settings.grass > 0) {
         // The grass: rings of tufts, finer near the camera (one grid each), as many as the setting allows.
@@ -3879,6 +3951,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         if (timed) EndQuery(GL_TIME_ELAPSED);
         setLighting(progLit);
     }
+    passMark(FP_OPAQUE);
     BindVertexArray(dynVao);
     DrawArrays(GL_TRIANGLES, 0, (GLsizei)partVerts.size());
     drawWheels(sim, progLit);
@@ -3886,6 +3959,58 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     setLighting(progCar);
     drawCarBodies(sim, progCar, false);
 
+    // The ground last of the solid things, nearest chunks first: what's in front of it (cars, rocks, trees, grass, nearer
+    // hills) has its depth down already, so the ground's costly shader only runs where the ground shows.
+    passMark(FP_TERRAIN);
+    // The ground: photo-scanned materials where they're loaded, else the procedural look.
+    int gq = std::min(std::max(settings.ground, 0), 3);
+    ensureGround(gq);
+    if (groundFailed || !groundTex.ok()) gq = 0;
+    if (gq) {
+        setLighting(progTerrain);
+        uniformM4(progTerrain, "uModel", m4identity());
+        bindTerrainTex(progTerrain);
+        Uniform1i(uniformLocation(progTerrain, "uMap"), mapId);
+        float rs[2];
+        if (mapId == MAP_MOUNTAIN) rs[0] = 165.0f, rs[1] = 205.0f;
+        else if (mapId == MAP_FRONTIER) rs[0] = 125.0f, rs[1] = 400.0f;
+        else if (mapId == MAP_BACKCOUNTRY) rs[0] = 105.0f, rs[1] = 400.0f;
+        else rs[0] = 60.0f, rs[1] = 240.0f;
+        Uniform2f(uniformLocation(progTerrain, "uRockSnow"), rs[0], rs[1]);
+        ActiveTexture(GL_TEXTURE0 + 3);
+        BindTexture(GL_TEXTURE_2D_ARRAY, groundTex.albedo);
+        ActiveTexture(GL_TEXTURE0 + 4);
+        BindTexture(GL_TEXTURE_2D_ARRAY, groundTex.normal);
+        ActiveTexture(GL_TEXTURE0);
+        Uniform1i(uniformLocation(progTerrain, "uGroundA"), 3);
+        Uniform1i(uniformLocation(progTerrain, "uGroundB"), 4);
+        Uniform1i(uniformLocation(progTerrain, "uGroundQ"), gq);
+    } else {
+        UseProgram(progLit);
+        uniformM4(progLit, "uModel", m4identity());  // (the wheels moved it)
+    }
+    drawTerrain(vp, view);
+    if (effects) {
+        // The ground shoved up beside tire tracks and round sunk tires, painted like the
+        // terrain under it.
+        static GLuint rutVao = 0, rutVbo = 0;
+        static std::vector<Vtx> rutVerts;
+        if (!rutVao) {
+            GenVertexArrays(1, &rutVao);
+            GenBuffers(1, &rutVbo);
+            setupVtxVao(rutVao, rutVbo);
+        }
+        rutVerts.clear();
+        effects->buildRutWalls(sim, view.eye, rutVerts);
+        if (!rutVerts.empty()) {
+            BindBuffer(GL_ARRAY_BUFFER, rutVbo);
+            BufferData(GL_ARRAY_BUFFER, rutVerts.size() * sizeof(Vtx), rutVerts.data(), GL_STREAM_DRAW);
+            BindVertexArray(rutVao);
+            DrawArrays(GL_TRIANGLES, 0, (GLsizei)rutVerts.size());
+        }
+    }
+
+    passMark(FP_FX);
     if (effects) {
         fxVerts.clear();
         effects->buildSkids(view.eye, fxVerts);
@@ -4004,8 +4129,66 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         DrawArrays(GL_POINTS, (GLint)lineCount, (GLsizei)(lineVerts.size() - lineCount));
         Enable(GL_DEPTH_TEST);
     }
+    passMark(FP_POST);
     postProcess(view, proj);
+    passMark(FP_PROPS);
     props.endFrame();
+}
+
+void Renderer::ensureGround(int gq) {
+    if (!gq || groundFailed) return;
+    const int want = gq >= 2 ? 1024 : 512;
+    if (groundTex.ok() && groundSize == want) return;
+    std::string gerr;
+    if (loadGroundTextures(groundTex, want, gerr)) groundSize = want;
+    else {
+        std::fprintf(stderr, "ground textures: %s (staying procedural)\n", gerr.c_str());
+        groundFailed = true;
+    }
+}
+
+// Behind the loading screen: what the first frames would otherwise load mid-game (the ground's textures, the shadow
+// maps, the scanned props for this quality).
+void Renderer::preload(const World& world) {
+    ensureGround(std::min(std::max(settings.ground, 0), 3));
+    static const int kShadowRes[4] = {0, 1024, 2048, 4096};
+    if (settings.shadows > 0) ensureShadows(kShadowRes[std::min(settings.shadows, 3)]);
+    if (settings.props != propsApplied) updateObjects(world);
+}
+
+void Renderer::passMark(FramePass p) {
+    if (syncTiming) Finish();
+    frameProfile().enter(p);
+    if (!gpuTiming) return;
+    GpuMarks& m = gpuMarks_[gpuMarkFrame_];
+    if (m.n >= GpuMarks::kMax) return;
+    if (!m.q[0]) GenQueries(GpuMarks::kMax, m.q);
+    QueryCounter(m.q[m.n], GL_TIMESTAMP);
+    m.pass[m.n++] = (uint8_t)p;
+}
+
+// The slot about to be reused was filled four frames ago: its timestamps are in by now (if not, that frame goes unread
+// rather than stalling on the GPU). Each stage's GPU time is from its mark to the next.
+void Renderer::gpuFrameBegin() {
+    gpuMarkFrame_ = (gpuMarkFrame_ + 1) % 4;
+    GpuMarks& m = gpuMarks_[gpuMarkFrame_];
+    if (m.n >= 2) {
+        GLint ready = 0;
+        GetQueryObjectiv(m.q[m.n - 1], GL_QUERY_RESULT_AVAILABLE, &ready);
+        if (ready) {
+            double ms[FP_COUNT];
+            for (int i = 0; i < FP_COUNT; i++) ms[i] = framePassDraws((FramePass)i) ? 0 : -1;
+            GLuint64 prev = 0;
+            for (int k = 0; k < m.n; k++) {
+                GLuint64 t = 0;
+                GetQueryObjectui64v(m.q[k], GL_QUERY_RESULT, &t);
+                if (k && t >= prev && framePassDraws((FramePass)m.pass[k - 1])) ms[m.pass[k - 1]] += (t - prev) / 1e6;
+                prev = t;
+            }
+            frameProfile().setGpu(ms);
+        }
+    }
+    m.n = 0;
 }
 
 void Renderer::text(float x, float y, float s, const std::string& str, float r, float g, float b, float a) {

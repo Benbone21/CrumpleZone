@@ -168,6 +168,9 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
     sleeping = false;
     stillTime = 0;
     impactEnergy = damage = 0;
+    shoveV = shoveP = V3();
+    heldHere = 0;
+    handBack = false;
     brokenBeams = 0;
     tirePops = 0;
     if (!grid) grid = std::make_unique<TriGrid>();

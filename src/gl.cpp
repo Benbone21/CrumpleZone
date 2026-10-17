@@ -9,6 +9,7 @@ std::map<GLuint, std::map<std::string, GLint, std::less<>>> uniformLocations;
 }
 #define CZ_DEFINE(ret, name, args) PFN_##name name = nullptr;
 CZ_GL_FUNCS(CZ_DEFINE)
+CZ_GL_OPTIONAL(CZ_DEFINE)
 #undef CZ_DEFINE
 
 const char* load(void* (*getProc)(const char*)) {
@@ -18,6 +19,9 @@ const char* load(void* (*getProc)(const char*)) {
     if (!name) return "gl" #name;
     CZ_GL_FUNCS(CZ_LOAD)
 #undef CZ_LOAD
+#define CZ_LOAD_OPTIONAL(ret, name, args) name = reinterpret_cast<PFN_##name>(getProc("gl" #name));
+    CZ_GL_OPTIONAL(CZ_LOAD_OPTIONAL)
+#undef CZ_LOAD_OPTIONAL
     return nullptr;
 }
 
