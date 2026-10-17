@@ -37,9 +37,7 @@ enum InteractKind {
     IA_STOW_CHAIN,    // put the chain you carry back in the truck
     IA_OPEN_CACHE,    // open a supply cache (career.h)
     IA_FIX,           // a repair (fixes.h): a CV axle, a tie rod, a new tire...
-    IA_OPEN_GATE,     // the tailgate / liftgate / bed gate (trunk.h)
-    IA_CLOSE_GATE,
-    IA_OPEN_INVENTORY,  // E at the back of your truck: what it carries, as a menu (invmenu.h); a shut gate swings open with it
+    IA_OPEN_INVENTORY,  // E at the back of your truck: what it carries, as a menu (invmenu.h)
     IA_TAKE_ITEM,     // a tool, part or anchor out of the open back, into your hands
     IA_STOW_ITEM,     // ...and back in
 };
@@ -65,9 +63,9 @@ struct InteractOption {
 };
 
 struct Interact {
-    Kit kit;                 // the tools and parts you can use now (set by the game; sandbox: everything; trunk.h: within reach of the open back)
+    Kit kit;                 // the tools and parts you can use now (set by the game; sandbox: everything; trunk.h: within reach of the back)
     TrunkStock own;          // everything you own (the back's contents)
-    bool trunkOn = false;    // the game has set `own`: trucks with a back have to be opened (else the old way: the kit's on you)
+    bool trunkOn = false;    // the game has set `own`: your kit rides in the truck's back: the inventory (else the old way: the kit's on you)
     InteractOption current;  // what E does now (kind IA_NONE: nothing in reach)
     int usedPart = -1;       // set when a repair used a part (RepairPart): the game takes it from here
     bool waitRelease = false;  // a held job finished: E has to be let go before the next
