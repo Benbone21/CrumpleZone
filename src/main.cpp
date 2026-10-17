@@ -1703,8 +1703,8 @@ int main(int argc, char** argv) {
     if (opt.spawnSection >= 0) {  // (the obstacle sections' entries, facing along them)
         if (opt.spawnSection < (int)sim.world.sections.size()) {
             const World::SectionSpot& s = sim.world.sections[opt.spawnSection];
-            opt.spawnSet = true, opt.spawnX = s.entry.x, opt.spawnZ = s.entry.z, opt.spawnHeading = s.heading * 180 / M_PI;
-            std::printf("section %d %s: entry %.1f,%.1f heading %.1f deg\n", opt.spawnSection, s.name.c_str(), s.entry.x, s.entry.z, opt.spawnHeading);
+            opt.spawnSet = true, opt.spawnX = s.spawn.x, opt.spawnZ = s.spawn.z, opt.spawnHeading = s.spawnYaw * 180 / M_PI;  // (on its pad, a little before the entry)
+            std::printf("section %d %s: entry %.1f,%.1f start %.1f,%.1f heading %.1f deg\n", opt.spawnSection, s.name.c_str(), s.entry.x, s.entry.z, opt.spawnX, opt.spawnZ, opt.spawnHeading);
         } else std::printf("no section %d: the proving ground has %zu\n", opt.spawnSection, sim.world.sections.size());
     }
     if (opt.spawnSet) {
@@ -2070,7 +2070,7 @@ int main(int argc, char** argv) {
             V3 p = lv.hasStart ? lv.start : sim.world.spawn;
             double yaw = lv.hasStart ? lv.startYaw : sim.world.spawnYaw;
             if (lv.hasStart) LevelRun::gridSlot(lv, runSlot(), p, yaw);
-            else p += V3(std::sin(yaw), 0, std::cos(yaw)) * (6.5 * runSlot());  // (each player their own spot, side by side)
+            else if (!sim.world.spawnSlot(runSlot(), p, yaw)) p += V3(std::sin(yaw), 0, std::cos(yaw)) * (6.5 * runSlot());  // (each player their own place on the pad)
             Car& c = sim.cars[sim.player];
             c.respawn(V3(p.x, sim.world.clearY(p.x, p.z) + 0.05, p.z), yaw);
             c.setDown(sim.world);

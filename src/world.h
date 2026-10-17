@@ -83,6 +83,18 @@ struct Placed {
     float clipLo = -1e9f, clipHi = 1e9f;
 };
 
+// A spawn pad (spawnpad.h): the slab vehicles start on. A rectangle in its own frame: u ahead of p (the
+// way you face) from -back to +front, v to the left +-half, then a ramp `ramp` m long down to the ground
+// ahead (`drop` m lower at its end).
+struct SpawnPad {
+    V3 p;                      // the point vehicles start on (slot 0), on the slab
+    double yaw = 0;
+    double back = 0, front = 0, half = 0, ramp = 0, drop = 0;
+    int slots = 1, cols = 1;
+    double openAhead = 0;      // m of lane past the front kept clear of trees and rocks (a map's start: so it leads somewhere)
+    bool drawn = true;         // false: it was a concrete paddock already (nothing was changed or drawn)
+};
+
 // A repair station: a concrete pad under an open shed. Park on it, stop, and the crew
 // fixes whatever is broken.
 struct Station {
@@ -224,6 +236,8 @@ public:
         int type = 0;         // SectionType
         V3 entry, exit;       // on the ground
         double heading = 0;   // radians, the game's yaw
+        V3 spawn;             // where a vehicle starts to drive it: on its spawn pad, a little before the entry
+        double spawnYaw = 0;
     };
     std::vector<SectionSpot> sections;
     std::vector<Station> stations;
@@ -254,6 +268,10 @@ public:
     int map = MAP_PROVING_GROUND;
     V3 spawn;                    // where the player starts (on the ground)
     double spawnYaw = 0;
+    std::vector<SpawnPad> spawnPads;  // the slabs vehicles start on (spawnpad.h): the map's start, its parking, a level's start
+    // Slot k of the pad at the map's start (or the level's): where the kth vehicle starts and which way it faces. False
+    // when there's no such pad or it has no kth slot.
+    bool spawnSlot(int k, V3& p, double& yaw) const;
     std::vector<V3> parking;     // where the other vehicles start, facing parkingYaw
     double parkingYaw = M_PI / 2;
     bool crashProps = true;      // crash boxes and barriers (the proving ground)

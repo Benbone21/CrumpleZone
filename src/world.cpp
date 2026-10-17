@@ -5,6 +5,7 @@
 
 #include "props.h"
 #include "sections.h"
+#include "spawnpad.h"
 
 #include <algorithm>
 #include <atomic>
@@ -363,6 +364,8 @@ World::World(int m) : map(m) {
     else if (map == MAP_BACKCOUNTRY) buildBackcountry();
     else if (map == MAP_WILDS) buildWilds();
     else buildProvingGround();
+    // The slab the player starts on (and the parked trucks): in the game's proving ground, as the other maps are always built.
+    if (map != MAP_PROVING_GROUND || withShowcase) addMapSpawnPads(*this);
     buildGrid();
 }
 
@@ -486,7 +489,9 @@ void World::buildSectionPark() {
             f.entry.y = height(f.entry.x, f.entry.z);
             f.heading = s.heading;
             const SectionBuilt b = buildSection(*this, t, 1, f);
-            sections.push_back({sectionName(t), (int)t, b.entry, b.exit, s.heading});
+            // (Start from a slab on the flat run-in, a little before the entry, facing along it.)
+            const SpawnPad& pad = addSpawnPad(*this, b.entry - dir * 12.0, s.heading);
+            sections.push_back({sectionName(t), (int)t, b.entry, b.exit, s.heading, pad.p, s.heading});
             tags.push_back({sectionName(t), b.entry + V3(0, 5, 0)});
             along += fp.length + 2 * fp.apron + gap;
         }

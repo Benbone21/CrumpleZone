@@ -1346,8 +1346,13 @@ void NetSession::adopt(Sim& sim) {
         const V3 side = V3(std::sin(sim.world.spawnYaw), 0, std::cos(sim.world.spawnYaw));
         const V3 back = V3(-std::cos(sim.world.spawnYaw), 0, std::sin(sim.world.spawnYaw));
         V3 p = sim.world.spawn + side * (6.5 * self);
+        double yaw = sim.world.spawnYaw;
         for (int k = 0; k < 40; k++) {
-            const V3 q = sim.world.spawn + side * (6.5 * (self + k % 8)) + back * (9.0 * (k / 8));
+            // (The places on the spawn pad first, from mine round; then side by side along it.)
+            V3 q;
+            double qyaw = yaw;
+            if (!sim.world.spawnSlot((self + k) % net::kMaxPeers, q, qyaw))
+                q = sim.world.spawn + side * (6.5 * (self + k % 8)) + back * (9.0 * (k / 8)), qyaw = sim.world.spawnYaw;
             bool clear = true;
             for (int i = 0; i < (int)sim.cars.size() && clear; i++) {
                 if (i == sim.player) continue;
@@ -1357,11 +1362,11 @@ void NetSession::adopt(Sim& sim) {
                 if (d.x * d.x + d.z * d.z < r * r) clear = false;
             }
             if (clear) {
-                p = q;
+                p = q, yaw = qyaw;
                 break;
             }
         }
-        me.respawn(V3(p.x, sim.world.clearY(p.x, p.z) + 0.05, p.z), sim.world.spawnYaw);
+        me.respawn(V3(p.x, sim.world.clearY(p.x, p.z) + 0.05, p.z), yaw);
         me.setDown(sim.world);
     }
 }
