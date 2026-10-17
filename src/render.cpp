@@ -231,7 +231,10 @@ layout(location=0) in vec3 aPos;
 layout(location=1) in vec3 aNrm;
 layout(location=2) in vec4 aCol;
 uniform mat4 uVP; uniform mat4 uModel; uniform mat4 uLightVP;
-out vec3 vPos; out vec3 vNrm; out vec4 vCol; out vec4 vLight; out vec3 vLocal;
+// (centroid: with MSAA a pixel only partly on a thin triangle - a blade, a needle, a petal - would
+// otherwise take the colour extrapolated out past its corners, which can go negative: pow() of that
+// is NaN, and the bloom spreads it into a coloured spark)
+out vec3 vPos; out vec3 vNrm; centroid out vec4 vCol; out vec4 vLight; out vec3 vLocal;
 void main(){
   vec4 wp = uModel * vec4(aPos, 1.0);
   vPos = wp.xyz; vNrm = mat3(uModel) * aNrm; vCol = aCol; vLocal = aPos;
@@ -241,7 +244,7 @@ void main(){
 
 // The lit shader's declarations (the terrain shaders share them).
 const char* kLitIns = R"(
-in vec3 vPos; in vec3 vNrm; in vec4 vCol; in vec4 vLight; in vec3 vLocal;
+in vec3 vPos; in vec3 vNrm; centroid in vec4 vCol; in vec4 vLight; in vec3 vLocal;
 out vec4 oCol;
 uniform int uMap;                 // 0 proving ground, 1 mountain, 2 freeway
 uniform sampler2D uTerrainTex;    // per meter: height, grass, paint
@@ -474,7 +477,7 @@ void main(){
     specK = 0.05; specP = 8.0;
   }
 
-  vec3 lin = pow(base, vec3(2.2));
+  vec3 lin = pow(max(base, 0.0), vec3(2.2));
   float sh = shadowAt(vPos, n);
   if (sunlit) sh = max(sh, 0.85);
   float diff = max(dot(n, uSun), 0.0);
@@ -1521,7 +1524,7 @@ uniform int uPushN;
 uniform vec4 uPush[8];  // vehicles as capsules: (x, z, radius) of one end, then (x, z) of the other
 uniform vec3 uSun; uniform float uClouds;       // (the shadows are worked out here, a few times a blade instead of at every pixel)
 uniform sampler2DShadow uShadow0, uShadow1; uniform mat4 uLightVP0, uLightVP1; uniform vec4 uShadowCfg;
-out vec3 vPos; out vec3 vN; out vec3 vC0; out vec3 vC1; out vec3 vC2; out vec2 vT; out float vSh;
+out vec3 vPos; out vec3 vN; centroid out vec3 vC0; centroid out vec3 vC1; centroid out vec3 vC2; out vec2 vT; out float vSh;  // (centroid: see kLitVS)
 float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float vnoise(vec2 p){
   vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
@@ -1687,12 +1690,12 @@ void main(){
 })";
 
 const char* kGrassFSBody = R"(
-in vec3 vPos; in vec3 vN; in vec3 vC0; in vec3 vC1; in vec3 vC2; in vec2 vT; in float vSh;
+in vec3 vPos; in vec3 vN; centroid in vec3 vC0; centroid in vec3 vC1; centroid in vec3 vC2; in vec2 vT; in float vSh;
 out vec4 oCol;
 void main(){
   float t = vT.x;
   float hm = smoothstep(vT.y - 0.02, vT.y + 0.03, t);
-  vec3 lin = pow(mix(mix(vC0, vC1, smoothstep(0.0, 0.9, t)), vC2, hm), vec3(2.2));
+  vec3 lin = pow(max(mix(mix(vC0, vC1, smoothstep(0.0, 0.9, t)), vC2, hm), 0.0), vec3(2.2));
   vec3 V = normalize(uCam - vPos);
   vec3 n = normalize(vN);
   if (dot(n, V) < 0.0) n = -n;                       // (a blade has two faces: the one you see)
@@ -1712,7 +1715,7 @@ void main(){
 // a flow-stretched current; foam and a fading edge where it meets the shore. Dual-source
 // blending: oCol is what the surface adds, oKeep how much of the bed shows through, per channel.
 const char* kWaterFSBody = R"(
-in vec3 vPos; in vec3 vNrm; in vec4 vCol; in vec4 vLight; in vec3 vLocal;
+in vec3 vPos; in vec3 vNrm; centroid in vec4 vCol; in vec4 vLight; in vec3 vLocal;
 layout(location = 0, index = 0) out vec4 oCol;
 layout(location = 0, index = 1) out vec4 oKeep;
 uniform sampler2D uTerrainTex; uniform float uTerrainN;
@@ -1849,7 +1852,8 @@ const char* kDownFS = R"(#version 330 core
 in vec2 vUv; out vec4 oCol;
 uniform sampler2D uSrc; uniform vec2 uTexel; uniform float uThreshold;  // < 0: keep everything
 vec3 pre(vec3 c){
-  c = min(c, vec3(30.0));  // the sun's disk must not turn into a huge square
+  if (any(isnan(c)) || any(isinf(c))) return vec3(0.0);  // a stray bad pixel must not bloom into a spark
+  c = clamp(c, vec3(0.0), vec3(30.0));  // the sun's disk must not turn into a huge square
   if (uThreshold < 0.0) return c;
   float br = max(c.r, max(c.g, c.b)), knee = uThreshold * 0.5;
   float soft = clamp(br - uThreshold + knee, 0.0, 2.0 * knee);
@@ -1939,6 +1943,7 @@ float aoAt(vec2 uv){  // depth-aware 3x3 blur of the half-res AO
 vec3 aces(vec3 x){ return clamp(x * (2.51 * x + 0.03) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
 void main(){
   vec3 c = texture(uScene, vUv).rgb;
+  if (any(isnan(c)) || any(isinf(c))) c = vec3(0.0);
   if (uAOK > 0.0) c *= mix(1.0, aoAt(vUv), uAOK);
   vec3 b = texture(uBloom, vUv).rgb;
   c += b * uBloomK;
@@ -4212,4 +4217,17 @@ std::vector<unsigned char> Renderer::readPixels(int width, int height) {
     PixelStorei(GL_PACK_ALIGNMENT, 1);
     ReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, px.data());
     return px;
+}
+
+int Renderer::badScenePixels() {
+    if (!sceneFbo || targetW <= 0 || targetH <= 0) return 0;
+    std::vector<float> px((size_t)targetW * targetH * 4);
+    BindFramebuffer(GL_READ_FRAMEBUFFER, sceneFbo);
+    PixelStorei(GL_PACK_ALIGNMENT, 4);
+    ReadPixels(0, 0, targetW, targetH, GL_RGBA, GL_FLOAT, px.data());
+    BindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+    int bad = 0;
+    for (size_t i = 0; i < px.size(); i += 4)
+        if (!std::isfinite(px[i]) || !std::isfinite(px[i + 1]) || !std::isfinite(px[i + 2]) || px[i] < 0 || px[i + 1] < 0 || px[i + 2] < 0) bad++;
+    return bad;
 }

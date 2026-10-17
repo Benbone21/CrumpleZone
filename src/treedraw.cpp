@@ -19,7 +19,7 @@ using namespace gl;
 
 const char* const kTreeVS = "#version 330 core\n" TREE_PLACE R"(
 uniform mat4 uVP; uniform mat4 uLightVP;
-out vec3 vPos; out vec3 vNrm; out vec4 vCol; out vec4 vLight; out vec3 vLocal;
+out vec3 vPos; out vec3 vNrm; centroid out vec4 vCol; out vec4 vLight; out vec3 vLocal;  // (centroid: see kLitVS)
 void main(){
   vec3 wp = iPos.xyz + turn(aPos * iLook.x);
   vec3 col = aCol.rgb * iLook.y;
