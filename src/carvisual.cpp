@@ -1449,7 +1449,7 @@ void evalBody(const Car& car, const VisualTemplate& t, std::vector<BodyDynamic>&
     for (const auto& f : t.faces) {
         if (torn[f.parent]) continue;
         V3 n = cross(pos[f.topo[2]] - pos[f.topo[0]], pos[f.topo[3]] - pos[f.topo[1]]);
-        for (int c = 0; c < 4; c++) nrm[f.topo[c]] += n;
+        for (int c = 0; c < (f.topo[3] == f.topo[2] ? 3 : 4); c++) nrm[f.topo[c]] += n;
     }
 
     dyn.resize(t.rvTopo.size());
@@ -1470,8 +1470,13 @@ void evalBody(const Car& car, const VisualTemplate& t, std::vector<BodyDynamic>&
         if (f.glass && shattered[f.parent])
             for (int c = 0; c < 4; c++) dyn[f.rv[c]].broken = 1;
         unsigned a = f.rv[0], b = f.rv[1], c = f.rv[2], d = f.rv[3];
-        opaque.insert(opaque.end(), {a, b, c, a, c, d});
-        if (f.glass) glass.insert(glass.end(), {a, b, c, a, c, d});
+        const bool tri = d == c;  // (a triangle: the fourth corner repeats the third)
+        opaque.insert(opaque.end(), {a, b, c});
+        if (!tri) opaque.insert(opaque.end(), {a, c, d});
+        if (f.glass) {
+            glass.insert(glass.end(), {a, b, c});
+            if (!tri) glass.insert(glass.end(), {a, c, d});
+        }
     }
 }
 

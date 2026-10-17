@@ -8,6 +8,7 @@
 #include <map>
 
 #include "carvisual.h"
+#include "meshopt.h"
 #include "scenery.h"
 #include "treefade.h"
 #include "font.h"
@@ -3131,6 +3132,7 @@ void Renderer::buildWheelStyle(int style) {
     m.barrel(0.07, 0.0, 0.035, 20, false, dark, SM_METAL);
     m.annulus(0.0, 0.07, 0.035, 20, 1, dark, SM_METAL);
 
+    optimizeVtx(v);  // (degenerate and hidden triangles of the spokes, lugs and hub)
     GenVertexArrays(1, &wheelVao[style]);
     GenBuffers(1, &wheelVbo[style]);
     setupVtxVao(wheelVao[style], wheelVbo[style]);
