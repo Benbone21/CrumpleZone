@@ -5,6 +5,7 @@
 // The working state (and undo) is EditCore (editcore.h); this is its camera, mouse and
 // keyboard, and what's drawn over the view. The game hands it the events while it's open.
 #pragma once
+#include "textedit.h"
 #include <array>
 #include <functional>
 #include <map>
@@ -103,6 +104,8 @@ public:
     bool grabPoint(float& sx, float& sy) const;  // where the grabbed point of a move is on the screen now
     // An SDL event (mouse in window coordinates; `scale` turns them into drawable pixels).
     void handleEvent(const SDL_Event& e, float scale);
+    bool wantsText() const { return typing || flow.stage == SaveFlow::NAMING; }  // a text field has focus: SDL's text input is on
+    void textInput(const std::string& utf8);  // typed or pasted text for it
     // Every frame: flies the camera, keeps brushing while the button's held, and catches the
     // renderer up with what changed.
     void update(double dt, const uint8_t* keys, Renderer& r, int W, int H);
@@ -230,6 +233,8 @@ private:
     // Settings page.
     int setRow = 0;
     bool typing = false;           // typing the level's name
+    te::Edit nameEd, flowEd;       // the cursors: in the level's name, and in the save prompt's
+    void startTyping() { typing = true, nameEd.reset(); }
     // Files.
     bool fileOpen = false;         // the open dialog
     int fileSel = 0;

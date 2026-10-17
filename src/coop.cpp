@@ -45,6 +45,7 @@ void screenRay(const View& v, int W, int H, float sx, float sy, V3& o, V3& d) {
 // ---- Messages ------------------------------------------------------------------------------
 
 void Coop::update(double dt) {
+    draftClock += dt;
     for (Ping& p : pings) p.age += dt;
     pings.erase(std::remove_if(pings.begin(), pings.end(), [](const Ping& p) { return p.age > kPingLife; }), pings.end());
     for (ChatLine& c : chat) c.age += dt;
@@ -102,29 +103,22 @@ void Coop::say(const std::string& text, const std::string& me, NetSession& net) 
     net.sendGame("chat " + text.substr(0, 200));
 }
 
-bool Coop::typeKey(int sc, bool shift, const std::string& me, NetSession& net) {
+bool Coop::typeKey(int sc, bool shift, bool ctrl, const std::string& me, NetSession& net) {
     if (!typing) return false;
-    char ch = 0;
-    if (sc >= SC_A && sc <= SC_A + 25) ch = (char)('A' + (sc - SC_A));
-    else if (sc >= SC_1 && sc <= SC_1 + 8) ch = shift && sc == SC_1 ? '!' : (char)('1' + (sc - SC_1));
-    else if (sc == SC_0) ch = '0';
-    else if (sc == SC_SPACE) ch = ' ';
-    else if (sc == SC_MINUS) ch = '-';
-    else if (sc == 55) ch = '.';
-    else if (sc == 54) ch = ',';
-    else if (sc == 56) ch = shift ? '?' : '/';
-    else if (sc == 52) ch = '\'';
-    if (ch && draft.size() < 120) draft += ch;
-    else if (sc == SC_BACKSPACE && !draft.empty()) draft.pop_back();
-    else if (sc == SC_RETURN || sc == SC_KP_ENTER) {
+    if (te::key(draft, draftEd, sc, ctrl, shift, {te::Kind::Chat, 120}).handled) return true;
+    if (sc == SC_RETURN || sc == SC_KP_ENTER) {
         say(draft, me, net);
-        draft.clear();
+        draft.clear(), draftEd.reset();
         typing = false;
     } else if (sc == SC_ESCAPE) {
-        draft.clear();
+        draft.clear(), draftEd.reset();
         typing = false;
     }
     return true;
+}
+
+void Coop::typeText(const char* utf8) {
+    if (typing && utf8) te::insert(draft, draftEd, utf8, {te::Kind::Chat, 120});
 }
 
 // ---- The map -------------------------------------------------------------------------------
@@ -276,7 +270,7 @@ void Coop::drawChat(Renderer& r, int W, int H) const {
         y += lh;
     }
     if (typing) {
-        const std::string t = "SAY: " + draft + "_";
+        const std::string t = "SAY: " + te::withCursor(draft, draftEd, std::fmod(draftClock, 1.0) < 0.55);
         pill(r, x - 6 * u, y + 2 * u, std::max(300 * u, r.textWidth(t, s) + 16 * u), lh + 6 * u, 0, 0, 0, 0.7f);
         r.text(x, y + 5 * u, s, t, 1.0f, 0.9f, 0.6f, 1);
     }

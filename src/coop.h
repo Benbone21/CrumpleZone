@@ -5,6 +5,7 @@
 // (NetSession::sendGame): "ping KIND X Z", "chat TEXT". Offline, pings and the map still work
 // for you.
 #pragma once
+#include "textedit.h"
 #include <string>
 #include <vector>
 
@@ -40,6 +41,8 @@ public:
     // Typing a chat line.
     bool typing = false;
     std::string draft;
+    te::Edit draftEd;  // the cursor in it
+    double draftClock = 0;  // (its blink)
     // The map.
     bool mapOpen = false;
 
@@ -50,7 +53,8 @@ public:
     void ping(int kind, const V3& p, const std::string& me, NetSession& net);
     void say(const std::string& text, const std::string& me, NetSession& net);
     // Chat typing: a key while typing (true: used). Enter sends.
-    bool typeKey(int scancode, bool shift, const std::string& me, NetSession& net);
+    bool typeKey(int scancode, bool shift, bool ctrl, const std::string& me, NetSession& net);
+    void typeText(const char* utf8);  // typed text (SDL_TEXTINPUT)
 
     // The map: rebuilt for each world (colors from its ground, water and paint).
     void buildMap(const World& w);

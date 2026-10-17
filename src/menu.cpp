@@ -863,15 +863,39 @@ void PauseMenu::askPassword(const Settings& s) {
         if (r[k].id == JPASS_ROW) sel = k;
 }
 
+bool PauseMenu::textField(int id, Settings& s, std::string*& v, te::Rules& r) {
+    switch (id) {
+        case NAME_ROW: v = &s.playerName, r = {te::Kind::Name, 16}; return true;
+        case SESSION_ROW: v = &s.sessionName, r = {te::Kind::Session, 24}; return true;
+        case PASSWORD_ROW: v = &s.netPassword, r = {te::Kind::Password, 32}; return true;
+        case JPASS_ROW: v = &s.joinPassword, r = {te::Kind::Password, 64}; return true;
+        case ADDRESS_ROW: v = &s.joinAddress, r = {te::Kind::Address, 60}; return true;
+        case PORT_ROW: v = &portText, r = {te::Kind::Port, 5}; return true;
+    }
+    return false;
+}
+
+void PauseMenu::focusText(int id, Settings& s) {
+    if (tedRow != id) ted.reset(), tedRow = id;
+    if (id == PORT_ROW && !portEdited) {
+        portText = std::to_string(s.hostPort), portEdited = portFresh = true;
+        te::selectAll(portText, ted);  // (what you type or paste goes over the number shown)
+    }
+}
+
+// Typed or pasted text into the field that has focus (any case and symbol that field takes).
 PauseMenu::Result PauseMenu::textInput(const char* utf8, Settings& s) {
-    if (!open || !utf8) return {};
+    if (!open || !utf8 || ctrl) return {};
     const std::vector<Row> r = rows(s);
-    if (sel < 0 || sel >= (int)r.size() || (r[sel].id != PASSWORD_ROW && r[sel].id != JPASS_ROW)) return {};
-    std::string& field = r[sel].id == PASSWORD_ROW ? s.netPassword : s.joinPassword;
-    const size_t cap = r[sel].id == PASSWORD_ROW ? 32 : 64;
-    bool any = false;
-    for (const char* p = utf8; *p; p++)
-        if ((unsigned char)*p >= 33 && (unsigned char)*p < 127 && field.size() < cap) field += *p, any = true;  // (printable ASCII: spaces stay out, the file is read by word)
+    std::string* v;
+    te::Rules rl;
+    if (sel < 0 || sel >= (int)r.size() || r[sel].kind != TEXT || !textField(r[sel].id, s, v, rl)) return {};
+    focusText(r[sel].id, s);
+    const bool any = te::insert(*v, ted, utf8, rl);
+    if (any && r[sel].id == PORT_ROW) {
+        const int p = net::parsePort(portText, net::kMinHostPort);
+        if (p > 0) s.hostPort = p;
+    }
     return {any ? CHANGED : NONE};
 }
 
@@ -896,7 +920,7 @@ PauseMenu::Result PauseMenu::key(int sc, Settings& s) {
         if (best >= 0) sel = best;
         return best >= 0;
     };
-    if (page == 2 && joining && (sc == SC_ESCAPE || sc == SC_BACKSPACE)) return {CANCEL_JOIN};
+    if (page == 2 && joining && (sc == SC_ESCAPE || (sc == SC_BACKSPACE && !joinNeedsPw))) return {CANCEL_JOIN};  // (the password card edits with Backspace)
     if (page == 7 && listening >= 0) {  // the keybinds page waiting for a key: this press is the binding
         const KeyAction a = (KeyAction)listening;
         if (sc == SC_ESCAPE && a != KA_MENU) {  // (Esc is never a binding: it cancels. The MENU row can be put back to Esc with Backspace)
@@ -924,45 +948,28 @@ PauseMenu::Result PauseMenu::key(int sc, Settings& s) {
         keyNote.clear();
         return {CHANGED};
     }
-    // Typing into a text field: letters, digits, '.', '-', ':' (shift + ';'); backspace.
+    // A text field has focus: the keys edit it (typed characters arrive as text, see textInput).
     {
         std::vector<Row> r = rows(s);
-        if (sel >= 0 && sel < (int)r.size() && r[sel].kind == TEXT) {
-            const bool isPort = r[sel].id == PORT_ROW;
-            if (isPort && !portEdited) portText = std::to_string(s.hostPort), portEdited = portFresh = true;
-            if (isPort && portFresh && sc >= SC_1 && sc <= SC_1 + 9) portText.clear();  // (a digit over the number shown replaces it)
-            if (isPort && (portFresh && (sc == SC_BACKSPACE || (sc >= SC_1 && sc <= SC_1 + 9)))) portFresh = false;
-            std::string& field = isPort ? portText : r[sel].id == NAME_ROW ? s.playerName : r[sel].id == SESSION_ROW ? s.sessionName : r[sel].id == PASSWORD_ROW ? s.netPassword : r[sel].id == JPASS_ROW ? s.joinPassword : s.joinAddress;
-            char ch = 0;
-            if (sc == SC_SPACE && r[sel].id == SESSION_ROW && !field.empty()) ch = ' ';
-            if (sc >= SC_A && sc <= SC_A + 25) ch = (char)('A' + (sc - SC_A));
-            else if (sc >= SC_1 && sc <= SC_1 + 8) ch = (char)('1' + (sc - SC_1));
-            else if (sc == SC_1 + 9) ch = '0';
-            else if (sc == 55) ch = '.';
-            else if (sc == 45) ch = shift ? '_' : '-';
-            else if (sc == 51 && shift) ch = ':';
-            if (r[sel].id == PASSWORD_ROW || r[sel].id == JPASS_ROW) ch = 0;  // (passwords come through textInput: case and symbols)
-            if (r[sel].id == ADDRESS_ROW && ch >= 'A' && ch <= 'Z') ch = (char)(ch - 'A' + 'a');
-            if (isPort && !(ch >= '0' && ch <= '9')) ch = 0;  // (digits only)
-            // (Whatever the port field holds becomes the setting once it's a good port.)
-            auto portTyped = [&] {
-                const int p = net::parsePort(portText, net::kMinHostPort);
-                if (p > 0) s.hostPort = p;
-            };
-            if (ch && field.size() < (isPort ? 5u : r[sel].id == NAME_ROW ? 16u : r[sel].id == SESSION_ROW ? 24u : r[sel].id == PASSWORD_ROW ? 32u : 60u)) {
-                field += ch;
-                if (isPort) portTyped();
-                return {CHANGED};
-            }
-            if (sc == SC_BACKSPACE && !field.empty()) {
-                field.pop_back();
-                if (isPort) portTyped();
-                return {CHANGED};
+        std::string* field;
+        te::Rules rl;
+        if (sel >= 0 && sel < (int)r.size() && r[sel].kind == TEXT && textField(r[sel].id, s, field, rl)) {
+            const int id = r[sel].id;
+            focusText(id, s);
+            const bool atEdge = !ted.hasSel() && ((sc == SC_LEFT && te::cursorOf(*field, ted) == 0) || (sc == SC_RIGHT && te::cursorOf(*field, ted) >= field->size()));
+            if (atEdge && !shift && !ctrl && switchCard(sc == SC_LEFT ? -1 : 1)) return {};  // (the HOST and JOIN cards: left and right at the end of the text)
+            const bool canCopy = id != PASSWORD_ROW && (id != JPASS_ROW || showPw);
+            const te::KeyResult kr = te::key(*field, ted, sc, ctrl, shift, rl, canCopy);
+            if (kr.handled) {
+                if (kr.changed && id == PORT_ROW) {  // (whatever the port field holds becomes the setting once it's a good port)
+                    portFresh = false;
+                    const int p = net::parsePort(portText, net::kMinHostPort);
+                    if (p > 0) s.hostPort = p;
+                }
+                return {kr.changed ? CHANGED : NONE};
             }
             if (sc == SC_UP) moveSel(-1, s);
             else if (sc == SC_DOWN) moveSel(1, s);
-            else if (sc == SC_LEFT) switchCard(-1);
-            else if (sc == SC_RIGHT) switchCard(1);
             else if (sc == SC_RETURN || sc == SC_KP_ENTER) return activate(sel, s);
             if (sc != SC_ESCAPE) return {};
         }
@@ -1088,8 +1095,22 @@ float PauseMenu::drawRow(Renderer& r, const Row& row, int k, float x, float w, f
     if (row.kind == TEXT) {
         r.rect(valueX, cy + 5 * u, valueW, rowH - 10 * u, 0, 0, 0, 0.5f * a);
         if (on) r.rect(valueX, cy + rowH - 7 * u, valueW, 2 * u, 1.0f, 0.75f, 0.3f, 0.6f * a);
-        std::string v = row.value;
-        while (!v.empty() && r.textWidth(v, ts) > valueW - 20 * u) v.erase(v.begin());
+        // The window of the text that shows: the cursor stays in it (the front scrolls off, as it did).
+        const bool mine = on && tedRow == row.id;
+        const size_t cpos = mine ? te::cursorOf(row.value, ted) : row.value.size();
+        const float room = valueW - 20 * u;
+        size_t off = 0;
+        while (off < cpos && r.textWidth(row.value.substr(off, cpos - off), ts) > room) off++;
+        std::string v = row.value.substr(off);
+        while (!v.empty() && r.textWidth(v, ts) > room) v.pop_back();
+        size_t sf, st2;
+        if (mine && te::selection(row.value, ted, sf, st2)) {
+            sf = std::max(sf, off), st2 = std::min(st2, off + v.size());
+            if (st2 > sf) {
+                const float x0 = r.textWidth(row.value.substr(off, sf - off), ts), x1 = r.textWidth(row.value.substr(off, st2 - off), ts);
+                r.rect(valueX + 8 * u + x0, cy + 9 * u, x1 - x0, rowH - 18 * u, 0.3f, 0.5f, 0.95f, 0.6f * a);
+            }
+        }
         if (v.empty() && !row.placeholder.empty()) {
             std::string ph = row.placeholder;
             while (!ph.empty() && r.textWidth(ph, ts) > valueW - 20 * u) ph.pop_back();
@@ -1098,7 +1119,7 @@ float PauseMenu::drawRow(Renderer& r, const Row& row, int k, float x, float w, f
             r.text(valueX + 8 * u, ty, ts, v, 1, 1, 1, a);
         }
         if (on && std::fmod(caret, 1.0f) < 0.55f)
-            r.rect(valueX + 9 * u + r.textWidth(v, ts), cy + 9 * u, 2 * u, rowH - 18 * u, 1.0f, 0.75f, 0.3f, a);
+            r.rect(valueX + 9 * u + r.textWidth(row.value.substr(off, cpos - off), ts), cy + 9 * u, 2 * u, rowH - 18 * u, 1.0f, 0.75f, 0.3f, a);
         if (on && valueX - x > r.textWidth(row.label, ts) + r.textWidth(row.hint, small) + 60 * u)
             r.text(valueX - r.textWidth(row.hint, small) - 12 * u, cy + (rowH - 8 * small) / 2, small, row.hint, 0.6f, 0.62f, 0.66f, a);
     }
