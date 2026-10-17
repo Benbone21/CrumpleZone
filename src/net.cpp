@@ -96,11 +96,11 @@ enum MsgType : uint8_t {
     MSG_ROPE,         // a line was hooked
     MSG_UNROPE,       // netId
     MSG_PING,         // f64 time
-    MSG_PONG,         // f64 time (echoed)
+    MSG_PONG,         // f64 time (echoed); from the host also f64 its shared clock then
     MSG_RTT,          // id, f32 ping: the host telling everyone the pings
-    MSG_CLOCK,        // f32 hours, f32 hours per second: the host's time of day
+    MSG_CLOCK,        // f64 shared time, f32 hours then, f32 hours per second: the host's time of day
     MSG_LEVEL,        // u32 serial, u16 part, u16 parts, bytes: the level's text, in parts
-    MSG_GAME,         // u8 player, str: race chatter
+    MSG_GAME,         // u8 player, str, f64 shared time it was said: race chatter
     MSG_LAMPS,        // u32 car id, u8 LampMode: reliable, also while the car sleeps
     MSG_CHALLENGE,    // host -> client: 16 random bytes; answer with MSG_AUTH (only if there's a password)
     MSG_AUTH,         // client -> host: HMAC-SHA-256(password, those 16 bytes)
@@ -401,6 +401,63 @@ std::vector<uint8_t> hmacSha256(const std::string& key, const std::vector<uint8_
     return out.finish();
 }
 
+// ---- The shared clock ----------------------------------------------------------------
+
+bool ClockSync::add(double sent, double hostT, double got) {
+    const double trip = got - sent;
+    if (!std::isfinite(trip) || !std::isfinite(hostT) || trip < 0 || trip > 5 || std::fabs(hostT) > 1e9) return false;
+    recent.push_back({trip, hostT + trip / 2 - got});  // (the answer was made halfway through the trip)
+    while (recent.size() > 8) recent.pop_front();
+    const Sample* best = &recent.front();
+    for (const Sample& s : recent)
+        if (s.rtt < best->rtt) best = &s;
+    samples++;
+    if (!synced || std::fabs(best->offset - offset) > 0.5) offset = best->offset;  // (the first, or way off: take it)
+    else offset += (best->offset - offset) * 0.3;
+    synced = true;
+    return true;
+}
+
+double ClockSync::rtt() const {
+    double r = 0;
+    for (size_t k = 0; k < recent.size(); k++) r = k ? std::min(r, recent[k].rtt) : recent[k].rtt;
+    return r;
+}
+
+void Lateness::add(double late, double sinceLast) {
+    if (!std::isfinite(late)) return;
+    late = std::min(std::max(late, -1.0), 2.0);
+    if (mean < 0) {
+        mean = std::max(0.0, late), dev = 0;
+    } else {
+        const double e = late - mean;
+        mean = std::max(0.0, mean + e * 0.1);
+        dev += (std::fabs(e) - dev) * 0.1;
+    }
+    if (sinceLast > 0 && sinceLast < 0.2) gap += (sinceLast - gap) * 0.1;  // (parked ones, twice a second, don't count)
+}
+
+void Timeline::step(double shared, double need) {
+    need = std::min(std::max(need, kPlaybackDelay), kMaxDelay);
+    if (!started()) {
+        delay = need, render = shared - need, at = shared;
+        return;
+    }
+    const double dt = shared - at;
+    at = shared;
+    if (dt <= 0) return;  // (the clock estimate stepped back: hold)
+    // More delay at once (a late state is worse than a slower clock); less, slowly.
+    delay = need > delay ? need : delay + (need - delay) * std::min(1.0, dt * 0.25);
+    const double err = shared - delay - (render + dt);
+    if (err > 0.5) {
+        render = shared - delay;  // far behind (a long stall): skip ahead
+        return;
+    }
+    // Close: 0.9 to 1.1 times real speed; further off, 0.5 to 2.
+    const double lo = std::fabs(err) < 0.1 ? 0.9 : 0.5, hi = std::fabs(err) < 0.1 ? 1.1 : 2.0;
+    render += dt + std::min(std::max(err, dt * (lo - 1)), dt * (hi - 1));
+}
+
 }  // namespace net
 
 // ---- Connection and remote-vehicle state ----------------------------------------
@@ -422,9 +479,12 @@ struct NetSession::Snap {
 struct NetSession::Remote {
     uint32_t netId = 0;
     std::deque<Snap> buf;
-    double newestT = -1, newestArrival = 0;
-    double clockOffset = 0, playbackTime = 0, playbackNow = -1;
-    bool clockSet = false;
+    double newestT = -1, newestArrival = 0;  // (shared clock)
+    net::Lateness late;
+    // Easing out a coast that guessed wrong: what's added to where the states say it is.
+    V3 ease, lastShown, lastVel;
+    bool shown = false;
+    double coastedTo = -1;  // the newest state's time while coasting past it last frame (-1: wasn't)
     struct Assembly {
         bool active = false;
         uint32_t seq = 0;
@@ -475,6 +535,13 @@ void NetSession::close() {
     adopted = false;
     udpReady = false;
     sessionStart = -1;
+    clock = net::ClockSync();
+    view = net::Timeline();
+    nextSync = 0;
+    dayBase = daySentAt = -1;
+    dayHours = -1, dayRate = 0, dayFresh = false;
+    heldGame.clear();
+    heldWorld.clear();
 }
 
 bool NetSession::host(int port, const std::string& name, int m, int maxP, const std::string& session) {
@@ -796,11 +863,13 @@ void NetSession::handle(Sim* sim, Conn* from, const std::vector<uint8_t>& msg) {
             const uint16_t ver = r.get<uint16_t>();
             const std::string name = net::sanitize(r.str(), net::kMaxNameLen);
             if (!r.ok) return violation(from, "a bad hello");
-            if (ver != net::kVersion) {
+            if (ver != net::kVersion) {  // (an older game can't follow this one's clock: say so plainly, not a session that drifts)
                 Writer w;
-                w.str("different game version");
+                w.str(ver < net::kVersion ? std::string("version mismatch: update to ") + net::kRelease + " or newer"
+                                          : "version mismatch: this server is older than your game");
                 sendTo(*from, frame(MSG_REJECT, w));
                 from->kill = true, from->killT = now;
+                note("TURNED AWAY A GUEST ON PROTOCOL " + std::to_string(ver) + " (THIS IS " + std::to_string(net::kVersion) + ")");
                 return;
             }
             if (!password.empty()) {  // prove it: HMAC of a challenge only we know
@@ -838,9 +907,10 @@ void NetSession::handle(Sim* sim, Conn* from, const std::vector<uint8_t>& msg) {
         }
         if (!from->hello) return violation(from, "talking before saying hello");
         switch (type) {
-            case MSG_PING: {
+            case MSG_PING: {  // (a guest setting its clock by ours)
                 Writer w;
                 w.put<double>(r.get<double>());
+                w.put<double>(sharedTime(curNow));
                 sendTo(*from, frame(MSG_PONG, w));
                 return;
             }
@@ -859,14 +929,19 @@ void NetSession::handle(Sim* sim, Conn* from, const std::vector<uint8_t>& msg) {
             case MSG_GAME: {
                 r.get<uint8_t>();  // (who it says it is from: it's from the guest)
                 const std::string text = net::sanitize(r.str(), 255);
+                double said = r.get<double>();
                 if (!r.ok) return violation(from, "a bad chatter message");
                 if (!from->games.take(now, 1, 30, 60)) return;
                 if (hostOnlyChatter(text)) return note(players[from->peer].name + " SENT A HOST'S MESSAGE");
+                // (When it was said, by the guest's idea of our clock: no later than now, no more than a second ago.)
+                const double shared = sharedTime(curNow);
+                said = std::isfinite(said) ? clampd(said, shared - 1.0, shared) : shared;
                 Writer w;
                 w.put<uint8_t>((uint8_t)from->peer);
                 w.str(text);
+                w.put<double>(said);
                 broadcast(frame(MSG_GAME, w), from);
-                gameIn.push_back({from->peer, text});
+                hold(sim, heldGame, said, {}, from->peer, text);
                 return;
             }
             case MSG_SPAWN:
@@ -966,23 +1041,27 @@ void NetSession::handle(Sim* sim, Conn* from, const std::vector<uint8_t>& msg) {
         case MSG_GAME: {
             const int who = r.get<uint8_t>();
             const std::string text = net::sanitize(r.str(), 255);
+            const double said = r.get<double>();
             if (!r.ok || who >= net::kMaxPeers || who == self || (who != 0 && hostOnlyChatter(text))) return;
-            gameIn.push_back({who, text});
+            hold(sim, heldGame, said, {}, who, text);
             return;
         }
         case MSG_CLOCK: {
             if (role != CLIENT) return;
-            const double hours = r.get<float>(), rate = r.get<float>();
-            if (!r.ok || !okNum(hours, 1e6) || !okNum(rate, 1e3)) return;
-            dayHours = std::fmod(std::max(0.0, hours), 24.0);
+            const double stamp = r.get<double>(), hours = r.get<float>(), rate = r.get<float>();
+            if (!r.ok || r.at != r.n || !okNum(stamp, 1e9) || !okNum(hours, 1e6) || !okNum(rate, 1e3)) return;
+            dayStamp = stamp;
+            dayBase = std::fmod(std::max(0.0, hours), 24.0);
             dayRate = rate;
+            runDay();
             dayFresh = true;
             return;
         }
         case MSG_PONG: {
-            double rtt = clockNow() - r.get<double>();
+            const double sent = r.get<double>(), hostT = r.get<double>();
             if (!r.ok) return;
-            if (!std::isfinite(rtt)) rtt = 0;
+            const double rtt = curNow - sent;
+            if (!clock.add(sent, hostT, curNow)) return;
             if (self >= 0 && self < net::kMaxPeers) players[self].ping = clampd(rtt, 0, 10);
             return;
         }
@@ -992,9 +1071,12 @@ void NetSession::handle(Sim* sim, Conn* from, const std::vector<uint8_t>& msg) {
         default:
             break;
     }
-    // Everything else concerns the world: applied once the sim has joined the session.
+    // Everything else concerns the world: applied once the sim has joined the session; a line
+    // hooked or let go when the others are shown it happening (and whatever came after it, in turn).
     if (sim && adopted) {
-        apply(*sim, msg, -1);
+        double due = -1e18;
+        if ((type == MSG_ROPE || type == MSG_UNROPE) && msg.size() >= 9) std::memcpy(&due, msg.data() + msg.size() - 8, 8);
+        hold(sim, heldWorld, due, msg, -1, "");
     } else if (role == CLIENT && pending.size() < kMaxPending && pendingBytes + msg.size() <= kMaxPendingBytes) {
         pending.push_back(msg);
         pendingBytes += msg.size();
@@ -1015,6 +1097,7 @@ void NetSession::welcome(Sim& sim, Conn& c) {
             sendTo(c, frame(MSG_PLAYER, p));
         }
     if (!levelText.empty()) sendLevel(&c);
+    if (dayHours >= 0) sendClock(&c);
     for (const Car& car : sim.cars)
         if (car.netId) sendTo(c, spawnMsg(car));
     for (const Rope& rp : sim.ropes)
@@ -1059,6 +1142,7 @@ std::vector<uint8_t> NetSession::ropeMsg(const Sim& sim, const Rope& r) const {
         w.v3(e->p);
     }
     for (double v : {r.length, r.maxLen, r.k, r.c, r.breakN, r.stallN}) w.put<float>((float)v);
+    w.put<double>(sharedTime(curNow));  // (when it was hooked)
     return frame(MSG_ROPE, w);
 }
 
@@ -1135,8 +1219,9 @@ bool NetSession::apply(Sim& sim, const std::vector<uint8_t>& msg, int from) {
             if (Remote* rm = remoteFor(netId)) {
                 rm->buf.clear();
                 rm->newestT = -1;
-                rm->clockSet = false;
-                rm->playbackNow = -1;
+                rm->shown = false;
+                rm->ease = V3();
+                rm->coastedTo = -1;
                 for (auto& assembly : rm->assemblies) assembly.active = false;
             }
             return true;
@@ -1187,6 +1272,7 @@ bool NetSession::apply(Sim& sim, const std::vector<uint8_t>& msg, int from) {
             float v[6];
             for (float& x : v) x = r.get<float>();
             rp.length = v[0], rp.maxLen = v[1], rp.k = v[2], rp.c = v[3], rp.breakN = v[4], rp.stallN = v[5];
+            r.get<double>();  // (when: handle() holds it till then)
             // (A line's numbers all have a sane range; the winch's maths divides by some of them.)
             ok &= okNum(v[0], 200) && v[0] >= 0 && okNum(v[1], 200) && v[1] >= 0.5 && okNum(v[2], 2e6) && v[2] >= 0 && okNum(v[3], 2e5) && v[3] >= 0 &&
                   okNum(v[4], 2e6) && v[4] >= 1 && okNum(v[5], 1e6) && v[5] >= (rp.kind == ROPE_WINCH ? 1 : 0);  // (a strap has no stall)
@@ -1206,6 +1292,7 @@ bool NetSession::apply(Sim& sim, const std::vector<uint8_t>& msg, int from) {
         }
         case MSG_UNROPE: {
             const uint32_t netId = r.get<uint32_t>();
+            r.get<double>();  // (when)
             if (!r.ok || !ownerOk(netId)) return false;
             knownRopes.erase(std::remove(knownRopes.begin(), knownRopes.end(), netId), knownRopes.end());
             for (size_t k = 0; k < sim.ropes.size(); k++)
@@ -1390,7 +1477,7 @@ std::vector<uint8_t> NetSession::snapshotMsg(const Sim& sim, const Car& c, doubl
     Writer w;
     const Frame fr = c.frame();
     const Quat rot = c.chassis.nodes.empty() ? Quat::axisAngle(V3(0, 1, 0), std::atan2(-fr.fwd.z, fr.fwd.x)) : c.chassis.rot;
-    w.put<double>(now - sessionStart);
+    w.put<double>(sharedTime(now));
     w.put<uint32_t>((uint32_t)c.buildCount);
     w.v3(fr.com);
     w.put<float>((float)rot.w), w.put<float>((float)rot.x), w.put<float>((float)rot.y), w.put<float>((float)rot.z);
@@ -1620,14 +1707,11 @@ void NetSession::takeSnapshot(Sim& sim, uint32_t netId, const std::vector<uint8_
     s.boost = clampd(s.boost, 0, 10);
     s.gear = (int8_t)std::min(std::max((int)s.gear, -1), (int)car.spec->gears.size());  // (it indexes the gear table)
     for (float& o : s.wheelOmega) o = (float)clampd(o, -3000, 3000);
-    const double offset = now - s.t;
-    if (!rm->clockSet) {
-        rm->clockOffset = offset;
-        rm->clockSet = true;
-    } else {
-        // Arrival jitter must not reset the playback clock on every packet. Track the
-        // clock difference slowly; the presentation clock below never runs backwards.
-        rm->clockOffset += clampd(offset - rm->clockOffset, -0.05, 0.05) * 0.02;
+    // Stamped with the shared clock: how late it is says how far behind the others must be shown.
+    const double shared = sharedTime(now);
+    if (clockSynced()) {
+        if (s.t > shared + 1.0) return;  // (from the future: a sender whose clock is broken)
+        rm->late.add(shared - s.t, rm->newestT >= 0 ? s.t - rm->newestT : -1);
     }
     if (!rm->buf.empty()) {
         const Snap& previous = rm->buf.back();
@@ -1637,29 +1721,37 @@ void NetSession::takeSnapshot(Sim& sim, uint32_t netId, const std::vector<uint8_
             // Repairs/recovery/spawn changes jump immediately, without interpolating
             // a car through everything between the old and new positions.
             rm->buf.clear();
-            rm->playbackNow = -1;
+            rm->shown = false;
+            rm->ease = V3();
+            rm->coastedTo = -1;
         }
     }
     rm->newestT = s.t;
-    rm->newestArrival = now;
+    rm->newestArrival = shared;
     rm->buf.push_back(std::move(s));
     while (rm->buf.size() > 30) rm->buf.pop_front();
 }
 
 void NetSession::applyRemotes(Sim& sim, double now) {
+    if (!clockSynced()) return;  // (a guest that doesn't know the host's clock yet can't place anything on it)
+    // Everyone's vehicles at one moment on the shared clock: as far behind it as the latest
+    // sender needs (so their trucks stay where they were relative to each other).
+    const double shared = sharedTime(now);
+    double need = net::kPlaybackDelay;
+    for (const Remote* rm : remotes)
+        if (!rm->buf.empty() && shared - rm->newestArrival < 3) need = std::max(need, rm->late.need());
+    const bool had = view.started();
+    const double before = view.render;
+    view.step(shared, need);
+    const double t = view.render, dt = had ? std::max(0.0, t - before) : 0;
     for (Remote* rm : remotes) {
         const int ci = findCar(sim, rm->netId);
         if (ci < 0 || rm->buf.empty()) continue;
         Car& c = sim.cars[ci];
         if (!c.remote) continue;
-        // Play back a little behind the newest state, in the sender's time.
-        const double target = now - rm->clockOffset - net::kPlaybackDelay;
-        if (rm->playbackNow < 0) rm->playbackTime = target;
-        else rm->playbackTime += clampd(target - rm->playbackTime, 0, std::max(0.0, now - rm->playbackNow) * 1.1);
-        rm->playbackNow = now;
-        const double t = rm->playbackTime;
         while (rm->buf.size() > 2 && rm->buf[1].t < t - 0.5) rm->buf.pop_front();
         const V3 rc = restCom(c);
+        V3 com;
         auto pose = [&](double at, std::vector<V3>& out, V3& vel, Quat& rot, size_t& idx, double& alpha) {
             const std::deque<Snap>& b = rm->buf;
             idx = 0;
@@ -1667,11 +1759,11 @@ void NetSession::applyRemotes(Sim& sim, double now) {
             const Snap& a = b[idx];
             const Snap& n = idx + 1 < b.size() ? b[idx + 1] : a;
             alpha = n.t > a.t ? clampd((at - a.t) / (n.t - a.t), 0, 1) : 0;
-            V3 com = a.com + (n.com - a.com) * alpha;
+            com = a.com + (n.com - a.com) * alpha;
             vel = a.vel + (n.vel - a.vel) * alpha;
             if (&n == &a) {
-                com += a.vel * clampd(at - a.t, 0, 0.25);  // nothing newer: coast briefly
-                if (at > a.t + 0.25) vel = V3();
+                com += a.vel * clampd(at - a.t, 0, net::kMaxCoast);  // nothing newer (lost, or late): coast briefly
+                if (at > a.t + net::kMaxCoast) vel = V3();
             }
             rot = nlerp(a.rot, n.rot, alpha);
             out.resize(c.nodes.size());
@@ -1688,9 +1780,20 @@ void NetSession::applyRemotes(Sim& sim, double now) {
         pose(t, now0, vel, rot, idx, alpha);
         // A jump (put back on its wheels, towed home) is a teleport, not a speed.
         const bool jumped = len((now0[0] - prev[0]) / 0.05 - vel) > 25;
-        const bool stopped = t >= rm->buf.back().t + 0.25;
+        const bool stopped = t >= rm->buf.back().t + net::kMaxCoast;
+        // States that come in after a coast put it somewhere else: ease into that over a
+        // moment rather than snapping (a real jump, a recovery, still snaps: takeSnapshot).
+        const double newest = rm->buf.back().t;
+        if (rm->shown && rm->coastedTo >= 0 && newest > rm->coastedTo && !jumped) {
+            rm->ease = rm->lastShown + rm->lastVel * dt - com;
+            if (len(rm->ease) > 3) rm->ease = V3();
+        }
+        rm->ease = rm->ease * std::exp(-dt / 0.15);
+        if (len(rm->ease) < 1e-4) rm->ease = V3();
+        rm->coastedTo = t > newest ? newest : -1;
+        rm->lastShown = com + rm->ease, rm->lastVel = vel, rm->shown = true;
         for (size_t i = 0; i < c.nodes.size(); i++) {
-            c.nodes[i].p = now0[i];
+            c.nodes[i].p = now0[i] + rm->ease;
             c.nodes[i].v = jumped || stopped ? vel : (now0[i] - prev[i]) / 0.05;
             c.nodes[i].f = V3();
         }
@@ -1733,6 +1836,7 @@ void NetSession::receive(Sim& sim, double now) {
     if (role == OFF) return;
     lastSim = &sim;
     if (sessionStart < 0) sessionStart = now;
+    curNow = now;
     const double wall = clockNow();
     if (role == HOST) accept();
     for (size_t i = 0; i < conns.size();) {
@@ -1766,23 +1870,83 @@ void NetSession::receive(Sim& sim, double now) {
         d.put<uint64_t>(udpToken);
         sendto(udpFd, (const char*)d.b.data(), (int)d.b.size(), 0, (sockaddr*)hostUdp, sizeof(sockaddr_in));
     }
-    if (now >= nextPing) {
+    if (role == HOST && now >= nextPing) {  // (the pings everyone sees on the player list)
         nextPing = now + 1.0;
         Writer w;
-        w.put<double>(std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count());
+        w.put<double>(clockNow());
         const auto msg = frame(MSG_PING, w);
         for (Conn* c : conns)
-            if (role == CLIENT || c->hello) sendTo(*c, msg);
-        if (role == HOST && dayHours >= 0) {  // the sky, once a second (the clients' clocks run on in between)
-            Writer t;
-            t.put<float>((float)dayHours);
-            t.put<float>((float)dayRate);
-            const auto clockMsg = frame(MSG_CLOCK, t);
-            for (Conn* c : conns)
-                if (c->hello) sendTo(*c, clockMsg);
-        }
+            if (c->hello) sendTo(*c, msg);
     }
+    if (role == CLIENT && now >= nextSync && !conns.empty()) {  // setting our clock by the host's: quickly at first, then once a second
+        nextSync = now + (clock.samples < 8 ? 0.15 : 1.0);
+        Writer w;
+        w.put<double>(now);
+        sendTo(*conns[0], frame(MSG_PING, w));
+    }
+    if (role == HOST && dayHours >= 0) {
+        // The sky: once a second, and at once when it's been moved (the guests run it on in between).
+        const double shared = sharedTime(now), expect = daySentHours + daySentRate * (shared - daySentAt);
+        const double off = std::fabs(std::remainder(dayHours - expect, 24.0));
+        if (daySentAt < 0 || shared - daySentAt >= 1.0 || off > 0.02 || dayRate != daySentRate) sendClock(nullptr);
+    }
+    if (role == CLIENT) runDay();
     if (adopted) applyRemotes(sim, now);
+    release(&sim);
+}
+
+void NetSession::sendClock(Conn* to) {
+    Writer t;
+    const double shared = sharedTime(curNow);
+    t.put<double>(shared);
+    t.put<float>((float)dayHours);
+    t.put<float>((float)dayRate);
+    const auto m = frame(MSG_CLOCK, t);
+    if (to) sendTo(*to, m);
+    else broadcast(m);
+    if (!to) daySentAt = shared, daySentHours = dayHours, daySentRate = dayRate;
+}
+
+void NetSession::runDay() {
+    if (dayBase < 0 || !clock.synced) return;
+    dayHours = std::fmod(dayBase + dayRate * (sharedTime(curNow) - dayStamp), 24.0);
+    if (dayHours < 0) dayHours += 24.0;
+}
+
+double NetSession::sharedTime(double now) const {
+    if (role == CLIENT) return clock.host(now);
+    return sessionStart < 0 ? now : now - sessionStart;
+}
+
+// Chatter and lines come stamped with when they happened. They're held until the others are
+// shown at that moment, so they happen with the vehicles, not ahead of them. (Never later than
+// now on the shared clock: then any stamp is out within the view delay.)
+void NetSession::hold(Sim* sim, std::deque<Held>& q, double due, std::vector<uint8_t> msg, int player, const std::string& text) {
+    if (!std::isfinite(due)) due = -1e18;
+    due = std::min(due, sharedTime(curNow));
+    Held h{due, std::move(msg), player, text};
+    const bool world = &q == &heldWorld;
+    if (!clockSynced() || !view.started() || (q.empty() && due <= view.render)) return deliver(sim, h, world);
+    q.push_back(std::move(h));
+    while (q.size() > 512) {  // (a flood: out with the oldest now)
+        deliver(sim, q.front(), world);
+        q.pop_front();
+    }
+}
+
+void NetSession::deliver(Sim* sim, Held& h, bool world) {
+    if (!world) gameIn.push_back({h.player, h.text});
+    else if (sim) apply(*sim, h.msg, -1);
+}
+
+void NetSession::release(Sim* sim) {
+    for (std::deque<Held>* q : {&heldWorld, &heldGame})
+        while (!q->empty() && (q->front().due <= view.render || !view.started())) {
+            Held h = std::move(q->front());
+            q->pop_front();
+            deliver(sim, h, q == &heldWorld);
+            if (role == OFF) return;
+        }
 }
 
 void NetSession::send(Sim& sim, double now) {
@@ -1836,6 +2000,7 @@ void NetSession::send(Sim& sim, double now) {
         if (std::find(ropesNow.begin(), ropesNow.end(), knownRopes[k]) == ropesNow.end()) {
             Writer w;
             w.put<uint32_t>(knownRopes[k]);
+            w.put<double>(sharedTime(now));
             broadcast(frame(MSG_UNROPE, w));
             knownRopes.erase(knownRopes.begin() + k);
         } else {
@@ -1844,10 +2009,13 @@ void NetSession::send(Sim& sim, double now) {
     }
     // States, ~20 a second (parked ones twice a second).
     if (sessionStart < 0) sessionStart = now;
-    if (now - lastSend < 1.0 / net::kSendRate) return;
+    curNow = now;
+    const double interval = 1.0 / net::kSendRate;
+    if (now - lastSend < interval) return;
     const bool slowTick = std::fmod(now, 0.5) < now - lastSend;
-    lastSend = now;
-    if (role == CLIENT && !udpReady) return;
+    // On the beat, not a frame late each time (20 a second at any frame rate, not 15 at 60 fps).
+    lastSend = lastSend < 0 || now - lastSend > 2 * interval ? now : lastSend + interval;
+    if (role == CLIENT && (!udpReady || !clock.synced)) return;  // (a state stamped by a clock we don't know yet would be wrong)
     for (const Car& c : sim.cars)
         if (!c.remote && (!c.sleeping || slowTick)) sendSnapshot(sim, c, now);
 }
@@ -1883,6 +2051,7 @@ void NetSession::sendGame(const std::string& text) {
     Writer w;
     w.put<uint8_t>((uint8_t)std::max(0, self));
     w.str(text);
+    w.put<double>(sharedTime(curNow));
     if (role == HOST) broadcast(frame(MSG_GAME, w));
     else if (!conns.empty()) sendTo(*conns[0], frame(MSG_GAME, w));
 }

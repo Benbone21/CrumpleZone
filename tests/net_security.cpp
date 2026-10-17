@@ -120,9 +120,11 @@ std::vector<uint8_t> helloOf(uint16_t version, const std::string& name) {
     b.insert(b.end(), name.begin(), name.end());
     return frameOf(HELLO, b);
 }
-std::vector<uint8_t> gameOf(const std::string& text) {
+std::vector<uint8_t> gameOf(const std::string& text, double said = 0) {
     std::vector<uint8_t> b = {0, (uint8_t)text.size()};
     b.insert(b.end(), text.begin(), text.end());
+    const uint8_t* p = (const uint8_t*)&said;  // (when it was said, by the shared clock)
+    b.insert(b.end(), p, p + 8);
     return frameOf(GAME, b);
 }
 
@@ -885,6 +887,7 @@ SCENARIO(netSecFuzz, "net/sec-fuzz", "Thousands of random, truncated, oversized,
                 for (int j = 0; j < 3; j++) put(r, fz.below(3) ? -50.f + (float)j : special());
             }
             for (float def : {8.f, 30.f, 2.5e5f, 3000.f, 9e4f, 4.4e4f}) put(r, fz.below(8) ? def : special());
+            put(r, fz.below(4) ? 0.5 + 0.05 * k : (double)special());  // when (any number: it only says when to show it)
             if (T::apply(rx, target, r, 1)) {
                 roped++;
                 for (int s = 0; s < 2; s++) target.advance(Ctx::kFrame, 4);  // (a line that got in is pulling on something now)
@@ -896,6 +899,7 @@ SCENARIO(netSecFuzz, "net/sec-fuzz", "Thousands of random, truncated, oversized,
             for (uint32_t j = 1; j <= 6; j++) {
                 std::vector<uint8_t> d = {UNROPE};
                 put(d, base | j);
+                put(d, fz.below(4) ? 0.5 + 0.05 * k : (double)special());
                 T::apply(rx, target, d, 1);
             }
             // A state with one odd number.

@@ -108,7 +108,7 @@ SCENARIO(netJitter, "net/state-jitter", "Variable latency and reordered states d
     ctx.metric("worst backward jump from jitter", worstReverse, "m", 0, 1e-5);
     ctx.metric("largest move at 120 Hz and 10 m/s", maxStep, "m", 0.05, 0.15);
     ctx.metric("largest wheel animation step", maxAngleStep, "rad", 0.1, 0.3);
-    NetSessionTest::play(receiver, ctx.sim, 2.4);  // Just past the extrapolation limit.
+    NetSessionTest::play(receiver, ctx.sim, 2.6);  // Just past the coasting limit (behind the view delay).
     const V3 frozen = ctx.sim.cars[0].frame().com;
     ctx.sim.advance(1.0 / 60, 1000);
     ctx.check("prolonged packet loss stops remote coasting", len(ctx.sim.cars[0].frame().com - frozen) < 1e-9);

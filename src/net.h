@@ -6,8 +6,13 @@
 // between two players' trucks pulls on each truck on its owner's machine.
 //
 // The host relays everything and picks the map. Reliable messages (joins, spawns, lines)
-// go over TCP; vehicle states over UDP, played back ~0.1 s behind so they stay smooth.
-// Plain POSIX sockets, nothing else.
+// go over TCP; vehicle states over UDP. Plain POSIX sockets, nothing else.
+//
+// One clock for everyone: the host's (seconds since it opened the session). Guests learn
+// how far theirs is from it with pings, NTP style. Every state, line and chatter line is
+// stamped with that clock, and each machine shows the others a little behind it (the delay
+// follows the measured latency and jitter), so a remote truck is where it was at the same
+// moment on every screen, and what was said or done then happens then too.
 #pragma once
 #include <algorithm>
 #include <cstdint>
@@ -27,9 +32,12 @@ constexpr int kMaxPort = 65535;
 constexpr int kDiscoveryPort = 27016;  // UDP: "who's hosting?" on the local network
 constexpr int kBeaconPort = 27017;     // UDP: hosts also announce themselves here every couple of seconds
 constexpr int kMaxPeers = 8;
-constexpr uint16_t kVersion = 5;  // 5: passwords, a secret in every datagram, strict checks (4: every garage slot in a car's spec)
+constexpr uint16_t kVersion = 6;  // 6: one clock (stamped states, chatter and lines; the sky) (5: passwords, a secret in every datagram, strict checks)
+constexpr const char* kRelease = "0.2.1";  // the first release that speaks kVersion (what an older guest is told to update to)
 constexpr double kSendRate = 20;      // vehicle states per second
-constexpr double kPlaybackDelay = 0.1; // s behind the newest state received
+constexpr double kPlaybackDelay = 0.1; // s: the least the others are shown behind the shared clock (two states)
+constexpr double kMaxDelay = 1.0;      // s: and the most, however bad the line
+constexpr double kMaxCoast = 0.25;     // s: a vehicle whose states stop coming coasts this long, then holds
 
 // What a host puts up with (docs/server-security.md): connections, silence, size.
 constexpr int kMaxConns = 24;          // TCP connections held at once, in the session or not
@@ -66,6 +74,43 @@ std::string sanitize(const std::string& s, size_t maxLen);
 inline std::string joinPassword(const std::string& fromCommandLine, const std::string& typed) { return fromCommandLine.empty() ? typed : fromCommandLine; }
 // HMAC-SHA-256 (the password proof), 32 bytes.
 std::vector<uint8_t> hmacSha256(const std::string& key, const std::vector<uint8_t>& data);
+
+// A guest's estimate of the host's clock, from pings: each answer says what the host's clock
+// read when it answered. The one with the shortest round trip of the last few is the truest
+// (it waited least in queues on the way); the estimate moves toward it.
+struct ClockSync {
+    double offset = 0;  // host's clock minus mine
+    bool synced = false;
+    int samples = 0;
+    // A ping sent at `sent` (my clock), answered with the host's `hostT`, back at `got`. False: thrown away.
+    bool add(double sent, double hostT, double got);
+    double host(double mine) const { return mine + offset; }
+    double rtt() const;  // the shortest of the recent round trips (s)
+private:
+    struct Sample {
+        double rtt, offset;
+    };
+    std::deque<Sample> recent;
+};
+
+// How late one sender's states arrive (by the shared clock), and how far apart they are.
+struct Lateness {
+    double mean = -1, dev = 0, gap = 1.0 / kSendRate;
+    void add(double late, double sinceLast);
+    // The delay that leaves this sender's next state, or the one after it if one is lost, in
+    // hand when it's needed.
+    double need() const { return mean < 0 ? kPlaybackDelay : std::min(kMaxDelay, std::max(kPlaybackDelay, mean + 2 * gap + 2.5 * dev)); }
+};
+
+// The moment other players are shown at: the shared clock less a delay. It follows the
+// delay the senders need (up at once, down slowly), but never runs backwards and changes
+// speed gently, so remote vehicles neither jump nor stall.
+struct Timeline {
+    double delay = kPlaybackDelay;  // what it aims for
+    double render = 0, at = -1;     // the shown moment, and the shared time when it was set (-1: not yet)
+    void step(double shared, double need);
+    bool started() const { return at >= 0; }
+};
 }  // namespace net
 
 // Finds games hosted on the local network, two ways, so either direction getting through is
@@ -121,10 +166,20 @@ public:
     std::vector<std::string> events;  // joins, leaves, errors: for the HUD
     std::string error;
     uint64_t bytesIn = 0, bytesOut = 0;
-    // Time of day: the host's clock goes out every couple of seconds so everyone sees the
-    // same sky. Host: the game sets these each frame. Client: the host's latest (-1 = none yet).
+    // Time of day: the host's goes out on joining and every second, stamped with the shared
+    // clock, so everyone sees the same sky. Host: the game (or the server) sets these each
+    // frame. Client: the host's, run on to now every frame (-1 = none heard yet).
     double dayHours = -1, dayRate = 0;  // clock hours, and hours per real second (0 = held)
     bool dayFresh = false;              // client: a new one came in
+
+    // The shared clock (the host's seconds since it opened). `now` is the caller's clock, as
+    // given to receive() and send().
+    double sharedTime(double now) const;
+    bool clockSynced() const { return role != CLIENT || clock.synced; }
+    double clockOffset() const { return clock.offset; }  // client: the host's clock minus mine
+    // Where the others are shown: this far behind the shared clock (s), at that moment.
+    double viewDelay() const { return view.started() ? view.delay : net::kPlaybackDelay; }
+    double viewTime() const { return view.render; }
     // Levels: everyone plays the host's level (its whole text goes out, edits and all; "" is
     // the plain map). Client: levelFresh when a new one has come in.
     std::string levelText;
@@ -225,6 +280,27 @@ private:
     friend struct NetSessionSecTest;  // And the hostile-input ones.
     struct Snap;
     struct Remote;
+    net::ClockSync clock;       // client: the host's clock
+    net::Timeline view;         // where the others are shown
+    double curNow = 0;          // the caller's clock this frame (what receive() was given)
+    double nextSync = 0;        // client: the next clock ping
+    double dayStamp = 0, dayBase = -1;  // client: the host's hours at that shared moment
+    double daySentAt = -1, daySentHours = 0;  // host: the last clock sent
+    void sendClock(Conn* to);   // host: the sky, to one guest (or everyone)
+    // Held until the shown moment reaches their stamp: chatter, and (on a guest) the world's
+    // messages behind a stamped one (in order).
+    double daySentRate = 0;
+    void runDay();              // client: the host's hours, run on to now
+    struct Held {
+        double due;
+        std::vector<uint8_t> msg;  // a world message (heldWorld), or
+        int player;                // chatter (heldGame)
+        std::string text;
+    };
+    std::deque<Held> heldGame, heldWorld;
+    void hold(Sim* sim, std::deque<Held>& q, double due, std::vector<uint8_t> msg, int player, const std::string& text);
+    void deliver(Sim* sim, Held& h, bool world);
+    void release(Sim* sim);
     int listenFd = -1, udpFd = -1;
     int findFd = -1;            // host: answers "who's hosting?" (net::kDiscoveryPort)
     int hostPort = 0;
