@@ -3,6 +3,7 @@
 // each stage's start, the renderer hands back GPU times (setGpu), and F3 and --bench read the smoothed numbers.
 // Benchmark mode (--bench N) keeps every frame's numbers in a BenchStats and prints average, 1% low and per-stage ms.
 #pragma once
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -82,6 +83,12 @@ private:
 // the stages that ran longest (CPU, from `stageMs`).
 bool frameSpike(double frameMs, double typicalMs);
 void describeSpike(char* line, int n, int frame, double frameMs, double typicalMs, const double* stageMs);
+
+// Physics catch-up (the game's sim.advance): the time to run this frame, given the frame's dt and the usual one (eased
+// here). A hitch (over 50 ms and 2.5 times the usual) runs only the usual frame's worth: the rest is let go.
+double simCatchUp(double dt, double& usualDt);
+// The most physics steps a frame runs: 50 ms of them (below 20 fps the game slows down rather than spiral).
+inline int simMaxSteps(double h) { return h > 0 ? std::max(1, (int)(0.05 / h + 0.5)) : 1; }
 
 // The benchmark's camera: a drone flying a lap round `centre`, low over the ground (`h` m up), looking ahead and in.
 // `t` 0..1 is the share of the lap; heightAt gives the ground. Pure, so the path is the same every run.

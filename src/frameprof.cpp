@@ -157,3 +157,10 @@ void describeSpike(char* line, int n, int frame, double frameMs, double typicalM
     std::snprintf(line, n, "spike: frame %d took %.1f ms (typical %.1f): %s %.1f ms, %s %.1f ms", frame, frameMs, typicalMs, framePassName((FramePass)a),
                   stageMs[a], framePassName((FramePass)b), stageMs[b]);
 }
+
+double simCatchUp(double dt, double& usualDt) {
+    if (!(dt > 0)) return 0;
+    const double run = dt > 0.05 && dt > 2.5 * usualDt ? usualDt : dt;
+    usualDt += (std::min(dt, 3 * usualDt) - usualDt) * 0.05;
+    return run;
+}

@@ -96,3 +96,17 @@ SCENARIO(frameprofSpikes, "perf/spikes", "A spike is a frame over 30 ms and twic
     const BenchStats::Result r = b.result();
     ctx.check("two hitches, two frames over 30 ms", r.hitches == 2 && r.over30 == 2);
 }
+
+SCENARIO(frameprofCatchUp, "perf/sim-catch-up", "Physics catch-up: slow frames run in real time, a hitch isn't caught up all at once, at most 50 ms of steps a frame") {
+    double usual = 1.0 / 60;
+    double ran = 0;
+    for (int i = 0; i < 300; i++) ran += simCatchUp(1.0 / 30, usual);  // (a steady 30 fps)
+    ctx.metric("30 fps for 10 s: physics time run", ran, "s", 9.99, 10.01);
+    usual = 1.0 / 60;
+    for (int i = 0; i < 100; i++) simCatchUp(1.0 / 60, usual);
+    const double hitch = simCatchUp(0.1, usual), next = simCatchUp(1.0 / 60, usual);
+    ctx.check("a 100 ms hitch at 60 fps runs one usual frame", std::fabs(hitch - 1.0 / 60) < 0.002, std::to_string(hitch));
+    ctx.check("and the next frame is ordinary", std::fabs(next - 1.0 / 60) < 1e-9);
+    ctx.check("50 ms of steps at 2 kHz is 100", simMaxSteps(1.0 / 2000) == 100 && simMaxSteps(0) == 1);
+    ctx.check("junk dt runs nothing", simCatchUp(NAN, usual) == 0 && simCatchUp(-1, usual) == 0);
+}

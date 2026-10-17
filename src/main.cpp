@@ -325,7 +325,10 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--garage") o.showGarage = true;
         else if (a == "--clipboard") o.clipboard = next();
         else if (a == "--menu") o.menu = std::atoi(next().c_str());
-        else if (a == "--quality") o.quality = std::atoi(next().c_str());
+        else if (a == "--quality") {  // 0-3 LOW..ULTRA, 4 or potato: POTATO
+            const std::string q = next();
+            o.quality = q == "potato" ? (int)Q_POTATO : std::atoi(q.c_str());
+        }
         else if (a == "--ground") o.ground = std::atoi(next().c_str());
         else if (a == "--props") o.props = std::atoi(next().c_str());
         else if (a == "--grass") o.grass = std::atoi(next().c_str());
@@ -398,7 +401,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--help" || a == "-h") {
             std::puts("usage: crumplezone [--fullscreen] [--size WxH] [--no-audio] [--no-vsync] [--no-pad] [--spawn X,Z[,HEADING]] [--spawn-section N] [--scenario NAME]\n"
                       "                   [--map N] [--host [PORT]] [--join HOST[:PORT]] [--name NAME] [--password PASSWORD] [--time HOURS] [--level NAME]\n"
-                      "                   [--physics-threads auto|all|N] [--lab [--lab-model ID]] [--quality 0-3] [--bench FRAMES[,WARM] [--bench-sync]]");
+                      "                   [--physics-threads auto|all|N] [--lab [--lab-model ID]] [--quality 0-3] [--bench FRAMES [--bench-sync]]");
             std::exit(0);
         }
     }
@@ -1664,10 +1667,21 @@ int main(int argc, char** argv) {
         fail(std::string("missing OpenGL function ") + missing);
         return 1;
     }
+    {  // (compiled shaders kept between launches; scripted runs only with CZ_SHADER_CACHE=DIR, so they never write to the config)
+        const char* dir = std::getenv("CZ_SHADER_CACHE");
+        setShaderCacheDir(dir ? dir : scripted || std::getenv("CZ_NO_SHADER_CACHE") ? "" : configDir() + "/shadercache");
+    }
     const char* glRenderer = (const char*)gl::GetString(GL_RENDERER);
     const char* glVendor = (const char*)gl::GetString(GL_VENDOR);
-    // Honor the saved setting on every GPU; vendor names do not establish driver performance.
-    SDL_GL_SetSwapInterval(settings.vsync && opt.vsync && !scripted ? 1 : 0);
+    // Honor the saved setting on every GPU; vendor names do not establish driver performance. VSync asks for adaptive
+    // sync first (a frame that misses the refresh shows at once, torn, instead of waiting a whole refresh and halving
+    // the frame rate), plain vsync where the driver hasn't got it.
+    auto setVsync = [&](bool on) {
+        if (!on) SDL_GL_SetSwapInterval(0);
+        else if (SDL_GL_SetSwapInterval(-1) != 0) SDL_GL_SetSwapInterval(1);
+    };
+    setVsync(settings.vsync && opt.vsync && !scripted);
+    std::printf("Swap interval: %d\n", SDL_GL_GetSwapInterval());
     std::printf("OpenGL: %s / %s / %s\n", glVendor ? glVendor : "unknown",
                 (const char*)gl::GetString(GL_VERSION), glRenderer ? glRenderer : "unknown");
     std::printf("GPU vendor: %s\n", gpuVendorName(detectGpuVendor(glVendor, glRenderer)));
@@ -1746,10 +1760,15 @@ int main(int argc, char** argv) {
     Renderer renderer;
     std::string err;
     uint64_t drawnWorld = sim.world.stamp;
+    const uint64_t initStart = SDL_GetPerformanceCounter();
     if (!renderer.init(sim.world, err)) {
         fail("renderer init failed:\n" + err);
         return 1;
     }
+    renderer.settings = settings.gfx;
+    renderer.preload(sim.world);
+    std::printf("renderer: ready in %.0f ms (%d shader programs compiled, %d from the cache)\n",
+                (SDL_GetPerformanceCounter() - initStart) * 1000.0 / SDL_GetPerformanceFrequency(), gShaderCacheStats.compiled, gShaderCacheStats.hits);
     if (opt.lab) {  // the model lab instead of the game (lab.h)
         LabOptions lo;
         lo.select = opt.labModel, lo.variant = opt.labDesign;
@@ -1841,7 +1860,8 @@ int main(int argc, char** argv) {
         bool fs = (SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN_DESKTOP) == SDL_WINDOW_FULLSCREEN_DESKTOP;
         if (fs != settings.fullscreen && !scripted)
             SDL_SetWindowFullscreen(win, settings.fullscreen ? (uint32_t)SDL_WINDOW_FULLSCREEN_DESKTOP : 0u);
-        SDL_GL_SetSwapInterval(settings.vsync && opt.vsync && !scripted ? 1 : 0);
+        setVsync(settings.vsync && opt.vsync && !scripted);
+        adaptiveQuality.init(settings.gfx, settings.fpsTarget > 0 ? (float)settings.fpsTarget : 60.0f);
         sim.realRecovery = settings.realRecovery;
         for (Car& c : sim.cars) if (!c.remote) c.winchSpeed = settings.winchSpeed;
         sim.steeringAssist = settings.steeringAssist;
@@ -3900,7 +3920,11 @@ int main(int argc, char** argv) {
             }
             const uint64_t physicsStart = SDL_GetPerformanceCounter();
             renderer.passMark(FP_SIM);
-            simDt = sim.advance(dt, 120) * sim.h;
+            // Catching up is capped: a hitch (a frame far over the usual) isn't run all at once, which would make the next frame
+            // a hitch too, and so on; it's let go, like a pause. Ordinary slow frames run in real time down to 20 fps (at most
+            // 50 ms of physics a frame); below that the game slows rather than spiral.
+            static double usualDt = 1.0 / 60;
+            simDt = sim.advance(simCatchUp(dt, usualDt), simMaxSteps(sim.h)) * sim.h;
             renderer.passMark(FP_GAME);
             const double physicsMs = (double)(SDL_GetPerformanceCounter() - physicsStart) * 1000 / freq;
             hud.physicsMs += (physicsMs - hud.physicsMs) * 0.05;
@@ -4926,6 +4950,13 @@ int main(int argc, char** argv) {
         renderer.passMark(FP_SWAP);
         if (opt.bench) gl::Finish();  // (the frame isn't done until the GPU is: offscreen, the swap doesn't wait for it)
         SDL_GL_SwapWindow(win);
+        if (!scripted && settings.fpsTarget > 0 && SDL_GL_GetSwapInterval() == 0) {  // FPS TARGET with VSync off: the frame cap
+            const uint64_t until = now + freq / (uint64_t)settings.fpsTarget;
+            for (uint64_t t = SDL_GetPerformanceCounter(); t < until; t = SDL_GetPerformanceCounter()) {
+                const double leftMs = (double)(until - t) * 1000 / freq;
+                if (leftMs > 2) SDL_Delay((uint32_t)(leftMs - 1.5));  // (sleep most of it: SDL asks Windows for 1 ms timer ticks)
+            }
+        }
         frame++;
     }
 

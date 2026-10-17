@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "render.h"
+#include "perf.h"
 #include "devmenu.h"
 #include "keybinds.h"
 #include "throttle.h"
@@ -44,6 +45,7 @@ struct Settings {
     int padSteering = 1, padDeadzone = 1, padRumble = 1;
     RenderSettings gfx;
     bool adaptiveQuality = true;  // auto-scale quality to maintain framerate
+    int fpsTarget = 60;           // kFpsTargets: adaptive quality's aim and, VSync off, the frame cap (0: uncapped, aiming for 60)
     bool devHotkeys = false;      // the debug and test keys (1-7, I, K, N, DEL, [ ], F2, F3, F5) work directly; OFF: only through the dev menu (F12)
     Keybinds keys;
     throttle::Tuning throttle;  // the throttle limit (throttle.h): the keyboard's cap, its ramp, whether the pad obeys it
@@ -53,10 +55,7 @@ struct Settings {
     static std::string defaultPath();
 };
 
-// Graphics quality presets: LOW, MEDIUM, HIGH, ULTRA. presetOf() returns 4 (CUSTOM) when
-// the options don't match one.
-void applyPreset(RenderSettings& g, int preset);
-int presetOf(const RenderSettings& g);
+// (The graphics quality presets: perf.h.)
 
 class PauseMenu {
 public:
