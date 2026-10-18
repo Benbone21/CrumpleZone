@@ -34,15 +34,12 @@ const float kVTile[17] = float[](2.5, 3.0, 2.5, 3.0, 3.0, 3.0, 2.5, 3.0, 3.5, 3.
 const float kVBump[17] = float[](1.0, 1.0, 1.0, 1.0, 0.8, 0.8, 1.0, 0.9, 0.5, 0.7, 0.7, 1.1, 1.2, 0.5, 0.8, 1.3, 0.0);
 
 // ---- The material mix at this pixel: up to 12 (variant, weight) slots ----
-int sV[12]; float sW[12]; int sN = 0;
+// (One weight per variant, written at constant indices so they stay in registers: a small array searched and indexed at run time lives in slow per-thread memory on Apple's GPU, and cost 40% of the frame.)
+float sW[16];
 float gProc = 0.0;       // weight of the procedural look
 float gMud = 0.0, gSnow = 0.0, gTrail = 0.0, gRockPaint = 0.0;
-void addSlot(int v, float w){
-  if (w <= 0.001) return;
-  if (v == kPROC) { gProc += w; return; }
-  for (int i = 0; i < sN; i++) if (sV[i] == v) { sW[i] += w; return; }
-  if (sN < 12) { sV[sN] = v; sW[sN] = w; sN++; }
-}
+#define ADD(v, w) { float aw_ = (w); if (aw_ > 0.001) sW[v] += aw_; }
+void addProc(float w){ if (w > 0.001) gProc += w; }
 // Per-pixel environment, worked out once.
 float gN1, gDry, gForest, gSteep, gHigh, gSnowH, gAlt, gNoiseA, gNoiseB, gBald;
 float gDens;
@@ -54,26 +51,26 @@ void naturalGround(float w){
   float t = smoothstep(0.35, 0.65, gN1);
   if (meadow) {
     float bare = gBald * 0.5;
-    addSlot(5, flatW * (1.0 - t) * (1.0 - gDry) * (1.0 - bare));
-    addSlot(4, flatW * t * (1.0 - gDry) * (1.0 - bare));
-    addSlot(14, flatW * gDry * (1.0 - bare));
-    addSlot(2, flatW * bare);
+    ADD(5, flatW * (1.0 - t) * (1.0 - gDry) * (1.0 - bare));
+    ADD(4, flatW * t * (1.0 - gDry) * (1.0 - bare));
+    ADD(14, flatW * gDry * (1.0 - bare));
+    ADD(2, flatW * bare);
   } else {
     float lit = gForest * (1.0 - gBald * 0.3);
     float gr = 1.0 - lit;
     float bare = gBald * 0.55 * (1.0 - lit * 0.5);
-    addSlot(3, flatW * lit);
-    addSlot(5, flatW * gr * (1.0 - t) * (1.0 - gDry) * (1.0 - bare));
-    addSlot(4, flatW * gr * t * (1.0 - gDry) * (1.0 - bare));
-    addSlot(14, flatW * gr * gDry * (1.0 - bare));
-    addSlot(2, flatW * (gr * bare + lit * gBald * 0.3));
+    ADD(3, flatW * lit);
+    ADD(5, flatW * gr * (1.0 - t) * (1.0 - gDry) * (1.0 - bare));
+    ADD(4, flatW * gr * t * (1.0 - gDry) * (1.0 - bare));
+    ADD(14, flatW * gr * gDry * (1.0 - bare));
+    ADD(2, flatW * (gr * bare + lit * gBald * 0.3));
   }
   float rw = rockW * (1.0 - gSnowH) * w;
   float cliff = smoothstep(0.30, 0.55, gNoiseA);
-  addSlot(15, rw * cliff);
-  addSlot(11, rw * (1.0 - cliff) * 0.7);
-  addSlot(12, rw * (1.0 - cliff) * 0.3);
-  addSlot(13, gSnowH * w);
+  ADD(15, rw * cliff);
+  ADD(11, rw * (1.0 - cliff) * 0.7);
+  ADD(12, rw * (1.0 - cliff) * 0.3);
+  ADD(13, gSnowH * w);
 }
 // What a paint is made of, `w` of the pixel's weight.
 void expandPaint(int paint, float w){
@@ -83,24 +80,24 @@ void expandPaint(int paint, float w){
     if (uMap == 0 || uMap == 2) {  // asphalt road: the procedural look out to its gravel shoulder, the land beyond
       float e = max(fwidth(abs(vCol.g)), 0.02) * 1.5;
       float road = (1.0 - smoothstep(6.6 - e, 6.6 + e, abs(vCol.g))) * step(0.5, vCol.r);
-      addSlot(kPROC, w * road);
+      addProc(w * road);
       naturalGround(w * (1.0 - road));
     } else {                          // gravel road
       gTrail += w;
-      addSlot(6, w * (0.55 + 0.35 * nz));
-      addSlot(7, w * (0.45 - 0.35 * nz));
+      ADD(6, w * (0.55 + 0.35 * nz));
+      ADD(7, w * (0.45 - 0.35 * nz));
     }
   }
-  else if (paint == 2) { gTrail += w; addSlot(2, w * (0.7 - 0.25 * nz)); addSlot(6, w * (0.3 + 0.25 * nz)); }
-  else if (paint == 3) { gRockPaint += w; addSlot(11, w * (0.55 + 0.25 * nz)); addSlot(15, w * (0.25 - 0.1 * nz)); addSlot(12, w * (0.2 - 0.15 * nz)); }
-  else if (paint == 4) { addSlot(6, w * (0.55 + 0.3 * nz)); addSlot(7, w * (0.45 - 0.3 * nz)); }
-  else if (paint == 6) { addSlot(12, w * (0.5 + 0.3 * nz)); addSlot(6, w * (0.5 - 0.3 * nz)); }
-  else if (paint == 7) { addSlot(8, w * (0.7 + 0.2 * nz)); addSlot(7, w * (0.3 - 0.2 * nz)); }
-  else if (paint == 8) { gMud += w; addSlot(0, w * (0.65 + 0.3 * nz2)); addSlot(1, w * (0.35 - 0.3 * nz2)); }
-  else if (paint == 9) { gSnow += w; addSlot(13, w); }
-  else if (paint == 14) { addSlot(9, w * (0.7 + 0.2 * nz)); addSlot(7, w * (0.3 - 0.2 * nz)); }
-  else if (paint == 15) { addSlot(10, w * (0.8 + 0.1 * nz)); addSlot(9, w * (0.2 - 0.1 * nz)); }
-  else addSlot(kPROC, w);  // pad, ice, wet asphalt, freeway, race circuit
+  else if (paint == 2) { gTrail += w; ADD(2, w * (0.7 - 0.25 * nz)); ADD(6, w * (0.3 + 0.25 * nz)); }
+  else if (paint == 3) { gRockPaint += w; ADD(11, w * (0.55 + 0.25 * nz)); ADD(15, w * (0.25 - 0.1 * nz)); ADD(12, w * (0.2 - 0.15 * nz)); }
+  else if (paint == 4) { ADD(6, w * (0.55 + 0.3 * nz)); ADD(7, w * (0.45 - 0.3 * nz)); }
+  else if (paint == 6) { ADD(12, w * (0.5 + 0.3 * nz)); ADD(6, w * (0.5 - 0.3 * nz)); }
+  else if (paint == 7) { ADD(8, w * (0.7 + 0.2 * nz)); ADD(7, w * (0.3 - 0.2 * nz)); }
+  else if (paint == 8) { gMud += w; ADD(0, w * (0.65 + 0.3 * nz2)); ADD(1, w * (0.35 - 0.3 * nz2)); }
+  else if (paint == 9) { gSnow += w; ADD(13, w); }
+  else if (paint == 14) { ADD(9, w * (0.7 + 0.2 * nz)); ADD(7, w * (0.3 - 0.2 * nz)); }
+  else if (paint == 15) { ADD(10, w * (0.8 + 0.1 * nz)); ADD(9, w * (0.2 - 0.1 * nz)); }
+  else addProc(w);  // pad, ice, wet asphalt, freeway, race circuit
 }
 
 // ---- Sampling ----
@@ -171,15 +168,23 @@ void main(){
   vec4 c00 = texelFetch(uTerrainTex, i0, 0), c10 = texelFetch(uTerrainTex, i0 + ivec2(1, 0), 0);
   vec4 c01 = texelFetch(uTerrainTex, i0 + ivec2(0, 1), 0), c11 = texelFetch(uTerrainTex, i0 + ivec2(1, 1), 0);
   gDens = mix(mix(c00.g, c10.g, f.x), mix(c01.g, c11.g, f.x), f.y);
-  int cp[4]; float cw[4]; int cn = 0;
-  int pcs[4] = int[](int(c00.b + 0.5), int(c10.b + 0.5), int(c01.b + 0.5), int(c11.b + 0.5));
-  float wts[4] = float[]((1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y);
-  for (int c = 0; c < 4; c++) {
-    bool found = false;
-    for (int k = 0; k < cn; k++) if (cp[k] == pcs[c]) { cw[k] += wts[c]; found = true; }
-    if (!found) { cp[cn] = pcs[c]; cw[cn] = wts[c]; cn++; }
-  }
-  for (int k = 0; k < cn; k++) expandPaint(cp[k], cw[k]);
+  for (int i = 0; i < 16; i++) sW[i] = 0.0;
+  int pc0 = int(c00.b + 0.5), pc1 = int(c10.b + 0.5), pc2 = int(c01.b + 0.5), pc3 = int(c11.b + 0.5);
+  float a0 = (1.0 - f.x) * (1.0 - f.y), a1 = f.x * (1.0 - f.y), a2 = (1.0 - f.x) * f.y, a3 = f.x * f.y;
+  // (The distinct paints of the four cells, each with its summed weight; usually just one.)
+  float w0 = a0, w1 = a1, w2 = a2;
+  if (pc1 == pc0) w0 += a1;
+  if (pc2 == pc0) w0 += a2;
+  if (pc3 == pc0) w0 += a3;
+  bool d1 = pc1 != pc0;
+  if (d1) { if (pc2 == pc1) w1 += a2; if (pc3 == pc1) w1 += a3; }
+  bool d2 = pc2 != pc0 && pc2 != pc1;
+  if (d2 && pc3 == pc2) w2 += a3;
+  bool d3 = pc3 != pc0 && pc3 != pc1 && pc3 != pc2;
+  expandPaint(pc0, w0);
+  if (d1) expandPaint(pc1, w1);
+  if (d2) expandPaint(pc2, w2);
+  if (d3) expandPaint(pc3, a3);
 
   // ---- The procedural part (paved ground and the like) ----
   vec3 procBase = vec3(0.0); float procK = 0.04, procP = 16.0;
@@ -191,12 +196,14 @@ void main(){
   if (dist > 350.0) K = 1;
   int selV[4] = int[](0, 0, 0, 0); float selW[4] = float[](0.0, 0.0, 0.0, 0.0);
   float texTotal = 0.0;
+  int used = 0;
+#define TRY(i) if (sW[i] > bw && (used & (1 << i)) == 0) { bw = sW[i]; bi = i; }
   for (int k = 0; k < 4; k++) {
     if (k >= K) break;
     int bi = -1; float bw = 0.0;
-    for (int i = 0; i < sN; i++) if (sW[i] > bw) { bw = sW[i]; bi = i; }
+    TRY(0) TRY(1) TRY(2) TRY(3) TRY(4) TRY(5) TRY(6) TRY(7) TRY(8) TRY(9) TRY(10) TRY(11) TRY(12) TRY(13) TRY(14) TRY(15)
     if (bi < 0) break;
-    selV[k] = sV[bi]; selW[k] = bw; sW[bi] = -1.0; texTotal += bw;
+    selV[k] = bi; selW[k] = bw; used |= 1 << bi; texTotal += bw;
   }
   float texW = clamp(1.0 - gProc, 0.0, 1.0);
   if (texTotal > 0.0) for (int k = 0; k < 4; k++) selW[k] *= texW / texTotal;
