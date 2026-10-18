@@ -426,7 +426,11 @@ const mk::Mesh& placedMesh(const Placed& pl) {
     }
     static std::unordered_map<uint64_t, mk::Mesh> built;  // (cleared with the picks: see the lab; keyed by a hash, as a string key was built every frame)
     static uint64_t builtFor = 0;
-    if (builtFor != mk::picksVersion()) built.clear(), builtFor = mk::picksVersion();
+    static std::vector<std::unordered_map<uint64_t, mk::Mesh>> parked;  // (references handed out stay good: a flushed cache is parked, not freed)
+    if (builtFor != mk::picksVersion()) {
+        if (!built.empty()) parked.push_back(std::move(built));
+        built.clear(), builtFor = mk::picksVersion();
+    }
     const int variant = placedVariant(pl);
     // (A flexing car's parts ask for a new size every frame: the sizes are rounded to ~3% for the cache, else it would build and keep a mesh per frame.)
     auto quant = [] (double v) {
