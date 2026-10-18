@@ -1432,12 +1432,6 @@ void Car::wheelStep(double h, const World& w) {
         throttleFill = pedal > throttleFill ? std::min(pedal, throttleFill + h * rise) : pedal;
     }
     double thr = shiftTimer > 0 || engineDead ? 0.0 : throttleFill;
-    // Speed limiter (the ECU): eases the throttle off over the last 3 km/h. (On the road
-    // speed it filters, ~0.3 s: a live axle hopping on its springs mustn't pulse the throttle.)
-    if (spec->speedLimit > 0 && nd) {
-        govKmh += (gs / nd * wheels[0].R * 3.6 - govKmh) * std::min(1.0, h / 0.3);
-        thr *= clampd((spec->speedLimit - govKmh) / 3.0, 0, 1);
-    }
     double power = 0.25 + 0.75 * engineHealth;  // a crushed engine bay loses power
     // Turbo: boost follows the pedal, slowly at low revs (lag), and leaks away off throttle.
     // Off boost the engine makes a bit over half its torque.
@@ -1655,6 +1649,19 @@ void Car::wheelStep(double h, const World& w) {
         // (A blown tire runs on what's left of it; a rim or a bare hub on steel.)
         const double mu = spec->tireGrip * (!wh.mounted ? 0.3 : wh.debeaded ? 0.45 : wh.popped ? 0.55 : 1.0);
         const bool tire = wh.mounted && !wh.debeaded;  // rubber on the ground (else steel)
+        // Blowout: a tire at or past its speed rating can fail (tires.h). Each step past the rating rolls a
+        // deterministic die. The owner decides: a remote car's tire arrives in the snapshot (popped).
+        if (tire && !wh.popped && !wh.detached && !remote && blowoutsOn) {
+            const double frac = std::fabs(wh.omega) * wh.R * 3.6 / spec->tireRatingKmh();
+            const double share = mass * 9.81 / std::max<size_t>(wheels.size(), 1);
+            const double loadRatio = share > 0 ? wh.load / share : 1.0;
+            const double rate = tireBlowoutRate(frac, loadRatio, wheelTempFactor(wh));
+            if (rate > 0 && blowoutDie(blowSeed, (int)(&wh - wheels.data()), wh.blowTick++) < 1 - std::exp(-rate * h)) {
+                wh.popped = true;
+                tirePops++;
+                blowouts++;
+            }
+        }
         double Fx = 0;
         wh.load = 0;
         wh.slip = 0;
@@ -2372,6 +2379,7 @@ V3 Sim::nextColor() {
 
 void Sim::addCar(const VehicleSpec& vs, const V3& pos, double yaw, const V3& color) {
     cars.emplace_back();
+    cars.back().blowSeed = cars.size();
     // Vehicles modelled on one particular car wear its paint.
     V3 paint = vs.paintColor[0] >= 0 ? V3(vs.paintColor[0], vs.paintColor[1], vs.paintColor[2]) : color;
     cars.back().build(vs, pos, yaw, paint);

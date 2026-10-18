@@ -62,7 +62,7 @@ void LapTimer::update(const V3& pos, double dt) {
         if (d < bd) bd = d, idx = i;
     }
     if (std::sqrt(bd) > kRoadReach) {  // off the road: the lap is void, and the next sample starts fresh
-        if (running) event = VOID;
+        if (running) event = VOIDED;
         reset();
         return;
     }
@@ -73,7 +73,7 @@ void LapTimer::update(const V3& pos, double dt) {
     }
     const double delta = wrap(s - prevS);
     if (std::fabs(delta) > 60) {  // a jump (a respawn): not driving
-        if (running) event = VOID;
+        if (running) event = VOIDED;
         reset();
         prevS = s, havePrev = true;
         return;

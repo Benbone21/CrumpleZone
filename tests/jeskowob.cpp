@@ -43,6 +43,7 @@ void startOnStrip(Ctx& ctx, const VehicleSpec& spec) {
     ctx.sim.world = World(MAP_FREEWAY);
     flatStrip(ctx.sim.world);
     Car& c = ctx.add(spec, -250, -400, 0);
+    c.blowoutsOn = false;  // (these measure the car, not its tires: the Jesko is past its slicks' 270 km/h rating)
     ctx.sim.player = 0;
     ctx.sim.steeringAssist = true;
     ctx.focus(c);
