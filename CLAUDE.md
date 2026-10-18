@@ -15,6 +15,6 @@ If the user says "sync", pull main again and re-read both files, because the pla
 - Linux: `make crumplezone build/run_tests`. Tests: `./build/run_tests --jobs 4 [filter] [-v]`. Never pass `--update-baseline`. Put a time limit on every run: `timeout -k 10 N ...`.
 - Windows: install MSYS2 (`winget install MSYS2.MSYS2`), then run `pacman -S --needed make mingw-w64-ucrt-x86_64-gcc git`. Run make with `MSYSTEM=UCRT64`, e.g. `C:\msys64\usr\bin\bash.exe -lc "cd <repo> && make build/win/run_tests.exe"`. `make windows` builds the game.
 - Mac: `make mac-dev` (see `docs/hardware-testing.md`). If the Xcode license blocks clang, `export DEVELOPER_DIR=/Library/Developer/CommandLineTools`.
-- Physics must stay bit-identical across builds (`-ffp-contract=off`). `tools/bench_sim` prints the state fingerprint. Making the fingerprint identical across Linux, Windows and Mac is in progress on the Linux machine, so report yours and don't fix it locally.
+- Physics must stay bit-identical across builds (`-ffp-contract=off`). `tools/bench_sim` prints the state fingerprint. Each platform currently has its own fingerprint (making them identical is paused): report yours and keep it unchanged by your edits.
 - Benchmarks: `--bench N,WARM` for one scene, `--bench-suite` for the full set, `--debug-screen` to show the F3 stats in screenshots. Measure in a real window; offscreen rendering may use a different GPU.
 - Baselines: `docs/hardware/windows-rtx4070-baseline.md` and `docs/hardware/mac-m1-baseline.md`.

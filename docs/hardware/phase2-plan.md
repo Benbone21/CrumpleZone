@@ -23,7 +23,7 @@ Steps:
 - A cheaper ground shader path for LOW and POTATO (fewer taps and layers). HIGH up close stays the same.
 - The Mac `fieldrepair/steps` bad_alloc. It's being hunted with ASan/UBSan.
 - A model-cache thread race (`models/threads` failing intermittently).
-- **Physics differs between platforms.** Linux is `bbde8f6bd59f9c4a`, Windows `3db86794fec05596`, Mac `69497071eddf9087`. A fix is under discussion (our own deterministic math functions instead of each OS's libm). Don't try to fix it locally, only report your fingerprint.
+- **Physics differs between platforms.** Linux is `bbde8f6bd59f9c4a`, Windows `3db86794fec05596`, Mac `69497071eddf9087`. Making them identical is paused for now (multiplayer works without it, since each player owns their car and the server sends positions). Don't try to fix it locally: report your fingerprint, and make sure your own edits don't change it.
 
 If one of these turns out to be specific to your machine, say so in your report instead of fixing it.
 
