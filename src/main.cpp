@@ -1792,7 +1792,11 @@ int main(int argc, char** argv) {
     renderer.preload(sim.world);
     std::printf("renderer: ready in %.0f ms (%d shader programs compiled, %d from the cache)\n",
                 (SDL_GetPerformanceCounter() - initStart) * 1000.0 / SDL_GetPerformanceFrequency(), gShaderCacheStats.compiled, gShaderCacheStats.hits);
-    while (!visualReady(*sim.cars[sim.player].spec)) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    // (a scenario has no cars until its first frame: nothing to wait for, and nobody would ever make it)
+    if (!sim.cars.empty() && sim.player >= 0 && sim.player < (int)sim.cars.size()) {
+        prebuildVisual(*sim.cars[sim.player].spec, sim.cars[sim.player].color);  // (asked for, in case nothing has yet)
+        while (!visualReady(*sim.cars[sim.player].spec)) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
     if (opt.lab) {  // the model lab instead of the game (lab.h)
         LabOptions lo;
         lo.select = opt.labModel, lo.variant = opt.labDesign;
