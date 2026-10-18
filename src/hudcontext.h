@@ -20,6 +20,7 @@ enum Elem {
     E_DRIVELINE,  // the 4x4 schematic
     E_LAPS,       // the proving ground's lap timer (while a lap runs; a lap done or voided keeps it up a few seconds)
     E_TIRETEMP,   // the tire-temperature marks in the dial (blue cold, green in the window, red hot)
+    E_TIRESPEED,  // TIRES OVER SPEED RATING: while a tire is past its rating (blowouts possible)
     E_COUNT
 };
 
@@ -51,6 +52,7 @@ struct Sample {
     float tireLoss = 0;             // the most grip any of them has lost to it (0..1)
     bool hasDriveline = false;      // trucks with a transfer case or lockers
     int mode = 0;                   // drive mode
+    float tireFrac = 0;             // the fastest tire's road speed over its rating (1 = at it)
     bool lowRange = false, lockF = false, lockR = false, lockC = false, sway = false;
 };
 
@@ -79,6 +81,7 @@ struct Context {
             case E_PRESSURE: return s.airing || std::fabs(s.psi - s.streetPsi) > 1.0f;
             case E_LAPS: return s.lapOn;
             case E_TIRETEMP: return s.tireLoss > kTireLoss;
+            case E_TIRESPEED: return s.tireFrac >= 1.0f;
             case E_DRIVELINE: return s.hasDriveline && (s.lowRange || s.lockF || s.lockR || s.lockC);
         }
         return false;

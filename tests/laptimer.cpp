@@ -75,7 +75,7 @@ SCENARIO(lapTimerCheats, "laps/no-cheating", "Cutting across the loop, driving b
         t.setLoop(w), t.setVehicle("X");
         driveLoop(t, w, line - 5, n / 3);
         t.update(w.loopRoad[(line + n / 3) % n] + V3(0, 0, 200) * 0.0 + V3(100, 0, 100), 0.1);
-        ctx.check("off the road voids it", !t.running && t.event == LapTimer::VOID);
+        ctx.check("off the road voids it", !t.running && t.event == LapTimer::VOIDED);
         driveLoop(t, w, line + n / 3, n - n / 3 + 10);
         ctx.check("and the rest of that lap doesn't count", t.laps == 0);
     }

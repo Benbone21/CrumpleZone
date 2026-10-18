@@ -77,10 +77,15 @@ Weights bindBody(const Car& car, const V3& p) {
 }
 
 // A point on a bolt-on panel: bilinear weights on the nearest of the panel's own quads
-// (projected onto its sheet), so it hinges and flies off with the panel.
-Weights bindPanel(const Car& car, const Panel& pnl, const V3& p) {
+// (projected onto its sheet), so it hinges and flies off with the panel. With keepOffset,
+// how far the point stands off that sheet is kept too, as differences of the lattice nodes
+// round the quad's corner (so a drawn shape that leans in further than the physics panel,
+// a door's glass under a tucked roof, stays where it was drawn).
+Weights bindPanel(const Car& car, const Panel& pnl, const V3& p, bool keepOffset) {
     Weights out;
     double best = 1e18;
+    V3 resid;
+    int bestCorner = -1;
     for (int qi : pnl.quads) {
         const SkinQuad& q = car.quads[qi];
         V3 P[4];
@@ -102,12 +107,33 @@ Weights bindPanel(const Car& car, const Panel& pnl, const V3& p) {
         double score = len(at(u, v) - p) + outside * 2;
         if (score >= best) continue;
         best = score;
+        resid = p - at(u, v);
+        bestCorner = q.v[0];
         const double w[4] = {(1 - u) * (1 - v), u * (1 - v), u * v, (1 - u) * v};
         out.w.clear();
         for (int c = 0; c < 4; c++) {
             auto it = std::find(pnl.bodyNodes.begin(), pnl.bodyNodes.end(), q.v[c]);
             int node = it == pnl.bodyNodes.end() ? q.v[c] : pnl.panelNodes[it - pnl.bodyNodes.begin()];
             out.w.push_back({node, (float)w[c]});
+        }
+    }
+    if (keepOffset && bestCorner >= 0 && len(resid) > 1e-4) {
+        for (const auto& cell : car.cells) {
+            int b = -1;
+            for (int k = 0; k < 8; k++)
+                if (cell[k] == bestCorner) b = k;
+            if (b < 0) continue;
+            // resid = sum of a_k E_k over the cell's three edges from that corner.
+            V3 E[3];
+            for (int k = 0; k < 3; k++) E[k] = car.restLocal[cell[b ^ (1 << k)]] - car.restLocal[cell[b]];
+            const double det = dot(E[0], cross(E[1], E[2]));
+            if (std::fabs(det) < 1e-12) break;
+            const double a[3] = {dot(resid, cross(E[1], E[2])) / det, dot(E[0], cross(resid, E[2])) / det, dot(E[0], cross(E[1], resid)) / det};
+            for (int k = 0; k < 3; k++) {
+                out.w.push_back({cell[b ^ (1 << k)], (float)a[k]});
+                out.w.push_back({cell[b], (float)-a[k]});
+            }
+            break;
         }
     }
     return out;
@@ -147,6 +173,7 @@ struct Style {
     double hoodInset;          // hood seam this far in from the body side
     double sillDrop = 0;       // the drawn rocker hangs this far below the lattice floor
     double extraTuck = 0;      // the drawn greenhouse leans in this much more than the cage does
+    bool panelOffset = false;  // doors and the like keep the drawn shape off their physics sheet (else they lie on it)
 };
 
 const Style* styleFor(const VehicleSpec& vs) {
@@ -157,7 +184,7 @@ const Style* styleFor(const VehicleSpec& vs) {
     // tops into the hood, the hood's nose rolling down into the grille, the roof's edges), a
     // flat clamshell hood, an upright windshield and swing gate, a greenhouse leaning in,
     // squared-off wheel openings under black flares.
-    static const Style bronco{2, 0.15, 0.11, 0.05, 0.20, 0.06, 0.08, 0.075, 0.012, 0.016, 0.008, 0.03, 0.03, 2.8, 0.03, 0.07, 0.09};
+    static const Style bronco{2, 0.15, 0.11, 0.05, 0.20, 0.06, 0.08, 0.075, 0.012, 0.016, 0.008, 0.03, 0.03, 2.8, 0.03, 0.07, 0.09, true};
     // 1990 EF Civic hatch: a low wedge nose, soft shoulders, a slightly bowed side and a
     // sloping glass hatch.
     static const Style civic{3, 0.24, 0.13, 0.09, 0.28, 0.06, 0.07, 0.07, 0.03, 0.025, 0.025, 0.07, 0.05, 2.0, 0.05};
@@ -400,6 +427,14 @@ double shellArchHeight(const VehicleSpec& vs, double d) {
 
 bool hasBodyShell(const VehicleSpec& vs) { return styleFor(vs) != nullptr; }
 
+double shellRoofHalfWidth(const VehicleSpec& vs) {
+    const Style* style = styleFor(vs);
+    if (!style) return vs.width / 2;
+    const ShellLines L(vs, *style);
+    const double re = std::min(style->roofEdge, std::max(0.006, (L.T - L.B) * 0.35));
+    return L.W2 - style->sideBow - L.tuck * (L.T - re - L.B) / std::max(0.1, L.T - L.B) - re;  // (as section() draws it mid-roof)
+}
+
 bool bedMouth(const VehicleSpec& vs, BedMouth& m) {
     const Style* style = styleFor(vs);
     if (!style) return false;
@@ -625,7 +660,7 @@ bool buildBodyShell(const Car& car, VisualTemplate& t, bool merge) {
     auto weightsOf = [&](int v, int group) -> const Weights& {
         auto it = bound.find({v, group});
         if (it == bound.end())
-            it = bound.emplace(std::make_pair(v, group), group >= 0 ? bindPanel(car, car.panels[group], pos[v]) : bindBody(car, pos[v])).first;
+            it = bound.emplace(std::make_pair(v, group), group >= 0 ? bindPanel(car, car.panels[group], pos[v], style->panelOffset) : bindBody(car, pos[v])).first;
         return it->second;
     };
 

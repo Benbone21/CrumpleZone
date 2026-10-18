@@ -8,6 +8,7 @@
 
 #include "carframe.h"
 #include "softbody.h"
+#include "tiretemp.h"
 
 std::string WheelItem::sizeName() const {
     char buf[32];
@@ -472,4 +473,32 @@ void Sim::looseWheelStep() {
             lw.q = Quat{};
         }
     }
+}
+
+BlowoutTuning gBlowout;
+
+double tireBlowoutRate(double frac, double loadRatio, double heat) {
+    if (frac < 1) return 0;
+    const BlowoutTuning& t = gBlowout;
+    return t.base * std::exp(t.steep * (frac - 1)) * std::pow(clampd(loadRatio, 0.3, 2.5), t.loadExp) * heat;
+}
+
+double wheelTempFactor(const Wheel& wh, int tread) { return 1 + 4 * tireOverheat(tread, wh.tempC); }
+
+double blowoutDie(uint64_t seed, int wheel, uint32_t tick) {
+    uint64_t z = seed * 0x9E3779B97F4A7C15ull + (uint64_t)(wheel + 1) * 0xD1B54A32D192ED03ull + (uint64_t)tick * 0xBF58476D1CE4E5B9ull;
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+    z ^= z >> 31;
+    return (double)(z >> 11) * (1.0 / 9007199254740992.0);
+}
+
+double Car::tireSpeedFrac() const {
+    double f = 0;
+    for (const Wheel& wh : wheels) {
+        if (!wh.mounted || wh.detached || wh.popped || wh.debeaded) continue;
+        const double rating = spec->tireRatingKmh();
+        f = std::max(f, std::fabs(wh.omega) * wh.R * 3.6 / rating);
+    }
+    return f;
 }

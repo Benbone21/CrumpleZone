@@ -12,7 +12,7 @@ class LapTimer {
 public:
     static constexpr int kChecks = 8;         // checkpoints between one crossing of the line and the next
     static constexpr double kRoadReach = 45;  // farther than this from the loop road and the lap is void (m)
-    enum Event { NONE, STARTED, LAP, BEST, VOID };
+    enum Event { NONE, STARTED, LAP, BEST, VOIDED };  // (not VOID: windows.h defines that)
 
     bool running = false;
     double lap = 0, last = 0;  // the lap running (s), the last one finished
