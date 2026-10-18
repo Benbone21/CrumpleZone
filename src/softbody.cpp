@@ -82,32 +82,135 @@ int TriGrid::key(int x, int y, int z) {
 }
 
 void TriGrid::clear() {
-    if (val.capacity() < 8192) val.reserve(8192), nxt.reserve(8192), used.reserve(1024);  // (room for a car's cells: it grows once, not as cars come close)
+    if (box.capacity() < 6 * 1024) {  // (room for a car: it grows once, not as cars come close)
+        val.reserve(1024), box.reserve(6 * 1024), used.reserve(1024), usedCells.reserve(1024);
+        sx.reserve(64 * 16), sy.reserve(32 * 16), sz.reserve(64 * 16), cellNext.reserve(8192);
+    }
     for (int b : used) head[b] = -1;
+    for (int b : usedCells) cellHead[b] = -1;
     used.clear();
+    usedCells.clear();
     val.clear();
+    box.clear();
+    ent.clear();
     nxt.clear();
+    slabs = false;
 }
 
-void TriGrid::insert(int tri, const V3& mn, const V3& mx) {
-    int x0 = (int)std::floor(mn.x / kCell), x1 = (int)std::floor(mx.x / kCell);
-    int y0 = (int)std::floor(mn.y / kCell), y1 = (int)std::floor(mx.y / kCell);
-    int z0 = (int)std::floor(mn.z / kCell), z1 = (int)std::floor(mx.z / kCell);
-    for (int x = x0; x <= x1; x++)
-        for (int y = y0; y <= y1; y++)
-            for (int z = z0; z <= z1; z++) {
-                int b = key(x, y, z);
-                const int i = (int)val.size();
-                val.push_back(tri);
-                nxt.push_back(-1);
-                if (head[b] < 0) head[b] = i, used.push_back(b);
-                else nxt[tail[b]] = i;
-                tail[b] = i;
+void TriGrid::insert(int item, const V3& mn, const V3& mx) {
+    val.push_back(item);
+    box.insert(box.end(), {(int)std::floor(mn.x / kCell), (int)std::floor(mx.x / kCell), (int)std::floor(mn.y / kCell),
+                           (int)std::floor(mx.y / kCell), (int)std::floor(mn.z / kCell), (int)std::floor(mx.z / kCell)});
+}
+
+void TriGrid::finish() {
+    const int M = (int)val.size();
+    if (M == 0) return;
+    int lo[3] = {box[0], box[2], box[4]}, hi[3] = {box[1], box[3], box[5]};
+    for (int i = 1; i < M; i++)
+        for (int a = 0; a < 3; a++) lo[a] = std::min(lo[a], box[6 * i + 2 * a]), hi[a] = std::max(hi[a], box[6 * i + 2 * a + 1]);
+    const long long ex = (long long)hi[0] - lo[0] + 1, ey = (long long)hi[1] - lo[1] + 1, ez = (long long)hi[2] - lo[2] + 1;
+    if (ex * ey * ez > kMaxCells) {  // strewn far and wide: a chain link per covered cell
+        for (int i = 0; i < M; i++) {
+            const int* c = &box[6 * i];
+            for (int x = c[0]; x <= c[1]; x++)
+                for (int y = c[2]; y <= c[3]; y++)
+                    for (int z = c[4]; z <= c[5]; z++) {
+                        const int b = key(x, y, z), l = (int)ent.size();
+                        ent.push_back(i);
+                        nxt.push_back(-1);
+                        if (head[b] < 0) head[b] = l, used.push_back(b);
+                        else nxt[tail[b]] = l;
+                        tail[b] = l;
+                    }
+        }
+        return;
+    }
+    slabs = true;
+    const int words = this->words();
+    ox = lo[0], oy = lo[1], oz = lo[2];
+    nx = (int)ex, ny = (int)ey, nz = (int)ez;
+    sx.assign((size_t)nx * words, 0);
+    sy.assign((size_t)ny * words, 0);
+    sz.assign((size_t)nz * words, 0);
+    for (int i = 0; i < M; i++) {
+        const int* c = &box[6 * i];
+        const int w = i >> 6;
+        const uint64_t bit = 1ull << (i & 63);
+        for (int x = c[0]; x <= c[1]; x++) sx[(size_t)(x - ox) * words + w] |= bit;
+        for (int y = c[2]; y <= c[3]; y++) sy[(size_t)(y - oy) * words + w] |= bit;
+        for (int z = c[4]; z <= c[5]; z++) sz[(size_t)(z - oz) * words + w] |= bit;
+    }
+    cellNext.resize((size_t)nx * ny * nz);
+    int ci = 0;
+    for (int x = 0; x < nx; x++)
+        for (int y = 0; y < ny; y++)
+            for (int z = 0; z < nz; z++, ci++) {
+                const int b = key(ox + x, oy + y, oz + z);
+                if (cellHead[b] < 0) usedCells.push_back(b);
+                cellNext[ci] = cellHead[b];
+                cellHead[b] = ci;
             }
 }
 
-TriGrid::Chain TriGrid::query(const V3& p) const {
-    return {this, head[key((int)std::floor(p.x / kCell), (int)std::floor(p.y / kCell), (int)std::floor(p.z / kCell))]};
+int TriGrid::collect(const V3& p, std::vector<int>& out) const {
+    const int b = key((int)std::floor(p.x / kCell), (int)std::floor(p.y / kCell), (int)std::floor(p.z / kCell));
+    int n = 0;
+    if (!slabs) {
+        for (int l = head[b]; l >= 0; l = nxt[l]) {
+            if (n == (int)out.size()) out.resize(2 * n + 64);
+            out[n++] = val[ent[l]];
+        }
+        return n;
+    }
+    int c = cellHead[b];
+    if (c < 0) return 0;
+    const int words = this->words();
+    auto rows = [&](int ci, int w) {
+        const int x = ci / (ny * nz), y = ci / nz % ny, z = ci % nz;
+        return sx[(size_t)x * words + w] & sy[(size_t)y * words + w] & sz[(size_t)z * words + w];
+    };
+    int cells = 0;
+    for (int ci = c; ci >= 0; ci = cellNext[ci]) cells++;
+    if ((int)out.size() < (int)val.size() * cells) out.resize(val.size() * cells);
+    int* o = out.data();
+    if (cells == 1) {  // the usual: one cell of the box in this bucket
+        for (int w = 0; w < words; w++)
+            for (uint64_t m = rows(c, w); m; m &= m - 1) o[n++] = val[w * 64 + __builtin_ctzll(m)];
+        return n;
+    }
+    // Several (hash collisions): an item covering k of them comes k times, as k chain links would.
+    CZ_THREAD_CACHE(std::vector<uint64_t>, masks);
+    for (int w = 0; w < words; w++) {
+        masks.clear();
+        uint64_t any = 0;
+        for (int ci = c; ci >= 0; ci = cellNext[ci]) {
+            const uint64_t m = rows(ci, w);
+            if (m) masks.push_back(m), any |= m;
+        }
+        for (; any; any &= any - 1) {
+            const uint64_t bit = any & -any;
+            const int v = val[w * 64 + __builtin_ctzll(any)];
+            for (uint64_t m : masks)
+                if (m & bit) o[n++] = v;
+        }
+    }
+    return n;
+}
+
+void TriGrid::meets(const V3& p, uint64_t* out) const {
+    const int words = this->words();
+    std::fill(out, out + words, 0);
+    const int b = key((int)std::floor(p.x / kCell), (int)std::floor(p.y / kCell), (int)std::floor(p.z / kCell));
+    if (!slabs) {
+        for (int l = head[b]; l >= 0; l = nxt[l]) out[ent[l] >> 6] |= 1ull << (ent[l] & 63);
+        return;
+    }
+    for (int ci = cellHead[b]; ci >= 0; ci = cellNext[ci]) {
+        const int x = ci / (ny * nz), y = ci / nz % ny, z = ci % nz;
+        const uint64_t *rx = &sx[(size_t)x * words], *ry = &sy[(size_t)y * words], *rz = &sz[(size_t)z * words];
+        for (int w = 0; w < words; w++) out[w] |= rx[w] & ry[w] & rz[w];
+    }
 }
 
 V3 Car::groupAvg(const std::vector<int>& g) const {
@@ -2352,12 +2455,32 @@ void Sim::substep() {
     for (int i = 0; i < N; i++)
         if (cars[i].remote && cars[i].heldHere > 0)
             for (const Node& n : cars[i].nodes) ownForce[i] += n.f;
-    for (const auto& pair : contactPairs) {
-        const int i = pair.first, j = pair.second;
-        // Sleeping bodies still push back (they act as static supports); the forces
-        // they receive are discarded until they wake.
-        if (!(cars[i].sleeping && cars[j].sleeping)) collide(cars[i], cars[j]);
+    // Sleeping bodies still push back (they act as static supports); the forces
+    // they receive are discarded until they wake.
+    contactPasses.clear();
+    for (int k = 0; k < (int)contactPairs.size(); k++)
+        if (!(cars[contactPairs[k].first].sleeping && cars[contactPairs[k].second].sleeping))
+            contactPasses.push_back(2 * k), contactPasses.push_back(2 * k + 1);
+    while (contactAdds.size() < 2 * contactPairs.size()) {
+        contactAdds.emplace_back();
+        contactAdds.back().reserve(512);
     }
+    // Each pass only reads the bodies: they run side by side, and their pushes land after, in order.
+    auto pass = [&](int index) {
+        const int k = contactPasses[index];
+        const auto& pair = contactPairs[k / 2];
+        const Car& a = cars[k & 1 ? pair.second : pair.first];
+        const Car& b = cars[k & 1 ? pair.first : pair.second];
+        contactAdds[k].clear();
+        pointsVsSkin(a, b, contactAdds[k]);
+    };
+    if (physicsWorkers && contactPasses.size() >= 2) physicsWorkers->run((int)contactPasses.size(), pass);
+    else for (int i = 0; i < (int)contactPasses.size(); i++) pass(i);
+    for (int k : contactPasses)
+        for (const ContactAdd& c : contactAdds[k]) {
+            if (c.node < 0) c.car->impactEnergy += c.F.x;
+            else c.car->nodes[c.node].f += c.F;
+        }
 
     // Another player's vehicle one of ours crashes into runs on our physics from here (it
     // takes this step's push already), until a little after the hit. (Only a hit: leaning
@@ -2466,11 +2589,6 @@ void Car::settleShove(const V3& netVel, double dt) {
     shoveP *= std::max(0.0, 1 - dt / 0.6);
 }
 
-void Sim::collide(Car& A, Car& B) {
-    pointsVsSkin(A, B);
-    pointsVsSkin(B, A);
-}
-
 void Sim::setPhysicsThreads(int threads) {
     threads = resolvePhysicsThreads(threads);
     if (threads == physicsThreadCount) return;
@@ -2498,7 +2616,20 @@ void Car::prepareContact(long step) {
             }
             grid->insert(ti, mn - m, mx + m);
         }
+        grid->finish();
         grid->stamp = step;
+    }
+    // Where the grid's faces are now, in its item order (a parked body's grid is reused; its
+    // nodes haven't moved either). Rows padded to whole bitset words.
+    const size_t M = grid->val.size(), S = 64 * (size_t)grid->words();
+    faceGeo.resize(16 * S);
+    double* g = faceGeo.data();
+    for (size_t i = 0; i < M; i++) {
+        const Tri& t = tris[grid->val[i]];
+        const V3& a = nodes[t.v[0]].p;
+        const double row[16] = {a.x, a.y, a.z, t.nrm.x, t.nrm.y, t.nrm.z, t.e0.x, t.e0.y, t.e0.z,
+                                t.e1.x, t.e1.y, t.e1.z, t.d00, t.d01, t.d11, t.den};
+        for (int k = 0; k < 16; k++) g[k * S + i] = row[k];
     }
     const V3 reach(0.36, 0.36, 0.36);
     if (nodeGridStamp != step && (!sleeping || nodeGridStamp < 0)) {
@@ -2514,6 +2645,7 @@ void Car::prepareContact(long step) {
                 const V3& p = nodes[i].p;
                 nodeGrid->insert(i, p - reach, p + reach);
             }
+        nodeGrid->finish();
         nodeGridStamp = step;
     }
 }
@@ -2521,7 +2653,9 @@ void Car::prepareContact(long step) {
 // Of a push across a side wall above the sill, the share carried down to the sill.
 constexpr double kSillShare = 0.6;
 
-void Sim::pointsVsSkin(Car& A, Car& B) {
+void Sim::pointsVsSkin(const Car& A, const Car& B, std::vector<ContactAdd>& out) const {
+    Car* const pa = const_cast<Car*>(&A);  // (the cars the pushes land on, once added)
+    Car* const pb = const_cast<Car*>(&B);
     const double kK = 4e5 * std::min(A.spec->contactScale, B.spec->contactScale), kC = 700, kCt = 2000, kMu = 0.45;
     struct Hit {
         int tri = -1;
@@ -2531,10 +2665,22 @@ void Sim::pointsVsSkin(Car& A, Car& B) {
     // 3 cm: resting contact) take the deepest, which is steady for a box on a box's corner.
     // If it's deeper than that on every side, take the nearest: a node that has just
     // touched a barrier's front face mustn't be shoved out through the top, 30 cm above.
+    // (The faces whose plane the point is within reach of, sifted first in bulk.)
+    CZ_THREAD_CACHE(std::vector<int>, cand);
+    CZ_THREAD_CACHE(std::vector<uint64_t>, meets);
+    const int words = B.grid->words();
+    if ((int)meets.size() < 2 * words) meets.resize(2 * words);
+    uint64_t *met = meets.data(), *kept = met + words;
+    const FaceGeo geo = FaceGeo::rows(B.faceGeo.data(), 64 * (size_t)words);
+    const int* faceOf = B.grid->val.data();
     auto findHit = [&](const V3& p, double radius, Hit& hit) {
         Hit nearest;
         nearest.pen = 1e9;
-        for (int ti : B.grid->query(p)) {
+        B.grid->meets(p, met);
+        faceCandidates(geo, words, met, p, radius, kept);
+        for (int wi = 0; wi < words; wi++)
+        for (uint64_t bits = kept[wi]; bits; bits &= bits - 1) {
+            const int ti = faceOf[wi * 64 + __builtin_ctzll(bits)];
             const Tri& t = B.tris[ti];
             if (t.torn) continue;
             const V3& a = B.nodes[t.v[0]].p;
@@ -2567,18 +2713,18 @@ void Sim::pointsVsSkin(Car& A, Car& B) {
     // A push across a side wall, above the sill, is carried down to the sill: the door's
     // side-impact beam and the pillars take it there (pushed on the glass line alone, a truck
     // hit side-on was flipped over its far wheels by a load half a metre over its weight).
-    auto load = [&](Car& C, int i, const V3& F) {
-        const int s = i < (int)C.sideSill.size() ? C.sideSill[i] : -1;
+    auto load = [&](Car* C, int i, const V3& F) {
+        const int s = i < (int)C->sideSill.size() ? C->sideSill[i] : -1;
         if (s < 0) {
-            C.nodes[i].f += F;
+            out.push_back({C, i, F});
             return;
         }
-        const V3 across = C.chassis.rot.rotate(V3(0, 0, 1));
+        const V3 across = C->chassis.rot.rotate(V3(0, 0, 1));
         const V3 down = across * (dot(F, across) * kSillShare);
-        C.nodes[i].f += F - down;
-        C.nodes[s].f += down;
+        out.push_back({C, i, F - down});
+        out.push_back({C, s, down});
     };
-    auto apply = [&](const Hit& hit, const V3& pv, Node* pts[], int np) {
+    auto apply = [&](const Hit& hit, const V3& pv, const Node* pts[], int np) {
         const Tri& t = B.tris[hit.tri];
         V3 vb;
         for (int k = 0; k < 3; k++) vb += B.nodes[t.v[k]].v * hit.w[k];
@@ -2593,33 +2739,33 @@ void Sim::pointsVsSkin(Car& A, Car& B) {
         double vtl = len(vt);
         V3 F = t.nrm * Fn;
         if (vtl > 1e-6) F -= vt * (std::min(kMu * Fn, std::min(kCt, 0.4 * mMin / h) * vtl) / vtl);
-        for (int i = 0; i < np; i++) load(A, (int)(pts[i] - A.nodes.data()), F / (double)np);
-        for (int k = 0; k < 3; k++) load(B, t.v[k], F * -hit.w[k]);
+        for (int i = 0; i < np; i++) load(pa, (int)(pts[i] - A.nodes.data()), F / (double)np);
+        for (int k = 0; k < 3; k++) load(pb, t.v[k], F * -hit.w[k]);
         double e = std::fabs(vn) * Fn * h;
-        A.impactEnergy += e * 0.5;
-        B.impactEnergy += e * 0.5;
+        out.push_back({pa, -1, V3(e * 0.5, 0, 0)});
+        out.push_back({pb, -1, V3(e * 0.5, 0, 0)});
     };
     auto inBounds = [&](const V3& p) {
         return p.x >= B.bbMin.x && p.x <= B.bbMax.x && p.y >= B.bbMin.y && p.y <= B.bbMax.y && p.z >= B.bbMin.z &&
                p.z <= B.bbMax.z;
     };
 
-    for (Node& n : A.nodes) {
+    for (const Node& n : A.nodes) {
         if (!n.collide || !inBounds(n.p)) continue;
         Hit hit;
         if (findHit(n.p, 0.0, hit)) {
-            Node* pts[1] = {&n};
+            const Node* pts[1] = {&n};
             apply(hit, n.v, pts, 1);
         }
     }
-    for (Wheel& wh : A.wheels) {
-        Node& a = A.nodes[wh.inner];
-        Node& b = A.nodes[wh.outer];
+    for (const Wheel& wh : A.wheels) {
+        const Node& a = A.nodes[wh.inner];
+        const Node& b = A.nodes[wh.outer];
         V3 c = (a.p + b.p) * 0.5;
         if (!inBounds(c)) continue;
         Hit hit;
         if (findHit(c, wh.R * 0.9, hit)) {
-            Node* pts[2] = {&a, &b};
+            const Node* pts[2] = {&a, &b};
             apply(hit, (a.v + b.v) * 0.5, pts, 2);
         }
     }
@@ -2632,10 +2778,12 @@ void Sim::pointsVsSkin(Car& A, Car& B) {
     // folds up round the other's frame horns as if they weren't there, and only the bodies
     // crush): a rail corner reaches about half its section.
     const double rrBody = 0.36, rrHard = 0.12;  // contact distance between node centers
-    for (Node& na : A.nodes) {
+    for (const Node& na : A.nodes) {
         if (!na.collide || !inBounds(na.p)) continue;
-        for (int j : B.nodeGrid->query(na.p)) {
-            Node& nb = B.nodes[j];
+        const int nc = B.nodeGrid->collect(na.p, cand);
+        for (int k = 0; k < nc; k++) {
+            const int j = cand[k];
+            const Node& nb = B.nodes[j];
             const double rr = j < B.bodyNodes ? rrBody : rrHard;
             V3 d = na.p - nb.p;
             double dist2 = dot(d, d);
@@ -2648,8 +2796,8 @@ void Sim::pointsVsSkin(Car& A, Car& B) {
             if (Fn <= 0) continue;
             Fn = std::min(Fn, m * 3000.0);
             V3 F = nrm * Fn;
-            load(A, (int)(&na - A.nodes.data()), F);
-            load(B, j, F * -1.0);
+            load(pa, (int)(&na - A.nodes.data()), F);
+            load(pb, j, F * -1.0);
         }
     }
 }
