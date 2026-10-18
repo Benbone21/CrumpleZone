@@ -14,6 +14,26 @@ Measurement note: short single-run benches (`--map 3 --quality Q --bench 300,100
 
 Combined (before merging main's newer shader work), Frontier was about 23 ms at LOW and 41.5 ms at HIGH; at the new 0.75 default LOW is about 18 ms.
 
+## Full bench suite, before and after (1600x900 window, one run each)
+"Before" is new main (`dc7fe7f`) with none of my changes; "after" is this branch merged with the newest main (cheap ground tiers, traffic LOD, HUD). The suite sets the preset directly, so it runs at full logical scale; the 0.75 first-launch default is not in these numbers. Raw files: `raw/mac-m1-phase2-before-1600x900.txt`, `raw/mac-m1-phase2-suite-1600x900.txt`.
+
+| Map | Preset | Before avg ms (fps) | After avg ms (fps) | After 1% low ms |
+|---|---|---|---|---|
+| Frontier | POTATO | 21.6 (46) | 11.2 (89) | 16.8 |
+| Frontier | LOW | 61.4 (16) | 14.9 (67) | 20.0 |
+| Frontier | MEDIUM | 92.5 (11) | 35.2 (28) | 42.0 |
+| Frontier | HIGH | 107.2 (9) | 42.0 (24) | 50.6 |
+| Open Country | POTATO | 18.7 (54) | 10.2 (98) | 16.0 |
+| Open Country | LOW | 51.9 (19) | 14.6 (68) | 19.6 |
+| Open Country | MEDIUM | 81.8 (12) | 32.4 (31) | 41.0 |
+| Open Country | HIGH | 93.7 (11) | 39.5 (25) | 48.2 |
+| Boulder Gully | POTATO | 20.0 (50) | 11.4 (88) | 17.3 |
+| Boulder Gully | LOW | 53.3 (19) | 15.8 (63) | 20.6 |
+| Boulder Gully | MEDIUM | 85.0 (12) | 34.5 (29) | 43.5 |
+| Boulder Gully | HIGH | 100.1 (10) | 40.9 (24.5) | 49.9 |
+
+Hitches: 0 on every run except POTATO (2 on Frontier, 1 on Boulder Gully). LOW and POTATO are now playable at 60+ fps; MEDIUM and HIGH are 24 to 31 fps. The gain is the Retina fix (all presets) plus main's cheap ground shader tiers (mostly LOW and POTATO); this run can't separate the two.
+
 ## Where the GPU time goes (HIGH, Frontier, whole-frame ablation)
 GL timers don't exist on macOS and `--bench-sync` inflates numbers (every sync splits the tile renderer's pass: 61 ms synced against 44 ms normal), so each feature was switched off in turn and the whole frame timed.
 - **Terrain draw: about 26 of 44.7 ms (58%)**; at LOW 13.7 of 26.2 ms. It is fragment-bound and scales with pixel count (about 11 ns per shaded pixel at LOW); everything else is a flat 12.4 ms (CPU) that doesn't change with resolution.
