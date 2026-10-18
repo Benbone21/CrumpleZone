@@ -2917,7 +2917,8 @@ int main(int argc, char** argv) {
             return;
         }
         const std::vector<int>& listed = listedVehicles();
-        auto vehicleName = [&](int k) { return std::string(vehicleCatalog()[listed[k]].name); };
+        // (static, not [&]: the whenVisualReady callbacks below run after this call has returned)
+        static const auto vehicleName = [](int k) { return std::string(vehicleCatalog()[listedVehicles()[k]].name); };
         auto toSpot = [&](double x, double z, const std::string& what) {
             if (walker.active) getIn();
             if (walker.active) return;  // (nobody to drive there)
@@ -2932,7 +2933,7 @@ int main(int argc, char** argv) {
                 if (da.arg >= 0 && da.arg < (int)listed.size()) {  // (the listed vehicles, in order: 1 the Blazer)
                     const int k = da.arg;
                     whenVisualReady(garage.spec(listed[k]), [&, k] {
-                        sim.swapPlayerVehicle(garage.spec(listed[k]));
+                        sim.swapPlayerVehicle(garage.spec(listedVehicles()[k]));
                         hud.toast("NOW DRIVING " + vehicleName(k));
                     });
                 }
@@ -2941,7 +2942,7 @@ int main(int argc, char** argv) {
                 const size_t k = da.arg >= 0 ? (size_t)da.arg : spawnType;
                 if (k >= listed.size()) break;
                 whenVisualReady(garage.spec(listed[k]), [&, k] {
-                    hud.toast(sim.spawnAhead(garage.spec(listed[k])) ? "SPAWNED " + vehicleName((int)k) : std::string("VEHICLE LIMIT REACHED"));
+                    hud.toast(sim.spawnAhead(garage.spec(listedVehicles()[k])) ? "SPAWNED " + vehicleName((int)k) : std::string("VEHICLE LIMIT REACHED"));
                 });
                 if (da.arg < 0) spawnType = (spawnType + 1) % listed.size();
                 break;
@@ -2950,7 +2951,7 @@ int main(int argc, char** argv) {
                 {
                     const size_t k = trafficType;
                     whenVisualReady(garage.spec(listed[k]), [&, k] {
-                        hud.toast(sim.spawnTraffic(garage.spec(listed[k])) ? "AI " + vehicleName((int)k) + " ON THE LOOP ROAD"
+                        hud.toast(sim.spawnTraffic(garage.spec(listedVehicles()[k])) ? "AI " + vehicleName((int)k) + " ON THE LOOP ROAD"
                                                                             : std::string("VEHICLE LIMIT REACHED"));
                     });
                 }
@@ -3090,10 +3091,10 @@ int main(int argc, char** argv) {
         if (tourStep < nMaps) requestMap(maps[tourStep], nullptr);
         else if (tourStep < nMaps + nVeh) {
             const VehicleSpec& vs = garage.spec(listed[tourStep - nMaps]);
-            whenVisualReady(vs, [&] { sim.swapPlayerVehicle(vs); });
+            whenVisualReady(vs, [&, v = &vs] { sim.swapPlayerVehicle(*v); });
         } else if (tourStep < nMaps + 2 * nVeh) {
             const VehicleSpec& vs = garage.spec(listed[tourStep - nMaps - nVeh]);
-            whenVisualReady(vs, [&] { sim.spawnAhead(vs); });
+            whenVisualReady(vs, [&, v = &vs] { sim.spawnAhead(*v); });
         }
         else if (false) {}
         else {
