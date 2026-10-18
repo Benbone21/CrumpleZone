@@ -191,31 +191,8 @@ uint32_t hash32(uint32_t x) {
 }
 double hashf(uint32_t a, uint32_t b) { return hash32(a * 0x9e3779b9u ^ hash32(b + 0x632be5abu)) / 4294967296.0; }
 
-// Frustum planes (a, b, c, d: inside when a x + b y + c z + d >= 0) from a column-major matrix.
-void planesOf(const M4& m, float out[6][4]) {
-    const float* a = m.m;
-    for (int i = 0; i < 3; i++)
-        for (int s = 0; s < 2; s++) {
-            float* p = out[i * 2 + s];
-            const float sg = s ? -1.0f : 1.0f;
-            for (int k = 0; k < 4; k++) p[k] = a[k * 4 + 3] + sg * a[k * 4 + i];
-            const float l = std::sqrt(p[0] * p[0] + p[1] * p[1] + p[2] * p[2]);
-            if (l > 0)
-                for (int k = 0; k < 4; k++) p[k] /= l;
-        }
-}
-bool sphereIn(const float pl[6][4], const V3& c, double r) {
-    for (int i = 0; i < 6; i++)
-        if (pl[i][0] * c.x + pl[i][1] * c.y + pl[i][2] * c.z + pl[i][3] < -r) return false;
-    return true;
-}
-bool boxIn(const float pl[6][4], const V3& mn, const V3& mx) {
-    for (int i = 0; i < 6; i++) {
-        const V3 p(pl[i][0] >= 0 ? mx.x : mn.x, pl[i][1] >= 0 ? mx.y : mn.y, pl[i][2] >= 0 ? mx.z : mn.z);
-        if (pl[i][0] * p.x + pl[i][1] * p.y + pl[i][2] * p.z + pl[i][3] < 0) return false;
-    }
-    return true;
-}
+using props::boxInFrustum;
+using props::sphereInFrustum;
 
 // A decoded image, RGBA.
 struct Decoded {
@@ -734,12 +711,19 @@ void PropRenderer::buildScatterCell(int cx, int cz, std::vector<Inst>& out) {
     }
 }
 
-int PropRenderer::lodFor(const Inst& in, double dist) const {
+int PropRenderer::lodFor(const Inst& in, double dist, bool shadowPass) const {
     const double k = kLodK[quality];
     if (in.tree) {  // trees by distance: the near ones carry the most cards
         if (dist < 14 * k) return 0;
         if (dist < 40 * k) return 1;
         return 2;
+    }
+    const Model& g = models[in.model];
+    if (g.kind == props::KIND_ROCK || g.kind == props::KIND_CLIFF) {  // by how big their triangles come out on screen
+        const int tris[3] = {g.lodTris[0], g.lodTris[1], g.lodTris[2]};
+        // (A shadow from one under ~10 px on screen is a speck: those cast none.)
+        if (shadowPass && in.size < props::kLodShadowCullSize / k * std::max(dist, 0.1)) return -1;
+        return props::solidLod(tris, in.size, dist, k);
     }
     const double s = in.size / std::max(dist, 0.1);  // by size on screen
     if (s > 0.06 / k) return 0;
@@ -815,7 +799,7 @@ void PropRenderer::select(const float pl[6][4], bool useBillboards, int lodBias,
             v.insert(v.end(), vals, vals + 8);
             return;
         }
-        int lod = lodFor(in, dist);
+        int lod = lodFor(in, dist, shadowPass);
         if (lod < 0) return;
         if (scatterInst && dist > kScatterReach[quality]) return;
         lod = std::min(2, lod + lodBias);
@@ -834,11 +818,11 @@ void PropRenderer::select(const float pl[6][4], bool useBillboards, int lodBias,
         d.push_back(fade);
     };
     for (const Cell& c : cells) {
-        if (c.inst.empty() || !boxIn(pl, c.mn, c.mx)) continue;
+        if (c.inst.empty() || !boxInFrustum(pl, c.mn, c.mx)) continue;
         for (int i : c.inst) {
             Inst& in = statics[i];
             if (shadowPass && !in.shadow) continue;
-            if (!sphereIn(pl, in.c, in.r)) continue;
+            if (!sphereInFrustum(pl, in.c, in.r)) continue;
             put(in, false, hidden(in));
         }
     }
@@ -846,7 +830,7 @@ void PropRenderer::select(const float pl[6][4], bool useBillboards, int lodBias,
         for (const auto& kv : scatter)
             for (const Inst& in : kv.second) {
                 if (shadowPass && !in.shadow) continue;
-                if (!sphereIn(pl, in.c, in.r)) continue;
+                if (!sphereInFrustum(pl, in.c, in.r)) continue;
                 put(in, true, 0.0f);
                 if (!shadowPass) stats.scatter++;
             }
@@ -959,7 +943,7 @@ void PropRenderer::drawShadow(const M4& lightVP, int cascade, const V3& lightDir
     const auto t0 = std::chrono::steady_clock::now();
     beginQuery(cascade);
     float pl[6][4];
-    planesOf(lightVP, pl);
+    props::frustumPlanes(lightVP, pl);
     // The far cascade takes a coarser LOD; the scatter only casts into the near one.
     select(pl, true, cascade, true);
     UseProgram(progDepth);
@@ -979,7 +963,7 @@ void PropRenderer::draw(const M4& viewProj, const std::function<void(GLuint)>& s
     const auto t0 = std::chrono::steady_clock::now();
     beginQuery(2);
     float pl[6][4];
-    planesOf(viewProj, pl);
+    props::frustumPlanes(viewProj, pl);
     select(pl, true, 0, false);
     setLighting(progLit);
     submit(progLit, false, stats.tris, stats.draws, stats.instances);

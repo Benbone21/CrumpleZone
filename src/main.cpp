@@ -4859,6 +4859,8 @@ int main(int argc, char** argv) {
                             "shadows %d draws, %d instances, %.0fk tris\n",
                             ps.gpuMs, ps.cpuMs, ps.selectMs, ps.draws, ps.instances, ps.billboards, ps.scatter, ps.tris / 1000.0, ps.shadowDraws, ps.shadowInstances,
                             ps.shadowTris / 1000.0);
+                std::printf("bench: models main %u draws, %.0fk tris; shadows %u draws, %.0fk tris\n", geometry.modelDraws, geometry.modelVertices / 3000.0,
+                            geometry.shadowModelDraws, geometry.shadowModelVertices / 3000.0);
             }
             char path[512];
             std::snprintf(path, sizeof(path), "%s_%04d.ppm", opt.shotPrefix.c_str(), frame);

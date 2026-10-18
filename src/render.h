@@ -128,6 +128,7 @@ public:
         unsigned terrainTriangles = 0, terrainFullTriangles = 0;
         unsigned terrainChunks = 0, terrainVisibleChunks = 0;
         unsigned sceneryVertices = 0, shadowSceneryVertices = 0;
+        unsigned modelVertices = 0, shadowModelVertices = 0, modelDraws = 0, shadowModelDraws = 0;  // (of those: the code-made models, boxes and figures)
     };
     const GeometryStats& geometryStats() const { return geometryStats_; }
     double grassGpuMs() const { return grassGpuMs_; }  // (CZ_BENCH: the grass pass on the GPU, a few frames late)

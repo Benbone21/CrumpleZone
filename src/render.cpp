@@ -2528,6 +2528,8 @@ void Renderer::drawBatches(GLuint vao, const std::vector<StaticBatch>& batches, 
         if (!batch.bounds.visible(vp)) continue;
         DrawArrays(GL_TRIANGLES, batch.first, batch.count);
         (shadow ? geometryStats_.shadowSceneryVertices : geometryStats_.sceneryVertices) += batch.count;
+        (shadow ? geometryStats_.shadowModelVertices : geometryStats_.modelVertices) += batch.count;
+        (shadow ? geometryStats_.shadowModelDraws : geometryStats_.modelDraws)++;
     }
 }
 
@@ -3618,6 +3620,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         if (figVertexCount > 0) {
             BindVertexArray(figVao);
             DrawArrays(GL_TRIANGLES, 0, figVertexCount);
+            geometryStats_.shadowModelVertices += figVertexCount, geometryStats_.shadowModelDraws++;
         }
         UseProgram(progTreeDepth);
         uniformM4(progTreeDepth, "uLightVP", lightVP[c]);
@@ -3768,6 +3771,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     if (figVertexCount > 0) {
         BindVertexArray(figVao);
         DrawArrays(GL_TRIANGLES, 0, figVertexCount);
+        geometryStats_.modelVertices += figVertexCount, geometryStats_.modelDraws++;
     }
     // The code-made trees the camera sees through (close to it, or across the line to the car) dither away:
     // the few most hidden go to the shader as (x, z, reach, fade).
