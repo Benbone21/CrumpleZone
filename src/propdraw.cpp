@@ -848,6 +848,11 @@ void PropRenderer::select(const float pl[6][4], bool useBillboards, int lodBias,
     };
     for (const Cell& c : cells) {
         if (c.inst.empty() || !boxInFrustum(pl, c.mn, c.mx)) continue;
+        if (!shadowPass && occluder) {
+            RenderBounds b;
+            b.add(c.mn), b.add(c.mx);
+            if (occluder->occluded(b)) continue;
+        }
         for (int i : c.inst) {
             Inst& in = statics[i];
             if (shadowPass && !in.shadow) continue;
@@ -856,13 +861,19 @@ void PropRenderer::select(const float pl[6][4], bool useBillboards, int lodBias,
         }
     }
     if (!shadowPass || lodBias == 0)
-        for (const auto& kv : scatter)
+        for (const auto& kv : scatter) {
+            if (!shadowPass && occluder && !kv.second.empty()) {
+                RenderBounds b;
+                for (const Inst& in : kv.second) b.add(in.c - V3(in.r, in.r, in.r)), b.add(in.c + V3(in.r, in.r, in.r));
+                if (occluder->occluded(b)) continue;
+            }
             for (const Inst& in : kv.second) {
                 if (shadowPass && !in.shadow) continue;
                 if (!sphereInFrustum(pl, in.c, in.r)) continue;
                 put(in, true, 0.0f);
                 if (!shadowPass) stats.scatter++;
             }
+        }
 }
 
 void PropRenderer::submit(GLuint prog, bool depth, long long& tris, int& draws, int& instances) {
