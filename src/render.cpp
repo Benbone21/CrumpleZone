@@ -2525,7 +2525,7 @@ void Renderer::uploadBatches(GLuint& vao, GLuint& vbo, std::vector<Vtx>& vertice
 void Renderer::drawBatches(GLuint vao, const std::vector<StaticBatch>& batches, const M4& vp, bool shadow) {
     BindVertexArray(vao);
     for (const auto& batch : batches) {
-        if (!batch.bounds.visible(vp)) continue;
+        if (!batch.bounds.visible(vp) || (!shadow && occl_.occluded(batch.bounds))) continue;
         DrawArrays(GL_TRIANGLES, batch.first, batch.count);
         (shadow ? geometryStats_.shadowSceneryVertices : geometryStats_.sceneryVertices) += batch.count;
     }
@@ -2536,7 +2536,7 @@ void Renderer::drawBushes(const M4& vp, const V3& eye, bool shadow) {
     const double reach = shadow ? 80 : 300;
     BindVertexArray(bushVao);
     for (const auto& batch : bushBatches) {
-        if (batch.bounds.distance(eye) > reach || !batch.bounds.visible(vp)) continue;
+        if (batch.bounds.distance(eye) > reach || !batch.bounds.visible(vp) || (!shadow && occl_.occluded(batch.bounds))) continue;
         DrawArrays(GL_TRIANGLES, batch.first, batch.count);
         (shadow ? geometryStats_.shadowSceneryVertices : geometryStats_.sceneryVertices) += batch.count;
     }
@@ -2550,8 +2550,9 @@ void Renderer::drawTerrain(const M4& vp, const View& view) {
     for (const auto& chunk : terrainChunks) {
         geometryStats_.terrainFullTriangles += chunk.count[0] / 3;
         if (!chunk.bounds.visible(vp)) continue;
+        if (occl_.occluded(chunk.bounds)) { ++geometryStats_.terrainOccluded; continue; }
         const double distance = chunk.bounds.distance(view.eye);
-        const int lod = distance < 100 ? 0 : distance < 220 ? 1 : distance < 450 ? 2 : 3;
+        const int lod = terrainLodForDistance(distance);
         DrawElements(GL_TRIANGLES, chunk.count[lod], GL_UNSIGNED_INT,
                      reinterpret_cast<const void*>((uintptr_t)chunk.first[lod] * sizeof(unsigned)));
         geometryStats_.terrainTriangles += chunk.count[lod] / 3;
@@ -2654,7 +2655,7 @@ void Renderer::updateTerrainRegion(const World& world, int i0, int j0, int i1, i
     std::vector<Vtx> row;
     for (int i = mi0; i <= mi1; i++) {
         row.clear();
-        for (int j = mj0; j <= mj1; j++) row.push_back(terrainVertex(world, -half + i * sp, -half + j * sp));
+        for (int j = mj0; j <= mj1; j++) row.push_back(terrainVertex(world, -half + i * sp, -half + j * sp)), occl_.patch(i, j, row.back().p[1]);
         BufferSubData(GL_ARRAY_BUFFER, (GLintptr)(((size_t)i * n + mj0) * sizeof(Vtx)), (GLsizeiptr)(row.size() * sizeof(Vtx)), row.data());
     }
     // Bounds must include raised/lowered editor vertices before the next culling pass.
@@ -2746,6 +2747,11 @@ void Renderer::buildTerrain(const World& world) {
         GenBuffers(1, &terrainVbo);
         GenBuffers(1, &terrainIbo);
         setupVtxVao(terrainVao, terrainVbo);
+    }
+    {
+        std::vector<float> hs(verts.size());
+        for (size_t k = 0; k < verts.size(); k++) hs[k] = verts[k].p[1];
+        occl_.build(hs, n, spacing, -half);
     }
     BindVertexArray(terrainVao);
     BindBuffer(GL_ARRAY_BUFFER, terrainVbo);
@@ -3531,6 +3537,10 @@ void Renderer::drawCarBodies(const Sim& sim, GLuint prog, bool glassPass) {
 }
 
 void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effects* effects) {
+    static const bool noOcclusion = std::getenv("CZ_NO_OCCLUSION") != nullptr;  // (the reference render of the pixel test)
+    occl_.enable(!noOcclusion);
+    occl_.refresh();
+    occl_.setEye(view.eye);
     buildFigures();
     prepareCars(sim, debug);
 
@@ -3801,10 +3811,11 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         Uniform1i(uniformLocation(progTree, "uTreeFadeN"), n);
         if (n) Uniform4fv(uniformLocation(progTree, "uTreeFade"), n, list);
     }
-    geometryStats_.sceneryVertices += trees_.draw(vp, view.eye);
+    geometryStats_.sceneryVertices += trees_.draw(vp, view.eye, 0, &occl_);
     UseProgram(progLit);
     drawBatches(sceneryVao, sceneryBatches, vp, false);
     drawBushes(vp, view.eye, false);
+    geometryStats_.occlusionTests = occl_.asked, geometryStats_.occlusionHidden = occl_.hidden;
     props.draw(vp, [&](GLuint prog) {
         setLighting(prog);
         Uniform1i(uniformLocation(prog, "uMap"), mapId);

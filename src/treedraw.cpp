@@ -91,7 +91,7 @@ void TreeDraw::build(const World& w, bool skipPines, bool skipSnags) {
     buckets_.assign(set.shapes.size() * forest::kLods, {});
 }
 
-unsigned TreeDraw::draw(const M4& vp, const V3& eye, int lodBias) {
+unsigned TreeDraw::draw(const M4& vp, const V3& eye, int lodBias, const TerrainOcclusion* hidden) {
     if (!vao_ || inst_.empty()) return 0;
     const int L = forest::kLods;
     static const int forced = std::getenv("CZ_TREE_LOD") ? std::clamp(std::atoi(std::getenv("CZ_TREE_LOD")), 0, L - 1) : -1;  // (screenshots of one LOD)
@@ -99,7 +99,7 @@ unsigned TreeDraw::draw(const M4& vp, const V3& eye, int lodBias) {
     // (nearest cells first, and the near LODs drawn first: what's in front fills the depth first, so less is shaded behind it)
     order_.clear();
     for (int k = 0; k < (int)cells_.size(); k++)
-        if (cells_[k].bounds.visible(vp)) order_.push_back({cells_[k].bounds.distance(eye), k});
+        if (cells_[k].bounds.visible(vp) && !(hidden && hidden->occluded(cells_[k].bounds))) order_.push_back({cells_[k].bounds.distance(eye), k});
     std::sort(order_.begin(), order_.end());
     for (const auto& ok : order_) {
         const Cell& c = cells_[ok.second];
