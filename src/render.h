@@ -8,6 +8,7 @@
 #include "gl.h"
 #include "treedraw.h"
 #include "visibility.h"
+#include "occlusion.h"
 #include "groundtex.h"
 #include "lights.h"
 #include "modelkit.h"
@@ -120,6 +121,8 @@ public:
     } carried;
     // The world editor: redraw just what changed (terrain cells i, j on the 1 m grid,
     // inclusive), the water, or the objects.
+    // Hidden behind the ground from the camera? For the main pass only (never a shadow pass). See occlusion.h.
+    const TerrainOcclusion& occlusion() const { return occl_; }
     void updateTerrainRegion(const World& world, int i0, int j0, int i1, int j1);
     void updateWater(const World& world);
     void updateObjects(const World& world);
@@ -144,6 +147,7 @@ public:
     struct GeometryStats {
         unsigned terrainTriangles = 0, terrainFullTriangles = 0;
         unsigned terrainChunks = 0, terrainVisibleChunks = 0;
+        unsigned occlusionTests = 0, occlusionHidden = 0, terrainOccluded = 0;  // horizon tests this frame (all systems) and boxes they culled
         unsigned sceneryVertices = 0, shadowSceneryVertices = 0;
         // Vehicles (CZ_BENCH): draw calls and triangles in the main pass and in both shadow passes,
         // the CPU spent building their meshes (skin, parts, running gear) and the parts models.
@@ -224,13 +228,14 @@ private:
     };
     struct StaticBatch { RenderBounds bounds; int first = 0, count = 0; };
     std::vector<TerrainChunk> terrainChunks;
+    TerrainOcclusion occl_;
     std::vector<StaticBatch> boxBatches, sceneryBatches, bushBatches;
     GeometryStats geometryStats_;
     VegStats vegStats_;
     bool shadowPass_ = false;
     int carKind_ = 0;  // (which of GeometryStats::carKindTris a car draw counts to)
     std::vector<char> carVisible_;  // per car, in the pass being drawn (cullCars)
-    void cullCars(size_t cars, const M4& vp);
+    void cullCars(size_t cars, const M4& vp, bool mainPass);
     bool carShown(size_t ci) const { return ci >= carVisible_.size() || carVisible_[ci]; }
     unsigned rebuilds_ = 0;  // (which of the car counts a car draw goes to)
     void carDrawArrays(int first, int count) {

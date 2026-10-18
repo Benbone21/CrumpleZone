@@ -1,4 +1,5 @@
 #include "groundtex.h"
+#include "meshcache.h"
 #include "platform.h"
 #include "texcomp.h"
 
@@ -177,8 +178,31 @@ bool loadGroundTextures(GroundTextures& gt, int maxSize, std::string& err) {
     std::vector<std::thread> pool;
     for (int l = 0; l < kLayerCount; l++)
         pool.emplace_back([&, l] {
+            meshcache::Hasher key;
+            key.u64((uint64_t)texenc::kEncoderVersion), key.u64((uint64_t)maxSize), key.u64(texcomp::s3tcAvailable()), key.str(kGroundLayers[l]);
+            for (const char* part : {"diff", "nor_gl", "arm", "disp"})
+                key.u64(meshcache::fileStamp(dir + "/" + kGroundLayers[l] + "_" + part + "_1k.jpg"));
+            std::vector<uint8_t> blob;
+            if (meshcache::getBlob(key.h, blob)) {  // (kept on disk: the albedo's blocks, then the normal's)
+                uint64_t n;
+                std::memcpy(&n, blob.data(), blob.size() >= 8 ? 8 : 0);
+                if (blob.size() >= 8 && n <= blob.size() - 8 &&
+                    meshcache::unpackEncoded(std::vector<uint8_t>(blob.begin() + 8, blob.begin() + 8 + n), dec[l].encAlbedo) &&
+                    meshcache::unpackEncoded(std::vector<uint8_t>(blob.begin() + 8 + n, blob.end()), dec[l].encNormal)) {
+                    dec[l].size = dec[l].encAlbedo.w, dec[l].ok = true;
+                    return;
+                }
+            }
             decodeLayer(dir, kGroundLayers[l], maxSize, 1024, dec[l]);
-            if (dec[l].ok) encodeLayer(dec[l]);
+            if (dec[l].ok) {
+                encodeLayer(dec[l]);
+                const std::vector<uint8_t> a = meshcache::packEncoded(dec[l].encAlbedo), b = meshcache::packEncoded(dec[l].encNormal);
+                std::vector<uint8_t> both;
+                const uint64_t n = a.size();
+                both.insert(both.end(), (const uint8_t*)&n, (const uint8_t*)&n + 8);
+                both.insert(both.end(), a.begin(), a.end()), both.insert(both.end(), b.begin(), b.end());
+                meshcache::putBlob(key.h, both);
+            }
         });
     for (std::thread& t : pool) t.join();
     for (const Decoded& d : dec)

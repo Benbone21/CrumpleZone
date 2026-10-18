@@ -1,4 +1,5 @@
 #include "thread_cache.h"
+#include "loadprof.h"
 #include "carvisual.h"
 
 #include "bodyshell.h"
@@ -7,6 +8,9 @@
 #include "scenery.h"
 
 #include <array>
+#include <atomic>
+#include <mutex>
+#include <thread>
 #include <map>
 #include <string>
 #include <set>
@@ -1182,9 +1186,26 @@ void buildParts(const Car& car, PartBuilder& pb) {
     if(vs.model==1)for(size_t i=cabinStart;i<pb.corners.size();i++)pb.corners[i].y+=vs.layerY[0]-0.11;
 }
 
-std::map<const VehicleSpec*, std::unique_ptr<VisualTemplate>>& cache() {
-    static std::map<const VehicleSpec*, std::unique_ptr<VisualTemplate>> c;
+// One slot per vehicle spec. Builders on any thread: the map is locked, a slot's build is serialised, and a finished template
+// is published with `ready` (so the render thread can ask without waiting: tryVisualTemplate).
+struct Slot {
+    std::unique_ptr<VisualTemplate> t;
+    std::atomic<bool> ready{false}, queued{false};
+    std::mutex build;
+};
+std::mutex& cacheLock() {
+    static std::mutex m;
+    return m;
+}
+std::map<const VehicleSpec*, std::unique_ptr<Slot>>& cache() {
+    static std::map<const VehicleSpec*, std::unique_ptr<Slot>> c;
     return c;
+}
+Slot& slotFor(const VehicleSpec* spec) {
+    std::lock_guard<std::mutex> lk(cacheLock());
+    auto& s = cache()[spec];
+    if (!s) s = std::make_unique<Slot>();
+    return *s;
 }
 
 // ---- Running-gear helpers --------------------------------------------------------
@@ -1218,10 +1239,13 @@ void blob(std::vector<Vtx>& out, const V3& c, double r, const V3& col, int mat) 
 // =============================================================================
 
 const VisualTemplate& visualTemplate(const Car& car) {
-    auto& slot = cache()[car.spec];
-    if (slot) return *slot;
-    slot = std::make_unique<VisualTemplate>();
-    VisualTemplate& t = *slot;
+    Slot& slot = slotFor(car.spec);
+    if (slot.ready.load(std::memory_order_acquire)) return *slot.t;
+    std::lock_guard<std::mutex> building(slot.build);  // (another thread may be making it: wait for that one)
+    if (slot.ready.load(std::memory_order_acquire)) return *slot.t;
+    LOADPROF("car.visualTemplate (first sight)");
+    auto made = std::make_unique<VisualTemplate>();
+    VisualTemplate& t = *made;
     const VehicleSpec& vs = *car.spec;
     const int cells = (int)vs.profile[0].size();
     int glassStart=cells, glassEnd=0, glassLayer=0;
@@ -1401,8 +1425,33 @@ const VisualTemplate& visualTemplate(const Car& car) {
         } else t.partBind.push_back(bindPoint(car, pb.corners[k]));
     }
     t.partColor = pb.color;
-    return t;
+    slot.t = std::move(made);
+    slot.ready.store(true, std::memory_order_release);
+    return *slot.t;
 }
+
+void prebuildVisual(const VehicleSpec& spec, const V3& color);
+
+const VisualTemplate* tryVisualTemplate(const Car& car) {
+    Slot& slot = slotFor(car.spec);
+    if (slot.ready.load(std::memory_order_acquire)) return slot.t.get();
+    if (blockOnTemplates) return &visualTemplate(car);  // (screenshots and tests want the car drawn, now)
+    prebuildVisual(*car.spec, car.color);  // first sight: made on a worker from a fresh car of the spec (the sim goes on changing this one)
+    return nullptr;
+}
+
+void prebuildVisual(const VehicleSpec& spec, const V3& color) {
+    Slot& slot = slotFor(&spec);
+    if (slot.ready.load(std::memory_order_acquire) || slot.queued.exchange(true)) return;
+    const VehicleSpec* sp = &spec;
+    std::thread([sp, color] {
+        Car scratch;
+        scratch.build(*sp, V3(0, 1, 0), 0, sp->paintColor[0] >= 0 ? V3(sp->paintColor[0], sp->paintColor[1], sp->paintColor[2]) : color);
+        visualTemplate(scratch);
+    }).detach();
+}
+
+bool visualReady(const VehicleSpec& spec) { return slotFor(&spec).ready.load(std::memory_order_acquire); }
 
 void evalBody(const Car& car, const std::vector<V3>& P, const VisualTemplate& t, std::vector<BodyDynamic>& dyn, std::vector<unsigned>& opaque,
               std::vector<unsigned>& glass) {

@@ -1,5 +1,6 @@
 #include <chrono>
 #include "render.h"
+#include "loadprof.h"
 #include "watermesh.h"
 #include "texcomp.h"
 
@@ -2268,6 +2269,7 @@ struct MeshOut {
 
 bool Renderer::init(const World& world, std::string& err) {
     const std::string header = "#version 330 core\n";
+    const double lpShaders0 = loadprof::nowMs();
     progLit = linkProgram(kLitVS, header + kCommonFS + kLitIns + kTerrainProcFS + kLitFSBody, err);
     progCar = linkProgram(kCarVS, header + kCommonFS + kCarFSBody, err);
     progDepth = linkProgram(kDepthVS, kDepthFS, err);
@@ -2304,15 +2306,16 @@ bool Renderer::init(const World& world, std::string& err) {
     if (!progLit || !progDepth || !progParts || !progPartsDepth || !progLine || !progXray || !progSky || !progHud || !progFx || !progCar || !progAO || !progDown ||
         !progUp || !progComposite || !progGrass || !progWater || !progTree || !progTreeDepth)
         return false;
+    loadprof::add("gl.shaders (main)", loadprof::nowMs() - lpShaders0);
     // (Scanned props: if their shaders won't build, the scenery stays code-made.)
     {
+        LOADPROF("gl.shaders (props)");
         std::string perr;
         propsOk = props.init(kCommonFS, linkProgram, perr);
         if (!propsOk) std::fprintf(stderr, "prop shaders: %s\n", perr.c_str());
     }
 
-    buildWheel();
-    buildFont();
+    { LOADPROF("gl.wheel+font"); buildWheel(); buildFont(); }
     setWorld(world);
 
     GenVertexArrays(1, &dynVao);
@@ -2593,8 +2596,9 @@ double sceneryHeight(const World& world, double x, double z) {
 }  // namespace
 
 void Renderer::setWorld(const World& world) {
+    LOADPROF("renderer.setWorld");
     mapId = world.map == MAP_WILDS ? (int)MAP_FREEWAY : world.map;  // (the wilds are painted as the freeway's meadows are: land and paints, no pad or road)
-    buildTerrain(world);
+    { LOADPROF("terrain.build+upload"); buildTerrain(world); }
     treeSig_ = scenerySig_ = bushSig_ = 0;  // (a new world: everything is built afresh)
     updateObjects(world);
     updateWater(world);
@@ -2627,8 +2631,8 @@ Sig sceneryBase(const World& w, int props, const ScanCover& c) {
 void Renderer::updateObjects(const World& world) {
     // The scanned props first: whatever they cover, the code-made meshes leave out.
     const int pq = propsOk ? std::min(std::max(settings.props, 0), 3) : 0;
-    if (pq) props.ensureLoaded(pq);
-    props.setWorld(world, pq);
+    if (pq) { LOADPROF("props.ensureLoaded"); props.ensureLoaded(pq); }
+    { LOADPROF("props.setWorld"); props.setWorld(world, pq); }
     const ScanCover cover = props.cover(pq);
     scanCover_ = cover;
     treeFade_.assign(world.trees.size(), 0.0f);
@@ -2641,7 +2645,7 @@ void Renderer::updateObjects(const World& world) {
     if (ts.h != treeSig_ || treeVertexCount == 0) {
         treeSig_ = ts.h;
         forest::Set set;
-        forest::build(world, cover.pines, cover.snags, set);
+        { LOADPROF("trees.generate"); forest::build(world, cover.pines, cover.snags, set); }
         trees_.build(set);
         treeVertexCount = (int)trees_.meshVertices();
     }
@@ -2654,7 +2658,8 @@ void Renderer::updateObjects(const World& world) {
         if (!cover.bushes) forest::buildBushes(world, set);
         bushes_.build(set);
         std::vector<Vtx> v;
-        buildBushMesh(world, v, cover);
+        { LOADPROF("bushes.mesh"); buildBushMesh(world, v, cover); }
+        LOADPROF("bushes.bin+upload");
         uploadBatches(bushVao, bushVbo, v, bushBatches);
         bushVertexCount = (int)v.size();
     }
@@ -2672,8 +2677,9 @@ void Renderer::updateObjects(const World& world) {
     if (ss.h != scenerySig_ || sceneryVertexCount == 0) {
         scenerySig_ = ss.h;
         std::vector<Vtx> v;
-        buildRockMesh(world, v, cover);
-        buildPropMesh(world, v);
+        { LOADPROF("rocks.mesh"); buildRockMesh(world, v, cover); }
+        { LOADPROF("models.mesh (props)"); buildPropMesh(world, v); }
+        LOADPROF("scenery.bin+upload");
         uploadBatches(sceneryVao, sceneryVbo, v, sceneryBatches);
         sceneryVertexCount = (int)v.size();
     }
@@ -2706,7 +2712,7 @@ void Renderer::uploadBatches(GLuint& vao, GLuint& vbo, std::vector<Vtx>& vertice
 void Renderer::drawBatches(GLuint vao, const std::vector<StaticBatch>& batches, const M4& vp, bool shadow) {
     BindVertexArray(vao);
     for (const auto& batch : batches) {
-        if (!batch.bounds.visible(vp)) continue;
+        if (!batch.bounds.visible(vp) || (!shadow && occl_.occluded(batch.bounds))) continue;
         DrawArrays(GL_TRIANGLES, batch.first, batch.count);
         (shadow ? geometryStats_.shadowSceneryVertices : geometryStats_.sceneryVertices) += batch.count;
         (shadow ? geometryStats_.shadowModelVertices : geometryStats_.modelVertices) += batch.count;
@@ -2719,7 +2725,7 @@ void Renderer::drawBushes(const M4& vp, const V3& eye, bool shadow, VegStats::Pa
     const double reach = (shadow ? 80 : 300) * vegDetail();
     BindVertexArray(bushVao);
     for (const auto& batch : bushBatches) {
-        if (batch.bounds.distance(eye) > reach || !batch.bounds.visible(vp)) continue;
+        if (batch.bounds.distance(eye) > reach || !batch.bounds.visible(vp) || (!shadow && occl_.occluded(batch.bounds))) continue;
         DrawArrays(GL_TRIANGLES, batch.first, batch.count);
         (shadow ? geometryStats_.shadowSceneryVertices : geometryStats_.sceneryVertices) += batch.count;
         stats.add(1, batch.count / 3);
@@ -2737,13 +2743,15 @@ void Renderer::drawTerrain(const M4& vp, const View& view) {
     for (size_t i = 0; i < terrainChunks.size(); i++) {
         const auto& chunk = terrainChunks[i];
         geometryStats_.terrainFullTriangles += chunk.count[0] / 3;
-        if (chunk.bounds.visible(vp)) terrainOrder_.push_back({(float)chunk.bounds.distance(view.eye), (int)i});
+        if (!chunk.bounds.visible(vp)) continue;
+        if (occl_.occluded(chunk.bounds)) { ++geometryStats_.terrainOccluded; continue; }
+        terrainOrder_.push_back({(float)chunk.bounds.distance(view.eye), (int)i});
     }
     std::sort(terrainOrder_.begin(), terrainOrder_.end());
     for (const auto& o : terrainOrder_) {
         const auto& chunk = terrainChunks[o.second];
         const double distance = o.first;
-        const int lod = distance < 100 ? 0 : distance < 220 ? 1 : distance < 450 ? 2 : 3;
+        const int lod = terrainLodForDistance(distance);
         DrawElements(GL_TRIANGLES, chunk.count[lod], GL_UNSIGNED_INT,
                      reinterpret_cast<const void*>((uintptr_t)chunk.first[lod] * sizeof(unsigned)));
         geometryStats_.terrainTriangles += chunk.count[lod] / 3;
@@ -2809,7 +2817,7 @@ void Renderer::updateTerrainRegion(const World& world, int i0, int j0, int i1, i
     std::vector<Vtx> row;
     for (int i = mi0; i <= mi1; i++) {
         row.clear();
-        for (int j = mj0; j <= mj1; j++) row.push_back(terrainVertex(world, -half + i * sp, -half + j * sp));
+        for (int j = mj0; j <= mj1; j++) row.push_back(terrainVertex(world, -half + i * sp, -half + j * sp)), occl_.patch(i, j, row.back().p[1]);
         BufferSubData(GL_ARRAY_BUFFER, (GLintptr)(((size_t)i * n + mj0) * sizeof(Vtx)), (GLsizeiptr)(row.size() * sizeof(Vtx)), row.data());
     }
     // Bounds must include raised/lowered editor vertices before the next culling pass.
@@ -2901,6 +2909,11 @@ void Renderer::buildTerrain(const World& world) {
         GenBuffers(1, &terrainVbo);
         GenBuffers(1, &terrainIbo);
         setupVtxVao(terrainVao, terrainVbo);
+    }
+    {
+        std::vector<float> hs(verts.size());
+        for (size_t k = 0; k < verts.size(); k++) hs[k] = verts[k].p[1];
+        occl_.build(hs, n, spacing, -half);
     }
     BindVertexArray(terrainVao);
     BindBuffer(GL_ARRAY_BUFFER, terrainVbo);
@@ -3618,7 +3631,13 @@ void Renderer::prepareCars(const Sim& sim, DebugView debug, const V3& eye) {
     rebuilds_ = 0;
     for (size_t ci = 0; ci < sim.cars.size(); ci++) {
         const Car& car = sim.cars[ci];
-        const VisualTemplate& t = visualTemplate(car);
+        const VisualTemplate* tp = tryVisualTemplate(car);
+        if (!tp) {  // (still being made on a worker: the car joins the picture when it is ready)
+            CarSlot& sl = carSlots[ci];
+            sl.opaqueCount = sl.glassCount = sl.partsCount = 0, sl.builtTpl = nullptr, sl.intact = false, sl.lpos.clear();
+            continue;
+        }
+        const VisualTemplate& t = *tp;
         CarSlot& slot = carSlots[ci];
         if (!slot.vao) {
             GenVertexArrays(1, &slot.vao);
@@ -3800,6 +3819,7 @@ void Renderer::drawCarBodies(const Sim& sim, GLuint prog, bool glassPass) {
         if (!carShown(ci)) continue;
         const Car& car = sim.cars[ci];
         const CarSlot& slot = carSlots[ci];
+        if (!slot.tpl) continue;
         const VisualTemplate& t = *static_cast<const VisualTemplate*>(slot.tpl);
         if (prog == progCar) {
             Uniform3f(uniformLocation(prog, "uPaint"), (float)car.color.x, (float)car.color.y, (float)car.color.z);
@@ -3836,8 +3856,9 @@ void Renderer::drawCarBodies(const Sim& sim, GLuint prog, bool glassPass) {
     uniformM4(prog, "uModel", m4identity());
 }
 
-// Which cars the pass with this view-projection sees (a box round each one's frame, wheels and all).
-void Renderer::cullCars(size_t cars, const M4& vp) {
+// Which cars the pass with this view-projection sees (a box round each one's frame, wheels and all), and in the main
+// pass, which the terrain doesn't hide (occlusion.h).
+void Renderer::cullCars(size_t cars, const M4& vp, bool mainPass) {
     carVisible_.assign(cars, 1);
     for (size_t ci = 0; ci < cars && ci < carSlots.size(); ci++) {
         const CarSlot& slot = carSlots[ci];
@@ -3846,7 +3867,7 @@ void Renderer::cullCars(size_t cars, const M4& vp) {
         const double r = slot.radius + 0.6;
         b.add(slot.center - V3(r, r, r));
         b.add(slot.center + V3(r, r, r));
-        carVisible_[ci] = b.visible(vp);
+        carVisible_[ci] = b.visible(vp) && !(mainPass && occl_.occluded(b));  // (behind a hill: the main pass only, never the shadows)
     }
 }
 
@@ -4051,6 +4072,10 @@ void Renderer::drawCarModels(GLuint prog) {
 }
 
 void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effects* effects) {
+    static const bool noOcclusion = std::getenv("CZ_NO_OCCLUSION") != nullptr;  // (the reference render of the pixel test)
+    occl_.enable(!noOcclusion);
+    occl_.refresh();
+    occl_.setEye(view.eye);
     passMark(FP_OPAQUE);
     const auto benchClock = [] { return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count(); };
     const double t0 = benchClock();
@@ -4178,7 +4203,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         if (!noVegShadow) drawBushes(lightVP[c], view.eye, true, vegStats_.logsShadow);
         // (The far cascade, a hand a texel, takes the bodies and wheels: what's under and inside them doesn't show at that size.)
         shadowPass_ = true;
-        cullCars(sim.cars.size(), lightVP[c]);
+        cullCars(sim.cars.size(), lightVP[c], false);
         drawCarBodies(sim, progDepth, false);
         BindVertexArray(dynVao);
         if (c == 0) carKind_ = 3, carDrawArrays(0, (GLsizei)partVerts.size());
@@ -4198,7 +4223,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
 
     // Main pass, into the HDR target.
     passMark(FP_SKY);
-    cullCars(sim.cars.size(), vp);
+    cullCars(sim.cars.size(), vp, true);
     BindFramebuffer(GL_FRAMEBUFFER, targetSamples ? msFbo : sceneFbo);
     Viewport(0, 0, targetW, targetH);
     ClearColor(kFog[0], kFog[1], kFog[2], 1);
@@ -4315,7 +4340,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         if (n) Uniform4fv(uniformLocation(progTree, "uTreeFade"), n, list);
     }
     if (!noVeg) {
-        const forest::View tv{vp, view.eye, vegDetail(), 0, false, 1};
+        const forest::View tv{vp, view.eye, vegDetail(), 0, false, 1, &occl_};
         geometryStats_.sceneryVertices += trees_.draw(tv, &vegStats_.trees);
         Uniform1i(uniformLocation(progTree, "uTreeFadeN"), 0);  // (the see-through trees' leaves only)
         geometryStats_.sceneryVertices += bushes_.draw(tv, &vegStats_.bushes);
@@ -4325,6 +4350,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     drawBatches(sceneryVao, sceneryBatches, vp, false);
     passMark(FP_VEG);
     if (!noVeg) drawBushes(vp, view.eye, false, vegStats_.logs);
+    geometryStats_.occlusionTests = occl_.asked, geometryStats_.occlusionHidden = occl_.hidden;
     passMark(FP_PROPS);
     props.draw(vp, [&](GLuint prog) {
         setLighting(prog);

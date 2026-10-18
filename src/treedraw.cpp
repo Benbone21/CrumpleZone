@@ -1,4 +1,5 @@
 #include "treedraw.h"
+#include "loadprof.h"
 
 #include <algorithm>
 #include <array>

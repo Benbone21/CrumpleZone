@@ -308,7 +308,10 @@ public:
     // (axis * 2 + positive side) it stays outside of.
     std::vector<std::pair<int, int8_t>> blockContacts;
     int frameNodes = 0;             // nodes [0, frameNodes) are rigidly part of the body
-    std::vector<std::vector<int>> nodeTris;  // skin triangles touching each node (for smooth shading)
+    std::vector<std::vector<int>> nodeTris;
+    // Up a side wall above the sill: the sill node at the foot of it (a push on the door goes
+    // there through the door's side-impact beam and the pillars), else -1.
+    std::vector<int> sideSill;  // skin triangles touching each node (for smooth shading)
     std::vector<SkinQuad> quads;               // skin as quads (visual body is built from these)
     std::vector<V3> restLocal;                 // every node's factory position in the car's own frame
     std::vector<std::array<int, 8>> cells;     // solid cells' corner node ids (bit 0 = +i, 1 = +j, 2 = +k)

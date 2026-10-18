@@ -1,5 +1,6 @@
 #include "thread_cache.h"
 #include "softbody.h"
+#include "loadprof.h"
 #include "collision.h"
 #include "vehicles.h"
 
@@ -2104,6 +2105,7 @@ bool Car::finite() const {
 // Sim
 
 void Sim::setup() {
+    loadprof::Scope lpSetup("sim.setup (cars)");
     const auto& cat = vehicleCatalog();
     cars.clear();
     ropes.clear();
@@ -2490,6 +2492,9 @@ void Car::prepareContact(long step) {
     }
 }
 
+// Of a push across a side wall above the sill, the share carried down to the sill.
+constexpr double kSillShare = 0.6;
+
 void Sim::pointsVsSkin(Car& A, Car& B) {
     const double kK = 4e5 * std::min(A.spec->contactScale, B.spec->contactScale), kC = 700, kCt = 2000, kMu = 0.45;
     struct Hit {
@@ -2533,6 +2538,20 @@ void Sim::pointsVsSkin(Car& A, Car& B) {
         return hit.tri >= 0;
     };
     // Applies the contact force; the point's force is shared between pts[0..np).
+    // A push across a side wall, above the sill, is carried down to the sill: the door's
+    // side-impact beam and the pillars take it there (pushed on the glass line alone, a truck
+    // hit side-on was flipped over its far wheels by a load half a metre over its weight).
+    auto load = [&](Car& C, int i, const V3& F) {
+        const int s = i < (int)C.sideSill.size() ? C.sideSill[i] : -1;
+        if (s < 0) {
+            C.nodes[i].f += F;
+            return;
+        }
+        const V3 across = C.chassis.rot.rotate(V3(0, 0, 1));
+        const V3 down = across * (dot(F, across) * kSillShare);
+        C.nodes[i].f += F - down;
+        C.nodes[s].f += down;
+    };
     auto apply = [&](const Hit& hit, const V3& pv, Node* pts[], int np) {
         const Tri& t = B.tris[hit.tri];
         V3 vb;
@@ -2548,8 +2567,8 @@ void Sim::pointsVsSkin(Car& A, Car& B) {
         double vtl = len(vt);
         V3 F = t.nrm * Fn;
         if (vtl > 1e-6) F -= vt * (std::min(kMu * Fn, std::min(kCt, 0.4 * mMin / h) * vtl) / vtl);
-        for (int i = 0; i < np; i++) pts[i]->f += F / (double)np;
-        for (int k = 0; k < 3; k++) B.nodes[t.v[k]].f -= F * hit.w[k];
+        for (int i = 0; i < np; i++) load(A, (int)(pts[i] - A.nodes.data()), F / (double)np);
+        for (int k = 0; k < 3; k++) load(B, t.v[k], F * -hit.w[k]);
         double e = std::fabs(vn) * Fn * h;
         A.impactEnergy += e * 0.5;
         B.impactEnergy += e * 0.5;
@@ -2603,8 +2622,8 @@ void Sim::pointsVsSkin(Car& A, Car& B) {
             if (Fn <= 0) continue;
             Fn = std::min(Fn, m * 3000.0);
             V3 F = nrm * Fn;
-            na.f += F;
-            nb.f -= F;
+            load(A, (int)(&na - A.nodes.data()), F);
+            load(B, j, F * -1.0);
         }
     }
 }

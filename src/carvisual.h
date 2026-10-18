@@ -84,6 +84,13 @@ struct VisualTemplate {
 
 // Built once per vehicle type (cached).
 const VisualTemplate& visualTemplate(const Car& car);
+// For the render loop, which must not stall on a first sight: the template if it is built; otherwise null (the car is left out of
+// the frame) while a worker thread builds it from a copy of the car. Set blockOnTemplates (screenshots, tests) to build it right here.
+const VisualTemplate* tryVisualTemplate(const Car& car);
+inline bool blockOnTemplates = false;
+// Starts building a spec's template on a worker (a vehicle about to spawn), and asks whether it is done.
+void prebuildVisual(const VehicleSpec& spec, const V3& color);
+bool visualReady(const VehicleSpec& spec);
 
 // Evaluation from node positions P (the car's nodes, in whatever frame the result is wanted in). Indices are
 // appended for visible faces; glass faces go in both lists.

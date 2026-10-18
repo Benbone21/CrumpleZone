@@ -1,6 +1,7 @@
 // Offscreen OpenGL integration checks, including an emulated driver rejecting HDR MSAA.
 #include "../src/render.h"
 #include "../src/carparts.h"
+#include "../src/carvisual.h"
 #include "../src/gpu.h"
 #include "../src/menu.h"
 #include "../src/sdl_min.h"
@@ -313,6 +314,7 @@ int main() {
         std::puts("PASS resizing and render scale after MSAA fallback");
         {  // Vehicles (Renderer::CarSlot): kept skins, merged parts, far copies, culling; draws and triangles per car
             rejectMsaa = false;
+            blockOnTemplates = true;  // (the car drawn from its first frame, not when a worker has made its mesh)
             renderer.settings.renderScale = 1.0f;
             renderer.settings.msaa = 0;
             view.width = 1280, view.height = 720;

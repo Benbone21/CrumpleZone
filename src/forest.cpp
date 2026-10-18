@@ -307,7 +307,7 @@ void Picker::pick(const Set& s, const View& v, std::vector<std::vector<Pick>>& b
     for (int k = 0; k < (int)cells_.size(); k++) {
         RenderBounds b;
         b.lo = cells_[k].lo, b.hi = cells_[k].hi;
-        if (b.visible(v.vp)) order_.push_back({b.distance(v.eye), k});
+        if (b.visible(v.vp) && !(v.hidden && v.hidden->occluded(b))) order_.push_back({b.distance(v.eye), k});
     }
     std::sort(order_.begin(), order_.end());
     for (const auto& ok : order_)

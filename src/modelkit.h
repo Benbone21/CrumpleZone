@@ -107,6 +107,11 @@ struct ModelDef {
     std::vector<Variant> variants;
 };
 
+// A mesh as bytes, field by field (no struct padding), and back: what the mesh cache (meshcache.h) stores. unpackMesh is false
+// for bytes that aren't a whole mesh.
+std::vector<uint8_t> packMesh(const Mesh& m);
+bool unpackMesh(const std::vector<uint8_t>& bytes, Mesh& m);
+
 // Registers a model (from a static in src/models/*.cpp).
 struct Reg {
     explicit Reg(ModelDef def);
