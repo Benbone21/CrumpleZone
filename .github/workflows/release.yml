@@ -149,6 +149,8 @@ jobs:
           cp build/mac/CrumpleZone-mac.dmg "out/CrumpleZone-${V}-mac.dmg"
       - name: Native macOS regression checks
         run: |
+          # macOS only answers on 127.0.0.1; net/sec-flood binds its fake clients to 127.0.0.2, .0.3 and 127.0.1.1-40.
+          for a in 127.0.0.2 127.0.0.3 $(seq -f '127.0.1.%g' 1 40); do sudo ifconfig lo0 alias "$a" up; done
           make -j4 build/mac/bench_sim build/mac/run_tests build/mac/test_audio build/mac/test_render build/mac/test_visibility
           ./build/mac/test_visibility
           ./build/mac/run_tests --jobs 1 net/ engine/collision engine/physics-workers engine/thread-cache engine/adaptive-quality tires/pressure vtools/
