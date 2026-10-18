@@ -1973,9 +1973,13 @@ vec3 posAt(vec2 uv){
   return v.xyz / v.w;
 }
 void main(){
-  // (An AO pixel's centre falls between two depth rows; on the NEAREST depth, rounding picked either one row by row, which showed as horizontal bands.
-  // So read the depth at one texel's centre, the lower-left of the 2x2 the AO pixel covers.)
+#ifdef CZ_APPLE
+  // (Apple only: an AO pixel's centre falls between two depth rows; on the NEAREST depth, rounding there picked either row line by line,
+  // which showed as horizontal bands on the flat ground. So read the depth at one texel's centre, the lower-left of the 2x2 the AO pixel covers.)
   vec2 uv = (floor(gl_FragCoord.xy) * 2.0 + 0.5) * uTexel;
+#else
+  vec2 uv = vUv;
+#endif
   if (texture(uDepth, uv).r >= 1.0) { oCol = vec4(1.0); return; }
   vec3 P = posAt(uv);
   vec3 Pr = posAt(uv + vec2(uTexel.x, 0)), Pl = posAt(uv - vec2(uTexel.x, 0));
@@ -2312,7 +2316,11 @@ bool Renderer::init(const World& world, std::string& err) {
         if (!progIcon || !progIconMesh) std::fprintf(stderr, "icon shaders: %s\n", ierr.c_str()), progIcon = progIconMesh = 0;
     }
     progFx = linkProgram(kFxVS, header + kCommonFS + kFxFSBody, err);
-    progAO = linkProgram(kPostVS, kAOFS, err);
+    std::string aoSrc = kAOFS;
+#ifdef __APPLE__
+    aoSrc.insert(aoSrc.find('\n') + 1, "#define CZ_APPLE\n");  // (the depth-row fix, Apple only)
+#endif
+    progAO = linkProgram(kPostVS, aoSrc, err);
     progDown = linkProgram(kPostVS, kDownFS, err);
     progUp = linkProgram(kPostVS, kUpFS, err);
     progComposite = linkProgram(kPostVS, kCompositeFS, err);

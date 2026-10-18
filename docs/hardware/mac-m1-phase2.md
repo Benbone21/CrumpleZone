@@ -8,10 +8,11 @@ Measurement note: short single-run benches (`--map 3 --quality Q --bench 300,100
 | Change | Frontier avg frame time before -> after |
 |---|---|
 | Scene renders at logical pixels on Retina (target 2880x1676 -> 1440x838); base Apple chips (M1) auto-detect LOW | LOW 61.4 -> 25.5 ms, MEDIUM 92.5 -> 38.1, HIGH 107.2 -> 44.4 |
-| Scan lines at HIGH fixed: the half-resolution AO pass read depth on the boundary between two depth rows, and NEAREST rounding picked either row line by line. It now reads a texel centre. | none (visual fix). Row-to-row banding on pavement 1.265 -> 0.338, equal to AO off |
-| Ground shader: material slots at constant indices instead of run-time-indexed arrays | LOW 26.2 -> 23.2, HIGH 44.7 -> 41.5 (0.0026% of pixels differ by more than 2/255 in a HIGH shot) |
+| Scan lines at HIGH fixed (**Apple only**, behind `#ifdef __APPLE__`; other platforms keep the old AO read until someone checks it there): the half-resolution AO pass read depth on the boundary between two depth rows, and NEAREST rounding picked either row line by line. It now reads a texel centre. | none (visual fix). Row-to-row banding on pavement 1.265 -> 0.338, equal to AO off |
+| Ground shader: material slots at constant indices (about 3 ms) | **Dropped.** Main's cheap-tier ground shader rewrite (a4922f4, e61f8cd) covers the same ground; its Mac effect is not re-measured here. The finding stands: run-time-indexed arrays in the ground shader are slow on Apple's GPU. |
+| First launch on an Apple chip that gets LOW starts at render scale 0.75 | LOW 22.6 -> 18.2 ms (44 -> 55 fps); slightly softer distance detail. First launch only; saved settings untouched. |
 
-Combined, Frontier is now about 23 ms at LOW (about 43 fps), 41.5 ms at HIGH.
+Combined (before merging main's newer shader work), Frontier was about 23 ms at LOW and 41.5 ms at HIGH; at the new 0.75 default LOW is about 18 ms.
 
 ## Where the GPU time goes (HIGH, Frontier, whole-frame ablation)
 GL timers don't exist on macOS and `--bench-sync` inflates numbers (every sync splits the tile renderer's pass: 61 ms synced against 44 ms normal), so each feature was switched off in turn and the whole frame timed.
