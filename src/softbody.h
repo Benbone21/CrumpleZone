@@ -619,6 +619,9 @@ public:
     World world;
     std::vector<Car> cars;
     int player = 0;
+    // The player is out on foot: their vehicle, left standing, sleeps like any parked one (it wakes the same ways:
+    // something touching it, its pedals or wheel worked, a jack wound up under it).
+    bool playerAway = false;
     double h = 1.0 / 2000.0;  // physics step: 2 kHz
     double timeScale = 1.0;
     bool paused = false;

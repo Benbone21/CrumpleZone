@@ -15,6 +15,7 @@ static void noteRT(const char* name, const char* fmt, int w, int h, int bytesPer
 #include <cstdio>
 #include <cstring>
 #include <map>
+#include <unordered_map>
 
 #include "carvisual.h"
 #include "meshopt.h"
@@ -3022,7 +3023,7 @@ void Renderer::buildWheelStyle(int style) {
     const bool steelWheel = style == WHEEL_STEEL;
     const bool offroad = style == WHEEL_OFFROAD_BRONZE || style == WHEEL_OFFROAD_BLACK || steelWheel;
     const bool cover = style == WHEEL_HONDA_COVER, forged = style == WHEEL_FORGED;
-    const int segs = 48;
+    const int segs = buildLod_ ? 16 : 48;  // (the far copy: a coarser round, no tread blocks, letters or lugs)
     const double rimR = offroad ? 0.158 : cover ? 0.197 : forged ? 0.23 : 0.215;
     std::vector<Vtx> v;
     MeshOut m{v};
@@ -3074,7 +3075,7 @@ void Renderer::buildWheelStyle(int style) {
             // hexa() wants bit1 = "up" (here: outward), bit2 = +z.
             m.hexa(p, rubber, SM_TIRE);
         };
-        for (int b = 0; b < blocks; b++) {
+        for (int b = 0; b < (buildLod_ ? 0 : blocks); b++) {
             double a = 2 * M_PI * b / blocks, h = M_PI / blocks * 0.62;
             for (int side = -1; side <= 1; side += 2) {
                 double shift = side * 0.25 * (2 * M_PI / blocks);
@@ -3086,7 +3087,7 @@ void Renderer::buildWheelStyle(int style) {
         }
         // Raised white letters on the outer sidewall: two arcs of short strokes.
         const V3 white(0.82, 0.82, 0.8);
-        for (int arc = 0; arc < (style == WHEEL_OFFROAD_BRONZE ? 2 : 0); arc++)
+        for (int arc = 0; arc < (style == WHEEL_OFFROAD_BRONZE && !buildLod_ ? 2 : 0); arc++)
             for (int c = 0; c < 15; c++) {
                 double a = (arc ? M_PI : 0) + 0.55 + c * 0.13, h = 0.035 * ((c % 3) ? 1.0 : 0.6);
                 V3 p[8];
@@ -3098,7 +3099,7 @@ void Renderer::buildWheelStyle(int style) {
             }
     }
 
-    tireVertexCount[style] = (int)v.size();
+    tireVertexCount[buildLod_ ? 1 : 0][style] = (int)v.size();
     // Rim: barrel, outer lip, dished spokes, hub with lug nuts and a center cap.
     const V3 alloy = steelWheel ? V3(0.86, 0.86, 0.83) : forged ? V3(0.12, 0.13, 0.15) : cover ? V3(0.55, 0.56, 0.58) : style == WHEEL_OFFROAD_BRONZE ? V3(0.36, 0.27, 0.16)
                    : style == WHEEL_OFFROAD_BLACK  ? V3(0.05, 0.05, 0.055)
@@ -3144,7 +3145,7 @@ void Renderer::buildWheelStyle(int style) {
         m.annulus(0.0, rimR * 0.71, 0.100, segs, 1, alloy, SM_MATTE);
         m.annulus(rimR * 0.88, rimR, 0.100, segs, 1, alloy, SM_MATTE);
     }
-    const int lugs = steelWheel ? 0 : offroad ? 6 : cover ? 4 : forged ? 1 : 5;
+    const int lugs = buildLod_ || steelWheel ? 0 : offroad ? 6 : cover ? 4 : forged ? 1 : 5;
     for (int l = 0; l < lugs; l++) {
         double a = 2 * M_PI * (l + 0.5) / lugs;
         V3 c(std::cos(a) * 0.04, std::sin(a) * 0.04, 0);
@@ -3165,11 +3166,12 @@ void Renderer::buildWheelStyle(int style) {
     m.annulus(0.0, 0.07, 0.035, 20, 1, dark, SM_METAL);
 
     optimizeVtx(v);  // (degenerate and hidden triangles of the spokes, lugs and hub)
-    GenVertexArrays(1, &wheelVao[style]);
-    GenBuffers(1, &wheelVbo[style]);
-    setupVtxVao(wheelVao[style], wheelVbo[style]);
+    const int L = buildLod_ ? 1 : 0;
+    GenVertexArrays(1, &wheelVao[L][style]);
+    GenBuffers(1, &wheelVbo[L][style]);
+    setupVtxVao(wheelVao[L][style], wheelVbo[L][style]);
     BufferData(GL_ARRAY_BUFFER, v.size() * sizeof(Vtx), v.data(), GL_STATIC_DRAW);
-    wheelVertexCount[style] = (int)v.size();
+    wheelVertexCount[L][style] = (int)v.size();
 }
 
 // One tread on one wheel style: the tire alone, built (like the wheel) for R = 0.32 and a
@@ -3181,7 +3183,7 @@ void Renderer::buildTire(int style, int tread) {
     const bool slick = tread == TIRE_RACE_SLICK;
     std::vector<Vtx> v;
     MeshOut m{v};
-    const int segs = 48;
+    const int segs = buildLod_ ? 16 : 48;  // (the far copy: a coarser round, no tread blocks, letters or lugs)
     // The carcass: a rounded profile from bead to bead. Knobby tires have a tall, rounded
     // sidewall and their tread blocks stand on it; road tires a low, square shoulder.
     static const double road[][2] = {{0.212, 0.104}, {0.23, 0.117}, {0.27, 0.122}, {0.302, 0.114}, {0.316, 0.098},
@@ -3238,7 +3240,9 @@ void Renderer::buildTire(int style, int tread) {
             m.quad(p0, q0, q1, p1, V3(0.012, 0.012, 0.012), SM_MATTE);
         }
     };
-    if (tread == TIRE_STREET) {
+    if (buildLod_) {
+        // (far off: the carcass alone)
+    } else if (tread == TIRE_STREET) {
         for (double z : {-0.062, -0.022, 0.022, 0.062}) groove(z, 0.0045);
         // Sipes across the shoulders.
         for (int b = 0; b < 60; b++) {
@@ -3321,11 +3325,12 @@ void Renderer::buildTire(int style, int tread) {
             }
         }
     }
-    GenVertexArrays(1, &tireVao[style][tread]);
-    GenBuffers(1, &tireVbo[style][tread]);
-    setupVtxVao(tireVao[style][tread], tireVbo[style][tread]);
+    const int L = buildLod_ ? 1 : 0;
+    GenVertexArrays(1, &tireVao[L][style][tread]);
+    GenBuffers(1, &tireVbo[L][style][tread]);
+    setupVtxVao(tireVao[L][style][tread], tireVbo[L][style][tread]);
     BufferData(GL_ARRAY_BUFFER, v.size() * sizeof(Vtx), v.data(), GL_STATIC_DRAW);
-    treadVertexCount[style][tread] = (int)v.size();
+    treadVertexCount[L][style][tread] = (int)v.size();
 }
 
 // Snow chains: cross links over the tread every few inches, and a side chain round each
@@ -3388,9 +3393,13 @@ void Renderer::buildChains() {
 }
 
 void Renderer::buildWheel() {
-    for (int st = 0; st < WHEEL_STYLES; st++) buildWheelStyle(st);
-    for (int st = 0; st < WHEEL_STYLES; st++)
-        for (int tt = 0; tt < TIRE_TYPES; tt++) buildTire(st, tt);
+    for (int lod = 0; lod < 2; lod++) {  // (and a far copy of each: drawWheels picks by distance)
+        buildLod_ = lod == 1;
+        for (int st = 0; st < WHEEL_STYLES; st++) buildWheelStyle(st);
+        for (int st = 0; st < WHEEL_STYLES; st++)
+            for (int tt = 0; tt < TIRE_TYPES; tt++) buildTire(st, tt);
+    }
+    buildLod_ = false;
     buildChains();
     std::vector<Vtx> cal;
 
@@ -3459,29 +3468,30 @@ void Renderer::drawWheels(const Sim& sim, GLuint prog) {
     // A wheel (or a bare tire, or a flat) off a vehicle, by its matrix at full size.
     auto drawItem = [&](const WheelItem& it, const M4& full, const M4& flat) {
         const int st = std::min(std::max(it.style, 0), WHEEL_STYLES - 1);
-        BindVertexArray(wheelVao[st]);
+        BindVertexArray(wheelVao[0][st]);
         if (it.tireOnly) {
             uniformM4(prog, "uModel", full);
-            carDrawArrays(0, tireVertexCount[st]);
+            carDrawArrays(0, tireVertexCount[0][st]);
         } else if (it.popped) {
             uniformM4(prog, "uModel", flat);
-            carDrawArrays(0, tireVertexCount[st]);
+            carDrawArrays(0, tireVertexCount[0][st]);
             uniformM4(prog, "uModel", full);
-            carDrawArrays(tireVertexCount[st], wheelVertexCount[st] - tireVertexCount[st]);
+            carDrawArrays(tireVertexCount[0][st], wheelVertexCount[0][st] - tireVertexCount[0][st]);
         } else {
             uniformM4(prog, "uModel", full);
-            carDrawArrays(0, wheelVertexCount[st]);
+            carDrawArrays(0, wheelVertexCount[0][st]);
         }
     };
     for (const Car& car : sim.cars) {
         if (car.wheels.empty() || !carShown(&car - sim.cars.data())) continue;
         Frame fr = car.frame();
+        const int L = len(fr.com - eye_) > wheelLodDist_ ? 1 : 0;  // (far off: the coarse copies, no calipers)
         // The car's own tread on this wheel (and chains over it when they're on).
         const int tread = std::min(std::max(car.spec->tireType, 0), TIRE_TYPES - 1);
         auto drawTread = [&](int st, const M4& tm, double chain) {  // (chain: how much of one is wrapped on, 0..1)
             uniformM4(prog, "uModel", tm);
-            BindVertexArray(tireVao[st][tread]);
-            carDrawArrays(0, treadVertexCount[st][tread]);
+            BindVertexArray(tireVao[L][st][tread]);
+            carDrawArrays(0, treadVertexCount[L][st][tread]);
             if (chain > 0) {
                 BindVertexArray(chainVao);
                 carDrawArrays(0, chain >= 1 ? chainVertexCount : (int)(chainVertexCount * chain / 3) * 3);
@@ -3499,33 +3509,34 @@ void Renderer::drawWheels(const Sim& sim, GLuint prog) {
                 return m;
             };
             const int st = std::min(std::max(wh.mounted ? wh.item.style : car.spec->wheelStyle, 0), WHEEL_STYLES - 1);
-            BindVertexArray(wheelVao[st]);
+            BindVertexArray(wheelVao[L][st]);
             if (!wh.mounted) {
                 // Nothing on the hub but its rotor (the caliper below) and the studs: a sliver of rim face.
                 uniformM4(prog, "uModel", wm(true, kBareHubR / wh.R));
-                carDrawArrays(tireVertexCount[st], wheelVertexCount[st] - tireVertexCount[st]);
+                carDrawArrays(tireVertexCount[L][st], wheelVertexCount[L][st] - tireVertexCount[L][st]);
             } else if (wh.debeaded) {  // the rim alone, the tire gone
                 uniformM4(prog, "uModel", wm(true));
-                carDrawArrays(tireVertexCount[st], wheelVertexCount[st] - tireVertexCount[st]);
+                carDrawArrays(tireVertexCount[L][st], wheelVertexCount[L][st] - tireVertexCount[L][st]);
             } else if (wh.popped) {
                 // Smooth deflation animation: interpolate between inflated and flat
                 const double flatScale = (wh.rimR + 0.015) / wh.R;
                 double scale = (1.0 - wh.poppedAnim) * 1.0 + wh.poppedAnim * flatScale;
                 const M4 tm = wm(true, scale);
                 drawTread(st, tm, chain);
-                BindVertexArray(wheelVao[st]);
+                BindVertexArray(wheelVao[L][st]);
                 uniformM4(prog, "uModel", wm(true));
-                carDrawArrays(tireVertexCount[st], wheelVertexCount[st] - tireVertexCount[st]);
+                carDrawArrays(tireVertexCount[L][st], wheelVertexCount[L][st] - tireVertexCount[L][st]);
             } else {
                 // Match load-dependent sidewall sag; keep the rim full size and
                 // the compressed axis stationary while the tread rotates.
                 const double vertical = wh.loadedRadius(car.tirePsi, car.spec->tirePsi, car.spec->tireSoft) / wh.R;
                 const double bulge = 1 + 0.3 * (1 - vertical);
                 drawTread(st, wm(true, 1.0, vertical, bulge), chain);
-                BindVertexArray(wheelVao[st]);
+                BindVertexArray(wheelVao[L][st]);
                 uniformM4(prog, "uModel", wm(true));
-                carDrawArrays(tireVertexCount[st], wheelVertexCount[st] - tireVertexCount[st]);
+                carDrawArrays(tireVertexCount[L][st], wheelVertexCount[L][st] - tireVertexCount[L][st]);
             }
+            if (L) continue;
             BindVertexArray(caliperVao);
             // (The off-road rim is smaller for its tire: its brake is too.)
             uniformM4(prog, "uModel", wheelMatrix(car, wh, fr.up, false, st == WHEEL_OFFROAD_BRONZE || st == WHEEL_OFFROAD_BLACK || st == WHEEL_STEEL ? 0.72 : st == WHEEL_HONDA_COVER ? 0.82 : 1.0));
@@ -3701,6 +3712,11 @@ void Renderer::prepareCars(const Sim& sim, DebugView debug, const V3& eye) {
                 BufferData(GL_ELEMENT_ARRAY_BUFFER, opaque.size() * sizeof(unsigned), opaque.data(), GL_DYNAMIC_DRAW);
                 slot.opaqueCount = (int)opaque.size();
                 slot.glassCount = (int)glass.size();
+                slot.lpos.resize(dyn.size() * 3);
+                for (size_t v = 0; v < dyn.size(); v++)
+                    for (int k = 0; k < 3; k++) slot.lpos[v * 3 + k] = dyn[v].p[k];
+                slot.lopaque = opaque, slot.lglass = glass;
+                slot.intact = opaque.size() == t.faces.size() * 6 && car.damage < 0.03;
                 slot.snap = now;
                 slot.shattered = shattered, slot.debug = (int)debug, slot.builtTpl = &t;
                 slot.builds++;
@@ -3727,6 +3743,51 @@ void Renderer::prepareCars(const Sim& sim, DebugView debug, const V3& eye) {
     buildRopes(sim, partVerts);
     BindBuffer(GL_ARRAY_BUFFER, dynVbo);
     BufferData(GL_ARRAY_BUFFER, partVerts.size() * sizeof(Vtx), partVerts.data(), GL_STREAM_DRAW);
+}
+
+// Which copy of its skin a car draws: a far one where its cells (half of them: what clustering moves an edge by) come
+// to under 3/4 of a pixel. The copy is built the first time it's wanted after the skin was.
+int Renderer::skinLod(const CarSlot& slot) const {
+    if (!slot.intact || slot.lpos.empty()) return 0;
+    const double px = pxPerM_ / std::max(1.0, len(slot.center - eye_));
+    static const double kCell[2] = {0.06, 0.15};
+    int L = 0;
+    for (int k = 0; k < 2; k++)
+        if (kCell[k] * 0.5 * px < 0.75) L = k + 1;
+    if (!L) return 0;
+    CarSlot& s = const_cast<CarSlot&>(slot);
+    if (s.lodBuilt[L - 1] != s.builds) {
+        const VisualTemplate& t = *static_cast<const VisualTemplate*>(s.tpl);
+        const double c = kCell[L - 1];
+        const size_t nv = s.lpos.size() / 3;
+        std::unordered_map<uint64_t, unsigned> cell;
+        std::vector<unsigned> rep(nv);
+        for (size_t v = 0; v < nv; v++) {
+            const int64_t ix = (int64_t)std::floor(s.lpos[v * 3] / c), iy = (int64_t)std::floor(s.lpos[v * 3 + 1] / c), iz = (int64_t)std::floor(s.lpos[v * 3 + 2] / c);
+            const int region = v < t.rvStatic.size() ? (int)t.rvStatic[v].region : 0;
+            const uint64_t key = ((uint64_t)(ix & 0xffff) << 48) ^ ((uint64_t)(iy & 0xffff) << 32) ^ ((uint64_t)(iz & 0xffff) << 16) ^ (uint64_t)region;
+            rep[v] = cell.emplace(key, (unsigned)v).first->second;
+        }
+        auto cluster = [&](const std::vector<unsigned>& in, std::vector<unsigned>& out) {
+            out.clear();
+            for (size_t i = 0; i + 2 < in.size(); i += 3) {
+                const unsigned a = rep[in[i]], b = rep[in[i + 1]], d = rep[in[i + 2]];
+                if (a != b && b != d && a != d) out.insert(out.end(), {a, b, d});
+            }
+        };
+        static std::vector<unsigned> o, g;
+        cluster(s.lopaque, o);
+        cluster(s.lglass, g);
+        if (!s.lodIbo[L - 1]) GenBuffers(1, &s.lodIbo[L - 1]), GenBuffers(1, &s.lodGlassIbo[L - 1]);
+        BindVertexArray(s.vao);
+        BindBuffer(GL_ELEMENT_ARRAY_BUFFER, s.lodGlassIbo[L - 1]);
+        BufferData(GL_ELEMENT_ARRAY_BUFFER, g.size() * sizeof(unsigned), g.data(), GL_DYNAMIC_DRAW);
+        BindBuffer(GL_ELEMENT_ARRAY_BUFFER, s.lodIbo[L - 1]);
+        BufferData(GL_ELEMENT_ARRAY_BUFFER, o.size() * sizeof(unsigned), o.data(), GL_DYNAMIC_DRAW);
+        s.lodCount[L - 1] = (int)o.size(), s.lodGlassCount[L - 1] = (int)g.size();
+        s.lodBuilt[L - 1] = s.builds;
+    }
+    return L;
 }
 
 void Renderer::drawCarBodies(const Sim& sim, GLuint prog, bool glassPass) {
@@ -3760,10 +3821,12 @@ void Renderer::drawCarBodies(const Sim& sim, GLuint prog, bool glassPass) {
         }
         uniformM4(prog, "uModel", slot.model);
         BindVertexArray(slot.vao);
-        BindBuffer(GL_ELEMENT_ARRAY_BUFFER, glassPass ? slot.glassIbo : slot.ibo);
-        DrawElements(GL_TRIANGLES, glassPass ? slot.glassCount : slot.opaqueCount, GL_UNSIGNED_INT, nullptr);
+        const int L = skinLod(slot);
+        const int n = L ? (glassPass ? slot.lodGlassCount[L - 1] : slot.lodCount[L - 1]) : glassPass ? slot.glassCount : slot.opaqueCount;
+        BindBuffer(GL_ELEMENT_ARRAY_BUFFER, L ? (glassPass ? slot.lodGlassIbo[L - 1] : slot.lodIbo[L - 1]) : glassPass ? slot.glassIbo : slot.ibo);
+        DrawElements(GL_TRIANGLES, n, GL_UNSIGNED_INT, nullptr);
         carKind_ = glassPass ? 1 : 0;
-        countCar(glassPass ? slot.glassCount : slot.opaqueCount);
+        countCar(n);
     }
     uniformM4(prog, "uModel", m4identity());
 }
@@ -3811,11 +3874,27 @@ uint64_t partsSignature(const std::vector<Placed>& parts) {
     }
     return h ^ parts.size();
 }
-const mk::Mesh& partMesh(const Placed& pl, mk::Mesh& scratch) {
+const mk::Mesh& partMeshRaw(const Placed& pl, mk::Mesh& scratch) {
     if (pl.bare || pl.variant >= 0) return placedMesh(pl);
     if (pl.set.empty()) return mk::modelMesh(pl.id);
     scratch = mk::modelMesh(pl.id, pl.set);
     return scratch;
+}
+// The part's mesh without the faces hidden inside it (meshopt.h: degenerate and hidden faces only; the flats aren't
+// merged, so a clipped or stretched part is cut and shaded as before). Kept per model build.
+const mk::Mesh& partMesh(const Placed& pl, mk::Mesh& scratch) {
+    static std::map<std::string, mk::Mesh> cache;
+    static uint64_t version = 0;
+    if (version != mk::picksVersion()) cache.clear(), version = mk::picksVersion();
+    std::string key = pl.id + "#" + std::to_string(pl.variant) + (pl.bare ? "b" : "");
+    for (const auto& kv : pl.set) key += "|" + kv.first + "=" + std::to_string(kv.second);
+    auto it = cache.find(key);
+    if (it != cache.end()) return it->second;
+    mk::Mesh m = partMeshRaw(pl, scratch);
+    MeshOptOptions o;
+    o.coplanar = false;
+    optimizeMesh(m, o);
+    return cache.emplace(key, std::move(m)).first->second;
 }
 }  // namespace
 
@@ -3993,6 +4072,10 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     farZ_ = settings.drawDistance > 0 ? std::max(150.0f, settings.drawDistance) : 6000.0f;  // (a draw distance: everything past it is clipped)
     M4 proj = perspective(view.fovy, (float)view.width / std::max(1, view.height), 0.05f, farZ_);
     M4 vp = proj * lookAt(view.eye, view.target, view.up);
+    // Wheels past where a tread block (1.5 cm) is under half a pixel draw their far copies.
+    eye_ = view.eye;
+    pxPerM_ = view.height * scale / (2 * std::tan(view.fovy * 0.5));
+    wheelLodDist_ = 0.03 * pxPerM_;
     geometryStats_ = {};
     geometryStats_.carPartsMs = t1 - t0, geometryStats_.carPrepMs = t2 - t1, geometryStats_.carRebuilds = rebuilds_;
     vegStats_ = {};

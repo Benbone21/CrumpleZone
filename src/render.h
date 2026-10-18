@@ -181,6 +181,13 @@ private:
         GLuint modelsVao = 0, modelsVbo = 0, modelsIdx = 0;  // the merged parts (CarModels), their part numbers
         uint64_t modelsSig = 0;      // which parts they were merged from
         int modelsCount = 0, modelsBase = 0, modelsParts = 0;  // vertices; this frame: first transform, how many (0: none)
+        // Far copies of the skin (an intact one): its vertices clustered (6 cm, 15 cm cells, within one shader region),
+        // the triangles left drawn from the same vertices. Built when first wanted after a rebuild.
+        std::vector<float> lpos;     // the skin's vertices as last built (car frame)
+        std::vector<unsigned> lopaque, lglass;
+        GLuint lodIbo[2] = {}, lodGlassIbo[2] = {};
+        int lodCount[2] = {}, lodGlassCount[2] = {}, lodBuilt[2] = {-1, -1};
+        bool intact = false;         // (nothing torn, hardly any damage: the far copies may stand in)
         double radius = 0;           // bounding sphere about the frame's origin (culling)
         V3 center;
     };
@@ -263,11 +270,11 @@ private:
     ScanCover scanCover_;           // what the scanned props draw instead of the code-made meshes
     std::vector<float> treeFade_;   // per tree (World::trees): how much of it the camera hides now (treefade.h)
     double fadeTime_ = 0;
-    GLuint wheelVao[WHEEL_STYLES] = {}, wheelVbo[WHEEL_STYLES] = {}, caliperVao = 0, caliperVbo = 0;
+    GLuint wheelVao[2][WHEEL_STYLES] = {}, wheelVbo[2][WHEEL_STYLES] = {}, caliperVao = 0, caliperVbo = 0;
     // Each tread on each wheel style (the tire alone: the rim is the wheel's), and snow chains.
-    GLuint tireVao[WHEEL_STYLES][TIRE_TYPES] = {}, tireVbo[WHEEL_STYLES][TIRE_TYPES] = {}, chainVao = 0, chainVbo = 0;
-    int treadVertexCount[WHEEL_STYLES][TIRE_TYPES] = {}, chainVertexCount = 0;
-    int tireVertexCount[WHEEL_STYLES] = {}, wheelVertexCount[WHEEL_STYLES] = {}, caliperVertexCount = 0;
+    GLuint tireVao[2][WHEEL_STYLES][TIRE_TYPES] = {}, tireVbo[2][WHEEL_STYLES][TIRE_TYPES] = {}, chainVao = 0, chainVbo = 0;
+    int treadVertexCount[2][WHEEL_STYLES][TIRE_TYPES] = {}, chainVertexCount = 0;
+    int tireVertexCount[2][WHEEL_STYLES] = {}, wheelVertexCount[2][WHEEL_STYLES] = {}, caliperVertexCount = 0;
     GLuint dynVao = 0, dynVbo = 0;  // per-frame lit geometry: car parts and running gear
     GLuint lineVao = 0, lineVbo = 0;
     GLuint fxVao = 0, fxVbo = 0;
@@ -311,6 +318,11 @@ private:
     void buildWheel();
     void buildWheelStyle(int style);
     void buildTire(int style, int tread);
+    bool buildLod_ = false;  // (building the wheels' far copies: [1] in the arrays above)
+    V3 eye_;                 // this frame's eye (the wheels' LOD)
+    double wheelLodDist_ = 1e9;  // past this a car's wheels draw their far copies
+    double pxPerM_ = 1000;       // pixels a meter spans 1 m from the eye (scaled by 1/distance)
+    int skinLod(const CarSlot& slot) const;  // 0 the skin, 1-2 its far copies (built on demand)
     void buildChains();
     void buildFont();
     void buildBackdrop(const World& world, std::vector<Vtx>& verts, std::vector<unsigned>& idx);
