@@ -1,6 +1,7 @@
 #include "thread_cache.h"
 #include "softbody.h"
 #include "collision.h"
+#include "simdkern.h"
 #include "vehicles.h"
 
 #include <cstdlib>
@@ -321,20 +322,28 @@ void Car::computeForces(double h, const World& w) {
         }
     }
 
-    for (Beam& b : beams) {
+    // Length, direction and closing speed of the beams, a block at a time in one SIMD sweep (the
+    // square roots and divisions were most of this loop); the per-beam logic stays scalar and in
+    // order. (Blocks keep the sweep's output in the L1 cache: a car's beams are 300 KB already.)
+    constexpr size_t kBlock = 256;
+    double geoBuf[5 * kBlock];
+    const BeamGeo geo = {geoBuf, geoBuf + kBlock, geoBuf + 2 * kBlock, geoBuf + 3 * kBlock, geoBuf + 4 * kBlock};
+    const size_t nbeams = beams.size();
+    for (size_t bi = 0; bi < nbeams; bi++) {
+        if (bi % kBlock == 0) beamGeometry(beams.data() + bi, (int)std::min(kBlock, nbeams - bi), nodes.data(), geo);
+        Beam& b = beams[bi];
         if (b.broken) continue;
         Node& A = nodes[b.a];
         Node& B = nodes[b.b];
-        V3 d = B.p - A.p;
-        double L = len(d);
+        const double L = geo.L[bi % kBlock];
         if (L < 1e-9) continue;
         if (b.type == BEAM_SHAFT) {  // slides and flexes freely, but tears off when pulled apart
             if (L > b.Lorig * (1 + b.breakStrain) || L < b.Lorig * 0.55) b.broken = true;
             continue;
         }
-        V3 dir = d / L;
+        const V3 dir(geo.ux[bi % kBlock], geo.uy[bi % kBlock], geo.uz[bi % kBlock]);
         double F;
-        double vrel = dot(B.v - A.v, dir);
+        const double vrel = geo.vrel[bi % kBlock];
         if (b.type == BEAM_BUMPSTOP) {
             // Jounce bumper: nothing until the axle rises onto it, then the same progressive
             // rubber as a coil-over's stop, damped only while it's being squashed. Past ~4 cm
@@ -383,36 +392,46 @@ void Car::computeForces(double h, const World& w) {
             if (b.friction > 0) F += b.friction * std::tanh(vrel / 0.06);  // (smoothed: an explicit step can't hold a true stick)
         } else {
             // Work hardening: bent metal gets harder to bend further (folds stack up).
-            double plastic = std::fabs(b.L0 - b.Lorig) / b.Lorig;
-            double yieldNow = b.yieldStrain * (1 + b.hardening * plastic);
-            double strain = (L - b.L0) / b.L0;
-            // A rubber mount has a snubber both ways (the rebound washer on its through-bolt):
-            // squashed flat or pulled up to the washer it's a hard stop. Well past that, pulled
-            // the rubber tears, pushed the bracket bends: either way it sets (and stretched to
-            // breakStrain, lets go).
+            // (Nearly every beam, nearly always, is well inside its yield: those skip the strain
+            // maths (two divisions) and only creep back if they yielded lately.)
             const bool mount = b.snub;
-            const double snub = mount ? yieldNow : 0;
-            if (mount) yieldNow *= 2.5;
-            if (mount && std::fabs(strain) > snub && std::fabs(strain) <= yieldNow) {
-                // on the rebound washer or the snubber: no set
-            } else if (strain > yieldNow) {  // stretched past yield: permanent elongation
-                double nl = L / (1 + yieldNow);
-                impactEnergy += b.k * yieldNow * b.L0 * (nl - b.L0);
-                b.L0 = nl;
-                b.relaxTime = 0.25f;
-                releaseFromFrame(b);
-            } else if (strain < -yieldNow) {  // crushed past yield: permanent shortening
-                double nl = std::max(L / (1 - yieldNow), 0.25 * b.Lorig);
-                impactEnergy += b.k * yieldNow * b.L0 * std::fabs(b.L0 - nl);
-                b.L0 = nl;
-                b.relaxTime = 0.25f;
-                releaseFromFrame(b);
-            } else if (b.relaxTime > 0) {
-                // Viscoplastic relaxation: real crushed metal hardly springs back, but this
-                // lattice is far softer than steel and would store (and return) a lot of
-                // elastic energy. Let freshly yielded beams creep toward their current length.
-                b.relaxTime -= (float)h;
-                b.L0 += (L - b.L0) * std::min(1.0, 90.0 * h);
+            double yieldNow = 0, strain = 0, snub = 0;
+            if (b.hardening >= 0 && std::fabs(L - b.L0) <= 0.99 * b.yieldStrain * b.L0) {
+                if (b.relaxTime > 0) {
+                    b.relaxTime -= (float)h;
+                    b.L0 += (L - b.L0) * std::min(1.0, 90.0 * h);
+                }
+            } else {
+                double plastic = b.L0 == b.Lorig && b.Lorig > 0 ? 0.0 : std::fabs(b.L0 - b.Lorig) / b.Lorig;
+                yieldNow = b.yieldStrain * (1 + b.hardening * plastic);
+                strain = (L - b.L0) / b.L0;
+                // A rubber mount has a snubber both ways (the rebound washer on its through-bolt):
+                // squashed flat or pulled up to the washer it's a hard stop. Well past that, pulled
+                // the rubber tears, pushed the bracket bends: either way it sets (and stretched to
+                // breakStrain, lets go).
+                snub = mount ? yieldNow : 0;
+                if (mount) yieldNow *= 2.5;
+                if (mount && std::fabs(strain) > snub && std::fabs(strain) <= yieldNow) {
+                    // on the rebound washer or the snubber: no set
+                } else if (strain > yieldNow) {  // stretched past yield: permanent elongation
+                    double nl = L / (1 + yieldNow);
+                    impactEnergy += b.k * yieldNow * b.L0 * (nl - b.L0);
+                    b.L0 = nl;
+                    b.relaxTime = 0.25f;
+                    releaseFromFrame(b);
+                } else if (strain < -yieldNow) {  // crushed past yield: permanent shortening
+                    double nl = std::max(L / (1 - yieldNow), 0.25 * b.Lorig);
+                    impactEnergy += b.k * yieldNow * b.L0 * std::fabs(b.L0 - nl);
+                    b.L0 = nl;
+                    b.relaxTime = 0.25f;
+                    releaseFromFrame(b);
+                } else if (b.relaxTime > 0) {
+                    // Viscoplastic relaxation: real crushed metal hardly springs back, but this
+                    // lattice is far softer than steel and would store (and return) a lot of
+                    // elastic energy. Let freshly yielded beams creep toward their current length.
+                    b.relaxTime -= (float)h;
+                    b.L0 += (L - b.L0) * std::min(1.0, 90.0 * h);
+                }
             }
             if (L > b.Lorig * (1 + b.breakStrain)) {
                 b.broken = true;
@@ -2278,7 +2297,7 @@ void Sim::substep() {
     };
     // A few cars cost less than waking the pool at 2 kHz. Pileups also benefit because
     // triangle/grid preparation is independent per car, before any shared contact forces.
-    if (physicsWorkers && forceCars.size() >= 4) physicsWorkers->run((int)forceCars.size(), forces);
+    if (physicsWorkers && forceCars.size() >= 2) physicsWorkers->run((int)forceCars.size(), forces);
     else for (int i = 0; i < (int)forceCars.size(); i++) forces(i);
     // A wheel that sheared off (or a tire that rolled off its rim) goes its own way.
     for (int i = 0; i < N; i++)

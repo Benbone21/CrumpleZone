@@ -1,5 +1,34 @@
 #include "physics_workers.h"
 #include <algorithm>
+#include <chrono>
+#if defined(__x86_64__) || defined(__i386__)
+#include <immintrin.h>
+#endif
+
+namespace {
+// How long a thread waits by spinning before it blocks: a few substeps' worth.
+constexpr std::chrono::microseconds kSpin(150);
+inline void relax() {
+#if defined(__x86_64__) || defined(__i386__)
+    _mm_pause();
+#elif defined(__aarch64__)
+    asm volatile("yield");
+#else
+    std::this_thread::yield();
+#endif
+}
+// Spins until done() holds or the spin budget runs out; true if it held.
+template <class Pred> bool spinUntil(Pred done) {
+    const auto stop = std::chrono::steady_clock::now() + kSpin;
+    for (;;) {
+        for (int k = 0; k < 64; k++) {
+            if (done()) return true;
+            relax();
+        }
+        if (std::chrono::steady_clock::now() >= stop) return done();
+    }
+}
+}  // namespace
 
 int physicsThreadLimit() {
     return std::max(1, (int)std::thread::hardware_concurrency());
@@ -13,17 +42,22 @@ int resolvePhysicsThreads(int requested, int available) {
 
 PhysicsWorkers::PhysicsWorkers(int threads) {
     try {
-        for (int i = 1; i < threads; i++) workers.emplace_back([this] {
-            unsigned seen = 0;
-            std::unique_lock<std::mutex> lock(mutex);
+        for (int i = 1; i < threads; i++) workers.emplace_back([this, i] {
+            unsigned seen = generation.load();
             for (;;) {
-                start.wait(lock, [&] { return stopping || generation != seen; });
+                if (!spinUntil([&] { return generation.load() != seen || stopping.load(); })) {
+                    std::unique_lock<std::mutex> lock(mutex);
+                    sleepers++;
+                    start.wait(lock, [&] { return generation.load() != seen || stopping.load(); });
+                    sleepers--;
+                }
                 if (stopping) return;
-                seen = generation;
-                lock.unlock();
-                process();
-                lock.lock();
-                if (--pending == 0) done.notify_one();
+                seen = generation.load();
+                process(i);
+                if (pending.fetch_sub(1) == 1 && callerSleeping.load()) {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    done.notify_one();
+                }
             }
         });
     } catch (...) {
@@ -32,12 +66,15 @@ PhysicsWorkers::PhysicsWorkers(int threads) {
     }
 }
 
-void PhysicsWorkers::process() {
+void PhysicsWorkers::process(int self) {
+    const int threads = (int)workers.size() + 1;
     try {
-        for (;;) {
-            const int i = next.fetch_add(1, std::memory_order_relaxed);
-            if (i >= count) break;
-            job(i);
+        // Its own jobs first, then whatever's left.
+        for (int i = self; i < count; i += threads)
+            if (claimed[i].exchange(1, std::memory_order_relaxed) == 0) thunk(ctx, i);
+        for (int k = 0; k < count; k++) {
+            const int i = (k + self) % count;
+            if (claimed[i].exchange(1, std::memory_order_relaxed) == 0) thunk(ctx, i);
         }
     } catch (...) {
         std::lock_guard<std::mutex> lock(mutex);
@@ -45,22 +82,37 @@ void PhysicsWorkers::process() {
     }
 }
 
-void PhysicsWorkers::run(int n, const std::function<void(int)>& fn) {
-    {
-        std::lock_guard<std::mutex> lock(mutex);
-        count = n;
-        next.store(0, std::memory_order_relaxed);
-        pending = (int)workers.size();
-        job = fn;
-        failure = nullptr;
-        generation++;
+void PhysicsWorkers::runRaw(int n, Thunk fn, const void* job) {
+    // (The workers are all idle here: the last batch returned only after every one finished.)
+    count = n;
+    thunk = fn;
+    ctx = job;
+    failure = nullptr;
+    if (n > claimedSize) {
+        claimed.reset(new std::atomic<uint8_t>[n]);
+        claimedSize = n;
     }
-    start.notify_all();
-    process();  // The main thread does its share too.
-    std::unique_lock<std::mutex> lock(mutex);
-    done.wait(lock, [&] { return pending == 0; });
-    job = nullptr;
-    if (failure) std::rethrow_exception(failure);
+    for (int i = 0; i < n; i++) claimed[i].store(0, std::memory_order_relaxed);
+    pending.store((int)workers.size());
+    generation++;
+    if (sleepers.load() > 0) {
+        { std::lock_guard<std::mutex> lock(mutex); }  // (so a worker about to wait can't miss this)
+        start.notify_all();
+    }
+    process(0);  // The caller does its share too.
+    if (!spinUntil([&] { return pending.load() == 0; })) {
+        std::unique_lock<std::mutex> lock(mutex);
+        callerSleeping = true;
+        done.wait(lock, [&] { return pending.load() == 0; });
+        callerSleeping = false;
+    }
+    thunk = nullptr;
+    ctx = nullptr;
+    if (failure) {
+        std::exception_ptr e = failure;
+        failure = nullptr;
+        std::rethrow_exception(e);
+    }
 }
 
 void PhysicsWorkers::stop() {
