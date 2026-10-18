@@ -79,6 +79,7 @@ enum DebugView { DEBUG_OFF, DEBUG_XRAY, DEBUG_BEAMS_ONLY, DEBUG_PARTS, DEBUG_VIE
 class Renderer {
 public:
     RenderSettings settings;
+    float dpiFactor = 1;  // logical window size / drawable size; scene targets render at renderScale * this (Retina draws at logical pixels)
     Daylight daylight;           // the sky and light for this frame (the game runs the clock)
     std::vector<int> carBeams;   // per car (sim.cars order): 0 lamps off, 1 low beam, 2 high beam
     bool init(const World& world, std::string& err);

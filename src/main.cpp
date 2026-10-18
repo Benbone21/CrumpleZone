@@ -4418,6 +4418,13 @@ int main(int argc, char** argv) {
 
         int W, H;
         SDL_GL_GetDrawableSize(win, &W, &H);
+#ifdef __APPLE__
+        {  // Retina: the scene renders at logical pixels (the OpenGL layer is a slow path at 2x)
+            int lw = 0, lh = 0;
+            SDL_GetWindowSize(win, &lw, &lh);
+            renderer.dpiFactor = W > 0 && lw > 0 && lw < W ? (float)lw / (float)W : 1.0f;
+        }
+#endif
         if (scripted && opt.script == "job" && frame == 10) {  // (screenshots: a recovery job under way)
             refreshJobs();
             if (!jobList.empty()) startJob(jobList[0]);

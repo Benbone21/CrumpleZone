@@ -19,7 +19,7 @@ SCENARIO(gfxClassify, "engine/gfx-detect-table", "GL_RENDERER strings map to the
         {"Intel", "Intel(R) Arc(tm) A770 Graphics", Q_HIGH},
         {"Intel", "Intel(R) Arc(tm) Graphics", Q_MEDIUM},
         {"Intel", "Mesa Intel(R) HD Graphics 530 (SKL GT2)", Q_LOW},
-        {"Apple", "Apple M1", Q_MEDIUM},
+        {"Apple", "Apple M1", Q_LOW},
         {"Apple", "Apple M2 Max", Q_HIGH},
         {"Mesa", "llvmpipe (LLVM 15.0.7, 256 bits)", Q_POTATO},
         {"Microsoft Corporation", "GDI Generic", Q_POTATO},
