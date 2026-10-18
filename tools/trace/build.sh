@@ -11,4 +11,4 @@ out=build/trace/$sub/$(basename "$src" .cpp)
 mkdir -p "build/trace/$sub"
 PHYS=$(sed -n 's/^PHYS *:= //p' Makefile)
 OBJS=$(for f in $PHYS; do echo build/${f%.cpp}.o; done)
-nice -n 19 g++ -O2 -march=native -std=c++17 -o "$out" "$src" $OBJS build/tests/harness.o -lpthread -lm && echo "$out"
+nice -n 19 g++ -O2 -march=native -ffp-contract=off -std=c++17 -o "$out" "$src" $OBJS build/tests/harness.o -lpthread -lm && echo "$out"

@@ -4156,6 +4156,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     static const bool noSeeThrough = std::getenv("CZ_NO_SEETHROUGH") != nullptr;  // (for comparing screenshots)
     const SeeThrough seeThrough{view.eye, view.focus, view.hasFocus && !noSeeThrough, noSeeThrough ? 0.0f : view.fadeNear};
     props.setSeeThrough(seeThrough);
+    props.occluder = &occl_;
     props.beginFrame(sim.world, view.eye, M4(), propsOk ? settings.props : 0, view.time);
 
     farZ_ = settings.drawDistance > 0 ? std::max(150.0f, settings.drawDistance) : 6000.0f;  // (a draw distance: everything past it is clipped)
@@ -4444,7 +4445,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
                             }
                             RenderBounds b;
                             b.add(V3(x0, lo - 3.0, z0)), b.add(V3(x1, hi + 3.0, z1));  // (a blade stands under 2 m; the ground between the samples)
-                            in = b.visible(vp);
+                            in = b.visible(vp) && !occl_.occluded(b);
                         }
                     }
                     if (in && runX < 0) runX = tx;
