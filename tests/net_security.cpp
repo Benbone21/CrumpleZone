@@ -11,6 +11,8 @@
 #define HAVE_RAW_SOCKETS 1  // (the hostile-peer tests below speak TCP and UDP by hand: POSIX sockets only)
 #endif
 
+#include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -344,7 +346,11 @@ SCENARIO(netSecFlood, "net/sec-flood", "A flood of connections is capped per add
     many.clear();
     rig.pump(300);
     // Connections that never say a word (slowloris) are dropped after the handshake time.
-    T::timeouts(host, 0.4, 30);
+    // (The host counts wall-clock seconds, pump() sleeps: where usleep(2000) overshoots, as on a loaded macOS runner, scale the times by how slow it runs.)
+    const auto w0 = std::chrono::steady_clock::now();
+    rig.pump(100);
+    const double slow = std::max(1.0, std::chrono::duration<double>(std::chrono::steady_clock::now() - w0).count() / 0.1);
+    T::timeouts(host, 0.4 * slow, 30);
     std::vector<Raw> silent(3);
     for (Raw& f : silent) f.open(port, "127.0.0.3");
     rig.pump(200);
@@ -359,7 +365,7 @@ SCENARIO(netSecFlood, "net/sec-flood", "A flood of connections is capped per add
     std::string why;
     ctx.check("and a real player still gets in", joinClient(rig, c, csim, port, "REAL", &why), why);
     // A player who answers pings stays; one who goes silent for the idle time is dropped.
-    T::timeouts(host, 8, 2.5);  // (the host pings once a second)
+    T::timeouts(host, 8, 2.5 * slow);  // (the host pings once a second)
     rig.pump(2000);
     ctx.check("a player is fine while it answers pings", host.playerCount() == 2);
     rig.clients.clear();  // (c goes silent)
