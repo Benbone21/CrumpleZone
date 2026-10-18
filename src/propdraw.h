@@ -13,6 +13,7 @@
 // Quality (RenderSettings::props): 0 off (all code-made), 1 low, 2 high, 3 ultra: LOD
 // distances, the billboard distance, scatter reach and density, texture size.
 #pragma once
+#include "occlusion.h"
 #include <functional>
 #include <map>
 #include <string>
@@ -63,6 +64,8 @@ public:
     // Main pass: `setLighting` sets the shared uniforms (sun, sky, fog, shadows, lamps) on a program.
     void draw(const M4& viewProj, const std::function<void(GLuint)>& setLighting);
     void endFrame();  // collects the GPU timings
+    // Main pass only (never a shadow pass): cells and scatter behind the ground are skipped (occlusion.h). Set once; null = off.
+    const TerrainOcclusion* occluder = nullptr;
     // The editor changed the ground in [x0, x1] x [z0, z1]: the scatter there is placed again.
     void terrainChanged(double x0, double z0, double x1, double z1);
     PropStats stats;
