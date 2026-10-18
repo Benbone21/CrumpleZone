@@ -179,6 +179,12 @@ struct Style {
     // lattice's top line (a rear-engine car's engine lid); with openTail its middle is left open
     // over the engine and there's no rear panel at all (a Baja Bug's bare engine).
     bool tailLine = false, openTail = false;
+    // A Beetle: the top is one dome from the steep little windshield over the roof and down the
+    // long back to the tail (a spline, set out from the front axle and the floor), the greenhouse
+    // curves in hard to a narrow round roof, and round fenders stand out of a narrow tub with a
+    // running board between them (fenderOut: how far they stand out of it).
+    bool dome = false;
+    double fenderOut = 0;
 };
 
 const Style* styleFor(const VehicleSpec& vs) {
@@ -206,7 +212,7 @@ const Style* styleFor(const VehicleSpec& vs) {
     // roof with a strong tumblehome falling in one curve to the back, fat shoulders over the
     // short fiberglass hood), the fenders bobbed into big round openings, the tail cut off
     // low over the bare engine.
-    static const Style baja{6, 0.34, 0.26, 0.10, 0.34, 0.05, 0.13, 0.17, 0.05, 0.07, 0.025, 0.05, 0.08, 2.0, 0.26, 0.0, 0.15, true, 0.0, true, true};
+    static const Style baja{6, 0.30, 0.22, 0.0, 0.30, 0.04, 0.10, 0.17, 0.05, 0.05, 0.0, 0.04, 0.06, 2.0, 0.24, 0.0, 0.22, true, 0.0, true, true, true, 0.16};
     const std::string id = vs.id;
     return id == "baja" ? &baja
            : id == "blazer" ? &blazer
@@ -230,6 +236,13 @@ struct ShellLines {
     std::vector<double> axles, hoodX, hoodY;
     double xTail = -1e9;  // (tailLine: where the roof meets the belt at the back, and the deck behind it)
     std::vector<double> tailX, tailY;
+    // (dome) the top line's points, and the fenders: middle x, half length, crown height.
+    std::vector<double> domeX, domeY;
+    struct Fender {
+        double xc, hx, top;
+    };
+    std::vector<Fender> fenders;
+    double boardX0 = 0, boardX1 = 0;  // the running board between the fenders
 
     ShellLines(const VehicleSpec& v, const Style& style) : vs(v), st(style) {
         F = vs.layerY[0];
@@ -270,6 +283,63 @@ struct ShellLines {
                 tailY.push_back(i < (int)vs.topLine.size() && vs.topLine[i] > 0 ? vs.topLine[i] : B);
             }
         }
+        if (style.dome && axles.size() >= 2) {
+            // 1969 Beetle side profile (from the front axle back, from the floor up), lifted with the
+            // body: the short fiberglass nose falling steeply, the frunk lid's curve up to the cowl, the
+            // windshield, the roof's one arc and the long fall of the back to the cut tail.
+            const double xF = axles.front(), xR = axles.back();
+            static const double pts[][2] = {{0.62, 0.30}, {0.56, 0.40}, {0.44, 0.48}, {0.24, 0.55}, {0.00, 0.58}, {-0.25, 0.61},
+                                            {-0.45, 0.64}, {-0.56, 0.80}, {-0.66, 0.97}, {-0.80, 1.11}, {-0.98, 1.18}, {-1.20, 1.205},
+                                            {-1.45, 1.20}, {-1.72, 1.15}, {-2.00, 1.05}, {-2.27, 0.90}, {-2.52, 0.74}, {-2.75, 0.62},
+                                            {-2.98, 0.53}, {-3.10, 0.50}, {-3.25, 0.48}};
+            for (const auto& p : pts) {
+                domeX.push_back(xF + p[0]);
+                domeY.push_back(F + p[1]);
+            }
+            xa = xF - 0.45;       // the windshield's foot (the cowl)
+            xRoofF = xF - 0.82;   // its header
+            xTail = xR - 0.33;    // where the back falls below the belt: the deck lid, here cut away
+            fenders = {{xF - 0.04, 0.47, F + 0.56}, {xR + 0.08, 0.50, F + 0.60}};  // (the Baja's: the front cut short, the back bobbed)
+            boardX0 = xF - 0.52, boardX1 = xR + 0.45;
+            tailX.clear(), tailY.clear();
+        }
+    }
+
+    // (dome) Catmull-Rom through the profile's points.
+    double domeTop(double x) const {
+        const int n = (int)domeX.size();
+        if (x >= domeX[0]) return domeY[0];
+        if (x <= domeX[n - 1]) return domeY[n - 1];
+        int k = 0;
+        while (k + 1 < n && !(x <= domeX[k] && x >= domeX[k + 1])) k++;
+        const double t = (domeX[k] - x) / (domeX[k] - domeX[k + 1]);
+        const double p0 = domeY[std::max(0, k - 1)], p1 = domeY[k], p2 = domeY[k + 1], p3 = domeY[std::min(n - 1, k + 2)];
+        return 0.5 * (2 * p1 + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t * t + (-p0 + 3 * p1 - 3 * p2 + p3) * t * t * t);
+    }
+    // (dome) the narrow tub's half width, and how far the fenders or the running board stand out of it at (x, y).
+    double tubHalf(double x) const { return std::min(W2 - st.fenderOut, halfWidth(x)); }
+    double fenderIn(double x) const {  // 0..1: how much fender there is at x
+        double f = 0;
+        for (const Fender& fd : fenders) {
+            const double u = (x - fd.xc) / fd.hx;
+            if (std::fabs(u) < 1) f = std::max(f, std::pow(1 - u * u, 0.35));
+        }
+        return f;
+    }
+    double sideOut(double x, double y) const {
+        double out = 0;
+        for (const Fender& fd : fenders) {
+            const double u = (x - fd.xc) / fd.hx;
+            if (std::fabs(u) >= 1) continue;
+            const double ex = std::pow(1 - u * u, 0.35), rf = 0.17, y0 = fd.top - rf;
+            const double ey = y <= y0 ? 1.0 : y >= fd.top ? 0.0 : std::sqrt(std::max(0.0, 1 - (y - y0) * (y - y0) / (rf * rf)));
+            out = std::max(out, st.fenderOut * ex * ey);
+        }
+        if (x < boardX0 && x > boardX1 && y < F + 0.07) {  // the running board: a step out along the sill
+            const double e = std::min({1.0, (boardX0 - x) / 0.06, (x - boardX1) / 0.06});
+            out = std::max(out, 0.10 * e * smoothstep(F + 0.07, F + 0.05, y));
+        }
+        return out;
     }
 
     double halfWidth(double x) const {
@@ -290,6 +360,7 @@ struct ShellLines {
     // Top of the body: hood, windshield, roof, then down the rear glass (a pickup's bed: the
     // rail along its walls).
     double top(double x) const {
+        if (st.dome && !domeX.empty()) return domeTop(x);
         if (inBed(x)) return railY;
         double y;
         if (x >= xa) {
@@ -344,6 +415,7 @@ struct ShellLines {
 
     // Half cross-section from the bottom center out and up to the top center.
     std::vector<Pt> section(double x) const {
+        if (st.dome && !domeX.empty()) return domeSection(x);
         if (inBed(x)) return bedSection(x);
         std::vector<Pt> pts;
         pts.reserve(kRows);
@@ -401,6 +473,67 @@ struct ShellLines {
         return pts;
     }
 
+    // (dome) A Beetle section: under the floor, round the sill, up the narrow tub with the fender
+    // swelling out of it (or the running board at its foot), then the greenhouse curving in hard to
+    // a round roof; ahead of the windshield and behind the cabin, over a rounded shoulder onto the
+    // frunk lid or the deck, the fenders humped either side of it.
+    std::vector<Pt> domeSection(double x) const {
+        std::vector<Pt> pts;
+        pts.reserve(kRows);
+        const double yb = bottom(x), yt = top(x), tub = tubHalf(x), rl = st.rocker;
+        const bool gh = greenhouse(x);
+        auto sideZ = [&](double y) { return tub + sideOut(x, y); };
+        const double rs = gh ? 0 : std::min(st.shoulder, std::max(0.01, (yt - yb - rl) * 0.3));
+        const double y0 = yb + rl, y1 = gh ? B : yt - rs;
+        const double zb = sideZ(yb);
+        for (int k = 0; k < kNB; k++) pts.push_back({(zb - rl) * k / (kNB - 1), yb, SEG_BOTTOM});
+        for (int k = 1; k <= kNL; k++) {
+            const double a = -M_PI / 2 + M_PI / 2 * k / kNL;
+            pts.push_back({zb - rl + rl * std::cos(a), yb + rl + rl * std::sin(a), SEG_CORNER});
+        }
+        for (int k = 1; k <= kNS; k++) {
+            const double y = y0 + (y1 - y0) * k / kNS;
+            pts.push_back({sideZ(y), y, SEG_SIDE});
+        }
+        double zEdge;
+        if (gh) {
+            // Tumblehome: the glass leans in harder the higher it goes, to a roof half as wide as the tub.
+            const double re = std::min(st.roofEdge, std::max(0.006, (yt - B) * 0.35));
+            auto zAt = [&](double y) { const double t = std::max(0.0, (y - B) / std::max(0.1, T - B)); return tub - tuck * std::pow(t, 1.35); };
+            for (int k = 1; k <= kNG; k++) {
+                const double y = B + (yt - re - B) * k / kNG;
+                pts.push_back({zAt(y), y, SEG_UPPER});
+            }
+            const double zc = zAt(yt - re) - re, yc = yt - re;
+            for (int k = 1; k <= kNE; k++) {
+                const double a = M_PI / 2 * k / kNE;
+                pts.push_back({zc + re * std::cos(a), yc + re * std::sin(a), SEG_EDGE});
+            }
+            zEdge = zc;
+            for (int k = 1; k <= kNT; k++) {
+                const double z = zEdge * (1.0 - (double)k / kNT), q = z / std::max(0.05, zEdge);
+                pts.push_back({z, yt + st.roofCrown * (1 - q * q), SEG_TOP});
+            }
+            return pts;
+        }
+        const double ws = sideZ(y1);
+        for (int k = 1; k <= kNG; k++) {
+            const double a = M_PI / 2 * k / kNG;
+            pts.push_back({ws - rs + rs * std::cos(a), yt - rs + rs * std::sin(a), SEG_UPPER});
+        }
+        for (int k = 1; k <= kNE; k++) pts.push_back({ws - rs, yt, SEG_EDGE});
+        zEdge = ws - rs;
+        // The lid between the fenders: a crown in the middle, a valley where it meets each fender, the
+        // fender's own round top outboard of it.
+        const double fi = fenderIn(x);
+        for (int k = 1; k <= kNT; k++) {
+            const double z = zEdge * (1.0 - (double)k / kNT), q = z / std::max(0.05, zEdge);
+            const double valley = 0.035 * fi * std::exp(-((z - tub + 0.04) * (z - tub + 0.04)) / (0.06 * 0.06));
+            pts.push_back({z, yt + st.hoodCrown * (1 - q * q) - valley, SEG_TOP});
+        }
+        return pts;
+    }
+
     // A pickup bed, the same number of points: under the floor, up the outside, over the
     // rail cap, down the inside wall and across the bed floor to the middle.
     std::vector<Pt> bedSection(double x) const {
@@ -439,8 +572,8 @@ void shellArch(const VehicleSpec& vs, double& centerY, double& radius) {
         radius = vs.wheelRadius + 0.05;
     } else if (id == "baja") {
         // The fenders bobbed: big round openings cut high over the 30s (room for 33s).
-        centerY = vs.layerY[0] - 0.02;
-        radius = 0.50;
+        centerY = vs.layerY[0] - 0.04;
+        radius = 0.49;
     } else if (id == "blazer") {
         // Round openings cut well up into the fenders (room for ~33s), from just below the rocker.
         centerY = vs.layerY[0] - 0.08;
@@ -501,7 +634,7 @@ bool buildBodyShell(const Car& car, VisualTemplate& t, bool merge) {
     // Stations along the length: even spacing, plus every line that must fall on a
     // station (panel seams, windshield base and header, arch edges, the ends).
     std::vector<double> xs;
-    for (double x = L.xr; x <= L.xf + 1e-9; x += 0.03) xs.push_back(x);
+    for (double x = L.xr; x <= L.xf + 1e-9; x += style->dome ? 0.04 : 0.03) xs.push_back(x);  // (a dome is curved everywhere: little merges, so fewer stations)
     std::vector<double> forced = {L.xf, L.xr, L.xa, L.xRoofF, L.xr + L.rakeR, L.xf - 0.10};
     if (L.bed) forced.insert(forced.end(), {L.xCab, L.xCab - 0.012, L.xCab + L.rakeR});  // (the cab's back wall)
     std::map<std::string, std::pair<V3, V3>> box;  // panel bounding boxes
@@ -705,7 +838,7 @@ bool buildBodyShell(const Car& car, VisualTemplate& t, bool merge) {
         if (parent < 0) parent = 0;
         info[f] = {group, region, parent, region == REG_CABIN_SIDE || region == REG_WINDSHIELD || region == REG_REAR_WINDOW};
         // A Baja's cut tail: the deck stops short of the engine, which stands up out of it in the air.
-        if (style->openTail && !rf.cap && (rf.seg == SEG_TOP || rf.seg == SEG_EDGE) && c.x < L.xTail - 0.30 &&
+        if (style->openTail && !rf.cap && (rf.seg == SEG_TOP || rf.seg == SEG_EDGE) && c.x < L.xTail + (style->dome ? 0.04 : -0.30) &&
             std::fabs(c.z) < std::min(0.46, L.W2 - style->hoodInset - 0.06))
             info[f].region = kHole;
     }

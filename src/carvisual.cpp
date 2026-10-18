@@ -1332,7 +1332,7 @@ void buildParts(const Car& car, PartBuilder& pb) {
     // Mirrors on stalks at the base of the A-pillars, and wipers.
     for (int s = -1; s <= 1; s += 2) {
         pb.current = s < 0 ? ON_LEFT_DOOR : ON_RIGHT_DOOR;
-        V3 base = vs.model==1 ? V3(0.33,0.93,s*0.69) : V3(cabFront - 0.1, beltY + 0.05, s * (W / 2 - 0.05));
+        V3 base = vs.model==1 ? V3(0.33,0.93,s*0.69) : V3(cabFront - 0.1, beltY + 0.05, s * (W / 2 - ((vs.extras & EXTRA_BAJA) ? 0.18 : 0.05)));  // (a Beetle's door is well in from its fenders)
         V3 head = base + (vs.model==1 ? V3(-0.05,0.05,s*0.22) : V3(0.02, 0.05, s * 0.08));
         pb.cylinder(base, head, 0.012, 4, kBlack, SM_MATTE, false);
         pb.box(head + V3(0, 0.025, s * 0.03), V3(0.035, 0.04, 0.065), car.color, SM_PAINT);
