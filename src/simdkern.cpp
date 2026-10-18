@@ -66,16 +66,18 @@ void faceCandidatesBase(const FaceGeo& f, int words, const uint64_t* cand, const
 }
 
 #ifdef CZ_X86
+// (A free function, not a lambda: GCC 13 and clang don't give a lambda its enclosing function's target.)
+__attribute__((target("avx2"))) inline __m256d dot3(__m256d x, __m256d y, __m256d z, const double* a, const double* b, const double* c) {
+    return _mm256_add_pd(_mm256_add_pd(_mm256_mul_pd(x, _mm256_loadu_pd(a)), _mm256_mul_pd(y, _mm256_loadu_pd(b))),
+                         _mm256_mul_pd(z, _mm256_loadu_pd(c)));
+}
+
 // Four faces at a time, straight from the rows: only the blocks holding a candidate.
 __attribute__((target("avx2"))) void faceCandidatesAvx2(const FaceGeo& f, int words, const uint64_t* cand, const V3& p,
                                                         double radius, uint64_t* keep) {
     const __m256d px = _mm256_set1_pd(p.x), py = _mm256_set1_pd(p.y), pz = _mm256_set1_pd(p.z);
     const __m256d r = _mm256_set1_pd(radius), zero = _mm256_setzero_pd(), back = _mm256_set1_pd(-0.4);
     const __m256d one = _mm256_set1_pd(1), tiny = _mm256_set1_pd(1e-12), slack = _mm256_set1_pd(-0.02);
-    auto dot3 = [](__m256d x, __m256d y, __m256d z, const double* a, const double* b, const double* c) {
-        return _mm256_add_pd(_mm256_add_pd(_mm256_mul_pd(x, _mm256_loadu_pd(a)), _mm256_mul_pd(y, _mm256_loadu_pd(b))),
-                             _mm256_mul_pd(z, _mm256_loadu_pd(c)));
-    };
     for (int w = 0; w < words; w++) {
         uint64_t k = 0;
         for (uint64_t m = cand[w]; m;) {
