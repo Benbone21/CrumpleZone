@@ -4872,6 +4872,7 @@ int main(int argc, char** argv) {
             benchCars.carDraws += g.carDraws, benchCars.carTris += g.carTris, benchCars.carShadowDraws += g.carShadowDraws;
             benchCars.carShadowTris += g.carShadowTris, benchCars.carPrepMs += g.carPrepMs, benchCars.carPartsMs += g.carPartsMs;
             benchCars.carRebuilds += g.carRebuilds;
+            for (int k = 0; k < 6; k++) benchCars.carKindTris[k] += g.carKindTris[k];
         }
         if (scripted && opt.shotFrames.count(frame)) {
             if (bench && benchN) {
@@ -4894,6 +4895,12 @@ int main(int argc, char** argv) {
                                 "main %.1f draws %.1fk tris, shadows %.1f draws %.1fk tris; %.2f meshes rebuilt a frame\n",
                                 vehicles, awake, benchPhysicsN ? benchPhysics / benchPhysicsN : 0.0, benchCars.carPrepMs / n, benchCars.carPartsMs / n,
                                 benchCars.carDraws / n, benchCars.carTris / n / 1000, benchCars.carShadowDraws / n, benchCars.carShadowTris / n / 1000, benchCars.carRebuilds / n);
+                }
+                {
+                    const unsigned* k = benchCars.carKindTris;
+                    const double n = benchN * 1000.0;
+                    std::printf("bench: car tris (main, k) skin %.1f glass %.1f bound parts %.1f running gear %.1f wheels %.1f parts models %.1f\n",
+                                k[0] / n, k[1] / n, k[2] / n, k[3] / n, k[4] / n, k[5] / n);
                 }
                 if (dbgMsN) std::printf("bench: debug screen %.3f ms/frame CPU (gather + queue) over %d frames\n", dbgMsSum / dbgMsN, dbgMsN);
                 const PropStats& ps = renderer.propStats();

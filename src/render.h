@@ -141,7 +141,8 @@ public:
         // the CPU spent building their meshes (skin, parts, running gear) and the parts models.
         unsigned carDraws = 0, carTris = 0, carShadowDraws = 0, carShadowTris = 0;
         double carPrepMs = 0, carPartsMs = 0;
-        unsigned carRebuilds = 0;  // skins built again this frame (the rest drew their cached mesh)
+        unsigned carRebuilds = 0;
+        unsigned carKindTris[6] = {};  // main pass: skin, glass, bound parts, running gear (and frame models), wheels, parts models  // skins built again this frame (the rest drew their cached mesh)
     };
     const GeometryStats& geometryStats() const { return geometryStats_; }
     double grassGpuMs() const { return grassGpuMs_; }  // (CZ_BENCH: the grass pass on the GPU, a few frames late)
@@ -201,6 +202,10 @@ private:
     std::vector<StaticBatch> boxBatches, sceneryBatches, bushBatches;
     GeometryStats geometryStats_;
     bool shadowPass_ = false;
+    int carKind_ = 0;  // (which of GeometryStats::carKindTris a car draw counts to)
+    std::vector<char> carVisible_;  // per car, in the pass being drawn (cullCars)
+    void cullCars(size_t cars, const M4& vp);
+    bool carShown(size_t ci) const { return ci >= carVisible_.size() || carVisible_[ci]; }
     unsigned rebuilds_ = 0;  // (which of the car counts a car draw goes to)
     void carDrawArrays(int first, int count) {
         gl::DrawArrays(GL_TRIANGLES, first, count);
@@ -209,6 +214,7 @@ private:
     void countCar(long vertices) {
         (shadowPass_ ? geometryStats_.carShadowDraws : geometryStats_.carDraws)++;
         (shadowPass_ ? geometryStats_.carShadowTris : geometryStats_.carTris) += (unsigned)(vertices / 3);
+        if (!shadowPass_) geometryStats_.carKindTris[carKind_] += (unsigned)(vertices / 3);
     }
     GLuint grassQuery_[4] = {};
     int grassQueryFrame_ = 0;

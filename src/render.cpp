@@ -3354,6 +3354,7 @@ M4 wheelMatrixAt(const V3& c, const V3& axis, const V3& up, double spin, double 
 }
 
 void Renderer::drawWheels(const Sim& sim, GLuint prog) {
+    carKind_ = 4;
     // A wheel (or a bare tire, or a flat) off a vehicle, by its matrix at full size.
     auto drawItem = [&](const WheelItem& it, const M4& full, const M4& flat) {
         const int st = std::min(std::max(it.style, 0), WHEEL_STYLES - 1);
@@ -3372,7 +3373,7 @@ void Renderer::drawWheels(const Sim& sim, GLuint prog) {
         }
     };
     for (const Car& car : sim.cars) {
-        if (car.wheels.empty()) continue;
+        if (car.wheels.empty() || !carShown(&car - sim.cars.data())) continue;
         Frame fr = car.frame();
         // The car's own tread on this wheel (and chains over it when they're on).
         const int tread = std::min(std::max(car.spec->tireType, 0), TIRE_TYPES - 1);
@@ -3629,6 +3630,7 @@ void Renderer::prepareCars(const Sim& sim, DebugView debug, const V3& eye) {
 
 void Renderer::drawCarBodies(const Sim& sim, GLuint prog, bool glassPass) {
     for (size_t ci = 0; ci < sim.cars.size() && ci < carSlots.size(); ci++) {
+        if (!carShown(ci)) continue;
         const Car& car = sim.cars[ci];
         const CarSlot& slot = carSlots[ci];
         const VisualTemplate& t = *static_cast<const VisualTemplate*>(slot.tpl);
@@ -3659,18 +3661,34 @@ void Renderer::drawCarBodies(const Sim& sim, GLuint prog, bool glassPass) {
         BindVertexArray(slot.vao);
         BindBuffer(GL_ELEMENT_ARRAY_BUFFER, glassPass ? slot.glassIbo : slot.ibo);
         DrawElements(GL_TRIANGLES, glassPass ? slot.glassCount : slot.opaqueCount, GL_UNSIGNED_INT, nullptr);
+        carKind_ = glassPass ? 1 : 0;
         countCar(glassPass ? slot.glassCount : slot.opaqueCount);
     }
     uniformM4(prog, "uModel", m4identity());
+}
+
+// Which cars the pass with this view-projection sees (a box round each one's frame, wheels and all).
+void Renderer::cullCars(size_t cars, const M4& vp) {
+    carVisible_.assign(cars, 1);
+    for (size_t ci = 0; ci < cars && ci < carSlots.size(); ci++) {
+        const CarSlot& slot = carSlots[ci];
+        if (slot.radius <= 0) continue;
+        RenderBounds b;
+        const double r = slot.radius + 0.6;
+        b.add(slot.center - V3(r, r, r));
+        b.add(slot.center + V3(r, r, r));
+        carVisible_[ci] = b.visible(vp);
+    }
 }
 
 // The parts bound to each car's lattice, in its frame (prepareCars).
 void Renderer::drawCarParts(const Sim& sim, GLuint prog) {
     for (size_t ci = 0; ci < sim.cars.size() && ci < carSlots.size(); ci++) {
         const CarSlot& slot = carSlots[ci];
-        if (!slot.partsCount) continue;
+        if (!slot.partsCount || !carShown(ci)) continue;
         uniformM4(prog, "uModel", slot.model);
         BindVertexArray(slot.partsVao);
+        carKind_ = 2;
         carDrawArrays(0, slot.partsCount);
     }
     uniformM4(prog, "uModel", m4identity());
@@ -3778,10 +3796,12 @@ void Renderer::drawCarModels(GLuint prog) {
     BindTexture(GL_TEXTURE_2D, partTex);
     ActiveTexture(GL_TEXTURE0);
     Uniform1i(uniformLocation(prog, "uParts"), 9);
-    for (const CarSlot& slot : carSlots) {
-        if (!slot.modelsParts || !slot.modelsCount) continue;
+    for (size_t ci = 0; ci < carSlots.size(); ci++) {
+        const CarSlot& slot = carSlots[ci];
+        if (!slot.modelsParts || !slot.modelsCount || !carShown(ci)) continue;
         Uniform1i(uniformLocation(prog, "uPartBase"), slot.modelsBase);
         BindVertexArray(slot.modelsVao);
+        carKind_ = 5;
         carDrawArrays(0, slot.modelsCount);
     }
 }
@@ -3880,7 +3900,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         if (figVertexCount > 0) {
             BindVertexArray(figVao);
             shadowPass_ = true;
-            carDrawArrays(0, figVertexCount);  // (counted with the cars: it's mostly their parts)
+            carKind_ = 3, carDrawArrays(0, figVertexCount);  // (counted with the cars: it's mostly their parts)
             shadowPass_ = false;
         }
         UseProgram(progTreeDepth);
@@ -3889,24 +3909,28 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         UseProgram(progDepth);
         drawBatches(sceneryVao, sceneryBatches, lightVP[c], true);
         drawBushes(lightVP[c], view.eye, true);
+        // (The far cascade, a hand a texel, takes the bodies and wheels: what's under and inside them doesn't show at that size.)
         shadowPass_ = true;
+        cullCars(sim.cars.size(), lightVP[c]);
         drawCarBodies(sim, progDepth, false);
         BindVertexArray(dynVao);
-        carDrawArrays(0, (GLsizei)partVerts.size());
-        drawCarParts(sim, progDepth);
+        if (c == 0) carKind_ = 3, carDrawArrays(0, (GLsizei)partVerts.size());
+        if (c == 0) drawCarParts(sim, progDepth);
         drawWheels(sim, progDepth);
-        if (partRows) {
+        if (partRows && c == 0) {
             UseProgram(progPartsDepth);
             uniformM4(progPartsDepth, "uLightVP", lightVP[c]);
             drawCarModels(progPartsDepth);
             UseProgram(progDepth);
         }
+        carVisible_.clear();
         shadowPass_ = false;
         props.drawShadow(lightVP[c], c, keyDir);
         Disable(GL_POLYGON_OFFSET_FILL);
     }
 
     // Main pass, into the HDR target.
+    cullCars(sim.cars.size(), vp);
     BindFramebuffer(GL_FRAMEBUFFER, targetSamples ? msFbo : sceneFbo);
     Viewport(0, 0, targetW, targetH);
     ClearColor(kFog[0], kFog[1], kFog[2], 1);
@@ -4040,7 +4064,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     drawBatches(boxVao, boxBatches, vp, false);
     if (figVertexCount > 0) {
         BindVertexArray(figVao);
-        carDrawArrays(0, figVertexCount);
+        carKind_ = 3, carDrawArrays(0, figVertexCount);
     }
     // The code-made trees the camera sees through (close to it, or across the line to the car) dither away:
     // the few most hidden go to the shader as (x, z, reach, fade).
@@ -4153,7 +4177,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         setLighting(progLit);
     }
     BindVertexArray(dynVao);
-    carDrawArrays(0, (GLsizei)partVerts.size());
+    carKind_ = 3, carDrawArrays(0, (GLsizei)partVerts.size());
     drawCarParts(sim, progLit);
     drawWheels(sim, progLit);
     if (partRows) {  // the cars' mechanical parts (CarModels)
