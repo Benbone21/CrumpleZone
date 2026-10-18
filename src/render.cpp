@@ -1953,10 +1953,13 @@ vec3 posAt(vec2 uv){
   return v.xyz / v.w;
 }
 void main(){
-  if (texture(uDepth, vUv).r >= 1.0) { oCol = vec4(1.0); return; }
-  vec3 P = posAt(vUv);
-  vec3 Pr = posAt(vUv + vec2(uTexel.x, 0)), Pl = posAt(vUv - vec2(uTexel.x, 0));
-  vec3 Pu = posAt(vUv + vec2(0, uTexel.y)), Pd = posAt(vUv - vec2(0, uTexel.y));
+  // (An AO pixel's centre falls between two depth rows; on the NEAREST depth, rounding picked either one row by row, which showed as horizontal bands.
+  // So read the depth at one texel's centre, the lower-left of the 2x2 the AO pixel covers.)
+  vec2 uv = (floor(gl_FragCoord.xy) * 2.0 + 0.5) * uTexel;
+  if (texture(uDepth, uv).r >= 1.0) { oCol = vec4(1.0); return; }
+  vec3 P = posAt(uv);
+  vec3 Pr = posAt(uv + vec2(uTexel.x, 0)), Pl = posAt(uv - vec2(uTexel.x, 0));
+  vec3 Pu = posAt(uv + vec2(0, uTexel.y)), Pd = posAt(uv - vec2(0, uTexel.y));
   vec3 dx = abs(Pr.z - P.z) < abs(P.z - Pl.z) ? Pr - P : P - Pl;
   vec3 dy = abs(Pu.z - P.z) < abs(P.z - Pd.z) ? Pu - P : P - Pd;
   vec3 n = normalize(cross(dx, dy));
@@ -1968,7 +1971,7 @@ void main(){
   float rot = hash(gl_FragCoord.xy) * 6.2832, sum = 0.0, bias = 0.006 - 0.0015 * P.z;
   for (int i = 0; i < N; i++) {
     float a = (float(i) + 0.5) / float(N), ang = a * 43.98 + rot;  // 7 turns
-    vec3 Q = posAt(vUv + vec2(cos(ang), sin(ang)) * a * rpx * uAOTexel);
+    vec3 Q = posAt(uv + vec2(cos(ang), sin(ang)) * a * rpx * uAOTexel);
     vec3 v = Q - P;
     float vv = dot(v, v), f = max(R * R - vv, 0.0);
     sum += f * f * f * max((dot(v, n) - bias) / (vv + 0.01), 0.0);
