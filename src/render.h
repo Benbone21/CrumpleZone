@@ -182,6 +182,7 @@ private:
         GLuint modelsVao = 0, modelsVbo = 0, modelsIdx = 0;  // the merged parts (CarModels), their part numbers
         uint64_t modelsSig = 0;      // which parts they were merged from
         int modelsCount = 0, modelsBase = 0, modelsParts = 0;  // vertices; this frame: first transform, how many (0: none)
+        int modelsShown = 0;         // vertices of the parts that can be seen (first): the rest are shut inside the intact body
         // Far copies of the skin (an intact one): its vertices clustered (6 cm, 15 cm cells, within one shader region),
         // the triangles left drawn from the same vertices. Built when first wanted after a rebuild.
         std::vector<float> lpos;     // the skin's vertices as last built (car frame)
@@ -336,6 +337,7 @@ private:
     void drawWheels(const Sim& sim, GLuint prog);
     void drawCarParts(const Sim& sim, GLuint prog);
     void prepareCarModels();
+    int debug_ = 0;  // (this frame's DebugView: the parts view shows what the body hides)
     void drawCarModels(GLuint prog);
     GLuint progParts = 0, progPartsDepth = 0, partTex = 0;  // (the parts' transforms: four texels each, 256 to a row)
     std::vector<float> partXf;

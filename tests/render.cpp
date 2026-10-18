@@ -1,5 +1,6 @@
 // Offscreen OpenGL integration checks, including an emulated driver rejecting HDR MSAA.
 #include "../src/render.h"
+#include "../src/carparts.h"
 #include "../src/gpu.h"
 #include "../src/menu.h"
 #include "../src/sdl_min.h"
@@ -310,6 +311,70 @@ int main() {
         renderer.drawScene(sim, view, DEBUG_OFF, nullptr);
         clean();
         std::puts("PASS resizing and render scale after MSAA fallback");
+        {  // Vehicles (Renderer::CarSlot): kept skins, merged parts, far copies, culling; draws and triangles per car
+            rejectMsaa = false;
+            renderer.settings.renderScale = 1.0f;
+            renderer.settings.msaa = 0;
+            view.width = 1280, view.height = 720;
+            sim.cars.clear();
+            sim.addCar(vehicleCatalog()[7], V3(-40, 0.05, -40), 0, V3(0.6, 0.3, 0.1));
+            sim.player = 0;
+            for (int k = 0; k < 120; k++) sim.substep();  // (settled on its wheels)
+            Car& car = sim.cars[0];
+            auto look = [&](double d, bool once = false) {
+                const V3 c = car.frame().com;
+                view.target = c, view.eye = c + V3(d * 0.7, d * 0.25, d * 0.7), view.up = V3(0, 1, 0);
+                renderer.carModels.assign(1, Renderer::CarModels());
+                renderer.carModels[0].car = 0;
+                if (d < 40) carPartModels(car, renderer.carModels[0].parts, d < 20 ? PARTS_ALL : PARTS_BIG);
+                renderer.drawScene(sim, view, DEBUG_OFF, nullptr);
+                if (!once) renderer.drawScene(sim, view, DEBUG_OFF, nullptr);  // (the second frame: what it costs from then on)
+                clean();
+                return renderer.geometryStats();
+            };
+            struct Budget { double d; unsigned draws, tris, shadowTris; };
+            // (draws: skin, bound parts, running gear, parts, four tires, rims and calipers, the spare)
+            const Budget budgets[] = {{8, 22, 70000, 110000}, {60, 16, 13000, 24000}, {200, 16, 13000, 24000}};
+            for (const Budget& b : budgets) {
+                const Renderer::GeometryStats g = look(b.d);
+                std::printf("Render check: a Blazer %.0f m off: %u draws, %u triangles; shadows %u draws, %u triangles\n", b.d, g.carDraws, g.carTris,
+                            g.carShadowDraws, g.carShadowTris);
+                if (g.carDraws > b.draws || g.carTris > b.tris || g.carShadowTris > b.shadowTris)
+                    throw std::runtime_error("a vehicle " + std::to_string((int)b.d) + " m off is over its draw or triangle budget");
+            }
+            const Renderer::GeometryStats near = look(8), far = look(200);
+            if (far.carTris * 4 > near.carTris) throw std::runtime_error("a vehicle far off should draw under a quarter of the triangles it does close up");
+            if (look(8, true).carRebuilds) throw std::runtime_error("a vehicle standing still was built again");
+            car.translate(V3(1.5, 0, 0));
+            if (look(8, true).carRebuilds) throw std::runtime_error("a vehicle moved whole (not bent) was built again");
+            car.nodes[car.quads[car.quads.size() / 2].v[0]].p += V3(0, 0.05, 0);  // a dent
+            if (!look(8, true).carRebuilds) throw std::runtime_error("a dent didn't show the frame it happened");
+            view.target = car.frame().com + V3(0, 0, 0), view.eye = view.target + V3(0, 3, 30);  // (looking at the car...)
+            renderer.drawScene(sim, view, DEBUG_OFF, nullptr);
+            auto drawn = [&] { const auto& g = renderer.geometryStats(); return g.carKindTris[0] + g.carKindTris[2] + g.carKindTris[4]; };  // (skin, bound parts, wheels)
+            const unsigned seen = drawn();
+            view.target = view.eye + V3(0, 0, 10);  // (...and away from it)
+            renderer.drawScene(sim, view, DEBUG_OFF, nullptr);
+            if (!seen || drawn()) throw std::runtime_error("a vehicle behind the camera was drawn");
+            // What each vehicle more costs the CPU when nothing about it changed: 1 against 9 standing.
+            auto cpu = [&](int n) {
+                sim.cars.resize(1);
+                for (int k = 1; k < n; k++) sim.addCar(vehicleCatalog()[k % 2 ? 2 : 6], V3(-40 + 5 * k, 0.05, -30), 0, V3(0.3, 0.3, 0.3));
+                renderer.carModels.clear();
+                view.target = V3(-20, 1, -35), view.eye = V3(-20, 8, 0);
+                double best = 1e9;
+                for (int f = 0; f < 12; f++) {
+                    renderer.drawScene(sim, view, DEBUG_OFF, nullptr);
+                    if (f >= 2) best = std::min(best, renderer.geometryStats().carPrepMs);
+                }
+                return best;
+            };
+            const double one = cpu(1), nine = cpu(9), each = (nine - one) / 8;
+            std::printf("Render check: car meshes %.3f ms CPU for one, %.3f ms for nine: %.3f ms each more\n", one, nine, each);
+            if (each > 0.25) throw std::runtime_error("each vehicle standing costs the CPU over 0.25 ms a frame");
+            clean();
+            std::puts("PASS vehicles: per-car draw and triangle budgets near and far, kept meshes, dents shown at once, culled, cheap to add");
+        }
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL render: %s\n", error.what());
         result = 1;

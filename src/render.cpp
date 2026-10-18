@@ -3609,6 +3609,7 @@ const std::vector<int>& watchedNodes(const Car& car, const VisualTemplate& t) {
 // for this frame, and uploads them.
 void Renderer::prepareCars(const Sim& sim, DebugView debug, const V3& eye) {
     partVerts.clear();
+    debug_ = (int)debug;
     if (carSlots.size() < sim.cars.size()) carSlots.resize(sim.cars.size());
     static std::vector<BodyDynamic> dyn;
     static std::vector<unsigned> opaque, glass;
@@ -3718,7 +3719,9 @@ void Renderer::prepareCars(const Sim& sim, DebugView debug, const V3& eye) {
                 for (size_t v = 0; v < dyn.size(); v++)
                     for (int k = 0; k < 3; k++) slot.lpos[v * 3 + k] = dyn[v].p[k];
                 slot.lopaque = opaque, slot.lglass = glass;
-                slot.intact = opaque.size() == t.faces.size() * 6 && car.damage < 0.03;
+                size_t whole = 0;  // (indices with no face torn off)
+                for (const auto& f : t.faces) whole += f.rv[3] == f.rv[2] ? 3 : 6;
+                slot.intact = !car.isProp() && opaque.size() == whole && car.damage < 0.03;
                 slot.snap = now;
                 slot.shattered = shattered, slot.debug = (int)debug, slot.builtTpl = &t;
                 slot.builds++;
@@ -3876,6 +3879,30 @@ uint64_t partsSignature(const std::vector<Placed>& parts) {
     }
     return h ^ parts.size();
 }
+// Whether p (the car's frame) is shut inside its skin as last built: a ray up, down and to either side each crosses
+// it an odd number of times. (A crack or a shared edge only ever makes it look outside: then it's drawn.)
+bool insideSkin(const std::vector<float>& P, const std::vector<unsigned>& idx, const V3& p) {
+    int odd[4] = {0, 0, 0, 0};
+    for (size_t i = 0; i + 2 < idx.size(); i += 3) {
+        const float* a = &P[idx[i] * 3];
+        const float* b = &P[idx[i + 1] * 3];
+        const float* c = &P[idx[i + 2] * 3];
+        for (int dir = 0; dir < 2; dir++) {  // 0: along y (the x, z plane), 1: along z (the x, y plane)
+            const int u = 0, v = dir == 0 ? 2 : 1, w = dir == 0 ? 1 : 2;
+            const double pu = u == 0 ? p.x : 0, pv = v == 2 ? p.z : p.y, pw = w == 1 ? p.y : p.z;
+            if (pu < std::min({a[u], b[u], c[u]}) || pu > std::max({a[u], b[u], c[u]}) || pv < std::min({a[v], b[v], c[v]}) || pv > std::max({a[v], b[v], c[v]})) continue;
+            const double d = (b[u] - a[u]) * (c[v] - a[v]) - (c[u] - a[u]) * (b[v] - a[v]);
+            if (std::fabs(d) < 1e-12) continue;
+            const double l1 = ((b[u] - pu) * (c[v] - pv) - (c[u] - pu) * (b[v] - pv)) / d;
+            const double l2 = ((c[u] - pu) * (a[v] - pv) - (a[u] - pu) * (c[v] - pv)) / d;
+            const double l3 = 1 - l1 - l2;
+            if (l1 < 0 || l2 < 0 || l3 < 0) continue;
+            const double hit = l1 * a[w] + l2 * b[w] + l3 * c[w];
+            odd[dir * 2 + (hit > pw ? 0 : 1)] ^= 1;
+        }
+    }
+    return odd[0] && odd[1] && odd[2] && odd[3];
+}
 const mk::Mesh& partMeshRaw(const Placed& pl, mk::Mesh& scratch) {
     if (pl.bare || pl.variant >= 0) return placedMesh(pl);
     if (pl.set.empty()) return mk::modelMesh(pl.id);
@@ -3924,11 +3951,45 @@ void Renderer::prepareCarModels() {
             static std::vector<float> idx;
             mk::Mesh scratch;
             v.clear(), idx.clear();
-            for (size_t k = 0; k < cm.parts.size(); k++)
-                for (const mk::MVert& q : partMesh(cm.parts[k], scratch).v) {
-                    v.push_back(Vtx{{q.p[0], q.p[1], q.p[2]}, {q.n[0], q.n[1], q.n[2]}, {q.c[0], q.c[1], q.c[2], (float)q.mat}});
-                    idx.push_back((float)k);
+            // The parts shut inside the intact body (the engine under its hood...) go last, so they can be left off the draw:
+            // every corner of their bounds (padded 3 cm) inside the skin and below its lowest glass.
+            std::vector<char> shut(cm.parts.size(), 0);
+            if (slot.intact && !slot.lglass.empty()) {
+                const M4& M = slot.model;
+                const V3 ax[3] = {V3(M.m[0], M.m[1], M.m[2]), V3(M.m[4], M.m[5], M.m[6]), V3(M.m[8], M.m[9], M.m[10])}, o(M.m[12], M.m[13], M.m[14]);
+                double belt = 1e9;
+                for (unsigned i : slot.lglass) belt = std::min(belt, (double)slot.lpos[i * 3 + 1]);
+                for (size_t k = 0; k < cm.parts.size(); k++) {
+                    const Placed& pl = cm.parts[k];
+                    const mk::Mesh& m = partMesh(pl, scratch);
+                    if (m.v.empty() || pl.wear) continue;
+                    V3 a[3];
+                    if (pl.oriented) a[0] = pl.ax[0], a[1] = pl.ax[1], a[2] = pl.ax[2];
+                    else a[0] = V3(std::cos(pl.yaw), 0, -std::sin(pl.yaw)), a[1] = V3(0, 1, 0), a[2] = V3(-a[0].z, 0, a[0].x);
+                    bool in = true;
+                    for (int cnr = 0; cnr < 8 && in; cnr++) {
+                        const double pad = 0.03;
+                        const V3 q((cnr & 1 ? m.hi.x : m.lo.x), (cnr & 2 ? m.hi.y : m.lo.y), (cnr & 4 ? m.hi.z : m.lo.z));
+                        V3 w = pl.p + a[0] * (q.x * pl.scale.x) + a[1] * (q.y * pl.scale.y) + a[2] * (q.z * pl.scale.z);
+                        w += (a[0] * (cnr & 1 ? 1.0 : -1.0) + a[1] * (cnr & 2 ? 1.0 : -1.0) + a[2] * (cnr & 4 ? 1.0 : -1.0)) * pad;
+                        const V3 d = w - o, l(dot(d, ax[0]), dot(d, ax[1]), dot(d, ax[2]));
+                        in = l.y < belt - 0.02 && insideSkin(slot.lpos, slot.lopaque, l);
+                    }
+                    shut[k] = in;
                 }
+            }
+            int shown = 0;
+            for (int pass = 0; pass < 2; pass++) {
+                for (size_t k = 0; k < cm.parts.size(); k++) {
+                    if (shut[k] != pass) continue;
+                    for (const mk::MVert& q : partMesh(cm.parts[k], scratch).v) {
+                        v.push_back(Vtx{{q.p[0], q.p[1], q.p[2]}, {q.n[0], q.n[1], q.n[2]}, {q.c[0], q.c[1], q.c[2], (float)q.mat}});
+                        idx.push_back((float)k);
+                    }
+                }
+                if (pass == 0) shown = (int)v.size();
+            }
+            slot.modelsShown = shown;
             BindBuffer(GL_ARRAY_BUFFER, slot.modelsVbo);
             BufferData(GL_ARRAY_BUFFER, v.size() * sizeof(Vtx), v.data(), GL_STATIC_DRAW);
             BindBuffer(GL_ARRAY_BUFFER, slot.modelsIdx);
@@ -3984,7 +4045,8 @@ void Renderer::drawCarModels(GLuint prog) {
         Uniform1i(uniformLocation(prog, "uPartBase"), slot.modelsBase);
         BindVertexArray(slot.modelsVao);
         carKind_ = 5;
-        carDrawArrays(0, slot.modelsCount);
+        // (what the intact body shuts in isn't drawn: in the parts view it's all there, and a body that's been opened up shows it)
+        carDrawArrays(0, slot.intact && debug_ == DEBUG_OFF ? slot.modelsShown : slot.modelsCount);
     }
 }
 
@@ -4074,10 +4136,13 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     farZ_ = settings.drawDistance > 0 ? std::max(150.0f, settings.drawDistance) : 6000.0f;  // (a draw distance: everything past it is clipped)
     M4 proj = perspective(view.fovy, (float)view.width / std::max(1, view.height), 0.05f, farZ_);
     M4 vp = proj * lookAt(view.eye, view.target, view.up);
-    // Wheels past where a tread block (1.5 cm) is under half a pixel draw their far copies.
+    // Wheels past where a mud tire's lug (2.4 cm proud) is under half a pixel draw their far copies.
     eye_ = view.eye;
     pxPerM_ = view.height * scale / (2 * std::tan(view.fovy * 0.5));
-    wheelLodDist_ = 0.03 * pxPerM_;
+    wheelLodDist_ = 0.05 * pxPerM_;
+    static const char* noLod = std::getenv("CZ_NO_CARLOD");  // (for comparing screenshots: 1 no far copies, 2 no wheel ones, 3 no skin ones)
+    if (noLod && (noLod[0] == '1' || noLod[0] == '2')) wheelLodDist_ = 1e9;
+    if (noLod && (noLod[0] == '1' || noLod[0] == '3')) pxPerM_ = 1e9;
     geometryStats_ = {};
     geometryStats_.carPartsMs = t1 - t0, geometryStats_.carPrepMs = t2 - t1, geometryStats_.carRebuilds = rebuilds_;
     vegStats_ = {};

@@ -4704,13 +4704,7 @@ int main(int argc, char** argv) {
                 const Car& c = sim.cars[i];
                 if (c.isProp() || c.nodes.empty()) continue;
                 const double away = len(c.nodes[0].p - view.eye);
-                if (c.bedGate() && away < 30) {
-                    const size_t at = on[i].size();
-                    trunk::gateModels(sim, i, on[i]);
-                    for (size_t k = at; k < on[i].size(); k++)  // (to the half centimetre: the gate's mesh is kept while it's the same)
-                        for (auto& kv : on[i][k].set)
-                            if (kv.first == "width" || kv.first == "height") kv.second = std::round(kv.second * 200) / 200;
-                }
+                if (c.bedGate() && away < 30) trunk::gateModels(sim, i, on[i]);  // (its size is the bed's at rest: the mesh is kept)
                 if (c.spec->wheelLoss && !c.hasGate() && away < 80) {
                     const Frame fr = c.frame();
                     auto stowed = [&](const char* id, const V3& at) {
