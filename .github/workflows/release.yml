@@ -27,14 +27,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        flags: ["-fno-vectorize", "-fno-slp-vectorize", "-fno-unroll-loops", "-fno-inline", "-fno-vectorize -fno-slp-vectorize", "-mllvm -aarch64-enable-ldst-opt=false", "-mllvm -enable-misched=false", "-mllvm -aarch64-enable-gep-opt=false -mllvm -aarch64-enable-cond-br-tune=false", "-fno-strict-aliasing -fno-math-errno", "-mllvm -aarch64-enable-machine-combiner=false -mllvm -enable-aarch64-ccmp=false"]
+        args: ["MACLDX=", "MACLDX='-Wl,-mllvm,-vectorize-slp=false'", "MACLTO= MACLDX="]
     steps:
       - uses: actions/checkout@v4
-      - run: |
-          clang++ -O2 -ffp-contract=off -fno-fast-math ${{ matrix.flags }} -std=c++17 -arch arm64 -mmacosx-version-min=11.0 -c -o /tmp/b.o src/bodyshell.cpp 2>&1 | grep -v warning | head -5
-          echo "exit ${PIPESTATUS[0]}"
-      - if: always()
+      - name: SDL2 framework
         run: |
-          ls ~/Library/Logs/DiagnosticReports/ || true
-          clang++ -O2 -ffp-contract=off -fno-fast-math -std=c++17 -arch arm64 -mmacosx-version-min=11.0 -c -o /tmp/b.o src/bodyshell.cpp -Xclang -mllvm 2>&1 | head -0
-          clang++ -O2 -ffp-contract=off -fno-fast-math -std=c++17 -arch arm64 -mmacosx-version-min=11.0 -c -o /tmp/b.o src/bodyshell.cpp 2>&1 | grep -E '^ *[0-9]+ |Stack dump|Program arguments|Running pass|While' | head -40
+          SDLV=2.30.9
+          curl -fsSL -o sdl.dmg "https://github.com/libsdl-org/SDL/releases/download/release-${SDLV}/SDL2-${SDLV}.dmg"
+          hdiutil attach -quiet -nobrowse -mountpoint /tmp/sdl sdl.dmg
+          mkdir -p third_party/sdl2-mac && cp -R /tmp/sdl/SDL2.framework third_party/sdl2-mac/
+          hdiutil detach -quiet /tmp/sdl
+      - run: make -j3 build/mac/crumplezone ${{ matrix.args }} 2>&1 | grep -vE 'warning|^ +[0-9]+ \||\^~|^ +\|' | tail -25; echo "exit ${PIPESTATUS[0]}"
