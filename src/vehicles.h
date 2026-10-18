@@ -137,6 +137,8 @@ struct VehicleSpec {
     double bodyStiffness;          // multiplier on beam stiffness
     double bodyStrength = 1.0;     // multiplier on how far the body steel bends before it dents (thinner, older steel < 1)
     double frameStiffness = 1.0;   // multiplier on the chassis frame's rigidity (body-on-frame trucks: less)
+    double noseStrength = 1.0;     // multiplier on the body ahead of the front axle (its crumple zone): how hard it is to crush
+    bool carbonTub = false;        // a carbon monocoque: its sills and tail are the tub itself (they don't give like steel doors)
     double frameStrength = 1.0;    // multiplier on how far frame rails bend before they take a set (ladder frames: more)
     double panelStrength = 1.0;    // multiplier on panel sheet metal (thicker truck doors and hoods: more)
     double pinStrength = 1.0;      // multiplier on the force hinges, latches and clips hold

@@ -12,8 +12,9 @@
 #include "carvisual.h"
 
 // Fills t's body (topological vertices, faces, render vertices) with the sculpted
-// shell for this vehicle, if it has one. Returns false (t untouched) if it doesn't.
-bool buildBodyShell(const Car& car, VisualTemplate& t);
+// shell for this vehicle, if it has one. Returns false (t untouched) if it doesn't. `merge` cuts the flat runs of
+// quads that move together into fewest triangles (off: the full grid, for the tests to compare against).
+bool buildBodyShell(const Car& car, VisualTemplate& t, bool merge = true);
 
 // Wheel arch cut into the shell for an axle at x: center height and radius (m).
 void shellArch(const VehicleSpec& vs, double& centerY, double& radius);

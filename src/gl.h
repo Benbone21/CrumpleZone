@@ -52,10 +52,17 @@ enum : GLenum {
     GL_TEXTURE_2D_ARRAY = 0x8C1A, GL_SRGB8_ALPHA8 = 0x8C43, GL_RGBA8 = 0x8058, GL_REPEAT = 0x2901,
     GL_LINEAR_MIPMAP_LINEAR = 0x2703, GL_TEXTURE_MAX_ANISOTROPY = 0x84FE, GL_MAX_TEXTURE_MAX_ANISOTROPY = 0x84FF,
     GL_TEXTURE_MAX_LEVEL = 0x813D,
+    // Compressed textures (texcomp.cpp): S3TC (an extension), RGTC (core since 3.0), channel swizzle.
+    GL_COMPRESSED_RGB_S3TC_DXT1 = 0x83F0, GL_COMPRESSED_RGBA_S3TC_DXT5 = 0x83F3, GL_COMPRESSED_SRGB_S3TC_DXT1 = 0x8C4C,
+    GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5 = 0x8C4F, GL_COMPRESSED_RG_RGTC2 = 0x8DBD,
+    GL_TEXTURE_SWIZZLE_R = 0x8E42, GL_TEXTURE_SWIZZLE_G = 0x8E43, GL_TEXTURE_SWIZZLE_B = 0x8E44, GL_TEXTURE_SWIZZLE_A = 0x8E45,
+    GL_GREEN = 0x1904, GL_BLUE = 0x1905, GL_ALPHA = 0x1906,
     // Instanced props (propdraw.cpp): vertex formats, cut-out leaves, GPU timing.
     GL_BYTE = 0x1400, GL_SHORT = 0x1402, GL_UNSIGNED_SHORT = 0x1403, GL_SRGB8 = 0x8C41,
     GL_SAMPLE_ALPHA_TO_COVERAGE = 0x809E, GL_TIME_ELAPSED = 0x88BF, GL_QUERY_RESULT = 0x8866,
-    GL_QUERY_RESULT_AVAILABLE = 0x8867, GL_LINEAR_MIPMAP_NEAREST = 0x2701,
+    GL_QUERY_RESULT_AVAILABLE = 0x8867, GL_LINEAR_MIPMAP_NEAREST = 0x2701, GL_TIMESTAMP = 0x8E28,
+    // Program binaries (GL 4.1 / ARB_get_program_binary: optional).
+    GL_PROGRAM_BINARY_RETRIEVABLE_HINT = 0x8257, GL_PROGRAM_BINARY_LENGTH = 0x8741, GL_NUM_PROGRAM_BINARY_FORMATS = 0x87FE,
 };
 
 #define CZ_GL_FUNCS(X)                                                                         \
@@ -129,6 +136,8 @@ enum : GLenum {
     X(void, TexImage3D, (GLenum, GLint, GLint, GLsizei, GLsizei, GLsizei, GLint, GLenum, GLenum, const void*)) \
     X(void, TexSubImage3D, (GLenum, GLint, GLint, GLint, GLint, GLsizei, GLsizei, GLsizei, GLenum, GLenum, const void*)) \
     X(void, TexParameterf, (GLenum, GLenum, GLfloat))                                          \
+    X(void, CompressedTexImage2D, (GLenum, GLint, GLenum, GLsizei, GLsizei, GLint, GLsizei, const void*)) \
+    X(void, CompressedTexImage3D, (GLenum, GLint, GLenum, GLsizei, GLsizei, GLsizei, GLint, GLsizei, const void*)) \
     X(void, GenerateMipmap, (GLenum))                                                          \
     X(void, VertexAttribDivisor, (GLuint, GLuint))                                             \
     X(void, DrawElementsInstanced, (GLenum, GLsizei, GLenum, const void*, GLsizei))            \
@@ -139,13 +148,23 @@ enum : GLenum {
     X(void, BeginQuery, (GLenum, GLuint))                                                      \
     X(void, EndQuery, (GLenum))                                                                \
     X(void, GetQueryObjectiv, (GLuint, GLenum, GLint*))                                        \
-    X(void, GetQueryObjectui64v, (GLuint, GLenum, GLuint64*))
+    X(void, GetQueryObjectui64v, (GLuint, GLenum, GLuint64*))                                  \
+    X(void, QueryCounter, (GLuint, GLenum))                                                    \
+    X(void, Finish, (void))                                                                    \
+    X(void, DeleteProgram, (GLuint))
+
+// Functions past OpenGL 3.3, loaded when the driver has them (null when not).
+#define CZ_GL_OPTIONAL(X)                                                                      \
+    X(void, GetProgramBinary, (GLuint, GLsizei, GLsizei*, GLenum*, void*))                     \
+    X(void, ProgramBinary, (GLuint, GLenum, const void*, GLsizei))                             \
+    X(void, ProgramParameteri, (GLuint, GLenum, GLint))
 
 namespace gl {
 #define CZ_DECLARE(ret, name, args) \
     typedef ret(*PFN_##name) args;  \
     extern PFN_##name name;
 CZ_GL_FUNCS(CZ_DECLARE)
+CZ_GL_OPTIONAL(CZ_DECLARE)
 #undef CZ_DECLARE
 
 // Resolves every function; returns the name of the first missing one, or nullptr.
