@@ -2,7 +2,9 @@
 
 You are running on one of the user's test machines: a Windows laptop or a Mac laptop. The main development machine is a Linux desktop with an RX 7900 XTX and a 360 Hz monitor. The user wants very high frame rates everywhere, and wants the game to run on very simple hardware.
 
-## CURRENT PHASE: 1, test and report only. Change no game code.
+## CURRENT PHASE: 2 once the user says to start. Your task list is `docs/hardware/phase2-plan.md`. (Phase 1, below, is done on both laptops; its reports are in `docs/hardware/`.)
+
+## Phase 1 (done): test and report only. Change no game code.
 The big CPU work (car drawing and physics threading) is still being finished on the main machine. Optimizing here now would duplicate it or clash with it, so this phase only measures and reports. Phase 2, optimizing on this machine, comes later; sections 3 to 5 below describe it, and you only use them when the user says phase 2 has started.
 
 What to do in phase 1:

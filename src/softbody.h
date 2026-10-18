@@ -275,31 +275,40 @@ struct ChassisFrame {
 };
 
 // Spatial hash of a car's skin triangles, rebuilt on demand for car-vs-car contact.
+// What a query returns is fixed by the hash: every item whose padded box covers a cell of
+// p's bucket, in insertion order, once per such cell. Fill it with insert() then finish().
+// Small bodies are held as per-axis bitsets (a padded box spans ~3 cells a side, so binning
+// it costs ~9 bit sets, not ~27 chain links); a body strewn over a huge box falls back to chains.
 struct TriGrid {
     static constexpr int kBuckets = 4096;
     static constexpr double kCell = 0.5;
+    static constexpr int kMaxCells = 1 << 15;  // slab boxes up to this many cells
     // Buckets are chains through one pooled array (in insertion order), so a rebuild reuses its storage instead of regrowing 4096 vectors.
     int head[kBuckets], tail[kBuckets];
-    std::vector<int> val, nxt;
+    std::vector<int> val;       // per item: its value
+    std::vector<int> ent, nxt;  // per chain link: its item and the next link
     std::vector<int> used;
     long stamp = -1;
-    TriGrid() { std::fill(head, head + kBuckets, -1); }
-    struct Chain {
-        const TriGrid* g;
-        int first;
-        struct It {
-            const TriGrid* g;
-            int i;
-            int operator*() const { return g->val[i]; }
-            It& operator++() { i = g->nxt[i]; return *this; }
-            bool operator!=(const It& o) const { return i != o.i; }
-        };
-        It begin() const { return {g, first}; }
-        It end() const { return {g, -1}; }
-    };
+    // Each item's cell box, as inserted.
+    std::vector<int> box;  // x0 x1 y0 y1 z0 z1 per item
+    bool slabs = false;
+    int ox = 0, oy = 0, oz = 0, nx = 0, ny = 0, nz = 0;
+    std::vector<uint64_t> sx, sy, sz;  // per cell column of the box: the items spanning it
+    int cellHead[kBuckets];            // the box's cells that hash to each bucket
+    std::vector<int> cellNext, usedCells;
+    TriGrid() {
+        std::fill(head, head + kBuckets, -1);
+        std::fill(cellHead, cellHead + kBuckets, -1);
+    }
     void clear();
-    void insert(int tri, const V3& mn, const V3& mx);
-    Chain query(const V3& p) const;
+    void insert(int item, const V3& mn, const V3& mx);
+    void finish();
+    // The values a query at p meets, in order, written to out[0..n) (out only ever grows); returns n.
+    int collect(const V3& p, std::vector<int>& out) const;
+    // The same items as a bitset of words() words, each item once (for faces: meeting one twice
+    // changes nothing, it can't beat itself).
+    void meets(const V3& p, uint64_t* out) const;
+    int words() const { return (int)(val.size() + 63) / 64; }
     static int key(int x, int y, int z);
 };
 
@@ -524,6 +533,7 @@ public:
     int tirePops = 0;             // tires blown since last read
     std::unique_ptr<TriGrid> grid;
     std::unique_ptr<TriGrid> nodeGrid;  // body nodes, for node-node contact
+    std::vector<double> faceGeo;  // per grid item (a face), for contact: corner, normal, edges, their dots (16 rows, simdkern.h)
     long nodeGridStamp = -1;
 
     void build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& color);
@@ -763,8 +773,16 @@ private:
     std::vector<Frame> aiFrames;
     std::vector<double> aiAlong, aiLat;
     int trafficDir = 1;
-    void collide(Car& A, Car& B);
+    // One push car-to-car contact found: added to a node's force (or, node < 0, F.x to the
+    // car's impact energy). Found in parallel, added in the serial order (the same float sums).
+    struct ContactAdd {
+        Car* car;
+        int node;
+        V3 F;
+    };
+    std::vector<std::vector<ContactAdd>> contactAdds;  // per pass: pair k's A-into-B at 2k, B-into-A at 2k+1
+    std::vector<int> contactPasses;
     void ropeForces();
     void jackForces();
-    void pointsVsSkin(Car& A, Car& B);
+    void pointsVsSkin(const Car& A, const Car& B, std::vector<ContactAdd>& out) const;
 };

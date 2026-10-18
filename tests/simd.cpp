@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <random>
 
 #include "../src/simdkern.h"
 #include "harness.h"
@@ -124,4 +125,57 @@ SCENARIO(poolStress, "engine/pool-stress", "Pools hammered from many threads, ne
     for (int t = 0; t < 4; t++) threads.emplace_back(share, t);
     for (auto& t : threads) t.join();
     ctx.check("every job of every batch ran, from every caller", total == expected && !bad);
+}
+
+SCENARIO(simdFacesAgree, "engine/simd-faces", "The contact face sift gives the same faces on every instruction set, and the scalar test's") {
+    std::mt19937 rng(3);
+    std::uniform_real_distribution<double> U(-1, 1);
+    const int words = 6, S = 64 * words;
+    std::vector<double> rows(16 * S);
+    for (int t = 0; t < S; t++) {
+        const V3 a(U(rng), U(rng), U(rng)), e0(U(rng), U(rng), U(rng));
+        V3 e1(U(rng), U(rng), U(rng));
+        if (t % 17 == 0) e1 = e0 * 2.0;  // degenerate: den ~ 0
+        const V3 n = norm(cross(e0, e1));
+        const double d00 = dot(e0, e0), d01 = dot(e0, e1), d11 = dot(e1, e1);
+        double row[16] = {a.x, a.y, a.z, n.x, n.y, n.z, e0.x, e0.y, e0.z, e1.x, e1.y, e1.z, d00, d01, d11, d00 * d11 - d01 * d01};
+        if (t % 29 == 0) row[3] = NAN;  // a NaN normal passes, as in the scalar test
+        for (int k = 0; k < 16; k++) rows[k * S + t] = row[k];
+    }
+    const FaceGeo f = FaceGeo::rows(rows.data(), S);
+    const int saved = simdLevel();
+    bool agree = true, scalar = true;
+    long kept = 0;
+    for (int q = 0; q < 20000; q++) {
+        uint64_t cand[words], keep[2][words];
+        for (uint64_t& c : cand) c = (uint64_t)rng() << 32 | rng();
+        if (q % 3 == 0) cand[q % words] = 0;
+        const V3 p(U(rng), U(rng), U(rng));
+        const double radius = q % 2 ? 0 : 0.35;
+        for (int lv = 0; lv < 2; lv++) {
+            simdSetLevel(lv);
+            faceCandidates(f, words, cand, p, radius, keep[lv]);
+        }
+        for (int w = 0; w < words; w++) {
+            agree &= keep[0][w] == keep[1][w];
+            kept += __builtin_popcountll(keep[1][w]);
+            for (int b = 0; b < 64; b++) {
+                // The contact test as written in pointsVsSkin.
+                const int t = 64 * w + b;
+                const V3 a(f.ax[t], f.ay[t], f.az[t]), nrm(f.nx[t], f.ny[t], f.nz[t]);
+                const double d = dot(p - a, nrm), pen = radius - d;
+                const V3 q3 = p - a;
+                const double d20 = dot(q3, V3(f.e0x[t], f.e0y[t], f.e0z[t])), d21 = dot(q3, V3(f.e1x[t], f.e1y[t], f.e1z[t]));
+                const double den = f.den[t];
+                const double v = (f.d11[t] * d20 - f.d01[t] * d21) / den, ww = (f.d00[t] * d21 - f.d01[t] * d20) / den, u = 1 - v - ww;
+                const bool want = (cand[w] >> b & 1) && !(pen <= 0 || d < -0.4) && !(den < 1e-12) &&
+                                  !(u < -0.02 || v < -0.02 || ww < -0.02);
+                scalar &= want == (keep[1][w] >> b & 1);
+            }
+        }
+    }
+    simdSetLevel(saved);
+    ctx.check("some faces kept (" + std::to_string(kept) + ")", kept > 1000);
+    ctx.check("AVX2 and baseline sifts agree (" + std::string(simdName()) + " in use)", agree);
+    ctx.check("the sift keeps exactly the faces the scalar test would", scalar);
 }
