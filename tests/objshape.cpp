@@ -160,7 +160,7 @@ SCENARIO(objRays, "objshape/rays", "Rays hit the real shape: the rock's hull (ch
     const int rockIdx = (int)w.rocks.size() - 1;
     const int logIdx = (int)w.logs.size() - 1, poleIdx = (int)w.poles.size() - 1, boxIdx = (int)w.boxes.size() - 1;
     WorldHit wh;
-    const V3 eye(-80, 0.5, -150);
+    const V3 eye(-80, r0.c.y, -150);  // (at the rock's centre height: the pad's level ground sets where it sits)
     ctx.check("rayWorld finds the rock first", rayWorld(w, eye, V3(1, 0, 0), 200, wh) && wh.kind == SH_ROCK && wh.index == rockIdx);
     ctx.check("the rock hit is on its hull", wh.kind == SH_ROCK && std::fabs(worstPlane(r0, wh.hit.p)) < 1e-6 && wh.hit.n.x < 0);
     ctx.check("past the rock: the log", rayWorld(w, V3(-50, 0.4, -150), V3(1, 0, 0), 200, wh) && wh.kind == SH_LOG && wh.index == logIdx &&

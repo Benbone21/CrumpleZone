@@ -103,7 +103,7 @@ SCENARIO(anchorSurfaces, "anchors/surfaces", "On the real ground: the proving gr
 SCENARIO(anchorCounts, "anchors/counts", "Hooking to a stake uses one up and says how many are left; at none the hook is refused and no line is made; a strap goes back when the line comes off") {
     ctx.sim = Sim();
     ctx.sim.world = World(MAP_PROVING_GROUND);
-    Car& c = ctx.add(bronco(), -60, -150, 0);  // open ground: the proving ground's dirt
+    Car& c = ctx.add(bronco(), -60, -270, 0);  // open ground: dirt south of the proving ground's paved pad
     ctx.focus(c);
     ctx.run(0.5);
     const int ci = (int)(&c - ctx.sim.cars.data());
