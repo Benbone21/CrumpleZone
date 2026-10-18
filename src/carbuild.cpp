@@ -2192,6 +2192,21 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
     wheelbase = 2.5;
     if (axleI.size() >= 2) wheelbase = xAt(axleI.front()) - xAt(axleI.back());
 
+    sideSill.assign(nodes.size(), -1);
+    if (!isProp) {
+        const double wall = vs.width / 2 - vs.width / vs.widthCells * 1.2;
+        for (int n = 0; n < bodyNodes; n++) {
+            const V3& p = local[n];
+            if (std::fabs(p.z) <= wall || p.y <= vs.layerY[1] + 1e-6) continue;
+            int best = -1;
+            for (int m = 0; m < bodyNodes; m++) {
+                const V3& q = local[m];
+                if (std::fabs(q.x - p.x) > 1e-3 || q.z * p.z <= 0 || std::fabs(q.z) <= wall || q.y > vs.layerY[0] + 1e-6) continue;
+                if (best < 0 || std::fabs(q.z) > std::fabs(local[best].z)) best = m;
+            }
+            sideSill[n] = best;
+        }
+    }
     nodeTris.assign(nodes.size(), {});
     for (int t = 0; t < (int)tris.size(); t++)
         for (int c = 0; c < 3; c++) nodeTris[tris[t].v[c]].push_back(t);
