@@ -405,6 +405,14 @@ public:
     bool hydrolocked = false;   // sucked water into the intake (dead until repaired)
     // Trail setup.
     double tirePsi = 32;        // tire pressure (starts at the spec's; air down for rock)
+    // The speedometer reads wheel speed (the driven wheels, like a transmission-output sensor)
+    // against the rolling radius it was calibrated for: the factory tire at its street pressure.
+    // 0 = factory; the garage's RECALIBRATE sets it to what is fitted now.
+    double speedoCalR = 0;
+    double rollingRadius(const Wheel& wh, double psi) const;  // loaded rolling radius (m): free radius less a third of the sag
+    double speedoMs() const;      // what the speedometer shows (m/s)
+    void recalibrateSpeedo();
+    static int speedoDisplay(double ms, bool mph) { return (int)std::lround(ms * (mph ? 2.23694 : 3.6)); }  // the gauge's number
     // The spare (tires.h): on its carrier (or under the bed, in the trunk) if hasSpare.
     // Where it sits follows the body: a weighted mix of the lattice nodes around it, which
     // also carry its weight (taken off with it, put back when one is stowed).

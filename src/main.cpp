@@ -764,7 +764,7 @@ void drawGauges(Renderer& r, const Car& car, HudState& hud, float u, int W, int 
 
     // Speed and gear.
     Frame fr = car.frame();
-    std::string spd = std::to_string((int)std::lround(len(fr.vel) * (mph ? 2.23694 : 3.6)));
+    std::string spd = std::to_string(Car::speedoDisplay(car.speedoMs(), mph));
     float ss = px(3.5f * u), sm = px(1.2f * u);
     label(r, cx - r.textWidth(spd, ss) / 2, cy + 12 * u, ss, spd, 1, 1, 1);
     const char* unit = mph ? "MPH" : "KM/H";
@@ -1265,6 +1265,7 @@ struct GarageUI {
     bool open = false;
     int vehicle = 0, slot = 0;
     ModSet pick;
+    bool recal = false;  // recalibrate the speedometer to the tires when fitted
 };
 
 std::string fmt(const char* f, double a, double b = 0, double c = 0) {
@@ -1321,6 +1322,9 @@ void drawGarage(Renderer& r, const GarageUI& g, const Garage& garage, const Care
             (vs.lowRange > 0 ? fmt("   LOW RANGE %.2f", vs.lowRange) : std::string()),
         fmt("TIRES    %.0f MM TALL  %.0f MM WIDE", vs.wheelRadius * 2000, vs.wheelWidth * 1000) +
             fmt("   GRIP %.2f / %.2f", vs.tireGrip, vs.tireGrip * vs.lateralGrip),
+        std::string("SPEEDO   ") + (g.recal ? "RECALIBRATED TO THESE TIRES: READS TRUE" :
+            std::fabs(vs.wheelRadius / stock.wheelRadius - 1) < 0.005 ? "FACTORY: READS TRUE" :
+            fmt("FACTORY: READS %.0f%%", std::fabs(vs.wheelRadius / stock.wheelRadius - 1) * 100) + (vs.wheelRadius > stock.wheelRadius ? " LOW" : " HIGH")),
         fmt("RIDE     %+.0f MM BODY HEIGHT  %+.0f MM LIFT", ride * 1000, lift * 1000) +
             fmt("   BOUNCE %.2f / %.2f HZ", vs.rideFreqFront, vs.rideFreqRear),
     };
@@ -1331,7 +1335,7 @@ void drawGarage(Renderer& r, const GarageUI& g, const Garage& garage, const Care
     }
     const std::string garageKeys = pad::ui.last ? "D-PAD UP DOWN: CHOOSE PART   LEFT RIGHT: CHANGE   " + std::string(pad::hint("", pad::B_A)) + " FIT AND DRIVE   " +
                                                       (career.on ? std::string(pad::hint("", pad::B_Y)) + " BUY   " : std::string()) + pad::hint("", pad::B_B) + " CLOSE"
-                                                : std::string("W S CHOOSE PART   A D CHANGE   ENTER FIT AND DRIVE   ") + (career.on ? "B BUY   " : "") + "G CLOSE";
+                                                : std::string("W S CHOOSE PART   A D CHANGE   C SPEEDO   ENTER FIT AND DRIVE   ") + (career.on ? "B BUY   " : "") + "G CLOSE";
     r.text(x + pad, y + h - pad - 8 * s, s, garageKeys, 1.0f, 0.75f, 0.3f);
 }
 
@@ -3382,6 +3386,7 @@ int main(int argc, char** argv) {
                         else if (sc == SC_S || sc == SC_DOWN) garageUI.slot = (garageUI.slot + 1) % MOD_SLOTS;
                         else if (sc == SC_A || sc == SC_LEFT) pk = (pk + n - 1) % n;
                         else if (sc == SC_D || sc == SC_RIGHT) pk = (pk + 1) % n;
+                        else if (sc == SC_C) garageUI.recal = !garageUI.recal;
                         else if (sc == SC_B && career.on) {  // buy the part shown, at a station
                             const int at = sim.stationAt(sim.cars[sim.player].frame().com);
                             std::string why;
@@ -3408,6 +3413,7 @@ int main(int argc, char** argv) {
                             garage.fitted[garageUI.vehicle] = garageUI.pick;
                             garage.save(garagePath);
                             sim.swapPlayerVehicle(garage.spec(garageUI.vehicle));
+                            if (garageUI.recal) sim.cars[sim.player].recalibrateSpeedo();
                             garageUI.open = false;
                             hud.toast(garageUI.pick.stock() ? "BACK TO STOCK" : "MODS FITTED");
                         } else if (kh.action == KA_GARAGE || sc == SC_ESCAPE) {

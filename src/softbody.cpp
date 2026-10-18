@@ -6,6 +6,7 @@
 #include "vehicles.h"
 
 #include <cstdlib>
+#include <cstring>
 #include <set>
 #include <utility>
 
@@ -998,6 +999,50 @@ bool Car::lockerAllowed(bool front) const {
 void Car::setLocker(bool front, bool on) {
     if (on && !lockerAllowed(front)) return;
     (front ? lockFront : lockRear) = on;
+}
+
+// A tire rolls on a smaller radius than it stands: r_roll = R - sag/3 (the sag is the static
+// load over the radial stiffness, softer aired down). The sim's wheels roll on the free radius
+// (the sag is modelled as suspension compliance), so this feeds the speedometer only.
+double Car::rollingRadius(const Wheel& wh, double psi) const {
+    if (!wh.mounted || wh.debeaded || wh.popped) return wh.rollR();
+    const double load = mass * 9.81 / std::max<size_t>(1, wheels.size());
+    const double sag = std::min(load / wh.radialK(psi, spec->tirePsi, spec->tireSoft), 0.25 * wh.R);
+    return wh.R - sag / 3;
+}
+
+static const VehicleSpec& factorySpec(const VehicleSpec& s) {
+    for (const VehicleSpec& v : vehicleCatalog())
+        if (*s.id && !std::strcmp(v.id, s.id)) return v;
+    return s;
+}
+
+double Car::speedoMs() const {
+    if (!spec || wheels.empty()) return len(frame().vel);
+    const VehicleSpec& stock = factorySpec(*spec);
+    double sum = 0;
+    int n = 0, all = 0;
+    double sumAll = 0;
+    for (const Wheel& wh : wheels) {
+        // (what the factory wheel on this corner would have rolled on: the calibration)
+        Wheel ref = wh;
+        ref.R = stock.wheelRadius, ref.mounted = true, ref.debeaded = ref.popped = false;
+        const double cal = speedoCalR > 0 ? speedoCalR : rollingRadius(ref, stock.tirePsi);
+        // The real spin that tire would have at the speed the sim rolls this one.
+        const double s = wh.omega * wh.rollR() * cal / rollingRadius(wh, tirePsi);
+        sumAll += s, all++;
+        if (wheelPowered(wh)) sum += s, n++;
+    }
+    const double v = n ? sum / n : sumAll / all;  // (no driven wheel left: the ABS sensors)
+    return std::fabs(v);
+}
+
+void Car::recalibrateSpeedo() {
+    speedoCalR = 0;
+    if (wheels.empty() || !spec) return;
+    Wheel ref = wheels[0];
+    ref.mounted = true, ref.debeaded = ref.popped = false;
+    speedoCalR = rollingRadius(ref, spec->tirePsi);
 }
 
 bool Car::wheelPowered(const Wheel& wh) const {
