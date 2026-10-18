@@ -675,6 +675,23 @@ std::string Sim::hookStrapTo(int ci, int mh, const RopeEnd& target) {
     return std::string("TOW STRAP: YOUR ") + (mh ? "REAR" : "FRONT") + " TO " + (cars[bo].spec ? cars[bo].spec->name : "VEHICLE") + (bh ? " REAR" : " FRONT");
 }
 
+std::vector<V3> Sim::ropePath(const Rope& r, double lift) const {
+    const V3 a = endPoint(cars, r.a), b = endPoint(cars, r.b);
+    const double L = len(b - a), slack = std::max(0.0, r.length - L);
+    // (A parabola as long as the line: sag ~ sqrt(3 L slack / 8). Unloaded, a hint of droop.)
+    const double sag = std::sqrt(3 * L * slack / 8) + (r.tension > 100 ? 0.0 : 0.004 * L);
+    const int n = (int)clampd(std::ceil(L / 0.75), 16, 96);  // (fine enough to follow the ground it lies on)
+    std::vector<V3> out;
+    out.reserve(n + 1);
+    for (int k = 0; k <= n; k++) {
+        const double t = (double)k / n;
+        V3 p = a + (b - a) * t - V3(0, sag * 4 * t * (1 - t), 0);
+        if (k > 0 && k < n) p.y = std::max(p.y, world.height(p.x, p.z) + lift);
+        out.push_back(p);
+    }
+    return out;
+}
+
 void Sim::setWinch(int ci, int dir) {
     for (Rope& r : ropes)
         if (r.kind == ROPE_WINCH && r.a.car == ci) r.winch = dir;

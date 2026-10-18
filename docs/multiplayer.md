@@ -145,6 +145,22 @@ CZ_PASSWORD='a long random password' ./build/crumplezone-server --port 27015 --m
 - `--port` takes 1024 to 65535 and refuses anything else (`--port 80`, `--port 99999`, `--port abc`)
   with a message and exit code 2; so does a bad `CZ_PORT`.
 - It never writes a file and needs nothing from the network but those two sockets.
+- **Time of day**: the server owns it, and every player sees the same sky (sent on joining and
+  every second; a guest's own TIME OF DAY setting is kept for single player and for games it hosts).
+  `--time HOURS` is where it starts (0 to 24, default 10; `13.5` is 1:30 pm), `--day-length MINUTES`
+  how many real minutes a whole day takes (1 to 1440, default 24), `--frozen` holds it at `--time`.
+  Example: `--time 12 --frozen` (always noon), `--time 6 --day-length 120` (a slow day from dawn).
+- **One clock**: the server's. Guests set theirs by it with pings (NTP style) and every state,
+  line and chatter line is stamped with it; each player shows the others a little behind it
+  (twice the send interval plus the measured latency and jitter, F3 shows how far), so a truck
+  is in the same place at the same moment on every screen.
+- **Traffic**: states are quantized and told only by the dents that moved since the newest one the
+  receiver said it has; the server re-tells each guest's states to each other guest that way, and
+  sends trucks more than 150 m from all of a player's own less often (10, 5, then 2 a second past
+  150, 400 and 800 m). Seven guests driving together: about 60 KB/s down per guest, 450 KB/s up
+  from the server (0.2.0: 284 and 1990); spread over the map, about 9 and 60.
+- **Versions**: protocol 6 (0.2.1). An older game is turned away with "version mismatch: update
+  to 0.2.1 or newer"; a newer game joining an older server is told the server is older.
 
 Firewall examples (the server is IPv4 only; keep your SSH rule or you lock yourself out):
 

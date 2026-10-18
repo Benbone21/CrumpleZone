@@ -1,9 +1,13 @@
 #include "propdraw.h"
+#include "loadprof.h"
+#include "meshcache.h"
+#include "texcomp.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <set>
 #include <thread>
@@ -75,8 +79,9 @@ void main(){
     if (dot(T, T) > 1e-10) {
       T = normalize(T);
       vec3 B = cross(N, T) * (vTan.w < 0.0 ? -1.0 : 1.0);
-      vec3 t = texture(uNorm, vUv).xyz * 2.0 - 1.0;
-      n = normalize(T * t.x + B * t.y + N * max(t.z, 0.05));
+      vec2 t = texture(uNorm, vUv).xy * 2.0 - 1.0;  // (BC5: two channels; Z is rebuilt)
+      float tz = sqrt(max(1.0 - dot(t, t), 0.0025));
+      n = normalize(T * t.x + B * t.y + N * tz);
     }
   }
   float ao = 1.0, rough = 0.85;
@@ -191,31 +196,8 @@ uint32_t hash32(uint32_t x) {
 }
 double hashf(uint32_t a, uint32_t b) { return hash32(a * 0x9e3779b9u ^ hash32(b + 0x632be5abu)) / 4294967296.0; }
 
-// Frustum planes (a, b, c, d: inside when a x + b y + c z + d >= 0) from a column-major matrix.
-void planesOf(const M4& m, float out[6][4]) {
-    const float* a = m.m;
-    for (int i = 0; i < 3; i++)
-        for (int s = 0; s < 2; s++) {
-            float* p = out[i * 2 + s];
-            const float sg = s ? -1.0f : 1.0f;
-            for (int k = 0; k < 4; k++) p[k] = a[k * 4 + 3] + sg * a[k * 4 + i];
-            const float l = std::sqrt(p[0] * p[0] + p[1] * p[1] + p[2] * p[2]);
-            if (l > 0)
-                for (int k = 0; k < 4; k++) p[k] /= l;
-        }
-}
-bool sphereIn(const float pl[6][4], const V3& c, double r) {
-    for (int i = 0; i < 6; i++)
-        if (pl[i][0] * c.x + pl[i][1] * c.y + pl[i][2] * c.z + pl[i][3] < -r) return false;
-    return true;
-}
-bool boxIn(const float pl[6][4], const V3& mn, const V3& mx) {
-    for (int i = 0; i < 6; i++) {
-        const V3 p(pl[i][0] >= 0 ? mx.x : mn.x, pl[i][1] >= 0 ? mx.y : mn.y, pl[i][2] >= 0 ? mx.z : mn.z);
-        if (pl[i][0] * p.x + pl[i][1] * p.y + pl[i][2] * p.z + pl[i][3] < 0) return false;
-    }
-    return true;
-}
+using props::boxInFrustum;
+using props::sphereInFrustum;
 
 // A decoded image, RGBA.
 struct Decoded {
@@ -223,6 +205,13 @@ struct Decoded {
     int w = 0, h = 0;
     std::vector<uint8_t> px;
     bool alpha = false;  // a real alpha channel (PNG)
+    texenc::Encoded enc;  // mips, in the upload format (made on the decode threads)
+};
+// What a texture is for: colour (sRGB), a normal map (RG; the shader rebuilds Z), or data (roughness, occlusion).
+enum Role { ROLE_COLOR, ROLE_NORMAL, ROLE_DATA };
+struct Want {
+    Role role;
+    float cutoff;
 };
 
 void decode(const std::string& dir, Decoded& d, int maxSize) {
@@ -250,64 +239,56 @@ void decode(const std::string& dir, Decoded& d, int maxSize) {
     }
 }
 
-// Uploads with mipmaps. Cut-out textures keep their coverage down the mip chain (each level's
-// alpha is scaled so as many texels pass the cutoff as at the top), so leaves don't thin away
-// into the distance.
-GLuint upload(const Decoded& d, bool srgb, float cutoff) {
-    GLuint t = 0;
-    GenTextures(1, &t);
-    BindTexture(GL_TEXTURE_2D, t);
-    PixelStorei(GL_UNPACK_ALIGNMENT, 4);
-    const GLenum internal = srgb ? GL_SRGB8_ALPHA8 : GL_RGBA8;
-    TexImage2D(GL_TEXTURE_2D, 0, internal, d.w, d.h, 0, GL_RGBA, GL_UNSIGNED_BYTE, d.px.data());
-    if (d.alpha) {
-        auto coverage = [&](const std::vector<uint8_t>& px, float scale) {
-            size_t n = 0;
-            for (size_t i = 3; i < px.size(); i += 4) n += px[i] * scale > cutoff * 255.0f;
-            return (double)n / std::max<size_t>(1, px.size() / 4);
-        };
-        const double want = coverage(d.px, 1.0f);
-        std::vector<uint8_t> cur = d.px;
-        int w = d.w, h = d.h, level = 0;
-        while (w > 1 || h > 1) {
-            const int w2 = std::max(1, w / 2), h2 = std::max(1, h / 2);
-            std::vector<uint8_t> o((size_t)w2 * h2 * 4);
-            for (int y = 0; y < h2; y++)
-                for (int x = 0; x < w2; x++) {
-                    const int x0 = std::min(2 * x, w - 1), x1 = std::min(2 * x + 1, w - 1), y0 = std::min(2 * y, h - 1), y1 = std::min(2 * y + 1, h - 1);
-                    const uint8_t* q[4] = {&cur[((size_t)y0 * w + x0) * 4], &cur[((size_t)y0 * w + x1) * 4], &cur[((size_t)y1 * w + x0) * 4], &cur[((size_t)y1 * w + x1) * 4]};
-                    // Colour weighted by coverage, so the empty texels' colour doesn't bleed in.
-                    int asum = q[0][3] + q[1][3] + q[2][3] + q[3][3];
-                    for (int k = 0; k < 3; k++) {
-                        int s = 0;
-                        for (int j = 0; j < 4; j++) s += asum ? q[j][k] * q[j][3] : q[j][k];
-                        o[((size_t)y * w2 + x) * 4 + k] = (uint8_t)(asum ? s / asum : s / 4);
-                    }
-                    o[((size_t)y * w2 + x) * 4 + 3] = (uint8_t)((asum + 2) / 4);
+// The mip chain: cut-out textures keep their coverage down it (each level's alpha is scaled so as
+// many texels pass the cutoff as at the top), so leaves don't thin away into the distance.
+std::vector<std::vector<uint8_t>> cutoutChain(const Decoded& d, float cutoff) {
+    auto coverage = [&](const std::vector<uint8_t>& px, float scale) {
+        size_t n = 0;
+        for (size_t i = 3; i < px.size(); i += 4) n += px[i] * scale > cutoff * 255.0f;
+        return (double)n / std::max<size_t>(1, px.size() / 4);
+    };
+    const double want = coverage(d.px, 1.0f);
+    std::vector<std::vector<uint8_t>> levels{d.px};
+    std::vector<uint8_t> cur = d.px;
+    int w = d.w, h = d.h;
+    while (w > 1 || h > 1) {
+        const int w2 = std::max(1, w / 2), h2 = std::max(1, h / 2);
+        std::vector<uint8_t> o((size_t)w2 * h2 * 4);
+        for (int y = 0; y < h2; y++)
+            for (int x = 0; x < w2; x++) {
+                const int x0 = std::min(2 * x, w - 1), x1 = std::min(2 * x + 1, w - 1), y0 = std::min(2 * y, h - 1), y1 = std::min(2 * y + 1, h - 1);
+                const uint8_t* q[4] = {&cur[((size_t)y0 * w + x0) * 4], &cur[((size_t)y0 * w + x1) * 4], &cur[((size_t)y1 * w + x0) * 4], &cur[((size_t)y1 * w + x1) * 4]};
+                // Colour weighted by coverage, so the empty texels' colour doesn't bleed in.
+                int asum = q[0][3] + q[1][3] + q[2][3] + q[3][3];
+                for (int k = 0; k < 3; k++) {
+                    int s = 0;
+                    for (int j = 0; j < 4; j++) s += asum ? q[j][k] * q[j][3] : q[j][k];
+                    o[((size_t)y * w2 + x) * 4 + k] = (uint8_t)(asum ? s / asum : s / 4);
                 }
-            // The alpha scale that keeps the coverage.
-            float lo = 0.5f, hi = 8.0f;
-            for (int it = 0; it < 14; it++) {
-                const float mid = (lo + hi) * 0.5f;
-                (coverage(o, mid) < want ? lo : hi) = mid;
+                o[((size_t)y * w2 + x) * 4 + 3] = (uint8_t)((asum + 2) / 4);
             }
-            std::vector<uint8_t> up = o;
-            for (size_t i = 3; i < up.size(); i += 4) up[i] = (uint8_t)std::min(255.0f, up[i] * hi);
-            level++;
-            TexImage2D(GL_TEXTURE_2D, level, internal, w2, h2, 0, GL_RGBA, GL_UNSIGNED_BYTE, up.data());
-            cur.swap(o);
-            w = w2, h = h2;
+        // The alpha scale that keeps the coverage.
+        float lo = 0.5f, hi = 8.0f;
+        for (int it = 0; it < 14; it++) {
+            const float mid = (lo + hi) * 0.5f;
+            (coverage(o, mid) < want ? lo : hi) = mid;
         }
-    } else {
-        GenerateMipmap(GL_TEXTURE_2D);
+        std::vector<uint8_t> up = o;
+        for (size_t i = 3; i < up.size(); i += 4) up[i] = (uint8_t)std::min(255.0f, up[i] * hi);
+        levels.push_back(std::move(up));
+        cur.swap(o);
+        w = w2, h = h2;
     }
-    TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-    const float aniso = maxTextureAnisotropy();
-    if (aniso > 1) TexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, std::min(aniso, 8.0f));
-    return t;
+    return levels;
+}
+
+// Mips and block compression (BC1 colour, BC3 with alpha, BC5 normals), on a decode thread.
+void encodeTex(Decoded& d, const Want& w) {
+    const bool srgb = w.role == ROLE_COLOR;
+    auto levels = d.alpha ? cutoutChain(d, w.cutoff) : texenc::mipChain(d.px.data(), d.w, d.h, srgb);
+    const texenc::Kind kind = w.role == ROLE_NORMAL ? texenc::Kind::Normal2 : w.role == ROLE_DATA ? texenc::Kind::Data : d.alpha ? texenc::Kind::ColorAlpha : texenc::Kind::Color;
+    d.enc = texcomp::make(kind, srgb, levels, d.w, d.h);
+    std::vector<uint8_t>().swap(d.px);
 }
 
 bool startsWith(const std::string& s, const char* p) { return s.compare(0, std::strlen(p), p) == 0; }
@@ -352,6 +333,7 @@ bool PropRenderer::ensureLoaded(int q) {
     }
     const std::vector<props::ManifestEntry> list = props::readManifest(dir);
     std::vector<props::Model> src;
+    double lp0 = loadprof::nowMs();
     for (const props::ManifestEntry& e : list) {
         props::Model m;
         if (props::loadModel(dir + "/" + e.name + ".prop", m) && !m.lods.empty()) src.push_back(std::move(m));
@@ -361,16 +343,17 @@ bool PropRenderer::ensureLoaded(int q) {
         std::fprintf(stderr, "props: no models in %s (scenery stays code-made)\n", dir.c_str());
         return false;
     }
+    loadprof::add("props.read models", loadprof::nowMs() - lp0), lp0 = loadprof::nowMs();
     // Textures: every file once, decoded on a few threads.
     std::vector<Decoded> dec;
-    std::map<std::string, std::pair<bool, float>> want;  // file -> (sRGB, alpha cutoff)
+    std::map<std::string, Want> want;  // file -> its role, alpha cutoff
     for (const props::Model& m : src) {
         for (const props::Material& mt : m.mats)
             for (int k = 0; k < 3; k++)
-                if (!mt.tex[k].empty()) want[mt.tex[k]] = {k == 0, mt.alphaMode ? mt.cutoff : 0.5f};
+                if (!mt.tex[k].empty()) want[mt.tex[k]] = {k == 0 ? ROLE_COLOR : k == 1 ? ROLE_NORMAL : ROLE_DATA, mt.alphaMode ? mt.cutoff : 0.5f};
         if (m.kind == props::KIND_TREE) {
-            want[m.name + "_bb_d.png"] = {true, 0.5f};
-            want[m.name + "_bb_n.jpg"] = {false, 0.5f};
+            want[m.name + "_bb_d.png"] = {ROLE_COLOR, 0.5f};
+            want[m.name + "_bb_n.jpg"] = {ROLE_DATA, 0.5f};  // (billboard normals use all three channels)
         }
     }
     for (const auto& w : want) {
@@ -379,23 +362,45 @@ bool PropRenderer::ensureLoaded(int q) {
         dec.push_back(d);
     }
     const int maxSize = kTexSize[std::min(std::max(q, 1), 3)];
+    const auto t0 = std::chrono::steady_clock::now();
+    texcomp::s3tcAvailable();  // (asks GL: here, not on the threads)
     {
         std::vector<std::thread> pool;
         const int nt = 4;
         for (int t = 0; t < nt; t++)
             pool.emplace_back([&, t] {
-                for (size_t i = t; i < dec.size(); i += nt) decode(dir, dec[i], maxSize);
+                for (size_t i = t; i < dec.size(); i += nt) {
+                    // (The encoded blocks are kept on disk, keyed by the source file and the encoder: a later launch skips decode and encode.)
+                    const Want& wt = want.at(dec[i].file);
+                    meshcache::Hasher key;
+                    key.u64((uint64_t)texenc::kEncoderVersion), key.u64(meshcache::fileStamp(dir + "/tex/" + dec[i].file)), key.u64((uint64_t)maxSize);
+                    key.u64((uint64_t)wt.role), key.num(wt.cutoff), key.u64(texcomp::s3tcAvailable());
+                    std::vector<uint8_t> blob;
+                    if (meshcache::getBlob(key.h, blob) && meshcache::unpackEncoded(blob, dec[i].enc)) {
+                        dec[i].w = dec[i].enc.w, dec[i].h = dec[i].enc.h;
+                        continue;
+                    }
+                    decode(dir, dec[i], maxSize);
+                    if (dec[i].w) {
+                        encodeTex(dec[i], wt);
+                        meshcache::putBlob(key.h, meshcache::packEncoded(dec[i].enc));
+                    }
+                }
             });
         for (std::thread& t : pool) t.join();
     }
+    loadprof::add("props.decode textures", loadprof::nowMs() - lp0), lp0 = loadprof::nowMs();
     for (const Decoded& d : dec) {
         if (!d.w) {
             std::fprintf(stderr, "props: missing texture %s\n", d.file.c_str());
             continue;
         }
-        const auto& w = want[d.file];
-        texCache[d.file] = upload(d, w.first, w.second);
+        texCache[d.file] = texcomp::upload2D(d.enc, "prop " + d.file);
     }
+    loadprof::add("props.upload textures", loadprof::nowMs() - lp0), lp0 = loadprof::nowMs();
+    if (std::getenv("CZ_TEXSTATS"))
+        std::fprintf(stderr, "texstats: %zu prop textures, %.0f ms (decode, mips, encode, upload)\n", dec.size(),
+                     std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
     loadedQuality = q;
     // Meshes.
     for (props::Model& m : src) {
@@ -489,6 +494,7 @@ bool PropRenderer::ensureLoaded(int q) {
         else if (startsWith(n, "fern_")) scatterFern.push_back(i);
         else if (startsWith(n, "stump_") || startsWith(n, "branches_")) scatterLitter.push_back(i);
     }
+    loadprof::add("props.upload meshes", loadprof::nowMs() - lp0);
     std::printf("props: %zu models, %zu textures from %s\n", models.size(), texCache.size(), dir.c_str());
     return true;
 }
@@ -734,12 +740,19 @@ void PropRenderer::buildScatterCell(int cx, int cz, std::vector<Inst>& out) {
     }
 }
 
-int PropRenderer::lodFor(const Inst& in, double dist) const {
+int PropRenderer::lodFor(const Inst& in, double dist, bool shadowPass) const {
     const double k = kLodK[quality];
     if (in.tree) {  // trees by distance: the near ones carry the most cards
         if (dist < 14 * k) return 0;
         if (dist < 40 * k) return 1;
         return 2;
+    }
+    const Model& g = models[in.model];
+    if (g.kind == props::KIND_ROCK || g.kind == props::KIND_CLIFF) {  // by how big their triangles come out on screen
+        const int tris[3] = {g.lodTris[0], g.lodTris[1], g.lodTris[2]};
+        // (A shadow from one under ~10 px on screen is a speck: those cast none.)
+        if (shadowPass && in.size < props::kLodShadowCullSize / k * std::max(dist, 0.1)) return -1;
+        return props::solidLod(tris, in.size, dist, k);
     }
     const double s = in.size / std::max(dist, 0.1);  // by size on screen
     if (s > 0.06 / k) return 0;
@@ -815,7 +828,7 @@ void PropRenderer::select(const float pl[6][4], bool useBillboards, int lodBias,
             v.insert(v.end(), vals, vals + 8);
             return;
         }
-        int lod = lodFor(in, dist);
+        int lod = lodFor(in, dist, shadowPass);
         if (lod < 0) return;
         if (scatterInst && dist > kScatterReach[quality]) return;
         lod = std::min(2, lod + lodBias);
@@ -834,22 +847,33 @@ void PropRenderer::select(const float pl[6][4], bool useBillboards, int lodBias,
         d.push_back(fade);
     };
     for (const Cell& c : cells) {
-        if (c.inst.empty() || !boxIn(pl, c.mn, c.mx)) continue;
+        if (c.inst.empty() || !boxInFrustum(pl, c.mn, c.mx)) continue;
+        if (!shadowPass && occluder) {
+            RenderBounds b;
+            b.add(c.mn), b.add(c.mx);
+            if (occluder->occluded(b)) continue;
+        }
         for (int i : c.inst) {
             Inst& in = statics[i];
             if (shadowPass && !in.shadow) continue;
-            if (!sphereIn(pl, in.c, in.r)) continue;
+            if (!sphereInFrustum(pl, in.c, in.r)) continue;
             put(in, false, hidden(in));
         }
     }
     if (!shadowPass || lodBias == 0)
-        for (const auto& kv : scatter)
+        for (const auto& kv : scatter) {
+            if (!shadowPass && occluder && !kv.second.empty()) {
+                RenderBounds b;
+                for (const Inst& in : kv.second) b.add(in.c - V3(in.r, in.r, in.r)), b.add(in.c + V3(in.r, in.r, in.r));
+                if (occluder->occluded(b)) continue;
+            }
             for (const Inst& in : kv.second) {
                 if (shadowPass && !in.shadow) continue;
-                if (!sphereIn(pl, in.c, in.r)) continue;
+                if (!sphereInFrustum(pl, in.c, in.r)) continue;
                 put(in, true, 0.0f);
                 if (!shadowPass) stats.scatter++;
             }
+        }
 }
 
 void PropRenderer::submit(GLuint prog, bool depth, long long& tris, int& draws, int& instances) {
@@ -959,7 +983,7 @@ void PropRenderer::drawShadow(const M4& lightVP, int cascade, const V3& lightDir
     const auto t0 = std::chrono::steady_clock::now();
     beginQuery(cascade);
     float pl[6][4];
-    planesOf(lightVP, pl);
+    props::frustumPlanes(lightVP, pl);
     // The far cascade takes a coarser LOD; the scatter only casts into the near one.
     select(pl, true, cascade, true);
     UseProgram(progDepth);
@@ -979,7 +1003,7 @@ void PropRenderer::draw(const M4& viewProj, const std::function<void(GLuint)>& s
     const auto t0 = std::chrono::steady_clock::now();
     beginQuery(2);
     float pl[6][4];
-    planesOf(viewProj, pl);
+    props::frustumPlanes(viewProj, pl);
     select(pl, true, 0, false);
     setLighting(progLit);
     submit(progLit, false, stats.tris, stats.draws, stats.instances);

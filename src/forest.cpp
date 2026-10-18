@@ -1,6 +1,8 @@
 #include "forest.h"
 
 #include "biome.h"
+#include "plants.h"
+#include "visibility.h"
 
 #include <algorithm>
 #include <array>
@@ -18,7 +20,7 @@ const char* modelId(int kind) {
 double modelHeight(int kind) { return kind == 2 ? 8.0 : 10.0; }
 
 double lodReach(int lod) {
-    static const double reach[kLods] = {30, 75, 1e9};
+    static const double reach[kLods] = {30, 75, 200, 1e9};
     return reach[std::clamp(lod, 0, kLods - 1)];
 }
 
@@ -133,8 +135,61 @@ size_t Set::bakedVertices() const {
     return n;
 }
 
+namespace {
+// Its reach round the base and its top, from the full model.
+void measureShape(Shape& s) {
+    const mk::Mesh& m = s.lod[0];
+    s.reach = (float)std::max({std::fabs(m.lo.x), std::fabs(m.hi.x), std::fabs(m.lo.z), std::fabs(m.hi.z), 0.3}) * (float)std::sqrt(2.0);
+    s.top = (float)std::max(m.hi.y, 0.3);
+}
+}  // namespace
+
+mk::Mesh simplify(const mk::Mesh& m, double cell) {
+    // Each corner to a cluster (by its cell and material): the cluster's corners averaged.
+    struct Acc {
+        double p[3] = {}, n[3] = {}, c[3] = {};
+        int k = 0;
+    };
+    std::map<std::tuple<int, int, int, int>, int> at;
+    std::vector<Acc> acc;
+    std::vector<int> id(m.v.size());
+    for (size_t i = 0; i < m.v.size(); i++) {
+        const mk::MVert& q = m.v[i];
+        const auto key = std::make_tuple((int)std::floor(q.p[0] / cell), (int)std::floor(q.p[1] / cell), (int)std::floor(q.p[2] / cell), (int)q.mat);
+        auto it = at.find(key);
+        if (it == at.end()) it = at.emplace(key, (int)acc.size()).first, acc.emplace_back();
+        Acc& a = acc[it->second];
+        for (int k = 0; k < 3; k++) a.p[k] += q.p[k], a.n[k] += q.n[k], a.c[k] += q.c[k];
+        a.k++;
+        id[i] = it->second;
+    }
+    mk::Mesh out;
+    std::map<std::tuple<int, int, int>, bool> seen;  // (a sheet drawn from both sides comes out once: nothing is culled)
+    for (size_t i = 0; i + 2 < m.v.size(); i += 3) {
+        int t[3] = {id[i], id[i + 1], id[i + 2]};
+        if (t[0] == t[1] || t[1] == t[2] || t[0] == t[2]) continue;
+        int u[3] = {t[0], t[1], t[2]};
+        std::sort(u, u + 3);
+        if (!seen.emplace(std::make_tuple(u[0], u[1], u[2]), true).second) continue;
+        for (int k = 0; k < 3; k++) {
+            const Acc& a = acc[t[k]];
+            mk::MVert q = m.v[i + k];
+            V3 n(a.n[0], a.n[1], a.n[2]);
+            n = len(n) > 1e-6 ? norm(n) : V3(q.n[0], q.n[1], q.n[2]);
+            for (int j = 0; j < 3; j++) q.p[j] = (float)(a.p[j] / a.k), q.c[j] = (float)(a.c[j] / a.k);
+            q.n[0] = (float)n.x, q.n[1] = (float)n.y, q.n[2] = (float)n.z;
+            out.v.push_back(q);
+        }
+    }
+    out.finish();
+    return out;
+}
+
+constexpr double kFarCell = 0.9;  // (model units: a tree is 10 tall)
+
 void build(const World& w, bool skipPines, bool skipSnags, Set& out) {
     out = Set();
+    for (int l = 0; l < kLods; l++) out.lodAt[l] = (float)lodReach(l);
     std::map<std::tuple<int, int, int, int>, int> index;
     for (size_t i = 0; i < w.trees.size(); i++) {
         const Tree& t = w.trees[i];
@@ -151,7 +206,9 @@ void build(const World& w, bool skipPines, bool skipSnags, Set& out) {
             it = index.emplace(key, (int)out.shapes.size()).first;
             Shape s;
             s.look = lk;
-            for (int l = 0; l < kLods; l++) s.lod[l] = buildModel(lk, l);
+            for (int l = 0; l < kLods - 1; l++) s.lod[l] = buildModel(lk, l);
+            s.lod[kLods - 1] = simplify(s.lod[kLods - 2], kFarCell);
+            measureShape(s);
             out.shapes.push_back(std::move(s));
         }
         Inst in;
@@ -163,6 +220,123 @@ void build(const World& w, bool skipPines, bool skipSnags, Set& out) {
         in.shape = it->second, in.tree = (int)i;
         out.inst.push_back(in);
     }
+}
+
+void buildBushes(const World& w, Set& out) {
+    out = Set();
+    const mk::ModelDef* d = mk::findModel("bush");
+    if (!d) return;
+    std::map<std::tuple<int, int, int>, int> index;
+    int seed = 0;
+    for (size_t i = 0; i < w.bushes.size(); i++) {
+        const Bush& b = w.bushes[i];
+        seed++;  // (as the baked bushes had it: a bush keeps its look)
+        const int kind = plantKindOf(b.kind), sd = 1 + seed % 6, dry = seed % 7 == 0 ? 1 : 0;
+        const auto key = std::make_tuple(kind, sd, dry);
+        auto it = index.find(key);
+        if (it == index.end()) {
+            it = index.emplace(key, (int)out.shapes.size()).first;
+            Shape s;
+            s.look.kind = kind, s.look.design = kind, s.look.seed = sd;
+            const int v = std::min(kind, std::max(0, (int)d->variants.size() - 1));
+            mk::P p = mk::pickedParams(*d, v);
+            p.v["seed"] = sd, p.v["dry"] = dry;
+            mk::build(*d, v, p, s.lod[0]);
+            measureShape(s);
+            out.shapes.push_back(std::move(s));
+        }
+        Inst in;
+        in.x = (float)b.p.x, in.y = (float)b.p.y, in.z = (float)b.p.z;
+        in.yaw = (float)(seed * 2.39996);
+        in.scale = (float)(b.r / 0.8);
+        in.stretch = (float)(0.8 + 0.4 * latticeHash(seed, 2));
+        in.tint = (float)(0.85 + 0.15 * b.tint);
+        in.warm = 0;
+        // Out to where it's a few pixels across: further for a big one.
+        in.reach = (float)(100 + 80 * b.r);
+        in.shape = it->second, in.tree = (int)i;
+        out.inst.push_back(in);
+    }
+}
+
+void Picker::sphere(const Set& s, const Inst& in, V3& c, double& r) {
+    const Shape& sh = s.shapes[in.shape];
+    const double h = sh.top * in.scale * in.stretch, w = sh.reach * in.scale;
+    c = V3(in.x, in.y + h * 0.5, in.z);
+    r = std::sqrt(w * w + h * h * 0.25);
+}
+
+void Picker::build(const Set& s) {
+    // The instances in 64 m cells, each cell's box round all of them.
+    std::map<std::pair<int, int>, int> at;
+    cells_.clear();
+    for (size_t i = 0; i < s.inst.size(); i++) {
+        const Inst& in = s.inst[i];
+        const std::pair<int, int> key((int)std::floor(in.x / 64), (int)std::floor(in.z / 64));
+        auto it = at.find(key);
+        if (it == at.end()) {
+            it = at.emplace(key, (int)cells_.size()).first, cells_.emplace_back();
+            cells_.back().lo = V3(1e30, 1e30, 1e30), cells_.back().hi = V3(-1e30, -1e30, -1e30);
+        }
+        Cell& c = cells_[it->second];
+        c.inst.push_back((int)i);
+        V3 m;
+        double r;
+        sphere(s, in, m, r);
+        c.lo = V3(std::min(c.lo.x, m.x - r), std::min(c.lo.y, m.y - r), std::min(c.lo.z, m.z - r));
+        c.hi = V3(std::max(c.hi.x, m.x + r), std::max(c.hi.y, m.y + r), std::max(c.hi.z, m.z + r));
+    }
+}
+
+void Picker::pick(const Set& s, const View& v, std::vector<std::vector<Pick>>& buckets) {
+    buckets.resize(s.shapes.size() * kLods);
+    for (auto& b : buckets) b.clear();
+    // The view's six planes (a, b, c, d: inside where a x + b y + c z + d >= 0), and each normal's length.
+    double pl[6][5];
+    {
+        int k = 0;
+        for (int axis = 0; axis < 3; ++axis)
+            for (int sign : {-1, 1}) {
+                for (int c = 0; c < 4; c++) pl[k][c] = v.vp.m[c * 4 + 3] + sign * v.vp.m[c * 4 + axis];
+                pl[k][4] = std::sqrt(pl[k][0] * pl[k][0] + pl[k][1] * pl[k][1] + pl[k][2] * pl[k][2]);
+                k++;
+            }
+    }
+    // (nearest cells first, and the near LODs drawn first: what's in front fills the depth first, so less is shaded behind it)
+    order_.clear();
+    for (int k = 0; k < (int)cells_.size(); k++) {
+        RenderBounds b;
+        b.lo = cells_[k].lo, b.hi = cells_[k].hi;
+        if (b.visible(v.vp) && !(v.hidden && v.hidden->occluded(b))) order_.push_back({b.distance(v.eye), k});
+    }
+    std::sort(order_.begin(), order_.end());
+    for (const auto& ok : order_)
+        for (int i : cells_[ok.second].inst) {
+            const Inst& in = s.inst[i];
+            const double d = std::hypot(in.x - v.eye.x, in.z - v.eye.z);
+            float fade = 1;
+            if (in.reach > 0) {
+                const double R = in.reach * v.detail * v.reach;
+                if (d >= R) continue;
+                fade = (float)std::min(1.0, (R - d) / (0.15 * R));
+                if (v.shadow) {
+                    if (fade < 0.5f) continue;
+                    fade = 1;
+                }
+            }
+            V3 c;
+            double r;
+            sphere(s, in, c, r);
+            bool out = false;
+            for (int k = 0; k < 6 && !out; k++) out = pl[k][0] * c.x + pl[k][1] * c.y + pl[k][2] * c.z + pl[k][3] < -r * pl[k][4];
+            if (out) continue;
+            int lod = 0;
+            while (lod < kLods - 1 && d > s.lodAt[lod] * v.detail) lod++;
+            lod = std::min(kLods - 1, lod + v.lodBias);
+            const Shape& sh = s.shapes[in.shape];
+            while (lod > 0 && sh.lod[lod].v.empty()) lod--;
+            buckets[in.shape * kLods + lod].push_back({i, fade});
+        }
 }
 
 void logMesh(const World& w, const Log& g, uint32_t seed, mk::Mesh& out) {

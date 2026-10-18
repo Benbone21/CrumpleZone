@@ -1,5 +1,6 @@
 #include "thread_cache.h"
 #include "softbody.h"
+#include "loadprof.h"
 #include "collision.h"
 #include "simdkern.h"
 #include "vehicles.h"
@@ -1951,6 +1952,10 @@ void Car::updateTris() {
     }
 }
 
+// A panel whose structure is pushed in this far (m, on average) is caved in (under kPanelScuff
+// it's a scuff, nothing); each counts this share of the damage, to at most kPanelShareMax.
+constexpr double kPanelScuff = 0.02, kPanelCaved = 0.12, kPanelShare = 0.01, kPanelShareMax = 0.05;
+
 void Car::updateStats() {
     double sum = 0;
     int n = 0;
@@ -1971,7 +1976,31 @@ void Car::updateStats() {
             sum += std::min(1.0, std::fabs(b.L0 - b.Lorig) / b.Lorig * 8);
         }
     }
-    damage = n ? std::min(1.0, sum / n) : 0;
+    // The panels count a little too: each door, hood or fender pushed in (the body under it
+    // dented, by the chassis' rest shape) or torn off adds up to a percent, a few at most, so
+    // a caved-in door shows but a car that's all dents and no bent structure isn't a wreck.
+    double dents = 0;
+    if (chassisRest0.size() == chassis.rest.size() && !chassis.rest.empty()) {
+        V3 shift;
+        for (size_t k = 0; k < chassis.rest.size(); k++) shift += chassis.rest[k] - chassisRest0[k];
+        shift = shift / (double)chassis.rest.size();
+        for (const Panel& p : panels) {
+            if (p.state == 2) {
+                dents += 1;
+                continue;
+            }
+            double d = 0;
+            int m = 0;
+            for (int i : p.bodyNodes) {
+                const int k = i < (int)chassis.slot.size() ? chassis.slot[i] : -1;
+                if (k < 0) continue;
+                d += len(chassis.rest[k] - chassisRest0[k] - shift);
+                m++;
+            }
+            if (m) dents += clampd((d / m - kPanelScuff) / (kPanelCaved - kPanelScuff), 0, 1);
+        }
+    }
+    damage = n ? std::min(1.0, sum / n + std::min(kPanelShareMax, kPanelShare * dents)) : 0;
 
     for (Wheel& wh : wheels) {
         bool attached = false;
@@ -2095,6 +2124,7 @@ bool Car::finite() const {
 // Sim
 
 void Sim::setup() {
+    loadprof::Scope lpSetup("sim.setup (cars)");
     const auto& cat = vehicleCatalog();
     cars.clear();
     ropes.clear();
@@ -2272,7 +2302,8 @@ void Sim::substep() {
     needsContact.assign(N, 0);
     for (Car& c : cars) {
         if (c.remote) {  // another player's: moved by the network, it only pushes back
-            for (Node& n : c.nodes) n.f = V3();
+            if (c.heldHere <= 0)
+                for (Node& n : c.nodes) n.f = V3();
             continue;
         }
         // Someone working a parked car's pedals or wheel wakes it too. (The player's car and
@@ -2288,11 +2319,11 @@ void Sim::substep() {
         if (!(cars[pair.first].sleeping && cars[pair.second].sleeping))
             needsContact[pair.first] = needsContact[pair.second] = 1;
     for (int i = 0; i < N; i++)
-        if ((!cars[i].remote && !cars[i].sleeping) || needsContact[i]) forceCars.push_back(i);
+        if ((!cars[i].remote && !cars[i].sleeping) || cars[i].heldHere > 0 || needsContact[i]) forceCars.push_back(i);
     auto forces = [&](int index) {
         const int i = forceCars[index];
         Car& c = cars[i];
-        if (!c.remote && !c.sleeping) c.computeForces(h, world);
+        if ((!c.remote && !c.sleeping) || c.heldHere > 0) c.computeForces(h, world);
         if (needsContact[i]) c.prepareContact(stepCount);
     };
     // A few cars cost less than waking the pool at 2 kHz. Pileups also benefit because
@@ -2305,14 +2336,43 @@ void Sim::substep() {
             if (cars[i].wheels[k].shed) {
                 const bool tire = cars[i].wheels[k].shed == 2;
                 cars[i].wheels[k].shed = 0;
-                shedWheel(i, k, tire);
+                if (!cars[i].remote) shedWheel(i, k, tire);  // (a remote's comes off on its owner's machine)
             }
 
+    // (A held remote's own forces, so the hit can be told from them below.)
+    CZ_THREAD_CACHE(std::vector<V3>, ownForce);
+    ownForce.assign(N, V3());
+    for (int i = 0; i < N; i++)
+        if (cars[i].remote && cars[i].heldHere > 0)
+            for (const Node& n : cars[i].nodes) ownForce[i] += n.f;
     for (const auto& pair : contactPairs) {
         const int i = pair.first, j = pair.second;
         // Sleeping bodies still push back (they act as static supports); the forces
         // they receive are discarded until they wake.
         if (!(cars[i].sleeping && cars[j].sleeping)) collide(cars[i], cars[j]);
+    }
+
+    // Another player's vehicle one of ours crashes into runs on our physics from here (it
+    // takes this step's push already), until a little after the hit. (Only a hit: leaning
+    // on it, or pushed along together after, it's moved by its states again.)
+    for (const auto& pair : contactPairs) {
+        Car& a = cars[pair.first];
+        Car& b = cars[pair.second];
+        if (a.remote == b.remote) continue;
+        Car& r = a.remote ? a : b;
+        V3 F = ownForce[a.remote ? pair.first : pair.second] * -1.0;
+        for (const Node& n : r.nodes) F += n.f;
+        if (len(F) < 2 * 9.81 * r.mass) continue;
+        // (And coming together: two wrecks tangled at rest press on each other hard too.)
+        auto vel = [](const Car& c) {
+            V3 p;
+            double m = 0;
+            for (const Node& n : c.nodes) p += n.v * n.m, m += n.m;
+            return m > 0 ? p / m : V3();
+        };
+        if (r.heldHere <= 0 && len(vel(a) - vel(b)) < 1.0) continue;
+        if (r.heldHere <= 0) r.holdHere();
+        r.heldHere = 0.4;
     }
 
     if (!ropes.empty()) ropeForces();
@@ -2321,8 +2381,16 @@ void Sim::substep() {
 
     for (int i = 0; i < N; i++) {
         Car& c = cars[i];
-        if (c.remote) {  // coasts along on the velocities its owner last sent
-            for (Node& n : c.nodes) n.p += n.v * h;
+        if (c.remote && c.heldHere > 0) {  // ours for now
+            c.integrate(h);
+            c.updateBounds();
+            c.heldHere -= h;
+            if (c.heldHere <= 0) c.handBack = true;
+            continue;
+        }
+        if (c.remote) {  // coasts along on the velocities its owner last sent (and any ease)
+            for (Node& n : c.nodes) n.p += (n.v + c.shoveV) * h;
+            c.shoveP += c.shoveV * h;
             c.updateBounds();
             continue;
         }
@@ -2341,6 +2409,54 @@ void Sim::substep() {
         }
     }
     if (!looseWheels.empty()) looseWheelStep();
+}
+
+void Car::holdHere() {
+    // Its states carry the owner's dents in the shape, not in the beams: made the rest shape
+    // here, so they don't spring back out. (Only the bent ones: springs keep their preload.)
+    for (Beam& b : beams) {
+        if (b.broken || b.type == BEAM_SPRING || b.type == BEAM_BUMPSTOP) continue;
+        const double L = len(nodes[b.a].p - nodes[b.b].p);
+        if (std::fabs(L - b.L0) > b.yieldStrain * b.L0) b.L0 = L;
+    }
+    shoveV = shoveP = V3();
+    sleeping = false;
+    stillTime = 0;
+    if (grid) grid->stamp = -1;
+    nodeGridStamp = -1;
+}
+
+void Car::handBackTo(const std::vector<V3>& statePos, const V3& stateVel) {
+    handBack = false;
+    V3 here, there, vel;
+    double M = 0;
+    for (size_t i = 0; i < nodes.size() && i < statePos.size(); i++) {
+        here += nodes[i].p * nodes[i].m;
+        there += statePos[i] * nodes[i].m;
+        vel += nodes[i].v * nodes[i].m;
+        M += nodes[i].m;
+    }
+    if (M <= 0) return;
+    shoveP = (here - there) / M;
+    const V3 dv = vel / M - stateVel;
+    shoveV = V3(dv.x, 0, dv.z);
+    shoveNetVel = stateVel;
+}
+
+// The owner's states catching up with a shove: as they show the car picking up speed the
+// shove's way, that much of it has got there (and its lead on the states eases out after).
+// Owner and here disagree on the details, so what's left fades out within a second.
+void Car::settleShove(const V3& netVel, double dt) {
+    const V3 dv = netVel - shoveNetVel;
+    shoveNetVel = netVel;
+    const double s2 = dot(shoveV, shoveV);
+    if (s2 < 1e-10 && dot(shoveP, shoveP) < 1e-10) {
+        shoveV = shoveP = V3();
+        return;
+    }
+    if (s2 > 1e-10) shoveV *= 1 - clampd(dot(V3(dv.x, 0, dv.z), shoveV) / s2, 0, 1);
+    shoveV *= std::max(0.0, 1 - dt / 0.6);
+    shoveP *= std::max(0.0, 1 - dt / 0.6);
 }
 
 void Sim::collide(Car& A, Car& B) {
@@ -2385,9 +2501,18 @@ void Car::prepareContact(long step) {
             const V3& p = nodes[i].p;
             nodeGrid->insert(i, p - reach, p + reach);
         }
+        // The ladder frame and the engine block: what a bumper finds behind the sheet metal.
+        for (const std::vector<int>* hard : {&ladder, &engineNodes})
+            for (int i : *hard) {
+                const V3& p = nodes[i].p;
+                nodeGrid->insert(i, p - reach, p + reach);
+            }
         nodeGridStamp = step;
     }
 }
+
+// Of a push across a side wall above the sill, the share carried down to the sill.
+constexpr double kSillShare = 0.6;
 
 void Sim::pointsVsSkin(Car& A, Car& B) {
     const double kK = 4e5 * std::min(A.spec->contactScale, B.spec->contactScale), kC = 700, kCt = 2000, kMu = 0.45;
@@ -2432,6 +2557,20 @@ void Sim::pointsVsSkin(Car& A, Car& B) {
         return hit.tri >= 0;
     };
     // Applies the contact force; the point's force is shared between pts[0..np).
+    // A push across a side wall, above the sill, is carried down to the sill: the door's
+    // side-impact beam and the pillars take it there (pushed on the glass line alone, a truck
+    // hit side-on was flipped over its far wheels by a load half a metre over its weight).
+    auto load = [&](Car& C, int i, const V3& F) {
+        const int s = i < (int)C.sideSill.size() ? C.sideSill[i] : -1;
+        if (s < 0) {
+            C.nodes[i].f += F;
+            return;
+        }
+        const V3 across = C.chassis.rot.rotate(V3(0, 0, 1));
+        const V3 down = across * (dot(F, across) * kSillShare);
+        C.nodes[i].f += F - down;
+        C.nodes[s].f += down;
+    };
     auto apply = [&](const Hit& hit, const V3& pv, Node* pts[], int np) {
         const Tri& t = B.tris[hit.tri];
         V3 vb;
@@ -2447,8 +2586,8 @@ void Sim::pointsVsSkin(Car& A, Car& B) {
         double vtl = len(vt);
         V3 F = t.nrm * Fn;
         if (vtl > 1e-6) F -= vt * (std::min(kMu * Fn, std::min(kCt, 0.4 * mMin / h) * vtl) / vtl);
-        for (int i = 0; i < np; i++) pts[i]->f += F / (double)np;
-        for (int k = 0; k < 3; k++) B.nodes[t.v[k]].f -= F * hit.w[k];
+        for (int i = 0; i < np; i++) load(A, (int)(pts[i] - A.nodes.data()), F / (double)np);
+        for (int k = 0; k < 3; k++) load(B, t.v[k], F * -hit.w[k]);
         double e = std::fabs(vn) * Fn * h;
         A.impactEnergy += e * 0.5;
         B.impactEnergy += e * 0.5;
@@ -2482,11 +2621,15 @@ void Sim::pointsVsSkin(Car& A, Car& B) {
     // crumpled into each other the faces fold away. Any node that gets close to one of
     // B's *interior* nodes (not on the skin) is inside B, so push it back out. Skin
     // nodes are left alone so touching bodies don't hover apart.
-    const double rr = 0.36;  // contact distance between node centers
+    // The ladder frame's rails and the engine block are hard points too (or one truck's nose
+    // folds up round the other's frame horns as if they weren't there, and only the bodies
+    // crush): a rail corner reaches about half its section.
+    const double rrBody = 0.36, rrHard = 0.12;  // contact distance between node centers
     for (Node& na : A.nodes) {
         if (!na.collide || !inBounds(na.p)) continue;
         for (int j : B.nodeGrid->query(na.p)) {
             Node& nb = B.nodes[j];
+            const double rr = j < B.bodyNodes ? rrBody : rrHard;
             V3 d = na.p - nb.p;
             double dist2 = dot(d, d);
             if (dist2 >= rr * rr || dist2 < 1e-12) continue;
@@ -2498,8 +2641,8 @@ void Sim::pointsVsSkin(Car& A, Car& B) {
             if (Fn <= 0) continue;
             Fn = std::min(Fn, m * 3000.0);
             V3 F = nrm * Fn;
-            na.f += F;
-            nb.f -= F;
+            load(A, (int)(&na - A.nodes.data()), F);
+            load(B, j, F * -1.0);
         }
     }
 }

@@ -183,6 +183,7 @@ SCENARIO(modelsThreads, "models/threads", "Several threads asking the shared mes
                 const mk::Mesh copy = mk::modelMesh(d.id);
                 mk::Mesh fresh;
                 mk::build(d, mk::pickedVariant(d), mk::pickedParams(d, mk::pickedVariant(d)), fresh);
+                mk::trimMesh(fresh);  // (the cache's are trimmed)
                 if (copy.v.size() != fresh.v.size()) bad++;
             }
         });

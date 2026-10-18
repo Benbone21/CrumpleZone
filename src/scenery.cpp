@@ -1,11 +1,14 @@
 #include "scenery.h"
-#include "plants.h"
 
 #include "forest.h"
+#include "meshopt.h"
 
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <map>
+#include <memory>
+#include <mutex>
 
 namespace {
 
@@ -249,13 +252,6 @@ void buildRockMesh(const World& world, std::vector<Vtx>& v, const ScanCover& ski
     }
     for (const Box& b : world.boxes)
         if (b.rock) slab(v, b);
-    int logSeed = 0;
-    for (const Log& g : world.logs) {
-        if (skip.logs) break;
-        mk::Mesh m;
-        forest::logMesh(world, g, (uint32_t)++logSeed, m);
-        appendModel(v, m, V3(), 0.0);  // (built where it lies)
-    }
 }
 
 void buildBushMesh(const World& world, std::vector<Vtx>& v, const ScanCover& skip) {
@@ -313,20 +309,19 @@ void buildBushMesh(const World& world, std::vector<Vtx>& v, const ScanCover& ski
                 }
             }
     }
+    // The fallen logs (each its own mesh, built where it lies).
+    int logSeed = 0;
+    for (const Log& g : world.logs) {
+        if (skip.logs) break;
+        mk::Mesh m;
+        forest::logMesh(world, g, (uint32_t)++logSeed, m);
+        appendModel(v, m, V3(), 0.0);
+    }
+    // The bushes are instances of the "bush" model (forest::buildBushes): only without it are they made here, as blobs.
     int seed = 0;
-    const bool bushModel = mk::findModel("bush") != nullptr;
     for (const Bush& b : world.bushes) {
-        if (skip.bushes) break;
+        if (skip.bushes || mk::findModel("bush")) break;
         seed++;
-        if (bushModel) {  // the picked model, made 0.8 m in radius
-            Placed pl;
-            pl.id = "bush";
-            pl.variant = plantKindOf(b.kind);  // (the design of that kind: plants.h)
-            pl.set = {{"seed", 1 + seed % 6}, {"dry", seed % 7 == 0 ? 1 : 0}};
-            const double k = b.r / 0.8;
-            appendModel(v, placedMesh(pl), b.p, seed * 2.39996, V3(k, k * (0.8 + 0.4 * latticeHash(seed, 2)), k), (float)(0.85 + 0.15 * b.tint));
-            continue;
-        }
         const int n = 3 + seed % 3;
         for (int k = 0; k < n; k++) {
             double a = k * 2.39996 + seed, d = b.r * 0.45 * latticeHash(seed, k);
@@ -439,11 +434,101 @@ const mk::Mesh& placedMesh(const Placed& pl) {
         for (const auto& kv : pl.set) p.v[kv.first] = kv.second;
         if (pl.bare) p.v["bare"] = 1;
         mk::build(*d, variant, p, m);
+        mk::trimMesh(m);
     }
     return m;
 }
 
-void buildPropMesh(const World& world, std::vector<Vtx>& v) {
+static constexpr double kFloorBlock = 16, kFloorReach = 16, kFloorEdge = 520;
+MeshOptOptions sceneryOptions(const World& world, bool whole) {
+    // The lowest the drawn ground gets over a rectangle: the terrain grid's heights round it, as far out as its coarsest
+    // LOD's cells reach (16 m), so no LOD of it comes up through a bottom left out. Near the rim (the crags): none.
+    // (The table of it is made on the first call, and kept while the ground's the same: an editor drag asks again.)
+    struct Floor {
+        const World* w = nullptr;
+        int map = -1;
+        uint64_t edits = 0, sig = 0;
+        int n = 0;
+        std::vector<float> lo;
+    };
+    static std::shared_ptr<Floor> last;
+    static std::mutex lock;
+    std::shared_ptr<Floor> f;
+    const double half = World::kHalfSize;
+    uint64_t sig = 1469598103934665603ull;  // (a sample of the ground: another map built in the same place isn't this one)
+    for (int i = 0; i <= 64; i++)
+        for (int j = 0; j <= 64; j++) {
+            const float h = (float)world.height(-half + 2 * half * i / 64, -half + 2 * half * j / 64);
+            uint32_t b;
+            std::memcpy(&b, &h, 4);
+            sig = (sig ^ b) * 1099511628211ull;
+        }
+    {
+        std::lock_guard<std::mutex> lk(lock);
+        if (!last || last->w != &world || last->map != world.map || last->edits != world.cellEdits || last->sig != sig) {
+            last = std::make_shared<Floor>();
+            last->w = &world, last->map = world.map, last->edits = world.cellEdits, last->sig = sig;
+        }
+        f = last;
+    }
+    MeshOptOptions o;
+    o.weldEps = 1e-4;  // (world-sized, in floats)
+    if (!whole) o.degenerate = o.hidden = o.coplanar = false;
+    o.groundMin = [f, half](double x0, double z0, double x1, double z1) {
+        if (std::max({-x0, -z0, x1, z1}) > kFloorEdge) return -1e9;
+        if (f->lo.empty()) {
+            f->n = (int)std::ceil(2 * half / kFloorBlock);
+            f->lo.assign((size_t)f->n * f->n, 1e9f);
+            for (double x = -half; x <= half; x += 1)
+                for (double z = -half; z <= half; z += 1) {  // (the 1 m grid)
+                    const int i = std::min(f->n - 1, (int)((x + half) / kFloorBlock)), j = std::min(f->n - 1, (int)((z + half) / kFloorBlock));
+                    float& m = f->lo[(size_t)i * f->n + j];
+                    m = std::min(m, (float)f->w->height(x, z));
+                }
+        }
+        const int i0 = std::max(0, (int)((x0 - kFloorReach + half) / kFloorBlock)), i1 = std::min(f->n - 1, (int)((x1 + kFloorReach + half) / kFloorBlock));
+        const int j0 = std::max(0, (int)((z0 - kFloorReach + half) / kFloorBlock)), j1 = std::min(f->n - 1, (int)((z1 + kFloorReach + half) / kFloorBlock));
+        float m = 1e9f;
+        for (int i = i0; i <= i1; i++)
+            for (int j = j0; j <= j1; j++) m = std::min(m, f->lo[(size_t)i * f->n + j]);
+        return (double)m - 0.01;
+    };
+    return o;
+}
+
+void buildBoxMesh(const World& world, std::vector<Vtx>& out) {
+    std::vector<Vtx> v;
+    for (const Box& b : world.boxes) {
+        if (b.hidden || b.rock) continue;  // rock slabs are drawn with the rocks
+        const double he[3] = {b.h.x, b.h.y, b.h.z};
+        for (int axis = 0; axis < 3; axis++)
+            for (int s = -1; s <= 1; s += 2) {
+                const int u = (axis + 1) % 3, w = (axis + 2) % 3;
+                const V3 n = b.ax[axis] * s, c = b.c + n * he[axis], du = b.ax[u] * he[u], dw = b.ax[w] * he[w];
+                const V3 q[4] = {c - du - dw, c + du - dw, c + du + dw, c - du + dw};
+                for (int k : {0, 1, 2, 0, 2, 3}) v.push_back(vert(q[k], n, V3(b.col[0], b.col[1], b.col[2]), SM_CONCRETE));
+            }
+    }
+    if (simplifyScenery()) optimizeVtx(v, sceneryOptions(world, true));
+    out.insert(out.end(), v.begin(), v.end());
+}
+
+bool& simplifyScenery() {
+    static bool on = true;
+    return on;
+}
+
+void buildPropMesh(const World& world, std::vector<Vtx>& out) {
+    std::vector<Vtx> v;
+    struct Done {  // (as it goes out)
+        const World& w;
+        std::vector<Vtx>& v;
+        std::vector<Vtx>& out;
+        ~Done() {
+            if (simplifyScenery()) optimizeVtx(v, sceneryOptions(w, false));  // (each model is simplified already: here just the bottoms in the ground, which is quick)
+            out.insert(out.end(), v.begin(), v.end());
+        }
+    } done{world, v, out};
     for (const Placed& pl : world.models) appendPlaced(v, pl, placedMesh(pl));
     const V3 wood(0.45, 0.33, 0.21), darkWood(0.28, 0.20, 0.13), grey(0.42, 0.40, 0.37);
     int seed = 0;

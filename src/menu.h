@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "render.h"
+#include "perf.h"
 #include "devmenu.h"
 #include "keybinds.h"
 #include "throttle.h"
@@ -44,6 +45,8 @@ struct Settings {
     int padSteering = 1, padDeadzone = 1, padRumble = 1;
     RenderSettings gfx;
     bool adaptiveQuality = true;  // auto-scale quality to maintain framerate
+    int fpsTarget = 60;           // kFpsTargets: adaptive quality's aim and, VSync off, the frame cap (0: uncapped, aiming for 60)
+    bool gfxChosen = false;       // a quality has been chosen (by the player or the first-launch detection); a saved file without it counts as chosen
     bool devHotkeys = false;      // the debug and test keys (1-7, I, K, N, DEL, [ ], F2, F3, F5) work directly; OFF: only through the dev menu (F12)
     Keybinds keys;
     throttle::Tuning throttle;  // the throttle limit (throttle.h): the keyboard's cap, its ramp, whether the pad obeys it
@@ -53,15 +56,12 @@ struct Settings {
     static std::string defaultPath();
 };
 
-// Graphics quality presets: LOW, MEDIUM, HIGH, ULTRA. presetOf() returns 4 (CUSTOM) when
-// the options don't match one.
-void applyPreset(RenderSettings& g, int preset);
-int presetOf(const RenderSettings& g);
+// (The graphics quality presets: perf.h.)
 
 class PauseMenu {
 public:
     enum Action { NONE, RESUME, DRIVE, GARAGE, CONTROLS, RESET, QUIT, CHANGED, LOAD_MAP, HOST, JOIN, LEAVE, PILOT_GO, PILOT_STOP,
-                  FREE_DRIVE, PLAY_LEVEL, EDIT_LEVEL, EDITOR, LEVEL_RESTART, LEVEL_QUIT, MAIN_MENU, JOB_START, JOB_STOP, MEET_UP,
+                  DETECT_GFX, FREE_DRIVE, PLAY_LEVEL, EDIT_LEVEL, EDITOR, LEVEL_RESTART, LEVEL_QUIT, MAIN_MENU, JOB_START, JOB_STOP, MEET_UP,
                   CANCEL_JOIN, MODEL_LAB, NEW_SECTION, EDITOR_BACK, DEV_RUN };
     struct Result {
         Action action = NONE;
