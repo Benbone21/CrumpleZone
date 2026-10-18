@@ -4126,6 +4126,7 @@ bool partMeshReady(const Placed& pl) {
     if (cache.count(key)) return true;
     auto it = pending.find(key);
     if (it == pending.end()) {
+        if (pending.size() >= 6) return false;
         pending.emplace(key, std::async(std::launch::async, [pl] { return buildPartMesh(pl); }));
         return false;
     }
@@ -4168,6 +4169,12 @@ void Renderer::prepareCarModels() {
             // The parts shut inside the intact body (the engine under its hood...) go last, so they can be left off the draw:
             // every corner of their bounds (padded 3 cm) inside the skin and below its lowest glass.
             std::vector<char> shut(cm.parts.size(), 0);
+            // A car already shown that gains parts (the frame's, as the camera comes near) fills in over a few frames, not one stall:
+            // a few shut tests and the meshes that are ready; the rest is drawn as it is (inside the body, hidden by the depth test) or left out
+            // until its mesh is built (on a worker).
+            const bool fresh = slot.modelsCount == 0;
+            int testsLeft = 4;
+            bool unfinished = false;
             // (the test costs 10 ms or more for a car: kept per part, by its model, params and place in the body, for as long as the skin stands)
             if (slot.shutSkin != slot.lpos.size() || slot.shutIntact != slot.intact) slot.shutCache.clear(), slot.shutSkin = slot.lpos.size(), slot.shutIntact = slot.intact;
             if (slot.intact && !slot.lglass.empty()) {
@@ -4188,6 +4195,8 @@ void Renderer::prepareCarModels() {
                     mix(pl.scale.x, 20), mix(pl.scale.y, 20), mix(pl.scale.z, 20), mix(pl.wear, 20);
                     auto hit = slot.shutCache.find(h);
                     if (hit != slot.shutCache.end()) { shut[k] = hit->second; continue; }
+                    if (!fresh && (testsLeft <= 0 || !partMeshReady(pl))) { unfinished = true; continue; }
+                    testsLeft--;
                     const mk::Mesh& m = partMesh(pl, scratch);
                     if (m.v.empty() || pl.wear) { slot.shutCache[h] = 0; continue; }
                     bool in = true;
@@ -4208,6 +4217,7 @@ void Renderer::prepareCarModels() {
             for (int pass = 0; pass < 2; pass++) {
                 for (size_t k = 0; k < cm.parts.size(); k++) {
                     if (shut[k] != pass) continue;
+                    if (!fresh && !partMeshReady(cm.parts[k])) { unfinished = true; continue; }
                     for (const mk::MVert& q : partMesh(cm.parts[k], scratch).v) {
                         v.push_back(Vtx{{q.p[0], q.p[1], q.p[2]}, {q.n[0], q.n[1], q.n[2]}, {q.c[0], q.c[1], q.c[2], (float)q.mat}});
                         idx.push_back((float)k);
@@ -4221,7 +4231,7 @@ void Renderer::prepareCarModels() {
             BindBuffer(GL_ARRAY_BUFFER, slot.modelsIdx);
             BufferData(GL_ARRAY_BUFFER, idx.size() * sizeof(float), idx.data(), GL_STATIC_DRAW);
             slot.modelsCount = (int)v.size();
-            slot.modelsSig = sig;
+            slot.modelsSig = unfinished ? ~sig : sig;  // (not done: the next frame goes on)
             rebuilds_++;
         }
         slot.modelsBase = base, slot.modelsParts = (int)cm.parts.size();

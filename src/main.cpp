@@ -2417,6 +2417,7 @@ int main(int argc, char** argv) {
         std::unique_ptr<World> world;
         int map = 0;
         float fade = 0;  // how black the screen is
+        int warm = 0;    // frames held black once built: the first draws of the new buffers and textures (80 ms and more) land here, not in the fade
         std::function<void()> then;
         bool active() const { return st != IDLE; }
     } mapLoad;
@@ -2469,7 +2470,7 @@ int main(int argc, char** argv) {
             cam.initialized = false;
             L.st = MapLoad::STEPS;
         } else if (L.st == MapLoad::STEPS) {
-            if (renderer.stepWorld(sim.world)) L.st = MapLoad::FADEIN;
+            if (renderer.stepWorld(sim.world) && ++L.warm > 8) L.st = MapLoad::FADEIN, L.warm = 0;
         } else if (L.st == MapLoad::FADEIN) {
             L.fade -= step * 0.8f;
             if (L.fade <= 0) {
