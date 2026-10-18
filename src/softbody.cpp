@@ -699,6 +699,52 @@ void Car::chassisForces(double h) {
         applyTorque(wh.assembly, tau, true);
         applyTorque(k.pickups, -tau);
     }
+    steeringStops(h);
+}
+
+// Steering stops. A steered knuckle turns about its kingpin as far as the tie rod lets it, and the
+// tie rod holds it only while it pulls or pushes across the steering arm: turned well past full
+// lock, the arm swings round until the tie rod lies along it, where it holds nothing, and past that
+// the linkage folds over the other way and locks there, the wheel turned ~100 degrees with every
+// beam at its own length. The 4Runner on 37s, at full lock in 4L with the pedal down, had its inside
+// tire (unloaded, spinning, rubbing the frame) wind its knuckle past that in half a second, and it
+// stayed there: undrivable, and nothing to repair. Real knuckles have stops (a boss on the knuckle
+// meets a bolt on the lower arm) a little past full lock: so do these, against the body.
+constexpr double kStopMargin = 0.08;     // rad past the inside wheel's full lock (~4.6 deg)
+constexpr double kStopK = 200000;        // N*m/rad (~3.5 kN*m a degree)
+constexpr double kStopC = 400;           // N*m*s/rad (about a third of critical on a 37 in wheel's knuckle)
+
+void Car::steeringStops(double h) {
+    if (chassis.nodes.empty() || restLocal.empty() || !spec || spec->frontSusp == SOLID_AXLE) return;
+    const V3 up = chassis.rot.rotate(V3(0, 1, 0));
+    for (Wheel& wh : wheels) {
+        if (!wh.front || wh.detached || wh.tieRod < 0 || wh.assembly.size() < 3) continue;
+        // Its steer against the body (+: turned left), from the hub's axle line.
+        const V3 a = chassis.rot.unrotate(nodes[wh.outer].p - nodes[wh.inner].p), a0 = restLocal[wh.outer] - restLocal[wh.inner];
+        double d = std::atan2(a.x, a.z) - std::atan2(a0.x, a0.z);
+        d = std::remainder(d, 2 * M_PI);
+        const double rate = clampd((d - wh.stopSteer) / h, -30.0, 30.0);  // (a knuckle doesn't turn faster: a fresh car or a reset starts from 0)
+        wh.stopSteer = d;
+        // The stop: the inside wheel's angle at the rack's full lock (Ackermann, as the rack sets it), plus a little.
+        const double track = std::fabs(restLocal[wh.outer].z + restLocal[wh.inner].z);
+        const double dt = wheelbase > 0.5 ? 0.5 * track / wheelbase * 0.7 : 0;
+        const double stop = std::atan(1.0 / (1.0 / std::tan(0.6) - dt)) + kStopMargin;
+        const double over = std::fabs(d) - stop;
+        if (over <= 0) continue;
+        const double sgn = d > 0 ? 1.0 : -1.0;
+        const double T = std::max(0.0, kStopK * over + kStopC * rate * sgn);
+        const V3 tau = up * (-sgn * T);
+        // Its reaction goes into the arms' pick-ups (the lower arm carries the stop's bolt).
+        if (wh.stopPickups.empty())
+            for (int bi : wh.mounts) {
+                const Beam& b = beams[bi];
+                const int far = std::find(wh.assembly.begin(), wh.assembly.end(), b.a) != wh.assembly.end() ? b.b : b.a;
+                if (std::find(wh.stopPickups.begin(), wh.stopPickups.end(), far) == wh.stopPickups.end()) wh.stopPickups.push_back(far);
+            }
+        if (wh.stopPickups.size() < 3) continue;
+        applyTorque(wh.assembly, tau, true);
+        applyTorque(wh.stopPickups, -tau);
+    }
 }
 
 void Car::chassisGroupForces(ChassisFrame& cf, double h) {

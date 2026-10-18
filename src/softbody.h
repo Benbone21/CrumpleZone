@@ -118,6 +118,8 @@ struct Wheel {
     double motionRatio = 1;     // coil-over travel per unit of wheel travel
     double tieOffset = 0;       // permanent bend in the tie rod (m): the wheel is knocked out of line
     double brakeReaction = 0;   // brake torque passed to the knuckle (smoothed by pad/caliper give)
+    double stopSteer = 0;       // a steered knuckle's angle against the body last step (rad, + left): its steering stop's damping
+    std::vector<int> stopPickups;  // ...and the arms' body ends, which take the stop's reaction (filled on first use)
     double abs = 1;             // ABS: share of brake pressure let through to this wheel
     double tcBrake = 0;         // brake traction control: share of this brake applied to stop it spinning
     double escBrake = 0;        // stability control: share of this brake applied to stop a spin
@@ -678,6 +680,7 @@ public:
 private:
     void applyTorque(const std::vector<int>& set, const V3& torque, bool byMass = false);
     void chassisForces(double h);
+    void steeringStops(double h);
     void chassisGroupForces(ChassisFrame& cf, double h);
     void releaseFromFrame(const Beam& b);
     void updateChassisMembership();
