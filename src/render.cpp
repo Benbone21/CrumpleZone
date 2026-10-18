@@ -3249,6 +3249,10 @@ void Renderer::buildFigures() {
         else if (pl.set.empty()) appendPlaced(v, pl, mk::modelMesh(pl.id));
         else appendPlaced(v, pl, mk::modelMesh(pl.id, pl.set));
     }
+    if (!people.v.empty()) {
+        const V3 ax[3] = {V3(1, 0, 0), V3(0, 1, 0), V3(0, 0, 1)};
+        appendModel(v, people, V3(0, 0, 0), ax, 1.0);
+    }
     const bool modelled = mk::findModel("person") != nullptr;
     for (const Figure& fg : figures) {
         if (modelled) {  // the picked person (modelkit.h), posed for this frame

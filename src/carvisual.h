@@ -80,7 +80,19 @@ struct VisualTemplate {
     std::vector<Bind> sculptBind; // authored body mesh, bound to cage / moving panels
     std::vector<Bind> partBind;  // one per part triangle corner
     std::vector<float> partColor;  // r, g, b, material per triangle
+
+    // The driver's seat (people.h draws the driver and the steering wheel, which turns, there): the hip point on the
+    // seat, the wheel's middle and the right foot on the throttle, each bound to the body like a part (it rides its
+    // dents and flex). Rest positions in the car's frame (x ahead, y up, z to the right).
+    struct Cockpit {
+        bool on = false;
+        Bind hip{}, wheel{}, pedal{};
+        V3 hipL, wheelL, pedalL;
+        float wheelR = 0.17f, tilt = 0.45f;  // the wheel's radius (m) and lean back from upright (rad)
+    } cockpit;
 };
+// Where a bound point is now (on the car's live nodes, world space).
+V3 boundPoint(const Car& car, const VisualTemplate::Bind& b);
 
 // Built once per vehicle type (cached).
 const VisualTemplate& visualTemplate(const Car& car);

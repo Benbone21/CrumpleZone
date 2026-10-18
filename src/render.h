@@ -105,6 +105,8 @@ public:
         double stride = 0;  // walk cycle phase (radians), legs and arms swing with it
     };
     std::vector<Figure> figures;
+    // People posed this frame (people.h): you, drivers in their seats, buddies, and the steering wheels, in world space.
+    mk::Mesh people;
     // Code-made models (modelkit.h) drawn this frame only: a jack under a wheel, the tools in
     // your hands (handwork.h)...
     std::vector<Placed> frameModels;

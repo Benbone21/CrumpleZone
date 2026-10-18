@@ -25,6 +25,26 @@ double smooth(double x) { return x * x * (3 - 2 * x); }
 
 struct Scene {
     Handwork& out;
+    // A hand on the last model put down: `along` m from its origin down its X (its grip, for a tool), the thumb toward its head.
+    void hold(int side, double along = 0, double grip = 0.95) {
+        if (out.models.empty()) return;
+        const Placed& pl = out.models.back();
+        out.hands[side].on = true;
+        out.hands[side].p = pl.p + pl.ax[0] * (along * pl.scale.x);
+        out.hands[side].axis = pl.ax[0];
+        out.hands[side].grip = grip;
+    }
+    // Both hands either side of the last model's middle (`half` m out along its Z), gripping across it.
+    void both(double half, double up = 0) {
+        if (out.models.empty()) return;
+        const Placed& pl = out.models.back();
+        for (int s = 0; s < 2; s++) {
+            out.hands[s].on = true;
+            out.hands[s].p = pl.p + pl.ax[2] * (s == 0 ? -half : half) + pl.ax[1] * up;
+            out.hands[s].axis = pl.ax[0] * (s == 0 ? 1.0 : -1.0);
+            out.hands[s].grip = 0.7;
+        }
+    }
     // A model turned so its front is X and its up is (near) Y.
     void put(const char* id, const V3& at, V3 X, V3 Y, double scale = 1) {
         if (!id || !*id || !mk::findModel(id)) return;
@@ -61,6 +81,7 @@ struct Scene {
         const double lift = c < stroke ? 0.0 : 0.02 * std::sin((c - stroke) / (1 - stroke) * M_PI);
         const V3 d = left * std::cos(phi) - u * std::sin(phi);  // (from the stud to the grip)
         put(id, top + axis * (-m.lo.y - engage + lift) + d * reach, -d, axis);
+        hold(1, 0.02);
     }
     // A hammer tapping at `at`, swung from your side (toward is from `at` to you).
     void tap(const char* id, const V3& at, const V3& toward, double phase) {
@@ -68,12 +89,15 @@ struct Scene {
         const double lift = 0.12 + 0.9 * std::pow(std::max(0.0, std::sin(phase)), 2), reach = mk::modelMesh(id).hi.x;
         const V3 grip = at + toward * (reach * std::cos(lift)) + kUp * (reach * std::sin(lift));
         put(id, grip, at - grip, kUp);
+        hold(1, 0.05);
     }
     // A bar levering at `at`.
     void lever(const char* id, const V3& at, const V3& toward, double phase) {
         if (!id || !mk::findModel(id)) return;
         const V3 grip = at + norm(toward * 0.42 + kUp * (0.22 + 0.1 * std::sin(phase))) * mk::modelMesh(id).hi.x;
         put(id, grip, at - grip, kUp);
+        hold(1, 0.04);
+        hold(0, std::min(0.3, mk::modelMesh(id).hi.x * 0.35));
     }
 };
 
@@ -137,8 +161,23 @@ Handwork handwork(const Sim& sim, const Walker& wk, const Interact& ia, const V3
     const V3 toward = flat(eye - o.at);
 
     // What you carry while you walk.
-    if (wk.holdingJack && !(working && o.kind == IA_PLACE_JACK)) sc.put("jack", eye + flat(F) * 0.55 + R * 0.1 - kUp * 1.05, flat(F), kUp);
-    if (wk.holdingChain && !(working && o.kind == IA_FIT_CHAIN)) sc.put("chain_bundle", eye + flat(F) * 0.5 + R * 0.05 - kUp * 0.75, flat(F), kUp);
+    // (Your hand on the jack's bar near its top; the chain held in both.)
+    auto jackGrip = [&](const Placed& pl) {
+        if (!mk::findModel("jack")) return;
+        const mk::Mesh& m = mk::modelMesh("jack");
+        h.hands[1].on = true;
+        h.hands[1].p = pl.p + pl.ax[0] * (0.5 * (m.lo.x + m.hi.x)) + pl.ax[1] * (m.hi.y - 0.12) + pl.ax[2] * (0.5 * (m.lo.z + m.hi.z));
+        h.hands[1].axis = pl.ax[1];
+        h.hands[1].grip = 1;
+    };
+    if (wk.holdingJack && !(working && o.kind == IA_PLACE_JACK)) {
+        sc.put("jack", eye + flat(F) * 0.55 + R * 0.1 - kUp * 1.05, flat(F), kUp);
+        if (!h.models.empty() && h.models.back().id == std::string("jack")) jackGrip(h.models.back());
+    }
+    if (wk.holdingChain && !(working && o.kind == IA_FIT_CHAIN)) {
+        sc.put("chain_bundle", eye + flat(F) * 0.5 + R * 0.05 - kUp * 0.75, flat(F), kUp);
+        sc.both(0.12, 0.05);
+    }
     // A tool, part or anchor out of the back (trunk.h): held out in front of the right hand.
     if (wk.hand.any() && !working) {
         const char* id = trunk::model(wk.hand);
@@ -149,7 +188,15 @@ Handwork handwork(const Sim& sim, const Walker& wk, const Interact& ia, const V3
             const V3 grip = eye + F * 0.5 + R * 0.2 - U * 0.24 + kUp * bob;
             sc.put(id, grip, flat(F) * 0.95 + U * 0.3 - R * 0.15, kUp, k);
             h.models.back().bare = true;  // (an anchor without the soil, snow or rock it's shown set in)
-        }  // (no hand drawn: just the thing)
+            // In your right hand: a tool by its grip (its origin), anything else by its middle.
+            if (wk.hand.kind == TK_TOOL) sc.hold(1, 0.03);
+            else {
+                const Placed& pl = h.models.back();
+                const V3 mid = (m.lo + m.hi) * 0.5;
+                h.hands[1].on = true, h.hands[1].grip = 0.75, h.hands[1].axis = pl.ax[0];
+                h.hands[1].p = pl.p + (pl.ax[0] * mid.x + pl.ax[1] * (m.lo.y * 0.4 + mid.y * 0.6) + pl.ax[2] * mid.z) * k;
+            }
+        }
     }
     if (!working) return h;
 
@@ -189,7 +236,10 @@ Handwork handwork(const Sim& sim, const Walker& wk, const Interact& ia, const V3
         h.wheel.chain = o.kind == IA_FIT_CHAIN ? t : 1 - t;
         // The chain's bundle comes up to the top of the tread as it's wrapped round.
         const V3 top = hubOf(*car, *wh) + kUp * (wh->R * 1.02) + norm(car->nodes[wh->outer].p - car->nodes[wh->inner].p) * (wh->width * 0.3);
-        if (o.kind == IA_FIT_CHAIN && mk::findModel("chain_bundle")) sc.put("chain_bundle", lerp(eye + F * 0.4 + R * 0.2 - kUp * 0.55, top, 0.3), flat(F), kUp);
+        if (o.kind == IA_FIT_CHAIN && mk::findModel("chain_bundle")) {
+            sc.put("chain_bundle", lerp(eye + F * 0.4 + R * 0.2 - kUp * 0.55, top, 0.3), flat(F), kUp);
+            sc.both(0.12, 0.05);
+        }
         break;
     }
     case IA_RAISE_JACK:
@@ -206,6 +256,7 @@ Handwork handwork(const Sim& sim, const Walker& wk, const Interact& ia, const V3
         pl.ax[0] = x, pl.ax[1] = kUp, pl.ax[2] = cross(x, kUp);
         for (auto& kv : pl.set) kv.second *= s;
         h.models.push_back(pl);
+        if (s < 0.85) jackGrip(pl);  // (let go as it settles)
         break;
     }
     case IA_FIX: {
@@ -229,6 +280,7 @@ Handwork handwork(const Sim& sim, const Walker& wk, const Interact& ia, const V3
             if (car && wh) along = norm(car->nodes[wh->outer].p - car->nodes[wh->inner].p);
             const V3 at = lerp(work + norm(workAxis + kUp * 0.3) * 0.45, work, s);
             sc.put(repairPartModel((RepairPart)o.part), at, along, kUp);
+            if (s < 0.95) sc.both(0.1);
         } else if (o.tool >= 0) {
             const Tool tool = (Tool)o.tool;
             switch (tool) {
@@ -255,6 +307,7 @@ Handwork handwork(const Sim& sim, const Walker& wk, const Interact& ia, const V3
         if (o.part >= 0) {
             const double s = smooth(std::min(1.0, t / 0.8));
             sc.put(repairPartModel((RepairPart)o.part), lerp(rim + toward * 0.4 + kUp * 0.3, lw.p, s), lw.axis(), kUp);
+            if (s < 0.95) sc.both(0.1);
         } else if (o.tool >= 0) {
             sc.lever(toolId((Tool)o.tool), rim, toward, secs / 1.4 * M_PI * 2);
         }

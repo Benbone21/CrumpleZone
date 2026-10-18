@@ -480,6 +480,23 @@ struct PartBuilder {
     std::vector<float> color;  // 4 per triangle
     std::vector<int> group;    // what each triangle rides on
     int current = ON_BODY;
+    // The driver's place (car frame, at rest): hip point on the seat, the steering wheel's middle, radius and lean
+    // back from upright, and where the right foot rests on the throttle. The wheel itself is drawn each frame (people.h),
+    // turned with the steering.
+    struct Cockpit {
+        bool on = false;
+        V3 hip, wheel, pedal;
+        double R = 0.17, tilt = 0.45;
+    } cockpit;
+    void setCockpit(V3 hip, const V3& wheel, double R, double tilt, double floor, double frontLimit, double roof) {
+        // (Sat low enough for the eyes, 0.74 m over the hip, to have a hand's room under the roof.)
+        hip.y = std::max(floor + 0.17, std::min(hip.y, roof - 0.16 - 0.74));
+        cockpit.on = true, cockpit.hip = hip, cockpit.wheel = wheel, cockpit.R = R, cockpit.tilt = tilt;
+        // The ankle on the pedal: down by the floor, as far forward as a slightly bent leg (0.86 m hip to ankle) reaches.
+        const double y = floor + 0.10, dy = hip.y - y, reach = 0.80;
+        const double dx = std::sqrt(std::max(0.09, reach * reach - dy * dy));
+        cockpit.pedal = V3(std::min(hip.x + dx, frontLimit), y, hip.z + 0.09);
+    }
     void tri(const V3& a, const V3& b, const V3& c, const V3& col, int mat) {
         corners.insert(corners.end(), {a, b, c});
         color.insert(color.end(), {(float)col.x, (float)col.y, (float)col.z, (float)mat});
@@ -1042,11 +1059,7 @@ void buildOpenFrame(const Car& car, PartBuilder& pb) {
             pb.box(V3(sx - 0.20, sh + 0.30, s * (szz + 0.12)), V3(0.012, 0.28, 0.025), belt, SM_MATTE);
         }
         const V3 wc(cabF - 0.38, F + 0.58, -szz);
-        for (int k = 0; k < 14; k++) {
-            const double a0 = 2 * M_PI * k / 14, a1 = 2 * M_PI * (k + 1) / 14, R = 0.17, tilt = 0.5;
-            auto ring = [&](double a) { return wc + V3(std::sin(a) * R * std::sin(tilt), std::sin(a) * R * std::cos(tilt), std::cos(a) * R); };
-            pb.cylinder(ring(a0), ring(a1), 0.016, 5, kBlack, SM_MATTE, false);
-        }
+        pb.setCockpit(V3(sx - 0.09, sh + 0.14, -szz), wc, 0.17, 0.5, F + 0.02, cabF + 0.1, roofY);  // (the wheel's drawn each frame, turning)
         pb.cylinder(wc, wc + V3(0.36, -0.14, 0), 0.022, 6, kDarkGrey, SM_MATTE);
         pb.box(V3(cabF - 0.10, F + 0.52, 0), V3(0.05, 0.09, 0.62), V3(0.04, 0.04, 0.045), SM_MATTE);  // dash
         pb.box(V3(cabF - 0.15, F + 0.64, 0), V3(0.012, 0.04, 0.30), V3(0.05, 0.4, 0.05), SM_EMISSIVE);  // gauge strip
@@ -1118,11 +1131,7 @@ void buildOpenFrame(const Car& car, PartBuilder& pb) {
             pb.box(V3(sx - 0.18, sh + 0.28, s * (szz + 0.11)), V3(0.012, 0.26, 0.025), belt, SM_MATTE);
         }
         const V3 wc(cabF - 0.34, F + 0.62, -szz);
-        for (int k = 0; k < 14; k++) {
-            const double a0 = 2 * M_PI * k / 14, a1 = 2 * M_PI * (k + 1) / 14, R = 0.15, tilt = 0.55;
-            auto ring = [&](double a) { return wc + V3(std::sin(a) * R * std::sin(tilt), std::sin(a) * R * std::cos(tilt), std::cos(a) * R); };
-            pb.cylinder(ring(a0), ring(a1), 0.015, 5, kBlack, SM_MATTE, false);
-        }
+        pb.setCockpit(V3(sx - 0.08, sh + 0.14, -szz), wc, 0.15, 0.55, F + 0.02, cabF + 0.1, roofY);
         pb.cylinder(wc, wc + V3(0.32, -0.12, 0), 0.02, 6, kDarkGrey, SM_MATTE);
         pb.box(V3(cabF - 0.04, F + 0.58, 0), V3(0.06, 0.08, 0.56), V3(0.05, 0.05, 0.055), SM_MATTE);
         pb.box(V3(cabF - 0.10, F + 0.68, 0), V3(0.012, 0.04, 0.22), V3(0.05, 0.4, 0.05), SM_EMISSIVE);
@@ -1224,7 +1233,7 @@ void buildParts(const Car& car, PartBuilder& pb) {
     if (!hasCabin) return;
     const size_t cabinStart=pb.corners.size();
     const double cabLen = cabFront - cabRear;
-    const double seatY = vs.model==1 ? 0.30 : beltY - 0.4;
+    const double seatY = vs.model==1 ? 0.30 : beltY - 0.56;  // (the cushion over half a metre under the windows: a seated driver's eyes come 0.3 m over them)
     const double driverZ = vs.model==1 ? -0.35 : -W * 0.23;
 
     // Dashboard, steering wheel, seats.
@@ -1235,30 +1244,23 @@ void buildParts(const Car& car, PartBuilder& pb) {
     } else pb.box(V3(cabFront - 0.18, beltY - 0.06, 0), V3(0.16, 0.09, W / 2 - 0.12), V3(0.1, 0.1, 0.11), SM_MATTE);
     double frontSeatX = vs.model==1 ? -0.07 : cabFront - std::min(0.95, cabLen * 0.55);
     V3 wheelC(frontSeatX + 0.52, vs.model==1 ? 0.66 : beltY + 0.02, driverZ);
-    {
-        const int segs = 16;
-        const double R = vs.model==1 ? 0.135 : 0.17, r = 0.018, tilt = 0.45;
-        for (int k = 0; k < segs; k++) {
-            double a0 = 2 * M_PI * k / segs, a1 = 2 * M_PI * (k + 1) / segs;
-            auto ringPt = [&](double a) {
-                V3 p(0, std::sin(a) * R, std::cos(a) * R);
-                return wheelC + V3(p.y * std::sin(tilt), p.y * std::cos(tilt), p.z);
-            };
-            pb.cylinder(ringPt(a0), ringPt(a1), r, 5, kBlack, SM_MATTE, false);
-        }
-        pb.cylinder(wheelC, wheelC + V3(0.3, -0.05, 0), 0.025, 6, kDarkGrey, SM_MATTE);  // column
-        pb.cylinder(wheelC + V3(0, 0.02, -0.15), wheelC + V3(0, 0.02, 0.15), 0.012, 4, kBlack, SM_MATTE, false);
-    }
+    pb.cylinder(wheelC, wheelC + V3(0.3, -0.05, 0), 0.025, 6, kDarkGrey, SM_MATTE);  // column (the wheel's drawn each frame, turning)
     const V3 seatCol(0.16, 0.15, 0.15);
     auto seat = [&](double x, double z, double halfW) {
         pb.box(V3(x, seatY, z), V3(0.24, 0.06, halfW), seatCol, SM_MATTE);
         if(vs.model==1) {
             pb.obox(V3(x-0.20,seatY+0.25,z),norm(V3(1,0.24,0)),norm(V3(-0.24,1,0)),V3(0,0,1),0.05,0.26,halfW*0.83,seatCol,SM_MATTE);
             for(int side:{-1,1})pb.box(V3(x-0.02,seatY+0.09,z+side*halfW*0.9),V3(0.22,0.07,0.035),kBlack,SM_MATTE);
-        } else pb.box(V3(x - 0.24, seatY + 0.3, z), V3(0.06, 0.3, halfW * 0.95), seatCol, SM_MATTE);
-        pb.box(V3(x - 0.25, seatY + (vs.model==1 ? 0.56 : 0.66), z), V3(0.05, 0.08, halfW * 0.55), seatCol, SM_MATTE);
+        } else pb.box(V3(x - 0.24, seatY + 0.34, z), V3(0.06, 0.33, halfW * 0.95), seatCol, SM_MATTE);
+        pb.box(V3(x - 0.25, seatY + (vs.model==1 ? 0.56 : 0.8), z), V3(0.05, 0.08, halfW * 0.55), seatCol, SM_MATTE);
     };
     seat(frontSeatX, driverZ, 0.23);
+    {
+        const double lift = vs.model == 1 ? vs.layerY[0] - 0.11 : 0.0;  // (the Jesko's cabin is raised below)
+        pb.setCockpit(V3(frontSeatX - (vs.model == 1 ? 0.06 : 0.08), seatY + (vs.model == 1 ? 0.12 : 0.13) + lift, driverZ), wheelC + V3(0, lift, 0),
+                      vs.model == 1 ? 0.135 : 0.17, 0.45, (vs.model == 1 ? seatY - 0.06 : floorY) + lift, cabFront + 0.3,
+                      vs.model == 1 ? 1e9 : vs.layerY[std::min((int)vs.layerY.size() - 1, gk1 + 1)]);
+    }
     seat(frontSeatX, -driverZ, 0.23);
     // Rear bench, far enough forward to sit under the roof (fastbacks slope down early).
     // (Its back kept inside the cab: a pickup's back wall is right behind the rear seat.)
@@ -1518,6 +1520,13 @@ const VisualTemplate& visualTemplate(const Car& car) {
         } else t.partBind.push_back(bindPoint(car, pb.corners[k]));
     }
     t.partColor = pb.color;
+    if (pb.cockpit.on && !car.isProp()) {
+        VisualTemplate::Cockpit& ck = t.cockpit;
+        ck.on = true;
+        ck.hipL = pb.cockpit.hip, ck.wheelL = pb.cockpit.wheel, ck.pedalL = pb.cockpit.pedal;
+        ck.hip = bindPoint(car, ck.hipL), ck.wheel = bindPoint(car, ck.wheelL), ck.pedal = bindPoint(car, ck.pedalL);
+        ck.wheelR = (float)pb.cockpit.R, ck.tilt = (float)pb.cockpit.tilt;
+    }
     slot.t = std::move(made);
     slot.ready.store(true, std::memory_order_release);
     return *slot.t;
@@ -1620,6 +1629,13 @@ void evalBody(const Car& car, const std::vector<V3>& P, const VisualTemplate& t,
             if (!tri) glass.insert(glass.end(), {a, c, d});
         }
     }
+}
+
+V3 boundPoint(const Car& car, const VisualTemplate::Bind& b) {
+    V3 p;
+    for (int k = 0; k < 8; k++)
+        if (b.w[k] != 0 && b.n[k] >= 0 && b.n[k] < (int)car.nodes.size()) p += car.nodes[b.n[k]].p * (double)b.w[k];
+    return p;
 }
 
 void evalParts(const std::vector<V3>& P, const VisualTemplate& t, std::vector<Vtx>& out) {
