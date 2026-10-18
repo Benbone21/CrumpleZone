@@ -669,13 +669,14 @@ void buildExtras(const Car& car, PartBuilder& pb) {
                 // On a sculpted shell they follow its arch cut, standing out from the side.
                 double cy, rr;
                 shellArch(vs, cy, rr);
-                const bool bronco = vs.model == 2;
-                if (bronco) {
+                const bool bronco = vs.model == 2, taco = vs.model == 6;
+                if (bronco || taco) {
                     // Wide Sasquatch-style flares: a rounded band swept round the squared opening,
                     // rising off the body side to a rolled lip ~8 cm proud of it.
                     static const double prof[][2] = {{0.155, 0.0}, {0.125, 0.035}, {0.085, 0.062}, {0.04, 0.078}, {0.012, 0.078},
                                                      {-0.006, 0.062}, {-0.008, 0.03}, {0.0, 0.0}};  // (out from the opening, out from the side)
                     const int np = 8, n = 24;
+                    const double sr = taco ? 0.8 : 1.0, sz = taco ? 0.7 : 1.0;  // (the Tacoma's are slimmer moldings)
                     auto archAt = [&](double d) { return V3(xw + d, std::max(shellArchHeight(vs, d), cy), 0); };
                     const V3 col = vs.trimTop > 0 ? trim : kBlack;
                     const int mat = vs.trimTop > 0 ? SM_PAINT : SM_MATTE;
@@ -686,9 +687,13 @@ void buildExtras(const Car& car, PartBuilder& pb) {
                             const V3 a = archAt(d), t = norm(archAt(std::min(rr, d + e)) - archAt(std::max(-rr, d - e)));
                             V3 nn(-t.y, t.x, 0);
                             if (dot(nn, a - V3(xw, cy, 0)) < 0) nn = nn * -1.0;
+                            if (taco && a.y < floorY - 0.01) {  // (ends at the rocker, not on down the opening)
+                                prev.clear();
+                                continue;
+                            }
                             std::vector<V3> ring;
-                            for (int q = 0; q < np; q++) ring.push_back(a + nn * prof[q][0] + V3(0, 0, s * (W / 2 - 0.006 + prof[q][1])));
-                            if (k > 0)
+                            for (int q = 0; q < np; q++) ring.push_back(a + nn * (prof[q][0] * sr) + V3(0, 0, s * (W / 2 - 0.006 + prof[q][1] * sz)));
+                            if (!prev.empty())
                                 for (int q = 0; q + 1 < np; q++) {
                                     if (s > 0) pb.quad(prev[q], prev[q + 1], ring[q + 1], ring[q], col, mat);
                                     else pb.quad(prev[q], ring[q], ring[q + 1], prev[q + 1], col, mat);
@@ -893,6 +898,29 @@ void buildCoachwork(const Car& car, PartBuilder& pb) {
         pb.box(V3(xr,floor+0.12,0),V3(0.06,0.10,W/2-0.10),steel,SM_MATTE);
         pb.box(V3(xr-0.05,floor+0.215,0),V3(0.03,0.008,0.35),V3(0.08,0.08,0.085),SM_MATTE);
         pb.box(V3(xr-0.09,floor+0.06,0),V3(0.04,0.035,0.035),V3(0.08,0.08,0.08),SM_METAL);
+    }
+    if (v.model == 6) {
+        // 2020-23 TRD Pro: the hood scoop, a silver TRD skid plate under the black lower lip,
+        // tube rock rails, a black step bumper with a hitch.
+        const V3 steel(0.035,0.035,0.038), skid(0.32,0.32,0.33);
+        pb.current=ON_HOOD;
+        {
+            const double xs=L/2-0.62, ys=shellTopY(v,xs);
+            pb.obox(V3(xs,ys+0.025,0),norm(V3(1,-0.12,0)),norm(V3(0.12,1,0)),V3(0,0,1),0.19,0.03,0.26,v.paintColor[0]>=0 ? V3(v.paintColor[0],v.paintColor[1],v.paintColor[2]) : car.color,SM_PAINT);
+            pb.obox(V3(xs+0.17,ys+0.035,0),norm(V3(1,-0.6,0)),norm(V3(0.6,1,0)),V3(0,0,1),0.035,0.004,0.22,steel,SM_MATTE);  // the black inlet
+        }
+        pb.current=ON_BODY;
+        pb.obox(V3(L/2-0.10,floor-0.02,0),norm(V3(1,0.35,0)),norm(V3(-0.35,1,0)),V3(0,0,1),0.20,0.012,0.40,skid,SM_METAL);
+        pb.box(V3(L/2+0.005,floor+0.03,0),V3(0.006,0.014,0.06),V3(0.6,0.06,0.04),SM_PAINT);  // the red TRD badge
+        for (int sd : {-1,1}) {
+            pb.cylinder(V3(-0.95,floor-0.01,sd*(W/2-0.01)),V3(0.80,floor-0.01,sd*(W/2-0.01)),0.03,8,rubber,SM_MATTE);
+            for (double x : {-0.95,0.80})
+                pb.cylinder(V3(x,floor-0.01,sd*(W/2-0.01)),V3(x,floor+0.01,sd*(W/2-0.13)),0.026,6,rubber,SM_MATTE);
+        }
+        const double xr=-L/2-0.02;
+        pb.box(V3(xr,floor+0.10,0),V3(0.07,0.09,W/2-0.06),steel,SM_MATTE);
+        pb.box(V3(xr-0.06,floor+0.19,0),V3(0.02,0.008,0.4),V3(0.08,0.08,0.085),SM_MATTE);  // step pad
+        pb.box(V3(xr-0.11,floor+0.04,0),V3(0.04,0.035,0.035),V3(0.08,0.08,0.08),SM_METAL);  // hitch
     }
     if(v.model==1)for(size_t i=firstCorner;i<pb.corners.size();i++)pb.corners[i].y+=v.layerY[0]-0.11;
 }

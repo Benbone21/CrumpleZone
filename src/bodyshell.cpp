@@ -174,6 +174,7 @@ struct Style {
     double sillDrop = 0;       // the drawn rocker hangs this far below the lattice floor
     double extraTuck = 0;      // the drawn greenhouse leans in this much more than the cage does
     bool panelOffset = false;  // doors and the like keep the drawn shape off their physics sheet (else they lie on it)
+    double hoodLift = 0;       // the drawn hood's nose stands this much over the lattice's, fading out at the cowl
 };
 
 const Style* styleFor(const VehicleSpec& vs) {
@@ -188,10 +189,11 @@ const Style* styleFor(const VehicleSpec& vs) {
     // 1990 EF Civic hatch: a low wedge nose, soft shoulders, a slightly bowed side and a
     // sloping glass hatch.
     static const Style civic{3, 0.24, 0.13, 0.09, 0.28, 0.06, 0.07, 0.07, 0.03, 0.025, 0.025, 0.07, 0.05, 2.0, 0.05};
-    // 3rd-gen Tacoma double cab: a tall, rounded nose with a domed hood over a big grille,
-    // a cab with a gently curved roof, then the bed: slab sides up to a rail at the cab's
-    // belt line, square at the tailgate; wheel arches with a squarish flare.
-    static const Style tacoma{4, 0.20, 0.05, 0.08, 0.12, 0.04, 0.06, 0.06, 0.02, 0.02, 0.012, 0.06, 0.03, 2.6, 0.07};
+    // 3rd-gen Tacoma double cab (2020-23 TRD Pro): a tall, blunt, rounded nose (the hood
+    // nearly level from the grille back to the cowl) over a big grille, softly radiused
+    // fender tops and corners, a cab with a gently curved roof, then the bed: slab sides up
+    // to a rail at the cab's belt line, square at the tailgate; squarish wheel openings.
+    static const Style tacoma{4, 0.15, 0.07, 0.06, 0.16, 0.06, 0.07, 0.06, 0.025, 0.02, 0.012, 0.06, 0.03, 2.6, 0.07, 0.0, 0.0, true, 0.15};
     // 1972 K5 Blazer: a long box with a flat hood and a flat roof, softly rounded corners,
     // round wheel openings, an upright windshield and tailgate, the removable top over the
     // back half, a crease along the side at the belt.
@@ -277,6 +279,7 @@ struct ShellLines {
                     double t = (x - hoodX[k + 1]) / (hoodX[k] - hoodX[k + 1]);
                     y = hoodY[k + 1] + (hoodY[k] - hoodY[k + 1]) * t;
                 }
+            y += st.hoodLift * std::min(1.0, std::max(0.0, (x - xa) / std::max(0.1, xf - xa)));
             // The hood's leading edge rolls down into the grille.
             y -= st.noseRoll * std::pow(smoothstep(xf - st.noseLen, xf, x), 2.0);
         } else {
@@ -406,9 +409,9 @@ void shellArch(const VehicleSpec& vs, double& centerY, double& radius) {
         centerY = vs.layerY[0] - 0.08;
         radius = 0.47;
     } else if (id == "tacoma") {
-        // Tall openings with room over the 265/70R16s (a ~13 cm gap), raised with the body.
-        centerY = vs.layerY[0] - 0.08;
-        radius = 0.50;
+        // Tall openings a hand over the 265/70R16s (~10 cm), raised with the body.
+        centerY = vs.layerY[0] - 0.10;
+        radius = 0.48;
     } else {
         // 4Runner: arches sized for the factory 265/70R16 (radius 0.389 m) with a ~8 cm
         // gap, raised with the body: lifts and body lifts open up the gap over bigger tires.
@@ -426,6 +429,13 @@ double shellArchHeight(const VehicleSpec& vs, double d) {
 }
 
 bool hasBodyShell(const VehicleSpec& vs) { return styleFor(vs) != nullptr; }
+
+double shellTopY(const VehicleSpec& vs, double x) {
+    const Style* style = styleFor(vs);
+    if (!style) return vs.layerY.back();
+    const ShellLines L(vs, *style);
+    return L.top(x) + (L.greenhouse(x) ? style->roofCrown : style->hoodCrown);
+}
 
 double shellRoofHalfWidth(const VehicleSpec& vs) {
     const Style* style = styleFor(vs);
