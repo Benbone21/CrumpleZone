@@ -1652,7 +1652,7 @@ void Car::wheelStep(double h, const World& w) {
         // Blowout: a tire at or past its speed rating can fail (tires.h). Each step past the rating rolls a
         // deterministic die. The owner decides: a remote car's tire arrives in the snapshot (popped).
         if (tire && !wh.popped && !wh.detached && !remote && blowoutsOn) {
-            const double frac = std::fabs(wh.omega) * wh.R * 3.6 / tireSpeedRatingKmh(spec->tireType);
+            const double frac = std::fabs(wh.omega) * wh.R * 3.6 / spec->tireRatingKmh();
             const double share = mass * 9.81 / std::max<size_t>(wheels.size(), 1);
             const double loadRatio = share > 0 ? wh.load / share : 1.0;
             const double rate = tireBlowoutRate(frac, loadRatio, wheelTempFactor(wh));

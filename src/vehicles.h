@@ -219,6 +219,11 @@ struct VehicleSpec {
     double fuelCapacity = 50;     // L in a full tank
     double jerryCan = 0;          // L in the spare can it carries (0: none)
     int tireType = TIRE_STREET;
+    // Factory tires rated above their type's usual speed rating (a hypercar's): applies only while the
+    // vehicle still runs the tire type it left the factory with (stockTireType); other tires use their type's.
+    double stockTireRatingKmh = 0;
+    int stockTireType = -1;
+    double tireRatingKmh() const;
     int snowChains = 0;           // chains carried, one per tire (fitted on foot: interact.h)
     double tireGrip = 1.1;    // peak friction coefficient on pavement
     double lateralGrip = 1.0; // cornering grip as a share of braking/traction grip (blocky off-road treads squirm)

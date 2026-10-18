@@ -78,6 +78,16 @@ SCENARIO(blowoutRatings, "blowout/ratings", "Speed ratings: mud and snow 160, al
     ctx.check("dice are uniform in [0,1)", lo >= 0 && hi < 1 && std::fabs(sum / 20000 - 0.5) < 0.01, std::to_string(sum / 20000));
 }
 
+SCENARIO(blowoutStockRating, "blowout/stock-rating", "The Jesko's stock semi-slicks are rated 500 km/h; any other tire fitted uses its type's rating (270 for race slicks)") {
+    VehicleSpec j = vehicleCatalog()[1];
+    ctx.check("stock tires: 500", j.tireRatingKmh() == 500, std::to_string(j.tireRatingKmh()));
+    j.tireType = TIRE_RACE_SLICK;
+    ctx.check("race slicks fitted: 270", j.tireRatingKmh() == 270);
+    j.tireType = TIRE_STREET;
+    ctx.check("street tires fitted: 180", j.tireRatingKmh() == 180);
+    ctx.check("a Bronco has no stock override", bronco().tireRatingKmh() == 170);
+}
+
 SCENARIO(blowoutBelow, "blowout/below-rating", "A Bronco held at 95% of its tires' rating for three minutes never blows a tire") {
     Car& c = fresh(ctx, 5);
     const Run r = hold(ctx, c, 170 * 0.95, 180);

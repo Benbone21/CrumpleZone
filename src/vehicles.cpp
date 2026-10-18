@@ -132,6 +132,10 @@ double tireSpeedRatingKmh(int t) {
     }
 }
 
+double VehicleSpec::tireRatingKmh() const {
+    return stockTireRatingKmh > 0 && tireType == stockTireType ? stockTireRatingKmh : tireSpeedRatingKmh(tireType);
+}
+
 const std::vector<DriveMode>& driveModes(TransferCase t) {
     // Part-time (Bronco): 4A drives both axles with the center free, so it's fine on dry
     // pavement; 4H and 4L lock the shafts together for loose ground and rock.
@@ -355,6 +359,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         jesko.arbRear = 20000;
         jesko.tireGrip = 1.32;  // Michelin Cup 2 R
         jesko.tireType = TIRE_SEMI_SLICK;
+        jesko.stockTireType = TIRE_SEMI_SLICK, jesko.stockTireRatingKmh = 500;  // Michelin Cup 2 R: rated past 450
         jesko.lateralGrip = 1.0;  // semi-slick Cup 2 R: corners as hard as it brakes (~1.2 g at skidpad speed; editor-ui's 1.15 spun it off the freeway at 330 km/h)
         jesko.drive = VehicleSpec::RWD;
         jesko.diffFront = DIFF_OPEN;

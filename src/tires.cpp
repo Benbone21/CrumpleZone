@@ -495,7 +495,7 @@ double Car::tireSpeedFrac() const {
     double f = 0;
     for (const Wheel& wh : wheels) {
         if (!wh.mounted || wh.detached || wh.popped || wh.debeaded) continue;
-        const double rating = tireSpeedRatingKmh(spec->tireType);
+        const double rating = spec->tireRatingKmh();
         f = std::max(f, std::fabs(wh.omega) * wh.R * 3.6 / rating);
     }
     return f;
