@@ -625,7 +625,7 @@ void buildExtras(const Car& car, PartBuilder& pb) {
     }
     if ((vs.extras & EXTRA_WINCH) && !armor && vs.model == 2) {
         // Winch tucked behind the Bronco's steel bumper: hawse fairlead and the hook.
-        const double xf = L / 2 + 0.052, y = floorY + 0.13;
+        const double xf = L / 2 + 0.103, y = floorY + 0.12;
         pb.box(V3(xf, y, 0), V3(0.008, 0.032, 0.11), V3(0.6, 0.6, 0.62), SM_METAL);
         pb.box(V3(xf + 0.006, y, 0), V3(0.004, 0.012, 0.06), V3(0.03, 0.03, 0.03), SM_MATTE);  // slot
         pb.box(V3(xf + 0.03, y - 0.01, 0), V3(0.02, 0.025, 0.01), V3(0.75, 0.12, 0.06), SM_MATTE);  // hook strap
@@ -669,19 +669,47 @@ void buildExtras(const Car& car, PartBuilder& pb) {
                 // On a sculpted shell they follow its arch cut, standing out from the side.
                 double cy, rr;
                 shellArch(vs, cy, rr);
-                const bool bronco = vs.model == 2;  // (chunky flares standing well out from the side)
-                const double grow = bronco ? 0.05 : 0.04, rw = rr + grow;
+                const bool bronco = vs.model == 2;
+                if (bronco) {
+                    // Wide Sasquatch-style flares: a rounded band swept round the squared opening,
+                    // rising off the body side to a rolled lip ~8 cm proud of it.
+                    static const double prof[][2] = {{0.155, 0.0}, {0.125, 0.035}, {0.085, 0.062}, {0.04, 0.078}, {0.012, 0.078},
+                                                     {-0.006, 0.062}, {-0.008, 0.03}, {0.0, 0.0}};  // (out from the opening, out from the side)
+                    const int np = 8, n = 24;
+                    auto archAt = [&](double d) { return V3(xw + d, std::max(shellArchHeight(vs, d), cy), 0); };
+                    const V3 col = vs.trimTop > 0 ? trim : kBlack;
+                    const int mat = vs.trimTop > 0 ? SM_PAINT : SM_MATTE;
+                    for (int s = -1; s <= 1; s += 2) {
+                        std::vector<V3> prev;
+                        for (int k = 0; k <= n; k++) {
+                            const double d = -rr + 2 * rr * k / n, e = 0.004;
+                            const V3 a = archAt(d), t = norm(archAt(std::min(rr, d + e)) - archAt(std::max(-rr, d - e)));
+                            V3 nn(-t.y, t.x, 0);
+                            if (dot(nn, a - V3(xw, cy, 0)) < 0) nn = nn * -1.0;
+                            std::vector<V3> ring;
+                            for (int q = 0; q < np; q++) ring.push_back(a + nn * prof[q][0] + V3(0, 0, s * (W / 2 - 0.006 + prof[q][1])));
+                            if (k > 0)
+                                for (int q = 0; q + 1 < np; q++) {
+                                    if (s > 0) pb.quad(prev[q], prev[q + 1], ring[q + 1], ring[q], col, mat);
+                                    else pb.quad(prev[q], ring[q], ring[q + 1], prev[q + 1], col, mat);
+                                }
+                            prev = ring;
+                        }
+                    }
+                    continue;
+                }
+                const double grow = 0.04, rw = rr + grow;
                 const int n = 20;
                 for (int s = -1; s <= 1; s += 2)
                     for (int k = 0; k < n; k++) {
                         double d0 = -rw + 2 * rw * k / n, d1 = -rw + 2 * rw * (k + 1) / n;
                         double y0 = shellArchHeight(vs, d0 * rr / rw) + grow, y1 = shellArchHeight(vs, d1 * rr / rw) + grow;
                         y0 = std::max(y0, floorY + 0.02), y1 = std::max(y1, floorY + 0.02);
-                        const double zf = W / 2 + (bronco ? 0.04 : 0.02);
+                        const double zf = W / 2 + 0.02;
                         V3 p0(xw + d0, y0, s * zf), p1(xw + d1, y1, s * zf);
                         if (len(p1 - p0) < 1e-4) continue;
                         V3 d = norm(p1 - p0), c = (p0 + p1) * 0.5;
-                        pb.obox(c, d, cross(V3(0, 0, 1), d), V3(0, 0, 1), len(p1 - p0) * 0.52, bronco ? 0.075 : 0.055, bronco ? 0.055 : 0.035,
+                        pb.obox(c, d, cross(V3(0, 0, 1), d), V3(0, 0, 1), len(p1 - p0) * 0.52, 0.055, 0.035,
                                 vs.trimTop > 0 ? trim : kBlack, vs.trimTop > 0 ? SM_PAINT : SM_MATTE);
                     }
                 continue;
@@ -833,14 +861,38 @@ void buildCoachwork(const Car& car, PartBuilder& pb) {
         // Sunroof inset in the roof, narrow glass seal (the sculpted shell draws its own).
         if (!hasBodyShell(v)) pb.box(V3(-0.10,v.layerY.back()+0.004,0),V3(0.31,0.004,0.34),rubber,SM_MATTE);
     } else if (v.model == 2) {
-        // Hardtop channels and roof panel joints; squared off-road bumper and skid.
+        // Hardtop channels and roof panel joints.
         for (double x : {-0.3,-1.05})
             pb.box(V3(x,v.layerY.back()+0.008,0),V3(0.006,0.007,W*0.44),rubber,SM_MATTE);
-        pb.box(V3(L/2-0.025,floor+0.13,0),V3(0.075,0.12,W*0.45),rubber,SM_MATTE);
+        // Badlands-style modular steel bumper: a flat face with a chamfered top, end caps
+        // swept back round the corners with fog lamps in them, red tow hooks, a silver bash
+        // plate under the middle sloping back to the skid plates.
+        const V3 steel(0.035,0.035,0.038), hook(0.62,0.06,0.04), skid(0.30,0.30,0.31);
+        const double xb=L/2+0.03, yb0=floor+0.02, yb1=floor+0.29, ybm=0.5*(yb0+yb1), hw=W/2-0.20;
+        pb.box(V3(xb,ybm-0.01,0),V3(0.07,(yb1-yb0)/2-0.01,hw),steel,SM_MATTE);
+        pb.obox(V3(xb-0.012,yb1-0.012,0),norm(V3(1,-1,0)),norm(V3(1,1,0)),V3(0,0,1),0.05,0.02,hw,steel,SM_MATTE);  // chamfer
+        pb.box(V3(xb+0.071,ybm+0.07,0),V3(0.002,0.008,hw-0.03),V3(0.02,0.02,0.02),SM_MATTE);                      // crease
         for (int sd : {-1,1}) {
-            pb.box(V3(0,floor+0.02,sd*(W/2+0.015)),V3(1.0,0.045,0.05),rubber,SM_MATTE);
-            pb.box(V3(L/2-0.03,floor+0.17,sd*0.64),V3(0.08,0.045,0.09),V3(0.14,0.14,0.15),SM_METAL);
+            const V3 ax=norm(V3(-0.75,0,sd*1.0)), ay(0,1,0), az=norm(cross(ax,ay));
+            const V3 cap=V3(xb-0.05,ybm-0.01,sd*(hw+0.09));
+            pb.obox(cap,ax,ay,az,0.13,(yb1-yb0)/2-0.025,0.06,steel,SM_MATTE);
+            const V3 face=cap+az*(az.x>0 ? 0.061 : -0.061);
+            pb.obox(face+ax*0.03+V3(0,0.01,0),ax,ay,az,0.03,0.022,0.002,V3(0.85,0.84,0.78),SM_EMISSIVE);                // fog lamp
+            pb.obox(face+ax*0.03+V3(0,0.01,0),ax,ay,az,0.042,0.033,0.0015,V3(0.02,0.02,0.02),SM_MATTE);                   // its bezel
+            pb.box(V3(xb+0.085,yb1-0.085,sd*0.47),V3(0.018,0.03,0.011),hook,SM_PAINT);                                 // tow hook
+            pb.box(V3(xb+0.1,yb1-0.105,sd*0.47),V3(0.01,0.012,0.011),hook,SM_PAINT);
+            pb.box(V3(0,floor-0.02,sd*(W/2-0.06)),V3(0.95,0.035,0.045),rubber,SM_MATTE);                             // rock rail
+            pb.cylinder(V3(-0.95,floor+0.005,sd*(W/2-0.005)),V3(0.95,floor+0.005,sd*(W/2-0.005)),0.032,8,rubber,SM_MATTE);
+            for (double x : {-0.95,0.95})
+                pb.cylinder(V3(x,floor+0.005,sd*(W/2-0.005)),V3(x,floor+0.02,sd*(W/2-0.12)),0.03,6,rubber,SM_MATTE);  // its legs in to the frame
         }
+        pb.box(V3(xb+0.072,ybm-0.035,0),V3(0.003,0.065,0.155),V3(0.88,0.88,0.84),SM_MATTE);  // plate
+        pb.obox(V3(xb-0.07,yb0-0.04,0),norm(V3(1,0.45,0)),norm(V3(-0.45,1,0)),V3(0,0,1),0.17,0.012,0.42,skid,SM_METAL);  // bash plate
+        // Rear: a black steel bumper with a step under the spare, a hitch.
+        const double xr=-L/2-0.03;
+        pb.box(V3(xr,floor+0.12,0),V3(0.06,0.10,W/2-0.10),steel,SM_MATTE);
+        pb.box(V3(xr-0.05,floor+0.215,0),V3(0.03,0.008,0.35),V3(0.08,0.08,0.085),SM_MATTE);
+        pb.box(V3(xr-0.09,floor+0.06,0),V3(0.04,0.035,0.035),V3(0.08,0.08,0.08),SM_METAL);
     }
     if(v.model==1)for(size_t i=firstCorner;i<pb.corners.size();i++)pb.corners[i].y+=v.layerY[0]-0.11;
 }

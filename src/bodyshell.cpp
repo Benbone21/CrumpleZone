@@ -153,9 +153,11 @@ const Style* styleFor(const VehicleSpec& vs) {
     // Third-generation 4Runner (2001-02): slab sides, a long flat hood and a blunt grille
     // face, a tall greenhouse leaning in ~4 degrees, upright liftgate.
     static const Style runner{1, 0.16, 0.09, 0.04, 0.10, 0.045, 0.05, 0.055, 0.012, 0.016, 0.0, 0.05, 0.04, 2.0, 0.06};
-    // 2021 Bronco 4-door: a box with crisp corners, a flat clamshell hood, an upright
-    // windshield and swing gate, squared-off wheel openings under black flares.
-    static const Style bronco{2, 0.07, 0.06, 0.015, 0.05, 0.03, 0.03, 0.035, 0.008, 0.010, 0.0, 0.03, 0.03, 2.8, 0.03, 0.07, 0.05};
+    // 2021 Bronco 4-door: a box, but every edge visibly radiused (the corners, the fender
+    // tops into the hood, the hood's nose rolling down into the grille, the roof's edges), a
+    // flat clamshell hood, an upright windshield and swing gate, a greenhouse leaning in,
+    // squared-off wheel openings under black flares.
+    static const Style bronco{2, 0.15, 0.11, 0.05, 0.20, 0.06, 0.08, 0.075, 0.012, 0.016, 0.008, 0.03, 0.03, 2.8, 0.03, 0.07, 0.09};
     // 1990 EF Civic hatch: a low wedge nose, soft shoulders, a slightly bowed side and a
     // sloping glass hatch.
     static const Style civic{3, 0.24, 0.13, 0.09, 0.28, 0.06, 0.07, 0.07, 0.03, 0.025, 0.025, 0.07, 0.05, 2.0, 0.05};
@@ -364,9 +366,10 @@ struct ShellLines {
 void shellArch(const VehicleSpec& vs, double& centerY, double& radius) {
     const std::string id = vs.id;
     if (id == "bronco") {
-        // Squared openings, tall enough for 35s, starting just below the rocker.
+        // Squared openings a hand over the 33s (a lift or bigger tires raise the body with
+        // them, so the 35s and 37s keep about the same gap), from just below the rocker.
         centerY = vs.layerY[0] - 0.02;
-        radius = 0.50;
+        radius = 0.475;
     } else if (id == "civic") {
         // Snug round arches over the 185/60R14s.
         centerY = vs.wheelRadius + 0.012;

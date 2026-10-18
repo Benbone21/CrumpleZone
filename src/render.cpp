@@ -979,7 +979,9 @@ void main(){
     kind = 0;
     float fw = max(fwidth(P.x) + fwidth(P.y) + fwidth(P.z), 1e-4);
     float az = abs(P.z);
-    float gBot = shBump + 0.03, gTop = shHood - 0.03, lampY = 0.5 * (gBot + gTop), lampZ = shW2 - 0.25;
+    // The grille a band about one lamp tall right under the hood's nose, the big round lamps at
+    // its outer ends; a strip of paint under it, then the steel bumper (carvisual.cpp).
+    float gTop = shHood - 0.012, gBot = gTop - 0.27, lampY = 0.5 * (gBot + gTop), lampZ = shW2 - 0.30, bbTop = shF + 0.30;
     if (region == 7 || region == 8) {
       base = vec3(region == 8 ? 0.025 : 0.05);
       kind = 5;
@@ -998,7 +1000,7 @@ void main(){
         }
       }
       if (P.x < shXr + 0.06 && P.y > shB - 0.40 && P.y < shB - 0.02) kind = P.y < shB - 0.31 ? 3 : 4;  // tail lamp wrap
-      if (P.x > shXf - 0.05 && abs(P.y - (lampY + 0.05)) < 0.03) kind = 8;                          // side marker
+      if (P.x > shXf - 0.27 && P.x < shXf - 0.19 && abs(P.y - lampY) < 0.022) kind = 8;              // side marker
     } else if (region == 1) {
       // Door frames in paint; the roof rail, B and C pillars and the rear quarter's edge black.
       if (P.y > shT - 0.12 || abs(P.x - shXB) < 0.075 || abs(P.x - shXC) < 0.06 || (P.x < shXr + 0.26 && P.y > shB + 0.01)) { base = vec3(0.035); kind = 1; }
@@ -1010,6 +1012,7 @@ void main(){
     } else if (region == 2 || region == 3) {
       if (win < 0.012) { base = vec3(0.02); kind = 1; }
       if (region == 2 && P.y < shB + 0.05) { base = vec3(0.03); kind = 1; }  // cowl
+      if (region == 2 && P.y > shT - 0.075) { base = vec3(0.035); kind = 1; }  // the hardtop's front edge over the glass
       if (region == 3) { base = vec3(0.035); kind = 1; }                     // hardtop round the back glass
       if (region == 3 && win < 0.0) kind = 0;
     } else if (region == 10) {
@@ -1019,30 +1022,23 @@ void main(){
       if (P.x > shXf - 0.32 && P.x < shXf - 0.12 && az > shW2 - 0.12) { base = vec3(0.03); kind = 1; }
       if (P.x < shXa + 0.06) { base = vec3(0.03); kind = 1; }  // cowl vent
     } else if (region == 5) {
-      if (P.y < gBot) {
-        base = vec3(0.04) * (0.9 + 0.2 * vnoise(P.zy * 40.0)); kind = 5;  // steel bumper
-        if (P.y < gBot - 0.05 && P.y > shF + 0.03 && az < 0.52 && az > 0.0) {  // bash plate: a raised steel face between the lamps
-          base = vec3(0.30, 0.30, 0.31); kind = 2;
-          if (P.y > gBot - 0.09 || az > 0.5) { base = vec3(0.03); kind = 1; }
-        }
-        float fog = length(vec2(az - 0.60, P.y - (gBot - 0.12)));
-        if (fog < 0.045) kind = 3;
-        else if (fog < 0.06) { base = vec3(0.02); kind = 1; }
-      }
-      if (P.y > gBot && P.y < gTop && az < shW2 - 0.05) {
+      if (P.y < bbTop) { base = vec3(0.04) * (0.9 + 0.2 * vnoise(P.zy * 40.0)); kind = 5; }  // (behind the bumper)
+      if (P.y > gBot - 0.03 && P.y < gBot - 0.01 && az < lampZ + 0.10) { base = vec3(0.03); kind = 1; }  // lip under the grille
+      if (P.y > gBot - 0.01 && P.y < gTop && az < lampZ + 0.15) {
         kind = 7;
-        // BRONCO: six letter blocks across the middle, a chrome bar out to each lamp.
-        float lx = (P.z + 0.40) / 0.133;
-        if (abs(P.y - lampY) < 0.05 && lx > 0.0 && lx < 6.0 && fract(lx) > 0.2 && fract(lx) < 0.8) { base = vec3(0.85); kind = 2; }
-        if (abs(P.y - lampY) < 0.011 && az > 0.43 && az < lampZ - 0.10) { base = vec3(0.75); kind = 2; }
-        if (abs(P.y - lampY + 0.085) < 0.008 && az < 0.58) kind = 1;                // slat
+        base = vec3(0.025);
+        // BRONCO: six letter blocks across the middle, a bar out to each lamp, slats above and below.
+        float lx = (P.z + 0.33) / 0.11;
+        if (abs(P.y - lampY) < 0.035 && lx > 0.0 && lx < 6.0 && fract(lx) > 0.16 && fract(lx) < 0.84) { base = vec3(0.86); kind = 2; }
+        if (abs(P.y - lampY) < 0.009 && az > 0.37 && az < lampZ - 0.10) { base = vec3(0.72); kind = 2; }
+        if (abs(abs(P.y - lampY) - 0.075) < 0.007 && az < lampZ - 0.14) kind = 1;  // slats
+        if (P.y > gTop - 0.012 || az > lampZ + 0.135) { base = vec3(0.05); kind = 1; }  // the grille's frame
         float r = length(vec2(az - lampZ, P.y - lampY));
-        if (r < 0.075) kind = 3;                                             // LED projector
-        else if (r < 0.115) { base = vec3(0.6); kind = 2; }                  // chrome bowl
-        else if (r < 0.135) { base = vec3(0.015); kind = 1; }                // bezel
+        if (r < 0.072) kind = 3;                                             // LED projector
+        else if (r < 0.098) { base = vec3(0.62); kind = 2; }                 // chrome bowl
+        else if (r < 0.112) kind = 3;                                        // the DRL ring
+        else if (r < 0.132) { base = vec3(0.015); kind = 1; }                // bezel
       }
-      float plate = rbox(P.zy, vec2(0.0, shF + 0.15), vec2(0.15, 0.07), 0.01);
-      if (plate < 0.0) { base = vec3(0.88, 0.88, 0.84); kind = 1; }
     } else if (region == 6) {
       if (P.y < shLiftY) { base = vec3(0.04) * (0.9 + 0.2 * vnoise(P.zy * 40.0)); kind = 5; }
       float seam = P.y > shLiftY ? lineAt(az, shLiftZ, 0.004, fw) : 0.0;
