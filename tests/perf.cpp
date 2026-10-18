@@ -1,5 +1,6 @@
 #include "../src/perf.h"
 #include "harness.h"
+#include "../src/menu.h"
 #include <limits>
 
 SCENARIO(adaptiveQuality, "engine/adaptive-quality", "Adaptive quality respects saved limits and recovers under VSync") {
@@ -94,7 +95,7 @@ SCENARIO(qualityPresets, "engine/quality-presets", "The presets: HIGH is the def
     applyPreset(own, Q_ULTRA);
     ctx.check("between the others the player's render scale stays", own.renderScale == 1.5f);
     ctx.check("names", std::string(presetName(Q_POTATO)) == "POTATO" && std::string(presetName(Q_CUSTOM)) == "CUSTOM");
-    ctx.check("FPS targets", kFpsTargets[0] == 60 && kFpsTargets[1] == 120 && kFpsTargets[2] == 144 && kFpsTargets[3] == 0);
+    ctx.check("FPS targets", kFpsTargets[0] == kFpsMatchDisplay && kFpsTargets[1] == 60 && kFpsTargets[3] == 144 && kFpsTargets[4] == 240 && kFpsTargets[5] == 360 && kFpsTargets[6] == 0);
 }
 
 SCENARIO(adaptiveTarget, "engine/adaptive-target", "Adaptive quality aims for the FPS target: 144 Hz cuts where 60 wouldn't") {
@@ -105,4 +106,30 @@ SCENARIO(adaptiveTarget, "engine/adaptive-target", "Adaptive quality aims for th
     int n60 = 0, n144 = 0;
     for (int i = 0; i < 1200; ++i) n60 += c60.evaluate(12, at60), n144 += c144.evaluate(12, at144);  // (83 fps)
     ctx.check("83 fps: fine for 60, too slow for 144", n60 == 0 && n144 >= 1, std::to_string(n60) + " / " + std::to_string(n144));
+}
+
+SCENARIO(fpsTargetChoices, "engine/fps-target", "FPS target: saved values parse, the default follows the display, adaptive quality never aims above 144") {
+    ctx.check("default is match display", Settings().fpsTarget == kFpsMatchDisplay);
+    ctx.check("saved 0 stays uncapped", fpsTargetFromSaved(0) == 0);
+    ctx.check("saved -1 is match display", fpsTargetFromSaved(-1) == kFpsMatchDisplay);
+    ctx.check("old values stay", fpsTargetFromSaved(60) == 60 && fpsTargetFromSaved(120) == 120 && fpsTargetFromSaved(144) == 144);
+    ctx.check("new values", fpsTargetFromSaved(240) == 240 && fpsTargetFromSaved(360) == 360 && fpsTargetFromSaved(500) == 360);
+    ctx.check("in-between snaps down, low snaps to 60", fpsTargetFromSaved(165) == 144 && fpsTargetFromSaved(30) == 60);
+    ctx.check("garbage is the default", fpsTargetFromSaved(std::numeric_limits<float>::quiet_NaN()) == kFpsMatchDisplay);
+    ctx.check("match display follows the refresh rate", resolveFpsTarget(kFpsMatchDisplay, 360) == 360 && resolveFpsTarget(kFpsMatchDisplay, 59) == 59);
+    ctx.check("match display, rate unknown: uncapped", resolveFpsTarget(kFpsMatchDisplay, 0) == 0 && resolveFpsTarget(kFpsMatchDisplay, -1) == 0);
+    ctx.check("explicit targets ignore the display", resolveFpsTarget(120, 360) == 120 && resolveFpsTarget(0, 360) == 0);
+    ctx.check("aim capped at 144, uncapped aims 60", adaptiveAim(360) == 144 && adaptiveAim(240) == 144 && adaptiveAim(100) == 100 && adaptiveAim(0) == 60);
+    RenderSettings chosen, at360, at144;
+    at360 = at144 = chosen;
+    AdaptiveQuality c360, c144;
+    c360.init(chosen, adaptiveAim(360)), c144.init(chosen, 144);
+    int n360 = 0, n144 = 0, n360raw = 0;
+    for (int i = 0; i < 1200; ++i) n360 += c360.evaluate(6, at360), n144 += c144.evaluate(6, at144);  // (167 fps: above 144)
+    ctx.check("167 fps at a 360 target: no downgrades", n360 == 0 && n144 == 0, std::to_string(n360));
+    RenderSettings slow = chosen;
+    AdaptiveQuality c;
+    c.init(slow, adaptiveAim(360));
+    for (int i = 0; i < 1200; ++i) n360raw += c.evaluate(10, slow);  // (100 fps: below the 144 aim, so it does cut)
+    ctx.check("100 fps still cuts", n360raw >= 1);
 }

@@ -9,10 +9,10 @@ override CXXFLAGS += $(FPFLAGS) -std=c++17 -Wall -Wextra
 LDLIBS   := -l:libSDL2-2.0.so.0 -lpthread -lm
 
 MODELS   := $(sort $(wildcard src/models/*.cpp))
-PHYS     := src/modelkit.cpp $(MODELS) src/perf.cpp src/physics_workers.cpp src/collision.cpp src/props.cpp src/jobs.cpp src/walker.cpp src/softbody.cpp src/recovery.cpp src/net.cpp src/level.cpp src/levels_builtin.cpp src/levelrun.cpp src/editcore.cpp src/saveflow.cpp src/textedit.cpp src/autopilot.cpp src/pilotsense.cpp src/carbuild.cpp src/world.cpp src/spawnpad.cpp src/sections.cpp src/mountain.cpp src/freeway.cpp src/frontier.cpp src/backcountry.cpp src/vehicles.cpp src/mods.cpp src/gamepad.cpp src/platform.cpp src/tires.cpp src/interact.cpp src/fixes.cpp src/carparts.cpp src/carframe.cpp src/vtools.cpp src/keybinds.cpp src/devmenu.cpp src/career.cpp src/anchors.cpp src/biome.cpp src/plants.cpp src/handwork.cpp src/sectionfile.cpp src/trunk.cpp src/invmenu.cpp src/objshape.cpp src/bodyshell.cpp src/throttle.cpp src/debuginfo.cpp src/forest.cpp src/meshopt.cpp src/frameprof.cpp src/watermesh.cpp src/texenc.cpp src/occlusion.cpp src/loadprof.cpp src/meshcache.cpp
+PHYS     := src/modelkit.cpp $(MODELS) src/perf.cpp src/physics_workers.cpp src/collision.cpp src/props.cpp src/jobs.cpp src/walker.cpp src/softbody.cpp src/recovery.cpp src/net.cpp src/level.cpp src/levels_builtin.cpp src/levelrun.cpp src/editcore.cpp src/saveflow.cpp src/textedit.cpp src/autopilot.cpp src/pilotsense.cpp src/carbuild.cpp src/world.cpp src/spawnpad.cpp src/sections.cpp src/mountain.cpp src/freeway.cpp src/frontier.cpp src/backcountry.cpp src/vehicles.cpp src/mods.cpp src/gamepad.cpp src/platform.cpp src/tires.cpp src/interact.cpp src/fixes.cpp src/carparts.cpp src/carframe.cpp src/vtools.cpp src/keybinds.cpp src/devmenu.cpp src/career.cpp src/anchors.cpp src/biome.cpp src/plants.cpp src/handwork.cpp src/sectionfile.cpp src/trunk.cpp src/invmenu.cpp src/objshape.cpp src/bodyshell.cpp src/throttle.cpp src/debuginfo.cpp src/forest.cpp src/meshopt.cpp src/frameprof.cpp src/watermesh.cpp src/texenc.cpp src/occlusion.cpp src/loadprof.cpp src/meshcache.cpp src/benchreport.cpp
 SCEN     := tests/perf.cpp tests/carsleep.cpp tests/drivetrain.cpp tests/net_state.cpp tests/collision.cpp tests/props.cpp tests/jobs.cpp tests/walker.cpp tests/editor.cpp tests/levels.cpp tests/circuit.cpp tests/frontier.cpp tests/backcountry.cpp tests/freeway.cpp tests/surfaces.cpp tests/handling.cpp tests/harness.cpp tests/scenarios.cpp tests/components.cpp tests/offroad.cpp tests/recovery.cpp tests/net.cpp tests/autopilot.cpp tests/nearby.cpp tests/gamepad.cpp tests/tires.cpp tests/vtools.cpp tests/simulation.cpp tests/vehicle_physics.cpp tests/dynamics.cpp tests/extreme.cpp tests/environment.cpp tests/towing.cpp tests/keybinds.cpp tests/devmenu.cpp tests/treads.cpp tests/wobble.cpp tests/career.cpp tests/models.cpp tests/carparts.cpp tests/sections.cpp tests/anchors.cpp tests/music.cpp tests/trunk.cpp tests/fieldrepair.cpp tests/net_security.cpp tests/carframe.cpp tests/spawnpads.cpp tests/invmenu.cpp tests/rumble.cpp tests/editbrush.cpp tests/objshape.cpp tests/editobjects.cpp tests/throttle.cpp tests/f3info.cpp tests/plants.cpp tests/forest.cpp tests/grass.cpp tests/textedit.cpp tests/winch_payout.cpp tests/meshopt.cpp tests/frameprof.cpp tests/crashshare.cpp tests/gfxdetect.cpp tests/net_bandwidth.cpp tests/net_time.cpp tests/texenc.cpp tests/carshell.cpp tests/occlusion.cpp tests/loading.cpp
 PHYS     += src/allocstat.cpp
-SCEN     += tests/allocs.cpp
+SCEN     += tests/allocs.cpp tests/benchreport.cpp
 GAME_SRC := src/main.cpp src/lab.cpp src/gamepad_sdl.cpp src/editor.cpp src/coop.cpp src/gl.cpp src/gpu.cpp src/render.cpp src/carvisual.cpp src/scenery.cpp src/menu.cpp src/fx.cpp src/engine_samples.cpp src/engineaudio.cpp src/audio.cpp src/music.cpp src/ambience.cpp src/daylight.cpp src/lights.cpp src/groundtex.cpp src/groundshader.cpp src/propdraw.cpp src/invdraw.cpp src/debugscreen.cpp src/buildinfo.cpp $(PHYS) $(SCEN) src/treedraw.cpp src/texcomp.cpp
 GAME_OBJ := $(patsubst %.cpp,build/%.o,$(GAME_SRC))
 TEST_OBJ := $(patsubst %.cpp,build/%.o,tests/run_tests.cpp $(PHYS) $(SCEN) src/music.cpp)
@@ -158,6 +158,11 @@ build/rel/test_audio: build/rel/tests/audio.o build/rel/tests/engine_samples.o b
 #   make windows   ->  build/win/CrumpleZone/ (crumplezone.exe + SDL2.dll) and build/win/CrumpleZone-windows.zip
 # Needs: the g++-mingw-w64-x86-64-posix package, and SDL2.dll (the official SDL2 x64
 # Windows runtime) in $(WINSDL).
+# Natively in an MSYS2 UCRT64 or MINGW64 shell (pacman -S --needed make mingw-w64-ucrt-x86_64-gcc git; zip optional) the
+# same target works and uses that shell's g++ (or: make windows WINCXX=g++).
+ifneq (,$(findstring MINGW,$(shell uname -s 2>/dev/null))$(findstring MSYS,$(shell uname -s 2>/dev/null)))
+WINCXX   ?= g++
+endif
 WINCXX   ?= x86_64-w64-mingw32-g++-posix
 WINSDL   ?= third_party/sdl2-win64
 # LTO always (every Windows build is a release); PGO as for Linux (tools/pgo.sh windows: trained under wine, since gcc profiles are not portable across compiler builds), -s strips the link.
@@ -186,7 +191,9 @@ windows: build/win/CrumpleZone/crumplezone.exe
 	if [ -d assets/audio ]; then cp -r assets/audio build/win/CrumpleZone/assets/; fi
 	if [ -f assets/props/props.txt ]; then cp -r assets/props build/win/CrumpleZone/assets/; fi
 	if [ -d assets/models ]; then cp -r assets/models build/win/CrumpleZone/assets/; fi
-	cd build/win && rm -f CrumpleZone-windows.zip && zip -qr CrumpleZone-windows.zip CrumpleZone
+	@cd build/win && rm -f CrumpleZone-windows.zip && if command -v zip >/dev/null 2>&1; then zip -qr CrumpleZone-windows.zip CrumpleZone; \
+	  elif command -v powershell.exe >/dev/null 2>&1; then powershell.exe -NoProfile -Command "Compress-Archive -Force -Path CrumpleZone -DestinationPath CrumpleZone-windows.zip"; \
+	  else echo "no zip: build/win/CrumpleZone/ is the game (crumplezone.exe)"; fi
 
 # Windows installer (NSIS): build/win/CrumpleZone-setup.exe from the windows build. Needs makensis (apt: nsis).
 windows-installer: windows
@@ -224,6 +231,20 @@ mac: build/mac/crumplezone
 	printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>\n<key>CFBundleName</key><string>Crumple Zone</string>\n<key>CFBundleDisplayName</key><string>Crumple Zone</string>\n<key>CFBundleIdentifier</key><string>io.github.benbone21.crumplezone</string>\n<key>CFBundleExecutable</key><string>crumplezone</string>\n<key>CFBundlePackageType</key><string>APPL</string>\n<key>CFBundleShortVersionString</key><string>$(VERSION)</string>\n<key>CFBundleVersion</key><string>$(VERSION)</string>\n<key>LSMinimumSystemVersion</key><string>11.0</string>\n<key>LSApplicationCategoryType</key><string>public.app-category.simulation-games</string>\n<key>NSHighResolutionCapable</key><true/>\n</dict></plist>\n' > $(MACAPP)/Contents/Info.plist
 	codesign --force --deep --sign - $(MACAPP)
 	cd build/mac && rm -f CrumpleZone-mac.zip && ditto -c -k --keepParent CrumpleZone.app CrumpleZone-mac.zip
+
+# Quick iteration build for this Mac only: this machine's architecture, no LTO, no app bundle; runs from the checkout
+# (finds assets/ two folders up): make mac-dev && build/macdev/crumplezone. Same SDL2.framework in $(MACSDL).
+MACDEVFLAGS := -O2 $(FPFLAGS) -std=c++17 -mmacosx-version-min=11.0 -Wall
+MACDEV_OBJ  := $(patsubst %.cpp,build/macdev/obj/%.o,$(GAME_SRC))
+
+build/macdev/obj/%.o: %.cpp $(HEADERS)
+	@mkdir -p $(dir $@)
+	$(MACCXX) $(MACDEVFLAGS) -c -o $@ $<
+
+build/macdev/crumplezone: $(MACDEV_OBJ)
+	$(MACCXX) $(MACDEVFLAGS) -o $@ $^ -F$(MACSDL) -framework SDL2 -Wl,-rpath,$(abspath $(MACSDL))
+
+mac-dev: build/macdev/crumplezone
 
 # DMG contains the signed app and an Applications shortcut for drag-and-drop installation.
 mac-dmg: mac
@@ -289,4 +310,4 @@ run: crumplezone
 clean:
 	rm -rf build crumplezone
 
-.PHONY: windows windows-installer mac mac-dmg deb all test run clean bake meshaudit
+.PHONY: windows windows-installer mac mac-dev mac-dmg deb all test run clean bake meshaudit

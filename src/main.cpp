@@ -10,6 +10,7 @@
 #include <cstring>
 #include <mutex>
 #include "loadprof.h"
+#include "benchreport.h"
 #include "meshcache.h"
 #include "carvisual.h"
 #include <set>
@@ -107,6 +108,8 @@ struct Options {
     int debugScreen = 0;          // --debug-screen [graph]: F3 (and Shift+F3) already pressed
     int bench = 0;                // --bench N: fly a lap round the start for N frames (after a warm-up), print the frame times, quit
     int benchWarm = 60;           // --bench N,WARM: frames to warm up first (default 60)
+    bool benchSuite = false;      // --bench-suite [N[,WARM]]: Frontier, Open Country and Boulder Gully at POTATO..HIGH, one launch, a report file and a shot per run
+    std::string benchOut;         // --bench-out FILE: where the bench report goes (default: configDir()/bench/<date-time>-<map>-<quality>-<WxH>.txt)
     bool benchSync = false;       // --bench-sync: wait for the GPU at every stage (each stage's whole cost, no overlap)
     bool mph = false;             // --mph
     double throttleCap = -1;      // --throttle PCT[,RESPONSE[,PAD]]: the throttle limit (testing)
@@ -348,6 +351,13 @@ Options parseArgs(int argc, char** argv) {
             o.bench = std::max(1, n), o.benchWarm = w >= 0 ? w : o.benchWarm;
         }
         else if (a == "--bench-sync") o.benchSync = true;
+        else if (a == "--bench-out") o.benchOut = next();
+        else if (a == "--bench-suite") {  // [N[,WARM]]: default 600 frames after 120
+            o.benchSuite = true;
+            int n = 600, w = 120;
+            if (i + 1 < argc && std::isdigit((unsigned char)argv[i + 1][0])) std::sscanf(argv[++i], "%d,%d", &n, &w);
+            o.bench = std::max(1, n), o.benchWarm = std::max(0, w);
+        }
         else if (a == "--debug-graph") o.debugScreen = 2;
         else if (a == "--mph") o.mph = true;
         else if (a == "--throttle") {
@@ -408,7 +418,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--help" || a == "-h") {
             std::puts("usage: crumplezone [--fullscreen] [--size WxH] [--no-audio] [--no-vsync] [--no-pad] [--spawn X,Z[,HEADING]] [--spawn-section N] [--scenario NAME]\n"
                       "                   [--map N] [--host [PORT]] [--join HOST[:PORT]] [--name NAME] [--password PASSWORD] [--time HOURS] [--level NAME]\n"
-                      "                   [--physics-threads auto|all|N] [--lab [--lab-model ID]] [--quality 0-3] [--bench FRAMES [--bench-sync]]");
+                      "                   [--physics-threads auto|all|N] [--lab [--lab-model ID]] [--quality 0-3] [--bench FRAMES [--bench-sync] [--bench-out FILE]] [--bench-suite [FRAMES[,WARM]]]");
             std::exit(0);
         }
     }
@@ -1872,7 +1882,11 @@ int main(int argc, char** argv) {
     double levelHours = -1;  // the playing level's own hour (-1: none)
     bool dayFromHost = false;  // in someone else's game: the sky is theirs (and our own clock waits in settings)
     int lampMode = opt.lamps >= 0 && opt.lamps < LAMP_MODES ? opt.lamps : LAMPS_AUTO;  // the player's headlight switch
+    int displayHz = 0;  // the window's display refresh rate (0 unknown), for FPS TARGET: MATCH DISPLAY
+    auto fpsCap = [&]() { return resolveFpsTarget(settings.fpsTarget, displayHz); };
     auto applySettings = [&]() {
+        { SDL_DisplayMode dm = {}; displayHz = SDL_GetCurrentDisplayMode(std::max(SDL_GetWindowDisplayIndex(win), 0), &dm) == 0 ? dm.refresh_rate : 0; }
+
         const int threads = resolvePhysicsThreads(settings.physicsThreads);
         if (threads != sim.physicsThreads()) {
             try {
@@ -1890,7 +1904,7 @@ int main(int argc, char** argv) {
         if (fs != settings.fullscreen && !scripted)
             SDL_SetWindowFullscreen(win, settings.fullscreen ? (uint32_t)SDL_WINDOW_FULLSCREEN_DESKTOP : 0u);
         setVsync(settings.vsync && opt.vsync && !scripted);
-        adaptiveQuality.init(settings.gfx, settings.fpsTarget > 0 ? (float)settings.fpsTarget : 60.0f);
+        adaptiveQuality.init(settings.gfx, adaptiveAim(fpsCap()));
         sim.realRecovery = settings.realRecovery;
         for (Car& c : sim.cars) if (!c.remote) c.winchSpeed = settings.winchSpeed;
         sim.steeringAssist = settings.steeringAssist;
@@ -1903,7 +1917,7 @@ int main(int argc, char** argv) {
     QualityProbe probe;
     bool probePending = autoDetect;  // (waits for the world to be drawing)
     auto startProbe = [&]() {
-        probe.start(guessPreset(hardware), settings.fpsTarget > 0 ? (float)settings.fpsTarget : 60.0f);
+        probe.start(guessPreset(hardware), adaptiveAim(fpsCap()));
         applyPreset(settings.gfx, probe.preset());
         applySettings();
         hud.toast(std::string("DETECTING GRAPHICS: ") + presetName(probe.preset()) + "?");
@@ -2893,14 +2907,84 @@ int main(int argc, char** argv) {
     // --bench: a lap round where the player starts, the same every run.
     const int benchWarm = opt.benchWarm;
     BenchStats benchStats;
-    const V3 benchCentre = sim.cars.empty() ? V3() : sim.cars[sim.player].frame().com;
+    const bool offscreenBench = [] { const char* d = std::getenv("SDL_VIDEODRIVER"); return d && std::string(d) == "offscreen"; }();
+    V3 benchCentre = sim.cars.empty() ? V3() : sim.cars[sim.player].frame().com;
     if (opt.bench) std::printf("bench: %d frames after %d to warm up, %dx%d, quality %d%s\n", opt.bench, benchWarm, opt.width, opt.height,
                                presetOf(settings.gfx), opt.benchSync ? ", GPU synced per stage" : "");
+    // The bench report file (the Windows build has no console): the machine, the settings, the numbers. --bench-suite: a run after another.
+    BenchSuite suite;
+    BenchStats& benchSt = opt.benchSuite ? suite.stats() : benchStats;
+    MachineInfo machine;
+    const std::string benchStamp = benchTimestamp();
+    int benchBase = 0, suitePhase = 0;  // (the frame the run started at; suite: 0 measuring, 1 F3 shot due, 2 run over)
+    bool suiteDbgOn = false, suiteSummaryDone = false;
+    if (opt.bench) {
+        machine.gpu = glRenderer ? glRenderer : "", machine.vendor = glVendor ? glVendor : "";
+        const char* glv = (const char*)gl::GetString(GL_VERSION);
+        const char* sl = (const char*)gl::GetString(0x8B8C /* GL_SHADING_LANGUAGE_VERSION */);
+        machine.glVersion = glv ? glv : "", machine.glsl = sl ? sl : "";
+        const char* vd = SDL_GetCurrentVideoDriver();
+        machine.videoDriver = vd ? vd : "";
+        queryMachine(machine);
+        const int di = std::max(0, SDL_GetWindowDisplayIndex(win));
+        SDL_DisplayMode dm;
+        if (SDL_GetCurrentDisplayMode(di, &dm) == 0) {
+            machine.refreshHz = dm.refresh_rate;
+            const char* dn = SDL_GetDisplayName(di);
+            machine.display = std::string(dn ? dn : "display") + " " + std::to_string(dm.w) + "x" + std::to_string(dm.h);
+        }
+    }
+    auto benchRunInfo = [&](const std::string& mapTitle, const char* place) {
+        BenchRunInfo ri;
+        ri.map = mapTitle, ri.place = place, ri.preset = presetName(presetOf(settings.gfx));
+        ri.width = opt.width, ri.height = opt.height, ri.frames = opt.bench, ri.warm = benchWarm, ri.synced = opt.benchSync;
+        SDL_GL_GetDrawableSize(win, &ri.drawW, &ri.drawH);
+        char b[400];
+        const RenderSettings& g = renderer.settings;
+        std::snprintf(b, sizeof b, "scale %.2f, shadows %d, MSAA %d, AO %d, bloom %d, grass %d, ground %d, props %d, draw distance %.0f, vsync %d, adaptive %d, physics threads %d",
+                      g.renderScale, g.shadows, g.msaa, (int)g.ao, (int)g.bloom, g.grass, g.ground, g.props, g.drawDistance, SDL_GL_GetSwapInterval(),
+                      (int)(settings.adaptiveQuality && opt.adaptive == 1), sim.physicsThreads());
+        ri.settings = b;
+        return ri;
+    };
+    auto benchPathStem = [&]() {  // (no extension)
+        if (!opt.benchOut.empty()) {
+            const size_t dot = opt.benchOut.find_last_of('.'), sep = opt.benchOut.find_last_of("/\\");
+            return dot != std::string::npos && (sep == std::string::npos || dot > sep) ? opt.benchOut.substr(0, dot) : opt.benchOut;
+        }
+        return benchDir() + "/" + (opt.benchSuite ? "suite-" + benchStamp + "-" + std::to_string(opt.width) + "x" + std::to_string(opt.height)
+                                                  : benchStem(benchStamp, mapName(sim.world.map), presetName(presetOf(settings.gfx)), opt.width, opt.height));
+    };
+    auto writeSuiteSummary = [&]() {
+        if (suiteSummaryDone || suite.done().empty()) return;
+        suiteSummaryDone = true;
+        const std::string path = !opt.benchOut.empty() ? opt.benchOut : benchPathStem() + ".txt";
+        if (writeTextFile(path, suite.summary(machine, benchStamp, opt.width, opt.height, opt.bench, benchWarm))) std::printf("bench: suite summary written to %s\n", path.c_str());
+        else std::printf("bench: could not write %s\n", path.c_str());
+    };
+    // The suite's next run: its map (the car at the foot of Boulder Gully), its preset, a fresh BenchStats and lap.
+    auto startNextRun = [&]() -> bool {
+        if (!suite.next()) return false;
+        const BenchSuite::Entry& e = suite.current();
+        if (sim.world.map != e.map) loadMap(e.map);
+        if (e.spawn) sim.cars[sim.player].respawn(V3(e.x, sim.world.clearY(e.x, e.z) + 0.05, e.z), e.heading * M_PI / 180);
+        applyPreset(settings.gfx, e.preset);
+        benchCentre = sim.cars[sim.player].frame().com;
+        benchBase = frame, suitePhase = 0;
+        std::printf("bench: suite run %d of %d: %s%s%s, %s\n", suite.index() + 1, suite.size(), mapName(e.map), *e.place ? " / " : "", e.place, presetName(e.preset));
+        return true;
+    };
 
     while (running) {
         uint64_t now = SDL_GetPerformanceCounter();
         const double frameTimeMs = 1000.0 * (double)(now - last) / freq;
         tourTick(frameTimeMs);
+        if (opt.benchSuite && (!suite.begun() || suitePhase == 2) && !startNextRun()) {
+            writeSuiteSummary();
+            running = false;
+            break;
+        }
+        const int bf = frame - benchBase;  // (frames into the bench run)
         if (frame == 90) std::thread([] { meshcache::flush(); }).detach();  // (what the first seconds generated, for the next run: off the main thread)
         for (size_t i = 0; i < afterVisual.size();)
             if (visualReady(*afterVisual[i].first)) {
@@ -2910,17 +2994,27 @@ int main(int argc, char** argv) {
             } else i++;
         // ---- frame timing (frameprof.h): the stage times F3 and --bench show ----
         frameProfile().beginFrame();
-        if (opt.bench && frame > benchWarm + opt.bench) {
+        if (opt.bench && bf > benchWarm + opt.bench && (!opt.benchSuite || suitePhase == 0)) {
             std::string title = std::string(mapName(sim.world.map)) + (run.active() ? " / " + run.level.name : std::string()) + ", " +
                                 std::to_string(opt.width) + "x" + std::to_string(opt.height) + ", quality " + std::to_string(presetOf(settings.gfx));
             char extra[160];
             std::snprintf(extra, sizeof extra, " (scale %.2f, shadows %d, MSAA %d, AO %d, bloom %d, grass %d, ground %d, props %d)%s",
                           renderer.settings.renderScale, renderer.settings.shadows, renderer.settings.msaa, renderer.settings.ao, renderer.settings.bloom,
                           renderer.settings.grass, renderer.settings.ground, renderer.settings.props, opt.benchSync ? " synced" : "");
-            std::fputs(BenchStats::report(benchStats.result(), title + extra).c_str(), stdout);
+            std::fputs(BenchStats::report(benchSt.result(), title + extra).c_str(), stdout);
             printCarBench();
-            running = false;
-            break;
+            if (opt.benchSuite) {  // (filed, then one F3 shot of this run, then the next)
+                suite.record(mapName(sim.world.map), presetName(presetOf(settings.gfx)));
+                if (!dbg.on) dbg.toggle(false), suiteDbgOn = true;
+                suitePhase = 1;
+            } else {
+                const BenchRunInfo ri = benchRunInfo(mapName(sim.world.map) + (run.active() ? " / " + run.level.name : std::string()), "");
+                const std::string path = !opt.benchOut.empty() ? opt.benchOut : benchPathStem() + ".txt";
+                if (writeTextFile(path, benchFileText(machine, ri, benchSt.result()))) std::printf("bench: report written to %s\n", path.c_str());
+                else std::printf("bench: could not write %s\n", path.c_str());
+                running = false;
+                break;
+            }
         }
         {  // (spikes go to the log, with the stages that ran long: stdout, graphics.log on Windows)
             static double typical = 16.7, logged = -1;
@@ -2934,7 +3028,7 @@ int main(int argc, char** argv) {
             }
             if (frameTimeMs < 250) typical = frame <= 10 ? frameTimeMs : typical + (std::min(frameTimeMs, typical * 3) - typical) * 0.05;
         }
-        if (opt.bench && frame > benchWarm) benchStats.add(frameTimeMs, frameProfile().last, frameProfile().gpuValid ? frameProfile().lastGpu : nullptr);
+        if (opt.bench && bf > benchWarm && bf <= benchWarm + opt.bench) benchSt.add(frameTimeMs, frameProfile().last, frameProfile().gpuValid ? frameProfile().lastGpu : nullptr);
         renderer.gpuTiming = dbg.on || opt.bench;
         renderer.syncTiming = opt.benchSync;
         renderer.gpuFrameBegin();
@@ -4659,7 +4753,7 @@ int main(int argc, char** argv) {
         }
         if (opt.bench) {  // (the lap: 30 m round the start, 2.5 m up, once over the warm-up and the run)
             auto ground = [](const void* w, double x, double z) { return ((const World*)w)->height(x, z); };
-            const BenchPose bp = benchPose(benchCentre.x, benchCentre.z, (double)frame / (benchWarm + opt.bench), 30, 2.5, ground, &sim.world);
+            const BenchPose bp = benchPose(benchCentre.x, benchCentre.z, (double)bf / (benchWarm + opt.bench), 30, 2.5, ground, &sim.world);
             cam.mode = 3, cam.droneEye = V3(bp.x, bp.y, bp.z), cam.droneYaw = bp.yaw, cam.dronePitch = bp.pitch;
         }
         View view = editor.active ? editor.view(W, H) : cam.update(fr, sim.world, dt, (dragging || padLooking) && !menu.open);
@@ -5159,8 +5253,15 @@ int main(int argc, char** argv) {
             std::printf("wrote %s\n", path);
             if (frame >= *opt.shotFrames.rbegin()) running = false;
         }
+        if (opt.benchSuite && suitePhase == 1 && bf >= benchWarm + opt.bench + 2) {  // the run's F3 screen, beside the summary
+            const BenchSuite::Done& d = suite.done().back();
+            const std::string shot = benchPathStem() + "-" + benchSlug(d.mapName + (*d.e.place ? std::string("-") + d.e.place : "") + "-" + d.presetName) + ".bmp";
+            std::printf(writeBMP(shot, renderer.readPixels(W, H), W, H) ? "bench: wrote %s\n" : "bench: could not write %s\n", shot.c_str());
+            if (suiteDbgOn) dbg.toggle(false), suiteDbgOn = false;
+            suitePhase = 2;
+        }
         renderer.passMark(FP_SWAP);
-        if (opt.bench) gl::Finish();  // (the frame isn't done until the GPU is: offscreen, the swap doesn't wait for it)
+        if (opt.bench && offscreenBench) gl::Finish();  // (offscreen the swap doesn't wait for the GPU, so the bench waits; with a real window it must not: a Finish here made CPU and GPU run one after the other)
         SDL_GL_SwapWindow(win);
         if (allocWatch) {
             const uint64_t n = allocstat::count(), all = allocstat::countAll();
@@ -5168,8 +5269,8 @@ int main(int argc, char** argv) {
             if (frame > allocWarm) allocFrames.push_back(n - allocLast), allocAllSum += all - allocAllLast;
             allocLast = n, allocAllLast = all;
         }
-        if (!scripted && settings.fpsTarget > 0 && SDL_GL_GetSwapInterval() == 0) {  // FPS TARGET with VSync off: the frame cap
-            const uint64_t until = now + freq / (uint64_t)settings.fpsTarget;
+        if (const int cap = fpsCap(); !scripted && cap > 0 && SDL_GL_GetSwapInterval() == 0) {  // FPS TARGET with VSync off: the frame cap
+            const uint64_t until = now + freq / (uint64_t)cap;
             for (uint64_t t = SDL_GetPerformanceCounter(); t < until; t = SDL_GetPerformanceCounter()) {
                 const double leftMs = (double)(until - t) * 1000 / freq;
                 if (leftMs > 2) SDL_Delay((uint32_t)(leftMs - 1.5));  // (sleep most of it: SDL asks Windows for 1 ms timer ticks)
@@ -5177,6 +5278,7 @@ int main(int argc, char** argv) {
         }
         frame++;
     }
+    writeSuiteSummary();  // (the window closed part-way: what was done)
     if (allocWatch && !allocFrames.empty()) {
         std::vector<uint64_t> v = allocFrames;
         std::sort(v.begin(), v.end());

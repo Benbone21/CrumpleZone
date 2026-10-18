@@ -1,0 +1,73 @@
+# Crumple Zone model picks, written by the model lab (crumplezone --lab).
+# pick: the design the game uses. status: new, liked, or redo (with a note on what to change).
+# tweak <design>: settings moved off their defaults.
+
+[repair_shed]
+pick = STEEL PORTAL
+status = liked
+
+[cabin]
+pick = LOG CABIN
+status = liked
+
+[outhouse]
+pick = PLANK PRIVY
+status = liked
+
+[tent]
+pick = DOME TENT
+status = liked
+
+[campfire]
+pick = STONE RING
+status = liked
+
+[woodpile]
+pick = STACK AND ROOF
+status = liked
+
+[picnic_table]
+pick = A-FRAME TIMBER
+status = liked
+
+[ore_cart]
+pick = V-TIPPER SKIP
+status = liked
+
+[mine_portal]
+pick = TIMBER SET
+status = liked
+
+[fire_tower]
+pick = TIMBER TOWER
+status = liked
+
+[wreck_pickup]
+pick = STRIPPED HULK
+status = liked
+
+[tree_pine]
+pick = CLASSIC FIR
+status = liked
+
+[tree_broadleaf]
+pick = OAK
+status = liked
+tweak OAK: seed = 1
+
+[tree_snag]
+pick = GREY SNAG
+status = liked
+
+[stump]
+pick = SAW CUT
+status = liked
+
+[person]
+pick = TRAIL RANGER
+status = liked
+
+[bush]
+pick = LEAFY BUSH
+status = liked
+
