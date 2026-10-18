@@ -80,6 +80,19 @@ float pcf(sampler2DShadow tex, vec3 c, float radius, float rot){
   int taps = int(uShadowCfg.y);
   mat2 R = mat2(cos(rot), sin(rot), -sin(rot), cos(rot));
   float s = 0.0;
+#ifdef PCF_EARLY
+  // (The ground shader only.) Four probes first, out at the kernel's edge, one a quarter: where they agree (fully
+  // lit, or deep in a shadow) the other taps would say the same, and most pixels are one or the other. Only an
+  // edge pays for all of them.
+  if (taps > 4) {
+    const int kProbe[4] = int[](0, 1, 4, 7);
+    for (int k = 0; k < 4; k++) s += texture(tex, vec3(c.xy + R * kPoisson[kProbe[k]] * radius, c.z));
+    if (s < 0.001 || s > 3.999) return s * 0.25;
+    for (int i = 0; i < taps; i++)
+      if (i != 0 && i != 1 && i != 4 && i != 7) s += texture(tex, vec3(c.xy + R * kPoisson[i] * radius, c.z));
+    return s / float(taps);
+  }
+#endif
   for (int i = 0; i < taps; i++) s += texture(tex, vec3(c.xy + R * kPoisson[i] * radius, c.z));
   return s / float(taps);
 }
@@ -2305,7 +2318,7 @@ bool Renderer::init(const World& world, std::string& err) {
     // (Photo-scanned ground: if it can't be built the terrain keeps its procedural look.)
     {
         std::string gerr;
-        progTerrain = linkProgram(kLitVS, header + kCommonFS + kLitIns + kTerrainProcFS + kGroundShaderFS, gerr);
+        progTerrain = linkProgram(kLitVS, header + "#define PCF_EARLY\n" + kCommonFS + kLitIns + kTerrainProcFS + kGroundShaderFS, gerr);
         if (!progTerrain) {
             std::fprintf(stderr, "ground shader: %s\n", gerr.c_str());
             groundFailed = true;
