@@ -1,4 +1,5 @@
 #include "props.h"
+#include "loadprof.h"
 #include "platform.h"
 
 #include <algorithm>
@@ -197,6 +198,7 @@ std::string assetDir() {
 }
 
 bool HullLibrary::load(const std::string& dir) {
+    LOADPROF("hulls.load");
     hulls.clear();
     FILE* f = std::fopen((dir + "/rocks.hull").c_str(), "rb");
     if (!f) return false;

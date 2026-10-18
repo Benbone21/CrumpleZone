@@ -10,6 +10,9 @@
 
 namespace texenc {
 
+// Bump when any encoder's output changes: the on-disk cache of encoded textures (meshcache.h) is keyed by it.
+inline constexpr int kEncoderVersion = 1;
+
 // Block encoders. `rgba` is w*h*4 bytes; any size (edges are padded by clamping). Output is the
 // blocks, row by row: BC1 and BC4 8 bytes a block, BC3 and BC5 16.
 void encodeBC1(const uint8_t* rgba, int w, int h, std::vector<uint8_t>& out);               // RGB (alpha ignored)

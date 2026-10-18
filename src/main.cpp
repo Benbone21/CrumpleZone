@@ -9,6 +9,9 @@
 #include <cmath>
 #include <cstring>
 #include <mutex>
+#include "loadprof.h"
+#include "meshcache.h"
+#include "carvisual.h"
 #include <set>
 #include <stdexcept>
 #include <system_error>
@@ -110,6 +113,7 @@ struct Options {
     int map = -1;                 // --map N: 0 proving ground, 1 mountain
     double orbitYaw = 0, orbitPitch = 0.2, orbitDist = 7.5;  // degrees, degrees, meters
     bool spawnSet = false;
+    bool loadTour = false;  // --load-tour: switch maps, swap and spawn vehicles on a timer, report the worst frame of each
     int resumeModel = -1;  // --resume-model: the vehicle to be in (after a reload)
     double spawnX = 0, spawnZ = 0, spawnHeading = 0;  // heading in degrees, 0 = +X
     int spawnSection = -1;        // --spawn-section N: start at the Nth obstacle section's entry (0-based, proving ground)
@@ -397,6 +401,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--editor") o.editor = true;
         else if (a == "--new-section") o.newSection = true;
         else if (a == "--lab") o.lab = true;
+        else if (a == "--load-tour") o.loadTour = true;
         else if (a == "--lab-model") o.lab = true, o.labModel = next();
         else if (a == "--lab-design") o.lab = true, o.labDesign = std::atoi(next().c_str());
         else if (a == "--help" || a == "-h") {
@@ -1577,7 +1582,8 @@ int main(int argc, char** argv) {
     signal(SIGPIPE, SIG_IGN);  // (a multiplayer peer dropping mid-send; macOS has no MSG_NOSIGNAL)
 #endif
     Options opt = parseArgs(argc, argv);
-    const bool scripted = !opt.shotFrames.empty() || opt.bench > 0;  // (the default settings, no vsync, a fixed 60 Hz step)
+    const bool scripted = !opt.shotFrames.empty() || opt.bench > 0 || opt.loadTour;  // (the default settings, no vsync, a fixed 60 Hz step)
+    blockOnTemplates = !opt.shotFrames.empty() || opt.bench > 0;  // (screenshots and the bench show every car; the tour wants the real, waiting behaviour)
 #ifdef _WIN32
     // The GUI executable has no terminal. Keep driver/shader errors where players can find them.
     makeDir(configDir());
@@ -1739,6 +1745,9 @@ int main(int argc, char** argv) {
             }
     };
     fitGarage();
+    // The lineup's drawing templates are made on worker threads while the window's shaders build (the first frame waits for yours).
+    for (const Car& c : sim.cars)
+        if (!c.isProp()) prebuildVisual(*c.spec, c.color);
     GarageUI garageUI;
     Playback playback;
     throttle::Pedal throttlePedal;
@@ -1782,6 +1791,7 @@ int main(int argc, char** argv) {
     renderer.preload(sim.world);
     std::printf("renderer: ready in %.0f ms (%d shader programs compiled, %d from the cache)\n",
                 (SDL_GetPerformanceCounter() - initStart) * 1000.0 / SDL_GetPerformanceFrequency(), gShaderCacheStats.compiled, gShaderCacheStats.hits);
+    while (!visualReady(*sim.cars[sim.player].spec)) std::this_thread::sleep_for(std::chrono::milliseconds(1));
     if (opt.lab) {  // the model lab instead of the game (lab.h)
         LabOptions lo;
         lo.select = opt.labModel, lo.variant = opt.labDesign;
@@ -2013,6 +2023,14 @@ int main(int argc, char** argv) {
             name = pl.name.substr(7);
         }
         hud.toast(pilotStart(c, sim.world, goal, name, settings.pilotSpeed / 3.6, settings.pilotRoute));
+    };
+    // A vehicle about to appear (a spawn, a swap) has its drawing template built on a worker first: `act` runs the frame it is ready
+    // (the game goes on meanwhile), so nothing hitches and nothing pops in half-made.
+    std::vector<std::pair<const VehicleSpec*, std::function<void()>>> afterVisual;
+    auto whenVisualReady = [&](const VehicleSpec& vs, std::function<void()> act) {
+        if (visualReady(vs) || blockOnTemplates) return act();
+        prebuildVisual(vs, sim.cars[sim.player].color);
+        afterVisual.push_back({&vs, std::move(act)});
     };
     // Loads a map, keeping the vehicle you were in.
     auto loadMap = [&](int m) {
@@ -2680,20 +2698,30 @@ int main(int argc, char** argv) {
             case NONE: break;
             case SWAP_VEHICLE:
                 if (da.arg >= 0 && da.arg < (int)listed.size()) {  // (the listed vehicles, in order: 1 the Blazer)
-                    sim.swapPlayerVehicle(garage.spec(listed[da.arg]));
-                    hud.toast("NOW DRIVING " + vehicleName(da.arg));
+                    const int k = da.arg;
+                    whenVisualReady(garage.spec(listed[k]), [&, k] {
+                        sim.swapPlayerVehicle(garage.spec(listed[k]));
+                        hud.toast("NOW DRIVING " + vehicleName(k));
+                    });
                 }
                 break;
             case SPAWN_PARKED: {
                 const size_t k = da.arg >= 0 ? (size_t)da.arg : spawnType;
                 if (k >= listed.size()) break;
-                hud.toast(sim.spawnAhead(garage.spec(listed[k])) ? "SPAWNED " + vehicleName((int)k) : std::string("VEHICLE LIMIT REACHED"));
+                whenVisualReady(garage.spec(listed[k]), [&, k] {
+                    hud.toast(sim.spawnAhead(garage.spec(listed[k])) ? "SPAWNED " + vehicleName((int)k) : std::string("VEHICLE LIMIT REACHED"));
+                });
                 if (da.arg < 0) spawnType = (spawnType + 1) % listed.size();
                 break;
             }
             case SPAWN_TRAFFIC:
-                hud.toast(sim.spawnTraffic(garage.spec(listed[trafficType])) ? "AI " + vehicleName((int)trafficType) + " ON THE LOOP ROAD"
-                                                                              : std::string("VEHICLE LIMIT REACHED"));
+                {
+                    const size_t k = trafficType;
+                    whenVisualReady(garage.spec(listed[k]), [&, k] {
+                        hud.toast(sim.spawnTraffic(garage.spec(listed[k])) ? "AI " + vehicleName((int)k) + " ON THE LOOP ROAD"
+                                                                            : std::string("VEHICLE LIMIT REACHED"));
+                    });
+                }
                 trafficType = (trafficType + 1) % listed.size();
                 break;
             case REMOVE_VEHICLE: hud.toast(sim.removeCar(sim.player) ? "VEHICLE REMOVED" : "KEEP ONE LOCAL VEHICLE"); break;
@@ -2792,6 +2820,49 @@ int main(int argc, char** argv) {
         }
     };
 
+    // --load-tour: every 45 frames do the next thing that used to hitch (a map switch, a vehicle swap, a spawn) and report the
+    // worst frame since the last one.
+    loadprof::Frames tourFrames, startFrames;
+    int tourStep = -1, tourNext = 60;
+    std::vector<std::string> tourLog;
+    auto tourTick = [&](double ms) {
+        if (!opt.loadTour) return;
+        if (frame < 60) startFrames.add(ms);
+        else tourFrames.add(ms);
+        if (frame == 0) loadprof::report("startup (to the first frame)");
+        if (frame < tourNext) return;
+        const std::vector<int>& listed = listedVehicles();
+        static const int maps[] = {MAP_FREEWAY, MAP_MOUNTAIN, MAP_FRONTIER, MAP_BACKCOUNTRY, MAP_WILDS, MAP_PROVING_GROUND};
+        const int nMaps = (int)(sizeof maps / sizeof maps[0]), nVeh = (int)listed.size();
+        if (tourStep >= 0) {
+            char line[160];
+            const std::string what = tourStep < nMaps ? std::string("load map ") + mapName(maps[tourStep])
+                                     : tourStep < nMaps + nVeh ? "swap to vehicle " + std::to_string(tourStep - nMaps)
+                                                               : "spawn vehicle " + std::to_string(tourStep - nMaps - nVeh);
+            std::snprintf(line, sizeof line, "tour: %-28s worst frame %7.1f ms  mean %6.2f ms", what.c_str(), tourFrames.worst, tourFrames.mean());
+            tourLog.push_back(line);
+            std::printf("%s\n", line);
+            loadprof::report(what.c_str());
+        } else {
+            std::printf("tour: startup frames 0-59: worst %.1f ms, mean %.2f ms\n", startFrames.worst, startFrames.mean());
+        }
+        tourFrames.reset();
+        tourStep++;
+        tourNext = frame + 45;
+        if (tourStep < nMaps) loadMap(maps[tourStep]);
+        else if (tourStep < nMaps + nVeh) {
+            const VehicleSpec& vs = garage.spec(listed[tourStep - nMaps]);
+            whenVisualReady(vs, [&] { sim.swapPlayerVehicle(vs); });
+        } else if (tourStep < nMaps + 2 * nVeh) {
+            const VehicleSpec& vs = garage.spec(listed[tourStep - nMaps - nVeh]);
+            whenVisualReady(vs, [&] { sim.spawnAhead(vs); });
+        }
+        else if (false) {}
+        else {
+            std::printf("tour done\n");
+            running = false;
+        }
+    };
     // --bench: a lap round where the player starts, the same every run.
     const int benchWarm = opt.benchWarm;
     BenchStats benchStats;
@@ -2802,6 +2873,14 @@ int main(int argc, char** argv) {
     while (running) {
         uint64_t now = SDL_GetPerformanceCounter();
         const double frameTimeMs = 1000.0 * (double)(now - last) / freq;
+        tourTick(frameTimeMs);
+        if (frame == 90) std::thread([] { meshcache::flush(); }).detach();  // (what the first seconds generated, for the next run: off the main thread)
+        for (size_t i = 0; i < afterVisual.size();)
+            if (visualReady(*afterVisual[i].first)) {
+                auto act = std::move(afterVisual[i].second);
+                afterVisual.erase(afterVisual.begin() + i);
+                act();
+            } else i++;
         // ---- frame timing (frameprof.h): the stage times F3 and --bench show ----
         frameProfile().beginFrame();
         if (opt.bench && frame > benchWarm + opt.bench) {

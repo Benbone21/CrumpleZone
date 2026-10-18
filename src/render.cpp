@@ -1,4 +1,5 @@
 #include "render.h"
+#include "loadprof.h"
 #include "watermesh.h"
 #include "texcomp.h"
 
@@ -2229,6 +2230,7 @@ struct MeshOut {
 
 bool Renderer::init(const World& world, std::string& err) {
     const std::string header = "#version 330 core\n";
+    const double lpShaders0 = loadprof::nowMs();
     progLit = linkProgram(kLitVS, header + kCommonFS + kLitIns + kTerrainProcFS + kLitFSBody, err);
     progCar = linkProgram(kCarVS, header + kCommonFS + kCarFSBody, err);
     progDepth = linkProgram(kDepthVS, kDepthFS, err);
@@ -2263,15 +2265,16 @@ bool Renderer::init(const World& world, std::string& err) {
     if (!progLit || !progDepth || !progLine || !progXray || !progSky || !progHud || !progFx || !progCar || !progAO || !progDown ||
         !progUp || !progComposite || !progGrass || !progWater || !progTree || !progTreeDepth)
         return false;
+    loadprof::add("gl.shaders (main)", loadprof::nowMs() - lpShaders0);
     // (Scanned props: if their shaders won't build, the scenery stays code-made.)
     {
+        LOADPROF("gl.shaders (props)");
         std::string perr;
         propsOk = props.init(kCommonFS, linkProgram, perr);
         if (!propsOk) std::fprintf(stderr, "prop shaders: %s\n", perr.c_str());
     }
 
-    buildWheel();
-    buildFont();
+    { LOADPROF("gl.wheel+font"); buildWheel(); buildFont(); }
     setWorld(world);
 
     GenVertexArrays(1, &dynVao);
@@ -2552,8 +2555,9 @@ double sceneryHeight(const World& world, double x, double z) {
 }  // namespace
 
 void Renderer::setWorld(const World& world) {
+    LOADPROF("renderer.setWorld");
     mapId = world.map == MAP_WILDS ? (int)MAP_FREEWAY : world.map;  // (the wilds are painted as the freeway's meadows are: land and paints, no pad or road)
-    buildTerrain(world);
+    { LOADPROF("terrain.build+upload"); buildTerrain(world); }
     treeSig_ = scenerySig_ = bushSig_ = 0;  // (a new world: everything is built afresh)
     updateObjects(world);
     updateWater(world);
@@ -2586,8 +2590,8 @@ Sig sceneryBase(const World& w, int props, const ScanCover& c) {
 void Renderer::updateObjects(const World& world) {
     // The scanned props first: whatever they cover, the code-made meshes leave out.
     const int pq = propsOk ? std::min(std::max(settings.props, 0), 3) : 0;
-    if (pq) props.ensureLoaded(pq);
-    props.setWorld(world, pq);
+    if (pq) { LOADPROF("props.ensureLoaded"); props.ensureLoaded(pq); }
+    { LOADPROF("props.setWorld"); props.setWorld(world, pq); }
     const ScanCover cover = props.cover(pq);
     scanCover_ = cover;
     treeFade_.assign(world.trees.size(), 0.0f);
@@ -2600,7 +2604,7 @@ void Renderer::updateObjects(const World& world) {
     if (ts.h != treeSig_ || treeVertexCount == 0) {
         treeSig_ = ts.h;
         forest::Set set;
-        forest::build(world, cover.pines, cover.snags, set);
+        { LOADPROF("trees.generate"); forest::build(world, cover.pines, cover.snags, set); }
         trees_.build(set);
         treeVertexCount = (int)trees_.meshVertices();
     }
@@ -2613,7 +2617,8 @@ void Renderer::updateObjects(const World& world) {
         if (!cover.bushes) forest::buildBushes(world, set);
         bushes_.build(set);
         std::vector<Vtx> v;
-        buildBushMesh(world, v, cover);
+        { LOADPROF("bushes.mesh"); buildBushMesh(world, v, cover); }
+        LOADPROF("bushes.bin+upload");
         uploadBatches(bushVao, bushVbo, v, bushBatches);
         bushVertexCount = (int)v.size();
     }
@@ -2631,8 +2636,9 @@ void Renderer::updateObjects(const World& world) {
     if (ss.h != scenerySig_ || sceneryVertexCount == 0) {
         scenerySig_ = ss.h;
         std::vector<Vtx> v;
-        buildRockMesh(world, v, cover);
-        buildPropMesh(world, v);
+        { LOADPROF("rocks.mesh"); buildRockMesh(world, v, cover); }
+        { LOADPROF("models.mesh (props)"); buildPropMesh(world, v); }
+        LOADPROF("scenery.bin+upload");
         uploadBatches(sceneryVao, sceneryVbo, v, sceneryBatches);
         sceneryVertexCount = (int)v.size();
     }
@@ -3535,7 +3541,9 @@ void Renderer::prepareCars(const Sim& sim, DebugView debug) {
     static std::vector<unsigned> opaque, glass;
     for (size_t ci = 0; ci < sim.cars.size(); ci++) {
         const Car& car = sim.cars[ci];
-        const VisualTemplate& t = visualTemplate(car);
+        const VisualTemplate* tp = tryVisualTemplate(car);
+        if (!tp) { carSlots[ci].opaqueCount = carSlots[ci].glassCount = 0; continue; }  // (still being made on a worker: the car joins the picture when it is ready)
+        const VisualTemplate& t = *tp;
         CarSlot& slot = carSlots[ci];
         if (!slot.vao) {
             GenVertexArrays(1, &slot.vao);
@@ -3610,6 +3618,7 @@ void Renderer::drawCarBodies(const Sim& sim, GLuint prog, bool glassPass) {
     for (size_t ci = 0; ci < sim.cars.size() && ci < carSlots.size(); ci++) {
         const Car& car = sim.cars[ci];
         const CarSlot& slot = carSlots[ci];
+        if (!slot.tpl) continue;
         const VisualTemplate& t = *static_cast<const VisualTemplate*>(slot.tpl);
         if (prog == progCar) {
             Uniform3f(uniformLocation(prog, "uPaint"), (float)car.color.x, (float)car.color.y, (float)car.color.z);

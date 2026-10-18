@@ -1,4 +1,6 @@
 #include "propdraw.h"
+#include "loadprof.h"
+#include "meshcache.h"
 #include "texcomp.h"
 
 #include <algorithm>
@@ -331,6 +333,7 @@ bool PropRenderer::ensureLoaded(int q) {
     }
     const std::vector<props::ManifestEntry> list = props::readManifest(dir);
     std::vector<props::Model> src;
+    double lp0 = loadprof::nowMs();
     for (const props::ManifestEntry& e : list) {
         props::Model m;
         if (props::loadModel(dir + "/" + e.name + ".prop", m) && !m.lods.empty()) src.push_back(std::move(m));
@@ -340,6 +343,7 @@ bool PropRenderer::ensureLoaded(int q) {
         std::fprintf(stderr, "props: no models in %s (scenery stays code-made)\n", dir.c_str());
         return false;
     }
+    loadprof::add("props.read models", loadprof::nowMs() - lp0), lp0 = loadprof::nowMs();
     // Textures: every file once, decoded on a few threads.
     std::vector<Decoded> dec;
     std::map<std::string, Want> want;  // file -> its role, alpha cutoff
@@ -366,12 +370,26 @@ bool PropRenderer::ensureLoaded(int q) {
         for (int t = 0; t < nt; t++)
             pool.emplace_back([&, t] {
                 for (size_t i = t; i < dec.size(); i += nt) {
+                    // (The encoded blocks are kept on disk, keyed by the source file and the encoder: a later launch skips decode and encode.)
+                    const Want& wt = want.at(dec[i].file);
+                    meshcache::Hasher key;
+                    key.u64((uint64_t)texenc::kEncoderVersion), key.u64(meshcache::fileStamp(dir + "/tex/" + dec[i].file)), key.u64((uint64_t)maxSize);
+                    key.u64((uint64_t)wt.role), key.num(wt.cutoff), key.u64(texcomp::s3tcAvailable());
+                    std::vector<uint8_t> blob;
+                    if (meshcache::getBlob(key.h, blob) && meshcache::unpackEncoded(blob, dec[i].enc)) {
+                        dec[i].w = dec[i].enc.w, dec[i].h = dec[i].enc.h;
+                        continue;
+                    }
                     decode(dir, dec[i], maxSize);
-                    if (dec[i].w) encodeTex(dec[i], want.at(dec[i].file));
+                    if (dec[i].w) {
+                        encodeTex(dec[i], wt);
+                        meshcache::putBlob(key.h, meshcache::packEncoded(dec[i].enc));
+                    }
                 }
             });
         for (std::thread& t : pool) t.join();
     }
+    loadprof::add("props.decode textures", loadprof::nowMs() - lp0), lp0 = loadprof::nowMs();
     for (const Decoded& d : dec) {
         if (!d.w) {
             std::fprintf(stderr, "props: missing texture %s\n", d.file.c_str());
@@ -379,6 +397,7 @@ bool PropRenderer::ensureLoaded(int q) {
         }
         texCache[d.file] = texcomp::upload2D(d.enc, "prop " + d.file);
     }
+    loadprof::add("props.upload textures", loadprof::nowMs() - lp0), lp0 = loadprof::nowMs();
     if (std::getenv("CZ_TEXSTATS"))
         std::fprintf(stderr, "texstats: %zu prop textures, %.0f ms (decode, mips, encode, upload)\n", dec.size(),
                      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
@@ -475,6 +494,7 @@ bool PropRenderer::ensureLoaded(int q) {
         else if (startsWith(n, "fern_")) scatterFern.push_back(i);
         else if (startsWith(n, "stump_") || startsWith(n, "branches_")) scatterLitter.push_back(i);
     }
+    loadprof::add("props.upload meshes", loadprof::nowMs() - lp0);
     std::printf("props: %zu models, %zu textures from %s\n", models.size(), texCache.size(), dir.c_str());
     return true;
 }
