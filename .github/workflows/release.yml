@@ -177,6 +177,8 @@ jobs:
                   raise SystemExit('Serial/parallel macOS simulation differs: ' + mode)
           PY
       - name: Packaged app smoke test
+        # The hosted Mac draws in software: its first frame takes over a minute, past the scripted-run hang limit (60 s).
+        env: { CZ_WATCHDOG_STALL: "900" }
         run: |
           python3 - <<'PY'
           import pathlib, subprocess, tempfile
