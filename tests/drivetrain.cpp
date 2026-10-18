@@ -323,7 +323,7 @@ SCENARIO(runnerFrontDurability, "drivetrain/4runner-front-durability", "Sandbox 
 }
 
 // ...but a CV is still a fuse: the sandbox 4Runner in 4L with both lockers, full lock and the pedal on the floor on the
-// slickrock dome (the lockers bind, a loaded front tire grips) snaps one, as the Bronco does (offroad/shaft-break);
+// slickrock dome (the lockers bind, a loaded front tire grips) snaps one, as the Bronco's does flat out into a ledge (offroad/shaft-break);
 // and flat out against a held brake in the 77:1 stack still does (drivetrain/low-range-crawler).
 SCENARIO(runnerFrontAbuse, "drivetrain/4runner-front-abuse", "Sandbox 4Runner flat out at full lock with both lockers in 4L on the rock dome: a CV still snaps and that wheel freewheels") {
     const VehicleSpec& spec = sandboxRunner();

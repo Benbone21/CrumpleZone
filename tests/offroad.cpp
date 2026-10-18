@@ -252,36 +252,38 @@ SCENARIO(driveModeSwitching, "offroad/drive-modes", "2H drives the rear only; 4H
 
 // Abuse: the front locked in low range at full steering lock and full throttle binds the
 // front axle until a CV joint lets go. That wheel then freewheels.
-SCENARIO(shaftBreak, "offroad/shaft-break", "Bronco in 4L, both locked, full lock, full throttle on rock: it binds and hops until a shaft snaps") {
+// A shaft is a fuse. Flat out in 4L with both lockers, the Bronco slams its front tires into a
+// half-metre square ledge: the face grips them (~40 kN on each tire), the lockers won't let either
+// slip, and the shock of the stop goes straight into the CVs. One snaps, and its hub freewheels.
+// (This used to bind and hop at full lock on the rock dome, but that only snapped a shaft while the
+// inside knuckle sat wound ~17 degrees past lock, which the steering stops now prevent.)
+SCENARIO(shaftBreak, "offroad/shaft-break", "Bronco in 4L, both locked, flat out into a 0.5 m ledge: the shock load snaps a shaft and that wheel freewheels") {
     VehicleSpec spec = bronco();
     spec.lockerFront = true;
-    ctx.sim.world = World(MAP_MOUNTAIN);
-    const V3 dome = mountainFeature("dome");
-    Car& c = ctx.add(spec, dome.x, dome.z - 12, -90);
+    ctx.sim.world = World(MAP_PROVING_GROUND);
+    World& w = ctx.sim.world;
+    const double z = 60, H = 0.5;
+    w.addBox(V3(-100, w.height(-100, z) + H / 2, z), V3(8, H / 2, 5), 0, 0, 0, V3(0.4, 0.38, 0.35));
+    w.boxes.back().rock = true;
+    w.buildGrid();
+    Car& c = ctx.add(spec, -120, z, 0);
     ctx.focus(c);
     ctx.run(1.0);
     c.setDriveMode((int)driveModes(spec.transfer).size() - 1);
     c.setLocker(true, true);
     c.setLocker(false, true);
     c.tractionControl = false;
-    int broken = 0, brokenFront = 0;
+    int broken = 0;
     ctx.runUntil(15, [&] { return broken > 0; }, [&] {
         c.throttle = 1;
-        c.steer = 0.6;
+        c.steer = 0;
         c.brake = c.handbrake = 0;
-        broken = brokenFront = 0;
-        for (const Wheel& wh : c.wheels) broken += wh.shaftBroken, brokenFront += wh.shaftBroken && wh.front;
-        static thread_local int fr = 0;
-        if (std::getenv("CZ_SHAFT") && ++fr % 6 == 0) {
-            std::printf("SHAFT t %.2f rpm %.0f", ctx.t, c.rpm);
-            for (const Wheel& wh : c.wheels) std::printf(" | %s%s T %.0f act %.0f load %.0f w %.1f", wh.front ? "F" : "R", wh.left ? "L" : "R", wh.shaftLoad, wh.driveActual, wh.load, wh.omega);
-            std::printf("\n");
-        }
+        broken = 0;
+        for (const Wheel& wh : c.wheels) broken += wh.shaftBroken;
     });
-    // (Which one goes depends on the hop: the drivetrain carries what the tires can take
-    // plus the shock of each landing, so it's often a rear shaft on a landing.)
     ctx.check("a shaft snaps", broken >= 1);
-    (void)brokenFront;
+    ctx.check("...at the ledge (not before it)", c.frame().com.x > -112, std::to_string(c.frame().com.x));
+    ctx.check("...with the wheels straight (no help from the steering)", std::fabs(c.steer) < 1e-9);
     bool freewheels = false;
     for (const Wheel& wh : c.wheels)
         if (wh.shaftBroken) freewheels = !c.wheelPowered(wh);
