@@ -142,8 +142,8 @@ jobs:
       - name: Build the app
         run: |
           V="${VERSION#[vV]}"
-          # ThinLTO (MACLTO in the Makefile); if clang/ld64 rejects it, rebuild without so the Mac files still ship.
-          make -j4 mac-dmg VERSION="$V" || { echo "::warning::LTO build failed, building without it"; rm -rf build/mac; make -j4 mac-dmg VERSION="$V" MACLTO=; }
+          # -j2: at -j4 clang segfaulted (likely out of memory) on the universal (two -arch) build. ThinLTO (MACLTO in the Makefile); if clang/ld64 rejects it, rebuild without so the Mac files still ship.
+          make -j2 mac-dmg VERSION="$V" || { echo "::warning::LTO build failed, building without it"; rm -rf build/mac; make -j2 mac-dmg VERSION="$V" MACLTO=; }
           lipo -info build/mac/CrumpleZone.app/Contents/MacOS/crumplezone
           mkdir -p out && cp build/mac/CrumpleZone-mac.zip "out/CrumpleZone-${V}-mac.zip"
           cp build/mac/CrumpleZone-mac.dmg "out/CrumpleZone-${V}-mac.dmg"
