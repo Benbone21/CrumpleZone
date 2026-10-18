@@ -53,6 +53,7 @@ Not checked (no normal play launch). The suite's own presets: POTATO = scale 0.5
 - Xcode license blocks the toolchain (see Build).
 - No GPU stage timing on macOS.
 - 2.1 s frame on first MEDIUM run.
+- Visual glitch, added afterwards from the user's own observation (not measured by the agent): scan-line-like horizontal lines across the screen on the HIGH preset only, on every map. The same artifact appears on the Windows RTX 4070 laptop (see `windows-rtx4070-baseline.md`). Cause unknown; POST and SHADOWS at HIGH are the first suspects.
 - No play-check done: crashes, glitches and input not assessed.
 
 ## Your read (ideas only, not implemented)
