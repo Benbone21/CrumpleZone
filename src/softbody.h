@@ -740,7 +740,24 @@ public:
     // Every anchor the winch reaches. `look` (optional): where the driver is looking or
     // standing, offered as a ground anchor too (buried in loose ground, a bolt in rock).
     std::vector<WinchTarget> winchTargets(int car, const V3* look = nullptr) const;
-    std::string hookWinchTo(int car, const RopeEnd& anchor);
+    // Programmatic hooking (tests, the autopilot, the --script screenshots): no one has to walk the line out. The player's way is
+    // on foot (takeLine, then hookHandLine: interact.h); from the seat it is refused (seatHook).
+    std::string hookWinchTo(int car, const RopeEnd& anchor, bool byHand = false);  // byHand: the line was walked out to it (no fairlead arc)
+    // The end of a line in your hands, on foot: the winch's line (hook 0) or either end of a tow strap, `hand` where your hands are.
+    // The line pays out from the drum as you walk (Walker::step keeps you within its length) and hooks with hookHandLine.
+    struct HandLine {
+        int car = -1;                  // whose line it came from (-1: nothing in your hands)
+        int hook = 0;                  // ...which of its recovery points (0 front, 1 rear)
+        RopeKind kind = ROPE_WINCH;
+        V3 hand;                       // where it is held (set each frame by the game)
+        bool on() const { return car >= 0; }
+    } handLine;
+    std::string takeLine(int car, RopeKind kind, int hook, const V3& hand);  // "" on success, else why not
+    void dropHandLine() { handLine = HandLine(); }                          // let go: the line spools back
+    double handLineReach(const HandLine& h) const;                          // how far from its recovery point you can walk with it (m)
+    std::string hookHandLine(const RopeEnd& anchor);                        // hook the line in your hands to `anchor`
+    // Asked from the driver's seat (V, O): always refused. The hook-up is done on foot.
+    std::string seatHook(int car, RopeKind kind) const;
     bool dropWinch(int car, bool say = true);  // unhooks the car's winch line (false if none); say: announce the strap or sling coming back
     // Anchor gear (anchors.h): what you carry, and the stakes you've left in the ground.
     // Hooking to a stake, bolt or picket uses one up; a strap or sling comes back when the line comes off.
@@ -759,6 +776,8 @@ public:
     bool dropStrap(int car);
     std::vector<WinchTarget> strapTargets(int car, int hook) const;
     std::string hookStrapTo(int car, int hook, const RopeEnd& target);
+    // Unhooks whichever line `ropes[rope]` is (on foot, at one of its ends): "" if it isn't yours to take off.
+    std::string unhookRope(int rope);
     int pickRecoveryTarget(const std::vector<WinchTarget>& targets, const V3& eye, const V3& ray, double cone) const;
     void setWinch(int car, int dir);   // +1 reel in, -1 pay out, 0 hold
     int ropeOn(int car, int kind = -1) const;  // index of a line on that car (-1 none)

@@ -152,7 +152,7 @@ scenario finishes, you can drive around in the aftermath.
 | 9 / 0 | Hold to let air out of / pump up the tires (stopped). 35 psi street, 15–18 for rock |
 | V | Winch: point and click an anchor; right stick + A on a controller. V with a line attached unhooks it |
 | Z / Shift+Z | Winch in / pay out (- and = change the saved speed, 0.1–20x; default 4x) |
-| O | Tow strap: click your front/rear point, then the other vehicle's point within 9 m; O with a strap attached unhooks it |
+| O | Tow strap: hooked on foot (get out, hold E at a recovery point, walk the end to the other vehicle's point, hold E); O in the seat just says so |
 | U | Autopilot on/off: drives to the place picked in Esc → Autopilot |
 | Tab | Switch to another vehicle |
 | R | Repair in place. R twice quickly: respawn at the start (in a level: restart the attempt) |
@@ -201,7 +201,7 @@ Driving is analog. The left stick is a real analog steering input: a radial dead
 | L3 | Headlights |
 | Back (View) | The map: sticks pan, RT / LT zoom, A sets the waypoint, Back or B closes |
 | Start (Menu) | Pause menu |
-| LB + D-pad up / down | Winch: hook (or unhook) / tow strap |
+| LB + D-pad up / down | Winch / tow strap hints (the hook-up itself is on foot: hold X at the bumper) |
 | LB + RT / LT | Winch in / out (right stick up and down sets the winch speed) |
 | LB + D-pad left / right | Air down / pump up the tires (hold, stopped) |
 | LB + A | Repair in place (twice quickly: back to the start) |
@@ -229,7 +229,7 @@ Launched plainly, the game opens on the main menu, a screen of its own (no world
 - **Map (M):** the whole map, north up: trails, water, repair shops, places, everyone's trucks. Wheel zooms, drag pans, left click sets your waypoint, right click pings GO HERE for everyone (Shift: HELP). Shift+M is now manual/automatic.
 - **Pings:** middle click pings GO HERE where you point; Shift+middle click pings HELP at your truck. Everyone sees them in the world and on the map.
 - **Chat:** Enter, type, Enter. **Meet up** (Esc → Multiplayer) parks your truck behind a buddy's (again for the next one). Name tags float over your buddies' trucks (and over them on foot).
-- **On foot (J):** get out (stopped) to spot a line or walk the trail. You see through your own eyes: the mouse looks around, WASD walk where you look, Shift run, Space jump; you wade, swim, and climb over rocks. V opens your truck's winch picker; point and click a tree, rock, vehicle recovery point or ground anchor within 60 m; F pours your truck's spare can into the nearest truck (a buddy's too). J again by a truck gets in.
+- **On foot (J):** get out (stopped) to spot a line or walk the trail. You see through your own eyes: the mouse looks around, WASD walk where you look, Shift run, Space jump; you wade, swim, and climb over rocks. Hooking a winch line or tow strap is done by hand: hold E at the fairlead (or a recovery point) to grab the line, walk it out (it pays out of the drum, as far as there is line), and hold E at a tree, boulder, ground spot or another vehicle's recovery point to hook it; hold E at either end to unhook. G lets go. Reeling in and paying out (Z, Shift+Z) work from the seat or on foot once it's hooked; F pours your truck's spare can into the nearest truck (a buddy's too). J again by a truck gets in.
 - **Exploring:** every named place on a map starts undiscovered ("?" on the map); get within 30 m to find it. Your discoveries are kept between sessions.
 - **Fuel:** engines burn fuel for the power they make (setting FUEL: OFF / REAL / FAST, default FAST: 4x). Run dry and the engine dies. Shops fill the tank and the spare can; the Bronco and 4Runner carry a 20 L can.
 
@@ -483,7 +483,7 @@ Run it safely (details and a hardened systemd unit in [docs/multiplayer.md](docs
 
 The idea: trucks break, and your buddies get you home. (Until multiplayer lands, a buddy is any other truck: Tab into it and drive.)
 
-- **Winch (V, Z, Shift+Z):** the Bronco, 4Runner and rock buggy carry a 9,500 lb winch, the side-by-side a 4,500 lb one (20 kN), with 30 m of line and a 30 m extension (60 m total). V opens a pointer/controller picker for trees, boulders, vehicle recovery points and ground anchors (what each takes is under **Anchor gear** below). The default 4x speed reels in at about 0.52 m/s unloaded; -/= or Settings → WINCH SPEED adjusts 0.1–20x (up to 2.6 m/s). Speed falls under load, the drum stalls at rated pull, and the line breaks past about 90 kN.
+- **Winch (V, Z, Shift+Z):** the Bronco, 4Runner and rock buggy carry a 9,500 lb winch, the side-by-side a 4,500 lb one (20 kN), with 30 m of line and a 30 m extension (60 m total). The line is hooked on foot (J, hold E at the front of the truck, walk it to a tree, boulder, vehicle recovery point or ground anchor, hold E; what each takes is under **Anchor gear** below); V from the seat only reminds you. The default 4x speed reels in at about 0.52 m/s unloaded; -/= or Settings → WINCH SPEED adjusts 0.1–20x (up to 2.6 m/s). Speed falls under load, the drum stalls at rated pull, and the line breaks past about 90 kN.
 
 - **Anchor gear:** what the winch line ties to depends on what you carry. Every target in reach stays listed; one you can't use is greyed with the reason ("NO GROUND STAKES LEFT", "CAN'T STAKE ON ROCK: NEEDS A ROCK BOLT", "TOO DEEP TO STAKE"), and the auto-pick (V with no choice) skips it. The HUD line above the fuel gauge shows the counts: `STRAPS 3 SLING 2 STAKES 4 BOLTS 2 ICE 2`. All the numbers are in `src/anchors.h`.
 
@@ -498,7 +498,7 @@ The idea: trucks break, and your buddies get you home. (Until multiplayer lands,
 
   Nothing sets on pavement or scree, or under more than 15 cm of water. Sandbox starts with 3 straps, 2 slings, 4 stakes, 2 bolts and 2 ice anchors, and a repair station (park on the pad) or a full reset (R R) refills them free. A career starts with 2 / 1 / 2 / 0 / 0 (saved with the career as `stock N ANCHOR:...`); buy more off a station's rack on foot, or find them in supply caches (bolts and ice anchors are scarce).
 
-- **Tow strap (O):** click your front/rear recovery point, then the other vehicle's front/rear point within 9 m. The 9 m kinetic strap breaks at 130 kN. An unattended vehicle rolls in neutral with both brakes released and steers to follow. See [engine audio, recovery and gearing](docs/recovery-audio.md) for controls, audio previews and validation.
+- **Tow strap (O):** get out, hold E at your front/rear recovery point to grab the strap, then hold E at the other vehicle's front/rear point within 9 m. The 9 m kinetic strap breaks at 130 kN. An unattended vehicle rolls in neutral with both brakes released and steers to follow. See [engine audio, recovery and gearing](docs/recovery-audio.md) for controls, audio previews and validation.
 
 - **Repair stations:** park on the pad and stop. The crew fixes everything (dents, panels, glass, tires, shafts, engine, hydrolock) in 4 s plus time per thing broken; moving resets the work. Towed trucks get fixed too, and the strap comes off.
   - Mountain: Trailhead Garage (in the lot), Crawl Park Pit (by the dome), Halfway Hut (a pull-off on the summit trail, where the Widowmaker Spur leaves it).

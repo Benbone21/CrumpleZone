@@ -520,49 +520,6 @@ bool project(const View& v, const V3& p, float& sx, float& sy) {
     return true;
 }
 
-// Pointer/controller recovery picker. Straps first choose our recovery point,
-// then a point on another vehicle; winches choose one reachable anchor.
-struct WinchAim {
-    bool on = false, pointer = false;
-    RopeKind kind = ROPE_WINCH;
-    int sourceHook = -1, sel = -1;
-    float pointerX = 0, pointerY = 0;
-    std::vector<WinchTarget> targets;
-    V3 look;
-    bool hasLook = false;
-    V3 ray(const View& v) const {
-        const float x = pointer ? pointerX : v.width * 0.5f, y = pointer ? pointerY : v.height * 0.5f;
-        const V3 f = norm(v.target - v.eye), right = norm(cross(f, v.up)), up = cross(right, f);
-        const double scale = 2 * std::tan(v.fovy / 2) / std::max(1, v.height);
-        return norm(f + right * ((x - v.width * 0.5) * scale) - up * ((y - v.height * 0.5) * scale));
-    }
-    void update(const Sim& sim, const View& v) {
-        if (!on) return;
-        const V3 dir = ray(v);
-        hasLook = false;
-        if (kind == ROPE_WINCH) {
-            for (double d = 0.5; d < recovery::kWinchReach + 20; d += 0.5) {
-                const V3 q = v.eye + dir * d;
-                if (q.y <= sim.world.height(q.x, q.z)) {
-                    look = q, hasLook = true;
-                    // (A boulder, log or trunk in the way is what you're looking at, not the ground behind it: no stake or bolt through it.)
-                    objshape::WorldHit solid;
-                    if (objshape::rayWorld(sim.world, v.eye, dir, d, solid)) hasLook = false;
-                    break;
-                }
-            }
-            targets = sim.winchTargets(sim.player, hasLook ? &look : nullptr);
-        } else if (sourceHook < 0) {
-            targets.clear();
-            for (int h = 0; h < 2; h++) {
-                RopeEnd end; end.car = sim.player; end.hook = h;
-                targets.push_back({end, sim.cars[sim.player].hookPoint(h), 0, true, h ? "YOUR REAR POINT" : "YOUR FRONT POINT"});
-            }
-        } else targets = sim.strapTargets(sim.player, sourceHook);
-        sel = sim.pickRecoveryTarget(targets, v.eye, dir, 44 * std::tan(v.fovy / 2) / std::max(1, v.height));
-    }
-};
-
 // Where the autopilot can go on this map (the menu's DRIVE TO list).
 struct Place {
     std::string name;
@@ -984,8 +941,8 @@ void drawRecovery(Renderer& r, const Sim& sim, const HudState& hud, float u, int
         const float sm = px(1.1f * u);
         char hint[200];
         const double speed = sim.cars[sim.player].winchSpeed;
-        if (pad::ui.last) std::snprintf(hint, sizeof hint, "%s + RT REEL IN   %s + LT PAY OUT   RIGHT STICK UP DOWN: SPEED %.2gX   %s + D-PAD UP: UNHOOK", pad::hint("", pad::B_LB), pad::hint("", pad::B_LB), speed, pad::hint("", pad::B_LB));
-        else std::snprintf(hint, sizeof hint, "%s REEL IN   %s PAY OUT   %s %s SPEED %.2gX   %s UNHOOK", K(KA_WINCH_IN).c_str(), K(KA_WINCH_OUT).c_str(), K(KA_WINCH_SLOWER).c_str(), K(KA_WINCH_FASTER).c_str(), speed, K(KA_WINCH).c_str());
+        if (pad::ui.last) std::snprintf(hint, sizeof hint, "%s + RT REEL IN   %s + LT PAY OUT   RIGHT STICK UP DOWN: SPEED %.2gX   ON FOOT, HOLD X AT AN END: UNHOOK", pad::hint("", pad::B_LB), pad::hint("", pad::B_LB), speed);
+        else std::snprintf(hint, sizeof hint, "%s REEL IN   %s PAY OUT   %s %s SPEED %.2gX   ON FOOT, HOLD %s AT AN END: UNHOOK", K(KA_WINCH_IN).c_str(), K(KA_WINCH_OUT).c_str(), K(KA_WINCH_SLOWER).c_str(), K(KA_WINCH_FASTER).c_str(), speed, K(KA_INTERACT).c_str());
         // (The key hints stay left of the compass: past that, they break at a gap onto a second line.)
         std::string h1 = hint, h2;
         const int fit = hudlayout::fitChars(sm, hudlayout::topLeftMaxW(u, W) - 18 * u);
@@ -1273,14 +1230,14 @@ void drawHelp(Renderer& r, float u, int W, int H, bool mph) {
         {K(KA_THROTTLE) + sp + K(KA_BRAKE), "DRIVE / BRAKE / REVERSE"}, {K(KA_STEER_LEFT) + sp + K(KA_STEER_RIGHT), "STEER"},
         {K(KA_HANDBRAKE), "HANDBRAKE"},                                  {K(KA_REPAIR), "REPAIR IN PLACE (TWICE: RESPAWN)"},
         {K(KA_FLIP), "BACK ON ITS WHEELS"},                              {K(KA_NEXT_VEHICLE), "NEXT VEHICLE (ON FOOT: TRUCK INVENTORY, " + K(KA_INVENTORY) + ")"},
-        {K(KA_WINCH), "WINCH: HOOK / UNHOOK"},                           {K(KA_WINCH_IN) + " / " + K(KA_WINCH_OUT), "WINCH IN / OUT (" + K(KA_WINCH_SLOWER) + " " + K(KA_WINCH_FASTER) + " = SPEED)"},
-        {K(KA_STRAP), "TOW STRAP: CLICK YOUR POINT, THEN THEIRS"},       {K(KA_SWAY), "FRONT SWAY BAR DISCONNECT"},
+        {"HOLD " + K(KA_INTERACT), "ON FOOT: GRAB THE WINCH LINE, WALK IT OUT, HOOK IT (SAME TO UNHOOK)"},                           {K(KA_WINCH_IN) + " / " + K(KA_WINCH_OUT), "WINCH IN / OUT (" + K(KA_WINCH_SLOWER) + " " + K(KA_WINCH_FASTER) + " = SPEED)"},
+        {K(KA_STRAP), "TOW STRAP: GET OUT, HOLD " + K(KA_INTERACT) + " AT A POINT"},       {K(KA_SWAY), "FRONT SWAY BAR DISCONNECT"},
         {K(KA_AIR_DOWN) + sp + K(KA_AIR_UP), "AIR DOWN / UP (STOPPED)"}, {K(KA_THROTTLE_CAP), "THROTTLE LIMIT: 100 50 25 10% (FOR CRAWLING)"},
         {K(KA_GARAGE), "GARAGE: ENGINE, SUSPENSION, GEARBOX"},
         {K(KA_GEAR_DOWN) + sp + K(KA_GEAR_UP), "SHIFT DOWN / UP (R N 1...)"}, {K(KA_MANUAL), "MANUAL / AUTOMATIC"},
         {K(KA_MAP), "MAP (WAYPOINTS, PINGS)"},                           {K(KA_CHAT), "CHAT"},
         {"MIDDLE CLICK", "PING: GO HERE (SHIFT: HELP)"},
-        {K(KA_GET_IN_OUT), "GET OUT / IN (ON FOOT: " + K(KA_WINCH) + " WINCH, " + K(KA_FUEL_CAN) + " FUEL CAN)"},
+        {K(KA_GET_IN_OUT), "GET OUT / IN (ON FOOT: " + K(KA_INTERACT) + " WINCH LINE, " + K(KA_FUEL_CAN) + " FUEL CAN)"},
         {K(KA_TRANSFER), mph ? "4X4: 2H 4H 4L (LOW: BELOW 5 MPH)" : "4X4: 2H 4H 4L (LOW: BELOW 8 KM/H)"},
         {K(KA_LIGHTS), "LIGHTS: AUTO, LOW, HIGH, OFF"},
         {K(KA_LOCK_FRONT) + sp + K(KA_LOCK_REAR), "FRONT / REAR LOCKER"}, {K(KA_AUTOPILOT), "AUTOPILOT (ESC > AUTOPILOT: WHERE)"},
@@ -1452,59 +1409,6 @@ void drawGarage(Renderer& r, const GarageUI& g, const Garage& garage, const Care
     r.text(x + pad, y + h - pad - 8 * s, s, garageKeys, 1.0f, 0.75f, 0.3f);
 }
 
-void drawWinchAim(Renderer& r, const Sim& sim, const WinchAim& aim, const View& view, float u, int W, int H) {
-    if (!aim.on) return;
-    const Car& car = sim.cars[sim.player];
-    const V3 hook = car.hookPoint(aim.kind == ROPE_STRAP && aim.sourceHook >= 0 ? aim.sourceHook : 0);
-    // The line's reach: a ring on the ground.
-    const double reach = aim.kind == ROPE_WINCH ? recovery::kWinchReach - 1 : recovery::kStrapReach;
-    for (int k = 0; k < 120; k++) {
-        const double a = k * 2 * M_PI / 120;
-        V3 q = hook + V3(std::cos(a), 0, std::sin(a)) * reach;
-        q.y = sim.world.height(q.x, q.z) + 0.15;
-        float sx, sy;
-        if (project(view, q, sx, sy)) r.rect(sx - 2 * u, sy - 2 * u, 4 * u, 4 * u, 1.0f, 0.75f, 0.3f, 0.75f);
-    }
-    // Every anchor in reach; the selected one gets a reticle and a dotted line to the winch.
-    for (int k = 0; k < (int)aim.targets.size(); k++) {
-        const WinchTarget& t = aim.targets[k];
-        float sx, sy;
-        if (!project(view, t.at, sx, sy)) continue;
-        const bool on = k == aim.sel;
-        // (A target you can't use stays listed, greyed: the reason is on its label.)
-        const float cr = !t.usable ? 0.62f : t.inArc ? 0.55f : 0.5f, cg = !t.usable ? 0.58f : t.inArc ? 1.0f : 0.5f, cb = !t.usable ? 0.58f : t.inArc ? 0.6f : 0.52f;
-        const float d = (on ? 7 : 4) * u;
-        r.tri(sx, sy - d, sx + d, sy, sx, sy + d, cr, cg, cb, on ? 1.0f : 0.8f);
-        r.tri(sx, sy - d, sx, sy + d, sx - d, sy, cr, cg, cb, on ? 1.0f : 0.8f);
-        if (!on) continue;
-        const float b = 18 * u, l = 7 * u, th = 2.5f * u;
-        for (int cx = -1; cx <= 1; cx += 2)
-            for (int cy = -1; cy <= 1; cy += 2) {
-                const float x0 = sx + cx * b, y0 = sy + cy * b;
-                r.rect(cx < 0 ? x0 : x0 - l, y0 - th / 2, l, th, cr, cg, cb, 1);
-                r.rect(x0 - th / 2, cy < 0 ? y0 : y0 - l, th, l, cr, cg, cb, 1);
-            }
-        for (int i = 1; i < 24; i++) {
-            float lx, ly;
-            if (project(view, hook + (t.at - hook) * (i / 24.0), lx, ly)) r.rect(lx - 1.5f * u, ly - 1.5f * u, 3 * u, 3 * u, cr, cg, cb, 0.8f);
-        }
-        char buf[64];
-        std::snprintf(buf, sizeof buf, "%s  %.0f M%s", t.what, t.dist, t.inArc ? "" : "  (BEHIND THE WINCH)");
-        const float ts = px(1.8f * u);
-        label(r, sx - r.textWidth(buf, ts) / 2, sy + b + 6 * u, ts, buf, cr, cg, cb);
-        if (!t.usable) label(r, sx - r.textWidth(t.why, ts) / 2, sy + b + 6 * u + 8 * ts + 4 * u, ts, t.why, 1.0f, 0.55f, 0.4f);
-    }
-    const char* stage = aim.kind == ROPE_WINCH ? "WINCH: CHOOSE AN ANCHOR" : aim.sourceHook < 0 ? "STRAP: CHOOSE YOUR FRONT OR REAR POINT" : "STRAP: CHOOSE THE OTHER VEHICLE'S POINT (9 M)";
-    drawPrompt(r, u, W, H, 1, stage, 0.02f, 0.02f, 0.03f, 0.95f, 1.0f, 0.75f, 0.3f);
-    if (!aim.pointer) {
-        r.rect(W * 0.5f - 8 * u, H * 0.5f - u, 16 * u, 2 * u, 1, 1, 1, 0.8f);
-        r.rect(W * 0.5f - u, H * 0.5f - 8 * u, 2 * u, 16 * u, 1, 1, 1, 0.8f);
-    }
-    const std::string padHelp = "RIGHT STICK AIMS   " + std::string(pad::hint("", pad::B_A)) + ": SELECT   " + pad::hint("", pad::B_B) + ": CANCEL";
-    const char* help = pad::ui.last ? padHelp.c_str() : "CLICK: SELECT   MIDDLE DRAG: LOOK   WHEEL: ZOOM   ESC: CANCEL";
-    drawPrompt(r, u, W, H, 0, help, 0.02f, 0.02f, 0.03f, 0.95f, 1.0f, 0.75f, 0.3f);
-}
-
 // Multiplayer: who's here (top right), and a name tag over each of their vehicles.
 void drawPlayers(Renderer& r, const Sim& sim, const NetSession& net, const View& view, float u, int W, int H, bool fpsOn) {
     if (!net.active()) return;
@@ -1576,7 +1480,7 @@ void drawTags(Renderer& r, const World& world, const View& view, float u, int W,
     }
 }
 
-void drawHud(Renderer& r, const Sim& sim, const View& view, HudState& hud, const Playback* pb, const NetSession& net, const WinchAim& aim, int W,
+void drawHud(Renderer& r, const Sim& sim, const View& view, HudState& hud, const Playback* pb, const NetSession& net, int W,
              int H, float fps, double dt, bool mph, const Career& career, const std::vector<CacheSpot>& caches) {
     float u = std::max(0.75f, H / 720.0f);
     const Car& car = sim.cars[sim.player];
@@ -1587,7 +1491,6 @@ void drawHud(Renderer& r, const Sim& sim, const View& view, HudState& hud, const
     drawAnchors(r, sim, hud, u, W, H);
     drawStation(r, sim, u, W, H);
     if (!hud.debugOn) drawPlayers(r, sim, net, view, u, W, H, hud.showFps);  // (F3 lists them itself)
-    drawWinchAim(r, sim, aim, view, u, W, H);
     drawPilot(r, sim, view, u, W, H);
     drawCaches(r, career, hud, caches, view, u, W, H);
     drawTags(r, sim.world, view, u, W, H);
@@ -2049,7 +1952,6 @@ int main(int argc, char** argv) {
     // Multiplayer session (see net.h).
     NetSession net;
     net::Finder finder;  // games on the local network, while the multiplayer page is open
-    WinchAim winchAim;
     View lastView;
     // The pause menu, and putting its settings into effect.
     Effects fx;
@@ -2146,30 +2048,6 @@ int main(int argc, char** argv) {
         const uint8_t* ks = SDL_GetKeyboardState(nullptr);
         if (shiftForce >= 0) return shiftForce != 0;
         return padShift || ks[SC_LSHIFT] || ks[SC_RSHIFT];
-    };
-    auto confirmWinch = [&]() {
-        winchAim.update(sim, lastView);
-        if (winchAim.sel < 0 || winchAim.sel >= (int)winchAim.targets.size()) {
-            hud.toast("POINT AT A RECOVERY POINT OR ANCHOR");
-            return;
-        }
-        const WinchTarget t = winchAim.targets[winchAim.sel];
-        if (winchAim.kind == ROPE_STRAP && winchAim.sourceHook < 0) {
-            winchAim.sourceHook = t.end.hook;
-            winchAim.update(sim, lastView);
-            hud.toast("NOW CLICK THE OTHER VEHICLE'S FRONT OR REAR POINT");
-            return;
-        }
-        if (!t.inArc) { hud.toast("THAT'S BEHIND THE WINCH: TURN TO FACE IT"); return; }
-        if (winchAim.kind == ROPE_WINCH && !t.usable) { hud.toast(t.why); return; }
-        const std::string message = winchAim.kind == ROPE_WINCH ? sim.hookWinchTo(sim.player, t.end)
-            : sim.hookStrapTo(sim.player, winchAim.sourceHook, t.end);
-        hud.toast(message);
-        if (message.rfind("WINCH HOOKED", 0) == 0 || message.rfind("TOW STRAP:", 0) == 0) winchAim.on = false;
-    };
-    auto startRecoveryPick = [&](RopeKind kind) {
-        winchAim = WinchAim(); winchAim.on = true; winchAim.kind = kind;
-        winchAim.update(sim, lastView);
     };
     auto stopPilot = [&]() {
         Car& c = sim.cars[sim.player];
@@ -2537,9 +2415,13 @@ int main(int argc, char** argv) {
         cam.initialized = false;
         footYaw = walker.yaw;  // looking the way you got out
         footPitch = -0.1;
-        hud.toast("ON FOOT: MOUSE LOOK, WASD WALK, SHIFT RUN, SPACE JUMP, V HOOK YOUR WINCH HERE, J GET IN");
+        hud.toast("ON FOOT: MOUSE LOOK, WASD WALK, SHIFT RUN, SPACE JUMP, HOLD E AT THE BUMPER TO GRAB THE WINCH LINE, J GET IN");
     };
     auto getIn = [&]() {
+        if (sim.handLine.on()) {  // (the line in your hands spools back onto its drum)
+            sim.dropHandLine();
+            hud.toast("LINE SPOOLED BACK");
+        }
         walker.hand = TrunkRef();  // (a tool in your hand goes back in the truck with you)
         inv.close();
         if (walker.carrying) Interact::drop(sim, walker, V3(std::cos(walker.yaw), 0, -std::sin(walker.yaw)));  // (whisked away: it's left there)
@@ -3350,7 +3232,6 @@ int main(int argc, char** argv) {
         padCtx = editor.active || coop.typing || playback.active() || !padDev.connected() ? pad::Mode::Off
                  : menu.open || garageUI.open || inv.open                                 ? pad::Mode::Menu
                  : coop.mapOpen                                                           ? pad::Mode::Map
-                 : winchAim.on                                                            ? pad::Mode::Aim
                                                                                           : pad::Mode::Drive;
         padLogic.tune = {settings.padSteering, settings.padDeadzone, settings.padRumble, settings.throttle.padScale()};
         padLogic.update(padDev.read((SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS) != 0), padCtx, dt);
@@ -3489,7 +3370,7 @@ int main(int argc, char** argv) {
                     }
                     break;
                 case SDL_KEYDOWN: {
-                    if (settings.keys.matches(KA_DEV_MENU, evKeyScancode(e), shiftDown()) && !fromPad && !evKeyRepeat(e) && !inv.open && !garageUI.open && !winchAim.on && !menu.title &&
+                    if (settings.keys.matches(KA_DEV_MENU, evKeyScancode(e), shiftDown()) && !fromPad && !evKeyRepeat(e) && !inv.open && !garageUI.open && !menu.title &&
                         !menu.listeningForKey()) {  // the dev menu (devmenu.h): F12 opens and closes it, whatever DEV HOTKEYS says
                         if (menu.devOpen()) closeMenu();
                         else {
@@ -3499,7 +3380,7 @@ int main(int argc, char** argv) {
                         }
                         break;
                     }
-                    if (settings.keys.matches(KA_DEV_TOGGLE, evKeyScancode(e), shiftDown()) && !fromPad && !evKeyRepeat(e) && !menu.open && !inv.open && !garageUI.open && !winchAim.on) {
+                    if (settings.keys.matches(KA_DEV_TOGGLE, evKeyScancode(e), shiftDown()) && !fromPad && !evKeyRepeat(e) && !menu.open && !inv.open && !garageUI.open) {
                         settings.devHotkeys = !settings.devHotkeys;  // DEV KEYS <-> GAMEPLAY KEYS (devmenu.h has the table)
                         saveSettings();
                         hud.toast(settings.devHotkeys ? "DEV KEYS: THE DEV KEYS ARE TOOLS (" + K(KA_DEV_TOGGLE) + " FOR GAMEPLAY KEYS)" : "GAMEPLAY KEYS (" + K(KA_DEV_TOGGLE) + " FOR DEV KEYS)");
@@ -3577,22 +3458,7 @@ int main(int argc, char** argv) {
                         if (!garageUI.open) garageFromMenu = false;
                         break;
                     }
-                    if (winchAim.on) {  // recovery picker owns keyboard confirmation/cancel
-                        const int sc = gsc;
-                        if (sc == SC_BACKSPACE && winchAim.kind == ROPE_STRAP && winchAim.sourceHook >= 0) {
-                            winchAim.sourceHook = -1;
-                            winchAim.update(sim, lastView);
-                            break;
-                        }
-                        if (sc == SC_ESCAPE || sc == SC_BACKSPACE) {
-                            winchAim.on = false;
-                            break;
-                        }
-                        if (fromPad) winchAim.pointer = false;
-                        if (sc == SC_V || sc == SC_O || sc == SC_RETURN || sc == SC_KP_ENTER) confirmWinch();
-                        break;
-                    }
-                    if (kh.action == KA_CHAT && !winchAim.on) {
+                    if (kh.action == KA_CHAT) {
                         coop.typing = true;
                         coop.draft.clear(), coop.draftEd.reset();
                         break;
@@ -3657,16 +3523,12 @@ int main(int argc, char** argv) {
                             hud.toast(t); saveSettings();
                             break;
                         }
-                        case SC_V: {
-                            const Car& c = sim.cars[sim.player];
-                            if (sim.dropWinch(sim.player)) hud.toast("WINCH LINE UNHOOKED AND SPOOLED");
-                            else if (c.isProp() || !(c.spec->extras & EXTRA_WINCH)) hud.toast("NO WINCH ON THIS TRUCK");
-                            else startRecoveryPick(ROPE_WINCH);
-                            break;
-                        }
+                        case SC_V:  // (the hook-up is done on foot: grab the line at the bumper, walk it to the anchor, hold E)
                         case SC_O: {
-                            if (sim.dropStrap(sim.player)) hud.toast("TOW STRAP UNHOOKED");
-                            else if (!sim.cars[sim.player].isProp()) startRecoveryPick(ROPE_STRAP);
+                            const bool winchKey = gsc == SC_V;
+                            hud.toast(walker.active ? (sim.handLine.on() ? "WALK THE LINE TO THE ANCHOR AND HOLD " + K(KA_INTERACT) + " TO HOOK IT (" + K(KA_PUT_DOWN) + " LETS GO)"
+                                                                         : "HOLD " + K(KA_INTERACT) + " AT THE " + (winchKey ? "WINCH FAIRLEAD" : "RECOVERY POINT") + " TO GRAB THE LINE")
+                                                    : sim.seatHook(sim.player, winchKey ? ROPE_WINCH : ROPE_STRAP));
                             break;
                         }
                         case SC_Y: {  // front sway bar disconnect
@@ -3733,7 +3595,8 @@ int main(int argc, char** argv) {
                         }
                         case SC_G:
                             if (walker.active) {
-                                if (walker.carrying) Interact::drop(sim, walker, lastView.target - lastView.eye);  // (on foot: put down what you carry)
+                                if (sim.handLine.on()) { sim.dropHandLine(); hud.toast("LET GO OF THE LINE: IT SPOOLS BACK"); }
+                                else if (walker.carrying) Interact::drop(sim, walker, lastView.target - lastView.eye);  // (on foot: put down what you carry)
                                 else if (walker.holdingJack) Interact::dropJack(sim, walker);  // (put the jack down)
                                 else if (walker.hand.any()) hud.toast("PUT IT BACK IN THE TRUCK: PRESS " + K(KA_INTERACT) + " AT ITS BACK");
                             }
@@ -3870,15 +3733,7 @@ int main(int argc, char** argv) {
                         float mx, my;
                         toDrawable(evMotionX(e), evMotionY(e), mx, my);
                         handleMenu(menu.mouseMove(mx, my, evMotionState(e) & 1, settings));
-                    } else if (winchAim.on) {
-                        if (evMotionState(e) & 2) {
-                            if (walker.active) {
-                                footYaw -= evMotionXrel(e) * 0.0035;
-                                footPitch = clampd(footPitch - evMotionYrel(e) * 0.0035, -1.45, 1.45);
-                            } else cam.drag(evMotionXrel(e), evMotionYrel(e));
-                        }
-                        else { toDrawable(evMotionX(e), evMotionY(e), winchAim.pointerX, winchAim.pointerY); winchAim.pointer = true; }
-                    } else if (walker.active && !editor.active && !winchAim.on) {  // on foot: the mouse turns your head
+                    } else if (walker.active && !editor.active) {  // on foot: the mouse turns your head
                         footYaw -= evMotionXrel(e) * 0.0035;
                         footPitch = clampd(footPitch - evMotionYrel(e) * 0.0035, -1.45, 1.45);
                     } else if (evMotionState(e) & 0x5) {  // left or right button held
@@ -3895,7 +3750,6 @@ int main(int argc, char** argv) {
                         else if (evButton(e) == 3 || (evButton(e) == 1 && !invLay.panel.has(mx, my))) closeInventory();
                         break;
                     }
-                    if (!menu.open && winchAim.on && evButton(e) == 3) winchAim.on = false;  // right click: cancel
                     if (menu.open && evButton(e) == 1) {
                         float mx, my;
                         toDrawable(evButtonX(e), evButtonY(e), mx, my);
@@ -3903,11 +3757,6 @@ int main(int argc, char** argv) {
                     }
                     break;
                 case SDL_MOUSEBUTTONUP:
-                    if (!menu.open && winchAim.on && evButton(e) == 1) {
-                        toDrawable(evButtonX(e), evButtonY(e), winchAim.pointerX, winchAim.pointerY);
-                        winchAim.pointer = true;
-                        confirmWinch();
-                    }
                     dragging = false;
                     menu.mouseUp();
                     break;
@@ -4007,9 +3856,6 @@ int main(int argc, char** argv) {
                 if (frame > 8 && frame % 60 == 0 && sim.cars.size() > 1)
                     std::printf("trafficlod: frame %d, %d proxies, car %.0f m away, %.1f m/s, %s\n", frame, sim.proxyCount(), len(sim.cars.back().frame().com - sim.cars[sim.player].frame().com),
                                 len(sim.cars.back().frame().vel), sim.cars.back().proxy ? "PROXY" : "full sim");
-            }
-            if (opt.script == "aim" && frame == 20) {  // screenshot of picking a winch anchor
-                startRecoveryPick(ROPE_WINCH);
             }
             if (opt.script.rfind("work-", 0) == 0) {  // screenshots of hands-on work: a wheel off, a chain on, a CV axle in
                 Car& c = sim.cars[sim.player];
@@ -4308,6 +4154,7 @@ int main(int argc, char** argv) {
                             if (pickCarPart(sim.cars[ci], lastView.eye, look, 4.0, debug != DEBUG_PARTS, h) && (!interact.hover.ok || h.t < interact.hover.t)) h.car = ci, interact.hover = h;
                         }
                     }
+                    if (sim.handLine.on()) sim.handLine.hand = walker.p + V3(0, 1.0, 0) + V3(std::cos(walker.yaw), 0, -std::sin(walker.yaw)) * 0.35;  // (held at the chest)
                     const std::string said = interact.update(sim, walker, lastView.eye, lastView.target - lastView.eye, holdE, dt);
                     if (!said.empty()) hud.toast(said);
                     if (interact.openedInventory >= 0) {  // E at the back
@@ -4339,7 +4186,8 @@ int main(int argc, char** argv) {
                         interact.openedSpot.clear();
                     }
                     if (padCtx == pad::Mode::Drive && padLogic.in.drop) {
-                        if (walker.carrying) Interact::drop(sim, walker, lastView.target - lastView.eye);
+                        if (sim.handLine.on()) { sim.dropHandLine(); hud.toast("LET GO OF THE LINE: IT SPOOLS BACK"); }
+                        else if (walker.carrying) Interact::drop(sim, walker, lastView.target - lastView.eye);
                         else if (walker.holdingJack) Interact::dropJack(sim, walker);
                         else if (walker.hand.any()) hud.toast("PUT IT BACK IN THE TRUCK: PRESS " + K(KA_INTERACT) + " AT ITS BACK");
                     }
@@ -5077,11 +4925,7 @@ int main(int argc, char** argv) {
         if (padCtx == pad::Mode::Drive || padCtx == pad::Mode::Aim) {
             const pad::Intent& pin = padLogic.in;
             padLooking = pin.lookX != 0 || pin.lookY != 0 || pin.lookBack;
-            if (walker.active && winchAim.on) {
-                footYaw -= pin.lookX * 2.6 * dt;
-                footPitch = clampd(footPitch + pin.lookY * 1.8 * dt, -1.45, 1.45);
-            } else if (padLooking || pin.resetView) cam.padLook(pin.lookX, pin.lookY, pin.lookBack, pin.resetView, dt);
-            if (padLooking && winchAim.on) winchAim.pointer = false;
+            if (padLooking || pin.resetView) cam.padLook(pin.lookX, pin.lookY, pin.lookBack, pin.resetView, dt);
         } else if (padCtx == pad::Mode::Map) {
             const pad::Intent& pin = padLogic.in;
             int dw = 1, dh = 1;
@@ -5140,7 +4984,7 @@ int main(int argc, char** argv) {
         }
         {
             // The mouse is yours to look with on foot; anywhere else it's a pointer.
-            const bool want = walker.active && !menu.open && !inv.open && !editor.active && !winchAim.on && cam.mode != 3;
+            const bool want = walker.active && !menu.open && !inv.open && !editor.active && cam.mode != 3;
             if (want != mouseLook) {
                 SDL_SetRelativeMouseMode(want ? 1 : 0);
                 mouseLook = want;
@@ -5153,7 +4997,6 @@ int main(int argc, char** argv) {
         if (audioOn) audio.setEnvironment(soundMap(sim.world.map), (float)dayHours, settings.ambience,
                                          !walker.active && cam.mode == 2 ? 0.3f : 1.0f);
         lastView = view;
-        if (winchAim.on) winchAim.update(sim, view);
         clock += dt;
         view.time = (float)clock;
         {
@@ -5346,7 +5189,7 @@ int main(int argc, char** argv) {
         }
         hud.update(dt);
         if (editor.active && !menu.open) editor.draw(renderer, W, H, dt);
-        else if (!menu.open && !hud.photo) drawHud(renderer, sim, view, hud, &playback, net, winchAim, W, H, fps, dt, settings.mph, career, caches);
+        else if (!menu.open && !hud.photo) drawHud(renderer, sim, view, hud, &playback, net, W, H, fps, dt, settings.mph, career, caches);
         const bool showHud = !menu.open && !editor.active && !hud.photo;
         hud.debugOn = dbg.on;
         if (dbg.on && showHud) {  // F3: gathered and painted only while it's up
@@ -5441,6 +5284,14 @@ int main(int argc, char** argv) {
             if (walker.hand.any() && !walker.carrying && !inv.open) {
                 const std::string line = "IN YOUR HAND: " + trunk::name(walker.hand) + (padNow ? "   (X AT THE BACK OF YOUR TRUCK: PUT IT BACK)" : "   (" + K(KA_INTERACT) + " AT THE BACK OF YOUR TRUCK: PUT IT BACK)");
                 drawPrompt(renderer, u, W, H, 0, line, 0, 0, 0, 0.55f, 0.9f, 0.92f, 0.95f);
+            }
+            if (sim.handLine.on() && sim.handLine.car < (int)sim.cars.size()) {
+                const Sim::HandLine& hl = sim.handLine;
+                const double out = len(hl.hand - sim.cars[hl.car].hookPoint(hl.hook)), most = sim.handLineReach(hl) + 3.2;
+                char lb[160];
+                std::snprintf(lb, sizeof lb, "%s: %.0f OF %.0f M OUT   WALK IT TO AN ANCHOR, HOLD %s TO HOOK   %s: LET GO", hl.kind == ROPE_WINCH ? "WINCH LINE" : "TOW STRAP", out, most,
+                              padNow ? "X" : K(KA_INTERACT).c_str(), padNow ? "B" : K(KA_PUT_DOWN).c_str());
+                drawPrompt(renderer, u, W, H, 0, lb, 0, 0, 0, 0.55f, 0.9f, 0.92f, 0.95f);
             }
             if (walker.carrying) {
                 const std::string line = "CARRYING A " + walker.carrying->sizeName() + (walker.carrying->tireOnly ? "" : " WHEEL") +

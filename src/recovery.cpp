@@ -342,6 +342,8 @@ void Sim::dropRopes(int car) {
 
 void Sim::carRemoved(int car) {
     dropRopes(car);
+    if (handLine.car == car) dropHandLine();
+    else if (handLine.car > car) handLine.car--;
     for (Rope& r : ropes) {
         if (r.a.kind == ANCHOR_CAR && r.a.car > car) r.a.car--;
         if (r.b.kind == ANCHOR_CAR && r.b.car > car) r.b.car--;
@@ -527,7 +529,7 @@ std::string Sim::hookWinch(int ci) {
     return hookWinchTo(ci, best->end);
 }
 
-std::string Sim::hookWinchTo(int ci, const RopeEnd& best) {
+std::string Sim::hookWinchTo(int ci, const RopeEnd& best, bool byHand) {
     if (ci < 0 || ci >= (int)cars.size()) return "VEHICLE NO LONGER AVAILABLE";
     Car& c = cars[ci];
     if (c.isProp() || !(c.spec->extras & EXTRA_WINCH)) return "NO WINCH ON THIS TRUCK";
@@ -535,9 +537,9 @@ std::string Sim::hookWinchTo(int ci, const RopeEnd& best) {
                                   cars[best.car].isProp() || best.hook < 0 || best.hook > 1)) return "INVALID RECOVERY POINT";
     const V3 dest = endPoint(cars, best), source = c.hookPoint(0);
     const V3 delta = dest - source;
-    if (!std::isfinite(len(delta)) || len(delta) < 1.5 || len(delta) > recovery::kWinchReach) return "ANCHOR OUT OF LINE REACH";
+    if (!std::isfinite(len(delta)) || len(delta) < (byHand ? 0.3 : 1.5) || len(delta) > recovery::kWinchReach) return "ANCHOR OUT OF LINE REACH";
     const V3 fwd = c.frame().fwd;
-    if (dot(norm(V3(delta.x, 0, delta.z)), norm(V3(fwd.x, 0, fwd.z))) <= 0.26) return "THAT'S BEHIND THE WINCH: TURN TO FACE IT";
+    if (!byHand && dot(norm(V3(delta.x, 0, delta.z)), norm(V3(fwd.x, 0, fwd.z))) <= 0.26) return "THAT'S BEHIND THE WINCH: TURN TO FACE IT";
     AnchorUse use = anchorUse(best, ci);
     if (!use.ok) return use.why;
     dropWinch(ci, false);
@@ -677,6 +679,53 @@ std::string Sim::hookStrapTo(int ci, int mh, const RopeEnd& target) {
     ropes.push_back(r);
     cars[bo].wake();
     return std::string("TOW STRAP: YOUR ") + (mh ? "REAR" : "FRONT") + " TO " + (cars[bo].spec ? cars[bo].spec->name : "VEHICLE") + (bh ? " REAR" : " FRONT");
+}
+
+std::string Sim::takeLine(int ci, RopeKind kind, int hook, const V3& hand) {
+    if (ci < 0 || ci >= (int)cars.size() || cars[ci].isProp() || cars[ci].remote) return "VEHICLE NO LONGER AVAILABLE";
+    const Car& c = cars[ci];
+    if (kind == ROPE_WINCH) {
+        if (!(c.spec->extras & EXTRA_WINCH)) return "NO WINCH ON THIS TRUCK";
+        hook = 0;  // (the fairlead)
+    } else if (hook < 0 || hook > 1) return "INVALID RECOVERY POINT";
+    for (const Rope& r : ropes)
+        if (r.kind == kind && ((r.a.kind == ANCHOR_CAR && r.a.car == ci) || (kind == ROPE_STRAP && r.b.kind == ANCHOR_CAR && r.b.car == ci)))
+            return kind == ROPE_WINCH ? "THE WINCH LINE IS ALREADY HOOKED" : "THE TOW STRAP IS ALREADY HOOKED";
+    handLine = HandLine();
+    handLine.car = ci, handLine.hook = hook, handLine.kind = kind, handLine.hand = hand;
+    return "";
+}
+
+double Sim::handLineReach(const HandLine& h) const {
+    // (The arm's length short of all the line there is: so the hook at the end of it is still within the line's reach.)
+    return (h.kind == ROPE_WINCH ? recovery::kWinchReach : recovery::kStrapReach) - 3.2;
+}
+
+std::string Sim::hookHandLine(const RopeEnd& anchor) {
+    if (!handLine.on() || handLine.car >= (int)cars.size()) return "NO LINE IN YOUR HANDS";
+    const HandLine h = handLine;
+    const std::string said = h.kind == ROPE_WINCH ? hookWinchTo(h.car, anchor, true) : hookStrapTo(h.car, h.hook, anchor);
+    if (said.rfind("WINCH HOOKED", 0) == 0 || said.rfind("TOW STRAP:", 0) == 0) dropHandLine();
+    return said;
+}
+
+std::string Sim::seatHook(int ci, RopeKind kind) const {
+    const bool winch = kind == ROPE_WINCH;
+    if (ci < 0 || ci >= (int)cars.size() || cars[ci].isProp()) return "";
+    if (winch && !(cars[ci].spec->extras & EXTRA_WINCH)) return "NO WINCH ON THIS TRUCK";
+    const bool hooked = ropeOn(ci, kind) >= 0;
+    if (hooked) return winch ? "GET OUT TO UNHOOK THE WINCH LINE: HOLD E AT ITS END" : "GET OUT TO UNHOOK THE TOW STRAP: HOLD E AT ITS END";
+    return winch ? "GET OUT TO HOOK THE WINCH: GRAB THE LINE AT THE FRONT (HOLD E), WALK IT TO THE ANCHOR"
+                 : "GET OUT TO HOOK THE STRAP: GRAB IT AT A RECOVERY POINT (HOLD E), WALK IT TO THE OTHER VEHICLE";
+}
+
+std::string Sim::unhookRope(int ri) {
+    if (ri < 0 || ri >= (int)ropes.size()) return "";
+    const Rope& r = ropes[ri];
+    if (r.a.kind != ANCHOR_CAR || r.a.car < 0 || r.a.car >= (int)cars.size() || cars[r.a.car].remote) return "";  // (another player's line)
+    const int ci = r.a.car;
+    if (r.kind == ROPE_WINCH) return dropWinch(ci) ? "WINCH LINE UNHOOKED AND SPOOLED" : "";
+    return dropStrap(ci) ? "TOW STRAP UNHOOKED" : "";
 }
 
 std::vector<V3> Sim::ropePath(const Rope& r, double lift) const {

@@ -146,6 +146,19 @@ void Walker::step(const World& w, const Sim& sim, double dt, double fwd, double 
     }
     p.x = clampd(p.x, -World::kHalfSize + 2, World::kHalfSize - 2);
     p.z = clampd(p.z, -World::kHalfSize + 2, World::kHalfSize - 2);
+    // A line in your hands pays out from its drum as you walk, and runs out: the tether keeps you within its length.
+    if (sim.handLine.on() && sim.handLine.car < (int)sim.cars.size()) {
+        const V3 root = sim.cars[sim.handLine.car].hookPoint(sim.handLine.hook);
+        const double reach = sim.handLineReach(sim.handLine);
+        const V3 d(p.x - root.x, 0, p.z - root.z);
+        const double dist = len(d);
+        if (dist > reach && dist > 1e-6) {
+            const V3 out = d / dist;
+            p.x = root.x + out.x * reach, p.z = root.z + out.z * reach;
+            const double away = v.x * out.x + v.z * out.z;
+            if (away > 0) v.x -= out.x * away, v.z -= out.z * away;
+        }
+    }
     const double moving = len(V3(v.x, 0, v.z));
     if (grounded || swimming) stride += moving * dt * 3.2;
 }

@@ -41,6 +41,10 @@ enum InteractKind {
     IA_TAKE_ITEM,     // a tool, part or anchor out of the open back, into your hands
     IA_STOW_ITEM,     // ...and back in
     IA_TIRE_WORK,     // a new tire onto a wheel lying on the ground (fixes.h tireSteps), a step at a time
+    IA_GRAB_LINE,     // the winch line (at the fairlead) or a tow strap end (at a recovery point), to walk out to an anchor
+    IA_HOOK_LINE,     // the line in your hands onto a tree, boulder, stake or another vehicle's recovery point
+    IA_UNHOOK_LINE,   // a hooked line off, at either end
+    IA_STOW_LINE,     // the line in your hands spooled back onto its drum
 };
 
 // The repair in progress, as the on-foot checklist shows it: "CV AXLE, FRONT LEFT" and its steps.
@@ -72,7 +76,16 @@ struct InteractOption {
     int tool = -1, part = -1; // ...what it's done with (for the work's look: handwork.h)
     bool atEnd = false;       // (IA_FIX) at one end of a shaft: there, wherever on it you look
     TrunkRef item;            // (IA_TAKE_ITEM, IA_STOW_ITEM)
-    bool same(const InteractOption& o) const { return kind == o.kind && car == o.car && wheel == o.wheel && loose == o.loose && spot == o.spot && item == o.item && step == o.step; }
+    RopeKind lineKind = ROPE_WINCH;  // (the IA_*_LINE jobs) a winch line or a tow strap
+    int hook = 0;             // (IA_GRAB_LINE) which recovery point
+    int rope = -1;            // (IA_UNHOOK_LINE) which of Sim::ropes
+    RopeEnd end;              // (IA_HOOK_LINE) what it hooks to
+    bool same(const InteractOption& o) const {
+        // (A ground stake is wherever you look: the same job as you sweep the ground.)
+        const bool sameEnd = end.kind == o.end.kind && end.car == o.end.car && end.hook == o.end.hook && (end.kind == ANCHOR_STAKE || len(end.p - o.end.p) < 0.5);
+        return kind == o.kind && car == o.car && wheel == o.wheel && loose == o.loose && spot == o.spot && item == o.item && step == o.step &&
+               hook == o.hook && rope == o.rope && lineKind == o.lineKind && sameEnd;
+    }
 };
 
 struct Interact {

@@ -1878,6 +1878,19 @@ const mk::Mesh& rockSlingModel(const char* id, int rock, const objshape::Wrap& w
 void buildRopes(const Sim& sim, std::vector<Vtx>& out) {
     for (const SetAnchor& sa : sim.setAnchors)
         appendModel(out, mk::modelMesh(anchors::gearModel(sa.gear)), V3(sa.p.x, sim.world.height(sa.p.x, sa.p.z), sa.p.z), sa.yaw);
+    if (sim.handLine.on() && sim.handLine.car < (int)sim.cars.size()) {  // the line in someone's hands: from its drum, out to the hand
+        const Sim::HandLine& hl = sim.handLine;
+        const bool winch = hl.kind == ROPE_WINCH;
+        Rope tmp;  // (drawn as the slack line it is)
+        tmp.kind = hl.kind;
+        tmp.a.kind = ANCHOR_CAR, tmp.a.car = hl.car, tmp.a.hook = hl.hook;
+        tmp.b.kind = ANCHOR_STAKE, tmp.b.p = hl.hand;
+        tmp.length = len(hl.hand - sim.cars[hl.car].hookPoint(hl.hook)) * 1.04 + 0.2;
+        const double rad = winch ? 0.011 : 0.02;
+        const std::vector<V3> path = sim.ropePath(tmp, rad + 0.015);
+        for (size_t k = 1; k < path.size(); k++) tube(out, path[k - 1], path[k], rad, winch ? 5 : 4, winch ? V3(0.72, 0.1, 0.05) : V3(0.95, 0.6, 0.08), SM_MATTE);
+        blob(out, hl.hand, 0.03, V3(0.55, 0.55, 0.57), SM_METAL);  // the hook in the hand
+    }
     for (const Rope& r : sim.ropes) {
         auto at = [&](const RopeEnd& e) { return e.kind == ANCHOR_CAR ? sim.cars[e.car].hookPoint(e.hook) : e.p; };
         const bool winch = r.kind == ROPE_WINCH;

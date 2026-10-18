@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "modelkit.h"
+#include "objshape.h"
 #include "walker.h"
 
 namespace {
@@ -14,10 +15,19 @@ constexpr double kTakeSpare = 1.0, kStowSpare = 1.0, kRemoveWheel = 5.8, kFitWhe
 constexpr double kTakeJack = 0.6, kStowJack = 0.6, kPlaceJack = 1.0, kRemoveJack = 0.8;
 constexpr double kJackRate = 0.14;  // m/s the saddle moves while E is held
 constexpr double kTakeChain = 0.6, kFitChain = 3.0, kRemoveChain = 2.0, kStowChain = 0.6;
+constexpr double kGrabLine = 1.0, kHookLine = 1.2, kUnhookLine = 0.8, kStowLine = 0.6;  // the recovery line jobs
+constexpr double kLineReach = 3.0;  // m from your chest to the anchor you hook to
 constexpr double kOpenCache = 1.5;  // prise the lid off a supply cache
 constexpr double kTakeItem = 0.5, kStowItem = 0.5;  // the back, and things in and out of it
 constexpr double kReach = 2.5;           // m from your chest
 constexpr double kCone = 35 * M_PI / 180;  // off your line of sight
+
+// Whether a car already has a line of this kind of its own out (a winch hooked from it; a strap at either end).
+bool hasLine(const Sim& sim, int ci, RopeKind kind) {
+    for (const Rope& r : sim.ropes)
+        if (r.kind == kind && ((r.a.kind == ANCHOR_CAR && r.a.car == ci) || (kind == ROPE_STRAP && r.b.kind == ANCHOR_CAR && r.b.car == ci))) return true;
+    return false;
+}
 
 std::string withSize(const char* what, const WheelItem& it) { return std::string(what) + " (" + it.sizeName() + ")"; }
 
@@ -208,7 +218,8 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
         }
         else if (lift && !lifted) o.blocked = true, o.prompt += ": JACK THIS CORNER UP FIRST";
     };
-    const bool hands = wk.carrying.has_value() || wk.holdingChain;
+    const bool lineHeld = sim.handLine.on() && sim.handLine.car < (int)sim.cars.size();
+    const bool hands = wk.carrying.has_value() || wk.holdingChain || lineHeld;
     const bool busy = hands || wk.holdingJack;
     const bool wheelInHands = wk.carrying.has_value() && !wk.carrying->tireOnly, tireInHands = wk.carrying.has_value() && wk.carrying->tireOnly;
     for (int ci = 0; ci < (int)sim.cars.size(); ci++) {
@@ -292,8 +303,34 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
                 consider(j, kReach, working ? 0.25 : 0);
             }
         }
+        // The recovery gear: the winch line at the fairlead and a tow strap at either recovery point are grabbed by hand, to walk out
+        // to the anchor (the line pays out of the drum as you go); the drum takes it back.
+        if (!busy) {
+            if ((c.spec->extras & EXTRA_WINCH) && !hasLine(sim, ci, ROPE_WINCH)) {
+                InteractOption o;
+                o.kind = IA_GRAB_LINE, o.car = ci, o.hook = 0, o.lineKind = ROPE_WINCH, o.hold = kGrabLine;
+                o.at = c.hookPoint(0) + V3(0, 0.15, 0);
+                o.prompt = "GRAB THE WINCH LINE";
+                consider(o);
+            }
+            if (!hasLine(sim, ci, ROPE_STRAP))
+                for (int h = 0; h < 2; h++) {
+                    InteractOption o;
+                    o.kind = IA_GRAB_LINE, o.car = ci, o.hook = h, o.lineKind = ROPE_STRAP, o.hold = kGrabLine;
+                    o.at = c.hookPoint(h) - V3(0, 0.15, 0);
+                    o.prompt = h ? "GRAB THE TOW STRAP (REAR POINT)" : "GRAB THE TOW STRAP (FRONT POINT)";
+                    consider(o);
+                }
+        }
+        if (lineHeld && sim.handLine.car == ci) {
+            InteractOption o;
+            o.kind = IA_STOW_LINE, o.car = ci, o.hook = sim.handLine.hook, o.lineKind = sim.handLine.kind, o.hold = kStowLine;
+            o.at = c.hookPoint(sim.handLine.hook);
+            o.prompt = sim.handLine.kind == ROPE_WINCH ? "SPOOL THE WINCH LINE BACK" : "PUT THE TOW STRAP BACK";
+            consider(o);
+        }
         // The back (trunk.h): E at it opens the inventory (invmenu.h), where you take what you need and put it back.
-        if (trunkCar && !wk.carrying.has_value()) {
+        if (trunkCar && !wk.carrying.has_value() && !lineHeld) {
             InteractOption g;
             g.car = ci, g.at = trunk::gateAt(c), g.kind = IA_OPEN_INVENTORY;
             const bool held = wk.hand.any() || wk.holdingJack || wk.holdingChain;
@@ -349,6 +386,47 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
                     consider(o);
                 }
             }
+    }
+    // Lines that are out: off again, at either end (yours: another player's is theirs to take off).
+    if (!busy)
+        for (int ri = 0; ri < (int)sim.ropes.size(); ri++) {
+            const Rope& r = sim.ropes[ri];
+            if (r.a.kind != ANCHOR_CAR || r.a.car < 0 || r.a.car >= (int)sim.cars.size() || sim.cars[r.a.car].remote) continue;
+            for (const RopeEnd* e : {&r.a, &r.b}) {
+                if (e->kind == ANCHOR_CAR && (e->car < 0 || e->car >= (int)sim.cars.size())) continue;
+                InteractOption o;
+                o.kind = IA_UNHOOK_LINE, o.rope = ri, o.lineKind = r.kind, o.hold = kUnhookLine;
+                o.at = e->kind == ANCHOR_CAR ? sim.cars[e->car].hookPoint(e->hook) : e->p;
+                o.prompt = r.kind == ROPE_WINCH ? "UNHOOK THE WINCH LINE" : "UNHOOK THE TOW STRAP";
+                consider(o, kLineReach, -0.12);  // (at the fairlead, the line that's out wins over grabbing another)
+            }
+        }
+    // The line in your hands: hook it where you stand (a tree, a boulder, a stake in the ground, a vehicle's recovery point).
+    if (lineHeld) {
+        const Sim::HandLine& hl = sim.handLine;
+        std::vector<WinchTarget> ts;
+        if (hl.kind == ROPE_WINCH) {
+            V3 lk;
+            bool hasLook = false;
+            for (double d = 0.4; d < kLineReach + 1.5; d += 0.25) {
+                const V3 q = eye + dir * d;
+                if (q.y <= sim.world.height(q.x, q.z)) {
+                    lk = q, hasLook = true;
+                    objshape::WorldHit solid;
+                    if (objshape::rayWorld(sim.world, eye, dir, d, solid)) hasLook = false;  // (a boulder or trunk in the way is what you're looking at)
+                    break;
+                }
+            }
+            ts = sim.winchTargets(hl.car, hasLook ? &lk : nullptr);
+        } else ts = sim.strapTargets(hl.car, hl.hook);
+        for (const WinchTarget& t : ts) {
+            if (len(t.at - chest) > kLineReach) continue;
+            InteractOption o;
+            o.kind = IA_HOOK_LINE, o.car = hl.car, o.lineKind = hl.kind, o.hook = hl.hook, o.end = t.end, o.hold = kHookLine, o.at = t.at;
+            if (hl.kind == ROPE_WINCH && !t.usable) o.blocked = true, o.prompt = t.why;
+            else o.prompt = std::string(hl.kind == ROPE_WINCH ? "HOOK THE WINCH TO THE " : "HOOK THE STRAP TO THE ") + t.what;
+            consider(o, kLineReach, t.end.kind == ANCHOR_STAKE ? 0.15 : 0);
+        }
     }
     if (!hands && spots)
         for (int si = 0; si < (int)spots->size(); si++) {
@@ -465,7 +543,8 @@ std::string Interact::run(Sim& sim, Walker& wk, const V3& eye, const V3& look, b
     }
     if (progress < o.hold) return "";
     progress = 0;
-    if (o.kind == IA_FIX || o.kind == IA_TIRE_WORK) waitRelease = true;  // (a step at a time: let go before the next)
+    if (o.kind == IA_FIX || o.kind == IA_TIRE_WORK || o.kind == IA_GRAB_LINE || o.kind == IA_HOOK_LINE || o.kind == IA_UNHOOK_LINE || o.kind == IA_STOW_LINE)
+        waitRelease = true;  // (a step at a time: let go before the next)
     return perform(sim, wk, o);
 }
 
@@ -613,6 +692,18 @@ std::string Interact::perform(Sim& sim, Walker& wk, const InteractOption& o) {
             }
             return st.label;
         }
+        case IA_GRAB_LINE: {
+            const std::string why = sim.takeLine(o.car, o.lineKind, o.hook, wk.p + V3(0, 1.0, 0));
+            if (!why.empty()) return why;
+            return o.lineKind == ROPE_WINCH ? "GOT THE WINCH LINE: WALK IT TO AN ANCHOR" : "GOT THE TOW STRAP: WALK ITS END TO THE OTHER VEHICLE";
+        }
+        case IA_HOOK_LINE:
+            return sim.hookHandLine(o.end);
+        case IA_UNHOOK_LINE:
+            return sim.unhookRope(o.rope);
+        case IA_STOW_LINE:
+            sim.dropHandLine();
+            return o.lineKind == ROPE_WINCH ? "WINCH LINE SPOOLED BACK" : "TOW STRAP PUT BACK";
         default:
             return "";
     }
@@ -651,6 +742,7 @@ std::string Interact::putBackInBack(Sim& sim, Walker& wk, int car) {
 
 std::string Interact::takeFromBack(Sim& sim, Walker& wk, int car, const TrunkStock& stock, TrunkRef ref) {
     if (car < 0 || car >= (int)sim.cars.size() || wk.carrying.has_value()) return "";
+    if (sim.handLine.on()) return "LET GO OF THE LINE FIRST (G)";
     const Car& c = sim.cars[car];
     const bool inHand = (ref.kind == TK_JACK && wk.holdingJack) || (ref.kind == TK_CHAINS && wk.holdingChain) || (ref.any() && wk.hand == ref);
     if (inHand) return putBackInBack(sim, wk, car);  // (the one you hold: back it goes)

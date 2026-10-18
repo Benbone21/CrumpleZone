@@ -2414,6 +2414,7 @@ void Sim::setup() {
     const auto& cat = vehicleCatalog();
     cars.clear();
     ropes.clear();
+    handLine = HandLine();
     setAnchors.clear();
     refillAnchors();
     cars.reserve(kMaxBodies);
@@ -2435,6 +2436,7 @@ void Sim::setup() {
 void Sim::setupEmpty() {
     cars.clear();
     ropes.clear();
+    handLine = HandLine();
     setAnchors.clear();
     cars.reserve(kMaxBodies);
     colorIndex = 0;
