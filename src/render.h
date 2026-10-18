@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 #include <memory>
 #include <map>
 #include <string>
@@ -221,6 +222,7 @@ private:
     GLuint progTerrain = 0;                 // the ground shader in use this frame
     GLuint noiseTex = 0;                    // the cheap ground tiers' noise
     GLuint progTerrainTier[4] = {0, 0, 0, 0};  // per tier (groundTier)
+    GLuint progTerrainNoProc = 0;              // Apple: tier 2 without the procedural paving code (chunks with none of it)
     PropRenderer props;
     bool propsOk = false;     // its shaders built
     int propsApplied = -1;    // the props quality the scenery was last built for
@@ -245,6 +247,7 @@ private:
     struct TerrainChunk {
         RenderBounds bounds;
         unsigned first[4] = {}, count[4] = {};
+        bool proc = true;  // may hold paved/procedural paint (Apple: the rest are drawn with a ground shader without that code; see drawTerrain)
     };
 public:
     struct Prepared {
@@ -307,7 +310,7 @@ private:
     void uploadBatches(GLuint& vao, GLuint& vbo, std::vector<Vtx>& vertices, std::vector<StaticBatch>& batches);
     void drawBatches(GLuint vao, const std::vector<StaticBatch>& batches, const M4& vp, bool shadow);
     void drawBushes(const M4& vp, const V3& eye, bool shadow, VegStats::Pass& stats);  // (the reed and log batches within sight: small things, not drawn far off)
-    void drawTerrain(const M4& vp, const View& view);
+    void drawTerrain(const M4& vp, const View& view, const std::function<void(GLuint)>& setup = nullptr, GLuint noProcProg = 0, GLuint procProg = 0);
     GLuint boxVao = 0, boxVbo = 0;
     int boxVertexCount = 0;
     TreeDraw trees_, bushes_;       // the forest and the bushes, instanced (treedraw.h)
@@ -377,7 +380,7 @@ private:
     void ensureShadows(int size);
     void ensureGround(int quality);
     int groundTier(int gq) const;
-    GLuint terrainProgram(int tier);
+    GLuint terrainProgram(int tier, bool noProc = false);
     void ensureTargets(int w, int h, int samples);
     void postProcess(const View& view, const M4& proj);
     void prepareCars(const Sim& sim, DebugView debug, const V3& eye);

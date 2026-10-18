@@ -53,3 +53,18 @@ GL timers don't exist on macOS and `--bench-sync` inflates numbers (every sync s
 - `./build/run_tests --jobs 4`: 693 pass, 17 fail, the same 17 as in phase 1 (known list plus `frontier/autopilot-lodge`, `fieldrepair/steps` bad_alloc, `net/lan-discovery`, `net/custom-port`, `net/find`). No new failures.
 - `bench_sim` state: `69497071eddf9087`, unchanged by all edits.
 - Not checked: the UI and mouse at logical scale by hand, and what auto-detect picks on a fresh settings file.
+
+## Ground shader follow-up: paving-free chunks (Apple only)
+Cost breakdown of the MEDIUM/HIGH ground shader (tier 2, HIGH Frontier, 42 ms): the trivial-output floor is 19.8 ms, so the shader itself is about 22 ms. Switching pieces off with `CZ_GDEF`: the procedural paving code (`terrainProcedural`) costs 6.4 ms even though only paved pixels use it (it bloats the whole shader); shadows 3.4, material taps and blend about 9, fog, cloud shadow, lamps and gloss about 1 each or less.
+
+Change: at map load every terrain chunk (including the distant backdrop) is checked for paving/procedural paint (`chunkHasProcPaint`, same paint rules as `expandPaint`). On Apple, tier-2 terrain is drawn in two sweeps, each nearest first: chunks that may hold paving with the full shader, the rest with a build that has that code compiled out (`X_NOPROC`). Editor terrain edits put every chunk back on the full shader. Picture identical (max 1/255 difference on three maps).
+
+| Map | Preset | Same build, split off -> on |
+|---|---|---|
+| Frontier | MEDIUM / HIGH | 36.4 -> 35.4 / 42.9 -> 42.5 ms |
+| Open Country | MEDIUM / HIGH | 31.8 -> 29.6 / 38.3 -> 34.6 ms |
+| Boulder Gully | MEDIUM / HIGH | 36.1 -> 35.7 / 42.6 -> 40.8 ms |
+
+Small, map-dependent (Frontier has a paved circuit and pad near the start, so most of what it sees still needs paving). Not applied on other platforms; it should help them too but I have not measured there.
+
+Remaining ideas for the ground, none done: 2x MSAA at HIGH (about 4 ms), baking the low-frequency noise fields to a texture (about 3 ms), a lighter shadow filter on the ground (3 ms), and rendering the ground at lower resolution where the player can't see the difference.

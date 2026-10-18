@@ -2772,7 +2772,7 @@ void Renderer::drawBushes(const M4& vp, const V3& eye, bool shadow, VegStats::Pa
     }
 }
 
-void Renderer::drawTerrain(const M4& vp, const View& view) {
+void Renderer::drawTerrain(const M4& vp, const View& view, const std::function<void(GLuint)>& setup, GLuint noProcProg, GLuint procProg) {
     BindVertexArray(terrainVao);
     geometryStats_.terrainChunks = (unsigned)terrainChunks.size();
     // Keep collision-scale detail nearby; select distance from the nearest point
@@ -2788,14 +2788,24 @@ void Renderer::drawTerrain(const M4& vp, const View& view) {
         terrainOrder_.push_back({(float)chunk.bounds.distance(view.eye), (int)i});
     }
     std::sort(terrainOrder_.begin(), terrainOrder_.end());
-    for (const auto& o : terrainOrder_) {
+    auto drawChunk = [&](const std::pair<float, int>& o) {
         const auto& chunk = terrainChunks[o.second];
-        const double distance = o.first;
-        const int lod = terrainLodForDistance(distance);
+        const int lod = terrainLodForDistance(o.first);
         DrawElements(GL_TRIANGLES, chunk.count[lod], GL_UNSIGNED_INT,
                      reinterpret_cast<const void*>((uintptr_t)chunk.first[lod] * sizeof(unsigned)));
         geometryStats_.terrainTriangles += chunk.count[lod] / 3;
         ++geometryStats_.terrainVisibleChunks;
+    };
+    if (!noProcProg || !setup) {
+        for (const auto& o : terrainOrder_) drawChunk(o);
+        return;
+    }
+    // Two sweeps, each nearest first: the chunks that can hold paving with the full shader, the rest with the build without it.
+    for (int pass = 0; pass < 2; pass++) {
+        setup(pass == 0 ? procProg : noProcProg);
+        BindVertexArray(terrainVao);
+        for (const auto& o : terrainOrder_)
+            if (terrainChunks[o.second].proc == (pass == 0)) drawChunk(o);
     }
 }
 
@@ -2862,6 +2872,7 @@ void Renderer::updateTerrainRegion(const World& world, int i0, int j0, int i1, i
     }
     // Bounds must include raised/lowered editor vertices before the next culling pass.
     for (auto& chunk : terrainChunks) {
+        chunk.proc = true;  // (an edit may have painted paving: the full shader from now on, over the whole terrain, simply)
         if (chunk.bounds.hi.x < -half + mi0 * sp || chunk.bounds.lo.x > -half + mi1 * sp ||
             chunk.bounds.hi.z < -half + mj0 * sp || chunk.bounds.lo.z > -half + mj1 * sp) continue;
         const int xi0 = std::max(mi0, (int)std::ceil((chunk.bounds.lo.x + half) / sp));
@@ -2890,6 +2901,25 @@ void Renderer::updateTerrainRegion(const World& world, int i0, int j0, int i1, i
     TexSubImage2D(GL_TEXTURE_2D, 0, i0, j0, i1 - i0 + 1, j1 - j0 + 1, GL_RGBA, GL_FLOAT, data.data());
     props.terrainChanged(-half + i0, -half + j0, -half + i1, -half + j1);  // (grass doesn't grow on a new trail)
 }
+#ifdef __APPLE__
+// Does any 1 m paint cell the ground shader could read for this chunk (its bounds and two cells beyond) become the procedural look (groundshader.cpp expandPaint:
+// every paint but the photo-scanned ones, and the road on the proving ground and freeway maps)? The rest draw with a shader that lacks that code.
+static bool chunkHasProcPaint(const World& world, const RenderBounds& b) {
+    const int m = world.map == MAP_WILDS ? (int)MAP_FREEWAY : world.map;
+    const bool asphaltRoads = m == MAP_PROVING_GROUND || m == MAP_FREEWAY;
+    const double half = World::kHalfSize;
+    const int x0 = (int)std::floor(b.lo.x) - 2, x1 = (int)std::ceil(b.hi.x) + 2, z0 = (int)std::floor(b.lo.z) - 2, z1 = (int)std::ceil(b.hi.z) + 2;
+    // (The shader clamps to the paint grid, so a chunk out past its edge reads the edge cells.)
+    auto clampi = [&](int v) { return std::min(std::max(v, (int)-half), (int)half); };
+    for (int z = clampi(z0); z <= clampi(z1); z++)
+        for (int x = clampi(x0); x <= clampi(x1); x++) {
+            const int p = world.roadAt(x, z).paint;
+            const bool photo = p == 0 || p == 2 || p == 3 || p == 4 || p == 6 || p == 7 || p == 8 || p == 9 || p == 14 || p == 15 || (p == 1 && !asphaltRoads);
+            if (!photo) return true;
+        }
+    return false;
+}
+#endif
 // The CPU half of the terrain: vertices, the chunks' indices at four LODs, the backdrop and the occlusion pyramid. Pure: any thread.
 void Renderer::prepareTerrain(const World& world, Prepared& p) {
     // 1 m on the mountain (its crawl features are small) and the wilds (the sections' steps), 2 m on the proving ground.
@@ -2920,6 +2950,9 @@ void Renderer::prepareTerrain(const World& world, Prepared& p) {
                 appendTerrainLod(idx, n, i, j, ie, je, 1 << lod);
                 chunk.count[lod] = (unsigned)idx.size() - chunk.first[lod];
             }
+#ifdef __APPLE__
+            chunk.proc = chunkHasProcPaint(world, chunk.bounds);
+#endif
             chunks.push_back(chunk);
         }
     // Backdrop is already coarse; spatially batch it for camera culling too.
@@ -2942,6 +2975,9 @@ void Renderer::prepareTerrain(const World& world, Prepared& p) {
             chunk.first[lod] = (unsigned)idx.size();
             chunk.count[lod] = (unsigned)entry.second.size();
         }
+#ifdef __APPLE__
+        chunk.proc = chunkHasProcPaint(world, chunk.bounds);
+#endif
         idx.insert(idx.end(), entry.second.begin(), entry.second.end());
         chunks.push_back(chunk);
     }
@@ -4727,35 +4763,44 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     if (groundFailed || !groundTex.ok()) gq = 0;
     progTerrain = gq ? terrainProgram(groundTier(gq)) : 0;
     if (!progTerrain) gq = 0;
+    std::function<void(GLuint)> groundSetup;
+    GLuint noProcProg = 0;
     if (gq) {
-        setLighting(progTerrain);
-        uniformM4(progTerrain, "uModel", m4identity());
-        bindTerrainTex(progTerrain);
-        Uniform1i(uniformLocation(progTerrain, "uMap"), mapId);
-        float rs[2];
-        if (mapId == MAP_MOUNTAIN) rs[0] = 165.0f, rs[1] = 205.0f;
-        else if (mapId == MAP_FRONTIER) rs[0] = 125.0f, rs[1] = 400.0f;
-        else if (mapId == MAP_BACKCOUNTRY) rs[0] = 105.0f, rs[1] = 400.0f;
-        else rs[0] = 60.0f, rs[1] = 240.0f;
-        Uniform2f(uniformLocation(progTerrain, "uRockSnow"), rs[0], rs[1]);
-        ActiveTexture(GL_TEXTURE0 + 3);
-        BindTexture(GL_TEXTURE_2D_ARRAY, groundTex.albedo);
-        ActiveTexture(GL_TEXTURE0 + 4);
-        BindTexture(GL_TEXTURE_2D_ARRAY, groundTex.normal);
-        ActiveTexture(GL_TEXTURE0);
-        Uniform1i(uniformLocation(progTerrain, "uGroundA"), 3);
-        Uniform1i(uniformLocation(progTerrain, "uGroundB"), 4);
-        if (groundTier(gq) <= 1) {  // (the cheap tiers read their noise from a texture)
-            ActiveTexture(GL_TEXTURE0 + 5);
-            BindTexture(GL_TEXTURE_2D, noiseTex);
+        groundSetup = [&](GLuint prog) {
+            setLighting(prog);
+            uniformM4(prog, "uModel", m4identity());
+            bindTerrainTex(prog);
+            Uniform1i(uniformLocation(prog, "uMap"), mapId);
+            float rs[2];
+            if (mapId == MAP_MOUNTAIN) rs[0] = 165.0f, rs[1] = 205.0f;
+            else if (mapId == MAP_FRONTIER) rs[0] = 125.0f, rs[1] = 400.0f;
+            else if (mapId == MAP_BACKCOUNTRY) rs[0] = 105.0f, rs[1] = 400.0f;
+            else rs[0] = 60.0f, rs[1] = 240.0f;
+            Uniform2f(uniformLocation(prog, "uRockSnow"), rs[0], rs[1]);
+            ActiveTexture(GL_TEXTURE0 + 3);
+            BindTexture(GL_TEXTURE_2D_ARRAY, groundTex.albedo);
+            ActiveTexture(GL_TEXTURE0 + 4);
+            BindTexture(GL_TEXTURE_2D_ARRAY, groundTex.normal);
             ActiveTexture(GL_TEXTURE0);
-            Uniform1i(uniformLocation(progTerrain, "uNoiseTex"), 5);
-        }
+            Uniform1i(uniformLocation(prog, "uGroundA"), 3);
+            Uniform1i(uniformLocation(prog, "uGroundB"), 4);
+            if (groundTier(gq) <= 1) {  // (the cheap tiers read their noise from a texture)
+                ActiveTexture(GL_TEXTURE0 + 5);
+                BindTexture(GL_TEXTURE_2D, noiseTex);
+                ActiveTexture(GL_TEXTURE0);
+                Uniform1i(uniformLocation(prog, "uNoiseTex"), 5);
+            }
+        };
+        groundSetup(progTerrain);
+#ifdef __APPLE__
+        // (Apple: the paving code makes the whole shader slower, so chunks with none of it use a build without it; same picture.)
+        if (groundTier(gq) >= 2) noProcProg = terrainProgram(groundTier(gq), true);
+#endif
     } else {
         UseProgram(progLit);
         uniformM4(progLit, "uModel", m4identity());  // (the wheels moved it)
     }
-    drawTerrain(vp, view);
+    drawTerrain(vp, view, groundSetup, noProcProg, progTerrain);
     if (effects) {
         // The ground shoved up beside tire tracks and round sunk tires, painted like the
         // terrain under it.
@@ -4904,9 +4949,11 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
 // The ground shader's tier for a ground setting: POTATO has a tier of its own (the cheapest), LOW the next (see groundshader.cpp).
 int Renderer::groundTier(int gq) const { return gq == 1 && presetOf(settings) == Q_POTATO ? 0 : gq; }
 
-GLuint Renderer::terrainProgram(int tier) {
-    if (progTerrainTier[tier] || groundFailed) return progTerrainTier[tier];
+GLuint Renderer::terrainProgram(int tier, bool noProc) {
+    GLuint& slot = noProc ? progTerrainNoProc : progTerrainTier[tier];
+    if (slot || groundFailed) return slot;
     std::string xd = "#define GQ " + std::to_string(tier) + "\n";
+    if (noProc) xd += "#define X_NOPROC\n";
     if (tier <= 1) xd += "#define PROC_LITE\n";
     if (const char* e = std::getenv("CZ_GDEF")) {  // (a tryout switch: comma-separated defines)
         std::string t = e;
@@ -4954,12 +5001,12 @@ void main(){
         } else std::fprintf(stderr, "ground noise bake: %s\n", berr.c_str());
     }
     std::string gerr;
-    progTerrainTier[tier] = linkProgram(kLitVS, "#version 330 core\n" + xd + kCommonFS + kLitIns + kTerrainProcFS + kGroundShaderFS, gerr);
-    if (!progTerrainTier[tier]) {
+    slot = linkProgram(kLitVS, "#version 330 core\n" + xd + kCommonFS + kLitIns + kTerrainProcFS + kGroundShaderFS, gerr);
+    if (!slot) {
         std::fprintf(stderr, "ground shader: %s\n", gerr.c_str());
         groundFailed = true;
     }
-    return progTerrainTier[tier];
+    return slot;
 }
 
 void Renderer::ensureGround(int gq) {
