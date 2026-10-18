@@ -374,17 +374,19 @@ bool surfacePaint(int paint, inout vec3 base, inout float specK, inout float spe
   return true;
 }
 void terrainProcedural(vec3 n, inout vec3 base, inout float specK, inout float specP){
-    float r = length(vPos.xz);
-    float pad = 1.0 - smoothstep(130.0, 140.0, r);
-    vec3 padc = vec3(0.41, 0.415, 0.43) * (0.92 + 0.10 * vnoise(vPos.xz * 0.5)) * (0.9 + 0.14 * fbm(vPos.xz * 0.04, 3));
-    padc *= 1.0 - 0.13 * gridLine(vPos.xz, 0.0);
-    padc = mix(padc, vec3(0.30, 0.31, 0.33), 0.75 * gridLine(vPos.xz / 10.0, 0.6));
-    padc = mix(padc, vec3(0.92, 0.45, 0.10), 0.85 * gridLine(vPos.xz / 50.0, 1.2));
+    // The test pad's floor (paint 5 on the proving ground): light grey concrete in 10 m squares, darker lines between them and
+    // darker still every 50 m. All in the shader; the joints fade out where they'd be finer than a pixel or two.
+    float fwx = max(fwidth(vPos.x), 1e-4);
+    float fineFade = 1.0 - smoothstep(0.12, 0.3, fwx), gridFade = 1.0 - smoothstep(1.5, 4.0, fwx);
+    vec3 padc = vec3(0.50, 0.505, 0.52) * (0.95 + 0.06 * vnoise(vPos.xz * 0.5)) * (0.96 + 0.06 * vnoise(vPos.xz * 0.05));
+    padc *= 1.0 - 0.10 * fineFade * gridLine(vPos.xz, 0.0);
+    padc = mix(padc, vec3(0.33, 0.34, 0.36), 0.8 * gridFade * gridLine(vPos.xz / 10.0, 0.6));
+    padc = mix(padc, vec3(0.26, 0.27, 0.29), 0.85 * gridLine(vPos.xz / 50.0, 1.2));
 #ifdef PROC_LITE
     // (LOW and POTATO ground: the land under a road is a flat tone, the photo layers draw the countryside.)
     float n2 = 0.5, steep = 0.0, snow = 0.0;
     vec3 land = vec3(0.22, 0.27, 0.11);
-    base = uMap == 0 ? mix(land, padc, pad) : land;
+    base = land;
 #else
     // Countryside: two-tone meadow with dry patches, rock on steep ground and up the rim
     // mountains (banded strata), snow on the high tops.
@@ -402,7 +404,7 @@ void terrainProcedural(vec3 n, inout vec3 base, inout float specK, inout float s
     vec3 land = mix(grass, rock, max(steep, high * 0.8));
     float snow = smoothstep(uRockSnow.y, uRockSnow.y + 50.0, vPos.y + 70.0 * n1) * smoothstep(0.5, 0.75, n.y);
     land = mix(land, vec3(0.90, 0.92, 0.96), snow);
-    base = uMap == 0 ? mix(land, padc, pad) : land;
+    base = land;
 #endif
     // Road: r = near-road flag, g = signed lateral offset, b = distance along.
     // Evaluated unconditionally so fwidth() stays well defined, then masked.
@@ -422,7 +424,7 @@ void terrainProcedural(vec3 n, inout vec3 base, inout float specK, inout float s
       if (uMap == 0) base = mix(base, roadCol, step(0.5, vCol.r));
       // The surface course (and its concrete apron).
       int paint = int(paintAt(vPos.xz) + 0.5);
-      if (paint == 5) base = vec3(0.50, 0.49, 0.47) * (0.9 + 0.12 * vnoise(vPos.xz * 1.7)) * (1.0 - 0.3 * gridLine(vPos.xz / 3.0, 0.2));
+      if (paint == 5) base = uMap == 0 ? padc : vec3(0.50, 0.49, 0.47) * (0.9 + 0.12 * vnoise(vPos.xz * 1.7)) * (1.0 - 0.3 * gridLine(vPos.xz / 3.0, 0.2));
       else surfacePaint(paint, base, specK, specP);
     } else {
 #ifdef PROC_LITE

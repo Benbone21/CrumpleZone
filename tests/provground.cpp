@@ -4,6 +4,7 @@
 #include <cstdio>
 
 #include "../src/editcore.h"
+#include "../src/laptimer.h"
 #include "../src/level.h"
 #include "../src/platform.h"
 #include "../src/sectionfile.h"
@@ -175,8 +176,59 @@ SCENARIO(provGroundYard, "levels/model-yard", "The proving ground's model yard s
             if (rs[i].x0 < rs[j].x1 - 0.01 && rs[j].x0 < rs[i].x1 - 0.01 && rs[i].z0 < rs[j].z1 - 0.01 && rs[j].z0 < rs[i].z1 - 0.01) overlaps++;
     }
     ctx.check("no two overlap", overlaps == 0, std::to_string(overlaps));
-    ctx.check("all on the pad", minX > -440 && minZ > -440, std::to_string(minX) + " " + std::to_string(minZ));
+    double maxX = -1e9, maxZ = -1e9, itemArea = 0;
+    bool inside = true;
+    for (const R& r : rs) {
+        maxX = std::max(maxX, r.x1), maxZ = std::max(maxZ, r.z1), itemArea += (r.x1 - r.x0) * (r.z1 - r.z0);
+        for (double x : {r.x0, r.x1})
+            for (double z : {r.z0, r.z1}) inside &= World::padOutside(x, z) < -5;
+    }
+    ctx.check("all on the test pad", inside, std::to_string(minX) + " " + std::to_string(minZ));
+    // Tight: the whole yard in one block (it was 100 x 360 m, with the small things at the far end).
+    const double fill = itemArea / std::max(1.0, (maxX - minX) * (maxZ - minZ));
+    ctx.check("tight: one block, no stranded rows", maxX - minX < 220 && maxZ - minZ < 120, std::to_string(maxX - minX) + " x " + std::to_string(maxZ - minZ));
+    ctx.metric("yard fill", fill, "", 0.05, 1.0);
     ctx.metric("designs shown", (double)yard, "", 1, 5000);
     ctx.metric("yard west edge", minX, "m", -500, 0);
     ctx.metric("yard south edge", minZ, "m", -500, 0);
+}
+
+SCENARIO(provGroundPad, "levels/test-pad", "The proving ground's test pad is one flat paved grid floor holding the course and the yard, the land rises beyond a short ramp, and the loop road, the lap gate and the sections stay clear of it") {
+    const bool showcase = World::withShowcase;
+    World::withShowcase = true;
+    const World w(MAP_PROVING_GROUND);
+    World::withShowcase = showcase;
+    int bad = 0, notPaved = 0, notFlat = 0;
+    for (double x = World::kZoneX0 + 1; x < World::kZoneX1; x += 7)
+        for (double z = World::kZoneZ0 + 1; z < World::kZoneZ1; z += 7) {
+            if (w.roadAt(x, z).near) continue;  // (the link road runs across it)
+            if (w.surfaceAt(x, z) != SURF_PAVED) notPaved++;
+            if (w.roadAt(x, z).paint != PAINT_PAD && w.courseSurface(x, z) < 0) bad++;
+            if (std::fabs(w.height(x, z)) > 0.05) notFlat++;
+        }
+    ctx.check("paved all over", notPaved == 0, std::to_string(notPaved));
+    ctx.check("painted as the grid pad all over", bad == 0, std::to_string(bad));
+    ctx.check("flat (the ramps and the platform stand on it)", notFlat == 0, std::to_string(notFlat));
+    // The land beyond: grass, rising over the ramp.
+    ctx.check("grass beyond the edge", w.surfaceAt(World::kZoneX1 + 30, 0) == SURF_GRASS);
+    double top = 0;
+    for (double d = 0; d <= World::kZoneRamp + 100; d += 4) top = std::max(top, std::fabs(w.height(World::kZoneX1 + d, 20)));
+    ctx.check("the hills rise beyond it", top > 1.0, std::to_string(top));
+    double steepest = 0;
+    for (double d = 0; d < World::kZoneRamp; d += 2)
+        steepest = std::max(steepest, std::fabs(w.height(World::kZoneX0 - d - 2, -50) - w.height(World::kZoneX0 - d, -50)) / 2);
+    ctx.check("the ramp is drivable", steepest < 0.6, std::to_string(steepest));
+    // What stays where it was.
+    double nearest = 1e9;
+    for (const V3& p : w.loopRoad) nearest = std::min(nearest, World::padOutside(p.x, p.z));
+    ctx.check("the loop road keeps clear of the pad", nearest > 20, std::to_string(nearest));
+    V3 line;
+    double yaw;
+    LapTimer::linePose(w, line, yaw);
+    ctx.check("the lap gate is outside it", World::padOutside(line.x, line.z) > 20);
+    bool parkClear = w.sections.size() == SEC_COUNT;
+    for (const auto& sp : w.sections) parkClear &= World::padOutside(sp.entry.x, sp.entry.z) > 40 && World::padOutside(sp.exit.x, sp.exit.z) > 40;
+    ctx.check("the section park is outside it", parkClear);
+    ctx.check("the pond is still out in the meadow", !w.waters.empty() && World::padOutside(w.waters[0].x, w.waters[0].z) > 30);
+    ctx.metric("pad area", (World::kZoneX1 - World::kZoneX0) * (World::kZoneZ1 - World::kZoneZ0), "m2", 1, 1e7);
 }

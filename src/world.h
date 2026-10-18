@@ -214,6 +214,10 @@ class World {
 public:
     static constexpr double kHalfSize = 600.0;
     static constexpr double kPadRadius = 140.0;
+    // The proving ground's test pad: a flat, paved, gridded rectangle (x0, x1, z0, z1) holding the course, the ramps and the model yard;
+    // the land rises to the hills over kZoneRamp m beyond its edge. padOutside: how far (x, z) is outside it (negative inside).
+    static constexpr double kZoneX0 = -230, kZoneX1 = 150, kZoneZ0 = -135, kZoneZ1 = 140, kZoneRamp = 60;
+    static double padOutside(double x, double z);
     static constexpr double kRoadHalfWidth = 5.0;
 
     std::vector<Box> boxes;

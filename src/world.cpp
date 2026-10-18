@@ -15,11 +15,17 @@
 #include <atomic>
 
 namespace {
+const double kPadRadius = World::kPadRadius;  // (the old round pad: kept for where the woods and scatter stand)
 const V3 kConcrete(0.62, 0.62, 0.60);
 const V3 kRampYellow(0.86, 0.62, 0.16);
 const V3 kPoleWhite(0.85, 0.85, 0.82);
-const double kPadRadius = World::kPadRadius;
 }  // namespace
+
+// The test pad: one flat, paved rectangle with the surface course, the ramps and the model yard on it (a light grey grid floor).
+// Outside it the land rises to the hills over kZoneRamp metres.
+double World::padOutside(double x, double z) {
+    return std::max(std::max(kZoneX0 - x, x - kZoneX1), std::max(kZoneZ0 - z, z - kZoneZ1));
+}
 
 const SurfaceInfo& surfaceInfo(Surface s) {
     // name, grip, bite, keep, rolling, sink, dust color
@@ -435,15 +441,14 @@ void World::buildLapLine() {
     tags.push_back({"START AND FINISH", g.p + V3(0, 6, 0)});
 }
 
-// The model yard, south-west on the pad: everything the game draws, every design of every model (not just
-// the ones picked in the model lab), a row for each model with its designs side by side, each with its name
-// over it and the solid ones solid, to walk round, drive into and try out. Each is spaced by its own bounds.
+// The model yard, south-west on the pad: everything the game draws, every design of every model (not just the ones picked in
+// the model lab), each with its name over it and the solid ones solid, to walk round, drive into and try out. Three
+// columns side by side by size, the big structures nearest the spawn, then the mid-sized, then the small things, so a tent
+// stands a few metres from the shed it is a tent next to and not across the pad. A model's designs stand side by side on a
+// line, models follow one another along it, and each is spaced by its own bounds.
 void World::buildModelYard() {
-    const double colW = 110, zEnd = -270;  // columns of rows side by side, each running west from its x0 and stepping south from z0 to zEnd (the loop road is beyond)
-    double x0 = -32, x1 = x0 - colW;
-    const double z0 = -30;
-    const double gapX = 1.6, gapZ = 3.2;         // between designs, and between rows (the yard's old gaps, 2.5 and 5, less 35%)
-    double x = x0, z = z0, rowDepth = 0;
+    const double gapX = 1.6, gapM = 3.2, gapZ = 3.2, gapCol = 8;  // between designs, between models on a line, between lines, between columns
+    const double yardX = -32, yardZ = -35;                        // the east edge of the first column, and the north edge of all of them
     // Shown smaller than they're used, so they fit in the yard: (id, settings).
     auto settingsFor = [](const std::string& id) -> std::vector<std::pair<std::string, double>> {
         if (id == "sign_gantry") return {{"span", 16}};
@@ -459,44 +464,91 @@ void World::buildModelYard() {
                id == "person" || id == "campfire" || id == "tree_saver" || id == "ground_anchor" || id.rfind("tree_", 0) == 0 || id == "bush" ||
                id == "lamp_post" || id == "marker_post" || id == "trail_sign" || id == "map_board";
     };
+    struct Design {
+        int variant;
+        std::string label;
+        struct {
+            V3 lo, hi;
+        } b;
+        double w, d;  // across the line (the model's z extent), and its depth (x)
+    };
+    struct Item {
+        const mk::ModelDef* def;
+        std::vector<Design> designs;
+        double rowW = 0, rowD = 0, size = 0;
+        std::vector<std::pair<std::string, double>> set;
+    };
+    std::vector<Item> items;
     for (const mk::ModelDef& d : mk::catalog()) {
         if (!see(d.id)) continue;
-        const std::vector<std::pair<std::string, double>> set = settingsFor(d.id);
+        Item it;
+        it.def = &d;
+        it.set = settingsFor(d.id);
         const int nv = std::max(1, (int)d.variants.size());
-        bool started = false;  // (this model's row has begun)
         for (int vi = 0; vi < nv; vi++) {
             mk::Mesh m;
             mk::P pp = d.variants.empty() ? mk::P() : mk::pickedParams(d, vi);
-            for (const auto& kv : set) pp.v[kv.first] = kv.second;
+            for (const auto& kv : it.set) pp.v[kv.first] = kv.second;
             if (!d.variants.empty()) mk::build(d, vi, pp, m);
             if (m.v.empty()) continue;
-            // Facing north, toward the spawn (front +X to world +Z, its left +Z to world -X): its
-            // width across the row is its z extent, its depth its x extent.
-            const double yaw = -M_PI / 2;
-            const double wx = std::max(1.0, m.hi.z - m.lo.z), dz = std::max(1.0, m.hi.x - m.lo.x);
-            if (!started || x - wx < x1) {  // a row for each model, and another when a row's full
-                if (started || rowDepth > 0) z -= rowDepth + gapZ;
-                if (z - dz < zEnd) x0 -= colW + 10, x1 = x0 - colW, z = z0;  // (the column is full: the next one west)
-                x = x0, rowDepth = 0, started = true;
-            }
-            const double cx = x - wx / 2, cz = z - dz / 2;  // (the fronts in a line at z)
-            const double gy = height(cx, cz);
-            Placed pl;
-            pl.id = d.id, pl.yaw = yaw, pl.set = set, pl.variant = vi;
-            pl.p = V3(cx + (m.lo.z + m.hi.z) / 2, gy, cz - (m.lo.x + m.hi.x) / 2);
-            models.push_back(pl);
-            std::string label = d.title;
-            if (nv > 1) label += " " + std::to_string(vi + 1) + "/" + std::to_string(nv) + " " + d.variants[vi].name;
-            tags.push_back({label, V3(cx, gy + std::min(m.hi.y, 7.0) + 0.5, cz)});
-            if (!ghost(d.id) && m.hi.y > 0.25) {  // its bounds as a collider
-                addBox(V3(cx, gy + (m.lo.y + m.hi.y) / 2, cz), V3((m.hi.x - m.lo.x) / 2 * 0.95, (m.hi.y - m.lo.y) / 2, (m.hi.z - m.lo.z) / 2 * 0.95), yaw, 0, 0,
-                       V3(0.5, 0.5, 0.5));
-                boxes.back().hidden = true;
-            }
-            x -= wx + gapX;
-            rowDepth = std::max(rowDepth, dz);
+            Design dg;
+            dg.variant = vi;
+            dg.label = d.title;
+            if (nv > 1) dg.label += " " + std::to_string(vi + 1) + "/" + std::to_string(nv) + " " + d.variants[vi].name;
+            dg.b.lo = m.lo, dg.b.hi = m.hi;
+            dg.w = std::max(1.0, m.hi.z - m.lo.z), dg.d = std::max(1.0, m.hi.x - m.lo.x);
+            it.rowW += dg.w + (it.designs.empty() ? 0 : gapX), it.rowD = std::max(it.rowD, dg.d);
+            it.size = std::max({it.size, dg.w, dg.d, 0.6 * (double)m.hi.y});
+            it.designs.push_back(std::move(dg));
         }
-        if (started) z -= rowDepth + gapZ, x = x0, rowDepth = 0, started = false;
+        if (!it.designs.empty()) items.push_back(std::move(it));
+    }
+    // The classes: large (fire towers, sheds, cabins), medium, small; each column as wide as makes it about square.
+    const int kClasses = 3;
+    auto classOf = [](double size) { return size >= 9 ? 0 : size >= 3.5 ? 1 : 2; };
+    double area[kClasses] = {0, 0, 0}, widest[kClasses] = {0, 0, 0};
+    for (const Item& it : items) {
+        const int c = classOf(it.size);
+        area[c] += (it.rowW + gapM) * (it.rowD + gapZ);
+        for (const Design& dg : it.designs) widest[c] = std::max(widest[c], dg.w);
+    }
+    static const char* kClassName[kClasses] = {"LARGE STRUCTURES", "MEDIUM", "SMALL THINGS"};
+    double colX = yardX;
+    for (int c = 0; c < kClasses; c++) {
+        if (area[c] <= 0) continue;
+        const double W = std::max(widest[c], std::sqrt(area[c] * 1.3));
+        const double x1 = colX - W;  // the column's west edge
+        double x = colX, z = yardZ, lineD = 0;
+        auto newLine = [&]() {
+            if (lineD > 0) z -= lineD + gapZ;
+            x = colX, lineD = 0;
+        };
+        tags.push_back({kClassName[c], V3(colX - W / 2, height(colX - W / 2, yardZ + 3) + 1.0, yardZ + 3)});
+        for (const Item& it : items) {
+            if (classOf(it.size) != c) continue;
+            if (x < colX && x - gapM - it.rowW < x1 && it.rowW <= W) newLine();  // the whole row doesn't fit here: it starts a line
+            else if (x < colX) x -= gapM;
+            for (const Design& dg : it.designs) {
+                if (x < colX && x - dg.w < x1) newLine();
+                // Facing north, toward the spawn (front +X to world +Z, its left +Z to world -X): its width across the line is its z extent, its depth its x extent.
+                const double yaw = -M_PI / 2;
+                const double cx = x - dg.w / 2, cz = z - dg.d / 2;  // (the fronts in a line at z)
+                const double gy = height(cx, cz);
+                Placed pl;
+                pl.id = it.def->id, pl.yaw = yaw, pl.set = it.set, pl.variant = dg.variant;
+                pl.p = V3(cx + (dg.b.lo.z + dg.b.hi.z) / 2, gy, cz - (dg.b.lo.x + dg.b.hi.x) / 2);
+                models.push_back(pl);
+                tags.push_back({dg.label, V3(cx, gy + std::min((double)dg.b.hi.y, 7.0) + 0.5, cz)});
+                if (!ghost(it.def->id) && dg.b.hi.y > 0.25) {  // its bounds as a collider
+                    addBox(V3(cx, gy + (dg.b.lo.y + dg.b.hi.y) / 2, cz), V3(dg.d / 2 * 0.95, (dg.b.hi.y - dg.b.lo.y) / 2, dg.w / 2 * 0.95), yaw, 0, 0, V3(0.5, 0.5, 0.5));
+                    boxes.back().hidden = true;
+                }
+                x -= dg.w + gapX;
+                lineD = std::max(lineD, dg.d);
+            }
+            x += gapX;  // (the last design's gap isn't a gap)
+        }
+        colX = x1 - gapCol;
     }
     buildGrid();
 }
@@ -576,7 +628,7 @@ void World::scatterScenery(uint32_t seed) {
     };
     auto offRoad = [&](double x, double z, double margin) {
         RoadInfo r = roadAt(x, z);
-        return !r.near && std::sqrt(x * x + z * z) > kPadRadius + margin && courseOutside(x, z) > margin;
+        return !r.near && padOutside(x, z) > margin && std::sqrt(x * x + z * z) > kPadRadius + margin && courseOutside(x, z) > margin;
     };
     // A pond out in a meadow: the first open spot far from the pad, the roads and the trees.
     for (double pz = 380; pz > -400 && waters.empty(); pz -= 40)
@@ -783,15 +835,14 @@ void World::buildWilds() {
 
 double World::baseHeight(double x, double z) const {
     double h = 0;
-    double r = std::sqrt(x * x + z * z);
-    if (r > kPadRadius) {
-        double t = smoothstep(kPadRadius, kPadRadius + 100, r);
+    const double out = padOutside(x, z);
+    if (out > 0) {
+        double t = smoothstep(0, kZoneRamp, out);
         double hills = 9.0 * std::sin(x * 0.012 + 0.7) * std::cos(z * 0.010 - 0.3) +
                        4.0 * std::sin(x * 0.027 + z * 0.021 + 1.3) +
                        1.6 * std::sin(x * 0.061 - z * 0.047) * std::cos(z * 0.053 + x * 0.013);
         h = t * (hills + 6.0 * t);
         // Flat under the surface course (and its run-up).
-        if (map == MAP_PROVING_GROUND) h *= smoothstep(0, 18, courseOutside(x, z) + 6);
     }
     // Rim mountains keep you on the map.
     double ex = std::max(0.0, std::fabs(x) - 520), ez = std::max(0.0, std::fabs(z) - 520);
@@ -845,7 +896,7 @@ void World::bakeTerrain() {
     }
     for (size_t i = 0; i < link.size(); i++) {
         V3& p = link[i];
-        p.y *= smoothstep(kPadRadius, kPadRadius + 50, std::sqrt(p.x * p.x + p.z * p.z));
+        p.y *= smoothstep(0, 50, padOutside(p.x, p.z));
         double tEnd = smoothstep(link.size() - 25.0, link.size() - 1.0, (double)i);
         p.y += (joinY - p.y) * tEnd;
     }
@@ -911,7 +962,7 @@ void World::bakeTerrain() {
     };
     for (int attempt = 0; attempt < 20000 && trees.size() < 650; attempt++) {
         double x = (rnd() * 2 - 1) * 500, z = (rnd() * 2 - 1) * 500;
-        if (std::sqrt(x * x + z * z) < kPadRadius + 25 || courseOutside(x, z) < 20) continue;
+        if (padOutside(x, z) < 25 || x * x + z * z < (kPadRadius + 25) * (kPadRadius + 25)) continue;  // (the old round pad too: the same woods as ever round it)
         if (rnd() > grove(x, z) * grove(x, z) * 1.3) continue;
         int i = (int)std::lround((x + kHalfSize) / kRes), j = (int)std::lround((z + kHalfSize) / kRes);
         if (dist[i * hN + j] < kRoadHalfWidth + 9) continue;
@@ -957,7 +1008,7 @@ RoadInfo World::roadAt(double x, double z) const {
         static const uint8_t look[SURF_COUNT] = {PAINT_PAD, PAINT_NONE, PAINT_TRAIL, PAINT_ROCK, PAINT_SCREE, PAINT_GRAVEL,
                                                  PAINT_SAND, PAINT_MUD, PAINT_SNOW, PAINT_ICE, PAINT_WET};
         if (c >= 0) r.paint = look[c], r.near = false;
-        else if (courseOutside(x, z) < 4) r.paint = PAINT_PAD, r.near = false;
+        else if (courseOutside(x, z) < 4 || (!r.near && padOutside(x, z) < 0)) r.paint = PAINT_PAD, r.near = false;
     }
     r.lateral = roadLat[id];
     r.along = roadAlong[id];
@@ -973,7 +1024,7 @@ Surface World::surfaceAt(double x, double z) const {
     }
     const int course = courseSurface(x, z);
     if (course >= 0) return (Surface)course;
-    if (x * x + z * z < kPadRadius * kPadRadius || courseOutside(x, z) < 4) return SURF_PAVED;
+    if (padOutside(x, z) < 0 || courseOutside(x, z) < 4) return SURF_PAVED;
     RoadInfo r = roadAt(x, z);
     return r.near && std::fabs(r.lateral) < kRoadHalfWidth + 1.5 ? SURF_PAVED : SURF_GRASS;
 }
@@ -985,12 +1036,12 @@ float World::grassDensity(double x, double z) const {
     double h = height(x, z);
     float d = (float)(0.35 + 0.65 * fbmNoise(x * 0.03 + 11.0, z * 0.03 - 4.0, 3));
     if (r.near) d *= (float)smoothstep(kRoadHalfWidth + 1.5, kRoadHalfWidth + 4.5, std::fabs(r.lateral));  // thins out toward the verge
-    if (map == MAP_PROVING_GROUND) d *= (float)smoothstep(kPadRadius + 2, kPadRadius + 12, std::sqrt(x * x + z * z));
+    if (map == MAP_PROVING_GROUND) d *= (float)smoothstep(2, 12, padOutside(x, z));
     return d * (float)(1 - smoothstep(120, 190, h));  // thins out up the mountains
 }
 
 V3 World::normal(double x, double z) const {
-    if (map == MAP_PROVING_GROUND && x * x + z * z < (kPadRadius - 5) * (kPadRadius - 5)) return V3(0, 1, 0);
+    if (map == MAP_PROVING_GROUND && padOutside(x, z) < -5) return V3(0, 1, 0);
     const double e = 0.5;
     double dx = (height(x + e, z) - height(x - e, z)) / (2 * e);
     double dz = (height(x, z + e) - height(x, z - e)) / (2 * e);
