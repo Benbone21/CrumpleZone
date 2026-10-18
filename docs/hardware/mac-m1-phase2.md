@@ -8,10 +8,31 @@ Measurement note: short single-run benches (`--map 3 --quality Q --bench 300,100
 | Change | Frontier avg frame time before -> after |
 |---|---|
 | Scene renders at logical pixels on Retina (target 2880x1676 -> 1440x838); base Apple chips (M1) auto-detect LOW | LOW 61.4 -> 25.5 ms, MEDIUM 92.5 -> 38.1, HIGH 107.2 -> 44.4 |
-| Scan lines at HIGH fixed: the half-resolution AO pass read depth on the boundary between two depth rows, and NEAREST rounding picked either row line by line. It now reads a texel centre. | none (visual fix). Row-to-row banding on pavement 1.265 -> 0.338, equal to AO off |
-| Ground shader: material slots at constant indices instead of run-time-indexed arrays | LOW 26.2 -> 23.2, HIGH 44.7 -> 41.5 (0.0026% of pixels differ by more than 2/255 in a HIGH shot) |
+| Scan lines at HIGH fixed (**Apple only**, behind `#ifdef __APPLE__`; other platforms keep the old AO read until someone checks it there): the half-resolution AO pass read depth on the boundary between two depth rows, and NEAREST rounding picked either row line by line. It now reads a texel centre. | none (visual fix). Row-to-row banding on pavement 1.265 -> 0.338, equal to AO off |
+| Ground shader: material slots at constant indices (about 3 ms) | **Dropped.** Main's cheap-tier ground shader rewrite (a4922f4, e61f8cd) covers the same ground; its Mac effect is not re-measured here. The finding stands: run-time-indexed arrays in the ground shader are slow on Apple's GPU. |
+| First launch on an Apple chip that gets LOW starts at render scale 0.75 | LOW 22.6 -> 18.2 ms (44 -> 55 fps); slightly softer distance detail. First launch only; saved settings untouched. |
 
-Combined, Frontier is now about 23 ms at LOW (about 43 fps), 41.5 ms at HIGH.
+Combined (before merging main's newer shader work), Frontier was about 23 ms at LOW and 41.5 ms at HIGH; at the new 0.75 default LOW is about 18 ms.
+
+## Full bench suite, before and after (1600x900 window, one run each)
+"Before" is new main (`dc7fe7f`) with none of my changes; "after" is this branch merged with the newest main (cheap ground tiers, traffic LOD, HUD). The suite sets the preset directly, so it runs at full logical scale; the 0.75 first-launch default is not in these numbers. Raw files: `raw/mac-m1-phase2-before-1600x900.txt`, `raw/mac-m1-phase2-suite-1600x900.txt`.
+
+| Map | Preset | Before avg ms (fps) | After avg ms (fps) | After 1% low ms |
+|---|---|---|---|---|
+| Frontier | POTATO | 21.6 (46) | 11.2 (89) | 16.8 |
+| Frontier | LOW | 61.4 (16) | 14.9 (67) | 20.0 |
+| Frontier | MEDIUM | 92.5 (11) | 35.2 (28) | 42.0 |
+| Frontier | HIGH | 107.2 (9) | 42.0 (24) | 50.6 |
+| Open Country | POTATO | 18.7 (54) | 10.2 (98) | 16.0 |
+| Open Country | LOW | 51.9 (19) | 14.6 (68) | 19.6 |
+| Open Country | MEDIUM | 81.8 (12) | 32.4 (31) | 41.0 |
+| Open Country | HIGH | 93.7 (11) | 39.5 (25) | 48.2 |
+| Boulder Gully | POTATO | 20.0 (50) | 11.4 (88) | 17.3 |
+| Boulder Gully | LOW | 53.3 (19) | 15.8 (63) | 20.6 |
+| Boulder Gully | MEDIUM | 85.0 (12) | 34.5 (29) | 43.5 |
+| Boulder Gully | HIGH | 100.1 (10) | 40.9 (24.5) | 49.9 |
+
+Hitches: 0 on every run except POTATO (2 on Frontier, 1 on Boulder Gully). LOW and POTATO are now playable at 60+ fps; MEDIUM and HIGH are 24 to 31 fps. The gain is the Retina fix (all presets) plus main's cheap ground shader tiers (mostly LOW and POTATO); this run can't separate the two.
 
 ## Where the GPU time goes (HIGH, Frontier, whole-frame ablation)
 GL timers don't exist on macOS and `--bench-sync` inflates numbers (every sync splits the tile renderer's pass: 61 ms synced against 44 ms normal), so each feature was switched off in turn and the whole frame timed.
@@ -32,3 +53,26 @@ GL timers don't exist on macOS and `--bench-sync` inflates numbers (every sync s
 - `./build/run_tests --jobs 4`: 693 pass, 17 fail, the same 17 as in phase 1 (known list plus `frontier/autopilot-lodge`, `fieldrepair/steps` bad_alloc, `net/lan-discovery`, `net/custom-port`, `net/find`). No new failures.
 - `bench_sim` state: `69497071eddf9087`, unchanged by all edits.
 - Not checked: the UI and mouse at logical scale by hand, and what auto-detect picks on a fresh settings file.
+
+## Ground shader follow-up: paving-free chunks (Apple only)
+Cost breakdown of the MEDIUM/HIGH ground shader (tier 2, HIGH Frontier, 42 ms): the trivial-output floor is 19.8 ms, so the shader itself is about 22 ms. Switching pieces off with `CZ_GDEF`: the procedural paving code (`terrainProcedural`) costs 6.4 ms even though only paved pixels use it (it bloats the whole shader); shadows 3.4, material taps and blend about 9, fog, cloud shadow, lamps and gloss about 1 each or less.
+
+Change: at map load every terrain chunk (including the distant backdrop) is checked for paving/procedural paint (`chunkHasProcPaint`, same paint rules as `expandPaint`). On Apple, tier-2 terrain is drawn in two sweeps, each nearest first: chunks that may hold paving with the full shader, the rest with a build that has that code compiled out (`X_NOPROC`). Editor terrain edits put every chunk back on the full shader. Picture identical (max 1/255 difference on three maps).
+
+| Map | Preset | Same build, split off -> on |
+|---|---|---|
+| Frontier | MEDIUM / HIGH | 36.4 -> 35.4 / 42.9 -> 42.5 ms |
+| Open Country | MEDIUM / HIGH | 31.8 -> 29.6 / 38.3 -> 34.6 ms |
+| Boulder Gully | MEDIUM / HIGH | 36.1 -> 35.7 / 42.6 -> 40.8 ms |
+
+Small, map-dependent (Frontier has a paved circuit and pad near the start, so most of what it sees still needs paving). Not applied on other platforms; it should help them too but I have not measured there.
+
+Remaining ideas for the ground, none done: 2x MSAA at HIGH (about 4 ms), baking the low-frequency noise fields to a texture (about 3 ms), a lighter shadow filter on the ground (3 ms), and rendering the ground at lower resolution where the player can't see the difference.
+
+## Far ground on the cheap tier (Apple only)
+Tier-2 ground (MEDIUM/HIGH) chunks whose nearest point is past 300 m are drawn with the LOW-tier ground shader (one tap a layer, noise from a texture; its noise is the same numbers, so patches stay in place). The full shader already drops most of its layers out there. A third sweep after the two paving sweeps.
+
+HIGH, average frame time (ms), before this -> after: Frontier 42.5 -> 39.1, Open Country 34.6 -> 33.0, Boulder Gully 40.8 -> 39.4. With a 150 m cutoff the gain is larger (38.0, 32.0, 38.0) but more of the distant hills change (1.2 to 2.8% of pixels differ by over 8/255 from the full shader, against 0.6 to 1.4% at 300 m; the far hillsides pick up a paler patch). The cutoff is `kFarGround` in `drawTerrain` (render.cpp). This is a small, deliberate visual change at distance on a Mac only.
+
+## Shader cache and precompiling on macOS
+Apple's OpenGL reports 0 program binary formats (`shader cache: 0 binary formats (compiling every launch)`), so `glGetProgramBinary`-style caching cannot work on a Mac; the game compiles all its programs on every launch (about 1.3 to 1.7 s for 24 to 28 programs, in "renderer ready"). The cache is also switched off for scripted runs, which is why benches always show "0 from the cache". What can be done is compile everything behind the loading screen: the ground tier programs, including the two Apple-only variants added above, are now built in `ensureGround` (called from `preload`), not on the first frame that draws with them. Other lazily built programs were not audited.
