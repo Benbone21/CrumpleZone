@@ -266,7 +266,7 @@ build/mac/bench_sim: build/mac/obj/tools/bench_sim.o $(patsubst %.cpp,build/mac/
 	$(MACCXX) $(MACFLAGS) -o $@ $^
 
 build/mac/run_tests: build/mac/obj/tests/run_tests.o $(patsubst %.cpp,build/mac/obj/%.o,$(PHYS) $(SCEN) src/music.cpp)
-	$(MACCXX) $(MACFLAGS) -o $@ $^
+	$(MACCXX) $(MACFLAGS) $(MACLDX) -o $@ $^
 
 build/mac/test_audio: build/mac/obj/tests/audio.o build/mac/obj/tests/engine_samples.o build/mac/obj/tests/soundscape.o build/mac/obj/src/audio.o build/mac/obj/src/engineaudio.o build/mac/obj/src/engine_samples.o build/mac/obj/src/music.o build/mac/obj/src/ambience.o $(patsubst %.cpp,build/mac/obj/%.o,$(filter-out src/allocstat.cpp,$(PHYS)))
 	$(MACCXX) $(MACFLAGS) $(MACLDX) -o $@ $^ -F$(MACSDL) -framework SDL2 -Wl,-rpath,$(abspath $(MACSDL))
