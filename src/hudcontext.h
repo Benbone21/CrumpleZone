@@ -19,6 +19,7 @@ enum Elem {
     E_PRESSURE,   // tire pressure (and SWAY OFF) over the schematic
     E_DRIVELINE,  // the 4x4 schematic
     E_LAPS,       // the proving ground's lap timer (while a lap runs; a lap done or voided keeps it up a few seconds)
+    E_TIRETEMP,   // the tire-temperature marks in the dial (blue cold, green in the window, red hot)
     E_COUNT
 };
 
@@ -29,6 +30,7 @@ constexpr float kDamageSecs = 5.0f;
 constexpr float kLowFuel = 0.25f;   // fraction of the tank
 constexpr float kStopMs = 0.4f, kMoveMs = 0.8f;  // "stopped" below the first, "moving" again above the second (m/s)
 constexpr float kBadDamage = 0.5f;  // the bar's own scale (0..1): at this or above, it stays up
+constexpr float kTireLoss = 0.06f;  // tires this far off their grip (cold or hot) keep their marks up
 
 // What the HUD knows this frame.
 struct Sample {
@@ -45,6 +47,8 @@ struct Sample {
     float psi = 0, streetPsi = 0;
     bool airing = false;            // an air key is down
     bool lapOn = false;             // a lap is being timed
+    int tireBand = 0;               // the tires' temperature (tiretemp.h): -1 cold, 0 in the window, 1 hot (the worst)
+    float tireLoss = 0;             // the most grip any of them has lost to it (0..1)
     bool hasDriveline = false;      // trucks with a transfer case or lockers
     int mode = 0;                   // drive mode
     bool lowRange = false, lockF = false, lockR = false, lockC = false, sway = false;
@@ -74,6 +78,7 @@ struct Context {
             case E_CARINFO: return stopped;
             case E_PRESSURE: return s.airing || std::fabs(s.psi - s.streetPsi) > 1.0f;
             case E_LAPS: return s.lapOn;
+            case E_TIRETEMP: return s.tireLoss > kTireLoss;
             case E_DRIVELINE: return s.hasDriveline && (s.lowRange || s.lockF || s.lockR || s.lockC);
         }
         return false;
@@ -87,11 +92,13 @@ struct Context {
             trigger(E_DRIVELINE, kHoldSecs);
             trigger(E_PRESSURE, kHoldSecs);
             trigger(E_ANCHORS, kHoldSecs);
+            trigger(E_TIRETEMP, kHoldSecs);
             stopped = s.speed < kMoveMs;
         } else {
             if (s.fuelL > prev.fuelL + 0.3f || std::fabs(s.jerryL - prev.jerryL) > 0.3f) trigger(E_FUEL, kHoldSecs);  // refuelling
             if (s.surface != prev.surface && s.surface >= 0) trigger(E_TERRAIN, kHoldSecs);
             if (s.anchorSig != prev.anchorSig) trigger(E_ANCHORS, kHoldSecs);
+            if (s.tireBand != prev.tireBand) trigger(E_TIRETEMP, kHoldSecs);
             if (s.damage > prev.damage + 0.004f) trigger(E_DAMAGE, kDamageSecs);
             if (std::fabs(s.psi - prev.psi) > 0.05f) trigger(E_PRESSURE, kHoldSecs);
             if (s.mode != prev.mode || s.lockF != prev.lockF || s.lockR != prev.lockR || s.lockC != prev.lockC || s.sway != prev.sway) {

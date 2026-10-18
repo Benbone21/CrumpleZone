@@ -4,8 +4,10 @@
 #include <cstdio>
 #include <string>
 
+#include "biome.h"
 #include "objshape.h"
 #include "softbody.h"
+#include "tiretemp.h"
 
 // ---- Recovery points --------------------------------------------------------
 
@@ -761,6 +763,28 @@ void Sim::updateTrail(double dt) {
             c.fuel = std::min(c.spec->fuelCapacity, c.fuel + 3.0 * dt);
             if (c.jerry >= 0) c.jerry = std::min(c.spec->jerryCan, c.jerry + 3.0 * dt);
         }
+        // The air: the country it's in and the clock (twice a second). Arriving, the tires
+        // start at it; driving on, the air changes over a few seconds.
+        c.ambientPoll += dt;
+        if (!c.ambientSet || c.ambientPoll >= 0.5) {
+            const V3 at = c.frame().com;
+            const double air = ambientTempC(biomeAt(world, at.x, at.z), dayHours);
+            if (!c.ambientSet) {
+                c.ambientC = air;
+                for (Wheel& wh : c.wheels) wh.tempC = (float)air;
+                c.ambientSet = true;
+            } else {
+                c.ambientC += (air - c.ambientC) * std::min(1.0, c.ambientPoll / 8.0);
+            }
+            c.ambientPoll = 0;
+        }
+        // Asleep (parked, nothing touching it) its tires aren't stepped: they cool in still
+        // air (softbody.cpp's 10 W/K on ~6 kJ/K, plus the ground's 8).
+        if (c.sleeping)
+            for (Wheel& wh : c.wheels) {
+                const double k = 18 / (24000 * std::max(0.1, wh.width));
+                wh.tempC = (float)(c.ambientC + (wh.tempC - c.ambientC) * std::exp(-k * dt));
+            }
         // An electronic sway-bar disconnect hooks itself back up past ~30 km/h.
         if (c.swayDisconnected && c.spec->swayDisconnect == 1 && speed > 30 / 3.6) {
             c.swayDisconnected = false;

@@ -153,6 +153,7 @@ struct Wheel {
     uint8_t shed = 0;          // set by the tire model: 1 the wheel came off, 2 the tire did (Sim spawns it)
     float sink = 0;            // how far it has sunk into sand, mud or snow (m)
     float clog = 0;            // mud packed into the tread, 0..1 (spinning flings it out)
+    float tempC = 20;          // the tread's temperature (C, tiretemp.h): warmed by slip and flexing, cooled by the air and the ground
     float bite = 1;            // how fast its grip builds with slip here (tread and surface): ABS and traction control aim for the peak
     float shaftLoad = 0;       // torque through the axle shaft (N*m, smoothed over ~10 ms)
     double xferTorque = 0;     // torque a locker or the locked center put through it this step
@@ -418,6 +419,12 @@ public:
     bool hydrolocked = false;   // sucked water into the intake (dead until repaired)
     // Trail setup.
     double tirePsi = 32;        // tire pressure (starts at the spec's; air down for rock)
+    // The air around it (C): the tires cool toward it. Sim::updateTrail sets it from the
+    // country and the clock (the first time, the tires start at it too).
+    double ambientC = 20;
+    bool ambientSet = false;
+    double ambientPoll = 0;     // s since the country under it was last looked at
+    int treadType(const Wheel& wh) const;  // the tread on the ground there (TireType; chains when fitted)
     // The speedometer reads wheel speed (the driven wheels, like a transmission-output sensor)
     // against the rolling radius it was calibrated for: the factory tire at its street pressure.
     // 0 = factory; the garage's RECALIBRATE sets it to what is fitted now.
@@ -693,6 +700,7 @@ public:
     bool playerAway = false;
     double h = 1.0 / 2000.0;  // physics step: 2 kHz
     double timeScale = 1.0;
+    double dayHours = 12;     // the clock (the game sets it): nights are colder for the tires
     bool paused = false;
     static constexpr int kMaxVehicles = 12;
     static constexpr int kMaxBodies = 48;  // vehicles + props

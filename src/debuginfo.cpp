@@ -11,6 +11,7 @@
 #include "levelrun.h"
 #include "net.h"
 #include "throttle.h"
+#include "tiretemp.h"
 #include "trunk.h"
 #include "vehicles.h"
 #include "walker.h"
@@ -308,6 +309,21 @@ void gatherVehicle(const DebugInputs& in, DebugColumn& R) {
     else R.add(DT_TEXT, "FUEL FULL (%.0f L)", vs.fuelCapacity);
     R.add(car.engineDead || car.engineHealth < 0.8 ? DT_WARN : DT_TEXT, "ENGINE HEALTH %.0f%%%s", car.engineHealth * 100, car.engineDead ? (car.hydrolocked ? "  FLOODED" : "  DEAD") : "");
     R.add(DT_TEXT, "TIRES %s  %.0f PSI%s", tireTypeName(vs.tireType), car.tirePsi, car.hasSpare ? "  SPARE FITTED" : "");
+    {  // the tread's temperature, each corner (C), against its window (tiretemp.h)
+        char line[96];
+        int n = std::snprintf(line, sizeof line, "TREAD C"), cold = 0, hot = 0;
+        for (int i = 0; i < (int)car.wheels.size() && i < 6 && n < (int)sizeof line; i++) {
+            const Wheel& wh = car.wheels[i];
+            char tag[4];
+            wheelTag(car, i, tag);
+            const int band = tireTempBand(car.treadType(wh), wh.tempC);
+            cold += band < 0, hot += band > 0;
+            n += std::snprintf(line + n, sizeof line - n, " %s %.0f", tag, wh.tempC);
+        }
+        R.add(cold || hot ? DT_WARN : DT_TEXT, "%s%s", line, hot ? "  HOT" : cold ? "  COLD" : "");
+        const TireWindow& tw = tireWindow(car.wheels.empty() ? vs.tireType : car.treadType(car.wheels[0]));
+        R.add(DT_DIM, "AIR %.0fC  GRIP WINDOW %.0f TO %.0fC", car.ambientC, tw.lo, tw.hi);
+    }
     R.add(DT_DIM, "");
 
     R.add(DT_HEAD, "WHEELS  LOAD RATIO ANGLE TRAVEL");

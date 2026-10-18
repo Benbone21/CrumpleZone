@@ -4,6 +4,7 @@
 #include "collision.h"
 #include "simdkern.h"
 #include "vehicles.h"
+#include "tiretemp.h"
 
 #include <cstdlib>
 #include <cstring>
@@ -45,27 +46,50 @@ double tireCurve(double s, double bite, double keep) {
     return std::sin(C * std::atan(11.0 * bite * s));
 }
 
-// Each tread on each surface, against its grip on dry pavement (PAVED, GRASS, DIRT, ROCK,
-// SCREE, GRAVEL, SAND, MUD, SNOW, ICE, WET). Semi-slicks have no voids for water, mud or
-// snow to go; knobbly tires bite into loose stuff; big mud lugs clear mud but have less
-// rubber on ice and wet pavement. A race slick is all rubber: on loose ground it rolls on
-// top like a ball bearing, and water can't get out from under it. A winter tire's soft,
-// siped blocks hold snow (snow grips snow) and its sipes' edges ice. Chains dig into ice,
-// packed snow and mud, but on pavement only the links touch: steel on asphalt.
-// (The tire's own peak grip, VehicleSpec::tireGrip, is on top of this.)
+// Each tread on each surface, against its own grip on dry pavement (PAVED, GRASS, DIRT,
+// ROCK, SCREE, GRAVEL, SAND, MUD, SNOW, ICE, WET). The tread's dry-pavement peak (mods.cpp
+// kTypeGrip: street 1.00, semi-slick 1.10, all-terrain 0.98, mud-terrain 0.92, race slick
+// 1.32, winter 0.94) is on top; together, against a street tire on the same surface:
+//
+//               PAVED GRASS DIRT ROCK SCREE GRAVEL SAND  MUD SNOW  ICE  WET
+//   street       1.00  .92  .95  .95  .90   .92   .85  .70  .80 1.00 1.00
+//   semi-slick   1.10  .70  .78 1.00  .70   .75   .65  .45  .50  .80  .80
+//   all-terrain   .98 1.06 1.06  .98 1.06  1.06  1.08 1.18 1.13  .98  .93
+//   mud-terrain   .92 1.03 1.07 1.00 1.09  1.07  1.00 1.38  .97  .78  .76
+//   race slick   1.32  .40  .45  .80  .40   .42   .40  .25  .22  .50  .60
+//   winter        .94  .98  .98  .90  .98   .98   .94  .99 1.46 1.65  .99
+//   chains (x the tire under them): .70 on pavement and wet, .80 rock, 1.95 snow, 3.2 ice
+//
+// A street tire is the road all-rounder: siped for wet, too shallow to clear mud, sand or
+// snow. Semi-slicks have few voids for water, mud or snow to go. A race slick is all rubber:
+// on loose ground it rolls on top like a ball bearing, nothing clears water from under it,
+// and its hard compound can't wrap a rock. All-terrain blocks bite loose stuff and still roll
+// on the road; big mud lugs dig and clear mud and wrap rock edges, but leave the least rubber
+// on wet pavement and ice. A winter tire's soft, siped blocks hold snow (snow grips snow) and
+// their edges ice. Chains dig into ice, packed snow and mud, but on pavement only the links
+// touch: steel on asphalt. (The tire's own peak grip, VehicleSpec::tireGrip, is on top of
+// this; its temperature, tiretemp.h, on top of that.)
 const double kTreadGrip[TIRE_TYPES][SURF_COUNT] = {
-    {1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 0.95, 0.85, 0.90, 1.00, 1.00},  // street
-    {1.00, 0.75, 0.80, 0.95, 0.80, 0.80, 0.70, 0.50, 0.55, 0.80, 0.72},  // semi-slick
+    {1.00, 0.92, 0.95, 0.95, 0.90, 0.92, 0.85, 0.70, 0.80, 1.00, 1.00},  // street
+    {1.00, 0.64, 0.71, 0.91, 0.64, 0.68, 0.59, 0.41, 0.45, 0.73, 0.73},  // semi-slick
     {1.00, 1.08, 1.08, 1.00, 1.08, 1.08, 1.10, 1.20, 1.15, 1.00, 0.95},  // all-terrain
-    {1.00, 1.12, 1.12, 1.00, 1.12, 1.10, 1.08, 1.45, 1.05, 0.90, 0.88},  // mud-terrain
-    {1.00, 0.55, 0.62, 0.92, 0.55, 0.60, 0.50, 0.32, 0.30, 0.55, 0.50},  // race slick
-    {1.00, 1.04, 1.04, 0.96, 1.04, 1.04, 1.00, 1.05, 1.55, 1.75, 1.05},  // snow (winter)
-    {1.00, 1.12, 1.18, 0.88, 1.22, 1.18, 0.92, 1.42, 1.95, 3.20, 0.95},  // chains
+    {1.00, 1.12, 1.16, 1.09, 1.18, 1.16, 1.09, 1.50, 1.05, 0.85, 0.83},  // mud-terrain
+    {1.00, 0.30, 0.34, 0.61, 0.30, 0.32, 0.30, 0.19, 0.17, 0.38, 0.45},  // race slick
+    {1.00, 1.04, 1.04, 0.96, 1.04, 1.04, 1.00, 1.05, 1.55, 1.76, 1.05},  // winter
+    {0.70, 1.12, 1.18, 0.80, 1.22, 1.18, 0.92, 1.42, 1.95, 3.20, 0.70},  // chains
 };
-// How stiff the tread is (how quickly grip builds with slip): a semi-slick's shallow
-// tread barely squirms, a slick not at all; tall lugs and soft winter blocks do; chains
-// bite at once.
+// How quickly grip builds with slip. On hard ground (pavement, rock, ice) that's how stiff
+// the tread is: a semi-slick's shallow tread barely squirms, a slick not at all; tall lugs
+// and soft winter blocks do; chains bite at once. On loose ground it's how deep the tread
+// digs in: lugs and chains bite into it, a slick's bare rubber only skims the top.
 const double kTreadBite[TIRE_TYPES] = {1.0, 1.4, 1.0, 0.85, 1.7, 0.9, 1.25};
+const double kTreadBiteLoose[TIRE_TYPES] = {0.95, 0.8, 1.0, 1.1, 0.6, 1.0, 1.3};
+bool hardGround(int s) { return s == SURF_PAVED || s == SURF_WET || s == SURF_ICE || s == SURF_ROCK; }
+// How much the rubber's temperature matters there: all of it where rubber meets a hard
+// face, less where the ground itself shears (sand, mud and snow most).
+double tempWeight(int s) {
+    return hardGround(s) ? 1.0 : (s == SURF_SAND || s == SURF_MUD || s == SURF_SNOW) ? 0.4 : 0.6;
+}
 
 const V3 kPalette[] = {
     {0.80, 0.16, 0.10}, {0.14, 0.34, 0.78}, {0.90, 0.72, 0.16}, {0.88, 0.88, 0.86}, {0.16, 0.55, 0.30},
@@ -1067,6 +1091,10 @@ double Car::speedoMs() const {
     return std::fabs(v);
 }
 
+int Car::treadType(const Wheel& wh) const {
+    return wh.chained ? (int)TIRE_CHAINS : std::min(std::max(spec->tireType, 0), TIRE_TYPES - 1);
+}
+
 void Car::recalibrateSpeedo() {
     speedoCalR = 0;
     if (wheels.empty() || !spec) return;
@@ -1660,6 +1688,7 @@ void Car::wheelStep(double h, const World& w) {
         wh.slip = 0;
         wh.sx = 0;
         Contact ct;
+        double heatW = 0, groundK = 0, groundC = ambientC;  // tread temperature: heat in (W), the ground's cooling (W/K) and its temperature
         if (!tire) wh.studLoad = wh.beadLoad = 0;
         if (w.contact(c, R, &axis, (wh.mounted ? wh.width : 0.06) * 0.5, ct)) {
             const V3& n = ct.n;
@@ -1676,15 +1705,17 @@ void Car::wheelStep(double h, const World& w) {
                 wh.chainStrain = v > 16.7 ? wh.chainStrain + (float)h : std::max(0.0f, wh.chainStrain - (float)h);
                 if (wh.chainStrain > 2.0f) wh.chained = false, wh.chainStrain = 0, chainsSnapped++;
             }
-            const int tread = wh.chained ? (int)TIRE_CHAINS : std::min(std::max(spec->tireType, 0), TIRE_TYPES - 1);
+            const int tread = treadType(wh);
             double grip = si.grip * kTreadGrip[tread][ct.surface];
+            // Cold rubber is hard, overheated rubber greasy (tiretemp.h).
+            grip *= 1 + (tireTempGrip(tread, wh.tempC) - 1) * tempWeight(ct.surface);
             if (ct.surface != SURF_PAVED && ct.surface != SURF_WET && ct.surface != SURF_ICE) grip *= (1 + 0.012 * psiDrop) * spec->looseGrip;
             // Mud packed into the tread turns it into a slick.
             grip *= 1 - (tread == TIRE_MUD_TERRAIN ? 0.25 : tread == TIRE_CHAINS ? 0.15 : tread == TIRE_RACE_SLICK ? 0.5 : 0.4) * wh.clog;
             // Standing water: past ~80 km/h the tread can't push it out of the way fast
             // enough and the tire rides up on it (aquaplaning).
             if (ct.surface == SURF_WET) grip *= 1 - (tread == TIRE_RACE_SLICK ? 0.75 : tread == TIRE_SEMI_SLICK ? 0.6 : tread == TIRE_SNOW ? 0.35 : 0.45) * smoothstep(22, 40, len(vc));
-            const double bite = si.bite * kTreadBite[tread];
+            const double bite = si.bite * (hardGround(ct.surface) ? kTreadBite : kTreadBiteLoose)[tread];
             wh.bite = (float)bite;
             const double tireK = wh.radialK(tirePsi, spec->tirePsi, spec->tireSoft);
             const double popSpeed = kRimPopSpeed * clampd((tirePsi + 5) / (spec->tirePsi + 5), 0.45, 1.1);
@@ -1766,6 +1797,8 @@ void Car::wheelStep(double h, const World& w) {
                 }
                 Fx = fx;
                 Ft = fdir * fx + sdir * fy;
+                // Slip work heats the tread (about a third of it: the rest goes into the ground).
+                heatW += 0.35 * std::fabs(fx * slipX + fy * slipY);
                 // Aired right down, a hard sideways load rolls the bead off the rim (unless a
                 // beadlock clamps it): past ~0.75 g of side load at 8 psi, ~0.95 g at 12.
                 if (tire && spec->wheelLoss && !wh.popped && !spec->beadlock && tirePsi < 14 && std::fabs(vx) > 3) {
@@ -1854,11 +1887,26 @@ void Car::wheelStep(double h, const World& w) {
                 wh.studLoad += (float)((stud - wh.studLoad) * std::min(1.0, h / 0.005));
                 if (spec->wheelLoss && wh.studLoad > spec->lugShear) wh.shed = 1;
             }
+            // The carcass flexing as it rolls heats it (more loaded, faster, softer), and the
+            // ground carries heat off: wet, snow and ice fast, toward their own cold.
+            if (tire && N > 0) {
+                const double flex = clampd(std::pow(spec->tirePsi / std::max(tirePsi, 6.0), 1.5), 0.6, 3.0);
+                heatW += 0.012 * N * std::fabs(wh.omega * R) * flex;
+                groundK = ct.surface == SURF_WET ? 40 : (ct.surface == SURF_SNOW || ct.surface == SURF_ICE) ? 50 : ct.surface == SURF_MUD ? 25 : 8;
+                if (ct.surface == SURF_SNOW || ct.surface == SURF_ICE) groundC = std::min(ambientC, -1.0);
+            }
             wh.load = (float)N;
             wh.contactNormal = n;
             wh.contact = c - n * (R - pen);
         }
 
+        {  // The tread's temperature: ~6 kJ/K of rubber (a 25 cm tread), cooled by the air (more
+           // the faster it turns) and whatever it's touching. (A bare rim: nothing to heat.)
+            const double C = 24000 * std::max(0.1, wh.width), airK = 10 + 1.2 * std::fabs(wh.omega * R);
+            const double dT = (heatW - airK * (wh.tempC - ambientC) - groundK * (wh.tempC - groundC)) / C * h;
+            wh.tempC = (float)clampd(wh.tempC + dT, -50, 250);
+            if (!std::isfinite(wh.tempC)) wh.tempC = (float)ambientC;
+        }
         if (wh.load <= 0) {
             // No contact patch survives a jump. Old deflection otherwise kicks the
             // tire sideways on landing, and road speed is the hub's own (for shifts and ABS).

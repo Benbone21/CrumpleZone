@@ -299,6 +299,7 @@ bool Sim::fitWheel(int ci, int wi, const WheelItem& it) {
     }
     wh.omega = 0;
     wh.sink = wh.clog = 0;
+    wh.tempC = (float)c.ambientC;  // (a wheel off the ground has sat in the air)
     wh.stickX = wh.stickY = 0;
     wh.studLoad = wh.beadLoad = 0;
     wh.poppedAnim = 0;
