@@ -1,0 +1,270 @@
+Crumple Zone benchmark suite 20261017-234701
+
+GPU:       NVIDIA GeForce RTX 4070 Laptop GPU/PCIe/SSE2
+Vendor:    NVIDIA Corporation
+GL:        3.3.0 NVIDIA 616.92 (GLSL 3.30 NVIDIA via Cg compiler)
+CPU:       AMD Ryzen AI 9 HX 370 w/ Radeon 890M
+Cores:     24 logical
+RAM:       31864 MB
+OS:        Windows 11 Pro 26H2 (build 26300)
+Display:   ATNA60DL04-0  2048x1280, refresh 240 Hz
+Video:     windows
+Window:    1600x900, 600 frames per run after 120 to warm up, 12 runs
+
+Map / place                  quality   avg ms   fps  1% low ms  hitches  >30ms
+FRONTIER                     POTATO      1.95 513.8       3.41        0      0
+FRONTIER                     LOW         3.10 322.5       5.28        0      0
+FRONTIER                     MEDIUM      4.58 218.4       5.78        0      0
+FRONTIER                     HIGH        5.42 184.6       6.73        0      0
+OPEN COUNTRY                 POTATO      1.72 582.2       1.92        0      0
+OPEN COUNTRY                 LOW         2.37 422.7       3.81        0      0
+OPEN COUNTRY                 MEDIUM      3.71 269.7       5.86        1      1
+OPEN COUNTRY                 HIGH        4.35 230.1       6.42        0      0
+MOUNTAIN / Boulder Gully     POTATO      2.24 445.6       3.49        0      0
+MOUNTAIN / Boulder Gully     LOW         3.05 327.6       4.07        0      0
+MOUNTAIN / Boulder Gully     MEDIUM      4.09 244.4       5.94        0      0
+MOUNTAIN / Boulder Gully     HIGH        4.93 202.7       6.14        0      0
+
+CSV (map,place,quality,then bench-csv fields: STAGE=cpu/gpu ms):
+suite-csv: FRONTIER,,POTATO,avg=1.95,low1=3.41,hitches=0,GAME=0.16,SIM=0.00,SHADOWS=0.00/0.00,SKY=0.01/0.01,TERRAIN=0.03/0.55,OPAQUE=0.09/0.07,VEGETATION=0.06/0.01,PROPS=0.03/0.01,FX=0.01/0.00,POST=0.00/0.04,UI=0.03/0.00,SWAP=1.53
+suite-csv: FRONTIER,,LOW,avg=3.10,low1=5.28,hitches=0,GAME=0.18,SIM=0.00,SHADOWS=0.13/0.11,SKY=0.02/0.04,TERRAIN=0.22/2.57,OPAQUE=0.54/0.03,VEGETATION=0.17/0.26,PROPS=0.11/0.02,FX=0.02/0.01,POST=0.01/0.03,UI=0.03/0.00,SWAP=1.68
+suite-csv: FRONTIER,,MEDIUM,avg=4.58,low1=5.78,hitches=0,GAME=0.25,SIM=0.00,SHADOWS=0.24/0.18,SKY=0.03/0.11,TERRAIN=0.23/3.74,OPAQUE=0.12/0.04,VEGETATION=0.22/0.27,PROPS=0.14/0.04,FX=0.02/0.01,POST=0.11/0.16,UI=0.04/0.00,SWAP=3.18
+suite-csv: FRONTIER,,HIGH,avg=5.42,low1=6.73,hitches=0,GAME=0.27,SIM=0.00,SHADOWS=0.27/0.22,SKY=0.04/0.12,TERRAIN=0.24/4.28,OPAQUE=0.13/0.05,VEGETATION=0.24/0.31,PROPS=0.15/0.07,FX=0.03/0.01,POST=0.12/0.33,UI=0.04/0.00,SWAP=3.89
+suite-csv: OPEN COUNTRY,,POTATO,avg=1.72,low1=1.92,hitches=0,GAME=0.05,SIM=0.00,SHADOWS=0.00/0.00,SKY=0.04/0.01,TERRAIN=0.04/0.40,OPAQUE=0.03/0.01,VEGETATION=0.07/0.01,PROPS=0.03/0.00,FX=0.01/0.00,POST=0.01/0.04,UI=0.02/0.00,SWAP=1.39
+suite-csv: OPEN COUNTRY,,LOW,avg=2.37,low1=3.81,hitches=0,GAME=0.06,SIM=0.00,SHADOWS=0.14/0.05,SKY=0.02/0.04,TERRAIN=0.22/1.88,OPAQUE=0.10/0.06,VEGETATION=0.17/0.11,PROPS=0.06/0.01,FX=0.04/0.00,POST=0.01/0.03,UI=0.03/0.00,SWAP=1.51
+suite-csv: OPEN COUNTRY,,MEDIUM,avg=3.71,low1=5.86,hitches=1,GAME=0.07,SIM=0.00,SHADOWS=0.17/0.05,SKY=0.03/0.11,TERRAIN=0.24/2.98,OPAQUE=0.16/0.09,VEGETATION=0.22/0.27,PROPS=0.07/0.01,FX=0.07/0.00,POST=0.10/0.17,UI=0.03/0.00,SWAP=2.56
+suite-csv: OPEN COUNTRY,,HIGH,avg=4.35,low1=6.42,hitches=0,GAME=0.08,SIM=0.00,SHADOWS=0.18/0.08,SKY=0.03/0.12,TERRAIN=0.24/3.43,OPAQUE=0.08/0.03,VEGETATION=0.23/0.30,PROPS=0.07/0.01,FX=0.07/0.00,POST=0.11/0.35,UI=0.03/0.00,SWAP=3.22
+suite-csv: MOUNTAIN,Boulder Gully,POTATO,avg=2.24,low1=3.49,hitches=0,GAME=0.15,SIM=0.00,SHADOWS=0.00/0.00,SKY=0.05/0.01,TERRAIN=0.04/0.52,OPAQUE=0.07/0.01,VEGETATION=0.10/0.02,PROPS=0.11/0.01,FX=0.02/0.00,POST=0.01/0.04,UI=0.03/0.00,SWAP=1.67
+suite-csv: MOUNTAIN,Boulder Gully,LOW,avg=3.05,low1=4.07,hitches=0,GAME=0.15,SIM=0.00,SHADOWS=0.22/0.24,SKY=0.02/0.04,TERRAIN=0.30/2.10,OPAQUE=0.07/0.01,VEGETATION=0.29/0.14,PROPS=0.27/0.03,FX=0.02/0.00,POST=0.01/0.03,UI=0.03/0.00,SWAP=1.65
+suite-csv: MOUNTAIN,Boulder Gully,MEDIUM,avg=4.09,low1=5.94,hitches=0,GAME=0.18,SIM=0.00,SHADOWS=0.27/0.18,SKY=0.03/0.10,TERRAIN=0.31/3.20,OPAQUE=0.08/0.01,VEGETATION=0.31/0.34,PROPS=0.29/0.06,FX=0.02/0.00,POST=0.11/0.17,UI=0.04/0.00,SWAP=2.46
+suite-csv: MOUNTAIN,Boulder Gully,HIGH,avg=4.93,low1=6.14,hitches=0,GAME=0.22,SIM=0.00,SHADOWS=0.30/0.26,SKY=0.03/0.11,TERRAIN=0.32/3.68,OPAQUE=0.10/0.01,VEGETATION=0.33/0.40,PROPS=0.31/0.10,FX=0.02/0.00,POST=0.12/0.35,UI=0.04/0.00,SWAP=3.15
+
+Per-run stage tables:
+
+bench: FRONTIER, POTATO
+bench: 600 frames: avg 1.95 ms (513.8 fps), 1% low 3.41 ms (293.6 fps), worst 6.22 ms
+bench: 0 frames over 30 ms, 0 hitches (over twice the median)
+bench:   stage        cpu ms   gpu ms
+bench:   GAME           0.16        -
+bench:   SIM            0.00        -
+bench:   SHADOWS        0.00     0.00
+bench:   SKY            0.01     0.01
+bench:   TERRAIN        0.03     0.55
+bench:   OPAQUE         0.09     0.07
+bench:   VEGETATION     0.06     0.01
+bench:   PROPS          0.03     0.01
+bench:   FX             0.01     0.00
+bench:   POST           0.00     0.04
+bench:   UI             0.03     0.00
+bench:   SWAP           1.53        -
+bench:   TOTAL          1.95     0.69
+bench-csv: avg=1.95,low1=3.41,hitches=0,GAME=0.16,SIM=0.00,SHADOWS=0.00/0.00,SKY=0.01/0.01,TERRAIN=0.03/0.55,OPAQUE=0.09/0.07,VEGETATION=0.06/0.01,PROPS=0.03/0.01,FX=0.01/0.00,POST=0.00/0.04,UI=0.03/0.00,SWAP=1.53
+
+bench: FRONTIER, LOW
+bench: 600 frames: avg 3.10 ms (322.5 fps), 1% low 5.28 ms (189.5 fps), worst 5.97 ms
+bench: 0 frames over 30 ms, 0 hitches (over twice the median)
+bench:   stage        cpu ms   gpu ms
+bench:   GAME           0.18        -
+bench:   SIM            0.00        -
+bench:   SHADOWS        0.13     0.11
+bench:   SKY            0.02     0.04
+bench:   TERRAIN        0.22     2.57
+bench:   OPAQUE         0.54     0.03
+bench:   VEGETATION     0.17     0.26
+bench:   PROPS          0.11     0.02
+bench:   FX             0.02     0.01
+bench:   POST           0.01     0.03
+bench:   UI             0.03     0.00
+bench:   SWAP           1.68        -
+bench:   TOTAL          3.10     3.07
+bench-csv: avg=3.10,low1=5.28,hitches=0,GAME=0.18,SIM=0.00,SHADOWS=0.13/0.11,SKY=0.02/0.04,TERRAIN=0.22/2.57,OPAQUE=0.54/0.03,VEGETATION=0.17/0.26,PROPS=0.11/0.02,FX=0.02/0.01,POST=0.01/0.03,UI=0.03/0.00,SWAP=1.68
+
+bench: FRONTIER, MEDIUM
+bench: 600 frames: avg 4.58 ms (218.4 fps), 1% low 5.78 ms (173.0 fps), worst 6.71 ms
+bench: 0 frames over 30 ms, 0 hitches (over twice the median)
+bench:   stage        cpu ms   gpu ms
+bench:   GAME           0.25        -
+bench:   SIM            0.00        -
+bench:   SHADOWS        0.24     0.18
+bench:   SKY            0.03     0.11
+bench:   TERRAIN        0.23     3.74
+bench:   OPAQUE         0.12     0.04
+bench:   VEGETATION     0.22     0.27
+bench:   PROPS          0.14     0.04
+bench:   FX             0.02     0.01
+bench:   POST           0.11     0.16
+bench:   UI             0.04     0.00
+bench:   SWAP           3.18        -
+bench:   TOTAL          4.58     4.56
+bench-csv: avg=4.58,low1=5.78,hitches=0,GAME=0.25,SIM=0.00,SHADOWS=0.24/0.18,SKY=0.03/0.11,TERRAIN=0.23/3.74,OPAQUE=0.12/0.04,VEGETATION=0.22/0.27,PROPS=0.14/0.04,FX=0.02/0.01,POST=0.11/0.16,UI=0.04/0.00,SWAP=3.18
+
+bench: FRONTIER, HIGH
+bench: 600 frames: avg 5.42 ms (184.6 fps), 1% low 6.73 ms (148.7 fps), worst 8.70 ms
+bench: 0 frames over 30 ms, 0 hitches (over twice the median)
+bench:   stage        cpu ms   gpu ms
+bench:   GAME           0.27        -
+bench:   SIM            0.00        -
+bench:   SHADOWS        0.27     0.22
+bench:   SKY            0.04     0.12
+bench:   TERRAIN        0.24     4.28
+bench:   OPAQUE         0.13     0.05
+bench:   VEGETATION     0.24     0.31
+bench:   PROPS          0.15     0.07
+bench:   FX             0.03     0.01
+bench:   POST           0.12     0.33
+bench:   UI             0.04     0.00
+bench:   SWAP           3.89        -
+bench:   TOTAL          5.42     5.40
+bench-csv: avg=5.42,low1=6.73,hitches=0,GAME=0.27,SIM=0.00,SHADOWS=0.27/0.22,SKY=0.04/0.12,TERRAIN=0.24/4.28,OPAQUE=0.13/0.05,VEGETATION=0.24/0.31,PROPS=0.15/0.07,FX=0.03/0.01,POST=0.12/0.33,UI=0.04/0.00,SWAP=3.89
+
+bench: OPEN COUNTRY, POTATO
+bench: 600 frames: avg 1.72 ms (582.2 fps), 1% low 1.92 ms (520.1 fps), worst 2.55 ms
+bench: 0 frames over 30 ms, 0 hitches (over twice the median)
+bench:   stage        cpu ms   gpu ms
+bench:   GAME           0.05        -
+bench:   SIM            0.00        -
+bench:   SHADOWS        0.00     0.00
+bench:   SKY            0.04     0.01
+bench:   TERRAIN        0.04     0.40
+bench:   OPAQUE         0.03     0.01
+bench:   VEGETATION     0.07     0.01
+bench:   PROPS          0.03     0.00
+bench:   FX             0.01     0.00
+bench:   POST           0.01     0.04
+bench:   UI             0.02     0.00
+bench:   SWAP           1.39        -
+bench:   TOTAL          1.72     0.47
+bench-csv: avg=1.72,low1=1.92,hitches=0,GAME=0.05,SIM=0.00,SHADOWS=0.00/0.00,SKY=0.04/0.01,TERRAIN=0.04/0.40,OPAQUE=0.03/0.01,VEGETATION=0.07/0.01,PROPS=0.03/0.00,FX=0.01/0.00,POST=0.01/0.04,UI=0.02/0.00,SWAP=1.39
+
+bench: OPEN COUNTRY, LOW
+bench: 600 frames: avg 2.37 ms (422.7 fps), 1% low 3.81 ms (262.6 fps), worst 4.13 ms
+bench: 0 frames over 30 ms, 0 hitches (over twice the median)
+bench:   stage        cpu ms   gpu ms
+bench:   GAME           0.06        -
+bench:   SIM            0.00        -
+bench:   SHADOWS        0.14     0.05
+bench:   SKY            0.02     0.04
+bench:   TERRAIN        0.22     1.88
+bench:   OPAQUE         0.10     0.06
+bench:   VEGETATION     0.17     0.11
+bench:   PROPS          0.06     0.01
+bench:   FX             0.04     0.00
+bench:   POST           0.01     0.03
+bench:   UI             0.03     0.00
+bench:   SWAP           1.51        -
+bench:   TOTAL          2.37     2.18
+bench-csv: avg=2.37,low1=3.81,hitches=0,GAME=0.06,SIM=0.00,SHADOWS=0.14/0.05,SKY=0.02/0.04,TERRAIN=0.22/1.88,OPAQUE=0.10/0.06,VEGETATION=0.17/0.11,PROPS=0.06/0.01,FX=0.04/0.00,POST=0.01/0.03,UI=0.03/0.00,SWAP=1.51
+
+bench: OPEN COUNTRY, MEDIUM
+bench: 600 frames: avg 3.71 ms (269.7 fps), 1% low 5.86 ms (170.6 fps), worst 31.40 ms
+bench: 1 frames over 30 ms, 1 hitches (over twice the median)
+bench:   stage        cpu ms   gpu ms
+bench:   GAME           0.07        -
+bench:   SIM            0.00        -
+bench:   SHADOWS        0.17     0.05
+bench:   SKY            0.03     0.11
+bench:   TERRAIN        0.24     2.98
+bench:   OPAQUE         0.16     0.09
+bench:   VEGETATION     0.22     0.27
+bench:   PROPS          0.07     0.01
+bench:   FX             0.07     0.00
+bench:   POST           0.10     0.17
+bench:   UI             0.03     0.00
+bench:   SWAP           2.56        -
+bench:   TOTAL          3.71     3.68
+bench-csv: avg=3.71,low1=5.86,hitches=1,GAME=0.07,SIM=0.00,SHADOWS=0.17/0.05,SKY=0.03/0.11,TERRAIN=0.24/2.98,OPAQUE=0.16/0.09,VEGETATION=0.22/0.27,PROPS=0.07/0.01,FX=0.07/0.00,POST=0.10/0.17,UI=0.03/0.00,SWAP=2.56
+
+bench: OPEN COUNTRY, HIGH
+bench: 600 frames: avg 4.35 ms (230.1 fps), 1% low 6.42 ms (155.8 fps), worst 7.30 ms
+bench: 0 frames over 30 ms, 0 hitches (over twice the median)
+bench:   stage        cpu ms   gpu ms
+bench:   GAME           0.08        -
+bench:   SIM            0.00        -
+bench:   SHADOWS        0.18     0.08
+bench:   SKY            0.03     0.12
+bench:   TERRAIN        0.24     3.43
+bench:   OPAQUE         0.08     0.03
+bench:   VEGETATION     0.23     0.30
+bench:   PROPS          0.07     0.01
+bench:   FX             0.07     0.00
+bench:   POST           0.11     0.35
+bench:   UI             0.03     0.00
+bench:   SWAP           3.22        -
+bench:   TOTAL          4.35     4.33
+bench-csv: avg=4.35,low1=6.42,hitches=0,GAME=0.08,SIM=0.00,SHADOWS=0.18/0.08,SKY=0.03/0.12,TERRAIN=0.24/3.43,OPAQUE=0.08/0.03,VEGETATION=0.23/0.30,PROPS=0.07/0.01,FX=0.07/0.00,POST=0.11/0.35,UI=0.03/0.00,SWAP=3.22
+
+bench: MOUNTAIN / Boulder Gully, POTATO
+bench: 600 frames: avg 2.24 ms (445.6 fps), 1% low 3.49 ms (286.2 fps), worst 3.85 ms
+bench: 0 frames over 30 ms, 0 hitches (over twice the median)
+bench:   stage        cpu ms   gpu ms
+bench:   GAME           0.15        -
+bench:   SIM            0.00        -
+bench:   SHADOWS        0.00     0.00
+bench:   SKY            0.05     0.01
+bench:   TERRAIN        0.04     0.52
+bench:   OPAQUE         0.07     0.01
+bench:   VEGETATION     0.10     0.02
+bench:   PROPS          0.11     0.01
+bench:   FX             0.02     0.00
+bench:   POST           0.01     0.04
+bench:   UI             0.03     0.00
+bench:   SWAP           1.67        -
+bench:   TOTAL          2.24     0.61
+bench-csv: avg=2.24,low1=3.49,hitches=0,GAME=0.15,SIM=0.00,SHADOWS=0.00/0.00,SKY=0.05/0.01,TERRAIN=0.04/0.52,OPAQUE=0.07/0.01,VEGETATION=0.10/0.02,PROPS=0.11/0.01,FX=0.02/0.00,POST=0.01/0.04,UI=0.03/0.00,SWAP=1.67
+
+bench: MOUNTAIN / Boulder Gully, LOW
+bench: 600 frames: avg 3.05 ms (327.6 fps), 1% low 4.07 ms (245.5 fps), worst 5.16 ms
+bench: 0 frames over 30 ms, 0 hitches (over twice the median)
+bench:   stage        cpu ms   gpu ms
+bench:   GAME           0.15        -
+bench:   SIM            0.00        -
+bench:   SHADOWS        0.22     0.24
+bench:   SKY            0.02     0.04
+bench:   TERRAIN        0.30     2.10
+bench:   OPAQUE         0.07     0.01
+bench:   VEGETATION     0.29     0.14
+bench:   PROPS          0.27     0.03
+bench:   FX             0.02     0.00
+bench:   POST           0.01     0.03
+bench:   UI             0.03     0.00
+bench:   SWAP           1.65        -
+bench:   TOTAL          3.05     2.59
+bench-csv: avg=3.05,low1=4.07,hitches=0,GAME=0.15,SIM=0.00,SHADOWS=0.22/0.24,SKY=0.02/0.04,TERRAIN=0.30/2.10,OPAQUE=0.07/0.01,VEGETATION=0.29/0.14,PROPS=0.27/0.03,FX=0.02/0.00,POST=0.01/0.03,UI=0.03/0.00,SWAP=1.65
+
+bench: MOUNTAIN / Boulder Gully, MEDIUM
+bench: 600 frames: avg 4.09 ms (244.4 fps), 1% low 5.94 ms (168.3 fps), worst 6.72 ms
+bench: 0 frames over 30 ms, 0 hitches (over twice the median)
+bench:   stage        cpu ms   gpu ms
+bench:   GAME           0.18        -
+bench:   SIM            0.00        -
+bench:   SHADOWS        0.27     0.18
+bench:   SKY            0.03     0.10
+bench:   TERRAIN        0.31     3.20
+bench:   OPAQUE         0.08     0.01
+bench:   VEGETATION     0.31     0.34
+bench:   PROPS          0.29     0.06
+bench:   FX             0.02     0.00
+bench:   POST           0.11     0.17
+bench:   UI             0.04     0.00
+bench:   SWAP           2.46        -
+bench:   TOTAL          4.09     4.07
+bench-csv: avg=4.09,low1=5.94,hitches=0,GAME=0.18,SIM=0.00,SHADOWS=0.27/0.18,SKY=0.03/0.10,TERRAIN=0.31/3.20,OPAQUE=0.08/0.01,VEGETATION=0.31/0.34,PROPS=0.29/0.06,FX=0.02/0.00,POST=0.11/0.17,UI=0.04/0.00,SWAP=2.46
+
+bench: MOUNTAIN / Boulder Gully, HIGH
+bench: 600 frames: avg 4.93 ms (202.7 fps), 1% low 6.14 ms (162.8 fps), worst 7.17 ms
+bench: 0 frames over 30 ms, 0 hitches (over twice the median)
+bench:   stage        cpu ms   gpu ms
+bench:   GAME           0.22        -
+bench:   SIM            0.00        -
+bench:   SHADOWS        0.30     0.26
+bench:   SKY            0.03     0.11
+bench:   TERRAIN        0.32     3.68
+bench:   OPAQUE         0.10     0.01
+bench:   VEGETATION     0.33     0.40
+bench:   PROPS          0.31     0.10
+bench:   FX             0.02     0.00
+bench:   POST           0.12     0.35
+bench:   UI             0.04     0.00
+bench:   SWAP           3.15        -
+bench:   TOTAL          4.93     4.92
+bench-csv: avg=4.93,low1=6.14,hitches=0,GAME=0.22,SIM=0.00,SHADOWS=0.30/0.26,SKY=0.03/0.11,TERRAIN=0.32/3.68,OPAQUE=0.10/0.01,VEGETATION=0.33/0.40,PROPS=0.31/0.10,FX=0.02/0.00,POST=0.12/0.35,UI=0.04/0.00,SWAP=3.15

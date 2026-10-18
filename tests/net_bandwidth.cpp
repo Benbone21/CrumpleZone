@@ -3,9 +3,11 @@
 // a second, and what the server sends in all, have budgets.
 #include <unistd.h>
 
+#include <chrono>
 #include <cmath>
 #include <memory>
 #include <string>
+#include <thread>
 
 #include "../src/net.h"
 #include "harness.h"
@@ -35,6 +37,10 @@ Traffic measure(Ctx& ctx, int port, int guests, bool spread) {
     std::vector<std::unique_ptr<Sim>> sims;
     std::vector<std::unique_ptr<NetSession>> nets;
     double t = 0;
+    // The host judges guests by the clock (messages a second), so frames must not run ahead of it: each one
+    // waits until its time has come. (A bare usleep(200) is a no-op where sleeps are coarse, as on Windows,
+    // and the first guest got dropped for "sending too much".)
+    const auto wall0 = std::chrono::steady_clock::now();
     auto frame = [&](bool drive) {
         host.receive(hsim, t);
         host.send(hsim, t);
@@ -48,8 +54,8 @@ Traffic measure(Ctx& ctx, int port, int guests, bool spread) {
             for (Car& c : s.cars) c.updateStats();
             n.send(s, t);
         }
-        usleep(200);
         t += Ctx::kFrame;
+        std::this_thread::sleep_until(wall0 + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(t)));
     };
     for (int g = 0; g < guests; g++) {
         sims.emplace_back(new Sim);
