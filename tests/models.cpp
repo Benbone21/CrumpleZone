@@ -212,6 +212,8 @@ SCENARIO(modelsStress, "models/stress", "Meshes stay whole and unchanged while t
                 const mk::Mesh& m = mk::modelMesh(ids[i]);  // (a reference, as the game holds them)
                 churn.assign(8, std::vector<double>(2000, 1.0));  // (reuses what a flush frees)
                 if (m.v.size() != want[i]) bad++;
+                const mk::Mesh copy = mk::modelMesh(ids[i]);  // (a car part's mesh is copied like this on a worker)
+                if (copy.v.size() != want[i]) bad++;
                 reads++;
             }
         });
