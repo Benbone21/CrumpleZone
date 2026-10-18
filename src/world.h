@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <array>
 #include <cstdint>
 #include <string>
@@ -237,6 +238,11 @@ public:
     // the game makes, laid out to look at and try): the game turns it on; the tests keep the pad as
     // it always was. (Per thread: the tests build both kinds side by side.)
     static inline thread_local bool withShowcase = false;
+    // Whether the park's sections are built from the player's own saved edits of those levels (sectionfile.h: editedSectionFor), else all
+    // from the generator. Off in multiplayer: the others build the proving ground from their own files, so the edits would desync it.
+    static inline std::atomic<bool> useLocalEdits{true};
+    bool parkEdited = false;      // some park section came from a saved edit
+    uint64_t editStamp = 0;       // levelFilesStamp() when the park was built
     // The WildsKind the next MAP_WILDS is built as (a level's `terrain`: see levelWorld in level.h). Per thread, like withShowcase.
     static inline thread_local int wildsKind = WILDS_MEADOW;
     // The park's obstacle sections (sections.h), in the order they're driven: where each starts.
@@ -338,6 +344,7 @@ private:
     void buildBackcountry();
     void buildWilds();       // the clean open country for obstacle sections (world.cpp)
     void buildModelYard();   // every model laid out on the proving ground (world.cpp)
+    void buildLapLine();     // the lap timer's start/finish gate on the loop road (world.cpp)
     void buildSectionPark(); // the obstacle sections laid out outside the loop road (world.cpp)
     void buildMountain();
     double mountainHeight(double x, double z) const;

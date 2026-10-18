@@ -62,6 +62,16 @@ std::string sectionPathFor(const std::string& levelPath);
 // Every .czs in the levels folders, in name order.
 std::vector<SectionFile> listSections();
 
+// The player's own edit of one of the game's section levels (a saved level of that name: the editor writes its .czs beside it), if there
+// is one: the first in the levels folders (the user's first). The proving ground's section park builds from it instead of the generator.
+bool editedSectionFor(SectionType t, SectionFile& out);
+// The game's own level of that section as a section file (built once per run, then kept): what the park shows where the player has no edit,
+// so the proving ground has the level as the level plays (its country round the trail, its rocks and trees), not a separate copy.
+bool builtinSectionFor(SectionType t, SectionFile& out);
+// Goes up whenever a level or section file is saved from the game: a world built before it may have stale sections (see World::editStamp).
+uint64_t levelFilesStamp();
+void touchLevelFiles();
+
 // A world point to and from a section's frame (entry, heading).
 V3 sectionToLocal(const SectionFrame& f, const V3& world);
 V3 sectionToWorld(const SectionFrame& f, const V3& local);

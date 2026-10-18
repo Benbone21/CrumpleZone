@@ -186,6 +186,7 @@ int main(int argc, char** argv) {
 
     // Create the world and parked vehicles
     Sim sim;
+    World::useLocalEdits = false;  // (the players' games build it the same way: no saved edits)
     World::withShowcase = true;  // (the same proving ground the players' games build: the model yard, the section park)
     sim.world = World(opts.map);
     sim.lineup = listedVehicles();

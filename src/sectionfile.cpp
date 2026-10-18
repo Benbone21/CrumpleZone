@@ -3,11 +3,18 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cctype>
 #include <cstdlib>
+#include <atomic>
+#include <map>
+#include <mutex>
 #include <fstream>
+#include <future>
 #include <sstream>
 
+#include "meshcache.h"
 #include "platform.h"
+#include "props.h"
 
 namespace {
 
@@ -110,7 +117,40 @@ bool extractSection(const World& w, const Level& lv, SectionFile& out, std::stri
                 s.flowU[k] = (float)(fl.x * ch - fl.z * sh), s.flowV[k] = (float)(fl.x * sh + fl.z * ch);
             }
         }
-    for (const LevelObject& o : lv.objects) {
+    // A generated section's own rocks, slabs, trees and logs aren't in the level (just its recipe): stand it up once more on a plain
+    // world to get them, less what the player took out (removed) and the run-in kept clear, so the section file is the whole section.
+    std::vector<LevelObject> objs;
+    if (c.live && c.gen >= 0 && c.gen < SEC_COUNT) {
+        const int was = World::wildsKind;
+        World::wildsKind = lv.terrain;
+        World tmp(lv.map);
+        World::wildsKind = was;
+        SectionFrame gf;
+        gf.heading = c.heading, gf.keepCountry = true;
+        gf.entry = V3(entryAt.x, tmp.height(entryAt.x, entryAt.z), entryAt.z);
+        buildSection(tmp, (SectionType)c.gen, c.genSeed, gf, &objs);
+        objs.erase(std::remove_if(objs.begin(), objs.end(),
+                                  [&](const LevelObject& o) {
+                                      const double u = (o.p.x - gf.entry.x) * ch - (o.p.z - gf.entry.z) * sh, v = (o.p.x - gf.entry.x) * sh + (o.p.z - gf.entry.z) * ch;
+                                      return u > -34 && u < 2 && std::fabs(v) < 5;
+                                  }),
+                   objs.end());
+        for (const V3& r : lv.removed) {  // (kind: 0 any, else 1 + rock, tree, log, box)
+            int best = -1;
+            double bd = 1.5;
+            for (int i = 0; i < (int)objs.size(); i++) {
+                const LevelObject& o = objs[i];
+                const int k = o.kind == OBJ_ROCK ? 0 : o.kind == OBJ_TREE ? 1 : o.kind == OBJ_LOG ? 2 : o.kind == OBJ_BOX ? 3 : -1;
+                const int want = (int)std::lround(r.y) - 1;
+                if (k < 0 || (want >= 0 && want != k)) continue;
+                const double d = std::hypot(o.p.x - r.x, o.p.z - r.z);
+                if (d < bd) bd = d, best = i;
+            }
+            if (best >= 0) objs.erase(objs.begin() + best);
+        }
+    }
+    objs.insert(objs.end(), lv.objects.begin(), lv.objects.end());
+    for (const LevelObject& o : objs) {
         const V3 at = (o.kind == OBJ_LOG || o.kind == OBJ_FENCE) ? (o.p + o.p2) * 0.5 : o.p;
         if (c.outside(at.x, at.z) > 0) {
             s.dropped++;
@@ -331,6 +371,67 @@ bool loadSectionFile(const std::string& path, SectionFile& s, std::string* error
     std::stringstream ss;
     ss << f.rdbuf();
     return parseSectionText(ss.str(), s, error);
+}
+
+namespace {
+std::atomic<uint64_t> gLevelFiles{1};
+}
+uint64_t levelFilesStamp() { return gLevelFiles; }
+void touchLevelFiles() { gLevelFiles++; }
+
+bool builtinSectionFor(SectionType t, SectionFile& out) {
+    static std::mutex lock;
+    static std::map<int, std::pair<bool, SectionFile>> cache;
+    std::lock_guard<std::mutex> lk(lock);
+    if (cache.empty()) {  // (all seven at once, on threads: each is a country world and a section, a few hundred ms)
+        const props::HullLibrary* hulls = props::activeRockScans();
+        std::vector<std::future<std::pair<bool, SectionFile>>> jobs;
+        for (int k = 0; k < SEC_COUNT; k++)
+            jobs.push_back(std::async(std::launch::async, [k, hulls] {
+                props::ScopedRockScans scans(hulls);
+                std::pair<bool, SectionFile> made{false, SectionFile()};
+                // (Kept in the mesh cache's folder, by the build that made it: the second run reads it instead of building seven worlds.)
+                char tag[48];
+                std::snprintf(tag, sizeof tag, "section_%d_%016llx.czs", k, (unsigned long long)meshcache::codeVersion());
+                const std::string file = meshcache::dir() + "/" + tag;
+                if (meshcache::enabled() && loadSectionFile(file, made.second)) return std::make_pair(true, made.second);
+                for (const Level& l : builtinLevels())
+                    if (l.section.on && l.section.live && l.section.gen == k) {
+                        const World w = levelWorld(l);
+                        made.first = extractSection(w, l, made.second);
+                        break;
+                    }
+                if (made.first && meshcache::enabled()) {
+                    for (const std::string& old : listLevelFiles(meshcache::dir(), ".czs"))
+                        if (old.find("section_" + std::to_string(k) + "_") != std::string::npos && old != file) std::remove(old.c_str());
+                    saveSectionFile(made.second, file);
+                }
+                return made;
+            }));
+        for (int k = 0; k < SEC_COUNT; k++) cache[k] = jobs[k].get();
+    }
+    const auto& hit = cache[(int)t];
+    if (!hit.first) return false;
+    out = hit.second;
+    return true;
+}
+
+bool editedSectionFor(SectionType t, SectionFile& out) {
+    auto same = [](const std::string& a, const std::string& b) {
+        if (a.size() != b.size()) return false;
+        for (size_t i = 0; i < a.size(); i++)
+            if (std::toupper((unsigned char)a[i]) != std::toupper((unsigned char)b[i])) return false;
+        return true;
+    };
+    for (const std::string& dir : levelFolders())
+        for (const std::string& path : listLevelFiles(dir, ".czs")) {
+            SectionFile s;
+            if (loadSectionFile(path, s) && same(s.name, sectionName(t))) {
+                out = std::move(s);
+                return true;
+            }
+        }
+    return false;
 }
 
 bool saveSectionFile(const SectionFile& s, const std::string& path, std::string* error) {
