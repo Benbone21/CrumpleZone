@@ -66,7 +66,8 @@ void column(Renderer& r, const DebugColumn& col, bool rightSide, float s, float 
             continue;
         }
         if (y + lh > yEnd) break;
-        const std::string txt(l.text);
+        static thread_local std::string txt;  // (a line a frame: its storage is kept)
+        txt.assign(l.text);
         const float w = r.textWidth(txt, s) + 2 * pad;
         const float x = rightSide ? W - edge - w : edge;
         r.rect(x, y, w, lh, 0.02f, 0.025f, 0.035f, 0.7f);

@@ -2913,7 +2913,8 @@ void Renderer::buildBoxes(const World& world) {
 }
 
 void Renderer::buildFigures() {
-    std::vector<Vtx> v;
+    static std::vector<Vtx> v;  // (kept between frames: a car's parts are hundreds of thousands of vertices)
+    v.clear();
     auto box = [&](const V3& c, const V3& he, const V3 ax[3], const V3& col) {
         const double h[3] = {he.x, he.y, he.z};
         for (int axis = 0; axis < 3; axis++)
@@ -2926,7 +2927,11 @@ void Renderer::buildFigures() {
             }
     };
     for (const Placed& pl : frameModels)  // (a car's parts are cached by key; the jack, whose own param moves every frame, is not)
-        appendPlaced(v, pl, pl.bare || pl.variant >= 0 ? placedMesh(pl) : pl.set.empty() ? mk::modelMesh(pl.id) : mk::modelMesh(pl.id, pl.set));
+    {  // (not one ?: over the three: its by-value branch would copy every cached mesh, every frame)
+        if (pl.bare || pl.variant >= 0) appendPlaced(v, pl, placedMesh(pl));
+        else if (pl.set.empty()) appendPlaced(v, pl, mk::modelMesh(pl.id));
+        else appendPlaced(v, pl, mk::modelMesh(pl.id, pl.set));
+    }
     const bool modelled = mk::findModel("person") != nullptr;
     for (const Figure& fg : figures) {
         if (modelled) {  // the picked person (modelkit.h), posed for this frame
@@ -2970,7 +2975,8 @@ void Renderer::buildFigures() {
     BufferData(GL_ARRAY_BUFFER, v.size() * sizeof(Vtx), v.data(), GL_STREAM_DRAW);
     figVertexCount = (int)v.size();
     // The hurt parts near you again, for the see-through glow.
-    std::vector<Vtx> xr;
+    static std::vector<Vtx> xr;
+    xr.clear();
     if (xrayRange > 0)
         for (const Placed& pl : frameModels)
             if ((pl.wear == 1 || pl.wear == 2) && len(pl.p - xrayEye) < xrayRange) appendPlaced(xr, pl, placedMesh(pl));

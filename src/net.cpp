@@ -118,6 +118,7 @@ constexpr size_t kMaxOut = 16u << 20;  // queued for one peer that isn't reading
 
 struct Writer {
     std::vector<uint8_t> b;
+    Writer() { b.reserve(96); }  // (a message is a few puts: one grab, not one per doubling)
     template <class T> void put(T v) {
         const uint8_t* p = reinterpret_cast<const uint8_t*>(&v);
         b.insert(b.end(), p, p + sizeof(T));
@@ -1549,6 +1550,7 @@ NetSession::Snap NetSession::makeSnap(const Sim& sim, const Car& c, double now) 
     s.load = (float)clampd(c.throttle * c.tcCut, 0, 1);
     s.boost = (float)c.boost;
     s.gear = (int8_t)c.gear;
+    s.wheelAngle.reserve(c.wheels.size()), s.wheelOmega.reserve(c.wheels.size()), s.wheelFlags.reserve(c.wheels.size());
     for (const Wheel& wh : c.wheels) {
         s.wheelAngle.push_back((float)wh.angle);
         s.wheelOmega.push_back((float)wh.omega);
@@ -1568,6 +1570,7 @@ NetSession::Snap NetSession::makeSnap(const Sim& sim, const Car& c, double now) 
 
 std::vector<uint8_t> NetSession::encodeState(const Snap& s, const Stream::Sent* base, std::vector<int16_t>& sentQ) {
     Writer w;
+    w.b.reserve(128 + s.q.size());
     const size_t nn = s.q.size() / 3;
     if (base && base->q.size() != s.q.size()) base = nullptr;  // (rebuilt: a whole one)
     w.put<double>(s.t);
@@ -1661,6 +1664,7 @@ void NetSession::sendDatagrams(Conn* to, uint32_t netId, const std::vector<uint8
     }
     for (size_t f = 0; f < frags; f++) {
         Writer d;
+        d.b.reserve(32 + std::min(total, (f + 1) * kChunk) - f * kChunk);
         d.put<uint16_t>(kMagic);
         d.put<uint8_t>(DG_SNAP);
         d.put<uint8_t>((uint8_t)ownerOf(netId));
@@ -1894,6 +1898,7 @@ void NetSession::takeSnapshot(Sim& sim, uint32_t netId, const std::vector<uint8_
     s.gear = r.get<int8_t>();
     const int nw = r.get<uint8_t>();
     if (nw != (int)car.wheels.size()) return;  // a rebuilt spec on the way
+    s.wheelAngle.reserve(nw), s.wheelOmega.reserve(nw), s.wheelFlags.reserve(nw);
     for (int k = 0; k < nw; k++) {
         s.wheelAngle.push_back(r.get<float>());
         s.wheelOmega.push_back(r.get<int16_t>() / 10.0f);
@@ -2210,6 +2215,7 @@ void NetSession::send(Sim& sim, double now) {
     lastSim = &sim;
     // My vehicles: new ones, rebuilt ones (respawns, repairs, a different model), gone ones.
     std::vector<uint32_t> seen;
+    seen.reserve(sim.cars.size());
     for (Car& c : sim.cars) {
         if (c.remote) continue;
         // (Only ever an id with my player number in it: one left from an earlier session, as
@@ -2244,6 +2250,7 @@ void NetSession::send(Sim& sim, double now) {
     // Lines: new ones get an id and are announced; ones that are gone (unhooked, snapped,
     // dropped by a repair) are withdrawn everywhere.
     std::vector<uint32_t> ropesNow;
+    ropesNow.reserve(sim.ropes.size());
     for (Rope& r : sim.ropes) {
         if (!r.netId) {
             r.netId = ((uint32_t)self << 16) | (nextRopeId++ & 0xffff);
