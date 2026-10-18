@@ -11,7 +11,7 @@
 namespace texenc {
 
 // Bump when any encoder's output changes: the on-disk cache of encoded textures (meshcache.h) is keyed by it.
-inline constexpr int kEncoderVersion = 1;
+inline constexpr int kEncoderVersion = 2;  // (2: built with -ffp-contract=off)
 
 // Block encoders. `rgba` is w*h*4 bytes; any size (edges are padded by clamping). Output is the
 // blocks, row by row: BC1 and BC4 8 bytes a block, BC3 and BC5 16.
