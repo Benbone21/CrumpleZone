@@ -640,9 +640,29 @@ void B::letters(const std::string& s, const V3& c, double px, double depth) {
 
 // ---- Picks ---------------------------------------------------------------------------------
 
+namespace {
+// A test may try other picks on its own thread (PicksSandbox): its own picks and meshes, the shared ones untouched.
+thread_local std::map<std::string, Choice>* sandboxPicks = nullptr;
+thread_local std::map<std::string, Mesh>* sandboxMeshes = nullptr;
+bool loaded = false;
+}  // namespace
+
 std::map<std::string, Choice>& choices() {
+    if (sandboxPicks) return *sandboxPicks;
     static std::map<std::string, Choice> c;
     return c;
+}
+
+PicksSandbox::PicksSandbox() : picks(new std::map<std::string, Choice>), meshes(new std::map<std::string, Mesh>) {
+    std::lock_guard<std::recursive_mutex> lk(picksLock());
+    if (!loaded) loadChoices(choicesPath());
+    *picks = choices();
+    sandboxPicks = picks, sandboxMeshes = meshes;
+}
+PicksSandbox::~PicksSandbox() {
+    sandboxPicks = nullptr, sandboxMeshes = nullptr;
+    delete picks;
+    delete meshes;
 }
 
 std::string choicesPath() {
@@ -678,7 +698,6 @@ int variantByName(const ModelDef& d, const std::string& name) {
         if (d.variants[i].name == name) return i;
     return -1;
 }
-bool loaded = false;
 }  // namespace
 
 bool loadChoices(const std::string& path) {
@@ -817,8 +836,14 @@ P pickedParams(const ModelDef& def, int variant) {
 
 namespace {
 std::map<std::string, Mesh>& meshCache() {
+    if (sandboxMeshes) return *sandboxMeshes;
     static std::map<std::string, Mesh> m;
     return m;
+}
+// (A flushed cache is parked, not freed: modelMesh hands out references, and a thread may still be reading one.)
+std::vector<std::map<std::string, Mesh>>& parkedMeshes() {
+    static std::vector<std::map<std::string, Mesh>> p;
+    return p;
 }
 }  // namespace
 
@@ -827,6 +852,8 @@ uint64_t version = 1;
 }
 void forgetMeshes() {
     std::lock_guard<std::recursive_mutex> lk(picksLock());
+    if (sandboxMeshes) return void(sandboxMeshes->clear());
+    if (!meshCache().empty()) parkedMeshes().push_back(std::move(meshCache()));
     meshCache().clear(), version++;
 }
 uint64_t picksVersion() { return version; }
