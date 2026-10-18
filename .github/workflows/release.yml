@@ -157,8 +157,8 @@ jobs:
           SDL_AUDIODRIVER=dummy CZ_AUDIO_DEVICE_TEST=1 ./build/mac/test_audio
           python3 -u - <<'PY'
           import subprocess
-          # Hosted Macs use Apple Software Renderer; the full graphics checks take minutes.
-          subprocess.run(['./build/mac/test_render'], check=True, timeout=900)
+          # Hosted Macs use Apple Software Renderer; the full graphics checks take 5-25 minutes (quality 1 alone has taken 7).
+          subprocess.run(['./build/mac/test_render'], check=True, timeout=2400)
           PY
           python3 - <<'PY'
           import re, subprocess
@@ -184,7 +184,7 @@ jobs:
           with tempfile.TemporaryDirectory() as cwd, open('shot.log', 'w') as log:
               subprocess.run([str(app), '--no-audio', '--no-pad', '--quality', '0', '--ground', '1', '--props', '0', '--size', '96x64',
                               '--shot-prefix', str(prefix), '--shot-frames', '0'], cwd=cwd,
-                             stdout=log, stderr=subprocess.STDOUT, check=True, timeout=900)
+                             stdout=log, stderr=subprocess.STDOUT, check=True, timeout=2400)
           if not pathlib.Path(str(prefix) + '_0000.ppm').is_file():
               raise SystemExit('Packaged Mac app did not render its screenshot')
           output = pathlib.Path('shot.log').read_text()
