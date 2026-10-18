@@ -1947,16 +1947,23 @@ uniform vec2 uTexel;       // one depth texel
 uniform vec2 uAOTexel;     // one AO texel
 uniform float uProjScale;  // AO pixels per meter at 1 m
 float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-vec3 posAt(vec2 uv){
-  float d = texture(uDepth, uv).r;
+// Depth is read by integer pixel: an AO texel's centre sits on the corner of four depth texels, and a
+// filtered fetch there picks one by rounding (differently per GPU), which striped flat ground at HIGH.
+ivec2 dsize;
+vec3 posPx(ivec2 p){
+  p = clamp(p, ivec2(0), dsize - 1);
+  float d = texelFetch(uDepth, p, 0).r;
+  vec2 uv = (vec2(p) + 0.5) * uTexel;
   vec4 v = uInvProj * vec4(vec3(uv, d) * 2.0 - 1.0, 1.0);
   return v.xyz / v.w;
 }
 void main(){
-  if (texture(uDepth, vUv).r >= 1.0) { oCol = vec4(1.0); return; }
-  vec3 P = posAt(vUv);
-  vec3 Pr = posAt(vUv + vec2(uTexel.x, 0)), Pl = posAt(vUv - vec2(uTexel.x, 0));
-  vec3 Pu = posAt(vUv + vec2(0, uTexel.y)), Pd = posAt(vUv - vec2(0, uTexel.y));
+  dsize = textureSize(uDepth, 0);
+  ivec2 c = ivec2(gl_FragCoord.xy) * 2;
+  if (texelFetch(uDepth, clamp(c, ivec2(0), dsize - 1), 0).r >= 1.0) { oCol = vec4(1.0); return; }
+  vec3 P = posPx(c);
+  vec3 Pr = posPx(c + ivec2(1, 0)), Pl = posPx(c - ivec2(1, 0));
+  vec3 Pu = posPx(c + ivec2(0, 1)), Pd = posPx(c - ivec2(0, 1));
   vec3 dx = abs(Pr.z - P.z) < abs(P.z - Pl.z) ? Pr - P : P - Pl;
   vec3 dy = abs(Pu.z - P.z) < abs(P.z - Pd.z) ? Pu - P : P - Pd;
   vec3 n = normalize(cross(dx, dy));
@@ -1968,7 +1975,7 @@ void main(){
   float rot = hash(gl_FragCoord.xy) * 6.2832, sum = 0.0, bias = 0.006 - 0.0015 * P.z;
   for (int i = 0; i < N; i++) {
     float a = (float(i) + 0.5) / float(N), ang = a * 43.98 + rot;  // 7 turns
-    vec3 Q = posAt(vUv + vec2(cos(ang), sin(ang)) * a * rpx * uAOTexel);
+    vec3 Q = posPx(c + ivec2(floor(vec2(cos(ang), sin(ang)) * a * rpx * (uAOTexel / uTexel) + 0.5)));
     vec3 v = Q - P;
     float vv = dot(v, v), f = max(R * R - vv, 0.0);
     sum += f * f * f * max((dot(v, n) - bias) / (vv + 0.01), 0.0);
