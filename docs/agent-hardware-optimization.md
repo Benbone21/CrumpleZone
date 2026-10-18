@@ -68,6 +68,18 @@ If a step in that doc is wrong for this machine, fix the doc in the same branch.
 - Record the machine: CPU, GPU, RAM, OS and refresh rate. The bench file has these.
 - Measure several times and quote medians. Laptops throttle, so plug the laptop in and let it cool between long runs.
 
+## Known so far (from the phase 1 reports)
+- **Mac M1** (`docs/hardware/mac-m1-baseline.md`, before the car and physics CPU work landed):
+  - It is GPU-bound. Only POTATO is playable (55 to 69 fps); LOW to HIGH run at 11 to 24 fps.
+  - A 1600x900 window renders at 2880x1676 on Retina.
+  - macOS has no GL timer queries, so GPU stage times read 0. The big PROPS CPU time is where the driver waits for the GPU.
+  - The physics fingerprint differs from Linux (`69497071eddf9087`), probably Apple's libm.
+  - `fieldrepair/steps` hits bad_alloc on the Mac only.
+  - The Mac phase 2 starting points:
+    - Retina/HiDPI: render scale relative to the logical window size, and default to logical pixels on HiDPI.
+    - Auto-detect for Apple M-series: POTATO or LOW for M1, and check the probe steps down.
+    - What the GPU spends its time on, using Xcode's GPU tools or Instruments (Metal System Trace) since GL timers are missing.
+
 ## 3. Find the limit (phase 2 only)
 - **CPU-bound:** SIM plus OPAQUE plus the other CPU stages exceed the GPU total. Look at the sim (`src/softbody.*`), car drawing (`src/carvisual.*`, `render.cpp` buildFigures), and per-frame allocations (`CZ_ALLOC=60` prints per-frame counts).
 - **GPU-bound:** the GPU stages dominate. TERRAIN, the ground shader, has historically been the biggest. Then SHADOWS, POST and VEGETATION.
