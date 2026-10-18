@@ -18,6 +18,7 @@ enum Elem {
     E_CARINFO,    // the vehicle card's weight and mod lines
     E_PRESSURE,   // tire pressure (and SWAY OFF) over the schematic
     E_DRIVELINE,  // the 4x4 schematic
+    E_LAPS,       // the proving ground's lap timer (while a lap runs; a lap done or voided keeps it up a few seconds)
     E_COUNT
 };
 
@@ -43,6 +44,7 @@ struct Sample {
     float damage = 0;               // the bar's 0..1
     float psi = 0, streetPsi = 0;
     bool airing = false;            // an air key is down
+    bool lapOn = false;             // a lap is being timed
     bool hasDriveline = false;      // trucks with a transfer case or lockers
     int mode = 0;                   // drive mode
     bool lowRange = false, lockF = false, lockR = false, lockC = false, sway = false;
@@ -71,6 +73,7 @@ struct Context {
             case E_DAMAGE: return s.damage >= kBadDamage;
             case E_CARINFO: return stopped;
             case E_PRESSURE: return s.airing || std::fabs(s.psi - s.streetPsi) > 1.0f;
+            case E_LAPS: return s.lapOn;
             case E_DRIVELINE: return s.hasDriveline && (s.lowRange || s.lockF || s.lockR || s.lockC);
         }
         return false;

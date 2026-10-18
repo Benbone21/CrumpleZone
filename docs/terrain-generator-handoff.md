@@ -613,6 +613,12 @@ every asset.
   its cliff levels off at 24 m. The river runs out into marsh at the sides of the cleared ground. Any
   heading works (terrain is sampled per world cell, boxes turn with it); the tests and the park use
   0, 90, 180 and 270 degrees.
+- **Park from the levels:** the park puts on each section's *level* as a section file (.czs, `placeSection`), not a separate copy:
+  the player's saved edit of that level if there is one (`editedSectionFor`: a .czs in the levels folders whose name is the section's),
+  else the game's own level (`builtinSectionFor`: the level extracted once, kept in the mesh cache folder by build). It is read from
+  disk every time a World is built, so a save, then Load Map / Free Drive / Reset World, shows the edit with no restart. In
+  multiplayer (`World::useLocalEdits` off, and the dedicated server) every machine builds the built-in levels: local edits are for
+  offline play, and the host rebuilds without them when it starts hosting.
 - **On the map:** `World::buildSectionPark()` (world.cpp) lays seed 1 of each out beyond the loop road
   in the north-west, gated by `World::withShowcase` (renamed from `withModelYard`; the game turns it
   on, the tests keep it off). West strip, running north from (-465, 280): STEEP HILL, MUD PIT, ROCKY

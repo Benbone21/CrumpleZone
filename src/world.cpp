@@ -1,11 +1,13 @@
 #include "thread_cache.h"
 #include "world.h"
+#include "laptimer.h"
 #include "loadprof.h"
 
 #include "forest.h"
 #include "modelkit.h"
 
 #include "props.h"
+#include "sectionfile.h"
 #include "sections.h"
 #include "spawnpad.h"
 
@@ -415,16 +417,33 @@ void World::buildProvingGround() {
 
     bakeTerrain();
     scatterScenery(777);
-    if (withShowcase) buildModelYard(), buildSectionPark();
+    if (withShowcase) {
+        buildLapLine();
+        { loadprof::Scope lp("world.model yard"); buildModelYard(); }
+        { loadprof::Scope lp("world.section park"); buildSectionPark(); }
+    }
 }
 
-// The model yard, south-west on the pad: everything the game draws (the designs picked in the
-// model lab), in rows by kind, each with its name over it and the solid ones solid, to walk
-// round, drive into and try out.
+// The start/finish line of the lap timer (laptimer.h): the checkered gate across the loop road's east side.
+void World::buildLapLine() {
+    Level lv;
+    Gate g;
+    LapTimer::linePose(*this, g.p, g.yaw);
+    g.width = 14;
+    lv.gates.push_back(g);
+    addGateMarkers(lv, *this);
+    tags.push_back({"START AND FINISH", g.p + V3(0, 6, 0)});
+}
+
+// The model yard, south-west on the pad: everything the game draws, every design of every model (not just
+// the ones picked in the model lab), a row for each model with its designs side by side, each with its name
+// over it and the solid ones solid, to walk round, drive into and try out. Each is spaced by its own bounds.
 void World::buildModelYard() {
-    const double x0 = -32, x1 = -128, z0 = -30;  // rows run west from x0, stepping south from z0
+    const double colW = 110, zEnd = -270;  // columns of rows side by side, each running west from its x0 and stepping south from z0 to zEnd (the loop road is beyond)
+    double x0 = -32, x1 = x0 - colW;
+    const double z0 = -30;
+    const double gapX = 1.6, gapZ = 3.2;         // between designs, and between rows (the yard's old gaps, 2.5 and 5, less 35%)
     double x = x0, z = z0, rowDepth = 0;
-    std::string cat;
     // Shown smaller than they're used, so they fit in the yard: (id, settings).
     auto settingsFor = [](const std::string& id) -> std::vector<std::pair<std::string, double>> {
         if (id == "sign_gantry") return {{"span", 16}};
@@ -443,30 +462,41 @@ void World::buildModelYard() {
     for (const mk::ModelDef& d : mk::catalog()) {
         if (!see(d.id)) continue;
         const std::vector<std::pair<std::string, double>> set = settingsFor(d.id);
-        const mk::Mesh m = set.empty() ? mk::modelMesh(d.id) : mk::modelMesh(d.id, set);
-        if (m.v.empty()) continue;
-        // Facing north, toward the spawn (front +X to world +Z, its left +Z to world -X): its
-        // width across the row is its z extent, its depth its x extent.
-        const double yaw = -M_PI / 2;
-        const double wx = std::max(1.0, m.hi.z - m.lo.z), dz = std::max(1.0, m.hi.x - m.lo.x);
-        if (d.category != cat || x - wx < x1) {  // a new row for each kind, and when a row's full
-            if (!cat.empty()) z -= rowDepth + 5, x = x0, rowDepth = 0;
-            cat = d.category;
+        const int nv = std::max(1, (int)d.variants.size());
+        bool started = false;  // (this model's row has begun)
+        for (int vi = 0; vi < nv; vi++) {
+            mk::Mesh m;
+            mk::P pp = d.variants.empty() ? mk::P() : mk::pickedParams(d, vi);
+            for (const auto& kv : set) pp.v[kv.first] = kv.second;
+            if (!d.variants.empty()) mk::build(d, vi, pp, m);
+            if (m.v.empty()) continue;
+            // Facing north, toward the spawn (front +X to world +Z, its left +Z to world -X): its
+            // width across the row is its z extent, its depth its x extent.
+            const double yaw = -M_PI / 2;
+            const double wx = std::max(1.0, m.hi.z - m.lo.z), dz = std::max(1.0, m.hi.x - m.lo.x);
+            if (!started || x - wx < x1) {  // a row for each model, and another when a row's full
+                if (started || rowDepth > 0) z -= rowDepth + gapZ;
+                if (z - dz < zEnd) x0 -= colW + 10, x1 = x0 - colW, z = z0;  // (the column is full: the next one west)
+                x = x0, rowDepth = 0, started = true;
+            }
+            const double cx = x - wx / 2, cz = z - dz / 2;  // (the fronts in a line at z)
+            const double gy = height(cx, cz);
+            Placed pl;
+            pl.id = d.id, pl.yaw = yaw, pl.set = set, pl.variant = vi;
+            pl.p = V3(cx + (m.lo.z + m.hi.z) / 2, gy, cz - (m.lo.x + m.hi.x) / 2);
+            models.push_back(pl);
+            std::string label = d.title;
+            if (nv > 1) label += " " + std::to_string(vi + 1) + "/" + std::to_string(nv) + " " + d.variants[vi].name;
+            tags.push_back({label, V3(cx, gy + std::min(m.hi.y, 7.0) + 0.5, cz)});
+            if (!ghost(d.id) && m.hi.y > 0.25) {  // its bounds as a collider
+                addBox(V3(cx, gy + (m.lo.y + m.hi.y) / 2, cz), V3((m.hi.x - m.lo.x) / 2 * 0.95, (m.hi.y - m.lo.y) / 2, (m.hi.z - m.lo.z) / 2 * 0.95), yaw, 0, 0,
+                       V3(0.5, 0.5, 0.5));
+                boxes.back().hidden = true;
+            }
+            x -= wx + gapX;
+            rowDepth = std::max(rowDepth, dz);
         }
-        const double cx = x - wx / 2, cz = z - dz / 2;  // (the fronts in a line at z)
-        const double gy = height(cx, cz);
-        Placed pl;
-        pl.id = d.id, pl.yaw = yaw, pl.set = set;
-        pl.p = V3(cx + (m.lo.z + m.hi.z) / 2, gy, cz - (m.lo.x + m.hi.x) / 2);
-        models.push_back(pl);
-        tags.push_back({d.title, V3(cx, gy + std::min(m.hi.y, 7.0) + 0.5, cz)});
-        if (!ghost(d.id) && m.hi.y > 0.25) {  // its bounds as a collider
-            addBox(V3(cx, gy + (m.lo.y + m.hi.y) / 2, cz), V3((m.hi.x - m.lo.x) / 2 * 0.95, (m.hi.y - m.lo.y) / 2, (m.hi.z - m.lo.z) / 2 * 0.95), yaw, 0, 0,
-                   V3(0.5, 0.5, 0.5));
-            boxes.back().hidden = true;
-        }
-        x -= wx + 2.5;
-        rowDepth = std::max(rowDepth, dz);
+        if (started) z -= rowDepth + gapZ, x = x0, rowDepth = 0, started = false;
     }
     buildGrid();
 }
@@ -477,6 +507,7 @@ void World::buildModelYard() {
 // field 440 m long, have the band of open ground south of the loop road to themselves, driven east.
 // Each has its name over its entry and is a place on the compass and map. Seed 1 of each.
 void World::buildSectionPark() {
+    editStamp = levelFilesStamp();
     struct Strip {
         double x, z, heading;  // where the first section's cleared ground starts, and which way the strip runs
         std::vector<SectionType> types;
@@ -492,16 +523,28 @@ void World::buildSectionPark() {
         double along = 0;  // from the strip's start
         for (SectionType t : s.types) {
             const SectionFootprint fp = sectionFootprint(t);
+            // The player's own saved edit of that section's level, if they've made one (else the generator's, as shipped).
+            SectionFile mine;
+            const bool edited = useLocalEdits && editedSectionFor(t, mine);
+            const bool fromLevel = edited || builtinSectionFor(t, mine);  // (the player's edit, else the game's own level: both put on as files)
             SectionFrame f;
-            f.entry = V3(s.x, 0, s.z) + dir * (along + fp.apron);
+            f.entry = V3(s.x, 0, s.z) + dir * (along + (fromLevel ? std::max(fp.apron, -mine.u0) : fp.apron));
             f.entry.y = height(f.entry.x, f.entry.z);
             f.heading = s.heading;
-            const SectionBuilt b = buildSection(*this, t, 1, f);
+            SectionBuilt b;
+            double step = fp.length + 2 * fp.apron;
+            if (fromLevel) {
+                b = placeSection(*this, mine, f);
+                step = std::max(step, std::max(fp.apron, -mine.u0) + mine.u1);
+                parkEdited |= edited;
+            } else {
+                b = buildSection(*this, t, 1, f);
+            }
             // (Start from a slab on the flat run-in, a little before the entry, facing along it.)
             const SpawnPad& pad = addSpawnPad(*this, b.entry - dir * 12.0, s.heading);
             sections.push_back({sectionName(t), (int)t, b.entry, b.exit, s.heading, pad.p, s.heading});
             tags.push_back({sectionName(t), b.entry + V3(0, 5, 0)});
-            along += fp.length + 2 * fp.apron + gap;
+            along += step + gap;
         }
     }
     // (In the order of the section types, whichever strip they're on: --spawn-section N and the tests count that way.)

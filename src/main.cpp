@@ -55,6 +55,8 @@
 #include "hudkit.h"
 #include "level.h"
 #include "levelrun.h"
+#include "laptimer.h"
+#include "sectionfile.h"
 #include "menu.h"
 #include "throttle.h"
 #include "mods.h"
@@ -712,6 +714,10 @@ struct HudState {
     // The Frontier's race circuit: time on the lap running (-1: not on one), the last and
     // the best, and which side of the start line you were on.
     double lapTime = -1, lastLap = 0, bestLap = 0, lapSide = 0;
+    // The proving ground's lap timer (laptimer.h): the lap running, the last and best (0: none), the checkpoints passed.
+    bool lapOn = false;
+    double plLap = 0, plLast = 0, plBest = 0;
+    int plNext = 0;
     bool showHelp = false, showFps = false, scenarioDetail = false;
     bool debugOn = false;   // F3: the debug screen is up (it has the FPS, and the players list, in it)
     std::string gpu;        // the graphics card drawing it (GL_RENDERER), shown with the FPS
@@ -788,6 +794,7 @@ void updateHudContext(HudState& hud, const Sim& sim, bool fuelOn, float dt) {
     s.psi = (float)car.tirePsi, s.streetPsi = (float)car.spec->tirePsi, s.airing = hud.airing;
     s.hasDriveline = !car.isProp() && (car.spec->transfer != XFER_NONE || car.spec->lockerFront || car.spec->lockerRear);
     if (const DriveMode* m = car.isProp() ? nullptr : car.mode()) s.mode = (int)(m - driveModes(car.spec->transfer).data()) + 1, s.lowRange = m->low;
+    s.lapOn = hud.lapOn;
     s.lockF = car.lockFront, s.lockR = car.lockRear, s.lockC = car.centerLocked(), s.sway = car.swayDisconnected;
     hud.ctx.update(s, dt);
 }
@@ -1623,6 +1630,20 @@ void drawHud(Renderer& r, const Sim& sim, const View& view, HudState& hud, const
             y += 20 * u;
         }
     }
+    // The proving ground's loop: the lap timer (shown while a lap runs, and a few seconds after).
+    if (sim.world.map == MAP_PROVING_GROUND && World::withShowcase && hud.ctx.alpha(hudctx::E_LAPS) > 0.01f) {
+        const HudFade fade(r, hud, hudctx::E_LAPS);
+        auto mmss = [](double t) {
+            char b[24];
+            std::snprintf(b, sizeof b, "%d:%05.2f", (int)(t / 60), std::fmod(t, 60.0));
+            return std::string(b);
+        };
+        std::string lap = hud.lapOn ? "LAP " + mmss(hud.plLap) + "  " + std::to_string(hud.plNext) + "/" + std::to_string(LapTimer::kChecks) : "CROSS THE LINE TO START A LAP";
+        if (hud.plLast > 0) lap += "    LAST " + mmss(hud.plLast);
+        if (hud.plBest > 0) lap += "    BEST " + mmss(hud.plBest);
+        centeredPill(r, W / 2.0f, y, px(1.4f * u), lap, 0.02f, 0.03f, 0.05f, 0.9f, 1.0f, 0.9f, 0.6f);
+        y += 20 * u;
+    }
     // The freeway: how far you've come, and the fastest you've been.
     if (sim.world.wrapPeriod > 0) {
         const Frame f = car.frame();
@@ -1976,6 +1997,10 @@ int main(int argc, char** argv) {
     DebugView debug = (DebugView)(opt.debug % DEBUG_VIEW_COUNT);
     bool dragging = false;
     HudState hud;
+    LapTimer lapTimer;  // (best laps by vehicle: configDir()/laps.txt)
+    lapTimer.savePath = LapTimer::defaultPath();
+    lapTimer.load(lapTimer.savePath);
+    uint64_t lapStamp = ~0ull;
     DebugScreen dbg;  // F3
     const std::string buildText = buildDescription();
     std::string peerAddress;  // the game joined, for the debug screen
@@ -2187,6 +2212,7 @@ int main(int argc, char** argv) {
     };
     // Loads a map, keeping the vehicle you were in.
     auto loadMap = [&](int m) {
+        World::useLocalEdits = !net.active();  // (a session's worlds are the same for everyone: the generator's sections, not your saved edits of them)
         const int model = std::max(0, sim.cars[sim.player].spec->model);
         sim.world = World(m);
         sim.setup();
@@ -2214,6 +2240,10 @@ int main(int argc, char** argv) {
                                     : (settings.playerName.empty() ? std::string("PLAYER") : settings.playerName) + "'S GAME";
         net.password = !opt.password.empty() ? opt.password : settings.netPassword;
         if (net.host(port, settings.playerName, sim.world.map, settings.maxPlayers, session)) {
+            if (sim.world.parkEdited) {  // (the guests build the generator's sections, so the host's world must too: your saved edits are for offline play)
+                loadMap(sim.world.map);
+                std::printf("hosting: the proving ground shows the built-in sections, not the saved level edits\n");
+            }
             net.adopt(sim);
             hud.toast("HOSTING " + session + " ON " + mapName(sim.world.map) + ": FRIENDS ON YOUR NETWORK SEE IT IN JOIN");
             std::printf("hosting %s on port %d\n", mapName(sim.world.map), port);
@@ -2262,7 +2292,7 @@ int main(int argc, char** argv) {
             std::printf("can't join %s: %s\n", address.c_str(), net.error.c_str());
             return;
         }
-        if (net.map != sim.world.map) loadMap(net.map);
+        if (net.map != sim.world.map || sim.world.parkEdited) loadMap(net.map);
         net.adopt(sim);
         hud.toast("JOINED " + net.ownerName(0) + "'S GAME ON " + mapName(net.map));
         std::printf("joined %s (player %d)\n", address.c_str(), net.self);
@@ -2533,6 +2563,7 @@ int main(int argc, char** argv) {
             if (then) then();
             return;
         }
+        World::useLocalEdits = !net.active();
         const bool showcase = World::withShowcase;
         const int wilds = (int)World::wildsKind;
         const props::HullLibrary* hulls = props::activeRockScans();
@@ -2724,12 +2755,14 @@ int main(int argc, char** argv) {
                 removeRemotes();
                 hud.toast("LEFT THE SESSION");
                 break;
-            case PauseMenu::FREE_DRIVE:
+            case PauseMenu::FREE_DRIVE: {
                 closeMenu();
                 run.stop();
                 levelHours = -1;
                 if (net.role == NetSession::HOST) net.setLevel("");
-                if (menu.mapPick != sim.world.map && net.role != NetSession::CLIENT) {
+                const bool staleEdits = menu.mapPick == MAP_PROVING_GROUND && sim.world.map == MAP_PROVING_GROUND && !net.active() &&
+                                        sim.world.editStamp != levelFilesStamp();  // (a level saved since the proving ground was built)
+                if ((menu.mapPick != sim.world.map || staleEdits) && net.role != NetSession::CLIENT) {
                     requestMap(menu.mapPick, nullptr);
                     settings.map = menu.mapPick;
                     saveSettings();
@@ -2737,6 +2770,7 @@ int main(int argc, char** argv) {
                 sim.swapPlayerVehicle(garage.spec(res.vehicle));
                 hud.toast(std::string(mapName(sim.world.map)) + ": " + vehicleCatalog()[res.vehicle].name);
                 break;
+            }
             case PauseMenu::PLAY_LEVEL:
                 if (res.vehicle < 0 || res.vehicle >= (int)levelList.size()) break;
                 if (net.role == NetSession::CLIENT) {
@@ -4125,7 +4159,7 @@ int main(int argc, char** argv) {
                     menu.joining = false;
                     closeMenu();
                     run.stop();
-                    if (net.map != sim.world.map) loadMap(net.map);
+                    if (net.map != sim.world.map || sim.world.parkEdited) loadMap(net.map);
                     net.adopt(sim);
                     hud.toast("JOINED " + net.ownerName(0) + "'S GAME ON " + mapName(net.map));
                     std::printf("joined (player %d)\n", net.self);
@@ -5268,6 +5302,24 @@ int main(int argc, char** argv) {
             hud.trunkOpen = inv.open;
             hud.ctx.settingFull = settings.fullHud;
             hud.ctx.holdFull = settings.keys.held(KA_HUD_ALL, SDL_GetKeyboardState(nullptr), shiftDown());
+            {  // (the proving ground's lap timer: only on the loop, driving, outside a level)
+                const Car& lc = sim.cars[sim.player];
+                if (lapStamp != sim.world.stamp) lapStamp = sim.world.stamp, lapTimer.setLoop(sim.world);
+                lapTimer.setVehicle(lc.spec->name);
+                const bool timing = sim.world.map == MAP_PROVING_GROUND && World::withShowcase && !run.active() && !walker.active && !sim.paused && !net.active();
+                if (timing) lapTimer.update(lc.frame().com, dt * sim.timeScale);
+                else lapTimer.reset();
+                using E = LapTimer::Event;
+                if (lapTimer.event == E::STARTED) hud.ctx.trigger(hudctx::E_LAPS, hudctx::kHoldSecs);
+                else if (lapTimer.event == E::LAP || lapTimer.event == E::BEST) {
+                    hud.toast("LAP " + formatRaceTime(lapTimer.last) + (lapTimer.event == E::BEST ? "  NEW BEST" : ""));
+                    hud.ctx.trigger(hudctx::E_LAPS, hudctx::kHoldSecs);
+                } else if (lapTimer.event == E::VOID) {
+                    hud.toast("LAP VOID: STAY ON THE ROAD, PASS EVERY CHECKPOINT");
+                    hud.ctx.trigger(hudctx::E_LAPS, hudctx::kHoldSecs);
+                }
+                hud.lapOn = lapTimer.running, hud.plLap = lapTimer.lap, hud.plLast = lapTimer.last, hud.plBest = lapTimer.best(), hud.plNext = lapTimer.next;
+            }
             updateHudContext(hud, sim, settings.fuelMode > 0, (float)dt);
         }
         hud.update(dt);

@@ -2133,6 +2133,7 @@ bool EditCore::save(const std::string& path, std::string* err) {
     Level out = level;
     out.builtin = false;
     if (!saveLevelFile(out, path, err)) return false;
+    touchLevelFiles();  // (a proving ground built earlier is stale now)
     level.file = path;
     level.builtin = false;
     savedChanges = changes;
