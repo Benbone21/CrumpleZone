@@ -1124,7 +1124,7 @@ void main(){
     kind = 0;
     float fw = max(fwidth(P.x) + fwidth(P.y) + fwidth(P.z), 1e-4);
     float az = abs(P.z);
-    float lampY = shHood - 0.10;                        // headlamp center height
+    float lampY = shHood - 0.08;                        // headlamp center height
     float tailLo = shB - 0.36, tailHi = shB - 0.02;      // tail lamps up the bed's corners
     float xCab = shXrr;
     if (region == 7 || region == 8) {
@@ -1167,24 +1167,40 @@ void main(){
         base = vec3(0.03); kind = 1;  // the bed rail caps: black plastic
       }
     } else if (region == 5) {
+      // TRD Pro face: the black hex grille in a surround that narrows downward, TOYOTA across
+      // it, swept LED headlamps at its top corners, the bumper in paint round the fog lamps,
+      // then a black lower lip (the silver skid plate is a part: carvisual.cpp).
       base = uPaint;
-      float lamp = rbox(vec2(az, P.y), vec2(0.60, lampY), vec2(0.22, 0.05), 0.03);
-      float grille = rbox(vec2(az, P.y), vec2(0.0, lampY - 0.07), vec2(0.40, 0.15), 0.05);
-      if (P.y < lampY - 0.26) { base = vec3(0.03); kind = 1; }  // lower valance
+      float gTop = shHood - 0.015, gBot = shHood - 0.34;
+      float t = clamp((gTop - P.y) / (gTop - gBot), 0.0, 1.0);
+      float gHalf = mix(0.47, 0.36, t);                                  // the surround's half width at this height
+      float grille = max(max(az - gHalf, P.y - gTop), gBot - P.y);
+      // Headlamp: from the grille's corner out round the fender, its lower edge rising outboard.
+      float lampLo = lampY - 0.07 + 0.09 * smoothstep(0.45, 0.9, az), lampHi = shHood - 0.02;
+      float lamp = max(max(lampLo - P.y, P.y - lampHi), 0.44 - az);
+      if (P.y < gBot + 0.02 && P.y > shF + 0.13) {  // bumper corners in paint: a black fog lamp pod each
+        float pod = rbox(vec2(az, P.y), vec2(0.66, gBot - 0.14), vec2(0.13, 0.06), 0.03);
+        if (pod < 0.0) { base = vec3(0.02); kind = 1; }
+        if (rbox(vec2(az, P.y), vec2(0.67, gBot - 0.14), vec2(0.07, 0.03), 0.01) < 0.0) kind = 3;  // the LED fog lamp
+      }
+      if (P.y < shF + 0.13) { base = vec3(0.03); kind = 1; }  // the lower lip
       if (grille < 0.0) {
         kind = 7;
         base = vec3(0.02);
-        vec2 hx = vec2(P.z * 14.0, P.y * 16.0);
+        vec2 hx = vec2(P.z * 16.0, P.y * 18.0);
         float honey = abs(fract(hx.x + 0.5 * step(0.5, fract(hx.y * 0.5))) - 0.5) + abs(fract(hx.y) - 0.5);
-        if (honey < 0.18) base = vec3(0.06);
-        float e = length(vec2(P.z / 0.09, (P.y - (lampY - 0.03)) / 0.06));
-        if (e > 0.75 && e < 1.0) kind = 2;  // the emblem
-        if (grille > -0.014) { base = vec3(0.025); kind = 1; }
+        if (honey < 0.16) base = vec3(0.07);
+        // TOYOTA across the middle: six letter blocks on a dark bar.
+        float ly = gTop - 0.15, lx = (P.z + 0.27) / 0.09;
+        if (abs(P.y - ly) < 0.05 && az < 0.30) base = vec3(0.012);
+        if (abs(P.y - ly) < 0.032 && lx > 0.0 && lx < 6.0 && fract(lx) > 0.18 && fract(lx) < 0.82) { base = vec3(0.62, 0.62, 0.6); kind = 2; }
+        if (grille > -0.022) { base = vec3(0.035); kind = 1; }  // the surround
       }
-      if (lamp < 0.0) kind = (az > 0.74) ? 8 : 3;
-      else if (lamp < 0.012) { base = vec3(0.02); kind = 1; }
-      // Fog lamps in the valance.
-      if (length(vec2(az - 0.68, P.y - (lampY - 0.33))) < 0.045) kind = 3;
+      if (lamp < 0.0) {
+        kind = 3;
+        if (P.y < lampLo + 0.014 && az > 0.5) kind = 8;  // the LED light bar along its lower edge
+        if (az > shW2 - 0.12 && P.y < lampLo + 0.04) kind = 8;
+      } else if (lamp < 0.014) { base = vec3(0.02); kind = 1; }
     } else if (region == 6) {
       // Tailgate: its seams, the stamped name, a handle; tail lamps outboard; the step bumper.
       if (P.y < shLiftY) { base = vec3(0.55, 0.56, 0.58); kind = 2; }  // chrome step bumper
