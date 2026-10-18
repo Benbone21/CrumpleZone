@@ -200,8 +200,12 @@ double hash01(uint32_t seed, uint32_t i);  // repeatable 0..1
 std::vector<V2> roundedRect(double w, double h, double r, int segs = 4);  // centred
 std::vector<V2> circle(double r, int segs, double cx = 0, double cy = 0);
 
-// Builds variant `variant` of `def` with params `p` (missing ones take their defaults).
+// Builds variant `variant` of `def` with params `p` (missing ones take their defaults). The result goes through
+// meshopt.h (fewest triangles for the same picture) when `simplified(def)`.
 void build(const ModelDef& def, int variant, const P& p, Mesh& out);
+// Everything but the vehicles' parts, the trees and the plants (simplified where they're made, by their own code).
+bool simplified(const ModelDef& def);
+bool& simplifyModels();  // (on; tools/meshaudit turns it off to see the models as they're written)
 P defaults(const Variant& v);
 
 // ---- Picks from the model lab -------------------------------------------------------

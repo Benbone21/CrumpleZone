@@ -27,6 +27,7 @@ std::string Settings::defaultPath() {
 bool Settings::load(const std::string& path) {
     FILE* f = std::fopen(path.c_str(), "r");
     if (!f) return false;
+    gfxChosen = true;  // (a file from before the detection: its graphics are the player's)
     char line[256];
     while (std::fgets(line, sizeof line, f)) {
         char key[64], text[192] = "";
@@ -86,6 +87,7 @@ bool Settings::load(const std::string& path) {
             hostPort = p > 0 ? p : net::kDefaultPort;
         }
         else if (k == "vsync") vsync = v != 0;
+        else if (k == "gfxchosen") gfxChosen = v != 0;
         else if (k == "adaptive") adaptiveQuality = v != 0;
         else if (k == "devhotkeys") devHotkeys = v != 0;
         else if (k == "fps") showFps = v != 0;
@@ -96,6 +98,9 @@ bool Settings::load(const std::string& path) {
         else if (k == "bloom") gfx.bloom = v != 0;
         else if (k == "clouds") gfx.clouds = v != 0;
         else if (k == "scale") gfx.renderScale = std::min(std::max(v, 0.5f), 2.0f);
+        else if (k == "drawdistance" && std::isfinite(v)) gfx.drawDistance = v > 0 ? std::clamp(v, 150.0f, 6000.0f) : 0.0f;
+        else if (k == "sharpen") gfx.sharpen = v != 0;
+        else if (k == "fpstarget") fpsTarget = v == 0 ? 0 : v >= 144 ? 144 : v >= 120 ? 120 : 60;
         else if (k == "grass") gfx.grass = v != 0 ? 2 : 0;  // (before it had levels: on is medium)
         else if (k == "grassq") gfx.grass = std::min(std::max((int)v, 0), 3);
         else if (k == "ground") gfx.ground = std::min(std::max((int)v, 0), 3);
@@ -130,9 +135,9 @@ bool Settings::save(const std::string& path) const {
     std::fprintf(f, "shadows %d\nmsaa %d\nao %d\nbloom %d\nclouds %d\nscale %.2f\ngrassq %d\nmap %d\n", gfx.shadows,
                  gfx.msaa, gfx.ao, gfx.bloom, gfx.clouds, gfx.renderScale, gfx.grass, map);
     std::fprintf(f, "recovery %d\nmusic %.2f\nambience %.2f\nfuel %d\ncareer %d\n", realRecovery, music, ambience, fuelMode, career);
-    std::fprintf(f, "ground %d\nprops %d\n", gfx.ground, gfx.props);
+    std::fprintf(f, "ground %d\nprops %d\ndrawdistance %.0f\nsharpen %d\nfpstarget %d\n", gfx.ground, gfx.props, gfx.drawDistance, gfx.sharpen, fpsTarget);
     std::fprintf(f, "physicsthreads %d\n", physicsThreads);
-    std::fprintf(f, "adaptive %d\ndevhotkeys %d\n", adaptiveQuality, devHotkeys);
+    std::fprintf(f, "adaptive %d\ndevhotkeys %d\ngfxchosen %d\n", adaptiveQuality, devHotkeys, gfxChosen);
     std::fprintf(f, "winchspeed %.2f\n", winchSpeed);
     if (!playerName.empty()) std::fprintf(f, "name %s\n", playerName.c_str());
     if (!joinAddress.empty()) std::fprintf(f, "join %s\n", joinAddress.c_str());
@@ -153,21 +158,9 @@ bool Settings::save(const std::string& path) const {
     return true;
 }
 
-// ---- Presets ---------------------------------------------------------------------
+// ---- Presets: perf.cpp ----
 
 namespace {
-struct Preset {
-    int shadows, msaa;
-    bool ao, bloom, clouds;
-    int grass;  // RenderSettings::grass
-    int scenery;  // photo-scanned ground and props (RenderSettings::ground and ::props)
-};
-const Preset kPresets[4] = {
-    {1, 0, false, false, false, 1, 1},  // LOW
-    {2, 2, false, true, true, 2, 2},    // MEDIUM
-    {3, 4, true, true, true, 2, 2},     // HIGH
-    {3, 8, true, true, true, 3, 3},     // ULTRA
-};
 const int kMsaa[4] = {0, 2, 4, 8};
 int msaaIndex(int samples) {
     int best = 0;
@@ -177,35 +170,14 @@ int msaaIndex(int samples) {
 }
 }  // namespace
 
-void applyPreset(RenderSettings& g, int preset) {
-    const Preset& p = kPresets[std::min(std::max(preset, 0), 3)];
-    g.shadows = p.shadows;
-    g.msaa = p.msaa;
-    g.ao = p.ao;
-    g.bloom = p.bloom;
-    g.clouds = p.clouds;
-    g.grass = p.grass;
-    g.ground = g.props = p.scenery;
-}
-
-int presetOf(const RenderSettings& g) {
-    for (int k = 0; k < 4; k++) {
-        const Preset& p = kPresets[k];
-        if (g.shadows == p.shadows && kMsaa[msaaIndex(g.msaa)] == p.msaa && g.ao == p.ao && g.bloom == p.bloom &&
-            g.clouds == p.clouds && g.grass == p.grass && g.ground == p.scenery && g.props == p.scenery)
-            return k;
-    }
-    return 4;
-}
-
 // ---- Rows ------------------------------------------------------------------------
 
 namespace {
 enum Id {
     // Settings page.
     UNITS = 1, VOLUME, FOV, RECOVERY, MUSIC, TIMEOFDAY, FUEL, AMBIENCE,
-    ADAPTIVE = 9, QUALITY = 10, SHADOWS, AA, AO, BLOOM, CLOUDS, GRASS, SCALE, SCENERY,
-    FULLSCREEN = 20, VSYNC, FPS, PHYSICSTHREADS, WINCHSPEED,
+    ADAPTIVE = 9, QUALITY = 10, SHADOWS, AA, AO, BLOOM, CLOUDS, GRASS, SCALE, SCENERY, DETECT_ROW = 19,
+    FULLSCREEN = 20, VSYNC, FPS, PHYSICSTHREADS, WINCHSPEED, FPSTARGET,
     PADSTEER = 30, PADDEAD, PADRUMBLE, THROTTLECAP, THROTTLERESP, THROTTLEPAD,
     // Main page and navigation.
     RESUME_ROW = 100, VEHICLE_ROW, MAP_ROW, GARAGE_ROW, SETTINGS_ROW, CONTROLS_ROW, RESET_ROW, QUIT_ROW, BACK_ROW,
@@ -482,7 +454,6 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
         button(BACK_ROW, "BACK");
         return r;
     }
-    static const char* quality[5] = {"LOW", "MEDIUM", "HIGH", "ULTRA", "CUSTOM"};
     static const char* shadows[4] = {"OFF", "LOW", "MEDIUM", "HIGH"};
     static const char* aa[4] = {"OFF", "2X MSAA", "4X MSAA", "8X MSAA"};
     header("GAME");
@@ -509,8 +480,11 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
     char speed[32]; std::snprintf(speed, sizeof speed, "%.2gX", s.winchSpeed);
     choice(WINCHSPEED, "WINCH SPEED", speed, 11, "1X: RATED SPEED. 4X: DEFAULT. UP TO 20X. " + s.keys.name(KA_WINCH_SLOWER) + " AND " + s.keys.name(KA_WINCH_FASTER) + " CHANGE IT WHILE DRIVING.");
     header("GRAPHICS");
-    choice(QUALITY, "QUALITY", quality[presetOf(s.gfx)], 4);
+    choice(QUALITY, "QUALITY", presetName(presetOf(s.gfx)), 5, "POTATO: FOR THE WEAKEST LAPTOPS. HALF RESOLUTION, NO SHADOWS, 300 M OF VIEW");
+    button(DETECT_ROW, "DETECT AUTOMATICALLY", "PICK QUALITY FOR THIS COMPUTER: TESTS A FEW SECONDS OF DRIVING");
     choice(ADAPTIVE, "ADAPTIVE QUALITY", kOffOn[s.adaptiveQuality], 2, "AUTO-SCALE GRAPHICS TO MAINTAIN FRAMERATE");
+    choice(FPSTARGET, "FPS TARGET", s.fpsTarget > 0 ? std::to_string(s.fpsTarget) + " FPS" : std::string("UNCAPPED"), 4,
+           "WHAT ADAPTIVE QUALITY AIMS FOR. WITH VSYNC OFF, ALSO THE FRAME CAP");
     choice(SHADOWS, "SHADOWS", shadows[std::min(std::max(s.gfx.shadows, 0), 3)], 4);
     choice(AA, "ANTI-ALIASING", aa[msaaIndex(s.gfx.msaa)], 4);
     choice(AO, "AMBIENT OCCLUSION", kOffOn[s.gfx.ao], 2);
@@ -679,6 +653,7 @@ PauseMenu::Result PauseMenu::activate(int row, Settings& s) {
         case DEVSEC_ROW: return {DEV_RUN, devmenu::TELEPORT_SECTION, std::min(std::max(devSection, 0), std::max(0, it.count - 1))};
         case DEVPLACE_ROW: return {DEV_RUN, devmenu::TELEPORT_PLACE, std::min(std::max(devPlace, 0), std::max(0, it.count - 1))};
         case KEYBINDS_ROW: listening = -1, keyNote.clear(); goPage(7, KEY_ROW0); return {};
+        case DETECT_ROW: return {DETECT_GFX};
         case KEYS_RESET: s.keys.resetDefaults(); listening = -1, keyNote.clear(); return {CHANGED};
         case RESET_ROW: return {RESET};
         case QUIT_ROW: return {QUIT};
@@ -774,6 +749,7 @@ PauseMenu::Result PauseMenu::change(int row, int dir, Settings& s) {
     std::vector<Row> r = rows(s);
     if (row < 0 || row >= (int)r.size()) return {};
     const Row& it = r[row];
+    if (it.id >= QUALITY && it.id <= SCENERY) s.gfxChosen = true;  // (touched the graphics: no first-launch detection over it)
     if (it.kind == SLIDER) return setSlider(row, it.frac + (float)dir / (it.count - 1), s);
     if (it.kind != CHOICE) return {};
     auto cycle = [&](int cur) { return (cur + dir + it.count) % it.count; };
@@ -808,8 +784,20 @@ PauseMenu::Result PauseMenu::change(int row, int dir, Settings& s) {
         case DEST_ROW: s.pilotDest = cycle(std::min(std::max(s.pilotDest, 0), it.count - 1)); break;
         case PROUTE_ROW: s.pilotRoute = cycle(std::min(std::max(s.pilotRoute, 0), 2)); break;
         case QUALITY: {
-            int cur = presetOf(g);
-            applyPreset(g, cur == 4 ? (dir > 0 ? 3 : 0) : cycle(cur));
+            static const int kOrder[5] = {Q_POTATO, Q_LOW, Q_MEDIUM, Q_HIGH, Q_ULTRA};  // (as the row steps through them)
+            const int cur = presetOf(g);
+            int at = dir > 0 ? 4 : 1;  // (CUSTOM: up to ULTRA, down to LOW)
+            if (cur != Q_CUSTOM)
+                for (int k = 0; k < 5; k++)
+                    if (kOrder[k] == cur) at = (k + (dir > 0 ? 1 : 4)) % 5;
+            applyPreset(g, kOrder[at]);
+            break;
+        }
+        case FPSTARGET: {
+            int at = 0;
+            for (int k = 0; k < 4; k++)
+                if (kFpsTargets[k] == s.fpsTarget) at = k;
+            s.fpsTarget = kFpsTargets[cycle(at)];
             break;
         }
         case ADAPTIVE: s.adaptiveQuality = !s.adaptiveQuality; break;

@@ -71,11 +71,17 @@ std::vector<int> weld(const std::vector<OptVert>& v, double eps, std::vector<V3>
     return id;
 }
 
-size_t countUnique(const std::vector<OptVert>& v) {
-    std::unordered_map<std::string, int> seen;
-    seen.reserve(v.size());
-    for (const OptVert& q : v) seen.emplace(std::string((const char*)&q, sizeof q), 0);
-    return seen.size();
+uint64_t fnv(const void* p, size_t n, uint64_t h = 1469598103934665603ull) {
+    const unsigned char* c = (const unsigned char*)p;
+    for (size_t i = 0; i < n; i++) h = (h ^ c[i]) * 1099511628211ull;
+    return h;
+}
+
+size_t countUnique(const std::vector<OptVert>& v) {  // (by hash: a count, nothing hangs on it)
+    std::vector<uint64_t> h(v.size());
+    for (size_t i = 0; i < v.size(); i++) h[i] = fnv(&v[i], sizeof(OptVert));
+    std::sort(h.begin(), h.end());
+    return (size_t)(std::unique(h.begin(), h.end()) - h.begin());
 }
 
 struct UF {
@@ -439,7 +445,7 @@ size_t mergeFlat(std::vector<Tri>& tris, const std::vector<OptVert>& v, const st
 
 }  // namespace
 
-MeshOptStats optimizeVerts(std::vector<OptVert>& v, const MeshOptOptions& o) {
+static MeshOptStats optimizeOnce(std::vector<OptVert>& v, const MeshOptOptions& o) {
     MeshOptStats st;
     v.resize(v.size() / 3 * 3);
     st.verticesIn = v.size();
@@ -470,25 +476,39 @@ MeshOptStats optimizeVerts(std::vector<OptVert>& v, const MeshOptOptions& o) {
         if (o.degenerate && (r.a == r.b || r.b == r.c || r.a == r.c || l <= longest * eps * 0.1)) r.alive = false, st.degenerate++;
     }
     if (o.degenerate) {  // (the same triangle again, looking the same: either winding, as nothing is culled)
-        std::unordered_map<std::string, int> once;
+        auto corners = [&](int t, int k[3]) {
+            k[0] = 0, k[1] = 1, k[2] = 2;
+            std::sort(k, k + 3, [&](int x, int y) { return id[t * 3 + x] < id[t * 3 + y]; });
+        };
+        auto same = [&](int s, int t) {
+            int a[3], b[3];
+            corners(s, a), corners(t, b);
+            for (int i = 0; i < 3; i++) {
+                const OptVert &p = v[s * 3 + a[i]], &q = v[t * 3 + b[i]];
+                if (id[s * 3 + a[i]] != id[t * 3 + b[i]] || std::memcmp(p.n, q.n, sizeof p.n + sizeof p.c)) return false;
+            }
+            return true;
+        };
+        std::unordered_multimap<uint64_t, int> once;
+        once.reserve(nt);
         for (int t = 0; t < nt; t++) {
             if (!tris[t].alive) continue;
-            int k[3] = {0, 1, 2};
-            std::sort(k, k + 3, [&](int x, int y) { return id[t * 3 + x] < id[t * 3 + y]; });
-            std::string key;
-            for (int j : k) {
-                key.append((const char*)&id[t * 3 + j], sizeof(int));
-                const OptVert& q = v[t * 3 + j];
-                key.append((const char*)q.n, sizeof q.n + sizeof q.c);
-            }
-            if (!once.emplace(key, t).second) tris[t].alive = false, st.repeated++;
+            int k[3];
+            corners(t, k);
+            uint64_t h = 1469598103934665603ull;
+            for (int j : k) h = fnv(&id[t * 3 + j], sizeof(int), h), h = fnv(v[t * 3 + j].n, sizeof(float) * 7, h);
+            bool dup = false;
+            auto range = once.equal_range(h);
+            for (auto it = range.first; it != range.second && !dup; ++it) dup = same(it->second, t);
+            if (dup) tris[t].alive = false, st.repeated++;
+            else once.emplace(h, t);
         }
     }
     if (o.hidden) dropHidden(tris, v, where, eps, st);
     if (o.groundMin)
         for (int t = 0; t < nt; t++) {
             Tri& r = tris[t];
-            if (!r.alive) continue;
+            if (!r.alive || r.gn.y > -0.5) continue;  // (bottoms only: a trench dug beside it in the editor shows its sides)
             const V3 &a = where[r.a], &b = where[r.b], &c = where[r.c];
             const double top = std::max({a.y, b.y, c.y});
             if (top < o.groundMin(std::min({a.x, b.x, c.x}), std::min({a.z, b.z, c.z}), std::max({a.x, b.x, c.x}), std::max({a.z, b.z, c.z})))
@@ -520,6 +540,42 @@ MeshOptStats optimizeVerts(std::vector<OptVert>& v, const MeshOptOptions& o) {
     }
     v.swap(out);
     st.trianglesOut = v.size() / 3;
+    return st;
+}
+
+MeshOptStats optimizeVerts(std::vector<OptVert>& v, const MeshOptOptions& o) {
+    if (!o.degenerate && !o.hidden && !o.coplanar) {  // (just the ground: no welding needed, quick)
+        MeshOptStats st;
+        v.resize(v.size() / 3 * 3);
+        st.verticesIn = st.uniqueVertices = v.size(), st.trianglesIn = v.size() / 3;  // (not counted here)
+        size_t out = 0;
+        for (size_t t = 0; t < v.size(); t += 3) {
+            const V3 a = pos(v[t]), b = pos(v[t + 1]), c = pos(v[t + 2]);
+            V3 n = cross(b - a, c - a), nv;
+            for (int k = 0; k < 3; k++) nv += V3(v[t + k].n[0], v[t + k].n[1], v[t + k].n[2]);
+            if (dot(n, nv) < 0) n = -n;
+            const double l = len(n);
+            if (o.groundMin && l > 0 && n.y / l <= -0.5 &&
+                std::max({a.y, b.y, c.y}) < o.groundMin(std::min({a.x, b.x, c.x}), std::min({a.z, b.z, c.z}), std::max({a.x, b.x, c.x}), std::max({a.z, b.z, c.z}))) {
+                st.buried++;
+                continue;
+            }
+            if (out != t) std::copy(v.begin() + t, v.begin() + t + 3, v.begin() + out);
+            out += 3;
+        }
+        v.resize(out);
+        st.trianglesOut = out / 3;
+        return st;
+    }
+    // (Again while it finds more: a part merged flat can close up and hide what's inside it.)
+    MeshOptStats st = optimizeOnce(v, o);
+    for (int pass = 0; pass < 3 && st.trianglesOut < st.trianglesIn; pass++) {
+        const size_t before = v.size();
+        MeshOptStats more = optimizeOnce(v, o);
+        st.degenerate += more.degenerate, st.repeated += more.repeated, st.hidden += more.hidden, st.buried += more.buried;
+        st.coplanarSaved += more.coplanarSaved, st.trianglesOut = more.trianglesOut;
+        if (v.size() == before) break;
+    }
     return st;
 }
 

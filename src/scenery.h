@@ -1,16 +1,24 @@
 // Static scenery meshes, built once per map for the lit shader (the trees are instanced: treedraw.h):
-// boulders, rock slabs, logs and bushes. Rocks are built to hug their colliders, so a tire on one sits where it looks like it should.
+// boulders and rock slabs; reeds and logs. Rocks are built to hug their colliders, so a tire on one sits where it looks like it should.
 #pragma once
 #include <vector>
 
+#include "meshopt.h"
 #include "modelkit.h"
 #include "render.h"
 #include "world.h"
 
 // (`skip`: what the scanned props draw instead, see propdraw.h.)
-void buildRockMesh(const World& world, std::vector<Vtx>& out, const ScanCover& skip = ScanCover());   // boulders, rock slabs, logs
-void buildBushMesh(const World& world, std::vector<Vtx>& out, const ScanCover& skip = ScanCover());   // bushes and lakeside reeds
+void buildRockMesh(const World& world, std::vector<Vtx>& out, const ScanCover& skip = ScanCover());   // boulders, rock slabs
+void buildBushMesh(const World& world, std::vector<Vtx>& out, const ScanCover& skip = ScanCover());   // reeds and fallen logs (the bushes are instanced: forest::buildBushes)
 void buildPropMesh(const World& world, std::vector<Vtx>& out);   // fences, cabin, signs, tables, stumps
+void buildBoxMesh(const World& world, std::vector<Vtx>& out);    // the level's concrete blocks (World::boxes)
+// Both go through meshopt.h as they're built (bottoms in the ground; the boxes also faces one hides in another, flat
+// regions merged): `simplifyScenery() = false` leaves them as made (tools/meshaudit).
+bool& simplifyScenery();
+// What they're simplified with: world-sized, the ground under them; `whole`: everything meshopt does (the boxes), else just
+// the bottoms in the ground (the models, each simplified already: an editor drag rebuilds them all).
+MeshOptOptions sceneryOptions(const World& world, bool whole);
 
 // A code-made model (modelkit.h) into lit-shader vertices: its origin at p, its front turned
 // to `yaw`, scaled along (front, up, left).

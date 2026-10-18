@@ -141,26 +141,29 @@ vec4 sideTap(sampler2DArray s, float L, Side f, float scale){
   return textureGrad(s, vec3(f.uv * scale, L), f.gx * scale, f.gy * scale);
 }
 
+// Fewer octaves of fbm(p, full), scaled to the same range (one tap a layer, LOW: the patches are blurrier, not paler).
+float fbmFew(vec2 p, int oct, int full){ return fbm(p, oct) * (1.0 - exp2(-float(full))) / (1.0 - exp2(-float(oct))); }
+
 void main(){
   vec3 N0 = normalize(vNrm);
   vec2 p = vPos.xz;
   vec3 dPx = dFdx(vPos), dPy = dFdy(vPos);
   float dist = length(vPos - uCam);
 
-  // ---- Environment noise (shared by every paint) ----
-  gN1 = fbm(p * 0.02, 4);
-  gNoiseA = fbm(p * 0.35 + 5.0, 3);
-  gNoiseB = fbm(p * 0.55 - 3.0, 2);
-  gDry = smoothstep(0.6, 0.8, fbm(p * 0.006 + 3.1, 3));
-  gBald = smoothstep(0.60, 0.80, fbm(p * 0.30 + 9.0, 3));
-  float n2 = vnoise(p * 0.9);
+  // ---- Environment noise (shared by every paint; one tap a layer, LOW, takes fewer octaves of it) ----
+  int lo = uGroundQ <= 1 ? 1 : 0;
+  gN1 = (lo == 1 ? fbmFew(p * 0.02, 2, 4) : fbm(p * 0.02, 4));
+  gNoiseA = (lo == 1 ? fbmFew(p * 0.35 + 5.0, 2, 3) : fbm(p * 0.35 + 5.0, 3));
+  gNoiseB = (lo == 1 ? fbmFew(p * 0.55 - 3.0, 1, 2) : fbm(p * 0.55 - 3.0, 2));
+  gDry = smoothstep(0.6, 0.8, (lo == 1 ? fbmFew(p * 0.006 + 3.1, 1, 3) : fbm(p * 0.006 + 3.1, 3)));
+  gBald = smoothstep(0.60, 0.80, (lo == 1 ? fbmFew(p * 0.30 + 9.0, 2, 3) : fbm(p * 0.30 + 9.0, 3)));
   gSteep = (uMap == 0 || uMap == 2) ? smoothstep(0.84, 0.62, N0.y + 0.14 * (gN1 - 0.5)) : smoothstep(0.72, 0.55, N0.y + 0.14 * (gN1 - 0.5));
   gHigh = smoothstep(uRockSnow.x, uRockSnow.x + 90.0, vPos.y + 30.0 * gN1);
   gSnowH = smoothstep(uRockSnow.y, uRockSnow.y + 50.0, vPos.y + 70.0 * gN1) * smoothstep(0.5, 0.75, N0.y);
-  gForest = smoothstep(0.40, 0.65, fbm(p * 0.012 + vec2(7.0, -3.0), 3)) * smoothstep(6.0, 22.0, vPos.y);
+  gForest = smoothstep(0.40, 0.65, (lo == 1 ? fbmFew(p * 0.012 + vec2(7.0, -3.0), 1, 3) : fbm(p * 0.012 + vec2(7.0, -3.0), 3))) * smoothstep(6.0, 22.0, vPos.y);
 
   // ---- The four cells round this point, from a slightly wobbled spot so edges are ragged, not 1 m stairs ----
-  vec2 wob = (vec2(vnoise(p * 0.8), vnoise(p.yx * 0.8 + 7.0)) - 0.5) * 1.4;
+  vec2 wob = lo == 1 ? vec2(0.0) : (vec2(vnoise(p * 0.8), vnoise(p.yx * 0.8 + 7.0)) - 0.5) * 1.4;
   vec2 gp = p + wob + 600.0;
   ivec2 i0 = clamp(ivec2(floor(gp)), ivec2(0), ivec2(int(uTerrainN) - 2));
   vec2 f = clamp(gp - vec2(i0), 0.0, 1.0);
@@ -263,7 +266,7 @@ void main(){
   ao = mix(1.0, ao, distFade * 0.9 + 0.1);
 
   // ---- Large-scale variation: patches of lighter and darker, warmer and cooler ground ----
-  float bright = 0.80 + 0.40 * fbm(p * 0.045 + 11.0, 3);
+  float bright = 0.80 + 0.40 * (lo == 1 ? fbmFew(p * 0.045 + 11.0, 1, 3) : fbm(p * 0.045 + 11.0, 3));
   vec3 warm = mix(vec3(1.05, 1.0, 0.92), vec3(0.94, 0.99, 1.04), vnoise(p * 0.02 - 6.0));
   alb *= bright * warm;
   // ---- Wheel tracks worn into trails and roads, and packed down in snow ----
@@ -272,13 +275,17 @@ void main(){
   float ruts = (1.0 - smoothstep(0.15, 0.4, trk)) * step(0.5, vCol.r);
   alb *= 1.0 - 0.30 * ruts * min(gTrail, 1.0);
   rough = mix(rough, rough * 0.8, ruts * min(gTrail, 1.0));
-  float sruts = (1.0 - smoothstep(0.2, 0.5, abs(abs(vCol.g) - 0.85))) * step(0.5, vCol.b) * (0.75 + 0.25 * vnoise(p * 3.0));
-  alb *= mix(vec3(1.0), vec3(0.70, 0.74, 0.80), sruts * 0.85 * min(gSnow, 1.0));
+  if (gSnow > 0.0 && vCol.b > 0.5) {  // (only where it's snow: the noise is the cost)
+    float sruts = (1.0 - smoothstep(0.2, 0.5, abs(abs(vCol.g) - 0.85))) * (0.75 + 0.25 * vnoise(p * 3.0));
+    alb *= mix(vec3(1.0), vec3(0.70, 0.74, 0.80), sruts * 0.85 * min(gSnow, 1.0));
+  }
   // ---- Mud: puddles in the hollows (dark, glassy, flat) ----
-  float pud = smoothstep(0.55, 0.7, fbm(p * 0.25, 3)) * min(gMud, 1.0);
-  alb *= 1.0 - 0.45 * pud;
-  rough = mix(rough, 0.10, pud);
-  nrm = normalize(mix(nrm, N0, pud * 0.85));
+  if (gMud > 0.0) {
+    float pud = smoothstep(0.55, 0.7, fbm(p * 0.25, 3)) * min(gMud, 1.0);
+    alb *= 1.0 - 0.45 * pud;
+    rough = mix(rough, 0.10, pud);
+    nrm = normalize(mix(nrm, N0, pud * 0.85));
+  }
   // ---- Wet ground at the water's edge, and a dark silty bed under it ----
   float wl = texture(uTerrainTex, (p + 600.5) / uTerrainN).a;
   float wet = 1.0 - smoothstep(0.0, 0.5, vPos.y - wl);

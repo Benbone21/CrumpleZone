@@ -323,6 +323,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         jesko.engineHgt = 0.46;
         jesko.gearboxLen = 0.42;
         jesko.bodyStiffness = 1.1;   // carbon monocoque
+        jesko.carbonTub = true;
         jesko.wheelRadius = 0.355;    // 265/35R20 front, 325/30R21 rear
         jesko.wheelWidth = 0.265;
         jesko.wheelWidthRear = 0.325;
@@ -1196,6 +1197,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         blazer.bodyStiffness = 0.95;   // an open-backed tub (the top is bolted on)
         blazer.bodyStrength = 0.85;    // mild steel, thick
         blazer.frameStrength = 2.6;
+        blazer.noseStrength = 1.5;     // the grille, core support and fenders boxed on the frame horns
         blazer.panelStrength = 1.5;
         blazer.pinStrength = 1.8;
         // Ladder frame: C-channel rails, riveted crossmembers (ESTIMATE: ~7 x 2.5 in, 3/16 in).
