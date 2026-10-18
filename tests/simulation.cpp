@@ -107,9 +107,11 @@ SCENARIO(long_duration, "simulation/long-duration",
     ctx.run(30.0, [&] {
         c.throttle = 0.5;
         c.handbrake = 0;
-        // Minimal steering correction.
+        // Minimal steering correction. (Back toward the start line: +z is to the right, + steer
+        // is left. It had the sign the other way, so it steered the Civic's own slight pull
+        // further off.)
         Frame f = c.frame();
-        c.steer = -0.01 * (f.com.z - startZ);
+        c.steer = 0.01 * (f.com.z - startZ);
         maxDrift = std::max(maxDrift, std::abs(f.com.z - startZ));
     });
 

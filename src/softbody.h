@@ -350,6 +350,19 @@ public:
     // own shape, stiff in bending; the crossmembers tie the two, and give in twist as a real
     // ladder frame does. The body tub rides on it on its rubber mounts. Empty on a unibody.
     ChassisFrame railFrame[2];
+    // Each unsteered independent corner's knuckle (hub, ball joints, toe link arm) held as the
+    // one rigid piece it is, the way the body is, and at its toe (chassisForces). Its beams alone
+    // left it a near-flat truss (the hub's outer end had almost nothing holding it fore and aft),
+    // on links far looser in toe than real arms: the drive and cornering loads toed the rear
+    // wheels, and under full power on grippy tires that steered the car into a growing 3 Hz weave.
+    struct Knuckle {
+        int wheel = -1;
+        std::vector<int> beams;    // its own beams: one broken and it's no longer one piece
+        std::vector<int> pickups;  // the body ends of its links, which take its toe's reaction
+        ChassisFrame frame;
+        double toe = 0;            // last toe against the body (rad), for its rate
+    };
+    std::vector<Knuckle> knuckles;
     int bodyNodes = 0;
     // Ladder frame (body-on-frame trucks): its nodes, station by station (left rail's four
     // section corners, then the right rail's), and the rubber body mounts.

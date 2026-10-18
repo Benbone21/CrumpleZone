@@ -253,6 +253,7 @@ void Sim::lodStep(int self, double dt) {
         rail.rot = dq * rail.rot;
         rail.rot.normalize();
     }
+    for (Car::Knuckle& k : c.knuckles) k.frame.rot = dq * k.frame.rot, k.frame.rot.normalize();
     for (Wheel& wh : c.wheels) {
         if (wh.detached) continue;
         wh.omega = L.speed / std::max(wh.rollR(), 0.05);

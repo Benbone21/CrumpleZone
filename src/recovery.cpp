@@ -71,6 +71,7 @@ void Car::rotateRigid(const V3& axis, double ang) {
         chassis.rot = q * chassis.rot;
         chassis.rot.normalize();
         for (ChassisFrame& rf : railFrame) rf.rot = q * rf.rot, rf.rot.normalize();
+        for (Knuckle& k : knuckles) k.frame.rot = q * k.frame.rot, k.frame.rot.normalize();
     }
     for (Wheel& wh : wheels) wh.omega = 0, wh.stickX = wh.stickY = 0;
     wake();
@@ -100,6 +101,7 @@ void Car::placeUpright(const World& w, double x, double z, double yaw) {
         chassis.rot = q * chassis.rot;
         chassis.rot.normalize();
         for (ChassisFrame& rf : railFrame) rf.rot = q * rf.rot, rf.rot.normalize();
+        for (Knuckle& k : knuckles) k.frame.rot = q * k.frame.rot, k.frame.rot.normalize();
     }
     setDown(w);  // onto the slope under it
     for (Wheel& wh : wheels) wh.omega = 0, wh.stickX = wh.stickY = 0;

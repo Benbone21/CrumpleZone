@@ -47,6 +47,9 @@ constexpr double kBracketYield = 70000;
 constexpr double kSideGive = 0.35;
 constexpr double kSillGive = 0.45;
 constexpr double kTailGive = 0.45;
+// A knuckle's shape-holding pull per kg (N/m/kg): sqrt, ~450 rad/s, is its frequency. (Three
+// times that rang the Bronco's heavy hubs against their own beams at the 2 kHz step.)
+constexpr double kKnuckleKappa = 200000;
 
 const BeamSpec kSpec[BEAM_TYPE_COUNT] = {
     {1.6e5, 350, 0.056, 0.65},   // body
@@ -2262,6 +2265,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
     // more, as ladder frames do; the stiffer tub rides on its mounts).
     chassis = ChassisFrame();
     for (ChassisFrame& rf : railFrame) rf = ChassisFrame();
+    knuckles.clear();
     if (!isProp) {
         auto setUp = [&](ChassisFrame& cf, const std::vector<int>& members, double kappa) {
             cf.kappa = kappa;
@@ -2341,6 +2345,28 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
             }
         } else {
             setUp(chassis, range(0, frameNodes), 300000 * vs.frameStiffness);
+        }
+        // Each unsteered independent corner's knuckle, held in its shape as one rigid piece (a
+        // live axle's housing is braced in depth already; a steered one's toe is the rack's). A
+        // forged upright doesn't flex; bent in a crash (shoved 3 cm out of shape) it lets go, and
+        // holds the new bend.
+        for (size_t wi = 0; wi < wheels.size(); wi++) {
+            const Wheel& wh = wheels[wi];
+            if (wh.front || vs.rearSusp == SOLID_AXLE || wh.assembly.size() < 3) continue;
+            Knuckle k;
+            k.wheel = (int)wi;
+            setUp(k.frame, wh.assembly, kKnuckleKappa);
+            k.frame.maxPull = 1e9;
+            k.frame.releaseDist = 0.03;
+            const auto in = [&](int n) { return std::find(wh.assembly.begin(), wh.assembly.end(), n) != wh.assembly.end(); };
+            for (size_t bi = 0; bi < beams.size(); bi++)
+                if (beams[bi].type == BEAM_KNUCKLE && in(beams[bi].a) && in(beams[bi].b)) k.beams.push_back((int)bi);
+            if (wh.tieRod >= 0)
+                for (int bi : wh.mounts) {
+                    const int far = in(beams[bi].a) ? beams[bi].b : beams[bi].a;
+                    if (std::find(k.pickups.begin(), k.pickups.end(), far) == k.pickups.end()) k.pickups.push_back(far);
+                }
+            knuckles.push_back(std::move(k));
         }
     }
     chassisRest0 = chassis.rest;
