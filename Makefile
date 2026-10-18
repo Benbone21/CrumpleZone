@@ -3,7 +3,9 @@
 
 CXX      ?= g++
 CXXFLAGS ?= -O2 -march=native
-CXXFLAGS += -std=c++17 -Wall -Wextra
+# -ffp-contract=off (every build, 'override' so a command-line CXXFLAGS keeps it): no FMA fusing, so the sim is bit-identical between -march=native and x86-64-v2/Windows builds.
+FPFLAGS  := -ffp-contract=off -fno-fast-math
+override CXXFLAGS += $(FPFLAGS) -std=c++17 -Wall -Wextra
 LDLIBS   := -l:libSDL2-2.0.so.0 -lpthread -lm
 
 MODELS   := $(sort $(wildcard src/models/*.cpp))
@@ -127,7 +129,7 @@ PGOFLAGS := -fprofile-use=$(PGODIR) -fprofile-partial-training -Wno-missing-prof
 else
 PGOFLAGS :=
 endif
-RELFLAGS := -O2 $(RELARCH) -flto=$(LTOJ) -fno-plt $(PGOFLAGS) -std=c++17 -Wall -Wextra
+RELFLAGS := -O2 $(RELARCH) -flto=$(LTOJ) -fno-plt $(FPFLAGS) $(PGOFLAGS) -std=c++17 -Wall -Wextra
 RELLD    := -s
 REL_GAME := $(patsubst %.cpp,build/rel/%.o,$(GAME_SRC))
 REL_PHYS := $(patsubst %.cpp,build/rel/%.o,$(PHYS))
@@ -158,7 +160,7 @@ WINCXX   ?= x86_64-w64-mingw32-g++-posix
 WINSDL   ?= third_party/sdl2-win64
 # LTO always (every Windows build is a release); PGO as for Linux (tools/pgo.sh windows: trained under wine, since gcc profiles are not portable across compiler builds), -s strips the link.
 WINPGO   := $(if $(filter use,$(PGO)),-fprofile-use=$(PGODIR)/win -fprofile-partial-training -Wno-missing-profile -Wno-coverage-mismatch,$(if $(filter gen,$(PGO)),-fprofile-generate=$(PGODIR)/win -fprofile-update=prefer-atomic))
-WINFLAGS := -O2 -march=x86-64-v2 -mtune=generic -flto=$(LTOJ) $(WINPGO) -std=gnu++17 -Wall -D_WIN32_WINNT=0x0601
+WINFLAGS := -O2 -march=x86-64-v2 -mtune=generic -flto=$(LTOJ) $(FPFLAGS) $(WINPGO) -std=gnu++17 -Wall -D_WIN32_WINNT=0x0601
 WIN_OBJ  := $(patsubst %.cpp,build/win/obj/%.o,$(GAME_SRC))
 
 build/win/obj/%.o: %.cpp $(HEADERS)
@@ -197,7 +199,7 @@ VERSION  ?= 0.2.0
 MACCXX   ?= clang++
 MACSDL   ?= third_party/sdl2-mac
 MACLTO   ?= -flto=thin
-MACFLAGS := -O2 $(MACLTO) -std=c++17 -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -Wall
+MACFLAGS := -O2 $(FPFLAGS) $(MACLTO) -std=c++17 -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -Wall
 MAC_OBJ  := $(patsubst %.cpp,build/mac/obj/%.o,$(GAME_SRC))
 MACAPP   := build/mac/CrumpleZone.app
 
