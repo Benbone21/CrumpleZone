@@ -1,10 +1,14 @@
 #include "groundtex.h"
+#include "meshcache.h"
 #include "platform.h"
+#include "texcomp.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <thread>
 #include <vector>
@@ -54,6 +58,8 @@ bool fileExists(const std::string& p) {
 
 struct Decoded {
     std::vector<uint8_t> albedo, normal;  // RGBA, size x size
+    texenc::Encoded encAlbedo, encNormal;  // the same, as mip chains in their upload format
+    int size = 0;
     bool ok = false;
     std::string err;
 };
@@ -124,7 +130,18 @@ void decodeLayer(const std::string& dir, const char* id, int maxSize, int expect
         halve(out.albedo, sz);
         halve(out.normal, s2);
     }
+    out.size = sz;
     out.ok = true;
+}
+
+// Mips and (where the machine takes it) block compression, on the layer's own thread. The albedo
+// array is colour with the height in A (BC3); the normal array packs normal xy, roughness and
+// occlusion (BC3, swizzled back on sampling).
+void encodeLayer(Decoded& d) {
+    d.encAlbedo = texcomp::make(texenc::Kind::ColorAlpha, true, texenc::mipChain(d.albedo.data(), d.size, d.size, true), d.size, d.size);
+    d.encNormal = texcomp::make(texenc::Kind::Packed4, false, texenc::mipChain(d.normal.data(), d.size, d.size, false), d.size, d.size);
+    std::vector<uint8_t>().swap(d.albedo);
+    std::vector<uint8_t>().swap(d.normal);
 }
 }  // namespace
 
@@ -140,8 +157,8 @@ std::string findGroundDir() {
 }
 
 void freeGroundTextures(GroundTextures& gt) {
-    if (gt.albedo) DeleteTextures(1, &gt.albedo);
-    if (gt.normal) DeleteTextures(1, &gt.normal);
+    if (gt.albedo) texcomp::release(gt.albedo, "ground albedo");
+    if (gt.normal) texcomp::release(gt.normal, "ground normal");
     gt = GroundTextures();
 }
 
@@ -153,10 +170,40 @@ bool loadGroundTextures(GroundTextures& gt, int maxSize, std::string& err) {
         err = "assets/ground not found";
         return false;
     }
-    // Decode every layer on its own thread (JPEG decoding is most of the start-up cost).
+    // Decode every layer on its own thread (JPEG decoding is most of the start-up cost), then mip
+    // and compress it there too.
+    const auto t0 = std::chrono::steady_clock::now();
+    texcomp::s3tcAvailable();  // (asks GL: here, not on the threads)
     std::vector<Decoded> dec(kLayerCount);
     std::vector<std::thread> pool;
-    for (int l = 0; l < kLayerCount; l++) pool.emplace_back([&, l] { decodeLayer(dir, kGroundLayers[l], maxSize, 1024, dec[l]); });
+    for (int l = 0; l < kLayerCount; l++)
+        pool.emplace_back([&, l] {
+            meshcache::Hasher key;
+            key.u64((uint64_t)texenc::kEncoderVersion), key.u64((uint64_t)maxSize), key.u64(texcomp::s3tcAvailable()), key.str(kGroundLayers[l]);
+            for (const char* part : {"diff", "nor_gl", "arm", "disp"})
+                key.u64(meshcache::fileStamp(dir + "/" + kGroundLayers[l] + "_" + part + "_1k.jpg"));
+            std::vector<uint8_t> blob;
+            if (meshcache::getBlob(key.h, blob)) {  // (kept on disk: the albedo's blocks, then the normal's)
+                uint64_t n;
+                std::memcpy(&n, blob.data(), blob.size() >= 8 ? 8 : 0);
+                if (blob.size() >= 8 && n <= blob.size() - 8 &&
+                    meshcache::unpackEncoded(std::vector<uint8_t>(blob.begin() + 8, blob.begin() + 8 + n), dec[l].encAlbedo) &&
+                    meshcache::unpackEncoded(std::vector<uint8_t>(blob.begin() + 8 + n, blob.end()), dec[l].encNormal)) {
+                    dec[l].size = dec[l].encAlbedo.w, dec[l].ok = true;
+                    return;
+                }
+            }
+            decodeLayer(dir, kGroundLayers[l], maxSize, 1024, dec[l]);
+            if (dec[l].ok) {
+                encodeLayer(dec[l]);
+                const std::vector<uint8_t> a = meshcache::packEncoded(dec[l].encAlbedo), b = meshcache::packEncoded(dec[l].encNormal);
+                std::vector<uint8_t> both;
+                const uint64_t n = a.size();
+                both.insert(both.end(), (const uint8_t*)&n, (const uint8_t*)&n + 8);
+                both.insert(both.end(), a.begin(), a.end()), both.insert(both.end(), b.begin(), b.end());
+                meshcache::putBlob(key.h, both);
+            }
+        });
     for (std::thread& t : pool) t.join();
     for (const Decoded& d : dec)
         if (!d.ok) {
@@ -165,24 +212,15 @@ bool loadGroundTextures(GroundTextures& gt, int maxSize, std::string& err) {
         }
     const int size = maxSize;
     freeGroundTextures(gt);
+    std::vector<texenc::Encoded> ea, en;
+    for (Decoded& d : dec) ea.push_back(std::move(d.encAlbedo)), en.push_back(std::move(d.encNormal));
     GLuint tex[2];
-    GenTextures(2, tex);
-    const float aniso = maxTextureAnisotropy();
-    PixelStorei(GL_UNPACK_ALIGNMENT, 4);
-    for (int k = 0; k < 2; k++) {
-        BindTexture(GL_TEXTURE_2D_ARRAY, tex[k]);
-        TexImage3D(GL_TEXTURE_2D_ARRAY, 0, k == 0 ? GL_SRGB8_ALPHA8 : GL_RGBA8, size, size, kLayerCount, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-        for (int l = 0; l < kLayerCount; l++)
-            TexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, l, size, size, 1, GL_RGBA, GL_UNSIGNED_BYTE,
-                          (k == 0 ? dec[l].albedo : dec[l].normal).data());
-        GenerateMipmap(GL_TEXTURE_2D_ARRAY);
-        TexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-        TexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        TexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
-        TexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
-        if (aniso > 1) TexParameterf(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAX_ANISOTROPY, std::min(aniso, 16.0f));
-    }
+    tex[0] = texcomp::uploadArray(ea, "ground albedo");
+    tex[1] = texcomp::uploadArray(en, "ground normal");
     BindTexture(GL_TEXTURE_2D_ARRAY, 0);
+    if (std::getenv("CZ_TEXSTATS"))
+        std::fprintf(stderr, "texstats: ground textures %d, %.0f ms (decode, mips, encode, upload)\n", size,
+                     std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
     gt.albedo = tex[0], gt.normal = tex[1], gt.size = size;
     return true;
 }

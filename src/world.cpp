@@ -1,5 +1,6 @@
 #include "thread_cache.h"
 #include "world.h"
+#include "loadprof.h"
 
 #include "forest.h"
 #include "modelkit.h"
@@ -364,6 +365,7 @@ void World::addLake(double x, double z, double r, double depth) {
 }
 
 World::World(int m) : map(m) {
+    loadprof::Scope lpGen("world.terrain+layout");
     if (map == MAP_MOUNTAIN) buildMountain();
     else if (map == MAP_FREEWAY) buildFreeway();
     else if (map == MAP_FRONTIER) buildFrontier();
@@ -372,7 +374,7 @@ World::World(int m) : map(m) {
     else buildProvingGround();
     // The slab the player starts on (and the parked trucks): in the game's proving ground, as the other maps are always built.
     if (map != MAP_PROVING_GROUND || withShowcase) addMapSpawnPads(*this);
-    buildGrid();
+    { loadprof::Scope lpGrid("world.grid"); buildGrid(); }
 }
 
 void World::buildProvingGround() {

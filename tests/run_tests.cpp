@@ -9,6 +9,7 @@
 // Writes build/test_report.html (charts, metrics, checks) and compares every
 // metric with tests/baseline.txt so behavior changes show up even when they
 // still fall inside the expected range.
+#include "../src/meshcache.h"
 #include <unistd.h>
 
 #include <algorithm>
@@ -323,6 +324,7 @@ document.querySelectorAll('.tools button').forEach(x=>x.classList.toggle('on',x=
 }  // namespace
 
 int main(int argc, char** argv) {
+    meshcache::setEnabled(false);  // (tests generate fresh and leave no cache about; the loading scenarios turn it on for themselves)
     useColor = isatty(1);
     std::vector<std::string> filters;
     bool list = false, update = false, verbose = false;

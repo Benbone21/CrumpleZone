@@ -1,4 +1,7 @@
 #include "modelkit.h"
+#include "loadprof.h"
+#include "meshcache.h"
+#include "meshopt.h"
 
 #include <algorithm>
 #include <array>
@@ -10,6 +13,7 @@
 #include <mutex>
 
 #include "font.h"
+#include "meshopt.h"
 #include "platform.h"
 
 namespace mk {
@@ -74,15 +78,76 @@ P defaults(const Variant& v) {
     return p;
 }
 
+std::vector<uint8_t> packMesh(const Mesh& m) {
+    std::vector<uint8_t> o;
+    const uint64_t n = m.v.size();
+    o.reserve(8 + 48 + n * 37);
+    auto put = [&](const void* p, size_t k) { o.insert(o.end(), (const uint8_t*)p, (const uint8_t*)p + k); };
+    put(&n, 8);
+    const double b[6] = {m.lo.x, m.lo.y, m.lo.z, m.hi.x, m.hi.y, m.hi.z};
+    put(b, sizeof b);
+    for (const MVert& v : m.v) put(v.p, 12), put(v.n, 12), put(v.c, 12), put(&v.mat, 1);
+    return o;
+}
+
+bool unpackMesh(const std::vector<uint8_t>& o, Mesh& m) {
+    if (o.size() < 56) return false;
+    uint64_t n;
+    std::memcpy(&n, o.data(), 8);
+    if (n > (o.size() - 56) / 37 || o.size() != 56 + n * 37) return false;
+    double b[6];
+    std::memcpy(b, o.data() + 8, sizeof b);
+    m.lo = V3(b[0], b[1], b[2]), m.hi = V3(b[3], b[4], b[5]);
+    m.v.resize(n);
+    const uint8_t* at = o.data() + 56;
+    for (MVert& v : m.v) {
+        std::memcpy(v.p, at, 12), std::memcpy(v.n, at + 12, 12), std::memcpy(v.c, at + 24, 12), v.mat = at[36];
+        at += 37;
+    }
+    return true;
+}
+
 void build(const ModelDef& def, int variant, const P& p, Mesh& out) {
     out.v.clear();
     if (def.variants.empty()) return;
-    const Variant& var = def.variants[std::clamp(variant, 0, (int)def.variants.size() - 1)];
+    const int vi = std::clamp(variant, 0, (int)def.variants.size() - 1);
+    const Variant& var = def.variants[vi];
     P full = defaults(var);
     for (const auto& kv : p.v) full.v[kv.first] = kv.second;
-    B b(out);
-    if (var.build) var.build(b, full);
-    out.finish();
+    // (A model built round a path hint depends on more than its numbers: not cached.)
+    const bool cached = meshcache::enabled() && pathHint().empty();
+    uint64_t key = 0;
+    if (cached) {
+        meshcache::Hasher h;
+        h.u64(meshcache::codeVersion()), h.str(def.id), h.u64((uint64_t)vi), h.u64(simplifyModels() && simplified(def));
+        for (const auto& kv : full.v) h.str(kv.first), h.num(kv.second);
+        key = h.h;
+        std::vector<uint8_t> blob;
+        if (meshcache::get(key, blob) && unpackMesh(blob, out)) return;
+        out.v.clear();
+    }
+    const double g0 = loadprof::nowMs();
+    {
+        B b(out);
+        if (var.build) var.build(b, full);
+        if (simplifyModels() && simplified(def)) optimizeMesh(out);
+        out.finish();
+    }
+    const double cost = loadprof::nowMs() - g0;
+    loadprof::add("model.generate", cost);
+    if (cached && cost >= meshcache::minCostMs()) meshcache::put(key, packMesh(out));
+}
+
+bool simplified(const ModelDef& def) {
+    static const std::set<std::string> own = {"tree_pine", "tree_broadleaf", "tree_snag", "bush", "stump",  // (plants and trees)
+                                              "drive_shaft", "tie_rod", "control_arm", "cv_axle", "torn_end", "bed_gate", "tire_part"};  // (a car's)
+    static const std::set<std::string> crates = {"crate_engine_v8", "crate_engine_v6", "crate_engine_i4", "supply_crate"};  // (parts drawn as they stand: skids and crates bury faces)
+    return (def.category != "PARTS" || crates.count(def.id)) && !own.count(def.id);
+}
+
+bool& simplifyModels() {
+    static bool on = true;
+    return on;
 }
 
 // ---- Helpers ----------------------------------------------------------------------------
@@ -766,6 +831,12 @@ void forgetMeshes() {
 }
 uint64_t picksVersion() { return version; }
 
+void trimMesh(Mesh& m) {
+    const V3 lo = m.lo, hi = m.hi;
+    optimizeMesh(m);
+    m.lo = lo, m.hi = hi;  // (the same box: what's placed and bumped into by it doesn't move)
+}
+
 const Mesh& modelMesh(const std::string& id) {
     // (Locked for the whole build: another thread must not copy a mesh that's still being filled in. And the picks are loaded
     // first: loading them drops the cache, which would pull `m` out from under us.)
@@ -774,9 +845,11 @@ const Mesh& modelMesh(const std::string& id) {
     auto it = meshCache().find(id);
     if (it != meshCache().end()) return it->second;
     Mesh& m = meshCache()[id];
+    loadprof::Scope lpM("model.build (cached by id)");
     if (const ModelDef* d = findModel(id)) {
         const int v = pickedVariant(*d);
         build(*d, v, pickedParams(*d, v), m);
+        trimMesh(m);
     }
     return m;
 }

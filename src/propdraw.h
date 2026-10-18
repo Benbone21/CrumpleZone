@@ -162,5 +162,5 @@ private:
     void select(const float planes[6][4], bool useBillboards, int lodBias, bool shadowPass);
     void submit(GLuint prog, bool depth, long long& tris, int& draws, int& instances);
     void submitBillboards(GLuint prog, bool depth);
-    int lodFor(const Inst& in, double dist) const;
+    int lodFor(const Inst& in, double dist, bool shadowPass) const;
 };

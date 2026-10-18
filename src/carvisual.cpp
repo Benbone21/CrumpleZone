@@ -1,4 +1,5 @@
 #include "thread_cache.h"
+#include "loadprof.h"
 #include "carvisual.h"
 
 #include "bodyshell.h"
@@ -7,6 +8,9 @@
 #include "scenery.h"
 
 #include <array>
+#include <atomic>
+#include <mutex>
+#include <thread>
 #include <map>
 #include <string>
 #include <set>
@@ -1182,9 +1186,26 @@ void buildParts(const Car& car, PartBuilder& pb) {
     if(vs.model==1)for(size_t i=cabinStart;i<pb.corners.size();i++)pb.corners[i].y+=vs.layerY[0]-0.11;
 }
 
-std::map<const VehicleSpec*, std::unique_ptr<VisualTemplate>>& cache() {
-    static std::map<const VehicleSpec*, std::unique_ptr<VisualTemplate>> c;
+// One slot per vehicle spec. Builders on any thread: the map is locked, a slot's build is serialised, and a finished template
+// is published with `ready` (so the render thread can ask without waiting: tryVisualTemplate).
+struct Slot {
+    std::unique_ptr<VisualTemplate> t;
+    std::atomic<bool> ready{false}, queued{false};
+    std::mutex build;
+};
+std::mutex& cacheLock() {
+    static std::mutex m;
+    return m;
+}
+std::map<const VehicleSpec*, std::unique_ptr<Slot>>& cache() {
+    static std::map<const VehicleSpec*, std::unique_ptr<Slot>> c;
     return c;
+}
+Slot& slotFor(const VehicleSpec* spec) {
+    std::lock_guard<std::mutex> lk(cacheLock());
+    auto& s = cache()[spec];
+    if (!s) s = std::make_unique<Slot>();
+    return *s;
 }
 
 // ---- Running-gear helpers --------------------------------------------------------
@@ -1218,10 +1239,13 @@ void blob(std::vector<Vtx>& out, const V3& c, double r, const V3& col, int mat) 
 // =============================================================================
 
 const VisualTemplate& visualTemplate(const Car& car) {
-    auto& slot = cache()[car.spec];
-    if (slot) return *slot;
-    slot = std::make_unique<VisualTemplate>();
-    VisualTemplate& t = *slot;
+    Slot& slot = slotFor(car.spec);
+    if (slot.ready.load(std::memory_order_acquire)) return *slot.t;
+    std::lock_guard<std::mutex> building(slot.build);  // (another thread may be making it: wait for that one)
+    if (slot.ready.load(std::memory_order_acquire)) return *slot.t;
+    LOADPROF("car.visualTemplate (first sight)");
+    auto made = std::make_unique<VisualTemplate>();
+    VisualTemplate& t = *made;
     const VehicleSpec& vs = *car.spec;
     const int cells = (int)vs.profile[0].size();
     int glassStart=cells, glassEnd=0, glassLayer=0;
@@ -1401,8 +1425,33 @@ const VisualTemplate& visualTemplate(const Car& car) {
         } else t.partBind.push_back(bindPoint(car, pb.corners[k]));
     }
     t.partColor = pb.color;
-    return t;
+    slot.t = std::move(made);
+    slot.ready.store(true, std::memory_order_release);
+    return *slot.t;
 }
+
+void prebuildVisual(const VehicleSpec& spec, const V3& color);
+
+const VisualTemplate* tryVisualTemplate(const Car& car) {
+    Slot& slot = slotFor(car.spec);
+    if (slot.ready.load(std::memory_order_acquire)) return slot.t.get();
+    if (blockOnTemplates) return &visualTemplate(car);  // (screenshots and tests want the car drawn, now)
+    prebuildVisual(*car.spec, car.color);  // first sight: made on a worker from a fresh car of the spec (the sim goes on changing this one)
+    return nullptr;
+}
+
+void prebuildVisual(const VehicleSpec& spec, const V3& color) {
+    Slot& slot = slotFor(&spec);
+    if (slot.ready.load(std::memory_order_acquire) || slot.queued.exchange(true)) return;
+    const VehicleSpec* sp = &spec;
+    std::thread([sp, color] {
+        Car scratch;
+        scratch.build(*sp, V3(0, 1, 0), 0, sp->paintColor[0] >= 0 ? V3(sp->paintColor[0], sp->paintColor[1], sp->paintColor[2]) : color);
+        visualTemplate(scratch);
+    }).detach();
+}
+
+bool visualReady(const VehicleSpec& spec) { return slotFor(&spec).ready.load(std::memory_order_acquire); }
 
 void evalBody(const Car& car, const VisualTemplate& t, std::vector<BodyDynamic>& dyn, std::vector<unsigned>& opaque,
               std::vector<unsigned>& glass) {
@@ -1449,7 +1498,7 @@ void evalBody(const Car& car, const VisualTemplate& t, std::vector<BodyDynamic>&
     for (const auto& f : t.faces) {
         if (torn[f.parent]) continue;
         V3 n = cross(pos[f.topo[2]] - pos[f.topo[0]], pos[f.topo[3]] - pos[f.topo[1]]);
-        for (int c = 0; c < 4; c++) nrm[f.topo[c]] += n;
+        for (int c = 0; c < (f.topo[3] == f.topo[2] ? 3 : 4); c++) nrm[f.topo[c]] += n;
     }
 
     dyn.resize(t.rvTopo.size());
@@ -1470,8 +1519,13 @@ void evalBody(const Car& car, const VisualTemplate& t, std::vector<BodyDynamic>&
         if (f.glass && shattered[f.parent])
             for (int c = 0; c < 4; c++) dyn[f.rv[c]].broken = 1;
         unsigned a = f.rv[0], b = f.rv[1], c = f.rv[2], d = f.rv[3];
-        opaque.insert(opaque.end(), {a, b, c, a, c, d});
-        if (f.glass) glass.insert(glass.end(), {a, b, c, a, c, d});
+        const bool tri = d == c;  // (a triangle: the fourth corner repeats the third)
+        opaque.insert(opaque.end(), {a, b, c});
+        if (!tri) opaque.insert(opaque.end(), {a, c, d});
+        if (f.glass) {
+            glass.insert(glass.end(), {a, b, c});
+            if (!tri) glass.insert(glass.end(), {a, c, d});
+        }
     }
 }
 
@@ -1733,20 +1787,11 @@ void buildRopes(const Sim& sim, std::vector<Vtx>& out) {
         appendModel(out, mk::modelMesh(anchors::gearModel(sa.gear)), V3(sa.p.x, sim.world.height(sa.p.x, sa.p.z), sa.p.z), sa.yaw);
     for (const Rope& r : sim.ropes) {
         auto at = [&](const RopeEnd& e) { return e.kind == ANCHOR_CAR ? sim.cars[e.car].hookPoint(e.hook) : e.p; };
-        const V3 a = at(r.a), b = at(r.b);
         const bool winch = r.kind == ROPE_WINCH;
         const V3 col = winch ? V3(0.72, 0.1, 0.05) : V3(0.95, 0.6, 0.08);
         const double rad = winch ? 0.011 : 0.02;  // (the winch line drawn a bit fat so it reads at a distance)
-        const double L = len(b - a), slack = std::max(0.0, r.length - L);
-        const double sag = std::sqrt(3 * L * slack / 8) + (r.tension > 100 ? 0.0 : 0.004 * L);
-        const int n = 16;
-        V3 prev = a;
-        for (int k = 1; k <= n; k++) {
-            const double t = (double)k / n;
-            const V3 p = a + (b - a) * t - V3(0, sag * 4 * t * (1 - t), 0);
-            tube(out, prev, p, rad, winch ? 5 : 4, col, SM_MATTE);
-            prev = p;
-        }
+        const std::vector<V3> path = sim.ropePath(r, rad + 0.015);  // (slack line lies on the ground, not through it)
+        for (size_t k = 1; k < path.size(); k++) tube(out, path[k - 1], path[k], rad, winch ? 5 : 4, col, SM_MATTE);
         for (const RopeEnd* e : {&r.a, &r.b}) {
             const V3 p = at(*e), to = at(e == &r.a ? r.b : r.a);
             if (e->kind == ANCHOR_CAR) blob(out, p, 0.025, V3(0.55, 0.55, 0.57), SM_METAL);  // shackle

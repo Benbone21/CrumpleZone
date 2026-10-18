@@ -12,6 +12,8 @@ Count measure(Ctx& ctx, int warm, int frames) {
     for (int k = 0; k < warm; k++) ctx.step();
     Count c;
     uint64_t sum = 0;
+    const bool tr = std::getenv("CZ_ALLOC_TRACE") != nullptr;  // (the top call sites, for addr2line)
+    allocstat::trace(tr);
     for (int k = 0; k < frames; k++) {
         const uint64_t before = allocstat::count();
         ctx.step();
@@ -19,6 +21,8 @@ Count measure(Ctx& ctx, int warm, int frames) {
         sum += n, c.worst = std::max(c.worst, n);
     }
     c.mean = (double)sum / frames;
+    if (tr) allocstat::dump(stdout, 30);
+    allocstat::trace(false);
     return c;
 }
 }  // namespace

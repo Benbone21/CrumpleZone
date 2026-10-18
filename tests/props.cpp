@@ -4,6 +4,8 @@
 // code-made rocks it was tuned on); these scenarios load the library and turn it on for
 // their own thread (props::ScopedRockScans).
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <map>
 #include <set>
 
@@ -277,4 +279,168 @@ SCENARIO(propRestOnRock, "props/rest-on-rock", "A Bronco settled with a wheel on
     ctx.metric("tire contact off the visible rock", gap * 100, "cm", 0, 12);
     ctx.metric("tire tread off the visible rock (hub distance - radius)", (mesh.distance(h) - wh.R) * 100, "cm", -5, 5);
     ctx.metric("rock height under the tire", wh.contact.y - w.height(wh.contact.x, wh.contact.z), "m", 0.15, 0.5);
+}
+
+// ---- Drawing them: LODs and culling (src/props.h; propdraw.cpp draws with these) ----------------------------------
+namespace {
+
+// The models in the bake (empty, and the checks skipped, where assets/props isn't there).
+std::vector<props::Model> bakedModels() {
+    std::vector<props::Model> out;
+    const std::string dir = props::assetDir();
+    if (dir.empty()) return out;
+    for (const props::ManifestEntry& e : props::readManifest(dir)) {
+        props::Model m;
+        if (props::loadModel(dir + "/" + e.name + ".prop", m)) out.push_back(std::move(m));
+    }
+    return out;
+}
+
+// FNV-1a over a LOD's vertices and indices: the very mesh, not just its size.
+uint64_t lodHash(const props::Lod& l) {
+    uint64_t h = 1469598103934665603ull;
+    auto bytes = [&](const void* p, size_t n) {
+        const unsigned char* c = (const unsigned char*)p;
+        for (size_t i = 0; i < n; i++) h = (h ^ c[i]) * 1099511628211ull;
+    };
+    for (const props::Sub& s : l.subs) {
+        bytes(&s.mat, sizeof s.mat);
+        for (const props::Vert& v : s.v) bytes(v.p, sizeof v.p), bytes(v.n, sizeof v.n), bytes(v.uv, sizeof v.uv);
+        bytes(s.idx.data(), s.idx.size() * sizeof(uint16_t));
+    }
+    return h;
+}
+
+uint32_t rng(uint32_t& s) { return s = s * 1664525u + 1013904223u; }
+double rnd(uint32_t& s, double lo, double hi) { return lo + (hi - lo) * (rng(s) >> 8) / 16777216.0; }
+
+}  // namespace
+
+SCENARIO(propLodBudgets, "props/lod-budgets", "Every scanned rock and cliff: three LODs, each well under the one before (the simplifier stopped at 196 on one LOD2), LOD0 within its budget; the near ones always drawn at LOD0") {
+    const std::vector<props::Model> models = bakedModels();
+    if (models.empty()) {
+        std::printf("     skip assets/props missing: run `make bake` (tools/bakeprops.cpp)\n");
+        return;
+    }
+    int bad = 0, nearBad = 0;
+    for (const props::Model& m : models) {
+        if (m.kind != props::KIND_ROCK && m.kind != props::KIND_CLIFF) continue;
+        const int budget = m.kind == props::KIND_CLIFF ? 3600 : 1900;
+        const bool ok = m.lods.size() == 3 && m.lods[0].tris() <= budget && m.lods[1].tris() * 3 <= m.lods[0].tris() && m.lods[2].tris() * 2 <= m.lods[1].tris() &&
+                        m.lods[2].tris() >= 40;
+        if (!ok) bad++, std::printf("     %s: %d / %d / %d tris\n", m.name.c_str(), m.lods.size() > 0 ? m.lods[0].tris() : 0, m.lods.size() > 1 ? m.lods[1].tris() : 0, m.lods.size() > 2 ? m.lods[2].tris() : 0), ctx.note(m.name + ": " + std::to_string(m.lods.size()) + " LODs, " + std::to_string(m.lods.empty() ? 0 : m.lods[0].tris()) + " tris at LOD0");
+        if (m.lods.size() != 3) continue;
+        // Up close (nearer than three times its size, at high and ultra) it's the full mesh.
+        const int tris[3] = {m.lods[0].tris(), m.lods[1].tris(), m.lods[2].tris()};
+        for (double detail : {1.0, 1.5})
+            for (double k = 0.1; k <= 3.0; k += 0.1)
+                if (props::solidLod(tris, 1.0, k, detail) != 0) nearBad++;
+    }
+    ctx.check("three LODs, LOD1 under a third of LOD0, LOD2 under half of LOD1, LOD0 in budget", bad == 0, std::to_string(bad) + " models off");
+    ctx.check("LOD0 nearer than three times its size", nearBad == 0, std::to_string(nearBad) + " near picks coarser");
+    // The pick only ever gets coarser with distance, and drops a copy only when it's a few pixels.
+    const int tris[3] = {1500, 400, 100};
+    int last = 0, backwards = 0;
+    for (double d = 0.5; d < 2000; d *= 1.05) {
+        const int l = props::solidLod(tris, 2.0, d, 1.0);
+        const int rank = l < 0 ? 3 : l;
+        if (rank < last) backwards++;
+        last = rank;
+        if (l < 0 && 2.0 / d * props::kLodRefPxPerRad > 3.5) backwards++;
+    }
+    ctx.check("coarser with distance, dropped only under ~3 px", backwards == 0);
+}
+
+SCENARIO(propLod0, "props/lod0-unchanged", "The scanned models' LOD0 is the mesh that was baked (vertex for vertex): the LOD work leaves what you see up close alone") {
+    const std::vector<props::Model> models = bakedModels();
+    if (models.empty()) {
+        std::printf("     skip assets/props missing: run `make bake` (tools/bakeprops.cpp)\n");
+        return;
+    }
+    // (CZ_LOD0_HASHES=1 prints these afresh, after a deliberate re-bake.)
+    static const std::map<std::string, uint64_t> want = {
+        {"rock_moss1_a", 0x27c09f61e0c6eceaull},
+        {"rock_moss1_b", 0x2fdd118ddf83faccull},
+        {"rock_moss1_c", 0x5013adf8b5030218ull},
+        {"rock_moss1_d", 0x33c73f997ac13aafull},
+        {"rock_moss1_e", 0x2336f83110bf85e1ull},
+        {"rock_moss1_f", 0x7360139c89509df5ull},
+        {"rock_moss2_a", 0xea0d4c4acf4ae3efull},
+        {"rock_moss2_b", 0xbc9ff87748d8d904ull},
+        {"rock_moss2_c", 0xfb4a30ab0c56968aull},
+        {"rock_moss2_d", 0x6ef93c3c9241c875ull},
+        {"rock_moss2_e", 0xa0fcc76680bf273dull},
+        {"rock_moss2_f", 0x5ae2009c606793a8ull},
+        {"rock_moss2_g", 0x03e8293a6c10095cull},
+        {"rock_07", 0x6a2ed36947003fafull},
+        {"rock_09", 0xf47bd9ea86d9bd15ull},
+        {"boulder_01", 0x7b786bc3a1f4e447ull},
+        {"stone_01", 0x7d67c15c0db036d1ull},
+        {"nama_boulder_03", 0x491e6f2aded9abb3ull},
+        {"nama_boulder_04", 0x01c2ecf0c63fa200ull},
+        {"nama_boulder_05", 0x4e3adbf318888d80ull},
+        {"nama_boulders_01a", 0xeed79d37fc8970c7ull},
+        {"nama_boulders_01b", 0xda2715a337cb8b16ull},
+        {"nama_stone_a", 0x9c5ef5099421a111ull},
+        {"nama_stone_b", 0xe438b47b3127a726ull},
+        {"nama_stone_c", 0x493c3684736d1a55ull},
+        {"nama_stone_d", 0x909d600c647de9caull},
+        {"nama_stone_e", 0xe1792e6c5dedb6aeull},
+        {"cliff_face_01", 0x88e0678b8922086full},
+        {"cliff_face_02", 0x92ca88cd8d363d78ull},
+        {"cliff_nama_01", 0x2242a69b99de209cull},
+    };
+    int bad = 0, seen = 0;
+    for (const props::Model& m : models) {
+        if (m.lods.empty()) continue;
+        const uint64_t h = lodHash(m.lods[0]);
+        char line[160];
+        std::snprintf(line, sizeof line, "{\"%s\", 0x%016llxull},", m.name.c_str(), (unsigned long long)h);
+        auto it = want.find(m.name);
+        if (std::getenv("CZ_LOD0_HASHES")) std::printf("%s\n", line);
+        if (it == want.end()) continue;
+        seen++;
+        if (it->second != h) bad++, ctx.note(std::string("changed: ") + line);
+    }
+    ctx.check("every LOD0 the same as baked", bad == 0 && seen == (int)want.size(), std::to_string(bad) + " changed, " + std::to_string(seen) + " of " + std::to_string(want.size()) + " found");
+}
+
+SCENARIO(propCulling, "props/culling", "Frustum culling (main view and shadow box) never drops a sphere or box that reaches into the view") {
+    uint32_t seed = 12345;
+    int dropped = 0, kept = 0, tried = 0;
+    for (int cam = 0; cam < 200; cam++) {
+        const V3 eye(rnd(seed, -300, 300), rnd(seed, 0, 80), rnd(seed, -300, 300));
+        const V3 at = eye + V3(rnd(seed, -1, 1), rnd(seed, -0.6, 0.3), rnd(seed, -1, 1));
+        M4 vp;
+        if (cam % 2) vp = perspective((float)rnd(seed, 0.6, 1.6), (float)rnd(seed, 1.0, 2.4), 0.05f, 6000.0f) * lookAt(eye, at, V3(0, 1, 0));
+        else {  // a shadow cascade's box
+            const float h = (float)rnd(seed, 20, 240);
+            vp = ortho(-h, h, -h, h, -500, 500) * lookAt(eye, eye - norm(V3(rnd(seed, -1, 1), rnd(seed, 0.3, 1), rnd(seed, -1, 1))), V3(0, 1, 0));
+        }
+        float pl[6][4];
+        props::frustumPlanes(vp, pl);
+        auto inside = [&](const V3& p) {
+            const float* m = vp.m;
+            const double x = m[0] * p.x + m[4] * p.y + m[8] * p.z + m[12], y = m[1] * p.x + m[5] * p.y + m[9] * p.z + m[13];
+            const double z = m[2] * p.x + m[6] * p.y + m[10] * p.z + m[14], w = m[3] * p.x + m[7] * p.y + m[11] * p.z + m[15];
+            return w > 0 && std::fabs(x) <= w && std::fabs(y) <= w && std::fabs(z) <= w;
+        };
+        for (int k = 0; k < 400; k++) {
+            const V3 c = eye + V3(rnd(seed, -250, 250), rnd(seed, -60, 60), rnd(seed, -250, 250));
+            const double r = rnd(seed, 0.1, 12);
+            // Seen if any point of it is in the view (its middle, and points over its surface and inside).
+            bool seen = inside(c);
+            for (int s = 0; s < 64 && !seen; s++) {
+                const V3 d = norm(V3(rnd(seed, -1, 1), rnd(seed, -1, 1), rnd(seed, -1, 1)));
+                seen = inside(c + d * (r * (s % 2 ? 1.0 : rnd(seed, 0, 1))));
+            }
+            tried++;
+            if (!seen) continue;
+            const V3 h(r, r, r);  // (a box round it, as a cell's box is round its copies' spheres)
+            if (!props::sphereInFrustum(pl, c, r) || !props::boxInFrustum(pl, c - h, c + h)) dropped++;
+            else kept++;
+        }
+    }
+    ctx.metric("seen and kept", kept, "", 1000, 1e9);
+    ctx.check("nothing seen is culled", dropped == 0, std::to_string(dropped) + " of " + std::to_string(kept + dropped) + " dropped (" + std::to_string(tried) + " tried)");
 }

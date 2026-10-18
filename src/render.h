@@ -4,9 +4,11 @@
 #include <vector>
 
 #include "daylight.h"
+#include "frameprof.h"
 #include "gl.h"
 #include "treedraw.h"
 #include "visibility.h"
+#include "occlusion.h"
 #include "groundtex.h"
 #include "lights.h"
 #include "modelkit.h"
@@ -60,8 +62,15 @@ struct RenderSettings {
     int ground = 2;             // terrain materials: 0 procedural, 1 photo-scanned (one tap), 2 full, 3 full + more layers
     int props = 2;              // scanned props (propdraw.h): 0 off (code-made scenery), 1 low, 2 high, 3 ultra
     float renderScale = 1.0f;   // scene resolution relative to the window, 0.5 .. 2
+    float drawDistance = 0;     // m: nothing drawn past it, fog thickening to hide the edge (0: everything, to the horizon)
+    bool sharpen = false;       // sharpen the scene as it's scaled to the window (for a low render scale)
     float blur = 0;             // 0..1: blurs the scene behind a menu
 };
+
+// Linked shader programs cached on disk (render.cpp): "" turns it off (the default; scripted runs leave it so).
+void setShaderCacheDir(const std::string& dir);
+struct ShaderCacheStats { int hits = 0, compiled = 0; };
+extern ShaderCacheStats gShaderCacheStats;
 
 enum DebugView { DEBUG_OFF, DEBUG_XRAY, DEBUG_BEAMS_ONLY, DEBUG_PARTS, DEBUG_VIEW_COUNT };  // (parts: no body skin, to see the engine and running gear)
 
@@ -103,6 +112,8 @@ public:
     } carried;
     // The world editor: redraw just what changed (terrain cells i, j on the 1 m grid,
     // inclusive), the water, or the objects.
+    // Hidden behind the ground from the camera? For the main pass only (never a shadow pass). See occlusion.h.
+    const TerrainOcclusion& occlusion() const { return occl_; }
     void updateTerrainRegion(const World& world, int i0, int j0, int i1, int j1);
     void updateWater(const World& world);
     void updateObjects(const World& world);
@@ -127,10 +138,20 @@ public:
     struct GeometryStats {
         unsigned terrainTriangles = 0, terrainFullTriangles = 0;
         unsigned terrainChunks = 0, terrainVisibleChunks = 0;
+        unsigned occlusionTests = 0, occlusionHidden = 0, terrainOccluded = 0;  // horizon tests this frame (all systems) and boxes they culled
         unsigned sceneryVertices = 0, shadowSceneryVertices = 0;
+        unsigned modelVertices = 0, shadowModelVertices = 0, modelDraws = 0, shadowModelDraws = 0;  // (of those: the code-made models, boxes and figures)
     };
     const GeometryStats& geometryStats() const { return geometryStats_; }
     double grassGpuMs() const { return grassGpuMs_; }  // (CZ_BENCH: the grass pass on the GPU, a few frames late)
+    const VegStats& vegStats() const { return vegStats_; }  // (trees, bushes, logs and grass: what they sent the GPU last frame)
+    // Frame timing (frameprof.h): the stage `p` starts now, on the CPU (frameProfile()) and, with gpuTiming, on the GPU
+    // (a timestamp query). gpuFrameBegin() at the top of each frame reads back a frame from a few frames ago.
+    bool gpuTiming = false;
+    bool syncTiming = false;  // (--bench-sync: wait for the GPU at each mark, so the CPU times are each stage's whole cost)
+    void passMark(FramePass p);
+    void preload(const World& world);  // (after init and settings: loads what the first frame would)
+    void gpuFrameBegin();
 
 private:
     struct CarSlot {
@@ -146,7 +167,7 @@ private:
     bool propsOk = false;     // its shaders built
     int propsApplied = -1;    // the props quality the scenery was last built for
     uint64_t treeSig_ = 0, scenerySig_ = 0, bushSig_ = 0;  // what the tree, scenery and bush meshes were last built from (unchanged: not rebuilt; an editor drag moves one thing)
-    GLuint bushVao = 0, bushVbo = 0;  // bushes and reeds (apart from the scenery: they seldom change when it does)
+    GLuint bushVao = 0, bushVbo = 0;  // reeds and logs (apart from the scenery: they seldom change when it does; the bushes themselves are instanced)
     int bushVertexCount = 0;
     GroundTextures groundTex;
     bool groundFailed = false;  // the textures couldn't be loaded: stay procedural
@@ -169,19 +190,35 @@ private:
     };
     struct StaticBatch { RenderBounds bounds; int first = 0, count = 0; };
     std::vector<TerrainChunk> terrainChunks;
+    TerrainOcclusion occl_;
     std::vector<StaticBatch> boxBatches, sceneryBatches, bushBatches;
     GeometryStats geometryStats_;
+    VegStats vegStats_;
     GLuint grassQuery_[4] = {};
     int grassQueryFrame_ = 0;
     bool grassQueryUsed_[4] = {};
     double grassGpuMs_ = 0;
+    struct GpuMarks {
+        static const int kMax = 48;
+        GLuint q[kMax] = {};
+        uint8_t pass[kMax] = {};
+        int n = 0;
+    };
+    GpuMarks gpuMarks_[4];
+    // AO, bloom and clouds ease in and out over ~0.6 s when they're switched (adaptive quality: no pops); -1 = not yet drawn.
+    float fadeAO_ = -1, fadeBloom_ = -1, fadeClouds_ = -1;
+    double fadeClock_ = 0;
+    float farZ_ = 6000;  // this frame's far plane (a draw distance brings it in)
+    int gpuMarkFrame_ = 0;
     void uploadBatches(GLuint& vao, GLuint& vbo, std::vector<Vtx>& vertices, std::vector<StaticBatch>& batches);
     void drawBatches(GLuint vao, const std::vector<StaticBatch>& batches, const M4& vp, bool shadow);
-    void drawBushes(const M4& vp, const V3& eye, bool shadow);  // (the bush batches within sight: small things, not drawn far off)
+    void drawBushes(const M4& vp, const V3& eye, bool shadow, VegStats::Pass& stats);  // (the reed and log batches within sight: small things, not drawn far off)
     void drawTerrain(const M4& vp, const View& view);
     GLuint boxVao = 0, boxVbo = 0;
     int boxVertexCount = 0;
-    TreeDraw trees_;                // the forest, instanced (treedraw.h)
+    TreeDraw trees_, bushes_;       // the forest and the bushes, instanced (treedraw.h)
+    // How far the vegetation's detail reaches (its LOD distances and reaches), by the scenery quality.
+    double vegDetail() const { static const double k[4] = {0.6, 0.7, 1.0, 1.3}; return k[std::min(std::max(settings.props, 0), 3)]; }
     GLuint progTree = 0, progTreeDepth = 0;
     int treeVertexCount = 0;
     ScanCover scanCover_;           // what the scanned props draw instead of the code-made meshes
@@ -239,6 +276,7 @@ private:
     void buildFont();
     void buildBackdrop(const World& world, std::vector<Vtx>& verts, std::vector<unsigned>& idx);
     void ensureShadows(int size);
+    void ensureGround(int quality);
     void ensureTargets(int w, int h, int samples);
     void postProcess(const View& view, const M4& proj);
     void prepareCars(const Sim& sim, DebugView debug);
