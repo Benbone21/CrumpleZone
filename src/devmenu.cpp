@@ -18,7 +18,7 @@ const char* groupHint(Group g) {
 }
 
 Action forKeyAction(KeyAction a) {
-    if (a >= KA_DEV_VEHICLE1 && a <= KA_DEV_VEHICLE5) return {SWAP_VEHICLE, a - KA_DEV_VEHICLE1};
+    if (a >= KA_DEV_VEHICLE1 && a <= KA_DEV_VEHICLE6) return {SWAP_VEHICLE, a - KA_DEV_VEHICLE1};
     switch (a) {
         case KA_DEV_SPAWN: return {SPAWN_PARKED, -1};
         case KA_DEV_TRAFFIC: return {SPAWN_TRAFFIC, 0};

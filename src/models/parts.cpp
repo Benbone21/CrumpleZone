@@ -633,6 +633,120 @@ void i4Junk(B& b, const P& p) {
     engineGround(b, [&] { i4(b, e); }, 0.65);
 }
 
+// ---- crate_engine_flat4 ----------------------------------------------------------------------
+
+// The air-cooled VW Type 1 four: crank axis on the origin, +X the pulley end (in a Beetle it
+// faces the back bumper), -X the flywheel flange. A short magnesium crankcase, two finned
+// barrels each side, finned heads with bail-held rocker covers, the tin "doghouse" fan
+// shroud across the top with the generator stand and the fan housing, dual carbs on the
+// heads under round chrome air cleaners, and the J-tube heater boxes under the heads into
+// one collector. The pan (the strainer plate) is 0.15 below the axis.
+void flat4(B& b, const Eng& e) {
+    const V3 mag = grime(e, V3(0.58, 0.58, 0.55), 0.9), alu = grime(e, V3(0.66, 0.66, 0.64), 0.9);
+    const V3 tin = grime(e, e.paint, 0.6), black = V3(0.05, 0.05, 0.055), steel = grime(e, V3(0.5, 0.47, 0.44), 0.6);
+    // Crankcase, split down the middle (its seam a dark line on top).
+    b.style(mag, METAL);
+    b.box(V3(0, 0, 0), V3(0.36, 0.24, 0.26), 0.025);
+    b.style(V3(0.2, 0.2, 0.2), METAL);
+    b.box(V3(0, 0.1215, 0), V3(0.34, 0.004, 0.006));
+    b.style(alu, METAL);
+    b.box(V3(0.02, -0.14, 0), V3(0.14, 0.02, 0.14), 0.005);  // oil strainer plate
+    rearFace(b, e, -0.20, 0.0, 0.30, 0.28, 0.13, mag, METAL);
+    // Barrels: finned, two each side.
+    for (int sd = -1; sd <= 1; sd += 2)
+        for (int c = -1; c <= 1; c += 2) {
+            const double x = c * 0.085;
+            b.style(V3(0.16, 0.16, 0.17), METAL);
+            zcyl(b, x, 0.0, sd * 0.13, sd * 0.29, 0.048, 8, false);
+            b.style(grime(e, V3(0.24, 0.24, 0.25), 0.5), METAL);
+            for (int f = 0; f < 3; f++) {
+                const double z = sd * (0.16 + 0.045 * f);
+                zcyl(b, x, 0.0, z - 0.004, z + 0.004, 0.062, 8);
+            }
+        }
+    // Heads, finned, and the rocker covers held on by their bails.
+    for (int sd = -1; sd <= 1; sd += 2) {
+        b.style(alu, METAL);
+        b.box(V3(0, 0.0, sd * 0.325), V3(0.34, 0.15, 0.07));
+        for (int f = 0; f < 3; f++) b.box(V3(0, -0.045 + 0.045 * f, sd * 0.325), V3(0.355, 0.008, 0.075));
+        b.style(e.chrome ? V3(0.78, 0.79, 0.82) : black, e.chrome ? CHROME : PAINT);
+        b.box(V3(0, -0.005, sd * 0.38), V3(0.30, 0.10, 0.04), 0.012);
+        b.style(steel, METAL);
+        b.box(V3(0, -0.005, sd * 0.403), V3(0.012, 0.11, 0.006));
+        // Spark plug leads up over the heads.
+        b.style(black, MATTE);
+        for (int c = -1; c <= 1; c += 2) b.tube({V3(c * 0.085, 0.05, sd * 0.345), V3(c * 0.07, 0.15, sd * 0.30), V3(0.05, 0.24, sd * 0.12)}, 0.006, 3, false, false);
+    }
+    // The fan shroud (the doghouse), its fan housing round at the pulley end, and the
+    // generator stand on top of it.
+    b.style(tin, PAINT);
+    b.box(V3(0.0, 0.205, 0), V3(0.32, 0.17, 0.50), 0.05);
+    for (int sd = -1; sd <= 1; sd += 2) b.box(V3(0.0, 0.135, sd * 0.30), V3(0.30, 0.05, 0.14));  // the tins over the heads
+    xcyl(b, 0.06, 0.18, 0.21, 0, 0.14, 12);
+    b.style(black, MATTE);
+    xcyl(b, 0.179, 0.182, 0.21, 0, 0.115, 12, false);  // fan inlet
+    b.style(grime(e, V3(0.15, 0.15, 0.16), 0.4), METAL);
+    xcyl(b, -0.10, 0.17, 0.34, 0, 0.058, 10);   // generator
+    b.style(grime(e, V3(0.08, 0.08, 0.09), 0.4), METAL);
+    b.box(V3(-0.03, 0.29, 0), V3(0.12, 0.04, 0.09));  // generator stand
+    // Distributor and oil filler beside the stand.
+    b.style(black, MATTE);
+    b.cyl(V3(-0.13, 0.12, 0.08), V3(-0.13, 0.20, 0.08), 0.03, 6);
+    b.style(V3(0.15, 0.15, 0.16), METAL);
+    b.cyl(V3(-0.15, 0.10, -0.10), V3(-0.15, 0.24, -0.10), 0.025, 6);
+    // Crank and generator pulleys on one belt.
+    b.style(grime(e, V3(0.3, 0.3, 0.32), 0.5), METAL);
+    pulleyX(b, V3(0.19, 0, 0), 0.085, 0.03, 10);
+    pulleyX(b, V3(0.19, 0.34, 0), 0.05, 0.022, 10);
+    beltX(b, 0.20, {{0, 0, 0.085}, {0, 0.34, 0.05}}, 0.016, V3(0.04, 0.04, 0.04));
+    // Dual carbs on the heads under round chrome air cleaners.
+    for (int sd = -1; sd <= 1; sd += 2) {
+        b.style(alu, METAL);
+        b.cyl(V3(0, 0.08, sd * 0.30), V3(0, 0.25, sd * 0.30), 0.03, 6, false);    // manifold riser
+        b.box(V3(0, 0.27, sd * 0.30), V3(0.10, 0.07, 0.08));       // carb body
+        b.style(V3(0.8, 0.8, 0.82), CHROME);
+        b.cyl(V3(0, 0.305, sd * 0.30), V3(0, 0.36, sd * 0.30), 0.085, 12);  // air cleaner
+        b.style(V3(0.06, 0.06, 0.065), MATTE);
+        b.cyl(V3(0, 0.30, sd * 0.30), V3(0, 0.307, sd * 0.30), 0.088, 12, false); // its filter band
+    }
+    // J-tubes from the exhaust ports under each head, and the collector back out past the pulley.
+    b.style(steel, METAL);
+    const V3 C(0.24, -0.17, 0.0);
+    for (int sd = -1; sd <= 1; sd += 2)
+        for (int c = -1; c <= 1; c += 2) {
+            const double x = c * 0.085;
+            b.tube({V3(x, -0.07, sd * 0.32), V3(x, -0.14, sd * 0.30), V3(x * 0.5 + 0.1, -0.17, sd * 0.20), V3(C.x, C.y, sd * 0.06)}, 0.018, 5, false, false);
+        }
+    b.box(C, V3(0.06, 0.07, 0.16));
+    b.cone(C + V3(0.03, 0, 0), C + V3(0.13, -0.01, 0), 0.035, 0.03, 10);
+}
+
+void f4Stand(B& b, const P& p) {
+    Eng e = optsFor(p);
+    e.chrome = p.i("chrome") != 0;
+    if (bare(p)) return flat4(b, e);
+    engineStand(b, 0.5, -0.24, V3(0.2, 0.22, 0.26), [&] { flat4(b, e); });
+}
+void f4Skid(B& b, const P& p) {
+    Eng e = optsFor(p);
+    e.chrome = p.i("chrome") != 0;
+    if (bare(p)) return flat4(b, e);
+    engineSkid(b, V3(0.85, 0.62, 0.1), [&] { flat4(b, e); }, 0.0, {V2(0.42, -0.14), V2(0.45, 0.05), V2(0.40, 0.30), V2(0.25, 0.40), V2(0.08, 0.40)}, 0.7);
+}
+void f4Junk(B& b, const P& p) {
+    Eng e = optsFor(p, p("wear"));
+    e.chrome = false;
+    if (bare(p)) return flat4(b, e);
+    engineGround(b, [&] { flat4(b, e); }, 0.6);
+}
+
+Reg crateEngineFlat4({"crate_engine_flat4", "CRATE ENGINE FLAT-4", "PARTS", "Career upgrade: an air-cooled VW flat four with its fan shroud and dual carbs", 0.8,
+                      {
+                          {"ON A STAND", "Fresh-built dual-carb Type 1 on a rolling engine stand", {enginePaintParam(2), choice("chrome", "CHROME COVERS", 1, {"OFF", "ON"})}, f4Stand},
+                          {"ON A SKID", "Crate long-block strapped to a shipping skid", {enginePaintParam(2), choice("chrome", "CHROME COVERS", 0, {"OFF", "ON"})}, f4Skid},
+                          {"JUNKYARD PULL", "Oily pull out of a dead Beetle on scrap timber", {enginePaintParam(2), num("wear", "GREASE", 0.7, 0, 1, 0.05), seedParam()}, f4Junk},
+                      }});
+
 Reg crateEngineV6({"crate_engine_v6", "CRATE ENGINE V6", "PARTS", "Career upgrade: a modern V6 crate engine with a plastic engine cover", 0.8,
                    {
                        {"ON A STAND", "Plastic-covered V6 bolted to a rolling engine stand", {enginePaintParam(2)}, v6Stand},

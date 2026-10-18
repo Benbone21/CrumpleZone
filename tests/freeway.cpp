@@ -33,7 +33,7 @@ VEHICLE_SCENARIO(topSpeed, "freeway/top-speed", "Flat out down the endless freew
     // blow them). Civic Si ~210 km/h; Jesko Attack with its big wing ~460 (drag-limited on 1,400 kg of downforce; the
     // low-drag Absolut is the 480+ km/h one); the trucks 205-225 (they used to stop at 130-180: 100 mph and
     // down, their tires' rating), the Blazer ~175.
-    static const struct { double lo, hi; } expect[] = {{200, 245}, {370, 470}, {210, 234}, {196, 218}, {210, 234}, {136, 150}, {208, 232}, {165, 183}};
+    static const struct { double lo, hi; } expect[] = {{200, 245}, {370, 470}, {210, 234}, {196, 218}, {210, 234}, {136, 150}, {208, 232}, {165, 183}, {150, 185}};  // (Baja Bug: ~160-175, its drag and a 2.0 L's ~115 hp, estimate)
     ctx.sim.world = World(MAP_FREEWAY);
     Car& c = ctx.add(spec, ctx.sim.world.spawn.x, kLaneZ, 0);
     c.blowoutsOn = false;  // (top speed is power, gearing and drag; tires past their rating are blowout/*)

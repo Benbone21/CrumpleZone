@@ -409,7 +409,10 @@ VEHICLE_SCENARIO(carPartsHover, "carparts/hover", "Aiming at a part names it: a 
         ctx.check("it's named, with its make and how it is", h.ok && h.tag.label() == "ENGINE: " + std::string(spec.engineName) + ", OK", h.ok ? h.tag.label() : "");
         PartHit blocked;
         const bool seen = pickCarPart(c, eye, mid - eye, 4.0, true, blocked) && blocked.tag.kind == PK_ENGINE;
-        ctx.check("the body hides it from above", !seen, seen ? "seen through the roof" : "");
+        if (spec.extras & EXTRA_BAJA)  // (a Baja Bug's engine stands bare out of its cut-off tail)
+            ctx.check("the bare engine is seen from above", seen, seen ? "" : "hidden");
+        else
+            ctx.check("the body hides it from above", !seen, seen ? "seen through the roof" : "");
         c.hydrolocked = true;
         PartHit fl;
         const bool got = pickCarPart(c, eye, mid - eye, 4.0, false, fl);

@@ -605,7 +605,7 @@ uniform int uVehicle;  // catalog body style: EF, Jesko, Bronco, 4Runner
 // y up, z across) and these are its lines: floor, belt, roof, hood front | front x,
 // half width, windshield base x, roof front x | B-pillar x, C-pillar x, liftgate
 // bottom y, liftgate half width | trim top y, roof tuck, rear x, liftgate top x.
-uniform int uShell;      // 1 4Runner, 2 Bronco, 3 Civic, 4 Tacoma (uShD.w: its cab's back x), 5 K5 Blazer
+uniform int uShell;      // 1 4Runner, 2 Bronco, 3 Civic, 4 Tacoma (uShD.w: its cab's back x), 5 K5 Blazer, 6 Baja Bug (uShD.w: where the roof meets the deck)
 uniform vec4 uShA, uShB, uShC, uShD;
 uniform vec4 uShE;       // front door's front edge x, gate top y, bumper top y, wheel opening top y
 out vec4 oCol;
@@ -756,6 +756,28 @@ void main(){
     } else if (region == 3) {
       // The tailgate's roll-down glass.
       win = rbox(P.zy, vec2(0.0, 0.5 * (shB + 0.06 + shT - 0.08)), vec2(shW2 - 0.17, 0.5 * (shT - 0.08 - shB - 0.06)), 0.05);
+    }
+  }
+  if (uShell == 6) {
+    win = 1.0;
+    if (region == 1) {
+      // 1969 Beetle: the door glass with its vent wing behind a slim A pillar, then the rounded
+      // rear quarter window under the falling roof.
+      float yc = 0.5 * (shYlo + shYhi), yh = 0.5 * (shYhi - shYlo);
+      float w1 = rbox(P.xy, vec2(0.5 * (shXB + shAx), yc), vec2(0.5 * (shAx - shXB) - 0.04, yh), 0.06);
+      w1 = max(w1, P.x - (shAx - 0.05));
+      float qEnd = shXrr + 0.42, qTop = shYhi - 0.06 - max(0.0, (shXB - 0.10 - P.x)) * 0.30;
+      float w2 = rbox(P.xy, vec2(0.5 * (shXB - 0.08 + qEnd), yc - 0.02), vec2(0.5 * (shXB - 0.08 - qEnd), yh - 0.02), 0.11);
+      w2 = max(w2, P.y - qTop);
+      win = min(w1, w2);
+    } else if (region == 2) {
+      float zRef = shW2 - 0.16, zLim = zRef - shTuck * (P.y - shB) / max(0.1, shT - shB);
+      float u = abs(P.z) / max(0.1, zLim) * zRef;
+      win = rbox(vec2(u, P.y), vec2(0.0, 0.5 * (shB + 0.05 + shT - 0.07)), vec2(zRef - 0.04, 0.5 * (shT - 0.07 - shB - 0.05)), 0.07);
+    } else if (region == 3) {
+      // The small rounded back window high in the falling roof.
+      float yb = shB + 0.55 * (shT - shB), yt = shT - 0.06;
+      win = rbox(P.zy, vec2(0.0, 0.5 * (yb + yt)), vec2(0.40, 0.5 * (yt - yb)), 0.07);
     }
   }
   bool isWindow = region >= 1 && region <= 3 && win < 0.0;
@@ -1326,6 +1348,88 @@ void main(){
       if (plate < 0.0) { base = vec3(0.9, 0.88, 0.8); kind = 1; }
     }
     if (kind == 7) k = P.y * 2.2;
+    if (kind == 3) {
+      j = (P.z > 0.0 ? W - 0.55 : 0.55) + (P.z > 0.0 ? -(az - lampZ) : (az - lampZ)) * 3.0;
+      k = uBody.z + (P.y - lampY) * 3.0 / 2.2;
+    }
+  }
+
+  if (uShell == 6) {
+    // Baja Bug: a short fiberglass nose with two round lamps set into it and a VW roundel, the
+    // hood lid's seam and chrome handle, black rockers where the running boards were, door seams
+    // with push-button handles, a race number on each door, little round tail lamps on the cut
+    // fenders at the back.
+    base = uPaint;
+    kind = 0;
+    float fw = max(fwidth(P.x) + fwidth(P.y) + fwidth(P.z), 1e-4);
+    float az = abs(P.z);
+    float lampY = shF + 0.5 * (shHood - shF) + 0.04, lampZ = shW2 - 0.34;
+    if (region == 7 || region == 8) {
+      base = vec3(region == 8 ? 0.025 : 0.05);
+      kind = 5;
+    } else if (region == 0) {
+      if (P.y < shF + 0.07) { base = vec3(0.035); kind = 1; }  // rocker (no running boards)
+      if (P.y > shF + 0.07 && P.y < shB + 0.01) {
+        float seam = max(lineAt(P.x, shXE, 0.004, fw), lineAt(P.x, shXB, 0.004, fw));
+        base = mix(base, vec3(0.012), seam * 0.9);
+        if (rbox(P.xy, vec2(shXB + 0.10, shB - 0.08), vec2(0.06, 0.012), 0.006) < 0.0) { base = vec3(0.8); kind = 2; }
+        // Race number: a white disc with a black ring mid-door, a block number on it.
+        vec2 q = vec2(P.x - 0.5 * (shXE + shXB), P.y - (shF + 0.62 * (shB - shF)));
+        float r = length(q);
+        if (r < 0.17) {
+          base = vec3(0.92, 0.91, 0.86);
+          if (r > 0.15) base = vec3(0.03);
+          vec2 d = q / 0.10 * vec2(P.z < 0.0 ? -1.0 : 1.0, 1.0);  // "19" as two blocky digits (read from either side)
+          bool one = abs(d.x + 0.42) < 0.09 && abs(d.y) < 0.62;
+          bool nine = (abs(d.x - 0.32) < 0.30 && abs(d.x - 0.32) > 0.12 && d.y > -0.05 && d.y < 0.62) ||
+                      (abs(d.x - 0.32) < 0.30 && abs(d.y - 0.53) < 0.09) || (abs(d.x - 0.32) < 0.30 && abs(d.y + 0.02) < 0.09) ||
+                      (abs(d.x - 0.53) < 0.09 && d.y > -0.62 && d.y < 0.62) || (abs(d.x - 0.32) < 0.30 && abs(d.y + 0.53) < 0.09);
+          if (one || nine) base = vec3(0.03);
+        }
+      }
+      // Front fender corners: amber turn lamps; the bobbed rear fenders: small round tail lamps.
+      if (P.x > shXf - 0.22 && P.x < shXf - 0.12 && abs(P.y - (shHood - 0.12)) < 0.03) kind = 8;
+      vec2 tq = vec2(P.x - (shXr + 0.10), P.y - (shF + 0.62 * (shB - shF)));
+      if (length(tq) < 0.055) kind = 4;
+      else if (length(tq) < 0.065) { base = vec3(0.75); kind = 2; }
+    } else if (region == 1) {
+      if (win < 0.014) { base = vec3(0.75); kind = 2; }  // chrome window trim
+      if (abs(P.x - (shAx - 0.24)) < 0.007 && P.y > shYlo && P.y < shYhi) { base = vec3(0.72); kind = 2; }  // vent wing post
+    } else if (region == 2) {
+      if (win < 0.014) { base = vec3(0.04); kind = 1; }  // rubber
+      if (P.y < shB + 0.05) { base = vec3(0.03); kind = 1; }  // cowl vents
+    } else if (region == 3) {
+      if (win < 0.014) { base = vec3(0.04); kind = 1; }
+    } else if (region == 10) {
+      // The front hood lid (its seam is the panel's own gap): a chrome handle and the VW roundel at its nose.
+      if (rbox(vec2(P.x, az), vec2(shXf - 0.22, 0.0), vec2(0.035, 0.06), 0.02) < 0.0) { base = vec3(0.8); kind = 2; }
+      vec2 rq = vec2(P.x - (shXf - 0.36), P.z);
+      float rr = length(rq);
+      if (rr < 0.085) {
+        // The VW roundel: a chrome ring, dark inside, a V over a W in chrome (forward is up).
+        vec2 u = rq / 0.085;
+        bool vee = u.x > -0.12 && u.x < 0.72 && abs(abs(u.y) - 0.45 * (u.x + 0.12)) < 0.08;
+        bool dub = u.x < -0.06 && u.x > -0.74 && abs(abs(abs(u.y) - 0.3) - 0.3 * (u.x + 0.74) / 0.68) < 0.08;
+        base = vec3(0.05, 0.06, 0.09); kind = 1;
+        if (rr > 0.072 || vee || dub) { base = vec3(0.82); kind = 2; }
+      }
+      if (P.x < shXa + 0.07 && P.x > shXa - 0.02) { base = vec3(0.03); kind = 1; }  // cowl vent
+    } else if (region == 4) {
+      base = uPaint;
+    } else if (region == 5) {
+      // The fiberglass nose: two round lamps in chrome rims, amber parking lamps under them,
+      // a dark lower lip, the tow loop.
+      if (P.y < shF + 0.10) { base = vec3(0.035); kind = 1; }
+      vec2 q = vec2(az - lampZ, P.y - lampY);
+      float r = length(q);
+      if (r < 0.105) { base = vec3(0.8); kind = 2; }
+      if (r < 0.088) kind = 3;
+      if (rbox(vec2(az, P.y), vec2(lampZ, lampY - 0.17), vec2(0.06, 0.022), 0.01) < 0.0) kind = 8;
+      float plate = rbox(P.zy, vec2(0.0, shF + 0.17), vec2(0.15, 0.055), 0.01);
+      if (plate < 0.0) { base = vec3(0.9, 0.88, 0.8); kind = 1; }
+    } else if (region == 6) {
+      if (P.y < shF + 0.08) { base = vec3(0.035); kind = 1; }
+    }
     if (kind == 3) {
       j = (P.z > 0.0 ? W - 0.55 : 0.55) + (P.z > 0.0 ? -(az - lampZ) : (az - lampZ)) * 3.0;
       k = uBody.z + (P.y - lampY) * 3.0 / 2.2;

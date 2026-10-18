@@ -76,6 +76,7 @@ enum BodyExtra : unsigned {
     EXTRA_SLIDERS = 2048,     // steel rock sliders along the sills
     EXTRA_WINCH = 4096,       // electric winch on the front bumper (V hooks it, Z reels in)
     EXTRA_TUBE_CAGE = 8192,   // tube-frame vehicles: the roll cage, tube chassis and bumpers are drawn from tubes (carvisual.cpp)
+    EXTRA_BAJA = 16384,       // Baja Bug kit: tube push bar, rear exo-cage over the bare engine, stinger exhaust, roof light bar
 };
 
 // Wheel and tire look.
@@ -120,6 +121,7 @@ struct VehicleSpec {
     bool tractionFitted = true;  // has traction control at all (the driver can still switch it off)
     int cylinders = 4;
     bool flatPlane = false;        // flat-plane crank V8: even firing, a high-pitched howl
+    bool airCooled = false;        // air-cooled flat four (a VW): no radiator, drawn with its fan shroud on top
     EngineTone voice;             // its own sound (engineaudio.h); voiceFor() fills its seed
     enum Induction { NATURAL, TURBO, SUPERCHARGER } induction = TURBO;
     double displacement = 1.5;     // liters, also sets the procedural engine voice
@@ -162,6 +164,7 @@ struct VehicleSpec {
     // Powertrain: engine and gearbox as one block on rubber mounts.
     double engineMass = 0, gearboxMass = 0;  // 0 = no powertrain (props)
     bool transverse = false;                  // crank across the car (front-drive) or along it
+    bool rearEngine = false;                  // hung out behind the rear axle, its transaxle ahead of it (an air-cooled VW): the block faces backward
     double engineX = 0, engineY = 0.5, engineZ = 0;  // block center
     double engineLen = 0.6, engineWid = 0.5, engineHgt = 0.5;  // along the crank, across, up
     double gearboxLen = 0.5;                  // behind the block (beside it, if transverse)
@@ -283,8 +286,8 @@ struct VehicleSpec {
 
 // Drivable vehicles.
 const std::vector<VehicleSpec>& vehicleCatalog();
-// The ones the game offers (the vehicle menu, keys 1-5, spawning), in that order: the
-// overlanders first, then the Jesko. The Civic, the UTV and the buggy stay in the catalog
+// The ones the game offers (the vehicle menu, keys 1-6, spawning), in that order: the
+// overlanders first, then the Jesko, then the Baja Bug. The Civic, the UTV and the buggy stay in the catalog
 // (the tests drive them, old levels may name them) but aren't offered.
 const std::vector<int>& listedVehicles();
 bool vehicleListed(int v);

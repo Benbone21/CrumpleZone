@@ -216,7 +216,7 @@ struct Maker {
         blk.Z = cross(blk.X, blk.Y);
         for (int b = 0; b < 8; b += 2) blk.rear += e[b];
         blk.rear = blk.rear * 0.25;
-        const char* id = vs.cylinders >= 7 ? "crate_engine_v8" : vs.cylinders >= 5 ? "crate_engine_v6" : "crate_engine_i4";
+        const char* id = vs.airCooled ? "crate_engine_flat4" : vs.cylinders >= 7 ? "crate_engine_v8" : vs.cylinders >= 5 ? "crate_engine_v6" : "crate_engine_i4";
         const Bnd b = bounds(id);
         const V3 sc = b.size();
         blk.scale = V3(clampTo(blk.size.x / sc.x, 0.75, 1.2), clampTo((blk.size.y - 0.1) / sc.y, 0.7, 1.2), clampTo(blk.size.z / sc.z, 0.75, 1.2));

@@ -1004,7 +1004,8 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
 
     std::vector<int> gearboxTail;
     if (!isProp) {
-        const V3 ca = vs.transverse ? V3(0, 0, 1) : V3(1, 0, 0);  // crank axis (block "front" end)
+        // (A rear engine faces backward: its gearbox, the transaxle, is ahead of it.)
+        const V3 ca = vs.transverse ? V3(0, 0, 1) : vs.rearEngine ? V3(-1, 0, 0) : V3(1, 0, 0);  // crank axis (block "front" end)
         const V3 up(0, 1, 0), across = cross(ca, up);
         const V3 c0(vs.engineX, vs.engineY, vs.engineZ);
         const double hl = vs.engineLen / 2, hwid = vs.engineWid / 2, hh = vs.engineHgt / 2;

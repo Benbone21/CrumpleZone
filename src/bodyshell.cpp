@@ -175,6 +175,10 @@ struct Style {
     double extraTuck = 0;      // the drawn greenhouse leans in this much more than the cage does
     bool panelOffset = false;  // doors and the like keep the drawn shape off their physics sheet (else they lie on it)
     double hoodLift = 0;       // the drawn hood's nose stands this much over the lattice's, fading out at the cowl
+    // The roof comes down to the belt at the cabin's back, and behind it the deck follows the
+    // lattice's top line (a rear-engine car's engine lid); with openTail its middle is left open
+    // over the engine and there's no rear panel at all (a Baja Bug's bare engine).
+    bool tailLine = false, openTail = false;
 };
 
 const Style* styleFor(const VehicleSpec& vs) {
@@ -198,8 +202,14 @@ const Style* styleFor(const VehicleSpec& vs) {
     // round wheel openings, an upright windshield and tailgate, the removable top over the
     // back half, a crease along the side at the belt.
     static const Style blazer{5, 0.06, 0.05, 0.02, 0.08, 0.03, 0.035, 0.045, 0.006, 0.012, 0.010, 0.0, 0.0, 2.2, 0.035};
+    // 1969 Beetle as a Baja Bug: round everything (a rounded nose and tail in plan, a round
+    // roof with a strong tumblehome falling in one curve to the back, fat shoulders over the
+    // short fiberglass hood), the fenders bobbed into big round openings, the tail cut off
+    // low over the bare engine.
+    static const Style baja{6, 0.34, 0.26, 0.10, 0.34, 0.05, 0.13, 0.17, 0.05, 0.07, 0.025, 0.05, 0.08, 2.0, 0.26, 0.0, 0.15, true, 0.0, true, true};
     const std::string id = vs.id;
-    return id == "blazer" ? &blazer
+    return id == "baja" ? &baja
+           : id == "blazer" ? &blazer
            : id == "4runner"  ? &runner
            : id == "bronco" ? &bronco
            : id == "civic"  ? &civic
@@ -218,6 +228,8 @@ struct ShellLines {
     bool bed = false;
     double xCab = -1e9, bedY = 0, railY = 0, railW = 0.10;
     std::vector<double> axles, hoodX, hoodY;
+    double xTail = -1e9;  // (tailLine: where the roof meets the belt at the back, and the deck behind it)
+    std::vector<double> tailX, tailY;
 
     ShellLines(const VehicleSpec& v, const Style& style) : vs(v), st(style) {
         F = vs.layerY[0];
@@ -250,6 +262,14 @@ struct ShellLines {
         }
         hoodX.push_back(xa);
         hoodY.push_back(B);
+        if (style.tailLine) {
+            const int n = (int)vs.profile[0].size();
+            xTail = latticeX(vs, gi1 + 1);
+            for (int i = gi1 + 1; i <= n; i++) {
+                tailX.push_back(latticeX(vs, i));
+                tailY.push_back(i < (int)vs.topLine.size() && vs.topLine[i] > 0 ? vs.topLine[i] : B);
+            }
+        }
     }
 
     double halfWidth(double x) const {
@@ -286,8 +306,21 @@ struct ShellLines {
             double shield = B + (T - B) * (xa - x) / std::max(0.05, xa - xRoofF);
             y = smin(shield, T, 0.12);  // rounded windshield header
         }
-        const double xBack = bed ? xCab : xr;
-        double gate = T - (T - B) * ((xBack + rakeR) - x) / rakeR;  // rear glass
+        if (st.tailLine && x < xTail) {  // the deck behind the cabin
+            y = tailY.back();
+            for (size_t k = 0; k + 1 < tailX.size(); k++)
+                if (x <= tailX[k] && x >= tailX[k + 1]) {
+                    double t = (x - tailX[k + 1]) / (tailX[k] - tailX[k + 1]);
+                    y = tailY[k + 1] + (tailY[k] - tailY[k + 1]) * t;
+                }
+            // (rounding the deck into the back of the roof)
+            const double back = B - (T - B) * (xTail - x) / rakeR;
+            return std::max(y, std::min(back, B));
+        }
+        const double xBack = bed ? xCab : st.tailLine ? xTail : xr;
+        // (A fastback's roof falls in a curve, not a straight rake: the Beetle's.)
+        double t = std::max(0.0, ((xBack + rakeR) - x) / rakeR);
+        double gate = st.tailLine ? T - (T - B) * t * t * (0.55 + 0.45 * t) : T - (T - B) * t;  // rear glass
         if (x < xBack + rakeR + 0.08) y = smin(y, gate, 0.09);
         return y;
     }
@@ -404,6 +437,10 @@ void shellArch(const VehicleSpec& vs, double& centerY, double& radius) {
         // Snug round arches over the 185/60R14s.
         centerY = vs.wheelRadius + 0.012;
         radius = vs.wheelRadius + 0.05;
+    } else if (id == "baja") {
+        // The fenders bobbed: big round openings cut high over the 30s (room for 33s).
+        centerY = vs.layerY[0] - 0.02;
+        radius = 0.50;
     } else if (id == "blazer") {
         // Round openings cut well up into the fenders (room for ~33s), from just below the rocker.
         centerY = vs.layerY[0] - 0.08;
@@ -526,6 +563,7 @@ bool buildBodyShell(const Car& car, VisualTemplate& t, bool merge) {
             }
     // End caps: the grille face and the liftgate's lower face, fanned from a center.
     for (int end = -1; end <= 1; end += 2) {
+        if (end < 0 && style->openTail) continue;  // (a Baja's cut tail: open, the engine out in the air)
         const int i = end > 0 ? NX - 1 : 0;
         std::vector<int> loop;
         for (int j = 0; j < NS; j++) loop.push_back(vid(i, j, 1));
@@ -605,7 +643,7 @@ bool buildBodyShell(const Car& car, VisualTemplate& t, bool merge) {
     }
     // The back opening: a liftgate (hinged at the top) or a swing gate (at the side).
     const char* gateName = panelIndex("LIFTGATE") >= 0 ? "LIFTGATE" : "TAILGATE";
-    const int pLift = panelIndex(gateName), pHood = panelIndex("HOOD");
+    const int pLift = panelIndex(gateName), pHood = panelIndex("HOOD"), pEngineLid = panelIndex("ENGINE COVER");
     const int pFrontBumper = panelIndex("FRONT BUMPER"), pRearBumper = panelIndex("REAR BUMPER");
     const double liftY = pLift >= 0 ? box[gateName].first.y : 1e9, liftZ = pLift >= 0 ? box[gateName].second.z : 0;
     const double frontBumperX = pFrontBumper >= 0 ? box["FRONT BUMPER"].first.x : 1e9;
@@ -616,6 +654,7 @@ bool buildBodyShell(const Car& car, VisualTemplate& t, bool merge) {
         int group, region, parent;
         bool glass;
     };
+    const int kHole = 99;  // (a face left out: an opening in the shell)
     std::vector<FaceInfo> info(raw.size());
     for (size_t f = 0; f < raw.size(); f++) {
         const RawFace& rf = raw[f];
@@ -633,8 +672,9 @@ bool buildBodyShell(const Car& car, VisualTemplate& t, bool merge) {
         } else if (L.inBed(c.x)) {
             region = rf.seg == SEG_EDGE ? REG_STEP : REG_BED;  // inside the bed: its walls and floor
         } else {
-            const double xBack = L.bed ? L.xCab : L.xr;
+            const double xBack = L.bed ? L.xCab : style->tailLine ? L.xTail : L.xr;
             region = c.x > L.xa ? REG_TOP : c.x > L.xRoofF - 0.03 ? REG_WINDSHIELD : c.x < xBack + L.rakeR + 0.05 ? REG_REAR_WINDOW : REG_ROOF;
+            if (style->tailLine && c.x < L.xTail + 0.01) region = REG_TOP;  // the deck behind the cabin
         }
         // The cab's back wall (between its last station and the bed's first): the back glass
         // and the panel round it.
@@ -645,7 +685,8 @@ bool buildBodyShell(const Car& car, VisualTemplate& t, bool merge) {
             if (inX(left ? "LEFT DOOR" : "RIGHT DOOR", c.x)) group = panelIndex(left ? "LEFT DOOR" : "RIGHT DOOR");
             else if (inX(left ? "LEFT REAR DOOR" : "RIGHT REAR DOOR", c.x)) group = panelIndex(left ? "LEFT REAR DOOR" : "RIGHT REAR DOOR");
         }
-        if (region == REG_TOP && pHood >= 0 && rf.seg == SEG_TOP && c.x < L.xf - 0.10 && std::fabs(c.z) < L.W2 - style->hoodInset) group = pHood;
+        if (region == REG_TOP && pHood >= 0 && rf.seg == SEG_TOP && c.x > L.xa && c.x < L.xf - 0.10 && std::fabs(c.z) < L.W2 - style->hoodInset) group = pHood;
+        if (region == REG_TOP && pEngineLid >= 0 && style->tailLine && rf.seg == SEG_TOP && c.x < L.xTail - 0.03 && std::fabs(c.z) < L.W2 - style->hoodInset) group = pEngineLid;
         if (region == REG_REAR_WINDOW && pLift >= 0 && std::fabs(c.z) < liftZ) group = pLift;
         // Bumper covers: the ends of the body below the bumper line.
         if (c.y < bumperTop - 0.02 && rf.seg != SEG_TOP) {
@@ -663,6 +704,10 @@ bool buildBodyShell(const Car& car, VisualTemplate& t, bool merge) {
         }
         if (parent < 0) parent = 0;
         info[f] = {group, region, parent, region == REG_CABIN_SIDE || region == REG_WINDSHIELD || region == REG_REAR_WINDOW};
+        // A Baja's cut tail: the deck stops short of the engine, which stands up out of it in the air.
+        if (style->openTail && !rf.cap && (rf.seg == SEG_TOP || rf.seg == SEG_EDGE) && c.x < L.xTail - 0.30 &&
+            std::fabs(c.z) < std::min(0.46, L.W2 - style->hoodInset - 0.06))
+            info[f].region = kHole;
     }
 
     // Weights per (grid vertex, panel): one binding shared by the merge test and the topological vertices.
@@ -844,7 +889,7 @@ bool buildBodyShell(const Car& car, VisualTemplate& t, bool merge) {
     std::map<std::pair<int, int>, int> topo;
     std::vector<std::array<int, 4>> faceTopo(raw.size());
     for (size_t f = 0; f < raw.size(); f++)
-        for (int c = 0; c < 4; c++) {
+        for (int c = 0; c < 4 && info[f].region != kHole; c++) {
             auto key = std::make_pair(raw[f].v[c], info[f].group);
             auto it = topo.find(key);
             if (it == topo.end()) {
@@ -866,6 +911,7 @@ bool buildBodyShell(const Car& car, VisualTemplate& t, bool merge) {
     std::vector<int> topoGrid(t.topoCount);
     for (const auto& e : topo) topoGrid[e.second] = e.first.first;
     for (size_t f = 0; f < raw.size(); f++) {
+        if (info[f].region == kHole) continue;
         VisualTemplate::Face face;
         face.parent = info[f].parent;
         face.glass = info[f].glass;
@@ -897,7 +943,7 @@ bool buildBodyShell(const Car& car, VisualTemplate& t, bool merge) {
     const float sp[16] = {(float)L.F,       (float)L.B,       (float)L.T,      (float)L.top(L.xf - 0.10),
                           (float)L.xf,      (float)L.W2,      (float)L.xa,     (float)L.xRoofF,
                           (float)fd.first.x, (float)rd.first.x, (float)liftY,  (float)liftZ,
-                          (float)trimY,     (float)L.tuck,    (float)L.xr,     (float)(L.bed ? L.xCab : L.xr + L.rakeR)};  // (a pickup: its cab's back)
+                          (float)trimY,     (float)L.tuck,    (float)L.xr,     (float)(L.bed ? L.xCab : style->tailLine ? L.xTail : L.xr + L.rakeR)};  // (a pickup: its cab's back; a fastback: where its roof meets the deck)
     std::copy(sp, sp + 16, t.shellParam);
     if (L.bed && pLift < 0) {  // (no gate panel: the lamps sit on the walls' ends, outboard of the drawn gate, and the chrome step bumper ends a hand below the floor)
         BedMouth bm;

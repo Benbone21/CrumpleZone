@@ -801,6 +801,69 @@ void buildExtras(const Car& car, PartBuilder& pb) {
         const double x = xAt(1.2);
         pb.box(V3(x, vs.layerY[0] - 0.03, 0), V3(0.45, 0.01, W * 0.3), V3(0.25, 0.25, 0.27), SM_METAL);
     }
+    if (vs.extras & EXTRA_BAJA) {
+        // The Baja kit, in 1.75 in black tube: a push bar on the nose with two round driving
+        // lights, an exo-cage over the bare engine down to a tube rear bumper, the stinger
+        // exhaust curling up out of the back, and a light bar on a low rack over the windshield.
+        const double tr = 0.022, xf = L / 2, xr = -L / 2;
+        auto tube = [&](const V3& a, const V3& b) { pb.cylinder(a, b, tr, 8, steel, SM_MATTE); };
+        auto lamp = [&](const V3& at, double r, const V3& face) {  // a round off-road lamp, facing +x
+            pb.cylinder(at - V3(0.07, 0, 0), at, r, 12, steel, SM_MATTE);
+            pb.cylinder(at, at + V3(0.006, 0, 0), r * 0.85, 12, face, SM_EMISSIVE);
+        };
+        // Push bar: two uprights from the frame head to over the nose's lip, a top bar and a low
+        // bar, braced back to the beam.
+        const double yb0 = floorY - 0.02, yb1 = topAt(0) + 0.06, zb = 0.42;
+        for (int sd = -1; sd <= 1; sd += 2) {
+            tube(V3(xf + 0.06, yb0, sd * zb), V3(xf + 0.09, yb1, sd * zb));
+            tube(V3(xf + 0.09, yb1, sd * zb), V3(xf - 0.16, floorY + 0.20, sd * zb));  // brace back into the nose's frame head
+            tube(V3(xf + 0.06, yb0, sd * zb), V3(xf - 0.35, floorY + 0.02, sd * 0.30));        // and under, to the beam
+            lamp(V3(xf + 0.16, yb1 + 0.10, sd * 0.30), 0.075, V3(1.0, 0.97, 0.88));
+            pb.box(V3(xf + 0.10, yb1 + 0.04, sd * 0.30), V3(0.02, 0.05, 0.02), steel, SM_MATTE);  // lamp tab
+        }
+        tube(V3(xf + 0.09, yb1, -zb), V3(xf + 0.09, yb1, zb));
+        tube(V3(xf + 0.07, yb0 + 0.16, -zb), V3(xf + 0.07, yb0 + 0.16, zb));
+        tube(V3(xf + 0.07, yb0 + 0.16, 0), V3(xf + 0.09, yb1, 0));  // (center upright)
+        pb.box(V3(xf + 0.10, yb0 + 0.05, 0), V3(0.03, 0.05, 0.10), V3(0.62, 0.06, 0.04), SM_PAINT);  // red tow loop plate
+        // Exo-cage: from the body at the rear axle over the engine, down to the rear bumper.
+        const auto ac = axleColumns(vs);
+        const double xa = ac.size() >= 2 ? xAt(ac.back()) + 0.05 : xr + 0.9;
+        const double yTop = vs.engineY + vs.engineHgt / 2 + 0.12, ytop0 = vs.layerY[1] + 0.05;
+        const double zc = std::min(W / 2 - 0.10, vs.engineWid / 2 + 0.08);
+        for (int sd = -1; sd <= 1; sd += 2) {
+            tube(V3(xa, ytop0, sd * (W / 2 - 0.12)), V3(xa - 0.30, yTop, sd * zc));      // up from the body
+            tube(V3(xa - 0.30, yTop, sd * zc), V3(xr - 0.02, yTop - 0.10, sd * zc));     // back over the engine
+            tube(V3(xr - 0.02, yTop - 0.10, sd * zc), V3(xr - 0.10, floorY + 0.12, sd * zc));  // down to the bumper
+            tube(V3(xr - 0.10, floorY + 0.12, sd * zc), V3(xr + 0.30, floorY - 0.02, sd * (zc - 0.05)));  // and under, to the frame horns
+            tube(V3(xa - 0.30, yTop, sd * zc), V3(xr - 0.10, floorY + 0.12, sd * zc));  // diagonal
+            // Little round tail lamps on the cage's back uprights.
+            pb.cylinder(V3(xr - 0.06, yTop - 0.18, sd * zc), V3(xr - 0.10, yTop - 0.18, sd * zc), 0.045, 10, steel, SM_MATTE);
+            pb.cylinder(V3(xr - 0.10, yTop - 0.18, sd * zc), V3(xr - 0.106, yTop - 0.18, sd * zc), 0.038, 10, V3(0.75, 0.04, 0.03), SM_EMISSIVE);
+        }
+        tube(V3(xa - 0.30, yTop, -zc), V3(xa - 0.30, yTop, zc));
+        tube(V3(xr - 0.02, yTop - 0.10, -zc), V3(xr - 0.02, yTop - 0.10, zc));
+        tube(V3(xr - 0.10, floorY + 0.12, -zc - 0.04), V3(xr - 0.10, floorY + 0.12, zc + 0.04));  // rear bumper
+        // Stinger: out of the collector under the pulley, back and up over the bumper, the tip cut on a slant.
+        const V3 col(vs.engineX - vs.engineLen / 2 - 0.08, vs.engineY - vs.engineHgt / 2 + 0.06, 0.0);
+        const V3 s1(xr - 0.12, col.y + 0.04, 0.0), s2(xr - 0.24, floorY + 0.55, 0.0);
+        pb.cylinder(col, s1, 0.032, 10, V3(0.42, 0.40, 0.38), SM_METAL, false);
+        pb.cylinder(s1, s2, 0.034, 10, V3(0.42, 0.40, 0.38), SM_METAL, false);
+        pb.cylinder(s2, s2 + norm(s2 - s1) * 0.10, 0.04, 10, V3(0.18, 0.16, 0.15), SM_METAL);  // the sooty tip
+        // Light bar on a low rack over the windshield header: six lamps.
+        if (gi1 >= 0) {
+            const double x0 = roofFront - 0.10, y = roofY + 0.10, hz = W / 2 - vs.roofTuck - 0.18;
+            for (int sd = -1; sd <= 1; sd += 2) {
+                tube(V3(x0 - 0.05, roofY - 0.02, sd * hz), V3(x0, y, sd * hz));
+                tube(V3(x0, y, sd * hz), V3(x0 - 0.75, roofY + 0.02, sd * hz));
+            }
+            tube(V3(x0, y, -hz), V3(x0, y, hz));
+            pb.box(V3(x0 + 0.01, y + 0.08, 0), V3(0.05, 0.05, hz * 0.95), steel, SM_MATTE);
+            for (int l = 0; l < 6; l++) {
+                const double z = -hz * 0.95 + hz * 1.9 * (l + 0.5) / 6;
+                pb.box(V3(x0 + 0.062, y + 0.08, z), V3(0.002, 0.035, hz * 0.95 / 6 - 0.01), V3(1.0, 0.98, 0.92), SM_EMISSIVE);
+            }
+        }
+    }
 }
 
 // Coachwork details are geometry, with local bindings so dents carry them along.
@@ -1166,7 +1229,7 @@ void buildParts(const Car& car, PartBuilder& pb) {
     // (The engine and gearbox are models on the block's nodes: carparts.h.)
     const V3 eng(vs.engineX, vs.engineY, vs.engineZ);
     const double ey = eng.y;
-    {
+    if (!vs.airCooled) {
         // Radiator behind the grille, kept under the (sometimes very low) nose.
         double hood = vs.layerY[vs.layerY.size() - 2];
         if (!vs.topLine.empty() && vs.topLine[0] > 0) hood = std::min(hood, 0.5 * (vs.topLine[0] + vs.topLine[std::min<size_t>(1, vs.topLine.size() - 1)]));
@@ -1185,7 +1248,9 @@ void buildParts(const Car& car, PartBuilder& pb) {
     // Exhaust: down from the engine, along the floor, out the back.
     const double exY = floorY - 0.06;
     const std::vector<int> axCols = axleColumns(vs);
-    if (vs.rearSusp != SOLID_AXLE || axCols.size() < 2) {
+    if (vs.rearEngine) {
+        // (Out the back of the engine itself: the Baja kit draws its stinger, extras below.)
+    } else if (vs.rearSusp != SOLID_AXLE || axCols.size() < 2) {
         const double exZ = W * 0.18;
         pb.cylinder(V3(eng.x - 0.1, ey - 0.15, exZ * 0.5), V3(eng.x - 0.45, exY, exZ), 0.03, 6, kMetal, SM_METAL, false);
         pb.cylinder(V3(eng.x - 0.45, exY, exZ), V3(-L / 2 + 0.95, exY, exZ), 0.03, 6, kMetal, SM_METAL, false);

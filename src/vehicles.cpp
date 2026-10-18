@@ -167,7 +167,7 @@ const std::vector<int>& listedVehicles() {
     static const std::vector<int> l = [] {
         std::vector<int> out;
         const auto& cat = vehicleCatalog();
-        for (const char* id : {"blazer", "bronco", "4runner", "tacoma", "jesko"})
+        for (const char* id : {"blazer", "bronco", "4runner", "tacoma", "jesko", "baja"})
             for (int i = 0; i < (int)cat.size(); i++)
                 if (std::string(cat[i].id) == id) out.push_back(i);
         return out;
@@ -192,7 +192,7 @@ int nextListedVehicle(int v, int dir) {
 }
 
 const std::vector<VehicleSpec>& vehicleCatalog() {
-    // Six vehicles (two of them crawl specials), built from their published specs (dimensions, weights,
+    // Nine vehicles (two of them crawl specials), built from their published specs (dimensions, weights,
     // engine outputs, gear ratios, suspension layouts). Where a maker doesn't publish
     // a number (weight split of the Jesko, its final drive...), it's a careful estimate.
     // Lattice: x forward from the middle, y up from the ground; masses in kg.
@@ -1370,6 +1370,153 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         ef.wheelStyle = WHEEL_HONDA_COVER;
         ef.extras = EXTRA_LIP_SPOILER;
 
+        // ---- VW Baja Bug (a 1969 Type 1 Beetle built for the desert) ----------------------------
+        // The classic air-cooled Beetle cut down for Baja: the fenders bobbed front and rear, a
+        // short fiberglass nose, the rear apron and engine lid gone so the motor sits out in the
+        // air under a tube exo-cage, the front torsion beam's trailing arms and the rear IRS
+        // trailing arms lifted and on long-travel shocks, 30 in all-terrains on 15 in wheels, a
+        // tube push bar and a light bar. Platform chassis with the body bolted on (unibody here),
+        // 2,400 mm (94.5 in) wheelbase; stock 1969 body 4,031 x 1,549 mm, tracks 1,311 / 1,354 mm
+        // (carsales.com.au spec listing); the Baja's cut nose and tail and wider wheels are
+        // estimates. Engine: a built 2.0 L Type 1 (2007 cc, dual carbs; ~115 hp at 5,200, ~160 N*m
+        // at 3,800, typical builder figures, estimate). Type 1 four-speed: 3.80 / 2.06 / 1.26 /
+        // 0.93, 4.375 final (VW). ~870 kg with the cage and a tank of fuel (stock Beetle ~820 kg;
+        // estimate), about 40/60 with the engine hung out behind the rear axle. (The trailing
+        // arms at both ends are drawn and built as short-long arms: the same wheel paths for
+        // the travel the game uses.)
+        VehicleSpec baja = v[0];
+        baja.name = "VW BAJA BUG";
+        baja.id = "baja";
+        baja.blurb = "1969 BEETLE  2.0L AIR-COOLED FLAT-4  4-SPEED  RWD  LONG TRAVEL";
+        // Nose (the cut fiberglass hood), front wheels, the cabin under the round roof, rear
+        // wheels, the bare engine out the back.
+        baja.profile = {
+            "#WW#####WW#",
+            "###########",
+            "...GGGGG...",
+        };
+        baja.layerY = {0.42, 0.78, 1.05, 1.60};  // (lifted: ~0.36 m under the pan)
+        baja.length = 3.85;
+        baja.width = 1.60;
+        baja.widthCells = 4;
+        baja.wheelbase = 2.40;
+        baja.frontOverhang = 0.62;
+        // The short hood falling to the push bar; behind the cabin, the stub of the deck over
+        // the engine, cut off low (the engine stands up out of it).
+        baja.topLine = {0.80, 0.93, 1.01, 0, 0, 0, 0, 0, 0, 0.94, 0.80, 0.72};
+        baja.bodyWidth = {0.74, 0.94, 1.0, 0.95, 0.92, 0.92, 0.92, 0.93, 0.97, 1.0, 0.92, 0.82};
+        baja.outerCellWidth = 0;
+        baja.noseDrop = baja.tailDrop = 0;
+        baja.bumperLift = 0.10;
+        baja.bumperLiftRear = 0.16;
+        baja.cornerRound = 0.12;
+        baja.roofTuck = 0.10;   // the Beetle's strong tumblehome (the drawn shell leans in more)
+        baja.rakeFront = 0.38;
+        baja.rakeRear = 0.78;   // the long, round back of the roof
+        baja.doors = 2;
+        baja.doorLength = 1.05;
+        baja.liftgate = false;
+        baja.structureMass = 185;  // the platform pan, its backbone tunnel and the steel body tub (the rear torsion housing is an item)
+        baja.panelMass = 70;       // doors (steel), fiberglass nose and the cut fenders, glass
+        baja.items = {
+            {"tube push bar", 9, 1.88, 0.58, 0},              {"fuel cell behind the seats (40 L, full)", 38, -0.45, 0.62, 0},
+            {"spare wheel strapped in where the back seat was", 22, -0.65, 0.80, 0},    {"front beam and torsion bars", 22, 1.30, 0.50, 0},
+            {"steering box", 6, 1.10, 0.68, -0.30},            {"dashboard", 8, 0.85, 0.95, 0},
+            {"race buckets and belts", 24, 0.15, 0.60, 0},     {"tools and recovery straps", 10, -0.50, 0.58, 0},
+            {"roll cage", 45, -0.15, 1.20, 0},                 {"battery", 15, -1.0, 0.60, 0.35},
+            {"carpets, trim and wiring", 20, 0.0, 0.50, 0},    {"rear exo-cage and bumper", 18, -1.80, 0.85, 0},
+            {"stinger exhaust", 10, -1.75, 0.75, 0},           {"oil cooler", 6, -1.45, 1.00, 0.25},
+            {"light bar", 8, 0.20, 1.68, 0},                   {"brakes", 16, 0.0, 0.45, 0},
+            {"rear torsion housing and spring plates", 40, -1.10, 0.45, 0},
+        };
+        baja.engineMass = 125;   // a built Type 1 with its fan shroud, tin, heater boxes and dual carbs
+        baja.gearboxMass = 40;   // the transaxle
+        baja.transverse = false;
+        baja.midEngine = true;   // (a transaxle: the differential is in the gearbox)
+        baja.rearEngine = true;
+        baja.airCooled = true;
+        baja.engineX = -1.60;
+        baja.engineY = 0.72;
+        baja.engineZ = 0;
+        baja.engineLen = 0.44;
+        baja.engineWid = 0.78;   // a flat four is wide and short
+        baja.engineHgt = 0.56;
+        baja.gearboxLen = 0.40;
+        baja.induction = VehicleSpec::NATURAL;
+        baja.turboLag = 0;
+        baja.cylinders = 4;
+        baja.flatPlane = false;
+        baja.displacement = 2.0;
+        baja.bodyStiffness = 1.25;    // the cage ties the tub together
+        baja.bodyStrength = 1.0;      // 1969 sheet steel, the cage and the seam welding a Baja gets
+        baja.frameStrength = 2.0;     // plated shock towers and beefed trailing arms, as a desert Bug gets
+        baja.noseStrength = 0.7;      // a fiberglass nose ahead of the beam: it crushes
+        baja.panelStrength = 0.6;
+        baja.pinStrength = 0.8;
+        baja.wheelRadius = 0.381;     // 30x9.50R15
+        baja.wheelWidth = 0.24;
+        baja.wheelWidthRear = 0;
+        baja.wellTireRadius = 0.42;   // the bobbed fenders clear ~33s
+        baja.wellTireWidth = 0.29;
+        baja.rimRadius = 0.1905;
+        baja.trackFront = 1.40;       // (stock 1,311 / 1,354 mm; wider-offset wheels)
+        baja.trackRear = 1.40;
+        baja.wheelMass = 22;
+        baja.hubMass = 14;
+        baja.frontSusp = WISHBONE;    // torsion-beam trailing arms (see above)
+        baja.rearSusp = WISHBONE;     // IRS trailing arms on long-travel shocks
+        baja.armLower = 0.34, baja.armUpper = 0.28;
+        baja.rideFreqFront = 1.30;
+        baja.rideFreqRear = 1.40;
+        baja.dampingRatio = 0.40;     // race shocks, two per wheel at the back
+        baja.arbFront = 3500;
+        baja.arbRear = 0;
+        // Wheel travel (ESTIMATE, a lifted desert Bug): ~21 cm front, ~28 cm rear.
+        baja.bumpFront = 0.09, baja.droopFront = 0.12;
+        baja.bumpRear = 0.12, baja.droopRear = 0.16;
+        baja.swayDisconnect = 0;
+        baja.heaveRate = baja.heaveGap = baja.heaveDamping = 0;
+        baja.tirePsi = 22;
+        baja.tireType = TIRE_ALL_TERRAIN;   // BFG-style all-terrains
+        baja.stockTireType = TIRE_ALL_TERRAIN, baja.stockTireRatingKmh = 180;  // (S-rated 30x9.50R15s: flat out it's ~176 km/h)
+        baja.tireGrip = 0.95;
+        baja.lateralGrip = 0.80;
+        baja.looseGrip = 1.05;    // light, on wide aired-down tires: it floats on sand and bites in dirt
+        baja.drive = VehicleSpec::RWD;
+        baja.diffFront = DIFF_OPEN;
+        baja.diffRear = DIFF_OPEN;  // the stock Type 1 differential (the engine's weight is the traction aid)
+        baja.transfer = XFER_NONE;
+        baja.lockerFront = baja.lockerRear = false;
+        baja.shaftLimit = 7000;     // 930-size CV axles (estimate)
+        baja.lowRange = 0;
+        baja.brakeFront = 1500;     // drums all round
+        baja.brakeRear = 1150;
+        baja.absEnabled = false;
+        baja.tractionFitted = false;
+        baja.dragArea = 1.10;       // Cd ~0.55 x 2.0 m^2 with the cage, the light bar, the spare on the roof and the big bare tires
+        baja.downforce = baja.downforceMax = 0;
+        // 2.0 L Type 1 build (estimate): ~115 hp at 5,200, ~160 N*m at 3,800.
+        baja.torque = {{0, 95}, {1000, 112}, {2000, 135}, {3000, 152}, {3800, 160}, {4500, 157}, {5200, 150}, {5800, 132}, {6200, 112}};
+        baja.idleRpm = 900;
+        baja.redline = 5800;
+        baja.gears = {3.80, 2.06, 1.26, 0.93};
+        baja.reverseRatio = 3.88;
+        baja.finalDrive = 4.375;
+        baja.shiftTime = 0.32;
+        baja.stallRpm = 0;
+        baja.lockupGear = 0;
+        baja.engineName = "2.0L AIR-COOLED FLAT-4";
+        baja.gearboxName = "TYPE 1 4-SPEED TRANSAXLE";
+        baja.lampStyle = LAMP_ROUND;
+        baja.grilleStyle = GRILLE_CENTER;
+        baja.extras = EXTRA_BAJA | EXTRA_SKID_PLATE;
+        baja.wheelStyle = WHEEL_OFFROAD_BLACK;
+        baja.paintColor[0] = 0.92f, baja.paintColor[1] = 0.70f, baja.paintColor[2] = 0.12f;  // Saturn yellow
+        baja.trimColor[0] = baja.trimColor[1] = baja.trimColor[2] = 0;
+        baja.trimTop = 0;
+        baja.coverColor[0] = 0.06f, baja.coverColor[1] = 0.06f, baja.coverColor[2] = 0.065f;
+        v.push_back(baja);
+
         // Each engine's sound (engineaudio.h): the exhaust pipe's note (Hz), how open it is, cam,
         // intake, valvetrain, timbre, pops, the burble of big uneven pulses, and the roar under load.
         auto voice = [&](const char* id, float pipeHz, float muffler, float lope, float intake, float mech, float rasp, float crackle, float rumble, float roar) {
@@ -1384,6 +1531,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         voice("utv", 300, 0.62f, 0.0f, 0.60f, 0.55f, 0.85f, 0.30f, 0.15f, 0.50f);    // Rotax turbo triple: raspy, clattery, braps
         voice("tacoma", 175, 0.25f, 0.0f, 0.35f, 0.25f, 0.40f, 0.0f, 0.0f, 0.20f);   // 2GR V6: smooth and quiet
         voice("blazer", 105, 0.38f, 0.15f, 0.60f, 0.40f, 0.12f, 0.15f, 0.55f, 0.55f); // carbureted small block on dual exhaust: deep, a little lope, a rumble
+        voice("baja", 215, 0.88f, 0.10f, 0.65f, 0.70f, 0.80f, 0.30f, 0.12f, 0.65f);   // air-cooled flat four out a stinger: loud, raspy, valvetrain and fan clatter, dual-carb honk
         for (size_t i = 0; i < v.size(); i++) v[i].model = (int)i;
         // Engines tuned ~15% over their factory ratings: rated torque is the crank's, and
         // with the drivetrain's spinning mass counted the stock figures felt flat in the game.
@@ -1398,8 +1546,9 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         v[5].fuelCapacity = 40;                         // UTV: 10.6 gal (Maverick X3)
         v[6].fuelCapacity = 80, v[6].jerryCan = 20;     // Tacoma: 21.1 gal
         v[7].fuelCapacity = 117;                        // Blazer: 31 gal
+        v[8].fuelCapacity = 40, v[8].jerryCan = 10;     // Baja Bug: the Beetle's 10.6 gal tank in the nose
         // A set of snow chains in the back of each off-roader (a pair per axle).
-        for (const char* id : {"bronco", "4runner", "buggy", "utv", "tacoma", "blazer"})
+        for (const char* id : {"bronco", "4runner", "buggy", "utv", "tacoma", "blazer", "baja"})
             for (VehicleSpec& s : v)
                 if (std::string(s.id) == id) s.snowChains = 4;
         return v;
