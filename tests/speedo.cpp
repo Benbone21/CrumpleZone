@@ -2,6 +2,7 @@
 // so gearing matches the textbook formula, bigger tires read low, wheelspin and aired-down
 // tires read high, locked wheels read zero, and mph and km/h agree.
 #include <cmath>
+#include <string>
 
 #include "../src/mods.h"
 #include "harness.h"
@@ -97,4 +98,32 @@ SCENARIO(speedoUnits, "speedo/units", "mph and km/h agree") {
         ctx.check("km/h is mph * 1.609 at " + std::to_string(ms) + " m/s", std::fabs(kmh - mph * 1.609344) < 1.0 + 0.0, std::to_string(kmh) + " vs " + std::to_string(mph));
         ctx.check("km/h is 3.6 times m/s at " + std::to_string(ms) + " m/s", std::fabs(kmh - ms * 3.6) <= 0.5);
     }
+}
+
+SCENARIO(speedoGovernor, "speedo/governor-tires", "A governed truck's limiter follows its tires' speed rating; an ungoverned car keeps none") {
+    int bronco = -1, jesko = -1;
+    const auto& cat = vehicleCatalog();
+    for (int v = 0; v < (int)cat.size(); v++) {
+        if (std::string(cat[v].name).find("BRONCO") != std::string::npos) bronco = v;
+        if (std::string(cat[v].name).find("JESKO") != std::string::npos) jesko = v;
+    }
+    ctx.check("the Bronco and the Jesko are in the catalog", bronco >= 0 && jesko >= 0);
+    if (bronco < 0 || jesko < 0) return;
+    auto withTires = [&](int v, const char* tire) -> const VehicleSpec* {
+        const auto& opts = modOptions(v, MOD_TIRES);
+        for (int k = 1; k < (int)opts.size(); k++)
+            if (opts[k].name.find(tire) != std::string::npos) {
+                ModSet m;
+                m.pick[MOD_TIRES] = k;
+                return &tunedSpec(v, m);
+            }
+        return nullptr;
+    };
+    ctx.check("stock Bronco governed at 100 mph", std::fabs(cat[bronco].speedLimit - 161) < 0.5);
+    const VehicleSpec* street = withTires(bronco, "STREET");
+    const VehicleSpec* mud = withTires(bronco, "MUD");
+    ctx.check("street tires raise it to their rating", street && std::fabs(street->speedLimit - tireSpeedRatingKmh(TIRE_STREET)) < 0.5 && street->speedLimit > 161);
+    ctx.check("mud-terrains keep about 100 mph", mud && std::fabs(mud->speedLimit - 161) < 0.5);
+    const VehicleSpec* jslick = withTires(jesko, "SLICK");
+    ctx.check("the Jesko stays ungoverned on any tires", jslick && jslick->speedLimit == 0);
 }

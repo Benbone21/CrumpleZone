@@ -48,6 +48,8 @@ std::string modPartTitle(const std::string& key);
 std::string modFindPart(const char* vehicleId, int slot, const char* name);
 // Catalog vehicle with these mods fitted. The same mods always give the same object
 // (cars keep a pointer to their spec); no mods gives the catalog entry itself.
+// The ECU speed limit (km/h) a governed truck gets on these tires.
+double tireSpeedRatingKmh(int tireType);
 const VehicleSpec& tunedSpec(int vehicle, const ModSet& mods);
 
 // Which mods are fitted to each vehicle in your garage: keys 1-4, parked spawns and

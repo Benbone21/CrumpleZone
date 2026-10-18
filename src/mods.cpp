@@ -705,6 +705,17 @@ std::string modFindPart(const char* vehicleId, int slot, const char* name) {
     return "";
 }
 
+// The speed rating a governed truck's ECU is set to for each tire (km/h): Q 160, R 170, S 180, H 210.
+double tireSpeedRatingKmh(int tireType) {
+    switch (tireType) {
+        case TIRE_MUD_TERRAIN: return 161;  // (Q: 100 mph)
+        case TIRE_SNOW: return 160;
+        case TIRE_ALL_TERRAIN: return 171;  // (R: 106 mph)
+        case TIRE_STREET: return 180;       // (S: 112 mph)
+        default: return 209;                // (H: 130 mph, the semi-slicks and slicks)
+    }
+}
+
 const VehicleSpec& tunedSpec(int vehicle, const ModSet& mods) {
     if (mods.stock()) return vehicleCatalog()[vehicle];
     static std::mutex lock;
@@ -725,6 +736,9 @@ const VehicleSpec& tunedSpec(int vehicle, const ModSet& mods) {
             opts[p].apply(s);
             s.modSummary += (s.modSummary.empty() ? "" : " / ") + opts[p].name;
         }
+        // A governed truck is limited to its tires' speed rating, so other tires move the limiter (an ungoverned car stays so).
+        const VehicleSpec& base = vehicleCatalog()[vehicle];
+        if (base.speedLimit > 0 && s.tireType != base.tireType) s.speedLimit = tireSpeedRatingKmh(s.tireType);
     }
     return *slot;
 }
