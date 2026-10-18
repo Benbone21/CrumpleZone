@@ -193,7 +193,7 @@ const Style* styleFor(const VehicleSpec& vs) {
     // nearly level from the grille back to the cowl) over a big grille, softly radiused
     // fender tops and corners, a cab with a gently curved roof, then the bed: slab sides up
     // to a rail at the cab's belt line, square at the tailgate; squarish wheel openings.
-    static const Style tacoma{4, 0.22, 0.07, 0.06, 0.16, 0.06, 0.07, 0.06, 0.025, 0.02, 0.012, 0.06, 0.03, 2.6, 0.07, 0.0, 0.0, true, 0.15};
+    static const Style tacoma{4, 0.15, 0.07, 0.06, 0.16, 0.06, 0.07, 0.06, 0.025, 0.02, 0.012, 0.06, 0.03, 2.6, 0.07, 0.0, 0.0, true, 0.15};
     // 1972 K5 Blazer: a long box with a flat hood and a flat roof, softly rounded corners,
     // round wheel openings, an upright windshield and tailgate, the removable top over the
     // back half, a crease along the side at the belt.
@@ -409,9 +409,9 @@ void shellArch(const VehicleSpec& vs, double& centerY, double& radius) {
         centerY = vs.layerY[0] - 0.08;
         radius = 0.47;
     } else if (id == "tacoma") {
-        // Tall openings with room over the 265/70R16s (a ~13 cm gap), raised with the body.
-        centerY = vs.layerY[0] - 0.08;
-        radius = 0.50;
+        // Tall openings a hand over the 265/70R16s (~10 cm), raised with the body.
+        centerY = vs.layerY[0] - 0.10;
+        radius = 0.48;
     } else {
         // 4Runner: arches sized for the factory 265/70R16 (radius 0.389 m) with a ~8 cm
         // gap, raised with the body: lifts and body lifts open up the gap over bigger tires.
@@ -429,6 +429,13 @@ double shellArchHeight(const VehicleSpec& vs, double d) {
 }
 
 bool hasBodyShell(const VehicleSpec& vs) { return styleFor(vs) != nullptr; }
+
+double shellTopY(const VehicleSpec& vs, double x) {
+    const Style* style = styleFor(vs);
+    if (!style) return vs.layerY.back();
+    const ShellLines L(vs, *style);
+    return L.top(x) + (L.greenhouse(x) ? style->roofCrown : style->hoodCrown);
+}
 
 double shellRoofHalfWidth(const VehicleSpec& vs) {
     const Style* style = styleFor(vs);

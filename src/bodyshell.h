@@ -24,6 +24,8 @@ double shellArchHeight(const VehicleSpec& vs, double d);
 bool hasBodyShell(const VehicleSpec& vs);
 // Half width of the drawn roof's flat top, inside its rounded edges (W/2 without a shell).
 double shellRoofHalfWidth(const VehicleSpec& vs);
+// Height of the drawn body's top (hood, roof) at x along it, on the center line.
+double shellTopY(const VehicleSpec& vs, double x);
 
 // A pickup's bed at its open end (rest frame, m): the end of the walls, the floor, the rail's top
 // and the half-width between the walls. False for anything without a bed.

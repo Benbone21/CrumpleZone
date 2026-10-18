@@ -1122,7 +1122,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         tacoma.gearboxName = "6-SPEED AUTO";
         tacoma.lampStyle = LAMP_RECT;
         tacoma.grilleStyle = GRILLE_WIDE;
-        tacoma.extras = EXTRA_SKID_PLATE;
+        tacoma.extras = EXTRA_SKID_PLATE | EXTRA_FLARES;  // (the TRD Pro's black flare moldings: drawn only)
         tacoma.paintColor[0] = 0.50f, tacoma.paintColor[1] = 0.51f, tacoma.paintColor[2] = 0.49f;  // Cement
         tacoma.trimColor[0] = tacoma.trimColor[1] = tacoma.trimColor[2] = 0;
         tacoma.trimTop = 0;
