@@ -515,6 +515,21 @@ public:
     // State.
     bool sleeping = false;
     double stillTime = 0;
+    // Traffic LOD (trafficlod.cpp): a driving AI car far from everyone is a rigid proxy riding the road: it sleeps
+    // (no soft-body step) while its nodes are re-placed each frame from a pose on the road and the terrain, frozen in
+    // the shape (damage and all) it had. wake() ends it with positions, velocities and wheel spin already right.
+    bool proxy = false;
+    double lodCalm = 0;  // s it has been fit to become a proxy
+    struct Proxy {
+        std::vector<V3> local;  // node offsets from the center of mass, in the chassis frame it entered with
+        Quat qd;                // that frame relative to the pose it follows
+        Quat prevQ;
+        V3 dd, prevCom;         // the center of mass relative to the pose (in its frame), and where it was last frame
+        int idx = 0;            // road sample and distance along its segment (travel direction aiDir)
+        double off = 0, speed = 0, lat = 0, head = 0, yaw = 0;
+        double fx = 0, fz = 0;  // the pose's place (x, z): the road point, a little behind
+    } lod;
+    void endProxy();
     double sleptControls[4] = {};  // throttle, brake, handbrake and steer when it fell asleep
     V3 bbMin, bbMax;
     double impactEnergy = 0;  // joules absorbed by deformation since last read
@@ -548,6 +563,7 @@ public:
     void wake() {
         sleeping = false;
         stillTime = 0;
+        if (proxy) endProxy();
     }
     bool isProp() const { return wheels.empty(); }
     // Recovery gear (recovery.cpp).
@@ -629,6 +645,9 @@ private:
     void wheelBodyContact(double h);
     double gearRatio(int g) const;
 };
+
+// How hard (m/s^2) the AI driver corners this car (its bend speeds).
+double aiCornerAccel(const Car& c);
 
 class Sim {
 public:
@@ -745,6 +764,16 @@ public:
     // Next drivable vehicle after index `from` (wraps around).
     int nextVehicle(int from) const;
     void addCar(const VehicleSpec& vs, const V3& pos, double yaw, const V3& color);
+    // Traffic LOD (trafficlod.cpp): off by default (the game turns it on). lodWatch: extra places that count as a player
+    // (on-foot position, camera) beyond the cars.
+    bool trafficLod = false;
+    std::vector<V3> lodWatch;
+    static constexpr double kLodEnter = 150;  // m: nobody nearer than this (and than the wake radius plus kLodHyst) and a driving AI car may become a proxy
+    static constexpr double kLodWake = 80;    // m: a proxy wakes when anything is nearer than this plus kLodLead s of closing speed
+    static constexpr double kLodLead = 3.0;   // s of travel (both bodies' speeds) added to the wake radius: predicted contact
+    static constexpr double kLodHyst = 50;    // m between waking and being allowed back
+    static constexpr double kLodAiWake = 40;  // m: another AI car (it brakes for the proxy itself)
+    int proxyCount() const;
     // Nearest loop-road sample to p; searches around `hint` when it is >= 0.
     int nearestRoadIndex(const V3& p, int hint) const;
 
@@ -760,6 +789,9 @@ private:
     int colorIndex = 0;
     void placeProps();
     void aiDrive(int self, double dt);
+    bool lodClear(int self, double vSelf, bool entering) const;  // nothing within the wake radius (entering: plus the hysteresis)
+    bool lodEnter(int self, double dt);
+    void lodStep(int self, double dt);
     std::vector<Frame> aiFrames;
     std::vector<double> aiAlong, aiLat;
     int trafficDir = 1;

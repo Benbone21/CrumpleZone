@@ -171,6 +171,9 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
     swayDisconnected = false;
     shaftsBroken = 0;
     sleeping = false;
+    proxy = false;
+    lod = Proxy();
+    lodCalm = 0;
     stillTime = 0;
     impactEnergy = damage = 0;
     shoveV = shoveP = V3();

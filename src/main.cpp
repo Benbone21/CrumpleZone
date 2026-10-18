@@ -83,6 +83,7 @@ struct Options {
     int physicsThreads = -1;  // -1 saved setting; 0 automatic; otherwise a CPU thread budget
     int width = 1600, height = 900;
     bool fullscreen = false, audio = true, vsync = true;
+    bool trafficLod = true;  // --no-traffic-lod: far AI traffic runs the full soft-body sim too
     bool simAsync = true;  // --no-sim-async: step the physics on the frame thread, not alongside the GPU wait
     bool pad = true;  // --no-pad: don't open game controllers (also CZ_NO_PAD=1)
     // Scripted capture (for testing): fixed 60 Hz steps, writes PPM screenshots.
@@ -308,6 +309,7 @@ Options parseArgs(int argc, char** argv) {
         if (a == "--fullscreen") o.fullscreen = true;
         else if (a == "--no-audio") o.audio = false;
         else if (a == "--no-sim-async") o.simAsync = false;
+        else if (a == "--no-traffic-lod") o.trafficLod = false;
         else if (a == "--no-vsync") o.vsync = false;
         else if (a == "--physics-threads") {
             const std::string value = next();
@@ -1731,6 +1733,7 @@ int main(int argc, char** argv) {
     const int physicsThreads = resolvePhysicsThreads(settings.physicsThreads);
     try {
         sim.setPhysicsThreads(physicsThreads);
+        sim.trafficLod = opt.trafficLod;
         std::printf("Physics: %d threads (small scenes use the main thread)\n", physicsThreads);
     } catch (const std::system_error& error) {
         std::fprintf(stderr, "Physics workers unavailable; using one thread: %s\n", error.what());
@@ -3685,6 +3688,23 @@ int main(int argc, char** argv) {
                 startPilot();
             }
             if (opt.script == "pilot") up = down = left = right = false;
+            if (opt.script == "trafficlod") {  // screenshots of far traffic as proxies and the handover: one AI car, you 600 m up the road facing it
+                up = down = left = right = false;
+                if (frame == 5) sim.spawnTraffic(*sim.cars[sim.player].spec);
+                if (frame == 8 && sim.cars.size() > 1) {
+                    const auto& road = sim.world.loopRoad;
+                    const int n = (int)road.size();
+                    int j = sim.cars.back().aiIndex;
+                    double acc = 0;
+                    while (acc < 600) acc += len(road[(j + 1) % n] - road[j]), j = (j + 1) % n;
+                    const V3 t = norm(V3(road[(j + 1) % n].x - road[j].x, 0, road[(j + 1) % n].z - road[j].z));
+                    const V3 p = road[j] - V3(-t.z, 0, t.x) * 2.6;  // (the oncoming lane)
+                    sim.teleportPlayer(p.x, p.z, std::atan2(t.z, -t.x));
+                }
+                if (frame > 8 && frame % 60 == 0 && sim.cars.size() > 1)
+                    std::printf("trafficlod: frame %d, %d proxies, car %.0f m away, %.1f m/s, %s\n", frame, sim.proxyCount(), len(sim.cars.back().frame().com - sim.cars[sim.player].frame().com),
+                                len(sim.cars.back().frame().vel), sim.cars.back().proxy ? "PROXY" : "full sim");
+            }
             if (opt.script == "aim" && frame == 20) {  // screenshot of picking a winch anchor
                 startRecoveryPick(ROPE_WINCH);
             }
@@ -4031,6 +4051,9 @@ int main(int argc, char** argv) {
                     net.sendGame(b);
                 }
             }
+            sim.lodWatch.clear();  // (where traffic counts someone: on foot, and the camera)
+            if (walker.active) sim.lodWatch.push_back(walker.p);
+            sim.lodWatch.push_back(lastView.eye);
             if (!sim.paused) sim.drive(up, down, left, right, hb, dt);
             {  // ---- the throttle limit: W gives the cap, built up over the response time (throttle.h; the pad is shaped in padLogic.apply) ----
                 Car& kc = sim.cars[sim.player];
