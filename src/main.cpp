@@ -4457,7 +4457,9 @@ int main(int argc, char** argv) {
             static double usualDt = 1.0 / 60;
             double owed = simCatchUp(dt, usualDt) - simCredit;
             simCredit = owed < 0 ? -owed : 0;
-            simDt = (simAsyncSteps + sim.advance(std::max(0.0, owed), simMaxSteps(sim.h))) * sim.h;
+            const bool bgNow = !scripted && !(SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS);
+            const int maxSteps = bgNow ? std::max(simMaxSteps(sim.h), (int)(0.075 / sim.h + 0.5)) : simMaxSteps(sim.h);  // (15 fps in the background: still real time)
+            simDt = (simAsyncSteps + sim.advance(std::max(0.0, owed), maxSteps)) * sim.h;
             simAsyncSteps = 0;
             renderer.passMark(FP_GAME);
             const double physicsMs = (double)(SDL_GetPerformanceCounter() - physicsStart) * 1000 / freq;
@@ -5143,7 +5145,10 @@ int main(int argc, char** argv) {
                 }
             }
         }
-        if (settings.adaptiveQuality && !probe.active() && !menu.open && !garageUI.open && !editor.active && (!scripted || opt.adaptive == 1)) {
+        const bool inBackground = !scripted && !(SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS);  // (another window has the focus: throttled to 15 fps below)
+        if (inBackground) {
+            // (frames are slow on purpose: nothing for adaptive quality to judge)
+        } else if (settings.adaptiveQuality && !probe.active() && !menu.open && !garageUI.open && !editor.active && (!scripted || opt.adaptive == 1)) {
             adaptiveQuality.evaluate((float)frameTimeMs, adaptiveSettings);
         } else {
             adaptiveQuality.reset(settings.gfx);
@@ -5596,7 +5601,7 @@ int main(int argc, char** argv) {
             if (frame > allocWarm) allocFrames.push_back(n - allocLast), allocAllSum += all - allocAllLast;
             allocLast = n, allocAllLast = all;
         }
-        if (const int cap = fpsCap(); !scripted && cap > 0 && SDL_GL_GetSwapInterval() == 0) {  // FPS TARGET with VSync off: the frame cap
+        if (const int cap = inBackground ? 15 : fpsCap(); !scripted && cap > 0 && (inBackground || SDL_GL_GetSwapInterval() == 0)) {  // FPS TARGET with VSync off: the frame cap (15 fps whenever the window is in the background, to spare the machine)
             const uint64_t until = now + freq / (uint64_t)cap;
             for (uint64_t t = SDL_GetPerformanceCounter(); t < until; t = SDL_GetPerformanceCounter()) {
                 const double leftMs = (double)(until - t) * 1000 / freq;
