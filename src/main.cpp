@@ -2821,8 +2821,9 @@ int main(int argc, char** argv) {
         }
     };
 
-    // CZ_ALLOC=1 (with --shot-frames): heap allocations per frame on this thread after frame 60; CZ_ALLOC_TRACE=1 adds the top call sites.
+    // CZ_ALLOC=N (with --shot-frames; N: the frames to warm up, default 60): heap allocations per frame on this thread afterwards; CZ_ALLOC_TRACE=1 adds the top call sites.
     const bool allocWatch = std::getenv("CZ_ALLOC") != nullptr;
+    const int allocWarm = allocWatch && std::atoi(std::getenv("CZ_ALLOC")) > 1 ? std::atoi(std::getenv("CZ_ALLOC")) : 60;
     std::vector<uint64_t> allocFrames;
     uint64_t allocLast = 0, allocAllLast = 0, allocAllSum = 0;
     // --load-tour: every 45 frames do the next thing that used to hitch (a map switch, a vehicle swap, a spawn) and report the
@@ -5098,8 +5099,8 @@ int main(int argc, char** argv) {
         SDL_GL_SwapWindow(win);
         if (allocWatch) {
             const uint64_t n = allocstat::count(), all = allocstat::countAll();
-            if (frame == 60 && std::getenv("CZ_ALLOC_TRACE")) allocstat::trace(true);
-            if (frame > 60) allocFrames.push_back(n - allocLast), allocAllSum += all - allocAllLast;
+            if (frame == allocWarm && std::getenv("CZ_ALLOC_TRACE")) allocstat::trace(true);
+            if (frame > allocWarm) allocFrames.push_back(n - allocLast), allocAllSum += all - allocAllLast;
             allocLast = n, allocAllLast = all;
         }
         if (!scripted && settings.fpsTarget > 0 && SDL_GL_GetSwapInterval() == 0) {  // FPS TARGET with VSync off: the frame cap

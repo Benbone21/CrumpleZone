@@ -81,8 +81,11 @@ int TriGrid::key(int x, int y, int z) {
 }
 
 void TriGrid::clear() {
-    for (int b : used) bucket[b].clear();
+    if (val.capacity() < 8192) val.reserve(8192), nxt.reserve(8192), used.reserve(1024);  // (room for a car's cells: it grows once, not as cars come close)
+    for (int b : used) head[b] = -1;
     used.clear();
+    val.clear();
+    nxt.clear();
 }
 
 void TriGrid::insert(int tri, const V3& mn, const V3& mx) {
@@ -93,13 +96,17 @@ void TriGrid::insert(int tri, const V3& mn, const V3& mx) {
         for (int y = y0; y <= y1; y++)
             for (int z = z0; z <= z1; z++) {
                 int b = key(x, y, z);
-                if (bucket[b].empty()) used.push_back(b);
-                bucket[b].push_back(tri);
+                const int i = (int)val.size();
+                val.push_back(tri);
+                nxt.push_back(-1);
+                if (head[b] < 0) head[b] = i, used.push_back(b);
+                else nxt[tail[b]] = i;
+                tail[b] = i;
             }
 }
 
-const std::vector<int>& TriGrid::query(const V3& p) const {
-    return bucket[key((int)std::floor(p.x / kCell), (int)std::floor(p.y / kCell), (int)std::floor(p.z / kCell))];
+TriGrid::Chain TriGrid::query(const V3& p) const {
+    return {this, head[key((int)std::floor(p.x / kCell), (int)std::floor(p.y / kCell), (int)std::floor(p.z / kCell))]};
 }
 
 V3 Car::groupAvg(const std::vector<int>& g) const {
@@ -669,18 +676,18 @@ void Car::chassisGroupForces(ChassisFrame& cf, double h) {
     }
     // The steel between nodes that bent takes the same set (so it holds the new shape, and
     // counts as damage).
-    if (!flowed.empty()) {
-        if (cf.beamsAt.empty()) {
-            cf.beamsAt.assign(n, {});
-            for (size_t i = 0; i < beams.size(); i++) {
-                const Beam& b = beams[i];
-                if (b.type != BEAM_FRAME) continue;
-                const int ka = cf.slot[b.a], kb = cf.slot[b.b];
-                if (ka < 0 || kb < 0) continue;
-                cf.beamsAt[ka].push_back((int)i);
-                cf.beamsAt[kb].push_back((int)i);
-            }
+    if (cf.yieldDist > 0 && cf.beamsAt.empty()) {  // (built on the first frame, not at the first crash: that frame would stall)
+        cf.beamsAt.assign(n, {});
+        for (size_t i = 0; i < beams.size(); i++) {
+            const Beam& b = beams[i];
+            if (b.type != BEAM_FRAME) continue;
+            const int ka = cf.slot[b.a], kb = cf.slot[b.b];
+            if (ka < 0 || kb < 0) continue;
+            cf.beamsAt[ka].push_back((int)i);
+            cf.beamsAt[kb].push_back((int)i);
         }
+    }
+    if (!flowed.empty()) {
         for (int k : flowed)
             for (int bi : cf.beamsAt[k]) {
                 Beam& b = beams[bi];
