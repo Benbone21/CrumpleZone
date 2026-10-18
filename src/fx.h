@@ -15,8 +15,29 @@ struct FxEvents {
     int tirePops = 0;  // tires blown
 };
 
+// How long tire tracks and skid marks last, how far they're drawn and how many are kept, by quality
+// preset (perf.h QualityPreset: LOW MEDIUM HIGH ULTRA POTATO; CUSTOM counts as MEDIUM).
+struct MarkLimits {
+    size_t cap;       // most marks kept: a ring, the oldest go first (a mark is ~20 cm of one tire's track)
+    float life;       // seconds before a mark has faded out
+    float fadeDist;   // m: marks are gone past this, fading in over the last 30%
+};
+MarkLimits markLimits(int preset);
+constexpr size_t kMaxMarkCap = 16000;  // (the ring's storage: the largest cap)
+
+struct MarkStats {
+    size_t marks = 0, drawn = 0;  // alive; and how many of those the last buildSkids drew
+    size_t bytes = 0;             // ring storage
+};
+
 class Effects {
 public:
+    void setLimits(const MarkLimits& m);  // the quality changed
+    MarkStats markStats() const;
+    // The i-th oldest live mark (tests, debugging): where it starts, how wide it is, whether it's black rubber.
+    struct MarkInfo { V3 p; double width; bool rubber; double age; };
+    MarkInfo markInfo(size_t i) const;
+    double clock() const { return clock_; }  // simulated seconds since the last clear (marks age by it)
     // simDt is the simulated time that passed this frame (0 while paused, small in slow motion).
     FxEvents update(Sim& sim, double simDt);
     // Appends the tire tracks and skid marks within sight of `eye`: decal strips laid on
@@ -51,17 +72,25 @@ private:
         float tint[3];    // what the mark does to the ground's color, at full strength
         float alpha;
         RutKind kind;
+        float born;       // clock_ when laid
+        float look;       // shader tread code: tire type, smear and direction (packed, see fx.cpp)
     };
     struct Track {
         bool active = false;
         V3 p, side, n;
         float along = 0, depth = 0, lip = 0;
+        float roll = 0;  // tire surface travel since the last mark (m, signed)
         int segs = 0;  // segments laid since this strip started (its lips rise over the first few)
     };
 
     std::vector<Particle> particles;
-    std::vector<Rut> skids;  // a ring: the oldest are overwritten (and fade out first)
-    size_t skidHead = 0;
+    std::vector<Rut> skids;  // a ring (storage never grows past kMaxMarkCap): the oldest go first, fading out before they do
+    size_t skidHead = 0, skidCount = 0;  // (oldest, how many alive)
+    MarkLimits lim_ = markLimits(1);
+    double clock_ = 0;
+    mutable size_t lastDrawn_ = 0;
+    const Rut& markAt(size_t i) const { return skids[(skidHead + i) % skids.size()]; }  // i-th oldest
+    float markFade(size_t i, const Rut& r, const V3& eye, double far) const;  // 0..1: age, ring position and distance
     std::vector<std::vector<Track>> tracks;  // [car][wheel]
     std::vector<const Car*> trackOwner;
     uint32_t rng = 0x9E3779B9u;
@@ -81,7 +110,7 @@ private:
     }
     void emit(Kind kind, const V3& p, const V3& v, float life, float s0, float s1, float r, float g, float b, float a);
     // Extends a wheel's track to ground point p: a new segment every ~20 cm.
-    void addSkid(Track& t, RutKind kind, const V3& p, const V3& n, double halfWidth, double depth, double lip,
-                 const float tint[3], float alpha, double alongScale);
-    float rutFade(size_t i) const;  // 0..1: the oldest marks fade away before they're overwritten
+    void addSkid(const World& world, Track& t, RutKind kind, const V3& p, const V3& n, double halfWidth, double depth, double lip,
+                 const float tint[3], float alpha, float look);
+    void push(const Rut& r);
 };

@@ -1479,8 +1479,15 @@ void main(){
     float u = vUv.x, au = abs(u), along = vUv.y;
     float edge = 1.0 - smoothstep(0.8, 1.0, au);
     vec3 f = pow(vCol.rgb, vec3(2.2));
-    if (vMode < 3.995) {
-      float depth = clamp(vMode - 3.0, 0.0, 1.0);     // 0..1 = 0..15 cm
+    if (vMode < 99.0) {
+      // vMode = 3 + look + depth; the look is the tire type (0..6) + 7 * (smear 0..3 + 4 * reversing).
+      float m = vMode - 3.0;
+      float L = floor(m + 0.01);
+      float depth = clamp(m - L, 0.0, 1.0);     // 0..1 = 0..15 cm
+      float rest = floor((L + 0.5) / 7.0);
+      float type = floor(L + 0.5 - rest * 7.0);
+      float revf = floor(rest / 4.0 + 0.001);
+      float smear = rest - 4.0 * revf;
       // Surface frame from the screen derivatives: the ground normal, and which way
       // across and along the mark run.
       vec3 dp1 = dFdx(vPos), dp2 = dFdy(vPos);
@@ -1494,13 +1501,26 @@ void main(){
       // Groove: a flat floor, walls up to the edges (steeper the deeper it is).
       float wall = smoothstep(0.62, 0.95, au);
       float slope = (6.0 * au * (1.0 - au) + 0.4) * smoothstep(0.55, 0.7, au) * (1.0 - smoothstep(0.95, 1.0, au)) * (0.35 + 2.6 * depth);
-      // Tread print on the floor: chevron lugs every 16 cm (gone where it's too fine to see).
-      float tv = along / 0.16 + 0.45 * au;
+      // Tread print on the floor, by tire: lugs (across the mark) every pitch, a chevron lean, ribs along it.
+      float pitch = 0.16, lugA = 0.55, chev = 0.45, ribA = 0.0, boldAo = 0.15;
+      if (type < 0.5)      { pitch = 0.08; lugA = 0.12; chev = 0.2; ribA = 0.4; }      // street: fine sipes, ribs
+      else if (type < 1.5) { pitch = 0.16; lugA = 0.05; chev = 0.1; ribA = 0.25; }     // semi-slick
+      else if (type < 2.5) { }                                                          // all-terrain
+      else if (type < 3.5) { pitch = 0.25; lugA = 0.95; chev = 0.7; boldAo = 0.3; }     // mud-terrain: big blocks
+      else if (type < 4.5) { lugA = 0.0; chev = 0.0; boldAo = 0.0; }                    // slick: a smooth band
+      else if (type < 5.5) { pitch = 0.08; lugA = 0.35; chev = 0.3; ribA = 0.15; }      // winter: siped
+      else                 { pitch = 0.2; lugA = 0.9; chev = 0.0; boldAo = 0.25; }      // chains: cross links
+      float keep = 1.0 - smear / 3.0;                 // a spinning or locked tire smears its print out
+      float tv = along / pitch + (revf > 0.5 ? -chev : chev) * au;
       float fw = fwidth(tv);
-      float tread = (1.0 - smoothstep(0.25, 0.6, fw)) * (1.0 - wall) * smoothstep(0.06, 0.16, au);
-      float lugSlope = -sin(6.2832 * tv) * 0.55 * tread;
-      vec3 N1 = normalize(N0 - T * sign(u) * slope + B * lugSlope);
-      float ao = 1.0 - (0.25 + 0.45 * depth) * (1.0 - wall) - 0.15 * tread * (0.5 + 0.5 * cos(6.2832 * tv));
+      float tread = (1.0 - smoothstep(0.25, 0.6, fw)) * (1.0 - wall) * smoothstep(0.06, 0.16, au) * keep;
+      float lugSlope = -sin(6.2832 * tv) * lugA * tread;
+      float ribSlope = cos(6.2832 * au * 2.5) * ribA * (1.0 - wall) * keep;
+      float sm = smear / 3.0;                         // wheelspin: furrows running along the mark
+      float furrow = 0.5 + 0.5 * sin(u * 26.0 + 2.5 * sin(along * 0.7));
+      ribSlope += (furrow - 0.5) * 0.9 * sm * (1.0 - wall);
+      vec3 N1 = normalize(N0 - T * (sign(u) * slope + ribSlope) + B * lugSlope);
+      float ao = 1.0 - (0.25 + 0.45 * depth + 0.15 * sm) * (1.0 - wall) - boldAo * tread * (0.5 + 0.5 * cos(6.2832 * tv)) - 0.18 * sm * furrow * (1.0 - wall);
       float sh = shadowAt(vPos, N0);
       vec3 lit0 = ambientAt(N0) + kSunCol * max(dot(N0, uSun), 0.0) * sh;
       vec3 lit1 = ambientAt(N1) + kSunCol * max(dot(N1, uSun), 0.0) * sh;
