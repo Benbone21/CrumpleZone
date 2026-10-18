@@ -2907,6 +2907,31 @@ int main(int argc, char** argv) {
             running = false;
         }
     };
+    // CZ_FRAMELOG=1 with --bench: a histogram, and every frame over 1.5x the median with its stages (CPU/GPU ms).
+    struct FrameRec { int bf; double ms, cpu[FP_COUNT], gpu[FP_COUNT]; };
+    std::vector<FrameRec> frameRecs;
+    auto printFrameLog = [&] {
+        if (frameRecs.empty()) return;
+        std::vector<double> t;
+        for (auto& f : frameRecs) t.push_back(f.ms);
+        std::sort(t.begin(), t.end());
+        const double med = t[t.size() / 2];
+        static const double edges[] = {2.0, 2.25, 2.5, 2.75, 3.0, 3.5, 4, 5, 6, 8, 12, 1e9};
+        int h[12] = {};
+        for (double v : t) { int k = 0; while (v >= edges[k]) k++; h[k]++; }
+        std::printf("framelog: median %.3f ms; histogram (ms): <2:%d", med, h[0]);
+        for (int k = 1; k < 12; k++) std::printf(" <%g:%d", edges[k], h[k]);
+        std::printf("\n");
+        int n = 0, last = -100;
+        for (auto& f : frameRecs) if (f.ms > med * 1.5) {
+            std::printf("framelog: f%d (+%d) %.2f ms |", f.bf, f.bf - last, f.ms);
+            for (int i = 0; i < FP_COUNT; i++) if (f.cpu[i] > 0.15 || f.gpu[i] > 0.15) std::printf(" %s %.2f/%.2f", framePassName((FramePass)i), f.cpu[i], f.gpu[i]);
+            std::printf("\n");
+            last = f.bf;
+            if (++n >= 400) break;
+        }
+        frameRecs.clear();
+    };
     // --bench: a lap round where the player starts, the same every run.
     const int benchWarm = opt.benchWarm;
     BenchStats benchStats;
@@ -3012,6 +3037,7 @@ int main(int argc, char** argv) {
                           renderer.settings.renderScale, renderer.settings.shadows, renderer.settings.msaa, renderer.settings.ao, renderer.settings.bloom,
                           renderer.settings.grass, renderer.settings.ground, renderer.settings.props, opt.benchSync ? " synced" : "");
             std::fputs(BenchStats::report(benchSt.result(), title + extra).c_str(), stdout);
+            printFrameLog();
             printCarBench();
             if (opt.benchSuite) {  // (filed, then one F3 shot of this run, then the next)
                 suite.record(mapName(sim.world.map), presetName(presetOf(settings.gfx)));
@@ -3037,6 +3063,13 @@ int main(int argc, char** argv) {
                 logged = wall, spikesLogged++;
             }
             if (frameTimeMs < 250) typical = frame <= 10 ? frameTimeMs : typical + (std::min(frameTimeMs, typical * 3) - typical) * 0.05;
+        }
+        if (opt.bench && bf > benchWarm && bf <= benchWarm + opt.bench && std::getenv("CZ_FRAMELOG")) {  // (every measured frame's stages, for the slow-frame report)
+            FrameRec fr;
+            fr.bf = bf, fr.ms = frameTimeMs;
+            std::copy(frameProfile().last, frameProfile().last + FP_COUNT, fr.cpu);
+            for (int i = 0; i < FP_COUNT; i++) fr.gpu[i] = frameProfile().gpuValid ? frameProfile().lastGpu[i] : -1;
+            frameRecs.push_back(fr);
         }
         if (opt.bench && bf > benchWarm && bf <= benchWarm + opt.bench) benchSt.add(frameTimeMs, frameProfile().last, frameProfile().gpuValid ? frameProfile().lastGpu : nullptr);
         renderer.gpuTiming = dbg.on || opt.bench;

@@ -416,6 +416,7 @@ int placedVariant(const Placed& pl) {
     return mk::variantFor(*d, mk::placementKey(pl.id, pl.p.x, pl.p.z));
 }
 
+mk::Mesh buildPlacedMesh(const Placed& pl);
 const mk::Mesh& placedMesh(const Placed& pl) {
     if (pl.set.empty() && pl.variant < 0 && !pl.bare) {
         const mk::ModelDef* d = mk::findModel(pl.id);
@@ -445,7 +446,17 @@ const mk::Mesh& placedMesh(const Placed& pl) {
     }
     auto it = built.find(key);
     if (it != built.end()) return it->second;
-    mk::Mesh& m = built[key];
+    return built[key] = buildPlacedMesh(pl);
+}
+
+mk::Mesh buildPlacedMesh(const Placed& pl) {
+    mk::Mesh m;
+    const int variant = placedVariant(pl);
+    auto quant = [] (double v) {
+        if (v == 0 || !std::isfinite(v)) return v;
+        const double step = std::ldexp(1.0, std::ilogb(std::fabs(v)) - 5);
+        return std::round(v / step) * step;
+    };
     if (const mk::ModelDef* d = mk::findModel(pl.id)) {
         mk::P p = mk::pickedParams(*d, variant);
         for (const auto& kv : pl.set) p.v[kv.first] = quant(kv.second);
