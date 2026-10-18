@@ -68,3 +68,8 @@ Change: at map load every terrain chunk (including the distant backdrop) is chec
 Small, map-dependent (Frontier has a paved circuit and pad near the start, so most of what it sees still needs paving). Not applied on other platforms; it should help them too but I have not measured there.
 
 Remaining ideas for the ground, none done: 2x MSAA at HIGH (about 4 ms), baking the low-frequency noise fields to a texture (about 3 ms), a lighter shadow filter on the ground (3 ms), and rendering the ground at lower resolution where the player can't see the difference.
+
+## Far ground on the cheap tier (Apple only)
+Tier-2 ground (MEDIUM/HIGH) chunks whose nearest point is past 300 m are drawn with the LOW-tier ground shader (one tap a layer, noise from a texture; its noise is the same numbers, so patches stay in place). The full shader already drops most of its layers out there. A third sweep after the two paving sweeps.
+
+HIGH, average frame time (ms), before this -> after: Frontier 42.5 -> 39.1, Open Country 34.6 -> 33.0, Boulder Gully 40.8 -> 39.4. With a 150 m cutoff the gain is larger (38.0, 32.0, 38.0) but more of the distant hills change (1.2 to 2.8% of pixels differ by over 8/255 from the full shader, against 0.6 to 1.4% at 300 m; the far hillsides pick up a paler patch). The cutoff is `kFarGround` in `drawTerrain` (render.cpp). This is a small, deliberate visual change at distance on a Mac only.

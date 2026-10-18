@@ -2772,7 +2772,7 @@ void Renderer::drawBushes(const M4& vp, const V3& eye, bool shadow, VegStats::Pa
     }
 }
 
-void Renderer::drawTerrain(const M4& vp, const View& view, const std::function<void(GLuint)>& setup, GLuint noProcProg, GLuint procProg) {
+void Renderer::drawTerrain(const M4& vp, const View& view, const std::function<void(GLuint, bool)>& setup, GLuint noProcProg, GLuint procProg, GLuint farProg) {
     BindVertexArray(terrainVao);
     geometryStats_.terrainChunks = (unsigned)terrainChunks.size();
     // Keep collision-scale detail nearby; select distance from the nearest point
@@ -2800,12 +2800,19 @@ void Renderer::drawTerrain(const M4& vp, const View& view, const std::function<v
         for (const auto& o : terrainOrder_) drawChunk(o);
         return;
     }
-    // Two sweeps, each nearest first: the chunks that can hold paving with the full shader, the rest with the build without it.
-    for (int pass = 0; pass < 2; pass++) {
-        setup(pass == 0 ? procProg : noProcProg);
+    // Three sweeps, each nearest first: near chunks that may hold paving with the full shader, near chunks without it with the build lacking that
+    // code, and far chunks (past kFarGround, where the full shader already drops most of its layers) with the cheap LOW tier, whose noise is the same
+    // numbers, so patches stay where they are.
+    constexpr float kFarGround = 300.0f;
+    for (int pass = 0; pass < 3; pass++) {
+        if (pass == 2 && !farProg) break;
+        setup(pass == 0 ? procProg : pass == 1 ? noProcProg : farProg, pass == 2);
         BindVertexArray(terrainVao);
-        for (const auto& o : terrainOrder_)
-            if (terrainChunks[o.second].proc == (pass == 0)) drawChunk(o);
+        for (const auto& o : terrainOrder_) {
+            const bool far = farProg && o.first > kFarGround;
+            const int cls = far ? 2 : terrainChunks[o.second].proc ? 0 : 1;
+            if (cls == pass) drawChunk(o);
+        }
     }
 }
 
@@ -4763,10 +4770,10 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     if (groundFailed || !groundTex.ok()) gq = 0;
     progTerrain = gq ? terrainProgram(groundTier(gq)) : 0;
     if (!progTerrain) gq = 0;
-    std::function<void(GLuint)> groundSetup;
-    GLuint noProcProg = 0;
+    std::function<void(GLuint, bool)> groundSetup;
+    GLuint noProcProg = 0, farProg = 0;
     if (gq) {
-        groundSetup = [&](GLuint prog) {
+        groundSetup = [&](GLuint prog, bool cheap) {
             setLighting(prog);
             uniformM4(prog, "uModel", m4identity());
             bindTerrainTex(prog);
@@ -4784,23 +4791,23 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
             ActiveTexture(GL_TEXTURE0);
             Uniform1i(uniformLocation(prog, "uGroundA"), 3);
             Uniform1i(uniformLocation(prog, "uGroundB"), 4);
-            if (groundTier(gq) <= 1) {  // (the cheap tiers read their noise from a texture)
+            if (cheap || groundTier(gq) <= 1) {  // (the cheap tiers read their noise from a texture)
                 ActiveTexture(GL_TEXTURE0 + 5);
                 BindTexture(GL_TEXTURE_2D, noiseTex);
                 ActiveTexture(GL_TEXTURE0);
                 Uniform1i(uniformLocation(prog, "uNoiseTex"), 5);
             }
         };
-        groundSetup(progTerrain);
+        groundSetup(progTerrain, groundTier(gq) <= 1);
 #ifdef __APPLE__
         // (Apple: the paving code makes the whole shader slower, so chunks with none of it use a build without it; same picture.)
-        if (groundTier(gq) >= 2) noProcProg = terrainProgram(groundTier(gq), true);
+        if (groundTier(gq) >= 2) noProcProg = terrainProgram(groundTier(gq), true), farProg = terrainProgram(1);
 #endif
     } else {
         UseProgram(progLit);
         uniformM4(progLit, "uModel", m4identity());  // (the wheels moved it)
     }
-    drawTerrain(vp, view, groundSetup, noProcProg, progTerrain);
+    drawTerrain(vp, view, groundSetup, noProcProg, progTerrain, farProg);
     if (effects) {
         // The ground shoved up beside tire tracks and round sunk tires, painted like the
         // terrain under it.

@@ -310,7 +310,7 @@ private:
     void uploadBatches(GLuint& vao, GLuint& vbo, std::vector<Vtx>& vertices, std::vector<StaticBatch>& batches);
     void drawBatches(GLuint vao, const std::vector<StaticBatch>& batches, const M4& vp, bool shadow);
     void drawBushes(const M4& vp, const V3& eye, bool shadow, VegStats::Pass& stats);  // (the reed and log batches within sight: small things, not drawn far off)
-    void drawTerrain(const M4& vp, const View& view, const std::function<void(GLuint)>& setup = nullptr, GLuint noProcProg = 0, GLuint procProg = 0);
+    void drawTerrain(const M4& vp, const View& view, const std::function<void(GLuint, bool)>& setup = nullptr, GLuint noProcProg = 0, GLuint procProg = 0, GLuint farProg = 0);
     GLuint boxVao = 0, boxVbo = 0;
     int boxVertexCount = 0;
     TreeDraw trees_, bushes_;       // the forest and the bushes, instanced (treedraw.h)
