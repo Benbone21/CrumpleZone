@@ -137,7 +137,7 @@ int main() {
             std::printf("Render check: map switch in %d upload slices (worst %.1f ms), adopt %.1f ms, %d stages (worst %.1f ms)\n", calls, worst, adopt, steps, worstStep);
             // (A software rasterizer on a shared CI runner gets twice the room: the limits are for real GPUs.)
             const char* gr = (const char*)gl::GetString(GL_RENDERER);
-            const double room = gr && (std::strstr(gr, "llvmpipe") || std::strstr(gr, "softpipe") || std::strstr(gr, "SwiftShader")) ? 2.0 : 1.0;
+            const double room = gr && (std::strstr(gr, "llvmpipe") || std::strstr(gr, "softpipe") || std::strstr(gr, "SwiftShader") || std::strstr(gr, "Software Renderer")) ? 2.0 : 1.0;
             if (worst > 25 * room || adopt > 60 * room || worstStep > 400 * room) throw std::runtime_error("a map switch step took long enough to hitch a frame");
             renderer.setWorld(sim.world);  // (the first world again: `next` goes out of scope)
             clean();
