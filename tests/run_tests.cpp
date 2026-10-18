@@ -5,6 +5,10 @@
 //   build/run_tests --list                list scenarios
 //   build/run_tests --jobs 4              limit parallelism
 //   build/run_tests --update-baseline     record current metric values as the baseline
+//   build/run_tests --scenario-timeout S  wall-clock limit per scenario (default 300 s, a few long ones have their own);
+//                                         a scenario over it prints "HANG name after N s" plus every thread's wait channel,
+//                                         then the process _exit()s non-zero (a hung thread can't be joined)
+//   build/run_tests --selftest             also run the "selftest/" scenarios (they hang on purpose: the watchdog's own test)
 //
 // Writes build/test_report.html (charts, metrics, checks) and compares every
 // metric with tests/baseline.txt so behavior changes show up even when they
@@ -24,6 +28,7 @@
 #include <cstdlib>
 #include <thread>
 
+#include "../src/watchdog.h"
 #include "harness.h"
 
 namespace {
@@ -77,6 +82,23 @@ Result runScenario(const Scenario& sc) {
     for (const MetricResult& m : r.metrics) r.passed &= m.ok;
     return r;
 }
+
+// ---- hang watchdog -----------------------------------------------------------
+// Each worker publishes the scenario it is running; a watchdog thread trips when one is over its limit.
+const double kDefaultTimeout = 300;  // s of wall time (a scenario takes 1-100 s; under load and with --jobs 6 several times that)
+double scenarioTimeout = kDefaultTimeout;
+bool timeoutGiven = false;
+// Scenarios that legitimately run long, with their own limit (the longest, net/crash-share, took 84 s at --jobs 6 on a busy machine; x3 is under the 300 s default, these get headroom).
+const std::map<std::string, double> kLongScenarios = {{"net/crash-share", 400}, {"ai/traffic", 400}, {"vehicle-physics/top-speed", 400}};
+double limitFor(const std::string& name) {
+    auto it = kLongScenarios.find(name);
+    return it != kLongScenarios.end() && !timeoutGiven ? std::max(it->second, scenarioTimeout) : scenarioTimeout;
+}
+
+struct Slot {
+    std::atomic<int> idx{-1};
+    std::atomic<double> start{0};
+};
 
 std::string key(const Result& r, const MetricResult& m) { return r.sc->name + " | " + m.name; }
 
@@ -327,7 +349,7 @@ int main(int argc, char** argv) {
     meshcache::setEnabled(false);  // (tests generate fresh and leave no cache about; the loading scenarios turn it on for themselves)
     useColor = isatty(1);
     std::vector<std::string> filters;
-    bool list = false, update = false, verbose = false;
+    bool list = false, update = false, verbose = false, selftest = false;
     int jobs = (int)std::max(1u, std::thread::hardware_concurrency());
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
@@ -335,10 +357,13 @@ int main(int argc, char** argv) {
         else if (a == "--update-baseline") update = true;
         else if (a == "--verbose" || a == "-v") verbose = true;
         else if (a == "--jobs" && i + 1 < argc) jobs = std::max(1, std::atoi(argv[++i]));
+        else if (a == "--scenario-timeout" && i + 1 < argc) scenarioTimeout = std::atof(argv[++i]), timeoutGiven = true;
+        else if (a == "--selftest") selftest = true;
         else filters.push_back(a);
     }
     std::vector<const Scenario*> todo;
     for (const Scenario& s : scenarioRegistry()) {
+        if (s.name.rfind("selftest/", 0) == 0 && !selftest) continue;  // (deliberately broken: only on request)
         bool match = filters.empty();
         for (const std::string& f : filters) match |= s.name.find(f) != std::string::npos;
         if (match) todo.push_back(&s);
@@ -358,10 +383,53 @@ int main(int argc, char** argv) {
     std::mutex printMutex;
     auto t0 = std::chrono::steady_clock::now();
     std::vector<std::thread> pool;
-    for (int j = 0; j < std::min<int>(jobs, (int)todo.size()); j++)
-        pool.emplace_back([&] {
+    std::vector<std::atomic<char>> done(todo.size());
+    for (auto& d : done) d = 0;
+    std::vector<Slot> slots(std::min<int>(jobs, (int)todo.size()));
+    std::vector<std::string> hung;
+    // On a hang: say which scenarios and what every thread waits on, still print the summary, leave non-zero without joining.
+    wd::Watchdog dog(
+        [&]() -> std::string {
+            std::string msg;
+            const double now = wd::nowSec();
+            for (Slot& sl : slots) {
+                int i = sl.idx;
+                if (i < 0 || done[i]) continue;
+                double lim = limitFor(todo[i]->name), el = now - sl.start;
+                if (el > lim) {
+                    char buf[256];
+                    std::snprintf(buf, sizeof(buf), "HANG %s after %.0f s", todo[i]->name.c_str(), el);
+                    msg += (msg.empty() ? "" : "\n") + std::string(buf);
+                    hung.push_back(todo[i]->name);
+                }
+            }
+            return msg;
+        },
+        [&](const std::string& msg) {
+            std::lock_guard<std::mutex> lock(printMutex);
+            std::printf("%s%s%s\n", RED, msg.c_str(), RESET);
+            wd::dumpThreads();
+            size_t fin = 0;
+            std::string failedNames;
+            for (size_t i = 0; i < todo.size(); i++)
+                if (done[i]) {
+                    fin++;
+                    if (!results[i].passed) failedNames += " " + todo[i]->name;
+                }
+            for (const std::string& h : hung) failedNames += " " + h;
+            std::printf("\n%s%zu scenarios: %zu finished, %zu HUNG (FAIL), %zu not finished, %.1f s. No report written.%s\nFailed:%s\n", RED, todo.size(), fin,
+                        hung.size(), todo.size() - fin - hung.size(), std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(), RESET,
+                        failedNames.c_str());
+            wd::hardExit(1);
+        });
+    for (size_t j = 0; j < slots.size(); j++)
+        pool.emplace_back([&, j] {
             for (size_t i; (i = next++) < todo.size();) {
+                slots[j].start = wd::nowSec();
+                slots[j].idx = (int)i;
                 results[i] = runScenario(*todo[i]);
+                done[i] = 1;
+                slots[j].idx = -1;
                 std::lock_guard<std::mutex> lock(printMutex);
                 printResult(results[i], base, verbose);
                 std::fflush(stdout);

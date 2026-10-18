@@ -26,7 +26,7 @@ What a fresh clone contains: `assets/ground`, `assets/props` and the code. `asse
 6. Discrete GPU: Settings > System > Display > Graphics > Add desktop app > pick `crumplezone.exe` > Options > High performance. Plug the laptop in and set the power mode to Best performance. The first lines of the report name the GPU the game really used; check it is not the Intel or AMD integrated one.
 
 ## Mac
-1. Prerequisites: `xcode-select --install`. Download `SDL2-2.30.x.dmg` (the newest 2.30.x) from https://github.com/libsdl-org/SDL/releases, open it, and copy `SDL2.framework` to `third_party/sdl2-mac/` inside the clone (create that folder; it is git-ignored).
+1. Prerequisites: `xcode-select --install`. Download `SDL2-2.30.x.dmg` (the newest 2.30.x) from https://github.com/libsdl-org/SDL/releases, open it, and copy `SDL2.framework` to `third_party/sdl2-mac/` inside the clone (create that folder; it is git-ignored). If every `clang` or `git` call fails with exit 69 ("You have not agreed to the Xcode license"), either run `sudo xcodebuild -license` once, or skip the license by using only the command-line tools: `export DEVELOPER_DIR=/Library/Developer/CommandLineTools`.
 2. Clone and build the quick native build (this machine's architecture, no app bundle):
    ```
    git clone https://github.com/Benbone21/CrumpleZone.git MemeNG
