@@ -94,6 +94,15 @@ public:
     // Code-made models (modelkit.h) drawn this frame only: a jack under a wheel, the tools in
     // your hands (handwork.h)...
     std::vector<Placed> frameModels;
+    // Each car's mechanical parts this frame (carparts.h, carframe.h). A car's are merged into one mesh, kept
+    // while the same parts are fitted, and drawn in one call with every part placed by its own transform on
+    // the GPU: nothing is rebuilt as they ride and flex. A part that bends or breaks is a different part (and
+    // the mesh is merged again); a snapped shaft's halves are clipped in the shader.
+    struct CarModels {
+        int car = -1;
+        std::vector<Placed> parts;
+    };
+    std::vector<CarModels> carModels;
     // On foot, a car part that's bent or broken (Placed::wear 1, 2) within `xrayRange` m of `xrayEye` glows through
     // whatever hides it (the body, a tire), faint and slow-pulsing, so you can tell from outside (0: off).
     V3 xrayEye;
@@ -140,6 +149,12 @@ public:
         unsigned terrainChunks = 0, terrainVisibleChunks = 0;
         unsigned occlusionTests = 0, occlusionHidden = 0, terrainOccluded = 0;  // horizon tests this frame (all systems) and boxes they culled
         unsigned sceneryVertices = 0, shadowSceneryVertices = 0;
+        // Vehicles (CZ_BENCH): draw calls and triangles in the main pass and in both shadow passes,
+        // the CPU spent building their meshes (skin, parts, running gear) and the parts models.
+        unsigned carDraws = 0, carTris = 0, carShadowDraws = 0, carShadowTris = 0;
+        double carPrepMs = 0, carPartsMs = 0;
+        unsigned carRebuilds = 0;      // skins and merged parts built again this frame (the rest drew what they had)
+        unsigned carKindTris[6] = {};  // main pass: skin, glass, bound parts, running gear, wheels, parts models
         unsigned modelVertices = 0, shadowModelVertices = 0, modelDraws = 0, shadowModelDraws = 0;  // (of those: the code-made models, boxes and figures)
     };
     const GeometryStats& geometryStats() const { return geometryStats_; }
@@ -154,10 +169,33 @@ public:
     void gpuFrameBegin();
 
 private:
+    // A vehicle's skin and the parts bound to it, kept in the car's own frame: drawn with the frame as the
+    // model matrix, built again only when its shape (in that frame) moves on by more than a fraction of a pixel,
+    // a window breaks or a lamp changes. A parked or cruising car isn't rebuilt at all; a dent shows the frame it happens.
     struct CarSlot {
         GLuint vao = 0, dyn = 0, ibo = 0, glassIbo = 0;
+        GLuint partsVao = 0, partsVbo = 0;  // the parts bound to the lattice (interior, lamps, mirrors...)
         const void* tpl = nullptr;
-        int opaqueCount = 0, glassCount = 0;
+        int opaqueCount = 0, glassCount = 0, partsCount = 0;
+        M4 model;                    // the car's frame this frame (local to world)
+        const void* builtTpl = nullptr;  // what the cached meshes were built for
+        std::vector<float> snap;     // the watched nodes, in the car's frame, when they were built
+        int shattered = -1, debug = -1;
+        float lampKey[5] = {-1, -1, -1, -1, -1};
+        int builds = 0;              // (tests and the bench: how many times it's been rebuilt)
+        GLuint modelsVao = 0, modelsVbo = 0, modelsIdx = 0;  // the merged parts (CarModels), their part numbers
+        uint64_t modelsSig = 0;      // which parts they were merged from
+        int modelsCount = 0, modelsBase = 0, modelsParts = 0;  // vertices; this frame: first transform, how many (0: none)
+        int modelsShown = 0;         // vertices of the parts that can be seen (first): the rest are shut inside the intact body
+        // Far copies of the skin (an intact one): its vertices clustered (6 cm, 15 cm cells, within one shader region),
+        // the triangles left drawn from the same vertices. Built when first wanted after a rebuild.
+        std::vector<float> lpos;     // the skin's vertices as last built (car frame)
+        std::vector<unsigned> lopaque, lglass;
+        GLuint lodIbo[2] = {}, lodGlassIbo[2] = {};
+        int lodCount[2] = {}, lodGlassCount[2] = {}, lodBuilt[2] = {-1, -1};
+        bool intact = false;         // (nothing torn, hardly any damage: the far copies may stand in)
+        double radius = 0;           // bounding sphere about the frame's origin (culling)
+        V3 center;
     };
 
     static const int kBloomLevels = 6;
@@ -194,6 +232,21 @@ private:
     std::vector<StaticBatch> boxBatches, sceneryBatches, bushBatches;
     GeometryStats geometryStats_;
     VegStats vegStats_;
+    bool shadowPass_ = false;
+    int carKind_ = 0;  // (which of GeometryStats::carKindTris a car draw counts to)
+    std::vector<char> carVisible_;  // per car, in the pass being drawn (cullCars)
+    void cullCars(size_t cars, const M4& vp, bool mainPass);
+    bool carShown(size_t ci) const { return ci >= carVisible_.size() || carVisible_[ci]; }
+    unsigned rebuilds_ = 0;  // (which of the car counts a car draw goes to)
+    void carDrawArrays(int first, int count) {
+        gl::DrawArrays(GL_TRIANGLES, first, count);
+        countCar(count);
+    }
+    void countCar(long vertices) {
+        (shadowPass_ ? geometryStats_.carShadowDraws : geometryStats_.carDraws)++;
+        (shadowPass_ ? geometryStats_.carShadowTris : geometryStats_.carTris) += (unsigned)(vertices / 3);
+        if (!shadowPass_) geometryStats_.carKindTris[carKind_] += (unsigned)(vertices / 3);
+    }
     GLuint grassQuery_[4] = {};
     int grassQueryFrame_ = 0;
     bool grassQueryUsed_[4] = {};
@@ -224,11 +277,11 @@ private:
     ScanCover scanCover_;           // what the scanned props draw instead of the code-made meshes
     std::vector<float> treeFade_;   // per tree (World::trees): how much of it the camera hides now (treefade.h)
     double fadeTime_ = 0;
-    GLuint wheelVao[WHEEL_STYLES] = {}, wheelVbo[WHEEL_STYLES] = {}, caliperVao = 0, caliperVbo = 0;
+    GLuint wheelVao[2][WHEEL_STYLES] = {}, wheelVbo[2][WHEEL_STYLES] = {}, caliperVao = 0, caliperVbo = 0;
     // Each tread on each wheel style (the tire alone: the rim is the wheel's), and snow chains.
-    GLuint tireVao[WHEEL_STYLES][TIRE_TYPES] = {}, tireVbo[WHEEL_STYLES][TIRE_TYPES] = {}, chainVao = 0, chainVbo = 0;
-    int treadVertexCount[WHEEL_STYLES][TIRE_TYPES] = {}, chainVertexCount = 0;
-    int tireVertexCount[WHEEL_STYLES] = {}, wheelVertexCount[WHEEL_STYLES] = {}, caliperVertexCount = 0;
+    GLuint tireVao[2][WHEEL_STYLES][TIRE_TYPES] = {}, tireVbo[2][WHEEL_STYLES][TIRE_TYPES] = {}, chainVao = 0, chainVbo = 0;
+    int treadVertexCount[2][WHEEL_STYLES][TIRE_TYPES] = {}, chainVertexCount = 0;
+    int tireVertexCount[2][WHEEL_STYLES] = {}, wheelVertexCount[2][WHEEL_STYLES] = {}, caliperVertexCount = 0;
     GLuint dynVao = 0, dynVbo = 0;  // per-frame lit geometry: car parts and running gear
     GLuint lineVao = 0, lineVbo = 0;
     GLuint fxVao = 0, fxVbo = 0;
@@ -272,6 +325,11 @@ private:
     void buildWheel();
     void buildWheelStyle(int style);
     void buildTire(int style, int tread);
+    bool buildLod_ = false;  // (building the wheels' far copies: [1] in the arrays above)
+    V3 eye_;                 // this frame's eye (the wheels' LOD)
+    double wheelLodDist_ = 1e9;  // past this a car's wheels draw their far copies
+    double pxPerM_ = 1000;       // pixels a meter spans 1 m from the eye (scaled by 1/distance)
+    int skinLod(const CarSlot& slot) const;  // 0 the skin, 1-2 its far copies (built on demand)
     void buildChains();
     void buildFont();
     void buildBackdrop(const World& world, std::vector<Vtx>& verts, std::vector<unsigned>& idx);
@@ -279,7 +337,14 @@ private:
     void ensureGround(int quality);
     void ensureTargets(int w, int h, int samples);
     void postProcess(const View& view, const M4& proj);
-    void prepareCars(const Sim& sim, DebugView debug);
+    void prepareCars(const Sim& sim, DebugView debug, const V3& eye);
     void drawCarBodies(const Sim& sim, GLuint prog, bool glassPass);
     void drawWheels(const Sim& sim, GLuint prog);
+    void drawCarParts(const Sim& sim, GLuint prog);
+    void prepareCarModels();
+    int debug_ = 0;  // (this frame's DebugView: the parts view shows what the body hides)
+    void drawCarModels(GLuint prog);
+    GLuint progParts = 0, progPartsDepth = 0, partTex = 0;  // (the parts' transforms: four texels each, 256 to a row)
+    std::vector<float> partXf;
+    int partRows = 0;
 };

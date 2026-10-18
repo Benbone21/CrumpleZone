@@ -42,6 +42,11 @@ struct PartTag {
 // placement (for the hover).
 void carPartModels(const Car& c, std::vector<Placed>& out, int level = PARTS_ALL, std::vector<PartTag>* tags = nullptr);
 
+// Placements kept from frame to frame so laying out a car's parts makes no garbage: recyclePlaced() takes back a
+// list of them (and empties it), takePlaced() hands one out reset (its id string and params keep their room).
+void recyclePlaced(std::vector<Placed>& v);
+Placed takePlaced();
+
 struct PartHit {
     bool ok = false;
     int car = -1;         // (set by the caller that looks through several cars)

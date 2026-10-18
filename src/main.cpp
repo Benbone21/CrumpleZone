@@ -1802,7 +1802,11 @@ int main(int argc, char** argv) {
     renderer.preload(sim.world);
     std::printf("renderer: ready in %.0f ms (%d shader programs compiled, %d from the cache)\n",
                 (SDL_GetPerformanceCounter() - initStart) * 1000.0 / SDL_GetPerformanceFrequency(), gShaderCacheStats.compiled, gShaderCacheStats.hits);
-    while (!visualReady(*sim.cars[sim.player].spec)) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    // (a scenario has no cars until its first frame: nothing to wait for, and nobody would ever make it)
+    if (!sim.cars.empty() && sim.player >= 0 && sim.player < (int)sim.cars.size()) {
+        prebuildVisual(*sim.cars[sim.player].spec, sim.cars[sim.player].color);  // (asked for, in case nothing has yet)
+        while (!visualReady(*sim.cars[sim.player].spec)) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
     if (opt.lab) {  // the model lab instead of the game (lab.h)
         LabOptions lo;
         lo.select = opt.labModel, lo.variant = opt.labDesign;
@@ -2690,7 +2694,24 @@ int main(int argc, char** argv) {
     float fps = 60;
     uint64_t freq = SDL_GetPerformanceFrequency(), last = SDL_GetPerformanceCounter();
     int frame = 0;
-    double benchDraw = 0;
+    double benchDraw = 0, benchPhysics = 0;
+    int benchPhysicsN = 0;
+    Renderer::GeometryStats benchCars;  // (CZ_BENCH: the vehicles' counts, summed over the frames measured)
+    int benchCarN = 0;
+    auto printCarBench = [&] {  // (CZ_BENCH or --bench: what the vehicles cost; --script cars puts CZ_CARS of them in view)
+        if (!benchCarN) return;
+        int awake = 0, vehicles = 0;
+        for (const Car& c : sim.cars)
+            if (!c.isProp()) vehicles++, awake += !c.sleeping && !c.remote;
+        const double n = benchCarN;
+        std::printf("bench: cars %d (%d awake), physics %.2f ms/frame; car meshes %.2f ms CPU (skin, bound parts, running gear, parts models), other frame models %.2f ms; "
+                    "main %.1f draws %.1fk tris, shadows %.1f draws %.1fk tris; %.2f meshes rebuilt a frame\n",
+                    vehicles, awake, benchPhysicsN ? benchPhysics / benchPhysicsN : 0.0, benchCars.carPrepMs / n, benchCars.carPartsMs / n,
+                    benchCars.carDraws / n, benchCars.carTris / n / 1000, benchCars.carShadowDraws / n, benchCars.carShadowTris / n / 1000, benchCars.carRebuilds / n);
+        const unsigned* k = benchCars.carKindTris;
+        std::printf("bench: car tris (main, k) skin %.1f glass %.1f bound parts %.1f running gear %.1f wheels %.1f parts models %.1f\n",
+                    k[0] / n / 1000, k[1] / n / 1000, k[2] / n / 1000, k[3] / n / 1000, k[4] / n / 1000, k[5] / n / 1000);
+    };
     size_t spawnType = 0, trafficType = 0;
     // The dev tools (devmenu.h): what the old test keys did, now also what the dev menu's entries do.
     runDev = [&](const devmenu::Action& da) {
@@ -2981,6 +3002,7 @@ int main(int argc, char** argv) {
                           renderer.settings.renderScale, renderer.settings.shadows, renderer.settings.msaa, renderer.settings.ao, renderer.settings.bloom,
                           renderer.settings.grass, renderer.settings.ground, renderer.settings.props, opt.benchSync ? " synced" : "");
             std::fputs(BenchStats::report(benchSt.result(), title + extra).c_str(), stdout);
+            printCarBench();
             if (opt.benchSuite) {  // (filed, then one F3 shot of this run, then the next)
                 suite.record(mapName(sim.world.map), presetName(presetOf(settings.gfx)));
                 if (!dbg.on) dbg.toggle(false), suiteDbgOn = true;
@@ -3781,6 +3803,24 @@ int main(int argc, char** argv) {
                     if (frame == 200 && std::getenv("CZ_INV_CLOSE")) closeInventory();
                 }
             }
+            if (opt.script == "cars" && frame == 2) {  // (CZ_BENCH: CZ_CARS vehicles in view, models mixed, in rows ahead of yours; CZ_CARS_AWAKE=1 keeps them simulated)
+                const char* env = std::getenv("CZ_CARS");
+                const int want = std::max(1, env ? std::atoi(env) : 8);
+                static const int kMix[] = {7, 2, 3, 6, 1};
+                const auto& cat = vehicleCatalog();
+                const Frame fr = sim.cars[sim.player].frame();
+                V3 fwd = norm(V3(fr.fwd.x, 0, fr.fwd.z)), side(-fwd.z, 0, fwd.x);
+                for (int k = 1; k < want; k++) {
+                    const int row = (k - 1) / 4, col = (k - 1) % 4;
+                    const V3 p = fr.com + fwd * (9.0 + 8.0 * row) + side * ((col - 1.5) * 4.2);
+                    const int m = kMix[(k - 1) % 5];
+                    if (m >= (int)cat.size()) continue;
+                    sim.addCar(cat[m], V3(p.x, sim.world.clearY(p.x, p.z) + 0.05, p.z), std::atan2(-fwd.z, fwd.x) + 0.35 * (col - 1.5), sim.nextColor());
+                    sim.cars.back().handbrake = 1;
+                }
+            }
+            if (opt.script == "cars" && std::getenv("CZ_CARS_AWAKE"))
+                for (Car& c : sim.cars) c.wake();
             if (opt.script == "winch" || opt.script == "winchout" || opt.script == "strap") {  // screenshots of the recovery gear
                 if (frame == 20) std::printf("%s\n", (opt.script == "strap" ? sim.hookStrap(sim.player) : sim.hookWinch(sim.player)).c_str());
                 winch = frame <= 20 ? 0 : opt.script == "winch" ? 1 : opt.script == "winchout" ? -1 : 0;  // (winchout: paying out, the slack line)
@@ -4132,11 +4172,13 @@ int main(int argc, char** argv) {
             // Catching up is capped: a hitch (a frame far over the usual) isn't run all at once, which would make the next frame
             // a hitch too, and so on; it's let go, like a pause. Ordinary slow frames run in real time down to 20 fps (at most
             // 50 ms of physics a frame); below that the game slows rather than spiral.
+            sim.playerAway = walker.active;
             static double usualDt = 1.0 / 60;
             simDt = sim.advance(simCatchUp(dt, usualDt), simMaxSteps(sim.h)) * sim.h;
             renderer.passMark(FP_GAME);
             const double physicsMs = (double)(SDL_GetPerformanceCounter() - physicsStart) * 1000 / freq;
             hud.physicsMs += (physicsMs - hud.physicsMs) * 0.05;
+            if (scripted && frame >= (opt.bench ? benchWarm + 1 : 40)) benchPhysics += physicsMs, benchPhysicsN++;
             if (sim.wrapShift != wrapSeen) {  // the freeway moved everything back a period: so do the camera and the effects
                 const V3 d(sim.wrapShift - wrapSeen, 0, 0);
                 cam.target += d;
@@ -4832,42 +4874,56 @@ int main(int argc, char** argv) {
         if (mk::findModel("jack"))
             for (const Car& c : sim.cars)
                 if (c.jackPlaced && c.jackWheel >= 0 && c.jackWheel < (int)c.wheels.size()) renderer.frameModels.push_back(Interact::jackModel(sim, c, c.jackWheel));
-        // A pickup's tailgate (trunk.h): a drawn panel, shut.
-        for (int i = 0; i < (int)sim.cars.size(); i++) {
-            const Car& c = sim.cars[i];
-            if (c.isProp() || c.nodes.empty() || !c.bedGate() || len(c.nodes[0].p - view.eye) > 30) continue;
-            trunk::gateModels(sim, i, renderer.frameModels);
-        }
-        // What rides in the back of a truck with no cargo area to open: the chains in their bag, the jack (while they're there).
-        for (const Car& c : sim.cars) {
-            if (c.isProp() || !c.spec->wheelLoss || c.hasGate()) continue;
-            const Frame fr = c.frame();
-            auto stowed = [&](const char* id, const V3& at) {
-                if (!mk::findModel(id)) return;
-                Placed pl;
-                pl.id = id, pl.p = at - fr.up * 0.12, pl.oriented = true;
-                pl.ax[0] = fr.fwd, pl.ax[1] = fr.up, pl.ax[2] = fr.left;
-                renderer.frameModels.push_back(pl);
-            };
-            if (c.chains > 0) stowed("chain_bundle", c.stowAt(Car::STOW_CHAINS));
-            if (c.hasJack && !c.jackPlaced && !walker.holdingJack) stowed("jack", c.stowAt(Car::STOW_JACK));
-        }
-        // What's under the car: the engine, gearbox, diffs, shafts, arms and springs, as models on the
-        // physics nodes (carparts.h). A car's parts are ~80k vertices: the nearest four get them all (within
-        // 20 m), the nearest eight the big ones (to 40 m).
+        // What rides on each vehicle, as models (renderer.carModels: one mesh per car, kept, placed on the GPU and culled
+        // with the car). A pickup's tailgate (trunk.h), shut; what rides in the back of a truck with no cargo area to
+        // open (the chains in their bag, the jack while it's there); and what's under it: the engine, gearbox, diffs,
+        // shafts, arms and springs, as models on the physics nodes (carparts.h). A car's parts are ~80k vertices: the
+        // nearest four get them all (within 20 m), the nearest eight the big ones (to 40 m).
         {
-            std::vector<std::pair<double, const Car*>> near;
-            for (const Car& c : sim.cars) {
+            static std::vector<std::vector<Placed>> on;
+            on.resize(sim.cars.size());
+            for (auto& v : on) recyclePlaced(v);  // (last frame's placements go back to be filled again: no garbage a frame)
+            for (int i = 0; i < (int)sim.cars.size(); i++) {
+                const Car& c = sim.cars[i];
                 if (c.isProp() || c.nodes.empty()) continue;
                 const double away = len(c.nodes[0].p - view.eye);
-                if (away < 40) near.push_back({away, &c});
+                if (c.bedGate() && away < 30) trunk::gateModels(sim, i, on[i]);  // (its size is the bed's at rest: the mesh is kept)
+                if (c.spec->wheelLoss && !c.hasGate() && away < 80) {
+                    const Frame fr = c.frame();
+                    auto stowed = [&](const char* id, const V3& at) {
+                        if (!mk::findModel(id)) return;
+                        Placed pl;
+                        pl.id = id, pl.p = at - fr.up * 0.12, pl.oriented = true;
+                        pl.ax[0] = fr.fwd, pl.ax[1] = fr.up, pl.ax[2] = fr.left;
+                        on[i].push_back(pl);
+                    };
+                    if (c.chains > 0) stowed("chain_bundle", c.stowAt(Car::STOW_CHAINS));
+                    if (c.hasJack && !c.jackPlaced && !walker.holdingJack) stowed("jack", c.stowAt(Car::STOW_JACK));
+                }
             }
-            std::sort(near.begin(), near.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+            std::vector<std::pair<double, int>> near;
+            for (int i = 0; i < (int)sim.cars.size(); i++) {
+                const Car& c = sim.cars[i];
+                if (c.isProp() || c.nodes.empty()) continue;
+                const double away = len(c.nodes[0].p - view.eye);
+                if (away < 40) near.push_back({away, i});
+            }
+            std::sort(near.begin(), near.end());
             for (size_t i = 0; i < near.size() && i < 8; i++) {
                 const int level = i < 4 && near[i].first < 20 ? PARTS_ALL : PARTS_BIG;
-                carPartModels(*near[i].second, renderer.frameModels, level);
-                carFrameModels(*near[i].second, renderer.frameModels, level);  // (a ladder frame's rails, crossmembers, brackets and jack pads: carframe.h)
+                const int ci = near[i].second;
+                carPartModels(sim.cars[ci], on[ci], level);
+                carFrameModels(sim.cars[ci], on[ci], level);  // (a ladder frame's rails, crossmembers, brackets and jack pads: carframe.h)
             }
+            size_t n = 0;
+            for (int i = 0; i < (int)on.size(); i++) {
+                if (on[i].empty()) continue;
+                if (renderer.carModels.size() <= n) renderer.carModels.resize(n + 1);
+                renderer.carModels[n].car = i;
+                renderer.carModels[n].parts.swap(on[i]);
+                n++;
+            }
+            renderer.carModels.resize(n);
         }
         // The work in your hands (first person): tools, the hand, a part going in; a wheel or
         // chain being moved (handwork.h).
@@ -5149,6 +5205,14 @@ int main(int argc, char** argv) {
         static int benchN = 0;
         static double benchGrass = 0;
         if (bench && scripted && frame >= 40) benchSum += benchDraw, benchGrass += renderer.grassGpuMs(), benchN++;
+        if ((bench && scripted && frame >= 40) || (opt.bench && frame > benchWarm)) {
+            benchCarN++;
+            const auto& g = renderer.geometryStats();
+            benchCars.carDraws += g.carDraws, benchCars.carTris += g.carTris, benchCars.carShadowDraws += g.carShadowDraws;
+            benchCars.carShadowTris += g.carShadowTris, benchCars.carPrepMs += g.carPrepMs, benchCars.carPartsMs += g.carPartsMs;
+            benchCars.carRebuilds += g.carRebuilds;
+            for (int k = 0; k < 6; k++) benchCars.carKindTris[k] += g.carKindTris[k];
+        }
         if (scripted && opt.shotFrames.count(frame)) {
             if (bench && benchN) {
                 std::printf("bench: scene %.2f ms/frame over %d frames\n", 1000.0 * benchSum / benchN, benchN);
@@ -5162,6 +5226,7 @@ int main(int argc, char** argv) {
                 std::printf("bench: adaptive %d, scale %.2f, shadows %d, MSAA %d, AO %d, ground %d, props %d, grass %d\n",
                             settings.adaptiveQuality, renderer.settings.renderScale, renderer.settings.shadows,
                             renderer.settings.msaa, renderer.settings.ao, renderer.settings.ground, renderer.settings.props, renderer.settings.grass);
+                printCarBench();
                 if (dbgMsN) std::printf("bench: debug screen %.3f ms/frame CPU (gather + queue) over %d frames\n", dbgMsSum / dbgMsN, dbgMsN);
                 const VegStats& vs = renderer.vegStats();
                 auto pass = [](const VegStats::Pass& p) { return std::to_string(p.draws) + " draws " + std::to_string(p.tris / 1000) + "k tris"; };

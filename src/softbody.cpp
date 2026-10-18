@@ -2385,7 +2385,7 @@ void Sim::substep() {
         if (c.sleeping) continue;
         c.integrate(h);
         c.updateBounds();
-        if (i != player && c.stillTime > 1.5) {
+        if ((i != player || playerAway) && c.stillTime > 1.5) {
             c.sleeping = true;
             c.sleptControls[0] = c.throttle, c.sleptControls[1] = c.brake;
             c.sleptControls[2] = c.handbrake, c.sleptControls[3] = c.steer;

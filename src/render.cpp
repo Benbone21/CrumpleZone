@@ -1,3 +1,4 @@
+#include <chrono>
 #include "render.h"
 #include "loadprof.h"
 #include "watermesh.h"
@@ -15,6 +16,7 @@ static void noteRT(const char* name, const char* fmt, int w, int h, int bytesPer
 #include <cstdio>
 #include <cstring>
 #include <map>
+#include <unordered_map>
 
 #include "carvisual.h"
 #include "meshopt.h"
@@ -540,11 +542,13 @@ layout(location=2) in float aBroken;
 layout(location=3) in vec3 aLat;
 layout(location=4) in float aRegion;
 uniform mat4 uVP; uniform mat4 uLightVP;
+uniform mat4 uModel;  // the car's frame (its skin is kept in it: Renderer::CarSlot)
 out vec3 vPos; out vec3 vNrm; out vec3 vLat; out float vRegion; out float vBroken; out vec4 vLight;
 void main(){
-  vPos = aPos; vNrm = aNrm; vLat = aLat; vRegion = aRegion; vBroken = aBroken;
-  vLight = uLightVP * vec4(aPos, 1.0);
-  gl_Position = uVP * vec4(aPos, 1.0);
+  vec4 wp = uModel * vec4(aPos, 1.0);
+  vPos = wp.xyz; vNrm = mat3(uModel) * aNrm; vLat = aLat; vRegion = aRegion; vBroken = aBroken;
+  vLight = uLightVP * wp;
+  gl_Position = uVP * wp;
 })";
 
 const char* kCarFSBody = R"(
@@ -1308,6 +1312,41 @@ void main(){
   }
   oCol = finishColor(col, vPos, 1.0);
 })";
+
+// A car's parts merged into one mesh (Renderer::CarModels): each vertex carries its part's number, and the part's
+// transform comes from uParts (four texels: its axes scaled, its origin; the clip range along its X and what's
+// added to the material ride in the w's). As appendModel places them on the CPU.
+const char* kPartsXf = R"(#version 330 core
+layout(location=0) in vec3 aPos;
+layout(location=1) in vec3 aNrm;
+layout(location=2) in vec4 aCol;
+layout(location=3) in float aPart;
+uniform sampler2D uParts; uniform int uPartBase;
+vec4 c0, c1, c2, c3;
+vec3 partPos(){
+  int i = uPartBase + int(aPart + 0.5);
+  ivec2 b = ivec2((i % 256) * 4, i / 256);
+  c0 = texelFetch(uParts, b, 0); c1 = texelFetch(uParts, b + ivec2(1, 0), 0);
+  c2 = texelFetch(uParts, b + ivec2(2, 0), 0); c3 = texelFetch(uParts, b + ivec2(3, 0), 0);
+  float x = clamp(aPos.x, c0.w, c1.w);
+  return c3.xyz + c0.xyz * x + c1.xyz * aPos.y + c2.xyz * aPos.z;
+}
+)";
+const char* kPartsVS = R"(
+uniform mat4 uVP; uniform mat4 uLightVP;
+out vec3 vPos; out vec3 vNrm; centroid out vec4 vCol; out vec4 vLight; out vec3 vLocal;
+void main(){
+  vec3 wp = partPos();
+  vec3 s2 = max(vec3(dot(c0.xyz, c0.xyz), dot(c1.xyz, c1.xyz), dot(c2.xyz, c2.xyz)), vec3(1e-12));
+  vPos = wp; vLocal = wp;
+  vNrm = normalize(c0.xyz * (aNrm.x / s2.x) + c1.xyz * (aNrm.y / s2.y) + c2.xyz * (aNrm.z / s2.z));
+  vCol = vec4(aCol.rgb, aCol.a + c2.w);
+  vLight = uLightVP * vec4(wp, 1.0);
+  gl_Position = uVP * vec4(wp, 1.0);
+})";
+const char* kPartsDepthVS = R"(
+uniform mat4 uLightVP;
+void main(){ gl_Position = uLightVP * vec4(partPos(), 1.0); })";
 
 const char* kDepthVS = R"(#version 330 core
 layout(location=0) in vec3 aPos;
@@ -2234,6 +2273,8 @@ bool Renderer::init(const World& world, std::string& err) {
     progLit = linkProgram(kLitVS, header + kCommonFS + kLitIns + kTerrainProcFS + kLitFSBody, err);
     progCar = linkProgram(kCarVS, header + kCommonFS + kCarFSBody, err);
     progDepth = linkProgram(kDepthVS, kDepthFS, err);
+    progParts = linkProgram(std::string(kPartsXf) + kPartsVS, header + kCommonFS + kLitIns + kTerrainProcFS + kLitFSBody, err);
+    progPartsDepth = linkProgram(std::string(kPartsXf) + kPartsDepthVS, kDepthFS, err);
     progTree = linkProgram(kTreeVS, header + kCommonFS + kLitIns + kTreeFSBody, err);
     progTreeDepth = linkProgram(kTreeDepthVS, kDepthFS, err);
     progLine = linkProgram(kLineVS, kLineFS, err);
@@ -2262,7 +2303,7 @@ bool Renderer::init(const World& world, std::string& err) {
             groundFailed = true;
         }
     }
-    if (!progLit || !progDepth || !progLine || !progXray || !progSky || !progHud || !progFx || !progCar || !progAO || !progDown ||
+    if (!progLit || !progDepth || !progParts || !progPartsDepth || !progLine || !progXray || !progSky || !progHud || !progFx || !progCar || !progAO || !progDown ||
         !progUp || !progComposite || !progGrass || !progWater || !progTree || !progTreeDepth)
         return false;
     loadprof::add("gl.shaders (main)", loadprof::nowMs() - lpShaders0);
@@ -2977,9 +3018,13 @@ void Renderer::buildFigures() {
     // The hurt parts near you again, for the see-through glow.
     static std::vector<Vtx> xr;
     xr.clear();
-    if (xrayRange > 0)
+    if (xrayRange > 0) {
         for (const Placed& pl : frameModels)
             if ((pl.wear == 1 || pl.wear == 2) && len(pl.p - xrayEye) < xrayRange) appendPlaced(xr, pl, placedMesh(pl));
+        for (const CarModels& cm : carModels)
+            for (const Placed& pl : cm.parts)
+                if ((pl.wear == 1 || pl.wear == 2) && len(pl.p - xrayEye) < xrayRange) appendPlaced(xr, pl, placedMesh(pl));
+    }
     if (!xrayVao) {
         GenVertexArrays(1, &xrayVao);
         GenBuffers(1, &xrayVbo);
@@ -2999,7 +3044,7 @@ void Renderer::buildWheelStyle(int style) {
     const bool steelWheel = style == WHEEL_STEEL;
     const bool offroad = style == WHEEL_OFFROAD_BRONZE || style == WHEEL_OFFROAD_BLACK || steelWheel;
     const bool cover = style == WHEEL_HONDA_COVER, forged = style == WHEEL_FORGED;
-    const int segs = 48;
+    const int segs = buildLod_ ? 16 : 48;  // (the far copy: a coarser round, no tread blocks, letters or lugs)
     const double rimR = offroad ? 0.158 : cover ? 0.197 : forged ? 0.23 : 0.215;
     std::vector<Vtx> v;
     MeshOut m{v};
@@ -3051,7 +3096,7 @@ void Renderer::buildWheelStyle(int style) {
             // hexa() wants bit1 = "up" (here: outward), bit2 = +z.
             m.hexa(p, rubber, SM_TIRE);
         };
-        for (int b = 0; b < blocks; b++) {
+        for (int b = 0; b < (buildLod_ ? 0 : blocks); b++) {
             double a = 2 * M_PI * b / blocks, h = M_PI / blocks * 0.62;
             for (int side = -1; side <= 1; side += 2) {
                 double shift = side * 0.25 * (2 * M_PI / blocks);
@@ -3063,7 +3108,7 @@ void Renderer::buildWheelStyle(int style) {
         }
         // Raised white letters on the outer sidewall: two arcs of short strokes.
         const V3 white(0.82, 0.82, 0.8);
-        for (int arc = 0; arc < (style == WHEEL_OFFROAD_BRONZE ? 2 : 0); arc++)
+        for (int arc = 0; arc < (style == WHEEL_OFFROAD_BRONZE && !buildLod_ ? 2 : 0); arc++)
             for (int c = 0; c < 15; c++) {
                 double a = (arc ? M_PI : 0) + 0.55 + c * 0.13, h = 0.035 * ((c % 3) ? 1.0 : 0.6);
                 V3 p[8];
@@ -3075,7 +3120,7 @@ void Renderer::buildWheelStyle(int style) {
             }
     }
 
-    tireVertexCount[style] = (int)v.size();
+    tireVertexCount[buildLod_ ? 1 : 0][style] = (int)v.size();
     // Rim: barrel, outer lip, dished spokes, hub with lug nuts and a center cap.
     const V3 alloy = steelWheel ? V3(0.86, 0.86, 0.83) : forged ? V3(0.12, 0.13, 0.15) : cover ? V3(0.55, 0.56, 0.58) : style == WHEEL_OFFROAD_BRONZE ? V3(0.36, 0.27, 0.16)
                    : style == WHEEL_OFFROAD_BLACK  ? V3(0.05, 0.05, 0.055)
@@ -3121,7 +3166,7 @@ void Renderer::buildWheelStyle(int style) {
         m.annulus(0.0, rimR * 0.71, 0.100, segs, 1, alloy, SM_MATTE);
         m.annulus(rimR * 0.88, rimR, 0.100, segs, 1, alloy, SM_MATTE);
     }
-    const int lugs = steelWheel ? 0 : offroad ? 6 : cover ? 4 : forged ? 1 : 5;
+    const int lugs = buildLod_ || steelWheel ? 0 : offroad ? 6 : cover ? 4 : forged ? 1 : 5;
     for (int l = 0; l < lugs; l++) {
         double a = 2 * M_PI * (l + 0.5) / lugs;
         V3 c(std::cos(a) * 0.04, std::sin(a) * 0.04, 0);
@@ -3142,11 +3187,12 @@ void Renderer::buildWheelStyle(int style) {
     m.annulus(0.0, 0.07, 0.035, 20, 1, dark, SM_METAL);
 
     optimizeVtx(v);  // (degenerate and hidden triangles of the spokes, lugs and hub)
-    GenVertexArrays(1, &wheelVao[style]);
-    GenBuffers(1, &wheelVbo[style]);
-    setupVtxVao(wheelVao[style], wheelVbo[style]);
+    const int L = buildLod_ ? 1 : 0;
+    GenVertexArrays(1, &wheelVao[L][style]);
+    GenBuffers(1, &wheelVbo[L][style]);
+    setupVtxVao(wheelVao[L][style], wheelVbo[L][style]);
     BufferData(GL_ARRAY_BUFFER, v.size() * sizeof(Vtx), v.data(), GL_STATIC_DRAW);
-    wheelVertexCount[style] = (int)v.size();
+    wheelVertexCount[L][style] = (int)v.size();
 }
 
 // One tread on one wheel style: the tire alone, built (like the wheel) for R = 0.32 and a
@@ -3158,7 +3204,7 @@ void Renderer::buildTire(int style, int tread) {
     const bool slick = tread == TIRE_RACE_SLICK;
     std::vector<Vtx> v;
     MeshOut m{v};
-    const int segs = 48;
+    const int segs = buildLod_ ? 16 : 48;  // (the far copy: a coarser round, no tread blocks, letters or lugs)
     // The carcass: a rounded profile from bead to bead. Knobby tires have a tall, rounded
     // sidewall and their tread blocks stand on it; road tires a low, square shoulder.
     static const double road[][2] = {{0.212, 0.104}, {0.23, 0.117}, {0.27, 0.122}, {0.302, 0.114}, {0.316, 0.098},
@@ -3215,7 +3261,9 @@ void Renderer::buildTire(int style, int tread) {
             m.quad(p0, q0, q1, p1, V3(0.012, 0.012, 0.012), SM_MATTE);
         }
     };
-    if (tread == TIRE_STREET) {
+    if (buildLod_) {
+        // (far off: the carcass alone)
+    } else if (tread == TIRE_STREET) {
         for (double z : {-0.062, -0.022, 0.022, 0.062}) groove(z, 0.0045);
         // Sipes across the shoulders.
         for (int b = 0; b < 60; b++) {
@@ -3298,11 +3346,12 @@ void Renderer::buildTire(int style, int tread) {
             }
         }
     }
-    GenVertexArrays(1, &tireVao[style][tread]);
-    GenBuffers(1, &tireVbo[style][tread]);
-    setupVtxVao(tireVao[style][tread], tireVbo[style][tread]);
+    const int L = buildLod_ ? 1 : 0;
+    GenVertexArrays(1, &tireVao[L][style][tread]);
+    GenBuffers(1, &tireVbo[L][style][tread]);
+    setupVtxVao(tireVao[L][style][tread], tireVbo[L][style][tread]);
     BufferData(GL_ARRAY_BUFFER, v.size() * sizeof(Vtx), v.data(), GL_STATIC_DRAW);
-    treadVertexCount[style][tread] = (int)v.size();
+    treadVertexCount[L][style][tread] = (int)v.size();
 }
 
 // Snow chains: cross links over the tread every few inches, and a side chain round each
@@ -3365,9 +3414,13 @@ void Renderer::buildChains() {
 }
 
 void Renderer::buildWheel() {
-    for (int st = 0; st < WHEEL_STYLES; st++) buildWheelStyle(st);
-    for (int st = 0; st < WHEEL_STYLES; st++)
-        for (int tt = 0; tt < TIRE_TYPES; tt++) buildTire(st, tt);
+    for (int lod = 0; lod < 2; lod++) {  // (and a far copy of each: drawWheels picks by distance)
+        buildLod_ = lod == 1;
+        for (int st = 0; st < WHEEL_STYLES; st++) buildWheelStyle(st);
+        for (int st = 0; st < WHEEL_STYLES; st++)
+            for (int tt = 0; tt < TIRE_TYPES; tt++) buildTire(st, tt);
+    }
+    buildLod_ = false;
     buildChains();
     std::vector<Vtx> cal;
 
@@ -3432,35 +3485,37 @@ M4 wheelMatrixAt(const V3& c, const V3& axis, const V3& up, double spin, double 
 }
 
 void Renderer::drawWheels(const Sim& sim, GLuint prog) {
+    carKind_ = 4;
     // A wheel (or a bare tire, or a flat) off a vehicle, by its matrix at full size.
     auto drawItem = [&](const WheelItem& it, const M4& full, const M4& flat) {
         const int st = std::min(std::max(it.style, 0), WHEEL_STYLES - 1);
-        BindVertexArray(wheelVao[st]);
+        BindVertexArray(wheelVao[0][st]);
         if (it.tireOnly) {
             uniformM4(prog, "uModel", full);
-            DrawArrays(GL_TRIANGLES, 0, tireVertexCount[st]);
+            carDrawArrays(0, tireVertexCount[0][st]);
         } else if (it.popped) {
             uniformM4(prog, "uModel", flat);
-            DrawArrays(GL_TRIANGLES, 0, tireVertexCount[st]);
+            carDrawArrays(0, tireVertexCount[0][st]);
             uniformM4(prog, "uModel", full);
-            DrawArrays(GL_TRIANGLES, tireVertexCount[st], wheelVertexCount[st] - tireVertexCount[st]);
+            carDrawArrays(tireVertexCount[0][st], wheelVertexCount[0][st] - tireVertexCount[0][st]);
         } else {
             uniformM4(prog, "uModel", full);
-            DrawArrays(GL_TRIANGLES, 0, wheelVertexCount[st]);
+            carDrawArrays(0, wheelVertexCount[0][st]);
         }
     };
     for (const Car& car : sim.cars) {
-        if (car.wheels.empty()) continue;
+        if (car.wheels.empty() || !carShown(&car - sim.cars.data())) continue;
         Frame fr = car.frame();
+        const int L = len(fr.com - eye_) > wheelLodDist_ ? 1 : 0;  // (far off: the coarse copies, no calipers)
         // The car's own tread on this wheel (and chains over it when they're on).
         const int tread = std::min(std::max(car.spec->tireType, 0), TIRE_TYPES - 1);
         auto drawTread = [&](int st, const M4& tm, double chain) {  // (chain: how much of one is wrapped on, 0..1)
             uniformM4(prog, "uModel", tm);
-            BindVertexArray(tireVao[st][tread]);
-            DrawArrays(GL_TRIANGLES, 0, treadVertexCount[st][tread]);
+            BindVertexArray(tireVao[L][st][tread]);
+            carDrawArrays(0, treadVertexCount[L][st][tread]);
             if (chain > 0) {
                 BindVertexArray(chainVao);
-                DrawArrays(GL_TRIANGLES, 0, chain >= 1 ? chainVertexCount : (int)(chainVertexCount * chain / 3) * 3);
+                carDrawArrays(0, chain >= 1 ? chainVertexCount : (int)(chainVertexCount * chain / 3) * 3);
             }
         };
         const int ci = (int)(&car - sim.cars.data());
@@ -3475,37 +3530,38 @@ void Renderer::drawWheels(const Sim& sim, GLuint prog) {
                 return m;
             };
             const int st = std::min(std::max(wh.mounted ? wh.item.style : car.spec->wheelStyle, 0), WHEEL_STYLES - 1);
-            BindVertexArray(wheelVao[st]);
+            BindVertexArray(wheelVao[L][st]);
             if (!wh.mounted) {
                 // Nothing on the hub but its rotor (the caliper below) and the studs: a sliver of rim face.
                 uniformM4(prog, "uModel", wm(true, kBareHubR / wh.R));
-                DrawArrays(GL_TRIANGLES, tireVertexCount[st], wheelVertexCount[st] - tireVertexCount[st]);
+                carDrawArrays(tireVertexCount[L][st], wheelVertexCount[L][st] - tireVertexCount[L][st]);
             } else if (wh.debeaded) {  // the rim alone, the tire gone
                 uniformM4(prog, "uModel", wm(true));
-                DrawArrays(GL_TRIANGLES, tireVertexCount[st], wheelVertexCount[st] - tireVertexCount[st]);
+                carDrawArrays(tireVertexCount[L][st], wheelVertexCount[L][st] - tireVertexCount[L][st]);
             } else if (wh.popped) {
                 // Smooth deflation animation: interpolate between inflated and flat
                 const double flatScale = (wh.rimR + 0.015) / wh.R;
                 double scale = (1.0 - wh.poppedAnim) * 1.0 + wh.poppedAnim * flatScale;
                 const M4 tm = wm(true, scale);
                 drawTread(st, tm, chain);
-                BindVertexArray(wheelVao[st]);
+                BindVertexArray(wheelVao[L][st]);
                 uniformM4(prog, "uModel", wm(true));
-                DrawArrays(GL_TRIANGLES, tireVertexCount[st], wheelVertexCount[st] - tireVertexCount[st]);
+                carDrawArrays(tireVertexCount[L][st], wheelVertexCount[L][st] - tireVertexCount[L][st]);
             } else {
                 // Match load-dependent sidewall sag; keep the rim full size and
                 // the compressed axis stationary while the tread rotates.
                 const double vertical = wh.loadedRadius(car.tirePsi, car.spec->tirePsi, car.spec->tireSoft) / wh.R;
                 const double bulge = 1 + 0.3 * (1 - vertical);
                 drawTread(st, wm(true, 1.0, vertical, bulge), chain);
-                BindVertexArray(wheelVao[st]);
+                BindVertexArray(wheelVao[L][st]);
                 uniformM4(prog, "uModel", wm(true));
-                DrawArrays(GL_TRIANGLES, tireVertexCount[st], wheelVertexCount[st] - tireVertexCount[st]);
+                carDrawArrays(tireVertexCount[L][st], wheelVertexCount[L][st] - tireVertexCount[L][st]);
             }
+            if (L) continue;
             BindVertexArray(caliperVao);
             // (The off-road rim is smaller for its tire: its brake is too.)
             uniformM4(prog, "uModel", wheelMatrix(car, wh, fr.up, false, st == WHEEL_OFFROAD_BRONZE || st == WHEEL_OFFROAD_BLACK || st == WHEEL_STEEL ? 0.72 : st == WHEEL_HONDA_COVER ? 0.82 : 1.0));
-            DrawArrays(GL_TRIANGLES, 0, caliperVertexCount);
+            carDrawArrays(0, caliperVertexCount);
         }
         // The spare where it rides (gone when it's been taken).
         if (car.hasSpare && !car.spareNodes.empty()) {
@@ -3539,16 +3595,54 @@ void Renderer::drawWheels(const Sim& sim, GLuint prog) {
     uniformM4(prog, "uModel", m4identity());
 }
 
-// Evaluates every vehicle's body, parts and running gear for this frame and uploads them.
-void Renderer::prepareCars(const Sim& sim, DebugView debug) {
+namespace {
+// The nodes a vehicle type's skin and bound parts are made from (and its torn-panel test reads).
+const std::vector<int>& watchedNodes(const Car& car, const VisualTemplate& t) {
+    static std::map<const VisualTemplate*, std::vector<int>> cache;
+    auto it = cache.find(&t);
+    if (it != cache.end()) return it->second;
+    std::vector<char> used(car.nodes.size(), 0);
+    auto use = [&](int n) {
+        if (n >= 0 && n < (int)used.size()) used[n] = 1;
+    };
+    for (const auto& b : t.sculptBind)
+        for (int k = 0; k < 8; k++) use(b.n[k]);
+    for (const auto& b : t.partBind)
+        for (int k = 0; k < 8; k++) use(b.n[k]);
+    for (int n : t.wNode) use(n);
+    for (const SkinQuad& q : car.quads)
+        for (int k = 0; k < 2; k++)
+            for (int v : car.tris[q.tri + k].v) use(v);
+    for (const Panel& p : car.panels) {
+        for (int n : p.bodyNodes) use(n);
+        for (int n : p.panelNodes) use(n);
+    }
+    std::vector<int>& w = cache[&t];
+    for (int n = 0; n < (int)used.size(); n++)
+        if (used[n]) w.push_back(n);
+    return w;
+}
+}  // namespace
+
+// Evaluates every vehicle's body and bound parts (in its own frame, when its shape has moved on) and its running gear
+// for this frame, and uploads them.
+void Renderer::prepareCars(const Sim& sim, DebugView debug, const V3& eye) {
     partVerts.clear();
+    debug_ = (int)debug;
     if (carSlots.size() < sim.cars.size()) carSlots.resize(sim.cars.size());
     static std::vector<BodyDynamic> dyn;
     static std::vector<unsigned> opaque, glass;
+    static std::vector<Vtx> local;
+    static std::vector<float> now;
+    rebuilds_ = 0;
     for (size_t ci = 0; ci < sim.cars.size(); ci++) {
         const Car& car = sim.cars[ci];
         const VisualTemplate* tp = tryVisualTemplate(car);
-        if (!tp) { carSlots[ci].opaqueCount = carSlots[ci].glassCount = 0; continue; }  // (still being made on a worker: the car joins the picture when it is ready)
+        if (!tp) {  // (still being made on a worker: the car joins the picture when it is ready)
+            CarSlot& sl = carSlots[ci];
+            sl.opaqueCount = sl.glassCount = sl.partsCount = 0, sl.builtTpl = nullptr, sl.intact = false, sl.lpos.clear();
+            continue;
+        }
         const VisualTemplate& t = *tp;
         CarSlot& slot = carSlots[ci];
         if (!slot.vao) {
@@ -3556,6 +3650,9 @@ void Renderer::prepareCars(const Sim& sim, DebugView debug) {
             GenBuffers(1, &slot.dyn);
             GenBuffers(1, &slot.ibo);
             GenBuffers(1, &slot.glassIbo);
+            GenVertexArrays(1, &slot.partsVao);
+            GenBuffers(1, &slot.partsVbo);
+            setupVtxVao(slot.partsVao, slot.partsVbo);
         }
         if (slot.tpl != &t) {
             GLuint staticVbo = 0;
@@ -3578,50 +3675,154 @@ void Renderer::prepareCars(const Sim& sim, DebugView debug) {
             for (int a = 0; a < 5; a++) EnableVertexAttribArray(a);
             slot.tpl = &t;
         }
-        dyn.clear();
-        opaque.clear();
-        glass.clear();
+        // The car's frame: its model matrix, and where its nodes are in it.
+        const Frame fr = car.frame();
+        M4& M = slot.model;
+        M = m4identity();
+        const V3 right = fr.left * -1.0;  // (fwd, up, right: a right-handed frame, so the cross products in it keep their sense)
+        const V3 ax[3] = {fr.fwd, fr.up, right};
+        for (int c = 0; c < 3; c++) M.m[c * 4] = (float)ax[c].x, M.m[c * 4 + 1] = (float)ax[c].y, M.m[c * 4 + 2] = (float)ax[c].z;
+        M.m[12] = (float)fr.com.x, M.m[13] = (float)fr.com.y, M.m[14] = (float)fr.com.z;
+        auto toLocal = [&](const V3& p) {
+            const V3 d = p - fr.com;
+            return V3(dot(d, fr.fwd), dot(d, fr.up), dot(d, right));
+        };
+        const std::vector<int>& watch = watchedNodes(car, t);
+        now.resize(watch.size() * 3);
+        double r2 = 0;
+        for (size_t k = 0; k < watch.size(); k++) {
+            const V3 l = toLocal(car.nodes[watch[k]].p);
+            now[k * 3] = (float)l.x, now[k * 3 + 1] = (float)l.y, now[k * 3 + 2] = (float)l.z;
+            r2 = std::max(r2, dot(l, l));
+        }
+        // Built again when anything has moved on by more than ~1/4 pixel (1.5 mm close up) since it last was.
+        const double eps = std::max(0.0015, 0.0003 * len(fr.com - eye));
+        bool moved = slot.builtTpl != &t || slot.snap.size() != now.size() || slot.debug != (int)debug;
+        for (size_t k = 0; !moved && k < now.size(); k += 3) {
+            const float dx = now[k] - slot.snap[k], dy = now[k + 1] - slot.snap[k + 1], dz = now[k + 2] - slot.snap[k + 2];
+            moved = dx * dx + dy * dy + dz * dz > eps * eps;
+        }
+        int shattered = 0;
+        for (const Tri& tr : car.tris) shattered += tr.shattered;
+        const bool bodyDirty = moved || shattered != slot.shattered;
+
         const int beam = ci < carBeams.size() ? carBeams[ci] : 0;
         if (carLampState.size() < sim.cars.size()) carLampState.resize(sim.cars.size());
         CarLamps& lamps = carLampState[ci];
         carLamps(car, t, beam, lamps);
-        if (debug != DEBUG_BEAMS_ONLY) {
-            if (debug != DEBUG_PARTS) evalBody(car, t, dyn, opaque, glass);
-            const size_t first = partVerts.size();
-            evalParts(car, t, partVerts);
-            // Lamps modelled as glowing parts (the Jesko's LED strips, the 4Runner's bumper
-            // lights): brighter when lit, dark when smashed. Their glow is color^2.2 (lit shader).
-            const Frame fr = car.frame();
-            for (size_t v = first; v < partVerts.size(); v++) {
-                Vtx& pv = partVerts[v];
+        // Lamps modelled as glowing parts (the Jesko's LED strips, the 4Runner's bumper lights): brighter when
+        // lit, dark when smashed. Their glow is color^2.2 (lit shader).
+        float redK[2], frontK[2];
+        for (int sd = 0; sd < 2; sd++) {
+            redK[sd] = lamps.tail[sd] < 0.5f ? 0.15f : 1 + 0.6f * (beam > 0) + 1.4f * (float)std::max(car.brake, car.handbrake * 0.6);
+            frontK[sd] = lamps.head[sd] < 0.5f ? 0.15f : 1 + (beam == 2 ? 3.0f : beam ? 2.5f : 0.0f);
+        }
+        const float lampKey[5] = {redK[0], redK[1], frontK[0], frontK[1], 0};
+        bool lampsChanged = false;
+        for (int k = 0; k < 4; k++) lampsChanged |= std::fabs(lampKey[k] - slot.lampKey[k]) > 0.01f;
+
+        if (debug != DEBUG_BEAMS_ONLY && (bodyDirty || lampsChanged)) {
+            // Everything in the car's frame: the nodes relative to it, as evalBody and evalParts read them.
+            static std::vector<V3> P;
+            P.resize(car.nodes.size());
+            for (size_t n = 0; n < car.nodes.size(); n++) P[n] = toLocal(car.nodes[n].p);
+            if (bodyDirty) {
+                dyn.clear();
+                opaque.clear();
+                glass.clear();
+                if (debug != DEBUG_PARTS) evalBody(car, P, t, dyn, opaque, glass);
+                BindBuffer(GL_ARRAY_BUFFER, slot.dyn);
+                BufferData(GL_ARRAY_BUFFER, dyn.size() * sizeof(BodyDynamic), dyn.data(), GL_DYNAMIC_DRAW);
+                BindVertexArray(slot.vao);
+                BindBuffer(GL_ELEMENT_ARRAY_BUFFER, slot.glassIbo);
+                BufferData(GL_ELEMENT_ARRAY_BUFFER, glass.size() * sizeof(unsigned), glass.data(), GL_DYNAMIC_DRAW);
+                BindBuffer(GL_ELEMENT_ARRAY_BUFFER, slot.ibo);
+                BufferData(GL_ELEMENT_ARRAY_BUFFER, opaque.size() * sizeof(unsigned), opaque.data(), GL_DYNAMIC_DRAW);
+                slot.opaqueCount = (int)opaque.size();
+                slot.glassCount = (int)glass.size();
+                slot.lpos.resize(dyn.size() * 3);
+                for (size_t v = 0; v < dyn.size(); v++)
+                    for (int k = 0; k < 3; k++) slot.lpos[v * 3 + k] = dyn[v].p[k];
+                slot.lopaque = opaque, slot.lglass = glass;
+                size_t whole = 0;  // (indices with no face torn off)
+                for (const auto& f : t.faces) whole += f.rv[3] == f.rv[2] ? 3 : 6;
+                slot.intact = !car.isProp() && opaque.size() == whole && car.damage < 0.03;
+                slot.snap = now;
+                slot.shattered = shattered, slot.debug = (int)debug, slot.builtTpl = &t;
+                slot.builds++;
+                rebuilds_++;
+            }
+            local.clear();
+            evalParts(P, t, local);
+            for (Vtx& pv : local) {
                 if (pv.c[3] < 5.5f || pv.c[3] > 6.5f) continue;
-                const V3 rel = V3(pv.p[0], pv.p[1], pv.p[2]) - fr.com;
-                const int sd = dot(rel, fr.left) > 0 ? 0 : 1;
-                const bool front = dot(rel, fr.fwd) > 0, red = pv.c[0] > 2.5f * pv.c[1], amber = pv.c[2] < 0.5f * pv.c[0];
-                float k = 1;
-                if (red) k = lamps.tail[sd] < 0.5f ? 0.15f : 1 + 0.6f * (beam > 0) + 1.4f * (float)std::max(car.brake, car.handbrake * 0.6);
-                else if (front && !amber) k = lamps.head[sd] < 0.5f ? 0.15f : 1 + (beam == 2 ? 3.0f : beam ? 2.5f : 0.0f);
+                const int sd = pv.p[2] < 0 ? 0 : 1;  // (local z: toward the car's right)
+                const bool front = pv.p[0] > 0, red = pv.c[0] > 2.5f * pv.c[1], amber = pv.c[2] < 0.5f * pv.c[0];
+                const float k = red ? redK[sd] : front && !amber ? frontK[sd] : 1.0f;
                 for (int c = 0; c < 3; c++) pv.c[c] *= k;
             }
+            BindBuffer(GL_ARRAY_BUFFER, slot.partsVbo);
+            BufferData(GL_ARRAY_BUFFER, local.size() * sizeof(Vtx), local.data(), GL_DYNAMIC_DRAW);
+            slot.partsCount = (int)local.size();
+            for (int k = 0; k < 4; k++) slot.lampKey[k] = lampKey[k];
         }
+        if (debug == DEBUG_BEAMS_ONLY) slot.opaqueCount = slot.glassCount = slot.partsCount = 0, slot.debug = (int)debug;
         buildRunningGear(car, partVerts);
-        BindBuffer(GL_ARRAY_BUFFER, slot.dyn);
-        BufferData(GL_ARRAY_BUFFER, dyn.size() * sizeof(BodyDynamic), dyn.data(), GL_STREAM_DRAW);
-        BindVertexArray(slot.vao);
-        BindBuffer(GL_ELEMENT_ARRAY_BUFFER, slot.glassIbo);
-        BufferData(GL_ELEMENT_ARRAY_BUFFER, glass.size() * sizeof(unsigned), glass.data(), GL_STREAM_DRAW);
-        BindBuffer(GL_ELEMENT_ARRAY_BUFFER, slot.ibo);
-        BufferData(GL_ELEMENT_ARRAY_BUFFER, opaque.size() * sizeof(unsigned), opaque.data(), GL_STREAM_DRAW);
-        slot.opaqueCount = (int)opaque.size();
-        slot.glassCount = (int)glass.size();
+        slot.center = fr.com, slot.radius = std::sqrt(r2) + 0.5;
     }
     buildRopes(sim, partVerts);
     BindBuffer(GL_ARRAY_BUFFER, dynVbo);
     BufferData(GL_ARRAY_BUFFER, partVerts.size() * sizeof(Vtx), partVerts.data(), GL_STREAM_DRAW);
 }
 
+// Which copy of its skin a car draws: a far one where its cells (half of them: what clustering moves an edge by) come
+// to under 3/4 of a pixel. The copy is built the first time it's wanted after the skin was.
+int Renderer::skinLod(const CarSlot& slot) const {
+    if (!slot.intact || slot.lpos.empty()) return 0;
+    const double px = pxPerM_ / std::max(1.0, len(slot.center - eye_));
+    static const double kCell[2] = {0.06, 0.15};
+    int L = 0;
+    for (int k = 0; k < 2; k++)
+        if (kCell[k] * 0.5 * px < 0.75) L = k + 1;
+    if (!L) return 0;
+    CarSlot& s = const_cast<CarSlot&>(slot);
+    if (s.lodBuilt[L - 1] != s.builds) {
+        const VisualTemplate& t = *static_cast<const VisualTemplate*>(s.tpl);
+        const double c = kCell[L - 1];
+        const size_t nv = s.lpos.size() / 3;
+        std::unordered_map<uint64_t, unsigned> cell;
+        std::vector<unsigned> rep(nv);
+        for (size_t v = 0; v < nv; v++) {
+            const int64_t ix = (int64_t)std::floor(s.lpos[v * 3] / c), iy = (int64_t)std::floor(s.lpos[v * 3 + 1] / c), iz = (int64_t)std::floor(s.lpos[v * 3 + 2] / c);
+            const int region = v < t.rvStatic.size() ? (int)t.rvStatic[v].region : 0;
+            const uint64_t key = ((uint64_t)(ix & 0xffff) << 48) ^ ((uint64_t)(iy & 0xffff) << 32) ^ ((uint64_t)(iz & 0xffff) << 16) ^ (uint64_t)region;
+            rep[v] = cell.emplace(key, (unsigned)v).first->second;
+        }
+        auto cluster = [&](const std::vector<unsigned>& in, std::vector<unsigned>& out) {
+            out.clear();
+            for (size_t i = 0; i + 2 < in.size(); i += 3) {
+                const unsigned a = rep[in[i]], b = rep[in[i + 1]], d = rep[in[i + 2]];
+                if (a != b && b != d && a != d) out.insert(out.end(), {a, b, d});
+            }
+        };
+        static std::vector<unsigned> o, g;
+        cluster(s.lopaque, o);
+        cluster(s.lglass, g);
+        if (!s.lodIbo[L - 1]) GenBuffers(1, &s.lodIbo[L - 1]), GenBuffers(1, &s.lodGlassIbo[L - 1]);
+        BindVertexArray(s.vao);
+        BindBuffer(GL_ELEMENT_ARRAY_BUFFER, s.lodGlassIbo[L - 1]);
+        BufferData(GL_ELEMENT_ARRAY_BUFFER, g.size() * sizeof(unsigned), g.data(), GL_DYNAMIC_DRAW);
+        BindBuffer(GL_ELEMENT_ARRAY_BUFFER, s.lodIbo[L - 1]);
+        BufferData(GL_ELEMENT_ARRAY_BUFFER, o.size() * sizeof(unsigned), o.data(), GL_DYNAMIC_DRAW);
+        s.lodCount[L - 1] = (int)o.size(), s.lodGlassCount[L - 1] = (int)g.size();
+        s.lodBuilt[L - 1] = s.builds;
+    }
+    return L;
+}
+
 void Renderer::drawCarBodies(const Sim& sim, GLuint prog, bool glassPass) {
     for (size_t ci = 0; ci < sim.cars.size() && ci < carSlots.size(); ci++) {
+        if (!carShown(ci)) continue;
         const Car& car = sim.cars[ci];
         const CarSlot& slot = carSlots[ci];
         if (!slot.tpl) continue;
@@ -3649,9 +3850,230 @@ void Renderer::drawCarBodies(const Sim& sim, GLuint prog, bool glassPass) {
             Uniform4f(uniformLocation(prog, "uShD"), sp[12], sp[13], sp[14], sp[15]);
             Uniform4f(uniformLocation(prog, "uShE"), sp[16], sp[17], sp[18], sp[19]);
         }
+        uniformM4(prog, "uModel", slot.model);
         BindVertexArray(slot.vao);
-        BindBuffer(GL_ELEMENT_ARRAY_BUFFER, glassPass ? slot.glassIbo : slot.ibo);
-        DrawElements(GL_TRIANGLES, glassPass ? slot.glassCount : slot.opaqueCount, GL_UNSIGNED_INT, nullptr);
+        const int L = skinLod(slot);
+        const int n = L ? (glassPass ? slot.lodGlassCount[L - 1] : slot.lodCount[L - 1]) : glassPass ? slot.glassCount : slot.opaqueCount;
+        BindBuffer(GL_ELEMENT_ARRAY_BUFFER, L ? (glassPass ? slot.lodGlassIbo[L - 1] : slot.lodIbo[L - 1]) : glassPass ? slot.glassIbo : slot.ibo);
+        DrawElements(GL_TRIANGLES, n, GL_UNSIGNED_INT, nullptr);
+        carKind_ = glassPass ? 1 : 0;
+        countCar(n);
+    }
+    uniformM4(prog, "uModel", m4identity());
+}
+
+// Which cars the pass with this view-projection sees (a box round each one's frame, wheels and all), and in the main
+// pass, which the terrain doesn't hide (occlusion.h).
+void Renderer::cullCars(size_t cars, const M4& vp, bool mainPass) {
+    carVisible_.assign(cars, 1);
+    for (size_t ci = 0; ci < cars && ci < carSlots.size(); ci++) {
+        const CarSlot& slot = carSlots[ci];
+        if (slot.radius <= 0) continue;
+        RenderBounds b;
+        const double r = slot.radius + 0.6;
+        b.add(slot.center - V3(r, r, r));
+        b.add(slot.center + V3(r, r, r));
+        carVisible_[ci] = b.visible(vp) && !(mainPass && occl_.occluded(b));  // (behind a hill: the main pass only, never the shadows)
+    }
+}
+
+// The parts bound to each car's lattice, in its frame (prepareCars).
+void Renderer::drawCarParts(const Sim& sim, GLuint prog) {
+    for (size_t ci = 0; ci < sim.cars.size() && ci < carSlots.size(); ci++) {
+        const CarSlot& slot = carSlots[ci];
+        if (!slot.partsCount || !carShown(ci)) continue;
+        uniformM4(prog, "uModel", slot.model);
+        BindVertexArray(slot.partsVao);
+        carKind_ = 2;
+        carDrawArrays(0, slot.partsCount);
+    }
+    uniformM4(prog, "uModel", m4identity());
+}
+
+namespace {
+// What a car's parts mesh is merged from: the models and their builds, in order (not where they are).
+uint64_t partsSignature(const std::vector<Placed>& parts) {
+    uint64_t h = 1469598103934665603ull;
+    auto mix = [&](uint64_t v) { h = (h ^ v) * 1099511628211ull; };
+    for (const Placed& pl : parts) {
+        for (char ch : pl.id) mix((unsigned char)ch);
+        mix((uint64_t)(pl.variant + 7) * 31 + pl.bare * 3 + pl.clip);
+        for (const auto& kv : pl.set) {
+            for (char ch : kv.first) mix((unsigned char)ch);
+            mix((uint64_t)std::llround(kv.second * 4096));
+        }
+        mix(0xff);
+    }
+    return h ^ parts.size();
+}
+// Whether p (the car's frame) is shut inside its skin as last built: a ray up, down and to either side each crosses
+// it an odd number of times. (A crack or a shared edge only ever makes it look outside: then it's drawn.)
+bool insideSkin(const std::vector<float>& P, const std::vector<unsigned>& idx, const V3& p) {
+    int odd[4] = {0, 0, 0, 0};
+    for (size_t i = 0; i + 2 < idx.size(); i += 3) {
+        const float* a = &P[idx[i] * 3];
+        const float* b = &P[idx[i + 1] * 3];
+        const float* c = &P[idx[i + 2] * 3];
+        for (int dir = 0; dir < 2; dir++) {  // 0: along y (the x, z plane), 1: along z (the x, y plane)
+            const int u = 0, v = dir == 0 ? 2 : 1, w = dir == 0 ? 1 : 2;
+            const double pu = u == 0 ? p.x : 0, pv = v == 2 ? p.z : p.y, pw = w == 1 ? p.y : p.z;
+            if (pu < std::min({a[u], b[u], c[u]}) || pu > std::max({a[u], b[u], c[u]}) || pv < std::min({a[v], b[v], c[v]}) || pv > std::max({a[v], b[v], c[v]})) continue;
+            const double d = (b[u] - a[u]) * (c[v] - a[v]) - (c[u] - a[u]) * (b[v] - a[v]);
+            if (std::fabs(d) < 1e-12) continue;
+            const double l1 = ((b[u] - pu) * (c[v] - pv) - (c[u] - pu) * (b[v] - pv)) / d;
+            const double l2 = ((c[u] - pu) * (a[v] - pv) - (a[u] - pu) * (c[v] - pv)) / d;
+            const double l3 = 1 - l1 - l2;
+            if (l1 < 0 || l2 < 0 || l3 < 0) continue;
+            const double hit = l1 * a[w] + l2 * b[w] + l3 * c[w];
+            odd[dir * 2 + (hit > pw ? 0 : 1)] ^= 1;
+        }
+    }
+    return odd[0] && odd[1] && odd[2] && odd[3];
+}
+const mk::Mesh& partMeshRaw(const Placed& pl, mk::Mesh& scratch) {
+    if (pl.bare || pl.variant >= 0) return placedMesh(pl);
+    if (pl.set.empty()) return mk::modelMesh(pl.id);
+    scratch = mk::modelMesh(pl.id, pl.set);
+    return scratch;
+}
+// The part's mesh without the faces hidden inside it (meshopt.h: degenerate and hidden faces only; the flats aren't
+// merged, so a clipped or stretched part is cut and shaded as before). Kept per model build.
+const mk::Mesh& partMesh(const Placed& pl, mk::Mesh& scratch) {
+    static std::map<std::string, mk::Mesh> cache;
+    static uint64_t version = 0;
+    if (version != mk::picksVersion()) cache.clear(), version = mk::picksVersion();
+    std::string key = pl.id + "#" + std::to_string(pl.variant) + (pl.bare ? "b" : "");
+    for (const auto& kv : pl.set) key += "|" + kv.first + "=" + std::to_string(kv.second);
+    auto it = cache.find(key);
+    if (it != cache.end()) return it->second;
+    mk::Mesh m = partMeshRaw(pl, scratch);
+    MeshOptOptions o;
+    o.coplanar = false;
+    optimizeMesh(m, o);
+    return cache.emplace(key, std::move(m)).first->second;
+}
+}  // namespace
+
+// Merges each car's parts again if they changed, and lays out this frame's transforms (one texture for all cars).
+void Renderer::prepareCarModels() {
+    for (CarSlot& slot : carSlots) slot.modelsParts = 0;
+    partXf.clear();
+    int base = 0;
+    for (const CarModels& cm : carModels) {
+        if (cm.car < 0 || cm.car >= (int)carSlots.size() || cm.parts.empty()) continue;
+        CarSlot& slot = carSlots[cm.car];
+        if (!slot.vao) continue;  // (not prepared: prepareCars runs first)
+        const uint64_t sig = partsSignature(cm.parts);
+        if (!slot.modelsVao) {
+            GenVertexArrays(1, &slot.modelsVao);
+            GenBuffers(1, &slot.modelsVbo);
+            GenBuffers(1, &slot.modelsIdx);
+            setupVtxVao(slot.modelsVao, slot.modelsVbo);
+            BindBuffer(GL_ARRAY_BUFFER, slot.modelsIdx);
+            VertexAttribPointer(3, 1, GL_FLOAT, 0, sizeof(float), (void*)0);
+            EnableVertexAttribArray(3);
+        }
+        if (sig != slot.modelsSig || !slot.modelsCount) {
+            static std::vector<Vtx> v;
+            static std::vector<float> idx;
+            mk::Mesh scratch;
+            v.clear(), idx.clear();
+            // The parts shut inside the intact body (the engine under its hood...) go last, so they can be left off the draw:
+            // every corner of their bounds (padded 3 cm) inside the skin and below its lowest glass.
+            std::vector<char> shut(cm.parts.size(), 0);
+            if (slot.intact && !slot.lglass.empty()) {
+                const M4& M = slot.model;
+                const V3 ax[3] = {V3(M.m[0], M.m[1], M.m[2]), V3(M.m[4], M.m[5], M.m[6]), V3(M.m[8], M.m[9], M.m[10])}, o(M.m[12], M.m[13], M.m[14]);
+                double belt = 1e9;
+                for (unsigned i : slot.lglass) belt = std::min(belt, (double)slot.lpos[i * 3 + 1]);
+                for (size_t k = 0; k < cm.parts.size(); k++) {
+                    const Placed& pl = cm.parts[k];
+                    const mk::Mesh& m = partMesh(pl, scratch);
+                    if (m.v.empty() || pl.wear) continue;
+                    V3 a[3];
+                    if (pl.oriented) a[0] = pl.ax[0], a[1] = pl.ax[1], a[2] = pl.ax[2];
+                    else a[0] = V3(std::cos(pl.yaw), 0, -std::sin(pl.yaw)), a[1] = V3(0, 1, 0), a[2] = V3(-a[0].z, 0, a[0].x);
+                    bool in = true;
+                    for (int cnr = 0; cnr < 8 && in; cnr++) {
+                        const double pad = 0.03;
+                        const V3 q((cnr & 1 ? m.hi.x : m.lo.x), (cnr & 2 ? m.hi.y : m.lo.y), (cnr & 4 ? m.hi.z : m.lo.z));
+                        V3 w = pl.p + a[0] * (q.x * pl.scale.x) + a[1] * (q.y * pl.scale.y) + a[2] * (q.z * pl.scale.z);
+                        w += (a[0] * (cnr & 1 ? 1.0 : -1.0) + a[1] * (cnr & 2 ? 1.0 : -1.0) + a[2] * (cnr & 4 ? 1.0 : -1.0)) * pad;
+                        const V3 d = w - o, l(dot(d, ax[0]), dot(d, ax[1]), dot(d, ax[2]));
+                        in = l.y < belt - 0.02 && insideSkin(slot.lpos, slot.lopaque, l);
+                    }
+                    shut[k] = in;
+                }
+            }
+            int shown = 0;
+            for (int pass = 0; pass < 2; pass++) {
+                for (size_t k = 0; k < cm.parts.size(); k++) {
+                    if (shut[k] != pass) continue;
+                    for (const mk::MVert& q : partMesh(cm.parts[k], scratch).v) {
+                        v.push_back(Vtx{{q.p[0], q.p[1], q.p[2]}, {q.n[0], q.n[1], q.n[2]}, {q.c[0], q.c[1], q.c[2], (float)q.mat}});
+                        idx.push_back((float)k);
+                    }
+                }
+                if (pass == 0) shown = (int)v.size();
+            }
+            slot.modelsShown = shown;
+            BindBuffer(GL_ARRAY_BUFFER, slot.modelsVbo);
+            BufferData(GL_ARRAY_BUFFER, v.size() * sizeof(Vtx), v.data(), GL_STATIC_DRAW);
+            BindBuffer(GL_ARRAY_BUFFER, slot.modelsIdx);
+            BufferData(GL_ARRAY_BUFFER, idx.size() * sizeof(float), idx.data(), GL_STATIC_DRAW);
+            slot.modelsCount = (int)v.size();
+            slot.modelsSig = sig;
+            rebuilds_++;
+        }
+        slot.modelsBase = base, slot.modelsParts = (int)cm.parts.size();
+        for (const Placed& pl : cm.parts) {
+            V3 a[3];
+            if (pl.oriented) a[0] = pl.ax[0], a[1] = pl.ax[1], a[2] = pl.ax[2];
+            else {
+                const V3 f(std::cos(pl.yaw), 0, -std::sin(pl.yaw));
+                a[0] = f, a[1] = V3(0, 1, 0), a[2] = V3(-f.z, 0, f.x);
+            }
+            const double sc[3] = {pl.scale.x, pl.scale.y, pl.scale.z};
+            const float w[3] = {pl.clip ? pl.clipLo : -1e9f, pl.clip ? pl.clipHi : 1e9f, (pl.sunlit ? 100.0f : 0.0f) + 200.0f * pl.wear};
+            for (int c = 0; c < 3; c++) {
+                const V3 e = a[c] * sc[c];
+                partXf.insert(partXf.end(), {(float)e.x, (float)e.y, (float)e.z, w[c]});
+            }
+            partXf.insert(partXf.end(), {(float)pl.p.x, (float)pl.p.y, (float)pl.p.z, 0.0f});
+        }
+        base += (int)cm.parts.size();
+    }
+    if (!base) return;
+    const int rows = (base + 255) / 256;
+    partXf.resize((size_t)rows * 256 * 16, 0.0f);
+    if (!partTex) {
+        GenTextures(1, &partTex);
+        BindTexture(GL_TEXTURE_2D, partTex);
+        TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
+    BindTexture(GL_TEXTURE_2D, partTex);
+    if (rows != partRows) TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 1024, rows, 0, GL_RGBA, GL_FLOAT, partXf.data()), partRows = rows;
+    else TexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 1024, rows, GL_RGBA, GL_FLOAT, partXf.data());
+}
+
+// Every car's parts, one draw each (prog: progParts or progPartsDepth, its other uniforms set).
+void Renderer::drawCarModels(GLuint prog) {
+    if (!partRows) return;
+    ActiveTexture(GL_TEXTURE0 + 9);
+    BindTexture(GL_TEXTURE_2D, partTex);
+    ActiveTexture(GL_TEXTURE0);
+    Uniform1i(uniformLocation(prog, "uParts"), 9);
+    for (size_t ci = 0; ci < carSlots.size(); ci++) {
+        const CarSlot& slot = carSlots[ci];
+        if (!slot.modelsParts || !slot.modelsCount || !carShown(ci)) continue;
+        Uniform1i(uniformLocation(prog, "uPartBase"), slot.modelsBase);
+        BindVertexArray(slot.modelsVao);
+        carKind_ = 5;
+        // (what the intact body shuts in isn't drawn: in the parts view it's all there, and a body that's been opened up shows it)
+        carDrawArrays(0, slot.intact && debug_ == DEBUG_OFF ? slot.modelsShown : slot.modelsCount);
     }
 }
 
@@ -3661,8 +4083,13 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     occl_.refresh();
     occl_.setEye(view.eye);
     passMark(FP_OPAQUE);
+    const auto benchClock = [] { return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count(); };
+    const double t0 = benchClock();
     buildFigures();
-    prepareCars(sim, debug);
+    const double t1 = benchClock();
+    prepareCars(sim, debug, view.eye);
+    prepareCarModels();
+    const double t2 = benchClock();
 
     // Headlamps lit as real lights: the nearest cars with their lamps on, two spots each,
     // so the shaders' per-pixel loop stays short however many cars there are.
@@ -3741,7 +4168,15 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     farZ_ = settings.drawDistance > 0 ? std::max(150.0f, settings.drawDistance) : 6000.0f;  // (a draw distance: everything past it is clipped)
     M4 proj = perspective(view.fovy, (float)view.width / std::max(1, view.height), 0.05f, farZ_);
     M4 vp = proj * lookAt(view.eye, view.target, view.up);
+    // Wheels past where a mud tire's lug (2.4 cm proud) is under half a pixel draw their far copies.
+    eye_ = view.eye;
+    pxPerM_ = view.height * scale / (2 * std::tan(view.fovy * 0.5));
+    wheelLodDist_ = 0.05 * pxPerM_;
+    static const char* noLod = std::getenv("CZ_NO_CARLOD");  // (for comparing screenshots: 1 no far copies, 2 no wheel ones, 3 no skin ones)
+    if (noLod && (noLod[0] == '1' || noLod[0] == '2')) wheelLodDist_ = 1e9;
+    if (noLod && (noLod[0] == '1' || noLod[0] == '3')) pxPerM_ = 1e9;
     geometryStats_ = {};
+    geometryStats_.carPartsMs = t1 - t0, geometryStats_.carPrepMs = t2 - t1, geometryStats_.carRebuilds = rebuilds_;
     vegStats_ = {};
     static const char* noVegEnv = std::getenv("CZ_NO_VEG");  // (timing: the frame without the trees and bushes; "shadow" or "main": that pass only)
     static const bool noVeg = noVegEnv && std::strcmp(noVegEnv, "shadow") != 0, noVegShadow = noVegEnv && std::strcmp(noVegEnv, "main") != 0;
@@ -3773,16 +4208,29 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         UseProgram(progDepth);
         drawBatches(sceneryVao, sceneryBatches, lightVP[c], true);
         if (!noVegShadow) drawBushes(lightVP[c], view.eye, true, vegStats_.logsShadow);
+        // (The far cascade, a hand a texel, takes the bodies and wheels: what's under and inside them doesn't show at that size.)
+        shadowPass_ = true;
+        cullCars(sim.cars.size(), lightVP[c], false);
         drawCarBodies(sim, progDepth, false);
         BindVertexArray(dynVao);
-        DrawArrays(GL_TRIANGLES, 0, (GLsizei)partVerts.size());
+        if (c == 0) carKind_ = 3, carDrawArrays(0, (GLsizei)partVerts.size());
+        if (c == 0) drawCarParts(sim, progDepth);
         drawWheels(sim, progDepth);
+        if (partRows && c == 0) {
+            UseProgram(progPartsDepth);
+            uniformM4(progPartsDepth, "uLightVP", lightVP[c]);
+            drawCarModels(progPartsDepth);
+            UseProgram(progDepth);
+        }
+        carVisible_.clear();
+        shadowPass_ = false;
         props.drawShadow(lightVP[c], c, keyDir);
         Disable(GL_POLYGON_OFFSET_FILL);
     }
 
     // Main pass, into the HDR target.
     passMark(FP_SKY);
+    cullCars(sim.cars.size(), vp, true);
     BindFramebuffer(GL_FRAMEBUFFER, targetSamples ? msFbo : sceneFbo);
     Viewport(0, 0, targetW, targetH);
     ClearColor(kFog[0], kFog[1], kFog[2], 1);
@@ -4025,8 +4473,15 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     }
     passMark(FP_OPAQUE);
     BindVertexArray(dynVao);
-    DrawArrays(GL_TRIANGLES, 0, (GLsizei)partVerts.size());
+    carKind_ = 3, carDrawArrays(0, (GLsizei)partVerts.size());
+    drawCarParts(sim, progLit);
     drawWheels(sim, progLit);
+    if (partRows) {  // the cars' mechanical parts (CarModels)
+        setLighting(progParts);
+        bindTerrainTex(progParts);
+        Uniform1i(uniformLocation(progParts, "uMap"), mapId);
+        drawCarModels(progParts);
+    }
 
     setLighting(progCar);
     drawCarBodies(sim, progCar, false);
