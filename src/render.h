@@ -200,7 +200,9 @@ private:
 
     static const int kBloomLevels = 6;
     GLuint progLit = 0, progDepth = 0, progLine = 0, progSky = 0, progHud = 0, progFx = 0, progCar = 0;
-    GLuint progTerrain = 0;
+    GLuint progTerrain = 0;                 // the ground shader in use this frame
+    GLuint noiseTex = 0;                    // the cheap ground tiers' noise
+    GLuint progTerrainTier[4] = {0, 0, 0, 0};  // per tier (groundTier)
     PropRenderer props;
     bool propsOk = false;     // its shaders built
     int propsApplied = -1;    // the props quality the scenery was last built for
@@ -335,6 +337,8 @@ private:
     void buildBackdrop(const World& world, std::vector<Vtx>& verts, std::vector<unsigned>& idx);
     void ensureShadows(int size);
     void ensureGround(int quality);
+    int groundTier(int gq) const;
+    GLuint terrainProgram(int tier);
     void ensureTargets(int w, int h, int samples);
     void postProcess(const View& view, const M4& proj);
     void prepareCars(const Sim& sim, DebugView debug, const V3& eye);

@@ -7,7 +7,31 @@
 extern const char* const kGroundShaderFS = R"(
 uniform sampler2DArray uGroundA;  // sRGB albedo, A = height
 uniform sampler2DArray uGroundB;  // RG tangent normal, B roughness, A ambient occlusion
-uniform int uGroundQ;             // 1 one tap a layer, 2 anti-tiling + height blend + steep rock, 3 as 2 with more layers
+// GQ (a #define, so each tier is its own program): 0 POTATO: cheapest, 1 LOW: one tap a layer, 2 anti-tiling + height blend + steep rock, 3 as 2 with more layers
+#ifndef GQ
+#define GQ 2
+#endif
+const int uGroundQ = GQ;
+
+#if GQ <= 1
+// LOW and POTATO: value noise from one texture tap (the bilinear weights are put through the smoothstep by
+// moving the lookup, so the tap does the four-corner mix) in place of four hashes.
+uniform sampler2D uNoiseTex;
+float vnoiseL(vec2 p){
+  vec2 i = floor(p), f = fract(p);
+  return textureLod(uNoiseTex, (i + f * f * (3.0 - 2.0 * f) + 0.5) * (1.0 / 256.0), 0.0).r;
+}
+float fbmL(vec2 p, int oct){
+  float s = 0.0, a = 0.5;
+  for (int i = 0; i < oct; i++) { s += a * vnoiseL(p); p = mat2(1.6, 1.2, -1.2, 1.6) * p; a *= 0.5; }
+  return s;
+}
+#define vnoise vnoiseL
+#define fbm fbmL
+#endif
+
+// Fewer octaves of fbm(p, full), scaled to the same range (one tap a layer, LOW: the patches are blurrier, not paler).
+float fbmFew(vec2 p, int oct, int full){ return fbm(p, oct) * (1.0 - exp2(-float(full))) / (1.0 - exp2(-float(oct))); }
 
 // ---- Materials: a layer of the arrays, a tint, a size on the ground, a relief strength ----
 const int kPROC = 16;  // "not a photo": the procedural look
@@ -34,17 +58,41 @@ const float kVTile[17] = float[](2.5, 3.0, 2.5, 3.0, 3.0, 3.0, 2.5, 3.0, 3.5, 3.
 const float kVBump[17] = float[](1.0, 1.0, 1.0, 1.0, 0.8, 0.8, 1.0, 0.9, 0.5, 0.7, 0.7, 1.1, 1.2, 0.5, 0.8, 1.3, 0.0);
 
 // ---- The material mix at this pixel: up to 12 (variant, weight) slots ----
-int sV[12]; float sW[12]; int sN = 0;
 float gProc = 0.0;       // weight of the procedural look
 float gMud = 0.0, gSnow = 0.0, gTrail = 0.0, gRockPaint = 0.0;
+#if GQ >= 2
+int sV[12]; float sW[12]; int sN = 0;
 void addSlot(int v, float w){
   if (w <= 0.001) return;
   if (v == kPROC) { gProc += w; return; }
   for (int i = 0; i < sN; i++) if (sV[i] == v) { sW[i] += w; return; }
   if (sN < 12) { sV[sN] = v; sW[sN] = w; sN++; }
 }
+#else
+// (Two materials are all LOW and POTATO draw: only the two strongest are kept, in scalars, not a table the
+// GPU would have to index.)
+int sV0 = -1, sV1 = -1; float sW0 = 0.0, sW1 = 0.0;
+void addSlot(int v, float w){
+  if (w <= 0.001) return;
+  if (v == kPROC) { gProc += w; return; }
+  if (v == sV0) sW0 += w;
+  else if (v == sV1) sW1 += w;
+  else if (w > sW1) { sV1 = v; sW1 = w; }
+  if (sW1 > sW0) { int tv = sV0; float tw = sW0; sV0 = sV1; sW0 = sW1; sV1 = tv; sW1 = tw; }
+}
+#endif
 // Per-pixel environment, worked out once.
-float gN1, gDry, gForest, gSteep, gHigh, gSnowH, gAlt, gNoiseA, gNoiseB, gBald;
+float gN1, gDry, gForest, gSteep, gHigh, gSnowH, gAlt, gBald;
+#if GQ >= 2
+float gNoiseA, gNoiseB;
+#else
+// (LOW and POTATO work these two out where a paint needs them: meadow and forest floor need neither.)
+float gNA = -1.0, gNB = -1.0;
+float noiseA(){ if (gNA < 0.0) gNA = fbmFew(vPos.xz * 0.35 + 5.0, 2, 3); return gNA; }
+float noiseB(){ if (gNB < 0.0) gNB = fbmFew(vPos.xz * 0.55 - 3.0, 1, 2); return gNB; }
+#define gNoiseA noiseA()
+#define gNoiseB noiseB()
+#endif
 float gDens;
 // Natural ground (paint 0): meadow, forest floor, bare rock on steep faces and up the range, snow on the tops.
 void naturalGround(float w){
@@ -69,7 +117,11 @@ void naturalGround(float w){
     addSlot(2, flatW * (gr * bare + lit * gBald * 0.3));
   }
   float rw = rockW * (1.0 - gSnowH) * w;
+#if GQ >= 2
   float cliff = smoothstep(0.30, 0.55, gNoiseA);
+#else
+  float cliff = rw > 0.001 ? smoothstep(0.30, 0.55, gNoiseA) : 0.0;
+#endif
   addSlot(15, rw * cliff);
   addSlot(11, rw * (1.0 - cliff) * 0.7);
   addSlot(12, rw * (1.0 - cliff) * 0.3);
@@ -77,7 +129,11 @@ void naturalGround(float w){
 }
 // What a paint is made of, `w` of the pixel's weight.
 void expandPaint(int paint, float w){
+#if GQ >= 2
   float nz = gNoiseA, nz2 = gNoiseB;
+#else
+  float nz = paint != 0 ? gNoiseA : 0.0, nz2 = paint == 8 ? gNoiseB : 0.0;
+#endif
   if (paint == 0) { naturalGround(w); }
   else if (paint == 1) {
     if (uMap == 0 || uMap == 2) {  // asphalt road: the procedural look out to its gravel shoulder, the land beyond
@@ -141,10 +197,11 @@ vec4 sideTap(sampler2DArray s, float L, Side f, float scale){
   return textureGrad(s, vec3(f.uv * scale, L), f.gx * scale, f.gy * scale);
 }
 
-// Fewer octaves of fbm(p, full), scaled to the same range (one tap a layer, LOW: the patches are blurrier, not paler).
-float fbmFew(vec2 p, int oct, int full){ return fbm(p, oct) * (1.0 - exp2(-float(full))) / (1.0 - exp2(-float(oct))); }
 
 void main(){
+#ifdef X_R0
+  oCol = vec4(vPos * 0.001 + vNrm, 1.0); return;
+#endif
   vec3 N0 = normalize(vNrm);
   vec2 p = vPos.xz;
   vec3 dPx = dFdx(vPos), dPy = dFdy(vPos);
@@ -153,8 +210,10 @@ void main(){
   // ---- Environment noise (shared by every paint; one tap a layer, LOW, takes fewer octaves of it) ----
   int lo = uGroundQ <= 1 ? 1 : 0;
   gN1 = (lo == 1 ? fbmFew(p * 0.02, 2, 4) : fbm(p * 0.02, 4));
-  gNoiseA = (lo == 1 ? fbmFew(p * 0.35 + 5.0, 2, 3) : fbm(p * 0.35 + 5.0, 3));
-  gNoiseB = (lo == 1 ? fbmFew(p * 0.55 - 3.0, 1, 2) : fbm(p * 0.55 - 3.0, 2));
+#if GQ >= 2
+  gNoiseA = fbm(p * 0.35 + 5.0, 3);
+  gNoiseB = fbm(p * 0.55 - 3.0, 2);
+#endif
   gDry = smoothstep(0.6, 0.8, (lo == 1 ? fbmFew(p * 0.006 + 3.1, 1, 3) : fbm(p * 0.006 + 3.1, 3)));
   gBald = smoothstep(0.60, 0.80, (lo == 1 ? fbmFew(p * 0.30 + 9.0, 2, 3) : fbm(p * 0.30 + 9.0, 3)));
   gSteep = (uMap == 0 || uMap == 2) ? smoothstep(0.84, 0.62, N0.y + 0.14 * (gN1 - 0.5)) : smoothstep(0.72, 0.55, N0.y + 0.14 * (gN1 - 0.5));
@@ -162,6 +221,12 @@ void main(){
   gSnowH = smoothstep(uRockSnow.y, uRockSnow.y + 50.0, vPos.y + 70.0 * gN1) * smoothstep(0.5, 0.75, N0.y);
   gForest = smoothstep(0.40, 0.65, (lo == 1 ? fbmFew(p * 0.012 + vec2(7.0, -3.0), 1, 3) : fbm(p * 0.012 + vec2(7.0, -3.0), 3))) * smoothstep(6.0, 22.0, vPos.y);
 
+#ifdef X_NONOISE
+  gN1 = 0.5; gDry = gBald = gForest = 0.0;
+#endif
+#ifdef X_RA
+  oCol = vec4(gN1 + gNoiseA + gNoiseB + gDry + gBald + gSteep + gHigh + gSnowH + gForest); return;
+#endif
   // ---- The four cells round this point, from a slightly wobbled spot so edges are ragged, not 1 m stairs ----
   vec2 wob = lo == 1 ? vec2(0.0) : (vec2(vnoise(p * 0.8), vnoise(p.yx * 0.8 + 7.0)) - 0.5) * 1.4;
   vec2 gp = p + wob + 600.0;
@@ -171,6 +236,7 @@ void main(){
   vec4 c00 = texelFetch(uTerrainTex, i0, 0), c10 = texelFetch(uTerrainTex, i0 + ivec2(1, 0), 0);
   vec4 c01 = texelFetch(uTerrainTex, i0 + ivec2(0, 1), 0), c11 = texelFetch(uTerrainTex, i0 + ivec2(1, 1), 0);
   gDens = mix(mix(c00.g, c10.g, f.x), mix(c01.g, c11.g, f.x), f.y);
+#if GQ >= 2
   int cp[4]; float cw[4]; int cn = 0;
   int pcs[4] = int[](int(c00.b + 0.5), int(c10.b + 0.5), int(c01.b + 0.5), int(c11.b + 0.5));
   float wts[4] = float[]((1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y);
@@ -181,14 +247,40 @@ void main(){
   }
   for (int k = 0; k < cn; k++) expandPaint(cp[k], cw[k]);
 
+#else
+#ifdef X_RB
+  oCol = vec4(c00 + c10 + c01 + c11); return;
+#endif
+  {
+    int p0 = int(c00.b + 0.5), p1 = int(c10.b + 0.5), p2 = int(c01.b + 0.5), p3 = int(c11.b + 0.5);
+    float w0 = (1.0 - f.x) * (1.0 - f.y), w1 = f.x * (1.0 - f.y), w2 = (1.0 - f.x) * f.y, w3 = f.x * f.y;
+    if (p0 == p1 && p0 == p2 && p0 == p3) expandPaint(p0, 1.0);
+    else {
+      expandPaint(p0, w0 + (p1 == p0 ? w1 : 0.0) + (p2 == p0 ? w2 : 0.0) + (p3 == p0 ? w3 : 0.0));
+      if (p1 != p0) expandPaint(p1, w1 + (p2 == p1 ? w2 : 0.0) + (p3 == p1 ? w3 : 0.0));
+      if (p2 != p0 && p2 != p1) expandPaint(p2, w2 + (p3 == p2 ? w3 : 0.0));
+      if (p3 != p0 && p3 != p1 && p3 != p2) expandPaint(p3, w3);
+    }
+  }
+#endif
+
+#ifdef X_R1
+  oCol = vec4(float(sV0) * 0.1 + sW0 + sW1 + gProc + gMud + gSnow + gTrail + gDens + gDry + gForest + gBald + gHigh + gSnowH + gSteep + gN1); return;
+#endif
   // ---- The procedural part (paved ground and the like) ----
   vec3 procBase = vec3(0.0); float procK = 0.04, procP = 16.0;
+#ifndef X_NOPROC
   if (gProc > 0.001) { procBase = vCol.rgb; terrainProcedural(N0, procBase, procK, procP); }
+#endif
 
   // ---- Pick the strongest materials ----
   int K = uGroundQ >= 3 ? 4 : uGroundQ == 2 ? 3 : 2;
+#ifdef X_K1
+  K = 1;
+#endif
   if (dist > 120.0) K = min(K, 2);
   if (dist > 350.0) K = 1;
+#if GQ >= 2
   int selV[4] = int[](0, 0, 0, 0); float selW[4] = float[](0.0, 0.0, 0.0, 0.0);
   float texTotal = 0.0;
   for (int k = 0; k < 4; k++) {
@@ -198,15 +290,25 @@ void main(){
     if (bi < 0) break;
     selV[k] = sV[bi]; selW[k] = bw; sW[bi] = -1.0; texTotal += bw;
   }
+#else
+  if (dist > 350.0) sW1 = 0.0;
+  int selV[4] = int[](max(sV0, 0), max(sV1, 0), 0, 0); float selW[4] = float[](sW0, sW1 > 0.0 ? sW1 : 0.0, 0.0, 0.0);
+  float texTotal = selW[0] + selW[1];
+#endif
   float texW = clamp(1.0 - gProc, 0.0, 1.0);
   if (texTotal > 0.0) for (int k = 0; k < 4; k++) selW[k] *= texW / texTotal;
 
+#ifdef X_R2
+  oCol = vec4(selW[0] + selW[1] + float(selV[0] + selV[1]) + texTotal + procBase.x); return;
+#endif
   // ---- Photo layers ----
   bool two = uGroundQ >= 2 && dist < 250.0;
   float mix2 = 0.15 + 0.7 * smoothstep(0.25, 0.75, vnoise(p * 0.11 + 4.0));
   float wTop = smoothstep(0.55, 0.93, N0.y);  // how much the top-down mapping counts on a slope
   bool steepFace = uGroundQ >= 2 && wTop < 0.999 && dist < 400.0;
+#if GQ >= 2
   sideFrames(N0, dPx, dPy);
+#endif
   vec4 A[4];
   float Lr[4]; float scl[4]; vec4 avgA[4];
   for (int k = 0; k < 4; k++) {
@@ -227,6 +329,9 @@ void main(){
     A[k] = a;
     A[k].a = clamp(A[k].a, 0.0, 1.0);
   }
+#ifdef X_R3
+  oCol = vec4(A[0].rgb + A[1].rgb, 1.0); return;
+#endif
   // Height blend: the knobbly material shows through first at a border.
   float bwt[4] = float[](selW[0], selW[1], selW[2], selW[3]);
   if (uGroundQ >= 2 && K > 1) {
@@ -243,7 +348,11 @@ void main(){
     if (k >= K || bwt[k] < 0.01) continue;
     int v = selV[k];
     float w = bwt[k];
+#ifdef X_NONORM
+    vec4 b = vec4(0.5, 0.5, 0.7, 1.0);
+#else
     vec4 b = planarTap(uGroundB, Lr[k], p, scl[k], dPx.xz, dPy.xz, mix2, textureLod(uGroundB, vec3(0.5, 0.5, Lr[k]), 12.0), two);
+#endif
     float st = kVBump[v] * distFade;
     vec3 nY = reorient(tangentNormal(b, st), vec3(1.0, 0.0, 0.0), vec3(0.0, 0.0, -1.0), vec3(0.0, 1.0, 0.0), N0);
     if (steepFace) {
@@ -265,6 +374,9 @@ void main(){
   else { alb = vec3(0.1); rough = 0.9; ao = 1.0; nrm = N0; }
   ao = mix(1.0, ao, distFade * 0.9 + 0.1);
 
+#ifdef X_R4
+  oCol = vec4(alb + nrm + vec3(rough + ao), 1.0); return;
+#endif
   // ---- Large-scale variation: patches of lighter and darker, warmer and cooler ground ----
   float bright = 0.80 + 0.40 * (lo == 1 ? fbmFew(p * 0.045 + 11.0, 1, 3) : fbm(p * 0.045 + 11.0, 3));
   vec3 warm = mix(vec3(1.05, 1.0, 0.92), vec3(0.94, 0.99, 1.04), vnoise(p * 0.02 - 6.0));
@@ -293,10 +405,20 @@ void main(){
   rough = mix(rough, 0.25, wet * 0.7);
   alb = mix(alb, vec3(0.010, 0.012, 0.005), smoothstep(0.0, -0.4, vPos.y - wl) * 0.8);
 
+#ifdef X_FLAT
+  oCol = vec4(alb, 1.0); return;
+#endif
+#ifdef X_R5
+  oCol = vec4(alb + vec3(rough + ao) + nrm, 1.0); return;
+#endif
   // ---- Light it ----
   vec3 lin = mix(alb, pow(max(procBase, vec3(0.0)), vec3(2.2)), clamp(gProc, 0.0, 1.0));
   vec3 n = normalize(mix(nrm, N0, clamp(gProc, 0.0, 1.0)));
+#ifdef X_NOSH
+  float sh = 1.0;
+#else
   float sh = shadowAt(vPos, N0);
+#endif
   float NL = max(dot(n, uSun), 0.0);
   vec3 V = normalize(uCam - vPos);
   vec3 H = normalize(V + uSun);
@@ -305,13 +427,21 @@ void main(){
   float NH = max(dot(n, H), 0.0);
   float F = 0.04 + 0.96 * pow(1.0 - max(dot(H, V), 0.0), 5.0);
   vec3 sunSpec = vec3(pow(NH, P) * (P + 2.0) * 0.0398 * F * NL * sh) * kSunSpec * 2.6;
+#ifdef X_NOLAMP
+  vec3 lspec = vec3(0.0), lamp = vec3(0.0);
+#else
   vec3 lspec, lamp = lampLight(vPos, n, V, max(P, 12.0), 0.0, lspec);
+#endif
   vec3 col = lin * (ambientAt(n) * ao + NL * aoD * sh * kSunCol + lamp);
   col += sunSpec * (1.0 - clamp(gProc, 0.0, 1.0));
   col += lspec * 0.08 * (1.0 - rough) * (1.0 - clamp(gProc, 0.0, 1.0)) * 4.0;
   // Glossy ground (wet mud, puddles, the shore) mirrors the sky.
   float gloss = (1.0 - rough);
+#ifdef X_NOGLOSS
+  if (false) {
+#else
   if (gloss > 0.35 && gProc < 0.5) {
+#endif
     float fres = 0.02 + 0.98 * pow(1.0 - max(dot(n, V), 0.0), 5.0);
     col += skyEnv(reflect(-V, n)) * fres * gloss * gloss * ao * 0.9;
   }
