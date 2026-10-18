@@ -208,7 +208,11 @@ VERSION  ?= 0.3.0
 MACCXX   ?= clang++
 MACSDL   ?= third_party/sdl2-mac
 MACLTO   ?= -flto=thin
-MACFLAGS := -O2 $(FPFLAGS) $(MACLTO) -std=c++17 -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -Wall
+# -fno-slp-vectorize: Apple clang 17 (Xcode 16.4) segfaults in the SLP vectorizer on arm64 at -O2 with -ffp-contract=off (bodyshell.cpp; the ThinLTO link too). No effect on results.
+MACSLP   ?= -fno-slp-vectorize
+# ThinLTO runs the optimizer inside ld64 at link time, so the same crash needs the switch there too.
+MACLDX   ?= -Wl,-mllvm,-vectorize-slp=false
+MACFLAGS := -O2 $(FPFLAGS) $(MACSLP) $(MACLTO) -std=c++17 -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -Wall
 MAC_OBJ  := $(patsubst %.cpp,build/mac/obj/%.o,$(GAME_SRC))
 MACAPP   := build/mac/CrumpleZone.app
 
@@ -217,7 +221,7 @@ build/mac/obj/%.o: %.cpp $(HEADERS)
 	$(MACCXX) $(MACFLAGS) -c -o $@ $<
 
 build/mac/crumplezone: $(MAC_OBJ)
-	$(MACCXX) $(MACFLAGS) -o $@ $^ -F$(MACSDL) -framework SDL2 -Wl,-rpath,@executable_path/../Frameworks
+	$(MACCXX) $(MACFLAGS) $(MACLDX) -o $@ $^ -F$(MACSDL) -framework SDL2 -Wl,-rpath,@executable_path/../Frameworks
 
 mac: build/mac/crumplezone
 	rm -rf $(MACAPP) && mkdir -p $(MACAPP)/Contents/MacOS $(MACAPP)/Contents/Resources/assets $(MACAPP)/Contents/Frameworks
@@ -259,16 +263,16 @@ mac-dmg: mac
 
 # Native macOS regression executables, using the same universal release flags.
 build/mac/bench_sim: build/mac/obj/tools/bench_sim.o $(patsubst %.cpp,build/mac/obj/%.o,$(PHYS))
-	$(MACCXX) $(MACFLAGS) -o $@ $^
+	$(MACCXX) $(MACFLAGS) $(MACLDX) -o $@ $^
 
 build/mac/run_tests: build/mac/obj/tests/run_tests.o $(patsubst %.cpp,build/mac/obj/%.o,$(PHYS) $(SCEN) src/music.cpp)
-	$(MACCXX) $(MACFLAGS) -o $@ $^
+	$(MACCXX) $(MACFLAGS) $(MACLDX) -o $@ $^
 
 build/mac/test_audio: build/mac/obj/tests/audio.o build/mac/obj/tests/engine_samples.o build/mac/obj/tests/soundscape.o build/mac/obj/src/audio.o build/mac/obj/src/engineaudio.o build/mac/obj/src/engine_samples.o build/mac/obj/src/music.o build/mac/obj/src/ambience.o $(patsubst %.cpp,build/mac/obj/%.o,$(filter-out src/allocstat.cpp,$(PHYS)))
-	$(MACCXX) $(MACFLAGS) -o $@ $^ -F$(MACSDL) -framework SDL2 -Wl,-rpath,$(abspath $(MACSDL))
+	$(MACCXX) $(MACFLAGS) $(MACLDX) -o $@ $^ -F$(MACSDL) -framework SDL2 -Wl,-rpath,$(abspath $(MACSDL))
 
 build/mac/test_render: build/mac/obj/tests/render.o $(filter-out build/mac/obj/src/main.o,$(MAC_OBJ))
-	$(MACCXX) $(MACFLAGS) -o $@ $^ -F$(MACSDL) -framework SDL2 -Wl,-rpath,$(abspath $(MACSDL))
+	$(MACCXX) $(MACFLAGS) $(MACLDX) -o $@ $^ -F$(MACSDL) -framework SDL2 -Wl,-rpath,$(abspath $(MACSDL))
 
 # ---- Debian package ---------------------------------------------------------------
 #   make deb [VERSION=x.y.z]  ->  build/deb/crumplezone_VERSION_amd64.deb
