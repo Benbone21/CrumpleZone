@@ -51,6 +51,8 @@ struct HardwareInfo {
 };
 int presetForRenderer(const std::string& vendor, const std::string& renderer);  // the table alone; Q_MEDIUM for a string it doesn't know
 int guessPreset(const HardwareInfo& hw);
+// First-launch render scale for a guessed preset: 0.75 for an Apple chip that gets LOW (about 20% faster on an M1, slightly softer); 1 otherwise.
+float firstLaunchRenderScale(const HardwareInfo& hw, int preset);
 void queryHardware(HardwareInfo& hw);  // cores and RAM (the caller fills in the GL strings and VRAM)
 // First launch: no settings file, or one that has no quality chosen yet. A saved choice is never overridden.
 inline bool shouldAutoDetect(bool settingsFileLoaded, bool qualityChosen) { return !settingsFileLoaded || !qualityChosen; }

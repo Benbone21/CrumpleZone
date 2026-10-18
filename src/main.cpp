@@ -1826,7 +1826,11 @@ int main(int argc, char** argv) {
     }
     std::printf("hardware: %d cores, %ld MB RAM, VRAM %ld MB, guess %s\n", hardware.cores, hardware.ramMb, hardware.vramMb,
                 presetName(guessPreset(hardware)));
-    if (autoDetect) applyPreset(settings.gfx, guessPreset(hardware));
+    if (autoDetect) {
+        const int guess = guessPreset(hardware);
+        applyPreset(settings.gfx, guess);
+        if (guess != Q_POTATO) settings.gfx.renderScale = firstLaunchRenderScale(hardware, guess);
+    }
     // Honor the saved setting on every GPU; vendor names do not establish driver performance. VSync asks for adaptive
     // sync first (a frame that misses the refresh shows at once, torn, instead of waiting a whole refresh and halving
     // the frame rate), plain vsync where the driver hasn't got it.
@@ -4545,6 +4549,13 @@ int main(int argc, char** argv) {
 
         int W, H;
         SDL_GL_GetDrawableSize(win, &W, &H);
+#ifdef __APPLE__
+        {  // Retina: the scene renders at logical pixels (the OpenGL layer is a slow path at 2x)
+            int lw = 0, lh = 0;
+            SDL_GetWindowSize(win, &lw, &lh);
+            renderer.dpiFactor = W > 0 && lw > 0 && lw < W ? (float)lw / (float)W : 1.0f;
+        }
+#endif
         if (scripted && opt.script == "job" && frame == 10) {  // (screenshots: a recovery job under way)
             refreshJobs();
             if (!jobList.empty()) startJob(jobList[0]);

@@ -19,7 +19,7 @@ SCENARIO(gfxClassify, "engine/gfx-detect-table", "GL_RENDERER strings map to the
         {"Intel", "Intel(R) Arc(tm) A770 Graphics", Q_HIGH},
         {"Intel", "Intel(R) Arc(tm) Graphics", Q_MEDIUM},
         {"Intel", "Mesa Intel(R) HD Graphics 530 (SKL GT2)", Q_LOW},
-        {"Apple", "Apple M1", Q_MEDIUM},
+        {"Apple", "Apple M1", Q_LOW},
         {"Apple", "Apple M2 Max", Q_HIGH},
         {"Mesa", "llvmpipe (LLVM 15.0.7, 256 bits)", Q_POTATO},
         {"Microsoft Corporation", "GDI Generic", Q_POTATO},
@@ -47,6 +47,10 @@ SCENARIO(gfxGuess, "engine/gfx-detect-guess", "VRAM, cores and RAM only lower th
     ctx.check("software stays POTATO", guessPreset(hw) == Q_POTATO);
     hw.vendor = "Intel", hw.renderer = "Intel(R) Iris(R) Xe Graphics";
     ctx.check("hardware is never guessed up to ULTRA", guessPreset(hw) != Q_ULTRA);
+    HardwareInfo m1;
+    m1.vendor = "Apple", m1.renderer = "Apple M1", m1.cores = 8, m1.ramMb = 8192;
+    ctx.check("M1 first launch: LOW at 0.75 scale", guessPreset(m1) == Q_LOW && firstLaunchRenderScale(m1, Q_LOW) == 0.75f);
+    ctx.check("other GPUs keep full scale", firstLaunchRenderScale(hw, Q_LOW) == 1.0f && firstLaunchRenderScale(m1, Q_MEDIUM) == 1.0f);
     ctx.check("no settings file: detect", shouldAutoDetect(false, false) && shouldAutoDetect(false, true));
     ctx.check("file without a quality chosen: detect", shouldAutoDetect(true, false));
     ctx.check("a saved choice is never overridden", !shouldAutoDetect(true, true));

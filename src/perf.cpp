@@ -180,8 +180,8 @@ const RendererRule kRenderers[] = {
     {"software rasterizer", nullptr, Q_POTATO}, {"swrast", nullptr, Q_POTATO}, {"videocore", nullptr, Q_POTATO}, {"v3d", nullptr, Q_POTATO},
     // phones and tablets
     {"adreno", nullptr, Q_LOW}, {"mali", nullptr, Q_LOW}, {"powervr", nullptr, Q_LOW},
-    // Apple silicon: shared memory, but strong
-    {"apple", "ultra", Q_HIGH}, {"apple", "max", Q_HIGH}, {"apple", "pro", Q_HIGH}, {"apple", nullptr, Q_MEDIUM},
+    // Apple silicon: Pro/Max/Ultra are strong; the base chips (M1 8 GB) manage LOW at Retina sizes
+    {"apple", "ultra", Q_HIGH}, {"apple", "max", Q_HIGH}, {"apple", "pro", Q_HIGH}, {"apple", nullptr, Q_LOW},
     // Intel: Arc cards are discrete, the rest is on the CPU
     {"arc(tm) a", nullptr, Q_HIGH}, {"arc a", nullptr, Q_HIGH}, {"arc(tm) b", nullptr, Q_HIGH}, {"arc b", nullptr, Q_HIGH}, {"arc pro", nullptr, Q_HIGH},
     {"intel", "arc", Q_MEDIUM}, {"intel", "iris xe", Q_MEDIUM}, {"intel", "iris(r) xe", Q_MEDIUM}, {"intel", nullptr, Q_LOW},
@@ -226,6 +226,11 @@ int guessPreset(const HardwareInfo& hw) {
     if (hw.ramMb > 0 && hw.ramMb < 4096) cap(Q_LOW);
     else if (hw.ramMb > 0 && hw.ramMb < 8192) cap(Q_MEDIUM);
     return p;
+}
+
+float firstLaunchRenderScale(const HardwareInfo& hw, int preset) {
+    const std::string text = lowered(hw.vendor + " " + hw.renderer);
+    return preset == Q_LOW && text.find("apple") != std::string::npos ? 0.75f : 1.0f;
 }
 
 void queryHardware(HardwareInfo& hw) {

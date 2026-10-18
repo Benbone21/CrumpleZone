@@ -4371,7 +4371,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     static const int kShadowRes[4] = {0, 1024, 2048, 4096}, kShadowTaps[4] = {0, 5, 9, 16};
     const int sq = std::min(std::max(settings.shadows, 0), 3);
     if (sq) ensureShadows(kShadowRes[sq]);
-    const float scale = std::min(std::max(settings.renderScale, 0.25f), 2.0f);
+    const float scale = std::min(std::max(settings.renderScale, 0.25f), 2.0f) * std::min(std::max(dpiFactor, 0.25f), 1.0f);
     ensureTargets(std::max(1, (int)std::lround(view.width * scale)), std::max(1, (int)std::lround(view.height * scale)),
                   settings.msaa);
 
