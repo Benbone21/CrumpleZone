@@ -5,6 +5,7 @@
 #include "watermesh.h"
 #include "texcomp.h"
 #include "perf.h"
+#include "grasstiles.h"
 
 // Render targets and data textures in the VRAM report (texcomp.h); no mips on purpose.
 static void noteRT(const char* name, const char* fmt, int w, int h, int bytesPerTexel, int mips = 0, bool runtime = true) {
@@ -1593,7 +1594,7 @@ uniform sampler2D uTerrainTex; uniform float uTerrainN;
 uniform mat4 uVP; uniform vec3 uCam; uniform float uTime;
 uniform int uSide; uniform int uBlades; uniform int uMap;
 uniform vec3 uTile;     // this draw's tufts: a run of the ring's grid from (x, z), x wide
-uniform float uCell;
+uniform float uCell; uniform float uNoCull;
 uniform vec4 uRing;     // this ring comes in over x..y metres from the camera, and goes out over z..w
 uniform vec4 uLook;     // x height scale, y width scale, z 1: plain blades (the far rings), w 1: seed heads and flowers
 uniform vec2 uRockSnow;
@@ -1653,10 +1654,6 @@ void main(){
   float share = smoothstep(uRing.x, uRing.y, dist) * (1.0 - smoothstep(uRing.z, uRing.w, dist));
   float grow = smoothstep(0.0, 0.3, share - hs(cell, 3u));
   if (grow <= 0.0) { gone(); return; }
-  {  // Out of the view sideways (the height hardly matters for that): gone before any texture or noise work.
-    vec4 c0 = uVP * vec4(base.x, uCam.y - 1.0, base.y, 1.0);
-    if (c0.w < -2.0 || abs(c0.x) > c0.w + 2.5 * uVP[0][0] + 2.0) { gone(); return; }
-  }
   // The four terrain texels round the tuft: height and slope, how thick it grows, paint, water.
   vec2 g = base + 600.0;
   ivec2 i0 = ivec2(floor(g));
@@ -1667,8 +1664,14 @@ void main(){
   if (dens < 0.02 || paint > 0.5) { gone(); return; }
   float gy = mix(mix(t00.r, t10.r, f.x), mix(t01.r, t11.r, f.x), f.y);
   vec2 slope = vec2(mix(t10.r - t00.r, t11.r - t01.r, f.y), mix(t01.r - t00.r, t11.r - t10.r, f.x));
+  // Out of the view: the tuft's base against the frustum, widened by what a blade can reach (up to 2 m tall, leaning, off to one side
+  // by 0.7 cell; kGrassReach). Metres of margin in view space, so the same at every depth.
   vec4 clip = uVP * vec4(base.x, gy + 0.4, base.y, 1.0);
-  if (clip.w < -0.3 || abs(clip.x) > clip.w + 1.2 * uVP[0][0] || abs(clip.y) > clip.w + 1.2 * uVP[1][1]) { gone(); return; }
+  // (a move of R m changes clip.x by up to R times the length of the view-projection's first row (the projection's scale: its rows are
+  // that times the camera's unit axes; uVP[0][0] alone is that times a component of the camera's right, zero or negative facing the
+  // wrong way) and clip.w by up to R: a tuft R m from the frustum's edge is where |clip.x| = clip.w + R (scale + 1))
+  vec2 ps = vec2(length(vec3(uVP[0][0], uVP[1][0], uVP[2][0])), length(vec3(uVP[0][1], uVP[1][1], uVP[2][1])));
+  if (uNoCull < 0.5 && (clip.w < -3.5 || abs(clip.x) > clip.w + 3.5 * (ps.x + 1.0) || abs(clip.y) > clip.w + 3.5 * (ps.y + 1.0))) { gone(); return; }
   // The ground shader's own noise: what it makes of the meadow here.
   float n1 = fbm(base * 0.02, 4);
   float dry = smoothstep(0.6, 0.8, fbm(base * 0.006 + 3.1, 3));
@@ -4630,6 +4633,8 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         Uniform1i(uniformLocation(progGrass, "uPushN"), pushN);
         if (pushN) Uniform4fv(uniformLocation(progGrass, "uPush"), pushN * 2, push);
         BindVertexArray(grassVao);
+        static const bool noGrassCull = std::getenv("CZ_NO_GRASSCULL") != nullptr;  // (the reference render of the cull test)  // (the reference render of the grass cull test)
+        Uniform1f(uniformLocation(progGrass, "uNoCull"), noGrassCull ? 1.0f : 0.0f);
         static const bool timed = std::getenv("CZ_BENCH") != nullptr;
         if (timed) {
             if (!grassQuery_[0]) GenQueries(4, grassQuery_);
@@ -4651,17 +4656,16 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
             Uniform4f(uniformLocation(progGrass, "uRing"), r.in0, r.in1, r.out0, r.out1);
             Uniform4f(uniformLocation(progGrass, "uLook"), r.height, r.width, r.shape ? 1.0f : 0.0f, r.heads ? 1.0f : 0.0f);
             // The ring's grid in tiles: only those in view and in the ring's reach are drawn (a row's run of them at once).
-            const int T = 8, ts = (r.side + T - 1) / T;
-            const double c0x = (std::floor(view.eye.x / r.cell) - r.side / 2) * r.cell, c0z = (std::floor(view.eye.z / r.cell) - r.side / 2) * r.cell;
+            const int T = kGrassTiles, ts = grassTileSpan(r.side);
+            const double c0x = grassGridOrigin(view.eye.x, r.cell, r.side), c0z = grassGridOrigin(view.eye.z, r.cell, r.side);
             const GLint tileAt = uniformLocation(progGrass, "uTile");
             for (int tz = 0; tz < T; tz++) {
                 int runX = -1;
                 for (int tx = 0; tx <= T; tx++) {
                     bool in = false;
                     if (tx < T && tx * ts < r.side && tz * ts < r.side) {
-                        // (a cell's margin round it: the shader finds the camera's cell itself; tufts sit anywhere in theirs)
-                        const double x0 = c0x + (tx * ts - 1) * r.cell, x1 = c0x + (std::min(r.side, tx * ts + ts) + 1) * r.cell;
-                        const double z0 = c0z + (tz * ts - 1) * r.cell, z1 = c0z + (std::min(r.side, tz * ts + ts) + 1) * r.cell;
+                        double x0, x1, z0, z1;  // (a margin round it: the shader finds the camera's cell itself)
+                        grassTileRange(c0x, r.cell, r.side, tx, x0, x1), grassTileRange(c0z, r.cell, r.side, tz, z0, z1);
                         const double nx = std::max({x0 - view.eye.x, 0.0, view.eye.x - x1}), nz = std::max({z0 - view.eye.z, 0.0, view.eye.z - z1});
                         const double fx = std::max(std::fabs(x0 - view.eye.x), std::fabs(x1 - view.eye.x)), fz = std::max(std::fabs(z0 - view.eye.z), std::fabs(z1 - view.eye.z));
                         if (std::hypot(nx, nz) < r.out1 && std::hypot(fx, fz) > r.in0) {
@@ -4671,8 +4675,9 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
                                 lo = std::min(lo, y), hi = std::max(hi, y);
                             }
                             RenderBounds b;
-                            b.add(V3(x0, lo - 3.0, z0)), b.add(V3(x1, hi + 3.0, z1));  // (a blade stands under 2 m; the ground between the samples)
-                            in = b.visible(vp) && !occl_.occluded(b);
+                            const double pad = 3.0 + 0.2 * (x1 - x0);  // (a blade stands under 2 m; the ground between the samples, off them by the slope)
+                            b.add(V3(x0, lo - pad, z0)), b.add(V3(x1, hi + pad, z1));
+                            in = noGrassCull || (b.visible(vp) && !occl_.occluded(b));
                         }
                     }
                     if (in && runX < 0) runX = tx;
