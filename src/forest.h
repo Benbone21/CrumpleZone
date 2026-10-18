@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "modelkit.h"
+#include "occlusion.h"
 #include "world.h"
 
 namespace forest {
@@ -66,6 +67,7 @@ struct View {
     int lodBias = 0;    // coarser than the distance says (a shadow cascade)
     bool shadow = false;  // shadows: no fades (an instance fading out casts while it's over half there)
     double reach = 1;   // the instances' reaches scaled by this too (shadows: only the near bushes cast)
+    const TerrainOcclusion* hidden = nullptr;  // main pass only: cells behind the ground are skipped (occlusion.h)
 };
 struct Pick {
     int inst;

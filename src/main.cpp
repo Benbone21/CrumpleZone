@@ -4979,6 +4979,7 @@ int main(int argc, char** argv) {
                             geometry.terrainTriangles, geometry.terrainFullTriangles,
                             geometry.terrainVisibleChunks, geometry.terrainChunks,
                             geometry.sceneryVertices, geometry.shadowSceneryVertices);
+                std::printf("bench: occlusion %u of %u boxes hidden behind the ground (terrain chunks, scenery, trees); %u terrain chunks of the in-frustum ones\n", geometry.occlusionHidden, geometry.occlusionTests, geometry.terrainOccluded);
                 std::printf("bench: adaptive %d, scale %.2f, shadows %d, MSAA %d, AO %d, ground %d, props %d, grass %d\n",
                             settings.adaptiveQuality, renderer.settings.renderScale, renderer.settings.shadows,
                             renderer.settings.msaa, renderer.settings.ao, renderer.settings.ground, renderer.settings.props, renderer.settings.grass);
