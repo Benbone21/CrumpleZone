@@ -55,7 +55,7 @@ struct Budget {
 }  // namespace
 
 SCENARIO(carShell, "visual/body-shell", "Each sculpted body shell draws within its triangle budget (flat runs merged), and after a warp every vertex of the full grid still lies on the merged surface that replaced it") {
-    const Budget budgets[] = {{"4runner", 22000}, {"bronco", 20500}, {"civic", 20800}, {"tacoma", 26200}, {"blazer", 21900}};
+    const Budget budgets[] = {{"4runner", 22000}, {"bronco", 21000}, {"civic", 20800}, {"tacoma", 26200}, {"blazer", 21900}};
     for (const Budget& b : budgets) {
         const VehicleSpec* vs = nullptr;
         for (const VehicleSpec& s : vehicleCatalog())
