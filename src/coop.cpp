@@ -1,4 +1,5 @@
 #include "coop.h"
+#include "hudlayout.h"
 
 #include <algorithm>
 #include <cmath>
@@ -264,9 +265,10 @@ void Coop::drawChat(Renderer& r, int W, int H) const {
         const float a = typing ? 1.0f : (float)clampd((kChatLife - c.age) / 3, 0, 1);
         if (a <= 0) continue;
         const std::string who = c.who + ": ";
-        r.rect(x - 4 * u, y - 2 * u, r.textWidth(who + c.text, s) + 8 * u, lh, 0, 0, 0, 0.45f * a);
+        const std::string text = c.text.substr(0, (size_t)std::max(0, hudlayout::fitChars(s, hudlayout::chatMaxW(u, W)) - (int)who.size()));  // (stops short of the fuel column)
+        r.rect(x - 4 * u, y - 2 * u, r.textWidth(who + text, s) + 8 * u, lh, 0, 0, 0, 0.45f * a);
         r.text(x, y, s, who, 0.6f, 0.95f, 0.7f, a);
-        r.text(x + r.textWidth(who, s), y, s, c.text, 0.95f, 0.95f, 0.97f, a);
+        r.text(x + r.textWidth(who, s), y, s, text, 0.95f, 0.95f, 0.97f, a);
         y += lh;
     }
     if (typing) {

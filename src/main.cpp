@@ -50,6 +50,7 @@
 #include "gamepad.h"
 #include "gl.h"
 #include "gpu.h"
+#include "hudlayout.h"
 #include "hudkit.h"
 #include "level.h"
 #include "levelrun.h"
@@ -715,6 +716,8 @@ struct HudState {
     double confirmReset = 0;  // R just pressed: a second press within this long respawns at the start
     double hintTime = 7.0;  // "press H for controls" fades out after this
     float needle = 0;       // smoothed tach position 0..1
+    hudlayout::TopLeftState tl;  // which top-left panels are up this frame (set before drawHud): they stack, not overlap
+    bool levelOn = false;        // the level run's clock panel is up under the compass (the toasts start below it)
     float throttleCap = 1;  // the throttle limit (settings): shown by the gear when it's under 100%
     void toast(const std::string& text) {
         for (Toast& t : toasts)
@@ -809,11 +812,11 @@ void drawGauges(Renderer& r, const Car& car, HudState& hud, float u, int W, int 
             if (sink > 0.02) txt += "  SUNK " + std::to_string((int)std::lround(sink * 100)) + " CM";
             if (clog > 0.35) txt += "  TREAD PACKED WITH MUD";
             const float* dc = surfaceInfo((Surface)s).dust;
-            const float ts2 = px(1.0f * u);
-            const float tw = r.textWidth(txt, ts2);
-            const float tx = std::min(cx - tw / 2, W - tw - 14 * u);  // (kept on screen)
-            pill(r, tx - 6 * u, cy - R - 26 * u, tw + 12 * u, 10 * ts2 + 4 * u, 0.0f, 0.0f, 0.0f, 0.45f);
-            r.text(tx, cy - R - 24 * u, ts2, txt, 0.55f + 0.45f * dc[0], 0.55f + 0.45f * dc[1], 0.55f + 0.45f * dc[2], 0.95f);
+            const hudlayout::Column col = hudlayout::rightColumn(u, W, H, (float)txt.size(), 0, 0);
+            const float ts2 = col.tagScale;
+            txt = txt.substr(0, (size_t)hudlayout::fitChars(ts2, col.tag.w - 12 * u));  // (a line that's still too long at scale 1 is clipped)
+            pill(r, col.tag.x, col.tag.y, col.tag.w, col.tag.h, 0.0f, 0.0f, 0.0f, 0.45f);
+            r.text(col.tag.x + 6 * u, col.tag.y + 2 * u, ts2, txt, 0.55f + 0.45f * dc[0], 0.55f + 0.45f * dc[1], 0.55f + 0.45f * dc[2], 0.95f);
         }
     }
     float total = 0;
@@ -872,11 +875,11 @@ void drawDriveline(Renderer& r, const Car& car, float u, int W, int H) {
 }
 
 // Winch line or tow strap in use: line out, pull, and how close it is to its limit.
-void drawRecovery(Renderer& r, const Sim& sim, float u) {
+void drawRecovery(Renderer& r, const Sim& sim, const HudState& hud, float u, int W) {
     const int ri = sim.ropeOn(sim.player);
     if (ri < 0) return;
     const Rope& rp = sim.ropes[ri];
-    const float s = px(1.4f * u), x = 22 * u, y = 14 * u, h = 8 * s * 2 + 22 * u, w = 250 * u;
+    const float s = px(1.4f * u), x = 22 * u, y = hudlayout::topLeftY(hud.tl, hudlayout::TL_WINCH, u), h = 8 * s * 2 + 22 * u, w = std::max(250 * u, 18 * u + std::max(hudlayout::textW(27, s), hudlayout::textW(14, s) + 70 * u));  // (wide enough for the longest state and a bar)
     pill(r, x, y, w, h, 0.0f, 0.0f, 0.0f, 0.55f);
     char buf[96];
     const char* what = rp.kind == ROPE_STRAP ? "TOW STRAP" : rp.a.car == sim.player ? "WINCH" : "ON A WINCH LINE";
@@ -892,22 +895,30 @@ void drawRecovery(Renderer& r, const Sim& sim, float u) {
     r.rect(bx, by, bw * f, 6 * u, 0.4f + 0.6f * f, 0.85f - 0.6f * f, 0.25f, 0.95f);
     if (rp.kind == ROPE_WINCH && rp.a.car == sim.player) {
         const float sm = px(1.1f * u);
-        char hint[96];
+        char hint[200];
         const double speed = sim.cars[sim.player].winchSpeed;
         if (pad::ui.last) std::snprintf(hint, sizeof hint, "%s + RT REEL IN   %s + LT PAY OUT   RIGHT STICK UP DOWN: SPEED %.2gX   %s + D-PAD UP: UNHOOK", pad::hint("", pad::B_LB), pad::hint("", pad::B_LB), speed, pad::hint("", pad::B_LB));
         else std::snprintf(hint, sizeof hint, "%s REEL IN   %s PAY OUT   %s %s SPEED %.2gX   %s UNHOOK", K(KA_WINCH_IN).c_str(), K(KA_WINCH_OUT).c_str(), K(KA_WINCH_SLOWER).c_str(), K(KA_WINCH_FASTER).c_str(), speed, K(KA_WINCH).c_str());
-        r.text(x + 8 * u, y + h + 4 * u, sm, hint, 0.8f, 0.82f, 0.86f, 0.9f);
+        // (The key hints stay left of the compass: past that, they break at a gap onto a second line.)
+        std::string h1 = hint, h2;
+        const int fit = hudlayout::fitChars(sm, hudlayout::topLeftMaxW(u, W) - 18 * u);
+        if ((int)h1.size() > fit) {
+            size_t cut = h1.rfind("   ", (size_t)fit);
+            if (cut != std::string::npos && cut > 0) h2 = h1.substr(cut + 3), h1 = h1.substr(0, cut);
+        }
+        r.text(x + 8 * u, y + h + 4 * u, sm, h1, 0.8f, 0.82f, 0.86f, 0.9f);
+        if (!h2.empty()) r.text(x + 8 * u, y + h + 6 * u + 8 * sm, sm, h2, 0.8f, 0.82f, 0.86f, 0.9f);
     }
 }
 
 // The anchor gear on you (anchors.h), small, above the fuel gauge: only in a truck with a winch.
-void drawAnchors(Renderer& r, const Sim& sim, float u, int W, int H) {
+void drawAnchors(Renderer& r, const Sim& sim, float u, int W, int H) {  // (the column above the dial: hudlayout.h)
     const Car& car = sim.cars[sim.player];
     if (car.isProp() || !(car.spec->extras & EXTRA_WINCH)) return;
-    const float s = px(1.1f * u);
     const std::string line = anchors::hudLine(sim.anchorStock);
-    const float w = r.textWidth(line, s), x = W - w - 26 * u, y = H - 272 * u;
-    pill(r, x - 8 * u, y - 5 * u, w + 16 * u, 8 * s + 10 * u, 0, 0, 0, 0.5f);
+    const hudlayout::Column col = hudlayout::rightColumn(u, W, H, 0, 0, (float)line.size());
+    const float s = col.anchorScale, x = col.anchors.x + 8 * u, y = col.anchors.y + 5 * u;
+    pill(r, col.anchors.x, col.anchors.y, col.anchors.w, col.anchors.h, 0, 0, 0, 0.5f);
     // (The HUD's amber; red for a kind you've run out of.)
     float cx = x;
     for (int g = 0; g < GEAR_COUNT; g++) {
@@ -989,8 +1000,9 @@ void drawCompass(Renderer& r, const Sim& sim, const NetSession& net, const View&
         }
 }
 
-void drawVehicleCard(Renderer& r, const Car& car, float u, int H) {
-    float s = px(2.0f * u), sm = px(1.6f * u), x = 22 * u;
+void drawVehicleCard(Renderer& r, const Car& car, float u, int W, int H) {
+    const bool schematic = !car.isProp() && (car.spec->transfer != XFER_NONE || car.spec->lockerFront || car.spec->lockerRear);  // (drawDriveline's)
+    float s = px(2.0f * u), sm = hudlayout::cardScale(u, (float)car.spec->modSummary.size(), W, H, schematic), x = 22 * u;
     float y = H - 26 * u - 8 * s - 10 * sm - (car.isProp() ? 0 : 8 * sm + 5 * u) - (car.spec->modSummary.empty() ? 0 : 8 * sm + 5 * u);
     label(r, x, y, s, car.spec->name, 1, 1, 1);
     float dmg = (float)clampd(car.damage * 2.0, 0, 1), bw = 150 * u, by = y + 8 * s + 4 * u;
@@ -1428,12 +1440,13 @@ void drawPlayers(Renderer& r, const Sim& sim, const NetSession& net, const View&
 
 // A career's supply caches still to open, within ~250 m: a marker over each and how far.
 // (Your cash, top left.)
-void drawCaches(Renderer& r, const Career& career, const std::vector<CacheSpot>& caches, const View& view, float u, int W, int H) {
+void drawCaches(Renderer& r, const Career& career, const HudState& hud, const std::vector<CacheSpot>& caches, const View& view, float u, int W, int H) {
     if (!career.on) return;
     const std::string cash = "CAREER  $" + std::to_string(career.cash);
     const float cs = px(1.4f * u);
-    pill(r, 12 * u, 12 * u, r.textWidth(cash, cs) + 16 * u, 8 * cs + 10 * u, 0.02f, 0.025f, 0.035f, 0.75f);
-    r.text(20 * u, 17 * u, cs, cash, 0.55f, 0.9f, 0.6f);
+    const float cy = hudlayout::topLeftY(hud.tl, hudlayout::TL_CASH, u);
+    pill(r, 12 * u, cy, r.textWidth(cash, cs) + 16 * u, 8 * cs + 10 * u, 0.02f, 0.025f, 0.035f, 0.75f);
+    r.text(20 * u, cy + 5 * u, cs, cash, 0.55f, 0.9f, 0.6f);
     for (const CacheSpot& c : caches) {
         if (career.isOpened(c)) continue;
         const double d = len(c.at - view.eye);
@@ -1468,18 +1481,19 @@ void drawHud(Renderer& r, const Sim& sim, const View& view, HudState& hud, const
     const Car& car = sim.cars[sim.player];
     drawGauges(r, car, hud, u, W, H, dt, mph);
     drawDriveline(r, car, u, W, H);
-    drawVehicleCard(r, car, u, H);
-    drawRecovery(r, sim, u);
+    drawVehicleCard(r, car, u, W, H);
+    drawRecovery(r, sim, hud, u, W);
     drawAnchors(r, sim, u, W, H);
     drawStation(r, sim, u, W, H);
     if (!hud.debugOn) drawPlayers(r, sim, net, view, u, W, H);  // (F3 lists them itself)
     drawWinchAim(r, sim, aim, view, u, W, H);
     drawPilot(r, sim, view, u, W, H);
-    drawCaches(r, career, caches, view, u, W, H);
+    drawCaches(r, career, hud, caches, view, u, W, H);
     drawTags(r, sim.world, view, u, W, H);
 
     // Top-center: compass, scenario status, persistent states, then toasts.
     float y = 12 * u;
+    if (hud.levelOn) y = hudlayout::levelPanel(u, W).b() + 6 * u;  // (the clock panel sits right under the compass)
     if (!(pb && pb->active()) && !sim.world.stations.empty()) {
         drawCompass(r, sim, net, view, u, W);
         y += 40 * u;
@@ -5136,6 +5150,14 @@ int main(int argc, char** argv) {
             gl::ReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
             benchDraw = (double)(SDL_GetPerformanceCounter() - drawStart) / freq;
         }
+        {  // (which top-left panels are up: they stack from the top, see hudlayout.h)
+            hud.tl.devKeys = hud.devHotkeys;
+            hud.tl.on[hudlayout::TL_PLAYTEST] = editorSuspended && !editor.active && !hud.photo;
+            hud.tl.on[hudlayout::TL_CASH] = career.on;
+            hud.tl.on[hudlayout::TL_JOB] = jobOn;
+            hud.tl.on[hudlayout::TL_WINCH] = sim.ropeOn(sim.player) >= 0;
+            hud.levelOn = run.active();
+        }
         hud.update(dt);
         if (editor.active && !menu.open) editor.draw(renderer, W, H, dt);
         else if (!menu.open && !hud.photo) drawHud(renderer, sim, view, hud, &playback, net, winchAim, W, H, fps, dt, settings.mph, career, caches);
@@ -5242,20 +5264,23 @@ int main(int argc, char** argv) {
         }
         if (showHud && run.active()) drawLevelHud(renderer, run, sim, view, W, H);
         if (editorSuspended && !editor.active && !hud.photo) {  // a playtest: the way back, always on screen
-            const float u = std::max(0.75f, H / 720.0f), s = px(1.5f * u);
+            const float u = std::max(0.75f, H / 720.0f);
             const std::string t = "PLAYTEST   " + K(KA_PLAYTEST_BACK) + ": BACK TO THE EDITOR";
+            const float s = hudlayout::fitScale((float)t.size(), 1.5f * u, hudlayout::topLeftMaxW(u, W) - 28 * u), py = hudlayout::topLeftY(hud.tl, hudlayout::TL_PLAYTEST, u);
             const float w = r_textW(renderer, t, s) + 28 * u;
-            pill(renderer, 12 * u, 12 * u, w, 8 * s + 18 * u, 0.30f, 0.17f, 0.02f, 0.92f);
-            label(renderer, 26 * u, 21 * u, s, t, 1.0f, 0.88f, 0.45f, 1);
+            pill(renderer, 12 * u, py, w, 8 * s + 18 * u, 0.30f, 0.17f, 0.02f, 0.92f);
+            label(renderer, 26 * u, py + 9 * u, s, t, 1.0f, 0.88f, 0.45f, 1);
         }
         if (showHud && jobOn) {  // the job: what to do next, and where
-            const float u = std::max(0.75f, H / 720.0f), s = px(1.2f * u);
+            const float u = std::max(0.75f, H / 720.0f);
             const V3 me = walker.active ? walker.p : sim.cars[sim.player].frame().com;
             const std::string status = jobStatus(job, sim, me);
+            const float s = hudlayout::fitScale((float)std::max(job.title.size(), status.size()), 1.2f * u, hudlayout::topLeftMaxW(u, W) - 24 * u);
             const float w = std::max(r_textW(renderer, job.title, s), r_textW(renderer, status, s)) + 24 * u;
-            pill(renderer, 12 * u, 12 * u, w, 2 * 8 * s + 22 * u, 0, 0, 0, 0.55f);
-            label(renderer, 22 * u, 18 * u, s, job.title, 1.0f, 0.62f, 0.25f, 1);
-            renderer.text(22 * u, 24 * u + 8 * s, s, status, 0.92f, 0.93f, 0.95f, 1);
+            const float jy = hudlayout::topLeftY(hud.tl, hudlayout::TL_JOB, u);
+            pill(renderer, 12 * u, jy, w, 2 * 8 * s + 22 * u, 0, 0, 0, 0.55f);
+            label(renderer, 22 * u, jy + 6 * u, s, job.title, 1.0f, 0.62f, 0.25f, 1);
+            renderer.text(22 * u, jy + 12 * u + 8 * s, s, status, 0.92f, 0.93f, 0.95f, 1);
             V3 at;
             std::string what;
             static const float jc[3] = {1.0f, 0.62f, 0.25f};
@@ -5266,11 +5291,12 @@ int main(int argc, char** argv) {
         if (showHud && settings.fuelMode > 0) {  // the fuel gauge
             const Car& c = sim.cars[sim.player];
             if (!c.isProp() && c.fuel >= 0 && c.spec->fuelCapacity > 0) {
-                const float u = std::max(0.75f, H / 720.0f), s = px(1.2f * u);
-                const float f = (float)(c.fuel / c.spec->fuelCapacity), w = 150 * u, x = W - w - 26 * u, y = H - 245 * u;
-                pill(renderer, x - 8 * u, y - 6 * u, w + 16 * u, 8 * s + 22 * u, 0, 0, 0, 0.5f);
+                const float u = std::max(0.75f, H / 720.0f);
                 char b[64];
                 std::snprintf(b, sizeof b, "FUEL %.0f L%s", c.fuel, c.jerry > 0.5 ? ("   CAN " + std::to_string((int)std::lround(c.jerry)) + " L").c_str() : "");
+                const hudlayout::Column col = hudlayout::rightColumn(u, W, H, 0, (float)std::strlen(b), 0);  // (its own slot above the terrain tag)
+                const float s = col.fuelScale, f = (float)(c.fuel / c.spec->fuelCapacity), w = col.fuelBarW, x = col.fuel.x + 8 * u, y = col.fuel.y + 6 * u;
+                pill(renderer, col.fuel.x, col.fuel.y, col.fuel.w, col.fuel.h, 0, 0, 0, 0.5f);
                 renderer.text(x, y, s, b, f < 0.15f ? 1.0f : 0.9f, f < 0.15f ? 0.4f : 0.9f, f < 0.15f ? 0.3f : 0.92f, 1);
                 renderer.rect(x, y + 8 * s + 4 * u, w, 5 * u, 1, 1, 1, 0.15f);
                 renderer.rect(x, y + 8 * s + 4 * u, w * f, 5 * u, f < 0.15f ? 1.0f : 0.95f, f < 0.15f ? 0.35f : 0.75f, 0.25f, 0.95f);
