@@ -210,7 +210,8 @@ MACSDL   ?= third_party/sdl2-mac
 MACLTO   ?= -flto=thin
 # -fno-slp-vectorize: Apple clang 17 (Xcode 16.4) segfaults in the SLP vectorizer on arm64 at -O2 with -ffp-contract=off (bodyshell.cpp; the ThinLTO link too). No effect on results.
 MACSLP   ?= -fno-slp-vectorize
-MACLDX   ?=
+# ThinLTO runs the optimizer inside ld64 at link time, so the same crash needs the switch there too.
+MACLDX   ?= -Wl,-mllvm,-vectorize-slp=false
 MACFLAGS := -O2 $(FPFLAGS) $(MACSLP) $(MACLTO) -std=c++17 -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -Wall
 MAC_OBJ  := $(patsubst %.cpp,build/mac/obj/%.o,$(GAME_SRC))
 MACAPP   := build/mac/CrumpleZone.app

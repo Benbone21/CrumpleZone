@@ -22,19 +22,222 @@ env:
   VERSION: ${{ (startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/V')) && github.ref_name || '0.0.0-dev' }}
 
 jobs:
-  probe:
-    runs-on: macos-15
-    strategy:
-      fail-fast: false
-      matrix:
-        args: ["MACLDX=", "MACLDX='-Wl,-mllvm,-vectorize-slp=false'", "MACLTO= MACLDX="]
+  # Opt-in PGO: build instrumented, run a fixed training workload (tools/pgo.sh), hand the profile to the linux job.
+  # Never blocks a release: if this job fails, the linux job finds no profile and build plain LTO.
+  profile:
+    runs-on: ubuntu-24.04
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - name: SDL2 framework
+      - name: Toolchain
+        run: sudo apt-get update -q && sudo apt-get install -y -q g++ libsdl2-2.0-0 libegl1 libgl1-mesa-dri libglx-mesa0
+      - name: Train
+        run: tools/pgo.sh linux
+      - uses: actions/upload-artifact@v4
+        with: { name: pgo-profile, path: build/pgo/*.gcda, if-no-files-found: ignore }
+
+  linux:
+    needs: profile
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: sudo apt-get update -q && sudo apt-get install -y -q g++ libsdl2-2.0-0 libegl1 libgl1-mesa-dri libglx-mesa0
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with: { name: pgo-profile, path: build/pgo }
+      - name: Build and package
+        run: |
+          V="${VERSION#[vV]}"
+          # Release objects go to build/rel: generic x86-64-v2, -O2, LTO, -fno-plt (the Makefile's plain default is -march=native:
+          # the build machine's CPU only). PGO when the profile job produced one and the build accepts it; else plain LTO.
+          PGO=""; ls build/pgo/*.gcda >/dev/null 2>&1 && tools/pgo.sh rebase && PGO=use
+          TARGETS="build/rel/crumplezone build/rel/run_tests build/rel/test_render build/rel/test_audio"
+          make -j"$(nproc)" PGO=$PGO $TARGETS || { echo "::warning::PGO build failed, building without it"; PGO=""; rm -rf build/rel; make -j"$(nproc)" $TARGETS; }
+          make -j"$(nproc)" CXXFLAGS="-O2 -march=x86-64-v2 -mtune=generic" build/test_visibility
+          ./build/test_visibility
+          ./build/rel/run_tests --jobs 1 engine/collision engine/physics-workers engine/thread-cache engine/adaptive-quality tires/pressure net/state vtools/
+          SDL_VIDEODRIVER=offscreen LP_NUM_THREADS=2 ./build/rel/test_render
+          SDL_AUDIODRIVER=dummy CZ_AUDIO_DEVICE_TEST=1 ./build/rel/test_audio
+          python3 tests/test_engine_import.py
+          make deb VERSION="$V" PGO=$PGO
+          mkdir -p out && cp "build/deb/crumplezone_${V}_amd64.deb" "out/CrumpleZone-${V}-linux.deb"
+      - uses: actions/upload-artifact@v4
+        with: { name: linux, path: out/* }
+
+  windows:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: sudo apt-get update -q && sudo apt-get install -y -q g++-mingw-w64-x86-64-posix zip nsis
+      - name: Cross-compile and build the installer
+        run: |
+          V="${VERSION#[vV]}"
+          # LTO always (the Makefile's WINFLAGS). Windows PGO is NOT used: tools/pgo.sh windows (wine-trained) works, but it changed
+          # the sim's bit-exact state vs the plain build, which the Linux PGO and every LTO build do not.
+          make -j"$(nproc)" windows-installer VERSION="$V"
+          make -j"$(nproc)" build/win/bench_sim.exe build/win/run_tests.exe build/win/test_audio.exe build/win/test_visibility.exe
+          mkdir -p build/win/cpu-tests
+          cp build/win/bench_sim.exe build/win/run_tests.exe build/win/test_audio.exe build/win/test_visibility.exe third_party/sdl2-win64/SDL2.dll build/win/cpu-tests/
+          x86_64-w64-mingw32-objdump -p build/win/CrumpleZone/crumplezone.exe > build/win/imports.txt
+          grep -q 'NvOptimusEnablement' build/win/imports.txt
+          grep -q 'AmdPowerXpressRequestHighPerformance' build/win/imports.txt
+          mkdir -p out && cp build/win/CrumpleZone-setup.exe "out/CrumpleZone-${V}-windows-setup.exe"
+      - uses: actions/upload-artifact@v4
+        with: { name: windows, path: out/* }
+      - uses: actions/upload-artifact@v4
+        with: { name: windows-cpu-tests, path: build/win/cpu-tests/* }
+
+  windows-cpu:
+    needs: windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: windows-cpu-tests, path: cpu-tests }
+      - name: Native Windows serial and parallel simulation
+        shell: pwsh
+        run: |
+          foreach ($mode in @('separated', 'pileup')) {
+            $serial = & .\cpu-tests\bench_sim.exe 12 $mode 1000 1
+            if ($LASTEXITCODE -ne 0) { throw "Serial benchmark failed" }
+            $parallel = & .\cpu-tests\bench_sim.exe 12 $mode 1000 4
+            if ($LASTEXITCODE -ne 0) { throw "Parallel benchmark failed" }
+            Write-Output $serial
+            Write-Output $parallel
+            $a = [regex]::Match($serial, 'state ([0-9a-f]{16})')
+            $b = [regex]::Match($parallel, 'state ([0-9a-f]{16})')
+            if (!$a.Success -or !$b.Success -or $a.Groups[1].Value -ne $b.Groups[1].Value) {
+              throw "Serial and parallel simulation differ on Windows ($mode)"
+            }
+          }
+      - name: Native Windows networking, configurable workers, and audio
+        shell: pwsh
+        run: |
+          .\cpu-tests\test_visibility.exe
+          if ($LASTEXITCODE -ne 0) { throw "Windows culling/LOD geometry checks failed" }
+          .\cpu-tests\run_tests.exe --jobs 1 net/ engine/collision engine/physics-workers engine/thread-cache engine/adaptive-quality tires/pressure vtools/
+          if ($LASTEXITCODE -ne 0) { throw "Windows networking/physics regression checks failed (exit $LASTEXITCODE)" }
+          foreach ($attempt in 1..5) {
+            .\cpu-tests\run_tests.exe --jobs 1 engine/thread-cache vtools/go net/state
+            if ($LASTEXITCODE -ne 0) { throw "Windows thread-exit stress failed (attempt $attempt, exit $LASTEXITCODE)" }
+          }
+          $env:SDL_AUDIODRIVER = 'dummy'
+          $env:CZ_AUDIO_DEVICE_TEST = '1'
+          .\cpu-tests\test_audio.exe
+          if ($LASTEXITCODE -ne 0) { throw "Windows audio regression checks failed" }
+
+  mac:
+    if: github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/') || vars.RELEASE_MAC == 'true'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: SDL2 framework (official universal build)
         run: |
           SDLV=2.30.9
           curl -fsSL -o sdl.dmg "https://github.com/libsdl-org/SDL/releases/download/release-${SDLV}/SDL2-${SDLV}.dmg"
           hdiutil attach -quiet -nobrowse -mountpoint /tmp/sdl sdl.dmg
           mkdir -p third_party/sdl2-mac && cp -R /tmp/sdl/SDL2.framework third_party/sdl2-mac/
           hdiutil detach -quiet /tmp/sdl
-      - run: make -j3 build/mac/crumplezone ${{ matrix.args }} 2>&1 | grep -vE 'warning|^ +[0-9]+ \||\^~|^ +\|' | tail -25; echo "exit ${PIPESTATUS[0]}"
+      - name: Build the app
+        run: |
+          V="${VERSION#[vV]}"
+          # -j2 (was -j4). Apple clang 17 segfaults in the arm64 SLP vectorizer with -ffp-contract=off: the Makefile turns SLP off (compile and ThinLTO link). ThinLTO (MACLTO in the Makefile); if clang/ld64 rejects it, rebuild without so the Mac files still ship.
+          make -j2 mac-dmg VERSION="$V" || { echo "::warning::LTO build failed, building without it"; rm -rf build/mac; make -j2 mac-dmg VERSION="$V" MACLTO=; }
+          lipo -info build/mac/CrumpleZone.app/Contents/MacOS/crumplezone
+          mkdir -p out && cp build/mac/CrumpleZone-mac.zip "out/CrumpleZone-${V}-mac.zip"
+          cp build/mac/CrumpleZone-mac.dmg "out/CrumpleZone-${V}-mac.dmg"
+      - name: Native macOS regression checks
+        run: |
+          make -j4 build/mac/bench_sim build/mac/run_tests build/mac/test_audio build/mac/test_render build/mac/test_visibility
+          ./build/mac/test_visibility
+          ./build/mac/run_tests --jobs 1 net/ engine/collision engine/physics-workers engine/thread-cache engine/adaptive-quality tires/pressure vtools/
+          SDL_AUDIODRIVER=dummy CZ_AUDIO_DEVICE_TEST=1 ./build/mac/test_audio
+          python3 -u - <<'PY'
+          import subprocess
+          # Hosted Macs use Apple Software Renderer; the full graphics checks take minutes.
+          subprocess.run(['./build/mac/test_render'], check=True, timeout=900)
+          PY
+          python3 - <<'PY'
+          import re, subprocess
+          for mode in ('separated', 'pileup'):
+              states = []
+              for workers in (1, 4):
+                  output = subprocess.check_output(['./build/mac/bench_sim', '12', mode, '1000', str(workers)], text=True, timeout=120)
+                  print(output, end='')
+                  match = re.search(r'state ([0-9a-f]{16})', output)
+                  if not match:
+                      raise SystemExit('Missing simulation fingerprint')
+                  states.append(match.group(1))
+              if states[0] != states[1]:
+                  raise SystemExit('Serial/parallel macOS simulation differs: ' + mode)
+          PY
+      - name: Packaged app smoke test
+        run: |
+          python3 - <<'PY'
+          import pathlib, subprocess, tempfile
+          app = pathlib.Path('build/mac/CrumpleZone.app/Contents/MacOS/crumplezone').resolve()
+          prefix = pathlib.Path('out-shot').resolve()
+          # Launch away from the repository so packaged framework and asset lookup are tested.
+          with tempfile.TemporaryDirectory() as cwd, open('shot.log', 'w') as log:
+              subprocess.run([str(app), '--no-audio', '--no-pad', '--quality', '0', '--ground', '1', '--props', '0', '--size', '96x64',
+                              '--shot-prefix', str(prefix), '--shot-frames', '0'], cwd=cwd,
+                             stdout=log, stderr=subprocess.STDOUT, check=True, timeout=900)
+          if not pathlib.Path(str(prefix) + '_0000.ppm').is_file():
+              raise SystemExit('Packaged Mac app did not render its screenshot')
+          output = pathlib.Path('shot.log').read_text()
+          print(output)
+          if 'ground textures:' in output:
+              raise SystemExit('Packaged Mac ground assets failed to load')
+          PY
+      - name: Verify the mounted DMG
+        run: |
+          mkdir -p "$RUNNER_TEMP/crumplezone-dmg"
+          hdiutil attach -quiet -readonly -nobrowse -mountpoint "$RUNNER_TEMP/crumplezone-dmg" build/mac/CrumpleZone-mac.dmg
+          trap 'hdiutil detach -quiet "$RUNNER_TEMP/crumplezone-dmg"' EXIT
+          test -d "$RUNNER_TEMP/crumplezone-dmg/CrumpleZone.app"
+          test -L "$RUNNER_TEMP/crumplezone-dmg/Applications"
+          codesign --verify --deep --strict "$RUNNER_TEMP/crumplezone-dmg/CrumpleZone.app"
+          lipo "$RUNNER_TEMP/crumplezone-dmg/CrumpleZone.app/Contents/MacOS/crumplezone" -verify_arch arm64 x86_64
+      - uses: actions/upload-artifact@v4
+        with: { name: mac, path: out/* }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: mac-smoke, path: "out-shot*\nshot.log", if-no-files-found: ignore }
+
+  publish:
+    # mac may be skipped (see above); a failed or cancelled job still blocks the release.
+    if: ${{ !cancelled() && !failure() && (startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/V')) }}
+    needs: [linux, windows, windows-cpu, mac]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: dist, merge-multiple: true }
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V="${VERSION#[vV]}"
+          ls -la dist
+          # Always the .exe and .deb; the Mac files only when the mac job built them (both or neither).
+          names=("CrumpleZone-${V}-windows-setup.exe" "CrumpleZone-${V}-linux.deb")
+          if [ -e "dist/CrumpleZone-${V}-mac.dmg" ] || [ -e "dist/CrumpleZone-${V}-mac.zip" ]; then
+            names+=("CrumpleZone-${V}-mac.dmg" "CrumpleZone-${V}-mac.zip")
+          fi
+          for name in "${names[@]}"; do test -s "dist/$name"; done
+          (cd dist && sha256sum "${names[@]}" > SHA256SUMS)
+          files=()
+          for name in "${names[@]}"; do files+=("dist/$name"); done
+          files+=("dist/SHA256SUMS")
+          notes=(--generate-notes)
+          if [ -f "docs/releases/${GITHUB_REF_NAME}.md" ]; then notes=(--notes-file "docs/releases/${GITHUB_REF_NAME}.md"); fi
+          # (A release made by hand on the website for this tag just gets the files attached.)
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
+            if [ -f "docs/releases/${GITHUB_REF_NAME}.md" ]; then
+              gh release edit "$GITHUB_REF_NAME" --title "Crumple Zone ${V}" --notes-file "docs/releases/${GITHUB_REF_NAME}.md" --draft=false --prerelease=false --latest
+            fi
+          else
+            gh release create "$GITHUB_REF_NAME" --verify-tag --title "Crumple Zone ${V}" "${notes[@]}" "${files[@]}"
+          fi
