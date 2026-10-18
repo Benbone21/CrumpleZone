@@ -36,7 +36,7 @@ SCENARIO(grassDensityMap, "grass/density", "Grass grows on the meadow, thinning 
                   std::to_string(sumNear / near) + " against " + std::to_string(sumFar / far));
 }
 
-SCENARIO(grassQuality, "grass/adaptive-levels", "Adaptive quality steps the grass down a level at a time under load, and back up to no more than the chosen level") {
+SCENARIO(grassQuality, "grass/adaptive-levels", "Adaptive quality steps the grass down a level at a time under load (to LOW, not off), and back up to no more than the chosen level") {
     RenderSettings chosen, runtime;
     chosen.grass = 3;
     runtime = chosen;
@@ -50,7 +50,7 @@ SCENARIO(grassQuality, "grass/adaptive-levels", "Adaptive quality steps the gras
         lowest = std::min(lowest, runtime.grass);
         steps &= std::abs(runtime.grass - before) <= 1;
     }
-    ctx.check("sustained slow frames take it to off", lowest == 0 && runtime.grass == 0);
+    ctx.check("sustained slow frames take it down to LOW, never off", lowest == 1 && runtime.grass == 1);
     ctx.check("one level at a time", steps);
     ctx.check("the chosen level is untouched", chosen.grass == 3);
     bool within = true;

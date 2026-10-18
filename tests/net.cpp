@@ -59,7 +59,7 @@ SCENARIO(netTwoPlayers, "net/two-players", "Host and client over loopback: each 
     ctx.check("client got the host's map", client.map == MAP_PROVING_GROUND);
 
     // Both machines run a frame at a time; the client also keeps a history of where its
-    // truck really was, to check what the host sees (~0.1 s behind).
+    // truck really was, by the shared clock, to check what the host shows at its moment on it.
     struct Past {
         double t;
         std::vector<V3> p;
@@ -74,7 +74,7 @@ SCENARIO(netTwoPlayers, "net/two-players", "Host and client over loopback: each 
         sim2.advance(Ctx::kFrame, 1000);
         for (Car& c : sim2.cars) c.updateStats();
         client.send(sim2, ctx.t);
-        Past p{ctx.t, {}};
+        Past p{client.sharedTime(ctx.t), {}};
         for (const Node& n : sim2.cars[sim2.player].nodes) p.p.push_back(n.p);
         history.push_back(p);
         while (history.size() > 120) history.pop_front();
@@ -92,10 +92,9 @@ SCENARIO(netTwoPlayers, "net/two-players", "Host and client over loopback: each 
         frameBoth();
         const Car* r = remoteCar(ctx.sim);
         if (!r || ctx.t < 2.5) return;
-        // Compare with where the client's truck was ~0.1 s ago (the playback delay), the
-        // closest history entry.
-        // (interpolated between the two frames either side of it).
-        const double want = ctx.t - net::kPlaybackDelay - Ctx::kFrame;  // (+ a frame: it's read the frame after it's sent)
+        // Compare with where the client's truck was at the moment the host shows (on the
+        // shared clock), interpolated between the two frames either side of it.
+        const double want = host.viewTime();
         size_t k = 0;
         while (k + 2 < history.size() && history[k + 1].t < want) k++;
         const Past &a = history[k], &b = history[k + 1];
@@ -113,8 +112,8 @@ SCENARIO(netTwoPlayers, "net/two-players", "Host and client over loopback: each 
     clientDrive = false;
     const Car& mine = sim2.cars[sim2.player];
     ctx.metric("client truck speed (it drove)", len(mine.frame().vel) * 3.6, "km/h", 10, 80);
-    ctx.metric("host's copy vs the truck 0.1 s earlier: center", worstCom, "m", 0, 0.1);
-    ctx.metric("host's copy vs the truck 0.1 s earlier: worst node", worstNode, "m", 0, 0.15);
+    ctx.metric("host's copy vs the truck at the moment shown: center", worstCom, "m", 0, 0.1);
+    ctx.metric("host's copy vs the truck at the moment shown: worst node", worstNode, "m", 0, 0.15);
 
     // Stop the client next to the host, strap them together from the host, and tow.
     ctx.run(3.0, [&] {
@@ -161,7 +160,7 @@ SCENARIO(netTwoPlayers, "net/two-players", "Host and client over loopback: each 
     const double t0 = ctx.t;
     const uint64_t out0 = client.bytesOut;
     ctx.run(2.0, frameBoth);
-    ctx.metric("client upload for one truck", (client.bytesOut - out0) / (ctx.t - t0) / 1024, "KB/s", 5, 120);
+    ctx.metric("client upload for one truck", (client.bytesOut - out0) / (ctx.t - t0) / 1024, "KB/s", 0.5, 20);  // (only the dents that moved: a whole state is ~3 KB, 60 KB/s)
 
     // The client leaves: its truck and the strap go away on the host.
     client.close();
@@ -205,13 +204,15 @@ SCENARIO(netLevel, "net/level", "The host's level reaches the client whole (a bi
     ctx.check("client is let in", joined, client.error);
     if (!joined) return;
     client.adopt(sim2);
+    double t = ctx.t;
     auto pump = [&](int frames) {
         for (int k = 0; k < frames; k++) {
-            host.send(ctx.sim, ctx.t);
-            host.receive(ctx.sim, ctx.t);
-            client.receive(sim2, ctx.t);
-            client.send(sim2, ctx.t);
+            host.send(ctx.sim, t);
+            host.receive(ctx.sim, t);
+            client.receive(sim2, t);
+            client.send(sim2, t);
             usleep(1000);
+            t += 0.002;  // (chatter is held till the others are shown at the moment it was said: time must pass)
         }
     };
     pump(200);
@@ -222,7 +223,7 @@ SCENARIO(netLevel, "net/level", "The host's level reaches the client whole (a bi
     ctx.check("a new level replaces it", client.levelFresh && client.levelText.find("SMALL") != std::string::npos);
     client.sendGame("prog 3 12.5");
     host.sendGame("go 1.5");
-    pump(50);
+    pump(150);  // (out once the others are shown at the moment it was said: a view delay later)
     bool hostHeard = false, clientHeard = false;
     for (const auto& m : host.gameIn) hostHeard |= m.player == client.self && m.text == "prog 3 12.5";
     for (const auto& m : client.gameIn) clientHeard |= m.player == 0 && m.text == "go 1.5";

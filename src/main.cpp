@@ -1,4 +1,5 @@
 // Crumple Zone: a soft-body driving sandbox.
+#include "texenc.h"
 #include <algorithm>
 #include <array>
 #include <condition_variable>
@@ -59,6 +60,7 @@
 #include "objshape.h"
 #include "render.h"
 #include "perf.h"
+#include "frameprof.h"
 #include "sdl_min.h"
 #include "softbody.h"
 #include "../tests/harness.h"
@@ -99,6 +101,9 @@ struct Options {
     bool career = false;          // --career: career mode (a fresh one when scripted)
     bool photo = false;           // --photo: no HUD (screenshots; F10 in the game)
     int debugScreen = 0;          // --debug-screen [graph]: F3 (and Shift+F3) already pressed
+    int bench = 0;                // --bench N: fly a lap round the start for N frames (after a warm-up), print the frame times, quit
+    int benchWarm = 60;           // --bench N,WARM: frames to warm up first (default 60)
+    bool benchSync = false;       // --bench-sync: wait for the GPU at every stage (each stage's whole cost, no overlap)
     bool mph = false;             // --mph
     double throttleCap = -1;      // --throttle PCT[,RESPONSE[,PAD]]: the throttle limit (testing)
     int throttleResp = 0, throttlePad = 0;
@@ -321,13 +326,23 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--garage") o.showGarage = true;
         else if (a == "--clipboard") o.clipboard = next();
         else if (a == "--menu") o.menu = std::atoi(next().c_str());
-        else if (a == "--quality") o.quality = std::atoi(next().c_str());
+        else if (a == "--quality") {  // 0-3 LOW..ULTRA, 4 or potato: POTATO
+            const std::string q = next();
+            o.quality = q == "potato" ? (int)Q_POTATO : std::atoi(q.c_str());
+        }
         else if (a == "--ground") o.ground = std::atoi(next().c_str());
         else if (a == "--props") o.props = std::atoi(next().c_str());
         else if (a == "--grass") o.grass = std::atoi(next().c_str());
         else if (a == "--adaptive") o.adaptive = std::atoi(next().c_str());
         else if (a == "--photo") o.photo = true;
         else if (a == "--debug-screen") o.debugScreen = 1;
+        else if (a == "--bench") {  // N[,WARM]
+            const std::string v = next();
+            int n = 0, w = -1;
+            std::sscanf(v.c_str(), "%d,%d", &n, &w);
+            o.bench = std::max(1, n), o.benchWarm = w >= 0 ? w : o.benchWarm;
+        }
+        else if (a == "--bench-sync") o.benchSync = true;
         else if (a == "--debug-graph") o.debugScreen = 2;
         else if (a == "--mph") o.mph = true;
         else if (a == "--throttle") {
@@ -387,7 +402,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--help" || a == "-h") {
             std::puts("usage: crumplezone [--fullscreen] [--size WxH] [--no-audio] [--no-vsync] [--no-pad] [--spawn X,Z[,HEADING]] [--spawn-section N] [--scenario NAME]\n"
                       "                   [--map N] [--host [PORT]] [--join HOST[:PORT]] [--name NAME] [--password PASSWORD] [--time HOURS] [--level NAME]\n"
-                      "                   [--physics-threads auto|all|N] [--lab [--lab-model ID]]");
+                      "                   [--physics-threads auto|all|N] [--lab [--lab-model ID]] [--quality 0-3] [--bench FRAMES [--bench-sync]]");
             std::exit(0);
         }
     }
@@ -1562,7 +1577,7 @@ int main(int argc, char** argv) {
     signal(SIGPIPE, SIG_IGN);  // (a multiplayer peer dropping mid-send; macOS has no MSG_NOSIGNAL)
 #endif
     Options opt = parseArgs(argc, argv);
-    const bool scripted = !opt.shotFrames.empty();
+    const bool scripted = !opt.shotFrames.empty() || opt.bench > 0;  // (the default settings, no vsync, a fixed 60 Hz step)
 #ifdef _WIN32
     // The GUI executable has no terminal. Keep driver/shader errors where players can find them.
     makeDir(configDir());
@@ -1582,7 +1597,7 @@ int main(int argc, char** argv) {
     // Settings from last time (scripted captures use the defaults, so they're repeatable).
     Settings settings;
     const std::string settingsPath = Settings::defaultPath();
-    if (!scripted) settings.load(settingsPath);
+    const bool settingsLoaded = !scripted && settings.load(settingsPath);
     if (opt.physicsThreads >= 0) settings.physicsThreads = opt.physicsThreads;
     if (!opt.name.empty()) settings.playerName = opt.name;
     if (settings.playerName.empty()) {
@@ -1592,6 +1607,7 @@ int main(int argc, char** argv) {
         if (settings.playerName.size() > 16) settings.playerName.resize(16);
     }
     if (opt.quality >= 0) applyPreset(settings.gfx, opt.quality);
+    const bool autoDetect = !scripted && opt.quality < 0 && shouldAutoDetect(settingsLoaded, settings.gfxChosen);
     if (opt.ground >= 0) settings.gfx.ground = std::min(opt.ground, 3);
     if (opt.props >= 0) settings.gfx.props = std::min(opt.props, 3);
     if (opt.grass >= 0) settings.gfx.grass = std::min(opt.grass, 3);
@@ -1653,10 +1669,32 @@ int main(int argc, char** argv) {
         fail(std::string("missing OpenGL function ") + missing);
         return 1;
     }
+    {  // (compiled shaders kept between launches; scripted runs only with CZ_SHADER_CACHE=DIR, so they never write to the config)
+        const char* dir = std::getenv("CZ_SHADER_CACHE");
+        setShaderCacheDir(dir ? dir : scripted || std::getenv("CZ_NO_SHADER_CACHE") ? "" : configDir() + "/shadercache");
+    }
     const char* glRenderer = (const char*)gl::GetString(GL_RENDERER);
     const char* glVendor = (const char*)gl::GetString(GL_VENDOR);
-    // Honor the saved setting on every GPU; vendor names do not establish driver performance.
-    SDL_GL_SetSwapInterval(settings.vsync && opt.vsync && !scripted ? 1 : 0);
+    HardwareInfo hardware;  // (for the first-launch guess and DETECT AUTOMATICALLY)
+    hardware.vendor = glVendor ? glVendor : "", hardware.renderer = glRenderer ? glRenderer : "";
+    queryHardware(hardware);
+    {
+        GLint kb[4] = {-1, 0, 0, 0};
+        if (hardware.vendor.find("NVIDIA") != std::string::npos) gl::GetIntegerv(0x9047 /* GPU_MEMORY_INFO_DEDICATED_VIDMEM_NVX */, kb);
+        if (kb[0] > 0 && hardware.vendor.find("NVIDIA") != std::string::npos) hardware.vramMb = kb[0] / 1024;
+    }
+    std::printf("hardware: %d cores, %ld MB RAM, VRAM %ld MB, guess %s\n", hardware.cores, hardware.ramMb, hardware.vramMb,
+                presetName(guessPreset(hardware)));
+    if (autoDetect) applyPreset(settings.gfx, guessPreset(hardware));
+    // Honor the saved setting on every GPU; vendor names do not establish driver performance. VSync asks for adaptive
+    // sync first (a frame that misses the refresh shows at once, torn, instead of waiting a whole refresh and halving
+    // the frame rate), plain vsync where the driver hasn't got it.
+    auto setVsync = [&](bool on) {
+        if (!on) SDL_GL_SetSwapInterval(0);
+        else if (SDL_GL_SetSwapInterval(-1) != 0) SDL_GL_SetSwapInterval(1);
+    };
+    setVsync(settings.vsync && opt.vsync && !scripted);
+    std::printf("Swap interval: %d\n", SDL_GL_GetSwapInterval());
     std::printf("OpenGL: %s / %s / %s\n", glVendor ? glVendor : "unknown",
                 (const char*)gl::GetString(GL_VERSION), glRenderer ? glRenderer : "unknown");
     std::printf("GPU vendor: %s\n", gpuVendorName(detectGpuVendor(glVendor, glRenderer)));
@@ -1735,10 +1773,15 @@ int main(int argc, char** argv) {
     Renderer renderer;
     std::string err;
     uint64_t drawnWorld = sim.world.stamp;
+    const uint64_t initStart = SDL_GetPerformanceCounter();
     if (!renderer.init(sim.world, err)) {
         fail("renderer init failed:\n" + err);
         return 1;
     }
+    renderer.settings = settings.gfx;
+    renderer.preload(sim.world);
+    std::printf("renderer: ready in %.0f ms (%d shader programs compiled, %d from the cache)\n",
+                (SDL_GetPerformanceCounter() - initStart) * 1000.0 / SDL_GetPerformanceFrequency(), gShaderCacheStats.compiled, gShaderCacheStats.hits);
     if (opt.lab) {  // the model lab instead of the game (lab.h)
         LabOptions lo;
         lo.select = opt.labModel, lo.variant = opt.labDesign;
@@ -1812,6 +1855,7 @@ int main(int argc, char** argv) {
     // Time of day: the clock (hours) carries on from last time; --time holds it still.
     double dayHours = opt.timeHours >= 0 ? opt.timeHours : settings.clockHours;
     double levelHours = -1;  // the playing level's own hour (-1: none)
+    bool dayFromHost = false;  // in someone else's game: the sky is theirs (and our own clock waits in settings)
     int lampMode = opt.lamps >= 0 && opt.lamps < LAMP_MODES ? opt.lamps : LAMPS_AUTO;  // the player's headlight switch
     auto applySettings = [&]() {
         const int threads = resolvePhysicsThreads(settings.physicsThreads);
@@ -1830,13 +1874,24 @@ int main(int argc, char** argv) {
         bool fs = (SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN_DESKTOP) == SDL_WINDOW_FULLSCREEN_DESKTOP;
         if (fs != settings.fullscreen && !scripted)
             SDL_SetWindowFullscreen(win, settings.fullscreen ? (uint32_t)SDL_WINDOW_FULLSCREEN_DESKTOP : 0u);
-        SDL_GL_SetSwapInterval(settings.vsync && opt.vsync && !scripted ? 1 : 0);
+        setVsync(settings.vsync && opt.vsync && !scripted);
+        adaptiveQuality.init(settings.gfx, settings.fpsTarget > 0 ? (float)settings.fpsTarget : 60.0f);
         sim.realRecovery = settings.realRecovery;
         for (Car& c : sim.cars) if (!c.remote) c.winchSpeed = settings.winchSpeed;
         sim.steeringAssist = settings.steeringAssist;
     };
     auto saveSettings = [&]() {
         if (!scripted) settings.save(settingsPath);
+    };
+    // Graphics detection (perf.h): the hardware guess is on already (first launch) or applied here (the button); the probe then
+    // measures a few seconds of the running game and steps the preset toward the FPS target.
+    QualityProbe probe;
+    bool probePending = autoDetect;  // (waits for the world to be drawing)
+    auto startProbe = [&]() {
+        probe.start(guessPreset(hardware), settings.fpsTarget > 0 ? (float)settings.fpsTarget : 60.0f);
+        applyPreset(settings.gfx, probe.preset());
+        applySettings();
+        hud.toast(std::string("DETECTING GRAPHICS: ") + presetName(probe.preset()) + "?");
     };
     applySettings();
     gKeys = &settings.keys;
@@ -2367,7 +2422,13 @@ int main(int argc, char** argv) {
                 }
                 break;
             case PauseMenu::QUIT: running = false; break;
+            case PauseMenu::DETECT_GFX:
+                saveSettings();
+                if (!menu.title) closeMenu();  // (the game runs while it measures)
+                startProbe();
+                break;
             case PauseMenu::CHANGED:
+                if (probe.active() && presetOf(settings.gfx) != probe.preset()) probe.cancel(), probePending = false;  // (you picked one yourself)
                 applySettings();
                 saveSettings();
                 if (settings.career != career.on) {  // career <-> sandbox: each has its own garage
@@ -2731,9 +2792,46 @@ int main(int argc, char** argv) {
         }
     };
 
+    // --bench: a lap round where the player starts, the same every run.
+    const int benchWarm = opt.benchWarm;
+    BenchStats benchStats;
+    const V3 benchCentre = sim.cars.empty() ? V3() : sim.cars[sim.player].frame().com;
+    if (opt.bench) std::printf("bench: %d frames after %d to warm up, %dx%d, quality %d%s\n", opt.bench, benchWarm, opt.width, opt.height,
+                               presetOf(settings.gfx), opt.benchSync ? ", GPU synced per stage" : "");
+
     while (running) {
         uint64_t now = SDL_GetPerformanceCounter();
         const double frameTimeMs = 1000.0 * (double)(now - last) / freq;
+        // ---- frame timing (frameprof.h): the stage times F3 and --bench show ----
+        frameProfile().beginFrame();
+        if (opt.bench && frame > benchWarm + opt.bench) {
+            std::string title = std::string(mapName(sim.world.map)) + (run.active() ? " / " + run.level.name : std::string()) + ", " +
+                                std::to_string(opt.width) + "x" + std::to_string(opt.height) + ", quality " + std::to_string(presetOf(settings.gfx));
+            char extra[160];
+            std::snprintf(extra, sizeof extra, " (scale %.2f, shadows %d, MSAA %d, AO %d, bloom %d, grass %d, ground %d, props %d)%s",
+                          renderer.settings.renderScale, renderer.settings.shadows, renderer.settings.msaa, renderer.settings.ao, renderer.settings.bloom,
+                          renderer.settings.grass, renderer.settings.ground, renderer.settings.props, opt.benchSync ? " synced" : "");
+            std::fputs(BenchStats::report(benchStats.result(), title + extra).c_str(), stdout);
+            running = false;
+            break;
+        }
+        {  // (spikes go to the log, with the stages that ran long: stdout, graphics.log on Windows)
+            static double typical = 16.7, logged = -1;
+            static int spikesLogged = 0;
+            const double wall = (double)now / freq;
+            if (frame > 10 && frameSpike(frameTimeMs, typical) && (opt.bench || wall - logged > 0.5) && spikesLogged < 2000) {
+                char line[200];
+                describeSpike(line, sizeof line, frame - 1, frameTimeMs, typical, frameProfile().last);
+                std::printf("%s\n", line);
+                logged = wall, spikesLogged++;
+            }
+            if (frameTimeMs < 250) typical = frame <= 10 ? frameTimeMs : typical + (std::min(frameTimeMs, typical * 3) - typical) * 0.05;
+        }
+        if (opt.bench && frame > benchWarm) benchStats.add(frameTimeMs, frameProfile().last, frameProfile().gpuValid ? frameProfile().lastGpu : nullptr);
+        renderer.gpuTiming = dbg.on || opt.bench;
+        renderer.syncTiming = opt.benchSync;
+        renderer.gpuFrameBegin();
+        renderer.passMark(FP_GAME);
         double dt = scripted ? 1.0 / 60.0 : std::min(0.1, frameTimeMs / 1000.0);
         last = now;
         if (dt > 0) fps += ((float)(1.0 / dt) - fps) * 0.05f;
@@ -3504,9 +3602,9 @@ int main(int argc, char** argv) {
                     if (frame == 200 && std::getenv("CZ_INV_CLOSE")) closeInventory();
                 }
             }
-            if (opt.script == "winch" || opt.script == "strap") {  // screenshots of the recovery gear
-                if (frame == 20) std::printf("%s\n", (opt.script == "winch" ? sim.hookWinch(sim.player) : sim.hookStrap(sim.player)).c_str());
-                winch = opt.script == "winch" && frame > 20 ? 1 : 0;
+            if (opt.script == "winch" || opt.script == "winchout" || opt.script == "strap") {  // screenshots of the recovery gear
+                if (frame == 20) std::printf("%s\n", (opt.script == "strap" ? sim.hookStrap(sim.player) : sim.hookWinch(sim.player)).c_str());
+                winch = frame <= 20 ? 0 : opt.script == "winch" ? 1 : opt.script == "winchout" ? -1 : 0;  // (winchout: paying out, the slack line)
                 up = opt.script == "strap" && frame > 40;
                 sim.setWinch(sim.player, winch);
             }
@@ -3851,7 +3949,13 @@ int main(int argc, char** argv) {
                 run.outbox.clear();
             }
             const uint64_t physicsStart = SDL_GetPerformanceCounter();
-            simDt = sim.advance(dt, 120) * sim.h;
+            renderer.passMark(FP_SIM);
+            // Catching up is capped: a hitch (a frame far over the usual) isn't run all at once, which would make the next frame
+            // a hitch too, and so on; it's let go, like a pause. Ordinary slow frames run in real time down to 20 fps (at most
+            // 50 ms of physics a frame); below that the game slows rather than spiral.
+            static double usualDt = 1.0 / 60;
+            simDt = sim.advance(simCatchUp(dt, usualDt), simMaxSteps(sim.h)) * sim.h;
+            renderer.passMark(FP_GAME);
             const double physicsMs = (double)(SDL_GetPerformanceCounter() - physicsStart) * 1000 / freq;
             hud.physicsMs += (physicsMs - hud.physicsMs) * 0.05;
             if (sim.wrapShift != wrapSeen) {  // the freeway moved everything back a period: so do the camera and the effects
@@ -4426,6 +4530,11 @@ int main(int argc, char** argv) {
             footYaw -= padLogic.in.lookX * 2.6 * dt;
             footPitch = clampd(footPitch + padLogic.in.lookY * 1.8 * dt, -1.45, 1.45);
         }
+        if (opt.bench) {  // (the lap: 30 m round the start, 2.5 m up, once over the warm-up and the run)
+            auto ground = [](const void* w, double x, double z) { return ((const World*)w)->height(x, z); };
+            const BenchPose bp = benchPose(benchCentre.x, benchCentre.z, (double)frame / (benchWarm + opt.bench), 30, 2.5, ground, &sim.world);
+            cam.mode = 3, cam.droneEye = V3(bp.x, bp.y, bp.z), cam.droneYaw = bp.yaw, cam.dronePitch = bp.pitch;
+        }
         View view = editor.active ? editor.view(W, H) : cam.update(fr, sim.world, dt, (dragging || padLooking) && !menu.open);
         if (walker.active && !editor.active && cam.mode != 3) {
             // First person: eyes 1.62 m up, a little bob as you walk.
@@ -4479,19 +4588,23 @@ int main(int argc, char** argv) {
         view.time = (float)clock;
         {
             // Time of day: the clock runs (a whole day in settings.dayMinutes) unless it's
-            // held at a fixed time; in multiplayer the host's clock rules.
+            // held at a fixed time; in multiplayer the host's (or the server's) clock rules,
+            // and ours, and the setting, come back when we leave.
             double dayRate = 0;  // clock hours per real second
-            if (net.role == NetSession::CLIENT && net.dayHours >= 0) {
-                if (net.dayFresh) dayHours = net.dayHours, net.dayFresh = false;
-                dayRate = net.dayRate;
+            const bool fromHost = net.role == NetSession::CLIENT && net.dayHours >= 0;
+            if (dayFromHost && !fromHost) dayHours = settings.clockHours;
+            dayFromHost = fromHost;
+            if (fromHost) {
+                dayHours = net.dayHours;  // (run on to this moment by the session: everyone's sky agrees)
+                net.dayFresh = false;
             } else if (opt.timeHours >= 0) dayHours = opt.timeHours;
             else if (editor.active && editor.core.level.timeOfDay >= 0) dayHours = editor.core.level.timeOfDay;  // the editor shows the level's light
             else if (levelHours >= 0 && settings.timeOfDay != TOD_CYCLE) dayHours = levelHours;  // a level's hour holds over a fixed setting (with the cycle it starts there and runs)
             else if (settings.timeOfDay != TOD_CYCLE) dayHours = timeOfDayHours(settings.timeOfDay);
             else dayRate = clockAdvance(1.0, settings.dayMinutes);
             if (!sim.paused) dayHours = std::fmod(dayHours + dayRate * dt * sim.timeScale, 24.0);
-            settings.clockHours = (float)dayHours;
-            if (net.role == NetSession::HOST) net.dayHours = dayHours, net.dayRate = dayRate;
+            if (!fromHost) settings.clockHours = (float)dayHours;
+            if (net.role == NetSession::HOST) net.dayHours = dayHours, net.dayRate = sim.paused ? 0 : dayRate * sim.timeScale;
             renderer.daylight = computeDaylight(dayHours);
             // Each owner's switch is carried reliably, including OFF and high beams.
             renderer.carBeams.assign(sim.cars.size(), 0);
@@ -4504,7 +4617,21 @@ int main(int argc, char** argv) {
         if (!menu.open && menuBlur < 0.01f) menuBlur = 0;
         // Keep saved/menu choices separate from temporary runtime reductions.
         // Scripted captures stay deterministic unless adaptation is explicitly requested.
-        if (settings.adaptiveQuality && !menu.open && !garageUI.open && !editor.active && (!scripted || opt.adaptive == 1)) {
+        if (probePending && frame > 90 && !probe.active()) probePending = false, startProbe();
+        if (probe.active() && !garageUI.open && !editor.active) {
+            const QualityProbe::Step step = probe.feed((float)frameTimeMs);
+            if (step != QualityProbe::NONE) {
+                applyPreset(settings.gfx, probe.preset());
+                applySettings();
+                if (step == QualityProbe::DONE) {
+                    settings.gfxChosen = true;
+                    saveSettings();
+                    std::printf("graphics detected: %s\n", presetName(probe.preset()));
+                    hud.toast(std::string("GRAPHICS: ") + presetName(probe.preset()) + ". CHANGE IT IN SETTINGS");
+                }
+            }
+        }
+        if (settings.adaptiveQuality && !probe.active() && !menu.open && !garageUI.open && !editor.active && (!scripted || opt.adaptive == 1)) {
             adaptiveQuality.evaluate((float)frameTimeMs, adaptiveSettings);
         } else {
             adaptiveQuality.reset(settings.gfx);
@@ -4589,6 +4716,7 @@ int main(int argc, char** argv) {
                 break;
             }
         }
+        renderer.passMark(FP_UI);
         const double drawCpuMs = (double)(SDL_GetPerformanceCounter() - drawStart) * 1000 / freq;
         hud.drawCpuMs += (drawCpuMs - hud.drawCpuMs) * 0.05;
         if (scripted && std::getenv("CZ_BENCH")) {  // (the scene's frame time: wait for the GPU to finish it)
@@ -4620,6 +4748,7 @@ int main(int argc, char** argv) {
             di.camMode = cam.mode, di.mph = settings.mph, di.playtest = editorSuspended, di.throttleCap = hud.throttleCap;
             di.dayHours = dayHours, di.simSeconds = dbgSimSeconds, di.frame = dbg.history.stats();
             di.physicsMs = hud.physicsMs, di.drawCpuMs = hud.drawCpuMs, di.substeps = dbgSubsteps;
+            di.profile = &frameProfile();
             di.physicsThreads = sim.physicsThreads(), di.physicsThreadLimit = physicsThreadLimit();
             di.width = W, di.height = H, di.gpu = hud.gpu.c_str(), di.build = buildText.c_str();
             const Renderer::GeometryStats& gs = renderer.geometryStats();
@@ -4855,11 +4984,22 @@ int main(int argc, char** argv) {
                             settings.adaptiveQuality, renderer.settings.renderScale, renderer.settings.shadows,
                             renderer.settings.msaa, renderer.settings.ao, renderer.settings.ground, renderer.settings.props, renderer.settings.grass);
                 if (dbgMsN) std::printf("bench: debug screen %.3f ms/frame CPU (gather + queue) over %d frames\n", dbgMsSum / dbgMsN, dbgMsN);
+                const VegStats& vs = renderer.vegStats();
+                auto pass = [](const VegStats::Pass& p) { return std::to_string(p.draws) + " draws " + std::to_string(p.tris / 1000) + "k tris"; };
+                std::printf("bench: vegetation main: trees %s (%d), bushes %s (%d), reeds and logs %s, grass %s (%d tufts); shadows: trees %s, bushes %s, reeds and logs %s\n",
+                            pass(vs.trees).c_str(), vs.trees.inst, pass(vs.bushes).c_str(), vs.bushes.inst, pass(vs.logs).c_str(), pass(vs.grass).c_str(), vs.grass.inst,
+                            pass(vs.treesShadow).c_str(), pass(vs.bushesShadow).c_str(), pass(vs.logsShadow).c_str());
                 const PropStats& ps = renderer.propStats();
                 std::printf("bench: props %.2f ms GPU (timer queries), %.2f ms CPU (%.2f ms culling/LODs); main %d draws, %d instances, %d billboards, %d scatter, %.0fk tris; "
                             "shadows %d draws, %d instances, %.0fk tris\n",
                             ps.gpuMs, ps.cpuMs, ps.selectMs, ps.draws, ps.instances, ps.billboards, ps.scatter, ps.tris / 1000.0, ps.shadowDraws, ps.shadowInstances,
                             ps.shadowTris / 1000.0);
+                if (std::getenv("CZ_TEXSTATS")) {  // every texture held: format, size, mips, VRAM (texenc.h)
+                    std::string table;
+                    const std::vector<std::string> bad = texenc::textureReport(&table);
+                    std::printf("texstats:\n%s", table.c_str());
+                    for (const std::string& n : bad) std::printf("texstats: %s has no full mip chain\n", n.c_str());
+                }
             }
             char path[512];
             std::snprintf(path, sizeof(path), "%s_%04d.ppm", opt.shotPrefix.c_str(), frame);
@@ -4867,7 +5007,16 @@ int main(int argc, char** argv) {
             std::printf("wrote %s\n", path);
             if (frame >= *opt.shotFrames.rbegin()) running = false;
         }
+        renderer.passMark(FP_SWAP);
+        if (opt.bench) gl::Finish();  // (the frame isn't done until the GPU is: offscreen, the swap doesn't wait for it)
         SDL_GL_SwapWindow(win);
+        if (!scripted && settings.fpsTarget > 0 && SDL_GL_GetSwapInterval() == 0) {  // FPS TARGET with VSync off: the frame cap
+            const uint64_t until = now + freq / (uint64_t)settings.fpsTarget;
+            for (uint64_t t = SDL_GetPerformanceCounter(); t < until; t = SDL_GetPerformanceCounter()) {
+                const double leftMs = (double)(until - t) * 1000 / freq;
+                if (leftMs > 2) SDL_Delay((uint32_t)(leftMs - 1.5));  // (sleep most of it: SDL asks Windows for 1 ms timer ticks)
+            }
+        }
         frame++;
     }
 

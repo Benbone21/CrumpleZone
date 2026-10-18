@@ -1,8 +1,10 @@
 #include "bodyshell.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <map>
+#include <set>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -403,7 +405,7 @@ bool bedMouth(const VehicleSpec& vs, BedMouth& m) {
     return true;
 }
 
-bool buildBodyShell(const Car& car, VisualTemplate& t) {
+bool buildBodyShell(const Car& car, VisualTemplate& t, bool merge) {
     const VehicleSpec& vs = *car.spec;
     const Style* style = styleFor(vs);
     if (!style || car.panels.empty()) return false;
@@ -613,6 +615,181 @@ bool buildBodyShell(const Car& car, VisualTemplate& t) {
         info[f] = {group, region, parent, region == REG_CABIN_SIDE || region == REG_WINDSHIELD || region == REG_REAR_WINDOW};
     }
 
+    // Weights per (grid vertex, panel): one binding shared by the merge test and the topological vertices.
+    std::map<std::pair<int, int>, Weights> bound;
+    auto weightsOf = [&](int v, int group) -> const Weights& {
+        auto it = bound.find({v, group});
+        if (it == bound.end())
+            it = bound.emplace(std::make_pair(v, group), group >= 0 ? bindPanel(car, car.panels[group], pos[v]) : bindBody(car, pos[v])).first;
+        return it->second;
+    };
+
+    // Flat merge: runs of grid quads that are one plane, one region, one panel and one skin-quad parent, and whose
+    // inner vertices sit on the bilinear blend of the run's corner weights (they move with the same nodes, in the
+    // same proportion), are cut again into the fewest triangles from their outline. Every vertex another face
+    // uses stays, so no cracks open, and a run only goes where its vertices already shade as the plane. A run that
+    // crosses a lattice cell or a panel edge fails the weight test and stays.
+    const size_t gridFaces = 2 * (size_t)(NX - 1) * (NS - 1);
+    if (merge) {
+        auto cellId = [&](int s, int i, int j) { return ((size_t)(s < 0 ? 0 : 1) * (NX - 1) + i) * (NS - 1) + j; };
+        auto cornerOf = [&](int s, int i, int j, int c) {  // c: 0 (i,j) 1 (i+1,j) 2 (i+1,j+1) 3 (i,j+1)
+            return vid(i + (c == 1 || c == 2), j + (c >= 2), s);
+        };
+        std::vector<char> taken(gridFaces, 0);
+        auto same = [&](size_t a, size_t b) {
+            return info[a].group == info[b].group && info[a].region == info[b].region && info[a].parent == info[b].parent &&
+                   info[a].glass == info[b].glass;
+        };
+        // The smooth normal each (vertex, panel) has at rest, as evalBody will sum it: a run may only go where its
+        // vertices already shade as the flat plane (next to a curve the outline's blended normals must stay on quads).
+        std::map<std::pair<int, int>, V3> restN;
+        for (size_t f = 0; f < raw.size(); f++) {
+            const V3 n = cross(pos[raw[f].v[2]] - pos[raw[f].v[0]], pos[raw[f].v[3]] - pos[raw[f].v[1]]);
+            for (int c = 0; c < 4; c++) restN[{raw[f].v[c], info[f].group}] += n;
+        }
+        auto bilinearOk = [&](int s, int i0, int j0, int i1, int j1, int group) {
+            const V3 P00 = pos[vid(i0, j0, s)], P10 = pos[vid(i1, j0, s)], P11 = pos[vid(i1, j1, s)], P01 = pos[vid(i0, j1, s)];
+            const V3 nrm = cross(P10 - P00, P01 - P00);
+            if (len(nrm) < 1e-9) return false;
+            const V3 nn = norm(nrm);
+            if (std::fabs(dot(P11 - P00, nn)) > 5e-4) return false;
+            const Weights &W00 = weightsOf(vid(i0, j0, s), group), &W10 = weightsOf(vid(i1, j0, s), group),
+                          &W11 = weightsOf(vid(i1, j1, s), group), &W01 = weightsOf(vid(i0, j1, s), group);
+            for (int i = i0; i <= i1; i++)
+                for (int j = j0; j <= j1; j++) {
+                    const V3 vn = restN[{vid(i, j, s), group}];
+                    if (std::fabs(dot(vn, nn)) < 0.9998 * len(vn)) return false;
+                    const bool corner = (i == i0 || i == i1) && (j == j0 || j == j1);
+                    if (corner) continue;
+                    const V3 p = pos[vid(i, j, s)];
+                    if (std::fabs(dot(p - P00, nn)) > 5e-4) return false;
+                    double u = 0.5, v = 0.5;  // inverse bilinear (Gauss-Newton)
+                    for (int it = 0; it < 12; it++) {
+                        const V3 q = P00 * ((1 - u) * (1 - v)) + P10 * (u * (1 - v)) + P11 * (u * v) + P01 * ((1 - u) * v);
+                        const V3 r = q - p;
+                        const V3 du = (P10 - P00) * (1 - v) + (P11 - P01) * v, dv = (P01 - P00) * (1 - u) + (P11 - P10) * u;
+                        const double a = dot(du, du), b = dot(du, dv), c = dot(dv, dv), e = dot(du, r), f = dot(dv, r);
+                        const double det = a * c - b * b;
+                        if (std::fabs(det) < 1e-18) return false;
+                        const double ddu = (c * e - b * f) / det, ddv = (a * f - b * e) / det;
+                        u -= ddu, v -= ddv;
+                        if (std::fabs(ddu) + std::fabs(ddv) < 1e-10) break;
+                    }
+                    const V3 q = P00 * ((1 - u) * (1 - v)) + P10 * (u * (1 - v)) + P11 * (u * v) + P01 * ((1 - u) * v);
+                    if (len(q - p) > 5e-4 || u < -1e-6 || u > 1 + 1e-6 || v < -1e-6 || v > 1 + 1e-6) return false;
+                    std::map<int, double> want;
+                    for (const auto& e2 : W00.w) want[e2.first] += (1 - u) * (1 - v) * e2.second;
+                    for (const auto& e2 : W10.w) want[e2.first] += u * (1 - v) * e2.second;
+                    for (const auto& e2 : W11.w) want[e2.first] += u * v * e2.second;
+                    for (const auto& e2 : W01.w) want[e2.first] += (1 - u) * v * e2.second;
+                    for (const auto& e2 : weightsOf(vid(i, j, s), group).w) want[e2.first] -= e2.second;
+                    for (const auto& e2 : want)
+                        if (std::fabs(e2.second) > 0.01) return false;
+                }
+            return true;
+        };
+        auto usable = [&](int s, int i0, int j0, int i1, int j1) {  // cells i0..i1-1 x j0..j1-1
+            const size_t ref = cellId(s, i0, j0);
+            for (int i = i0; i < i1; i++)
+                for (int j = j0; j < j1; j++) {
+                    const size_t c = cellId(s, i, j);
+                    if (taken[c] || !same(ref, c)) return false;
+                }
+            return bilinearOk(s, i0, j0, i1, j1, info[ref].group);
+        };
+        struct Block {
+            int s, i0, j0, i1, j1;
+        };
+        std::vector<Block> blocks;
+        for (int s = -1; s <= 1; s += 2)
+            for (int i = 0; i + 1 < NX; i++)
+                for (int j = 0; j + 1 < NS; j++) {
+                    if (taken[cellId(s, i, j)]) continue;
+                    Block best{s, i, j, i + 1, j + 1};
+                    for (int order = 0; order < 2; order++) {
+                        Block b{s, i, j, i + 1, j + 1};
+                        for (int pass = 0; pass < 2; pass++) {
+                            const bool alongI = (pass == 0) == (order == 0);
+                            for (;;) {
+                                Block n = b;
+                                if (alongI) n.i1++; else n.j1++;
+                                if (n.i1 > NX - 1 || n.j1 > NS - 1 || !usable(s, n.i0, n.j0, n.i1, n.j1)) break;
+                                b = n;
+                            }
+                        }
+                        if ((b.i1 - b.i0) * (b.j1 - b.j0) > (best.i1 - best.i0) * (best.j1 - best.j0)) best = b;
+                    }
+                    for (int a = best.i0; a < best.i1; a++)
+                        for (int c = best.j0; c < best.j1; c++) taken[cellId(s, a, c)] = 1;
+                    blocks.push_back(best);
+                }
+        // Vertices that must stay: every corner of every run (a lone quad's four included) and the end caps' loops.
+        std::set<int> keep;
+        for (const Block& b : blocks)
+            for (int c = 0; c < 4; c++) keep.insert(vid(c == 1 || c == 2 ? b.i1 : b.i0, c >= 2 ? b.j1 : b.j0, b.s));
+        for (size_t f = gridFaces; f < raw.size(); f++)
+            for (int c = 0; c < 4; c++) keep.insert(raw[f].v[c]);
+
+        std::vector<RawFace> out;
+        std::vector<FaceInfo> outInfo;
+        for (const Block& b : blocks) {
+            const size_t ref = cellId(b.s, b.i0, b.j0);
+            if ((b.i1 - b.i0) * (b.j1 - b.j0) < 2) {
+                out.push_back(raw[ref]);
+                outInfo.push_back(info[ref]);
+                continue;
+            }
+            // Outline, in the winding of the grid quads (a, b, c, d).
+            std::vector<int> loop;
+            for (int i = b.i0; i < b.i1; i++) loop.push_back(vid(i, b.j0, b.s));
+            for (int j = b.j0; j < b.j1; j++) loop.push_back(vid(b.i1, j, b.s));
+            for (int i = b.i1; i > b.i0; i--) loop.push_back(vid(i, b.j1, b.s));
+            for (int j = b.j1; j > b.j0; j--) loop.push_back(vid(b.i0, j, b.s));
+            std::vector<int> poly;
+            for (int v : loop)
+                if (keep.count(v)) poly.push_back(v);
+            if (b.s < 0) std::reverse(poly.begin(), poly.end());
+            // Ear-clip the (convex) outline, best-shaped ear first.
+            std::vector<std::array<int, 3>> tris;
+            std::vector<int> rest = poly;
+            auto quality = [&](int a, int bb, int c) {  // smallest angle's sine-ish: 2 x area over the longest edge squared
+                const V3 ab = pos[bb] - pos[a], bc = pos[c] - pos[bb], ca = pos[a] - pos[c];
+                const double l2 = std::max({dot(ab, ab), dot(bc, bc), dot(ca, ca)});
+                return len(cross(ab, ca)) / std::max(l2, 1e-12);
+            };
+            while (rest.size() > 3) {
+                const size_t n = rest.size();
+                size_t bestK = n;
+                double bestQ = 1e-3;
+                for (size_t k = 0; k < n; k++) {
+                    const double q = quality(rest[(k + n - 1) % n], rest[k], rest[(k + 1) % n]);
+                    if (q > bestQ) bestQ = q, bestK = k;
+                }
+                if (bestK == n) break;
+                tris.push_back({rest[(bestK + n - 1) % n], rest[bestK], rest[(bestK + 1) % n]});
+                rest.erase(rest.begin() + bestK);
+            }
+            if (rest.size() == 3 && quality(rest[0], rest[1], rest[2]) > 1e-3) tris.push_back({rest[0], rest[1], rest[2]});
+            else {  // (no ear left: a collapsed outline) keep the block as it was
+                for (int i = b.i0; i < b.i1; i++)
+                    for (int j = b.j0; j < b.j1; j++) {
+                        const size_t cell = cellId(b.s, i, j);
+                        out.push_back(raw[cell]);
+                        outInfo.push_back(info[cell]);
+                    }
+                continue;
+            }
+            for (const auto& t3 : tris) {
+                const RawFace f{{t3[0], t3[1], t3[2], t3[2]}, raw[ref].seg, false, 0};
+                out.push_back(f);
+                outInfo.push_back(info[ref]);
+            }
+        }
+        for (size_t f = gridFaces; f < raw.size(); f++) out.push_back(raw[f]), outInfo.push_back(info[f]);
+        raw.swap(out);
+        info.swap(outInfo);
+    }
+
     // Topological vertices: one per (grid vertex, panel), so seams split when a panel moves.
     std::map<std::pair<int, int>, int> topo;
     std::vector<std::array<int, 4>> faceTopo(raw.size());
@@ -624,7 +801,7 @@ bool buildBodyShell(const Car& car, VisualTemplate& t) {
                 it = topo.emplace(key, t.topoCount++).first;
                 t.wStart.push_back((int)t.wNode.size());
                 const V3& p = pos[key.first];
-                Weights w = key.second >= 0 ? bindPanel(car, car.panels[key.second], p) : bindBody(car, p);
+                const Weights& w = weightsOf(key.first, key.second);
                 for (const auto& e : w.w) {
                     t.wNode.push_back(e.first);
                     t.wVal.push_back(e.second);
