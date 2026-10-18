@@ -14,7 +14,7 @@
 
 namespace {
 const char* kDir = "build/test-mesh-cache";
-const uint64_t kPinnedEncoderHash = 6923209209361431738ull;  // texenc output for the test texture, at kEncoderVersion 1
+const uint64_t kPinnedEncoderHash = 14444043085489283286ull;  // texenc output for the test texture, at kEncoderVersion 2
 std::mutex serial;  // (the cache is one per process, and scenarios run side by side)
 
 struct CacheEnv {  // a private folder, and the real settings put back afterwards

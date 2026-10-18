@@ -271,19 +271,35 @@ struct ChassisFrame {
     std::vector<int> section;   // per member: which cross-section it's part of (a rail station's corners
                                 // bend together: the section itself only crushes under a far bigger
                                 // local shove); empty = each on its own
-    std::vector<std::vector<int>> beamsAt;  // per member: its beams to other members (built on first flow)
+    std::vector<std::vector<int>> beamsAt;  // per member: its beams to other members (built on the first frame)
 };
 
 // Spatial hash of a car's skin triangles, rebuilt on demand for car-vs-car contact.
 struct TriGrid {
     static constexpr int kBuckets = 4096;
     static constexpr double kCell = 0.5;
-    std::vector<int> bucket[kBuckets];
+    // Buckets are chains through one pooled array (in insertion order), so a rebuild reuses its storage instead of regrowing 4096 vectors.
+    int head[kBuckets], tail[kBuckets];
+    std::vector<int> val, nxt;
     std::vector<int> used;
     long stamp = -1;
+    TriGrid() { std::fill(head, head + kBuckets, -1); }
+    struct Chain {
+        const TriGrid* g;
+        int first;
+        struct It {
+            const TriGrid* g;
+            int i;
+            int operator*() const { return g->val[i]; }
+            It& operator++() { i = g->nxt[i]; return *this; }
+            bool operator!=(const It& o) const { return i != o.i; }
+        };
+        It begin() const { return {g, first}; }
+        It end() const { return {g, -1}; }
+    };
     void clear();
     void insert(int tri, const V3& mn, const V3& mx);
-    const std::vector<int>& query(const V3& p) const;
+    Chain query(const V3& p) const;
     static int key(int x, int y, int z);
 };
 

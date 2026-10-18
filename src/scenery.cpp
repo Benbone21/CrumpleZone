@@ -1,3 +1,4 @@
+#include <unordered_map>
 #include "scenery.h"
 
 #include "forest.h"
@@ -394,7 +395,7 @@ void appendModel(std::vector<Vtx>& out, const mk::Mesh& m, const V3& p, const V3
 void appendPlaced(std::vector<Vtx>& out, const Placed& pl, const mk::Mesh& m) {
     const size_t at = out.size();
     if (pl.clip) {  // (squash what lies past the cut flat onto it: a straight tube is cut clean, the rest folds to nothing)
-        mk::Mesh cut;
+        static thread_local mk::Mesh cut;  // (its storage is kept between calls)
         cut.v = m.v;
         for (mk::MVert& q : cut.v) q.p[0] = std::min(std::max(q.p[0], pl.clipLo), pl.clipHi);
         if (pl.oriented) appendModel(out, cut, pl.p, pl.ax, pl.scale);
@@ -420,18 +421,34 @@ const mk::Mesh& placedMesh(const Placed& pl) {
         const mk::ModelDef* d = mk::findModel(pl.id);
         if (!d || d->variants.size() < 2) return mk::modelMesh(pl.id);
     }
-    static std::map<std::string, mk::Mesh> built;  // (cleared with the picks: see the lab)
+    static std::unordered_map<uint64_t, mk::Mesh> built;  // (cleared with the picks: see the lab; keyed by a hash, as a string key was built every frame)
     static uint64_t builtFor = 0;
     if (builtFor != mk::picksVersion()) built.clear(), builtFor = mk::picksVersion();
     const int variant = placedVariant(pl);
-    std::string key = pl.id + "#" + std::to_string(variant) + (pl.bare ? "|bare" : "");
-    for (const auto& kv : pl.set) key += "|" + kv.first + "=" + std::to_string(kv.second);
+    // (A flexing car's parts ask for a new size every frame: the sizes are rounded to ~3% for the cache, else it would build and keep a mesh per frame.)
+    auto quant = [] (double v) {
+        if (v == 0 || !std::isfinite(v)) return v;
+        const double step = std::ldexp(1.0, std::ilogb(std::fabs(v)) - 5);
+        return std::round(v / step) * step;
+    };
+    uint64_t key = 1469598103934665603ull;
+    auto mix = [&](const void* data, size_t n) {
+        for (size_t i = 0; i < n; i++) key = (key ^ ((const unsigned char*)data)[i]) * 1099511628211ull;
+    };
+    mix(pl.id.data(), pl.id.size());
+    mix(&variant, sizeof variant);
+    mix(&pl.bare, sizeof pl.bare);
+    for (const auto& kv : pl.set) {
+        mix(kv.first.data(), kv.first.size());
+        const double q = quant(kv.second);
+        mix(&q, sizeof q);
+    }
     auto it = built.find(key);
     if (it != built.end()) return it->second;
     mk::Mesh& m = built[key];
     if (const mk::ModelDef* d = mk::findModel(pl.id)) {
         mk::P p = mk::pickedParams(*d, variant);
-        for (const auto& kv : pl.set) p.v[kv.first] = kv.second;
+        for (const auto& kv : pl.set) p.v[kv.first] = quant(kv.second);
         if (pl.bare) p.v["bare"] = 1;
         mk::build(*d, variant, p, m);
         mk::trimMesh(m);

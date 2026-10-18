@@ -49,18 +49,20 @@ struct Maker {
 
     // A model placed with its front toward X and its up near Y (turned to be square), +Z its left; `out` is which way is outboard
     // here (the models are built for the left side: "mir" builds the right).
-    void put(const char* id, const V3& at, V3 X, V3 Y, const V3& scale, int variant, const V3& outward, std::vector<std::pair<std::string, double>> set) {
+    void put(const char* id, const V3& at, V3 X, V3 Y, const V3& scale, int variant, const V3& outward, std::initializer_list<std::pair<std::string, double>> params) {
         X = norm(X);
         Y = Y - X * dot(Y, X);
         Y = len(Y) > 1e-6 ? norm(Y) : norm(cross(cross(X, kUp), X));
         Placed pl;
         pl.id = id, pl.p = at, pl.oriented = true, pl.bare = true, pl.variant = variant, pl.scale = scale;
         pl.ax[0] = X, pl.ax[1] = Y, pl.ax[2] = cross(X, Y);
+        std::vector<std::pair<std::string, double>>& set = pl.set;  // (one grab: the part's few params and the three below)
+        set.reserve(params.size() + 3);
+        set.assign(params.begin(), params.end());
         set.push_back({"mir", dot(pl.ax[2], outward) < 0 ? 1.0 : 0.0});
         set.push_back({"coat", (double)st.coat});
         set.push_back({"wear", st.wear});
-        pl.set = std::move(set);
-        out.push_back(pl);
+        out.push_back(std::move(pl));
     }
 
     // ---- The rails: one model per station-to-station stretch of each rail, from its eight corner nodes. ----
