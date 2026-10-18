@@ -12,7 +12,7 @@ What a fresh clone contains: `assets/ground`, `assets/props` and the code. `asse
    ```
 3. Clone and build (SDL2.dll is already in `third_party/sdl2-win64`):
    ```
-   git clone https://github.com/OWNER/REPO.git MemeNG    # or the URL you were given
+   git clone https://github.com/Benbone21/CrumpleZone.git MemeNG    # (if it is private, sign in when git asks)
    cd MemeNG
    make -j$(nproc) windows
    ```
@@ -29,7 +29,7 @@ What a fresh clone contains: `assets/ground`, `assets/props` and the code. `asse
 1. Prerequisites: `xcode-select --install`. Download `SDL2-2.30.x.dmg` (the newest 2.30.x) from https://github.com/libsdl-org/SDL/releases, open it, and copy `SDL2.framework` to `third_party/sdl2-mac/` inside the clone (create that folder; it is git-ignored).
 2. Clone and build the quick native build (this machine's architecture, no app bundle):
    ```
-   git clone https://github.com/OWNER/REPO.git MemeNG
+   git clone https://github.com/Benbone21/CrumpleZone.git MemeNG
    cd MemeNG
    mkdir -p third_party/sdl2-mac
    cp -R /Volumes/SDL2/SDL2.framework third_party/sdl2-mac/

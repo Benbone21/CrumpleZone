@@ -6,19 +6,21 @@ Your job: measure how the game performs on **this** hardware, find what limits i
 
 ## 1. Set up and build
 Follow `docs/hardware-testing.md` for the prerequisites and build steps for this OS:
-- Windows: MSYS2, then `make windows`.
-- Mac: Xcode CLT and the SDL2 framework, then `make mac` or the quick dev build.
+- Windows: MSYS2 UCRT64 shell, then `make -j$(nproc) windows` (uses that shell's g++); the exe is `build/win/CrumpleZone/crumplezone.exe`.
+- Mac: Xcode CLT and SDL2.framework in `third_party/sdl2-mac/`, then `make -j$(sysctl -n hw.ncpu) mac-dev` (host architecture, no LTO; the binary is `build/macdev/crumplezone`). `make mac` builds the universal app.
 
 If a step in that doc is wrong for this machine, fix the doc in the same branch.
 
 ## 2. Measure first
 - Run the benchmark suite in a **real window**, never offscreen:
   ```
-  crumplezone --bench-suite
+  ./build/win/CrumpleZone/crumplezone.exe --bench-suite     # Windows (no console: output goes to files)
+  ./build/macdev/crumplezone --bench-suite                  # Mac
   ```
-  The results go to `<config dir>/bench/`: `%APPDATA%\crumplezone\bench` on Windows, `~/.config/crumplezone/bench` on Mac. The suite covers Frontier, Wilds and Boulder Gully at POTATO, LOW, MEDIUM and HIGH, plus a `--debug-screen` screenshot per run.
+  Optional: `--bench-suite FRAMES,WARMUP` (default 600,120), `--size WxH`, `--bench-out FILE`.
+  The results go to `<config dir>/bench/`: `%APPDATA%\crumplezone\bench` on Windows, `~/.config/crumplezone/bench` on Mac. The suite covers Frontier, Open Country (Wilds) and Boulder Gully at POTATO, LOW, MEDIUM and HIGH. It writes `suite-<date-time>-<WxH>.txt` (machine, table, one `suite-csv:` line per run, stage tables) and one `.bmp` screenshot per run with the F3 stats showing. Windows also keeps console output in `%APPDATA%\crumplezone\graphics.log`.
 - Make sure the game runs on the discrete GPU if the laptop has one. F3 shows the active GPU.
-- For one scene, use `--map N --quality Q --bench FRAMES,WARMUP`. Its `bench-csv:` line gives the average, the 1% low, hitches, and CPU/GPU ms for each stage: GAME, SIM, SHADOWS, SKY, TERRAIN, OPAQUE, VEGETATION, PROPS, FX, POST, UI, SWAP.
+- For one scene, use `--map N --quality Q --bench FRAMES,WARMUP` (map 3 Frontier, 5 Open Country, 1 Mountain; quality 0-3 or `potato`). It writes `<date-time>-<map>-<quality>-<WxH>.txt` to the same folder (or `--bench-out FILE`). Its `bench-csv:` line gives the average, the 1% low, hitches, and CPU/GPU ms for each stage: GAME, SIM, SHADOWS, SKY, TERRAIN, OPAQUE, VEGETATION, PROPS, FX, POST, UI, SWAP.
 - Record the machine: CPU, GPU, RAM, OS and refresh rate. The bench file has these.
 - Measure several times and quote medians. Laptops throttle, so plug the laptop in and let it cool between long runs.
 
