@@ -27,11 +27,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch: [arm64, x86_64]
-        flags: ["-O2 -ffp-contract=off -fno-fast-math", "-O2 -ffp-contract=off", "-O2 -fno-fast-math", "-O2", "-O1 -ffp-contract=off -fno-fast-math", "-O0 -ffp-contract=off -fno-fast-math"]
+        flags: ["-fno-vectorize", "-fno-slp-vectorize", "-fno-unroll-loops", "-fno-inline", "-fno-vectorize -fno-slp-vectorize", "-mllvm -aarch64-enable-ldst-opt=false", "-mllvm -enable-misched=false", "-mllvm -aarch64-enable-gep-opt=false -mllvm -aarch64-enable-cond-br-tune=false", "-fno-strict-aliasing -fno-math-errno", "-mllvm -aarch64-enable-machine-combiner=false -mllvm -enable-aarch64-ccmp=false"]
     steps:
       - uses: actions/checkout@v4
       - run: |
-          clang++ --version
-          clang++ ${{ matrix.flags }} -std=c++17 -arch ${{ matrix.arch }} -mmacosx-version-min=11.0 -c -o /tmp/b.o src/bodyshell.cpp 2>&1 | grep -v warning | head -60
+          clang++ -O2 -ffp-contract=off -fno-fast-math ${{ matrix.flags }} -std=c++17 -arch arm64 -mmacosx-version-min=11.0 -c -o /tmp/b.o src/bodyshell.cpp 2>&1 | grep -v warning | head -5
           echo "exit ${PIPESTATUS[0]}"
+      - if: always()
+        run: |
+          ls ~/Library/Logs/DiagnosticReports/ || true
+          clang++ -O2 -ffp-contract=off -fno-fast-math -std=c++17 -arch arm64 -mmacosx-version-min=11.0 -c -o /tmp/b.o src/bodyshell.cpp -Xclang -mllvm 2>&1 | head -0
+          clang++ -O2 -ffp-contract=off -fno-fast-math -std=c++17 -arch arm64 -mmacosx-version-min=11.0 -c -o /tmp/b.o src/bodyshell.cpp 2>&1 | grep -E '^ *[0-9]+ |Stack dump|Program arguments|Running pass|While' | head -40
