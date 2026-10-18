@@ -263,7 +263,7 @@ mac-dmg: mac
 
 # Native macOS regression executables, using the same universal release flags.
 build/mac/bench_sim: build/mac/obj/tools/bench_sim.o $(patsubst %.cpp,build/mac/obj/%.o,$(PHYS))
-	$(MACCXX) $(MACFLAGS) -o $@ $^
+	$(MACCXX) $(MACFLAGS) $(MACLDX) -o $@ $^
 
 build/mac/run_tests: build/mac/obj/tests/run_tests.o $(patsubst %.cpp,build/mac/obj/%.o,$(PHYS) $(SCEN) src/music.cpp)
 	$(MACCXX) $(MACFLAGS) $(MACLDX) -o $@ $^
