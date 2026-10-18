@@ -91,6 +91,21 @@ BenchStats::Result BenchStats::result() const {
     return r;
 }
 
+std::string BenchStats::csvLine(const Result& r) {
+    char b[128];
+    std::snprintf(b, sizeof b, "avg=%.2f,low1=%.2f,hitches=%d", r.avgMs, r.lowMs, r.hitches);
+    std::string csv = b;
+    for (int i = 0; i < FP_COUNT; i++) {
+        std::snprintf(b, sizeof b, ",%s=%.2f", framePassName((FramePass)i), r.cpu[i]);
+        csv += b;
+        if (framePassDraws((FramePass)i) && r.gpu[i] >= 0) {
+            std::snprintf(b, sizeof b, "/%.2f", r.gpu[i]);
+            csv += b;
+        }
+    }
+    return csv;
+}
+
 std::string BenchStats::report(const Result& r, const std::string& title) {
     std::string out;
     char b[256];
@@ -114,17 +129,7 @@ std::string BenchStats::report(const Result& r, const std::string& title) {
     }
     std::snprintf(b, sizeof b, "bench:   %-10s %8.2f %8.2f\n", "TOTAL", cpuSum, gpuSum);
     out += b;
-    std::snprintf(b, sizeof b, "bench-csv: avg=%.2f,low1=%.2f,hitches=%d", r.avgMs, r.lowMs, r.hitches);
-    std::string csv = b;
-    for (int i = 0; i < FP_COUNT; i++) {
-        std::snprintf(b, sizeof b, ",%s=%.2f", framePassName((FramePass)i), r.cpu[i]);
-        csv += b;
-        if (framePassDraws((FramePass)i) && r.gpu[i] >= 0) {
-            std::snprintf(b, sizeof b, "/%.2f", r.gpu[i]);
-            csv += b;
-        }
-    }
-    out += csv + "\n";
+    out += "bench-csv: " + csvLine(r) + "\n";
     return out;
 }
 

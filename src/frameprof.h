@@ -72,6 +72,7 @@ public:
     Result result() const;
     // The lines --bench prints (each starts "bench: "), and one machine-readable line ("bench-csv: ...").
     static std::string report(const Result& r, const std::string& title);
+    static std::string csvLine(const Result& r);  // "avg=..,low1=..,hitches=..,STAGE=cpu/gpu,..." (what follows "bench-csv: ")
 
 private:
     std::vector<float> frames_;
