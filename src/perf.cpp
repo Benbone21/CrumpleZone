@@ -228,6 +228,11 @@ int guessPreset(const HardwareInfo& hw) {
     return p;
 }
 
+float firstLaunchRenderScale(const HardwareInfo& hw, int preset) {
+    const std::string text = lowered(hw.vendor + " " + hw.renderer);
+    return preset == Q_LOW && text.find("apple") != std::string::npos ? 0.75f : 1.0f;
+}
+
 void queryHardware(HardwareInfo& hw) {
     hw.cores = (int)std::thread::hardware_concurrency();
 #ifdef _WIN32
