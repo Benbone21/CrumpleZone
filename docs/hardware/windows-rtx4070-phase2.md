@@ -115,3 +115,14 @@ HIGH gained 13 to 23% at native resolution (all from the ground shader's shadow 
 2. Power plan: still Balanced. Best performance might lift the 1% lows.
 3. POTATO SWAP floor (about 1.4 ms, 550 fps ceiling): only the NVIDIA Control Panel or another present path could change it; not worth it at 240 Hz.
 4. Mac: the AO fix in item 2 and the shadow change in item 5 are shared code; the Mac agent should skip item 2 and confirm both there.
+
+## ULTRA (added afterwards; the bench suite only covers POTATO to HIGH)
+`--quality 3` (MSAA 8x, grass 3, ground 3), 1 run each, `--bench 600,120`, this branch's code. Average fps (1% low ms):
+
+| Map | 1600x900 | 2048x1280 |
+|---|---|---|
+| Frontier | 159 (8.17) | 106 (13.20) |
+| Open Country | 206 (7.14) | 140 (11.36) |
+| Boulder Gully | 174 (8.75) | 120 (10.46) |
+
+Compared with HIGH now (Frontier / Open Country / Boulder Gully): at 1600x900 185 / 230 / 203, at 2048x1280 120 / 153 / 134. So ULTRA costs about 10 to 15% against HIGH. Still GPU-bound: TERRAIN GPU is 4.0 to 4.9 ms at 1600x900 and 5.5 to 7.6 ms at native, and OPAQUE's 2.4 to 6.4 ms of CPU is again the CPU waiting for the GPU (item 3). Not checked for the scan-line artifact (the AO fix applies to ULTRA too, since it uses the same AO pass).
