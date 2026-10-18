@@ -100,7 +100,7 @@ bool Settings::load(const std::string& path) {
         else if (k == "scale") gfx.renderScale = std::min(std::max(v, 0.5f), 2.0f);
         else if (k == "drawdistance" && std::isfinite(v)) gfx.drawDistance = v > 0 ? std::clamp(v, 150.0f, 6000.0f) : 0.0f;
         else if (k == "sharpen") gfx.sharpen = v != 0;
-        else if (k == "fpstarget") fpsTarget = v == 0 ? 0 : v >= 144 ? 144 : v >= 120 ? 120 : 60;
+        else if (k == "fpstarget") fpsTarget = fpsTargetFromSaved(v);
         else if (k == "grass") gfx.grass = v != 0 ? 2 : 0;  // (before it had levels: on is medium)
         else if (k == "grassq") gfx.grass = std::min(std::max((int)v, 0), 3);
         else if (k == "ground") gfx.ground = std::min(std::max((int)v, 0), 3);
@@ -483,8 +483,8 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
     choice(QUALITY, "QUALITY", presetName(presetOf(s.gfx)), 5, "POTATO: FOR THE WEAKEST LAPTOPS. HALF RESOLUTION, NO SHADOWS, 300 M OF VIEW");
     button(DETECT_ROW, "DETECT AUTOMATICALLY", "PICK QUALITY FOR THIS COMPUTER: TESTS A FEW SECONDS OF DRIVING");
     choice(ADAPTIVE, "ADAPTIVE QUALITY", kOffOn[s.adaptiveQuality], 2, "AUTO-SCALE GRAPHICS TO MAINTAIN FRAMERATE");
-    choice(FPSTARGET, "FPS TARGET", s.fpsTarget > 0 ? std::to_string(s.fpsTarget) + " FPS" : std::string("UNCAPPED"), 4,
-           "WHAT ADAPTIVE QUALITY AIMS FOR. WITH VSYNC OFF, ALSO THE FRAME CAP");
+    choice(FPSTARGET, "FPS TARGET", s.fpsTarget > 0 ? std::to_string(s.fpsTarget) + " FPS" : s.fpsTarget < 0 ? std::string("MATCH DISPLAY") : std::string("UNCAPPED"), 7,
+           "WHAT ADAPTIVE QUALITY AIMS FOR (NEVER ABOVE 144). WITH VSYNC OFF, ALSO THE FRAME CAP. MATCH DISPLAY: YOUR MONITOR'S REFRESH RATE");
     choice(SHADOWS, "SHADOWS", shadows[std::min(std::max(s.gfx.shadows, 0), 3)], 4);
     choice(AA, "ANTI-ALIASING", aa[msaaIndex(s.gfx.msaa)], 4);
     choice(AO, "AMBIENT OCCLUSION", kOffOn[s.gfx.ao], 2);
@@ -795,7 +795,7 @@ PauseMenu::Result PauseMenu::change(int row, int dir, Settings& s) {
         }
         case FPSTARGET: {
             int at = 0;
-            for (int k = 0; k < 4; k++)
+            for (int k = 0; k < 7; k++)
                 if (kFpsTargets[k] == s.fpsTarget) at = k;
             s.fpsTarget = kFpsTargets[cycle(at)];
             break;

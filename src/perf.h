@@ -31,7 +31,14 @@ void applyPreset(RenderSettings& g, int preset);
 int presetOf(const RenderSettings& g);
 const char* presetName(int preset);  // "LOW" ... "POTATO", "CUSTOM"
 // The FPS TARGET choices (Settings::fpsTarget): what adaptive quality aims for, and (VSync off) the frame cap; 0 uncapped.
-extern const int kFpsTargets[4];
+// kFpsMatchDisplay (the default) follows the display's refresh rate, uncapped when that's unknown.
+constexpr int kFpsMatchDisplay = -1;
+extern const int kFpsTargets[7];  // MATCH DISPLAY, 60, 120, 144, 240, 360, uncapped
+int fpsTargetFromSaved(float v);  // a saved value to a choice: <0 match display, 0 uncapped, else the highest choice not above it (60 at least)
+int resolveFpsTarget(int setting, int displayHz);  // the fps to cap at: 0 uncapped
+// What adaptive quality and the detection probe aim for: the target, but never above 144, so a 240 or 360 target on a machine
+// that can't reach it doesn't cut quality for ever (it still cuts below 144). Uncapped aims for 60.
+float adaptiveAim(int resolvedTarget);
 
 // ---- First-launch detection ------------------------------------------------------------------------------
 // A guess from the hardware (a table over GL_VENDOR + GL_RENDERER, then VRAM, cores and RAM can only lower it), confirmed by a
