@@ -43,7 +43,7 @@ int resolvePhysicsThreads(int requested, int available) {
 PhysicsWorkers::PhysicsWorkers(int threads) {
     try {
         for (int i = 1; i < threads; i++) workers.emplace_back([this, i] {
-            unsigned seen = generation.load();
+            unsigned seen = 0;  // (not generation.load(): a worker that starts late must still take the batch already published)
             for (;;) {
                 if (!spinUntil([&] { return generation.load() != seen || stopping.load(); })) {
                     std::unique_lock<std::mutex> lock(mutex);
@@ -83,6 +83,7 @@ void PhysicsWorkers::process(int self) {
 }
 
 void PhysicsWorkers::runRaw(int n, Thunk fn, const void* job) {
+    std::lock_guard<std::mutex> one(callMutex);
     // (The workers are all idle here: the last batch returned only after every one finished.)
     count = n;
     thunk = fn;

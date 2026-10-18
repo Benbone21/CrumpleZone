@@ -45,6 +45,7 @@ private:
     Thunk thunk = nullptr;
     const void* ctx = nullptr;
     int count = 0;
+    std::mutex callMutex;  // one batch at a time, whoever calls
     std::mutex mutex;
     std::condition_variable start, done;
     std::exception_ptr failure;

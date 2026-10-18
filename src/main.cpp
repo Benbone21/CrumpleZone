@@ -64,6 +64,7 @@
 #include "render.h"
 #include "perf.h"
 #include "frameprof.h"
+#include "simasync.h"
 #include "sdl_min.h"
 #include "softbody.h"
 #include "../tests/harness.h"
@@ -80,6 +81,7 @@ struct Options {
     int physicsThreads = -1;  // -1 saved setting; 0 automatic; otherwise a CPU thread budget
     int width = 1600, height = 900;
     bool fullscreen = false, audio = true, vsync = true;
+    bool simAsync = true;  // --no-sim-async: step the physics on the frame thread, not alongside the GPU wait
     bool pad = true;  // --no-pad: don't open game controllers (also CZ_NO_PAD=1)
     // Scripted capture (for testing): fixed 60 Hz steps, writes PPM screenshots.
     std::string shotPrefix;
@@ -301,6 +303,7 @@ Options parseArgs(int argc, char** argv) {
         auto next = [&]() -> std::string { return i + 1 < argc ? argv[++i] : ""; };
         if (a == "--fullscreen") o.fullscreen = true;
         else if (a == "--no-audio") o.audio = false;
+        else if (a == "--no-sim-async") o.simAsync = false;
         else if (a == "--no-vsync") o.vsync = false;
         else if (a == "--physics-threads") {
             const std::string value = next();
@@ -2870,6 +2873,13 @@ int main(int argc, char** argv) {
     if (opt.bench) std::printf("bench: %d frames after %d to warm up, %dx%d, quality %d%s\n", opt.bench, benchWarm, opt.width, opt.height,
                                presetOf(settings.gfx), opt.benchSync ? ", GPU synced per stage" : "");
 
+    // The physics for the next frame runs during this one's GPU wait (the swap), when nothing else touches the sim;
+    // the next frame owes only what's left of its time. Not for scripted captures, nor net play or the editor.
+    SimAsync simAsync;
+    double simCredit = 0;  // time already simulated ahead (s)
+    int simAsyncSteps = 0;
+    const bool asyncAllowed = opt.simAsync && opt.shotFrames.empty() && !opt.loadTour && opt.script.empty();
+
     while (running) {
         uint64_t now = SDL_GetPerformanceCounter();
         const double frameTimeMs = 1000.0 * (double)(now - last) / freq;
@@ -4033,7 +4043,10 @@ int main(int argc, char** argv) {
             // a hitch too, and so on; it's let go, like a pause. Ordinary slow frames run in real time down to 20 fps (at most
             // 50 ms of physics a frame); below that the game slows rather than spiral.
             static double usualDt = 1.0 / 60;
-            simDt = sim.advance(simCatchUp(dt, usualDt), simMaxSteps(sim.h)) * sim.h;
+            double owed = simCatchUp(dt, usualDt) - simCredit;
+            simCredit = owed < 0 ? -owed : 0;
+            simDt = (simAsyncSteps + sim.advance(std::max(0.0, owed), simMaxSteps(sim.h))) * sim.h;
+            simAsyncSteps = 0;
             renderer.passMark(FP_GAME);
             const double physicsMs = (double)(SDL_GetPerformanceCounter() - physicsStart) * 1000 / freq;
             hud.physicsMs += (physicsMs - hud.physicsMs) * 0.05;
@@ -5089,6 +5102,14 @@ int main(int argc, char** argv) {
             if (frame >= *opt.shotFrames.rbegin()) running = false;
         }
         renderer.passMark(FP_SWAP);
+        bool simKicked = false;
+        if (asyncAllowed && !sim.paused && !net.active() && !editor.active && !playback.active() && dt > 0) {
+            // (Scripted benches run a fixed step, so the guess is exact; otherwise a little under the last frame's, never over.)
+            const double ahead = scripted ? dt : std::min(0.9 * dt, 0.03);
+            simAsync.kick(sim, ahead, simMaxSteps(sim.h));
+            simCredit += ahead;
+            simKicked = true;
+        }
         if (opt.bench) gl::Finish();  // (the frame isn't done until the GPU is: offscreen, the swap doesn't wait for it)
         SDL_GL_SwapWindow(win);
         if (!scripted && settings.fpsTarget > 0 && SDL_GL_GetSwapInterval() == 0) {  // FPS TARGET with VSync off: the frame cap
@@ -5098,6 +5119,7 @@ int main(int argc, char** argv) {
                 if (leftMs > 2) SDL_Delay((uint32_t)(leftMs - 1.5));  // (sleep most of it: SDL asks Windows for 1 ms timer ticks)
             }
         }
+        if (simKicked) simAsyncSteps += simAsync.join();
         frame++;
     }
 

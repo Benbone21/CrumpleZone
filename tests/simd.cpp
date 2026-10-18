@@ -96,3 +96,32 @@ SCENARIO(poolEveryJobOnce, "engine/pool-jobs", "The spinning worker pool runs ev
     pool.run(0, [&](int) { calls++; });
     ctx.check("an empty batch does nothing", calls == 0);
 }
+
+SCENARIO(poolStress, "engine/pool-stress", "Pools hammered from many threads, new pools used at once, one pool shared: no lost wakeups") {
+    std::atomic<long> total{0}, expected{0};
+    std::atomic<bool> bad{false};
+    auto churn = [&](int seed) {  // fresh pools, used the moment they exist
+        for (int round = 0; round < 150; round++) {
+            PhysicsWorkers pool(2 + (seed + round) % 4);
+            for (int b = 0; b < 40; b++) {
+                const int n = 1 + (b * 7 + seed) % 23;
+                pool.run(n, [&](int i) { total += i + 1; });
+                expected += n * (n + 1) / 2;
+            }
+        }
+    };
+    PhysicsWorkers shared(4);
+    auto share = [&](int seed) {  // one pool, several callers
+        for (int b = 0; b < 3000; b++) {
+            const int n = 1 + (b + seed) % 16;
+            std::atomic<int> sum{0};
+            shared.run(n, [&](int i) { sum += i + 1; });
+            if (sum != n * (n + 1) / 2) bad = true;
+        }
+    };
+    std::vector<std::thread> threads;
+    for (int t = 0; t < 4; t++) threads.emplace_back(churn, t);
+    for (int t = 0; t < 4; t++) threads.emplace_back(share, t);
+    for (auto& t : threads) t.join();
+    ctx.check("every job of every batch ran, from every caller", total == expected && !bad);
+}
