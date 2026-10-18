@@ -42,7 +42,7 @@ struct LooseWheel {
 // Blowouts: a tire driven at or past its speed rating (tireSpeedRatingKmh) can fail, at a chance
 // per second that climbs steeply the further over it is and with load and tread heat.
 // Tuning, so the curve can be moved in one place: rate = base * exp(steep * (frac - 1)) * load * heat,
-// frac = tire road speed / rating, heat = wheelTempFactor (1 = nominal; tire temperature plugs in there).
+// frac = tire road speed / rating, heat = wheelTempFactor (1 in the tread's window, up to 5 overheated: tiretemp.h).
 // At nominal load: ~1/4000 s at the rating, ~1/200 s per tire at +15%, ~1/10 s at +30%.
 struct BlowoutTuning {
     double base = 2.5e-4;   // per second, at the rating
@@ -53,8 +53,9 @@ extern BlowoutTuning gBlowout;
 // Chance per second of this tire blowing: `frac` speed over rating, `loadRatio` load over its static share, tread heat.
 double tireBlowoutRate(double frac, double loadRatio, double heat);
 struct Wheel;
-// How much hotter (>1) or cooler (<1) than nominal this tire's tread is: a multiplier on the blowout chance. 1 for now.
-double wheelTempFactor(const Wheel& wh);
+// How much the tread's heat raises the blowout chance: 1 up to the top of its window (tiretemp.h),
+// climbing to 5 a hotSpan past it (an overheated carcass lets go).
+double wheelTempFactor(const Wheel& wh, int tread);
 // A deterministic die in [0,1): the same (seed, wheel, tick) always rolls the same.
 double blowoutDie(uint64_t seed, int wheel, uint32_t tick);
 

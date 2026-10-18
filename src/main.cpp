@@ -59,6 +59,7 @@
 #include "sectionfile.h"
 #include "menu.h"
 #include "throttle.h"
+#include "tiretemp.h"
 #include "mods.h"
 #include "net.h"
 #include "pilotsense.h"
@@ -795,6 +796,13 @@ void updateHudContext(HudState& hud, const Sim& sim, bool fuelOn, float dt) {
     s.hasDriveline = !car.isProp() && (car.spec->transfer != XFER_NONE || car.spec->lockerFront || car.spec->lockerRear);
     if (const DriveMode* m = car.isProp() ? nullptr : car.mode()) s.mode = (int)(m - driveModes(car.spec->transfer).data()) + 1, s.lowRange = m->low;
     s.lapOn = hud.lapOn;
+    if (!car.isProp())
+        for (const Wheel& wh : car.wheels) {
+            if (!wh.mounted || wh.debeaded) continue;
+            const int tread = car.treadType(wh), band = tireTempBand(tread, wh.tempC);
+            if (band > 0 || (band < 0 && s.tireBand == 0)) s.tireBand = band;
+            s.tireLoss = std::max(s.tireLoss, (float)(1 - tireTempGrip(tread, wh.tempC)));
+        }
     s.tireFrac = car.isProp() ? 0.0f : (float)car.tireSpeedFrac();
     s.lockF = car.lockFront, s.lockR = car.lockRear, s.lockC = car.centerLocked(), s.sway = car.swayDisconnected;
     hud.ctx.update(s, dt);
@@ -849,6 +857,18 @@ void drawGauges(Renderer& r, const Car& car, HudState& hud, float u, int W, int 
         const float chx = cx - gw / 2 - 6 * u - cw, chy = gy + (gh - ch) / 2;
         pill(r, chx, chy, cw, ch, mc[0] * 0.25f, mc[1] * 0.25f, mc[2] * 0.25f, 0.8f);
         r.text(chx + 5 * u, chy + 3 * u, cs, m->name, mc[0], mc[1], mc[2]);
+    }
+    if (!car.isProp() && hud.ctx.alpha(hudctx::E_TIRETEMP) > 0) {  // the tires' temperature: four marks beside the gear, laid out as they sit
+        const HudFade fade(r, hud, hudctx::E_TIRETEMP);
+        const float tw = 5 * u, th = std::max(3 * u, (gh - 8 * u) / 2), bw = 2 * tw + 12 * u, bx = cx + gw / 2 + 6 * u;
+        pill(r, bx, gy, bw, gh, 0.0f, 0.0f, 0.0f, 0.55f);
+        for (const Wheel& wh : car.wheels) {
+            const int band = tireTempBand(car.treadType(wh), wh.tempC);
+            const float c[3] = {band < 0 ? 0.35f : band > 0 ? 1.0f : 0.4f, band < 0 ? 0.62f : band > 0 ? 0.3f : 0.88f, band < 0 ? 1.0f : band > 0 ? 0.22f : 0.45f};
+            const bool gone = !wh.mounted || wh.debeaded;
+            r.rect(wh.left ? bx + 4 * u : bx + bw - 4 * u - tw, wh.front ? gy + 3 * u : gy + gh - 3 * u - th, tw, th,
+                   gone ? 0.3f : c[0], gone ? 0.3f : c[1], gone ? 0.32f : c[2], 0.95f);
+        }
     }
     if (hud.throttleCap < 0.995f && !car.isProp()) {  // the throttle limit, under the gear box
         const std::string txt = "THROTTLE " + throttle::percent(hud.throttleCap);
@@ -5156,6 +5176,7 @@ int main(int argc, char** argv) {
             if (!fromHost) settings.clockHours = (float)dayHours;
             if (net.role == NetSession::HOST) net.dayHours = dayHours, net.dayRate = sim.paused ? 0 : dayRate * sim.timeScale;
             renderer.daylight = computeDaylight(dayHours);
+            sim.dayHours = dayHours;  // (the air cools at night: the tires feel it)
             // Each owner's switch is carried reliably, including OFF and high beams.
             renderer.carBeams.assign(sim.cars.size(), 0);
             for (int i = 0; i < (int)sim.cars.size(); i++) {

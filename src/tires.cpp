@@ -8,6 +8,7 @@
 
 #include "carframe.h"
 #include "softbody.h"
+#include "tiretemp.h"
 
 std::string WheelItem::sizeName() const {
     char buf[32];
@@ -299,6 +300,7 @@ bool Sim::fitWheel(int ci, int wi, const WheelItem& it) {
     }
     wh.omega = 0;
     wh.sink = wh.clog = 0;
+    wh.tempC = (float)c.ambientC;  // (a wheel off the ground has sat in the air)
     wh.stickX = wh.stickY = 0;
     wh.studLoad = wh.beadLoad = 0;
     wh.poppedAnim = 0;
@@ -481,7 +483,7 @@ double tireBlowoutRate(double frac, double loadRatio, double heat) {
     return t.base * std::exp(t.steep * (frac - 1)) * std::pow(clampd(loadRatio, 0.3, 2.5), t.loadExp) * heat;
 }
 
-double wheelTempFactor(const Wheel&) { return 1.0; }
+double wheelTempFactor(const Wheel& wh, int tread) { return 1 + 4 * tireOverheat(tread, wh.tempC); }
 
 double blowoutDie(uint64_t seed, int wheel, uint32_t tick) {
     uint64_t z = seed * 0x9E3779B97F4A7C15ull + (uint64_t)(wheel + 1) * 0xD1B54A32D192ED03ull + (uint64_t)tick * 0xBF58476D1CE4E5B9ull;

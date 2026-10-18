@@ -38,6 +38,8 @@ double stopDistance(Ctx& ctx, const VehicleSpec& spec, Surface surf, bool chains
     ctx.run(1.0);
     if (chains)
         for (Wheel& wh : ctx.sim.cars[idx].wheels) wh.chained = true;
+    if (spec.tireType == TIRE_RACE_SLICK && surf == SURF_PAVED)  // (slicks are raced warm: tiretemp.h)
+        for (Wheel& wh : ctx.sim.cars[idx].wheels) wh.tempC = 90;
     ctx.launch(c, 40 / 3.6);
     const V3 p0 = ctx.sim.cars[idx].frame().com;
     ctx.runUntil(30, [&] { return len(ctx.sim.cars[idx].frame().vel) < 0.3; }, [&] {
