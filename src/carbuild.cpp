@@ -42,6 +42,11 @@ constexpr double kRailStiffness = 3.5;
 // What's welded to them (suspension brackets, coil towers, the engine's pads) is built for
 // the suspension's hits, whatever the rails: about this much force before it bends (N).
 constexpr double kBracketYield = 70000;
+// The doors and sills crushed across, and the tail lengthwise: their share of what the
+// lattice's members take before they set.
+constexpr double kSideGive = 0.35;
+constexpr double kSillGive = 0.45;
+constexpr double kTailGive = 0.45;
 
 const BeamSpec kSpec[BEAM_TYPE_COUNT] = {
     {1.6e5, 350, 0.056, 0.65},   // body
@@ -1661,7 +1666,37 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
             const bool skid = (vs.extras & EXTRA_SKID_PLATE) && pa.x > xf - 0.9 && pb.x > xf - 0.9;
             const bool slider = (vs.extras & EXTRA_SLIDERS) && std::min(pa.x, pb.x) > xr - 0.3 && std::max(pa.x, pb.x) < xf + 0.3 &&
                                 ((pa.z > sill && pb.z > sill) || (pa.z < -sill && pb.z < -sill));
-            if (skid || slider) b.yieldStrain *= 2.5;
+            // (A slider is a tube under the sill, for rocks from below: a bumper in the door
+            // squeezes the sill across, which the slider doesn't stop.)
+            if (skid || (slider && std::fabs(pa.y - pb.y) > 0.5 * len(pa - pb))) b.yieldStrain *= 2.5;
+        }
+    }
+
+    // Where a crash is taken. A nose is built to soak up a frontal hit; the doors, sills and
+    // the tail are not: a door is two skins and a bar, a tail a floor pan and a bumper. Crushed
+    // across (a T-bone) or lengthwise from behind they give at a fraction of what the nose
+    // takes, so the one hit dents instead of being shoved over whole. (Only the members a hit
+    // squeezes: the uprights a rock or a landing loads keep their strength.)
+    if (!isProp && axleI.size() >= 2) {
+        const double xf = xAt(axleI.front()), xr = xAt(axleI.back());
+        const double sill = vs.width / 2 - vs.width / vs.widthCells * 1.2;
+        for (Beam& b : beams) {
+            if ((b.type != BEAM_BODY && b.type != BEAM_CABIN) || b.a >= bodyNodes || b.b >= bodyNodes) continue;
+            const V3 &pa = local[b.a], &pb = local[b.b], d = pb - pa;
+            const double L = len(d);
+            if (L < 1e-9) continue;
+            if (pa.x > xf && pb.x > xf) {
+                b.yieldStrain *= vs.noseStrength;
+            } else if (vs.carbonTub || (vs.extras & EXTRA_TUBE_CAGE)) {
+                continue;  // (a tub or a cage is the crash structure all round)
+            } else if (pa.x < xr && pb.x < xr) {
+                if (std::fabs(d.x) > 0.5 * L) b.yieldStrain *= kTailGive;  // (lengthwise)
+            } else if (std::fabs(d.z) > 0.5 * L && std::fabs(pa.z) > sill && std::fabs(pb.z) > sill) {
+                // (crosswise, in the door and sill cells: the sill, low down, is a box section
+                // and gives less; it's what shoves the struck car along, under its weight)
+                const bool low = pa.y < vs.layerY[1] - 1e-6 || pb.y < vs.layerY[1] - 1e-6;
+                b.yieldStrain *= low ? kSillGive : kSideGive;
+            }
         }
     }
 
@@ -2290,6 +2325,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
             setUp(chassis, range(0, frameNodes), 300000 * vs.frameStiffness);
         }
     }
+    chassisRest0 = chassis.rest;
 
     // Recovery points: the frame nodes at the very front and back of the floor (where
     // the shackle mounts bolt on), and the shackle itself just outside the bumper.

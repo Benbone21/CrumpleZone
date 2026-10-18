@@ -317,6 +317,7 @@ public:
     void buildWheelRub();      // each tire's nearby skin triangles (after the tris and rest shape exist)
     std::vector<V3> extForce;  // optional extra force per node (test rigs); empty = none
     ChassisFrame chassis;
+    std::vector<V3> chassisRest0;  // its factory rest shape (what dents are measured against)
     // A body-on-frame truck's ladder frame: each rail (and everything welded to it) holds its
     // own shape, stiff in bending; the crossmembers tie the two, and give in twist as a real
     // ladder frame does. The body tub rides on it on its rubber mounts. Empty on a unibody.
