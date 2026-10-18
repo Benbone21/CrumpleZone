@@ -159,8 +159,8 @@ CZ_PASSWORD='a long random password' ./build/crumplezone-server --port 27015 --m
   sends trucks more than 150 m from all of a player's own less often (10, 5, then 2 a second past
   150, 400 and 800 m). Seven guests driving together: about 60 KB/s down per guest, 450 KB/s up
   from the server (0.2.0: 284 and 1990); spread over the map, about 9 and 60.
-- **Versions**: protocol 6 (0.2.1). An older game is turned away with "version mismatch: update
-  to 0.2.1 or newer"; a newer game joining an older server is told the server is older.
+- **Versions**: protocol 6 (0.3.0). An older game is turned away with "version mismatch: update
+  to 0.3.0 or newer"; a newer game joining an older server is told the server is older.
 
 Firewall examples (the server is IPv4 only; keep your SSH rule or you lock yourself out):
 
