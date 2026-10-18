@@ -665,11 +665,11 @@ void main(){
     win = 1.0;
     if (region == 1) {
       // Bronco 4-door: front and rear door glass, then the big quarter window in the hardtop.
-      float yc = 0.5 * (shYlo + shYhi), yh = 0.5 * (shYhi - shYlo);
-      float w1 = rbox(P.xy, vec2(0.5 * (shXB + shAx), yc), vec2(0.5 * (shAx - shXB) - 0.06, yh), 0.025);
-      w1 = max(w1, P.x - (shAx - 0.06));
-      float w2 = rbox(P.xy, vec2(0.5 * (shXC + shXB), yc), vec2(0.5 * (shXB - shXC) - 0.055, yh), 0.025);
-      float w3 = rbox(P.xy, vec2(0.5 * (shXC + shXr + 0.2), yc), vec2(0.5 * (shXC - shXr - 0.2) - 0.06, yh), 0.03);
+      float ylo = shYlo + 0.035, yhi = shYhi - 0.03, yc = 0.5 * (ylo + yhi), yh = 0.5 * (yhi - ylo);
+      float w1 = rbox(P.xy, vec2(0.5 * (shXB + shAx), yc), vec2(0.5 * (shAx - shXB) - 0.06, yh), 0.03);
+      w1 = max(w1, P.x - (shAx - 0.10 + (P.y - ylo) * 0.12));
+      float w2 = rbox(P.xy, vec2(0.5 * (shXC + shXB), yc), vec2(0.5 * (shXB - shXC) - 0.055, yh), 0.03);
+      float w3 = rbox(P.xy, vec2(0.5 * (shXC + shXr + 0.2), yc), vec2(0.5 * (shXC - shXr - 0.2) - 0.06, yh), 0.04);
       win = min(w1, min(w2, w3));
     }
   } else if (uShell == 3) {
@@ -1000,7 +1000,8 @@ void main(){
       if (P.x < shXr + 0.06 && P.y > shB - 0.40 && P.y < shB - 0.02) kind = P.y < shB - 0.31 ? 3 : 4;  // tail lamp wrap
       if (P.x > shXf - 0.05 && abs(P.y - (lampY + 0.05)) < 0.03) kind = 8;                          // side marker
     } else if (region == 1) {
-      if (P.x < shAx - 0.05 && P.y > shB + 0.01) { base = vec3(0.035); kind = 1; }  // the hardtop's pillars
+      // Door frames in paint; the roof rail, B and C pillars and the rear quarter's edge black.
+      if (P.y > shT - 0.12 || abs(P.x - shXB) < 0.075 || abs(P.x - shXC) < 0.06 || (P.x < shXr + 0.26 && P.y > shB + 0.01)) { base = vec3(0.035); kind = 1; }
       if (win < 0.012) { base = vec3(0.02); kind = 1; }
       if (P.x < shXr + 0.06 && P.y < shB + 0.01) kind = 4;
     } else if (region == 4) {
@@ -1018,17 +1019,27 @@ void main(){
       if (P.x > shXf - 0.32 && P.x < shXf - 0.12 && az > shW2 - 0.12) { base = vec3(0.03); kind = 1; }
       if (P.x < shXa + 0.06) { base = vec3(0.03); kind = 1; }  // cowl vent
     } else if (region == 5) {
-      if (P.y < gBot) { base = vec3(0.04) * (0.9 + 0.2 * vnoise(P.zy * 40.0)); kind = 5; }  // steel bumper
+      if (P.y < gBot) {
+        base = vec3(0.04) * (0.9 + 0.2 * vnoise(P.zy * 40.0)); kind = 5;  // steel bumper
+        if (P.y < gBot - 0.05 && P.y > shF + 0.03 && az < 0.52 && az > 0.0) {  // bash plate: a raised steel face between the lamps
+          base = vec3(0.30, 0.30, 0.31); kind = 2;
+          if (P.y > gBot - 0.09 || az > 0.5) { base = vec3(0.03); kind = 1; }
+        }
+        float fog = length(vec2(az - 0.60, P.y - (gBot - 0.12)));
+        if (fog < 0.045) kind = 3;
+        else if (fog < 0.06) { base = vec3(0.02); kind = 1; }
+      }
       if (P.y > gBot && P.y < gTop && az < shW2 - 0.05) {
         kind = 7;
-        // BRONCO: six letter blocks across the middle.
-        float lx = (P.z + 0.33) / 0.11;
-        if (abs(P.y - lampY) < 0.035 && lx > 0.0 && lx < 6.0 && fract(lx) > 0.18 && fract(lx) < 0.82) { base = vec3(0.85); kind = 2; }
+        // BRONCO: six letter blocks across the middle, a chrome bar out to each lamp.
+        float lx = (P.z + 0.40) / 0.133;
+        if (abs(P.y - lampY) < 0.05 && lx > 0.0 && lx < 6.0 && fract(lx) > 0.2 && fract(lx) < 0.8) { base = vec3(0.85); kind = 2; }
+        if (abs(P.y - lampY) < 0.011 && az > 0.43 && az < lampZ - 0.10) { base = vec3(0.75); kind = 2; }
+        if (abs(P.y - lampY + 0.085) < 0.008 && az < 0.58) kind = 1;                // slat
         float r = length(vec2(az - lampZ, P.y - lampY));
-        if (r < 0.06) kind = 3;                                              // LED projector
-        else if (r < 0.105) { base = vec3(0.6); kind = 2; }                  // chrome bowl
-        else if (r < 0.132 && (az - lampZ) > -0.07) kind = 3;               // C-shaped running light round the outside
-        else if (r < 0.14) { base = vec3(0.02); kind = 1; }
+        if (r < 0.075) kind = 3;                                             // LED projector
+        else if (r < 0.115) { base = vec3(0.6); kind = 2; }                  // chrome bowl
+        else if (r < 0.135) { base = vec3(0.015); kind = 1; }                // bezel
       }
       float plate = rbox(P.zy, vec2(0.0, shF + 0.15), vec2(0.15, 0.07), 0.01);
       if (plate < 0.0) { base = vec3(0.88, 0.88, 0.84); kind = 1; }

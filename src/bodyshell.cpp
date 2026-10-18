@@ -145,6 +145,8 @@ struct Style {
     double tuckF, tuckR;       // bumper undersides rise this much at the ends
     double archPow;            // wheel arch shape: 2 round, higher = squarer
     double hoodInset;          // hood seam this far in from the body side
+    double sillDrop = 0;       // the drawn rocker hangs this far below the lattice floor
+    double extraTuck = 0;      // the drawn greenhouse leans in this much more than the cage does
 };
 
 const Style* styleFor(const VehicleSpec& vs) {
@@ -153,7 +155,7 @@ const Style* styleFor(const VehicleSpec& vs) {
     static const Style runner{1, 0.16, 0.09, 0.04, 0.10, 0.045, 0.05, 0.055, 0.012, 0.016, 0.0, 0.05, 0.04, 2.0, 0.06};
     // 2021 Bronco 4-door: a box with crisp corners, a flat clamshell hood, an upright
     // windshield and swing gate, squared-off wheel openings under black flares.
-    static const Style bronco{2, 0.07, 0.06, 0.015, 0.05, 0.03, 0.03, 0.035, 0.008, 0.010, 0.0, 0.03, 0.03, 3.5, 0.03};
+    static const Style bronco{2, 0.07, 0.06, 0.015, 0.05, 0.03, 0.03, 0.035, 0.008, 0.010, 0.0, 0.03, 0.03, 2.8, 0.03, 0.07, 0.05};
     // 1990 EF Civic hatch: a low wedge nose, soft shoulders, a slightly bowed side and a
     // sloping glass hatch.
     static const Style civic{3, 0.24, 0.13, 0.09, 0.28, 0.06, 0.07, 0.07, 0.03, 0.025, 0.025, 0.07, 0.05, 2.0, 0.05};
@@ -193,7 +195,7 @@ struct ShellLines {
         xf = vs.length / 2;
         xr = -vs.length / 2;
         W2 = vs.width / 2;
-        tuck = vs.roofTuck;
+        tuck = vs.roofTuck + style.extraTuck;
         rakeR = std::max(0.02, vs.rakeRear);
         int gi0 = 99, gi1 = -1;
         for (const std::string& row : vs.profile)
@@ -267,7 +269,7 @@ struct ShellLines {
 
     // Bottom edge: the rocker, cut up into arches around the tires.
     double bottom(double x) const {
-        double y = F;
+        double y = F - st.sillDrop;
         for (double ax : axles) y = std::max(y, arch(x - ax));
         y += st.tuckF * smoothstep(xf - 0.3, xf, x) + st.tuckR * smoothstep(xr + 0.3, xr, x);
         return y;
@@ -364,7 +366,7 @@ void shellArch(const VehicleSpec& vs, double& centerY, double& radius) {
     if (id == "bronco") {
         // Squared openings, tall enough for 35s, starting just below the rocker.
         centerY = vs.layerY[0] - 0.02;
-        radius = 0.56;
+        radius = 0.50;
     } else if (id == "civic") {
         // Snug round arches over the 185/60R14s.
         centerY = vs.wheelRadius + 0.012;

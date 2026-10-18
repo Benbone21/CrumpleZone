@@ -519,7 +519,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         bronco.paintColor[0] = 0.30f, bronco.paintColor[1] = 0.40f, bronco.paintColor[2] = 0.43f;
         bronco.lampStyle = LAMP_ROUND;
         bronco.grilleStyle = GRILLE_WIDE;
-        bronco.extras = EXTRA_SPARE | EXTRA_FLARES | EXTRA_ROOF_RACK | EXTRA_SKID_PLATE | EXTRA_SLIDERS | EXTRA_WINCH;
+        bronco.extras = EXTRA_SPARE | EXTRA_FLARES | EXTRA_SKID_PLATE | EXTRA_SLIDERS | EXTRA_WINCH;
         bronco.coverColor[0] = 0.05f, bronco.coverColor[1] = 0.05f, bronco.coverColor[2] = 0.06f;
         v.push_back(bronco);
 

@@ -630,6 +630,17 @@ void buildExtras(const Car& car, PartBuilder& pb) {
         pb.box(V3(xf + 0.006, y, 0), V3(0.004, 0.012, 0.06), V3(0.03, 0.03, 0.03), SM_MATTE);  // slot
         pb.box(V3(xf + 0.03, y - 0.01, 0), V3(0.02, 0.025, 0.01), V3(0.75, 0.12, 0.06), SM_MATTE);  // hook strap
     }
+    if (vs.model == 2 && gi1 >= 0) {
+        // Trail sights on the fenders' front corners and the big black door mirrors.
+        const double xs = L / 2 - 0.22, ys = topAt(0) + 0.015;
+        for (int sd = -1; sd <= 1; sd += 2) {
+            pb.box(V3(xs, ys + 0.015, sd * (W / 2 - 0.09)), V3(0.07, 0.022, 0.035), kBlack, SM_MATTE);
+            pb.box(V3(xs + 0.03, ys + 0.045, sd * (W / 2 - 0.09)), V3(0.012, 0.02, 0.03), kBlack, SM_MATTE);
+            const double xm = xAt(gi0) + 0.02, ym = vs.layerY[2] + 0.13, zm = sd * (W / 2 + 0.07);
+            pb.box(V3(xm, ym, sd * (W / 2 + 0.02)), V3(0.04, 0.025, 0.05), kBlack, SM_MATTE);  // arm
+            pb.box(V3(xm - 0.02, ym + 0.03, zm), V3(0.055, 0.09, 0.05), kBlack, SM_MATTE);     // housing
+        }
+    }
     if (vs.extras & EXTRA_SPARE) {
         // Full-size spare on the swing gate: tire, wheel and its mount.
         // (With armor: on the bumper's swing-out carrier, off to the left.)
@@ -658,17 +669,19 @@ void buildExtras(const Car& car, PartBuilder& pb) {
                 // On a sculpted shell they follow its arch cut, standing out from the side.
                 double cy, rr;
                 shellArch(vs, cy, rr);
-                const double grow = 0.04, rw = rr + grow;
+                const bool bronco = vs.model == 2;  // (chunky flares standing well out from the side)
+                const double grow = bronco ? 0.05 : 0.04, rw = rr + grow;
                 const int n = 20;
                 for (int s = -1; s <= 1; s += 2)
                     for (int k = 0; k < n; k++) {
                         double d0 = -rw + 2 * rw * k / n, d1 = -rw + 2 * rw * (k + 1) / n;
                         double y0 = shellArchHeight(vs, d0 * rr / rw) + grow, y1 = shellArchHeight(vs, d1 * rr / rw) + grow;
                         y0 = std::max(y0, floorY + 0.02), y1 = std::max(y1, floorY + 0.02);
-                        V3 p0(xw + d0, y0, s * (W / 2 + 0.02)), p1(xw + d1, y1, s * (W / 2 + 0.02));
+                        const double zf = W / 2 + (bronco ? 0.04 : 0.02);
+                        V3 p0(xw + d0, y0, s * zf), p1(xw + d1, y1, s * zf);
                         if (len(p1 - p0) < 1e-4) continue;
                         V3 d = norm(p1 - p0), c = (p0 + p1) * 0.5;
-                        pb.obox(c, d, cross(V3(0, 0, 1), d), V3(0, 0, 1), len(p1 - p0) * 0.52, 0.055, 0.035,
+                        pb.obox(c, d, cross(V3(0, 0, 1), d), V3(0, 0, 1), len(p1 - p0) * 0.52, bronco ? 0.075 : 0.055, bronco ? 0.055 : 0.035,
                                 vs.trimTop > 0 ? trim : kBlack, vs.trimTop > 0 ? SM_PAINT : SM_MATTE);
                     }
                 continue;
