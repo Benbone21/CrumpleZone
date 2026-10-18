@@ -15,7 +15,7 @@ inline double clamp01(double x) { return std::clamp(x, 0.0, 1.0); }
 inline double lerp(double a, double b, double t) { return a + (b - a) * t; }
 
 uint32_t posKey(const V3& p) {
-    return (uint32_t)((int)std::lround(p.x * 20) * 73856093) ^ (uint32_t)((int)std::lround(p.y * 20) * 19349663) ^ (uint32_t)((int)std::lround(p.z * 20) * 83492791);
+    return (uint32_t)(int)std::lround(p.x * 20) * 73856093u ^ (uint32_t)(int)std::lround(p.y * 20) * 19349663u ^ (uint32_t)(int)std::lround(p.z * 20) * 83492791u;  // (unsigned: the hash wraps)
 }
 
 // A lumpy clump of leaves, dappled between two colours, lighter on top and dark underneath.

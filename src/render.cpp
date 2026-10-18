@@ -4,6 +4,7 @@
 #include "loadprof.h"
 #include "watermesh.h"
 #include "texcomp.h"
+#include "perf.h"
 
 // Render targets and data textures in the VRAM report (texcomp.h); no mips on purpose.
 static void noteRT(const char* name, const char* fmt, int w, int h, int bytesPerTexel, int mips = 0, bool runtime = true) {
@@ -288,6 +289,9 @@ float gridLine(vec2 p, float w){
 // wet asphalt. Returns false for anything else.
 bool surfacePaint(int paint, inout vec3 base, inout float specK, inout float specP){
   vec2 p = vPos.xz;
+#ifdef PROC_LITE
+  if (false) {
+#else
   if (paint == 4) {  // gravel: grey-brown stones
     base = vec3(0.40, 0.37, 0.33) * (0.8 + 0.25 * vnoise(p * 9.0) + 0.15 * vnoise(p * 23.0)) * (0.9 + 0.2 * fbm(p * 0.2, 2));
   } else if (paint == 7) {  // sand: pale, rippled by the wind
@@ -304,6 +308,7 @@ bool surfacePaint(int paint, inout vec3 base, inout float specK, inout float spe
     float ruts = (1.0 - smoothstep(0.2, 0.5, abs(abs(vCol.g) - 0.85))) * step(0.5, vCol.b) * (0.75 + 0.25 * vnoise(p * 3.0));
     base *= mix(vec3(1.0), vec3(0.70, 0.74, 0.80), ruts * 0.85);
     specK = 0.08; specP = 30.0;
+#endif
   } else if (paint == 10) {  // ice: blue-grey, glassy, white cracks
     float crack = 1.0 - smoothstep(0.0, 0.025, abs(vnoise(p * 0.7) - 0.5));
     base = mix(vec3(0.62, 0.72, 0.80), vec3(0.78, 0.85, 0.90), fbm(p * 0.15, 3));
@@ -337,6 +342,7 @@ bool surfacePaint(int paint, inout vec3 base, inout float specK, inout float spe
     float check = mod(floor(p.x / 0.8) + floor(p.y / 0.8), 2.0);
     base = mix(base, vec3(check * 0.9 + 0.05), start);
     specK = 0.05; specP = 30.0;
+#ifndef PROC_LITE
   } else if (paint == 14) {  // desert hardpan: pale cracked clay
     base = mix(vec3(0.66, 0.55, 0.40), vec3(0.74, 0.63, 0.47), fbm(p * 0.05, 3)) * (0.9 + 0.12 * vnoise(p * 6.0));
     base *= 1.0 - 0.3 * (1.0 - smoothstep(0.0, 0.03, abs(vnoise(p * 1.1) - 0.5)));
@@ -345,6 +351,7 @@ bool surfacePaint(int paint, inout vec3 base, inout float specK, inout float spe
     base = mix(vec3(0.55, 0.27, 0.16), vec3(0.72, 0.42, 0.26), band) * (0.82 + 0.25 * fbm(p * 0.15, 3));
     base = mix(base, base * 0.6, smoothstep(0.6, 0.72, vnoise(vec2(p.x * 0.5, vPos.y * 0.08))) * 0.5);
     specK = 0.05; specP = 20.0;
+#endif
   } else if (paint == 11) {  // wet asphalt: dark, shiny, puddles
     float pud = smoothstep(0.6, 0.72, fbm(p * 0.18, 3));
     base = vec3(0.13, 0.135, 0.14) * (0.85 + 0.15 * vnoise(p * 1.3));
@@ -359,6 +366,12 @@ void terrainProcedural(vec3 n, inout vec3 base, inout float specK, inout float s
     padc *= 1.0 - 0.13 * gridLine(vPos.xz, 0.0);
     padc = mix(padc, vec3(0.30, 0.31, 0.33), 0.75 * gridLine(vPos.xz / 10.0, 0.6));
     padc = mix(padc, vec3(0.92, 0.45, 0.10), 0.85 * gridLine(vPos.xz / 50.0, 1.2));
+#ifdef PROC_LITE
+    // (LOW and POTATO ground: the land under a road is a flat tone, the photo layers draw the countryside.)
+    float n2 = 0.5, steep = 0.0, snow = 0.0;
+    vec3 land = vec3(0.22, 0.27, 0.11);
+    base = uMap == 0 ? mix(land, padc, pad) : land;
+#else
     // Countryside: two-tone meadow with dry patches, rock on steep ground and up the rim
     // mountains (banded strata), snow on the high tops.
     float n1 = fbm(vPos.xz * 0.02, 4), n2 = vnoise(vPos.xz * 0.9);
@@ -376,6 +389,7 @@ void terrainProcedural(vec3 n, inout vec3 base, inout float specK, inout float s
     float snow = smoothstep(uRockSnow.y, uRockSnow.y + 50.0, vPos.y + 70.0 * n1) * smoothstep(0.5, 0.75, n.y);
     land = mix(land, vec3(0.90, 0.92, 0.96), snow);
     base = uMap == 0 ? mix(land, padc, pad) : land;
+#endif
     // Road: r = near-road flag, g = signed lateral offset, b = distance along.
     // Evaluated unconditionally so fwidth() stays well defined, then masked.
     float lat = abs(vCol.g), along = vCol.b;
@@ -397,6 +411,11 @@ void terrainProcedural(vec3 n, inout vec3 base, inout float specK, inout float s
       if (paint == 5) base = vec3(0.50, 0.49, 0.47) * (0.9 + 0.12 * vnoise(vPos.xz * 1.7)) * (1.0 - 0.3 * gridLine(vPos.xz / 3.0, 0.2));
       else surfacePaint(paint, base, specK, specP);
     } else {
+#ifdef PROC_LITE
+      int paint = int(paintAt(vPos.xz) + 0.5);
+      if (paint == 5) base = vec3(0.50, 0.49, 0.47) * (0.9 + 0.12 * vnoise(vPos.xz * 1.7)) * (1.0 - 0.35 * gridLine(vPos.xz / 3.0, 0.2));
+      else surfacePaint(paint, base, specK, specP);
+#else
       // Mountain: paint looked up per pixel (from a slightly wobbled spot, so the edges
       // are ragged rather than 1 m stairs): gravel road, dirt trail, slickrock, gravel.
       vec2 wob = (vec2(vnoise(vPos.xz * 0.8), vnoise(vPos.zx * 0.8 + 7.0)) - 0.5) * 1.3;
@@ -426,6 +445,7 @@ void terrainProcedural(vec3 n, inout vec3 base, inout float specK, inout float s
       }
       // Forest floor: brown needle litter under the pines.
       if (paint == 0) base = mix(base, vec3(0.24, 0.20, 0.13) * (0.8 + 0.3 * n2), smoothstep(0.55, 0.75, fbm(vPos.xz * 0.012 + vec2(7.0, -3.0), 3)) * smoothstep(18.0, 30.0, vPos.y) * 0.55 * (1.0 - snow) * (1.0 - steep));
+#endif
     }
     // Wet ground at the water's edge, and a dark silty bed under it.
     float wl = texture(uTerrainTex, (vPos.xz + 600.5) / uTerrainN).a;
@@ -2295,15 +2315,7 @@ bool Renderer::init(const World& world, std::string& err) {
     progComposite = linkProgram(kPostVS, kCompositeFS, err);
     progGrass = linkProgram(kGrassVS, header + kCommonFS + kGrassFSBody, err);
     progWater = linkProgram(kLitVS, header + kCommonFS + kWaterFSBody, err);
-    // (Photo-scanned ground: if it can't be built the terrain keeps its procedural look.)
-    {
-        std::string gerr;
-        progTerrain = linkProgram(kLitVS, header + kCommonFS + kLitIns + kTerrainProcFS + kGroundShaderFS, gerr);
-        if (!progTerrain) {
-            std::fprintf(stderr, "ground shader: %s\n", gerr.c_str());
-            groundFailed = true;
-        }
-    }
+    // (Photo-scanned ground: a program per tier, built when first wanted (ensureGround); if one can't be built the terrain keeps its procedural look.)
     if (!progLit || !progDepth || !progParts || !progPartsDepth || !progLine || !progXray || !progSky || !progHud || !progFx || !progCar || !progAO || !progDown ||
         !progUp || !progComposite || !progGrass || !progWater || !progTree || !progTreeDepth)
         return false;
@@ -4702,6 +4714,8 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     int gq = std::min(std::max(settings.ground, 0), 3);
     ensureGround(gq);
     if (groundFailed || !groundTex.ok()) gq = 0;
+    progTerrain = gq ? terrainProgram(groundTier(gq)) : 0;
+    if (!progTerrain) gq = 0;
     if (gq) {
         setLighting(progTerrain);
         uniformM4(progTerrain, "uModel", m4identity());
@@ -4720,7 +4734,12 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         ActiveTexture(GL_TEXTURE0);
         Uniform1i(uniformLocation(progTerrain, "uGroundA"), 3);
         Uniform1i(uniformLocation(progTerrain, "uGroundB"), 4);
-        Uniform1i(uniformLocation(progTerrain, "uGroundQ"), gq);
+        if (groundTier(gq) <= 1) {  // (the cheap tiers read their noise from a texture)
+            ActiveTexture(GL_TEXTURE0 + 5);
+            BindTexture(GL_TEXTURE_2D, noiseTex);
+            ActiveTexture(GL_TEXTURE0);
+            Uniform1i(uniformLocation(progTerrain, "uNoiseTex"), 5);
+        }
     } else {
         UseProgram(progLit);
         uniformM4(progLit, "uModel", m4identity());  // (the wheels moved it)
@@ -4871,8 +4890,70 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     props.endFrame();
 }
 
+// The ground shader's tier for a ground setting: POTATO has a tier of its own (the cheapest), LOW the next (see groundshader.cpp).
+int Renderer::groundTier(int gq) const { return gq == 1 && presetOf(settings) == Q_POTATO ? 0 : gq; }
+
+GLuint Renderer::terrainProgram(int tier) {
+    if (progTerrainTier[tier] || groundFailed) return progTerrainTier[tier];
+    std::string xd = "#define GQ " + std::to_string(tier) + "\n";
+    if (tier <= 1) xd += "#define PROC_LITE\n";
+    if (const char* e = std::getenv("CZ_GDEF")) {  // (a tryout switch: comma-separated defines)
+        std::string t = e;
+        for (size_t i = 0; i < t.size();) {
+            size_t j = t.find(',', i);
+            if (j == std::string::npos) j = t.size();
+            xd += "#define " + t.substr(i, j - i) + "\n";
+            i = j + 1;
+        }
+    }
+    if (tier <= 1 && !noiseTex) {  // the shader's own lattice hash drawn into a 256 x 256 texture (wrapped), on this GPU so it's the very numbers HIGH computes: vnoiseL samples between the texels
+        static const char* kBakeFS = R"(#version 330 core
+in vec2 vUv; out vec4 oCol;
+float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+void main(){
+  vec2 i = floor(vUv * 256.0);
+  i -= 256.0 * step(128.0, i);
+  oCol = vec4(hash(i), 0.0, 0.0, 1.0);
+})";
+        std::string berr;
+        const GLuint bake = linkProgram(kPostVS, kBakeFS, berr);
+        GLint fbo0 = 0, vp[4] = {0, 0, 0, 0};
+        GetIntegerv(0x8CA6 /* GL_FRAMEBUFFER_BINDING */, &fbo0);
+        GetIntegerv(0x0BA2 /* GL_VIEWPORT */, vp);
+        GenTextures(1, &noiseTex);
+        BindTexture(GL_TEXTURE_2D, noiseTex);
+        TexImage2D(GL_TEXTURE_2D, 0, 0x822A /* GL_R16 */, 256, 256, 0, GL_RED, GL_UNSIGNED_SHORT, nullptr);
+        TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        if (bake) {
+            GLuint f = 0;
+            GenFramebuffers(1, &f);
+            BindFramebuffer(GL_FRAMEBUFFER, f);
+            FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, noiseTex, 0);
+            Viewport(0, 0, 256, 256);
+            UseProgram(bake);
+            BindVertexArray(postVao);
+            DrawArrays(GL_TRIANGLES, 0, 3);
+            BindFramebuffer(GL_FRAMEBUFFER, (GLuint)fbo0);
+            DeleteFramebuffers(1, &f);
+            DeleteProgram(bake);
+            Viewport(vp[0], vp[1], vp[2], vp[3]);
+        } else std::fprintf(stderr, "ground noise bake: %s\n", berr.c_str());
+    }
+    std::string gerr;
+    progTerrainTier[tier] = linkProgram(kLitVS, "#version 330 core\n" + xd + kCommonFS + kLitIns + kTerrainProcFS + kGroundShaderFS, gerr);
+    if (!progTerrainTier[tier]) {
+        std::fprintf(stderr, "ground shader: %s\n", gerr.c_str());
+        groundFailed = true;
+    }
+    return progTerrainTier[tier];
+}
+
 void Renderer::ensureGround(int gq) {
     if (!gq || groundFailed) return;
+    terrainProgram(groundTier(gq));
     {
         static int lastAniso = -1;  // (anisotropy follows the ground quality: 4x, 8x, 16x)
         if (gq != lastAniso) texcomp::setQuality(gq), lastAniso = gq;
