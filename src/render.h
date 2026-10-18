@@ -1,6 +1,8 @@
 #pragma once
+#include <memory>
 #include <map>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "daylight.h"
@@ -83,6 +85,16 @@ public:
     // Rebuilds the static scenery (terrain, boxes, trees, rocks, bushes, grass data) for
     // a new map.
     void setWorld(const World& world);
+    // A map switch without a frozen frame: prepareWorld (any thread) makes the terrain's vertices, indices, height texture and
+    // water from the world; beginUpload/pumpUpload put them on the GPU a few ms a frame into spare buffers; adoptWorld swaps them
+    // in (with the first stage of the scenery), and stepWorld does one more stage of it per call until it returns true.
+    struct Prepared;
+    static std::shared_ptr<Prepared> prepareWorld(const World& world, const ScanCover& cover = ScanCover());  // (cover: what the scans draw, see scanCover())
+    ScanCover scanCover() const { return scanCover_; }
+    void beginUpload(std::shared_ptr<Prepared> p);
+    bool pumpUpload(double budgetMs);  // true once everything is uploaded
+    void adoptWorld(const World& world);
+    bool stepWorld(const World& world);  // true once the scenery is built
     // People on foot this frame (you, your buddies): drawn as simple figures.
     struct Figure {
         V3 p;            // feet, on the ground
@@ -185,6 +197,10 @@ private:
         int builds = 0;              // (tests and the bench: how many times it's been rebuilt)
         GLuint modelsVao = 0, modelsVbo = 0, modelsIdx = 0;  // the merged parts (CarModels), their part numbers
         uint64_t modelsSig = 0;      // which parts they were merged from
+        uint64_t modelsShape = 0;    // ... and which models (not their params)
+        std::unordered_map<uint64_t, char> shutCache;  // per part (model, params, place in the body): whether it is shut inside the skin
+        size_t shutSkin = 0;
+        bool shutIntact = false;
         int modelsCount = 0, modelsBase = 0, modelsParts = 0;  // vertices; this frame: first transform, how many (0: none)
         int modelsShown = 0;         // vertices of the parts that can be seen (first): the rest are shut inside the intact body
         // Far copies of the skin (an intact one): its vertices clustered (6 cm, 15 cm cells, within one shader region),
@@ -226,6 +242,27 @@ private:
         RenderBounds bounds;
         unsigned first[4] = {}, count[4] = {};
     };
+public:
+    struct Prepared {
+        double spacing = 1;
+        int n = 0, gridN = 0;
+        std::vector<Vtx> verts;
+        std::vector<unsigned> idx;
+        std::vector<TerrainChunk> chunks;
+        TerrainOcclusion occl;
+        std::vector<float> data;  // the shaders' height / grass / paint / water texels
+        std::vector<Vtx> water;
+        // The upload: spare buffers filled a slice at a time.
+        GLuint vbo = 0, ibo = 0, tex = 0;
+        size_t vDone = 0, iDone = 0;
+        int rowsDone = 0;
+        int stage = 0;
+    };
+private:
+    std::shared_ptr<Prepared> pending_;
+    int objStage_ = 0, stagePq_ = 0;
+    void updateObjectsStage(const World& world, int stage);
+    static void prepareTerrain(const World& world, Prepared& p);
     struct StaticBatch { RenderBounds bounds; int first = 0, count = 0; };
     std::vector<TerrainChunk> terrainChunks;
     TerrainOcclusion occl_;
@@ -332,7 +369,7 @@ private:
     int skinLod(const CarSlot& slot) const;  // 0 the skin, 1-2 its far copies (built on demand)
     void buildChains();
     void buildFont();
-    void buildBackdrop(const World& world, std::vector<Vtx>& verts, std::vector<unsigned>& idx);
+    static void buildBackdrop(const World& world, std::vector<Vtx>& verts, std::vector<unsigned>& idx);
     void ensureShadows(int size);
     void ensureGround(int quality);
     void ensureTargets(int w, int h, int samples);

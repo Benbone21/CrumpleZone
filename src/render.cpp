@@ -1,3 +1,4 @@
+#include <future>
 #include <chrono>
 #include "render.h"
 #include "loadprof.h"
@@ -2629,17 +2630,28 @@ Sig sceneryBase(const World& w, int props, const ScanCover& c) {
 }  // namespace
 
 void Renderer::updateObjects(const World& world) {
+    for (int s = 0; s < 4; s++) updateObjectsStage(world, s);
+}
+
+// One of four blocks of updateObjects: 0 the scanned props and boxes, 1 the trees, 2 the bushes, 3 the rocks and models. (A map
+// switch does one per frame; stage 0 sets the quality and cover the others use.)
+void Renderer::updateObjectsStage(const World& world, int stage) {
     // The scanned props first: whatever they cover, the code-made meshes leave out.
-    const int pq = propsOk ? std::min(std::max(settings.props, 0), 3) : 0;
+    if (stage == 0) stagePq_ = propsOk ? std::min(std::max(settings.props, 0), 3) : 0;
+    const int pq = stagePq_;
+    const ScanCover cover = scanCover_;
+    if (stage == 0) {
     if (pq) { LOADPROF("props.ensureLoaded"); props.ensureLoaded(pq); }
     { LOADPROF("props.setWorld"); props.setWorld(world, pq); }
-    const ScanCover cover = props.cover(pq);
-    scanCover_ = cover;
+    scanCover_ = props.cover(pq);
     treeFade_.assign(world.trees.size(), 0.0f);
     propsApplied = settings.props;
     buildBoxes(world);
+    return;
+    }
     // (The trees and the rest of the scenery are only rebuilt when something they're made from changed: moving a block in the
     // editor leaves the forest alone, so a drag keeps up with the mouse.)
+    if (stage == 1) {
     Sig ts = sceneryBase(world, pq, cover);
     for (const Tree& t : world.trees) ts.vec(t.base), ts.num(t.height), ts.num(t.radius), ts.num(t.kind), ts.num(t.tint);
     if (ts.h != treeSig_ || treeVertexCount == 0) {
@@ -2649,6 +2661,9 @@ void Renderer::updateObjects(const World& world) {
         trees_.build(set);
         treeVertexCount = (int)trees_.meshVertices();
     }
+    return;
+    }
+    if (stage == 2) {
     Sig bs = sceneryBase(world, pq, cover);
     for (const Bush& b : world.bushes) bs.vec(b.p), bs.num(b.r), bs.num(b.tint), bs.num(b.kind);
     for (const Log& g : world.logs) bs.vec(g.a), bs.vec(g.b), bs.num(g.r);
@@ -2662,6 +2677,8 @@ void Renderer::updateObjects(const World& world) {
         LOADPROF("bushes.bin+upload");
         uploadBatches(bushVao, bushVbo, v, bushBatches);
         bushVertexCount = (int)v.size();
+    }
+    return;
     }
     Sig ss = sceneryBase(world, pq, cover);
     for (const Rock& k : world.rocks) ss.vec(k.c), ss.num(k.r), ss.num(k.tint), ss.num(k.scan), ss.num((double)k.v.size()), ss.vec(k.v.empty() ? V3() : k.v[0]);
@@ -2850,20 +2867,21 @@ void Renderer::updateTerrainRegion(const World& world, int i0, int j0, int i1, i
     TexSubImage2D(GL_TEXTURE_2D, 0, i0, j0, i1 - i0 + 1, j1 - j0 + 1, GL_RGBA, GL_FLOAT, data.data());
     props.terrainChanged(-half + i0, -half + j0, -half + i1, -half + j1);  // (grass doesn't grow on a new trail)
 }
-void Renderer::buildTerrain(const World& world) {
+// The CPU half of the terrain: vertices, the chunks' indices at four LODs, the backdrop and the occlusion pyramid. Pure: any thread.
+void Renderer::prepareTerrain(const World& world, Prepared& p) {
     // 1 m on the mountain (its crawl features are small) and the wilds (the sections' steps), 2 m on the proving ground.
     const double spacing = world.map == MAP_MOUNTAIN || world.map == MAP_FRONTIER || world.map == MAP_BACKCOUNTRY || world.map == MAP_WILDS ? 1.0 : 2.0, half = World::kHalfSize;
     const int n = (int)(2 * half / spacing) + 1;
-    terrainSpacing = spacing;
-    terrainMeshN = n;
-    std::vector<Vtx> verts;
+    p.spacing = spacing;
+    p.n = n;
+    std::vector<Vtx>& verts = p.verts;
+    std::vector<unsigned>& idx = p.idx;
+    std::vector<TerrainChunk>& chunks = p.chunks;
     verts.reserve(n * n);
     for (int i = 0; i < n; i++)
         for (int j = 0; j < n; j++) {
             verts.push_back(terrainVertex(world, -half + i * spacing, -half + j * spacing));
         }
-    std::vector<unsigned> idx;
-    terrainChunks.clear();
     // Keep every boundary vertex at all LODs so adjacent chunks share exact edges.
     for (int i = 0; i < n - 1; i += 64)
         for (int j = 0; j < n - 1; j += 64) {
@@ -2879,7 +2897,7 @@ void Renderer::buildTerrain(const World& world) {
                 appendTerrainLod(idx, n, i, j, ie, je, 1 << lod);
                 chunk.count[lod] = (unsigned)idx.size() - chunk.first[lod];
             }
-            terrainChunks.push_back(chunk);
+            chunks.push_back(chunk);
         }
     // Backdrop is already coarse; spatially batch it for camera culling too.
     const unsigned backdropFirst = (unsigned)idx.size();
@@ -2902,24 +2920,155 @@ void Renderer::buildTerrain(const World& world) {
             chunk.count[lod] = (unsigned)entry.second.size();
         }
         idx.insert(idx.end(), entry.second.begin(), entry.second.end());
-        terrainChunks.push_back(chunk);
+        chunks.push_back(chunk);
     }
+    std::vector<float> hs(verts.size());
+    for (size_t k = 0; k < verts.size(); k++) hs[k] = verts[k].p[1];
+    p.occl.build(hs, n, spacing, -half);
+}
+
+void Renderer::buildTerrain(const World& world) {
+    Prepared p;
+    prepareTerrain(world, p);
+    terrainSpacing = p.spacing;
+    terrainMeshN = p.n;
+    terrainChunks = std::move(p.chunks);
+    occl_ = std::move(p.occl);
     if (!terrainVao) {
         GenVertexArrays(1, &terrainVao);
         GenBuffers(1, &terrainVbo);
         GenBuffers(1, &terrainIbo);
         setupVtxVao(terrainVao, terrainVbo);
     }
-    {
-        std::vector<float> hs(verts.size());
-        for (size_t k = 0; k < verts.size(); k++) hs[k] = verts[k].p[1];
-        occl_.build(hs, n, spacing, -half);
-    }
     BindVertexArray(terrainVao);
     BindBuffer(GL_ARRAY_BUFFER, terrainVbo);
-    BufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(Vtx), verts.data(), GL_DYNAMIC_DRAW);  // (the editor patches it)
+    BufferData(GL_ARRAY_BUFFER, p.verts.size() * sizeof(Vtx), p.verts.data(), GL_DYNAMIC_DRAW);  // (the editor patches it)
     BindBuffer(GL_ELEMENT_ARRAY_BUFFER, terrainIbo);
-    BufferData(GL_ELEMENT_ARRAY_BUFFER, idx.size() * sizeof(unsigned), idx.data(), GL_STATIC_DRAW);
+    BufferData(GL_ELEMENT_ARRAY_BUFFER, p.idx.size() * sizeof(unsigned), p.idx.data(), GL_STATIC_DRAW);
+}
+
+// ---- A map switch without a frozen frame (render.h: prepareWorld) ----
+
+std::shared_ptr<Renderer::Prepared> Renderer::prepareWorld(const World& world, const ScanCover& cover) {
+    auto p = std::make_shared<Prepared>();
+    prepareTerrain(world, *p);
+    buildWaterMesh(world, p->water);
+    {  // (builds the placed models' meshes, which the scenery stage then finds made)
+        LOADPROF("models.warm (worker)");
+        std::vector<Vtx> scratch;
+        buildPropMesh(world, scratch);
+        forest::Set set;  // (and the trees' models, which the tree stage would otherwise make on the frame thread)
+        forest::build(world, cover.pines, cover.snags, set);
+    }
+    // The shaders' terrain texels, one per meter: height, grass density, paint, water level.
+    const double half = World::kHalfSize;
+    const int n = (int)(2 * half) + 1;
+    p->gridN = n;
+    p->data.resize((size_t)n * n * 4);
+    for (int j = 0; j < n; j++)
+        for (int i = 0; i < n; i++) {
+            double x = -half + i, z = -half + j;
+            float* t = &p->data[((size_t)j * n + i) * 4];
+            t[0] = (float)world.height(x, z);
+            t[1] = world.grassDensity(x, z);
+            t[2] = (float)world.roadAt(x, z).paint;
+            t[3] = (float)std::max(world.waterLevel(x, z), -1000.0);
+        }
+    return p;
+}
+
+void Renderer::beginUpload(std::shared_ptr<Prepared> p) {
+    pending_ = std::move(p);
+    pending_->stage = 0;
+}
+
+bool Renderer::pumpUpload(double budgetMs) {
+    Prepared* p = pending_.get();
+    if (!p) return true;
+    const double t0 = loadprof::nowMs();
+    auto over = [&] { return loadprof::nowMs() - t0 >= budgetMs; };
+    const size_t slice = 1 << 20;  // a megabyte at a time
+    if (p->stage == 0) {
+        GenBuffers(1, &p->vbo);
+        GenBuffers(1, &p->ibo);
+        BindBuffer(GL_ARRAY_BUFFER, p->vbo);
+        BufferData(GL_ARRAY_BUFFER, p->verts.size() * sizeof(Vtx), nullptr, GL_DYNAMIC_DRAW);  // (the editor patches it)
+        BindBuffer(GL_ELEMENT_ARRAY_BUFFER, p->ibo);
+        BufferData(GL_ELEMENT_ARRAY_BUFFER, p->idx.size() * sizeof(unsigned), nullptr, GL_STATIC_DRAW);
+        GenTextures(1, &p->tex);
+        BindTexture(GL_TEXTURE_2D, p->tex);
+        TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, p->gridN, p->gridN, 0, GL_RGBA, GL_FLOAT, nullptr);
+        TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        p->stage = 1;
+        if (over()) return false;
+    }
+    if (p->stage == 1) {
+        const size_t total = p->verts.size() * sizeof(Vtx);
+        BindBuffer(GL_ARRAY_BUFFER, p->vbo);
+        while (p->vDone < total) {
+            const size_t k = std::min(slice, total - p->vDone);
+            BufferSubData(GL_ARRAY_BUFFER, (GLintptr)p->vDone, (GLsizeiptr)k, (const char*)p->verts.data() + p->vDone);
+            p->vDone += k;
+            if (over()) return false;
+        }
+        p->stage = 2;
+    }
+    if (p->stage == 2) {
+        const size_t total = p->idx.size() * sizeof(unsigned);
+        BindBuffer(GL_ELEMENT_ARRAY_BUFFER, p->ibo);
+        while (p->iDone < total) {
+            const size_t k = std::min(slice, total - p->iDone);
+            BufferSubData(GL_ELEMENT_ARRAY_BUFFER, (GLintptr)p->iDone, (GLsizeiptr)k, (const char*)p->idx.data() + p->iDone);
+            p->iDone += k;
+            if (over()) return false;
+        }
+        p->stage = 3;
+    }
+    if (p->stage == 3) {
+        BindTexture(GL_TEXTURE_2D, p->tex);
+        const int rows = std::max(1, (int)(slice / ((size_t)p->gridN * 16)));
+        while (p->rowsDone < p->gridN) {
+            const int k = std::min(rows, p->gridN - p->rowsDone);
+            TexSubImage2D(GL_TEXTURE_2D, 0, 0, p->rowsDone, p->gridN, k, GL_RGBA, GL_FLOAT, &p->data[(size_t)p->rowsDone * p->gridN * 4]);
+            p->rowsDone += k;
+            if (over()) return false;
+        }
+        std::vector<Vtx>().swap(p->verts);
+        std::vector<unsigned>().swap(p->idx);
+        std::vector<float>().swap(p->data);
+        p->stage = 4;
+    }
+    return true;
+}
+
+void Renderer::adoptWorld(const World& world) {
+    LOADPROF("renderer.adoptWorld");
+    std::shared_ptr<Prepared> p = std::move(pending_);
+    mapId = world.map == MAP_WILDS ? (int)MAP_FREEWAY : world.map;
+    if (terrainVbo) DeleteBuffers(1, &terrainVbo);
+    if (terrainIbo) DeleteBuffers(1, &terrainIbo);
+    if (terrainTex) DeleteTextures(1, &terrainTex);
+    terrainVbo = p->vbo, terrainIbo = p->ibo, terrainTex = p->tex;
+    terrainSpacing = p->spacing, terrainMeshN = p->n, terrainGridN = p->gridN;
+    terrainChunks = std::move(p->chunks);
+    occl_ = std::move(p->occl);
+    BindVertexArray(terrainVao);
+    setupVtxVao(terrainVao, terrainVbo);
+    BindBuffer(GL_ELEMENT_ARRAY_BUFFER, terrainIbo);
+    noteRT("terrain height map", "RGBA32F", p->gridN, p->gridN, 16, 0, true);
+    uploadStatic(waterVao, waterVbo, p->water);
+    waterVertexCount = (int)p->water.size();
+    treeSig_ = scenerySig_ = bushSig_ = 0;
+    updateObjectsStage(world, 0);
+    objStage_ = 1;
+}
+
+bool Renderer::stepWorld(const World& world) {
+    if (objStage_ <= 3) updateObjectsStage(world, objStage_++);
+    return objStage_ > 3;
 }
 
 // The mountain range around the map, out to 3.6 km: a coarse grid with the map's
@@ -3906,6 +4055,17 @@ uint64_t partsSignature(const std::vector<Placed>& parts) {
     }
     return h ^ parts.size();
 }
+// The same without the params: which models are in the merge, in which order.
+uint64_t partsShape(const std::vector<Placed>& parts) {
+    uint64_t h = 1469598103934665603ull;
+    auto mix = [&](uint64_t v) { h = (h ^ v) * 1099511628211ull; };
+    for (const Placed& pl : parts) {
+        for (char ch : pl.id) mix((unsigned char)ch);
+        mix((uint64_t)(pl.variant + 7) * 31 + pl.bare * 3 + pl.clip);
+        mix(0xff);
+    }
+    return h ^ parts.size();
+}
 // Whether p (the car's frame) is shut inside its skin as last built: a ray up, down and to either side each crosses
 // it an odd number of times. (A crack or a shared edge only ever makes it look outside: then it's drawn.)
 bool insideSkin(const std::vector<float>& P, const std::vector<unsigned>& idx, const V3& p) {
@@ -3930,27 +4090,50 @@ bool insideSkin(const std::vector<float>& P, const std::vector<unsigned>& idx, c
     }
     return odd[0] && odd[1] && odd[2] && odd[3];
 }
-const mk::Mesh& partMeshRaw(const Placed& pl, mk::Mesh& scratch) {
-    if (pl.bare || pl.variant >= 0) return placedMesh(pl);
-    if (pl.set.empty()) return mk::modelMesh(pl.id);
-    scratch = mk::modelMesh(pl.id, pl.set);
-    return scratch;
-}
 // The part's mesh without the faces hidden inside it (meshopt.h: degenerate and hidden faces only; the flats aren't
 // merged, so a clipped or stretched part is cut and shaded as before). Kept per model build.
-const mk::Mesh& partMesh(const Placed& pl, mk::Mesh& scratch) {
+std::map<std::string, mk::Mesh>& partMeshCache() {
     static std::map<std::string, mk::Mesh> cache;
     static uint64_t version = 0;
     if (version != mk::picksVersion()) cache.clear(), version = mk::picksVersion();
+    return cache;
+}
+std::string partMeshKey(const Placed& pl) {
     std::string key = pl.id + "#" + std::to_string(pl.variant) + (pl.bare ? "b" : "");
     for (const auto& kv : pl.set) key += "|" + kv.first + "=" + std::to_string(kv.second);
-    auto it = cache.find(key);
-    if (it != cache.end()) return it->second;
-    mk::Mesh m = partMeshRaw(pl, scratch);
+    return key;
+}
+mk::Mesh buildPartMesh(const Placed& pl) {  // (no shared state besides the model kit's own: any thread)
+    mk::Mesh m = pl.bare || pl.variant >= 0 ? buildPlacedMesh(pl) : pl.set.empty() ? mk::modelMesh(pl.id) : mk::modelMesh(pl.id, pl.set);
     MeshOptOptions o;
     o.coplanar = false;
     optimizeMesh(m, o);
-    return cache.emplace(key, std::move(m)).first->second;
+    return m;
+}
+const mk::Mesh& partMesh(const Placed& pl, mk::Mesh&) {
+    auto& cache = partMeshCache();
+    const std::string key = partMeshKey(pl);
+    auto it = cache.find(key);
+    if (it != cache.end()) return it->second;
+    return cache.emplace(key, buildPartMesh(pl)).first->second;
+}
+// Whether the part's mesh is ready. If not, it is being built on another thread (started here): a car whose params only
+// ease (a leaf spring's camber as it settles) keeps its last merge a few frames instead of stalling 7 ms on the build.
+bool partMeshReady(const Placed& pl) {
+    static std::map<std::string, std::future<mk::Mesh>> pending;
+    auto& cache = partMeshCache();
+    const std::string key = partMeshKey(pl);
+    if (cache.count(key)) return true;
+    auto it = pending.find(key);
+    if (it == pending.end()) {
+        if (pending.size() >= 6) return false;
+        pending.emplace(key, std::async(std::launch::async, [pl] { return buildPartMesh(pl); }));
+        return false;
+    }
+    if (it->second.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return false;
+    cache.emplace(key, it->second.get());
+    pending.erase(it);
+    return true;
 }
 }  // namespace
 
@@ -3973,7 +4156,12 @@ void Renderer::prepareCarModels() {
             VertexAttribPointer(3, 1, GL_FLOAT, 0, sizeof(float), (void*)0);
             EnableVertexAttribArray(3);
         }
-        if (sig != slot.modelsSig || !slot.modelsCount) {
+        const uint64_t shape = partsShape(cm.parts);
+        bool wait = false;
+        if (sig != slot.modelsSig && slot.modelsCount && slot.modelsShape == shape)
+            for (const Placed& pl : cm.parts) wait |= !partMeshReady(pl);
+        if ((sig != slot.modelsSig || !slot.modelsCount) && !wait) {
+            slot.modelsShape = shape;
             static std::vector<Vtx> v;
             static std::vector<float> idx;
             mk::Mesh scratch;
@@ -3981,6 +4169,14 @@ void Renderer::prepareCarModels() {
             // The parts shut inside the intact body (the engine under its hood...) go last, so they can be left off the draw:
             // every corner of their bounds (padded 3 cm) inside the skin and below its lowest glass.
             std::vector<char> shut(cm.parts.size(), 0);
+            // A car already shown that gains parts (the frame's, as the camera comes near) fills in over a few frames, not one stall:
+            // a few shut tests and the meshes that are ready; the rest is drawn as it is (inside the body, hidden by the depth test) or left out
+            // until its mesh is built (on a worker).
+            const bool fresh = slot.modelsCount == 0;
+            int testsLeft = 4;
+            bool unfinished = false;
+            // (the test costs 10 ms or more for a car: kept per part, by its model, params and place in the body, for as long as the skin stands)
+            if (slot.shutSkin != slot.lpos.size() || slot.shutIntact != slot.intact) slot.shutCache.clear(), slot.shutSkin = slot.lpos.size(), slot.shutIntact = slot.intact;
             if (slot.intact && !slot.lglass.empty()) {
                 const M4& M = slot.model;
                 const V3 ax[3] = {V3(M.m[0], M.m[1], M.m[2]), V3(M.m[4], M.m[5], M.m[6]), V3(M.m[8], M.m[9], M.m[10])}, o(M.m[12], M.m[13], M.m[14]);
@@ -3988,27 +4184,40 @@ void Renderer::prepareCarModels() {
                 for (unsigned i : slot.lglass) belt = std::min(belt, (double)slot.lpos[i * 3 + 1]);
                 for (size_t k = 0; k < cm.parts.size(); k++) {
                     const Placed& pl = cm.parts[k];
-                    const mk::Mesh& m = partMesh(pl, scratch);
-                    if (m.v.empty() || pl.wear) continue;
                     V3 a[3];
                     if (pl.oriented) a[0] = pl.ax[0], a[1] = pl.ax[1], a[2] = pl.ax[2];
                     else a[0] = V3(std::cos(pl.yaw), 0, -std::sin(pl.yaw)), a[1] = V3(0, 1, 0), a[2] = V3(-a[0].z, 0, a[0].x);
+                    uint64_t h = partsSignature({pl});
+                    const auto mix = [&](double v, double q = 100) { h = (h ^ (uint64_t)std::llround(v * q)) * 1099511628211ull; };  // (1 cm, the axes to 0.05: the body flexes)
+                    const V3 d = pl.p - o;
+                    mix(dot(d, ax[0])), mix(dot(d, ax[1])), mix(dot(d, ax[2]));
+                    for (int c = 0; c < 3; c++) mix(dot(a[c], ax[0]), 20), mix(dot(a[c], ax[1]), 20), mix(dot(a[c], ax[2]), 20);
+                    mix(pl.scale.x, 20), mix(pl.scale.y, 20), mix(pl.scale.z, 20), mix(pl.wear, 20);
+                    auto hit = slot.shutCache.find(h);
+                    if (hit != slot.shutCache.end()) { shut[k] = hit->second; continue; }
+                    if (!fresh && (testsLeft <= 0 || !partMeshReady(pl))) { unfinished = true; continue; }
+                    testsLeft--;
+                    const mk::Mesh& m = partMesh(pl, scratch);
+                    if (m.v.empty() || pl.wear) { slot.shutCache[h] = 0; continue; }
                     bool in = true;
                     for (int cnr = 0; cnr < 8 && in; cnr++) {
                         const double pad = 0.03;
                         const V3 q((cnr & 1 ? m.hi.x : m.lo.x), (cnr & 2 ? m.hi.y : m.lo.y), (cnr & 4 ? m.hi.z : m.lo.z));
                         V3 w = pl.p + a[0] * (q.x * pl.scale.x) + a[1] * (q.y * pl.scale.y) + a[2] * (q.z * pl.scale.z);
                         w += (a[0] * (cnr & 1 ? 1.0 : -1.0) + a[1] * (cnr & 2 ? 1.0 : -1.0) + a[2] * (cnr & 4 ? 1.0 : -1.0)) * pad;
-                        const V3 d = w - o, l(dot(d, ax[0]), dot(d, ax[1]), dot(d, ax[2]));
+                        const V3 dd = w - o, l(dot(dd, ax[0]), dot(dd, ax[1]), dot(dd, ax[2]));
                         in = l.y < belt - 0.02 && insideSkin(slot.lpos, slot.lopaque, l);
                     }
                     shut[k] = in;
+                    slot.shutCache[h] = in;
                 }
+                if (slot.shutCache.size() > 4000) slot.shutCache.clear();
             }
             int shown = 0;
             for (int pass = 0; pass < 2; pass++) {
                 for (size_t k = 0; k < cm.parts.size(); k++) {
                     if (shut[k] != pass) continue;
+                    if (!fresh && !partMeshReady(cm.parts[k])) { unfinished = true; continue; }
                     for (const mk::MVert& q : partMesh(cm.parts[k], scratch).v) {
                         v.push_back(Vtx{{q.p[0], q.p[1], q.p[2]}, {q.n[0], q.n[1], q.n[2]}, {q.c[0], q.c[1], q.c[2], (float)q.mat}});
                         idx.push_back((float)k);
@@ -4022,7 +4231,7 @@ void Renderer::prepareCarModels() {
             BindBuffer(GL_ARRAY_BUFFER, slot.modelsIdx);
             BufferData(GL_ARRAY_BUFFER, idx.size() * sizeof(float), idx.data(), GL_STATIC_DRAW);
             slot.modelsCount = (int)v.size();
-            slot.modelsSig = sig;
+            slot.modelsSig = unfinished ? ~sig : sig;  // (not done: the next frame goes on)
             rebuilds_++;
         }
         slot.modelsBase = base, slot.modelsParts = (int)cm.parts.size();

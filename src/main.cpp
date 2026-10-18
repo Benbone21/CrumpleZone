@@ -30,6 +30,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <future>
 #include <sstream>
 #include <map>
 
@@ -2407,6 +2408,77 @@ int main(int argc, char** argv) {
     };
     // ---- The world editor (offline) ----
     Editor editor;
+    // A map switch without a frozen frame: the world and the terrain's data are made on a worker, uploaded a few ms a frame, the
+    // screen fades to black meanwhile, the scenery is built a stage a frame, and it fades back in. (Hosting, joining and the
+    // editor load in one go, as before.)
+    struct MapLoad {
+        enum State { IDLE, WORK, UPLOAD, STEPS, FADEIN } st = IDLE;
+        std::future<std::pair<std::unique_ptr<World>, std::shared_ptr<Renderer::Prepared>>> fut;
+        std::unique_ptr<World> world;
+        int map = 0;
+        float fade = 0;  // how black the screen is
+        int warm = 0;    // frames held black once built: the first draws of the new buffers and textures (80 ms and more) land here, not in the fade
+        std::function<void()> then;
+        bool active() const { return st != IDLE; }
+    } mapLoad;
+    auto requestMap = [&](int m, std::function<void()> then) {
+        if (mapLoad.active()) return;
+        if (!opt.shotFrames.empty() || !opt.script.empty() || editor.active || net.active()) {
+            loadMap(m);
+            if (then) then();
+            return;
+        }
+        const bool showcase = World::withShowcase;
+        const int wilds = (int)World::wildsKind;
+        const props::HullLibrary* hulls = props::activeRockScans();
+        const ScanCover cover = renderer.scanCover();
+        mapLoad.map = m, mapLoad.then = std::move(then), mapLoad.st = MapLoad::WORK;
+        mapLoad.fut = std::async(std::launch::async, [=] {
+            World::withShowcase = showcase, World::wildsKind = wilds;
+            props::setActiveRockScans(hulls);
+            auto w = std::make_unique<World>(m);
+            auto p = Renderer::prepareWorld(*w, cover);
+            return std::make_pair(std::move(w), std::move(p));
+        });
+    };
+    auto mapLoadTick = [&](double dtSec) {
+        MapLoad& L = mapLoad;
+        if (!L.active()) return;
+        const float step = (float)(std::min(dtSec, 0.05) / 0.3);
+        if (L.st != MapLoad::STEPS && L.st != MapLoad::FADEIN) L.fade = std::min(1.0f, L.fade + step);
+        if (L.st == MapLoad::WORK && L.fut.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+            auto made = L.fut.get();
+            L.world = std::move(made.first);
+            renderer.beginUpload(std::move(made.second));
+            L.st = MapLoad::UPLOAD;
+        }
+        if (L.st == MapLoad::UPLOAD && renderer.pumpUpload(3.0) && L.fade >= 1) {
+            LOADPROF("mapload.swap (sim)");
+            const int model = std::max(0, sim.cars[sim.player].spec->model);
+            sim.world = std::move(*L.world);
+            L.world.reset();
+            sim.setup();
+            fitGarage();
+            if (model != sim.cars[sim.player].spec->model) sim.swapPlayerVehicle(garage.spec(model));
+            sim.paused = false;
+            renderer.adoptWorld(sim.world);
+            drawnWorld = sim.world.stamp;
+            hud.bestKmh = 0;
+            dbgSimSeconds = 0;
+            wrapSeen = sim.wrapShift = 0;
+            fx.clear();
+            cam.initialized = false;
+            L.st = MapLoad::STEPS;
+        } else if (L.st == MapLoad::STEPS) {
+            if (renderer.stepWorld(sim.world) && ++L.warm > 8) L.st = MapLoad::FADEIN, L.warm = 0;
+        } else if (L.st == MapLoad::FADEIN) {
+            L.fade -= step * 0.8f;
+            if (L.fade <= 0) {
+                L.fade = 0, L.st = MapLoad::IDLE;
+                if (L.then) std::exchange(L.then, nullptr)();
+            }
+        }
+    };
     if (!scripted) editor.autosaveDir = userLevelFolder() + "/autosave";  // (recovery copies; never from the scripted runs)
     Level lastEdited;
     bool haveEdited = false;
@@ -2553,7 +2625,7 @@ int main(int argc, char** argv) {
                 levelHours = -1;
                 if (net.role == NetSession::HOST) net.setLevel("");
                 if (menu.mapPick != sim.world.map && net.role != NetSession::CLIENT) {
-                    loadMap(menu.mapPick);
+                    requestMap(menu.mapPick, nullptr);
                     settings.map = menu.mapPick;
                     saveSettings();
                 }
@@ -2668,7 +2740,7 @@ int main(int argc, char** argv) {
                     hud.toast("LEAVE THE MULTIPLAYER SESSION TO CHANGE MAPS");
                     break;
                 }
-                loadMap(res.vehicle);
+                requestMap(res.vehicle, nullptr);
                 levelHours = -1;
                 settings.map = res.vehicle;
                 saveSettings();
@@ -2837,7 +2909,7 @@ int main(int argc, char** argv) {
             case RESET_WORLD:
                 run.stop();
                 levelHours = -1;
-                loadMap(sim.world.map);
+                requestMap(sim.world.map, nullptr);
                 hud.toast("WORLD RESET");
                 break;
             case REPAIR: sim.recoverPlayer(); hud.toast("REPAIRED"); break;
@@ -2896,6 +2968,7 @@ int main(int argc, char** argv) {
     std::vector<std::string> tourLog;
     auto tourTick = [&](double ms) {
         if (!opt.loadTour) return;
+        if (mapLoad.active() && frame >= tourNext) tourNext = frame + 1;  // (a map switch in progress: the next step waits)
         if (frame < 60) startFrames.add(ms);
         else tourFrames.add(ms);
         if (frame == 0) loadprof::report("startup (to the first frame)");
@@ -2918,7 +2991,7 @@ int main(int argc, char** argv) {
         tourFrames.reset();
         tourStep++;
         tourNext = frame + 45;
-        if (tourStep < nMaps) loadMap(maps[tourStep]);
+        if (tourStep < nMaps) requestMap(maps[tourStep], nullptr);
         else if (tourStep < nMaps + nVeh) {
             const VehicleSpec& vs = garage.spec(listed[tourStep - nMaps]);
             whenVisualReady(vs, [&] { sim.swapPlayerVehicle(vs); });
@@ -2931,6 +3004,31 @@ int main(int argc, char** argv) {
             std::printf("tour done\n");
             running = false;
         }
+    };
+    // CZ_FRAMELOG=1 with --bench: a histogram, and every frame over 1.5x the median with its stages (CPU/GPU ms).
+    struct FrameRec { int bf; double ms, cpu[FP_COUNT], gpu[FP_COUNT]; };
+    std::vector<FrameRec> frameRecs;
+    auto printFrameLog = [&] {
+        if (frameRecs.empty()) return;
+        std::vector<double> t;
+        for (auto& f : frameRecs) t.push_back(f.ms);
+        std::sort(t.begin(), t.end());
+        const double med = t[t.size() / 2];
+        static const double edges[] = {2.0, 2.25, 2.5, 2.75, 3.0, 3.5, 4, 5, 6, 8, 12, 1e9};
+        int h[12] = {};
+        for (double v : t) { int k = 0; while (v >= edges[k]) k++; h[k]++; }
+        std::printf("framelog: median %.3f ms; histogram (ms): <2:%d", med, h[0]);
+        for (int k = 1; k < 12; k++) std::printf(" <%g:%d", edges[k], h[k]);
+        std::printf("\n");
+        int n = 0, last = -100;
+        for (auto& f : frameRecs) if (f.ms > med * 1.5) {
+            std::printf("framelog: f%d (+%d) %.2f ms |", f.bf, f.bf - last, f.ms);
+            for (int i = 0; i < FP_COUNT; i++) if (f.cpu[i] > 0.15 || f.gpu[i] > 0.15) std::printf(" %s %.2f/%.2f", framePassName((FramePass)i), f.cpu[i], f.gpu[i]);
+            std::printf("\n");
+            last = f.bf;
+            if (++n >= 400) break;
+        }
+        frameRecs.clear();
     };
     // --bench: a lap round where the player starts, the same every run.
     const int benchWarm = opt.benchWarm;
@@ -3016,6 +3114,7 @@ int main(int argc, char** argv) {
         if (frame == testStallFrame) for (;;) std::this_thread::sleep_for(std::chrono::seconds(1));
         uint64_t now = SDL_GetPerformanceCounter();
         const double frameTimeMs = 1000.0 * (double)(now - last) / freq;
+        mapLoadTick(frameTimeMs / 1000.0);
         tourTick(frameTimeMs);
         if (opt.benchSuite && (!suite.begun() || suitePhase == 2) && !startNextRun()) {
             writeSuiteSummary();
@@ -3040,6 +3139,7 @@ int main(int argc, char** argv) {
                           renderer.settings.renderScale, renderer.settings.shadows, renderer.settings.msaa, renderer.settings.ao, renderer.settings.bloom,
                           renderer.settings.grass, renderer.settings.ground, renderer.settings.props, opt.benchSync ? " synced" : "");
             std::fputs(BenchStats::report(benchSt.result(), title + extra).c_str(), stdout);
+            printFrameLog();
             printCarBench();
             if (opt.benchSuite) {  // (filed, then one F3 shot of this run, then the next)
                 suite.record(mapName(sim.world.map), presetName(presetOf(settings.gfx)));
@@ -3065,6 +3165,13 @@ int main(int argc, char** argv) {
                 logged = wall, spikesLogged++;
             }
             if (frameTimeMs < 250) typical = frame <= 10 ? frameTimeMs : typical + (std::min(frameTimeMs, typical * 3) - typical) * 0.05;
+        }
+        if (opt.bench && bf > benchWarm && bf <= benchWarm + opt.bench && std::getenv("CZ_FRAMELOG")) {  // (every measured frame's stages, for the slow-frame report)
+            FrameRec fr;
+            fr.bf = bf, fr.ms = frameTimeMs;
+            std::copy(frameProfile().last, frameProfile().last + FP_COUNT, fr.cpu);
+            for (int i = 0; i < FP_COUNT; i++) fr.gpu[i] = frameProfile().gpuValid ? frameProfile().lastGpu[i] : -1;
+            frameRecs.push_back(fr);
         }
         if (opt.bench && bf > benchWarm && bf <= benchWarm + opt.bench) benchSt.add(frameTimeMs, frameProfile().last, frameProfile().gpuValid ? frameProfile().lastGpu : nullptr);
         renderer.gpuTiming = dbg.on || opt.bench;
@@ -5237,6 +5344,14 @@ int main(int argc, char** argv) {
             drawInvMenu(renderer, inv, invLay, W, H, padNow);
         }
         if (garageUI.open) drawGarage(renderer, garageUI, garage, career, sim.stationAt(sim.cars[sim.player].frame().com), sim, std::max(0.75f, H / 720.0f), W, H);
+        if (mapLoad.fade > 0.001f) {  // a map switch: black, with its name once it's dark enough to read
+            renderer.rect(0, 0, (float)W, (float)H, 0, 0, 0, std::min(1.0f, mapLoad.fade));
+            if (mapLoad.fade > 0.6f) {
+                const float s = std::max(1.0f, H / 360.0f);
+                const std::string t = std::string("LOADING ") + mapName(mapLoad.map);
+                renderer.text(W * 0.5f - renderer.textWidth(t, s) * 0.5f, H * 0.5f, s, t, 0.85f, 0.85f, 0.85f, std::min(1.0f, (mapLoad.fade - 0.6f) * 4));
+            }
+        }
         menu.draw(renderer, settings, W, H, dt);
         renderer.flushHud(W, H);
 

@@ -1,6 +1,7 @@
 // Loading and the mesh cache (meshcache.h): a cached mesh is the generated one byte for byte, a missing, stale or damaged cache is
 // rebuilt, and several threads building and caching meshes together agree with one thread alone.
 #include <cstdio>
+#include <memory>
 #include <string>
 #include <mutex>
 #include <thread>
@@ -217,4 +218,17 @@ SCENARIO(loadingTextureBlobs, "loading/texture-cache", "Encoded textures kept on
     // The encoder's output, pinned. If this fails the encoder changed: raise texenc::kEncoderVersion (the cache would otherwise serve
     // the old blocks) and put the new hash here.
     ctx.check("encoder output matches the pinned hash for version " + std::to_string(texenc::kEncoderVersion), hashEncoded(fresh) == kPinnedEncoderHash, std::to_string(hashEncoded(fresh)));
+}
+
+SCENARIO(loadingWorldOnWorker, "loading/world-on-worker", "A world made on a worker thread is the world made on the main one (a map switch builds it off the frame thread)") {
+    for (int map : {MAP_FREEWAY, MAP_MOUNTAIN, MAP_FRONTIER}) {
+        World a(map);
+        std::unique_ptr<World> b;
+        std::thread([&] { b = std::make_unique<World>(map); }).join();
+        bool same = a.trees.size() == b->trees.size() && a.rocks.size() == b->rocks.size() && a.boxes.size() == b->boxes.size() &&
+                    a.models.size() == b->models.size() && a.bushes.size() == b->bushes.size() && a.fixtures.size() == b->fixtures.size();
+        for (double x = -500; x <= 500; x += 83)
+            for (double z = -500; z <= 500; z += 97) same &= a.height(x, z) == b->height(x, z) && a.surfaceAt(x, z) == b->surfaceAt(x, z);
+        ctx.check(std::string("on a worker: ") + mapName(map), same);
+    }
 }
