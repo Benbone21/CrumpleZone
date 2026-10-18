@@ -5314,7 +5314,7 @@ int main(int argc, char** argv) {
                 else if (lapTimer.event == E::LAP || lapTimer.event == E::BEST) {
                     hud.toast("LAP " + formatRaceTime(lapTimer.last) + (lapTimer.event == E::BEST ? "  NEW BEST" : ""));
                     hud.ctx.trigger(hudctx::E_LAPS, hudctx::kHoldSecs);
-                } else if (lapTimer.event == E::VOID) {
+                } else if (lapTimer.event == E::VOIDED) {
                     hud.toast("LAP VOID: STAY ON THE ROAD, PASS EVERY CHECKPOINT");
                     hud.ctx.trigger(hudctx::E_LAPS, hudctx::kHoldSecs);
                 }
