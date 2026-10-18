@@ -57,7 +57,8 @@ Not checked: the game was only run through `--bench-suite`, not a normal start.
 ## Problems seen
 - Winget's MSYS2 install is slow (a few minutes with a Qt installer console window).
 - Nothing crashed or hung during the bench suite or tests.
-- No play-check was done, so visual glitches and input are unchecked.
+- **Visual glitch, reported by the user (not measured by the agent): scan-line-like horizontal lines across the screen on the HIGH preset only, on every map (Frontier, Open Country, Boulder Gully). The user says the same thing happens on the Mac. It is not seen at POTATO, LOW or MEDIUM. Cause unknown. HIGH differs from MEDIUM in its post-processing and shadow settings, so POST and SHADOWS are the first places to look. Check with `--debug-screen` screenshots (the `.bmp` files in `%APPDATA%umplezonebench`) at HIGH versus MEDIUM.**
+- No play-check was done, so other visual glitches and input are unchecked.
 
 ## Your read (ideas only)
 1. The TERRAIN ground shader is the GPU limit at every preset above POTATO (about 80% of GPU time at HIGH). Cutting its cost would help most.
