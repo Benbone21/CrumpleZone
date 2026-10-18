@@ -49,13 +49,6 @@ void SDL_GL_SwapWindow(SDL_Window* window);
 void* SDL_GL_GetProcAddress(const char* proc);
 void SDL_GL_GetDrawableSize(SDL_Window* window, int* w, int* h);
 void SDL_GetWindowSize(SDL_Window* window, int* w, int* h);
-struct SDL_DisplayMode {
-    uint32_t format;
-    int w, h, refresh_rate;
-    void* driverdata;
-};
-int SDL_GetWindowDisplayIndex(SDL_Window* window);
-int SDL_GetCurrentDisplayMode(int displayIndex, SDL_DisplayMode* mode);
 const char* SDL_GetDisplayName(int displayIndex);
 const char* SDL_GetCurrentVideoDriver(void);
 int SDL_PollEvent(SDL_Event* event);
