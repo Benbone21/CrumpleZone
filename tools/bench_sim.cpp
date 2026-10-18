@@ -5,6 +5,7 @@
 #include <cstring>
 #include <cstdint>
 #include "../src/softbody.h"
+#include "../src/simdkern.h"
 
 int main(int argc, char** argv) {
     const int count = argc > 1 ? std::atoi(argv[1]) : 12;
@@ -14,6 +15,7 @@ int main(int argc, char** argv) {
     if (count < 1 || count > 256 || steps < 1) return 1;
     Sim sim;
     sim.setPhysicsThreads(threads);
+    if (getenv("CZ_SIMD0")) simdSetLevel(0);
     sim.setupEmpty();
     const auto& cat = vehicleCatalog();
     for (int i = 0; i < count; i++) {

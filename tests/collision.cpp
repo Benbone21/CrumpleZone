@@ -1,6 +1,8 @@
 #include "harness.h"
 #include "../src/collision.h"
 #include "../src/thread_cache.h"
+#include <algorithm>
+#include <array>
 #include <random>
 #include <stdexcept>
 
@@ -154,4 +156,64 @@ SCENARIO(collisionWorkers, "engine/physics-workers", "Parallel forces and collis
     ctx.check("counts adapt after CPU changes", resolvePhysicsThreads(24, 8) == 8);
     ctx.check("unknown CPU count falls back to one", resolvePhysicsThreads(20, 0) == 1);
     ctx.check("automatic retains the measured conservative budget", resolvePhysicsThreads(0, 24) == 4);
+}
+
+// The bitset grid has to hand back exactly what the old chained hash did (contact sums run in
+// that order): every item covering a cell of p's bucket, in insertion order, once per such cell.
+SCENARIO(triGridChains, "engine/tri-grid", "The contact grid returns what chained hash buckets would, collisions and repeats included") {
+    std::mt19937 rng(7);
+    std::uniform_real_distribution<double> U(-3, 3), R(0.05, 0.9);
+    bool same = true, sets = true;
+    int slabRuns = 0, chainRuns = 0, repeats = 0;
+    std::vector<int> got;
+    std::vector<uint64_t> mask;
+    for (int run = 0; run < 40; run++) {
+        TriGrid g;
+        std::vector<std::array<int, 6>> boxes;
+        std::vector<int> vals;
+        g.clear();
+        const int n = 50 + run * 13;
+        for (int i = 0; i < n; i++) {
+            V3 c(U(rng), U(rng) * 0.5, U(rng)), r(R(rng), R(rng), R(rng));
+            if (run % 4 == 3 && i == n / 2) c = V3(400, 0, -300);  // one far-flung piece: chains
+            V3 mn = c - r, mx = c + r;
+            if (run % 4 == 1 && i == n / 3) mn = V3(-1, -1, -1), mx = V3(9.9, 9.9, 9.9);  // spans cells that share buckets
+
+            const int v = (i * 7919) % 5000;
+            g.insert(v, mn, mx);
+            vals.push_back(v);
+            boxes.push_back({(int)std::floor(mn.x / TriGrid::kCell), (int)std::floor(mx.x / TriGrid::kCell),
+                             (int)std::floor(mn.y / TriGrid::kCell), (int)std::floor(mx.y / TriGrid::kCell),
+                             (int)std::floor(mn.z / TriGrid::kCell), (int)std::floor(mx.z / TriGrid::kCell)});
+        }
+        g.finish();
+        (g.slabs ? slabRuns : chainRuns)++;
+        mask.assign(g.words(), 0);
+        for (int q = 0; q < 400; q++) {
+            const V3 p(U(rng) * 1.5, U(rng) * 0.8, U(rng) * 1.5);
+            const int key = TriGrid::key((int)std::floor(p.x / TriGrid::kCell), (int)std::floor(p.y / TriGrid::kCell),
+                                         (int)std::floor(p.z / TriGrid::kCell));
+            std::vector<int> want;
+            std::vector<uint64_t> wantMask(g.words(), 0);
+            for (int i = 0; i < n; i++) {
+                const auto& b = boxes[i];
+                int hits = 0;
+                for (int x = b[0]; x <= b[1]; x++)
+                    for (int y = b[2]; y <= b[3]; y++)
+                        for (int z = b[4]; z <= b[5]; z++)
+                            if (TriGrid::key(x, y, z) == key) want.push_back(vals[i]), hits++;
+                if (hits) wantMask[i >> 6] |= 1ull << (i & 63);
+                repeats += hits > 1;
+            }
+            const int k = g.collect(p, got);
+            same &= k == (int)want.size() && std::equal(want.begin(), want.end(), got.begin());
+            g.meets(p, mask.data());
+            sets &= mask == wantMask;
+        }
+    }
+    ctx.check("both layouts exercised (bitsets " + std::to_string(slabRuns) + ", chains " + std::to_string(chainRuns) + ")",
+              slabRuns > 0 && chainRuns > 0);
+    ctx.check("hash collisions exercised (" + std::to_string(repeats) + " repeats)", repeats > 0);
+    ctx.check("collect matches the chained buckets item for item", same);
+    ctx.check("meets marks exactly the items met", sets);
 }
