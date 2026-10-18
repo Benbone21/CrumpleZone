@@ -28,7 +28,7 @@ public:
     mutable unsigned asked = 0, hidden = 0;
 private:
     static constexpr int kMinLevel = 1, kLevels = 8;
-    static constexpr double kRayStep = 0.012;  // radians between rays
+    static constexpr double kRayStep = 0.025;  // radians between rays
     int n_ = 0;
     double sp_ = 1, origin_ = 0;
     std::vector<float> raw_;
