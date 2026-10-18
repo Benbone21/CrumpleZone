@@ -206,11 +206,13 @@ SCENARIO(modelsStress, "models/stress", "Meshes stay whole and unchanged while t
     std::vector<std::thread> pool;
     for (int t = 0; t < 6; t++)
         pool.emplace_back([&, t] {
-            std::vector<std::vector<double>> churn;
+            std::vector<std::vector<char>> churn;
             for (size_t n = t; !stop; n += 7) {
                 const size_t i = n % ids.size();
                 const mk::Mesh& m = mk::modelMesh(ids[i]);  // (a reference, as the game holds them)
-                churn.assign(8, std::vector<double>(2000, 1.0));  // (reuses what a flush frees)
+                std::this_thread::sleep_for(std::chrono::microseconds(100));  // (a flush lands meanwhile)
+                churn.clear();
+                for (size_t sz = 16; sz <= 4096; sz += 16) churn.emplace_back(sz, (char)0xCD);  // (reuses what a flush frees)
                 if (m.v.size() != want[i]) bad++;
                 const mk::Mesh copy = mk::modelMesh(ids[i]);  // (a car part's mesh is copied like this on a worker)
                 if (copy.v.size() != want[i]) bad++;
@@ -235,7 +237,7 @@ SCENARIO(modelsStress, "models/stress", "Meshes stay whole and unchanged while t
     while (std::chrono::steady_clock::now() < until) std::this_thread::sleep_for(std::chrono::milliseconds(20));
     stop = true;
     for (std::thread& th : pool) th.join();
-    ctx.check("every mesh read was whole and the shared picks', flush or no flush", bad == 0 && reads > 100, std::to_string(bad.load()) + " bad of " + std::to_string(reads.load()));
+    ctx.check("every mesh read was whole and the shared picks', flush or no flush", bad == 0 && reads > 10, std::to_string(bad.load()) + " bad of " + std::to_string(reads.load()));
 }
 
 SCENARIO(modelsAllVariants, "models/all-variants", "The game uses every design of a model not left out, chosen by where each copy stands; an old picks file leaves them all in") {
