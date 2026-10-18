@@ -58,6 +58,7 @@
 #include "laptimer.h"
 #include "sectionfile.h"
 #include "menu.h"
+#include "camhold.h"
 #include "throttle.h"
 #include "tiretemp.h"
 #include "mods.h"
@@ -155,8 +156,9 @@ struct CameraRig {
     float fovy = 1.15f;  // radians (settings: FIELD OF VIEW)
     V3 target;
     bool initialized = false;
+    camhold::Hold hold;
 
-    View update(const Frame& fr, const World& world, double dt, bool dragging) {
+    View update(const Frame& fr, const World& world, double dt, bool dragging, bool driving = true) {
         double carYaw = std::atan2(-fr.fwd.z, fr.fwd.x);
         V3 want = fr.com + V3(0, 0.55, 0);
         if (!initialized) {
@@ -171,12 +173,10 @@ struct CameraRig {
         target += (want - target) * (1 - std::exp(-dt * 14));
         if (std::isfinite(carYaw)) chaseYaw += wrapAngle(carYaw - chaseYaw) * (1 - std::exp(-dt * 3));
         idle = dragging ? 0 : idle + dt;
-        // (Spun round and round, it comes back the short way, not unwinding every turn.)
+        // (Spun round and round, it comes back the short way, not unwinding every turn.) It only
+        // comes back while the car is being driven: parked or crawling, the view stays as set.
         userYaw = wrapAngle(userYaw);
-        if (mode == 0 && idle > 1.5) {
-            userYaw *= std::exp(-dt * 2);
-            if (pitch < -0.05) pitch += (-0.05 - pitch) * (1 - std::exp(-dt * 2));  // let go: back to looking at the car
-        }
+        hold.step(dt, driving, idle > camhold::kIdle, mode == 0 || mode == 2, mode == 0, userYaw, pitch, -0.05);
 
         View v;
         v.fovy = fovy;
@@ -4949,7 +4949,7 @@ int main(int argc, char** argv) {
             const BenchPose bp = benchPose(benchCentre.x, benchCentre.z, (double)bf / (benchWarm + opt.bench), 30, 2.5, ground, &sim.world);
             cam.mode = 3, cam.droneEye = V3(bp.x, bp.y, bp.z), cam.droneYaw = bp.yaw, cam.dronePitch = bp.pitch;
         }
-        View view = editor.active ? editor.view(W, H) : cam.update(fr, sim.world, dt, (dragging || padLooking) && !menu.open);
+        View view = editor.active ? editor.view(W, H) : cam.update(fr, sim.world, dt, (dragging || padLooking) && !menu.open, camhold::driving(len(fr.vel), sim.paused ? 0.0 : sim.cars[sim.player].throttle));
         if (walker.active && !editor.active && cam.mode != 3) {
             // First person: eyes 1.62 m up, a little bob as you walk.
             const double bob = walker.grounded ? 0.025 * std::sin(walker.stride * 2) * std::min(1.0, len(walker.v) / 1.5) : 0.0;
