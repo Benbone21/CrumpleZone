@@ -862,8 +862,8 @@ void buildCoachwork(const Car& car, PartBuilder& pb) {
         if (!hasBodyShell(v)) pb.box(V3(-0.10,v.layerY.back()+0.004,0),V3(0.31,0.004,0.34),rubber,SM_MATTE);
     } else if (v.model == 2) {
         // Hardtop channels and roof panel joints.
-        for (double x : {-0.3,-1.05})
-            pb.box(V3(x,v.layerY.back()+0.008,0),V3(0.006,0.007,W*0.44),rubber,SM_MATTE);
+        for (double x : {-0.3,-1.05})  // (across the drawn roof's flat top, short of its rounded edges)
+            pb.box(V3(x,v.layerY.back()+0.008,0),V3(0.006,0.007,shellRoofHalfWidth(v)-0.01),rubber,SM_MATTE);
         // Badlands-style modular steel bumper: a flat face with a chamfered top, end caps
         // swept back round the corners with fog lamps in them, red tow hooks, a silver bash
         // plate under the middle sloping back to the skid plates.
