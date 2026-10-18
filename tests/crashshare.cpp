@@ -270,3 +270,25 @@ SCENARIO(shareSideRear, "damage/share/side-rear", "Blazer at 50 km/h into a Bron
     ctx.metric("T-boned Civic: its worst panel pushed in (mean)", worst * 100, "cm", 4, 40);
     ctx.metric("T-boned Civic: damage", r.dmgB * 100, "%", 3, 20);
 }
+
+// Hit side-on, a truck is shoved and may lift onto two wheels, but it shouldn't go over:
+// the door carries the push down to the sill, under its weight. Seven lines along each of a
+// Blazer's and a Bronco's sides, the Blazer at 50 km/h: one at most ends on its side or roof.
+SCENARIO(shareSideRoll, "damage/share/side-roll", "Blazer at 50 km/h into a Blazer's and a Bronco's side along 7 lines each: they take the hit, and hardly any go over") {
+    int over = 0, runs = 0;
+    double struck = 0;
+    for (int k : {7, 2})
+        for (int i = -3; i <= 3; i++) {
+            Setup s{&blazer(), &vehicleCatalog()[k], 50, 90};
+            s.offset = i * 0.25, s.asleep = false;
+            const Crash r = crash(ctx, s);
+            over += r.upB < 0.2;
+            struck += r.dmgB / 14;
+            runs++;
+            char buf[120];
+            std::snprintf(buf, sizeof buf, "%s, %+.2f m: least up %.2f, damage %.2f / %.2f %%", vehicleCatalog()[k].name, s.offset, r.upB, r.dmgA * 100, r.dmgB * 100);
+            ctx.note(buf);
+        }
+    ctx.metric("struck trucks on their side or roof", over, "of 14", 0, 1);
+    ctx.metric("struck trucks' damage (mean)", struck * 100, "%", 2, 15);
+}

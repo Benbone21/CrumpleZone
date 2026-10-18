@@ -180,7 +180,7 @@ struct NetCrash {
 // Two machines, one Blazer each: mine drives at 50 km/h into the other player's, parked. Each
 // runs its own physics; states go both ways at 20 Hz, `lag` s on the wire. `lag` < 0: both on
 // one machine (what it should come to).
-NetCrash netCrash(double lag, bool tbone) {
+NetCrash netCrash(double lag, bool tbone, double offset = 0) {
     const VehicleSpec& s = vehicleCatalog()[7];
     Machine m1, m2;
     for (Machine* m : {&m1, &m2}) {
@@ -193,7 +193,7 @@ NetCrash netCrash(double lag, bool tbone) {
     const bool alone = lag < 0;
     Machine& mb = alone ? m1 : m2;
     const double z = -50, xb = 0, xa = -(s.length / 2 + (tbone ? s.width : s.length) / 2 + 6);
-    m1.sim.addCar(s, V3(xa, m1.sim.world.clearY(xa, z) + 0.6, z), 0, V3(0.8, 0.2, 0.2));
+    m1.sim.addCar(s, V3(xa, m1.sim.world.clearY(xa, z + offset) + 0.6, z + offset), 0, V3(0.8, 0.2, 0.2));
     mb.sim.addCar(s, V3(xb, mb.sim.world.clearY(xb, z) + 0.6, z), (tbone ? 90 : 180) * M_PI / 180, V3(0.2, 0.2, 0.8));
     const uint32_t idA = 1, idB = (1u << 16) | 1;
     m1.sim.cars[0].netId = idA;
@@ -261,18 +261,35 @@ NetCrash netCrash(double lag, bool tbone) {
 }
 }
 
-SCENARIO(netCrashShare, "net/crash-share", "Two players' Blazers, one at 50 km/h into the other parked: each owner's damage comes out as on one machine (not the striker wrecked, the struck one barely touched)") {
+// A single crash is a poor yardstick: dead centre, two Blazers' noses happen to fold up
+// neatly (3 % each, against 7-10 % a few centimetres either side), so one line's ratio swings
+// by half. Averaged over several lines either side, the two machines' crash is the one
+// machine's, and neither owner's truck takes the lion's share.
+SCENARIO(netCrashShare, "net/crash-share", "Two players' Blazers, one at 50 km/h into the other parked, over several lines: each owner's damage comes out as on one machine (not the striker wrecked, the struck one barely touched)") {
     for (bool tbone : {false, true}) {
-        const NetCrash one = netCrash(-1, tbone);
         const std::string what = tbone ? "t-bone" : "head-on";
-        ctx.note(what + " on one machine: striker " + std::to_string(one.striker * 100) + " %, struck " + std::to_string(one.struck * 100) + " %");
+        const std::vector<double> lines = tbone ? std::vector<double>{-0.2, 0.0, 0.2} : std::vector<double>{-0.3, -0.15, 0.0, 0.15, 0.3};
+        NetCrash one;
+        for (double off : lines) {
+            const NetCrash r = netCrash(-1, tbone, off);
+            one.striker += r.striker / lines.size(), one.struck += r.struck / lines.size();
+        }
+        ctx.note(what + " on one machine: striker " + std::to_string(one.striker * 100) + " %, struck " + std::to_string(one.struck * 100) + " % (mean)");
         for (double lag : {0.0, 0.06}) {
-            const NetCrash r = netCrash(lag, tbone);
+            NetCrash r;
+            for (double off : lines) {
+                const NetCrash k = netCrash(lag, tbone, off);
+                r.striker += k.striker / lines.size(), r.struck += k.struck / lines.size();
+                r.drift = std::max(r.drift, k.drift);
+                r.finite &= k.finite;
+            }
             const std::string name = what + ", " + std::to_string((int)std::lround(lag * 1000)) + " ms";
-            ctx.note(name + ": striker " + std::to_string(r.striker * 100) + " %, struck " + std::to_string(r.struck * 100) + " %");
-            ctx.metric(name + ": striker's damage / on one machine", r.striker / std::max(one.striker, 1e-6), "", 0.5, 1.6);
-            ctx.metric(name + ": struck one's damage / on one machine", r.struck / std::max(one.struck, 1e-6), "", 0.5, 1.6);
-            ctx.metric(name + ": copies off their owners' trucks after", r.drift, "m", 0, 0.5);
+            ctx.note(name + ": striker " + std::to_string(r.striker * 100) + " %, struck " + std::to_string(r.struck * 100) + " % (mean)");
+            ctx.metric(name + ": striker's damage / on one machine", r.striker / std::max(one.striker, 1e-6), "", 0.7, 1.4);
+            ctx.metric(name + ": struck one's damage / on one machine", r.struck / std::max(one.struck, 1e-6), "", 0.7, 1.4);
+            // (What the players saw: the striker wrecked, the struck one barely touched.)
+            ctx.metric(name + ": striker's damage / struck one's", r.striker / std::max(r.struck, 1e-6), "", 0.7, 1.4);
+            ctx.metric(name + ": copies off their owners' trucks after (worst)", r.drift, "m", 0, 0.5);
             ctx.check(name + ": nothing blew up", r.finite);
         }
     }
