@@ -4697,19 +4697,41 @@ GLuint Renderer::terrainProgram(int tier) {
             i = j + 1;
         }
     }
-    if (tier <= 1 && !noiseTex) {  // 256 x 256 white noise, wrapped; sampled between the texels it makes smooth value noise (see vnoiseL)
-        std::vector<uint8_t> px(256 * 256);
-        uint32_t h = 12345u;
-        for (uint8_t& b : px) h = h * 1664525u + 1013904223u, b = (uint8_t)(h >> 24);
+    if (tier <= 1 && !noiseTex) {  // the shader's own lattice hash drawn into a 256 x 256 texture (wrapped), on this GPU so it's the very numbers HIGH computes: vnoiseL samples between the texels
+        static const char* kBakeFS = R"(#version 330 core
+in vec2 vUv; out vec4 oCol;
+float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+void main(){
+  vec2 i = floor(vUv * 256.0);
+  i -= 256.0 * step(128.0, i);
+  oCol = vec4(hash(i), 0.0, 0.0, 1.0);
+})";
+        std::string berr;
+        const GLuint bake = linkProgram(kPostVS, kBakeFS, berr);
+        GLint fbo0 = 0, vp[4] = {0, 0, 0, 0};
+        GetIntegerv(0x8CA6 /* GL_FRAMEBUFFER_BINDING */, &fbo0);
+        GetIntegerv(0x0BA2 /* GL_VIEWPORT */, vp);
         GenTextures(1, &noiseTex);
         BindTexture(GL_TEXTURE_2D, noiseTex);
-        PixelStorei(GL_UNPACK_ALIGNMENT, 1);
-        TexImage2D(GL_TEXTURE_2D, 0, GL_R8, 256, 256, 0, GL_RED, GL_UNSIGNED_BYTE, px.data());
-        PixelStorei(GL_UNPACK_ALIGNMENT, 4);
+        TexImage2D(GL_TEXTURE_2D, 0, 0x822A /* GL_R16 */, 256, 256, 0, GL_RED, GL_UNSIGNED_SHORT, nullptr);
         TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
         TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        if (bake) {
+            GLuint f = 0;
+            GenFramebuffers(1, &f);
+            BindFramebuffer(GL_FRAMEBUFFER, f);
+            FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, noiseTex, 0);
+            Viewport(0, 0, 256, 256);
+            UseProgram(bake);
+            BindVertexArray(postVao);
+            DrawArrays(GL_TRIANGLES, 0, 3);
+            BindFramebuffer(GL_FRAMEBUFFER, (GLuint)fbo0);
+            DeleteFramebuffers(1, &f);
+            DeleteProgram(bake);
+            Viewport(vp[0], vp[1], vp[2], vp[3]);
+        } else std::fprintf(stderr, "ground noise bake: %s\n", berr.c_str());
     }
     std::string gerr;
     progTerrainTier[tier] = linkProgram(kLitVS, "#version 330 core\n" + xd + kCommonFS + kLitIns + kTerrainProcFS + kGroundShaderFS, gerr);

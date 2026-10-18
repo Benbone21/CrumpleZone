@@ -14,7 +14,7 @@ uniform sampler2DArray uGroundB;  // RG tangent normal, B roughness, A ambient o
 const int uGroundQ = GQ;
 
 #if GQ <= 1
-// LOW and POTATO: value noise from one texture tap (the bilinear weights are put through the smoothstep by
+// LOW and POTATO: value noise from one texture tap (a table of the same lattice hash: the patches fall where HIGH puts them; the bilinear weights are put through the smoothstep by
 // moving the lookup, so the tap does the four-corner mix) in place of four hashes.
 uniform sampler2D uNoiseTex;
 float vnoiseL(vec2 p){
