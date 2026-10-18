@@ -60,3 +60,62 @@ SCENARIO(grassQuality, "grass/adaptive-levels", "Adaptive quality steps the gras
     }
     ctx.check("recovery brings it back and no higher", within && runtime.grass == 3);
 }
+
+// The grass cull: every tuft whose blades could show is in a tile that is drawn, and the shader's own cull keeps them too.
+#include "../src/grasstiles.h"
+#include "../src/visibility.h"
+
+SCENARIO(grassCull, "grass/cull-frustum", "No grass cell that could show on screen lies in a culled tile or past the shader's cull, at 16:9, 16:10 and 21:9, FOV 66, facing any way") {
+    struct Ring { double cell; int side; };
+    const Ring rings[] = {{0.50, 56}, {1.00, 72}, {0.36, 80}, {0.62, 108}, {1.20, 106}, {0.30, 96}, {0.52, 132}, {0.95, 152}};
+    const double aspects[] = {16.0 / 9, 16.0 / 10, 21.0 / 9};
+    const float fovy = 66 * (float)M_PI / 180;
+    int shown = 0, lost = 0, shaderLost = 0, wrongScale = 0;
+    double worstScale = 0;
+    for (double aspect : aspects)
+        for (int yawDeg = 0; yawDeg < 360; yawDeg += 30)
+            for (double pitchDeg : {-50.0, -15.0, 0.0, 10.0}) {
+                const V3 eye(137.3 + yawDeg, 2.1, -61.7 + pitchDeg * 3);
+                const double yaw = yawDeg * M_PI / 180, pitch = pitchDeg * M_PI / 180;
+                const V3 target = eye + V3(std::cos(yaw) * std::cos(pitch), std::sin(pitch), -std::sin(yaw) * std::cos(pitch)) * 10;
+                const M4 vp = perspective(fovy, (float)aspect, 0.05f, 6000.0f) * lookAt(eye, target, V3(0, 1, 0));
+                // (the shader's cull scale: the lengths of the first two rows of the view-projection are the projection's)
+                const double sx = std::hypot(std::hypot(vp.m[0], vp.m[4]), vp.m[8]), sy = std::hypot(std::hypot(vp.m[1], vp.m[5]), vp.m[9]);
+                worstScale = std::max({worstScale, std::fabs(sx - 1 / std::tan(fovy * 0.5) / aspect) , std::fabs(sy - 1 / std::tan(fovy * 0.5))});
+                if (std::fabs(sx - 1 / std::tan(fovy * 0.5) / aspect) > 1e-4 || std::fabs(sy - 1 / std::tan(fovy * 0.5)) > 1e-4) wrongScale++;
+                for (const Ring& r : rings) {
+                    const double ox = grassGridOrigin(eye.x, r.cell, r.side), oz = grassGridOrigin(eye.z, r.cell, r.side);
+                    const int ts = grassTileSpan(r.side);
+                    for (int cz = 0; cz < r.side; cz += 1)
+                        for (int cx = 0; cx < r.side; cx += 1) {
+                            // a tuft sits anywhere in its cell (its corners here); its blade 0.7 cell off it and leaning a metre more; the tip 2 m up
+                            for (int k = 0; k < 16; k++) {
+                                const V3 base(ox + (cx + (k & 1)) * r.cell, 0.4, oz + (cz + ((k >> 1) & 1)) * r.cell);
+                                const double reach = 0.7 * r.cell + 1.0, dirs[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+                                const V3 tip(base.x + dirs[k >> 2][0] * reach, 2.0, base.z + dirs[k >> 2][1] * reach);
+                                const double cxw = vp.m[0] * tip.x + vp.m[4] * tip.y + vp.m[8] * tip.z + vp.m[12];
+                                const double cyw = vp.m[1] * tip.x + vp.m[5] * tip.y + vp.m[9] * tip.z + vp.m[13];
+                                const double cww = vp.m[3] * tip.x + vp.m[7] * tip.y + vp.m[11] * tip.z + vp.m[15];
+                                if (!(cww > 0.05 && std::fabs(cxw) < cww && std::fabs(cyw) < cww)) continue;
+                                shown++;
+                                const int tx = cx / ts, tz = cz / ts;
+                                double x0, x1, z0, z1;
+                                grassTileRange(ox, r.cell, r.side, tx, x0, x1), grassTileRange(oz, r.cell, r.side, tz, z0, z1);
+                                RenderBounds b;
+                                const double pad = 3.0 + 0.2 * (x1 - x0);
+                                b.add(V3(x0, -pad, z0)), b.add(V3(x1, pad, z1));
+                                if (!b.visible(vp)) lost++;
+                                // the shader's test on the tuft's base
+                                const double bx = vp.m[0] * base.x + vp.m[4] * base.y + vp.m[8] * base.z + vp.m[12];
+                                const double by = vp.m[1] * base.x + vp.m[5] * base.y + vp.m[9] * base.z + vp.m[13];
+                                const double bw = vp.m[3] * base.x + vp.m[7] * base.y + vp.m[11] * base.z + vp.m[15];
+                                if (bw < -kGrassReach || std::fabs(bx) > bw + kGrassReach * (sx + 1) || std::fabs(by) > bw + kGrassReach * (sy + 1)) shaderLost++;
+                            }
+                        }
+                }
+            }
+    ctx.check("there were blades on screen to test", shown > 10000, std::to_string(shown));
+    ctx.check("the cull's scale is the projection's whatever way the camera faces", wrongScale == 0, "worst " + std::to_string(worstScale));
+    ctx.check("no visible cell sits in a culled tile", lost == 0, std::to_string(lost) + " of " + std::to_string(shown));
+    ctx.check("the shader's cull keeps every visible tuft", shaderLost == 0, std::to_string(shaderLost) + " of " + std::to_string(shown));
+}
