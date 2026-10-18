@@ -28,3 +28,16 @@ Main's new work (car drawing, physics threading, map loading) changes almost not
 
 ## Items
 Not started. Next in the plan: item 1, `net/bandwidth` on Windows.
+
+## Item 2: scan-line stripes at HIGH (done first, at the user's request)
+**Found:** the stripes come from the ambient occlusion (AO) pass, which only HIGH and ULTRA turn on. With AO off they disappear; with MSAA 2 or shadows 2 (the other two differences from MEDIUM) they stay. Before: `img/hq-scanlines-before.png` (crop `-crop`). After: `img/hq-scanlines-after.png`.
+
+**Cause:** the AO texture is half resolution. Its pixel centres sit exactly on the corner of four full-resolution depth texels, and the shader read depth with a `NEAREST` texture fetch at those coordinates (and the +-1 pixel neighbours used to rebuild the surface normal). Which texel the GPU picks at an exact corner is decided by rounding, so rows were picked inconsistently and the rebuilt normals alternated by row. On a flat floor seen at a grazing angle that prints horizontal stripes. This is GPU- and driver-dependent, which fits it appearing on NVIDIA/Windows and Apple but not on the Linux AMD machine.
+
+**Fix (`src/render.cpp`, AO shader):** read depth with `texelFetch` at integer pixel coordinates (`posPx`), centred on the 2x2 block of each AO pixel, for the centre, the four normal taps and the spiral taps. No hardware filtering decides anything now. Shared code, no `#ifdef`, so the Mac gets the same fix: **the Mac agent should skip this item and only confirm it once this is in main.**
+
+**Checked:**
+- Frontier, Open Country and Boulder Gully at HIGH, 2048x1280: no stripes after the fix.
+- AO still works: contact shadows under the vehicles remain. Away from the stripe pattern the AO is slightly lighter than before, because the old stripes were also adding dark lines.
+- Speed: Frontier HIGH at 2048x1280, 106.2 fps before and 106.5 / 106.4 after (no cost).
+- Physics fingerprint not touched (render-only change). `render/water-mesh-budget` passes. The full suite was not rerun for this change.
