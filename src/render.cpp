@@ -5019,6 +5019,10 @@ void main(){
 void Renderer::ensureGround(int gq) {
     if (!gq || groundFailed) return;
     terrainProgram(groundTier(gq));
+#ifdef __APPLE__
+    // (Apple's GL has no program binaries to cache, so every build is compiled here, behind the loading screen, not on the first frame that draws with it.)
+    if (groundTier(gq) >= 2) terrainProgram(groundTier(gq), true), terrainProgram(1);
+#endif
     {
         static int lastAniso = -1;  // (anisotropy follows the ground quality: 4x, 8x, 16x)
         if (gq != lastAniso) texcomp::setQuality(gq), lastAniso = gq;
