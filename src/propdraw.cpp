@@ -1,4 +1,5 @@
 #include "propdraw.h"
+#include "loadprof.h"
 
 #include <algorithm>
 #include <chrono>
@@ -352,6 +353,7 @@ bool PropRenderer::ensureLoaded(int q) {
     }
     const std::vector<props::ManifestEntry> list = props::readManifest(dir);
     std::vector<props::Model> src;
+    double lp0 = loadprof::nowMs();
     for (const props::ManifestEntry& e : list) {
         props::Model m;
         if (props::loadModel(dir + "/" + e.name + ".prop", m) && !m.lods.empty()) src.push_back(std::move(m));
@@ -361,6 +363,7 @@ bool PropRenderer::ensureLoaded(int q) {
         std::fprintf(stderr, "props: no models in %s (scenery stays code-made)\n", dir.c_str());
         return false;
     }
+    loadprof::add("props.read models", loadprof::nowMs() - lp0), lp0 = loadprof::nowMs();
     // Textures: every file once, decoded on a few threads.
     std::vector<Decoded> dec;
     std::map<std::string, std::pair<bool, float>> want;  // file -> (sRGB, alpha cutoff)
@@ -388,6 +391,7 @@ bool PropRenderer::ensureLoaded(int q) {
             });
         for (std::thread& t : pool) t.join();
     }
+    loadprof::add("props.decode textures", loadprof::nowMs() - lp0), lp0 = loadprof::nowMs();
     for (const Decoded& d : dec) {
         if (!d.w) {
             std::fprintf(stderr, "props: missing texture %s\n", d.file.c_str());
@@ -396,6 +400,7 @@ bool PropRenderer::ensureLoaded(int q) {
         const auto& w = want[d.file];
         texCache[d.file] = upload(d, w.first, w.second);
     }
+    loadprof::add("props.upload textures", loadprof::nowMs() - lp0), lp0 = loadprof::nowMs();
     loadedQuality = q;
     // Meshes.
     for (props::Model& m : src) {
@@ -489,6 +494,7 @@ bool PropRenderer::ensureLoaded(int q) {
         else if (startsWith(n, "fern_")) scatterFern.push_back(i);
         else if (startsWith(n, "stump_") || startsWith(n, "branches_")) scatterLitter.push_back(i);
     }
+    loadprof::add("props.upload meshes", loadprof::nowMs() - lp0);
     std::printf("props: %zu models, %zu textures from %s\n", models.size(), texCache.size(), dir.c_str());
     return true;
 }

@@ -1,5 +1,6 @@
 #include "thread_cache.h"
 #include "softbody.h"
+#include "loadprof.h"
 #include "collision.h"
 #include "vehicles.h"
 
@@ -2076,6 +2077,7 @@ bool Car::finite() const {
 // Sim
 
 void Sim::setup() {
+    loadprof::Scope lpSetup("sim.setup (cars)");
     const auto& cat = vehicleCatalog();
     cars.clear();
     ropes.clear();

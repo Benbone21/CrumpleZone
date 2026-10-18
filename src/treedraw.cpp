@@ -1,4 +1,5 @@
 #include "treedraw.h"
+#include "loadprof.h"
 
 #include <algorithm>
 #include <cmath>
@@ -36,7 +37,7 @@ void main(){ gl_Position = uLightVP * vec4(iPos.xyz + turn(aPos * iLook.x), 1.0)
 
 void TreeDraw::build(const World& w, bool skipPines, bool skipSnags) {
     forest::Set set;
-    forest::build(w, skipPines, skipSnags, set);
+    { LOADPROF("trees.generate (forest::build)"); forest::build(w, skipPines, skipSnags, set); }
     inst_ = set.inst;
     meshVerts_ = set.vertices(), baked_ = set.bakedVertices();
     // The meshes, one after another: position, normal, colour and material (the lit shader's Vtx).
