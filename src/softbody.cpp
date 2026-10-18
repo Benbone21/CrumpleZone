@@ -633,18 +633,48 @@ void Car::computeForces(double h, const World& w) {
 }
 
 void Car::releaseFromFrame(const Beam& b) {
-    for (ChassisFrame* cf : {&chassis, &railFrame[0], &railFrame[1]}) {
-        if (cf->slot.empty() || cf->yieldDist > 0) continue;  // (steel flows instead)
+    auto release = [&](ChassisFrame* cf) {
+        if (cf->slot.empty() || cf->yieldDist > 0) return;  // (steel flows instead)
         for (int nid : {b.a, b.b}) {
-            int k = cf->slot[nid];
+            int k = nid < (int)cf->slot.size() ? cf->slot[nid] : -1;
             if (k >= 0) cf->release[k] = 0.15f;
         }
-    }
+    };
+    for (ChassisFrame* cf : {&chassis, &railFrame[0], &railFrame[1]}) release(cf);
+    if (b.type == BEAM_KNUCKLE)
+        for (Knuckle& k : knuckles) release(&k.frame);
 }
+
+// An unsteered knuckle's toe stiffness against the body (N*m/rad; ~1.7 kN*m a degree) and its
+// damping (N*m*s/rad: about a third of critical on a knuckle's ~0.8 kg*m^2 about the vertical).
+constexpr double kToeK = 100000, kToeC = 170;
 
 void Car::chassisForces(double h) {
     chassisGroupForces(chassis, h);
     for (ChassisFrame& rf : railFrame) chassisGroupForces(rf, h);
+    for (Knuckle& k : knuckles) {
+        if (wheels[k.wheel].detached) continue;
+        bool whole = true;
+        for (int bi : k.beams) whole &= !beams[bi].broken;
+        if (whole) chassisGroupForces(k.frame, h);
+        // Toe: the links' own beams hold the wheel's steer far more loosely than a real
+        // wishbone's forged arms and stiff bushings (at the 2 kHz step they can't be much
+        // stiffer), ~0.25 kN*m a degree: the drive and cornering loads toed the rear wheels by
+        // most of a degree, and the car steered itself. So an unsteered knuckle is also held
+        // at its build toe against the body, its reaction on its pick-ups. (Not once its toe
+        // link is bent or snapped: the wheel then sits where the link puts it.)
+        const Wheel& wh = wheels[k.wheel];
+        if (!whole || k.pickups.size() < 3 || wh.tieRod < 0) continue;
+        const Beam& link = beams[wh.tieRod];
+        if (link.broken || std::fabs(link.L0 - link.Lorig) > 1e-4 * link.Lorig) continue;
+        const Quat rel = Quat{chassis.rot.w, -chassis.rot.x, -chassis.rot.y, -chassis.rot.z} * k.frame.rot;  // (both start at the build's yaw)
+        const double toe = std::asin(clampd(rel.rotate(V3(0, 0, 1)).x, -1, 1));  // (+: turned left)
+        const double rate = (toe - k.toe) / h;
+        k.toe = toe;
+        const V3 tau = chassis.rot.rotate(V3(0, -(kToeK * toe + kToeC * rate), 0));
+        applyTorque(wh.assembly, tau, true);
+        applyTorque(k.pickups, -tau);
+    }
 }
 
 void Car::chassisGroupForces(ChassisFrame& cf, double h) {
