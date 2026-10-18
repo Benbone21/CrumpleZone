@@ -417,6 +417,8 @@ int placedVariant(const Placed& pl) {
 }
 
 const mk::Mesh& placedMesh(const Placed& pl) {
+    static std::mutex lock;  // (a map switch warms these on a worker thread; references stay good: map nodes do not move)
+    std::lock_guard<std::mutex> lk(lock);
     if (pl.set.empty() && pl.variant < 0 && !pl.bare) {
         const mk::ModelDef* d = mk::findModel(pl.id);
         if (!d || d->variants.size() < 2) return mk::modelMesh(pl.id);

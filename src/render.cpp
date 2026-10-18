@@ -2629,17 +2629,28 @@ Sig sceneryBase(const World& w, int props, const ScanCover& c) {
 }  // namespace
 
 void Renderer::updateObjects(const World& world) {
+    for (int s = 0; s < 4; s++) updateObjectsStage(world, s);
+}
+
+// One of four blocks of updateObjects: 0 the scanned props and boxes, 1 the trees, 2 the bushes, 3 the rocks and models. (A map
+// switch does one per frame; stage 0 sets the quality and cover the others use.)
+void Renderer::updateObjectsStage(const World& world, int stage) {
     // The scanned props first: whatever they cover, the code-made meshes leave out.
-    const int pq = propsOk ? std::min(std::max(settings.props, 0), 3) : 0;
+    if (stage == 0) stagePq_ = propsOk ? std::min(std::max(settings.props, 0), 3) : 0;
+    const int pq = stagePq_;
+    const ScanCover cover = scanCover_;
+    if (stage == 0) {
     if (pq) { LOADPROF("props.ensureLoaded"); props.ensureLoaded(pq); }
     { LOADPROF("props.setWorld"); props.setWorld(world, pq); }
-    const ScanCover cover = props.cover(pq);
-    scanCover_ = cover;
+    scanCover_ = props.cover(pq);
     treeFade_.assign(world.trees.size(), 0.0f);
     propsApplied = settings.props;
     buildBoxes(world);
+    return;
+    }
     // (The trees and the rest of the scenery are only rebuilt when something they're made from changed: moving a block in the
     // editor leaves the forest alone, so a drag keeps up with the mouse.)
+    if (stage == 1) {
     Sig ts = sceneryBase(world, pq, cover);
     for (const Tree& t : world.trees) ts.vec(t.base), ts.num(t.height), ts.num(t.radius), ts.num(t.kind), ts.num(t.tint);
     if (ts.h != treeSig_ || treeVertexCount == 0) {
@@ -2649,6 +2660,9 @@ void Renderer::updateObjects(const World& world) {
         trees_.build(set);
         treeVertexCount = (int)trees_.meshVertices();
     }
+    return;
+    }
+    if (stage == 2) {
     Sig bs = sceneryBase(world, pq, cover);
     for (const Bush& b : world.bushes) bs.vec(b.p), bs.num(b.r), bs.num(b.tint), bs.num(b.kind);
     for (const Log& g : world.logs) bs.vec(g.a), bs.vec(g.b), bs.num(g.r);
@@ -2662,6 +2676,8 @@ void Renderer::updateObjects(const World& world) {
         LOADPROF("bushes.bin+upload");
         uploadBatches(bushVao, bushVbo, v, bushBatches);
         bushVertexCount = (int)v.size();
+    }
+    return;
     }
     Sig ss = sceneryBase(world, pq, cover);
     for (const Rock& k : world.rocks) ss.vec(k.c), ss.num(k.r), ss.num(k.tint), ss.num(k.scan), ss.num((double)k.v.size()), ss.vec(k.v.empty() ? V3() : k.v[0]);
@@ -2850,20 +2866,21 @@ void Renderer::updateTerrainRegion(const World& world, int i0, int j0, int i1, i
     TexSubImage2D(GL_TEXTURE_2D, 0, i0, j0, i1 - i0 + 1, j1 - j0 + 1, GL_RGBA, GL_FLOAT, data.data());
     props.terrainChanged(-half + i0, -half + j0, -half + i1, -half + j1);  // (grass doesn't grow on a new trail)
 }
-void Renderer::buildTerrain(const World& world) {
+// The CPU half of the terrain: vertices, the chunks' indices at four LODs, the backdrop and the occlusion pyramid. Pure: any thread.
+void Renderer::prepareTerrain(const World& world, Prepared& p) {
     // 1 m on the mountain (its crawl features are small) and the wilds (the sections' steps), 2 m on the proving ground.
     const double spacing = world.map == MAP_MOUNTAIN || world.map == MAP_FRONTIER || world.map == MAP_BACKCOUNTRY || world.map == MAP_WILDS ? 1.0 : 2.0, half = World::kHalfSize;
     const int n = (int)(2 * half / spacing) + 1;
-    terrainSpacing = spacing;
-    terrainMeshN = n;
-    std::vector<Vtx> verts;
+    p.spacing = spacing;
+    p.n = n;
+    std::vector<Vtx>& verts = p.verts;
+    std::vector<unsigned>& idx = p.idx;
+    std::vector<TerrainChunk>& chunks = p.chunks;
     verts.reserve(n * n);
     for (int i = 0; i < n; i++)
         for (int j = 0; j < n; j++) {
             verts.push_back(terrainVertex(world, -half + i * spacing, -half + j * spacing));
         }
-    std::vector<unsigned> idx;
-    terrainChunks.clear();
     // Keep every boundary vertex at all LODs so adjacent chunks share exact edges.
     for (int i = 0; i < n - 1; i += 64)
         for (int j = 0; j < n - 1; j += 64) {
@@ -2879,7 +2896,7 @@ void Renderer::buildTerrain(const World& world) {
                 appendTerrainLod(idx, n, i, j, ie, je, 1 << lod);
                 chunk.count[lod] = (unsigned)idx.size() - chunk.first[lod];
             }
-            terrainChunks.push_back(chunk);
+            chunks.push_back(chunk);
         }
     // Backdrop is already coarse; spatially batch it for camera culling too.
     const unsigned backdropFirst = (unsigned)idx.size();
@@ -2902,24 +2919,155 @@ void Renderer::buildTerrain(const World& world) {
             chunk.count[lod] = (unsigned)entry.second.size();
         }
         idx.insert(idx.end(), entry.second.begin(), entry.second.end());
-        terrainChunks.push_back(chunk);
+        chunks.push_back(chunk);
     }
+    std::vector<float> hs(verts.size());
+    for (size_t k = 0; k < verts.size(); k++) hs[k] = verts[k].p[1];
+    p.occl.build(hs, n, spacing, -half);
+}
+
+void Renderer::buildTerrain(const World& world) {
+    Prepared p;
+    prepareTerrain(world, p);
+    terrainSpacing = p.spacing;
+    terrainMeshN = p.n;
+    terrainChunks = std::move(p.chunks);
+    occl_ = std::move(p.occl);
     if (!terrainVao) {
         GenVertexArrays(1, &terrainVao);
         GenBuffers(1, &terrainVbo);
         GenBuffers(1, &terrainIbo);
         setupVtxVao(terrainVao, terrainVbo);
     }
-    {
-        std::vector<float> hs(verts.size());
-        for (size_t k = 0; k < verts.size(); k++) hs[k] = verts[k].p[1];
-        occl_.build(hs, n, spacing, -half);
-    }
     BindVertexArray(terrainVao);
     BindBuffer(GL_ARRAY_BUFFER, terrainVbo);
-    BufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(Vtx), verts.data(), GL_DYNAMIC_DRAW);  // (the editor patches it)
+    BufferData(GL_ARRAY_BUFFER, p.verts.size() * sizeof(Vtx), p.verts.data(), GL_DYNAMIC_DRAW);  // (the editor patches it)
     BindBuffer(GL_ELEMENT_ARRAY_BUFFER, terrainIbo);
-    BufferData(GL_ELEMENT_ARRAY_BUFFER, idx.size() * sizeof(unsigned), idx.data(), GL_STATIC_DRAW);
+    BufferData(GL_ELEMENT_ARRAY_BUFFER, p.idx.size() * sizeof(unsigned), p.idx.data(), GL_STATIC_DRAW);
+}
+
+// ---- A map switch without a frozen frame (render.h: prepareWorld) ----
+
+std::shared_ptr<Renderer::Prepared> Renderer::prepareWorld(const World& world, const ScanCover& cover) {
+    auto p = std::make_shared<Prepared>();
+    prepareTerrain(world, *p);
+    buildWaterMesh(world, p->water);
+    {  // (builds the placed models' meshes, which the scenery stage then finds made)
+        LOADPROF("models.warm (worker)");
+        std::vector<Vtx> scratch;
+        buildPropMesh(world, scratch);
+        forest::Set set;  // (and the trees' models, which the tree stage would otherwise make on the frame thread)
+        forest::build(world, cover.pines, cover.snags, set);
+    }
+    // The shaders' terrain texels, one per meter: height, grass density, paint, water level.
+    const double half = World::kHalfSize;
+    const int n = (int)(2 * half) + 1;
+    p->gridN = n;
+    p->data.resize((size_t)n * n * 4);
+    for (int j = 0; j < n; j++)
+        for (int i = 0; i < n; i++) {
+            double x = -half + i, z = -half + j;
+            float* t = &p->data[((size_t)j * n + i) * 4];
+            t[0] = (float)world.height(x, z);
+            t[1] = world.grassDensity(x, z);
+            t[2] = (float)world.roadAt(x, z).paint;
+            t[3] = (float)std::max(world.waterLevel(x, z), -1000.0);
+        }
+    return p;
+}
+
+void Renderer::beginUpload(std::shared_ptr<Prepared> p) {
+    pending_ = std::move(p);
+    pending_->stage = 0;
+}
+
+bool Renderer::pumpUpload(double budgetMs) {
+    Prepared* p = pending_.get();
+    if (!p) return true;
+    const double t0 = loadprof::nowMs();
+    auto over = [&] { return loadprof::nowMs() - t0 >= budgetMs; };
+    const size_t slice = 1 << 20;  // a megabyte at a time
+    if (p->stage == 0) {
+        GenBuffers(1, &p->vbo);
+        GenBuffers(1, &p->ibo);
+        BindBuffer(GL_ARRAY_BUFFER, p->vbo);
+        BufferData(GL_ARRAY_BUFFER, p->verts.size() * sizeof(Vtx), nullptr, GL_DYNAMIC_DRAW);  // (the editor patches it)
+        BindBuffer(GL_ELEMENT_ARRAY_BUFFER, p->ibo);
+        BufferData(GL_ELEMENT_ARRAY_BUFFER, p->idx.size() * sizeof(unsigned), nullptr, GL_STATIC_DRAW);
+        GenTextures(1, &p->tex);
+        BindTexture(GL_TEXTURE_2D, p->tex);
+        TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, p->gridN, p->gridN, 0, GL_RGBA, GL_FLOAT, nullptr);
+        TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        p->stage = 1;
+        if (over()) return false;
+    }
+    if (p->stage == 1) {
+        const size_t total = p->verts.size() * sizeof(Vtx);
+        BindBuffer(GL_ARRAY_BUFFER, p->vbo);
+        while (p->vDone < total) {
+            const size_t k = std::min(slice, total - p->vDone);
+            BufferSubData(GL_ARRAY_BUFFER, (GLintptr)p->vDone, (GLsizeiptr)k, (const char*)p->verts.data() + p->vDone);
+            p->vDone += k;
+            if (over()) return false;
+        }
+        p->stage = 2;
+    }
+    if (p->stage == 2) {
+        const size_t total = p->idx.size() * sizeof(unsigned);
+        BindBuffer(GL_ELEMENT_ARRAY_BUFFER, p->ibo);
+        while (p->iDone < total) {
+            const size_t k = std::min(slice, total - p->iDone);
+            BufferSubData(GL_ELEMENT_ARRAY_BUFFER, (GLintptr)p->iDone, (GLsizeiptr)k, (const char*)p->idx.data() + p->iDone);
+            p->iDone += k;
+            if (over()) return false;
+        }
+        p->stage = 3;
+    }
+    if (p->stage == 3) {
+        BindTexture(GL_TEXTURE_2D, p->tex);
+        const int rows = std::max(1, (int)(slice / ((size_t)p->gridN * 16)));
+        while (p->rowsDone < p->gridN) {
+            const int k = std::min(rows, p->gridN - p->rowsDone);
+            TexSubImage2D(GL_TEXTURE_2D, 0, 0, p->rowsDone, p->gridN, k, GL_RGBA, GL_FLOAT, &p->data[(size_t)p->rowsDone * p->gridN * 4]);
+            p->rowsDone += k;
+            if (over()) return false;
+        }
+        std::vector<Vtx>().swap(p->verts);
+        std::vector<unsigned>().swap(p->idx);
+        std::vector<float>().swap(p->data);
+        p->stage = 4;
+    }
+    return true;
+}
+
+void Renderer::adoptWorld(const World& world) {
+    LOADPROF("renderer.adoptWorld");
+    std::shared_ptr<Prepared> p = std::move(pending_);
+    mapId = world.map == MAP_WILDS ? (int)MAP_FREEWAY : world.map;
+    if (terrainVbo) DeleteBuffers(1, &terrainVbo);
+    if (terrainIbo) DeleteBuffers(1, &terrainIbo);
+    if (terrainTex) DeleteTextures(1, &terrainTex);
+    terrainVbo = p->vbo, terrainIbo = p->ibo, terrainTex = p->tex;
+    terrainSpacing = p->spacing, terrainMeshN = p->n, terrainGridN = p->gridN;
+    terrainChunks = std::move(p->chunks);
+    occl_ = std::move(p->occl);
+    BindVertexArray(terrainVao);
+    setupVtxVao(terrainVao, terrainVbo);
+    BindBuffer(GL_ELEMENT_ARRAY_BUFFER, terrainIbo);
+    noteRT("terrain height map", "RGBA32F", p->gridN, p->gridN, 16, 0, true);
+    uploadStatic(waterVao, waterVbo, p->water);
+    waterVertexCount = (int)p->water.size();
+    treeSig_ = scenerySig_ = bushSig_ = 0;
+    updateObjectsStage(world, 0);
+    objStage_ = 1;
+}
+
+bool Renderer::stepWorld(const World& world) {
+    if (objStage_ <= 3) updateObjectsStage(world, objStage_++);
+    return objStage_ > 3;
 }
 
 // The mountain range around the map, out to 3.6 km: a coarse grid with the map's
