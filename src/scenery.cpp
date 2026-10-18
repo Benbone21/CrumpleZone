@@ -434,6 +434,7 @@ const mk::Mesh& placedMesh(const Placed& pl) {
         for (const auto& kv : pl.set) p.v[kv.first] = kv.second;
         if (pl.bare) p.v["bare"] = 1;
         mk::build(*d, variant, p, m);
+        mk::trimMesh(m);
     }
     return m;
 }

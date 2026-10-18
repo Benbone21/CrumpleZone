@@ -11,6 +11,7 @@
 #include <mutex>
 
 #include "font.h"
+#include "meshopt.h"
 #include "platform.h"
 
 namespace mk {
@@ -780,6 +781,12 @@ void forgetMeshes() {
 }
 uint64_t picksVersion() { return version; }
 
+void trimMesh(Mesh& m) {
+    const V3 lo = m.lo, hi = m.hi;
+    optimizeMesh(m);
+    m.lo = lo, m.hi = hi;  // (the same box: what's placed and bumped into by it doesn't move)
+}
+
 const Mesh& modelMesh(const std::string& id) {
     // (Locked for the whole build: another thread must not copy a mesh that's still being filled in. And the picks are loaded
     // first: loading them drops the cache, which would pull `m` out from under us.)
@@ -791,6 +798,7 @@ const Mesh& modelMesh(const std::string& id) {
     if (const ModelDef* d = findModel(id)) {
         const int v = pickedVariant(*d);
         build(*d, v, pickedParams(*d, v), m);
+        trimMesh(m);
     }
     return m;
 }

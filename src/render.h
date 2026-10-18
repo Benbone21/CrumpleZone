@@ -149,8 +149,9 @@ public:
         // the CPU spent building their meshes (skin, parts, running gear) and the parts models.
         unsigned carDraws = 0, carTris = 0, carShadowDraws = 0, carShadowTris = 0;
         double carPrepMs = 0, carPartsMs = 0;
-        unsigned carRebuilds = 0;
-        unsigned carKindTris[6] = {};  // main pass: skin, glass, bound parts, running gear (and frame models), wheels, parts models  // skins built again this frame (the rest drew their cached mesh)
+        unsigned carRebuilds = 0;      // skins and merged parts built again this frame (the rest drew what they had)
+        unsigned carKindTris[6] = {};  // main pass: skin, glass, bound parts, running gear, wheels, parts models
+        unsigned modelVertices = 0, shadowModelVertices = 0, modelDraws = 0, shadowModelDraws = 0;  // (of those: the code-made models, boxes and figures)
     };
     const GeometryStats& geometryStats() const { return geometryStats_; }
     double grassGpuMs() const { return grassGpuMs_; }  // (CZ_BENCH: the grass pass on the GPU, a few frames late)

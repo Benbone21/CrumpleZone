@@ -234,6 +234,9 @@ P pickedParams(const ModelDef& def, int variant);
 const Mesh& modelMesh(const std::string& id);
 Mesh modelMesh(const std::string& id, const std::vector<std::pair<std::string, double>>& over);
 void forgetMeshes();  // after picks change
+// The same picture from fewer triangles (meshopt.h: hidden faces, flat regions merged), bounds kept. The cached meshes
+// above have had it; a mesh built per copy (with `over`) hasn't.
+void trimMesh(Mesh& m);
 // A path for the next build on this thread to follow (a chain sling or strap round a boulder's cross-section), in
 // the model's own frame: x out of the thing it's tied to, z across, y 0. Empty (the default): the model's own shape.
 std::vector<V3>& pathHint();

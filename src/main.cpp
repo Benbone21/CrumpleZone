@@ -5060,6 +5060,8 @@ int main(int argc, char** argv) {
                             "shadows %d draws, %d instances, %.0fk tris\n",
                             ps.gpuMs, ps.cpuMs, ps.selectMs, ps.draws, ps.instances, ps.billboards, ps.scatter, ps.tris / 1000.0, ps.shadowDraws, ps.shadowInstances,
                             ps.shadowTris / 1000.0);
+                std::printf("bench: models main %u draws, %.0fk tris; shadows %u draws, %.0fk tris\n", geometry.modelDraws, geometry.modelVertices / 3000.0,
+                            geometry.shadowModelDraws, geometry.shadowModelVertices / 3000.0);
                 if (std::getenv("CZ_TEXSTATS")) {  // every texture held: format, size, mips, VRAM (texenc.h)
                     std::string table;
                     const std::vector<std::string> bad = texenc::textureReport(&table);

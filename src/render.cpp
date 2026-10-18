@@ -2709,6 +2709,8 @@ void Renderer::drawBatches(GLuint vao, const std::vector<StaticBatch>& batches, 
         if (!batch.bounds.visible(vp)) continue;
         DrawArrays(GL_TRIANGLES, batch.first, batch.count);
         (shadow ? geometryStats_.shadowSceneryVertices : geometryStats_.sceneryVertices) += batch.count;
+        (shadow ? geometryStats_.shadowModelVertices : geometryStats_.modelVertices) += batch.count;
+        (shadow ? geometryStats_.shadowModelDraws : geometryStats_.modelDraws)++;
     }
 }
 
@@ -4096,9 +4098,8 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         drawBatches(boxVao, boxBatches, lightVP[c], true);
         if (figVertexCount > 0) {
             BindVertexArray(figVao);
-            shadowPass_ = true;
-            carKind_ = 3, carDrawArrays(0, figVertexCount);  // (counted with the cars: it's mostly their parts)
-            shadowPass_ = false;
+            DrawArrays(GL_TRIANGLES, 0, figVertexCount);
+            geometryStats_.shadowModelVertices += figVertexCount, geometryStats_.shadowModelDraws++;
         }
         UseProgram(progTreeDepth);
         uniformM4(progTreeDepth, "uLightVP", lightVP[c]);
@@ -4212,7 +4213,8 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     drawBatches(boxVao, boxBatches, vp, false);
     if (figVertexCount > 0) {
         BindVertexArray(figVao);
-        carKind_ = 3, carDrawArrays(0, figVertexCount);
+        DrawArrays(GL_TRIANGLES, 0, figVertexCount);
+        geometryStats_.modelVertices += figVertexCount, geometryStats_.modelDraws++;
     }
     passMark(FP_VEG);
     // The code-made trees the camera sees through (close to it, or across the line to the car) dither away:
