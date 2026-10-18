@@ -2,6 +2,7 @@
 #include <memory>
 #include <map>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "daylight.h"
@@ -196,6 +197,10 @@ private:
         int builds = 0;              // (tests and the bench: how many times it's been rebuilt)
         GLuint modelsVao = 0, modelsVbo = 0, modelsIdx = 0;  // the merged parts (CarModels), their part numbers
         uint64_t modelsSig = 0;      // which parts they were merged from
+        uint64_t modelsShape = 0;    // ... and which models (not their params)
+        std::unordered_map<uint64_t, char> shutCache;  // per part (model, params, place in the body): whether it is shut inside the skin
+        size_t shutSkin = 0;
+        bool shutIntact = false;
         int modelsCount = 0, modelsBase = 0, modelsParts = 0;  // vertices; this frame: first transform, how many (0: none)
         int modelsShown = 0;         // vertices of the parts that can be seen (first): the rest are shut inside the intact body
         // Far copies of the skin (an intact one): its vertices clustered (6 cm, 15 cm cells, within one shader region),
