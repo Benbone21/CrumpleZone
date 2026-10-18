@@ -29,14 +29,14 @@ void holdLane(Car& c, double z, double& trim) {
 }  // namespace
 
 VEHICLE_SCENARIO(topSpeed, "freeway/top-speed", "Flat out down the endless freeway until it stops gaining: top speed, and it stays in its lane") {
-    // Civic Si ~220 km/h (137 mph); Jesko Attack with its big wing ~400+ (estimate: it's
-    // drag-limited on 1,400 kg of downforce, ~460 on its 0.75 m^2; the low-drag Absolut is the 480+ km/h one); the
-    // Bronco and the 4Runner are governed: 161 km/h (100 mph) and 171 km/h (106 mph). The buggy is limited to 150 km/h (an estimate:
-    // its tires' rating) and the side-by-side to 130 km/h (Can-Am limits the Turbo RR near 85 mph).
-    // Tacoma at ~180 (112 mph, for its all-terrains).
-    static const struct { double lo, hi; } expect[] = {{200, 245}, {370, 470}, {155, 164}, {164, 174}, {144, 152}, {124, 132}, {172, 186}, {135, 154}};  // (Blazer: ~90-95 mph)
+    // No governors: power, gearing and drag set the top speed (blowouts off: past their tires' rating these would
+    // blow them). Civic Si ~210 km/h; Jesko Attack with its big wing ~460 (drag-limited on 1,400 kg of downforce; the
+    // low-drag Absolut is the 480+ km/h one); the trucks 205-225 (they used to stop at 130-180: 100 mph and
+    // down, their tires' rating), the Blazer ~175.
+    static const struct { double lo, hi; } expect[] = {{200, 245}, {370, 470}, {210, 234}, {196, 218}, {210, 234}, {136, 150}, {208, 232}, {165, 183}};
     ctx.sim.world = World(MAP_FREEWAY);
     Car& c = ctx.add(spec, ctx.sim.world.spawn.x, kLaneZ, 0);
+    c.blowoutsOn = false;  // (top speed is power, gearing and drag; tires past their rating are blowout/*)
     ctx.sim.player = (int)(&c - ctx.sim.cars.data());
     ctx.focus(c);
     ctx.run(1.0);

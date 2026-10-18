@@ -123,6 +123,15 @@ const char* tireTypeName(int t) {
            : t == TIRE_RACE_SLICK ? "RACE SLICK" : t == TIRE_SNOW ? "SNOW" : t == TIRE_CHAINS ? "CHAINED" : "STREET";
 }
 
+double tireSpeedRatingKmh(int t) {
+    switch (t) {
+        case TIRE_MUD_TERRAIN: case TIRE_SNOW: return 160;
+        case TIRE_ALL_TERRAIN: return 170;
+        case TIRE_SEMI_SLICK: case TIRE_RACE_SLICK: return 270;
+        default: return 180;
+    }
+}
+
 const std::vector<DriveMode>& driveModes(TransferCase t) {
     // Part-time (Bronco): 4A drives both axles with the center free, so it's fine on dry
     // pavement; 4H and 4L lock the shafts together for loose ground and rock.
@@ -500,7 +509,6 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         bronco.torque = {{0, 240}, {1000, 330}, {2000, 500}, {3100, 563}, {4500, 530}, {5250, 447}, {5800, 400}};
         bronco.idleRpm = 700;
         bronco.redline = 5800;
-        bronco.speedLimit = 161;  // governed at 100 mph (the off-road tires' speed rating)
         bronco.turboLag = 0.45;
         bronco.gears = {4.714, 2.997, 2.149, 1.769, 1.521, 1.275, 1.000, 0.853, 0.689, 0.636};
         bronco.reverseRatio = 4.885;
@@ -656,7 +664,6 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         runner.torque = {{0, 230}, {1000, 290}, {2000, 340}, {3000, 360}, {3600, 366}, {4200, 364}, {4800, 358}, {5200, 350}, {5500, 315}};
         runner.idleRpm = 700;
         runner.redline = 5500;
-        runner.speedLimit = 171;  // Toyota's governor: 106 mph
         runner.induction = VehicleSpec::SUPERCHARGER;
         runner.displacement = 3.4;
         runner.cylinders = 6;
@@ -809,7 +816,6 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         buggy.torque = {{0, 300}, {1000, 360}, {2000, 470}, {3000, 520}, {4000, 555}, {4600, 565}, {5200, 560}, {6000, 534}, {6500, 485}};
         buggy.idleRpm = 800;
         buggy.redline = 6500;
-        buggy.speedLimit = 150;     // limited for the tires' speed rating (estimate)
         buggy.induction = VehicleSpec::NATURAL;
         buggy.turboLag = 0;
         buggy.cylinders = 8;
@@ -954,7 +960,6 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         utv.torque = {{0, 90}, {1500, 110}, {3000, 160}, {4500, 195}, {5500, 205}, {6500, 200}, {7500, 185}, {8000, 165}, {8400, 130}};
         utv.idleRpm = 1400;
         utv.redline = 8300;
-        utv.speedLimit = 130;     // the factory limiter, ~80 mph
         utv.induction = VehicleSpec::TURBO;
         utv.turboLag = 0.4;
         utv.cylinders = 3;
@@ -1110,7 +1115,6 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         tacoma.torque = {{0, 200}, {1000, 262}, {1600, 292}, {2000, 305}, {3000, 336}, {4000, 355}, {4600, 359}, {5000, 355}, {5500, 342}, {6000, 330}, {6400, 305}};
         tacoma.idleRpm = 650;
         tacoma.redline = 6400;
-        tacoma.speedLimit = 180;
         tacoma.gears = {3.600, 2.090, 1.490, 1.000, 0.690, 0.580};
         tacoma.reverseRatio = 3.73;
         tacoma.finalDrive = 3.909;
@@ -1264,7 +1268,6 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         blazer.torque = {{0, 250}, {800, 300}, {1200, 335}, {1800, 365}, {2400, 380}, {3000, 370}, {3600, 345}, {4000, 320}, {4400, 285}, {4800, 240}};
         blazer.idleRpm = 650;
         blazer.redline = 4800;
-        blazer.speedLimit = 150;
         blazer.gears = {6.55, 3.58, 1.70, 1.00};  // SM465
         blazer.reverseRatio = 6.09;
         blazer.finalDrive = 3.73;

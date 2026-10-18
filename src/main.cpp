@@ -788,6 +788,7 @@ void updateHudContext(HudState& hud, const Sim& sim, bool fuelOn, float dt) {
     s.psi = (float)car.tirePsi, s.streetPsi = (float)car.spec->tirePsi, s.airing = hud.airing;
     s.hasDriveline = !car.isProp() && (car.spec->transfer != XFER_NONE || car.spec->lockerFront || car.spec->lockerRear);
     if (const DriveMode* m = car.isProp() ? nullptr : car.mode()) s.mode = (int)(m - driveModes(car.spec->transfer).data()) + 1, s.lowRange = m->low;
+    s.tireFrac = car.isProp() ? 0.0f : (float)car.tireSpeedFrac();
     s.lockF = car.lockFront, s.lockR = car.lockRear, s.lockC = car.centerLocked(), s.sway = car.swayDisconnected;
     hud.ctx.update(s, dt);
 }
@@ -5415,6 +5416,16 @@ int main(int argc, char** argv) {
                 renderer.hudAlpha = fade.old;  // (OUT OF FUEL is a fault: always up)
                 if (c.outOfFuel()) centeredPill(renderer, W / 2.0f, H * 0.62f, px(1.6f * u), "OUT OF FUEL: A BUDDY'S SPARE CAN (F ON FOOT) OR A TOW TO A SHOP", 0, 0, 0, 1, 1, 0.5f, 0.4f);
             }
+        }
+        if (showHud && hud.ctx.alpha(hudctx::E_TIRESPEED) > 0.01f) {  // over a tire's speed rating: it can blow out
+            const HudFade fade(renderer, hud, hudctx::E_TIRESPEED);
+            centeredPill(renderer, W / 2.0f, H * 0.72f, px(1.3f * std::max(0.75f, H / 720.0f)), "TIRES OVER SPEED RATING", 0, 0, 0, 0.6f, 1, 0.72f, 0.25f);
+        }
+        {  // a tire blew from being driven too fast
+            static int blownSeen = 0;
+            const Car& pc = sim.cars[sim.player];
+            if (pc.blowouts > blownSeen) hud.toast("TIRE BLEW OUT: OVER ITS SPEED RATING");
+            blownSeen = pc.blowouts;
         }
         coop.update(dt);
         if (showHud || (coop.mapOpen && !menu.open && !editor.active)) {

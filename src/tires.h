@@ -39,6 +39,25 @@ struct LooseWheel {
     V3 axis() const { return q.rotate(V3(0, 0, 1)); }
 };
 
+// Blowouts: a tire driven at or past its speed rating (tireSpeedRatingKmh) can fail, at a chance
+// per second that climbs steeply the further over it is and with load and tread heat.
+// Tuning, so the curve can be moved in one place: rate = base * exp(steep * (frac - 1)) * load * heat,
+// frac = tire road speed / rating, heat = wheelTempFactor (1 = nominal; tire temperature plugs in there).
+// At nominal load: ~1/4000 s at the rating, ~1/200 s per tire at +15%, ~1/10 s at +30%.
+struct BlowoutTuning {
+    double base = 2.5e-4;   // per second, at the rating
+    double steep = 20.3;    // e-fold per unit of frac
+    double loadExp = 1.5;   // exponent on load over the tire's static share
+};
+extern BlowoutTuning gBlowout;
+// Chance per second of this tire blowing: `frac` speed over rating, `loadRatio` load over its static share, tread heat.
+double tireBlowoutRate(double frac, double loadRatio, double heat);
+struct Wheel;
+// How much hotter (>1) or cooler (<1) than nominal this tire's tread is: a multiplier on the blowout chance. 1 for now.
+double wheelTempFactor(const Wheel& wh);
+// A deterministic die in [0,1): the same (seed, wheel, tick) always rolls the same.
+double blowoutDie(uint64_t seed, int wheel, uint32_t tick);
+
 // Hub (rotor, studs and drum) a corner rolls on with no wheel bolted to it (m).
 constexpr double kBareHubR = 0.17;
 // How many loose wheels the world keeps (the oldest are cleared past this).

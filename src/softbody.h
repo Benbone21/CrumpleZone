@@ -138,6 +138,7 @@ struct Wheel {
     Surface surface = SURF_PAVED;
     bool detached = false;
     bool popped = false;    // blown tire: runs on the rim
+    uint32_t blowTick = 0;  // draws taken for a blowout so far (the deterministic dice, tires.h)
     bool chained = false;   // snow chains fitted over the tire (on foot: interact.h)
     float chainStrain = 0;  // s driven too fast on them: past ~2 s they snap
     double poppedAnim = 0;  // deflation animation: 0 = inflated, 1 = fully flat
@@ -405,7 +406,6 @@ public:
     // Stability control: the yaw rate it measures (rad/s, + = turning left) and how hard it's
     // working (0..1: braking the outside front, easing the throttle).
     double escYaw = 0, escLevel = 0;
-    double govKmh = 0;          // the speed limiter's filtered road speed
     V3 escFwd;
     double dragAssist = 0;      // throttle opened to stop engine braking locking the driven wheels
     double throttleFill = 0;    // the throttle the engine has built up to (see wheelStep)
@@ -499,6 +499,10 @@ public:
     // it; here it only pushes back). netId is the same on every machine.
     bool remote = false;
     uint32_t netId = 0;
+    bool blowoutsOn = true;  // off: tests that measure raw power, gearing and drag
+    uint64_t blowSeed = 1;  // seeds its tires' blowout dice (with the wheel's index): the same seed, the same blowouts
+    // The fastest tire's road speed over its rating (tires.h): 1 = at it, above = blowouts possible. 0 if none.
+    double tireSpeedFrac() const;
     // A remote car one of ours crashes into is simulated here, as a whole soft body, through
     // the hit and a little after: here it was a wall (moved by its states, it couldn't be
     // pushed or bent, so whoever hit it took the whole crash, and their states showed them
@@ -567,6 +571,7 @@ public:
     int brokenBeams = 0;
     std::vector<V3> glassBursts;  // where windows shattered since last read
     int tirePops = 0;             // tires blown since last read
+    int blowouts = 0;             // ...of them, speed-rating blowouts, ever (the HUD toast)
     std::unique_ptr<TriGrid> grid;
     std::unique_ptr<TriGrid> nodeGrid;  // body nodes, for node-node contact
     std::vector<double> faceGeo;  // per grid item (a face), for contact: corner, normal, edges, their dots (16 rows, simdkern.h)

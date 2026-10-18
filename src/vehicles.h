@@ -47,6 +47,9 @@ enum TireType { TIRE_STREET, TIRE_SEMI_SLICK, TIRE_ALL_TERRAIN, TIRE_MUD_TERRAIN
                 TIRE_CHAINS,      // snow chains over the tire: they cut into ice, snow and mud, skate on pavement
                 TIRE_TYPES };
 const char* tireTypeName(int t);
+// Speed rating (km/h): driven at or past it, a tire can blow out (tires.h tireBlowoutRate).
+// Mud-terrain and snow 160, all-terrain 170, street 180, semi-slick and race slick 270.
+double tireSpeedRatingKmh(int t);
 
 struct DriveMode {
     const char* name;
@@ -227,7 +230,6 @@ struct VehicleSpec {
     TransferCase transfer = XFER_NONE;
     bool lockerFront = false, lockerRear = false;  // selectable lockers (a switch on the dash)
     bool frontLockerLowOnly = false, rearLockerLowOnly = false;  // the switch only works in low range
-    double speedLimit = 0;    // km/h the ECU won't go past (0 = none): trucks are governed to their tires' rating
     double shaftLimit = 0;    // N*m an axle shaft takes before it snaps (0 = never); IFS CVs take 65% of it
     double brakeFront, brakeRear;  // N*m per wheel
 
