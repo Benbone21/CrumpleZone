@@ -8,8 +8,10 @@
 #include <cctype>
 #include <cmath>
 #include <cstring>
+#include <memory>
 #include <mutex>
 #include "loadprof.h"
+#include "watchdog.h"
 #include "benchreport.h"
 #include "meshcache.h"
 #include "carvisual.h"
@@ -1588,12 +1590,33 @@ __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
 }
 #endif
 
+// SIGTERM / SIGINT. SDL's own handler only queues an SDL_QUIT, which a hung main loop never reads (so `timeout` never killed it).
+// Ours: normal play sets a flag the loop checks (clean quit), a second signal exits at once; a scripted run exits at the first.
+static volatile std::sig_atomic_t g_termSignals = 0;
+static bool g_termScripted = false;
+static void onTermSignal(int sig) {
+    if (g_termScripted || g_termSignals++ >= 1) _exit(128 + sig);
+}
+
 int main(int argc, char** argv) {
 #ifndef _WIN32
     signal(SIGPIPE, SIG_IGN);  // (a multiplayer peer dropping mid-send; macOS has no MSG_NOSIGNAL)
 #endif
     Options opt = parseArgs(argc, argv);
     const bool scripted = !opt.shotFrames.empty() || opt.bench > 0 || opt.loadTour;  // (the default settings, no vsync, a fixed 60 Hz step)
+    // Unattended runs get a hang watchdog: no frame for 60 s (240 s while loading), or the whole run over CZ_WATCHDOG_TOTAL s (default 3600).
+    // (CZ_WATCHDOG_STALL=S shortens the stall limit; CZ_TEST_STALL_FRAME=N makes the loop sleep for ever at frame N: the tests' hooks.)
+    const bool unattended = scripted || !opt.scenario.empty() || !opt.script.empty();
+    g_termScripted = unattended;
+    std::unique_ptr<wd::FrameWatchdog> watchdog;
+    if (unattended) {
+        const char* es = std::getenv("CZ_WATCHDOG_STALL");
+        const char* et = std::getenv("CZ_WATCHDOG_TOTAL");
+        const double stall = es ? std::atof(es) : 60.0;
+        watchdog.reset(new wd::FrameWatchdog(stall, et ? std::atof(et) : 3600.0, std::max(240.0, stall)));
+    }
+    const char* stallEnv = std::getenv("CZ_TEST_STALL_FRAME");
+    const int testStallFrame = stallEnv ? std::atoi(stallEnv) : -1;
     blockOnTemplates = !opt.shotFrames.empty() || opt.bench > 0;  // (screenshots and the bench show every car; the tour wants the real, waiting behaviour)
 #ifdef _WIN32
     // The GUI executable has no terminal. Keep driver/shader errors where players can find them.
@@ -1655,6 +1678,8 @@ int main(int argc, char** argv) {
         fail(std::string("SDL_Init failed: ") + SDL_GetError());
         return 1;
     }
+    std::signal(SIGTERM, onTermSignal);  // (after SDL_Init, which installs its own)
+    std::signal(SIGINT, onTermSignal);
     if (!opt.clipboard.empty()) SDL_SetClipboardText(opt.clipboard.c_str());
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
@@ -2955,6 +2980,9 @@ int main(int argc, char** argv) {
     };
 
     while (running) {
+        if (g_termSignals) break;  // (SIGTERM / SIGINT in normal play: quit cleanly)
+        if (watchdog) watchdog->frame(frame);
+        if (frame == testStallFrame) for (;;) std::this_thread::sleep_for(std::chrono::seconds(1));
         uint64_t now = SDL_GetPerformanceCounter();
         const double frameTimeMs = 1000.0 * (double)(now - last) / freq;
         tourTick(frameTimeMs);
