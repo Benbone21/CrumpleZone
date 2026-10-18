@@ -110,7 +110,8 @@ SCENARIO(fieldRepairSteps, "fieldrepair/steps", "Every field repair is a list of
     const int a = c.axles[0].propShaft >= 0 ? 0 : 1;
     ctx.check("a driven axle with a prop shaft", c.axles[a].propShaft >= 0);
     c.beams[c.axles[a].propShaft].broken = true;
-    const Fix* ds = fixOf(fixesFor(c), Fix::DRIVE_SHAFT);
+    const std::vector<Fix> dsFixes = fixesFor(c);  // (kept: fixOf points into it)
+    const Fix* ds = fixOf(dsFixes, Fix::DRIVE_SHAFT);
     ctx.check("the drive shaft is a repair", ds != nullptr);
     if (!ds) return;
     Walker wk;
@@ -134,7 +135,8 @@ SCENARIO(fieldRepairCv, "fieldrepair/cv-axle", "A snapped CV axle on a Bronco, d
     ia.trunkOn = true;
     ia.own = stock(0);
     ia.kit = ia.own.kit;
-    const Fix* f0 = fixOf(fixesFor(c), Fix::CV_AXLE);
+    const std::vector<Fix> f0Fixes = fixesFor(c);
+    const Fix* f0 = fixOf(f0Fixes, Fix::CV_AXLE);
     ctx.check("the CV axle is a repair", f0 != nullptr);
     if (!f0) return;
     const Fix fix = *f0;

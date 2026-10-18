@@ -238,7 +238,17 @@ P pickedParams(const ModelDef& def, int variant);
 // set on top (per placed copy: a sign's rating, a crate's state); built fresh, not cached.
 const Mesh& modelMesh(const std::string& id);
 Mesh modelMesh(const std::string& id, const std::vector<std::pair<std::string, double>>& over);
-void forgetMeshes();  // after picks change
+void forgetMeshes();  // after picks change (meshes handed out before stay valid: they are parked, not freed)
+// For a test that sets its own picks: on this thread choices(), the picks queries and modelMesh use a private copy, so scenarios
+// running on other threads never see them.
+struct PicksSandbox {
+    PicksSandbox();
+    ~PicksSandbox();
+    PicksSandbox(const PicksSandbox&) = delete;
+    PicksSandbox& operator=(const PicksSandbox&) = delete;
+    std::map<std::string, Choice>* picks;
+    std::map<std::string, Mesh>* meshes;
+};
 // The same picture from fewer triangles (meshopt.h: hidden faces, flat regions merged), bounds kept. The cached meshes
 // above have had it; a mesh built per copy (with `over`) hasn't.
 void trimMesh(Mesh& m);

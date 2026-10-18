@@ -66,6 +66,7 @@ const Info kInfo[KA_COUNT] = {
     {SC_C, false, "CAMERA", "key_camera", KG_VIEW, ANY, false, false},
     {SC_M, false, "MAP", "key_map", KG_VIEW, ANY, false, false},
     {SC_F10, false, "HIDE THE HUD (PHOTOS)", "key_photo", KG_VIEW, ANY, false, false},
+    {SC_F9, false, "SHOW THE FULL HUD (HOLD)", "key_hudall", KG_VIEW, ANY, true, false},
     {SC_F3, false, "DEBUG INFO", "key_devfps", KG_VIEW, ANY, false, false},
     // GAME
     {SC_ESCAPE, false, "MENU", "key_menu", KG_GAME, ANY, false, false},

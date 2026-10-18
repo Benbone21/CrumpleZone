@@ -20,6 +20,7 @@ struct Settings {
     float music = 0.4f;         // background music, under the master volume (0 = off)
     float fovDeg = 66;          // vertical field of view of the chase and orbit cameras
     bool fullscreen = false, vsync = true, showFps = false;
+    bool fullHud = false;       // SHOW FULL HUD: always (false: contextual, the HUD shows what matters now; hudcontext.h)
     int physicsThreads = 0;     // 0 AUTO; 1 serial; otherwise up to the available logical CPUs
     bool steeringAssist = true; // limit steering angle at high speeds (false = simulation mode)
     int map = 0;                // the map you were on last

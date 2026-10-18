@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 #include <atomic>
+#include <chrono>
 #include <map>
 #include <thread>
 #include <vector>
@@ -155,7 +156,7 @@ SCENARIO(modelsPicks, "models/picks", "The model lab's picks save and load: the 
     if (!d) return;
     const mk::Param& q = d->variants[1].params[0];
     const double tweak = q.names.empty() ? (q.lo + q.hi) / 2 + (q.hi - q.lo) * 0.1 : q.hi;
-    auto saved = mk::choices();
+    mk::PicksSandbox own;  // (scenarios run side by side: the picks tried here are this thread's alone)
     mk::choices().clear();
     mk::Choice& c = mk::choices()[d->id];
     c.off = {0}, c.status = mk::REDO, c.note = "MAKE IT TALLER", c.tweaks[1][q.key] = tweak;
@@ -168,8 +169,6 @@ SCENARIO(modelsPicks, "models/picks", "The model lab's picks save and load: the 
                                     std::fabs(back.tweaks.at(1).at(q.key) - tweak) < 1e-6);
     ctx.check("the game skips the design left out and builds the others, tweaked", mk::pickedVariant(*d) == 1 && !mk::variantIncluded(*d, 0) && std::fabs(mk::pickedParams(*d, 1)(q.key) - tweak) < 1e-6);
     std::remove(path.c_str());
-    mk::choices() = saved;
-    mk::forgetMeshes();
 }
 
 // Worlds are built on several threads at once (the test runner does; a server could): the shared mesh cache must hand out
@@ -191,6 +190,56 @@ SCENARIO(modelsThreads, "models/threads", "Several threads asking the shared mes
     ctx.check("every copy is whole", bad == 0, std::to_string(bad.load()) + " models came back part-built");
 }
 
+// The hard case: threads reading meshes while the cache is flushed under them (a lab pick, a map warm), and another scenario trying
+// its own picks. Held references must stay whole, and the picks one thread tries must never show in another's meshes.
+SCENARIO(modelsStress, "models/stress", "Meshes stay whole and unchanged while the cache is flushed and other threads try other picks") {
+    std::vector<std::string> ids;
+    std::vector<size_t> want;
+    for (const mk::ModelDef& d : mk::catalog()) {
+        mk::Mesh fresh;
+        mk::build(d, mk::pickedVariant(d), mk::pickedParams(d, mk::pickedVariant(d)), fresh);
+        mk::trimMesh(fresh);
+        ids.push_back(d.id), want.push_back(fresh.v.size());
+    }
+    std::atomic<bool> stop{false};
+    std::atomic<int> bad{0}, reads{0};
+    std::vector<std::thread> pool;
+    for (int t = 0; t < 6; t++)
+        pool.emplace_back([&, t] {
+            std::vector<std::vector<char>> churn;
+            for (size_t n = t; !stop; n += 7) {
+                const size_t i = n % ids.size();
+                const mk::Mesh& m = mk::modelMesh(ids[i]);  // (a reference, as the game holds them)
+                std::this_thread::sleep_for(std::chrono::microseconds(100));  // (a flush lands meanwhile)
+                churn.clear();
+                for (size_t sz = 16; sz <= 4096; sz += 16) churn.emplace_back(sz, (char)0xCD);  // (reuses what a flush frees)
+                if (m.v.size() != want[i]) bad++;
+                const mk::Mesh copy = mk::modelMesh(ids[i]);  // (a car part's mesh is copied like this on a worker)
+                if (copy.v.size() != want[i]) bad++;
+                reads++;
+            }
+        });
+    pool.emplace_back([&] {  // the flusher
+        while (!stop) mk::forgetMeshes(), std::this_thread::sleep_for(std::chrono::microseconds(300));
+    });
+    pool.emplace_back([&] {  // another scenario trying picks: leaves every design but the first out
+        mk::PicksSandbox own;
+        while (!stop) {
+            for (const mk::ModelDef& d : mk::catalog())
+                if (d.variants.size() >= 2) mk::choices()[d.id].off = {0};
+            mk::forgetMeshes();
+            for (const mk::ModelDef& d : mk::catalog())
+                if (d.variants.size() >= 2) mk::modelMesh(d.id);
+            mk::choices().clear();
+        }
+    });
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (std::chrono::steady_clock::now() < until) std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    stop = true;
+    for (std::thread& th : pool) th.join();
+    ctx.check("every mesh read was whole and the shared picks', flush or no flush", bad == 0 && reads > 0, std::to_string(bad.load()) + " bad of " + std::to_string(reads.load()));
+}
+
 SCENARIO(modelsAllVariants, "models/all-variants", "The game uses every design of a model not left out, chosen by where each copy stands; an old picks file leaves them all in") {
     const mk::ModelDef* d = nullptr;
     for (const mk::ModelDef& m : mk::catalog())
@@ -198,7 +247,7 @@ SCENARIO(modelsAllVariants, "models/all-variants", "The game uses every design o
     ctx.check("a model with several designs", d != nullptr);
     if (!d) return;
     const int n = (int)d->variants.size();
-    auto saved = mk::choices();
+    mk::PicksSandbox own;  // (scenarios run side by side: the picks tried here are this thread's alone)
     mk::choices().clear();
     auto tally = [&](std::vector<int>& seen) {
         seen.assign(n, 0);
@@ -237,6 +286,4 @@ SCENARIO(modelsAllVariants, "models/all-variants", "The game uses every design o
     for (int v = 0; v < n; v++) all &= mk::variantIncluded(*d, v);
     ctx.check("its single pick leaves every design in", all && mk::choices()[d->id].status == mk::LIKED);
     std::remove(path.c_str());
-    mk::choices() = saved;
-    mk::forgetMeshes();
 }

@@ -142,6 +142,7 @@ public:
     void drawScene(const Sim& sim, const View& view, DebugView debug, Effects* effects);
 
     // HUD (pixel coordinates, origin top-left). Queue with text()/rect(), then flushHud().
+    float hudAlpha = 1;  // multiplies the alpha of text, rects, tris and arcs queued after it (the contextual HUD's fades)
     void text(float x, float y, float scale, const std::string& s, float r, float g, float b, float a = 1);
     void rect(float x, float y, float w, float h, float r, float g, float b, float a);
     void tri(float x0, float y0, float x1, float y1, float x2, float y2, float r, float g, float b, float a);
@@ -217,7 +218,9 @@ private:
 
     static const int kBloomLevels = 6;
     GLuint progLit = 0, progDepth = 0, progLine = 0, progSky = 0, progHud = 0, progFx = 0, progCar = 0;
-    GLuint progTerrain = 0;
+    GLuint progTerrain = 0;                 // the ground shader in use this frame
+    GLuint noiseTex = 0;                    // the cheap ground tiers' noise
+    GLuint progTerrainTier[4] = {0, 0, 0, 0};  // per tier (groundTier)
     PropRenderer props;
     bool propsOk = false;     // its shaders built
     int propsApplied = -1;    // the props quality the scenery was last built for
@@ -373,6 +376,8 @@ private:
     static void buildBackdrop(const World& world, std::vector<Vtx>& verts, std::vector<unsigned>& idx);
     void ensureShadows(int size);
     void ensureGround(int quality);
+    int groundTier(int gq) const;
+    GLuint terrainProgram(int tier);
     void ensureTargets(int w, int h, int samples);
     void postProcess(const View& view, const M4& proj);
     void prepareCars(const Sim& sim, DebugView debug, const V3& eye);
