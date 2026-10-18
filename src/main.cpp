@@ -4515,6 +4515,7 @@ int main(int argc, char** argv) {
         }
         if (!(playback.active() && !playback.done) && !net.joining()) net.send(sim, (double)(SDL_GetPerformanceCounter()) / freq);
         dbgSimSeconds += simDt, dbgSubsteps = (int)std::lround(simDt / sim.h);
+        fx.setLimits(markLimits(presetOf(settings.gfx)));
         FxEvents events = fx.update(sim, simDt);
 
         Car& car = sim.cars[sim.player];

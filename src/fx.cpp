@@ -1,20 +1,26 @@
 #include "fx.h"
 
 #include <algorithm>
+#include <cmath>
 
 #include "render.h"
 
 namespace {
 const size_t kMaxParticles = 6000;
-// Tire tracks and skid marks: a segment every ~20 cm, so 12000 is ~2.4 km of one tire's
-// track (600 m behind each wheel of one truck) before the oldest fade and go.
-const size_t kMaxSkids = 12000;
-const double kRutDrawDist = 300, kRutWallDist = 70;  // decals / the ground shoved up beside them
+// Tire tracks and skid marks: a segment every ~20 cm (a ring, markLimits() says how many), each
+// fading out by its age, its place in the ring and its distance from the camera.
+const double kRutWallDist = 70;  // the ground shoved up beside them is drawn this far (the decals: markLimits)
 
 // Fx vertex layout: normal.xy = billboard uv (-1..1), normal.z = shading mode.
-// Tracks (FX_TRACK): normal.x = across the mark (-1..1), normal.y = along it (m),
-// normal.z = 3 + how deep the groove is (0..1 = 0..15 cm); rubber marks are 4.
-enum FxMode { FX_SOFT = 0, FX_GLOW = 1, FX_FLAT = 2, FX_TRACK = 3, FX_RUBBER = 4 };
+// Tracks (FX_TRACK): normal.x = across the mark (-1..1), normal.y = along it (m, the tire's own
+// travel: its tread scrolls with the wheel), normal.z = 3 + the look + how deep the groove is (0..1 =
+// 0..15 cm). The look is the TireType + 7 * (smear 0..3 + 4 * reversing); rubber marks are FX_RUBBER.
+enum FxMode { FX_SOFT = 0, FX_GLOW = 1, FX_FLAT = 2, FX_TRACK = 3, FX_RUBBER = 100 };
+float treadLook(int type, double spin, double groundSpeed, double omegaR, bool reverse) {
+    const double r = std::fabs(spin) / std::max(std::max(std::fabs(groundSpeed), std::fabs(omegaR)), 1.5);  // spinning or locked: smeared
+    const int smear = r < 0.12 ? 0 : r < 0.3 ? 1 : r < 0.55 ? 2 : 3;
+    return (float)(std::min(std::max(type, 0), (int)TIRE_TYPES - 1) + 7 * (smear + 4 * (reverse ? 1 : 0)));
+}
 
 // The lit shader's terrain material (the ground's own paint at that spot, no road).
 Vtx groundVtx(const V3& p, const V3& n) {
@@ -61,7 +67,8 @@ Vtx fxVtx(const V3& p, float u, float v, float mode, const float c[4]) {
 void Effects::clear() {
     particles.clear();
     skids.clear();
-    skidHead = 0;
+    skidHead = skidCount = 0;
+    clock_ = 0;
     tracks.clear();
     trackOwner.clear();
 }
@@ -83,19 +90,66 @@ void Effects::emit(Kind kind, const V3& p, const V3& v, float life, float s0, fl
     particles.push_back(pt);
 }
 
-void Effects::addSkid(Track& t, RutKind kind, const V3& p, const V3& n, double halfWidth, double depth, double lip,
-                      const float tint[3], float alpha, double alongScale) {
+MarkLimits markLimits(int preset) {
+    switch (preset) {
+        case 4: return {1500, 20.0f, 80.0f};    // POTATO
+        case 0: return {4000, 40.0f, 150.0f};   // LOW
+        case 2: return {12000, 75.0f, 300.0f};  // HIGH
+        case 3: return {kMaxMarkCap, 90.0f, 400.0f};  // ULTRA
+        default: return {8000, 60.0f, 220.0f};  // MEDIUM, CUSTOM
+    }
+}
+
+void Effects::setLimits(const MarkLimits& m) {
+    lim_ = m;
+    lim_.cap = std::min(std::max<size_t>(lim_.cap, 1), kMaxMarkCap);
+    while (skidCount > lim_.cap) skidHead = (skidHead + 1) % skids.size(), skidCount--;
+}
+
+MarkStats Effects::markStats() const {
+    MarkStats s;
+    s.marks = skidCount, s.drawn = lastDrawn_, s.bytes = skids.capacity() * sizeof(Rut);
+    return s;
+}
+
+Effects::MarkInfo Effects::markInfo(size_t i) const {
+    const Rut& r = markAt(i);
+    return {r.p[0], len(r.side[0]) * 2, r.kind == RUT_RUBBER, clock_ - r.born};
+}
+
+void Effects::push(const Rut& r) {
+    if (skids.empty()) skids.resize(kMaxMarkCap);
+    if (skidCount >= lim_.cap) skidHead = (skidHead + 1) % skids.size(), skidCount--;  // the oldest go
+    Rut& d = skids[(skidHead + skidCount) % skids.size()];
+    d = r;
+    d.born = (float)clock_;
+    skidCount++;
+}
+
+float Effects::markFade(size_t i, const Rut& r, const V3& eye, double far) const {
+    // By ring place (the oldest fade before they're overwritten: the last 20%), age, and distance.
+    const double left = (double)(lim_.cap - skidCount + i + 1);
+    const double ring = std::min(1.0, left / (lim_.cap * 0.2));
+    const double age = clock_ - r.born;
+    const double old = smoothstep(lim_.life, lim_.life * 0.7, age);
+    const V3 e = r.p[0] - eye;
+    const double d = smoothstep(far, far * 0.7, std::sqrt(dot(e, e)));
+    return (float)(ring * old * d);
+}
+
+void Effects::addSkid(const World& world, Track& t, RutKind kind, const V3& p, const V3& n, double halfWidth, double depth,
+                      double lip, const float tint[3], float alpha, float look) {
     if (!t.active) {
         t.active = true;
         t.p = p, t.n = n, t.side = V3();
-        t.along = 0, t.depth = (float)depth, t.lip = 0, t.segs = 0;
+        t.along = 0, t.depth = (float)depth, t.lip = 0, t.segs = 0, t.roll = 0;
         return;
     }
     const V3 d = p - t.p;
     const double dl = len(d);
     if (dl > 3.0) {  // teleported or airborne for a while: restart the strip
         t.active = false;
-        addSkid(t, kind, p, n, halfWidth, depth, lip, tint, alpha, alongScale);
+        addSkid(world, t, kind, p, n, halfWidth, depth, lip, tint, alpha, look);
         return;
     }
     if (dl < 0.2) return;
@@ -103,38 +157,50 @@ void Effects::addSkid(Track& t, RutKind kind, const V3& p, const V3& n, double h
     V3 s0 = t.side;
     if (len(s0) < 1e-6) s0 = side;           // first segment: square start
     else if (dot(s0, side) < 0) s0 = -s0;    // backing up over it (the mark is the same both ways)
-    if (t.along >= 64) t.along -= 64;        // (the tread print repeats every 16 cm: 64 m is a whole number of them)
+    if (t.along >= 64) t.along -= 64;        // (the tread print repeats every few cm: 64 m is a whole number of them)
+    // The print advances by what the tire turned (a locked wheel prints one smear, a spinning one a bunched-up one).
+    const float adv = kind == RUT_RUBBER ? (float)dl : std::fabs(t.roll);
+    t.roll = 0;
     // The lips rise over the first few segments of a strip, so its end isn't a cut-off wall.
     const float lip1 = (float)(lip * std::min(1.0, (t.segs + 1) / 3.0));
-    Rut r;
-    r.p[0] = t.p, r.p[1] = p;
-    r.side[0] = s0, r.side[1] = side;
-    r.n[0] = t.n, r.n[1] = n;
-    r.along[0] = t.along, r.along[1] = t.along + (float)(dl * alongScale);
-    r.depth[0] = t.depth, r.depth[1] = (float)depth;
-    r.lip[0] = t.lip, r.lip[1] = lip1;
-    for (int k = 0; k < 3; k++) r.tint[k] = tint[k];
-    r.alpha = alpha;
-    r.kind = kind;
-    if (skids.size() < kMaxSkids) skids.push_back(r);
-    else {
-        skids[skidHead] = r;
-        skidHead = (skidHead + 1) % kMaxSkids;
+    // A long stretch (fast driving) is laid in ~30 cm pieces, each put back on the terrain, so the
+    // decal hugs the slopes and bumps between two contact samples.
+    const int K = std::min(8, std::max(1, (int)std::ceil(dl / 0.3)));
+    const double h0 = world.height(t.p.x, t.p.z), h1 = world.height(p.x, p.z);
+    const double o0 = t.p.y - h0, o1 = p.y - h1;
+    auto at = [&](double f) {
+        V3 q = t.p + d * f;
+        if (f > 0 && f < 1) q.y = world.height(q.x, q.z) + o0 + (o1 - o0) * f;
+        return q;
+    };
+    for (int j = 0; j < K; j++) {
+        const double f0 = (double)j / K, f1 = (double)(j + 1) / K;
+        Rut r;
+        r.p[0] = at(f0), r.p[1] = at(f1);
+        r.side[0] = s0 * (1 - f0) + side * f0, r.side[1] = s0 * (1 - f1) + side * f1;
+        r.n[0] = norm(t.n * (1 - f0) + n * f0), r.n[1] = norm(t.n * (1 - f1) + n * f1);
+        r.along[0] = t.along + (float)(adv * f0), r.along[1] = t.along + (float)(adv * f1);
+        r.depth[0] = (float)(t.depth + (depth - t.depth) * f0), r.depth[1] = (float)(t.depth + (depth - t.depth) * f1);
+        r.lip[0] = (float)(t.lip + (lip1 - t.lip) * f0), r.lip[1] = (float)(t.lip + (lip1 - t.lip) * f1);
+        for (int k = 0; k < 3; k++) r.tint[k] = tint[k];
+        r.alpha = alpha;
+        r.kind = kind;
+        r.look = look;
+        push(r);
     }
     t.p = p, t.n = n, t.side = side;
-    t.along = r.along[1], t.depth = (float)depth, t.lip = lip1;
+    t.along += adv, t.depth = (float)depth, t.lip = lip1;
     t.segs++;
-}
-
-float Effects::rutFade(size_t i) const {
-    // How many more marks get laid before this one is overwritten; the last 20% fade.
-    const size_t left = skids.size() < kMaxSkids ? kMaxSkids - skids.size() + i : (i + kMaxSkids - skidHead) % kMaxSkids;
-    return std::min(1.0f, (float)(left + 1) / (kMaxSkids * 0.2f));
 }
 
 FxEvents Effects::update(Sim& sim, double dt) {
     FxEvents ev;
     const World& world = sim.world;
+    if (dt > 0) {
+        clock_ += dt;
+        // (marks are laid in order: the expired ones are the oldest)
+        while (skidCount && clock_ - skids[skidHead].born > lim_.life) skidHead = (skidHead + 1) % skids.size(), skidCount--;
+    }
 
     // Track state follows cars by identity; rebuild when cars are added or removed.
     if (trackOwner.size() != sim.cars.size()) {
@@ -186,27 +252,42 @@ FxEvents Effects::update(Sim& sim, double dt) {
                 V3 ax = norm(b.p - a.p);
                 if (!wh.left) ax = -ax;
                 Contact ct;
-                if (!world.contact(c, wh.R, &ax, wh.width * 0.5, ct)) {
+                if (!world.contact(c, wh.R, &ax, wh.width * 0.5, ct) || ct.pen < 0.004) {
                     tr.active = false;
                     continue;
                 }
                 const V3 ground = c - ct.n * (wh.R - ct.pen);
+                const V3 rv = (a.v + b.v) * 0.5;
+                const double sp = len(rv);
+                tr.roll += (float)(dot(rv, norm(cross(ax, ct.n))) * dt);  // (no wheel speed sent: it rolls with the car)
+                const int type = car.spec ? car.spec->tireType : (int)TIRE_ALL_TERRAIN;
+                const float look = treadLook(type, 0, sp, sp, dot(rv, norm(cross(ax, ct.n))) < -0.3);
                 if (ct.surface == SURF_PAVED || ct.surface == SURF_WET || ct.surface == SURF_ICE || ct.surface == SURF_ROCK) {
-                    tr.active = false;
+                    // Hard ground: a skid when the car is going sideways over its tires.
+                    const double slide = std::fabs(dot(rv, ax));
+                    if (sp > 6 && slide > 0.25 * sp) {
+                        const float alpha = (float)clampd(slide / sp * 1.1, 0.15, 0.6);
+                        const float g = ct.surface == SURF_PAVED || ct.surface == SURF_ROCK ? 0.22f : 0.5f;
+                        const float rubber[3] = {g, g, g * 1.03f};
+                        addSkid(world, tr, RUT_RUBBER, ground, ct.n, wh.width * 0.5, 0, 0, rubber, alpha, look);
+                    } else {
+                        tr.active = false;
+                    }
                     continue;
                 }
                 const SurfaceInfo& si = surfaceInfo(ct.surface);
                 const double sink = std::min(si.sink, std::max(0.0, ct.pen - 0.03));
                 float tint[3], alpha;
                 trackLook(ct.surface, tint, alpha);
-                addSkid(tr, RUT_GROOVE, ground, ct.n, wh.width * 0.5 + 0.04 + sink * 0.4, si.sink > 0 ? sink + 0.01 : 0.008,
-                        si.sink > 0 ? std::min(0.12, 0.9 * sink + 0.008) : 0.0, tint, alpha, 1.0);
+                addSkid(world, tr, RUT_GROOVE, ground, ct.n, wh.width * 0.5, si.sink > 0 ? sink + 0.01 : 0.008,
+                        si.sink > 0 ? std::min(0.12, 0.9 * sink + 0.008) : 0.0, tint, alpha, look);
                 continue;
             }
-            if (wh.load < 300 || wh.detached) {
+            if (wh.load < 300 || wh.detached) {  // in the air, or barely touching: no mark
                 tr.active = false;
                 continue;
             }
+            tr.roll += (float)(wh.omega * wh.R * dt);
             const Node& a = car.nodes[wh.inner];
             const Node& b = car.nodes[wh.outer];
             V3 vel = (a.v + b.v) * 0.5;
@@ -272,13 +353,16 @@ FxEvents Effects::update(Sim& sim, double dt) {
             // Tracks. On loose ground every tire leaves one: a groove the width of the tread,
             // as deep as it sank (with the ground shoved up either side in sand, mud and
             // snow), darker where it spun. On hard ground, black rubber where it slid.
+            const int tread = wh.chained ? (int)TIRE_CHAINS : car.spec ? car.spec->tireType : (int)TIRE_ALL_TERRAIN;
+            const float look = treadLook(tread, wh.omega * wh.R - wh.groundSpeed, wh.groundSpeed, wh.omega * wh.R, wh.omega < -0.5);
             const V3 ground = wh.contact + wh.contactNormal * wh.sink;  // (the contact is the tire's bottom, down in it)
             if (hard) {
                 if (wh.slip > 0.22 && wh.load > 800) {
                     const float alpha = (float)clampd((wh.slip - 0.15) * 1.6, 0.15, 0.6);
                     const float g = onPad || wh.surface == SURF_ROCK ? 0.22f : 0.5f;
                     const float rubber[3] = {g, g, g * 1.03f};
-                    addSkid(tr, RUT_RUBBER, ground, wh.contactNormal, wh.width * 0.45, 0, 0, rubber, alpha, 1.0);
+                    const float a2 = alpha * (float)(0.7 + 0.3 * clampd(wh.load / 4000, 0, 1));
+                    addSkid(world, tr, RUT_RUBBER, ground, wh.contactNormal, wh.width * 0.5, 0, 0, rubber, a2, look);
                 } else {
                     tr.active = false;
                 }
@@ -290,7 +374,9 @@ FxEvents Effects::update(Sim& sim, double dt) {
                 const bool soft = si.sink > 0;
                 const double depth = soft ? wh.sink + 0.01 + 0.02 * dug : wh.surface == SURF_GRAVEL || wh.surface == SURF_SCREE ? 0.012 : 0.008;
                 const double lip = soft ? std::min(0.12, 0.9 * wh.sink + 0.008) : 0.0;
-                addSkid(tr, RUT_GROOVE, ground, wh.contactNormal, wh.width * 0.5 + 0.04 + depth * 0.4, depth, lip, tint, alpha, 1.0);
+                // (heavier on it: darker)
+                alpha *= (float)(0.65 + 0.35 * clampd(wh.load / 3500, 0, 1));
+                addSkid(world, tr, RUT_GROOVE, ground, wh.contactNormal, wh.width * 0.5, depth, lip, tint, alpha, look);
             }
         }
 
@@ -355,40 +441,45 @@ FxEvents Effects::update(Sim& sim, double dt) {
 
 void Effects::translate(const V3& d) {
     for (Particle& p : particles) p.p += d;
-    for (Rut& r : skids) r.p[0] += d, r.p[1] += d;
+    for (size_t i = 0; i < skidCount; i++) {
+        Rut& r = skids[(skidHead + i) % skids.size()];
+        r.p[0] += d, r.p[1] += d;
+    }
     for (auto& car : tracks)
         for (Track& t : car) t.p += d;
 }
 
 void Effects::buildSkids(const V3& eye, std::vector<Vtx>& out) const {
-    const double far2 = kRutDrawDist * kRutDrawDist;
-    for (size_t i = 0; i < skids.size(); i++) {
-        const Rut& r = skids[i];
+    const size_t v0 = out.size();
+    const double far2 = lim_.fadeDist * lim_.fadeDist;
+    for (size_t i = 0; i < skidCount; i++) {
+        const Rut& r = markAt(i);
         const V3 e = r.p[0] - eye;
         if (dot(e, e) > far2) continue;
-        const float c[4] = {r.tint[0], r.tint[1], r.tint[2], r.alpha * rutFade(i)};
+        const float c[4] = {r.tint[0], r.tint[1], r.tint[2], r.alpha * markFade(i, r, eye, lim_.fadeDist)};
         if (c[3] < 0.01f) continue;
         Vtx v[4];  // left and right at each end
         for (int k = 0; k < 2; k++) {
             const V3 lift = r.n[k] * 0.01;
-            const float mode = r.kind == RUT_RUBBER ? (float)FX_RUBBER : FX_TRACK + std::min(0.98f, r.depth[k] / 0.15f);
+            const float mode = r.kind == RUT_RUBBER ? (float)FX_RUBBER : FX_TRACK + r.look + std::min(0.98f, r.depth[k] / 0.15f);
             v[k * 2] = fxVtx(r.p[k] + r.side[k] + lift, 1, r.along[k], mode, c);
             v[k * 2 + 1] = fxVtx(r.p[k] - r.side[k] + lift, -1, r.along[k], mode, c);
         }
         const int order[6] = {0, 2, 3, 0, 3, 1};
         for (int k : order) out.push_back(v[k]);
     }
+    lastDrawn_ = (out.size() - v0) / 6;
 }
 
 void Effects::buildRutWalls(const Sim& sim, const V3& eye, std::vector<Vtx>& out) const {
     // Lips along the fresh grooves.
     const double far2 = kRutWallDist * kRutWallDist;
-    for (size_t i = 0; i < skids.size(); i++) {
-        const Rut& r = skids[i];
+    for (size_t i = 0; i < skidCount; i++) {
+        const Rut& r = markAt(i);
         if (r.kind != RUT_GROOVE || std::max(r.lip[0], r.lip[1]) < 0.004f) continue;
         const V3 e = r.p[0] - eye;
         if (dot(e, e) > far2) continue;
-        const float fade = rutFade(i);
+        const float fade = markFade(i, r, eye, kRutWallDist);
         for (int sgn = -1; sgn <= 1; sgn += 2) {
             V3 in[2], crest[2], outer[2], dir[2];
             float h[2], wIn[2], wOut[2];
