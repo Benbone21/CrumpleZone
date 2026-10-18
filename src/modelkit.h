@@ -205,8 +205,12 @@ double hash01(uint32_t seed, uint32_t i);  // repeatable 0..1
 std::vector<V2> roundedRect(double w, double h, double r, int segs = 4);  // centred
 std::vector<V2> circle(double r, int segs, double cx = 0, double cy = 0);
 
-// Builds variant `variant` of `def` with params `p` (missing ones take their defaults).
+// Builds variant `variant` of `def` with params `p` (missing ones take their defaults). The result goes through
+// meshopt.h (fewest triangles for the same picture) when `simplified(def)`.
 void build(const ModelDef& def, int variant, const P& p, Mesh& out);
+// Everything but the vehicles' parts, the trees and the plants (simplified where they're made, by their own code).
+bool simplified(const ModelDef& def);
+bool& simplifyModels();  // (on; tools/meshaudit turns it off to see the models as they're written)
 P defaults(const Variant& v);
 
 // ---- Picks from the model lab -------------------------------------------------------
@@ -235,6 +239,9 @@ P pickedParams(const ModelDef& def, int variant);
 const Mesh& modelMesh(const std::string& id);
 Mesh modelMesh(const std::string& id, const std::vector<std::pair<std::string, double>>& over);
 void forgetMeshes();  // after picks change
+// The same picture from fewer triangles (meshopt.h: hidden faces, flat regions merged), bounds kept. The cached meshes
+// above have had it; a mesh built per copy (with `over`) hasn't.
+void trimMesh(Mesh& m);
 // A path for the next build on this thread to follow (a chain sling or strap round a boulder's cross-section), in
 // the model's own frame: x out of the thing it's tied to, z across, y 0. Empty (the default): the model's own shape.
 std::vector<V3>& pathHint();

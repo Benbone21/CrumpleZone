@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+#include "texenc.h"
+
 namespace meshcache {
 
 // FNV-1a over values; the key of an entry is built with one of these.
@@ -42,6 +44,16 @@ bool get(uint64_t key, std::vector<uint8_t>& out);
 void put(uint64_t key, std::vector<uint8_t> bytes);
 // Writes the bundle if anything was added. False if it could not be written (the game goes on without it).
 bool flush();
+// Single-file blobs (encoded textures: big, and read one at a time): <dir>/blob-<key>.bin, written at once (temp file, rename).
+// `key` should hold everything the bytes were made from; the file carries a checksum, so a damaged one is a miss.
+bool getBlob(uint64_t key, std::vector<uint8_t>& out);
+bool putBlob(uint64_t key, const std::vector<uint8_t>& bytes);
+// An encoded texture (texenc.h) as bytes, and back.
+std::vector<uint8_t> packEncoded(const texenc::Encoded& e);
+bool unpackEncoded(const std::vector<uint8_t>& bytes, texenc::Encoded& e);
+// A hash of a source file's name, size and time stamp (0 if it is not there): part of a texture's key.
+uint64_t fileStamp(const std::string& path);
+
 // Forgets everything held in memory (the next get() reads the file again).
 void reset();
 

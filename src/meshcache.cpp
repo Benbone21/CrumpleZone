@@ -196,6 +196,96 @@ bool flush() {
     return true;
 }
 
+bool getBlob(uint64_t key, std::vector<uint8_t>& out) {
+    if (!enabled()) return false;
+    std::string path;
+    {
+        State& s = st();
+        std::lock_guard<std::mutex> lk(s.lock);
+        char name[40];
+        std::snprintf(name, sizeof name, "/blob-%016llx.bin", (unsigned long long)key);
+        path = dirLocked(s) + name;
+    }
+    FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) return false;
+    std::fseek(f, 0, SEEK_END);
+    const long size = std::ftell(f);
+    std::fseek(f, 0, SEEK_SET);
+    std::vector<uint8_t> all(size > 0 ? (size_t)size : 0);
+    const bool read = size > 0 && std::fread(all.data(), 1, all.size(), f) == all.size();
+    std::fclose(f);
+    uint64_t sum;
+    if (!read || all.size() < 8) return false;
+    std::memcpy(&sum, all.data(), 8);
+    if (sum != checksum(all.data() + 8, all.size() - 8)) return false;
+    out.assign(all.begin() + 8, all.end());
+    return true;
+}
+
+bool putBlob(uint64_t key, const std::vector<uint8_t>& bytes) {
+    if (!enabled()) return true;
+    std::string d, path;
+    {
+        State& s = st();
+        std::lock_guard<std::mutex> lk(s.lock);
+        char name[40];
+        std::snprintf(name, sizeof name, "/blob-%016llx.bin", (unsigned long long)key);
+        d = dirLocked(s), path = d + name;
+    }
+    makeDir(d.substr(0, d.find_last_of('/')));
+    makeDir(d);
+    const std::string tmp = path + ".tmp" + std::to_string((unsigned long long)(uintptr_t)&bytes);  // (several threads write at once)
+    FILE* f = std::fopen(tmp.c_str(), "wb");
+    if (!f) return false;
+    const uint64_t sum = checksum(bytes.data(), bytes.size());
+    const bool ok = std::fwrite(&sum, 8, 1, f) == 1 && std::fwrite(bytes.data(), 1, bytes.size(), f) == bytes.size();
+    if (std::fclose(f) != 0 || !ok) return std::remove(tmp.c_str()), false;
+    std::remove(path.c_str());
+    return std::rename(tmp.c_str(), path.c_str()) == 0;
+}
+
+std::vector<uint8_t> packEncoded(const texenc::Encoded& e) {
+    std::vector<uint8_t> o;
+    auto put = [&](const void* p, size_t n) { o.insert(o.end(), (const uint8_t*)p, (const uint8_t*)p + n); };
+    const int32_t head[4] = {e.w, e.h, (int32_t)e.kind, (int32_t)e.levels.size()};
+    const uint8_t flags[3] = {e.srgb, e.compressed, e.swizzle};
+    put(head, sizeof head), put(flags, sizeof flags);
+    for (const auto& l : e.levels) {
+        const uint64_t n = l.size();
+        put(&n, 8), put(l.data(), l.size());
+    }
+    return o;
+}
+
+bool unpackEncoded(const std::vector<uint8_t>& o, texenc::Encoded& e) {
+    if (o.size() < 19) return false;
+    int32_t head[4];
+    std::memcpy(head, o.data(), sizeof head);
+    e.w = head[0], e.h = head[1], e.kind = (texenc::Kind)head[2];
+    e.srgb = o[16], e.compressed = o[17], e.swizzle = o[18];
+    if (head[3] < 0 || head[3] > 32) return false;
+    size_t at = 19;
+    e.levels.assign(head[3], {});
+    for (auto& l : e.levels) {
+        uint64_t n;
+        if (at + 8 > o.size()) return false;
+        std::memcpy(&n, &o[at], 8);
+        at += 8;
+        if (n > o.size() - at) return false;
+        l.assign(o.begin() + at, o.begin() + at + n);
+        at += n;
+    }
+    return at == o.size();
+}
+
+uint64_t fileStamp(const std::string& path) {
+    struct stat sb;
+    if (stat(path.c_str(), &sb) != 0) return 0;
+    Hasher h;
+    h.str(path), h.u64((uint64_t)sb.st_size), h.u64((uint64_t)sb.st_mtime);
+    return h.h | 1;
+}
+
 void reset() {
     State& s = st();
     std::lock_guard<std::mutex> lk(s.lock);

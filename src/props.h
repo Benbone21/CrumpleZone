@@ -109,4 +109,21 @@ struct ManifestEntry {
 };
 std::vector<ManifestEntry> readManifest(const std::string& dir);
 
+// ---- Drawing them (no GL: propdraw.cpp and the tests share these) ----------------------
+// Frustum planes (a, b, c, d: inside when a x + b y + c z + d >= 0, unit normals) from a
+// column-major view-projection matrix, and whether a sphere or a box reaches inside them.
+void frustumPlanes(const M4& m, float out[6][4]);
+bool sphereInFrustum(const float pl[6][4], const V3& c, double r);
+bool boxInFrustum(const float pl[6][4], const V3& mn, const V3& mx);
+
+// Which LOD a scanned rock or cliff face `size` m across takes seen from `dist` m: the coarsest
+// whose triangles stay under a few pixels on screen (on a 1080-line screen at the default
+// field of view; `detail` is the quality's LOD factor, more is finer). -1: too small to draw.
+// lodTris: the triangles of LOD 0, 1, 2.
+const double kLodRefPxPerRad = 830;  // pixels a radian covers: 1080 lines over the 1.15 rad field of view
+const double kLodEdgePx = 5;          // how long a triangle's edge may get on screen (at detail 1)
+const double kLodCullSize = 0.0035;   // smaller than this (size / distance, at detail 1): not drawn (~3 px)
+const double kLodShadowCullSize = 0.012;  // smaller than this: casts no shadow (~10 px)
+int solidLod(const int lodTris[3], double size, double dist, double detail);
+
 }  // namespace props

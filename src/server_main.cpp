@@ -3,17 +3,20 @@
 // Clients connect via --join HOST:PORT [--password PASSWORD].
 //
 // Usage: crumplezone-server [--port PORT (27015, or CZ_PORT)] --map 1 [--name "My Session"] [--players 8] [--password SECRET]
+//                           [--time HOURS] [--day-length MINUTES] [--frozen]
 //
 // The server hosts the session, relays vehicle states between clients, and keeps the shared
 // world (parked vehicles, crash props, everyone's vehicles for whoever joins later). It runs
 // no physics: each client runs the physics of its own car. Everything it hears from the
-// network is checked first (net.cpp); docs/server-security.md says what and why.
+// network is checked first (net.cpp); docs/server-security.md says what and why. It owns the
+// session's clock, and the time of day on it: every player sees the same sky.
 //
 // Run it as an ordinary user, not root, behind a firewall that lets through only the game port.
 
 #include <unistd.h>
 
 #include <chrono>
+#include <cmath>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
@@ -22,6 +25,7 @@
 #include <string>
 #include <thread>
 
+#include "daylight.h"
 #include "net.h"
 #include "softbody.h"
 #include "vehicles.h"
@@ -41,8 +45,24 @@ struct Options {
     int maxPlayers = 8;
     std::string password, passwordFile, bind;
     bool lan = false, allowRoot = false;
+    double hours = 10, dayMinutes = 24;  // the time of day it starts at, and a whole day in real minutes
+    bool frozen = false;                 // the clock holds at `hours`
     bool bad = false;
 };
+
+// A plain number from lo to hi ("12", "17.5"; not "12h", "nan" or "").
+bool takeNumber(const char* what, const std::string& text, double lo, double hi, double& out) {
+    char* end = nullptr;
+    const double v = std::strtod(text.c_str(), &end);
+    bool plain = !text.empty() && end && *end == 0;
+    for (char ch : text) plain &= (ch >= '0' && ch <= '9') || ch == '.';
+    if (!plain || !(v >= lo && v <= hi)) {
+        fprintf(stderr, "bad %s \"%s\": a number from %g to %g\n", what, text.c_str(), lo, hi);
+        return false;
+    }
+    out = v;
+    return true;
+}
 
 // A port for the game (TCP and UDP): 1024 to 65535, plain digits.
 bool takePort(const char* what, const std::string& text, int& port, bool quiet = false) {
@@ -79,6 +99,13 @@ Options parseArgs(int argc, char** argv) {
             opts.passwordFile = argv[++i];
         } else if (arg == "--bind" && more) {
             opts.bind = argv[++i];
+        } else if (arg == "--time" && more) {
+            if (!takeNumber("--time", argv[++i], 0, 24, opts.hours)) opts.bad = true;
+            opts.hours = std::fmod(opts.hours, 24.0);
+        } else if (arg == "--day-length" && more) {
+            if (!takeNumber("--day-length", argv[++i], 1, 1440, opts.dayMinutes)) opts.bad = true;
+        } else if (arg == "--frozen") {
+            opts.frozen = true;
         } else if (arg == "--lan") {
             opts.lan = true;
         } else if (arg == "--allow-root") {
@@ -95,6 +122,9 @@ Options parseArgs(int argc, char** argv) {
             printf("                   Visible in `ps`: prefer --password-file FILE or the CZ_PASSWORD variable.\n");
             printf("  --password-file FILE   Read the password from the first line of FILE\n");
             printf("  --bind IP        Listen only on this local address (default: every interface)\n");
+            printf("  --time HOURS     Time of day it starts at, 0 to 24 (default 10: mid-morning; 13.5 is 1:30 pm)\n");
+            printf("  --day-length MIN A whole day takes this many real minutes, 1 to 1440 (default 24)\n");
+            printf("  --frozen         The clock holds at --time (always that time of day)\n");
             printf("  --lan            Also answer \"who's hosting?\" on the local network (off by default:\n");
             printf("                   for a game on your own network, not a public server)\n");
             printf("  --allow-root     Run as root anyway (don't)\n");
@@ -141,6 +171,8 @@ int main(int argc, char** argv) {
     printf("  Session:    %s\n", sessionName.c_str());
     printf("  Players:    up to %d\n", opts.maxPlayers - 1);
     printf("  Password:   %s\n", opts.password.empty() ? "NONE" : "yes");
+    if (opts.frozen) printf("  Time:       %02d:%02d, held\n", (int)opts.hours, (int)(std::fmod(opts.hours, 1.0) * 60));
+    else printf("  Time:       from %02d:%02d, a day every %g min\n", (int)opts.hours, (int)(std::fmod(opts.hours, 1.0) * 60), opts.dayMinutes);
     if (opts.password.empty())
         printf("WARNING: no password. Anyone who can reach this port can join. Use --password-file or CZ_PASSWORD.\n");
     else if (opts.password.size() < 8)
@@ -187,6 +219,10 @@ int main(int argc, char** argv) {
         auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - start);
         double t = elapsed.count() / 1000000.0;
+
+        // The sky everyone shares (sent on joining and every second, stamped with the session's clock).
+        net.dayRate = opts.frozen ? 0 : clockAdvance(1.0, opts.dayMinutes);
+        net.dayHours = std::fmod(opts.hours + net.dayRate * t, 24.0);
 
         // Handle network input and send states
         net.receive(sim, t);

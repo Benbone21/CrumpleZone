@@ -22,24 +22,45 @@ env:
   VERSION: ${{ (startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/V')) && github.ref_name || '0.0.0-dev' }}
 
 jobs:
+  # Opt-in PGO: build instrumented, run a fixed training workload (tools/pgo.sh), hand the profile to the linux job.
+  # Never blocks a release: if this job fails, the linux job finds no profile and build plain LTO.
+  profile:
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: sudo apt-get update -q && sudo apt-get install -y -q g++ libsdl2-2.0-0 libegl1 libgl1-mesa-dri libglx-mesa0
+      - name: Train
+        run: tools/pgo.sh linux
+      - uses: actions/upload-artifact@v4
+        with: { name: pgo-profile, path: build/pgo/*.gcda, if-no-files-found: ignore }
+
   linux:
+    needs: profile
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Toolchain
         run: sudo apt-get update -q && sudo apt-get install -y -q g++ libsdl2-2.0-0 libegl1 libgl1-mesa-dri libglx-mesa0
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with: { name: pgo-profile, path: build/pgo }
       - name: Build and package
         run: |
           V="${VERSION#[vV]}"
-          # Generic x86-64 (the Makefile's default is -march=native: the build machine's CPU only).
-          make -j"$(nproc)" CXXFLAGS="-O2 -march=x86-64-v2 -mtune=generic" crumplezone
-          make -j"$(nproc)" CXXFLAGS="-O2 -march=x86-64-v2 -mtune=generic" build/run_tests build/test_render build/test_audio build/test_visibility
+          # Release objects go to build/rel: generic x86-64-v2, -O2, LTO, -fno-plt (the Makefile's plain default is -march=native:
+          # the build machine's CPU only). PGO when the profile job produced one and the build accepts it; else plain LTO.
+          PGO=""; ls build/pgo/*.gcda >/dev/null 2>&1 && tools/pgo.sh rebase && PGO=use
+          TARGETS="build/rel/crumplezone build/rel/run_tests build/rel/test_render build/rel/test_audio"
+          make -j"$(nproc)" PGO=$PGO $TARGETS || { echo "::warning::PGO build failed, building without it"; PGO=""; rm -rf build/rel; make -j"$(nproc)" $TARGETS; }
+          make -j"$(nproc)" CXXFLAGS="-O2 -march=x86-64-v2 -mtune=generic" build/test_visibility
           ./build/test_visibility
-          ./build/run_tests --jobs 1 engine/collision engine/physics-workers engine/thread-cache engine/adaptive-quality tires/pressure net/state vtools/
-          SDL_VIDEODRIVER=offscreen LP_NUM_THREADS=2 ./build/test_render
-          SDL_AUDIODRIVER=dummy CZ_AUDIO_DEVICE_TEST=1 ./build/test_audio
+          ./build/rel/run_tests --jobs 1 engine/collision engine/physics-workers engine/thread-cache engine/adaptive-quality tires/pressure net/state vtools/
+          SDL_VIDEODRIVER=offscreen LP_NUM_THREADS=2 ./build/rel/test_render
+          SDL_AUDIODRIVER=dummy CZ_AUDIO_DEVICE_TEST=1 ./build/rel/test_audio
           python3 tests/test_engine_import.py
-          make deb VERSION="$V"
+          make deb VERSION="$V" PGO=$PGO
           mkdir -p out && cp "build/deb/crumplezone_${V}_amd64.deb" "out/CrumpleZone-${V}-linux.deb"
       - uses: actions/upload-artifact@v4
         with: { name: linux, path: out/* }
@@ -53,6 +74,8 @@ jobs:
       - name: Cross-compile and build the installer
         run: |
           V="${VERSION#[vV]}"
+          # LTO always (the Makefile's WINFLAGS). Windows PGO is NOT used: tools/pgo.sh windows (wine-trained) works, but it changed
+          # the sim's bit-exact state vs the plain build, which the Linux PGO and every LTO build do not.
           make -j"$(nproc)" windows-installer VERSION="$V"
           make -j"$(nproc)" build/win/bench_sim.exe build/win/run_tests.exe build/win/test_audio.exe build/win/test_visibility.exe
           mkdir -p build/win/cpu-tests
@@ -119,7 +142,8 @@ jobs:
       - name: Build the app
         run: |
           V="${VERSION#[vV]}"
-          make -j4 mac-dmg VERSION="$V"
+          # ThinLTO (MACLTO in the Makefile); if clang/ld64 rejects it, rebuild without so the Mac files still ship.
+          make -j4 mac-dmg VERSION="$V" || { echo "::warning::LTO build failed, building without it"; rm -rf build/mac; make -j4 mac-dmg VERSION="$V" MACLTO=; }
           lipo -info build/mac/CrumpleZone.app/Contents/MacOS/crumplezone
           mkdir -p out && cp build/mac/CrumpleZone-mac.zip "out/CrumpleZone-${V}-mac.zip"
           cp build/mac/CrumpleZone-mac.dmg "out/CrumpleZone-${V}-mac.dmg"

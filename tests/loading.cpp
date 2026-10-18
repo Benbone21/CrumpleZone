@@ -9,10 +9,12 @@
 #include "../src/meshcache.h"
 #include "../src/modelkit.h"
 #include "../src/platform.h"
+#include "../src/texenc.h"
 #include "harness.h"
 
 namespace {
 const char* kDir = "build/test-mesh-cache";
+const uint64_t kPinnedEncoderHash = 6923209209361431738ull;  // texenc output for the test texture, at kEncoderVersion 1
 std::mutex serial;  // (the cache is one per process, and scenarios run side by side)
 
 struct CacheEnv {  // a private folder, and the real settings put back afterwards
@@ -165,4 +167,54 @@ SCENARIO(loadingConcurrent, "loading/concurrent", "Several threads building and 
     bool same = true;
     for (size_t i = 0; i < defs.size(); i++) same &= built(*defs[i]) == fresh[i];
     ctx.check("and serves the same meshes", same && meshcache::stats().hits >= (int)defs.size() && meshcache::stats().stale == 0);
+}
+
+namespace {
+std::vector<uint8_t> gradient(int w, int h) {
+    std::vector<uint8_t> px((size_t)w * h * 4);
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++) {
+            uint8_t* p = &px[((size_t)y * w + x) * 4];
+            p[0] = (uint8_t)(x * 255 / (w - 1)), p[1] = (uint8_t)(y * 255 / (h - 1)), p[2] = (uint8_t)((x * 7 + y * 13) & 255), p[3] = (uint8_t)(((x / 8 + y / 8) & 1) ? 255 : 90);
+        }
+    return px;
+}
+uint64_t hashEncoded(const texenc::Encoded& e) {
+    meshcache::Hasher h;
+    for (const auto& l : e.levels) h.bytes(l.data(), l.size());
+    return h.h;
+}
+}  // namespace
+
+SCENARIO(loadingTextureBlobs, "loading/texture-cache", "Encoded textures kept on disk come back exactly as encoded; a damaged file is a miss; the encoder's output is pinned so a change must bump its version") {
+    std::lock_guard<std::mutex> only(serial);
+    wipe();
+    CacheEnv env(4001);
+    const int w = 64, h = 64;
+    const auto px = gradient(w, h);
+    const auto chain = texenc::mipChain(px.data(), w, h, true);
+    const texenc::Encoded fresh = texenc::encode(texenc::Kind::ColorAlpha, true, chain, w, h, true);
+    ctx.check("the texture was compressed", fresh.compressed && !fresh.levels.empty());
+    const uint64_t key = 0xabcdef12345ull;
+    ctx.check("a missing blob is a miss", !meshcache::getBlob(key, *std::make_unique<std::vector<uint8_t>>()));
+    ctx.check("stored", meshcache::putBlob(key, meshcache::packEncoded(fresh)));
+    std::vector<uint8_t> blob;
+    texenc::Encoded back;
+    ctx.check("read back", meshcache::getBlob(key, blob) && meshcache::unpackEncoded(blob, back));
+    ctx.check("blocks identical to the encoder's", back.levels == fresh.levels && back.w == fresh.w && back.h == fresh.h && back.kind == fresh.kind &&
+                                                   back.srgb == fresh.srgb && back.compressed == fresh.compressed && back.swizzle == fresh.swizzle);
+    // Damage it.
+    const std::string path = std::string(kDir) + "/blob-00000abcdef12345.bin";
+    FILE* f = std::fopen(path.c_str(), "r+b");
+    ctx.check("the blob file is there", f != nullptr);
+    if (f) {
+        std::fseek(f, 40, SEEK_SET);
+        std::fputc(0x77, f);
+        std::fclose(f);
+    }
+    std::vector<uint8_t> bad;
+    ctx.check("a damaged blob is a miss", !meshcache::getBlob(key, bad));
+    // The encoder's output, pinned. If this fails the encoder changed: raise texenc::kEncoderVersion (the cache would otherwise serve
+    // the old blocks) and put the new hash here.
+    ctx.check("encoder output matches the pinned hash for version " + std::to_string(texenc::kEncoderVersion), hashEncoded(fresh) == kPinnedEncoderHash, std::to_string(hashEncoded(fresh)));
 }

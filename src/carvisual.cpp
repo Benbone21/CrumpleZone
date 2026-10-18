@@ -1498,7 +1498,7 @@ void evalBody(const Car& car, const VisualTemplate& t, std::vector<BodyDynamic>&
     for (const auto& f : t.faces) {
         if (torn[f.parent]) continue;
         V3 n = cross(pos[f.topo[2]] - pos[f.topo[0]], pos[f.topo[3]] - pos[f.topo[1]]);
-        for (int c = 0; c < 4; c++) nrm[f.topo[c]] += n;
+        for (int c = 0; c < (f.topo[3] == f.topo[2] ? 3 : 4); c++) nrm[f.topo[c]] += n;
     }
 
     dyn.resize(t.rvTopo.size());
@@ -1519,8 +1519,13 @@ void evalBody(const Car& car, const VisualTemplate& t, std::vector<BodyDynamic>&
         if (f.glass && shattered[f.parent])
             for (int c = 0; c < 4; c++) dyn[f.rv[c]].broken = 1;
         unsigned a = f.rv[0], b = f.rv[1], c = f.rv[2], d = f.rv[3];
-        opaque.insert(opaque.end(), {a, b, c, a, c, d});
-        if (f.glass) glass.insert(glass.end(), {a, b, c, a, c, d});
+        const bool tri = d == c;  // (a triangle: the fourth corner repeats the third)
+        opaque.insert(opaque.end(), {a, b, c});
+        if (!tri) opaque.insert(opaque.end(), {a, c, d});
+        if (f.glass) {
+            glass.insert(glass.end(), {a, b, c});
+            if (!tri) glass.insert(glass.end(), {a, c, d});
+        }
     }
 }
 
@@ -1782,20 +1787,11 @@ void buildRopes(const Sim& sim, std::vector<Vtx>& out) {
         appendModel(out, mk::modelMesh(anchors::gearModel(sa.gear)), V3(sa.p.x, sim.world.height(sa.p.x, sa.p.z), sa.p.z), sa.yaw);
     for (const Rope& r : sim.ropes) {
         auto at = [&](const RopeEnd& e) { return e.kind == ANCHOR_CAR ? sim.cars[e.car].hookPoint(e.hook) : e.p; };
-        const V3 a = at(r.a), b = at(r.b);
         const bool winch = r.kind == ROPE_WINCH;
         const V3 col = winch ? V3(0.72, 0.1, 0.05) : V3(0.95, 0.6, 0.08);
         const double rad = winch ? 0.011 : 0.02;  // (the winch line drawn a bit fat so it reads at a distance)
-        const double L = len(b - a), slack = std::max(0.0, r.length - L);
-        const double sag = std::sqrt(3 * L * slack / 8) + (r.tension > 100 ? 0.0 : 0.004 * L);
-        const int n = 16;
-        V3 prev = a;
-        for (int k = 1; k <= n; k++) {
-            const double t = (double)k / n;
-            const V3 p = a + (b - a) * t - V3(0, sag * 4 * t * (1 - t), 0);
-            tube(out, prev, p, rad, winch ? 5 : 4, col, SM_MATTE);
-            prev = p;
-        }
+        const std::vector<V3> path = sim.ropePath(r, rad + 0.015);  // (slack line lies on the ground, not through it)
+        for (size_t k = 1; k < path.size(); k++) tube(out, path[k - 1], path[k], rad, winch ? 5 : 4, col, SM_MATTE);
         for (const RopeEnd* e : {&r.a, &r.b}) {
             const V3 p = at(*e), to = at(e == &r.a ? r.b : r.a);
             if (e->kind == ANCHOR_CAR) blob(out, p, 0.025, V3(0.55, 0.55, 0.57), SM_METAL);  // shackle

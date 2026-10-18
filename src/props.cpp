@@ -422,4 +422,40 @@ std::vector<ManifestEntry> readManifest(const std::string& dir) {
     return out;
 }
 
+// ---- Drawing helpers ---------------------------------------------------------------------
+void frustumPlanes(const M4& m, float out[6][4]) {
+    const float* a = m.m;
+    for (int i = 0; i < 3; i++)
+        for (int s = 0; s < 2; s++) {
+            float* p = out[i * 2 + s];
+            const float sg = s ? -1.0f : 1.0f;
+            for (int k = 0; k < 4; k++) p[k] = a[k * 4 + 3] + sg * a[k * 4 + i];
+            const float l = std::sqrt(p[0] * p[0] + p[1] * p[1] + p[2] * p[2]);
+            if (l > 0)
+                for (int k = 0; k < 4; k++) p[k] /= l;
+        }
+}
+bool sphereInFrustum(const float pl[6][4], const V3& c, double r) {
+    for (int i = 0; i < 6; i++)
+        if (pl[i][0] * c.x + pl[i][1] * c.y + pl[i][2] * c.z + pl[i][3] < -r) return false;
+    return true;
+}
+bool boxInFrustum(const float pl[6][4], const V3& mn, const V3& mx) {
+    for (int i = 0; i < 6; i++) {
+        const V3 p(pl[i][0] >= 0 ? mx.x : mn.x, pl[i][1] >= 0 ? mx.y : mn.y, pl[i][2] >= 0 ? mx.z : mn.z);
+        if (pl[i][0] * p.x + pl[i][1] * p.y + pl[i][2] * p.z + pl[i][3] < 0) return false;
+    }
+    return true;
+}
+
+int solidLod(const int lodTris[3], double size, double dist, double detail) {
+    const double s = size / std::max(dist, 0.1);
+    if (s < kLodCullSize / detail) return -1;
+    // About sqrt(tris / 2) triangles across the side it shows: the coarsest LOD whose edges are short enough.
+    const double px = s * kLodRefPxPerRad, edge = kLodEdgePx / detail;
+    for (int l = 2; l > 0; l--)
+        if (px <= edge * std::sqrt(std::max(1, lodTris[l]) / 2.0)) return l;
+    return 0;
+}
+
 }  // namespace props

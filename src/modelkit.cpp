@@ -1,6 +1,7 @@
 #include "modelkit.h"
 #include "loadprof.h"
 #include "meshcache.h"
+#include "meshopt.h"
 
 #include <algorithm>
 #include <array>
@@ -12,6 +13,7 @@
 #include <mutex>
 
 #include "font.h"
+#include "meshopt.h"
 #include "platform.h"
 
 namespace mk {
@@ -117,7 +119,7 @@ void build(const ModelDef& def, int variant, const P& p, Mesh& out) {
     uint64_t key = 0;
     if (cached) {
         meshcache::Hasher h;
-        h.u64(meshcache::codeVersion()), h.str(def.id), h.u64((uint64_t)vi);
+        h.u64(meshcache::codeVersion()), h.str(def.id), h.u64((uint64_t)vi), h.u64(simplifyModels() && simplified(def));
         for (const auto& kv : full.v) h.str(kv.first), h.num(kv.second);
         key = h.h;
         std::vector<uint8_t> blob;
@@ -128,11 +130,24 @@ void build(const ModelDef& def, int variant, const P& p, Mesh& out) {
     {
         B b(out);
         if (var.build) var.build(b, full);
+        if (simplifyModels() && simplified(def)) optimizeMesh(out);
         out.finish();
     }
     const double cost = loadprof::nowMs() - g0;
     loadprof::add("model.generate", cost);
     if (cached && cost >= meshcache::minCostMs()) meshcache::put(key, packMesh(out));
+}
+
+bool simplified(const ModelDef& def) {
+    static const std::set<std::string> own = {"tree_pine", "tree_broadleaf", "tree_snag", "bush", "stump",  // (plants and trees)
+                                              "drive_shaft", "tie_rod", "control_arm", "cv_axle", "torn_end", "bed_gate", "tire_part"};  // (a car's)
+    static const std::set<std::string> crates = {"crate_engine_v8", "crate_engine_v6", "crate_engine_i4", "supply_crate"};  // (parts drawn as they stand: skids and crates bury faces)
+    return (def.category != "PARTS" || crates.count(def.id)) && !own.count(def.id);
+}
+
+bool& simplifyModels() {
+    static bool on = true;
+    return on;
 }
 
 // ---- Helpers ----------------------------------------------------------------------------
@@ -816,6 +831,12 @@ void forgetMeshes() {
 }
 uint64_t picksVersion() { return version; }
 
+void trimMesh(Mesh& m) {
+    const V3 lo = m.lo, hi = m.hi;
+    optimizeMesh(m);
+    m.lo = lo, m.hi = hi;  // (the same box: what's placed and bumped into by it doesn't move)
+}
+
 const Mesh& modelMesh(const std::string& id) {
     // (Locked for the whole build: another thread must not copy a mesh that's still being filled in. And the picks are loaded
     // first: loading them drops the cache, which would pull `m` out from under us.)
@@ -828,6 +849,7 @@ const Mesh& modelMesh(const std::string& id) {
     if (const ModelDef* d = findModel(id)) {
         const int v = pickedVariant(*d);
         build(*d, v, pickedParams(*d, v), m);
+        trimMesh(m);
     }
     return m;
 }
