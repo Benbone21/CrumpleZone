@@ -23,6 +23,14 @@ What to do in phase 1:
 5. **Play-check, briefly.** Start the game normally, drive for a minute on Frontier at the preset the auto-detect picked, and note that preset. Note any visual glitch, crash, missing asset or input problem.
 6. **Write the report** (below), commit it and push it.
 
+### Don't get stuck
+- A hung game or test process looks the same as a slow one, and these have hung before (a deadlock, and a game that ignored SIGTERM).
+- Always put a time limit on runs:
+  - Windows, MSYS2: `timeout -k 10 1800 <command>`.
+  - Mac: install coreutils with `brew install coreutils` and use `gtimeout -k 10 1800 <command>`. Or watch the run yourself and kill it.
+- If a run shows no new output or files for 5 minutes and uses no CPU (Task Manager or Activity Monitor), it's hung. Kill it, note which map, preset or test it was on, and report that as a finding. Don't keep retrying the same thing.
+- If the same step hangs twice, skip it, report it, and move on to the remaining steps.
+
 ### Phase 1 report: `docs/hardware/<os>-<gpu>-baseline.md`
 Use a short name, e.g. `windows-rtx4060-baseline.md` or `mac-m2-baseline.md`. The report has these parts:
 - **Machine:** CPU, cores, RAM, GPU (and whether discrete was active), OS version, display resolution, refresh rate, scale factor, and power mode.
