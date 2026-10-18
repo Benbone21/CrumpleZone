@@ -4784,7 +4784,7 @@ int main(int argc, char** argv) {
         {
             static std::vector<std::vector<Placed>> on;
             on.resize(sim.cars.size());
-            for (auto& v : on) v.clear();
+            for (auto& v : on) recyclePlaced(v);  // (last frame's placements go back to be filled again: no garbage a frame)
             for (int i = 0; i < (int)sim.cars.size(); i++) {
                 const Car& c = sim.cars[i];
                 if (c.isProp() || c.nodes.empty()) continue;

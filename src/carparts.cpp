@@ -23,12 +23,14 @@ struct Bnd {
     V3 size() const { return hi - lo; }
 };
 Bnd bounds(const char* id, int variant = -1) {
-    static std::map<std::string, Bnd> cache;
+    static std::map<std::pair<uint64_t, int>, Bnd> cache;  // (by the id's hash: no string made to look one up)
     static std::mutex lock;
     static uint64_t cachedFor = 0;
     std::lock_guard<std::mutex> g(lock);
     if (cachedFor != mk::picksVersion()) cache.clear(), cachedFor = mk::picksVersion();
-    const std::string key = std::string(id) + "#" + std::to_string(variant);
+    uint64_t h = 1469598103934665603ull;
+    for (const char* q = id; *q; q++) h = (h ^ (unsigned char)*q) * 1099511628211ull;
+    const std::pair<uint64_t, int> key(h, variant);
     auto it = cache.find(key);
     if (it != cache.end()) return it->second;
     Bnd b{V3(-0.1, -0.1, -0.1), V3(0.1, 0.1, 0.1)};
@@ -41,6 +43,37 @@ Bnd bounds(const char* id, int variant = -1) {
         if (!m.v.empty()) b = {m.lo, m.hi};
     }
     return cache[key] = b;
+}
+
+}  // namespace
+
+namespace {
+thread_local std::vector<Placed> placedPool;
+}
+
+void recyclePlaced(std::vector<Placed>& v) {
+    if (placedPool.size() < 4096)
+        for (Placed& p : v) placedPool.push_back(std::move(p));
+    v.clear();
+}
+
+Placed takePlaced() {
+    if (placedPool.empty()) return Placed();
+    Placed p = std::move(placedPool.back());
+    placedPool.pop_back();
+    p.yaw = 0, p.scale = V3(1, 1, 1), p.variant = -1, p.oriented = false, p.bare = false, p.sunlit = false, p.wear = 0;
+    p.clip = false, p.clipLo = -1e9f, p.clipHi = 1e9f;
+    p.set.clear();
+    return p;
+}
+
+namespace {
+// The leaf pack's leaf count as picked (kept until the lab changes the picks: it's read for every pack, every frame).
+int pickedLeaves(const mk::ModelDef& def, int v) {
+    static int cached = -1, cachedV = -1;
+    static uint64_t cachedFor = ~0ull;
+    if (cachedFor != mk::picksVersion() || cachedV != v) cached = mk::pickedParams(def, v).i("leaves"), cachedV = v, cachedFor = mk::picksVersion();
+    return cached;
 }
 
 int pickedOf(const char* id) {
@@ -68,19 +101,28 @@ struct Maker {
         cur.kind = k, cur.state = st, cur.wheel = wheel, cur.axle = axle, cur.beam = beam, cur.beam2 = beam2;
         if (tags) cur.name = name, cur.detail = detail;
     }
+    std::string N(const char* name) const { return tags && name ? std::string(name) : std::string(); }  // (names only for the hover: no strings made a frame)
     std::string corner(int w) const { return std::string(c.wheels[w].front ? "FRONT " : "REAR ") + (c.wheels[w].left ? "LEFT" : "RIGHT"); }
     static uint8_t wearOf(PartState st) { return st == PS_BENT ? 1 : st == PS_BROKEN ? 2 : st == PS_FLOODED || st == PS_DEAD ? 3 : st == PS_DAMAGED ? 1 : 0; }
 
     // The model `id` with its origin at `at`, its front toward X, its up near Y, scaled along (front, up, left).
-    Placed make(const char* id, const V3& at, V3 X, V3 Y, const V3& scale = V3(1, 1, 1), int variant = -1,
-                const std::vector<std::pair<std::string, double>>& set = {}) const {
+    template <class It>
+    Placed makeSet(const char* id, const V3& at, V3 X, V3 Y, const V3& scale, int variant, It setBegin, It setEnd) const {
         X = norm(X);
         Y = Y - X * dot(Y, X);
         Y = len(Y) > 1e-6 ? norm(Y) : norm(cross(cross(X, kUp), X));
-        Placed pl;
-        pl.id = id, pl.p = at, pl.oriented = true, pl.bare = true, pl.variant = variant, pl.scale = scale, pl.set = set;
+        Placed pl = takePlaced();  // (one from last frame's: its strings and params keep their room)
+        pl.id = id, pl.p = at, pl.oriented = true, pl.bare = true, pl.variant = variant, pl.scale = scale;
+        pl.set.assign(setBegin, setEnd);
         pl.ax[0] = X, pl.ax[1] = Y, pl.ax[2] = cross(X, Y);
         return pl;
+    }
+    Placed make(const char* id, const V3& at, V3 X, V3 Y, const V3& scale = V3(1, 1, 1), int variant = -1,
+                std::initializer_list<std::pair<std::string, double>> set = {}) const {
+        return makeSet(id, at, X, Y, scale, variant, set.begin(), set.end());
+    }
+    Placed make(const char* id, const V3& at, V3 X, V3 Y, const V3& scale, int variant, const std::vector<std::pair<std::string, double>>& set) const {
+        return makeSet(id, at, X, Y, scale, variant, set.begin(), set.end());
     }
     void add(Placed pl, int wear = -1) {
         pl.wear = wear >= 0 ? (uint8_t)wear : wearOf(cur.state);
@@ -89,10 +131,13 @@ struct Maker {
             t.index = out.size();
             tags->push_back(t);
         }
-        out.push_back(pl);
+        out.push_back(std::move(pl));
     }
     void put(const char* id, const V3& at, V3 X, V3 Y, const V3& scale = V3(1, 1, 1), int variant = -1,
-             const std::vector<std::pair<std::string, double>>& set = {}) {
+             std::initializer_list<std::pair<std::string, double>> set = {}) {
+        add(make(id, at, X, Y, scale, variant, set));
+    }
+    void put(const char* id, const V3& at, V3 X, V3 Y, const V3& scale, int variant, const std::vector<std::pair<std::string, double>>& set) {
         add(make(id, at, X, Y, scale, variant, set));
     }
 
@@ -178,7 +223,7 @@ struct Maker {
         // Its middle in the block's, its top a hand under the block's (the hood is over it).
         const V3 m = b.mid();
         blk.origin = blk.c - blk.X * (m.x * blk.scale.x) + blk.Y * (blk.size.y * 0.5 - 0.1 - b.hi.y * blk.scale.y) - blk.Z * (m.z * blk.scale.z);
-        part(PK_ENGINE, c.hydrolocked ? PS_FLOODED : c.engineDead ? PS_DEAD : c.engineHealth < 0.6 ? PS_DAMAGED : PS_OK, "ENGINE", -1, -1, -1, -1, vs.engineName);
+        part(PK_ENGINE, c.hydrolocked ? PS_FLOODED : c.engineDead ? PS_DEAD : c.engineHealth < 0.6 ? PS_DAMAGED : PS_OK, N("ENGINE"), -1, -1, -1, -1, N(vs.engineName));
         put(id, blk.origin, blk.X, blk.Y, blk.scale);
         blk.rear = blk.origin + blk.X * (b.lo.x * blk.scale.x);  // (on the crank axis)
         blk.ok = true;
@@ -209,12 +254,12 @@ struct Maker {
         const double sg = clampTo(lg / (bell - g.lo.x), 0.3, 1.1);
         const double cs = clampTo(vs.engineWid * 0.62 / g.size().z, 0.7, 1.05);
         const V3 up = blk.Y;
-        part(PK_GEARBOX, PS_OK, automatic ? "AUTOMATIC GEARBOX" : "MANUAL GEARBOX", -1, -1, -1, -1, vs.gearboxName);
+        part(PK_GEARBOX, PS_OK, N(automatic ? "AUTOMATIC GEARBOX" : "MANUAL GEARBOX"), -1, -1, -1, -1, N(vs.gearboxName));
         put(gb, blk.rear + D * (bell * sg - 0.02), -D, up, V3(sg, cs, cs), -1, kNoLever);
         if (!xfer) return;
         const char* tc = "transfer_case";
         const Bnd t = bounds(tc);
-        part(PK_TRANSFER, PS_OK, "TRANSFER CASE");
+        part(PK_TRANSFER, PS_OK, N("TRANSFER CASE"));
         const double xin = 0.2;
         const double st = clampTo((total - lg + 0.04) / (xin - t.lo.x), 0.3, 1.1), ts = clampTo(cs * 0.9, 0.7, 1.0);
         put(tc, blk.rear + D * (lg - 0.02 + xin * st), -D, up, V3(st, ts, ts), -1, kNoLever);
@@ -240,7 +285,7 @@ struct Maker {
             const double sgn = dot(X, fr.fwd) >= 0 ? 1.0 : -1.0;
             V3 Z = lat * sgn;
             Z = norm(Z - X * dot(Z, X));
-            part(PK_DIFF, PS_OK, std::string(ax.front ? "FRONT" : "REAR") + " DIFFERENTIAL", -1, (int)(&ax - &c.axles[0]));
+            part(PK_DIFF, PS_OK, tags ? std::string(ax.front ? "FRONT" : "REAR") + " DIFFERENTIAL" : std::string(), -1, (int)(&ax - &c.axles[0]));
             put("differential", at, X, cross(Z, X), V3(1, 1, 1), 0);
         }
     }
@@ -259,10 +304,10 @@ struct Maker {
             const Bnd s = bounds("drive_shaft");
             const double L = len(e - a);
             if (L < 0.1) continue;
-            part(PK_PROP_SHAFT, b.broken ? PS_BROKEN : PS_OK, std::string(ax.front ? "FRONT" : "REAR") + " DRIVE SHAFT", -1, ai, ax.propShaft);
-            const Placed full = make("drive_shaft", (a + e) * 0.5, e - a, fr.up, V3(L / s.size().x, 0.75 * sz, 0.75 * sz));
+            part(PK_PROP_SHAFT, b.broken ? PS_BROKEN : PS_OK, tags ? std::string(ax.front ? "FRONT" : "REAR") + " DRIVE SHAFT" : std::string(), -1, ai, ax.propShaft);
+            Placed full = make("drive_shaft", (a + e) * 0.5, e - a, fr.up, V3(L / s.size().x, 0.75 * sz, 0.75 * sz));
             if (b.broken) snap(full, "drive_shaft", a, e, 0.42 + 0.16 * luck(ax.propShaft, 1), 0.6, 0.0445 * 0.75 * sz);
-            else add(full);
+            else add(std::move(full));
         }
         if (level < PARTS_ALL) return;
         // Half shafts to independent wheels, from the diff's flange to the hub.
@@ -278,11 +323,11 @@ struct Maker {
                 const double L = dot(hub - from, d);
                 if (L < 0.12) continue;
                 const bool snapped = b.broken || wh.shaftBroken;
-                part(PK_CV_AXLE, snapped ? PS_BROKEN : PS_OK, corner(wi) + " CV AXLE", wi, -1, bi);
+                part(PK_CV_AXLE, snapped ? PS_BROKEN : PS_OK, tags ? corner(wi) + " CV AXLE" : std::string(), wi, -1, bi);
                 const Bnd s = bounds("cv_axle");
-                const Placed full = make("cv_axle", (from + hub) * 0.5, d, fr.up, V3(L / s.size().x, sz, sz));
+                Placed full = make("cv_axle", (from + hub) * 0.5, d, fr.up, V3(L / s.size().x, sz, sz));
                 if (snapped) snap(full, "cv_axle", from, hub, 0.4 + 0.2 * luck(bi, 2), 0.7, 0.017 * sz);
-                else add(full);
+                else add(std::move(full));
             }
         }
     }
@@ -297,7 +342,8 @@ struct Maker {
             bool upper = false;
             int wheel = -1;
         };
-        std::map<int, Arm> arms;  // (wheel * 2 + upper)
+        static thread_local std::vector<Arm> arms;  // ((wheel + 1) * 2 + upper, a wheelless one first; kept from frame to frame)
+        arms.assign((c.wheels.size() + 1) * 2, Arm());
         for (const SuspLink& l : c.links) {
             const Beam& b = c.beams[l.beam];
             const bool aBody = b.a < c.frameNodes;
@@ -309,7 +355,8 @@ struct Maker {
             switch (l.kind) {
             case LINK_LOWER_ARM:
             case LINK_UPPER_ARM: {
-                Arm& a = arms[l.wheel * 2 + (l.kind == LINK_UPPER_ARM)];
+                if (l.wheel < -1 || l.wheel >= (int)c.wheels.size()) break;
+                Arm& a = arms[(l.wheel + 1) * 2 + (l.kind == LINK_UPPER_ARM)];
                 if (a.n < 2) a.body[a.n] = body, a.beam[a.n] = l.beam;
                 a.n++;
                 a.joint = joint;
@@ -322,33 +369,33 @@ struct Maker {
                 const Wheel* wh = l.wheel >= 0 ? &c.wheels[l.wheel] : nullptr;
                 const double off = wh ? std::fabs(wh->tieOffset) : 0;
                 const bool kinked = !b.broken && (off > 0.002 || isBent);
-                part(PK_TIE_ROD, b.broken ? PS_BROKEN : kinked ? PS_BENT : PS_OK, (l.wheel >= 0 ? corner(l.wheel) + " " : std::string()) + (l.kind == LINK_TOE_LINK ? "TOE LINK" : "TIE ROD"), l.wheel, -1, l.beam);
+                part(PK_TIE_ROD, b.broken ? PS_BROKEN : kinked ? PS_BENT : PS_OK, tags ? (l.wheel >= 0 ? corner(l.wheel) + " " : std::string()) + (l.kind == LINK_TOE_LINK ? "TOE LINK" : "TIE ROD") : std::string(), l.wheel, -1, l.beam);
                 const Bnd s = bounds("tie_rod");
-                const Placed full = make("tie_rod", (body + joint) * 0.5, joint - body, fr.up, V3(span / s.size().x, w, w));
+                Placed full = make("tie_rod", (body + joint) * 0.5, joint - body, fr.up, V3(span / s.size().x, w, w));
                 if (b.broken) snap(full, "tie_rod", body, joint, 0.35 + 0.3 * luck(l.beam, 3), 0.7, 0.0128 * w);
                 else if (kinked) kink(full, span, sideways(l.beam, 4), bendOf(span, std::max(off, std::fabs(b.L0 - b.Lorig))));
-                else add(full);
+                else add(std::move(full));
                 break;
             }
             case LINK_TRAILING:
             case LINK_PANHARD: {
-                part(PK_TRAILING, b.broken ? PS_BROKEN : isBent ? PS_BENT : PS_OK, (l.wheel >= 0 ? corner(l.wheel) + " " : std::string(c.axles.size() > 1 ? "REAR " : "")) + (l.kind == LINK_PANHARD ? "TRACK BAR" : "TRAILING ARM"), l.wheel, -1, l.beam);
+                part(PK_TRAILING, b.broken ? PS_BROKEN : isBent ? PS_BENT : PS_OK, tags ? (l.wheel >= 0 ? corner(l.wheel) + " " : std::string(c.axles.size() > 1 ? "REAR " : "")) + (l.kind == LINK_PANHARD ? "TRACK BAR" : "TRAILING ARM") : std::string(), l.wheel, -1, l.beam);
                 const Bnd s = bounds("control_arm", 2);  // (the straight radius arm)
-                const Placed full = make("control_arm", (body + joint) * 0.5, joint - body, fr.up, V3(span / (s.size().x * 0.95), w, w), 2);
+                Placed full = make("control_arm", (body + joint) * 0.5, joint - body, fr.up, V3(span / (s.size().x * 0.95), w, w), 2);
                 if (b.broken) snap(full, "control_arm", body, joint, 0.35 + 0.3 * luck(l.beam, 5), 0.6, 0.02 * w);
                 else if (isBent) kink(full, span, sideways(l.beam, 6), bendOf(span, std::fabs(b.L0 - b.Lorig)));
-                else add(full);
+                else add(std::move(full));
                 break;
             }
             default: break;
             }
         }
-        for (const auto& kv : arms) {
-            const Arm& a = kv.second;
+        for (const Arm& a : arms) {
+            if (!a.n) continue;
             const int v = pickedOf("control_arm") == 2 ? 0 : pickedOf("control_arm");
             const Bnd s = bounds("control_arm", v);
             const PartState st = a.broken ? PS_BROKEN : a.bent ? PS_BENT : PS_OK;
-            part(a.upper ? PK_UPPER_ARM : PK_LOWER_ARM, st, (a.wheel >= 0 ? corner(a.wheel) + " " : std::string()) + (a.upper ? "UPPER" : "LOWER") + " CONTROL ARM", a.wheel, -1, a.beam[0], a.beam[1]);
+            part(a.upper ? PK_UPPER_ARM : PK_LOWER_ARM, st, tags ? (a.wheel >= 0 ? corner(a.wheel) + " " : std::string()) + (a.upper ? "UPPER" : "LOWER") + " CONTROL ARM" : std::string(), a.wheel, -1, a.beam[0], a.beam[1]);
             if (a.n >= 2) {
                 const V3 m = (a.body[0] + a.body[1]) * 0.5;
                 const V3 X = norm(a.joint - m);
@@ -359,20 +406,20 @@ struct Maker {
                 V3 Y = cross(Z, X);
                 if (dot(Y, fr.up) < 0) Z = -Z, Y = -Y;
                 const double span = len(a.joint - m);
-                const Placed full = make("control_arm", (m + a.joint) * 0.5, X, Y, V3(span / (s.size().x * 0.92), 1, clampTo(spread / 0.34, 0.4, 2.5)), v);
+                Placed full = make("control_arm", (m + a.joint) * 0.5, X, Y, V3(span / (s.size().x * 0.92), 1, clampTo(spread / 0.34, 0.4, 2.5)), v);
                 double dl = 0;
                 for (int k = 0; k < 2; k++)
                     if (a.beam[k] >= 0) dl = std::max(dl, std::fabs(c.beams[a.beam[k]].L0 - c.beams[a.beam[k]].Lorig));
                 if (a.broken) snap(full, "control_arm", m, a.joint, 0.4 + 0.2 * luck(a.beam[0], 7), 0.6, 0.022, 1.0);
                 else if (a.bent) kink(full, span, sideways(a.beam[0], 8), bendOf(span, dl));
-                else add(full);
+                else add(std::move(full));
             } else if (a.n == 1) {  // (one leg gone: what's left is a bare link)
                 const Bnd r = bounds("control_arm", 2);
                 const V3 d = a.joint - a.body[0];
-                const Placed full = make("control_arm", (a.body[0] + a.joint) * 0.5, d, fr.up, V3(len(d) / (r.size().x * 0.95), 1, 1), 2);
+                Placed full = make("control_arm", (a.body[0] + a.joint) * 0.5, d, fr.up, V3(len(d) / (r.size().x * 0.95), 1, 1), 2);
                 if (a.broken) snap(full, "control_arm", a.body[0], a.joint, 0.5, 0.6, 0.02);
                 else if (a.bent) kink(full, len(d), fr.up, bendOf(len(d), std::fabs(c.beams[a.beam[0]].L0 - c.beams[a.beam[0]].Lorig)));
-                else add(full);
+                else add(std::move(full));
             }
         }
     }
@@ -404,10 +451,10 @@ struct Maker {
             const V3 inward = fr.com - (lower + upper) * 0.5;
             if (dot(Z, inward) < 0) Y = -Y, Z = -Z;
             const V3 mid = (lower + upper) * 0.5;
-            part(PK_COILOVER, b.broken ? PS_BROKEN : PS_OK, corner(wi) + " COILOVER", wi, -1, wh.spring);
-            const Placed full = make(id, mid - X * (midX[k] * sx) - Y * (axisY[k] * cs), X, Y, V3(sx, cs, cs), -1);
+            part(PK_COILOVER, b.broken ? PS_BROKEN : PS_OK, tags ? corner(wi) + " COILOVER" : std::string(), wi, -1, wh.spring);
+            Placed full = make(id, mid - X * (midX[k] * sx) - Y * (axisY[k] * cs), X, Y, V3(sx, cs, cs), -1);
             if (b.broken) snap(full, id, lower, upper, 0.45 + 0.1 * luck(wh.spring, 9), 0.7, 0.035 * cs);
-            else add(full);
+            else add(std::move(full));
         }
     }
 
@@ -421,7 +468,7 @@ struct Maker {
         const mk::ModelDef* def = mk::findModel("leaf_pack");
         if (!def) return;
         const int v = pickedOf("leaf_pack"), k = std::min(v, 1);
-        const int leaves = std::max(2, mk::pickedParams(*def, v).i("leaves"));
+        const int leaves = std::max(2, pickedLeaves(*def, v));
         for (const SuspLink& l : c.links) {
             if (l.kind != LINK_LEAF || l.wheel < 0) continue;
             const Wheel& wh = c.wheels[l.wheel];
@@ -448,10 +495,10 @@ struct Maker {
             const double rise = dot(mid - at, Y);
             const double camber = clampTo(std::round((lift + leaves * stackT[k] - eyeDrop[k] - rise) * 100) / 100, -0.3, 0.14);
             const double eyeY = lift - camber + leaves * stackT[k] - eyeDrop[k];
-            part(PK_LEAF, b.broken ? PS_BROKEN : PS_OK, corner(l.wheel) + " LEAF SPRING", l.wheel, -1, l.beam);
-            const Placed full = make("leaf_pack", at + Y * (rise - eyeY), X, Y, V3(span * 0.5 / eyeHalf[k], 1, 1), -1, {{"camber", camber}});
+            part(PK_LEAF, b.broken ? PS_BROKEN : PS_OK, tags ? corner(l.wheel) + " LEAF SPRING" : std::string(), l.wheel, -1, l.beam);
+            Placed full = make("leaf_pack", at + Y * (rise - eyeY), X, Y, V3(span * 0.5 / eyeHalf[k], 1, 1), -1, {{"camber", camber}});
             if (b.broken) snap(full, "leaf_pack", rear, front, 0.5, 0.45, 0.03, 1.6);
-            else add(full);
+            else add(std::move(full));
         }
     }
 };

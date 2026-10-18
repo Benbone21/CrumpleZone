@@ -53,7 +53,7 @@ struct Maker {
         X = norm(X);
         Y = Y - X * dot(Y, X);
         Y = len(Y) > 1e-6 ? norm(Y) : norm(cross(cross(X, kUp), X));
-        Placed pl;
+        Placed pl = takePlaced();  // (last frame's, its room kept: carparts.h)
         pl.id = id, pl.p = at, pl.oriented = true, pl.bare = true, pl.variant = variant, pl.scale = scale;
         pl.ax[0] = X, pl.ax[1] = Y, pl.ax[2] = cross(X, Y);
         std::vector<std::pair<std::string, double>>& set = pl.set;  // (one grab: the part's few params and the three below)
@@ -182,8 +182,13 @@ struct Maker {
     }
 
     void brackets() {
-        std::set<int> done;
-        auto once = [&](int n) { return done.insert(n).second; };
+        static thread_local std::vector<int> done;  // (kept from frame to frame: no garbage)
+        done.clear();
+        auto once = [&](int n) {
+            if (std::find(done.begin(), done.end(), n) != done.end()) return false;
+            done.push_back(n);
+            return true;
+        };
         for (const SuspLink& l : c.links) {
             const Beam& b = c.beams[l.beam];
             const int f = b.a < c.frameNodes ? b.a : b.b;
@@ -209,14 +214,16 @@ struct Maker {
 
     // ---- Body mounts: on the rail beside every station the body's rubber mounts bolt to. ----
     void bodyMounts() {
-        std::set<int> done;
+        static thread_local std::vector<int> done;
+        done.clear();
         for (int bi : c.bodyMountBeams) {
             const Beam& b = c.beams[bi];
             auto it = std::find(c.ladder.begin(), c.ladder.end(), b.a);  // (the rail's end of the mount: one of the two)
             if (it == c.ladder.end()) it = std::find(c.ladder.begin(), c.ladder.end(), b.b);
             if (it == c.ladder.end()) continue;
             const int idx = (int)(it - c.ladder.begin()), station = idx / 8, side = (idx / 4) % 2;
-            if (!done.insert(station * 2 + side).second) continue;
+            if (std::find(done.begin(), done.end(), station * 2 + side) != done.end()) continue;
+            done.push_back(station * 2 + side);
             const V3 top = L(station, side, 3);
             V3 along = station + 1 < c.ladderStations ? L(station, side, 3) - L(station + 1, side, 3) : L(station - 1, side, 3) - L(station, side, 3);
             put("frame_bodymount", top, along, L(station, side, 3) - L(station, side, 1), V3(1, 1, 1), st.mount, L(station, side, 3) - L(station, side, 2), {});
