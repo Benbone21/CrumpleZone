@@ -63,3 +63,19 @@ Not checked: the game was only run through `--bench-suite`, not a normal start.
 1. The TERRAIN ground shader is the GPU limit at every preset above POTATO (about 80% of GPU time at HIGH). Cutting its cost would help most.
 2. Look at the physics mismatch (`3db86794fec05596`) first, before any optimizing here, since it affects correctness rather than speed.
 3. Find out why POTATO sits at about 1.4 to 1.6 ms of SWAP; present overhead may cap fps near 500 to 550.
+
+## Native resolution run (2048x1280, 1 run)
+Raw: `docs/hardware/raw/windows-rtx4070-suite-20261017-220819-2048x1280.txt`. Power plan still Balanced.
+
+| Map | POTATO | LOW | MEDIUM | HIGH |
+|---|---|---|---|---|
+| Frontier avg fps (1% low ms) | 516 (3.65) | 199 (8.01) | 130 (12.72) | 107 (13.68) |
+| Open Country avg fps (1% low ms) | 619 (1.99) | 259 (7.23) | 157 (11.06) | 124 (13.55) |
+| Boulder Gully avg fps (1% low ms) | 480 (3.59) | 225 (8.20) | 139 (11.86) | 110 (14.85) |
+
+Hitches: 1 (Open Country LOW), none elsewhere.
+
+- Going from 1600x900 to 2048x1280 costs about 25 to 40% of fps at LOW to HIGH (Frontier HIGH 163 to 107). POTATO barely changes.
+- Still GPU-bound at LOW to HIGH. TERRAIN GPU is 3.4 to 4.4 ms at LOW and 6.8 to 7.9 ms at HIGH.
+- New at this resolution: **OPAQUE CPU time is 1.6 to 2.4 ms at LOW and 5.4 to 6.5 ms at HIGH**, while its GPU time is only 0.01 to 0.08 ms. That is probably the driver waiting on the GPU inside that stage (same pattern as the Mac's PROPS time), not real CPU work. Worth checking before treating it as a CPU limit.
+- POTATO is still dominated by SWAP (1.4 to 1.6 ms).
