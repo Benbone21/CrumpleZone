@@ -23,9 +23,12 @@ Steps:
 - A cheaper ground shader path for LOW and POTATO (fewer taps and layers). HIGH up close stays the same.
 - The Mac `fieldrepair/steps` bad_alloc. It's being hunted with ASan/UBSan.
 - A model-cache thread race (`models/threads` failing intermittently).
-- **Physics differs between platforms.** Linux is `bbde8f6bd59f9c4a`, Windows `3db86794fec05596`, Mac `69497071eddf9087`. Making them identical is paused for now (multiplayer works without it, since each player owns their car and the server sends positions). Don't try to fix it locally: report your fingerprint, and make sure your own edits don't change it.
+- **Physics differs between platforms.** Linux is `1cb2a908f74c3983`, Windows `3db86794fec05596`, Mac `69497071eddf9087`. Making them identical is paused for now (multiplayer works without it, since each player owns their car and the server sends positions). Don't try to fix it locally: report your fingerprint, and make sure your own edits don't change it.
 
 If one of these turns out to be specific to your machine, say so in your report instead of fixing it.
+
+## Note: physics changed on 2026-10-18
+The rear-knuckle fix for the Jesko weave changed physics on purpose, so every platform's `bench_sim` fingerprint changes once. Linux's is now `1cb2a908f74c3983`. After you sync, record your new fingerprint as the reference for checking your own edits.
 
 ## Windows (RTX 4070 Laptop, Ryzen AI 9 HX 370, 2048x1280 at 240 Hz)
 Phase 1: GPU-bound at LOW and above. TERRAIN is about 80% of GPU time at HIGH, 5 ms at 1600x900 and about 8 ms at native. POTATO is capped by about 1.5 ms of SWAP.

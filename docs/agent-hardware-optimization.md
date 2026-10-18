@@ -21,7 +21,7 @@ What to do in phase 1:
      - Windows: `make build/win/bench_sim.exe` and run it
      - Mac: `make build/bench_sim` and run it
 
-     Record the `state` line. On the Linux desktop it is `bbde8f6bd59f9c4a`. A different value means this platform's physics differs, and multiplayer between platforms could drift. That is important to report.
+     Record the `state` line. On the Linux desktop it is `1cb2a908f74c3983`. A different value means this platform's physics differs, and multiplayer between platforms could drift. That is important to report.
 5. **Play-check, briefly.** Start the game normally, drive for a minute on Frontier at the preset the auto-detect picked, and note that preset. Note any visual glitch, crash, missing asset or input problem.
 6. **Write the report** (below), commit it and push it.
 
@@ -41,7 +41,7 @@ Use a short name, e.g. `windows-rtx4060-baseline.md` or `mac-m2-baseline.md`. Th
 - **Verdict per preset:**
   - CPU-bound or GPU-bound, from the stage times: CPU-bound when the CPU stages sum to more than the GPU total.
   - The limiting stage.
-- **Tests:** the pass/fail counts and any failure not on the known list, plus the `bench_sim` state line and whether it matches `bbde8f6bd59f9c4a`.
+- **Tests:** the pass/fail counts and any failure not on the known list, plus the `bench_sim` state line and whether it matches `1cb2a908f74c3983`.
 - **Auto-detect:** the preset it chose, and whether that was right for this machine.
 - **Problems seen:** crashes, glitches, missing assets, input issues, slow loading. Give exact messages.
 - **Your read:** the 3 things most likely to help this machine, ranked. These are ideas only; don't implement them.
