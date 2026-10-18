@@ -195,6 +195,11 @@ void Sim::lodStep(int self, double dt) {
             vTarget = std::min(vTarget, std::sqrt(vb * vb + 2 * decel * dist));
         }
     }
+    {  // (the driver's own cap while it eases back to its lane: 19 m/s on the line, as aiDrive)
+        const double back = clampd((6.0 - std::fabs(L.lat - kLane)) / 5.0, 0, 1);
+        vTarget = std::min(vTarget, 5.0 + 14.0 * back * back);
+    }
+    vTarget *= 0.94;  // calibrated: the full sim, with its grip and throttle, averages this much under the driver's target
     double gap = 1e9, leadSpeed = 0;
     for (size_t o = 0; o < cars.size(); o++) {
         if ((int)o == self) continue;

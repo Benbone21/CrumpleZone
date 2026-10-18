@@ -240,5 +240,29 @@ SCENARIO(lodHit, "trafficlod/hit-takes-full-damage", "A car that was a proxy and
     }
     ctx.check("both crashes hurt", dmg[0] > 0.01 && dmg[1] > 0.01);
     ctx.metric("hit car's damage, was a proxy / never", dmg[1] / std::max(dmg[0], 1e-6), "", 0.6, 1.6);
-    ctx.metric("hitter's damage, proxy / never", dmgB[1] / std::max(dmgB[0], 1e-6), "", 0.6, 1.6);
+    ctx.metric("hitter's damage, proxy minus never", dmgB[1] - dmgB[0], "", -0.2, 0.2);
+}
+
+namespace {
+// Mean speed (m/s) of the AI car over 12..72 s.
+double meanSpeed(bool lod) {
+    Sim sim;
+    sim.setupEmpty();
+    Ctx cx(sim);
+    Setup s;
+    Car& c = addTraffic(cx, s, lod);
+    double sum = 0;
+    int n = 0;
+    cx.run(72, [&] {
+        if (cx.t > 12) sum += len(c.frame().vel), n++;
+    });
+    return sum / std::max(n, 1);
+}
+}  // namespace
+
+SCENARIO(lodSpeed, "trafficlod/same-speed", "A proxy's mean speed along the road is within 5% of the full sim's") {
+    const double on = meanSpeed(true), off = meanSpeed(false);
+    ctx.metric("mean speed, proxy", on, "m/s", 5, 40);
+    ctx.metric("mean speed, full sim", off, "m/s", 5, 40);
+    ctx.check("within 5%", std::fabs(on - off) < 0.05 * off, std::to_string(on) + " vs " + std::to_string(off));
 }
