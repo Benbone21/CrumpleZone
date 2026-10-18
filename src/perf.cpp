@@ -11,7 +11,7 @@
 #endif
 
 void AdaptiveQuality::init(const RenderSettings& settings, float targetFps) {
-    targetMs_ = 1000.0f / (std::isfinite(targetFps) && targetFps > 0 ? targetFps : 60);
+    targetMs_ = 1000.0f / (std::isfinite(targetFps) && targetFps > 0 ? std::min(targetFps, 144.0f) : 60);
     reset(settings);
 }
 
@@ -111,7 +111,24 @@ int msaaIndex(int samples) {
 }
 }  // namespace
 
-const int kFpsTargets[4] = {60, 120, 144, 0};
+const int kFpsTargets[7] = {kFpsMatchDisplay, 60, 120, 144, 240, 360, 0};
+
+int fpsTargetFromSaved(float v) {
+    if (!std::isfinite(v)) return kFpsMatchDisplay;
+    if (v < 0) return kFpsMatchDisplay;
+    if (v == 0) return 0;
+    int best = 60;
+    for (int k = 1; k < 6; k++)
+        if (kFpsTargets[k] <= v) best = kFpsTargets[k];
+    return best;
+}
+
+int resolveFpsTarget(int setting, int displayHz) {
+    if (setting == kFpsMatchDisplay) return displayHz >= 30 && displayHz <= 1000 ? displayHz : 0;
+    return setting > 0 ? setting : 0;
+}
+
+float adaptiveAim(int resolvedTarget) { return resolvedTarget > 0 ? (float)std::min(resolvedTarget, 144) : 60.0f; }
 
 const char* presetName(int preset) {
     static const char* kNames[6] = {"LOW", "MEDIUM", "HIGH", "ULTRA", "POTATO", "CUSTOM"};

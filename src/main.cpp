@@ -1868,7 +1868,11 @@ int main(int argc, char** argv) {
     double levelHours = -1;  // the playing level's own hour (-1: none)
     bool dayFromHost = false;  // in someone else's game: the sky is theirs (and our own clock waits in settings)
     int lampMode = opt.lamps >= 0 && opt.lamps < LAMP_MODES ? opt.lamps : LAMPS_AUTO;  // the player's headlight switch
+    int displayHz = 0;  // the window's display refresh rate (0 unknown), for FPS TARGET: MATCH DISPLAY
+    auto fpsCap = [&]() { return resolveFpsTarget(settings.fpsTarget, displayHz); };
     auto applySettings = [&]() {
+        { SDL_DisplayMode dm = {}; displayHz = SDL_GetCurrentDisplayMode(std::max(SDL_GetWindowDisplayIndex(win), 0), &dm) == 0 ? dm.refresh_rate : 0; }
+
         const int threads = resolvePhysicsThreads(settings.physicsThreads);
         if (threads != sim.physicsThreads()) {
             try {
@@ -1886,7 +1890,7 @@ int main(int argc, char** argv) {
         if (fs != settings.fullscreen && !scripted)
             SDL_SetWindowFullscreen(win, settings.fullscreen ? (uint32_t)SDL_WINDOW_FULLSCREEN_DESKTOP : 0u);
         setVsync(settings.vsync && opt.vsync && !scripted);
-        adaptiveQuality.init(settings.gfx, settings.fpsTarget > 0 ? (float)settings.fpsTarget : 60.0f);
+        adaptiveQuality.init(settings.gfx, adaptiveAim(fpsCap()));
         sim.realRecovery = settings.realRecovery;
         for (Car& c : sim.cars) if (!c.remote) c.winchSpeed = settings.winchSpeed;
         sim.steeringAssist = settings.steeringAssist;
@@ -1899,7 +1903,7 @@ int main(int argc, char** argv) {
     QualityProbe probe;
     bool probePending = autoDetect;  // (waits for the world to be drawing)
     auto startProbe = [&]() {
-        probe.start(guessPreset(hardware), settings.fpsTarget > 0 ? (float)settings.fpsTarget : 60.0f);
+        probe.start(guessPreset(hardware), adaptiveAim(fpsCap()));
         applyPreset(settings.gfx, probe.preset());
         applySettings();
         hud.toast(std::string("DETECTING GRAPHICS: ") + presetName(probe.preset()) + "?");
@@ -2872,6 +2876,7 @@ int main(int argc, char** argv) {
     // --bench: a lap round where the player starts, the same every run.
     const int benchWarm = opt.benchWarm;
     BenchStats benchStats;
+    const bool offscreenBench = [] { const char* d = std::getenv("SDL_VIDEODRIVER"); return d && std::string(d) == "offscreen"; }();
     const V3 benchCentre = sim.cars.empty() ? V3() : sim.cars[sim.player].frame().com;
     if (opt.bench) std::printf("bench: %d frames after %d to warm up, %dx%d, quality %d%s\n", opt.bench, benchWarm, opt.width, opt.height,
                                presetOf(settings.gfx), opt.benchSync ? ", GPU synced per stage" : "");
@@ -5095,7 +5100,7 @@ int main(int argc, char** argv) {
             if (frame >= *opt.shotFrames.rbegin()) running = false;
         }
         renderer.passMark(FP_SWAP);
-        if (opt.bench) gl::Finish();  // (the frame isn't done until the GPU is: offscreen, the swap doesn't wait for it)
+        if (opt.bench && offscreenBench) gl::Finish();  // (offscreen the swap doesn't wait for the GPU, so the bench waits; with a real window it must not: a Finish here made CPU and GPU run one after the other)
         SDL_GL_SwapWindow(win);
         if (allocWatch) {
             const uint64_t n = allocstat::count(), all = allocstat::countAll();
@@ -5103,8 +5108,8 @@ int main(int argc, char** argv) {
             if (frame > allocWarm) allocFrames.push_back(n - allocLast), allocAllSum += all - allocAllLast;
             allocLast = n, allocAllLast = all;
         }
-        if (!scripted && settings.fpsTarget > 0 && SDL_GL_GetSwapInterval() == 0) {  // FPS TARGET with VSync off: the frame cap
-            const uint64_t until = now + freq / (uint64_t)settings.fpsTarget;
+        if (const int cap = fpsCap(); !scripted && cap > 0 && SDL_GL_GetSwapInterval() == 0) {  // FPS TARGET with VSync off: the frame cap
+            const uint64_t until = now + freq / (uint64_t)cap;
             for (uint64_t t = SDL_GetPerformanceCounter(); t < until; t = SDL_GetPerformanceCounter()) {
                 const double leftMs = (double)(until - t) * 1000 / freq;
                 if (leftMs > 2) SDL_Delay((uint32_t)(leftMs - 1.5));  // (sleep most of it: SDL asks Windows for 1 ms timer ticks)
