@@ -5013,6 +5013,8 @@ void Renderer::gpuFrameBegin() {
 }
 
 void Renderer::text(float x, float y, float s, const std::string& str, float r, float g, float b, float a) {
+    a *= hudAlpha;
+    if (a <= 0) return;
     const float cw = 6.0f / 96.0f, ch = 8.0f / 48.0f;
     for (char raw : str) {
         int c = (unsigned char)raw;
@@ -5030,6 +5032,8 @@ void Renderer::text(float x, float y, float s, const std::string& str, float r, 
 }
 
 void Renderer::rect(float x, float y, float w, float h, float r, float g, float b, float a) {
+    a *= hudAlpha;
+    if (a <= 0) return;
     // Sample the middle of the solid glyph (code 127).
     float u = ((127 - 32) % 16 + 0.5f) * 6.0f / 96.0f, v = ((127 - 32) / 16 + 0.5f) * 8.0f / 48.0f;
     float q[6][2] = {{x, y}, {x + w, y}, {x + w, y + h}, {x, y}, {x + w, y + h}, {x, y + h}};
@@ -5037,6 +5041,8 @@ void Renderer::rect(float x, float y, float w, float h, float r, float g, float 
 }
 
 void Renderer::tri(float x0, float y0, float x1, float y1, float x2, float y2, float r, float g, float b, float a) {
+    a *= hudAlpha;
+    if (a <= 0) return;
     float u = ((127 - 32) % 16 + 0.5f) * 6.0f / 96.0f, v = ((127 - 32) / 16 + 0.5f) * 8.0f / 48.0f;
     hudVerts.insert(hudVerts.end(), {x0, y0, u, v, r, g, b, a, x1, y1, u, v, r, g, b, a, x2, y2, u, v, r, g, b, a});
 }

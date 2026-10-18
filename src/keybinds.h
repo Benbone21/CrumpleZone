@@ -71,6 +71,7 @@ enum KeyAction {
     KA_CAMERA,
     KA_MAP,
     KA_PHOTO,
+    KA_HUD_ALL,  // hold: the whole HUD, whatever the contextual HUD is hiding
     KA_DEBUG_INFO,  // F3: the debug info screen (was the FPS counter)
     // GAME
     KA_MENU,

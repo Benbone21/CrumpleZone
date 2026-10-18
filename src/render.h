@@ -141,6 +141,7 @@ public:
     void drawScene(const Sim& sim, const View& view, DebugView debug, Effects* effects);
 
     // HUD (pixel coordinates, origin top-left). Queue with text()/rect(), then flushHud().
+    float hudAlpha = 1;  // multiplies the alpha of text, rects, tris and arcs queued after it (the contextual HUD's fades)
     void text(float x, float y, float scale, const std::string& s, float r, float g, float b, float a = 1);
     void rect(float x, float y, float w, float h, float r, float g, float b, float a);
     void tri(float x0, float y0, float x1, float y1, float x2, float y2, float r, float g, float b, float a);

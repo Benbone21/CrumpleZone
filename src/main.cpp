@@ -50,6 +50,7 @@
 #include "gamepad.h"
 #include "gl.h"
 #include "gpu.h"
+#include "hudcontext.h"
 #include "hudlayout.h"
 #include "hudkit.h"
 #include "level.h"
@@ -119,6 +120,7 @@ struct Options {
     std::string benchOut;         // --bench-out FILE: where the bench report goes (default: configDir()/bench/<date-time>-<map>-<quality>-<WxH>.txt)
     bool benchSync = false;       // --bench-sync: wait for the GPU at every stage (each stage's whole cost, no overlap)
     bool mph = false;             // --mph
+    bool fullHud = false;         // --full-hud: SHOW FULL HUD on
     double throttleCap = -1;      // --throttle PCT[,RESPONSE[,PAD]]: the throttle limit (testing)
     int throttleResp = 0, throttlePad = 0;
     int map = -1;                 // --map N: 0 proving ground, 1 mountain
@@ -286,7 +288,7 @@ struct BuildWatch {
 #ifndef _WIN32
         static const std::set<std::string> withValue = {"--map", "--player", "--spawn", "--resume-model", "--scenario", "--script",
                                                         "--shot-prefix", "--shot-frames", "--clipboard", "--menu", "--orbit", "--spawn-section", "--eye"};
-        static const std::set<std::string> flags = {"--garage", "--show-help", "--debug-screen", "--debug-graph"};
+        static const std::set<std::string> flags = {"--garage", "--show-help", "--debug-screen", "--debug-graph", "--full-hud"};
         std::vector<std::string> args = {exe};
         for (int i = 1; i < argc; i++) {
             const std::string a = argv[i];
@@ -369,6 +371,7 @@ Options parseArgs(int argc, char** argv) {
         }
         else if (a == "--debug-graph") o.debugScreen = 2;
         else if (a == "--mph") o.mph = true;
+        else if (a == "--full-hud") o.fullHud = true;
         else if (a == "--throttle") {
             std::string v = next();
             std::sscanf(v.c_str(), "%lf,%d,%d", &o.throttleCap, &o.throttleResp, &o.throttlePad);
@@ -719,6 +722,9 @@ struct HudState {
     hudlayout::TopLeftState tl;  // which top-left panels are up this frame (set before drawHud): they stack, not overlap
     bool levelOn = false;        // the level run's clock panel is up under the compass (the toasts start below it)
     float throttleCap = 1;  // the throttle limit (settings): shown by the gear when it's under 100%
+    float blink = 0;        // the shift light's clock
+    hudctx::Context ctx;    // which pieces show now (hudcontext.h): drawn at ctx.alpha(...)
+    bool nearTruck = false, trunkOpen = false, airing = false, fuelGauge = false;  // (set before the context updates)
     void toast(const std::string& text) {
         for (Toast& t : toasts)
             if (t.text == text) {
@@ -738,8 +744,56 @@ struct HudState {
 
 using namespace hud;
 
+// Draws everything queued while it lives at the alpha of one contextual element.
+struct HudFade {
+    Renderer& r;
+    float old;
+    HudFade(Renderer& rr, const HudState& hud, int e) : r(rr), old(rr.hudAlpha) { r.hudAlpha = old * hud.ctx.alpha(e); }
+    ~HudFade() { r.hudAlpha = old; }
+};
+
+// What most of the tires are on (-1: none touching), and the worst sink and tread clog.
+int dominantSurface(const Car& car, double* sinkOut = nullptr, double* clogOut = nullptr) {
+    int count[SURF_COUNT] = {0};
+    double sink = 0, clog = 0;
+    int on = 0;
+    for (const Wheel& wh : car.wheels)
+        if (wh.load > 0) count[wh.surface]++, on++, sink = std::max(sink, (double)wh.sink), clog = std::max(clog, (double)wh.clog);
+    if (sinkOut) *sinkOut = sink;
+    if (clogOut) *clogOut = clog;
+    if (on == 0) return -1;
+    int s = 0;
+    for (int k = 1; k < SURF_COUNT; k++)
+        if (count[k] > count[s]) s = k;
+    return s;
+}
+
+// The contextual HUD's inputs for this frame, and the step.
+void updateHudContext(HudState& hud, const Sim& sim, bool fuelOn, float dt) {
+    const Car& car = sim.cars[sim.player];
+    hudctx::Sample s;
+    s.carId = sim.player;
+    s.speed = (float)len(car.frame().vel);
+    if (fuelOn && !car.isProp() && car.fuel >= 0 && car.spec->fuelCapacity > 0) {
+        s.fuelFrac = (float)(car.fuel / car.spec->fuelCapacity);
+        s.fuelL = (float)car.fuel, s.jerryL = (float)car.jerry, s.outOfFuel = car.outOfFuel();
+    }
+    double sink = 0, clog = 0;
+    s.surface = car.isProp() ? -1 : dominantSurface(car, &sink, &clog);
+    s.sunk = sink > 0.02, s.clogged = clog > 0.35;
+    s.nearTruck = hud.nearTruck, s.trunkOpen = hud.trunkOpen, s.ropeOn = sim.ropeOn(sim.player) >= 0;
+    if (!car.isProp() && (car.spec->extras & EXTRA_WINCH))
+        for (int g = 0; g < GEAR_COUNT; g++) s.anchorSig = s.anchorSig * 31 + sim.anchorStock.n[g] + 1;
+    s.damage = (float)clampd(car.damage * 2.0, 0, 1);
+    s.psi = (float)car.tirePsi, s.streetPsi = (float)car.spec->tirePsi, s.airing = hud.airing;
+    s.hasDriveline = !car.isProp() && (car.spec->transfer != XFER_NONE || car.spec->lockerFront || car.spec->lockerRear);
+    if (const DriveMode* m = car.isProp() ? nullptr : car.mode()) s.mode = (int)(m - driveModes(car.spec->transfer).data()) + 1, s.lowRange = m->low;
+    s.lockF = car.lockFront, s.lockR = car.lockRear, s.lockC = car.centerLocked(), s.sway = car.swayDisconnected;
+    hud.ctx.update(s, dt);
+}
+
 void drawGauges(Renderer& r, const Car& car, HudState& hud, float u, int W, int H, double dt, bool mph) {
-    const float R = 92 * u, cx = W - R - 26 * u, cy = H - R - 18 * u;
+    const float R = hudlayout::kDialR * u, cx = W - R - 26 * u, cy = H - R - 18 * u;
     const float a0 = 0.75f * (float)M_PI, a1 = 2.25f * (float)M_PI;
     const double redline = car.spec->redline, maxRpm = std::ceil((redline + 600) / 1000) * 1000;
     float target = (float)clampd(car.rpm / maxRpm, 0, 1);
@@ -748,13 +802,17 @@ void drawGauges(Renderer& r, const Car& car, HudState& hud, float u, int W, int 
     r.arc(cx, cy, 0, R, 0, 2 * (float)M_PI, 0.03f, 0.035f, 0.045f, 0.55f, 48);  // dial face
     r.arc(cx, cy, R - 9 * u, R - 4 * u, a0, a1, 0.35f, 0.37f, 0.4f, 0.55f);      // track
     float red0 = a0 + (a1 - a0) * (float)(redline / maxRpm);
-    r.arc(cx, cy, R - 9 * u, R - 4 * u, red0, a1, 0.85f, 0.15f, 0.12f, 0.9f, 12);  // redline zone
+    r.arc(cx, cy, R - 12 * u, R - 2 * u, red0, a1, 0.85f, 0.15f, 0.12f, 0.9f, 12);  // redline zone (wide: it's the one to see coming)
+    hud.blink += (float)dt;
+    if (car.manualShift && !car.engineDead && car.rpm >= redline * 0.94 && std::fmod(hud.blink, 0.2f) < 0.1f)  // shift light: the rim flashes near redline
+        r.arc(cx, cy, R - 1 * u, R + 3 * u, 0, 2 * (float)M_PI, 1.0f, 0.25f, 0.15f, 0.95f, 48);
     float fillEnd = a0 + (a1 - a0) * hud.needle;
     r.arc(cx, cy, R - 9 * u, R - 4 * u, a0, std::min(fillEnd, red0), 0.98f, 0.62f, 0.18f, 0.95f, 40);
     // Ticks every 1000 rpm, labelled.
     for (int k = 0; k <= (int)(maxRpm / 1000); k++) {
         float a = a0 + (a1 - a0) * (float)(k * 1000 / maxRpm);
         r.arc(cx, cy, R - 16 * u, R - 10 * u, a - 0.012f, a + 0.012f, 0.85f, 0.85f, 0.88f, 0.9f, 1);
+        if (u < 1 && k % 2) continue;  // (small dial: every other label)
         std::string n = std::to_string(k);
         float ts = px(1.1f * u), tx = cx + std::cos(a) * (R - 24 * u) - r.textWidth(n, ts) / 2, ty = cy + std::sin(a) * (R - 24 * u) - 4 * ts;
         r.text(tx, ty, ts, n, 0.75f, 0.76f, 0.8f, 0.9f);
@@ -768,15 +826,22 @@ void drawGauges(Renderer& r, const Car& car, HudState& hud, float u, int W, int 
     // Speed and gear.
     Frame fr = car.frame();
     std::string spd = std::to_string(Car::speedoDisplay(car.speedoMs(), mph));
-    float ss = px(3.5f * u), sm = px(1.2f * u);
-    label(r, cx - r.textWidth(spd, ss) / 2, cy + 12 * u, ss, spd, 1, 1, 1);
+    float ss = px(4.5f * u), sm = px(1.2f * u);  // (speed is what's read most: big, 999 still fits)
+    label(r, cx - r.textWidth(spd, ss) / 2, cy + 8 * u, ss, spd, 1, 1, 1);
     const char* unit = mph ? "MPH" : "KM/H";
-    r.text(cx - r.textWidth(unit, sm) / 2, cy + 12 * u + 9 * ss, sm, unit, 0.7f, 0.72f, 0.76f);
+    r.text(cx - r.textWidth(unit, sm) / 2, cy + 8 * u + 8 * ss + 3 * u, sm, unit, 0.78f, 0.8f, 0.84f);
     // Gear in a small box in the dial's bottom opening.
     std::string gear = car.engineDead ? "-" : car.gear < 0 ? "R" : car.gear == 0 ? "N" : std::to_string(car.gear);
     float gs = px(2.2f * u), gw = 12 * gs * 0.5f + 8 * u, gh = 8 * gs + 6 * u, gy = cy + R - gh - 2 * u;
     pill(r, cx - gw / 2, gy, gw, gh, 0.0f, 0.0f, 0.0f, 0.55f);
     r.text(cx - r.textWidth(gear, gs) / 2, gy + 3 * u + gs * 0.5f, gs, gear, 1.0f, 0.72f, 0.25f);
+    if (const DriveMode* m = car.isProp() ? nullptr : car.mode()) {  // the drive mode, a chip beside the gear
+        const float cs = px(1.3f * u), cw = r.textWidth(m->name, cs) + 10 * u, ch = 8 * cs + 6 * u;
+        const std::array<float, 3> mc = m->low ? std::array<float, 3>{1.0f, 0.75f, 0.2f} : m->front ? std::array<float, 3>{0.5f, 0.9f, 0.5f} : std::array<float, 3>{0.75f, 0.77f, 0.8f};
+        const float chx = cx - gw / 2 - 6 * u - cw, chy = gy + (gh - ch) / 2;
+        pill(r, chx, chy, cw, ch, mc[0] * 0.25f, mc[1] * 0.25f, mc[2] * 0.25f, 0.8f);
+        r.text(chx + 5 * u, chy + 3 * u, cs, m->name, mc[0], mc[1], mc[2]);
+    }
     if (hud.throttleCap < 0.995f && !car.isProp()) {  // the throttle limit, under the gear box
         const std::string txt = "THROTTLE " + throttle::percent(hud.throttleCap);
         const float ts2 = px(1.0f * u);
@@ -789,9 +854,6 @@ void drawGauges(Renderer& r, const Car& car, HudState& hud, float u, int W, int 
     std::vector<std::pair<std::string, std::array<float, 3>>> lights;
     if (!car.tractionControl && car.spec->tractionFitted) lights.push_back({"TC OFF", {1.0f, 0.75f, 0.2f}});
     if (car.manualShift) lights.push_back({"MAN", {0.6f, 0.9f, 0.5f}});
-    if (const DriveMode* m = car.isProp() ? nullptr : car.mode())
-        lights.push_back({m->name, m->low ? std::array<float, 3>{1.0f, 0.75f, 0.2f}
-                                   : m->front ? std::array<float, 3>{0.5f, 0.9f, 0.5f} : std::array<float, 3>{0.7f, 0.72f, 0.76f}});
     if (car.lockFront) lights.push_back({"F LOCK", {1.0f, 0.75f, 0.2f}});
     if (car.lockRear) lights.push_back({"R LOCK", {1.0f, 0.75f, 0.2f}});
     if (car.swayDisconnected) lights.push_back({"SWAY", {1.0f, 0.75f, 0.2f}});
@@ -799,15 +861,10 @@ void drawGauges(Renderer& r, const Car& car, HudState& hud, float u, int W, int 
     if (car.ai) lights.push_back({"AUTO", {0.4f, 0.85f, 1.0f}});
     // What the tires are on (most of them), and how they're doing in it.
     if (!car.isProp()) {
-        int count[SURF_COUNT] = {0};
         double sink = 0, clog = 0;
-        int on = 0;
-        for (const Wheel& wh : car.wheels)
-            if (wh.load > 0) count[wh.surface]++, on++, sink = std::max(sink, (double)wh.sink), clog = std::max(clog, (double)wh.clog);
-        if (on > 0) {
-            int s = 0;
-            for (int k = 1; k < SURF_COUNT; k++)
-                if (count[k] > count[s]) s = k;
+        const int s = dominantSurface(car, &sink, &clog);
+        if (s >= 0) {
+            const HudFade fade(r, hud, hudctx::E_TERRAIN);
             std::string txt = std::string(surfaceInfo((Surface)s).name) + "  " + tireTypeName(car.spec->tireType) + " TIRES";
             if (sink > 0.02) txt += "  SUNK " + std::to_string((int)std::lround(sink * 100)) + " CM";
             if (clog > 0.35) txt += "  TREAD PACKED WITH MUD";
@@ -831,10 +888,11 @@ void drawGauges(Renderer& r, const Car& car, HudState& hud, float u, int W, int 
 // 4x4 schematic beside the gauges (trucks with a transfer case or lockers): wheels lit
 // when driven, the prop shaft solid when front and rear are tied together, and a block
 // on each axle whose diff is locked.
-void drawDriveline(Renderer& r, const Car& car, float u, int W, int H) {
+void drawDriveline(Renderer& r, const Car& car, const HudState& hud, float u, int W, int H) {
     if (car.isProp() || (car.spec->transfer == XFER_NONE && !car.spec->lockerFront && !car.spec->lockerRear)) return;
-    const float R = 92 * u, gaugeX = W - 2 * R - 26 * u;
+    const float R = hudlayout::kDialR * u, gaugeX = W - 2 * R - 26 * u;
     const float w = 46 * u, h = 70 * u, x = gaugeX - w - 26 * u, y = H - h - 40 * u;
+    HudFade fade(r, hud, hudctx::E_DRIVELINE);
     pill(r, x - 10 * u, y - 10 * u, w + 20 * u, h + 34 * u, 0.0f, 0.0f, 0.0f, 0.4f);
     const float on[3] = {1.0f, 0.72f, 0.25f}, off[3] = {0.42f, 0.44f, 0.48f}, lockC[3] = {1.0f, 0.3f, 0.22f};
     auto axle = [&](bool front, float ay) {
@@ -866,6 +924,7 @@ void drawDriveline(Renderer& r, const Car& car, float u, int W, int H) {
         r.text(x + w / 2 - r.textWidth(m->name, s) / 2, y + h + 6 * u, s, m->name, 1, 1, 1, 0.95f);
     }
     // Tire pressure (orange when aired down) and the sway bar, above the schematic.
+    r.hudAlpha = fade.old * hud.ctx.alpha(hudctx::E_PRESSURE);
     const float s = px(1.1f * u);
     char buf[32];
     std::snprintf(buf, sizeof buf, "%d PSI", (int)std::lround(car.tirePsi));
@@ -912,12 +971,13 @@ void drawRecovery(Renderer& r, const Sim& sim, const HudState& hud, float u, int
 }
 
 // The anchor gear on you (anchors.h), small, above the fuel gauge: only in a truck with a winch.
-void drawAnchors(Renderer& r, const Sim& sim, float u, int W, int H) {  // (the column above the dial: hudlayout.h)
+void drawAnchors(Renderer& r, const Sim& sim, const HudState& hud, float u, int W, int H) {  // (the column above the dial: hudlayout.h)
     const Car& car = sim.cars[sim.player];
     if (car.isProp() || !(car.spec->extras & EXTRA_WINCH)) return;
     const std::string line = anchors::hudLine(sim.anchorStock);
     const hudlayout::Column col = hudlayout::rightColumn(u, W, H, 0, 0, (float)line.size());
     const float s = col.anchorScale, x = col.anchors.x + 8 * u, y = col.anchors.y + 5 * u;
+    const HudFade fade(r, hud, hudctx::E_ANCHORS);
     pill(r, col.anchors.x, col.anchors.y, col.anchors.w, col.anchors.h, 0, 0, 0, 0.5f);
     // (The HUD's amber; red for a kind you've run out of.)
     float cx = x;
@@ -929,11 +989,19 @@ void drawAnchors(Renderer& r, const Sim& sim, float u, int W, int H) {  // (the 
     }
 }
 
+// A bottom-centre prompt in its slot (hudlayout::prompt): shrinks, then clips, to the room it has.
+void drawPrompt(Renderer& r, float u, int W, int H, int slot, const std::string& text, float br, float bg, float bb, float ba, float tr, float tg, float tb) {
+    float s = 1;
+    const hudlayout::Rect q = hudlayout::prompt(u, W, H, slot, (float)text.size(), &s);
+    const int fit = hudlayout::fitChars(s, q.w - 14 * s);
+    centeredPill(r, W / 2.0f, q.y, s, text.substr(0, (size_t)fit), br, bg, bb, ba, tr, tg, tb);
+}
+
 // Repair station status while parked on (or rolling onto) a pad.
 void drawStation(Renderer& r, const Sim& sim, float u, int W, int H) {
     const Car& car = sim.cars[sim.player];
     if (car.station < 0 && !car.isProp() && car.needsFieldRepair() && len(car.frame().vel) < 0.5) {  // (fixes.h: hands-on)
-        centeredPill(r, W / 2.0f, H - 70 * u, px(1.5f * u), ("SOMETHING'S BROKEN: GET OUT (" + K(KA_GET_IN_OUT) + ") AND FIX IT, OR GET TO A REPAIR STATION"), 0.08f, 0.05f, 0.02f, 0.95f, 1.0f, 0.75f, 0.4f);
+        drawPrompt(r, u, W, H, 0, "SOMETHING'S BROKEN: GET OUT (" + K(KA_GET_IN_OUT) + ") AND FIX IT, OR GET TO A REPAIR STATION", 0.08f, 0.05f, 0.02f, 0.95f, 1.0f, 0.75f, 0.4f);
         return;
     }
     if (car.station < 0 || car.isProp()) return;
@@ -945,7 +1013,7 @@ void drawStation(Renderer& r, const Sim& sim, float u, int W, int H) {
         std::snprintf(buf, sizeof buf, "%s: STOP ON THE PAD FOR REPAIRS (%.0f S)", st.name, car.repairSeconds());
     else
         std::snprintf(buf, sizeof buf, "%s: REPAIRING %d%%", st.name, (int)std::lround(100 * car.repairTime / car.repairSeconds()));
-    centeredPill(r, W / 2.0f, H - 70 * u, px(1.6f * u), buf, 0.02f, 0.08f, 0.04f, 0.95f, 0.6f, 1.0f, 0.6f);
+    drawPrompt(r, u, W, H, 0, buf, 0.02f, 0.08f, 0.04f, 0.95f, 0.6f, 1.0f, 0.6f);
 }
 
 // Compass strip across the top: headings, the nearest repair station, the summit.
@@ -1000,18 +1068,22 @@ void drawCompass(Renderer& r, const Sim& sim, const NetSession& net, const View&
         }
 }
 
-void drawVehicleCard(Renderer& r, const Car& car, float u, int W, int H) {
+void drawVehicleCard(Renderer& r, const Car& car, const HudState& hud, float u, int W, int H) {
     const bool schematic = !car.isProp() && (car.spec->transfer != XFER_NONE || car.spec->lockerFront || car.spec->lockerRear);  // (drawDriveline's)
     float s = px(2.0f * u), sm = hudlayout::cardScale(u, (float)car.spec->modSummary.size(), W, H, schematic), x = 22 * u;
     float y = H - 26 * u - 8 * s - 10 * sm - (car.isProp() ? 0 : 8 * sm + 5 * u) - (car.spec->modSummary.empty() ? 0 : 8 * sm + 5 * u);
     label(r, x, y, s, car.spec->name, 1, 1, 1);
     float dmg = (float)clampd(car.damage * 2.0, 0, 1), bw = 150 * u, by = y + 8 * s + 4 * u;
-    r.rect(x, by, bw, 4 * u, 1, 1, 1, 0.22f);
-    r.rect(x, by, bw * dmg, 4 * u, 0.95f, 0.3f + 0.45f * (1 - dmg), 0.15f, 0.95f);
     char buf[32];
-    std::snprintf(buf, sizeof(buf), "DAMAGE %d%%", (int)std::lround(dmg * 100));
-    label(r, x, by + 8 * u, sm, buf, 0.85f, 0.87f, 0.9f, 0.95f);
+    {  // (the damage bar and its percentage: after a hit, or when it's bad)
+        const HudFade fade(r, hud, hudctx::E_DAMAGE);
+        r.rect(x, by, bw, 4 * u, 1, 1, 1, 0.22f);
+        r.rect(x, by, bw * dmg, 4 * u, 0.95f, 0.3f + 0.45f * (1 - dmg), 0.15f, 0.95f);
+        std::snprintf(buf, sizeof(buf), "DAMAGE %d%%", (int)std::lround(dmg * 100));
+        label(r, x, by + 8 * u, sm, buf, 0.85f, 0.87f, 0.9f, 0.95f);
+    }
     if (!car.isProp()) {
+        const HudFade fade(r, hud, hudctx::E_CARINFO);  // (weight and mods: when stopped)
         int f = (int)std::lround(car.frontShare * 100);
         std::snprintf(buf, sizeof(buf), "%d KG  %d/%d", (int)std::lround(car.mass / 10) * 10, f, 100 - f);
         label(r, x, by + 8 * u + 8 * sm + 5 * u, sm, buf, 0.62f, 0.65f, 0.7f, 0.9f);  // weight, front/rear split
@@ -1187,6 +1259,7 @@ void drawHelp(Renderer& r, float u, int W, int H, bool mph) {
         {K(KA_CAMERA), "CAMERA"},                                        {"MOUSE", "LOOK / ZOOM"},
         {K(KA_PAUSE), "PAUSE"},                                          {K(KA_TRACTION), "TRACTION CONTROL"},
         {K(KA_FULLSCREEN), "FULLSCREEN"},                                {K(KA_PHOTO), "HIDE THE HUD (PHOTOS)"},
+        {K(KA_HUD_ALL), "HOLD: SHOW THE FULL HUD"},
         {K(KA_DEBUG_INFO), "DEBUG SCREEN (SHIFT: GRAPH)"},
         {K(KA_DEV_MENU), "DEV MENU: SPAWN, TELEPORT, DEBUG"},            {K(KA_MENU), "MENU: CARS, SETTINGS, QUIT"},
         {K(KA_HELP), "CLOSE"},
@@ -1394,21 +1467,21 @@ void drawWinchAim(Renderer& r, const Sim& sim, const WinchAim& aim, const View& 
         if (!t.usable) label(r, sx - r.textWidth(t.why, ts) / 2, sy + b + 6 * u + 8 * ts + 4 * u, ts, t.why, 1.0f, 0.55f, 0.4f);
     }
     const char* stage = aim.kind == ROPE_WINCH ? "WINCH: CHOOSE AN ANCHOR" : aim.sourceHook < 0 ? "STRAP: CHOOSE YOUR FRONT OR REAR POINT" : "STRAP: CHOOSE THE OTHER VEHICLE'S POINT (9 M)";
-    centeredPill(r, W / 2.0f, H - 139 * u, px(1.5f * u), stage, 0.02f, 0.02f, 0.03f, 0.95f, 1.0f, 0.75f, 0.3f);
+    drawPrompt(r, u, W, H, 1, stage, 0.02f, 0.02f, 0.03f, 0.95f, 1.0f, 0.75f, 0.3f);
     if (!aim.pointer) {
         r.rect(W * 0.5f - 8 * u, H * 0.5f - u, 16 * u, 2 * u, 1, 1, 1, 0.8f);
         r.rect(W * 0.5f - u, H * 0.5f - 8 * u, 2 * u, 16 * u, 1, 1, 1, 0.8f);
     }
     const std::string padHelp = "RIGHT STICK AIMS   " + std::string(pad::hint("", pad::B_A)) + ": SELECT   " + pad::hint("", pad::B_B) + ": CANCEL";
     const char* help = pad::ui.last ? padHelp.c_str() : "CLICK: SELECT   MIDDLE DRAG: LOOK   WHEEL: ZOOM   ESC: CANCEL";
-    centeredPill(r, W / 2.0f, H - 110 * u, px(1.5f * u), help, 0.02f, 0.02f, 0.03f, 0.95f, 1.0f, 0.75f, 0.3f);
+    drawPrompt(r, u, W, H, 0, help, 0.02f, 0.02f, 0.03f, 0.95f, 1.0f, 0.75f, 0.3f);
 }
 
 // Multiplayer: who's here (top right), and a name tag over each of their vehicles.
-void drawPlayers(Renderer& r, const Sim& sim, const NetSession& net, const View& view, float u, int W, int H) {
+void drawPlayers(Renderer& r, const Sim& sim, const NetSession& net, const View& view, float u, int W, int H, bool fpsOn) {
     if (!net.active()) return;
     const float s = px(1.3f * u), lh = 8 * s + 6 * u;
-    float y = 34 * u;
+    float y = hudlayout::playersList(u, W, 1, 0, fpsOn).y;  // (under the FPS block when that is up)
     for (int k = 0; k < net::kMaxPeers; k++) {
         const NetPlayer& p = net.players[k];
         if (!p.active) continue;
@@ -1480,12 +1553,12 @@ void drawHud(Renderer& r, const Sim& sim, const View& view, HudState& hud, const
     float u = std::max(0.75f, H / 720.0f);
     const Car& car = sim.cars[sim.player];
     drawGauges(r, car, hud, u, W, H, dt, mph);
-    drawDriveline(r, car, u, W, H);
-    drawVehicleCard(r, car, u, W, H);
+    drawDriveline(r, car, hud, u, W, H);
+    drawVehicleCard(r, car, hud, u, W, H);
     drawRecovery(r, sim, hud, u, W);
-    drawAnchors(r, sim, u, W, H);
+    drawAnchors(r, sim, hud, u, W, H);
     drawStation(r, sim, u, W, H);
-    if (!hud.debugOn) drawPlayers(r, sim, net, view, u, W, H);  // (F3 lists them itself)
+    if (!hud.debugOn) drawPlayers(r, sim, net, view, u, W, H, hud.showFps);  // (F3 lists them itself)
     drawWinchAim(r, sim, aim, view, u, W, H);
     drawPilot(r, sim, view, u, W, H);
     drawCaches(r, career, hud, caches, view, u, W, H);
@@ -1588,12 +1661,13 @@ void drawHud(Renderer& r, const Sim& sim, const View& view, HudState& hud, const
     }
     if (hud.showFps && !hud.debugOn) {
         std::snprintf(buf, sizeof(buf), "%d FPS", (int)std::lround(fps));
-        label(r, W - r.textWidth(buf, px(1.3f * u)) - 10 * u, 8 * u, px(1.3f * u), buf, 0.8f, 0.9f, 0.8f);
+        const hudlayout::Rect fb = hudlayout::fpsBlock(u, W, 33);  // (right aligned in its block: hudlayout.h)
+        const float s1 = px(1.3f * u), s2 = px(1.0f * u);
+        label(r, fb.r() - r.textWidth(buf, s1), fb.y, s1, buf, 0.8f, 0.9f, 0.8f);
         // (Which chip draws it: on a laptop with two, the built-in one is far slower.)
-        if (!hud.gpu.empty()) r.text(W - r.textWidth(hud.gpu, px(1.0f * u)) - 10 * u, 8 * u + 8 * px(1.3f * u) + 4 * u, px(1.0f * u), hud.gpu, 0.7f, 0.75f, 0.8f);
+        if (!hud.gpu.empty()) r.text(fb.r() - r.textWidth(hud.gpu, s2), fb.y + 8 * s1 + 4 * u, s2, hud.gpu, 0.7f, 0.75f, 0.8f);
         std::snprintf(buf, sizeof(buf), "PHYSICS %.1f MS  DRAW CPU %.1f MS", hud.physicsMs, hud.drawCpuMs);
-        r.text(W - r.textWidth(buf, px(1.0f * u)) - 10 * u, 8 * u + 8 * px(1.3f * u) + 8 * px(1.0f * u) + 8 * u,
-               px(1.0f * u), buf, 0.7f, 0.75f, 0.8f);
+        r.text(fb.r() - r.textWidth(buf, s2), fb.y + 8 * s1 + 8 * s2 + 8 * u, s2, buf, 0.7f, 0.75f, 0.8f);
     }
     if (hud.devHotkeys) {  // the key mode: 1-7, I, K, N... are the dev tools (` flips back)
         const float ds = px(1.2f * u);
@@ -1677,6 +1751,7 @@ int main(int argc, char** argv) {
     if (opt.grass >= 0) settings.gfx.grass = std::min(opt.grass, 3);
     if (opt.adaptive >= 0) settings.adaptiveQuality = opt.adaptive != 0;
     if (opt.mph) settings.mph = true;
+    if (opt.fullHud) settings.fullHud = true;
     if (opt.throttleCap > 0) {
         settings.throttle.loadSetting("throttlecap", opt.throttleCap), settings.throttle.loadSetting("throttleresp", opt.throttleResp);
         settings.throttle.loadSetting("throttlepad", opt.throttlePad);
@@ -3826,12 +3901,20 @@ int main(int argc, char** argv) {
         if (!playback.active() && sim.player >= 0 && sim.player < (int)sim.cars.size()) {  // (a scenario drives its own cars)
             for (Car& c : sim.cars) { c.airing = 0; if (!c.remote) c.winchSpeed = settings.winchSpeed; }
             sim.cars[sim.player].airing = airing;
+            hud.airing = airing != 0;
             for (int i = 0; i < (int)sim.cars.size(); i++) sim.setWinch(i, i == sim.player ? winch : 0);
             if (airing && len(sim.cars[sim.player].frame().vel) > 0.5) hud.toast("STOP TO LET AIR OUT OR PUMP UP THE TIRES");
         }
         if (scripted) {
             bool donut = opt.script == "donut";
-            up = frame > 30 && (opt.script == "drive" || opt.script == "left" || donut);
+            up = frame > 30 && (opt.script == "drive" || opt.script == "left" || donut || (opt.script == "hud" && !std::getenv("CZ_HUD_STILL")));
+            if (opt.script == "hud") {  // screenshots of the contextual HUD: CZ_HUD_STILL=1 (stay put), CZ_HUD_FUEL=0.15 (tank fraction from frame 5), CZ_HUD_HIT=F (a knock at frame F)
+                Car& c = sim.cars[sim.player];
+                if (frame == 5 && std::getenv("CZ_HUD_FUEL") && c.spec->fuelCapacity > 0) c.fuel = c.spec->fuelCapacity * std::atof(std::getenv("CZ_HUD_FUEL"));
+                if (std::getenv("CZ_HUD_HIT") && frame == std::atoi(std::getenv("CZ_HUD_HIT")))
+                    for (size_t k = 0; k < c.beams.size(); k += 3)  // (bent beams: what damage is measured from)
+                        if (c.beams[k].type != BEAM_MOUNT) c.beams[k].L0 = c.beams[k].Lorig * 1.04;
+            }
             left = (opt.script == "left" || donut) && frame > 90;
             hb = donut && frame > 150 && frame < 175;
             down = right = false;
@@ -5157,6 +5240,12 @@ int main(int argc, char** argv) {
             hud.tl.on[hudlayout::TL_JOB] = jobOn;
             hud.tl.on[hudlayout::TL_WINCH] = sim.ropeOn(sim.player) >= 0;
             hud.levelOn = run.active();
+            const Car& pc = sim.cars[sim.player];
+            hud.nearTruck = walker.active && len(walker.p - pc.frame().com) < 8;
+            hud.trunkOpen = inv.open;
+            hud.ctx.settingFull = settings.fullHud;
+            hud.ctx.holdFull = settings.keys.held(KA_HUD_ALL, SDL_GetKeyboardState(nullptr), shiftDown());
+            updateHudContext(hud, sim, settings.fuelMode > 0, (float)dt);
         }
         hud.update(dt);
         if (editor.active && !menu.open) editor.draw(renderer, W, H, dt);
@@ -5254,12 +5343,12 @@ int main(int argc, char** argv) {
             }
             if (walker.hand.any() && !walker.carrying && !inv.open) {
                 const std::string line = "IN YOUR HAND: " + trunk::name(walker.hand) + (padNow ? "   (X AT THE BACK OF YOUR TRUCK: PUT IT BACK)" : "   (" + K(KA_INTERACT) + " AT THE BACK OF YOUR TRUCK: PUT IT BACK)");
-                centeredPill(renderer, W / 2.0f, H - 110 * u, px(1.2f * u), line, 0, 0, 0, 0.55f, 0.9f, 0.92f, 0.95f);
+                drawPrompt(renderer, u, W, H, 0, line, 0, 0, 0, 0.55f, 0.9f, 0.92f, 0.95f);
             }
             if (walker.carrying) {
                 const std::string line = "CARRYING A " + walker.carrying->sizeName() + (walker.carrying->tireOnly ? "" : " WHEEL") +
                                          (walker.carrying->popped ? " (FLAT)" : "") + (padNow ? "   B: PUT IT DOWN" : "   G: PUT IT DOWN");
-                centeredPill(renderer, W / 2.0f, H - 110 * u, px(1.2f * u), line, 0, 0, 0, 0.55f, 0.9f, 0.92f, 0.95f);
+                drawPrompt(renderer, u, W, H, 0, line, 0, 0, 0, 0.55f, 0.9f, 0.92f, 0.95f);
             }
         }
         if (showHud && run.active()) drawLevelHud(renderer, run, sim, view, W, H);
@@ -5296,10 +5385,12 @@ int main(int argc, char** argv) {
                 std::snprintf(b, sizeof b, "FUEL %.0f L%s", c.fuel, c.jerry > 0.5 ? ("   CAN " + std::to_string((int)std::lround(c.jerry)) + " L").c_str() : "");
                 const hudlayout::Column col = hudlayout::rightColumn(u, W, H, 0, (float)std::strlen(b), 0);  // (its own slot above the terrain tag)
                 const float s = col.fuelScale, f = (float)(c.fuel / c.spec->fuelCapacity), w = col.fuelBarW, x = col.fuel.x + 8 * u, y = col.fuel.y + 6 * u;
+                const HudFade fade(renderer, hud, hudctx::E_FUEL);
                 pill(renderer, col.fuel.x, col.fuel.y, col.fuel.w, col.fuel.h, 0, 0, 0, 0.5f);
                 renderer.text(x, y, s, b, f < 0.15f ? 1.0f : 0.9f, f < 0.15f ? 0.4f : 0.9f, f < 0.15f ? 0.3f : 0.92f, 1);
                 renderer.rect(x, y + 8 * s + 4 * u, w, 5 * u, 1, 1, 1, 0.15f);
                 renderer.rect(x, y + 8 * s + 4 * u, w * f, 5 * u, f < 0.15f ? 1.0f : 0.95f, f < 0.15f ? 0.35f : 0.75f, 0.25f, 0.95f);
+                renderer.hudAlpha = fade.old;  // (OUT OF FUEL is a fault: always up)
                 if (c.outOfFuel()) centeredPill(renderer, W / 2.0f, H * 0.62f, px(1.6f * u), "OUT OF FUEL: A BUDDY'S SPARE CAN (F ON FOOT) OR A TOW TO A SHOP", 0, 0, 0, 1, 1, 0.5f, 0.4f);
             }
         }

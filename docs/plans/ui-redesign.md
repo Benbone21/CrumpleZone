@@ -1,11 +1,33 @@
 # In-game UI redesign: proposal (not implemented)
 
-Status: proposal, 2026-10-17. Part 1 (the overlap fix, below) is done on wip/hudfix; the redesign itself is not started.
+Status: 2026-10-17. Part 1 (the overlap fix, below) is done on wip/hudfix. Directions A (one grid) and C (contextual) are built on wip/hudac, with a smaller set of speedometer changes: see "Built: A + C" next. B is not started.
 
 Reference shots of the current HUD (Blazer and Bronco on the proving ground, F3 off):
 - before the fix: `/tmp/claude-1000/-home-bread-Documents-GitHub-MemeNG/974f9a4d-9df0-4dc6-906e-0a5ec985ab51/scratchpad/hudfix/before_1280.png` (fuel gauge sitting on the terrain tag)
 - after the fix: `/tmp/claude-1000/-home-bread-Documents-GitHub-MemeNG/974f9a4d-9df0-4dc6-906e-0a5ec985ab51/scratchpad/hudfix/after_{1024x768,1280x720,1600x900,1920x1080,2560x1440,2560x1600}__0120.png`
 - with F3 up: `/tmp/claude-1000/-home-bread-Documents-GitHub-MemeNG/974f9a4d-9df0-4dc6-906e-0a5ec985ab51/scratchpad/hudfix/f3_1280x720__0120.png`, `/tmp/claude-1000/-home-bread-Documents-GitHub-MemeNG/974f9a4d-9df0-4dc6-906e-0a5ec985ab51/scratchpad/hudfix/f3_1024x768__0120.png`
+
+## Built: A + C (wip/hudac)
+**A, one grid.** Every HUD element's rect comes from `src/hudlayout.h` (`u = H/720`, never recomputed there). New in it: `kDialR` (the dial's radius, 100u), `prompt()` (the bottom-centre stack: repair station, what you carry or hold, winch aiming; slot 0 is lowest, just above the vehicle card's tallest case; as wide as the gap left of the 4x4 schematic, shrinking then clipping), `fpsBlock()` and `playersList()` (top right: the players list sits under the FPS block when that is on, no longer under it). `tests/hudlayout.cpp` checks them with the rest at eight sizes (`hud/layout`, `hud/layout-prompts`). Same font, colours and panel look.
+
+**Speedometer (the smallest set that reads better).** Dial 184u to 200u across. Speed digits 3.5x to 4.5x (999 still fits) with a brighter unit label. The drive mode (2H/4H/4L/4A) moved out of the text row into a coloured chip beside the gear (amber low range, green front driven, grey 2H). Redline zone is twice as thick; for manual-shift trucks the dial's rim flashes near redline (shift light). Below 720p only every other tach label is drawn. TC/MAN/locks stay a text row (icons: later). Compass unchanged.
+
+**C, contextual (`src/hudcontext.h`, tests `hud/context`, `hud/context-full`).** Elements fade in over 0.15 s and out over 0.7 s (smoothstep, no popping); "full" shows everything within 0.08 s. Final rules:
+
+| Element | Shows when |
+|---|---|
+| Compass, speedometer (gauges, lights, gear, mode chip), warning pills (ENGINE DEAD, FLAT TIRE...), OUT OF FUEL banner, toasts, prompts, vehicle name | always (faults and prompts are never hidden) |
+| Fuel gauge | under 25% of the tank, out of fuel, for 4 s after fuel goes up or the can changes (refuelling), and while stopped |
+| Terrain / tire tag | for 4 s after the surface changes (and when a vehicle appears), and while sunk (over 2 cm) or the tread is packed with mud |
+| Inventory line (anchor gear) | on foot within 8 m of the truck, with its inventory open, while a rope is out, for 4 s after a count changes |
+| Winch, strap, job, cash, level panels | only while in use (they never were always-on) |
+| Damage bar and percent | for 5 s after damage goes up, and while damage is 50% or more of the bar |
+| Weight and mod lines of the card | while stopped |
+| Tire pressure (PSI, SWAY OFF) | while an air key is held, while off street pressure (over 1 PSI), for 4 s after it changes |
+| 4x4 widget | for 4 s after the drive mode, an axle lock, the centre lock or the sway bar changes, and while in low range or with any diff locked |
+| Everything above | always, with SHOW FULL HUD: ALWAYS (Settings, display; default CONTEXTUAL, saved as `fullhud`), or while the SHOW THE FULL HUD key is held |
+
+"Stopped" has hysteresis (stopped under 0.4 m/s, moving again over 0.8 m/s) so a crawl doesn't flicker. A new vehicle shows its terrain, 4x4, pressure and anchor pieces once for 4 s. Space for hidden pieces stays reserved (the layout never moves with visibility), so nothing jumps. The hold key is **F9** (`key_hudall`, group CAMERA AND VIEW, default unbound elsewhere): the letters, digits and function keys 1-8, 10-12 are all taken or dev-gated (digits 1-7 swap vehicles in DEV KEYS mode, N and K are dev tools), and `keybinds/*` checks every default pair for clashes. Not done: a gamepad button for it (the pad already has few free buttons), fading the winch/job panels out (they have no state to draw once off).
 
 ## What Part 1 changed
 `src/hudlayout.h` now computes the HUD's rects from one scale `u = max(0.75, H/720)` and the screen size, with no GL.

@@ -91,6 +91,7 @@ bool Settings::load(const std::string& path) {
         else if (k == "adaptive") adaptiveQuality = v != 0;
         else if (k == "devhotkeys") devHotkeys = v != 0;
         else if (k == "fps") showFps = v != 0;
+        else if (k == "fullhud") fullHud = v != 0;
         else if (k == "steeringassist") steeringAssist = v != 0;
         else if (k == "shadows") gfx.shadows = std::min(std::max((int)v, 0), 3);
         else if (k == "msaa") gfx.msaa = (int)v;
@@ -136,7 +137,7 @@ bool Settings::save(const std::string& path) const {
                  gfx.msaa, gfx.ao, gfx.bloom, gfx.clouds, gfx.renderScale, gfx.grass, map);
     std::fprintf(f, "recovery %d\nmusic %.2f\nambience %.2f\nfuel %d\ncareer %d\n", realRecovery, music, ambience, fuelMode, career);
     std::fprintf(f, "ground %d\nprops %d\ndrawdistance %.0f\nsharpen %d\nfpstarget %d\n", gfx.ground, gfx.props, gfx.drawDistance, gfx.sharpen, fpsTarget);
-    std::fprintf(f, "physicsthreads %d\n", physicsThreads);
+    std::fprintf(f, "physicsthreads %d\nfullhud %d\n", physicsThreads, fullHud);
     std::fprintf(f, "adaptive %d\ndevhotkeys %d\ngfxchosen %d\n", adaptiveQuality, devHotkeys, gfxChosen);
     std::fprintf(f, "winchspeed %.2f\n", winchSpeed);
     if (!playerName.empty()) std::fprintf(f, "name %s\n", playerName.c_str());
@@ -177,7 +178,7 @@ enum Id {
     // Settings page.
     UNITS = 1, VOLUME, FOV, RECOVERY, MUSIC, TIMEOFDAY, FUEL, AMBIENCE,
     ADAPTIVE = 9, QUALITY = 10, SHADOWS, AA, AO, BLOOM, CLOUDS, GRASS, SCALE, SCENERY, DETECT_ROW = 19,
-    FULLSCREEN = 20, VSYNC, FPS, PHYSICSTHREADS, WINCHSPEED, FPSTARGET,
+    FULLSCREEN = 20, VSYNC, FPS, PHYSICSTHREADS, WINCHSPEED, FPSTARGET, FULLHUD,
     PADSTEER = 30, PADDEAD, PADRUMBLE, THROTTLECAP, THROTTLERESP, THROTTLEPAD,
     // Main page and navigation.
     RESUME_ROW = 100, VEHICLE_ROW, MAP_ROW, GARAGE_ROW, SETTINGS_ROW, CONTROLS_ROW, RESET_ROW, QUIT_ROW, BACK_ROW,
@@ -505,6 +506,7 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
     choice(FULLSCREEN, "FULLSCREEN", kOffOn[s.fullscreen], 2);
     choice(VSYNC, "VSYNC", kOffOn[s.vsync], 2);
     choice(FPS, "SHOW FPS", kOffOn[s.showFps], 2);
+    choice(FULLHUD, "SHOW FULL HUD", s.fullHud ? "ALWAYS" : "CONTEXTUAL", 2, "CONTEXTUAL: FUEL, TERRAIN, DAMAGE AND 4X4 SHOW WHEN THEY MATTER. HOLD THE FULL HUD KEY (CONTROLS) TO SEE ALL.");
     {
         const int available = physicsThreadLimit();
         const int chosen = std::clamp(s.physicsThreads, 0, available);
@@ -814,6 +816,7 @@ PauseMenu::Result PauseMenu::change(int row, int dir, Settings& s) {
         case FULLSCREEN: s.fullscreen = !s.fullscreen; break;
         case VSYNC: s.vsync = !s.vsync; break;
         case FPS: s.showFps = !s.showFps; break;
+        case FULLHUD: s.fullHud = !s.fullHud; break;
         case PHYSICSTHREADS: s.physicsThreads = cycle(std::clamp(s.physicsThreads, 0, it.count - 1)); break;
         case WINCHSPEED: s.winchSpeed = recovery::adjustWinchSpeed(s.winchSpeed, dir); break;
         case PADSTEER: s.padSteering = cycle(std::min(std::max(s.padSteering, 0), 2)); break;
