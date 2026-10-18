@@ -1917,7 +1917,12 @@ int main(int argc, char** argv) {
     }
     if (opt.spawnSet) {
         Car& c = sim.cars[sim.player];
+        const V3 home = c.spawnPos;
+        const double homeYaw = c.spawnYaw;
         c.respawn(V3(opt.spawnX, sim.world.clearY(opt.spawnX, opt.spawnZ) + 0.05, opt.spawnZ), opt.spawnHeading * M_PI / 180);
+        // (--spawn only places you: a hot reload passes where you were, and home must stay the map's spawn pad. A
+        // section start is a real start, so there it becomes home.)
+        if (opt.spawnSection < 0) c.spawnPos = home, c.spawnYaw = homeYaw;
     }
     Renderer renderer;
     std::string err;
