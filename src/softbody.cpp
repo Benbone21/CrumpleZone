@@ -2859,8 +2859,25 @@ void Sim::updateAI(double dt) {
         aiAlong[i] = world.loopAlong[k];
         aiLat[i] = (p.x - road[k].x) * -t.z + (p.z - road[k].z) * t.x;  // right of the +1 direction
     }
-    for (size_t i = 0; i < cars.size(); i++)
-        if (cars[i].ai && !cars[i].isProp()) aiDrive((int)i, dt);
+    for (size_t i = 0; i < cars.size(); i++) {
+        if (!cars[i].ai || cars[i].isProp()) continue;
+        if (cars[i].proxy) {  // far from everyone: a rigid proxy on the road (trafficlod.cpp), until something comes near
+            if (lodClear((int)i, cars[i].lod.speed, false)) {
+                lodStep((int)i, dt * timeScale);
+                continue;
+            }
+            cars[i].wake();
+        }
+        aiDrive((int)i, dt);
+        if (trafficLod) lodEnter((int)i, dt);
+    }
+}
+
+double aiCornerAccel(const Car& c) {
+    const VehicleSpec* spec = c.spec;
+    const double tireK = std::min(1.0, spec->tireGrip * spec->lateralGrip / 0.72);
+    const double height = spec->layerY.back();
+    return std::min(clampd(6.5 - 3.0 * (height - 1.4) - (c.mass - 1300) / 800, 3.2, 5.5) * tireK, spec->openFrame && spec->wheelRadius > 0.45 ? 3.3 : 9.0);
 }
 
 void Sim::aiDrive(int self, double dt) {
@@ -2980,8 +2997,7 @@ void Sim::aiDrive(int self, double dt) {
     // (A tube-frame buggy's 40 in tires and long travel top out at ~0.6 g: it drives the loop gently.)
     // (And on old or soft tires, gentler again: what's left of the grip, against ~0.72 for a
     // modern all-terrain.)
-    const double tireK = std::min(1.0, spec->tireGrip * spec->lateralGrip / 0.72);
-    const double height = spec->layerY.back(), aLat = std::min(clampd(6.5 - 3.0 * (height - 1.4) - (c.mass - 1300) / 800, 3.2, 5.5) * tireK, spec->openFrame && spec->wheelRadius > 0.45 ? 3.3 : 9.0);
+    const double aLat = aiCornerAccel(c);
     const double decel = aLat * 0.75;
     auto bendSpeed = [&](int from) {  // max speed for the ~10 m of road starting at `from`
         double seg = 0;

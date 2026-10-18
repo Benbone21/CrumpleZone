@@ -2286,7 +2286,7 @@ void NetSession::send(Sim& sim, double now) {
     prune(upStreams);
     for (Conn* cn : conns) prune(cn->streams);
     for (const Car& c : sim.cars)
-        if (!c.remote && (!c.sleeping || slowTick)) sendSnapshot(sim, c, now);
+        if (!c.remote && (!c.sleeping || c.proxy || slowTick)) sendSnapshot(sim, c, now);
 }
 
 void NetSession::sendLevel(Conn* to) {
