@@ -83,3 +83,35 @@ Within the shadow lookup, the PCF costs about 2 ms and the cloud shadow only 0.3
 - Not full-suite re-tested after this change.
 
 **Left, ranked by expected gain** (not done): fbm noise, 1.5 ms (nine or more `sin`-hash noise calls a pixel, all very low frequency: computing the smooth ones per vertex or cheaper would change little visually but needs vertex-shader work); material layers, 1.1 ms (changes the look); two-tap anti-tiling, 0.7 ms (changes the look).
+
+## Item 6: auto-detect
+`%APPDATA%\crumplezone\settings.txt` was moved aside (a copy was kept first and the original was put back byte-for-byte, hash checked), and the game was started with no options. `graphics.log`: "hardware: 24 cores, 31864 MB RAM, VRAM 8188 MB, guess HIGH", then "graphics detected: HIGH". Resulting settings: shadows 3, MSAA 4, AO on, bloom on, clouds on, render scale 1.00, grass 2, fullscreen off, vsync on (adaptive). The table guesses HIGH for any GeForce or RTX, and the warm-up probe confirmed it. For this laptop that is right: HIGH is about 120 fps at native 2048x1280 and 185 fps at 1600x900, and the quality gap to MEDIUM (139 and 218 fps) is the AO, shadows and MSAA. One 72 ms spike was logged at frame 90, all of it in SWAP (the first present after the window appears), once.
+
+## Final results (after items 1 to 6; main at dc7fe7f plus this branch)
+Average fps, 1 run each. Step 0 is before this branch's changes.
+
+| Map / preset | 1600x900 step 0 | 1600x900 now | 2048x1280 step 0 | 2048x1280 now |
+|---|---|---|---|---|
+| Frontier POTATO | 512 | 514 | 536 | 526 |
+| Frontier LOW | 315 | 323 | 198 | 201 |
+| Frontier MEDIUM | 204 | 218 | 130 | 139 |
+| Frontier HIGH | 163 | 185 | 106 | 120 |
+| Open Country POTATO | 597 | 582 | 625 | 622 |
+| Open Country LOW | 408 | 423 | 262 | 281 |
+| Open Country MEDIUM | 243 | 270 | 157 | 178 |
+| Open Country HIGH | 187 | 230 | 125 | 153 |
+| Boulder Gully POTATO | 440 | 446 | 497 | 497 |
+| Boulder Gully LOW | 316 | 328 | 225 | 241 |
+| Boulder Gully MEDIUM | 217 | 244 | 140 | 158 |
+| Boulder Gully HIGH | 167 | 203 | 110 | 134 |
+
+HIGH gained 13 to 23% at native resolution (all from the ground shader's shadow lookup); POTATO is unchanged (it has no shadows), as expected. Raw: `raw/suite-20261017-234701-1600x900.txt`, `raw/suite-20261017-234737-2048x1280.txt`.
+
+- **Tests:** 864 scenarios, 851 passed, 13 failed (`raw/windows-rtx4070-phase2-final-run_tests.log`, `--jobs 6`). The 11 known failures, `engine/performance` (flaky), and `net/find` (flaky under load: it passes alone). `net/bandwidth` now passes.
+- **Fingerprint:** `3db86794fec05596`, unchanged by every edit here (all changes are rendering or test code).
+
+## What is left, ranked
+1. Ground shader (TERRAIN is still about 6.8 ms of 8.3 ms at native HIGH): fbm noise about 1.5 ms; fewer material layers about 1.1 ms and single-tap about 0.7 ms (these change the look).
+2. Power plan: still Balanced. Best performance might lift the 1% lows.
+3. POTATO SWAP floor (about 1.4 ms, 550 fps ceiling): only the NVIDIA Control Panel or another present path could change it; not worth it at 240 Hz.
+4. Mac: the AO fix in item 2 and the shadow change in item 5 are shared code; the Mac agent should skip item 2 and confirm both there.
