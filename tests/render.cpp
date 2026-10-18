@@ -5,7 +5,10 @@
 #include "../src/gpu.h"
 #include "../src/menu.h"
 #include "../src/sdl_min.h"
+#include <chrono>
 #include <cstdio>
+#include <memory>
+#include <thread>
 #include <stdexcept>
 
 namespace {
@@ -104,6 +107,38 @@ int main() {
         if (!renderer.init(sim.world, error)) throw std::runtime_error(error);
         std::puts("Render check: renderer initialized");
         clean();
+        {  // A map switch without a frozen frame: made on a worker, uploaded in slices, built a stage a call; no call is a hitch.
+            World next(MAP_MOUNTAIN);
+            std::shared_ptr<Renderer::Prepared> prep;
+            std::thread([&] { prep = Renderer::prepareWorld(next); }).join();
+            renderer.beginUpload(prep);
+            prep.reset();
+            auto ms = [](std::chrono::steady_clock::time_point a) { return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - a).count(); };
+            double worst = 0;
+            int calls = 0;
+            for (bool done = false; !done; calls++) {
+                const auto t0 = std::chrono::steady_clock::now();
+                done = renderer.pumpUpload(3.0);
+                worst = std::max(worst, ms(t0));
+                if (calls > 100000) throw std::runtime_error("the terrain upload never finishes");
+            }
+            clean();
+            const auto t1 = std::chrono::steady_clock::now();
+            renderer.adoptWorld(next);
+            double adopt = ms(t1), worstStep = 0;
+            int steps = 0;
+            for (bool done = false; !done; steps++) {
+                const auto t2 = std::chrono::steady_clock::now();
+                done = renderer.stepWorld(next);
+                worstStep = std::max(worstStep, ms(t2));
+            }
+            clean();
+            std::printf("Render check: map switch in %d upload slices (worst %.1f ms), adopt %.1f ms, %d stages (worst %.1f ms)\n", calls, worst, adopt, steps, worstStep);
+            if (worst > 25 || adopt > 60 || worstStep > 400) throw std::runtime_error("a map switch step took long enough to hitch a frame");
+            renderer.setWorld(sim.world);  // (the first world again: `next` goes out of scope)
+            clean();
+            std::puts("PASS map switch: terrain uploaded in slices, scenery built a stage at a time, none long enough to hitch");
+        }
         // Exercise the actual menu through keyboard input, plus disk persistence.
         Settings settings;
         PauseMenu menu;
