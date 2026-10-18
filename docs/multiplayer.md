@@ -241,6 +241,8 @@ journalctl -u crumplezone -f     # joins, leaves, "[net] ..." lines for what was
 systemd-analyze security crumplezone
 ```
 
+Updating a server to a new release: `docs/server-update.md`.
+
 Players: `./crumplezone --join SERVER_IP:PORT --password 'the password'` (`:PORT` may be left off for 27015).
 
 ## Tests
