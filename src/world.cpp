@@ -73,7 +73,7 @@ V3 World::courseStart(int surface) const {
 }
 
 const std::vector<int>& listedMaps() {
-    static const std::vector<int> m = {MAP_PROVING_GROUND};
+    static const std::vector<int> m = {MAP_PROVING_GROUND, MAP_MOUNTAIN, MAP_FREEWAY, MAP_FRONTIER, MAP_BACKCOUNTRY, MAP_WILDS};  // (all back on the list, 2026-10-18: the owner edits them)
     return m;
 }
 

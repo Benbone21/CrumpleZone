@@ -154,7 +154,7 @@ Without `--time`, captures start at 10:00 with the clock running.
   `swing`, `width`, `length`, `span`, `snow`, `dry`). Placement: `World::models` /
   `placeModel` / `standIn` (draws a model over the boxes that stood in for it, keeping them
   as its collider); scenery.cpp falls back to the old code-made props if a model is missing.
-- **Map list is just the proving ground** (owner's call, 2026-10-16: another agent is doing
+- **All maps are on the list again** (owner's call, 2026-10-18, for editing them; it was just the proving ground from 2026-10-16 while
   world gen). `listedMaps()` in world.cpp; the other maps still build for the tests and
   `--map`. (The seeded Wilderness map, number 5, was removed 2026-10-16: see commit c735d9e. Number 5 is now `MAP_WILDS`, the clean open country that obstacle-section levels are set in: see below; it is not on the list, but levels on it are.) The proving ground carries the **model yard** (`World::buildModelYard`, game
   only: `World::withShowcase`, off in the tests, which drive over that corner). The same flag lays
