@@ -81,13 +81,13 @@ struct VisualTemplate {
     std::vector<Bind> partBind;  // one per part triangle corner
     std::vector<float> partColor;  // r, g, b, material per triangle
 
-    // The driver's seat (people.h draws the driver and the steering wheel, which turns, there): the hip point on the
-    // seat, the wheel's middle and the right foot on the throttle, each bound to the body like a part (it rides its
+    // The driver's seat (people.h draws the steering wheel, which turns, there; the cockpit view is from where a driver's
+    // eyes would be): the hip point on the seat and the wheel's middle, each bound to the body like a part (it rides its
     // dents and flex). Rest positions in the car's frame (x ahead, y up, z to the right).
     struct Cockpit {
         bool on = false;
-        Bind hip{}, wheel{}, pedal{};
-        V3 hipL, wheelL, pedalL;
+        Bind hip{}, wheel{};
+        V3 hipL, wheelL;
         float wheelR = 0.17f, tilt = 0.45f;  // the wheel's radius (m) and lean back from upright (rad)
     } cockpit;
 };

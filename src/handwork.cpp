@@ -185,7 +185,7 @@ Handwork handwork(const Sim& sim, const Walker& wk, const Interact& ia, const V3
             const mk::Mesh& m = mk::modelMesh(id);
             const double L = std::max({m.hi.x - m.lo.x, m.hi.y - m.lo.y, m.hi.z - m.lo.z, 0.05});
             const double k = clampd(0.4 / L, 0.35, 2.0), bob = 0.01 * std::sin(time * 1.7);
-            const V3 grip = eye + F * 0.5 + R * 0.2 - U * 0.24 + kUp * bob;
+            const V3 grip = eye + F * 0.46 + R * 0.22 - U * 0.33 + kUp * bob;  // (low in the right of the view)
             sc.put(id, grip, flat(F) * 0.95 + U * 0.3 - R * 0.15, kUp, k);
             h.models.back().bare = true;  // (an anchor without the soil, snow or rock it's shown set in)
             // In your right hand: a tool by its grip (its origin), anything else by its middle.
@@ -197,6 +197,23 @@ Handwork handwork(const Sim& sim, const Walker& wk, const Interact& ia, const V3
                 h.hands[1].p = pl.p + (pl.ax[0] * mid.x + pl.ax[1] * (m.lo.y * 0.4 + mid.y * 0.6) + pl.ax[2] * mid.z) * k;
             }
         }
+    }
+    // The winch line or a strap end in your right hand (the game holds it there: Sim::handLine), the line running back
+    // through the fist to its drum.
+    if (sim.handLine.on() && sim.handLine.car < (int)sim.cars.size()) {
+        h.hands[1].on = true, h.hands[1].grip = 1;
+        h.hands[1].p = sim.handLine.hand;
+        h.hands[1].axis = norm(sim.cars[sim.handLine.car].hookPoint(sim.handLine.hook) - sim.handLine.hand);
+    }
+    // Reaching for a line (the fairlead's hook, a strap's end, a hooked line's end, the drum to stow it): the right hand
+    // goes out to it, opening, and closes on it.
+    if (working && (o.kind == IA_GRAB_LINE || o.kind == IA_UNHOOK_LINE || o.kind == IA_STOW_LINE) && std::isfinite(o.at.x)) {
+        const V3 rest = eye + flat(F) * 0.35 + R * 0.2 - kUp * 0.55;
+        const double s = smooth(std::min(1.0, t * 1.7));
+        h.hands[1].on = true;
+        h.hands[1].p = lerp(rest, o.at + toward * 0.03, s);
+        h.hands[1].axis = norm(lerp(flat(F), kUp, s));
+        h.hands[1].grip = s < 0.85 ? 0.15 : 0.15 + (s - 0.85) / 0.15 * 0.85;
     }
     if (!working) return h;
 

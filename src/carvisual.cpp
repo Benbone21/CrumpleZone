@@ -481,21 +481,16 @@ struct PartBuilder {
     std::vector<int> group;    // what each triangle rides on
     int current = ON_BODY;
     // The driver's place (car frame, at rest): hip point on the seat, the steering wheel's middle, radius and lean
-    // back from upright, and where the right foot rests on the throttle. The wheel itself is drawn each frame (people.h),
-    // turned with the steering.
+    // back from upright. The wheel itself is drawn each frame (people.h), turned with the steering.
     struct Cockpit {
         bool on = false;
-        V3 hip, wheel, pedal;
+        V3 hip, wheel;
         double R = 0.17, tilt = 0.45;
     } cockpit;
-    void setCockpit(V3 hip, const V3& wheel, double R, double tilt, double floor, double frontLimit, double roof) {
+    void setCockpit(V3 hip, const V3& wheel, double R, double tilt, double floor, double roof) {
         // (Sat low enough for the eyes, 0.74 m over the hip, to have a hand's room under the roof.)
         hip.y = std::max(floor + 0.17, std::min(hip.y, roof - 0.16 - 0.74));
         cockpit.on = true, cockpit.hip = hip, cockpit.wheel = wheel, cockpit.R = R, cockpit.tilt = tilt;
-        // The ankle on the pedal: down by the floor, as far forward as a slightly bent leg (0.86 m hip to ankle) reaches.
-        const double y = floor + 0.10, dy = hip.y - y, reach = 0.80;
-        const double dx = std::sqrt(std::max(0.09, reach * reach - dy * dy));
-        cockpit.pedal = V3(std::min(hip.x + dx, frontLimit), y, hip.z + 0.09);
     }
     void tri(const V3& a, const V3& b, const V3& c, const V3& col, int mat) {
         corners.insert(corners.end(), {a, b, c});
@@ -1059,7 +1054,7 @@ void buildOpenFrame(const Car& car, PartBuilder& pb) {
             pb.box(V3(sx - 0.20, sh + 0.30, s * (szz + 0.12)), V3(0.012, 0.28, 0.025), belt, SM_MATTE);
         }
         const V3 wc(cabF - 0.38, F + 0.58, -szz);
-        pb.setCockpit(V3(sx - 0.09, sh + 0.14, -szz), wc, 0.17, 0.5, F + 0.02, cabF + 0.1, roofY);  // (the wheel's drawn each frame, turning)
+        pb.setCockpit(V3(sx - 0.09, sh + 0.14, -szz), wc, 0.17, 0.5, F + 0.02, roofY);  // (the wheel's drawn each frame, turning)
         pb.cylinder(wc, wc + V3(0.36, -0.14, 0), 0.022, 6, kDarkGrey, SM_MATTE);
         pb.box(V3(cabF - 0.10, F + 0.52, 0), V3(0.05, 0.09, 0.62), V3(0.04, 0.04, 0.045), SM_MATTE);  // dash
         pb.box(V3(cabF - 0.15, F + 0.64, 0), V3(0.012, 0.04, 0.30), V3(0.05, 0.4, 0.05), SM_EMISSIVE);  // gauge strip
@@ -1131,7 +1126,7 @@ void buildOpenFrame(const Car& car, PartBuilder& pb) {
             pb.box(V3(sx - 0.18, sh + 0.28, s * (szz + 0.11)), V3(0.012, 0.26, 0.025), belt, SM_MATTE);
         }
         const V3 wc(cabF - 0.34, F + 0.62, -szz);
-        pb.setCockpit(V3(sx - 0.08, sh + 0.14, -szz), wc, 0.15, 0.55, F + 0.02, cabF + 0.1, roofY);
+        pb.setCockpit(V3(sx - 0.08, sh + 0.14, -szz), wc, 0.15, 0.55, F + 0.02, roofY);
         pb.cylinder(wc, wc + V3(0.32, -0.12, 0), 0.02, 6, kDarkGrey, SM_MATTE);
         pb.box(V3(cabF - 0.04, F + 0.58, 0), V3(0.06, 0.08, 0.56), V3(0.05, 0.05, 0.055), SM_MATTE);
         pb.box(V3(cabF - 0.10, F + 0.68, 0), V3(0.012, 0.04, 0.22), V3(0.05, 0.4, 0.05), SM_EMISSIVE);
@@ -1258,7 +1253,7 @@ void buildParts(const Car& car, PartBuilder& pb) {
     {
         const double lift = vs.model == 1 ? vs.layerY[0] - 0.11 : 0.0;  // (the Jesko's cabin is raised below)
         pb.setCockpit(V3(frontSeatX - (vs.model == 1 ? 0.06 : 0.08), seatY + (vs.model == 1 ? 0.12 : 0.13) + lift, driverZ), wheelC + V3(0, lift, 0),
-                      vs.model == 1 ? 0.135 : 0.17, 0.45, (vs.model == 1 ? seatY - 0.06 : floorY) + lift, cabFront + 0.3,
+                      vs.model == 1 ? 0.135 : 0.17, 0.45, (vs.model == 1 ? seatY - 0.06 : floorY) + lift,
                       vs.model == 1 ? 1e9 : vs.layerY[std::min((int)vs.layerY.size() - 1, gk1 + 1)]);
     }
     seat(frontSeatX, -driverZ, 0.23);
@@ -1523,8 +1518,8 @@ const VisualTemplate& visualTemplate(const Car& car) {
     if (pb.cockpit.on && !car.isProp()) {
         VisualTemplate::Cockpit& ck = t.cockpit;
         ck.on = true;
-        ck.hipL = pb.cockpit.hip, ck.wheelL = pb.cockpit.wheel, ck.pedalL = pb.cockpit.pedal;
-        ck.hip = bindPoint(car, ck.hipL), ck.wheel = bindPoint(car, ck.wheelL), ck.pedal = bindPoint(car, ck.pedalL);
+        ck.hipL = pb.cockpit.hip, ck.wheelL = pb.cockpit.wheel;
+        ck.hip = bindPoint(car, ck.hipL), ck.wheel = bindPoint(car, ck.wheelL);
         ck.wheelR = (float)pb.cockpit.R, ck.tilt = (float)pb.cockpit.tilt;
     }
     slot.t = std::move(made);
