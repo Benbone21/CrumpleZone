@@ -84,6 +84,7 @@ const Info kInfo[KA_COUNT] = {
     {SC_3, false, "SWAP TO VEHICLE 3", "key_devvehicle3", KG_DEV, ANY, false, true},
     {SC_4, false, "SWAP TO VEHICLE 4", "key_devvehicle4", KG_DEV, ANY, false, true},
     {SC_5, false, "SWAP TO VEHICLE 5", "key_devvehicle5", KG_DEV, ANY, false, true},
+    {SC_6, false, "SWAP TO VEHICLE 6", "key_devvehicle6", KG_DEV, ANY, false, true},
     {SC_I, false, "SPAWN PARKED VEHICLE AHEAD", "key_devspawn", KG_DEV, D, false, true},
     {SC_K, false, "SPAWN AI TRAFFIC", "key_devtraffic", KG_DEV, ANY, false, true},
     {SC_DELETE, false, "REMOVE THIS VEHICLE", "key_devremove", KG_DEV, ANY, false, true},

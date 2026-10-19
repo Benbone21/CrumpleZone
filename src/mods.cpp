@@ -472,12 +472,60 @@ Slots blazerMods() {
     return m;
 }
 
+Slots bajaMods() {
+    Slots m(MOD_SLOTS);
+    m[MOD_ENGINE] = {
+        stock("2.0L TYPE 1 DUAL CARBS  115 HP  160 NM"),
+        {"1835 STREET MOTOR", "92 MM BORE  SINGLE 34 CARB  ~90 HP  ~135 NM  QUIETER", [](VehicleSpec& s) {
+             // A mild 1835 cc Type 1 on a single carb and a header (typical builder figures, estimate).
+             s.voice.muffler = 0.6f, s.voice.rasp = 0.7f, s.voice.crackle = 0.15f, s.voice.intake = 0.45f, s.voice.exhaustHz = 205, s.voice.roar = 0.45f;
+             engine(s, "1835 STREET FLAT-4",
+                    {{0, 85}, {1000, 100}, {2000, 118}, {3000, 130}, {3500, 135}, {4200, 132}, {5000, 125}, {5500, 108}, {5800, 92}}, 5600, 0);
+             s.displacement = 1.835;
+             s.engineMass -= 5;
+         }},
+        {"2332 STROKER", "94 MM BORE  84 STROKE  DUAL 48S  ~150 HP  ~200 NM  LOUDER", [](VehicleSpec& s) {
+             // A big-bore stroker Type 1 (2,332 cc; typical builder figures, estimate).
+             s.voice.muffler = 0.95f, s.voice.rasp = 0.72f, s.voice.crackle = 0.45f, s.voice.lope = 0.25f, s.voice.intake = 0.8f, s.voice.exhaustHz = 190, s.voice.roar = 0.8f;
+             engine(s, "2332 STROKER FLAT-4",
+                    {{0, 110}, {1000, 135}, {2000, 165}, {3000, 188}, {4000, 200}, {4800, 196}, {5500, 185}, {6000, 165}, {6300, 140}}, 6200, 0);
+             s.displacement = 2.33;
+             s.engineMass += 6;
+         }},
+    };
+    m[MOD_SUSPENSION] = {
+        stock("LIFTED BEAM AND IRS  LONG-TRAVEL SHOCKS  30X9.50R15"),
+        {"DESERT RACE AND 33S", "+40 MM  LONGER TRAILING ARMS  SOFTER  33X10.50R15 ALL-TERRAINS", [](VehicleSpec& s) {
+             tires(s, 0.419, 0.267, 5, 0.94, 0.79, 0);
+             springs(s, 0.04, 0.85, 0.8, 0.38);
+             s.bumpFront += 0.03, s.droopFront += 0.04, s.bumpRear += 0.04, s.droopRear += 0.05;
+         }},
+        {"STREET BUG", "-80 MM  STOCK TORSION BARS  195/65R15 ROAD TIRES", [](VehicleSpec& s) {
+             tires(s, 0.317, 0.195, -7, 1.0, 0.86, 0);
+             s.tireType = TIRE_STREET;
+             springs(s, -0.08, 1.2, 1.3, 0.34);
+             s.bumpFront = 0.07, s.droopFront = 0.08, s.bumpRear = 0.08, s.droopRear = 0.10;
+         }},
+    };
+    m[MOD_TRANSMISSION] = {
+        stock("TYPE 1 4-SPEED  4.375 FINAL  OPEN DIFF"),
+        {"WEDDLE LSD", "A LIMITED-SLIP IN THE TRANSAXLE: BOTH REAR TIRES PULL", [](VehicleSpec& s) {
+             s.diffRear = DIFF_LSD;
+             s.lsdBias = 2.5;
+         }},
+        {"SAND BOX", "4.86 FINAL  TALLER 3.09 FIRST: PULLS THROUGH SAND WITHOUT DIGGING IN, LOWER TOP SPEED", [](VehicleSpec& s) {
+             gears(s, "TYPE 1 SAND BOX", {3.09, 2.06, 1.26, 0.93}, 3.88, 4.86, 0.32);
+         }},
+    };
+    return m;
+}
+
 const std::vector<Slots>& allMods() {
     static const std::vector<Slots> mods = [] {
         std::vector<Slots> m;
         for (const VehicleSpec& vs : vehicleCatalog()) {
             std::string id = vs.id;
-            m.push_back(id == "civic" ? civicMods() : id == "jesko" ? jeskoMods() : id == "bronco" ? broncoMods() : id == "buggy" ? buggyMods() : id == "utv" ? utvMods() : id == "tacoma" ? tacomaMods() : id == "blazer" ? blazerMods() : runnerMods());
+            m.push_back(id == "civic" ? civicMods() : id == "jesko" ? jeskoMods() : id == "bronco" ? broncoMods() : id == "buggy" ? buggyMods() : id == "utv" ? utvMods() : id == "tacoma" ? tacomaMods() : id == "blazer" ? blazerMods() : id == "baja" ? bajaMods() : runnerMods());
         }
         return m;
     }();
@@ -499,6 +547,7 @@ void takeEngine(VehicleSpec& s, const VehicleSpec& from) {
     s.displacement = from.displacement;
     s.cylinders = from.cylinders;
     s.flatPlane = from.flatPlane;
+    s.airCooled = from.airCooled;
     s.engineName = from.engineName;
     s.engineMass = from.engineMass;
     s.engineLen = from.engineLen, s.engineWid = from.engineWid, s.engineHgt = from.engineHgt;

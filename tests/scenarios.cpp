@@ -156,7 +156,8 @@ VEHICLE_SCENARIO(accel, "dynamics/acceleration", "Full throttle from rest on the
     // with 5.38 axles). Side-by-side: ~4 s (Can-Am claims 0-60 mph in under 4 s for the Turbo RR).
     // (Engines run ~15% over the factory figures, see vehicles.cpp: a little quicker.)
     // Tacoma TRD Off-Road V6 automatic: 0-60 mph in 8.3 s (Edmunds), so ~8.8 s to 100.
-    static const Range expect[] = {{8.5, 11.0}, {2.4, 3.4}, {5.6, 7.2}, {8.5, 11.0}, {4.2, 6.4}, {3.3, 5.0}, {7.6, 10.0}, {10.0, 14.5}};
+    static const Range expect[] = {{8.5, 11.0}, {2.4, 3.4}, {5.6, 7.2}, {8.5, 11.0}, {4.2, 6.4}, {3.3, 5.0}, {7.6, 10.0}, {10.0, 14.5}, {7.5, 11.0}};
+    // (Baja Bug, 2.0 L Type 1 ~115 hp in ~870 kg: ~9 s to 100, estimate; period 1600 Beetles took ~18.)
     // (1972 K5 Blazer 350 four-speed: 0-60 mph in ~11.5 s in period road tests: ~12.5 s to 100.)
     Car& c = ctx.add(spec, kLaneStartX, kLaneZ, 0);
     ctx.focus(c);
@@ -211,7 +212,8 @@ VEHICLE_SCENARIO(braking, "dynamics/braking", "Full brakes from 100 km/h: stoppi
     // published figure, and no ABS (Can-Am's and Polaris's spec sheets list none): on pavement its
     // 32 in all-terrains lock and slide, ~0.8 g, so ~45-50 m (estimate; the earlier ~39 m assumed ABS).
     // Tacoma TRD Off-Road 124-135 ft from 60 mph (two Edmunds tests): ~40.5-44 m from 100.
-    static const Range expect[] = {{38, 49}, {27, 35}, {39, 50}, {40, 52}, {40, 56}, {38, 52}, {39, 50}, {45, 62}};
+    static const Range expect[] = {{38, 49}, {27, 35}, {39, 50}, {40, 52}, {40, 56}, {38, 52}, {39, 50}, {45, 62}, {44, 60}};
+    // (Baja Bug: drums all round, no ABS, knobby all-terrains: ~150-190 ft from 60 mph, estimate.)
     // (Blazer: front discs, rear drums, no ABS, tall tread: ~160-180 ft from 60 mph in period tests.)
     const Range& r = expect[vehicleIndex(spec)];
     ctx.metric("100-0 km/h stopping distance", dist, "m", r.lo, r.hi);
@@ -226,7 +228,8 @@ VEHICLE_SCENARIO(skidpad, "dynamics/skidpad", "Holds a 30 m circle, speeding up 
     // EF Civic on period-size street tires: ~0.8 g (estimate), Jesko well over 1.1 g, Bronco ~0.70 g, 2002 4Runner ~0.68 g.
     // Rock buggy ~0.6 g (tall, soft mud tires on 40s), side-by-side ~0.8 g (estimate).
     // Tacoma TRD Off-Road on all-terrains ~0.70 g (estimate: mid-size off-road pickups test 0.68-0.73).
-    static const Range expect[] = {{0.75, 0.90}, {1.08, 1.45}, {0.62, 0.78}, {0.60, 0.76}, {0.50, 0.72}, {0.70, 0.92}, {0.62, 0.78}, {0.52, 0.70}};
+    static const Range expect[] = {{0.75, 0.90}, {1.08, 1.45}, {0.62, 0.78}, {0.60, 0.76}, {0.50, 0.72}, {0.70, 0.92}, {0.62, 0.78}, {0.52, 0.70}, {0.58, 0.78}};
+    // (Baja Bug: light, on all-terrains, soft and lifted: ~0.65-0.7 g, estimate.)
     // (Blazer: tall, soft and on 1970s truck tires: ~0.6 g, estimate.)
     const double R = 30;
     Car& c = ctx.add(spec, -40, -100, 0);
@@ -319,7 +322,8 @@ VEHICLE_SCENARIO(turningCircle, "dynamics/turning-circle", "Full lock at a walk:
     // isn't published (wide front tires, little lock: ~11-12 m, estimate).
     // Buggy and side-by-side: not published for these builds (estimates: the buggy's steering
     // front axle on 40s turns about like a full-size truck; a Maverick X3 class UTV ~10-11 m).
-    static const Range expect[] = {{9.3, 10.8}, {10.0, 12.5}, {10.5, 12.5}, {11.0, 12.4}, {10.0, 15.0}, {8.5, 13.0}, {11.8, 13.5}, {10.5, 13.0}};
+    static const Range expect[] = {{9.3, 10.8}, {10.0, 12.5}, {10.5, 12.5}, {11.0, 12.4}, {10.0, 15.0}, {8.5, 13.0}, {11.8, 13.5}, {10.5, 13.0}, {10.0, 12.0}};
+    // (Beetle: 11.0 m curb to curb (VW, 1969); the wider wheels take a little lock.)
     // (Blazer 4x4: ~37 ft (11.3 m) curb to curb, GM's 1972 truck data book figure for the 104 in wheelbase.)
     Car& c = ctx.add(spec, -100, -50, 0);
     ctx.focus(c);
@@ -525,7 +529,7 @@ VEHICLE_SCENARIO(torsion, "structure/torsion", "Twisting rig in free fall: torsi
     // Real cars: roughly 10-35 kNm/deg (older or open bodies lower, modern unibodies higher).
     // (Unibody Civic, carbon tub Jesko, body-on-frame Bronco and 4Runner, tube chassis and cage for the buggy and UTV.)
     // (The Tacoma's cab and bed are separate boxes on a long, partly open frame: softer.)
-    static const Range expect[] = {{12, 55}, {15, 80}, {6, 36}, {6, 36}, {15, 60}, {6, 30}, {4, 30}, {3, 30}};  // (Blazer: an open C-channel frame and an open-backed tub)
+    static const Range expect[] = {{12, 55}, {15, 80}, {6, 36}, {6, 36}, {15, 60}, {6, 30}, {4, 30}, {3, 30}, {4, 40}};  // (Blazer: an open C-channel frame and an open-backed tub)
     Car& c = rigInAir(ctx, spec);
     Section f = sectionAt(c, axleX(c, true)), r = sectionAt(c, axleX(c, false));
     auto roll = [&](const Section& s) {
@@ -743,6 +747,9 @@ VEHICLE_SCENARIO(clearanceAngles, "structure/clearance", "Ground clearance and a
         // 1972 K5 Blazer 4x4: ~8.5 in under the diffs on 10-15s; ~35 / ~24 / ~24 degrees (ESTIMATES from its
         // overhangs: chrome bumpers 0.80 m ahead of and 0.95 m behind the axles).
         {{0.19, 0.28}, {28, 46}, {18, 32}, {17, 30}},
+        // Baja Bug: ~14 in (0.36 m) under the front and 13.75 in under the back (a SCORE Class 11 car,
+        // thedrive.com); the cut nose and tail give big angles (estimates: ~45 / ~40 / ~28 degrees).
+        {{0.25, 0.40}, {35, 60}, {30, 55}, {22, 40}},
     };
     Car& c = ctx.add(spec, -100, -50, 0);
     ctx.focus(c);
@@ -790,7 +797,7 @@ VEHICLE_SCENARIO(tiltTable, "structure/tilt-table", "Tipped sideways on a tilt t
     // NHTSA 3 stars (1.13-1.24 on the SSF-only scale; the rating now adds a dynamic test);
     // 2001 4Runner 4x4 2 stars (1.04-1.12) stock, and this one sits 2 in higher on 35s with a
     // roof basket; Tacoma 4x4 Double Cab 3 stars.
-    static const Range ssfRange[] = {{1.30, 1.55}, {1.60, 2.10}, {1.08, 1.24}, {0.92, 1.10}, {1.00, 1.60}, {1.00, 1.55}, {1.05, 1.24}, {0.95, 1.18}};  // (buggy, UTV: estimates from track and CG)
+    static const Range ssfRange[] = {{1.30, 1.55}, {1.60, 2.10}, {1.08, 1.24}, {0.92, 1.10}, {1.00, 1.60}, {1.00, 1.55}, {1.05, 1.24}, {0.95, 1.18}, {1.00, 1.30}};  // (buggy, UTV: estimates from track and CG)
     VehicleSpec deck = spec;
     deck.tireGrip = 2.5;  // a tilt table's grippy deck: the tires don't slide off it first
     Car& c = ctx.add(deck, -100, -50, 0);
@@ -846,6 +853,7 @@ VEHICLE_SCENARIO(weight, "structure/weight", "Curb weight, front/rear split and 
         {{770, 830}, {42, 47}, {0.52, 0.66}},        // Side-by-side: ~800 kg with fluids (Maverick X3 / RZR class), engine behind the seats: ~44/56
         {{1990, 2110}, {53, 58}, {0.66, 0.85}},      // Tacoma TRD Off-Road Double Cab: 2,016-2,059 kg, ~55/45 empty
         {{1730, 1900}, {51, 59}, {0.68, 0.88}},      // 1972 K5 Blazer 350 4x4 with the top: ~4,000 lb, ~55/45 (estimate)
+        {{820, 920}, {38, 45}, {0.55, 0.74}},        // Baja Bug: ~870 kg with the cage (stock 1969 Beetle ~820 kg), stock Beetles ~42/58, the Baja a little further back (estimate), lifted
     };
     Car& c = ctx.add(spec, kLaneStartX, kLaneZ, 0);
     ctx.focus(c);
@@ -873,7 +881,8 @@ VEHICLE_SCENARIO(weight, "structure/weight", "Curb weight, front/rear split and 
         Ipitch += n.m * (along * along + up * up);
     }
     const double frontShare = front / std::max(total, 1.0), a = c.wheelbase * (1 - frontShare), b = c.wheelbase * frontShare;
-    ctx.metric("pitch dynamic index k^2 / (a b)", Ipitch / M / std::max(1e-6, a * b), "", 0.8, 1.2);
+    // (A rear engine hung out past the axle spreads the mass to the ends, as on a Beetle or a 911.)
+    ctx.metric("pitch dynamic index k^2 / (a b)", Ipitch / M / std::max(1e-6, a * b), "", 0.8, spec.rearEngine ? 1.45 : 1.2);
     const Expect& e = expect[vehicleIndex(spec)];
     ctx.metric("curb weight", c.mass, "kg", e.kg.lo, e.kg.hi);
     ctx.metric("weight on the front axle", front / std::max(total, 1.0) * 100, "%", e.front.lo, e.front.hi);
@@ -902,12 +911,13 @@ VEHICLE_SCENARIO(wall50, "damage/wall-50", "50 km/h into the concrete wall: crum
     ctx.metric("crumple depth", crush, "m", tubeFrame(spec) ? 0.0 : 0.12, 1.0);  // (tougher than stock: see wall-25; a tube cage takes a 50 km/h hit with its bumper and hood)
     ctx.metric("peak deceleration (smoothed)", peakDecel, "g", 8, 60);
     // (A long-nosed car can take a 50 km/h hit in its crumple zone before the engine.)
-    ctx.metric("engine health", c.engineHealth, "", 0.15, tubeFrame(spec) ? 1.0 : 0.99);  // (a tube frame has no bay to crush)
+    ctx.metric("engine health", c.engineHealth, "", 0.15, tubeFrame(spec) || spec.rearEngine ? 1.0 : 0.99);  // (a tube frame has no bay to crush; a rear engine is out of the way)
     ctx.check("does not pass through the wall", c.frame().com.x < 114 - 0.5);
     ctx.metric("rebound speed (real cars: ~5-8 km/h; stiffer here)", rebound, "km/h", 0, tubeFrame(spec) ? 22 : 14);
     int glass = 0;
     for (const Tri& t : c.tris) glass += t.mat == MAT_GLASS && t.shattered;
-    ctx.metric("broken glass panels", glass, "", tubeFrame(spec) ? 0 : 1, 60);
+    // (A rear-engined car has no block behind its nose to drive the cowl back into the windshield.)
+    ctx.metric("broken glass panels", glass, "", tubeFrame(spec) || spec.rearEngine ? 0 : 1, 60);
     // (Steel armor bumpers have no covers to knock off.)
     ctx.metric("body panels knocked loose", loosePanels(c), "", 0, 6);
     ctx.note("loose: " + loosePanelNames(c));

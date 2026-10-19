@@ -55,7 +55,7 @@ struct Budget {
 }  // namespace
 
 SCENARIO(carShell, "visual/body-shell", "Each sculpted body shell draws within its triangle budget (flat runs merged), and after a warp every vertex of the full grid still lies on the merged surface that replaced it") {
-    const Budget budgets[] = {{"4runner", 22000}, {"bronco", 21000}, {"civic", 20800}, {"tacoma", 26200}, {"blazer", 21900}};
+    const Budget budgets[] = {{"4runner", 22000}, {"bronco", 21000}, {"civic", 20800}, {"tacoma", 26200}, {"blazer", 21900}, {"baja", 18200}};
     for (const Budget& b : budgets) {
         const VehicleSpec* vs = nullptr;
         for (const VehicleSpec& s : vehicleCatalog())
@@ -70,7 +70,8 @@ SCENARIO(carShell, "visual/body-shell", "Each sculpted body shell draws within i
         ctx.check(std::string(b.id) + ": a shell", buildBodyShell(c, merged, true) && buildBodyShell(c, full, false));
         const size_t tm = trianglesOf(merged), tf = trianglesOf(full);
         ctx.metric(std::string(b.id) + ": body shell triangles", (double)tm, "tris", 0, (double)b.tris);
-        ctx.check(std::string(b.id) + ": fewer than the full grid", tm * 10 < tf * 8.5, std::to_string(tm) + " of " + std::to_string(tf));
+        // (The Baja's Beetle dome is curved nearly everywhere: only its tub sides and running boards merge.)
+        ctx.check(std::string(b.id) + ": fewer than the full grid", tm * 100 < tf * (std::string(b.id) == "baja" ? 97 : 85), std::to_string(tm) + " of " + std::to_string(tf));
         ctx.check(std::string(b.id) + ": glass and panels keep their faces", merged.topoCount < full.topoCount);
 
         // (A few panel vertices sit off their rest spot by design: skip them and any triangle that has one.)
