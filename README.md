@@ -513,7 +513,7 @@ The idea: trucks break, and your buddies get you home. (Until multiplayer lands,
 
 ## Maps
 
-The map list has just the **proving ground** for now: it's where everything in the game is laid out to look at and try while the world is rebuilt. The other maps are still in the code (the tests use them) and `--map N` still loads one: `1` mountain, `2` freeway, `3` Frontier, `4` Backcountry. (The seeded Wilderness map was removed for now, commit `c735d9e` has the generator; `5` is now the plain **open country** the obstacle-section levels are set in: rolling land with nothing laid out on it. The game ships a level for each obstacle section on it: STEEP HILL, MUD PIT, ROCKY RIVER, ROCK WALL, DUNES, CLIFF SHELF and TIMBER, each on country of its own kind.)
+Pick the map in the pause menu (Esc); the game remembers it. All maps are on the list (and in the editor). From the command line, `--map N`: `0` proving ground, `1` mountain, `2` freeway, `3` Frontier, `4` Backcountry. (The seeded Wilderness map was removed for now, commit `c735d9e` has the generator; `5` is now the plain **open country** the obstacle-section levels are set in: rolling land with nothing laid out on it. The game ships a level for each obstacle section on it: STEEP HILL, MUD PIT, ROCKY RIVER, ROCK WALL, DUNES, CLIFF SHELF and TIMBER, each on country of its own kind.)
 
 ### Backcountry
 
