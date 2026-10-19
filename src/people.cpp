@@ -22,7 +22,7 @@ const double kWaist = 0.10;                   // pelvis to the chest's pivot
 const double kShoulderY = 0.37, kShoulderW = 0.182;  // shoulder joints, in the chest's frame
 const double kNeckY = 0.455;
 const double kGripX = 0.072, kGripY = 0.03;   // a handle in the closed hand, from the wrist
-const double kSeatSlide = 0.09;               // the driver sits this far ahead of the seat's hip point (sat up to the wheel)
+const double kSeatSlide = 0.09;               // a driver would sit this far ahead of the seat's hip point (up to the wheel): the eyes are over that
 
 double smooth01(double x) {
     x = clampd(x, 0, 1);
@@ -185,82 +185,133 @@ void buildSeat(mk::B& b, const Look& L, int detail) {
 // The jacket's body: the waist pivot at the origin, the neck at +y.
 void buildChest(mk::B& b, const Look& L, int detail) {
     const int sg = detail >= 2 ? 16 : 10;
+    // Cut in at the waist, out over the chest and the shoulder blades, the shoulders sloping to the collar.
     b.style(L.jacket, mk::MATTE);
     b.push();
-    b.scale(V3(0.6, 1, 1));
-    b.lathe(V3(0, 0, 0), {mk::V2(0.0, -0.075), mk::V2(0.166, -0.07), mk::V2(0.172, -0.02), mk::V2(0.169, 0.1), mk::V2(0.18, 0.22), mk::V2(0.192, 0.31), mk::V2(0.19, 0.36),
-                          mk::V2(0.162, 0.405), mk::V2(0.095, 0.44), mk::V2(0.0, 0.45)},
+    b.scale(V3(0.58, 1, 1));
+    b.lathe(V3(0, 0, 0), {mk::V2(0.0, -0.075), mk::V2(0.162, -0.07), mk::V2(0.166, -0.02), mk::V2(0.158, 0.08), mk::V2(0.172, 0.2), mk::V2(0.186, 0.29), mk::V2(0.184, 0.345),
+                          mk::V2(0.16, 0.39), mk::V2(0.11, 0.425), mk::V2(0.06, 0.445), mk::V2(0.0, 0.448)},
             sg, true);
     b.style(L.jacketDark, mk::MATTE);
-    b.cyl(V3(0, -0.075, 0), V3(0, -0.03, 0), 0.175, sg, false);  // hem band
+    b.cyl(V3(0, -0.075, 0), V3(0, -0.032, 0), 0.169, sg, false);  // hem band
     b.pop();
-    // Collar standing up round the neck, the zip and its pull.
+    // Chest and back: a little fuller in front over the pecs, the shoulder blades behind.
+    b.style(L.jacket, mk::MATTE);
+    for (int s = -1; s <= 1; s += 2) {
+        b.sphere(V3(0.06, 0.265, s * 0.07), V3(0.05, 0.07, 0.085), detail >= 2 ? 1 : 0);
+        b.sphere(V3(-0.062, 0.29, s * 0.075), V3(0.042, 0.085, 0.085), detail >= 2 ? 1 : 0);
+    }
+    // Collar standing up round the neck (open at the throat), the zip and its pull.
     b.style(L.jacketDark, mk::MATTE);
-    b.cone(V3(0, 0.418, 0), V3(-0.006, 0.495, 0), 0.078, 0.07, sg, false);
-    b.torus(V3(-0.006, 0.495, 0), 0.07, 0.009, sg, 3);
+    b.cone(V3(-0.004, 0.41, 0), V3(-0.012, 0.49, 0), 0.074, 0.066, sg, false);
+    b.torus(V3(-0.012, 0.49, 0), 0.066, 0.008, sg, 3);
     b.style(V3(0.13, 0.13, 0.14), mk::METAL);
-    b.beam(V3(0.103, -0.07, 0), V3(0.111, 0.25, 0), 0.008, 0.007, V3(1, 0, 0));
-    b.beam(V3(0.111, 0.25, 0), V3(0.077, 0.44, 0), 0.008, 0.007, V3(1, 0, 0));
-    b.box(V3(0.116, 0.2, 0), V3(0.006, 0.026, 0.012), 0.002);
+    b.beam(V3(0.098, -0.07, 0), V3(0.104, 0.08, 0), 0.008, 0.007, V3(1, 0, 0));
+    b.beam(V3(0.104, 0.08, 0), V3(0.112, 0.27, 0), 0.008, 0.007, V3(1, 0, 0));
+    b.beam(V3(0.112, 0.27, 0), V3(0.07, 0.43, 0), 0.008, 0.007, V3(1, 0, 0));
+    b.box(V3(0.117, 0.21, 0), V3(0.006, 0.026, 0.012), 0.002);
     if (detail >= 1) {
-        // Chest pockets with flaps, a reflective stripe round the arms' tops (picked up by headlights).
         for (int s = -1; s <= 1; s += 2) {
+            // Chest pockets with flaps, hand-warmer pocket openings.
             b.style(L.jacketDark, mk::MATTE);
-            b.box(V3(0.104, 0.24, s * 0.077), V3(0.016, 0.1, 0.086), 0.006);
-            b.style(L.jacket * 0.9, mk::MATTE);
-            b.box(V3(0.113, 0.288, s * 0.077), V3(0.014, 0.026, 0.092), 0.004);
-            b.box(V3(0.08, 0.02, s * 0.108), V3(0.034, 0.12, 0.012), 0.004);  // hand-warmer pocket seam
+            b.box(V3(0.113, 0.25, s * 0.07), V3(0.014, 0.09, 0.08), 0.006);
+            b.style(L.jacket * 0.92, mk::MATTE);
+            b.box(V3(0.121, 0.292, s * 0.07), V3(0.012, 0.024, 0.086), 0.004);
+            b.style(L.jacketDark * 0.9, mk::MATTE);
+            b.beam(V3(0.094, -0.04, s * 0.06), V3(0.09, 0.08, s * 0.095), 0.006, 0.006, V3(1, 0, 0));
+            // Seams that read at a distance: down each side, over each shoulder to the collar.
+            b.style(L.jacketDark * 0.95, mk::MATTE);
+            b.beam(V3(0, -0.06, s * 0.164), V3(0, 0.08, s * 0.157), 0.006, 0.006, V3(1, 0, 0));
+            b.beam(V3(0, 0.08, s * 0.157), V3(0, 0.29, s * 0.187), 0.006, 0.006, V3(1, 0, 0));
+            b.beam(V3(0, 0.355, s * 0.18), V3(-0.004, 0.43, s * 0.075), 0.006, 0.006, V3(0, 1, 0));
         }
-        b.style(L.jacketDark * 0.85, mk::MATTE);  // shoulder yoke seam across the back
-        b.push();
-        b.scale(V3(0.6, 1, 1));
-        b.cyl(V3(0, 0.33, 0), V3(0, 0.338, 0), 0.191, sg, false);
-        b.pop();
+        b.style(L.jacketDark * 0.85, mk::MATTE);  // shoulder yoke across the back
+        b.box(V3(-0.1, 0.335, 0), V3(0.014, 0.008, 0.22), 0.003);
     }
 }
 
 // The head: its middle at the origin, the face toward +x.
 void buildHead(mk::B& b, const Look& L, int detail) {
-    const int d = detail >= 2 ? 2 : 1;
-    b.style(L.skin, mk::MATTE);
-    b.sphere(V3(0.008, 0, 0), V3(0.098, 0.114, 0.088), d);
-    b.sphere(V3(0.03, -0.072, 0), V3(0.066, 0.058, 0.064), 1);  // jaw
-    for (int k = -1; k <= 1; k += 2) b.sphere(V3(-0.006, -0.006, k * 0.088), V3(0.02, 0.033, 0.013), 0);  // ears
-    b.cone(V3(0.09, -0.006, 0), V3(0.127, -0.026, 0), 0.02, 0.008, 6, true);  // nose
-    b.style(V3(0.08, 0.06, 0.05), mk::MATTE);
+    const int d = detail >= 2 ? 2 : 1, d0 = detail >= 2 ? 1 : 0;
+    const V3 skin = L.skin, shade = skin * 0.86;
+    b.style(skin, mk::MATTE);
+    b.sphere(V3(-0.006, 0.012, 0), V3(0.096, 0.108, 0.086), d);                 // skull
+    b.sphere(V3(0.026, -0.05, 0), V3(0.068, 0.052, 0.068), d0);                // cheeks and upper jaw
+    b.style(L.stubble ? skin * 0.72 : skin, mk::MATTE);
+    b.sphere(V3(0.03, -0.074, 0), V3(0.06, 0.042, 0.058), d0);                 // jaw
+    b.sphere(V3(0.074, -0.092, 0), V3(0.026, 0.024, 0.032), 0);                // chin
+    b.style(skin, mk::MATTE);
+    b.sphere(V3(0.078, 0.033, 0), V3(0.022, 0.016, 0.07), d0);                 // brow ridge
+    for (int k = -1; k <= 1; k += 2) b.sphere(V3(0.06, -0.01, k * 0.044), V3(0.026, 0.02, 0.022), 0);  // cheekbones
+    // Nose: bridge, tip and wings.
+    b.beam(V3(0.09, 0.022, 0), V3(0.113, -0.024, 0), 0.017, 0.014, V3(1, 0.4, 0), 0.004);
+    b.sphere(V3(0.112, -0.028, 0), V3(0.014, 0.013, 0.014), 0);
+    for (int k = -1; k <= 1; k += 2) b.sphere(V3(0.101, -0.033, k * 0.012), V3(0.011, 0.009, 0.009), 0);
+    // Ears: rim and hollow.
     for (int k = -1; k <= 1; k += 2) {
-        b.sphere(V3(0.09, 0.016, k * 0.036), V3(0.011, 0.012, 0.012), 0);           // eyes
-        b.style(L.hair * 0.9, mk::MATTE);
-        b.box(V3(0.092, 0.041, k * 0.038), V3(0.012, 0.009, 0.042), 0.002);          // brows
-        b.style(V3(0.08, 0.06, 0.05), mk::MATTE);
+        b.style(skin, mk::MATTE);
+        b.sphere(V3(-0.012, -0.004, k * 0.086), V3(0.024, 0.034, 0.011), 0);
+        b.style(shade * 0.85, mk::MATTE);
+        b.sphere(V3(-0.008, -0.006, k * 0.092), V3(0.012, 0.02, 0.005), 0);
     }
-    b.style(V3(L.skin.x * 0.75, L.skin.y * 0.5, L.skin.z * 0.5), mk::MATTE);
-    b.box(V3(0.092, -0.052, 0), V3(0.01, 0.007, 0.04), 0.002);  // mouth
-    // Hair and hat.
+    // Eyes under the brow: whites, irises, lids; brows.
+    for (int k = -1; k <= 1; k += 2) {
+        b.style(V3(0.62, 0.6, 0.57), mk::MATTE);
+        b.sphere(V3(0.073, 0.009, k * 0.033), V3(0.011, 0.0068, 0.0095), 0);
+        b.style(L.eyes, mk::MATTE);
+        b.sphere(V3(0.082, 0.009, k * 0.033), V3(0.005, 0.0068, 0.0068), 0);
+        b.style(shade, mk::MATTE);
+        b.box(V3(0.081, 0.018, k * 0.033), V3(0.01, 0.005, 0.03), 0.002);  // upper lid
+        b.style(L.hair * 0.85, mk::MATTE);
+        b.push();
+        b.move(0.094, 0.034, k * 0.034);
+        b.roll(k * -8.0);
+        b.box(V3(0, 0, 0), V3(0.01, 0.008, 0.038), 0.002);
+        b.pop();
+    }
+    // Lips.
+    b.style(L.lips, mk::MATTE);
+    b.box(V3(0.094, -0.054, 0), V3(0.012, 0.007, 0.04), 0.003);
+    b.style(L.lips * 1.08, mk::MATTE);
+    b.box(V3(0.091, -0.063, 0), V3(0.012, 0.008, 0.034), 0.003);
+    // Hair (short at the back and sides, sideburns) and hat.
     b.style(L.hair, mk::MATTE);
-    b.blob(V3(-0.018, 0.02, 0), V3(0.104, 0.113, 0.097), 0.035, 3, 1, 0.3, -0.055);
-    if (L.hat_ == 0) {  // ball cap, peak forward
+    b.blob(V3(-0.016, 0.024, 0), V3(0.103, 0.11, 0.094), 0.03, 3, d0 + 1, 0.3, -0.05);
+    for (int k = -1; k <= 1; k += 2) b.box(V3(0.03, -0.012, k * 0.083), V3(0.022, 0.04, 0.008), 0.003);
+    if (L.hat_ == 0) {  // ball cap, peak forward, curved
         b.style(L.hat, mk::MATTE);
-        b.blob(V3(0.0, 0.048, 0), V3(0.106, 0.08, 0.097), 0.0, 4, 1, 0.3, 0.035);
+        b.blob(V3(0.0, 0.05, 0), V3(0.105, 0.08, 0.097), 0.0, 4, 1, 0.3, 0.035);
         b.push();
         b.scale(V3(1, 1, 0.92));
-        b.cyl(V3(0.0, 0.03, 0), V3(0.0, 0.058, 0), 0.105, 12, false);
+        b.cyl(V3(0.0, 0.03, 0), V3(0.0, 0.058, 0), 0.104, 12, false);
         b.pop();
         b.push();
-        b.move(0.085, 0.037, 0);
-        b.pitch(-10);
-        b.extrudeUp({mk::V2(0.0, 0.09), mk::V2(0.055, 0.08), mk::V2(0.095, 0.042), mk::V2(0.108, 0.0), mk::V2(0.095, -0.042), mk::V2(0.055, -0.08), mk::V2(0.0, -0.09)}, 0.008, -0.004);
+        b.move(0.085, 0.038, 0);
+        b.pitch(-12);
+        b.extrudeUp({mk::V2(0.0, 0.09), mk::V2(0.055, 0.08), mk::V2(0.095, 0.042), mk::V2(0.108, 0.0), mk::V2(0.095, -0.042), mk::V2(0.055, -0.08), mk::V2(0.0, -0.09)}, 0.007, -0.0035);
         b.pop();
         b.style(L.hat * 0.7, mk::MATTE);
-        b.sphere(V3(0.0, 0.127, 0), V3(0.012, 0.007, 0.012), 0);  // button
+        b.sphere(V3(0.0, 0.128, 0), V3(0.012, 0.007, 0.012), 0);  // button
+        b.box(V3(0.098, 0.075, 0), V3(0.004, 0.026, 0.04), 0.002);  // patch
     } else if (L.hat_ == 1) {  // beanie, turned-up band
         b.style(L.hat, mk::MATTE);
-        b.blob(V3(-0.005, 0.03, 0), V3(0.108, 0.11, 0.098), 0.0, 4, 1, 0.3, 0.02);
+        b.blob(V3(-0.005, 0.032, 0), V3(0.107, 0.11, 0.098), 0.0, 4, 1, 0.3, 0.02);
         b.style(L.hat * 0.8, mk::MATTE);
         b.push();
         b.scale(V3(1, 1, 0.91));
-        b.cyl(V3(-0.005, 0.03, 0), V3(-0.005, 0.07, 0), 0.11, 12, false);
+        b.cyl(V3(-0.005, 0.03, 0), V3(-0.005, 0.07, 0), 0.109, 12, false);
         b.pop();
+    }
+}
+
+// Colour by height: darker toward a hem, a jacket's shadowed sides (soft, as dirt and shade gather there).
+void shadeByHeight(mk::Mesh& m, size_t from, double y0, double y1, double k0, double k1) {
+    for (size_t i = from; i < m.v.size(); i++) {
+        mk::MVert& q = m.v[i];
+        const double t = clampd((q.p[1] - y0) / (y1 - y0), 0, 1), k = k0 + (k1 - k0) * t * t * (3 - 2 * t);
+        // (...and a touch darker where it faces down or away round the sides)
+        const double side = 0.94 + 0.06 * clampd(0.5 + 0.5 * q.n[1] + 0.3 * std::fabs(q.n[0]), 0, 1);
+        for (int c = 0; c < 3; c++) q.c[c] = (float)(q.c[c] * k * side);
     }
 }
 
@@ -280,8 +331,8 @@ const mk::Mesh& piece(int what, const Look& L, int detail, int param = 0) {
     switch (what) {
     case P_HAND: buildHand(b, L, param & 1, (param >> 1) / 4.0, detail); break;
     case P_BOOT: buildBoot(b, L, detail); break;
-    case P_SEAT: buildSeat(b, L, detail); break;
-    case P_CHEST: buildChest(b, L, detail); break;
+    case P_SEAT: buildSeat(b, L, detail), shadeByHeight(m, 0, -0.1, 0.15, 0.88, 1.0); break;
+    case P_CHEST: buildChest(b, L, detail), shadeByHeight(m, 0, -0.07, 0.36, 0.84, 1.04); break;
     case P_HEAD: buildHead(b, L, detail); break;
     default: break;
     }
@@ -321,7 +372,7 @@ Basis pelvisBasis(const Pose& p) {
 
 V3 shoulderOf(const Pose& p, int side) {
     const Basis c = chestBasis(p);
-    return c.o + c.y * kShoulderY + c.z * (side == 0 ? -kShoulderW : kShoulderW);
+    return c.o + c.y * (kShoulderY + 0.006 * p.breath) + c.z * (side == 0 ? -kShoulderW : kShoulderW);
 }
 V3 hipOf(const Pose& p, int side) {
     const Basis c = pelvisBasis(p);
@@ -336,6 +387,7 @@ Look lookFor(const V3& jacket, uint32_t seed) {
     static const V3 pants[] = {V3(0.16, 0.21, 0.33), V3(0.13, 0.15, 0.2), V3(0.32, 0.28, 0.2), V3(0.2, 0.2, 0.19)};
     L.pants = pants[(int)(h(1) * 4) % 4];
     L.pantsDark = L.pants * 0.7;
+    L.pantsWorn = L.pants * 1.18 + V3(0.03, 0.03, 0.03);  // (jeans faded at the knees and down the thighs)
     static const V3 boots[] = {V3(0.33, 0.21, 0.12), V3(0.1, 0.09, 0.085), V3(0.42, 0.33, 0.2)};
     L.boots = boots[(int)(h(2) * 3) % 3];
     L.soles = V3(0.09, 0.085, 0.08);
@@ -353,6 +405,10 @@ Look lookFor(const V3& jacket, uint32_t seed) {
     L.hat = hats[(int)(h(7) * 4) % 4];
     uint64_t k = seed;
     for (double c : {jacket.x, jacket.y, jacket.z}) k = k * 1000003ull + (uint64_t)(c * 255);
+    static const V3 eyes[] = {V3(0.25, 0.16, 0.08), V3(0.2, 0.3, 0.42), V3(0.28, 0.32, 0.18), V3(0.12, 0.08, 0.05)};
+    L.eyes = eyes[(int)(h(8) * 4) % 4];
+    L.lips = V3(L.skin.x * 0.8, L.skin.y * 0.62, L.skin.z * 0.6);
+    L.stubble = h(9) < 0.35;
     L.key = k;
     return L;
 }
@@ -368,6 +424,21 @@ void gripAt(Pose& p, int side, const V3& g, const V3& axis, double grip) {
     p.grip[side] = grip;
 }
 
+namespace {
+// A limb's tube along a polyline of (point, radius) stations.
+void limb(mk::B& b, std::initializer_list<std::pair<V3, double>> st, int sg) {
+    const std::pair<V3, double>* prev = nullptr;
+    for (const auto& q : st) {
+        if (prev) b.cone(prev->first, q.first, prev->second, q.second, sg, false);
+        prev = &q;
+    }
+}
+// A thin band round a limb at `c` (axis `ax`): a fold or a seam that reads at a distance.
+void band(mk::B& b, const V3& c, const V3& ax, double r, double w, int sg) { b.cone(c - ax * (w * 0.5), c + ax * (w * 0.5), r, r, sg, false); }
+}  // namespace
+
+const double kClipR = 0.15;  // first person: nothing of you nearer the eyes than this
+
 void build(const Pose& p, const Look& L, mk::Mesh& out) {
     const size_t start = out.v.size();
     const int det = p.detail, sg = det >= 2 ? 10 : det == 1 ? 7 : 5;
@@ -375,21 +446,29 @@ void build(const Pose& p, const Look& L, mk::Mesh& out) {
     const Basis pel = pelvisBasis(p), ch = chestBasis(p);
     place(out, piece(P_SEAT, L, det), pel);
     place(out, piece(P_CHEST, L, det), ch);
-    // Waist: the jacket's hem over the belt (fills the gap a bend opens).
-    b.style(L.jacket, mk::MATTE);
-    // Legs: thigh and shin to the ankle, the jeans breaking over the boot.
+    // Legs: the thigh tapering to the knee, the calf swelling below it and slimming to the ankle; the jeans faded
+    // at the knee, an outside seam, folds stacked over the boot.
     for (int s = 0; s < 2; s++) {
-        const V3 hip = hipOf(p, s);
+        const V3 hip = hipOf(p, s), out_ = pel.z * (s == 0 ? -1.0 : 1.0);
         V3 ankle;
         const V3 knee = solve(hip, p.ankle[s], kThigh, kShin, p.kneePole[s], &ankle);
+        const V3 td = norm(knee - hip), sd = norm(ankle - knee);
         b.style(L.pants, mk::MATTE);
-        b.cone(hip, knee, 0.084, 0.06, sg, false);
-        b.sphere(knee, V3(0.06, 0.06, 0.06), det >= 2 ? 1 : 0);
-        const V3 sd = norm(ankle - knee);
-        b.cone(knee, ankle + sd * 0.035, 0.058, 0.051, sg, false);
+        limb(b, {{hip - td * 0.02, 0.083}, {hip + (knee - hip) * 0.45, 0.071}, {knee - td * 0.03, 0.054}}, sg);
+        b.style(L.pantsWorn, mk::MATTE);
+        b.sphere(knee, V3(0.054, 0.054, 0.054), det >= 2 ? 1 : 0);
+        b.style(L.pants, mk::MATTE);
+        limb(b, {{knee + sd * 0.01, 0.052}, {knee + (ankle - knee) * 0.3, 0.054}, {ankle + sd * 0.0, 0.046}}, sg);
+        if (det >= 1) {
+            b.style(L.pantsDark, mk::MATTE);
+            const V3 so = perpTo(out_, td), ss = perpTo(out_, sd);
+            b.beam(hip + so * 0.08, knee + so * 0.052, 0.006, 0.005, so);  // outside seams
+            b.beam(knee + ss * 0.051, ankle + ss * 0.045, 0.006, 0.005, ss);
+            band(b, knee - sd * 0.035, sd, 0.053, 0.008, sg);  // a fold behind the knee
+            band(b, ankle - sd * 0.06, sd, 0.049, 0.01, sg);   // folds stacking over the boot
+        }
         b.style(L.pantsDark, mk::MATTE);
-        b.cone(ankle - sd * 0.02, ankle + sd * 0.045, 0.053, 0.062, sg, true);  // the hem, breaking over the boot
-        // The boot on the foot's own axes (it may not reach exactly: then it's where the leg ends).
+        b.cone(ankle - sd * 0.035, ankle + sd * 0.045, 0.048, 0.058, sg, true);  // the hem, breaking over the boot
         Basis f;
         f.x = norm(p.footF[s]);
         f.y = perpTo(p.footU[s], f.x);
@@ -397,7 +476,8 @@ void build(const Pose& p, const Look& L, mk::Mesh& out) {
         f.o = ankle;
         place(out, piece(P_BOOT, L, det), f);
     }
-    // Arms: shoulder, elbow, wrist; a sleeve with a cuff, then the glove.
+    // Arms: a rounded shoulder, the upper arm slimming to a defined elbow, the forearm full below it and slim at the
+    // wrist; the sleeve creased at the elbow and bunched over the cuff, then the glove.
     for (int s = 0; s < 2; s++) {
         const V3 sh = shoulderOf(p, s);
         double l1 = kUpperArm;
@@ -405,14 +485,19 @@ void build(const Pose& p, const Look& L, mk::Mesh& out) {
         if (p.stretch && reach > (kUpperArm + kForearm) * 0.97) l1 = reach - kForearm * 0.93;
         V3 wrist;
         const V3 elbow = solve(sh, p.hand[s], l1, kForearm, p.elbowPole[s], &wrist);
+        const V3 ud = norm(elbow - sh), fd = norm(wrist - elbow);
         b.style(L.jacket, mk::MATTE);
-        b.sphere(sh - ch.y * 0.008, V3(0.055, 0.052, 0.055), det >= 2 ? 1 : 0);  // the shoulder
-        b.cone(sh, elbow, 0.054, 0.044, sg, false);
-        b.sphere(elbow, V3(0.044, 0.044, 0.044), det >= 2 ? 1 : 0);
-        const V3 fd = norm(wrist - elbow);
-        b.cone(elbow, wrist - fd * 0.035, 0.044, 0.039, sg, false);
+        b.sphere(sh - ch.y * 0.006 + ch.z * (s == 0 ? -0.004 : 0.004), V3(0.046, 0.044, 0.047), det >= 2 ? 1 : 0);  // the deltoid
+        limb(b, {{sh, 0.047}, {sh + (elbow - sh) * 0.45, 0.043}, {elbow, 0.036}}, sg);
+        b.sphere(elbow, V3(0.036, 0.036, 0.036), 0);
+        limb(b, {{elbow, 0.036}, {elbow + (wrist - elbow) * 0.28, 0.038}, {wrist - fd * 0.05, 0.032}}, sg);
         b.style(L.jacketDark, mk::MATTE);
-        b.cone(wrist - fd * 0.042, wrist + fd * 0.004, 0.043, 0.042, sg, true);  // cuff
+        if (det >= 1) {
+            band(b, elbow + ud * -0.03, ud, 0.041, 0.007, sg);   // creases at the inside of the elbow
+            band(b, elbow + fd * 0.035, fd, 0.039, 0.007, sg);
+            band(b, wrist - fd * 0.075, fd, 0.035, 0.008, sg);   // bunched over the cuff
+        }
+        b.cone(wrist - fd * 0.055, wrist + fd * 0.004, 0.034, 0.033, sg, true);  // cuff
         Basis h;
         h.x = norm(p.handX[s]);
         h.y = perpTo(p.handY[s], h.x);
@@ -427,147 +512,271 @@ void build(const Pose& p, const Look& L, mk::Mesh& out) {
         Basis hd;
         hd.y = norm(ch.y * 0.6 + kUp * 0.4);
         hd.x = perpTo(p.headF, hd.y);
-        // (The head turns and nods on the neck, not past what a neck does.)
         hd.z = cross(hd.x, hd.y);
         hd.y = cross(hd.z, hd.x);
         hd.o = neck + ch.y * 0.115 + hd.y * 0.06 + ch.x * 0.012;
         b.style(L.skin, mk::MATTE);
-        b.cone(neck - ch.y * 0.03, hd.o - hd.y * 0.06, 0.05, 0.046, sg, false);
+        const V3 nb = neck - ch.y * 0.03, nt = hd.o - hd.y * 0.065 - hd.x * 0.018;
+        limb(b, {{nb, 0.047}, {(nb + nt) * 0.5, 0.041}, {nt, 0.043}}, sg);
+        b.style(L.skin * 0.9, mk::MATTE);
+        b.sphere(nb + (nt - nb) * 0.45 + hd.x * 0.03, V3(0.012, 0.014, 0.012), 0);  // Adam's apple
         place(out, piece(P_HEAD, L, det), hd);
     }
+    // First person: nothing within a hand's width of the eyes (pushed out round them, never through the camera).
+    if (p.clip)
+        for (size_t i = start; i < out.v.size(); i++) {
+            mk::MVert& q = out.v[i];
+            const V3 d = V3(q.p[0], q.p[1], q.p[2]) - p.eye;
+            const double r = len(d);
+            if (r < kClipR && r > 1e-6) {
+                const V3 w = p.eye + d * (kClipR / r);
+                q.p[0] = (float)w.x, q.p[1] = (float)w.y, q.p[2] = (float)w.z;
+            }
+        }
     lastTris += (int)((out.v.size() - start) / 3);
 }
 
 // ---- On foot ----
 
-double GaitClock::step(double stride, double dt, double speedNow) {
-    if (!init) {
-        init = true, lastStride = stride, phase = stride * 1.45;
-        return phase;
-    }
-    double d = stride - lastStride;
-    lastStride = stride;
-    if (std::fabs(d) > 2.0) d = 0;  // (a jump in the count: someone new, or it restarted)
-    const double sp = speedNow >= 0 ? speedNow : (dt > 1e-4 ? d / 3.2 / dt : speed);
-    speed += (sp - speed) * std::min(1.0, dt * 8);
-    // A walk's cycle is 1.35 m (two steps); a run's 2.3 m.
-    const double run = clampd((speed - 2.4) / 1.6, 0, 1);
-    phase += d * (1.45 + (0.85 - 1.45) * run);
-    return phase;
+namespace {
+// A foot rolled `pitch` (+ toes up) about its heel (toes up) or the ball of the foot (heel up): the ankle and the
+// foot's forward, from where the flat foot's ankle would be.
+void rollFoot(const V3& flatAnkle, const V3& F, double pitch, V3& ankle, V3& fwd) {
+    const V3 R = cross(F, kUp);
+    const V3 pivot = flatAnkle - kUp * kAnkle + F * (pitch > 0 ? -0.055 : 0.125);
+    ankle = pivot + rotateAxis(flatAnkle - pivot, R, pitch);
+    fwd = rotateAxis(F, R, pitch);
 }
+V3 yawDir(double y) { return V3(std::cos(y), 0, -std::sin(y)); }
+double yawOf(const V3& d) { return std::atan2(-d.z, d.x); }
+}  // namespace
 
-Pose walking(const Gait& g) {
+Pose walking(const Gait& g, Mover& m, double dt) {
+    dt = clampd(dt, 0, 0.1);
     Pose p;
-    const V3 F(std::cos(g.yaw), 0, -std::sin(g.yaw)), R = cross(F, kUp);
-    const V3 vh(g.vel.x, 0, g.vel.z);
-    const double s = len(vh);
-    const double amp = g.grounded ? smooth01(s / 1.1) : 0.0;
-    const double run = clampd((s - 2.4) / 1.6, 0, 1);
-    const V3 m = s > 0.05 ? vh / s : F;
-    const double beta = 0.58 + (0.36 - 0.58) * run;          // share of the cycle a foot's on the ground
-    const double D = 2 * M_PI / (3.2 * (1.45 + (0.85 - 1.45) * run));  // cycle length (m)
-    const double travel = D * beta * amp, back = 0.06 + 0.055 * run;
-    double footX[2], lift[2], toe[2], heel[2];
-    const double u0 = g.phase / (2 * M_PI);
-    for (int sd = 0; sd < 2; sd++) {
-        double u = u0 + (sd == 0 ? 0.0 : 0.5);
-        u -= std::floor(u);
-        heel[sd] = 0;
-        if (u < beta) {  // stance: the foot stays put as the body passes over it, the heel coming up at the end
-            const double w = u / beta;
-            footX[sd] = travel * (0.5 - w) - back * amp;
-            lift[sd] = 0;
-            heel[sd] = smooth01((w - 0.62) / 0.38) * amp;
-            toe[sd] = 0;
-        } else {  // swing: up, forward and down onto the heel
-            const double w = (u - beta) / (1 - beta);
-            footX[sd] = -travel * 0.5 + travel * smooth01(w) - back * amp;
-            const double peak = 0.3 + 0.12 * run;
-            const double hgt = (0.1 + 0.2 * run) * amp;
-            lift[sd] = hgt * (w < peak ? std::sin(w / peak * M_PI / 2) : std::cos((w - peak) / (1 - peak) * M_PI / 2));
-            toe[sd] = (w < 0.5 ? -(0.6 - w) * 0.9 : (w - 0.5) * 0.5) * amp;  // toes down leaving, up landing
-        }
+    if (!m.init) {
+        m.init = true, m.lastStride = g.stride, m.phase = g.stride * 1.45, m.lastP = g.p, m.lookNext = 1 + mk::hash01(m.seed, 3) * 2;
     }
-    // Hips bob (lowest as weight comes on: walking at the heel strikes, running mid-stance), sway over the
-    // standing leg, and turn with the stride; the shoulders turn against them.
-    const double ph = 2 * M_PI * u0;
-    const double bob = (-0.022 * std::cos(2 * ph) * (1 - run) - 0.035 * std::cos(2 * (ph - M_PI * beta / 2)) * run) * amp;
-    const double sway = 0.018 * std::sin(ph) * amp * (1 - run);
-    const double twist = 0.1 * std::sin(ph) * amp;
-    double hipY = 0.935 - 0.03 * run + bob;
-    const V3 base = g.p;
-    for (int sd = 0; sd < 2; sd++) {  // no higher than the planted legs reach
-        if (lift[sd] > 0.01) continue;
-        const double dx = footX[sd], ay = kAnkle + heel[sd] * 0.07;
-        const double L = (kThigh + kShin) * 0.995;
-        hipY = std::min(hipY, ay + std::sqrt(std::max(0.0, L * L - dx * dx)));
+    m.t += dt;
+    // How fast: given, or (a buddy) from where they've got to.
+    if (g.estimate) {
+        const V3 d = g.p - m.lastP;
+        if (dt > 1e-4 && len(d) < 3) m.vel += (d / dt - m.vel) * std::min(1.0, dt * 6);
+    } else
+        m.vel = g.vel;
+    m.lastP = g.p;
+    const V3 vh(m.vel.x, 0, m.vel.z);
+    const double sNow = len(vh), prev = m.speed;
+    m.speed += (sNow - m.speed) * std::min(1.0, dt * 8);
+    if (dt > 1e-4) m.accel += ((m.speed - prev) / dt - m.accel) * std::min(1.0, dt * 5);
+    double dStride = g.stride - m.lastStride;
+    m.lastStride = g.stride;
+    if (std::fabs(dStride) > 2.0) dStride = 0;  // (a jump in the count: someone new, or it restarted)
+    const double run = clampd((m.speed - 2.4) / 1.6, 0, 1);
+    m.phase += dStride * (1.45 + (0.85 - 1.45) * run);  // a walk's cycle is 1.35 m (two steps), a run's 2.3 m
+    // In the air, and landing.
+    if (!g.grounded) m.air += dt;
+    else {
+        if (m.air > 0.25) m.land = 1;
+        m.air = 0;
     }
-    if (!g.grounded) {  // in the air: knees up a little, feet hanging
-        for (int sd = 0; sd < 2; sd++) footX[sd] = 0.05 + (sd ? -0.08 : 0.08), lift[sd] = 0.12 + sd * 0.06, toe[sd] = -0.3, heel[sd] = 0;
-        hipY = 0.95;
-    }
-    p.pelvis = base + kUp * hipY + R * sway;
-    p.pelvisF = rotateAxis(F, kUp, twist), p.pelvisU = kUp;
-    const double lean = (0.05 + 0.16 * run) * amp;
-    p.chestU = norm(kUp * std::cos(lean) + F * std::sin(lean) + R * (-sway * 2));
-    p.chestF = rotateAxis(F, kUp, -twist * 0.7);
-    p.headF = norm(F * std::cos(g.lookPitch) + kUp * std::sin(g.lookPitch));
+    m.land = std::max(0.0, m.land - dt * 2.6);
+    const double inAir = smooth01(m.air / 0.15);
+    // Walking the cycle, or standing on planted feet (blended as you start and stop).
+    const bool wantMove = g.grounded && m.speed > (m.move > 0.5 ? 0.16 : 0.32);
+    const double movePrev = m.move;
+    m.move = clampd(m.move + (wantMove ? 1 : -1) * dt * 4.5, 0, 1);
+    const double mv = smooth01(m.move);
+
+    const V3 F = yawDir(g.yaw), R = cross(F, kUp);
+    const double amp = smooth01(m.speed / 1.1);
+    const V3 dir = sNow > 0.05 ? vh / sNow : F;
+    const double beta = 0.6 + (0.36 - 0.6) * run;  // share of the cycle a foot's on the ground
+    const double D = 2 * M_PI / (3.2 * (1.45 + (0.85 - 1.45) * run));
+    const double travel = D * beta * amp, back = 0.05 + 0.06 * run;
+    const double u0 = m.phase / (2 * M_PI);
+    V3 cyAnkle[2], cyFwd[2];
+    double lift[2];
     for (int sd = 0; sd < 2; sd++) {
         const double sgn = sd == 0 ? -1.0 : 1.0;
-        const double lat = (0.105 - 0.035 * run) * sgn;
-        p.ankle[sd] = base + m * footX[sd] + R * lat + kUp * (kAnkle + lift[sd] + heel[sd] * 0.07);
-        const double pitch = toe[sd] - heel[sd] * 0.45;  // + toes up
-        p.footF[sd] = norm(rotateAxis(F, R, pitch) + R * (sgn * 0.08));
-        p.footU[sd] = kUp;
-        p.kneePole[sd] = F + R * (sgn * 0.12);
+        double u = u0 + (sd == 0 ? 0.0 : 0.5);
+        u -= std::floor(u);
+        double x, pitch, h = 0;
+        if (u < beta) {  // stance: heel strike, roll onto the flat foot, the heel coming up and off the toes
+            const double w = u / beta;
+            x = travel * (0.5 - w) - back * amp;
+            const double strike = (0.28 - 0.2 * run) * amp;
+            pitch = w < 0.14 ? strike * (1 - smooth01(w / 0.14)) : w > 0.55 ? -0.75 * smooth01((w - 0.55) / 0.45) * amp : 0.0;
+        } else {  // swing: toes off, the knee coming through, the foot reaching out onto its heel
+            const double w = (u - beta) / (1 - beta);
+            x = -travel * 0.5 + travel * smooth01(w) - back * amp;
+            const double peak = 0.32 - 0.08 * run;
+            const double hgt = (0.09 + 0.26 * run) * amp;
+            h = hgt * (w < peak ? std::sin(w / peak * M_PI / 2) : std::cos((w - peak) / (1 - peak) * M_PI / 2));
+            x -= 0.12 * run * amp * std::sin(w * M_PI) * (1 - w);  // (running, the heel kicks up behind first)
+            pitch = (-0.75 + (0.28 - 0.2 * run + 0.75) * smooth01(w)) * amp;
+        }
+        const V3 flat = g.p + dir * x + R * (sgn * (0.1 - 0.035 * run)) + kUp * (kAnkle + h);
+        const V3 fF = norm(F + R * (sgn * 0.09));
+        rollFoot(flat, fF, pitch, cyAnkle[sd], cyFwd[sd]);
+        lift[sd] = h;
     }
-    // Arms swing against the legs: hanging and easy walking, bent and pumping running.
+    // Planted feet when standing: put down where the cycle left them as you stop, then a step at a time back in under
+    // you, and round as you turn on the spot.
+    V3 stAnkle[2], stFwd[2];
+    if (m.move < 1) {
+        if (!m.planted || (movePrev >= 1 && m.move < 1)) {
+            m.planted = true, m.stepping = -1;
+            for (int sd = 0; sd < 2; sd++) {
+                m.foot[sd] = V3(cyAnkle[sd].x, g.p.y + kAnkle, cyAnkle[sd].z);
+                m.footYaw[sd] = yawOf(V3(cyFwd[sd].x, 0, cyFwd[sd].z));
+            }
+        }
+        auto home = [&](int sd) { return g.p + R * ((sd == 0 ? -1.0 : 1.0) * 0.105) + F * (sd == 0 ? 0.02 : -0.02) + kUp * kAnkle; };
+        auto homeYaw = [&](int sd) { return g.yaw + (sd == 0 ? 0.1 : -0.1); };
+        for (int sd = 0; sd < 2; sd++) m.foot[sd].y = g.p.y + kAnkle;
+        if (m.stepping < 0 && !wantMove && g.grounded) {
+            int worst = -1;
+            double most = 0.085;
+            for (int sd = 0; sd < 2; sd++) {
+                const V3 e = home(sd) - m.foot[sd];
+                const double err = len(V3(e.x, 0, e.z)) + 0.16 * std::fabs(wrapAngle(homeYaw(sd) - m.footYaw[sd]));
+                if (err > most) most = err, worst = sd;
+            }
+            if (worst >= 0) m.stepping = worst, m.stepT = 0, m.stepFrom = m.foot[worst], m.stepYawFrom = m.footYaw[worst];
+        }
+        for (int sd = 0; sd < 2; sd++) {
+            stAnkle[sd] = m.foot[sd];
+            stFwd[sd] = yawDir(m.footYaw[sd]);
+        }
+        if (m.stepping >= 0) {
+            const int sd = m.stepping;
+            m.stepT += dt / 0.3;
+            const double t = smooth01(m.stepT);
+            V3 to = home(sd);
+            m.foot[sd] = m.stepFrom + (to - m.stepFrom) * t;
+            m.foot[sd].y = g.p.y + kAnkle;
+            m.footYaw[sd] = m.stepYawFrom + wrapAngle(homeYaw(sd) - m.stepYawFrom) * t;
+            stAnkle[sd] = m.foot[sd] + kUp * (0.07 * std::sin(M_PI * std::min(1.0, m.stepT)));
+            stFwd[sd] = rotateAxis(yawDir(m.footYaw[sd]), cross(yawDir(m.footYaw[sd]), kUp), -0.25 * std::sin(M_PI * std::min(1.0, m.stepT)));
+            lift[sd] = std::max(lift[sd] * mv, stAnkle[sd].y - g.p.y - kAnkle);
+            if (m.stepT >= 1) m.stepping = -1;
+        }
+    } else
+        m.planted = false;
+    // Hips: bob (walking lowest at the heel strikes, running mid-stance), over the standing leg, hip dropping on the
+    // swing side; standing, a slow shift of weight from foot to foot and breathing.
+    const double ph = 2 * M_PI * u0;
+    const double bob = (-0.024 * std::cos(2 * ph) * (1 - run) - 0.04 * std::cos(2 * (ph - M_PI * beta / 2)) * run) * amp * mv;
+    const double idle = 1 - mv;
+    const double shiftIdle = 0.016 * std::sin(m.t * 0.45 + m.seed) * idle;
+    const double sway = 0.028 * std::sin(ph) * amp * (1 - run) * mv + shiftIdle;
+    const double twist = 0.11 * std::sin(ph) * amp * mv;
+    const double breath = std::sin(m.t * 2 * M_PI / (4.2 - 1.6 * run));
+    double hipY = 0.935 - 0.035 * run * mv + bob - 0.13 * smooth01(m.land) - 0.004 * idle * (1 + breath);
+    V3 ankle[2], fwd[2];
+    for (int sd = 0; sd < 2; sd++) {
+        ankle[sd] = m.planted ? stAnkle[sd] + (cyAnkle[sd] - stAnkle[sd]) * mv : cyAnkle[sd];
+        fwd[sd] = m.planted ? norm(stFwd[sd] + (cyFwd[sd] - stFwd[sd]) * mv) : cyFwd[sd];
+    }
+    const V3 pelH = g.p + R * sway;
+    for (int sd = 0; sd < 2; sd++) {  // no higher than the planted legs reach
+        if (lift[sd] > 0.015) continue;
+        const V3 hip = pelH + R * ((sd == 0 ? -1.0 : 1.0) * kHipW);
+        const double dx = len(V3(ankle[sd].x - hip.x, 0, ankle[sd].z - hip.z));
+        const double L = (kThigh + kShin) * 0.995;
+        hipY = std::min(hipY, ankle[sd].y - g.p.y + std::sqrt(std::max(0.0, L * L - dx * dx)));
+    }
+    // In the air: knees up, feet tucked under, arms out for balance.
+    if (inAir > 0) {
+        hipY += (0.95 - hipY) * inAir;
+        for (int sd = 0; sd < 2; sd++) {
+            const double sgn = sd == 0 ? -1.0 : 1.0;
+            const V3 tuck = g.p + kUp * (0.95 - 0.7) + F * (sd == 0 ? 0.14 : -0.04) + R * (sgn * 0.11);
+            ankle[sd] = ankle[sd] + (tuck - ankle[sd]) * inAir;
+            fwd[sd] = norm(fwd[sd] + (rotateAxis(F, R, -0.35) - fwd[sd]) * inAir);
+        }
+    }
+    p.pelvis = pelH + kUp * hipY;
+    p.pelvisF = rotateAxis(F, kUp, twist);
+    p.pelvisU = norm(kUp + R * (sway * 2.2) * (1 - run));
+    const double lean = (0.05 + 0.24 * run) * amp * mv + clampd(m.accel * 0.05, -0.08, 0.12) * mv + 0.3 * smooth01(m.land) - 0.012 * breath * idle;
+    p.chestU = norm(kUp * std::cos(lean) + F * std::sin(lean) - R * (sway * 2.6));
+    p.chestF = rotateAxis(F, kUp, -twist * 0.75);
+    p.breath = breath;
+    // The head: level with the eyes ahead (running, it stays up as the body leans); a buddy standing about glances round.
+    if (g.lookAround && m.t > m.lookNext) {
+        m.lookTo = (mk::hash01(m.seed, (uint32_t)(m.t * 7)) * 2 - 1) * (0.75 - 0.55 * mv);
+        m.lookNext = m.t + 1.6 + 3.2 * mk::hash01(m.seed + 1, (uint32_t)(m.t * 5));
+    }
+    m.look += ((g.lookAround ? m.lookTo : 0.0) - m.look) * std::min(1.0, dt * 3.5);
+    const V3 lf = rotateAxis(F, kUp, m.look);
+    const double pitch = g.lookPitch - lean * 0.6;
+    p.headF = norm(lf * std::cos(pitch) + kUp * std::sin(pitch));
+    for (int sd = 0; sd < 2; sd++) {
+        const double sgn = sd == 0 ? -1.0 : 1.0;
+        p.ankle[sd] = ankle[sd];
+        p.footF[sd] = fwd[sd];
+        p.footU[sd] = perpTo(kUp, fwd[sd]);
+        p.kneePole[sd] = norm(F + R * (sgn * 0.12) + kUp * (0.3 * inAir));
+    }
+    // Arms swing against the legs walking, pump bent running, hang easy standing, go out for balance in the air.
     for (int sd = 0; sd < 2; sd++) {
         const double sgn = sd == 0 ? -1.0 : 1.0;
         const V3 sh = shoulderOf(p, sd);
-        const double swing = -footX[sd] * (0.42 + 0.25 * run);
-        const V3 hang = sh + kUp * -0.56 + F * (0.03 + swing) + R * (sgn * 0.05);
-        const V3 pump = sh + kUp * -0.3 + F * (0.12 + swing * 0.85) + R * (sgn * -0.02);
-        p.hand[sd] = lerpV(hang, pump, run);
-        p.elbowPole[sd] = norm(F * -1.0 + R * (sgn * 0.4) + kUp * -0.2);
-        const V3 el = solve(sh, p.hand[sd], kUpperArm, kForearm, p.elbowPole[sd]);
-        const V3 x = norm(p.hand[sd] - el + F * (0.1 + 0.5 * run));
+        const V3 rel = ankle[sd] - g.p;
+        const double footX = dot(rel, dir) * mv;
+        const double swing = -footX * (0.38 + 0.3 * run);
+        const V3 hang = sh + kUp * -0.56 + F * (0.035 + swing) + R * (sgn * 0.055);
+        const V3 pump = sh + kUp * -0.27 + F * (0.13 + swing * 0.9) + R * (sgn * -0.035);
+        const V3 rest = sh + kUp * (-0.565 + 0.006 * breath) + F * 0.035 + R * (sgn * (0.07 + 0.004 * std::sin(m.t * 0.7 + sd)));
+        V3 h = rest + ((hang + (pump - hang) * run) - rest) * mv;
+        const V3 out = sh + kUp * -0.32 + R * (sgn * 0.3) + F * 0.12;
+        h = h + (out - h) * (inAir * 0.8);
+        p.hand[sd] = h;
+        p.elbowPole[sd] = norm(F * -1.0 + R * (sgn * 0.45) + kUp * -0.2);
+        const V3 el = solve(sh, h, kUpperArm, kForearm, p.elbowPole[sd]);
+        const V3 x = norm(h - el + F * (0.08 + 0.45 * run * mv));
         p.handX[sd] = x;
-        p.handY[sd] = perpTo(R * sgn + F * (-0.2), x);
-        p.grip[sd] = 0.3 + 0.55 * run;
+        p.handY[sd] = perpTo(R * sgn + F * (-0.25), x);
+        p.grip[sd] = 0.3 + 0.55 * run * mv;
     }
     return p;
 }
 
-Pose firstPerson(const Gait& g, double viewYaw, double viewPitch, const V3& lean) {
+Pose firstPerson(const Gait& g, Mover& m, double dt, double viewYaw, double viewPitch, const V3& eye, const V3& lean) {
     Gait gg = g;
     gg.yaw = viewYaw;
-    Pose p = walking(gg);
+    Pose p = walking(gg, m, dt);
     p.head = false;
     p.stretch = true;
-    // Set back as you look down (and a little anyway: the eyes are over the front of the neck).
+    p.clip = true, p.eye = eye;
+    // Set back as you look down (and a little anyway: the eyes are over the front of the neck); hands a touch
+    // lower and in, so swinging they stay down in the corners.
     const V3 F(std::cos(viewYaw), 0, -std::sin(viewYaw)), R = cross(F, kUp);
     const double down = std::max(0.0, -std::sin(viewPitch));
-    const double drop = -std::min(0.0, lean.y), ahead = dot(lean, F);
+    const double drop = -std::min(0.0, lean.y);
     const double leaning = clampd(len(lean) / 0.15, 0, 1);  // (leaning in, the chest's under the eyes: no setting back)
-    const V3 off = F * -(0.05 + 0.09 * down) * (1 - leaning);
+    const V3 off = F * -(0.06 + 0.1 * down) * (1 - leaning);
     p.pelvis += off;
-    for (int s = 0; s < 2; s++) p.hand[s] += off, p.ankle[s] += off;
+    for (int s = 0; s < 2; s++) p.hand[s] += off - kUp * 0.02, p.ankle[s] += off;
     // Crouched and leaning in: the chest goes with the eyes, the hips less (knees bend, feet stay).
     if (drop > 0.01 || len(lean) > 0.01) {
         const V3 sh0[2] = {shoulderOf(p, 0), shoulderOf(p, 1)};
         const V3 hip0 = p.pelvis;
-        p.pelvis += kUp * (-drop * 0.95) + F * (ahead * 0.35) + R * (dot(lean, R) * 0.5);
+        p.pelvis += kUp * (-drop * 0.95) + F * (dot(lean, F) * 0.35) + R * (dot(lean, R) * 0.5);
         p.pelvis.y = std::max(p.pelvis.y, g.p.y + 0.42);
         const V3 sh = hip0 + kUp * (kWaist + kShoulderY) + lean;  // where the shoulders' middle goes
         V3 up = sh - p.pelvis;
         up = len(up) > 1e-6 ? norm(up) : kUp;
         p.chestU = up, p.chestF = perpTo(F, up);
         p.pelvisU = norm(kUp + up), p.pelvisF = perpTo(F, p.pelvisU);
-        for (int s = 0; s < 2; s++) {  // feet planted a little apart, knees out over them
+        const double k = clampd(drop / 0.3, 0, 1);
+        for (int s = 0; s < 2; s++) {  // feet set apart, one a little ahead, knees out over them
             const double sgn = s == 0 ? -1.0 : 1.0;
-            p.ankle[s] = g.p + off + R * (sgn * 0.16) + F * (s == 0 ? 0.12 : -0.05) + kUp * kAnkle;
-            p.footF[s] = norm(F + R * (sgn * 0.25)), p.footU[s] = kUp;
+            const V3 a = g.p + off + R * (sgn * 0.16) + F * (s == 0 ? 0.12 : -0.05) + kUp * kAnkle;
+            p.ankle[s] = p.ankle[s] + (a - p.ankle[s]) * k;
+            p.footF[s] = norm(p.footF[s] + (norm(F + R * (sgn * 0.25)) - p.footF[s]) * k), p.footU[s] = perpTo(kUp, p.footF[s]);
             p.kneePole[s] = norm(F + R * (sgn * 0.5) + kUp * 0.3);
             p.hand[s] += shoulderOf(p, s) - sh0[s];  // (a free hand goes with its shoulder)
         }
@@ -583,9 +792,8 @@ bool seatOf(const Car& c, const VisualTemplate& t, Seat& s) {
     s.fwd = f.fwd, s.up = f.up, s.right = f.left * -1.0;
     s.hip = boundPoint(c, t.cockpit.hip);
     s.wheel = boundPoint(c, t.cockpit.wheel);
-    s.pedal = boundPoint(c, t.cockpit.pedal);
     s.wheelR = t.cockpit.wheelR, s.tilt = t.cockpit.tilt;
-    return std::isfinite(s.hip.x + s.wheel.x + s.pedal.x);
+    return std::isfinite(s.hip.x + s.wheel.x);
 }
 
 V3 seatEye(const Seat& s) { return s.hip + s.up * 0.735 + s.fwd * (kSeatSlide + 0.05); }
@@ -605,44 +813,6 @@ WheelFrame wheelFrame(const Seat& s) {
     return w;
 }
 }  // namespace
-
-Pose seated(const Seat& s, double wheelTurn, double throttle, double brake, const V3& look) {
-    Pose p;
-    const V3 F = s.fwd, U = s.up, R = s.right;
-    p.pelvis = s.hip + F * kSeatSlide;
-    const double recline = 0.1;
-    p.pelvisF = norm(F * std::cos(recline * 0.5) + U * std::sin(recline * 0.5));
-    p.pelvisU = norm(U * std::cos(recline * 0.5) - F * std::sin(recline * 0.5));
-    p.chestU = norm(U * std::cos(recline) - F * std::sin(recline));
-    p.chestF = F;
-    p.headF = len(look) > 1e-6 ? norm(look) : F;
-    // Feet: the right on the throttle (or across on the brake), the left back on the rest.
-    const bool braking = brake > 0.08 && brake >= throttle;
-    const double press = braking ? brake : throttle;
-    const V3 pedalR = braking ? s.pedal - R * 0.13 + U * 0.03 : s.pedal;
-    const double ang = 0.62 - 0.28 * clampd(press, 0, 1);  // toes up (rad) off the floor
-    p.ankle[1] = pedalR + F * (0.03 * press);
-    p.ankle[0] = s.pedal - R * 0.27 - F * 0.06 + U * 0.01;
-    for (int sd = 0; sd < 2; sd++) {
-        const double a = sd == 1 ? ang : 0.55;
-        p.footF[sd] = norm(F * std::cos(a) + U * std::sin(a) + R * (sd == 0 ? -0.1 : 0.05));
-        p.footU[sd] = perpTo(U, p.footF[sd]);
-        p.kneePole[sd] = norm(U + F * 0.6 + R * (sd == 0 ? -0.15 : 0.15));
-    }
-    // Hands on the rim at a quarter to three, carried round with it (until it turns past them: then it's fed through).
-    const WheelFrame w = wheelFrame(s);
-    const double turn = clampd(-wheelTurn, -0.85, 0.85);
-    for (int sd = 0; sd < 2; sd++) {
-        const double th = (sd == 0 ? -1.3 : 1.3) + turn;
-        const double rr = s.wheelR;
-        const V3 radial = w.u * std::cos(th) + w.r * std::sin(th), tangent = w.u * -std::sin(th) + w.r * std::cos(th);
-        const V3 g = w.c + radial * rr;
-        gripAt(p, sd, g, sd == 0 ? tangent : tangent * -1.0, 0.85);
-        p.elbowPole[sd] = norm(U * -1.0 + R * (sd == 0 ? -0.7 : 0.7) - F * 0.2);
-    }
-    p.stretch = true;
-    return p;
-}
 
 void steeringWheel(const Seat& s, double wheelTurn, mk::Mesh& out) {
     const WheelFrame w = wheelFrame(s);

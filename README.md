@@ -813,7 +813,7 @@ Poly Haven `leafy_grass`, `aerial_grass_rock` (grass), `coast_sand_01`, `aerial_
 | `src/props.*`, `src/propdraw.*` | Scanned props: the baked model and hull files (no GL; the physics uses the hulls), and their instanced renderer |
 | `tools/bakeprops.cpp`, `tools/fetch_polyhaven.py` | Fetches the Poly Haven sources and bakes them into `assets/props` |
 | `src/carvisual.*` | Visual car models: subdivided body shell skinned to the physics, lattice-attached parts, running gear from the live suspension |
-| `src/people.*` | People posed each frame: you in first person (body, arms and gloved hands on the tools), drivers in their seats (hands on a steering wheel that turns, feet on the pedals), buddies walking and running; IK limbs round cached outfit pieces |
+| `src/people.*` | People posed each frame: you in first person (body, arms and gloved hands on the tools and the winch line) and buddies on foot (walk, run, idle, turning steps, jumps); IK limbs round cached outfit pieces. Nobody's drawn in a seat: cabs show a steering wheel that turns |
 | `src/fx.*` | Particles, skid marks and tire tracks (decals multiplied into the ground), the lips of shoved-aside ground along ruts and round sunk tires |
 | `src/audio.*` | Procedural sound |
 | `src/engineaudio.*` | Shared engine synthesizer for your car and nearby engines |
