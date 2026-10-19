@@ -40,6 +40,7 @@
 #include "jobs.h"
 #include "career.h"
 #include "interact.h"
+#include "prompts.h"
 #include "invdraw.h"
 #include "walker.h"
 #include "buildinfo.h"
@@ -1119,6 +1120,87 @@ void drawVehicleCard(Renderer& r, const Car& car, const HudState& hud, float u, 
 }
 
 inline float r_textW(Renderer& r, const std::string& s, float scale) { return r.textWidth(s, scale); }
+
+bool projectToScreen(const View& v, int W, int H, const V3& p, float& sx, float& sy);
+
+// ---- On-foot prompts (prompts.h) ---------------------------------------------------------------
+
+// A key cap: the key (or pad button) in a lit box, then what it does. `lit`: can be done now. Returns the width.
+float drawKeyLine(Renderer& r, float cx, float y, float s, const std::string& key, const std::string& what, bool lit, bool measureOnly = false) {
+    const float capW = r.textWidth(key, s) + 10 * s, gap = 6 * s, whatW = r.textWidth(what, s), pad = 7 * s, h = 12 * s;
+    const float w = capW + gap + whatW + 2 * pad;
+    if (measureOnly) return w;
+    const float x = cx - w / 2;
+    pill(r, x, y, w, h, 0, 0, 0, 0.62f);
+    pill(r, x + pad * 0.6f, y + 1.5f * s, capW, h - 3 * s, lit ? 1.0f : 0.45f, lit ? 0.78f : 0.4f, lit ? 0.3f : 0.38f, 0.95f);
+    r.text(x + pad * 0.6f + 5 * s, y + 2.7f * s, s, key, 0.08f, 0.06f, 0.02f, 1);
+    r.text(x + pad * 0.6f + capW + gap, y + 2.2f * s, s, what, lit ? 1.0f : 0.8f, lit ? 0.9f : 0.78f, lit ? 0.6f : 0.75f, 1);
+    return w;
+}
+
+// The key (or the pad's button) the marker's job is done with.
+std::string promptKeyName(const prompts::Marker& m, bool padNow, const std::string& holdWord) {
+    if (m.key == prompts::KEY_GET_IN) return padNow ? "LB+Y" : K(KA_GET_IN_OUT);
+    return (m.hold ? holdWord : std::string()) + (padNow ? "X" : K(KA_INTERACT));
+}
+
+// The markers (a small diamond at each spot there is something to do; the target's brighter, with corner brackets round
+// the part) and the prompt near the crosshair: the key, what it does, and why not if it can't be done. Only on foot.
+void drawFocus(Renderer& r, const prompts::Focus& fo, const Interact& ia, const Sim& sim, const View& view, const Walker& wk, int W, int H, bool padNow) {
+    const float u = std::max(0.75f, H / 720.0f);
+    const double k = 1.0 / std::tan(view.fovy / 2);
+    const V3 chest = wk.p + V3(0, 1.0, 0);
+    for (size_t i = 0; i < fo.markers.size(); i++) {
+        const prompts::Marker& m = fo.markers[i];
+        float sx, sy;
+        if (!projectToScreen(view, W, H, m.at, sx, sy) || sx < 0 || sx > W || sy < 0 || sy > H) continue;
+        if (m.car >= 0 && m.car < (int)sim.cars.size()) {  // (the far side of a car is behind its body)
+            const Car& c = sim.cars[m.car];
+            V3 a = m.at - c.frame().com, b = view.eye - c.frame().com;
+            a.y = b.y = 0;
+            if (len(a) > 0.3 && len(b) > c.spec->width * 0.6 && dot(norm(a), norm(b)) < -0.3 && !m.current) continue;
+        }
+        const double dist = len(m.at - chest);
+        const float prox = (float)clampd(1.25 - dist / 4.0, 0.3, 1.0);  // 1 up close, dim by 5 m
+        float cr = 1.0f, cg = 0.82f, cb = 0.35f;
+        if (m.blocked) cr = 0.75f, cg = 0.6f, cb = 0.5f;
+        if (m.key == prompts::KEY_GET_IN) cr = 0.55f, cg = 0.85f, cb = 1.0f;
+        const float a = m.current ? 1.0f : prox * (m.far ? 0.55f : 0.9f);
+        const float rr = (m.current ? 8.0f : 5.5f) * u;
+        r.tri(sx, sy - rr * 1.35f, sx + rr * 1.35f, sy, sx, sy + rr * 1.35f, 0, 0, 0, 0.5f * a);
+        r.tri(sx, sy - rr * 1.35f, sx - rr * 1.35f, sy, sx, sy + rr * 1.35f, 0, 0, 0, 0.5f * a);
+        r.tri(sx, sy - rr, sx + rr, sy, sx, sy + rr, cr, cg, cb, a);
+        r.tri(sx, sy - rr, sx - rr, sy, sx, sy + rr, cr, cg, cb, a);
+        if (m.current) {  // brackets round the part
+            const double z = std::max(0.5, dot(m.at - view.eye, norm(view.target - view.eye)));
+            const float hb = (float)clampd(m.radius / z * k * H / 2.0, 16 * u, 90 * u), bl = hb * 0.5f, th = std::max(2.0f, 2.0f * u);
+            for (int sxn = -1; sxn <= 1; sxn += 2)
+                for (int syn = -1; syn <= 1; syn += 2) {
+                    const float bx = sx + sxn * hb, by = sy + syn * hb;
+                    r.rect(sxn < 0 ? bx : bx - bl, syn < 0 ? by : by - th, bl, th, cr, cg, cb, 0.95f);
+                    r.rect(sxn < 0 ? bx : bx - th, syn < 0 ? by : by - bl, th, bl, cr, cg, cb, 0.95f);
+                }
+        }
+    }
+    const float s = px(1.4f * u), y = H / 2.0f + 40 * u;
+    if (const prompts::Marker* m = fo.current()) {
+        const bool tap = !m->hold && m->key == prompts::KEY_INTERACT;
+        const float ps = tap ? px(1.8f * u) : s;  // (E at the back is the way in to everything: say it big)
+        drawKeyLine(r, W / 2.0f, y, ps, promptKeyName(*m, padNow, "HOLD "), m->label, !m->blocked);
+        float by = y + 12 * ps + 4 * u;
+        if (!m->reason.empty()) {
+            centeredPill(r, W / 2.0f, by, s, m->reason, 0.12f, 0.03f, 0.02f, 0.9f, 1.0f, 0.55f, 0.4f);
+            by += 12 * s + 4 * u;
+        }
+        if (ia.progress > 0 && m->kind != IA_NONE) {
+            const float bw = 220 * u, bx = W / 2.0f - bw / 2;
+            r.rect(bx, by + 4 * u, bw, 5 * u, 0, 0, 0, 0.6f);
+            r.rect(bx, by + 4 * u, bw * (float)ia.share(), 5 * u, 1.0f, 0.75f, 0.3f, 0.95f);
+        }
+    } else if (!fo.hint.empty()) {
+        centeredPill(r, W / 2.0f, y, px(1.5f * u), fo.hint, 0, 0, 0, 0.75f, 0.85f, 0.88f, 0.9f);
+    }
+}
 
 // ---- Levels on screen -------------------------------------------------------------------
 
@@ -2375,6 +2457,8 @@ int main(int argc, char** argv) {
     // ---- On foot ----
     Walker walker;
     Interact interact;  // on foot: the hold-E jobs (the spare, the wheels)
+    prompts::Prompter prompter;  // ...and where they are and what to say (markers, the prompt line, the hint)
+    prompts::Focus focus;
     InvMenu inv;           // on foot at the back of your truck: its inventory (E, or TAB / I) (invmenu.h)
     InvLayout invLay;      // ...as last drawn (the mouse and keys work from it)
     double walkSend = 0, carCamDist = 7.5;
@@ -3902,6 +3986,29 @@ int main(int argc, char** argv) {
                 }
                 scriptE = opt.script == "work-repair" ? frame > 70 && std::getenv("CZ_WORK_E") : frame > 70;
             }
+            if (opt.script == "prompts") {  // screenshots of the on-foot prompts: CZ_PROMPT=wheel|door|trunk|near (what the crosshair is near), CZ_PROMPT_OFF=m (how far off the middle of it)
+                Car& c = sim.cars[sim.player];
+                const std::string what = std::getenv("CZ_PROMPT") ? std::getenv("CZ_PROMPT") : "wheel";
+                const double off = std::getenv("CZ_PROMPT_OFF") ? std::atof(std::getenv("CZ_PROMPT_OFF")) : 0.25;
+                if (frame == 20) c.handbrake = 1, getOut();
+                if (frame == 30) {
+                    const Frame fr = c.frame();
+                    const V3 fwd = norm(V3(fr.fwd.x, 0, fr.fwd.z)), left(fwd.z, 0, -fwd.x);
+                    V3 stand, aim;
+                    if (what == "door") aim = prompts::doorAt(c), stand = aim + left * 1.9 - fwd * 0.5;
+                    else if (what == "trunk") aim = trunk::gateAt(c) + V3(0, off, 0), stand = trunk::gateAt(c) - fwd * 1.9 + left * 0.3;
+                    else if (what == "near") stand = fr.com + left * (c.spec->width / 2 + 2.2) - fwd * 1.0, aim = stand + left * 5.0 + fwd * 3.0;
+                    else {
+                        const int k = std::getenv("CZ_WORK_WHEEL") ? std::atoi(std::getenv("CZ_WORK_WHEEL")) : 2;
+                        const Wheel& wh = c.wheels[k];
+                        const V3 hub = (c.nodes[wh.inner].p + c.nodes[wh.outer].p) * 0.5, out = norm(c.nodes[wh.outer].p - c.nodes[wh.inner].p);
+                        aim = hub + fwd * off, stand = hub + out * 1.9 - fwd * 0.6;
+                    }
+                    walker.p = V3(stand.x, sim.world.height(stand.x, stand.z), stand.z);
+                    const V3 d = norm(aim - (walker.p + V3(0, 1.62, 0)));
+                    footYaw = std::atan2(-d.z, d.x), footPitch = std::asin(d.y);
+                }
+            }
             if (opt.script == "damage") {  // screenshots of broken parts: CZ_BREAK=cv:fl,tie:fr,bend:fl,shaft:f,spring:rl,leaf:rr,flood (corner = front/rear + left/right),
                 // CZ_STAND=fwd,left (m from the car's middle, default 2.6,1.9) and CZ_LOOKAT=fwd,left,up (m, default the front axle at hub height)
                 Car& c = sim.cars[sim.player];
@@ -4174,6 +4281,7 @@ int main(int argc, char** argv) {
                         sim.handLine.hand = hold;
                     }
                     const std::string said = interact.update(sim, walker, lastView.eye - fpLean, lastView.target - lastView.eye, holdE, dt);  // (from where you stand, not where you've leaned in to)
+                    focus = prompter.update(sim, walker, interact, interact.nearby, lastView.eye - fpLean, lastView.target - lastView.eye);
                     if (!said.empty()) hud.toast(said);
                     if (interact.openedInventory >= 0) {  // E at the back
                         inv.show(interact.openedInventory);
@@ -5373,10 +5481,11 @@ int main(int argc, char** argv) {
             const float u = std::max(0.75f, H / 720.0f), s = px(1.4f * u);
             renderer.rect(W / 2.0f - 2 * u, H / 2.0f - 2 * u, 4 * u, 4 * u, 1, 1, 1, 0.8f);
             const bool padNow = pad::ui.last && padDev.connected();
-            if (interact.current.kind != IA_NONE && !inv.open) {
+            if (!inv.open && !std::getenv("CZ_OLDHUD")) drawFocus(renderer, focus, interact, sim, view, walker, W, H, padNow);
+            else if (interact.current.kind != IA_NONE && !inv.open) {
                 const bool tap = interact.current.hold <= 0 && !interact.current.continuous;  // (E opens a menu: no holding)
                 const std::string line = std::string(padNow ? (tap ? "X  " : "HOLD X  ") : (tap ? K(KA_INTERACT) + "  " : "HOLD " + K(KA_INTERACT) + "  ")) + interact.current.prompt;
-                const float ps = tap ? px(1.8f * u) : s;  // (E at the back is the way in to everything: say it big)
+                const float ps = tap ? px(1.8f * u) : s;
                 centeredPill(renderer, W / 2.0f, H / 2.0f + 40 * u, ps, line, 0, 0, 0, 0.6f, 1.0f, 0.85f, 0.45f);
                 if (interact.progress > 0) {
                     const float bw = 220 * u, bx = W / 2.0f - bw / 2, by = H / 2.0f + 40 * u + 8 * s + 14 * u;

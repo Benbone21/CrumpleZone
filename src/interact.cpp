@@ -5,6 +5,7 @@
 
 #include "modelkit.h"
 #include "objshape.h"
+#include "prompts.h"
 #include "walker.h"
 
 namespace {
@@ -19,8 +20,7 @@ constexpr double kGrabLine = 1.0, kHookLine = 1.2, kUnhookLine = 0.8, kStowLine 
 constexpr double kLineReach = 3.0;  // m from your chest to the anchor you hook to
 constexpr double kOpenCache = 1.5;  // prise the lid off a supply cache
 constexpr double kTakeItem = 0.5, kStowItem = 0.5;  // the back, and things in and out of it
-constexpr double kReach = 2.5;           // m from your chest
-constexpr double kCone = 35 * M_PI / 180;  // off your line of sight
+constexpr double kReach = prompts::kReach;  // m from your chest
 
 // Whether a car already has a line of this kind of its own out (a winch hooked from it; a strap at either end).
 bool hasLine(const Sim& sim, int ci, RopeKind kind) {
@@ -186,21 +186,21 @@ bool Interact::cornerLifted(const Sim& sim, const Car& c, int k) {
     return hub.y - wh.R - ground > 0.05;
 }
 
-InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, const V3& look, const std::vector<InteractSpot>* spots, const Kit& kit, const TrunkStock* own, const PartHit* hover) {
+InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, const V3& look, const std::vector<InteractSpot>* spots, const Kit& kit, const TrunkStock* own, const PartHit* hover, const PickOpts* opts) {
     InteractOption best;
     double bestScore = 1e9;
     const V3 chest = wk.p + V3(0, 1.0, 0);
     const V3 dir = norm(look);
-    // A candidate at `at`: scored on how far off your aim it is, then how far away (a job you
-    // can't do yet loses to one you can, close by).
+    // A candidate at `at`: scored on how far off your aim it is (to the edge of it: a wheel is a big target), then how far
+    // away (a job you can't do yet loses to one you can, close by). The one you have already keeps it a while.
     auto consider = [&](InteractOption o, double reach = kReach, double bias = 0, double distW = 0.15) {
-        if (len(o.at - chest) > reach) return;
-        const V3 to = o.at - eye;
-        const double d = len(to);
+        if (o.radius <= 0) o.radius = prompts::info(o.kind).radius;
+        if (opts && opts->nearby && len(o.at - chest) <= std::max(reach, prompts::kMarkerRange)) opts->nearby->push_back(o);
+        const double d = len(o.at - eye);
         if (d < 1e-6) return;
-        const double off = std::acos(clampd(dot(to / d, dir), -1, 1));
-        if (off > kCone) return;
-        const double score = off + distW * d + (o.blocked ? 0.04 : 0) + bias;
+        const bool st = opts && opts->sticky && (opts->sticky->kind != IA_NONE || opts->sticky->passive) && o.same(*opts->sticky);
+        double score;
+        if (!prompts::aimScore(eye, dir, chest, o.at, o.radius, reach, distW * d + (o.blocked ? 0.04 : 0) + bias, st, opts ? opts->stickyBonus : prompts::kStickyBonus, score)) return;
         if (score < bestScore) bestScore = score, best = o;
     };
     // A job that needs tools you may not have, or a corner up off the ground.
@@ -222,9 +222,15 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
     const bool hands = wk.carrying.has_value() || wk.holdingChain || lineHeld;
     const bool busy = hands || wk.holdingJack;
     const bool wheelInHands = wk.carrying.has_value() && !wk.carrying->tireOnly, tireInHands = wk.carrying.has_value() && wk.carrying->tireOnly;
+    const int enterCar = wk.carToEnter(sim, 5.0);  // (J gets into this one: its door is something to look at)
     for (int ci = 0; ci < (int)sim.cars.size(); ci++) {
         const Car& c = sim.cars[ci];
         if (c.remote || c.isProp()) continue;
+        if (ci == enterCar) {
+            InteractOption d;
+            d.car = ci, d.passive = true, d.at = prompts::doorAt(c), d.prompt = "GET IN";
+            consider(d, kReach + 1.0, 0.03);
+        }
         const bool trunkCar = own && !c.ai && (c.hasGate() || ci == sim.player);  // (its chains, jack and your kit are in the back: the inventory, below)
         if (c.spec->wheelLoss) {
             // Snow chains: in the back on one side (the jack's on the other), onto a tire, off
@@ -511,7 +517,12 @@ std::string Interact::update(Sim& sim, Walker& wk, const V3& eye, const V3& look
 }
 
 std::string Interact::run(Sim& sim, Walker& wk, const V3& eye, const V3& look, bool holdE, double dt) {
-    InteractOption o = pick(sim, wk, eye, look, &spots, kit, trunkOn ? &own : nullptr, hover.ok ? &hover : nullptr);
+    PickOpts po;
+    po.sticky = &current;
+    po.stickyBonus = holdE && progress > 0 ? prompts::kHoldBonus : prompts::kStickyBonus;  // (working on it: only a clear change of aim lets go)
+    nearby.clear();
+    po.nearby = &nearby;
+    InteractOption o = pick(sim, wk, eye, look, &spots, kit, trunkOn ? &own : nullptr, hover.ok ? &hover : nullptr, &po);
     if (!holdE) waitRelease = false;
     // Working the jack: it goes on while E is held, whatever it turns into on the way.
     if (holdE && progress > 0 && current.continuous && o.car == current.car) o = current;
