@@ -1658,3 +1658,83 @@ SCENARIO(editorModelPose, "editor/model-pose", "A tipped structure saves its til
         if (pl.id == "cabin" && pl.oriented) drawn = true;
     ctx.check("played: drawn tipped", drawn);
 }
+
+// ---- Safe saves and the editor's mouse rules ------------------------------------------------------------------------------
+
+namespace {
+std::string slurp(const std::string& path) {
+    std::ifstream f(path, std::ios::binary);
+    std::stringstream ss;
+    ss << f.rdbuf();
+    return ss.str();
+}
+bool exists(const std::string& path) { return (bool)std::ifstream(path); }
+}  // namespace
+
+SCENARIO(editorAtomicSave, "editor/atomic-save", "A save writes a temp file and renames it over; a write that dies halfway leaves the old file whole; the previous save is kept as .bak") {
+    setEnvVar("XDG_CONFIG_HOME", "build/test-config-atomic");  // (never the real ~/.config)
+    makeDir("build");
+    makeDir(configDir());
+    const std::string dir = "build/test-atomic";
+    makeDir(dir);
+    const std::string path = dir + "/a.czl";
+    std::remove(path.c_str()), std::remove((path + ".bak").c_str()), std::remove((path + ".tmp").c_str());
+    Level a;
+    a.name = "ONE", a.map = MAP_MOUNTAIN;
+    std::string err;
+    ctx.check("first save", saveLevelFile(a, path, &err), err);
+    ctx.check("no .bak for the first", !exists(path + ".bak") && !exists(path + ".tmp"));
+    const std::string first = slurp(path);
+    Level b = a;
+    b.name = "TWO";
+    ctx.check("second save", saveLevelFile(b, path, &err), err);
+    ctx.check("the first is the .bak", slurp(path + ".bak") == first && slurp(path) != first && !exists(path + ".tmp"));
+    // A write that stops partway: the file is as it was, and still loads.
+    const std::string second = slurp(path);
+    Level c = a;
+    c.name = "THREE";
+    gAtomicFailAfter = 20;
+    ctx.check("the failed save says so", !saveLevelFile(c, path, &err));
+    ctx.check("the old file is whole", slurp(path) == second);
+    Level back;
+    ctx.check("and loads", loadLevelFile(path, back) && back.name == "TWO" && !back.fromBackup);
+    ctx.check("a good save after it works", saveLevelFile(c, path, &err) && loadLevelFile(path, back) && back.name == "THREE");
+    // A file that won't parse: the .bak is opened instead.
+    {
+        std::ofstream f(path, std::ios::binary | std::ios::trunc);
+        f << "garbage \x01\x02 not a level";
+    }
+    Level fb;
+    std::string why;
+    ctx.check("falls back to the .bak", loadLevelFile(path, fb, &why) && fb.fromBackup && fb.name == "TWO" && fb.file == path, why);
+    // Saving over the bad file doesn't replace the good backup with it.
+    ctx.check("save over the bad file", saveLevelFile(a, path, &err), err);
+    ctx.check("the good .bak survives", slurp(path + ".bak").find("TWO") != std::string::npos);
+    // No file and no backup: a plain failure.
+    std::remove(path.c_str()), std::remove((path + ".bak").c_str());
+    ctx.check("nothing there fails", !loadLevelFile(path, fb));
+    // Sections the same.
+    SectionFile s1, s2;
+    s1.name = "SEC ONE", s2.name = "SEC TWO";
+    const std::string sp = dir + "/s.czs";
+    std::remove(sp.c_str()), std::remove((sp + ".bak").c_str());
+    ctx.check("section saves", saveSectionFile(s1, sp, &err) && saveSectionFile(s2, sp, &err), err);
+    SectionFile sb;
+    ctx.check("section .bak holds the previous", loadSectionFile(sp + ".bak", sb) && sb.name == "SEC ONE");
+    {
+        std::ofstream f(sp, std::ios::binary | std::ios::trunc);
+        f << "junk";
+    }
+    ctx.check("section falls back", loadSectionFile(sp, sb) && sb.name == "SEC ONE");
+    setEnvVar("XDG_CONFIG_HOME", nullptr);
+}
+
+SCENARIO(editorMouseRules, "editor/mouse-rules", "Right-click grabs only what is already selected (else it is the camera); the gizmo shows arrows in move mode and rings in turn mode") {
+    ctx.check("unselected object: camera", !EditCore::rightGrabs(true, false, true, false));
+    ctx.check("empty ground: camera", !EditCore::rightGrabs(true, false, false, false));
+    ctx.check("selected object: turns", EditCore::rightGrabs(true, false, true, true));
+    ctx.check("a gizmo handle: turns", EditCore::rightGrabs(true, true, false, false));
+    ctx.check("switched off: camera even on the selected", !EditCore::rightGrabs(false, true, true, true));
+    ctx.check("move mode: arrows only", EditCore::gizmoShowsArrows(false) && !EditCore::gizmoShowsRings(false));
+    ctx.check("turn mode: rings only", !EditCore::gizmoShowsArrows(true) && EditCore::gizmoShowsRings(true));
+}

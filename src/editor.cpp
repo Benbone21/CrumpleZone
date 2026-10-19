@@ -197,10 +197,10 @@ void Editor::resume(World& w, Renderer& r) {
     say("BACK IN THE EDITOR: YOUR EDITS ARE HERE" + std::string(core.unsaved() ? " (NOT SAVED YET: CTRL+S)" : ""), 4);
 }
 
-void Editor::autosaveNow() {
-    if (autosaveDir.empty() || !core.started() || !core.unsaved() || core.autosavedChanges == core.changes) return;
-    core.autosave(autosaveDir);
+bool Editor::autosaveNow() {
+    if (autosaveDir.empty() || !core.started() || !core.unsaved() || core.autosavedChanges == core.changes) return true;
     lastAuto = clock;
+    return core.autosave(autosaveDir);
 }
 
 // Asks for a playtest. From here: where the middle of the view meets the ground, facing the way the camera faces. From the start:
@@ -263,14 +263,12 @@ void Editor::handleEvent(const SDL_Event& e, float scale) {
                     dragging = false, rmbEaten = true, rmbTurn = false;
                     break;
                 }
-                // Right button on an object or a gizmo handle: a drag turns it (an object is selected by the press if it wasn't; on the selection, all of it turns).
+                // Right button on the selected object or a gizmo handle: a drag turns it (all of the selection turns).
                 const bool can = !overUi && !fileOpen && flow.stage == SaveFlow::IDLE && tool == OBJECTS && pointer && !ledgeBrush;
-                rHandle = can && !selection.empty() && !shift && !ctrl ? gizmoHit(mx, my) : H_NONE;
-                rmbTurn = can && (rHandle != H_NONE || hover.kind == EditPick::OBJECT || hover.kind == EditPick::BASE);
-                if (rmbTurn) {
-                    rpress.press(mx, my);
-                    if (rHandle == H_NONE && !isSelected(hover)) selection.assign(1, hover), sel = hover;
-                }
+                // (Only what is ALREADY selected turns: right-drag on anything else is the camera. Left-click selects first.)
+                rHandle = can && rightTurns && !selection.empty() && !shift && !ctrl ? gizmoHit(mx, my) : H_NONE;
+                rmbTurn = can && EditCore::rightGrabs(rightTurns, rHandle != H_NONE, hover.kind == EditPick::OBJECT || hover.kind == EditPick::BASE, isSelected(hover));
+                if (rmbTurn) rpress.press(mx, my);
             }
             if (evButton(e) == 1) {
                 if (rmb && (rmbTurn || drag.kind != DRAG_NONE)) {  // (during a turn: cancels it)
@@ -927,13 +925,17 @@ void Editor::openLevel(const Level& lv, bool recovered) {
     if (l.builtin) l.builtin = false, l.file.clear(), l.name = l.name + " (MINE)";
     open(w, *rend, l);
     fileOpen = false;
-    if (recovered) {  // (it's unsaved work: saving writes the level's own file, which is still the old one)
-        core.changes = 1;
-        core.origin = Level();  // (what discarding goes back to: the saved file if there is one, else the plain level)
-        core.origin.map = l.map, core.origin.terrain = l.terrain, core.origin.name = l.name;
-        if (l.section.live) core.origin.section = l.section;
-        say("RECOVERED FROM THE AUTOSAVE: CTRL+S TO KEEP IT", 6);
-    }
+    if (recovered) markRecovered(l);
+    else if (lv.fromBackup) say("THAT FILE WOULDN'T READ: OPENED ITS .BAK (THE SAVE BEFORE THE LAST). CTRL+S TO REPAIR IT", 8);
+}
+
+void Editor::markRecovered(const Level& l) {
+    // (it's unsaved work: saving writes the level's own file, which is still the old one)
+    core.changes = 1;
+    core.origin = Level();  // (what discarding goes back to: the saved file if there is one, else the plain level)
+    core.origin.map = l.map, core.origin.terrain = l.terrain, core.origin.name = l.name;
+    if (l.section.live) core.origin.section = l.section;
+    say("RECOVERED FROM THE AUTOSAVE: CTRL+S TO KEEP IT", 6);
 }
 
 void Editor::key(int sc) {
@@ -1073,6 +1075,14 @@ void Editor::objectKey(int sc) {
         case SC_Z:
         case SC_PAGEDOWN_: applyOp(OP_LIFT, shift ? -1.0 : -0.25, "lift"); return;
         case SC_B: applyOp(OP_SEAT, 0, "seat"); return;
+        case SC_M:
+            gizmoMode = gizmoMode == GIZ_MOVE ? GIZ_TURN : GIZ_MOVE;
+            say(gizmoMode == GIZ_MOVE ? "GIZMO: MOVE (ARROWS). M: TURN RINGS" : "GIZMO: TURN (RINGS). M: MOVE ARROWS", 2);
+            return;
+        case SC_O:
+            rightTurns = !rightTurns;
+            say(rightTurns ? "RIGHT-DRAG ON THE SELECTED OBJECT TURNS IT (ELSEWHERE: CAMERA)" : "RIGHT-DRAG IS ALWAYS THE CAMERA (TURN WITH THE GIZMO RINGS: M)", 3);
+            return;
         case SC_EQUALS: applyOp(OP_SCALE, grow, "scale"); return;
         case SC_MINUS: applyOp(OP_SCALE, 1 / grow, "scale"); return;
         case SC_T: applyOp(OP_STRETCH_X, grow, "stretchx"); return;
@@ -1385,7 +1395,7 @@ Editor::Handle Editor::gizmoHit(float x, float y) const {
     const float u = std::max(0.75f, H / 720.0f);
     Handle best = H_NONE;
     double bestD = 9 * u;
-    for (int a = 0; a < 3; a++) {  // the arrows' outer part (inside it, the object and the rings)
+    for (int a = 0; a < 3 && EditCore::gizmoShowsArrows(gizmoMode == GIZ_TURN); a++) {  // the arrows' outer part (inside it, the object and the rings)
         const V3 A = axisDir((EditAxis)(a + 1));
         double ax, ay, bx, by;
         if (!cm.project(c + A * (La * 0.62), ax, ay) || !cm.project(c + A * (La * 1.2), bx, by) || std::hypot(bx - ax, by - ay) < 10 * u) continue;
@@ -1398,7 +1408,7 @@ Editor::Handle Editor::gizmoHit(float x, float y) const {
     double cx, cy;
     cm.project(c, cx, cy);
     const double inner = 0.55 * Rr * cm.pxPerMetre(c);
-    for (int a = 0; a < 3; a++) {
+    for (int a = 0; a < 3 && EditCore::gizmoShowsRings(gizmoMode == GIZ_TURN); a++) {
         if (std::fabs(dot(axisDir((EditAxis)(a + 1)), norm(eye - c))) < 0.12) continue;  // (edge-on: a line, not a ring)
         V3 e1, e2;
         ringBasis(a, e1, e2);
@@ -1498,7 +1508,7 @@ void Editor::drawGizmo(Renderer& r, float u) {
         float cr = kAxisCol[a][0], cg = kAxisCol[a][1], cb = kAxisCol[a][2];
         // The ring: turn about this axis (its far half faint).
         const bool ringOn = hot == H_RING_X + a || (drag.kind == DRAG_TURN_AXIS && drag.axis == ea);
-        if (!moving && (!turning || ringOn || drag.kind == DRAG_TURN)) {
+        if (!moving && (turning ? (ringOn || drag.kind == DRAG_TURN) : gizmoMode == GIZ_TURN)) {
             const float rr = ringOn ? 1.0f : cr, rg = ringOn ? 0.9f : cg, rb = ringOn ? 0.35f : cb;
             const float face = ringOn ? 1.0f : (float)smoothstep(0.05, 0.3, std::fabs(dot(A, toCam)));  // (edge-on it's a line through the object: faint)
             V3 e1, e2;
@@ -1512,7 +1522,7 @@ void Editor::drawGizmo(Renderer& r, float u) {
         }
         // The arrow: move along it.
         const bool arrowOn = hot == H_ARROW_X + a || (drag.kind == DRAG_AXIS && drag.axis == ea);
-        if (turning || drag.kind == DRAG_MOVE || (drag.kind == DRAG_AXIS && !arrowOn)) continue;
+        if (turning || drag.kind == DRAG_MOVE || (drag.kind == DRAG_AXIS && !arrowOn) || (drag.kind == DRAG_NONE && gizmoMode != GIZ_MOVE)) continue;
         double ax, ay, bx, by, tx, ty;
         if (!cm.project(c + A * (La * 0.2), ax, ay) || !cm.project(c + A * La, bx, by) || !cm.project(c + A * (La * 1.22), tx, ty)) continue;
         if (std::hypot(tx - ax, ty - ay) < 10 * u) continue;  // (pointing at you: nothing to grab)
@@ -1527,6 +1537,11 @@ void Editor::drawGizmo(Renderer& r, float u) {
         label(r, (float)tx + (float)(hx / hl) * 8 * u - 3 * u, (float)ty + (float)(hy / hl) * 8 * u - 4 * u, s, nm[a], cr, cg, cb, al);
     }
     r.rect((float)cx - 3 * u, (float)cy - 3 * u, 6 * u, 6 * u, 1, 1, 1, 0.9f);
+    {  // which gizmo this is
+        const char* m = gizmoMode == GIZ_MOVE ? "MOVE (M: TURN)" : "TURN (M: MOVE)";
+        const float s = px(1.0f * u);
+        label(r, (float)cx - r.textWidth(m, s) / 2, (float)(cy + (Rr > La ? Rr : La) * cm.pxPerMetre(c) + 14 * u), s, m, 1, 0.9f, 0.35f, 1);
+    }
 }
 
 Shape Editor::shapeOfPick(const EditPick& p) const {
@@ -2509,10 +2524,10 @@ void Editor::drawOptions(Renderer& r, float u) {
                 note("DRAG IT: MOVE (IT STAYS UNDER THE MOUSE,");
                 note("RIDING THE GROUND AND ROCKS). HOLD SHIFT: X");
                 note("ONLY, CTRL: Z, SPACE (OR ALT): Y, UP AND DOWN");
-                note("RIGHT-DRAG IT: TURN ANY WAY (SIDEWAYS: ABOUT");
-                note("UP, UP AND DOWN: TIP). SHIFT, CTRL, SPACE:");
-                note("ONLY ABOUT X, Z, Y. OR DRAG THE GIZMO'S");
-                note("ARROWS (MOVE) AND RINGS (TURN). GRID SNAP: 15");
+                note("M: GIZMO MOVE (ARROWS) / TURN (RINGS)");
+                note("RIGHT-DRAG THE SELECTED: TURN ANY WAY (O: OFF)");
+                note("RIGHT-DRAG ANYTHING ELSE: CAMERA. SHIFT, CTRL,");
+                note("SPACE: ONLY ABOUT X, Z, Y. GRID SNAP: 15");
                 note("DEG TURNS. ESC OR THE OTHER BUTTON CANCELS");
             } else {
                 note("CLICK: PLACE (ON TOP OF A ROCK: STACKS)");
@@ -2691,7 +2706,7 @@ void Editor::drawStatus(Renderer& r, float u) {
                   mapName(l.map), levelModeName(l.mode), core.cellEdits(), l.objects.size(), l.gates.size(),
                   core.canUndo() ? core.undoName().c_str() : "-");
     r.text(12 * u, y + 7 * u, s, buf, 0.9f, 0.91f, 0.94f, 1);
-    const char* keys = tool == OBJECTS && pointer ? "DRAG: MOVE  RIGHT-DRAG: TURN  + SHIFT X  CTRL Z  SPACE Y  ESC CANCELS  WASD FLY  RIGHT-DRAG GROUND: LOOK  CTRL+Z/Y UNDO/REDO  CTRL+S SAVE  F5 TEST"
+    const char* keys = tool == OBJECTS && pointer ? "DRAG: MOVE  M: GIZMO MOVE/TURN  RIGHT-DRAG SELECTED: TURN (O)  + SHIFT X  CTRL Z  SPACE Y  ESC CANCELS  WASD FLY  RIGHT-DRAG GROUND: LOOK  CTRL+Z/Y UNDO/REDO  CTRL+S SAVE  F5 TEST"
                                                   : "WASD FLY  SPACE OR SHIFT+WHEEL UP DOWN  WHEEL ZOOM  Q E SIZE  RIGHT-DRAG LOOK/TURN  SHIFT FAST  1-7 TOOLS  CTRL+Z/Y UNDO/REDO  CTRL+S SAVE  F5 TEST HERE  F6 TEST START  ESC EXIT";
     const float ks = px(1.0f * u);
     r.rect(W - r.textWidth(keys, ks) - 20 * u, y - 8 * ks - 10 * u, r.textWidth(keys, ks) + 20 * u, 8 * ks + 10 * u, 0, 0, 0, 0.45f);

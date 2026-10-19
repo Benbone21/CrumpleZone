@@ -126,6 +126,7 @@ struct Level {
     std::vector<V3> removed;           // base-map objects taken out: (x, kind, z), each the nearest within 1.5 m (kind: 0 any, else 1 + EditPick::baseKind: rock, tree, log, box, fixture, -, bush)
 
     bool builtin = false;
+    bool fromBackup = false;  // loaded from the .bak because the file itself wouldn't read (not saved)
     bool hasJob() const { return mode != LEVEL_FREE && !gates.empty(); }
 };
 
@@ -151,7 +152,7 @@ void addGateMarkers(const Level& lv, World& w);
 std::string saveLevelText(const Level& lv);
 bool parseLevelText(const std::string& text, Level& lv, std::string* error = nullptr);
 bool loadLevelFile(const std::string& path, Level& lv, std::string* error = nullptr);
-bool saveLevelFile(const Level& lv, const std::string& path, std::string* error = nullptr);
+bool saveLevelFile(const Level& lv, const std::string& path, std::string* error = nullptr, bool keepBak = true);  // (atomic; the file replaced becomes path.bak)
 
 // Where players' levels live: the user's (~/.config/crumplezone/levels) first, then the
 // game's own folder (./levels). New levels are saved to the first.

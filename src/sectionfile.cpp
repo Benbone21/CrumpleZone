@@ -363,14 +363,20 @@ bool parseSectionText(const std::string& text, SectionFile& out, std::string* er
 }
 
 bool loadSectionFile(const std::string& path, SectionFile& s, std::string* error) {
-    std::ifstream f(path, std::ios::binary);
-    if (!f) {
-        if (error) *error = "CAN'T OPEN " + path;
-        return false;
+    for (const std::string& p : {path, path + ".bak"}) {
+        std::ifstream f(p, std::ios::binary);
+        if (!f) {
+            if (p == path && error) *error = "CAN'T OPEN " + path;
+            continue;
+        }
+        std::stringstream ss;
+        ss << f.rdbuf();
+        if (parseSectionText(ss.str(), s, p == path ? error : nullptr)) {
+            if (p != path && error) error->clear();
+            return true;
+        }
     }
-    std::stringstream ss;
-    ss << f.rdbuf();
-    return parseSectionText(ss.str(), s, error);
+    return false;
 }
 
 namespace {
@@ -434,19 +440,18 @@ bool editedSectionFor(SectionType t, SectionFile& out) {
     return false;
 }
 
+static bool sectionTextValid(const std::string& t) {
+    SectionFile s;
+    return parseSectionText(t, s, nullptr);
+}
+
 bool saveSectionFile(const SectionFile& s, const std::string& path, std::string* error) {
     const size_t slash = path.find_last_of("/\\");
     if (slash != std::string::npos) {
         makeDir(configDir());
         makeDir(path.substr(0, slash));
     }
-    std::ofstream f(path, std::ios::binary);
-    if (!f) {
-        if (error) *error = "CAN'T WRITE " + path;
-        return false;
-    }
-    f << saveSectionText(s);
-    return (bool)f;
+    return writeFileAtomic(path, saveSectionText(s), error, true, sectionTextValid);
 }
 
 std::string sectionPathFor(const std::string& levelPath) {

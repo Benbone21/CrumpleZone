@@ -55,7 +55,8 @@ public:
     V3 viewPoint() const { return haveViewHit ? viewHit : eye; }
     double heading() const { return yaw; }
     // Writes the recovery copy now (the game does this as a playtest starts).
-    void autosaveNow();
+    bool autosaveNow();  // false only if it was needed and couldn't be written
+    void markRecovered(const Level& l);  // the open level is unsaved work from a recovery copy
     // Starts a new obstacle section on a fresh proving ground: the canvas flattened and cleared, the
     // entry and exit set (EditCore::newSection). `w` is replaced.
     void newSection(World& w, Renderer& r);
@@ -195,6 +196,9 @@ private:
     V3 pressGrab;                      // the point on the object the left button went down on
     bool pressHasGrab = false;
     Handle hot = H_NONE, pressHandle = H_NONE, rHandle = H_NONE;  // the gizmo handle under the mouse; the one a press went down on
+    enum GizmoMode { GIZ_MOVE, GIZ_TURN };
+    GizmoMode gizmoMode = GIZ_MOVE;  // M: the gizmo shows arrows (move) or rings (turn)
+    bool rightTurns = true;          // O: right-drag on the SELECTED object turns it (off: right-drag is always the camera)
     bool rmbTurn = false, rmbEaten = false;  // the right button went down on what turns; it cancelled a drag (it does nothing more till it's up)
     DragGate rpress;
     bool lockBlock = false;            // the press was Shift on an object that wasn't selected (adding it): no X lock for this drag

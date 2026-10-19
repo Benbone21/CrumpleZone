@@ -742,7 +742,13 @@ bool parseLevelText(const std::string& text, Level& lv, std::string* error) {
     return true;
 }
 
-bool loadLevelFile(const std::string& path, Level& lv, std::string* error) {
+namespace {
+bool levelTextValid(const std::string& t) {
+    Level l;
+    return parseLevelText(t, l, nullptr);
+}
+
+bool readLevelOnce(const std::string& path, Level& lv, std::string* error) {
     std::ifstream f(path, std::ios::binary);
     if (!f) {
         if (error) *error = "CAN'T OPEN " + path;
@@ -755,20 +761,27 @@ bool loadLevelFile(const std::string& path, Level& lv, std::string* error) {
     lv.file = path;
     return true;
 }
+}  // namespace
 
-bool saveLevelFile(const Level& lv, const std::string& path, std::string* error) {
+bool loadLevelFile(const std::string& path, Level& lv, std::string* error) {
+    if (readLevelOnce(path, lv, error)) return true;
+    // (The file won't read: the copy from before the last save, if that does.)
+    Level back = lv;
+    if (!readLevelOnce(path + ".bak", back, nullptr)) return false;
+    back.file = path;
+    back.fromBackup = true;
+    lv = back;
+    if (error) error->clear();
+    return true;
+}
+
+bool saveLevelFile(const Level& lv, const std::string& path, std::string* error, bool keepBak) {
     const size_t slash = path.find_last_of("/\\");
     if (slash != std::string::npos) {
         makeDir(configDir());
         makeDir(path.substr(0, slash));
     }
-    std::ofstream f(path, std::ios::binary);
-    if (!f) {
-        if (error) *error = "CAN'T WRITE " + path;
-        return false;
-    }
-    f << saveLevelText(lv);
-    return (bool)f;
+    return writeFileAtomic(path, saveLevelText(lv), error, keepBak, levelTextValid);
 }
 
 std::string userLevelFolder() { return configDir() + "/levels"; }
