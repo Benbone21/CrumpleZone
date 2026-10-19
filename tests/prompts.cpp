@@ -63,7 +63,7 @@ SCENARIO(promptsAim, "prompts/aim", "the aim counts the size of the target: a wh
     double st = 0;
     prompts::aimScore(eye, fwd, chest, wheel, 0.45, 3, 0, true, 0.12, st);
     ctx.check("the sticky bonus is taken off", std::fabs((mid - st) - 0.12) < 1e-9);
-    for (int k = IA_TAKE_SPARE; k <= IA_STOW_LINE; k++) {
+    for (int k = IA_TAKE_SPARE; k <= IA_RIDE_ALONG; k++) {
         const prompts::KindInfo& ki = prompts::info((InteractKind)k);
         ctx.check("kind " + std::to_string(k) + " has its own row (a new IA_ kind adds one to prompts.cpp)", std::string(ki.noun) != "A MARKER" && ki.radius > 0, ki.noun);
     }
@@ -108,7 +108,7 @@ SCENARIO(promptsPick, "prompts/pick", "beside a Blazer: a wheel is picked lookin
     ctx.check("the wheel and the door are some degrees apart", span > 8 && span < 60, std::to_string(span));
     double flip = -1;
     for (double a = 0; a <= span + 10; a += 0.25)
-        if (pickS(turned(toFS, sign * a)).passive) {
+        if (pickS(turned(toFS, sign * a)).kind == IA_ENTER_CAR) {
             flip = a;
             break;
         }
@@ -118,7 +118,7 @@ SCENARIO(promptsPick, "prompts/pick", "beside a Blazer: a wheel is picked lookin
     po.sticky = &was;
     po.stickyBonus = prompts::kStickyBonus;
     ctx.check("...but with the wheel as the target it keeps it a little past that (no flicker)", isF(pickS(turned(toFS, sign * (flip + 1.5)), &po)));
-    ctx.check("...and lets go once the aim is clearly on the door", pickS(turned(toFS, sign * (flip + 12)), &po).passive);
+    ctx.check("...and lets go once the aim is clearly on the door", pickS(turned(toFS, sign * (flip + 12)), &po).kind == IA_ENTER_CAR);
     po.stickyBonus = prompts::kHoldBonus;
     ctx.check("holding E on it, it takes a clear change of aim to let go", isF(pickS(turned(toFS, sign * (flip + 12)), &po)));
     {  // an aim shaking across the crossover
@@ -181,7 +181,7 @@ SCENARIO(promptsPick, "prompts/pick", "beside a Blazer: a wheel is picked lookin
     const V3 eye2 = eyeOf(wk), toD = norm(door - eye2);
     ia.update(ctx.sim, wk, eye2, toD, false, Ctx::kFrame);
     fo = pr.update(ctx.sim, wk, ia, ia.nearby, eye2, toD);
-    ctx.check("looking at the driver's door: the target is get in, on J", ia.current.kind == IA_NONE && ia.current.passive && fo.current() && fo.current()->key == prompts::KEY_GET_IN && fo.current()->label == "GET IN", fo.current() ? fo.current()->label : "none");
+    ctx.check("looking at the driver's door: the target is get in, on J", ia.current.kind == IA_ENTER_CAR && fo.current() && fo.current()->key == prompts::KEY_GET_IN && fo.current()->label.rfind("GET IN", 0) == 0, fo.current() ? fo.current()->label : "none");
     // Nothing aimed at: what to look at.
     const V3 away = left;
     ia.update(ctx.sim, wk, eye2, away, false, Ctx::kFrame);

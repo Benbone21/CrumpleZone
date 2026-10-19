@@ -18,6 +18,7 @@ const KindInfo& info(InteractKind k) {
         kItem{"THE BACK", "TAKE OR PUT BACK", 0.6, KEY_INTERACT}, kLine{"THE RECOVERY POINT", "GRAB THE LINE", 0.3, KEY_INTERACT},
         kHook{"AN ANCHOR", "HOOK THE LINE ON", 0.4, KEY_INTERACT}, kUnhook{"THE HOOKED LINE", "UNHOOK IT", 0.3, KEY_INTERACT},
         kTire{"THE WHEEL ON THE GROUND", "PUT A NEW TIRE ON", 0.4, KEY_INTERACT}, kDoor{"THE DRIVER DOOR", "GET IN", 0.55, KEY_GET_IN},
+        kRide{"THE PASSENGER DOOR", "RIDE ALONG", 0.55, KEY_GET_IN},
         kOther{"A MARKER", "USE IT", 0.3, KEY_INTERACT};
     switch (k) {
         case IA_TAKE_SPARE: case IA_STOW_SPARE: return kTake;
@@ -35,6 +36,8 @@ const KindInfo& info(InteractKind k) {
         case IA_GRAB_LINE: case IA_STOW_LINE: return kLine;
         case IA_HOOK_LINE: return kHook;
         case IA_UNHOOK_LINE: return kUnhook;
+        case IA_ENTER_CAR: return kDoor;  // (carentry.h)
+        case IA_RIDE_ALONG: return kRide;
         case IA_NONE: return kDoor;  // (the door is the one marker that is no InteractKind: J, not E)
         default: return kOther;
     }
@@ -77,7 +80,8 @@ Focus Prompter::update(const Sim& sim, const Walker& wk, const Interact& ia, con
         m.at = o.at, m.radius = o.radius > 0 ? o.radius : info(o.kind).radius, m.kind = o.kind, m.key = info(o.kind).key;
         m.hold = o.hold > 0 || o.continuous, m.blocked = o.blocked, m.car = o.car;
         m.current = haveCurrent && o.same(ia.current);
-        m.far = len(o.at - chest) > (o.passive ? kReach + 1.0 : o.kind == IA_OPEN_INVENTORY ? 3.2 : kReach);
+        const bool door = o.passive || o.kind == IA_ENTER_CAR || o.kind == IA_RIDE_ALONG;
+        m.far = len(o.at - chest) > (door ? kReach + 1.0 : o.kind == IA_OPEN_INVENTORY ? 3.2 : kReach);
         split(o, m.label, m.reason);
         // One marker to a spot: the target, then the one that can be done, then the first.
         bool merged = false;
@@ -103,7 +107,7 @@ Focus Prompter::update(const Sim& sim, const Walker& wk, const Interact& ia, con
         const Marker* b = nullptr;
         for (const Marker& m : fo.markers) {
             const V3 to = m.at - eye;
-            const double d = std::max(1e-6, len(to)), off = std::acos(clampd(dot(to / d, dir), -1, 1)) + (m.blocked ? 0.15 : 0) + (m.kind == IA_NONE ? 0.1 : 0) + (m.far ? 0.5 : 0);
+            const double d = std::max(1e-6, len(to)), off = std::acos(clampd(dot(to / d, dir), -1, 1)) + (m.blocked ? 0.15 : 0) + (m.kind == IA_NONE || m.kind == IA_ENTER_CAR || m.kind == IA_RIDE_ALONG ? 0.1 : 0) + (m.far ? 0.5 : 0);
             if (off < bestOff) bestOff = off, b = &m;
         }
         if (b) {

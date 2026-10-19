@@ -24,5 +24,4 @@ V3 door(const Car& c, bool passenger);
 V3 acrossCab(const Car& c, const V3& p);
 // The door job for car `ci`, if any (interact.h: IA_ENTER_CAR, IA_RIDE_ALONG). False: none.
 bool option(const Sim& sim, int ci, InteractOption& o);
-constexpr double kHold = 0.3;  // s of holding E at a door
 }  // namespace carentry

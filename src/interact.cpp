@@ -224,15 +224,9 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
     const bool hands = wk.carrying.has_value() || wk.holdingChain || lineHeld;
     const bool busy = hands || wk.holdingJack;
     const bool wheelInHands = wk.carrying.has_value() && !wk.carrying->tireOnly, tireInHands = wk.carrying.has_value() && wk.carrying->tireOnly;
-    const int enterCar = wk.carToEnter(sim, 5.0);  // (J gets into this one: its door is something to look at)
     for (int ci = 0; ci < (int)sim.cars.size(); ci++) {
         const Car& c = sim.cars[ci];
         if (c.remote || c.isProp()) continue;
-        if (ci == enterCar) {
-            InteractOption d;
-            d.car = ci, d.passive = true, d.at = prompts::doorAt(c), d.prompt = "GET IN";
-            consider(d, kReach + 1.0, 0.03);
-        }
         const bool trunkCar = own && !c.ai && (c.hasGate() || ci == sim.player);  // (its chains, jack and your kit are in the back: the inventory, below)
         if (c.spec->wheelLoss) {
             // Snow chains: in the back on one side (the jack's on the other), onto a tire, off
@@ -468,11 +462,13 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
                 }
             }
         }
-    if (!busy)  // getting in at a door (carentry.h), after the work round it
-        for (int ci = 0; ci < (int)sim.cars.size(); ci++) {
-            InteractOption o;
-            if (carentry::option(sim, ci, o)) consider(o, kReach, 0.1);
-        }
+    // Getting in at a door (carentry.h: yours, anyone's with nobody in it, a buddy's passenger door): J or E, a tap.
+    for (int ci = 0; ci < (int)sim.cars.size(); ci++) {
+        InteractOption o;
+        if (!carentry::option(sim, ci, o)) continue;
+        if (wk.carrying && !o.blocked) o.blocked = true, o.prompt += ": PUT THE WHEEL DOWN FIRST";
+        consider(o, kReach + 1.0, 0.03);
+    }
     return best;
 }
 

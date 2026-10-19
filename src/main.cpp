@@ -3733,7 +3733,7 @@ int main(int argc, char** argv) {
                         case SC_J:
                             if (playback.active()) break;  // (a scenario: J is its checks list, a dev key)
                             if (walker.active && walker.carrying) hud.toast("PUT THE WHEEL DOWN FIRST (" + K(KA_PUT_DOWN) + ")");
-                            else if (walker.active) getIn(-1, true);
+                            else if (walker.active) getIn(interact.current.kind == IA_ENTER_CAR || interact.current.kind == IA_RIDE_ALONG ? interact.current.car : -1, true);  // (the door the prompt is on, else the nearest)
                             else getOut();
                             break;
                         case SC_P:

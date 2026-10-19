@@ -33,8 +33,9 @@ int nearest(const Sim& sim, const V3& feet, double reach) {
 }
 
 V3 door(const Car& c, bool passenger) {
-    const Frame f = c.frame();
-    return f.com + f.left * ((passenger ? -1 : 1) * (c.spec->width / 2 + 0.15)) + f.fwd * 0.3 + f.up * 0.25;
+    const Frame f = c.frame();  // (the driver's is prompts::doorAt's)
+    const V3 fwd = norm(V3(f.fwd.x, 0, f.fwd.z)), left(fwd.z, 0, -fwd.x);
+    return f.com + left * ((passenger ? -1 : 1) * (c.spec->width / 2)) + fwd * 0.3 + V3(0, 0.2, 0);
 }
 
 V3 acrossCab(const Car& c, const V3& p) {
@@ -48,7 +49,7 @@ bool option(const Sim& sim, int ci, InteractOption& o) {
     const Car& c = sim.cars[ci];
     o = InteractOption();
     o.car = ci;
-    o.hold = kHold;
+    o.hold = 0;  // (a tap, J or E: prompts.cpp keys it on J)
     o.kind = v == RIDE ? IA_RIDE_ALONG : IA_ENTER_CAR;
     o.at = door(c, v == RIDE);
     const std::string name = c.spec->name;

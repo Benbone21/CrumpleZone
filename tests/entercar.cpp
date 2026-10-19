@@ -17,7 +17,7 @@
 
 namespace {
 
-int testPort() { return 28300 + (int)(getpid() % 300); }
+int testPort() { return 29200 + (int)(getpid() % 300); }  // (clear of net, net_security, net_bandwidth and net_time)
 
 int byId(const Sim& s, uint32_t id) {
     for (int i = 0; i < (int)s.cars.size(); i++)
