@@ -167,7 +167,7 @@ const std::vector<int>& listedVehicles() {
     static const std::vector<int> l = [] {
         std::vector<int> out;
         const auto& cat = vehicleCatalog();
-        for (const char* id : {"blazer", "bronco", "4runner", "tacoma", "jesko", "baja"})
+        for (const char* id : {"blazer", "bronco", "4runner", "tacoma", "jesko"})  // (the Baja is built but hidden for now, like the Civic, UTV and buggy)
             for (int i = 0; i < (int)cat.size(); i++)
                 if (std::string(cat[i].id) == id) out.push_back(i);
         return out;
