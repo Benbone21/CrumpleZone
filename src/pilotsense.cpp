@@ -20,6 +20,11 @@ const char* seenName(int kind) {
 // ---- Exact tops ---------------------------------------------------------------------
 
 double rockTop(const Rock& r, double x, double z) {
+    if (!r.parts.empty()) {
+        double best = -1e9;
+        for (const Rock& p : r.parts) best = std::max(best, rockTop(p, x, z));
+        return best;
+    }
     // Inside the hull: dot(n, p) <= d for every face. Along a vertical line that bounds y
     // from above (faces turned up) and below (faces turned down).
     double hi = 1e9, lo = -1e9;

@@ -42,6 +42,10 @@ struct Rock {
     // axes scaled), which the renderer draws the scan's mesh with. -1: a code-made rock.
     int scan = -1;
     V3 axis[3], origin;
+    // A big scanned rock the single hull above overstates (a convex hull bridges a lumpy scan's hollows, tens of cm once scaled up):
+    // the convex pieces it is really made of (each with its own c, r, v, f, fn, fd; none with parts). What is hit and driven on is
+    // these; the hull above stays as the whole's bound and its look-alike for everything else. Empty: the hull is the rock.
+    std::vector<Rock> parts;
     V3 at;  // the point its pose turns it about (code-made: the middle of its points; scanned: the scan's middle)
 };
 
