@@ -133,6 +133,7 @@ struct Options {
     double orbitYaw = 0, orbitPitch = 0.2, orbitDist = 7.5;  // degrees, degrees, meters
     bool spawnSet = false;
     bool loadTour = false;  // --load-tour: switch maps, swap and spawn vehicles on a timer, report the worst frame of each
+    std::string resumeEdit;  // --resume-edit NAME: reopen that level's recovery copy in the editor (after a reload with unsaved edits)
     int resumeModel = -1;  // --resume-model: the vehicle to be in (after a reload)
     double spawnX = 0, spawnZ = 0, spawnHeading = 0;  // heading in degrees, 0 = +X
     int spawnSection = -1;        // --spawn-section N: start at the Nth obstacle section's entry (0-based, proving ground)
@@ -291,7 +292,7 @@ struct BuildWatch {
     // Restarts on the new build with these extra arguments (replacing the old ones).
     void exec(int argc, char** argv, const std::vector<std::string>& extra) {
 #ifndef _WIN32
-        static const std::set<std::string> withValue = {"--map", "--player", "--spawn", "--resume-model", "--scenario", "--script",
+        static const std::set<std::string> withValue = {"--map", "--player", "--spawn", "--resume-model", "--resume-edit", "--scenario", "--script",
                                                         "--shot-prefix", "--shot-frames", "--clipboard", "--menu", "--orbit", "--spawn-section", "--eye"};
         static const std::set<std::string> flags = {"--garage", "--show-help", "--debug-screen", "--debug-graph", "--full-hud"};
         std::vector<std::string> args = {exe};
@@ -422,6 +423,7 @@ Options parseArgs(int argc, char** argv) {
         }
         else if (a == "--name") o.name = next();
         else if (a == "--password") o.password = next();
+        else if (a == "--resume-edit") o.resumeEdit = next();
         else if (a == "--resume-model") o.resumeModel = std::atoi(next().c_str());
         else if (a == "--time") o.timeHours = std::fmod(std::max(0.0, std::atof(next().c_str())), 24.0);
         else if (a == "--lamps") o.lamps = std::atoi(next().c_str());
@@ -2898,7 +2900,19 @@ int main(int argc, char** argv) {
     if (opt.hostPort >= 0) startHost(opt.hostPort > 0 ? opt.hostPort : settings.hostPort);
     else if (!opt.join.empty()) startJoin(opt.join);
     // Launched plainly (no map, spawn, session or test asked for): the title screen first.
-    if (opt.newSection) {
+    bool resumedEdit = false;
+    if (!opt.resumeEdit.empty() && !scripted) {  // (a reload with unsaved edits: the recovery copy it just wrote)
+        Level l;
+        if (loadLevelFile(editor.autosaveDir + "/" + levelFileName(opt.resumeEdit) + ".czl", l)) {
+            l.file = userLevelFolder() + "/" + levelFileName(l.name) + ".czl";
+            l.builtin = false;
+            openEditor(l);
+            editor.markRecovered(l);
+            resumedEdit = true;
+        }
+    }
+    if (resumedEdit) {
+    } else if (opt.newSection) {
         openEditor(Level(), true);
     } else if (opt.editor) {
         Level l;
@@ -3076,6 +3090,7 @@ int main(int argc, char** argv) {
             case NEW_SECTION: openEditor(Level(), true); break;
             case RELOAD:  // load the new build (see BuildWatch)
                 if (editorSuspended) hud.toast("NO RELOADING DURING A PLAYTEST: " + K(KA_PLAYTEST_BACK) + " BACK TO THE EDITOR FIRST");  // (a reload would lose the editor and its unsaved edits)
+                else if (hud.newBuild && editor.started() && !editor.autosaveNow()) hud.toast("RELOAD CANCELLED: COULDN'T SAVE A RECOVERY COPY OF YOUR EDITS (CTRL+S)");  // (a reload never costs edits)
                 else if (hud.newBuild) reload = true, running = false;
                 else hud.toast(watch.exe.empty() ? "RELOADING ISN'T AVAILABLE HERE" : "NO NEW BUILD YET");
                 break;
@@ -5819,6 +5834,7 @@ int main(int argc, char** argv) {
         resume = {"--map", std::to_string(sim.world.map), "--player", std::to_string(sim.player), "--spawn", spawn};
         if (c.spec->model >= 0) resume.insert(resume.end(), {"--resume-model", std::to_string(c.spec->model)});
     }
+    if (reload && editor.started() && editor.core.unsaved()) resume.insert(resume.end(), {"--resume-edit", editor.core.level.name});  // (back in the editor on the recovery copy)
     if (opt.timeHours < 0) saveSettings();  // (the clock carries on next time, and after a reload)
     if (editor.started()) editor.autosaveNow();  // (closing the game with unsaved edits, in the editor or while testing them: a recovery copy)
     playback.stop();

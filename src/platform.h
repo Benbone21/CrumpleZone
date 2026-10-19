@@ -46,3 +46,12 @@ inline void makeDir(const std::string& path) {
 // (platform.cpp: /proc/self/exe, GetModuleFileName, _NSGetExecutablePath.)
 std::string exePath();
 std::string exeDir();
+
+// Writes a file so a crash or power loss never leaves it half-written: the text goes to PATH.tmp (same folder), is flushed and
+// fsync'd, then renamed over PATH (Windows: MoveFileEx REPLACE_EXISTING). With keepBak, the file it replaces is first copied to
+// PATH.bak (one generation) if it is there and `valid` (when given) accepts it, so a bad old file never displaces a good backup.
+// A failure leaves the old file untouched. (platform.cpp)
+bool writeFileAtomic(const std::string& path, const std::string& data, std::string* error = nullptr, bool keepBak = false,
+                     bool (*valid)(const std::string&) = nullptr);
+// Tests only: if >= 0, the next atomic write stops (as a failed write would) after this many bytes of the temp file, then goes back to -1.
+extern long gAtomicFailAfter;

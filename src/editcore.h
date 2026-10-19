@@ -225,6 +225,12 @@ public:
     // began (normalized), never from last frame's, so nothing drifts; the editor keeps it one undo step (beginEdit ... endEdit, or cancelEdit).
     // Rocks, blocks, logs and structures turn freely in 3D; repair shops and fences only about Y; trees and bushes stay as they are (upright).
     static bool turnsFreely(int objKind);
+    // Does a right-button press grab (and turn) something, or is it the camera's? Only what is ALREADY selected is grabbed: a gizmo handle
+    // (there is one only on a selection) or the selected object under the mouse. Anything else, and everything when `rightTurns` is off, looks round.
+    static bool rightGrabs(bool rightTurns, bool onGizmoHandle, bool overObject, bool overSelected) { return rightTurns && (onGizmoHandle || (overObject && overSelected)); }
+    // Which gizmo handles a mode shows and grabs: move = the arrows, turn = the rings.
+    static bool gizmoShowsArrows(bool turnMode) { return !turnMode; }
+    static bool gizmoShowsRings(bool turnMode) { return turnMode; }
     static bool turnsAboutY(int objKind);
     static bool canLift(int objKind);  // (it can stand off the ground: everything but repair shops and fences)
     // A slide over the ground that keeps `grab` (a point on `lead`, the object grabbed, when the slide began) exactly under the mouse ray

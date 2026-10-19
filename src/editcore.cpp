@@ -446,7 +446,7 @@ bool EditCore::autosave(const std::string& dir, std::string* err) {
     if (slash != std::string::npos) makeDir(configDir()), makeDir(dir.substr(0, slash));  // (levels/, then levels/autosave/ in saveLevelFile)
     Level out = level;
     out.builtin = false;
-    if (!saveLevelFile(out, autosavePath(dir), err)) return false;
+    if (!saveLevelFile(out, autosavePath(dir), err, false)) return false;
     autosavedChanges = changes;
     return true;
 }
