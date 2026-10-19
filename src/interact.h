@@ -80,12 +80,21 @@ struct InteractOption {
     int hook = 0;             // (IA_GRAB_LINE) which recovery point
     int rope = -1;            // (IA_UNHOOK_LINE) which of Sim::ropes
     RopeEnd end;              // (IA_HOOK_LINE) what it hooks to
+    double radius = 0;        // m across, for the aim (0: the kind's own, prompts.h)
+    bool passive = false;     // (kind IA_NONE) something to look at that E does nothing with: a vehicle's door (J gets in); markers and the prompt, nothing to hold
     bool same(const InteractOption& o) const {
         // (A ground stake is wherever you look: the same job as you sweep the ground.)
         const bool sameEnd = end.kind == o.end.kind && end.car == o.end.car && end.hook == o.end.hook && (end.kind == ANCHOR_STAKE || len(end.p - o.end.p) < 0.5);
-        return kind == o.kind && car == o.car && wheel == o.wheel && loose == o.loose && spot == o.spot && item == o.item && step == o.step &&
+        return kind == o.kind && passive == o.passive && car == o.car && wheel == o.wheel && loose == o.loose && spot == o.spot && item == o.item && step == o.step &&
                hook == o.hook && rope == o.rope && lineKind == o.lineKind && sameEnd;
     }
+};
+
+// How the pick is asked (all optional).
+struct PickOpts {
+    const InteractOption* sticky = nullptr;  // the job you have now: it keeps the target a little past where another would take it over
+    double stickyBonus = 0.12;               // rad
+    std::vector<InteractOption>* nearby = nullptr;  // filled with every job within marker range, aimed at or not (the markers, prompts.h)
 };
 
 struct Interact {
@@ -93,6 +102,7 @@ struct Interact {
     TrunkStock own;          // everything you own (the back's contents)
     bool trunkOn = false;    // the game has set `own`: your kit rides in the truck's back: the inventory (else the old way: the kit's on you)
     InteractOption current;  // what E does now (kind IA_NONE: nothing in reach)
+    std::vector<InteractOption> nearby;  // every job within a few metres, aimed at or not: the markers (set by run)
     int usedPart = -1;       // set when a repair used a part (RepairPart): the game takes it from here
     bool waitRelease = false;  // a held job finished: E has to be let go before the next
     double progress = 0;     // s held on it so far
@@ -105,11 +115,11 @@ struct Interact {
     double share() const { return current.hold > 0 ? std::min(1.0, progress / current.hold) : 0; }
     static constexpr double kJackMax = 0.45;  // m the saddle can rise above where it met the pad (the hi-lift's bar is 1.2 m)
 
-    // The job in front of you: the nearest thing to where you're looking, within reach
-    // (2.5 m) and no more than ~35 degrees off your line of sight.
+    // The job in front of you: the best aimed thing within reach (3 m), counting the size of the target (prompts.h
+    // aimScore: a cone of 40 degrees to its edge) and how close it is, keeping the one you have (PickOpts::sticky).
     // `own`: everything you own, if the trucks' backs are in play (trunk.h).
     static InteractOption pick(const Sim& sim, const Walker& wk, const V3& eye, const V3& look, const std::vector<InteractSpot>* spots = nullptr,
-                               const Kit& kit = Kit(), const TrunkStock* own = nullptr, const PartHit* hover = nullptr);
+                               const Kit& kit = Kit(), const TrunkStock* own = nullptr, const PartHit* hover = nullptr, const PickOpts* opts = nullptr);
     // A repair's next step as an option (fixes.h): the work, the wheel off, or what stands in the way ("JACK THIS
     // CORNER UP FIRST", "NEEDS THE SOCKET SET: GET IT FROM THE BACK"). kind IA_NONE: nothing left to do here.
     static InteractOption fixOption(const Sim& sim, const Walker& wk, int car, const Fix& f, const Kit& kit, const TrunkStock* own);
