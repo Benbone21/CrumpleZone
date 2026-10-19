@@ -353,6 +353,8 @@ RockHull buildRockHull(const std::string& name, const std::vector<V3>& pts, int 
     // Then grow a small one from the biggest misses.
     Hull h;
     h.init(cand);
+    if ((int)cand.size() <= maxVerts)  // (every corner fits: no need to hunt for the misses)
+        for (int k = 0; k < (int)cand.size(); k++) h.add(k);
     while ((int)h.used.size() < maxVerts) {
         int best = -1;
         double bd = 1e-4;  // 0.1 mm
@@ -458,4 +460,123 @@ int solidLod(const int lodTris[3], double size, double dist, double detail) {
     return 0;
 }
 
+}  // namespace props
+
+// ---- Meshes and convex pieces -----------------------------------------------------------------
+namespace props {
+const std::vector<V3>& rockMeshTris(const std::string& name) {
+    static std::mutex mu;
+    static std::map<std::string, std::vector<V3>> cache;
+    std::lock_guard<std::mutex> lock(mu);
+    auto it = cache.find(name);
+    if (it != cache.end()) return it->second;
+    std::vector<V3>& out = cache[name];
+    Model m;
+    if (!loadModel(assetDir() + "/" + name + ".prop", m) || m.lods.empty()) return out;
+    for (const Sub& s : m.lods[0].subs)
+        for (size_t i = 0; i + 2 < s.idx.size(); i += 3)
+            for (int k = 0; k < 3; k++) out.push_back(V3(s.v[s.idx[i + k]].p[0], s.v[s.idx[i + k]].p[1], s.v[s.idx[i + k]].p[2]));
+    return out;
+}
+
+namespace {
+struct Piece {
+    std::vector<int> tri;  // triangle numbers
+    RockHull hull;
+    double slack = 0;
+};
+
+// How far the hull stands off the surface it holds: from each exposed triangle's middle out along its normal to the hull's skin.
+double hullSlack(const RockHull& h, const std::vector<V3>& tris, const std::vector<int>& ids, double (*ground)(void*, double, double), void* gc) {
+    if (h.v.empty()) return 0;
+    V3 hc;
+    for (const V3& p : h.v) hc += p;
+    hc = hc / (double)h.v.size();
+    std::vector<V3> fn;
+    std::vector<double> fd;
+    for (const auto& f : h.f) {
+        const V3 n = norm(cross(h.v[f[1]] - h.v[f[0]], h.v[f[2]] - h.v[f[0]]));
+        fn.push_back(n), fd.push_back(dot(n, h.v[f[0]]));
+    }
+    double worst = 0;
+    for (int t : ids) {
+        const V3 &a = tris[3 * t], &b = tris[3 * t + 1], &c = tris[3 * t + 2];
+        V3 n = cross(b - a, c - a);
+        const double area = len(n) * 0.5;
+        if (area < 1e-5) continue;
+        n = n / (2 * area);
+        const V3 m = (a + b + c) / 3.0;
+        if (dot(n, m - hc) < 0) n = -n;
+        if (gc && m.y < ground(gc, m.x, m.z) - 0.05) continue;  // buried
+        double reach = 1e9;
+        for (size_t f = 0; f < fn.size(); f++) {
+            const double den = dot(fn[f], n);
+            if (den > 1e-9) reach = std::min(reach, (fd[f] - dot(fn[f], m)) / den);
+        }
+        if (reach < 1e8) worst = std::max(worst, n.y > 0.35 ? reach : reach * 0.5);  // (the top is what's driven on; a flank matters less)
+    }
+    return worst;
+}
+
+RockHull hullOf(const std::vector<V3>& tris, const std::vector<int>& ids) {
+    std::vector<V3> pts;
+    for (int t : ids)
+        for (int k = 0; k < 3; k++) pts.push_back(tris[3 * t + k]);
+    std::sort(pts.begin(), pts.end(), [](const V3& a, const V3& b) { return a.x < b.x || (a.x == b.x && (a.y < b.y || (a.y == b.y && a.z < b.z))); });
+    pts.erase(std::unique(pts.begin(), pts.end(), [](const V3& a, const V3& b) { return a.x == b.x && a.y == b.y && a.z == b.z; }), pts.end());  // (corners shared by triangles, once)
+    return buildRockHull("part", pts, 40, nullptr);
+}
+}  // namespace
+
+std::vector<RockHull> splitRockMesh(const std::vector<V3>& tris, double (*ground)(void*, double, double), void* gc, double tol, int maxParts) {
+    std::vector<RockHull> out;
+    const int nt = (int)tris.size() / 3;
+    if (nt < 8) return out;
+    std::vector<Piece> parts(1);
+    for (int t = 0; t < nt; t++) parts[0].tri.push_back(t);
+    parts[0].hull = hullOf(tris, parts[0].tri);
+    if (parts[0].hull.v.empty()) return out;
+    parts[0].slack = hullSlack(parts[0].hull, tris, parts[0].tri, ground, gc);
+    if (parts[0].slack <= tol) return out;
+    for (;;) {
+        int worst = -1;
+        for (int i = 0; i < (int)parts.size(); i++)
+            if (parts[i].slack > tol && parts[i].tri.size() >= 4 && (worst < 0 || parts[i].slack > parts[worst].slack)) worst = i;
+        if (worst < 0 || (int)parts.size() >= maxParts) break;
+        Piece src = std::move(parts[worst]);
+        // Across its longest run, at the median triangle.
+        V3 lo(1e9, 1e9, 1e9), hi(-1e9, -1e9, -1e9);
+        std::vector<V3> mid(src.tri.size());
+        for (size_t i = 0; i < src.tri.size(); i++) {
+            const int t = src.tri[i];
+            mid[i] = (tris[3 * t] + tris[3 * t + 1] + tris[3 * t + 2]) / 3.0;
+            lo = V3(std::min(lo.x, mid[i].x), std::min(lo.y, mid[i].y), std::min(lo.z, mid[i].z));
+            hi = V3(std::max(hi.x, mid[i].x), std::max(hi.y, mid[i].y), std::max(hi.z, mid[i].z));
+        }
+        const int axis = (hi.x - lo.x) >= (hi.z - lo.z) && (hi.x - lo.x) >= (hi.y - lo.y) ? 0 : (hi.z - lo.z) >= (hi.y - lo.y) ? 2 : 1;
+        std::vector<int> order(src.tri.size());
+        for (size_t i = 0; i < order.size(); i++) order[i] = (int)i;
+        std::sort(order.begin(), order.end(), [&](int a, int b) {
+            const double ka = axis == 0 ? mid[a].x : axis == 2 ? mid[a].z : mid[a].y, kb = axis == 0 ? mid[b].x : axis == 2 ? mid[b].z : mid[b].y;
+            return ka < kb || (ka == kb && a < b);
+        });
+        Piece a, b;
+        for (size_t i = 0; i < order.size(); i++) (i < order.size() / 2 ? a : b).tri.push_back(src.tri[order[i]]);
+        bool ok = true;
+        for (Piece* q : {&a, &b}) {
+            q->hull = hullOf(tris, q->tri);
+            if (q->hull.v.empty()) ok = false;
+            else q->slack = hullSlack(q->hull, tris, q->tri, ground, gc);
+        }
+        if (!ok) {  // (a sliver: leave it whole)
+            src.slack = 0;
+            parts[worst] = std::move(src);
+            continue;
+        }
+        parts[worst] = std::move(a);
+        parts.push_back(std::move(b));
+    }
+    for (Piece& p : parts) out.push_back(std::move(p.hull));
+    return out;
+}
 }  // namespace props
