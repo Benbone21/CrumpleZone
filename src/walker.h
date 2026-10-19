@@ -28,8 +28,8 @@ struct Walker {
     // Steps (dt, ~60 Hz): `fwd`/`side` (-1..1) move relative to `viewYaw` (the camera's
     // heading), `run` faster, `jump` once when grounded.
     void step(const World& w, const Sim& sim, double dt, double fwd, double side, bool run, bool jump, double viewYaw);
-    // Out of a car, beside its driver's door (on the ground, clear of it).
-    void exitCar(const World& w, const Car& c);
+    // Out of a car, beside its driver's door (on the ground, clear of it); `passenger`: the other door.
+    void exitCar(const World& w, const Car& c, bool passenger = false);
     // The nearest vehicle (index into sim.cars, not someone else's) within reach to get
     // into, or -1.
     int carToEnter(const Sim& sim, double reach = 4.0) const;

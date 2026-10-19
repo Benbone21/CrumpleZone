@@ -104,6 +104,10 @@ enum MsgType : uint8_t {
     MSG_LAMPS,        // u32 car id, u8 LampMode: reliable, also while the car sleeps
     MSG_CHALLENGE,    // host -> client: 16 random bytes; answer with MSG_AUTH (only if there's a password)
     MSG_AUTH,         // client -> host: HMAC-SHA-256(password, those 16 bytes)
+    // Handing a vehicle over (NetSession::requestTake). All three: u32 its id, u32 the id it's to have (the taker's).
+    MSG_TAKE,         // taker -> host: may I have it; host -> its owner: they ask
+    MSG_GIVE,         // owner -> host: it's theirs now; host -> everyone: it changed hands
+    MSG_REFUSE,       // owner -> host -> taker: no (+ str why)
 };
 // (WELCOME: u8 id, u8 map, u64 the guest's datagram secret.)
 enum DgramType : uint8_t { DG_SNAP = 1, DG_HELLO = 2, DG_ACK = 3 };  // (an ack: u32 netId, u32 seq, ...: states we have, to tell the next against)
@@ -546,6 +550,10 @@ void NetSession::close() {
     heldGame.clear();
     heldWorld.clear();
     upStreams.clear();
+    askId = askNew = 0;
+    takes.clear();
+    homeOf.clear();
+    for (uint32_t& r : ridingOf) r = 0;
     upAcks.clear();
 }
 
@@ -938,6 +946,8 @@ void NetSession::handle(Sim* sim, Conn* from, const std::vector<uint8_t>& msg) {
                 if (!r.ok) return violation(from, "a bad chatter message");
                 if (!from->games.take(now, 1, 30, 60)) return;
                 if (hostOnlyChatter(text)) return note(players[from->peer].name + " SENT A HOST'S MESSAGE");
+                if (text.rfind("ride ", 0) == 0) ridingOf[from->peer] = (uint32_t)std::strtoul(text.c_str() + 5, nullptr, 10);
+                else if (text.rfind("walk ", 0) == 0 || text == "inside") ridingOf[from->peer] = 0;
                 // (When it was said, by the guest's idea of our clock: no later than now, no more than a second ago.)
                 const double shared = sharedTime(curNow);
                 said = std::isfinite(said) ? clampd(said, shared - 1.0, shared) : shared;
@@ -963,6 +973,34 @@ void NetSession::handle(Sim* sim, Conn* from, const std::vector<uint8_t>& msg) {
                     std::vector<uint8_t> framed = {(uint8_t)(msg.size() & 255), (uint8_t)(msg.size() >> 8)};  // (as the others read it: length first)
                     framed.insert(framed.end(), msg.begin(), msg.end());
                     broadcast(framed, from);
+                }
+                return;
+            }
+            case MSG_TAKE: {  // a guest asks for someone else's vehicle
+                const uint32_t oldId = r.get<uint32_t>(), newId = r.get<uint32_t>();
+                if (!r.ok) return violation(from, "a bad take");
+                if (!from->spawns.take(now, 1, 3, 12)) return refuseTake(from->peer, oldId, newId, "TOO MANY AT ONCE");
+                if (sim && adopted) hostTake(*sim, from, oldId, newId);
+                else refuseTake(from->peer, oldId, newId, "NOT YET");
+                return;
+            }
+            case MSG_GIVE:
+            case MSG_REFUSE: {  // an owner's answer to one we asked of them
+                const uint32_t oldId = r.get<uint32_t>(), newId = r.get<uint32_t>();
+                const std::string why = type == MSG_REFUSE ? net::sanitize(r.str(), 60) : std::string();
+                if (!r.ok) return violation(from, "a bad answer to a take");
+                auto it = std::find_if(takes.begin(), takes.end(), [&](const PendingTake& t) { return t.oldId == oldId && t.newId == newId; });
+                if (it == takes.end() || ownerOf(oldId) != from->peer) return;  // (too late: it timed out; or never asked)
+                const PendingTake pt = *it;
+                takes.erase(it);
+                if (type == MSG_REFUSE) return refuseTake(pt.taker, oldId, newId, why.empty() ? "NO" : why);
+                if (!sim || !adopted) return;
+                rekey(*sim, oldId, newId, pt.taker == self && askId == oldId);
+                if (pt.taker == self && askId == oldId) askId = 0;
+                hostGiven(*sim, oldId, newId, from);
+                if (pt.takerGone) {  // (they left while it was on its way to them: it stays, mine)
+                    const int i = findCar(*sim, newId);
+                    if (i >= 0) hostReclaim(*sim, i);
                 }
                 return;
             }
@@ -1075,6 +1113,27 @@ void NetSession::handle(Sim* sim, Conn* from, const std::vector<uint8_t>& msg) {
         case MSG_HELLO:  // (what only a host hears)
         case MSG_AUTH:
             return;
+        case MSG_TAKE: {  // someone asks the host for one of mine
+            const uint32_t oldId = r.get<uint32_t>(), newId = r.get<uint32_t>();
+            if (!r.ok || role != CLIENT || conns.empty()) return;
+            const int i = sim && adopted ? findCar(*sim, oldId) : -1;
+            std::string why = i < 0 || ownerOf(oldId) != self ? "IT'S GONE" : whyNot(*sim, i);
+            if (why.empty() && (ownerOf(newId) == self || ownerOf(newId) >= net::kMaxPeers)) why = "NO";
+            if (why.empty()) giveAway(*sim, i, newId);
+            sendTo(*conns[0], takeMsg(why.empty() ? MSG_GIVE : MSG_REFUSE, oldId, newId, why));
+            return;
+        }
+        case MSG_REFUSE: {
+            const uint32_t oldId = r.get<uint32_t>();
+            r.get<uint32_t>();
+            const std::string why = net::sanitize(r.str(), 60);
+            if (!r.ok || role != CLIENT || !askId || oldId != askId) return;
+            CarEvent e{CarEvent::REFUSED};
+            e.oldId = oldId, e.newId = askNew, e.why = why;
+            carEvents.push_back(e);
+            askId = 0;
+            return;
+        }
         default:
             break;
     }
@@ -1297,6 +1356,21 @@ bool NetSession::apply(Sim& sim, const std::vector<uint8_t>& msg, int from) {
             knownRopes.push_back(rp.netId);
             return true;
         }
+        case MSG_GIVE: {  // the host: a vehicle changed hands
+            const uint32_t oldId = r.get<uint32_t>(), newId = r.get<uint32_t>();
+            if (!r.ok || from >= 0 || ownerOf(newId) >= net::kMaxPeers || ownerOf(oldId) >= net::kMaxPeers) return false;
+            const bool asked = askId && oldId == askId && newId == askNew;
+            const bool ok = rekey(sim, oldId, newId, asked);
+            if (asked) {
+                askId = 0;
+                if (!ok) {
+                    CarEvent e{CarEvent::REFUSED};
+                    e.oldId = oldId, e.newId = newId, e.why = "IT'S GONE";
+                    carEvents.push_back(e);
+                }
+            }
+            return ok;
+        }
         case MSG_UNROPE: {
             const uint32_t netId = r.get<uint32_t>();
             r.get<double>();  // (when)
@@ -1324,6 +1398,201 @@ void NetSession::removeCars(Sim& sim, int owner) {
         } else {
             k++;
         }
+}
+
+// ---- Vehicles changing hands -----------------------------------------------------------
+
+std::vector<uint8_t> NetSession::takeMsg(uint8_t type, uint32_t oldId, uint32_t newId, const std::string& why) {
+    Writer w;
+    w.put<uint32_t>(oldId);
+    w.put<uint32_t>(newId);
+    if (type == MSG_REFUSE) w.str(why);
+    return frame((MsgType)type, w);
+}
+
+bool NetSession::requestTake(Sim& sim, int car) {
+    if (role == OFF || !adopted || askId || self < 0 || car < 0 || car >= (int)sim.cars.size()) return false;
+    const Car& c = sim.cars[car];
+    if (!c.remote || c.isProp() || !c.netId || ownerOf(c.netId) == self) return false;
+    if (role == CLIENT && conns.empty()) return false;
+    uint32_t newId = 0;
+    for (int k = 0; k < 0x10000 && (!(newId & 0xffff) || findCar(sim, newId) >= 0); k++) newId = ((uint32_t)self << 16) | (nextCarId++ & 0xffff);
+    askId = c.netId, askNew = newId, askAt = curNow;
+    if (role == HOST) hostTake(sim, nullptr, askId, newId);
+    else sendTo(*conns[0], takeMsg(MSG_TAKE, askId, newId));
+    return true;
+}
+
+std::string NetSession::whyNot(const Sim& sim, int car) const {
+    const Car& c = sim.cars[car];
+    if (c.remote || c.isProp()) return "IT'S GONE";
+    if (c.occupied || (mayGive && !mayGive(sim, car))) return "SOMEONE'S IN IT";
+    if (len(c.frame().vel) > 1.0) return "IT'S MOVING";
+    if (c.jackPlaced) return "IT'S UP ON THE JACK";
+    if (sim.handLine.car == car) return "THEY'VE GOT ITS LINE OUT";
+    return "";
+}
+
+void NetSession::giveAway(Sim& sim, int car, uint32_t newId) {
+    Car& c = sim.cars[car];
+    const uint32_t oldId = c.netId;
+    // The lines it works were mine: they go (send() withdraws them everywhere). Lines others
+    // hooked to it stay.
+    for (size_t k = sim.ropes.size(); k-- > 0;) {
+        const Rope& rp = sim.ropes[k];
+        if (rp.a.kind == ANCHOR_CAR && rp.a.car == car && (!rp.netId || ownerOf(rp.netId) == self)) sim.ropes.erase(sim.ropes.begin() + k);
+    }
+    c.ai = false;
+    c.pilot.active = false;
+    c.pilot.followCar = -1;
+    c.remote = true;
+    c.netId = newId;
+    c.occupied = false;
+    c.heldHere = 0;
+    c.handBack = false;
+    c.shoveV = c.shoveP = V3();
+    knownCars.erase(std::remove_if(knownCars.begin(), knownCars.end(), [&](const Known& k) { return k.netId == oldId; }), knownCars.end());
+    CarEvent e{CarEvent::GAVE};
+    e.oldId = oldId, e.newId = newId;
+    carEvents.push_back(e);
+}
+
+bool NetSession::rekey(Sim& sim, uint32_t oldId, uint32_t newId, bool asked) {
+    const int i = findCar(sim, oldId);
+    if (i < 0 || !sim.cars[i].remote || !newId || findCar(sim, newId) >= 0) return false;
+    Car& c = sim.cars[i];
+    c.netId = newId;
+    size_t ri = remotes.size();
+    for (size_t k = 0; k < remotes.size(); k++)
+        if (remotes[k]->netId == oldId) ri = k;
+    CarEvent e{CarEvent::RENAMED};
+    e.oldId = oldId, e.newId = newId, e.asked = asked;
+    if (ownerOf(newId) == self) {  // mine now: on my physics from the shape it's in, dents and all
+        if (ri < remotes.size()) {
+            delete remotes[ri];
+            remotes.erase(remotes.begin() + ri);
+        }
+        c.remote = false;
+        c.holdHere();
+        c.heldHere = 0;
+        c.handBack = false;
+        c.occupied = false;
+        c.throttle = c.brake = 0;
+        c.handbrake = 1;
+        knownCars.push_back({newId, c.spec, c.buildCount, c.lampMode});  // (everyone has it already: no spawn)
+        e.kind = CarEvent::GOT;
+    } else if (ri < remotes.size()) {  // someone else's: its states come from them now, told afresh
+        Remote* rm = remotes[ri];
+        rm->netId = newId;
+        rm->got.clear();
+        for (auto& a : rm->assemblies) a.active = false;
+    }
+    carEvents.push_back(e);
+    return true;
+}
+
+void NetSession::refuseTake(int taker, uint32_t oldId, uint32_t newId, const std::string& why) {
+    if (taker == self) {
+        if (askId != oldId) return;
+        CarEvent e{CarEvent::REFUSED};
+        e.oldId = oldId, e.newId = newId, e.why = why;
+        carEvents.push_back(e);
+        askId = 0;
+        return;
+    }
+    for (Conn* c : conns)
+        if (c->hello && !c->kill && c->peer == taker) sendTo(*c, takeMsg(MSG_REFUSE, oldId, newId, why));
+}
+
+void NetSession::hostTake(Sim& sim, Conn* from, uint32_t oldId, uint32_t newId) {
+    const int taker = from ? from->peer : self;
+    const int owner = ownerOf(oldId);
+    const int i = findCar(sim, oldId);
+    auto no = [&](const char* why) { refuseTake(taker, oldId, newId, why); };
+    if (ownerOf(newId) != taker || !(newId & 0xffff) || findCar(sim, newId) >= 0) return no("NO");
+    if (i < 0 || sim.cars[i].isProp() || owner == taker || owner >= net::kMaxPeers) return no("IT'S GONE");
+    for (const PendingTake& t : takes) {
+        if (t.oldId == oldId) return no("SOMEONE ELSE IS GETTING IN");  // (first come: the host hears them in order)
+        if (t.newId == newId) return no("NO");
+    }
+    if (taker != self) {  // (a guest's vehicles are rationed, taken ones too)
+        int theirs = 0;
+        for (const Car& c : sim.cars) theirs += c.remote && ownerOf(c.netId) == taker;
+        for (const PendingTake& t : takes) theirs += t.taker == taker;
+        if (theirs >= net::kMaxCarsPerPlayer) return no("YOU HAVE TOO MANY VEHICLES OUT");
+    }
+    if (owner == self) {  // mine: I say
+        const std::string why = whyNot(sim, i);
+        if (!why.empty()) return refuseTake(taker, oldId, newId, why);
+        giveAway(sim, i, newId);
+        hostGiven(sim, oldId, newId, nullptr);
+        return;
+    }
+    Conn* oc = nullptr;
+    for (Conn* c : conns)
+        if (c->hello && !c->kill && c->peer == owner) oc = c;
+    if (!oc) return no("IT'S GONE");
+    sendTo(*oc, takeMsg(MSG_TAKE, oldId, newId));
+    takes.push_back({oldId, newId, taker, curNow});
+}
+
+void NetSession::hostGiven(Sim& sim, uint32_t oldId, uint32_t newId, Conn* except) {
+    (void)sim;
+    const auto h = homeOf.find(oldId);
+    const int home = h != homeOf.end() ? h->second : ownerOf(oldId);
+    if (h != homeOf.end()) homeOf.erase(h);
+    if (home != ownerOf(newId)) homeOf[newId] = home;
+    broadcast(takeMsg(MSG_GIVE, oldId, newId), except);
+}
+
+void NetSession::hostReclaim(Sim& sim, int car) {
+    if (car < 0 || car >= (int)sim.cars.size() || !sim.cars[car].remote) return;
+    const uint32_t oldId = sim.cars[car].netId;
+    uint32_t newId = 0;
+    for (int k = 0; k < 0x10000 && (!(newId & 0xffff) || findCar(sim, newId) >= 0); k++) newId = ((uint32_t)self << 16) | (nextCarId++ & 0xffff);
+    if (!rekey(sim, oldId, newId, false)) return;
+    hostGiven(sim, oldId, newId, nullptr);
+}
+
+void NetSession::dropTakes(Sim* sim, int peer) {
+    if (role != HOST || peer < 0 || peer >= net::kMaxPeers) return;
+    ridingOf[peer] = 0;
+    for (size_t k = 0; k < takes.size();) {
+        if (ownerOf(takes[k].oldId) == peer) {  // (its owner left with it: it's gone)
+            const PendingTake t = takes[k];
+            takes.erase(takes.begin() + k);
+            refuseTake(t.taker, t.oldId, t.newId, "THEY LEFT");
+            continue;
+        }
+        if (takes[k].taker == peer) takes[k].takerGone = true;  // (if it comes, it stays: hostReclaim)
+        k++;
+    }
+    if (!sim) return;
+    // What they had of someone else's stays behind, mine now (parked); their own go with them.
+    for (int i = 0; i < (int)sim->cars.size(); i++) {
+        const Car& c = sim->cars[i];
+        if (c.remote && ownerOf(c.netId) == peer && homeOf.count(c.netId)) hostReclaim(*sim, i);
+    }
+    for (auto it = homeOf.begin(); it != homeOf.end();) it = ownerOf(it->first) == peer ? homeOf.erase(it) : std::next(it);
+}
+
+void NetSession::expireTakes(double now) {
+    if (askId && now - askAt > 10) {  // (no answer: the host or the owner went quiet)
+        CarEvent e{CarEvent::REFUSED};
+        e.oldId = askId, e.newId = askNew, e.why = "NO ANSWER";
+        carEvents.push_back(e);
+        askId = 0;
+    }
+    if (role != HOST) return;
+    for (size_t k = 0; k < takes.size();) {
+        if (now - takes[k].at > 8) {
+            const PendingTake t = takes[k];
+            takes.erase(takes.begin() + k);
+            if (!t.takerGone) refuseTake(t.taker, t.oldId, t.newId, "NO ANSWER");
+        } else {
+            k++;
+        }
+    }
 }
 
 void NetSession::accept() {
@@ -1400,6 +1669,7 @@ void NetSession::dropConn(size_t i) {
     if (role == HOST && wasIn && peer > 0) {
         events.push_back(players[peer].name + " LEFT");
         players[peer] = NetPlayer();
+        dropTakes(lastSim, peer);  // (what they'd taken from others stays: before their own go)
         if (lastSim) removeCars(*lastSim, peer);
         Writer w;
         w.put<uint8_t>((uint8_t)peer);
@@ -1545,7 +1815,7 @@ NetSession::Snap NetSession::makeSnap(const Sim& sim, const Car& c, double now) 
     s.steer = (float)c.steer;
     s.brake = (float)clampd(std::max(c.brake, c.handbrake * 0.6), 0, 1);
     s.damage = (float)c.damage;
-    s.status = (uint8_t)(c.engineDead | (c.hydrolocked << 1));
+    s.status = (uint8_t)(c.engineDead | (c.hydrolocked << 1) | (c.occupied << 2));
     s.rpm = (float)c.rpm;
     s.load = (float)clampd(c.throttle * c.tcCut, 0, 1);
     s.boost = (float)c.boost;
@@ -1689,6 +1959,13 @@ double NetSession::relevantEvery(const Sim& sim, const Conn& to, const V3& at) c
             const V3 d = c.frame().com - at;
             d2 = std::min(d2, d.x * d.x + d.z * d.z);
         }
+    if (to.peer >= 0 && to.peer < net::kMaxPeers && ridingOf[to.peer]) {  // (riding along in someone's: where they are)
+        const int ri = findCar(sim, ridingOf[to.peer]);
+        if (ri >= 0) {
+            const V3 d = sim.cars[ri].frame().com - at;
+            d2 = std::min(d2, d.x * d.x + d.z * d.z);
+        }
+    }
     if (d2 > 1e17) return 0;  // (nothing of theirs yet: everything)
     const double d = std::sqrt(d2);
     return d < 150 ? 0 : d < 400 ? 0.1 : d < 800 ? 0.2 : 0.5;
@@ -1891,7 +2168,7 @@ void NetSession::takeSnapshot(Sim& sim, uint32_t netId, const std::vector<uint8_
     s.steer = r.get<int16_t>() / 16000.0f;
     s.brake = r.get<uint8_t>() / 255.0f;
     s.damage = r.get<uint16_t>() / 65535.0f;
-    s.status = r.get<uint8_t>() & 3;
+    s.status = r.get<uint8_t>() & 7;
     s.rpm = r.get<uint16_t>() / 3.0f;
     s.load = r.get<uint16_t>() / 65535.0f;
     s.boost = r.get<uint16_t>() / 6000.0f;
@@ -2081,6 +2358,7 @@ void NetSession::applyRemotes(Sim& sim, double now) {
         c.gear = s.gear;
         c.engineDead = s.status & 1;
         c.hydrolocked = (s.status >> 1) & 1;
+        c.occupied = (s.status >> 2) & 1;
         c.sleeping = false;
         c.updateBounds();
         for (const auto& rl : s.ropeLen)  // (only the winch lines this vehicle works)
@@ -2151,6 +2429,7 @@ void NetSession::receive(Sim& sim, double now) {
     }
     if (role == CLIENT) runDay();
     if (adopted) applyRemotes(sim, now);
+    expireTakes(now);
     release(&sim);
     sendAcks();
 }

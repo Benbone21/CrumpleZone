@@ -3274,6 +3274,7 @@ void Sim::drive(bool up, bool down, bool left, bool right, bool hb, double dt) {
     }
     updateAI(dt);
     Car& c = cars[player];
+    if (c.remote) return;  // (riding along in someone else's, or on foot by one that's changed hands: not mine to drive)
     if (c.towRolling) { c.gear = c.towGear; c.towRolling = false; }
     c.wake();
     if (c.ai) return;  // following the loop road
@@ -3390,6 +3391,7 @@ void Sim::pilotStep(int i, double dt) {
 
 void Sim::respawnPlayer() {
     Car& c = cars[player];
+    if (c.remote) return;  // (someone else's)
     dropRopes(player);
     refillAnchors();  // (a full reset: sandbox gear comes back too)
     c.respawn(c.spawnPos, c.spawnYaw);
@@ -3399,6 +3401,7 @@ void Sim::respawnPlayer() {
 
 void Sim::rightPlayer() {
     Car& c = cars[player];
+    if (c.remote) return;  // (someone else's)
     dropRopes(player);
     const Frame fr = c.frame();
     double yaw = std::atan2(-fr.fwd.z, fr.fwd.x);
@@ -3408,6 +3411,7 @@ void Sim::rightPlayer() {
 
 void Sim::towPlayerHome() {
     Car& c = cars[player];
+    if (c.remote) return;  // (someone else's)
     dropRopes(player);
     c.placeUpright(world, c.spawnPos.x, c.spawnPos.z, c.spawnYaw);
     accum = 0;
@@ -3415,6 +3419,7 @@ void Sim::towPlayerHome() {
 
 void Sim::teleportPlayer(double x, double z, double yaw) {
     Car& c = cars[player];
+    if (c.remote) return;  // (someone else's)
     dropRopes(player);
     c.placeUpright(world, x, z, yaw);
     accum = 0;
@@ -3422,6 +3427,7 @@ void Sim::teleportPlayer(double x, double z, double yaw) {
 
 void Sim::recoverPlayer() {
     Car& c = cars[player];
+    if (c.remote) return;  // (someone else's)
     dropRopes(player);
     Frame fr = c.frame();
     V3 sp = c.spawnPos;
@@ -3436,6 +3442,7 @@ void Sim::recoverPlayer() {
 
 void Sim::swapPlayerVehicle(const VehicleSpec& vs) {
     Car& c = cars[player];
+    if (c.remote) return;  // (someone else's)
     c.spec = &vs;
     recoverPlayer();
 }

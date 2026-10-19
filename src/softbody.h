@@ -508,6 +508,7 @@ public:
     // it; here it only pushes back). netId is the same on every machine.
     bool remote = false;
     uint32_t netId = 0;
+    bool occupied = false;  // someone's in the driver's seat (mine: the game says; a remote one: its states)
     bool blowoutsOn = true;  // off: tests that measure raw power, gearing and drag
     uint64_t blowSeed = 1;  // seeds its tires' blowout dice (with the wheel's index): the same seed, the same blowouts
     // The fastest tire's road speed over its rating (tires.h): 1 = at it, above = blowouts possible. 0 if none.

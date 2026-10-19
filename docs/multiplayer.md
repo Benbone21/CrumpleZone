@@ -159,8 +159,15 @@ CZ_PASSWORD='a long random password' ./build/crumplezone-server --port 27015 --m
   sends trucks more than 150 m from all of a player's own less often (10, 5, then 2 a second past
   150, 400 and 800 m). Seven guests driving together: about 60 KB/s down per guest, 450 KB/s up
   from the server (0.2.0: 284 and 1990); spread over the map, about 9 and 60.
-- **Versions**: protocol 6 (0.3.0). An older game is turned away with "version mismatch: update
-  to 0.3.0 or newer"; a newer game joining an older server is told the server is older.
+- **Other players' vehicles**: one with nobody in it changes hands when you get in (MSG_TAKE to the host,
+  which asks its owner: the owner is the one that knows nobody's in it, and the host takes the asks in
+  order, so two at once get one yes and one no). Handed over, it keeps its body and dents on every machine
+  under an id of the new owner's, and the new owner simulates and sends it (MSG_GIVE); getting it back is
+  the same. A state's status byte carries a "driver in it" bit: then you ride along instead (chatter
+  "ride ID", so the server sends that truck to you at the full rate). Someone who leaves holding another's
+  vehicle leaves it behind: the host takes it on, parked, and its owner can take it back.
+- **Versions**: protocol 7 (0.4.0). An older game is turned away with "version mismatch: update
+  to 0.4.0 or newer"; a newer game joining an older server is told the server is older.
 
 Firewall examples (the server is IPv4 only; keep your SSH rule or you lock yourself out):
 

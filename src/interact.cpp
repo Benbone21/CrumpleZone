@@ -1,6 +1,8 @@
 // On foot, hands on (interact.h): the spare, the wheels, and the hold-E jobs.
 #include "interact.h"
 
+#include "carentry.h"
+
 #include <cmath>
 
 #include "modelkit.h"
@@ -460,6 +462,11 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
                 }
             }
         }
+    if (!busy)  // getting in at a door (carentry.h), after the work round it
+        for (int ci = 0; ci < (int)sim.cars.size(); ci++) {
+            InteractOption o;
+            if (carentry::option(sim, ci, o)) consider(o, kReach, 0.1);
+        }
     return best;
 }
 
@@ -641,6 +648,11 @@ std::string Interact::perform(Sim& sim, Walker& wk, const InteractOption& o) {
             wk.holdingJack = true;
             return "GOT THE JACK";
         }
+        case IA_ENTER_CAR:
+        case IA_RIDE_ALONG:
+            enterCar = o.car;
+            waitRelease = true;
+            return "";
         case IA_OPEN_INVENTORY: {
             openedInventory = o.car;
             waitRelease = true;  // (E is let go before it does anything else)
