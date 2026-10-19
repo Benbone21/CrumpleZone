@@ -45,6 +45,8 @@ enum InteractKind {
     IA_HOOK_LINE,     // the line in your hands onto a tree, boulder, stake or another vehicle's recovery point
     IA_UNHOOK_LINE,   // a hooked line off, at either end
     IA_STOW_LINE,     // the line in your hands spooled back onto its drum
+    IA_ENTER_CAR,     // in at a vehicle's driver's door (carentry.h: yours, anyone's with nobody in it, a buddy's taken over)
+    IA_RIDE_ALONG,    // in at the passenger's door of a buddy's they're driving
 };
 
 // The repair in progress, as the on-foot checklist shows it: "CV AXLE, FRONT LEFT" and its steps.
@@ -109,6 +111,7 @@ struct Interact {
     std::vector<InteractSpot> spots;  // things out in the world to open (set by the game)
     std::string openedSpot;           // set when one's been opened (its id): the game takes it from here
     int openedInventory = -1;         // set when E opened a truck's inventory (its car): the game shows the menu
+    int enterCar = -1;                // set when E at a door says get in (its car: IA_ENTER_CAR, IA_RIDE_ALONG): the game does it
     PartHit hover;                    // the car part under the crosshair (set by the game each frame): its repair, if any, is the one picked
     std::string toSay;                // a job finished: said once the step's own words are
     RepairChecklist checklist;        // the repair you're on (or the nearest one under way), for the HUD: set by update

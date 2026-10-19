@@ -30,15 +30,16 @@ V3 pushOut(const World& w, const V3& c, double r, bool* ground) {
 
 }  // namespace
 
-void Walker::exitCar(const World& w, const Car& c) {
+void Walker::exitCar(const World& w, const Car& c, bool passenger) {
     const Frame f = c.frame();
     const V3 fwd = norm(V3(f.fwd.x, 0, f.fwd.z)), left(fwd.z, 0, -fwd.x);  // (up x forward)
     // The driver's side, past the mirror; if that's blocked (a rock face), the other side.
-    for (int side : {1, -1}) {
+    const int first = passenger ? -1 : 1;
+    for (int side : {first, -first}) {
         const V3 at = f.com + left * (side * (c.spec->width / 2 + 0.7)) + fwd * 0.3;
         V3 q(at.x, w.clearY(at.x, at.z), at.z);
         Contact ct;
-        if (!w.contact(q + V3(0, kChestH, 0), kChestR, nullptr, 0, ct) || side == -1) {
+        if (!w.contact(q + V3(0, kChestH, 0), kChestR, nullptr, 0, ct) || side == -first) {
             p = V3(at.x, w.height(at.x, at.z) + 0.02, at.z);
             break;
         }

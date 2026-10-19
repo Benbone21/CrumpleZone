@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -32,8 +33,8 @@ constexpr int kMaxPort = 65535;
 constexpr int kDiscoveryPort = 27016;  // UDP: "who's hosting?" on the local network
 constexpr int kBeaconPort = 27017;     // UDP: hosts also announce themselves here every couple of seconds
 constexpr int kMaxPeers = 8;
-constexpr uint16_t kVersion = 6;  // 6: one clock (stamped states, chatter and lines; the sky) (5: passwords, a secret in every datagram, strict checks)
-constexpr const char* kRelease = "0.3.0";  // the first release that speaks kVersion (what an older guest is told to update to)
+constexpr uint16_t kVersion = 7;  // 7: taking over someone else's empty vehicle (MSG_TAKE / GIVE / REFUSE), a driver-in-it bit in states; 6: one clock (stamped states, chatter and lines; the sky) (5: passwords, a secret in every datagram, strict checks)
+constexpr const char* kRelease = "0.4.0";  // the first release that speaks kVersion (what an older guest is told to update to)
 constexpr double kSendRate = 20;      // vehicle states per second
 constexpr double kPlaybackDelay = 0.1; // s: the least the others are shown behind the shared clock (two states)
 constexpr double kMaxDelay = 1.0;      // s: and the most, however bad the line
@@ -255,6 +256,27 @@ public:
     std::string ownerName(uint32_t netId) const;
     static int ownerOf(uint32_t netId) { return (int)(netId >> 16); }
 
+    // Getting into someone else's vehicle with nobody in it (a buddy's truck while they're on
+    // foot, the host's parked trucks and stopped traffic): it's handed over. Its owner decides
+    // (it's the one that knows nobody's in it) and the host settles who asked first; then on
+    // every machine it keeps its body, dents and all, under an id of the new owner's, and is
+    // simulated and sent by them. The way back is the same. A player who leaves with someone
+    // else's vehicle leaves it behind: the host takes it on (parked).
+    // Asks for sim.cars[car] (another player's). False: not one that can be asked for, or asking already.
+    bool requestTake(Sim& sim, int car);
+    uint32_t asking() const { return askId; }  // the vehicle asked for (0: none)
+    // Owner: whether one of mine may go now (the game: nobody's driving it). Unset: whenever it's
+    // stopped. (Either way, never while it's moving.)
+    std::function<bool(const Sim&, int car)> mayGive;
+    struct CarEvent {
+        enum Kind { GOT, REFUSED, GAVE, RENAMED } kind;
+        CarEvent(Kind k = GOT) : kind(k) {}
+        uint32_t oldId = 0, newId = 0;  // (REFUSED: what was asked for)
+        bool asked = false;             // GOT: the one we asked for (else the host taking on a leaver's)
+        std::string why;                // REFUSED
+    };
+    std::vector<CarEvent> carEvents;  // what happened to vehicles changing hands, for the game (it clears them)
+
 private:
     // One vehicle's states to one receiver: what was sent lately (the dents as the receiver
     // will have them), so the next can say only what changed since the newest it has heard.
@@ -406,4 +428,26 @@ private:
     Remote* remoteFor(uint32_t netId);
     void removeCars(Sim& sim, int owner);
     Sim* lastSim = nullptr;
+    // Handing vehicles over.
+    uint32_t askId = 0, askNew = 0;  // what I asked for, and the id it's to have
+    double askAt = 0;
+    struct PendingTake {  // host: asked of an owner, not answered yet
+        uint32_t oldId, newId;
+        int taker;
+        double at;
+        bool takerGone = false;
+    };
+    std::vector<PendingTake> takes;
+    std::map<uint32_t, int> homeOf;  // host: vehicles handed over: whose they were first
+    uint32_t ridingOf[net::kMaxPeers] = {};  // host: the vehicle each player rides along in (chatter "ride ID"), for what's near them
+    std::string whyNot(const Sim& sim, int car) const;  // owner: "" if it may go now
+    void giveAway(Sim& sim, int car, uint32_t newId);   // owner: mine goes to whoever newId says
+    bool rekey(Sim& sim, uint32_t oldId, uint32_t newId, bool asked);  // a remote one changes hands (to me, or between others)
+    void refuseTake(int taker, uint32_t oldId, uint32_t newId, const std::string& why);  // host: tell the taker no
+    void hostTake(Sim& sim, Conn* from, uint32_t oldId, uint32_t newId);  // host: someone asks (from null: me)
+    void hostGiven(Sim& sim, uint32_t oldId, uint32_t newId, Conn* except);  // host: it went: everyone hears
+    void hostReclaim(Sim& sim, int car);  // host: a leaver's vehicle that was someone else's is mine now
+    void dropTakes(Sim* sim, int peer);   // host: a player left: their asks and answers
+    void expireTakes(double now);
+    static std::vector<uint8_t> takeMsg(uint8_t type, uint32_t oldId, uint32_t newId, const std::string& why = "");
 };

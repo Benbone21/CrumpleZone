@@ -43,6 +43,7 @@
 #include "prompts.h"
 #include "invdraw.h"
 #include "walker.h"
+#include "carentry.h"
 #include "buildinfo.h"
 #include "coop.h"
 #include "debugscreen.h"
@@ -2153,7 +2154,7 @@ int main(int argc, char** argv) {
     };
     auto startPilot = [&]() {
         Car& c = sim.cars[sim.player];
-        if (c.isProp()) return;
+        if (c.isProp() || c.remote) return;
         const std::vector<Place> places = pilotPlaces(sim, net);
         const Place& pl = places[std::min(std::max(settings.pilotDest, 0), (int)places.size() - 1)];
         c.pilot.followCar = -1;
@@ -2497,23 +2498,61 @@ int main(int argc, char** argv) {
         if (!said.empty()) hud.toast(said);
         if (closed) closeInventory();
     };
+    // Getting into other vehicles (carentry.h): riding along in a buddy's (sim.player is theirs
+    // meanwhile, and nothing of yours is driven), or waiting for the one you asked for to be handed over.
+    uint32_t rideId = 0;    // the one you ride along in (its netId; 0: not riding)
+    V3 rideAt;              // where it was last (if it goes, you're set down there)
+    uint32_t enterAsk = 0;  // the one you asked for (its netId) to get into when it's yours
+    auto carById = [&](uint32_t id) {
+        for (int i = 0; i < (int)sim.cars.size(); i++)
+            if (id && sim.cars[i].netId == id) return i;
+        return -1;
+    };
+    auto backToMine = [&]() {  // sim.player back on one of mine, the nearest (if any is left)
+        if (sim.player >= 0 && sim.player < (int)sim.cars.size() && !sim.cars[sim.player].remote) return;
+        int best = -1;
+        double bd = 1e18;
+        for (int i = 0; i < (int)sim.cars.size(); i++)
+            if (!sim.cars[i].remote && !sim.cars[i].isProp() && len(sim.cars[i].frame().com - walker.p) < bd) bd = len(sim.cars[i].frame().com - walker.p), best = i;
+        if (best >= 0) sim.player = best;
+    };
     auto getOut = [&]() {
         Car& c = sim.cars[sim.player];
-        if (len(c.frame().vel) > 2.0) {
-            hud.toast("STOP FIRST");
+        const bool riding = rideId != 0;
+        if (len(c.frame().vel) > (riding ? 3.0 : 2.0)) {
+            hud.toast(riding ? "ASK THEM TO STOP FIRST" : "STOP FIRST");
             return;
         }
-        stopPilot();
-        c.handbrake = 1;
+        if (!riding) {
+            stopPilot();
+            c.handbrake = 1;
+        }
         camFrom = lastView, camBlend = 0;
-        walker.exitCar(sim.world, c);
+        walker.exitCar(sim.world, c, riding);
+        if (riding) {
+            rideId = 0;
+            backToMine();
+        }
         carCamDist = cam.dist;
         cam.initialized = false;
         footYaw = walker.yaw;  // looking the way you got out
         footPitch = -0.1;
         hud.toast("ON FOOT: MOUSE LOOK, WASD WALK, SHIFT RUN, SPACE JUMP, HOLD E AT THE BUMPER TO GRAB THE WINCH LINE, J GET IN");
     };
-    auto getIn = [&]() {
+    // In: `target`, else the nearest (`any`: anyone's, the J key and E at a door; else only yours).
+    auto getIn = [&](int target = -1, bool any = false) {
+        const int k = target >= 0 ? target : any ? carentry::nearest(sim, walker.p) : walker.carToEnter(sim);
+        const carentry::Verdict v = carentry::verdict(sim, k);
+        if (v == carentry::WAIT) {
+            hud.toast("WAIT FOR IT TO STOP");
+            return;
+        }
+        if (v == carentry::TAKE) {  // someone else's with nobody in it: asked of its owner (the host settles who's first)
+            if (enterAsk) hud.toast("GETTING IN...");
+            else if (net.requestTake(sim, k)) enterAsk = net.asking(), hud.toast("GETTING INTO " + net.ownerName(sim.cars[k].netId) + "'S " + sim.cars[k].spec->name + "...");
+            else hud.toast("CAN'T GET INTO THAT ONE NOW");
+            return;
+        }
         if (sim.handLine.on()) {  // (the line in your hands spools back onto its drum)
             sim.dropHandLine();
             hud.toast("LINE SPOOLED BACK");
@@ -2522,8 +2561,18 @@ int main(int argc, char** argv) {
         inv.close();
         if (walker.carrying) Interact::drop(sim, walker, V3(std::cos(walker.yaw), 0, -std::sin(walker.yaw)));  // (whisked away: it's left there)
         else if (walker.holdingJack) Interact::dropJack(sim, walker);  // (put the jack down)
-        const int k = walker.carToEnter(sim);
-        if (walker.holdingChain && k >= 0) {  // (a chain in your hands goes in the back with you)
+        if (v == carentry::RIDE) {  // a buddy's they're driving: along for the ride (their car's on the screen, yours stays parked)
+            rideId = sim.cars[k].netId, rideAt = sim.cars[k].frame().com;
+            sim.player = k;
+            camFrom = lastView, camBlend = 0;
+            walker.active = false;
+            cam.dist = carCamDist;
+            cam.initialized = false;
+            net.sendGame("ride " + std::to_string(rideId));
+            hud.toast("RIDING ALONG WITH " + net.ownerName(rideId) + " (" + K(KA_GET_IN_OUT) + " GETS OUT)");
+            return;
+        }
+        if (walker.holdingChain && k >= 0 && v == carentry::DRIVE) {  // (a chain in your hands goes in the back with you)
             Car& kc = sim.cars[k];
             if (kc.chains < std::max(kc.spec->snowChains, 4)) kc.chains++;
             walker.holdingChain = false;
@@ -2534,6 +2583,12 @@ int main(int argc, char** argv) {
         }
         sim.player = k;
         sim.cars[k].handbrake = 0;
+        if (sim.cars[k].ai || sim.cars[k].pilot.active) {  // (traffic, stopped: it's yours to drive now, no AI)
+            sim.cars[k].ai = false;
+            sim.cars[k].pilot.active = false;
+            sim.cars[k].pilot.followCar = -1;
+            if (sim.cars[k].gear < 0) sim.cars[k].gear = 1;
+        }
         camFrom = lastView, camBlend = 0;
         walker.active = false;
         cam.dist = carCamDist;
@@ -2835,6 +2890,10 @@ int main(int argc, char** argv) {
                 const V3 back = norm(V3(f.fwd.x, 0, f.fwd.z));
                 const V3 at = f.com - back * (theirs->spec->length / 2 + 6);
                 if (walker.active) getIn();
+                if (sim.cars[sim.player].remote) {  // (riding along, or yours went to someone: none of yours to bring)
+                    hud.toast(rideId ? "GET OUT FIRST (" + K(KA_GET_IN_OUT) + ")" : "GET INTO ONE OF YOURS FIRST");
+                    break;
+                }
                 Car& me = sim.cars[sim.player];
                 sim.dropRopes(sim.player);
                 me.respawn(V3(at.x, sim.world.clearY(at.x, at.z) + 0.1, at.z), std::atan2(-back.z, back.x));
@@ -3689,7 +3748,7 @@ int main(int argc, char** argv) {
                         case SC_J:
                             if (playback.active()) break;  // (a scenario: J is its checks list, a dev key)
                             if (walker.active && walker.carrying) hud.toast("PUT THE WHEEL DOWN FIRST (" + K(KA_PUT_DOWN) + ")");
-                            else if (walker.active) getIn();
+                            else if (walker.active) getIn(interact.current.kind == IA_ENTER_CAR || interact.current.kind == IA_RIDE_ALONG ? interact.current.car : -1, true);  // (the door the prompt is on, else the nearest)
                             else getOut();
                             break;
                         case SC_P:
@@ -4169,6 +4228,50 @@ int main(int argc, char** argv) {
                 }
             }
             if (!net.joining()) net.receive(sim, netNow);
+            // Vehicles that changed hands (NetSession::requestTake): the one you asked for, yours someone took, the ride you're on.
+            for (const NetSession::CarEvent& e : net.carEvents) {
+                if (rideId && e.oldId == rideId) rideId = e.newId;
+                if (job.wreckId && e.oldId == job.wreckId) job.wreckId = e.newId;
+                const int i = carById(e.newId);
+                const std::string what = i >= 0 ? std::string(sim.cars[i].spec->name) : std::string("VEHICLE");
+                if (e.kind == NetSession::CarEvent::GOT && e.asked && e.oldId == enterAsk) {
+                    enterAsk = 0;
+                    if (walker.active && i >= 0 && len(sim.cars[i].frame().com - walker.p) < 10) getIn(i, true);
+                    else hud.toast("THE " + what + " IS YOURS NOW");
+                } else if (e.kind == NetSession::CarEvent::GOT) {
+                    hud.toast("THE " + what + " LEFT BEHIND IS YOURS NOW (PARKED)");
+                } else if (e.kind == NetSession::CarEvent::REFUSED && e.oldId == enterAsk) {
+                    enterAsk = 0;
+                    hud.toast("CAN'T GET IN: " + e.why);
+                } else if (e.kind == NetSession::CarEvent::GAVE) {
+                    hud.toast(net.ownerName(e.newId) + " TOOK YOUR " + what);
+                    if (walker.active) backToMine();  // (on foot by it: the nearest of yours is "your truck" now)
+                }
+            }
+            net.carEvents.clear();
+            if (enterAsk && net.asking() != enterAsk) enterAsk = 0;  // (the session's gone)
+            if (rideId) {  // riding along: the view stays on their vehicle; if it's gone, you're set down where it was
+                const int ri = carById(rideId);
+                if (ri < 0) {
+                    rideId = 0;
+                    walker.p = V3(rideAt.x + 2.0, sim.world.height(rideAt.x + 2.0, rideAt.z) + 0.02, rideAt.z);
+                    walker.v = V3();
+                    walker.active = true, walker.grounded = false;
+                    footYaw = walker.yaw, footPitch = -0.1;
+                    cam.initialized = false;
+                    backToMine();
+                    hud.toast("THE RIDE'S OVER: THEY'RE GONE");
+                } else {
+                    sim.player = ri;
+                    rideAt = sim.cars[ri].frame().com;
+                    if (!sim.cars[ri].remote) rideId = 0;  // (it's yours now: you're driving)
+                }
+            } else if (!walker.active && sim.player < (int)sim.cars.size() && sim.cars[sim.player].remote) {  // (in one that isn't yours, not riding: out beside it)
+                walker.exitCar(sim.world, sim.cars[sim.player]);
+                footYaw = walker.yaw, footPitch = -0.1;
+                cam.initialized = false;
+                backToMine();
+            }
             // The host's level (a client loads it as it comes), and the race chatter.
             if (net.levelFresh) {
                 net.levelFresh = false;
@@ -4226,6 +4329,12 @@ int main(int argc, char** argv) {
                                 c.fuel = std::min(c.spec->fuelCapacity, c.fuel + liters);
                                 hud.toast(net.players[std::min(std::max(m.player, 0), net::kMaxPeers - 1)].name + " POURED IN " + std::to_string((int)liters) + " L OF FUEL");
                             }
+                    continue;
+                }
+                if (m.text.rfind("ride ", 0) == 0 && m.player >= 0 && m.player < net::kMaxPeers) {  // a buddy got in with someone: not on foot
+                    const int ri = carById((uint32_t)std::strtoul(m.text.c_str() + 5, nullptr, 10));
+                    if (ri >= 0 && !sim.cars[ri].remote) hud.toast(net.players[m.player].name + " IS RIDING ALONG WITH YOU");
+                    coop.onMessage(net.players[m.player].name, "inside");
                     continue;
                 }
                 if (m.player >= 0 && m.player < net::kMaxPeers && coop.onMessage(net.players[m.player].name, m.text)) continue;
@@ -4298,6 +4407,11 @@ int main(int argc, char** argv) {
                     const std::string said = interact.update(sim, walker, lastView.eye - fpLean, lastView.target - lastView.eye, holdE, dt);  // (from where you stand, not where you've leaned in to)
                     focus = prompter.update(sim, walker, interact, interact.nearby, lastView.eye - fpLean, lastView.target - lastView.eye);
                     if (!said.empty()) hud.toast(said);
+                    if (interact.enterCar >= 0) {  // E at a door
+                        const int k = interact.enterCar;
+                        interact.enterCar = -1;
+                        getIn(k, true);
+                    }
                     if (interact.openedInventory >= 0) {  // E at the back
                         inv.show(interact.openedInventory);
                         interact.openedInventory = -1;
@@ -4336,7 +4450,7 @@ int main(int argc, char** argv) {
                 up = down = left = right = false;
                 hb = true;
                 walkSend -= dt;
-                if (net.active() && walkSend <= 0) {
+                if (net.active() && walkSend <= 0 && walker.active) {
                     walkSend = 0.1;
                     char b[96];
                     std::snprintf(b, sizeof b, "walk %.2f %.2f %.2f %.3f %.2f", walker.p.x, walker.p.y, walker.p.z, walker.yaw, walker.stride);
@@ -4357,7 +4471,7 @@ int main(int argc, char** argv) {
             }
             {  // ---- gamepad: analog steering and pedals on top of the keyboard path ----
                 Car& pc = sim.cars[sim.player];
-                if (padDrives && !sim.paused && !pc.ai && !pc.pilot.active) padLogic.apply(pc, dt);
+                if (padDrives && !sim.paused && !pc.ai && !pc.pilot.active && !pc.remote) padLogic.apply(pc, dt);
                 else padLogic.steerState = 0;
             }
             if (jobOn && !sim.paused) {
@@ -4557,6 +4671,8 @@ int main(int argc, char** argv) {
                 rumbler.reset();
             }
         }
+        for (int i = 0; i < (int)sim.cars.size(); i++)  // (who's in the driver's seat: a buddy getting in either takes it over or rides along)
+            if (!sim.cars[i].remote) sim.cars[i].occupied = i == sim.player && !walker.active;
         if (!(playback.active() && !playback.done) && !net.joining()) net.send(sim, (double)(SDL_GetPerformanceCounter()) / freq);
         dbgSimSeconds += simDt, dbgSubsteps = (int)std::lround(simDt / sim.h);
         fx.setLimits(markLimits(presetOf(settings.gfx)));
@@ -5106,7 +5222,8 @@ int main(int argc, char** argv) {
             const Car& pc = sim.cars[sim.player];
             people::Seat seat;
             if (const VisualTemplate* t = tryVisualTemplate(pc); t && people::seatOf(pc, *t, seat)) {
-                const V3 d = people::seatEye(seat) - view.eye;
+                const V3 eye = rideId ? carentry::acrossCab(pc, people::seatEye(seat)) : people::seatEye(seat);  // (riding along: the passenger's seat)
+                const V3 d = eye - view.eye;
                 view.eye += d, view.target += d;
             }
         }
