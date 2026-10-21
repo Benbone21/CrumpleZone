@@ -148,7 +148,7 @@ SCENARIO(fieldRepairCv, "fieldrepair/cv-axle", "A snapped CV axle on a Bronco, d
     ctx.check("the checklist shows the job", ia.checklist.title == "CV AXLE, REAR LEFT" && ia.checklist.rows.size() == 8 && ia.checklist.next == 0, rows(ia.checklist));
     ctx.check("the corner jacks up", lift(ctx, c, k));
     const InteractOption& o2 = lookAt(ctx, ia, wk, fix.at);
-    ctx.check("jacked: next, the wheel off with the lug wrench", o2.kind == IA_REMOVE_WHEEL && !o2.blocked && o2.prompt == "CV AXLE: TAKE THE WHEEL OFF (LUG WRENCH)", o2.prompt);
+    ctx.check("jacked: next, the wheel off with the lug wrench", o2.kind == IA_REMOVE_WHEEL && !o2.blocked && o2.prompt == "CV AXLE: REMOVE WHEEL (LUG WRENCH)", o2.prompt);
     std::string said = holdOn(ctx, ia, wk, fix.at, 8);
     ctx.check("the wheel comes off into your arms", said == "WHEEL OFF" && wk.carrying && !c.wheels[k].mounted, said);
     ctx.check("...the job's under way", c.fieldJobs.size() == 1 && c.fieldJobs[0].done == 0);

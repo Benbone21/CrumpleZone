@@ -73,7 +73,7 @@ meshaudit: build/meshaudit
 	SDL_VIDEODRIVER=offscreen ./build/meshaudit
 
 # Contact sheets of the code-made models: build/modelsheet [--out DIR] [id ...].
-build/modelsheet: build/tools/modelsheet.o build/src/modelkit.o build/src/meshopt.o build/src/platform.o $(patsubst %.cpp,build/%.o,$(MODELS))
+build/modelsheet: build/tools/modelsheet.o build/src/modelkit.o build/src/meshopt.o build/src/platform.o build/src/meshcache.o build/src/loadprof.o $(patsubst %.cpp,build/%.o,$(MODELS))
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lm
 
 # Silent audition files: build/engine_preview [output directory].

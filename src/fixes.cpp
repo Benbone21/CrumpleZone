@@ -183,7 +183,7 @@ std::vector<RepairStep> repairSteps(int kind, bool jack, bool wheelOff) {
     };
     const auto W = RepairStep::WORK;
     if (jack) step(RepairStep::JACK, "JACKED UP", "JACK THIS CORNER UP");
-    if (wheelOff) step(RepairStep::WHEEL_OFF, "WHEEL OFF", "TAKE THE WHEEL OFF", TOOL_LUG_WRENCH);
+    if (wheelOff) step(RepairStep::WHEEL_OFF, "WHEEL OFF", "REMOVE WHEEL", TOOL_LUG_WRENCH);
     switch (kind) {
     case Fix::CV_AXLE:
         step(W, "AXLE NUT OFF", "UNDO THE AXLE NUT", TOOL_RATCHET, -1, 4.5);
@@ -218,7 +218,7 @@ std::vector<RepairStep> repairSteps(int kind, bool jack, bool wheelOff) {
     case Fix::SPARK_PLUGS:
         step(W, "PLUGS OUT", "PULL THE PLUGS", TOOL_RATCHET, -1, 4);
         step(W, "WATER CRANKED OUT", "CRANK THE WATER OUT", -1, -1, 3);
-        step(W, "NEW PLUGS IN", "PUT THE NEW PLUGS IN", -1, PART_SPARK_PLUGS, 4, true);
+        step(W, "NEW PLUGS IN", "INSTALL NEW PLUGS", -1, PART_SPARK_PLUGS, 4, true);
         break;
     case Fix::NEW_TIRE:
         if (wheelOff) {  // (the tire's work is on the wheel once it's off, on the ground: tireSteps)
@@ -229,7 +229,7 @@ std::vector<RepairStep> repairSteps(int kind, bool jack, bool wheelOff) {
         }
         break;
     }
-    if (wheelOff) step(RepairStep::WHEEL_ON, "WHEEL BACK ON", "PUT THE WHEEL BACK ON", TOOL_LUG_WRENCH);
+    if (wheelOff) step(RepairStep::WHEEL_ON, "WHEEL BACK ON", "MOUNT WHEEL", TOOL_LUG_WRENCH);
     if (jack) step(RepairStep::LOWER, "JACK DOWN", "LET THE JACK DOWN");
     return s;
 }

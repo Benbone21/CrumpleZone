@@ -10,14 +10,14 @@ namespace prompts {
 
 const KindInfo& info(InteractKind k) {
     // noun, verb, radius, key. A new IA_ kind adds a row (and gets a marker, a prompt and a hint for free).
-    static const KindInfo kTake{"THE SPARE", "TAKE IT", 0.5, KEY_INTERACT}, kWheel{"THE WHEEL", "TAKE IT OFF", 0.45, KEY_INTERACT},
-        kFit{"THE BARE HUB", "PUT THE WHEEL ON", 0.45, KEY_INTERACT}, kJackStow{"THE JACK", "TAKE IT", 0.35, KEY_INTERACT},
+    static const KindInfo kTake{"THE SPARE", "TAKE IT", 0.5, KEY_INTERACT}, kWheel{"THE WHEEL", "REMOVE IT", 0.45, KEY_INTERACT},
+        kFit{"THE BARE HUB", "MOUNT WHEEL", 0.45, KEY_INTERACT}, kJackStow{"THE JACK", "TAKE IT", 0.35, KEY_INTERACT},
         kChain{"THE SNOW CHAINS", "TAKE ONE", 0.35, KEY_INTERACT}, kLoose{"THE WHEEL ON THE GROUND", "PICK IT UP", 0.4, KEY_INTERACT},
         kJack{"THE JACK", "WORK IT", 0.4, KEY_INTERACT}, kCache{"THE SUPPLY CACHE", "OPEN IT", 0.5, KEY_INTERACT},
-        kFix{"THE PART THAT NEEDS WORK", "FIX IT", 0.3, KEY_INTERACT}, kBack{"THE BACK", "OPEN THE TRUNK", 0.6, KEY_INTERACT},
-        kItem{"THE BACK", "TAKE OR PUT BACK", 0.6, KEY_INTERACT}, kLine{"THE RECOVERY POINT", "GRAB THE LINE", 0.3, KEY_INTERACT},
-        kHook{"AN ANCHOR", "HOOK THE LINE ON", 0.4, KEY_INTERACT}, kUnhook{"THE HOOKED LINE", "UNHOOK IT", 0.3, KEY_INTERACT},
-        kTire{"THE WHEEL ON THE GROUND", "PUT A NEW TIRE ON", 0.4, KEY_INTERACT}, kDoor{"THE DRIVER DOOR", "GET IN", 0.55, KEY_GET_IN},
+        kFix{"THE PART THAT NEEDS WORK", "FIX IT", 0.3, KEY_INTERACT}, kBack{"THE BACK", "OPEN TRUNK", 0.6, KEY_INTERACT},
+        kItem{"THE BACK", "TAKE OR PUT BACK", 0.6, KEY_INTERACT}, kLine{"THE RECOVERY POINT", "GRAB LINE", 0.3, KEY_INTERACT},
+        kHook{"AN ANCHOR", "HOOK LINE", 0.4, KEY_INTERACT}, kUnhook{"THE HOOKED LINE", "UNHOOK IT", 0.3, KEY_INTERACT},
+        kTire{"THE WHEEL ON THE GROUND", "MOUNT NEW TIRE", 0.4, KEY_INTERACT}, kDoor{"THE DRIVER DOOR", "GET IN", 0.55, KEY_GET_IN},
         kRide{"THE PASSENGER DOOR", "RIDE ALONG", 0.55, KEY_GET_IN},
         kOther{"A MARKER", "USE IT", 0.3, KEY_INTERACT};
     switch (k) {
@@ -56,7 +56,7 @@ bool aimScore(const V3& eye, const V3& dir, const V3& chest, const V3& at, doubl
 
 void split(const InteractOption& o, std::string& label, std::string& reason) {
     label = o.prompt, reason.clear();
-    if (o.kind == IA_OPEN_INVENTORY && o.prompt == "INVENTORY") label = "OPEN THE TRUNK";
+    if (o.kind == IA_OPEN_INVENTORY && o.prompt == "INVENTORY") label = "OPEN TRUNK";
     if (!o.blocked) return;
     const size_t c = o.prompt.rfind(": ");
     if (c == std::string::npos) return;
