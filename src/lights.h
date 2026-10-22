@@ -21,5 +21,8 @@ struct CarLamps {
     bool placed = false;     // headPos is known (vehicles from the catalog)
 };
 
+// Drops what is remembered of a spec's lamps (call before the spec is freed: its address may be reused). Render thread only.
+void forgetLampLayout(const VehicleSpec* spec);
+
 // Finds this car's lamps on its body now (`beam` is what's switched on).
 void carLamps(const Car& car, const VisualTemplate& t, int beam, CarLamps& out);

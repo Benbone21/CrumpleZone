@@ -106,6 +106,12 @@ build/test_jesko_visual: build/tests/jesko_visual.o build/src/carvisual.o $(pats
 build/test_loading_visual: build/tests/loading_visual.o build/src/carvisual.o build/src/scenery.o $(patsubst %.cpp,build/%.o,$(PHYS)) build/tests/harness.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -lm
 
+build/test_showroom_visual: build/tests/showroom_visual.o build/src/carvisual.o build/src/scenery.o build/src/lights.o $(patsubst %.cpp,build/%.o,$(PHYS)) build/tests/harness.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -lm
+
+build/win/test_showroom_visual.exe: build/win/obj/tests/showroom_visual.o build/win/obj/src/carvisual.o build/win/obj/src/scenery.o build/win/obj/src/lights.o $(patsubst %.cpp,build/win/obj/%.o,$(PHYS)) build/win/obj/tests/harness.o
+	$(WINCXX) $(WINFLAGS) -o $@ $^ -lws2_32 -liphlpapi -static -static-libgcc -static-libstdc++
+
 build/%.o: %.cpp $(HEADERS)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
