@@ -211,6 +211,19 @@ VERSION  ?= 0.4.0
 MACCXX   ?= clang++
 MACSDL   ?= third_party/sdl2-mac
 MACLTO   ?= -flto=thin
+# ccache, when it's installed: rebuilds only recompile what changed (CCACHE= turns it off).
+CCACHE   ?= $(shell command -v ccache 2>/dev/null)
+ifneq ($(CCACHE),)
+ifeq ($(findstring ccache,$(CXX)),)
+CXX      := $(CCACHE) $(CXX)
+endif
+ifeq ($(findstring ccache,$(WINCXX)),)
+WINCXX   := $(CCACHE) $(WINCXX)
+endif
+ifeq ($(findstring ccache,$(MACCXX)),)
+MACCXX   := $(CCACHE) $(MACCXX)
+endif
+endif
 # -fno-slp-vectorize: Apple clang 17 (Xcode 16.4) segfaults in the SLP vectorizer on arm64 at -O2 with -ffp-contract=off (bodyshell.cpp; the ThinLTO link too). No effect on results.
 MACSLP   ?= -fno-slp-vectorize
 # ThinLTO runs the optimizer inside ld64 at link time, so the same crash needs the switch there too.

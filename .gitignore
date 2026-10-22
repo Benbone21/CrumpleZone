@@ -10,3 +10,4 @@ assets/source
 
 # Python tooling bytecode
 __pycache__/
+.ccache/
