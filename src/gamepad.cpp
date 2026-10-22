@@ -204,11 +204,10 @@ void Logic::update(const Raw& raw, Mode ctx, double dt) {
         return;
     }
 
-    // Menu: D-pad or left stick move (holding repeats), A selects, B / Start back out. The garage's left stick is the
-    // option's alone (its slot is the D-pad's and LB/RB's).
+    // Menu: D-pad or left stick move (holding repeats), A selects, B / Start back out. (The showroom's tiles and rows
+    // move both ways.)
     static const int dirKey[4] = {SC_UP, SC_DOWN, SC_LEFT, SC_RIGHT};
-    const float ly = ctx == Mode::Garage ? 0 : L.y;
-    const bool want[4] = {D(B_UP) || ly < -0.5f, D(B_DOWN) || ly > 0.5f, D(B_LEFT) || L.x < -0.5f, D(B_RIGHT) || L.x > 0.5f};
+    const bool want[4] = {D(B_UP) || L.y < -0.5f, D(B_DOWN) || L.y > 0.5f, D(B_LEFT) || L.x < -0.5f, D(B_RIGHT) || L.x > 0.5f};
     for (int d = 0; d < 4; d++) {
         if (!want[d]) {
             dir_[d] = false;

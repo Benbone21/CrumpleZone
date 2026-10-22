@@ -183,7 +183,9 @@ ShowroomLayout showroomLayout(int W, int H) {
     l.right = {W - rw, 0, rw, top};
     l.bottom = {0, top, (float)W, bar};
     l.car = {lw, 0, W - lw - rw, top};
-    l.listRows = (int)std::floor((l.left.h - 60 * l.u) / (18 * l.u));  // 60u of title and header, 18u a row
+    // Level 2 rows: two 7 px lines (the name, its detail) at the label scale, 2u between and 4u around; 78u of title, tabs and breadcrumb.
+    l.rowH = 14 * hudlayout::px(1.4f * l.u) + 6 * l.u;
+    l.listRows = (int)std::floor((l.left.h - 78 * l.u) / l.rowH);
     // Tiles: (panel - 3 gaps) / 2 wide, a 4:3 picture, then two caption lines (7 px glyphs at the label scale, 4u apart).
     l.tileCols = 2;
     l.tileGap = 12 * l.u;

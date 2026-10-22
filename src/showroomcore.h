@@ -66,13 +66,16 @@ private:
 
 struct Rect { float x, y, w, h; };
 // left: tabs, then (level 2) a breadcrumb line, then the tiles (level 1: tileCols x tileRows whole tiles, scrolling) or the
-// rows (level 2: listRows, the breadcrumb takes one). A tile is a 4:3 picture over two caption lines.
+// rows (level 2: listRows rows of rowH under the breadcrumb: the name, then its detail line). A tile is a 4:3 picture
+// over two caption lines.
 struct ShowroomLayout {
     float u;
     Rect left, right, bottom, car;
     int listRows;
+    float rowH;  // a level 2 row: name line, detail line
     int tileCols, tileRows;
     float tileTop, tileW, tileH, tileGap;  // the first tile row's y; a tile's size; the space between tiles and from the panel's edge
+    Rect rowRect(int i) const { return {left.x + 6 * u, left.y + 78 * u + i * rowH, left.w - 12 * u, rowH}; }  // (78u: title, tabs, breadcrumb)
     Rect tileRect(int col, int row) const { return {left.x + tileGap + col * (tileW + tileGap), tileTop + row * (tileH + tileGap), tileW, tileH}; }
 };
 ShowroomLayout showroomLayout(int W, int H);

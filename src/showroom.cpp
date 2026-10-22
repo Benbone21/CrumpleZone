@@ -147,7 +147,7 @@ void Showroom::open(int vehicle, const ModSet& fitted, const V3& color, bool car
     heads.clear();
     nav.open(vehicle, core->fitted(), (int)builds().size());
     const ShowroomLayout l = showroomLayout(W, H);
-    nav.setView(l.tileCols, l.tileRows, std::max(1, l.listRows - 1));
+    nav.setView(l.tileCols, l.tileRows, std::max(1, l.listRows));
     frameTab(nav.tabIndex(), true);
 }
 
@@ -494,7 +494,7 @@ void Showroom::drawLeft(const ShowroomLayout& l) {
                             else backToTiles();
                         }});
     }
-    const int t = nav.tabIndex(), rows = std::max(1, l.listRows - 1);
+    const int t = nav.tabIndex(), rows = std::max(1, l.listRows);
     nav.setView(l.tileCols, l.tileRows, rows);
     const ModSet& pick = core->pick();
     const float top = p.y + 60 * u;
@@ -550,12 +550,12 @@ void Showroom::drawLeft(const ShowroomLayout& l) {
     const int fitted = core->fitted().pick[t], cur = pick.pick[t], n = g.count;
     const int first = std::clamp(nav.scroll() + scrollAdj, 0, std::max(0, n - rows));
     scrollAdj = first - nav.scroll();
-    const float rowH = 18 * u;
     for (int i = first; i < n && i < first + rows; i++) {
         const int o = g.first + i;
-        const float y = top + rowH + (i - first) * rowH, ty2 = y + (rowH - 2 * u - 7 * s) / 2;
-        if (o == cur) r.rect(p.x + pad * 0.5f, y, p.w - pad, rowH - 2 * u, 1, 1, 1, 0.07f);
-        else if (hover == (int)hits.size()) r.rect(p.x + pad * 0.5f, y, p.w - pad, rowH - 2 * u, 1, 1, 1, 0.04f);
+        const Rect rr = l.rowRect(i - first);
+        const float y = rr.y, rowH = rr.h, ty2 = y + 2 * u;
+        if (o == cur) r.rect(rr.x, y, rr.w, rowH - 2 * u, 1, 1, 1, 0.07f);
+        else if (hover == (int)hits.size()) r.rect(rr.x, y, rr.w, rowH - 2 * u, 1, 1, 1, 0.04f);
         float end = p.x + p.w - pad;
         if (o == fitted) {
             end -= r.textWidth("FITTED", s);
@@ -567,6 +567,10 @@ void Showroom::drawLeft(const ShowroomLayout& l) {
         if ((int)name.size() > room) name = name.substr(0, room - 2) + "..";
         if (o == cur) r.text(p.x + pad, ty2, s, name, 1.0f, 0.8f, 0.35f);
         else r.text(p.x + pad, ty2, s, name, 0.9f, 0.9f, 0.92f);
+        std::string detail = opts[o].detail;  // under the name, in the label grey
+        const int dRoom = std::max(3, (int)((p.w - 2 * pad) / (6 * s)));
+        if ((int)detail.size() > dRoom) detail = detail.substr(0, dRoom - 2) + "..";
+        r.text(p.x + pad, ty2 + 7 * s + 2 * u, s, detail, kGrey[0], kGrey[1], kGrey[2]);
         hits.push_back({p.x, y, p.w, rowH, [this, i] { navDone(nav.clickRow(i)); }});
     }
 }

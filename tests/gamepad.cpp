@@ -167,7 +167,7 @@ SCENARIO(padBindings, "gamepad/bindings", "Button presses become the keys they s
     ctx.check("menu: A is Enter", hasTap(l, SC_RETURN));
     press(B_B, Mode::Menu);
     ctx.check("menu: B is Esc", hasTap(l, SC_ESCAPE));
-    // The garage: as a menu, but the left stick only picks the option (the slot is the D-pad's and LB/RB's).
+    // The garage (the showroom): as a menu, the left stick moves in all four directions (tiles, rows).
     press(B_UP, Mode::Garage);
     ctx.check("garage: D-pad up is Up", hasTap(l, SC_UP));
     press(B_Y, Mode::Garage);
@@ -177,7 +177,7 @@ SCENARIO(padBindings, "gamepad/bindings", "Button presses become the keys they s
         l.update(r, Mode::Garage, 0.016);
         r.ly = ly;
         l.update(r, Mode::Garage, 0.016);
-        ctx.check(ly < 0 ? "garage: left stick up is nothing" : "garage: left stick down is nothing", l.taps.empty());
+        ctx.check(ly < 0 ? "garage: left stick up is Up" : "garage: left stick down is Down", hasTap(l, ly < 0 ? SC_UP : SC_DOWN));
     }
     r = Raw();
     l.update(r, Mode::Garage, 0.016);

@@ -335,6 +335,13 @@ SCENARIO(showroomPanels, "showroom/layout", "The showroom's panels fit the scree
                         t.y + t.h <= l.left.y + l.left.h + 0.01f;
             }
         ctx.check(at + " tiles inside the left panel", tiles);
+        // Level 2: every row (name and detail line) inside the panel, under the breadcrumb.
+        bool rows = l.listRows >= 3 && l.rowH > 0;
+        for (int i = 0; i < l.listRows; i++) {
+            const Rect t = l.rowRect(i);
+            rows = rows && t.x >= l.left.x - 0.01f && t.y >= l.tileTop + 18 * l.u - 0.01f && t.x + t.w <= l.left.x + l.left.w + 0.01f && t.y + t.h <= l.left.y + l.left.h + 0.01f;
+        }
+        ctx.check(at + " rows inside the left panel", rows);
     }
 }
 
