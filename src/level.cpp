@@ -428,6 +428,7 @@ std::string saveLevelText(const Level& lv) {
         if (c.live) o << "#generate " << c.gen << ' ' << c.genSeed << '\n';
         else if (c.gen >= 0) o << "#stamp " << c.gen << ' ' << c.genSeed << '\n';
     }
+    for (const std::string& m : lv.menuLines) o << m << '\n';
     if (lv.hasStart) o << "start " << num(lv.start.x) << ' ' << num(lv.start.z) << ' ' << num(lv.startYaw / kDeg, 1) << '\n';
     for (const Gate& g : lv.gates) o << "gate " << num(g.p.x) << ' ' << num(g.p.z) << ' ' << num(g.yaw / kDeg, 1) << ' ' << num(g.width, 1) << '\n';
     for (const LevelObject& b : lv.objects) {
@@ -511,6 +512,10 @@ bool parseLevelText(const std::string& text, Level& lv, std::string* error) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
         if (line.empty()) continue;
         if (line[0] == '#') {  // (comments; except a section's own lines, which an older build skips like any other)
+            if (line.rfind("#menu ", 0) == 0) {
+                out.menuLines.push_back(line);
+                continue;
+            }
             if (line.rfind("#flow ", 0) == 0) {  // #flow I J0 FX,FZ FX,FZ ...
                 std::istringstream fs(line);
                 std::string tag, v;

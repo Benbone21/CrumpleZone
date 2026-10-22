@@ -552,6 +552,14 @@ void PauseMenu::showTitle(int currentVehicle, int currentMap) {
     title = true;
 }
 
+void PauseMenu::showTitlePage(int pg, int currentVehicle, int currentMap) {
+    show(currentVehicle, currentMap);
+    title = true;
+    page = pg;
+    sel = 1;
+    if (pg == 2) sel = 1;  // (row 0 is the status header)
+}
+
 void PauseMenu::show(int currentVehicle, int currentMap) {
     mapPick = mapListed(currentMap) ? currentMap : nextListedMap(currentMap, 0);
     open = true;
@@ -1169,7 +1177,8 @@ void PauseMenu::draw(Renderer& r, const Settings& s, int W, int H, double dt) {
     caret += (float)dt;
     spin += (float)dt;
     const float a = fade;
-    if (this->title) drawBackdrop(r, W, H, a);
+    if (this->title && sceneBehind) r.rect(0, 0, (float)W, (float)H, 0.0f, 0.01f, 0.02f, 0.38f * a);  // the camp shows through, dimmed
+    else if (this->title) drawBackdrop(r, W, H, a);
     else r.rect(0, 0, (float)W, (float)H, 0.0f, 0.01f, 0.02f, 0.35f * a);  // darken the (blurred) scene
     if (page == 2) {
         drawMulti(r, s, W, H, a);

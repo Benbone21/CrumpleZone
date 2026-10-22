@@ -344,6 +344,10 @@ private:
     int bloomW[kBloomLevels] = {}, bloomH[kBloomLevels] = {};
 
     std::vector<CarSlot> carSlots;
+public:
+    // The main menu's camp fire: one orange point light (position, strength; 0 = none). Set each frame by the game.
+    struct FireLight { V3 pos; float strength = 0; } fireLight;
+private:
     std::vector<CarLamps> carLampState;  // per car this frame (prepareCars)
     // The headlamps lit as spot lights this frame (the nearest cars'), for the shaders.
     static const int kMaxLamps = 16;

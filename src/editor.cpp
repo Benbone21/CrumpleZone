@@ -12,15 +12,18 @@
 #include "levelrun.h"
 #include "sectionfile.h"
 #include "vehicles.h"
+#include "menucamp.h"
+#include "menuscene.h"
 
 using namespace hud;
 
 namespace {
 
-const char* kToolNames[Editor::TOOL_COUNT] = {"SCULPT", "PAINT", "WATER", "OBJECTS", "COURSE", "SETTINGS", "SECTION"};
+const char* kToolNames[Editor::TOOL_COUNT] = {"SCULPT", "PAINT", "WATER", "OBJECTS", "COURSE", "SETTINGS", "SECTION", "MENU SCENE"};
 const char* kToolHints[Editor::TOOL_COUNT] = {"RAISE, LOWER, SMOOTH, FLATTEN, ROUGHEN, TERRACE", "PAINT MUD, SAND, SNOW, ROCK...",
                                               "FLOOD A HOLLOW, OR DRAIN IT", "ROCKS, TREES, LOGS, RAMPS, SHOPS",
-                                              "START AND GATES", "NAME, MODE, RULES, MEDALS", "TYPE, DIFFICULTY, KIT, STAMP A GENERATOR"};
+                                              "START AND GATES", "NAME, MODE, RULES, MEDALS", "TYPE, DIFFICULTY, KIT, STAMP A GENERATOR",
+                                              "VEHICLES, CAMERA AND SKY"};
 const char* kOpNames[BRUSH_OP_COUNT] = {"RAISE", "LOWER", "SMOOTH", "FLATTEN", "ROUGHEN", "TERRACE"};
 const double kTerraces[4] = {0.25, 0.5, 1, 2};  // m: terrace step heights
 const char* kWaterModes[3] = {"FILL HOLLOW", "DRAIN BRUSH", "DRAIN WHOLE POOL"};
@@ -53,6 +56,7 @@ enum {
     B_PAL_PREV = 1230, B_PAL_NEXT,
     B_SEAT = 1238, B_BOXMODE,
     B_ASK_SAVE = 1240, B_ASK_DISCARD, B_ASK_CANCEL, B_NAME_OK, B_NAME_CANCEL, B_SAVEAS,
+    B_MENU = 1300,           // + menu scene action (menuAction); to 1349
     B_PAL = 2000,            // + palette index
 };
 
@@ -158,6 +162,8 @@ void Editor::open(World& w, Renderer& r, const Level& lv) {
     core.begin(w, lv);
     active = true;
     wantPlay = wantClose = discarded = false;
+    wantPreview = wantResetCamp = confirmReset = false;
+    flow.fixedPath = menucamp::isCamp(lv) ? menuscene::userPath() : "";  // (the camp saves to its own file, whatever it's called)
     fileOpen = typing = confirmClose = false;
     sel = EditPick();
     selection.clear();
@@ -171,6 +177,11 @@ void Editor::open(World& w, Renderer& r, const Level& lv) {
     yaw = lv.hasStart ? lv.startYaw : w.spawnYaw;
     pitch = -0.55;
     eye = V3(s.x, w.height(s.x, s.z), s.z) - V3(std::cos(yaw), 0, -std::sin(yaw)) * 30 + V3(0, 22, 0);
+    if (menucamp::isCamp(lv)) {  // (the main menu's camp: above the camera's place, looking the way the menu does)
+        const menucamp::Camera c = menucamp::metaOf(lv).cam;
+        yaw = std::atan2(-(c.tz - c.ez), c.tx - c.ex), pitch = -0.5;
+        eye = V3(c.ex, w.height(c.ex, c.ez) + c.ey + 14, c.ez) - V3(std::cos(yaw), 0, -std::sin(yaw)) * 12;
+    }
     newMap = lv.map;
     r.setWorld(w);
     core.dirtyCells.clear();
@@ -1701,6 +1712,78 @@ void Editor::settingChange(int row, int dir) {
     });
 }
 
+void Editor::menuAction(int code) {
+    if (!menucamp::isCamp(core.level)) return;
+    if (code != 38) confirmReset = false;
+    const World& w = *core.world;
+    V3 fire;
+    const bool haveFire = menucamp::fireOf(core.level, fire);
+    if (code >= 0 && code < 24) {  // a vehicle: which, where, which way
+        const int k = code / 8, a = code % 8;
+        const int n = (int)listedVehicles().size();
+        const V3 at = viewPoint();
+        core.settings("menuveh" + std::to_string(k), [&](Level& l) {
+            menucamp::Meta m = menucamp::metaOf(l);
+            menucamp::Vehicle& v = m.veh[k];
+            switch (a) {
+                case 0: v.slot = (v.slot + n - 1) % n; break;
+                case 1: v.slot = (v.slot + 1) % n; break;
+                case 2: v.x = at.x, v.z = at.z; break;
+                case 3: v.yawDeg = std::fmod(v.yawDeg - 15 + 360, 360.0); break;
+                case 4: v.yawDeg = std::fmod(v.yawDeg + 15, 360.0); break;
+                case 5:
+                    if (haveFire) v.yawDeg = std::fmod(std::atan2(-(fire.z - v.z), fire.x - v.x) * 180 / M_PI + 360 + 18, 360.0);  // (a little off straight at it: parked for the night)
+                    break;
+            }
+            menucamp::setMeta(l, m);
+        });
+        return;
+    }
+    switch (code) {
+        case 30: {
+            const V3 fwd(std::cos(yaw) * std::cos(pitch), std::sin(pitch), -std::sin(yaw) * std::cos(pitch));
+            const double dist = haveViewHit ? std::max(3.0, len(viewHit - eye)) : 20.0;
+            const V3 t = eye + fwd * dist;
+            core.settings("menucam", [&](Level& l) {
+                menucamp::Meta m = menucamp::metaOf(l);
+                m.cam.ex = eye.x, m.cam.ez = eye.z, m.cam.ey = std::max(0.3, eye.y - w.height(eye.x, eye.z));
+                m.cam.tx = t.x, m.cam.tz = t.z, m.cam.ty = t.y - w.height(t.x, t.z);
+                menucamp::setMeta(l, m);
+            });
+            say("MENU CAMERA SET HERE: PREVIEW TO SEE IT");
+            break;
+        }
+        case 31:
+        case 32:
+            core.settings("menudrift", [&](Level& l) {
+                menucamp::Meta m = menucamp::metaOf(l);
+                m.cam.drift = std::min(3.0, std::max(0.0, std::round((m.cam.drift + (code == 32 ? 0.25 : -0.25)) * 100) / 100));
+                menucamp::setMeta(l, m);
+            });
+            break;
+        case 33:
+        case 34:
+            core.settings("menusun", [&](Level& l) {
+                const double h = l.timeOfDay >= 0 ? l.timeOfDay : 17.55;
+                l.timeOfDay = std::min(23.75, std::max(0.0, h + (code == 34 ? 0.25 : -0.25)));
+            });
+            break;
+        case 35:
+        case 36:
+            core.settings("menulook", [&](Level& l) {
+                menucamp::Meta m = menucamp::metaOf(l);
+                m.look = std::min(23.75, std::max(0.0, m.look + (code == 36 ? 0.25 : -0.25)));
+                menucamp::setMeta(l, m);
+            });
+            break;
+        case 37: wantPreview = true; break;
+        case 38:
+            if (!confirmReset) confirmReset = true;
+            else wantResetCamp = true, confirmReset = false;
+            return;
+    }
+}
+
 void Editor::sectionAction(int code) {
     if (!core.level.section.on) return;
     auto step = [&](int cur, int dir, int n) { return ((cur + dir) % n + n) % n; };
@@ -1735,6 +1818,10 @@ void Editor::doButton(int id) {
     confirmClose = false;
     if (id >= B_SEC && id < B_SEC + 100) {
         sectionAction(id - B_SEC);
+        return;
+    }
+    if (id >= B_MENU && id < B_MENU + 50) {
+        menuAction(id - B_MENU);
         return;
     }
     if (id >= B_TOOL && id < B_TOOL + TOOL_COUNT) {
@@ -2040,6 +2127,32 @@ void Editor::drawWorldMarks(Renderer& r) {
     auto line = [&](const V3& a, const V3& b, int n, float size, float cr, float cg, float cb, float al) {
         for (int k = 0; k <= n; k++) dotAt(a + (b - a) * ((double)k / n), size, cr, cg, cb, al);
     };
+    if (menucamp::isCamp(core.level) && (tool == MENU || tool == OBJECTS)) {  // the main menu's vehicles (a footprint, a nose) and its camera
+        const menucamp::Meta mm = menucamp::metaOf(core.level);
+        const auto& cat = vehicleCatalog();
+        const auto& lvs = listedVehicles();
+        for (int k = 0; k < 3; k++) {
+            const menucamp::Vehicle& mv = mm.veh[k];
+            const double yw = mv.yawDeg * M_PI / 180, gy = core.world->height(mv.x, mv.z) + 0.15;
+            const V3 c(mv.x, gy, mv.z), f(std::cos(yw), 0, -std::sin(yw)), sd(std::sin(yw), 0, std::cos(yw));
+            const V3 p[4] = {c + f * 2.4 + sd, c + f * 2.4 - sd, c - f * 2.4 - sd, c - f * 2.4 + sd};
+            for (int e = 0; e < 4; e++) line(p[e], p[(e + 1) % 4], 14, 3, 1.0f, 0.75f, 0.2f, 0.95f);
+            line(c, c + f * 3.2, 8, 4, 1.0f, 0.4f, 0.2f, 1.0f);
+            float sx, sy;
+            if (screenPoint(v, W, H, c + V3(0, 2.2, 0), sx, sy)) {
+                const std::string t = std::to_string(k + 1) + " " + cat[lvs[mv.slot]].name;
+                r.text(sx - r.textWidth(t, s) / 2 + s * 0.6f, sy + s * 0.6f, s, t, 0, 0, 0, 0.7f);
+                r.text(sx - r.textWidth(t, s) / 2, sy, s, t, 1.0f, 0.8f, 0.3f, 1.0f);
+            }
+        }
+        const V3 e(mm.cam.ex, core.world->height(mm.cam.ex, mm.cam.ez) + mm.cam.ey, mm.cam.ez), t(mm.cam.tx, core.world->height(mm.cam.tx, mm.cam.tz) + mm.cam.ty, mm.cam.tz);
+        line(e, t, 40, 3, 0.4f, 0.9f, 1.0f, 0.9f);
+        float sx, sy;
+        if (screenPoint(v, W, H, e, sx, sy)) {
+            r.rect(sx - 5, sy - 5, 10, 10, 0.4f, 0.9f, 1.0f, 1.0f);
+            r.text(sx + 8, sy - 4, s, "MENU CAMERA", 0.4f, 0.9f, 1.0f, 1.0f);
+        }
+    }
     auto tag = [&](const V3& p, const std::string& t, float cr, float cg, float cb) {
         float sx, sy;
         if (screenPoint(v, W, H, p, sx, sy)) label(r, sx - r.textWidth(t, s) / 2, sy - 8 * s - 6 * u, s, t, cr, cg, cb, 1);
@@ -2302,7 +2415,7 @@ void Editor::drawOptions(Renderer& r, float u) {
     // scratch list of rows first. Simpler: a fixed tall panel per tool.)
     // (The backing is as tall as the rows were last frame; the first frame, a guess.)
     const float guessH = tool == PAINT ? 640 * u : tool == SCULPT ? 560 * u : tool == WATER ? (waterMode == 1 ? 520 * u : 330 * u)
-                         : tool == SETTINGS ? 420 * u : tool == OBJECTS ? (selection.empty() ? 520.0f : 590.0f) * u : tool == SECTION ? 600 * u : 300 * u;
+                         : tool == SETTINGS ? 420 * u : tool == MENU ? 560 * u : tool == OBJECTS ? (selection.empty() ? 520.0f : 590.0f) * u : tool == SECTION ? 600 * u : 300 * u;
     const float panelH = optionsH > 0 ? optionsH : guessH;
     pill(r, x - 8 * u, top - 6 * u, w + 16 * u, panelH, 0, 0, 0, 0.55f);
     label(r, x, y, px(1.6f * u), kToolNames[tool], 1.0f, 0.75f, 0.3f, 1);
@@ -2597,6 +2710,41 @@ void Editor::drawOptions(Renderer& r, float u) {
             y += 8 * u;
             note(typing ? "TYPE THE NAME, ENTER WHEN DONE" : "UP DOWN: PICK   LEFT RIGHT: CHANGE");
             note("ENTER ON NAME: TYPE IT");
+            break;
+        }
+        case MENU: {
+            if (!menucamp::isCamp(core.level)) {
+                note("THIS LEVEL ISN'T THE MENU SCENE.");
+                note("MAIN MENU > DEV > EDIT MENU SCENE OPENS IT.");
+                break;
+            }
+            const menucamp::Meta m = menucamp::metaOf(core.level);
+            const auto& cat = vehicleCatalog();
+            const auto& lvs = listedVehicles();
+            for (int k = 0; k < 3; k++) {
+                row("VEHICLE " + std::to_string(k + 1), cat[lvs[m.veh[k].slot]].name, B_MENU + k * 8, B_MENU + k * 8 + 1);
+                const float bw = (w - 3 * 3 * u) / 4;
+                const char* names[4] = {"HERE", "TURN -", "TURN +", "AT FIRE"};
+                for (int b = 0; b < 4; b++) button(r, x + b * (bw + 3 * u), y, bw, bh, names[b], B_MENU + k * 8 + 2 + b, false, u);
+                y += bh + 8 * u;
+            }
+            button(r, x, y, w, bh, "SET CAMERA HERE", B_MENU + 30, false, u);
+            y += bh + 4 * u;
+            row("CAMERA DRIFT", fmt1(m.cam.drift, ""), B_MENU + 31, B_MENU + 32);
+            row("SUN: TIME OF DAY", fmt1(core.level.timeOfDay >= 0 ? core.level.timeOfDay : 17.55, " H"), B_MENU + 33, B_MENU + 34);
+            row("SKY COLOURS (H)", fmt1(m.look, ""), B_MENU + 35, B_MENU + 36);
+            y += 4 * u;
+            button(r, x, y, w, bh, "PREVIEW THE MENU", B_MENU + 37, false, u);
+            y += bh + 4 * u;
+            button(r, x, y, w, bh, confirmReset ? "SURE? CLICK AGAIN" : "RESET TO THE GAME'S SCENE", B_MENU + 38, confirmReset, u);
+            y += bh + 8 * u;
+            note("HERE: VEHICLE GOES WHERE THE");
+            note("VIEW CENTRE MEETS THE GROUND");
+            note("SET CAMERA: THE MENU LOOKS");
+            note("FROM WHERE YOU FLY, AT WHAT");
+            note("YOU LOOK AT. TOOL 4 MOVES");
+            note("THE CABIN, FIRE, TREES, ROCKS.");
+            note("CTRL+S SAVES YOUR SCENE.");
             break;
         }
         case SECTION: {

@@ -1,6 +1,8 @@
 #include "audio.h"
 
+#include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <cstdio>
 
 #include "sdl_min.h"
@@ -83,8 +85,44 @@ int Audio::loadEngineRecordings(const std::string& directory) {
     return count;
 }
 
+// A mono 16-bit PCM WAV into floats (-1..1); false if it isn't one.
+static bool readMono16(const std::string& path, std::vector<float>& out) {
+    std::FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) return false;
+    std::vector<unsigned char> b;
+    unsigned char chunk[4096];
+    for (size_t n; (n = std::fread(chunk, 1, sizeof chunk, f)) > 0;) b.insert(b.end(), chunk, chunk + n);
+    std::fclose(f);
+    if (b.size() < 44 || std::memcmp(b.data(), "RIFF", 4) || std::memcmp(b.data() + 8, "WAVE", 4)) return false;
+    auto u32 = [&](size_t at) { return (uint32_t)b[at] | (uint32_t)b[at + 1] << 8 | (uint32_t)b[at + 2] << 16 | (uint32_t)b[at + 3] << 24; };
+    bool ok = false;
+    for (size_t at = 12; at + 8 <= b.size();) {
+        const uint32_t size = u32(at + 4);
+        if (!std::memcmp(&b[at], "fmt ", 4) && size >= 16 && at + 8 + 16 <= b.size()) ok = b[at + 8] == 1 && b[at + 10] == 1 && b[at + 22] == 16 && u32(at + 12) == 48000;  // PCM, mono, 16 bit, 48 kHz
+        else if (!std::memcmp(&b[at], "data", 4)) {
+            if (!ok) return false;
+            const size_t n = std::min<size_t>(size, b.size() - at - 8) / 2;
+            out.resize(n);
+            for (size_t i = 0; i < n; i++) out[i] = (int16_t)(b[at + 8 + 2 * i] | b[at + 9 + 2 * i] << 8) / 32768.0f;
+            return n > 0;
+        }
+        at += 8 + size + (size & 1);
+    }
+    return false;
+}
+
+int Audio::loadAmbience(const std::string& directory) {
+    if (device_) return -1;
+    ambienceLoaded_ = true;
+    int n = 0;
+    n += readMono16(directory + "/campfire.wav", fireLoop_);
+    n += readMono16(directory + "/wind.wav", windLoop_);
+    return n;
+}
+
 bool Audio::start() {
     if (device_) return true;
+    if (!ambienceLoaded_) std::printf("Ambience recordings: %d of 2 loaded; missing ones stay synthesized\n", loadAmbience("assets/audio/ambience"));
     const int banks = recordingsReady_ ? recordingCount_ : loadEngineRecordings("assets/audio/engines");
     std::printf("Engine recordings: %d banks loaded; missing banks use procedural audio\n", banks);
     SDL_AudioSpec want{}, have{};
@@ -251,6 +289,62 @@ void Audio::render(float* out, int frames) {
     const float mv = level(musicVol_) * duck;
     music_.render(out, frames, musicMap_, mv, musicBiome_);
     ambience_.render(out, frames, rate_, {(int)ambienceMap_, (float)hours_, level(ambienceVol_) * sceneGain, exposure});
+    if (const float camp = campfire_; camp > 0 || cfGain_ > 1e-4f) {  // the main menu's camp: the fire (the focus), a stream, wind in the trees, crickets. All synthesized
+        const float target = camp * sceneGain, amb = level(ambienceVol_) * 0.6f + 0.25f;  // (the ambience setting scales the beds, never to silence)
+        const float panF = campPanFire_, panS = campPanStream_;
+        const float lF = std::sqrt(0.5f * (1 - panF)), rF = std::sqrt(0.5f * (1 + panF)), lS = std::sqrt(0.5f * (1 - panS)), rS = std::sqrt(0.5f * (1 + panS));
+        for (int i = 0; i < frames; i++) {
+            cfGain_ += (target - cfGain_) * 0.00004f;  // (about a second and a half to come in or go out)
+            const float g = cfGain_;
+            const float n = noise();
+            cfT_ += 1.0f / rate_;
+            // Fire: the recording (a low flutter of flame under sharp little pops), or, with no file, a synthesized one.
+            cfRoar_ += (n - cfRoar_) * 0.03f;
+            cfLow_ += (n - cfLow_) * 0.004f;
+            if (std::fabs(noise()) > 0.9996f) cfPop_ = 0.35f + 0.65f * std::fabs(noise());
+            if (std::fabs(noise()) > 0.99985f) cfPop_ = 1.0f;
+            cfHp_ = n - cfHp_ * 0.4f;
+            float fire = (cfRoar_ * 0.5f * (0.55f + 0.45f * cfLow_ * 12.0f) + cfHp_ * cfPop_ * 0.28f) * 0.9f;
+            cfPop_ *= 0.9985f;
+            if (!fireLoop_.empty()) {
+                fire = fireLoop_[firePos_] * 4.0f;
+                if (++firePos_ >= fireLoop_.size()) firePos_ = 0;
+            }
+            // Stream: bright, burbling water (band-passed noise swelling a little), off to one side.
+            const float n2 = noise();
+            stLp1_ += (n2 - stLp1_) * 0.22f;
+            stLp2_ += (n2 - stLp2_) * 0.03f;
+            const float burble = 0.65f + 0.35f * std::sin(cfT_ * 9.0f + 2.0f * std::sin(cfT_ * 1.7f));
+            const float stream = (stLp1_ - stLp2_) * burble * 0.55f;
+            // Wind: a low rush with gusts, and a leafier hush on top of it.
+            const float n3 = noise();
+            wnLp_ += (n3 - wnLp_) * 0.012f;
+            wnHp_ += (n3 - wnHp_) * 0.12f;
+            const float gust = 0.35f + 0.65f * std::max(0.0f, std::sin(cfT_ * 0.43f) * 0.6f + std::sin(cfT_ * 0.17f + 1.0f) * 0.4f);
+            float wind = (wnLp_ * 2.2f + (wnHp_ - wnLp_) * 0.35f * gust) * gust * 0.5f;
+            if (!windLoop_.empty()) {  // (the recorded air, a gentle bed: no gusts of our own on top)
+                wind = windLoop_[windPos_] * 0.9f;
+                if (++windPos_ >= windLoop_.size()) windPos_ = 0;
+            }
+            // Crickets: three voices chirping in threes, each a little out of step with the others.
+            float crick = 0, crickL = 0, crickR = 0;
+            for (int v = 0; v < 3; v++) {
+                const float rate = 1.9f + 0.37f * v, ph = std::fmod(cfT_ * rate + v * 0.31f, 1.0f);
+                const float chirp = ph < 0.55f ? 0.5f - 0.5f * std::cos(std::fmod(ph * 3.0f / 0.55f, 1.0f) * 6.2831853f) : 0.0f;
+                cfPhase_[v] += (4300.0f + 330.0f * v + 60.0f * chirp) / rate_ * 6.2831853f;
+                if (cfPhase_[v] > 6.2831853f) cfPhase_[v] -= 6.2831853f;
+                const float c = std::sin(cfPhase_[v]) * chirp * chirp * 0.05f;
+                crick += c;
+                crickL += c * (0.75f - 0.35f * v), crickR += c * (0.15f + 0.35f * v);
+            }
+            (void)crick;
+            const float bed = amb * 0.5f;
+            const float l = fire * lF * 0.9f + stream * lS * 0.2f * bed + (wind + 0) * 0.5f * bed + crickL * 1.3f * bed;
+            const float r = fire * rF * 0.9f + stream * rS * 0.2f * bed + (wind + 0) * 0.5f * bed + crickR * 1.3f * bed;
+            out[2 * i] += l * g;
+            out[2 * i + 1] += r * g;
+        }
+    }
     const float volumeA = 1 - std::exp(-dt / 0.025f);
     for (int i = 0; i < frames; i++) {
         sMaster_ += (master - sMaster_) * volumeA;

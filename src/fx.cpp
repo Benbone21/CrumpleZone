@@ -15,6 +15,7 @@ const double kRutWallDist = 70;  // the ground shoved up beside them is drawn th
 // Tracks (FX_TRACK): normal.x = across the mark (-1..1), normal.y = along it (m, the tire's own
 // travel: its tread scrolls with the wheel), normal.z = 3 + the look + how deep the groove is (0..1 =
 // 0..15 cm). The look is the TireType + 7 * (smear 0..3 + 4 * reversing); rubber marks are FX_RUBBER.
+constexpr float kFxFlame = 1.2f;  // (glow mode 1 with a round shape: render.cpp's fx shader)
 enum FxMode { FX_SOFT = 0, FX_GLOW = 1, FX_FLAT = 2, FX_TRACK = 3, FX_RUBBER = 100 };
 float treadLook(int type, double spin, double groundSpeed, double omegaR, bool reverse) {
     const double r = std::fabs(spin) / std::max(std::max(std::fabs(groundSpeed), std::fabs(omegaR)), 1.5);  // spinning or locked: smeared
@@ -417,6 +418,10 @@ FxEvents Effects::update(Sim& sim, double dt) {
                 case SPARK:
                     p.v.y -= 9.81 * dt;
                     break;
+                case FLAME:
+                    p.v *= std::exp(-1.2 * dt);
+                    p.v.y += 2.2 * dt;  // a flame lifts and thins
+                    break;
                 case SHARD:
                 case CLOD:
                     p.v.y -= 9.81 * dt;
@@ -437,6 +442,23 @@ FxEvents Effects::update(Sim& sim, double dt) {
                         particles.end());
     }
     return ev;
+}
+
+void Effects::campfire(const V3& base, double dt, const V3& wind) {
+    // Flames: a few tongues a frame, rising from a ring of about 0.25 m over the logs.
+    for (int k = count(46, dt); k > 0; k--) {
+        const double a = rand01() * 6.2831853, r = 0.28 * std::sqrt(rand01());
+        emit(FLAME, base + V3(std::cos(a) * r, 0.22 + rand01() * 0.1, std::sin(a) * r), V3(randS() * 0.18, 0.7 + rand01() * 0.9, randS() * 0.18) + wind * 0.3,
+             0.5f + rand01() * 0.35f, 0.2f + rand01() * 0.08f, 0.05f, 1.0f, 0.78f, 0.34f, 0.85f);
+    }
+    // Smoke: grey puffs that grow and lean downwind.
+    for (int k = count(5, dt); k > 0; k--)
+        emit(SMOKE, base + V3(randS() * 0.2, 0.9, randS() * 0.2), V3(randS() * 0.15, 0.9 + rand01() * 0.4, randS() * 0.15) + wind,
+             5.0f + rand01() * 3.0f, 0.18f, 1.6f, 0.42f, 0.4f, 0.38f, 0.22f);
+    // Sparks: now and then one, thrown up and across.
+    for (int k = count(2.2, dt); k > 0; k--)
+        emit(SPARK, base + V3(randS() * 0.15, 0.7, randS() * 0.15), V3(randS() * 0.8, 1.6 + rand01() * 2.2, randS() * 0.8) + wind * 0.5, 0.7f + rand01() * 1.0f,
+             0.018f, 0.01f, 1.0f, 0.55f, 0.16f, 1.0f);
 }
 
 void Effects::translate(const V3& d) {
@@ -578,7 +600,16 @@ void Effects::buildParticles(const V3& eye, std::vector<Vtx>& out) {
         V3 up = cross(right, view);
         V3 q[4];
         float mode = FX_SOFT;
-        if (p.kind == SPARK) {
+        if (p.kind == FLAME) {
+            mode = kFxFlame;
+            c[3] *= (1.0f - t) * std::min(1.0f, t * 10.0f + 0.3f);
+            // (a flame cools as it rises: yellow-white at the logs, orange, then red)
+            c[1] *= 1.0f - 0.45f * t, c[2] *= 1.0f - 0.8f * t;
+            q[0] = p.p - right * size - up * size;
+            q[1] = p.p + right * size - up * size;
+            q[2] = p.p + right * size + up * size;
+            q[3] = p.p - right * size + up * size;
+        } else if (p.kind == SPARK) {
             // Streak along the velocity.
             mode = FX_GLOW;
             c[3] = 1.0f - t * 0.5f;

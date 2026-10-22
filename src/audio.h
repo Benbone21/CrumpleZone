@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstdint>
 #include <array>
+#include <vector>
 
 #include "music.h"
 #include "ambience.h"
@@ -33,6 +34,8 @@ public:
     }
     void setBoost(float boost) { boost_ = boost; }  // turbo boost built up, 0..1
     void setRecording(int recording) { recording_ = recording; }
+    // The camp's recorded loops (campfire.wav, wind.wav: mono PCM16 in `directory`); before start only. A missing file leaves that layer synthesized.
+    int loadAmbience(const std::string& directory);
     // Before start only; loading/decoding is never performed by the callback.
     int loadEngineRecordings(const std::string& directory);
     int recordingBankCount() const { return recordingCount_; }
@@ -54,6 +57,8 @@ public:
     void impact(float strength);  // 0..1
     void glass(float strength);   // window shattering, 0..1
     void pop();                   // tire blowout
+    // The main menu's camp (fire crackle, stream, wind, crickets): `level` 0 silent .. 1, the game eases it in and out; the pans (-1 left .. 1 right) place the fire and the stream.
+    void setCampfire(float level, float panFire = 0.2f, float panStream = -0.6f) { campfire_ = level, campPanFire_ = panFire, campPanStream_ = panStream; }
     void setHiss(float level);    // tire air hiss: 0 = off, 1 = full hiss (inflate/deflate)
     // Game thread: publish the nearest engines, with distance attenuation and stereo pan.
     void setNearbyEngines(const Sim& sim, const V3& listener, const V3& right, float timeScale);
@@ -115,6 +120,12 @@ private:
     float pingEnv_[3] = {0, 0, 0}, pingPhase_[3] = {0, 0, 0}, pingFreq_[3] = {3000, 4200, 5600};
     float popEnv_ = 0, popLp_ = 0;
     std::atomic<float> pendingHiss_{0};
+    std::atomic<float> campfire_{0};
+    std::atomic<float> campPanFire_{0.2f}, campPanStream_{-0.6f};
+    std::vector<float> fireLoop_, windLoop_;  // recorded loops (immutable once the device runs)
+    bool ambienceLoaded_ = false;
+    size_t firePos_ = 0, windPos_ = 0;       // audio thread only
+    float cfPop_ = 0, cfLow_ = 0, cfHp_ = 0, cfGain_ = 0, cfRoar_ = 0, cfT_ = 0, stLp1_ = 0, stLp2_ = 0, wnLp_ = 0, wnHp_ = 0, cfPhase_[3] = {0, 0, 0};
     float hissEnv_ = 0, hissBp_ = 0, hissBp2_ = 0;
     uint32_t rng_ = 0x12345678;
     float noise() {
