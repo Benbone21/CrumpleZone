@@ -15,7 +15,9 @@
 class Sim;
 
 // Recorded one-shots (assets/audio/sfx/*.wav, mono 48 kHz PCM16). The winch clicks and the wrench ticks are banks of short slots, one picked at random.
-enum Sfx { SFX_DOOR_OPEN, SFX_DOOR_SHUT, SFX_CLUNK, SFX_TOOLBOX_OPEN, SFX_TOOLBOX_SHUT, SFX_WRENCH, SFX_AIR_BURST, SFX_HORN, SFX_WINCH_CLICK, SFX_UI_CLICK, SFX_UI_HOVER, SFX_COUNT };
+enum Sfx { SFX_DOOR_OPEN, SFX_DOOR_SHUT, SFX_CLUNK, SFX_TOOLBOX_OPEN, SFX_TOOLBOX_SHUT, SFX_WRENCH, SFX_AIR_BURST, SFX_HORN, SFX_WINCH_CLICK, SFX_UI_CLICK, SFX_UI_HOVER,
+           // synthesized when the sound effects load (no files): the repair and tool sounds (toolsounds.h)
+           SFX_HAMMER, SFX_JACK_PUMP, SFX_JACK_LOWER, SFX_PRY_CREAK, SFX_TIRE_IRON, SFX_WHEEL_OFF, SFX_WHEEL_ON, SFX_BOLT_DROP, SFX_NUT_SQUEAL, SFX_COUNT };
 
 // What a winch sounds like at a line speed (m/s, + reeling in, - paying out) and load (0..1 of its pull): the motor's hum
 // (playback rate and level), how hard it strains (0..1: a lower, rougher, driven note) and the pawl's clicks per second.
@@ -76,7 +78,10 @@ public:
     // Game thread: works out each winch line's speed from how its length changes and publishes the nearest kWinches (own and remote players').
     void setWinches(const Sim& sim, const V3& listener, const V3& right, double simDt);
     // A recorded one-shot, `delay` seconds from now (a door shutting after it opened), at distance gain/pan. Ignored when the file is missing.
-    void play(Sfx what, float gain = 1, float pan = 0, float delay = 0);
+    // `pitch`: playback rate (1 as recorded; a touch either side each time keeps repeats from sounding stamped).
+    void play(Sfx what, float gain = 1, float pan = 0, float delay = 0, float pitch = 1);
+    // The same, placed in the world at `at`: louder near the listener, panned by which side of `right` it is on.
+    void playAt(Sfx what, const V3& at, const V3& listener, const V3& right, float gain = 1, float delay = 0, float pitch = 1);
     // Tire air by the compressor (+1 pumping up) or the hiss (-1 letting out); 0 off. True if the recordings are there (the synthesized hiss stays off then).
     bool setAiring(int direction);
     // Files in `directory` (assets/audio/sfx); before start only. Returns how many loaded.
@@ -161,14 +166,15 @@ private:
     std::vector<float> winchMotor_, compressor_, airBlow_, streamLoop_;  // loops
     int sfxCount_ = 0;
     bool sfxLoaded_ = false;
-    struct PendingSfx { Sfx what = SFX_COUNT; float gain = 0, pan = 0; uint32_t delay = 0; };
+    struct PendingSfx { Sfx what = SFX_COUNT; float gain = 0, pan = 0, pitch = 1; uint32_t delay = 0; };
     static constexpr unsigned kPending = 32;
     PendingSfx pending_[kPending];
     std::atomic<unsigned> pendingHead_{0}, pendingTail_{0};  // game thread produces (head), the callback consumes (tail)
-    struct SfxVoice { Sfx what = SFX_COUNT; size_t pos = 0, end = 0; float left = 0, right = 0; uint32_t wait = 0; };
+    struct SfxVoice { Sfx what = SFX_COUNT; double pos = 0; size_t end = 0; float rate = 1, left = 0, right = 0; uint32_t wait = 0; };
     static constexpr int kSfxVoices = 20;
     SfxVoice sfxVoices_[kSfxVoices];
-    void startSfx(Sfx what, float gain, float pan, uint32_t wait);
+    void startSfx(Sfx what, float gain, float pan, uint32_t wait, float pitch = 1);
+    void synthesizeTools();  // fills the repair/tool one-shots (loadSfx)
     struct WinchSlot { std::atomic<float> running{0}, speed{0}, load{0}, gain{0}, pan{0}; } winchIn_[kWinches];
     struct WinchState { float rate = 1, gain = 0, strain = 0, speed = 0, load = 0, pan = 0, clickAcc = 0, t = 0; double pos = 0; } winchState_[kWinches];
     std::atomic<int> airingDir_{0};

@@ -36,6 +36,7 @@
 
 #include "allocstat.h"
 #include "audio.h"
+#include "toolsounds.h"
 #include "worldsound.h"
 #include "biome.h"
 #include "jobs.h"
@@ -5730,10 +5731,9 @@ int main(int argc, char** argv) {
             fpHands[0] = hw.hands[0], fpHands[1] = hw.hands[1];
             fpHideTorso = hw.hideTorso;
             workHandOn = hw.hands[1].on, workHand = hw.hands[1].p;
-            {  // the ratchet / socket / lug wrench's ticks on its return stroke (handwork.cpp: a swing is a stroke, then the free swing back), at the hand, stopping with the job
-                static double lastSwing = -1;
-                if (audioOn && hw.swing >= 0 && lastSwing >= 0 && lastSwing < 0.7 && hw.swing >= 0.7) audio.play(SFX_WRENCH, 0.55f);
-                lastSwing = hw.swing;
+            {  // the tools' and jack's sounds, placed at the work (toolsounds.h): wrench ticks and nut squeals, hammer, jack, pry bar, tire irons, the wheel
+                static ToolSounds toolSounds;
+                if (audioOn) toolSounds.update(audio, interact, hw, view.eye, norm(cross(view.target - view.eye, view.up)));
             }
             renderer.frameModels.insert(renderer.frameModels.end(), hw.models.begin(), hw.models.end());
             renderer.wheelWork = hw.wheel;

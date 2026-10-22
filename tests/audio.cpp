@@ -4,6 +4,8 @@
 #include "../src/softbody.h"
 #include "../src/sdl_min.h"
 #include "../src/worldsound.h"
+#include "../src/toolsounds.h"
+#include "../src/fixes.h"
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -246,6 +248,75 @@ int main() {
         }
         traceAllocations = false;
         check("winch, one-shots and air loops perform no C++ allocations in the callback", callbackAllocations == 0);
+    }
+    {  // repair and tool sounds: every action makes a voice, at the work, in 3D
+        auto energy = [&](const std::function<void(Audio&)>& drive, bool* finite = nullptr, float* leftShare = nullptr) {
+            Audio a;
+            a.loadSfx("assets/audio/sfx");
+            a.setEngine(0, 0);
+            a.setVolume(1);
+            std::vector<float> buf(512 * 2);
+            double e = 0, el = 0, er = 0;
+            bool ok = true;
+            drive(a);
+            for (int k = 0; k < 150; k++) {
+                AudioTest::render(a, buf.data(), 512);
+                for (int i = 0; i < 512; i++) e += buf[2 * i] * buf[2 * i] + buf[2 * i + 1] * buf[2 * i + 1], el += buf[2 * i] * buf[2 * i], er += buf[2 * i + 1] * buf[2 * i + 1];
+                for (float v : buf) ok &= std::isfinite(v);
+            }
+            if (finite) *finite = ok;
+            if (leftShare) *leftShare = (float)(el / std::max(1e-12, el + er));
+            return e;
+        };
+        const V3 eye(0, 1.7, 0), right(1, 0, 0), bench(0.4, 1.0, 1.0);
+        const Sfx synth[] = {SFX_HAMMER, SFX_JACK_PUMP, SFX_JACK_LOWER, SFX_PRY_CREAK, SFX_TIRE_IRON, SFX_WHEEL_OFF, SFX_WHEEL_ON, SFX_BOLT_DROP, SFX_NUT_SQUEAL};
+        bool allAudible = true, allFinite = true;
+        for (Sfx w : synth) {
+            bool fin = true;
+            const double e = energy([&](Audio& a) { a.play(w, 1); }, &fin);
+            allAudible &= e > 1e-2, allFinite &= fin;
+        }
+        check("each synthesized tool sound (hammer, jack pump/lower, pry bar, tire iron, wheel off/on, bolt drop, nut squeal) is audible and finite", allAudible && allFinite);
+        const double base = energy([&](Audio& a) { a.play(SFX_HAMMER, 1); }), nearE = energy([&](Audio& a) { a.playAt(SFX_HAMMER, V3(0.5, 1.2, 0.8), eye, right); }), farE = energy([&](Audio& a) { a.playAt(SFX_HAMMER, V3(25, 1.2, 0), eye, right); });
+        float leftSide = 0, rightSide = 0;
+        energy([&](Audio& a) { a.playAt(SFX_HAMMER, V3(-1.5, 1.2, 0.5), eye, right); }, nullptr, &leftSide);
+        energy([&](Audio& a) { a.playAt(SFX_HAMMER, V3(1.5, 1.2, 0.5), eye, right); }, nullptr, &rightSide);
+        check("tool sounds are placed: louder near the hand than 25 m off, panned to the side the work is on", nearE > farE * 10 && leftSide > 0.7f && rightSide < 0.3f && base > 0);
+        const double slow = energy([&](Audio& a) { a.play(SFX_CLUNK, 1, 0, 0, 0.6f); }), norm1 = energy([&](Audio& a) { a.play(SFX_CLUNK, 1, 0, 0, 1.0f); });
+        check("pitch changes the playback rate (a lower clunk lasts longer: more of the clip's energy)", slow > norm1 * 0.5 && energy([&](Audio& a) { a.play(SFX_CLUNK, 1, 0, 0, 1.4f); }) > 1e-3);
+
+        // Each job through ToolSounds: step the held-E time and see that a voice is made.
+        auto job = [&](InteractKind kind, int tool, int part, double hold, double seconds, bool nutOff, bool swings) {
+            return energy([&](Audio& a) {
+                ToolSounds ts;
+                Interact ia;
+                ia.current.kind = kind, ia.current.tool = tool, ia.current.part = part, ia.current.hold = hold, ia.current.at = bench, ia.current.car = 0, ia.current.wheel = 0;
+                ia.current.continuous = kind == IA_RAISE_JACK || kind == IA_LOWER_JACK;
+                for (double t = 0.016; t < seconds; t += 0.016) {
+                    ia.progress = t;
+                    Handwork hw;
+                    hw.hasWork = true, hw.workAt = bench;
+                    if (swings) {
+                        hw.swing = std::fmod(t, 0.52) / 0.52, hw.nut = (int)(t / 1.2), hw.nutOff = nutOff;
+                        hw.hands[1].on = true, hw.hands[1].p = bench;
+                    }
+                    ts.update(a, ia, hw, eye, right);
+                    // (the sounds are made on the game thread; here they queue and play out when rendered)
+                }
+            });
+        };
+        const double eHammer = job(IA_FIX, TOOL_HAMMER, -1, 3, 1.5, false, false), ePry = job(IA_FIX, TOOL_PRY_BAR, -1, 4, 0.5, false, false), eIron = job(IA_TIRE_WORK, TOOL_TIRE_IRONS, -1, 4, 0.5, false, false);
+        const double eRaise = job(IA_RAISE_JACK, -1, -1, 0, 1.2, false, false), eLower = job(IA_LOWER_JACK, -1, -1, 0, 1.0, false, false);
+        const double eOff = job(IA_REMOVE_WHEEL, TOOL_LUG_WRENCH, -1, 3, 2.9, true, false), eOn = job(IA_FIT_WHEEL, TOOL_LUG_WRENCH, -1, 3, 0.9, false, false);
+        const double eRatchet = job(IA_FIX, TOOL_RATCHET, -1, 5, 2.6, true, true), eRatchetOn = job(IA_FIX, TOOL_RATCHET, -1, 5, 1.0, false, true), eCache = job(IA_OPEN_CACHE, -1, -1, 3, 0.3, false, false);
+        std::printf("  tool job energy: hammer %.3g pry %.3g irons %.3g raise %.3g lower %.3g wheel off %.3g on %.3g ratchet off %.3g on %.3g cache %.3g\n", eHammer, ePry, eIron, eRaise, eLower, eOff, eOn, eRatchet, eRatchetOn, eCache);
+        check("a hammer job rings out hammer blows", eHammer > 1e-2);
+        check("a pry bar job creaks and a tire iron job clinks", ePry > 1e-2 && eIron > 1e-2 && eCache > 1e-2);
+        check("raising the jack pumps and lowering it lets the saddle down", eRaise > 1e-2 && eLower > 1e-2);
+        check("a wheel coming off thumps on the ground (louder than a job with no sounds) and one going on clinks onto its studs", eOff > 1e-2 && eOn > 1e-2);
+        check("a wrench turning a nut off ticks, squeals and drops it (more than doing a nut up, which only ticks)", eRatchet > eRatchetOn && eRatchetOn > 1e-3);
+        const double idleJob = job(IA_NONE, -1, -1, 0, 1.0, false, false), partJob = job(IA_FIX, TOOL_HAMMER, 3, 3, 1.5, false, false);
+        check("no job, no sound; a new part going in (no tool) isn't a hammer job", idleJob < 1e-9 && partJob < 1e-9);
     }
     {  // placed sounds: repair shops and water found on the maps that have them; gains fall with distance; the callback allocates nothing
         const int maps[] = {MAP_PROVING_GROUND, MAP_MOUNTAIN, MAP_FRONTIER, MAP_BACKCOUNTRY};

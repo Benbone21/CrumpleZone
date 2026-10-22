@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <functional>
 #include <cstdio>
 
 #include "sdl_min.h"
@@ -146,8 +147,120 @@ int Audio::loadSfx(const std::string& directory) {
     n += readMono16(directory + "/winch_motor.wav", winchMotor_);
     n += readMono16(directory + "/compressor.wav", compressor_);
     n += readMono16(directory + "/air_blow.wav", airBlow_);
+    synthesizeTools();
     sfxCount_ = n;
     return n;
+}
+
+void Audio::playAt(Sfx what, const V3& at, const V3& listener, const V3& right, float gain, float delay, float pitch) {
+    const V3 d = at - listener;
+    const double dist = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+    if (!std::isfinite(dist)) return;
+    const double rl = std::sqrt(right.x * right.x + right.y * right.y + right.z * right.z);
+    const float pan = dist > 0.3 && rl > 1e-6 ? (float)std::clamp((d.x * right.x + d.y * right.y + d.z * right.z) / (rl * dist), -1.0, 1.0) * 0.8f : 0.0f;
+    const float att = 1.0f / (1.0f + (float)dist * 0.22f + (float)(dist * dist) * 0.012f);  // (a hand's reach: nearly full; 30 m: faint)
+    if (att * gain < 0.01f) return;
+    play(what, gain * att, pan, delay, pitch);
+}
+
+// The repair and tool sounds, made from noise and ringing tones when the effects load: a hammer face on steel, the jack's pawl,
+// a pry bar's creak, a tire iron's clink, a wheel thumping off or onto its studs, a nut bouncing, a seized nut's squeal.
+void Audio::synthesizeTools() {
+    uint32_t seed = 0x9e3779b9u;
+    auto rnd = [&]() { seed ^= seed << 13, seed ^= seed >> 17, seed ^= seed << 5; return (seed >> 8) * (1.0f / 8388608.0f) - 1.0f; };
+    const float sr = 48000.0f, tau = 6.2831853f;
+    auto make = [&](Sfx what, float seconds, const std::function<float(float, int)>& f) {
+        std::vector<float>& d = sfx_[what];
+        d.assign((size_t)(seconds * sr), 0.0f);
+        float peak = 1e-6f;
+        for (size_t i = 0; i < d.size(); i++) d[i] = f(i / sr, (int)i), peak = std::max(peak, std::fabs(d[i]));
+        const size_t fade = std::min<size_t>(d.size() / 8, 240);
+        for (size_t i = 0; i < d.size(); i++) d[i] *= 0.9f / peak * (i + fade > d.size() ? (float)(d.size() - i) / fade : 1.0f);
+    };
+    auto ring = [&](float t, float hz, float decay) { return std::sin(tau * hz * t) * std::exp(-t * decay); };
+    // A hammer's face on steel: a sharp tick, the head's ring, a dull thud under it.
+    {
+        float lp = 0;
+        make(SFX_HAMMER, 0.35f, [&](float t, int) {
+            lp += (rnd() - lp) * 0.35f;
+            return 0.7f * lp * std::exp(-t * 700) + 0.5f * ring(t, 1180, 38) + 0.35f * ring(t, 2870, 55) + 0.2f * ring(t, 4410, 90) + 0.7f * ring(t, 130, 45);
+        });
+    }
+    // One stroke of the jack's handle: the pawl clicking over two teeth and the lever's creak between them.
+    {
+        float lp = 0;
+        make(SFX_JACK_PUMP, 0.30f, [&](float t, int) {
+            lp += (rnd() - lp) * 0.5f;
+            const float c2 = t - 0.075f, creak = t > 0.1f ? std::sin(tau * (210 + 60 * t) * t) * std::sin(3.14159f * (t - 0.1f) / 0.2f) * (0.5f + 0.5f * rnd()) : 0.0f;
+            return 0.8f * lp * std::exp(-t * 900) * 0.8f + 0.5f * ring(t, 2300, 160) + (c2 > 0 ? (0.6f * lp * std::exp(-c2 * 900) + 0.4f * ring(c2, 3100, 190)) : 0.0f) + (t > 0.1f && t < 0.3f ? 0.12f * creak : 0.0f);
+        });
+    }
+    // Letting the jack down: a slow, rough valve hiss with a groan of the saddle.
+    {
+        float lp = 0, bp = 0, bp2 = 0;
+        make(SFX_JACK_LOWER, 0.55f, [&](float t, int) {
+            const float n = rnd();
+            lp += (n - lp) * 0.2f, bp += (lp - bp) * 0.12f, bp2 += (n - bp2) * 0.6f;
+            const float env = std::sin(3.14159f * std::min(1.0f, t / 0.55f)), moan = std::sin(tau * (95 - 25 * t) * t) * 0.5f;
+            return env * (1.6f * (lp - bp) + 0.12f * (n - bp2) + 0.22f * moan * (0.7f + 0.3f * rnd()));
+        });
+    }
+    // A pry bar bending a stuck part: a rising, wobbling groan of steel with grit in it.
+    {
+        float ph = 0, lp = 0;
+        make(SFX_PRY_CREAK, 0.7f, [&](float t, int) {
+            const float wob = 1 + 0.06f * std::sin(tau * 23 * t) + 0.03f * rnd();
+            ph += tau * (520 + 380 * (t / 0.7f) * (t / 0.7f)) * wob / sr;
+            lp += (rnd() - lp) * 0.25f;
+            const float env = std::pow(std::sin(3.14159f * t / 0.7f), 1.5f), saw = (std::fmod(ph, tau) / tau) * 2 - 1;
+            return env * (0.5f * saw + 0.3f * std::sin(ph) + 0.35f * lp) + 0.4f * lp * std::exp(-t * 400);
+        });
+    }
+    // A tire iron slipping against a rim: a bright clink and a short scrape.
+    {
+        float lp = 0, hp = 0;
+        make(SFX_TIRE_IRON, 0.4f, [&](float t, int) {
+            const float n = rnd();
+            lp += (n - lp) * 0.5f, hp += (lp - hp) * 0.05f;
+            return 0.6f * ring(t, 1760, 30) + 0.5f * ring(t, 2640, 45) + 0.25f * ring(t, 4180, 80) + (t < 0.12f ? 1.2f * (lp - hp) * (1 - t / 0.12f) : 0.0f) + 0.5f * lp * std::exp(-t * 600);
+        });
+    }
+    // A wheel coming off its studs: the rim scraping out, then a heavy rubber thump on the ground.
+    {
+        float lp = 0, lp2 = 0;
+        make(SFX_WHEEL_OFF, 0.6f, [&](float t, int) {
+            const float n = rnd();
+            lp += (n - lp) * 0.15f, lp2 += (n - lp2) * 0.04f;
+            const float tt = t - 0.16f;
+            return (t < 0.16f ? 0.6f * lp * std::sin(3.14159f * t / 0.16f) + 0.25f * ring(t, 1500, 18) : 0.0f) + (tt > 0 ? 1.0f * ring(tt, 70, 14) + 0.9f * lp2 * std::exp(-tt * 28) + 0.4f * ring(tt, 150, 30) : 0.0f);
+        });
+    }
+    // A wheel going onto its studs: the holes finding the studs (two clinks) and a solid bump home.
+    {
+        float lp = 0;
+        make(SFX_WHEEL_ON, 0.5f, [&](float t, int) {
+            lp += (rnd() - lp) * 0.3f;
+            const float a = t - 0.05f, b = t - 0.17f, c = t - 0.26f;
+            return (a > 0 ? 0.5f * ring(a, 2050, 60) + 0.3f * lp * std::exp(-a * 500) : 0.0f) + (b > 0 ? 0.45f * ring(b, 2400, 70) : 0.0f) + (c > 0 ? 0.9f * ring(c, 95, 22) + 0.6f * ring(c, 620, 40) + 0.5f * lp * std::exp(-c * 150) : 0.0f);
+        });
+    }
+    // A nut falling and bouncing on the ground: pings that come quicker and quieter.
+    {
+        make(SFX_BOLT_DROP, 0.5f, [&](float t, int) {
+            float v = 0, at = 0, gap = 0.11f, amp = 1;
+            for (int k = 0; k < 6 && at < t; k++, at += gap, gap *= 0.62f, amp *= 0.55f) v += amp * (ring(t - at, 3300 + 160 * k, 140) + 0.4f * ring(t - at, 5200, 220));
+            return v;
+        });
+    }
+    // A seized nut letting go: a short, rising squeal with a stick-slip buzz.
+    {
+        float ph = 0;
+        make(SFX_NUT_SQUEAL, 0.38f, [&](float t, int) {
+            const float stick = 0.55f + 0.45f * std::sin(tau * 95 * t), x = t / 0.38f;
+            ph += tau * (1250 + 900 * x + 120 * rnd()) / sr;
+            return std::sin(ph) * stick * std::pow(std::sin(3.14159f * std::pow(x, 0.7f)), 1.2f) + 0.2f * std::sin(2 * ph) * stick;
+        });
+    }
 }
 
 WinchSound WinchSound::at(float lineSpeed, float load) {
@@ -251,11 +364,11 @@ void Audio::renderWorldVoices(float* out, int frames, float volume) {
     }
 }
 
-void Audio::play(Sfx what, float gain, float pan, float delay) {
+void Audio::play(Sfx what, float gain, float pan, float delay, float pitch) {
     if (what < 0 || what >= SFX_COUNT || sfx_[what].empty() || !std::isfinite(gain) || !std::isfinite(pan)) return;
     const unsigned head = pendingHead_.load(std::memory_order_relaxed);
     if (head - pendingTail_.load(std::memory_order_acquire) >= kPending) return;
-    pending_[head % kPending] = {what, std::clamp(gain, 0.0f, 2.0f), std::clamp(pan, -1.0f, 1.0f), (uint32_t)(std::clamp(std::isfinite(delay) ? delay : 0.0f, 0.0f, 10.0f) * rate_)};
+    pending_[head % kPending] = {what, std::clamp(gain, 0.0f, 2.0f), std::clamp(pan, -1.0f, 1.0f), std::isfinite(pitch) ? std::clamp(pitch, 0.25f, 4.0f) : 1.0f, (uint32_t)(std::clamp(std::isfinite(delay) ? delay : 0.0f, 0.0f, 10.0f) * rate_)};
     pendingHead_.store(head + 1, std::memory_order_release);
 }
 
@@ -268,7 +381,7 @@ bool Audio::setAiring(int direction) {
     return true;
 }
 
-void Audio::startSfx(Sfx what, float gain, float pan, uint32_t wait) {
+void Audio::startSfx(Sfx what, float gain, float pan, uint32_t wait, float pitch) {
     SfxVoice* v = &sfxVoices_[0];
     for (SfxVoice& x : sfxVoices_) {
         if (x.what == SFX_COUNT) { v = &x; break; }
@@ -282,7 +395,7 @@ void Audio::startSfx(Sfx what, float gain, float pan, uint32_t wait) {
         from = k * slot, to = std::min(d.size(), from + slot);
         gain *= 0.85f + 0.15f * noise();
     }
-    v->what = what, v->pos = from, v->end = to, v->wait = wait;
+    v->what = what, v->pos = (double)from, v->end = to, v->wait = wait, v->rate = pitch;
     v->left = gain * std::sqrt(0.5f * (1 - pan)), v->right = gain * std::sqrt(0.5f * (1 + pan));
 }
 
@@ -333,7 +446,7 @@ void Audio::callback(void* user, uint8_t* stream, int len) {
 void Audio::renderEffects(float* out, int frames, float dt, float sceneGain) {
     for (unsigned tail = pendingTail_.load(std::memory_order_relaxed), head = pendingHead_.load(std::memory_order_acquire); tail != head; tail++) {
         const PendingSfx& e = pending_[tail % kPending];
-        startSfx(e.what, e.gain, e.pan, e.delay);
+        startSfx(e.what, e.gain, e.pan, e.delay, e.pitch);
         pendingTail_.store(tail + 1, std::memory_order_release);
     }
     const float smooth = 1.0f - std::exp(-dt * 12.0f);
@@ -389,10 +502,12 @@ void Audio::renderEffects(float* out, int frames, float dt, float sceneGain) {
         for (SfxVoice& v : sfxVoices_) {
             if (v.what == SFX_COUNT) continue;
             if (v.wait) { v.wait--; continue; }
-            const float s = sfx_[v.what][v.pos];
+            const std::vector<float>& d = sfx_[v.what];
+            const size_t a = (size_t)v.pos, b = std::min(a + 1, v.end - 1);
+            const float s = d[a] + (d[b] - d[a]) * (float)(v.pos - (double)a);
             if (v.what == SFX_UI_CLICK || v.what == SFX_UI_HOVER) ul += s * v.left, ur += s * v.right;  // (menu sounds aren't ducked with the scene)
             else l += s * v.left, r += s * v.right;
-            if (++v.pos >= v.end) v.what = SFX_COUNT;
+            if ((v.pos += v.rate) >= (double)v.end - 1) v.what = SFX_COUNT;
         }
         out[2 * i] += l * sceneGain + ul, out[2 * i + 1] += r * sceneGain + ur;
     }
