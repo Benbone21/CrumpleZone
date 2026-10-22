@@ -1101,7 +1101,7 @@ bool pilotDrive(Car& c, const World& w, double dt, const std::vector<Car>* cars)
     // Brakes: gently for the speed asked, firmly coming up on something to crawl over.
     c.brake = vt <= 0.05 ? 1 : vt < 3.5 ? (e < -0.3 ? clampd(-0.6 * e, 0, 1) : 0) : (e < -1.0 ? clampd(-0.3 * e, 0, 1) : 0);
     if (c.brake > 0) c.throttle = 0;
-    c.handbrake = 0;
+    c.handbrake = 0, c.parkBrake = false;  // (the autopilot lets the parking brake off to drive)
     // Stuck? (Wanting to push but not moving, or nowhere to go. Easing off because the tires
     // just spin counts: feathering it forever on a slope it can't hold isn't getting anywhere.)
     if ((wanted > 0.3 && c.brake <= 0 && std::fabs(v) < 0.35) || ap.blocked) ap.stuckTime += dt * (ap.blocked ? 2 : 1);

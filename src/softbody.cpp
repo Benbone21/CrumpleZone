@@ -2047,7 +2047,7 @@ void Car::wheelStep(double h, const World& w) {
             else
                 wh.abs = std::min(1.0, wh.abs + h * 6);
             double service = (brakePressure * wh.abs * (1 - 1.5 * wh.escCut) + std::max(wh.tcBrake, wh.escBrake)) * wh.brakeMax;
-            Tb += service + (wh.front ? 0.0 : handbrake * kHandbrakeTorque);
+            Tb += service + (wh.front ? 0.0 : std::max(handbrake, parkBrake ? 1.0 : 0.0) * kHandbrakeTorque);
         }
         // The brake grips the wheel to its knuckle, so it stops the wheel turning relative to
         // the knuckle, not in space: when the knuckle (or a solid axle) pitches back under
@@ -2602,6 +2602,7 @@ void Sim::substep() {
             const double now[4] = {c.throttle, c.brake, c.handbrake, c.steer};
             for (int k = 0; k < 4; k++)
                 if (std::fabs(now[k] - c.sleptControls[k]) > 0.01) c.wake();
+            if (c.parkBrake != c.sleptPark) c.wake();
         }
     }
     for (const auto& pair : contactPairs)
@@ -2710,6 +2711,7 @@ void Sim::substep() {
             c.sleeping = true;
             c.sleptControls[0] = c.throttle, c.sleptControls[1] = c.brake;
             c.sleptControls[2] = c.handbrake, c.sleptControls[3] = c.steer;
+            c.sleptPark = c.parkBrake;
             for (Node& n : c.nodes) {
                 n.v = V3();
                 n.scrape = 0;

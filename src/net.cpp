@@ -1279,7 +1279,7 @@ bool NetSession::apply(Sim& sim, const std::vector<uint8_t>& msg, int from) {
             Car& c = sim.cars[i];
             c.remote = true;
             c.netId = netId;
-            c.handbrake = 0;
+            c.handbrake = 0, c.parkBrake = false;
             c.lampMode = std::min<uint8_t>(lamps, 3);
             c.buildCount = (int)build;
             if (Remote* rm = remoteFor(netId)) {
@@ -1478,7 +1478,7 @@ bool NetSession::rekey(Sim& sim, uint32_t oldId, uint32_t newId, bool asked) {
         c.handBack = false;
         c.occupied = false;
         c.throttle = c.brake = 0;
-        c.handbrake = 1;
+        c.handbrake = 1, c.parkBrake = true;  // (it was empty: it stays put)
         knownCars.push_back({newId, c.spec, c.buildCount, c.lampMode});  // (everyone has it already: no spawn)
         e.kind = CarEvent::GOT;
     } else if (ri < remotes.size()) {  // someone else's: its states come from them now, told afresh

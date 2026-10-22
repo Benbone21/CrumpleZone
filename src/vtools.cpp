@@ -172,7 +172,7 @@ std::string status(const Sim& sim, int car) {
     if (c.ai) return "AI TRAFFIC";
     if (c.pilot.active) return (c.pilot.followCar >= 0 ? "FOLLOWING: " : "AUTOPILOT: ") + c.pilot.goalName;
     if (car == sim.player) return "DRIVEN BY YOU";
-    return c.handbrake > 0.5 ? "PARKED" : "STANDING";
+    return c.handbrake > 0.5 || c.parkBrake ? "PARKED" : "STANDING";
 }
 
 // ---- Finding vehicles ------------------------------------------------------------------------
