@@ -859,7 +859,8 @@ void drawGauges(Renderer& r, const Car& car, HudState& hud, float u, int W, int 
     if (car.lockFront) lights.push_back({"F LOCK", {1.0f, 0.75f, 0.2f}});
     if (car.lockRear) lights.push_back({"R LOCK", {1.0f, 0.75f, 0.2f}});
     if (car.swayDisconnected) lights.push_back({"SWAY", {1.0f, 0.75f, 0.2f}});
-    if (car.handbrake > 0.5) lights.push_back({"P", {1.0f, 0.3f, 0.25f}});
+    if (car.handbrake > 0.5 || car.parkBrake) lights.push_back({"P", {1.0f, 0.3f, 0.25f}});
+    if (car.parkBrake && car.throttle > 0.3 && len(car.frame().vel) > 1.0) lights.push_back({"PARKING BRAKE ON", {1.0f, 0.2f, 0.15f}});
     if (car.ai) lights.push_back({"AUTO", {0.4f, 0.85f, 1.0f}});
     // What the tires are on (most of them), and how they're doing in it.
     if (!car.isProp()) {
@@ -1340,7 +1341,8 @@ void drawHelp(Renderer& r, float u, int W, int H, bool mph) {
         {K(KA_LIGHTS), "LIGHTS: AUTO, LOW, HIGH, OFF"},
         {K(KA_LOCK_FRONT) + sp + K(KA_LOCK_REAR), "FRONT / REAR LOCKER"}, {K(KA_AUTOPILOT), "AUTOPILOT (ESC > AUTOPILOT: WHERE)"},
         {K(KA_CAMERA), "CAMERA"},                                        {"MOUSE", "LOOK / ZOOM"},
-        {K(KA_PAUSE), "PAUSE"},                                          {K(KA_TRACTION), "TRACTION CONTROL"},
+        {K(KA_PAUSE), "PAUSE"},                                          {K(KA_PARK_BRAKE), "PARKING BRAKE"},
+        {K(KA_TRACTION), "TRACTION CONTROL"},
         {K(KA_FULLSCREEN), "FULLSCREEN"},                                {K(KA_PHOTO), "HIDE THE HUD (PHOTOS)"},
         {K(KA_HUD_ALL), "HOLD: SHOW THE FULL HUD"},
         {K(KA_DEBUG_INFO), "DEBUG SCREEN (SHIFT: GRAPH)"},
@@ -2597,6 +2599,7 @@ int main(int argc, char** argv) {
         if (!riding) {
             stopPilot();
             c.handbrake = 1;
+            c.parkBrake = true;
         }
         camFrom = lastView, camBlend = 0;
         walker.exitCar(sim.world, c, riding);
@@ -3941,7 +3944,13 @@ int main(int argc, char** argv) {
                             else if (walker.active) getIn(interact.current.kind == IA_ENTER_CAR || interact.current.kind == IA_RIDE_ALONG ? interact.current.car : -1, true);  // (the door the prompt is on, else the nearest)
                             else getOut();
                             break;
-                        case SC_P:
+                        case SC_P: {
+                            Car& c = sim.cars[sim.player];
+                            c.parkBrake = !c.parkBrake;
+                            hud.toast(c.parkBrake ? "PARKING BRAKE ON" : "PARKING BRAKE OFF");
+                            break;
+                        }
+                        case SC_F6:
                             if (net.active()) hud.toast("NO PAUSING IN MULTIPLAYER (" + K(KA_MENU) + " STILL OPENS THE MENU)");
                             else sim.paused = !sim.paused;
                             break;

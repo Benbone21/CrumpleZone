@@ -36,6 +36,7 @@ enum KeyAction {
     KA_STEER_LEFT,
     KA_STEER_RIGHT,
     KA_HANDBRAKE,
+    KA_PARK_BRAKE,
     KA_GEAR_UP,
     KA_GEAR_DOWN,
     KA_MANUAL,

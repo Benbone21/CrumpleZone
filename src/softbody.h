@@ -387,6 +387,7 @@ public:
 
     // Controls.
     double throttle = 0, brake = 0, handbrake = 0;
+    bool parkBrake = false;
     double brakePressure = 0;  // follows `brake`, but takes ~0.15 s to build (hydraulics)
     double steerInput = 0;  // -1..1 (smoothed key input)
     double steer = 0;       // road-wheel angle, radians (+ = left)
@@ -574,6 +575,7 @@ public:
         double fx = 0, fz = 0;  // the pose's place (x, z): the road point, a little behind
     } lod;
     void endProxy();
+    bool sleptPark = false;  // the parking brake when it fell asleep
     double sleptControls[4] = {};  // throttle, brake, handbrake and steer when it fell asleep
     V3 bbMin, bbMax;
     double impactEnergy = 0;  // joules absorbed by deformation since last read

@@ -160,7 +160,8 @@ scenario finishes, you can drive around in the aftermath.
 | C | Camera: chase / orbit / cockpit / drone (WASD fly, Q/E down/up, drag look; the truck stays put) |
 | F10 | Photo mode: hide the HUD |
 | Mouse drag, wheel | Look around (drag up past level to look up at the sky), zoom |
-| P | Pause |
+| P | Parking brake on/off (stays set until released; getting out sets it; the P light on the HUD) |
+| F6 | Pause (single player; Esc always opens the menu) |
 | X | Traction control on/off |
 | F11 | Fullscreen |
 | H | Controls overlay |

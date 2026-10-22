@@ -31,6 +31,7 @@ const Info kInfo[KA_COUNT] = {
     {SC_A, false, "STEER LEFT", "key_steerleft", KG_DRIVING, ANY, true, false},
     {SC_D, false, "STEER RIGHT", "key_steerright", KG_DRIVING, ANY, true, false},
     {SC_SPACE, false, "HANDBRAKE", "key_handbrake", KG_DRIVING, ANY, true, false},
+    {SC_P, false, "PARKING BRAKE", "key_parkbrake", KG_DRIVING, ANY, false, false},
     {SC_E, false, "GEAR UP", "key_gearup", KG_DRIVING, D, false, false},
     {SC_Q, false, "GEAR DOWN", "key_geardown", KG_DRIVING, D, false, false},
     {SC_M, true, "MANUAL / AUTOMATIC GEARBOX", "key_manual", KG_DRIVING, D, false, false},
@@ -70,7 +71,7 @@ const Info kInfo[KA_COUNT] = {
     {SC_F3, false, "DEBUG INFO", "key_devfps", KG_VIEW, ANY, false, false},
     // GAME
     {SC_ESCAPE, false, "MENU", "key_menu", KG_GAME, ANY, false, false},
-    {SC_P, false, "PAUSE", "key_pause", KG_GAME, ANY, false, false},
+    {SC_F6, false, "PAUSE", "key_pause", KG_GAME, ANY, false, false},
     {SC_H, false, "CONTROLS OVERLAY", "key_help", KG_GAME, ANY, false, false},
     {SC_F11, false, "FULLSCREEN", "key_fullscreen", KG_GAME, ANY, false, false},
     {SC_RETURN, false, "CHAT", "key_chat", KG_GAME, ANY, false, false},
