@@ -509,7 +509,7 @@ public:
     bool remote = false;
     uint32_t netId = 0;
     bool occupied = false;  // someone's in the driver's seat (mine: the game says; a remote one: its states)
-    bool blowoutsOn = true;  // off: tests that measure raw power, gearing and drag
+    bool blowoutsOn = false;  // speed-rating blowouts: off for now (the owner's call, 2026-10-22); blowout/* tests turn them on
     uint64_t blowSeed = 1;  // seeds its tires' blowout dice (with the wheel's index): the same seed, the same blowouts
     // The fastest tire's road speed over its rating (tires.h): 1 = at it, above = blowouts possible. 0 if none.
     double tireSpeedFrac() const;

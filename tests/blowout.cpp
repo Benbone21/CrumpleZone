@@ -49,6 +49,7 @@ Car& fresh(Ctx& ctx, uint64_t seed) {
     Car& c = ctx.add(bronco(), ctx.sim.world.spawn.x, kLaneZ, 0);
     ctx.sim.player = 0;
     c.blowSeed = seed;
+    c.blowoutsOn = true;  // (off in the game for now: these test the mechanism)
     ctx.focus(c);
     ctx.run(1.0);
     return c;

@@ -14,6 +14,7 @@
 #include <climits>
 #include <cstdlib>
 #include <cstdint>
+#include <unistd.h>  // (fsync for the atomic saves)
 #else
 #include <unistd.h>
 #endif

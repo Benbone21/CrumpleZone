@@ -765,7 +765,7 @@ void updateHudContext(HudState& hud, const Sim& sim, bool fuelOn, float dt) {
             if (band > 0 || (band < 0 && s.tireBand == 0)) s.tireBand = band;
             s.tireLoss = std::max(s.tireLoss, (float)(1 - tireTempGrip(tread, wh.tempC)));
         }
-    s.tireFrac = car.isProp() ? 0.0f : (float)car.tireSpeedFrac();
+    s.tireFrac = car.isProp() || !car.blowoutsOn ? 0.0f : (float)car.tireSpeedFrac();
     s.lockF = car.lockFront, s.lockR = car.lockRear, s.lockC = car.centerLocked(), s.sway = car.swayDisconnected;
     hud.ctx.update(s, dt);
 }
