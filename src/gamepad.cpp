@@ -226,7 +226,7 @@ void Logic::update(const Raw& raw, Mode ctx, double dt) {
     if (P(B_Y)) tap(SC_B);  // (the garage: buy the part, at a station in a career)
 }
 
-bool Logic::apply(Car& c, double dt) {
+bool Logic::apply(Car& c, double dt, bool steeringAssist) {
     bool did = false;
     // Steering: the stick sets a target between full lock left and right; the wheel follows it a
     // little quicker the slower you go (hands get gentler as the speed climbs), and lets go fast.
@@ -238,7 +238,13 @@ bool Logic::apply(Car& c, double dt) {
         // Full stick is the keyboard's full key (what the tires hold at this speed), times a
         // gain: full lock when crawling, a few degrees at 130 km/h; half stick is half of that.
         c.steerInput = steerState;
-        c.steer = steerState * std::min(kMaxLock, steerLimit(c, steerState) * steerGain(tune.steering));
+        if (steeringAssist) {
+            c.steer = steerState * std::min(kMaxLock, steerLimit(c, steerState) * steerGain(tune.steering));
+        } else {
+            // Simulation mode: full lock at all speeds (kMaxLock = 0.6 rad = 34 degrees), matching
+            // the keyboard's assist-off path in Sim::drive.
+            c.steer = steerState * kMaxLock;
+        }
         did = true;
     } else {
         steerState = 0;
