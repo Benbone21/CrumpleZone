@@ -199,3 +199,46 @@ SCENARIO(promptsPick, "prompts/pick", "beside a Blazer: a wheel is picked lookin
     fo = pr.update(ctx.sim, wk, ia, ia.nearby, eyeOf(wk), left);
     ctx.check("40 m away: no markers, no hint", fo.markers.empty() && fo.hint.empty() && fo.target < 0);
 }
+
+SCENARIO(promptsAir, "prompts/air", "on-foot tire airing: AIR UP and LET AIR OUT appear at the tire when the car is stopped and the pressure is off") {
+    const VehicleSpec* spec = byId("blazer");
+    Car& c = ctx.add(*spec, -140, -50, 0);
+    ctx.focus(c);
+    c.handbrake = 1;
+    c.setJack(true);
+    c.tirePsi = 20.0;  // well below the spec's target
+    ctx.run(1.0);
+    const int fl = cornerOf(c, true, true);
+    ctx.check("a left front corner", fl >= 0);
+    if (fl < 0) return;
+    const Frame f = c.frame();
+    const V3 fwd = norm(V3(f.fwd.x, 0, f.fwd.z)), left(fwd.z, 0, -fwd.x);
+    Walker wk;
+    Interact ia;
+    ia.trunkOn = false;
+    ia.own = tools(true);
+    ia.kit = ia.own.kit;
+    const V3 hubF = hubOf(c, fl);
+    standAt(ctx.sim.world, wk, hubF + left * 2.0);
+    const V3 eye = eyeOf(wk);
+    auto pickAt = [&](const V3& dir) { return Interact::pick(ctx.sim, wk, eye, dir, nullptr, ia.kit, &ia.own, nullptr, nullptr); };
+    // Aim at the hub: should pick the wheel job, not airing.
+    InteractOption o = pickAt(norm(hubF - eye));
+    ctx.check("aiming at the hub: the target is the wheel job, not airing", o.kind == IA_REMOVE_WHEEL && o.wheel == fl, o.prompt);
+    // Aim at the sidewall (offset from the hub): should pick air up.
+    V3 wheelOut = c.nodes[c.wheels[fl].outer].p - c.nodes[c.wheels[fl].inner].p;
+    wheelOut = len(wheelOut) > 1e-6 ? norm(wheelOut) : f.fwd;
+    const V3 sidewall = hubF + wheelOut * c.wheels[fl].R;
+    // First, check that the air up option is generated (in the nearby list).
+    std::vector<InteractOption> nearby;
+    PickOpts po;
+    po.nearby = &nearby;
+    Interact::pick(ctx.sim, wk, eye, norm(hubF - eye), nullptr, ia.kit, &ia.own, nullptr, &po);
+    bool sawAirUp = false;
+    for (const InteractOption& opt : nearby) {
+        if (opt.kind == IA_AIR_UP_TIRE) sawAirUp = true;
+    }
+    ctx.check("low pressure: AIR UP option is generated", sawAirUp);
+    o = pickAt(norm(sidewall - eye));
+    ctx.check("aiming at the sidewall: the target is air up", o.kind == IA_AIR_UP_TIRE && o.wheel == fl, o.prompt);
+}

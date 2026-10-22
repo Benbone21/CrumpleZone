@@ -377,32 +377,35 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
                 }
             }
         // Tire pressure: air up with the compressor (or shop air) and let air out at the valves,
-        // on foot or in the seat, stopped.
+        // on foot or in the seat, stopped. Placed on the tire's sidewall (offset from the hub) so
+        // aiming at the hub still picks the wheel jobs; lower priority (bias) than wheel work.
         {
             const double speed = len(c.frame().vel);
-            if (speed < 0.5)
+            if (speed < 0.5 && c.tirePsi < c.spec->tirePsi - 0.5)
                 for (int k = 0; k < (int)c.wheels.size(); k++) {
                     const Wheel& wh = c.wheels[k];
                     if (wh.detached) continue;
-                    // Air up: if below the spec's target, offer to fill it.
-                    if (c.tirePsi < c.spec->tirePsi - 0.5) {
-                        InteractOption o;
-                        o.car = ci, o.wheel = k, o.kind = IA_AIR_UP_TIRE, o.continuous = true;
-                        o.at = hubOf(c, wh);
-                        char buf[64];
-                        std::snprintf(buf, sizeof buf, "AIR UP (%.0f PSI)", c.tirePsi);
-                        o.prompt = buf;
-                        consider(o);
-                    }
-                    // Let air out: if above the minimum, offer to drop it.
+                    // Sidewall position: offset from the hub along the wheel's out direction.
+                    V3 wheelOut = c.nodes[wh.outer].p - c.nodes[wh.inner].p;
+                    wheelOut = len(wheelOut) > 1e-6 ? norm(wheelOut) : c.frame().fwd;
+                    const V3 sidewall = hubOf(c, wh) + wheelOut * wh.R;
+                    InteractOption o;
+                    o.car = ci, o.wheel = k, o.kind = IA_AIR_UP_TIRE, o.continuous = true;
+                    o.at = sidewall;
+                    o.radius = 0.5;
+                    char buf[64];
+                    std::snprintf(buf, sizeof buf, "AIR UP (%.0f PSI)", c.tirePsi);
+                    o.prompt = buf;
+                    consider(o, kReach, 0.1);
                     if (c.tirePsi > 12.5) {
-                        InteractOption o;
-                        o.car = ci, o.wheel = k, o.kind = IA_AIR_DOWN_TIRE, o.continuous = true;
-                        o.at = hubOf(c, wh);
-                        char buf[64];
-                        std::snprintf(buf, sizeof buf, "LET AIR OUT (%.0f PSI)", c.tirePsi);
-                        o.prompt = buf;
-                        consider(o);
+                        InteractOption o2;
+                        o2.car = ci, o2.wheel = k, o2.kind = IA_AIR_DOWN_TIRE, o2.continuous = true;
+                        o2.at = sidewall;
+                        o2.radius = 0.5;
+                        char buf2[64];
+                        std::snprintf(buf2, sizeof buf2, "LET AIR OUT (%.0f PSI)", c.tirePsi);
+                        o2.prompt = buf2;
+                        consider(o2, kReach, 0.1);
                     }
                 }
         }
