@@ -680,6 +680,8 @@ public:
     bool lockerAllowed(bool front) const;
 private:
     void applyTorque(const std::vector<int>& set, const V3& torque, bool byMass = false);
+    V3 turnRate(const std::vector<int>& set, bool byMass) const;  // (what applyTorque turns)
+    bool setInertia(const std::vector<int>& set, bool byMass, V3& c, M3& I) const;
     void chassisForces(double h);
     void steeringStops(double h);
     void chassisGroupForces(ChassisFrame& cf, double h);
