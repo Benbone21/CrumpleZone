@@ -1,4 +1,4 @@
-// The new main menu (shown on launch): a front page (SANDBOX, CAREER, MULTIPLAYER, a gear for the settings, small DEV
+// The new main menu (shown on launch): a front page (SANDBOX, CAREER, MULTIPLAYER, SETTINGS, small DEV
 // and QUIT), the pick pages SANDBOX/CAREER go through (the map, then the vehicle, then start), and the DEV page that lists
 // the developer tools. The navigation here is plain state with no GL or SDL, so the tests drive it; mainmenudraw.cpp
 // paints it over the live camp scene (menuscene.h) and main.cpp acts on what it returns.
@@ -15,7 +15,7 @@ enum Act {
     A_NONE,
     A_START,         // map + vehicle + career chosen: free drive there
     A_MULTIPLAYER,   // the join / host page
-    A_SETTINGS,      // the settings page
+    A_SETTINGS,      // the settings page (the SETTINGS button)
     A_QUIT,
     A_DEV_EDITOR,    // the world editor
     A_DEV_SECTION,   // a new obstacle section in the editor
@@ -36,7 +36,7 @@ struct Result {
 };
 
 // The front page's focus order.
-enum Front { F_SANDBOX, F_CAREER, F_MULTI, F_DEV, F_QUIT, F_GEAR, F_COUNT };
+enum Front { F_SANDBOX, F_CAREER, F_MULTI, F_SETTINGS, F_DEV, F_QUIT, F_COUNT };
 
 struct DevEntry {
     Act act;

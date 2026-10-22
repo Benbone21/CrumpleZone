@@ -7,7 +7,7 @@
 
 namespace menuscene {
 
-constexpr double kHours = 18.4;  // the sun low and warm
+constexpr double kHours = 18.5;  // the sun a few degrees up, behind the camp and a little to the right: the sunset
 
 // The camp as a level on the wilds (not on any list): ground, cabin, fire, trees, rocks. The fire is at fire().
 Level level();

@@ -18,25 +18,6 @@ const float kAmber[3] = {1.0f, 0.75f, 0.3f};
 const float kGrey[3] = {0.62f, 0.64f, 0.68f};
 const float kPanel[3] = {0.03f, 0.035f, 0.045f};
 
-// A gear: eight teeth round a ring (a hub hole in the middle).
-void gear(Renderer& r, float cx, float cy, float rad, float cr, float cg, float cb, float a) {
-    const int teeth = 8, segs = teeth * 4;
-    float px0 = 0, py0 = 0, px1 = 0, py1 = 0;
-    for (int i = 0; i <= segs; i++) {
-        const int k = i % segs, ph = k % 4;  // tooth: out, out, in, in
-        const float ang = k * 6.2831853f / segs - 0.19f, rr = rad * (ph == 0 || ph == 3 ? 1.0f : 0.8f);
-        px1 = cx + std::cos(ang) * rr, py1 = cy + std::sin(ang) * rr;
-        if (i > 0) r.tri(cx, cy, px0, py0, px1, py1, cr, cg, cb, a);
-        px0 = px1, py0 = py1;
-    }
-    const int hs = 20;
-    for (int i = 0; i < hs; i++) {  // the hub hole: the dark of the button behind it
-        const float a0 = i * 6.2831853f / hs, a1 = (i + 1) * 6.2831853f / hs;
-        r.tri(cx, cy, cx + std::cos(a0) * rad * 0.36f, cy + std::sin(a0) * rad * 0.36f, cx + std::cos(a1) * rad * 0.36f, cy + std::sin(a1) * rad * 0.36f,
-              kPanel[0], kPanel[1], kPanel[2], std::min(1.0f, a * 1.2f));
-    }
-}
-
 struct Ctx {
     Renderer& r;
     Nav& nav;
@@ -93,14 +74,16 @@ void draw(Renderer& r, Nav& nav, int W, int H, float a, double clock, bool padLa
         r.text(x0 + 4 * u, ty + 8 * big + 10 * u, mid, "SOFT-BODY DRIVING: CRASH IT, CRAWL IT, RACE IT", 0.8f, 0.8f, 0.82f, a);
         r.rect(x0 + 2 * u, ty + 8 * big + 2 * u, big * 6 * 12 - 6 * big, 2 * u, kAmber[0], kAmber[1], kAmber[2], 0.8f * a);
         const float bw = std::min(W * 0.34f, 440 * u), bh = 54 * u, gap = 10 * u;
-        float y = std::max(H * 0.40f, ty + 8 * big + 60 * u);
+        float y = std::max(H * 0.37f, ty + 8 * big + 50 * u);
         const float ts = px(3.0f * u);
         row(c, F_SANDBOX, x0, y, bw, bh, ts, "SANDBOX", "EVERY PART ON EVERY VEHICLE, ANY MAP", nav.sel == F_SANDBOX);
         y += bh + gap;
         row(c, F_CAREER, x0, y, bw, bh, ts, "CAREER", "START STOCK: FIND, WIN AND BUY BETTER PARTS", nav.sel == F_CAREER);
         y += bh + gap;
-        row(c, F_MULTI, x0, y, bw, 40 * u, px(2.2f * u), "MULTIPLAYER", "", nav.sel == F_MULTI);
-        // Small DEV and QUIT, bottom left; the gear, bottom right.
+        row(c, F_MULTI, x0, y, bw, bh, ts, "MULTIPLAYER", "HOST OR JOIN A GAME ON YOUR NETWORK", nav.sel == F_MULTI);
+        y += bh + gap;
+        row(c, F_SETTINGS, x0, y, bw, bh, ts, "SETTINGS", "GRAPHICS, CONTROLS, AUDIO", nav.sel == F_SETTINGS);
+        // Small DEV and QUIT, bottom left.
         const float sy = H - 74 * u, sw = 74 * u, sh = 28 * u, st = px(1.6f * u);
         const char* names[2] = {"DEV", "QUIT"};
         for (int i = 0; i < 2; i++) {
@@ -112,12 +95,6 @@ void draw(Renderer& r, Nav& nav, int W, int H, float a, double clock, bool padLa
             r.text(sx + (sw - r.textWidth(names[i], st)) / 2, sy + (sh - 8 * st) / 2, st, names[i], foc ? kAmber[0] : 0.82f, foc ? kAmber[1] : 0.82f, foc ? kAmber[2] : 0.85f, a);
             nav.hits.push_back({sx, sy, sw, sh, f});
         }
-        const float gr = 22 * u, gcx = W - x0 + 8 * u - gr, gcy = H - 74 * u + 14 * u;
-        const bool gf = nav.sel == F_GEAR;
-        pill(r, gcx - gr - 8 * u, gcy - gr - 8 * u, 2 * gr + 16 * u, 2 * gr + 16 * u, kPanel[0], kPanel[1], kPanel[2], (gf ? 0.85f : 0.45f) * a);
-        gear(r, gcx, gcy, gr, gf ? kAmber[0] : 0.85f, gf ? kAmber[1] : 0.85f, gf ? kAmber[2] : 0.88f, a);
-        nav.hits.push_back({gcx - gr - 8 * u, gcy - gr - 8 * u, 2 * gr + 16 * u, 2 * gr + 16 * u, F_GEAR});
-        if (gf) r.text(gcx - gr - 8 * u - r.textWidth("SETTINGS", small) - 10 * u, gcy - 4 * small, small, "SETTINGS", 0.85f, 0.85f, 0.88f, a);
         return;
     }
 

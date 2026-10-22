@@ -106,7 +106,7 @@ Result Nav::choose(int i) {
                     page = P_DEV, sel = 0;
                     return {};
                 case F_QUIT: return {A_QUIT};
-                case F_GEAR: return {A_SETTINGS};
+                case F_SETTINGS: return {A_SETTINGS};
             }
             return {};
         }
@@ -134,8 +134,8 @@ Result Nav::key(int sc) {
     if (up) move(-1);
     else if (down) move(1);
     else if (left || right) {
-        // Sideways: along the front page's bottom row (DEV, QUIT, the gear); on the pick pages, nothing (rows are a column).
-        if (page == P_FRONT && sel >= F_DEV) setSel(F_DEV + (sel - F_DEV + (right ? 1 : 2)) % 3);
+        // Sideways: along the front page's bottom row (DEV, QUIT); on the pick pages, nothing (rows are a column).
+        if (page == P_FRONT && sel >= F_DEV) setSel(F_DEV + (sel - F_DEV + 1) % 2);
         else if (page == P_DEV && sel >= 0) {  // (a toggle row: left or right flips it, like the old menu)
             const Act a = devEntries()[sel].act;
             if (a == A_DEV_HOTKEYS || a == A_DEV_DEBUG) return choose(sel);

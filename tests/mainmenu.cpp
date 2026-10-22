@@ -45,11 +45,11 @@ SCENARIO(menuBack, "mainmenu/back", "Esc goes back one page at a time, keeping t
     ctx.check("back from CAREER lands on CAREER", n.page == P_FRONT && n.sel == F_CAREER);
 }
 
-SCENARIO(menuFront, "mainmenu/front", "The front page: MULTIPLAYER, the gear, QUIT and DEV answer; every button is reachable with the keys") {
+SCENARIO(menuFront, "mainmenu/front", "The front page: MULTIPLAYER, SETTINGS, QUIT and DEV answer; every button is reachable with the keys") {
     Nav n;
     n.open(0, 0);
     ctx.check("MULTIPLAYER asks for the join page", n.choose(F_MULTI).act == A_MULTIPLAYER && n.page == P_FRONT);
-    ctx.check("the gear asks for the settings", n.choose(F_GEAR).act == A_SETTINGS);
+    ctx.check("SETTINGS asks for the settings", n.choose(F_SETTINGS).act == A_SETTINGS);
     ctx.check("QUIT quits", n.choose(F_QUIT).act == A_QUIT);
     n.open(0, 0);
     std::vector<int> seen;
@@ -62,11 +62,12 @@ SCENARIO(menuFront, "mainmenu/front", "The front page: MULTIPLAYER, the gear, QU
     n.key(K_RIGHT);
     ctx.check("right from DEV: QUIT", n.sel == F_QUIT);
     n.key(K_RIGHT);
-    ctx.check("right from QUIT: the gear", n.sel == F_GEAR);
-    n.key(K_RIGHT);
-    ctx.check("right from the gear: DEV again", n.sel == F_DEV);
+    ctx.check("right from QUIT: DEV again", n.sel == F_DEV);
     n.key(K_LEFT);
-    ctx.check("left from DEV: the gear", n.sel == F_GEAR);
+    ctx.check("left from DEV: QUIT", n.sel == F_QUIT);
+    n.setSel(F_SANDBOX);
+    n.key(K_S), n.key(K_S), n.key(K_S);
+    ctx.check("three steps down from SANDBOX: SETTINGS, under MULTIPLAYER", n.sel == F_SETTINGS);
 }
 
 SCENARIO(menuDev, "mainmenu/dev", "The DEV page lists the existing tools, each asks for its action, and Esc comes back to DEV") {
