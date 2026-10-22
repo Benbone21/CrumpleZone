@@ -19,6 +19,7 @@ const KindInfo& info(InteractKind k) {
         kHook{"AN ANCHOR", "HOOK LINE", 0.4, KEY_INTERACT}, kUnhook{"THE HOOKED LINE", "UNHOOK IT", 0.3, KEY_INTERACT},
         kTire{"THE WHEEL ON THE GROUND", "MOUNT NEW TIRE", 0.4, KEY_INTERACT}, kDoor{"THE DRIVER DOOR", "GET IN", 0.55, KEY_GET_IN},
         kRide{"THE PASSENGER DOOR", "RIDE ALONG", 0.55, KEY_GET_IN},
+        kAirUp{"THE TIRE", "AIR UP", 0.4, KEY_INTERACT}, kAirDown{"THE TIRE", "LET AIR OUT", 0.4, KEY_INTERACT},
         kOther{"A MARKER", "USE IT", 0.3, KEY_INTERACT};
     switch (k) {
         case IA_TAKE_SPARE: case IA_STOW_SPARE: return kTake;
@@ -38,6 +39,8 @@ const KindInfo& info(InteractKind k) {
         case IA_UNHOOK_LINE: return kUnhook;
         case IA_ENTER_CAR: return kDoor;  // (carentry.h)
         case IA_RIDE_ALONG: return kRide;
+        case IA_AIR_UP_TIRE: return kAirUp;
+        case IA_AIR_DOWN_TIRE: return kAirDown;
         case IA_NONE: return kDoor;  // (the door is the one marker that is no InteractKind: J, not E)
         default: return kOther;
     }

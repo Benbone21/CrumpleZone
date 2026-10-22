@@ -376,6 +376,36 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
                     consider(o);
                 }
             }
+        // Tire pressure: air up with the compressor (or shop air) and let air out at the valves,
+        // on foot or in the seat, stopped.
+        {
+            const double speed = len(c.frame().vel);
+            if (speed < 0.5)
+                for (int k = 0; k < (int)c.wheels.size(); k++) {
+                    const Wheel& wh = c.wheels[k];
+                    if (wh.detached) continue;
+                    // Air up: if below the spec's target, offer to fill it.
+                    if (c.tirePsi < c.spec->tirePsi - 0.5) {
+                        InteractOption o;
+                        o.car = ci, o.wheel = k, o.kind = IA_AIR_UP_TIRE, o.continuous = true;
+                        o.at = hubOf(c, wh);
+                        char buf[64];
+                        std::snprintf(buf, sizeof buf, "AIR UP (%.0f PSI)", c.tirePsi);
+                        o.prompt = buf;
+                        consider(o);
+                    }
+                    // Let air out: if above the minimum, offer to drop it.
+                    if (c.tirePsi > 12.5) {
+                        InteractOption o;
+                        o.car = ci, o.wheel = k, o.kind = IA_AIR_DOWN_TIRE, o.continuous = true;
+                        o.at = hubOf(c, wh);
+                        char buf[64];
+                        std::snprintf(buf, sizeof buf, "LET AIR OUT (%.0f PSI)", c.tirePsi);
+                        o.prompt = buf;
+                        consider(o);
+                    }
+                }
+        }
         // Repairs (fixes.h): in order, a step at a time, each with the right thing in your hand.
         if (!busy)
             for (const Fix& f : fixesFor(c)) {
@@ -530,8 +560,17 @@ std::string Interact::run(Sim& sim, Walker& wk, const V3& eye, const V3& look, b
     // Working the jack: it goes on while E is held, whatever it turns into on the way.
     if (holdE && progress > 0 && current.continuous && o.car == current.car) o = current;
     if (!o.same(current)) progress = 0;
+    const InteractOption prev = current;
     current = o;
+    // If we were airing on a previous interaction and now we're not, stop airing.
+    if ((prev.kind == IA_AIR_UP_TIRE || prev.kind == IA_AIR_DOWN_TIRE) && prev.car >= 0 && prev.car < (int)sim.cars.size() && !o.same(prev)) {
+        sim.cars[prev.car].airing = 0;
+    }
     if (!holdE || o.kind == IA_NONE || o.blocked || waitRelease) {
+        // Stop airing when we let go (or the interaction ends).
+        if ((prev.kind == IA_AIR_UP_TIRE || prev.kind == IA_AIR_DOWN_TIRE) && prev.car >= 0 && prev.car < (int)sim.cars.size()) {
+            sim.cars[prev.car].airing = 0;
+        }
         progress = 0;
         return "";
     }
@@ -546,11 +585,27 @@ std::string Interact::run(Sim& sim, Walker& wk, const V3& eye, const V3& look, b
                 progress = 0, waitRelease = true;
                 return c.jackHeight >= kJackMax && !cornerLifted(sim, c, o.wheel) ? "THE JACK'S AS HIGH AS IT GOES" : "CORNER UP";
             }
-        } else {
+        } else if (o.kind == IA_LOWER_JACK) {
             c.jackHeight = std::max(0.0, c.jackHeight - kJackRate * dt);
             if (c.jackHeight <= 0) {
                 progress = 0, waitRelease = true;
                 return "JACK DOWN";
+            }
+        } else if (o.kind == IA_AIR_UP_TIRE) {
+            c.airing = 1;
+            if (c.tirePsi >= c.spec->tirePsi - 0.5) {
+                c.airing = 0;
+                progress = 0, waitRelease = true;
+                char buf[64];
+                std::snprintf(buf, sizeof buf, "TIRES UP TO %.0f PSI", c.spec->tirePsi);
+                return buf;
+            }
+        } else if (o.kind == IA_AIR_DOWN_TIRE) {
+            c.airing = -1;
+            if (c.tirePsi <= 12.5) {
+                c.airing = 0;
+                progress = 0, waitRelease = true;
+                return "TIRES AT 12 PSI";
             }
         }
         return "";
