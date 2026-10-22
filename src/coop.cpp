@@ -78,6 +78,8 @@ bool Coop::onMessage(const std::string& who, const std::string& text) {
         }
         if (it == walkers.end()) walkers.push_back(RemoteWalker{who}), it = walkers.end() - 1;
         in >> it->p.x >> it->p.y >> it->p.z >> it->yaw >> it->stride;
+        double cr = 0;
+        it->crouch = (in >> cr) ? std::min(std::max(cr, 0.0), 1.0) : 0.0;
         it->age = 0;
         return true;
     }

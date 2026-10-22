@@ -675,13 +675,14 @@ Pose walking(const Gait& g, Mover& m, double dt) {
     const double sway = 0.028 * std::sin(ph) * amp * (1 - run) * mv + shiftIdle;
     const double twist = 0.11 * std::sin(ph) * amp * mv;
     const double breath = std::sin(m.t * 2 * M_PI / (4.2 - 1.6 * run));
-    double hipY = 0.935 - 0.035 * run * mv + bob - 0.13 * smooth01(m.land) - 0.004 * idle * (1 + breath);
+    const double cr = clampd(g.crouch, 0, 1);
+    double hipY = 0.935 - 0.035 * run * mv - 0.5 * cr + bob - 0.13 * smooth01(m.land) - 0.004 * idle * (1 + breath);
     V3 ankle[2], fwd[2];
     for (int sd = 0; sd < 2; sd++) {
         ankle[sd] = m.planted ? stAnkle[sd] + (cyAnkle[sd] - stAnkle[sd]) * mv : cyAnkle[sd];
         fwd[sd] = m.planted ? norm(stFwd[sd] + (cyFwd[sd] - stFwd[sd]) * mv) : cyFwd[sd];
     }
-    const V3 pelH = g.p + R * sway;
+    const V3 pelH = g.p + R * sway - F * (0.1 * cr);  // (crouched: the seat goes back)
     for (int sd = 0; sd < 2; sd++) {  // no higher than the planted legs reach
         if (lift[sd] > 0.015) continue;
         const V3 hip = pelH + R * ((sd == 0 ? -1.0 : 1.0) * kHipW);
@@ -702,7 +703,7 @@ Pose walking(const Gait& g, Mover& m, double dt) {
     p.pelvis = pelH + kUp * hipY;
     p.pelvisF = rotateAxis(F, kUp, twist);
     p.pelvisU = norm(kUp + R * (sway * 2.2) * (1 - run));
-    const double lean = (0.05 + 0.24 * run) * amp * mv + clampd(m.accel * 0.05, -0.08, 0.12) * mv + 0.3 * smooth01(m.land) - 0.012 * breath * idle;
+    const double lean = (0.05 + 0.24 * run) * amp * mv + clampd(m.accel * 0.05, -0.08, 0.12) * mv + 0.3 * smooth01(m.land) + 0.5 * cr - 0.012 * breath * idle;
     p.chestU = norm(kUp * std::cos(lean) + F * std::sin(lean) - R * (sway * 2.6));
     p.chestF = rotateAxis(F, kUp, -twist * 0.75);
     p.breath = breath;

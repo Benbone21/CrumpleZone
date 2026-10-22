@@ -45,6 +45,7 @@ struct Settings {
     // Game controller (gamepad.h): indices into pad::kSteeringNames / kDeadzoneNames / kRumbleNames.
     int padSteering = 1, padDeadzone = 1, padRumble = 1;
     bool padInvertLookX = false, padInvertLookY = false;  // invert right-stick look axes
+    bool crouchToggle = false;  // on foot: the crouch key (and pad stick click) toggles instead of being held
     RenderSettings gfx;
     bool adaptiveQuality = true;  // auto-scale quality to maintain framerate
     int fpsTarget = kFpsMatchDisplay;  // kFpsTargets: adaptive quality's aim and, VSync off, the frame cap (match display, or 0: uncapped, aiming for 60)

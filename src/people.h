@@ -67,6 +67,7 @@ struct Gait {
     double stride = 0;     // the walker's distance-driven stride (radians, 3.2 per m)
     bool grounded = true;
     double lookPitch = 0;  // head (radians, + up)
+    double crouch = 0;     // 0 standing .. 1 crouched, already eased (knees bent, hips down, chest forward; synced to other players)
     bool lookAround = false;  // an idle head that glances about (others; never yours)
 };
 // One per person, kept between frames: the walk cycle (its own length per stride, longer running), the feet

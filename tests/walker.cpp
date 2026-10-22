@@ -1,6 +1,8 @@
 // On foot: walking, stepping up, being blocked, wading, and getting in and out.
 #include <cmath>
 
+#include "../src/carentry.h"
+#include "../src/interact.h"
 #include "../src/walker.h"
 #include "harness.h"
 
@@ -87,4 +89,57 @@ SCENARIO(gameplayFuel, "gameplay/fuel", "Fuel: a Bronco at full throttle burns a
     d.fuel = 1;
     ctx.run(5, [&] { d.throttle = 0, d.brake = 1, d.handbrake = 1; });
     ctx.metric("filled at the shop in 5 s", d.fuel, "L", 10, 20);
+}
+
+SCENARIO(walkerCrouch, "walker/crouch", "Crouch: the eyes ease down to ~60% in ~0.35 s and back up, walking drops to ~45% (no running or jumping), a repair prompt is still offered crouched, and standing up again") {
+    Car& c = ctx.add(vehicleCatalog()[2], -120, -50, 0);
+    ctx.focus(c);
+    ctx.run(1.0);
+    World& w = ctx.sim.world;
+    Walker wk;
+    wk.exitCar(w, c);
+    wk.p = V3(-100, w.height(-100, -50), -50), wk.v = V3();
+    auto stepFor = [&](double secs, double fwd, bool run) {
+        for (double t = 0; t < secs; t += Ctx::kFrame) wk.step(w, ctx.sim, Ctx::kFrame, fwd, 0, run, false, 0);
+    };
+    stepFor(0.5, 0, false);
+    ctx.metric("standing eye height", wk.eyeHeight(), "m", 1.6, 1.64);
+    wk.crouching = true;
+    stepFor(0.17, 0, false);
+    ctx.check("halfway down after ~0.17 s", wk.eyeHeight() < 1.4 && wk.eyeHeight() > 1.1, std::to_string(wk.eyeHeight()));
+    stepFor(0.3, 0, false);
+    ctx.metric("crouched eye height (60% of standing)", wk.eyeHeight() / Walker::kEyeStand, "", 0.58, 0.62);
+    // Speed: 10 s of walking, standing then crouched (running while crouched is still a walk).
+    auto distance = [&](bool crouch, bool run) {
+        wk.crouching = crouch;
+        wk.p = V3(-100, w.height(-100, -40), -40), wk.v = V3();
+        stepFor(1.0, 0, false);  // (settle into the stance)
+        const double x0 = wk.p.x;
+        stepFor(5, 1, run);
+        return wk.p.x - x0;
+    };
+    const double stand = distance(false, false), low = distance(true, false), lowRun = distance(true, true);
+    ctx.metric("crouched walking speed vs standing", low / stand, "", 0.40, 0.50);
+    ctx.check("holding run while crouched stays a crouch walk", lowRun < stand * 0.55, std::to_string(lowRun));
+    // A repair prompt is still offered with the eyes down: at the parked truck's door.
+    {
+        Car& t = ctx.add(vehicleCatalog()[2], -60, -30, 0);
+        ctx.run(1.0);
+        Walker pw;
+        pw.exitCar(w, t);
+        pw.crouching = true;
+        for (double s = 0; s < 1; s += Ctx::kFrame) pw.step(w, ctx.sim, Ctx::kFrame, 0, 0, false, false, 0);
+        const V3 eye = pw.p + V3(0, pw.eyeHeight(), 0);
+        const V3 at = carentry::door(t, false);
+        InteractOption o = Interact::pick(ctx.sim, pw, eye, at - eye);
+        ctx.check("crouched at the door: the get-in prompt is still there", o.kind == IA_ENTER_CAR && !o.blocked, o.prompt);
+    }
+    // Stand up again.
+    wk.crouching = false;
+    stepFor(0.5, 0, false);
+    ctx.metric("standing again", wk.eyeHeight(), "m", 1.6, 1.64);
+    // (Standing up under a low ceiling: Walker::headBlocked keeps you down; no overhang in the test world to prove it.)
+    wk.p = V3(-60, w.height(-60, 0), 0);
+    stepFor(0.6, 0, false);
+    ctx.check("out in the open the key's let go: stands", wk.eyeHeight() > 1.6, std::to_string(wk.eyeHeight()));
 }

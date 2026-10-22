@@ -45,6 +45,7 @@ void Walker::exitCar(const World& w, const Car& c, bool passenger) {
         }
     }
     yaw = std::atan2(-fwd.z, fwd.x);
+    crouch = 0, crouching = false;
     v = f.vel * 0.5;
     active = true;
     grounded = false;
@@ -66,19 +67,34 @@ int Walker::carToEnter(const Sim& sim, double reach) const {
     return best;
 }
 
+bool Walker::headBlocked(const World& w) const {
+    Contact ct;
+    return w.contact(p + V3(0, kEyeStand - 0.12, 0), 0.15, nullptr, 0, ct) && ct.pen > 0 && ct.n.y < -0.5;
+}
+
 void Walker::step(const World& w, const Sim& sim, double dt, double fwd, double side, bool run, bool jump, double viewYaw) {
     if (!active) return;
     // Where the legs want to go.
     // (Left is up x forward: with +x ahead and +y up, -z is on the left. A and D were swapped.)
     const V3 f(std::cos(viewYaw), 0, -std::sin(viewYaw)), l(f.z, 0, -f.x);
+    // Crouch: eased down while the key's held (or while something low is overhead), back up when it's let go.
+    {
+        const bool deep = inWater > 1.2;
+        const bool wantDown = !deep && (crouching || (crouch > 0 && headBlocked(w)));
+        crouch = clampd(crouch + (wantDown ? dt : -dt) / kCrouchTime, 0.0, 1.0);
+    }
+    const double cs = crouchAmount();
+    if (crouch > 0) run = jump = false;
     V3 want = f * fwd + l * side;
     if (len(want) > 1) want = norm(want);
     const double ground = w.height(p.x, p.z);
     const double water = w.waterLevel(p.x, p.z);
     inWater = std::max(0.0, water - std::max(ground, p.y));
     const bool swimming = inWater > 1.2;
+    if (swimming) crouch = 0;
     if (carrying) run = jump = false;  // (a 40 kg wheel in your arms)
     double speed = carrying ? 1.2 : run ? 4.6 : 1.7;
+    speed *= 1 - (1 - kCrouchSpeed) * cs;
     if (holdingJack && !carrying) speed *= 0.9;  // (the jack is heavy to carry)
     if (inWater > 0.3) speed *= clampd(1.0 - (inWater - 0.3) * 0.5, 0.35, 1.0);  // wading
     if (swimming) speed = 1.0;
@@ -123,7 +139,7 @@ void Walker::step(const World& w, const Sim& sim, double dt, double fwd, double 
     }
     for (int it = 0; it < 3; it++) {
         bool g = false;
-        const V3 feet = pushOut(w, p + V3(0, kFootR, 0), kFootR, &g), chest = pushOut(w, p + V3(0, kChestH, 0), kChestR, nullptr);
+        const V3 feet = pushOut(w, p + V3(0, kFootR, 0), kFootR, &g), chest = pushOut(w, p + V3(0, kChestH - 0.45 * cs, 0), kChestR, nullptr);
         // Feet pushed up (onto a rock or log): step up onto it; sideways: blocked.
         p += feet + V3(chest.x, 0, chest.z);
         if (g) {

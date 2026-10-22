@@ -64,6 +64,7 @@ const Info kInfo[KA_COUNT] = {
     {SC_I, false, "TRUCK INVENTORY", "key_inventory", KG_FOOT, F, false, false},
     {SC_G, false, "PUT DOWN WHAT YOU CARRY", "key_putdown", KG_FOOT, F, false, false},
     {SC_F, false, "FUEL CAN: POUR", "key_fuelcan", KG_FOOT, F, false, false},
+    {SC_LCTRL, false, "CROUCH", "key_crouch", KG_FOOT, F, true, false},
     // CAMERA AND VIEW
     {SC_C, false, "CAMERA", "key_camera", KG_VIEW, ANY, false, false},
     {SC_M, false, "MAP", "key_map", KG_VIEW, ANY, false, false},
@@ -129,7 +130,7 @@ bool bindable(int sc) {
     if (sc < 4 || sc >= 232) return false;  // (letters are 4.. ; 232 and up are media keys)
     if (sc == SC_ESCAPE || sc == SC_KP_ENTER) return false;
     if (sc >= SC_RIGHT && sc <= SC_UP) return false;  // arrows: the second set of driving keys
-    if (sc >= 224) return false;                      // ctrl, shift, alt, gui
+    if (sc >= 224 && sc != SC_LCTRL) return false;    // shift, alt, gui, right ctrl (left Ctrl: the crouch's default)
     return true;
 }
 
@@ -167,6 +168,7 @@ std::string keyName(int sc) {
         case SC_LEFT: return "LEFT";
         case SC_DOWN: return "DOWN";
         case SC_UP: return "UP";
+        case SC_LCTRL: return "LEFT CTRL";
         case SC_LSHIFT: return "LEFT SHIFT";
         case SC_RSHIFT: return "RIGHT SHIFT";
         case 0: return "NONE";
