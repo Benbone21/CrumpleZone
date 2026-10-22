@@ -21,13 +21,32 @@ struct PartTree {
     int groupOf(int slot, int option) const;  // -1 if out of range
 };
 
+// A TIRES tile's tread swatch (spec: Thumbnails): which pattern a tread type is drawn as, and the raised rubber of
+// each pattern as rects in the unit square (the swatch is dark ground with these on it; the gaps are the grooves).
+enum TreadPattern {
+    TREAD_UNKNOWN = -1,
+    TREAD_GROOVES,      // street: ribs between grooves
+    TREAD_TWO_GROOVES,  // semi-slick: just two
+    TREAD_PLAIN,        // slick: none
+    TREAD_BLOCKS,       // all-terrain
+    TREAD_LUGS,         // mud-terrain: fewer, bigger, staggered
+    TREAD_SIPED,        // snow: blocks cut with thin slits
+    TREAD_PATTERNS
+};
+TreadPattern treadPattern(int tireType);     // TREAD_UNKNOWN for a type the picker never offers (chains)
+int tireOptionType(int vehicle, int option);  // the TireType a TIRES option leaves the vehicle with
+struct TreadBar {
+    float x, y, w, h;
+};
+const std::vector<TreadBar>& treadBars(TreadPattern p);
+
 class PickerNav {
 public:
     void open(int vehicle, const ModSet& fitted, int buildCount);
     // How many tile columns, and how many tile rows / list rows fit, so scroll() keeps the cursor in view.
     void setView(int cols, int tileRows, int listRows);
     // Each returns true if the pick changed (opening or leaving a level never does).
-    bool tab(int d);                  // Q/E, LB/RB: wraps; level 1, cursor on the pick's group (BUILDS: on YOUR PICK)
+    bool tab(int d);                  // Q/E, LB/RB: wraps; level 1, cursor on the pick's group (BUILDS: on YOUR PICK). Onto the open tab: nothing
     bool move(int dx, int dy);        // level 1: the grid, clamped; level 2: rows (dy only)
     bool enter();                     // level 1: open a multi-option group; level 2: back to the tiles
     bool back(bool& close);           // level 2: back to the tiles; level 1: close = true

@@ -550,6 +550,56 @@ SCENARIO(showroomPickerView, "showroom/picker-view", "The grid clamps, scroll ke
     ctx.check("it kept YOUR PICK", nav.yourPick().pick[MOD_ENGINE] == yours.pick[MOD_ENGINE]);
 }
 
+// ---- Tread swatches
+
+SCENARIO(showroomTreads, "showroom/treads", "Every TIRES option on every vehicle maps to one of the six tread swatches") {
+    // The six treads and their patterns (spec: Thumbnails).
+    const struct { int type; TreadPattern pat; } want[] = {{TIRE_STREET, TREAD_GROOVES},     {TIRE_SEMI_SLICK, TREAD_TWO_GROOVES}, {TIRE_RACE_SLICK, TREAD_PLAIN},
+                                                          {TIRE_ALL_TERRAIN, TREAD_BLOCKS}, {TIRE_MUD_TERRAIN, TREAD_LUGS},       {TIRE_SNOW, TREAD_SIPED}};
+    bool table = true;
+    for (const auto& w : want) table = table && treadPattern(w.type) == w.pat;
+    ctx.check("each of the six treads has its pattern", table);
+    ctx.check("chains (never offered) and out-of-range have none", treadPattern(TIRE_CHAINS) == TREAD_UNKNOWN && treadPattern(-1) == TREAD_UNKNOWN && treadPattern(99) == TREAD_UNKNOWN);
+
+    // The swatches themselves: bars in the unit square, and no two patterns the same picture.
+    bool inside = true;
+    std::set<size_t> counts;
+    for (int p = 0; p < TREAD_PATTERNS; p++) {
+        const auto& bars = treadBars((TreadPattern)p);
+        counts.insert(bars.size());
+        for (const TreadBar& b : bars) inside = inside && b.w > 0 && b.h > 0 && b.x >= 0 && b.y >= 0 && b.x + b.w <= 1.0001f && b.y + b.h <= 1.0001f;
+    }
+    ctx.check("every bar is inside the unit square", inside);
+    ctx.check("the six patterns draw six different bar counts", counts.size() == (size_t)TREAD_PATTERNS);
+    ctx.check("no pattern has no rubber, and unknown draws nothing", treadBars(TREAD_UNKNOWN).empty() && std::none_of(counts.begin(), counts.end(), [](size_t n) { return n == 0; }));
+
+    // Every TIRES option of every catalog vehicle.
+    const auto& cat = vehicleCatalog();
+    int bad = 0, options = 0;
+    std::string first;
+    for (int v = 0; v < (int)cat.size(); v++)
+        for (int o = 0; o < (int)modOptions(v, MOD_TIRES).size(); o++) {
+            options++;
+            const int type = tireOptionType(v, o);
+            if (treadPattern(type) == TREAD_UNKNOWN || (o > 0 && type == cat[v].tireType)) {
+                if (!bad) first = std::string(cat[v].id) + " option " + std::to_string(o) + " type " + std::to_string(type);
+                bad++;
+            }
+        }
+    ctx.check("all of them map to a pattern, and an offered tread differs from the vehicle's own", bad == 0 && options > 0, first);
+    // The option's tread is the one applyMods leaves the vehicle with.
+    int mismatch = 0;
+    for (int v = 0; v < (int)cat.size(); v++)
+        for (int o = 0; o < (int)modOptions(v, MOD_TIRES).size(); o++) {
+            VehicleSpec vs;
+            ModSet m;
+            m.pick[MOD_TIRES] = o;
+            applyMods(v, m, vs);
+            if (vs.tireType != tireOptionType(v, o)) mismatch++;
+        }
+    ctx.check("tireOptionType is what applyMods sets", mismatch == 0);
+}
+
 // ---- Builds
 
 namespace {
@@ -725,6 +775,7 @@ SCENARIO(showroomBuilds, "showroom/builds", "Every build resolves on every vehic
 
     // Leaving keeps the build, and the other tabs' groups remember its parts.
     nav.clickTile(second + 1);
+    ctx.check("tab onto the open tab is a no-op (YOUR PICK isn't taken again)", !nav.tab(0) && !nav.tab(TAB_COUNT) && nav.tabIndex() == TAB_BUILDS && nav.cursor() == second + 1 && samePicks(nav.pick(), b1) && samePicks(nav.yourPick(), yours));
     ctx.check("leaving keeps the build", !nav.tab(1) && nav.tabIndex() == TAB_ENGINE && samePicks(nav.pick(), b1));
     bool follows = true;
     std::string why;
@@ -746,7 +797,7 @@ SCENARIO(showroomBuilds, "showroom/builds", "Every build resolves on every vehic
     {
         int hyper = -1;
         for (int i = 0; i < (int)bl.size(); i++)
-            if (bl[i].parts[MOD_ENGINE] && std::string(bl[i].parts[MOD_ENGINE]) == "ENGINE:jesko:2") hyper = i;
+            if (std::string(bl[i].name) == "HYPERCAR SWAP") hyper = i;
         PickerNav n2;
         n2.open(v, ModSet(), (int)bl.size());
         n2.resolve = nav.resolve;

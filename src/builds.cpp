@@ -2,6 +2,9 @@
 
 #include <cstdio>
 #include <cstring>
+#include <mutex>
+#include <set>
+#include <string>
 
 // Parts are named by donor ("ENGINE:jesko:2" is the Jesko's third engine, whatever vehicle it goes into), so a
 // build works on every vehicle. A slot left nullptr keeps whatever the player had picked. "<SLOT>:own"
@@ -28,13 +31,13 @@ const std::vector<Build>& builds() {
           nullptr,
           "TIRES:ALL-TERRAIN"}},    // the gravel tread (see DESERT RUNNER)
         {"HYPERCAR SWAP", "THE JESKO'S TOP ENGINE AND GEARBOX, ON SLICKS",
-         {"ENGINE:jesko:2",         // RACE FUEL AND BOOST: ~1750 hp, the Jesko's strongest engine
+         {"ENGINE:jesko:2",         // RACE FUEL AND BOOST: 2015 hp (peakPower, measured over the catalog), the Jesko's strongest engine
           nullptr,
-          "TRANSMISSION:jesko:2",   // TOP SPEED GEARING: the 9-speed with the 3.0 final drive that lets 1750 hp run
+          "TRANSMISSION:jesko:2",   // TOP SPEED GEARING: the 9-speed with the 3.0 final drive that lets 2015 hp run
           nullptr,
           "TIRES:RACE SLICK"}},     // the most grip there is, for a hypercar's power
         {"SLEEPER", "THE BIGGEST ENGINE, FACTORY SUSPENSION AND WHEELS",
-         {"ENGINE:jesko:2",           // RACE FUEL AND BOOST: ~2000 hp, the most power of any engine in the catalog (the HYPERCAR SWAP's too)
+         {"ENGINE:jesko:2",           // RACE FUEL AND BOOST: 2015 hp (peakPower, measured over the catalog), the most of any engine (the HYPERCAR SWAP's too)
           "SUSPENSION:own",           // the vehicle's own suspension and wheels, whatever was picked before: it looks factory
           nullptr,
           "WHEELS:own",
@@ -58,7 +61,15 @@ bool resolveBuild(int vehicle, const Build& b, ModSet& io) {
         // The vehicle's own tread isn't listed again: option 0 is that tread.
         if (found < 0 && s == MOD_TIRES && std::string(b.parts[s]) == std::string("TIRES:") + tireTypeName(cat[vehicle].tireType)) found = 0;
         if (found < 0) {
-            std::fprintf(stderr, "builds: %s: %s isn't a part %s can take\n", b.name, b.parts[s], cat[vehicle].id);
+            // (Once per key per process: the picker resolves builds as it needs them, and the same bad key would repeat.)
+            static std::mutex told_m;
+            static std::set<std::string> told;
+            bool first;
+            {
+                std::lock_guard<std::mutex> lk(told_m);
+                first = told.insert(std::string(b.name) + "|" + b.parts[s] + "|" + cat[vehicle].id).second;
+            }
+            if (first) std::fprintf(stderr, "builds: %s: %s isn't a part %s can take\n", b.name, b.parts[s], cat[vehicle].id);
             ok = false;
             continue;
         }

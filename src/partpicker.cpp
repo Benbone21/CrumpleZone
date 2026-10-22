@@ -29,6 +29,62 @@ int PartTree::groupOf(int slot, int option) const {
     return -1;
 }
 
+TreadPattern treadPattern(int tireType) {
+    switch (tireType) {
+    case TIRE_STREET: return TREAD_GROOVES;
+    case TIRE_SEMI_SLICK: return TREAD_TWO_GROOVES;
+    case TIRE_RACE_SLICK: return TREAD_PLAIN;
+    case TIRE_ALL_TERRAIN: return TREAD_BLOCKS;
+    case TIRE_MUD_TERRAIN: return TREAD_LUGS;
+    case TIRE_SNOW: return TREAD_SIPED;
+    default: return TREAD_UNKNOWN;
+    }
+}
+
+int tireOptionType(int vehicle, int option) {
+    const auto& opts = modOptions(vehicle, MOD_TIRES);
+    if (option < 0 || option >= (int)opts.size()) return -1;
+    return opts[option].fromVehicle < 0 ? opts[option].fromOption : vehicleCatalog()[vehicle].tireType;  // (a tread names its type; option 0 keeps the vehicle's own)
+}
+
+namespace {
+// Swatch geometry, in the unit square: ribs side by side for grooves, a grid of blocks, a staggered grid of big lugs.
+std::vector<TreadBar> ribs(int n, float gap) {
+    std::vector<TreadBar> v;
+    const float w = (1 - gap * (n - 1)) / n;
+    for (int i = 0; i < n; i++) v.push_back({i * (w + gap), 0, w, 1});
+    return v;
+}
+std::vector<TreadBar> grid(int cols, int rows, float gx, float gy, bool stagger, bool siped) {
+    std::vector<TreadBar> v;
+    const float w = (1 - gx * (cols - 1)) / cols, h = (1 - gy * (rows - 1)) / rows;
+    for (int r = 0; r < rows; r++)
+        for (int c = 0; c < cols; c++) {
+            float x = c * (w + gx);
+            if (stagger && r % 2) x = std::min(x + w * 0.5f, 1 - w);  // (alternate rows shift: the lugs of a mud tire)
+            if (siped) {  // a thin slit down the middle of each block
+                const float slit = w * 0.14f, half = (w - slit) / 2;
+                v.push_back({x, r * (h + gy), half, h});
+                v.push_back({x + half + slit, r * (h + gy), half, h});
+            } else v.push_back({x, r * (h + gy), w, h});
+        }
+    return v;
+}
+}  // namespace
+
+const std::vector<TreadBar>& treadBars(TreadPattern p) {
+    static const std::vector<TreadBar> none;
+    static const std::vector<TreadBar> all[TREAD_PATTERNS] = {
+        ribs(4, 0.07f),                         // street: three grooves
+        ribs(3, 0.12f),                         // semi-slick: two
+        ribs(1, 0),                             // slick: one smooth band
+        grid(3, 4, 0.08f, 0.08f, false, false),  // all-terrain: blocks
+        grid(2, 3, 0.14f, 0.12f, true, false),   // mud-terrain: fewer, bigger, staggered
+        grid(3, 4, 0.08f, 0.08f, false, true),   // snow: the same blocks, siped
+    };
+    return p >= 0 && p < TREAD_PATTERNS ? all[p] : none;
+}
+
 void PickerNav::open(int vehicle, const ModSet& fitted, int buildCount) {
     vehicle_ = vehicle;
     buildCount_ = std::max(buildCount, 0);
@@ -103,7 +159,9 @@ bool PickerNav::pickBuild() {
 }
 
 bool PickerNav::tab(int d) {
-    tab_ = ((tab_ + d) % TAB_COUNT + TAB_COUNT) % TAB_COUNT;
+    const int to = ((tab_ + d) % TAB_COUNT + TAB_COUNT) % TAB_COUNT;
+    if (to == tab_) return false;  // (the open tab: nothing to redo, and BUILDS would take YOUR PICK again)
+    tab_ = to;
     level_ = 1, scroll1_ = 0;
     if (tab_ == TAB_BUILDS) {
         yours_ = pick_;

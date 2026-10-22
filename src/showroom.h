@@ -70,7 +70,9 @@ private:
     uint32_t padPrev = 0;
     float rev = 0;  // RT (phase 3: revs the preview's engine)
     std::vector<Hit> hits;
-    int hover = -1;  // the hit under the mouse
+    int hover = -1;  // the hit under the mouse (an index into hits: reset when the level or tab changes the hits)
+    int navLevel = 1, navTab = 0;  // the level and tab hover was last valid for
+    std::vector<int> buildPic;     // per build, the vehicle whose stock car is its picture: its named engine's donor (made on open)
     std::string toast;
     double toastT = 0;
     int W = 1280, H = 720;

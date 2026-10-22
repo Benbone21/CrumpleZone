@@ -105,6 +105,7 @@ struct Showroom::TileInfo {
     int count = 1;                  // options in the group (a badge when more than one)
     int pictureOf = -1;             // the vehicle whose stock car is the picture
     bool wheel = false, build = false;
+    TreadPattern tread = TREAD_UNKNOWN;  // a TIRES tile: the swatch drawn as its picture
 };
 
 Showroom::Showroom(Renderer& rr, std::function<void()> restoreGameWorld) : r(rr), restore(std::move(restoreGameWorld)) {
@@ -148,6 +149,17 @@ void Showroom::open(int vehicle, const ModSet& fitted, const V3& color, bool car
     nav.open(vehicle, core->fitted(), (int)builds().size());
     const ShowroomLayout l = showroomLayout(W, H);
     nav.setView(l.tileCols, l.tileRows, std::max(1, l.listRows));
+    navLevel = nav.level(), navTab = nav.tabIndex();
+    // A build's picture: the donor of the engine it names, or this vehicle if it names none (the same whatever YOUR PICK is).
+    buildPic.clear();
+    for (const Build& b : builds()) {
+        Build e = b;  // (just the engine slot, so only it has to resolve)
+        for (int s = 0; s < MOD_SLOTS; s++)
+            if (s != MOD_ENGINE) e.parts[s] = nullptr;
+        ModSet m;
+        resolveBuild(vehicle, e, m);
+        buildPic.push_back(b.parts[MOD_ENGINE] ? modOptions(vehicle, MOD_ENGINE)[m.pick[MOD_ENGINE]].fromVehicle : vehicle);
+    }
     frameTab(nav.tabIndex(), true);
 }
 
@@ -188,6 +200,7 @@ void Showroom::backToTiles() {
 
 void Showroom::navDone(bool pickChanged) {
     scrollAdj = 0;
+    if (nav.level() != navLevel || nav.tabIndex() != navTab) hover = -1, navLevel = nav.level(), navTab = nav.tabIndex();  // (the hits are different ones now)
     if (pickChanged) core->setPicks(nav.pick());
 }
 
@@ -433,12 +446,18 @@ void Showroom::draw(int w, int h) {
     r.hudAlpha = keepAlpha;
 }
 
-// A tile: a 4:3 picture over two caption lines. With no picture (tilePicture: 0) the plate holds the headline instead.
+// A tile: a 4:3 picture over two caption lines. With no picture (tilePicture: 0) the plate holds the headline instead. A TIRES tile's picture is its tread swatch.
 void Showroom::drawTile(const Rect& t, const TileInfo& ti, bool cursor, bool inPick, float u) {
     const float s = px(1.4f * u), pic = t.w * 0.75f, in = 4 * u;
     r.rect(t.x, t.y, t.w, t.h, 1, 1, 1, cursor ? 0.07f : 0.03f);
-    const bool picture = tilePicture(ti.pictureOf, ti.wheel) != 0;
-    if (!picture) {  // (a text tile: the Task 10 picture draws over this plate, in the same rect)
+    const bool swatch = ti.tread != TREAD_UNKNOWN;
+    const bool picture = swatch || tilePicture(ti.pictureOf, ti.wheel) != 0;
+    if (swatch) {  // dark rubber, the raised tread on it in the label grey; the grooves are the gaps
+        r.rect(t.x, t.y, t.w, pic, 0, 0, 0, 0.25f);
+        const float sh = pic - 4 * in, sw = std::min(sh * 0.75f, t.w - 4 * in), sx = t.x + (t.w - sw) / 2, sy = t.y + 2 * in;
+        r.rect(sx, sy, sw, sh, 0.04f, 0.04f, 0.045f, 1);
+        for (const TreadBar& b : treadBars(ti.tread)) r.rect(sx + b.x * sw, sy + b.y * sh, b.w * sw, b.h * sh, kGrey[0] * 0.55f, kGrey[1] * 0.55f, kGrey[2] * 0.55f, 1);
+    } else if (!picture) {  // (a text tile: the Task 10 picture draws over this plate, in the same rect)
         r.rect(t.x, t.y, t.w, pic, 0, 0, 0, 0.25f);
         if (ti.build) wrap(r, t.x + in, t.y + in, t.w - 2 * in, s, 8 * s + 2 * u, ti.head, kGrey);
         else {
@@ -516,16 +535,15 @@ void Showroom::drawLeft(const ShowroomLayout& l) {
                     if (i == 0) ti.title = "YOUR PICK", ti.head = "THE PARTS YOU HAD WHEN YOU CAME HERE";
                     else {
                         const Build& b = builds()[i - 1];
-                        ModSet m = nav.yourPick();
-                        resolveBuild(v, b, m);
                         ti.title = b.name, ti.head = b.detail;
-                        ti.pictureOf = modOptions(v, MOD_ENGINE)[m.pick[MOD_ENGINE]].fromVehicle;  // the build's engine's donor (or this vehicle)
+                        ti.pictureOf = i - 1 < (int)buildPic.size() ? buildPic[i - 1] : v;  // (made on open)
                     }
                 } else {
                     const PartGroup& g = nav.tree().groups[t][i];
                     ti.count = g.count;
                     ti.pictureOf = g.donor >= 0 ? g.donor : v;
                     ti.wheel = t == MOD_WHEELS;
+                    if (t == MOD_TIRES) ti.tread = treadPattern(tireOptionType(v, g.first));
                     ti.head = headline(t, nav.remembered(t, i));
                     ti.title = t == MOD_TIRES ? (i == 0 ? donorTitle(v) : "TREAD") : donorTitle(g.donor);
                     if (g.donor == v) ti.tags = "YOURS";
