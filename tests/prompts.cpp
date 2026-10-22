@@ -155,7 +155,7 @@ SCENARIO(promptsPick, "prompts/pick", "beside a Blazer: a wheel is picked lookin
         ctx.check("no lug wrench: the wheel is still offered, blocked, and says what it needs", b.kind == IA_REMOVE_WHEEL && b.blocked && b.prompt.find("NEEDS") != std::string::npos, b.prompt);
         std::string label, reason;
         prompts::split(b, label, reason);
-        ctx.check("...as two lines: what, and why not", label == "TAKE THE WHEEL OFF" && reason.rfind("NEEDS", 0) == 0, label + " | " + reason);
+        ctx.check("...as two lines: what, and why not", label == "REMOVE WHEEL" && reason.rfind("NEEDS", 0) == 0, label + " | " + reason);
     }
 
     // The markers and the prompt.

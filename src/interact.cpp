@@ -102,7 +102,7 @@ InteractOption Interact::fixOption(const Sim& sim, const Walker& wk, int ci, con
         o.prompt = what + (kit.has(TOOL_JACK) || c.hasJack || c.jackPlaced ? "JACK THIS CORNER UP FIRST" : "JACK THIS CORNER UP FIRST: NEEDS A JACK");
         break;
     case RepairStep::WHEEL_OFF: {  // (the wheel jobs: the lug wrench within reach, as ever)
-        o.kind = IA_REMOVE_WHEEL, o.hold = kRemoveWheel, o.prompt = what + "TAKE THE WHEEL OFF (LUG WRENCH)";
+        o.kind = IA_REMOVE_WHEEL, o.hold = kRemoveWheel, o.prompt = what + "REMOVE WHEEL (LUG WRENCH)";
         const std::string miss = stepMissing(st, kit, nullptr, -1, -1);
         if (!miss.empty()) o.blocked = true, o.prompt = what + miss;
         break;
@@ -240,7 +240,7 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
                     o.kind = IA_TAKE_CHAIN, o.hold = kTakeChain, o.prompt = "TAKE A SNOW CHAIN (" + std::to_string(c.chains) + " LEFT)";
                     consider(o);
                 } else if (wk.holdingChain && c.chains < c.spec->snowChains) {
-                    o.kind = IA_STOW_CHAIN, o.hold = kStowChain, o.prompt = "PUT THE CHAIN BACK";
+                    o.kind = IA_STOW_CHAIN, o.hold = kStowChain, o.prompt = "STOW CHAIN";
                     consider(o);
                 }
                 for (int k = 0; k < (int)c.wheels.size(); k++) {
@@ -253,7 +253,7 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
                         w.kind = IA_FIT_CHAIN, w.hold = kFitChain, w.prompt = "WRAP THE CHAIN ROUND THIS TIRE";
                         consider(w);
                     } else if (!busy && wh.chained) {
-                        w.kind = IA_REMOVE_CHAIN, w.hold = kRemoveChain, w.prompt = "TAKE THE CHAIN OFF";
+                        w.kind = IA_REMOVE_CHAIN, w.hold = kRemoveChain, w.prompt = "REMOVE CHAIN";
                         consider(w);
                     }
                 }
@@ -263,7 +263,7 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
                 o.car = ci;
                 o.at = c.spareAt();
                 if (c.hasSpare && !busy) {
-                    o.kind = IA_TAKE_SPARE, o.hold = kTakeSpare, o.prompt = withSize("TAKE THE SPARE", c.spare);
+                    o.kind = IA_TAKE_SPARE, o.hold = kTakeSpare, o.prompt = withSize("TAKE SPARE", c.spare);
                     consider(o);
                 } else if (!c.hasSpare && wheelInHands) {
                     o.kind = IA_STOW_SPARE, o.hold = kStowSpare, o.prompt = withSize("STOW IT AS THE SPARE", *wk.carrying);
@@ -278,17 +278,17 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
             o.at = c.stowAt(Car::STOW_JACK);
             if (trunkCar) {
             } else if (!c.jackPlaced && !busy) {
-                o.kind = IA_TAKE_JACK, o.hold = kTakeJack, o.prompt = "TAKE THE JACK";
+                o.kind = IA_TAKE_JACK, o.hold = kTakeJack, o.prompt = "TAKE JACK";
                 consider(o);
             } else if (wk.holdingJack) {
-                o.kind = IA_STOW_JACK, o.hold = kStowJack, o.prompt = "PUT THE JACK AWAY";
+                o.kind = IA_STOW_JACK, o.hold = kStowJack, o.prompt = "STOW JACK";
                 consider(o);
             }
             if (wk.holdingJack && !c.jackPlaced)
                 for (int k = 0; k < (int)c.wheels.size(); k++) {
                     if (c.wheels[k].detached) continue;
                     InteractOption p;
-                    p.car = ci, p.wheel = k, p.kind = IA_PLACE_JACK, p.hold = kPlaceJack, p.prompt = "PUT THE JACK UNDER THIS CORNER";
+                    p.car = ci, p.wheel = k, p.kind = IA_PLACE_JACK, p.hold = kPlaceJack, p.prompt = "PLACE JACK UNDER THIS CORNER";
                     p.at = jackAim(sim, c, k);
                     consider(p);
                 }
@@ -296,7 +296,7 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
                 InteractOption j;
                 j.car = ci, j.wheel = c.jackWheel;
                 j.at = jackAim(sim, c, c.jackWheel);
-                if (c.jackWorked && c.jackHeight <= 0.005) j.kind = IA_REMOVE_JACK, j.hold = kRemoveJack, j.prompt = "TAKE THE JACK OUT";
+                if (c.jackWorked && c.jackHeight <= 0.005) j.kind = IA_REMOVE_JACK, j.hold = kRemoveJack, j.prompt = "REMOVE JACK";
                 else if (!cornerLifted(sim, c, c.jackWheel) && c.jackHeight < kJackMax) j.kind = IA_RAISE_JACK, j.continuous = true, j.prompt = "RAISE THE JACK";
                 else j.kind = IA_LOWER_JACK, j.continuous = true, j.prompt = "LOWER THE JACK";
                 bool working = false;  // (a repair still to do at this corner: the work beside it wins over letting it down)
@@ -312,7 +312,7 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
                 InteractOption o;
                 o.kind = IA_GRAB_LINE, o.car = ci, o.hook = 0, o.lineKind = ROPE_WINCH, o.hold = kGrabLine;
                 o.at = c.hookPoint(0) + V3(0, 0.15, 0);
-                o.prompt = "GRAB THE WINCH LINE";
+                o.prompt = "GRAB WINCH LINE";
                 consider(o);
             }
             if (!hasLine(sim, ci, ROPE_STRAP))
@@ -320,7 +320,7 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
                     InteractOption o;
                     o.kind = IA_GRAB_LINE, o.car = ci, o.hook = h, o.lineKind = ROPE_STRAP, o.hold = kGrabLine;
                     o.at = c.hookPoint(h) - V3(0, 0.15, 0);
-                    o.prompt = h ? "GRAB THE TOW STRAP (REAR POINT)" : "GRAB THE TOW STRAP (FRONT POINT)";
+                    o.prompt = h ? "GRAB TOW STRAP (REAR POINT)" : "GRAB TOW STRAP (FRONT POINT)";
                     consider(o);
                 }
         }
@@ -328,7 +328,7 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
             InteractOption o;
             o.kind = IA_STOW_LINE, o.car = ci, o.hook = sim.handLine.hook, o.lineKind = sim.handLine.kind, o.hold = kStowLine;
             o.at = c.hookPoint(sim.handLine.hook);
-            o.prompt = sim.handLine.kind == ROPE_WINCH ? "SPOOL THE WINCH LINE BACK" : "PUT THE TOW STRAP BACK";
+            o.prompt = sim.handLine.kind == ROPE_WINCH ? "SPOOL WINCH LINE BACK" : "STOW TOW STRAP";
             consider(o);
         }
         // The back (trunk.h): E at it opens the inventory (invmenu.h), where you take what you need and put it back.
@@ -336,7 +336,7 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
             InteractOption g;
             g.car = ci, g.at = trunk::gateAt(c), g.kind = IA_OPEN_INVENTORY;
             const bool held = wk.hand.any() || wk.holdingJack || wk.holdingChain;
-            g.prompt = held ? "INVENTORY: PUT THE " + (wk.holdingJack ? std::string("JACK") : wk.holdingChain ? std::string("SNOW CHAIN") : trunk::name(wk.hand)) + " BACK" : "INVENTORY";
+            g.prompt = held ? "INVENTORY: PUT BACK " + (wk.holdingJack ? std::string("JACK") : wk.holdingChain ? std::string("SNOW CHAIN") : trunk::name(wk.hand)) : "INVENTORY";
             consider(g, 3.2);
         }
         // Wheels off and on (a lug wrench, the corner up off the ground).
@@ -350,7 +350,7 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
                 const bool lifted = cornerLifted(sim, c, k);
                 if (wh.mounted && !busy) {
                     o.kind = IA_REMOVE_WHEEL, o.hold = kRemoveWheel;
-                    o.prompt = wh.debeaded ? "TAKE THE BARE RIM OFF" : wh.popped ? "TAKE THE FLAT OFF" : "TAKE THE WHEEL OFF";
+                    o.prompt = wh.debeaded ? "REMOVE RIM" : wh.popped ? "REMOVE FLAT" : "REMOVE WHEEL";
                     needs(o, {TOOL_LUG_WRENCH}, true, lifted);
                     consider(o);
                 } else if (!wh.mounted && wheelInHands) {
@@ -371,7 +371,7 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
                         break;
                     }
                 } else if (wh.mounted && wh.debeaded && tireInHands) {
-                    o.kind = IA_RESEAT_TIRE, o.hold = kReseatTire, o.prompt = "PUT THE TIRE BACK ON THE RIM";
+                    o.kind = IA_RESEAT_TIRE, o.hold = kReseatTire, o.prompt = "MOUNT TIRE TO RIM";
                     needs(o, {TOOL_TIRE_IRONS}, false, lifted);
                     consider(o);
                 }
@@ -466,7 +466,7 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
     for (int ci = 0; ci < (int)sim.cars.size(); ci++) {
         InteractOption o;
         if (!carentry::option(sim, ci, o)) continue;
-        if (wk.carrying && !o.blocked) o.blocked = true, o.prompt += ": PUT THE WHEEL DOWN FIRST";
+        if (wk.carrying && !o.blocked) o.blocked = true, o.prompt += ": PUT WHEEL DOWN FIRST";
         consider(o, kReach + 1.0, 0.03);
     }
     return best;
@@ -670,7 +670,7 @@ std::string Interact::perform(Sim& sim, Walker& wk, const InteractOption& o) {
             return "GOT THE " + trunk::name(o.item);
         case IA_STOW_ITEM:
             wk.hand = TrunkRef();
-            return "PUT THE " + trunk::name(o.item) + " BACK";
+            return "PUT BACK " + trunk::name(o.item);
         case IA_FIX: {  // a repair's work step, in its turn (fixes.h)
             Car& c = sim.cars[o.car];
             if (len(c.frame().vel) > 0.5) return "STOP THE TRUCK FIRST";
@@ -707,7 +707,7 @@ std::string Interact::perform(Sim& sim, Walker& wk, const InteractOption& o) {
             lw.tireWork++;
             if (st.fixes) {
                 lw.popped = false, lw.tireWork = 0;
-                return "NEW TIRE ON: PUT THE WHEEL BACK ON";
+                return "NEW TIRE ON: MOUNT WHEEL";
             }
             return st.label;
         }
@@ -734,10 +734,10 @@ InteractOption Interact::takeOption(const Car& c, int ci, const TrunkItem& it) {
     if (it.count - it.taken <= 0) return o;
     o.car = ci, o.item = it.ref;
     switch (it.ref.kind) {
-        case TK_JACK: o.kind = IA_TAKE_JACK, o.hold = kTakeJack, o.prompt = "TAKE THE " + it.name; break;
+        case TK_JACK: o.kind = IA_TAKE_JACK, o.hold = kTakeJack, o.prompt = "TAKE " + it.name; break;
         case TK_CHAINS: o.kind = IA_TAKE_CHAIN, o.hold = kTakeChain, o.prompt = "TAKE A SNOW CHAIN (" + std::to_string(c.chains) + " LEFT)"; break;
         default:
-            o.kind = IA_TAKE_ITEM, o.hold = kTakeItem, o.prompt = "TAKE THE " + it.name;
+            o.kind = IA_TAKE_ITEM, o.hold = kTakeItem, o.prompt = "TAKE " + it.name;
             if (!it.endless && it.count - it.taken > 1) o.prompt += " (" + std::to_string(it.count - it.taken) + " IN THE BACK)";
     }
     return o;
@@ -747,9 +747,9 @@ InteractOption Interact::stowOption(const Car& c, int ci, const Walker& wk) {
     InteractOption o;
     o.car = ci;
     if (wk.carrying.has_value()) return o;
-    if (wk.holdingJack) o.kind = IA_STOW_JACK, o.hold = kStowJack, o.prompt = "PUT THE JACK BACK";
-    else if (wk.holdingChain && c.chains < std::max(c.spec->snowChains, 4)) o.kind = IA_STOW_CHAIN, o.hold = kStowChain, o.prompt = "PUT THE CHAIN BACK";
-    else if (wk.hand.any() && !wk.holdingChain) o.kind = IA_STOW_ITEM, o.hold = kStowItem, o.item = wk.hand, o.prompt = "PUT THE " + trunk::name(wk.hand) + " BACK";
+    if (wk.holdingJack) o.kind = IA_STOW_JACK, o.hold = kStowJack, o.prompt = "STOW JACK";
+    else if (wk.holdingChain && c.chains < std::max(c.spec->snowChains, 4)) o.kind = IA_STOW_CHAIN, o.hold = kStowChain, o.prompt = "STOW CHAIN";
+    else if (wk.hand.any() && !wk.holdingChain) o.kind = IA_STOW_ITEM, o.hold = kStowItem, o.item = wk.hand, o.prompt = "PUT BACK " + trunk::name(wk.hand);
     return o;
 }
 
