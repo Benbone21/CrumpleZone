@@ -5659,6 +5659,11 @@ int main(int argc, char** argv) {
         if (mk::findModel("jack"))
             for (const Car& c : sim.cars)
                 if (c.jackPlaced && c.jackWheel >= 0 && c.jackWheel < (int)c.wheels.size()) renderer.frameModels.push_back(Interact::jackModel(sim, c, c.jackWheel));
+        for (const Sim::DroppedPart& d : sim.droppedParts) {  // broken parts taken off in a repair, left on the ground
+            Placed pl;
+            pl.id = repairPartModel((RepairPart)d.part), pl.p = d.p, pl.yaw = d.yaw;
+            renderer.frameModels.push_back(pl);
+        }
         // What rides on each vehicle, as models (renderer.carModels: one mesh per car, kept, placed on the GPU and culled
         // with the car). A pickup's tailgate (trunk.h), shut; what rides in the back of a truck with no cargo area to
         // open (the chains in their bag, the jack while it's there); and what's under it: the engine, gearbox, diffs,

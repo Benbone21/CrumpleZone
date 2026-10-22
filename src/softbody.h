@@ -717,6 +717,10 @@ public:
     // Wheels off their vehicles (tires.cpp): lying about, rolling, bouncing.
     std::vector<LooseWheel> looseWheels;
     uint32_t nextLooseId = 1;
+    // A broken part taken off in a field repair (fixes.h), lying where it was dropped: a prop to look at, left there.
+    // Not simulated, not in the physics state; the oldest go when there are too many.
+    struct DroppedPart { int part = 0; V3 p; double yaw = 0; };
+    std::vector<DroppedPart> droppedParts;
     WheelItem wheelItem(const Car& c, const Wheel& wh) const;  // what's bolted to that corner
     // The wheel (or with tireOnly, just the tire) comes off that corner and goes its own way.
     int shedWheel(int car, int wheel, bool tireOnly);

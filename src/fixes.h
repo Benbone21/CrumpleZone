@@ -76,7 +76,7 @@ bool applyFix(Car& c, const Fix& f);
 
 // A repair is done in order, a step at a time, each a hold of E with the right thing in your hand (interact.h):
 // at a corner the jack goes under its frame pad and the corner comes up, the wheel comes off (a truck's: wheelLoss),
-// then the work on the part (the old one out, the new one in, bolted up: the last bolt is what fixes it), then the
+// then the two jobs on the part (REMOVE the broken one, it drops beside the car; FIT the new one: that is what fixes it), then the
 // wheel goes back on and the jack comes down. A tie rod, a sway bar link, a drive shaft, the plugs: just the work.
 struct RepairStep {
     enum Type { JACK, WHEEL_OFF, WORK, WHEEL_ON, LOWER } type = WORK;
@@ -86,6 +86,7 @@ struct RepairStep {
     int part = -1;           // ...or the new RepairPart: it goes in (and is used up) here
     double hold = 4;         // s of work
     bool fixes = false;      // the step that makes the part whole again
+    bool removes = false;    // the broken part comes off here: dropped on the ground beside the car
     int end = 0;             // where: 0 at the fix, 1 / 2 the front / back end of a shaft
     bool ground = false;     // done on the wheel that came off, lying on the ground (the tire)
 };
