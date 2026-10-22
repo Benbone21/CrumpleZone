@@ -28,6 +28,7 @@ const Style kStyles[] = {
     {"bronco",   0,  -1e9,   1,  -1e9,  1, 0.05,  1,   1,  0,  1,   1,  0,  0,  1,   1},  // boxed all along, hydroformed tubes
     {"4runner",  0,  -1.50,  1,  -1.50, 0, 0.12,  0,   0,  0,  1,   0,  1,  0,  1,   1},  // boxed, an open C tail
     {"tacoma",   0,  -0.35,  1,  -0.35, 0, 0.10,  1,   1,  0,  1,   1,  0,  0,  0,   0},  // boxed front, C-channel rear, tubes up front
+    {"hellboy",  0,  -1e9,   1,  -1e9,  0, 0.25,  0,   0,  1,  1,   0,  1,  0,  1,   1},  // Ram rails boxed with 3/8 plate, DOM tube crossmembers
 };
 
 const V3 kUp(0, 1, 0);

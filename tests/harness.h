@@ -49,6 +49,9 @@ public:
     // Runs until done() returns true or maxSeconds pass; returns whether done() fired.
     bool runUntil(double maxSeconds, const std::function<bool()>& done,
                   const std::function<void()>& perFrame = nullptr);
+    // Runs until the car sits still (every node under 5 cm/s for a quarter second; at once if
+    // it already is), at most maxSeconds.
+    void settle(const Car& car, double maxSeconds);
 
     // ---- Setting up ------------------------------------------------------------
     // Adds a vehicle on the ground at (x, z); heading in degrees, 0 = +X, 90 = -Z.

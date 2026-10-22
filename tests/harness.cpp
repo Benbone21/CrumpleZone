@@ -47,6 +47,19 @@ bool Ctx::runUntil(double maxSeconds, const std::function<bool()>& done, const s
     return done();
 }
 
+void Ctx::settle(const Car& car, double maxSeconds) {
+    // (Hell Boy squashes its 58 in tires 6 cm when it's set down and is still bouncing on them
+    // well after a car on 30s has come to rest.)
+    auto still = [&] {
+        for (const Node& n : car.nodes)
+            if (dot(n.v, n.v) > 0.05 * 0.05) return false;
+        return true;
+    };
+    if (still()) return;
+    int quiet = 0;
+    runUntil(maxSeconds, [&] { return quiet >= 15; }, [&] { quiet = still() ? quiet + 1 : 0; });
+}
+
 void Ctx::checkInvariants() {
     static const char* names[3] = {"invariant: all node positions finite", "invariant: no node faster than 150 m/s",
                                    "invariant: nothing tunnels below the terrain"};

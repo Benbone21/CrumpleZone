@@ -15,6 +15,10 @@
 // between rows, the left one a little ahead. Three or more (a map's start): the first on the point
 // and the rest filling out each row from the middle.
 constexpr double kPadRowGap = 7.0, kPadColGap = 5.6;
+// The slab past its slots: behind the last row, ahead of the first and beside the outer columns. Room for
+// the biggest truck that starts on it (Hell Boy, 6.8 by 3.0 m) to stand on the paint, which stops a metre
+// in from the edge.
+constexpr double kPadBack = 5.2, kPadFront = 5.5, kPadSide = 3.2;
 inline void padSlotUV(int cols, int k, double& u, double& v) {
     cols = cols < 1 ? 1 : cols;
     const int row = k / cols, c = k % cols;

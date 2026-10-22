@@ -520,12 +520,49 @@ Slots bajaMods() {
     return m;
 }
 
+Slots hellboyMods() {
+    Slots m(MOD_SLOTS);
+    m[MOD_ENGINE] = {
+        stock("6.7L CUMMINS COMPOUND TURBOS  ~700 HP  ~2,000 LB-FT"),
+        {"NITROUS", "A WET SHOT ON TOP: ~850 HP  ~2,400 LB-FT  +15 KG", [](VehicleSpec& s) {
+             // Rick runs nitrous (Mar 2024); the shot size isn't stated, so ~150 hp (estimate).
+             s.voice.roar = 0.95f, s.voice.intake = 0.85f;
+             engine(s, "6.7L CUMMINS COMPOUNDS + NITROUS",
+                    {{0, 1000}, {800, 1350}, {1200, 2100}, {1500, 2850}, {1700, 3250}, {2000, 3050}, {2300, 2700}, {2600, 2400}, {2900, 2050}, {3200, 1650}, {3400, 1350}}, 3400, 0.5);
+             s.engineMass += 15;
+         }},
+        {"FACTORY 6.7", "THE 5500'S STOCK SINGLE TURBO  325 HP  750 LB-FT  -40 KG", [](VehicleSpec& s) {
+             // 2018 Ram 5500 chassis cab rating (FCA).
+             s.voice.roar = 0.5f, s.voice.muffler = 0.4f;
+             engine(s, "6.7L CUMMINS",
+                    {{0, 500}, {800, 650}, {1200, 900}, {1600, 1017}, {2000, 990}, {2400, 940}, {2800, 860}, {3000, 800}, {3200, 700}}, 3200, 0.8);
+             s.engineMass -= 40;
+         }},
+    };
+    m[MOD_SUSPENSION] = {
+        stock("4-LINKS  COIL-OVERS FRONT  AIR BAGS REAR  16 IN TRAVEL  58 IN TIRES"),
+        {"BAGS AIRED UP", "FIRMER REAR BAGS FOR A HEAVY TOW  +30 MM AT THE BACK", [](VehicleSpec& s) {
+             s.rideFreqRear *= 1.25;
+             s.dampingRatio = 0.45;
+         }},
+        {"54 IN TIRES", "MICKEY THOMPSON 54S ON THE SAME BEADLOCKS  -50 MM", [](VehicleSpec& s) {
+             tires(s, 0.686, 0.483, -25, 0.90, 0.71, 0);
+         }},
+    };
+    m[MOD_TRANSMISSION] = {
+        stock("ALLISON 6-SPEED  T-600 2.0 LOW  6.86 PLANETARIES  AIR LOCKERS"),
+        {"7.8 PLANETARIES", "SHORTER HUB GEARS: MORE PULL, LESS TOP SPEED", [](VehicleSpec& s) { s.finalDrive = 7.8; }},
+        {"OPEN DIFFS", "LOCKERS PULLED: IT TURNS TIGHTER ON THE ROAD", [](VehicleSpec& s) { s.lockerFront = s.lockerRear = false; }},
+    };
+    return m;
+}
+
 const std::vector<Slots>& allMods() {
     static const std::vector<Slots> mods = [] {
         std::vector<Slots> m;
         for (const VehicleSpec& vs : vehicleCatalog()) {
             std::string id = vs.id;
-            m.push_back(id == "civic" ? civicMods() : id == "jesko" ? jeskoMods() : id == "bronco" ? broncoMods() : id == "buggy" ? buggyMods() : id == "utv" ? utvMods() : id == "tacoma" ? tacomaMods() : id == "blazer" ? blazerMods() : id == "baja" ? bajaMods() : runnerMods());
+            m.push_back(id == "civic" ? civicMods() : id == "jesko" ? jeskoMods() : id == "bronco" ? broncoMods() : id == "buggy" ? buggyMods() : id == "utv" ? utvMods() : id == "tacoma" ? tacomaMods() : id == "blazer" ? blazerMods() : id == "baja" ? bajaMods() : id == "hellboy" ? hellboyMods() : runnerMods());
         }
         return m;
     }();
@@ -667,6 +704,11 @@ const Universal& universal() {
                 for (size_t o = 1; o < base[w][MOD_SUSPENSION].size(); o++) {
                     const ModOption& mo = base[w][MOD_SUSPENSION][o];
                     auto fn = mo.apply;
+                    if (cat[w].planetaryHubs != cat[v].planetaryHubs) {  // (one that brings its own tires: see the wheels below)
+                        VehicleSpec m = cat[w];
+                        fn(m);
+                        if (std::fabs(m.wheelRadius - cat[w].wheelRadius) > 0.005 || m.tireType != cat[w].tireType) continue;
+                    }
                     // (Fitted to its own vehicle first: then its tuning, its tires if it brings
                     // any, and what it does to the ride height, within reason, come across.)
                     U.opts[v][MOD_SUSPENSION].push_back({who + mo.name, mo.detail, [from, fn](VehicleSpec& s) {
@@ -683,7 +725,9 @@ const Universal& universal() {
                 }
                 char b[96];
                 std::snprintf(b, sizeof b, "%.0f MM TALL  %.0f MM WIDE  %.0f IN RIMS", from->wheelRadius * 2000, from->wheelWidth * 1000, from->rimRadius * 2 / 0.0254);
-                U.opts[v][MOD_WHEELS].push_back({who + "WHEELS AND TIRES", b, [from](VehicleSpec& s) { takeWheels(s, *from); }, w, 0});
+                // (Not between planetary hubs and the rest: Hell Boy's 24 in beadlocks bolt to 10-lug hubs no
+                // other vehicle has, and its 58s on a light truck's track stood inside the body and tipped it.)
+                if (cat[w].planetaryHubs == cat[v].planetaryHubs) U.opts[v][MOD_WHEELS].push_back({who + "WHEELS AND TIRES", b, [from](VehicleSpec& s) { takeWheels(s, *from); }, w, 0});
             }
             // Tires: every tread, on the wheels it has.
             static const int kOffer[] = {TIRE_STREET, TIRE_SEMI_SLICK, TIRE_RACE_SLICK, TIRE_ALL_TERRAIN, TIRE_MUD_TERRAIN, TIRE_SNOW};

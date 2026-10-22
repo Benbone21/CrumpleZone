@@ -20,7 +20,6 @@ const double kRimPopSpeed = 7.0;     // rim strike faster than this (m/s) pinche
 const double kStickK = 1.2e5, kStickC = 4000;  // contact-patch static friction (parking, slopes)
 const double kNodeRadius = 0.04;
 const double kGroundK = 4e5, kGroundC = 2000, kGroundCt = 3000, kGroundMu = 0.7;
-const double kHandbrakeTorque = 3000;
 
 // Soft ground under a hard landing (estimates). Loose sand bears ~100-150 kPa under a
 // tire before it shears and flows out from under it, more the deeper the tire goes (the
@@ -1170,18 +1169,16 @@ bool Car::wheelPowered(const Wheel& wh) const {
 
 // Applies a pure torque to a set of nodes: forces F_i = alpha x d_i that sum to zero and
 // whose moment is exactly `torque` (alpha = I^-1 torque, I = the set's geometric inertia).
-void Car::applyTorque(const std::vector<int>& set, const V3& torque, bool byMass) {
-    if (dot(torque, torque) < 1e-12 || set.size() < 3) return;
-    // byMass: spin the set as the rigid piece it is (each node pushed in proportion to its
-    // mass, about the centre of mass), so the moment turns it without bending it.
-    V3 c;
+// The set's centre and its inertia about it, each node weighted by its mass (byMass) or alike.
+bool Car::setInertia(const std::vector<int>& set, bool byMass, V3& c, M3& I) const {
+    c = V3();
+    I = M3();
     double M = 0;
     for (int i : set) {
         const double m = byMass ? nodes[i].m : 1.0;
         c += nodes[i].p * m, M += m;
     }
     c = c / M;
-    M3 I;
     for (int i : set) {
         V3 d = nodes[i].p - c;
         double dd = dot(d, d), m = byMass ? nodes[i].m : 1.0;
@@ -1190,12 +1187,34 @@ void Car::applyTorque(const std::vector<int>& set, const V3& torque, bool byMass
         I.c[2] += V3(-d.x * d.z, -d.y * d.z, dd - d.z * d.z) * m;
     }
     double tr = I.c[0].x + I.c[1].y + I.c[2].z;
-    if (tr < 1e-6) return;
+    if (tr < 1e-6) return false;
     I.c[0].x += tr * 1e-3;  // keeps nearly-flat sets well conditioned
     I.c[1].y += tr * 1e-3;
     I.c[2].z += tr * 1e-3;
+    return true;
+}
+
+void Car::applyTorque(const std::vector<int>& set, const V3& torque, bool byMass) {
+    if (dot(torque, torque) < 1e-12 || set.size() < 3) return;
+    // byMass: spin the set as the rigid piece it is (each node pushed in proportion to its
+    // mass, about the centre of mass), so the moment turns it without bending it.
+    V3 c;
+    M3 I;
+    if (!setInertia(set, byMass, c, I)) return;
     V3 alpha = inverseSym(I) * torque;
     for (int i : set) nodes[i].f += cross(alpha, nodes[i].p - c) * (byMass ? nodes[i].m : 1.0);
+}
+
+// How fast the set turns, as the one piece applyTorque spins: its angular momentum (with the
+// same weights) over its inertia. A moment put in with applyTorque on the same set and weights
+// does work at exactly this rate, so a force that depends on it can only take energy out.
+V3 Car::turnRate(const std::vector<int>& set, bool byMass) const {
+    V3 c;
+    M3 I;
+    if (set.size() < 3 || !setInertia(set, byMass, c, I)) return V3();
+    V3 L;
+    for (int i : set) L += cross(nodes[i].p - c, nodes[i].v) * (byMass ? nodes[i].m : 1.0);
+    return inverseSym(I) * L;
 }
 
 // Points sampled on a skin triangle for the tire to meet (barycentric weights): the
@@ -1517,6 +1536,11 @@ void Car::wheelStep(double h, const World& w) {
         turbo = 0.7 + 0.3 * boost;
     }
 
+    // (Torque management: a gearbox that can't take the engine's full torque in its low gears
+    // has the engine held back there.)
+    const bool managed = spec->lowGearTorque > 0 && gear >= 1 && gear <= 2;
+    auto curve = [&](double r) { return managed ? std::min(engineTorque(r), spec->lowGearTorque) : engineTorque(r); };
+
     const int ng = (int)spec->gears.size();
     // Automatic shifting, judged on the gearbox's input speed (the engine's, through a
     // clutch or a locked converter; the turbine's through a slipping one).
@@ -1595,7 +1619,7 @@ void Car::wheelStep(double h, const World& w) {
         // The engine spins up or down on its own inertia; an idle governor holds it at idle.
         const double idleThr = clampd((spec->idleRpm + 100 - rpm) / 400, 0, 0.4);
         const double tEff = std::max(thr, idleThr);
-        double Teng = tEff * engineTorque(rpm) * power * turbo - (1 - tEff) * (18 + rpm * 0.005);
+        double Teng = tEff * curve(rpm) * power * turbo - (1 - tEff) * (18 + rpm * 0.005);
         if (rpm > spec->redline) Teng = std::min(Teng, 0.0) - (rpm - spec->redline) * 0.5;  // rev limiter
         rpm = std::max(0.0, rpm + (Teng - Tp) / Ie * h * 60 / (2 * M_PI));
         Te = Tt;          // what the gears get
@@ -1605,7 +1629,7 @@ void Car::wheelStep(double h, const World& w) {
         double target = spec->idleRpm + thr * 2600;
         rpm += (target - rpm) * std::min(1.0, h * 5);
         rpm = std::max(rpm, wheelRpm);
-        Te = thr * engineTorque(rpm) * power * turbo;
+        Te = thr * curve(rpm) * power * turbo;
         // Rolling to a stop: drop back toward first, ready to pull away.
         if (!manualShift && gear > 1 && shiftTimer < -0.25 && roadRpm < 1250) {
             gear--;
@@ -1613,7 +1637,7 @@ void Car::wheelStep(double h, const World& w) {
         }
     } else {
         rpm = wheelRpm;
-        Te = thr * engineTorque(rpm) * power * turbo - (1 - thr) * (18 + rpm * 0.005);  // engine braking
+        Te = thr * curve(rpm) * power * turbo - (1 - thr) * (18 + rpm * 0.005);  // engine braking
         if (rpm > spec->redline) Te = std::min(Te, 0.0) - (rpm - spec->redline) * 0.5;  // rev limiter
         autoShift(rpm);
     }
@@ -1773,11 +1797,22 @@ void Car::wheelStep(double h, const World& w) {
             const double tireK = wh.radialK(tirePsi, spec->tirePsi, spec->tireSoft);
             const double popSpeed = kRimPopSpeed * clampd((tirePsi + 5) / (spec->tirePsi + 5), 0.45, 1.1);
             // Slip is measured where the tread touches the road: the hub's velocity plus the
-            // knuckle tilting or steering (its rotation other than the wheel's own spin).
+            // knuckle tilting or steering (its rotation other than the wheel's own spin). That
+            // turning is read off the same piece, by mass, that the tread's moment is put into
+            // below (the knuckle, or a live axle's whole housing): taken from the two
+            // hub nodes alone while the moment went into the housing, the two didn't match, and
+            // on 58 in tires the axle fed itself a 21 Hz tramp standing still.
+            const bool independent = (wh.front ? spec->frontSusp : spec->rearSusp) != SOLID_AXLE;
             {
-                V3 ab = b.p - a.p;
-                double L = std::max(1e-6, len(ab));
-                V3 tiltRate = cross(ab / L, (b.v - a.v) / L);
+                V3 tiltRate;
+                if (!wh.detached && wh.assembly.size() >= 3) {
+                    tiltRate = turnRate(wh.assembly, true);
+                    tiltRate -= axis * dot(tiltRate, axis);
+                } else {
+                    V3 ab = b.p - a.p;
+                    double L = std::max(1e-6, len(ab));
+                    tiltRate = cross(ab / L, (b.v - a.v) / L);
+                }
                 vc += cross(tiltRate, -n * (R - ct.pen + wh.sink));
             }
             double vn = dot(vc, n);
@@ -1895,7 +1930,6 @@ void Car::wheelStep(double h, const World& w) {
             // to side. On grippy tires that fed the body's roll: the Jesko on race slicks rocked
             // itself into a 3 Hz wobble at 80 mph. (A live axle's assembly is the whole housing,
             // both wheels: there the push stays at the hub.)
-            const bool independent = (wh.front ? spec->frontSusp : spec->rearSusp) != SOLID_AXLE;
             V3 extraTau;
             if (independent && !wh.detached && wh.assembly.size() >= 3) {
                 double M = 0;
@@ -1919,9 +1953,10 @@ void Car::wheelStep(double h, const World& w) {
             V3 tau = cross(arm, Ft);
             tau -= axis * dot(tau, axis);
             tau += extraTau - axis * dot(extraTau, axis);
-            // (On a knuckle, spread by mass, so it turns it as the one rigid piece it is: spread
-            // evenly, its light ball-joint nodes took as much as the heavy hub and it bent instead.)
-            if (!wh.detached) applyTorque(wh.assembly, tau, independent);
+            // (Spread by mass, so it turns the knuckle or the housing as the one rigid piece it is:
+            // spread evenly, a knuckle's light ball-joint nodes took as much as the heavy hub and it
+            // bent instead, and a housing's light tube nodes rang on their braces.)
+            if (!wh.detached) applyTorque(wh.assembly, tau, true);
             // The studs carry the moment of a sideways shove at the tread (a curb or a rock's
             // edge levering the wheel off its hub face); squeezed straight in on its face (lying
             // on its side) the hub takes it. As the sideways force at the tread that would make
@@ -2047,7 +2082,7 @@ void Car::wheelStep(double h, const World& w) {
             else
                 wh.abs = std::min(1.0, wh.abs + h * 6);
             double service = (brakePressure * wh.abs * (1 - 1.5 * wh.escCut) + std::max(wh.tcBrake, wh.escBrake)) * wh.brakeMax;
-            Tb += service + (wh.front ? 0.0 : handbrake * kHandbrakeTorque);
+            Tb += service + (wh.front ? 0.0 : handbrake * spec->handbrakeTorque);
         }
         // The brake grips the wheel to its knuckle, so it stops the wheel turning relative to
         // the knuckle, not in space: when the knuckle (or a solid axle) pitches back under
@@ -3444,6 +3479,7 @@ void Sim::swapPlayerVehicle(const VehicleSpec& vs) {
     Car& c = cars[player];
     if (c.remote) return;  // (someone else's)
     c.spec = &vs;
+    if (vs.paintColor[0] >= 0) c.color = V3(vs.paintColor[0], vs.paintColor[1], vs.paintColor[2]);  // (its factory paint, as addCar)
     recoverPlayer();
 }
 

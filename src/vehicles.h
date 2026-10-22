@@ -77,6 +77,7 @@ enum BodyExtra : unsigned {
     EXTRA_WINCH = 4096,       // electric winch on the front bumper (V hooks it, Z reels in)
     EXTRA_TUBE_CAGE = 8192,   // tube-frame vehicles: the roll cage, tube chassis and bumpers are drawn from tubes (carvisual.cpp)
     EXTRA_BAJA = 16384,       // Baja Bug kit: tube push bar, rear exo-cage over the bare engine, stinger exhaust, roof light bar
+    EXTRA_WRECKER = 32768,    // Hell Boy kit: horn stinger bumper, black flares, exo-cage and pods, toolboxes and the boom (drawn, not working)
 };
 
 // Wheel and tire look.
@@ -177,6 +178,7 @@ struct VehicleSpec {
     double trackFront = 0, trackRear = 0;     // tire center to tire center (m); 0 = from the body width
     double wheelMass = 20, hubMass = 16;      // per corner: wheel and tire; knuckle, hub and brake
     double axleMass = 60;                     // solid axle housing and differential
+    bool planetaryHubs = false;               // medium-duty planetary hubs: their 10-lug wheels fit nothing else (mods.cpp)
     SuspensionType frontSusp = WISHBONE, rearSusp = WISHBONE;
     // Linkage sizes (m). Solid axle: the length of the lower trailing links (the upper link
     // is `upperLink` times it, or 0.55 m if that is 0; equal lengths keep the axle parallel to the frame through its travel); a front solid axle steers on kingpins and trails them back toward the
@@ -240,6 +242,7 @@ struct VehicleSpec {
     bool frontLockerLowOnly = false, rearLockerLowOnly = false;  // the switch only works in low range
     double shaftLimit = 0;    // N*m an axle shaft takes before it snaps (0 = never); IFS CVs take 65% of it
     double brakeFront, brakeRear;  // N*m per wheel
+    double handbrakeTorque = 3000; // N*m per rear wheel (a heavy truck's driveline brake holds through the axle's gears)
 
     // Aerodynamics.
     double dragArea = 0.70;    // drag coefficient times frontal area (m^2)
@@ -262,6 +265,7 @@ struct VehicleSpec {
     double stallRpm = 0;
     double stallRatio = 2.0;
     int lockupGear = 3;
+    double lowGearTorque = 0;   // N*m the engine may make in 1st and 2nd (torque management; 0 = no limit)
     const char* engineName = "";
     const char* gearboxName = "";
 

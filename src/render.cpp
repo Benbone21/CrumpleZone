@@ -618,7 +618,7 @@ uniform int uVehicle;  // catalog body style: EF, Jesko, Bronco, 4Runner
 // y up, z across) and these are its lines: floor, belt, roof, hood front | front x,
 // half width, windshield base x, roof front x | B-pillar x, C-pillar x, liftgate
 // bottom y, liftgate half width | trim top y, roof tuck, rear x, liftgate top x.
-uniform int uShell;      // 1 4Runner, 2 Bronco, 3 Civic, 4 Tacoma (uShD.w: its cab's back x), 5 K5 Blazer, 6 Baja Bug (uShD.w: where the roof meets the deck)
+uniform int uShell;      // 1 4Runner, 2 Bronco, 3 Civic, 4 Tacoma (uShD.w: its cab's back x), 5 K5 Blazer, 6 Baja Bug (uShD.w: where the roof meets the deck), 7 Hell Boy (the same)
 uniform vec4 uShA, uShB, uShC, uShD;
 uniform vec4 uShE;       // front door's front edge x, gate top y, bumper top y, wheel opening top y
 out vec4 oCol;
@@ -733,10 +733,10 @@ void main(){
       win = rbox(vec2(u, P.y), vec2(0.0, 0.5 * (y0 + y1)), vec2(zRef, 0.5 * (y1 - y0)), 0.05);
     }
   }
-  if (uShell == 4) {
+  if (uShell == 4 || uShell == 7) {
     win = 1.0;
     if (region == 1) {
-      // Double cab: front and rear door glass between the A, B and C pillars.
+      // Double cab (a Ram crew cab the same): front and rear door glass between the A, B and C pillars.
       float yc = 0.5 * (shYlo + shYhi), yh = 0.5 * (shYhi - shYlo);
       float w1 = rbox(P.xy, vec2(0.5 * (shXB + shXa), yc), vec2(0.5 * (shXa - shXB) - 0.05, yh), 0.03);
       w1 = max(w1, P.x - (shAx - 0.075));
@@ -1260,6 +1260,100 @@ void main(){
     if (kind == 3) {
       j = (P.z / max(0.1, shW2) * 0.5 + 0.5) * W;
       k = uBody.z + (P.y - lampY) / 0.15;
+    }
+  }
+
+  if (uShell == 7) {
+    // Hell Boy: the Ram's cab in red, its grille cut out for a black mesh fascia with four round
+    // lamps across it, black fenders ahead of the doors, the Murphy's Diesel logo in white on the
+    // doors and a RAM badge ahead of it, black rockers, the wrecker's black toolboxes behind the
+    // cab and a diamond-plate deck. (The horn bumper, flares, cage and boom are parts: carvisual.cpp.)
+    base = uPaint;
+    kind = 0;
+    float fw = max(fwidth(P.x) + fwidth(P.y) + fwidth(P.z), 1e-4);
+    float az = abs(P.z);
+    float xCab = shXrr;
+    float lampY = shHood - 0.24, lampZ = az < 0.47 ? 0.30 : 0.64;
+    if (region == 7 || region == 8) {
+      base = vec3(0.03);
+      kind = 5;
+    } else if (region == 0) {
+      if (P.y < shF + 0.09) { base = vec3(0.03); kind = 1; }  // rocker
+      if (P.x > shXE + 0.02 || P.x < xCab) { base = vec3(0.035); kind = 1; }  // the fenders ahead of the doors; the toolboxes behind
+      if (P.x > xCab - 0.01 && P.x < xCab + 0.02) { base = vec3(0.01); kind = 1; }
+      if (P.x < xCab) {  // toolbox doors: seams, a latch each
+        float bx = fract((xCab - P.x) / 0.95);
+        float seam = max(lineAt(bx * 0.95, 0.0, 0.006, fw), lineAt(P.y, shF + 0.06, 0.004, fw));
+        base = mix(base, vec3(0.008), seam * 0.9);
+        if (rbox(vec2(bx * 0.95, P.y), vec2(0.47, shF + 0.38), vec2(0.07, 0.02), 0.008) < 0.0) { base = vec3(0.6); kind = 2; }
+      }
+      if (P.y > shF + 0.08 && P.y < shB + 0.01 && P.x > xCab && P.x < shXE + 0.02) {
+        float seam = max(lineAt(P.x, shXE, 0.004, fw), max(lineAt(P.x, shXB, 0.004, fw), lineAt(P.x, shXC, 0.004, fw)));
+        base = mix(base, vec3(0.012), seam * 0.9);
+        float h = min(rbox(P.xy, vec2(shXB + 0.15, shB - 0.10), vec2(0.075, 0.022), 0.012),
+                      rbox(P.xy, vec2(shXC + 0.14, shB - 0.10), vec2(0.07, 0.022), 0.012));
+        if (h < 0.0) { base = vec3(0.02); kind = 1; }
+        // RAM on the front door, ahead of the logo.
+        vec2 rq = vec2((P.z > 0.0 ? shXE - 0.30 - P.x : P.x - (shXE - 0.30)) / 0.06, (P.y - (shF + 0.62)) / 0.035);
+        if (abs(rq.y) < 1.0 && rq.x > -1.5 && rq.x < 1.5 && fract(rq.x * 0.5 + 0.75) > 0.15) { base = vec3(0.75); kind = 2; }
+        // The Murphy's Diesel logo across the B pillar: a white peak over two lines of lettering.
+        float lx = (P.z > 0.0 ? shXB - P.x : P.x - shXB);  // (read the same from either side)
+        float ly = P.y - (shF + 0.20);
+        float peak = max(ly - 0.16 - 0.30 * (0.22 - abs(lx)) * 2.0, max(abs(lx) - 0.22, 0.13 - ly));
+        if (peak < 0.0 && ly < 0.48) base = vec3(0.9);
+        if (peak < 0.0 && abs(lx + 0.03) < 0.035 && ly > 0.20 && ly < 0.40) base = vec3(0.03);  // the M cut into it
+        float word1 = step(abs(ly - 0.085), 0.026) * step(abs(lx), 0.21) * step(0.3, fract(lx * 22.0));
+        float word2 = step(abs(ly - 0.02), 0.024) * step(abs(lx), 0.15) * step(0.3, fract(lx * 22.0));
+        base = mix(base, vec3(0.9), max(word1, word2));
+        if (max(word1, word2) > 0.5 || (peak < 0.0 && ly < 0.48)) kind = 1;
+      }
+    } else if (region == 1) {
+      if (P.x > xCab + 0.02 && P.x < shAx - 0.045 && P.y > shB + 0.008 && P.y < shYhi + 0.035) { base = vec3(0.03); kind = 1; }  // black window frames and pillars
+      if (win < 0.012) { base = vec3(0.018); kind = 1; }
+    } else if (region == 2 || region == 3) {
+      if (win < 0.012) { base = vec3(0.018); kind = 1; }
+      if (region == 2 && P.y < shB + 0.05) { base = vec3(0.03); kind = 1; }  // cowl
+    } else if (region == 10) {
+      if (P.x > shXa) {
+        float seam = max(lineAt(P.x, shXf - 0.10, 0.004, fw), lineAt(az, shW2 - 0.08, 0.004, fw));
+        base = mix(base, vec3(0.012), seam * 0.9);
+        if (P.x < shXa + 0.05) { base = vec3(0.03); kind = 1; }  // cowl vent
+        if (az > shW2 - 0.08) { base = vec3(0.035); kind = 1; }  // the flares' tops, black
+      } else {
+        // The deck: black diamond plate.
+        vec2 d = vec2(P.x * 9.0, P.z * 9.0);
+        float dia = abs(fract(d.x + d.y) - 0.5) + abs(fract(d.x - d.y) - 0.5);
+        base = vec3(0.05) * (0.85 + 0.4 * step(0.82, dia));
+        kind = 1;
+      }
+    } else if (region == 5) {
+      // The face: the grille delete's black mesh fascia from fender to fender, four round lamps
+      // across it (the outer pair a hand higher in the photos: level here), a black lower panel.
+      base = vec3(0.035);
+      kind = 1;
+      if (P.y > shHood - 0.07) { base = uPaint; kind = 0; }  // the hood's red lip
+      float mesh = rbox(vec2(az, P.y), vec2(0.0, shHood - 0.24), vec2(shW2 - 0.06, 0.17), 0.03);
+      if (mesh < 0.0) {
+        vec2 m = vec2(P.z * 34.0, P.y * 34.0);
+        float cell = abs(fract(m.x + m.y) - 0.5) + abs(fract(m.x - m.y) - 0.5);
+        base = cell > 0.75 ? vec3(0.08) : vec3(0.008);
+      }
+      float lr = length(vec2(az - lampZ, P.y - lampY));
+      if (lr < 0.105) { base = vec3(0.02); kind = 1; }  // bucket
+      if (lr < 0.085) kind = lampZ > 0.5 ? 3 : 8;
+      if (lampZ < 0.5 && lr < 0.085 && lr > 0.06) kind = 3;  // (the inner pair: halos round amber centers)
+    } else if (region == 6) {
+      // The deck's tail: black, a round tail lamp and a reversing lamp each side.
+      base = vec3(0.035);
+      kind = 1;
+      float t1 = length(vec2(az - (shW2 - 0.18), P.y - (shF + 0.30)));
+      float t2 = length(vec2(az - (shW2 - 0.38), P.y - (shF + 0.30)));
+      if (t1 < 0.065) kind = 4;
+      if (t2 < 0.05) kind = 3;
+    }
+    if (kind == 3) {
+      j = (P.z > 0.0 ? W - 0.55 : 0.55) + (P.z > 0.0 ? -(az - lampZ) : (az - lampZ)) * 3.0;
+      k = uBody.z + (P.y - lampY) * 3.0 / 2.2;
     }
   }
 

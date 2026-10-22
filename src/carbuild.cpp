@@ -1505,8 +1505,15 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
             V3 o;
             for (int n : as.nodes) o += local[n];
             o = o / (double)as.nodes.size();
+            // (A steered solid axle's tie rods run from its knuckles to a bracket on its own tube:
+            // they ride along and hold nothing against the body. Counted as links they locked the
+            // axle solid here and its coils got the fallback ratio.)
+            std::vector<int> rides = as.nodes;
+            for (int wi : as.wheelIdx) rides.insert(rides.end(), wheels[wi].assembly.begin(), wheels[wi].assembly.end());
+            auto riding = [&](int n) { return std::find(rides.begin(), rides.end(), n) != rides.end(); };
             for (int bi : as.links) {
                 const Beam& b = beams[bi];
+                if (riding(b.a) && riding(b.b)) continue;
                 bool aIn = std::find(as.nodes.begin(), as.nodes.end(), b.a) != as.nodes.end();
                 int mine = aIn ? b.a : b.b, other = aIn ? b.b : b.a;
                 V3 u = norm(local[mine] - local[other]), r = local[mine] - o, ru = cross(r, u);

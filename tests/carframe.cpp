@@ -78,7 +78,7 @@ VEHICLE_SCENARIO(frameOnTheCar, "carframe/placed", "Every ladder-frame vehicle h
     }
     ctx.check("the rails are as deep and wide as the spec's", wrongSize == 0, std::to_string(wrongSize));
     if (id == "blazer") ctx.check("the K5's rails are riveted C-channel all along", boxed == 0 && channel == stretches, std::to_string(channel) + " channel, " + std::to_string(boxed) + " boxed");
-    if (id == "bronco") ctx.check("the Bronco's rails are boxed all along", channel == 0 && boxed == stretches, std::to_string(channel) + " channel, " + std::to_string(boxed) + " boxed");
+    if (id == "bronco" || id == "hellboy") ctx.check("the rails are boxed all along", channel == 0 && boxed == stretches, std::to_string(channel) + " channel, " + std::to_string(boxed) + " boxed");
     if (id == "4runner" || id == "tacoma") ctx.check("boxed up front, an open C-channel tail", boxed > 0 && channel > 0 && boxed > channel / 2, std::to_string(channel) + " channel, " + std::to_string(boxed) + " boxed");
     // Everything sits within the car's box (a little over), is a real model, and is square-turned.
     V3 lo = c.nodes[0].p, hi = lo;

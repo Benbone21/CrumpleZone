@@ -1848,6 +1848,8 @@ int main(int argc, char** argv) {
 
     uint32_t flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
     if (settings.fullscreen) flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+    // Windows' SDL has no offscreen driver: CZ_HIDDEN_WINDOW=1 renders scripted shots in a window that's never shown.
+    if (const char* h = std::getenv("CZ_HIDDEN_WINDOW"); h && *h == '1') flags |= SDL_WINDOW_HIDDEN;
     SDL_Window* win = SDL_CreateWindow("Crumple Zone", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, opt.width,
                                        opt.height, flags);
     if (!win) {
