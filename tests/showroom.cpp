@@ -11,6 +11,7 @@
 
 #include "../src/career.h"
 #include "../src/mods.h"
+#include "../src/partpicker.h"
 #include "../src/showroomcore.h"
 #include "../src/studio.h"
 #include "../src/vehicles.h"
@@ -365,4 +366,155 @@ SCENARIO(showroomBuyPart, "showroom/buy", "B buys the part shown in a career, at
     Career sandbox;
     sandbox.cash = 1000000;
     ctx.check("a sandbox: nothing", !showroomBuy(sandbox, v, MOD_TIRES, o, true, toast) && sandbox.cash == 1000000 && toast.empty(), toast);
+}
+
+SCENARIO(showroomPickerTree, "showroom/picker-tree", "Every option of every slot is in exactly one group, grouped by donor in catalog order") {
+    const int n = (int)vehicleCatalog().size();
+    int bad = 0;
+    std::string first;
+    auto fail = [&](const std::string& why) {
+        if (!bad++) first = why;
+    };
+    for (int v = 0; v < n; v++) {
+        PartTree t;
+        t.build(v);
+        for (int s = 0; s < MOD_SLOTS; s++) {
+            const std::string at = "vehicle " + std::to_string(v) + " slot " + std::to_string(s) + ": ";
+            const int total = (int)modOptions(v, s).size();
+            const auto& g = t.groups[s];
+            std::vector<int> seen(total, 0);
+            for (const PartGroup& p : g)
+                for (int o = p.first; o < p.first + p.count; o++)
+                    if (o >= 0 && o < total) seen[o]++;
+                    else fail(at + "option " + std::to_string(o) + " out of range");
+            for (int o = 0; o < total; o++) {
+                if (seen[o] != 1) fail(at + "option " + std::to_string(o) + " in " + std::to_string(seen[o]) + " groups");
+                const int gi = t.groupOf(s, o);
+                if (gi < 0 || gi >= (int)g.size() || o < g[gi].first || o >= g[gi].first + g[gi].count) fail(at + "groupOf(" + std::to_string(o) + ")");
+            }
+            if (t.groupOf(s, -1) != -1 || t.groupOf(s, total) != -1) fail(at + "groupOf out of range");
+            if (g.empty() || g[0].donor != v || g[0].first != 0 || g[0].count != modOwnCount(v, s)) fail(at + "group 0 isn't the vehicle's own");
+            if (s == MOD_TIRES) {
+                for (const PartGroup& p : g)
+                    if (p.count != 1) fail(at + "a tire group of " + std::to_string(p.count));
+                continue;
+            }
+            int prev = -1;
+            for (size_t i = 1; i < g.size(); i++) {
+                if (g[i].donor == v || g[i].donor <= prev) fail(at + "donor " + std::to_string(g[i].donor) + " after " + std::to_string(prev));
+                prev = g[i].donor;
+                for (int o = g[i].first; o < g[i].first + g[i].count; o++)
+                    if (modOptions(v, s)[o].fromVehicle != g[i].donor) fail(at + "option " + std::to_string(o) + " not from the group's donor");
+            }
+        }
+    }
+    ctx.check("grouped by donor, nothing lost or doubled", bad == 0, first);
+}
+
+SCENARIO(showroomPickerNav, "showroom/picker-nav", "Tiles and rows pick the highlighted part, a group remembers its variant, tabs keep the pick") {
+    const int v = 3;
+    const auto& cat = vehicleCatalog();
+    int jesko = -1;
+    for (int i = 0; i < (int)cat.size(); i++)
+        if (std::string(cat[i].id) == "jesko") jesko = i;
+    if (!ctx.check("the Jesko is a donor to catalog 3", jesko >= 0 && jesko != v)) return;
+    PickerNav nav;
+    nav.open(v, ModSet(), 2);
+    ctx.check("opens on ENGINE, level 1, group 0", nav.tabIndex() == TAB_ENGINE && nav.level() == 1 && nav.cursor() == 0 && nav.pick().stock());
+    const PartTree& tr = nav.tree();
+    int jg = -1;
+    for (int g = 0; g < (int)tr.groups[MOD_ENGINE].size(); g++)
+        if (tr.groups[MOD_ENGINE][g].donor == jesko) jg = g;
+    if (!ctx.check("the Jesko has a multi-option engine group", jg > 0 && tr.groups[MOD_ENGINE][jg].count >= 2)) return;
+    const PartGroup jp = tr.groups[MOD_ENGINE][jg];
+
+    // Onto the Jesko's tile, one step at a time (the grid's two columns, then down a row).
+    bool changed = false;
+    for (int guard = 0; nav.cursor() < jg && guard < 100; guard++) changed = nav.move(1, 0) || changed;
+    ctx.check("moving onto its tile picks its first engine", nav.cursor() == jg && nav.pick().pick[MOD_ENGINE] == jp.first && changed);
+    ctx.check("opening it keeps the pick", !nav.enter() && nav.level() == 2 && nav.pick().pick[MOD_ENGINE] == jp.first && nav.cursor() == 0);
+    ctx.check("one row down picks its second", nav.move(0, 1) && nav.pick().pick[MOD_ENGINE] == jp.first + 1 && nav.cursor() == 1);
+    bool close = true;
+    ctx.check("back keeps it", !nav.back(close) && !close && nav.level() == 1 && nav.cursor() == jg && nav.pick().pick[MOD_ENGINE] == jp.first + 1);
+    ctx.check("away picks the other tile's part", nav.move(-1, 0) && nav.pick().pick[MOD_ENGINE] != jp.first + 1 && nav.cursor() == jg - 1);
+    ctx.check("and back remembers the second", nav.move(1, 0) && nav.pick().pick[MOD_ENGINE] == jp.first + 1);
+    ctx.check("a clamped move picks nothing", !nav.move(0, -100) || nav.cursor() == 0);
+    nav.clickTile(jg);
+
+    // Tabs: the new tab's cursor lands on the group holding the pick; the pick never changes.
+    const ModSet before = nav.pick();
+    ctx.check("tab changes no pick", !nav.tab(1) && nav.tabIndex() == TAB_SUSP && nav.level() == 1 && nav.pick().pick[MOD_ENGINE] == before.pick[MOD_ENGINE]);
+    ctx.check("...and lands on the SUSP group holding the pick", nav.cursor() == tr.groupOf(MOD_SUSPENSION, nav.pick().pick[MOD_SUSPENSION]));
+    ctx.check("tab(-1) wraps back", !nav.tab(-1) && nav.tabIndex() == TAB_ENGINE && nav.cursor() == jg);
+    ctx.check("tab(-1) wraps to BUILDS", !nav.tab(-1) && nav.tabIndex() == TAB_BUILDS && nav.cursor() == 0);
+    ctx.check("...and forward again", !nav.tab(1) && nav.tabIndex() == TAB_ENGINE);
+
+    // A one-option tile doesn't open.
+    nav.open(v, ModSet(), 0);
+    nav.tab(TAB_TIRES);
+    ctx.check("at TIRES", nav.tabIndex() == TAB_TIRES && nav.level() == 1);
+    ctx.check("enter on a one-option tile does nothing", !nav.enter() && nav.level() == 1);
+    close = false;
+    ctx.check("back at level 1 closes, and changes nothing", !nav.back(close) && close && nav.level() == 1 && nav.pick().stock());
+
+    // A fitted non-own part: the cursor opens on its group.
+    ModSet fit;
+    fit.pick[MOD_ENGINE] = 5;
+    if (!ctx.check("option 5 is a donor's, not the vehicle's own", 5 >= modOwnCount(v, MOD_ENGINE) && 5 < (int)modOptions(v, MOD_ENGINE).size())) return;
+    nav.open(v, fit, 0);
+    const int want = nav.tree().groupOf(MOD_ENGINE, 5);
+    ctx.check("opens on the fitted part's group", want > 0 && nav.cursor() == want && nav.pick().pick[MOD_ENGINE] == 5);
+    nav.enter();
+    const PartGroup fg = nav.tree().groups[MOD_ENGINE][want];
+    ctx.check("its row is under the cursor", fg.count < 2 || nav.cursor() == 5 - fg.first);
+}
+
+SCENARIO(showroomPickerView, "showroom/picker-view", "The grid clamps, scroll keeps the cursor in view, clicks are absolute, and BUILDS only moves the cursor") {
+    const int v = 3;
+    PickerNav nav;
+    nav.open(v, ModSet(), 3);
+    nav.setView(2, 2, 3);
+    const int n = (int)nav.tree().groups[MOD_ENGINE].size();
+    if (!ctx.check("enough tiles to scroll", n >= 6)) return;
+    ctx.check("up from the top clamps", !nav.move(0, -1) && !nav.move(-1, 0) && nav.cursor() == 0 && nav.scroll() == 0);
+    ctx.check("down is a whole row", nav.move(0, 1) && nav.cursor() == 2 && nav.scroll() == 0);
+    nav.move(0, 1);
+    ctx.check("scrolls once the cursor leaves the view", nav.cursor() == 4 && nav.scroll() == 1);
+    for (int i = 0; i < 40; i++) nav.move(0, 1);
+    ctx.check("down clamps to the last tile", nav.cursor() == n - 1 && nav.scroll() == (n - 1) / 2 - 1);
+    nav.move(0, -100);
+    ctx.check("and scrolls back", nav.cursor() == 0 || nav.scroll() <= nav.cursor() / 2);
+    nav.clickTile(0);
+    ctx.check("clicking a tile picks its part", nav.clickTile(n - 1) && nav.cursor() == n - 1 && nav.pick().pick[MOD_ENGINE] == nav.tree().groups[MOD_ENGINE][n - 1].first);
+    ctx.check("out of range does nothing", !nav.clickTile(n) && !nav.clickTile(-1) && nav.cursor() == n - 1);
+
+    // Rows are absolute option-within-group indices, scrolled to stay visible.
+    int big = -1;
+    for (int g = 0; g < n && big < 0; g++)
+        if (nav.tree().groups[MOD_ENGINE][g].count >= 3) big = g;
+    if (!ctx.check("a group of three or more", big >= 0)) return;
+    const PartGroup bg = nav.tree().groups[MOD_ENGINE][big];
+    nav.setView(2, 2, 2);
+    nav.clickTile(big);
+    nav.enter();
+    ctx.check("clicking a row picks and remembers it", nav.clickRow(2) && nav.cursor() == 2 && nav.scroll() == 1 && nav.pick().pick[MOD_ENGINE] == bg.first + 2);
+    ctx.check("a tile click at level 2 does nothing", !nav.clickTile(0) && nav.level() == 2);
+    bool close = true;
+    nav.back(close);
+    nav.clickTile(0);
+    nav.clickTile(big);
+    ctx.check("the tile remembers it", nav.pick().pick[MOD_ENGINE] == bg.first + 2);
+
+    // BUILDS: YOUR PICK, then the builds. The cursor moves; the pick doesn't.
+    nav.tab(-1);
+    const ModSet yours = nav.pick();
+    ctx.check("BUILDS opens on YOUR PICK", nav.tabIndex() == TAB_BUILDS && nav.cursor() == 0 && nav.tileCount() == 4);
+    int resolved = 0;
+    nav.resolve = [&](int, const ModSet& b) {
+        resolved++;
+        return b;
+    };
+    ctx.check("moving over builds changes no pick", !nav.move(0, 1) && !nav.move(1, 0) && nav.cursor() == 3 && !nav.move(0, 5) && nav.cursor() == 3 && nav.pick().pick[MOD_ENGINE] == yours.pick[MOD_ENGINE]);
+    ctx.check("...and calls nothing yet", resolved == 0 && !nav.enter() && nav.level() == 1 && !nav.clickTile(1) && nav.cursor() == 1);
+    ctx.check("it kept YOUR PICK", nav.yourPick().pick[MOD_ENGINE] == yours.pick[MOD_ENGINE]);
 }

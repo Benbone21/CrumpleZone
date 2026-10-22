@@ -16,6 +16,7 @@ PHYS     += src/allocstat.cpp
 PHYS     += src/carentry.cpp
 PHYS     += src/studio.cpp
 PHYS     += src/showroomcore.cpp
+PHYS     += src/partpicker.cpp
 SCEN     += tests/baja.cpp
 SCEN     += tests/entercar.cpp
 SCEN     += tests/winchfoot.cpp tests/allocs.cpp tests/benchreport.cpp tests/tracks.cpp src/fx.cpp
