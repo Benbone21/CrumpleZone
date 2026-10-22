@@ -19,22 +19,25 @@ struct ShowroomResult {
     enum Act { NONE, FIT, CLOSED } act = NONE;
     ModSet mods;
     bool recal = false;  // FIT: recalibrate the speedometer to the tires fitted (C), as the old garage did (mods == fitted: only that)
+    bool bought = false;  // B bought a part (career): save the career
 };
 
 class Showroom {
 public:
+    enum class Ui { NONE, HOVER, CLICK };  // the menu sound an input makes (main plays uiHover / uiClick)
     Showroom(Renderer& r, std::function<void()> restoreGameWorld);  // restore: renderer.setWorld(sim.world) + drawnWorld
     ~Showroom();  // (closes and lets go of every spec: run it while the GL context is still up)
     void open(int vehicle, const ModSet& fitted, const V3& color, bool career);
     bool isOpen() const;          // from open() until the closing fade has cleared
     bool drawsScene() const;      // true while the studio is the world on screen (game skips drawScene/HUD)
-    void handleEvent(const SDL_Event& e);
-    void pad(const pad::Raw& raw, double dt);
+    Ui handleEvent(const SDL_Event& e);
+    Ui pad(const pad::Raw& raw, double dt);
     // Call every frame, closed too: after closing it lets go of the preview's specs as their builds finish.
     ShowroomResult update(double dt, Career& career, bool atStation);
     void draw(int W, int H);      // studio scene (when drawsScene) + panels + fade overlay, queued on the HUD (the caller flushes)
     const Car* previewCar() const;
     void requestClose();          // ESC/G/B, and after FIT
+    void fitDone();               // after a FIT: the fitted car is in (swapped, or nothing to swap); the closing fade holds black till then
     void camera(View& v) const;   // the turntable's view, as the last draw() framed it (tests)
 
 private:
@@ -48,7 +51,9 @@ private:
     std::unique_ptr<ShowroomCore> core;
     ShowroomFade fade;
     Phase phase = CLOSED;
-    bool scene = false, career_ = false, recal = false, fitWanted = false, closeWanted = false;
+    bool scene = false, career_ = false, recal = false, fitWanted = false, buyWanted = false, closeWanted = false;
+    bool swapWait = false;  // a FIT's car not swapped in yet (fitDone)
+    double blackT = 0;      // s the fade has been held black
     int slot = 0, listScroll = 0;
     bool follow = true;  // keep the pick in view (after a key moved it; the wheel scrolls freely)
     // Camera: yaw from the car's +x, pitch up from level, zoom times the distance (1.25 car lengths).
@@ -61,6 +66,7 @@ private:
     uint32_t padPrev = 0;
     float rev = 0;  // RT (phase 3: revs the preview's engine)
     std::vector<Hit> hits;
+    int hover = -1;  // the hit under the mouse
     std::string toast;
     double toastT = 0;
     int W = 1280, H = 720;
@@ -73,6 +79,7 @@ private:
     void setSlot(int s, bool now = false);
     void step(int d);
     void touched();
+    int hitAt(float x, float y) const;  // the topmost hit there, or -1
     void say(const std::string& s) { toast = s, toastT = 2.5; }
     void drawLeft(const ShowroomLayout& l);
     void drawRight(const ShowroomLayout& l);

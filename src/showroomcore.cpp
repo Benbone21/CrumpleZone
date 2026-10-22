@@ -2,9 +2,20 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
+#include "career.h"
+#include "frameprof.h"
 #include "hudlayout.h"
 #include "studio.h"
+
+namespace {
+std::string modsText(const VehicleSpec& s) {  // "(mods 0 2 1 0 0)", for the log
+    std::string t = "(mods";
+    for (int k = 0; k < MOD_SLOTS; k++) t += " " + std::to_string(s.mods[k]);
+    return t + ")";
+}
+}  // namespace
 
 ShowroomCore::ShowroomCore(VisualHooks h) : hooks(std::move(h)) {
     sim.setupEmpty();
@@ -93,6 +104,7 @@ void ShowroomCore::update(double dt) {
             if (b != building.end() && hooks.ready(**it)) {
                 building.erase(b);
             } else if (b != building.end() && (b->second += dt) >= kBuildTimeout) {
+                std::fprintf(stderr, "showroom: %s %s not built in %.0f s, let go\n", (*it)->name, modsText(**it).c_str(), kBuildTimeout);
                 if (it->get() == want) failed_ = true, want = nullptr;
                 building.erase(b);
                 evicting.push_back(std::move(*it));
@@ -134,12 +146,13 @@ void ShowroomCore::update(double dt) {
             bool blown = !c.finite();
             for (const Node& n : c.nodes) blown = blown || len(n.p) > kUnstable;
             if (blown) {
+                std::fprintf(stderr, "showroom: %s %s blew up on the turntable, removed\n", c.spec->name, modsText(*c.spec).c_str());
                 failed_ = true;
                 removePreview();
                 want = nullptr;  // not again until the next pick
             }
         }
-        sim.advance(dt, 64);
+        sim.advance(dt, simMaxSteps(sim.h));  // (capped like the main sim)
     }
     for (auto it = evicting.begin(); it != evicting.end();)
         if (hooks.evict(**it)) it = evicting.erase(it);
@@ -161,14 +174,24 @@ ShowroomLayout showroomLayout(int W, int H) {
     return l;
 }
 
+bool showroomBuy(Career& career, int vehicle, int slot, int option, bool atStation, std::string& toast) {
+    toast.clear();
+    if (!career.on) return false;
+    if (!atStation) return toast = "PARTS ARE SOLD AT THE REPAIR STATIONS", false;
+    std::string why;
+    if (!career.buy(vehicle, slot, option, why)) return toast = why, false;
+    toast = "BOUGHT " + modOptions(vehicle, slot)[option].name + ": $" + std::to_string(career.cash) + " LEFT";
+    return true;
+}
+
 bool ShowroomFade::start() {
     if (on) return false;
     on = true, black = false, t = 0;
     return true;
 }
 
-bool ShowroomFade::update(double dt) {
-    if (!on) return false;
+bool ShowroomFade::update(double dt, bool hold) {
+    if (!on || (black && hold && t <= kTime)) return false;  // (held: black until let go)
     t += dt;
     if (!black && t >= kTime) {
         black = true, t = kTime;  // fully black on the swap frame

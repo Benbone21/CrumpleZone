@@ -103,9 +103,9 @@ void Showroom::open(int vehicle, const ModSet& fitted, const V3& color, bool car
     if (phase != CLOSED) return;
     core->open(vehicle, fitted, color);  // (the preview is built behind the fade)
     career_ = career;
-    phase = OPENING, scene = false, fitWanted = closeWanted = orbiting = false;
+    phase = OPENING, scene = false, recal = fitWanted = buyWanted = closeWanted = orbiting = swapWait = false;
     fade.start();
-    listScroll = 0, follow = true, idle = 0, toastT = 0;
+    listScroll = 0, follow = true, idle = 0, toastT = 0, blackT = 0, hover = -1;
     setSlot(0, true);
 }
 
@@ -117,7 +117,15 @@ void Showroom::requestClose() {
     if (phase == OPENING || phase == OPEN) closeWanted = true;
 }
 
+void Showroom::fitDone() { swapWait = false; }
+
 void Showroom::touched() { idle = 0; }
+
+int Showroom::hitAt(float x, float y) const {
+    for (int i = (int)hits.size() - 1; i >= 0; i--)
+        if (x >= hits[i].x && x < hits[i].x + hits[i].w && y >= hits[i].y && y < hits[i].y + hits[i].h) return i;
+    return -1;
+}
 
 void Showroom::setSlot(int s, bool now) {
     slot = (s % MOD_SLOTS + MOD_SLOTS) % MOD_SLOTS;
@@ -133,42 +141,45 @@ void Showroom::step(int d) {
     follow = true;
 }
 
-void Showroom::handleEvent(const SDL_Event& e) {
+Showroom::Ui Showroom::handleEvent(const SDL_Event& e) {
     if (e.type == SDL_MOUSEBUTTONUP && evButton(e) == 1) orbiting = false;
-    if (phase != OPEN || closeWanted) return;
+    if (phase != OPEN || closeWanted) return Ui::NONE;
     const float k = 1 / std::clamp(r.dpiFactor, 0.25f, 1.0f);  // (window points to drawable pixels)
+    Ui ui = Ui::NONE;
     switch (e.type) {
     case SDL_KEYDOWN: {
         const int sc = evKeyScancode(e);
         touched();
-        if (sc == SC_W || sc == SC_UP) setSlot(slot - 1);  // (the pad's menu mode taps the arrows)
-        else if (sc == SC_S || sc == SC_DOWN) setSlot(slot + 1);
-        else if (sc == SC_A || sc == SC_LEFT) step(-1);
-        else if (sc == SC_D || sc == SC_RIGHT) step(1);
+        if (sc == SC_W || sc == SC_UP) setSlot(slot - 1), ui = Ui::HOVER;  // (the pad's menu mode taps the arrows)
+        else if (sc == SC_S || sc == SC_DOWN) setSlot(slot + 1), ui = Ui::HOVER;
+        else if (sc == SC_A || sc == SC_LEFT) step(-1), ui = Ui::HOVER;
+        else if (sc == SC_D || sc == SC_RIGHT) step(1), ui = Ui::HOVER;
         else if (evKeyRepeat(e)) break;
-        else if (sc == SC_C) recal = !recal;
-        else if (sc == SC_RETURN || sc == SC_KP_ENTER) fitWanted = true;  // (the pad's A)
-        else if (sc == SC_ESCAPE || sc == SC_G) requestClose();          // (the pad's B)
-        break;  // (R revs and B buys in later phases)
+        else if (sc == SC_C) recal = !recal, ui = Ui::CLICK;
+        else if (sc == SC_B) buyWanted = true, ui = Ui::CLICK;                            // (the pad's Y)
+        else if (sc == SC_RETURN || sc == SC_KP_ENTER) fitWanted = true, ui = Ui::CLICK;  // (the pad's A)
+        else if (sc == SC_ESCAPE || sc == SC_G) requestClose();                           // (the pad's B)
+        break;  // (R revs in phase 3)
     }
-    case SDL_MOUSEMOTION:
+    case SDL_MOUSEMOTION: {
         mouseX = evMotionX(e) * k, mouseY = evMotionY(e) * k;
         if (orbiting) {
             touched(), ease.t = -1;
             yaw -= evMotionXrel(e) * k * 0.006, pitch = std::clamp(pitch + evMotionYrel(e) * k * 0.005, -0.1, 1.45);  // (the lab's rates)
         }
+        const int h = orbiting ? -1 : hitAt(mouseX, mouseY);
+        if (h >= 0 && h != hover) ui = Ui::HOVER;  // (onto a tab, a row or the button, as the menus do)
+        hover = h;
         break;
+    }
     case SDL_MOUSEBUTTONDOWN: {
         mouseX = evButtonX(e) * k, mouseY = evButtonY(e) * k;
         if (evButton(e) != 1) break;
         touched();
-        for (int i = (int)hits.size() - 1; i >= 0; i--) {
-            const Hit& h = hits[i];
-            if (mouseX >= h.x && mouseX < h.x + h.w && mouseY >= h.y && mouseY < h.y + h.h) {
-                auto fn = h.click;  // (may change what the hits are)
-                fn();
-                return;
-            }
+        if (const int h = hitAt(mouseX, mouseY); h >= 0) {
+            auto fn = hits[h].click;  // (may change what the hits are)
+            fn();
+            return Ui::CLICK;
         }
         orbiting = inside(showroomLayout(W, H).car, mouseX, mouseY);
         break;
@@ -182,23 +193,26 @@ void Showroom::handleEvent(const SDL_Event& e) {
     }
     default: break;
     }
+    return ui;
 }
 
-void Showroom::pad(const pad::Raw& raw, double dt) {
+Showroom::Ui Showroom::pad(const pad::Raw& raw, double dt) {
     const uint32_t pressed = raw.buttons & ~padPrev;
     padPrev = raw.buttons;
     rev = raw.rt;
-    if (phase != OPEN || closeWanted) return;
-    if (pressed & pad::bit(pad::B_LB)) touched(), setSlot(slot - 1);
-    if (pressed & pad::bit(pad::B_RB)) touched(), setSlot(slot + 1);
+    if (phase != OPEN || closeWanted) return Ui::NONE;
+    Ui ui = Ui::NONE;
+    if (pressed & pad::bit(pad::B_LB)) touched(), setSlot(slot - 1), ui = Ui::HOVER;
+    if (pressed & pad::bit(pad::B_RB)) touched(), setSlot(slot + 1), ui = Ui::HOVER;
     const pad::Stick s = pad::radialDeadzone(raw.rx, raw.ry, pad::deadzoneRadius(1));
-    if (s.x == 0 && s.y == 0) return;
+    if (s.x == 0 && s.y == 0) return ui;
     touched(), ease.t = -1;
     // Full stick: a turn in ~3 s (2 rad/s, an estimate that keeps the car readable while it swings), the pitch at
     // half that; with LT held, up-down zooms (full stick: x4.5 a second, so the whole range in ~2 s).
     yaw -= s.x * 2.0 * dt;
     if (raw.lt > 0.5f) zoom = std::clamp(zoom * std::exp(s.y * 1.5 * dt), 0.15, 4.0);
     else pitch = std::clamp(pitch + s.y * 1.0 * dt, -0.1, 1.45);
+    return ui;
 }
 
 ShowroomResult Showroom::update(double dt, Career& career, bool station) {
@@ -206,7 +220,12 @@ ShowroomResult Showroom::update(double dt, Career& career, bool station) {
     careerNow = &career, atStation = station;
     clock += dt;
     toastT = std::max(0.0, toastT - dt);
-    if (fade.update(dt)) {  // black: swap the worlds
+    // The fade holds black: opening, until the preview is in (build it, then fade in); closing after a FIT, until main
+    // has the fitted car in (fitDone: the swap happens behind it). At most kBuildTimeout, when the core gives up too.
+    const bool wait = phase == OPEN ? !core->preview() && !core->failed() : phase == CLOSING && swapWait;
+    const bool hold = wait && blackT < ShowroomCore::kBuildTimeout;
+    if (hold && fade.isBlack()) blackT += dt;
+    if (fade.update(dt, hold)) {  // black: swap the worlds
         if (phase == OPENING) {
             r.frameModels.clear();  // (the game's jack, tools and frames from its last frame aren't in the studio)
             r.carModels.clear();
@@ -218,6 +237,12 @@ ShowroomResult Showroom::update(double dt, Career& career, bool station) {
             restore();
         }
     }
+    if (phase == OPEN && buyWanted && !closeWanted) {
+        std::string said;
+        res.bought = showroomBuy(career, core->vehicle(), slot, core->pick().pick[slot], atStation, said);
+        if (!said.empty()) say(said);
+    }
+    buyWanted = false;
     if (phase == OPEN && fitWanted && !closeWanted) {
         const int v = core->vehicle();
         const ModSet& pick = core->pick();
@@ -228,15 +253,16 @@ ShowroomResult Showroom::update(double dt, Career& career, bool station) {
             if (career_ && !career.owns(v, k, pick.pick[k]) && locked < 0) owned = false, locked = k;
         }
         if (same && !recal) requestClose();  // nothing to fit: back to driving (with recal on, the same mods refit to recalibrate)
-        else if (career_ && !atStation) say("DRIVE TO A REPAIR STATION TO FIT PARTS");
+        else if (career_ && !atStation && !same) say("DRIVE TO A REPAIR STATION TO FIT PARTS");  // (a recal alone changes no part: anywhere)
         else if (!owned) say(std::string("LOCKED: ") + modOptions(v, locked)[pick.pick[locked]].name);
         else {
             res.act = ShowroomResult::FIT, res.mods = pick, res.recal = recal;
+            swapWait = true;
             requestClose();
         }
     }
     fitWanted = false;
-    if (closeWanted && phase == OPEN && fade.start()) phase = CLOSING, closeWanted = false, orbiting = false;
+    if (closeWanted && phase == OPEN && fade.start()) phase = CLOSING, closeWanted = false, orbiting = false, blackT = 0;
     if (phase == CLOSING && !fade.busy()) {
         phase = CLOSED;
         if (res.act == ShowroomResult::NONE) res.act = ShowroomResult::CLOSED;

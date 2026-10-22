@@ -6,10 +6,13 @@
 #include <list>
 #include <map>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "mods.h"
 #include "softbody.h"
+
+struct Career;
 
 struct VisualHooks {  // the template cache (carvisual.h) in the game; fakes in tests
     std::function<void(const VehicleSpec&, const V3&)> prebuild;
@@ -64,12 +67,17 @@ struct Rect { float x, y, w, h; };
 struct ShowroomLayout { float u; Rect left, right, bottom, car; int listRows; };
 ShowroomLayout showroomLayout(int W, int H);
 
+// B (the pad's Y): buys the part shown, in a career and at a repair station. True if bought; `toast` is what to say
+// ("" in a sandbox, where there's nothing to buy).
+bool showroomBuy(Career& career, int vehicle, int slot, int option, bool atStation, std::string& toast);
+
 struct ShowroomFade {  // black fade between worlds: start() -> black (swap) -> clear
     static constexpr double kTime = 0.25;
     bool start();                                    // false if one is running already
-    bool update(double dt);                          // true once, on the frame it reaches black
+    bool update(double dt, bool hold = false);       // true once, on the frame it reaches black; hold: stay black
     float alpha() const;
     bool busy() const { return on; }
+    bool isBlack() const { return on && black && t <= kTime; }  // at the swap's black (held there, or its one frame)
 
 private:
     double t = 0;

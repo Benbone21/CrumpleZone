@@ -3484,7 +3484,8 @@ int main(int argc, char** argv) {
 
         // ---- gamepad: what the pad is doing this frame (its presses are fed in as keys below) ----
         padCtx = editor.active || coop.typing || playback.active() || !padDev.connected() ? pad::Mode::Off
-                 : menu.open || showroom.isOpen() || inv.open                             ? pad::Mode::Menu
+                 : showroom.isOpen()                                                      ? pad::Mode::Garage
+                 : menu.open || inv.open                                                  ? pad::Mode::Menu
                  : coop.mapOpen                                                           ? pad::Mode::Map
                                                                                           : pad::Mode::Drive;
         padLogic.tune = {settings.padSteering, settings.padDeadzone, settings.padRumble, settings.throttle.padScale()};
@@ -3549,7 +3550,9 @@ int main(int argc, char** argv) {
             if (showroom.isOpen() && e.type != SDL_QUIT) {  // the showroom takes everything (its Esc and G close it)
                 if (e.type == SDL_KEYDOWN && !fromPad && !evKeyRepeat(e) && showroom.drawsScene() && settings.keys.matches(KA_GARAGE, evKeyScancode(e), shiftDown()))
                     showroom.requestClose();  // (the garage key rebound off G; not while fading in, as its own G)
-                showroom.handleEvent(e);
+                const Showroom::Ui ui = showroom.handleEvent(e);
+                if (ui == Showroom::Ui::CLICK) uiClick();
+                else if (ui == Showroom::Ui::HOVER) uiHover();
                 continue;
             }
             if (!editor.active && !menu.open && coop.typing && e.type == SDL_KEYDOWN) {
@@ -4789,8 +4792,9 @@ int main(int argc, char** argv) {
             fx.campfire(V3(f.x, sim.world.height(f.x, f.z), f.z), dt, V3(0.32, 0, -0.12));
         }
         {  // the showroom: every frame, closed too (it lets go of builds still finishing); FIT rebuilds your car where it stands
-            if (showroom.isOpen()) showroom.pad(padRaw, dt);
+            if (showroom.isOpen() && showroom.pad(padRaw, dt) == Showroom::Ui::HOVER) uiHover();
             const ShowroomResult sr = showroom.update(dt, career, showroom.isOpen() && sim.stationAt(sim.cars[sim.player].frame().com) >= 0);
+            if (sr.bought && !scripted) career.save(Career::defaultPath());
             if (sr.act == ShowroomResult::FIT) {
                 const int v = showroomVehicle;
                 garage.fitted[v] = sr.mods;
@@ -4798,10 +4802,12 @@ int main(int argc, char** argv) {
                 const bool same = &garage.spec(v) == sim.cars[sim.player].spec;  // (tunedSpec: the same mods, the same spec)
                 if (same) {  // only the speedometer: no swap, which would also mend the truck for nothing
                     if (sr.recal) sim.cars[sim.player].recalibrateSpeedo();
+                    showroom.fitDone();
                 } else
                     whenVisualReady(garage.spec(v), [&, v, recal = sr.recal] {
                         sim.swapPlayerVehicle(garage.spec(v));
                         if (recal) sim.cars[sim.player].recalibrateSpeedo();
+                        showroom.fitDone();  // (its closing fade held black till now)
                     });
                 hud.toast(same && sr.recal ? "SPEEDO RECALIBRATED" : sr.mods.stock() ? "BACK TO STOCK" : "MODS FITTED");
                 garageFromMenu = false;  // (fitted: off you drive)
@@ -5468,7 +5474,7 @@ int main(int argc, char** argv) {
         }
         {
             // The mouse is yours to look with on foot; anywhere else it's a pointer.
-            const bool want = walker.active && !menu.open && !inv.open && !editor.active && cam.mode != 3;
+            const bool want = walker.active && !menu.open && !inv.open && !editor.active && !showroom.isOpen() && cam.mode != 3;
             if (want != mouseLook) {
                 SDL_SetRelativeMouseMode(want ? 1 : 0);
                 mouseLook = want;
@@ -5476,16 +5482,19 @@ int main(int argc, char** argv) {
         }
         view.width = W;
         view.height = H;
+        const bool inStudio = showroom.drawsScene();  // (the world outside goes quiet: its engines, winches, ambience and placed loops)
         if (audioOn) audio.setNearbyEngines(sim, view.eye, norm(cross(view.target - view.eye, view.up)),
-                                           (float)std::max(0.35, sim.timeScale));
-        if (audioOn) audio.setWinches(sim, view.eye, norm(cross(view.target - view.eye, view.up)), simDt);
-        if (audioOn) audio.setEnvironment(soundMap(sim.world.map), (float)dayHours, settings.ambience,
+                                           (float)std::max(0.35, sim.timeScale), inStudio);
+        if (audioOn && inStudio)
+            for (int i = 0; i < Audio::kWinches; i++) audio.setWinch(i, false, 0, 0, 0, 0);
+        else if (audioOn) audio.setWinches(sim, view.eye, norm(cross(view.target - view.eye, view.up)), simDt);
+        if (audioOn) audio.setEnvironment(soundMap(sim.world.map), (float)dayHours, inStudio ? 0.0f : settings.ambience,
                                          !walker.active && cam.mode == 2 ? 0.3f : 1.0f);
         if (audioOn) {  // the repair shops' din, the rivers and brooks, the forest (worldsound.h)
             static WorldSounds worldSounds;
             static BiomeTracker worldBiome;
             WorldSounds::Voice voices[WorldSounds::kVoices];
-            if (!campBehind()) {
+            if (!campBehind() && !inStudio) {
                 worldSounds.prepare(sim.world);
                 worldSounds.update(view.eye, norm(cross(view.target - view.eye, view.up)), voices);
                 voices[WorldSounds::kVoices - 1] = WorldSounds::forest(worldBiome.update(sim.world, view.eye.x, view.eye.z, dt), (float)dayHours);

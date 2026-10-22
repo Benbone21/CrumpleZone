@@ -9,6 +9,7 @@
 #include <map>
 #include <set>
 
+#include "../src/career.h"
 #include "../src/mods.h"
 #include "../src/showroomcore.h"
 #include "../src/studio.h"
@@ -336,4 +337,32 @@ SCENARIO(showroomFades, "showroom/fade", "The fade between worlds goes black onc
     }
     ctx.check("goes black exactly once", blacks == 1 && blackThen && most == 1);
     ctx.check("clears", fade.alpha() == 0 && !fade.busy());
+    // Held at black (the preview still building, the fitted car not yet swapped in), then let go.
+    fade.start();
+    blacks = 0;
+    for (int i = 0; i < 120; i++) blacks += fade.update(1 / 60.0, true);  // 2 s
+    ctx.check("holds black", blacks == 1 && fade.alpha() == 1 && fade.busy());
+    for (int i = 0; i < 18; i++) fade.update(1 / 60.0);  // 0.3 s
+    ctx.check("then clears", fade.alpha() == 0 && !fade.busy());
+}
+
+SCENARIO(showroomBuyPart, "showroom/buy", "B buys the part shown in a career, at a repair station only; a sandbox has nothing to buy") {
+    Career c;
+    c.on = true;
+    c.startFresh();
+    const int v = 0;
+    int o = -1;  // something on sale, not owned, and affordable
+    for (int k = 1; k < (int)modOptions(v, MOD_TIRES).size() && o < 0; k++)
+        if (!c.owns(v, MOD_TIRES, k) && Career::price(v, MOD_TIRES, k) > 0 && Career::price(v, MOD_TIRES, k) <= c.cash) o = k;
+    if (!ctx.check("a part on sale", o > 0)) return;
+    const int cash0 = c.cash, p = Career::price(v, MOD_TIRES, o);
+    std::string toast;
+    ctx.check("away from a station: spends nothing", !showroomBuy(c, v, MOD_TIRES, o, false, toast) && c.cash == cash0 && !c.owns(v, MOD_TIRES, o) &&
+                                                         toast == "PARTS ARE SOLD AT THE REPAIR STATIONS", toast);
+    ctx.check("at a station: buys it", showroomBuy(c, v, MOD_TIRES, o, true, toast) && c.cash == cash0 - p && c.owns(v, MOD_TIRES, o), toast);
+    ctx.check("...and says so", toast == "BOUGHT " + modOptions(v, MOD_TIRES)[o].name + ": $" + std::to_string(cash0 - p) + " LEFT", toast);
+    ctx.check("not twice", !showroomBuy(c, v, MOD_TIRES, o, true, toast) && c.cash == cash0 - p && toast == "YOU HAVE IT ALREADY", toast);
+    Career sandbox;
+    sandbox.cash = 1000000;
+    ctx.check("a sandbox: nothing", !showroomBuy(sandbox, v, MOD_TIRES, o, true, toast) && sandbox.cash == 1000000 && toast.empty(), toast);
 }

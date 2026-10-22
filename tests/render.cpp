@@ -458,6 +458,7 @@ int main() {
                 return subject(renderer.readPixels(W, H));
             };
             const int before = gameFrame();
+            if (before <= 0) throw std::runtime_error("the game's car is not in frame before the showroom (nothing to compare after)");
             Showroom showroom(renderer, [&] { renderer.setWorld(sim.world); });
             Career career;
             showroom.open(3, ModSet(), V3(0.5, 0.1, 0.1), false);
@@ -472,6 +473,7 @@ int main() {
             frames(120);
             for (int f = 0; f < 480 && !showroom.previewCar(); f++) frames(1);  // (its template is made on a worker: a slow runner gets 8 s more)
             if (!showroom.drawsScene() || !showroom.previewCar()) throw std::runtime_error("the showroom shows no car after 2 s");
+            frames(20);  // (it fades in once the car is in)
             // The car in frame: the centre third against the same studio frame with no car in it (same view, light, world).
             const std::vector<unsigned char> withCar = renderer.readPixels(W, H);
             Sim bare;
