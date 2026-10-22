@@ -25,6 +25,7 @@ void ShowroomCore::close() {
     removePreview();
     for (auto& s : specs) evicting.push_back(std::move(s));
     specs.clear();
+    building.clear();
     want = nullptr;
     isOpen_ = debouncing = false;
 }
@@ -52,6 +53,7 @@ VehicleSpec* ShowroomCore::specFor(const ModSet& m, bool build) {
     auto s = std::make_unique<VehicleSpec>();
     applyMods(vehicle_, m, *s);
     hooks.prebuild(*s, color);
+    building[s.get()] = 0;
     specs.push_front(std::move(s));
     return specs.front().get();
 }
@@ -70,7 +72,7 @@ void ShowroomCore::trim() {
         auto it = specs.end();
         while (it != specs.begin()) {
             --it;
-            if (it->get() != shown && it->get() != want && hooks.ready(**it)) break;
+            if (it->get() != shown && it->get() != want && !building.count(it->get())) break;
             if (it == specs.begin()) return;  // nothing can go yet
         }
         evicting.push_back(std::move(*it));
@@ -83,39 +85,46 @@ void ShowroomCore::update(double dt) {
         if (debouncing && (held += dt) >= kDebounce) {
             debouncing = false;
             want = specFor(pick_, true);
-            waited = 0;
         }
-        if (want && want != shown) {
-            if (hooks.ready(*want)) {
-                double yaw = 0;
-                if (!sim.cars.empty()) {
-                    const Frame f = sim.cars[0].frame();
-                    yaw = std::atan2(-f.fwd.z, f.fwd.x);
-                }
-                removePreview();
-                sim.addCar(*want, V3(0, kDrop, 0), yaw, color);
-                sim.cars[0].gear = 0, sim.cars[0].handbrake = 1;
-                shown = want;
-            } else if ((waited += dt) >= kBuildTimeout) {
-                failed_ = true;
+        // A build not in after kBuildTimeout is let go (the cache frees it once it can), so it holds no place among
+        // the specs or the builds in flight; if it was the pick's, the pick has failed.
+        for (auto it = specs.begin(); it != specs.end();) {
+            auto b = building.find(it->get());
+            if (b != building.end() && hooks.ready(**it)) {
+                building.erase(b);
+            } else if (b != building.end() && (b->second += dt) >= kBuildTimeout) {
+                if (it->get() == want) failed_ = true, want = nullptr;
+                building.erase(b);
+                evicting.push_back(std::move(*it));
+                it = specs.erase(it);
+                continue;
             }
+            ++it;
+        }
+        if (want && want != shown && !building.count(want)) {
+            double yaw = 0;
+            if (!sim.cars.empty()) {
+                const Frame f = sim.cars[0].frame();
+                yaw = std::atan2(-f.fwd.z, f.fwd.x);
+            }
+            removePreview();
+            sim.addCar(*want, V3(0, kDrop, 0), yaw, color);
+            sim.cars[0].gear = 0, sim.cars[0].handbrake = 1;
+            shown = want;
         }
         // Then the options either side in the slot last changed, so stepping through them is instant.
         if (shown && shown == want && !neighboursDone) {
             neighboursDone = true;
             if (lastSlot >= 0) {
-                int building = 0;
-                for (const auto& s : specs) building += !hooks.ready(*s);
                 for (int d : {-1, 1}) {
                     ModSet m = pick_;
                     m.pick[lastSlot] += d;
                     if (m.pick[lastSlot] < 0 || m.pick[lastSlot] >= (int)modOptions(vehicle_, lastSlot).size() || specFor(m, false)) continue;
-                    if (building >= kMaxInFlight) {
+                    if ((int)building.size() >= kMaxInFlight) {
                         neighboursDone = false;  // try again next frame
                         continue;
                     }
                     specFor(m, true);
-                    building++;
                 }
             }
         }

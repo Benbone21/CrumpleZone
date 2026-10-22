@@ -94,7 +94,9 @@ struct FakeCache {
     std::map<const VehicleSpec*, int> t;            // held: updates left until it's built
     std::set<const VehicleSpec*> evicted;           // let go (an address the allocator may hand out again)
     std::vector<std::array<int, MOD_SLOTS>> built;  // every prebuild's mods, in order
-    bool bad = false;                               // asked about a spec it doesn't hold, or told to build one it does
+    bool bad = false;                               // asked about a spec it doesn't hold, told to build one it does, or to evict the preview's
+    int refused = 0;                                // evicts turned down: still building
+    const ShowroomCore* core = nullptr;             // (set: evicting the spec its preview is showing is bad)
     void tick() {
         for (auto& [s, n] : t)
             if (n > 0) n--;
@@ -118,7 +120,8 @@ VisualHooks fakeHooks(FakeCache& f) {
     h.evict = [&f](const VehicleSpec& s) {
         auto it = f.t.find(&s);
         if (it == f.t.end()) return f.bad = true, true;
-        if (it->second > 0) return false;
+        if (f.core && f.core->preview() && f.core->preview()->spec == &s) f.bad = true;
+        if (it->second > 0) return f.refused++, false;
         f.t.erase(it);
         f.evicted.insert(&s);
         return true;
@@ -148,6 +151,7 @@ const V3 kPaint(0.6, 0.1, 0.1);
 SCENARIO(showroomMemory, "showroom/memory", "Picking through 40 engines keeps the showroom's specs bounded, and closing frees them all") {
     FakeCache f;
     ShowroomCore core(fakeHooks(f));
+    f.core = &core;
     const int opts = (int)modOptions(3, MOD_ENGINE).size();
     std::vector<const VehicleSpec*> tuned;
     for (int k = 0; k < opts; k++) {
@@ -167,6 +171,7 @@ SCENARIO(showroomMemory, "showroom/memory", "Picking through 40 engines keeps th
     ctx.metric("most specs held at once", most, "", 1, ShowroomCore::kMaxSpecs + ShowroomCore::kMaxInFlight);
     ctx.check("shows the last pick", showsPick(core));
     ctx.check("the cache never saw a spec it had let go of", !f.bad && !f.evicted.empty());
+    ctx.check("never asked to evict one still building", f.refused == 0, std::to_string(f.refused) + " refused");
     bool same = true;
     for (int k = 0; k < opts; k++) {
         ModSet m;
@@ -232,21 +237,59 @@ SCENARIO(showroomStance, "showroom/stance", "A lift kit on the turntable raises 
     ctx.note("ride height change " + std::to_string((int)std::lround(got)) + " mm");
 }
 
+SCENARIO(showroomEvictWaits, "showroom/evict-waits", "Closing mid-build frees a spec only once the cache lets it go") {
+    FakeCache f;
+    f.delayFrames = 5;
+    ShowroomCore core(fakeHooks(f));
+    f.core = &core;
+    core.open(3, ModSet(), kPaint);
+    for (int i = 0; i < 20 && !core.preview(); i++) tick(core, f, 0.2);
+    core.setPick(MOD_ENGINE, 1);
+    tick(core, f, 0.2);  // past the debounce: the pick is building
+    ctx.check("the pick is building", f.t.size() == 2 && core.fitting());
+    core.close();
+    bool held = true;
+    for (int i = 0; i < 10; i++) {
+        tick(core, f, 0.2);
+        held = held && core.liveSpecs() >= (int)f.t.size();
+    }
+    ctx.check("a spec the cache still holds is never freed", held && f.refused > 0, std::to_string(f.refused) + " refused");
+    ctx.check("then every spec goes", core.liveSpecs() == 0 && f.t.empty() && !f.bad);
+}
+
 SCENARIO(showroomFailures, "showroom/failures", "A build that never comes, and a preview that blows up, both show as failed") {
     FakeCache f;
     f.delayFrames = INT_MAX;
     ShowroomCore core(fakeHooks(f));
+    f.core = &core;
     core.open(3, ModSet(), kPaint);
     for (int i = 0; i < 306; i++) tick(core, f, Ctx::kFrame);  // 5.1 s
     ctx.check("times out", core.failed() && !core.preview());
+    // Three more that never come: a timed-out build holds no place among the specs or the builds in flight.
+    bool timedOut = true;
+    for (int k = 1; k <= 3; k++) {
+        core.setPick(MOD_ENGINE, k);
+        for (int i = 0; i < 320; i++) tick(core, f, Ctx::kFrame);  // the debounce, then 5.1 s
+        timedOut = timedOut && core.failed();
+    }
+    ctx.check("each times out", timedOut);
     f.delayFrames = 2;
-    core.setPick(MOD_ENGINE, 1);
+    core.setPick(MOD_ENGINE, 5);
     ctx.check("a new pick clears it", !core.failed());
     for (int i = 0; i < 20 && !core.preview(); i++) tick(core, f, Ctx::kFrame);
     if (!ctx.check("the new pick shows", core.preview() != nullptr)) return;
+    for (int i = 0; i < 10; i++) tick(core, f, Ctx::kFrame);
+    int neighbours = 0;
+    for (const auto& m : f.built) neighbours += m[MOD_ENGINE] == 4 || m[MOD_ENGINE] == 6;
+    ctx.check("its neighbours still get built", neighbours == 2, std::to_string(neighbours));
     core.studio().cars[0].nodes[0].p = V3(100, 0, 0);
     tick(core, f, Ctx::kFrame);
     ctx.check("a node 100 m out fails it", core.failed() && !core.preview());
+    // The cache finally finishes the stuck builds: closing then frees everything.
+    for (auto& [s, n] : f.t) n = 0;
+    core.close();
+    for (int i = 0; i < 10; i++) tick(core, f, Ctx::kFrame);
+    ctx.check("closing frees every spec", core.liveSpecs() == 0 && f.t.empty() && !f.bad, std::to_string(core.liveSpecs()) + " left");
 }
 
 SCENARIO(showroomClamp, "showroom/clamp", "open() clamps the fitted mods like applyMods, and builds them") {

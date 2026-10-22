@@ -4,6 +4,7 @@
 #pragma once
 #include <functional>
 #include <list>
+#include <map>
 #include <memory>
 #include <vector>
 
@@ -20,7 +21,8 @@ class ShowroomCore {
 public:
     // kMaxSpecs: picks kept built (back and forth costs no rebuild); kMaxInFlight: builds at once (the
     // pick and its two neighbours). kDebounce: a pick held this long (s) is built, so mashing builds once.
-    // kDrop (m): the car is set down this far above the pad. kBuildTimeout (s), kUnstable (m): see failed().
+    // kDrop (m): the car is set down this far above the pad. kBuildTimeout (s): a build not in by then is
+    // let go (the pick's: failed()). kUnstable (m): see failed().
     static constexpr int kMaxSpecs = 8, kMaxInFlight = 3;
     static constexpr double kDebounce = 0.15, kDrop = 0.03, kBuildTimeout = 5.0, kUnstable = 5.0;
     explicit ShowroomCore(VisualHooks hooks);
@@ -50,7 +52,8 @@ private:
     std::vector<std::unique_ptr<VehicleSpec>> evicting;  // let go of, until hooks.evict takes them
     const VehicleSpec* shown = nullptr;                   // the preview car's spec
     VehicleSpec* want = nullptr;                          // the pick's spec, from the end of its debounce
-    double held = 0, waited = 0;                          // s since the last setPick; s the pick has been building
+    std::map<const VehicleSpec*, double> building;        // held specs still building: s since their prebuild
+    double held = 0;                                      // s since the last setPick
     bool debouncing = false, neighboursDone = false;
     VehicleSpec* specFor(const ModSet& m, bool build);
     void removePreview();
