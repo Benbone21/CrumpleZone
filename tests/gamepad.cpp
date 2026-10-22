@@ -129,6 +129,10 @@ SCENARIO(padBindings, "gamepad/bindings", "Button presses become the keys they s
     ctx.check("LB + Y gets out (J)", hasTap(l, SC_J));
     press(B_RB, Mode::Drive, bit(B_LB));
     ctx.check("LB + RB is manual / automatic (Shift+M)", hasTap(l, SC_M, true));
+    press(B_RSTICK, Mode::Drive, bit(B_LB));
+    ctx.check("LB + R3 held is the horn (and not look-back)", l.in.horn && !l.in.lookBack);
+    press(B_RSTICK);
+    ctx.check("R3 alone still looks back and does not honk", !l.in.horn && l.in.lookBack);
     // Held controls.
     r = Raw();
     r.buttons = bit(B_A);

@@ -37,6 +37,7 @@
 #include "allocstat.h"
 #include "audio.h"
 #include "toolsounds.h"
+#include "horn.h"
 #include "worldsound.h"
 #include "biome.h"
 #include "jobs.h"
@@ -1342,7 +1343,7 @@ void drawHelp(Renderer& r, float u, int W, int H, bool mph) {
         {K(KA_LOCK_FRONT) + sp + K(KA_LOCK_REAR), "FRONT / REAR LOCKER"}, {K(KA_AUTOPILOT), "AUTOPILOT (ESC > AUTOPILOT: WHERE)"},
         {K(KA_CAMERA), "CAMERA"},                                        {"MOUSE", "LOOK / ZOOM"},
         {K(KA_PAUSE), "PAUSE"},                                          {K(KA_PARK_BRAKE), "PARKING BRAKE"},
-        {K(KA_TRACTION), "TRACTION CONTROL"},
+        {K(KA_TRACTION), "TRACTION CONTROL"},                            {K(KA_HORN), "HORN (HOLD)"},
         {K(KA_FULLSCREEN), "FULLSCREEN"},                                {K(KA_PHOTO), "HIDE THE HUD (PHOTOS)"},
         {K(KA_HUD_ALL), "HOLD: SHOW THE FULL HUD"},
         {K(KA_DEBUG_INFO), "DEBUG SCREEN (SHIFT: GRAPH)"},
@@ -2115,6 +2116,8 @@ int main(int argc, char** argv) {
     bool menuWasPaused = false, garageFromMenu = false;
     float menuBlur = 0;
     double clock = 0;
+    horn::Sender hornSender;  // your horn, as told to the others (horn.h)
+    horn::Remote hornRemote;  // theirs
     // Time of day: the clock (hours) carries on from last time; --time holds it still.
     double dayHours = opt.timeHours >= 0 ? opt.timeHours : settings.clockHours;
     double levelHours = -1;  // the playing level's own hour (-1: none)
@@ -4519,6 +4522,10 @@ int main(int argc, char** argv) {
                     }
                     continue;
                 }
+                if (bool hornState = false; horn::parse(m.text, hornState)) {  // a buddy's horn goes down or up (horn.h)
+                    hornRemote.hear(m.player, hornState, clock);
+                    continue;
+                }
                 if (m.text == "jobstop") {
                     jobOn = false;
                     continue;
@@ -5588,6 +5595,32 @@ int main(int argc, char** argv) {
         view.height = H;
         if (audioOn) audio.setNearbyEngines(sim, view.eye, norm(cross(view.target - view.eye, view.up)),
                                            (float)std::max(0.35, sim.timeScale));
+        {  // the horn (held): yours at your car, each buddy's at theirs (sent as "horn 1" / "horn 0" chatter, horn.h)
+            const uint8_t* ks = SDL_GetKeyboardState(nullptr);
+            const bool shiftDown = ks[SC_LSHIFT] || ks[SC_RSHIFT];
+            const bool hornHeld = sim.player >= 0 && sim.player < (int)sim.cars.size() && !walker.active && !garageUI.open && !menu.open && !editor.active && !coop.typing && !coop.mapOpen &&
+                                  (settings.keys.held(KA_HORN, ks, shiftDown) || (padCtx == pad::Mode::Drive && padLogic.in.horn));
+            if (net.active() && hornSender.update(hornHeld, clock)) net.sendGame(horn::message(hornHeld));
+            else if (!net.active()) hornSender.on = hornHeld;
+            if (audioOn) {
+                const V3 hr = norm(cross(view.target - view.eye, view.up));
+                bool slotUsed[Audio::kHorns] = {};
+                if (sim.player >= 0 && sim.player < (int)sim.cars.size()) {
+                    const Car& pc = sim.cars[sim.player];
+                    audio.setHornAt(0, hornHeld, pc.frame().com, view.eye, hr, horn::pitchFor(pc.mass));
+                    slotUsed[0] = true;
+                }
+                int slot = 1;
+                for (const Car& c : sim.cars) {  // (a remote car whose owner is honking: the first, if they own several)
+                    const int owner = NetSession::ownerOf(c.netId);
+                    if (!c.remote || slot >= Audio::kHorns || !hornRemote.sounding(owner, clock) || !c.occupied) continue;
+                    audio.setHornAt(slot, true, c.frame().com, view.eye, hr, horn::pitchFor(c.mass));
+                    slotUsed[slot++] = true;
+                }
+                for (int k = 0; k < Audio::kHorns; k++)
+                    if (!slotUsed[k]) audio.setHorn(k, false, 0, 0, 1);
+            }
+        }
         if (audioOn) audio.setWinches(sim, view.eye, norm(cross(view.target - view.eye, view.up)), simDt);
         if (audioOn) audio.setEnvironment(soundMap(sim.world.map), (float)dayHours, settings.ambience,
                                          !walker.active && cam.mode == 2 ? 0.3f : 1.0f);

@@ -143,6 +143,7 @@ void Logic::update(const Raw& raw, Mode ctx, double dt) {
             if (P(B_BACK)) tap(SC_TAB);
             if (P(B_UP)) tap(SC_V);
             if (P(B_DOWN)) tap(SC_O);
+            in.horn = D(B_RSTICK);
             if (D(B_LEFT)) in.airing = -1;
             else if (D(B_RIGHT)) in.airing = 1;
             if (rt > 0.3f) in.winch = 1;
@@ -176,8 +177,8 @@ void Logic::update(const Raw& raw, Mode ctx, double dt) {
         in.steerTarget = -expoCurve(L.x, steerExponent(tune.steering));  // (stick right = steer right = negative)
         in.lookX = R.x;
         in.lookY = mod ? 0.0f : R.y;
-        in.lookBack = D(B_RSTICK);
-        in.resetView = (released & bit(B_RSTICK)) != 0;
+        in.lookBack = D(B_RSTICK) && !mod;
+        in.resetView = (released & bit(B_RSTICK)) != 0 && !mod;
         in.walkForward = -L.y;
         in.walkTurn = -L.x;
         return;
@@ -385,6 +386,7 @@ std::vector<std::pair<std::string, std::string>> helpRows(Style s) {
         {hold + n(B_Y), "GET OUT / IN"},
         {hold + n(B_RB), "MANUAL / AUTOMATIC GEARBOX"},
         {hold + "L3", "AUTOPILOT"},
+        {hold + "R3 (HOLD)", "HORN"},
         {hold + n(B_BACK), "NEXT VEHICLE"},
         {hold + n(B_START), "THIS CONTROLS LIST"},
     };

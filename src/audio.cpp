@@ -126,6 +126,7 @@ int Audio::loadAmbience(const std::string& directory) {
 }
 
 namespace {
+constexpr size_t kHornLoopStart = 3000, kHornLoopEnd = 13846;
 constexpr size_t kClickSlot = 3360, kWrenchSlot = 7680;  // (the banks' slots, samples: tools/sfx_prepare.py)
 }
 
@@ -150,6 +151,25 @@ int Audio::loadSfx(const std::string& directory) {
     synthesizeTools();
     sfxCount_ = n;
     return n;
+}
+
+void Audio::setHorn(int slot, bool on, float gain, float pan, float pitch) {
+    if (slot < 0 || slot >= kHorns) return;
+    HornSlot& h = hornIn_[slot];
+    h.gain = std::isfinite(gain) ? std::clamp(gain, 0.0f, 1.0f) : 0.0f;
+    h.pan = std::isfinite(pan) ? std::clamp(pan, -1.0f, 1.0f) : 0.0f;
+    h.pitch = std::isfinite(pitch) ? std::clamp(pitch, 0.5f, 2.0f) : 1.0f;
+    h.on = on ? 1.0f : 0.0f;
+}
+
+void Audio::setHornAt(int slot, bool on, const V3& at, const V3& listener, const V3& right, float pitch) {
+    const V3 d = at - listener;
+    const double dist = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+    const double rl = std::sqrt(right.x * right.x + right.y * right.y + right.z * right.z);
+    if (!std::isfinite(dist)) return setHorn(slot, false, 0, 0, 1);
+    const float pan = dist > 0.3 && rl > 1e-6 ? (float)std::clamp((d.x * right.x + d.y * right.y + d.z * right.z) / (rl * dist), -1.0, 1.0) * 0.8f : 0.0f;
+    const float att = 1.0f / (1.0f + (float)dist * 0.04f + (float)(dist * dist) * 0.0006f);  // (a horn carries: faint at 100 m)
+    setHorn(slot, on, att, pan, pitch);
 }
 
 void Audio::playAt(Sfx what, const V3& at, const V3& listener, const V3& right, float gain, float delay, float pitch) {
@@ -461,6 +481,11 @@ void Audio::renderEffects(float* out, int frames, float dt, float sceneGain) {
         target[k] = in.running.load() > 0.5f ? in.gain.load() * ws[k].motorGain : 0.0f;
         st.pan = in.pan;
     }
+    // The horn: horn.wav is a steady two-tone (392 and 628 Hz) for its first 0.3 s; 3000..13846 (10846 samples at 48 kHz) repeats it to 0.999 correlation.
+    const bool hornOn = sfx_[SFX_HORN].size() > kHornLoopEnd + 2;
+    struct HornTarget { float on, gain, pan, pitch; } hornT[kHorns];
+    for (int k = 0; k < kHorns; k++) hornT[k] = {hornIn_[k].on.load(), hornIn_[k].gain.load(), hornIn_[k].pan.load(), hornIn_[k].pitch.load()};
+    const float hornUp = 1.0f - std::exp(-dt * 200.0f), hornDown = 1.0f - std::exp(-dt * 40.0f);  // (about 5 ms up, 25 ms down)
     const int air = airingDir_;
     const float airTarget[2] = {air > 0 && !compressor_.empty() ? 0.28f : 0.0f, air < 0 && !airBlow_.empty() ? 0.30f : 0.0f};
     for (int i = 0; i < frames; i++) {
@@ -488,6 +513,20 @@ void Audio::renderEffects(float* out, int frames, float dt, float sceneGain) {
                 if (st.clickAcc > 1) st.clickAcc = 0;
                 if (!sfx_[SFX_WINCH_CLICK].empty() && target[k] > 0)
                     startSfx(SFX_WINCH_CLICK, std::min(1.0f, target[k] / std::max(0.05f, ws[k].motorGain)) * (st.speed < 0 ? 0.55f : 0.7f), st.pan, 0);
+            }
+        }
+        if (hornOn) {  // the horn: the steady part of the recording, looped (whole periods, so no click), faded in and out
+            for (int k = 0; k < kHorns; k++) {
+                HornState& st = hornState_[k];
+                const bool wanted = hornT[k].on > 0.5f;
+                if (!wanted && st.env < 1e-4f) { st.pos = kHornLoopStart; continue; }
+                st.env += ((wanted ? 1.0f : 0.0f) - st.env) * (wanted ? hornUp : hornDown);
+                st.gain += (hornT[k].gain - st.gain) * smooth, st.pan += (hornT[k].pan - st.pan) * smooth, st.pitch += (hornT[k].pitch - st.pitch) * smooth;
+                const std::vector<float>& d = sfx_[SFX_HORN];
+                const size_t a = (size_t)st.pos;
+                const float s = (d[a] + (d[a + 1] - d[a]) * (float)(st.pos - (double)a)) * st.env * st.gain * 0.8f;
+                l += s * std::sqrt(0.5f * (1 - st.pan)), r += s * std::sqrt(0.5f * (1 + st.pan));
+                if ((st.pos += st.pitch) >= (double)kHornLoopEnd) st.pos -= (double)(kHornLoopEnd - kHornLoopStart);
             }
         }
         for (int a = 0; a < 2; a++) {

@@ -142,6 +142,7 @@ scenario finishes, you can drive around in the aftermath.
 | W / S or ↑ / ↓ | Throttle / brake (hold S when stopped to reverse) |
 | A / D or ← / → | Steer. Keys are all or nothing, so full steer is as much as the tires can hold at your speed, on that surface (full lock when parking, a few degrees at 130 km/h), plus room to catch a slide |
 | Space | Handbrake |
+| 7 | Horn (hold; pitched by vehicle, small cars higher; other players hear it from your car). On a pad: LB + R3 |
 | G | Garage: W/S pick engine, suspension, transmission, wheels or tires, A/D change the part, Enter fits it (career: B buys it, at a repair station) |
 | Q / E | Shift down / up (R, N, 1…; switches to manual). In manual W is gas, S is brake |
 | Shift+M | Manual / automatic gearbox |

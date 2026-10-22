@@ -32,6 +32,7 @@ const Info kInfo[KA_COUNT] = {
     {SC_D, false, "STEER RIGHT", "key_steerright", KG_DRIVING, ANY, true, false},
     {SC_SPACE, false, "HANDBRAKE", "key_handbrake", KG_DRIVING, ANY, true, false},
     {SC_P, false, "PARKING BRAKE", "key_parkbrake", KG_DRIVING, ANY, false, false},
+    {SC_7, false, "HORN (HOLD)", "key_horn", KG_DRIVING, ANY, true, false},
     {SC_E, false, "GEAR UP", "key_gearup", KG_DRIVING, D, false, false},
     {SC_Q, false, "GEAR DOWN", "key_geardown", KG_DRIVING, D, false, false},
     {SC_M, true, "MANUAL / AUTOMATIC GEARBOX", "key_manual", KG_DRIVING, D, false, false},

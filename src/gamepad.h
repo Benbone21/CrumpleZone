@@ -96,6 +96,7 @@ struct Intent {
     bool steerStick = false;     // the stick is off centre
     double throttle = 0, brake = 0;  // 0..1 shaped triggers (zero while LB holds the winch)
     bool handbrake = false;
+    bool horn = false;           // LB + R3 held
     int winch = 0;               // +1 reel in, -1 pay out (LB + RT / LT)
     int airing = 0;              // -1 let air out, +1 pump up (LB + D-pad left / right)
     // Camera and walking.

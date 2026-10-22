@@ -1,5 +1,6 @@
 // Offline audio checks: no device, speakers or window required.
 #include "../src/audio.h"
+#include "../src/horn.h"
 #include "../src/mods.h"
 #include "../src/softbody.h"
 #include "../src/sdl_min.h"
@@ -248,6 +249,60 @@ int main() {
         }
         traceAllocations = false;
         check("winch, one-shots and air loops perform no C++ allocations in the callback", callbackAllocations == 0);
+    }
+    {  // the horn: sounds while held, quiet when let go, pitched by vehicle, placed in the world, no allocations
+        auto hornEnergy = [&](bool on, float pitch, float pan, bool* finite = nullptr, double* afterRelease = nullptr) {
+            Audio a;
+            a.loadSfx("assets/audio/sfx");
+            a.setEngine(0, 0);
+            a.setVolume(1);
+            a.setHorn(0, on, 1, pan, pitch);
+            std::vector<float> buf(512 * 2);
+            double e = 0;
+            bool fin = true;
+            for (int k = 0; k < 200; k++) {  // (~2 s: far longer than the 0.56 s recording, so only a loop keeps it going)
+                AudioTest::render(a, buf.data(), 512);
+                if (k >= 150) for (float v : buf) e += v * v, fin &= std::isfinite(v);
+            }
+            if (finite) *finite = fin;
+            if (afterRelease) {
+                a.setHorn(0, false, 1, pan, pitch);
+                for (int k = 0; k < 20; k++) AudioTest::render(a, buf.data(), 512);
+                double q = 0;
+                for (int k = 0; k < 10; k++) { AudioTest::render(a, buf.data(), 512); for (float v : buf) q += v * v; }
+                *afterRelease = q;
+            }
+            return e;
+        };
+        bool finite = true;
+        double quiet = 0;
+        const double held = hornEnergy(true, 1, 0, &finite, &quiet), off = hornEnergy(false, 1, 0);
+        std::printf("  horn energy held %.3g off %.3g after release %.3g\n", held, off, quiet);
+        check("a held horn sounds, still, two seconds in (it loops past the recording's end)", held > 1.0 && finite);
+        check("a horn that is off is silent, and goes quiet after being let go", off < 1e-9 && quiet < held * 1e-4);
+        Audio p;
+        p.loadSfx("assets/audio/sfx");
+        p.setEngine(0, 0);
+        p.setVolume(1);
+        const V3 lis(0, 0, 0), rt(0, 0, 1);
+        p.setHornAt(0, true, V3(2, 0, 3), lis, rt, 1);
+        std::vector<float> hb(512 * 2);
+        double hl = 0, hr = 0, near = 0, far = 0;
+        for (int k = 0; k < 40; k++) { AudioTest::render(p, hb.data(), 512); if (k > 20) for (int i = 0; i < 512; i++) hl += hb[2 * i] * hb[2 * i], hr += hb[2 * i + 1] * hb[2 * i + 1]; }
+        check("a horn to the listener's right is louder in the right ear", hr > hl * 1.5);
+        auto at = [&](double dist) { Audio q; q.loadSfx("assets/audio/sfx"); q.setEngine(0, 0); q.setVolume(1); q.setHornAt(0, true, V3(dist, 0, 0), lis, rt, 1); double e = 0; for (int k = 0; k < 40; k++) { AudioTest::render(q, hb.data(), 512); if (k > 20) for (float v : hb) e += v * v; } return e; };
+        near = at(5), far = at(80);
+        check("a horn 80 m away is much fainter than at 5 m, and not gone", far < near * 0.3 && far > 0);
+        check("small cars honk higher: a light car's horn is a higher pitch, heavy lower", horn::pitchFor(700) > 1.1f && horn::pitchFor(3000) < 0.95f && horn::pitchFor(1600) > 0.99f && horn::pitchFor(1600) < 1.01f);
+        p.setHorn(1, true, 1, 0, 1.2f);
+        traceAllocations = true;
+        callbackAllocations = 0;
+        for (int k = 0; k < 200; k++) {
+            if (k == 100) p.setHorn(0, false, 1, 0, 1), p.setHorn(2, true, 0.5f, -0.5f, 0.9f);
+            AudioTest::render(p, hb.data(), 512);
+        }
+        traceAllocations = false;
+        check("horns perform no C++ allocations in the callback", callbackAllocations == 0);
     }
     {  // repair and tool sounds: every action makes a voice, at the work, in 3D
         auto energy = [&](const std::function<void(Audio&)>& drive, bool* finite = nullptr, float* leftShare = nullptr) {

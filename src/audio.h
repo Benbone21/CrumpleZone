@@ -82,6 +82,12 @@ public:
     void play(Sfx what, float gain = 1, float pan = 0, float delay = 0, float pitch = 1);
     // The same, placed in the world at `at`: louder near the listener, panned by which side of `right` it is on.
     void playAt(Sfx what, const V3& at, const V3& listener, const V3& right, float gain = 1, float delay = 0, float pitch = 1);
+    // The horn, held: voice `slot` (0 yours, the rest other players') sounds while `on`, at distance gain and pan -1..1, `pitch` 1 as recorded.
+    // It loops the steady part of horn.wav with a short attack and release. Silent when the file is missing.
+    static constexpr int kHorns = 4;
+    void setHorn(int slot, bool on, float gain, float pan, float pitch);
+    // The same placed in the world at `at` (the car's horn), attenuated and panned like playAt.
+    void setHornAt(int slot, bool on, const V3& at, const V3& listener, const V3& right, float pitch = 1);
     // Tire air by the compressor (+1 pumping up) or the hiss (-1 letting out); 0 off. True if the recordings are there (the synthesized hiss stays off then).
     bool setAiring(int direction);
     // Files in `directory` (assets/audio/sfx); before start only. Returns how many loaded.
@@ -177,6 +183,8 @@ private:
     void synthesizeTools();  // fills the repair/tool one-shots (loadSfx)
     struct WinchSlot { std::atomic<float> running{0}, speed{0}, load{0}, gain{0}, pan{0}; } winchIn_[kWinches];
     struct WinchState { float rate = 1, gain = 0, strain = 0, speed = 0, load = 0, pan = 0, clickAcc = 0, t = 0; double pos = 0; } winchState_[kWinches];
+    struct HornSlot { std::atomic<float> on{0}, gain{0}, pan{0}, pitch{1}; } hornIn_[kHorns];
+    struct HornState { float env = 0, gain = 0, pan = 0, pitch = 1; double pos = 0; } hornState_[kHorns];
     std::atomic<int> airingDir_{0};
     float airGain_[2] = {0, 0};
     double compPos_ = 0, blowPos_ = 0;

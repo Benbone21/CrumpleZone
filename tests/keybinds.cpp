@@ -77,6 +77,10 @@ SCENARIO(keysRemap, "keybinds/remap", "Rebound actions reach the key switch as t
     ctx.check("default keys are the ones the switch uses: E Q V O Esc and F4 for the steering assist",
               kb.gameKey(SC_E, false) == SC_E && kb.gameKey(SC_Q, false) == SC_Q && kb.gameKey(SC_V, false) == SC_V &&
                   kb.gameKey(SC_O, false) == SC_O && kb.gameKey(SC_F4, false) == SC_F4);
+    ctx.check("the horn is a held key on 7 (every letter is taken), free in every context, with a pad button of its own", [&] {
+        Keybinds h;
+        return h.key(KA_HORN) == SC_7 && !h.shift[KA_HORN] && actionContexts(KA_HORN) == KCTX_ANY && h.held(KA_HORN, [] { static uint8_t k[512]; k[SC_7] = 1; return k; }(), false);
+    }());
     ctx.check("the steering assist default isn't a key the game already uses (P pauses)", defaultKey(KA_STEER_ASSIST) != SC_P);
 
     ctx.check("gear up to X is accepted", kb.bind(KA_GEAR_UP, SC_X));
