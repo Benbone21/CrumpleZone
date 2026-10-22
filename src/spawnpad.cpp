@@ -193,7 +193,7 @@ const SpawnPad& addSpawnPad(World& w, V3 p, double yaw, int slots, int cols, dou
     }
     SpawnPad s;
     s.p = p, s.yaw = yaw, s.slots = slots, s.cols = cols, s.openAhead = openAhead;
-    s.back = -umin + 4.5, s.front = 5.5, s.half = std::max(vabs + 2.6, 3.4);
+    s.back = -umin + kPadBack, s.front = kPadFront, s.half = std::max(vabs + kPadSide, 3.4);
     return add(w, s);
 }
 
@@ -210,7 +210,7 @@ const SpawnPad& addParkingPad(World& w, const std::vector<V3>& spots, double yaw
     const double uc = (u0 + u1) / 2, vc = (v0 + v1) / 2;
     s.p = V3(f.fx * uc + f.lx * vc, 0, f.fz * uc + f.lz * vc);
     s.slots = (int)spots.size(), s.cols = std::max(1, (int)spots.size());
-    s.back = (u1 - u0) / 2 + 4.5, s.front = (u1 - u0) / 2 + 5.5, s.half = (v1 - v0) / 2 + 2.6;
+    s.back = (u1 - u0) / 2 + kPadBack, s.front = (u1 - u0) / 2 + kPadFront, s.half = (v1 - v0) / 2 + kPadSide;
     s.half = std::max(s.half, 3.4);
     return add(w, s);
 }
@@ -291,7 +291,7 @@ void addMapSpawnPads(World& w) {
     // The map's own start if it's a good one, else the nearest spot that is (round it, turned toward open ground).
     SpawnPad probe;
     probe.slots = 8, probe.cols = 3;
-    probe.back = kPadRowGap * 2 + 4.5, probe.front = 5.5, probe.half = kPadColGap + 2.6;
+    probe.back = kPadRowGap * 2 + kPadBack, probe.front = kPadFront, probe.half = kPadColGap + kPadSide;
     V3 at = w.spawn;
     double yaw = w.spawnYaw;
     double bestCost = 1e18;
