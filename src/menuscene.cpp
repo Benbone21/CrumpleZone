@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 
 #include "daylight.h"
 
@@ -13,7 +14,7 @@ namespace {
 const double kFx = 80, kFz = 40;  // (the wilds' ground is level and bare here, a hundred metres from its spawn pad)
 
 // The camp is turned on the map so the sunset lies behind it, a little right of the camera's line (kSunLocal radians, in camp terms).
-const double kSunLocal = 0.15;
+const double kSunLocal = std::getenv("CZ_SUNLOCAL") ? std::atof(std::getenv("CZ_SUNLOCAL")) : 0.15;
 double theta() {
     static const double t = [] {
         const Daylight d = computeDaylight(kHours);
@@ -74,7 +75,7 @@ World buildWorld() {
     auto in = [&](double x, double z, double pad) {
         double cx, cz;
         local(x, z, cx, cz);
-        return (cx > -21 - pad && cx < 21 + pad && cz > -21 - pad && cz < 27 + pad) || inSunGap(cx, cz);
+        return (cx > -21 - pad && cx < 21 + pad && cz > -21 - pad && cz < 27 + pad) || (cx > -34 - pad && cx < 34 + pad && cz > -34 - pad && cz <= -21 + pad) || inSunGap(cx, cz);
     };
     auto drop = [](auto& vec, auto gone) { vec.erase(std::remove_if(vec.begin(), vec.end(), gone), vec.end()); };
     drop(w.trees, [&](const Tree& t) { return in(t.base.x, t.base.z, t.radius); });
@@ -85,24 +86,25 @@ World buildWorld() {
     drop(w.bushes, [&](const Bush& b) { return in(b.p.x, b.p.z, b.r); });
     drop(w.fixtures, [&](const Prop& p) { return in(p.a.x, p.a.z, 0); });
     drop(w.models, [&](const Placed& p) { return in(p.p.x, p.p.z, 0); });
-    // A little stream across the foreground (camp terms: from (-9, 8.5) to (15, 10)): a flattened bed dug a hand deep with water in it.
+    // A valley river behind the camp (camp terms: from (-40, -24.5) to (40, -24)): a flattened bed dug into the ground, water in it; it catches the sunset.
     {
-        const V3 a = at(-9, 8.5), b = at(15, 10);
+        const V3 a = at(-40, -24.5), b = at(40, -24);
         const double dx = b.x - a.x, dz = b.z - a.z, L = std::hypot(dx, dz);
-        double g = 0;
-        for (int k = 0; k <= 12; k++) g += w.height(a.x + dx * k / 12, a.z + dz * k / 12) / 13;
-        for (double x = std::min(a.x, b.x) - 8; x <= std::max(a.x, b.x) + 8; x += 1)
-            for (double z = std::min(a.z, b.z) - 8; z <= std::max(a.z, b.z) + 8; z += 1) {
+        double g = 1e9;
+        for (int k = 0; k <= 16; k++) g = std::min(g, w.height(a.x + dx * k / 16, a.z + dz * k / 16));
+        g += 0.5;
+        for (double x = std::min(a.x, b.x) - 12; x <= std::max(a.x, b.x) + 12; x += 1)
+            for (double z = std::min(a.z, b.z) - 12; z <= std::max(a.z, b.z) + 12; z += 1) {
                 const double u = ((x - a.x) * dx + (z - a.z) * dz) / (L * L);
-                if (u < -0.05 || u > 1.05) continue;
-                const double wob = 0.9 * std::sin(u * 9.0), d = std::fabs(((x - a.x) * dz - (z - a.z) * dx) / L - wob);
+                if (u < -0.02 || u > 1.02) continue;
+                const double wob = 2.2 * std::sin(u * 9.0), d = std::fabs(((x - a.x) * dz - (z - a.z) * dx) / L - wob);
                 const int id = w.cellIndex(x, z);
-                if (id < 0 || d > 6) continue;
-                const double orig = w.height(x, z), k = std::min(1.0, std::max(0.0, (6 - d) / 3.5));
+                if (id < 0 || d > 11) continue;
+                const double orig = w.height(x, z), k = std::min(1.0, std::max(0.0, (11 - d) / 5.0));
                 double h = orig + (g - orig) * k * k * (3 - 2 * k);
-                if (d < 1.6) h = g - 0.42 * (1 - d * d / 2.56);
+                if (d < 5.6) h = g - 0.6 * (1 - d * d / 31.4);
                 w.setCellHeight(id, (float)h);
-                if (d < 1.45) w.setCellWater(id, (float)(g - 0.14));
+                if (d < 5.2) w.setCellWater(id, (float)(g - 0.2));
             }
     }
     applyLevel(lv, w);
@@ -111,7 +113,7 @@ World buildWorld() {
 
 const Spot* spots() {
     // (camp terms: the Bronco and the 4Runner right of the fire, the Blazer left of it with its nose to the flames, as if parked for the night)
-    static const Spot s[3] = {{7.6, -0.8, 2.95}, {5.0, -8.6, 3.55}, {-4.6, -5.6, -0.72}};
+    static const Spot s[3] = {{4.8, 1.2, 2.9}, {3.4, -6.8, 3.5}, {-5.0, -3.2, -0.55}};
     static Spot w[3];
     for (int k = 0; k < 3; k++) {
         const V3 p = at(s[k].x, s[k].z), f = fire();
@@ -131,7 +133,7 @@ Level level() {
     o.push_back(model("woodpile", -4.5, -14.0, 90));
     o.push_back(model("campfire", 0, 0, 0));
     o.push_back(model("tent", 12.5, -9.5, -150));
-    o.push_back(model("picnic_table", 3.0, 3.5, 20));
+    o.push_back(model("picnic_table", 0.6, 4.6, 20));
     o.push_back(logSeat(-3.2, -1.2, -2.2, 1.6));
     o.push_back(logSeat(2.4, -2.6, 3.4, 0.2));
     // The tree line: pines and broadleaf in a loose ring that opens on the camera's side.
@@ -142,12 +144,13 @@ Level level() {
     };
     for (int i = 0; i < 44; i++) {
         const double a = -0.35 * M_PI + (i / 43.0) * 1.7 * M_PI;  // sweeps round the back; the front (toward -z) stays open
-        const double r = 17 + rnd() * 16;
+        const double r = 17 + rnd() * 30;
         const double cx = std::sin(a) * r * 1.25, cz = -std::cos(a) * r * 0.8 - 4 + rnd() * 3;
+        if (cz > -34 && std::fabs(cx) < 34) continue;  // (the river and its banks stay open)
         if (cz > 3 || inSunGap(cx, cz)) continue;
         o.push_back(tree(cx, cz, 9 + rnd() * 9, rnd() < 0.72 ? 0 : 1, 0.85f + 0.3f * (float)rnd()));
     }
-    for (int i = 0; i < 9; i++) if (!inSunGap(-26 + i * 6.5, -30)) o.push_back(tree(-26 + i * 6.5 + rnd() * 3, -26 - rnd() * 8, 12 + rnd() * 8, 0, 0.8f + 0.2f * (float)rnd()));
+    for (int i = 0; i < 12; i++) if (!inSunGap(-33 + i * 6.0, -42)) o.push_back(tree(-33 + i * 6.0 + rnd() * 3, -38 - rnd() * 10, 12 + rnd() * 8, 0, 0.8f + 0.2f * (float)rnd()));
     // Rocks round the fire and in the grass, bushes at the edges.
     o.push_back(rock(-1.4, 1.1, 0.42, 0.3, 0.36, 3));
     o.push_back(rock(1.5, 0.9, 0.38, 0.28, 0.4, 7));
@@ -158,6 +161,10 @@ Level level() {
     o.push_back(rock(10.5, 8, 0.7, 0.5, 0.6, 23));
     o.push_back(rock(-6, 8.5, 0.6, 0.45, 0.55, 24));
     o.push_back(rock(16, 0.5, 2.0, 1.4, 1.7, 25));
+    for (int i = 0; i < 16; i++) {  // the river's banks: rocks along both edges
+        const double cx = -30 + i * 4.0 + rnd() * 2.5, cz = -24.5 + 0.9 * std::sin((cx + 30) / 68.0 * 9.0) + (i % 2 ? 4.2 : -4.0) + rnd();
+        o.push_back(rock(cx, cz, 0.5 + rnd() * 0.9, 0.35 + rnd() * 0.5, 0.45 + rnd() * 0.7, 40 + i));
+    }
     for (int i = 0; i < 14; i++) o.push_back(bush(-20 + rnd() * 40, -12 + rnd() * 20, 0.5 + rnd() * 0.5, 0));
     return lv;
 }
@@ -167,17 +174,27 @@ View camera(const World& w, double t) {
     // A slow drift, never an orbit: the eye swings about 11 degrees either way round the fire (two waves, periods about 121 s and 370 s), moves in and
     // out by a metre and a bit (period about 203 s) and bobs 25 cm (about 143 s). The view stays on the camp.
     const double az = 0.16 * std::sin(t * 0.052) + 0.04 * std::sin(t * 0.017 + 1);
-    const double dist = 15.5 + 1.2 * std::sin(t * 0.031 + 0.7);
+    const double dist = 11.8 + 1.0 * std::sin(t * 0.031 + 0.7);
     const double gy = w.height(f.x, f.z);
     View v;
     v.fovy = 0.78f;
     v.eye = at(std::sin(az) * dist - 2.0, std::cos(az) * dist);
-    v.eye.y = std::max(w.height(v.eye.x, v.eye.z) + 1.5, gy + 1.5) + 0.25 * std::sin(t * 0.044);
+    v.eye.y = std::max(w.height(v.eye.x, v.eye.z) + 2.6, gy + 2.6) + 0.25 * std::sin(t * 0.044);
     // The camp sits to the right of the middle: the menu has the left of the screen.
-    v.target = at(-1.2, -6.0);
-    v.target.y = gy + 1.7;
+    v.target = at(-2.4, -5.0);
+    v.target.y = gy + 2.2;
     v.up = V3(0, 1, 0);
     return v;
+}
+
+Daylight daylight() {
+    // The sun's place from kHours, high enough to clear the far ridge; the sky's colours from a minute before it sets: orange, pink and gold, the clouds lit from below.
+    Daylight d = computeDaylight(kHours);
+    const Daylight s = computeDaylight(kSunsetLook);
+    d.skyZen = s.skyZen, d.skyHor = s.skyHor, d.duskCol = s.duskCol * 1.25, d.sunGlow = s.sunGlow * 1.6, d.ambSky = s.ambSky * 0.9, d.ambGround = s.ambGround;
+    d.cloudLit = V3(s.cloudLit.x * 1.5, s.cloudLit.y * 1.15, s.cloudLit.z * 0.7), d.cloudDark = s.cloudDark;
+    d.keyCol = V3(d.keyCol.x, d.keyCol.y * 0.82, d.keyCol.z * 0.62);
+    return d;
 }
 
 float flicker(double t) {

@@ -293,8 +293,8 @@ void Audio::render(float* out, int frames) {
             }
             (void)crick;
             const float bed = amb * 0.5f;
-            const float l = fire * lF * 0.9f + stream * lS * 0.5f * bed + (wind + 0) * 0.5f * bed + crickL * 1.3f * bed;
-            const float r = fire * rF * 0.9f + stream * rS * 0.5f * bed + (wind + 0) * 0.5f * bed + crickR * 1.3f * bed;
+            const float l = fire * lF * 0.9f + stream * lS * 0.2f * bed + (wind + 0) * 0.5f * bed + crickL * 1.3f * bed;
+            const float r = fire * rF * 0.9f + stream * rS * 0.2f * bed + (wind + 0) * 0.5f * bed + crickR * 1.3f * bed;
             out[2 * i] += l * g;
             out[2 * i + 1] += r * g;
         }

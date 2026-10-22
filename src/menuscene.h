@@ -3,11 +3,13 @@
 // camera that drifts slowly. Plain launches build it; scripted and headless runs never do (main.cpp).
 #pragma once
 #include "level.h"
+#include "daylight.h"
 #include "render.h"
 
 namespace menuscene {
 
-constexpr double kHours = 18.5;  // the sun a few degrees up, behind the camp and a little to the right: the sunset
+constexpr double kHours = 17.55;       // where the sun stands (about 8 degrees up, behind the camp and a little to the right: its disc clears the ridge)
+constexpr double kSunsetLook = 18.55;  // the sky and cloud colours are the ones of this hour (sunset)
 
 // The camp as a level on the wilds (not on any list): ground, cabin, fire, trees, rocks. The fire is at fire().
 Level level();
@@ -22,5 +24,7 @@ const Spot* spots();
 View camera(const World& w, double t);
 // The fire's light this frame: a flicker (t in s).
 float flicker(double t);
+// The camp's sky: kHours' sun with kSunsetLook's colours, the clouds gold.
+Daylight daylight();
 // How much the menu's panels need the background dimmed on the left (0..1), for the painter.
 }  // namespace menuscene
