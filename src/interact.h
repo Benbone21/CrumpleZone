@@ -47,6 +47,8 @@ enum InteractKind {
     IA_STOW_LINE,     // the line in your hands spooled back onto its drum
     IA_ENTER_CAR,     // in at a vehicle's driver's door (carentry.h: yours, anyone's with nobody in it, a buddy's taken over)
     IA_RIDE_ALONG,    // in at the passenger's door of a buddy's they're driving
+    IA_AIR_UP_TIRE,   // air up a tire with the onboard compressor (or shop air)
+    IA_AIR_DOWN_TIRE, // let air out of a tire at the valve
 };
 
 // The repair in progress, as the on-foot checklist shows it: "CV AXLE, FRONT LEFT" and its steps.

@@ -376,6 +376,39 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
                     consider(o);
                 }
             }
+        // Tire pressure: air up with the compressor (or shop air) and let air out at the valves,
+        // on foot or in the seat, stopped. Placed on the tire's sidewall (offset from the hub) so
+        // aiming at the hub still picks the wheel jobs; lower priority (bias) than wheel work.
+        {
+            const double speed = len(c.frame().vel);
+            if (speed < 0.5 && c.tirePsi < c.spec->tirePsi - 0.5)
+                for (int k = 0; k < (int)c.wheels.size(); k++) {
+                    const Wheel& wh = c.wheels[k];
+                    if (wh.detached) continue;
+                    // Sidewall position: offset from the hub along the wheel's out direction.
+                    V3 wheelOut = c.nodes[wh.outer].p - c.nodes[wh.inner].p;
+                    wheelOut = len(wheelOut) > 1e-6 ? norm(wheelOut) : c.frame().fwd;
+                    const V3 sidewall = hubOf(c, wh) + wheelOut * wh.R;
+                    InteractOption o;
+                    o.car = ci, o.wheel = k, o.kind = IA_AIR_UP_TIRE, o.continuous = true;
+                    o.at = sidewall;
+                    o.radius = 0.5;
+                    char buf[64];
+                    std::snprintf(buf, sizeof buf, "AIR UP (%.0f PSI)", c.tirePsi);
+                    o.prompt = buf;
+                    consider(o, kReach, 0.1);
+                    if (c.tirePsi > 12.5) {
+                        InteractOption o2;
+                        o2.car = ci, o2.wheel = k, o2.kind = IA_AIR_DOWN_TIRE, o2.continuous = true;
+                        o2.at = sidewall;
+                        o2.radius = 0.5;
+                        char buf2[64];
+                        std::snprintf(buf2, sizeof buf2, "LET AIR OUT (%.0f PSI)", c.tirePsi);
+                        o2.prompt = buf2;
+                        consider(o2, kReach, 0.1);
+                    }
+                }
+        }
         // Repairs (fixes.h): in order, a step at a time, each with the right thing in your hand.
         if (!busy)
             for (const Fix& f : fixesFor(c)) {
@@ -530,8 +563,17 @@ std::string Interact::run(Sim& sim, Walker& wk, const V3& eye, const V3& look, b
     // Working the jack: it goes on while E is held, whatever it turns into on the way.
     if (holdE && progress > 0 && current.continuous && o.car == current.car) o = current;
     if (!o.same(current)) progress = 0;
+    const InteractOption prev = current;
     current = o;
+    // If we were airing on a previous interaction and now we're not, stop airing.
+    if ((prev.kind == IA_AIR_UP_TIRE || prev.kind == IA_AIR_DOWN_TIRE) && prev.car >= 0 && prev.car < (int)sim.cars.size() && !o.same(prev)) {
+        sim.cars[prev.car].airing = 0;
+    }
     if (!holdE || o.kind == IA_NONE || o.blocked || waitRelease) {
+        // Stop airing when we let go (or the interaction ends).
+        if ((prev.kind == IA_AIR_UP_TIRE || prev.kind == IA_AIR_DOWN_TIRE) && prev.car >= 0 && prev.car < (int)sim.cars.size()) {
+            sim.cars[prev.car].airing = 0;
+        }
         progress = 0;
         return "";
     }
@@ -546,11 +588,27 @@ std::string Interact::run(Sim& sim, Walker& wk, const V3& eye, const V3& look, b
                 progress = 0, waitRelease = true;
                 return c.jackHeight >= kJackMax && !cornerLifted(sim, c, o.wheel) ? "THE JACK'S AS HIGH AS IT GOES" : "CORNER UP";
             }
-        } else {
+        } else if (o.kind == IA_LOWER_JACK) {
             c.jackHeight = std::max(0.0, c.jackHeight - kJackRate * dt);
             if (c.jackHeight <= 0) {
                 progress = 0, waitRelease = true;
                 return "JACK DOWN";
+            }
+        } else if (o.kind == IA_AIR_UP_TIRE) {
+            c.airing = 1;
+            if (c.tirePsi >= c.spec->tirePsi - 0.5) {
+                c.airing = 0;
+                progress = 0, waitRelease = true;
+                char buf[64];
+                std::snprintf(buf, sizeof buf, "TIRES UP TO %.0f PSI", c.spec->tirePsi);
+                return buf;
+            }
+        } else if (o.kind == IA_AIR_DOWN_TIRE) {
+            c.airing = -1;
+            if (c.tirePsi <= 12.5) {
+                c.airing = 0;
+                progress = 0, waitRelease = true;
+                return "TIRES AT 12 PSI";
             }
         }
         return "";
