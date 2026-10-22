@@ -323,6 +323,18 @@ SCENARIO(showroomPanels, "showroom/layout", "The showroom's panels fit the scree
         ctx.check(at + " no overlap", apart(l.left, l.right) && apart(l.left, l.car) && apart(l.right, l.car));
         ctx.check(at + " car gets a third", l.car.w > 0.3f * W, std::to_string(l.car.w));
         ctx.check(at + " list rows", l.listRows >= 3, std::to_string(l.listRows));
+        // Level 1's tiles: 2 columns, 2 rows at the smallest size and 3 at 720p, every one inside the left panel.
+        ctx.check(at + " tile columns", l.tileCols == 2, std::to_string(l.tileCols));
+        if (H == 600) ctx.check(at + " tile rows", l.tileRows >= 2, std::to_string(l.tileRows));
+        if (H == 720) ctx.check(at + " tile rows", l.tileRows >= 3, std::to_string(l.tileRows));
+        bool tiles = l.tileRows >= 1;
+        for (int row = 0; row < l.tileRows; row++)
+            for (int col = 0; col < l.tileCols; col++) {
+                const Rect t = l.tileRect(col, row);
+                tiles = tiles && t.w > 0 && t.h > 0 && t.x >= l.left.x - 0.01f && t.y >= l.left.y - 0.01f && t.x + t.w <= l.left.x + l.left.w + 0.01f &&
+                        t.y + t.h <= l.left.y + l.left.h + 0.01f;
+            }
+        ctx.check(at + " tiles inside the left panel", tiles);
     }
 }
 

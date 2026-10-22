@@ -184,6 +184,13 @@ ShowroomLayout showroomLayout(int W, int H) {
     l.bottom = {0, top, (float)W, bar};
     l.car = {lw, 0, W - lw - rw, top};
     l.listRows = (int)std::floor((l.left.h - 60 * l.u) / (18 * l.u));  // 60u of title and header, 18u a row
+    // Tiles: (panel - 3 gaps) / 2 wide, a 4:3 picture, then two caption lines (7 px glyphs at the label scale, 4u apart).
+    l.tileCols = 2;
+    l.tileGap = 12 * l.u;
+    l.tileTop = l.left.y + 60 * l.u;
+    l.tileW = (l.left.w - 3 * l.tileGap) / l.tileCols;
+    l.tileH = l.tileW * 0.75f + 2 * (7 * hudlayout::px(1.4f * l.u) + 4 * l.u);
+    l.tileRows = std::max(0, (int)std::floor((l.left.y + l.left.h - l.tileTop + l.tileGap) / (l.tileH + l.tileGap)));
     return l;
 }
 

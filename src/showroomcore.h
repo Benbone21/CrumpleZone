@@ -65,7 +65,16 @@ private:
 };
 
 struct Rect { float x, y, w, h; };
-struct ShowroomLayout { float u; Rect left, right, bottom, car; int listRows; };
+// left: tabs, then (level 2) a breadcrumb line, then the tiles (level 1: tileCols x tileRows whole tiles, scrolling) or the
+// rows (level 2: listRows, the breadcrumb takes one). A tile is a 4:3 picture over two caption lines.
+struct ShowroomLayout {
+    float u;
+    Rect left, right, bottom, car;
+    int listRows;
+    int tileCols, tileRows;
+    float tileTop, tileW, tileH, tileGap;  // the first tile row's y; a tile's size; the space between tiles and from the panel's edge
+    Rect tileRect(int col, int row) const { return {left.x + tileGap + col * (tileW + tileGap), tileTop + row * (tileH + tileGap), tileW, tileH}; }
+};
 ShowroomLayout showroomLayout(int W, int H);
 
 // B (the pad's Y): buys the part shown, in a career and at a repair station. True if bought; `toast` is what to say

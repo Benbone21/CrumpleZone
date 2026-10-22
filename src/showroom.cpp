@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <thread>
 
+#include "builds.h"
 #include "career.h"
 #include "carframe.h"
 #include "carparts.h"
@@ -29,7 +30,7 @@ constexpr double kHours = 13.5;  // the studio's light: the model lab's hour
 constexpr double kFovy = 0.9;    // (the lab's)
 
 // Per slot: yaw (rad, from the car's +x), pitch and zoom. Engine and gearbox: front three-quarter, slightly high;
-// suspension, wheels and tires: low three-quarter at wheel height, closer, so a stance change shows.
+// suspension, wheels and tires: low three-quarter at wheel height, closer, so a stance change shows. (BUILDS: the engine's.)
 struct Framing { double yaw, pitch, zoom; };
 Framing framing(int slot) { return slot == MOD_ENGINE || slot == MOD_TRANSMISSION ? Framing{0.6, 0.25, 1.0} : Framing{0.9, 0.05, 0.8}; }
 
@@ -73,7 +74,38 @@ float wrap(Renderer& r, float x, float y, float width, float s, float lh, const 
     return yy - y;
 }
 
+const char* const kTabs[TAB_COUNT] = {"ENGINE", "SUSP", "TRANS", "WHEELS", "TIRES", "BUILDS"};  // (modSlotName's, short enough for a tab)
+
+// A donor's tile title: its catalog name (the id, as the option names use), or SWAP for the vehicles the game doesn't offer.
+std::string donorTitle(int donor) {
+    if (!vehicleListed(donor)) return "SWAP";
+    std::string n = vehicleCatalog()[donor].id;
+    for (char& ch : n) ch = (char)std::toupper((unsigned char)ch);
+    return n;
+}
+
+// The Task 10 hook: a tile's picture, the donor's stock car as a GL texture (WHEEL: its front wheel, close), or 0 while
+// there isn't one, when the tile is text only. The thumbnails (Renderer::carThumb) plug in here and in drawTile.
+GLuint tilePicture(int vehicle, bool wheel) {
+    (void)vehicle, (void)wheel;
+    return 0;
+}
+
+// A row's name without the "WHO: " the breadcrumb now says (the vehicle's own parts have none).
+std::string rowName(const ModOption& o, int vehicle) {
+    if (o.fromVehicle == vehicle) return o.name;
+    const size_t at = o.name.find(": ");
+    return at == std::string::npos ? o.name : o.name.substr(at + 2);
+}
+
 }  // namespace
+
+struct Showroom::TileInfo {
+    std::string title, head, tags;  // tags: YOURS / FITTED, right-aligned on the second caption line
+    int count = 1;                  // options in the group (a badge when more than one)
+    int pictureOf = -1;             // the vehicle whose stock car is the picture
+    bool wheel = false, build = false;
+};
 
 Showroom::Showroom(Renderer& rr, std::function<void()> restoreGameWorld) : r(rr), restore(std::move(restoreGameWorld)) {
     VisualHooks h;
@@ -87,6 +119,12 @@ Showroom::Showroom(Renderer& rr, std::function<void()> restoreGameWorld) : r(rr)
         return true;
     };
     core = std::make_unique<ShowroomCore>(std::move(h));
+    // A build previews on top of the base it is given (YOUR PICK: the parts a build doesn't name stay as picked).
+    nav.resolve = [this](int b, const ModSet& base) {
+        ModSet m = base;
+        resolveBuild(core->vehicle(), builds()[b], m);
+        return m;
+    };
 }
 
 Showroom::~Showroom() {
@@ -105,8 +143,12 @@ void Showroom::open(int vehicle, const ModSet& fitted, const V3& color, bool car
     career_ = career;
     phase = OPENING, scene = false, recal = fitWanted = buyWanted = closeWanted = orbiting = swapWait = false;
     fade.start();
-    listScroll = 0, follow = true, idle = 0, toastT = 0, blackT = 0, hover = -1;
-    setSlot(0, true);
+    scrollAdj = 0, idle = 0, toastT = 0, blackT = 0, hover = -1;
+    heads.clear();
+    nav.open(vehicle, core->fitted(), (int)builds().size());
+    const ShowroomLayout l = showroomLayout(W, H);
+    nav.setView(l.tileCols, l.tileRows, std::max(1, l.listRows - 1));
+    frameTab(nav.tabIndex(), true);
 }
 
 bool Showroom::isOpen() const { return phase != CLOSED; }
@@ -127,18 +169,51 @@ int Showroom::hitAt(float x, float y) const {
     return -1;
 }
 
-void Showroom::setSlot(int s, bool now) {
-    slot = (s % MOD_SLOTS + MOD_SLOTS) % MOD_SLOTS;
-    follow = true;
+void Showroom::frameTab(int tab, bool now) {
+    slot = tab == TAB_BUILDS ? MOD_ENGINE : tab;
     const Framing f = framing(slot);
     if (now) yaw = f.yaw, pitch = f.pitch, zoom = f.zoom, ease.t = -1;
     else ease = {0, yaw, pitch, zoom, f.yaw, f.pitch, f.zoom};
 }
 
-void Showroom::step(int d) {
-    const int n = (int)modOptions(core->vehicle(), slot).size();
-    core->setPick(slot, (core->pick().pick[slot] + d + n) % n);
-    follow = true;
+void Showroom::tabBy(int d) {
+    navDone(nav.tab(d));  // (never onto the open tab: that would take YOUR PICK again)
+    frameTab(nav.tabIndex());
+}
+
+void Showroom::backToTiles() {
+    bool close = false;
+    navDone(nav.back(close));  // (at the tiles it only says close: ESC does that, not a click)
+}
+
+void Showroom::navDone(bool pickChanged) {
+    scrollAdj = 0;
+    if (pickChanged) core->setPicks(nav.pick());
+}
+
+// What the group's remembered variant does to this vehicle alone (applyMods on a scratch spec), made once per (slot, option).
+std::string Showroom::headline(int s, int option) {
+    const int key = s * 1000 + option;
+    if (const auto it = heads.find(key); it != heads.end()) return it->second;
+    const int v = core->vehicle();
+    ModSet m;
+    m.pick[s] = option;
+    VehicleSpec vs;
+    applyMods(v, m, vs);
+    char b[64];
+    switch (s) {
+    case MOD_ENGINE: std::snprintf(b, sizeof b, "%.0f HP", peakPower(vs) / 745.7); break;
+    case MOD_TRANSMISSION: std::snprintf(b, sizeof b, "%d SPD %.2f", (int)vs.gears.size(), vs.finalDrive); break;
+    case MOD_SUSPENSION: {  // the same body-height change the detail text calls RIDE
+        const long mm = std::lround((vs.layerY[0] - vehicleCatalog()[v].layerY[0]) * 1000);
+        if (mm == 0) std::snprintf(b, sizeof b, "0 MM");
+        else std::snprintf(b, sizeof b, "%+ld MM", mm);
+        break;
+    }
+    case MOD_WHEELS: std::snprintf(b, sizeof b, "%.0f MM %.0f IN", vs.wheelRadius * 2000, vs.rimRadius * 2 / 0.0254); break;
+    default: std::snprintf(b, sizeof b, "%s", tireTypeName(vs.tireType)); break;
+    }
+    return heads[key] = b;
 }
 
 Showroom::Ui Showroom::handleEvent(const SDL_Event& e) {
@@ -150,15 +225,29 @@ Showroom::Ui Showroom::handleEvent(const SDL_Event& e) {
     case SDL_KEYDOWN: {
         const int sc = evKeyScancode(e);
         touched();
-        if (sc == SC_W || sc == SC_UP) setSlot(slot - 1), ui = Ui::HOVER;  // (the pad's menu mode taps the arrows)
-        else if (sc == SC_S || sc == SC_DOWN) setSlot(slot + 1), ui = Ui::HOVER;
-        else if (sc == SC_A || sc == SC_LEFT) step(-1), ui = Ui::HOVER;
-        else if (sc == SC_D || sc == SC_RIGHT) step(1), ui = Ui::HOVER;
-        else if (evKeyRepeat(e)) break;
+        const int dx = sc == SC_D || sc == SC_RIGHT ? 1 : sc == SC_A || sc == SC_LEFT ? -1 : 0;  // (the pad's menu mode taps the arrows)
+        const int dy = sc == SC_S || sc == SC_DOWN ? 1 : sc == SC_W || sc == SC_UP ? -1 : 0;
+        if (dx || dy) {
+            const int was = nav.cursor();
+            navDone(nav.move(dx, dy));
+            if (nav.cursor() != was) ui = Ui::HOVER;
+        } else if (evKeyRepeat(e)) break;
+        else if (sc == SC_Q || sc == SC_E) tabBy(sc == SC_E ? 1 : -1), ui = Ui::HOVER;
+        else if (sc == SC_RETURN || sc == SC_KP_ENTER) {  // opens a tile, or backs out of one (the pad's A); never fits
+            const int was = nav.level();
+            navDone(nav.enter());
+            if (nav.level() != was) ui = Ui::CLICK;
+        } else if (sc == SC_BACKSPACE) {
+            if (nav.level() == 2) backToTiles(), ui = Ui::CLICK;
+        } else if (sc == SC_ESCAPE) {  // (the pad's B)
+            bool close = false;
+            navDone(nav.back(close));
+            if (close) requestClose();
+            else ui = Ui::CLICK;
+        } else if (sc == SC_G) requestClose();
+        else if (sc == SC_F) fitWanted = true, ui = Ui::CLICK;  // (the pad's X)
         else if (sc == SC_C) recal = !recal, ui = Ui::CLICK;
-        else if (sc == SC_B) buyWanted = true, ui = Ui::CLICK;                            // (the pad's Y)
-        else if (sc == SC_RETURN || sc == SC_KP_ENTER) fitWanted = true, ui = Ui::CLICK;  // (the pad's A)
-        else if (sc == SC_ESCAPE || sc == SC_G) requestClose();                           // (the pad's B)
+        else if (sc == SC_B) buyWanted = true, ui = Ui::CLICK;  // (the pad's Y)
         break;  // (R revs in phase 3)
     }
     case SDL_MOUSEMOTION: {
@@ -174,6 +263,10 @@ Showroom::Ui Showroom::handleEvent(const SDL_Event& e) {
     }
     case SDL_MOUSEBUTTONDOWN: {
         mouseX = evButtonX(e) * k, mouseY = evButtonY(e) * k;
+        if (evButton(e) == 3 && nav.level() == 2 && inside(showroomLayout(W, H).left, mouseX, mouseY)) {  // right-click: back to the tiles
+            backToTiles(), touched();
+            return Ui::CLICK;
+        }
         if (evButton(e) != 1) break;
         touched();
         if (const int h = hitAt(mouseX, mouseY); h >= 0) {
@@ -187,7 +280,7 @@ Showroom::Ui Showroom::handleEvent(const SDL_Event& e) {
     case SDL_MOUSEWHEEL: {
         touched();
         const ShowroomLayout l = showroomLayout(W, H);
-        if (inside(l.left, mouseX, mouseY)) listScroll -= evWheelY(e), follow = false;
+        if (inside(l.left, mouseX, mouseY)) scrollAdj -= evWheelY(e);  // (drawLeft keeps it in range)
         else if (inside(l.car, mouseX, mouseY)) ease.t = -1, zoom = std::clamp(zoom * std::pow(0.88, evWheelY(e)), 0.15, 4.0);
         break;
     }
@@ -202,8 +295,9 @@ Showroom::Ui Showroom::pad(const pad::Raw& raw, double dt) {
     rev = raw.rt;
     if (phase != OPEN || closeWanted) return Ui::NONE;
     Ui ui = Ui::NONE;
-    if (pressed & pad::bit(pad::B_LB)) touched(), setSlot(slot - 1), ui = Ui::HOVER;
-    if (pressed & pad::bit(pad::B_RB)) touched(), setSlot(slot + 1), ui = Ui::HOVER;
+    if (pressed & pad::bit(pad::B_LB)) touched(), tabBy(-1), ui = Ui::HOVER;
+    if (pressed & pad::bit(pad::B_RB)) touched(), tabBy(1), ui = Ui::HOVER;
+    if (pressed & pad::bit(pad::B_X)) touched(), fitWanted = true, ui = Ui::CLICK;  // (A opens tiles in the menus, so FIT is X)
     const pad::Stick s = pad::radialDeadzone(raw.rx, raw.ry, pad::deadzoneRadius(1));
     if (s.x == 0 && s.y == 0) return ui;
     touched(), ease.t = -1;
@@ -237,7 +331,8 @@ ShowroomResult Showroom::update(double dt, Career& career, bool station) {
             restore();
         }
     }
-    if (phase == OPEN && buyWanted && !closeWanted) {
+    if (phase == OPEN && buyWanted && !closeWanted && nav.tabIndex() == TAB_BUILDS) say("BUY PARTS ONE AT A TIME, ON THEIR OWN TABS");
+    else if (phase == OPEN && buyWanted && !closeWanted) {
         std::string said;
         res.bought = showroomBuy(career, core->vehicle(), slot, core->pick().pick[slot], atStation, said);
         if (!said.empty()) say(said);
@@ -338,46 +433,141 @@ void Showroom::draw(int w, int h) {
     r.hudAlpha = keepAlpha;
 }
 
-// Slot tabs, then the slot's options: the pick highlighted, the fitted one marked.
+// A tile: a 4:3 picture over two caption lines. With no picture (tilePicture: 0) the plate holds the headline instead.
+void Showroom::drawTile(const Rect& t, const TileInfo& ti, bool cursor, bool inPick, float u) {
+    const float s = px(1.4f * u), pic = t.w * 0.75f, in = 4 * u;
+    r.rect(t.x, t.y, t.w, t.h, 1, 1, 1, cursor ? 0.07f : 0.03f);
+    const bool picture = tilePicture(ti.pictureOf, ti.wheel) != 0;
+    if (!picture) {  // (a text tile: the Task 10 picture draws over this plate, in the same rect)
+        r.rect(t.x, t.y, t.w, pic, 0, 0, 0, 0.25f);
+        if (ti.build) wrap(r, t.x + in, t.y + in, t.w - 2 * in, s, 8 * s + 2 * u, ti.head, kGrey);
+        else {
+            float bs = px(2.5f * u);
+            while (bs > 1 && r.textWidth(ti.head, bs) > t.w - 2 * in) bs -= 1;
+            r.text(t.x + (t.w - r.textWidth(ti.head, bs)) / 2, t.y + (pic - 7 * bs) / 2, bs, ti.head, kValue[0], kValue[1], kValue[2]);
+        }
+    }
+    if (ti.count > 1) {  // the variant count badge, top right of the plate
+        const std::string n = std::to_string(ti.count);
+        const float bw = r.textWidth(n, s) + 6 * u, bh = 7 * s + 4 * u;
+        r.rect(t.x + t.w - bw - in, t.y + in, bw, bh, 0, 0, 0, 0.6f);
+        r.text(t.x + t.w - bw - in + 3 * u, t.y + in + 2 * u, s, n, kAmber[0], kAmber[1], kAmber[2]);
+    }
+    const float y1 = t.y + pic + 2 * u, y2 = y1 + 7 * s + 4 * u;
+    auto fitText = [&](const std::string& x, float width) {
+        const int chars = std::max(3, (int)(width / (6 * s)));
+        return (int)x.size() > chars ? x.substr(0, chars - 2) + ".." : x;
+    };
+    r.text(t.x + in, y1, s, fitText(ti.title, t.w - 2 * in), kAmber[0], kAmber[1], kAmber[2]);
+    const float tagW = r.textWidth(ti.tags, s);
+    if (!ti.tags.empty()) r.text(t.x + t.w - in - tagW, y2, s, ti.tags, kGrey[0], kGrey[1], kGrey[2]);
+    if (picture && !ti.build) r.text(t.x + in, y2, s, fitText(ti.head, t.w - 3 * in - tagW), kValue[0], kValue[1], kValue[2]);  // (a text tile has it on the plate)
+    if (inPick) {  // a 1u amber outline on the group holding the pick
+        const float o = std::max(1.0f, u);
+        r.rect(t.x, t.y, t.w, o, kAmber[0], kAmber[1], kAmber[2], 1);
+        r.rect(t.x, t.y + t.h - o, t.w, o, kAmber[0], kAmber[1], kAmber[2], 1);
+        r.rect(t.x, t.y, o, t.h, kAmber[0], kAmber[1], kAmber[2], 1);
+        r.rect(t.x + t.w - o, t.y, o, t.h, kAmber[0], kAmber[1], kAmber[2], 1);
+    }
+}
+
+// Tabs, then level 1: the tab's groups as tiles; level 2: a breadcrumb and the open group's variants as rows (the pick
+// highlighted, the fitted one marked).
 void Showroom::drawLeft(const ShowroomLayout& l) {
-    static const char* const kTabs[MOD_SLOTS] = {"ENGINE", "SUSP", "TRANS", "WHEELS", "TIRES"};  // (modSlotName's, short enough for a tab)
     const float u = l.u, s = px(1.4f * u), big = px(2.0f * u), pad = 12 * u;
     const Rect& p = l.left;
     const int v = core->vehicle();
     panel(r, p);
     label(r, p.x + pad, p.y + 12 * u, big, vehicleCatalog()[v].name, kAmber[0], kAmber[1], kAmber[2]);
-    const float gap = 3 * u, tw = (p.w - 2 * pad - (MOD_SLOTS - 1) * gap) / MOD_SLOTS, ty = p.y + 34 * u, th = 18 * u;
-    for (int k = 0; k < MOD_SLOTS; k++) {
+    const float gap = 3 * u, tw = (p.w - 2 * pad - (TAB_COUNT - 1) * gap) / TAB_COUNT, ty = p.y + 34 * u, th = 18 * u;
+    for (int k = 0; k < TAB_COUNT; k++) {
         const float x = p.x + pad + k * (tw + gap);
-        const bool on = k == slot;
+        const bool on = k == nav.tabIndex();
         r.rect(x, ty, tw, th, 1, 1, 1, on ? 0.12f : 0.04f);
         if (on) r.rect(x, ty + th - 2 * u, tw, 2 * u, kAmber[0], kAmber[1], kAmber[2], 1);
         float ts = s;
         while (ts > 1 && r.textWidth(kTabs[k], ts) > tw - 4 * u) ts -= 1;
         const float* c = on ? kAmber : kGrey;
         r.text(x + (tw - r.textWidth(kTabs[k], ts)) / 2, ty + (th - 7 * ts) / 2, ts, kTabs[k], c[0], c[1], c[2]);
-        hits.push_back({x, ty, tw, th, [this, k] { setSlot(k); }});
+        hits.push_back({x, ty, tw, th, [this, k] {
+                            if (k != nav.tabIndex()) tabBy(k - nav.tabIndex());
+                            else backToTiles();
+                        }});
     }
-    const auto& opts = modOptions(v, slot);
-    const int n = (int)opts.size(), pick = core->pick().pick[slot], fitted = core->fitted().pick[slot], rows = std::max(1, l.listRows);
-    if (follow) listScroll = std::clamp(listScroll, pick - rows + 1, pick);
-    listScroll = std::clamp(listScroll, 0, std::max(0, n - rows));
-    const float top = p.y + 60 * u, rowH = 18 * u;
-    for (int i = listScroll; i < n && i < listScroll + rows; i++) {
-        const float y = top + (i - listScroll) * rowH, ty2 = y + (rowH - 2 * u - 7 * s) / 2;
-        if (i == pick) r.rect(p.x + pad * 0.5f, y, p.w - pad, rowH - 2 * u, 1, 1, 1, 0.07f);
+    const int t = nav.tabIndex(), rows = std::max(1, l.listRows - 1);
+    nav.setView(l.tileCols, l.tileRows, rows);
+    const ModSet& pick = core->pick();
+    const float top = p.y + 60 * u;
+    if (nav.level() == 1) {
+        const int n = nav.tileCount(), total = (n + l.tileCols - 1) / l.tileCols;
+        const int first = std::clamp(nav.scroll() + scrollAdj, 0, std::max(0, total - l.tileRows));
+        scrollAdj = first - nav.scroll();  // (the wheel stops at the ends)
+        const bool builds_ = t == TAB_BUILDS;
+        const int fitted = builds_ ? -1 : nav.tree().groupOf(t, core->fitted().pick[t]);
+        const int inPick = builds_ ? nav.cursor() : nav.tree().groupOf(t, pick.pick[t]);
+        for (int row = 0; row < l.tileRows; row++)
+            for (int col = 0; col < l.tileCols; col++) {
+                const int i = (first + row) * l.tileCols + col;
+                if (i >= n) break;
+                TileInfo ti;
+                if (builds_) {
+                    ti.build = true;
+                    ti.pictureOf = v;
+                    if (i == 0) ti.title = "YOUR PICK", ti.head = "THE PARTS YOU HAD WHEN YOU CAME HERE";
+                    else {
+                        const Build& b = builds()[i - 1];
+                        ModSet m = nav.yourPick();
+                        resolveBuild(v, b, m);
+                        ti.title = b.name, ti.head = b.detail;
+                        ti.pictureOf = modOptions(v, MOD_ENGINE)[m.pick[MOD_ENGINE]].fromVehicle;  // the build's engine's donor (or this vehicle)
+                    }
+                } else {
+                    const PartGroup& g = nav.tree().groups[t][i];
+                    ti.count = g.count;
+                    ti.pictureOf = g.donor >= 0 ? g.donor : v;
+                    ti.wheel = t == MOD_WHEELS;
+                    ti.head = headline(t, nav.remembered(t, i));
+                    ti.title = t == MOD_TIRES ? (i == 0 ? donorTitle(v) : "TREAD") : donorTitle(g.donor);
+                    if (g.donor == v) ti.tags = "YOURS";
+                    if (i == fitted) ti.tags += std::string(ti.tags.empty() ? "" : " ") + "FITTED";
+                }
+                const Rect rc = l.tileRect(col, row);
+                if (hover == (int)hits.size()) r.rect(rc.x, rc.y, rc.w, rc.h, 1, 1, 1, 0.04f);
+                drawTile(rc, ti, i == nav.cursor(), i == inPick, u);
+                hits.push_back({rc.x, rc.y, rc.w, rc.h, [this, i] {
+                                    navDone(nav.clickTile(i));
+                                    navDone(nav.enter());  // (a tile with variants opens; a build or a single part does not)
+                                }});
+            }
+        return;
+    }
+    // Level 2.
+    const PartGroup& g = nav.tree().groups[t][nav.openGroup()];
+    const auto& opts = modOptions(v, t);
+    const std::string crumb = std::string(kTabs[t]) + " > " + donorTitle(g.donor);
+    label(r, p.x + pad, top + (18 * u - 2 * u - 7 * s) / 2, s, crumb, kAmber[0], kAmber[1], kAmber[2]);
+    hits.push_back({p.x, top, p.w, 18 * u, [this] { backToTiles(); }});
+    const int fitted = core->fitted().pick[t], cur = pick.pick[t], n = g.count;
+    const int first = std::clamp(nav.scroll() + scrollAdj, 0, std::max(0, n - rows));
+    scrollAdj = first - nav.scroll();
+    const float rowH = 18 * u;
+    for (int i = first; i < n && i < first + rows; i++) {
+        const int o = g.first + i;
+        const float y = top + rowH + (i - first) * rowH, ty2 = y + (rowH - 2 * u - 7 * s) / 2;
+        if (o == cur) r.rect(p.x + pad * 0.5f, y, p.w - pad, rowH - 2 * u, 1, 1, 1, 0.07f);
+        else if (hover == (int)hits.size()) r.rect(p.x + pad * 0.5f, y, p.w - pad, rowH - 2 * u, 1, 1, 1, 0.04f);
         float end = p.x + p.w - pad;
-        if (i == fitted) {
+        if (o == fitted) {
             end -= r.textWidth("FITTED", s);
             r.text(end, ty2, s, "FITTED", kGrey[0], kGrey[1], kGrey[2]);
             end -= 8 * u;
         }
-        std::string name = opts[i].name;
+        std::string name = rowName(opts[o], v);
         const int room = std::max(3, (int)((end - p.x - pad) / (6 * s)));
         if ((int)name.size() > room) name = name.substr(0, room - 2) + "..";
-        if (i == pick) r.text(p.x + pad, ty2, s, name, 1.0f, 0.8f, 0.35f);
+        if (o == cur) r.text(p.x + pad, ty2, s, name, 1.0f, 0.8f, 0.35f);
         else r.text(p.x + pad, ty2, s, name, 0.9f, 0.9f, 0.92f);
-        hits.push_back({p.x, y, p.w, rowH, [this, i] { core->setPick(slot, i); }});
+        hits.push_back({p.x, y, p.w, rowH, [this, i] { navDone(nav.clickRow(i)); }});
     }
 }
 
@@ -396,12 +586,14 @@ void Showroom::drawRight(const ShowroomLayout& l) {
     const VehicleSpec& vs = detail;
     panel(r, p);
     float y = p.y + 12 * u;
-    r.text(x, y, s, modSlotName(slot), kGrey[0], kGrey[1], kGrey[2]);
+    const bool onBuild = nav.tabIndex() == TAB_BUILDS;
+    const Build* build = onBuild && nav.cursor() > 0 ? &builds()[nav.cursor() - 1] : nullptr;
+    r.text(x, y, s, onBuild ? "BUILD" : modSlotName(slot), kGrey[0], kGrey[1], kGrey[2]);
     y += lh;
     const ModOption& o = modOptions(v, slot)[pick.pick[slot]];
-    y += wrap(r, x, y, w, big, 8 * big + 4 * u, o.name, kAmber);
-    std::string what = o.detail;
-    const bool have = !careerNow || careerNow->owns(v, slot, pick.pick[slot]);
+    y += wrap(r, x, y, w, big, 8 * big + 4 * u, onBuild ? (build ? build->name : "YOUR PICK") : o.name, kAmber);
+    std::string what = onBuild ? (build ? build->detail : "THE PARTS YOU HAD PICKED WHEN YOU CAME HERE") : o.detail;
+    const bool have = onBuild || !careerNow || careerNow->owns(v, slot, pick.pick[slot]);
     if (!have) {
         const int price = Career::price(v, slot, pick.pick[slot]);
         what = price > 0 ? "$" + std::to_string(price) + (atStation ? (pad::ui.last ? "  Y: BUY IT" : "  B: BUY IT") : "  AT ANY REPAIR STATION")
@@ -441,7 +633,7 @@ void Showroom::drawBottom(const ShowroomLayout& l) {
     panel(r, p);
     const ModSet& pick = core->pick();
     const bool change = recal || !std::equal(pick.pick, pick.pick + MOD_SLOTS, core->fitted().pick);
-    const std::string fit = pad::ui.last ? std::string(pad::buttonName(pad::B_A, pad::ui.style)) + "  FIT" : "ENTER  FIT";
+    const std::string fit = pad::ui.last ? std::string(pad::buttonName(pad::B_X, pad::ui.style)) + "  FIT" : "F  FIT";  // (A and ENTER open tiles now)
     const float bw = r.textWidth(fit, big) + 28 * u, bh = p.h - 12 * u, bx = p.x + p.w - pad - bw, by = p.y + 6 * u;
     if (change) hud::pill(r, bx, by, bw, bh, 0.8f, 0.55f, 0.2f, 0.95f);
     else hud::pill(r, bx, by, bw, bh, 0.25f, 0.26f, 0.28f, 0.9f);
@@ -456,9 +648,9 @@ void Showroom::drawBottom(const ShowroomLayout& l) {
         end -= 16 * u;
     }
     auto name = [](pad::Button b) { return std::string(pad::buttonName(b, pad::ui.style)); };
-    const std::string keys = pad::ui.last ? name(pad::B_LB) + " " + name(pad::B_RB) + " PART   D-PAD OPTION   RIGHT STICK ORBIT   " + "LT + RIGHT STICK ZOOM   " +
-                                                name(pad::B_B) + " CLOSE"
-                                          : "W S PART   A D OPTION   DRAG ORBIT   WHEEL ZOOM   C SPEEDO   ESC CLOSE";
+    const std::string keys = pad::ui.last ? name(pad::B_LB) + " " + name(pad::B_RB) + " TAB   D-PAD MOVE   " + name(pad::B_A) + " OPEN   " + name(pad::B_B) + " BACK   " +
+                                                name(pad::B_X) + " FIT"
+                                          : "Q E TAB   ARROWS MOVE   ENTER OPEN   ESC BACK   F FIT";
     while (s > 1 && r.textWidth(keys, s) > end - p.x - pad) s -= 1;
     r.text(p.x + pad, p.y + (p.h - 7 * s) / 2, s, keys, kGrey[0], kGrey[1], kGrey[2]);
 }

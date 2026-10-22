@@ -3,12 +3,14 @@
 // One frame: handleEvent for each event, pad, update (builds, evicts, fades: never while drawing), then draw.
 #pragma once
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "gamepad.h"
 #include "mods.h"
+#include "partpicker.h"
 #include "showroomcore.h"
 
 class Renderer;
@@ -54,8 +56,10 @@ private:
     bool scene = false, career_ = false, recal = false, fitWanted = false, buyWanted = false, closeWanted = false;
     bool swapWait = false;  // a FIT's car not swapped in yet (fitDone)
     double blackT = 0;      // s the fade has been held black
-    int slot = 0, listScroll = 0;
-    bool follow = true;  // keep the pick in view (after a key moved it; the wheel scrolls freely)
+    PickerNav nav;      // the part picker: tabs, tiles, variants and the pick (every change goes to core->setPicks)
+    int slot = 0;       // the ModSlot the right panel and B (buy) work on: the tab's, or ENGINE on BUILDS
+    int scrollAdj = 0;  // rows the wheel has scrolled away from where the cursor is in view (0 after any key)
+    std::map<int, std::string> heads;  // a tile's headline number, per (slot, option) (made on first draw, cleared on open)
     // Camera: yaw from the car's +x, pitch up from level, zoom times the distance (1.25 car lengths).
     double yaw = 0, pitch = 0, zoom = 1, idle = 0, clock = 0;
     struct Ease {
@@ -76,8 +80,11 @@ private:
     ModSet detailOf;
     int detailVehicle = -1;
 
-    void setSlot(int s, bool now = false);
-    void step(int d);
+    void frameTab(int tab, bool now = false);  // the camera's framing for a tab (BUILDS: ENGINE's), and the slot the right panel shows
+    void tabBy(int d);                         // Q/E, LB/RB, a click on a tab
+    void backToTiles();                        // level 2 -> level 1 (a click on the breadcrumb or right-click)
+    void navDone(bool pickChanged);            // after any PickerNav call: the pick to the core, the cursor back in view
+    std::string headline(int s, int option);   // a tile's one number
     void touched();
     int hitAt(float x, float y) const;  // the topmost hit there, or -1
     void say(const std::string& s) { toast = s, toastT = 2.5; }
@@ -85,4 +92,6 @@ private:
     void drawRight(const ShowroomLayout& l);
     void drawBottom(const ShowroomLayout& l);
     void drawOverCar(const ShowroomLayout& l);
+    struct TileInfo;
+    void drawTile(const Rect& t, const TileInfo& ti, bool cursor, bool inPick, float u);
 };
