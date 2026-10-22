@@ -117,12 +117,120 @@ int Audio::loadAmbience(const std::string& directory) {
     int n = 0;
     n += readMono16(directory + "/campfire.wav", fireLoop_);
     n += readMono16(directory + "/wind.wav", windLoop_);
+    n += readMono16(directory + "/stream.wav", streamLoop_);
     return n;
+}
+
+namespace {
+constexpr size_t kClickSlot = 3360, kWrenchSlot = 7680;  // (the banks' slots, samples: tools/sfx_prepare.py)
+}
+
+int Audio::loadSfx(const std::string& directory) {
+    if (device_) return -1;
+    sfxLoaded_ = true;
+    int n = 0;
+    struct { const char* file; Sfx what; } one[] = {
+        {"door_open.wav", SFX_DOOR_OPEN}, {"door_shut.wav", SFX_DOOR_SHUT}, {"clunk.wav", SFX_CLUNK}, {"toolbox_rummage.wav", SFX_TOOLBOX_OPEN},
+        {"toolbox_shut.wav", SFX_TOOLBOX_SHUT}, {"wrench_ratchet.wav", SFX_WRENCH}, {"air_hiss.wav", SFX_AIR_BURST}, {"horn.wav", SFX_HORN},
+        {"winch_click.wav", SFX_WINCH_CLICK}};
+    for (auto& e : one) n += readMono16(directory + "/" + e.file, sfx_[e.what]);
+    n += readMono16(directory + "/winch_motor.wav", winchMotor_);
+    n += readMono16(directory + "/compressor.wav", compressor_);
+    n += readMono16(directory + "/air_blow.wav", airBlow_);
+    sfxCount_ = n;
+    return n;
+}
+
+WinchSound WinchSound::at(float lineSpeed, float load) {
+    const float v = std::isfinite(lineSpeed) ? std::fabs(lineSpeed) : 0, ld = std::isfinite(load) ? std::clamp(load, 0.0f, 1.0f) : 0;
+    const float vn = std::min(1.0f, v / 1.2f);  // (a reel-in at the default 4x is 0.5 m/s, paying out 1 m/s)
+    const float k = std::clamp((ld - 0.45f) / 0.5f, 0.0f, 1.0f);
+    WinchSound w;
+    w.motorRate = (0.8f + 0.55f * vn) * (1 - 0.2f * ld);  // faster line, higher hum; a load pulls it down
+    w.motorGain = 0.10f + 0.16f * vn + 0.30f * ld;
+    w.strain = k * k * (3 - 2 * k);
+    w.clicksPerSecond = ld > 0.97f && v < 0.03f ? 0.0f : std::min(28.0f, v * 22.0f);  // (~22 pawl teeth a metre of line; past 28/s they'd just be a buzz)
+    return w;
+}
+
+void Audio::setWinch(int slot, bool running, float lineSpeed, float load, float gain, float pan) {
+    if (slot < 0 || slot >= kWinches) return;
+    WinchSlot& w = winchIn_[slot];
+    w.speed = std::isfinite(lineSpeed) ? lineSpeed : 0, w.load = std::isfinite(load) ? load : 0, w.pan = std::isfinite(pan) ? pan : 0;
+    w.gain = running && std::isfinite(gain) ? gain : 0;
+    w.running = running ? 1.0f : 0.0f;
+}
+
+void Audio::setWinches(const Sim& sim, const V3& listener, const V3& right, double simDt) {
+    struct Cand { double d; float speed, load, pan; bool running; };
+    std::vector<Cand> cands;
+    for (RopeSeen& r : ropesSeen_) r.live = false;
+    for (const Rope& r : sim.ropes) {
+        if (r.kind != ROPE_WINCH || r.a.kind != ANCHOR_CAR || r.a.car < 0 || r.a.car >= (int)sim.cars.size()) continue;
+        const Car& c = sim.cars[r.a.car];
+        const uint32_t key = (uint32_t)(r.a.car * 4 + r.a.hook + 1);
+        RopeSeen* seen = nullptr;
+        for (RopeSeen& x : ropesSeen_) if (x.key == key) seen = &x;
+        if (!seen) { ropesSeen_.push_back({key, r.length, 0, true}); seen = &ropesSeen_.back(); }
+        seen->live = true;
+        if (simDt > 1e-6) {
+            const double raw = (seen->length - r.length) / simDt, tau = c.remote ? 0.3 : 0.12;  // (+ reeling in; a remote's length arrives in steps)
+            seen->speed += (raw - seen->speed) * std::min(1.0, simDt / tau);
+        } else seen->speed = 0;
+        seen->length = r.length;
+        const V3 at = c.hookPoint(r.a.hook), off = at - listener;
+        const double d = len(off);
+        if (d > 90) continue;
+        const bool running = c.remote ? std::fabs(seen->speed) > 0.03 : r.winch != 0 && simDt > 0;
+        cands.push_back({d, (float)seen->speed, (float)(r.stallN > 1 ? r.tension / r.stallN : 0), (float)clampd(d > 1e-6 ? dot(off / d, right) : 0, -1, 1), running});
+    }
+    ropesSeen_.erase(std::remove_if(ropesSeen_.begin(), ropesSeen_.end(), [](const RopeSeen& x) { return !x.live; }), ropesSeen_.end());
+    std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) { return a.d < b.d; });
+    for (int i = 0; i < kWinches; i++) {
+        if (i < (int)cands.size()) setWinch(i, cands[i].running, cands[i].speed, cands[i].load, (float)(1 / (1 + cands[i].d * cands[i].d / 36)), cands[i].pan);
+        else setWinch(i, false, 0, 0, 0, 0);
+    }
+}
+
+void Audio::play(Sfx what, float gain, float pan, float delay) {
+    if (what < 0 || what >= SFX_COUNT || sfx_[what].empty() || !std::isfinite(gain) || !std::isfinite(pan)) return;
+    const unsigned head = pendingHead_.load(std::memory_order_relaxed);
+    if (head - pendingTail_.load(std::memory_order_acquire) >= kPending) return;
+    pending_[head % kPending] = {what, std::clamp(gain, 0.0f, 2.0f), std::clamp(pan, -1.0f, 1.0f), (uint32_t)(std::clamp(std::isfinite(delay) ? delay : 0.0f, 0.0f, 10.0f) * rate_)};
+    pendingHead_.store(head + 1, std::memory_order_release);
+}
+
+bool Audio::setAiring(int direction) {
+    direction = std::clamp(direction, -1, 1);
+    const bool have = !compressor_.empty() && !airBlow_.empty();
+    if (!have) return false;
+    if (direction < 0 && airingDir_ != -1) play(SFX_AIR_BURST, 0.5f);  // (the first "psst" of the valve)
+    airingDir_ = direction;
+    return true;
+}
+
+void Audio::startSfx(Sfx what, float gain, float pan, uint32_t wait) {
+    SfxVoice* v = &sfxVoices_[0];
+    for (SfxVoice& x : sfxVoices_) {
+        if (x.what == SFX_COUNT) { v = &x; break; }
+        if (x.pos > v->pos) v = &x;  // (none free: take the one furthest along)
+    }
+    const std::vector<float>& d = sfx_[what];
+    size_t from = 0, to = d.size();
+    if (what == SFX_WINCH_CLICK || what == SFX_WRENCH) {  // a bank: one slot, a touch louder or softer each time
+        const size_t slot = what == SFX_WINCH_CLICK ? kClickSlot : kWrenchSlot, slots = std::max<size_t>(1, d.size() / slot);
+        const size_t k = (size_t)((noise() * 0.5f + 0.5f) * slots) % slots;
+        from = k * slot, to = std::min(d.size(), from + slot);
+        gain *= 0.85f + 0.15f * noise();
+    }
+    v->what = what, v->pos = from, v->end = to, v->wait = wait;
+    v->left = gain * std::sqrt(0.5f * (1 - pan)), v->right = gain * std::sqrt(0.5f * (1 + pan));
 }
 
 bool Audio::start() {
     if (device_) return true;
-    if (!ambienceLoaded_) std::printf("Ambience recordings: %d of 2 loaded; missing ones stay synthesized\n", loadAmbience("assets/audio/ambience"));
+    if (!ambienceLoaded_) std::printf("Ambience recordings: %d of 3 loaded; missing ones stay synthesized\n", loadAmbience("assets/audio/ambience"));
+    if (!sfxLoaded_) std::printf("Sound effects: %d of 12 loaded; missing ones stay silent\n", loadSfx("assets/audio/sfx"));
     const int banks = recordingsReady_ ? recordingCount_ : loadEngineRecordings("assets/audio/engines");
     std::printf("Engine recordings: %d banks loaded; missing banks use procedural audio\n", banks);
     SDL_AudioSpec want{}, have{};
@@ -160,6 +268,74 @@ void Audio::setHiss(float level) { pendingHiss_ = std::isfinite(level) ? std::cl
 
 void Audio::callback(void* user, uint8_t* stream, int len) {
     static_cast<Audio*>(user)->render(reinterpret_cast<float*>(stream), len / (int)(2 * sizeof(float)));
+}
+
+// Recorded one-shots, the winch (motor hum + pawl clicks) and the tire air, added over the mix.
+void Audio::renderEffects(float* out, int frames, float dt, float sceneGain) {
+    for (unsigned tail = pendingTail_.load(std::memory_order_relaxed), head = pendingHead_.load(std::memory_order_acquire); tail != head; tail++) {
+        const PendingSfx& e = pending_[tail % kPending];
+        startSfx(e.what, e.gain, e.pan, e.delay);
+        pendingTail_.store(tail + 1, std::memory_order_release);
+    }
+    const float smooth = 1.0f - std::exp(-dt * 12.0f);
+    WinchSound ws[kWinches];
+    float target[kWinches];
+    const bool motor = winchMotor_.size() > 2;
+    for (int k = 0; k < kWinches; k++) {
+        const WinchSlot& in = winchIn_[k];
+        WinchState& st = winchState_[k];
+        st.speed = in.speed, st.load = in.load;
+        ws[k] = WinchSound::at(in.speed, in.load);
+        target[k] = in.running.load() > 0.5f ? in.gain.load() * ws[k].motorGain : 0.0f;
+        st.pan = in.pan;
+    }
+    const int air = airingDir_;
+    const float airTarget[2] = {air > 0 && !compressor_.empty() ? 0.28f : 0.0f, air < 0 && !airBlow_.empty() ? 0.30f : 0.0f};
+    for (int i = 0; i < frames; i++) {
+        float l = 0, r = 0;
+        for (int k = 0; k < kWinches; k++) {
+            WinchState& st = winchState_[k];
+            st.gain += (target[k] - st.gain) * smooth;
+            st.rate += (ws[k].motorRate - st.rate) * smooth;
+            st.strain += (ws[k].strain - st.strain) * smooth;
+            if (st.gain < 1e-4f && target[k] == 0) { st.clickAcc = 0; continue; }
+            if (motor) {
+                st.t += dt;
+                st.pos += st.rate * (1 + 0.03f * st.strain * std::sin(6.2831853f * 7.0f * st.t));
+                const double n = (double)winchMotor_.size();
+                if (st.pos >= n) st.pos -= n;
+                const size_t a = (size_t)st.pos, b = a + 1 >= winchMotor_.size() ? 0 : a + 1;
+                const float f = (float)(st.pos - a), m = winchMotor_[a] * (1 - f) + winchMotor_[b] * f;
+                const float drive = 1 + 4 * st.strain;
+                const float s = std::tanh(m * drive) / std::sqrt(drive) * st.gain;  // (a load drives it harder: rougher, fuller)
+                l += s * std::sqrt(0.5f * (1 - st.pan)), r += s * std::sqrt(0.5f * (1 + st.pan));
+            }
+            st.clickAcc += ws[k].clicksPerSecond * dt;
+            if (st.clickAcc >= 1) {  // a pawl tooth: the click rate follows the line, either way
+                st.clickAcc -= 1;
+                if (st.clickAcc > 1) st.clickAcc = 0;
+                if (!sfx_[SFX_WINCH_CLICK].empty() && target[k] > 0)
+                    startSfx(SFX_WINCH_CLICK, std::min(1.0f, target[k] / std::max(0.05f, ws[k].motorGain)) * (st.speed < 0 ? 0.55f : 0.7f), st.pan, 0);
+            }
+        }
+        for (int a = 0; a < 2; a++) {
+            airGain_[a] += (airTarget[a] - airGain_[a]) * smooth;
+            const std::vector<float>& d = a == 0 ? compressor_ : airBlow_;
+            if (airGain_[a] < 1e-4f && airTarget[a] == 0) continue;
+            double& pos = a == 0 ? compPos_ : blowPos_;
+            if (++pos >= d.size()) pos = 0;
+            const float s = d[(size_t)pos] * airGain_[a];
+            l += s, r += s;
+        }
+        for (SfxVoice& v : sfxVoices_) {
+            if (v.what == SFX_COUNT) continue;
+            if (v.wait) { v.wait--; continue; }
+            const float s = sfx_[v.what][v.pos];
+            l += s * v.left, r += s * v.right;
+            if (++v.pos >= v.end) v.what = SFX_COUNT;
+        }
+        out[2 * i] += l * sceneGain, out[2 * i + 1] += r * sceneGain;
+    }
 }
 
 void Audio::render(float* out, int frames) {
@@ -282,6 +458,7 @@ void Audio::render(float* out, int frames) {
         out[2 * i] = (left + (cabinLowL_ - left) * cabin) * sceneGain;
         out[2 * i + 1] = (right + (cabinLowR_ - right) * cabin) * sceneGain;
     }
+    renderEffects(out, frames, dt, sceneGain);
     // Music goes on top, quieter than the car (its own level is about -18 dBFS before the
     // volume setting). A soft knee catches the rare moment both peak together.
     // Leave space for engine detail during hard acceleration and impacts.
@@ -315,7 +492,11 @@ void Audio::render(float* out, int frames) {
             stLp1_ += (n2 - stLp1_) * 0.22f;
             stLp2_ += (n2 - stLp2_) * 0.03f;
             const float burble = 0.65f + 0.35f * std::sin(cfT_ * 9.0f + 2.0f * std::sin(cfT_ * 1.7f));
-            const float stream = (stLp1_ - stLp2_) * burble * 0.55f;
+            float stream = (stLp1_ - stLp2_) * burble * 0.55f;
+            if (!streamLoop_.empty()) {  // (the recorded brook, a quiet bed off to its side)
+                stream = streamLoop_[streamPos_] * 2.2f;
+                if (++streamPos_ >= streamLoop_.size()) streamPos_ = 0;
+            }
             // Wind: a low rush with gusts, and a leafier hush on top of it.
             const float n3 = noise();
             wnLp_ += (n3 - wnLp_) * 0.012f;

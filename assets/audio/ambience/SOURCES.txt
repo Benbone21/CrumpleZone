@@ -4,3 +4,4 @@ tools/ambience_loops.py (the tail is crossfaded into the head).
 
 campfire.wav   from soundreality-campfire-crackling-sound-439573 (Pixabay; file name as downloaded), 40 s taken from 55 s in
 wind.wav       from ezanarini-air-ambience-234180 (Pixabay; file name as downloaded), the first 26 s
+stream.wav     from soundreality-stream-nature-445380 (Pixabay), 24 s taken from 30 s in; the menu's brook. See ../sfx/SOURCES.txt (reserved: river.wav, forest.wav)
