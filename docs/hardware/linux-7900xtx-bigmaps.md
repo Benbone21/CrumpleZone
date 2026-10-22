@@ -46,3 +46,33 @@ Cold startup on the proving ground (`CZ_LOADPROF=1 --load-tour`):
 Where the time went:
 - The sim's own proving-ground world was built with the model yard and the section park even when another map or the menu's camp replaced it at once. It is now built bare in that case.
 - The section-park cache built every built-in level's world (Frontier, Mountain, and 7 section worlds twice) just to read one section each. It now builds only the one world it needs.
+
+## Phase 2: compact land data, parallel bake, world cache (branch wip/bigmaps-p2)
+
+Land hashes and every cell's roads and water are bit-identical to before, on every map. The fingerprint is still `91850b5879f5e3e3`. The suite fails only the known 8.
+
+| | Before | After |
+|---|---|---|
+| World RAM, Frontier / Backcountry / Mountain | 47 / 50 / 48 MB | 26 / 26 / 39 MB |
+| World build on 24 threads, Frontier / Backcountry | 0.89 / 0.54 s | 0.73 / 0.39 s |
+| Map switch with the world cache warm, Frontier / Backcountry / Mountain | 0.79 / 0.43 / 0.14 s | 22 / 21 / 38 ms |
+| Worst frame in a map switch (`--load-tour`) | 53-75 ms | 30-39 ms |
+
+Notes on the table:
+- The worst-frame numbers are noisy: other agents were running during the "before" runs.
+- The world cache files are 19 / 20 / 29 MB (Frontier / Backcountry / Mountain), not yet compressed.
+- Re-seeding the scatter per cell was not done. The existing maps keep their layouts. Per-cell seeds come with the new land in phase 4, where they are needed. The quadratic tree-spacing checks are only in the proving ground and the open country's scatter.
+
+### Frame-time baseline before phase 3
+
+`--bench-suite`, defaults (600 frames after 120, 1600x900), on the phase 2 build. Taken at about 17:12 on 2026-10-22, with load average 8 on 24 threads (another agent's tests were using about 3 cores), so these numbers are a little noisy.
+
+Average frame time, with the 1% low in brackets:
+
+| Scene | POTATO | LOW | MEDIUM | HIGH |
+|---|---|---|---|---|
+| Frontier | 2.39 (3.90) | 2.85 (4.38) | 2.71 (4.24) | 2.46 (3.59) |
+| Open country | 1.58 (2.56) | 1.96 (2.92) | 1.92 (2.65) | 2.22 (3.59) |
+| Mountain / Boulder Gully | 2.04 (2.62) | 3.07 (4.99) | 3.11 (4.33) | 3.17 (5.51) |
+
+The 6.3 / 5.5 ms single-scene numbers in the baseline section were taken while the machine was much busier. Compare against this table.
