@@ -242,6 +242,7 @@ void placeObject(const LevelObject& obj, World& w) {
             const V3 at(o.p.x, w.height(o.p.x, o.p.z) + o.lift, o.p.z);
             std::vector<std::pair<std::string, double>> set;
             if (o.name == "trail_sign") set = {{"rating", (double)o.sub}};
+            else if (o.name == "menu_vehicle") set = {{"slot", (double)o.sub}};  // (the main menu camp's vehicle stand-in: which vehicle)
             else if (o.name == "cairn" || o.name == "stump") set = {{"seed", (double)o.sub}};
             w.placeModel(o.name, at, o.yaw, set, sc);
             w.models.back().variant = o.variant;

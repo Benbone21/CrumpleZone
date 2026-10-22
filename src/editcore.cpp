@@ -1718,7 +1718,7 @@ LevelObject EditCore::rotatedAbout(LevelObject o, const Quat& qq, const V3& c, c
     const World& w = *world;
     // (Things that stay upright take only the turn about the vertical: the twist of q about Y. Tipped right over, none.)
     Quat q = qq;
-    if (!turnsFreely(o.kind)) {
+    if (!turnsFreely(o.kind) || o.name == "menu_vehicle") {  // (a parked vehicle stands on its wheels: only the turn about the vertical)
         q = std::hypot(qq.w, qq.y) > 1e-6 ? Quat{qq.w, 0, qq.y, 0} : Quat();
         q.normalize();
     }

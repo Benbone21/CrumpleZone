@@ -20,14 +20,18 @@ struct Camera {
 };
 struct Meta {
     Vehicle veh[3];
+    int vehicles = 0;                 // how many of them the level has (a vehicle deleted in the editor is not parked)
     Camera cam;
     double look = 18.55;              // the sky's colours are the ones of this hour (sunset); the level's own time of day is where the sun stands
 };
 
 bool isCamp(const Level& lv);         // a level made for the menu (it has the "#menu scene" line)
 Meta metaOf(const Level& lv);         // its settings (the defaults for any that are missing)
-void setMeta(Level& lv, const Meta& m);  // rewrites the "#menu" lines (keeps "scene")
+void setMeta(Level& lv, const Meta& m);  // rewrites the "#menu" lines (keeps "scene"), and moves/turns/changes the vehicles the level has (it adds none)
+void upgrade(Level& lv);  // an older camp file (vehicles in "#menu veh" lines) gets its stand-in objects
+int addVehicle(Level& lv, const Vehicle& v);  // a new stand-in (up to three): its number, or -1
 bool sameMeta(const Meta& a, const Meta& b);
+const char* const kVehicleModel = "menu_vehicle";
 // Where the fire is: the first campfire in the level (false: none).
 bool fireOf(const Level& lv, V3& at);
 
