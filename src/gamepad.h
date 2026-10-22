@@ -79,7 +79,8 @@ Pedals pedals(double rt, double lt, double vf, int gear, bool manual = false);
 enum class Mode {  // what the pad is for right now
     Off,    // the pad does nothing (editor, chat, scenario playback)
     Drive,  // in the vehicle (or on foot)
-    Menu,   // the pause menu, title screen, garage: D-pad / stick move, A select, B back
+    Menu,   // the pause menu, title screen: D-pad / stick move, A select, B back
+    Garage, // the showroom: as Menu, but the left stick only moves left-right (option); Y buys
     Map,    // the map: stick pans, triggers zoom, A sets the waypoint
     Aim,    // picking a winch anchor
 };

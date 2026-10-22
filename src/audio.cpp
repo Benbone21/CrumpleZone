@@ -8,7 +8,7 @@
 #include "sdl_min.h"
 #include "softbody.h"
 
-void Audio::setNearbyEngines(const Sim& sim, const V3& listener, const V3& right, float timeScale) {
+void Audio::setNearbyEngines(const Sim& sim, const V3& listener, const V3& right, float timeScale, bool hush) {
     // The player's own engine should recede when walking away or flying the drone.
     if (sim.player >= 0 && sim.player < (int)sim.cars.size()) {
         const double distance = len(sim.cars[sim.player].frame().com - listener);
@@ -17,7 +17,7 @@ void Audio::setNearbyEngines(const Sim& sim, const V3& listener, const V3& right
     Sources& frame = sources_[backSources_];
     frame.count = 0;
     std::array<double, kNearbyEngines> distances{};
-    for (size_t i = 0; i < sim.cars.size(); i++) {
+    for (size_t i = 0; !hush && i < sim.cars.size(); i++) {
         const Car& c = sim.cars[i];
         if ((int)i == sim.player || c.isProp()) continue;
         const V3 offset = c.frame().com - listener;

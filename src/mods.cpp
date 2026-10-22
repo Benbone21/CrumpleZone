@@ -754,6 +754,18 @@ std::string modFindPart(const char* vehicleId, int slot, const char* name) {
     return "";
 }
 
+void applyMods(int vehicle, const ModSet& mods, VehicleSpec& s) {
+    s = vehicleCatalog()[vehicle];
+    for (int k = 0; k < MOD_SLOTS; k++) {
+        const auto& opts = modOptions(vehicle, k);
+        int p = std::min(std::max(mods.pick[k], 0), (int)opts.size() - 1);
+        s.mods[k] = p;
+        if (p == 0) continue;
+        opts[p].apply(s);
+        s.modSummary += (s.modSummary.empty() ? "" : " / ") + opts[p].name;
+    }
+}
+
 const VehicleSpec& tunedSpec(int vehicle, const ModSet& mods) {
     if (mods.stock()) return vehicleCatalog()[vehicle];
     static std::mutex lock;
@@ -764,16 +776,8 @@ const VehicleSpec& tunedSpec(int vehicle, const ModSet& mods) {
     for (int k = 0; k < MOD_SLOTS; k++) key[k + 1] = mods.pick[k];
     auto& slot = cache[key];
     if (!slot) {
-        slot = std::make_unique<VehicleSpec>(vehicleCatalog()[vehicle]);
-        VehicleSpec& s = *slot;
-        for (int k = 0; k < MOD_SLOTS; k++) {
-            const auto& opts = modOptions(vehicle, k);
-            int p = std::min(std::max(mods.pick[k], 0), (int)opts.size() - 1);
-            s.mods[k] = p;
-            if (p == 0) continue;
-            opts[p].apply(s);
-            s.modSummary += (s.modSummary.empty() ? "" : " / ") + opts[p].name;
-        }
+        slot = std::make_unique<VehicleSpec>();
+        applyMods(vehicle, mods, *slot);
     }
     return *slot;
 }

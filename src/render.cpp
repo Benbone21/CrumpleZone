@@ -4002,8 +4002,12 @@ void Renderer::drawWheels(const Sim& sim, GLuint prog) {
 
 namespace {
 // The nodes a vehicle type's skin and bound parts are made from (and its torn-panel test reads).
+std::map<const VisualTemplate*, std::vector<int>>& watchCache() {
+    static std::map<const VisualTemplate*, std::vector<int>> cache;  // (the render thread only; Renderer::forgetTemplate empties an entry)
+    return cache;
+}
 const std::vector<int>& watchedNodes(const Car& car, const VisualTemplate& t) {
-    static std::map<const VisualTemplate*, std::vector<int>> cache;
+    auto& cache = watchCache();
     auto it = cache.find(&t);
     if (it != cache.end()) return it->second;
     std::vector<char> used(car.nodes.size(), 0);
@@ -4028,6 +4032,19 @@ const std::vector<int>& watchedNodes(const Car& car, const VisualTemplate& t) {
     return w;
 }
 }  // namespace
+
+void Renderer::forgetTemplate(const VisualTemplate* t) {
+    watchCache().erase(t);
+    for (size_t i = 0; i < templateVbos.size(); i++)
+        if (templateVbos[i].first == t) {
+            DeleteBuffers(1, &templateVbos[i].second);
+            templateVbos.erase(templateVbos.begin() + i);
+            break;
+        }
+    for (CarSlot& sl : carSlots)
+        if (sl.tpl == t || sl.builtTpl == t)
+            sl.opaqueCount = sl.glassCount = sl.partsCount = 0, sl.tpl = sl.builtTpl = nullptr, sl.intact = false;
+}
 
 // Evaluates every vehicle's body and bound parts (in its own frame, when its shape has moved on) and its running gear
 // for this frame, and uploads them.

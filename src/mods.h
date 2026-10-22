@@ -46,6 +46,8 @@ std::string modPartTitle(const std::string& key);
 // The key of a vehicle's own part whose name contains `name` in `slot` (a tread by its
 // TireType name, e.g. "RACE SLICK"); "" if none.
 std::string modFindPart(const char* vehicleId, int slot, const char* name);
+// Overwrites s with the catalog vehicle plus these mods; picks are clamped to each slot's options.
+void applyMods(int vehicle, const ModSet& mods, VehicleSpec& s);
 // Catalog vehicle with these mods fitted. The same mods always give the same object
 // (cars keep a pointer to their spec); no mods gives the catalog entry itself.
 const VehicleSpec& tunedSpec(int vehicle, const ModSet& mods);

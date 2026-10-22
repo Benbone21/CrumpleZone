@@ -213,7 +213,7 @@ Driving is analog. The left stick is a real analog steering input: a radial dead
 | LB + Back | Next vehicle |
 | LB + Start | The controls list (shows the pad's map) |
 
-Picking a winch anchor or tow-strap point: right stick aims the crosshair, A selects the highlighted point, B cancels. With a mouse, point and click; middle-drag looks and the wheel zooms. Menus, the title screen, the level list and the garage: D-pad or left stick move (hold to repeat), A selects, B or Start goes back. On foot the left stick walks, A jumps, and the right stick looks; Y with LB gets back in. The drone camera flies with the left stick and looks with the right.
+Picking a winch anchor or tow-strap point: right stick aims the crosshair, A selects the highlighted point, B cancels. With a mouse, point and click; middle-drag looks and the wheel zooms. Menus, the title screen, the level list and the garage: D-pad or left stick move (hold to repeat; in the garage the left stick only changes the part, and LB / RB or the D-pad pick the slot), A selects, B or Start goes back. On foot the left stick walks, A jumps, and the right stick looks; Y with LB gets back in. The drone camera flies with the left stick and looks with the right.
 
 **Rumble** (settings, CONTROLLER page: OFF / LOW / HIGH): a thump on impacts, a rumble over rough ground, a buzz from tires sliding and from the engine on its limiter. It only runs while the pad is the last thing you used and the window has the focus. The same page sets STEERING (SOFT / NORMAL / SHARP: how the stick maps to the wheels) and STICK DEADZONE (SMALL / MEDIUM / LARGE). Multiplayer needs nothing: each machine reads its own pad.
 

@@ -59,8 +59,13 @@ void lampRest(const Car& car, const VisualTemplate& t, V3 head[2], V3 tail[2]) {
     }
 }
 
-const Layout& layoutFor(const Car& car, const VisualTemplate& t) {
+std::map<const VehicleSpec*, Layout>& layouts() {
     static std::map<const VehicleSpec*, Layout> cache;  // (the render thread only)
+    return cache;
+}
+
+const Layout& layoutFor(const Car& car, const VisualTemplate& t) {
+    auto& cache = layouts();
     auto it = cache.find(car.spec);
     if (it != cache.end() && it->second.node[0] < car.bodyNodes) return it->second;
     Layout L;
@@ -84,6 +89,8 @@ const Layout& layoutFor(const Car& car, const VisualTemplate& t) {
 }
 
 }  // namespace
+
+void forgetLampLayout(const VehicleSpec* spec) { layouts().erase(spec); }
 
 const char* lampModeName(int mode) {
     static const char* names[LAMP_MODES] = {"LIGHTS: AUTO (ON AT DUSK)", "LOW BEAM", "HIGH BEAM", "LIGHTS OFF"};
