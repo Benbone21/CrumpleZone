@@ -704,6 +704,11 @@ const Universal& universal() {
                 for (size_t o = 1; o < base[w][MOD_SUSPENSION].size(); o++) {
                     const ModOption& mo = base[w][MOD_SUSPENSION][o];
                     auto fn = mo.apply;
+                    if (cat[w].planetaryHubs != cat[v].planetaryHubs) {  // (one that brings its own tires: see the wheels below)
+                        VehicleSpec m = cat[w];
+                        fn(m);
+                        if (std::fabs(m.wheelRadius - cat[w].wheelRadius) > 0.005 || m.tireType != cat[w].tireType) continue;
+                    }
                     // (Fitted to its own vehicle first: then its tuning, its tires if it brings
                     // any, and what it does to the ride height, within reason, come across.)
                     U.opts[v][MOD_SUSPENSION].push_back({who + mo.name, mo.detail, [from, fn](VehicleSpec& s) {
@@ -720,7 +725,9 @@ const Universal& universal() {
                 }
                 char b[96];
                 std::snprintf(b, sizeof b, "%.0f MM TALL  %.0f MM WIDE  %.0f IN RIMS", from->wheelRadius * 2000, from->wheelWidth * 1000, from->rimRadius * 2 / 0.0254);
-                U.opts[v][MOD_WHEELS].push_back({who + "WHEELS AND TIRES", b, [from](VehicleSpec& s) { takeWheels(s, *from); }, w, 0});
+                // (Not between planetary hubs and the rest: Hell Boy's 24 in beadlocks bolt to 10-lug hubs no
+                // other vehicle has, and its 58s on a light truck's track stood inside the body and tipped it.)
+                if (cat[w].planetaryHubs == cat[v].planetaryHubs) U.opts[v][MOD_WHEELS].push_back({who + "WHEELS AND TIRES", b, [from](VehicleSpec& s) { takeWheels(s, *from); }, w, 0});
             }
             // Tires: every tread, on the wheels it has.
             static const int kOffer[] = {TIRE_STREET, TIRE_SEMI_SLICK, TIRE_RACE_SLICK, TIRE_ALL_TERRAIN, TIRE_MUD_TERRAIN, TIRE_SNOW};

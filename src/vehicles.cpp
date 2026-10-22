@@ -1615,6 +1615,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         hellboy.wheelMass = 185;       // ~150 kg of tire on a two-piece beadlock wheel
         hellboy.hubMass = 110;         // planetary hub and its brake
         hellboy.axleMass = 380;        // an AxleTech 4000 housing and its carrier
+        hellboy.planetaryHubs = true;
         hellboy.frontSusp = hellboy.rearSusp = SOLID_AXLE;
         hellboy.leafSprings = hellboy.leafFront = false;
         hellboy.linkLength = 1.20;

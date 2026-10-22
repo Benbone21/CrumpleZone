@@ -178,6 +178,7 @@ struct VehicleSpec {
     double trackFront = 0, trackRear = 0;     // tire center to tire center (m); 0 = from the body width
     double wheelMass = 20, hubMass = 16;      // per corner: wheel and tire; knuckle, hub and brake
     double axleMass = 60;                     // solid axle housing and differential
+    bool planetaryHubs = false;               // medium-duty planetary hubs: their 10-lug wheels fit nothing else (mods.cpp)
     SuspensionType frontSusp = WISHBONE, rearSusp = WISHBONE;
     // Linkage sizes (m). Solid axle: the length of the lower trailing links (the upper link
     // is `upperLink` times it, or 0.55 m if that is 0; equal lengths keep the axle parallel to the frame through its travel); a front solid axle steers on kingpins and trails them back toward the
