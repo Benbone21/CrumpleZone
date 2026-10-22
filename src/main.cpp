@@ -1488,7 +1488,7 @@ void drawGarage(Renderer& r, const GarageUI& g, const Garage& garage, const Care
         std::string("GEARBOX  ") + vs.gearboxName + fmt("   FINAL DRIVE %.2f", vs.finalDrive) +
             (vs.lowRange > 0 ? fmt("   LOW RANGE %.2f", vs.lowRange) : std::string()),
         fmt("TIRES    %.0f MM TALL  %.0f MM WIDE", vs.wheelRadius * 2000, vs.wheelWidth * 1000) +
-            fmt("   GRIP %.2f / %.2f", vs.tireGrip, vs.tireGrip * vs.lateralGrip),
+            fmt("   GRIP %.2f / %.2f", vs.tireMu(), vs.tireMu() * vs.lateralGrip),
         std::string("SPEEDO   ") + (g.recal ? "RECALIBRATED TO THESE TIRES: READS TRUE" :
             std::fabs(vs.wheelRadius / stock.wheelRadius - 1) < 0.005 ? "FACTORY: READS TRUE" :
             fmt("FACTORY: READS %.0f%%", std::fabs(vs.wheelRadius / stock.wheelRadius - 1) * 100) + (vs.wheelRadius > stock.wheelRadius ? " LOW" : " HIGH")),

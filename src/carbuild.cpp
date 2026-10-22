@@ -1198,7 +1198,11 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
             wh.item.R = wh.R, wh.item.rimR = wh.rimR, wh.item.width = ww;
             wh.item.mass = vs.wheelMass, wh.item.I = wh.I;
             wh.item.style = vs.wheelStyle, wh.item.from = vs.id;
-            wh.brakeMax = front ? vs.brakeFront : vs.brakeRear;
+            // (Each car's brakes were sized against its tires' grip: they scale with the global
+            // grip factor, so they still reach the lock (or the ABS) at the front first, as
+            // before. Short of it, an ABS car's fronts end up brake-limited while its rears
+            // still run at their peak, and a car without ABS locks its fronts one at a time.)
+            wh.brakeMax = (front ? vs.brakeFront : vs.brakeRear) * kTireGripScale;
             double wm = vs.wheelMass / 2 + vs.hubMass * 0.25;
             wh.inner = addNode(V3(xw, R, zc - s * ww / 2), wm, false);
             wh.outer = addNode(V3(xw, R, zc + s * ww / 2), wm, false);

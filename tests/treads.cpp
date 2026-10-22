@@ -61,7 +61,9 @@ SCENARIO(treadGrip, "tires/treads", "Each tread on ice, pavement and mud: winter
     ctx.check("chains beat winter tires on ice", iceChains < iceSnow, std::to_string(iceChains) + " vs " + std::to_string(iceSnow) + " m");
     const double dryStreet = stopDistance(ctx, broncoOn(TIRE_STREET), SURF_PAVED, false, 10);
     const double drySlick = stopDistance(ctx, broncoOn(TIRE_RACE_SLICK), SURF_PAVED, false, 30);
-    ctx.metric("pavement, race slicks vs street (shorter)", drySlick / dryStreet, "x", 0.6, 0.95);
+    // (On slicks the Bronco's brakes, not the rubber, set the stop: with every tire
+    // kTireGripScale grippier the street tires come closer to that limit, ~0.94x became ~0.96x.)
+    ctx.metric("pavement, race slicks vs street (shorter)", drySlick / dryStreet, "x", 0.6, 0.97);
     const double mudAT = stopDistance(ctx, broncoOn(TIRE_MUD_TERRAIN), SURF_MUD, false, 50);
     const double mudSlick = stopDistance(ctx, broncoOn(TIRE_RACE_SLICK), SURF_MUD, false, 70);
     ctx.metric("mud, race slicks vs mud tires (much longer)", mudSlick / mudAT, "x", 1.5, 8);

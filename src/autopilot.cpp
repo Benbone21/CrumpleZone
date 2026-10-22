@@ -552,7 +552,7 @@ void tryLine(Line& L, Scene& sc, const Car& c, const Autopilot& ap, const Caps& 
         // (a ledge, the river), it gets to.
         if (pitch < -0.2 || std::fabs(roll) > 0.15) {
             const V3 mid = Q + f * (b.wb * 0.5);
-            const double mu = 0.85 * sc.grip(mid.x, mid.z) * c.spec->tireGrip;
+            const double mu = 0.85 * sc.grip(mid.x, mid.z) * c.spec->tireMu();
             if ((std::tan(-pitch) > mu || std::tan(std::fabs(roll)) > mu * c.spec->lateralGrip) && fail(-1, "slide")) break;
         }
         // The underbody over whatever is under it (every other step).

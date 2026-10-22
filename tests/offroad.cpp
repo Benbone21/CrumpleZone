@@ -383,7 +383,9 @@ SCENARIO(mountainMap, "maps/mountain", "The mountain map: trucks start at the tr
 // 15 psi. Then the price: a fast hit on a rock edge at 12 psi pinches the tire.
 static double slabClimb(Ctx& ctx, double psi, double z) {
     World& w = ctx.sim.world;
-    const double angle = 41 * M_PI / 180, run = 7;
+    // (43.5 degrees: it was 41 when the tires gripped kTireGripScale less. On 41 the Bronco now
+    // climbs most of it on street pressure; past ~45 not even aired down.)
+    const double angle = 43.5 * M_PI / 180, run = 7;
     w.addRamp(V3(-80, 0, z), V3(-80 + run * std::cos(angle), run * std::sin(angle), z), 4, 1.5, V3(0.5, 0.48, 0.45));
     w.boxes.back().rock = true;
     w.buildGrid();
@@ -398,10 +400,10 @@ static double slabClimb(Ctx& ctx, double psi, double z) {
     return top;
 }
 
-SCENARIO(airDown, "offroad/air-down", "Bronco in 4L on a 41 degree granite slab: spins out at 35 psi, climbs at 15 psi; 12 psi pinches a tire on a fast rock hit") {
+SCENARIO(airDown, "offroad/air-down", "Bronco in 4L on a 43.5 degree granite slab: spins out at 35 psi, climbs at 15 psi; 12 psi pinches a tire on a fast rock hit") {
     const double street = slabClimb(ctx, 35, -30), aired = slabClimb(ctx, 15, 30);
     ctx.metric("height up the slab at 35 psi", street, "m", 0, 3.0);
-    ctx.metric("height up the slab at 15 psi (4.6 m to the top)", aired, "m", 3.5, 6);
+    ctx.metric("height up the slab at 15 psi (4.8 m to the top)", aired, "m", 3.5, 6);
     // Fast over a square rock edge.
     auto hit = [&](double psi, double z) {
         World& w = ctx.sim.world;
