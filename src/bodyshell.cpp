@@ -1028,7 +1028,6 @@ bool buildBodyShell(const Car& car, VisualTemplate& t, bool merge) {
             if (it == topo.end()) {
                 it = topo.emplace(key, t.topoCount++).first;
                 t.wStart.push_back((int)t.wNode.size());
-                const V3& p = pos[key.first];
                 const Weights& w = weightsOf(key.first, key.second);
                 for (const auto& e : w.w) {
                     t.wNode.push_back(e.first);

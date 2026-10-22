@@ -844,7 +844,7 @@ bool Interact::drop(Sim& sim, Walker& wk, const V3& look) {
     return true;
 }
 
-bool Interact::dropJack(Sim& sim, Walker& wk) {
+bool Interact::dropJack(Sim& /*sim*/, Walker& wk) {
     if (!wk.holdingJack) return false;
     wk.holdingJack = false;
     return true;
