@@ -4471,7 +4471,7 @@ int main(int argc, char** argv) {
             }
             {  // ---- gamepad: analog steering and pedals on top of the keyboard path ----
                 Car& pc = sim.cars[sim.player];
-                if (padDrives && !sim.paused && !pc.ai && !pc.pilot.active && !pc.remote) padLogic.apply(pc, dt);
+                if (padDrives && !sim.paused && !pc.ai && !pc.pilot.active && !pc.remote) padLogic.apply(pc, dt, sim.steeringAssist);
                 else padLogic.steerState = 0;
             }
             if (jobOn && !sim.paused) {
