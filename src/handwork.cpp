@@ -105,7 +105,7 @@ struct Scene {
         // Rotate the wrench around the bolt axis by the turn angle.
         const V3 rSide = rotateAxis(side, along, phi);
         const V3 rUp = rotateAxis(cross(along, side), along, phi);
-        put(id, top + along * (-m.lo.y - engage + lift), -along, rSide);
+        put(id, top + along * (-m.lo.y - engage + lift), rSide, along);
         hold(1, 0.02);
     }
     // A hammer tapping at `at`, swung from your side (toward is from `at` to you).
