@@ -50,10 +50,13 @@ public:
     void buildRutWalls(const Sim& sim, const V3& eye, std::vector<Vtx>& out) const;
     void translate(const V3& d);  // the freeway moved everything back a period
     void buildParticles(const V3& eye, std::vector<Vtx>& out);
+    // The main menu's camp fire at `base` (the ground under the logs): this frame's flames, sparks and smoke, drifting with `wind`.
+    // (The particles age in update(): the menu feeds it the real frame time, as the sim is paused behind the menu.)
+    void campfire(const V3& base, double dt, const V3& wind);
     void clear();
 
 private:
-    enum Kind : uint8_t { SMOKE, DUST, SPARK, SHARD, CLOD };  // CLOD: mud, sand, snow or gravel thrown by a tire
+    enum Kind : uint8_t { SMOKE, DUST, SPARK, SHARD, CLOD, FLAME };  // CLOD: mud, sand, snow or gravel thrown by a tire
     struct Particle {
         V3 p, v;
         float age = 0, life = 1, size0 = 0.1f, size1 = 0.1f;

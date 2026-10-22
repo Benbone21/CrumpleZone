@@ -137,6 +137,8 @@ public:
     std::string jobStatus;
 
     void showTitle(int currentVehicle, int currentMap);
+    void showTitlePage(int page, int currentVehicle, int currentMap);  // a page (settings, multiplayer, levels) of the title screen: BACK returns to its page 0
+    bool sceneBehind = false;  // the title is drawn over the main menu's camp scene (no gradient backdrop, the scene shows through)
     // The dev menu (devmenu.h): pages 8 (the groups) and 9 (one group's rows). The game fills the lists before drawing.
     void showDev(int currentVehicle, int currentMap, bool fromPause = false);  // opens straight onto the groups
     bool devOpen() const { return open && page >= 8; }

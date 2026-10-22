@@ -251,6 +251,54 @@ void Audio::render(float* out, int frames) {
     const float mv = level(musicVol_) * duck;
     music_.render(out, frames, musicMap_, mv, musicBiome_);
     ambience_.render(out, frames, rate_, {(int)ambienceMap_, (float)hours_, level(ambienceVol_) * sceneGain, exposure});
+    if (const float camp = campfire_; camp > 0 || cfGain_ > 1e-4f) {  // the main menu's camp: the fire (the focus), a stream, wind in the trees, crickets. All synthesized
+        const float target = camp * sceneGain, amb = level(ambienceVol_) * 0.6f + 0.25f;  // (the ambience setting scales the beds, never to silence)
+        const float panF = campPanFire_, panS = campPanStream_;
+        const float lF = std::sqrt(0.5f * (1 - panF)), rF = std::sqrt(0.5f * (1 + panF)), lS = std::sqrt(0.5f * (1 - panS)), rS = std::sqrt(0.5f * (1 + panS));
+        for (int i = 0; i < frames; i++) {
+            cfGain_ += (target - cfGain_) * 0.00004f;  // (about a second and a half to come in or go out)
+            const float g = cfGain_;
+            const float n = noise();
+            cfT_ += 1.0f / rate_;
+            // Fire: a low flutter of flame under sharp little pops.
+            cfRoar_ += (n - cfRoar_) * 0.03f;
+            cfLow_ += (n - cfLow_) * 0.004f;
+            if (std::fabs(noise()) > 0.9996f) cfPop_ = 0.35f + 0.65f * std::fabs(noise());
+            if (std::fabs(noise()) > 0.99985f) cfPop_ = 1.0f;
+            cfHp_ = n - cfHp_ * 0.4f;
+            const float fire = (cfRoar_ * 0.5f * (0.55f + 0.45f * cfLow_ * 12.0f) + cfHp_ * cfPop_ * 0.28f) * 0.9f;
+            cfPop_ *= 0.9985f;
+            // Stream: bright, burbling water (band-passed noise swelling a little), off to one side.
+            const float n2 = noise();
+            stLp1_ += (n2 - stLp1_) * 0.22f;
+            stLp2_ += (n2 - stLp2_) * 0.03f;
+            const float burble = 0.65f + 0.35f * std::sin(cfT_ * 9.0f + 2.0f * std::sin(cfT_ * 1.7f));
+            const float stream = (stLp1_ - stLp2_) * burble * 0.55f;
+            // Wind: a low rush with gusts, and a leafier hush on top of it.
+            const float n3 = noise();
+            wnLp_ += (n3 - wnLp_) * 0.012f;
+            wnHp_ += (n3 - wnHp_) * 0.12f;
+            const float gust = 0.35f + 0.65f * std::max(0.0f, std::sin(cfT_ * 0.43f) * 0.6f + std::sin(cfT_ * 0.17f + 1.0f) * 0.4f);
+            const float wind = (wnLp_ * 2.2f + (wnHp_ - wnLp_) * 0.35f * gust) * gust * 0.5f;
+            // Crickets: three voices chirping in threes, each a little out of step with the others.
+            float crick = 0, crickL = 0, crickR = 0;
+            for (int v = 0; v < 3; v++) {
+                const float rate = 1.9f + 0.37f * v, ph = std::fmod(cfT_ * rate + v * 0.31f, 1.0f);
+                const float chirp = ph < 0.55f ? 0.5f - 0.5f * std::cos(std::fmod(ph * 3.0f / 0.55f, 1.0f) * 6.2831853f) : 0.0f;
+                cfPhase_[v] += (4300.0f + 330.0f * v + 60.0f * chirp) / rate_ * 6.2831853f;
+                if (cfPhase_[v] > 6.2831853f) cfPhase_[v] -= 6.2831853f;
+                const float c = std::sin(cfPhase_[v]) * chirp * chirp * 0.05f;
+                crick += c;
+                crickL += c * (0.75f - 0.35f * v), crickR += c * (0.15f + 0.35f * v);
+            }
+            (void)crick;
+            const float bed = amb * 0.5f;
+            const float l = fire * lF * 0.9f + stream * lS * 0.5f * bed + (wind + 0) * 0.5f * bed + crickL * 1.3f * bed;
+            const float r = fire * rF * 0.9f + stream * rS * 0.5f * bed + (wind + 0) * 0.5f * bed + crickR * 1.3f * bed;
+            out[2 * i] += l * g;
+            out[2 * i + 1] += r * g;
+        }
+    }
     const float volumeA = 1 - std::exp(-dt / 0.025f);
     for (int i = 0; i < frames; i++) {
         sMaster_ += (master - sMaster_) * volumeA;

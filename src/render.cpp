@@ -57,6 +57,7 @@ uniform mat3 uSkyRot;                        // world direction -> star sphere
 #define kSunSpec (uKeyCol * 0.385)           // key-light highlights: white by day, faint blue by moonlight
 // Vehicle headlamps (lights.h): spot lights, two per car for the nearest few cars.
 uniform int uLampN;
+uniform vec4 uFire;                          // a camp fire's point light: position, strength (0: none; the main menu's scene)
 uniform vec4 uLampPos[16];                   // lens center, beam (1 low, 2 high)
 uniform vec4 uLampDir[16];                   // beam axis (the car's forward), range (m)
 uniform vec4 uLampUp[16];                    // the car's up, peak intensity
@@ -240,6 +241,18 @@ vec3 lampLight(vec3 p, vec3 n, vec3 V, float specP, float wrap, out vec3 spec){
     spec += vec3(pow(max(dot(n, normalize(Ln + V)), 0.0), specP) * Ei);
   }
   const vec3 tint = vec3(1.0, 0.95, 0.86);  // warm white
+  if (uFire.w > 0.0) {  // the camp fire: an orange point light that flickers (its strength does)
+    vec3 L = uFire.xyz - p;
+    float d2 = dot(L, L);
+    float w = clamp(1.0 - d2 / 1600.0, 0.0, 1.0);
+    vec3 Ln = L * inversesqrt(d2 + 1e-4);
+    float ndl = max(dot(n, Ln) * (1.0 - wrap) + wrap, 0.0);
+    float Ei = uFire.w * w * w * ndl / (d2 + 3.0);
+    Ei = Ei * 6.0 / (Ei + 6.0);
+    vec3 fc = vec3(1.0, 0.42, 0.14) / tint;
+    E += fc * Ei;
+    spec += fc * (pow(max(dot(n, normalize(Ln + V)), 0.0), specP) * Ei);
+  }
   spec *= tint;
   return E * tint;
 }
@@ -1591,10 +1604,18 @@ void main(){
     float f = 1.0 - r2; a *= f * f;
     vec3 lspec, lamp = lampLight(vPos, vec3(0, 1, 0), normalize(uCam - vPos), 4.0, 1.0, lspec);  // dust in the beams
     col *= (0.55 + 0.45 * (vUv.y * 0.5 + 0.5)) * (ambientAt(vec3(0, 1, 0)) + kSunCol * 0.45 + lamp * 0.6);
-  } else if (vMode < 1.5) {     // glowing streak (sparks): hot enough to bloom
-    vec2 q = vUv * vec2(1.0, 0.45);
-    a *= clamp(1.0 - dot(q, q), 0.0, 1.0);
-    col *= 7.0;
+  } else if (vMode < 1.5) {     // glowing streak (sparks): hot enough to bloom; 1.2: a flame's round glow
+    if (vMode > 1.1) {
+      float r2 = dot(vUv, vUv);
+      if (r2 > 1.0) discard;
+      float f = 1.0 - r2;
+      a *= f * f;
+      col *= 4.0;
+    } else {
+      vec2 q = vUv * vec2(1.0, 0.45);
+      a *= clamp(1.0 - dot(q, q), 0.0, 1.0);
+      col *= 7.0;
+    }
   } else if (vMode > 2.5) {     // tire tracks: multiplied into the ground (drawn blending dst * 2 src)
     // The mark changes the ground's color and the way its surface faces the light, so
     // it's lit (and shadowed, and dark at night) exactly like the ground it's pressed into.
@@ -4704,6 +4725,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         for (int k = 0; k < 9; k++) rot[k] = (float)d.skyRot[k];
         UniformMatrix3fv(uniformLocation(prog, "uSkyRot"), 1, 1, rot);  // (row major: transposed)
         Uniform1i(uniformLocation(prog, "uLampN"), lampCount);
+        Uniform4f(uniformLocation(prog, "uFire"), (float)fireLight.pos.x, (float)fireLight.pos.y, (float)fireLight.pos.z, fireLight.strength);
         if (lampCount) {
             Uniform4fv(uniformLocation(prog, "uLampPos"), lampCount, lampPos);
             Uniform4fv(uniformLocation(prog, "uLampDir"), lampCount, lampDir);

@@ -60,6 +60,9 @@
 #include "laptimer.h"
 #include "sectionfile.h"
 #include "menu.h"
+#include "mainmenu.h"
+#include "mainmenudraw.h"
+#include "menuscene.h"
 #include "camhold.h"
 #include "throttle.h"
 #include "tiretemp.h"
@@ -113,6 +116,8 @@ struct Options {
     int mods[5] = {-1, -1, -1, -1, -1};  // --mods E,S,T[,W,R]: fit these to the player's car (testing)
     std::string clipboard;        // --clipboard TEXT: put this on the system clipboard first (testing paste); a --press scancode over 1000 is that key with Ctrl held
     int menu = -1;                // --menu P: open the pause menu on page P (testing)
+    int mainMenu = -1;            // --main-menu P: the new main menu with its camp scene, on page P (0 front, 1 map, 2 vehicle, 3 dev); a plain launch shows it too
+    bool menuCareer = false;      // --main-menu-career: its map and vehicle pages are CAREER's
     int quality = -1;             // --quality 0-3: graphics preset (testing)
     int ground = -1;              // --ground 0-3: terrain materials (testing; see RenderSettings::ground)
     int props = -1;               // --props 0-3: scanned props (testing; see RenderSettings::props)
@@ -352,6 +357,8 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--garage") o.showGarage = true;
         else if (a == "--clipboard") o.clipboard = next();
         else if (a == "--menu") o.menu = std::atoi(next().c_str());
+        else if (a == "--main-menu") o.mainMenu = std::atoi(next().c_str());
+        else if (a == "--main-menu-career") o.menuCareer = true;
         else if (a == "--quality") {  // 0-3 LOW..ULTRA, 4 or potato: POTATO
             const std::string q = next();
             o.quality = q == "potato" ? (int)Q_POTATO : std::atoi(q.c_str());
@@ -1735,6 +1742,12 @@ int main(int argc, char** argv) {
     const bool scripted = !opt.shotFrames.empty() || opt.bench > 0 || opt.loadTour;  // (the default settings, no vsync, a fixed 60 Hz step)
     // Unattended runs get a hang watchdog: no frame for 60 s (240 s while loading), or the whole run over CZ_WATCHDOG_TOTAL s (default 3600).
     // (CZ_WATCHDOG_STALL=S shortens the stall limit; CZ_TEST_STALL_FRAME=N makes the loop sleep for ever at frame N: the tests' hooks.)
+    // The new main menu (mainmenu.h) with its camp scene behind it: a plain launch (nothing asked for), or --main-menu. Scripted and test runs never build it
+    // (CZ_NO_MENU_SCENE=1 turns it off for a plain launch too).
+    const bool wantCamp = (opt.mainMenu >= 0 && !opt.lab) ||
+                          (!scripted && !std::getenv("CZ_NO_MENU_SCENE") && opt.scenario.empty() && opt.script.empty() && opt.map < 0 && !opt.spawnSet && opt.spawnSection < 0 &&
+                           opt.hostPort < 0 && opt.join.empty() && opt.menu < 0 && opt.resumeModel < 0 && opt.level.empty() && !opt.editor && !opt.newSection && opt.resumeEdit.empty() &&
+                           !opt.lab && !opt.loadTour);
     const bool unattended = scripted || !opt.scenario.empty() || !opt.script.empty();
     g_termScripted = unattended;
     std::unique_ptr<wd::FrameWatchdog> watchdog;
@@ -1892,7 +1905,9 @@ int main(int argc, char** argv) {
     } catch (const std::system_error& error) {
         std::fprintf(stderr, "Physics workers unavailable; using one thread: %s\n", error.what());
     }
-    if (settings.map != MAP_PROVING_GROUND) sim.world = World(settings.map);
+    if (wantCamp) {  // (the menu's camp instead of the saved map: choosing a map loads it)
+        sim.world = menuscene::buildWorld();
+    } else if (settings.map != MAP_PROVING_GROUND) sim.world = World(settings.map);
     sim.lineup = listedVehicles();  // (the overlanders and the Jesko: no Civic, UTV or buggy)
     sim.setup();
     // Your garage: the mods fitted last time go back on the cars. (A career keeps a garage of
@@ -1915,7 +1930,39 @@ int main(int argc, char** argv) {
                 c.handbrake = 1;
             }
     };
+    bool campWorld = false;  // sim.world is the main menu's camp (a map load, a level or the editor ends it)
+    // Three of the listed vehicles parked round the camp's fire: the player's car becomes the first (the lineup's others are dropped).
+    auto parkCamp = [&]() {
+        for (int i = (int)sim.cars.size() - 1; i >= 0; i--)
+            if (i != sim.player) {
+                sim.carRemoved(i);
+                sim.cars.erase(sim.cars.begin() + i);
+                if (sim.player > i) sim.player--;
+            }
+        sim.dropRopes(sim.player);
+        const std::vector<int>& lv = listedVehicles();
+        const int which[3] = {lv[std::min<size_t>(1, lv.size() - 1)], lv[std::min<size_t>(2, lv.size() - 1)], lv[std::min<size_t>(3, lv.size() - 1)]};
+        const V3 paint[3] = {V3(0.55, 0.12, 0.08), V3(0.16, 0.3, 0.2), V3(0.82, 0.8, 0.74)};
+        const menuscene::Spot* sp = menuscene::spots();
+        sim.swapPlayerVehicle(garage.spec(which[0]));
+        for (int k = 0; k < 3; k++) {
+            if (k > 0) sim.addCar(garage.spec(which[k]), V3(sp[k].x, 0, sp[k].z), sp[k].yaw, paint[k]);
+            Car& c = sim.cars[k == 0 ? sim.player : (int)sim.cars.size() - 1];
+            const V3 f = menuscene::fire();
+            const double x = f.x + sp[k].x, z = f.z + sp[k].z;
+            c.respawn(V3(x, sim.world.clearY(x, z) + 0.05, z), sp[k].yaw);
+            c.setDown(sim.world);
+            c.spawnPos = c.frame().com, c.spawnYaw = sp[k].yaw;
+            c.handbrake = 1;
+        }
+        sim.paused = false;  // (a moment of physics settles them on their springs; then they stand still)
+        for (int i = 0; i < 100; i++) sim.advance(1.0 / 60, 4);
+        for (Car& c : sim.cars) c.handbrake = 1;
+        sim.paused = true;
+        campWorld = true;
+    };
     fitGarage();
+    if (wantCamp) parkCamp();
     // The lineup's drawing templates are made on worker threads while the window's shaders build (the first frame waits for yours).
     for (const Car& c : sim.cars)
         if (!c.isProp()) prebuildVisual(*c.spec, c.color);
@@ -2042,6 +2089,12 @@ int main(int argc, char** argv) {
     // The pause menu, and putting its settings into effect.
     Effects fx;
     PauseMenu menu;
+    mainmenu::Nav mainNav;        // the new main menu's state (mainmenu.h)
+    bool classicTitle = false;    // the old title page is up (DEV > CLASSIC MENU, or --menu 9) instead of the new one
+    float mainFade = 0;           // the new menu fading in
+    // The new main menu is the title screen's page 0 over the camp (the settings, multiplayer and levels pages are still the PauseMenu's).
+    auto mainMenuShown = [&]() { return menu.open && menu.title && menu.pageNow() == 0 && campWorld && !classicTitle; };
+    auto campBehind = [&]() { return campWorld && menu.open && menu.title; };
     bool menuWasPaused = false, garageFromMenu = false;
     float menuBlur = 0;
     double clock = 0;
@@ -2199,6 +2252,7 @@ int main(int argc, char** argv) {
     auto loadMap = [&](int m) {
         World::useLocalEdits = !net.active();  // (a session's worlds are the same for everyone: the generator's sections, not your saved edits of them)
         const int model = std::max(0, sim.cars[sim.player].spec->model);
+        campWorld = false;
         sim.world = World(m);
         sim.setup();
         fitGarage();
@@ -2277,7 +2331,7 @@ int main(int argc, char** argv) {
             std::printf("can't join %s: %s\n", address.c_str(), net.error.c_str());
             return;
         }
-        if (net.map != sim.world.map || sim.world.parkEdited) loadMap(net.map);
+        if (net.map != sim.world.map || sim.world.parkEdited || campWorld) loadMap(net.map);
         net.adopt(sim);
         hud.toast("JOINED " + net.ownerName(0) + "'S GAME ON " + mapName(net.map));
         std::printf("joined %s (player %d)\n", address.c_str(), net.self);
@@ -2325,6 +2379,7 @@ int main(int argc, char** argv) {
         me.pilot.active = false;
         me.ai = false;
         const int model = lv.vehicle >= 0 && lv.vehicle < (int)vehicleCatalog().size() ? lv.vehicle : std::max(0, me.spec->model);
+        campWorld = false;
         sim.world = levelWorld(lv);
         applyLevel(lv, sim.world);
         addGateMarkers(lv, sim.world);
@@ -2646,6 +2701,7 @@ int main(int argc, char** argv) {
         if (L.st == MapLoad::UPLOAD && renderer.pumpUpload(3.0) && L.fade >= 1) {
             LOADPROF("mapload.swap (sim)");
             const int model = std::max(0, sim.cars[sim.player].spec->model);
+            campWorld = false;
             sim.world = std::move(*L.world);
             L.world.reset();
             sim.setup();
@@ -2683,6 +2739,7 @@ int main(int argc, char** argv) {
         stopPilot();
         if (newSection) editor.newSection(sim.world, renderer);  // (a fresh open country, the canvas cleared)
         else {
+            campWorld = false;
             sim.world = levelWorld(base);
             editor.open(sim.world, renderer, base);
             if (atPlayer) {  // (F2 from driving: the camera starts above and behind you, looking the way you face)
@@ -2701,6 +2758,7 @@ int main(int argc, char** argv) {
         run.stop();
         levelHours = -1;
         stopPilot();
+        campWorld = false;
         sim.world = levelWorld(editor.core.level);
         editor.resume(sim.world, renderer);
         drawnWorld = sim.world.stamp;
@@ -2716,6 +2774,23 @@ int main(int argc, char** argv) {
         l.map = sim.world.map;
         l.name = "UNTITLED";
         return l;
+    };
+    // Back to the main menu's camp: its world and the three parked vehicles replace what was up (offline only).
+    auto enterCamp = [&]() {
+        run.stop();
+        levelHours = -1;
+        sim.world = menuscene::buildWorld();
+        sim.setup();
+        fitGarage();
+        parkCamp();
+        for (const Car& c : sim.cars)
+            if (!c.isProp()) prebuildVisual(*c.spec, c.color);
+        renderer.setWorld(sim.world);
+        drawnWorld = sim.world.stamp;
+        fx.clear();
+        cam.initialized = false;
+        wrapSeen = sim.wrapShift = 0;
+        hud.bestKmh = 0;
     };
     std::function<void(const devmenu::Action&)> runDev;  // the dev tools, one place for the menu and the hotkeys (set below, where its state lives)
     auto handleMenu = [&](PauseMenu::Result res) {
@@ -2782,7 +2857,7 @@ int main(int argc, char** argv) {
                 break;
             case PauseMenu::HOST:
                 saveSettings();
-                if (menu.mapPick != sim.world.map) {  // (the HOST card's map)
+                if (menu.mapPick != sim.world.map || campWorld) {  // (the HOST card's map)
                     run.stop();
                     levelHours = -1;
                     loadMap(menu.mapPick);
@@ -2817,7 +2892,7 @@ int main(int argc, char** argv) {
                 if (net.role == NetSession::HOST) net.setLevel("");
                 const bool staleEdits = menu.mapPick == MAP_PROVING_GROUND && sim.world.map == MAP_PROVING_GROUND && !net.active() &&
                                         sim.world.editStamp != levelFilesStamp();  // (a level saved since the proving ground was built)
-                if ((menu.mapPick != sim.world.map || staleEdits) && net.role != NetSession::CLIENT) {
+                if ((menu.mapPick != sim.world.map || staleEdits || campWorld) && net.role != NetSession::CLIENT) {
                     requestMap(menu.mapPick, nullptr);
                     settings.map = menu.mapPick;
                     saveSettings();
@@ -2930,7 +3005,10 @@ int main(int argc, char** argv) {
                 levelHours = -1;
                 if (net.role == NetSession::HOST) net.setLevel("");
                 refreshLevels();
-                menu.showTitle(std::max(0, sim.cars[sim.player].spec->model), sim.world.map);
+                if (wantCamp && !net.active() && !editor.active && !mapLoad.active()) enterCamp();
+                menu.showTitle(std::max(0, sim.cars[sim.player].spec->model), campWorld ? settings.map : sim.world.map);
+                classicTitle = false;
+                if (campWorld) mainNav.open(menu.mapPick, std::max(0, sim.cars[sim.player].spec->model));
                 break;
             case PauseMenu::LOAD_MAP: {
                 closeMenu();
@@ -2987,10 +3065,65 @@ int main(int argc, char** argv) {
             if (levelList[k].name.find(want) != std::string::npos) found = k;
         if (found >= 0) playLevel(levelList[found]);
         else std::printf("no level matches '%s'\n", opt.level.c_str());
+    } else if (wantCamp && campWorld) {  // the new main menu over its camp
+        openMenu();
+        const int model = std::max(0, sim.cars[sim.player].spec->model);
+        menu.showTitle(model, settings.map);
+        mainNav.open(menu.mapPick, model);
+        mainNav.career = opt.menuCareer || (opt.mainMenu < 0 && settings.career);
+        if (opt.mainMenu >= 1) {  // (--main-menu P: straight onto a page, for the screenshots)
+            if (opt.mainMenu <= 2) mainNav.choose(opt.menuCareer ? mainmenu::F_CAREER : mainmenu::F_SANDBOX);
+            if (opt.mainMenu == 2) mainNav.choose(mainNav.mapIdx);
+            if (opt.mainMenu == 3) mainNav.choose(mainmenu::F_DEV);
+        }
     } else if (!scripted && opt.scenario.empty() && opt.map < 0 && !opt.spawnSet && opt.hostPort < 0 && opt.join.empty() && opt.menu < 0 && opt.resumeModel < 0) {
         openMenu();
         menu.showTitle(std::max(0, sim.cars[sim.player].spec->model), sim.world.map);
     }
+    // What the new main menu asked for (mainmenu.h).
+    auto handleMain = [&](const mainmenu::Result& r) {
+        using namespace mainmenu;
+        const int model = std::max(0, sim.cars[sim.player].spec->model);
+        switch (r.act) {
+            case A_NONE: break;
+            case A_START: {
+                settings.career = r.career;
+                handleMenu(PauseMenu::Result{PauseMenu::CHANGED});  // (career <-> sandbox: its own garage)
+                menu.mapPick = r.map;
+                menu.vehicle = r.vehicle;
+                handleMenu(PauseMenu::Result{PauseMenu::FREE_DRIVE, r.vehicle});
+                break;
+            }
+            case A_MULTIPLAYER: menu.showTitlePage(2, model, settings.map); menu.mapPick = mainNav.map(); break;
+            case A_SETTINGS: menu.showTitlePage(1, model, settings.map); menu.mapPick = mainNav.map(); break;
+            case A_QUIT: running = false; break;
+            case A_DEV_EDITOR: menu.mapPick = mainNav.map(); handleMenu(PauseMenu::Result{PauseMenu::EDITOR}); break;
+            case A_DEV_SECTION: handleMenu(PauseMenu::Result{PauseMenu::NEW_SECTION}); break;
+            case A_DEV_LAB: handleMenu(PauseMenu::Result{PauseMenu::MODEL_LAB}); break;
+            case A_DEV_LEVELS:
+                if (refreshLevelsLater) refreshLevelsLater();
+                menu.showTitlePage(4, model, settings.map);
+                menu.mapPick = mainNav.map();
+                break;
+            case A_DEV_TOOLS: {  // (the tools act on a real map: load the last one, then open the dev menu on it)
+                const int m = mainNav.map();
+                closeMenu();
+                settings.map = m;
+                saveSettings();
+                requestMap(m, [&, model] {
+                    openMenu();
+                    menu.showDev(model, sim.world.map, false);
+                });
+                break;
+            }
+            case A_DEV_HOTKEYS:
+                settings.devHotkeys = !settings.devHotkeys;
+                saveSettings();
+                break;
+            case A_DEV_DEBUG: runDev(devmenu::Action{devmenu::FPS, 0}); break;
+            case A_DEV_CLASSIC: classicTitle = true; break;
+        }
+    };
     // Mouse positions arrive in window coordinates; the HUD is drawn in drawable pixels.
     auto toDrawable = [&](int x, int y, float& dx, float& dy) {
         int ww = 1, wh = 1, dw = 1, dh = 1;
@@ -3555,6 +3688,14 @@ int main(int argc, char** argv) {
                         hud.toast(settings.devHotkeys ? "DEV KEYS: THE DEV KEYS ARE TOOLS (" + K(KA_DEV_TOGGLE) + " FOR GAMEPLAY KEYS)" : "GAMEPLAY KEYS (" + K(KA_DEV_TOGGLE) + " FOR DEV KEYS)");
                         break;
                     }
+                    if (mainMenuShown()) {  // the new main menu (mainmenu.h)
+                        handleMain(mainNav.key(evKeyScancode(e)));
+                        break;
+                    }
+                    if (menu.open && menu.title && classicTitle && campWorld && menu.pageNow() == 0 && evKeyScancode(e) == SC_ESCAPE) {  // (the old title page: Esc is back to the new one)
+                        classicTitle = false;
+                        break;
+                    }
                     if (menu.open) {  // the menu takes every key (repeats too: hold to slide)
                         const uint8_t* ks = SDL_GetKeyboardState(nullptr);
                         menu.shift = ks[SC_LSHIFT] || ks[SC_RSHIFT];
@@ -3898,6 +4039,11 @@ int main(int argc, char** argv) {
                         toDrawable(evMotionX(e), evMotionY(e), mx, my);
                         const int h = inv.hit(invLay, mx, my);
                         if (h != INV_NONE) inv.sel = h;
+                    } else if (mainMenuShown()) {
+                        float mx, my;
+                        toDrawable(evMotionX(e), evMotionY(e), mx, my);
+                        const int h = mainNav.hitAt(mx, my);
+                        if (h >= 0) mainNav.setSel(h);
                     } else if (menu.open) {
                         float mx, my;
                         toDrawable(evMotionX(e), evMotionY(e), mx, my);
@@ -3919,6 +4065,14 @@ int main(int argc, char** argv) {
                         else if (evButton(e) == 3 || (evButton(e) == 1 && !invLay.panel.has(mx, my))) closeInventory();
                         break;
                     }
+                    if (mainMenuShown()) {
+                        float mx, my;
+                        toDrawable(evButtonX(e), evButtonY(e), mx, my);
+                        const int h = mainNav.hitAt(mx, my);
+                        if (evButton(e) == 1 && h >= 0) handleMain(mainNav.choose(h));
+                        else if (evButton(e) == 3) handleMain(mainNav.back());
+                        break;
+                    }
                     if (menu.open && evButton(e) == 1) {
                         float mx, my;
                         toDrawable(evButtonX(e), evButtonY(e), mx, my);
@@ -3931,7 +4085,9 @@ int main(int argc, char** argv) {
                     break;
                 case SDL_MOUSEWHEEL:
                     if (!menu.open) cam.dist = clampd(cam.dist * std::pow(0.88, evWheelY(e)), 3.0, 60.0);
-                    else if (evWheelY(e) != 0) menu.wheel(evWheelY(e) > 0 ? -1 : 1, settings);
+                    else if (mainMenuShown()) {
+                        if (evWheelY(e) != 0 && mainNav.page != mainmenu::P_FRONT) mainNav.move(evWheelY(e) > 0 ? -1 : 1);
+                    } else if (evWheelY(e) != 0) menu.wheel(evWheelY(e) > 0 ? -1 : 1, settings);
                     break;
             }
         }
@@ -4218,7 +4374,7 @@ int main(int argc, char** argv) {
                     menu.joining = false;
                     closeMenu();
                     run.stop();
-                    if (net.map != sim.world.map || sim.world.parkEdited) loadMap(net.map);
+                    if (net.map != sim.world.map || sim.world.parkEdited || campWorld) loadMap(net.map);
                     net.adopt(sim);
                     hud.toast("JOINED " + net.ownerName(0) + "'S GAME ON " + mapName(net.map));
                     std::printf("joined (player %d)\n", net.self);
@@ -4676,7 +4832,11 @@ int main(int argc, char** argv) {
         if (!(playback.active() && !playback.done) && !net.joining()) net.send(sim, (double)(SDL_GetPerformanceCounter()) / freq);
         dbgSimSeconds += simDt, dbgSubsteps = (int)std::lround(simDt / sim.h);
         fx.setLimits(markLimits(presetOf(settings.gfx)));
-        FxEvents events = fx.update(sim, simDt);
+        FxEvents events = fx.update(sim, campBehind() ? dt : simDt);
+        if (campBehind()) {  // (the camp's fire: the sim is paused behind the menu, so the effects run on the real frame time)
+            const V3 f = menuscene::fire();
+            fx.campfire(V3(f.x, sim.world.height(f.x, f.z), f.z), dt, V3(0.32, 0, -0.12));
+        }
 
         Car& car = sim.cars[sim.player];
         Frame fr = car.frame();
@@ -4684,13 +4844,14 @@ int main(int argc, char** argv) {
             float slip = 0, load = (float)(sim.paused ? 0 : car.throttle * car.tcCut);
             for (const Wheel& wh : car.wheels)
                 if (wh.load > 500) slip = std::max(slip, wh.slip);
-            audio.setEngine((float)(car.engineDead ? 0 : car.rpm) * (float)std::max(0.35, sim.timeScale), load);
+            audio.setEngine((float)(car.engineDead || campWorld ? 0 : car.rpm) * (float)std::max(0.35, sim.timeScale), load);
             const VehicleSpec& vs = *car.spec;
             audio.setVoice(vs.cylinders, (float)vs.displacement, (int)vs.induction, vs.flatPlane, (float)vs.redline, voiceFor(vs));
             audio.setRecording(engineSamples::forVehicle(vs));
             audio.setBoost(vs.induction == VehicleSpec::TURBO ? (float)car.boost : 0.0f);
             audio.setTires(sim.paused ? 0 : slip);
-            audio.setVolume(settings.volume, menu.open ? 0.35f : 1.0f);
+            audio.setVolume(settings.volume, campBehind() ? 0.85f : menu.open ? 0.35f : 1.0f);
+            audio.setCampfire(campBehind() ? 0.85f : 0.0f, 0.25f, -0.55f);  // (the fire sits right of the middle of the picture, the stream off to the left)
             {  // the music follows the country under you (steadied, so a border doesn't flip it back and forth)
                 static BiomeTracker biomes;
                 const V3 at = walker.active ? walker.p : fr.com;
@@ -5216,7 +5377,7 @@ int main(int argc, char** argv) {
                 cam.userYaw = y, cam.pitch = p, cam.idle = 0;
             }
         }
-        View view = editor.active ? editor.view(W, H) : cam.update(fr, sim.world, dt, (dragging || padLooking) && !menu.open, camhold::driving(len(fr.vel), sim.paused ? 0.0 : sim.cars[sim.player].throttle));
+        View view = editor.active ? editor.view(W, H) : campBehind() ? menuscene::camera(sim.world, clock) : cam.update(fr, sim.world, dt, (dragging || padLooking) && !menu.open, camhold::driving(len(fr.vel), sim.paused ? 0.0 : sim.cars[sim.player].throttle));
         if (!walker.active && !editor.active && cam.mode == 2 && sim.player >= 0 && sim.player < (int)sim.cars.size()) {
             // The cockpit view from the driver's eyes (people.h sits them on the seat): the seat's hip point, up and a little ahead.
             const Car& pc = sim.cars[sim.player];
@@ -5310,6 +5471,7 @@ int main(int argc, char** argv) {
             // Time of day: the clock runs (a whole day in settings.dayMinutes) unless it's
             // held at a fixed time; in multiplayer the host's (or the server's) clock rules,
             // and ours, and the setting, come back when we leave.
+            static bool campWas = false;
             double dayRate = 0;  // clock hours per real second
             const bool fromHost = net.role == NetSession::CLIENT && net.dayHours >= 0;
             if (dayFromHost && !fromHost) dayHours = settings.clockHours;
@@ -5318,12 +5480,15 @@ int main(int argc, char** argv) {
                 dayHours = net.dayHours;  // (run on to this moment by the session: everyone's sky agrees)
                 net.dayFresh = false;
             } else if (opt.timeHours >= 0) dayHours = opt.timeHours;
+            else if (campWorld) dayHours = menuscene::kHours;  // (the menu's camp: golden hour, whatever the clock says)
             else if (editor.active && editor.core.level.timeOfDay >= 0) dayHours = editor.core.level.timeOfDay;  // the editor shows the level's light
             else if (levelHours >= 0 && settings.timeOfDay != TOD_CYCLE) dayHours = levelHours;  // a level's hour holds over a fixed setting (with the cycle it starts there and runs)
             else if (settings.timeOfDay != TOD_CYCLE) dayHours = timeOfDayHours(settings.timeOfDay);
             else dayRate = clockAdvance(1.0, settings.dayMinutes);
             if (!sim.paused) dayHours = std::fmod(dayHours + dayRate * dt * sim.timeScale, 24.0);
-            if (!fromHost) settings.clockHours = (float)dayHours;
+            if (!fromHost && !campWorld) settings.clockHours = (float)dayHours;
+            if (campWas && !campWorld) dayHours = settings.clockHours;  // (left the camp: the clock goes on from where it was)
+            campWas = campWorld;
             if (net.role == NetSession::HOST) net.dayHours = dayHours, net.dayRate = sim.paused ? 0 : dayRate * sim.timeScale;
             renderer.daylight = computeDaylight(dayHours);
             sim.dayHours = dayHours;  // (the air cools at night: the tires feel it)
@@ -5334,7 +5499,7 @@ int main(int argc, char** argv) {
                 renderer.carBeams[i] = lampBeam(c.lampMode, renderer.daylight.night);
             }
         }
-        menuBlur +=((menu.open ? 1.0f : 0.0f) - menuBlur) * (float)std::min(1.0, dt * 10);
+        menuBlur += ((menu.open ? (campBehind() ? (mainMenuShown() ? 0.0f : 0.45f) : 1.0f) : 0.0f) - menuBlur) * (float)std::min(1.0, dt * 10);
         if (!menu.open && menuBlur < 0.01f) menuBlur = 0;
         // Keep saved/menu choices separate from temporary runtime reductions.
         // Scripted captures stay deterministic unless adaptation is explicitly requested.
@@ -5515,7 +5680,12 @@ int main(int argc, char** argv) {
                 std::printf("people: %d tris, %.3f ms\n", people::lastTris, peopleMs);
         }
         const uint64_t drawStart = SDL_GetPerformanceCounter();
-        if (menu.open && menu.title) {  // the main menu is its own screen: no world behind it
+        if (campBehind()) {  // (the camp's fire lights what is near it; its flicker is the strength)
+            const V3 f = menuscene::fire();
+            renderer.fireLight.pos = V3(f.x, sim.world.height(f.x, f.z) + 0.7, f.z);
+            renderer.fireLight.strength = 260.0f * menuscene::flicker(clock);
+        } else renderer.fireLight.strength = 0;
+        if (menu.open && menu.title && !campWorld) {  // the old title page is its own screen: no world behind it
             gl::BindFramebuffer(GL_FRAMEBUFFER, 0);
             gl::Viewport(0, 0, W, H);
             gl::ClearColor(0.04f, 0.05f, 0.06f, 1);
@@ -5839,7 +6009,15 @@ int main(int argc, char** argv) {
                 renderer.text(W * 0.5f - renderer.textWidth(t, s) * 0.5f, H * 0.5f, s, t, 0.85f, 0.85f, 0.85f, std::min(1.0f, (mapLoad.fade - 0.6f) * 4));
             }
         }
-        menu.draw(renderer, settings, W, H, dt);
+        menu.sceneBehind = campBehind();
+        if (mainMenuShown()) {
+            mainFade = std::min(1.0f, mainFade + (float)dt * 3.0f);
+            mainNav.devHotkeys = settings.devHotkeys, mainNav.debugOn = dbg.on;
+            mainmenu::draw(renderer, mainNav, W, H, mainFade, clock, pad::ui.last);
+        } else {
+            mainFade = 0;
+            menu.draw(renderer, settings, W, H, dt);
+        }
         renderer.flushHud(W, H);
 
         // CZ_BENCH=1 (with --shot-frames): average frame time, the GPU finished (one pixel read back).
@@ -5920,7 +6098,7 @@ int main(int argc, char** argv) {
             if (frame > allocWarm) allocFrames.push_back(n - allocLast), allocAllSum += all - allocAllLast;
             allocLast = n, allocAllLast = all;
         }
-        if (const int cap = inBackground ? 15 : fpsCap(); !scripted && cap > 0 && (inBackground || SDL_GL_GetSwapInterval() == 0)) {  // FPS TARGET with VSync off: the frame cap (15 fps whenever the window is in the background, to spare the machine)
+        if (const int cap = inBackground ? 15 : campBehind() ? 30 : fpsCap(); !scripted && cap > 0 && (inBackground || campBehind() || SDL_GL_GetSwapInterval() == 0)) {  // FPS TARGET with VSync off: the frame cap (15 fps whenever the window is in the background, to spare the machine; 30 on the main menu's camp, which has nothing to do faster)
             const uint64_t until = now + freq / (uint64_t)cap;
             for (uint64_t t = SDL_GetPerformanceCounter(); t < until; t = SDL_GetPerformanceCounter()) {
                 const double leftMs = (double)(until - t) * 1000 / freq;
