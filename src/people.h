@@ -41,6 +41,7 @@ struct Pose {
     V3 kneePole[2];
     bool head = true;     // false: first person (you're looking out of it)
     bool stretch = false; // arms reach past their length at the shoulder (first person: work held further off)
+    bool noTorso = false; // first person: no chest or seat drawn (arms and hands only)
     bool clip = false;    // first person: keep everything at least kClipR from `eye`
     V3 eye;
     double breath = 0;    // -1..1: the chest rising and falling

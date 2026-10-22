@@ -794,31 +794,34 @@ Reg fpHandReg({"fp_hand", "FP HAND", "REPAIR", "First-person right forearm and h
 // 1. LUG WRENCH
 // ======================================================================================
 
-// The 4-way: two crossed bars with a socket on each end, a grip sleeve on one arm.
+// The 4-way: two crossed chrome bars, a socket at each end (four sizes), turned along their bars with the mouths out.
+// Origin at the crossing. +X is the arm that goes on the nut (its socket opens toward +X); the -X arm is the
+// tail, and the +/-Z bar is the cross bar you hold, a grip sleeve at each end.
 void crossWrench(B& b, const P& p) {
     const double w = p("wear");
     const int fin = p.i("finish");
-    b.move(0.1175, 0, 0);  // the grip (the sleeve on the -X arm) sits at the origin
-    const double arm = 0.19, sl = 0.044;
+    const double arm = 0.33, sl = 0.056;
     setFin(b, fin, w);
-    b.lathe(V3(0, 0, 0), {V2(0, -0.0115), V2(0.0215, -0.0115), V2(0.026, -0.0075), V2(0.026, 0.0075), V2(0.0215, 0.0115), V2(0, 0.0115)}, 14, false);
-    const double rs[4] = {0.0125, 0.0135, 0.0145, 0.0152};
+    // The crossing: a round boss, a little thicker than the bars.
+    b.lathe(V3(0, 0, 0), {V2(0, -0.0145), V2(0.022, -0.0145), V2(0.027, -0.01), V2(0.027, 0.01), V2(0.022, 0.0145), V2(0, 0.0145)}, 14, false);
+    const double rs[4] = {0.0148, 0.0160, 0.0172, 0.0182};  // 17, 19, 21, 22 mm hex sockets
     const V3 dirs[4] = {V3(1, 0, 0), V3(0, 0, 1), V3(-1, 0, 0), V3(0, 0, -1)};
     for (int k = 0; k < 4; k++) {
         setFin(b, fin, w);
-        // (Each socket stands on its arm's end, open side down: the way it goes onto a nut.)
-        const V3 at = dirs[k] * (arm - rs[k]);
-        rodAB(b, dirs[k] * 0.02, at, 0.0085, 0.001, 8);
-        socketAB(b, at + V3(0, 0.013, 0), at + V3(0, 0.013 - sl, 0), rs[k], rs[k] * 0.72, 10);
+        // (A socket on the end of each bar, in line with it, mouth out.)
+        rodAB(b, dirs[k] * 0.015, dirs[k] * (arm - sl + 0.006), 0.0098, 0.001, 10);
+        socketAB(b, dirs[k] * (arm - sl), dirs[k] * arm, rs[k], rs[k] * 0.72, 12);
     }
-    // The grip sleeve on the butt arm.
+    // The grip sleeves on the cross bar's two ends.
     b.style(paint(p.i("grip")), MATTE);
-    knurl(b, V3(-0.065, 0, 0), V3(-0.172, 0, 0), 0.0128, 0.0014, 7, 8, false);
-    rodAB(b, V3(-0.172, 0, 0), V3(-0.18, 0, 0), 0.0128, 0.0025, 10);
+    for (int sgn : {1, -1}) {
+        knurl(b, V3(0, 0, sgn * 0.085), V3(0, 0, sgn * (arm - sl - 0.012)), 0.0148, 0.0016, 7, 8, false);
+        rodAB(b, V3(0, 0, sgn * (arm - sl - 0.012)), V3(0, 0, sgn * (arm - sl - 0.004)), 0.0148, 0.003, 10);
+    }
     b.style(darkSteel(w), METAL);
-    stampTop(b, "4-WAY", V3(0, 0.0118, 0), 0.0011);
-    grease(b, V3(0.05, 0.005, 0), V3(0.17, 0.005, 0), 0.0025, 8, w, 11);
-    grease(b, V3(0, 0.005, 0.05), V3(0, 0.005, -0.15), 0.0025, 8, w, 12);
+    stampTop(b, "4-WAY", V3(0.0, 0.0148, 0), 0.0011);
+    grease(b, V3(0.05, 0.005, 0), V3(0.2, 0.005, 0), 0.0025, 8, w, 11);
+    grease(b, V3(-0.05, 0.005, 0), V3(-0.17, 0.005, 0), 0.0025, 6, w, 12);
 }
 
 // The factory L: a bent bar with a socket at the end of the short leg and a prying spade at the butt.
@@ -874,7 +877,7 @@ void breakerBar(B& b, const P& p) {
     grease(b, V3(xh - 0.03, 0.01, 0), V3(xh - 0.2, 0.01, 0), 0.0028, 7, w, 31, 0.008);
 }
 
-Reg lugWrench({"lug_wrench", "LUG WRENCH", "REPAIR", "Hand tool: wheel nuts on and off; grip at the origin, the working socket at the +X end, open side down (-Y)", 0.45,
+Reg lugWrench({"lug_wrench", "LUG WRENCH", "REPAIR", "Hand tool: wheel nuts on and off; the 4-way cross has its origin at the crossing and its nut arm along +X, mouth out; the others: grip at the origin, working socket at +X, open side down (-Y)", 0.66,
                {
                    {"4-WAY CROSS", "Chrome cross wrench, four sockets, one grip sleeve", {finParam(0), paintParam(8, "grip", "GRIP SLEEVE"), wearParam()}, lifted(crossWrench)},
                    {"FACTORY L", "Bent bar, socket on the short leg, hubcap spade", {finParam(2), paintParam(3, "grip", "GRIP DIP"), wearParam()}, lifted(lWrench)},
