@@ -18,7 +18,7 @@ struct View;
 struct ShowroomResult {
     enum Act { NONE, FIT, CLOSED } act = NONE;
     ModSet mods;
-    bool recal = false;  // FIT: recalibrate the speedometer to the tires fitted (C), as the old garage did
+    bool recal = false;  // FIT: recalibrate the speedometer to the tires fitted (C), as the old garage did (mods == fitted: only that)
 };
 
 class Showroom {
@@ -35,6 +35,7 @@ public:
     void draw(int W, int H);      // studio scene (when drawsScene) + panels + fade overlay, queued on the HUD (the caller flushes)
     const Car* previewCar() const;
     void requestClose();          // ESC/G/B, and after FIT
+    void camera(View& v) const;   // the turntable's view, as the last draw() framed it (tests)
 
 private:
     enum Phase { CLOSED, OPENING, OPEN, CLOSING };
@@ -73,7 +74,6 @@ private:
     void step(int d);
     void touched();
     void say(const std::string& s) { toast = s, toastT = 2.5; }
-    void camera(View& v) const;
     void drawLeft(const ShowroomLayout& l);
     void drawRight(const ShowroomLayout& l);
     void drawBottom(const ShowroomLayout& l);

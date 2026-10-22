@@ -227,7 +227,7 @@ ShowroomResult Showroom::update(double dt, Career& career, bool station) {
             same = same && pick.pick[k] == core->fitted().pick[k];
             if (career_ && !career.owns(v, k, pick.pick[k]) && locked < 0) owned = false, locked = k;
         }
-        if (same) requestClose();  // nothing to fit: back to driving
+        if (same && !recal) requestClose();  // nothing to fit: back to driving (with recal on, the same mods refit to recalibrate)
         else if (career_ && !atStation) say("DRIVE TO A REPAIR STATION TO FIT PARTS");
         else if (!owned) say(std::string("LOCKED: ") + modOptions(v, locked)[pick.pick[locked]].name);
         else {
@@ -414,7 +414,7 @@ void Showroom::drawBottom(const ShowroomLayout& l) {
     const Rect& p = l.bottom;
     panel(r, p);
     const ModSet& pick = core->pick();
-    const bool change = !std::equal(pick.pick, pick.pick + MOD_SLOTS, core->fitted().pick);
+    const bool change = recal || !std::equal(pick.pick, pick.pick + MOD_SLOTS, core->fitted().pick);
     const std::string fit = pad::ui.last ? std::string(pad::buttonName(pad::B_A, pad::ui.style)) + "  FIT" : "ENTER  FIT";
     const float bw = r.textWidth(fit, big) + 28 * u, bh = p.h - 12 * u, bx = p.x + p.w - pad - bw, by = p.y + 6 * u;
     if (change) hud::pill(r, bx, by, bw, bh, 0.8f, 0.55f, 0.2f, 0.95f);

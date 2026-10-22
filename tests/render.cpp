@@ -8,6 +8,7 @@
 #include "../src/menu.h"
 #include "../src/sdl_min.h"
 #include "../src/showroom.h"
+#include "../src/studio.h"
 #include <chrono>
 #include <cstdio>
 #include <memory>
@@ -471,7 +472,26 @@ int main() {
             frames(120);
             for (int f = 0; f < 480 && !showroom.previewCar(); f++) frames(1);  // (its template is made on a worker: a slow runner gets 8 s more)
             if (!showroom.drawsScene() || !showroom.previewCar()) throw std::runtime_error("the showroom shows no car after 2 s");
-            const int shown = subject(renderer.readPixels(W, H)), third = (W / 3) * (H / 3);
+            // The car in frame: the centre third against the same studio frame with no car in it (same view, light, world).
+            const std::vector<unsigned char> withCar = renderer.readPixels(W, H);
+            Sim bare;
+            bare.setupEmpty();
+            bare.world = studioWorld();
+            View studioView;
+            showroom.camera(studioView);
+            renderer.carModels.clear();
+            renderer.drawScene(bare, studioView, DEBUG_OFF, nullptr);
+            renderer.flushHud(W, H);
+            clean();
+            const std::vector<unsigned char> noCar = renderer.readPixels(W, H);
+            int shown = 0;
+            const int third = (W / 3) * (H / 3);
+            for (int y = H / 3; y < 2 * H / 3; y++)
+                for (int x = W / 3; x < 2 * W / 3; x++) {
+                    int d = 0;
+                    for (int c = 0; c < 3; c++) d += std::abs(withCar[(y * W + x) * 3 + c] - noCar[(y * W + x) * 3 + c]);
+                    shown += d > 40;
+                }
             showroom.requestClose();
             frames(60);
             if (showroom.isOpen() || showroom.drawsScene()) throw std::runtime_error("the showroom did not close in 1 s");
