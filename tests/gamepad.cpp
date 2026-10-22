@@ -297,3 +297,40 @@ SCENARIO(padRumble, "gamepad/rumble", "Rumble stays quiet cruising, thumps on a 
     ctx.metric("the heavy motor on a wall hit", hit, "0..1", 0.3, 1.0);
     ctx.metric("switched off", silent, "0..1", 0, 0);
 }
+
+SCENARIO(padLookInvert, "gamepad/look-invert", "The right stick's look direction, and the invert options (default: push up = look up)") {
+    using namespace pad;
+    // Simulate the invert logic from main.cpp.
+    // Raw gamepad: stick right = positive X, stick down = positive Y (SDL convention).
+    // The code flips Y by default so push up = look up.
+    auto applyInvert = [](float rawX, float rawY, bool invertX, bool invertY) -> std::pair<float, float> {
+        float lx = rawX, ly = -rawY;  // default: flip Y so push up = look up
+        if (invertX) lx = -lx;
+        if (invertY) ly = -ly;
+        return {lx, ly};
+    };
+    // Default: stick right = look right, stick down = look down.
+    {
+        auto [lx, ly] = applyInvert(1.0f, 0.0f, false, false);
+        ctx.check("stick right: look right (X positive)", lx > 0, std::to_string(lx));
+        auto [lx2, ly2] = applyInvert(0.0f, 1.0f, false, false);
+        ctx.check("stick down: look down (Y negative after flip)", ly2 < 0, std::to_string(ly2));
+        auto [lx3, ly3] = applyInvert(0.0f, -1.0f, false, false);
+        ctx.check("stick up: look up (Y positive after flip)", ly3 > 0, std::to_string(ly3));
+    }
+    // Invert X: stick right = look left.
+    {
+        auto [lx, ly] = applyInvert(1.0f, 0.0f, true, false);
+        ctx.check("inverted X, stick right: look left", lx < 0, std::to_string(lx));
+    }
+    // Invert Y: stick down = look up.
+    {
+        auto [lx, ly] = applyInvert(0.0f, 1.0f, false, true);
+        ctx.check("inverted Y, stick down: look up", ly > 0, std::to_string(ly));
+    }
+    // Both inverted.
+    {
+        auto [lx, ly] = applyInvert(1.0f, 1.0f, true, true);
+        ctx.check("both inverted, stick down-right: look up-left", lx < 0 && ly > 0, std::to_string(lx) + "," + std::to_string(ly));
+    }
+}

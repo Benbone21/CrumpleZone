@@ -5452,7 +5452,12 @@ int main(int argc, char** argv) {
         if (padCtx == pad::Mode::Drive || padCtx == pad::Mode::Aim) {
             const pad::Intent& pin = padLogic.in;
             padLooking = pin.lookX != 0 || pin.lookY != 0 || pin.lookBack;
-            if (padLooking || pin.resetView) cam.padLook(pin.lookX, pin.lookY, pin.lookBack, pin.resetView, dt);
+            // Invert axes per settings (default: stick up = look up, stick right = look right).
+            // The gamepad's raw values are inverted (stick down = positive), so flip Y by default.
+            float lx = pin.lookX, ly = -pin.lookY;
+            if (settings.padInvertLookX) lx = -lx;
+            if (settings.padInvertLookY) ly = -ly;
+            if (padLooking || pin.resetView) cam.padLook(lx, ly, pin.lookBack, pin.resetView, dt);
         } else if (padCtx == pad::Mode::Map) {
             const pad::Intent& pin = padLogic.in;
             int dw = 1, dh = 1;
@@ -5468,8 +5473,11 @@ int main(int argc, char** argv) {
             }
         }
         if (walker.active && padCtx == pad::Mode::Drive && cam.mode != 3) {  // (gamepad: the right stick looks around on foot)
-            footYaw -= padLogic.in.lookX * 2.6 * dt;
-            footPitch = clampd(footPitch + padLogic.in.lookY * 1.8 * dt, -1.45, 1.45);
+            float lx = padLogic.in.lookX, ly = -padLogic.in.lookY;
+            if (settings.padInvertLookX) lx = -lx;
+            if (settings.padInvertLookY) ly = -ly;
+            footYaw -= lx * 2.6 * dt;
+            footPitch = clampd(footPitch + ly * 1.8 * dt, -1.45, 1.45);
         }
         if (opt.bench) {  // (the lap: 30 m round the start, 2.5 m up, once over the warm-up and the run)
             auto ground = [](const void* w, double x, double z) { return ((const World*)w)->height(x, z); };
