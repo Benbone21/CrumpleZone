@@ -167,7 +167,7 @@ const std::vector<int>& listedVehicles() {
     static const std::vector<int> l = [] {
         std::vector<int> out;
         const auto& cat = vehicleCatalog();
-        for (const char* id : {"blazer", "bronco", "4runner", "tacoma", "jesko"})  // (the Baja is built but hidden for now, like the Civic, UTV and buggy)
+        for (const char* id : {"blazer", "bronco", "4runner", "tacoma", "jesko", "hellboy"})  // (the Baja is built but hidden for now, like the Civic, UTV and buggy)
             for (int i = 0; i < (int)cat.size(); i++)
                 if (std::string(cat[i].id) == id) out.push_back(i);
         return out;
@@ -192,7 +192,7 @@ int nextListedVehicle(int v, int dir) {
 }
 
 const std::vector<VehicleSpec>& vehicleCatalog() {
-    // Nine vehicles (two of them crawl specials), built from their published specs (dimensions, weights,
+    // Ten vehicles (two of them crawl specials), built from their published specs (dimensions, weights,
     // engine outputs, gear ratios, suspension layouts). Where a maker doesn't publish
     // a number (weight split of the Jesko, its final drive...), it's a careful estimate.
     // Lattice: x forward from the middle, y up from the ground; masses in kg.
@@ -1517,6 +1517,166 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         baja.coverColor[0] = 0.06f, baja.coverColor[1] = 0.06f, baja.coverColor[2] = 0.065f;
         v.push_back(baja);
 
+        // ---- "Hell Boy": Murphy's Diesel's Ram 5500 off-road wrecker (2025-26) ---------------
+        // A 4th-gen Ram 5500 crew-cab chassis cab with a Miller boom body, rebuilt in 2023 on
+        // AxleTech 4000 planetary axles (6.86 overall), four-links with 16 in Big Shocks
+        // coil-overs up front and air bags behind, air lockers, a T-600 two-speed case, an ATS
+        // Allison six-speed and a compound-turbo 6.7 Cummins (~700 hp, ~2,000 lb-ft: Rick's
+        // figures, no dyno), on 21/58-24 Mickey Thompsons. 14.8 kip hanging from his rotator
+        // (Mar 2024). Sources and what's estimated: docs/hellboy-research.md. The boom, cage
+        // and toolboxes are drawn and weighed, not working; its rear steer isn't modelled.
+        VehicleSpec hellboy = tacoma;
+        hellboy.name = "RAM 5500 HELLBOY";
+        hellboy.id = "hellboy";
+        hellboy.blurb = "MURPHY'S DIESEL OFF-ROAD WRECKER  6.7L CUMMINS  58 IN TIRES";
+        // Nose and front wheels, the crew cab, then the wrecker deck over the bare rear tires
+        // (the toolboxes' tops; the boom stands over it, drawn).
+        hellboy.profile = {
+            "WWW########WWW",
+            "WWW#####......",
+            "...GGGGG......",
+        };
+        // Measured off a side profile, scaled by the 1.47 m tire (docs/hellboy-research.md):
+        // doors ~1.0 m up, hood ~1.9, roof ~2.45; 5.3 m wheelbase, the tire the front-most point.
+        hellboy.layerY = {0.95, 1.42, 1.90, 2.45};
+        hellboy.length = 6.82;
+        hellboy.width = 3.0;     // fender to fender over the front tires: the cab and deck are 2.0 (bodyWidth)
+        hellboy.widthCells = 4;
+        hellboy.wheelbase = 5.30;
+        hellboy.frontOverhang = 0.62;
+        // The front wells: the tires stand in them, outside the cab, and at full lock (0.6 rad) a
+        // tire's corner swings in to ~0.64 m from the middle: the wells reach in to 0.6.
+        hellboy.outerCellWidth = 0.90;
+        // The hood rising to the cowl; the cab's roof; the deck at the toolboxes' tops.
+        hellboy.topLine = {1.78, 1.86, 1.90, 0, 0, 0, 0, 0, 0, 1.40, 1.40, 1.40, 1.40, 1.40, 1.40};
+        // The nose necks in so the tires clear it at full lock; the cab and the body behind are 2.0 m.
+        hellboy.bodyWidth = {0.55, 1, 1, 0.667, 0.667, 0.667, 0.667, 0.667, 0.667, 0.667, 0.667, 0.667, 0.667, 0.667, 0.667};
+        hellboy.noseDrop = hellboy.tailDrop = 0;
+        hellboy.bumperLift = 0.10;
+        hellboy.bumperLiftRear = 0.05;
+        hellboy.cornerRound = 0.05;
+        hellboy.roofTuck = 0.05;
+        hellboy.rakeFront = 0.30;  // the Ram's upright windshield
+        hellboy.rakeRear = 0.02;
+        hellboy.liftgate = false;
+        hellboy.doors = 4;
+        hellboy.doorLength = 1.05;
+        // ~6,700 kg, the rotator's reading. The masses inside are estimates against it: the boom
+        // and its body at the back, the Cummins and the horn bumper up front.
+        hellboy.structureMass = 970;  // cab, deck and subframe (the frame is its own, below)
+        hellboy.panelMass = 160;
+        hellboy.items = {
+            {"boom (Miller 612, stowed)", 450, -2.60, 2.05, 0},   {"boom base and hydraulics", 300, -1.00, 1.60, 0},
+            {"hydraulic winches", 180, -1.40, 1.45, 0},           {"toolboxes and deck plate", 250, -1.90, 1.20, 0},
+            {"rear bumper, spades and winch", 250, -3.30, 1.00, 0}, {"horn bumper and 18k winch", 230, 3.45, 1.00, 0},
+            {"exo-cage and tube doors", 180, 0.60, 2.10, 0},      {"light bar, pods and beacon", 25, 0.60, 2.55, 0},
+            {"seats, carpets and wiring", 120, 0.60, 1.20, 0},    {"dashboard and heater", 60, 1.50, 1.55, 0},
+            {"fuel tank (190 L, full)", 185, -0.40, 0.85, 0},     {"radiator and intercooler", 60, 2.95, 1.35, 0},
+            {"batteries", 55, 2.40, 1.30, -0.65},                 {"exhaust", 40, 0.20, 0.90, 0.40},
+            {"air tanks and compressor", 50, -0.90, 0.95, -0.55}, {"nitrous bottle", 30, -0.10, 1.70, 0.55},
+            {"rock sliders", 120, 0.60, 0.80, 0},                 {"prop shafts", 60, 0.10, 0.80, 0},
+            {"steering rams", 40, 2.75, 0.95, 0},                 {"jacks, chains and rigging", 80, -1.80, 1.30, 0},
+        };
+        hellboy.engineMass = 560;   // iron 6.7 Cummins with its compound turbos
+        hellboy.gearboxMass = 330;  // Allison 1000 and the T-600
+        hellboy.transverse = false;
+        hellboy.midEngine = false;
+        hellboy.engineX = 2.20;
+        hellboy.engineY = 1.35;
+        hellboy.engineZ = 0;
+        hellboy.engineLen = 1.10;
+        hellboy.engineWid = 0.75;
+        hellboy.engineHgt = 0.95;
+        hellboy.gearboxLen = 1.20;
+        hellboy.induction = VehicleSpec::TURBO;
+        hellboy.displacement = 6.7;
+        hellboy.cylinders = 6;
+        hellboy.turboLag = 0.6;
+        hellboy.bodyStiffness = 1.4;
+        hellboy.bodyStrength = 1.2;
+        hellboy.frameStrength = 4.0;   // plated rails and a DOM subframe
+        hellboy.panelStrength = 1.6;
+        hellboy.pinStrength = 2.0;
+        // Boxed with 3/8 in plate ([ORX]); the Ram's rails are 34 in apart, ~10 in deep (ESTIMATE).
+        hellboy.railSpacing = 0.86;
+        hellboy.railHeight = 0.25;
+        hellboy.railWidth = 0.09;
+        hellboy.frameMass = 520;
+        hellboy.frameStiffness = 0.25;
+        hellboy.railYield = 0.012;
+        hellboy.bodyMounts = 8;
+        hellboy.skidDrop = 0.25;       // the sliders and the T-600's skid ~0.7 m up
+        hellboy.wheelRadius = 0.737;   // 21/58-24LT Baja Pro XS (1.47 m)
+        hellboy.wheelWidth = 0.533;
+        hellboy.wellTireRadius = 0.76;
+        hellboy.wellTireWidth = 0.56;
+        hellboy.rimRadius = 0.305;     // 24 in
+        hellboy.trackFront = hellboy.trackRear = 2.55;
+        hellboy.wheelMass = 185;       // ~150 kg of tire on a two-piece beadlock wheel
+        hellboy.hubMass = 110;         // planetary hub and its brake
+        hellboy.axleMass = 380;        // an AxleTech 4000 housing and its carrier
+        hellboy.frontSusp = hellboy.rearSusp = SOLID_AXLE;
+        hellboy.leafSprings = hellboy.leafFront = false;
+        hellboy.linkLength = 1.20;
+        hellboy.upperLink = 0.72;
+        hellboy.coilTop = 0.70;
+        hellboy.rideFreqFront = 1.30;
+        hellboy.rideFreqRear = 1.40;   // three-bellows air bags, as a spring rate
+        hellboy.dampingRatio = 0.40;
+        hellboy.arbFront = hellboy.arbRear = 0;
+        hellboy.swayDisconnect = 0;
+        // 16 in of travel at both ends ([ORX]).
+        hellboy.bumpFront = 0.17, hellboy.droopFront = 0.24;
+        hellboy.bumpRear = 0.17, hellboy.droopRear = 0.24;
+        hellboy.tirePsi = 20;
+        hellboy.tireSoft = 1.15;       // a 58 in tire on 24 in wheels, stiff for its size at highway pressure
+        hellboy.beadlock = true;
+        hellboy.wheelLoss = true;
+        hellboy.spareFlat = false;
+        hellboy.lugShear = 200000;
+        hellboy.ledgeFactor = 1.1;
+        hellboy.looseGrip = 1.10;
+        hellboy.tireType = TIRE_MUD_TERRAIN;
+        hellboy.stockTireType = -1, hellboy.stockTireRatingKmh = 0;
+        hellboy.tireGrip = 0.90;
+        hellboy.lateralGrip = 0.70;
+        hellboy.drive = VehicleSpec::AWD;
+        hellboy.diffFront = hellboy.diffRear = DIFF_OPEN;
+        hellboy.transfer = XFER_PART_TIME_BASIC;
+        hellboy.lockerFront = hellboy.lockerRear = true;  // air lockers in both axles
+        hellboy.frontLockerLowOnly = hellboy.rearLockerLowOnly = false;
+        hellboy.shaftLimit = 40000;    // planetary hubs: the shafts carry a quarter of the wheel's torque
+        hellboy.lowRange = 2.0;        // T-600 low (ESTIMATE)
+        hellboy.brakeFront = 13000;
+        hellboy.brakeRear = 10000;
+        hellboy.absEnabled = false;
+        hellboy.tractionFitted = false;
+        hellboy.dragArea = 5.4;        // Cd ~0.85 x ~6.3 m^2 of cab, boom, cage and tires
+        hellboy.downforce = hellboy.downforceMax = 0;
+        // ~700 hp and ~2,000 lb-ft (2,710 N*m) on compound turbos (stated); the curve is an estimate.
+        hellboy.torque = {{0, 900}, {800, 1150}, {1200, 1750}, {1500, 2400}, {1700, 2712}, {2000, 2500}, {2300, 2170}, {2600, 1900}, {2900, 1600}, {3200, 1250}, {3400, 1000}};
+        hellboy.idleRpm = 750;
+        hellboy.redline = 3400;
+        hellboy.gears = {3.10, 1.81, 1.41, 1.00, 0.71, 0.61};  // Allison 1000
+        hellboy.reverseRatio = 4.49;
+        hellboy.finalDrive = 6.86;
+        hellboy.shiftTime = 0.40;
+        hellboy.stallRpm = 2000;
+        hellboy.stallRatio = 2.0;
+        hellboy.lockupGear = 3;
+        hellboy.engineName = "6.7L CUMMINS COMPOUND TURBO";
+        hellboy.gearboxName = "ALLISON 6-SPEED + T-600 2-SPEED";
+        hellboy.lampStyle = LAMP_ROUND;
+        hellboy.grilleStyle = GRILLE_WIDE;
+        hellboy.extras = EXTRA_WRECKER | EXTRA_WINCH;
+        hellboy.winchPull = 80000;     // 18k lb Warrior on the front (the hydraulic ones aren't modelled)
+        hellboy.paintColor[0] = 0.55f, hellboy.paintColor[1] = 0.04f, hellboy.paintColor[2] = 0.05f;  // red "like Hellboy"
+        hellboy.trimColor[0] = hellboy.trimColor[1] = hellboy.trimColor[2] = 0.03f;
+        hellboy.trimTop = 0.35;        // black below the doors' bottom third
+        hellboy.wheelStyle = WHEEL_OFFROAD_BLACK;
+        hellboy.coverColor[0] = 0.05f, hellboy.coverColor[1] = 0.05f, hellboy.coverColor[2] = 0.05f;
+        v.push_back(hellboy);
+
         // Each engine's sound (engineaudio.h): the exhaust pipe's note (Hz), how open it is, cam,
         // intake, valvetrain, timbre, pops, the burble of big uneven pulses, and the roar under load.
         auto voice = [&](const char* id, float pipeHz, float muffler, float lope, float intake, float mech, float rasp, float crackle, float rumble, float roar) {
@@ -1532,6 +1692,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         voice("tacoma", 175, 0.25f, 0.0f, 0.35f, 0.25f, 0.40f, 0.0f, 0.0f, 0.20f);   // 2GR V6: smooth and quiet
         voice("blazer", 105, 0.38f, 0.15f, 0.60f, 0.40f, 0.12f, 0.15f, 0.55f, 0.55f); // carbureted small block on dual exhaust: deep, a little lope, a rumble
         voice("baja", 215, 0.88f, 0.10f, 0.65f, 0.70f, 0.80f, 0.30f, 0.12f, 0.65f);   // air-cooled flat four out a stinger: loud, raspy, valvetrain and fan clatter, dual-carb honk
+        voice("hellboy", 70, 0.70f, 0.0f, 0.75f, 0.60f, 0.45f, 0.0f, 0.35f, 0.80f);  // compound-turbo Cummins six on a straight pipe: deep diesel clatter, a turbo whistle, a roar under load
         for (size_t i = 0; i < v.size(); i++) v[i].model = (int)i;
         // Engines tuned ~15% over their factory ratings: rated torque is the crank's, and
         // with the drivetrain's spinning mass counted the stock figures felt flat in the game.
@@ -1547,8 +1708,9 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         v[6].fuelCapacity = 80, v[6].jerryCan = 20;     // Tacoma: 21.1 gal
         v[7].fuelCapacity = 117;                        // Blazer: 31 gal
         v[8].fuelCapacity = 40, v[8].jerryCan = 10;     // Baja Bug: the Beetle's 10.6 gal tank in the nose
+        v[9].fuelCapacity = 190;                        // Hell Boy: 50 gal between the rails
         // A set of snow chains in the back of each off-roader (a pair per axle).
-        for (const char* id : {"bronco", "4runner", "buggy", "utv", "tacoma", "blazer", "baja"})
+        for (const char* id : {"bronco", "4runner", "buggy", "utv", "tacoma", "blazer", "baja", "hellboy"})
             for (VehicleSpec& s : v)
                 if (std::string(s.id) == id) s.snowChains = 4;
         return v;

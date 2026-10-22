@@ -3444,6 +3444,7 @@ void Sim::swapPlayerVehicle(const VehicleSpec& vs) {
     Car& c = cars[player];
     if (c.remote) return;  // (someone else's)
     c.spec = &vs;
+    if (vs.paintColor[0] >= 0) c.color = V3(vs.paintColor[0], vs.paintColor[1], vs.paintColor[2]);  // (its factory paint, as addCar)
     recoverPlayer();
 }
 

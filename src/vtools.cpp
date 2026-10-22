@@ -45,6 +45,7 @@ const char* modelName(const VehicleSpec& vs) {
     if (id == "buggy") return "BUGGY";
     if (id == "utv") return "UTV";
     if (id == "tacoma") return "TACOMA";
+    if (id == "hellboy") return "HELLBOY";
     if (vs.name && std::strstr(vs.name, "CRASH")) return "BOX";
     if (vs.name && std::strstr(vs.name, "BARRIER")) return "BARRIER";
     return "VEHICLE";

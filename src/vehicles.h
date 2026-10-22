@@ -77,6 +77,7 @@ enum BodyExtra : unsigned {
     EXTRA_WINCH = 4096,       // electric winch on the front bumper (V hooks it, Z reels in)
     EXTRA_TUBE_CAGE = 8192,   // tube-frame vehicles: the roll cage, tube chassis and bumpers are drawn from tubes (carvisual.cpp)
     EXTRA_BAJA = 16384,       // Baja Bug kit: tube push bar, rear exo-cage over the bare engine, stinger exhaust, roof light bar
+    EXTRA_WRECKER = 32768,    // Hell Boy kit: horn stinger bumper, black flares, exo-cage and pods, toolboxes and the boom (drawn, not working)
 };
 
 // Wheel and tire look.

@@ -876,6 +876,130 @@ void buildExtras(const Car& car, PartBuilder& pb) {
             }
         }
     }
+    if ((vs.extras & EXTRA_WRECKER) && gi1 >= 0) {
+        // Hell Boy's kit (docs/hellboy-research.md), all black but the red rope: fender flares over
+        // the 58s standing outside the 2 m cab, the horn stinger round the 18k winch, rock sliders,
+        // the exo-cage with its tube doors and eight red-capped pods across the roof, the boom on its
+        // base behind the cab with the hydraulic winches' rope run out along it to the tip, and the
+        // rear bumper with its fold-down spades and winch.
+        const double xf = L / 2, xr = -L / 2, tr = 0.032, cabW = 1.0;
+        const double xCabF = xAt(gi0), xCabR = xAt(gi1 + 1), deckY = topAt(cells - 1);
+        const V3 rope(0.72, 0.05, 0.05), metal(0.45, 0.45, 0.46);
+        auto tube = [&](const V3& a, const V3& b, double r) { pb.cylinder(a, b, r, 8, steel, SM_MATTE); };
+        auto both = [&](const V3& a, const V3& b, double r) {
+            tube(a, b, r);
+            tube(V3(a.x, a.y, -a.z), V3(b.x, b.y, -b.z), r);
+        };
+        const auto ac = axleColumns(vs);
+        // Front flares: a band round each front tire from ahead of it over the top to behind it,
+        // from the cab's side out past the tread, a lip turned down at its outer edge.
+        if (!ac.empty()) {
+            const double xw = xAt(ac.front()), cy = R, rr = R + vs.bumpFront + 0.06;
+            const double zi = cabW - 0.02, zo = vs.trackFront / 2 + vs.wheelWidth / 2 + 0.07;
+            const int n = 16;
+            for (int s = -1; s <= 1; s += 2)
+                for (int k = 0; k < n; k++) {
+                    const double a0 = 0.30 + (M_PI - 0.75) * k / n, a1 = 0.30 + (M_PI - 0.75) * (k + 1) / n;
+                    const V3 p0(xw + std::cos(a0) * rr, cy + std::sin(a0) * rr, 0), p1(xw + std::cos(a1) * rr, cy + std::sin(a1) * rr, 0);
+                    const V3 q0 = p0 + V3(std::cos(a0), std::sin(a0), 0) * -0.10, q1 = p1 + V3(std::cos(a1), std::sin(a1), 0) * -0.10;
+                    auto at = [&](const V3& p, double z) { return V3(p.x, p.y, s * z); };
+                    if (s > 0) {
+                        pb.quad(at(p0, zi), at(p0, zo), at(p1, zo), at(p1, zi), steel, SM_MATTE);
+                        pb.quad(at(p0, zo), at(q0, zo), at(q1, zo), at(p1, zo), steel, SM_MATTE);
+                    } else {
+                        pb.quad(at(p0, zi), at(p1, zi), at(p1, zo), at(p0, zo), steel, SM_MATTE);
+                        pb.quad(at(p0, zo), at(p1, zo), at(q1, zo), at(q0, zo), steel, SM_MATTE);
+                    }
+                }
+        }
+        // The horn stinger: a bar across the frame horns, the winch in its trough, and two tubes from
+        // the bar's ends sweeping up and in toward the hood, their tips curling out like horns.
+        const double yb = floorY + 0.06;
+        tube(V3(xf + 0.10, yb, -0.78), V3(xf + 0.10, yb, 0.78), 0.045);
+        tube(V3(xf + 0.06, yb - 0.16, -0.62), V3(xf + 0.06, yb - 0.16, 0.62), tr);
+        both(V3(xf + 0.10, yb, 0.78), V3(xf + 0.06, yb - 0.16, 0.62), tr);
+        both(V3(xf + 0.10, yb, 0.70), V3(xf + 0.22, yb + 0.32, 0.46), 0.04);
+        both(V3(xf + 0.22, yb + 0.32, 0.46), V3(xf + 0.22, yb + 0.62, 0.20), 0.036);
+        both(V3(xf + 0.22, yb + 0.62, 0.20), V3(xf + 0.12, yb + 0.86, 0.30), 0.03);
+        both(V3(xf + 0.12, yb + 0.86, 0.30), V3(xf + 0.02, yb + 0.92, 0.42), 0.022);  // (the horns' tips)
+        both(V3(xf + 0.22, yb + 0.32, 0.46), V3(xf - 0.05, yb + 0.55, 0.62), tr);       // braces back to the fenders
+        pb.box(V3(xf + 0.06, yb + 0.06, 0), V3(0.13, 0.10, 0.26), steel, SM_MATTE);    // the winch
+        pb.cylinder(V3(xf + 0.06, yb + 0.06, -0.20), V3(xf + 0.06, yb + 0.06, 0.20), 0.085, 12, rope, SM_MATTE);
+        pb.box(V3(xf + 0.195, yb + 0.06, 0), V3(0.01, 0.035, 0.11), metal, SM_METAL);  // fairlead
+        pb.box(V3(xf + 0.23, yb + 0.03, 0), V3(0.03, 0.05, 0.012), V3(0.9, 0.75, 0.1), SM_MATTE);  // the hook's soft shackle
+        for (int s = -1; s <= 1; s += 2) pb.box(V3(xf + 0.12, yb - 0.08, s * 0.40), V3(0.05, 0.03, 0.02), V3(0.75, 0.08, 0.05), SM_PAINT);  // tow hooks
+        // Rock sliders under the cab's sills.
+        for (int s = -1; s <= 1; s += 2) {
+            pb.box(V3(0.5 * (xCabF + xCabR), floorY - 0.06, s * (cabW - 0.04)), V3(0.5 * (xCabF - xCabR), 0.075, 0.025), steel, SM_MATTE);
+            tube(V3(xCabF, floorY - 0.02, s * (cabW + 0.06)), V3(xCabR, floorY - 0.02, s * (cabW + 0.06)), 0.03);
+        }
+        // Exo-cage: tubes up the A pillars, along the roof's edges, down behind the cab, the tube
+        // doors' bars at the belt; the headache rack behind with the beacon; the pods across the front.
+        const double yRoof = roofY + 0.06, xRf = roofFront + 0.04, xRr = xCabR - 0.06, zc = cabW + 0.02;
+        both(V3(xCabF + 0.04, vs.layerY[2] - 0.02, zc), V3(xRf, yRoof, zc - 0.04), tr);
+        both(V3(xRf, yRoof, zc - 0.04), V3(xRr, yRoof, zc - 0.04), tr);
+        both(V3(xRr, yRoof, zc - 0.04), V3(xRr, deckY, zc), tr);
+        both(V3(xCabF + 0.04, vs.layerY[2] - 0.02, zc + 0.04), V3(xRr, vs.layerY[2] - 0.02, zc + 0.04), tr);  // door bars
+        both(V3(xCabF - 0.05, floorY + 0.10, zc + 0.04), V3(xCabF + 0.04, vs.layerY[2] - 0.02, zc + 0.04), tr);
+        tube(V3(xRf, yRoof, -zc + 0.04), V3(xRf, yRoof, zc - 0.04), tr);
+        tube(V3(xRr, yRoof, -zc + 0.04), V3(xRr, yRoof, zc - 0.04), tr);
+        tube(V3(xRr - 0.04, deckY + 0.55, -zc), V3(xRr - 0.04, deckY + 0.55, zc), tr);
+        both(V3(xRr - 0.04, deckY + 0.55, zc), V3(xRr, yRoof, 0.0), 0.026);  // the rack's X
+        for (int s = -1; s <= 1; s += 2) {  // antennas off the front corners
+            pb.cylinder(V3(xRf, yRoof, s * (zc - 0.04)), V3(xRf - 0.12, yRoof + 1.0, s * (zc - 0.04)), 0.006, 4, kBlack, SM_MATTE);
+        }
+        const double yPods = yRoof + 0.12, xPods = xRf + 0.04;
+        tube(V3(xPods - 0.05, yPods - 0.06, -0.86), V3(xPods - 0.05, yPods - 0.06, 0.86), 0.028);
+        both(V3(xPods - 0.05, yPods - 0.06, 0.86), V3(xRf, yRoof, zc - 0.04), 0.024);
+        for (int l = 0; l < 8; l++) {
+            const double z = -0.77 + 1.54 * l / 7.0;
+            pb.cylinder(V3(xPods - 0.07, yPods, z), V3(xPods + 0.02, yPods, z), 0.085, 12, steel, SM_MATTE);
+            pb.cylinder(V3(xPods + 0.02, yPods, z), V3(xPods + 0.03, yPods, z), 0.078, 12, V3(0.80, 0.08, 0.05), SM_PAINT);  // KC covers
+        }
+        pb.cylinder(V3(xRr - 0.02, yRoof, -0.55), V3(xRr - 0.02, yRoof + 0.14, -0.55), 0.06, 12, V3(1.0, 0.55, 0.05), SM_EMISSIVE);  // beacon
+        // The boom: a box section from its pivot behind the cab, rising gently to the sheave head
+        // past the tail, on a base of two side plates, a lift ram from the deck, the winches' drums
+        // at its foot and their red rope hanging along under it to the tip.
+        const double xp = xCabR - 0.50, yp = deckY + 0.42, xt = xr - 0.72, yt = deckY + 0.78;
+        const V3 P(xp, yp, 0), T(xt, yt, 0), ax = norm(T - P), ay = cross(V3(0, 0, 1), ax);
+        pb.obox((P + T) * 0.5, ax, ay, V3(0, 0, 1), len(T - P) * 0.5 + 0.10, 0.15, 0.15, steel, SM_MATTE);
+        pb.obox((P + T) * 0.5 + ay * 0.02, ax, ay, V3(0, 0, 1), len(T - P) * 0.25, 0.04, 0.152, V3(0.85, 0.85, 0.85), SM_MATTE);  // the lettering's strip
+        for (int s = -1; s <= 1; s += 2) {
+            pb.quad(V3(xp + 0.35, deckY, s * 0.24), V3(xp - 0.75, deckY, s * 0.24), V3(xp - 0.25, yp + 0.05, s * 0.24), V3(xp + 0.15, yp + 0.05, s * 0.24), steel, SM_MATTE);
+            pb.quad(V3(xp + 0.35, deckY, s * 0.24), V3(xp + 0.15, yp + 0.05, s * 0.24), V3(xp - 0.25, yp + 0.05, s * 0.24), V3(xp - 0.75, deckY, s * 0.24), steel, SM_MATTE);
+        }
+        const V3 ramFoot(xp - 1.20, deckY + 0.02, 0), ramTop = P + ax * 1.55 - ay * 0.14;
+        pb.cylinder(ramFoot, ramFoot + (ramTop - ramFoot) * 0.55, 0.075, 10, steel, SM_MATTE);
+        pb.cylinder(ramFoot + (ramTop - ramFoot) * 0.5, ramTop, 0.045, 10, kChrome, SM_CHROME);
+        for (int s = -1; s <= 1; s += 2) {
+            const V3 drum(xp - 0.10, deckY + 0.24, s * 0.42);
+            pb.cylinder(drum - V3(0, 0, 0.16), drum + V3(0, 0, 0.16), 0.13, 12, steel, SM_MATTE);
+            pb.cylinder(drum - V3(0, 0, 0.12), drum + V3(0, 0, 0.12), 0.135, 12, rope, SM_MATTE);
+            // The rope out along the boom's side in a sag, to the tip.
+            V3 prev = drum + V3(0, 0.12, 0);
+            for (int k = 1; k <= 8; k++) {
+                const double t = k / 8.0;
+                V3 q = P + (T - P) * t - ay * 0.16 + V3(0, 0, s * 0.18);
+                q.y -= 0.32 * std::sin(t * M_PI);
+                pb.cylinder(prev, q, 0.014, 6, rope, SM_MATTE);
+                prev = q;
+            }
+        }
+        pb.obox(T + ax * 0.12, ax, ay, V3(0, 0, 1), 0.16, 0.20, 0.17, steel, SM_MATTE);  // sheave head
+        pb.cylinder(T + ax * 0.22 - V3(0, 0, 0.14), T + ax * 0.22 + V3(0, 0, 0.14), 0.12, 12, metal, SM_METAL);
+        pb.cylinder(T + ax * 0.30, T + ax * 0.30 - V3(0, 0.55, 0), 0.014, 6, rope, SM_MATTE);
+        pb.box(T + ax * 0.30 - V3(0, 0.60, 0), V3(0.04, 0.06, 0.015), V3(0.9, 0.75, 0.1), SM_MATTE);  // hook strap
+        // Rear bumper on the frame's tail: a beam, the spades folded up against it, the rear winch.
+        const double yr = floorY + 0.02;
+        pb.box(V3(xr - 0.10, yr, 0), V3(0.10, 0.11, 0.95), steel, SM_MATTE);
+        for (int s = -1; s <= 1; s += 2) {
+            const V3 ax2 = norm(V3(-0.25, 1, 0));
+            pb.obox(V3(xr - 0.24, yr - 0.12, s * 0.62), ax2, cross(V3(0, 0, 1), ax2) * -1.0, V3(0, 0, 1), 0.32, 0.02, 0.17, steel, SM_MATTE);
+            pb.box(V3(xr - 0.21, yr + 0.02, s * 0.85), V3(0.012, 0.04, 0.06), V3(0.8, 0.05, 0.03), SM_EMISSIVE);  // lamps on the beam
+        }
+        pb.box(V3(xr - 0.20, yr + 0.02, 0), V3(0.09, 0.08, 0.22), steel, SM_MATTE);
+        pb.cylinder(V3(xr - 0.20, yr + 0.02, -0.17), V3(xr - 0.20, yr + 0.02, 0.17), 0.07, 12, rope, SM_MATTE);
+    }
 }
 
 // Coachwork details are geometry, with local bindings so dents carry them along.

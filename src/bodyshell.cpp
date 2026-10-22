@@ -161,7 +161,7 @@ struct Pt {
 
 // How one vehicle's body is drawn: the character the lattice alone can't give.
 struct Style {
-    int shell;                 // shader id: 1 4Runner, 2 Bronco, 3 Civic, 4 Tacoma
+    int shell;                 // shader id: 1 4Runner, 2 Bronco, 3 Civic, 4 Tacoma, 5 Blazer, 6 Baja, 7 Hell Boy
     double crF, crR;           // plan-view corner radii at the nose and the tail
     double noseRoll, noseLen;  // the hood's leading edge rolls down this much over this length
     double rocker;             // radius of the rocker's lower corner
@@ -185,6 +185,7 @@ struct Style {
     // running board between them (fenderOut: how far they stand out of it).
     bool dome = false;
     double fenderOut = 0;
+    double tubW = 0;  // the drawn body's half width (0: the lattice's): a cab narrower than the fenders the tires stand in
 };
 
 const Style* styleFor(const VehicleSpec& vs) {
@@ -213,8 +214,14 @@ const Style* styleFor(const VehicleSpec& vs) {
     // short fiberglass hood), the fenders bobbed into big round openings, the tail cut off
     // low over the bare engine.
     static const Style baja{6, 0.30, 0.22, 0.0, 0.30, 0.04, 0.10, 0.17, 0.05, 0.05, 0.0, 0.04, 0.06, 2.0, 0.24, 0.0, 0.22, true, 0.0, true, true, true, 0.16};
+    // Hell Boy's Ram 5500 crew cab: a tall square cab with a flat roof and an upright
+    // windshield over a short red hood, 2.0 m across (the 58s stand outside it under black
+    // flares: carvisual.cpp), the wrecker deck behind it at the toolboxes' tops. No arches cut:
+    // the tires are outboard of the body.
+    static const Style hellboy{7, 0.10, 0.04, 0.05, 0.14, 0.03, 0.06, 0.05, 0.025, 0.012, 0.0, 0.0, 0.0, 2.0, 0.08, 0.0, 0.0, true, 0.0, true, false, false, 0.0, 1.0};
     const std::string id = vs.id;
-    return id == "baja" ? &baja
+    return id == "hellboy" ? &hellboy
+           : id == "baja" ? &baja
            : id == "blazer" ? &blazer
            : id == "4runner"  ? &runner
            : id == "bronco" ? &bronco
@@ -250,7 +257,7 @@ struct ShellLines {
         T = vs.layerY[3];
         xf = vs.length / 2;
         xr = -vs.length / 2;
-        W2 = vs.width / 2;
+        W2 = style.tubW > 0 ? style.tubW : vs.width / 2;
         tuck = vs.roofTuck + style.extraTuck;
         rakeR = std::max(0.02, vs.rakeRear);
         int gi0 = 99, gi1 = -1;
@@ -578,6 +585,10 @@ void shellArch(const VehicleSpec& vs, double& centerY, double& radius) {
         // Round openings cut well up into the fenders (room for ~33s), from just below the rocker.
         centerY = vs.layerY[0] - 0.08;
         radius = 0.47;
+    } else if (id == "hellboy") {
+        // (none: the tires stand outside the body)
+        centerY = vs.layerY[0] - 2.0;
+        radius = 0.30;
     } else if (id == "tacoma") {
         // Tall openings a hand over the 265/70R16s (~10 cm), raised with the body.
         centerY = vs.layerY[0] - 0.10;
