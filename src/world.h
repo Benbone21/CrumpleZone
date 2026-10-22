@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "mathx.h"
+#include "celltiles.h"
 #include "plants.h"
 
 // Oriented static box (ramps, walls, poles, bumps).
@@ -290,7 +291,7 @@ public:
     }
     bool hasWater() const { return !waters.empty() || !waterY.empty(); }
     // Maps with rivers keep their water on the height grid: level (-1e9 dry) and flow.
-    std::vector<float> waterY, flowX, flowZ;
+    CellTiles<float> waterY, flowX, flowZ;  // (kept only in the tiles with water: celltiles.h)
     int gridSize() const { return hN; }
     double frontierHeight(double x, double z) const;  // the Frontier's land before anything's carved into it
 
@@ -347,8 +348,9 @@ private:
     static constexpr double kRes = 1.0;
     double half = kDefaultHalfSize;  // halfSize()
     int hN = 0;
-    std::vector<float> hgrid, roadLat, roadAlong;
-    std::vector<uint8_t> roadNear;
+    std::vector<float> hgrid;
+    CellTiles<float> roadLat, roadAlong;  // (kept only in the tiles with a road or trail: celltiles.h)
+    CellTiles<uint8_t> roadNear;
     double baseHeight(double x, double z) const;  // analytic hills before roads
     void bakeTerrain();
     double gridAt(int i, int j) const { return hgrid[i * hN + j]; }

@@ -284,12 +284,12 @@ void World::buildBackcountry() {
         }
     paint.assign(N, PAINT_NONE);
     surf.assign(N, SURF_GRASS);
-    roadLat.assign(N, 0);
-    roadAlong.assign(N, 0);
-    roadNear.assign(N, 0);
-    waterY.assign(N, -1e9f);
-    flowX.assign(N, 0);
-    flowZ.assign(N, 0);
+    roadLat.reset(hN, 0);
+    roadAlong.reset(hN, 0);
+    roadNear.reset(hN, 0);
+    waterY.reset(hN, -1e9f);
+    flowX.reset(hN, 0);
+    flowZ.reset(hN, 0);
     std::vector<uint8_t> keep(N, 0);   // no trees, rocks or bushes here
     std::vector<float> edge(N, 1e9f);  // distance past the nearest trail's tread
 

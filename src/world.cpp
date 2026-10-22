@@ -713,9 +713,9 @@ void World::buildWilds() {
             h += 0.0045 * d * d + 0.02 * d;
             hgrid[i * hN + j] = (float)h;
         }
-    roadLat.assign(N, 0);
-    roadAlong.assign(N, 0);
-    roadNear.assign(N, 0);
+    roadLat.reset(hN, 0);
+    roadAlong.reset(hN, 0);
+    roadNear.reset(hN, 0);
     surf.assign(N, SURF_GRASS);
     paint.assign(N, PAINT_NONE);
     auto slopeAt = [&](int i, int j) {
@@ -907,9 +907,9 @@ void World::bakeTerrain() {
     // Carve: for each cell near a road keep the closest road sample, then blend.
     const double flat = kRoadHalfWidth + 2.0, blend = kRoadHalfWidth + 17.0;
     std::vector<float> dist(hN * hN, 1e9f), roadY(hN * hN, 0);
-    roadLat.assign(hN * hN, 0);
-    roadAlong.assign(hN * hN, 0);
-    roadNear.assign(hN * hN, 0);
+    roadLat.reset(hN, 0);
+    roadAlong.reset(hN, 0);
+    roadNear.reset(hN, 0);
     auto carve = [&](const std::vector<V3>& road, bool closed) {
         int n = (int)road.size();
         double along = 0;
@@ -1410,9 +1410,9 @@ void World::setCellSurface(int id, uint8_t surface, uint8_t paintLook) {
 
 void World::setCellWater(int id, float level) {
     if (waterY.empty()) {
-        waterY.assign(hN * hN, -1e9f);
-        flowX.assign(hN * hN, 0.0f);
-        flowZ.assign(hN * hN, 0.0f);
+        waterY.reset(hN, -1e9f);
+        flowX.reset(hN, 0.0f);
+        flowZ.reset(hN, 0.0f);
         // (Lakes defined as discs move onto the grid with it.)
         for (int k = 0; k < hN * hN; k++) {
             const V3 c = cellCenter(k);

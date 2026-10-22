@@ -343,12 +343,12 @@ void World::buildFrontier() {
         for (int j = 0; j < hN; j++) hgrid[i * hN + j] = (float)frontierHeight(X(i), X(j));
     paint.assign(N, PAINT_NONE);
     surf.assign(N, SURF_GRASS);
-    roadLat.assign(N, 0);
-    roadAlong.assign(N, 0);
-    roadNear.assign(N, 0);
-    waterY.assign(N, -1e9f);
-    flowX.assign(N, 0);
-    flowZ.assign(N, 0);
+    roadLat.reset(hN, 0);
+    roadAlong.reset(hN, 0);
+    roadNear.reset(hN, 0);
+    waterY.reset(hN, -1e9f);
+    flowX.reset(hN, 0);
+    flowZ.reset(hN, 0);
     auto at = [&](double x, double z) -> int { return cellI(x) * hN + cellI(z); };
     // Everything that mustn't get trees, rocks or bushes on it.
     std::vector<uint8_t> keep(N, 0);
@@ -708,7 +708,7 @@ void World::buildFrontier() {
             const int id = i * hN + j;
             if (std::hypot(X(i) - kEchoLake.x, X(j) - kEchoLake.z) > kEchoR * 1.25) continue;
             const double above = hgrid[id] - echoY;
-            if (above < 0) waterY[id] = std::max(waterY[id], (float)echoY), keep[id] = 1;
+            if (above < 0) waterY[id] = std::max((float)waterY[id], (float)echoY), keep[id] = 1;
             if (above > -0.8 && above < 1.2 && paint[id] == PAINT_NONE) paint[id] = PAINT_SAND, surf[id] = SURF_SAND, keep[id] = 1;
         }
     // The delta: where the Muddy spreads out and soaks into the desert, a wide mud flat
