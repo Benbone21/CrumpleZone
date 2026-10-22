@@ -1611,7 +1611,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         hellboy.wellTireRadius = 0.76;
         hellboy.wellTireWidth = 0.56;
         hellboy.rimRadius = 0.305;     // 24 in
-        hellboy.trackFront = hellboy.trackRear = 2.55;
+        hellboy.trackFront = hellboy.trackRear = 2.50;  // ~2.5 m off a front view (docs/hellboy-research.md)
         hellboy.wheelMass = 185;       // ~150 kg of tire on a two-piece beadlock wheel
         hellboy.hubMass = 110;         // planetary hub and its brake
         hellboy.axleMass = 380;        // an AxleTech 4000 housing and its carrier

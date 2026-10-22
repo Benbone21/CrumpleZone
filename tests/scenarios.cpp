@@ -156,7 +156,8 @@ VEHICLE_SCENARIO(accel, "dynamics/acceleration", "Full throttle from rest on the
     // with 5.38 axles). Side-by-side: ~4 s (Can-Am claims 0-60 mph in under 4 s for the Turbo RR).
     // (Engines run ~15% over the factory figures, see vehicles.cpp: a little quicker.)
     // Tacoma TRD Off-Road V6 automatic: 0-60 mph in 8.3 s (Edmunds), so ~8.8 s to 100.
-    static const Range expect[] = {{8.5, 11.0}, {2.4, 3.4}, {5.6, 7.2}, {8.5, 11.0}, {4.2, 6.4}, {3.3, 5.0}, {7.6, 10.0}, {10.0, 14.5}, {7.5, 11.0}};
+    static const Range expect[] = {{8.5, 11.0}, {2.4, 3.4}, {5.6, 7.2}, {8.5, 11.0}, {4.2, 6.4}, {3.3, 5.0}, {7.6, 10.0}, {10.0, 14.5}, {7.5, 11.0}, {8.0, 13.0}};
+    // (Hell Boy: ~700 hp in 6.7 t, ~21 lb/hp like a stock Cummins dually's ~19, but through 58 in tires: ~9-12 s, estimate.)
     // (Baja Bug, 2.0 L Type 1 ~115 hp in ~870 kg: ~9 s to 100, estimate; period 1600 Beetles took ~18.)
     // (1972 K5 Blazer 350 four-speed: 0-60 mph in ~11.5 s in period road tests: ~12.5 s to 100.)
     Car& c = ctx.add(spec, kLaneStartX, kLaneZ, 0);
@@ -212,7 +213,8 @@ VEHICLE_SCENARIO(braking, "dynamics/braking", "Full brakes from 100 km/h: stoppi
     // published figure, and no ABS (Can-Am's and Polaris's spec sheets list none): on pavement its
     // 32 in all-terrains lock and slide, ~0.8 g, so ~45-50 m (estimate; the earlier ~39 m assumed ABS).
     // Tacoma TRD Off-Road 124-135 ft from 60 mph (two Edmunds tests): ~40.5-44 m from 100.
-    static const Range expect[] = {{38, 49}, {27, 35}, {39, 50}, {40, 52}, {40, 56}, {38, 52}, {39, 50}, {45, 62}, {44, 60}};
+    static const Range expect[] = {{38, 49}, {27, 35}, {39, 50}, {40, 52}, {40, 56}, {38, 52}, {39, 50}, {45, 62}, {44, 60}, {52, 75}};
+    // (Hell Boy: 6.7 t on 58 in mud tires, no ABS: they lock and slide at ~0.55-0.75 g, ~170-240 ft from 60 mph, estimate.)
     // (Baja Bug: drums all round, no ABS, knobby all-terrains: ~150-190 ft from 60 mph, estimate.)
     // (Blazer: front discs, rear drums, no ABS, tall tread: ~160-180 ft from 60 mph in period tests.)
     const Range& r = expect[vehicleIndex(spec)];
@@ -228,7 +230,8 @@ VEHICLE_SCENARIO(skidpad, "dynamics/skidpad", "Holds a 30 m circle, speeding up 
     // EF Civic on period-size street tires: ~0.8 g (estimate), Jesko well over 1.1 g, Bronco ~0.70 g, 2002 4Runner ~0.68 g.
     // Rock buggy ~0.6 g (tall, soft mud tires on 40s), side-by-side ~0.8 g (estimate).
     // Tacoma TRD Off-Road on all-terrains ~0.70 g (estimate: mid-size off-road pickups test 0.68-0.73).
-    static const Range expect[] = {{0.75, 0.90}, {1.08, 1.45}, {0.62, 0.78}, {0.60, 0.76}, {0.50, 0.72}, {0.70, 0.92}, {0.62, 0.78}, {0.52, 0.70}, {0.58, 0.78}};
+    static const Range expect[] = {{0.75, 0.90}, {1.08, 1.45}, {0.62, 0.78}, {0.60, 0.76}, {0.50, 0.72}, {0.70, 0.92}, {0.62, 0.78}, {0.52, 0.70}, {0.58, 0.78}, {0.48, 0.68}};
+    // (Hell Boy: a CG ~1 m up on soft 58 in mud tires: ~0.55-0.6 g, estimate.)
     // (Baja Bug: light, on all-terrains, soft and lifted: ~0.65-0.7 g, estimate.)
     // (Blazer: tall, soft and on 1970s truck tires: ~0.6 g, estimate.)
     const double R = 30;
@@ -322,7 +325,9 @@ VEHICLE_SCENARIO(turningCircle, "dynamics/turning-circle", "Full lock at a walk:
     // isn't published (wide front tires, little lock: ~11-12 m, estimate).
     // Buggy and side-by-side: not published for these builds (estimates: the buggy's steering
     // front axle on 40s turns about like a full-size truck; a Maverick X3 class UTV ~10-11 m).
-    static const Range expect[] = {{9.3, 10.8}, {10.0, 12.5}, {10.5, 12.5}, {11.0, 12.4}, {10.0, 15.0}, {8.5, 13.0}, {11.8, 13.5}, {10.5, 13.0}, {10.0, 12.0}};
+    static const Range expect[] = {{9.3, 10.8}, {10.0, 12.5}, {10.5, 12.5}, {11.0, 12.4}, {10.0, 15.0}, {8.5, 13.0}, {11.8, 13.5}, {10.5, 13.0}, {10.0, 12.0}, {16.0, 21.0}};
+    // (Hell Boy on its front axle alone, the rear steer not modelled: a 5.3 m wheelbase at ~35 degrees of lock is ~18.5 m;
+    // a stock 4x4 Ram 5500 crew cab on its shorter wheelbase is ~17 m curb to curb. Estimate.)
     // (Beetle: 11.0 m curb to curb (VW, 1969); the wider wheels take a little lock.)
     // (Blazer 4x4: ~37 ft (11.3 m) curb to curb, GM's 1972 truck data book figure for the 104 in wheelbase.)
     Car& c = ctx.add(spec, -100, -50, 0);
@@ -529,7 +534,8 @@ VEHICLE_SCENARIO(torsion, "structure/torsion", "Twisting rig in free fall: torsi
     // Real cars: roughly 10-35 kNm/deg (older or open bodies lower, modern unibodies higher).
     // (Unibody Civic, carbon tub Jesko, body-on-frame Bronco and 4Runner, tube chassis and cage for the buggy and UTV.)
     // (The Tacoma's cab and bed are separate boxes on a long, partly open frame: softer.)
-    static const Range expect[] = {{12, 55}, {15, 80}, {6, 36}, {6, 36}, {15, 60}, {6, 30}, {4, 30}, {3, 30}, {4, 40}};  // (Blazer: an open C-channel frame and an open-backed tub)
+    static const Range expect[] = {{12, 55}, {15, 80}, {6, 36}, {6, 36}, {15, 60}, {6, 30}, {4, 30}, {3, 30}, {4, 40}, {4, 40}};  // (Blazer: an open C-channel frame and an open-backed tub)
+    // (Hell Boy: a boxed, plated ladder frame under a separate cab and wrecker body: like the trucks, estimate.)
     Car& c = rigInAir(ctx, spec);
     Section f = sectionAt(c, axleX(c, true)), r = sectionAt(c, axleX(c, false));
     auto roll = [&](const Section& s) {
@@ -750,6 +756,10 @@ VEHICLE_SCENARIO(clearanceAngles, "structure/clearance", "Ground clearance and a
         // Baja Bug: ~14 in (0.36 m) under the front and 13.75 in under the back (a SCORE Class 11 car,
         // thedrive.com); the cut nose and tail give big angles (estimates: ~45 / ~40 / ~28 degrees).
         {{0.25, 0.40}, {35, 60}, {30, 55}, {22, 40}},
+        // Hell Boy on 58s: the planetary axles' diffs ~0.45-0.55 m up (hubs at 0.71, estimate); the tires are its
+        // front-most point, so nothing hangs ahead of them; spades and bumper ~0.9 m behind the rear axle ~0.9 m up,
+        // a 0.7 m belly on a 5.3 m wheelbase (measured off a side profile, docs/hellboy-research.md; angles estimates).
+        {{0.42, 0.60}, {60, 90}, {40, 65}, {25, 40}},
     };
     Car& c = ctx.add(spec, -100, -50, 0);
     ctx.focus(c);
@@ -797,7 +807,8 @@ VEHICLE_SCENARIO(tiltTable, "structure/tilt-table", "Tipped sideways on a tilt t
     // NHTSA 3 stars (1.13-1.24 on the SSF-only scale; the rating now adds a dynamic test);
     // 2001 4Runner 4x4 2 stars (1.04-1.12) stock, and this one sits 2 in higher on 35s with a
     // roof basket; Tacoma 4x4 Double Cab 3 stars.
-    static const Range ssfRange[] = {{1.30, 1.55}, {1.60, 2.10}, {1.08, 1.24}, {0.92, 1.10}, {1.00, 1.60}, {1.00, 1.55}, {1.05, 1.24}, {0.95, 1.18}, {1.00, 1.30}};  // (buggy, UTV: estimates from track and CG)
+    static const Range ssfRange[] = {{1.30, 1.55}, {1.60, 2.10}, {1.08, 1.24}, {0.92, 1.10}, {1.00, 1.60}, {1.00, 1.55}, {1.05, 1.24}, {0.95, 1.18}, {1.00, 1.30}, {1.08, 1.32}};  // (buggy, UTV: estimates from track and CG)
+    // (Hell Boy: a 2.55 m track and a CG ~0.95-1.15 m up, estimate.)
     VehicleSpec deck = spec;
     deck.tireGrip = 2.5;  // a tilt table's grippy deck: the tires don't slide off it first
     Car& c = ctx.add(deck, -100, -50, 0);
@@ -854,6 +865,7 @@ VEHICLE_SCENARIO(weight, "structure/weight", "Curb weight, front/rear split and 
         {{1990, 2110}, {53, 58}, {0.66, 0.85}},      // Tacoma TRD Off-Road Double Cab: 2,016-2,059 kg, ~55/45 empty
         {{1730, 1900}, {51, 59}, {0.68, 0.88}},      // 1972 K5 Blazer 350 4x4 with the top: ~4,000 lb, ~55/45 (estimate)
         {{820, 920}, {38, 45}, {0.55, 0.74}},        // Baja Bug: ~870 kg with the cage (stock 1969 Beetle ~820 kg), stock Beetles ~42/58, the Baja a little further back (estimate), lifted
+        {{6500, 6950}, {44, 56}, {0.90, 1.15}},     // Hell Boy: 14.8 kip (6,713 kg) hanging from Rick's rotator (Mar 2024); the boom's weight behind a Cummins up front, ~50/50; 58 in tires, estimate
     };
     Car& c = ctx.add(spec, kLaneStartX, kLaneZ, 0);
     ctx.focus(c);
