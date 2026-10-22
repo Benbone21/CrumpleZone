@@ -83,6 +83,48 @@ int pickedOf(const char* id) {
 
 double clampTo(double v, double lo, double hi) { return v < lo ? lo : v > hi ? hi : v; }
 
+// U-joint centres of the models' yokes in their own space (parts.cpp: yoke(b, x0, ...) puts its cross pins 6.8 cm out from x0).
+// Per design (variant): gearbox_manual {alu, iron}, gearbox_auto {classic, modern}, transfer_case {gear, chain}, differential {axle, bare}.
+constexpr double kYokePin = 0.068;
+bool yokeLocal(const std::string& id, int variant, bool front, V3& out) {
+    const mk::ModelDef* d = mk::findModel(id);
+    const int v = variant >= 0 ? variant : d ? mk::pickedVariant(*d) : 0;
+    const int k = v == 1 ? 1 : 0;
+    if (id == "gearbox_manual") { out = V3((k ? -0.5 : -0.41) - kYokePin, 0, 0); return !front; }
+    if (id == "gearbox_auto") { out = V3((k ? -0.43 : -0.41) - kYokePin, 0, 0); return !front; }
+    if (id == "differential") { out = V3((k ? -0.37 : -0.31) - kYokePin, 0, 0); return !front; }
+    if (id == "transfer_case") {
+        out = front ? (k ? V3(0.28 + kYokePin, -0.085, 0.085) : V3(0.28 + kYokePin, -0.1, -0.09)) : V3((k ? -0.37 : -0.3) - kYokePin, 0, 0);
+        return true;
+    }
+    return false;
+}
+// A drive shaft model's own joint centres along its X (repair.cpp driveShaft: the cross at -0.45 and +0.45, the model shifted by -0.04, -0.03 for the double cardan, whose far joint is at 0.445).
+void shaftLocal(int variant, const mk::ModelDef* d, double& lo, double& hi) {
+    const int v = variant >= 0 ? variant : d ? mk::pickedVariant(*d) : 0;
+    lo = v == 2 ? -0.48 : -0.49;
+    hi = v == 2 ? 0.415 : 0.41;
+}
+
+}  // namespace
+
+V3 partYoke(const Placed& pl, bool front) {
+    V3 l;
+    if (!yokeLocal(pl.id, pl.variant, front, l)) return pl.p;
+    return pl.p + pl.ax[0] * (l.x * pl.scale.x) + pl.ax[1] * (l.y * pl.scale.y) + pl.ax[2] * (l.z * pl.scale.z);
+}
+
+bool driveShaftJoints(const Placed& pl, V3& a, V3& e) {
+    if (pl.id != "drive_shaft") return false;
+    double lo, hi;
+    shaftLocal(pl.variant, mk::findModel("drive_shaft"), lo, hi);
+    a = pl.p + pl.ax[0] * (lo * pl.scale.x);
+    e = pl.p + pl.ax[0] * (hi * pl.scale.x);
+    return true;
+}
+
+namespace {
+
 struct Maker {
     const Car& c;
     const VehicleSpec& vs;
@@ -191,6 +233,13 @@ struct Maker {
         V3 scale;
         V3 rear;              // the middle of the face the gearbox bolts to
     } blk;
+    // Where the drawn yokes are (the prop shafts end on these, not on the physics nodes they only roughly follow).
+    struct Yokes {
+        bool rear = false, front = false;
+        V3 rearAt, frontAt;        // the last unit's (transfer case or gearbox) rear output, and the transfer case's front output
+    } yk;
+    std::vector<V3> pinion;        // each axle's pinion yoke, as drawn
+    std::vector<char> hasPinion;
 
     void engine() {
         if (c.engineNodes.size() < 12) return;
@@ -256,6 +305,7 @@ struct Maker {
         const V3 up = blk.Y;
         part(PK_GEARBOX, PS_OK, N(automatic ? "AUTOMATIC GEARBOX" : "MANUAL GEARBOX"), -1, -1, -1, -1, N(vs.gearboxName));
         put(gb, blk.rear + D * (bell * sg - 0.02), -D, up, V3(sg, cs, cs), -1, kNoLever);
+        yk.rearAt = partYoke(out.back(), false), yk.rear = true;
         if (!xfer) return;
         const char* tc = "transfer_case";
         const Bnd t = bounds(tc);
@@ -263,10 +313,13 @@ struct Maker {
         const double xin = 0.2;
         const double st = clampTo((total - lg + 0.04) / (xin - t.lo.x), 0.3, 1.1), ts = clampTo(cs * 0.9, 0.7, 1.0);
         put(tc, blk.rear + D * (lg - 0.02 + xin * st), -D, up, V3(st, ts, ts), -1, kNoLever);
+        yk.rearAt = partYoke(out.back(), false), yk.frontAt = partYoke(out.back(), true), yk.front = true;
     }
 
     // One axle's differential, drive flange stubs out to each side.
     void diffs() {
+        pinion.assign(c.axles.size(), V3());
+        hasPinion.assign(c.axles.size(), 0);
         for (const Axle& ax : c.axles) {
             if (ax.wheel[0] < 0 || ax.wheel[1] < 0) continue;
             const Wheel &wl = c.wheels[ax.wheel[0]], &wr = c.wheels[ax.wheel[1]];
@@ -287,6 +340,7 @@ struct Maker {
             Z = norm(Z - X * dot(Z, X));
             part(PK_DIFF, PS_OK, tags ? std::string(ax.front ? "FRONT" : "REAR") + " DIFFERENTIAL" : std::string(), -1, (int)(&ax - &c.axles[0]));
             put("differential", at, X, cross(Z, X), V3(1, 1, 1), 0);
+            pinion[&ax - &c.axles[0]] = partYoke(out.back(), false), hasPinion[&ax - &c.axles[0]] = 1;
         }
     }
 
@@ -300,12 +354,24 @@ struct Maker {
             const Axle& ax = c.axles[ai];
             if (ax.propShaft < 0) continue;
             const Beam& b = c.beams[ax.propShaft];
-            const V3 a = P(b.a), e = P(b.b);
-            const Bnd s = bounds("drive_shaft");
+            V3 a = P(b.a), e = P(b.b);
+            // Joint to joint, from the drawn output yoke to the drawn pinion yoke (the beam's nodes are only where the physics
+            // holds them: they sit off the models, and a shaft drawn between them floats).
+            const bool fromYoke = ax.front ? yk.front : yk.rear;
+            if (fromYoke && ai < (int)hasPinion.size() && hasPinion[ai]) a = ax.front ? yk.frontAt : yk.rearAt, e = pinion[ai];
             const double L = len(e - a);
             if (L < 0.1) continue;
+            double jl, jh;
+            shaftLocal(-1, mk::findModel("drive_shaft"), jl, jh);
             part(PK_PROP_SHAFT, b.broken ? PS_BROKEN : PS_OK, tags ? std::string(ax.front ? "FRONT" : "REAR") + " DRIVE SHAFT" : std::string(), -1, ai, ax.propShaft);
-            Placed full = make("drive_shaft", (a + e) * 0.5, e - a, fr.up, V3(L / s.size().x, 0.75 * sz, 0.75 * sz));
+            Placed full;
+            if (fromYoke && ai < (int)hasPinion.size() && hasPinion[ai]) {
+                const double sx = L / (jh - jl);
+                full = make("drive_shaft", a - norm(e - a) * (jl * sx), e - a, fr.up, V3(sx, 0.75 * sz, 0.75 * sz));
+            } else {  // (no yokes drawn to meet: the model's whole length between the nodes)
+                const Bnd s = bounds("drive_shaft");
+                full = make("drive_shaft", (a + e) * 0.5, e - a, fr.up, V3(L / s.size().x, 0.75 * sz, 0.75 * sz));
+            }
             if (b.broken) snap(full, "drive_shaft", a, e, 0.42 + 0.16 * luck(ax.propShaft, 1), 0.6, 0.0445 * 0.75 * sz);
             else add(std::move(full));
         }

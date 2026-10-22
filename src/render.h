@@ -204,6 +204,7 @@ private:
         uint64_t modelsSig = 0;      // which parts they were merged from
         uint64_t modelsShape = 0;    // ... and which models (not their params)
         std::unordered_map<uint64_t, char> shutCache;  // per part (model, params, place in the body): whether it is shut inside the skin
+        std::unordered_map<uint64_t, char> shutSeen;  // parts that have been seen outside the skin: kept drawn
         size_t shutSkin = 0;
         bool shutIntact = false;
         int modelsCount = 0, modelsBase = 0, modelsParts = 0;  // vertices; this frame: first transform, how many (0: none)
