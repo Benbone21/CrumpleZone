@@ -28,6 +28,8 @@
 #include <cstdlib>
 #include <string>
 
+#include "loadprof.h"
+#include "parallel.h"
 #include "world.h"
 
 namespace {
@@ -248,6 +250,7 @@ const Poly& wreckTrail() {
 
 // ================================================================================================
 void World::buildBackcountry() {
+    loadprof::Steps steps("bc.start");
     map = MAP_BACKCOUNTRY;
     crashProps = false;
     hN = (int)(2 * half / kRes) + 1;
@@ -256,9 +259,10 @@ void World::buildBackcountry() {
     auto cellI = [&](double v) { return std::min(std::max((int)std::lround((v + half) / kRes), 0), hN - 1); };
     auto at = [&](double x, double z) -> int { return cellI(x) * hN + cellI(z); };
 
+    steps.next("bc.the land");
     // ---- The land -----------------------------------------------------------------------------
     hgrid.resize(N);
-    for (int i = 0; i < hN; i++)
+    parallelRows(hN, [&](int i) {
         for (int j = 0; j < hN; j++) {
             const double x = X(i), z = X(j);
             const double d = z - riverZ(x);
@@ -282,6 +286,7 @@ void World::buildBackcountry() {
             h += (ex * ex + ez * ez) * 0.02;
             hgrid[i * hN + j] = (float)h;
         }
+    });
     paint.assign(N, PAINT_NONE);
     surf.assign(N, SURF_GRASS);
     roadLat.reset(hN, 0);
@@ -412,6 +417,7 @@ void World::buildBackcountry() {
     const Poly &mud = mudTrail(), &creek = creekTrail(), &ridge = ridgeTrail(), &rroad = ridgeRoadTrail(), &hill = hillTrail(), &wash = washTrail(),
                &shelf = shelfTrail(), &pass = passTrail(), &tower = towerTrail(), &cabinT = cabinTrail(), &rivr = riverLine(), &wreckT = wreckTrail(), &cany = canyon();
 
+    steps.next("bc.landforms hills the");
     // ---- Landforms: hills, the dune bowl --------------------------------------------------------
     for (int i = cellI(kHill.x - 190); i <= cellI(kHill.x + 190); i++)  // Heartbreak Hill
         for (int j = cellI(kHill.z - 190); j <= cellI(kHill.z + 190); j++)
@@ -441,6 +447,7 @@ void World::buildBackcountry() {
             hgrid[id] = (float)(floorY + dunes * smoothstep(90, 60, d));
         }
 
+    steps.next("bc.camps level pads");
     // ---- Camps: level pads ---------------------------------------------------------------------
     auto padHeight = [&](const V3& c) {
         double sum = 0;
@@ -470,6 +477,7 @@ void World::buildBackcountry() {
         return 0.0;
     };
 
+    steps.next("bc.rock steps across");
     // ---- Rock steps across a trail's bed. A rise (h > 0): the profile steps up over 1.5 m and a rock slab
     // stands on the lip, so the face is square. A drop (h < 0): the profile falls over half a metre and
     // the slab holds the level above it ---------------------------------------------------------------
@@ -498,6 +506,7 @@ void World::buildBackcountry() {
     auto gravelTread = [&](int id, double, double) { paint[id] = PAINT_GRAVEL, surf[id] = SURF_GRAVEL; };
     auto sandTread = [&](int id, double, double) { paint[id] = PAINT_SAND, surf[id] = SURF_SAND; };
 
+    steps.next("bc.the mud run");
     // ---- THE MUD RUN ---------------------------------------------------------------------------
     // A forest track with four bog holes dug into it, ruts worn along it and its mud stretches
     // painted.
@@ -542,6 +551,7 @@ void World::buildBackcountry() {
             hgrid[id] += (float)((yAt(yc, k) + off(std::fabs(lat)) - hgrid[id]) * w);
         });
     };
+    steps.next("bc.creek crawl");
     // ---- CREEK CRAWL ---------------------------------------------------------------------------
     // A gully climbing the hillside from the trailhead to the mine, ledge after ledge.
     std::vector<double> creekY(creek.size());
@@ -569,6 +579,7 @@ void World::buildBackcountry() {
             }
         levelDisc(kMine + V3(-14, 0, -3), 4.5, mineY, 3, PAINT_GRAVEL, SURF_GRAVEL);
     }
+    steps.next("bc.slickrock ridge");
     // ---- SLICKROCK RIDGE -------------------------------------------------------------------------
     const int ridgeN = (int)ridge.size();
     int ridgeDown = ridgeN - 1;  // where it comes down onto the flood plain
@@ -606,6 +617,7 @@ void World::buildBackcountry() {
             keep[id] = 1;
         });
     }
+    steps.next("bc.the rest of");
     // ---- The rest of the network ---------------------------------------------------------------
     layTrail(rroad, groundProfile(rroad, 10, 0.1, {{0, padY(kSawmill)}, {(int)rroad.size() - 1, padY(kFarSide)}}), 3.2, 14, dirtTread, noTilt);
     {
@@ -630,6 +642,7 @@ void World::buildBackcountry() {
     }
     layTrail(tower, groundProfile(tower, 10, 0.15, {{0, padY(passHutAt())}, {(int)tower.size() - 1, height(tower.back().x, tower.back().z)}}), 3.0, 18, dirtTread, noTilt);
     layTrail(cabinT, groundProfile(cabinT, 6, 0.12, {{0, height(cabinT[0].x, cabinT[0].z)}}), 2.6, 12, dirtTread, noTilt);
+    steps.next("bc.shelf road");
     // ---- SHELF ROAD ----------------------------------------------------------------------------
     std::vector<double> shelfY = groundProfile(shelf, 8, 0.13, {{0, padY(kFarSide)}});
     layTrail(shelf, shelfY, 2.6, 2.5, dirtTread, noTilt);
@@ -661,6 +674,7 @@ void World::buildBackcountry() {
     // The camps, flat again where the trails ran into them.
     for (const Pad& p : pads) levelDisc(p.c, p.r + 3, p.y, 9, PAINT_PAD, SURF_PAVED, true);
 
+    steps.next("bc.elk river a");
     // ---- Elk River: a carved channel with water on the grid and its flow --------------------------
     // Water level: the land along the bank, smoothed, always falling toward the mouth (west).
     // Two crossings: the FORD (shallow gravel) and the DEEP CROSSING (about a metre of water).
@@ -727,13 +741,15 @@ void World::buildBackcountry() {
         }
     }
 
+    steps.next("bc.paint the land");
     // ---- Paint the land: bare rock on the steep and the knobs, scree, snow in the north ----------------
     auto slopeAtCell = [&](int i, int j) {
         const double gx = (hgrid[(i + 1) * hN + j] - hgrid[(i - 1) * hN + j]) / (2 * kRes), gz = (hgrid[i * hN + j + 1] - hgrid[i * hN + j - 1]) / (2 * kRes);
         return std::hypot(gx, gz);
     };
     auto snowline = [&](double x, double z) { return 50 + 16 * (fbmNoise(x * 0.02 + 3.0, z * 0.02 - 8.0, 3) - 0.5); };
-    for (int i = 1; i < hN - 1; i++)
+    parallelRows(hN - 2, [&](int i0) {  // (each cell paints only itself)
+        const int i = i0 + 1;
         for (int j = 1; j < hN - 1; j++) {
             const int id = i * hN + j;
             const double x = X(i), z = X(j), h = hgrid[id];
@@ -749,6 +765,7 @@ void World::buildBackcountry() {
             else if (slope > 0.85 || (h > 95 && north > 0.5)) surf[id] = SURF_ROCK;
             else if (h > 42 && slope > 0.55 && valueNoise(x * 0.04, z * 0.04) > 0.6) paint[id] = PAINT_SCREE, surf[id] = SURF_SCREE;
         }
+    });
 
     // The wash-down bay at the trailhead (wet pavement), black ice on the pass road, a frozen pond by
     // the hut.
@@ -769,6 +786,7 @@ void World::buildBackcountry() {
         levelDisc(c, 11, height(c.x, c.z) - 0.3, 7, PAINT_ICE, SURF_ICE);
     }
 
+    steps.next("bc.water the creek");
     // ---- Water: the creek down the crawl, the canyon's stream --------------------------------------
     auto stream = [&](const Poly& pts, double k0, double k1, double halfW, double depth, double speed, bool downToStart) {
         scanNear(pts, halfW + 1, [&](int id, double d, double k, double) {
@@ -785,6 +803,7 @@ void World::buildBackcountry() {
     stream(cany, 20, (double)cany.size() - 40, 1.6, 0.14, 1.0, true);
     stream(wreckT, 20, (double)wreckT.size() - 1, 1.3, 0.12, 0.9, true);
 
+    steps.next("bc.boulders ledges and");
     // ---- Boulders, ledges and the like on the trails ---------------------------------------------
     uint32_t seedCounter = 40000;
     auto boulder = [&](const V3& p, double r, double top, float tint = 1.0f) {
@@ -881,6 +900,7 @@ void World::buildBackcountry() {
             logs.push_back({a, c, r});
         }
 
+    steps.next("bc.props signs cairns");
     // ---- Props: signs, cairns, the camps' cabins and tables, the mine, the tower, the cabin, the wreck ---------
     auto cairn = [&](const V3& p) { fixtures.push_back({PROP_CAIRN, V3(p.x, height(p.x, p.z), p.z), V3(), between(0, 6.28)}); };
     auto marker = [&](const V3& p) { fixtures.push_back({PROP_MARKER, V3(p.x, height(p.x, p.z), p.z), V3(), 0}); };
@@ -1108,6 +1128,7 @@ void World::buildBackcountry() {
     // Dune bowl: a post at the ring trail's start.
     marker(kDunes + V3(-kDuneR - 3, 0, 22));
 
+    steps.next("bc.boulders scattered over");
     // ---- Boulders scattered over the hills ------------------------------------------------------------
     for (int attempt = 0; attempt < 40000 && rocks.size() < 900; attempt++) {
         const double x = (rnd() * 2 - 1) * 515, z = (rnd() * 2 - 1) * 515;
@@ -1123,6 +1144,7 @@ void World::buildBackcountry() {
         addRock(x, z, V3(r, r * flat, r * between(0.7, 1.0)), r * flat * between(0.5, 1.0), 20000 + attempt, (float)between(0.85, 1.1));
     }
 
+    steps.next("bc.trees broadleaf along");
     // ---- Trees: broadleaf along the river and in the lowlands, pine through the hills up to the
     // treeline, the odd dead snag; meadows between ---------------------------------------------------
     for (int attempt = 0; attempt < 220000 && trees.size() < 3400; attempt++) {
@@ -1191,6 +1213,7 @@ void World::buildBackcountry() {
         bushes.push_back(growBush(V3(x, hgrid[id], z), habitat, forest > 0.38, plantRoll(x, z, 44), (float)(0.75 + plantRoll(x, z, 45) * 0.45)));
     }
 
+    steps.next("bc.stations start");
     // ---- Stations, start ----------------------------------------------------------------------
     for (const Pad& p : pads) addStation(V3(p.c.x, p.y, p.c.z), p.yaw, p.name);
     spawn = V3(kTrailhead.x - 8, pads[0].y, kTrailhead.z + 7);

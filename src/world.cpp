@@ -1,4 +1,5 @@
 #include "thread_cache.h"
+#include "parallel.h"
 #include "world.h"
 #include "laptimer.h"
 #include "loadprof.h"
@@ -692,7 +693,7 @@ void World::buildWilds() {
     static const double kHillAmp[WILDS_COUNT] = {1.0, 0.5, 1.0, 0.9, 0.45, 1.4};
     const double amp = kHillAmp[kind];
     hgrid.resize(N);
-    for (int i = 0; i < hN; i++)
+    parallelRows(hN, [&](int i) {
         for (int j = 0; j < hN; j++) {
             const double x = X(i), z = X(j);
             const double hills = 9.0 * std::sin(x * 0.012 + 0.7) * std::cos(z * 0.010 - 0.3) + 4.0 * std::sin(x * 0.027 + z * 0.021 + 1.3) +
@@ -713,6 +714,7 @@ void World::buildWilds() {
             h += 0.0045 * d * d + 0.02 * d;
             hgrid[i * hN + j] = (float)h;
         }
+    });
     roadLat.reset(hN, 0);
     roadAlong.reset(hN, 0);
     roadNear.reset(hN, 0);
@@ -856,8 +858,9 @@ double World::baseHeight(double x, double z) const {
 void World::bakeTerrain() {
     hN = (int)(2 * half / kRes) + 1;
     hgrid.resize(hN * hN);
-    for (int i = 0; i < hN; i++)
+    parallelRows(hN, [&](int i) {
         for (int j = 0; j < hN; j++) hgrid[i * hN + j] = (float)baseHeight(-half + i * kRes, -half + j * kRes);
+    });
 
     // Roads: a loop through the hills and a link road from the north side of the pad.
     const std::vector<V3> loopPts = {

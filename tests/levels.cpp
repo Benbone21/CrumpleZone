@@ -320,3 +320,14 @@ SCENARIO(worldHalfSize, "world/halfsize", "A map built bigger than the default r
     ctx.check("and lands there", std::fabs(w.height(1020, -1020) - 7.0) < 1e-3, std::to_string(w.height(1020, -1020)));
     World::halfSizeOverride = 0;
 }
+
+#include "../src/parallel.h"
+SCENARIO(worldBakeThreads, "world/bake-threads", "A map's build comes out the same on one thread as on many (the land is filled and painted in parallel)") {
+    for (int map : {MAP_FRONTIER, MAP_BACKCOUNTRY, MAP_MOUNTAIN, MAP_PROVING_GROUND}) {
+        parallelRowsCap = 1;
+        const uint64_t one = World(map).landHash();
+        parallelRowsCap = 0;
+        const uint64_t many = World(map).landHash();
+        ctx.check(mapName(map), one == many);
+    }
+}

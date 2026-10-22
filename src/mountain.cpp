@@ -15,6 +15,7 @@
 #include <cmath>
 #include <string>
 
+#include "parallel.h"
 #include "world.h"
 
 namespace {
@@ -142,8 +143,9 @@ void World::buildMountain() {
     hN = (int)(2 * half / kRes) + 1;
     const int N = hN * hN;
     hgrid.resize(N);
-    for (int i = 0; i < hN; i++)
+    parallelRows(hN, [&](int i) {
         for (int j = 0; j < hN; j++) hgrid[i * hN + j] = (float)mountainHeight(-half + i * kRes, -half + j * kRes);
+    });
     auto X = [&](int i) { return -half + i * kRes; };
     auto cellI = [&](double v) { return std::min(std::max((int)std::lround((v + half) / kRes), 0), hN - 1); };
 

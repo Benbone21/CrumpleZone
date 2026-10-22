@@ -12,6 +12,7 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include "../src/loadprof.h"
 #include "../src/props.h"
 #include "../src/world.h"
 
@@ -71,6 +72,7 @@ int main(int argc, char** argv) {
                     (unsigned long long)w->landHash(), (unsigned long long)layerHash(*w));
         std::fflush(stdout);
         delete w;
+        loadprof::report(mapName(map));  // (CZ_LOADPROF=1: the build's stages)
     }
     return 0;
 }

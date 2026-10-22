@@ -28,6 +28,8 @@
 #include <cstdlib>
 #include <string>
 
+#include "loadprof.h"
+#include "parallel.h"
 #include "world.h"
 
 namespace {
@@ -332,6 +334,7 @@ double World::frontierHeight(double x, double z) const {
 }
 
 void World::buildFrontier() {
+    loadprof::Steps steps("fr.start");
     map = MAP_FRONTIER;
     crashProps = false;
     hN = (int)(2 * half / kRes) + 1;
@@ -339,8 +342,9 @@ void World::buildFrontier() {
     auto X = [&](int i) { return -half + i * kRes; };
     auto cellI = [&](double v) { return std::min(std::max((int)std::lround((v + half) / kRes), 0), hN - 1); };
     hgrid.resize(N);
-    for (int i = 0; i < hN; i++)
+    parallelRows(hN, [&](int i) {
         for (int j = 0; j < hN; j++) hgrid[i * hN + j] = (float)frontierHeight(X(i), X(j));
+    });
     paint.assign(N, PAINT_NONE);
     surf.assign(N, SURF_GRASS);
     roadLat.reset(hN, 0);
@@ -353,6 +357,7 @@ void World::buildFrontier() {
     // Everything that mustn't get trees, rocks or bushes on it.
     std::vector<uint8_t> keep(N, 0);
 
+    steps.next("fr.paths the circuit");
     // ---- Paths: the circuit, the rally stage, the summit trail ----------------------------
     std::vector<double> trackBank;
     const std::vector<V3> track = trackPoints(nullptr, &trackBank), rally = splinePoints(kRallyCtl, true), trail = summitTrail(*this);
@@ -439,6 +444,7 @@ void World::buildFrontier() {
         if (edge[id] < 4) keep[id] = 1;
     }
 
+    steps.next("fr.level pads the");
     // ---- Level pads: the paddock (pits, the shop), the outposts ----------------------------
     auto levelRect = [&](double x0, double x1, double z0, double z1, double y, double blend, uint8_t pnt, uint8_t sf) {
         for (int i = cellI(x0 - blend); i <= cellI(x1 + blend); i++)
@@ -465,6 +471,7 @@ void World::buildFrontier() {
     pad(lakeside, 9);
     pad(hut, 9);
 
+    steps.next("fr.rock staircases up");
     // ---- Rock: staircases up walls (ledge boxes on a ramp carved into the slope) -------------
     // From `start` heading `yaw` (0 = east, 90 = north... the car convention: forward
     // (cos, -sin)), climbing `steps` ledges of `riser` over `tread` each, `width` wide, to
@@ -598,6 +605,7 @@ void World::buildFrontier() {
         gWallTop = look;
         gWallFrom = wallFrom;
     }
+    steps.next("fr.desert slickrock bowl");
     // ---- Desert: slickrock bowl, dry wash ----------------------------------------------------
     for (int i = cellI(kBowl.x - 36); i <= cellI(kBowl.x + 36); i++)
         for (int j = cellI(kBowl.z - 36); j <= cellI(kBowl.z + 36); j++) {
@@ -608,6 +616,7 @@ void World::buildFrontier() {
             paint[id] = PAINT_REDROCK, surf[id] = SURF_ROCK, keep[id] = 1;
         }
 
+    steps.next("fr.lakes");
     // ---- Lakes ---------------------------------------------------------------------------
     addLake(kEchoLake.x, kEchoLake.z, kEchoR, 3.0);
     const double echoY = waters.back().y;
@@ -624,6 +633,7 @@ void World::buildFrontier() {
             }
     }
 
+    steps.next("fr.rivers carved channels");
     // ---- Rivers: carved channels, water on the grid with its flow -----------------------------
     auto river = [&](const std::vector<V3>& ctl, double half, double deep, double speed, double mouthY, bool muddy) {
         std::vector<V3> pts = splinePoints(ctl, false);
@@ -738,6 +748,7 @@ void World::buildFrontier() {
             if (d < 21) surf[id] = SURF_MUD, paint[id] = PAINT_MUD, keep[id] = 1;
         }
 
+    steps.next("fr.trails laid to");
     // ---- Trails laid to a set profile: Cold Creek road, the bayou's mud trail ----------------
     // A profile along a polyline (sampled every metre): the land under it, smoothed over
     // `window` metres either side, then no steeper than `maxGrade` (cut and fill). The first
@@ -800,6 +811,7 @@ void World::buildFrontier() {
         }
     };
 
+    steps.next("fr.cold creek the");
     // ---- Cold Creek: the valley, its frozen creek and pond, the snow road ----------------------
     const std::vector<V3> cold = resample(splinePoints(kColdCtl, false), 1.0);
     const double coldL = (double)cold.size() - 1;
@@ -877,6 +889,7 @@ void World::buildFrontier() {
         levelRect(kLodge.x - 9, kLodge.x + 22, kLodge.z - 8, kLodge.z + 8, height(road.back().x, road.back().z), 8, PAINT_SNOW, SURF_SNOW);
     }
 
+    steps.next("fr.blackwater bayou the");
     // ---- Blackwater Bayou: the swamp, its mud trail and MUD HILL --------------------------------
     // The swamp floor: hummocks and mud flats round the backwater's level, a third of it under
     // a hand's depth or two of still water.
@@ -993,8 +1006,10 @@ void World::buildFrontier() {
             if (flank || hgrid[id] < kBayouY + 0.42 + 0.4 * (valueNoise(x * 0.17, z * 0.17) - 0.5)) paint[id] = PAINT_MUD, surf[id] = SURF_MUD;
         }
 
+    steps.next("fr.paint the land");
     // ---- Paint the land: desert, rock, snow, scree ----------------------------------------
-    for (int i = 1; i < hN - 1; i++)
+    parallelRows(hN - 2, [&](int i0) {  // (each cell paints only itself)
+        const int i = i0 + 1;
         for (int j = 1; j < hN - 1; j++) {
             const int id = i * hN + j;
             const double x = X(i), z = X(j);
@@ -1018,6 +1033,7 @@ void World::buildFrontier() {
             else if (slope > 0.85 || h > 165) surf[id] = SURF_ROCK;
             else if (h > 95 && slope > 0.45 && valueNoise(x * 0.04, z * 0.04) > 0.55) paint[id] = PAINT_SCREE, surf[id] = SURF_SCREE;
         }
+    });
     // Cold Creek under snow: everything but the cliffs, the ice and the lodge's yard, the road
     // too (packed snow). The snowline at the valley mouth is ragged.
     for (int i = cellI(330); i <= cellI(530); i++)
@@ -1057,6 +1073,7 @@ void World::buildFrontier() {
                         paint[i * hN + j] = PAINT_ICE, surf[i * hN + j] = SURF_ICE;
         }
 
+    steps.next("fr.repair shops the");
     // ---- Repair shops, the start ---------------------------------------------------------------
     addStation(V3(-60, paddockY, -150), 0, "PADDOCK SHOP");
     addStation(V3(outpost.x, height(outpost.x, outpost.z), outpost.z), M_PI / 2, "DESERT OUTPOST");
@@ -1068,6 +1085,7 @@ void World::buildFrontier() {
     parking = {V3(-118, 0, -138), V3(-118, 0, -154), V3(-104, 0, -138)};
     parkingYaw = 0;
 
+    steps.next("fr.boulders");
     // ---- Boulders ----------------------------------------------------------------------------
     uint32_t rs = 0x9e3779b9u;
     auto rnd = [&]() {
@@ -1135,6 +1153,7 @@ void World::buildFrontier() {
                 dw > 0.5 ? 1.15f : (float)(0.85 + rnd() * 0.2));
     }
 
+    steps.next("fr.trees pines through");
     // ---- Trees: pines through the range up to the treeline, broadleaf along the water and
     // the south meadows, a few dead snags on the desert edge ----------------------------------
     for (int attempt = 0; attempt < 60000 && trees.size() < 1400; attempt++) {
@@ -1187,6 +1206,7 @@ void World::buildFrontier() {
     sign(gWallFoot.x + 6, gWallFoot.z - 4, -M_PI / 2, 0.1f, 0.1f, 0.1f);  // THE WALL: black
     sign(gGarden.x, gGarden.z - 5, M_PI, 0.85f, 0.15f, 0.12f);          // the rock garden: red
 
+    steps.next("fr.blackwater bayou and");
     // ---- Blackwater Bayou and Cold Creek: what grows there, what lies about, the markers ----
     // (Their own random numbers, so everything above stays where it was.)
     uint32_t rs2 = 0x51ed2701u;
