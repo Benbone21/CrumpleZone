@@ -1,22 +1,35 @@
-# Big maps: a 4 x 4 km Backcountry and Frontier, with rivers, waterfalls and places to find
+# Big maps: a 6 x 6 km Backcountry and Frontier, with rivers, waterfalls and places to find
 
 Plan for PI-TASKS #26 (big maps, points of interest) and #27 (rivers, waterfalls, every model in use).
-Status: **plan only, waiting for the owner's OK.** Nothing here is built yet.
+Status: **approved 2026-10-22 with the owner's answers (section 0).** Phases 0 and 1 are being built on `wip/bigmaps-plan`.
 
 ## Summary (the 10 lines)
 
-1. Backcountry, then Frontier, grow from 1.2 x 1.2 km to **4 x 4 km** (11x the land). Today's map stays as the middle of the new one, so its trails, caches and tests keep working.
-2. The land stays at 1 m detail everywhere (the editor keeps working the same way). The map data takes about 100 MB of RAM instead of 35 MB.
-3. The land is built in parallel 128 m tiles and saved to a disk cache after the first build. Target: first launch under 8 s, later loads under 3 s, map switch with no frame over 50 ms.
+1. Backcountry first, then Frontier, grow from 1.2 x 1.2 km to **6 x 6 km** (26x the land). Today's map stays as the middle of the new one, so its trails, caches and tests keep working.
+2. The land stays at 1 m detail everywhere (the editor keeps working the same way). The map data takes about 300 MB of RAM instead of 35 MB.
+3. The land is built in parallel 128 m tiles and saved to a disk cache after the first build. Target: first launch under 10 s on the desktop (realistic: 5-6 s; a 4-core laptop 15-20 s), later loads under 4 s, map switch with no frame over 50 ms.
 4. Only the land near you is drawn in full: chunks within about 600 m stream in and out, and a light 16 m mesh shows the rest of the map. Trees turn into flat cards far away. Grass already only grows near the camera.
 5. The frame rate target is today's: Backcountry HIGH averages 5.5 ms (181 fps) on the 7900 XTX, and the big map must stay within +10%.
-6. A trail network of about 25-30 km links 6 districts. Each trail has a colour rating, signs and a map board. Obstacle sections (mud pit, rock wall, and the rest) sit along the trails.
-7. Places to find: a cabin with a garage and a truck you can keep, 30+ caches, 5 lookouts, 2 old mines, 6+ river crossings, a ranger station (shop, repair, fuel), 4 fuel stops and 2 waterfalls. The M map starts dark and fills in as you explore.
+6. A trail network of about 45-50 km links 8 districts. Each trail has a colour rating, signs and a map board. Obstacle sections (mud pit, rock wall, and the rest) sit along the trails.
+7. Places to find: a cabin with a garage and a truck you can keep, 30+ caches (60 per map), 7 lookouts, 2 old mines, 6+ river crossings, a ranger station (shop, repair, fuel), 4 fuel stops and 2 waterfalls. The M map starts dark and fills in as you drive (owner's choice).
 8. Rivers run across the map with real depth and current. Fords are wadeable, deep pools drown the engine (this ties into #24, the engine repair). A code-made waterfall model scrolls its water, has foam, spray and mist at the base, and roars by size and distance.
 9. Nearly all of the 117 models (87 code-made, 30 scanned rocks and cliffs) get a place on the maps. The exceptions are the first-person hand, the editor stand-in, the 4 cm lug nut and the freeway gantry. The table is in section 8. The plan also needs 7 new models: waterfall, garage, ranger station, fuel pump, bridge, mine headframe and gate.
 10. Multiplayer: everyone builds the same world from the map id plus a generator version, and a world checksum check stops mismatched builds. Only vehicles, caches, doors and discoveries are synced. Work runs in 11 phases, each on its own branch and measured before and after.
 
 ---
+
+## 0. Decisions (owner, 2026-10-22)
+| Question | Answer |
+|---|---|
+| Size | **6 x 6 km** (6144 m square). Targets in section 2 are worked out for that. |
+| Order | **Backcountry first**, then Frontier. |
+| Today's map | **Kept as the middle district**; re-seeding the random scatter (rocks, trees, bushes move; hand-placed obstacles don't) is OK. |
+| M map | **Starts dark and fills in as you drive.** |
+| Plunge pools | Float cars away like Frontier's deep water (default). |
+| POTATO trees | Drawn to about 800 m on the big maps (default). |
+| Cabin truck, career vehicle locking | **Open** (section 9); not needed until phase 7. |
+
+What 6 km costs compared with 4 km: about 2.3x the land data, bake time and cache size. The first-launch target of 10 s holds on the desktop (expected 5-6 s) but not on a 4-core laptop without the cache (15-20 s there); cached loads stay under 4 s everywhere.
 
 ## 1. Where we are now (measured 2026-10-22, main @ 898c8e2)
 
@@ -54,12 +67,12 @@ Cold startup on the proving ground (`--load-tour`) breaks down like this:
 
 **Hard limits found in the code** (these are the reasons for the phases below):
 - `World::kHalfSize = 600` is one compile-time size for every map, used about 86 times in 19 files. The shaders also hard-code `600.0`, and the map edge walls are hard-coded at 520 m.
-- At 4 km with 1 m cells, as today's code is written, the map would need about 430 MB of world arrays, a 640 MB vertex buffer, a 512 MB index buffer and a 256 MB terrain texture. **It cannot just be scaled up.**
+- At 6 km with 1 m cells, as today's code is written, the map would need about 1 GB of world arrays, a 1.5 GB vertex buffer, a 1.2 GB index buffer and a 600 MB terrain texture. **It cannot just be scaled up.**
 - Saved levels (`.czl`) store edits by flat cell index on a grid assumed to be 1201 wide (`level.cpp` ~481), so changing the grid breaks every saved level.
 - Scatter (rocks, trees, bushes) uses one random stream per map plus rejection loops. Order matters, so it can't be split across threads as written. Some loops check every tree for every attempt.
 - Trees at their last level of detail, and all static scenery batches, are drawn out to the 6 km far plane. Only bushes are culled by distance (300 m).
-- The coop M map draws one rectangle per 6 m cell every frame (37k now, 444k at 4 km).
-- The prop lookup grids are `vector<vector<int>>` with 4 m cells, which would be 1M vectors each at 4 km.
+- The coop M map draws one rectangle per 6 m cell every frame (37k now, over 1M at 6 km).
+- The prop lookup grids are `vector<vector<int>>` with 4 m cells, which would be 2.4M vectors each at 6 km.
 - Tests hard-code 590, 1201 and `kHalfSize-150`.
 
 **What already scales fine:**
@@ -74,15 +87,15 @@ Cold startup on the proving ground (`--load-tour`) breaks down like this:
 
 | | Target |
 |---|---|
-| Map size | Backcountry and Frontier each 4096 x 4096 m (±2048 m), drivable to about ±1950 m with a natural edge (ridges, a lake, a canyon), not a wall |
+| Map size | Backcountry and Frontier each 6144 x 6144 m (±3072 m, grid 6145²), drivable to about ±2950 m with a natural edge (ridges, a lake, a canyon), not a wall |
 | Detail | 1 m terrain cells everywhere, as today |
-| First launch (no cache) | ≤ 8 s to driving on the 24-thread desktop; ≤ 20 s on a 4-core laptop |
-| Later launches (cache warm) | ≤ 3 s to driving |
+| First launch (no cache) | ≤ 10 s to driving on the 24-thread desktop (expected 5-6 s); a 4-core laptop 15-20 s (≤ 10 s there is not realistic without the cache) |
+| Later launches (cache warm) | ≤ 4 s to driving (expected 3 s: reading and unpacking a ~90 MB cache file is about 1-1.5 s of that) |
 | Map switch in game | built in the background, no frame over 50 ms (today 53-75 ms) |
 | Frame time, HIGH 1600x900, 7900 XTX | ≤ 6.1 ms Backcountry, ≤ 6.9 ms Frontier (today +10%); 1% low no worse |
-| RAM (whole game) | ≤ 1.3 GB (today 0.93 GB) |
-| VRAM added | ≤ 400 MB |
-| Dedicated server | ≤ 400 MB RAM, startup ≤ 15 s (the example systemd unit allows 1 GB) |
+| RAM (whole game) | ≤ 1.5 GB (today 0.93 GB) |
+| VRAM added | ≤ 450 MB |
+| Dedicated server | ≤ 450 MB RAM, startup ≤ 30 s cold and ≤ 5 s cached (the example systemd unit allows 1 GB) |
 | Physics fingerprint | unchanged in every phase (the bench runs on the proving ground) |
 
 ## 3. The design in plain words
@@ -92,20 +105,20 @@ Cold startup on the proving ground (`--load-tour`) breaks down like this:
 
 ### 3.2 Land data (physics and editor): kept whole, but compact
 The physics, the server and the editor need the whole map at all times (a buddy 3 km away still drives on it), so **world data is not streamed; only drawing is.** To keep it small:
-- **Heights** stay `float`, 1 m, the whole map: 67 MB. Keeping floats means no change in how cars touch the ground.
-- **Surface and paint** pack into 1 byte each: 34 MB.
-- **Road data** (`roadLat`, `roadAlong`, `roadNear`) and **water** (`waterY`, `flowX`, `flowZ`) are stored only in the 128 m tiles that have a road or water. About 20% of tiles, so about 50 MB at most instead of 400 MB. Lookups go through a tile table, and a tile with no data answers "no road, dry".
+- **Heights** stay `float`, 1 m, the whole map: 151 MB. Keeping floats means no change in how cars touch the ground.
+- **Surface and paint** stay 1 byte each: 76 MB.
+- **Road data** (`roadLat`, `roadAlong`, `roadNear`) and **water** (`waterY`, `flowX`, `flowZ`) are stored only in the 64 m tiles that have a road (9 bytes a cell) or water (12 bytes a cell): roads in about 8% of tiles and water in about 6%, so about 55 MB instead of 800 MB. Lookups go through a tile table, and a tile with no data answers "no road, dry".
 - The prop lookup grids become flat arrays (CSR: one index list plus offsets), sized from `halfSize`.
 
-That is about 150 MB in all.
+That is about 280 MB, plus about 30 MB of objects (about 85k trees, 25k rocks, 90k bushes).
 
 ### 3.3 Building the land: in parallel, then cached
 - The analytic height, carving and painting run **per 128 m tile on the job workers** (`src/jobs.*`). Tiles at the edges of trails and rivers carve with a 32 m apron, so seams match.
 - **Scatter becomes order-free.** Each 64 m cell gets its own seed from a hash of its position and the map's seed (the `plantRoll` pattern). Spacing checks only look at neighbouring cells, not every tree. Hand-placed things (trail rocks, ledges, POIs) are placed after, from data tables, in fixed order.
 - After the first build, the world (heights, packed surface/paint, sparse tiles and object lists) is written to `<configDir>/cache/world-<map>-<genhash>.bin`. It is delta-coded and compressed with the existing texenc-style coder, about 40 MB. The file is keyed by a **generator hash** (the build id plus a hand-bumped `kWorldGenVersion`), so a code change throws it away. This is the same idea as `meshcache`.
 - Expected times:
-  - today's per-cell cost × 11 = about 13 s of CPU, which is ≈ 1.5 s on 24 threads and ≈ 4 s on 4 cores;
-  - loading the cache is ~0.5 s.
+  - today's per-cell cost × 26 = about 26-30 s of CPU, which is ≈ 2.5 s on 24 threads (at 50% parallel efficiency) and ≈ 9 s on 4 cores;
+  - loading the cache (~90 MB) is ~1-1.5 s.
 - The built-in levels and the section park still bake 32 worlds at startup. Phase 1 makes those lazy: build a level's world only when the level is opened, and the section park only on the proving ground. Otherwise startup grows with the map.
 
 ### 3.4 Drawing: stream what's near, a light mesh for what's far
@@ -113,12 +126,12 @@ That is about 150 MB in all.
 **Terrain:**
 - 64 m chunks as now, but **each chunk gets its own small vertex and index buffer, built on a worker** when it comes within ~700 m, and dropped past ~900 m. That is about 450 chunks at ≈ 300 KB each, ≈ 130 MB of VRAM, in a pool of fixed size.
 - Upload uses the existing `pumpUpload` budget (3 ms/frame).
-- Past that ring, one **far mesh** at 16 m spacing covers the whole map: 257² verts, about 3 MB. It replaces the inside of today's backdrop, and the backdrop moves out to 6 km past the map edge.
+- Past that ring, one **far mesh** at 16 m spacing covers the whole map: 385² verts, about 6 MB. It replaces the inside of today's backdrop, and the backdrop moves out to 6 km past the map edge.
 - The LOD switch distances (100/220/450 m) stay the same.
 
 **Terrain texture:**
 - The RGBA32F texture (height, grass density, paint, water) becomes a **camera-centred window**: 2048 x 2048 texels at 1 m, stored as RGBA16F (32 MB). It updates a strip at a time as you drive (toroidal addressing, so nothing is copied).
-- A 4 m texture of the whole map (1024², 8 MB) serves the far mesh and the M map.
+- A 4 m texture of the whole map (1536², 19 MB) serves the far mesh and the M map.
 
 **Trees:**
 - Instance buffers are built per 256 m cell when the cell enters 1.5 km.
@@ -133,8 +146,8 @@ That is about 150 MB in all.
 
 **Fog and draw distance:** unchanged settings. POTATO's 300 m draw distance gets cheaper still.
 
-### 3.5 What the player sees: the new Backcountry (4 x 4 km)
-Today's Backcountry becomes **Elk Valley**, the middle district: Trailhead Camp, the Mud Run, Creek Crawl, the mine, the ford and so on, all unchanged. Its edge walls at ±520 m are removed and the land blends outward. Five new districts surround it:
+### 3.5 What the player sees: the new Backcountry (6 x 6 km)
+Today's Backcountry becomes **Elk Valley**, the middle district: Trailhead Camp, the Mud Run, Creek Crawl, the mine, the ford and so on, all unchanged. Its edge walls at ±520 m are removed and the land blends outward. Seven new districts surround it (6 km leaves about 2.4 km of new land on each side):
 
 | District | Where | Character | Main places |
 |---|---|---|---|
@@ -143,14 +156,16 @@ Today's Backcountry becomes **Elk Valley**, the middle district: Trailhead Camp,
 | Bear Creek Canyon | east | Elk River's upper canyon | **Bear Falls** (18 m waterfall), a deep pool, a shelf road over the canyon, a log bridge |
 | Ranger Flats | west | open meadows, a gravel road | **Ranger Station** (repair, parts shop, fuel, maps), a fuel stop, the main gravel road in |
 | Lakeshore | south-west | a large lake, sand, reeds, marsh | **Hollow Pine Cabin with a garage and a truck to take**, a campsite, a boat ramp ford |
+| Timber Basin | north-west | logged forest, a working sawmill yard, log decks, muddy skid roads | a second camp with repair, a timber obstacle section, a lookout on a knob |
+| High Lakes | north-east | alpine lakes over the treeline, snowfields, granite slabs | a lake chain joined by short creeks, the snowiest trail, a hut with fuel |
 | Badlands Wash | south-east | dry wash, sand, slickrock | 2 fuel stops on the way, a wreck site, dunes, the **Little Falls** (5 m) where a creek leaves the canyon |
 
 The new Frontier follows the same pattern later (phase 10): today's map as the middle, with desert to the west, the high range to the north, and the lake and bayou country to the south. That phase gets its own short design pass once Backcountry has shown what works.
 
 ### 3.6 Trails
-- About **25-30 km** of trails in all (today: about 4 km).
-  - A **gravel road loop** (green, about 9 km) links the districts, so anyone can drive to every district.
-  - From it, **about 20 trails** of 300 m to 2 km, rated green/blue/black/red as today.
+- About **45-50 km** of trails in all (today: about 4 km).
+  - A **gravel road loop** (green, about 14 km) links the districts, so anyone can drive to every district.
+  - From it, **about 30 trails** of 300 m to 3 km, rated green/blue/black/red as today.
   - Each trail has a sign at each end, a map board at junctions, marker posts and cairns.
 - **How they are made:**
   1. A dev tool (`tools/trailroute.cpp`) proposes a route between two places with A* over an 8 m cost grid: slope, water, rock and a rating-dependent grade limit.
@@ -170,11 +185,11 @@ The new Frontier follows the same pattern later (phase 10): today's map as the m
   - the career cache tables (`career.cpp`), which get their spots from POIs of kind CACHE.
 - **Discovery:**
   - Today `Coop::discover` marks a place found within 30 m and saves `MAP:NAME`. Keep that.
-  - Add **map reveal**: the M map starts dark and lights up in 64 m cells within ~150 m of where you've driven. That is a 64 x 64 bit set per map (512 bytes), saved with the career and profile.
+  - Add **map reveal**: the M map starts dark and lights up in 64 m cells within ~150 m of where you've driven. That is a 96 x 96 bit set per map (1.2 KB), saved with the career and profile.
   - Undiscovered POIs show as "?" on the M map once you are within 400 m, or once a trail sign has pointed to them.
   - Discovering one plays a short sting, shows the place name on screen, and counts toward "places found 12/41" in the pause menu.
 - **Caches:**
-  - About 30 new ones, so 40 per big map. The deeper in and the harder the trail, the better the loot.
+  - About 50 new ones, so 60 per big map. The deeper in and the harder the trail, the better the loot.
   - The loot lists in `career.cpp` grow to match. Money, parts and tools work as now.
 - **The cabin and its truck:**
   - The garage door opens with E.
@@ -194,7 +209,7 @@ The new Frontier follows the same pattern later (phase 10): today's map as the m
   - riffles at 0.2-0.4 m, where a car crosses at walking pace;
   - fords on trails at 0.4-0.6 m, with a gravel bed and a sign;
   - pools at 0.9-1.5 m, where a snorkel is needed or the engine hydrolocks;
-  - the plunge pools under falls at 2-3 m, where you float.
+  - the plunge pools under falls at 2-3 m, where you float away downstream like Frontier's deep water today (owner's default, 2026-10-22).
 - **Current:**
   - 0.5-1.5 m/s in the open, 2-3 m/s in chutes above falls.
   - Today's buoyancy and drag code (`softbody.cpp` ~340) is kept, with one change: **water level and flow are sampled per node, not once at `nodes[0]`**. Without that, a truck half in a river at its edge gets pushed wrong.
@@ -232,8 +247,8 @@ The new Frontier follows the same pattern later (phase 10): today's map as the m
 ## 4. The level editor on big maps
 - **Already works:** sculpt, paint, water, objects and course all work by world position, so they work on a big map once `kHalfSize` is per map.
 - **Needed additions:**
-  - **Navigation:** an overview map in the editor (Tab) that reuses the M map, plus **click to fly there**. Also a speed boost for high altitude, since the existing flight is too slow to cross 4 km.
-  - **Save format:** the `grid N half H` header. The cell maps stay run-length encoded, so a 4 km map with a few edits is still small. Big sculpts could reach the 8 MB network cap, so cell maps also get per-tile compression.
+  - **Navigation:** an overview map in the editor (Tab) that reuses the M map, plus **click to fly there**. Also a speed boost for high altitude, since the existing flight is too slow to cross 6 km.
+  - **Save format:** the `grid N half H` header. The cell maps stay run-length encoded, so a 6 km map with a few edits is still small. Big sculpts could reach the 8 MB network cap, so cell maps also get per-tile compression.
   - **Undo:** the cap of about 3M cell changes stays. One brush stroke is far below that.
   - **POIs:** a POI tool (place, move, rename, set kind). On the built-in maps it writes an overlay into the `.czl` like other edits do today. A dev-only button **"export POIs/trails as C++"** prints the table back for committing, so map design can be done in the editor and saved into the code.
   - **Trails:** a trail tool that drags spline control points. It carves live within a 32 m apron and has the same export button.
@@ -248,13 +263,13 @@ The new Frontier follows the same pattern later (phase 10): today's map as the m
   - Windows, Mac and Linux already have different physics fingerprints, so heights can differ by a float ulp across platforms. The checksum therefore rounds heights to 1 cm.
   - If two platforms really disagree, that is a bug to fix in the generator (it uses `std::sin`/`pow` from different libms). Phase 2 tests this on Windows, using a cross-compiled `world_hash` tool under wine.
 - **What is synced:**
-  - as now: vehicles (with interest rates by distance: 150/400/800 m, fine at 4 km), ropes, lamps, the clock, chat and pings;
+  - as now: vehicles (with interest rates by distance: 150/400/800 m, fine at 6 km), ropes, lamps, the clock, chat and pings;
   - new, as small TCP game messages like today's `cache MAP ID`: garage door open/closed, the found vehicle taken, place discovered (each player keeps their own discoveries, but a "place found" note goes to everyone).
   - **Not synced:** the map reveal (personal), and trees, rocks and terrain (built from the seed).
 - **Server:**
   - It builds the world headlessly as now and uses the disk cache too, so startup is about 2 s after the first.
-  - RAM: about 150 MB of world plus objects, under the 400 MB target. It doesn't build any render data.
-- **Bandwidth:** players spread over 4 km sit in the 0.5 s band most of the time, so bandwidth goes down, not up. `net/bandwidth`'s "spread" test gets a 4 km case.
+  - RAM: about 310 MB of world plus objects, under the 450 MB target. It doesn't build any render data.
+- **Bandwidth:** players spread over 6 km sit in the 0.5 s band most of the time, so bandwidth goes down, not up. `net/bandwidth`'s "spread" test gets a 6 km case.
 
 ## 6. Phases
 
@@ -318,7 +333,7 @@ Each phase is on its own branch from main, merged by the owner. Before and after
   - `propdraw.cpp` and `scenery.cpp`: the distance cuts;
   - `watermesh.cpp`: per chunk;
   - `coop.cpp`: the M map from the 4 m texture (one textured quad instead of 37k rects).
-- **Test map:** a dev-only `MAP_BIGTEST`, today's open country stretched to 4 km, to prove streaming before any real content.
+- **Test map:** a dev-only `MAP_BIGTEST`, today's open country stretched to 6 km, to prove streaming before any real content.
 - **Risks:**
   - chunk pop-in (fade over 0.3 s);
   - impostor look at dawn and dusk;
@@ -326,8 +341,8 @@ Each phase is on its own branch from main, merged by the owner. Before and after
   - the shadow cascade at 230 m must keep its casters;
   - the editor's live terrain edits must reach a streamed chunk.
 - **Acceptance:**
-  - on `MAP_BIGTEST`, driving a 4 km straight at 120 km/h with `--bench` gives no frame over 25 ms and an average within 10% of Backcountry today;
-  - VRAM added ≤ 400 MB (GL memory info);
+  - on `MAP_BIGTEST`, driving a 6 km straight at 120 km/h with `--bench` gives no frame over 25 ms and an average within 10% of Backcountry today;
+  - VRAM added ≤ 450 MB (GL memory info);
   - `test_render` and `test_visibility` pass with the chunk pool;
   - Backcountry and Frontier at 1.2 km bench no slower than before.
 
@@ -342,9 +357,9 @@ Each phase is on its own branch from main, merged by the owner. Before and after
   - the cell-hash scatter density per district needs tuning.
 - **Acceptance:**
   - all `backcountry/*` and `career/caches` tests pass (the `|x|<=590` assert becomes `halfSize - 10`);
-  - first launch ≤ 8 s and cached ≤ 3 s;
+  - first launch ≤ 10 s and cached ≤ 4 s;
   - the bench within +10%;
-  - peak RAM ≤ 1.3 GB;
+  - peak RAM ≤ 1.5 GB;
   - a screenshot tour of each district (`--shot-frames` script) for the owner.
 
 ### Phase 5: rivers and the waterfall (`wip/bigmaps-5-rivers`) [Opus for river carving and per-node water physics; Sonnet for the waterfall model and sound]
@@ -378,7 +393,7 @@ Each phase is on its own branch from main, merged by the owner. Before and after
   - `backcountry/routes` is extended: the autopilot drives every green trail end to end in a stock Tacoma;
   - a stock Bronco in 4L drives every blue trail;
   - the gravel loop reaches all 6 districts;
-  - total trail length is printed (25-30 km).
+  - total trail length is printed (45-50 km).
 
 ### Phase 7: points of interest and discovery (`wip/bigmaps-7-pois`) [Sonnet; Opus to review the career and network parts]
 - **Files:**
@@ -395,7 +410,7 @@ Each phase is on its own branch from main, merged by the owner. Before and after
 - **Acceptance:**
   - `pois/all-reachable`: every POI is on dry ground within 30 m of a trail, and the autopilot reaches it;
   - `career/found-vehicle`: taking the cabin truck grants its key, and it survives save and load;
-  - `career/caches` shows 40 per big map;
+  - `career/caches` shows 60 per big map;
   - `net/discovery`: the door and vehicle-taken messages arrive at the guest;
   - the M map reveal saved and loaded;
   - screenshots of each POI.
@@ -412,7 +427,7 @@ Each phase is on its own branch from main, merged by the owner. Before and after
 - **Risks:** small props placed in the hundreds add draw calls, so keep them in the 64 m batches and check the bench.
 - **Acceptance:**
   - `models/all-placed`: every id in `mk::catalog()` except `fp_hand`, `menu_vehicle` and `lug_nut` appears in `World::models` of at least one of Backcountry or Frontier, or is drawn as a fixture or tree;
-  - the editor can fly across 4 km in under 10 s;
+  - the editor can fly across 6 km in under 15 s;
   - POI and trail export round-trips (export, paste, rebuild, the same hash);
   - `--level` on the server.
 
@@ -496,7 +511,7 @@ Today: 87 code-made models (`src/models/*.cpp`) and 30 scanned props (`assets/pr
 | light_bar | model yard only | on the wreck pickups, the garage shelf |
 | tire_part | repair part | tire stacks at shops, the garage, a tire swing at the cabin |
 | bed_gate | pickups | wreck sites (lying in the grass) |
-| supply_crate | career caches | every cache (40 per big map) |
+| supply_crate | career caches | every cache (60 per big map) |
 
 ### Repair parts and tools (`repair.cpp`, `parts.cpp`, `frames.cpp`)
 | Model | Now | Big maps |
@@ -532,12 +547,6 @@ To steer which rock goes where, the scatter picks a rock set by district (moss i
 | mine_headframe | `buildings.cpp` | Copper Gulch Mine |
 | gate (a swing gate on posts) | `trail_road.cpp` | trail closures, the cabin drive |
 
-## 9. Open questions for the owner
-1. **Size:** is 4 x 4 km right, or bigger (6 x 6 km is possible with the same design, but adds about 2x the load time and RAM)?
-2. **Order:** Backcountry first, then Frontier? Or Frontier first, since it is the "everything" map?
-3. **Keep today's maps inside the big ones?** The plan keeps them as the middle district, so the tests and caches stay valid. The alternative is a fresh layout.
-4. **Re-seeding moves the random rocks and trees** on every map, including today's. Hand-placed obstacles stay. Is that OK?
-5. **The cabin's truck:** which vehicle? Should vehicles in career be locked until found (only the cabin truck, or more later)?
-6. **Map reveal:** start with the M map dark and reveal it as you drive, or show it all and only hide the POIs?
-7. **Deep water:** should the plunge pools float you away (as Frontier's deep water does now), or be walled off?
-8. **Low-end PCs:** OK if POTATO shows trees only to ~800 m on the big maps?
+## 9. Open items
+1. **The cabin's truck:** which vehicle, and whether career should lock vehicles until found. Not needed until phase 7. The cabin and garage get built either way.
+2. Everything else was answered: see section 0.
