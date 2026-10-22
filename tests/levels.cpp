@@ -322,12 +322,34 @@ SCENARIO(worldHalfSize, "world/halfsize", "A map built bigger than the default r
 }
 
 #include "../src/parallel.h"
+#include "../src/worldcache.h"
 SCENARIO(worldBakeThreads, "world/bake-threads", "A map's build comes out the same on one thread as on many (the land is filled and painted in parallel)") {
+    worldcache::bypass = true;  // (built, not read from the world cache)
     for (int map : {MAP_FRONTIER, MAP_BACKCOUNTRY, MAP_MOUNTAIN, MAP_PROVING_GROUND}) {
         parallelRowsCap = 1;
         const uint64_t one = World(map).landHash();
         parallelRowsCap = 0;
         const uint64_t many = World(map).landHash();
         ctx.check(mapName(map), one == many);
+    }
+    worldcache::bypass = false;
+}
+
+SCENARIO(worldCacheRoundTrip, "world/cache-roundtrip", "A built map saved to the world cache and read back is the same map, to the byte; a damaged file is refused") {
+    for (int map : {MAP_FRONTIER, MAP_BACKCOUNTRY, MAP_MOUNTAIN}) {
+        worldcache::bypass = true;  // (built here, not read from a cache)
+        const World built(map);
+        worldcache::bypass = false;
+        const std::vector<uint8_t> bytes = worldcache::encode(built);
+        World back(MAP_PROVING_GROUND);
+        const bool ok = worldcache::decode(bytes, back);
+        ctx.check(std::string(mapName(map)) + " reads back", ok);
+        if (!ok) continue;
+        ctx.check(std::string(mapName(map)) + " same bytes again", worldcache::encode(back) == bytes);
+        ctx.check(std::string(mapName(map)) + " same land", back.landHash() == built.landHash() && back.map == map);
+        back.buildGrid();
+        std::vector<uint8_t> cut(bytes.begin(), bytes.end() - 3);
+        World other(MAP_PROVING_GROUND);
+        ctx.check(std::string(mapName(map)) + " a cut-short file is refused", !worldcache::decode(cut, other) && other.map == MAP_PROVING_GROUND);
     }
 }

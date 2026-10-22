@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 template <class T>
@@ -56,6 +57,14 @@ public:
             t.assign((size_t)kTile * kTile, def_);
         }
         t[(size_t)((i & kMask) << kShift | (j & kMask))] = v;
+    }
+
+    // The tiles themselves (row-major, tilesAll() of them; an empty one is all the default): for saving and loading a world.
+    const std::vector<T>& tile(size_t k) const { return tiles_[k]; }
+    bool setTile(size_t k, std::vector<T> cells) {
+        if (k >= tiles_.size() || (!cells.empty() && cells.size() != (size_t)kTile * kTile)) return false;
+        tiles_[k] = std::move(cells);
+        return true;
     }
 
     // How many tiles are kept, of how many; and the bytes they take.

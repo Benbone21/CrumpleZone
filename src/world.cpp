@@ -1,6 +1,7 @@
 #include "thread_cache.h"
 #include "parallel.h"
 #include "world.h"
+#include "worldcache.h"
 #include "laptimer.h"
 #include "loadprof.h"
 
@@ -375,15 +376,25 @@ void World::addLake(double x, double z, double r, double depth) {
 
 World::World(int m) : map(m) {
     half = halfSizeFor(map);
-    loadprof::Scope lpGen("world.terrain+layout");
-    if (map == MAP_MOUNTAIN) buildMountain();
-    else if (map == MAP_FREEWAY) buildFreeway();
-    else if (map == MAP_FRONTIER) buildFrontier();
-    else if (map == MAP_BACKCOUNTRY) buildBackcountry();
-    else if (map == MAP_WILDS) buildWilds();
-    else buildProvingGround();
-    // The slab the player starts on (and the parked trucks): in the game's proving ground, as the other maps are always built.
-    if (map != MAP_PROVING_GROUND || withShowcase) addMapSpawnPads(*this);
+    // The big maps come from the world cache when this build of the game has built them before (worldcache.h).
+    bool cached = false;
+    {
+        loadprof::Scope lpCache("world.cache read");
+        cached = worldcache::load(*this);
+    }
+    if (!cached) {
+        loadprof::Scope lpGen("world.terrain+layout");
+        if (map == MAP_MOUNTAIN) buildMountain();
+        else if (map == MAP_FREEWAY) buildFreeway();
+        else if (map == MAP_FRONTIER) buildFrontier();
+        else if (map == MAP_BACKCOUNTRY) buildBackcountry();
+        else if (map == MAP_WILDS) buildWilds();
+        else buildProvingGround();
+        // The slab the player starts on (and the parked trucks): in the game's proving ground, as the other maps are always built.
+        if (map != MAP_PROVING_GROUND || withShowcase) addMapSpawnPads(*this);
+        loadprof::Scope lpStore("world.cache write");
+        worldcache::store(*this);
+    }
     { loadprof::Scope lpGrid("world.grid"); buildGrid(); }
 }
 

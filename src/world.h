@@ -215,6 +215,7 @@ struct RoadInfo {
 };
 
 class World {
+    friend struct WorldIO;  // (worldcache.cpp: a built map saved and loaded whole)
 public:
     // How far the map reaches from its middle each way (m): the terrain grid runs from -halfSize() to +halfSize() on both axes at
     // 1 m, so gridSize() is 2 * halfSize() + 1. Each map has its own (halfSizeFor); every map is kDefaultHalfSize for now.
