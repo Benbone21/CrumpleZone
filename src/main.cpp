@@ -1954,10 +1954,11 @@ int main(int argc, char** argv) {
             }
         sim.dropRopes(sim.player);
         const std::vector<int>& lv = listedVehicles();
-        const menucamp::Meta meta = menucamp::metaOf(campLevel);
+        menucamp::Meta meta = menucamp::metaOf(campLevel);
+        if (meta.vehicles == 0) meta.vehicles = 1, meta.veh[0].x = campFire.x + 4, meta.veh[0].z = campFire.z - 2;  // (no stand-ins left in the level: one parked by the fire)
         const V3 paint[3] = {V3(0.55, 0.12, 0.08), V3(0.16, 0.3, 0.2), V3(0.5, 0.2, 0.1)};
         sim.swapPlayerVehicle(garage.spec(lv[meta.veh[0].slot]));
-        for (int k = 0; k < 3; k++) {
+        for (int k = 0; k < meta.vehicles; k++) {
             const menucamp::Vehicle& v = meta.veh[k];
             const double yaw = v.yawDeg * M_PI / 180;
             if (k > 0) sim.addCar(garage.spec(lv[v.slot]), V3(v.x, 0, v.z), yaw, paint[k]);
@@ -5313,6 +5314,11 @@ int main(int argc, char** argv) {
                         if (std::hypot(r.c.x - num(0), r.c.z - num(1)) < num(2)) std::printf("  rock %zu c(%.1f %.1f %.1f) r %.2f\n", i, r.c.x, r.c.y, r.c.z, r.r), n++;
                     }
                 } else if (c == "save") { editor.applyKey(keyCode("s"), false, true); }
+                else if (c == "selveh") {  // (the camp's K-th parked vehicle stand-in, selected: selveh K)
+                    int n = 0;
+                    for (int i = 0; i < (int)editor.core.level.objects.size(); i++)
+                        if (editor.core.level.objects[i].name == menucamp::kVehicleModel && n++ == (int)num(0)) editor.selectObjects({i});
+                }
                 else if (c == "menupreview") editor.wantPreview = true;  // (the MENU tool's PREVIEW button)
                 else if (c == "menuexit") editor.wantClose = true;
                 else if (c == "saveas") { editor.applyKey(keyCode("s"), true, true); }

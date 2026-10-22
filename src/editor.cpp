@@ -180,6 +180,7 @@ void Editor::open(World& w, Renderer& r, const Level& lv) {
     if (menucamp::isCamp(lv)) {  // (the main menu's camp: above the camera's place, looking the way the menu does)
         const menucamp::Camera c = menucamp::metaOf(lv).cam;
         yaw = std::atan2(-(c.tz - c.ez), c.tx - c.ex), pitch = -0.5;
+        tool = MENU, pointer = true, ledgeBrush = false;  // (click a vehicle, the cabin, a tree: it's selected, and the gizmo moves it)
         eye = V3(c.ex, w.height(c.ex, c.ez) + c.ey + 14, c.ez) - V3(std::cos(yaw), 0, -std::sin(yaw)) * 12;
     }
     newMap = lv.map;
@@ -269,13 +270,13 @@ void Editor::handleEvent(const SDL_Event& e, float scale) {
             mx = evButtonX(e) * scale, my = evButtonY(e) * scale;
             if (evButton(e) == 3) {
                 rmb = true;
-                if (lmb && tool == OBJECTS && (dragging || drag.kind != DRAG_NONE)) {  // (during a left drag: cancels it, and does nothing more till it's let go)
+                if (lmb && objectTool() && (dragging || drag.kind != DRAG_NONE)) {  // (during a left drag: cancels it, and does nothing more till it's let go)
                     cancelDrag();
                     dragging = false, rmbEaten = true, rmbTurn = false;
                     break;
                 }
                 // Right button on the selected object or a gizmo handle: a drag turns it (all of the selection turns).
-                const bool can = !overUi && !fileOpen && flow.stage == SaveFlow::IDLE && tool == OBJECTS && pointer && !ledgeBrush;
+                const bool can = !overUi && !fileOpen && flow.stage == SaveFlow::IDLE && objectTool() && pointer && !ledgeBrush;
                 // (Only what is ALREADY selected turns: right-drag on anything else is the camera. Left-click selects first.)
                 rHandle = can && rightTurns && !selection.empty() && !shift && !ctrl ? gizmoHit(mx, my) : H_NONE;
                 rmbTurn = can && EditCore::rightGrabs(rightTurns, rHandle != H_NONE, hover.kind == EditPick::OBJECT || hover.kind == EditPick::BASE, isSelected(hover));
@@ -615,7 +616,7 @@ void Editor::click() {
     press.press(mx, my);
     shiftToggle = lockBlock = false;
     pressHandle = H_NONE, pressHasGrab = false;
-    if (tool == OBJECTS && pointer && !ledgeBrush) {
+    if (objectTool() && pointer && !ledgeBrush) {
         // (What's under the mouse now, exactly: the gizmo's handles first, then the object and the point on it that the drag will hold under the mouse.)
         V3 o, d, g;
         ray(mx, my, o, d);
@@ -629,7 +630,7 @@ void Editor::click() {
     }
     const bool onSelection = (hover.kind == EditPick::OBJECT || hover.kind == EditPick::BASE) && isSelected(hover);
     // Ctrl+drag: a box select that starts anywhere, on an object too (Shift as well adds); but starting on the selection, Ctrl is the Z lock of moving it.
-    if (tool == OBJECTS && pointer && !ledgeBrush && ctrl && !onSelection) {
+    if (objectTool() && pointer && !ledgeBrush && ctrl && !onSelection) {
         if (!shift) selection.clear(), sel = EditPick();
         marquee = true, marqueeX = mx, marqueeY = my;
         return;
@@ -991,6 +992,7 @@ void Editor::key(int sc) {
     }
     if (sc >= SC_1 && sc < SC_1 + TOOL_COUNT) {
         tool = (Tool)(sc - SC_1);
+        if (tool == MENU) pointer = true, ledgeBrush = false;
         sel = EditPick(), selection.clear();
         return;
     }
@@ -1037,7 +1039,7 @@ void Editor::key(int sc) {
         return;
     }
     if (tool == SCULPT || tool == PAINT || tool == WATER) brushKey(sc);
-    if (tool == OBJECTS) {
+    if (objectTool()) {
         objectKey(sc);
         return;
     }
@@ -1196,7 +1198,7 @@ void Editor::startDrag(bool right) {
     drag.ks = selectedObjects(wants);
     for (int k : drag.ks) {
         drag.from.push_back(core.normalized(k));
-        drag.upright |= !EditCore::turnsFreely(drag.from.back().kind);
+        drag.upright |= !EditCore::turnsFreely(drag.from.back().kind) || drag.from.back().name == "menu_vehicle";
     }
     // The one grabbed: what the press ray hits (the objects haven't moved yet).
     V3 o, d, gp;
@@ -1207,7 +1209,7 @@ void Editor::startDrag(bool right) {
     drag.grab = !right && h == H_NONE && pressHasGrab ? pressGrab : haveMid ? mid : eye;
     drag.start = drag.grab;
     drag.pivot = haveMid ? mid : drag.grab;
-    if (drag.ks.size() == 1 && !EditCore::turnsFreely(drag.from[0].kind)) drag.pivot = core.footOf(drag.from[0]);  // (an upright thing turns on the spot)
+    if (drag.ks.size() == 1 && (!EditCore::turnsFreely(drag.from[0].kind) || drag.from[0].name == "menu_vehicle")) drag.pivot = core.footOf(drag.from[0]);  // (an upright thing turns on the spot)
     drag.t = len(drag.grab - eye);
     const EditAxis ax = h != H_NONE ? handleAxis(h) : heldAxis(drag.right);
     restage(drag.right ? (ax == AXIS_NONE ? DRAG_TURN : DRAG_TURN_AXIS) : (ax == AXIS_NONE ? DRAG_MOVE : DRAG_AXIS), ax);
@@ -1385,7 +1387,7 @@ bool Editor::cancelDrag() {
 }
 
 bool Editor::gizmoAt(V3& c, double& arrowM, double& ringM) const {
-    if (tool != OBJECTS || !pointer || ledgeBrush || selection.empty() || marquee) return false;
+    if (!objectTool() || !pointer || ledgeBrush || selection.empty() || marquee) return false;
     double rad;
     if (drag.kind == DRAG_TURN || drag.kind == DRAG_TURN_AXIS) c = drag.pivot;
     else if (!selMiddle(c, rad)) return false;
@@ -1724,6 +1726,10 @@ void Editor::menuAction(int code) {
         const V3 at = viewPoint();
         core.settings("menuveh" + std::to_string(k), [&](Level& l) {
             menucamp::Meta m = menucamp::metaOf(l);
+            if (k >= m.vehicles) {  // (one deleted from the level: this brings it back)
+                menucamp::addVehicle(l, m.veh[k]);
+                m = menucamp::metaOf(l);
+            }
             menucamp::Vehicle& v = m.veh[k];
             switch (a) {
                 case 0: v.slot = (v.slot + n - 1) % n; break;
@@ -1826,6 +1832,7 @@ void Editor::doButton(int id) {
     }
     if (id >= B_TOOL && id < B_TOOL + TOOL_COUNT) {
         tool = (Tool)(id - B_TOOL);
+        if (tool == MENU) pointer = true, ledgeBrush = false;
         sel = EditPick(), selection.clear();
         return;
     }
@@ -1972,7 +1979,7 @@ void Editor::doButton(int id) {
             break;
         }
         case B_DELETE:
-            if (tool == OBJECTS) deleteSelection();
+            if (objectTool()) deleteSelection();
             else if (sel.kind == EditPick::GATE) core.removeGate(sel.index), say("GATE DELETED");
             sel = EditPick();
             break;
@@ -2003,7 +2010,7 @@ void Editor::update(double dt, const uint8_t* keys, Renderer& r, int w, int h) {
     }
     alt = keys[226] || keys[230];
     // (Holding an object, Space is the Y key, not up: Alt+drag is the window manager's on most Linux desktops.)
-    const bool holding = tool == OBJECTS && ((lmb && dragging) || (rmb && rmbTurn) || drag.kind != DRAG_NONE);
+    const bool holding = objectTool() && ((lmb && dragging) || (rmb && rmbTurn) || drag.kind != DRAG_NONE);
     yKey = alt || holdY || (holding && keys[SC_SPACE]);
     if (drag.kind == DRAG_NONE) dragNote.clear();
     // Fly (WASD, Space up, Shift fast, higher = faster; Shift+wheel is up / down).
@@ -2030,9 +2037,9 @@ void Editor::update(double dt, const uint8_t* keys, Renderer& r, int w, int h) {
     hover = EditPick();
     hot = drag.kind == DRAG_NONE && !lmb && !rmb && !shift && !ctrl ? gizmoHit(mx, my) : H_NONE;  // (a gizmo handle under the mouse takes the click, not what's behind it)
     if (hot != H_NONE) dragNote = hot >= H_RING_X ? std::string("DRAG: TURN ABOUT ") + axisName(handleAxis(hot)) : std::string("DRAG: MOVE ALONG ") + axisName(handleAxis(hot));
-    if (((tool == OBJECTS && pointer && !marquee && !overUi && drag.kind == DRAG_NONE) || tool == COURSE) && hot == H_NONE) {  // (placing: a click always places, so nothing is "under" the mouse)
-        const EditPick p = core.pick(o, d, hitT, tool == OBJECTS, tool == COURSE);  // (gates and the start are the course tool's: in the objects tool the ray goes through them)
-        const bool wanted = tool == OBJECTS ? (p.kind == EditPick::OBJECT || p.kind == EditPick::BASE) : (p.kind == EditPick::GATE || p.kind == EditPick::START);
+    if (((objectTool() && pointer && !marquee && !overUi && drag.kind == DRAG_NONE) || tool == COURSE) && hot == H_NONE) {  // (placing: a click always places, so nothing is "under" the mouse)
+        const EditPick p = core.pick(o, d, hitT, objectTool(), tool == COURSE);  // (gates and the start are the course tool's: in the objects tool the ray goes through them)
+        const bool wanted = objectTool() ? (p.kind == EditPick::OBJECT || p.kind == EditPick::BASE) : (p.kind == EditPick::GATE || p.kind == EditPick::START);
         if (wanted) hover = p;
     }
     // Where a click would put something: the ground at the mouse, or the top of an object in the way (so rocks stack).
@@ -2040,7 +2047,7 @@ void Editor::update(double dt, const uint8_t* keys, Renderer& r, int w, int h) {
     std::vector<int> skip;
     for (const EditPick& p : selection)
         if (p.kind == EditPick::OBJECT) skip.push_back(p.index);
-    if (tool == OBJECTS && haveHit && !overUi) {
+    if (objectTool() && haveHit && !overUi) {
         V3 pp, nn;
         if (core.rayObjects(o, d, hitT - 0.02, skip, pp, nn) && nn.y > 0.25) placeAt = pp, placeOn = true;
     }
@@ -2058,7 +2065,7 @@ void Editor::update(double dt, const uint8_t* keys, Renderer& r, int w, int h) {
     // Holding the button.
     if (lmb && stroke) applyBrush(dt);
     const float dragPx = 5.0f * std::max(1.0f, H / 720.0f);
-    if (drag.kind == DRAG_NONE && tool == OBJECTS && !selection.empty()) {  // (a press becomes a drag once the mouse has gone a few pixels)
+    if (drag.kind == DRAG_NONE && objectTool() && !selection.empty()) {  // (a press becomes a drag once the mouse has gone a few pixels)
         if (lmb && dragging && press.moved(mx, my, dragPx)) startDrag(false);
         else if (rmb && rmbTurn && !rmbEaten && rpress.moved(mx, my, dragPx)) startDrag(true);
     }
@@ -2131,7 +2138,7 @@ void Editor::drawWorldMarks(Renderer& r) {
         const menucamp::Meta mm = menucamp::metaOf(core.level);
         const auto& cat = vehicleCatalog();
         const auto& lvs = listedVehicles();
-        for (int k = 0; k < 3; k++) {
+        for (int k = 0; k < mm.vehicles; k++) {
             const menucamp::Vehicle& mv = mm.veh[k];
             const double yw = mv.yawDeg * M_PI / 180, gy = core.world->height(mv.x, mv.z) + 0.15;
             const V3 c(mv.x, gy, mv.z), f(std::cos(yw), 0, -std::sin(yw)), sd(std::sin(yw), 0, std::cos(yw));
@@ -2139,7 +2146,7 @@ void Editor::drawWorldMarks(Renderer& r) {
             for (int e = 0; e < 4; e++) line(p[e], p[(e + 1) % 4], 14, 3, 1.0f, 0.75f, 0.2f, 0.95f);
             line(c, c + f * 3.2, 8, 4, 1.0f, 0.4f, 0.2f, 1.0f);
             float sx, sy;
-            if (screenPoint(v, W, H, c + V3(0, 2.2, 0), sx, sy)) {
+            if (screenPoint(v, W, H, c + V3(0, 3.6, 0), sx, sy)) {
                 const std::string t = std::to_string(k + 1) + " " + cat[lvs[mv.slot]].name;
                 r.text(sx - r.textWidth(t, s) / 2 + s * 0.6f, sy + s * 0.6f, s, t, 0, 0, 0, 0.7f);
                 r.text(sx - r.textWidth(t, s) / 2, sy, s, t, 1.0f, 0.8f, 0.3f, 1.0f);
@@ -2274,7 +2281,7 @@ void Editor::drawWorldMarks(Renderer& r) {
     }
     // What's picked or about to be: the outline of each selected object (amber), of the one under the mouse (white), and the ghost
     // of what the next click places (a translucent shape, lying on the ground at the mouse, as it will be placed).
-    if (tool == OBJECTS) {
+    if (objectTool()) {
         auto outline = [&](const EditPick& p, float cr, float cg, float cb, float size) { drawShape(r, shapeOfPick(p), false, cr, cg, cb, 1, size); };
         for (const EditPick& p : selection) outline(p, 1.0f, 0.8f, 0.25f, 4 * u);
         if (hover.kind != EditPick::NONE && !isSelected(hover)) outline(hover, 1.0f, 1.0f, 1.0f, 3 * u);
@@ -2722,7 +2729,7 @@ void Editor::drawOptions(Renderer& r, float u) {
             const auto& cat = vehicleCatalog();
             const auto& lvs = listedVehicles();
             for (int k = 0; k < 3; k++) {
-                row("VEHICLE " + std::to_string(k + 1), cat[lvs[m.veh[k].slot]].name, B_MENU + k * 8, B_MENU + k * 8 + 1);
+                row("VEHICLE " + std::to_string(k + 1), k < m.vehicles ? std::string(cat[lvs[m.veh[k].slot]].name) : std::string("(DELETED)"), B_MENU + k * 8, B_MENU + k * 8 + 1);
                 const float bw = (w - 3 * 3 * u) / 4;
                 const char* names[4] = {"HERE", "TURN -", "TURN +", "AT FIRE"};
                 for (int b = 0; b < 4; b++) button(r, x + b * (bw + 3 * u), y, bw, bh, names[b], B_MENU + k * 8 + 2 + b, false, u);
@@ -2738,8 +2745,11 @@ void Editor::drawOptions(Renderer& r, float u) {
             y += bh + 4 * u;
             button(r, x, y, w, bh, confirmReset ? "SURE? CLICK AGAIN" : "RESET TO THE GAME'S SCENE", B_MENU + 38, confirmReset, u);
             y += bh + 8 * u;
-            note("HERE: VEHICLE GOES WHERE THE");
-            note("VIEW CENTRE MEETS THE GROUND");
+            note("CLICK A VEHICLE (THE BOXES), THE");
+            note("CABIN, A TREE: IT'S SELECTED. DRAG");
+            note("THE GIZMO ARROWS TO MOVE IT, M FOR");
+            note("RINGS TO TURN. THE BUTTONS ABOVE:");
+            note("A BACKUP (HERE = VIEW CENTRE).");
             note("SET CAMERA: THE MENU LOOKS");
             note("FROM WHERE YOU FLY, AT WHAT");
             note("YOU LOOK AT. TOOL 4 MOVES");
@@ -2854,7 +2864,7 @@ void Editor::drawStatus(Renderer& r, float u) {
                   mapName(l.map), levelModeName(l.mode), core.cellEdits(), l.objects.size(), l.gates.size(),
                   core.canUndo() ? core.undoName().c_str() : "-");
     r.text(12 * u, y + 7 * u, s, buf, 0.9f, 0.91f, 0.94f, 1);
-    const char* keys = tool == OBJECTS && pointer ? "DRAG: MOVE  M: GIZMO MOVE/TURN  RIGHT-DRAG SELECTED: TURN (O)  + SHIFT X  CTRL Z  SPACE Y  ESC CANCELS  WASD FLY  RIGHT-DRAG GROUND: LOOK  CTRL+Z/Y UNDO/REDO  CTRL+S SAVE  F5 TEST"
+    const char* keys = objectTool() && pointer ? "DRAG: MOVE  M: GIZMO MOVE/TURN  RIGHT-DRAG SELECTED: TURN (O)  + SHIFT X  CTRL Z  SPACE Y  ESC CANCELS  WASD FLY  RIGHT-DRAG GROUND: LOOK  CTRL+Z/Y UNDO/REDO  CTRL+S SAVE  F5 TEST"
                                                   : "WASD FLY  SPACE OR SHIFT+WHEEL UP DOWN  WHEEL ZOOM  Q E SIZE  RIGHT-DRAG LOOK/TURN  SHIFT FAST  1-7 TOOLS  CTRL+Z/Y UNDO/REDO  CTRL+S SAVE  F5 TEST HERE  F6 TEST START  ESC EXIT";
     const float ks = px(1.0f * u);
     r.rect(W - r.textWidth(keys, ks) - 20 * u, y - 8 * ks - 10 * u, r.textWidth(keys, ks) + 20 * u, 8 * ks + 10 * u, 0, 0, 0, 0.45f);

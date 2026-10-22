@@ -1,4 +1,5 @@
 // The main menu camp as data (menucamp.h): its settings ride in "#menu" lines of a level file and come back from a save and a load unchanged.
+#include "../src/editcore.h"
 #include "../src/level.h"
 #include "../src/menucamp.h"
 #include "../src/vehicles.h"
@@ -26,6 +27,7 @@ Level sample() {
     m.veh[2] = {75.0, 45.5, 90.0, 0};
     m.cam = {78.0, 2.6, 52.0, 77.5, 2.2, 35.0, 0.5};
     m.look = 18.55;
+    for (int k = 0; k < 3; k++) addVehicle(lv, m.veh[k]);
     setMeta(lv, m);
     return lv;
 }
@@ -65,4 +67,61 @@ SCENARIO(campSlots, "menucamp/slots", "A vehicle slot changed in the settings su
     bool ok = true;
     for (int k = 0; k < 3; k++) ok = ok && d.veh[k].slot >= 0 && d.veh[k].slot < n;
     ctx.check("a level with no menu lines has the default slots", ok);
+}
+
+SCENARIO(campVehicleObjects, "menucamp/vehicle-objects", "The parked vehicles are placed objects: the settings follow them when they are moved, and a deleted one is not parked") {
+    Level a = sample();
+    Meta m = metaOf(a);
+    ctx.check("three vehicles, in the level's objects", m.vehicles == 3 && m.veh[0].x == 83.5 && m.veh[1].slot == 2);
+    int k0 = -1;
+    for (int i = 0; i < (int)a.objects.size(); i++)
+        if (a.objects[i].name == kVehicleModel && k0 < 0) k0 = i;
+    a.objects[k0].p.x = 90, a.objects[k0].yaw = 1.0;
+    m = metaOf(a);
+    ctx.check("moving and turning the object moves the settings", m.veh[0].x == 90 && std::fabs(m.veh[0].yawDeg - 57.2958) < 0.01);
+    a.objects.erase(a.objects.begin() + k0);
+    ctx.check("a deleted vehicle isn't counted", metaOf(a).vehicles == 2);
+    ctx.check("...and can be added again", addVehicle(a, m.veh[0]) == 2 && metaOf(a).vehicles == 3);
+    Level old;
+    old.menuLines = {"#menu scene 1", "#menu veh 0 80 41 90 1", "#menu veh 1 70 31 0 2", "#menu veh 2 75 45 45 0"};
+    ctx.check("an older file keeps its vehicles in lines", metaOf(old).vehicles == 3 && metaOf(old).veh[1].x == 70);
+    upgrade(old);
+    ctx.check("upgrading turns them into objects with the same places", metaOf(old).vehicles == 3 && metaOf(old).veh[1].x == 70 && metaOf(old).veh[2].slot == 0);
+}
+
+SCENARIO(campPickMove, "menucamp/pick-move", "In the editor a click on a vehicle's body picks it, moving it moves the object and its drawn stand-in, and it saves and loads where it was put") {
+    World w(MAP_WILDS);
+    Level lv = sample();
+    for (LevelObject& o : lv.objects)
+        if (o.name == kVehicleModel) o.p.x = 80 + 3 * (&o - &lv.objects[0]), o.p.z = 40;  // (spread out)
+    EditCore ed;
+    ed.begin(w, lv);
+    int placed = 0;
+    for (const Placed& pl : w.models) placed += pl.id == kVehicleModel;
+    ctx.check("the stand-ins are in the editor's world", placed == 3);
+    int k = -1;
+    for (int i = 0; i < (int)ed.level.objects.size(); i++)
+        if (ed.level.objects[i].name == kVehicleModel) {
+            k = i;
+            break;
+        }
+    const V3 at(ed.level.objects[k].p.x, w.height(ed.level.objects[k].p.x, ed.level.objects[k].p.z) + 0.9, ed.level.objects[k].p.z);
+    const V3 from = at + V3(-9, 6, 8);
+    V3 d = norm(at - from);
+    V3 gp;
+    const double hit = ed.rayGround(from, d, 2000, gp) ? len(gp - from) : 1e9;
+    const EditPick p = ed.pick(from, d, hit, true, false);
+    ctx.check("a ray at the body picks that vehicle", p.kind == EditPick::OBJECT && p.index == k);
+    const V3 before = ed.level.objects[k].p;
+    ed.moveObjects({k}, 4.0, -3.0);
+    ctx.check("moving it moves the object", std::fabs(ed.level.objects[k].p.x - before.x - 4) < 0.01 && std::fabs(ed.level.objects[k].p.z - before.z + 3) < 0.01);
+    bool drawn = false;
+    for (const Placed& pl : w.models) drawn |= pl.id == kVehicleModel && std::fabs(pl.p.x - before.x - 4) < 0.05 && std::fabs(pl.p.y - w.height(pl.p.x, pl.p.z)) < 0.05;
+    ctx.check("its drawn stand-in follows, standing on the ground", drawn);
+    Level back;
+    parseLevelText(saveLevelText(ed.level), back);
+    const Meta m = metaOf(back);
+    int idx = 0;
+    for (int i = 0; i < k; i++) idx += ed.level.objects[i].name == kVehicleModel;
+    ctx.check("saved and loaded, the vehicle is where it was put", std::fabs(m.veh[idx].x - (before.x + 4)) < 0.01 && std::fabs(m.veh[idx].z - (before.z - 3)) < 0.01);
 }

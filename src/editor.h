@@ -259,6 +259,7 @@ private:
     };
     std::vector<Button> buttons;
 
+    bool objectTool() const { return tool == OBJECTS || tool == MENU; }  // (the MENU SCENE tool picks, moves and turns objects too: the parked vehicles are stand-ins)
     void say(const std::string& s, double t = 2.5) { toast = s, toastTime = t; }
     void ray(float sx, float sy, V3& o, V3& d) const;
     void click();

@@ -151,12 +151,12 @@ Level generateDefault() {
             if (wl > -1e8 && std::fabs(wl - w0.waterLevel(std::round(x), std::round(z))) > 1e-4) lv.water[id] = (float)wl;
         }
     // The vehicles, the camera and the sky's colours.
-    menucamp::Meta m;
     const struct { double cx, cz, yaw; int slot; } spot[3] = {{3.6, -2.4, 2.95, 1}, {1.5, -8.0, 4.0, 2}, {-2.6, -2.2, -0.55, 0}};
     for (int k = 0; k < 3; k++) {
         const V3 p = at(spot[k].cx, spot[k].cz);
-        m.veh[k] = {p.x, p.z, (spot[k].yaw - theta()) * 180 / M_PI, spot[k].slot};
+        menucamp::addVehicle(lv, {p.x, p.z, std::fmod((spot[k].yaw - theta()) * 180 / M_PI + 720, 360.0), spot[k].slot});
     }
+    menucamp::Meta m = menucamp::metaOf(lv);  // (the vehicles are in the level now)
     const V3 e = at(-1.8, 11.8), t = at(-3.9, -5.0);
     m.cam = {e.x, 2.6, e.z, t.x, 2.2, t.z, 1.0};
     m.look = kSunsetLook;
@@ -259,6 +259,7 @@ Level load(std::string* from) {
         const std::string path = pass == 0 ? userPath() : repoPath();
         Level lv;
         if (loadLevelFile(path, lv) && menucamp::isCamp(lv)) {
+            menucamp::upgrade(lv);
             lv.file = path, lv.builtin = pass == 1;
             if (from) *from = pass == 0 ? "YOUR SAVED SCENE" : "THE GAME'S SCENE";
             return lv;
@@ -279,7 +280,9 @@ bool resetUser() {
     return a;
 }
 
-World buildWorld(const Level& lv) {
+World buildWorld(const Level& camp) {
+    Level lv = camp;  // (the vehicle stand-ins are the editor's: the game parks the real ones)
+    lv.objects.erase(std::remove_if(lv.objects.begin(), lv.objects.end(), [](const LevelObject& o) { return o.kind == OBJ_MODEL && o.name == menucamp::kVehicleModel; }), lv.objects.end());
     World w = levelWorld(lv);
     applyLevel(lv, w);
     return w;
