@@ -108,7 +108,7 @@ InteractOption Interact::fixOption(const Sim& sim, const Walker& wk, int ci, con
         break;
     }
     case RepairStep::WORK: {
-        o.prompt = what + st.verb + (st.tool >= 0 ? std::string(" (") + toolName((Tool)st.tool) + ")" : "");
+        o.prompt = (st.removes || (st.part >= 0 && f.kind != Fix::NEW_TIRE) ? std::string() : what) + st.verb + (st.tool >= 0 ? std::string(" (") + toolName((Tool)st.tool) + ")" : "");
         const std::string miss = st.ground ? std::string(st.verb) : stepMissing(st, kit, own ? &own->kit : nullptr, handTool(wk), handPart(wk));
         if (!miss.empty()) o.blocked = true, o.prompt = what + miss;
         break;
@@ -744,6 +744,18 @@ std::string Interact::perform(Sim& sim, Walker& wk, const InteractOption& o) {
                 usedPart = st.part;
             }
             job.done++;
+            if (st.removes) {  // the broken one comes off: down on the ground beside the car
+                const Frame fr = c.frame();
+                const V3 fwd = norm(V3(fr.fwd.x, 0, fr.fwd.z)), left(fwd.z, 0, -fwd.x);
+                const double side = dot(o.fix.at - fr.com, left) < 0 ? -1.0 : 1.0;
+                Sim::DroppedPart d;
+                d.part = o.fix.part;
+                d.p = fr.com + left * (side * (c.spec->width / 2 + 0.8)) + fwd * dot(o.fix.at - fr.com, fwd);
+                d.p.y = sim.world.height(d.p.x, d.p.z) + 0.04;
+                d.yaw = std::atan2(-fwd.z, fwd.x) + 1.2 * (double)(sim.droppedParts.size() % 5);
+                sim.droppedParts.push_back(d);
+                if (sim.droppedParts.size() > 12) sim.droppedParts.erase(sim.droppedParts.begin());
+            }
             if (st.fixes) {
                 applyFix(c, o.fix);
                 job.fixed = true;

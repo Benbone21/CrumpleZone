@@ -337,6 +337,13 @@ Handwork handwork(const Sim& sim, const Walker& wk, const Interact& ia, const V3
             if (s < 0.95) sc.both(0.1);
         } else if (o.tool >= 0) {
             const Tool tool = (Tool)o.tool;
+            if (car) {  // taking the broken part off: it comes away in the other hand over the last of the hold
+                const std::vector<RepairStep> st = repairSteps(f.kind, jobJacks(f.kind, f.wheel), jobWheelOff(*car, f.kind, f.wheel));
+                if (o.step >= 0 && o.step < (int)st.size() && st[o.step].removes && t > 0.6) {
+                    const double s = smooth(std::min(1.0, (t - 0.6) / 0.4));
+                    sc.put(repairPartModel((RepairPart)f.part), lerp(work, work + norm(workAxis + kUp * 0.3) * 0.4, s), R, kUp);
+                }
+            }
             switch (tool) {
             case TOOL_HAMMER: sc.tap(toolId(tool), work, flat(workAxis), secs / 0.8 * M_PI * 2); break;
             case TOOL_PRY_BAR:

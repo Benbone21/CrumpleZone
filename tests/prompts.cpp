@@ -242,3 +242,28 @@ SCENARIO(promptsAir, "prompts/air", "on-foot tire airing: AIR UP and LET AIR OUT
     o = pickAt(norm(sidewall - eye));
     ctx.check("aiming at the sidewall: the target is air up", o.kind == IA_AIR_UP_TIRE && o.wheel == fl, o.prompt);
 }
+
+SCENARIO(promptsRemoveFit, "prompts/remove-fit", "a field repair's prompts are short: REMOVE <part> then FIT <part>, no job-name prefix, the reason of a blocked one split off") {
+    Car& c = ctx.add(*byId("blazer"), -140, -50, 0);
+    ctx.run(0.3);
+    c.wheels[1].tieOffset = 0.05;
+    c.wake();
+    const std::vector<Fix> fx = fixesFor(c);
+    const Fix* tr = nullptr;
+    for (const Fix& f : fx)
+        if (f.kind == Fix::TIE_ROD) tr = &f;
+    ctx.check("a bent tie rod is a repair", tr != nullptr);
+    if (!tr) return;
+    Walker wk;
+    Kit kit;
+    InteractOption o = Interact::fixOption(ctx.sim, wk, 0, *tr, kit, nullptr);
+    ctx.check("first: REMOVE TIE ROD (WRENCHES)", o.kind == IA_FIX && !o.blocked && o.prompt == "REMOVE TIE ROD (WRENCHES)", o.prompt);
+    c.fieldJobs.push_back({Fix::TIE_ROD, tr->wheel, tr->axle, tr->beam, 1, false});
+    o = Interact::fixOption(ctx.sim, wk, 0, *tr, kit, nullptr);
+    ctx.check("then: FIT TIE ROD", o.kind == IA_FIX && o.prompt == "FIT TIE ROD", o.prompt);
+    kit.unlimited = false;
+    o = Interact::fixOption(ctx.sim, wk, 0, *tr, kit, nullptr);
+    std::string label, reason;
+    prompts::split(o, label, reason);
+    ctx.check("no part: blocked, the label stays short", o.blocked && !reason.empty(), o.prompt);
+}
