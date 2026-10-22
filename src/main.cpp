@@ -1336,6 +1336,7 @@ void drawHelp(Renderer& r, float u, int W, int H, bool mph) {
         {K(KA_GEAR_DOWN) + sp + K(KA_GEAR_UP), "SHIFT DOWN / UP (R N 1...)"}, {K(KA_MANUAL), "MANUAL / AUTOMATIC"},
         {K(KA_MAP), "MAP (WAYPOINTS, PINGS)"},                           {K(KA_CHAT), "CHAT"},
         {"MIDDLE CLICK", "PING: GO HERE (SHIFT: HELP)"},
+        {K(KA_CROUCH), "ON FOOT: CROUCH (LOWER, SLOWER, LOOK UNDER THE TRUCK; REPAIRS STILL WORK)"},
         {K(KA_GET_IN_OUT), "GET OUT / IN (ON FOOT: " + K(KA_INTERACT) + " WINCH LINE, " + K(KA_FUEL_CAN) + " FUEL CAN)"},
         {K(KA_TRANSFER), mph ? "4X4: 2H 4H 4L (LOW: BELOW 5 MPH)" : "4X4: 2H 4H 4L (LOW: BELOW 8 KM/H)"},
         {K(KA_LIGHTS), "LIGHTS: AUTO, LOW, HIGH, OFF"},
@@ -2544,7 +2545,8 @@ int main(int argc, char** argv) {
     double camBlend = 1, peopleMs = 0;
     View camFrom;
     double workCrouch = 0;  // 0..1: crouched and leaning in to the work you're doing on foot (eased)
-    V3 crouchAt, crouchFrom, fpLean;  // ...at that, and how far the eyes moved for it
+    bool crouchLatch = false, crouchWas = false;  // the crouch key in toggle mode / last frame's press
+    V3 crouchAt, crouchFrom, fpLean, fpWork;  // ...at that, and how far the eyes moved for it
     double crouchReach = 0.85;
     V3 workHand;            // where your right hand was on the work last frame
     bool workHandOn = false;
@@ -2667,7 +2669,7 @@ int main(int argc, char** argv) {
         }
         if (audioOn) audio.play(SFX_DOOR_OPEN, 0.8f), audio.play(SFX_DOOR_SHUT, 0.9f, 0, 0.7f);  // (opens as you get in, and you pull it to behind you)
         camFrom = lastView, camBlend = 0;
-        walker.active = false;
+        walker.active = false, crouchLatch = false;
         cam.dist = carCamDist;
         cam.initialized = false;
         net.sendGame("inside");
@@ -3570,6 +3572,7 @@ int main(int argc, char** argv) {
                  : coop.mapOpen                                                           ? pad::Mode::Map
                                                                                           : pad::Mode::Drive;
         padLogic.tune = {settings.padSteering, settings.padDeadzone, settings.padRumble, settings.throttle.padScale()};
+        padLogic.onFoot = walker.active;
         padLogic.update(padDev.read((SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS) != 0), padCtx, dt);
         size_t padTap = 0;
         bool fromPad = false;
@@ -4576,6 +4579,16 @@ int main(int argc, char** argv) {
                 const V3 vf = norm(V3(lastView.target.x - lastView.eye.x, 0, lastView.target.z - lastView.eye.z));
                 const double viewYaw = std::atan2(-vf.z, vf.x);
                 const bool still = inv.open;  // (the menu is up: you stand and look at it)
+                {  // crouch: hold the key (or L3), or press it to toggle (Settings > Controls)
+                    const uint8_t* cks = SDL_GetKeyboardState(nullptr);
+                    const bool down = !menu.open && !inv.open && (settings.keys.held(KA_CROUCH, cks, cks[SC_LSHIFT] || cks[SC_RSHIFT]) || (padCtx == pad::Mode::Drive && padLogic.in.crouchHeld));
+                    if (settings.crouchToggle) {
+                        if (down && !crouchWas) crouchLatch = !crouchLatch;
+                        walker.crouching = crouchLatch;
+                    } else walker.crouching = down;
+                    crouchWas = down;
+                    if (std::getenv("CZ_CROUCH") && scripted) walker.crouching = true;  // (screenshots)
+                }
                 walker.step(sim.world, sim, dt, still ? 0 : (up ? 1 : 0) - (down ? 1 : 0), still ? 0 : (left ? 1 : 0) - (right ? 1 : 0), shiftHeld && !still, hb && !still, viewYaw);
                 {  // hands on: hold E (pad: X) for the job in front of you
                     const uint8_t* ks = SDL_GetKeyboardState(nullptr);
@@ -4628,8 +4641,8 @@ int main(int argc, char** argv) {
                         if (interact.progress > 0 && io.kind == IA_HOOK_LINE && std::isfinite(io.at.x)) hold = hold + (io.at - hold) * smoothstep(0, 1, std::min(1.0, interact.share() * 1.4));
                         sim.handLine.hand = hold;
                     }
-                    const std::string said = interact.update(sim, walker, lastView.eye - fpLean, lastView.target - lastView.eye, holdE, dt);  // (from where you stand, not where you've leaned in to)
-                    focus = prompter.update(sim, walker, interact, interact.nearby, lastView.eye - fpLean, lastView.target - lastView.eye);
+                    const std::string said = interact.update(sim, walker, lastView.eye - fpWork, lastView.target - lastView.eye, holdE, dt);  // (from where you stand, not where you've leaned in to)
+                    focus = prompter.update(sim, walker, interact, interact.nearby, lastView.eye - fpWork, lastView.target - lastView.eye);
                     if (!said.empty()) hud.toast(said);
                     if (interact.enterCar >= 0) {  // E at a door
                         const int k = interact.enterCar;
@@ -4686,7 +4699,7 @@ int main(int argc, char** argv) {
                 if (net.active() && walkSend <= 0 && walker.active) {
                     walkSend = 0.1;
                     char b[96];
-                    std::snprintf(b, sizeof b, "walk %.2f %.2f %.2f %.3f %.2f", walker.p.x, walker.p.y, walker.p.z, walker.yaw, walker.stride);
+                    std::snprintf(b, sizeof b, "walk %.2f %.2f %.2f %.3f %.2f %.2f", walker.p.x, walker.p.y, walker.p.z, walker.yaw, walker.stride, walker.crouchAmount());  // (the sixth field, crouch 0..1, is new: older builds read the first five)
                     net.sendGame(b);
                 }
             }
@@ -5451,7 +5464,7 @@ int main(int argc, char** argv) {
         }
         if (walker.active) {  // the camera follows you on foot
             fr = Frame();
-            fr.com = walker.p + V3(0, 1.1, 0);
+            fr.com = walker.p + V3(0, 1.1 - 0.4 * walker.crouchAmount(), 0);
             fr.fwd = V3(std::cos(walker.yaw), 0, -std::sin(walker.yaw));
             fr.up = V3(0, 1, 0);
             fr.left = cross(fr.up, fr.fwd);
@@ -5514,11 +5527,11 @@ int main(int argc, char** argv) {
                 view.eye += d, view.target += d;
             }
         }
-        fpLean = V3();
+        fpLean = V3(), fpWork = V3();
         if (walker.active && !editor.active && cam.mode != 3) {
             // First person: eyes 1.62 m up, a little bob as you walk (the hips' own: people.h).
             const double bob = walker.grounded ? 0.016 * std::sin(walker.stride * 2) * std::min(1.0, len(walker.v) / 1.5) : 0.0;
-            view.eye = walker.p + V3(0, 1.62 + bob, 0);
+            view.eye = walker.p + V3(0, walker.eyeHeight() + bob, 0);
             // Working on something low or out of reach (holding E): crouch and lean in to it, so your hands are on the work.
             const InteractOption& io = interact.current;
             const bool atWork = interact.progress > 0 && io.kind != IA_NONE && !io.blocked && io.kind != IA_RAISE_JACK && io.kind != IA_LOWER_JACK;
@@ -5536,7 +5549,8 @@ int main(int argc, char** argv) {
                 lean.y = std::min(lean.y, 0.0);
                 view.eye += lean * smoothstep(0, 1, workCrouch);
             }
-            fpLean = view.eye - (walker.p + V3(0, 1.62 + bob, 0));
+            fpLean = view.eye - (walker.p + V3(0, Walker::kEyeStand + bob, 0));  // (from the standing eyes: the body follows)
+            fpWork = view.eye - (walker.p + V3(0, walker.eyeHeight() + bob, 0));  // (from the eyes as crouched: the lean in to work)
             view.target = view.eye + V3(std::cos(footYaw) * std::cos(footPitch), std::sin(footPitch), -std::sin(footYaw) * std::cos(footPitch)) * 10.0;
             view.up = V3(0, 1, 0);
             view.fovy = cam.fovy;
@@ -5766,6 +5780,7 @@ int main(int argc, char** argv) {
                 people::Gait g;
                 g.p = walker.p, g.yaw = walker.yaw, g.vel = walker.v, g.stride = walker.stride;
                 g.grounded = walker.grounded || walker.inWater > 1.2;
+                g.crouch = walker.crouchAmount();  // (first person takes it from the eyes, see fpLean)
                 const people::Look me = people::lookFor(V3(0.56, 0.37, 0.2), 7);
                 if (!editor.active && cam.mode != 3) {
                     people::Pose p = people::firstPerson(g, myMove, dt, footYaw, footPitch, view.eye, fpLean);
@@ -5788,13 +5803,13 @@ int main(int argc, char** argv) {
             }
             const V3 viewDir = norm(view.target - view.eye);
             auto inView = [&](const V3& at, double d) { return d < 5 || dot(at - view.eye, viewDir) > 0.2 * d; };  // (well behind you: not drawn)
-            auto buddy = [&](const std::string& who, const V3& at, double yaw, double stride, const V3* vel) {
+            auto buddy = [&](const std::string& who, const V3& at, double yaw, double stride, const V3* vel, double crouch = 0) {
                 people::Mover& mv = buddyMove[who];
                 uint32_t h = 2166136261u;
                 for (char c : who) h = (h ^ (uint8_t)c) * 16777619u;
                 mv.seed = h;
                 people::Gait g;
-                g.p = at, g.yaw = yaw, g.stride = stride, g.lookAround = true;
+                g.p = at, g.yaw = yaw, g.stride = stride, g.lookAround = true, g.crouch = crouch;
                 g.grounded = at.y - sim.world.height(at.x, at.z) < 0.15;  // (off the ground: jumping)
                 if (vel) g.vel = *vel;
                 else g.estimate = true;
@@ -5804,16 +5819,16 @@ int main(int argc, char** argv) {
                 p.detail = d < 8 ? 2 : d < 30 ? 1 : 0;
                 people::build(p, people::lookFor(V3(0.2, 0.6, 0.95), h), renderer.people);
             };
-            for (const RemoteWalker& rw : coop.walkers) buddy(rw.who, rw.p, rw.yaw, rw.stride, nullptr);
-            if (const char* fg = scripted ? std::getenv("CZ_FIGURE") : nullptr) {  // (screenshots: a buddy on foot, CZ_FIGURE=m ahead of you, walking toward you[,side,speed[,turn rad/s]])
-                double d = 3, side = 0, sp = 1.7, turn = 0;
-                std::sscanf(fg, "%lf,%lf,%lf,%lf", &d, &side, &sp, &turn);
+            for (const RemoteWalker& rw : coop.walkers) buddy(rw.who, rw.p, rw.yaw, rw.stride, nullptr, rw.crouch);
+            if (const char* fg = scripted ? std::getenv("CZ_FIGURE") : nullptr) {  // (screenshots: a buddy on foot, CZ_FIGURE=m ahead of you, walking toward you[,side,speed[,turn rad/s[,crouch 0..1]]])
+                double d = 3, side = 0, sp = 1.7, turn = 0, figCrouch = 0;
+                std::sscanf(fg, "%lf,%lf,%lf,%lf,%lf", &d, &side, &sp, &turn, &figCrouch);
                 const V3 f = norm(V3(view.target.x - view.eye.x, 0, view.target.z - view.eye.z)), l(f.z, 0, -f.x);
                 V3 at = view.eye + f * d + l * side;
                 at.y = sim.world.height(at.x, at.z);
                 const double yaw = std::atan2(f.z, -f.x) + turn * clock;
                 const V3 vel = V3(std::cos(yaw), 0, -std::sin(yaw)) * sp;
-                buddy("CZ_FIGURE", at, yaw, clock * sp * 3.2, &vel);
+                buddy("CZ_FIGURE", at, yaw, clock * sp * 3.2, &vel, figCrouch);
             }
             // Every near cab's steering wheel (it turns with the steering).
             for (int i = 0; i < (int)sim.cars.size(); i++) {

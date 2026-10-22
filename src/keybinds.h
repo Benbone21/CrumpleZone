@@ -68,6 +68,7 @@ enum KeyAction {
     KA_INVENTORY,
     KA_PUT_DOWN,
     KA_FUEL_CAN,
+    KA_CROUCH,  // hold (or toggle, a setting): lower, slower, look under things
     // CAMERA AND VIEW
     KA_CAMERA,
     KA_MAP,

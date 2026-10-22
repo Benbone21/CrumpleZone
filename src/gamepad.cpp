@@ -159,7 +159,8 @@ void Logic::update(const Raw& raw, Mode ctx, double dt) {
             if (P(B_X)) tap(SC_Q);
             if (P(B_Y)) tap(SC_E);
             if (P(B_RB)) tap(SC_C);
-            if (P(B_LSTICK)) tap(SC_L, true);
+            if (P(B_LSTICK) && !onFoot) tap(SC_L, true);
+            in.crouchHeld = onFoot && D(B_LSTICK);
             if (P(B_UP)) tap(SC_L);
             if (P(B_LEFT)) tap(SC_F);
             if (P(B_RIGHT)) tap(SC_B);
@@ -373,7 +374,7 @@ std::vector<std::pair<std::string, std::string>> helpRows(Style s) {
         {"D-PAD UP", "4X4 MODE (2H 4H 4L)"},
         {"D-PAD LEFT / RIGHT", "FRONT / REAR LOCKER"},
         {"D-PAD DOWN", "FRONT SWAY BAR DISCONNECT"},
-        {"L3", "HEADLIGHTS"},
+        {"L3", "HEADLIGHTS (ON FOOT: CROUCH)"},
         {n(B_BACK), "MAP (STICK PANS, " + rt + " / " + lt + " ZOOM, " + n(B_A) + " WAYPOINT)"},
         {n(B_START), "PAUSE MENU (D-PAD / STICK MOVE, " + n(B_A) + " SELECT, " + n(B_B) + " BACK)"},
         {hold + "D-PAD UP / DOWN", "WINCH HOOK / TOW STRAP"},

@@ -24,6 +24,7 @@ struct RemoteWalker {
     std::string who;
     V3 p;
     double yaw = 0, stride = 0, age = 0;
+    double crouch = 0;  // 0..1 (the walk message's optional sixth field: older builds just don't send it)
 };
 
 struct ChatLine {

@@ -112,12 +112,14 @@ struct Intent {
     bool interact = false;       // X held: the hold-E job in front of you
     bool drop = false;           // B pressed: put down what you carry
     bool inventory = false;      // Y pressed (on foot): the list of what's in the truck
+    bool crouchHeld = false;     // L3 held (on foot; driving it's the headlights tap)
 };
 
 class Logic {
 public:
     Tuning tune;
     Intent in;
+    bool onFoot = false;  // set by main before update(): L3 crouches instead of toggling the lights
     std::vector<Tap> taps;  // pressed since the last update(); main feeds them in as key presses
 
     // `buttons` includes presses that came and went inside one frame. Fills `in` and `taps`.
