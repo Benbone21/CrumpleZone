@@ -4,8 +4,8 @@
 #include <cstring>
 
 // Parts are named by donor ("ENGINE:jesko:2" is the Jesko's third engine, whatever vehicle it goes into), so a
-// build works on every vehicle. A slot left nullptr keeps whatever the player had picked; that is how a build
-// leaves the factory suspension and wheels alone, since a vehicle's own part has a different key on each one.
+// build works on every vehicle. A slot left nullptr keeps whatever the player had picked. "<SLOT>:own"
+// ("SUSPENSION:own") names the vehicle's own part, option 0, which has a different key on each vehicle.
 const std::vector<Build>& builds() {
     static const std::vector<Build> b = {
         {"ROCK CRAWLER", "LIFT, MUD-TERRAINS AND A CRAWL BOX",
@@ -33,10 +33,12 @@ const std::vector<Build>& builds() {
           "TRANSMISSION:jesko:2",   // TOP SPEED GEARING: the 9-speed with the 3.0 final drive that lets 1750 hp run
           nullptr,
           "TIRES:RACE SLICK"}},     // the most grip there is, for a hypercar's power
-        {"SLEEPER", "A BIG ENGINE, EVERYTHING ELSE AS YOU HAD IT",
-         {"ENGINE:buggy:2",         // BLOWN 6.2: ~650 hp, the biggest engine after the HYPERCAR SWAP's. Nothing else is named:
-          nullptr, nullptr, nullptr, // the suspension and wheels stay as picked (the factory's, if untouched), so the car looks stock
-          nullptr}},
+        {"SLEEPER", "THE BIGGEST ENGINE, FACTORY SUSPENSION AND WHEELS",
+         {"ENGINE:jesko:2",           // RACE FUEL AND BOOST: ~2000 hp, the most power of any engine in the catalog (the HYPERCAR SWAP's too)
+          "SUSPENSION:own",           // the vehicle's own suspension and wheels, whatever was picked before: it looks factory
+          nullptr,
+          "WHEELS:own",
+          nullptr}},                  // (the tread stays as picked)
     };
     return b;
 }
@@ -51,6 +53,8 @@ bool resolveBuild(int vehicle, const Build& b, ModSet& io) {
         int found = -1;
         for (int o = 0; o < n && found < 0; o++)
             if (modPartKey(vehicle, s, o) == b.parts[s]) found = o;
+        // "<SLOT>:own" is the vehicle's own part, option 0.
+        if (found < 0 && std::string(b.parts[s]) == std::string(modSlotName(s)) + ":own") found = 0;
         // The vehicle's own tread isn't listed again: option 0 is that tread.
         if (found < 0 && s == MOD_TIRES && std::string(b.parts[s]) == std::string("TIRES:") + tireTypeName(cat[vehicle].tireType)) found = 0;
         if (found < 0) {

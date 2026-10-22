@@ -93,7 +93,9 @@ bool PickerNav::pickBuild() {
     for (int s = 0; s < MOD_SLOTS; s++) {
         pick_.pick[s] = std::min(std::max(pick_.pick[s], 0), (int)modOptions(vehicle_, s).size() - 1);  // (like open)
         changed = changed || pick_.pick[s] != was.pick[s];
-        // The group holding the part remembers it, so leaving the tab and coming back to that group keeps it.
+        // Only the pick's groups remember a build's parts; the rest are as they were on entering BUILDS (so browsing
+        // and going back to YOUR PICK leaves nothing behind).
+        rem_[s] = remBase_[s];
         const int g = tree_.groupOf(s, pick_.pick[s]);
         if (g >= 0) rem_[s][g] = pick_.pick[s];
     }
@@ -105,6 +107,7 @@ bool PickerNav::tab(int d) {
     level_ = 1, scroll1_ = 0;
     if (tab_ == TAB_BUILDS) {
         yours_ = pick_;
+        for (int s = 0; s < MOD_SLOTS; s++) remBase_[s] = rem_[s];
         cursor_ = 0;
     } else {
         cursor_ = std::max(tree_.groupOf(tab_, pick_.pick[tab_]), 0);

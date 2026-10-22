@@ -575,6 +575,10 @@ SCENARIO(showroomBuilds, "showroom/builds", "Every build resolves on every vehic
                     continue;
                 }
                 const std::string key = b.parts[k];
+                if (key == std::string(modSlotName(k)) + ":own") {  // (the vehicle's own part: option 0)
+                    if (io.pick[k] != 0 && !badNames++) firstName = at + b.name + ": " + key + " took option " + std::to_string(io.pick[k]);
+                    continue;
+                }
                 if (k == MOD_TIRES && io.pick[k] == 0 && key != modPartKey(v, k, 0)) {
                     // (the vehicle's own tread: option 0 stands for it)
                     if (key != std::string("TIRES:") + tireTypeName(cat[v].tireType) && !badNames++) firstName = at + b.name + ": " + key + " took option 0";
@@ -621,6 +625,54 @@ SCENARIO(showroomBuilds, "showroom/builds", "Every build resolves on every vehic
     ctx.check("each names its engine, gearbox and tread, and leaves the rest", badNames == 0, firstName);
     ctx.check("over a base, unnamed slots stay the base's", badBase == 0, firstBase);
     ctx.check("the vehicle's own tread resolves to option 0", badOwn == 0, firstOwn);
+
+    // A build that names a tread delivers it over any base: the base's suspension (which can bring its own tread) and wheels
+    // can't change it. Own treads resolve to option 0, which applies no tread, so this is the check that the parts hold it.
+    int badTread = 0, treadCases = 0;
+    std::string firstTread;
+    for (int v = 0; v < (int)cat.size(); v++) {
+        std::vector<ModSet> bases(1);  // (all default)
+        for (int o = 0; o < (int)modOptions(v, MOD_SUSPENSION).size(); o++) bases.push_back(onlySlot(MOD_SUSPENSION, o));
+        for (int o = 0; o < (int)modOptions(v, MOD_WHEELS).size(); o++) bases.push_back(onlySlot(MOD_WHEELS, o));
+        for (const Build& b : bl) {
+            if (!b.parts[MOD_TIRES]) continue;
+            for (const ModSet& base : bases) {
+                ModSet m = base;
+                resolveBuild(v, b, m);
+                VehicleSpec s;
+                applyMods(v, m, s);
+                treadCases++;
+                if (std::string("TIRES:") + tireTypeName(s.tireType) != b.parts[MOD_TIRES] && !badTread++)
+                    firstTread = std::string(cat[v].id) + " " + b.name + " over " + picksText(base) + ": " + tireTypeName(s.tireType);
+            }
+        }
+    }
+    ctx.check("a named tread holds over any suspension or wheels base", badTread == 0 && treadCases > 0, firstTread);
+
+    // SLEEPER: the most powerful engine in the catalog, and the vehicle's own suspension and wheels over any base.
+    const Build* sleeper = nullptr;
+    for (const Build& b : bl)
+        if (std::string(b.name) == "SLEEPER") sleeper = &b;
+    if (ctx.check("there is a SLEEPER", sleeper != nullptr)) {
+        int badSleeper = 0;
+        std::string firstSleeper;
+        for (int v = 0; v < (int)cat.size(); v++) {
+            ModSet over;
+            std::copy(baseWant, baseWant + MOD_SLOTS, over.pick);  // (a lifted suspension and donor wheels)
+            resolveBuild(v, *sleeper, over);
+            if ((over.pick[MOD_SUSPENSION] != 0 || over.pick[MOD_WHEELS] != 0) && !badSleeper++) firstSleeper = std::string(cat[v].id) + ": " + picksText(over);
+            double best = 0;
+            for (int o = 0; o < (int)modOptions(v, MOD_ENGINE).size(); o++) {
+                VehicleSpec s;
+                applyMods(v, onlySlot(MOD_ENGINE, o), s);
+                best = std::max(best, peakPower(s));
+            }
+            VehicleSpec got;
+            applyMods(v, over, got);
+            if (peakPower(got) < best && !badSleeper++) firstSleeper = std::string(cat[v].id) + ": engine " + std::to_string(peakPower(got)) + " W of " + std::to_string(best);
+        }
+        ctx.check("SLEEPER: the strongest engine, and its own suspension and wheels over a lifted, donor-wheeled base", badSleeper == 0, firstSleeper);
+    }
 
     // A key that isn't a part: false, and that slot stays as it was.
     Build bogus{"BOGUS", "", {"ENGINE:nowhere:9", nullptr, nullptr, nullptr, "TIRES:SNOW"}};
@@ -669,6 +721,30 @@ SCENARIO(showroomBuilds, "showroom/builds", "Every build resolves on every vehic
     ctx.check("away and back onto the group re-picks the build's part", nav.clickTile(eg) && nav.pick().pick[MOD_ENGINE] == b1.pick[MOD_ENGINE]);
     nav.tab(-1);
     ctx.check("entering again takes a fresh YOUR PICK", samePicks(nav.yourPick(), nav.pick()) && nav.cursor() == 0);
+
+    // Browsing builds doesn't disturb what the groups remember: after YOUR PICK is restored, the Jesko's engine
+    // tile picks the option it would have picked before BUILDS.
+    {
+        int hyper = -1;
+        for (int i = 0; i < (int)bl.size(); i++)
+            if (bl[i].parts[MOD_ENGINE] && std::string(bl[i].parts[MOD_ENGINE]) == "ENGINE:jesko:2") hyper = i;
+        PickerNav n2;
+        n2.open(v, ModSet(), (int)bl.size());
+        n2.resolve = nav.resolve;
+        int jg = -1;
+        for (int g = 0; g < (int)n2.tree().groups[MOD_ENGINE].size(); g++)
+            if (std::string(cat[n2.tree().groups[MOD_ENGINE][g].donor].id) == "jesko") jg = g;
+        if (ctx.check("a build with the Jesko's race engine, and the Jesko's engine group", hyper >= 0 && jg > 0)) {
+            const int before = n2.remembered(MOD_ENGINE, jg), raced = n2.tree().groups[MOD_ENGINE][jg].first + 2;
+            n2.tab(-1);
+            ctx.check("the build picks the race engine", n2.clickTile(hyper + 1) && n2.pick().pick[MOD_ENGINE] == raced);
+            ctx.check("...and is remembered while it is picked", n2.remembered(MOD_ENGINE, jg) == raced);
+            ctx.check("YOUR PICK restores", n2.clickTile(0) && n2.pick().stock());
+            ctx.check("...and gives the group back what it remembered", n2.remembered(MOD_ENGINE, jg) == before);
+            n2.tab(1);
+            ctx.check("on the ENGINE tab the Jesko tile picks the option remembered before BUILDS", n2.clickTile(jg) && n2.pick().pick[MOD_ENGINE] == before, picksText(n2.pick()));
+        }
+    }
 
     // setPicks: clamped like setPick, one debounce restart, neighbours only for a single slot.
     {

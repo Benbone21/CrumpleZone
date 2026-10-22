@@ -55,7 +55,7 @@ private:
     void fit();        // scroll so the cursor shows
     PartTree tree_;
     ModSet pick_, yours_;
-    std::vector<int> rem_[MOD_SLOTS];
+    std::vector<int> rem_[MOD_SLOTS], remBase_[MOD_SLOTS];  // remBase_: rem_ as it was on entering BUILDS (browsing builds borrows rem_)
     int vehicle_ = 0, buildCount_ = 0;
     int tab_ = TAB_ENGINE, level_ = 1, cursor_ = 0, group_ = 0;
     int scroll1_ = 0, scroll2_ = 0;
