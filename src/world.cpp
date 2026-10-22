@@ -721,7 +721,7 @@ void World::buildWilds() {
             const double bump = kind == WILDS_DESERT ? 0.3 : kind == WILDS_UPLAND ? 0.8 : 0.5;
             h += bump * (fbmNoise(x * 0.09 + 5.0, z * 0.09 + 1.0, 2) - 0.5) + 0.5 * bump * (valueNoise(x * 0.31, z * 0.27) - 0.5);
             // Hills close in far out, and keep you on the map.
-            const double d = std::hypot(std::max(0.0, std::fabs(x) - 470), std::max(0.0, std::fabs(z) - 470));
+            const double d = std::hypot(std::max(0.0, std::fabs(x) - (half - 130)), std::max(0.0, std::fabs(z) - (half - 130)));
             h += 0.0045 * d * d + 0.02 * d;
             hgrid[i * hN + j] = (float)h;
         }

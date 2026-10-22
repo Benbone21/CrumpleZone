@@ -18,6 +18,9 @@ public:
     void build(const std::vector<float>& heights, int n, double spacing, double origin);
     // Editor: a mesh vertex changed. The pyramid is stale (occluded() says false) until `refresh` rebuilds it.
     void patch(int i, int j, float h);
+    // ...or, on a grid coarser than the mesh (each sample the lowest mesh vertex round it): a vertex near sample (i, j) is now
+    // at h (the sample only goes down: still a lower bound if it went up).
+    void patchLower(int i, int j, float h);
     void refresh(bool force = false);  // call once a frame; rebuilds a stale pyramid after it settles
     void setEye(const V3& eye);        // the camera, once a frame, before any occluded()
     void enable(bool on) { enabled_ = on; }
