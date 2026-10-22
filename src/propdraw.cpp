@@ -623,7 +623,7 @@ void PropRenderer::setWorld(const World& w, int q) {
             double x, z;
         };
         std::vector<Spot> spots;
-        const double step = 6.0, lim = 520;
+        const double step = 6.0, lim = w.halfSize() - 80;
         for (double x = -lim; x < lim; x += step)
             for (double z = -lim; z < lim; z += step) {
                 const uint32_t h = hash32((uint32_t)(x * 7 + 5000) * 73856093u ^ (uint32_t)(z * 7 + 5000) * 19349663u);
@@ -669,23 +669,23 @@ void PropRenderer::setWorld(const World& w, int q) {
         }
     }
     // Static cells.
-    cellN = (int)std::ceil(2 * World::kHalfSize / kStaticCell) + 2;
+    cellN = (int)std::ceil(2 * w.halfSize() / kStaticCell) + 2;
     cells.assign((size_t)cellN * cellN, Cell());
     for (Cell& c : cells) c.mn = V3(1e30, 1e30, 1e30), c.mx = V3(-1e30, -1e30, -1e30);
     for (int i = 0; i < (int)statics.size(); i++) {
         const Inst& in = statics[i];
-        const int cx = std::min(cellN - 1, std::max(0, (int)((in.c.x + World::kHalfSize) / kStaticCell) + 1));
-        const int cz = std::min(cellN - 1, std::max(0, (int)((in.c.z + World::kHalfSize) / kStaticCell) + 1));
+        const int cx = std::min(cellN - 1, std::max(0, (int)((in.c.x + w.halfSize()) / kStaticCell) + 1));
+        const int cz = std::min(cellN - 1, std::max(0, (int)((in.c.z + w.halfSize()) / kStaticCell) + 1));
         Cell& c = cells[(size_t)cx * cellN + cz];
         c.inst.push_back(i);
         c.mn = V3(std::min(c.mn.x, in.c.x - in.r), std::min(c.mn.y, in.c.y - in.r), std::min(c.mn.z, in.c.z - in.r));
         c.mx = V3(std::max(c.mx.x, in.c.x + in.r), std::max(c.mx.y, in.c.y + in.r), std::max(c.mx.z, in.c.z + in.r));
     }
     // Trees near each 16 m cell (forest floor or open ground, for the scatter).
-    treeNearN = (int)(2 * World::kHalfSize / 16.0) + 1;
+    treeNearN = (int)(2 * w.halfSize() / 16.0) + 1;
     treeNear.assign((size_t)treeNearN * treeNearN, 0);
     for (const Tree& t : w.trees) {
-        const int i = (int)((t.base.x + World::kHalfSize) / 16.0), j = (int)((t.base.z + World::kHalfSize) / 16.0);
+        const int i = (int)((t.base.x + w.halfSize()) / 16.0), j = (int)((t.base.z + w.halfSize()) / 16.0);
         if (i >= 0 && j >= 0 && i < treeNearN && j < treeNearN) treeNear[(size_t)i * treeNearN + j] = (uint8_t)std::min(255, treeNear[(size_t)i * treeNearN + j] + 1);
     }
     std::printf("props: %zu placed (%zu trees, %zu rocks on the map)\n", statics.size(), w.trees.size(), w.rocks.size());
@@ -696,14 +696,14 @@ void PropRenderer::buildScatterCell(int cx, int cz, std::vector<Inst>& out) {
     const int tries = kScatterTries[quality];
     const uint32_t base = hash32((uint32_t)(cx + 40000) * 73856093u ^ (uint32_t)(cz + 40000) * 19349663u);
     auto forest = [&](double x, double z) {
-        const int i = (int)((x + World::kHalfSize) / 16.0), j = (int)((z + World::kHalfSize) / 16.0);
+        const int i = (int)((x + w.halfSize()) / 16.0), j = (int)((z + w.halfSize()) / 16.0);
         if (i < 0 || j < 0 || i >= treeNearN || j >= treeNearN) return 0;
         return (int)treeNear[(size_t)i * treeNearN + j];
     };
     for (int k = 0; k < tries; k++) {
         const uint32_t h = hash32(base + (uint32_t)k * 0x9e3779b9u);
         const double x = (cx + hashf(h, 1)) * kScatterCell, z = (cz + hashf(h, 2)) * kScatterCell;
-        if (std::fabs(x) > World::kHalfSize - 30 || std::fabs(z) > World::kHalfSize - 30) continue;
+        if (std::fabs(x) > w.halfSize() - 30 || std::fabs(z) > w.halfSize() - 30) continue;
         const RoadInfo r = w.roadAt(x, z);
         if (r.near || r.paint != PAINT_NONE) continue;  // off roads, trails, pads and painted ground
         const Surface s = w.surfaceAt(x, z);

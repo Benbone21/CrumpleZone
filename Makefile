@@ -54,6 +54,10 @@ build/crumplezone-server: build/src/server_main.o $(PHYS)
 build/bench_sim: build/tools/bench_sim.o $(patsubst %.cpp,build/%.o,$(PHYS))
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -lm
 
+# Headless world-build timer (docs/plans/big-maps.md): build/worldtime [--scans] [MAP...]
+build/worldtime: build/tools/worldtime.o $(patsubst %.cpp,build/%.o,$(PHYS))
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -lm
+
 # Prototype performance targets are measured separately from functional scenario checks.
 build/bench_autopilot: build/tests/run_tests.o build/tests/lidar.o build/tests/harness.o $(patsubst %.cpp,build/%.o,$(PHYS))
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -lm

@@ -7,6 +7,7 @@
 #include <fstream>
 #include <mutex>
 #include <sstream>
+#include <type_traits>
 
 #include "modelkit.h"
 #include "platform.h"
@@ -478,8 +479,10 @@ std::string saveLevelText(const Level& lv) {
         if (r.y > 0.5) o << ' ' << (int)std::lround(r.y) - 1;  // (which kind of thing; an older build takes the nearest of any)
         o << '\n';
     }
-    // (The grid is the same size on every map.)
-    const int n = World(MAP_FREEWAY).gridSize();
+    // The cells are keyed on the level's map's grid (World::cellIndex). A grid other than the old one, the same on every map
+    // (kLegacyGrid), says so in a `grid` line; a file without one is on the old grid.
+    const int n = World::gridSizeFor(lv.map);
+    if (n != kLegacyGrid) o << "grid " << n << '\n';
     writeRuns(o, "heights", lv.heights, n, [](float h) { return num(h); });
     writeRuns(o, "surfaces", lv.surfaces, n, [](uint16_t s) {
         char b[8];
@@ -503,7 +506,7 @@ bool parseLevelText(const std::string& text, Level& lv, std::string* error) {
     std::string line;
     int lineNo = 0;
     bool header = false;
-    static const int gridN = World(MAP_FREEWAY).gridSize();  // (made once, thread-safely)
+    int gridN = kLegacyGrid;  // the grid the file's cells are on (a `grid` line before them changes it)
     auto fail = [&](const std::string& why) {
         if (error) *error = "LINE " + std::to_string(lineNo) + ": " + why;
         return false;
@@ -631,6 +634,10 @@ bool parseLevelText(const std::string& text, Level& lv, std::string* error) {
         else if (tag == "about") out.about = rest();
         else if (tag == "author") out.author = rest();
         else if (tag == "map") ls >> out.map;
+        else if (tag == "grid") {
+            ls >> gridN;
+            if (gridN < 3 || gridN > 65537 || gridN % 2 == 0) return fail("BAD GRID");
+        }
         else if (tag == "terrain") ls >> out.terrain;
         else if (tag == "mode") {
             std::string m;
@@ -743,6 +750,21 @@ bool parseLevelText(const std::string& text, Level& lv, std::string* error) {
     const bool prototype = out.author == "GENERATOR" && out.about.find("PROTOTYPE") != std::string::npos;
     if (out.map == MAP_PROVING_GROUND && (out.section.on || prototype)) out.map = MAP_WILDS, out.terrain = WILDS_MEADOW;
     out.laps = std::max(1, out.laps);
+    // Cells saved on a grid of another size (the map has grown or shrunk since): both grids are centred on the map's middle at 1 m,
+    // so a cell keeps its place in the world; whatever is off the map now is dropped.
+    const int mapN = World::gridSizeFor(out.map);
+    if (gridN != mapN) {
+        const int shift = (mapN - gridN) / 2;
+        auto remap = [&](auto& cells) {
+            std::remove_reference_t<decltype(cells)> moved;
+            for (const auto& c : cells) {
+                const int i = c.first / gridN + shift, j = c.first % gridN + shift;
+                if (i >= 0 && j >= 0 && i < mapN && j < mapN) moved.emplace(i * mapN + j, c.second);
+            }
+            cells.swap(moved);
+        };
+        remap(out.heights), remap(out.surfaces), remap(out.water), remap(out.flow);
+    }
     out.file = lv.file;
     lv = out;
     return true;

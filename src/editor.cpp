@@ -2026,8 +2026,8 @@ void Editor::update(double dt, const uint8_t* keys, Renderer& r, int w, int h) {
         if (keys[SC_SPACE] && !holding) move.y += 1;
         if (len(move) > 0) eye += norm(move) * (speed * dt);
         eye.y = std::max(eye.y, core.world->height(eye.x, eye.z) + 1.5);
-        eye.x = clampd(eye.x, -World::kHalfSize + 5, World::kHalfSize - 5);
-        eye.z = clampd(eye.z, -World::kHalfSize + 5, World::kHalfSize - 5);
+        eye.x = clampd(eye.x, -core.world->halfSize() + 5, core.world->halfSize() - 5);
+        eye.z = clampd(eye.z, -core.world->halfSize() + 5, core.world->halfSize() - 5);
     }
     // What's under the mouse.
     V3 o, d;

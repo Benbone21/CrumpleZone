@@ -139,13 +139,13 @@ double World::mountainHeight(double x, double z) const {
 void World::buildMountain() {
     map = MAP_MOUNTAIN;
     crashProps = false;
-    hN = (int)(2 * kHalfSize / kRes) + 1;
+    hN = (int)(2 * half / kRes) + 1;
     const int N = hN * hN;
     hgrid.resize(N);
     for (int i = 0; i < hN; i++)
-        for (int j = 0; j < hN; j++) hgrid[i * hN + j] = (float)mountainHeight(-kHalfSize + i * kRes, -kHalfSize + j * kRes);
-    auto X = [&](int i) { return -kHalfSize + i * kRes; };
-    auto cellI = [&](double v) { return std::min(std::max((int)std::lround((v + kHalfSize) / kRes), 0), hN - 1); };
+        for (int j = 0; j < hN; j++) hgrid[i * hN + j] = (float)mountainHeight(-half + i * kRes, -half + j * kRes);
+    auto X = [&](int i) { return -half + i * kRes; };
+    auto cellI = [&](double v) { return std::min(std::max((int)std::lround((v + half) / kRes), 0), hN - 1); };
 
     // ---- Paths ----
     // The summit trail: from the trailhead north to the foot of the massif, then a

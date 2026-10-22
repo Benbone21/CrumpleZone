@@ -37,7 +37,9 @@ namespace {
 // ---- The map as the planner sees it: one cell per 2 m ----------------------------------
 
 constexpr double kCell = 2.0;
-constexpr int kN = (int)(2 * World::kHalfSize / kCell);
+// (The map's size, per thread: set from the world by gridFor, which every user calls first.)
+thread_local double gHalf = World::kDefaultHalfSize;
+thread_local int kN = (int)(2 * World::kDefaultHalfSize / kCell);
 
 // A rock, log or ledge, and how tall it stands.
 struct Lump {
@@ -54,8 +56,8 @@ struct Grid {
     std::vector<Lump> lumps;
 };
 
-int cellOf(double v) { return std::min(std::max((int)std::floor((v + World::kHalfSize) / kCell), 0), kN - 1); }
-double centerOf(int i) { return -World::kHalfSize + (i + 0.5) * kCell; }
+int cellOf(double v) { return std::min(std::max((int)std::floor((v + gHalf) / kCell), 0), kN - 1); }
+double centerOf(int i) { return -gHalf + (i + 0.5) * kCell; }
 
 // Marks every cell whose center is within r of (x, z).
 template <class F> void disc(double x, double z, double r, F mark) {
@@ -65,6 +67,7 @@ template <class F> void disc(double x, double z, double r, F mark) {
 }
 
 const Grid& gridFor(const World& w) {
+    gHalf = w.halfSize(), kN = (int)(2 * gHalf / kCell);
     CZ_THREAD_CACHE(Grid, g);
     if (g.stamp == w.stamp && w.stamp) return g;
     g.stamp = w.stamp;

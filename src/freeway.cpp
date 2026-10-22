@@ -30,7 +30,7 @@ void World::buildFreeway() {
     spawnYaw = 0;
     parking = {V3(-175, 0, 13.8), V3(-190, 0, 13.8), V3(-205, 0, 13.8)};  // on the shoulder
     parkingYaw = 0;
-    hN = (int)(2 * kHalfSize / kRes) + 1;
+    hN = (int)(2 * half / kRes) + 1;
     const int N = hN * hN;
     hgrid.assign(N, 0);
     paint.assign(N, PAINT_NONE);
@@ -38,7 +38,7 @@ void World::buildFreeway() {
     roadLat.assign(N, 0);
     roadAlong.assign(N, 0);
     roadNear.assign(N, 0);
-    auto X = [&](int i) { return -kHalfSize + i * kRes; };
+    auto X = [&](int i) { return -half + i * kRes; };
     const double tau = 2 * M_PI / kPeriod;
     // A rest area with a repair shop off the eastbound side every period: its pad, and a
     // gravel slip road from the shoulder.
@@ -66,24 +66,24 @@ void World::buildFreeway() {
             }
             roadNear[id] = az < kRail + 2;
             roadLat[id] = (float)z;
-            roadAlong[id] = (float)(x + kHalfSize);
+            roadAlong[id] = (float)(x + half);
         }
 
     // The median: a concrete barrier the length of the map, in 20 m sections.
-    for (double x = -kHalfSize; x < kHalfSize; x += 20) {
+    for (double x = -half; x < half; x += 20) {
         addBox(V3(x + 10, 0.42, 0), V3(10, 0.42, 0.28), 0, 0, 0, kConcrete);
         standIn(boxes.size() - 1, "jersey_barrier", V3(x + 10, 0, 0), 0, {{"length", 20}});
     }
     // Guardrails, with a gap at each slip road (eastbound).
     for (int s = -1; s <= 1; s += 2)
-        for (double x = -kHalfSize; x < kHalfSize; x += 20) {
+        for (double x = -half; x < half; x += 20) {
             if (s > 0 && std::fabs(fold(x + 10)) < 12) continue;
             addBox(V3(x + 10, 0.38, s * kRail), V3(10, 0.38, 0.07), 0, 0, 0, kSteel);
             standIn(boxes.size() - 1, "guardrail", V3(x + 10, 0, s * kRail), s > 0 ? M_PI : 0,  // (its rail to the traffic)
                     {{"length", 20}});
         }
     // Lamp posts every 50 m on both sides, the heads reaching over the outer lane.
-    for (double x = -kHalfSize + 25; x < kHalfSize; x += 50)
+    for (double x = -half + 25; x < half; x += 50)
         for (int s = -1; s <= 1; s += 2) {
             const double z = s * (kRail + 1.0);
             const size_t first = boxes.size();
@@ -99,7 +99,7 @@ void World::buildFreeway() {
     // A sign gantry over both carriageways every period (half a period from the shops).
     for (int k = -2; k <= 1; k++) {
         const double x = kPeriod / 2 + k * kPeriod;
-        if (std::fabs(x) > kHalfSize - 5) continue;
+        if (std::fabs(x) > half - 5) continue;
         const size_t first = boxes.size();
         for (int s = -1; s <= 1; s += 2) {
             const double z = s * (kRail + 2.4);
@@ -148,13 +148,13 @@ void World::buildFreeway() {
     for (int k = -2; k <= 2; k++) {
         for (Tree t : oneTrees) {
             t.base.x += k * kPeriod;
-            if (std::fabs(t.base.x) > kHalfSize - 2) continue;
+            if (std::fabs(t.base.x) > half - 2) continue;
             t.base.y = height(t.base.x, t.base.z) - 0.2;
             plant(t);
         }
         for (Bush b : oneBushes) {
             b.p.x += k * kPeriod;
-            if (std::fabs(b.p.x) > kHalfSize - 2) continue;
+            if (std::fabs(b.p.x) > half - 2) continue;
             b.p.y = height(b.p.x, b.p.z);
             bushes.push_back(b);
         }

@@ -528,7 +528,7 @@ void EditCore::endEdit() {
         for (const CellChange& c : pending.cells)
             if (c.what == 0) r.add(c.id / world->gridSize(), c.id % world->gridSize());
         bool hit = false;
-        const double half = World::kHalfSize;
+        const double half = world->halfSize();
         for (const LevelObject& o : level.objects) {
             // (a log rests on the ground at its two ends; a box on its footprint)
             const double m = o.kind == OBJ_LOG ? 3.0 : std::max(3.0, std::max(o.size.x, o.size.z) + 2);
@@ -675,7 +675,7 @@ void EditCore::brush(BrushOp op, const Brush& b, double cx, double cz, double am
     const bool own = !editing();
     if (own) beginEdit(names[op]);
     const int n = world->gridSize();
-    const double half = World::kHalfSize, r = std::max(b.radius, 0.5);
+    const double half = world->halfSize(), r = std::max(b.radius, 0.5);
     if (r < 1.0) cx = std::round(cx), cz = std::round(cz);
     const int i0 = std::max(1, (int)std::floor(cx + half - r)), i1 = std::min(n - 2, (int)std::ceil(cx + half + r));
     const int j0 = std::max(1, (int)std::floor(cz + half - r)), j1 = std::min(n - 2, (int)std::ceil(cz + half + r));
@@ -732,7 +732,7 @@ void EditCore::ramp(const V3& a, const V3& b, double width) {
     const bool own = !editing();
     if (own) beginEdit("RAMP");
     const int n = world->gridSize();
-    const double half = World::kHalfSize, hw = width / 2, shoulder = std::max(2.0, width * 0.5);
+    const double half = world->halfSize(), hw = width / 2, shoulder = std::max(2.0, width * 0.5);
     const V3 a2(a.x, 0, a.z), u(b.x - a.x, 0, b.z - a.z);
     const double L2 = dot(u, u), reach = hw + shoulder;
     const int i0 = std::max(0, (int)std::floor(std::min(a.x, b.x) + half - reach)), i1 = std::min(n - 1, (int)std::ceil(std::max(a.x, b.x) + half + reach));
@@ -757,7 +757,7 @@ void EditCore::levelPad(const V3& c, double yaw, double hl, double hw, double y,
     const bool own = !editing();
     if (own) beginEdit("LEVEL GROUND");
     const int n = world->gridSize();
-    const double half = World::kHalfSize, R = std::hypot(hl, hw) + margin;
+    const double half = world->halfSize(), R = std::hypot(hl, hw) + margin;
     const V3 f(std::cos(yaw), 0, -std::sin(yaw)), s(-f.z, 0, f.x);
     for (int i = std::max(0, (int)(c.x + half - R)); i <= std::min(n - 1, (int)(c.x + half + R + 1)); i++)
         for (int j = std::max(0, (int)(c.z + half - R)); j <= std::min(n - 1, (int)(c.z + half + R + 1)); j++) {
@@ -787,7 +787,7 @@ void EditCore::paint(const Brush& b, double cx, double cz, int material) {
     const bool own = !editing();
     if (own) beginEdit(std::string("PAINT ") + m.name);
     const int n = world->gridSize();
-    const double half = World::kHalfSize, r = std::max(b.radius, 0.5);
+    const double half = world->halfSize(), r = std::max(b.radius, 0.5);
     if (r < 1.0) cx = std::round(cx), cz = std::round(cz);
     for (int i = std::max(0, (int)std::floor(cx + half - r)); i <= std::min(n - 1, (int)std::ceil(cx + half + r)); i++)
         for (int j = std::max(0, (int)std::floor(cz + half - r)); j <= std::min(n - 1, (int)std::ceil(cz + half + r)); j++) {
@@ -851,7 +851,7 @@ void EditCore::dry(double cx, double cz, double r) {
     const bool own = !editing();
     if (own) beginEdit("DRY");
     const int n = world->gridSize();
-    const double half = World::kHalfSize;
+    const double half = world->halfSize();
     for (int i = std::max(0, (int)std::floor(cx + half - r)); i <= std::min(n - 1, (int)std::ceil(cx + half + r)); i++)
         for (int j = std::max(0, (int)std::floor(cz + half - r)); j <= std::min(n - 1, (int)std::ceil(cz + half + r)); j++) {
             if (std::hypot(i - half - cx, j - half - cz) > r) continue;
@@ -866,7 +866,7 @@ int EditCore::dryBrush(const Brush& b, double cx, double cz) {
     const bool own = !editing();
     if (own) beginEdit("DRAIN");
     const int n = world->gridSize();
-    const double half = World::kHalfSize, r = std::max(b.radius, 0.5);
+    const double half = world->halfSize(), r = std::max(b.radius, 0.5);
     if (r < 1.0) cx = std::round(cx), cz = std::round(cz);
     int count = 0;
     for (int i = std::max(0, (int)std::floor(cx + half - r)); i <= std::min(n - 1, (int)std::ceil(cx + half + r)); i++)
@@ -883,7 +883,7 @@ int EditCore::dryBrush(const Brush& b, double cx, double cz) {
 int EditCore::drain(double cx, double cz) {
     if (!world || !world->hasWater()) return 0;
     const int n = world->gridSize();
-    const double half = World::kHalfSize;
+    const double half = world->halfSize();
     // The wet cell nearest the click, within 3 m.
     int start = -1;
     double best = 1e9;

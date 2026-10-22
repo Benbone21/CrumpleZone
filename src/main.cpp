@@ -1910,7 +1910,12 @@ int main(int argc, char** argv) {
     // Scanned rock hulls (assets/props), so what you hit is what you see; without the bake,
     // code-made rocks. Scenario playback keeps the code-made rocks the tests ran with.
     if (opt.scenario.empty()) props::setActiveRockScans(&props::sharedHullLibrary());
+    // The sim starts on the proving ground. When another map or the menu's camp replaces it straight away, it's built bare: the
+    // model yard and the section park (seconds of work on a build's first run) aren't laid out only to be thrown away.
+    const bool showcaseOn = World::withShowcase;
+    World::withShowcase = showcaseOn && !wantCamp && settings.map == MAP_PROVING_GROUND;
     Sim sim;
+    World::withShowcase = showcaseOn;
     const int physicsThreads = resolvePhysicsThreads(settings.physicsThreads);
     try {
         sim.setPhysicsThreads(physicsThreads);
