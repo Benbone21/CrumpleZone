@@ -253,7 +253,7 @@ Build your own worlds and levels: title screen → WORLD EDITOR (a new level on 
 Press Esc to pause and open the menu. Use the mouse, or W/S to select, A/D to
 change and Enter to confirm. Esc goes back.
 
-- **Vehicle:** pick any of the seven vehicles, then press Enter (or click) to drive it.
+- **Vehicle:** pick any of the ten vehicles, then press Enter (or click) to drive it.
 - **Settings:**
   - Game: speed in km/h or mph, time of day (CYCLE: dawn, day, dusk and night go round, a whole day in 6 to 96 real minutes, 24 by default; or held at MORNING, NOON, EVENING or NIGHT; the clock carries on from where you left it), volume, music volume (default 40%, 0 turns it off; it sits under the master volume), field of view.
   - Graphics: adaptive quality (on/off), a quality preset (low / medium / high / ultra), shadows, anti-aliasing (MSAA), ambient occlusion, bloom, clouds, grass, scanned scenery (photo-scanned ground and props: off / low / high / ultra), render scale (50–200%).
@@ -263,7 +263,7 @@ Settings are saved to `~/.config/crumplezone/settings.txt`.
 
 ## Vehicles
 
-All seven are built from short side-profile maps plus a parts list in
+All ten are built from short side-profile maps plus a parts list in
 `src/vehicles.cpp` (where every heavy item sits, the engine's size and position,
 the suspension type and its ride frequency), so adding a new one is mostly a
 matter of drawing it in text.
@@ -306,6 +306,9 @@ Key 8. The first-generation K5: a 104 in wheelbase box with a white removable ha
 
 ### VW Baja Bug (1969 Beetle)
 A 1969 Type 1 Beetle built for the desert: fenders bobbed front and rear, a short fiberglass nose with two round lamps and a tube push bar, the rear apron and engine lid cut away so the air-cooled flat four stands bare under a tube exo-cage, a stinger exhaust, a light bar over the windshield, the spare strapped in where the back seat was. Lifted torsion-beam front and IRS trailing arms on long-travel shocks (~21 cm front, ~28 cm rear), 30x9.50R15 all-terrains at 22 psi. A built 2.0 L dual-carb Type 1 (~115 hp, ~160 N*m, estimate) in the back driving the rear wheels through the Type 1 four-speed transaxle (3.80 / 2.06 / 1.26 / 0.93, 4.375 final), open diff, drums all round, no ABS. About 900 kg, ~43/57. In the tests: 0-100 km/h ~8.6 s, ~176 km/h flat out, 0.36 m under it, approach / departure / breakover ~46 / 37 / 37 degrees, ~0.7 g on the skidpad; it takes the proving ground's kicker at 70-76 km/h, swings back level in the air on its tail-heavy weight and lands on its long travel with nothing broken (`baja/kicker-jump`), and shrugs off a 2.5 m flat drop (`baja/flat-drop`). The engine is hung out behind the rear axle (`rearEngine`: its transaxle ahead of it) and drawn as an air-cooled flat four (`crate_engine_flat4`, also in the model yard). Garage: 1835 street motor, 2332 stroker; desert race suspension and 33s, street Bug; Weddle LSD, sand box. Dimensions from the stock 1969 Beetle (2,400 mm wheelbase, 4,031 x 1,549 mm); the cut nose and tail, the build and the weights are estimates.
+
+### Ram 5500 "Hell Boy" (Murphy's Diesel)
+Murphy's Diesel's off-road wrecker: a 4th-gen Ram 5500 crew-cab chassis cab with a Miller boom body, on AxleTech planetary axles (6.86 overall) and 21/58-24 Mickey Thompsons (1.47 m). Four-links at both ends, coil-overs in front and air bags behind, air lockers in both axles, a T-600 two-speed transfer case (2.0 low) and an Allison six-speed behind a compound-turbo 6.7 Cummins (~700 hp, ~2,000 lb-ft: the owner's figures, no dyno). The gearbox holds the engine to 1,500 N*m in first and second (`lowGearTorque`, estimate), and the factory ABS and traction control are kept (estimate). About 6,600 kg against the 14.8 kip (6,700 kg) a rotator read; 5.3 m wheelbase, 6.8 x 3.0 m. The boom, cage, toolboxes, winches and nitrous bottle are drawn and weighed, but the boom and hydraulic winches don't work and its rear steer isn't modelled. Garage: nitrous (~850 hp), the factory 325 hp 6.7; bags aired up, 54 in tires; 7.8 planetaries, open diffs. Sources and what's estimated: `docs/hellboy-research.md`.
 
 ## How a vehicle is built
 
