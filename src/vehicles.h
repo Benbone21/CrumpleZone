@@ -242,6 +242,7 @@ struct VehicleSpec {
     bool frontLockerLowOnly = false, rearLockerLowOnly = false;  // the switch only works in low range
     double shaftLimit = 0;    // N*m an axle shaft takes before it snaps (0 = never); IFS CVs take 65% of it
     double brakeFront, brakeRear;  // N*m per wheel
+    double handbrakeTorque = 3000; // N*m per rear wheel (a heavy truck's driveline brake holds through the axle's gears)
 
     // Aerodynamics.
     double dragArea = 0.70;    // drag coefficient times frontal area (m^2)
@@ -264,6 +265,7 @@ struct VehicleSpec {
     double stallRpm = 0;
     double stallRatio = 2.0;
     int lockupGear = 3;
+    double lowGearTorque = 0;   // N*m the engine may make in 1st and 2nd (torque management; 0 = no limit)
     const char* engineName = "";
     const char* gearboxName = "";
 

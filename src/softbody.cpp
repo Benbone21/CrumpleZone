@@ -20,7 +20,6 @@ const double kRimPopSpeed = 7.0;     // rim strike faster than this (m/s) pinche
 const double kStickK = 1.2e5, kStickC = 4000;  // contact-patch static friction (parking, slopes)
 const double kNodeRadius = 0.04;
 const double kGroundK = 4e5, kGroundC = 2000, kGroundCt = 3000, kGroundMu = 0.7;
-const double kHandbrakeTorque = 3000;
 
 // Soft ground under a hard landing (estimates). Loose sand bears ~100-150 kPa under a
 // tire before it shears and flows out from under it, more the deeper the tire goes (the
@@ -1537,6 +1536,11 @@ void Car::wheelStep(double h, const World& w) {
         turbo = 0.7 + 0.3 * boost;
     }
 
+    // (Torque management: a gearbox that can't take the engine's full torque in its low gears
+    // has the engine held back there.)
+    const bool managed = spec->lowGearTorque > 0 && gear >= 1 && gear <= 2;
+    auto curve = [&](double r) { return managed ? std::min(engineTorque(r), spec->lowGearTorque) : engineTorque(r); };
+
     const int ng = (int)spec->gears.size();
     // Automatic shifting, judged on the gearbox's input speed (the engine's, through a
     // clutch or a locked converter; the turbine's through a slipping one).
@@ -1615,7 +1619,7 @@ void Car::wheelStep(double h, const World& w) {
         // The engine spins up or down on its own inertia; an idle governor holds it at idle.
         const double idleThr = clampd((spec->idleRpm + 100 - rpm) / 400, 0, 0.4);
         const double tEff = std::max(thr, idleThr);
-        double Teng = tEff * engineTorque(rpm) * power * turbo - (1 - tEff) * (18 + rpm * 0.005);
+        double Teng = tEff * curve(rpm) * power * turbo - (1 - tEff) * (18 + rpm * 0.005);
         if (rpm > spec->redline) Teng = std::min(Teng, 0.0) - (rpm - spec->redline) * 0.5;  // rev limiter
         rpm = std::max(0.0, rpm + (Teng - Tp) / Ie * h * 60 / (2 * M_PI));
         Te = Tt;          // what the gears get
@@ -1625,7 +1629,7 @@ void Car::wheelStep(double h, const World& w) {
         double target = spec->idleRpm + thr * 2600;
         rpm += (target - rpm) * std::min(1.0, h * 5);
         rpm = std::max(rpm, wheelRpm);
-        Te = thr * engineTorque(rpm) * power * turbo;
+        Te = thr * curve(rpm) * power * turbo;
         // Rolling to a stop: drop back toward first, ready to pull away.
         if (!manualShift && gear > 1 && shiftTimer < -0.25 && roadRpm < 1250) {
             gear--;
@@ -1633,7 +1637,7 @@ void Car::wheelStep(double h, const World& w) {
         }
     } else {
         rpm = wheelRpm;
-        Te = thr * engineTorque(rpm) * power * turbo - (1 - thr) * (18 + rpm * 0.005);  // engine braking
+        Te = thr * curve(rpm) * power * turbo - (1 - thr) * (18 + rpm * 0.005);  // engine braking
         if (rpm > spec->redline) Te = std::min(Te, 0.0) - (rpm - spec->redline) * 0.5;  // rev limiter
         autoShift(rpm);
     }
@@ -2078,7 +2082,7 @@ void Car::wheelStep(double h, const World& w) {
             else
                 wh.abs = std::min(1.0, wh.abs + h * 6);
             double service = (brakePressure * wh.abs * (1 - 1.5 * wh.escCut) + std::max(wh.tcBrake, wh.escBrake)) * wh.brakeMax;
-            Tb += service + (wh.front ? 0.0 : handbrake * kHandbrakeTorque);
+            Tb += service + (wh.front ? 0.0 : handbrake * spec->handbrakeTorque);
         }
         // The brake grips the wheel to its knuckle, so it stops the wheel turning relative to
         // the knuckle, not in space: when the knuckle (or a solid axle) pitches back under

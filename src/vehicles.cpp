@@ -1650,8 +1650,9 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         hellboy.lowRange = 2.0;        // T-600 low (ESTIMATE)
         hellboy.brakeFront = 13000;
         hellboy.brakeRear = 10000;
-        hellboy.absEnabled = false;
-        hellboy.tractionFitted = false;
+        hellboy.handbrakeTorque = 8000;  // the 5500's drum on the gearbox output, through 6.86 gears, and the Allison's park pawl (ESTIMATE)
+        hellboy.absEnabled = true;       // the 5500's factory ABS and stability control, kept under the conversion (ESTIMATE)
+        hellboy.tractionFitted = true;
         hellboy.dragArea = 5.4;        // Cd ~0.85 x ~6.3 m^2 of cab, boom, cage and tires
         hellboy.downforce = hellboy.downforceMax = 0;
         // ~700 hp and ~2,000 lb-ft (2,710 N*m) on compound turbos (stated); the curve is an estimate.
@@ -1665,6 +1666,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         hellboy.stallRpm = 2000;
         hellboy.stallRatio = 2.0;
         hellboy.lockupGear = 3;
+        hellboy.lowGearTorque = 1500;  // the Allison's input limit in 1st and 2nd: the tune pulls torque there (ESTIMATE)
         hellboy.engineName = "6.7L CUMMINS COMPOUND TURBO";
         hellboy.gearboxName = "ALLISON 6-SPEED + T-600 2-SPEED";
         hellboy.lampStyle = LAMP_ROUND;
