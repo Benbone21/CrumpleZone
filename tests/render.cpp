@@ -1,11 +1,13 @@
 // Offscreen OpenGL integration checks, including an emulated driver rejecting HDR MSAA.
 #include <cstring>
 #include "../src/render.h"
+#include "../src/career.h"
 #include "../src/carparts.h"
 #include "../src/carvisual.h"
 #include "../src/gpu.h"
 #include "../src/menu.h"
 #include "../src/sdl_min.h"
+#include "../src/showroom.h"
 #include <chrono>
 #include <cstdio>
 #include <memory>
@@ -46,7 +48,7 @@ int main() {
 #endif
     SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 0);
     SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 0);
-    SDL_Window* window = SDL_CreateWindow("render check", 0, 0, 160, 90, SDL_WINDOW_OPENGL);
+    SDL_Window* window = SDL_CreateWindow("render check", 0, 0, 960, 540, SDL_WINDOW_OPENGL);  // (the showroom check reads back 960x540)
     if (!window) { std::puts(SDL_GetError()); SDL_Quit(); return 1; }
     SDL_GLContext context = SDL_GL_CreateContext(window);
     int result = 0;
@@ -416,6 +418,68 @@ int main() {
             if (each > 0.25) throw std::runtime_error("each vehicle standing costs the CPU over 0.25 ms a frame");
             clean();
             std::puts("PASS vehicles: per-car draw and triangle budgets near and far, kept meshes, dents shown at once, culled, cheap to add");
+        }
+        {  // The showroom (showroom.h): its studio with the car in frame, then the game's world back as it was.
+            const int W = 960, H = 540;
+            sim.cars.resize(1);
+            Car& car = sim.cars[0];
+            View game;
+            game.width = W, game.height = H;
+            game.target = car.frame().com, game.eye = game.target + V3(5, 2, 5), game.up = V3(0, 1, 0);
+            // Pixels in the centre third unlike the mean of a 4 px border: what stands in the middle of the frame.
+            auto subject = [&](const std::vector<unsigned char>& px) {
+                double mean[3] = {0, 0, 0};
+                int n = 0;
+                for (int y = 0; y < H; y++)
+                    for (int x = 0; x < W; x++)
+                        if (x < 4 || y < 4 || x >= W - 4 || y >= H - 4) {
+                            for (int c = 0; c < 3; c++) mean[c] += px[(y * W + x) * 3 + c];
+                            n++;
+                        }
+                for (double& m : mean) m /= n;
+                int differ = 0;
+                for (int y = H / 3; y < 2 * H / 3; y++)
+                    for (int x = W / 3; x < 2 * W / 3; x++) {
+                        double d = 0;
+                        for (int c = 0; c < 3; c++) d += std::fabs(px[(y * W + x) * 3 + c] - mean[c]);
+                        differ += d > 40;
+                    }
+                return differ;
+            };
+            auto gameFrame = [&] {  // (the vehicles check's look)
+                renderer.daylight = computeDaylight(10);
+                renderer.carModels.assign(1, Renderer::CarModels());
+                renderer.carModels[0].car = 0;
+                carPartModels(car, renderer.carModels[0].parts, PARTS_ALL);
+                renderer.drawScene(sim, game, DEBUG_OFF, nullptr);
+                renderer.flushHud(W, H);
+                clean();
+                return subject(renderer.readPixels(W, H));
+            };
+            const int before = gameFrame();
+            Showroom showroom(renderer, [&] { renderer.setWorld(sim.world); });
+            Career career;
+            showroom.open(3, ModSet(), V3(0.5, 0.1, 0.1), false);
+            auto frames = [&](int n) {
+                for (int f = 0; f < n; f++) {
+                    showroom.update(1.0 / 60, career, false);
+                    showroom.draw(W, H);
+                    renderer.flushHud(W, H);
+                    clean();
+                }
+            };
+            frames(120);
+            for (int f = 0; f < 480 && !showroom.previewCar(); f++) frames(1);  // (its template is made on a worker: a slow runner gets 8 s more)
+            if (!showroom.drawsScene() || !showroom.previewCar()) throw std::runtime_error("the showroom shows no car after 2 s");
+            const int shown = subject(renderer.readPixels(W, H)), third = (W / 3) * (H / 3);
+            showroom.requestClose();
+            frames(60);
+            if (showroom.isOpen() || showroom.drawsScene()) throw std::runtime_error("the showroom did not close in 1 s");
+            const int after = gameFrame();
+            std::printf("Render check: showroom car %d of %d centre pixels; game car %d before, %d after\n", shown, third, before, after);
+            if (shown * 20 < third) throw std::runtime_error("the showroom's car is not in frame");
+            if (std::abs(after - before) * 10 > before) throw std::runtime_error("the game's frame changed after the showroom closed");
+            std::puts("PASS showroom: the car in its studio, and the game's world back after closing");
         }
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL render: %s\n", error.what());
