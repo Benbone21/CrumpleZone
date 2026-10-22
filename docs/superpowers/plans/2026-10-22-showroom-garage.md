@@ -3,14 +3,15 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the text-overlay garage with a studio showroom. The car sits on a turntable
-and is rebuilt live on every pick, before/after stats and career prices show, and the picked
+and is rebuilt live on every pick. Parts are picked from donor tiles with a drill-in to their
+variants, plus curated builds. Before/after stats and career prices show, and the picked
 engine can be revved.
 
 **Architecture:** A GL-free `ShowroomCore` (in `run_tests`) owns a studio `Sim`, the preview
 car's lifecycle, a bounded set of preview specs, stats, the cart and the rev throttle. It
 reaches the visual-template cache only through injected hooks. A thin `Showroom` (game only)
 adds the fades, the world swap, the camera, the layout, input and drawing. `main.cpp` keeps a
-few hooks. Phases ship as three stacked PRs.
+few hooks. Phases ship as four stacked PRs.
 
 **Tech Stack:** C++17, SDL2, the repo's own GL 3.3 loader, the repo's test harness
 (`tests/harness.h`, `SCENARIO`), and MSYS2 UCRT64 make on Windows.
@@ -68,9 +69,15 @@ plan doesn't repeat its rationale.
 4. **A saved or fitted pick out of range** (a hand-edited `garage.txt`, or the catalog gaining a
    vehicle and shifting cross-vehicle option indices). It is clamped exactly as `tunedSpec`
    clamps, and there is no crash. Tests in Tasks 2 and 4.
-5. **Changing the pick between the two ENTER presses of buy-and-fit.** The confirmation applies
+5. **Changing the pick between the two F presses of buy-and-fit.** The confirmation applies
    only to the cart it was shown for. A changed pick cancels it and spends nothing. Test in
-   Task 9.
+   Task 14.
+6. **Browsing BUILDS must not lose your pick.** Tabbing through BUILDS changes nothing, YOUR
+   PICK restores the exact pick you entered with, and a build's unnamed slots come from YOUR
+   PICK, never from the previous build. Test in Task 9.
+7. **The catalog gaining a vehicle** (the tow truck). It becomes a new donor group, every
+   option is still in exactly one group, and every build key still resolves. Tests in Tasks 8
+   and 9; re-run them after rebasing onto a `main` that has the truck.
 
 ---
 
@@ -359,7 +366,7 @@ Pinned values:
   - SUSPENSION, WHEELS and TIRES: yaw 0.9, pitch 0.05, distance factor 0.8.
 - **Input:** the spec's input table. Keys accept both W/S/A/D and the arrow keys, because the
   pad's menu mode taps arrows. `pad()` reads LB/RB edges for the slot, the right stick to
-  orbit, LT held plus right-stick Y to zoom, and RT (Phase 3).
+  orbit, LT held plus right-stick Y to zoom, and RT (Phase 4).
 - **Speedo recal (C):** port `GarageUI::recal`'s handling unchanged.
 - **Phase 1 right panel:** the detail lines of today's `drawGarage` (`main.cpp:1470-1491`),
   moved into `showroom.cpp`.
@@ -438,9 +445,228 @@ Steps:
 
 ---
 
-## Phase 2: stats and career (branch `showroom/2-stats`, from `showroom/1-studio`)
+## Phase 2: part picker (branch `showroom/2-picker`, from `showroom/1-studio`)
 
-### Task 7: `vehiclestats`
+Spec: "Phase 2: part picker". No change to `mods.cpp`, ModSet, `garage.txt`, career keys, the
+network packet or physics in this phase. If a task seems to need one, stop and ask.
+
+The Windows bar from here on is Phase 1's final result: 984/994, with the 10 known failures
+(PR #5), plus the new tests passing. `bench_sim` stays `1147d5f0f5f7730d`.
+
+### Task 7: Thumbnail spike (decides the capture path, or the text-tile fallback)
+
+**Output:** a decision and its numbers, written to the SDD ledger (`progress.md`) and to the
+group notes folder. Spike code is throwaway: it is not committed unless Task 10 adopts it as
+is.
+
+- [ ] **Step 1:** Create `showroom/2-picker` from the commit that holds this revised plan
+  (`fork/claude/showroom-picker-design-9e0cc5`, which sits on `showroom/1-studio`). Build, run
+  `showroom/` and `bench_sim`, and record the hash (expected `1147d5f0f5f7730d`).
+- [ ] **Step 2:** Read how a car is drawn: `Renderer::drawScene`, the `CarSlot` binding by car
+  index, the shadow and multisample targets (`msFbo`), and `iconTexture`'s offscreen pass
+  (`render.cpp:5348`). Note what a second draw into another target would share or clobber
+  (shadow cascades, bloom, `frameModels`).
+- [ ] **Step 3:** Prototype one capture: catalog 3's stock car, WHOLE framing, into a 256x256
+  multisampled target, resolved to a mipmapped texture. Try both:
+  - **(a)** a second car in the studio `Sim`, parked well off the turntable and outside the
+    studio camera's frustum, drawn with a fixed capture camera;
+  - **(b)** a small capture `Sim` of its own (`studioWorld()`, one car), drawn the same way.
+- [ ] **Step 4: Measure.**
+  - Put a `GL_TIME_ELAPSED` query around one capture and log it to stderr.
+  - On Windows, agents don't open windows. Ask the user for one run with `--garage` in a real
+    window, or take the number from `tests/render.cpp` on Linux/Mac.
+  - Run `showroom/isolation` and `showroom/memory` with captures running (a test hook that
+    triggers one capture per update): both must pass.
+- [ ] **Step 5: Decide,** against the spec's budget: at most 5 ms per capture on the RTX 2060,
+  and isolation passes.
+  - Pick (a) or (b), whichever meets it with less code. Record why.
+  - If neither does, record **text-tile fallback**: Task 10 is skipped, and the pictures become
+    a follow-up task after the phase 2 PR. Tell the user.
+  - Don't run a second spike.
+
+### Task 8: `PartTree` and `PickerNav` (GL-free)
+
+**Files:**
+- Create: `src/partpicker.h`, `src/partpicker.cpp` (added to `PHYS`, so `run_tests` links it)
+- Test: `tests/showroom.cpp`
+
+**Interfaces:**
+- Consumes: `modOptions`, `modOwnCount`, `vehicleListed` (`mods.h`, `vehicles.h`).
+- Produces:
+
+```cpp
+enum PickerTab { TAB_ENGINE, TAB_SUSP, TAB_TRANS, TAB_WHEELS, TAB_TIRES, TAB_BUILDS, TAB_COUNT };  // first five in ModSlot order
+struct PartGroup { int donor, first, count; };  // donor: catalog vehicle (-1: a tread); options first .. first + count - 1
+struct PartTree {
+    std::vector<PartGroup> groups[MOD_SLOTS];
+    void build(int vehicle);
+    int groupOf(int slot, int option) const;  // -1 if out of range
+};
+class PickerNav {
+public:
+    void open(int vehicle, const ModSet& fitted, int buildCount);
+    // Each returns true if the pick changed.
+    bool tab(int d);                  // Q/E, LB/RB: wraps; level 1, cursor on the pick's group (BUILDS: on YOUR PICK)
+    bool move(int dx, int dy);        // level 1: the 2-column grid; level 2: rows (dy only)
+    bool enter();                     // level 1: open a multi-option group; level 2: back to the tiles
+    bool back(bool& close);           // level 2: back to the tiles; level 1: close = true
+    bool clickTile(int i), clickRow(int i);
+    const ModSet& pick() const;
+    int tabIndex() const, level() const, cursor() const, scroll() const;
+    const PartTree& tree() const;
+    // BUILDS: the nav asks for a resolved pick through this (set by the caller; Task 9).
+    std::function<ModSet(int build, const ModSet& base)> resolve;
+};
+```
+
+Pinned behaviour: the spec's "Level 1: tiles", "Level 2: variants" and "Live picking",
+exactly. YOUR PICK is cursor 0 of TAB_BUILDS, and builds are cursor 1 onwards. The column count
+comes from the caller (`ShowroomLayout::tileCols`, Task 11); default 2.
+
+- [ ] **Step 1: Write the failing test** `showroom/picker-tree`. For every catalog vehicle and
+  each slot:
+  - every option `0 .. modOptions().size() - 1` lies in exactly one group;
+  - group 0 is `{vehicle, 0, modOwnCount}`;
+  - the other groups' donors rise in catalog order and skip `vehicle`;
+  - in TIRES every group has `count == 1`.
+- [ ] **Step 2: Write the failing test** `showroom/picker-nav`. On catalog 3 with fitted
+  `{0,0,0,0,0}`:
+  - on open, `tabIndex() == TAB_ENGINE`, level 1, and the cursor is on group 0;
+  - moving onto the Jesko's tile picks the Jesko's first engine option; `enter()` and one row
+    down picks its second; `back()` keeps it; moving away and back to the Jesko's tile picks
+    the remembered second option;
+  - `tab(1)` lands on the SUSP group holding the pick; a tab change never changes the pick;
+  - `enter()` on a one-option tile returns false and stays at level 1;
+  - `back(close)` at level 1 sets `close` and changes nothing;
+  - fitted `{5,0,0,0,0}` (any non-own option): on open the cursor is on that option's group.
+- [ ] **Step 3:** Run `run_tests.exe "showroom/picker"`. Expected: compile errors.
+- [ ] **Step 4:** Implement `partpicker.*`.
+- [ ] **Step 5:** Run `showroom/`: all PASS. Run `bench_sim`: the same hash.
+- [ ] **Step 6:** Commit `src/partpicker.h src/partpicker.cpp tests/showroom.cpp Makefile`,
+  message "Part picker: parts grouped by donor, and the tile/row navigation".
+
+### Task 9: Builds and `ShowroomCore::setPicks`
+
+**Files:**
+- Create: `src/builds.h`, `src/builds.cpp` (added to `PHYS`)
+- Modify: `src/showroomcore.h/.cpp`, `src/partpicker.cpp` (BUILDS through `resolve`)
+- Test: `tests/showroom.cpp`
+
+**Interfaces:**
+
+```cpp
+struct Build { const char* name; const char* detail; const char* parts[MOD_SLOTS]; };  // part keys (modPartKey); nullptr: not named
+const std::vector<Build>& builds();
+bool resolveBuild(int vehicle, const Build& b, ModSet& io);  // false (and one stderr line) if a key doesn't resolve
+// ShowroomCore:
+void setPicks(const ModSet& m);  // clamped; one debounce restart. Neighbour prebuild only if exactly one slot changed.
+```
+
+- [ ] **Step 1: Choose the parts.** List every part key with its title: a throwaway loop over
+  `modOptions(v, k)` printing `modPartKey` and `modPartTitle`, kept out of the commit. Pick
+  the five themes' parts from the spec ("BUILDS"). Engines and gearboxes are named by donor
+  variant, for example the Jesko's race-fuel engine. Write them into `builds.cpp`, one comment
+  per build saying why each part.
+- [ ] **Step 2: Write the failing test** `showroom/builds`:
+  - every build resolves on every catalog vehicle;
+  - after `applyMods`, the spec has the build's engine name, gearbox name and tire type where
+    the build names them;
+  - the vehicle's own tread resolves to option 0;
+  - a build over a base pick leaves the unnamed slots as the base;
+  - through `PickerNav`: entering BUILDS changes nothing; moving onto a build picks it; moving
+    back to YOUR PICK restores the base exactly; leaving the tab keeps the build, and the other
+    tabs' remembered options follow it (Review Focus 6);
+  - `setPicks` with an out-of-range pick clamps as `setPick` does.
+- [ ] **Step 3:** Run it. Expected: compile errors.
+- [ ] **Step 4:** Implement it.
+- [ ] **Step 5:** Run `showroom/`: all PASS. Run `bench_sim`: the same hash.
+- [ ] **Step 6:** Commit `src/builds.h src/builds.cpp src/showroomcore.h src/showroomcore.cpp src/partpicker.cpp tests/showroom.cpp Makefile`,
+  message "Showroom builds: curated part combinations, and setPicks".
+
+### Task 10: Donor thumbnails (skipped under the text-tile fallback)
+
+**Files:**
+- Modify: `src/render.h/.cpp` (the capture path Task 7 chose), `src/showroom.cpp` (queues
+  captures)
+- Modify: `tests/render.cpp` (one check)
+
+**Interfaces:**
+
+```cpp
+enum class ThumbFrame { WHOLE, WHEEL };
+GLuint Renderer::carThumb(int vehicle, ThumbFrame f);  // 0 until captured; captures at most one per frame, cached for the process
+```
+
+Pinned values:
+- 256x256, 4x multisampled, resolved and mipmapped, sRGB, as `iconTexture`.
+- **WHOLE:** front three-quarter, slightly high (yaw 0.6, pitch 0.25), the car filling 85% of
+  the width.
+- **WHEEL:** the front-left wheel's centre, at 2.4 × its radius across.
+- Only listed donors (`vehicleListed`) are captured. Unlisted donors stay text.
+- Captures use the catalog spec (`vehicleCatalog()[v]`), which is permanent. Never a showroom
+  spec.
+
+- [ ] **Step 1: Write the failing render check** in `tests/render.cpp`, after the phase 1 check:
+  open the showroom, run until every listed donor has both thumbnails (cap 10 s), then check
+  each texture is non-empty (at least 10% of pixels differ from the clear colour). The preview
+  car's pixel count in the main view must be within 2% of the count before the captures.
+- [ ] **Step 2:** Implement it, from Task 7's chosen prototype.
+- [ ] **Step 3:** Build `make windows build/win/run_tests.exe`. Run `showroom/` (isolation
+  and memory included) and `bench_sim`. `test_render` runs on Linux/Mac.
+- [ ] **Step 4:** Commit `src/render.h src/render.cpp src/showroom.cpp tests/render.cpp`,
+  message "Showroom: donor thumbnails from the game's own car renderer".
+
+### Task 11: Tiles, rows and input in `Showroom`, and the phase 2 PR
+
+**Files:**
+- Modify: `src/showroom.h/.cpp` (`drawLeft`, `handleEvent`, `pad`, the bottom bar's hints)
+- Modify: `src/showroomcore.h/.cpp` (`ShowroomLayout`: `tileCols`, `tileRows`)
+- Test: `tests/showroom.cpp` (`showroom/layout`)
+
+Pinned values:
+- **Layout:** the spec's "Layout". Tiles are `(left.w − 3u·pad) / 2` wide, a 4:3 picture over
+  two caption lines. `tileRows` is the whole tile rows that fit under the tabs (and the
+  breadcrumb, at level 2).
+- **Tile:** the spec's "Level 1: tiles". The picture is `carThumb` (WHOLE, or WHEEL on WHEELS),
+  the tread swatch on TIRES, or none (text only). Colours are those under Global Constraints:
+  amber titles, grey labels, the 0.07 white highlight, and a 1u amber outline on the pick's
+  group.
+- **Rows:** the phase 1 row drawing, with the "WHO: " prefix dropped (`name.substr(find(": ") + 2)`
+  when `fromVehicle != vehicle`).
+- **Input:** the spec's phase 2 table.
+  - `pad()` reads LB/RB edges for tabs (as now) and X's edge for FIT.
+  - A, B and the D-pad arrive as RETURN, ESC and arrows through menu mode.
+  - ESC or B at level 1 calls `requestClose()`; G always does.
+- **Every pick change:** `core->setPicks(nav.pick())`.
+- **Hints:** keys "Q E TAB   ARROWS MOVE   ENTER OPEN   ESC BACK   F FIT"; pad
+  "LB RB TAB   D-PAD MOVE   A OPEN   B BACK   X FIT", using `pad::buttonName`.
+
+- [ ] **Step 1: Write the failing test** `showroom/layout` additions: at 1024x600,
+  `tileRows >= 2`; at 1280x720, `tileRows >= 3`; at 3840x2160, every tile rect lies inside
+  `left`.
+- [ ] **Step 2:** Run it. Expected: a compile error.
+- [ ] **Step 3:** Implement it.
+- [ ] **Step 4:** Build. Run the full suite, `test_showroom_visual` and `bench_sim`. Same bar
+  as Task 6 Step 3.
+- [ ] **Step 5: By hand (user, real window).** Check:
+  - ENGINE shows donor tiles with pictures (or text, under the fallback);
+  - opening the Jesko shows its variants, and each rebuilds the car;
+  - backing out keeps the pick;
+  - BUILDS previews a whole car, and YOUR PICK restores;
+  - ENTER on a tile never fits; F / X fits;
+  - the pad works throughout.
+  - Measure the showroom FPS while thumbnails are being captured (on first open), and after.
+- [ ] **Step 6:** Commit `src/showroom.h src/showroom.cpp src/showroomcore.h src/showroomcore.cpp tests/showroom.cpp`,
+  message "Showroom: part tiles, variant rows, builds tab; FIT on F / X".
+- [ ] **Step 7:** Rebase onto `showroom/1-studio` (or `origin/main`, if phase 1 has merged).
+  Push `showroom/2-picker` to `fork` and open the PR, with the same body contents as Task 6,
+  plus the builds' parts list for the user to review. Bind it with `ccd_pr`.
+
+---
+
+## Phase 3: stats and career (branch `showroom/3-stats`, from `showroom/2-picker`)
+
+### Task 12: `vehiclestats`
 
 **Files:**
 - Create: `src/vehiclestats.h`, `src/vehiclestats.cpp` (added to `PHYS`)
@@ -490,14 +716,14 @@ Pinned values:
 - [ ] **Step 7:** Commit `src/vehiclestats.* tests/scenarios.cpp tests/freeway.cpp tests/topspeed.h tests/showroom.cpp Makefile`,
   message "vehiclestats: mass, stance and top-speed estimate; clearance test uses it".
 
-### Task 8: Stats in `ShowroomCore`
+### Task 13: Stats in `ShowroomCore`
 
 **Files:**
 - Modify: `src/showroomcore.h/.cpp`
 - Test: `tests/showroom.cpp`
 
 **Interfaces:**
-- Consumes: Task 7.
+- Consumes: Task 12.
 - Produces, on `ShowroomCore`:
   ```cpp
   static constexpr double kSettle = 1.0;
@@ -523,7 +749,7 @@ Pinned values:
 - [ ] **Step 4:** Run `showroom/`: all PASS.
 - [ ] **Step 5:** Commit, message "ShowroomCore: before/after stats".
 
-### Task 9: Career cart (logic)
+### Task 14: Career cart (logic)
 
 **Files:**
 - Modify: `src/showroomcore.h/.cpp`
@@ -539,7 +765,7 @@ Cart cartFor(const Career& c, int vehicle, const ModSet& pick);
 enum class FitCheck { SAME, OK, NEED_STATION, NEED_BUY, NOT_FOR_SALE, NEED_CASH };
 FitCheck canFit(const Career& c, int vehicle, const ModSet& fitted, const ModSet& pick, bool atStation);
 bool buyCart(Career& c, int vehicle, const ModSet& pick, std::string& why);  // all or nothing
-struct BuyConfirm {  // the second ENTER of buy-and-fit
+struct BuyConfirm {  // the second F (X) of buy-and-fit
     static constexpr double kWindow = 3.0;
     void ask(int vehicle, const ModSet& pick, int total);
     bool confirms(int vehicle, const ModSet& pick, int total) const;  // same cart, inside the window
@@ -571,7 +797,7 @@ struct BuyConfirm {  // the second ENTER of buy-and-fit
 - [ ] **Step 4:** Run `showroom/career`: PASS. Run `career/`: no change from baseline.
 - [ ] **Step 5:** Commit, message "Showroom cart: prices, fit checks, all-or-nothing buy".
 
-### Task 10: Stats panel and career UI, and the phase 2 PR
+### Task 15: Stats panel and career UI, and the phase 3 PR
 
 **Files:**
 - Modify: `src/showroom.cpp`
@@ -589,15 +815,19 @@ Pinned values:
   - Unmeasured rows show "..." with the previous value at 0.5 alpha.
 - **Bars:** a thin bar per row, scaled to that stat's maximum over the stock catalog, computed
   on first open from the catalog's own `stats()`. The fitted value is a tick.
-- **Option rows:** blank for a factory part, "OWNED", "$price", or "FIND IT". Sandbox shows
+- **Variant rows:** blank for a factory part, "OWNED", "$price", or "FIND IT". Sandbox shows
   none.
+- **Part tiles:** the same, for the variant the tile would preview.
+- **Build tiles:** the total of their unowned parts (`cartFor` on the build's resolved pick),
+  "OWNED" when the total is 0, or "FIND IT" when `notForSale` is set.
 - **Bottom bar:** the cart total, cash, and "CAN'T FIT: <part> NOT FOR SALE" when that applies.
-- **ENTER with `canFit == NEED_BUY` at a station:** `BuyConfirm::ask`, and the toast "BUY N
-  PARTS FOR $X? ENTER TO CONFIRM".
-  - A second ENTER that `confirms`: `buyCart`, `career.save()`, FIT.
+- **F / X with `canFit == NEED_BUY` at a station:** `BuyConfirm::ask`, and the toast "BUY N
+  PARTS FOR $X? F TO CONFIRM" ("X TO CONFIRM" on a pad).
+  - A second F / X that `confirms`: `buyCart`, `career.save()`, FIT.
   - `NEED_CASH` toasts "NEED $X MORE".
-  - Any `setPick` cancels the confirm.
-- **B / Y / BUY** buys the highlighted part through `Career::buy`, as before.
+  - Any `setPicks` cancels the confirm.
+- **B / Y / BUY** buys the highlighted part through `Career::buy`: the row's part, or the
+  variant a part tile would preview. Not offered on build tiles.
 
 Steps:
 - [ ] **Step 1:** Implement it. Build with `make windows build/win/run_tests.exe`. Expected: no
@@ -608,16 +838,17 @@ Steps:
   - stats fill in, with the off-road numbers arriving about 1 s later;
   - the deltas are coloured;
   - in career, a locked part previews with its stats but won't fit away from a station;
-  - buy-and-fit at a station needs two ENTERs and charges the cart total.
+  - buy-and-fit at a station needs two F presses and charges the cart total;
+  - a build tile's price matches what buy-and-fit then charges.
 - [ ] **Step 4:** Commit, message "Showroom: before/after stats panel and career prices".
-- [ ] **Step 5:** Rebase onto the updated `showroom/1-studio` (or `origin/main` if that merged).
+- [ ] **Step 5:** Rebase onto the updated `showroom/2-picker` (or `origin/main` if that merged).
   Push and open the PR, with the same body contents as Task 6.
 
 ---
 
-## Phase 3: audio preview (branch `showroom/3-audio`, from `showroom/2-stats`)
+## Phase 4: audio preview (branch `showroom/4-audio`, from `showroom/3-stats`)
 
-### Task 11: Rev throttle and auto-blip in `ShowroomCore`
+### Task 16: Rev throttle and auto-blip in `ShowroomCore`
 
 **Files:**
 - Modify: `src/showroomcore.h/.cpp`
@@ -645,7 +876,7 @@ Steps:
 - [ ] **Step 4:** Run `showroom/`: PASS. Run `bench_sim`: the same hash.
 - [ ] **Step 5:** Commit, message "Showroom: hold-to-rev and auto-blip on engine change".
 
-### Task 12: Audio feed and mix, and the phase 3 PR
+### Task 17: Audio feed and mix, and the phase 4 PR
 
 **Files:**
 - Modify: `src/main.cpp:4683-4700` (the audio block)
@@ -678,5 +909,5 @@ Steps:
   - after ESC, the game's own engine is back.
 - [ ] **Step 6:** Commit `src/main.cpp tests/audio.cpp` (plus `src/engine_samples.cpp` if
   changed), message "Showroom: engine preview audio, music ducked".
-- [ ] **Step 7:** Rebase, push `showroom/3-audio` and open the PR, with the same body contents
+- [ ] **Step 7:** Rebase, push `showroom/4-audio` and open the PR, with the same body contents
   as Task 6.
