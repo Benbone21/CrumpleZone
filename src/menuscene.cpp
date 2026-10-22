@@ -38,6 +38,16 @@ bool inSunGap(double cx, double cz) {
     return std::fabs(a) < 0.26 + 0.6 / d * 8;
 }
 
+// What stands on the ground in the camp, as (camp x, z, radius): nothing grows through any of it (bushes are kept out, the ground under it is bare earth).
+struct Keep { double x, z, r; };
+const Keep kKeep[] = {{0, 0, 3.6},      {0.6, 4.6, 2.6},   {-1.5, -16.5, 5.8}, {-5.0, -13.0, 2.2}, {9.5, -13, 2.8},
+                      {4.0, -1.2, 3.4}, {8.4, -6.8, 3.4},  {-2.6, -2.2, 3.4},  {-3.2, 0.2, 1.6},    {3.0, -1.2, 1.6}};
+bool blocked(double cx, double cz, double pad) {
+    for (const Keep& k : kKeep)
+        if (std::hypot(cx - k.x, cz - k.z) < k.r + pad) return true;
+    return false;
+}
+
 LevelObject model(const char* id, double cx, double cz, double yawDeg, double scale = 1, int variant = -1, int sub = 0) {
     LevelObject o;
     o.kind = OBJ_MODEL, o.name = id, o.p = at(cx, cz), o.size = V3(scale, scale, scale), o.yaw = yawDeg * M_PI / 180 - theta(), o.variant = variant, o.sub = sub;
@@ -86,6 +96,15 @@ World buildWorld() {
     drop(w.bushes, [&](const Bush& b) { return in(b.p.x, b.p.z, b.r); });
     drop(w.fixtures, [&](const Prop& p) { return in(p.a.x, p.a.z, 0); });
     drop(w.models, [&](const Placed& p) { return in(p.p.x, p.p.z, 0); });
+    // Bare earth under the fire, the cabin, the table, the tent and the trucks (grass tufts grow by the ground's surface): nothing grows through them.
+    for (double x = kFx - 40; x <= kFx + 40; x += 1)
+        for (double z = kFz - 40; z <= kFz + 40; z += 1) {
+            double cx, cz;
+            local(x, z, cx, cz);
+            if (!blocked(cx, cz, 0.3)) continue;
+            const int id = w.cellIndex(x, z);
+            if (id >= 0 && w.cellSurface(id) != SURF_PAVED) w.setCellSurface(id, SURF_DIRT, 0);
+        }
     // A valley river behind the camp (camp terms: from (-40, -24.5) to (40, -24)): a flattened bed dug into the ground, water in it; it catches the sunset.
     {
         const V3 a = at(-40, -24.5), b = at(40, -24);
@@ -113,7 +132,7 @@ World buildWorld() {
 
 const Spot* spots() {
     // (camp terms: the Bronco and the 4Runner right of the fire, the Blazer left of it with its nose to the flames, as if parked for the night)
-    static const Spot s[3] = {{4.8, 1.2, 2.9}, {3.4, -6.8, 3.5}, {-5.0, -3.2, -0.55}};
+    static const Spot s[3] = {{4.0, -1.2, 2.95}, {8.4, -6.8, 3.4}, {-2.6, -2.2, -0.55}};
     static Spot w[3];
     for (int k = 0; k < 3; k++) {
         const V3 p = at(s[k].x, s[k].z), f = fire();
@@ -129,28 +148,39 @@ Level level() {
     lv.terrain = WILDS_FOREST;
     lv.timeOfDay = kHours;
     std::vector<LevelObject>& o = lv.objects;
-    o.push_back(model("cabin", 3, -16.5, -80, 1, 0));
-    o.push_back(model("woodpile", -4.5, -14.0, 90));
+    o.push_back(model("cabin", -1.5, -16.5, -80, 1, 0));
+    o.push_back(model("woodpile", -5.0, -13.0, 90));
     o.push_back(model("campfire", 0, 0, 0));
-    o.push_back(model("tent", 12.5, -9.5, -150));
+    o.push_back(model("tent", 9.5, -13.0, -150));
     o.push_back(model("picnic_table", 0.6, 4.6, 20));
     o.push_back(logSeat(-3.2, -1.2, -2.2, 1.6));
-    o.push_back(logSeat(2.4, -2.6, 3.4, 0.2));
+    o.push_back(logSeat(2.6, -2.2, 3.4, 0.4));
     // The tree line: pines and broadleaf in a loose ring that opens on the camera's side.
     uint32_t h = 12345;
     auto rnd = [&]() {
         h = h * 1664525u + 1013904223u;
         return (h >> 8) / double(1 << 24);
     };
-    for (int i = 0; i < 44; i++) {
-        const double a = -0.35 * M_PI + (i / 43.0) * 1.7 * M_PI;  // sweeps round the back; the front (toward -z) stays open
+    for (int i = 0; i < 130; i++) {
+        const double a = -0.35 * M_PI + (i / 129.0) * 1.7 * M_PI;  // sweeps round the back; the front (toward -z) stays open
         const double r = 17 + rnd() * 30;
         const double cx = std::sin(a) * r * 1.25, cz = -std::cos(a) * r * 0.8 - 4 + rnd() * 3;
         if (cz > -34 && std::fabs(cx) < 34) continue;  // (the river and its banks stay open)
-        if (cz > 3 || inSunGap(cx, cz)) continue;
+        if (cz > 6 || inSunGap(cx, cz) || blocked(cx, cz, 2)) continue;
         o.push_back(tree(cx, cz, 9 + rnd() * 9, rnd() < 0.72 ? 0 : 1, 0.85f + 0.3f * (float)rnd()));
     }
     for (int i = 0; i < 12; i++) if (!inSunGap(-33 + i * 6.0, -42)) o.push_back(tree(-33 + i * 6.0 + rnd() * 3, -38 - rnd() * 10, 12 + rnd() * 8, 0, 0.8f + 0.2f * (float)rnd()));
+    // The slopes behind and the forest on both sides: a dense pine wood out to the far ridge (the sun gap and the river's view stay open).
+    for (int i = 0; i < 230; i++) {
+        const double cx = -75 + rnd() * 150, cz = -36 - rnd() * 70;
+        if (inSunGap(cx, cz)) continue;
+        o.push_back(tree(cx, cz, 11 + rnd() * 10, rnd() < 0.85 ? 0 : 1, 0.78f + 0.3f * (float)rnd()));
+    }
+    for (int i = 0; i < 110; i++) {
+        const double side = i % 2 ? 1 : -1, cx = side * (30 + rnd() * 45), cz = -34 + rnd() * 60;
+        if (inSunGap(cx, cz) || (cx > 0 && cz > 8)) continue;
+        o.push_back(tree(cx, cz, 9 + rnd() * 10, rnd() < 0.8 ? 0 : 1, 0.8f + 0.3f * (float)rnd()));
+    }
     // Rocks round the fire and in the grass, bushes at the edges.
     o.push_back(rock(-1.4, 1.1, 0.42, 0.3, 0.36, 3));
     o.push_back(rock(1.5, 0.9, 0.38, 0.28, 0.4, 7));
@@ -165,7 +195,11 @@ Level level() {
         const double cx = -30 + i * 4.0 + rnd() * 2.5, cz = -24.5 + 0.9 * std::sin((cx + 30) / 68.0 * 9.0) + (i % 2 ? 4.2 : -4.0) + rnd();
         o.push_back(rock(cx, cz, 0.5 + rnd() * 0.9, 0.35 + rnd() * 0.5, 0.45 + rnd() * 0.7, 40 + i));
     }
-    for (int i = 0; i < 14; i++) o.push_back(bush(-20 + rnd() * 40, -12 + rnd() * 20, 0.5 + rnd() * 0.5, 0));
+    for (int i = 0, n = 0; i < 60 && n < 14; i++) {
+        const double cx = -20 + rnd() * 40, cz = -12 + rnd() * 20, r = 0.5 + rnd() * 0.5;
+        if (blocked(cx, cz, r + 1.0)) continue;
+        o.push_back(bush(cx, cz, r, 0)), n++;
+    }
     return lv;
 }
 
@@ -192,7 +226,7 @@ Daylight daylight() {
     Daylight d = computeDaylight(kHours);
     const Daylight s = computeDaylight(kSunsetLook);
     d.skyZen = s.skyZen, d.skyHor = s.skyHor, d.duskCol = s.duskCol * 1.25, d.sunGlow = s.sunGlow * 1.6, d.ambSky = s.ambSky * 0.9, d.ambGround = s.ambGround;
-    d.cloudLit = V3(s.cloudLit.x * 1.5, s.cloudLit.y * 1.15, s.cloudLit.z * 0.7), d.cloudDark = s.cloudDark;
+    d.cloudLit = V3(s.cloudLit.x * 1.9, s.cloudLit.y * 1.2, s.cloudLit.z * 0.55), d.cloudDark = s.cloudDark;
     d.keyCol = V3(d.keyCol.x, d.keyCol.y * 0.82, d.keyCol.z * 0.62);
     return d;
 }
