@@ -49,6 +49,19 @@ void ShowroomCore::setPick(int slot, int option) {
     want = nullptr;  // (an older pick still building stays held until it's built: see trim)
 }
 
+void ShowroomCore::setPicks(const ModSet& m) {
+    int differ = 0, slot = -1;
+    for (int k = 0; k < MOD_SLOTS; k++) {
+        const int o = std::clamp(m.pick[k], 0, (int)modOptions(vehicle_, k).size() - 1);
+        if (o != pick_.pick[k]) differ++, slot = k;
+        pick_.pick[k] = o;
+    }
+    lastSlot = differ == 1 ? slot : -1;  // (one slot: as setPick; several: no neighbours to prebuild)
+    failed_ = false, neighboursDone = false;
+    debouncing = true, held = 0;
+    want = nullptr;
+}
+
 const Car* ShowroomCore::preview() const { return sim.cars.empty() ? nullptr : &sim.cars[0]; }
 bool ShowroomCore::fitting() const { return want && want != shown; }
 int ShowroomCore::liveSpecs() const { return (int)(specs.size() + evicting.size()); }

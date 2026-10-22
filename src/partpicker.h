@@ -45,12 +45,13 @@ public:
     int remembered(int slot, int group) const { return rem_[slot][group]; }
     // The pick as it was on entering BUILDS: what YOUR PICK restores.
     const ModSet& yourPick() const { return yours_; }
-    // BUILDS: the nav asks for a resolved pick through this (set by the caller; Task 9).
+    // BUILDS: moving onto build k (cursor k + 1) picks resolve(k, yourPick()); without it the pick stays.
     std::function<ModSet(int build, const ModSet& base)> resolve;
 
 private:
     bool pickGroup();  // set the slot's pick to the cursor's group's remembered option
     bool pickRow();    // set the slot's pick to the cursor's row, and remember it
+    bool pickBuild();  // BUILDS: set the whole pick to YOUR PICK (cursor 0) or the cursor's build over it
     void fit();        // scroll so the cursor shows
     PartTree tree_;
     ModSet pick_, yours_;

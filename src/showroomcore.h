@@ -36,6 +36,7 @@ public:
     const ModSet& fitted() const { return fitted_; }
     const ModSet& pick() const { return pick_; }
     void setPick(int slot, int option);              // clamped; restarts the debounce
+    void setPicks(const ModSet& m);                  // every slot at once (BUILDS): clamped; one restart; neighbours only if one slot changed
     void update(double dt);                          // debounce, build, swap, prebuild neighbours, step studio, evict (also while closed)
     const Car* preview() const;                      // null until the first build is in
     bool fitting() const;                            // a newer pick is building

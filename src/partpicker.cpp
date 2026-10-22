@@ -61,10 +61,12 @@ int PickerNav::tileCount() const {
 
 void PickerNav::fit() {
     if (level_ == 1) {
-        const int row = cursor_ / cols_;
+        const int row = cursor_ / cols_, rows = (tileCount() + cols_ - 1) / cols_;
         scroll1_ = std::min(std::max(scroll1_, row - tileRows_ + 1), row);
+        scroll1_ = std::min(scroll1_, std::max(0, rows - tileRows_));  // (no blank rows after a taller view)
     } else {
         scroll2_ = std::min(std::max(scroll2_, cursor_ - listRows_ + 1), cursor_);
+        scroll2_ = std::min(scroll2_, std::max(0, tileCount() - listRows_));
     }
 }
 
@@ -80,6 +82,21 @@ bool PickerNav::pickRow() {
     rem_[tab_][group_] = o;
     const bool changed = pick_.pick[tab_] != o;
     pick_.pick[tab_] = o;
+    return changed;
+}
+
+bool PickerNav::pickBuild() {
+    const ModSet was = pick_;
+    pick_ = yours_;
+    if (cursor_ > 0 && resolve) pick_ = resolve(cursor_ - 1, yours_);
+    bool changed = false;
+    for (int s = 0; s < MOD_SLOTS; s++) {
+        pick_.pick[s] = std::min(std::max(pick_.pick[s], 0), (int)modOptions(vehicle_, s).size() - 1);  // (like open)
+        changed = changed || pick_.pick[s] != was.pick[s];
+        // The group holding the part remembers it, so leaving the tab and coming back to that group keeps it.
+        const int g = tree_.groupOf(s, pick_.pick[s]);
+        if (g >= 0) rem_[s][g] = pick_.pick[s];
+    }
     return changed;
 }
 
@@ -102,7 +119,7 @@ bool PickerNav::move(int dx, int dy) {
     if (c == cursor_) return false;
     cursor_ = c;
     fit();
-    if (tab_ == TAB_BUILDS) return false;  // (builds are only looked at until Task 9)
+    if (tab_ == TAB_BUILDS) return pickBuild();
     return level_ == 1 ? pickGroup() : pickRow();
 }
 
@@ -134,7 +151,7 @@ bool PickerNav::clickTile(int i) {
     if (level_ != 1 || i < 0 || i >= tileCount()) return false;
     cursor_ = i;
     fit();
-    return tab_ == TAB_BUILDS ? false : pickGroup();
+    return tab_ == TAB_BUILDS ? pickBuild() : pickGroup();
 }
 
 bool PickerNav::clickRow(int i) {

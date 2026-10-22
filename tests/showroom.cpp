@@ -9,6 +9,7 @@
 #include <map>
 #include <set>
 
+#include "../src/builds.h"
 #include "../src/career.h"
 #include "../src/mods.h"
 #include "../src/partpicker.h"
@@ -438,7 +439,8 @@ SCENARIO(showroomPickerNav, "showroom/picker-nav", "Tiles and rows pick the high
     ctx.check("back keeps it", !nav.back(close) && !close && nav.level() == 1 && nav.cursor() == jg && nav.pick().pick[MOD_ENGINE] == jp.first + 1);
     ctx.check("away picks the other tile's part", nav.move(-1, 0) && nav.pick().pick[MOD_ENGINE] != jp.first + 1 && nav.cursor() == jg - 1);
     ctx.check("and back remembers the second", nav.move(1, 0) && nav.pick().pick[MOD_ENGINE] == jp.first + 1);
-    ctx.check("a clamped move picks nothing", !nav.move(0, -100) || nav.cursor() == 0);
+    ctx.check("a move up to the top picks group 0's part", nav.move(0, -100) && nav.cursor() == 0 && nav.scroll() == 0 && nav.pick().pick[MOD_ENGINE] == nav.remembered(MOD_ENGINE, 0));
+    ctx.check("a clamped move picks nothing", !nav.move(0, -100) && !nav.move(-1, 0) && nav.cursor() == 0 && nav.scroll() == 0 && nav.pick().pick[MOD_ENGINE] == nav.remembered(MOD_ENGINE, 0));
     nav.clickTile(jg);
 
     // Tabs: the new tab's cursor lands on the group holding the pick; the pick never changes.
@@ -467,6 +469,16 @@ SCENARIO(showroomPickerNav, "showroom/picker-nav", "Tiles and rows pick the high
     nav.enter();
     const PartGroup fg = nav.tree().groups[MOD_ENGINE][want];
     ctx.check("its row is under the cursor", fg.count < 2 || nav.cursor() == 5 - fg.first);
+
+    // A fitted pick out of range is clamped like applyMods, and everything built on it agrees.
+    ModSet wild;
+    const int w[MOD_SLOTS] = {99, -3, 0, 0, 0};
+    std::copy(w, w + MOD_SLOTS, wild.pick);
+    nav.open(v, wild, 0);
+    const int top = (int)modOptions(v, MOD_ENGINE).size() - 1;
+    ctx.check("an out-of-range fitted pick is clamped", nav.pick().pick[MOD_ENGINE] == top && nav.pick().pick[MOD_SUSPENSION] == 0 && nav.yourPick().pick[MOD_ENGINE] == top);
+    ctx.check("...the cursor is on the clamped part's group", nav.cursor() == nav.tree().groupOf(MOD_ENGINE, top) && nav.cursor() >= 0);
+    ctx.check("...and its group remembers it", nav.remembered(MOD_ENGINE, nav.cursor()) == top);
 }
 
 SCENARIO(showroomPickerView, "showroom/picker-view", "The grid clamps, scroll keeps the cursor in view, clicks are absolute, and BUILDS only moves the cursor") {
@@ -482,8 +494,13 @@ SCENARIO(showroomPickerView, "showroom/picker-view", "The grid clamps, scroll ke
     ctx.check("scrolls once the cursor leaves the view", nav.cursor() == 4 && nav.scroll() == 1);
     for (int i = 0; i < 40; i++) nav.move(0, 1);
     ctx.check("down clamps to the last tile", nav.cursor() == n - 1 && nav.scroll() == (n - 1) / 2 - 1);
-    nav.move(0, -100);
-    ctx.check("and scrolls back", nav.cursor() == 0 || nav.scroll() <= nav.cursor() / 2);
+    // (Raising the view's rows never leaves blank rows: scroll stops at the last full view.)
+    const int rows = (n + 1) / 2;
+    nav.setView(2, 4, 3);
+    ctx.check("a taller view clamps the scroll", nav.scroll() == std::max(0, rows - 4) && nav.cursor() == n - 1);
+    nav.setView(2, 2, 3);
+    ctx.check("...and the cursor stays in view", nav.scroll() >= (n - 1) / 2 - 1 && nav.scroll() <= (n - 1) / 2);
+    ctx.check("up to the top scrolls back", nav.move(0, -100) && nav.cursor() == 0 && nav.scroll() == 0);
     nav.clickTile(0);
     ctx.check("clicking a tile picks its part", nav.clickTile(n - 1) && nav.cursor() == n - 1 && nav.pick().pick[MOD_ENGINE] == nav.tree().groups[MOD_ENGINE][n - 1].first);
     ctx.check("out of range does nothing", !nav.clickTile(n) && !nav.clickTile(-1) && nav.cursor() == n - 1);
@@ -505,16 +522,186 @@ SCENARIO(showroomPickerView, "showroom/picker-view", "The grid clamps, scroll ke
     nav.clickTile(big);
     ctx.check("the tile remembers it", nav.pick().pick[MOD_ENGINE] == bg.first + 2);
 
-    // BUILDS: YOUR PICK, then the builds. The cursor moves; the pick doesn't.
+    // BUILDS: YOUR PICK, then the builds. With nothing to resolve them the cursor moves; the pick doesn't.
     nav.tab(-1);
     const ModSet yours = nav.pick();
     ctx.check("BUILDS opens on YOUR PICK", nav.tabIndex() == TAB_BUILDS && nav.cursor() == 0 && nav.tileCount() == 4);
-    int resolved = 0;
-    nav.resolve = [&](int, const ModSet& b) {
-        resolved++;
-        return b;
-    };
-    ctx.check("moving over builds changes no pick", !nav.move(0, 1) && !nav.move(1, 0) && nav.cursor() == 3 && !nav.move(0, 5) && nav.cursor() == 3 && nav.pick().pick[MOD_ENGINE] == yours.pick[MOD_ENGINE]);
-    ctx.check("...and calls nothing yet", resolved == 0 && !nav.enter() && nav.level() == 1 && !nav.clickTile(1) && nav.cursor() == 1);
+    ctx.check("with no resolve, moving over builds changes no pick", !nav.move(0, 1) && !nav.move(1, 0) && nav.cursor() == 3 && !nav.move(0, 5) && nav.cursor() == 3 && nav.pick().pick[MOD_ENGINE] == yours.pick[MOD_ENGINE]);
+    ctx.check("...nor does enter or a click", !nav.enter() && nav.level() == 1 && !nav.clickTile(1) && nav.cursor() == 1 && nav.pick().pick[MOD_ENGINE] == yours.pick[MOD_ENGINE]);
     ctx.check("it kept YOUR PICK", nav.yourPick().pick[MOD_ENGINE] == yours.pick[MOD_ENGINE]);
+}
+
+// ---- Builds
+
+namespace {
+ModSet onlySlot(int slot, int option) {
+    ModSet m;
+    m.pick[slot] = option;
+    return m;
+}
+bool samePicks(const ModSet& a, const ModSet& b) { return std::equal(a.pick, a.pick + MOD_SLOTS, b.pick); }
+std::string picksText(const ModSet& m) {
+    std::string t;
+    for (int p : m.pick) t += (t.empty() ? "" : " ") + std::to_string(p);
+    return t;
+}
+}  // namespace
+
+SCENARIO(showroomBuilds, "showroom/builds", "Every build resolves on every vehicle, names its engine, gearbox and tread, and sits on top of a pick; setPicks clamps and restarts the debounce once") {
+    const auto& cat = vehicleCatalog();
+    const auto& bl = builds();
+    if (!ctx.check("there are builds", !bl.empty())) return;
+    bool named = true;
+    for (const Build& b : bl) named = named && b.name && *b.name && b.detail && *b.detail;
+    ctx.check("each has a name and a detail", named);
+
+    // The base: parts in every slot, so a build's unnamed slots show where they came from.
+    const int baseWant[MOD_SLOTS] = {2, 1, 3, 1, 3};
+    int bad = 0, badNames = 0, badBase = 0, badOwn = 0;
+    std::string first, firstName, firstBase, firstOwn;
+    for (int v = 0; v < (int)cat.size(); v++) {
+        const std::string at = std::string(cat[v].id) + " ";
+        for (const Build& b : bl) {
+            ModSet io;
+            if (!resolveBuild(v, b, io)) {
+                if (!bad++) first = at + b.name;
+                continue;
+            }
+            VehicleSpec s;
+            applyMods(v, io, s);
+            for (int k = 0; k < MOD_SLOTS; k++) {
+                if (!b.parts[k]) {
+                    if (io.pick[k] != 0 && !badNames++) firstName = at + b.name + ": unnamed slot " + std::to_string(k) + " moved";
+                    continue;
+                }
+                const std::string key = b.parts[k];
+                if (k == MOD_TIRES && io.pick[k] == 0 && key != modPartKey(v, k, 0)) {
+                    // (the vehicle's own tread: option 0 stands for it)
+                    if (key != std::string("TIRES:") + tireTypeName(cat[v].tireType) && !badNames++) firstName = at + b.name + ": " + key + " took option 0";
+                    continue;
+                }
+                if (modPartKey(v, k, io.pick[k]) != key) {
+                    if (!badNames++) firstName = at + b.name + ": " + key + " resolved to " + modPartKey(v, k, io.pick[k]);
+                    continue;
+                }
+                const ModOption& o = modOptions(v, k)[io.pick[k]];
+                if (k == MOD_ENGINE || k == MOD_TRANSMISSION) {
+                    // The part on its own vehicle names what it fits: the same engine or gearbox name here.
+                    VehicleSpec donor;
+                    applyMods(o.fromVehicle, onlySlot(k, o.fromOption), donor);
+                    const std::string& want = k == MOD_ENGINE ? donor.engineName : donor.gearboxName;
+                    const std::string& got = k == MOD_ENGINE ? s.engineName : s.gearboxName;
+                    if (want != got && !badNames++) firstName = at + b.name + ": " + key + " is " + got + ", wanted " + want;
+                }
+            }
+            if (b.parts[MOD_TIRES] && std::string("TIRES:") + tireTypeName(s.tireType) != b.parts[MOD_TIRES] && !badNames++)
+                firstName = at + b.name + ": tires are " + tireTypeName(s.tireType) + ", wanted " + b.parts[MOD_TIRES];
+
+            // Over a base, the unnamed slots stay the base's.
+            ModSet base;
+            std::copy(baseWant, baseWant + MOD_SLOTS, base.pick);
+            ModSet over = base;
+            if (!resolveBuild(v, b, over)) {
+                if (!badBase++) firstBase = at + b.name + " over a base";
+                continue;
+            }
+            for (int k = 0; k < MOD_SLOTS; k++)
+                if (b.parts[k] ? over.pick[k] != io.pick[k] : over.pick[k] != base.pick[k])
+                    if (!badBase++) firstBase = at + b.name + " slot " + std::to_string(k) + ": " + picksText(over);
+        }
+        // The vehicle's own tread is option 0, however it is named.
+        Build own{"OWN", "", {nullptr, nullptr, nullptr, nullptr, nullptr}};
+        const std::string ownKey = std::string("TIRES:") + tireTypeName(cat[v].tireType);
+        own.parts[MOD_TIRES] = ownKey.c_str();
+        ModSet io = onlySlot(MOD_TIRES, 3);
+        if (!resolveBuild(v, own, io) || io.pick[MOD_TIRES] != 0)
+            if (!badOwn++) firstOwn = at + ownKey + " -> " + std::to_string(io.pick[MOD_TIRES]);
+    }
+    ctx.check("every build resolves on every vehicle", bad == 0, first);
+    ctx.check("each names its engine, gearbox and tread, and leaves the rest", badNames == 0, firstName);
+    ctx.check("over a base, unnamed slots stay the base's", badBase == 0, firstBase);
+    ctx.check("the vehicle's own tread resolves to option 0", badOwn == 0, firstOwn);
+
+    // A key that isn't a part: false, and that slot stays as it was.
+    Build bogus{"BOGUS", "", {"ENGINE:nowhere:9", nullptr, nullptr, nullptr, "TIRES:SNOW"}};
+    ModSet io = onlySlot(MOD_ENGINE, 2);
+    ctx.check("an unknown key fails and leaves its slot", !resolveBuild(3, bogus, io) && io.pick[MOD_ENGINE] == 2 && modPartKey(3, MOD_TIRES, io.pick[MOD_TIRES]) == "TIRES:SNOW");
+
+    // Through the picker.
+    const int v = 3;
+    ModSet yours;
+    std::copy(baseWant, baseWant + MOD_SLOTS, yours.pick);
+    PickerNav nav;
+    nav.open(v, yours, (int)bl.size());
+    nav.resolve = [&](int k, const ModSet& base) {
+        ModSet m = base;
+        resolveBuild(v, bl[k], m);
+        return m;
+    };
+    const int second = std::min(1, (int)bl.size() - 1);  // (two different builds, if there are two)
+    ModSet b0 = yours, b1 = yours;
+    resolveBuild(v, bl[0], b0);
+    resolveBuild(v, bl[second], b1);
+    ctx.check("builds differ from the base", !samePicks(b0, yours) && !samePicks(b1, yours));
+    nav.tab(-1);
+    ctx.check("entering BUILDS changes nothing", nav.tabIndex() == TAB_BUILDS && nav.cursor() == 0 && samePicks(nav.pick(), yours) && samePicks(nav.yourPick(), yours));
+    ctx.check("moving onto a build picks it", nav.move(1, 0) && nav.cursor() == 1 && samePicks(nav.pick(), b0), picksText(nav.pick()));
+    ctx.check("another build is over YOUR PICK, not the last build", nav.clickTile(second + 1) && samePicks(nav.pick(), b1), picksText(nav.pick()));
+    ctx.check("a build asked for again changes nothing", !nav.clickTile(second + 1) && samePicks(nav.pick(), b1));
+    ctx.check("back on YOUR PICK restores it exactly", nav.clickTile(0) && samePicks(nav.pick(), yours) && samePicks(nav.yourPick(), yours));
+    ctx.check("...also by moving", nav.move(1, 0) && samePicks(nav.pick(), b0) && nav.move(-1, 0) && samePicks(nav.pick(), yours) && nav.cursor() == 0);
+    ctx.check("tabbing through BUILDS changes nothing", !nav.tab(1) && !nav.tab(-1) && nav.tabIndex() == TAB_BUILDS && samePicks(nav.pick(), yours) && nav.cursor() == 0);
+
+    // Leaving keeps the build, and the other tabs' groups remember its parts.
+    nav.clickTile(second + 1);
+    ctx.check("leaving keeps the build", !nav.tab(1) && nav.tabIndex() == TAB_ENGINE && samePicks(nav.pick(), b1));
+    bool follows = true;
+    std::string why;
+    for (int k = 0; k < MOD_SLOTS; k++) {
+        const int g = nav.tree().groupOf(k, b1.pick[k]);
+        if (g < 0 || nav.remembered(k, g) != b1.pick[k]) follows = false, why += " slot " + std::to_string(k);
+    }
+    ctx.check("each slot's group remembers the build's option", follows, why);
+    const int eg = nav.tree().groupOf(MOD_ENGINE, b1.pick[MOD_ENGINE]);
+    ctx.check("...and the cursor is on the group holding it", eg >= 0 && nav.cursor() == eg);
+    // Highlighting that group's tile again picks the same part, not the group's first.
+    nav.clickTile(eg == 0 ? 1 : 0);
+    ctx.check("away and back onto the group re-picks the build's part", nav.clickTile(eg) && nav.pick().pick[MOD_ENGINE] == b1.pick[MOD_ENGINE]);
+    nav.tab(-1);
+    ctx.check("entering again takes a fresh YOUR PICK", samePicks(nav.yourPick(), nav.pick()) && nav.cursor() == 0);
+
+    // setPicks: clamped like setPick, one debounce restart, neighbours only for a single slot.
+    {
+        FakeCache f;
+        ShowroomCore core(fakeHooks(f)), ref(fakeHooks(f));
+        core.open(v, ModSet(), kPaint);
+        ref.open(v, ModSet(), kPaint);
+        ModSet wild;
+        const int w[MOD_SLOTS] = {999, -5, 1, 0, 40};
+        std::copy(w, w + MOD_SLOTS, wild.pick);
+        core.setPicks(wild);
+        for (int k = 0; k < MOD_SLOTS; k++) ref.setPick(k, wild.pick[k]);
+        ctx.check("setPicks clamps as setPick does", samePicks(core.pick(), ref.pick()) && core.pick().pick[MOD_ENGINE] == (int)modOptions(v, MOD_ENGINE).size() - 1 && core.pick().pick[MOD_SUSPENSION] == 0, picksText(core.pick()));
+    }
+    FakeCache f;
+    ShowroomCore core(fakeHooks(f));
+    core.open(v, ModSet(), kPaint);
+    for (int i = 0; i < 20; i++) tick(core, f, 0.2);
+    f.built.clear();
+    ModSet two = core.pick();
+    two.pick[MOD_ENGINE] = 5, two.pick[MOD_SUSPENSION] = 2;
+    core.setPicks(two);
+    tick(core, f, 0.05);
+    ctx.check("nothing builds inside the debounce", f.built.empty() && !showsPick(core));
+    core.setPicks(two);
+    for (int i = 0; i < 2; i++) tick(core, f, 0.05);
+    ctx.check("...and a restart pushes the build back", f.built.empty());
+    for (int i = 0; i < 20; i++) tick(core, f, 0.2);
+    ctx.check("several slots changed: just the pick is built, no neighbours", f.built.size() == 1 && showsPick(core), std::to_string(f.built.size()) + " builds");
+    f.built.clear();
+    ModSet one = core.pick();
+    one.pick[MOD_ENGINE] = 9;
+    core.setPicks(one);
+    for (int i = 0; i < 20; i++) tick(core, f, 0.2);
+    ctx.check("exactly one slot changed: the pick and the options either side are built", f.built.size() == 3 && showsPick(core) && !f.bad, std::to_string(f.built.size()) + " builds");
 }
