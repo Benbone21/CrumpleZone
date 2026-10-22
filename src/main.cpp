@@ -2549,6 +2549,7 @@ int main(int argc, char** argv) {
     auto closeInventory = [&]() {
         if (!inv.open) return;
         inv.close();
+        if (audioOn) audio.play(SFX_TOOLBOX_SHUT, 0.8f);
         interact.waitRelease = true;  // (E, if it's still down, is let go before it opens the menu again)
     };
     auto toggleInventory = [&]() {
@@ -2557,7 +2558,7 @@ int main(int argc, char** argv) {
             return;
         }
         if (!trunk::kitInReach(sim, walker.p)) hud.toast("WALK UP TO THE BACK OF YOUR TRUCK AND PRESS " + K(KA_INTERACT));
-        else inv.show(sim.player);
+        else inv.show(sim.player), audioOn ? audio.play(SFX_TOOLBOX_OPEN, 0.7f) : void();
     };
     // A choice in the menu (a slot): the same jobs as taking from the bed.
     auto inventoryChoose = [&](int what) {
@@ -2597,6 +2598,7 @@ int main(int argc, char** argv) {
         }
         camFrom = lastView, camBlend = 0;
         walker.exitCar(sim.world, c, riding);
+        if (audioOn) audio.play(SFX_DOOR_OPEN, 0.8f), audio.play(SFX_DOOR_SHUT, 0.8f, 0, 1.1f);  // (the door opens as you step out, and you push it shut)
         if (riding) {
             rideId = 0;
             backToMine();
@@ -2634,6 +2636,7 @@ int main(int argc, char** argv) {
             sim.player = k;
             camFrom = lastView, camBlend = 0;
             walker.active = false;
+            if (audioOn) audio.play(SFX_DOOR_OPEN, 0.8f), audio.play(SFX_DOOR_SHUT, 0.9f, 0, 0.7f);
             cam.dist = carCamDist;
             cam.initialized = false;
             net.sendGame("ride " + std::to_string(rideId));
@@ -2657,6 +2660,7 @@ int main(int argc, char** argv) {
             sim.cars[k].pilot.followCar = -1;
             if (sim.cars[k].gear < 0) sim.cars[k].gear = 1;
         }
+        if (audioOn) audio.play(SFX_DOOR_OPEN, 0.8f), audio.play(SFX_DOOR_SHUT, 0.9f, 0, 0.7f);  // (opens as you get in, and you pull it to behind you)
         camFrom = lastView, camBlend = 0;
         walker.active = false;
         cam.dist = carCamDist;
@@ -2807,6 +2811,10 @@ int main(int argc, char** argv) {
         hud.bestKmh = 0;
     };
     std::function<void(const devmenu::Action&)> runDev;  // the dev tools, one place for the menu and the hotkeys (set below, where its state lives)
+    // Menu sounds (quiet; the master volume applies): a click when something's activated, a softer, higher tick when the selection moves.
+    auto uiClick = [&]() { if (audioOn) audio.play(SFX_UI_CLICK, 0.35f); };
+    auto uiHover = [&]() { if (audioOn) audio.play(SFX_UI_HOVER, 0.16f); };
+    auto activationKey = [](int sc) { return sc == 40 || sc == 88 || sc == 44; };  // (Enter, keypad Enter, Space: the pad's A arrives as Enter)
     auto handleMenu = [&](PauseMenu::Result res) {
         switch (res.action) {
             case PauseMenu::NONE: break;
@@ -3716,7 +3724,13 @@ int main(int argc, char** argv) {
                             if (!returnToEditor()) hud.toast("CAN'T GO BACK TO THE EDITOR");
                             break;
                         }
-                        handleMain(mainNav.key(evKeyScancode(e)));
+                        {
+                            const int before = mainNav.sel, pageBefore = mainNav.page;
+                            const mainmenu::Result r = mainNav.key(evKeyScancode(e));
+                            if (activationKey(evKeyScancode(e)) || r.act != mainmenu::A_NONE || mainNav.page != pageBefore) uiClick();
+                            else if (mainNav.sel != before) uiHover();
+                            handleMain(r);
+                        }
                         break;
                     }
                     if (menu.open && menu.title && classicTitle && campWorld && menu.pageNow() == 0 && evKeyScancode(e) == SC_ESCAPE) {  // (the old title page: Esc is back to the new one)
@@ -3727,7 +3741,13 @@ int main(int argc, char** argv) {
                         const uint8_t* ks = SDL_GetKeyboardState(nullptr);
                         menu.shift = ks[SC_LSHIFT] || ks[SC_RSHIFT];
                         menu.ctrl = ks[224] || ks[228] || testCtrl;
-                        handleMenu(menu.key(evKeyScancode(e), settings));
+                        {
+                            const int before = menu.selected();
+                            const PauseMenu::Result r = menu.key(evKeyScancode(e), settings);
+                            if (activationKey(evKeyScancode(e))) uiClick();
+                            else if (menu.selected() != before) uiHover();
+                            handleMenu(r);
+                        }
                         break;
                     }
                     if (inv.open) {  // the inventory takes every key
@@ -4070,11 +4090,20 @@ int main(int argc, char** argv) {
                         float mx, my;
                         toDrawable(evMotionX(e), evMotionY(e), mx, my);
                         const int h = mainNav.hitAt(mx, my);
-                        if (h >= 0) mainNav.setSel(h);
+                        if (h >= 0) {
+                            const int before = mainNav.sel;
+                            mainNav.setSel(h);
+                            if (mainNav.sel != before) uiHover();
+                        }
                     } else if (menu.open) {
                         float mx, my;
                         toDrawable(evMotionX(e), evMotionY(e), mx, my);
-                        handleMenu(menu.mouseMove(mx, my, evMotionState(e) & 1, settings));
+                        {
+                            const int before = menu.selected();
+                            const PauseMenu::Result r = menu.mouseMove(mx, my, evMotionState(e) & 1, settings);
+                            if (menu.selected() != before) uiHover();
+                            handleMenu(r);
+                        }
                     } else if (walker.active && !editor.active) {  // on foot: the mouse turns your head
                         footYaw -= evMotionXrel(e) * 0.0035;
                         footPitch = clampd(footPitch - evMotionYrel(e) * 0.0035, -1.45, 1.45);
@@ -4096,13 +4125,14 @@ int main(int argc, char** argv) {
                         float mx, my;
                         toDrawable(evButtonX(e), evButtonY(e), mx, my);
                         const int h = mainNav.hitAt(mx, my);
-                        if (evButton(e) == 1 && h >= 0) handleMain(mainNav.choose(h));
+                        if (evButton(e) == 1 && h >= 0) uiClick(), handleMain(mainNav.choose(h));
                         else if (evButton(e) == 3) handleMain(mainNav.back());
                         break;
                     }
                     if (menu.open && evButton(e) == 1) {
                         float mx, my;
                         toDrawable(evButtonX(e), evButtonY(e), mx, my);
+                        if (menu.overRow(mx, my)) uiClick();
                         handleMenu(menu.mouseDown(mx, my, settings));
                     }
                     break;
@@ -4597,9 +4627,18 @@ int main(int argc, char** argv) {
                     }
                     if (interact.openedInventory >= 0) {  // E at the back
                         inv.show(interact.openedInventory);
+                        if (audioOn) audio.play(SFX_TOOLBOX_OPEN, 0.7f);
                         interact.openedInventory = -1;
                     }
                     if (inv.open) inv.refresh(sim, interact.own, walker);
+                    {  // a repair step done (a row of the checklist ticked, or the job gone with its last step): the part clunks home
+                        static std::string clTitle;
+                        static int clDone = 0;
+                        int done = 0;
+                        for (bool d : interact.checklist.done) done += d;
+                        if (audioOn && (interact.usedPart >= 0 || (interact.checklist.any() && interact.checklist.title == clTitle && done > clDone))) audio.play(SFX_CLUNK, 0.7f);
+                        clTitle = interact.checklist.title, clDone = done;
+                    }
                     if (interact.usedPart >= 0) {  // a repair used a part
                         if (career.on) {
                             career.usePart((RepairPart)interact.usedPart);
@@ -4900,7 +4939,8 @@ int main(int argc, char** argv) {
             const Car& pcar = sim.cars[sim.player];
             const bool airing = !sim.paused && pcar.airing != 0 && len(pcar.frame().vel) < 0.5 &&
                                 (pcar.airing < 0 ? pcar.tirePsi > 12 : pcar.tirePsi < 40);
-            audio.setHiss(airing ? 0.6f : 0.0f);
+            const bool recordedAir = audio.setAiring(airing ? pcar.airing : 0);  // (the compressor and the valve's hiss; the synthesized hiss only when they're missing)
+            audio.setHiss(airing && !recordedAir ? 0.6f : 0.0f);
         }
 
         int W, H;
@@ -5529,6 +5569,7 @@ int main(int argc, char** argv) {
         view.height = H;
         if (audioOn) audio.setNearbyEngines(sim, view.eye, norm(cross(view.target - view.eye, view.up)),
                                            (float)std::max(0.35, sim.timeScale));
+        if (audioOn) audio.setWinches(sim, view.eye, norm(cross(view.target - view.eye, view.up)), simDt);
         if (audioOn) audio.setEnvironment(soundMap(sim.world.map), (float)dayHours, settings.ambience,
                                          !walker.active && cam.mode == 2 ? 0.3f : 1.0f);
         lastView = view;
@@ -5667,6 +5708,11 @@ int main(int argc, char** argv) {
             const Handwork hw = handwork(sim, walker, interact, view.eye, view.target - view.eye, clock);
             fpHands[0] = hw.hands[0], fpHands[1] = hw.hands[1];
             workHandOn = hw.hands[1].on, workHand = hw.hands[1].p;
+            {  // the ratchet / socket / lug wrench's ticks on its return stroke (handwork.cpp: a swing is a stroke, then the free swing back), at the hand, stopping with the job
+                static double lastSwing = -1;
+                if (audioOn && hw.swing >= 0 && lastSwing >= 0 && lastSwing < 0.7 && hw.swing >= 0.7) audio.play(SFX_WRENCH, 0.55f);
+                lastSwing = hw.swing;
+            }
             renderer.frameModels.insert(renderer.frameModels.end(), hw.models.begin(), hw.models.end());
             renderer.wheelWork = hw.wheel;
             if (hw.carriedPose && renderer.carried.on) renderer.carried.c = hw.carriedC, renderer.carried.axis = hw.carriedAxis;

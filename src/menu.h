@@ -71,6 +71,8 @@ public:
     };
 
     bool open = false;
+    int selected() const { return sel; }  // the focused row (menu sounds)
+    bool overRow(float x, float y) const { return hitAt(x, y) >= 0; }
     bool title = false;  // the title screen (nothing to resume yet)
     int vehicle = 0;  // the car shown in the VEHICLE row
     int mapPick = 0;  // the map shown in the MAP row

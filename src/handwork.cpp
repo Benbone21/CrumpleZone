@@ -76,6 +76,7 @@ struct Scene {
         u = len(u) > 1e-6 ? norm(u) : norm(cross(axis, V3(1, 0, 0)));
         const V3 left = cross(axis, u);  // (left, seen from the stud's tip looking in)
         const double c = frac(time / kSwing), stroke = 0.7;
+        out.swing = c;
         const double p = c < stroke ? smooth(c / stroke) : 1 - smooth((c - stroke) / (1 - stroke));
         const double phi = 0.1 + kStroke * (off ? p : 1 - p);
         const double lift = c < stroke ? 0.0 : 0.02 * std::sin((c - stroke) / (1 - stroke) * M_PI);

@@ -211,6 +211,41 @@ int main() {
     }
     traceAllocations = false;
     check("mixer and music map changes perform no C++ allocations in the callback", callbackAllocations == 0);
+    {  // recorded effects: the files load; the winch's sound follows line speed and load; nothing allocates in the callback
+        Audio fx;
+        const int loaded = fx.loadSfx("assets/audio/sfx");
+        check("all thirteen effect recordings load (mono 48 kHz PCM16)", loaded == 13);
+        const WinchSound slow = WinchSound::at(0.1f, 0), fast = WinchSound::at(0.8f, 0), loadedUp = WinchSound::at(0.3f, 0.9f), out = WinchSound::at(-0.8f, 0), stalled = WinchSound::at(0, 1);
+        check("winch hum rises with line speed and sinks and strains under load", fast.motorRate > slow.motorRate * 1.3f && loadedUp.strain > 0.5f && fast.strain == 0 && loadedUp.motorGain > WinchSound::at(0.3f, 0).motorGain * 1.5f && loadedUp.motorRate < WinchSound::at(0.3f, 0).motorRate);
+        check("pawl clicks follow the cable speed, paying out and reeling in", fast.clicksPerSecond > slow.clicksPerSecond * 4 && std::fabs(out.clicksPerSecond - fast.clicksPerSecond) < 1e-4f && stalled.clicksPerSecond == 0 && WinchSound::at(50, 0).clicksPerSecond <= 28);
+        auto winchEnergy = [&](float speed, float load, bool running) {
+            Audio a;
+            a.loadSfx("assets/audio/sfx");
+            a.setEngine(0, 0);
+            a.setVolume(1);
+            a.setWinch(0, running, speed, load, 1, 0.3f);
+            std::vector<float> buf(512 * 2);
+            double e = 0;
+            for (int k = 0; k < 200; k++) {
+                AudioTest::render(a, buf.data(), 512);
+                if (k >= 100) for (float v : buf) e += v * v, e += std::isfinite(v) ? 0 : 1e9;
+            }
+            return e;
+        };
+        const double idle = winchEnergy(0.5f, 0.2f, false), run = winchEnergy(0.5f, 0.2f, true), heavy = winchEnergy(0.5f, 0.9f, true);
+        std::printf("  winch energy idle %.3g running %.3g heavy %.3g\n", idle, run, heavy);
+        check("a running winch is audible, silent when stopped, louder under load", idle < 1e-9 && run > 1e-3 && heavy > run);
+        fx.setWinch(0, true, 0.6f, 0.5f, 1, 0); fx.setAiring(-1);
+        traceAllocations = true;
+        callbackAllocations = 0;
+        for (int k = 0; k < 300; k++) {
+            if (k == 100) fx.play(SFX_DOOR_OPEN), fx.play(SFX_DOOR_SHUT, 1, 0, 0.1f);
+            if (k == 150) fx.setAiring(1), fx.setWinch(1, true, -0.5f, 0.8f, 0.5f, -0.5f);
+            AudioTest::render(fx, callbackBlock, 512);
+        }
+        traceAllocations = false;
+        check("winch, one-shots and air loops perform no C++ allocations in the callback", callbackAllocations == 0);
+    }
     if (std::getenv("CZ_AUDIO_DEVICE_TEST")) {
         // With SDL_AUDIODRIVER=dummy this exercises SDL's real callback lifecycle silently.
         const bool initialized = SDL_Init(SDL_INIT_AUDIO) == 0;
