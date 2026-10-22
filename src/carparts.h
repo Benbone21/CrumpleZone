@@ -47,6 +47,12 @@ void carPartModels(const Car& c, std::vector<Placed>& out, int level = PARTS_ALL
 void recyclePlaced(std::vector<Placed>& v);
 Placed takePlaced();
 
+// Where a placed part's U-joint is, in the world: a gearbox's, transfer case's (`front`: its front output) or differential's
+// yoke, whose centre a drive shaft's joint sits on. (The placement itself for any other part.)
+V3 partYoke(const Placed& pl, bool front = false);
+// A placed drive shaft's two joint centres (its -X and +X). false if it isn't a drive shaft.
+bool driveShaftJoints(const Placed& pl, V3& a, V3& e);
+
 struct PartHit {
     bool ok = false;
     int car = -1;         // (set by the caller that looks through several cars)

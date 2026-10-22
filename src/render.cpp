@@ -4432,7 +4432,7 @@ void Renderer::prepareCarModels() {
             int testsLeft = 4;
             bool unfinished = false;
             // (the test costs 10 ms or more for a car: kept per part, by its model, params and place in the body, for as long as the skin stands)
-            if (slot.shutSkin != slot.lpos.size() || slot.shutIntact != slot.intact) slot.shutCache.clear(), slot.shutSkin = slot.lpos.size(), slot.shutIntact = slot.intact;
+            if (slot.shutSkin != slot.lpos.size() || slot.shutIntact != slot.intact) slot.shutCache.clear(), slot.shutSeen.clear(), slot.shutSkin = slot.lpos.size(), slot.shutIntact = slot.intact;
             if (slot.intact && !slot.lglass.empty()) {
                 const M4& M = slot.model;
                 const V3 ax[3] = {V3(M.m[0], M.m[1], M.m[2]), V3(M.m[4], M.m[5], M.m[6]), V3(M.m[8], M.m[9], M.m[10])}, o(M.m[12], M.m[13], M.m[14]);
@@ -4449,8 +4449,15 @@ void Renderer::prepareCarModels() {
                     mix(dot(d, ax[0])), mix(dot(d, ax[1])), mix(dot(d, ax[2]));
                     for (int c = 0; c < 3; c++) mix(dot(a[c], ax[0]), 20), mix(dot(a[c], ax[1]), 20), mix(dot(a[c], ax[2]), 20);
                     mix(pl.scale.x, 20), mix(pl.scale.y, 20), mix(pl.scale.z, 20), mix(pl.wear, 20);
+                    // The gearbox, transfer case, shafts and diffs hang under the floor: always drawn (the depth test hides what the
+                    // floor covers). A part seen outside the skin once stays drawn (the test flips for a part on the skin's edge as
+                    // the body flexes: it would blink in and out); that is kept per part, for as long as the skin stands.
+                    const bool drivetrain = pl.id.rfind("gearbox_", 0) == 0 || pl.id.rfind("transfer_case", 0) == 0 || pl.id == "drive_shaft" ||
+                                            pl.id == "differential" || pl.id == "cv_axle";
+                    if (drivetrain) { shut[k] = 0; continue; }
+                    const uint64_t seenKey = (partsSignature({pl}) ^ (uint64_t)k * 0x9E3779B97F4A7C15ull);
                     auto hit = slot.shutCache.find(h);
-                    if (hit != slot.shutCache.end()) { shut[k] = hit->second; continue; }
+                    if (hit != slot.shutCache.end()) { shut[k] = hit->second && !slot.shutSeen.count(seenKey); continue; }
                     if (!fresh && (testsLeft <= 0 || !partMeshReady(pl))) { unfinished = true; continue; }
                     testsLeft--;
                     const mk::Mesh& m = partMesh(pl, scratch);
@@ -4464,7 +4471,8 @@ void Renderer::prepareCarModels() {
                         const V3 dd = w - o, l(dot(dd, ax[0]), dot(dd, ax[1]), dot(dd, ax[2]));
                         in = l.y < belt - 0.02 && insideSkin(slot.lpos, slot.lopaque, l);
                     }
-                    shut[k] = in;
+                    if (!in) slot.shutSeen[seenKey] = 1;
+                    shut[k] = in && !slot.shutSeen.count(seenKey);
                     slot.shutCache[h] = in;
                 }
                 if (slot.shutCache.size() > 4000) slot.shutCache.clear();
