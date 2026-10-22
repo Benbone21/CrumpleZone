@@ -5704,9 +5704,11 @@ int main(int argc, char** argv) {
         renderer.xrayEye = view.eye;
         renderer.wheelWork = Renderer::WheelWork();
         Handwork::Hold fpHands[2];
+        bool fpHideTorso = false;
         if (walker.active && !editor.active && cam.mode != 3) {
             const Handwork hw = handwork(sim, walker, interact, view.eye, view.target - view.eye, clock);
             fpHands[0] = hw.hands[0], fpHands[1] = hw.hands[1];
+            fpHideTorso = hw.hideTorso;
             workHandOn = hw.hands[1].on, workHand = hw.hands[1].p;
             {  // the ratchet / socket / lug wrench's ticks on its return stroke (handwork.cpp: a swing is a stroke, then the free swing back), at the hand, stopping with the job
                 static double lastSwing = -1;
@@ -5733,6 +5735,7 @@ int main(int argc, char** argv) {
                 const people::Look me = people::lookFor(V3(0.56, 0.37, 0.2), 7);
                 if (!editor.active && cam.mode != 3) {
                     people::Pose p = people::firstPerson(g, myMove, dt, footYaw, footPitch, view.eye, fpLean);
+                    p.noTorso = fpHideTorso;
                     for (int s = 0; s < 2; s++)
                         if (fpHands[s].on) people::gripAt(p, s, fpHands[s].p, fpHands[s].axis, fpHands[s].grip);
                     if (renderer.carried.on && !fpHands[0].on && !fpHands[1].on) {  // a wheel in your arms: a hand either side of the tread

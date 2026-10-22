@@ -104,8 +104,9 @@ struct Scene {
         const double theta = -1.2 + kStroke * (off ? pr : 1 - pr);  // (the cross bar's angle in the wheel's plane)
         const V3 bar = rotateAxis(left, axis, theta);
         put(id, top + axis * (arm - engage + lift), -axis, cross(bar, -axis));  // (X into the wheel, Z the cross bar)
+        out.hideTorso = true;  // (your chest would hide the lower hand)
         const Placed& pl = out.models.back();
-        const double reach = std::min(0.17, m.hi.z - 0.09);
+        const double reach = std::min(0.21, m.hi.z - 0.11);
         const V3 zr = pl.ax[2] * (dot(pl.ax[2], right) > 0 ? 1.0 : -1.0);  // (the cross bar's end toward your right)
         for (int hand = 0; hand < 2; hand++) {
             const V3 dir = hand == 1 ? zr : zr * -1.0;

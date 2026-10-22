@@ -14,6 +14,7 @@ struct Handwork {
     std::vector<Placed> models;     // tools, a part, the jack: drawn this frame
     Renderer::WheelWork wheel;      // a wheel slid out / a chain part on
     double swing = -1;              // a wrench is turning a nut: how far through its swing (0..1; the free swing back starts at 0.7); -1 if none
+    bool hideTorso = false;         // first person: leave your chest out of the picture (both hands on a low job)
     bool carriedPose = false;       // the wheel you carry, moved onto the hub
     V3 carriedC, carriedAxis;
     // Where your hands are (left, right): on a tool's grip (axis: along the handle, toward its head), the jack's bar,

@@ -800,26 +800,26 @@ Reg fpHandReg({"fp_hand", "FP HAND", "REPAIR", "First-person right forearm and h
 void crossWrench(B& b, const P& p) {
     const double w = p("wear");
     const int fin = p.i("finish");
-    const double arm = 0.27, sl = 0.046;
+    const double arm = 0.33, sl = 0.056;
     setFin(b, fin, w);
     // The crossing: a round boss, a little thicker than the bars.
-    b.lathe(V3(0, 0, 0), {V2(0, -0.0125), V2(0.0185, -0.0125), V2(0.0225, -0.0085), V2(0.0225, 0.0085), V2(0.0185, 0.0125), V2(0, 0.0125)}, 14, false);
-    const double rs[4] = {0.0125, 0.0135, 0.0145, 0.0152};  // 17, 19, 21, 22 mm hex sockets
+    b.lathe(V3(0, 0, 0), {V2(0, -0.0145), V2(0.022, -0.0145), V2(0.027, -0.01), V2(0.027, 0.01), V2(0.022, 0.0145), V2(0, 0.0145)}, 14, false);
+    const double rs[4] = {0.0148, 0.0160, 0.0172, 0.0182};  // 17, 19, 21, 22 mm hex sockets
     const V3 dirs[4] = {V3(1, 0, 0), V3(0, 0, 1), V3(-1, 0, 0), V3(0, 0, -1)};
     for (int k = 0; k < 4; k++) {
         setFin(b, fin, w);
         // (A socket on the end of each bar, in line with it, mouth out.)
-        rodAB(b, dirs[k] * 0.015, dirs[k] * (arm - sl + 0.006), 0.0085, 0.001, 10);
+        rodAB(b, dirs[k] * 0.015, dirs[k] * (arm - sl + 0.006), 0.0098, 0.001, 10);
         socketAB(b, dirs[k] * (arm - sl), dirs[k] * arm, rs[k], rs[k] * 0.72, 12);
     }
     // The grip sleeves on the cross bar's two ends.
     b.style(paint(p.i("grip")), MATTE);
     for (int sgn : {1, -1}) {
-        knurl(b, V3(0, 0, sgn * 0.085), V3(0, 0, sgn * (arm - sl - 0.012)), 0.0125, 0.0014, 7, 8, false);
-        rodAB(b, V3(0, 0, sgn * (arm - sl - 0.012)), V3(0, 0, sgn * (arm - sl - 0.004)), 0.0125, 0.0025, 10);
+        knurl(b, V3(0, 0, sgn * 0.085), V3(0, 0, sgn * (arm - sl - 0.012)), 0.0148, 0.0016, 7, 8, false);
+        rodAB(b, V3(0, 0, sgn * (arm - sl - 0.012)), V3(0, 0, sgn * (arm - sl - 0.004)), 0.0148, 0.003, 10);
     }
     b.style(darkSteel(w), METAL);
-    stampTop(b, "4-WAY", V3(0.0, 0.0128, 0), 0.0011);
+    stampTop(b, "4-WAY", V3(0.0, 0.0148, 0), 0.0011);
     grease(b, V3(0.05, 0.005, 0), V3(0.2, 0.005, 0), 0.0025, 8, w, 11);
     grease(b, V3(-0.05, 0.005, 0), V3(-0.17, 0.005, 0), 0.0025, 6, w, 12);
 }
@@ -877,7 +877,7 @@ void breakerBar(B& b, const P& p) {
     grease(b, V3(xh - 0.03, 0.01, 0), V3(xh - 0.2, 0.01, 0), 0.0028, 7, w, 31, 0.008);
 }
 
-Reg lugWrench({"lug_wrench", "LUG WRENCH", "REPAIR", "Hand tool: wheel nuts on and off; the 4-way cross has its origin at the crossing and its nut arm along +X, mouth out; the others: grip at the origin, working socket at +X, open side down (-Y)", 0.55,
+Reg lugWrench({"lug_wrench", "LUG WRENCH", "REPAIR", "Hand tool: wheel nuts on and off; the 4-way cross has its origin at the crossing and its nut arm along +X, mouth out; the others: grip at the origin, working socket at +X, open side down (-Y)", 0.66,
                {
                    {"4-WAY CROSS", "Chrome cross wrench, four sockets, one grip sleeve", {finParam(0), paintParam(8, "grip", "GRIP SLEEVE"), wearParam()}, lifted(crossWrench)},
                    {"FACTORY L", "Bent bar, socket on the short leg, hubcap spade", {finParam(2), paintParam(3, "grip", "GRIP DIP"), wearParam()}, lifted(lWrench)},

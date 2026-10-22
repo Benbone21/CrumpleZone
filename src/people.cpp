@@ -444,8 +444,10 @@ void build(const Pose& p, const Look& L, mk::Mesh& out) {
     const int det = p.detail, sg = det >= 2 ? 10 : det == 1 ? 7 : 5;
     mk::B b(out);
     const Basis pel = pelvisBasis(p), ch = chestBasis(p);
-    place(out, piece(P_SEAT, L, det), pel);
-    place(out, piece(P_CHEST, L, det), ch);
+    if (!p.noTorso) {
+        place(out, piece(P_SEAT, L, det), pel);
+        place(out, piece(P_CHEST, L, det), ch);
+    }
     // Legs: the thigh tapering to the knee, the calf swelling below it and slimming to the ankle; the jeans faded
     // at the knee, an outside seam, folds stacked over the boot.
     for (int s = 0; s < 2; s++) {
