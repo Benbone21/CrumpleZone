@@ -15,7 +15,7 @@
 class Sim;
 
 // Recorded one-shots (assets/audio/sfx/*.wav, mono 48 kHz PCM16). The winch clicks and the wrench ticks are banks of short slots, one picked at random.
-enum Sfx { SFX_DOOR_OPEN, SFX_DOOR_SHUT, SFX_CLUNK, SFX_TOOLBOX_OPEN, SFX_TOOLBOX_SHUT, SFX_WRENCH, SFX_AIR_BURST, SFX_HORN, SFX_WINCH_CLICK, SFX_COUNT };
+enum Sfx { SFX_DOOR_OPEN, SFX_DOOR_SHUT, SFX_CLUNK, SFX_TOOLBOX_OPEN, SFX_TOOLBOX_SHUT, SFX_WRENCH, SFX_AIR_BURST, SFX_HORN, SFX_WINCH_CLICK, SFX_UI_CLICK, SFX_UI_HOVER, SFX_COUNT };
 
 // What a winch sounds like at a line speed (m/s, + reeling in, - paying out) and load (0..1 of its pull): the motor's hum
 // (playback rate and level), how hard it strains (0..1: a lower, rougher, driven note) and the pawl's clicks per second.

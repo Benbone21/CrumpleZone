@@ -132,8 +132,14 @@ int Audio::loadSfx(const std::string& directory) {
     struct { const char* file; Sfx what; } one[] = {
         {"door_open.wav", SFX_DOOR_OPEN}, {"door_shut.wav", SFX_DOOR_SHUT}, {"clunk.wav", SFX_CLUNK}, {"toolbox_rummage.wav", SFX_TOOLBOX_OPEN},
         {"toolbox_shut.wav", SFX_TOOLBOX_SHUT}, {"wrench_ratchet.wav", SFX_WRENCH}, {"air_hiss.wav", SFX_AIR_BURST}, {"horn.wav", SFX_HORN},
-        {"winch_click.wav", SFX_WINCH_CLICK}};
+        {"winch_click.wav", SFX_WINCH_CLICK}, {"ui_click.wav", SFX_UI_CLICK}};
     for (auto& e : one) n += readMono16(directory + "/" + e.file, sfx_[e.what]);
+    if (!sfx_[SFX_UI_CLICK].empty()) {  // the hover tick: the same click, pitched up (resampled 1.15x)
+        const std::vector<float>& c = sfx_[SFX_UI_CLICK];
+        std::vector<float>& h = sfx_[SFX_UI_HOVER];
+        h.clear();
+        for (double at = 0; at + 1 < c.size(); at += 1.15) h.push_back((float)(c[(size_t)at] * (1 - (at - (size_t)at)) + c[(size_t)at + 1] * (at - (size_t)at)));
+    }
     n += readMono16(directory + "/winch_motor.wav", winchMotor_);
     n += readMono16(directory + "/compressor.wav", compressor_);
     n += readMono16(directory + "/air_blow.wav", airBlow_);
@@ -230,7 +236,7 @@ void Audio::startSfx(Sfx what, float gain, float pan, uint32_t wait) {
 bool Audio::start() {
     if (device_) return true;
     if (!ambienceLoaded_) std::printf("Ambience recordings: %d of 3 loaded; missing ones stay synthesized\n", loadAmbience("assets/audio/ambience"));
-    if (!sfxLoaded_) std::printf("Sound effects: %d of 12 loaded; missing ones stay silent\n", loadSfx("assets/audio/sfx"));
+    if (!sfxLoaded_) std::printf("Sound effects: %d of 13 loaded; missing ones stay silent\n", loadSfx("assets/audio/sfx"));
     const int banks = recordingsReady_ ? recordingCount_ : loadEngineRecordings("assets/audio/engines");
     std::printf("Engine recordings: %d banks loaded; missing banks use procedural audio\n", banks);
     SDL_AudioSpec want{}, have{};
@@ -292,7 +298,7 @@ void Audio::renderEffects(float* out, int frames, float dt, float sceneGain) {
     const int air = airingDir_;
     const float airTarget[2] = {air > 0 && !compressor_.empty() ? 0.28f : 0.0f, air < 0 && !airBlow_.empty() ? 0.30f : 0.0f};
     for (int i = 0; i < frames; i++) {
-        float l = 0, r = 0;
+        float l = 0, r = 0, ul = 0, ur = 0;
         for (int k = 0; k < kWinches; k++) {
             WinchState& st = winchState_[k];
             st.gain += (target[k] - st.gain) * smooth;
@@ -331,10 +337,11 @@ void Audio::renderEffects(float* out, int frames, float dt, float sceneGain) {
             if (v.what == SFX_COUNT) continue;
             if (v.wait) { v.wait--; continue; }
             const float s = sfx_[v.what][v.pos];
-            l += s * v.left, r += s * v.right;
+            if (v.what == SFX_UI_CLICK || v.what == SFX_UI_HOVER) ul += s * v.left, ur += s * v.right;  // (menu sounds aren't ducked with the scene)
+            else l += s * v.left, r += s * v.right;
             if (++v.pos >= v.end) v.what = SFX_COUNT;
         }
-        out[2 * i] += l * sceneGain, out[2 * i + 1] += r * sceneGain;
+        out[2 * i] += l * sceneGain + ul, out[2 * i + 1] += r * sceneGain + ur;
     }
 }
 

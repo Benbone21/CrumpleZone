@@ -79,6 +79,7 @@ for at in (0.11, 0.25, 0.55, 0.68, 0.95, 1.08):
     c *= np.minimum(1, np.linspace(1, 0, len(c)) * 6)
     slots.append(c / max(1e-6, np.abs(c).max()) * 0.9)
 save(S + 'wrench_ratchet.wav', np.concatenate(slots))
+save(S + 'ui_click.wav', shot(load('universfield-computer-mouse-click-02-383961'), 0.7, 0.03, 0.01))
 # the menu's stream and, held back for later: the horn, a river and a forest bed
 save('assets/audio/ambience/stream.wav', loop(load('soundreality-stream-nature-445380'), 30, 24, 2.0, 0.8))
 save(S + 'horn.wav', shot(load('universfield-double-car-honk-352443')))

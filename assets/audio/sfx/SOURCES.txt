@@ -19,3 +19,5 @@ Reserved (prepared, not used yet):
 horn.wav             one-shot     universfield-double-car-honk-352443   horn (no horn feature yet; Audio::play(SFX_HORN) is ready)
 ../ambience/river.wav   loop, 20 s  hasin2004-nature-sound-near-river-or-waterfall-247409  world rivers / waterfalls
 ../ambience/forest.wav  loop, 24 s  soundreality-nature-forest-sound-537925  a daytime forest bed (not for the menu's sunset)
+
+ui_click.wav         one-shot     universfield-computer-mouse-click-02-383961  menu items: played as is (quiet) when one is activated, and resampled 1.15x higher and softer on hover / selection change

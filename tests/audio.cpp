@@ -214,7 +214,7 @@ int main() {
     {  // recorded effects: the files load; the winch's sound follows line speed and load; nothing allocates in the callback
         Audio fx;
         const int loaded = fx.loadSfx("assets/audio/sfx");
-        check("all twelve effect recordings load (mono 48 kHz PCM16)", loaded == 12);
+        check("all thirteen effect recordings load (mono 48 kHz PCM16)", loaded == 13);
         const WinchSound slow = WinchSound::at(0.1f, 0), fast = WinchSound::at(0.8f, 0), loadedUp = WinchSound::at(0.3f, 0.9f), out = WinchSound::at(-0.8f, 0), stalled = WinchSound::at(0, 1);
         check("winch hum rises with line speed and sinks and strains under load", fast.motorRate > slow.motorRate * 1.3f && loadedUp.strain > 0.5f && fast.strain == 0 && loadedUp.motorGain > WinchSound::at(0.3f, 0).motorGain * 1.5f && loadedUp.motorRate < WinchSound::at(0.3f, 0).motorRate);
         check("pawl clicks follow the cable speed, paying out and reeling in", fast.clicksPerSecond > slow.clicksPerSecond * 4 && std::fabs(out.clicksPerSecond - fast.clicksPerSecond) < 1e-4f && stalled.clicksPerSecond == 0 && WinchSound::at(50, 0).clicksPerSecond <= 28);

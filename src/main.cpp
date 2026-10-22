@@ -2810,6 +2810,10 @@ int main(int argc, char** argv) {
         hud.bestKmh = 0;
     };
     std::function<void(const devmenu::Action&)> runDev;  // the dev tools, one place for the menu and the hotkeys (set below, where its state lives)
+    // Menu sounds (quiet; the master volume applies): a click when something's activated, a softer, higher tick when the selection moves.
+    auto uiClick = [&]() { if (audioOn) audio.play(SFX_UI_CLICK, 0.35f); };
+    auto uiHover = [&]() { if (audioOn) audio.play(SFX_UI_HOVER, 0.16f); };
+    auto activationKey = [](int sc) { return sc == 40 || sc == 88 || sc == 44; };  // (Enter, keypad Enter, Space: the pad's A arrives as Enter)
     auto handleMenu = [&](PauseMenu::Result res) {
         switch (res.action) {
             case PauseMenu::NONE: break;
@@ -3719,7 +3723,13 @@ int main(int argc, char** argv) {
                             if (!returnToEditor()) hud.toast("CAN'T GO BACK TO THE EDITOR");
                             break;
                         }
-                        handleMain(mainNav.key(evKeyScancode(e)));
+                        {
+                            const int before = mainNav.sel, pageBefore = mainNav.page;
+                            const mainmenu::Result r = mainNav.key(evKeyScancode(e));
+                            if (activationKey(evKeyScancode(e)) || r.act != mainmenu::A_NONE || mainNav.page != pageBefore) uiClick();
+                            else if (mainNav.sel != before) uiHover();
+                            handleMain(r);
+                        }
                         break;
                     }
                     if (menu.open && menu.title && classicTitle && campWorld && menu.pageNow() == 0 && evKeyScancode(e) == SC_ESCAPE) {  // (the old title page: Esc is back to the new one)
@@ -3730,7 +3740,13 @@ int main(int argc, char** argv) {
                         const uint8_t* ks = SDL_GetKeyboardState(nullptr);
                         menu.shift = ks[SC_LSHIFT] || ks[SC_RSHIFT];
                         menu.ctrl = ks[224] || ks[228] || testCtrl;
-                        handleMenu(menu.key(evKeyScancode(e), settings));
+                        {
+                            const int before = menu.selected();
+                            const PauseMenu::Result r = menu.key(evKeyScancode(e), settings);
+                            if (activationKey(evKeyScancode(e))) uiClick();
+                            else if (menu.selected() != before) uiHover();
+                            handleMenu(r);
+                        }
                         break;
                     }
                     if (inv.open) {  // the inventory takes every key
@@ -4073,11 +4089,20 @@ int main(int argc, char** argv) {
                         float mx, my;
                         toDrawable(evMotionX(e), evMotionY(e), mx, my);
                         const int h = mainNav.hitAt(mx, my);
-                        if (h >= 0) mainNav.setSel(h);
+                        if (h >= 0) {
+                            const int before = mainNav.sel;
+                            mainNav.setSel(h);
+                            if (mainNav.sel != before) uiHover();
+                        }
                     } else if (menu.open) {
                         float mx, my;
                         toDrawable(evMotionX(e), evMotionY(e), mx, my);
-                        handleMenu(menu.mouseMove(mx, my, evMotionState(e) & 1, settings));
+                        {
+                            const int before = menu.selected();
+                            const PauseMenu::Result r = menu.mouseMove(mx, my, evMotionState(e) & 1, settings);
+                            if (menu.selected() != before) uiHover();
+                            handleMenu(r);
+                        }
                     } else if (walker.active && !editor.active) {  // on foot: the mouse turns your head
                         footYaw -= evMotionXrel(e) * 0.0035;
                         footPitch = clampd(footPitch - evMotionYrel(e) * 0.0035, -1.45, 1.45);
@@ -4099,13 +4124,14 @@ int main(int argc, char** argv) {
                         float mx, my;
                         toDrawable(evButtonX(e), evButtonY(e), mx, my);
                         const int h = mainNav.hitAt(mx, my);
-                        if (evButton(e) == 1 && h >= 0) handleMain(mainNav.choose(h));
+                        if (evButton(e) == 1 && h >= 0) uiClick(), handleMain(mainNav.choose(h));
                         else if (evButton(e) == 3) handleMain(mainNav.back());
                         break;
                     }
                     if (menu.open && evButton(e) == 1) {
                         float mx, my;
                         toDrawable(evButtonX(e), evButtonY(e), mx, my);
+                        if (menu.overRow(mx, my)) uiClick();
                         handleMenu(menu.mouseDown(mx, my, settings));
                     }
                     break;
