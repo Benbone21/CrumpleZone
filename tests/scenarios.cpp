@@ -354,6 +354,23 @@ VEHICLE_SCENARIO(turningCircle, "dynamics/turning-circle", "Full lock at a walk:
 VEHICLE_SCENARIO(slopeHold, "dynamics/slope-hold", "Handbrake holds it nose-up on the 15 degree kicker ramp") {
     Car& c = ctx.add(spec, 47, -30, 0);
     ctx.focus(c);
+    // Set down nose-up along the ramp (it rises 3.4 m over 13), its tires just clear of it.
+    // (Dropped level, a long wheelbase's rear falls over a meter after the front lands, and
+    // meanwhile the unbraked fronts roll Hell Boy back off the ramp's foot.)
+    {
+        const double a = std::atan2(3.4, 13.0), ca = std::cos(a), sa = std::sin(a);
+        const V3 o = c.frame().com;
+        for (Node& n : c.nodes) {
+            const V3 d = n.p - o;
+            n.p = o + V3(d.x * ca - d.y * sa, d.x * sa + d.y * ca, d.z);
+        }
+        double gap = 1e9;
+        for (const Wheel& w : c.wheels) {
+            const V3& h = c.nodes[w.outer].p;
+            gap = std::min(gap, h.y - w.R / ca - 3.4 * (h.x - 40) / 13);
+        }
+        for (Node& n : c.nodes) n.p.y -= gap - 0.05;
+    }
     c.handbrake = 1;
     c.brake = 0;
     ctx.run(4.0, [&] { c.handbrake = 1; });  // dropped onto the slope: let it settle first
@@ -366,6 +383,7 @@ VEHICLE_SCENARIO(drop, "dynamics/drop", "Dropped from 0.3 m and 1.2 m: suspensio
     Car& c = ctx.add(spec, kLaneStartX, kLaneZ, 0);
     ctx.focus(c);
     ctx.run(1.0);
+    ctx.settle(c, 4.0);
     double restY = c.frame().com.y;
     for (Node& n : c.nodes) n.p.y += 0.3;
     double settleT = -1, t0 = ctx.t;
@@ -626,6 +644,9 @@ VEHICLE_SCENARIO(travel, "structure/suspension-travel", "Body pressed down to 1.
     ctx.focus(c);
     c.handbrake = 1;
     ctx.run(1.5);
+    const double t0 = ctx.t;
+    ctx.settle(c, 4.0);
+    const double waited = ctx.t - t0;
     c.extForce.assign(c.nodes.size(), V3());
     auto bodyY = [&] {
         double y = 0, m = 0;
@@ -655,7 +676,7 @@ VEHICLE_SCENARIO(travel, "structure/suspension-travel", "Body pressed down to 1.
     std::vector<Step> down, up;
     double lowest = y0, highest = y0;
     ctx.run(9.0, [&] {
-        double t = ctx.t - 1.5, load;
+        double t = ctx.t - 1.5 - waited, load;
         if (t < 3) load = 0.8 * t / 3;
         else if (t < 7.5) load = 0.8 - 1.4 * (t - 3) / 4.5;
         else load = -0.6 + 0.6 * (t - 7.5) / 1.5;
