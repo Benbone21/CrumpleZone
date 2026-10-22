@@ -124,7 +124,7 @@ public:
     void update(const Raw& raw, Mode ctx, double dt);
     // Puts the intent's steering and pedals on the player's car (call after Sim::drive; the
     // keyboard path is untouched while the pad's controls are centred). Returns whether it did.
-    bool apply(Car& c, double dt);
+    bool apply(Car& c, double dt, bool steeringAssist = true);
     double steerState = 0;  // the smoothed steering the car is being given (-1..1, + = left)
 
 private:

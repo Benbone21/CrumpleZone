@@ -4133,7 +4133,7 @@ int main(int argc, char** argv) {
         if (cam.mode == 3 && !menu.open && !editor.active && !coop.typing && !coop.mapOpen) {
             // The drone: the keys fly the camera; the truck waits on its handbrake.
             const double speed = (8 + std::max(0.0, cam.droneEye.y - sim.world.height(cam.droneEye.x, cam.droneEye.z)) * 0.6) * (shiftHeld ? 3 : 1);
-            const V3 f(std::cos(cam.droneYaw), 0, -std::sin(cam.droneYaw)), l(-f.z, 0, f.x);
+            const V3 f(std::cos(cam.droneYaw), 0, -std::sin(cam.droneYaw)), l(f.z, 0, -f.x);
             V3 m;
             if (up) m += f;
             if (down) m -= f;
@@ -4666,7 +4666,7 @@ int main(int argc, char** argv) {
             }
             {  // ---- gamepad: analog steering and pedals on top of the keyboard path ----
                 Car& pc = sim.cars[sim.player];
-                if (padDrives && !sim.paused && !pc.ai && !pc.pilot.active && !pc.remote) padLogic.apply(pc, dt);
+                if (padDrives && !sim.paused && !pc.ai && !pc.pilot.active && !pc.remote) padLogic.apply(pc, dt, sim.steeringAssist);
                 else padLogic.steerState = 0;
             }
             if (jobOn && !sim.paused) {
