@@ -83,6 +83,31 @@ struct Scene {
         put(id, top + axis * (-m.lo.y - engage + lift) + d * reach, -d, axis);
         hold(1, 0.02);
     }
+    // A wrench turned like a crank: the handle sticks out along the bolt's axis, not in the turning plane.
+    // This is the pose for wheel lug nuts (a real lug wrench sits on the nut with its handle along the axle).
+    void turnCrank(const char* id, const V3& top, const V3& axis, double time, bool off) {
+        if (!id || !mk::findModel(id)) return;
+        const std::string name = id;
+        const mk::Mesh& m = mk::modelMesh(name);
+        const double engage = std::min(0.015, -m.lo.y * 0.5);
+        // The wrench's socket (at its +X end) sits on the nut; the handle extends along the bolt axis.
+        // As it turns, the whole wrench rotates about the bolt axis.
+        const double c = frac(time / kSwing), stroke = 0.7;
+        const double p = c < stroke ? smooth(c / stroke) : 1 - smooth((c - stroke) / (1 - stroke));
+        const double phi = 0.1 + kStroke * (off ? p : 1 - p);
+        const double lift = c < stroke ? 0.0 : 0.02 * std::sin((c - stroke) / (1 - stroke) * M_PI);
+        // The wrench is placed with its X axis along the bolt axis, socket at the nut.
+        V3 along = axis;  // (the handle sticks out this way: the axle line)
+        V3 side = flat(V3(1, 0, 0));
+        if (std::fabs(dot(along, side)) > 0.9) side = flat(V3(0, 1, 0));
+        side = side - along * dot(side, along);
+        side = len(side) > 1e-6 ? norm(side) : V3(1, 0, 0);
+        // Rotate the wrench around the bolt axis by the turn angle.
+        const V3 rSide = rotateAxis(side, along, phi);
+        const V3 rUp = rotateAxis(cross(along, side), along, phi);
+        put(id, top + along * (-m.lo.y - engage + lift), rSide, along);
+        hold(1, 0.02);
+    }
     // A hammer tapping at `at`, swung from your side (toward is from `at` to you).
     void tap(const char* id, const V3& at, const V3& toward, double phase) {
         if (!id || !mk::findModel(id)) return;
@@ -240,7 +265,7 @@ Handwork handwork(const Sim& sim, const Walker& wk, const Interact& ia, const V3
             const int visit = std::min(lugs.n - 1, (int)(local / per));
             const double within = local - visit * per;
             const double swings = std::max(1.0, std::round(per / kSwing));  // (whole swings, so each nut ends on a reset)
-            sc.turn(toolId(TOOL_LUG_WRENCH), lugs.at(starNut(visit, lugs.n)), a, within / per * swings * kSwing, off, toward);
+            sc.turnCrank(toolId(TOOL_LUG_WRENCH), lugs.at(starNut(visit, lugs.n)), a, within / per * swings * kSwing, off);
         } else if (off && t >= n1) {
             h.wheel.car = o.car, h.wheel.wheel = o.wheel, h.wheel.out = (t - n1) / (1 - n1) * 0.16;
         }
