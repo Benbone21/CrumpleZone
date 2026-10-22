@@ -84,30 +84,36 @@ struct Scene {
         put(id, top + axis * (-m.lo.y - engage + lift) + d * reach, -d, axis);
         hold(1, 0.02);
     }
-    // A wrench turned like a crank: the handle sticks out along the bolt's axis, not in the turning plane.
-    // This is the pose for wheel lug nuts (a real lug wrench sits on the nut with its handle along the axle).
-    void turnCrank(const char* id, const V3& top, const V3& axis, double time, bool off) {
+    // The 4-way cross wrench on a wheel's lug nut: one arm's socket is on the nut and that arm runs straight out
+    // along the stud (`axis`, out of the wheel); the cross bar is square to it, parallel to the wheel face, and
+    // both hands hold its two ends. A stroke turns the whole wrench about the stud, like a steering wheel (off:
+    // counter-clockwise seen from outside), then it lifts a touch and swings back to take a fresh bite. The model
+    // (models/repair.cpp crossWrench): origin at the crossing, +X the nut arm (mouth out), +Z the cross bar.
+    void turnCross(const char* id, const V3& top, const V3& axis, double time, bool off, const V3& toward, const V3& right) {
         if (!id || !mk::findModel(id)) return;
-        const std::string name = id;
-        const mk::Mesh& m = mk::modelMesh(name);
-        const double engage = std::min(0.015, -m.lo.y * 0.5);
-        // The wrench's socket (at its +X end) sits on the nut; the handle extends along the bolt axis.
-        // As it turns, the whole wrench rotates about the bolt axis.
+        const mk::Mesh& m = mk::modelMesh(id);
+        const double arm = m.hi.x, engage = 0.018;
+        V3 u = kUp - axis * dot(kUp, axis);
+        if (len(u) < 0.3) u = toward - axis * dot(toward, axis);
+        u = len(u) > 1e-6 ? norm(u) : norm(cross(axis, V3(1, 0, 0)));
+        const V3 left = cross(axis, u);
         const double c = frac(time / kSwing), stroke = 0.7;
-        const double p = c < stroke ? smooth(c / stroke) : 1 - smooth((c - stroke) / (1 - stroke));
-        const double phi = 0.1 + kStroke * (off ? p : 1 - p);
+        out.swing = c;
+        const double pr = c < stroke ? smooth(c / stroke) : 1 - smooth((c - stroke) / (1 - stroke));
         const double lift = c < stroke ? 0.0 : 0.02 * std::sin((c - stroke) / (1 - stroke) * M_PI);
-        // The wrench is placed with its X axis along the bolt axis, socket at the nut.
-        V3 along = axis;  // (the handle sticks out this way: the axle line)
-        V3 side = flat(V3(1, 0, 0));
-        if (std::fabs(dot(along, side)) > 0.9) side = flat(V3(0, 1, 0));
-        side = side - along * dot(side, along);
-        side = len(side) > 1e-6 ? norm(side) : V3(1, 0, 0);
-        // Rotate the wrench around the bolt axis by the turn angle.
-        const V3 rSide = rotateAxis(side, along, phi);
-        const V3 rUp = rotateAxis(cross(along, side), along, phi);
-        put(id, top + along * (-m.lo.y - engage + lift), rSide, along);
-        hold(1, 0.02);
+        const double theta = -1.2 + kStroke * (off ? pr : 1 - pr);  // (the cross bar's angle in the wheel's plane)
+        const V3 bar = rotateAxis(left, axis, theta);
+        put(id, top + axis * (arm - engage + lift), -axis, cross(bar, -axis));  // (X into the wheel, Z the cross bar)
+        const Placed& pl = out.models.back();
+        const double reach = std::min(0.17, m.hi.z - 0.09);
+        const V3 zr = pl.ax[2] * (dot(pl.ax[2], right) > 0 ? 1.0 : -1.0);  // (the cross bar's end toward your right)
+        for (int hand = 0; hand < 2; hand++) {
+            const V3 dir = hand == 1 ? zr : zr * -1.0;
+            out.hands[hand].on = true;
+            out.hands[hand].p = pl.p + dir * reach;
+            out.hands[hand].axis = dir;
+            out.hands[hand].grip = 0.9;
+        }
     }
     // A hammer tapping at `at`, swung from your side (toward is from `at` to you).
     void tap(const char* id, const V3& at, const V3& toward, double phase) {
@@ -266,7 +272,7 @@ Handwork handwork(const Sim& sim, const Walker& wk, const Interact& ia, const V3
             const int visit = std::min(lugs.n - 1, (int)(local / per));
             const double within = local - visit * per;
             const double swings = std::max(1.0, std::round(per / kSwing));  // (whole swings, so each nut ends on a reset)
-            sc.turnCrank(toolId(TOOL_LUG_WRENCH), lugs.at(starNut(visit, lugs.n)), a, within / per * swings * kSwing, off);
+            sc.turnCross(toolId(TOOL_LUG_WRENCH), lugs.at(starNut(visit, lugs.n)), a, within / per * swings * kSwing, off, toward, R);
         } else if (off && t >= n1) {
             h.wheel.car = o.car, h.wheel.wheel = o.wheel, h.wheel.out = (t - n1) / (1 - n1) * 0.16;
         }

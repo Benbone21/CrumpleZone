@@ -1,6 +1,7 @@
 // Wheels that come off, and changing them on foot (src/tires.*, src/interact.*): the trucks
 // (Bronco, 4Runner, Tacoma) only.
 #include <cmath>
+#include <cstring>
 
 #include "../src/handwork.h"
 #include "../src/interact.h"
@@ -415,7 +416,7 @@ SCENARIO(tireJackLifts, "tires/jack-lifts", "Every listed vehicle, every corner:
 }
 
 // The first-person work (handwork.h): the tool's socket is coaxial with the stud, and the handle swings an arc about it.
-SCENARIO(tireWrenchAxis, "tires/wrench-axis", "The wrench, ratchet and spanner at a corner have their working axis along the axle, the lug wrench swings 60 to 90 degrees about the stud, no hand is drawn") {
+SCENARIO(tireWrenchAxis, "tires/wrench-axis", "The ratchet and spanner at a corner have their working axis along the axle; the 4-way lug wrench has its engaged arm along the stud with the cross bar square to it, swings 60 to 90 degrees about the stud, held in both hands (no bare hand model)") {
     Car& c = ctx.add(vehicleCatalog()[7], -100, -50, 0);  // (the Blazer)
     ctx.run(1.0);
     const int k = 2;
@@ -425,7 +426,7 @@ SCENARIO(tireWrenchAxis, "tires/wrench-axis", "The wrench, ratchet and spanner a
     const V3 hub = hubOf(c, k);
     const V3 eye = hub + axle * 1.0 + V3(0, 0.6, 0);
     wk.active = true;
-    auto frame = [&](double progress, const char* id, V3* origin = nullptr) {
+    auto frame = [&](double progress, const char* id, V3* origin = nullptr, V3* barOut = nullptr) {
         const Handwork h = handwork(ctx.sim, wk, ia, eye, hub - eye, 0);
         (void)progress;
         for (const Placed& p : h.models)
@@ -433,35 +434,41 @@ SCENARIO(tireWrenchAxis, "tires/wrench-axis", "The wrench, ratchet and spanner a
         for (const Placed& p : h.models)
             if (p.id == id) {
                 if (origin) *origin = p.p;
-                return p.ax[1];
+                if (barOut) *barOut = p.ax[2];
+                return strcmp(id, "lug_wrench") == 0 ? p.ax[0] : p.ax[1];  // (the cross wrench's working axis is its nut arm, X)
             }
         return V3(0, 0, 0);
     };
     // The lug wrench round the nuts: sampled across the first nut's visit (0.1 s apart).
     ia.current.kind = IA_REMOVE_WHEEL, ia.current.car = (int)(&c - ctx.sim.cars.data()), ia.current.wheel = k, ia.current.hold = 5.8;
-    int coaxial = 0, total = 0, noHand = 0;
+    int coaxial = 0, total = 0, noHand = 0, square = 0, bothHands = 0;
     double lo = 1e9, hi = -1e9;
     V3 ref;
     for (double s = 0.05; s < 5.0; s += 0.05) {
         ia.progress = s;
-        V3 origin;
-        const V3 up = frame(s, "lug_wrench", &origin);
+        V3 origin, bar;
+        const V3 up = frame(s, "lug_wrench", &origin, &bar);
         total++;
         coaxial += std::fabs(dot(up, axle)) > 0.999;
+        square += std::fabs(dot(bar, axle)) < 0.01;
+        const Handwork hh = handwork(ctx.sim, wk, ia, eye, hub - eye, 0);
+        bothHands += hh.hands[0].on && hh.hands[1].on && std::fabs(dot(norm(hh.hands[0].p - hh.hands[1].p), axle)) < 0.01;
         noHand += up.x < 1e8;
         // The handle's direction about the axle, as an angle to the first sample's, over the first nut (about 1 s).
         if (s < 1.0) {
             const Handwork h = handwork(ctx.sim, wk, ia, eye, hub - eye, 0);
             for (const Placed& p : h.models)
                 if (p.id == "lug_wrench") {
-                    const V3 d = p.ax[0];
+                    const V3 d = p.ax[2];  // (the cross bar)
                     if (s < 0.06) ref = d;
                     const double ang = std::atan2(dot(cross(ref, d), axle), dot(ref, d));
                     lo = std::min(lo, ang), hi = std::max(hi, ang);
                 }
         }
     }
-    ctx.check("the lug wrench's socket axis is along the axle at every moment", coaxial == total && total > 50, std::to_string(coaxial) + " of " + std::to_string(total));
+    ctx.check("the lug wrench's engaged arm is along the stud (axle) at every moment", coaxial == total && total > 50, std::to_string(coaxial) + " of " + std::to_string(total));
+    ctx.check("its cross bar is square to the stud, parallel to the wheel face", square == total, std::to_string(square) + " of " + std::to_string(total));
+    ctx.check("both hands are on the cross bar's ends, a bar apart across the face", bothHands == total, std::to_string(bothHands) + " of " + std::to_string(total));
     ctx.check("no hand is drawn during the wheel job", noHand == total);
     ctx.metric("handle swing about the stud", (hi - lo) * 180 / M_PI, "deg", 60, 90);
     // The socket set and spanners in a repair.
