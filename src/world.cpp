@@ -290,31 +290,6 @@ Rock& addScannedRock(World& w, const props::HullLibrary& lib, double x, double z
     for (const V3& q : k.v) cen += q;
     k.c = cen / (double)k.v.size();
     for (const V3& q : k.v) k.r = std::max(k.r, len(q - k.c));
-    // A big rock is cut into the convex pieces that follow its drawn surface (a lone hull would stand cm to dm above it).
-    if (k.r > 1.2) {
-        const std::vector<V3>& mesh = props::rockMeshTris(hull.name);
-        std::vector<V3> tris;
-        tris.reserve(mesh.size());
-        for (const V3& p : mesh) tris.push_back(at + local(p));
-        struct G {
-            const World* w;
-        } g{&w};
-        auto ground = [](void* c, double x, double z) { return static_cast<G*>(c)->w->height(x, z); };
-        for (const props::RockHull& ph : props::splitRockMesh(tris, ground, &g, 0.02 + 0.008 * k.r, (int)std::min(160.0, 32 + 28 * k.r))) {
-            Rock q;
-            q.v = ph.v, q.f = ph.f;
-            for (const auto& f : q.f) {
-                const V3 nrm = norm(cross(q.v[f[1]] - q.v[f[0]], q.v[f[2]] - q.v[f[0]]));
-                q.fn.push_back(nrm);
-                q.fd.push_back(dot(nrm, q.v[f[0]]));
-            }
-            V3 cc;
-            for (const V3& p : q.v) cc += p;
-            q.c = cc / (double)q.v.size();
-            for (const V3& p : q.v) q.r = std::max(q.r, len(p - q.c));
-            k.parts.push_back(std::move(q));
-        }
-    }
     w.rocks.push_back(std::move(k));
     return w.rocks.back();
 }
@@ -1168,41 +1143,32 @@ bool World::contact(const V3& c, double R, const V3* axis, double hw, Contact& o
             V3 d = c - k.c;
             double dd = dot(d, d), lim = k.r + reach;
             if (dd > lim * lim) continue;
-            // (A rock made of pieces: each in turn, as a rock of its own.)
-            const size_t np = std::max<size_t>(1, k.parts.size());
-            for (size_t pi = 0; pi < np; pi++) {
-            const Rock& kp = k.parts.empty() ? k : k.parts[pi];
-            if (!k.parts.empty()) {
-                const V3 dp = c - kp.c;
-                const double lp = kp.r + reach;
-                if (dot(dp, dp) > lp * lp) continue;
-            }
             // Farthest face plane: the true distance is never less, so it rejects cheaply;
             // inside the rock it's the way out.
             double far = -1e9;
             int fi = 0;
-            for (size_t f = 0; f < kp.f.size(); f++) {
-                double s = dot(kp.fn[f], c) - kp.fd[f];
+            for (size_t f = 0; f < k.f.size(); f++) {
+                double s = dot(k.fn[f], c) - k.fd[f];
                 if (s > far) far = s, fi = (int)f;
             }
             if (far > reach) continue;
             V3 n;
             double dist;
             if (far <= 0) {
-                n = kp.fn[fi];
+                n = k.fn[fi];
                 dist = far;
             } else {  // outside: the nearest point is on a face it can see
                 double best = 1e18;
                 V3 q;
-                for (size_t f = 0; f < kp.f.size(); f++) {
-                    if (dot(kp.fn[f], c) - kp.fd[f] <= 0) continue;
-                    V3 t = closestOnTriangle(c, kp.v[kp.f[f][0]], kp.v[kp.f[f][1]], kp.v[kp.f[f][2]]);
+                for (size_t f = 0; f < k.f.size(); f++) {
+                    if (dot(k.fn[f], c) - k.fd[f] <= 0) continue;
+                    V3 t = closestOnTriangle(c, k.v[k.f[f][0]], k.v[k.f[f][1]], k.v[k.f[f][2]]);
                     double e = dot(c - t, c - t);
                     if (e < best) best = e, q = t;
                 }
                 dist = std::sqrt(best);
                 if (dist > reach) continue;
-                n = dist > 1e-9 ? (c - q) / dist : kp.fn[fi];
+                n = dist > 1e-9 ? (c - q) / dist : k.fn[fi];
             }
             double pen = support(n) - dist;
             if (pen > out.pen) {
@@ -1210,7 +1176,6 @@ bool World::contact(const V3& c, double R, const V3* axis, double hw, Contact& o
                 out.n = n;
                 out.surface = SURF_ROCK;
                 hit = true;
-            }
             }
         }
         for (int li : logGrid[cell]) {

@@ -87,15 +87,6 @@ struct HullLibrary {
 // worstMiss (optional) gets how far the farthest point of `pts` was outside the cut-down hull.
 RockHull buildRockHull(const std::string& name, const std::vector<V3>& pts, int maxVerts, double* worstMiss = nullptr);
 
-// A scan's drawn (first-LOD) mesh as a triangle soup (3 corners per triangle), in the model's own frame; read once per model and kept
-// (empty if the model isn't there).
-const std::vector<V3>& rockMeshTris(const std::string& name);
-// A single hull bridges the hollows of a lumpy scan, and scaled up (an editor-sized flat rock) that is tens of cm of invisible rock.
-// This cuts a mesh (triangles in the world, 3 corners each) into convex pieces, best-first by how far a piece's hull stands off the
-// surface it holds (along the surface normals, skipping what `ground` buries), until every piece is within `tol` or there are `maxParts`.
-// Empty when the single hull is already within `tol`. Each piece is a RockHull (faces wound outward) in the same frame as the mesh.
-std::vector<RockHull> splitRockMesh(const std::vector<V3>& tris, double (*ground)(void*, double, double), void* groundCtx, double tol, int maxParts);
-
 // ---- Which rocks World::addRock makes --------------------------------------------------
 // Scanned hulls are opt-in, per thread: the game turns them on (on the thread that builds
 // its maps) when assets/props is there; build/run_tests never does, so the physics tests

@@ -104,15 +104,6 @@ bool rayRock(const Rock& k, const V3& o, const V3& d, double tMax, Hit& out) {
     const V3 oc = o - k.c;
     const double b = dot(oc, d), c = dot(oc, oc) - k.r * k.r;
     if (c > 0 && (b > 0 || b * b - c < 0)) return false;
-    if (!k.parts.empty()) {  // (the nearest of its pieces)
-        bool any = false;
-        double best = tMax;
-        for (const Rock& p : k.parts) {
-            Hit h;
-            if (rayRock(p, o, d, best, h) && (!any || h.t < out.t)) out = h, best = h.t, any = true;
-        }
-        return any;
-    }
     Interval iv;
     for (size_t f = 0; f < k.f.size() && !iv.empty; f++) iv.clip(k.fn[f], k.fd[f], o, d);
     return iv.hit(tMax, o, d, out);
@@ -203,17 +194,6 @@ bool rayWorld(const World& w, const V3& o, const V3& d, double tMax, WorldHit& o
 // ---- Nearest point on a surface -----------------------------------------------------------------
 
 Near closestOnRock(const Rock& k, const V3& q) {
-    if (!k.parts.empty()) {  // (the nearest of its pieces)
-        Near best;
-        best.dist = kInf;
-        for (const Rock& p : k.parts) {
-            if (len(q - p.c) - p.r > best.dist) continue;
-            const Near n = closestOnRock(p, q);
-            if (n.dist < best.dist) best = n;
-            if (best.dist <= 0) break;
-        }
-        return best;
-    }
     Near out;
     double far = -kInf;
     int fi = 0;

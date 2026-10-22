@@ -259,11 +259,6 @@ struct Canvas {
                     for (V3& q : r.v) q.y += dy;
                     r.c.y += dy, r.origin.y += dy;
                     for (size_t f = 0; f < r.f.size(); f++) r.fd[f] = dot(r.fn[f], r.v[r.f[f][0]]);
-                    for (Rock& p : r.parts) {
-                        for (V3& q : p.v) q.y += dy;
-                        p.c.y += dy;
-                        for (size_t f = 0; f < p.f.size(); f++) p.fd[f] = dot(p.fn[f], p.v[p.f[f][0]]);
-                    }
                     break;
                 }
                 case 1: w.trees[s.i].base.y += dy; break;
