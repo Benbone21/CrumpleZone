@@ -361,9 +361,9 @@ void World::addLake(double x, double z, double r, double depth) {
     }
     level -= 0.15;
     const double reach = r * 1.15 + 40;
-    for (int i = std::max(0, (int)((x - reach + kHalfSize) / kRes)); i <= std::min(hN - 1, (int)((x + reach + kHalfSize) / kRes)); i++)
-        for (int j = std::max(0, (int)((z - reach + kHalfSize) / kRes)); j <= std::min(hN - 1, (int)((z + reach + kHalfSize) / kRes)); j++) {
-            double px = -kHalfSize + i * kRes, pz = -kHalfSize + j * kRes, d = std::hypot(px - x, pz - z);
+    for (int i = std::max(0, (int)((x - reach + half) / kRes)); i <= std::min(hN - 1, (int)((x + reach + half) / kRes)); i++)
+        for (int j = std::max(0, (int)((z - reach + half) / kRes)); j <= std::min(hN - 1, (int)((z + reach + half) / kRes)); j++) {
+            double px = -half + i * kRes, pz = -half + j * kRes, d = std::hypot(px - x, pz - z);
             double rr = shore(std::atan2(pz - z, px - x)), q = d / rr;
             double bed = d < rr ? level - depth * (1 - q * q) : level + (d - rr) * 0.25;
             float& hh = hgrid[i * hN + j];
@@ -373,6 +373,7 @@ void World::addLake(double x, double z, double r, double depth) {
 }
 
 World::World(int m) : map(m) {
+    half = halfSizeFor(map);
     loadprof::Scope lpGen("world.terrain+layout");
     if (map == MAP_MOUNTAIN) buildMountain();
     else if (map == MAP_FREEWAY) buildFreeway();
@@ -384,6 +385,8 @@ World::World(int m) : map(m) {
     if (map != MAP_PROVING_GROUND || withShowcase) addMapSpawnPads(*this);
     { loadprof::Scope lpGrid("world.grid"); buildGrid(); }
 }
+
+double World::halfSizeFor(int) { return halfSizeOverride > 0 ? halfSizeOverride : kDefaultHalfSize; }
 
 void World::buildProvingGround() {
     map = MAP_PROVING_GROUND;
@@ -682,9 +685,9 @@ void World::buildWilds() {
     map = MAP_WILDS;
     crashProps = false;
     const int kind = std::min(std::max(wildsKind, 0), (int)WILDS_COUNT - 1);
-    hN = (int)(2 * kHalfSize / kRes) + 1;
+    hN = (int)(2 * half / kRes) + 1;
     const int N = hN * hN;
-    auto X = [&](int i) { return -kHalfSize + i * kRes; };
+    auto X = [&](int i) { return -half + i * kRes; };
     // How much of the hills each kind keeps (sand is flat, the uplands rough).
     static const double kHillAmp[WILDS_COUNT] = {1.0, 0.5, 1.0, 0.9, 0.45, 1.4};
     const double amp = kHillAmp[kind];
@@ -756,7 +759,7 @@ void World::buildWilds() {
         rng ^= rng << 5;
         return (rng & 0xFFFFFF) / double(0x1000000);
     };
-    auto cellOf2 = [&](double v) { return std::min(std::max((int)std::lround((v + kHalfSize) / kRes), 0), hN - 1); };
+    auto cellOf2 = [&](double v) { return std::min(std::max((int)std::lround((v + half) / kRes), 0), hN - 1); };
     auto wet = [&](double x, double z) { return surf[cellOf2(x) * hN + cellOf2(z)] == SURF_MUD; };
     auto grove = [](double x, double z) { return 0.5 + 0.25 * std::sin(x * 0.021 + 1.7) * std::cos(z * 0.017 - 0.4) + 0.25 * std::sin((x + z) * 0.013); };
     int treeMax = 0, bushMax = 0, rockMax = 0;
@@ -851,10 +854,10 @@ double World::baseHeight(double x, double z) const {
 }
 
 void World::bakeTerrain() {
-    hN = (int)(2 * kHalfSize / kRes) + 1;
+    hN = (int)(2 * half / kRes) + 1;
     hgrid.resize(hN * hN);
     for (int i = 0; i < hN; i++)
-        for (int j = 0; j < hN; j++) hgrid[i * hN + j] = (float)baseHeight(-kHalfSize + i * kRes, -kHalfSize + j * kRes);
+        for (int j = 0; j < hN; j++) hgrid[i * hN + j] = (float)baseHeight(-half + i * kRes, -half + j * kRes);
 
     // Roads: a loop through the hills and a link road from the north side of the pad.
     const std::vector<V3> loopPts = {
@@ -917,13 +920,13 @@ void World::bakeTerrain() {
             double L = len(d);
             if (L < 1e-6) continue;
             V3 dir = d / L;
-            int i0 = std::max(0, (int)((std::min(a.x, b.x) - blend + kHalfSize) / kRes));
-            int i1 = std::min(hN - 1, (int)((std::max(a.x, b.x) + blend + kHalfSize) / kRes) + 1);
-            int j0 = std::max(0, (int)((std::min(a.z, b.z) - blend + kHalfSize) / kRes));
-            int j1 = std::min(hN - 1, (int)((std::max(a.z, b.z) + blend + kHalfSize) / kRes) + 1);
+            int i0 = std::max(0, (int)((std::min(a.x, b.x) - blend + half) / kRes));
+            int i1 = std::min(hN - 1, (int)((std::max(a.x, b.x) + blend + half) / kRes) + 1);
+            int j0 = std::max(0, (int)((std::min(a.z, b.z) - blend + half) / kRes));
+            int j1 = std::min(hN - 1, (int)((std::max(a.z, b.z) + blend + half) / kRes) + 1);
             for (int i = i0; i <= i1; i++)
                 for (int j = j0; j <= j1; j++) {
-                    double x = -kHalfSize + i * kRes, z = -kHalfSize + j * kRes;
+                    double x = -half + i * kRes, z = -half + j * kRes;
                     double t = clampd(((x - a.x) * dir.x + (z - a.z) * dir.z) / L, 0, 1);
                     double cx = a.x + d.x * t, cz = a.z + d.z * t;
                     double dd = std::sqrt((x - cx) * (x - cx) + (z - cz) * (z - cz));
@@ -964,7 +967,7 @@ void World::bakeTerrain() {
         double x = (rnd() * 2 - 1) * 500, z = (rnd() * 2 - 1) * 500;
         if (padOutside(x, z) < 25 || x * x + z * z < (kPadRadius + 25) * (kPadRadius + 25)) continue;  // (the old round pad too: the same woods as ever round it)
         if (rnd() > grove(x, z) * grove(x, z) * 1.3) continue;
-        int i = (int)std::lround((x + kHalfSize) / kRes), j = (int)std::lround((z + kHalfSize) / kRes);
+        int i = (int)std::lround((x + half) / kRes), j = (int)std::lround((z + half) / kRes);
         if (dist[i * hN + j] < kRoadHalfWidth + 9) continue;
         double hx = gridAt(std::min(i + 1, hN - 1), j) - gridAt(std::max(i - 1, 0), j);
         double hz = gridAt(i, std::min(j + 1, hN - 1)) - gridAt(i, std::max(j - 1, 0));
@@ -986,7 +989,7 @@ void World::bakeTerrain() {
 
 double World::height(double x, double z) const {
     if (!std::isfinite(x) || !std::isfinite(z)) return 0;  // (an exploded vehicle: the game resets it after the frame)
-    double fx = (x + kHalfSize) / kRes, fz = (z + kHalfSize) / kRes;
+    double fx = (x + half) / kRes, fz = (z + half) / kRes;
     fx = clampd(fx, 0, hN - 1.001);
     fz = clampd(fz, 0, hN - 1.001);
     int i = (int)fx, j = (int)fz;
@@ -997,7 +1000,7 @@ double World::height(double x, double z) const {
 
 RoadInfo World::roadAt(double x, double z) const {
     if (!std::isfinite(x) || !std::isfinite(z)) return RoadInfo();
-    int i = (int)std::lround((x + kHalfSize) / kRes), j = (int)std::lround((z + kHalfSize) / kRes);
+    int i = (int)std::lround((x + half) / kRes), j = (int)std::lround((z + half) / kRes);
     RoadInfo r;
     if (i < 0 || j < 0 || i >= hN || j >= hN) return r;
     int id = i * hN + j;
@@ -1018,7 +1021,7 @@ RoadInfo World::roadAt(double x, double z) const {
 Surface World::surfaceAt(double x, double z) const {
     if (!std::isfinite(x) || !std::isfinite(z)) return SURF_PAVED;
     if (!surf.empty()) {
-        int i = (int)std::lround((x + kHalfSize) / kRes), j = (int)std::lround((z + kHalfSize) / kRes);
+        int i = (int)std::lround((x + half) / kRes), j = (int)std::lround((z + half) / kRes);
         if (i < 0 || j < 0 || i >= hN || j >= hN) return SURF_ROCK;
         return (Surface)surf[i * hN + j];
     }
@@ -1273,19 +1276,19 @@ void World::addRamp(V3 from, V3 to, double width, double thick, V3 col) {
 }
 
 int World::rockCellOf(double v) const {
-    int i = (int)((v + kHalfSize) / kRockCell);
+    int i = (int)((v + half) / kRockCell);
     return std::min(std::max(i, 0), rockN - 1);
 }
 
 int World::cellOf(double v) const {
-    int i = (int)((v + kHalfSize) / kCell);
+    int i = (int)((v + half) / kCell);
     return std::min(std::max(i, 0), gridN - 1);
 }
 
 void World::buildGrid() {
     static std::atomic<uint64_t> stamps{0};
     stamp = ++stamps;
-    gridN = (int)(2 * kHalfSize / kCell);
+    gridN = (int)(2 * half / kCell);
     grid.assign(gridN * gridN, {});
     for (int bi = 0; bi < (int)boxes.size(); bi++) {
         const Box& b = boxes[bi];
@@ -1301,7 +1304,7 @@ void World::buildGrid() {
             for (int iz = cellOf(p.z - r); iz <= cellOf(p.z + r); iz++) poleGrid[ix * gridN + iz].push_back(pi);
     }
     // Rocks and logs: a finer grid (a boulder field has a lot of them).
-    rockN = (int)(2 * kHalfSize / kRockCell);
+    rockN = (int)(2 * half / kRockCell);
     rockGrid.assign(rockN * rockN, {});
     logGrid.assign(rockN * rockN, {});
     const double margin = 1.0;  // wheel radius plus half width
@@ -1369,14 +1372,14 @@ void World::solidsNear(double x0, double z0, double x1, double z1, NearbySolids&
 
 int World::cellIndex(double x, double z) const {
     if (!std::isfinite(x) || !std::isfinite(z)) return -1;
-    const int i = (int)std::lround((x + kHalfSize) / kRes), j = (int)std::lround((z + kHalfSize) / kRes);
+    const int i = (int)std::lround((x + half) / kRes), j = (int)std::lround((z + half) / kRes);
     if (i < 0 || j < 0 || i >= hN || j >= hN) return -1;
     return i * hN + j;
 }
 
 V3 World::cellCenter(int id) const {
     const int i = id / hN, j = id % hN;
-    return V3(i * kRes - kHalfSize, hgrid[id], j * kRes - kHalfSize);
+    return V3(i * kRes - half, hgrid[id], j * kRes - half);
 }
 
 uint8_t World::cellSurface(int id) const {

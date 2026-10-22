@@ -229,7 +229,7 @@ void main(){
 #endif
   // ---- The four cells round this point, from a slightly wobbled spot so edges are ragged, not 1 m stairs ----
   vec2 wob = lo == 1 ? vec2(0.0) : (vec2(vnoise(p * 0.8), vnoise(p.yx * 0.8 + 7.0)) - 0.5) * 1.4;
-  vec2 gp = p + wob + 600.0;
+  vec2 gp = p + wob + (uTerrainN - 1.0) * 0.5;
   ivec2 i0 = clamp(ivec2(floor(gp)), ivec2(0), ivec2(int(uTerrainN) - 2));
   vec2 f = clamp(gp - vec2(i0), 0.0, 1.0);
   f = f * f * (3.0 - 2.0 * f);
@@ -399,7 +399,7 @@ void main(){
     nrm = normalize(mix(nrm, N0, pud * 0.85));
   }
   // ---- Wet ground at the water's edge, and a dark silty bed under it ----
-  float wl = texture(uTerrainTex, (p + 600.5) / uTerrainN).a;
+  float wl = texture(uTerrainTex, (p + uTerrainN * 0.5) / uTerrainN).a;
   float wet = 1.0 - smoothstep(0.0, 0.5, vPos.y - wl);
   alb *= mix(1.0, 0.40, wet);
   rough = mix(rough, 0.25, wet * 0.7);

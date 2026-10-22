@@ -23,3 +23,26 @@ Other baseline numbers:
 - Cold startup on the proving ground spends 12.7 s of CPU in 32 world builds on workers, plus 4.4 s on the section park.
 - Dedicated server RAM after startup: 91 MB on Frontier, 80 MB on Backcountry.
 - Fingerprint: `91850b5879f5e3e3`.
+
+## Phase 1: map size per map, fewer startup world builds
+
+The world builds and land hashes are unchanged on every map, with and without scanned rocks. The fingerprint is still `91850b5879f5e3e3`. The seven section-park section files come out byte-identical to the ones the old build made.
+
+Startup measured to the end of `--map N --bench 10,0`, wall clock, with an empty private cache (`CZ_CACHE_DIR`) for "first run" and the same cache again for "later":
+
+| Start on | First run before | First run after | Later before | Later after |
+|---|---|---|---|---|
+| Proving ground | 6.0 s | 3.5 s | 2.6 s | 2.5 s |
+| Backcountry | 6.1 s | 2.4 s | 2.6 s | 2.0 s |
+
+Cold startup on the proving ground (`CZ_LOADPROF=1 --load-tour`):
+
+| | Before | After |
+|---|---|---|
+| World builds | 32 | 15 |
+| CPU in world builds | 12.7 s | 4.3 s |
+| Section park | 4.4 s | 0.64 s |
+
+Where the time went:
+- The sim's own proving-ground world was built with the model yard and the section park even when another map or the menu's camp replaced it at once. It is now built bare in that case.
+- The section-park cache built every built-in level's world (Frontier, Mountain, and 7 section worlds twice) just to read one section each. It now builds only the one world it needs.

@@ -25,7 +25,7 @@ struct Field {
 };
 Field fromWorld(const World& w, double sp) {
     Field f;
-    f.sp = sp, f.origin = -World::kHalfSize, f.n = (int)(2 * World::kHalfSize / sp) + 1;
+    f.sp = sp, f.origin = -w.halfSize(), f.n = (int)(2 * w.halfSize() / sp) + 1;
     f.h.resize((size_t)f.n * f.n);
     for (int i = 0; i < f.n; i++)
         for (int j = 0; j < f.n; j++) f.h[(size_t)i * f.n + j] = (float)w.height(f.origin + i * sp, f.origin + j * sp);

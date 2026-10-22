@@ -64,7 +64,7 @@ int main(int argc, char** argv) {
         const long r1 = rssKb();
         std::printf("map %d %-14s build %8.1f ms  +%4ld MB  grid %d (half %.0f m)  trees %zu rocks %zu logs %zu bushes %zu boxes %zu "
                     "models %zu stations %zu  land %016llx\n",
-                    map, mapName(map), ms, (r1 - r0) / 1024, w->gridSize(), World::kHalfSize, w->trees.size(), w->rocks.size(),
+                    map, mapName(map), ms, (r1 - r0) / 1024, w->gridSize(), w->halfSize(), w->trees.size(), w->rocks.size(),
                     w->logs.size(), w->bushes.size(), w->boxes.size(), w->models.size(), w->stations.size(),
                     (unsigned long long)landHash(*w));
         std::fflush(stdout);

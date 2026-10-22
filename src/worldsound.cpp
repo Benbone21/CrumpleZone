@@ -69,7 +69,7 @@ void WorldSounds::build(const World& w) {
         for (int j = 0; j < n; j++) {
             const size_t k = (size_t)i * n + j;
             if (w.waterY[k] < -1e8f) continue;
-            const double x = -World::kHalfSize + i, z = -World::kHalfSize + j;
+            const double x = -w.halfSize() + i, z = -w.halfSize() + j;
             if (w.waterY[k] <= w.height(x, z) + 0.03) continue;  // dry (the shader cuts the sheet at the shore)
             const double sp = flows ? std::hypot(w.flowX[k], w.flowZ[k]) : 0;
             label[k] = sp >= 0.5 ? 1 : 2;
@@ -94,7 +94,7 @@ void WorldSounds::build(const World& w) {
             int& bk = block[(size_t)(i / 3) * bn + j / 3];
             if (bk != id) {
                 bk = id;
-                b.pts.push_back(V3(-World::kHalfSize + i, w.waterY[k], -World::kHalfSize + j));
+                b.pts.push_back(V3(-w.halfSize() + i, w.waterY[k], -w.halfSize() + j));
             }
             const int nb[4] = {i > 0 ? k - n : -1, i + 1 < n ? k + n : -1, j > 0 ? k - 1 : -1, j + 1 < n ? k + 1 : -1};
             for (int q : nb)

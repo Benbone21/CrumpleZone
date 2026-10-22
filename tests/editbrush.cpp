@@ -185,7 +185,7 @@ SCENARIO(editBrushTerrain, "editor/brush-terrain", "Terrain brushes take the sha
     double off = 0;
     for (int i = -10; i <= 10; i++)
         for (int j = -10; j <= 10; j++) {
-            const double h = w.cellHeight((int)(cx + i + World::kHalfSize) * w.gridSize() + (int)(cz + j + World::kHalfSize));
+            const double h = w.cellHeight((int)(cx + i + w.halfSize()) * w.gridSize() + (int)(cz + j + w.halfSize()));
             off = std::max(off, std::fabs(h / 0.5 - std::round(h / 0.5)) * 0.5);
         }
     ctx.metric("terrace: inside, heights sit on 0.5 m steps", off, "m", 0, 0.01);

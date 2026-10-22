@@ -1,7 +1,7 @@
 # Big maps: a 6 x 6 km Backcountry and Frontier, with rivers, waterfalls and places to find
 
 Plan for PI-TASKS #26 (big maps, points of interest) and #27 (rivers, waterfalls, every model in use).
-Status: **approved 2026-10-22 with the owner's answers (section 0).** Phases 0 and 1 are being built on `wip/bigmaps-plan`.
+Status: **approved 2026-10-22 with the owner's answers (section 0).** Phases 0 and 1 are done on `wip/bigmaps-plan` (measurements in `docs/hardware/linux-7900xtx-bigmaps.md`); phase 2 is next.
 
 ## Summary (the 10 lines)
 

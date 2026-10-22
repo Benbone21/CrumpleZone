@@ -100,6 +100,10 @@ struct SectionInfo {
     }
 };
 
+// The terrain grid every map had before maps got sizes of their own (World::gridSizeFor): a level file's cells are on it
+// unless the file has a `grid` line.
+constexpr int kLegacyGrid = 1201;
+
 struct Level {
     std::string name = "UNTITLED", about, author, file;
     SectionInfo section;
@@ -167,3 +171,6 @@ std::vector<std::string> listLevelFiles(const std::string& dir, const std::strin
 // The game's levels, then every .czl in the folders.
 std::vector<Level> listLevels();
 const std::vector<Level>& builtinLevels();
+// The game's own level of obstacle section `gen` (SectionType), as builtinLevels() has it, and the world it's played on: one world
+// built, not the dozen builtinLevels() builds (sectionfile.h builtinSectionFor). `out.section.on` false: no such section.
+World builtinSectionWorld(int gen, Level& out);

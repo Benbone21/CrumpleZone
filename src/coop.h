@@ -85,6 +85,7 @@ private:
     double mapCx = 0, mapCz = 0, mapZoom = 1;  // view: center (world), zoom (1 = the whole map fits)
     float mapX = 0, mapY = 0, mapS = 1;        // where the map was last drawn (HUD px, px per meter)
     int mapWorld = -1;
+    double mapHalf = World::kDefaultHalfSize;  // the map's half-size (World::halfSize) when it was drawn
 };
 
 // Where world point p lands on the screen; false behind the camera.

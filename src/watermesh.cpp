@@ -25,7 +25,7 @@ void buildWaterMesh(const World& world, std::vector<Vtx>& wv) {
                 V3 q[4];
                 float fx[4], fz[4];
                 for (int k = 0; k < 4; k++) {
-                    const double x = -World::kHalfSize + ci[k][0], z = -World::kHalfSize + ci[k][1];
+                    const double x = -world.halfSize() + ci[k][0], z = -world.halfSize() + ci[k][1];
                     q[k] = V3(x, c[k], z);
                     const V3 fl = world.waterFlow(x, z);
                     fx[k] = (float)fl.x, fz[k] = (float)fl.z;
