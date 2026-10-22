@@ -27,6 +27,7 @@
 
 #include "daylight.h"
 #include "net.h"
+#include "props.h"
 #include "softbody.h"
 #include "vehicles.h"
 #include "world.h"
@@ -184,6 +185,10 @@ int main(int argc, char** argv) {
     signal(SIGTERM, handleSignal);
     signal(SIGPIPE, SIG_IGN);
 
+    // The scanned rocks, as the players' games have them (their hulls are what cars hit): without the game's assets/props
+    // beside the server, code-made rocks stand in, and the rocks aren't where the players' are (World::landHash differs).
+    props::setActiveRockScans(&props::sharedHullLibrary());
+    std::printf("  Rocks:      %s\n", props::activeRockScans() ? "scanned (assets/props)" : "code-made (no assets/props found: players' rocks will differ)");
     // Create the world and parked vehicles
     Sim sim;
     World::useLocalEdits = false;  // (the players' games build it the same way: no saved edits)

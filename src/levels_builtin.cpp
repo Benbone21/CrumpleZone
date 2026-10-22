@@ -130,9 +130,7 @@ void sectionLevels(std::vector<Level>& out) {
 
 std::vector<Level> build() {
     std::vector<Level> out;
-    // The map features are laid out as each map is built.
-    { World f(MAP_FRONTIER); }
-    { World m(MAP_MOUNTAIN); }
+    // (The maps' features are data: frontierFeature, mountainFeature and the rest need no map built.)
 
     // ---- The Frontier ----
     {

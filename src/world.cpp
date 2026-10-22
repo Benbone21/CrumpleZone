@@ -1548,3 +1548,26 @@ std::string World::removeNear(double x, double z, double r, int onlyKind) {
         default: return "";
     }
 }
+
+uint64_t World::landHash() const {
+    uint64_t h = 1469598103934665603ull;
+    auto mix = [&](uint64_t v) { h = (h ^ v) * 1099511628211ull; };
+    auto cm = [](double v) { return (uint64_t)(int64_t)std::llround(v * 100.0); };
+    mix((uint64_t)hN);
+    for (int id = 0; id < hN * hN; id++) {
+        mix(cm(hgrid[id]));
+        mix(cellSurface(id));
+        const V3 c = cellCenter(id);
+        const double wl = waterLevel(c.x, c.z);
+        mix(wl < -1e8 ? 0xffffu : cm(wl));
+    }
+    mix(trees.size()), mix(rocks.size()), mix(logs.size()), mix(bushes.size()), mix(boxes.size());
+    auto at = [&](const V3& p) { mix(cm(p.x)), mix(cm(p.z)); };
+    for (const Tree& t : trees) at(t.base);
+    for (const Rock& r : rocks) at(r.c);
+    for (const Log& l : logs) at(l.a);
+    for (const Box& b : boxes) at(b.c);
+    for (const Placed& m : models) at(m.p);
+    for (const Station& s : stations) at(s.p);
+    return h;
+}

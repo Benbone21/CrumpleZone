@@ -24,6 +24,7 @@
 // the flow vectors), so the rivers can run downhill.
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 
@@ -125,8 +126,13 @@ constexpr double kRallyHalf = 3.6;
 // stage here.
 const V3 kTrailFoot(40, 0, 240);
 constexpr double kTrailHalf = 2.8;
-// Laid out when the map is built (the features the tests and the menu look up).
-V3 gWallFoot(-120, 0, 300), gWallTop(-120, 0, 345), gWallFrom(-120, 0, 290), gSummit(30, 0, 468), gGarden(100, 0, 260);
+// Where the build puts these (it searches the land for them): kept here as data, exactly, so the features can be looked up
+// without building the map (the built-in levels, the autopilot's places). The build lays them out again into the g* below and
+// frontier/feature-table checks it lands on these; after a change to the land, update them from what it prints.
+const V3 kWallFootAt(-0x1.3ap+8, 0, 0x1.2ap+8), kWallTopAt(-0x1.55p+8, 0, 0x1.58c3ef6815016p+8),
+    kWallFromAt(-0x1.2ee32d1f75af1p+8, 0, 0x1.155cebe6879e3p+8), kSummitAt(0x1.594cf6ed0cf16p+3, 0, 0x1.976b638edadb9p+8),
+    kGardenAt(0x1.2a2ba873be38fp+7, 0, 0x1.12d918940d245p+8);
+V3 gWallFoot = kWallFootAt, gWallTop = kWallTopAt, gWallFrom = kWallFromAt, gSummit = kSummitAt, gGarden = kGardenAt;
 // Rivers: from source to mouth.
 const std::vector<V3> kSnakeCtl = {{330, 0, 500}, {300, 0, 384}, {262, 0, 292}, {272, 0, 202}, {242, 0, 112},
                                    {270, 0, 22},  {320, 0, -58}, {362, 0, -118}, {392, 0, -150}};
@@ -1390,6 +1396,25 @@ V3 frontierFeature(const char* name) {
     if (n == "lakeside") return V3(332, 0, 120);
     if (n == "hut") return V3(92, 0, 214);
     return V3();
+}
+
+bool frontierFeatureTable(std::string* why) {
+    const struct {
+        const char* name;
+        V3 built, table;
+    } all[] = {{"wall", gWallFoot, kWallFootAt}, {"walltop", gWallTop, kWallTopAt}, {"wallfrom", gWallFrom, kWallFromAt},
+               {"summit", gSummit, kSummitAt}, {"garden", gGarden, kGardenAt}};
+    bool ok = true;
+    for (const auto& f : all)
+        if (f.built.x != f.table.x || f.built.y != f.table.y || f.built.z != f.table.z) {
+            ok = false;
+            if (why) {
+                char b[160];
+                std::snprintf(b, sizeof b, "%s built at (%a, %a, %a); ", f.name, f.built.x, f.built.y, f.built.z);
+                *why += b;
+            }
+        }
+    return ok;
 }
 
 const std::vector<V3>& frontierTrack() {

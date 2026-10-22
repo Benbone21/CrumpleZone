@@ -24,28 +24,6 @@ long rssKb() {  // (Linux; 0 elsewhere)
     return 0;
 }
 
-uint64_t landHash(const World& w) {
-    uint64_t h = 1469598103934665603ull;
-    auto mix = [&](uint64_t v) { h = (h ^ v) * 1099511628211ull; };
-    const int n = w.gridSize();
-    mix((uint64_t)n);
-    for (int id = 0; id < n * n; id++) {
-        mix((uint64_t)(int64_t)std::llround(w.cellHeight(id) * 100.0));
-        mix(w.cellSurface(id));
-        const V3 c = w.cellCenter(id);
-        const double wl = w.waterLevel(c.x, c.z);
-        mix(wl < -1e8 ? 0xffffu : (uint64_t)(int64_t)std::llround(wl * 100.0));
-    }
-    mix(w.trees.size()), mix(w.rocks.size()), mix(w.logs.size()), mix(w.bushes.size()), mix(w.boxes.size());
-    auto at = [&](const V3& p) { mix((uint64_t)(int64_t)std::llround(p.x * 100)), mix((uint64_t)(int64_t)std::llround(p.z * 100)); };
-    for (const Tree& t : w.trees) at(t.base);
-    for (const Rock& r : w.rocks) at(r.c);
-    for (const Log& l : w.logs) at(l.a);
-    for (const Box& b : w.boxes) at(b.c);
-    for (const Placed& m : w.models) at(m.p);
-    for (const Station& s : w.stations) at(s.p);
-    return h;
-}
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -66,7 +44,7 @@ int main(int argc, char** argv) {
                     "models %zu stations %zu  land %016llx\n",
                     map, mapName(map), ms, (r1 - r0) / 1024, w->gridSize(), w->halfSize(), w->trees.size(), w->rocks.size(),
                     w->logs.size(), w->bushes.size(), w->boxes.size(), w->models.size(), w->stations.size(),
-                    (unsigned long long)landHash(*w));
+                    (unsigned long long)w->landHash());
         std::fflush(stdout);
         delete w;
     }
