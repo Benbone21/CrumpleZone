@@ -36,6 +36,7 @@
 
 #include "allocstat.h"
 #include "audio.h"
+#include "worldsound.h"
 #include "biome.h"
 #include "jobs.h"
 #include "career.h"
@@ -5572,6 +5573,17 @@ int main(int argc, char** argv) {
         if (audioOn) audio.setWinches(sim, view.eye, norm(cross(view.target - view.eye, view.up)), simDt);
         if (audioOn) audio.setEnvironment(soundMap(sim.world.map), (float)dayHours, settings.ambience,
                                          !walker.active && cam.mode == 2 ? 0.3f : 1.0f);
+        if (audioOn) {  // the repair shops' din, the rivers and brooks, the forest (worldsound.h)
+            static WorldSounds worldSounds;
+            static BiomeTracker worldBiome;
+            WorldSounds::Voice voices[WorldSounds::kVoices];
+            if (!campBehind()) {
+                worldSounds.prepare(sim.world);
+                worldSounds.update(view.eye, norm(cross(view.target - view.eye, view.up)), voices);
+                voices[WorldSounds::kVoices - 1] = WorldSounds::forest(worldBiome.update(sim.world, view.eye.x, view.eye.z, dt), (float)dayHours);
+            }
+            for (int v = 0; v < WorldSounds::kVoices; v++) audio.setWorldVoice(v, voices[v].loop, voices[v].gain, voices[v].pan);
+        }
         lastView = view;
         clock += dt;
         view.time = (float)clock;

@@ -118,6 +118,9 @@ int Audio::loadAmbience(const std::string& directory) {
     n += readMono16(directory + "/campfire.wav", fireLoop_);
     n += readMono16(directory + "/wind.wav", windLoop_);
     n += readMono16(directory + "/stream.wav", streamLoop_);
+    n += readMono16(directory + "/shop.wav", shopLoop_);
+    n += readMono16(directory + "/river.wav", riverLoop_);
+    n += readMono16(directory + "/forest.wav", forestLoop_);
     return n;
 }
 
@@ -198,6 +201,56 @@ void Audio::setWinches(const Sim& sim, const V3& listener, const V3& right, doub
     }
 }
 
+void Audio::setWorldVoice(int slot, int loop, float gain, float pan) {
+    if (slot < 0 || slot >= kWorldVoices) return;
+    if (loop < 0 || loop > 3 || !std::isfinite(gain) || !std::isfinite(pan)) loop = -1, gain = 0, pan = 0;
+    worldIn_[slot].gain = std::clamp(gain, 0.0f, 1.0f);
+    worldIn_[slot].pan = std::clamp(pan, -1.0f, 1.0f);
+    worldIn_[slot].loop = loop;
+}
+
+// WorldLoop (worldsound.h): 0 the repair shop, 1 the river, 2 the brook, 3 the forest.
+const std::vector<float>* Audio::worldLoop(int loop) const {
+    switch (loop) {
+        case 0: return &shopLoop_;
+        case 1: return &riverLoop_;
+        case 2: return &streamLoop_;
+        case 3: return &forestLoop_;
+        default: return nullptr;
+    }
+}
+
+void Audio::renderWorldVoices(float* out, int frames, float volume) {
+    static constexpr float trim[4] = {1.3f, 1.6f, 0.4f, 1.2f};  // (the loops' own levels, evened up)
+    const float dt = 1.0f / rate_, a = 1 - std::exp(-dt / 0.6f);  // (gains and pans glide over about half a second)
+    for (int s = 0; s < kWorldVoices; s++) {
+        WorldState& st = worldState_[s];
+        const int want = worldIn_[s].loop;
+        float target = worldIn_[s].gain * volume;
+        const float tpan = worldIn_[s].pan;
+        if (want != st.loop) {  // a different loop in this voice: out with the old one first
+            target = 0;
+            if (st.gain < 1e-4f) { st.loop = want; st.gain = 0; st.pos = (size_t)s * 48611; }
+        }
+        const std::vector<float>* data = worldLoop(st.loop);
+        if (!data || data->empty()) { st.gain = 0; continue; }
+        if (target == 0 && st.gain < 1e-5f) { st.gain = 0; continue; }
+        const size_t size = data->size();
+        if (st.pos >= size) st.pos %= size;
+        const float cut = 0.12f + 0.88f * std::sqrt(std::clamp((float)worldIn_[s].gain, 0.0f, 1.0f));  // (farther is duller)
+        for (int i = 0; i < frames; i++) {
+            st.gain += (target - st.gain) * a;
+            st.pan += (tpan - st.pan) * a;
+            st.lp += ((*data)[st.pos] - st.lp) * cut;
+            if (++st.pos >= size) st.pos = 0;
+            const float v = st.lp * trim[st.loop] * st.gain;
+            const float angle = (st.pan + 1) * 0.7853982f;  // constant power
+            out[2 * i] += v * std::cos(angle);
+            out[2 * i + 1] += v * std::sin(angle);
+        }
+    }
+}
+
 void Audio::play(Sfx what, float gain, float pan, float delay) {
     if (what < 0 || what >= SFX_COUNT || sfx_[what].empty() || !std::isfinite(gain) || !std::isfinite(pan)) return;
     const unsigned head = pendingHead_.load(std::memory_order_relaxed);
@@ -235,7 +288,7 @@ void Audio::startSfx(Sfx what, float gain, float pan, uint32_t wait) {
 
 bool Audio::start() {
     if (device_) return true;
-    if (!ambienceLoaded_) std::printf("Ambience recordings: %d of 3 loaded; missing ones stay synthesized\n", loadAmbience("assets/audio/ambience"));
+    if (!ambienceLoaded_) std::printf("Ambience recordings: %d of 6 loaded; missing ones stay synthesized\n", loadAmbience("assets/audio/ambience"));
     if (!sfxLoaded_) std::printf("Sound effects: %d of 13 loaded; missing ones stay silent\n", loadSfx("assets/audio/sfx"));
     const int banks = recordingsReady_ ? recordingCount_ : loadEngineRecordings("assets/audio/engines");
     std::printf("Engine recordings: %d banks loaded; missing banks use procedural audio\n", banks);
@@ -473,6 +526,8 @@ void Audio::render(float* out, int frames) {
     const float mv = level(musicVol_) * duck;
     music_.render(out, frames, musicMap_, mv, musicBiome_);
     ambience_.render(out, frames, rate_, {(int)ambienceMap_, (float)hours_, level(ambienceVol_) * sceneGain, exposure});
+    if (ambienceMap_ >= 0) renderWorldVoices(out, frames, level(ambienceVol_) * sceneGain * sExposure_);
+    else for (WorldState& st : worldState_) st.gain = 0;
     if (const float camp = campfire_; camp > 0 || cfGain_ > 1e-4f) {  // the main menu's camp: the fire (the focus), a stream, wind in the trees, crickets. All synthesized
         const float target = camp * sceneGain, amb = level(ambienceVol_) * 0.6f + 0.25f;  // (the ambience setting scales the beds, never to silence)
         const float panF = campPanFire_, panS = campPanStream_;

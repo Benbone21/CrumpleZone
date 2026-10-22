@@ -13,6 +13,8 @@ This audio pass is isolated in `wip/audio-soundscape`, in `/home/bread/Documents
 - Walking or flying away attenuates your car's engine, tire noise and speed wind. Nearby multiplayer engines retain their shared voices and gain smooth panning.
 - Switching engine layouts or recorded banks crossfades the old and new voices over 40 ms, using the old engine's last control state while it fades.
 
+- **Placed sounds** (`src/worldsound.cpp`, drawn by `Audio::renderWorldVoices`): a workshop din (`shop.wav`) plays from the nearest 1-2 repair stations / garage sheds within 55 m; the nearest point of the two loudest water bodies plays `river.wav` (flowing >= 0.5 m/s and over 1500 m2) or `stream.wav` (brooks; slack water and lakes at a fraction of the level), heard to 30-120 m by size; `forest.wav` is a bed in the pine woods by day only. Gain falls as (1 - d/range)^2, farther voices are duller, all follow the AMBIENCE volume, master and the cabin.
+
 ## Recorded engine sounds
 
 **No real vehicle recordings were imported.** Existing banks still take precedence over procedural voices, and missing banks still use procedural fallback. Shell downloads are blocked by DNS in this session. Reference research and licensing status are in `docs/engine-recordings.md`; the CC0-only rule remains in effect.

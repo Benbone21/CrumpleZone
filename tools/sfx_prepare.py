@@ -45,6 +45,10 @@ def shot(x, peak=0.9, thr=0.01, tail=0.02, start=0.0, end=None):  # trimmed wher
     return norm(y, peak)
 
 S = 'assets/audio/sfx/'
+SHOP_ONLY = len(sys.argv) > 2 and sys.argv[2] == 'shop'
+if SHOP_ONLY:
+    save('assets/audio/ambience/shop.wav', loop(load('freesound_community-auto-shop-soundscape-68816'), 2.0, 15.4, 0.6, 0.8))
+    sys.exit(0)
 # winch: the motor's hum (a loop) and a bank of pawl clicks (8 of the strongest, 70 ms each, back to back)
 save(S + 'winch_motor.wav', loop(load('freesound_community-motor3-58848'), 20, 6.0, 0.5, 0.8))
 rat = load('freesound_community-toy-ratchet-71580')
@@ -85,3 +89,7 @@ save('assets/audio/ambience/stream.wav', loop(load('soundreality-stream-nature-4
 save(S + 'horn.wav', shot(load('universfield-double-car-honk-352443')))
 save('assets/audio/ambience/river.wav', loop(load('hasin2004-nature-sound-near-river-or-waterfall-247409'), 2, 20, 2.0, 0.8))
 save('assets/audio/ambience/forest.wav', loop(load('soundreality-nature-forest-sound-537925'), 40, 24, 2.0, 0.8))
+
+# the repair shop's ambience (a loop under every repair station / shop): 2 s to 17.4 s of the soundscape (its fade-out tail is left off), 0.6 s crossfade.
+# (Run as: python3 tools/sfx_prepare.py <wav folder> shop   to make only this one.)
+save('assets/audio/ambience/shop.wav', loop(load('freesound_community-auto-shop-soundscape-68816'), 2.0, 15.4, 0.6, 0.8))

@@ -45,7 +45,7 @@ public:
     void setBoost(float boost) { boost_ = boost; }  // turbo boost built up, 0..1
     void setRecording(int recording) { recording_ = recording; }
     // The camp's recorded loops (campfire.wav, wind.wav: mono PCM16 in `directory`); before start only. A missing file leaves that layer synthesized.
-    int loadAmbience(const std::string& directory);  // (also stream.wav, the camp's stream)
+    int loadAmbience(const std::string& directory);  // (also stream.wav, the camp's stream; shop.wav, river.wav, forest.wav: the world's places, below)
     // Before start only; loading/decoding is never performed by the callback.
     int loadEngineRecordings(const std::string& directory);
     int recordingBankCount() const { return recordingCount_; }
@@ -82,6 +82,10 @@ public:
     // Files in `directory` (assets/audio/sfx); before start only. Returns how many loaded.
     int loadSfx(const std::string& directory);
     int sfxLoaded() const { return sfxCount_; }
+    // Placed loops (worldsound.h: the repair shops, rivers and brooks, the forest): voice `slot` plays WorldLoop `loop` (-1 off) at gain 0..1 and pan -1..1.
+    // They follow the ambience volume and the cabin, fade in and out, and go darker with distance. A missing file leaves that loop silent.
+    static constexpr int kWorldVoices = 5;
+    void setWorldVoice(int slot, int loop, float gain, float pan);
     void setHiss(float level);    // tire air hiss: 0 = off, 1 = full hiss (inflate/deflate)
     // Game thread: publish the nearest engines, with distance attenuation and stereo pan.
     void setNearbyEngines(const Sim& sim, const V3& listener, const V3& right, float timeScale);
@@ -91,6 +95,7 @@ private:
     static void callback(void* user, uint8_t* stream, int len);
     void render(float* out, int frames);
     void renderEffects(float* out, int frames, float dt, float sceneGain);
+    void renderWorldVoices(float* out, int frames, float volume);
 
     uint32_t device_ = 0;
     int rate_ = 48000;
@@ -170,6 +175,10 @@ private:
     float airGain_[2] = {0, 0};
     double compPos_ = 0, blowPos_ = 0;
     size_t streamPos_ = 0;
+    std::vector<float> shopLoop_, riverLoop_, forestLoop_;  // (the placed loops; the brook is streamLoop_)
+    struct WorldIn { std::atomic<int> loop{-1}; std::atomic<float> gain{0}, pan{0}; } worldIn_[kWorldVoices];
+    struct WorldState { int loop = -1; float gain = 0, pan = 0, lp = 0; size_t pos = 0; } worldState_[kWorldVoices];  // audio thread
+    const std::vector<float>* worldLoop(int loop) const;
     struct RopeSeen { uint32_t key = 0; double length = 0, speed = 0; bool live = false; };  // game thread
     std::vector<RopeSeen> ropesSeen_;
     uint32_t rng_ = 0x12345678;

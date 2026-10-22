@@ -15,7 +15,7 @@ air_hiss.wav         one-shot     freesound_community-air-hiss-102406   the valv
 wrench_ratchet.wav   6 slots      freesound_community-ratchet-socket-wrench-tool-95253  the ratchet / socket set / lug wrench ticking on each return stroke (6 slots of 160 ms)
 ../ambience/stream.wav  loop, 24 s  soundreality-stream-nature-445380   the main menu's brook (replaces the synthesized stream)
 
-Reserved (prepared, not used yet):
+Reserved (prepared, not used yet; the river is now used by the world water, src/worldsound.cpp):
 horn.wav             one-shot     universfield-double-car-honk-352443   horn (no horn feature yet; Audio::play(SFX_HORN) is ready)
 ../ambience/river.wav   loop, 20 s  hasin2004-nature-sound-near-river-or-waterfall-247409  world rivers / waterfalls
 ../ambience/forest.wav  loop, 24 s  soundreality-nature-forest-sound-537925  a daytime forest bed (not for the menu's sunset)

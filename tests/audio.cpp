@@ -3,6 +3,7 @@
 #include "../src/mods.h"
 #include "../src/softbody.h"
 #include "../src/sdl_min.h"
+#include "../src/worldsound.h"
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -245,6 +246,77 @@ int main() {
         }
         traceAllocations = false;
         check("winch, one-shots and air loops perform no C++ allocations in the callback", callbackAllocations == 0);
+    }
+    {  // placed sounds: repair shops and water found on the maps that have them; gains fall with distance; the callback allocates nothing
+        const int maps[] = {MAP_PROVING_GROUND, MAP_MOUNTAIN, MAP_FRONTIER, MAP_BACKCOUNTRY};
+        bool shopsFound = true, falls = true, waterSeen = false, lakeSeen = false, riverSeen = false, quietLake = true, waterVoice = true;
+        float lakeLoud = 0, riverLoud = 0;
+        for (int m : maps) {
+            World w(m);
+            WorldSounds ws;
+            ws.prepare(w);
+            int rivers = 0, streams = 0;
+            for (const auto& b : ws.bodies()) (b.loop == WL_RIVER ? rivers : streams)++, riverLoud = std::max(riverLoud, b.loop == WL_RIVER ? b.loud : 0.0f);
+            std::printf("  map %d: %d shops, %d bodies (%d river, %d stream/still)\n", m, (int)ws.shops().size(), (int)ws.bodies().size(), rivers, streams);
+            shopsFound &= ws.shops().size() >= w.stations.size() && !ws.shops().empty();
+            const V3 east(1, 0, 0);
+            WorldSounds::Voice v[WorldSounds::kVoices - 1], distant[WorldSounds::kVoices - 1];
+            if (!ws.shops().empty()) {
+                const V3 s = ws.shops()[0];
+                ws.update(V3(s.x + 5, s.y, s.z), east, v);
+                ws.update(V3(s.x + 25, s.y, s.z), east, distant);
+                falls &= v[0].loop == WL_SHOP && v[0].gain > distant[0].gain && distant[0].gain > 0;
+                ws.update(V3(s.x + 90, s.y, s.z), east, distant);  // (nothing else of a shop that distant, unless another is closeBy)
+                falls &= distant[0].loop != WL_SHOP || distant[0].dist < 55;
+            }
+            for (const auto& b : ws.bodies()) {
+                waterSeen = true;
+                riverSeen |= b.loop == WL_RIVER;
+                lakeSeen |= b.disc;
+                if (b.disc) lakeLoud = std::max(lakeLoud, b.loud);
+                const V3 p = b.disc ? V3(b.c.x + b.r, b.c.y, b.c.z) : b.pts[b.pts.size() / 2];
+                WorldSounds::Voice closeBy[WorldSounds::kVoices - 1], farther[WorldSounds::kVoices - 1];
+                ws.update(V3(p.x + 4, p.y, p.z), east, closeBy);
+                ws.update(V3(p.x + 4 + b.range * 0.6, p.y, p.z), east, farther);
+                float gn = 0, gf = 0;
+                for (int i = WorldSounds::kShopVoices; i < WorldSounds::kVoices - 1; i++) gn = std::max(gn, closeBy[i].gain), gf = std::max(gf, farther[i].gain);
+                waterVoice &= gn > 0;
+                if (ws.bodies().size() == 1) falls &= gn > gf;  // (with several, a farther spot may be by another one)
+            }
+        }
+        check("every map's repair stations become shop sources", shopsFound);
+        check("water bodies are found on the maps with a lake or a river", waterSeen && lakeSeen && riverSeen);
+        check("a still lake is much quieter than a river", lakeLoud > 0 && lakeLoud < riverLoud * 0.4f);
+        check("shop and water gains fall with distance and every body is audible up close", falls && waterVoice);
+        check("the forest bed is a daytime pine-woods sound", WorldSounds::forest(2, 12).gain > 0.3f && WorldSounds::forest(2, 2).gain == 0 && WorldSounds::forest(0, 12).gain == 0);
+        Audio placed;
+        placed.loadAmbience("assets/audio/ambience");
+        placed.setEngine(0, 0); placed.setVolume(1); placed.setEnvironment(4, 12, 0.8f);
+        auto placedEnergy = [&](int loop, float gain, float pan) {
+            Audio a;
+            a.loadAmbience("assets/audio/ambience");
+            a.setEngine(0, 0); a.setVolume(1); a.setEnvironment(0, 12, 0.8f);
+            if (loop >= 0) a.setWorldVoice(0, loop, gain, pan);
+            std::vector<float> buf(512 * 2);
+            double l = 0, r = 0;
+            for (int k = 0; k < 300; k++) {
+                AudioTest::render(a, buf.data(), 512);
+                if (k >= 100) for (int i = 0; i < 512; i++) l += buf[2 * i] * buf[2 * i], r += buf[2 * i + 1] * buf[2 * i + 1];
+            }
+            return std::pair<double, double>(l, r);
+        };
+        const auto none = placedEnergy(-1, 0, 0), shopClose = placedEnergy(WL_SHOP, 0.9f, 0), shopDistant = placedEnergy(WL_SHOP, 0.1f, 0), riverLeft = placedEnergy(WL_RIVER, 0.8f, -1);
+        std::printf("  energy: none %.3g shop closeBy %.3g distant %.3g river left %.3g/%.3g\n", none.first, shopClose.first, shopDistant.first, riverLeft.first, riverLeft.second);
+        check("a placed shop is audible, quieter far away, and a hard-left river sounds on the left", shopClose.first > none.first * 1.5 && shopClose.first > shopDistant.first * 5 && riverLeft.first > riverLeft.second * 20);
+        placed.setWorldVoice(0, WL_SHOP, 0.9f, 0.3f); placed.setWorldVoice(1, WL_RIVER, 0.5f, -0.5f); placed.setWorldVoice(4, WL_FOREST, 0.5f, 0);
+        traceAllocations = true;
+        callbackAllocations = 0;
+        for (int k = 0; k < 300; k++) {
+            if (k == 100) placed.setWorldVoice(0, WL_STREAM, 0.4f, 0.8f), placed.setWorldVoice(2, WL_SHOP, 0.2f, 0);
+            AudioTest::render(placed, callbackBlock, 512);
+        }
+        traceAllocations = false;
+        check("placed shop, water and forest loops perform no C++ allocations in the callback", callbackAllocations == 0);
     }
     if (std::getenv("CZ_AUDIO_DEVICE_TEST")) {
         // With SDL_AUDIODRIVER=dummy this exercises SDL's real callback lifecycle silently.
