@@ -75,7 +75,7 @@ SCENARIO(menuDev, "mainmenu/dev", "The DEV page lists the existing tools, each a
     n.open(0, 0);
     n.choose(F_DEV);
     ctx.check("DEV opens the page", n.page == P_DEV && n.count() == (int)devEntries().size());
-    std::vector<Act> want = {A_DEV_EDITOR, A_DEV_SECTION, A_DEV_LAB, A_DEV_LEVELS, A_DEV_TOOLS, A_DEV_HOTKEYS, A_DEV_DEBUG, A_DEV_CLASSIC};
+    std::vector<Act> want = {A_DEV_EDITOR, A_DEV_SECTION, A_DEV_LAB, A_DEV_MENUSCENE, A_DEV_LEVELS, A_DEV_TOOLS, A_DEV_HOTKEYS, A_DEV_DEBUG, A_DEV_CLASSIC};
     ctx.check("the entries are the editors, the lab, the levels, the dev menu, the toggles and the classic page", devEntries().size() == want.size());
     for (int i = 0; i < (int)want.size() && i < (int)devEntries().size(); i++) {
         n.open(0, 0);

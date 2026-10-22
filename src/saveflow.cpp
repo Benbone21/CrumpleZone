@@ -31,7 +31,7 @@ bool SaveFlow::needsName(const EditCore& core, const std::string& dir) {
 }
 
 bool SaveFlow::writeNow(EditCore& core) {
-    const std::string path = dir() + "/" + levelFileName(core.level.name) + ".czl";
+    const std::string path = !fixedPath.empty() ? fixedPath : dir() + "/" + levelFileName(core.level.name) + ".czl";
     std::string err;
     makeDir(configDir());
     makeDir(dir());
@@ -48,7 +48,7 @@ void SaveFlow::requestSave(EditCore& core, bool saveAs, After then, int thenArg)
     saved = discarded = false;
     done = NOTHING;
     after = then, arg = thenArg;
-    if (!saveAs && !needsName(core, dir())) {
+    if (!saveAs && (!fixedPath.empty() || !needsName(core, dir()))) {
         if (writeNow(core)) finish(then, thenArg);
         else stage = IDLE;
         return;

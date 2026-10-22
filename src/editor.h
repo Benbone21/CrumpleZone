@@ -19,7 +19,7 @@
 
 class Editor {
 public:
-    enum Tool { SCULPT, PAINT, WATER, OBJECTS, COURSE, SETTINGS, SECTION, TOOL_COUNT };
+    enum Tool { SCULPT, PAINT, WATER, OBJECTS, COURSE, SETTINGS, SECTION, MENU, TOOL_COUNT };
     bool active = false;
     EditCore core;
     // Set when the player asks to try the level (the game plays core.levelToPlay(playHere) at `spot`, then comes back to this
@@ -33,6 +33,9 @@ public:
     std::vector<Placed> ghostModels;
     // Set when the editor is closed (the game puts the player back on the world as edited).
     bool wantClose = false;
+    // The MENU tool (the main menu's camp, menucamp.h): PREVIEW asks the game to show the menu as it will look (it comes back here on Esc); RESET
+    // asks for the game's own layout (the saved file forgotten, the editor reopened on it).
+    bool wantPreview = false, wantResetCamp = false;
     // With wantClose: DISCARD was chosen, so the game drives `reverted` (the level as last saved, or the plain one it came from),
     // not the edits. (The recovery copy of the edits is gone too.)
     bool discarded = false;
@@ -270,6 +273,8 @@ private:
     void openLevel(const Level& lv, bool recovered);
     void settingChange(int row, int dir);
     void sectionAction(int code);
+    void menuAction(int code);
+    bool confirmReset = false;
     V3 snapped(const V3& p) const;
     LevelObject makeObject(const V3& at, double rise = 0) const;  // rise: how far over the ground it's set (on top of another object)
     double placeRise() const;

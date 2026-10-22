@@ -1,0 +1,6 @@
+Recorded ambience for the main menu's camp (src/audio.cpp: Audio::loadAmbience). Both are Pixabay sounds, used under the Pixabay Content License
+(free to use in a game, no attribution required: https://pixabay.com/service/license-summary/). Cut into seamless mono 48 kHz 16-bit loops with
+tools/ambience_loops.py (the tail is crossfaded into the head).
+
+campfire.wav   from soundreality-campfire-crackling-sound-439573 (Pixabay; file name as downloaded), 40 s taken from 55 s in
+wind.wav       from ezanarini-air-ambience-234180 (Pixabay; file name as downloaded), the first 26 s

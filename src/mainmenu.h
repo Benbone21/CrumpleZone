@@ -20,6 +20,7 @@ enum Act {
     A_DEV_EDITOR,    // the world editor
     A_DEV_SECTION,   // a new obstacle section in the editor
     A_DEV_LAB,       // the model lab
+    A_DEV_MENUSCENE, // the editor on this menu's own camp scene (menucamp.h)
     A_DEV_LEVELS,    // the levels page (play or edit the levels and sections)
     A_DEV_TOOLS,     // the dev menu: spawn, teleport, time, view and the other tools
     A_DEV_HOTKEYS,   // toggles DEV HOTKEYS

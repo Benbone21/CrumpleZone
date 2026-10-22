@@ -63,6 +63,7 @@
 #include "mainmenu.h"
 #include "mainmenudraw.h"
 #include "menuscene.h"
+#include "menucamp.h"
 #include "camhold.h"
 #include "throttle.h"
 #include "tiretemp.h"
@@ -117,6 +118,7 @@ struct Options {
     std::string clipboard;        // --clipboard TEXT: put this on the system clipboard first (testing paste); a --press scancode over 1000 is that key with Ctrl held
     int menu = -1;                // --menu P: open the pause menu on page P (testing)
     int mainMenu = -1;            // --main-menu P: the new main menu with its camp scene, on page P (0 front, 1 map, 2 vehicle, 3 dev); a plain launch shows it too
+    std::string campDump;         // --menu-camp-dump FILE: write the main menu camp the game ships (made by code) there and quit
     bool menuCareer = false;      // --main-menu-career: its map and vehicle pages are CAREER's
     int quality = -1;             // --quality 0-3: graphics preset (testing)
     int ground = -1;              // --ground 0-3: terrain materials (testing; see RenderSettings::ground)
@@ -359,6 +361,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--menu") o.menu = std::atoi(next().c_str());
         else if (a == "--main-menu") o.mainMenu = std::atoi(next().c_str());
         else if (a == "--main-menu-career") o.menuCareer = true;
+        else if (a == "--menu-camp-dump") o.campDump = next();
         else if (a == "--quality") {  // 0-3 LOW..ULTRA, 4 or potato: POTATO
             const std::string q = next();
             o.quality = q == "potato" ? (int)Q_POTATO : std::atoi(q.c_str());
@@ -1739,6 +1742,11 @@ int main(int argc, char** argv) {
     signal(SIGPIPE, SIG_IGN);  // (a multiplayer peer dropping mid-send; macOS has no MSG_NOSIGNAL)
 #endif
     Options opt = parseArgs(argc, argv);
+    if (!opt.campDump.empty()) {
+        const bool ok = menuscene::dump(opt.campDump);
+        std::printf("%s %s\n", ok ? "wrote" : "could not write", opt.campDump.c_str());
+        return ok ? 0 : 1;
+    }
     const bool scripted = !opt.shotFrames.empty() || opt.bench > 0 || opt.loadTour;  // (the default settings, no vsync, a fixed 60 Hz step)
     // Unattended runs get a hang watchdog: no frame for 60 s (240 s while loading), or the whole run over CZ_WATCHDOG_TOTAL s (default 3600).
     // (CZ_WATCHDOG_STALL=S shortens the stall limit; CZ_TEST_STALL_FRAME=N makes the loop sleep for ever at frame N: the tests' hooks.)
@@ -1905,8 +1913,12 @@ int main(int argc, char** argv) {
     } catch (const std::system_error& error) {
         std::fprintf(stderr, "Physics workers unavailable; using one thread: %s\n", error.what());
     }
+    Level campLevel;  // the main menu's camp (menuscene.h): the player's file, the game's, or made by code
+    V3 campFire;
     if (wantCamp) {  // (the menu's camp instead of the saved map: choosing a map loads it)
-        sim.world = menuscene::buildWorld();
+        campLevel = menuscene::load();
+        menucamp::fireOf(campLevel, campFire);
+        sim.world = menuscene::buildWorld(campLevel);
     } else if (settings.map != MAP_PROVING_GROUND) sim.world = World(settings.map);
     sim.lineup = listedVehicles();  // (the overlanders and the Jesko: no Civic, UTV or buggy)
     sim.setup();
@@ -1930,6 +1942,7 @@ int main(int argc, char** argv) {
                 c.handbrake = 1;
             }
     };
+    bool previewMenu = false;  // the menu is shown as a preview from the camp editor (Esc goes back to it)
     bool campWorld = false;  // sim.world is the main menu's camp (a map load, a level or the editor ends it)
     // Three of the listed vehicles parked round the camp's fire: the player's car becomes the first (the lineup's others are dropped).
     auto parkCamp = [&]() {
@@ -1941,18 +1954,17 @@ int main(int argc, char** argv) {
             }
         sim.dropRopes(sim.player);
         const std::vector<int>& lv = listedVehicles();
-        const int which[3] = {lv[std::min<size_t>(1, lv.size() - 1)], lv[std::min<size_t>(2, lv.size() - 1)], lv[0]};  // Bronco, 4Runner, Blazer
+        const menucamp::Meta meta = menucamp::metaOf(campLevel);
         const V3 paint[3] = {V3(0.55, 0.12, 0.08), V3(0.16, 0.3, 0.2), V3(0.5, 0.2, 0.1)};
-        const menuscene::Spot* sp = menuscene::spots();
-        sim.swapPlayerVehicle(garage.spec(which[0]));
+        sim.swapPlayerVehicle(garage.spec(lv[meta.veh[0].slot]));
         for (int k = 0; k < 3; k++) {
-            if (k > 0) sim.addCar(garage.spec(which[k]), V3(sp[k].x, 0, sp[k].z), sp[k].yaw, paint[k]);
+            const menucamp::Vehicle& v = meta.veh[k];
+            const double yaw = v.yawDeg * M_PI / 180;
+            if (k > 0) sim.addCar(garage.spec(lv[v.slot]), V3(v.x, 0, v.z), yaw, paint[k]);
             Car& c = sim.cars[k == 0 ? sim.player : (int)sim.cars.size() - 1];
-            const V3 f = menuscene::fire();
-            const double x = f.x + sp[k].x, z = f.z + sp[k].z;
-            c.respawn(V3(x, sim.world.clearY(x, z) + 0.05, z), sp[k].yaw);
+            c.respawn(V3(v.x, sim.world.clearY(v.x, v.z) + 0.05, v.z), yaw);
             c.setDown(sim.world);
-            c.spawnPos = c.frame().com, c.spawnYaw = sp[k].yaw;
+            c.spawnPos = c.frame().com, c.spawnYaw = yaw;
             c.handbrake = 1;
         }
         sim.paused = false;  // (a moment of physics settles them on their springs; then they stand still)
@@ -2779,7 +2791,8 @@ int main(int argc, char** argv) {
     auto enterCamp = [&]() {
         run.stop();
         levelHours = -1;
-        sim.world = menuscene::buildWorld();
+        menucamp::fireOf(campLevel, campFire);
+        sim.world = menuscene::buildWorld(campLevel);
         sim.setup();
         fitGarage();
         parkCamp();
@@ -3100,6 +3113,13 @@ int main(int argc, char** argv) {
             case A_DEV_EDITOR: menu.mapPick = mainNav.map(); handleMenu(PauseMenu::Result{PauseMenu::EDITOR}); break;
             case A_DEV_SECTION: handleMenu(PauseMenu::Result{PauseMenu::NEW_SECTION}); break;
             case A_DEV_LAB: handleMenu(PauseMenu::Result{PauseMenu::MODEL_LAB}); break;
+            case A_DEV_MENUSCENE: {  // (the world editor on the camp: it saves to the player's own file, never the game's)
+                Level l = campLevel;
+                l.builtin = false, l.file = menuscene::userPath();
+                closeMenu();
+                openEditor(l);
+                break;
+            }
             case A_DEV_LEVELS:
                 if (refreshLevelsLater) refreshLevelsLater();
                 menu.showTitlePage(4, model, settings.map);
@@ -3689,6 +3709,12 @@ int main(int argc, char** argv) {
                         break;
                     }
                     if (mainMenuShown()) {  // the new main menu (mainmenu.h)
+                        if (previewMenu && evKeyScancode(e) == SC_ESCAPE && mainNav.page == mainmenu::P_FRONT) {  // (the camp editor's preview: back to the editor)
+                            previewMenu = false;
+                            closeMenu();
+                            if (!returnToEditor()) hud.toast("CAN'T GO BACK TO THE EDITOR");
+                            break;
+                        }
                         handleMain(mainNav.key(evKeyScancode(e)));
                         break;
                     }
@@ -4834,7 +4860,7 @@ int main(int argc, char** argv) {
         fx.setLimits(markLimits(presetOf(settings.gfx)));
         FxEvents events = fx.update(sim, campBehind() ? dt : simDt);
         if (campBehind()) {  // (the camp's fire: the sim is paused behind the menu, so the effects run on the real frame time)
-            const V3 f = menuscene::fire();
+            const V3 f = campFire;
             fx.campfire(V3(f.x, sim.world.height(f.x, f.z), f.z), dt, V3(0.32, 0, -0.12));
         }
 
@@ -5287,6 +5313,8 @@ int main(int argc, char** argv) {
                         if (std::hypot(r.c.x - num(0), r.c.z - num(1)) < num(2)) std::printf("  rock %zu c(%.1f %.1f %.1f) r %.2f\n", i, r.c.x, r.c.y, r.c.z, r.r), n++;
                     }
                 } else if (c == "save") { editor.applyKey(keyCode("s"), false, true); }
+                else if (c == "menupreview") editor.wantPreview = true;  // (the MENU tool's PREVIEW button)
+                else if (c == "menuexit") editor.wantClose = true;
                 else if (c == "saveas") { editor.applyKey(keyCode("s"), true, true); }
                 else if (c == "undo") { editor.applyKey(keyCode("z"), false, true); }
                 else if (c == "redo") { editor.applyKey(keyCode("y"), false, true); }
@@ -5309,7 +5337,40 @@ int main(int argc, char** argv) {
             if (editor.takeSaved()) refreshLevels();  // (a level just saved is on the menu's list at once)
             drawnWorld = sim.world.stamp;  // (it redraws what it changes itself)
             sim.paused = true;
-            if (editor.wantPlay || editor.wantClose) {
+            if (editor.wantResetCamp) {  // (MENU tool: the game's own scene back; the saved file is forgotten, the editor reopens on it)
+                editor.wantResetCamp = false;
+                menuscene::resetUser();
+                Level l = menuscene::load();
+                l.builtin = false, l.file = menuscene::userPath();
+                editor.close();
+                openEditor(l);
+                hud.toast("THE GAME'S MENU SCENE IS BACK. EDIT IT, OR EXIT TO KEEP IT");
+            } else if (editor.wantPreview) {  // (MENU tool: the menu as it will look, from the camp as edited so far; Esc comes back here)
+                editor.wantPreview = false;
+                editor.autosaveNow();
+                lastEdited = editor.core.level;
+                haveEdited = true;
+                campLevel = editor.core.level;
+                editor.close();
+                editorSuspended = true;
+                previewMenu = true;
+                enterCamp();
+                openMenu();
+                menu.showTitle(std::max(0, sim.cars[sim.player].spec->model), settings.map);
+                mainNav.open(menu.mapPick, std::max(0, sim.cars[sim.player].spec->model));
+                classicTitle = false;
+            } else if (editor.wantClose && menucamp::isCamp(editor.core.level)) {  // (leaving the camp: back to the menu, on the camp as edited or as saved)
+                const bool discard = editor.discarded;
+                if (!discard) editor.autosaveNow();
+                campLevel = discard ? editor.reverted : editor.core.level;
+                editor.close();
+                editorSuspended = false;
+                enterCamp();
+                openMenu();
+                menu.showTitle(std::max(0, sim.cars[sim.player].spec->model), settings.map);
+                mainNav.open(menu.mapPick, std::max(0, sim.cars[sim.player].spec->model));
+                classicTitle = false;
+            } else if (editor.wantPlay || editor.wantClose) {
                 const bool play = editor.wantPlay, here = editor.playHere;
                 EditCore::PlaySpot spot = editor.spot;
                 if (!play) spot = editor.core.playSpot(true, editor.viewPoint(), editor.heading());  // (leaving: you're where you were looking, unless there's a start)
@@ -5377,7 +5438,7 @@ int main(int argc, char** argv) {
                 cam.userYaw = y, cam.pitch = p, cam.idle = 0;
             }
         }
-        View view = editor.active ? editor.view(W, H) : campBehind() ? menuscene::camera(sim.world, clock) : cam.update(fr, sim.world, dt, (dragging || padLooking) && !menu.open, camhold::driving(len(fr.vel), sim.paused ? 0.0 : sim.cars[sim.player].throttle));
+        View view = editor.active ? editor.view(W, H) : campBehind() ? menuscene::camera(campLevel, sim.world, clock) : cam.update(fr, sim.world, dt, (dragging || padLooking) && !menu.open, camhold::driving(len(fr.vel), sim.paused ? 0.0 : sim.cars[sim.player].throttle));
         if (!walker.active && !editor.active && cam.mode == 2 && sim.player >= 0 && sim.player < (int)sim.cars.size()) {
             // The cockpit view from the driver's eyes (people.h sits them on the seat): the seat's hip point, up and a little ahead.
             const Car& pc = sim.cars[sim.player];
@@ -5480,7 +5541,7 @@ int main(int argc, char** argv) {
                 dayHours = net.dayHours;  // (run on to this moment by the session: everyone's sky agrees)
                 net.dayFresh = false;
             } else if (opt.timeHours >= 0) dayHours = opt.timeHours;
-            else if (campWorld) dayHours = menuscene::kHours;  // (the menu's camp: golden hour, whatever the clock says)
+            else if (campWorld) dayHours = campLevel.timeOfDay >= 0 ? campLevel.timeOfDay : menuscene::kHours;  // (the menu's camp: golden hour, whatever the clock says)
             else if (editor.active && editor.core.level.timeOfDay >= 0) dayHours = editor.core.level.timeOfDay;  // the editor shows the level's light
             else if (levelHours >= 0 && settings.timeOfDay != TOD_CYCLE) dayHours = levelHours;  // a level's hour holds over a fixed setting (with the cycle it starts there and runs)
             else if (settings.timeOfDay != TOD_CYCLE) dayHours = timeOfDayHours(settings.timeOfDay);
@@ -5490,7 +5551,7 @@ int main(int argc, char** argv) {
             if (campWas && !campWorld) dayHours = settings.clockHours;  // (left the camp: the clock goes on from where it was)
             campWas = campWorld;
             if (net.role == NetSession::HOST) net.dayHours = dayHours, net.dayRate = sim.paused ? 0 : dayRate * sim.timeScale;
-            renderer.daylight = campWorld ? menuscene::daylight() : computeDaylight(dayHours);
+            renderer.daylight = campWorld ? menuscene::daylight(campLevel) : computeDaylight(dayHours);
             sim.dayHours = dayHours;  // (the air cools at night: the tires feel it)
             // Each owner's switch is carried reliably, including OFF and high beams.
             renderer.carBeams.assign(sim.cars.size(), 0);
@@ -5681,7 +5742,7 @@ int main(int argc, char** argv) {
         }
         const uint64_t drawStart = SDL_GetPerformanceCounter();
         if (campBehind()) {  // (the camp's fire lights what is near it; its flicker is the strength)
-            const V3 f = menuscene::fire();
+            const V3 f = campFire;
             renderer.fireLight.pos = V3(f.x, sim.world.height(f.x, f.z) + 0.7, f.z);
             renderer.fireLight.strength = 260.0f * menuscene::flicker(clock);
         } else renderer.fireLight.strength = 0;
@@ -6010,10 +6071,17 @@ int main(int argc, char** argv) {
             }
         }
         menu.sceneBehind = campBehind();
+        if (!campWorld) previewMenu = false;
         if (mainMenuShown()) {
             mainFade = std::min(1.0f, mainFade + (float)dt * 3.0f);
             mainNav.devHotkeys = settings.devHotkeys, mainNav.debugOn = dbg.on;
             mainmenu::draw(renderer, mainNav, W, H, mainFade, clock, pad::ui.last);
+            if (previewMenu) {
+                const float us = std::max(0.75f, H / 720.0f), ps = hud::px(1.6f * us);
+                const std::string t = "PREVIEW OF THE MENU SCENE   ESC: BACK TO THE EDITOR";
+                renderer.rect(W - renderer.textWidth(t, ps) - 28 * us, 10 * us, renderer.textWidth(t, ps) + 20 * us, 8 * ps + 14 * us, 0, 0, 0, 0.6f);
+                renderer.text(W - renderer.textWidth(t, ps) - 18 * us, 17 * us, ps, t, 0.4f, 0.9f, 1.0f, 1.0f);
+            }
         } else {
             mainFade = 0;
             menu.draw(renderer, settings, W, H, dt);

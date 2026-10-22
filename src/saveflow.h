@@ -42,6 +42,7 @@ struct SaveFlow {
     // The question.
     void choose(EditCore& core, Choice c);
 
+    std::string fixedPath = "";  // the one file a save goes to, whatever the level is called (the main menu's camp: ~/.config/crumplezone/menu_camp.czl); "": by name, in `folder`
     std::string folder = "";  // where levels are saved ("": the user's levels folder)
     std::string dir() const;
 

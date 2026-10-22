@@ -125,6 +125,10 @@ struct Level {
     std::vector<LevelObject> objects;
     std::vector<V3> removed;           // base-map objects taken out: (x, kind, z), each the nearest within 1.5 m (kind: 0 any, else 1 + EditPick::baseKind: rock, tree, log, box, fixture, -, bush)
 
+    // The main menu's camp (menucamp.h) keeps its own settings (vehicles, camera, sky) in "#menu ..." comment lines: kept as they are, so a level
+    // opened and saved by any editor build carries them along.
+    std::vector<std::string> menuLines;
+
     bool builtin = false;
     bool fromBackup = false;  // loaded from the .bak because the file itself wouldn't read (not saved)
     bool hasJob() const { return mode != LEVEL_FREE && !gates.empty(); }
