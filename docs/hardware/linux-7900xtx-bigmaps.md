@@ -141,3 +141,31 @@ Frontier and the proving ground render pixel-identical to main.
 **Dedicated server** (`--map 4`): 562 MB RSS, against a target of 450. It keeps the whole world, render-only parts included.
 
 **Note:** the server run above used the default config folder, so it wrote its world-4.bin (30 MB) and rock-split blobs into `~/.config/crumplezone/cache`. These are ordinary cache files that the game replaces.
+
+## Frame time on the 6 km map (branch wip/bigmaps-perf)
+
+**Frame time.** Interleaved A/B, 3 runs each, `--map 4 --quality 2 --bench 600,120` (HIGH 1600x900, the trailhead). The reference is the old 1.2 km Backcountry, built from 0a583b3. Load average was 6.0-6.9 on 24 threads (Steam's web helper was busy).
+
+| | 1.2 km reference | 6 km, after this branch | 6 km, before this branch |
+|---|---|---|---|
+| Average | 3.35, 3.07, 3.34 ms | 3.11, 3.02, 3.16 ms | 3.95-4.12 ms |
+| 1% low | 5.4-6.5 ms | 5.7-6.0 ms | |
+
+Flying 1.6 km at 40 m/s, eye 4 m up: 2.91 ms, worst frame 24 ms.
+
+CPU per stage, reference → 6 km:
+
+| Stage | Reference | 6 km |
+|---|---|---|
+| Terrain | 0.22 | 0.13 |
+| Shadows | 0.18-0.22 | 0.21-0.25 |
+| Vegetation | 0.24-0.27 | 0.28-0.31 |
+| Props | 0.19-0.21 | 0.13-0.16 |
+
+GPU per stage is within 0.07 ms of the reference.
+
+Where the time went: the horizon (occlusion) test. Per test it cost about 0.6-0.85 µs, and the 6 km map ran about 330 of them a frame for the ground plus about 400 for tree cells. On a big map it now runs only in the band where it pays off: ground and props 64-450 m, trees 200-600 m.
+
+**Small maps.** Frontier, the proving ground and Mountain render pixel-identical to main.
+
+**Dedicated server** (`--map 4`): 558 → 436 MB, from `World::trimForServer` plus `malloc_trim`.

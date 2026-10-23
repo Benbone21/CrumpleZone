@@ -1,7 +1,7 @@
 # Big maps: a 6 x 6 km Backcountry and Frontier, with rivers, waterfalls and places to find
 
 Plan for PI-TASKS #26 (big maps, points of interest) and #27 (rivers, waterfalls, every model in use).
-Status: **approved 2026-10-22 with the owner's answers (section 0).** Phases 0-3 are merged. Phase 4, the 6 km Backcountry land, is on `wip/bigmaps-p4`: drivable, with the world cache packed (35 MB) and the autopilot planning in a window round the route. Measurements are in `docs/hardware/linux-7900xtx-bigmaps.md`. Changes to the plan so far: per-cell scatter seeds are used only for the new country (the old middle keeps its layout); tree impostors are replaced by a distance cut with thinning (1.2 km, 800 m on POTATO); the M map uses coarser cells; the autopilot plans long routes 3 km at a time. Open: the frame time on the 6 km map is about +26% (CPU loops over the bigger map), and the server uses 560 MB. Next: phase 5 (rivers, waterfall).
+Status: **approved 2026-10-22 with the owner's answers (section 0).** Phases 0-3 are merged. Phase 4, the 6 km Backcountry land, is on `wip/bigmaps-p4`: drivable, with the world cache packed (35 MB) and the autopilot planning in a window round the route. Measurements are in `docs/hardware/linux-7900xtx-bigmaps.md`. Changes to the plan so far: per-cell scatter seeds are used only for the new country (the old middle keeps its layout); tree impostors are replaced by a distance cut with thinning (1.2 km, 800 m on POTATO); the M map uses coarser cells; the autopilot plans long routes 3 km at a time. The 6 km map's frame time now matches the old 1.2 km Backcountry's, and the server uses 436 MB (`wip/bigmaps-perf`). Next: phase 5 (rivers, waterfall).
 
 ## Summary (the 10 lines)
 
