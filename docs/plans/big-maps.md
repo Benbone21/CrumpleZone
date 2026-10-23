@@ -1,7 +1,7 @@
 # Big maps: a 6 x 6 km Backcountry and Frontier, with rivers, waterfalls and places to find
 
 Plan for PI-TASKS #26 (big maps, points of interest) and #27 (rivers, waterfalls, every model in use).
-Status: **approved 2026-10-22 with the owner's answers (section 0).** Phases 0-3 are merged. Phase 4, the 6 km Backcountry land, is on `wip/bigmaps-p4`: drivable, with the world cache packed (35 MB) and the autopilot planning in a window round the route. Measurements are in `docs/hardware/linux-7900xtx-bigmaps.md`. Changes to the plan so far: per-cell scatter seeds are used only for the new country (the old middle keeps its layout); tree impostors are replaced by a distance cut with thinning (1.2 km, 800 m on POTATO); the M map uses coarser cells; the autopilot plans long routes 3 km at a time. Open: the frame time on the 6 km map is about +26% (CPU loops over the bigger map), and the server uses 560 MB. Next: phase 5 (rivers, waterfall).
+Status: **approved 2026-10-22 with the owner's answers (section 0).** Phases 0-3 are merged. Phase 4, the 6 km Backcountry land, is on `wip/bigmaps-p4`: drivable, with the world cache packed (35 MB) and the autopilot planning in a window round the route. Measurements are in `docs/hardware/linux-7900xtx-bigmaps.md`. Changes to the plan so far: per-cell scatter seeds are used only for the new country (the old middle keeps its layout); tree impostors are replaced by a distance cut with thinning (1.2 km, 800 m on POTATO); the M map uses coarser cells; the autopilot plans long routes 3 km at a time. Open: the frame time on the 6 km map is about +26% (CPU loops over the bigger map), and the server uses 560 MB. Next: phase 5 (rivers, waterfall). Phase 5 (rivers and falls) is on `wip/bigmaps-p5`: see its notes under Phase 5.
 
 ## Summary (the 10 lines)
 
@@ -383,6 +383,15 @@ Each phase is on its own branch from main, merged by the owner. Before and after
   - in-game screenshots of Bear Falls by day and at night;
   - the falls roar audible at 250 m and silent at 400 m;
   - fingerprint unchanged.
+
+**Phase 5 as built (2026-10-22, `wip/bigmaps-p5`):**
+- Water level and current are read at every node of a car (and the intake's level at the intake). Fingerprint unchanged. (A drag that grew with the square of the depth was tried and backed out: it threw the autopilot's Far Side run into 8% damage.)
+- `src/rivers.{h,cpp}`: the classes and Elk River's stretches out in the new country: fords (0.5 m, gravel, posts) at x = +-800, 1560, 2800, -1750; pools (1.25 m) at 1300, 2250, -1100, -2100, -2750; riffles (0.3 m) between; runs of 0.8 m elsewhere. `World::rivers` (a spot every 4 m) and `World::falls` go into the world cache (format 4).
+- Two falls, both in Bear Creek Canyon: **BEAR FALLS** (18 m, SHEET, x = 1900) and **UPPER FALLS** (6 m, CASCADE, x = 2600), each with a rock chute above, a 2.2-2.7 m plunge pool below and a gorge cut back into the canyon floor. (Not the plan's Little Falls in Badlands Wash: there's no creek there yet.)
+- The falls are drawn by the water pass (no extra draw call); their roar is one world voice, the loudest falls from where you are. River sound is still the load-time flood fill.
+- Plunge pools behave as Frontier's deep water: a car is held up (not afloat: the buoyancy is under its weight) and a car that can roll is carried off at about the current's speed.
+- Not done: bridges, recovery anchors at deep crossings, river sound points every 50 m.
+- See it: `./crumplezone --map 4 --eye 1838,34,8,-20,12` (Bear Falls from its pool), `--eye 2565,4,6,-18,6` (Upper Falls), `--spawn 800,4,-90 --eye 784,-24,4,-60,-8` (a truck in the east ford).
 
 ### Phase 6: trail network (`wip/bigmaps-6-trails`) [Sonnet; Pi for sign and marker placement from the route tables]
 - **Files:** `tools/trailroute.cpp`, the trail tables in `backcountry.cpp` (or `backcountry_trails.cpp`), signs and map boards, and the autopilot place list.
