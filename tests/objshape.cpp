@@ -38,6 +38,7 @@ std::vector<Rock> makeRocks(World& w, bool scanned) {
     double x = -100;
     for (const Spec& s : kSpecs) {
         out.push_back(w.addRock(x, -118, s.radii, s.top, s.seed, 1));
+        out.back().parts.clear();  // (these check the convex primitives against the hull's own mesh; the pieces have their own test, props/flat-rock-top)
         x += 18;
     }
     w.rocks.clear();
