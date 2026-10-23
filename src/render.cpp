@@ -3056,8 +3056,12 @@ void Renderer::drawTerrain(const M4& vp, const View& view, const std::function<v
         if (!chunk.backdrop && chunk.slot < 0 && chunkGroup_[i] >= 0 && farGroups_[chunkGroup_[i]].loaded == 0) continue;  // (drawn with its group)
         geometryStats_.terrainFullTriangles += (chunk.backdrop ? chunk.count[0] : terrainLods_[chunk.lodSet].count[0]) / 3;
         if (!chunk.bounds.visible(vp)) continue;
-        const bool farPatch = !chunk.backdrop && chunk.slot < 0;  // (far, and cheap: not worth the horizon test)
-        if (!farPatch && occl_.occluded(chunk.bounds)) { ++geometryStats_.terrainOccluded; continue; }
+        // (A far patch is cheap: not worth the horizon test. On a big map neither is a loaded chunk under 64 m or past 450 m off: the
+        // ground is drawn last, nearest first, so what's behind a hill is turned away by the depth test before it's shaded, and the
+        // test costs more than its vertices.)
+        const bool farPatch = !chunk.backdrop && chunk.slot < 0;
+        const double cd = terrainAll_ ? 0 : chunk.bounds.distance(view.eye);
+        if (!farPatch && (terrainAll_ || (cd > 64 && cd < 450)) && occl_.occluded(chunk.bounds)) { ++geometryStats_.terrainOccluded; continue; }
         (chunk.backdrop || chunk.slot < 0 ? coarse_ : fine_).push_back({(float)chunk.bounds.distance(view.eye), (int)i});
     }
     std::sort(fine_.begin(), fine_.end());
@@ -5079,7 +5083,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         if (!noVegShadow) {
             // (shadows from the lighter copies; a bush's only near the eye: further off it's a speck)
             geometryStats_.shadowSceneryVertices += trees_.draw({lightVP[c], view.eye, vegDetail(), 1 + c, true, 1, nullptr, terrainAll_ ? 0.0 : 600.0}, &vegStats_.treesShadow);  // (a big map: the cascades reach a few hundred metres)
-            geometryStats_.shadowSceneryVertices += bushes_.draw({lightVP[c], view.eye, vegDetail(), 0, true, 0.5}, &vegStats_.bushesShadow);
+            geometryStats_.shadowSceneryVertices += bushes_.draw({lightVP[c], view.eye, vegDetail(), 0, true, 0.5, nullptr, terrainAll_ ? 0.0 : 400.0}, &vegStats_.bushesShadow);
         }
         UseProgram(progDepth);
         drawBatches(sceneryVao, sceneryBatches, lightVP[c], true);

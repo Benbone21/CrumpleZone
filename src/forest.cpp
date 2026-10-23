@@ -286,6 +286,18 @@ void Picker::build(const Set& s) {
         c.lo = V3(std::min(c.lo.x, m.x - r), std::min(c.lo.y, m.y - r), std::min(c.lo.z, m.z - r));
         c.hi = V3(std::max(c.hi.x, m.x + r), std::max(c.hi.y, m.y + r), std::max(c.hi.z, m.z + r));
     }
+    blocks_.clear();
+    std::map<std::pair<int, int>, int> bat;
+    for (const auto& kv : at) {
+        const std::pair<int, int> key((int)std::floor(kv.first.first / 8.0), (int)std::floor(kv.first.second / 8.0));
+        auto it = bat.find(key);
+        if (it == bat.end()) it = bat.emplace(key, (int)blocks_.size()).first, blocks_.emplace_back();
+        Block& b = blocks_[it->second];
+        const Cell& c = cells_[kv.second];
+        b.cells.push_back(kv.second);
+        b.lo = V3(std::min(b.lo.x, c.lo.x), std::min(b.lo.y, c.lo.y), std::min(b.lo.z, c.lo.z));
+        b.hi = V3(std::max(b.hi.x, c.hi.x), std::max(b.hi.y, c.hi.y), std::max(b.hi.z, c.hi.z));
+    }
 }
 
 void Picker::pick(const Set& s, const View& v, std::vector<std::vector<Pick>>& buckets) {
@@ -304,13 +316,23 @@ void Picker::pick(const Set& s, const View& v, std::vector<std::vector<Pick>>& b
     }
     // (nearest cells first, and the near LODs drawn first: what's in front fills the depth first, so less is shaded behind it)
     order_.clear();
-    for (int k = 0; k < (int)cells_.size(); k++) {
-        RenderBounds b;
-        b.lo = cells_[k].lo, b.hi = cells_[k].hi;
-        if (v.maxDist > 0 && b.distance(v.eye) > v.maxDist) continue;
-        if (b.visible(v.vp) && !(v.hidden && v.hidden->occluded(b))) order_.push_back({b.distance(v.eye), k});
+    for (const Block& bl : blocks_) {
+        RenderBounds bb;
+        bb.lo = bl.lo, bb.hi = bl.hi;
+        if ((v.maxDist > 0 && bb.distance(v.eye) > v.maxDist) || !bb.visible(v.vp)) continue;  // (then so is every cell in it)
+        for (int k : bl.cells) {
+            RenderBounds b;
+            b.lo = cells_[k].lo, b.hi = cells_[k].hi;
+            if (v.maxDist > 0 && b.distance(v.eye) > v.maxDist) continue;
+            if (!b.visible(v.vp)) continue;
+            // (A big map: the horizon test only from 200 to 600 m. Nearer, a cell is next to never behind a hill; further, it holds
+            // few trees after the thinning. Either way the test costs more than drawing what it would save.)
+            const double dist = b.distance(v.eye);
+            const bool hid = v.hidden && !(v.maxDist > 0 && (dist < 200 || dist > 600)) && v.hidden->occluded(b);
+            if (!hid) order_.push_back({dist, k});
+        }
     }
-    std::sort(order_.begin(), order_.end());
+    std::sort(order_.begin(), order_.end());  // (by distance, then cell: the same order whatever order the blocks came in)
     for (const auto& ok : order_)
         for (int i : cells_[ok.second].inst) {
             const Inst& in = s.inst[i];

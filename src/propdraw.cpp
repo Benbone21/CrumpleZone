@@ -869,6 +869,7 @@ void PropRenderer::select(const float pl[6][4], bool useBillboards, int lodBias,
                      dz = std::max({mn.z - eye.z, 0.0, eye.z - mx.z});
         return maxSize < cull * std::sqrt(dx * dx + dy * dy + dz * dz);
     };
+    const bool big = world && world->halfSize() > 1000;
     for (const Block& bl : blocks) {
       if (!boxInFrustum(pl, bl.mn, bl.mx) || tooFar(bl.mn, bl.mx, bl.maxSize)) continue;
       for (int ci : bl.cells) {
@@ -877,7 +878,9 @@ void PropRenderer::select(const float pl[6][4], bool useBillboards, int lodBias,
         if (!shadowPass && occluder) {
             RenderBounds b;
             b.add(c.mn), b.add(c.mx);
-            if (occluder->occluded(b)) continue;
+            // (A big map: the horizon test only from 64 to 450 m, as for the ground: render.cpp drawTerrain.)
+            const double d = big ? b.distance(eye) : 100;
+            if (d > 64 && d < 450 && occluder->occluded(b)) continue;
         }
         for (int i : c.inst) {
             Inst& in = statics[i];

@@ -14,6 +14,9 @@
 // Run it as an ordinary user, not root, behind a firewall that lets through only the game port.
 
 #include <unistd.h>
+#ifdef __GLIBC__
+#include <malloc.h>
+#endif
 
 #include <chrono>
 #include <cmath>
@@ -199,6 +202,12 @@ int main(int argc, char** argv) {
     // (The server runs no physics: its parked trucks stay as built, and are told to the others
     // at the sleeping rate rather than twenty times a second.)
     for (Car& c : sim.cars) c.sleeping = true;
+    // Only what the server uses of the world stays: the land, what's solid on it, the spawn pads and the shops (it puts a
+    // joining player down on it, and relays the rest). What's only drawn goes, and the memory the build used is handed back.
+    sim.world.trimForServer();
+#ifdef __GLIBC__
+    malloc_trim(0);
+#endif
 
     // Host the session
     NetSession net;

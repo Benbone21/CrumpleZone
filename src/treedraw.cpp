@@ -182,7 +182,11 @@ unsigned TreeDraw::draw(const forest::View& view, VegStats::Pass* stats) {
     if (runs_.empty()) return 0;
     BindVertexArray(vao_);
     BindBuffer(GL_ARRAY_BUFFER, instVbo_);
-    BufferData(GL_ARRAY_BUFFER, instCap_ * sizeof(float), nullptr, GL_STREAM_DRAW);  // (orphaned: the last pass's draws keep theirs)
+    // (Orphaned: the last pass's draws keep theirs. Sized to what this pass draws, rounded up, not to every instance on the map:
+    // on a big map that's megabytes a pass for a few thousand trees.)
+    size_t cap = 4096;
+    while (cap < data_.size()) cap *= 2;
+    BufferData(GL_ARRAY_BUFFER, std::min(cap, std::max(instCap_, data_.size())) * sizeof(float), nullptr, GL_STREAM_DRAW);
     BufferSubData(GL_ARRAY_BUFFER, 0, data_.size() * sizeof(float), data_.data());
     unsigned verts = 0;
     for (const Run& r : runs_) {

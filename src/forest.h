@@ -89,6 +89,12 @@ public:
 
 private:
     std::vector<Cell> cells_;
+    // The cells 8 x 8 at a go (512 m), each block's box round its cells': a big map's cells are passed over a block at a time.
+    struct Block {
+        V3 lo = V3(1e30, 1e30, 1e30), hi = V3(-1e30, -1e30, -1e30);
+        std::vector<int> cells;
+    };
+    std::vector<Block> blocks_;
     std::vector<std::pair<double, int>> order_;
 };
 

@@ -1673,3 +1673,10 @@ uint64_t World::landHash() const {
     for (const Station& s : stations) at(s.p);
     return h;
 }
+
+void World::trimForServer() {
+    std::vector<uint8_t>().swap(paint);
+    std::vector<Bush>().swap(bushes);
+    std::vector<Tag>().swap(tags);
+    for (Rock& k : rocks) std::vector<Rock>().swap(k.parts);
+}

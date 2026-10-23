@@ -434,4 +434,7 @@ public:
     // log, box, model and station stands (to 1 cm). Two machines with the same hash have built the same map (the
     // multiplayer world check; the tests' "the map didn't change"). A few ms on today's maps.
     uint64_t landHash() const;
+    // The dedicated server's copy (it runs no physics or drawing, only puts a joining player down by the start): what's only drawn
+    // (paint, bushes, labels) and the big rocks' convex pieces (their hulls do for that) go. The land hash is the same.
+    void trimForServer();
 };
