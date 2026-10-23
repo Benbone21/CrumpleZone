@@ -1465,7 +1465,10 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         baja.hubMass = 14;
         baja.frontSusp = WISHBONE;    // torsion-beam trailing arms (see above)
         baja.rearSusp = WISHBONE;     // IRS trailing arms on long-travel shocks
-        baja.armLower = 0.34, baja.armUpper = 0.28;
+        // (Long-travel arms, as the kits use. On the stock-length 34 / 28 cm ones the tire was
+        // dragged ~6 m/s sideways across the ground at full bump, and that scrub jacked a front
+        // corner onto its rim landing the kicker level: a pinched tire at 76 km/h.)
+        baja.armLower = 0.46, baja.armUpper = 0.38;
         baja.rideFreqFront = 1.30;
         baja.rideFreqRear = 1.40;
         baja.dampingRatio = 0.40;     // race shocks, two per wheel at the back

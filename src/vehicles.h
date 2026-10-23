@@ -88,6 +88,10 @@ enum WheelStyle { WHEEL_ALLOY = 0, WHEEL_OFFROAD_BRONZE = 1, WHEEL_OFFROAD_BLACK
 enum LampStyle { LAMP_RECT = 0, LAMP_ROUND = 1, LAMP_SLIM = 2 };
 enum GrilleStyle { GRILLE_CENTER = 0, GRILLE_WIDE = 1, GRILLE_INTAKE = 2 };
 
+// Every tire's grip, on top of each vehicle's tireGrip and the tread and surface tables (kTreadGrip, surfaceInfo):
+// one global factor (owner, 2026-10-22: "up the traction on all tires by 10%").
+constexpr double kTireGripScale = 1.10;
+
 struct VehicleSpec {
     const char* name;        // shown in the HUD
     const char* id = "";     // short lowercase name (test names, save file)
@@ -228,7 +232,8 @@ struct VehicleSpec {
     int stockTireType = -1;
     double tireRatingKmh() const;
     int snowChains = 0;           // chains carried, one per tire (fitted on foot: interact.h)
-    double tireGrip = 1.1;    // peak friction coefficient on pavement
+    double tireGrip = 1.1;    // peak friction coefficient on pavement (before kTireGripScale)
+    double tireMu() const { return tireGrip * kTireGripScale; }  // what the rubber really grips with
     double lateralGrip = 1.0; // cornering grip as a share of braking/traction grip (blocky off-road treads squirm)
     enum Drive { RWD, FWD, AWD } drive;
     bool midEngine = false;   // engine ahead of the rear axle, gearbox and diff in one transaxle

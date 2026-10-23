@@ -19,7 +19,8 @@ SCENARIO(vehicle_acceleration_comparison, "vehicle-physics/acceleration",
 
     for (int i = 0; i < 4; i++) {
         const VehicleSpec& spec = vehicleCatalog()[indices[i]];
-        Car& c = ctx.add(spec, 0, 0, 0);
+        // (Each in its own lane: started in one, each ran into the last one coasting at the end.)
+        Car& c = ctx.add(spec, 0, 10.0 * i, 0);
         ctx.focus(c);
         ctx.run(0.5);
 
@@ -119,7 +120,8 @@ SCENARIO(vehicle_top_speed_comparison, "vehicle-physics/top-speed",
 
     for (int i = 0; i < 4; i++) {
         const VehicleSpec& spec = vehicleCatalog()[indices[i]];
-        Car& c = ctx.add(spec, 0, 0, 0);
+        // (Each in its own lane: in one, each ran down the one before, still rolling.)
+        Car& c = ctx.add(spec, 0, 10.0 * i, 0);
         ctx.focus(c);
         ctx.run(0.5);
 

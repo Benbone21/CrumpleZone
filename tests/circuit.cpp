@@ -97,7 +97,7 @@ Lap lap(Ctx& ctx, const VehicleSpec& spec, double latG, double brakeG, bool keys
             // As a player on the keyboard: left/right held or not, and the throttle/brake keys.
             // Feathering the keys (as a practised player does): a held key asks for the
             // grip limit, so tap to hold the input at the share of it the line needs.
-            const double aMax = 9.81 * spec.tireGrip * spec.lateralGrip * 0.85;
+            const double aMax = 9.81 * spec.tireMu() * spec.lateralGrip * 0.85;
             const double full = std::atan(c.wheelbase * aMax / std::max(1.0, v * v)) + 0.045;
             const double frac = clampd(want / std::min(0.6, full), -1, 1);
             const bool left = c.steerInput < frac - 0.06, right = c.steerInput > frac + 0.06;

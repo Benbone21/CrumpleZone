@@ -70,7 +70,7 @@ double steerLimit(const Car& c, double wanted) {
     grip = n ? grip / n : 1.0;
     double df = c.spec->downforce * vf * vf;
     if (c.spec->downforceMax > 0) df = std::min(df, c.spec->downforceMax);
-    const double aMax = 9.81 * c.spec->tireGrip * c.spec->lateralGrip * grip * (1 + df / std::max(1.0, c.mass * 9.81)) * 0.85;
+    const double aMax = 9.81 * c.spec->tireMu() * c.tempGrip() * c.spec->lateralGrip * grip * (1 + df / std::max(1.0, c.mass * 9.81)) * 0.85;
     // (Extra lock only when steering into a slide, to catch it: not to wind on more of the turn.)
     const double beta = std::atan2(dot(fr.vel, fr.left), std::max(1.0, std::fabs(vf)));
     const double catchLock = wanted * beta > 0 ? std::fabs(beta) : 0.0;

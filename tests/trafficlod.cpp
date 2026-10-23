@@ -211,34 +211,46 @@ SCENARIO(lodHandover, "trafficlod/no-pop", "No jump in position or velocity when
 }
 
 SCENARIO(lodHit, "trafficlod/hit-takes-full-damage", "A car that was a proxy and is hit takes the crash a never-proxied car takes") {
+    // (A rear-ender's crumple picks its own buckling order: one hit took 6% or 14% by a
+    // hair's difference. Each side is the mean of three, the hitter a little left, dead
+    // behind and a little right.)
     double dmg[2] = {0, 0}, dmgB[2] = {0, 0};
-    for (int lod = 0; lod < 2; lod++) {
-        Sim sim;
-        sim.setupEmpty();
-        Ctx cx(sim);
-        Setup s;
-        Car& c = addTraffic(cx, s, lod == 1);
-        cx.run(12);
-        if (lod) cx.check("proxy before the hit", c.proxy);
-        if (lod) {  // somebody comes near: it wakes (and nobody is driving it after)
-            sim.lodWatch = {c.frame().com};
-            cx.run(0.1);
-            sim.lodWatch.clear();
-            cx.check("woke", !c.proxy);
+    bool hurt = true;
+    for (int lod = 0; lod < 2; lod++)
+        for (double off : {-0.2, 0.0, 0.2}) {
+            Sim sim;
+            sim.setupEmpty();
+            Ctx cx(sim);
+            Setup s;
+            Car& c = addTraffic(cx, s, lod == 1);
+            cx.run(12);
+            if (lod) cx.check("proxy before the hit", c.proxy);
+            if (lod) {  // somebody comes near: it wakes (and nobody is driving it after)
+                sim.lodWatch = {c.frame().com};
+                cx.run(0.1);
+                sim.lodWatch.clear();
+                cx.check("woke", !c.proxy);
+            }
+            c.ai = false;
+            // Both hit in the same place: the pad, level. (Where each had got to along the loop
+            // road was ~20 m apart on a 13% downhill, launched level off it: two different
+            // crashes, ~2x apart in damage, whichever had been a proxy.)
+            c.placeUpright(sim.world, -120, -50, 0);
+            cx.run(1.0);
+            c.handbrake = 0;
+            cx.launch(c, 20);
+            c.throttle = c.brake = 0;
+            // A Blazer 14 m behind it, closing at 50 km/h.
+            const Frame f = c.frame();
+            const V3 back = norm(V3(f.fwd.x, 0, f.fwd.z)), left(back.z, 0, -back.x);
+            const V3 p = f.com - back * 14 + left * off;
+            Car& b = cx.add(blazer(), p.x, p.z, std::atan2(-back.z, back.x) * 180 / M_PI);
+            cx.launch(b, 20 + 50 / 3.6);
+            cx.run(3);
+            hurt &= c.damage > 0.01;
+            dmg[lod] += c.damage / 3, dmgB[lod] += b.damage / 3;
         }
-        c.ai = false;
-        cx.launch(c, 20);
-        c.throttle = c.brake = 0;
-        // A Blazer 14 m behind it, closing at 50 km/h.
-        const Frame f = c.frame();
-        const V3 back = norm(V3(f.fwd.x, 0, f.fwd.z));
-        const V3 p = f.com - back * 14;
-        Car& b = cx.add(blazer(), p.x, p.z, std::atan2(-back.z, back.x) * 180 / M_PI);
-        cx.launch(b, 20 + 50 / 3.6);
-        cx.run(3);
-        dmg[lod] = c.damage, dmgB[lod] = b.damage;
-    }
-    ctx.check("both crashes hurt", dmg[0] > 0.01 && dmg[1] > 0.01);
+    ctx.check("every crash hurts", hurt);
     ctx.metric("hit car's damage, was a proxy / never", dmg[1] / std::max(dmg[0], 1e-6), "", 0.6, 1.6);
     ctx.metric("hitter's damage, proxy minus never", dmgB[1] - dmgB[0], "", -0.2, 0.2);
 }

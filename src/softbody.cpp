@@ -1141,6 +1141,14 @@ int Car::treadType(const Wheel& wh) const {
     return wh.chained ? (int)TIRE_CHAINS : std::min(std::max(spec->tireType, 0), TIRE_TYPES - 1);
 }
 
+double Car::tempGrip() const {
+    double sum = 0;
+    int n = 0;
+    for (const Wheel& wh : wheels)
+        if (wh.mounted && !wh.detached) sum += 1 + (tireTempGrip(treadType(wh), wh.tempC) - 1) * tempWeight(wh.surface), n++;
+    return n ? sum / n : 1.0;
+}
+
 void Car::recalibrateSpeedo() {
     speedoCalR = 0;
     if (wheels.empty() || !spec) return;
@@ -1249,8 +1257,13 @@ void Car::buildWheelRub() {
             double allow[7] = {0, 0, 0, 0, 0, 0, 0};
             for (double up : {-droop, -0.5 * droop, 0.0, 0.5 * bump, bump})
                 for (double kp : {0.0, 0.08})
-                    for (double st : {-0.62, -0.31, 0.0, 0.31, 0.62}) {
-                        if (!wh.front && st != 0) continue;
+                    // (Every ~4 degrees through the lock, past full lock's inner wheel (Ackermann
+                    // turns it ~0.62): sampled at only 0, +-0.31 and +-0.62, the tire's arc between
+                    // them cut into a side-by-side's wheel well, and it rubbed 20-40 kN at
+                    // a third of its lock in ordinary driving.)
+                    for (int sti = -10; sti <= 10; sti++) {
+                        const double st = 0.068 * sti;
+                        if (!wh.front && sti != 0) continue;
                         // (Steered about the kingpin, up to ~8 cm inboard of the wheel's middle, so
                         // the tire swings round in an arc rather than turning on the spot.)
                         const double cs = std::cos(st), sn = std::sin(st);
@@ -1721,7 +1734,8 @@ void Car::wheelStep(double h, const World& w) {
 
         const double R = wh.rollR();
         // (A blown tire runs on what's left of it; a rim or a bare hub on steel.)
-        const double mu = spec->tireGrip * (!wh.mounted ? 0.3 : wh.debeaded ? 0.45 : wh.popped ? 0.55 : 1.0);
+        // (Bare steel - a rim, a hub - doesn't get the rubber's kTireGripScale.)
+        const double mu = (!wh.mounted ? 0.3 * spec->tireGrip : wh.debeaded ? 0.45 * spec->tireGrip : wh.popped ? 0.55 * spec->tireMu() : spec->tireMu());
         const bool tire = wh.mounted && !wh.debeaded;  // rubber on the ground (else steel)
         // Blowout: a tire at or past its speed rating can fail (tires.h). Each step past the rating rolls a
         // deterministic die. The owner decides: a remote car's tire arrives in the snapshot (popped).
@@ -1762,6 +1776,17 @@ void Car::wheelStep(double h, const World& w) {
             double grip = si.grip * kTreadGrip[tread][ct.surface];
             // Cold rubber is hard, overheated rubber greasy (tiretemp.h).
             grip *= 1 + (tireTempGrip(tread, wh.tempC) - 1) * tempWeight(ct.surface);
+            // Leaned far over on it (a truck shoved onto two wheels, a sidewall against a rock),
+            // the tread lifts and the round shoulder and smooth sidewall take the ground: past
+            // ~15 degrees of camber it holds less and less, ~40% less by ~37.
+            grip *= 1 - 0.4 * smoothstep(0.26, 0.6, std::fabs(dot(axis, n)));
+            // Under water (a ford, a riverbed) the stones are rounded, silted and slimed, and the
+            // water lubricates the patch: it grips like wet ground, the deeper the more. (Else a
+            // car near afloat in a current held its spot on four tires' worth of gravel.)
+            if (w.hasWater()) {
+                const double depth = w.waterLevel(c.x, c.z) - (c.y - R);
+                if (depth > 0) grip *= 1 - 0.3 * smoothstep(0, 0.4, depth);
+            }
             if (ct.surface != SURF_PAVED && ct.surface != SURF_WET && ct.surface != SURF_ICE) grip *= (1 + 0.012 * psiDrop) * spec->looseGrip;
             // Mud packed into the tread turns it into a slick.
             grip *= 1 - (tread == TIRE_MUD_TERRAIN ? 0.25 : tread == TIRE_CHAINS ? 0.15 : tread == TIRE_RACE_SLICK ? 0.5 : 0.4) * wh.clog;
@@ -3056,7 +3081,7 @@ void Sim::updateAI(double dt) {
 
 double aiCornerAccel(const Car& c) {
     const VehicleSpec* spec = c.spec;
-    const double tireK = std::min(1.0, spec->tireGrip * spec->lateralGrip / 0.72);
+    const double tireK = std::min(1.0, spec->tireMu() * c.tempGrip() * spec->lateralGrip / 0.72);
     const double height = spec->layerY.back();
     return std::min(clampd(6.5 - 3.0 * (height - 1.4) - (c.mass - 1300) / 800, 3.2, 5.5) * tireK, spec->openFrame && spec->wheelRadius > 0.45 ? 3.3 : 9.0);
 }
@@ -3312,7 +3337,7 @@ void Sim::drive(bool up, bool down, bool left, bool right, bool hb, double dt) {
         grip = n ? grip / n : 1.0;
         double df = c.spec->downforce * vf * vf;
         if (c.spec->downforceMax > 0) df = std::min(df, c.spec->downforceMax);
-        const double aMax = 9.81 * c.spec->tireGrip * c.spec->lateralGrip * grip * (1 + df / std::max(1.0, c.mass * 9.81)) * 0.85;
+        const double aMax = 9.81 * c.spec->tireMu() * c.tempGrip() * c.spec->lateralGrip * grip * (1 + df / std::max(1.0, c.mass * 9.81)) * 0.85;
         // (The extra lock for a slide only when steering into it, to catch it: not to wind
         // on more of the turn that's already sliding.)
         const double beta = std::atan2(dot(fr.vel, fr.left), std::max(1.0, std::fabs(vf)));

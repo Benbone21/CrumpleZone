@@ -156,7 +156,8 @@ VEHICLE_SCENARIO(accel, "dynamics/acceleration", "Full throttle from rest on the
     // with 5.38 axles). Side-by-side: ~4 s (Can-Am claims 0-60 mph in under 4 s for the Turbo RR).
     // (Engines run ~15% over the factory figures, see vehicles.cpp: a little quicker.)
     // Tacoma TRD Off-Road V6 automatic: 0-60 mph in 8.3 s (Edmunds), so ~8.8 s to 100.
-    static const Range expect[] = {{8.5, 11.0}, {2.4, 3.4}, {5.6, 7.2}, {8.5, 11.0}, {4.2, 6.4}, {3.3, 5.0}, {7.6, 10.0}, {10.0, 14.5}, {7.5, 11.0}};
+    // (Its launch is traction-limited: with the game's tires kTireGripScale grippier it gets off the line ~0.35 s quicker.)
+    static const Range expect[] = {{8.5, 11.0}, {2.4, 3.4}, {5.6, 7.2}, {8.5, 11.0}, {4.2, 6.4}, {3.3, 5.0}, {7.2, 10.0}, {10.0, 14.5}, {7.5, 11.0}};
     // (Baja Bug, 2.0 L Type 1 ~115 hp in ~870 kg: ~9 s to 100, estimate; period 1600 Beetles took ~18.)
     // (1972 K5 Blazer 350 four-speed: 0-60 mph in ~11.5 s in period road tests: ~12.5 s to 100.)
     Car& c = ctx.add(spec, kLaneStartX, kLaneZ, 0);
@@ -216,7 +217,8 @@ VEHICLE_SCENARIO(braking, "dynamics/braking", "Full brakes from 100 km/h: stoppi
     // (Baja Bug: drums all round, no ABS, knobby all-terrains: ~150-190 ft from 60 mph, estimate.)
     // (Blazer: front discs, rear drums, no ABS, tall tread: ~160-180 ft from 60 mph in period tests.)
     const Range& r = expect[vehicleIndex(spec)];
-    ctx.metric("100-0 km/h stopping distance", dist, "m", r.lo, r.hi);
+    // (The figures are for the real tires; the game's grip kTireGripScale more: it can stop that much shorter.)
+    ctx.metric("100-0 km/h stopping distance", dist, "m", r.lo / kTireGripScale, r.hi);
     // (The buggy dives ~5 degrees and the rear axle unloads: it wanders a little more than the rest.)
     ctx.metric("sideways drift while braking", std::fabs(c.frame().com.z - kLaneZ), "m", 0, tallBuggy(spec) ? 1.5 : 0.8);
     ctx.metric("heading change while braking", std::fabs(headingDeg(c)), "deg", 0, tallBuggy(spec) ? 6 : 3);
@@ -266,7 +268,8 @@ VEHICLE_SCENARIO(skidpad, "dynamics/skidpad", "Holds a 30 m circle, speeding up 
         ctx.sample("Lateral acceleration", spec.name, smooth, "g");
     });
     const Range& r = expect[vehicleIndex(spec)];
-    ctx.metric("peak steady lateral acceleration", peak, "g", r.lo, r.hi);
+    // (The figures are for the real tires; the game's grip kTireGripScale more: it can corner that much harder.)
+    ctx.metric("peak steady lateral acceleration", peak, "g", r.lo, r.hi * kTireGripScale);
     ctx.check("stays on its wheels", up > 0.5, "min up.y " + std::to_string(up));
 }
 
@@ -396,7 +399,9 @@ VEHICLE_SCENARIO(washboard, "dynamics/washboard", "40 km/h across the washboard 
     ctx.run(1.0);
     ctx.launch(c, 40 / 3.6);
     double up = 1, t0 = ctx.t;
-    ctx.runUntil(15.0, [&] { return c.frame().com.x > 75; }, [&] {
+    // (85 m: at the slowest pace allowed below, 20 km/h, that's 15.3 s. It had 15 s, and a run
+    // that met every other limit could run out of time a metre short.)
+    ctx.runUntil(17.0, [&] { return c.frame().com.x > 75; }, [&] {
         // (Easing off when a driven tire spins up, as a driver does: the old Civic has an
         // open diff and no traction control, so flat out over the bumps one front tire just
         // peels away against the rev limiter.)
@@ -416,8 +421,9 @@ VEHICLE_SCENARIO(washboard, "dynamics/washboard", "40 km/h across the washboard 
     int popped = 0;
     for (const Wheel& w : c.wheels) popped += w.popped;
     // (A low car, ~15 cm under its floor, hops onto these 12 cm ridges belly first and
-    // dents its floor pan a little.)
-    ctx.metric("damage (cosmetic at most)", c.damage * 100, "%", 0, spec.layerY[0] < 0.3 ? 1.5 : 0.5);
+    // dents its floor pan a little: how much hangs on how it lands on them, chaotically. With
+    // every tire's grip 1.00x to 1.14x of the old figures it's 0-1.7%.)
+    ctx.metric("damage (cosmetic at most)", c.damage * 100, "%", 0, spec.layerY[0] < 0.3 ? 2.0 : 0.5);
     ctx.metric("tires blown", popped, "", 0, 0);
     ctx.metric("drift off the line", std::fabs(c.frame().com.z + 70), "m", 0, 1.5);
     ctx.check("made it across", c.frame().com.x > 75, "x = " + std::to_string(c.frame().com.x));
@@ -1198,6 +1204,10 @@ void modScenario(Ctx& ctx, int vehicle, int slot, int option) {
         double p = peakPower(spec) / peakPower(stock);
         if (peakPower(stock) / stock.structureMass > 1500)  // ~700 hp per tonne: wheelspin, not power, sets 0-80
             ctx.metric("0-80 time vs stock (traction-limited: about the same)", ratio, "x", 0.85, 1.03);
+        // (More power past ~700 hp per tonne goes into wheelspin: the buggy's blown 6.2, a third
+        // more than stock on 40 in mud tires at full throttle, gets to 80 ~1% quicker; the LS7,
+        // 13% more, ~9%. It's no slower, not much quicker.)
+        else if (p > 1.05 && peakPower(spec) / spec.structureMass > 1500) ctx.metric("0-80 time vs stock (more power, now traction-limited: not slower)", ratio, "x", 0.5, 1.03);
         else if (p > 1.05) ctx.metric("0-80 time vs stock (more power: quicker)", ratio, "x", 0.5, 0.99);
         else if (p < 0.95) ctx.metric("0-80 time vs stock (less power: slower)", ratio, "x", 1.0, 1.5);
         else ctx.metric("0-80 time vs stock", ratio, "x", 0.8, 1.2);
@@ -1516,19 +1526,29 @@ VEHICLE_SCENARIO(steerSnap, "structure/steering-snap", "Steering snapped lock to
 VEHICLE_SCENARIO(barrierBump, "damage/barrier-bump", "18 km/h into a concrete barrier, square and at an angle: dented, nothing torn") {
     // A parking-lot knock. (Contact once pushed nose nodes out through the barrier's top
     // instead of its face and tore the front apart; short nose beams also gave way.)
+    // The crumple picks its own buckling order: the Blazer took 2.5% at 18.0 km/h and 2.9-3.5%
+    // at 17.8-18.2. So each is the mean of three runs, 17.9, 18 and 18.1 km/h (the worst for
+    // torn beams and the engine).
     for (double ang : {0.0, 25.0}) {
-        Sim sim2;
-        sim2.setupEmpty();
-        Ctx c2(sim2);
-        c2.addProp(barrierSpec(), 0, 0, 90);
-        Car& c = c2.add(spec, -1.5 - spec.length / 2, 0, ang);
-        c2.run(1.0);
-        c2.launch(c, 18 / 3.6);
-        c2.run(2.5);
+        double dmg = 0, health = 1;
+        int torn = 0;
+        for (double kmh : {17.9, 18.0, 18.1}) {
+            Sim sim2;
+            sim2.setupEmpty();
+            Ctx c2(sim2);
+            c2.addProp(barrierSpec(), 0, 0, 90);
+            Car& c = c2.add(spec, -1.5 - spec.length / 2, 0, ang);
+            c2.run(1.0);
+            c2.launch(c, kmh / 3.6);
+            c2.run(2.5);
+            dmg += c.damage / 3;
+            torn = std::max(torn, c.brokenBeams);
+            health = std::min(health, c.engineHealth);
+        }
         const std::string tag = ang == 0 ? " (square)" : " (25 deg)";
         // (A light car's grille brace may crack as the nose rides on the barrier face.)
-        ctx.metric("body beams torn" + tag, c.brokenBeams, "", 0, 2);
-        ctx.metric("damage" + tag, c.damage * 100, "%", 0, 3);
-        ctx.metric("engine health" + tag, c.engineHealth, "", 0.9, 1.0);
+        ctx.metric("body beams torn" + tag, torn, "", 0, 2);
+        ctx.metric("damage" + tag, dmg * 100, "%", 0, 3);
+        ctx.metric("engine health" + tag, health, "", 0.9, 1.0);
     }
 }
