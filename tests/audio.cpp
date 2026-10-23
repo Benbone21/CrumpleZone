@@ -434,7 +434,11 @@ int main() {
         const auto none = placedEnergy(-1, 0, 0), shopClose = placedEnergy(WL_SHOP, 0.9f, 0), shopDistant = placedEnergy(WL_SHOP, 0.1f, 0), riverLeft = placedEnergy(WL_RIVER, 0.8f, -1);
         std::printf("  energy: none %.3g shop closeBy %.3g distant %.3g river left %.3g/%.3g\n", none.first, shopClose.first, shopDistant.first, riverLeft.first, riverLeft.second);
         check("a placed shop is audible, quieter far away, and a hard-left river sounds on the left", shopClose.first > none.first * 1.5 && shopClose.first > shopDistant.first * 5 && riverLeft.first > riverLeft.second * 20);
-        placed.setWorldVoice(0, WL_SHOP, 0.9f, 0.3f); placed.setWorldVoice(1, WL_RIVER, 0.5f, -0.5f); placed.setWorldVoice(4, WL_FOREST, 0.5f, 0);
+        const auto fallsClose = placedEnergy(WL_FALLS, 0.9f, 0), fallsFar = placedEnergy(WL_FALLS, 0.05f, 0);
+        std::printf("  energy: falls closeBy %.3g far %.3g\n", fallsClose.first, fallsFar.first);
+        check("a waterfall roars (the river slowed, dulled, and brown noise), much quieter far off", fallsClose.first > none.first * 3 && fallsClose.first > fallsFar.first * 20);
+        placed.setWorldVoice(0, WL_SHOP, 0.9f, 0.3f); placed.setWorldVoice(1, WL_RIVER, 0.5f, -0.5f); placed.setWorldVoice(4, WL_FALLS, 0.6f, 0);
+        placed.setWorldVoice(5, WL_FOREST, 0.5f, 0);
         traceAllocations = true;
         callbackAllocations = 0;
         for (int k = 0; k < 300; k++) {
@@ -442,7 +446,7 @@ int main() {
             AudioTest::render(placed, callbackBlock, 512);
         }
         traceAllocations = false;
-        check("placed shop, water and forest loops perform no C++ allocations in the callback", callbackAllocations == 0);
+        check("placed shop, water, falls and forest loops perform no C++ allocations in the callback", callbackAllocations == 0);
     }
     if (std::getenv("CZ_AUDIO_DEVICE_TEST")) {
         // With SDL_AUDIODRIVER=dummy this exercises SDL's real callback lifecycle silently.

@@ -95,7 +95,7 @@ public:
     int sfxLoaded() const { return sfxCount_; }
     // Placed loops (worldsound.h: the repair shops, rivers and brooks, the forest): voice `slot` plays WorldLoop `loop` (-1 off) at gain 0..1 and pan -1..1.
     // They follow the ambience volume and the cabin, fade in and out, and go darker with distance. A missing file leaves that loop silent.
-    static constexpr int kWorldVoices = 5;
+    static constexpr int kWorldVoices = 6;
     void setWorldVoice(int slot, int loop, float gain, float pan);
     void setHiss(float level);    // tire air hiss: 0 = off, 1 = full hiss (inflate/deflate)
     // Game thread: publish the nearest engines, with distance attenuation and stereo pan.
@@ -107,6 +107,8 @@ private:
     void render(float* out, int frames);
     void renderEffects(float* out, int frames, float dt, float sceneGain);
     void renderWorldVoices(float* out, int frames, float volume);
+    struct WorldState;
+    void renderFalls(WorldState& st, const std::vector<float>* data, float target, float tpan, float closeness, float a, float* out, int frames);
 
     uint32_t device_ = 0;
     int rate_ = 48000;
@@ -191,7 +193,8 @@ private:
     size_t streamPos_ = 0;
     std::vector<float> shopLoop_, riverLoop_, forestLoop_;  // (the placed loops; the brook is streamLoop_)
     struct WorldIn { std::atomic<int> loop{-1}; std::atomic<float> gain{0}, pan{0}; } worldIn_[kWorldVoices];
-    struct WorldState { int loop = -1; float gain = 0, pan = 0, lp = 0; size_t pos = 0; } worldState_[kWorldVoices];  // audio thread
+    // (A falls' voice reads its loop at 0.6 speed, dulled, under brown noise of its own: fpos, lp2, brown, rng.)
+    struct WorldState { int loop = -1; float gain = 0, pan = 0, lp = 0, lp2 = 0, brown = 0; size_t pos = 0; double fpos = 0; uint32_t rng = 1; } worldState_[kWorldVoices];  // audio thread
     const std::vector<float>* worldLoop(int loop) const;
     struct RopeSeen { uint32_t key = 0; double length = 0, speed = 0; bool live = false; };  // game thread
     std::vector<RopeSeen> ropesSeen_;

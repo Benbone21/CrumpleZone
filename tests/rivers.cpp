@@ -5,6 +5,9 @@
 #include <cstdlib>
 #include <string>
 
+#include "../src/modelkit.h"
+#include "../src/watermesh.h"
+#include "../src/worldsound.h"
 #include "harness.h"
 
 namespace {
@@ -187,4 +190,55 @@ SCENARIO(riversCurrent, "rivers/current-push", "A Civic in neutral dropped into 
     ctx.metric("drift downstream in 15 s", drift, "m", 2.5, 40);
     ctx.metric("drift speed, as a share of the current's", drift / 15 / std::max(0.1, len(flow)), "", 0.5, 1.2);
     ctx.check("carried with the current, more than across it", drift > aside, std::to_string(aside) + " m aside");
+}
+
+SCENARIO(riversFalls, "rivers/falls", "The Backcountry's falls: at least two where Elk River drops, each a lip of rock over a deep plunge pool, its model built to size in budget and drawn with the water, its roar heard at 250 m and not at 400") {
+    const World w(MAP_BACKCOUNTRY);
+    ctx.check("two falls or more", w.falls.size() >= 2, std::to_string(w.falls.size()));
+    const mk::ModelDef* def = mk::findModel("waterfall");
+    ctx.check("the waterfall model is in the catalog with its three designs", def && def->variants.size() == 3);
+    if (!def) return;
+    for (int v = 0; v < (int)def->variants.size(); v++) {
+        mk::Mesh m;
+        mk::build(*def, v, mk::defaults(def->variants[v]), m);
+        m.finish();
+        const size_t t = m.triangles();
+        ctx.check(def->variants[v].name + ": " + std::to_string(t) + " triangles (under 1500)", t > 100 && t < 1500);
+        bool water = true;
+        for (const mk::MVert& q : m.v) water &= mk::waterMat(q.mat);
+        ctx.check(def->variants[v].name + ": all of it water materials", water);
+    }
+    std::vector<Vtx> wv;
+    buildWaterMesh(w, wv);
+    size_t fallsVerts = 0;
+    for (const Vtx& x : wv) fallsVerts += x.c[3] > 19.5f;
+    ctx.check("the falls are drawn with the water", fallsVerts > 600 * w.falls.size(), std::to_string(fallsVerts / 3) + " triangles");
+    WorldSounds ws;
+    ws.prepare(w);
+    for (const Falls& f : w.falls) {
+        const V3 base = f.base(), down(std::cos(f.yaw), 0, -std::sin(f.yaw));
+        const double above = w.height(f.lip.x - down.x * 1.5, f.lip.z - down.z * 1.5);  // (the bed just above the lip)
+        ctx.metric(f.name + ": drop", f.height, "m", f.variant == 2 ? 4 : 12, 30);
+        ctx.check(f.name + ": the water runs to the lip", w.waterLevel(f.lip.x - down.x * 1.5, f.lip.z - down.z * 1.5) > above && std::fabs(w.waterLevel(f.lip.x - down.x * 1.5, f.lip.z - down.z * 1.5) - f.lip.y) < 0.3);
+        std::string prof;
+        for (double o = -3; o <= 4; o += 0.5) {
+            char buf[64];
+            const V3 q = f.lip + down * o;
+            std::snprintf(buf, sizeof buf, "%.1f:%.1f/%.1f ", o, w.waterLevel(q.x, q.z), w.height(q.x, q.z));
+            prof += buf;
+        }
+        ctx.check(f.name + ": no water on the grid over the drop itself", w.waterLevel(f.lip.x + down.x * 1.2, f.lip.z + down.z * 1.2) < -1e8, prof);
+        const V3 pool = base + down * 6;
+        ctx.metric(f.name + ": the plunge pool's depth", w.waterLevel(pool.x, pool.z) - w.height(pool.x, pool.z), "m", 1.9, 3.3);
+        ctx.check(f.name + ": its pool's surface is where the sheet lands", std::fabs(w.waterLevel(pool.x, pool.z) - base.y) < 0.3);
+        WorldSounds::Voice v[WorldSounds::kVoices - 1];
+        const int slot = WorldSounds::kShopVoices + WorldSounds::kWaterVoices;
+        auto at = [&](double d) {
+            ws.update(base + down * d, V3(0, 0, 1), v);
+            return v[slot].loop == WL_FALLS ? v[slot].gain : 0.0f;
+        };
+        if (f.name == "BEAR FALLS") {
+            ctx.check(f.name + ": roars at 250 m, silent at 400", at(250) > 0.02f && at(400) == 0.0f && at(30) > at(250));
+        }
+    }
 }
