@@ -353,7 +353,9 @@ void Car::computeForces(double h, const World& w) {
             // The body's sealed cabin floats it once the water's halfway up (that's what
             // lets a current carry a car off); the wheels and tires much less so.
             const double lift = &n - nodes.data() < bodyNodes ? 0.85 : 0.4;
-            n.f += V3(0, 9.81 * n.m * lift * sub, 0) - rel * (n.m * sub * (1.0 + 0.6 * len(rel)));
+            // (The drag grows with the square of how far under it is: a tire in a hand of water - a creek, a puddle - only wets its
+            // tread, while each node stands for ~0.3 m of the car.)
+            n.f += V3(0, 9.81 * n.m * lift * sub, 0) - rel * (n.m * sub * sub * (1.0 + 0.6 * len(rel)));
         }
         // The air intake: atop the engine, or up at the roof with a snorkel. Water in it (the level where the intake is)
         // hydrolocks the engine.
