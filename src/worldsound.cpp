@@ -8,7 +8,7 @@ constexpr double kShopRange = 55, kShopLoud = 0.9, kMergeShops = 6;
 
 uint64_t worldSignature(const World& w) {
     uint64_t h = (uint64_t)w.map * 1000003u;
-    for (size_t v : {w.stations.size(), w.fixtures.size(), w.models.size(), w.waters.size(), w.waterY.size()}) h = h * 1315423911u + v;
+    for (size_t v : {w.stations.size(), w.fixtures.size(), w.models.size(), w.waters.size(), w.waterY.size(), w.falls.size()}) h = h * 1315423911u + v;
     return h;
 }
 float horizontalPan(const V3& from, const V3& to, const V3& right, double d) {
@@ -27,6 +27,10 @@ float WorldSounds::falloff(double d, double range) {
     return (float)(u * u);
 }
 
+float WorldSounds::fallsGain(const Falls& f, double d) {
+    return (float)(f.loudness() * falloff(d, f.hearRange()));
+}
+
 void WorldSounds::prepare(const World& world) {
     const uint64_t sig = worldSignature(world);
     if (world_ == &world && sig == signature_) return;
@@ -38,6 +42,7 @@ void WorldSounds::prepare(const World& world) {
 void WorldSounds::build(const World& w) {
     shops_.clear();
     bodies_.clear();
+    falls_ = w.falls;
     auto addShop = [&](const V3& p) {
         for (const V3& s : shops_) if (std::hypot(s.x - p.x, s.z - p.z) < kMergeShops) return;
         shops_.push_back(p);
@@ -159,6 +164,16 @@ void WorldSounds::update(const V3& at, const V3& right, Voice out[kVoices - 1]) 
     std::sort(c.begin(), c.end(), [](const Cand& a, const Cand& b) { return a.gain > b.gain; });
     for (int i = 0; i < kWaterVoices && i < (int)c.size(); i++)
         out[kShopVoices + i] = {c[i].loop, c[i].gain, horizontalPan(at, c[i].p, right, c[i].d), c[i].d};
+    // The falls: the loudest from here, from the middle of its foot (it fills the canyon close in: no side to it within ~25 m).
+    Cand best{1e18, 0, V3(), WL_FALLS};
+    for (const Falls& f : falls_) {
+        const V3 p = f.base();
+        const double d = std::hypot(p.x - at.x, p.z - at.z);
+        const float g = fallsGain(f, d);
+        if (g > best.gain) best = {d, g, p, WL_FALLS};
+    }
+    if (best.gain > 0)
+        out[kShopVoices + kWaterVoices] = {WL_FALLS, best.gain, horizontalPan(at, best.p, right, best.d) * (float)smoothstep(10, 40, best.d), best.d};
 }
 
 WorldSounds::Voice WorldSounds::forest(int biome, float hours) {

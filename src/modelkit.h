@@ -42,7 +42,16 @@ enum Mat : uint8_t {
     FOLIAGE = 13,   // leaves, needles, grass: soft light, glows with the sun behind
     WOOD = 14,      // weathered grain
     SNOWLEAF = 15,  // snow lying on boughs and crowns: plain matte, but dissolves with the foliage under it (see-through trees)
+    // Water (the waterfall, src/models/water.cpp): drawn see-through and moving by the water shader. Their vertex colour isn't a
+    // colour but the shader's coordinates: (across, down the fall, opacity) in metres, or (u, v, phase) on a puff.
+    WATERFALL = 20,  // the falling sheet
+    FOAM = 21,       // white water where it lands and on ledges
+    SPRAY = 22,      // soft puffs of spray round its foot
+    MIST = 23,       // big, faint ones drifting off
+    RIPPLE = 24,     // rings spreading over the plunge pool
 };
+
+inline bool waterMat(int m) { return m >= WATERFALL && m <= RIPPLE; }
 
 struct MVert {
     float p[3], n[3], c[3];

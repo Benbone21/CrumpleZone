@@ -336,19 +336,20 @@ void Audio::setWinches(const Sim& sim, const V3& listener, const V3& right, doub
 
 void Audio::setWorldVoice(int slot, int loop, float gain, float pan) {
     if (slot < 0 || slot >= kWorldVoices) return;
-    if (loop < 0 || loop > 3 || !std::isfinite(gain) || !std::isfinite(pan)) loop = -1, gain = 0, pan = 0;
+    if (loop < 0 || loop > 4 || !std::isfinite(gain) || !std::isfinite(pan)) loop = -1, gain = 0, pan = 0;
     worldIn_[slot].gain = std::clamp(gain, 0.0f, 1.0f);
     worldIn_[slot].pan = std::clamp(pan, -1.0f, 1.0f);
     worldIn_[slot].loop = loop;
 }
 
-// WorldLoop (worldsound.h): 0 the repair shop, 1 the river, 2 the brook, 3 the forest.
+// WorldLoop (worldsound.h): 0 the repair shop, 1 the river, 2 the brook, 3 the forest, 4 a falls (the river, slowed: renderWorldVoices).
 const std::vector<float>* Audio::worldLoop(int loop) const {
     switch (loop) {
         case 0: return &shopLoop_;
         case 1: return &riverLoop_;
         case 2: return &streamLoop_;
         case 3: return &forestLoop_;
+        case 4: return &riverLoop_;
         default: return nullptr;
     }
 }
@@ -366,6 +367,11 @@ void Audio::renderWorldVoices(float* out, int frames, float volume) {
             if (st.gain < 1e-4f) { st.loop = want; st.gain = 0; st.pos = (size_t)s * 48611; }
         }
         const std::vector<float>* data = worldLoop(st.loop);
+        if (st.loop == 4) {  // a falls: synthesized even without the recording
+            if (target == 0 && st.gain < 1e-5f) { st.gain = 0; continue; }
+            renderFalls(st, data, target, tpan, worldIn_[s].gain, a, out, frames);
+            continue;
+        }
         if (!data || data->empty()) { st.gain = 0; continue; }
         if (target == 0 && st.gain < 1e-5f) { st.gain = 0; continue; }
         const size_t size = data->size();
@@ -381,6 +387,36 @@ void Audio::renderWorldVoices(float* out, int frames, float volume) {
             out[2 * i] += v * std::cos(angle);
             out[2 * i + 1] += v * std::sin(angle);
         }
+    }
+}
+
+// A waterfall's roar: the river recording read at 0.6 speed (lower, slower) and low-passed hard, under brown noise (a deep, steady
+// rumble) that is most of it from far off; farther is duller still.
+void Audio::renderFalls(WorldState& st, const std::vector<float>* data, float target, float tpan, float closeness, float a, float* out, int frames) {
+    static constexpr float trim = 1.4f;
+    const bool rec = data && data->size() > 2;
+    const float cut = 0.05f + 0.25f * std::sqrt(std::clamp(closeness, 0.0f, 1.0f));
+    for (int i = 0; i < frames; i++) {
+        st.gain += (target - st.gain) * a;
+        st.pan += (tpan - st.pan) * a;
+        float x = 0;
+        if (rec) {
+            const size_t n = data->size();
+            if (st.fpos >= (double)n) st.fpos -= (double)n * std::floor(st.fpos / (double)n);
+            const size_t k = (size_t)st.fpos;
+            const float f = (float)(st.fpos - (double)k);
+            x = (*data)[k] * (1 - f) + (*data)[(k + 1) % n] * f;
+            st.fpos += 0.6;
+        }
+        st.rng = st.rng * 1664525u + 1013904223u;
+        const float white = (float)(st.rng >> 8) * (1.0f / 8388608.0f) - 1.0f;
+        st.brown = st.brown * 0.996f + white * 0.02f;
+        st.lp += (x - st.lp) * cut;
+        st.lp2 += (st.lp - st.lp2) * cut;
+        const float v = (st.lp2 * 1.1f + st.brown * 0.55f) * trim * st.gain;
+        const float angle = (st.pan + 1) * 0.7853982f;
+        out[2 * i] += v * std::cos(angle);
+        out[2 * i + 1] += v * std::sin(angle);
     }
 }
 

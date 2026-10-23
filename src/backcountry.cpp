@@ -30,6 +30,7 @@
 
 #include "loadprof.h"
 #include "parallel.h"
+#include "rivers.h"
 #include "world.h"
 
 namespace {
@@ -39,7 +40,7 @@ using Poly = std::vector<V3>;
 double sq(double v) { return v * v; }
 
 // Elk River's centre line: z as a function of x (it flows west).
-double riverZ(double x) { return 14 + 36 * std::sin(x * 0.0068 + 0.9) + 12 * std::sin(x * 0.019 + 2.3); }
+double riverZ(double x) { return elkRiverZ(x); }
 constexpr double kFordX = 90, kDeepX = -100;
 constexpr double kRiverHalf = 8.0;
 
@@ -247,11 +248,20 @@ Districts districtsAt(double x, double z) {
     return {smoothstep(450, 1500, z), smoothstep(-450, -1500, z), smoothstep(450, 1500, x), smoothstep(-450, -1500, x)};
 }
 // Elk River's level across the country: rising east into Bear Creek Canyon, falling gently west.
+// In the canyon it climbs in steps besides, at Bear Falls and Upper Falls (rivers.h): riverFloor. (The land adds those steps per
+// cell, sharp: the new country's land is sampled every 4 m, which would smear a cliff.)
 double valleyFloor(double x) { return x > 540 ? 2.6 + 0.009 * (x - 540) : x < -540 ? 2.6 - 0.0008 * (-540 - x) : 2.6; }
+double riverFloor(double x) { return valleyFloor(x) + elkFallsRise(x, riverZ(x)); }
 // The big lake on the Lakeshore.
 const V3 kLake(-1850, 0, -1650);
 constexpr double kLakeR = 480, kLakeY = 1.2;
 double lakeDist(double x, double z) { return std::hypot(x - kLake.x, z - kLake.z) + 60 * (valueNoise(x * 0.004 + 3.3, z * 0.004 - 1.1) - 0.5); }
+// How far the land at (x, z) is out of Elk River's valley (0 on its floor, 1 up on the hills): the falls' steps rise with the floor.
+double valleyOpen(double x, double z, double east) {
+    const double dv = std::fabs(z - riverZ(x));
+    const double open = smoothstep(40, 380, dv), gorge = smoothstep(26, 90, dv);
+    return open + (gorge - open) * east;
+}
 // The new country's land (smooth: the build adds the metre-scale bumps).
 double outerLand(double x, double z) {
     const Districts d = districtsAt(x, z);
@@ -273,9 +283,8 @@ double outerLand(double x, double z) {
     double h = d.n * (d.w * timber + colMid * copper + d.e * lakes) + d.s * (d.w * shore + colMid * south + d.e * bad) +
                rowMid * (d.w * flats + colMid * mid + d.e * canyon);
     // Elk River's valley right across: wide and gentle, a canyon in the east.
-    const double floor = valleyFloor(x), dv = std::fabs(z - riverZ(x));
-    const double open = smoothstep(40, 380, dv), gorge = smoothstep(26, 90, dv);
-    h = floor + (h - floor) * (open + (gorge - open) * d.e);
+    const double floor = valleyFloor(x);
+    h = floor + (h - floor) * valleyOpen(x, z, d.e);
     // The lake's basin.
     const double dl = lakeDist(x, z);
     if (dl < kLakeR + 260) {
@@ -321,7 +330,8 @@ void backcountryLand(double half, int hN, std::vector<float>& out) {
         const double fu = u - a, fv = v - b;
         auto M = [&](int p, int q) { return (double)macro[(size_t)p * mn + q]; };
         return M(a, b) * (1 - fu) * (1 - fv) + M(a + 1, b) * fu * (1 - fv) + M(a, b + 1) * (1 - fu) * fv + M(a + 1, b + 1) * fu * fv +
-               0.9 * (valueNoise(x * 0.09 + 5.0, z * 0.09 + 1.0) - 0.5) + 0.35 * (valueNoise(x * 0.31, z * 0.27) - 0.5);
+               0.9 * (valueNoise(x * 0.09 + 5.0, z * 0.09 + 1.0) - 0.5) + 0.35 * (valueNoise(x * 0.31, z * 0.27) - 0.5) +
+               (x > elkFalls()[0].x - 330 ? elkFallsRise(x, z) * (1 - valleyOpen(x, z, districtsAt(x, z).e)) : 0.0);
     };
     parallelRows(hN, [&](int i) {
         for (int j = 0; j < hN; j++) {
@@ -759,6 +769,10 @@ void World::buildBackcountry() {
     for (const Pad& p : pads) levelDisc(p.c, p.r + 3, p.y, 9, PAINT_PAD, SURF_PAVED, true);
 
     steps.next("bc.elk river a");
+    Poly eastRiver, westRiver;  // (Elk River out in the new country, kept for its rocks and falls below)
+    std::vector<double> eastLevel, westLevel;
+    std::vector<RiverStretch> eastStretch, westStretch;
+    size_t riverRocks = 0;  // (the rocks its bed gets: the old map's scatter below counts to its cap without them)
     // ---- Elk River: a carved channel with water on the grid and its flow --------------------------
     // Water level: the land along the bank, smoothed, always falling toward the mouth (west).
     // Two crossings: the FORD (shallow gravel) and the DEEP CROSSING (about a metre of water).
@@ -785,15 +799,21 @@ void World::buildBackcountry() {
             depth[k] += (0.88 - depth[k]) * smoothstep(26, 9, dd);
             bankSlope[k] = 0.45 + (0.16 - 0.45) * std::max(smoothstep(60, 30, df), smoothstep(50, 26, dd));
         }
-        const double reach = kRiverHalf + 10;
         CellTiles<float> nearestD;
         nearestD.reset(hN, 1e9f);
-        auto carve = [&](const Poly& pts, const std::vector<double>& lvl, const std::vector<double>& depth, const std::vector<double>& bankSlope) {
+        // st: the stretches out in the new country (rivers.h: each point's width, current and bed; through the falls, no water).
+        auto carve = [&](const Poly& pts, const std::vector<double>& lvl, const std::vector<double>& depth, const std::vector<double>& bankSlope,
+                         const std::vector<RiverStretch>* st = nullptr) {
         const int n = (int)pts.size();
         for (int s = 0; s + 1 < n; s++) {
             const V3 &a = pts[s], &b = pts[s + 1];
             const double dx = b.x - a.x, dz = b.z - a.z, L = std::hypot(dx, dz);
             if (L < 1e-6) continue;
+            const RiverStretch* sa = st ? &(*st)[s] : nullptr;
+            const RiverStretch* sb = st ? &(*st)[s + 1] : nullptr;
+            const double ws = st ? std::max(sa->widthScale, sb->widthScale) : 1.0;
+            const bool drop = st && (sa->cls == RIVER_FALLS || sb->cls == RIVER_FALLS);
+            const double reach = st ? kRiverHalf * ws + 10 : kRiverHalf + 10;
             for (int i = cellI(std::min(a.x, b.x) - reach); i <= cellI(std::max(a.x, b.x) + reach); i++)
                 for (int j = cellI(std::min(a.z, b.z) - reach); j <= cellI(std::max(a.z, b.z) + reach); j++) {
                     const double x = X(i), z = X(j);
@@ -801,36 +821,76 @@ void World::buildBackcountry() {
                     const double dd = std::hypot(x - (a.x + dx * t), z - (a.z + dz * t));
                     if (dd > reach) continue;
                     const int id = i * hN + j;
+                    // (Out in the new country the falls part it: the cliff's face is only the drop's, and a reach doesn't carve or
+                    // water the land beyond a falls, above it or below.)
+                    if (st && (drop ? elkFallsFace(x, z) < 0 : elkFallsFace(x, z) >= 0 || elkFallsZone(x, z) != elkFallsZone(0.5 * (a.x + b.x), 0.5 * (a.z + b.z)))) continue;
                     const double level = lvl[s] + (lvl[s + 1] - lvl[s]) * t, dep = depth[s] + (depth[s + 1] - depth[s]) * t;
-                    const double wq = kRiverHalf * (0.85 + 0.3 * valueNoise(x * 0.05, z * 0.05));
+                    const double wq = kRiverHalf * ws * (0.85 + 0.3 * valueNoise(x * 0.05, z * 0.05));
+                    const bool rockBed = st && (sa->bed == BED_ROCK || sb->bed == BED_ROCK);
+                    if (drop) {  // over the lip: bare rock, and no water on the grid (the falls model is the water)
+                        if (dd < wq + 2) {
+                            if (dd < nearestD[id]) nearestD[id] = (float)dd, waterY[id] = -1e9f, flowX[id] = flowZ[id] = 0;
+                            surf[id] = SURF_ROCK, paint[id] = PAINT_ROCK, keep[id] = 1;
+                        }
+                        continue;
+                    }
                     if (dd < wq) {
                         const double u = dd / wq;
-                        hgrid[id] = (float)std::min((double)hgrid[id], level - dep * (1 - u * u) - 0.05);
-                        surf[id] = SURF_GRAVEL, paint[id] = PAINT_GRAVEL;
+                        // (Out in the new country the bed is set to the stretch's depth by the nearest of it, filled where the land
+                        // lay low: a riffle is as shallow as it's meant to be.)
+                        if (st) {
+                            if (dd < nearestD[id]) hgrid[id] = (float)(level - dep * (1 - u * u) - 0.05);
+                        } else
+                            hgrid[id] = (float)std::min((double)hgrid[id], level - dep * (1 - u * u) - 0.05);
+                        if (rockBed) surf[id] = SURF_ROCK, paint[id] = PAINT_ROCK;
+                        else surf[id] = SURF_GRAVEL, paint[id] = PAINT_GRAVEL;
                         if (dd < nearestD[id]) {
                             nearestD[id] = (float)dd;
                             waterY[id] = (float)level;
-                            // Faster where it runs downhill, slower spread over a crossing.
+                            // Faster where it runs downhill, slower spread over a crossing (out in the new country: as its stretch is).
                             const double fall = (lvl[s] - lvl[s + 1]) / L;
-                            const double sp = std::min(2.6, 1.8 * (0.6 + 40 * fall)) * (1 - 0.6 * u * u) * (dep < 0.6 ? 0.7 : 1.0);
+                            const double sp = st ? (sa->speed + (sb->speed - sa->speed) * t) * (1 - 0.6 * u * u)
+                                                 : std::min(2.6, 1.8 * (0.6 + 40 * fall)) * (1 - 0.6 * u * u) * (dep < 0.6 ? 0.7 : 1.0);
                             flowX[id] = (float)(dx / L * sp);
                             flowZ[id] = (float)(dz / L * sp);
                         }
                         keep[id] = 1;
                     } else {
-                        // Banks: down to just above the water, sandy gravel at the edge.
+                        // Banks: down to just above the water, sandy gravel at the edge (rock in the canyon).
                         const double bank = level + 0.2 + (dd - wq) * bankSlope[s];
                         if (hgrid[id] > bank) hgrid[id] = (float)(hgrid[id] + (bank - hgrid[id]) * smoothstep(reach, wq, dd));
-                        if (dd < wq + 2.5 && paint[id] == PAINT_NONE) surf[id] = SURF_GRAVEL, paint[id] = PAINT_GRAVEL;
+                        if (dd < wq + 2.5 && paint[id] == PAINT_NONE) {
+                            if (rockBed) surf[id] = SURF_ROCK, paint[id] = PAINT_ROCK;
+                            else surf[id] = SURF_GRAVEL, paint[id] = PAINT_GRAVEL;
+                        }
                         if (dd < wq + 4) keep[id] = 1;
                     }
                 }
         }
         };
         carve(pts, lvl, depth, bankSlope);
+        // The old channel's spots, for World::rivers.
+        auto record = [&](const char* name, const Poly& o, const std::vector<double>& ol, const std::vector<double>& od,
+                          const std::vector<RiverStretch>* st) {
+            River r;
+            r.name = name;
+            for (size_t k = 0; k < o.size(); k += 4) {
+                RiverSpot sp;
+                sp.p = V3(o[k].x, ol[k], o[k].z);
+                sp.depth = (float)od[k];
+                const RiverStretch q = st ? (*st)[k] : RiverStretch();
+                sp.halfWidth = (float)(kRiverHalf * (st ? q.widthScale : 1.0));
+                sp.speed = (float)(st ? q.speed : std::hypot(flowX[at(o[k].x, o[k].z)], flowZ[at(o[k].x, o[k].z)]));
+                sp.cls = (uint8_t)(st ? q.cls : riverClassForDepth(od[k]));
+                sp.bed = (uint8_t)(st ? q.bed : BED_GRAVEL);
+                r.spots.push_back(sp);
+            }
+            rivers.push_back(std::move(r));
+        };
+        record("ELK RIVER", pts, lvl, depth, nullptr);
         // Out into the new country: down Bear Creek Canyon from the east edge to the old map, and from it out by the west edge.
-        // Its level follows the valley floor, meeting the old river's at its ends; about 0.9 m deep (a snorkel's water), with a
-        // riffle (0.4 m: a truck wades it) every 500 m.
+        // Its level follows the valley floor (stepping down at the falls), meeting the old river's at its ends. Its stretches
+        // (rivers.cpp): runs of 0.8 m (a snorkel's water) between riffles, fords, pools, and the chutes and plunge pools of the falls.
         for (int side = 0; side < 2; side++) {
             std::vector<V3> ctl;
             if (side == 0)
@@ -839,8 +899,9 @@ void World::buildBackcountry() {
                 for (double x = -540; x >= -3060; x -= 30) ctl.push_back(V3(x, 0, riverZ(x)));
             const Poly o = smooth(ctl);
             const int m = (int)o.size();
-            std::vector<double> ol(m), od(m), ob(m, 0.35);
-            for (int k = 0; k < m; k++) ol[k] = valleyFloor(o[k].x) - 0.3;
+            std::vector<double> ol(m), od(m), ob(m);
+            std::vector<RiverStretch> os(m);
+            for (int k = 0; k < m; k++) ol[k] = riverFloor(o[k].x) - 0.3;
             if (side == 0) {  // (falling all the way, and into the old river's level at its end)
                 ol[m - 1] = std::max(ol[m - 1], lvl[0] + 0.002);
                 for (int k = m - 2; k >= 0; k--) ol[k] = std::max(ol[k], ol[k + 1] + 0.002);
@@ -849,11 +910,120 @@ void World::buildBackcountry() {
                 for (int k = 1; k < m; k++) ol[k] = std::min(ol[k], ol[k - 1] - 0.002);
             }
             for (int k = 0; k < m; k++) {
-                const double along = std::fabs(o[k].x) - 540, riffle = std::fabs(std::fmod(along + 250, 500.0) - 250);
-                od[k] = 0.9 - 0.5 * smoothstep(40, 12, riffle) * smoothstep(60, 160, along);
+                os[k] = elkRiverAt(o[k].x);
+                od[k] = os[k].depth, ob[k] = os[k].bankSlope;
             }
-            carve(o, ol, od, ob);
+            carve(o, ol, od, ob, &os);
+            record(side == 0 ? "ELK RIVER (BEAR CREEK CANYON)" : "ELK RIVER (WEST)", o, ol, od, &os);
+            if (side == 0) eastRiver = o, eastLevel = ol, eastStretch = os;
+            else westRiver = o, westLevel = ol, westStretch = os;
         }
+    }
+
+    steps.next("bc.river beds and falls");
+    // ---- Elk River out in the new country: scanned rocks along its edges and in its riffles, posts at its fords; its falls ------
+    // (Their own random numbers, from a hash of where they are: the map's stream, rnd() below, stays as it was.)
+    {
+        auto h01 = [](uint32_t a, uint32_t b) {
+            uint32_t h = a * 0x9E3779B1u ^ (b + 0x7F4A7C15u) * 0x85EBCA77u;
+            h ^= h >> 15, h *= 0x2C1B3C6Du, h ^= h >> 12, h *= 0x297A2D39u, h ^= h >> 15;
+            return (h & 0xFFFFFF) / double(0x1000000);
+        };
+        uint32_t rockSeed = 71000;
+        const size_t rocksBefore = rocks.size();
+        // A rock of about radius r, `above` m of it out of the ground. (Under 1.2 m, so it's one hull: no cutting at load.)
+        auto bedRock = [&](const V3& c, double r, double above) {
+            r = std::min(r, 1.1);
+            addRock(c.x, c.z, V3(r, r * 0.62, r * 0.8), above, rockSeed, 0.8f + 0.25f * (float)h01(rockSeed, 7));
+            rockSeed++;
+        };
+        auto bigRock = [&](const V3& c, double r, double above) {
+            addRock(c.x, c.z, V3(r, r * 0.7, r * 0.85), above, rockSeed, 0.85f);
+            rockSeed++;
+        };
+        auto post = [&](const V3& p) { fixtures.push_back({PROP_MARKER, V3(p.x, height(p.x, p.z), p.z), V3(), 0}); };
+        for (int side = 0; side < 2; side++) {
+            const Poly& o = side ? westRiver : eastRiver;
+            const std::vector<RiverStretch>& os = side ? westStretch : eastStretch;
+            const int m = (int)o.size();
+            for (const double fx : elkFords()) {  // fords: clear gravel, a pair of posts on each bank
+                if ((fx > 0) == (side == 1)) continue;
+                int k = 1;
+                for (int q = 1; q + 1 < m; q++)
+                    if (std::fabs(o[q].x - fx) < std::fabs(o[k].x - fx)) k = q;
+                const V3 d = norm(o[k + 1] - o[k - 1]), l(-d.z, 0, d.x);
+                const double hw = kRiverHalf * os[k].widthScale;
+                for (int sd = -1; sd <= 1; sd += 2)
+                    for (int a = -1; a <= 1; a += 2) post(o[k] + l * (sd * (hw + 4.5)) + d * (a * 3.2));
+            }
+            for (int k = 2; k + 2 < m; k += 4) {
+                const RiverStretch& q = os[k];
+                if (std::fabs(o[k].x) < 620 || q.cls == RIVER_FALLS || q.cls == RIVER_FORD) continue;
+                const V3 d = norm(o[k + 1] - o[k - 1]), l(-d.z, 0, d.x);
+                const double hw = kRiverHalf * q.widthScale;
+                const double p = q.cls == RIVER_RIFFLE ? 0.45 : q.cls == RIVER_CHUTE ? 0.6 : q.cls == RIVER_PLUNGE ? 0.5 : q.cls == RIVER_POOL ? 0.22 : 0.14;
+                const double big = q.cls == RIVER_CHUTE || q.cls == RIVER_PLUNGE ? 1.6 : 1.0;
+                for (int sd = -1; sd <= 1; sd += 2) {
+                    const uint32_t key = (uint32_t)(k * 2 + (sd > 0)), salt = (uint32_t)side * 16;
+                    if (h01(key, salt + 1) > p) continue;
+                    const double u = 0.72 + 0.4 * h01(key, salt + 2), r = (0.35 + 0.5 * h01(key, salt + 3)) * big;
+                    bedRock(o[k] + l * (sd * u * hw), r, r * 0.55);
+                }
+                // Riffles: stones in the bed, low enough to drive over at walking pace.
+                if (q.cls == RIVER_RIFFLE && h01((uint32_t)k, (uint32_t)side * 16 + 5) < 0.5) {
+                    const double u = 1.2 * h01((uint32_t)k, (uint32_t)side * 16 + 6) - 0.6;
+                    bedRock(o[k] + l * (u * hw), 0.22 + 0.18 * h01((uint32_t)k, (uint32_t)side * 16 + 8), 0.16);
+                }
+            }
+        }
+        // The falls: where the valley floor steps (rivers.cpp), the river goes over a lip of bare rock framed by boulders into
+        // a deep plunge pool, boulders round its rim.
+        const Poly& o = eastRiver;
+        const int m = (int)o.size();
+        for (const FallsSite& f : elkFalls()) {
+            int kl = -1, kb = -1;  // the last point above the lip, the first in the pool (the line runs downstream: x falling)
+            for (int k = 0; k < m; k++) {
+                if (o[k].x >= f.x) kl = k;
+                if (kb < 0 && o[k].x < f.x - kFallsFace - 0.5) kb = k;
+            }
+            if (kl < 0 || kb < 0) continue;
+            Falls fl;
+            fl.name = f.name;
+            fl.lip = V3(f.x, eastLevel[kl], riverZ(f.x));
+            fl.yaw = M_PI;  // (west, over a cliff that runs north-south across the canyon)
+            fl.height = eastLevel[kl] - eastLevel[kb];
+            fl.width = 2 * kRiverHalf * eastStretch[kl].widthScale * 0.92;
+            fl.throwOut = f.throwOut;
+            fl.variant = f.variant;
+            fl.seed = (uint32_t)(f.x * 7);
+            fl.poolR = kRiverHalf * 1.8;
+            fl.poolDepth = f.poolDepth;
+            falls.push_back(fl);
+            const V3 d = norm(o[std::min(m - 1, kl + 1)] - o[std::max(0, kl - 1)]), l(-d.z, 0, d.x);
+            const double hw = 0.5 * fl.width;
+            // The cliff and the gorge's walls below it: bare rock wherever the floor steps.
+            const double zc = riverZ(f.x);
+            for (int i = cellI(f.x - 330); i <= cellI(f.x + 2); i++)
+                for (int j = cellI(zc - 110); j <= cellI(zc + 110); j++) {
+                    const double x = X(i), z = X(j);
+                    const double g = std::fabs(elkFallsRise(x + 1, z) - elkFallsRise(x - 1, z)) + std::fabs(elkFallsRise(x, z + 1) - elkFallsRise(x, z - 1));
+                    const int id = i * hN + j;
+                    if (g < 1.5 || waterY[id] > -1e8) continue;
+                    surf[id] = SURF_ROCK, paint[id] = PAINT_ROCK, keep[id] = 1;
+                }
+            for (int sd = -1; sd <= 1; sd += 2) {
+                bigRock(V3(f.x + 3.0, 0, fl.lip.z) + l * (sd * (hw + 2.6)), 1.8 + 0.4 * h01((uint32_t)f.x, 20 + sd), 1.2);  // the lip's shoulders, on top
+                bigRock(V3(f.x - kFallsFace - 1.5, 0, fl.lip.z) + l * (sd * (fl.poolR + 1.0)), 1.6, 1.2);                   // at the cliff's foot
+            }
+            for (int k = kb + 4; k < m && k < kb + (int)f.poolLen; k += 5)
+                for (int sd = -1; sd <= 1; sd += 2)
+                    if (h01((uint32_t)k, 30 + sd) < 0.7) {
+                        const V3 dk = norm(o[std::min(m - 1, k + 1)] - o[k - 1]), lk(-dk.z, 0, dk.x);
+                        const double r = 0.9 + 0.5 * h01((uint32_t)k, 33 + sd);
+                        bedRock(o[k] + lk * (sd * (fl.poolR * (0.95 + 0.15 * h01((uint32_t)k, 36 + sd)))), r, r * 0.6);
+                    }
+        }
+        riverRocks = rocks.size() - rocksBefore;
     }
 
     steps.next("bc.paint the land");
@@ -1267,7 +1437,7 @@ void World::buildBackcountry() {
 
     steps.next("bc.boulders scattered over");
     // ---- Boulders scattered over the hills ------------------------------------------------------------
-    for (int attempt = 0; attempt < 40000 && rocks.size() < 900; attempt++) {
+    for (int attempt = 0; attempt < 40000 && rocks.size() - riverRocks < 900; attempt++) {
         const double x = (rnd() * 2 - 1) * 515, z = (rnd() * 2 - 1) * 515;
         const int id = at(x, z);
         if (keep[id] || waterY[id] > -1e8) continue;
@@ -1473,6 +1643,8 @@ V3 backcountryFeature(const char* name) {
             if (std::hypot(q.x - p.x, q.z - p.z) < std::hypot(best.x - p.x, best.z - p.z)) best = q;
         return best;
     };
+    // Elk River out in the new country (rivers.cpp): its falls' lips, its fords and pools, mid-channel.
+    if (double rx = 0; elkRiverSpot(n, rx)) return V3(rx, 0, riverZ(rx));
     if (n == "trailhead" || n == "start") return kTrailhead;
     if (n == "sawmill") return kSawmill;
     if (n == "farside") return kFarSide;

@@ -9,6 +9,7 @@
 #include "celllists.h"
 #include "celltiles.h"
 #include "plants.h"
+#include "rivers.h"
 
 // Oriented static box (ramps, walls, poles, bumps).
 struct Box {
@@ -299,6 +300,9 @@ public:
         return V3(flowX[i * hN + j], 0, flowZ[i * hN + j]);
     }
     bool hasWater() const { return !waters.empty() || !waterY.empty(); }
+    // Its rivers as laid out (rivers.h: class, depth, width, current and bed every few metres) and the waterfalls on them.
+    std::vector<River> rivers;
+    std::vector<Falls> falls;
     // Maps with rivers keep their water on the height grid: level (-1e9 dry) and flow.
     CellTiles<float> waterY, flowX, flowZ;  // (kept only in the tiles with water: celltiles.h)
     int gridSize() const { return hN; }

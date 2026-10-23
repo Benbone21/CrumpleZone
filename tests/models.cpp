@@ -33,7 +33,7 @@ bool sound(const mk::Mesh& m, std::string& why) {
             if (!std::isfinite(v.p[k]) || !std::isfinite(v.n[k]) || !std::isfinite(v.c[k])) return why = "not finite", false;
         const double nl = std::sqrt(v.n[0] * v.n[0] + v.n[1] * v.n[1] + v.n[2] * v.n[2]);
         if (std::fabs(nl - 1) > 0.01) return why = "normal not unit length", false;
-        for (int k = 0; k < 3; k++)
+        for (int k = 0; k < 3 && !mk::waterMat(v.mat); k++)  // (the water materials' colours are the shader's coordinates)
             if (v.c[k] < 0 || v.c[k] > 1.5) return why = "colour out of range", false;
     }
     if (m.v.size() % 3) return why = "not whole triangles", false;

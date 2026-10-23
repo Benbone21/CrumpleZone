@@ -169,3 +169,14 @@ Where the time went: the horizon (occlusion) test. Per test it cost about 0.6-0.
 **Small maps.** Frontier, the proving ground and Mountain render pixel-identical to main.
 
 **Dedicated server** (`--map 4`): 558 → 436 MB, from `World::trimForServer` plus `malloc_trim`.
+
+## Phase 5: rivers and falls (branch wip/bigmaps-p5)
+
+Measured 2026-10-22 about 22:00, load average 4-8 (other agents).
+
+- Physics fingerprint `bench_sim 12 separated 4000`: `da17a95524fab674` before and after (no water under the bench's cars).
+- Frame time, HIGH 1600x900, `--map 4 --bench 600,120`, A = e666a15 (phase 4), B = this branch:
+  - the trailhead lap: A 3.72 / 3.66 / 3.61 / 3.63 / 3.63 ms, B 3.78 / 3.79 / 3.78 / 3.67 / 3.63 ms (about +2%, within the noise of this hour);
+  - the lap beside Bear Falls (`--spawn 1858,62,90`): A 3.15, B 3.04 ms; the water's GPU time +0.07 ms with the falls in view.
+- The water mesh gains 1360 triangles for the two falls; Elk Valley's heights, water and objects are byte-identical to phase 4.
+
