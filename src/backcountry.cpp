@@ -261,7 +261,9 @@ double outerLand(double x, double z) {
     const double ridge = ridgedNoise(x * 0.0024 + 0.7, z * 0.0024 + 2.9, 4);     // ridges, 0..1
     const double flats = 10 + 16 * roll + 4 * hill;
     const double timber = 45 + 40 * roll + 22 * hill;
-    const double copper = 105 + 175 * ridge + 30 * roll;
+    // (Sharp ridges in ranges, broad open valleys and saddles between them: a way through for whoever looks for it.)
+    const double range = smoothstep(0.42, 0.62, fbmNoise(x * 0.0011 - 6.0, z * 0.0011 + 2.5, 2));
+    const double copper = 100 + 40 * hill + range * 175 * std::pow(ridge, 2.2) + 30 * roll;
     const double lakes = 172 + 24 * roll + 9 * hill - 14 * smoothstep(0.55, 0.7, fbmNoise(x * 0.003 + 5.0, z * 0.003 + 5.0, 2));
     const double canyon = 72 + 24 * roll + 12 * hill;
     const double bad = 22 + 12 * hill + 22 * smoothstep(0.57, 0.62, fbmNoise(x * 0.004 + 9.0, z * 0.004 - 2.0, 3));  // mesas
