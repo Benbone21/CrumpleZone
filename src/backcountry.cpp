@@ -299,20 +299,11 @@ const Poly& wreckTrail() {
 
 }  // namespace
 
-// ================================================================================================
-void World::buildBackcountry() {
-    loadprof::Steps steps("bc.start");
-    map = MAP_BACKCOUNTRY;
-    crashProps = false;
-    hN = (int)(2 * half / kRes) + 1;
-    const int N = hN * hN;
-    auto X = [&](int i) { return -half + i * kRes; };
-    auto cellI = [&](double v) { return std::min(std::max((int)std::lround((v + half) / kRes), 0), hN - 1); };
-    auto at = [&](double x, double z) -> int { return cellI(x) * hN + cellI(z); };
-
-    steps.next("bc.the land");
-    // ---- The land -----------------------------------------------------------------------------
-    hgrid.resize(N);
+// The Backcountry's land before anything is laid on it (`n` cells a side, half-size `half`): its build starts from this, and the
+// world cache (worldcache.cpp) stores a built map's heights as the difference from it.
+void backcountryLand(double half, int hN, std::vector<float>& out) {
+    out.assign((size_t)hN * hN, 0.0f);
+    auto X = [&](int i) { return -half + i * 1.0; };
     // The new country, a sample every 4 m (smooth: bilinear between them, the bumps added per cell).
     const int mn = (int)std::ceil(2 * half / 4.0) + 1;
     std::vector<float> macro((size_t)mn * mn);
@@ -335,7 +326,7 @@ void World::buildBackcountry() {
             const double x = X(i), z = X(j);
             const double far = std::max(std::fabs(x), std::fabs(z));
             if (far >= kBlend) {
-                hgrid[i * hN + j] = (float)outerAt(x, z);
+                out[(size_t)i * hN + j] = (float)outerAt(x, z);
                 continue;
             }
             const double d = z - riverZ(x);
@@ -356,9 +347,25 @@ void World::buildBackcountry() {
             h = 2.6 + 0.7 * valueNoise(x * 0.04, z * 0.04) + (h - 2.6) * smoothstep(32, 150, std::fabs(d));
             // Past the old map's edge (where its rim mountains were), into the new country.
             if (far > kInner) h += (outerAt(x, z) - h) * smoothstep(kInner, kBlend, far);
-            hgrid[i * hN + j] = (float)h;
+            out[(size_t)i * hN + j] = (float)h;
         }
     });
+}
+
+// ================================================================================================
+void World::buildBackcountry() {
+    loadprof::Steps steps("bc.start");
+    map = MAP_BACKCOUNTRY;
+    crashProps = false;
+    hN = (int)(2 * half / kRes) + 1;
+    const int N = hN * hN;
+    auto X = [&](int i) { return -half + i * kRes; };
+    auto cellI = [&](double v) { return std::min(std::max((int)std::lround((v + half) / kRes), 0), hN - 1); };
+    auto at = [&](double x, double z) -> int { return cellI(x) * hN + cellI(z); };
+
+    steps.next("bc.the land");
+    // ---- The land -----------------------------------------------------------------------------
+    backcountryLand(half, hN, hgrid);
     paint.assign(N, PAINT_NONE);
     surf.assign(N, SURF_GRASS);
     roadLat.reset(hN, 0);

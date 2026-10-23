@@ -199,6 +199,8 @@ bool frontierFeatureTable(std::string* why = nullptr);
 // slab, ridgeend, deepcrossing, ford, farside, sawmill, hillclimb, hilltop, dunes, wash, mudstart,
 // bog1-4, shelf, shelfend, wreck, pass, passhut, firetower, cabin, ...
 V3 backcountryFeature(const char* name);
+// The Backcountry's land before anything is laid on it: n x n heights, half-size `half` (backcountry.cpp).
+void backcountryLand(double half, int n, std::vector<float>& out);
 // A trail's center line, ~1 m apart, in the direction of travel: "creek", "ridge", "mud", "wash",
 // "hill", "ridgeroad", "shelf", "pass", "tower", "river", "cabin".
 const std::vector<V3>& backcountryTrail(const char* name);
