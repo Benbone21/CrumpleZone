@@ -108,6 +108,12 @@ SCENARIO(steeringStops, "components/steering-stops",
                 watch();
                 c.steer = 0.6 * dir, c.throttle = 1, c.brake = 0, c.handbrake = 0;
             });
+        // Straightened while it creeps on a little (the tires scrubbing sideways when stopped
+        // can hold a wheel a degree or two off its centre until it rolls), then stopped.
+        ctx.run(2.0, [&] {
+            watch();
+            c.steer = 0, c.throttle = 0.25, c.brake = 0;
+        });
         ctx.run(2.0, [&] {
             watch();
             c.steer = 0, c.throttle = 0, c.brake = 1;

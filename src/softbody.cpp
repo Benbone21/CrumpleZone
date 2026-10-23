@@ -1141,6 +1141,14 @@ int Car::treadType(const Wheel& wh) const {
     return wh.chained ? (int)TIRE_CHAINS : std::min(std::max(spec->tireType, 0), TIRE_TYPES - 1);
 }
 
+double Car::tempGrip() const {
+    double sum = 0;
+    int n = 0;
+    for (const Wheel& wh : wheels)
+        if (wh.mounted && !wh.detached) sum += 1 + (tireTempGrip(treadType(wh), wh.tempC) - 1) * tempWeight(wh.surface), n++;
+    return n ? sum / n : 1.0;
+}
+
 void Car::recalibrateSpeedo() {
     speedoCalR = 0;
     if (wheels.empty() || !spec) return;
@@ -3071,7 +3079,7 @@ void Sim::updateAI(double dt) {
 
 double aiCornerAccel(const Car& c) {
     const VehicleSpec* spec = c.spec;
-    const double tireK = std::min(1.0, spec->tireMu() * spec->lateralGrip / 0.72);
+    const double tireK = std::min(1.0, spec->tireMu() * c.tempGrip() * spec->lateralGrip / 0.72);
     const double height = spec->layerY.back();
     return std::min(clampd(6.5 - 3.0 * (height - 1.4) - (c.mass - 1300) / 800, 3.2, 5.5) * tireK, spec->openFrame && spec->wheelRadius > 0.45 ? 3.3 : 9.0);
 }
@@ -3327,7 +3335,7 @@ void Sim::drive(bool up, bool down, bool left, bool right, bool hb, double dt) {
         grip = n ? grip / n : 1.0;
         double df = c.spec->downforce * vf * vf;
         if (c.spec->downforceMax > 0) df = std::min(df, c.spec->downforceMax);
-        const double aMax = 9.81 * c.spec->tireMu() * c.spec->lateralGrip * grip * (1 + df / std::max(1.0, c.mass * 9.81)) * 0.85;
+        const double aMax = 9.81 * c.spec->tireMu() * c.tempGrip() * c.spec->lateralGrip * grip * (1 + df / std::max(1.0, c.mass * 9.81)) * 0.85;
         // (The extra lock for a slide only when steering into it, to catch it: not to wind
         // on more of the turn that's already sliding.)
         const double beta = std::atan2(dot(fr.vel, fr.left), std::max(1.0, std::fabs(vf)));

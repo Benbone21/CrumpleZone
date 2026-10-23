@@ -552,7 +552,7 @@ void tryLine(Line& L, Scene& sc, const Car& c, const Autopilot& ap, const Caps& 
         // (a ledge, the river), it gets to.
         if (pitch < -0.2 || std::fabs(roll) > 0.15) {
             const V3 mid = Q + f * (b.wb * 0.5);
-            const double mu = 0.85 * sc.grip(mid.x, mid.z) * c.spec->tireMu();
+            const double mu = 0.85 * sc.grip(mid.x, mid.z) * c.spec->tireMu() * c.tempGrip();
             if ((std::tan(-pitch) > mu || std::tan(std::fabs(roll)) > mu * c.spec->lateralGrip) && fail(-1, "slide")) break;
         }
         // The underbody over whatever is under it (every other step).
@@ -1008,7 +1008,9 @@ bool pilotDrive(Car& c, const World& w, double dt, const std::vector<Car>* cars)
         // How much grip there is ahead (the slipperiest bit): bends and stops take that much less.
         double grip = 1;
         for (int k = ap.idx; k <= b; k++) grip = std::min(grip, surfaceGrip(w.surfaceAt(ap.path[k].x, ap.path[k].z)));
-        const double gripK = clampd(grip / 0.8, 0.12, 1.0);
+        // (And what the tires' temperature leaves of theirs: cold off the drive, stops and bends
+        // take a little longer.)
+        const double gripK = clampd(grip * c.tempGrip() / 0.8, 0.12, 1.0);
         if (turn > 1e-4) vt = std::min(vt, std::sqrt((c.spec->transfer != XFER_NONE ? 2.5 : 4.0) * gripK / turn));
         if (grip < 0.2) vt = std::min(vt, 30 / 3.6);        // ice
         else if (grip < 0.45) vt = std::min(vt, 45 / 3.6);  // snow, mud

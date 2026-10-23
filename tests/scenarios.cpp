@@ -1204,6 +1204,10 @@ void modScenario(Ctx& ctx, int vehicle, int slot, int option) {
         double p = peakPower(spec) / peakPower(stock);
         if (peakPower(stock) / stock.structureMass > 1500)  // ~700 hp per tonne: wheelspin, not power, sets 0-80
             ctx.metric("0-80 time vs stock (traction-limited: about the same)", ratio, "x", 0.85, 1.03);
+        // (More power past ~700 hp per tonne goes into wheelspin: the buggy's blown 6.2, a third
+        // more than stock on 40 in mud tires at full throttle, gets to 80 ~1% quicker; the LS7,
+        // 13% more, ~9%. It's no slower, not much quicker.)
+        else if (p > 1.05 && peakPower(spec) / spec.structureMass > 1500) ctx.metric("0-80 time vs stock (more power, now traction-limited: not slower)", ratio, "x", 0.5, 1.03);
         else if (p > 1.05) ctx.metric("0-80 time vs stock (more power: quicker)", ratio, "x", 0.5, 0.99);
         else if (p < 0.95) ctx.metric("0-80 time vs stock (less power: slower)", ratio, "x", 1.0, 1.5);
         else ctx.metric("0-80 time vs stock", ratio, "x", 0.8, 1.2);

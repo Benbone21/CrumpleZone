@@ -427,6 +427,10 @@ public:
     bool ambientSet = false;
     double ambientPoll = 0;     // s since the country under it was last looked at
     int treadType(const Wheel& wh) const;  // the tread on the ground there (TireType; chains when fitted)
+    // What the tread temperature leaves of the tires' grip (tiretemp.h), on average over the
+    // wheels: 1 warm, ~0.97 cold off the drive on a mild day. For whatever estimates the grip
+    // (steering assist, the AI's corner speed, the autopilot's stops and slopes).
+    double tempGrip() const;
     // The speedometer reads wheel speed (the driven wheels, like a transmission-output sensor)
     // against the rolling radius it was calibrated for: the factory tire at its street pressure.
     // 0 = factory; the garage's RECALIBRATE sets it to what is fitted now.
