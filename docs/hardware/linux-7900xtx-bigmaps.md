@@ -101,3 +101,43 @@ What phase 3 left out:
 - Tree impostors. On a big map the forest stops at 2 km instead (800 m on the lowest props setting), and static scenery batches stop at 2.5 km.
 - A textured M map. On a big map the M map just uses coarser cells: 30 m at 6 km.
 - The water mesh and the water sound still scan the whole grid at load. That is fine at 6 km: about 0.1 and 0.3 s.
+
+## Phase 4: the 6 x 6 km Backcountry (branch wip/bigmaps-p4)
+
+Measured 2026-10-22 between 20:00 and 20:45, with load average 4-8 on 24 threads from other agents running.
+
+**World data**
+
+| | |
+|---|---|
+| World build, no cache | 2.1-2.5 s, 0.35-0.52 GB |
+| World cache file | 35 MB (302 MB before it was packed) |
+| Reading the world cache | 0.3 s |
+| What's on the map | 65k trees, 9.7k rocks, 70k bushes, 1.8k logs |
+
+**Starting the game** (`--map 4`, private cache)
+
+| | Launch to the first frames | Peak RAM | Renderer ready |
+|---|---|---|---|
+| Cold | 5.3 s | 1.13 GB | 1.9 s |
+| Warm | 2.5 s | 0.99 GB | 1.6 s |
+
+**Frame time** (HIGH 1600x900, the trailhead looking north)
+
+| Run | Average | 1% low |
+|---|---|---|
+| 6 km Backcountry | 3.95-4.0 ms | 6.1-6.3 ms |
+| Main's 1.2 km Backcountry, same hour | 3.14 ms | 5.3 ms |
+| Flying the 6 km map, 1.6 km at 40 m/s | 3.72 ms | worst frame 24 ms |
+
+That is +26% on CPU stages that loop over the bigger map; the GPU stages are within 0.1 ms of main's:
+- shadows 0.40 vs 0.21 ms
+- terrain 0.40 vs 0.21 ms
+- vegetation 0.48 vs 0.26 ms
+- props 0.28 vs 0.19 ms
+
+Frontier and the proving ground render pixel-identical to main.
+
+**Dedicated server** (`--map 4`): 562 MB RSS, against a target of 450. It keeps the whole world, render-only parts included.
+
+**Note:** the server run above used the default config folder, so it wrote its world-4.bin (30 MB) and rock-split blobs into `~/.config/crumplezone/cache`. These are ordinary cache files that the game replaces.

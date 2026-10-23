@@ -1,7 +1,7 @@
 # Big maps: a 6 x 6 km Backcountry and Frontier, with rivers, waterfalls and places to find
 
 Plan for PI-TASKS #26 (big maps, points of interest) and #27 (rivers, waterfalls, every model in use).
-Status: **approved 2026-10-22 with the owner's answers (section 0).** Phases 0 and 1 are merged; phases 2 and 3 are done on `wip/bigmaps-p2` (measurements in `docs/hardware/linux-7900xtx-bigmaps.md`). Changes to the plan made while building them: per-cell scatter seeds moved from phase 2 to phase 4 (the existing maps keep their layouts); the world cache still needs compression before the 6 km maps; tree impostors were replaced by a distance cut (2 km, 800 m on POTATO) and the M map texture by coarser cells, both to revisit with real 6 km content. Try a 6 km map now with `--map 5 --map-half 3072` (open country), optionally `--eye X,Z,H,YAW,PITCH --eye-fly 60`.
+Status: **approved 2026-10-22 with the owner's answers (section 0).** Phases 0-3 are merged. Phase 4, the 6 km Backcountry land, is on `wip/bigmaps-p4`: drivable, with the world cache packed (35 MB) and the autopilot planning in a window round the route. Measurements are in `docs/hardware/linux-7900xtx-bigmaps.md`. Changes to the plan so far: per-cell scatter seeds are used only for the new country (the old middle keeps its layout); tree impostors are replaced by a distance cut with thinning (1.2 km, 800 m on POTATO); the M map uses coarser cells; the autopilot plans long routes 3 km at a time. Open: the frame time on the 6 km map is about +26% (CPU loops over the bigger map), and the server uses 560 MB. Next: phase 5 (rivers, waterfall).
 
 ## Summary (the 10 lines)
 
