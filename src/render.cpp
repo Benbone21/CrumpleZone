@@ -2978,8 +2978,8 @@ void Renderer::uploadBatches(GLuint& vao, GLuint& vbo, std::vector<Vtx>& vertice
 void Renderer::drawBatches(GLuint vao, const std::vector<StaticBatch>& batches, const M4& vp, bool shadow) {
     BindVertexArray(vao);
     for (const auto& batch : batches) {
-        if (!batch.bounds.visible(vp) || (!shadow && occl_.occluded(batch.bounds))) continue;
         if (!terrainAll_ && batch.bounds.distance(sceneEye_) > 2500) continue;  // (a big map: the far scenery is left to the fog)
+        if (!batch.bounds.visible(vp) || (!shadow && occl_.occluded(batch.bounds))) continue;
         DrawArrays(GL_TRIANGLES, batch.first, batch.count);
         (shadow ? geometryStats_.shadowSceneryVertices : geometryStats_.sceneryVertices) += batch.count;
         (shadow ? geometryStats_.shadowModelVertices : geometryStats_.modelVertices) += batch.count;
@@ -3500,6 +3500,9 @@ void Renderer::streamTerrain(const World& world, const V3& eye) {
         }
     }
     if (terrainAll_ || !terrainVao || slotChunk_.empty()) return;
+    // (Looked at again once the camera has gone 8 m, or while there's something still to load.)
+    if (!streamPending_ && len(eye - streamEye_) < 8) return;
+    streamEye_ = eye;
     static std::vector<std::pair<double, int>> want;
     want.clear();
     for (int k = 0; k < (int)terrainChunks.size(); k++) {
@@ -3512,6 +3515,7 @@ void Renderer::streamTerrain(const World& world, const V3& eye) {
         }
         else if (c.slot < 0 && d < kStreamIn) want.push_back({d, k});
     }
+    streamPending_ = (int)want.size() > kStreamPerFrame;
     if (want.empty()) return;
     std::sort(want.begin(), want.end());
     std::vector<int> slots;
@@ -3671,6 +3675,7 @@ void Renderer::adoptTerrain(Prepared& p) {
     terrainChunks = std::move(p.chunks);
     terrainLods_ = std::move(p.lods);
     terrainAll_ = p.all;
+    streamEye_ = V3(1e9, 0, 1e9), streamPending_ = true;
     terrainOcclStep_ = p.occlStep;
     slotChunk_.assign(p.poolSlots, -1);
     for (int k = 0; k < (int)terrainChunks.size(); k++)
@@ -5251,7 +5256,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     }
     if (!noVeg) {
         // (On a big map the forest stops at 2 km, 800 m on the lowest props setting: the fog has most of it by then.)
-        const forest::View tv{vp, view.eye, vegDetail(), 0, false, 1, &occl_, terrainAll_ ? 0.0 : settings.props <= 0 ? 800.0 : 1500.0};
+        const forest::View tv{vp, view.eye, vegDetail(), 0, false, 1, &occl_, terrainAll_ ? 0.0 : settings.props <= 0 ? 800.0 : 1200.0};
         geometryStats_.sceneryVertices += trees_.draw(tv, &vegStats_.trees);
         Uniform1i(uniformLocation(progTree, "uTreeFadeN"), 0);  // (the see-through trees' leaves only)
         forest::View bv = tv;

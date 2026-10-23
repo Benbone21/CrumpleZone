@@ -2183,6 +2183,7 @@ std::vector<EditPick> EditCore::pickInside(const std::function<bool(const V3&)>&
     if (!world) return found;
     const World& w = *world;
     auto take = [&](int baseKind, int index, const V3& at, const V3& look, const std::string& name) {
+        if (found.size() >= cap && (!capped || *capped)) return;  // (full, and already said so: nothing more to learn)
         if (!inside(look)) return;
         EditPick p;
         const int ow = ownerOf(baseKind, index);

@@ -319,6 +319,10 @@ void Picker::pick(const Set& s, const View& v, std::vector<std::vector<Pick>>& b
             if (v.maxDist > 0) {
                 if (d >= v.maxDist) continue;
                 fade = (float)std::min(1.0, (v.maxDist - d) / (0.15 * v.maxDist));
+                // (Thinned out with distance, from a third of the way: down to a quarter at the end. In the haze a stand still
+                // reads as a stand; the instance's own hash picks which stay, so the same ones do as you move.)
+                const uint32_t hsh = (uint32_t)i * 2654435761u;
+                if ((hsh >> 8) * (1.0 / 16777216.0) > 1 - 0.75 * smoothstep(0.33 * v.maxDist, v.maxDist, d)) continue;
             }
             if (in.reach > 0) {
                 const double R = in.reach * v.detail * v.reach;

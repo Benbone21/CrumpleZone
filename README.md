@@ -520,6 +520,13 @@ Pick the map in the pause menu (Esc); the game remembers it. All maps are on the
 
 ### Backcountry
 
+**6 x 6 km.** The trails below are in the middle, the old 1.2 km map (Elk Valley). Round it is open country to explore off-trail, in eight districts:
+- **North:** Timber Basin (forest, north-west), Copper Ridge (ranges of rock ridges with snow on top and open valleys between) and High Lakes (an alpine plateau, north-east).
+- **East and west:** Ranger Flats (meadows, west) and Bear Creek Canyon (a gorge Elk River has cut through a plateau, east).
+- **South:** Lakeshore (a 1 km lake with a sandy beach, south-west), the south uplands, and Badlands Wash (mesas, sand and hardpan, south-east).
+
+Elk River runs right across the map. Outside the middle it is about 0.9 m deep (snorkel water), with a 0.4 m riffle every 500 m to wade. The new country's trails, places and caches come later (docs/plans/big-maps.md).
+
 Forested hill country for crawling, mudding and exploring with buddies. You start at **Trailhead Camp** in the south and a network of trails (about 4 km in all) radiates from it, each its own challenge and rated on its signs: green easy, blue, black hard, red extreme. Elk River runs east to west across the middle, and the trails loop so a group can split up and meet again: Mud Run → Sawmill → ford → Far Side Camp on one side, Creek Crawl → mine → Slickrock Ridge → deep crossing → Far Side Camp on the other. Fuel is something to plan for (the camps have the shops).
 
 - **The Mud Run (black, 580 m):** a forest track east of camp to Sawmill Camp, worn into deep ruts, with five mud stretches and four **bog holes** (0.4–0.6 m of water over a mud bottom, wider than the trail so there's no way round). A 2WD car stalls in the first mud; a 4x4 in low range with lockers, aired down, wades through all four.

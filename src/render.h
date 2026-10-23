@@ -278,6 +278,8 @@ private:
     std::vector<int> slotChunk_;  // which chunk each pool slot holds (-1: free)
     bool terrainAll_ = true;      // every chunk's full mesh is loaded (a small map): nothing to stream
     V3 sceneEye_;                 // the camera this frame (for distance cuts)
+    V3 streamEye_ = V3(1e9, 0, 1e9);  // where streamTerrain last looked from
+    bool streamPending_ = true;       // ...and whether it left chunks to load
     int terrainOcclStep_ = 1;     // mesh steps per occlusion sample
     // The shaders' terrain texels (render.cpp terrainCell): a window of terrainWinW_ cells a side from cell (terrainWinI_,
     // terrainWinJ_), stored toroidally (cell (i, j) at texel (i mod W, j mod W)); the whole map when it fits, else round the camera.
