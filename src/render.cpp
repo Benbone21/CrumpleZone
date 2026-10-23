@@ -3056,7 +3056,8 @@ void Renderer::drawTerrain(const M4& vp, const View& view, const std::function<v
         if (!chunk.backdrop && chunk.slot < 0 && chunkGroup_[i] >= 0 && farGroups_[chunkGroup_[i]].loaded == 0) continue;  // (drawn with its group)
         geometryStats_.terrainFullTriangles += (chunk.backdrop ? chunk.count[0] : terrainLods_[chunk.lodSet].count[0]) / 3;
         if (!chunk.bounds.visible(vp)) continue;
-        if (occl_.occluded(chunk.bounds)) { ++geometryStats_.terrainOccluded; continue; }
+        const bool farPatch = !chunk.backdrop && chunk.slot < 0;  // (far, and cheap: not worth the horizon test)
+        if (!farPatch && occl_.occluded(chunk.bounds)) { ++geometryStats_.terrainOccluded; continue; }
         (chunk.backdrop || chunk.slot < 0 ? coarse_ : fine_).push_back({(float)chunk.bounds.distance(view.eye), (int)i});
     }
     std::sort(fine_.begin(), fine_.end());
@@ -5070,7 +5071,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         uniformM4(progTreeDepth, "uLightVP", lightVP[c]);
         if (!noVegShadow) {
             // (shadows from the lighter copies; a bush's only near the eye: further off it's a speck)
-            geometryStats_.shadowSceneryVertices += trees_.draw({lightVP[c], view.eye, vegDetail(), 1 + c, true, 1}, &vegStats_.treesShadow);
+            geometryStats_.shadowSceneryVertices += trees_.draw({lightVP[c], view.eye, vegDetail(), 1 + c, true, 1, nullptr, terrainAll_ ? 0.0 : 600.0}, &vegStats_.treesShadow);  // (a big map: the cascades reach a few hundred metres)
             geometryStats_.shadowSceneryVertices += bushes_.draw({lightVP[c], view.eye, vegDetail(), 0, true, 0.5}, &vegStats_.bushesShadow);
         }
         UseProgram(progDepth);
@@ -5197,13 +5198,40 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         int n = 0;
         const double dt = clampd(view.time - fadeTime_, 0.0, 0.1);
         fadeTime_ = view.time;
-        if (treeFade_.size() == sim.world.trees.size() && (st.nearScale > 0 || st.hasFocus))
-            for (size_t i = 0; i < sim.world.trees.size(); i++) {
+        // Which trees to look at: all of them (a small map), or those within reach of the camera and those still fading (a big one).
+        static std::vector<int> look;
+        look.clear();
+        const World& W = sim.world;
+        if (treeFade_.size() == W.trees.size() && (st.nearScale > 0 || st.hasFocus) && !terrainAll_) {
+            const double half = W.halfSize();
+            if (fadeStamp_ != W.stamp || fadeCells_.empty()) {
+                fadeStamp_ = W.stamp, fadeCellN_ = (int)std::ceil(2 * half / 64) + 1;
+                fadeCells_.assign((size_t)fadeCellN_ * fadeCellN_, {});
+                fadeActive_.clear();
+                for (int i = 0; i < (int)W.trees.size(); i++) {
+                    const int cx = std::clamp((int)((W.trees[i].base.x + half) / 64), 0, fadeCellN_ - 1), cz = std::clamp((int)((W.trees[i].base.z + half) / 64), 0, fadeCellN_ - 1);
+                    fadeCells_[(size_t)cx * fadeCellN_ + cz].push_back(i);
+                }
+            }
+            auto cell = [&](double v) { return std::clamp((int)((v + half) / 64), 0, fadeCellN_ - 1); };
+            for (int cx = cell(st.eye.x - 41); cx <= cell(st.eye.x + 41); cx++)
+                for (int cz = cell(st.eye.z - 41); cz <= cell(st.eye.z + 41); cz++)
+                    for (int i : fadeCells_[(size_t)cx * fadeCellN_ + cz]) look.push_back(i);
+            look.insert(look.end(), fadeActive_.begin(), fadeActive_.end());
+            std::sort(look.begin(), look.end());
+            look.erase(std::unique(look.begin(), look.end()), look.end());
+        } else if (treeFade_.size() == W.trees.size() && (st.nearScale > 0 || st.hasFocus)) {
+            for (int i = 0; i < (int)W.trees.size(); i++) look.push_back(i);
+        }
+        fadeActive_.clear();
+        if (!look.empty())
+            for (int i : look) {
                 const Tree& t = sim.world.trees[i];
                 if ((t.kind == 0 && scanCover_.pines) || (t.kind == 2 && scanCover_.snags)) continue;
                 float& f = treeFade_[i];
                 const bool far = std::fabs(t.base.x - st.eye.x) > 40 || std::fabs(t.base.z - st.eye.z) > 40;
                 f = far ? 0.0f : treefade::ease(f, treefade::target(st, t.base, t.height, t.radius), dt);
+                if (f > 0) fadeActive_.push_back(i);
                 if (f < 0.02f) continue;
                 int at = n;
                 if (n < 24) n++;
@@ -5223,10 +5251,12 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     }
     if (!noVeg) {
         // (On a big map the forest stops at 2 km, 800 m on the lowest props setting: the fog has most of it by then.)
-        const forest::View tv{vp, view.eye, vegDetail(), 0, false, 1, &occl_, terrainAll_ ? 0.0 : settings.props <= 0 ? 800.0 : 2000.0};
+        const forest::View tv{vp, view.eye, vegDetail(), 0, false, 1, &occl_, terrainAll_ ? 0.0 : settings.props <= 0 ? 800.0 : 1500.0};
         geometryStats_.sceneryVertices += trees_.draw(tv, &vegStats_.trees);
         Uniform1i(uniformLocation(progTree, "uTreeFadeN"), 0);  // (the see-through trees' leaves only)
-        geometryStats_.sceneryVertices += bushes_.draw(tv, &vegStats_.bushes);
+        forest::View bv = tv;
+        if (!terrainAll_) bv.maxDist = 400;  // (a big map: no bush reaches further than this anyway, and its cells aren't even looked at)
+        geometryStats_.sceneryVertices += bushes_.draw(bv, &vegStats_.bushes);
     }
     passMark(FP_PROPS);
     UseProgram(progLit);

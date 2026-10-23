@@ -369,6 +369,11 @@ private:
     int treeVertexCount = 0;
     ScanCover scanCover_;           // what the scanned props draw instead of the code-made meshes
     std::vector<float> treeFade_;   // per tree (World::trees): how much of it the camera hides now (treefade.h)
+    // (A big map: its trees by 64 m cell, so only those round the camera are looked at, and the ones still fading.)
+    std::vector<std::vector<int>> fadeCells_;
+    std::vector<int> fadeActive_;
+    int fadeCellN_ = 0;
+    uint64_t fadeStamp_ = 0;
     double fadeTime_ = 0;
     GLuint wheelVao[2][WHEEL_STYLES] = {}, wheelVbo[2][WHEEL_STYLES] = {}, caliperVao = 0, caliperVbo = 0;
     // Each tread on each wheel style (the tire alone: the rim is the wheel's), and snow chains.

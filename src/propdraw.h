@@ -110,7 +110,16 @@ private:
     struct Cell {
         V3 mn, mx;
         std::vector<int> inst;
+        float maxSize = 0;  // its biggest instance's size (a tree: never too small to draw)
     };
+    // Cells 8 x 8 at a go (a big map has tens of thousands): their bounds, so a block out of view or too far for anything in
+    // it to show is passed over whole.
+    struct Block {
+        V3 mn = V3(1e30, 1e30, 1e30), mx = V3(-1e30, -1e30, -1e30);
+        float maxSize = 0;
+        std::vector<int> cells;
+    };
+    std::vector<Block> blocks;
     std::vector<Model> models;
     std::map<std::string, int> byName;
     std::map<std::string, GLuint> texCache;
