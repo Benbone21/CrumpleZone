@@ -388,7 +388,17 @@ SCENARIO(backcountryBigCountry, "backcountry/big-country", "The 6 km Backcountry
     ctx.focus(c);
     ctx.run(1.0);
     double worst = 0;
-    const bool ok = pilotRun(ctx, c, V3(-1050, 0, -260), 35, 500, PILOT_ANYWHERE, &worst);
-    ctx.check("drove out onto Ranger Flats", ok, c.pilot.status);
+    int tr = 0;
+    if (std::getenv("BC_TRACE")) ctx.onStep = [&] {
+        if (tr++ % 300) return;
+        const Frame f = c.frame();
+        double wet = 0;
+        for (const Node& n : c.nodes) wet = std::max(wet, w.waterLevel(n.p.x, n.p.z) - n.p.y);
+        std::printf("TRACE t %.0f (%.0f %.0f) v %.1f wet %.2f %s\n", ctx.t, f.com.x, f.com.z, len(f.vel), wet, c.pilot.status.c_str());
+    };
+    const bool ok = pilotRun(ctx, c, V3(-1050, 0, -260), 35, 800, PILOT_ANYWHERE, &worst);  // (cross-country: its first try may be up the Creek Crawl, which it backs out of)
+    char at[64];
+    std::snprintf(at, sizeof at, " at (%.0f, %.0f)", c.frame().com.x, c.frame().com.z);
+    ctx.check("drove out onto Ranger Flats", ok, c.pilot.status + at);
     ctx.metric("damage on the way (cross-country, no trail)", worst * 100, "%", 0, 10);
 }

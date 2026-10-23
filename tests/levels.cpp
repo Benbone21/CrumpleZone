@@ -349,6 +349,9 @@ SCENARIO(worldCacheRoundTrip, "world/cache-roundtrip", "A built map saved to the
         if (!ok) continue;
         ctx.check(std::string(mapName(map)) + " same bytes again", worldcache::encode(back) == bytes);
         ctx.check(std::string(mapName(map)) + " same land", back.landHash() == built.landHash() && back.map == map);
+        bool sameRivers = back.rivers.size() == built.rivers.size() && back.falls.size() == built.falls.size();
+        for (size_t i = 0; sameRivers && i < built.falls.size(); i++) sameRivers = back.falls[i].name == built.falls[i].name && back.falls[i].height == built.falls[i].height;
+        ctx.check(std::string(mapName(map)) + " its rivers and falls read back", sameRivers && (map != MAP_BACKCOUNTRY || built.falls.size() >= 2));
         back.cutCachedRocks();
         size_t pb = 0, pa = 0;
         bool sameParts = back.rocks.size() == built.rocks.size();

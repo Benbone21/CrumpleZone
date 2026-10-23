@@ -545,7 +545,7 @@ void World::buildModelYard() {
         if (id == "jersey_barrier") return {{"length", 6}};
         return {};
     };
-    auto see = [](const std::string& id) { return id != "fp_hand" && id != "lug_nut"; };
+    auto see = [](const std::string& id) { return id != "fp_hand" && id != "lug_nut" && id != "waterfall"; };  // (the falls: drawn by the water pass, on rivers)
     // Things to walk through or round rather than bump into.
     auto ghost = [](const std::string& id) {
         return id == "repair_shed" || id == "fire_tower" || id == "race_gate" || id == "sign_gantry" || id == "mine_portal" || id == "tent" ||
@@ -1671,5 +1671,6 @@ uint64_t World::landHash() const {
     for (const Box& b : boxes) at(b.c);
     for (const Placed& m : models) at(m.p);
     for (const Station& s : stations) at(s.p);
+    for (const Falls& f : falls) at(f.lip);
     return h;
 }
