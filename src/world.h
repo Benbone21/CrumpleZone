@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "mathx.h"
+#include "celllists.h"
 #include "celltiles.h"
 #include "plants.h"
 
@@ -381,12 +382,12 @@ private:
 
     static constexpr double kRockCell = 4.0;
     int rockN = 0;
-    std::vector<std::vector<int>> rockGrid, logGrid;
+    CellLists rockGrid, logGrid;
     int rockCellOf(double v) const;
 
     static constexpr double kCell = 16.0;
     int gridN = 0;
-    std::vector<std::vector<int>> grid, poleGrid;
+    CellLists grid, poleGrid;
 
     int cellOf(double v) const;
 

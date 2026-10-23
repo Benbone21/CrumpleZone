@@ -235,6 +235,57 @@ const Poly& riverLine() {
     }();
     return t;
 }
+// ---- The country round the old map (docs/plans/big-maps.md 3.5) -------------------------------------
+// The map is 6 x 6 km; the old 1.2 km Backcountry is its middle (Elk Valley), as it was out to kInner, and the new country
+// takes over by kBlend. Round it, eight districts: Timber Basin (north-west), Copper Ridge (north), High Lakes (north-east),
+// Ranger Flats (west), Bear Creek Canyon (east), Lakeshore (south-west), the south uplands and Badlands Wash (south-east).
+constexpr double kInner = 520, kBlend = 900;
+struct Districts {
+    double n, s, e, w;  // how far into the north, south, east and west rows of districts (0..1; n and s never both, nor e and w)
+};
+Districts districtsAt(double x, double z) {
+    return {smoothstep(450, 1500, z), smoothstep(-450, -1500, z), smoothstep(450, 1500, x), smoothstep(-450, -1500, x)};
+}
+// Elk River's level across the country: rising east into Bear Creek Canyon, falling gently west.
+double valleyFloor(double x) { return x > 540 ? 2.6 + 0.009 * (x - 540) : x < -540 ? 2.6 - 0.0008 * (-540 - x) : 2.6; }
+// The big lake on the Lakeshore.
+const V3 kLake(-1850, 0, -1650);
+constexpr double kLakeR = 480, kLakeY = 1.2;
+double lakeDist(double x, double z) { return std::hypot(x - kLake.x, z - kLake.z) + 60 * (valueNoise(x * 0.004 + 3.3, z * 0.004 - 1.1) - 0.5); }
+// The new country's land (smooth: the build adds the metre-scale bumps).
+double outerLand(double x, double z) {
+    const Districts d = districtsAt(x, z);
+    const double rowMid = std::max(0.0, 1 - d.n - d.s), colMid = std::max(0.0, 1 - d.e - d.w);
+    const double roll = fbmNoise(x * 0.0021 + 3.1, z * 0.0021 - 7.3, 3) - 0.5;  // broad swells
+    const double hill = fbmNoise(x * 0.0065 - 1.7, z * 0.0065 + 4.2, 3) - 0.5;  // hills
+    const double ridge = ridgedNoise(x * 0.0024 + 0.7, z * 0.0024 + 2.9, 4);     // ridges, 0..1
+    const double flats = 10 + 16 * roll + 4 * hill;
+    const double timber = 45 + 40 * roll + 22 * hill;
+    const double copper = 105 + 175 * ridge + 30 * roll;
+    const double lakes = 172 + 24 * roll + 9 * hill - 14 * smoothstep(0.55, 0.7, fbmNoise(x * 0.003 + 5.0, z * 0.003 + 5.0, 2));
+    const double canyon = 72 + 24 * roll + 12 * hill;
+    const double bad = 22 + 12 * hill + 22 * smoothstep(0.57, 0.62, fbmNoise(x * 0.004 + 9.0, z * 0.004 - 2.0, 3));  // mesas
+    const double shore = 12 + 18 * roll + 6 * hill;
+    const double south = 40 + 30 * roll + 18 * hill + 14 * ridge;
+    const double mid = 22 + 22 * roll + 12 * hill;
+    double h = d.n * (d.w * timber + colMid * copper + d.e * lakes) + d.s * (d.w * shore + colMid * south + d.e * bad) +
+               rowMid * (d.w * flats + colMid * mid + d.e * canyon);
+    // Elk River's valley right across: wide and gentle, a canyon in the east.
+    const double floor = valleyFloor(x), dv = std::fabs(z - riverZ(x));
+    const double open = smoothstep(40, 380, dv), gorge = smoothstep(26, 90, dv);
+    h = floor + (h - floor) * (open + (gorge - open) * d.e);
+    // The lake's basin.
+    const double dl = lakeDist(x, z);
+    if (dl < kLakeR + 260) {
+        const double u = std::min(1.0, dl / kLakeR), bed = kLakeY - 0.4 - 6.5 * (1 - u * u);
+        h = bed + (h - bed) * smoothstep(kLakeR - 30, kLakeR + 260, dl);
+    }
+    // The map's edge: the land rises into a ridge you won't drive over.
+    const double e = std::max(std::fabs(x), std::fabs(z));
+    h += smoothstep(2720, 3050, e) * (55 + 90 * ridge);
+    return h;
+}
+
 // The wreck spur: from the ridge road up the canyon floor to the wreck.
 const Poly& wreckTrail() {
     static const Poly t = [] {
@@ -262,9 +313,31 @@ void World::buildBackcountry() {
     steps.next("bc.the land");
     // ---- The land -----------------------------------------------------------------------------
     hgrid.resize(N);
+    // The new country, a sample every 4 m (smooth: bilinear between them, the bumps added per cell).
+    const int mn = (int)std::ceil(2 * half / 4.0) + 1;
+    std::vector<float> macro((size_t)mn * mn);
+    parallelRows(mn, [&](int a) {
+        for (int b = 0; b < mn; b++) {
+            const double x = -half + a * 4.0, z = -half + b * 4.0;
+            macro[(size_t)a * mn + b] = std::max(std::fabs(x), std::fabs(z)) < kInner - 8 ? 0.0f : (float)outerLand(x, z);
+        }
+    });
+    auto outerAt = [&](double x, double z) {
+        const double u = (x + half) / 4.0, v = (z + half) / 4.0;
+        const int a = std::min(mn - 2, (int)u), b = std::min(mn - 2, (int)v);
+        const double fu = u - a, fv = v - b;
+        auto M = [&](int p, int q) { return (double)macro[(size_t)p * mn + q]; };
+        return M(a, b) * (1 - fu) * (1 - fv) + M(a + 1, b) * fu * (1 - fv) + M(a, b + 1) * (1 - fu) * fv + M(a + 1, b + 1) * fu * fv +
+               0.9 * (valueNoise(x * 0.09 + 5.0, z * 0.09 + 1.0) - 0.5) + 0.35 * (valueNoise(x * 0.31, z * 0.27) - 0.5);
+    };
     parallelRows(hN, [&](int i) {
         for (int j = 0; j < hN; j++) {
             const double x = X(i), z = X(j);
+            const double far = std::max(std::fabs(x), std::fabs(z));
+            if (far >= kBlend) {
+                hgrid[i * hN + j] = (float)outerAt(x, z);
+                continue;
+            }
             const double d = z - riverZ(x);
             // Rolling country everywhere (weaker on the flood plain)...
             const double plain = smoothstep(15, 120, std::fabs(d));
@@ -281,9 +354,8 @@ void World::buildBackcountry() {
             }
             // The river's flood plain: flat and low, the land climbing away from it.
             h = 2.6 + 0.7 * valueNoise(x * 0.04, z * 0.04) + (h - 2.6) * smoothstep(32, 150, std::fabs(d));
-            // Rim mountains keep you on the map.
-            const double ex = std::max(0.0, std::fabs(x) - 520), ez = std::max(0.0, std::fabs(z) - 520);
-            h += (ex * ex + ez * ez) * 0.02;
+            // Past the old map's edge (where its rim mountains were), into the new country.
+            if (far > kInner) h += (outerAt(x, z) - h) * smoothstep(kInner, kBlend, far);
             hgrid[i * hN + j] = (float)h;
         }
     });
@@ -295,11 +367,14 @@ void World::buildBackcountry() {
     waterY.reset(hN, -1e9f);
     flowX.reset(hN, 0);
     flowZ.reset(hN, 0);
-    std::vector<uint8_t> keep(N, 0);   // no trees, rocks or bushes here
-    std::vector<float> edge(N, 1e9f);  // distance past the nearest trail's tread
+    // (Kept only in the 64 m tiles where they're set: on a 6 km map these would be most of a gigabyte as plain arrays.)
+    CellTiles<uint8_t> keep;  // no trees, rocks or bushes here
+    CellTiles<float> edge;    // distance past the nearest trail's tread
+    keep.reset(hN, 0), edge.reset(hN, 1e9f);
 
     // Scratch for scanning cells near a polyline.
-    std::vector<float> sd(N, 1e9f), sk(N, 0), sl(N, 0);
+    CellTiles<float> sd, sk, sl;
+    sd.reset(hN, 1e9f), sk.reset(hN, 0), sl.reset(hN, 0);
     std::vector<int> cells;
     // Calls fn(id, distance, index along (fractional), signed lateral (+ left)) for every cell
     // within `reach` of the polyline, with its nearest stretch.
@@ -702,7 +777,10 @@ void World::buildBackcountry() {
             bankSlope[k] = 0.45 + (0.16 - 0.45) * std::max(smoothstep(60, 30, df), smoothstep(50, 26, dd));
         }
         const double reach = kRiverHalf + 10;
-        std::vector<float> nearestD(N, 1e9f);
+        CellTiles<float> nearestD;
+        nearestD.reset(hN, 1e9f);
+        auto carve = [&](const Poly& pts, const std::vector<double>& lvl, const std::vector<double>& depth, const std::vector<double>& bankSlope) {
+        const int n = (int)pts.size();
         for (int s = 0; s + 1 < n; s++) {
             const V3 &a = pts[s], &b = pts[s + 1];
             const double dx = b.x - a.x, dz = b.z - a.z, L = std::hypot(dx, dz);
@@ -739,6 +817,34 @@ void World::buildBackcountry() {
                     }
                 }
         }
+        };
+        carve(pts, lvl, depth, bankSlope);
+        // Out into the new country: down Bear Creek Canyon from the east edge to the old map, and from it out by the west edge.
+        // Its level follows the valley floor, meeting the old river's at its ends; about 0.9 m deep (a snorkel's water), with a
+        // riffle (0.4 m: a truck wades it) every 500 m.
+        for (int side = 0; side < 2; side++) {
+            std::vector<V3> ctl;
+            if (side == 0)
+                for (double x = 3060; x >= 540; x -= 30) ctl.push_back(V3(x, 0, riverZ(x)));
+            else
+                for (double x = -540; x >= -3060; x -= 30) ctl.push_back(V3(x, 0, riverZ(x)));
+            const Poly o = smooth(ctl);
+            const int m = (int)o.size();
+            std::vector<double> ol(m), od(m), ob(m, 0.35);
+            for (int k = 0; k < m; k++) ol[k] = valleyFloor(o[k].x) - 0.3;
+            if (side == 0) {  // (falling all the way, and into the old river's level at its end)
+                ol[m - 1] = std::max(ol[m - 1], lvl[0] + 0.002);
+                for (int k = m - 2; k >= 0; k--) ol[k] = std::max(ol[k], ol[k + 1] + 0.002);
+            } else {
+                ol[0] = std::min(ol[0], lvl[n - 1] - 0.002);
+                for (int k = 1; k < m; k++) ol[k] = std::min(ol[k], ol[k - 1] - 0.002);
+            }
+            for (int k = 0; k < m; k++) {
+                const double along = std::fabs(o[k].x) - 540, riffle = std::fabs(std::fmod(along + 250, 500.0) - 250);
+                od[k] = 0.9 - 0.5 * smoothstep(40, 12, riffle) * smoothstep(60, 160, along);
+            }
+            carve(o, ol, od, ob);
+        }
     }
 
     steps.next("bc.paint the land");
@@ -753,6 +859,22 @@ void World::buildBackcountry() {
         for (int j = 1; j < hN - 1; j++) {
             const int id = i * hN + j;
             const double x = X(i), z = X(j), h = hgrid[id];
+            if (std::max(std::fabs(x), std::fabs(z)) > kInner) {  // the new country: by district
+                if (paint[id] != PAINT_NONE || surf[id] != SURF_GRASS) continue;
+                const double slope = slopeAtCell(i, j), nz = valueNoise(x * 0.04, z * 0.04);
+                const Districts d = districtsAt(x, z);
+                const double dry = d.s * d.e;  // the badlands
+                if (h > 228 + 16 * (fbmNoise(x * 0.02 + 3.0, z * 0.02 - 8.0, 3) - 0.5) && slope < 0.8) paint[id] = PAINT_SNOW, surf[id] = SURF_SNOW;
+                else if (slope > 0.85 || (h > 195 && slope > 0.5)) {
+                    if (dry > 0.4) paint[id] = PAINT_REDROCK;
+                    surf[id] = SURF_ROCK;
+                } else if (h > 140 && slope > 0.45 && nz > 0.55) paint[id] = PAINT_SCREE, surf[id] = SURF_SCREE;
+                else if (dry > 0.45) {  // (sand in the low washes, hardpan the rest)
+                    if (h < 26 + 3 * nz && slope < 0.2) paint[id] = PAINT_SAND, surf[id] = SURF_SAND;
+                    else paint[id] = PAINT_DESERT, surf[id] = SURF_DIRT;
+                } else if (lakeDist(x, z) < kLakeR + 25 && h < kLakeY + 1.5) paint[id] = PAINT_SAND, surf[id] = SURF_SAND;
+                continue;
+            }
             const double north = smoothstep(150, 260, z - riverZ(x));
             const bool snowy = north > 0.5 && h > snowline(x, z);
             if (paint[id] == PAINT_TRAIL && snowy) {  // the high trails are packed snow
@@ -767,6 +889,12 @@ void World::buildBackcountry() {
         }
     });
 
+    // The Lakeshore's lake: water over its basin.
+    for (int i = cellI(kLake.x - kLakeR - 120); i <= cellI(kLake.x + kLakeR + 120); i++)
+        for (int j = cellI(kLake.z - kLakeR - 120); j <= cellI(kLake.z + kLakeR + 120); j++) {
+            const int id = i * hN + j;
+            if (hgrid[id] < kLakeY && lakeDist(X(i), X(j)) < kLakeR + 80) waterY[id] = (float)kLakeY, keep[id] = 1;
+        }
     // The wash-down bay at the trailhead (wet pavement), black ice on the pass road, a frozen pond by
     // the hut.
     for (int i = cellI(kTrailhead.x + 4); i <= cellI(kTrailhead.x + 16); i++)
@@ -1211,6 +1339,111 @@ void World::buildBackcountry() {
         if (plantRoll(x, z, 43) > 0.15 + 0.6 * smoothstep(0.3, 0.55, forest)) continue;
         const int habitat = hgrid[id] > 45 ? HAB_UPLAND : forest > 0.5 ? HAB_FOREST : HAB_MEADOW;
         bushes.push_back(growBush(V3(x, hgrid[id], z), habitat, forest > 0.38, plantRoll(x, z, 44), (float)(0.75 + plantRoll(x, z, 45) * 0.45)));
+    }
+
+    steps.next("bc.the new country's growth");
+    // ---- The new country: trees, rocks, logs and bushes, 64 m cell by cell (each cell its own random numbers, from where it is:
+    // nothing in one cell moves when another changes), by district ----------------------------------------------------------
+    {
+        constexpr double C = 64;
+        const int cn = (int)std::ceil(2 * half / C);
+        std::vector<std::vector<int>> nearTrees((size_t)cn * cn);
+        int bigRocks = 0;
+        for (int ci = 0; ci < cn; ci++)
+            for (int cj = 0; cj < cn; cj++) {
+                const double x0 = -half + ci * C, z0 = -half + cj * C, cx = x0 + C / 2, cz = z0 + C / 2;
+                if (std::max(std::fabs(cx), std::fabs(cz)) < kInner + 40) continue;  // (the old map has its own)
+                uint32_t r32 = (uint32_t)(ci * 73856093) ^ (uint32_t)(cj * 19349663) ^ 0x51ed2701u;
+                r32 = r32 * 2654435761u + 0x9e3779b9u;
+                auto rr = [&]() {
+                    r32 ^= r32 << 13, r32 ^= r32 >> 17, r32 ^= r32 << 5;
+                    return (r32 & 0xFFFFFF) / double(0x1000000);
+                };
+                const Districts d = districtsAt(cx, cz);
+                const double rowMid = std::max(0.0, 1 - d.n - d.s), colMid = std::max(0.0, 1 - d.e - d.w), dry = d.s * d.e;
+                const double grove = smoothstep(0.38, 0.6, fbmNoise(cx * 0.004 + 7.0, cz * 0.004 - 3.0, 3));
+                const double perCell = d.n * (d.w * 38 + colMid * 14 + d.e * 6) + d.s * (d.w * 10 + colMid * 18 + d.e * 0.6) +
+                                       rowMid * (d.w * 3 + colMid * 16 + d.e * 14);
+                const int wantTrees = (int)std::lround(perCell * (0.12 + 0.88 * grove));
+                const double burnt = d.n * colMid * smoothstep(0.62, 0.72, fbmNoise(cx * 0.003 - 4.0, cz * 0.003 + 6.0, 2));
+                auto open = [&](double x, double z, int& id, int& i, int& j) {
+                    if (std::max(std::fabs(x), std::fabs(z)) < kInner + 10) return false;
+                    i = cellI(x), j = cellI(z), id = i * hN + j;
+                    if (i < 1 || j < 1 || i >= hN - 1 || j >= hN - 1) return false;
+                    return !keep[id] && waterY[id] < -1e8;
+                };
+                // Trees.
+                int planted = 0;
+                for (int k = 0; k < wantTrees * 2 && planted < wantTrees; k++) {
+                    const double x = x0 + C * rr(), z = z0 + C * rr();
+                    int id, i, j;
+                    if (!open(x, z, id, i, j) || paint[id] != PAINT_NONE || surf[id] != SURF_GRASS) continue;
+                    const double h = hgrid[id];
+                    if (h > 205 + 12 * (valueNoise(x * 0.02, z * 0.02) - 0.5) || slopeAtCell(i, j) > 0.75) continue;
+                    bool spaced = true;
+                    for (int a = std::max(0, ci - 1); a <= std::min(cn - 1, ci + 1) && spaced; a++)
+                        for (int b = std::max(0, cj - 1); b <= std::min(cn - 1, cj + 1) && spaced; b++)
+                            for (int ti : nearTrees[(size_t)a * cn + b])
+                                if (sq(trees[ti].base.x - x) + sq(trees[ti].base.z - z) < 3.5 * 3.5) {
+                                    spaced = false;
+                                    break;
+                                }
+                    if (!spaced) continue;
+                    Tree t;
+                    const double q = rr(), dv = std::fabs(z - riverZ(x));
+                    const bool lowWet = (dv < 160 && h < 40) || lakeDist(x, z) < kLakeR + 200;
+                    if (q < 0.05 + 0.5 * burnt) t.kind = 2;
+                    else if ((lowWet && q < 0.75) || (d.w * rowMid > 0.5 && q < 0.5) || (dry > 0.4 && q < 0.6)) t.kind = 1;
+                    else t.kind = 0;
+                    t.base = V3(x, h - 0.2, z);
+                    t.height = t.kind == 0 ? 9 + rr() * 10 : t.kind == 1 ? 7 + rr() * 7 : 6 + rr() * 6;
+                    t.height *= 1 - 0.3 * smoothstep(120, 200, h);
+                    t.radius = t.height * (t.kind == 0 ? 0.2 + rr() * 0.06 : 0.26 + rr() * 0.08);
+                    t.tint = (float)(0.8 + rr() * 0.4);
+                    nearTrees[(size_t)ci * cn + cj].push_back((int)trees.size());
+                    plant(t);
+                    planted++;
+                }
+                // Rocks: more on the steep and up high, and in the badlands; now and then a big outcrop.
+                const int rockTries = 2 + (int)std::lround(3 * (d.n * colMid + dry));
+                for (int k = 0; k < rockTries; k++) {
+                    const double x = x0 + C * rr(), z = z0 + C * rr();
+                    int id, i, j;
+                    if (!open(x, z, id, i, j)) continue;
+                    const double slope = slopeAtCell(i, j), h = hgrid[id];
+                    if (rr() > 0.08 + 0.8 * smoothstep(0.2, 0.7, slope) + 0.25 * smoothstep(60, 200, h) + 0.3 * dry) continue;
+                    const bool big = slope > 0.5 && rr() < 0.12 && bigRocks < 400;
+                    const double rad = big ? 1.6 + 2.0 * rr() : 0.35 + rr() * rr() * 0.75, flat = 0.5 + 0.4 * rr();
+                    bigRocks += big;
+                    addRock(x, z, V3(rad, rad * flat, rad * (0.7 + 0.3 * rr())), rad * flat * (0.5 + 0.5 * rr()), 1000000u + (uint32_t)(ci * cn + cj) * 8u + (uint32_t)k,
+                            (float)(0.85 + 0.25 * rr()));
+                }
+                // A fallen log in the woods.
+                if (grove > 0.5 && rr() < 0.5 * grove * (1 - dry)) {
+                    const double x = x0 + C * rr(), z = z0 + C * rr();
+                    int id, i, j;
+                    const double r = 0.18 + 0.18 * rr(), L = 4 + 6 * rr(), a = 6.2832 * rr();
+                    V3 p0(x - std::cos(a) * L / 2, 0, z - std::sin(a) * L / 2), p1(x + std::cos(a) * L / 2, 0, z + std::sin(a) * L / 2);
+                    int i0, j0, id0, i1, j1, id1;
+                    if (open(x, z, id, i, j) && paint[id] == PAINT_NONE && open(p0.x, p0.z, id0, i0, j0) && open(p1.x, p1.z, id1, i1, j1)) {
+                        p0.y = height(p0.x, p0.z) + r * 0.8, p1.y = height(p1.x, p1.z) + r * 0.8;
+                        logs.push_back({p0, p1, r});
+                    }
+                }
+                // Bushes: what grows in each district.
+                const int bushTries = (int)std::lround(12 * (0.3 + 0.7 * std::max(grove, dry)));
+                for (int k = 0; k < bushTries; k++) {
+                    const double x = x0 + C * rr(), z = z0 + C * rr();
+                    int id, i, j;
+                    if (!open(x, z, id, i, j)) continue;
+                    const bool desert = paint[id] == PAINT_DESERT || (paint[id] == PAINT_SAND && dry > 0.4);
+                    if ((paint[id] != PAINT_NONE && !desert) || (surf[id] != SURF_GRASS && !desert) || hgrid[id] > 210) continue;
+                    const double wetDist = lakeDist(x, z) - kLakeR;
+                    const int habitat = desert || dry > 0.45 ? HAB_DESERT : wetDist < 60 ? HAB_WETLAND : d.e * rowMid > 0.5 ? HAB_CANYON
+                                        : hgrid[id] > 120 ? HAB_UPLAND : grove > 0.5 ? HAB_FOREST : HAB_MEADOW;
+                    bushes.push_back(growBush(V3(x, hgrid[id], z), habitat, grove > 0.35, rr(), (float)(0.75 + 0.45 * rr())));
+                }
+            }
     }
 
     steps.next("bc.stations start");
