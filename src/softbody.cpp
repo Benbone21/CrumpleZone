@@ -339,32 +339,35 @@ void Car::computeForces(double h, const World& w) {
     for (Node& n : nodes) n.f = g * n.m - n.v * (len(n.v) * dragPerKg * n.m);
     // Water: what's under the surface is held up a little and dragged back hard.
     if (w.hasWater()) {
-        const double level = w.waterLevel(nodes[0].p.x, nodes[0].p.z);
-        if (level > -1e8) {
+        // The water's level and current where each node is (not one sample for the whole car: a truck with its front wheels in a
+        // river and the rest on the bank, or straddling a pool's edge, is held up and pushed only where it's wet).
+        bool wet = false;
+        for (Node& n : nodes) {
+            const double level = w.waterLevel(n.p.x, n.p.z);
+            const double depth = level - n.p.y;
+            if (level < -1e8 || depth <= 0) continue;
+            wet = true;
+            double sub = std::min(1.0, depth / 0.3);
             // (A river's current pushes too: the drag is against the moving water.)
-            const V3 flow = w.waterFlow(nodes[0].p.x, nodes[0].p.z);
-            for (Node& n : nodes) {
-                double depth = level - n.p.y;
-                if (depth <= 0) continue;
-                double sub = std::min(1.0, depth / 0.3);
-                const V3 rel = n.v - flow;
-                // The body's sealed cabin floats it once the water's halfway up (that's what
-                // lets a current carry a car off); the wheels and tires much less so.
-                const double lift = &n - nodes.data() < bodyNodes ? 0.85 : 0.4;
-                n.f += V3(0, 9.81 * n.m * lift * sub, 0) - rel * (n.m * sub * (1.0 + 0.6 * len(rel)));
-            }
-            // The air intake: atop the engine, or up at the roof with a snorkel. Water
-            // in it hydrolocks the engine.
-            if (!engineDead && !engineNodes.empty() && rpm > 100) {
-                double intake = -1e9;
-                if (spec->extras & EXTRA_SNORKEL)
-                    for (int i = 0; i < bodyNodes; i++) intake = std::max(intake, nodes[i].p.y - 0.15);
-                else
-                    for (int i : engineNodes) intake = std::max(intake, nodes[i].p.y);
-                if (intake < level) {
-                    engineDead = hydrolocked = true;
-                    engineHealth = std::min(engineHealth, 0.1);
-                }
+            const V3 rel = n.v - w.waterFlow(n.p.x, n.p.z);
+            // The body's sealed cabin floats it once the water's halfway up (that's what
+            // lets a current carry a car off); the wheels and tires much less so.
+            const double lift = &n - nodes.data() < bodyNodes ? 0.85 : 0.4;
+            n.f += V3(0, 9.81 * n.m * lift * sub, 0) - rel * (n.m * sub * (1.0 + 0.6 * len(rel)));
+        }
+        // The air intake: atop the engine, or up at the roof with a snorkel. Water in it (the level where the intake is)
+        // hydrolocks the engine.
+        if (wet && !engineDead && !engineNodes.empty() && rpm > 100) {
+            int top = -1;
+            if (spec->extras & EXTRA_SNORKEL) {
+                for (int i = 0; i < bodyNodes; i++)
+                    if (top < 0 || nodes[i].p.y > nodes[top].p.y) top = i;
+            } else
+                for (int i : engineNodes)
+                    if (top < 0 || nodes[i].p.y > nodes[top].p.y) top = i;
+            if (top >= 0 && nodes[top].p.y - (spec->extras & EXTRA_SNORKEL ? 0.15 : 0.0) < w.waterLevel(nodes[top].p.x, nodes[top].p.z)) {
+                engineDead = hydrolocked = true;
+                engineHealth = std::min(engineHealth, 0.1);
             }
         }
     }
