@@ -163,7 +163,9 @@ Without `--time`, captures start at 10:00 with the clock running.
 - **Hands-on repairs** (`fixes.h`, `interact.cpp`, `handwork.cpp`): the parked-alongside
   field repair is gone. Tools and repair parts are career keys (`TOOL:`, `REPAIR:` in
   `Career::owned` / `stock`); sandbox has everything. `--script work-wheel|work-chain|work-fix`
-  stages a first-person job for screenshots.
+  stages a first-person job for screenshots. In multiplayer (`repairsync.*`) the others see and
+  hear it: "work"/"jack"/"drop"/"fixed" chatter lines (no version bump; older builds ignore them),
+  tested in `tests/net_repair.cpp`.
 
 - **Release integration (2026-10-14):** all available branch work is merged into `main` for
   `v0.1.9`; read `docs/release-merge-0.1.9.md` and the new handoff first. Release defaults

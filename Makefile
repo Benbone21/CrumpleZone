@@ -14,10 +14,11 @@ SCEN     := tests/perf.cpp tests/carsleep.cpp tests/drivetrain.cpp tests/net_sta
 PHYS     += src/allocstat.cpp
 PHYS     += src/carentry.cpp
 PHYS     += src/worldcache.cpp
-SCEN     += tests/baja.cpp
+PHYS     += src/toolsounds.cpp src/repairsync.cpp
+SCEN     += tests/baja.cpp tests/net_repair.cpp
 SCEN     += tests/entercar.cpp
 SCEN     += tests/winchfoot.cpp tests/allocs.cpp tests/benchreport.cpp tests/tracks.cpp src/fx.cpp
-GAME_SRC := src/main.cpp src/lab.cpp src/gamepad_sdl.cpp src/editor.cpp src/coop.cpp src/gl.cpp src/gpu.cpp src/render.cpp src/carvisual.cpp src/people.cpp src/scenery.cpp src/menu.cpp src/menuscene.cpp src/mainmenudraw.cpp src/mappreview.cpp src/engine_samples.cpp src/engineaudio.cpp src/audio.cpp src/toolsounds.cpp src/music.cpp src/ambience.cpp src/daylight.cpp src/lights.cpp src/groundtex.cpp src/groundshader.cpp src/propdraw.cpp src/invdraw.cpp src/debugscreen.cpp src/buildinfo.cpp $(PHYS) $(SCEN) src/treedraw.cpp src/texcomp.cpp
+GAME_SRC := src/main.cpp src/lab.cpp src/gamepad_sdl.cpp src/editor.cpp src/coop.cpp src/gl.cpp src/gpu.cpp src/render.cpp src/carvisual.cpp src/people.cpp src/scenery.cpp src/menu.cpp src/menuscene.cpp src/mainmenudraw.cpp src/mappreview.cpp src/engine_samples.cpp src/engineaudio.cpp src/audio.cpp src/music.cpp src/ambience.cpp src/daylight.cpp src/lights.cpp src/groundtex.cpp src/groundshader.cpp src/propdraw.cpp src/invdraw.cpp src/debugscreen.cpp src/buildinfo.cpp $(PHYS) $(SCEN) src/treedraw.cpp src/texcomp.cpp
 GAME_OBJ := $(patsubst %.cpp,build/%.o,$(GAME_SRC))
 TEST_OBJ := $(patsubst %.cpp,build/%.o,tests/run_tests.cpp $(PHYS) $(SCEN) src/music.cpp)
 HEADERS  := $(wildcard src/*.h tests/*.h)
@@ -67,7 +68,7 @@ build/bench_autopilot: build/tests/run_tests.o build/tests/lidar.o build/tests/h
 build/test_render: build/tests/render.o $(filter-out build/src/main.o,$(GAME_OBJ))
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDLIBS)
 
-build/test_audio: build/tests/audio.o build/tests/engine_samples.o build/tests/soundscape.o build/src/audio.o build/src/toolsounds.o build/src/engineaudio.o build/src/engine_samples.o build/src/music.o build/src/ambience.o $(patsubst %.cpp,build/%.o,$(filter-out src/allocstat.cpp,$(PHYS)))
+build/test_audio: build/tests/audio.o build/tests/engine_samples.o build/tests/soundscape.o build/src/audio.o build/src/engineaudio.o build/src/engine_samples.o build/src/music.o build/src/ambience.o $(patsubst %.cpp,build/%.o,$(filter-out src/allocstat.cpp,$(PHYS)))
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDLIBS)
 
 # Every mesh the game builds, what's wasted in it (meshopt.h): SDL_VIDEODRIVER=offscreen build/meshaudit [--fast].
@@ -99,7 +100,7 @@ build/win/bench_sim.exe: build/win/obj/tools/bench_sim.o $(patsubst %.cpp,build/
 build/win/run_tests.exe: build/win/obj/tests/run_tests.o $(patsubst %.cpp,build/win/obj/%.o,$(PHYS) $(SCEN) src/music.cpp)
 	$(WINCXX) $(WINFLAGS) -o $@ $^ -lws2_32 -liphlpapi -static -static-libgcc -static-libstdc++
 
-build/win/test_audio.exe: build/win/obj/tests/audio.o build/win/obj/tests/engine_samples.o build/win/obj/tests/soundscape.o build/win/obj/src/audio.o build/win/obj/src/toolsounds.o build/win/obj/src/engineaudio.o build/win/obj/src/engine_samples.o build/win/obj/src/music.o build/win/obj/src/ambience.o $(patsubst %.cpp,build/win/obj/%.o,$(filter-out src/allocstat.cpp,$(PHYS)))
+build/win/test_audio.exe: build/win/obj/tests/audio.o build/win/obj/tests/engine_samples.o build/win/obj/tests/soundscape.o build/win/obj/src/audio.o build/win/obj/src/engineaudio.o build/win/obj/src/engine_samples.o build/win/obj/src/music.o build/win/obj/src/ambience.o $(patsubst %.cpp,build/win/obj/%.o,$(filter-out src/allocstat.cpp,$(PHYS)))
 	$(WINCXX) $(WINFLAGS) -o $@ $^ $(WINSDL)/SDL2.dll -lws2_32 -liphlpapi -static -static-libgcc -static-libstdc++
 
 # Render-mesh integration checks, with no SDL window or OpenGL context.
@@ -159,7 +160,7 @@ build/rel/bench_sim: build/rel/tools/bench_sim.o $(REL_PHYS)
 	$(CXX) $(RELFLAGS) $(RELLD) -o $@ $^ -lpthread -lm
 build/rel/test_render: build/rel/tests/render.o $(filter-out build/rel/src/main.o,$(REL_GAME))
 	$(CXX) $(RELFLAGS) $(RELLD) -o $@ $^ $(LDLIBS)
-build/rel/test_audio: build/rel/tests/audio.o build/rel/tests/engine_samples.o build/rel/tests/soundscape.o build/rel/src/audio.o build/rel/src/toolsounds.o build/rel/src/engineaudio.o build/rel/src/engine_samples.o build/rel/src/music.o build/rel/src/ambience.o $(filter-out build/rel/src/allocstat.o,$(REL_PHYS))
+build/rel/test_audio: build/rel/tests/audio.o build/rel/tests/engine_samples.o build/rel/tests/soundscape.o build/rel/src/audio.o build/rel/src/engineaudio.o build/rel/src/engine_samples.o build/rel/src/music.o build/rel/src/ambience.o $(filter-out build/rel/src/allocstat.o,$(REL_PHYS))
 	$(CXX) $(RELFLAGS) $(RELLD) -o $@ $^ $(LDLIBS)
 
 # ---- Windows build: cross-compiled with mingw-w64 (posix threads) ------------------
@@ -291,7 +292,7 @@ build/mac/bench_sim: build/mac/obj/tools/bench_sim.o $(patsubst %.cpp,build/mac/
 build/mac/run_tests: build/mac/obj/tests/run_tests.o $(patsubst %.cpp,build/mac/obj/%.o,$(PHYS) $(SCEN) src/music.cpp)
 	$(MACCXX) $(MACFLAGS) $(MACLDX) -o $@ $^
 
-build/mac/test_audio: build/mac/obj/tests/audio.o build/mac/obj/tests/engine_samples.o build/mac/obj/tests/soundscape.o build/mac/obj/src/audio.o build/mac/obj/src/toolsounds.o build/mac/obj/src/engineaudio.o build/mac/obj/src/engine_samples.o build/mac/obj/src/music.o build/mac/obj/src/ambience.o $(patsubst %.cpp,build/mac/obj/%.o,$(filter-out src/allocstat.cpp,$(PHYS)))
+build/mac/test_audio: build/mac/obj/tests/audio.o build/mac/obj/tests/engine_samples.o build/mac/obj/tests/soundscape.o build/mac/obj/src/audio.o build/mac/obj/src/engineaudio.o build/mac/obj/src/engine_samples.o build/mac/obj/src/music.o build/mac/obj/src/ambience.o $(patsubst %.cpp,build/mac/obj/%.o,$(filter-out src/allocstat.cpp,$(PHYS)))
 	$(MACCXX) $(MACFLAGS) $(MACLDX) -o $@ $^ -F$(MACSDL) -framework SDL2 -Wl,-rpath,$(abspath $(MACSDL))
 
 build/mac/test_render: build/mac/obj/tests/render.o $(filter-out build/mac/obj/src/main.o,$(MAC_OBJ))

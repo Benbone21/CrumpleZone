@@ -135,6 +135,7 @@ public:
         V3 c, axis, up;  // center, its axle, which way is up for it
         WheelItem item;
     } carried;
+    std::vector<Carried> carriedOthers;  // ...and the ones in other players' arms (repairsync.h)
     // The world editor: redraw just what changed (terrain cells i, j on the 1 m grid,
     // inclusive), the water, or the objects.
     // Hidden behind the ground from the camera? For the main pass only (never a shadow pass). See occlusion.h.

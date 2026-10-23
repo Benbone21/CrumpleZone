@@ -38,6 +38,7 @@
 #include "audio.h"
 #include "toolsounds.h"
 #include "horn.h"
+#include "repairsync.h"
 #include "worldsound.h"
 #include "biome.h"
 #include "jobs.h"
@@ -2129,6 +2130,8 @@ int main(int argc, char** argv) {
     double clock = 0;
     horn::Sender hornSender;  // your horn, as told to the others (horn.h)
     horn::Remote hornRemote;  // theirs
+    repairsync::Sender repairOut;  // what you hold and the work you do on foot, the jacks under yours, as told to the others (repairsync.h)
+    repairsync::Remote repairIn;   // theirs
     // Time of day: the clock (hours) carries on from last time; --time holds it still.
     double dayHours = opt.timeHours >= 0 ? opt.timeHours : settings.clockHours;
     double levelHours = -1;  // the playing level's own hour (-1: none)
@@ -4545,6 +4548,7 @@ int main(int argc, char** argv) {
                     hornRemote.hear(m.player, hornState, clock);
                     continue;
                 }
+                if (m.player >= 0 && m.player < net::kMaxPeers && repairIn.onMessage(sim, m.player, net.players[m.player].name, m.text, clock)) continue;  // a buddy's work on foot, jack, dropped part, repair
                 if (m.text == "jobstop") {
                     jobOn = false;
                     continue;
@@ -4726,6 +4730,9 @@ int main(int argc, char** argv) {
                     net.sendGame(b);
                 }
             }
+            // Your work on foot and the jacks under yours, told to the others; theirs eased and forgotten when unheard (repairsync.h).
+            repairOut.update(sim, walker.active ? &walker : nullptr, interact, clock, net.active(), [&](const std::string& t) { net.sendGame(t); });
+            repairIn.update(sim, dt, clock);
             sim.lodWatch.clear();  // (where traffic counts someone: on foot, and the camera)
             if (walker.active) sim.lodWatch.push_back(walker.p);
             sim.lodWatch.push_back(lastView.eye);
@@ -5850,8 +5857,9 @@ int main(int argc, char** argv) {
                     people::build(p, me, renderer.people);
                 }
             }
-            const V3 viewDir = norm(view.target - view.eye);
+            const V3 viewDir = norm(view.target - view.eye), viewRight = norm(cross(viewDir, view.up));
             auto inView = [&](const V3& at, double d) { return d < 5 || dot(at - view.eye, viewDir) > 0.2 * d; };  // (well behind you: not drawn)
+            renderer.carriedOthers.clear();
             auto buddy = [&](const std::string& who, const V3& at, double yaw, double stride, const V3* vel, double crouch = 0) {
                 people::Mover& mv = buddyMove[who];
                 uint32_t h = 2166136261u;
@@ -5862,10 +5870,45 @@ int main(int argc, char** argv) {
                 g.grounded = at.y - sim.world.height(at.x, at.z) < 0.15;  // (off the ground: jumping)
                 if (vel) g.vel = *vel;
                 else g.estimate = true;
+                // What they hold and the work they're doing (repairsync.h): turned to it, down on their heels for a low job, the
+                // tools in their hands and the sounds of them.
+                Handwork rh;
+                bool rhOn = false;
+                V3 rEye = at + V3(0, Walker::kEyeStand, 0);
+                repairsync::Remote::Player* rp = repairIn.find(who);
+                if (rp) {
+                    const repairsync::Work& rw = rp->work;
+                    if (rw.working()) {
+                        const V3 dw = rw.job.at - at;
+                        if (dw.x * dw.x + dw.z * dw.z > 0.01) g.yaw = std::atan2(-dw.z, dw.x);
+                        if (rw.job.kind != IA_RAISE_JACK && rw.job.kind != IA_LOWER_JACK && rw.job.at.y < at.y + 1.1) g.crouch = std::max(g.crouch, 1.0);
+                    }
+                    rhOn = repairIn.handwork(sim, *rp, at, g.yaw, g.crouch, clock, rh, &rEye);
+                    if (audioOn)
+                        repairIn.sounds(*rp, rh, [&](Sfx s, const V3& p, float gain, float delay, float pitch) { audio.playAt(s, p, view.eye, viewRight, gain, delay, pitch); }, view.eye);
+                }
                 people::Pose p = people::walking(g, mv, dt);  // (posed even out of sight: their feet stay where they were)
                 const double d = len(at - view.eye);
                 if (d > 120 || !inView(at + V3(0, 1, 0), d)) return;
                 p.detail = d < 8 ? 2 : d < 30 ? 1 : 0;
+                if (rhOn) {
+                    for (int s = 0; s < 2; s++)
+                        if (rh.hands[s].on) people::gripAt(p, s, rh.hands[s].p, rh.hands[s].axis, rh.hands[s].grip), p.stretch = true;
+                    if (d < 60) renderer.frameModels.insert(renderer.frameModels.end(), rh.models.begin(), rh.models.end());
+                    if (rh.wheel.car >= 0 && renderer.wheelWork.car < 0) renderer.wheelWork = rh.wheel;
+                    if (rp->work.carrying) {  // a wheel in their arms (onto the hub as it goes on), a hand either side of the tread
+                        Renderer::Carried cw;
+                        cw.on = true, cw.item = rp->work.carry, cw.up = V3(0, 1, 0);
+                        const V3 fwd(std::cos(g.yaw), 0, -std::sin(g.yaw));
+                        cw.c = rEye + fwd * (0.45 + cw.item.width * 0.5) - V3(0, 0.95 - cw.item.R * 0.4, 0), cw.axis = -fwd;
+                        if (rh.carriedPose) cw.c = rh.carriedC, cw.axis = rh.carriedAxis;
+                        renderer.carriedOthers.push_back(cw);
+                        if (!rh.hands[0].on && !rh.hands[1].on) {
+                            const V3 side = norm(cross(cw.axis, V3(0, 1, 0)));
+                            for (int s = 0; s < 2; s++) people::gripAt(p, s, cw.c + side * ((s == 0 ? 1 : -1) * cw.item.R * 0.93) + V3(0, cw.item.R * 0.25, 0), V3(0, 1, 0), 0.8);
+                        }
+                    }
+                }
                 people::build(p, people::lookFor(V3(0.2, 0.6, 0.95), h), renderer.people);
             };
             for (const RemoteWalker& rw : coop.walkers) buddy(rw.who, rw.p, rw.yaw, rw.stride, nullptr, rw.crouch);

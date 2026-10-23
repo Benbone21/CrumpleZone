@@ -108,6 +108,10 @@ struct Interact {
     InteractOption current;  // what E does now (kind IA_NONE: nothing in reach)
     std::vector<InteractOption> nearby;  // every job within a few metres, aimed at or not: the markers (set by run)
     int usedPart = -1;       // set when a repair used a part (RepairPart): the game takes it from here
+    // What the last finished step did that the other players in a session should hear (repairsync.h takes them and clears them):
+    int droppedPart = -1;    // a broken part just put down beside the car: its index in Sim::droppedParts
+    int fixedCar = -1;       // a repair just made whole (the car's index)...
+    Fix fixedFix = InteractOption().fix;  // ...and which
     bool waitRelease = false;  // a held job finished: E has to be let go before the next
     double progress = 0;     // s held on it so far
     std::vector<InteractSpot> spots;  // things out in the world to open (set by the game)

@@ -181,7 +181,7 @@ int starNut(int visit, int n) { return n % 2 ? visit * 2 % n : visit % n; }
 
 }  // namespace
 
-Handwork handwork(const Sim& sim, const Walker& wk, const Interact& ia, const V3& eye, const V3& look, double time) {
+Handwork handwork(const Sim& sim, const Walker& wk, const Interact& ia, const V3& eye, const V3& look, double time, bool mine) {
     Handwork h;
     Scene sc{h};
     const V3 F = norm(look), R = norm(cross(F, kUp)), U = cross(R, F);
@@ -233,7 +233,7 @@ Handwork handwork(const Sim& sim, const Walker& wk, const Interact& ia, const V3
     }
     // The winch line or a strap end in your right hand (the game holds it there: Sim::handLine), the line running back
     // through the fist to its drum.
-    if (sim.handLine.on() && sim.handLine.car < (int)sim.cars.size()) {
+    if (mine && sim.handLine.on() && sim.handLine.car < (int)sim.cars.size()) {
         h.hands[1].on = true, h.hands[1].grip = 1;
         h.hands[1].p = sim.handLine.hand;
         h.hands[1].axis = norm(sim.cars[sim.handLine.car].hookPoint(sim.handLine.hook) - sim.handLine.hand);

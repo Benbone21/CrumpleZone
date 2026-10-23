@@ -3,8 +3,10 @@
 //   wrench ticks on each return stroke, a seized nut's squeal as a nut breaks loose, a nut dropping when it comes off;
 //   hammer blows; the jack's pawl clicking up, the saddle groaning down and a thunk when the tire meets the ground;
 //   a pry bar's creak; a tire iron's clink; a wheel thumping off its studs and clinking back on.
-// Only your own job is seen here: other players' repairs aren't visible to this client yet (the multiplayer sync, a separate task).
+// Other players' work is fed in the same way from what they told (repairsync.h), one ToolSounds each.
 #pragma once
+#include <functional>
+
 #include "audio.h"
 #include "handwork.h"
 #include "interact.h"
@@ -12,7 +14,12 @@
 class ToolSounds {
 public:
     // Call once a frame with the current job (`ia`), what handwork() drew for it (`hw`) and the listener's place and right-hand direction.
-    void update(Audio& audio, const Interact& ia, const Handwork& hw, const V3& listener, const V3& right);
+    void update(Audio& audio, const Interact& ia, const Handwork& hw, const V3& listener, const V3& right) {
+        update([&](Sfx what, const V3& at, float gain, float delay, float pitch) { audio.playAt(what, at, listener, right, gain, delay, pitch); }, ia, hw, listener);
+    }
+    // The same, each sound handed to `play` (what, where, gain, delay, pitch) instead of an Audio (the tests count them).
+    using Play = std::function<void(Sfx, const V3&, float, float, float)>;
+    void update(const Play& play, const Interact& ia, const Handwork& hw, const V3& listener);
 
 private:
     bool working_ = false;

@@ -755,9 +755,11 @@ std::string Interact::perform(Sim& sim, Walker& wk, const InteractOption& o) {
                 d.yaw = std::atan2(-fwd.z, fwd.x) + 1.2 * (double)(sim.droppedParts.size() % 5);
                 sim.droppedParts.push_back(d);
                 if (sim.droppedParts.size() > 12) sim.droppedParts.erase(sim.droppedParts.begin());
+                droppedPart = (int)sim.droppedParts.size() - 1;
             }
             if (st.fixes) {
                 applyFix(c, o.fix);
+                fixedCar = o.car, fixedFix = o.fix;
                 job.fixed = true;
                 return std::string(st.label) + ": " + jobName(o.fix.kind) + " FIXED";
             }

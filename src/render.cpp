@@ -4384,12 +4384,14 @@ void Renderer::drawWheels(const Sim& sim, GLuint prog) {
         };
         drawItem(it, mat(1.0), mat((it.rimR + 0.015) / it.R));
     }
-    // The one in your arms.
-    if (carried.on) {
-        const WheelItem& it = carried.item;
-        drawItem(it, wheelMatrixAt(carried.c, carried.axis, carried.up, 0, it.R, it.width),
-                 wheelMatrixAt(carried.c, carried.axis, carried.up, 0, it.R, it.width, (it.rimR + 0.015) / it.R));
-    }
+    // The one in your arms (and your buddies').
+    auto inArms = [&](const Carried& cw) {
+        const WheelItem& it = cw.item;
+        drawItem(it, wheelMatrixAt(cw.c, cw.axis, cw.up, 0, it.R, it.width), wheelMatrixAt(cw.c, cw.axis, cw.up, 0, it.R, it.width, (it.rimR + 0.015) / it.R));
+    };
+    if (carried.on) inArms(carried);
+    for (const Carried& cw : carriedOthers)
+        if (cw.on) inArms(cw);
     uniformM4(prog, "uModel", m4identity());
 }
 

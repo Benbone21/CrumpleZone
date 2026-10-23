@@ -32,5 +32,6 @@ struct Handwork {
     } hands[2];
 };
 
-// eye, look: the first-person view; time: seconds (for the to-and-fro of the work).
-Handwork handwork(const Sim& sim, const Walker& wk, const Interact& ia, const V3& eye, const V3& look, double time);
+// eye, look: the first-person view; time: seconds (for the to-and-fro of the work). `mine`: false for another player's
+// work (repairsync.h: their walker and job as they told it), which leaves out this machine's line in hand (Sim::handLine).
+Handwork handwork(const Sim& sim, const Walker& wk, const Interact& ia, const V3& eye, const V3& look, double time, bool mine = true);
