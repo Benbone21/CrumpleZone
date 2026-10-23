@@ -249,6 +249,7 @@ Handwork handwork(const Sim& sim, const Walker& wk, const Interact& ia, const V3
         h.hands[1].grip = s < 0.85 ? 0.15 : 0.15 + (s - 0.85) / 0.15 * 0.85;
     }
     if (!working) return h;
+    if (std::isfinite(o.at.x + o.at.y + o.at.z)) h.hasWork = true, h.workAt = o.at;
 
     switch (o.kind) {
     case IA_REMOVE_WHEEL:
@@ -266,6 +267,7 @@ Handwork handwork(const Sim& sim, const Walker& wk, const Interact& ia, const V3
             h.carriedC = lerp(from, hubOf(*car, *wh) + a * (0.25 * (1 - s)), smooth(s));
             h.carriedAxis = norm(lerp(-flat(F), a, s));
         }
+        h.hasWork = true, h.workAt = hubOf(*car, *wh);
         if (t >= n0 && t < n1) {
             const bool carriedWheel = !off && wk.carrying;
             const Lugs lugs(*car, *wh, carriedWheel ? *wk.carrying : wh->item, carriedWheel);
@@ -273,6 +275,7 @@ Handwork handwork(const Sim& sim, const Walker& wk, const Interact& ia, const V3
             const int visit = std::min(lugs.n - 1, (int)(local / per));
             const double within = local - visit * per;
             const double swings = std::max(1.0, std::round(per / kSwing));  // (whole swings, so each nut ends on a reset)
+            h.nut = visit, h.nutOff = off;
             sc.turnCross(toolId(TOOL_LUG_WRENCH), lugs.at(starNut(visit, lugs.n)), a, within / per * swings * kSwing, off, toward, R);
         } else if (off && t >= n1) {
             h.wheel.car = o.car, h.wheel.wheel = o.wheel, h.wheel.out = (t - n1) / (1 - n1) * 0.16;
@@ -323,6 +326,7 @@ Handwork handwork(const Sim& sim, const Walker& wk, const Interact& ia, const V3
             work = lugs.hubFace();
             workAxis = lugs.out;
         }
+        h.hasWork = true, h.workAt = work;
         if (o.part >= 0) {
             // The new part, from outboard of the work into place along the stud.
             const double s = smooth(std::min(1.0, t / 0.8));
@@ -333,6 +337,13 @@ Handwork handwork(const Sim& sim, const Walker& wk, const Interact& ia, const V3
             if (s < 0.95) sc.both(0.1);
         } else if (o.tool >= 0) {
             const Tool tool = (Tool)o.tool;
+            if (car) {  // taking the broken part off: it comes away in the other hand over the last of the hold
+                const std::vector<RepairStep> st = repairSteps(f.kind, jobJacks(f.kind, f.wheel), jobWheelOff(*car, f.kind, f.wheel));
+                if (o.step >= 0 && o.step < (int)st.size() && st[o.step].removes && t > 0.6) {
+                    const double s = smooth(std::min(1.0, (t - 0.6) / 0.4));
+                    sc.put(repairPartModel((RepairPart)f.part), lerp(work, work + norm(workAxis + kUp * 0.3) * 0.4, s), R, kUp);
+                }
+            }
             switch (tool) {
             case TOOL_HAMMER: sc.tap(toolId(tool), work, flat(workAxis), secs / 0.8 * M_PI * 2); break;
             case TOOL_PRY_BAR:
@@ -343,6 +354,7 @@ Handwork handwork(const Sim& sim, const Walker& wk, const Interact& ia, const V3
                     const std::vector<RepairStep> st = repairSteps(f.kind, jobJacks(f.kind, f.wheel), jobWheelOff(*car, f.kind, f.wheel));
                     for (int i = 0; i < o.step && i < (int)st.size(); i++) on |= st[i].part >= 0;
                 }
+                h.nut = 0, h.nutOff = !on;
                 sc.turn(toolId(tool), work, workAxis, secs * 0.75, !on, toward);
                 break;
             }
@@ -354,6 +366,7 @@ Handwork handwork(const Sim& sim, const Walker& wk, const Interact& ia, const V3
         if (o.loose < 0 || o.loose >= (int)sim.looseWheels.size()) break;
         const LooseWheel& lw = sim.looseWheels[o.loose];
         const V3 rim = lw.p + kUp * (lw.item.rimR * 0.9);  // (the bead at the top of the rim)
+        h.hasWork = true, h.workAt = rim;
         if (o.part >= 0) {
             const double s = smooth(std::min(1.0, t / 0.8));
             sc.put(repairPartModel((RepairPart)o.part), lerp(rim + toward * 0.4 + kUp * 0.3, lw.p, s), lw.axis(), kUp);

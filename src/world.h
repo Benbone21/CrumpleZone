@@ -212,7 +212,14 @@ struct RoadInfo {
 
 class World {
 public:
-    static constexpr double kHalfSize = 600.0;
+    // How far the map reaches from its middle each way (m): the terrain grid runs from -halfSize() to +halfSize() on both axes at
+    // 1 m, so gridSize() is 2 * halfSize() + 1. Each map has its own (halfSizeFor); every map is kDefaultHalfSize for now.
+    static constexpr double kDefaultHalfSize = 600.0;
+    static double halfSizeFor(int map);
+    // Tests: every map built on this thread is this big instead (0: as the map has it). Per thread, like withShowcase.
+    static inline thread_local double halfSizeOverride = 0;
+    static int gridSizeFor(int map) { return (int)(2 * halfSizeFor(map) / kRes) + 1; }
+    double halfSize() const { return half; }
     static constexpr double kPadRadius = 140.0;
     // The proving ground's test pad: a flat, paved, gridded rectangle (x0, x1, z0, z1) holding the course, the ramps and the model yard;
     // the land rises to the hills over kZoneRamp m beyond its edge. padOutside: how far (x, z) is outside it (negative inside).
@@ -263,7 +270,7 @@ public:
     // Water surface height at (x, z), or -1e9 where there's none.
     double waterLevel(double x, double z) const {
         if (!waterY.empty()) {
-            const int i = (int)std::lround((x + kHalfSize) / kRes), j = (int)std::lround((z + kHalfSize) / kRes);
+            const int i = (int)std::lround((x + half) / kRes), j = (int)std::lround((z + half) / kRes);
             if (i < 0 || j < 0 || i >= hN || j >= hN) return -1e9;
             return waterY[i * hN + j];
         }
@@ -274,7 +281,7 @@ public:
     // Which way the water there flows, and how fast (m/s): rivers push you downstream.
     V3 waterFlow(double x, double z) const {
         if (flowX.empty()) return V3();
-        const int i = (int)std::lround((x + kHalfSize) / kRes), j = (int)std::lround((z + kHalfSize) / kRes);
+        const int i = (int)std::lround((x + half) / kRes), j = (int)std::lround((z + half) / kRes);
         if (i < 0 || j < 0 || i >= hN || j >= hN) return V3();
         return V3(flowX[i * hN + j], 0, flowZ[i * hN + j]);
     }
@@ -335,6 +342,7 @@ public:
 private:
     // Terrain baked to a 1 m grid with the roads carved in.
     static constexpr double kRes = 1.0;
+    double half = kDefaultHalfSize;  // halfSize()
     int hN = 0;
     std::vector<float> hgrid, roadLat, roadAlong;
     std::vector<uint8_t> roadNear;

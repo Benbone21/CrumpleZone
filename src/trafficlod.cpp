@@ -170,7 +170,6 @@ void Sim::lodStep(int self, double dt) {
     Car::Proxy& L = c.lod;
     const auto& road = world.loopRoad;
     const RoadWalk rw(road, c.aiDir);
-    const int n = rw.n;
     const double kLane = 2.6, Lp = world.loopLength;
     // Speed: the lowest of cruise, the bends ahead and the gap to the car in front (IDM).
     const double aLat = aiCornerAccel(c), decel = aLat * 0.75;

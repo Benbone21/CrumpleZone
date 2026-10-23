@@ -184,42 +184,19 @@ std::vector<RepairStep> repairSteps(int kind, bool jack, bool wheelOff) {
     const auto W = RepairStep::WORK;
     if (jack) step(RepairStep::JACK, "JACKED UP", "JACK THIS CORNER UP");
     if (wheelOff) step(RepairStep::WHEEL_OFF, "WHEEL OFF", "REMOVE WHEEL", TOOL_LUG_WRENCH);
+    // Every repair is two jobs: the broken part comes off (and is dropped beside the car), then the new one goes on.
+    auto swap = [&](const char* rm, const char* fit, int tool, int part, double holdOff, double holdOn) {
+        step(W, rm, rm, tool, -1, holdOff);
+        s.back().removes = true;
+        step(W, fit, fit, -1, part, holdOn, true);
+    };
     switch (kind) {
-    case Fix::CV_AXLE:
-        step(W, "AXLE NUT OFF", "UNDO THE AXLE NUT", TOOL_RATCHET, -1, 4.5);
-        step(W, "OLD AXLE OUT", "KNOCK THE OLD AXLE OUT", TOOL_HAMMER, -1, 4);
-        step(W, "NEW AXLE IN", "FIT THE NEW CV AXLE", -1, PART_CV_AXLE, 3.5);
-        step(W, "AXLE NUT TORQUED", "TORQUE THE AXLE NUT", TOOL_RATCHET, -1, 4.5, true);
-        break;
-    case Fix::CONTROL_ARM:
-        step(W, "ARM UNBOLTED", "UNBOLT THE BENT ARM", TOOL_RATCHET, -1, 5);
-        step(W, "OLD ARM OUT", "LEVER THE OLD ARM OUT", TOOL_PRY_BAR, -1, 3.5);
-        step(W, "NEW ARM IN", "FIT THE NEW CONTROL ARM", -1, PART_CONTROL_ARM, 3.5);
-        step(W, "ARM BOLTED UP", "BOLT THE NEW ARM UP", TOOL_RATCHET, -1, 5, true);
-        break;
-    case Fix::TIE_ROD:
-        step(W, "NUTS OFF", "UNDO THE TIE ROD NUTS", TOOL_WRENCH, -1, 4);
-        step(W, "TAPER KNOCKED LOOSE", "KNOCK THE TAPER LOOSE", TOOL_HAMMER, -1, 3);
-        step(W, "NEW TIE ROD IN", "FIT THE NEW TIE ROD", -1, PART_TIE_ROD, 3);
-        step(W, "NUTS TIGHT", "TIGHTEN THE TIE ROD NUTS", TOOL_WRENCH, -1, 4, true);
-        break;
-    case Fix::SWAY_BAR:
-        step(W, "LINK OFF", "UNDO THE SWAY BAR LINK", TOOL_WRENCH, -1, 4);
-        step(W, "NEW LINK IN", "FIT THE NEW LINK", -1, PART_CONTROL_ARM, 3);
-        step(W, "BAR LINED UP", "LEVER THE BAR INTO LINE", TOOL_PRY_BAR, -1, 3);
-        step(W, "LINK TIGHT", "TIGHTEN THE LINK", TOOL_WRENCH, -1, 4, true);
-        break;
-    case Fix::DRIVE_SHAFT:
-        step(W, "FRONT END UNBOLTED", "UNBOLT THE FRONT END", TOOL_RATCHET, -1, 5, false, 1);
-        step(W, "BACK END UNBOLTED", "UNBOLT THE BACK END", TOOL_RATCHET, -1, 5, false, 2);
-        step(W, "NEW SHAFT IN", "FIT THE NEW DRIVE SHAFT", -1, PART_DRIVE_SHAFT, 4);
-        step(W, "BOTH ENDS BOLTED", "BOLT BOTH ENDS UP", TOOL_RATCHET, -1, 6, true);
-        break;
-    case Fix::SPARK_PLUGS:
-        step(W, "PLUGS OUT", "PULL THE PLUGS", TOOL_RATCHET, -1, 4);
-        step(W, "WATER CRANKED OUT", "CRANK THE WATER OUT", -1, -1, 3);
-        step(W, "NEW PLUGS IN", "INSTALL NEW PLUGS", -1, PART_SPARK_PLUGS, 4, true);
-        break;
+    case Fix::CV_AXLE: swap("REMOVE CV AXLE", "FIT CV AXLE", TOOL_HAMMER, PART_CV_AXLE, 6, 4); break;
+    case Fix::CONTROL_ARM: swap("REMOVE CONTROL ARM", "FIT CONTROL ARM", TOOL_RATCHET, PART_CONTROL_ARM, 6, 4); break;
+    case Fix::TIE_ROD: swap("REMOVE TIE ROD", "FIT TIE ROD", TOOL_WRENCH, PART_TIE_ROD, 5, 3.5); break;
+    case Fix::SWAY_BAR: swap("REMOVE SWAY BAR LINK", "FIT SWAY BAR LINK", TOOL_WRENCH, PART_CONTROL_ARM, 4, 3.5); break;
+    case Fix::DRIVE_SHAFT: swap("REMOVE DRIVE SHAFT", "FIT DRIVE SHAFT", TOOL_RATCHET, PART_DRIVE_SHAFT, 6, 5); break;
+    case Fix::SPARK_PLUGS: swap("REMOVE SPARK PLUGS", "FIT SPARK PLUGS", TOOL_RATCHET, PART_SPARK_PLUGS, 4, 4); break;
     case Fix::NEW_TIRE:
         if (wheelOff) {  // (the tire's work is on the wheel once it's off, on the ground: tireSteps)
             step(W, "NEW TIRE ON THE RIM", "PUT A NEW TIRE ON THE WHEEL YOU TOOK OFF", -1, -1, 0, true);

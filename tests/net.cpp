@@ -1,5 +1,6 @@
 // Multiplayer over loopback: a host and a client, each with its own sim, talking through
 // real sockets on this machine.
+#include "../src/horn.h"
 #include <unistd.h>
 
 #include <cmath>
@@ -229,6 +230,31 @@ SCENARIO(netLevel, "net/level", "The host's level reaches the client whole (a bi
     for (const auto& m : client.gameIn) clientHeard |= m.player == 0 && m.text == "go 1.5";
     ctx.check("host hears the client's progress", hostHeard);
     ctx.check("client hears the host's go", clientHeard);
+    {  // the horn: "horn 1" / "horn 0" chatter (horn.h), no new message type
+        host.gameIn.clear(), client.gameIn.clear();
+        client.sendGame(horn::message(true));
+        pump(150);
+        horn::Remote remote;
+        bool on = false;
+        for (const auto& m : host.gameIn)
+            if (m.player == client.self && horn::parse(m.text, on)) remote.hear(m.player, on, t);
+        ctx.check("a guest's horn reaches the host as sounding", remote.sounding(client.self, t));
+        ctx.check("...and goes quiet on its own if the guest never says stop", !remote.sounding(client.self, t + horn::kExpiry + 1));
+        host.gameIn.clear();
+        client.sendGame(horn::message(false));
+        pump(150);
+        for (const auto& m : host.gameIn)
+            if (m.player == client.self && horn::parse(m.text, on)) remote.hear(m.player, on, t);
+        ctx.check("the guest letting go silences it", !remote.sounding(client.self, t));
+        host.gameIn.clear(), client.gameIn.clear();
+        host.sendGame(horn::message(true));
+        pump(150);
+        bool clientHeardHorn = false;
+        for (const auto& m : client.gameIn) clientHeardHorn |= m.player == 0 && horn::parse(m.text, on) && on;
+        ctx.check("the host's horn reaches the guest", clientHeardHorn);
+        host.sendGame(horn::message(false));
+        pump(50);
+    }
     client.close();
     host.close();
 }

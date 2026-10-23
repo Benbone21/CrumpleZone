@@ -142,6 +142,7 @@ scenario finishes, you can drive around in the aftermath.
 | W / S or ↑ / ↓ | Throttle / brake (hold S when stopped to reverse) |
 | A / D or ← / → | Steer. Keys are all or nothing, so full steer is as much as the tires can hold at your speed, on that surface (full lock when parking, a few degrees at 130 km/h), plus room to catch a slide |
 | Space | Handbrake |
+| 7 | Horn (hold; pitched by vehicle, small cars higher; other players hear it from your car). On a pad: LB + R3 |
 | G | Garage: W/S pick engine, suspension, transmission, wheels or tires, A/D change the part, Enter fits it (career: B buys it, at a repair station) |
 | Q / E | Shift down / up (R, N, 1…; switches to manual). In manual W is gas, S is brake |
 | Shift+M | Manual / automatic gearbox |
@@ -160,13 +161,15 @@ scenario finishes, you can drive around in the aftermath.
 | C | Camera: chase / orbit / cockpit / drone (WASD fly, Q/E down/up, drag look; the truck stays put) |
 | F10 | Photo mode: hide the HUD |
 | Mouse drag, wheel | Look around (drag up past level to look up at the sky), zoom |
-| P | Pause |
+| P | Parking brake on/off (stays set until released; getting out sets it; the P light on the HUD) |
+| F6 | Pause (single player; Esc always opens the menu) |
 | X | Traction control on/off |
 | F11 | Fullscreen |
 | H | Controls overlay |
 | F3 | Debug screen (FPS, timings, position, vehicle, wheels, network); Shift+F3 adds a frame-time graph (rebindable) |
 | J | Get out of / into the vehicle |
 | I | On foot: the truck's inventory |
+| Left Ctrl (hold) | On foot: crouch. Your eyes ease down to 60% over about a third of a second, you walk at 45% speed (no running or jumping), and your body kneels in third person and for other players (the `walk` network message carries a sixth field, crouch 0..1; older builds ignore it, `net::kVersion` is unchanged). Good for looking under a truck; repair prompts work as usual. A low overhead keeps you down. Esc → Settings → Controls → CROUCH ON FOOT makes it a toggle. Rebindable. Pad: L3 on foot |
 | F12 | **Dev menu** (below) |
 | Grave (the key under Esc) | Flip the keyboard between GAMEPLAY KEYS and DEV KEYS (below) |
 
@@ -229,7 +232,7 @@ Launched plainly, the game opens on the main menu, a screen of its own (no world
 - **Map (M):** the whole map, north up: trails, water, repair shops, places, everyone's trucks. Wheel zooms, drag pans, left click sets your waypoint, right click pings GO HERE for everyone (Shift: HELP). Shift+M is now manual/automatic.
 - **Pings:** middle click pings GO HERE where you point; Shift+middle click pings HELP at your truck. Everyone sees them in the world and on the map.
 - **Chat:** Enter, type, Enter. **Meet up** (Esc → Multiplayer) parks your truck behind a buddy's (again for the next one). Name tags float over your buddies' trucks (and over them on foot).
-- **On foot (J):** get out (stopped) to spot a line or walk the trail. You see through your own eyes: the mouse looks around, WASD walk where you look, Shift run, Space jump; you wade, swim, and climb over rocks. Hooking a winch line or tow strap is done by hand: hold E at the fairlead (or a recovery point) to grab the line, walk it out (it pays out of the drum, as far as there is line), and hold E at a tree, boulder, ground spot or another vehicle's recovery point to hook it; hold E at either end to unhook. G lets go. Reeling in and paying out (Z, Shift+Z) work from the seat or on foot once it's hooked; F pours your truck's spare can into the nearest truck (a buddy's too). J again by a truck gets in. Any vehicle with nobody in it can be got into (J by it, or hold E at its driver's door): a parked one, one you spawned, a wreck, AI traffic once it's stopped (it's yours then, no AI); the one you left stays parked on its handbrake. In multiplayer a buddy's truck while they're on foot (or the host's parked ones) is handed over to you: you drive it and the others see you in it, and they can take it back the same way once you're out; if they're driving, you ride along (their truck on your screen, C for the passenger's seat) and J gets you out beside it. If two go for the same one the host settles who was first; someone who leaves with another's truck leaves it behind, parked, the host's.
+- **On foot (J):** get out (stopped) to spot a line or walk the trail. You see through your own eyes: the mouse looks around, WASD walk where you look, Shift run, Space jump, Left Ctrl crouch; you wade, swim, and climb over rocks. Hooking a winch line or tow strap is done by hand: hold E at the fairlead (or a recovery point) to grab the line, walk it out (it pays out of the drum, as far as there is line), and hold E at a tree, boulder, ground spot or another vehicle's recovery point to hook it; hold E at either end to unhook. G lets go. Reeling in and paying out (Z, Shift+Z) work from the seat or on foot once it's hooked; F pours your truck's spare can into the nearest truck (a buddy's too). J again by a truck gets in. Any vehicle with nobody in it can be got into (J by it, or hold E at its driver's door): a parked one, one you spawned, a wreck, AI traffic once it's stopped (it's yours then, no AI); the one you left stays parked on its handbrake. In multiplayer a buddy's truck while they're on foot (or the host's parked ones) is handed over to you: you drive it and the others see you in it, and they can take it back the same way once you're out; if they're driving, you ride along (their truck on your screen, C for the passenger's seat) and J gets you out beside it. If two go for the same one the host settles who was first; someone who leaves with another's truck leaves it behind, parked, the host's.
 - **Exploring:** every named place on a map starts undiscovered ("?" on the map); get within 30 m to find it. Your discoveries are kept between sessions.
 - **Fuel:** engines burn fuel for the power they make (setting FUEL: OFF / REAL / FAST, default FAST: 4x). Run dry and the engine dies. Shops fill the tank and the spare can; the Bronco and 4Runner carry a 20 L can.
 

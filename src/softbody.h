@@ -387,6 +387,7 @@ public:
 
     // Controls.
     double throttle = 0, brake = 0, handbrake = 0;
+    bool parkBrake = false;
     double brakePressure = 0;  // follows `brake`, but takes ~0.15 s to build (hydraulics)
     double steerInput = 0;  // -1..1 (smoothed key input)
     double steer = 0;       // road-wheel angle, radians (+ = left)
@@ -574,6 +575,7 @@ public:
         double fx = 0, fz = 0;  // the pose's place (x, z): the road point, a little behind
     } lod;
     void endProxy();
+    bool sleptPark = false;  // the parking brake when it fell asleep
     double sleptControls[4] = {};  // throttle, brake, handbrake and steer when it fell asleep
     V3 bbMin, bbMax;
     double impactEnergy = 0;  // joules absorbed by deformation since last read
@@ -717,6 +719,10 @@ public:
     // Wheels off their vehicles (tires.cpp): lying about, rolling, bouncing.
     std::vector<LooseWheel> looseWheels;
     uint32_t nextLooseId = 1;
+    // A broken part taken off in a field repair (fixes.h), lying where it was dropped: a prop to look at, left there.
+    // Not simulated, not in the physics state; the oldest go when there are too many.
+    struct DroppedPart { int part = 0; V3 p; double yaw = 0; };
+    std::vector<DroppedPart> droppedParts;
     WheelItem wheelItem(const Car& c, const Wheel& wh) const;  // what's bolted to that corner
     // The wheel (or with tireOnly, just the tire) comes off that corner and goes its own way.
     int shedWheel(int car, int wheel, bool tireOnly);

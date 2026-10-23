@@ -328,10 +328,10 @@ double World::frontierHeight(double x, double z) const {
 void World::buildFrontier() {
     map = MAP_FRONTIER;
     crashProps = false;
-    hN = (int)(2 * kHalfSize / kRes) + 1;
+    hN = (int)(2 * half / kRes) + 1;
     const int N = hN * hN;
-    auto X = [&](int i) { return -kHalfSize + i * kRes; };
-    auto cellI = [&](double v) { return std::min(std::max((int)std::lround((v + kHalfSize) / kRes), 0), hN - 1); };
+    auto X = [&](int i) { return -half + i * kRes; };
+    auto cellI = [&](double v) { return std::min(std::max((int)std::lround((v + half) / kRes), 0), hN - 1); };
     hgrid.resize(N);
     for (int i = 0; i < hN; i++)
         for (int j = 0; j < hN; j++) hgrid[i * hN + j] = (float)frontierHeight(X(i), X(j));

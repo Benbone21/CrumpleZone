@@ -287,7 +287,7 @@ void buildBushMesh(const World& world, std::vector<Vtx>& v, const ScanCover& ski
         const int n = world.gridSize();
         for (int i = 0; i < n; i += 2)
             for (int j = 0; j < n; j += 2) {
-                const double x = -World::kHalfSize + i + latticeHash(i, j + 3) - 0.5, z = -World::kHalfSize + j + latticeHash(i + 5, j) - 0.5;
+                const double x = -world.halfSize() + i + latticeHash(i, j + 3) - 0.5, z = -world.halfSize() + j + latticeHash(i + 5, j) - 0.5;
                 const double wl = world.waterLevel(x, z);
                 if (wl < -1e8) continue;
                 const double gy = world.height(x, z), depth = wl - gy;
@@ -473,7 +473,7 @@ mk::Mesh buildPlacedMesh(const Placed& pl) {
     return m;
 }
 
-static constexpr double kFloorBlock = 16, kFloorReach = 16, kFloorEdge = 520;
+static constexpr double kFloorBlock = 16, kFloorReach = 16;
 MeshOptOptions sceneryOptions(const World& world, bool whole) {
     // The lowest the drawn ground gets over a rectangle: the terrain grid's heights round it, as far out as its coarsest
     // LOD's cells reach (16 m), so no LOD of it comes up through a bottom left out. Near the rim (the crags): none.
@@ -488,7 +488,7 @@ MeshOptOptions sceneryOptions(const World& world, bool whole) {
     static std::shared_ptr<Floor> last;
     static std::mutex lock;
     std::shared_ptr<Floor> f;
-    const double half = World::kHalfSize;
+    const double half = world.halfSize();
     uint64_t sig = 1469598103934665603ull;  // (a sample of the ground: another map built in the same place isn't this one)
     for (int i = 0; i <= 64; i++)
         for (int j = 0; j <= 64; j++) {
@@ -509,7 +509,7 @@ MeshOptOptions sceneryOptions(const World& world, bool whole) {
     o.weldEps = 1e-4;  // (world-sized, in floats)
     if (!whole) o.degenerate = o.hidden = o.coplanar = false;
     o.groundMin = [f, half](double x0, double z0, double x1, double z1) {
-        if (std::max({-x0, -z0, x1, z1}) > kFloorEdge) return -1e9;
+        if (std::max({-x0, -z0, x1, z1}) > half - 80) return -1e9;  // (past the map's rim)
         if (f->lo.empty()) {
             f->n = (int)std::ceil(2 * half / kFloorBlock);
             f->lo.assign((size_t)f->n * f->n, 1e9f);

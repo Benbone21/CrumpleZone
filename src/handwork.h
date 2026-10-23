@@ -14,6 +14,12 @@ struct Handwork {
     std::vector<Placed> models;     // tools, a part, the jack: drawn this frame
     Renderer::WheelWork wheel;      // a wheel slid out / a chain part on
     double swing = -1;              // a wrench is turning a nut: how far through its swing (0..1; the free swing back starts at 0.7); -1 if none
+    // For the repair sounds (toolsounds.h): where the work is happening (a nut, the jack's saddle, the wheel's hub), and which nut a
+    // wrench is on (a count up through the job; -1 none) and whether it's coming off.
+    bool hasWork = false;
+    V3 workAt;
+    int nut = -1;
+    bool nutOff = false;
     bool hideTorso = false;         // first person: leave your chest out of the picture (both hands on a low job)
     bool carriedPose = false;       // the wheel you carry, moved onto the hub
     V3 carriedC, carriedAxis;

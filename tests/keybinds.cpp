@@ -77,6 +77,10 @@ SCENARIO(keysRemap, "keybinds/remap", "Rebound actions reach the key switch as t
     ctx.check("default keys are the ones the switch uses: E Q V O Esc and F4 for the steering assist",
               kb.gameKey(SC_E, false) == SC_E && kb.gameKey(SC_Q, false) == SC_Q && kb.gameKey(SC_V, false) == SC_V &&
                   kb.gameKey(SC_O, false) == SC_O && kb.gameKey(SC_F4, false) == SC_F4);
+    ctx.check("the horn is a held key on 7 (every letter is taken), free in every context, with a pad button of its own", [&] {
+        Keybinds h;
+        return h.key(KA_HORN) == SC_7 && !h.shift[KA_HORN] && actionContexts(KA_HORN) == KCTX_ANY && h.held(KA_HORN, [] { static uint8_t k[512]; k[SC_7] = 1; return k; }(), false);
+    }());
     ctx.check("the steering assist default isn't a key the game already uses (P pauses)", defaultKey(KA_STEER_ASSIST) != SC_P);
 
     ctx.check("gear up to X is accepted", kb.bind(KA_GEAR_UP, SC_X));
@@ -219,7 +223,7 @@ SCENARIO(keysResetExport, "keybinds/reset-export", "Reset all gives the defaults
     kb.bind(KA_WINCH, SC_K);
     kb.bind(KA_LIGHTS, SC_B, false);
     kb.unbind(KA_PAUSE);
-    ctx.check("unbound shows as NONE and resolves to nothing", kb.name(KA_PAUSE) == "NONE" && kb.resolve(SC_P, false, false, KCTX_DRIVE, false).action == -1);
+    ctx.check("unbound shows as NONE and resolves to nothing", kb.name(KA_PAUSE) == "NONE" && kb.resolve(SC_F6, false, false, KCTX_DRIVE, false).action == -1);
     ctx.check("nothing clashes after the rebinds", !anyClash(kb) && !kb.isDefault());
     const std::string text = kb.exportDefaults();
     int lines = 0;
@@ -228,7 +232,7 @@ SCENARIO(keysResetExport, "keybinds/reset-export", "Reset all gives the defaults
                                                                                   text.find("key_winch: K") != std::string::npos && text.find("key_pause: NONE") != std::string::npos &&
                                                                                   text.find("{0, false},  // key_pause") != std::string::npos);
     kb.resetDefaults();
-    ctx.check("reset all: the defaults, every action", kb.isDefault() && kb.name(KA_LIGHTS) == "SHIFT+L" && kb.key(KA_PAUSE) == SC_P);
+    ctx.check("reset all: the defaults, every action", kb.isDefault() && kb.name(KA_LIGHTS) == "SHIFT+L" && kb.key(KA_PAUSE) == SC_F6);
     const std::string def = kb.exportDefaults();
     ctx.check("the default export lists the defaults", def.find("key_throttle: W") != std::string::npos && def.find("key_lights: SHIFT+L") != std::string::npos &&
                                                          def.find("key_devmenu: F12") != std::string::npos);

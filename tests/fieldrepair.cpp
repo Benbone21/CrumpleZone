@@ -83,7 +83,7 @@ int nearestLoose(const Sim& sim, const V3& p) {
 
 }  // namespace
 
-SCENARIO(fieldRepairSteps, "fieldrepair/steps", "Every field repair is a list of steps in order: the corner jobs jack first and lower last with the wheel off between, the part goes in before the bolt that fixes it, 3 to 8 steps each, a tie rod needs no jack") {
+SCENARIO(fieldRepairSteps, "fieldrepair/steps", "Every field repair is a list of steps in order: the corner jobs jack first and lower last with the wheel off between, the part goes in before the bolt that fixes it, two jobs on the part (REMOVE then FIT), a tie rod needs no jack") {
     Car& c = ctx.add(bronco(), -60, -30, 0);
     ctx.run(0.3);
     const Fix::Kind kinds[] = {Fix::CV_AXLE, Fix::DRIVE_SHAFT, Fix::TIE_ROD, Fix::CONTROL_ARM, Fix::SWAY_BAR, Fix::NEW_TIRE, Fix::SPARK_PLUGS};
@@ -93,7 +93,19 @@ SCENARIO(fieldRepairSteps, "fieldrepair/steps", "Every field repair is a list of
         const std::string tag = std::string(jobName(k)) + ": ";
         std::string list;
         for (const RepairStep& s : st) list += std::string(s.label) + "; ";
-        ctx.check(tag + "3 to 8 steps", st.size() >= 3 && st.size() <= 8, list);
+        if (k != Fix::NEW_TIRE) {
+            int work = 0;
+            for (const RepairStep& s : st) work += s.type == RepairStep::WORK;
+            ctx.check(tag + "two work steps: remove the old, fit the new", work == 2 && st.size() >= 2 && st.size() <= 6, list);
+            int rm = -1, fit = -1;
+            for (int i = 0; i < (int)st.size(); i++) {
+                if (st[i].removes) rm = i;
+                if (st[i].part >= 0) fit = i;
+            }
+            ctx.check(tag + "the old one comes off first, the new one fitted after", rm >= 0 && fit > rm && std::string(st[rm].label).rfind("REMOVE ", 0) == 0 && std::string(st[fit].label).rfind("FIT ", 0) == 0, list);
+        } else {
+            ctx.check(tag + "3 to 8 steps", st.size() >= 3 && st.size() <= 8, list);
+        }
         int part = -1, fixes = -1;
         for (int i = 0; i < (int)st.size(); i++) {
             if (st[i].part >= 0 && part < 0) part = i;
@@ -106,22 +118,9 @@ SCENARIO(fieldRepairSteps, "fieldrepair/steps", "Every field repair is a list of
         }
     }
     ctx.check("a tie rod needs no jack", !jobJacks(Fix::TIE_ROD, 0));
-    // A drive shaft's two ends are two different spots.
-    const int a = c.axles[0].propShaft >= 0 ? 0 : 1;
-    ctx.check("a driven axle with a prop shaft", c.axles[a].propShaft >= 0);
-    c.beams[c.axles[a].propShaft].broken = true;
-    const std::vector<Fix> dsFixes = fixesFor(c);  // (kept: fixOf points into it)
-    const Fix* ds = fixOf(dsFixes, Fix::DRIVE_SHAFT);
-    ctx.check("the drive shaft is a repair", ds != nullptr);
-    if (!ds) return;
-    Walker wk;
-    const InteractOption front = Interact::fixOption(ctx.sim, wk, 0, *ds, Kit(), nullptr);
-    c.fieldJobs.push_back({Fix::DRIVE_SHAFT, -1, ds->axle, ds->beam, 1, false});
-    const InteractOption back = Interact::fixOption(ctx.sim, wk, 0, *ds, Kit(), nullptr);
-    ctx.check("its two ends are unbolted where each one is", front.atEnd && back.atEnd && len(front.at - back.at) > 0.3, std::to_string(len(front.at - back.at)));
 }
 
-SCENARIO(fieldRepairCv, "fieldrepair/cv-axle", "A snapped CV axle on a Bronco, done by the book with the kit in the back: jack, wheel off, socket set, hammer, the new axle, socket set, wheel on, jack down; out of turn it says why; the wheel goes back on with nothing fixed; walk off and come back and the job's where you left it") {
+SCENARIO(fieldRepairCv, "fieldrepair/cv-axle", "A snapped CV axle on a Bronco, done by the book with the kit in the back: jack, wheel off, hammer (REMOVE the broken axle, dropped beside the car), the new axle (FIT), wheel on, jack down; out of turn it says why; the wheel goes back on with nothing fixed; walk off and come back and the job's where you left it") {
     Car& c = ctx.add(bronco(), -60, -30, 0);
     ctx.focus(c);
     ctx.run(1.0);
@@ -145,7 +144,7 @@ SCENARIO(fieldRepairCv, "fieldrepair/cv-axle", "A snapped CV axle on a Bronco, d
     const InteractOption& o1 = lookAt(ctx, ia, wk, fix.at);
     ctx.check("socket set in hand, the corner down: it says jack it up first", o1.blocked && o1.prompt.find("JACK THIS CORNER UP FIRST") != std::string::npos, o1.prompt);
     ctx.check("...and holding E undoes nothing", holdOn(ctx, ia, wk, fix.at, 6).empty() && c.fieldJobs.empty());
-    ctx.check("the checklist shows the job", ia.checklist.title == "CV AXLE, REAR LEFT" && ia.checklist.rows.size() == 8 && ia.checklist.next == 0, rows(ia.checklist));
+    ctx.check("the checklist shows the job", ia.checklist.title == "CV AXLE, REAR LEFT" && ia.checklist.rows.size() == 6 && ia.checklist.next == 0, rows(ia.checklist));
     ctx.check("the corner jacks up", lift(ctx, c, k));
     const InteractOption& o2 = lookAt(ctx, ia, wk, fix.at);
     ctx.check("jacked: next, the wheel off with the lug wrench", o2.kind == IA_REMOVE_WHEEL && !o2.blocked && o2.prompt == "CV AXLE: REMOVE WHEEL (LUG WRENCH)", o2.prompt);
@@ -155,14 +154,21 @@ SCENARIO(fieldRepairCv, "fieldrepair/cv-axle", "A snapped CV axle on a Bronco, d
     ctx.check("...and that corner isn't driven", !c.wheelPowered(c.wheels[k]));
     Interact::drop(ctx.sim, wk, V3(1, 0, 0));
     const InteractOption& o3 = lookAt(ctx, ia, wk, fix.at);
-    ctx.check("empty-handed: it needs the socket set", o3.blocked && o3.prompt.find("NEEDS THE SOCKET SET") != std::string::npos, o3.prompt);
-    wk.hand = TrunkRef{TK_TOOL, TOOL_HAMMER};
-    ctx.check("the hammer won't do the nut", holdOn(ctx, ia, wk, fix.at, 6).empty() && c.fieldJobs[0].done == 0, ia.current.prompt);
+    ctx.check("empty-handed: it needs the hammer", o3.blocked && o3.prompt.find("NEEDS THE HAMMER") != std::string::npos, o3.prompt);
+    wk.hand = TrunkRef{TK_PART, PART_CV_AXLE};
+    ia.own.kit.parts[PART_CV_AXLE] = 1;
+    ia.kit = ia.own.kit;
+    ctx.check("the new axle can't go in with the old one still on", holdOn(ctx, ia, wk, fix.at, 6).empty() && c.fieldJobs[0].done == 0 && c.wheels[k].shaftBroken, ia.current.prompt);
+    ctx.check("...the step on offer is taking the old one off (the hammer)", ia.current.prompt.find("HAMMER") != std::string::npos, ia.current.prompt);
+    ia.own.kit.parts[PART_CV_AXLE] = 0;
+    ia.kit = ia.own.kit;
     wk.hand = TrunkRef{TK_TOOL, TOOL_RATCHET};
+    ctx.check("the socket set won't do it", holdOn(ctx, ia, wk, fix.at, 6).empty() && c.fieldJobs[0].done == 0, ia.current.prompt);
+    wk.hand = TrunkRef{TK_TOOL, TOOL_HAMMER};
     const InteractOption& o4 = lookAt(ctx, ia, wk, fix.at);
-    ctx.check("socket set in hand: undo the axle nut", o4.kind == IA_FIX && !o4.blocked && o4.prompt == "CV AXLE: UNDO THE AXLE NUT (SOCKET SET)", o4.prompt);
+    ctx.check("hammer in hand: remove the CV axle", o4.kind == IA_FIX && !o4.blocked && o4.prompt == "REMOVE CV AXLE (HAMMER)", o4.prompt);
     said = holdOn(ctx, ia, wk, fix.at, 8);
-    ctx.check("hold E: the nut's off", said == "AXLE NUT OFF" && c.fieldJobs[0].done == 1, said);
+    ctx.check("hold E: the broken axle's off, lying on the ground beside the car", said == "REMOVE CV AXLE" && c.fieldJobs[0].done == 1 && ctx.sim.droppedParts.size() == 1 && ctx.sim.droppedParts[0].part == PART_CV_AXLE && len(ctx.sim.droppedParts[0].p - c.frame().com) > c.spec->width * 0.5, said);
     // Walk off and come back.
     const V3 home = wk.p;
     wk.p = home + V3(30, 0, 0);
@@ -170,7 +176,7 @@ SCENARIO(fieldRepairCv, "fieldrepair/cv-axle", "A snapped CV axle on a Bronco, d
     for (int i = 0; i < 30; i++) ia.update(ctx.sim, wk, eyeOf(wk), V3(1, 0, 0), false, Ctx::kFrame), ctx.run(Ctx::kFrame);
     wk.p = home;
     lookAt(ctx, ia, wk, fix.at);
-    ctx.check("walked off and back: the job's where it was", c.fieldJobs.size() == 1 && c.fieldJobs[0].done == 1 && ia.checklist.next == 3 && ia.checklist.done[0] && ia.checklist.done[1] && ia.checklist.done[2], rows(ia.checklist));
+    ctx.check("walked off and back: the job's where it was", c.fieldJobs.size() == 1 && c.fieldJobs[0].done == 1 && ia.checklist.next == 3 && ia.checklist.done[0] && ia.checklist.done[1] && ia.checklist.done[2] && !ia.checklist.done[3], rows(ia.checklist));
     // The wheel back on with nothing fixed, and off again.
     const int li = nearestLoose(ctx.sim, home);
     ctx.check("the wheel lies by the truck", li >= 0);
@@ -188,8 +194,6 @@ SCENARIO(fieldRepairCv, "fieldrepair/cv-axle", "A snapped CV axle on a Bronco, d
     ctx.check("off again", said == "WHEEL OFF" && !c.wheels[k].mounted, said);
     Interact::drop(ctx.sim, wk, V3(1, 0, 0));
     wk.hand = TrunkRef{TK_TOOL, TOOL_HAMMER};
-    said = holdOn(ctx, ia, wk, fix.at, 8);
-    ctx.check("hammer: the old axle out", said == "OLD AXLE OUT", said);
     // No part: it can't go on.
     wk.hand = TrunkRef();
     const InteractOption& o6 = lookAt(ctx, ia, wk, fix.at);
@@ -200,14 +204,10 @@ SCENARIO(fieldRepairCv, "fieldrepair/cv-axle", "A snapped CV axle on a Bronco, d
     ctx.check("one in the back: get it", o7.blocked && o7.prompt.find("NEEDS THE NEW CV AXLE") != std::string::npos, o7.prompt);
     wk.hand = TrunkRef{TK_PART, PART_CV_AXLE};
     said = holdOn(ctx, ia, wk, fix.at, 8);
-    ctx.check("the new axle goes in (out of your hand, used up)", said == "NEW AXLE IN" && ia.usedPart == PART_CV_AXLE && !wk.hand.any(), said);
+    ctx.check("the new axle goes in (out of your hand, used up): fixed", said == "FIT CV AXLE: CV AXLE FIXED" && ia.usedPart == PART_CV_AXLE && !wk.hand.any() && !c.wheels[k].shaftBroken, said);
     ia.usedPart = -1;
-    ctx.check("...not bolted up yet: still broken", c.wheels[k].shaftBroken);
-    wk.hand = TrunkRef{TK_TOOL, TOOL_RATCHET};
-    said = holdOn(ctx, ia, wk, fix.at, 8);
-    ctx.check("socket set: torqued, fixed", said == "AXLE NUT TORQUED: CV AXLE FIXED" && !c.wheels[k].shaftBroken, said);
     lookAt(ctx, ia, wk, hub);
-    ctx.check("the checklist: the wheel back on next", ia.checklist.next == 6 && ia.checklist.rows[6] == "WHEEL BACK ON", rows(ia.checklist));
+    ctx.check("the checklist: the wheel back on next", ia.checklist.next == 4 && ia.checklist.rows[4] == "WHEEL BACK ON", rows(ia.checklist));
     wk.hand = TrunkRef();
     said = holdOn(ctx, ia, wk, ctx.sim.looseWheels[nearestLoose(ctx.sim, home)].p, 2);
     said = holdOn(ctx, ia, wk, hubOf(c, k), 8);
@@ -237,7 +237,7 @@ SCENARIO(fieldRepairBareHub, "fieldrepair/bare-hub", "The jack let down with the
     ctx.check("wheel off", said == "WHEEL OFF" && !c.wheels[k].mounted, said);
     Interact::drop(ctx.sim, wk, V3(1, 0, 0));
     said = holdOn(ctx, ia, wk, fix.at, 8);
-    ctx.check("(kit on you) the nut off", said == "AXLE NUT OFF", said);
+    ctx.check("(kit on you) the broken axle off", said == "REMOVE CV AXLE", said);
     const double up = hubOf(c, k).y - ctx.sim.world.height(hubOf(c, k).x, hubOf(c, k).z);
     c.jackHeight = 0;
     c.wake();

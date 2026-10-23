@@ -305,7 +305,7 @@ uniform vec4 uTreeFade[24];
 // paved ground, ice and the like (and everywhere with ground detail off).
 const char* kTerrainProcFS = R"(
 float paintAt(vec2 xz){
-  vec2 uv = (xz + 600.0 + 0.5) / uTerrainN;
+  vec2 uv = (xz + uTerrainN * 0.5) / uTerrainN;  // (the map is centred: its half-size is (uTerrainN - 1) / 2 texels)
   return texture(uTerrainTex, uv).b;
 }
 float gridLine(vec2 p, float w){
@@ -477,7 +477,7 @@ void terrainProcedural(vec3 n, inout vec3 base, inout float specK, inout float s
 #endif
     }
     // Wet ground at the water's edge, and a dark silty bed under it.
-    float wl = texture(uTerrainTex, (vPos.xz + 600.5) / uTerrainN).a;
+    float wl = texture(uTerrainTex, (vPos.xz + uTerrainN * 0.5) / uTerrainN).a;
     float wet = 1.0 - smoothstep(0.0, 0.5, vPos.y - wl);
     base = mix(base, base * 0.45 + vec3(0.04, 0.035, 0.02), wet);
     base = mix(base, vec3(0.10, 0.11, 0.07), smoothstep(0.0, -0.4, vPos.y - wl) * 0.8);
@@ -1842,7 +1842,7 @@ void main(){
   float grow = smoothstep(0.0, 0.3, share - hs(cell, 3u));
   if (grow <= 0.0) { gone(); return; }
   // The four terrain texels round the tuft: height and slope, how thick it grows, paint, water.
-  vec2 g = base + 600.0;
+  vec2 g = base + (uTerrainN - 1.0) * 0.5;
   ivec2 i0 = ivec2(floor(g));
   vec2 f = g - vec2(i0);
   vec4 t00 = tx(i0), t10 = tx(i0 + ivec2(1, 0)), t01 = tx(i0 + ivec2(0, 1)), t11 = tx(i0 + ivec2(1, 1));
@@ -1988,7 +1988,7 @@ layout(location = 0, index = 0) out vec4 oCol;
 layout(location = 0, index = 1) out vec4 oKeep;
 uniform sampler2D uTerrainTex; uniform float uTerrainN;
 float groundAt(vec2 xz){
-  vec2 g = xz + 600.0;
+  vec2 g = xz + (uTerrainN - 1.0) * 0.5;
   ivec2 i = clamp(ivec2(floor(g)), ivec2(0), ivec2(int(uTerrainN) - 2));
   vec2 f = g - vec2(i);
   float a = texelFetch(uTerrainTex, i, 0).r, b = texelFetch(uTerrainTex, i + ivec2(1, 0), 0).r;
@@ -2030,7 +2030,7 @@ void main(){
   float sh = shadowAt(vPos, vec3(0, 1, 0));
   vec3 irr = ambientAt(vec3(0, 1, 0)) + sh * kSunCol * 0.55;
   // What it flows over: the share of mud round here (a few taps, so the change is gradual).
-  ivec2 ti = clamp(ivec2(floor(p + 600.5)), ivec2(2), ivec2(int(uTerrainN) - 3));
+  ivec2 ti = clamp(ivec2(floor(p + uTerrainN * 0.5)), ivec2(2), ivec2(int(uTerrainN) - 3));
   float mud = 0.0;
   for (int k = 0; k < 4; k++) {
     ivec2 o = ti + ivec2((k & 1) * 4 - 2, (k >> 1) * 4 - 2);
@@ -2064,7 +2064,7 @@ void main(){
   vec2 rd = r.xz / max(length(r.xz), 1e-3);
   for (int k = 0; k < 6; k++) {
     float s = 2.5 * exp2(float(k));
-    ivec2 gi = clamp(ivec2(floor(p + rd * s + 600.5)), ivec2(0), ivec2(int(uTerrainN) - 1));
+    ivec2 gi = clamp(ivec2(floor(p + rd * s + uTerrainN * 0.5)), ivec2(0), ivec2(int(uTerrainN) - 1));
     occ = max(occ, smoothstep(0.0, 3.0, texelFetch(uTerrainTex, gi, 0).r - (vPos.y + r.y / max(length(r.xz), 0.05) * s)) * 0.85);
   }
   refl = mix(refl, vec3(0.035, 0.05, 0.03) * (ambientAt(vec3(0, 1, 0)) + 0.4 * sh * kSunCol), occ);
@@ -2784,7 +2784,7 @@ namespace {
 // mountains (too steep to drive, so the physics keeps them smooth), and beyond the map a
 // range of mountains to the horizon.
 double sceneryHeight(const World& world, double x, double z) {
-    const double half = World::kHalfSize;
+    const double half = world.halfSize();
     if (world.wrapPeriod > 0 && std::fabs(z) < half - 80) {
         // The freeway: the valley and the road run on beyond the map, a period at a time.
         const double P = world.wrapPeriod;
@@ -2793,7 +2793,8 @@ double sceneryHeight(const World& world, double x, double z) {
     }
     double cx = clampd(x, -half, half), cz = clampd(z, -half, half);
     double h = world.height(cx, cz);
-    double ex = std::max(0.0, std::fabs(cx) - 520), ez = std::max(0.0, std::fabs(cz) - 520);
+    const double rim = half - 80;  // (where every map's rim mountains start)
+    double ex = std::max(0.0, std::fabs(cx) - rim), ez = std::max(0.0, std::fabs(cz) - rim);
     double e = std::sqrt(ex * ex + ez * ez);
     if (e > 20) h += smoothstep(20, 70, e) * (ridgedNoise(cx * 0.008, cz * 0.008, 5) - 0.45) * 0.5 * (0.02 * e * e);
     double d = std::max(std::fabs(x) - half, std::fabs(z) - half);
@@ -3009,7 +3010,7 @@ void Renderer::updateWater(const World& world) {
     waterVertexCount = (int)wv.size();
 
     // Terrain data for the shaders, one texel per meter: height, grass density, paint.
-    const double half = World::kHalfSize;
+    const double half = world.halfSize();
     const int n = (int)(2 * half) + 1;
     terrainGridN = n;
     std::vector<float> data((size_t)n * n * 4);
@@ -3037,7 +3038,8 @@ static Vtx terrainVertex(const World& world, double x, double z) {
     RoadInfo road = world.roadAt(x, z);
     V3 nrm = world.normal(x, z);
     double y = world.height(x, z);
-    if ((std::fabs(x) > 540 && world.wrapPeriod <= 0) || std::fabs(z) > 540) {  // the crags (not across the freeway)
+    const double crags = world.halfSize() - 60;
+    if ((std::fabs(x) > crags && world.wrapPeriod <= 0) || std::fabs(z) > crags) {  // the crags (not across the freeway)
         y = sceneryHeight(world, x, z);
         const double e = 1.0;
         nrm = norm(V3(sceneryHeight(world, x - e, z) - sceneryHeight(world, x + e, z), 2 * e, sceneryHeight(world, x, z - e) - sceneryHeight(world, x, z + e)));
@@ -3047,7 +3049,7 @@ static Vtx terrainVertex(const World& world, double x, double z) {
 
 void Renderer::updateTerrainRegion(const World& world, int i0, int j0, int i1, int j1) {
     if (!terrainVao || terrainGridN <= 0) return;
-    const double half = World::kHalfSize;
+    const double half = world.halfSize();
     // (One past the edit each way: the normals there changed too.)
     i0 = std::max(0, i0 - 2), j0 = std::max(0, j0 - 2), i1 = std::min(terrainGridN - 1, i1 + 2), j1 = std::min(terrainGridN - 1, j1 + 2);
     if (i1 < i0 || j1 < j0) return;
@@ -3100,7 +3102,7 @@ void Renderer::updateTerrainRegion(const World& world, int i0, int j0, int i1, i
 static bool chunkHasProcPaint(const World& world, const RenderBounds& b) {
     const int m = world.map == MAP_WILDS ? (int)MAP_FREEWAY : world.map;
     const bool asphaltRoads = m == MAP_PROVING_GROUND || m == MAP_FREEWAY;
-    const double half = World::kHalfSize;
+    const double half = world.halfSize();
     const int x0 = (int)std::floor(b.lo.x) - 2, x1 = (int)std::ceil(b.hi.x) + 2, z0 = (int)std::floor(b.lo.z) - 2, z1 = (int)std::ceil(b.hi.z) + 2;
     // (The shader clamps to the paint grid, so a chunk out past its edge reads the edge cells.)
     auto clampi = [&](int v) { return std::min(std::max(v, (int)-half), (int)half); };
@@ -3116,7 +3118,7 @@ static bool chunkHasProcPaint(const World& world, const RenderBounds& b) {
 // The CPU half of the terrain: vertices, the chunks' indices at four LODs, the backdrop and the occlusion pyramid. Pure: any thread.
 void Renderer::prepareTerrain(const World& world, Prepared& p) {
     // 1 m on the mountain (its crawl features are small) and the wilds (the sections' steps), 2 m on the proving ground.
-    const double spacing = world.map == MAP_MOUNTAIN || world.map == MAP_FRONTIER || world.map == MAP_BACKCOUNTRY || world.map == MAP_WILDS ? 1.0 : 2.0, half = World::kHalfSize;
+    const double spacing = world.map == MAP_MOUNTAIN || world.map == MAP_FRONTIER || world.map == MAP_BACKCOUNTRY || world.map == MAP_WILDS ? 1.0 : 2.0, half = world.halfSize();
     const int n = (int)(2 * half / spacing) + 1;
     p.spacing = spacing;
     p.n = n;
@@ -3213,7 +3215,7 @@ std::shared_ptr<Renderer::Prepared> Renderer::prepareWorld(const World& world, c
         forest::build(world, cover.pines, cover.snags, set);
     }
     // The shaders' terrain texels, one per meter: height, grass density, paint, water level.
-    const double half = World::kHalfSize;
+    const double half = world.halfSize();
     const int n = (int)(2 * half) + 1;
     p->gridN = n;
     p->data.resize((size_t)n * n * 4);
@@ -3326,7 +3328,7 @@ bool Renderer::stepWorld(const World& world) {
 // The mountain range around the map, out to 3.6 km: a coarse grid with the map's
 // square cut out of it (its edge meets the crags at the rim).
 void Renderer::buildBackdrop(const World& world, std::vector<Vtx>& verts, std::vector<unsigned>& idx) {
-    const double spacing = 24.0, reach = 3600.0, half = World::kHalfSize;
+    const double spacing = 24.0, reach = 3600.0, half = world.halfSize();
     const int n = (int)(2 * reach / spacing) + 1;
     const unsigned base = (unsigned)verts.size();
     for (int i = 0; i < n; i++)
@@ -4449,7 +4451,7 @@ void Renderer::prepareCarModels() {
             int testsLeft = 4;
             bool unfinished = false;
             // (the test costs 10 ms or more for a car: kept per part, by its model, params and place in the body, for as long as the skin stands)
-            if (slot.shutSkin != slot.lpos.size() || slot.shutIntact != slot.intact) slot.shutCache.clear(), slot.shutSkin = slot.lpos.size(), slot.shutIntact = slot.intact;
+            if (slot.shutSkin != slot.lpos.size() || slot.shutIntact != slot.intact) slot.shutCache.clear(), slot.shutSeen.clear(), slot.shutSkin = slot.lpos.size(), slot.shutIntact = slot.intact;
             if (slot.intact && !slot.lglass.empty()) {
                 const M4& M = slot.model;
                 const V3 ax[3] = {V3(M.m[0], M.m[1], M.m[2]), V3(M.m[4], M.m[5], M.m[6]), V3(M.m[8], M.m[9], M.m[10])}, o(M.m[12], M.m[13], M.m[14]);
@@ -4466,8 +4468,15 @@ void Renderer::prepareCarModels() {
                     mix(dot(d, ax[0])), mix(dot(d, ax[1])), mix(dot(d, ax[2]));
                     for (int c = 0; c < 3; c++) mix(dot(a[c], ax[0]), 20), mix(dot(a[c], ax[1]), 20), mix(dot(a[c], ax[2]), 20);
                     mix(pl.scale.x, 20), mix(pl.scale.y, 20), mix(pl.scale.z, 20), mix(pl.wear, 20);
+                    // The gearbox, transfer case, shafts and diffs hang under the floor: always drawn (the depth test hides what the
+                    // floor covers). A part seen outside the skin once stays drawn (the test flips for a part on the skin's edge as
+                    // the body flexes: it would blink in and out); that is kept per part, for as long as the skin stands.
+                    const bool drivetrain = pl.id.rfind("gearbox_", 0) == 0 || pl.id.rfind("transfer_case", 0) == 0 || pl.id == "drive_shaft" ||
+                                            pl.id == "differential" || pl.id == "cv_axle";
+                    if (drivetrain) { shut[k] = 0; continue; }
+                    const uint64_t seenKey = (partsSignature({pl}) ^ (uint64_t)k * 0x9E3779B97F4A7C15ull);
                     auto hit = slot.shutCache.find(h);
-                    if (hit != slot.shutCache.end()) { shut[k] = hit->second; continue; }
+                    if (hit != slot.shutCache.end()) { shut[k] = hit->second && !slot.shutSeen.count(seenKey); continue; }
                     if (!fresh && (testsLeft <= 0 || !partMeshReady(pl))) { unfinished = true; continue; }
                     testsLeft--;
                     const mk::Mesh& m = partMesh(pl, scratch);
@@ -4481,7 +4490,8 @@ void Renderer::prepareCarModels() {
                         const V3 dd = w - o, l(dot(dd, ax[0]), dot(dd, ax[1]), dot(dd, ax[2]));
                         in = l.y < belt - 0.02 && insideSkin(slot.lpos, slot.lopaque, l);
                     }
-                    shut[k] = in;
+                    if (!in) slot.shutSeen[seenKey] = 1;
+                    shut[k] = in && !slot.shutSeen.count(seenKey);
                     slot.shutCache[h] = in;
                 }
                 if (slot.shutCache.size() > 4000) slot.shutCache.clear();

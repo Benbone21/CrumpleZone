@@ -152,6 +152,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
     spawnPos = pos;
     spawnYaw = yaw;
     throttle = brake = handbrake = steerInput = steer = rackSteer = brakePressure = 0;
+    parkBrake = false;
     gear = 1;
     rpm = vs.idleRpm;
     shiftTimer = 0;

@@ -1217,7 +1217,7 @@ void raiseHill(EditCore& ed, double x, double z) {
 V3 lumpyClearing(EditCore& ed, const World& w) {
     V3 best;
     double bestGap = -1;
-    const double lim = World::kHalfSize - 150;
+    const double lim = w.halfSize() - 150;
     for (double x = -lim; x <= lim; x += 50)
         for (double z = -lim; z <= lim; z += 50) {
             double gap = 1e9;

@@ -154,7 +154,7 @@ enum {
     SC_ESCAPE = 41, SC_TAB = 43, SC_SPACE = 44, SC_LEFTBRACKET = 47, SC_RIGHTBRACKET = 48,
     SC_F1 = 58, SC_F2 = 59, SC_F3 = 60, SC_F4 = 61, SC_F5 = 62, SC_F6 = 63, SC_F7 = 64, SC_F8 = 65, SC_F9 = 66, SC_F10 = 67, SC_F11 = 68, SC_F12 = 69, SC_RIGHT = 79, SC_LEFT = 80, SC_DOWN = 81, SC_UP = 82,
     SC_B = 5, SC_E = 8, SC_F = 9, SC_G = 10, SC_L = 15, SC_M = 16, SC_Q = 20, SC_RETURN = 40, SC_KP_ENTER = 88,
-    SC_INSERT = 73, SC_HOME = 74, SC_END = 77, SC_MINUS = 45, SC_EQUALS = 46, SC_O = 18, SC_V = 25, SC_Y = 28, SC_Z = 29, SC_8 = 37, SC_9 = 38, SC_0 = 39, SC_LSHIFT = 225, SC_RSHIFT = 229,
+    SC_INSERT = 73, SC_HOME = 74, SC_END = 77, SC_MINUS = 45, SC_EQUALS = 46, SC_O = 18, SC_V = 25, SC_Y = 28, SC_Z = 29, SC_8 = 37, SC_9 = 38, SC_0 = 39, SC_LCTRL = 224, SC_LSHIFT = 225, SC_RSHIFT = 229,
 };
 
 // Field accessors for the SDL_Event variants we read (offsets from SDL2's SDL_events.h).

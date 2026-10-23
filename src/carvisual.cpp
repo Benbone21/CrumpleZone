@@ -1007,7 +1007,7 @@ void buildCoachwork(const Car& car, PartBuilder& pb) {
 void buildOpenFrame(const Car& car, PartBuilder& pb) {
     const VehicleSpec& vs = *car.spec;
     const int cells = (int)vs.profile[0].size();
-    const double W = vs.width, L = vs.length, hz = W / 2, F = vs.layerY[0], roofY = vs.layerY.back();
+    const double W = vs.width, L = vs.length, F = vs.layerY[0], roofY = vs.layerY.back();
     auto xAt = [&](double i) { return latticeX(vs, i); };
     int gi0 = cells, gi1 = -1;
     for (const std::string& row : vs.profile)

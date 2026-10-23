@@ -812,8 +812,8 @@ void crossWrench(B& b, const P& p) {
         rodAB(b, dirs[k] * 0.015, dirs[k] * (arm - sl + 0.006), 0.0098, 0.001, 10);
         socketAB(b, dirs[k] * (arm - sl), dirs[k] * arm, rs[k], rs[k] * 0.72, 12);
     }
-    // The grip sleeves on the cross bar's two ends.
-    b.style(paint(p.i("grip")), MATTE);
+    // Knurled steel grips on the cross bar's two ends (bare metal, no sleeves).
+    setFin(b, fin, w);
     for (int sgn : {1, -1}) {
         knurl(b, V3(0, 0, sgn * 0.085), V3(0, 0, sgn * (arm - sl - 0.012)), 0.0148, 0.0016, 7, 8, false);
         rodAB(b, V3(0, 0, sgn * (arm - sl - 0.012)), V3(0, 0, sgn * (arm - sl - 0.004)), 0.0148, 0.003, 10);
@@ -879,7 +879,7 @@ void breakerBar(B& b, const P& p) {
 
 Reg lugWrench({"lug_wrench", "LUG WRENCH", "REPAIR", "Hand tool: wheel nuts on and off; the 4-way cross has its origin at the crossing and its nut arm along +X, mouth out; the others: grip at the origin, working socket at +X, open side down (-Y)", 0.66,
                {
-                   {"4-WAY CROSS", "Chrome cross wrench, four sockets, one grip sleeve", {finParam(0), paintParam(8, "grip", "GRIP SLEEVE"), wearParam()}, lifted(crossWrench)},
+                   {"4-WAY CROSS", "Chrome cross wrench, four sockets, knurled steel grips", {finParam(0), wearParam()}, lifted(crossWrench)},
                    {"FACTORY L", "Bent bar, socket on the short leg, hubcap spade", {finParam(2), paintParam(3, "grip", "GRIP DIP"), wearParam()}, lifted(lWrench)},
                    {"BREAKER BAR", "Long knurled bar, flex head, deep socket",
                     {finParam(1), choice("length", "LENGTH", 1, {"18 IN", "24 IN", "30 IN"}), wearParam()}, lifted(breakerBar)},

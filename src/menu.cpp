@@ -118,6 +118,9 @@ bool Settings::load(const std::string& path) {
         else if (k == "padsteer") padSteering = std::min(std::max((int)v, 0), 2);
         else if (k == "paddead") padDeadzone = std::min(std::max((int)v, 0), 2);
         else if (k == "padrumble") padRumble = std::min(std::max((int)v, 0), 2);
+        else if (k == "padinvertx") padInvertLookX = v != 0;
+        else if (k == "padinverty") padInvertLookY = v != 0;
+        else if (k == "crouchtoggle") crouchToggle = v != 0;
         else if (throttle.loadSetting(k, v)) {}
         else if (keys.loadSetting(k, std::atoi(text))) {}
     }
@@ -151,7 +154,8 @@ bool Settings::save(const std::string& path) const {
     std::fprintf(f, "maxplayers %d\nhostport %d\n", maxPlayers, hostPort >= net::kMinHostPort && hostPort <= net::kMaxPort ? hostPort : net::kDefaultPort);
     std::fprintf(f, "pilotdest %d\npilotspeed %.0f\npilotroute %d\n", pilotDest, pilotSpeed, pilotRoute);
     std::fprintf(f, "timeofday %d\ndaylength %.0f\nclock %.2f\n", timeOfDay, dayMinutes, clockHours);
-    std::fprintf(f, "padsteer %d\npaddead %d\npadrumble %d\n", padSteering, padDeadzone, padRumble);
+    std::fprintf(f, "padsteer %d\npaddead %d\npadrumble %d\npadinvertx %d\npadinverty %d\n", padSteering, padDeadzone, padRumble, padInvertLookX, padInvertLookY);
+    std::fprintf(f, "crouchtoggle %d\n", crouchToggle ? 1 : 0);
     std::fputs(throttle.saveText().c_str(), f);
     for (int a = 0; a < KA_COUNT; a++) std::fprintf(f, "%s %d\n", settingsName((KeyAction)a), keys.saveValue((KeyAction)a));
 
@@ -179,7 +183,7 @@ enum Id {
     UNITS = 1, VOLUME, FOV, RECOVERY, MUSIC, TIMEOFDAY, FUEL, AMBIENCE,
     ADAPTIVE = 9, QUALITY = 10, SHADOWS, AA, AO, BLOOM, CLOUDS, GRASS, SCALE, SCENERY, DETECT_ROW = 19,
     FULLSCREEN = 20, VSYNC, FPS, PHYSICSTHREADS, WINCHSPEED, FPSTARGET, FULLHUD,
-    PADSTEER = 30, PADDEAD, PADRUMBLE, THROTTLECAP, THROTTLERESP, THROTTLEPAD,
+    PADSTEER = 30, PADDEAD, PADRUMBLE, PADINVERTX, PADINVERTY, THROTTLECAP, THROTTLERESP, THROTTLEPAD, CROUCHMODE,
     // Main page and navigation.
     RESUME_ROW = 100, VEHICLE_ROW, MAP_ROW, GARAGE_ROW, SETTINGS_ROW, CONTROLS_ROW, RESET_ROW, QUIT_ROW, BACK_ROW,
     MULTI_ROW, NAME_ROW, HOST_ROW, ADDRESS_ROW, JOIN_ROW, LEAVE_ROW, FOUND_ROW0, FOUND_ROW5 = FOUND_ROW0 + 5,
@@ -273,12 +277,15 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
         choice(PADDEAD, "STICK DEADZONE", pad::kDeadzoneNames[std::min(std::max(s.padDeadzone, 0), 2)], 3,
                "RAISE IT IF THE CAR DRIFTS WITH YOUR HANDS OFF");
         choice(PADRUMBLE, "RUMBLE", pad::kRumbleNames[std::min(std::max(s.padRumble, 0), 2)], 3, "HITS, LANDINGS, BREAKS, REV LIMITER");
+        choice(PADINVERTX, "INVERT LOOK X", kOffOn[s.padInvertLookX], 2, "FLIPS LEFT/RIGHT ON THE RIGHT STICK");
+        choice(PADINVERTY, "INVERT LOOK Y", kOffOn[s.padInvertLookY], 2, "FLIPS UP/DOWN ON THE RIGHT STICK");
         header(("THROTTLE LIMIT: " + s.keys.name(KA_THROTTLE_CAP) + " CYCLES 100 50 25 10% WHILE DRIVING").c_str());
         slider(THROTTLECAP, "KEYBOARD THROTTLE", throttle::percent(s.throttle.cap), (s.throttle.cap - throttle::kMinCap) / (1 - throttle::kMinCap), 20);
         static const char* respHint[3] = {"W IS AT THE LIMIT AT ONCE", "W BUILDS UP OVER ABOUT 0.4 S", "W BUILDS UP OVER ABOUT 1.2 S"};
         const int resp = std::min(std::max(s.throttle.response, 0), 2);
         choice(THROTTLERESP, "THROTTLE RESPONSE", throttle::kResponseNames[resp], 3, respHint[resp]);
         choice(THROTTLEPAD, "APPLIES TO PAD", kOffOn[s.throttle.padToo], 2, "THE LIMIT ALSO SCALES THE TRIGGER (OFF: KEYBOARD ONLY)");
+        choice(CROUCHMODE, "CROUCH ON FOOT", s.crouchToggle ? "TOGGLE" : "HOLD", 2, "HOLD THE KEY TO STAY LOW, OR PRESS IT TO CROUCH AND AGAIN TO STAND");
         button(KEYBINDS_ROW, "KEYBOARD KEYBINDS", "REMAP EVERY KEY");
         button(BACK_ROW, "BACK");
         return r;
@@ -830,8 +837,11 @@ PauseMenu::Result PauseMenu::change(int row, int dir, Settings& s) {
         case PADSTEER: s.padSteering = cycle(std::min(std::max(s.padSteering, 0), 2)); break;
         case PADDEAD: s.padDeadzone = cycle(std::min(std::max(s.padDeadzone, 0), 2)); break;
         case PADRUMBLE: s.padRumble = cycle(std::min(std::max(s.padRumble, 0), 2)); break;
+        case PADINVERTX: s.padInvertLookX = !s.padInvertLookX; break;
+        case PADINVERTY: s.padInvertLookY = !s.padInvertLookY; break;
         case THROTTLERESP: s.throttle.response = cycle(std::min(std::max(s.throttle.response, 0), 2)); break;
         case THROTTLEPAD: s.throttle.padToo = !s.throttle.padToo; break;
+        case CROUCHMODE: s.crouchToggle = !s.crouchToggle; break;
         default: return {};
     }
     return {CHANGED};
@@ -934,7 +944,7 @@ PauseMenu::Result PauseMenu::key(int sc, Settings& s) {
             keyNote.clear();
             return {CHANGED};
         }
-        if (sc >= 224 && sc < 232) return {};  // (a modifier on its own: wait for the key it goes with)
+        if (sc >= 224 && sc < 232 && !(sc == SC_LCTRL && a == KA_CROUCH)) return {};  // (a modifier on its own: wait for the key it goes with)
         if (!bindable(sc)) {
             keyNote = "THAT KEY CAN'T BE USED";
             return {};

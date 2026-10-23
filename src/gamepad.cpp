@@ -143,6 +143,7 @@ void Logic::update(const Raw& raw, Mode ctx, double dt) {
             if (P(B_BACK)) tap(SC_TAB);
             if (P(B_UP)) tap(SC_V);
             if (P(B_DOWN)) tap(SC_O);
+            in.horn = D(B_RSTICK);
             if (D(B_LEFT)) in.airing = -1;
             else if (D(B_RIGHT)) in.airing = 1;
             if (rt > 0.3f) in.winch = 1;
@@ -159,7 +160,8 @@ void Logic::update(const Raw& raw, Mode ctx, double dt) {
             if (P(B_X)) tap(SC_Q);
             if (P(B_Y)) tap(SC_E);
             if (P(B_RB)) tap(SC_C);
-            if (P(B_LSTICK)) tap(SC_L, true);
+            if (P(B_LSTICK) && !onFoot) tap(SC_L, true);
+            in.crouchHeld = onFoot && D(B_LSTICK);
             if (P(B_UP)) tap(SC_L);
             if (P(B_LEFT)) tap(SC_F);
             if (P(B_RIGHT)) tap(SC_B);
@@ -176,8 +178,8 @@ void Logic::update(const Raw& raw, Mode ctx, double dt) {
         in.steerTarget = -expoCurve(L.x, steerExponent(tune.steering));  // (stick right = steer right = negative)
         in.lookX = R.x;
         in.lookY = mod ? 0.0f : R.y;
-        in.lookBack = D(B_RSTICK);
-        in.resetView = (released & bit(B_RSTICK)) != 0;
+        in.lookBack = D(B_RSTICK) && !mod;
+        in.resetView = (released & bit(B_RSTICK)) != 0 && !mod;
         in.walkForward = -L.y;
         in.walkTurn = -L.x;
         return;
@@ -374,7 +376,7 @@ std::vector<std::pair<std::string, std::string>> helpRows(Style s) {
         {"D-PAD UP", "4X4 MODE (2H 4H 4L)"},
         {"D-PAD LEFT / RIGHT", "FRONT / REAR LOCKER"},
         {"D-PAD DOWN", "FRONT SWAY BAR DISCONNECT"},
-        {"L3", "HEADLIGHTS"},
+        {"L3", "HEADLIGHTS (ON FOOT: CROUCH)"},
         {n(B_BACK), "MAP (STICK PANS, " + rt + " / " + lt + " ZOOM, " + n(B_A) + " WAYPOINT)"},
         {n(B_START), "PAUSE MENU (D-PAD / STICK MOVE, " + n(B_A) + " SELECT, " + n(B_B) + " BACK)"},
         {hold + "D-PAD UP / DOWN", "WINCH HOOK / TOW STRAP"},
@@ -386,6 +388,7 @@ std::vector<std::pair<std::string, std::string>> helpRows(Style s) {
         {hold + n(B_Y), "GET OUT / IN"},
         {hold + n(B_RB), "MANUAL / AUTOMATIC GEARBOX"},
         {hold + "L3", "AUTOPILOT"},
+        {hold + "R3 (HOLD)", "HORN"},
         {hold + n(B_BACK), "NEXT VEHICLE"},
         {hold + n(B_START), "THIS CONTROLS LIST"},
     };

@@ -401,12 +401,9 @@ bool builtinSectionFor(SectionType t, SectionFile& out) {
                 std::snprintf(tag, sizeof tag, "section_%d_%016llx.czs", k, (unsigned long long)meshcache::codeVersion());
                 const std::string file = meshcache::dir() + "/" + tag;
                 if (meshcache::enabled() && loadSectionFile(file, made.second)) return std::make_pair(true, made.second);
-                for (const Level& l : builtinLevels())
-                    if (l.section.on && l.section.live && l.section.gen == k) {
-                        const World w = levelWorld(l);
-                        made.first = extractSection(w, l, made.second);
-                        break;
-                    }
+                Level l;  // (just this section's level and world, not builtinLevels(): that builds every built-in level's world)
+                const World w = builtinSectionWorld(k, l);
+                if (l.section.on && l.section.live && l.section.gen == k) made.first = extractSection(w, l, made.second);
                 if (made.first && meshcache::enabled()) {
                     for (const std::string& old : listLevelFiles(meshcache::dir(), ".czs"))
                         if (old.find("section_" + std::to_string(k) + "_") != std::string::npos && old != file) std::remove(old.c_str());

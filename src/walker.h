@@ -24,6 +24,16 @@ struct Walker {
     // A tool, part or anchor out of the back (trunk.h): it's still in your kit, just in your hand
     // (and usable far from the truck); getting in or putting it back lays it in the back again.
     TrunkRef hand;
+    // Crouching: `crouching` is the key (set it before step()); `crouch` eases 0..1 over ~0.35 s. Crouched you
+    // are lower (eyes at 60% of standing), walk at ~45% speed, don't run or jump, and can't stand up under
+    // something low (a rock overhang) until you're clear of it.
+    bool crouching = false;
+    double crouch = 0;
+    static constexpr double kEyeStand = 1.62, kEyeCrouch = 0.6, kCrouchSpeed = 0.45, kCrouchTime = 0.35;
+    double crouchAmount() const { return crouch * crouch * (3 - 2 * crouch); }  // (eased)
+    double eyeHeight() const { return kEyeStand * (1 - (1 - kEyeCrouch) * crouchAmount()); }
+    // Something solid above where the standing head would be (so crouching stays on).
+    bool headBlocked(const World& w) const;
 
     // Steps (dt, ~60 Hz): `fwd`/`side` (-1..1) move relative to `viewYaw` (the camera's
     // heading), `run` faster, `jump` once when grounded.

@@ -78,6 +78,8 @@ bool Coop::onMessage(const std::string& who, const std::string& text) {
         }
         if (it == walkers.end()) walkers.push_back(RemoteWalker{who}), it = walkers.end() - 1;
         in >> it->p.x >> it->p.y >> it->p.z >> it->yaw >> it->stride;
+        double cr = 0;
+        it->crouch = (in >> cr) ? std::min(std::max(cr, 0.0), 1.0) : 0.0;
         it->age = 0;
         return true;
     }
@@ -126,7 +128,8 @@ void Coop::typeText(const char* utf8) {
 
 void Coop::buildMap(const World& w) {
     mapWorld = (int)(w.stamp & 0x7fffffff);
-    const double half = World::kHalfSize - 20;
+    mapHalf = w.halfSize();
+    const double half = mapHalf - 20;
     mapCell = 6;
     mapN = (int)(2 * half / mapCell);
     mapRgb.assign((size_t)mapN * mapN * 3, 0);
@@ -184,14 +187,14 @@ void Coop::mapMouse(float x, float y, int wheel, bool drag, float dx, float dy) 
         }
     }
     if (drag && mapS > 0) mapCx -= dx / mapS, mapCz += dy / mapS;
-    const double half = World::kHalfSize;
+    const double half = mapHalf;
     mapCx = clampd(mapCx, -half, half), mapCz = clampd(mapCz, -half, half);
 }
 
 bool Coop::mapPoint(float x, float y, V3& out) const {
     if (mapS <= 0) return false;
     out = V3(mapCx + (x - mapX) / mapS, 0, mapCz - (y - mapY) / mapS);
-    return std::fabs(out.x) < World::kHalfSize && std::fabs(out.z) < World::kHalfSize;
+    return std::fabs(out.x) < mapHalf && std::fabs(out.z) < mapHalf;
 }
 
 // ---- Drawing -------------------------------------------------------------------------------
@@ -284,7 +287,7 @@ void Coop::drawMap(Renderer& r, const Sim& sim, const NetSession& net, int W, in
     r.rect(0, 0, (float)W, (float)H, 0.02f, 0.03f, 0.04f, 0.92f);
     // Fit the whole map in the window at zoom 1.
     const float side = std::min((float)W - 40 * u, (float)H - 90 * u);
-    const double half = World::kHalfSize - 20;
+    const double half = mapHalf - 20;
     mapS = (float)(side / (2 * half) * mapZoom);
     mapX = W / 2.0f, mapY = H / 2.0f + 10 * u;
     auto toMap = [&](double x, double z, float& sx, float& sy) {

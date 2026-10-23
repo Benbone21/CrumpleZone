@@ -250,10 +250,10 @@ const Poly& wreckTrail() {
 void World::buildBackcountry() {
     map = MAP_BACKCOUNTRY;
     crashProps = false;
-    hN = (int)(2 * kHalfSize / kRes) + 1;
+    hN = (int)(2 * half / kRes) + 1;
     const int N = hN * hN;
-    auto X = [&](int i) { return -kHalfSize + i * kRes; };
-    auto cellI = [&](double v) { return std::min(std::max((int)std::lround((v + kHalfSize) / kRes), 0), hN - 1); };
+    auto X = [&](int i) { return -half + i * kRes; };
+    auto cellI = [&](double v) { return std::min(std::max((int)std::lround((v + half) / kRes), 0), hN - 1); };
     auto at = [&](double x, double z) -> int { return cellI(x) * hN + cellI(z); };
 
     // ---- The land -----------------------------------------------------------------------------

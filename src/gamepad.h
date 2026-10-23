@@ -97,6 +97,7 @@ struct Intent {
     bool steerStick = false;     // the stick is off centre
     double throttle = 0, brake = 0;  // 0..1 shaped triggers (zero while LB holds the winch)
     bool handbrake = false;
+    bool horn = false;           // LB + R3 held
     int winch = 0;               // +1 reel in, -1 pay out (LB + RT / LT)
     int airing = 0;              // -1 let air out, +1 pump up (LB + D-pad left / right)
     // Camera and walking.
@@ -113,12 +114,14 @@ struct Intent {
     bool interact = false;       // X held: the hold-E job in front of you
     bool drop = false;           // B pressed: put down what you carry
     bool inventory = false;      // Y pressed (on foot): the list of what's in the truck
+    bool crouchHeld = false;     // L3 held (on foot; driving it's the headlights tap)
 };
 
 class Logic {
 public:
     Tuning tune;
     Intent in;
+    bool onFoot = false;  // set by main before update(): L3 crouches instead of toggling the lights
     std::vector<Tap> taps;  // pressed since the last update(); main feeds them in as key presses
 
     // `buttons` includes presses that came and went inside one frame. Fills `in` and `taps`.

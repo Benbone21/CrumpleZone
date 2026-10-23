@@ -10,6 +10,7 @@
 #include "../src/interact.h"
 #include "../src/walker.h"
 #include "../src/modelkit.h"
+#include "../src/mods.h"
 
 namespace {
 
@@ -293,7 +294,16 @@ VEHICLE_SCENARIO(carPartsBreak, "carparts/damage", "A broken part is drawn broke
         for (const Placed* p : ofId(d, id)) cut += p->clip, red += p->wear == 2;
         ctx.check(std::string("...both cut and marked broken: ") + what, cut == 2 && red == 2, std::to_string(cut) + " cut, " + std::to_string(red) + " marked");
         // Each half's far end (the one not cut) is at one of the beam's nodes, one half at each.
-        const V3 a = c.nodes[c.beams[beam].a].p, e = c.nodes[c.beams[beam].b].p;
+        V3 a = c.nodes[c.beams[beam].a].p, e = c.nodes[c.beams[beam].b].p;
+        if (std::string(id) == "drive_shaft" && listed(spec)) {  // (a prop shaft is drawn joint to joint, between the yokes, not node to node)
+            double best = 1e9;
+            for (const Placed* p : ofId(whole, id)) {
+                V3 ja, je;
+                if (!driveShaftJoints(*p, ja, je)) continue;
+                const double d = len(ja - a) + len(je - e);
+                if (d < best) best = d, a = ja, e = je;
+            }
+        }
         std::vector<const Placed*> halves;
         for (const Placed* p : ofId(d, id))
             if (p->clip) halves.push_back(p);
@@ -310,7 +320,7 @@ VEHICLE_SCENARIO(carPartsBreak, "carparts/damage", "A broken part is drawn broke
             ends(*halves[1], l1, h1);
             const V3 f0 = halves[0]->clipHi < 1e8f ? l0 : h0, f1 = halves[1]->clipHi < 1e8f ? l1 : h1;
             const bool oneEach = (len(f0 - a) < len(f0 - e)) != (len(f1 - a) < len(f1 - e));
-            ctx.check(std::string("...each half still on its own end: ") + what, (oneEach || std::string(id) == "cv_axle") && worst < (std::string(id) == "cv_axle" ? 0.25 : 0.12), std::to_string(worst) + " m");
+            ctx.check(std::string("...each half still on its own end: ") + what, (oneEach || std::string(id) == "cv_axle") && worst < (std::string(id) == "cv_axle" || std::string(id) == "drive_shaft" ? 0.25 : 0.12), std::to_string(worst) + " m");
             // The free ends hang below where the whole part lay (unless it was standing upright).
             const V3 chord = e - a;
             if (std::fabs(chord.y) < 0.5 * len(chord)) {
@@ -509,4 +519,73 @@ SCENARIO(carPartsHoverFix, "carparts/hover-fix", "With two repairs near each oth
         ctx.check("...and its kind is the part's", (want.kind == PK_CV_AXLE) == (o.fix.kind == Fix::CV_AXLE), o.prompt);
     }
     ctx.check("both parts could be aimed at", aimed >= 2, std::to_string(aimed) + ": " + tried);
+}
+
+
+// A drive shaft is drawn from the drive-line's own yokes: each end's U-joint sits on the yoke it couples (the transfer case's or
+// gearbox's output yoke, the axle's pinion yoke), not on the physics node the shaft's beam happens to run between. It has to,
+// whatever the vehicle, whatever its suspension (every lift kit and spring set it can be fitted with) and wherever the axles are
+// in their travel: full droop, full bump, one wheel up.
+SCENARIO(driveShaftOnYokes, "carparts/drive-shaft-joints", "Every listed vehicle with each of its suspensions, at rest, at full bump, at full droop and one wheel up: every drive shaft's two U-joints are within 3 cm of the output yoke and pinion yoke they couple, and it is not stretched out of shape") {
+    int lane = 0;
+    for (int v : listedVehicles()) {
+        for (int o = 0; o < modOwnCount(v, MOD_SUSPENSION); o++) {
+            ModSet ms;
+            ms.pick[MOD_SUSPENSION] = o;
+            const VehicleSpec& spec = tunedSpec(v, ms);
+            Car& c = ctx.add(spec, -100, -50 - 8 * lane++, 0);
+            ctx.focus(c);
+            ctx.run(0.6);
+            const Frame fr = c.frame();
+            auto shiftAxles = [&](double dy, int onlyWheel) {
+                for (int wi = 0; wi < (int)c.wheels.size(); wi++)
+                    if (onlyWheel < 0 || wi == onlyWheel)
+                        for (int n : c.wheels[wi].assembly) c.nodes[n].p += fr.up * dy;
+            };
+            auto check = [&](const std::string& when) {
+                const std::string tag = std::string(spec.id) + " suspension " + std::to_string(o) + " " + when + ": ";
+                std::vector<Placed> all;
+                carPartModels(c, all);
+                std::vector<V3> yokes;  // every yoke a shaft can couple to
+                int shafts = 0;
+                for (const Placed& pl : all) {
+                    if (pl.id == "differential" || pl.id == "gearbox_manual" || pl.id == "gearbox_auto") yokes.push_back(partYoke(pl, false));
+                    if (pl.id == "transfer_case") yokes.push_back(partYoke(pl, false)), yokes.push_back(partYoke(pl, true));
+                }
+                for (const Placed& pl : all) {
+                    V3 a, e;
+                    if (!driveShaftJoints(pl, a, e)) continue;
+                    shafts++;
+                    double da = 1e9, de = 1e9;
+                    for (const V3& y : yokes) da = std::min(da, len(a - y)), de = std::min(de, len(e - y));
+                    ctx.check(tag + "the shaft's front joint is on a yoke", da < 0.03, std::to_string(da * 100) + " cm");
+                    ctx.check(tag + "the shaft's rear joint is on a yoke", de < 0.03, std::to_string(de * 100) + " cm");
+                    ctx.check(tag + "the shaft is not stretched out of shape", pl.scale.x > 0.45 && pl.scale.x < 1.9, "x" + std::to_string(pl.scale.x));
+                }
+                // (and the yokes are where the physics' shaft beams are, give or take: the drive line is drawn where it runs)
+                for (const Axle& ax : c.axles) {
+                    if (ax.propShaft < 0) continue;
+                    const Beam& b = c.beams[ax.propShaft];
+                    double worst = 0;
+                    for (int n : {b.a, b.b}) {
+                        double d = 1e9;
+                        for (const V3& y : yokes) d = std::min(d, len(c.nodes[n].p - y));
+                        worst = std::max(worst, d);
+                    }
+                    ctx.check(tag + "the shaft's beam ends are near the yokes", worst < 0.45, std::to_string(worst * 100) + " cm");
+                }
+                int want = 0;
+                for (const Axle& ax : c.axles) want += ax.propShaft >= 0;
+                ctx.check(tag + "a drawn shaft for each prop shaft", shafts == want, std::to_string(shafts) + " of " + std::to_string(want));
+            };
+            check("at rest");
+            shiftAxles(0.12, -1);
+            check("at full bump");
+            shiftAxles(-0.24, -1);
+            check("at full droop");
+            shiftAxles(0.12, -1);
+            shiftAxles(0.1, 0);
+            check("one wheel up");
+        }
+    }
 }

@@ -278,3 +278,45 @@ SCENARIO(levelLegacy, "levels/legacy", "Sections made before the open country (t
         for (double z : {-450.0, -380.0, -300.0}) worst = std::max(worst, std::fabs(w.height(x, z) - pg.height(x, z)));
     ctx.metric("land vs the proving ground's", worst, "m", 0, 2.5);
 }
+
+SCENARIO(levelGrid, "levels/grid", "A level's cells keep their place in the world when the map's grid is another size than the file's") {
+    // A file on a small centred grid (7 x 7: cells -3..3 m), loaded onto the map's grid.
+    const std::string text = "CRUMPLEZONE LEVEL 1\nname GRID\nmap 0\ngrid 7\nheights 3 3 2.5 2.75\nheights 0 0 1\n";
+    Level lv;
+    std::string err;
+    ctx.check("parses", parseLevelText(text, lv, &err), err);
+    World w(MAP_PROVING_GROUND);
+    const int mid = w.cellIndex(0, 0), next = w.cellIndex(0, 1), corner = w.cellIndex(-3, -3);
+    ctx.check("three cells", lv.heights.size() == 3, std::to_string(lv.heights.size()));
+    ctx.check("the middle stays in the middle", lv.heights.count(mid) && std::fabs(lv.heights[mid] - 2.5f) < 1e-6 && lv.heights.count(next) &&
+                                                    std::fabs(lv.heights[next] - 2.75f) < 1e-6);
+    ctx.check("the corner stays at (-3, -3)", lv.heights.count(corner) && std::fabs(lv.heights[corner] - 1.0f) < 1e-6);
+    // Saved again: on the map's own grid (the old one, so no grid line).
+    const std::string again = saveLevelText(lv);
+    ctx.check("no grid line on the old grid", again.find("\ngrid ") == std::string::npos);
+    ctx.check("a bad grid is refused", !parseLevelText("CRUMPLEZONE LEVEL 1\nmap 0\ngrid 8\n", lv, &err));
+}
+
+SCENARIO(worldHalfSize, "world/halfsize", "A map built bigger than the default reaches its new edges: grid, heights, cells, water and saved levels") {
+    World::halfSizeOverride = 1024;
+    World w(MAP_WILDS);
+    const int n = w.gridSize();
+    ctx.check("grid", n == 2049 && w.halfSize() == 1024 && World::gridSizeFor(MAP_WILDS) == 2049, std::to_string(n));
+    const int far = w.cellIndex(1020, -1020);
+    ctx.check("a cell near the edge", far >= 0 && std::fabs(w.cellCenter(far).x - 1020) < 1e-9 && std::fabs(w.cellCenter(far).z + 1020) < 1e-9);
+    ctx.check("off the map", w.cellIndex(1030, 0) < 0 && w.waterLevel(1030, 0) < -1e8);
+    ctx.check("heights out there", std::isfinite(w.height(1000, 1000)) && std::isfinite(w.height(-1023, 1023)));
+    // A level saved on this map says its grid, and loads back onto it.
+    Level lv;
+    lv.map = MAP_WILDS;
+    lv.heights[far] = 7.0f;
+    const std::string text = saveLevelText(lv);
+    ctx.check("grid line", text.find("\ngrid 2049\n") != std::string::npos);
+    Level back;
+    std::string err;
+    ctx.check("loads", parseLevelText(text, back, &err), err);
+    ctx.check("the cell is where it was", back.heights.count(far) && back.heights[far] == 7.0f);
+    applyLevel(back, w);
+    ctx.check("and lands there", std::fabs(w.height(1020, -1020) - 7.0) < 1e-3, std::to_string(w.height(1020, -1020)));
+    World::halfSizeOverride = 0;
+}
