@@ -307,6 +307,7 @@ void Picker::pick(const Set& s, const View& v, std::vector<std::vector<Pick>>& b
     for (int k = 0; k < (int)cells_.size(); k++) {
         RenderBounds b;
         b.lo = cells_[k].lo, b.hi = cells_[k].hi;
+        if (v.maxDist > 0 && b.distance(v.eye) > v.maxDist) continue;
         if (b.visible(v.vp) && !(v.hidden && v.hidden->occluded(b))) order_.push_back({b.distance(v.eye), k});
     }
     std::sort(order_.begin(), order_.end());
@@ -315,10 +316,14 @@ void Picker::pick(const Set& s, const View& v, std::vector<std::vector<Pick>>& b
             const Inst& in = s.inst[i];
             const double d = std::hypot(in.x - v.eye.x, in.z - v.eye.z);
             float fade = 1;
+            if (v.maxDist > 0) {
+                if (d >= v.maxDist) continue;
+                fade = (float)std::min(1.0, (v.maxDist - d) / (0.15 * v.maxDist));
+            }
             if (in.reach > 0) {
                 const double R = in.reach * v.detail * v.reach;
                 if (d >= R) continue;
-                fade = (float)std::min(1.0, (R - d) / (0.15 * R));
+                fade = std::min(fade, (float)std::min(1.0, (R - d) / (0.15 * R)));
                 if (v.shadow) {
                     if (fade < 0.5f) continue;
                     fade = 1;

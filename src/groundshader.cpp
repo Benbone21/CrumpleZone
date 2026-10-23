@@ -233,8 +233,8 @@ void main(){
   ivec2 i0 = clamp(ivec2(floor(gp)), ivec2(0), ivec2(int(uTerrainN) - 2));
   vec2 f = clamp(gp - vec2(i0), 0.0, 1.0);
   f = f * f * (3.0 - 2.0 * f);
-  vec4 c00 = texelFetch(uTerrainTex, i0, 0), c10 = texelFetch(uTerrainTex, i0 + ivec2(1, 0), 0);
-  vec4 c01 = texelFetch(uTerrainTex, i0 + ivec2(0, 1), 0), c11 = texelFetch(uTerrainTex, i0 + ivec2(1, 1), 0);
+  vec4 c00 = terrainCell(i0), c10 = terrainCell(i0 + ivec2(1, 0));
+  vec4 c01 = terrainCell(i0 + ivec2(0, 1)), c11 = terrainCell(i0 + ivec2(1, 1));
   gDens = mix(mix(c00.g, c10.g, f.x), mix(c01.g, c11.g, f.x), f.y);
 #if GQ >= 2
   int cp[4]; float cw[4]; int cn = 0;
@@ -399,7 +399,7 @@ void main(){
     nrm = normalize(mix(nrm, N0, pud * 0.85));
   }
   // ---- Wet ground at the water's edge, and a dark silty bed under it ----
-  float wl = texture(uTerrainTex, (p + uTerrainN * 0.5) / uTerrainN).a;
+  float wl = terrainCell(ivec2(floor(p + uTerrainN * 0.5))).a;
   float wet = 1.0 - smoothstep(0.0, 0.5, vPos.y - wl);
   alb *= mix(1.0, 0.40, wet);
   rough = mix(rough, 0.25, wet * 0.7);

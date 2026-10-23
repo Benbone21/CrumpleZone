@@ -18,6 +18,7 @@ PHYS     += src/studio.cpp
 PHYS     += src/showroomcore.cpp
 PHYS     += src/partpicker.cpp
 PHYS     += src/builds.cpp
+PHYS     += src/worldcache.cpp
 SCEN     += tests/baja.cpp
 SCEN     += tests/entercar.cpp
 SCEN     += tests/winchfoot.cpp tests/allocs.cpp tests/benchreport.cpp tests/tracks.cpp src/fx.cpp

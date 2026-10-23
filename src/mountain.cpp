@@ -15,6 +15,7 @@
 #include <cmath>
 #include <string>
 
+#include "parallel.h"
 #include "world.h"
 
 namespace {
@@ -142,8 +143,9 @@ void World::buildMountain() {
     hN = (int)(2 * half / kRes) + 1;
     const int N = hN * hN;
     hgrid.resize(N);
-    for (int i = 0; i < hN; i++)
+    parallelRows(hN, [&](int i) {
         for (int j = 0; j < hN; j++) hgrid[i * hN + j] = (float)mountainHeight(-half + i * kRes, -half + j * kRes);
+    });
     auto X = [&](int i) { return -half + i * kRes; };
     auto cellI = [&](double v) { return std::min(std::max((int)std::lround((v + half) / kRes), 0), hN - 1); };
 
@@ -205,9 +207,9 @@ void World::buildMountain() {
     // blending into the terrain over ~14 m.
     std::vector<float> edge(N, 1e9f), pathY(N, 0);
     std::vector<uint8_t> pathPaint(N, 0);
-    roadLat.assign(N, 0);
-    roadAlong.assign(N, 0);
-    roadNear.assign(N, 0);
+    roadLat.reset(hN, 0);
+    roadAlong.reset(hN, 0);
+    roadNear.reset(hN, 0);
     paint.assign(N, PAINT_NONE);
     surf.assign(N, SURF_GRASS);
     std::vector<float> trailDist(N, 1e9f);
@@ -370,7 +372,7 @@ void World::buildMountain() {
     };
     // The trail turns loose and rocky up high: stretches of scree.
     for (int id = 0; id < N; id++)
-        if (edge[id] < 0.6 && pathPaint[id] == PAINT_TRAIL && hgrid[id] > 95 && std::fmod(roadAlong[id], 85.0) < 22) {
+        if (edge[id] < 0.6 && pathPaint[id] == PAINT_TRAIL && hgrid[id] > 95 && std::fmod((double)roadAlong[id], 85.0) < 22) {
             paint[id] = PAINT_SCREE;
             surf[id] = SURF_SCREE;
         }

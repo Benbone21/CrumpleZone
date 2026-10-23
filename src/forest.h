@@ -68,6 +68,7 @@ struct View {
     bool shadow = false;  // shadows: no fades (an instance fading out casts while it's over half there)
     double reach = 1;   // the instances' reaches scaled by this too (shadows: only the near bushes cast)
     const TerrainOcclusion* hidden = nullptr;  // main pass only: cells behind the ground are skipped (occlusion.h)
+    double maxDist = 0;  // nothing farther (m; faded out over its last 15%): a big map's distant forest is left to the fog (0: no limit)
 };
 struct Pick {
     int inst;

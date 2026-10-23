@@ -196,16 +196,15 @@ bool flush() {
     return true;
 }
 
-bool getBlob(uint64_t key, std::vector<uint8_t>& out) {
-    if (!enabled()) return false;
-    std::string path;
-    {
-        State& s = st();
-        std::lock_guard<std::mutex> lk(s.lock);
-        char name[40];
-        std::snprintf(name, sizeof name, "/blob-%016llx.bin", (unsigned long long)key);
-        path = dirLocked(s) + name;
-    }
+namespace {
+// <dir>/<file>: the path, under the lock.
+std::string blobPath(const char* file) {
+    State& s = st();
+    std::lock_guard<std::mutex> lk(s.lock);
+    return dirLocked(s) + "/" + file;
+}
+
+bool readChecked(const std::string& path, std::vector<uint8_t>& out) {
     FILE* f = std::fopen(path.c_str(), "rb");
     if (!f) return false;
     std::fseek(f, 0, SEEK_END);
@@ -222,26 +221,56 @@ bool getBlob(uint64_t key, std::vector<uint8_t>& out) {
     return true;
 }
 
-bool putBlob(uint64_t key, const std::vector<uint8_t>& bytes) {
-    if (!enabled()) return true;
-    std::string d, path;
-    {
-        State& s = st();
-        std::lock_guard<std::mutex> lk(s.lock);
-        char name[40];
-        std::snprintf(name, sizeof name, "/blob-%016llx.bin", (unsigned long long)key);
-        d = dirLocked(s), path = d + name;
-    }
+// (head: written before `bytes`, under the same checksum)
+bool writeChecked(const std::string& path, const std::vector<uint8_t>& head, const std::vector<uint8_t>& bytes) {
+    const std::string d = path.substr(0, path.find_last_of('/'));
     makeDir(d.substr(0, d.find_last_of('/')));
     makeDir(d);
     const std::string tmp = path + ".tmp" + std::to_string((unsigned long long)(uintptr_t)&bytes);  // (several threads write at once)
     FILE* f = std::fopen(tmp.c_str(), "wb");
     if (!f) return false;
-    const uint64_t sum = checksum(bytes.data(), bytes.size());
-    const bool ok = std::fwrite(&sum, 8, 1, f) == 1 && std::fwrite(bytes.data(), 1, bytes.size(), f) == bytes.size();
+    std::vector<uint8_t> all;
+    all.reserve(head.size() + bytes.size());
+    all.insert(all.end(), head.begin(), head.end());
+    all.insert(all.end(), bytes.begin(), bytes.end());
+    const uint64_t sum = checksum(all.data(), all.size());
+    const bool ok = std::fwrite(&sum, 8, 1, f) == 1 && std::fwrite(all.data(), 1, all.size(), f) == all.size();
     if (std::fclose(f) != 0 || !ok) return std::remove(tmp.c_str()), false;
     std::remove(path.c_str());
     return std::rename(tmp.c_str(), path.c_str()) == 0;
+}
+}  // namespace
+
+bool getBlob(uint64_t key, std::vector<uint8_t>& out) {
+    if (!enabled()) return false;
+    char name[40];
+    std::snprintf(name, sizeof name, "blob-%016llx.bin", (unsigned long long)key);
+    return readChecked(blobPath(name), out);
+}
+
+bool putBlob(uint64_t key, const std::vector<uint8_t>& bytes) {
+    if (!enabled()) return true;
+    char name[40];
+    std::snprintf(name, sizeof name, "blob-%016llx.bin", (unsigned long long)key);
+    return writeChecked(blobPath(name), {}, bytes);
+}
+
+bool getNamedBlob(const std::string& name, uint64_t key, std::vector<uint8_t>& out) {
+    if (!enabled()) return false;
+    std::vector<uint8_t> all;
+    if (!readChecked(blobPath((name + ".bin").c_str()), all) || all.size() < 8) return false;
+    uint64_t stored;
+    std::memcpy(&stored, all.data(), 8);
+    if (stored != key) return false;
+    out.assign(all.begin() + 8, all.end());
+    return true;
+}
+
+bool putNamedBlob(const std::string& name, uint64_t key, const std::vector<uint8_t>& bytes) {
+    if (!enabled()) return true;
+    std::vector<uint8_t> head(8);
+    std::memcpy(head.data(), &key, 8);
+    return writeChecked(blobPath((name + ".bin").c_str()), head, bytes);
 }
 
 std::vector<uint8_t> packEncoded(const texenc::Encoded& e) {

@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "mathx.h"
+#include "celltiles.h"
 #include "plants.h"
 
 // Oriented static box (ramps, walls, poles, bumps).
@@ -190,6 +191,9 @@ std::vector<V3> mountainTrail();  // the summit trail's center line, trailhead t
 // delta, bowl, ford1-4, track, outpost, lakeside, hut), and its race circuit's center line.
 V3 frontierFeature(const char* name);
 const std::vector<V3>& frontierTrack();
+// Whether the Frontier's features its build searches the land for (THE WALL, the summit, the boulder garden) came out where
+// frontierFeature has them without a build (after a World(MAP_FRONTIER) on this process). `why`: the ones that didn't, exactly.
+bool frontierFeatureTable(std::string* why = nullptr);
 // The Backcountry's places and trails (see backcountry.cpp): trailhead, creekcrawl, creekend, mine,
 // slab, ridgeend, deepcrossing, ford, farside, sawmill, hillclimb, hilltop, dunes, wash, mudstart,
 // bog1-4, shelf, shelfend, wreck, pass, passhut, firetower, cabin, ...
@@ -216,6 +220,7 @@ struct RoadInfo {
 };
 
 class World {
+    friend struct WorldIO;  // (worldcache.cpp: a built map saved and loaded whole)
 public:
     // How far the map reaches from its middle each way (m): the terrain grid runs from -halfSize() to +halfSize() on both axes at
     // 1 m, so gridSize() is 2 * halfSize() + 1. Each map has its own (halfSizeFor); every map is kDefaultHalfSize for now.
@@ -292,7 +297,7 @@ public:
     }
     bool hasWater() const { return !waters.empty() || !waterY.empty(); }
     // Maps with rivers keep their water on the height grid: level (-1e9 dry) and flow.
-    std::vector<float> waterY, flowX, flowZ;
+    CellTiles<float> waterY, flowX, flowZ;  // (kept only in the tiles with water: celltiles.h)
     int gridSize() const { return hN; }
     double frontierHeight(double x, double z) const;  // the Frontier's land before anything's carved into it
 
@@ -333,6 +338,7 @@ public:
     // Big scanned rocks placed while the world is being made get their pieces (Rock::parts) all together at the end of it.
     bool deferRockSplits = false;
     void splitPendingRocks();
+    void cutCachedRocks();  // a world read from the cache: gives its big scanned rocks their convex pieces again
     double height(double x, double z) const;  // terrain only (baked grid, bilinear)
     V3 normal(double x, double z) const;
     RoadInfo roadAt(double x, double z) const;
@@ -352,8 +358,9 @@ private:
     static constexpr double kRes = 1.0;
     double half = kDefaultHalfSize;  // halfSize()
     int hN = 0;
-    std::vector<float> hgrid, roadLat, roadAlong;
-    std::vector<uint8_t> roadNear;
+    std::vector<float> hgrid;
+    CellTiles<float> roadLat, roadAlong;  // (kept only in the tiles with a road or trail: celltiles.h)
+    CellTiles<uint8_t> roadNear;
     double baseHeight(double x, double z) const;  // analytic hills before roads
     void bakeTerrain();
     double gridAt(int i, int j) const { return hgrid[i * hN + j]; }
@@ -420,4 +427,8 @@ public:
     // stations. Returns what it removed ("" nothing).
     // onlyKind: only that kind of thing counts (0 rock, 1 tree, 2 log, 3 box, 4 fixture, 6 bush) and distance is to its centre; -1 any.
     std::string removeNear(double x, double z, double r, int onlyKind = -1);
+    // A hash of what the map is: every cell's height and water level to 1 cm and its surface, and where every tree, rock,
+    // log, box, model and station stands (to 1 cm). Two machines with the same hash have built the same map (the
+    // multiplayer world check; the tests' "the map didn't change"). A few ms on today's maps.
+    uint64_t landHash() const;
 };

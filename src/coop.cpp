@@ -130,7 +130,7 @@ void Coop::buildMap(const World& w) {
     mapWorld = (int)(w.stamp & 0x7fffffff);
     mapHalf = w.halfSize();
     const double half = mapHalf - 20;
-    mapCell = 6;
+    mapCell = std::max(6.0, std::ceil(2 * half / 200));  // (6 m; coarser on a big map, which is drawn a rect a cell: about 200 a side)
     mapN = (int)(2 * half / mapCell);
     mapRgb.assign((size_t)mapN * mapN * 3, 0);
     for (int j = 0; j < mapN; j++)

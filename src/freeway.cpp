@@ -35,9 +35,9 @@ void World::buildFreeway() {
     hgrid.assign(N, 0);
     paint.assign(N, PAINT_NONE);
     surf.assign(N, SURF_GRASS);
-    roadLat.assign(N, 0);
-    roadAlong.assign(N, 0);
-    roadNear.assign(N, 0);
+    roadLat.reset(hN, 0);
+    roadAlong.reset(hN, 0);
+    roadNear.reset(hN, 0);
     auto X = [&](int i) { return -half + i * kRes; };
     const double tau = 2 * M_PI / kPeriod;
     // A rest area with a repair shop off the eastbound side every period: its pad, and a
