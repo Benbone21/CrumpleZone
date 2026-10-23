@@ -6,6 +6,7 @@
 #include "texcomp.h"
 #include "perf.h"
 #include "grasstiles.h"
+#include "parallel.h"
 
 // Render targets and data textures in the VRAM report (texcomp.h); no mips on purpose.
 static void noteRT(const char* name, const char* fmt, int w, int h, int bytesPerTexel, int mips = 0, bool runtime = true) {
@@ -295,18 +296,30 @@ in vec3 vPos; in vec3 vNrm; centroid in vec4 vCol; in vec4 vLight; in vec3 vLoca
 out vec4 oCol;
 uniform int uMap;                 // 0 proving ground, 1 mountain, 2 freeway
 uniform sampler2D uTerrainTex;    // per meter: height, grass, paint
-uniform float uTerrainN;          // texels per side
+uniform float uTerrainN;          // cells per side (the map's grid)
 uniform vec2 uRockSnow;           // heights where bare rock, then snow, take over
 uniform int uTreeFadeN;           // see-through trees: this many, each (x, z, reach, fade 0..1)
 uniform vec4 uTreeFade[24];
+// The terrain texels (one a cell): a window of the map round the camera, toroidal (a big map; a small one is in it whole), and
+// the whole map coarse (a texel per 4 cells) for whatever lies outside the window.
+uniform vec4 uTerrainWin;          // the window: its first cell (i, j), its texels a side, 1 when it holds the whole map
+uniform sampler2D uTerrainCoarse;
+uniform float uTerrainCoarseN;
+vec4 terrainCell(ivec2 g){
+  g = clamp(g, ivec2(0), ivec2(int(uTerrainN) - 1));
+  if (uTerrainWin.w > 0.5) return texelFetch(uTerrainTex, g, 0);  // (the whole map is in the window, as stored)
+  ivec2 r = g - ivec2(uTerrainWin.xy);
+  int w = int(uTerrainWin.z);
+  if (r.x < 0 || r.y < 0 || r.x >= w || r.y >= w) return texelFetch(uTerrainCoarse, clamp(g / 4, ivec2(0), ivec2(int(uTerrainCoarseN) - 1)), 0);
+  return texelFetch(uTerrainTex, g % w, 0);
+}
 )";
 
 // The procedural ground: the look the terrain had before photo-scanned materials, and still has for
 // paved ground, ice and the like (and everywhere with ground detail off).
 const char* kTerrainProcFS = R"(
 float paintAt(vec2 xz){
-  vec2 uv = (xz + uTerrainN * 0.5) / uTerrainN;  // (the map is centred: its half-size is (uTerrainN - 1) / 2 texels)
-  return texture(uTerrainTex, uv).b;
+  return terrainCell(ivec2(floor(xz + uTerrainN * 0.5))).b;  // (the map is centred: its half-size is (uTerrainN - 1) / 2 cells)
 }
 float gridLine(vec2 p, float w){
   vec2 d = abs(fract(p - 0.5) - 0.5) / max(fwidth(p), vec2(1e-4));
@@ -477,7 +490,7 @@ void terrainProcedural(vec3 n, inout vec3 base, inout float specK, inout float s
 #endif
     }
     // Wet ground at the water's edge, and a dark silty bed under it.
-    float wl = texture(uTerrainTex, (vPos.xz + uTerrainN * 0.5) / uTerrainN).a;
+    float wl = terrainCell(ivec2(floor(vPos.xz + uTerrainN * 0.5))).a;
     float wet = 1.0 - smoothstep(0.0, 0.5, vPos.y - wl);
     base = mix(base, base * 0.45 + vec3(0.04, 0.035, 0.02), wet);
     base = mix(base, vec3(0.10, 0.11, 0.07), smoothstep(0.0, -0.4, vPos.y - wl) * 0.8);
@@ -1778,6 +1791,19 @@ void main(){
 // vehicles push it down and aside.
 const char* kGrassVS = R"(#version 330 core
 uniform sampler2D uTerrainTex; uniform float uTerrainN;
+// The terrain texels (one a cell): a window of the map round the camera, toroidal (a big map; a small one is in it whole), and
+// the whole map coarse (a texel per 4 cells) for whatever lies outside the window.
+uniform vec4 uTerrainWin;          // the window: its first cell (i, j), its texels a side, 1 when it holds the whole map
+uniform sampler2D uTerrainCoarse;
+uniform float uTerrainCoarseN;
+vec4 terrainCell(ivec2 g){
+  g = clamp(g, ivec2(0), ivec2(int(uTerrainN) - 1));
+  if (uTerrainWin.w > 0.5) return texelFetch(uTerrainTex, g, 0);  // (the whole map is in the window, as stored)
+  ivec2 r = g - ivec2(uTerrainWin.xy);
+  int w = int(uTerrainWin.z);
+  if (r.x < 0 || r.y < 0 || r.x >= w || r.y >= w) return texelFetch(uTerrainCoarse, clamp(g / 4, ivec2(0), ivec2(int(uTerrainCoarseN) - 1)), 0);
+  return texelFetch(uTerrainTex, g % w, 0);
+}
 uniform mat4 uVP; uniform vec3 uCam; uniform float uTime;
 uniform int uSide; uniform int uBlades; uniform int uMap;
 uniform vec3 uTile;     // this draw's tufts: a run of the ring's grid from (x, z), x wide
@@ -1806,7 +1832,7 @@ float hs(vec2 c, uint s){  // integer hash of a cell and a salt: sin() hashes re
   h ^= h >> 16; h *= 0x7feb352du; h ^= h >> 15; h *= 0x846ca68bu; h ^= h >> 16;
   return float(h & 0xFFFFFFu) / 16777216.0;
 }
-vec4 tx(ivec2 i){ return texelFetch(uTerrainTex, clamp(i, ivec2(0), ivec2(int(uTerrainN) - 1)), 0); }
+vec4 tx(ivec2 i){ return terrainCell(i); }
 float grassShadow(vec3 p){
   float sh = 1.0;
   if (uShadowCfg.x > 0.5) {
@@ -1987,12 +2013,25 @@ in vec3 vPos; in vec3 vNrm; centroid in vec4 vCol; in vec4 vLight; in vec3 vLoca
 layout(location = 0, index = 0) out vec4 oCol;
 layout(location = 0, index = 1) out vec4 oKeep;
 uniform sampler2D uTerrainTex; uniform float uTerrainN;
+// The terrain texels (one a cell): a window of the map round the camera, toroidal (a big map; a small one is in it whole), and
+// the whole map coarse (a texel per 4 cells) for whatever lies outside the window.
+uniform vec4 uTerrainWin;          // the window: its first cell (i, j), its texels a side, 1 when it holds the whole map
+uniform sampler2D uTerrainCoarse;
+uniform float uTerrainCoarseN;
+vec4 terrainCell(ivec2 g){
+  g = clamp(g, ivec2(0), ivec2(int(uTerrainN) - 1));
+  if (uTerrainWin.w > 0.5) return texelFetch(uTerrainTex, g, 0);  // (the whole map is in the window, as stored)
+  ivec2 r = g - ivec2(uTerrainWin.xy);
+  int w = int(uTerrainWin.z);
+  if (r.x < 0 || r.y < 0 || r.x >= w || r.y >= w) return texelFetch(uTerrainCoarse, clamp(g / 4, ivec2(0), ivec2(int(uTerrainCoarseN) - 1)), 0);
+  return texelFetch(uTerrainTex, g % w, 0);
+}
 float groundAt(vec2 xz){
   vec2 g = xz + (uTerrainN - 1.0) * 0.5;
   ivec2 i = clamp(ivec2(floor(g)), ivec2(0), ivec2(int(uTerrainN) - 2));
   vec2 f = g - vec2(i);
-  float a = texelFetch(uTerrainTex, i, 0).r, b = texelFetch(uTerrainTex, i + ivec2(1, 0), 0).r;
-  float c = texelFetch(uTerrainTex, i + ivec2(0, 1), 0).r, d = texelFetch(uTerrainTex, i + ivec2(1, 1), 0).r;
+  float a = terrainCell(i).r, b = terrainCell(i + ivec2(1, 0)).r;
+  float c = terrainCell(i + ivec2(0, 1)).r, d = terrainCell(i + ivec2(1, 1)).r;
   return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 // Value noise and its slope, for ripple normals without finite differences.
@@ -2034,7 +2073,7 @@ void main(){
   float mud = 0.0;
   for (int k = 0; k < 4; k++) {
     ivec2 o = ti + ivec2((k & 1) * 4 - 2, (k >> 1) * 4 - 2);
-    mud += 1.0 - step(0.5, abs(texelFetch(uTerrainTex, o, 0).b - 8.0));
+    mud += 1.0 - step(0.5, abs(terrainCell(o).b - 8.0));
   }
   float murk = smoothstep(0.2, 0.8, mud * 0.25);
   vec2 flow = vCol.rg;
@@ -2065,7 +2104,7 @@ void main(){
   for (int k = 0; k < 6; k++) {
     float s = 2.5 * exp2(float(k));
     ivec2 gi = clamp(ivec2(floor(p + rd * s + uTerrainN * 0.5)), ivec2(0), ivec2(int(uTerrainN) - 1));
-    occ = max(occ, smoothstep(0.0, 3.0, texelFetch(uTerrainTex, gi, 0).r - (vPos.y + r.y / max(length(r.xz), 0.05) * s)) * 0.85);
+    occ = max(occ, smoothstep(0.0, 3.0, terrainCell(gi).r - (vPos.y + r.y / max(length(r.xz), 0.05) * s)) * 0.85);
   }
   refl = mix(refl, vec3(0.035, 0.05, 0.03) * (ambientAt(vec3(0, 1, 0)) + 0.4 * sh * kSunCol), occ);
   vec3 H = normalize(V + uSun);
@@ -2940,6 +2979,7 @@ void Renderer::drawBatches(GLuint vao, const std::vector<StaticBatch>& batches, 
     BindVertexArray(vao);
     for (const auto& batch : batches) {
         if (!batch.bounds.visible(vp) || (!shadow && occl_.occluded(batch.bounds))) continue;
+        if (!terrainAll_ && batch.bounds.distance(sceneEye_) > 2500) continue;  // (a big map: the far scenery is left to the fog)
         DrawArrays(GL_TRIANGLES, batch.first, batch.count);
         (shadow ? geometryStats_.shadowSceneryVertices : geometryStats_.sceneryVertices) += batch.count;
         (shadow ? geometryStats_.shadowModelVertices : geometryStats_.modelVertices) += batch.count;
@@ -2959,47 +2999,122 @@ void Renderer::drawBushes(const M4& vp, const V3& eye, bool shadow, VegStats::Pa
     }
 }
 
+namespace {
+// The terrain's chunks (render.h TerrainChunk): 64 x 64 mesh cells, 65 x 65 vertices in a pool slot.
+constexpr int kChunkCells = 64, kChunkSide = kChunkCells + 1, kChunkVerts = kChunkSide * kChunkSide;
+constexpr int kPoolMax = 640;                      // full-mesh slots at most: a map with more chunks streams them
+constexpr double kStreamIn = 700, kStreamOut = 830;  // m from the camera: a chunk's full mesh is loaded inside, dropped outside
+constexpr int kStreamPerFrame = 24;                // chunks built a frame at most (on a few threads)
+constexpr int kFarStep = 16;                       // far patches: a vertex every 16 mesh steps
+constexpr double kSkirt = 6;                       // m their edges hang down (hiding the cracks against a finer neighbour)
+constexpr int kTexWindow = 2048;                   // the terrain texture's window: cells a side (a map up to this is in it whole)
+constexpr int kTexSlack = 160;                     // cells the camera goes from the window's middle before it moves
+constexpr int kCoarseCell = 4;                     // cells a side per texel of the coarse texture
+// One cell's texels: its height, how thick the grass grows, its paint and its water level.
+void terrainTexel(const World& world, double x, double z, float* t) {
+    t[0] = (float)world.height(x, z);
+    t[1] = world.grassDensity(x, z);
+    t[2] = (float)world.roadAt(x, z).paint;
+    t[3] = (float)std::max(world.waterLevel(x, z), -1000.0);
+}
+// The window's first cell for a camera at grid cell (ci, cj), on a map of n cells a side.
+int windowStart(int c, int n, int w) { return std::min(std::max(c - w / 2, 0), std::max(0, n - w)); }
+// The whole map's coarse texels.
+void coarseTexels(const World& world, int n, std::vector<float>& out, int& cn) {
+    cn = (n + kCoarseCell - 1) / kCoarseCell;
+    out.assign((size_t)cn * cn * 4, 0.0f);
+    const double half = world.halfSize();
+    parallelRows(cn, [&](int cj) {
+        for (int ci = 0; ci < cn; ci++) {
+            const int i = std::min(n - 1, ci * kCoarseCell + kCoarseCell / 2), j = std::min(n - 1, cj * kCoarseCell + kCoarseCell / 2);
+            terrainTexel(world, -half + i, -half + j, &out[((size_t)cj * cn + ci) * 4]);
+        }
+    }, 8);
+}
+}  // namespace
+
 void Renderer::drawTerrain(const M4& vp, const View& view, const std::function<void(GLuint, bool)>& setup, GLuint noProcProg, GLuint procProg, GLuint farProg) {
-    BindVertexArray(terrainVao);
     geometryStats_.terrainChunks = (unsigned)terrainChunks.size();
     // Keep collision-scale detail nearby; select distance from the nearest point
     // of the chunk, not its center, to protect terrain under the camera.
     // Nearest first, so a hill hides the land behind it before that's shaded.
-    static std::vector<std::pair<float, int>> terrainOrder_;  // (kept: no allocation a frame)
-    terrainOrder_.clear();
+    // (Two lists: the pooled full meshes, then the coarse buffer's far patches and backdrop: a buffer bound once each.)
+    static std::vector<std::pair<float, int>> fine_, coarse_;  // (kept: no allocation a frame)
+    fine_.clear(), coarse_.clear();
+    // Whole far groups first (none of their chunks loaded: one draw each, entered as -1 - group); then each chunk.
+    for (int g = 0; g < (int)farGroups_.size(); g++) {
+        const FarGroup& fg = farGroups_[g];
+        if (fg.loaded > 0) continue;
+        geometryStats_.terrainFullTriangles += fg.count / 3;
+        if (!fg.bounds.visible(vp)) continue;
+        if (occl_.occluded(fg.bounds)) { ++geometryStats_.terrainOccluded; continue; }
+        coarse_.push_back({(float)fg.bounds.distance(view.eye), -1 - g});
+    }
     for (size_t i = 0; i < terrainChunks.size(); i++) {
         const auto& chunk = terrainChunks[i];
-        geometryStats_.terrainFullTriangles += chunk.count[0] / 3;
+        if (!chunk.backdrop && chunk.slot < 0 && chunk.farCount == 0) continue;  // (not loaded yet, and nothing coarse: a moment)
+        if (!chunk.backdrop && chunk.slot < 0 && chunkGroup_[i] >= 0 && farGroups_[chunkGroup_[i]].loaded == 0) continue;  // (drawn with its group)
+        geometryStats_.terrainFullTriangles += (chunk.backdrop ? chunk.count[0] : terrainLods_[chunk.lodSet].count[0]) / 3;
         if (!chunk.bounds.visible(vp)) continue;
         if (occl_.occluded(chunk.bounds)) { ++geometryStats_.terrainOccluded; continue; }
-        terrainOrder_.push_back({(float)chunk.bounds.distance(view.eye), (int)i});
+        (chunk.backdrop || chunk.slot < 0 ? coarse_ : fine_).push_back({(float)chunk.bounds.distance(view.eye), (int)i});
     }
-    std::sort(terrainOrder_.begin(), terrainOrder_.end());
+    std::sort(fine_.begin(), fine_.end());
+    std::sort(coarse_.begin(), coarse_.end());
     auto drawChunk = [&](const std::pair<float, int>& o) {
+        unsigned first, count;
+        if (o.second < 0) {
+            const FarGroup& fg = farGroups_[-1 - o.second];
+            first = fg.first, count = fg.count;
+            DrawElements(GL_TRIANGLES, count, GL_UNSIGNED_INT, reinterpret_cast<const void*>((uintptr_t)first * sizeof(unsigned)));
+            geometryStats_.terrainTriangles += count / 3;
+            ++geometryStats_.terrainVisibleChunks;
+            return;
+        }
         const auto& chunk = terrainChunks[o.second];
-        const int lod = terrainLodForDistance(o.first);
-        DrawElements(GL_TRIANGLES, chunk.count[lod], GL_UNSIGNED_INT,
-                     reinterpret_cast<const void*>((uintptr_t)chunk.first[lod] * sizeof(unsigned)));
-        geometryStats_.terrainTriangles += chunk.count[lod] / 3;
+        if (chunk.backdrop) {
+            first = chunk.first[0], count = chunk.count[0];
+            DrawElements(GL_TRIANGLES, count, GL_UNSIGNED_INT, reinterpret_cast<const void*>((uintptr_t)first * sizeof(unsigned)));
+        } else if (chunk.slot < 0) {
+            first = chunk.farFirst, count = chunk.farCount;
+            DrawElements(GL_TRIANGLES, count, GL_UNSIGNED_INT, reinterpret_cast<const void*>((uintptr_t)first * sizeof(unsigned)));
+        } else {
+            const LodSet& set = terrainLods_[chunk.lodSet];
+            const int lod = terrainLodForDistance(o.first);
+            first = set.first[lod], count = set.count[lod];
+            DrawElementsBaseVertex(GL_TRIANGLES, count, GL_UNSIGNED_INT, reinterpret_cast<const void*>((uintptr_t)first * sizeof(unsigned)),
+                                   chunk.slot * kChunkVerts);
+        }
+        geometryStats_.terrainTriangles += count / 3;
         ++geometryStats_.terrainVisibleChunks;
     };
+    auto sweep = [&](int pass) {
+        // Three sweeps, each nearest first: near chunks that may hold paving with the full shader, near chunks without it with the build
+        // lacking that code, and far chunks (past kFarGround, where the full shader already drops most of its layers) with the cheap LOW
+        // tier, whose noise is the same numbers, so patches stay where they are. (pass -1: all of them, as they come)
+        constexpr float kFarGround = 300.0f;
+        for (int list = 0; list < 2; list++) {
+            const auto& order = list == 0 ? fine_ : coarse_;
+            if (order.empty()) continue;
+            BindVertexArray(list == 0 ? terrainVao : coarseVao);
+            for (const auto& o : order) {
+                if (pass >= 0) {
+                    const bool far = farProg && o.first > kFarGround;
+                    const int cls = far ? 2 : o.second < 0 || terrainChunks[o.second].proc ? 0 : 1;
+                    if (cls != pass) continue;
+                }
+                drawChunk(o);
+            }
+        }
+    };
     if (!noProcProg || !setup) {
-        for (const auto& o : terrainOrder_) drawChunk(o);
+        sweep(-1);
         return;
     }
-    // Three sweeps, each nearest first: near chunks that may hold paving with the full shader, near chunks without it with the build lacking that
-    // code, and far chunks (past kFarGround, where the full shader already drops most of its layers) with the cheap LOW tier, whose noise is the same
-    // numbers, so patches stay where they are.
-    constexpr float kFarGround = 300.0f;
     for (int pass = 0; pass < 3; pass++) {
         if (pass == 2 && !farProg) break;
         setup(pass == 0 ? procProg : pass == 1 ? noProcProg : farProg, pass == 2);
-        BindVertexArray(terrainVao);
-        for (const auto& o : terrainOrder_) {
-            const bool far = farProg && o.first > kFarGround;
-            const int cls = far ? 2 : terrainChunks[o.second].proc ? 0 : 1;
-            if (cls == pass) drawChunk(o);
-        }
+        sweep(pass);
     }
 }
 
@@ -3009,42 +3124,142 @@ void Renderer::updateWater(const World& world) {
     uploadStatic(waterVao, waterVbo, wv);
     waterVertexCount = (int)wv.size();
 
-    // Terrain data for the shaders, one texel per meter: height, grass density, paint.
+    // Terrain data for the shaders, one texel per meter: height, grass density, paint, water: the window (kept where it is on
+    // this map, else round the start) and the coarse whole.
     const double half = world.halfSize();
     const int n = (int)(2 * half) + 1;
-    terrainGridN = n;
-    std::vector<float> data((size_t)n * n * 4);
-    for (int j = 0; j < n; j++)
-        for (int i = 0; i < n; i++) {
-            double x = -half + i, z = -half + j;
-            float* t = &data[((size_t)j * n + i) * 4];
-            t[0] = (float)world.height(x, z);
-            t[1] = world.grassDensity(x, z);
-            t[2] = (float)world.roadAt(x, z).paint;
-            t[3] = (float)std::max(world.waterLevel(x, z), -1000.0);
-        }
+    const int w = std::min(n, kTexWindow);
+    if (terrainGridN != n || terrainWinW_ != w) {
+        terrainWinI_ = windowStart((int)std::lround(world.spawn.x + half), n, w), terrainWinJ_ = windowStart((int)std::lround(world.spawn.z + half), n, w);
+    }
+    terrainGridN = n, terrainWinW_ = w;
     if (!terrainTex) GenTextures(1, &terrainTex);
     BindTexture(GL_TEXTURE_2D, terrainTex);
-    TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, n, n, 0, GL_RGBA, GL_FLOAT, data.data());
-    noteRT("terrain height map", "RGBA32F", n, n, 16, 0, true);  // (data, read texel by texel: exact, no mips)
+    TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, w, w, 0, GL_RGBA, GL_FLOAT, nullptr);
+    noteRT("terrain height map", "RGBA32F", w, w, 16, 0, true);  // (data, read texel by texel: exact, no mips)
     TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    uploadTerrainCells(world, terrainWinI_, terrainWinJ_, terrainWinI_ + w - 1, terrainWinJ_ + w - 1);
+    uploadTerrainCoarse(world, 0, 0, n - 1, n - 1);
 }
+
+void Renderer::uploadTerrainCells(const World& world, int i0, int j0, int i1, int j1) {
+    const int w = terrainWinW_;
+    if (!terrainTex || w <= 0) return;
+    i0 = std::max(i0, terrainWinI_), j0 = std::max(j0, terrainWinJ_), i1 = std::min(i1, terrainWinI_ + w - 1), j1 = std::min(j1, terrainWinJ_ + w - 1);
+    if (i1 < i0 || j1 < j0) return;
+    const double half = world.halfSize();
+    BindTexture(GL_TEXTURE_2D, terrainTex);
+    std::vector<float> data;
+    // (Stored toroidally: the rectangle splits where it wraps, into up to four.)
+    for (int a0 = i0; a0 <= i1;) {
+        const int a1 = std::min(i1, a0 + (w - 1 - a0 % w));
+        for (int b0 = j0; b0 <= j1;) {
+            const int b1 = std::min(j1, b0 + (w - 1 - b0 % w));
+            const int cw = a1 - a0 + 1, ch = b1 - b0 + 1;
+            data.assign((size_t)cw * ch * 4, 0.0f);
+            parallelRows(ch, [&](int r) {
+                for (int c = 0; c < cw; c++) terrainTexel(world, -half + a0 + c, -half + b0 + r, &data[((size_t)r * cw + c) * 4]);
+            }, 16);
+            TexSubImage2D(GL_TEXTURE_2D, 0, a0 % w, b0 % w, cw, ch, GL_RGBA, GL_FLOAT, data.data());
+            b0 = b1 + 1;
+        }
+        a0 = a1 + 1;
+    }
+}
+
+void Renderer::uploadTerrainCoarse(const World& world, int i0, int j0, int i1, int j1) {
+    const int n = terrainGridN;
+    const int cn = (n + kCoarseCell - 1) / kCoarseCell;
+    if (!terrainCoarseTex || terrainCoarseN_ != cn) {
+        std::vector<float> all;
+        int got = 1;
+        coarseTexels(world, n, all, got);
+        if (!terrainCoarseTex) GenTextures(1, &terrainCoarseTex);
+        BindTexture(GL_TEXTURE_2D, terrainCoarseTex);
+        TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, got, got, 0, GL_RGBA, GL_FLOAT, all.data());
+        TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        terrainCoarseN_ = got;
+        return;
+    }
+    const double half = world.halfSize();
+    const int c0 = std::max(0, i0 / kCoarseCell), c1 = std::min(cn - 1, i1 / kCoarseCell), r0 = std::max(0, j0 / kCoarseCell), r1 = std::min(cn - 1, j1 / kCoarseCell);
+    if (c1 < c0 || r1 < r0) return;
+    std::vector<float> data((size_t)(c1 - c0 + 1) * (r1 - r0 + 1) * 4);
+    for (int cj = r0; cj <= r1; cj++)
+        for (int ci = c0; ci <= c1; ci++) {
+            const int i = std::min(n - 1, ci * kCoarseCell + kCoarseCell / 2), j = std::min(n - 1, cj * kCoarseCell + kCoarseCell / 2);
+            terrainTexel(world, -half + i, -half + j, &data[((size_t)(cj - r0) * (c1 - c0 + 1) + (ci - c0)) * 4]);
+        }
+    BindTexture(GL_TEXTURE_2D, terrainCoarseTex);
+    TexSubImage2D(GL_TEXTURE_2D, 0, c0, r0, c1 - c0 + 1, r1 - r0 + 1, GL_RGBA, GL_FLOAT, data.data());
+}
+
+// Is (x, z) out among the rim's crags (drawn rougher than the physics' land, which keeps them smooth)?
+static bool inCrags(const World& world, double x, double z) {
+    const double crags = world.halfSize() - 60;
+    return (std::fabs(x) > crags && world.wrapPeriod <= 0) || std::fabs(z) > crags;  // (not across the freeway)
+}
+// The drawn terrain's height at a mesh vertex (terrainVertex's).
+static double terrainY(const World& world, double x, double z) { return inCrags(world, x, z) ? sceneryHeight(world, x, z) : world.height(x, z); }
 
 // One terrain vertex (the mesh's grid point (i, j)), as buildTerrain makes it.
 static Vtx terrainVertex(const World& world, double x, double z) {
     RoadInfo road = world.roadAt(x, z);
     V3 nrm = world.normal(x, z);
     double y = world.height(x, z);
-    const double crags = world.halfSize() - 60;
-    if ((std::fabs(x) > crags && world.wrapPeriod <= 0) || std::fabs(z) > crags) {  // the crags (not across the freeway)
+    if (inCrags(world, x, z)) {
         y = sceneryHeight(world, x, z);
         const double e = 1.0;
         nrm = norm(V3(sceneryHeight(world, x - e, z) - sceneryHeight(world, x + e, z), 2 * e, sceneryHeight(world, x, z - e) - sceneryHeight(world, x, z + e)));
     }
     return vtx(V3(x, y, z), nrm, road.near ? 1.0f : 0.0f, road.lateral, road.along, SM_TERRAIN);
+}
+
+// A chunk's full mesh: its vertices at (i, j) local (0..w, 0..h), slot index i * 65 + j (the rest of the slot unused).
+static void chunkVertices(const World& world, double spacing, int i0, int j0, int w, int h, Vtx* out) {
+    const double half = world.halfSize();
+    for (int i = 0; i <= w; i++)
+        for (int j = 0; j <= h; j++) out[i * kChunkSide + j] = terrainVertex(world, -half + (i0 + i) * spacing, -half + (j0 + j) * spacing);
+}
+
+// A chunk's far patch: a vertex every kFarStep mesh steps (and its far edges), and a skirt hanging kSkirt down round it.
+static void farPatch(const World& world, double spacing, int i0, int j0, int w, int h, std::vector<Vtx>& verts, std::vector<unsigned>& idx) {
+    const double half = world.halfSize();
+    std::vector<int> us, vs;
+    for (int k = 0; k < w; k += kFarStep) us.push_back(k);
+    us.push_back(w);
+    for (int k = 0; k < h; k += kFarStep) vs.push_back(k);
+    vs.push_back(h);
+    const int nu = (int)us.size(), nv = (int)vs.size();
+    const unsigned base = (unsigned)verts.size();
+    for (int a = 0; a < nu; a++)
+        for (int b = 0; b < nv; b++) verts.push_back(terrainVertex(world, -half + (i0 + us[a]) * spacing, -half + (j0 + vs[b]) * spacing));
+    auto at = [&](int a, int b) { return base + (unsigned)(a * nv + b); };
+    for (int a = 0; a + 1 < nu; a++)
+        for (int b = 0; b + 1 < nv; b++) idx.insert(idx.end(), {at(a, b), at(a, b + 1), at(a + 1, b + 1), at(a, b), at(a + 1, b + 1), at(a + 1, b)});
+    // The skirt: round the edge, each vertex again kSkirt lower.
+    std::vector<unsigned> ring;
+    for (int b = 0; b < nv; b++) ring.push_back(at(0, b));
+    for (int a = 1; a < nu; a++) ring.push_back(at(a, nv - 1));
+    for (int b = nv - 2; b >= 0; b--) ring.push_back(at(nu - 1, b));
+    for (int a = nu - 2; a > 0; a--) ring.push_back(at(a, 0));
+    const unsigned low = (unsigned)verts.size();
+    for (unsigned k : ring) {
+        Vtx v = verts[k];
+        v.p[1] -= (float)kSkirt;
+        verts.push_back(v);
+    }
+    const unsigned m = (unsigned)ring.size();
+    for (unsigned k = 0; k < m; k++) {
+        const unsigned a = ring[k], b = ring[(k + 1) % m], la = low + k, lb = low + (k + 1) % m;
+        idx.insert(idx.end(), {a, b, lb, a, lb, la});
+    }
 }
 
 void Renderer::updateTerrainRegion(const World& world, int i0, int j0, int i1, int j1) {
@@ -3058,42 +3273,44 @@ void Renderer::updateTerrainRegion(const World& world, int i0, int j0, int i1, i
     const int n = terrainMeshN;
     const int mi0 = std::max(0, (int)std::floor(i0 / sp)), mi1 = std::min(n - 1, (int)std::ceil(i1 / sp));
     const int mj0 = std::max(0, (int)std::floor(j0 / sp)), mj1 = std::min(n - 1, (int)std::ceil(j1 / sp));
-    BindBuffer(GL_ARRAY_BUFFER, terrainVbo);
-    std::vector<Vtx> row;
-    for (int i = mi0; i <= mi1; i++) {
-        row.clear();
-        for (int j = mj0; j <= mj1; j++) row.push_back(terrainVertex(world, -half + i * sp, -half + j * sp)), occl_.patch(i, j, row.back().p[1]);
-        BufferSubData(GL_ARRAY_BUFFER, (GLintptr)(((size_t)i * n + mj0) * sizeof(Vtx)), (GLsizeiptr)(row.size() * sizeof(Vtx)), row.data());
-    }
-    // Bounds must include raised/lowered editor vertices before the next culling pass.
+    std::vector<Vtx> row, fv;
+    std::vector<unsigned> fi;
     for (auto& chunk : terrainChunks) {
+        if (chunk.backdrop) continue;
+        const int ci0 = std::max(mi0, chunk.i0), ci1 = std::min(mi1, chunk.i0 + chunk.w);
+        const int cj0 = std::max(mj0, chunk.j0), cj1 = std::min(mj1, chunk.j0 + chunk.h);
+        if (ci1 < ci0 || cj1 < cj0) continue;
         chunk.proc = true;  // (an edit may have painted paving: the full shader from now on, over the whole terrain, simply)
-        if (chunk.bounds.hi.x < -half + mi0 * sp || chunk.bounds.lo.x > -half + mi1 * sp ||
-            chunk.bounds.hi.z < -half + mj0 * sp || chunk.bounds.lo.z > -half + mj1 * sp) continue;
-        const int xi0 = std::max(mi0, (int)std::ceil((chunk.bounds.lo.x + half) / sp));
-        const int xi1 = std::min(mi1, (int)std::floor((chunk.bounds.hi.x + half) / sp));
-        const int zj0 = std::max(mj0, (int)std::ceil((chunk.bounds.lo.z + half) / sp));
-        const int zj1 = std::min(mj1, (int)std::floor((chunk.bounds.hi.z + half) / sp));
-        for (int i = xi0; i <= xi1; ++i)
-            for (int j = zj0; j <= zj1; ++j) {
-                const auto v = terrainVertex(world, -half + i * sp, -half + j * sp);
+        // Its loaded mesh, a row at a time; its bounds (raised or lowered by the edit) before the next culling pass; the
+        // horizon test's heights.
+        for (int i = ci0; i <= ci1; i++) {
+            row.clear();
+            for (int j = cj0; j <= cj1; j++) {
+                const Vtx v = terrainVertex(world, -half + i * sp, -half + j * sp);
+                row.push_back(v);
                 chunk.bounds.lo.y = std::min(chunk.bounds.lo.y, (double)v.p[1]);
                 chunk.bounds.hi.y = std::max(chunk.bounds.hi.y, (double)v.p[1]);
+                if (terrainOcclStep_ == 1) occl_.patch(i, j, v.p[1]);
+                else occl_.patchLower((i + terrainOcclStep_ / 2) / terrainOcclStep_, (j + terrainOcclStep_ / 2) / terrainOcclStep_, v.p[1]);
             }
-    }
-    // The shaders' terrain texture (one texel per meter: x across, z down).
-    std::vector<float> data((size_t)(i1 - i0 + 1) * (j1 - j0 + 1) * 4);
-    for (int j = j0; j <= j1; j++)
-        for (int i = i0; i <= i1; i++) {
-            const double x = -half + i, z = -half + j;
-            float* t = &data[((size_t)(j - j0) * (i1 - i0 + 1) + (i - i0)) * 4];
-            t[0] = (float)world.height(x, z);
-            t[1] = world.grassDensity(x, z);
-            t[2] = (float)world.roadAt(x, z).paint;
-            t[3] = (float)std::max(world.waterLevel(x, z), -1000.0);
+            if (chunk.slot >= 0) {
+                BindBuffer(GL_ARRAY_BUFFER, terrainVbo);
+                const size_t at = (size_t)chunk.slot * kChunkVerts + (size_t)(i - chunk.i0) * kChunkSide + (cj0 - chunk.j0);
+                BufferSubData(GL_ARRAY_BUFFER, (GLintptr)(at * sizeof(Vtx)), (GLsizeiptr)(row.size() * sizeof(Vtx)), row.data());
+            }
         }
-    BindTexture(GL_TEXTURE_2D, terrainTex);
-    TexSubImage2D(GL_TEXTURE_2D, 0, i0, j0, i1 - i0 + 1, j1 - j0 + 1, GL_RGBA, GL_FLOAT, data.data());
+        if (chunk.farCount) {  // (its far patch, made again in place: the same vertices, new heights)
+            fv.clear(), fi.clear();
+            farPatch(world, sp, chunk.i0, chunk.j0, chunk.w, chunk.h, fv, fi);
+            if (fv.size() == chunk.farVN) {
+                BindBuffer(GL_ARRAY_BUFFER, coarseVbo);
+                BufferSubData(GL_ARRAY_BUFFER, (GLintptr)((size_t)chunk.farV0 * sizeof(Vtx)), (GLsizeiptr)(fv.size() * sizeof(Vtx)), fv.data());
+            }
+        }
+    }
+    // The shaders' terrain texels (one per meter: x across, z down).
+    uploadTerrainCells(world, i0, j0, i1, j1);
+    uploadTerrainCoarse(world, i0, j0, i1, j1);
     props.terrainChanged(-half + i0, -half + j0, -half + i1, -half + j1);  // (grass doesn't grow on a new trail)
 }
 #ifdef __APPLE__
@@ -3115,90 +3332,219 @@ static bool chunkHasProcPaint(const World& world, const RenderBounds& b) {
     return false;
 }
 #endif
-// The CPU half of the terrain: vertices, the chunks' indices at four LODs, the backdrop and the occlusion pyramid. Pure: any thread.
+// The CPU half of the terrain: the chunks, their shared index sets, the full meshes of the ones loaded at the start (all of a
+// small map; round the spawn on a big one), the far patches and the backdrop, and the occlusion pyramid. Pure: any thread.
 void Renderer::prepareTerrain(const World& world, Prepared& p) {
     // 1 m on the mountain (its crawl features are small) and the wilds (the sections' steps), 2 m on the proving ground.
     const double spacing = world.map == MAP_MOUNTAIN || world.map == MAP_FRONTIER || world.map == MAP_BACKCOUNTRY || world.map == MAP_WILDS ? 1.0 : 2.0, half = world.halfSize();
-    const int n = (int)(2 * half / spacing) + 1;
+    const int n = (int)(2 * half / spacing) + 1, cells = n - 1, cn = (cells + kChunkCells - 1) / kChunkCells;
     p.spacing = spacing;
     p.n = n;
-    std::vector<Vtx>& verts = p.verts;
-    std::vector<unsigned>& idx = p.idx;
+    // The chunks, and an index set per chunk size (64 x 64; the last row and column of a map may be narrower), four LODs each.
+    // Every LOD keeps every boundary vertex, so adjacent chunks share exact edges.
+    std::map<std::pair<int, int>, int> sets;
     std::vector<TerrainChunk>& chunks = p.chunks;
-    verts.reserve(n * n);
-    for (int i = 0; i < n; i++)
-        for (int j = 0; j < n; j++) {
-            verts.push_back(terrainVertex(world, -half + i * spacing, -half + j * spacing));
-        }
-    // Keep every boundary vertex at all LODs so adjacent chunks share exact edges.
-    for (int i = 0; i < n - 1; i += 64)
-        for (int j = 0; j < n - 1; j += 64) {
-            const int ie = std::min(i + 64, n - 1), je = std::min(j + 64, n - 1);
-            TerrainChunk chunk;
-            for (int x = i; x <= ie; ++x)
-                for (int z = j; z <= je; ++z) {
-                    const auto& v = verts[x * n + z];
-                    chunk.bounds.add(V3(v.p[0], v.p[1], v.p[2]));
+    for (int ci = 0; ci < cn; ci++)
+        for (int cj = 0; cj < cn; cj++) {
+            TerrainChunk c;
+            c.i0 = ci * kChunkCells, c.j0 = cj * kChunkCells;
+            c.w = std::min(kChunkCells, cells - c.i0), c.h = std::min(kChunkCells, cells - c.j0);
+            const auto key = std::make_pair(c.w, c.h);
+            auto it = sets.find(key);
+            if (it == sets.end()) {
+                LodSet s;
+                for (int lod = 0; lod < 4; ++lod) {
+                    s.first[lod] = (unsigned)p.lodIdx.size();
+                    appendTerrainLod(p.lodIdx, kChunkSide, 0, 0, c.w, c.h, 1 << lod);
+                    s.count[lod] = (unsigned)p.lodIdx.size() - s.first[lod];
                 }
-            for (int lod = 0; lod < 4; ++lod) {
-                chunk.first[lod] = (unsigned)idx.size();
-                appendTerrainLod(idx, n, i, j, ie, je, 1 << lod);
-                chunk.count[lod] = (unsigned)idx.size() - chunk.first[lod];
+                it = sets.emplace(key, (int)p.lods.size()).first;
+                p.lods.push_back(s);
             }
-#ifdef __APPLE__
-            chunk.proc = chunkHasProcPaint(world, chunk.bounds);
-#endif
-            chunks.push_back(chunk);
+            c.lodSet = it->second;
+            chunks.push_back(c);
         }
-    // Backdrop is already coarse; spatially batch it for camera culling too.
-    const unsigned backdropFirst = (unsigned)idx.size();
-    buildBackdrop(world, verts, idx);
-    std::map<std::pair<int, int>, std::vector<unsigned>> backdrop;
-    for (unsigned k = backdropFirst; k < idx.size(); k += 3) {
-        const auto& v = verts[idx[k]];
-        auto& bin = backdrop[{(int)std::floor(v.p[0] / 384), (int)std::floor(v.p[2] / 384)}];
-        bin.insert(bin.end(), {idx[k], idx[k + 1], idx[k + 2]});
+    const int mapChunks = (int)chunks.size();
+    // Their bounds: every vertex's height (as drawn), a row of chunks per thread.
+    parallelRows(cn, [&](int ci) {
+        for (int cj = 0; cj < cn; cj++) {
+            TerrainChunk& c = chunks[(size_t)ci * cn + cj];
+            for (int i = 0; i <= c.w; i++)
+                for (int j = 0; j <= c.h; j++) {
+                    const float x = (float)(-half + (c.i0 + i) * spacing), z = (float)(-half + (c.j0 + j) * spacing);
+                    c.bounds.add(V3(x, (float)terrainY(world, x, z), z));
+                }
+        }
+    }, 1);
+    // Which full meshes go in at the start, nearest the spawn first.
+    p.all = mapChunks <= kPoolMax;
+    p.poolSlots = p.all ? mapChunks : kPoolMax;
+    std::vector<int> load;
+    if (p.all) {
+        for (int k = 0; k < mapChunks; k++) load.push_back(k);
+    } else {
+        std::vector<std::pair<double, int>> near;
+        for (int k = 0; k < mapChunks; k++) {
+            const double d = chunks[k].bounds.distance(world.spawn);
+            if (d < kStreamIn) near.push_back({d, k});
+        }
+        std::sort(near.begin(), near.end());
+        for (const auto& e : near)
+            if ((int)load.size() < p.poolSlots) load.push_back(e.second);
     }
-    idx.resize(backdropFirst);
+    p.poolVerts.assign((size_t)load.size() * kChunkVerts, Vtx{});
+    for (size_t s = 0; s < load.size(); s++) chunks[load[s]].slot = (int)s;
+    parallelRows((int)load.size(), [&](int s) {
+        const TerrainChunk& c = chunks[load[s]];
+        chunkVertices(world, spacing, c.i0, c.j0, c.w, c.h, &p.poolVerts[(size_t)s * kChunkVerts]);
+    }, 1);
+    // The far patches (a big map: whatever isn't loaded is drawn with one), each made on its own and put in order.
+    if (!p.all) {
+        std::vector<std::vector<Vtx>> pv(mapChunks);
+        std::vector<std::vector<unsigned>> pi(mapChunks);
+        parallelRows(mapChunks, [&](int k) {
+            const TerrainChunk& c = chunks[k];
+            farPatch(world, spacing, c.i0, c.j0, c.w, c.h, pv[k], pi[k]);
+        }, 8);
+        // In groups of 8 x 8 chunks, each group's triangles together (drawn at once where none of its chunks is loaded).
+        constexpr int G = 8;
+        for (int gi = 0; gi < cn; gi += G)
+            for (int gj = 0; gj < cn; gj += G) {
+                FarGroup g;
+                g.first = (unsigned)p.coarseIdx.size();
+                for (int ci = gi; ci < std::min(cn, gi + G); ci++)
+                    for (int cj = gj; cj < std::min(cn, gj + G); cj++) {
+                        const int k = ci * cn + cj;
+                        TerrainChunk& c = chunks[k];
+                        const unsigned base = (unsigned)p.coarseVerts.size();
+                        c.farV0 = base, c.farVN = (unsigned)pv[k].size();
+                        c.farFirst = (unsigned)p.coarseIdx.size(), c.farCount = (unsigned)pi[k].size();
+                        p.coarseVerts.insert(p.coarseVerts.end(), pv[k].begin(), pv[k].end());
+                        for (unsigned v : pi[k]) p.coarseIdx.push_back(v + base);
+                        for (const Vtx& v : pv[k]) g.bounds.add(V3(v.p[0], v.p[1], v.p[2]));
+                        g.chunks.push_back(k);
+                    }
+                g.count = (unsigned)p.coarseIdx.size() - g.first;
+                p.groups.push_back(std::move(g));
+            }
+    }
+#ifdef __APPLE__
+    for (int k = 0; k < mapChunks; k++) chunks[k].proc = chunkHasProcPaint(world, chunks[k].bounds);
+#endif
+    // Backdrop is already coarse; spatially batch it for camera culling too.
+    std::vector<Vtx> bv;
+    std::vector<unsigned> bi;
+    buildBackdrop(world, bv, bi);
+    const unsigned bbase = (unsigned)p.coarseVerts.size();
+    p.coarseVerts.insert(p.coarseVerts.end(), bv.begin(), bv.end());
+    std::map<std::pair<int, int>, std::vector<unsigned>> backdrop;
+    for (size_t k = 0; k < bi.size(); k += 3) {
+        const auto& v = bv[bi[k]];
+        auto& bin = backdrop[{(int)std::floor(v.p[0] / 384), (int)std::floor(v.p[2] / 384)}];
+        bin.insert(bin.end(), {bi[k] + bbase, bi[k + 1] + bbase, bi[k + 2] + bbase});
+    }
     for (const auto& entry : backdrop) {
         TerrainChunk chunk;
+        chunk.backdrop = true;
         for (unsigned index : entry.second) {
-            const auto& v = verts[index];
+            const auto& v = p.coarseVerts[index];
             chunk.bounds.add(V3(v.p[0], v.p[1], v.p[2]));
         }
         for (int lod = 0; lod < 4; ++lod) {
-            chunk.first[lod] = (unsigned)idx.size();
+            chunk.first[lod] = (unsigned)p.coarseIdx.size();
             chunk.count[lod] = (unsigned)entry.second.size();
         }
 #ifdef __APPLE__
         chunk.proc = chunkHasProcPaint(world, chunk.bounds);
 #endif
-        idx.insert(idx.end(), entry.second.begin(), entry.second.end());
+        p.coarseIdx.insert(p.coarseIdx.end(), entry.second.begin(), entry.second.end());
         chunks.push_back(chunk);
     }
-    std::vector<float> hs(verts.size());
-    for (size_t k = 0; k < verts.size(); k++) hs[k] = verts[k].p[1];
-    p.occl.build(hs, n, spacing, -half);
+    // The horizon test's heights: the drawn mesh's, every vertex (a small map), else every occlStep-th, each the lowest of the
+    // mesh round it (a lower bound of what's drawn).
+    p.occlStep = p.all ? 1 : 2;
+    const int f = p.occlStep, on = (n - 1) / f + 1;
+    std::vector<float> hs((size_t)on * on);
+    parallelRows(on, [&](int I) {
+        for (int J = 0; J < on; J++) {
+            float lo = 1e30f;
+            for (int i = std::max(0, I * f - f + 1); i <= std::min(n - 1, I * f + f - 1); i++)
+                for (int j = std::max(0, J * f - f + 1); j <= std::min(n - 1, J * f + f - 1); j++)
+                    lo = std::min(lo, (float)terrainY(world, (float)(-half + i * spacing), (float)(-half + j * spacing)));
+            hs[(size_t)I * on + J] = lo;
+        }
+    });
+    p.occl.build(hs, on, spacing * f, -half);
+}
+
+// Loads the full meshes of the chunks near the camera and drops the far ones (a big map; a small one has them all).
+void Renderer::streamTerrain(const World& world, const V3& eye) {
+    // The texture's window follows the camera, a strip at a time.
+    if (terrainWinW_ > 0 && terrainWinW_ < terrainGridN && terrainTex) {
+        const double half = world.halfSize();
+        const int w = terrainWinW_, n = terrainGridN;
+        const int wi = windowStart((int)std::lround(eye.x + half), n, w), wj = windowStart((int)std::lround(eye.z + half), n, w);
+        if (std::abs(wi - terrainWinI_) > kTexSlack || std::abs(wj - terrainWinJ_) > kTexSlack) {
+            const int oi = terrainWinI_, oj = terrainWinJ_;
+            terrainWinI_ = wi, terrainWinJ_ = wj;
+            // What's new: the columns past the old window, then the rows (the whole window when it jumped further than it is wide).
+            if (std::abs(wi - oi) >= w || std::abs(wj - oj) >= w) {
+                uploadTerrainCells(world, wi, wj, wi + w - 1, wj + w - 1);
+            } else {
+                if (wi > oi) uploadTerrainCells(world, oi + w, wj, wi + w - 1, wj + w - 1);
+                if (wi < oi) uploadTerrainCells(world, wi, wj, oi - 1, wj + w - 1);
+                if (wj > oj) uploadTerrainCells(world, wi, oj + w, wi + w - 1, wj + w - 1);
+                if (wj < oj) uploadTerrainCells(world, wi, wj, wi + w - 1, oj - 1);
+            }
+        }
+    }
+    if (terrainAll_ || !terrainVao || slotChunk_.empty()) return;
+    static std::vector<std::pair<double, int>> want;
+    want.clear();
+    for (int k = 0; k < (int)terrainChunks.size(); k++) {
+        TerrainChunk& c = terrainChunks[k];
+        if (c.backdrop) continue;
+        const double d = c.bounds.distance(eye);
+        if (c.slot >= 0 && d > kStreamOut) {
+            slotChunk_[c.slot] = -1, c.slot = -1;
+            if (chunkGroup_[k] >= 0) farGroups_[chunkGroup_[k]].loaded--;
+        }
+        else if (c.slot < 0 && d < kStreamIn) want.push_back({d, k});
+    }
+    if (want.empty()) return;
+    std::sort(want.begin(), want.end());
+    std::vector<int> slots;
+    for (int s = 0; s < (int)slotChunk_.size() && (int)slots.size() < std::min((int)want.size(), kStreamPerFrame); s++)
+        if (slotChunk_[s] < 0) slots.push_back(s);
+    if (slots.empty()) return;
+    const int m = (int)slots.size();
+    static const bool dbg = std::getenv("CZ_STREAM_DEBUG") != nullptr;
+    const double t0 = loadprof::nowMs();
+    struct Done { const double& t0; int m; ~Done() { if (dbg) std::printf("stream: %d chunks %.2f ms\n", m, loadprof::nowMs() - t0); } } done{t0, m};
+    static std::vector<Vtx> buf;
+    buf.assign((size_t)m * kChunkVerts, Vtx{});
+    parallelRows(m, [&](int q) {
+        const TerrainChunk& c = terrainChunks[want[q].second];
+        chunkVertices(world, terrainSpacing, c.i0, c.j0, c.w, c.h, &buf[(size_t)q * kChunkVerts]);
+    }, 1);
+    BindBuffer(GL_ARRAY_BUFFER, terrainVbo);
+    for (int q = 0; q < m; q++) {
+        TerrainChunk& c = terrainChunks[want[q].second];
+        c.slot = slots[q], slotChunk_[slots[q]] = want[q].second;
+        if (chunkGroup_[want[q].second] >= 0) farGroups_[chunkGroup_[want[q].second]].loaded++;
+        BufferSubData(GL_ARRAY_BUFFER, (GLintptr)((size_t)c.slot * kChunkVerts * sizeof(Vtx)), (GLsizeiptr)(kChunkVerts * sizeof(Vtx)), &buf[(size_t)q * kChunkVerts]);
+    }
 }
 
 void Renderer::buildTerrain(const World& world) {
-    Prepared p;
-    prepareTerrain(world, p);
-    terrainSpacing = p.spacing;
-    terrainMeshN = p.n;
-    terrainChunks = std::move(p.chunks);
-    occl_ = std::move(p.occl);
-    if (!terrainVao) {
-        GenVertexArrays(1, &terrainVao);
-        GenBuffers(1, &terrainVbo);
-        GenBuffers(1, &terrainIbo);
-        setupVtxVao(terrainVao, terrainVbo);
-    }
-    BindVertexArray(terrainVao);
-    BindBuffer(GL_ARRAY_BUFFER, terrainVbo);
-    BufferData(GL_ARRAY_BUFFER, p.verts.size() * sizeof(Vtx), p.verts.data(), GL_DYNAMIC_DRAW);  // (the editor patches it)
-    BindBuffer(GL_ELEMENT_ARRAY_BUFFER, terrainIbo);
-    BufferData(GL_ELEMENT_ARRAY_BUFFER, p.idx.size() * sizeof(unsigned), p.idx.data(), GL_STATIC_DRAW);
+    auto p = std::make_shared<Prepared>();
+    prepareTerrain(world, *p);
+    p->texW = 0;  // (the texture: updateWater)
+    std::shared_ptr<Prepared> waiting = std::move(pending_);  // (a map switch's upload in flight, if any: it goes on after)
+    beginUpload(p);
+    while (!pumpUpload(1e9)) {}
+    adoptTerrain(*p);
+    pending_ = std::move(waiting);
 }
 
 // ---- A map switch without a frozen frame (render.h: prepareWorld) ----
@@ -3214,20 +3560,21 @@ std::shared_ptr<Renderer::Prepared> Renderer::prepareWorld(const World& world, c
         forest::Set set;  // (and the trees' models, which the tree stage would otherwise make on the frame thread)
         forest::build(world, cover.pines, cover.snags, set);
     }
-    // The shaders' terrain texels, one per meter: height, grass density, paint, water level.
+    // The shaders' terrain texels, one per meter: height, grass density, paint, water level; the window round the start (all of a
+    // small map), stored toroidally, and the coarse whole.
     const double half = world.halfSize();
-    const int n = (int)(2 * half) + 1;
-    p->gridN = n;
-    p->data.resize((size_t)n * n * 4);
-    for (int j = 0; j < n; j++)
-        for (int i = 0; i < n; i++) {
-            double x = -half + i, z = -half + j;
-            float* t = &p->data[((size_t)j * n + i) * 4];
-            t[0] = (float)world.height(x, z);
-            t[1] = world.grassDensity(x, z);
-            t[2] = (float)world.roadAt(x, z).paint;
-            t[3] = (float)std::max(world.waterLevel(x, z), -1000.0);
+    const int n = (int)(2 * half) + 1, w = std::min(n, kTexWindow);
+    p->gridN = n, p->texW = w;
+    p->winI = windowStart((int)std::lround(world.spawn.x + half), n, w), p->winJ = windowStart((int)std::lround(world.spawn.z + half), n, w);
+    p->data.resize((size_t)w * w * 4);
+    parallelRows(w, [&](int r) {
+        const int j = p->winJ + r;
+        for (int c = 0; c < w; c++) {
+            const int i = p->winI + c;
+            terrainTexel(world, -half + i, -half + j, &p->data[((size_t)(j % w) * w + (i % w)) * 4]);
         }
+    });
+    coarseTexels(world, n, p->coarse, p->coarseN);
     return p;
 }
 
@@ -3242,77 +3589,119 @@ bool Renderer::pumpUpload(double budgetMs) {
     const double t0 = loadprof::nowMs();
     auto over = [&] { return loadprof::nowMs() - t0 >= budgetMs; };
     const size_t slice = 1 << 20;  // a megabyte at a time
+    auto pump = [&](GLenum target, GLuint buf, const void* data, size_t total, size_t& done) {
+        BindBuffer(target, buf);
+        while (done < total) {
+            const size_t k = std::min(slice, total - done);
+            BufferSubData(target, (GLintptr)done, (GLsizeiptr)k, (const char*)data + done);
+            done += k;
+            if (over()) return false;
+        }
+        return true;
+    };
     if (p->stage == 0) {
         GenBuffers(1, &p->vbo);
         GenBuffers(1, &p->ibo);
+        GenBuffers(1, &p->cvbo);
+        GenBuffers(1, &p->cibo);
         BindBuffer(GL_ARRAY_BUFFER, p->vbo);
-        BufferData(GL_ARRAY_BUFFER, p->verts.size() * sizeof(Vtx), nullptr, GL_DYNAMIC_DRAW);  // (the editor patches it)
+        BufferData(GL_ARRAY_BUFFER, (size_t)p->poolSlots * kChunkVerts * sizeof(Vtx), nullptr, GL_DYNAMIC_DRAW);  // (streamed into; the editor patches it)
         BindBuffer(GL_ELEMENT_ARRAY_BUFFER, p->ibo);
-        BufferData(GL_ELEMENT_ARRAY_BUFFER, p->idx.size() * sizeof(unsigned), nullptr, GL_STATIC_DRAW);
-        GenTextures(1, &p->tex);
-        BindTexture(GL_TEXTURE_2D, p->tex);
-        TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, p->gridN, p->gridN, 0, GL_RGBA, GL_FLOAT, nullptr);
-        TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        BufferData(GL_ELEMENT_ARRAY_BUFFER, p->lodIdx.size() * sizeof(unsigned), nullptr, GL_STATIC_DRAW);
+        BindBuffer(GL_ARRAY_BUFFER, p->cvbo);
+        BufferData(GL_ARRAY_BUFFER, std::max<size_t>(1, p->coarseVerts.size()) * sizeof(Vtx), nullptr, GL_DYNAMIC_DRAW);  // (the editor patches far patches)
+        BindBuffer(GL_ELEMENT_ARRAY_BUFFER, p->cibo);
+        BufferData(GL_ELEMENT_ARRAY_BUFFER, std::max<size_t>(1, p->coarseIdx.size()) * sizeof(unsigned), nullptr, GL_STATIC_DRAW);
+        if (p->texW > 0) {
+            for (GLuint* t : {&p->tex, &p->ctex}) {
+                GenTextures(1, t);
+                BindTexture(GL_TEXTURE_2D, *t);
+                const int side = t == &p->tex ? p->texW : p->coarseN;
+                TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, side, side, 0, GL_RGBA, GL_FLOAT, t == &p->tex ? nullptr : p->coarse.data());
+                TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+                TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+                TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            }
+        }
         p->stage = 1;
         if (over()) return false;
     }
     if (p->stage == 1) {
-        const size_t total = p->verts.size() * sizeof(Vtx);
-        BindBuffer(GL_ARRAY_BUFFER, p->vbo);
-        while (p->vDone < total) {
-            const size_t k = std::min(slice, total - p->vDone);
-            BufferSubData(GL_ARRAY_BUFFER, (GLintptr)p->vDone, (GLsizeiptr)k, (const char*)p->verts.data() + p->vDone);
-            p->vDone += k;
-            if (over()) return false;
-        }
+        if (!pump(GL_ARRAY_BUFFER, p->vbo, p->poolVerts.data(), p->poolVerts.size() * sizeof(Vtx), p->vDone)) return false;
         p->stage = 2;
     }
     if (p->stage == 2) {
-        const size_t total = p->idx.size() * sizeof(unsigned);
-        BindBuffer(GL_ELEMENT_ARRAY_BUFFER, p->ibo);
-        while (p->iDone < total) {
-            const size_t k = std::min(slice, total - p->iDone);
-            BufferSubData(GL_ELEMENT_ARRAY_BUFFER, (GLintptr)p->iDone, (GLsizeiptr)k, (const char*)p->idx.data() + p->iDone);
-            p->iDone += k;
-            if (over()) return false;
-        }
+        if (!pump(GL_ELEMENT_ARRAY_BUFFER, p->ibo, p->lodIdx.data(), p->lodIdx.size() * sizeof(unsigned), p->iDone)) return false;
+        if (!pump(GL_ARRAY_BUFFER, p->cvbo, p->coarseVerts.data(), p->coarseVerts.size() * sizeof(Vtx), p->cvDone)) return false;
+        if (!pump(GL_ELEMENT_ARRAY_BUFFER, p->cibo, p->coarseIdx.data(), p->coarseIdx.size() * sizeof(unsigned), p->ciDone)) return false;
         p->stage = 3;
     }
     if (p->stage == 3) {
-        BindTexture(GL_TEXTURE_2D, p->tex);
-        const int rows = std::max(1, (int)(slice / ((size_t)p->gridN * 16)));
-        while (p->rowsDone < p->gridN) {
-            const int k = std::min(rows, p->gridN - p->rowsDone);
-            TexSubImage2D(GL_TEXTURE_2D, 0, 0, p->rowsDone, p->gridN, k, GL_RGBA, GL_FLOAT, &p->data[(size_t)p->rowsDone * p->gridN * 4]);
-            p->rowsDone += k;
-            if (over()) return false;
+        if (p->texW > 0) {
+            BindTexture(GL_TEXTURE_2D, p->tex);
+            const int rows = std::max(1, (int)(slice / ((size_t)p->texW * 16)));
+            while (p->rowsDone < p->texW) {
+                const int k = std::min(rows, p->texW - p->rowsDone);
+                TexSubImage2D(GL_TEXTURE_2D, 0, 0, p->rowsDone, p->texW, k, GL_RGBA, GL_FLOAT, &p->data[(size_t)p->rowsDone * p->texW * 4]);
+                p->rowsDone += k;
+                if (over()) return false;
+            }
         }
-        std::vector<Vtx>().swap(p->verts);
-        std::vector<unsigned>().swap(p->idx);
+        std::vector<Vtx>().swap(p->poolVerts);
+        std::vector<unsigned>().swap(p->lodIdx);
+        std::vector<Vtx>().swap(p->coarseVerts);
+        std::vector<unsigned>().swap(p->coarseIdx);
         std::vector<float>().swap(p->data);
+        std::vector<float>().swap(p->coarse);
         p->stage = 4;
     }
     return true;
+}
+
+// The uploaded terrain becomes the one drawn (its buffers replace the old ones).
+void Renderer::adoptTerrain(Prepared& p) {
+    if (terrainVbo) DeleteBuffers(1, &terrainVbo);
+    if (terrainIbo) DeleteBuffers(1, &terrainIbo);
+    if (coarseVbo) DeleteBuffers(1, &coarseVbo);
+    if (coarseIbo) DeleteBuffers(1, &coarseIbo);
+    terrainVbo = p.vbo, terrainIbo = p.ibo, coarseVbo = p.cvbo, coarseIbo = p.cibo;
+    terrainSpacing = p.spacing, terrainMeshN = p.n;
+    terrainChunks = std::move(p.chunks);
+    terrainLods_ = std::move(p.lods);
+    terrainAll_ = p.all;
+    terrainOcclStep_ = p.occlStep;
+    slotChunk_.assign(p.poolSlots, -1);
+    for (int k = 0; k < (int)terrainChunks.size(); k++)
+        if (terrainChunks[k].slot >= 0) slotChunk_[terrainChunks[k].slot] = k;
+    farGroups_ = std::move(p.groups);
+    chunkGroup_.assign(terrainChunks.size(), -1);
+    for (int g = 0; g < (int)farGroups_.size(); g++) {
+        farGroups_[g].loaded = 0;
+        for (int k : farGroups_[g].chunks) chunkGroup_[k] = g, farGroups_[g].loaded += terrainChunks[k].slot >= 0;
+    }
+    occl_ = std::move(p.occl);
+    if (!terrainVao) GenVertexArrays(1, &terrainVao);
+    if (!coarseVao) GenVertexArrays(1, &coarseVao);
+    setupVtxVao(terrainVao, terrainVbo);
+    BindVertexArray(terrainVao);
+    BindBuffer(GL_ELEMENT_ARRAY_BUFFER, terrainIbo);
+    setupVtxVao(coarseVao, coarseVbo);
+    BindVertexArray(coarseVao);
+    BindBuffer(GL_ELEMENT_ARRAY_BUFFER, coarseIbo);
+    BindVertexArray(0);
 }
 
 void Renderer::adoptWorld(const World& world) {
     LOADPROF("renderer.adoptWorld");
     std::shared_ptr<Prepared> p = std::move(pending_);
     mapId = world.map == MAP_WILDS ? (int)MAP_FREEWAY : world.map;
-    if (terrainVbo) DeleteBuffers(1, &terrainVbo);
-    if (terrainIbo) DeleteBuffers(1, &terrainIbo);
     if (terrainTex) DeleteTextures(1, &terrainTex);
-    terrainVbo = p->vbo, terrainIbo = p->ibo, terrainTex = p->tex;
-    terrainSpacing = p->spacing, terrainMeshN = p->n, terrainGridN = p->gridN;
-    terrainChunks = std::move(p->chunks);
-    occl_ = std::move(p->occl);
-    BindVertexArray(terrainVao);
-    setupVtxVao(terrainVao, terrainVbo);
-    BindBuffer(GL_ELEMENT_ARRAY_BUFFER, terrainIbo);
-    noteRT("terrain height map", "RGBA32F", p->gridN, p->gridN, 16, 0, true);
+    if (terrainCoarseTex) DeleteTextures(1, &terrainCoarseTex);
+    terrainTex = p->tex, terrainCoarseTex = p->ctex, terrainGridN = p->gridN;
+    terrainWinW_ = p->texW, terrainWinI_ = p->winI, terrainWinJ_ = p->winJ, terrainCoarseN_ = p->coarseN;
+    noteRT("terrain height map", "RGBA32F", p->texW, p->texW, 16, 0, true);
+    adoptTerrain(*p);
     uploadStatic(waterVao, waterVbo, p->water);
     waterVertexCount = (int)p->water.size();
     treeSig_ = scenerySig_ = bushSig_ = 0;
@@ -3325,20 +3714,22 @@ bool Renderer::stepWorld(const World& world) {
     return objStage_ > 3;
 }
 
-// The mountain range around the map, out to 3.6 km: a coarse grid with the map's
+// The mountain range around the map, 3 km past its edge: a coarse grid with the map's
 // square cut out of it (its edge meets the crags at the rim).
 void Renderer::buildBackdrop(const World& world, std::vector<Vtx>& verts, std::vector<unsigned>& idx) {
-    const double spacing = 24.0, reach = 3600.0, half = world.halfSize();
+    const double spacing = 24.0, half = world.halfSize(), reach = half + 3000.0;
     const int n = (int)(2 * reach / spacing) + 1;
     const unsigned base = (unsigned)verts.size();
-    for (int i = 0; i < n; i++)
+    verts.resize(base + (size_t)n * n);
+    parallelRows(n, [&](int i) {
         for (int j = 0; j < n; j++) {
             double x = -reach + i * spacing, z = -reach + j * spacing;
             const double e = 6.0;
             V3 nrm = norm(V3(sceneryHeight(world, x - e, z) - sceneryHeight(world, x + e, z), 2 * e,
                              sceneryHeight(world, x, z - e) - sceneryHeight(world, x, z + e)));
-            verts.push_back(vtx(V3(x, sceneryHeight(world, x, z), z), nrm, 0, 0, 0, SM_TERRAIN));
+            verts[base + (size_t)i * n + j] = vtx(V3(x, sceneryHeight(world, x, z), z), nrm, 0, 0, 0, SM_TERRAIN);
         }
+    });
     for (int i = 0; i < n - 1; i++)
         for (int j = 0; j < n - 1; j++) {
             double x0 = -reach + i * spacing, z0 = -reach + j * spacing;
@@ -4554,6 +4945,8 @@ void Renderer::drawCarModels(GLuint prog) {
 
 void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effects* effects) {
     static const bool noOcclusion = std::getenv("CZ_NO_OCCLUSION") != nullptr;  // (the reference render of the pixel test)
+    streamTerrain(sim.world, view.eye);  // (a big map: the full meshes round the camera)
+    sceneEye_ = view.eye;
     occl_.enable(!noOcclusion);
     occl_.refresh();
     occl_.setEye(view.eye);
@@ -4770,6 +5163,12 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         ActiveTexture(GL_TEXTURE0);
         Uniform1i(uniformLocation(prog, "uTerrainTex"), 2);
         Uniform1f(uniformLocation(prog, "uTerrainN"), (float)terrainGridN);
+        Uniform4f(uniformLocation(prog, "uTerrainWin"), (float)terrainWinI_, (float)terrainWinJ_, (float)terrainWinW_, terrainWinW_ >= terrainGridN ? 1.0f : 0.0f);
+        ActiveTexture(GL_TEXTURE0 + 10);
+        BindTexture(GL_TEXTURE_2D, terrainCoarseTex);
+        ActiveTexture(GL_TEXTURE0);
+        Uniform1i(uniformLocation(prog, "uTerrainCoarse"), 10);
+        Uniform1f(uniformLocation(prog, "uTerrainCoarseN"), (float)terrainCoarseN_);
     };
     setLighting(progLit);
     uniformM4(progLit, "uModel", m4identity());
@@ -4823,7 +5222,8 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         if (n) Uniform4fv(uniformLocation(progTree, "uTreeFade"), n, list);
     }
     if (!noVeg) {
-        const forest::View tv{vp, view.eye, vegDetail(), 0, false, 1, &occl_};
+        // (On a big map the forest stops at 2 km, 800 m on the lowest props setting: the fog has most of it by then.)
+        const forest::View tv{vp, view.eye, vegDetail(), 0, false, 1, &occl_, terrainAll_ ? 0.0 : settings.props <= 0 ? 800.0 : 2000.0};
         geometryStats_.sceneryVertices += trees_.draw(tv, &vegStats_.trees);
         Uniform1i(uniformLocation(progTree, "uTreeFadeN"), 0);  // (the see-through trees' leaves only)
         geometryStats_.sceneryVertices += bushes_.draw(tv, &vegStats_.bushes);

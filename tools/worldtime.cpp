@@ -12,6 +12,7 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include "../src/loadprof.h"
 #include "../src/props.h"
 #include "../src/world.h"
 
@@ -24,26 +25,28 @@ long rssKb() {  // (Linux; 0 elsewhere)
     return 0;
 }
 
-uint64_t landHash(const World& w) {
+}  // namespace
+
+namespace {
+// Everything the roads and water say at every cell (roadAt, surfaceAt, waterLevel, waterFlow), exactly: for checking a change
+// to how they're stored.
+uint64_t layerHash(const World& w) {
     uint64_t h = 1469598103934665603ull;
     auto mix = [&](uint64_t v) { h = (h ^ v) * 1099511628211ull; };
+    auto bits = [](double v) {
+        uint64_t u;
+        std::memcpy(&u, &v, sizeof u);
+        return u;
+    };
     const int n = w.gridSize();
-    mix((uint64_t)n);
     for (int id = 0; id < n * n; id++) {
-        mix((uint64_t)(int64_t)std::llround(w.cellHeight(id) * 100.0));
-        mix(w.cellSurface(id));
         const V3 c = w.cellCenter(id);
-        const double wl = w.waterLevel(c.x, c.z);
-        mix(wl < -1e8 ? 0xffffu : (uint64_t)(int64_t)std::llround(wl * 100.0));
+        const RoadInfo r = w.roadAt(c.x, c.z);
+        mix(r.near), mix(r.paint), mix(bits(r.lateral)), mix(bits(r.along)), mix(w.surfaceAt(c.x, c.z));
+        mix(bits(w.waterLevel(c.x, c.z)));
+        const V3 f = w.waterFlow(c.x, c.z);
+        mix(bits(f.x)), mix(bits(f.z));
     }
-    mix(w.trees.size()), mix(w.rocks.size()), mix(w.logs.size()), mix(w.bushes.size()), mix(w.boxes.size());
-    auto at = [&](const V3& p) { mix((uint64_t)(int64_t)std::llround(p.x * 100)), mix((uint64_t)(int64_t)std::llround(p.z * 100)); };
-    for (const Tree& t : w.trees) at(t.base);
-    for (const Rock& r : w.rocks) at(r.c);
-    for (const Log& l : w.logs) at(l.a);
-    for (const Box& b : w.boxes) at(b.c);
-    for (const Placed& m : w.models) at(m.p);
-    for (const Station& s : w.stations) at(s.p);
     return h;
 }
 }  // namespace
@@ -63,12 +66,13 @@ int main(int argc, char** argv) {
         const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
         const long r1 = rssKb();
         std::printf("map %d %-14s build %8.1f ms  +%4ld MB  grid %d (half %.0f m)  trees %zu rocks %zu logs %zu bushes %zu boxes %zu "
-                    "models %zu stations %zu  land %016llx\n",
+                    "models %zu stations %zu  land %016llx layers %016llx\n",
                     map, mapName(map), ms, (r1 - r0) / 1024, w->gridSize(), w->halfSize(), w->trees.size(), w->rocks.size(),
                     w->logs.size(), w->bushes.size(), w->boxes.size(), w->models.size(), w->stations.size(),
-                    (unsigned long long)landHash(*w));
+                    (unsigned long long)w->landHash(), (unsigned long long)layerHash(*w));
         std::fflush(stdout);
         delete w;
+        loadprof::report(mapName(map));  // (CZ_LOADPROF=1: the build's stages)
     }
     return 0;
 }

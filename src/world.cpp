@@ -1,5 +1,7 @@
 #include "thread_cache.h"
+#include "parallel.h"
 #include "world.h"
+#include "worldcache.h"
 #include "laptimer.h"
 #include "loadprof.h"
 
@@ -408,21 +410,40 @@ void World::addLake(double x, double z, double r, double depth) {
 
 World::World(int m) : map(m) {
     half = halfSizeFor(map);
-    loadprof::Scope lpGen("world.terrain+layout");
-    deferRockSplits = true;
-    if (map == MAP_MOUNTAIN) buildMountain();
-    else if (map == MAP_FREEWAY) buildFreeway();
-    else if (map == MAP_FRONTIER) buildFrontier();
-    else if (map == MAP_BACKCOUNTRY) buildBackcountry();
-    else if (map == MAP_WILDS) buildWilds();
-    else buildProvingGround();
-    // The slab the player starts on (and the parked trucks): in the game's proving ground, as the other maps are always built.
-    if (map != MAP_PROVING_GROUND || withShowcase) addMapSpawnPads(*this);
-    splitPendingRocks();
+    // The big maps come from the world cache when this build of the game has built them before (worldcache.h).
+    bool cached = false;
+    {
+        loadprof::Scope lpCache("world.cache read");
+        cached = worldcache::load(*this);
+    }
+    if (cached) {
+        cutCachedRocks();
+    } else {
+        loadprof::Scope lpGen("world.terrain+layout");
+        deferRockSplits = true;
+        if (map == MAP_MOUNTAIN) buildMountain();
+        else if (map == MAP_FREEWAY) buildFreeway();
+        else if (map == MAP_FRONTIER) buildFrontier();
+        else if (map == MAP_BACKCOUNTRY) buildBackcountry();
+        else if (map == MAP_WILDS) buildWilds();
+        else buildProvingGround();
+        // The slab the player starts on (and the parked trucks): in the game's proving ground, as the other maps are always built.
+        if (map != MAP_PROVING_GROUND || withShowcase) addMapSpawnPads(*this);
+        splitPendingRocks();
+        loadprof::Scope lpStore("world.cache write");
+        worldcache::store(*this);
+    }
     { loadprof::Scope lpGrid("world.grid"); buildGrid(); }
 }
 
 double World::halfSizeFor(int) { return halfSizeOverride > 0 ? halfSizeOverride : kDefaultHalfSize; }
+
+void World::cutCachedRocks() {
+    // (The world cache keeps each rock's hull, not its convex pieces: cut the big scanned ones again, from the scans' saved cuts.)
+    for (Rock& k : rocks)
+        if (k.scan >= 0 && k.r > 1.2 && k.parts.empty()) k.partsDue = true;
+    splitPendingRocks();
+}
 
 void World::splitPendingRocks() {
     deferRockSplits = false;
@@ -753,7 +774,7 @@ void World::buildWilds() {
     static const double kHillAmp[WILDS_COUNT] = {1.0, 0.5, 1.0, 0.9, 0.45, 1.4};
     const double amp = kHillAmp[kind];
     hgrid.resize(N);
-    for (int i = 0; i < hN; i++)
+    parallelRows(hN, [&](int i) {
         for (int j = 0; j < hN; j++) {
             const double x = X(i), z = X(j);
             const double hills = 9.0 * std::sin(x * 0.012 + 0.7) * std::cos(z * 0.010 - 0.3) + 4.0 * std::sin(x * 0.027 + z * 0.021 + 1.3) +
@@ -770,13 +791,14 @@ void World::buildWilds() {
             const double bump = kind == WILDS_DESERT ? 0.3 : kind == WILDS_UPLAND ? 0.8 : 0.5;
             h += bump * (fbmNoise(x * 0.09 + 5.0, z * 0.09 + 1.0, 2) - 0.5) + 0.5 * bump * (valueNoise(x * 0.31, z * 0.27) - 0.5);
             // Hills close in far out, and keep you on the map.
-            const double d = std::hypot(std::max(0.0, std::fabs(x) - 470), std::max(0.0, std::fabs(z) - 470));
+            const double d = std::hypot(std::max(0.0, std::fabs(x) - (half - 130)), std::max(0.0, std::fabs(z) - (half - 130)));
             h += 0.0045 * d * d + 0.02 * d;
             hgrid[i * hN + j] = (float)h;
         }
-    roadLat.assign(N, 0);
-    roadAlong.assign(N, 0);
-    roadNear.assign(N, 0);
+    });
+    roadLat.reset(hN, 0);
+    roadAlong.reset(hN, 0);
+    roadNear.reset(hN, 0);
     surf.assign(N, SURF_GRASS);
     paint.assign(N, PAINT_NONE);
     auto slopeAt = [&](int i, int j) {
@@ -917,8 +939,9 @@ double World::baseHeight(double x, double z) const {
 void World::bakeTerrain() {
     hN = (int)(2 * half / kRes) + 1;
     hgrid.resize(hN * hN);
-    for (int i = 0; i < hN; i++)
+    parallelRows(hN, [&](int i) {
         for (int j = 0; j < hN; j++) hgrid[i * hN + j] = (float)baseHeight(-half + i * kRes, -half + j * kRes);
+    });
 
     // Roads: a loop through the hills and a link road from the north side of the pad.
     const std::vector<V3> loopPts = {
@@ -968,9 +991,9 @@ void World::bakeTerrain() {
     // Carve: for each cell near a road keep the closest road sample, then blend.
     const double flat = kRoadHalfWidth + 2.0, blend = kRoadHalfWidth + 17.0;
     std::vector<float> dist(hN * hN, 1e9f), roadY(hN * hN, 0);
-    roadLat.assign(hN * hN, 0);
-    roadAlong.assign(hN * hN, 0);
-    roadNear.assign(hN * hN, 0);
+    roadLat.reset(hN, 0);
+    roadAlong.reset(hN, 0);
+    roadNear.reset(hN, 0);
     auto carve = [&](const std::vector<V3>& road, bool closed) {
         int n = (int)road.size();
         double along = 0;
@@ -1481,9 +1504,9 @@ void World::setCellSurface(int id, uint8_t surface, uint8_t paintLook) {
 
 void World::setCellWater(int id, float level) {
     if (waterY.empty()) {
-        waterY.assign(hN * hN, -1e9f);
-        flowX.assign(hN * hN, 0.0f);
-        flowZ.assign(hN * hN, 0.0f);
+        waterY.reset(hN, -1e9f);
+        flowX.reset(hN, 0.0f);
+        flowZ.reset(hN, 0.0f);
         // (Lakes defined as discs move onto the grid with it.)
         for (int k = 0; k < hN * hN; k++) {
             const V3 c = cellCenter(k);
@@ -1618,4 +1641,27 @@ std::string World::removeNear(double x, double z, double r, int onlyKind) {
         }
         default: return "";
     }
+}
+
+uint64_t World::landHash() const {
+    uint64_t h = 1469598103934665603ull;
+    auto mix = [&](uint64_t v) { h = (h ^ v) * 1099511628211ull; };
+    auto cm = [](double v) { return (uint64_t)(int64_t)std::llround(v * 100.0); };
+    mix((uint64_t)hN);
+    for (int id = 0; id < hN * hN; id++) {
+        mix(cm(hgrid[id]));
+        mix(cellSurface(id));
+        const V3 c = cellCenter(id);
+        const double wl = waterLevel(c.x, c.z);
+        mix(wl < -1e8 ? 0xffffu : cm(wl));
+    }
+    mix(trees.size()), mix(rocks.size()), mix(logs.size()), mix(bushes.size()), mix(boxes.size());
+    auto at = [&](const V3& p) { mix(cm(p.x)), mix(cm(p.z)); };
+    for (const Tree& t : trees) at(t.base);
+    for (const Rock& r : rocks) at(r.c);
+    for (const Log& l : logs) at(l.a);
+    for (const Box& b : boxes) at(b.c);
+    for (const Placed& m : models) at(m.p);
+    for (const Station& s : stations) at(s.p);
+    return h;
 }

@@ -48,6 +48,10 @@ bool flush();
 // `key` should hold everything the bytes were made from; the file carries a checksum, so a damaged one is a miss.
 bool getBlob(uint64_t key, std::vector<uint8_t>& out);
 bool putBlob(uint64_t key, const std::vector<uint8_t>& bytes);
+// A blob under a fixed name (<dir>/<name>.bin) holding one key's bytes at a time: a new key's bytes replace the old ones, so a
+// cache that changes with every build of the game (a built map: worldcache.h) keeps one file, not one per build.
+bool getNamedBlob(const std::string& name, uint64_t key, std::vector<uint8_t>& out);
+bool putNamedBlob(const std::string& name, uint64_t key, const std::vector<uint8_t>& bytes);
 // An encoded texture (texenc.h) as bytes, and back.
 std::vector<uint8_t> packEncoded(const texenc::Encoded& e);
 bool unpackEncoded(const std::vector<uint8_t>& bytes, texenc::Encoded& e);

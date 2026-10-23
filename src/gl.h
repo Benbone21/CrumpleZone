@@ -110,6 +110,7 @@ enum : GLenum {
     X(void, EnableVertexAttribArray, (GLuint))                                                 \
     X(void, DrawArrays, (GLenum, GLint, GLsizei))                                              \
     X(void, DrawElements, (GLenum, GLsizei, GLenum, const void*))                              \
+    X(void, DrawElementsBaseVertex, (GLenum, GLsizei, GLenum, const void*, GLint))             \
     X(void, GenTextures, (GLsizei, GLuint*))                                                   \
     X(void, BindTexture, (GLenum, GLuint))                                                     \
     X(void, ActiveTexture, (GLenum))                                                           \

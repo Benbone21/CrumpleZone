@@ -140,6 +140,8 @@ struct Options {
     bool fullHud = false;         // --full-hud: SHOW FULL HUD on
     double throttleCap = -1;      // --throttle PCT[,RESPONSE[,PAD]]: the throttle limit (testing)
     int throttleResp = 0, throttlePad = 0;
+    double eyeFly = 0;            // --eye-fly V (dev, with --eye): the drone flies on ahead at V m/s, its height over the ground kept (the streaming test)
+    double mapHalf = 0;           // --map-half M (dev): every map built M m each way from its middle (big-map tests: docs/plans/big-maps.md)
     int map = -1;                 // --map N: 0 proving ground, 1 mountain
     double orbitYaw = 0, orbitPitch = 0.2, orbitDist = 7.5;  // degrees, degrees, meters
     bool spawnSet = false;
@@ -398,6 +400,8 @@ Options parseArgs(int argc, char** argv) {
         }
         else if (a == "--career") o.career = true;
         else if (a == "--map") o.map = std::atoi(next().c_str());
+        else if (a == "--map-half") o.mapHalf = std::atof(next().c_str());
+        else if (a == "--eye-fly") o.eyeFly = std::atof(next().c_str());
         else if (a == "--mods") {
             std::string s = next();
             std::sscanf(s.c_str(), "%d,%d,%d,%d,%d", &o.mods[0], &o.mods[1], &o.mods[2], &o.mods[3], &o.mods[4]);
@@ -1815,6 +1819,7 @@ int main(int argc, char** argv) {
         settings.throttle.loadSetting("throttlepad", opt.throttlePad);
     }
     if (!mapListed(settings.map)) settings.map = MAP_PROVING_GROUND;  // (a map that's been taken off the list)
+    if (opt.mapHalf >= 100 && opt.mapHalf <= 8192) World::halfSizeOverride = std::floor(opt.mapHalf);
     World::withShowcase = opt.scenario.empty();  // (the model yard and section park laid out on the proving ground: not under a test's replay)
     if (opt.map >= 0) settings.map = opt.map < MAP_COUNT ? opt.map : MAP_PROVING_GROUND;  // (--map with no such map: the proving ground)
     if (!opt.scenario.empty()) settings.map = MAP_PROVING_GROUND;  // the tests are built for it
@@ -2708,11 +2713,12 @@ int main(int argc, char** argv) {
         World::useLocalEdits = !net.active();
         const bool showcase = World::withShowcase;
         const int wilds = (int)World::wildsKind;
+        const double halfOverride = World::halfSizeOverride;
         const props::HullLibrary* hulls = props::activeRockScans();
         const ScanCover cover = renderer.scanCover();
         mapLoad.map = m, mapLoad.then = std::move(then), mapLoad.st = MapLoad::WORK;
         mapLoad.fut = std::async(std::launch::async, [=] {
-            World::withShowcase = showcase, World::wildsKind = wilds;
+            World::withShowcase = showcase, World::wildsKind = wilds, World::halfSizeOverride = halfOverride;
             props::setActiveRockScans(hulls);
             auto w = std::make_unique<World>(m);
             auto p = Renderer::prepareWorld(*w, cover);
@@ -4192,6 +4198,11 @@ int main(int argc, char** argv) {
             if (kb.held(KA_GEAR_DOWN, keys, shiftHeld)) m.y -= 1;
             if (padCtx == pad::Mode::Drive) m += f * (double)padLogic.in.walkForward + l * (double)padLogic.in.walkTurn;  // (gamepad: left stick flies)
             if (len(m) > 0) cam.droneEye += norm(m) * (speed * dt);
+            if (opt.eyeFly != 0 && opt.eyeSet) {
+                const double over = cam.droneEye.y - sim.world.height(cam.droneEye.x, cam.droneEye.z);
+                cam.droneEye += f * (opt.eyeFly * dt);
+                cam.droneEye.y = sim.world.height(cam.droneEye.x, cam.droneEye.z) + over;
+            }
             cam.droneEye.y = std::max(cam.droneEye.y, sim.world.height(cam.droneEye.x, cam.droneEye.z) + 0.5);
             up = down = left = right = false;
             hb = true;

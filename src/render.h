@@ -246,25 +246,71 @@ private:
     GLuint progXray = 0;
     void buildFigures();
     double terrainSpacing = 1;
-    GLuint terrainVao = 0, terrainVbo = 0, terrainIbo = 0;
+    // The terrain (docs/plans/big-maps.md 3.4): the map in chunks of 64 x 64 mesh cells. A chunk's full mesh lives in a slot of
+    // one pooled vertex buffer (terrainVbo: 65 x 65 vertices a slot), drawn through index sets shared by every chunk of its size
+    // (terrainIbo, four LODs each). A small map keeps every chunk in the pool; a big one keeps the ring round the camera
+    // (streamTerrain) and draws the rest as far patches (16 mesh steps, skirted), which sit with the backdrop in the coarse
+    // buffers (coarseVbo, coarseIbo).
+    GLuint terrainVao = 0, terrainVbo = 0, terrainIbo = 0, coarseVao = 0, coarseVbo = 0, coarseIbo = 0;
     struct TerrainChunk {
         RenderBounds bounds;
-        unsigned first[4] = {}, count[4] = {};
+        unsigned first[4] = {}, count[4] = {};  // a backdrop piece: its triangles in the coarse buffer (the same at every LOD)
         bool proc = true;  // may hold paved/procedural paint (Apple: the rest are drawn with a ground shader without that code; see drawTerrain)
+        bool backdrop = false;
+        int i0 = 0, j0 = 0, w = 0, h = 0;  // a map chunk: its first mesh vertex (i, j) and its cells along i and j
+        int lodSet = 0;                    // its shared index set (by size)
+        int slot = -1;                     // its pool slot (-1: its full mesh isn't loaded)
+        unsigned farFirst = 0, farCount = 0, farV0 = 0, farVN = 0;  // its far patch in the coarse buffers (farCount 0: none)
     };
+    struct LodSet {
+        unsigned first[4] = {}, count[4] = {};
+    };
+    // Far patches drawn 8 x 8 chunks at a go where none of the 64 has its full mesh loaded (one draw, not 64).
+    struct FarGroup {
+        RenderBounds bounds;
+        unsigned first = 0, count = 0;
+        std::vector<int> chunks;
+        int loaded = 0;  // of its chunks, how many have their full mesh in the pool
+    };
+    std::vector<FarGroup> farGroups_;
+    std::vector<int> chunkGroup_;  // each map chunk's group (-1: none)
+    std::vector<LodSet> terrainLods_;
+    std::vector<int> slotChunk_;  // which chunk each pool slot holds (-1: free)
+    bool terrainAll_ = true;      // every chunk's full mesh is loaded (a small map): nothing to stream
+    V3 sceneEye_;                 // the camera this frame (for distance cuts)
+    int terrainOcclStep_ = 1;     // mesh steps per occlusion sample
+    // The shaders' terrain texels (render.cpp terrainCell): a window of terrainWinW_ cells a side from cell (terrainWinI_,
+    // terrainWinJ_), stored toroidally (cell (i, j) at texel (i mod W, j mod W)); the whole map when it fits, else round the camera.
+    // The rest of the map comes from a coarse texture, a texel per 4 cells.
+    int terrainWinI_ = 0, terrainWinJ_ = 0, terrainWinW_ = 0, terrainCoarseN_ = 1;
+    GLuint terrainCoarseTex = 0;
+    void uploadTerrainCells(const World& world, int i0, int j0, int i1, int j1);  // (cells; what's outside the window is left)
+    void uploadTerrainCoarse(const World& world, int i0, int j0, int i1, int j1);
+    void streamTerrain(const World& world, const V3& eye);
 public:
     struct Prepared {
         double spacing = 1;
         int n = 0, gridN = 0;
-        std::vector<Vtx> verts;
-        std::vector<unsigned> idx;
-        std::vector<TerrainChunk> chunks;
+        std::vector<TerrainChunk> chunks;  // the map's, then the backdrop's pieces
+        std::vector<LodSet> lods;
+        std::vector<unsigned> lodIdx;
+        std::vector<FarGroup> groups;
+        int poolSlots = 0;
+        std::vector<Vtx> poolVerts;        // the loaded chunks' full meshes, slot by slot from 0 (chunks[].slot says which)
+        std::vector<Vtx> coarseVerts;      // far patches and the backdrop
+        std::vector<unsigned> coarseIdx;
+        bool all = true;
+        int occlStep = 1;
         TerrainOcclusion occl;
-        std::vector<float> data;  // the shaders' height / grass / paint / water texels
+        std::vector<float> data;  // the shaders' height / grass / paint / water texels: the window's, row by row as stored
+        int texW = 0, winI = 0, winJ = 0;
+        std::vector<float> coarse;  // ...and the whole map's, a texel per 4 cells
+        int coarseN = 1;
+        GLuint ctex = 0;
         std::vector<Vtx> water;
         // The upload: spare buffers filled a slice at a time.
-        GLuint vbo = 0, ibo = 0, tex = 0;
-        size_t vDone = 0, iDone = 0;
+        GLuint vbo = 0, ibo = 0, tex = 0, cvbo = 0, cibo = 0;
+        size_t vDone = 0, iDone = 0, cvDone = 0, ciDone = 0;
         int rowsDone = 0;
         int stage = 0;
     };
@@ -372,6 +418,7 @@ private:
     GLuint iconTexture(const std::string& key, const mk::Mesh& mesh);
 
     void buildTerrain(const World& world);
+    void adoptTerrain(Prepared& p);
     void buildBoxes(const World& world);
     void buildWheel();
     void buildWheelStyle(int style);

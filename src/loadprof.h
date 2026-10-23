@@ -28,6 +28,22 @@ struct Scope {
     Scope& operator=(const Scope&) = delete;
 };
 
+// Back-to-back stages of one job (a map's build): next("b") ends the stage before it and starts b; the last ends with it.
+struct Steps {
+    const char* name = nullptr;
+    double t0 = 0;
+    void next(const char* n) {
+        const double t = nowMs();
+        if (name) add(name, t - t0);
+        name = n, t0 = t;
+    }
+    Steps() = default;
+    explicit Steps(const char* first) { next(first); }
+    ~Steps() { next(nullptr); }
+    Steps(const Steps&) = delete;
+    Steps& operator=(const Steps&) = delete;
+};
+
 // Frame times of a run: the worst one is the hitch.
 struct Frames {
     double worst = 0, sum = 0;

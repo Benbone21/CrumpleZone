@@ -17,6 +17,15 @@ void TerrainOcclusion::patch(int i, int j, float h) {
     sinceEdit_ = 0;
 }
 
+void TerrainOcclusion::patchLower(int i, int j, float h) {
+    if (i < 0 || j < 0 || i >= n_ || j >= n_) return;
+    float& r = raw_[(size_t)i * n_ + j];
+    if (h >= r) return;
+    r = h;
+    dirty_ = true;
+    sinceEdit_ = 0;
+}
+
 void TerrainOcclusion::refresh(bool force) {
     if (!dirty_ || n_ < 4) return;
     if (!force && ++sinceEdit_ < 20) return;

@@ -487,3 +487,9 @@ SCENARIO(frontierPilotBayou, "frontier/autopilot-bayou", "Autopilot takes the Br
     ctx.check("arrived", ok, c.pilot.status);
     ctx.metric("damage on the way", worst * 100, "%", 0, 1.5);
 }
+
+SCENARIO(frontierFeatureTableCheck, "frontier/feature-table", "The Frontier's searched-for features (THE WALL, the summit, the garden) are where its data table says, so levels need no map built") {
+    World w(MAP_FRONTIER);
+    std::string why;
+    ctx.check("built where the table has them", frontierFeatureTable(&why), why);
+}
