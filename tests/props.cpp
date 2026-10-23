@@ -9,6 +9,8 @@
 #include <map>
 #include <set>
 
+#include "../src/level.h"
+#include "../src/objshape.h"
 #include "../src/props.h"
 #include "harness.h"
 
@@ -443,4 +445,70 @@ SCENARIO(propCulling, "props/culling", "Frustum culling (main view and shadow bo
     }
     ctx.metric("seen and kept", kept, "", 1000, 1e9);
     ctx.check("nothing seen is culled", dropped == 0, std::to_string(dropped) + " of " + std::to_string(kept + dropped) + " dropped (" + std::to_string(tried) + " tried)");
+}
+
+// ---- Hit what's drawn: a placed, scaled, flat rock -------------------------------------------------
+SCENARIO(propFlatRockTop, "props/flat-rock-top", "A big flat rock placed the editor's way (any scan, scaled flat/long, posed): the surface a car meets is within a few cm of the drawn mesh's top") {
+    const props::HullLibrary* lib = library(ctx);
+    if (!lib) return;
+    props::ScopedRockScans on(lib);
+    World& w = ctx.sim.world;
+    double worstAbove = 0, tallAbove = 0, worstBelow = 0, worstAll = 0;
+    std::string worstName;
+    for (int scan = 0; scan < (int)lib->hulls.size(); scan++) {
+        for (int variant = 0; variant < 3; variant++) {
+            LevelObject o;
+            o.kind = OBJ_ROCK, o.sub = 1, o.scan = variant == 2 ? -1 : scan, o.seed = 7 + scan;
+            o.p = V3(40 + 14 * (scan % 4), 0, -150 - 14 * (scan / 4 % 6));
+            o.size = variant == 0 ? V3(5, 0.5, 3.5) : variant == 1 ? lib->hulls[scan].half() * 3.0 : V3(6, 0.6, 4.5);
+            o.top = o.size.y * 1.2;
+            o.yaw = 0.7 * scan, o.pitch = variant == 1 ? 0.1 : 0, o.roll = variant == 1 ? -0.08 : 0;
+            const size_t n = w.rocks.size();
+            placeObject(o, w);
+            w.buildGrid();
+            const Rock& k = w.rocks[n];
+            WorldMesh mesh;
+            if (!visibleMesh(k, *lib, mesh)) continue;
+            for (double fx = -0.9; fx <= 0.9; fx += 0.15)
+                for (double fz = -0.9; fz <= 0.9; fz += 0.15) {
+                    const V3 q = k.c + V3(fx * k.r, 0, fz * k.r);
+                    auto topAt = [&](double x, double z) {  // (the mesh's top at this x, z)
+                        double best = -1e9;
+                        for (const auto& t : mesh.t) {
+                            const V3 &a = mesh.p[t[0]], &b = mesh.p[t[1]], &c = mesh.p[t[2]];
+                            const double d = (b.z - c.z) * (a.x - c.x) + (c.x - b.x) * (a.z - c.z);
+                            if (std::fabs(d) < 1e-12) continue;
+                            const double l1 = ((b.z - c.z) * (x - c.x) + (c.x - b.x) * (z - c.z)) / d;
+                            const double l2 = ((c.z - a.z) * (x - c.x) + (a.x - c.x) * (z - c.z)) / d;
+                            if (l1 < 0 || l2 < 0 || l1 + l2 > 1) continue;
+                            best = std::max(best, l1 * a.y + l2 * b.y + (1 - l1 - l2) * c.y);
+                        }
+                        return best;
+                    };
+                    const double drawn = topAt(q.x, q.z);
+                    // (only where the drawn top is gentle: on a steep edge a few cm sideways is a lot of height)
+                    bool gentle = drawn > -1e8 && drawn > w.height(q.x, q.z) + 0.3;
+                    for (int e = 0; e < 4 && gentle; e++) {
+                        const double nb = topAt(q.x + (e == 0) * 0.08 - (e == 1) * 0.08, q.z + (e == 2) * 0.08 - (e == 3) * 0.08);
+                        gentle = nb > -1e8 && std::fabs(nb - drawn) < 0.06;
+                    }
+                    if (!gentle) continue;
+                    objshape::WorldHit h;
+                    double hit = -1e9;
+                    if (objshape::rayWorld(w, V3(q.x, drawn + 5, q.z), V3(0, -1, 0), 20, h) && h.kind == objshape::SH_ROCK) hit = h.hit.p.y;
+                    if (hit < -1e8) hit = drawn - 1;  // (missed it: counts as well below)
+                    const double dy = hit - drawn;
+                    const double off = hit > -1e8 ? mesh.distance(V3(q.x, hit, q.z)) : 1;  // (how far the surface met is from the drawn one: fair on a slope too)
+                    if (std::fabs(dy) > worstAll) worstAll = std::fabs(dy), worstName = lib->hulls[k.scan].name + " v" + std::to_string(variant);
+                    double& above = variant == 1 ? tallAbove : worstAbove;
+                    above = std::max(above, off), worstBelow = std::max(worstBelow, -dy);
+                }
+            w.rocks.resize(n);
+        }
+    }
+    std::printf("     worst: %s\n", worstName.c_str());
+    // (A single convex hull stood 20-30 cm over a flat scaled scan, 80 cm over a tall one; the pieces keep within a few cm to ~15 cm of a lumpy 3x boulder.)
+    ctx.metric("flat rocks: collision surface off the drawn mesh, above it (worst)", worstAbove * 100, "cm", 0, 9);
+    ctx.metric("scaled boulders: collision surface off the drawn mesh, above it (worst)", tallAbove * 100, "cm", 0, 20);
+    ctx.metric("collision below the drawn top (worst)", worstBelow * 100, "cm", 0, 5);
 }

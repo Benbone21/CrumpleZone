@@ -232,7 +232,8 @@ SCENARIO(netTakeOver, "net/take-over", "A buddy's empty truck changes hands: ask
     // The guest gets out and stops: the host takes it back.
     a->sim.cars[ai].occupied = false;
     a->sim.player = 0;
-    s.until(4, [&] { return len(ctx.sim.cars[hi].frame().vel) < 0.5 && len(a->sim.cars[ai].frame().vel) < 0.5; });
+    // (On its handbrake from ~47 km/h it takes ~4-4.5 s to stop: 4 s was only just enough.)
+    s.until(7, [&] { return len(ctx.sim.cars[hi].frame().vel) < 0.5 && len(a->sim.cars[ai].frame().vel) < 0.5; });
     s.run(0.5);
     ctx.check("empty: take it back", carentry::verdict(ctx.sim, hi) == carentry::TAKE);
     ctx.check("asked for it back", s.host.requestTake(ctx.sim, hi));

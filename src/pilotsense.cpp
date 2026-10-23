@@ -20,6 +20,11 @@ const char* seenName(int kind) {
 // ---- Exact tops ---------------------------------------------------------------------
 
 double rockTop(const Rock& r, double x, double z) {
+    if (!r.parts.empty()) {
+        double best = -1e9;
+        for (const Rock& p : r.parts) best = std::max(best, rockTop(p, x, z));
+        return best;
+    }
     // Inside the hull: dot(n, p) <= d for every face. Along a vertical line that bounds y
     // from above (faces turned up) and below (faces turned down).
     double hi = 1e9, lo = -1e9;
@@ -123,9 +128,20 @@ void Scene::gather(const World& world, const std::vector<Car>* cs, const Car* se
             const Frame fr = c.frame();
             const double reach = std::hypot(c.spec->length, c.spec->width) * 0.5;
             if (!near(fr.com.x, fr.com.z, reach)) continue;
-            Thing t{SEEN_VEHICLE, i, fr.com.x, fr.com.z, reach, 1.5};
+            // Its footprint as it stands: every node, bumpers, mirrors and tires. (A box of the
+            // spec's length and width round its center of mass sat ~0.4 m forward of a 4Runner's
+            // tail and inside its mirrors, and the line round a parked one clipped its corner.)
             const V3 f = norm(V3(fr.fwd.x, 0, fr.fwd.z));
-            t.fx = f.x, t.fz = f.z, t.hl = c.spec->length * 0.5, t.hw = c.spec->width * 0.5;
+            double a0 = 1e9, a1 = -1e9, s0 = 1e9, s1 = -1e9;
+            for (const Node& n : c.nodes) {
+                const double dx = n.p.x - fr.com.x, dz = n.p.z - fr.com.z;
+                const double along = dx * f.x + dz * f.z, across = dx * f.z - dz * f.x;
+                a0 = std::min(a0, along), a1 = std::max(a1, along), s0 = std::min(s0, across), s1 = std::max(s1, across);
+            }
+            const double am = 0.5 * (a0 + a1), sm = 0.5 * (s0 + s1);
+            Thing t{SEEN_VEHICLE, i, fr.com.x + f.x * am + f.z * sm, fr.com.z + f.z * am - f.x * sm, reach, 1.5};
+            t.fx = f.x, t.fz = f.z, t.hl = 0.5 * (a1 - a0), t.hw = 0.5 * (s1 - s0);
+            t.r = std::hypot(t.hl, t.hw);
             list.push_back(t);
         }
     for (auto& b : bins) b.clear();

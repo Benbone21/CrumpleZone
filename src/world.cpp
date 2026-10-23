@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <thread>
 
 namespace {
 const double kPadRadius = World::kPadRadius;  // (the old round pad: kept for where the woods and scatter stand)
@@ -213,6 +214,33 @@ void poseFrame(const RockPose& p, V3 out[3]) {
     out[0] = along, out[1] = rotateAxis(up0, along, p.roll), out[2] = cross(along, out[1]);
 }
 
+std::vector<props::RockHull> splitRock(const World& w, const Rock& k, const props::RockHull& hull) {
+    struct G {
+        const World* w;
+    } g{&w};
+    auto ground = [](void* c, double x, double z) { return static_cast<G*>(c)->w->height(x, z); };
+    return props::splitPlacedScan(hull.name, k.axis, k.origin, ground, &g, 0.02 + 0.008 * k.r, (int)std::min(160.0, 32 + 28 * k.r));
+}
+
+void attachRockParts(Rock& k, std::vector<props::RockHull>&& pieces) {
+    k.parts.clear();
+    k.parts.reserve(pieces.size());
+    for (props::RockHull& ph : pieces) {
+        Rock q;
+        q.v = std::move(ph.v), q.f = std::move(ph.f);
+        for (const auto& f : q.f) {
+            const V3 nrm = norm(cross(q.v[f[1]] - q.v[f[0]], q.v[f[2]] - q.v[f[0]]));
+            q.fn.push_back(nrm);
+            q.fd.push_back(dot(nrm, q.v[f[0]]));
+        }
+        V3 cc;
+        for (const V3& p : q.v) cc += p;
+        q.c = cc / (double)q.v.size();
+        for (const V3& p : q.v) q.r = std::max(q.r, len(p - q.c));
+        k.parts.push_back(std::move(q));
+    }
+}
+
 Rock& addScannedRock(World& w, const props::HullLibrary& lib, double x, double z, const V3& radii, double top, uint32_t seed, float tint, const RockPose* pose) {
     uint32_t s = seed * 2246822519u + 0x85ebca6bu;
     auto rnd = [&]() {
@@ -290,6 +318,12 @@ Rock& addScannedRock(World& w, const props::HullLibrary& lib, double x, double z
     for (const V3& q : k.v) cen += q;
     k.c = cen / (double)k.v.size();
     for (const V3& q : k.v) k.r = std::max(k.r, len(q - k.c));
+    // A big rock is cut into the convex pieces that follow its drawn surface (a lone hull would stand cm to dm above it): while the
+    // world is being made, all together at the end (on a few threads; nothing looks at them before then), else now.
+    if (k.r > 1.2) {
+        if (w.deferRockSplits) k.partsDue = true;
+        else attachRockParts(k, splitRock(w, k, hull));
+    }
     w.rocks.push_back(std::move(k));
     return w.rocks.back();
 }
@@ -375,6 +409,7 @@ void World::addLake(double x, double z, double r, double depth) {
 World::World(int m) : map(m) {
     half = halfSizeFor(map);
     loadprof::Scope lpGen("world.terrain+layout");
+    deferRockSplits = true;
     if (map == MAP_MOUNTAIN) buildMountain();
     else if (map == MAP_FREEWAY) buildFreeway();
     else if (map == MAP_FRONTIER) buildFrontier();
@@ -383,10 +418,36 @@ World::World(int m) : map(m) {
     else buildProvingGround();
     // The slab the player starts on (and the parked trucks): in the game's proving ground, as the other maps are always built.
     if (map != MAP_PROVING_GROUND || withShowcase) addMapSpawnPads(*this);
+    splitPendingRocks();
     { loadprof::Scope lpGrid("world.grid"); buildGrid(); }
 }
 
 double World::halfSizeFor(int) { return halfSizeOverride > 0 ? halfSizeOverride : kDefaultHalfSize; }
+
+void World::splitPendingRocks() {
+    deferRockSplits = false;
+    std::vector<int> due;  // (rocks may have been taken away since: by index only now)
+    for (int i = 0; i < (int)rocks.size(); i++)
+        if (rocks[i].partsDue) due.push_back(i), rocks[i].partsDue = false;
+    const props::HullLibrary* lib = props::activeRockScans();  // (what they were placed from: this thread's)
+    if (due.empty() || !lib) return;
+    loadprof::Scope lp("world.rock pieces");
+    std::atomic<size_t> next{0};
+    auto work = [&] {
+        for (size_t i; (i = next++) < due.size();) {
+            const Rock& k = rocks[due[i]];
+            if (k.scan >= 0 && k.scan < (int)lib->hulls.size()) attachRockParts(rocks[due[i]], splitRock(*this, k, lib->hulls[k.scan]));
+        }
+    };
+    // (Each rock on its own: the same pieces whichever thread cuts it.)
+    const unsigned hc = std::thread::hardware_concurrency();
+    const int extra = (int)std::min<size_t>(due.size() / 64, (size_t)std::min(3u, hc > 1 ? hc - 1 : 0u));
+    std::vector<std::thread> helpers;
+    for (int i = 0; i < extra; i++) helpers.emplace_back(work);
+    work();
+    for (std::thread& t : helpers) t.join();
+    props::saveRockSplits();  // (the scanned rocks' cuts, if this world needed new ones: the next run reads them)
+}
 
 void World::buildProvingGround() {
     map = MAP_PROVING_GROUND;
@@ -1146,32 +1207,41 @@ bool World::contact(const V3& c, double R, const V3* axis, double hw, Contact& o
             V3 d = c - k.c;
             double dd = dot(d, d), lim = k.r + reach;
             if (dd > lim * lim) continue;
+            // (A rock made of pieces: each in turn, as a rock of its own.)
+            const size_t np = std::max<size_t>(1, k.parts.size());
+            for (size_t pi = 0; pi < np; pi++) {
+            const Rock& kp = k.parts.empty() ? k : k.parts[pi];
+            if (!k.parts.empty()) {
+                const V3 dp = c - kp.c;
+                const double lp = kp.r + reach;
+                if (dot(dp, dp) > lp * lp) continue;
+            }
             // Farthest face plane: the true distance is never less, so it rejects cheaply;
             // inside the rock it's the way out.
             double far = -1e9;
             int fi = 0;
-            for (size_t f = 0; f < k.f.size(); f++) {
-                double s = dot(k.fn[f], c) - k.fd[f];
+            for (size_t f = 0; f < kp.f.size(); f++) {
+                double s = dot(kp.fn[f], c) - kp.fd[f];
                 if (s > far) far = s, fi = (int)f;
             }
             if (far > reach) continue;
             V3 n;
             double dist;
             if (far <= 0) {
-                n = k.fn[fi];
+                n = kp.fn[fi];
                 dist = far;
             } else {  // outside: the nearest point is on a face it can see
                 double best = 1e18;
                 V3 q;
-                for (size_t f = 0; f < k.f.size(); f++) {
-                    if (dot(k.fn[f], c) - k.fd[f] <= 0) continue;
-                    V3 t = closestOnTriangle(c, k.v[k.f[f][0]], k.v[k.f[f][1]], k.v[k.f[f][2]]);
+                for (size_t f = 0; f < kp.f.size(); f++) {
+                    if (dot(kp.fn[f], c) - kp.fd[f] <= 0) continue;
+                    V3 t = closestOnTriangle(c, kp.v[kp.f[f][0]], kp.v[kp.f[f][1]], kp.v[kp.f[f][2]]);
                     double e = dot(c - t, c - t);
                     if (e < best) best = e, q = t;
                 }
                 dist = std::sqrt(best);
                 if (dist > reach) continue;
-                n = dist > 1e-9 ? (c - q) / dist : k.fn[fi];
+                n = dist > 1e-9 ? (c - q) / dist : kp.fn[fi];
             }
             double pen = support(n) - dist;
             if (pen > out.pen) {
@@ -1179,6 +1249,7 @@ bool World::contact(const V3& c, double R, const V3* axis, double hw, Contact& o
                 out.n = n;
                 out.surface = SURF_ROCK;
                 hit = true;
+            }
             }
         }
         for (int li : logGrid[cell]) {

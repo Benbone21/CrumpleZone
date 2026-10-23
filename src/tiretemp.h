@@ -1,11 +1,12 @@
 // Tire temperature: how warm the tread is changes how well the rubber grips. Each compound
 // has its window: a race slick's is high and narrow (cold, it's a hard plastic puck), a
-// semi-slick's lower, a street or all-terrain tire's wide (it works from a frosty morning
-// to a hot afternoon), and a winter tire's soft compound works best cold and goes greasy
+// semi-slick's lower, a street or all-terrain tire's wide and forgiving (cold off the drive on
+// a mild day it grips ~3% less, and full once a few minutes' driving has it at ~40C; on a
+// frosty morning ~10% less), and a winter tire's soft compound works best cold and goes greasy
 // when warm. Past the window the rubber overheats: it greases off and the carcass is at risk.
 //
 // Grip from temperature (x the tread's own grip), at:   -20C  0C  20C  50C  80C  100C  130C
-//   street, all-terrain, mud-terrain                    .87  .96  1.0  1.0  1.0  1.0   .90
+//   street, all-terrain, mud-terrain                    .86  .91  .97  1.0  1.0  1.0   .90
 //   semi-slick                                          .84  .89  .97  1.0  1.0  1.0   .93
 //   race slick                                          .72  .72  .78  .94  1.0  1.0   .95
 //   winter                                              1.0  1.0  1.0  .90  .80  .80   .80
@@ -27,10 +28,10 @@ struct TireWindow {
 
 inline const TireWindow& tireWindow(int tread) {
     static const TireWindow w[TIRE_TYPES] = {
-        {15, 100, 45, 0.15, 50, 0.15},   // street
+        {40, 100, 70, 0.15, 50, 0.15},   // street
         {35, 105, 55, 0.16, 50, 0.15},   // semi-slick
-        {15, 100, 45, 0.15, 50, 0.15},   // all-terrain
-        {15, 100, 45, 0.15, 50, 0.15},   // mud-terrain
+        {40, 100, 70, 0.15, 50, 0.15},   // all-terrain
+        {40, 100, 70, 0.15, 50, 0.15},   // mud-terrain
         {75, 115, 80, 0.28, 45, 0.20},   // race slick
         {-40, 25, 30, 0.10, 50, 0.20},   // winter
         {-99, 999, 1, 0, 1, 0},          // chains

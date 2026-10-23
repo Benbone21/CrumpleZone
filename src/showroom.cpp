@@ -635,7 +635,7 @@ void Showroom::drawRight(const ShowroomLayout& l) {
     const std::vector<std::pair<const char*, std::vector<std::string>>> groups = {
         {"ENGINE", {fmt("%.0f HP AT %.0f RPM", P / 745.7, rpmP), fmt("%.0f NM AT %.0f RPM", T, rpmT), std::string(vs.engineName), fmt("REDLINE %.0f", vs.redline)}},
         {"GEARBOX", {std::string(vs.gearboxName), fmt("FINAL DRIVE %.2f", vs.finalDrive) + (vs.lowRange > 0 ? fmt("   LOW RANGE %.2f", vs.lowRange) : std::string())}},
-        {"TIRES", {fmt("%.0f MM TALL  %.0f MM WIDE", vs.wheelRadius * 2000, vs.wheelWidth * 1000), fmt("GRIP %.2f / %.2f", vs.tireGrip, vs.tireGrip * vs.lateralGrip)}},
+        {"TIRES", {fmt("%.0f MM TALL  %.0f MM WIDE", vs.wheelRadius * 2000, vs.wheelWidth * 1000), fmt("GRIP %.2f / %.2f", vs.tireMu(), vs.tireMu() * vs.lateralGrip)}},
         {"SPEEDO", {speedo}},
         {"RIDE", {fmt("%+.0f MM BODY HEIGHT", ride * 1000), fmt("%+.0f MM LIFT", lift * 1000), fmt("BOUNCE %.2f / %.2f HZ", vs.rideFreqFront, vs.rideFreqRear)}},
     };
