@@ -140,7 +140,7 @@ SCENARIO(provGroundYard, "levels/model-yard", "The proving ground's model yard s
     World::withShowcase = showcase;
     size_t want = 0;
     for (const mk::ModelDef& d : mk::catalog())
-        if (d.id != "fp_hand" && d.id != "lug_nut") want += std::max<size_t>(1, d.variants.size());
+        if (d.id != "fp_hand" && d.id != "lug_nut" && d.id != "waterfall") want += std::max<size_t>(1, d.variants.size());
     size_t yard = 0;
     struct R {
         double x0, x1, z0, z1;
@@ -162,7 +162,7 @@ SCENARIO(provGroundYard, "levels/model-yard", "The proving ground's model yard s
     std::string missing;
     for (const mk::ModelDef& d : mk::catalog())
         for (int v = 0; v < (int)d.variants.size(); v++) {
-            bool in = d.id == "fp_hand" || d.id == "lug_nut";
+            bool in = d.id == "fp_hand" || d.id == "lug_nut" || d.id == "waterfall";  // (the falls are on the rivers)
             for (const R& r : rs) in |= r.id == d.id && r.variant == v;
             if (!in) missing += d.id + "/" + std::to_string(v) + " ";
         }

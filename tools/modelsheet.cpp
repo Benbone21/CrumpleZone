@@ -185,6 +185,11 @@ struct Scene {
             const mk::MVert& v = m.v[i];
             t.c = V3(v.c[0], v.c[1], v.c[2]);
             t.mat = v.mat;
+            if (mk::waterMat(t.mat)) {  // (the water materials: their colours are the shader's coordinates; the mist would hide it all)
+                if (t.mat == mk::MIST) continue;
+                t.c = t.mat == mk::WATERFALL ? V3(0.72, 0.82, 0.86) : t.mat == mk::RIPPLE ? V3(0.25, 0.4, 0.45) : V3(0.92, 0.94, 0.95);
+                t.mat = mk::MATTE;
+            }
             tris.push_back(t);
         }
     }

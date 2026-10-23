@@ -40,7 +40,7 @@ using Poly = std::vector<V3>;
 double sq(double v) { return v * v; }
 
 // Elk River's centre line: z as a function of x (it flows west).
-double riverZ(double x) { return 14 + 36 * std::sin(x * 0.0068 + 0.9) + 12 * std::sin(x * 0.019 + 2.3); }
+double riverZ(double x) { return elkRiverZ(x); }
 constexpr double kFordX = 90, kDeepX = -100;
 constexpr double kRiverHalf = 8.0;
 
@@ -251,7 +251,7 @@ Districts districtsAt(double x, double z) {
 // In the canyon it climbs in steps besides, at Bear Falls and Upper Falls (rivers.h): riverFloor. (The land adds those steps per
 // cell, sharp: the new country's land is sampled every 4 m, which would smear a cliff.)
 double valleyFloor(double x) { return x > 540 ? 2.6 + 0.009 * (x - 540) : x < -540 ? 2.6 - 0.0008 * (-540 - x) : 2.6; }
-double riverFloor(double x) { return valleyFloor(x) + elkFallsRise(x); }
+double riverFloor(double x) { return valleyFloor(x) + elkFallsRise(x, riverZ(x)); }
 // The big lake on the Lakeshore.
 const V3 kLake(-1850, 0, -1650);
 constexpr double kLakeR = 480, kLakeY = 1.2;
@@ -331,7 +331,7 @@ void backcountryLand(double half, int hN, std::vector<float>& out) {
         auto M = [&](int p, int q) { return (double)macro[(size_t)p * mn + q]; };
         return M(a, b) * (1 - fu) * (1 - fv) + M(a + 1, b) * fu * (1 - fv) + M(a, b + 1) * (1 - fu) * fv + M(a + 1, b + 1) * fu * fv +
                0.9 * (valueNoise(x * 0.09 + 5.0, z * 0.09 + 1.0) - 0.5) + 0.35 * (valueNoise(x * 0.31, z * 0.27) - 0.5) +
-               (x > elkFalls()[0].x - kFallsFace - 1 ? elkFallsRise(x) * (1 - valleyOpen(x, z, districtsAt(x, z).e)) : 0.0);
+               (x > elkFalls()[0].x - 330 ? elkFallsRise(x, z) * (1 - valleyOpen(x, z, districtsAt(x, z).e)) : 0.0);
     };
     parallelRows(hN, [&](int i) {
         for (int j = 0; j < hN; j++) {
@@ -823,7 +823,7 @@ void World::buildBackcountry() {
                     const int id = i * hN + j;
                     // (Out in the new country the falls part it: the cliff's face is only the drop's, and a reach doesn't carve or
                     // water the land beyond a falls, above it or below.)
-                    if (st && (drop ? elkFallsFace(x) < 0 : elkFallsFace(x) >= 0 || elkFallsZone(x) != elkFallsZone(0.5 * (a.x + b.x)))) continue;
+                    if (st && (drop ? elkFallsFace(x, z) < 0 : elkFallsFace(x, z) >= 0 || elkFallsZone(x, z) != elkFallsZone(0.5 * (a.x + b.x), 0.5 * (a.z + b.z)))) continue;
                     const double level = lvl[s] + (lvl[s + 1] - lvl[s]) * t, dep = depth[s] + (depth[s + 1] - depth[s]) * t;
                     const double wq = kRiverHalf * ws * (0.85 + 0.3 * valueNoise(x * 0.05, z * 0.05));
                     const bool rockBed = st && (sa->bed == BED_ROCK || sb->bed == BED_ROCK);
@@ -1001,8 +1001,18 @@ void World::buildBackcountry() {
             falls.push_back(fl);
             const V3 d = norm(o[std::min(m - 1, kl + 1)] - o[std::max(0, kl - 1)]), l(-d.z, 0, d.x);
             const double hw = 0.5 * fl.width;
+            // The cliff and the gorge's walls below it: bare rock wherever the floor steps.
+            const double zc = riverZ(f.x);
+            for (int i = cellI(f.x - 330); i <= cellI(f.x + 2); i++)
+                for (int j = cellI(zc - 110); j <= cellI(zc + 110); j++) {
+                    const double x = X(i), z = X(j);
+                    const double g = std::fabs(elkFallsRise(x + 1, z) - elkFallsRise(x - 1, z)) + std::fabs(elkFallsRise(x, z + 1) - elkFallsRise(x, z - 1));
+                    const int id = i * hN + j;
+                    if (g < 1.5 || waterY[id] > -1e8) continue;
+                    surf[id] = SURF_ROCK, paint[id] = PAINT_ROCK, keep[id] = 1;
+                }
             for (int sd = -1; sd <= 1; sd += 2) {
-                bigRock(V3(f.x + 1.2, 0, fl.lip.z) + l * (sd * (hw + 2.4)), 2.0 + 0.4 * h01((uint32_t)f.x, 20 + sd), 1.6);  // the lip's shoulders
+                bigRock(V3(f.x + 3.0, 0, fl.lip.z) + l * (sd * (hw + 2.6)), 1.8 + 0.4 * h01((uint32_t)f.x, 20 + sd), 1.2);  // the lip's shoulders, on top
                 bigRock(V3(f.x - kFallsFace - 1.5, 0, fl.lip.z) + l * (sd * (fl.poolR + 1.0)), 1.6, 1.2);                   // at the cliff's foot
             }
             for (int k = kb + 4; k < m && k < kb + (int)f.poolLen; k += 5)

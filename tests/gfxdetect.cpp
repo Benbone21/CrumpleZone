@@ -104,7 +104,7 @@ SCENARIO(waterBudget, "render/water-mesh-budget", "The water surface stays withi
         ctx.check(std::string(mapName(r.map)) + ": " + std::to_string(v.size() / 3) + " triangles, budget " + std::to_string(r.budget),
                   v.size() % 3 == 0 && v.size() / 3 <= r.budget);
         bool flat = true;
-        for (const Vtx& x : v) flat &= std::isfinite(x.p[1]) && x.n[1] == 1;
+        for (const Vtx& x : v) flat &= std::isfinite(x.p[1]) && (x.n[1] == 1 || x.c[3] > 19.5f);  // (a waterfall's parts stand up)
         ctx.check(std::string(mapName(r.map)) + ": every corner finite, facing up", flat);
     }
 }

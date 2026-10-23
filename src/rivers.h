@@ -76,9 +76,11 @@ struct FallsSite {
 };
 constexpr double kFallsFace = 2.5;  // (the cliff's run, m: the valley floor steps up over this)
 const std::vector<FallsSite>& elkFalls();
-double elkFallsRise(double x);
-int elkFallsFace(double x);  // which falls' cliff face x is on (-1: none)
-int elkFallsZone(double x);  // how many falls' faces are at or below x (the reaches between the falls: 0 below them all)
+double elkRiverZ(double x);  // its middle line: z at x (it flows west)
+double elkLipX(const FallsSite& f, double z);  // where a falls' lip is, across the canyon (its cliff runs kFallsFace downstream of it)
+double elkFallsRise(double x, double z);  // how much the valley floor has stepped up at (x, z), going upstream over the falls
+int elkFallsFace(double x, double z);  // which falls' cliff face (x, z) is on (-1: none)
+int elkFallsZone(double x, double z);  // how many falls' faces are at or below (x, z) (the reaches between the falls: 0 below them all)
 const std::vector<double>& elkFords();  // where its fords are (x, mid-channel)  // how much the valley floor has stepped up by x, going upstream (east) over the falls
 // The named spots (backcountryFeature): bearfalls, upperfalls (their lips), eastford, eastpool, westford, westpool, eastriffle.
 bool elkRiverSpot(const std::string& name, double& x);

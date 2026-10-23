@@ -66,22 +66,47 @@ const std::vector<FallsSite>& elkFalls() {
     return f;
 }
 
-double elkFallsRise(double x) {
+double elkRiverZ(double x) { return 14 + 36 * std::sin(x * 0.0068 + 0.9) + 12 * std::sin(x * 0.019 + 2.3); }
+
+// Below each falls the river runs in a gorge it has cut back into the canyon floor: steep walls kFallsFace wide either side, the
+// gorge widening downstream and its walls sinking away into the canyon over a few hundred metres.
+double gorgeHalf(const FallsSite& f, double x) { return 15 + 0.25 * std::max(0.0, f.x - x); }
+double gorgeTaper(const FallsSite& f, double x) { return smoothstep(f.x - 320, f.x - 140, x); }
+double gorgeWall(const FallsSite& f, double x, double z) {  // 1 up on the floor beside the gorge, 0 down in it
+    if (x >= f.x || x < f.x - 320) return 0;
+    const double dz = std::fabs(z - elkRiverZ(x)) + 2.0 * (valueNoise(x * 0.07 + 3.1, z * 0.07 - f.x * 0.01) - 0.5), w = gorgeHalf(f, x);
+    return smoothstep(w, w + kFallsFace, dz) * gorgeTaper(f, x);
+}
+
+double elkLipX(const FallsSite& f, double z) {
+    // Straight across the channel, bending back a little (the falls has cut a horseshoe), and ragged.
+    const double dz = std::fabs(z - elkRiverZ(f.x)), off = std::max(0.0, dz - 6);
+    return f.x - std::min(6.0, 0.03 * off * off) - 1.2 * (valueNoise(z * 0.15 + f.x * 0.01, 7.7) - 0.5) * smoothstep(6, 12, dz);
+}
+
+double elkFallsRise(double x, double z) {
     double r = 0;
-    for (const FallsSite& f : elkFalls()) r += f.drop * smoothstep(f.x - kFallsFace, f.x, x);
+    for (const FallsSite& f : elkFalls()) {
+        if (x < f.x - 330) continue;
+        const double lx = elkLipX(f, z);
+        r += f.drop * std::max(smoothstep(lx - kFallsFace, lx, x), gorgeWall(f, x, z));
+    }
     return r;
 }
 
-int elkFallsFace(double x) {
-    for (size_t i = 0; i < elkFalls().size(); i++)
-        if (x >= elkFalls()[i].x - kFallsFace && x < elkFalls()[i].x) return (int)i;
+int elkFallsFace(double x, double z) {
+    for (size_t i = 0; i < elkFalls().size(); i++) {
+        const FallsSite& f = elkFalls()[i];
+        const double lx = elkLipX(f, z);
+        if (x >= lx - kFallsFace && x < lx && gorgeWall(f, x, z) < 0.5) return (int)i;
+    }
     return -1;
 }
 
-int elkFallsZone(double x) {
-    int z = 0;
-    for (const FallsSite& f : elkFalls()) z += x >= f.x - kFallsFace;
-    return z;
+int elkFallsZone(double x, double z) {
+    int n = 0;
+    for (const FallsSite& f : elkFalls()) n += x >= elkLipX(f, z) - kFallsFace || gorgeWall(f, x, z) >= 0.5;
+    return n;
 }
 
 const std::vector<double>& elkFords() {

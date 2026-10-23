@@ -1,5 +1,6 @@
 #include "watermesh.h"
 #include "meshopt.h"
+#include "modelkit.h"
 #include <algorithm>
 #include <cmath>
 
@@ -8,6 +9,26 @@ Vtx waterVtx(const V3& p, float fx, float fz) {
     return Vtx{{(float)p.x, (float)p.y, (float)p.z}, {0, 1, 0}, {fx, fz, 0, 0}};
 }
 }  // namespace
+
+// The falls: the "waterfall" model built to each one's size and set down at its foot, its water materials in the colour's alpha
+// (the water shader draws them: modelkit.h WATERFALL..RIPPLE).
+void appendFalls(const World& world, std::vector<Vtx>& wv) {
+    const mk::ModelDef* def = mk::findModel("waterfall");
+    if (!def) return;
+    for (const Falls& f : world.falls) {
+        const int v = std::clamp(f.variant, 0, (int)def->variants.size() - 1);
+        mk::P p = mk::defaults(def->variants[v]);
+        p.v["height"] = f.height, p.v["width"] = f.width, p.v["lip"] = f.throwOut, p.v["seed"] = (double)(f.seed % 999 + 1);
+        mk::Mesh m;
+        mk::build(*def, v, p, m);
+        const double c = std::cos(f.yaw), s = std::sin(f.yaw);
+        const V3 fw(c, 0, -s), lf(s, 0, c), o(f.lip.x, f.lip.y - f.height, f.lip.z);
+        for (const mk::MVert& q : m.v) {
+            const V3 pw = o + fw * q.p[0] + V3(0, q.p[1], 0) + lf * q.p[2], nw = fw * q.n[0] + V3(0, q.n[1], 0) + lf * q.n[2];
+            wv.push_back(Vtx{{(float)pw.x, (float)pw.y, (float)pw.z}, {(float)nw.x, (float)nw.y, (float)nw.z}, {q.c[0], q.c[1], q.c[2], (float)q.mat}});
+        }
+    }
+}
 
 void buildWaterMesh(const World& world, std::vector<Vtx>& wv) {
     if (!world.waterY.empty()) {
@@ -50,6 +71,13 @@ void buildWaterMesh(const World& world, std::vector<Vtx>& wv) {
                 float top = -1e9f;
                 for (float v : c) top = std::max(top, v);
                 if (top < -1e8f) continue;
+                bool lip = false;  // (a dry corner far below: the edge of a falls, whose model carries the water over it)
+                for (int k = 0; k < 4 && !world.falls.empty(); k++)
+                    if (c[k] < -1e8f) {
+                        const int ii = k == 1 || k == 2 ? i + step : i, jj = k >= 2 ? j + step : j;
+                        lip |= world.height(-world.halfSize() + ii, -world.halfSize() + jj) < top - 1.5;
+                    }
+                if (lip) continue;
                 for (float& v : c)
                     if (v < -1e8f) v = top;  // a dry corner: carry the level over (the shader cuts at the shore)
                 const int ci[4][2] = {{i, j}, {i + step, j}, {i + step, j + step}, {i, j + step}};
@@ -79,4 +107,5 @@ void buildWaterMesh(const World& world, std::vector<Vtx>& wv) {
                 for (const V3& q : {mid, P(si), P(si + 1)}) wv.push_back(waterVtx(q, 0, 0));
         }
     }
+    appendFalls(world, wv);
 }
