@@ -76,3 +76,28 @@ Average frame time, with the 1% low in brackets:
 | Mountain / Boulder Gully | 2.04 (2.62) | 3.07 (4.99) | 3.11 (4.33) | 3.17 (5.51) |
 
 The 6.3 / 5.5 ms single-scene numbers in the baseline section were taken while the machine was much busier. Compare against this table.
+
+## Phase 3: streamed terrain drawing (branch wip/bigmaps-p2)
+
+These numbers are on a 6 km test map, today's open country built at 6 km: `--map 5 --map-half 3072`. Before phase 3, the renderer drew it as one mesh.
+
+| | Before | After |
+|---|---|---|
+| Peak RAM (whole game) | 4.8 GB | 0.77 GB |
+| Renderer ready | 5.6 s | 0.5 s (cache warm), 1.0 s (cold) |
+| Launch to first bench frame | about 9 s | 2.3 s (warm), 2.8 s (cold) |
+| Average frame, standing (HIGH 1600x900) | 2.36 ms | 2.30 ms |
+| Flying 2.4 km at 60 m/s, eye 3 m up, looking along the ground | 5.1 ms (64 draws a frame per far chunk before grouping) | 2.48 ms, 1% low 3.9 ms, worst 11 ms |
+
+Today's maps:
+- Their screenshots match the previous renderer. PSNR is 64-67 dB against the 2a build on Backcountry, Frontier and the proving ground. The open country aerial differs by 13 pixels.
+- Frontier HIGH, run interleaved against the 2a build (3 runs each, load average 10): 2.79 / 2.98 / 2.83 ms before, 2.95 / 2.91 / 2.93 ms after. Every stage is the same within 0.02 ms, so the difference is within the noise.
+- `--bench-suite` after phase 3 (load average 10, noisy):
+  - Frontier: POTATO 2.16, LOW 2.67, MEDIUM 2.94, HIGH 2.96 ms.
+  - Open country: POTATO 1.58, LOW 1.99, MEDIUM 2.21, HIGH 2.19 ms.
+  - Boulder Gully: POTATO 2.52, LOW 3.16, MEDIUM 3.36, HIGH 3.44 ms.
+
+What phase 3 left out:
+- Tree impostors. On a big map the forest stops at 2 km instead (800 m on the lowest props setting), and static scenery batches stop at 2.5 km.
+- A textured M map. On a big map the M map just uses coarser cells: 30 m at 6 km.
+- The water mesh and the water sound still scan the whole grid at load. That is fine at 6 km: about 0.1 and 0.3 s.

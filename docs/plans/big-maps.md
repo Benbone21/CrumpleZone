@@ -1,7 +1,7 @@
 # Big maps: a 6 x 6 km Backcountry and Frontier, with rivers, waterfalls and places to find
 
 Plan for PI-TASKS #26 (big maps, points of interest) and #27 (rivers, waterfalls, every model in use).
-Status: **approved 2026-10-22 with the owner's answers (section 0).** Phases 0 and 1 are merged; phase 2 is done on `wip/bigmaps-p2` (measurements in `docs/hardware/linux-7900xtx-bigmaps.md`). Per-cell scatter seeds moved from phase 2 to phase 4 (the existing maps keep their layouts); the world cache still needs compression before the 6 km maps.
+Status: **approved 2026-10-22 with the owner's answers (section 0).** Phases 0 and 1 are merged; phases 2 and 3 are done on `wip/bigmaps-p2` (measurements in `docs/hardware/linux-7900xtx-bigmaps.md`). Changes to the plan made while building them: per-cell scatter seeds moved from phase 2 to phase 4 (the existing maps keep their layouts); the world cache still needs compression before the 6 km maps; tree impostors were replaced by a distance cut (2 km, 800 m on POTATO) and the M map texture by coarser cells, both to revisit with real 6 km content. Try a 6 km map now with `--map 5 --map-half 3072` (open country), optionally `--eye X,Z,H,YAW,PITCH --eye-fly 60`.
 
 ## Summary (the 10 lines)
 

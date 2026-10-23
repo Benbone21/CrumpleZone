@@ -302,11 +302,12 @@ uniform int uTreeFadeN;           // see-through trees: this many, each (x, z, r
 uniform vec4 uTreeFade[24];
 // The terrain texels (one a cell): a window of the map round the camera, toroidal (a big map; a small one is in it whole), and
 // the whole map coarse (a texel per 4 cells) for whatever lies outside the window.
-uniform vec4 uTerrainWin;          // the window: its first cell (i, j), its texels a side
+uniform vec4 uTerrainWin;          // the window: its first cell (i, j), its texels a side, 1 when it holds the whole map
 uniform sampler2D uTerrainCoarse;
 uniform float uTerrainCoarseN;
 vec4 terrainCell(ivec2 g){
   g = clamp(g, ivec2(0), ivec2(int(uTerrainN) - 1));
+  if (uTerrainWin.w > 0.5) return texelFetch(uTerrainTex, g, 0);  // (the whole map is in the window, as stored)
   ivec2 r = g - ivec2(uTerrainWin.xy);
   int w = int(uTerrainWin.z);
   if (r.x < 0 || r.y < 0 || r.x >= w || r.y >= w) return texelFetch(uTerrainCoarse, clamp(g / 4, ivec2(0), ivec2(int(uTerrainCoarseN) - 1)), 0);
@@ -1792,11 +1793,12 @@ const char* kGrassVS = R"(#version 330 core
 uniform sampler2D uTerrainTex; uniform float uTerrainN;
 // The terrain texels (one a cell): a window of the map round the camera, toroidal (a big map; a small one is in it whole), and
 // the whole map coarse (a texel per 4 cells) for whatever lies outside the window.
-uniform vec4 uTerrainWin;          // the window: its first cell (i, j), its texels a side
+uniform vec4 uTerrainWin;          // the window: its first cell (i, j), its texels a side, 1 when it holds the whole map
 uniform sampler2D uTerrainCoarse;
 uniform float uTerrainCoarseN;
 vec4 terrainCell(ivec2 g){
   g = clamp(g, ivec2(0), ivec2(int(uTerrainN) - 1));
+  if (uTerrainWin.w > 0.5) return texelFetch(uTerrainTex, g, 0);  // (the whole map is in the window, as stored)
   ivec2 r = g - ivec2(uTerrainWin.xy);
   int w = int(uTerrainWin.z);
   if (r.x < 0 || r.y < 0 || r.x >= w || r.y >= w) return texelFetch(uTerrainCoarse, clamp(g / 4, ivec2(0), ivec2(int(uTerrainCoarseN) - 1)), 0);
@@ -2013,11 +2015,12 @@ layout(location = 0, index = 1) out vec4 oKeep;
 uniform sampler2D uTerrainTex; uniform float uTerrainN;
 // The terrain texels (one a cell): a window of the map round the camera, toroidal (a big map; a small one is in it whole), and
 // the whole map coarse (a texel per 4 cells) for whatever lies outside the window.
-uniform vec4 uTerrainWin;          // the window: its first cell (i, j), its texels a side
+uniform vec4 uTerrainWin;          // the window: its first cell (i, j), its texels a side, 1 when it holds the whole map
 uniform sampler2D uTerrainCoarse;
 uniform float uTerrainCoarseN;
 vec4 terrainCell(ivec2 g){
   g = clamp(g, ivec2(0), ivec2(int(uTerrainN) - 1));
+  if (uTerrainWin.w > 0.5) return texelFetch(uTerrainTex, g, 0);  // (the whole map is in the window, as stored)
   ivec2 r = g - ivec2(uTerrainWin.xy);
   int w = int(uTerrainWin.z);
   if (r.x < 0 || r.y < 0 || r.x >= w || r.y >= w) return texelFetch(uTerrainCoarse, clamp(g / 4, ivec2(0), ivec2(int(uTerrainCoarseN) - 1)), 0);
@@ -2976,6 +2979,7 @@ void Renderer::drawBatches(GLuint vao, const std::vector<StaticBatch>& batches, 
     BindVertexArray(vao);
     for (const auto& batch : batches) {
         if (!batch.bounds.visible(vp) || (!shadow && occl_.occluded(batch.bounds))) continue;
+        if (!terrainAll_ && batch.bounds.distance(sceneEye_) > 2500) continue;  // (a big map: the far scenery is left to the fog)
         DrawArrays(GL_TRIANGLES, batch.first, batch.count);
         (shadow ? geometryStats_.shadowSceneryVertices : geometryStats_.sceneryVertices) += batch.count;
         (shadow ? geometryStats_.shadowModelVertices : geometryStats_.modelVertices) += batch.count;
@@ -4942,6 +4946,7 @@ void Renderer::drawCarModels(GLuint prog) {
 void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effects* effects) {
     static const bool noOcclusion = std::getenv("CZ_NO_OCCLUSION") != nullptr;  // (the reference render of the pixel test)
     streamTerrain(sim.world, view.eye);  // (a big map: the full meshes round the camera)
+    sceneEye_ = view.eye;
     occl_.enable(!noOcclusion);
     occl_.refresh();
     occl_.setEye(view.eye);
@@ -5158,7 +5163,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         ActiveTexture(GL_TEXTURE0);
         Uniform1i(uniformLocation(prog, "uTerrainTex"), 2);
         Uniform1f(uniformLocation(prog, "uTerrainN"), (float)terrainGridN);
-        Uniform4f(uniformLocation(prog, "uTerrainWin"), (float)terrainWinI_, (float)terrainWinJ_, (float)terrainWinW_, 0.0f);
+        Uniform4f(uniformLocation(prog, "uTerrainWin"), (float)terrainWinI_, (float)terrainWinJ_, (float)terrainWinW_, terrainWinW_ >= terrainGridN ? 1.0f : 0.0f);
         ActiveTexture(GL_TEXTURE0 + 10);
         BindTexture(GL_TEXTURE_2D, terrainCoarseTex);
         ActiveTexture(GL_TEXTURE0);
@@ -5217,7 +5222,8 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         if (n) Uniform4fv(uniformLocation(progTree, "uTreeFade"), n, list);
     }
     if (!noVeg) {
-        const forest::View tv{vp, view.eye, vegDetail(), 0, false, 1, &occl_};
+        // (On a big map the forest stops at 2 km, 800 m on the lowest props setting: the fog has most of it by then.)
+        const forest::View tv{vp, view.eye, vegDetail(), 0, false, 1, &occl_, terrainAll_ ? 0.0 : settings.props <= 0 ? 800.0 : 2000.0};
         geometryStats_.sceneryVertices += trees_.draw(tv, &vegStats_.trees);
         Uniform1i(uniformLocation(progTree, "uTreeFadeN"), 0);  // (the see-through trees' leaves only)
         geometryStats_.sceneryVertices += bushes_.draw(tv, &vegStats_.bushes);
