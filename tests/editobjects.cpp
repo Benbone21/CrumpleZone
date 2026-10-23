@@ -1092,7 +1092,8 @@ SCENARIO(editorBoxSelect, "editor/box-select", "Box select takes the level's obj
         size_t blocks = 0, fixtures = 0;
         for (const Box& b : w.boxes) blocks += !b.hidden && !b.rock;
         for (const Prop& f : w.fixtures) fixtures += f.kind == PROP_GARAGE || f.kind == PROP_CABIN;
-        const auto all = [](const V3&) { return true; };
+        // (The middle 1.2 km of a map: all of every map but the 6 km Backcountry, whose middle is where its blocks and shops are.)
+        const auto all = [](const V3& p) { return std::fabs(p.x) <= 600 && std::fabs(p.z) <= 600; };
         const std::vector<EditPick> some = ed.pickInside(all, false, 100000), every = ed.pickInside(all, true, 100000);
         int infraSome = 0;
         for (const EditPick& p : some) infraSome += p.kind == EditPick::BASE && (p.baseKind == 4 || (p.baseKind == 3 && !w.boxes[p.index].rock));

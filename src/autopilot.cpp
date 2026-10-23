@@ -37,9 +37,11 @@ namespace {
 // ---- The map as the planner sees it: one cell per 2 m ----------------------------------
 
 constexpr double kCell = 2.0;
-// (The map's size, per thread: set from the world by gridFor, which every user calls first.)
-thread_local double gHalf = World::kDefaultHalfSize;
+// The square the planner sees (per thread: set by gridFor, which every user calls first): the whole of a small map; on a big
+// one a window round the route's ends (gOx, gOz its corner, kN cells a side).
+thread_local double gOx = -World::kDefaultHalfSize, gOz = -World::kDefaultHalfSize;
 thread_local int kN = (int)(2 * World::kDefaultHalfSize / kCell);
+constexpr double kWindowMax = 3000;  // m a side at most (a longer route is driven a window at a time)
 
 // A rock, log or ledge, and how tall it stands.
 struct Lump {
@@ -49,6 +51,8 @@ struct Lump {
 
 struct Grid {
     uint64_t stamp = 0;  // the world's, when this was built
+    double ox = 0, oz = 0;
+    int n = 0;           // its window
     std::vector<float> h, slope;          // terrain height and steepness at each cell
     std::vector<float> obs;               // tallest rock / log / ledge in the cell, above the ground
     std::vector<uint8_t> surf, track;     // surface; on a road or trail
@@ -56,21 +60,32 @@ struct Grid {
     std::vector<Lump> lumps;
 };
 
-int cellOf(double v) { return std::min(std::max((int)std::floor((v + gHalf) / kCell), 0), kN - 1); }
-double centerOf(int i) { return -gHalf + (i + 0.5) * kCell; }
+int cellX(double v) { return std::min(std::max((int)std::floor((v - gOx) / kCell), 0), kN - 1); }
+int cellZ(double v) { return std::min(std::max((int)std::floor((v - gOz) / kCell), 0), kN - 1); }
+double centerX(int i) { return gOx + (i + 0.5) * kCell; }
+double centerZ(int j) { return gOz + (j + 0.5) * kCell; }
+bool inWindow(double x, double z, double r) { return x + r >= gOx && z + r >= gOz && x - r <= gOx + kN * kCell && z - r <= gOz + kN * kCell; }
 
 // Marks every cell whose center is within r of (x, z).
 template <class F> void disc(double x, double z, double r, F mark) {
-    for (int i = cellOf(x - r); i <= cellOf(x + r); i++)
-        for (int j = cellOf(z - r); j <= cellOf(z + r); j++)
-            if (std::hypot(centerOf(i) - x, centerOf(j) - z) <= r) mark(i * kN + j);
+    if (!inWindow(x, z, r)) return;
+    for (int i = cellX(x - r); i <= cellX(x + r); i++)
+        for (int j = cellZ(z - r); j <= cellZ(z + r); j++)
+            if (std::hypot(centerX(i) - x, centerZ(j) - z) <= r) mark(i * kN + j);
 }
 
-const Grid& gridFor(const World& w) {
-    gHalf = w.halfSize(), kN = (int)(2 * gHalf / kCell);
+const Grid& gridFor(const World& w, const V3& from, const V3& to) {
+    const double half = w.halfSize();
+    if (2 * half <= kWindowMax) {
+        gOx = gOz = -half, kN = (int)(2 * half / kCell);
+    } else {  // (round the two ends, 600 m to spare each way; snapped to 64 m so a route nearby finds the window built)
+        const double side = std::min(kWindowMax, std::max(1200.0, std::max(std::fabs(to.x - from.x), std::fabs(to.z - from.z)) + 1200));
+        auto corner = [&](double mid) { return std::min(std::max(std::floor((mid - side / 2) / 64) * 64, -half), half - side); };
+        kN = (int)(side / kCell), gOx = corner((from.x + to.x) / 2), gOz = corner((from.z + to.z) / 2);
+    }
     CZ_THREAD_CACHE(Grid, g);
-    if (g.stamp == w.stamp && w.stamp) return g;
-    g.stamp = w.stamp;
+    if (g.stamp == w.stamp && w.stamp && g.ox == gOx && g.oz == gOz && g.n == kN) return g;
+    g.stamp = w.stamp, g.ox = gOx, g.oz = gOz, g.n = kN;
     const int N = kN * kN;
     g.h.assign(N, 0);
     g.slope.assign(N, 0);
@@ -81,7 +96,7 @@ const Grid& gridFor(const World& w) {
     g.lumps.clear();
     for (int i = 0; i < kN; i++)
         for (int j = 0; j < kN; j++) {
-            const double x = centerOf(i), z = centerOf(j);
+            const double x = centerX(i), z = centerZ(j);
             const int id = i * kN + j;
             g.h[id] = (float)w.height(x, z);
             const Surface s = w.surfaceAt(x, z);
@@ -104,7 +119,7 @@ const Grid& gridFor(const World& w) {
         std::vector<uint8_t> wet = g.tall;
         for (int i = 1; i < kN - 1; i++)
             for (int j = 1; j < kN - 1; j++)
-                if (wet[i * kN + j] && w.waterLevel(centerOf(i), centerOf(j)) > -1e8)
+                if (wet[i * kN + j] && w.waterLevel(centerX(i), centerZ(j)) > -1e8)
                     for (int di = -1; di <= 1; di++)
                         for (int dj = -1; dj <= 1; dj++) g.tall[(i + di) * kN + j + dj] = 1;
     }
@@ -118,7 +133,8 @@ const Grid& gridFor(const World& w) {
                 const double o = t - w.height(x, z);
                 if (o <= 0) continue;
                 tallest = std::max(tallest, o);
-                float& c = g.obs[cellOf(x) * kN + cellOf(z)];
+                if (!inWindow(x, z, 0)) continue;  // (out of the window: counted for the lump, not stamped on its edge)
+                float& c = g.obs[cellX(x) * kN + cellZ(z)];
                 c = std::max(c, (float)o);
             }
         return tallest;
@@ -153,9 +169,10 @@ const Grid& gridFor(const World& w) {
         const double hx = b.h.x * std::hypot(b.ax[0].x, b.ax[0].z) + grow;
         const double hz = b.h.z * std::hypot(b.ax[2].x, b.ax[2].z) + grow;
         const double r = std::hypot(hx, hz);
-        for (int i = cellOf(b.c.x - r); i <= cellOf(b.c.x + r); i++)
-            for (int j = cellOf(b.c.z - r); j <= cellOf(b.c.z + r); j++) {
-                const V3 d(centerOf(i) - b.c.x, 0, centerOf(j) - b.c.z);
+        if (!inWindow(b.c.x, b.c.z, r)) continue;
+        for (int i = cellX(b.c.x - r); i <= cellX(b.c.x + r); i++)
+            for (int j = cellZ(b.c.z - r); j <= cellZ(b.c.z + r); j++) {
+                const V3 d(centerX(i) - b.c.x, 0, centerZ(j) - b.c.z);
                 if (std::fabs(dot(d, ax)) <= hx && std::fabs(dot(d, az)) <= hz) g.tall[i * kN + j] = 1;
             }
     }
@@ -180,7 +197,7 @@ bool planRoute(const World& w, const VehicleSpec& vs, const V3& from, const V3& 
                std::vector<V3>& out, double capScale) {
     out.clear();
     double TP=nowMs(); struct PS{double t;~PS(){g_pt.plan+=nowMs()-t;g_pt.plans++;}} ps{TP};
-    const Grid& g = gridFor(w);
+    const Grid& g = gridFor(w, from, to);
     const bool truck = vs.transfer != XFER_NONE;
     const Limits lim{truck ? 0.5 : 0.28, truck ? 0.45 : 0.26, truck};
     // Ledges and rocks: the tallest step it can take, and drop it will go off.
@@ -203,8 +220,8 @@ bool planRoute(const World& w, const VehicleSpec& vs, const V3& from, const V3& 
         if (start) return true;
         return !g.tall[id] && !extra[id];
     };
-    const int si = cellOf(from.x), sj = cellOf(from.z);
-    int gi = cellOf(to.x), gj = cellOf(to.z);
+    const int si = cellX(from.x), sj = cellZ(from.z);
+    int gi = cellX(to.x), gj = cellZ(to.z);
     // The goal itself may sit among obstacles (a shed's posts): use the nearest open cell.
     if (!open(gi * kN + gj, false)) {
         double best = 1e9;
@@ -283,7 +300,7 @@ bool planRoute(const World& w, const VehicleSpec& vs, const V3& from, const V3& 
             const double dist = std::hypot(ni - pi, nj - pj) * kCell;
             const double grade = dist > 0 ? (g.h[nid] - g.h[id]) / dist : 0;
             const double sl = g.slope[nid], cross = std::sqrt(std::max(0.0, sl * sl - grade * grade));
-            std::printf("  cell (%.0f,%.0f) h %.1f obs %.2f tall %d extra %d grade %.2f cross %.2f step %.2f%s\n", centerOf(ni), centerOf(nj), g.h[nid], g.obs[nid],
+            std::printf("  cell (%.0f,%.0f) h %.1f obs %.2f tall %d extra %d grade %.2f cross %.2f step %.2f%s\n", centerX(ni), centerZ(nj), g.h[nid], g.obs[nid],
                         g.tall[nid], extra[nid], grade, cross, g.obs[nid] - g.obs[id],
                         closed[nid] ? " reached" : "");
             pi = ni, pj = nj;
@@ -292,7 +309,7 @@ bool planRoute(const World& w, const VehicleSpec& vs, const V3& from, const V3& 
     }
     if (!found) return false;
     std::vector<V3> pts;
-    for (int id = goal; id >= 0; id = parent[id]) pts.push_back(V3(centerOf(id / kN), 0, centerOf(id % kN)));
+    for (int id = goal; id >= 0; id = parent[id]) pts.push_back(V3(centerX(id / kN), 0, centerZ(id % kN)));
     std::reverse(pts.begin(), pts.end());
     pts.front() = V3(from.x, 0, from.z);
     // Smooth the grid's zigzags (a few passes of neighbour averaging, ends pinned).

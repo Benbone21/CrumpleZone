@@ -358,3 +358,37 @@ SCENARIO(backcountryRoutes, "backcountry/routes", "The autopilot can plan a way 
         ctx.check(std::string("a route to ") + f, ok);
     }
 }
+
+// The 6 km country round the old map (docs/plans/big-maps.md, phase 4): every district can be got to, and a truck drives into one.
+SCENARIO(backcountryBigCountry, "backcountry/big-country", "The 6 km Backcountry: the autopilot finds a way overland into each of the new districts, and the Bronco drives from the trailhead out onto Ranger Flats") {
+    ctx.sim.world = World(MAP_BACKCOUNTRY);
+    const World& w = ctx.sim.world;
+    ctx.check("6 x 6 km", w.halfSize() >= 3000, std::to_string(w.halfSize()));
+    ctx.check("grown over", w.trees.size() > 30000 && w.rocks.size() > 4000 && w.bushes.size() > 30000,
+              std::to_string(w.trees.size()) + " trees, " + std::to_string(w.rocks.size()) + " rocks");
+    // Overland from the edge of the old map to a spot in each district.
+    const struct {
+        const char* name;
+        V3 from, to;
+    } legs[] = {{"RANGER FLATS", V3(-480, 0, -60), V3(-1500, 0, 160)}, {"TIMBER BASIN", V3(-480, 0, 300), V3(-1400, 0, 1300)},
+                {"LAKESHORE", V3(-450, 0, -450), V3(-1250, 0, -1150)}, {"SOUTH UPLANDS", V3(0, 0, -480), V3(150, 0, -1500)},
+                {"BADLANDS WASH", V3(450, 0, -450), V3(1500, 0, -1500)}, {"BEAR CREEK RIM", V3(480, 0, -200), V3(1500, 0, -350)},
+                {"HIGH LAKES", V3(480, 0, 420), V3(1500, 0, 1400)}, {"COPPER RIDGE", V3(-1400, 0, 1300), V3(0, 0, 1900)}};
+    for (const auto& l : legs) {
+        std::vector<V3> route;
+        const bool ok = planRoute(w, bBronco(), l.from, l.to, PILOT_ANYWHERE, {}, route);
+        double L = 0;
+        for (size_t k = 1; k < route.size(); k++) L += std::hypot(route[k].x - route[k - 1].x, route[k].z - route[k - 1].z);
+        std::printf("ROUTE to %-18s %s %5.0f m\n", l.name, ok ? "ok " : "NONE", L);
+        ctx.check(std::string("a way to ") + l.name, ok);
+    }
+    // And one driven: from the trailhead out of the old map onto the flats.
+    const V3 s = w.spawn;
+    Car& c = ctx.add(bBronco(), s.x, s.z, w.spawnYaw * 180 / M_PI);
+    ctx.focus(c);
+    ctx.run(1.0);
+    double worst = 0;
+    const bool ok = pilotRun(ctx, c, V3(-1050, 0, -260), 35, 500, PILOT_ANYWHERE, &worst);
+    ctx.check("drove out onto Ranger Flats", ok, c.pilot.status);
+    ctx.metric("damage on the way (cross-country, no trail)", worst * 100, "%", 0, 10);
+}

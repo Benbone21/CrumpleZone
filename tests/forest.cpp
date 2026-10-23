@@ -167,11 +167,12 @@ SCENARIO(forestBudget, "forest/budget", "The trees and bushes a dense view draws
     std::vector<std::vector<forest::Pick>> b;
     V3 fwd;
     forest::View v = viewAt(w, -80, -250, 2, -39, -2, fwd);
+    if (w.halfSize() > 1000) v.maxDist = 1200;  // (as the game draws a big map's forest at HIGH: render.cpp)
     pt.pick(trees, v, b);
     const Count t = count(trees, b);
     pb.pick(bushes, v, b);
     const Count u = count(bushes, b);
-    ctx.metric("trees: triangles", (double)t.tris, "", 0, 200000);
+    ctx.metric("trees: triangles", (double)t.tris, "", 0, w.halfSize() > 1000 ? 260000 : 200000);  // (a big map: forest out to 1.2 km, not the old map's edge)
     ctx.metric("trees: draws", (double)t.draws, "", 0, 160);
     ctx.metric("bushes: triangles", (double)u.tris, "", 0, 30000);
     ctx.metric("bushes: draws", (double)u.draws, "", 0, 100);

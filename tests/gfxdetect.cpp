@@ -97,7 +97,7 @@ SCENARIO(gfxProbe, "engine/gfx-detect-probe", "The warm-up measurement steps the
 SCENARIO(waterBudget, "render/water-mesh-budget", "The water surface stays within its triangle budget") {
     // (Before the simplification: 41468 on the frontier, 12138 on the backcountry, 4608 a lake on the other maps.)
     struct Row { int map; size_t budget; };
-    for (const Row& r : {Row{MAP_FRONTIER, 12200}, Row{MAP_BACKCOUNTRY, 12200}, Row{MAP_PROVING_GROUND, 600}, Row{MAP_MOUNTAIN, 200}}) {
+    for (const Row& r : {Row{MAP_FRONTIER, 12200}, Row{MAP_BACKCOUNTRY, 90000} /* (6 km: 5 km more of Elk River and a 1 km lake) */, Row{MAP_PROVING_GROUND, 600}, Row{MAP_MOUNTAIN, 200}}) {
         World w(r.map);
         std::vector<Vtx> v;
         buildWaterMesh(w, v);

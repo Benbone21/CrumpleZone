@@ -6,16 +6,18 @@
 #include <string>
 #include <type_traits>
 
+#include "bytepack.h"
 #include "meshcache.h"
 #include "props.h"
 #include "world.h"
 
 namespace {
 const char kMagic[8] = {'C', 'Z', 'W', 'O', 'R', 'L', 'D', '1'};
-constexpr uint64_t kFormat = 1;  // bump with any change to what's written below or to how a map is built that the build id misses
+constexpr uint64_t kFormat = 3;  // bump with any change to what's written below or to how a map is built that the build id misses
 
 struct Out {
     std::vector<uint8_t> b;
+    std::vector<std::pair<uint64_t, uint64_t>> shuffled;  // 32-bit runs (at, count) to transform before packing (the heights)
     template <class T> void pod(const T& v) {
         static_assert(std::is_arithmetic<T>::value || std::is_enum<T>::value, "field by field");
         const size_t at = b.size();
@@ -101,7 +103,7 @@ const char* intern(const std::string& s) {
 struct WorldIO {
     template <class IO, class W> static void fields(IO& io, W& w) {
         io.pod(w.map), io.pod(w.half), io.pod(w.hN);
-        io.arr(w.hgrid), io.arr(w.surf), io.arr(w.paint);
+        heights(io, w), io.arr(w.surf), io.arr(w.paint);
         tiles(io, w.roadLat), tiles(io, w.roadAlong), tiles(io, w.roadNear);
         tiles(io, w.waterY), tiles(io, w.flowX), tiles(io, w.flowZ);
         io.list(w.boxes, [&](auto& x) {
@@ -118,8 +120,7 @@ struct WorldIO {
             io.v3(r.c), io.pod(r.r), io.pod(r.tint), io.pod(r.seed);
             io.list(r.v, [&](auto& p) { io.v3(p); });
             io.list(r.f, [&](auto& f) { io.pod(f[0]), io.pod(f[1]), io.pod(f[2]); });
-            io.list(r.fn, [&](auto& p) { io.v3(p); });
-            io.arr(r.fd);
+            faces(io, r);
             io.pod(r.scan);
             for (auto& a : r.axis) io.v3(a);
             io.v3(r.origin), io.v3(r.at);
@@ -157,6 +158,65 @@ struct WorldIO {
         return w.hN >= 2 && w.hgrid.size() == n && fits(w.surf.size()) && fits(w.paint.size()) && tilesFit(w.roadLat.side()) &&
                tilesFit(w.roadAlong.side()) && tilesFit(w.roadNear.side()) && tilesFit(w.waterY.side()) && tilesFit(w.flowX.side()) &&
                tilesFit(w.flowZ.side());
+    }
+    // The heights: noted for the delta-and-shuffle that makes them pack small.
+    // (Where the map's land before anything was laid on it can be made again, each height is stored as its bits' difference
+    // (xor) from that: zero over most of the map, which packs to next to nothing.)
+    static bool baseLand(const World& w, std::vector<float>& base) {
+        if (w.map != MAP_BACKCOUNTRY || w.hN < 2) return false;
+        backcountryLand(w.half, w.hN, base);
+        return base.size() == w.hgrid.size();
+    }
+    static void xorWith(std::vector<float>& h, const std::vector<float>& base) {
+        for (size_t k = 0; k < h.size(); k++) {
+            uint32_t a, b;
+            std::memcpy(&a, &h[k], 4), std::memcpy(&b, &base[k], 4);
+            a ^= b;
+            std::memcpy(&h[k], &a, 4);
+        }
+    }
+    static void heights(Out& o, const World& w) {
+        std::vector<float> base, h = w.hgrid;
+        const bool predicted = baseLand(w, base);
+        if (predicted) xorWith(h, base);
+        o.pod(predicted);
+        o.arr(h);
+        o.shuffled.push_back({o.b.size() - h.size() * 4, h.size()});
+    }
+    static void heights(In& in, World& w) {
+        bool predicted = false;
+        in.pod(predicted);
+        in.arr(w.hgrid);
+        std::vector<float> base;
+        if (in.ok && predicted && !(baseLand(w, base) && (xorWith(w.hgrid, base), true))) in.ok = false;
+    }
+    // A rock's face planes: left out when they're what its corners and faces give (most rocks), and worked out again.
+    static void derive(const Rock& r, std::vector<V3>& fn, std::vector<double>& fd) {
+        fn.clear(), fd.clear();
+        for (const auto& f : r.f) {
+            if (f[0] < 0 || f[1] < 0 || f[2] < 0 || f[0] >= (int)r.v.size() || f[1] >= (int)r.v.size() || f[2] >= (int)r.v.size()) return;
+            const V3 nrm = norm(cross(r.v[f[1]] - r.v[f[0]], r.v[f[2]] - r.v[f[0]]));
+            fn.push_back(nrm), fd.push_back(dot(nrm, r.v[f[0]]));
+        }
+    }
+    static void faces(Out& o, const Rock& r) {
+        std::vector<V3> fn;
+        std::vector<double> fd;
+        derive(r, fn, fd);
+        bool same = fn.size() == r.fn.size() && fd.size() == r.fd.size();
+        for (size_t k = 0; same && k < fn.size(); k++)
+            same = std::memcmp(&fn[k], &r.fn[k], sizeof(V3)) == 0 && std::memcmp(&fd[k], &r.fd[k], sizeof(double)) == 0;
+        o.pod(same);
+        if (same) return;
+        o.list(r.fn, [&](const V3& p) { o.v3(p); });
+        o.arr(r.fd);
+    }
+    static void faces(In& in, Rock& r) {
+        bool same = false;
+        in.pod(same);
+        if (same) return derive(r, r.fn, r.fd);
+        in.list(r.fn, [&](V3& p) { in.v3(p); });
+        in.arr(r.fd);
     }
     static void station(Out& o, const Station& s) { o.str(s.name ? s.name : ""); }
     static void station(In& in, Station& s) {
@@ -214,24 +274,41 @@ uint64_t keyFor(int map) {
     return h.h;
 }
 
+// The file: the magic, the format, the transformed runs, then the packed fields (bytepack.h).
 std::vector<uint8_t> encode(const World& w) {
     Out o;
-    o.b.insert(o.b.end(), kMagic, kMagic + sizeof kMagic);
-    o.pod(kFormat);
     WorldIO::fields(o, w);
-    return std::move(o.b);
+    for (const auto& r : o.shuffled) bytepack::deltaShuffle32(o.b, r.first, r.second);
+    Out head;
+    head.b.insert(head.b.end(), kMagic, kMagic + sizeof kMagic);
+    head.pod(kFormat);
+    head.pod((uint64_t)o.shuffled.size());
+    for (const auto& r : o.shuffled) head.pod(r.first), head.pod(r.second);
+    const std::vector<uint8_t> packed = bytepack::pack(o.b);
+    head.b.insert(head.b.end(), packed.begin(), packed.end());
+    return std::move(head.b);
 }
 
 bool decode(const std::vector<uint8_t>& bytes, World& w) {
-    if (bytes.size() < sizeof kMagic + 8 || std::memcmp(bytes.data(), kMagic, sizeof kMagic) != 0) return false;
-    In in(bytes);
-    in.at = sizeof kMagic;
-    uint64_t format = 0;
-    in.pod(format);
-    if (format != kFormat) return false;
+    if (bytes.size() < sizeof kMagic + 16 || std::memcmp(bytes.data(), kMagic, sizeof kMagic) != 0) return false;
+    In head(bytes);
+    head.at = sizeof kMagic;
+    uint64_t format = 0, runs = 0;
+    head.pod(format), head.pod(runs);
+    if (!head.ok || format != kFormat || runs > 64) return false;
+    std::vector<std::pair<uint64_t, uint64_t>> shuffled(runs);
+    for (auto& r : shuffled) head.pod(r.first), head.pod(r.second);
+    if (!head.ok) return false;
+    std::vector<uint8_t> body;
+    if (!bytepack::unpack(std::vector<uint8_t>(bytes.begin() + (long)head.at, bytes.end()), body)) return false;
+    for (const auto& r : shuffled) {
+        if (r.second > body.size() / 4 || r.first > body.size() - r.second * 4) return false;
+        bytepack::unshuffleDelta32(body, r.first, r.second);
+    }
+    In in(body);
     World tmp(w);  // (filled in a copy: a damaged file leaves `w` as it was)
     WorldIO::fields(in, tmp);
-    if (!in.ok || in.at != bytes.size()) return false;
+    if (!in.ok || in.at != body.size()) return false;
     if (!WorldIO::sane(tmp)) return false;
     w = std::move(tmp);
     return true;

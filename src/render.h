@@ -279,6 +279,8 @@ private:
     std::vector<int> slotChunk_;  // which chunk each pool slot holds (-1: free)
     bool terrainAll_ = true;      // every chunk's full mesh is loaded (a small map): nothing to stream
     V3 sceneEye_;                 // the camera this frame (for distance cuts)
+    V3 streamEye_ = V3(1e9, 0, 1e9);  // where streamTerrain last looked from
+    bool streamPending_ = true;       // ...and whether it left chunks to load
     int terrainOcclStep_ = 1;     // mesh steps per occlusion sample
     // The shaders' terrain texels (render.cpp terrainCell): a window of terrainWinW_ cells a side from cell (terrainWinI_,
     // terrainWinJ_), stored toroidally (cell (i, j) at texel (i mod W, j mod W)); the whole map when it fits, else round the camera.
@@ -370,6 +372,11 @@ private:
     int treeVertexCount = 0;
     ScanCover scanCover_;           // what the scanned props draw instead of the code-made meshes
     std::vector<float> treeFade_;   // per tree (World::trees): how much of it the camera hides now (treefade.h)
+    // (A big map: its trees by 64 m cell, so only those round the camera are looked at, and the ones still fading.)
+    std::vector<std::vector<int>> fadeCells_;
+    std::vector<int> fadeActive_;
+    int fadeCellN_ = 0;
+    uint64_t fadeStamp_ = 0;
     double fadeTime_ = 0;
     GLuint wheelVao[2][WHEEL_STYLES] = {}, wheelVbo[2][WHEEL_STYLES] = {}, caliperVao = 0, caliperVbo = 0;
     // Each tread on each wheel style (the tire alone: the rim is the wheel's), and snow chains.

@@ -678,9 +678,25 @@ void PropRenderer::setWorld(const World& w, int q) {
         const int cz = std::min(cellN - 1, std::max(0, (int)((in.c.z + w.halfSize()) / kStaticCell) + 1));
         Cell& c = cells[(size_t)cx * cellN + cz];
         c.inst.push_back(i);
+        c.maxSize = std::max(c.maxSize, in.tree ? 1e30f : in.size);
         c.mn = V3(std::min(c.mn.x, in.c.x - in.r), std::min(c.mn.y, in.c.y - in.r), std::min(c.mn.z, in.c.z - in.r));
         c.mx = V3(std::max(c.mx.x, in.c.x + in.r), std::max(c.mx.y, in.c.y + in.r), std::max(c.mx.z, in.c.z + in.r));
     }
+    blocks.clear();
+    for (int bx = 0; bx < cellN; bx += 8)
+        for (int bz = 0; bz < cellN; bz += 8) {
+            Block b;
+            for (int cx = bx; cx < std::min(cellN, bx + 8); cx++)
+                for (int cz = bz; cz < std::min(cellN, bz + 8); cz++) {
+                    const Cell& c = cells[(size_t)cx * cellN + cz];
+                    if (c.inst.empty()) continue;
+                    b.cells.push_back(cx * cellN + cz);
+                    b.mn = V3(std::min(b.mn.x, c.mn.x), std::min(b.mn.y, c.mn.y), std::min(b.mn.z, c.mn.z));
+                    b.mx = V3(std::max(b.mx.x, c.mx.x), std::max(b.mx.y, c.mx.y), std::max(b.mx.z, c.mx.z));
+                    b.maxSize = std::max(b.maxSize, c.maxSize);
+                }
+            if (!b.cells.empty()) blocks.push_back(std::move(b));
+        }
     // Trees near each 16 m cell (forest floor or open ground, for the scatter).
     treeNearN = (int)(2 * w.halfSize() / 16.0) + 1;
     treeNear.assign((size_t)treeNearN * treeNearN, 0);
@@ -846,8 +862,18 @@ void PropRenderer::select(const float pl[6][4], bool useBillboards, int lodBias,
         d.insert(d.end(), in.extra, in.extra + 3);
         d.push_back(fade);
     };
-    for (const Cell& c : cells) {
-        if (c.inst.empty() || !boxInFrustum(pl, c.mn, c.mx)) continue;
+    // (Nothing in a cell or block whose biggest instance is under the cull size at its nearest is drawn: it's passed over.)
+    const double cull = props::kLodCullSize / std::max(0.1, (double)kLodK[quality]);
+    auto tooFar = [&](const V3& mn, const V3& mx, float maxSize) {
+        const double dx = std::max({mn.x - eye.x, 0.0, eye.x - mx.x}), dy = std::max({mn.y - eye.y, 0.0, eye.y - mx.y}),
+                     dz = std::max({mn.z - eye.z, 0.0, eye.z - mx.z});
+        return maxSize < cull * std::sqrt(dx * dx + dy * dy + dz * dz);
+    };
+    for (const Block& bl : blocks) {
+      if (!boxInFrustum(pl, bl.mn, bl.mx) || tooFar(bl.mn, bl.mx, bl.maxSize)) continue;
+      for (int ci : bl.cells) {
+        const Cell& c = cells[ci];
+        if (c.inst.empty() || !boxInFrustum(pl, c.mn, c.mx) || tooFar(c.mn, c.mx, c.maxSize)) continue;
         if (!shadowPass && occluder) {
             RenderBounds b;
             b.add(c.mn), b.add(c.mx);
@@ -859,6 +885,7 @@ void PropRenderer::select(const float pl[6][4], bool useBillboards, int lodBias,
             if (!sphereInFrustum(pl, in.c, in.r)) continue;
             put(in, false, hidden(in));
         }
+      }
     }
     if (!shadowPass || lodBias == 0)
         for (const auto& kv : scatter) {

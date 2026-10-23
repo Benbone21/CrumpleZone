@@ -436,7 +436,10 @@ World::World(int m) : map(m) {
     { loadprof::Scope lpGrid("world.grid"); buildGrid(); }
 }
 
-double World::halfSizeFor(int) { return halfSizeOverride > 0 ? halfSizeOverride : kDefaultHalfSize; }
+double World::halfSizeFor(int map) {
+    if (halfSizeOverride > 0) return halfSizeOverride;
+    return map == MAP_BACKCOUNTRY ? 3072.0 : kDefaultHalfSize;  // (the Backcountry: 6 x 6 km, docs/plans/big-maps.md)
+}
 
 void World::cutCachedRocks() {
     // (The world cache keeps each rock's hull, not its convex pieces: cut the big scanned ones again, from the scans' saved cuts.)
@@ -1383,38 +1386,43 @@ void World::buildGrid() {
     static std::atomic<uint64_t> stamps{0};
     stamp = ++stamps;
     gridN = (int)(2 * half / kCell);
-    grid.assign(gridN * gridN, {});
-    for (int bi = 0; bi < (int)boxes.size(); bi++) {
-        const Box& b = boxes[bi];
-        double r = b.bound + 2.0;
-        for (int ix = cellOf(b.c.x - r); ix <= cellOf(b.c.x + r); ix++)
-            for (int iz = cellOf(b.c.z - r); iz <= cellOf(b.c.z + r); iz++) grid[ix * gridN + iz].push_back(bi);
-    }
-    poleGrid.assign(gridN * gridN, {});
-    for (int pi = 0; pi < (int)poles.size(); pi++) {
-        const Pole& p = poles[pi];
-        double r = p.r + 2.0;
-        for (int ix = cellOf(p.x - r); ix <= cellOf(p.x + r); ix++)
-            for (int iz = cellOf(p.z - r); iz <= cellOf(p.z + r); iz++) poleGrid[ix * gridN + iz].push_back(pi);
-    }
+    // (Each list in the order the objects come: what's hit first stays the same.)
+    grid.build(gridN * gridN, [&](auto emit) {
+        for (int bi = 0; bi < (int)boxes.size(); bi++) {
+            const Box& b = boxes[bi];
+            double r = b.bound + 2.0;
+            for (int ix = cellOf(b.c.x - r); ix <= cellOf(b.c.x + r); ix++)
+                for (int iz = cellOf(b.c.z - r); iz <= cellOf(b.c.z + r); iz++) emit(ix * gridN + iz, bi);
+        }
+    });
+    poleGrid.build(gridN * gridN, [&](auto emit) {
+        for (int pi = 0; pi < (int)poles.size(); pi++) {
+            const Pole& p = poles[pi];
+            double r = p.r + 2.0;
+            for (int ix = cellOf(p.x - r); ix <= cellOf(p.x + r); ix++)
+                for (int iz = cellOf(p.z - r); iz <= cellOf(p.z + r); iz++) emit(ix * gridN + iz, pi);
+        }
+    });
     // Rocks and logs: a finer grid (a boulder field has a lot of them).
     rockN = (int)(2 * half / kRockCell);
-    rockGrid.assign(rockN * rockN, {});
-    logGrid.assign(rockN * rockN, {});
     const double margin = 1.0;  // wheel radius plus half width
-    for (int ri = 0; ri < (int)rocks.size(); ri++) {
-        const Rock& k = rocks[ri];
-        double r = k.r + margin;
-        for (int ix = rockCellOf(k.c.x - r); ix <= rockCellOf(k.c.x + r); ix++)
-            for (int iz = rockCellOf(k.c.z - r); iz <= rockCellOf(k.c.z + r); iz++) rockGrid[ix * rockN + iz].push_back(ri);
-    }
-    for (int li = 0; li < (int)logs.size(); li++) {
-        const Log& g = logs[li];
-        double r = g.r + margin;
-        for (int ix = rockCellOf(std::min(g.a.x, g.b.x) - r); ix <= rockCellOf(std::max(g.a.x, g.b.x) + r); ix++)
-            for (int iz = rockCellOf(std::min(g.a.z, g.b.z) - r); iz <= rockCellOf(std::max(g.a.z, g.b.z) + r); iz++)
-                logGrid[ix * rockN + iz].push_back(li);
-    }
+    rockGrid.build(rockN * rockN, [&](auto emit) {
+        for (int ri = 0; ri < (int)rocks.size(); ri++) {
+            const Rock& k = rocks[ri];
+            double r = k.r + margin;
+            for (int ix = rockCellOf(k.c.x - r); ix <= rockCellOf(k.c.x + r); ix++)
+                for (int iz = rockCellOf(k.c.z - r); iz <= rockCellOf(k.c.z + r); iz++) emit(ix * rockN + iz, ri);
+        }
+    });
+    logGrid.build(rockN * rockN, [&](auto emit) {
+        for (int li = 0; li < (int)logs.size(); li++) {
+            const Log& g = logs[li];
+            double r = g.r + margin;
+            for (int ix = rockCellOf(std::min(g.a.x, g.b.x) - r); ix <= rockCellOf(std::max(g.a.x, g.b.x) + r); ix++)
+                for (int iz = rockCellOf(std::min(g.a.z, g.b.z) - r); iz <= rockCellOf(std::max(g.a.z, g.b.z) + r); iz++)
+                    emit(ix * rockN + iz, li);
+        }
+    });
 }
 
 void World::polesNear(const V3& mn, const V3& mx, std::vector<int>& out) const {
