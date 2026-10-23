@@ -84,8 +84,8 @@ struct HullLibrary {
 // The convex hull of `pts` cut down to at most `maxVerts` corners (each a corner of the true
 // hull: the farthest miss is added until the budget runs out), then pushed out along the
 // corner normals by half the worst miss so the scan hardly pokes through. Faces wound outward.
-// worstMiss (optional) gets how far the farthest point of `pts` was outside the cut-down hull.
-RockHull buildRockHull(const std::string& name, const std::vector<V3>& pts, int maxVerts, double* worstMiss = nullptr);
+// worstMiss (optional) gets how far the farthest point of `pts` was outside the cut-down hull. pushMax: the most a corner is pushed out.
+RockHull buildRockHull(const std::string& name, const std::vector<V3>& pts, int maxVerts, double* worstMiss = nullptr, double pushMax = 0.01);
 
 // A scan's drawn (first-LOD) mesh as a triangle soup (3 corners per triangle), in the model's own frame; read once per model and kept
 // (empty if the model isn't there).
@@ -95,6 +95,13 @@ const std::vector<V3>& rockMeshTris(const std::string& name);
 // surface it holds (along the surface normals, skipping what `ground` buries), until every piece is within `tol` or there are `maxParts`.
 // Empty when the single hull is already within `tol`. Each piece is a RockHull (faces wound outward) in the same frame as the mesh.
 std::vector<RockHull> splitRockMesh(const std::vector<V3>& tris, double (*ground)(void*, double, double), void* groundCtx, double tol, int maxParts);
+// The same for a scan placed in the world (world = origin + ax[0] p.x + ax[1] p.y + ax[2] p.z, p in the scan's own frame), quick: the
+// cuts are made once per scan in its own frame and kept (thread-safe, and on disk: saveRockSplits); a placement only rescales what was
+// measured there and maps the pieces. (Cut that way, a piece can come down to one triangle, and its stand-off counts straight up too.)
+std::vector<RockHull> splitPlacedScan(const std::string& name, const V3 ax[3], const V3& origin, double (*ground)(void*, double, double), void* groundCtx,
+                                      double tol, int maxParts);
+// Writes the cuts made since the last time to the disk cache (meshcache blobs), for the next run; the world calls it once it is built.
+void saveRockSplits();
 
 // ---- Which rocks World::addRock makes --------------------------------------------------
 // Scanned hulls are opt-in, per thread: the game turns them on (on the thread that builds

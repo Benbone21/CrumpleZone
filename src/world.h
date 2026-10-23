@@ -46,6 +46,7 @@ struct Rock {
     // the convex pieces it is really made of (each with its own c, r, v, f, fn, fd; none with parts). What is hit and driven on is
     // these; the hull above stays as the whole's bound and its look-alike for everything else. Empty: the hull is the rock.
     std::vector<Rock> parts;
+    bool partsDue = false;  // (placed while its world was being made: the world cuts it at the end, World::splitPendingRocks)
     V3 at;  // the point its pose turns it about (code-made: the middle of its points; scanned: the scan's middle)
 };
 
@@ -322,6 +323,9 @@ public:
     void solidsNear(double x0, double z0, double x1, double z1, NearbySolids& out) const;
 
     explicit World(int map = MAP_PROVING_GROUND);
+    // Big scanned rocks placed while the world is being made get their pieces (Rock::parts) all together at the end of it.
+    bool deferRockSplits = false;
+    void splitPendingRocks();
     double height(double x, double z) const;  // terrain only (baked grid, bilinear)
     V3 normal(double x, double z) const;
     RoadInfo roadAt(double x, double z) const;

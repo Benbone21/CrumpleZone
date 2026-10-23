@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <thread>
 
 namespace {
 const double kPadRadius = World::kPadRadius;  // (the old round pad: kept for where the woods and scatter stand)
@@ -213,6 +214,33 @@ void poseFrame(const RockPose& p, V3 out[3]) {
     out[0] = along, out[1] = rotateAxis(up0, along, p.roll), out[2] = cross(along, out[1]);
 }
 
+std::vector<props::RockHull> splitRock(const World& w, const Rock& k, const props::RockHull& hull) {
+    struct G {
+        const World* w;
+    } g{&w};
+    auto ground = [](void* c, double x, double z) { return static_cast<G*>(c)->w->height(x, z); };
+    return props::splitPlacedScan(hull.name, k.axis, k.origin, ground, &g, 0.02 + 0.008 * k.r, (int)std::min(160.0, 32 + 28 * k.r));
+}
+
+void attachRockParts(Rock& k, std::vector<props::RockHull>&& pieces) {
+    k.parts.clear();
+    k.parts.reserve(pieces.size());
+    for (props::RockHull& ph : pieces) {
+        Rock q;
+        q.v = std::move(ph.v), q.f = std::move(ph.f);
+        for (const auto& f : q.f) {
+            const V3 nrm = norm(cross(q.v[f[1]] - q.v[f[0]], q.v[f[2]] - q.v[f[0]]));
+            q.fn.push_back(nrm);
+            q.fd.push_back(dot(nrm, q.v[f[0]]));
+        }
+        V3 cc;
+        for (const V3& p : q.v) cc += p;
+        q.c = cc / (double)q.v.size();
+        for (const V3& p : q.v) q.r = std::max(q.r, len(p - q.c));
+        k.parts.push_back(std::move(q));
+    }
+}
+
 Rock& addScannedRock(World& w, const props::HullLibrary& lib, double x, double z, const V3& radii, double top, uint32_t seed, float tint, const RockPose* pose) {
     uint32_t s = seed * 2246822519u + 0x85ebca6bu;
     auto rnd = [&]() {
@@ -290,30 +318,11 @@ Rock& addScannedRock(World& w, const props::HullLibrary& lib, double x, double z
     for (const V3& q : k.v) cen += q;
     k.c = cen / (double)k.v.size();
     for (const V3& q : k.v) k.r = std::max(k.r, len(q - k.c));
-    // A big rock is cut into the convex pieces that follow its drawn surface (a lone hull would stand cm to dm above it).
+    // A big rock is cut into the convex pieces that follow its drawn surface (a lone hull would stand cm to dm above it): while the
+    // world is being made, all together at the end (on a few threads; nothing looks at them before then), else now.
     if (k.r > 1.2) {
-        const std::vector<V3>& mesh = props::rockMeshTris(hull.name);
-        std::vector<V3> tris;
-        tris.reserve(mesh.size());
-        for (const V3& p : mesh) tris.push_back(at + local(p));
-        struct G {
-            const World* w;
-        } g{&w};
-        auto ground = [](void* c, double x, double z) { return static_cast<G*>(c)->w->height(x, z); };
-        for (const props::RockHull& ph : props::splitRockMesh(tris, ground, &g, 0.02 + 0.008 * k.r, (int)std::min(160.0, 32 + 28 * k.r))) {
-            Rock q;
-            q.v = ph.v, q.f = ph.f;
-            for (const auto& f : q.f) {
-                const V3 nrm = norm(cross(q.v[f[1]] - q.v[f[0]], q.v[f[2]] - q.v[f[0]]));
-                q.fn.push_back(nrm);
-                q.fd.push_back(dot(nrm, q.v[f[0]]));
-            }
-            V3 cc;
-            for (const V3& p : q.v) cc += p;
-            q.c = cc / (double)q.v.size();
-            for (const V3& p : q.v) q.r = std::max(q.r, len(p - q.c));
-            k.parts.push_back(std::move(q));
-        }
+        if (w.deferRockSplits) k.partsDue = true;
+        else attachRockParts(k, splitRock(w, k, hull));
     }
     w.rocks.push_back(std::move(k));
     return w.rocks.back();
@@ -399,6 +408,7 @@ void World::addLake(double x, double z, double r, double depth) {
 
 World::World(int m) : map(m) {
     loadprof::Scope lpGen("world.terrain+layout");
+    deferRockSplits = true;
     if (map == MAP_MOUNTAIN) buildMountain();
     else if (map == MAP_FREEWAY) buildFreeway();
     else if (map == MAP_FRONTIER) buildFrontier();
@@ -407,7 +417,33 @@ World::World(int m) : map(m) {
     else buildProvingGround();
     // The slab the player starts on (and the parked trucks): in the game's proving ground, as the other maps are always built.
     if (map != MAP_PROVING_GROUND || withShowcase) addMapSpawnPads(*this);
+    splitPendingRocks();
     { loadprof::Scope lpGrid("world.grid"); buildGrid(); }
+}
+
+void World::splitPendingRocks() {
+    deferRockSplits = false;
+    std::vector<int> due;  // (rocks may have been taken away since: by index only now)
+    for (int i = 0; i < (int)rocks.size(); i++)
+        if (rocks[i].partsDue) due.push_back(i), rocks[i].partsDue = false;
+    const props::HullLibrary* lib = props::activeRockScans();  // (what they were placed from: this thread's)
+    if (due.empty() || !lib) return;
+    loadprof::Scope lp("world.rock pieces");
+    std::atomic<size_t> next{0};
+    auto work = [&] {
+        for (size_t i; (i = next++) < due.size();) {
+            const Rock& k = rocks[due[i]];
+            if (k.scan >= 0 && k.scan < (int)lib->hulls.size()) attachRockParts(rocks[due[i]], splitRock(*this, k, lib->hulls[k.scan]));
+        }
+    };
+    // (Each rock on its own: the same pieces whichever thread cuts it.)
+    const unsigned hc = std::thread::hardware_concurrency();
+    const int extra = (int)std::min<size_t>(due.size() / 64, (size_t)std::min(3u, hc > 1 ? hc - 1 : 0u));
+    std::vector<std::thread> helpers;
+    for (int i = 0; i < extra; i++) helpers.emplace_back(work);
+    work();
+    for (std::thread& t : helpers) t.join();
+    props::saveRockSplits();  // (the scanned rocks' cuts, if this world needed new ones: the next run reads them)
 }
 
 void World::buildProvingGround() {
