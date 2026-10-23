@@ -184,6 +184,8 @@ public:
     void passMark(FramePass p);
     void preload(const World& world);  // (after init and settings: loads what the first frame would)
     void gpuFrameBegin();
+    // A vehicle template is about to be freed (evictVisual): drops its static buffer and every car slot built from it.
+    void forgetTemplate(const VisualTemplate* t);
 
 private:
     // A vehicle's skin and the parts bound to it, kept in the car's own frame: drawn with the frame as the

@@ -98,8 +98,8 @@ public:
     static constexpr int kWorldVoices = 5;
     void setWorldVoice(int slot, int loop, float gain, float pan);
     void setHiss(float level);    // tire air hiss: 0 = off, 1 = full hiss (inflate/deflate)
-    // Game thread: publish the nearest engines, with distance attenuation and stereo pan.
-    void setNearbyEngines(const Sim& sim, const V3& listener, const V3& right, float timeScale);
+    // Game thread: publish the nearest engines, with distance attenuation and stereo pan (hush: none, e.g. in the showroom's studio).
+    void setNearbyEngines(const Sim& sim, const V3& listener, const V3& right, float timeScale, bool hush = false);
 
 private:
     friend struct AudioTest;

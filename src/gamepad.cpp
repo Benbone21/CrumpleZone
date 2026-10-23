@@ -206,7 +206,8 @@ void Logic::update(const Raw& raw, Mode ctx, double dt) {
         return;
     }
 
-    // Menu: D-pad or left stick move (holding repeats), A selects, B / Start back out.
+    // Menu: D-pad or left stick move (holding repeats), A selects, B / Start back out. (The showroom's tiles and rows
+    // move both ways.)
     static const int dirKey[4] = {SC_UP, SC_DOWN, SC_LEFT, SC_RIGHT};
     const bool want[4] = {D(B_UP) || L.y < -0.5f, D(B_DOWN) || L.y > 0.5f, D(B_LEFT) || L.x < -0.5f, D(B_RIGHT) || L.x > 0.5f};
     for (int d = 0; d < 4; d++) {

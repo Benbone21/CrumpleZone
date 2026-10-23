@@ -14,6 +14,7 @@
 // Running gear (arms, coil-overs, drive shafts) is rebuilt every frame from the
 // actual suspension beams, so what you see is what the physics is doing.
 #pragma once
+#include <functional>
 #include <vector>
 
 #include "render.h"
@@ -103,6 +104,10 @@ inline bool blockOnTemplates = false;
 // Starts building a spec's template on a worker (a vehicle about to spawn), and asks whether it is done.
 void prebuildVisual(const VehicleSpec& spec, const V3& color);
 bool visualReady(const VehicleSpec& spec);
+// Drops a spec's template so the spec can be freed (the cache is keyed by its address: a new spec at the same address would find
+// it). `forget` is told which template goes (the renderer frees what it holds for it). False, and nothing dropped, while the
+// template is still being made on a worker; true if there is none.
+bool evictVisual(const VehicleSpec& spec, const std::function<void(const VisualTemplate&)>& forget);
 
 // Evaluation from node positions P (the car's nodes, in whatever frame the result is wanted in). Indices are
 // appended for visible faces; glass faces go in both lists.

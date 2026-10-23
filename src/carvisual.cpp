@@ -1615,6 +1615,19 @@ void prebuildVisual(const VehicleSpec& spec, const V3& color) {
 
 bool visualReady(const VehicleSpec& spec) { return slotFor(&spec).ready.load(std::memory_order_acquire); }
 
+bool evictVisual(const VehicleSpec& spec, const std::function<void(const VisualTemplate&)>& forget) {
+    std::lock_guard<std::mutex> lk(cacheLock());
+    auto it = cache().find(&spec);
+    if (it == cache().end()) return true;
+    std::unique_ptr<Slot> dead;  // (freed after its mutex is let go)
+    std::unique_lock<std::mutex> building(it->second->build, std::try_to_lock);  // (held while a thread makes the template: not ours to free yet)
+    if (!building || (it->second->queued.load() && !it->second->ready.load(std::memory_order_acquire))) return false;
+    if (it->second->t && forget) forget(*it->second->t);
+    dead = std::move(it->second);
+    cache().erase(it);
+    return true;
+}
+
 void evalBody(const Car& car, const std::vector<V3>& P, const VisualTemplate& t, std::vector<BodyDynamic>& dyn, std::vector<unsigned>& opaque,
               std::vector<unsigned>& glass) {
     CZ_THREAD_CACHE(std::vector<V3>, pos);
