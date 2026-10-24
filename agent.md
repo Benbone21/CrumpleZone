@@ -143,6 +143,20 @@ Without `--time`, captures start at 10:00 with the clock running.
 
 ## Open work
 
+- **TODO, Proving Ground Jesko moonshot stunt (owner's request, 2026-10-24; not started):** on the Proving Ground, lining the Koenigsegg Jesko up on a marked spot of the track and driving it flat out should send it off a hill, over the road, down onto the grass, and up the map-border rim at very high speed, clearing the top of the rim mountain. The car for the stunt (the owner's setup):
+  - engine **RACE FUEL AND BOOST** (`jeskoMods` engine option 2, "5.0L TWIN-TURBO V8 RACE", about 1,500 kW / 2,000 hp on the F3 screen);
+  - body **ABSOLUT LOW-DRAG BODY** (suspension slot option 3: `dragArea` 0.53, `downforce` 0.1, no wing);
+  - transmission **SHORT FINAL DRIVE** (option 1, 3.6 final drive);
+  - wheels **stock** (option 0);
+  - tires **RACE SLICK** (`TIRE_RACE_SLICK`, fresh, no wear).
+  - Build it with `tunedSpec(vehicle, ModSet)` (`src/mods.h`; find the slick option with `modFindPart("jesko", MOD_TIRES, "RACE SLICK")`).
+
+  Notes for whoever does it:
+  - **Rim:** `World::baseHeight` (`src/world.cpp`) adds `0.02 * d^2` past 520 m from the centre on each axis (`kHalfSize` is 600, so about 128 m high at the edge on the axes, about 256 m in the corners). Check what the car does past the edge before relying on it.
+  - **Speed:** the stock Jesko reaches about 413 km/h on the freeway (`freeway/top-speed/koenigsegg jesko`); measure the modded car's speed over the real run-up length, since the jump needs it.
+  - **Tests drive on the Proving Ground**, so don't change the shared heightfield: build the hill, run-up and landing only when `World::withShowcase` is on (as the model yard and section park are), or keep the change far from where any test goes. Then the suite and the `bench_sim` fingerprint should not move.
+  - **Verify with a scenario** (`tests/`, `ctx.add(...)` plus `drive`, record the apex height and where it comes down), not by eye, and tune the hill and the landing until it clears the rim repeatably. Also mark the lining-up spot on the ground so a player can find it.
+
 - **Models and the model lab (2026-10-16):** everything the game draws that isn't a vehicle
   body is a code-made model in `src/models/*.cpp`, built with the kit in `src/modelkit.h`
   (frame: +X front, +Y up, +Z left, origin on the ground; read `docs/model-brief.md` before
