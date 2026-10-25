@@ -718,7 +718,7 @@ void Audio::render(float* out, int frames) {
     const float hissSmooth = 1.0f - std::exp(-dt * 100.0f);
     const float hissLowA = 1.0f - std::exp(-2 * (float)M_PI * std::min(1500.0f, 0.10f / dt) * dt);
     const float hissHighA = 1.0f - std::exp(-2 * (float)M_PI * std::min(3200.0f, 0.20f / dt) * dt);
-    const EngineTone voice{vExhaust_, vMuffler_, vLope_, vIntake_, vMech_, vRasp_, vCrackle_, vSeed_, vRumble_, vRoar_};
+    const EngineTone voice{vExhaust_, vMuffler_, vLope_, vIntake_, vMech_, vRasp_, vCrackle_, vSeed_, vRumble_, vRoar_, (uint8_t)std::clamp((int)vKind_, 0, EK_KINDS - 1), vVtec_};
     const EngineInput engineInput{tRpm, tLoad, tBoost, (int)cyl_, (int)induction_, (float)liters_, (float)redline_, (bool)flatPlane_,
                                  (uint8_t)std::clamp((int)recording_, 0, engineSamples::kBanks - 1), voice};
     const auto* localBank = recordings_.bank(engineInput.recording);

@@ -115,6 +115,16 @@ EngineTone voiceFor(const VehicleSpec& vs) {
         for (const char* c = vs.engineName; c && *c; c++) h = (h ^ (uint8_t)*c) * 16777619u;
         e.seed = h ? h : 1;
     }
+    if (e.kind == EK_AUTO) {  // (what kind of engine: from its layout, induction and name)
+        const std::string name = vs.engineName ? vs.engineName : "";
+        auto has = [&](const char* s) { return name.find(s) != std::string::npos; };
+        if (vs.cylinders == 4 && (has("VTEC") || has("TYPE R"))) {
+            e.kind = EK_I4_VTEC;
+            if (!e.vtecRpm) e.vtecRpm = has("B18C") ? 5700 : 5500;
+        } else if (vs.cylinders == 4 && has("FLAT-4")) e.kind = EK_FLAT4_AIR;
+        else if (vs.cylinders == 8 && !vs.flatPlane && has("LS")) e.kind = vs.induction == VehicleSpec::SUPERCHARGER ? EK_V8_LS_SUPERCHARGED : EK_V8_LS;
+        else e.kind = (uint8_t)engineKindFor(vs.cylinders, (int)vs.induction, vs.flatPlane, (float)vs.displacement);
+    }
     return e;
 }
 
