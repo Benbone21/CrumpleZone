@@ -1883,6 +1883,7 @@ int main(int argc, char** argv) {
     // The career: the profile (career.h: what you own, cash, the caches you've opened, your vehicles), and the world
     // being played (careersession.h). The old career.txt is only read, when there's no profile.txt yet (the migration).
     CareerSession careerRun;
+    careerRun.write = !scripted;  // (scripted runs never write the saves)
     Career& career = careerRun.profile;
     career.on = settings.career;
     if (scripted || !career.loadProfile()) career.startFresh();
@@ -2273,6 +2274,12 @@ int main(int argc, char** argv) {
         if (!careerRun.active) return;
         careersession::end(careerRun, sim);
         std::printf("career: saved %s\n", careerRun.world.slug.c_str());
+    };
+    // In a career world the vehicles and the map are the world's: what would swap them is refused (true), saying why.
+    auto careerRefuses = [&](const char* why) {
+        if (!careerRun.active) return false;
+        hud.toast(why);
+        return true;
     };
     auto startPendingCareer = [&]() {
         if (!careerNext.on) return;
@@ -2860,6 +2867,18 @@ int main(int argc, char** argv) {
             case PauseMenu::RESUME: closeMenu(); break;
             case PauseMenu::DRIVE:
                 closeMenu();
+                if (careerRun.active) {  // (a career world: one of your own, at a station; careersession.h)
+                    const int k = careersession::ownedOf(careerRun, sim, res.vehicle);
+                    std::string why;
+                    if (walker.active) hud.toast("GET INTO YOUR VEHICLE FIRST");
+                    else if (k < 0) hud.toast(std::string("YOU DON'T OWN ANOTHER ") + vehicleCatalog()[res.vehicle].name);
+                    else if (!careersession::swapTo(careerRun, sim, k, why)) hud.toast(why);
+                    else {
+                        cam.initialized = false;
+                        hud.toast(std::string("NOW DRIVING ") + vehicleCatalog()[res.vehicle].name + " (YOURS LEFT PARKED HERE)");
+                    }
+                    break;
+                }
                 sim.swapPlayerVehicle(garage.spec(res.vehicle));
                 hud.toast(std::string("NOW DRIVING ") + vehicleCatalog()[res.vehicle].name);
                 break;
@@ -2888,6 +2907,11 @@ int main(int argc, char** argv) {
                 if (probe.active() && presetOf(settings.gfx) != probe.preset()) probe.cancel(), probePending = false;  // (you picked one yourself)
                 applySettings();
                 saveSettings();
+                if (settings.career != career.on && careerRun.active) {  // (not inside a career world: its vehicles would go sandbox)
+                    settings.career = career.on;
+                    saveSettings();
+                    hud.toast("LEAVE TO THE MAIN MENU TO SWITCH TO SANDBOX");
+                }
                 if (settings.career != career.on) {  // career <-> sandbox: each has its own garage
                     career.on = settings.career;
                     garagePath = career.on ? configDir() + "/garage-career.txt" : Garage::defaultPath();
@@ -2941,6 +2965,7 @@ int main(int argc, char** argv) {
                 break;
             case PauseMenu::FREE_DRIVE: {
                 closeMenu();
+                if (careerRefuses("LEAVE TO THE MAIN MENU TO CHANGE MAP")) break;
                 run.stop();
                 levelHours = -1;
                 if (net.role == NetSession::HOST) net.setLevel("");
@@ -3067,6 +3092,7 @@ int main(int argc, char** argv) {
                 break;
             case PauseMenu::LOAD_MAP: {
                 closeMenu();
+                if (careerRefuses("LEAVE TO THE MAIN MENU TO CHANGE MAP")) break;
                 if (net.active()) {
                     hud.toast("LEAVE THE MULTIPLAYER SESSION TO CHANGE MAPS");
                     break;
@@ -3203,8 +3229,8 @@ int main(int argc, char** argv) {
                 if (mapLoad.active()) break;  // (a map on its way already: it would take the world's place)
                 WorldSave w;
                 if (r.act == A_CAREER_NEW) {
-                    w = newWorld(r.worldName, r.map, (Difficulty)r.difficulty, (WorldMode)r.mode, listWorlds());
-                    if (!saveWorld(w)) {
+                    w = careersession::newWorldFor(career, r.worldName, r.map, (Difficulty)r.difficulty, (WorldMode)r.mode);
+                    if (!scripted && !saveWorld(w)) {
                         hud.toast("CAN'T SAVE THE NEW WORLD");
                         break;
                     }
@@ -3223,7 +3249,8 @@ int main(int argc, char** argv) {
                 break;
             }
             case A_CAREER_DELETE:
-                if (!deleteWorld(r.world)) hud.toast("COULDN'T DELETE THAT WORLD");
+                // (its vehicles stay yours, in no world: a new world by the same name doesn't get them back)
+                if (!careersession::forgetWorld(career, r.world, !scripted)) hud.toast("COULDN'T DELETE THAT WORLD");
                 mainNav.worlds = listWorlds();
                 break;
         }
@@ -3281,6 +3308,7 @@ int main(int argc, char** argv) {
         switch (da.act) {
             case NONE: break;
             case SWAP_VEHICLE:
+                if (careerRefuses("A CAREER WORLD HAS ONLY YOUR OWN VEHICLES")) break;
                 if (da.arg >= 0 && da.arg < (int)listed.size()) {  // (the listed vehicles, in order: 1 the Blazer)
                     const int k = da.arg;
                     whenVisualReady(garage.spec(listed[k]), [&, k] {

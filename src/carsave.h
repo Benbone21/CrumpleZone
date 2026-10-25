@@ -9,6 +9,7 @@
 #pragma once
 #include <string>
 
+#include "mathx.h"
 #include "mods.h"
 
 class Sim;
@@ -26,5 +27,8 @@ bool restore(Sim& sim, Car& c, const std::string& text);
 // The catalog vehicle the text is for (-1: none), and its mods.
 int vehicleOf(const std::string& text);
 ModSet modsOf(const std::string& text);
+// The same condition, stood somewhere else: its place (com, rot as net::dentPose gives them) replaced ("" if the text
+// isn't a condition).
+std::string posed(const std::string& text, const V3& com, const Quat& rot);
 
 }  // namespace carsave

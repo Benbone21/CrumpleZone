@@ -330,3 +330,127 @@ SCENARIO(careerSessionSandbox, "career/session-sandbox", "Sandbox (no world begu
     ctx.check("career off", !s.profile.on && !s.active);
     ctx.check("the sim's car is no career car", ctx.sim.cars[ctx.sim.player].careerSlot == -1);
 }
+
+SCENARIO(careerSessionSwap, "career/session-swap", "A car swapped for another vehicle type in a world isn't saved over the owned vehicle") {
+    ScopedCareerDir scope(freshDir("session-swap"));
+    const int blazer = catalogIndex("blazer"), tacoma = catalogIndex("tacoma");
+    ctx.sim.setupEmpty();
+    WorldSave w = newWorld("Swap", MAP_PROVING_GROUND, DIFF_MEDIUM, MODE_PERSONAL, {});
+    CareerSession s;
+    careersession::begin(s, ctx.sim, w, "ANN", blazer);
+    ctx.run(1.0);
+    careersession::capture(s, ctx.sim);
+    const std::string before = s.profile.vehicles[0].condition;
+    ctx.check("captured as the Blazer", carsave::vehicleOf(before) == blazer);
+    ctx.sim.swapPlayerVehicle(vehicleCatalog()[tacoma]);
+    ctx.run(0.5);
+    careersession::capture(s, ctx.sim);
+    ctx.check("still the Blazer, its condition as it was", s.profile.vehicles[0].vehicle == blazer && s.profile.vehicles[0].condition == before);
+}
+
+SCENARIO(careerSessionDelete, "career/session-delete", "Deleting a world keeps its vehicles in no world; a new world by the same name gets a fresh folder and none of them") {
+    const std::string dir = freshDir("session-delete");
+    ScopedCareerDir scope(dir);
+    const int blazer = catalogIndex("blazer"), bronco = catalogIndex("bronco");
+    ctx.sim.setupEmpty();
+    WorldSave w = careersession::newWorldFor(Career(), "Gone", MAP_PROVING_GROUND, DIFF_MEDIUM, MODE_PERSONAL);
+    CareerSession s;
+    careersession::begin(s, ctx.sim, w, "ANN", blazer);
+    careersession::end(s, ctx.sim);
+    ctx.check("deleted", careersession::forgetWorld(s.profile, w.slug, true) && !isDir(dir + "/worlds/" + w.slug));
+    Career p;
+    ctx.check("the profile keeps the Blazer, in no world", p.loadProfile() && p.vehicles.size() == 1 && p.vehicles[0].vehicle == blazer && p.vehicles[0].world.empty());
+
+    Career ghost;  // (a profile still naming a world whose folder is gone)
+    OwnedVehicle ov;
+    ov.world = "gone";
+    ghost.vehicles = {ov};
+    ctx.check("a slug a profile vehicle names isn't reused", careersession::newWorldFor(ghost, "Gone", 0, DIFF_MEDIUM, MODE_PERSONAL).slug != "gone");
+
+    WorldSave again = careersession::newWorldFor(p, "Gone", MAP_PROVING_GROUND, DIFF_MEDIUM, MODE_PERSONAL);
+    Sim sim2;
+    sim2.setupEmpty();
+    CareerSession s2;
+    careersession::begin(s2, sim2, again, "ANN", bronco);
+    ctx.check("only the new Bronco is out", vehiclesIn(sim2) == 1 && sim2.cars[sim2.player].spec->model == bronco);
+    ctx.check("the profile has both", s2.profile.vehicles.size() == 2);
+    careersession::end(s2, sim2);
+    const std::string saved = slurp(Career::profilePath());
+    ctx.check("deleting with write off touches nothing",
+              careersession::forgetWorld(s2.profile, again.slug, false) && isDir(dir + "/worlds/" + again.slug) && slurp(Career::profilePath()) == saved);
+}
+
+SCENARIO(careerSessionNoWrite, "career/session-nowrite", "A scripted run's session (write off): the autosave and the end come round but nothing is written") {
+    const std::string dir = freshDir("session-nowrite");
+    ScopedCareerDir scope(dir);
+    ctx.sim.setupEmpty();
+    WorldSave w = newWorld("Quiet", MAP_PROVING_GROUND, DIFF_MEDIUM, MODE_PERSONAL, {});
+    CareerSession s;
+    s.write = false;
+    careersession::begin(s, ctx.sim, w, "ANN", catalogIndex("blazer"));
+    bool saved = false;
+    for (int k = 0; k < 180; k++) saved |= careersession::tick(s, ctx.sim, 1.0);
+    careersession::end(s, ctx.sim);
+    ctx.check("the autosave came round", saved);
+    ctx.check("no profile.txt", !fileThere(dir + "/profile.txt"));
+    ctx.check("no worlds folder", !isDir(dir + "/worlds"));
+}
+
+SCENARIO(careerSessionStationSwap, "career/session-station-swap", "Changing vehicles: refused away from a station and for one you don't own; at a station between two of yours, both kept as they were") {
+    ScopedCareerDir scope(freshDir("session-station-swap"));
+    const int blazer = catalogIndex("blazer"), tacoma = catalogIndex("tacoma"), bronco = catalogIndex("bronco");
+    ctx.sim.setupEmpty();
+    WorldSave w = newWorld("Swaps", MAP_PROVING_GROUND, DIFF_MEDIUM, MODE_PERSONAL, {});
+    CareerSession s;
+    careersession::begin(s, ctx.sim, w, "ANN", blazer);
+    OwnedVehicle other;  // (a Tacoma of yours in no world)
+    other.vehicle = tacoma;
+    s.profile.vehicles.push_back(other);
+    {  // the Blazer bent a little, and settled
+        Car& c = ctx.sim.cars[ctx.sim.player];
+        for (size_t k = 0; k < c.beams.size(); k += 7)
+            if (c.beams[k].type == BEAM_BODY) c.beams[k].L0 *= 1.02;
+        c.handbrake = 1;
+    }
+    ctx.run(1.5);
+    std::string why;
+    ctx.check("away from a station: refused", !careersession::canSwapHere(ctx.sim) && !careersession::swapTo(s, ctx.sim, 1, why) && why == "SWAP VEHICLES AT A STATION", why);
+    const V3 here = ctx.sim.cars[ctx.sim.player].frame().com;
+    Station st;
+    st.p = V3(here.x, 0, here.z);
+    st.name = "TEST";
+    ctx.sim.world.stations.push_back(st);
+    ctx.check("on the pad: allowed", careersession::canSwapHere(ctx.sim));
+    ctx.check("a Bronco: not yours", careersession::ownedOf(s, ctx.sim, bronco) < 0);
+    ctx.check("a vehicle you don't own: refused", !careersession::swapTo(s, ctx.sim, 7, why), why);
+    ctx.check("the one you're in: refused", !careersession::swapTo(s, ctx.sim, 0, why), why);
+
+    const std::vector<int16_t> blazerDents = net::carDents(ctx.sim.cars[ctx.sim.player]);
+    const int t = careersession::ownedOf(s, ctx.sim, tacoma);
+    ctx.check("your Tacoma", t == 1);
+    ctx.check("swapped into the Tacoma", careersession::swapTo(s, ctx.sim, t, why), why);
+    ctx.check("you're in the Tacoma", ctx.sim.cars[ctx.sim.player].spec->model == tacoma && ctx.sim.cars[ctx.sim.player].careerSlot == 1);
+    const Car* parked = slotCar(ctx.sim, 0);
+    ctx.check("the Blazer stays parked where it was", parked && len(parked->frame().com - here) < 0.05);
+    ctx.check("the Tacoma is in this world now", s.profile.vehicles[1].world == w.slug);
+    ctx.check("two vehicles out", vehiclesIn(ctx.sim) == 2);
+    ctx.run(1.0);
+
+    ctx.check("and back into the Blazer", careersession::swapTo(s, ctx.sim, careersession::ownedOf(s, ctx.sim, blazer), why), why);
+    const Car& back = ctx.sim.cars[ctx.sim.player];
+    ctx.check("you're in the Blazer", back.spec->model == blazer && back.careerSlot == 0);
+    const double off = worstDentMm(blazerDents, net::carDents(back));
+    ctx.check("the same dents (2 mm)", off <= 2, std::to_string(off) + " mm");
+    ctx.check("still two vehicles out", vehiclesIn(ctx.sim) == 2);
+    ctx.check("the Tacoma's condition kept", carsave::vehicleOf(s.profile.vehicles[1].condition) == tacoma);
+
+    careersession::end(s, ctx.sim);
+    Sim sim2;
+    sim2.setupEmpty();
+    WorldSave w2;
+    loadWorld(w.slug, w2);
+    CareerSession s2;
+    careersession::begin(s2, sim2, w2, "ANN");
+    ctx.check("continued: both out, you in the Blazer",
+              vehiclesIn(sim2) == 2 && sim2.cars[sim2.player].spec->model == blazer && slotCar(sim2, 1) && slotCar(sim2, 1)->spec->model == tacoma);
+}

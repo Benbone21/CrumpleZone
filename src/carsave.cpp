@@ -436,6 +436,19 @@ ModSet modsOf(const std::string& text) {
     return m;
 }
 
+std::string posed(const std::string& text, const V3& com, const Quat& rot) {
+    std::map<std::string, std::string> kv;
+    if (!fields(text, kv)) return "";
+    std::string out;
+    for (const std::string& w : split(text, ' ')) {
+        out += out.empty() ? "" : " ";
+        if (w.rfind("com=", 0) == 0) out += "com=" + num(com.x) + ',' + num(com.y) + ',' + num(com.z);
+        else if (w.rfind("rot=", 0) == 0) out += "rot=" + num(rot.w) + ',' + num(rot.x) + ',' + num(rot.y) + ',' + num(rot.z);
+        else out += w;
+    }
+    return out;
+}
+
 bool restore(Sim& sim, Car& c, const std::string& text) {
     (void)sim;
     std::map<std::string, std::string> kv;
