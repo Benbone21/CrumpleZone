@@ -40,7 +40,8 @@ void begin(CareerSession& s, Sim& sim, const WorldSave& w, const std::string& pl
 void capture(CareerSession& s, const Sim& sim);
 // Counts the time played; true (and the profile and world saved) once kAutosaveEvery has passed since the last save.
 bool tick(CareerSession& s, const Sim& sim, double dt);
-// Out of the world: capture, both saved, and the session over. Nothing when it isn't active.
+// Out of the world: capture, both saved, the session over and career mode off (profile.on: there's no career without a
+// world). Nothing when it isn't active.
 void end(CareerSession& s, const Sim& sim);
 
 // Changing vehicles in a career world: only where it can be done (a repair station's pad; later phases add outposts and

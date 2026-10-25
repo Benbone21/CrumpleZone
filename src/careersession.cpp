@@ -173,6 +173,7 @@ void end(CareerSession& s, const Sim& sim) {
     if (!s.active) return;
     saveBoth(s, sim);
     s.active = false;
+    s.profile.on = false;  // (no career without a world: the game goes back to sandbox)
 }
 
 bool canSwapHere(const Sim& sim) {

@@ -1883,12 +1883,13 @@ int main(int argc, char** argv) {
     // The career: the profile (career.h: what you own, cash, the caches you've opened, your vehicles), and the world
     // being played (careersession.h). The old career.txt is only read, when there's no profile.txt yet (the migration).
     CareerSession careerRun;
-    careerRun.write = !scripted;  // (scripted runs never write the saves)
+    const bool careerQuiet = scripted || !opt.script.empty();  // (scripted and --script runs never write the career saves)
+    careerRun.write = !careerQuiet;
     Career& career = careerRun.profile;
     career.on = settings.career;
     if (scripted || !career.loadProfile()) career.startFresh();
     auto saveCareer = [&]() {
-        if (!scripted && career.on) career.saveProfile();
+        if (!careerQuiet && career.on) career.saveProfile();
     };
     std::vector<CacheSpot> caches;  // this map's supply caches (a career's)
     int cachesMap = -1;
@@ -2270,10 +2271,25 @@ int main(int argc, char** argv) {
         WorldSave world;
         int start = -1;  // a new world: the vehicle it starts in
     } careerNext;
-    auto endCareer = [&]() {
+    // Out of the world is out of career mode (no career without a world): back to sandbox, its garage and gear, unless
+    // the world is to restart (CAREER_RESTART) or the game is quitting (CAREER_QUIT: only the setting).
+    enum { CAREER_TO_SANDBOX, CAREER_QUIT, CAREER_RESTART };
+    auto endCareer = [&](int how = CAREER_TO_SANDBOX) {
         if (!careerRun.active) return;
-        careersession::end(careerRun, sim);
-        std::printf("career: saved %s\n", careerRun.world.slug.c_str());
+        careersession::end(careerRun, sim);  // (career.on goes off with it)
+        std::printf("career: %s %s\n", careerRun.write ? "saved" : "left (a scripted run: not written)", careerRun.world.slug.c_str());
+        if (how == CAREER_RESTART) return;
+        settings.career = false;
+        saveSettings();
+        if (how == CAREER_QUIT) return;
+        garagePath = Garage::defaultPath();
+        garage = Garage();
+        garage.load(garagePath);
+        const Car& pc = sim.cars[sim.player];
+        if (!pc.isProp() && pc.spec->model >= 0) sim.swapPlayerVehicle(garage.spec(pc.spec->model));
+        cachesMap = -1;
+        sim.anchorStock = AnchorStock();
+        hud.toast("LEFT " + careerRun.world.name + " (SAVED): SANDBOX");
     };
     // In a career world the vehicles and the map are the world's: what would swap them is refused (true), saying why.
     auto careerRefuses = [&](const char* why) {
@@ -3230,7 +3246,7 @@ int main(int argc, char** argv) {
                 WorldSave w;
                 if (r.act == A_CAREER_NEW) {
                     w = careersession::newWorldFor(career, r.worldName, r.map, (Difficulty)r.difficulty, (WorldMode)r.mode);
-                    if (!scripted && !saveWorld(w)) {
+                    if (!careerQuiet && !saveWorld(w)) {
                         hud.toast("CAN'T SAVE THE NEW WORLD");
                         break;
                     }
@@ -3250,7 +3266,7 @@ int main(int argc, char** argv) {
             }
             case A_CAREER_DELETE:
                 // (its vehicles stay yours, in no world: a new world by the same name doesn't get them back)
-                if (!careersession::forgetWorld(career, r.world, !scripted)) hud.toast("COULDN'T DELETE THAT WORLD");
+                if (!careersession::forgetWorld(career, r.world, !careerQuiet)) hud.toast("COULDN'T DELETE THAT WORLD");
                 mainNav.worlds = listWorlds();
                 break;
         }
@@ -3383,6 +3399,10 @@ int main(int argc, char** argv) {
                 timeScaleIdx = std::max(timeScaleIdx - 1, 0); sim.timeScale = kTimeScales[timeScaleIdx];
                 break;
             case RESET_WORLD:
+                if (careerRun.active) {  // (a career world: saved, then the same world again on the fresh map)
+                    endCareer(CAREER_RESTART);
+                    careerNext.on = true, careerNext.world = careerRun.world, careerNext.start = -1;
+                }
                 run.stop();
                 levelHours = -1;
                 requestMap(sim.world.map, nullptr);
@@ -6548,7 +6568,7 @@ int main(int argc, char** argv) {
     }
     writeSuiteSummary();  // (the window closed part-way: what was done)
     const std::string careerSlug = careerRun.active ? careerRun.world.slug : "";
-    endCareer();  // (quit from a menu, the window closed, a reload, a script's quit: a career world is saved)
+    endCareer(CAREER_QUIT);  // (quit from a menu, the window closed, a reload, a script's quit: a career world is saved)
     if (allocWatch && !allocFrames.empty()) {
         std::vector<uint64_t> v = allocFrames;
         std::sort(v.begin(), v.end());

@@ -224,7 +224,7 @@ SCENARIO(careerSessionContinue, "career/session-continue", "A Bronco driven 30 m
     ctx.check("dented", car.damage > 0.005, std::to_string(car.damage));
     const std::vector<int16_t> dents = net::carDents(car);
     careersession::end(s, ctx.sim);
-    ctx.check("ended", !s.active);
+    ctx.check("ended, career mode off with it", !s.active && !s.profile.on);
     ctx.check("profile saved", fileThere(dir + "/profile.txt"));
     ctx.check("world saved", fileThere(dir + "/worlds/" + w.slug + "/world.txt"));
 
