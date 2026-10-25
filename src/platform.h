@@ -2,6 +2,7 @@
 #pragma once
 #include <cstdlib>
 #include <string>
+#include <vector>
 
 #ifdef _WIN32
 #include <direct.h>
@@ -41,6 +42,14 @@ inline void makeDir(const std::string& path) {
     mkdir(path.c_str(), 0755);
 #endif
 }
+
+// The names (not paths) inside a folder, without "." and ".."; empty if it can't be read. (platform.cpp)
+std::vector<std::string> listDir(const std::string& dir);
+// Whether PATH is a folder (a symlink to one doesn't count), and a file's last-modified time in seconds (0 if it isn't there).
+bool isDir(const std::string& path);
+long long fileMTime(const std::string& path);
+// Deletes a folder and everything in it (symlinks are removed, not followed); false if anything is left. (platform.cpp)
+bool removeTree(const std::string& dir);
 
 // The running executable's full path (symlinks resolved) and its folder; "" if unknown.
 // (platform.cpp: /proc/self/exe, GetModuleFileName, _NSGetExecutablePath.)

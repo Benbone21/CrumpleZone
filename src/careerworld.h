@@ -1,5 +1,6 @@
 // Career worlds: the difficulty and mode a world is created with, and the folder name it gets.
 #pragma once
+#include <set>
 #include <string>
 #include <vector>
 
@@ -30,3 +31,32 @@ struct ScopedCareerDir {
 private:
     std::string prev_;
 };
+
+// A car a player left behind in a world (owner = player name; condition = the car's saved damage text, kept as is).
+struct LeftVehicle {
+    std::string owner;
+    int vehicle = 0;
+    std::string condition;
+};
+
+// One world's save (worlds/<slug>/world.txt). `damaged` is set when neither world.txt nor its .bak could be read
+// (only name = slug is then known).
+struct WorldSave {
+    std::string name, slug;
+    int map = 0;
+    Difficulty diff = DIFF_MEDIUM;
+    WorldMode mode = MODE_PERSONAL;
+    std::string build;
+    std::vector<LeftVehicle> left;
+    std::set<std::string> opened;
+    double playedSeconds = 0;
+    bool damaged = false;
+};
+
+std::string worldsDir();  // careerConfigDir() + "/worlds"
+bool saveWorld(const WorldSave& w);  // atomic; the previous good world.txt becomes world.txt.bak
+bool loadWorld(const std::string& slug, WorldSave& w);  // falls back to the .bak; both bad: w.damaged, false
+std::vector<WorldSave> listWorlds();  // every folder in worldsDir(), damaged ones too, most recently saved first
+bool deleteWorld(const std::string& slug);
+// A new world (not saved): the slug is free among `existing`, build is this release.
+WorldSave newWorld(const std::string& name, int map, Difficulty d, WorldMode m, const std::vector<WorldSave>& existing);
