@@ -119,7 +119,8 @@ SCENARIO(careerCaches, "career/caches", "Supply caches on the Frontier and in th
         const World& w = ctx.sim.world;
         const std::vector<CacheSpot> spots = cacheSpots(w);
         const std::string name = mapName(map);
-        ctx.check(name + ": ten caches", spots.size() == 10, std::to_string(spots.size()));
+        const size_t want = map == MAP_BACKCOUNTRY ? 60 : 10;  // (the 6 km Backcountry: the ten hand-made ones and fifty from its places: places.h)
+        ctx.check(name + ": " + std::to_string(want) + " caches", spots.size() == want, std::to_string(spots.size()));
         bool contents = true, dry = true, apart = true, onMap = true;
         std::string bad;
         for (size_t i = 0; i < spots.size(); i++) {
@@ -127,7 +128,7 @@ SCENARIO(careerCaches, "career/caches", "Supply caches on the Frontier and in th
             std::printf("  %s %s at (%.0f, %.0f): %s\n", name.c_str(), s.id.c_str(), s.at.x, s.at.z, s.part.empty() ? ("$" + std::to_string(s.cash)).c_str() : modPartTitle(s.part).c_str());
             if (s.part.empty() ? s.cash <= 0 : modPartTitle(s.part).empty()) contents = false, bad += " " + s.id;
             if (w.waterLevel(s.at.x, s.at.z) > s.at.y - 0.1) dry = false, bad += " wet:" + s.id;
-            if (std::fabs(s.at.x) > 590 || std::fabs(s.at.z) > 590) onMap = false;
+            if (std::fabs(s.at.x) > w.halfSize() - 10 || std::fabs(s.at.z) > w.halfSize() - 10) onMap = false;
             for (size_t j = 0; j < i; j++)
                 if (len(spots[j].at - s.at) < 30) apart = false, bad += " near:" + s.id;
             for (const Station& st : w.stations)

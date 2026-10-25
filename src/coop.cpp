@@ -281,7 +281,7 @@ void Coop::drawChat(Renderer& r, int W, int H) const {
     }
 }
 
-void Coop::drawMap(Renderer& r, const Sim& sim, const NetSession& net, int W, int H, const std::vector<std::pair<std::string, V3>>& places) {
+void Coop::drawMap(Renderer& r, const Sim& sim, const NetSession& net, int W, int H, const std::vector<DiscoverSpot>& places) {
     if (mapWorld != (int)(sim.world.stamp & 0x7fffffff) || mapN == 0) buildMap(sim.world);
     const float u = std::max(0.75f, H / 720.0f), s = px(1.2f * u);
     r.rect(0, 0, (float)W, (float)H, 0.02f, 0.03f, 0.04f, 0.92f);
@@ -318,11 +318,26 @@ void Coop::drawMap(Renderer& r, const Sim& sim, const NetSession& net, int W, in
     };
     for (const Station& st : sim.world.stations) pin(st.p, st.name, 0.55f, 1.0f, 0.55f, 9 * u);
     int found = 0;
+    // A place found is marked by what it is (a letter in a coloured square); one not found yet is a "?".
+    static const float kKindCol[PK_COUNT][3] = {{0.55f, 1.0f, 0.55f}, {1.0f, 0.65f, 0.25f}, {0.85f, 0.65f, 0.45f}, {0.75f, 0.8f, 0.45f}, {0.6f, 0.85f, 1.0f},
+                                                {0.4f, 0.7f, 1.0f},   {0.8f, 0.75f, 0.7f},  {1.0f, 1.0f, 1.0f},   {0.5f, 0.9f, 0.9f},  {0.7f, 0.6f, 0.55f},
+                                                {1.0f, 0.5f, 0.8f},   {1.0f, 0.9f, 0.3f},   {0.9f, 0.45f, 0.4f}};
     for (const auto& pl : places) {
-        const bool known = isDiscovered(mapNow, pl.first);
+        const bool known = isDiscovered(mapNow, pl.name);
         found += known;
-        if (known) pin(pl.second, pl.first, 1.0f, 0.9f, 0.6f, 7 * u);
-        else pin(pl.second, "?", 0.6f, 0.6f, 0.65f, 6 * u);
+        if (known) {
+            const float* c = pl.kind >= 0 && pl.kind < PK_COUNT ? kKindCol[pl.kind] : kKindCol[PK_CABIN];
+            const bool showName = mapZoom > 1.8 || pl.kind == PK_RANGER_STATION || pl.kind == PK_FUEL_STOP || pl.kind < 0;  // (a 6 km map has dozens: names when zoomed in)
+            pin(pl.p, showName ? pl.name : std::string(), c[0], c[1], c[2], 9 * u);
+            if (pl.kind >= 0) {
+                float sx, sy;
+                toMap(pl.p.x, pl.p.z, sx, sy);
+                if (sx >= 0 && sx <= W && sy >= 0 && sy <= H) {
+                    const char g[2] = {placeKindGlyph(pl.kind), 0};
+                    label(r, sx - 3 * s, sy - 4 * s, s, g, 0.05f, 0.05f, 0.05f, 1);
+                }
+            }
+        } else pin(pl.p, "?", 0.6f, 0.6f, 0.65f, 6 * u);
     }
     {
         char b[64];
@@ -360,15 +375,7 @@ bool Coop::isDiscovered(int map, const std::string& name) const {
     return std::find(discovered.begin(), discovered.end(), key) != discovered.end();
 }
 
-std::vector<std::string> Coop::discover(int map, const V3& p, const std::vector<std::pair<std::string, V3>>& places) {
-    std::vector<std::string> fresh;
-    for (const auto& pl : places)
-        if (std::hypot(pl.second.x - p.x, pl.second.z - p.z) < 30 && !isDiscovered(map, pl.first)) {
-            discovered.push_back(std::to_string(map) + ":" + pl.first);
-            fresh.push_back(pl.first);
-        }
-    return fresh;
-}
+std::vector<std::string> Coop::discover(int map, const V3& p, const std::vector<DiscoverSpot>& places) { return visitSpots(discovered, map, p, places); }
 
 void Coop::loadDiscoveries(const std::string& path) {
     std::ifstream f(path);

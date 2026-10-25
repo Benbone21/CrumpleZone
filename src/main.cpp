@@ -53,6 +53,7 @@
 #include "carentry.h"
 #include "buildinfo.h"
 #include "coop.h"
+#include "places.h"
 #include "debugscreen.h"
 #include "editor.h"
 #include "fx.h"
@@ -604,6 +605,13 @@ std::vector<Place> pilotPlaces(const Sim& sim, const NetSession& net) {
         out.push_back({"SNOW CORNER", backcountryFeature("snowcorner")});
         out.push_back({"FIRE TOWER", backcountryFeature("towerlook")});
         out.push_back({"TRAPPER'S CABIN", backcountryFeature("cabinend")});
+        // The places of the big map (places.h): the ones not already listed here (within 40 m of one that is).
+        for (const MapPlace& mp : mapPlaces(MAP_BACKCOUNTRY)) {
+            if (mp.kind == PK_CACHE || mp.kind == PK_PHOTO_SPOT || mp.kind == PK_ABANDONED_VEHICLE) continue;
+            bool have = false;
+            for (const Place& q : out) have |= q.kind == 0 && std::hypot(q.p.x - mp.p.x, q.p.z - mp.p.z) < 40;
+            if (!have) out.push_back({mp.name, V3(mp.p.x, sim.world.height(mp.p.x, mp.p.z), mp.p.z)});
+        }
     } else if (sim.world.map == MAP_PROVING_GROUND) {
         out.push_back({"SPAWN", sim.world.spawn});
         out.push_back({"CRASH WALL", V3(95, 0, 0)});
@@ -2523,6 +2531,19 @@ int main(int argc, char** argv) {
             return true;
         }
         return false;
+    };
+    // The spots that count as finding something on this map: its table of places (places.h) and the autopilot's named spots, except the
+    // ones the table already has (within 40 m of one).
+    auto discoverySpots = [&]() {
+        std::vector<DiscoverSpot> spots = discoverSpots(sim.world.map);
+        const size_t fromTable = spots.size();
+        for (const Place& pl : pilotPlaces(sim, net)) {
+            if (pl.kind != 0) continue;
+            bool have = false;
+            for (size_t k = 0; k < fromTable; k++) have |= std::hypot(spots[k].p.x - pl.p.x, spots[k].p.z - pl.p.z) < 40;
+            if (!have) spots.push_back({pl.name, pl.p, 30, -1});
+        }
+        return spots;
     };
     auto refreshJobs = [&]() {
         std::vector<JobPlace> places;
@@ -4739,6 +4760,15 @@ int main(int argc, char** argv) {
                     jobOn = false;
                     continue;
                 }
+                if (m.text.rfind("found ", 0) == 0) {  // a buddy found a place: it counts for you too
+                    std::string name;
+                    if (takeFoundMessage(coop.discovered, sim.world.map, discoverySpots(), m.text, name)) {
+                        jobBanner = std::max(jobBanner, 4.0);
+                        jobBannerText = "DISCOVERED: " + name;
+                        if (!scripted) coop.saveDiscoveries(discoveriesPath);
+                    }
+                    continue;
+                }
                 if (m.text.rfind("cache ", 0) == 0) {  // a buddy opened a supply cache: it counts for you too
                     const size_t sp = m.text.find(' ', 6);
                     if (career.on && sp != std::string::npos && std::atoi(m.text.c_str() + 6) == sim.world.map) {
@@ -5047,15 +5077,15 @@ int main(int argc, char** argv) {
                         }
                     if (!caches.empty()) sim.world.buildGrid();
                 }
-                std::vector<std::pair<std::string, V3>> places;
-                for (const Place& pl : pilotPlaces(sim, net))
-                    if (pl.kind == 0) places.push_back({pl.name, pl.p});
                 coop.mapNow = sim.world.map;
                 const V3 me = walker.active ? walker.p : sim.cars[sim.player].frame().com;
-                for (const std::string& name : coop.discover(sim.world.map, me, places)) {
+                for (const std::string& name : coop.discover(sim.world.map, me, discoverySpots())) {
                     jobBanner = std::max(jobBanner, 4.0);
                     jobBannerText = "DISCOVERED: " + name;
-                    if (net.active()) coop.say("FOUND " + name, myName(), net);
+                    if (net.active()) {
+                        coop.say("FOUND " + name, myName(), net);
+                        net.sendGame(foundMessage(sim.world.map, name));  // (the others have found it too)
+                    }
                     if (!scripted) coop.saveDiscoveries(discoveriesPath);
                 }
             }
@@ -6464,10 +6494,7 @@ int main(int argc, char** argv) {
         if (showHud || (coop.mapOpen && !menu.open && !editor.active)) {
             if (showHud) coop.drawWorld(renderer, sim, net, view, W, H);
             if (coop.mapOpen) {
-                std::vector<std::pair<std::string, V3>> places;
-                for (const Place& pl : pilotPlaces(sim, net))
-                    if (pl.kind == 0) places.push_back({pl.name, pl.p});
-                coop.drawMap(renderer, sim, net, W, H, places);
+                coop.drawMap(renderer, sim, net, W, H, discoverySpots());
             }
             coop.drawChat(renderer, W, H);
         }
