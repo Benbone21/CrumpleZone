@@ -86,17 +86,18 @@ std::string unescapeLine(const std::string& s) {
     return r;
 }
 
-// Reads world text; false if it has no "name" line (not a world file). Keys it doesn't know are skipped.
+// Reads world text; false if it has no "name" line or no closing "end 1" line (not a world file, or cut short). Keys it doesn't know are skipped.
 bool parseWorld(const std::string& text, WorldSave& w) {
     const std::string slug = w.slug;
     w = WorldSave();
     w.slug = slug;
-    bool sawName = false;
+    bool sawName = false, sawEnd = false;
     std::vector<std::pair<size_t, std::string>> conds;
     std::istringstream f(text);
     std::string line;
     while (std::getline(f, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line == "end 1") sawEnd = true;  // (the last line: a file cut short has none)
         const size_t sp = line.find(' ');
         if (sp == std::string::npos) continue;
         const std::string k = line.substr(0, sp), v = line.substr(sp + 1);
@@ -121,7 +122,7 @@ bool parseWorld(const std::string& text, WorldSave& w) {
     }
     for (const auto& c : conds)
         if (c.first < w.left.size()) w.left[c.first].condition = c.second;
-    return sawName;
+    return sawName && sawEnd;
 }
 
 bool validWorldText(const std::string& text) {
@@ -143,7 +144,7 @@ std::string worldText(const WorldSave& w) {
         t += "left " + std::to_string(w.left[i].vehicle) + ' ' + escapeLine(w.left[i].owner) + '\n';
         if (!w.left[i].condition.empty()) t += "lcond " + std::to_string(i) + ' ' + escapeLine(w.left[i].condition) + '\n';
     }
-    return t;
+    return t + "end 1\n";
 }
 
 bool readAll(const std::string& path, std::string& out) {

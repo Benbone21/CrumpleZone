@@ -91,6 +91,13 @@ SCENARIO(careerWorldDamaged, "career/world-damaged", "A garbage world.txt with n
     ctx.check("second save", saveWorld(w));
     const std::string path = dir + "/worlds/rough/world.txt";
     ctx.check("the .bak is the first", slurp(path + ".bak").find("cache b") == std::string::npos && !slurp(path + ".bak").empty());
+    {  // cut short after the name line: not trusted, the .bak loads, and a save doesn't let it replace the .bak
+        const std::string full = slurp(path);
+        spit(path, full.substr(0, full.find('\n') + 1));
+        WorldSave t;
+        ctx.check("truncated: loads the .bak", loadWorld("rough", t) && t.opened.size() == 1);
+        ctx.check("a save keeps the good .bak", saveWorld(w) && slurp(path + ".bak").find("end 1") != std::string::npos);
+    }
     spit(path, "x#!\x01z");
     WorldSave r;
     ctx.check("loads the .bak", loadWorld("rough", r) && !r.damaged && r.opened.size() == 1 && r.name == "Rough");
