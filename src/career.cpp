@@ -63,6 +63,8 @@ std::vector<std::string> cacheGear(int i) {
     if (parts[i % 6] == PART_SPARK_PLUGS || (i % 3 == 2 && parts[(i + 2) % 6] == PART_SPARK_PLUGS)) g.push_back(repairPartKey(PART_ENGINE_OIL));
     // And anchor gear: a stake in a third of them, the scarce kinds where the ground calls for them.
     if (i % 3 == 0) g.push_back(anchors::gearKey(GEAR_STAKE));
+    if (i == 4) g.push_back(toolKey(TOOL_JUMP_PACK));  // (one pack and one set of cables to find on each map)
+    if (i == 7) g.push_back(toolKey(TOOL_CABLES));
     if (i == 2 || i == 6) g.push_back(anchors::gearKey(GEAR_ICE));
     if (i == 3 || i == 7) g.push_back(anchors::gearKey(GEAR_BOLT));
     return g;

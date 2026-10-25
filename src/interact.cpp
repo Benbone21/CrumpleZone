@@ -449,10 +449,12 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
             if (c.isProp()) continue;
             InteractOption o;
             o.car = ci, o.at = battery::aim(c), o.radius = 0.4;
+            const bool shut = c.hasHood() && !c.hoodOpen();  // (the battery's under the hood)
             if (pack) {
                 o.kind = IA_JUMP_PACK, o.hold = kJumpPack, o.prompt = "JUMP START THE BATTERY";
                 if (battery::running(c)) o.blocked = true, o.prompt += ": IT'S RUNNING";
                 else if (c.engineDead) o.blocked = true, o.prompt += ": THE ENGINE'S DEAD, NOT THE BATTERY";
+                if (shut) o.blocked = true, o.prompt = "JUMP START THE BATTERY: OPEN THE HOOD FIRST";
                 consider(o, kReach, -0.1);
             }
             if (cables) {
@@ -467,6 +469,7 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
                     if (mineOut) o.blocked = true, o.prompt += ": YOUR CABLES ARE ON A VEHICLE ALREADY";
                     else if (battery::cableOn(sim, ci) >= 0) o.blocked = true, o.prompt += ": CABLES ON IT ALREADY";
                 }
+                if (shut && o.kind == IA_CLAMP_CABLE) o.blocked = true, o.prompt = (o.step ? "CLAMP THE CABLES ON THE OTHER BATTERY" : "CLAMP THE CABLES ON THIS BATTERY") + std::string(": OPEN THE HOOD FIRST");
                 consider(o, kReach, -0.1);
             }
         }

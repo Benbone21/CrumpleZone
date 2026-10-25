@@ -86,6 +86,7 @@ SCENARIO(batteryFlat, "battery/flat", "Lights left on with the engine off flatte
     Interact ia;
     ia.kit.unlimited = true;
     wk.hand = TrunkRef{TK_TOOL, TOOL_JUMP_PACK};
+    car.hood.share = 1, car.hood.dir = 0;
     const V3 at = battery::aim(car);
     standAt(ctx.sim.world, car, wk, at, 1.2);
     ctx.run(0.2);
@@ -95,6 +96,10 @@ SCENARIO(batteryFlat, "battery/flat", "Lights left on with the engine off flatte
     for (int i = 0; i < 2; i++) ia.update(ctx.sim, wk, eyeOf(wk), at - eyeOf(wk), false, Ctx::kFrame);
     ctx.check("...without it, none", ia.current.kind != IA_JUMP_PACK);
     wk.hand = TrunkRef{TK_TOOL, TOOL_JUMP_PACK};
+    car.hood.share = 0, car.hood.dir = 0;
+    for (int i = 0; i < 2; i++) ia.update(ctx.sim, wk, eyeOf(wk), at - eyeOf(wk), false, Ctx::kFrame);
+    ctx.check("hood shut: the battery's out of reach, the prompt says why", ia.current.kind == IA_JUMP_PACK && ia.current.blocked && ia.current.prompt.find("OPEN THE HOOD FIRST") != std::string::npos, ia.current.prompt);
+    car.hood.share = 1;
     const std::string said = holdOn(ctx.sim, ia, wk, at, 8, [&] { ctx.run(Ctx::kFrame); });
     ctx.check("hold E: the pack goes on the battery", said.find("JUMP PACK ON") == 0 && car.battery >= battery::kPackLevel - 0.05, said + " " + std::to_string(car.battery));
     car.occupied = true;
@@ -111,6 +116,7 @@ SCENARIO(batteryCables, "battery/cables", "Jumper cables walked from a running v
     ctx.focus(ctx.sim.cars[0]);
     ctx.run(0.5);
     Car &dead = ctx.sim.cars[0], &live = ctx.sim.cars[1];
+    for (Car* c : {&dead, &live}) c->hood.share = 1, c->hood.dir = 0;
     dead.engineOff = true, dead.battery = 0.03, dead.occupied = true;
     ctx.run(1.0);
     ctx.check("the dead one won't start by itself", dead.engineOff);
@@ -217,6 +223,8 @@ SCENARIO(batteryNet, "net/battery-cables", "Jumper cables between two players' v
     Car& guestCar = sim2.cars[0];
     guestCar.respawn(V3(13.2, sim2.world.height(13.2, -8) + 0.5, -8), 0);  // (parked beside the host's, a cable's length apart)
     guestCar.handbrake = 1;
+    guestCar.hood.share = 1, guestCar.hood.dir = 0;
+    hostCar.hood.share = 1, hostCar.hood.dir = 0;
     ctx.run(2.0, frame);
     guestCar.engineOff = true, guestCar.battery = 0.02, guestCar.occupied = true;
     ctx.run(2.0, frame);
