@@ -83,7 +83,7 @@ PartLook gearboxLook(const VehicleSpec& vs) {
         else L.id = "gearbox_manual", L.variant = MT_HYPERCAR;
     } else if (n.has("CVT")) {
         L.id = "gearbox_cvt", L.variant = CVT_BELT;
-    } else if (vs.stallRpm > 0) {
+    } else if (vs.stallRpm > 0 && !n.has("MANUAL")) {  // (a manual swapped in keeps the converter in the sim: drawn by its name)
         L.id = "gearbox_auto";
         if (n.has("TH350") || n.has("TH400")) {
             L.variant = AT_THM;

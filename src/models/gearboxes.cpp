@@ -940,8 +940,8 @@ struct TcDim {
 TcDim tcDim(int d) {
     switch (d) {
         case TC_GEAR_IRON: return {0.17, -0.2, V3(0.19, -0.11, -0.09)};
-        case TC_CHAIN: return {0.13, -0.26, V3(0.14, -0.095, 0.085)};
-        case TC_FULLTIME: return {0.14, -0.25, V3(0.15, -0.1, 0.09)};
+        case TC_CHAIN: return {0.13, -0.26, V3(0.14, -0.095, -0.085)};  // (front outputs on -Z: the side carbuild.cpp puts the front shaft)
+        case TC_FULLTIME: return {0.14, -0.25, V3(0.15, -0.1, -0.09)};
         default: return {0.15, -0.18, V3(0.17, -0.12, -0.08)};
     }
 }

@@ -196,7 +196,7 @@ SCENARIO(drivetrainDesigns, "drivetrain/designs", "Every design of every engine,
             ctx.check(tag + "a drive line out of it (or it's a transaxle)", e.rear || id == std::string("gearbox_manual"));
             if (std::string(id) != "transfer_case") ctx.check(tag + "no front output", !e.front);
             for (const mk::Param& q : d->variants[v].params) {
-                if (q.key == "finish" || q.key == "shifter" || q.key == "lever") continue;  // (a colour; the levers the car hides)
+                if (q.key == "finish" || q.key == "shifter" || q.key == "lever" || q.key == "converter") continue;  // (a colour; the levers the car hides; the converter shows out of the car only)
                 mk::P other = bare;
                 other.v[q.key] = q.names.empty() ? (q.def == q.hi ? q.lo : q.hi) : (q.def >= 1 ? 0 : 1);
                 mk::Mesh mo;
