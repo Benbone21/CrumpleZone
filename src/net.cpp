@@ -490,6 +490,7 @@ struct NetSession::Remote {
     std::deque<std::pair<uint32_t, std::vector<int16_t>>> got;  // the dents of the last states taken (seq): what the sender tells the next against
     // Easing out a coast that guessed wrong: what's added to where the states say it is.
     V3 ease, lastShown, lastVel;
+    Quat easeRot, lastRot;  // (and the turn: shown now, each state corrects the guess at it too)
     bool shown = false;
     double coastedTo = -1;  // the newest state's time while coasting past it last frame (-1: wasn't)
     struct Assembly {
@@ -544,6 +545,7 @@ void NetSession::close() {
     sessionStart = -1;
     clock = net::ClockSync();
     view = net::Timeline();
+    vehicleAt = -1, lastPlayNow = -1e18, vehicleLeadNow = 0;
     nextSync = 0;
     dayBase = daySentAt = -1;
     dayHours = -1, dayRate = 0, dayFresh = false;
@@ -1286,7 +1288,7 @@ bool NetSession::apply(Sim& sim, const std::vector<uint8_t>& msg, int from) {
                 rm->buf.clear();
                 rm->newestT = -1;
                 rm->shown = false;
-                rm->ease = V3();
+                rm->ease = V3(), rm->easeRot = Quat();
                 rm->coastedTo = -1;
                 for (auto& assembly : rm->assemblies) assembly.active = false;
             }
@@ -2239,7 +2241,7 @@ void NetSession::takeSnapshot(Sim& sim, uint32_t netId, const std::vector<uint8_
             // a car through everything between the old and new positions.
             rm->buf.clear();
             rm->shown = false;
-            rm->ease = V3();
+            rm->ease = V3(), rm->easeRot = Quat();
             rm->coastedTo = -1;
         }
     }
@@ -2271,7 +2273,20 @@ void NetSession::applyRemotes(Sim& sim, double now) {
     const bool had = view.started();
     const double before = view.render;
     view.step(shared, need);
-    const double t = view.render, dt = had ? std::max(0.0, t - before) : 0;
+    // The vehicles themselves are shown now, not then (docs/plans/net-collisions.md): each one
+    // run on from its newest state on its own speed and turn, so a truck is where its owner has
+    // it (to a few tens of cm) and a crash happens at the same place on both machines. (Shown
+    // `kPlaybackDelay` and more behind, a truck at 65 km/h was 2.5 to 5 m back of where it
+    // really was: each player hit the other's past.) Chatter, lines and the sky keep the view.
+    // (Less the frame about to be run: its states are stamped after their physics, these are
+    // placed before ours, which then carries them on for the frame.)
+    const double frame = clampd(now - lastPlayNow, 0, 0.05);
+    lastPlayNow = now;
+    const double t = predict ? std::max(shared - frame, view.render) : view.render;
+    const double coastMax = predict ? net::kMaxLead : net::kMaxCoast;
+    const double dt = predict ? (vehicleAt >= 0 ? std::max(0.0, t - vehicleAt) : 0) : (had ? std::max(0.0, t - before) : 0);
+    vehicleAt = t;
+    vehicleLeadNow = 0;
     for (Remote* rm : remotes) {
         const int ci = findCar(sim, rm->netId);
         if (ci < 0 || rm->buf.empty()) continue;
@@ -2290,11 +2305,33 @@ void NetSession::applyRemotes(Sim& sim, double now) {
             alpha = n.t > a.t ? clampd((at - a.t) / (n.t - a.t), 0, 1) : 0;
             com = a.com + (n.com - a.com) * alpha;
             vel = a.vel + (n.vel - a.vel) * alpha;
-            if (&n == &a) {
-                com += a.vel * clampd(at - a.t, 0, net::kMaxCoast);  // nothing newer (lost, or late): coast briefly
-                if (at > a.t + net::kMaxCoast) vel = V3();
-            }
             rot = nlerp(a.rot, n.rot, alpha);
+            if (&n == &a) {  // nothing newer (late, lost, or shown now): run on from it, a while
+                const double ahead = clampd(at - a.t, 0, coastMax);
+                com += a.vel * ahead;
+                if (at > a.t + coastMax) vel = V3();
+                else if (predict && idx > 0 && ahead > 0) {  // (turning: on at the rate it was turning)
+                    const Snap& p = b[idx - 1];
+                    const double span = a.t - p.t;
+                    if (span > 1e-3 && span < 0.3) {
+                        // On the arc it was on, too: its way of going turns (seen from above) at the rate it turned
+                        // between the last two states. (Faster than a car can corner is a knock: straight on.)
+                        const double h0 = std::atan2(p.vel.z, p.vel.x), h1 = std::atan2(a.vel.z, a.vel.x);
+                        const double w = std::remainder(h1 - h0, 2 * M_PI) / span, sp = std::hypot(a.vel.x, a.vel.z);
+                        if (std::hypot(p.vel.x, p.vel.z) > 2 && sp > 2 && std::fabs(w) < 1.5 && std::fabs(w) * ahead > 1e-6) {
+                            const double half = w * ahead / 2, chord = std::sin(half) / half * ahead;
+                            const double ch = std::cos(h1 + half), sh = std::sin(h1 + half);
+                            com += V3(ch * sp * chord, 0, sh * sp * chord) - V3(a.vel.x, 0, a.vel.z) * ahead;
+                            vel = V3(std::cos(h1 + 2 * half) * sp, a.vel.y, std::sin(h1 + 2 * half) * sp);
+                        }
+                        Quat d = a.rot * Quat{p.rot.w, -p.rot.x, -p.rot.y, -p.rot.z};
+                        if (d.w < 0) d = Quat{-d.w, -d.x, -d.y, -d.z};
+                        const double sn = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+                        const double ang = 2 * std::atan2(sn, d.w);
+                        if (sn > 1e-9 && ang / span < 6) rot = Quat::axisAngle(V3(d.x, d.y, d.z) / sn, ang / span * ahead) * a.rot, rot.normalize();
+                    }
+                }
+            }
             out.resize(c.nodes.size());
             for (size_t i = 0; i < c.nodes.size(); i++)
                 out[i] = com + rot.rotate(c.restLocal[i] - rc + a.local[i] + (n.local[i] - a.local[i]) * alpha);
@@ -2309,21 +2346,32 @@ void NetSession::applyRemotes(Sim& sim, double now) {
         pose(t, now0, vel, rot, idx, alpha);
         // A jump (put back on its wheels, towed home) is a teleport, not a speed.
         const bool jumped = len((now0[0] - prev[0]) / 0.05 - vel) > 25;
-        const bool stopped = t >= rm->buf.back().t + net::kMaxCoast;
+        const bool stopped = t >= rm->buf.back().t + coastMax;
         // States that come in after a coast put it somewhere else: ease into that over a
         // moment rather than snapping (a real jump, a recovery, still snaps: takeSnapshot).
+        // (Shown now, it's always run on from the newest: each state that comes in corrects it.)
         const double newest = rm->buf.back().t;
+        if (shared - rm->newestArrival < 3) vehicleLeadNow = std::max(vehicleLeadNow, clampd(t - newest, 0, coastMax));
         if (rm->shown && rm->coastedTo >= 0 && newest > rm->coastedTo && !jumped) {
             rm->ease = rm->lastShown + rm->lastVel * dt - com;
-            if (len(rm->ease) > 3) rm->ease = V3();
+            rm->easeRot = rm->lastRot * Quat{rot.w, -rot.x, -rot.y, -rot.z};
+            if (rm->easeRot.w < 0) rm->easeRot = Quat{-rm->easeRot.w, -rm->easeRot.x, -rm->easeRot.y, -rm->easeRot.z};
+            if (len(rm->ease) > 3) rm->ease = V3(), rm->easeRot = Quat();
         }
-        rm->ease = jumped ? V3() : rm->ease * std::exp(-dt / 0.15);
+        const double keep = std::exp(-dt / 0.15);
+        rm->ease = jumped ? V3() : rm->ease * keep;
+        rm->easeRot = jumped ? Quat() : nlerp(Quat(), rm->easeRot, keep);
         if (len(rm->ease) < 1e-4) rm->ease = V3();
         rm->coastedTo = t > newest ? newest : -1;
         rm->lastShown = com + rm->ease, rm->lastVel = vel, rm->shown = true;
+        rm->lastRot = rm->easeRot * rot;
+        rm->lastRot.normalize();
+        const bool turned = rm->easeRot.w < 1 - 1e-12;
         // (One of ours is in a crash with it: it's on our physics till they part, then eased back.)
         const bool held = c.heldHere > 0 && !jumped;
         if (jumped) c.heldHere = 0, c.handBack = false, c.shoveV = c.shoveP = V3();
+        if (turned)
+            for (size_t i = 0; i < now0.size(); i++) now0[i] = com + rm->easeRot.rotate(now0[i] - com), prev[i] = com + rm->easeRot.rotate(prev[i] - com);
         if (c.handBack) c.handBackTo(now0, vel);
         c.settleShove(vel, frameDt);
         for (size_t i = 0; i < c.nodes.size() && !held; i++) {
@@ -2331,7 +2379,7 @@ void NetSession::applyRemotes(Sim& sim, double now) {
             c.nodes[i].v = (jumped || stopped ? vel : (now0[i] - prev[i]) / 0.05) + c.shoveV;
             c.nodes[i].f = V3();
         }
-        if (!held && !c.chassis.nodes.empty()) c.chassis.rot = rot;
+        if (!held && !c.chassis.nodes.empty()) c.chassis.rot = rm->lastRot;
         const Snap& s = rm->buf[std::min(idx + (alpha > 0.5), rm->buf.size() - 1)];
         const Snap& a = rm->buf[idx];
         const Snap& b = rm->buf[std::min(idx + 1, rm->buf.size() - 1)];

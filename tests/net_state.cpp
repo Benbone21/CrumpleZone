@@ -56,6 +56,7 @@ SCENARIO(netEngineState, "net/state-engine-lamps", "Engine telemetry, smooth con
     source(origin);
     NetSession sender, receiver;
     NetSessionTest::sender(sender);
+    receiver.predict = false;  // (shown at the view: between the two states)
     Car& car = origin.cars[0];
     car.lampMode = LAMPS_OFF;
     NetSessionTest::spawn(sender, receiver, ctx.sim, car);

@@ -39,6 +39,7 @@ constexpr double kSendRate = 20;      // vehicle states per second
 constexpr double kPlaybackDelay = 0.1; // s: the least the others are shown behind the shared clock (two states)
 constexpr double kMaxDelay = 1.0;      // s: and the most, however bad the line
 constexpr double kMaxCoast = 0.25;     // s: a vehicle whose states stop coming coasts this long, then holds
+constexpr double kMaxLead = 0.5;       // s: shown now (NetSession::predict), how far a vehicle is run on past its newest state, at most
 constexpr int kDentStep = 2;           // mm: a dent that moved less than this since the receiver's state isn't sent again
 constexpr int kStreamKeep = 32;        // states a sender remembers per receiver (1.6 s): an answer older than that gets a whole one
 
@@ -183,6 +184,12 @@ public:
     // Where the others are shown: this far behind the shared clock (s), at that moment.
     double viewDelay() const { return view.started() ? view.delay : net::kPlaybackDelay; }
     double viewTime() const { return view.render; }
+    // Vehicles, though, are shown now: each run on from its newest state (its owner's truck is
+    // where it is, not where it was, so two players' crash happens at the same place on both
+    // machines; docs/plans/net-collisions.md). False: at the view, like the rest (as before 0.4.1).
+    bool predict = true;
+    double vehicleTime() const { return vehicleAt; }  // the moment the vehicles were last shown at (shared clock)
+    double vehicleLead() const { return vehicleLeadNow; }  // how far past its newest state the furthest was run on (s): about the latency
     // Levels: everyone plays the host's level (its whole text goes out, edits and all; "" is
     // the plain map). Client: levelFresh when a new one has come in.
     std::string levelText;
@@ -324,6 +331,9 @@ private:
     net::ClockSync clock;       // client: the host's clock
     net::Timeline view;         // where the others are shown
     double curNow = 0;          // the caller's clock this frame (what receive() was given)
+    double vehicleAt = -1;      // (vehicleTime)
+    double vehicleLeadNow = 0;  // (vehicleLead)
+    double lastPlayNow = -1e18; // (the caller's clock when they were last placed)
     double nextSync = 0;        // client: the next clock ping
     double dayStamp = 0, dayBase = -1;  // client: the host's hours at that shared moment
     double daySentAt = -1, daySentHours = 0;  // host: the last clock sent

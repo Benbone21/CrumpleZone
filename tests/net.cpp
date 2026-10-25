@@ -94,8 +94,8 @@ SCENARIO(netTwoPlayers, "net/two-players", "Host and client over loopback: each 
         const Car* r = remoteCar(ctx.sim);
         if (!r || ctx.t < 2.5) return;
         // Compare with where the client's truck was at the moment the host shows (on the
-        // shared clock), interpolated between the two frames either side of it.
-        const double want = host.viewTime();
+        // shared clock: now, run on from its newest state), interpolated between the two frames either side of it.
+        const double want = host.vehicleTime();
         size_t k = 0;
         while (k + 2 < history.size() && history[k + 1].t < want) k++;
         const Past &a = history[k], &b = history[k + 1];
