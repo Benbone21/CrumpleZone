@@ -5213,6 +5213,7 @@ int main(int argc, char** argv) {
             audio.setBoost(vs.induction == VehicleSpec::TURBO ? (float)car.boost : 0.0f);
             audio.setTires(sim.paused ? 0 : slip);
             audio.setVolume(settings.volume, campBehind() ? 0.85f : menu.open ? 0.35f : 1.0f);
+            audio.setVehicleVolume(settings.vehicleVolume);
             audio.setCampfire(campBehind() ? 0.85f : 0.0f, 0.25f, 0.1f);  // (the fire sits right of the middle of the picture, the stream runs across the foreground)
             {  // the music follows the country under you (steadied, so a border doesn't flip it back and forth)
                 static BiomeTracker biomes;
