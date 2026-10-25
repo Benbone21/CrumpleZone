@@ -7,6 +7,7 @@
 #include <sstream>
 
 #include "mods.h"
+#include "places.h"
 #include "platform.h"
 #include "world.h"
 
@@ -114,6 +115,13 @@ std::vector<CacheSpot> cacheSpots(const World& world) {
             }
         p.y = world.height(p.x, p.z);
         out.push_back({l.id, world.map, p, lootKey(l), l.cash, cacheGear(i)});
+    }
+    // The big map's caches come from its table of places (places.h), after the hand-made ones (whose ids stay as they were).
+    int k = n;
+    for (const MapPlace* pl : placesOfKind(world.map, PK_CACHE)) {
+        V3 p = pl->p;
+        p.y = world.height(p.x, p.z);
+        out.push_back({pl->name, world.map, p, "", pl->reward, cacheGear(k++)});
     }
     return out;
 }

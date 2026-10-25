@@ -87,14 +87,14 @@ double waterDepth(const World& w, const V3& p, double r = 2) {
 }  // namespace
 
 SCENARIO(backcountryMap, "maps/backcountry",
-         "The Backcountry: builds in reasonable time; 4 repair stations on flat pads; every surface is somewhere; 3-5 km of trail; the ford is shallow and the deep crossing deep") {
+         "The Backcountry: builds in reasonable time; 4 camp repair stations (and the ranger station's) on flat pads; every surface is somewhere; 3-5 km of trail; the ford is shallow and the deep crossing deep") {
     const auto t0 = std::chrono::steady_clock::now();
     ctx.sim.world = World(MAP_BACKCOUNTRY);
     const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     const World& w = ctx.sim.world;
     ctx.metric("time to build the map", secs, "s", 0, 6);
     // Stations: four, on pads flat to a few centimetres across their reach.
-    ctx.metric("repair stations", (double)w.stations.size(), "", 3, 4);
+    ctx.metric("repair stations", (double)w.stations.size(), "", 3, 5);  // (four camps and the ranger station)
     for (const Station& st : w.stations) {
         double lo = 1e9, hi = -1e9;
         for (double dx = -st.r; dx <= st.r; dx += 1.5)

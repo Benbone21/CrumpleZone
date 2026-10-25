@@ -30,6 +30,7 @@
 
 #include "loadprof.h"
 #include "parallel.h"
+#include "places.h"
 #include "rivers.h"
 #include "world.h"
 
@@ -1026,6 +1027,48 @@ void World::buildBackcountry() {
         riverRocks = rocks.size() - rocksBefore;
     }
 
+    steps.next("bc.places ground");
+    // ---- Places (places.h): level the ground their buildings stand on; the Lost Mine's way up through its dry falls --------------------
+    {
+        auto meanHeight = [&](const V3& c, double r) {
+            double sum = 0;
+            int n = 0;
+            for (int i = cellI(c.x - r); i <= cellI(c.x + r); i += 2)
+                for (int j = cellI(c.z - r); j <= cellI(c.z + r); j += 2)
+                    if (std::hypot(X(i) - c.x, X(j) - c.z) <= r) sum += hgrid[i * hN + j], n++;
+            return n ? sum / n : 0.0;
+        };
+        for (const MapPlace& pl : mapPlaces(MAP_BACKCOUNTRY)) {
+            if (pl.pad <= 0 || pl.id == "BC.LOST_MINE") continue;
+            const double y = meanHeight(pl.p, pl.pad * 0.6);
+            const bool yard = pl.kind == PK_RANGER_STATION || pl.kind == PK_FUEL_STOP;
+            levelDisc(pl.p, pl.pad, y, 4 + pl.pad * 0.5, yard || pl.kind == PK_LOOKOUT || pl.kind == PK_SUMMIT ? PAINT_GRAVEL : PAINT_TRAIL, yard || pl.kind == PK_LOOKOUT || pl.kind == PK_SUMMIT ? SURF_GRAVEL : SURF_DIRT);
+            if (pl.kind == PK_RANGER_STATION) levelDisc(pl.p, 9.5, y, 3, PAINT_PAD, SURF_PAVED);
+        }
+        // The Lost Mine: a yard on the mesa's edge, reached by a spur that climbs the scarp from the wash.
+        if (const MapPlace* lm = findPlace(MAP_BACKCOUNTRY, "BC.LOST_MINE")) {
+            const double yardY = meanHeight(lm->p, 8);
+            levelDisc(lm->p, lm->pad, yardY, 8, PAINT_GRAVEL, SURF_GRAVEL);
+            // The pit: a bowl in the yard where the shaft's spoil was dug out.
+            const V3 pit = lm->p + V3(-16, 0, -11);
+            for (int i = cellI(pit.x - 8); i <= cellI(pit.x + 8); i++)
+                for (int j = cellI(pit.z - 8); j <= cellI(pit.z + 8); j++) {
+                    const double d = std::hypot(X(i) - pit.x, X(j) - pit.z);
+                    if (d > 8) continue;
+                    hgrid[i * hN + j] -= (float)(2.2 * smoothstep(8, 1.5, d));
+                    if (d < 6) paint[i * hN + j] = PAINT_GRAVEL, surf[i * hN + j] = SURF_GRAVEL;
+                }
+            Poly spur = smooth(lostMineSpur());
+            const double rise = 4 * 0.55;  // the dry falls: four rock steps
+            std::vector<double> sy = groundProfile(spur, 4, 0.2, {{0, height(spur[0].x, spur[0].z)}, {(int)spur.size() - 1, yardY - rise}});
+            // (The steps stand where the spur meets the scarp.)
+            std::vector<std::pair<double, double>> fall;
+            for (int k = 0; k < 4; k++) fall.push_back({(double)spur.size() - 40 + k * 7.0, 0.55});
+            addSteps(spur, sy, fall, 2.4, V3(0.5, 0.26, 0.2));
+            layTrail(spur, sy, 2.6, 9, rockTread, noTilt);
+        }
+    }
+
     steps.next("bc.paint the land");
     // ---- Paint the land: bare rock on the steep and the knobs, scree, snow in the north ----------------
     auto slopeAtCell = [&](int i, int j) {
@@ -1623,6 +1666,197 @@ void World::buildBackcountry() {
                     bushes.push_back(growBush(V3(x, hgrid[id], z), habitat, grove > 0.35, rr(), (float)(0.75 + 0.45 * rr())));
                 }
             }
+    }
+
+    steps.next("bc.places dress");
+    // ---- Places (places.h): the ranger station, fuel stops, cabins and camps, the lost mine, the lookouts' cairns -------------------------
+    {
+        const V3 timber(0.30, 0.20, 0.12), iron(0.30, 0.26, 0.22), stone(0.42, 0.40, 0.36), brown(0.4, 0.3, 0.2);
+        auto grounded = [&](V3 q) {
+            q.y = height(q.x, q.z);
+            return q;
+        };
+        // A spot `ahead` metres in front of and `left` of o, facing yaw (the game's yaw: front (cos, 0, -sin), left (sin, 0, cos)).
+        auto rel = [&](const V3& o, double yaw, double ahead, double left) {
+            return grounded(V3(o.x + std::cos(yaw) * ahead + std::sin(yaw) * left, 0, o.z - std::sin(yaw) * ahead + std::cos(yaw) * left));
+        };
+        using Set = std::vector<std::pair<std::string, double>>;
+        // A code-made building at `at` (its footprint a hidden box of `half` for the collider; the model is drawn over it).
+        auto build = [&](const char* id, const V3& at, double yaw, const V3& half, Set set = {}, int variant = -1) {
+            const size_t from = boxes.size();
+            addBox(V3(at.x, at.y + half.y, at.z), half, yaw, 0, 0, brown);
+            standIn(from, id, at, yaw, std::move(set));
+            if (variant >= 0 && !models.empty() && models.back().id == id) models.back().variant = variant;
+        };
+        // A model with nothing to bump into, or only a post.
+        auto decor = [&](const char* id, const V3& at, double yaw, Set set = {}, int variant = -1) {
+            placeModel(id, at, yaw, std::move(set));
+            if (variant >= 0 && !models.empty() && models.back().id == id) models.back().variant = variant;
+        };
+        auto post = [&](const V3& q, double h, double r = 0.1) { poles.push_back({q.x, q.z, q.y - 0.3, q.y + h, r}); };
+        // A wall of a hidden box, from local (x0, z0) to (x1, z1) of a frame, `h` tall.
+        auto wall = [&](const V3& o, double yaw, double x0, double z0, double x1, double z1, double h) {
+            const V3 a = rel(o, yaw, x0, z0), b = rel(o, yaw, x1, z1);
+            const V3 c = (a + b) * 0.5;
+            const double dx = x1 - x0, dz = z1 - z0;
+            addBox(V3(c.x, o.y + h / 2, c.z), V3(std::max(std::fabs(dx), 0.25) / 2, h / 2, std::max(std::fabs(dz), 0.25) / 2), yaw, 0, 0, brown);
+            boxes.back().hidden = true;
+        };
+        auto cabinOf = [&](const V3& at, double yaw, int variant, Set set) { build("cabin", at, yaw, V3(2.7, 1.9, 2.2), std::move(set), variant); };
+        auto tent = [&](const V3& at, double yaw) { decor("tent", at, yaw); };
+        auto fire = [&](const V3& at) {
+            decor("campfire", at, 0);
+            fireRing(at);
+        };
+        auto woodpile = [&](const V3& at, double yaw) { build("woodpile", at, yaw, V3(1.4, 0.5, 0.5)); };
+        auto outhouse = [&](const V3& at, double yaw) { build("outhouse", at, yaw, V3(0.6, 1.1, 0.6)); };
+
+        for (const MapPlace& pl : mapPlaces(MAP_BACKCOUNTRY)) {
+            const V3 P = grounded(pl.p);
+            const double yw = pl.yaw;
+            if (pl.id == "BC.RANGER") {
+                // The shed (repair, shop) in the middle, the ranger office beside it facing the drive, pumps across, a gate at the road.
+                addStation(P, yw, "ELK RANGER STATION");
+                build("ranger_station", rel(P, yw, 0, 18), yw + M_PI / 2, V3(5.2, 1.8, 3.4));
+                build("fuel_pump", rel(P, yw, 7, -14), yw - M_PI / 2, V3(3.0, 0.6, 1.8), {}, 1);
+                decor("fuel_pump", rel(P, yw, -9, -14), yw - M_PI / 2, {}, 0);
+                woodpile(rel(P, yw, -10, 24), yw);
+                outhouse(rel(P, yw, 12, 25), yw + M_PI / 2);
+                table(rel(P, yw, -4, 22).x, rel(P, yw, -4, 22).z, yw);
+                sign(rel(P, yw, 16, 8).x, rel(P, yw, 16, 8).z, yw, V3(0.3, 0.22, 0.14), PROP_MAPBOARD);
+                const V3 g = rel(P, yw, -24, 0);
+                decor("gate", g, yw + M_PI / 2, {{"open", 1}});
+                post(rel(g, yw + M_PI / 2, 0, 2.7), 1.4), post(rel(g, yw + M_PI / 2, 0, -2.7), 1.4);
+            } else if (pl.kind == PK_FUEL_STOP) {
+                // A pump island under a canopy (posts at its corners), an old upright pump and a drum rack, a cairn.
+                const V3 I = rel(P, yw, 0, 7);  // (the forecourt, where you drive up, is P)
+                build("fuel_pump", I, yw, V3(2.6, 0.5, 0.6), {}, 1);
+                for (int a = -1; a <= 1; a += 2)
+                    for (int b = -1; b <= 1; b += 2) post(rel(I, yw, a * 2.7, b * 1.4), 3.7, 0.1);
+                decor("fuel_pump", rel(P, yw, 3, -7), yw + 0.3, {}, 0);
+                build("fuel_pump", rel(P, yw, -6, 8), yw + 0.5, V3(0.7, 0.5, 0.5), {}, 2);
+                cairn(rel(P, yw, -7, -6));
+                const V3 g = rel(P, yw, -20, 0);
+                decor("gate", g, yw + M_PI / 2, {{"open", 1}});
+                post(rel(g, yw + M_PI / 2, 0, 2.7), 1.4), post(rel(g, yw + M_PI / 2, 0, -2.7), 1.4);
+            } else if (pl.id == "BC.HERMIT_CABIN") {
+                // A log cabin, the garage beside it (the truck inside), a woodpile, the outhouse, a fire ring, a gate on the drive.
+                cabinOf(rel(P, yw, -7, 0), yw, 0, {});
+                woodpile(rel(P, yw, -1, 4.6), yw);
+                outhouse(rel(P, yw, -9, -7), yw + M_PI);
+                fire(rel(P, yw, 7, -5));
+                table(rel(P, yw, 6, 4).x, rel(P, yw, 6, 4).z, yw);
+                if (const MapPlace* t = findPlace(MAP_BACKCOUNTRY, "BC.HERMIT_TRUCK")) {
+                    const V3 T = grounded(t->p);
+                    const double ty = t->yaw;
+                    // The garage: 7.3 x 4.2 outside, a 3.2 x 2.5 m opening in the front, a roof; it stands open.
+                    decor("garage", T, ty, {{"open", 1}});
+                    auto lbox = [&](double cx, double cz, double hx, double hz, double y0, double y1) {
+                        const V3 c = rel(T, ty, cx, cz);
+                        addBox(V3(c.x, T.y + (y0 + y1) / 2, c.z), V3(hx, (y1 - y0) / 2, hz), ty, 0, 0, brown);
+                        boxes.back().hidden = true;
+                    };
+                    lbox(-3.55, 0, 0.1, 2.1, 0, 3.0);      // the back
+                    lbox(0, -2.0, 3.65, 0.1, 0, 3.0);      // the sides
+                    lbox(0, 2.0, 3.65, 0.1, 0, 3.0);
+                    lbox(3.55, -1.85, 0.1, 0.25, 0, 3.0);  // the front, beside the opening and over it
+                    lbox(3.55, 1.85, 0.1, 0.25, 0, 3.0);
+                    lbox(3.55, 0, 0.1, 1.6, 2.5, 3.0);
+                    lbox(0, 0, 4.0, 2.3, 3.0, 3.3);        // the roof
+                    const V3 g = rel(T, ty, 14, 0);
+                    decor("gate", g, ty + M_PI / 2, {{"open", 0.6}});
+                    post(rel(g, ty + M_PI / 2, 0, 2.7), 1.4), post(rel(g, ty + M_PI / 2, 0, -2.7), 1.4);
+                }
+            } else if (pl.id == "BC.SURVEYOR_CABIN") {
+                cabinOf(rel(P, yw, -7, 0), yw, 1, {{"porch", 1}});
+                woodpile(rel(P, yw, -1, 4.6), yw);
+                cairn(rel(P, yw, 8, -6));
+                table(rel(P, yw, 6, 5).x, rel(P, yw, 6, 5).z, yw);
+            } else if (pl.id == "BC.FISHING_SHACK") {
+                cabinOf(rel(P, yw, -7, 0), yw, 1, {{"roof", 3}, {"porch", 1}});
+                fire(rel(P, yw, 7, 4));
+                table(rel(P, yw, 5, -5).x, rel(P, yw, 5, -5).z, yw);
+                outhouse(rel(P, yw, -7, 6), yw + M_PI);
+            } else if (pl.id == "BC.LOGGERS_CAMP") {
+                cabinOf(rel(P, yw, -7, 0), yw, 1, {});
+                for (int k = 0; k < 12; k++) {  // a deck of logs
+                    const double row = k < 5 ? 0 : k < 9 ? 1 : 2, col = k < 5 ? k : k < 9 ? k - 5 + 0.5 : k - 9 + 1.0;
+                    const V3 a = rel(P, yw, -6, 8 + col * 0.62);
+                    V3 b = rel(P, yw, -9.4, 8 + col * 0.62);
+                    V3 a2 = a, b2 = b;
+                    a2.y = a.y + 0.3 + row * 0.5, b2.y = a2.y;
+                    logs.push_back({a2, b2, 0.3});
+                }
+                fire(rel(P, yw, 6, -6));
+                tent(rel(P, yw, 3, -10), yw + 0.4);
+                table(rel(P, yw, 7, 2).x, rel(P, yw, 7, 2).z, yw);
+            } else if (pl.id == "BC.BEAR_CREEK_CAMP") {
+                tent(rel(P, yw, 0, -3), yw + 0.3);
+                tent(rel(P, yw, 1, 4), yw - 0.5);
+                fire(rel(P, yw, 6, 0));
+                table(rel(P, yw, 8, 5).x, rel(P, yw, 8, 5).z, yw);
+                woodpile(rel(P, yw, -4, 9), yw);
+                post(rel(P, yw, -9, -9), 2.2), post(rel(P, yw, -9, 9), 2.2);
+            } else if (pl.id == "BC.HIGH_LAKES_CAMP") {
+                cabinOf(rel(P, yw, -7, 0), yw, 2, {});
+                tent(rel(P, yw, 7, 7), yw + 0.4);
+                fire(rel(P, yw, 8, -2));
+                woodpile(rel(P, yw, -1, 4.6), yw);
+            } else if (pl.id == "BC.HOMESTEAD") {
+                // Ruins: a stone foundation, a chimney still standing, fallen beams.
+                for (int k = 0; k < 26; k++) {
+                    const double t = k / 26.0 * 4;
+                    const int side = (int)t;
+                    const double u = (t - side) * 2 - 1;
+                    const double lx = side == 0 ? -4 + 8 * (u * 0.5 + 0.5) : side == 2 ? 4 - 8 * (u * 0.5 + 0.5) : (side == 1 ? 4 : -4);
+                    const double lz = side == 1 ? -3 + 6 * (u * 0.5 + 0.5) : side == 3 ? 3 - 6 * (u * 0.5 + 0.5) : (side == 0 ? -3 : 3);
+                    const V3 q = rel(P, yw, lx, lz);
+                    addRock(q.x, q.z, V3(0.4 + 0.15 * (k % 3), 0.25, 0.4), 0.22, 7000 + k, 0.9f);
+                }
+                const V3 ch = rel(P, yw, -4, 0);
+                piece(V3(ch.x, ch.y + 1.7, ch.z), V3(0.55, 1.7, 0.9), yw, 0, 0, stone);
+                piece(V3(ch.x, ch.y + 3.5, ch.z), V3(0.4, 0.15, 0.7), yw, 0, 0, stone);
+                for (int k = 0; k < 4; k++) {
+                    const V3 q = rel(P, yw, -1 + k * 1.9, (k % 2 ? 1.5 : -1.2));
+                    piece(V3(q.x, q.y + 0.18, q.z), V3(1.6, 0.1, 0.12), yw + 0.4 * (k - 1.5), 0.05, 0.1 * k, V3(0.2, 0.14, 0.1), false);
+                }
+                piece(rel(P, yw, 5.5, -6) + V3(0, 0.35, 0), V3(0.45, 0.35, 0.3), yw, 0, 0, V3(0.4, 0.17, 0.1));  // a rusted stove
+            } else if (pl.id == "BC.COPPER_VISTA" || pl.id == "BC.RIM_OVERLOOK") {
+                cairn(rel(P, yw, 3, 3));
+                table(rel(P, yw, -3, -3).x, rel(P, yw, -3, -3).z, yw + M_PI / 2);
+                sign(rel(P, yw, -5, 4).x, rel(P, yw, -5, 4).z, yw + M_PI, V3(0.3, 0.22, 0.14), PROP_MAPBOARD);
+                if (pl.id == "BC.RIM_OVERLOOK") {  // a rail along the drop
+                    const V3 a = rel(P, yw, 6, -5), b = rel(P, yw, 6, 5);
+                    fence(a.x, a.z, b.x, b.z);
+                }
+            } else if (pl.kind == PK_SUMMIT) {
+                cairn(rel(P, yw, 1.2, 0));
+                cairn(rel(P, yw, -1.5, 1.5));
+            } else if (pl.id == "BC.LOST_MINE") {
+                // The yard on the mesa: the headframe over the shaft, a tent and a fire, tailings, the ore cart on its track, a gate at the top of the spur.
+                const double Y = grounded(pl.p).y;
+                const V3 H = rel(P, yw, 0, 0);
+                build("mine_headframe", rel(H, yw, -7.5, 0), yw, V3(1.9, 1.8, 2.0), {{"rust", 0.8}}, 0);
+                if (!models.empty() && models.back().id == "mine_headframe") models.back().p = H;  // (the model's origin is the shaft mouth)
+                const V3 cart = rel(P, yw, 7, 2.5);
+                piece(V3(cart.x, Y + 0.65, cart.z), V3(0.85, 0.35, 0.6), yw, 0, 0, V3(0.38, 0.17, 0.1));
+                decor("ore_cart", V3(cart.x, Y + 0.2, cart.z), yw, {{"track", 1}});
+                piece(V3(cart.x + 2, Y + 0.25, cart.z - 0.7), V3(4.5, 0.025, 0.05), 0, 0, 0, V3(0.35, 0.3, 0.28), false);
+                piece(V3(cart.x + 2, Y + 0.25, cart.z + 0.7), V3(4.5, 0.025, 0.05), 0, 0, 0, V3(0.35, 0.3, 0.28), false);
+                tent(rel(P, yw, 8, -9), yw + 0.3);
+                fire(rel(P, yw, 12, -4));
+                table(rel(P, yw, 6, -10).x, rel(P, yw, 6, -10).z, yw);
+                for (int k = 0; k < 10; k++) {
+                    const double a = k * 0.8;
+                    const V3 q = rel(P, yw, -9 + 4 * std::cos(a), 9 + 3 * std::sin(a));
+                    addRock(q.x, q.z, V3(0.5 + 0.2 * (k % 3), 0.3, 0.5), 0.3, 7100 + k, 1.1f);
+                }
+                const V3 g = rel(P, yw, -27, 0);  // (the head of the spur, west of the yard)
+                decor("gate", V3(2285, height(2285, -1745), -1745), yw + M_PI / 2, {{"open", 0.85}});
+                (void)g;
+                post(V3(2285, height(2285, -1745), -1745 + 2.7), 1.4), post(V3(2285, height(2285, -1745), -1745 - 2.7), 1.4);
+            }
+        }
     }
 
     steps.next("bc.stations start");
