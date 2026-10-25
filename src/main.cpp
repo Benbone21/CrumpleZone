@@ -38,6 +38,7 @@
 #include "audio.h"
 #include "toolsounds.h"
 #include "horn.h"
+#include "battery.h"
 #include "repairsync.h"
 #include "worldsound.h"
 #include "biome.h"
@@ -827,7 +828,7 @@ void drawGauges(Renderer& r, const Car& car, HudState& hud, float u, int W, int 
     const char* unit = mph ? "MPH" : "KM/H";
     r.text(cx - r.textWidth(unit, sm) / 2, cy + 8 * u + 8 * ss + 3 * u, sm, unit, 0.78f, 0.8f, 0.84f);
     // Gear in a small box in the dial's bottom opening.
-    std::string gear = car.engineDead ? "-" : car.gear < 0 ? "R" : car.gear == 0 ? "N" : std::to_string(car.gear);
+    std::string gear = (car.engineDead || car.engineOff) ? "-" : car.gear < 0 ? "R" : car.gear == 0 ? "N" : std::to_string(car.gear);
     float gs = px(2.2f * u), gw = 12 * gs * 0.5f + 8 * u, gh = 8 * gs + 6 * u, gy = cy + R - gh - 2 * u;
     pill(r, cx - gw / 2, gy, gw, gh, 0.0f, 0.0f, 0.0f, 0.55f);
     r.text(cx - r.textWidth(gear, gs) / 2, gy + 3 * u + gs * 0.5f, gs, gear, 1.0f, 0.72f, 0.25f);
@@ -1106,6 +1107,8 @@ void drawVehicleCard(Renderer& r, const Car& car, const HudState& hud, float u, 
         detached += wh.detached;
         popped += wh.popped && !wh.detached;
     }
+    if (battery::flat(car) && !battery::running(car)) warn.push_back("BATTERY FLAT: NEEDS A JUMP");  // the dash battery light
+    else if (car.battery < battery::kLow) warn.push_back("BATTERY LOW");
     if (car.hydrolocked) warn.push_back("ENGINE HYDROLOCKED");
     else if (car.engineDead) warn.push_back("ENGINE DEAD");
     else if (car.engineHealth < 0.65) warn.push_back("ENGINE DAMAGED");
@@ -2627,6 +2630,7 @@ int main(int argc, char** argv) {
             stopPilot();
             c.handbrake = 1;
             c.parkBrake = true;
+            c.engineOff = true, c.crank = 0;  // (key out: the starter turns it over when you get back in; battery.h)
         }
         camFrom = lastView, camBlend = 0;
         walker.exitCar(sim.world, c, riding);
@@ -4677,6 +4681,17 @@ int main(int argc, char** argv) {
                         if (interact.progress > 0 && io.kind == IA_HOOK_LINE && std::isfinite(io.at.x)) hold = hold + (io.at - hold) * smoothstep(0, 1, std::min(1.0, interact.share() * 1.4));
                         sim.handLine.hand = hold;
                     }
+                    if (sim.handCable.on()) {  // (the cables' free end in your hand while you walk them to the other battery; battery.h)
+                        if (!(walker.hand.kind == TK_TOOL && walker.hand.id == TOOL_CABLES)) sim.handCable = Sim::HandCable();
+                        else {
+                            const double hy = cam.mode != 3 ? footYaw : walker.yaw;
+                            const V3 hf(std::cos(hy), 0, -std::sin(hy)), hr = cross(hf, V3(0, 1, 0));
+                            V3 hold = walker.p + V3(0, 1.0, 0) + hf * 0.4 + hr * 0.2;
+                            const InteractOption& io = interact.current;
+                            if (interact.progress > 0 && io.kind == IA_CLAMP_CABLE && std::isfinite(io.at.x)) hold = hold + (io.at - hold) * smoothstep(0, 1, std::min(1.0, interact.share() * 1.4));
+                            sim.handCable.hand = hold;
+                        }
+                    }
                     const std::string said = interact.update(sim, walker, lastView.eye - fpWork, lastView.target - lastView.eye, holdE, dt);  // (from where you stand, not where you've leaned in to)
                     focus = prompter.update(sim, walker, interact, interact.nearby, lastView.eye - fpWork, lastView.target - lastView.eye);
                     if (!said.empty()) hud.toast(said);
@@ -4956,6 +4971,11 @@ int main(int argc, char** argv) {
                 rumbler.reset();
             }
         }
+        {  // the starter and the dead battery's click (battery.h)
+            static battery::Sounds batSounds;
+            if (audioOn) batSounds.update(sim, simDt, [&](Sfx what, const V3&, float gain, float delay, float pitch) { audio.play(what, gain, 0, delay, pitch); });
+            if (!walker.active) sim.handCable = Sim::HandCable();
+        }
         for (int i = 0; i < (int)sim.cars.size(); i++)  // (who's in the driver's seat: a buddy getting in either takes it over or rides along)
             if (!sim.cars[i].remote) sim.cars[i].occupied = i == sim.player && !walker.active;
         if (!(playback.active() && !playback.done) && !net.joining()) net.send(sim, (double)(SDL_GetPerformanceCounter()) / freq);
@@ -4973,7 +4993,7 @@ int main(int argc, char** argv) {
             float slip = 0, load = (float)(sim.paused ? 0 : car.throttle * car.tcCut);
             for (const Wheel& wh : car.wheels)
                 if (wh.load > 500) slip = std::max(slip, wh.slip);
-            audio.setEngine((float)(car.engineDead || campWorld ? 0 : car.rpm) * (float)std::max(0.35, sim.timeScale), load);
+            audio.setEngine((float)(car.engineDead || car.engineOff || campWorld ? 0 : car.rpm) * (float)std::max(0.35, sim.timeScale), load);
             const VehicleSpec& vs = *car.spec;
             audio.setVoice(vs.cylinders, (float)vs.displacement, (int)vs.induction, vs.flatPlane, (float)vs.redline, voiceFor(vs));
             audio.setRecording(engineSamples::forVehicle(vs));

@@ -51,6 +51,9 @@ enum InteractKind {
     IA_AIR_DOWN_TIRE, // let air out of a tire at the valve
     IA_OPEN_HOOD,     // E at the front of the vehicle: the hood swings up on its hinges and stays (Car::setHood)
     IA_CLOSE_HOOD,    // ...and down again
+    IA_JUMP_PACK,     // the jump pack in your hands on a dead battery (battery.h): yours, or a buddy's
+    IA_CLAMP_CABLE,   // jumper cables in your hands onto a battery (step 0 the first end, 1 the second: the cable is made)
+    IA_UNCLAMP_CABLE, // cables off (the cable is Sim::cables[rope]); the cables come back into your hands
 };
 
 // The repair in progress, as the on-foot checklist shows it: "CV AXLE, FRONT LEFT" and its steps.
@@ -119,6 +122,7 @@ struct Interact {
     std::vector<InteractSpot> spots;  // things out in the world to open (set by the game)
     std::string openedSpot;           // set when one's been opened (its id): the game takes it from here
     int openedInventory = -1;         // set when E opened a truck's inventory (its car): the game shows the menu
+    int jumpedCar = -1;               // set when the pack went on a vehicle (its index): repairsync tells its owner
     int enterCar = -1;                // set when E at a door says get in (its car: IA_ENTER_CAR, IA_RIDE_ALONG): the game does it
     PartHit hover;                    // the car part under the crosshair (set by the game each frame): its repair, if any, is the one picked
     std::string toSay;                // a job finished: said once the step's own words are

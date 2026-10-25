@@ -158,7 +158,8 @@ SCENARIO(invmenuLayout, "invmenu/layout", "The menu is a compact grid, five slot
             k.sel = 0;
             k.move(0, -1);
             ctx.check(tag + "up from the top wraps to the bottom, in a real slot", k.sel > 0 && k.sel < (int)k.slots.size() && k.sel / kInvCols == ((int)k.slots.size() - 1) / kInvCols - (k.sel % kInvCols > ((int)k.slots.size() - 1) % kInvCols ? 1 : 0));
-            k.sel = 14;
+            const int nRows = ((int)k.slots.size() - 1) / kInvCols;
+            k.sel = (nRows - 1) * kInvCols + kInvCols - 1;  // (the right end of the row above the last)
             k.move(0, 1);
             ctx.check(tag + "down into the short last row lands on its end", k.sel == (int)k.slots.size() - 1, std::to_string(k.sel));
             (void)L;

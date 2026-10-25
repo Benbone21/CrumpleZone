@@ -16,6 +16,9 @@
 //       while it's up (so a late joiner learns it); the panel itself rides the car's states, this is the flag (Car::hood) the engine
 //       work (and a buddy's jumper cables) read. Unheard for kHoodExpiry s, it's down.
 //   "drop PART X Y Z YAW"  a broken part put down (Sim::droppedParts).
+//   "cable CARA CARB" / "cable -"  your jumper cables clamped on two vehicles (battery.h): when they go on or come off and every
+//       kCableRefresh s while they're on; unheard for kCableExpiry s they come off. Each machine charges its own vehicles from them.
+//   "jump CAR"  you put the jump pack on a vehicle of the receiver's: its owner brings the battery up.
 //   "fixed CAR KIND WHEEL BEAM AXLE"  a repair made whole on one of your vehicles: the others make their copy whole too
 //       (only from its owner: whoever's vehicle it is does the fix, the same as everything else about it).
 #pragma once
@@ -32,6 +35,7 @@
 namespace repairsync {
 
 constexpr double kRefresh = 1.0, kExpiry = 3.0, kMinGap = 0.1;
+constexpr double kCableRefresh = 2.0, kCableExpiry = 6.0;
 constexpr double kJackEvery = 0.2, kJackRefresh = 2.0, kJackExpiry = 6.0;
 constexpr double kHoodRefresh = 3.0, kHoodExpiry = 9.0;
 
@@ -72,6 +76,8 @@ struct Sender {
         double at = -1e9;
     };
     std::vector<HoodSent> hoods;
+    std::string lastCable;  // the last "cable ..." sent
+    double cableAt = -1e9;
     void update(const Sim& sim, const Walker* wk, Interact& ia, double now, bool online, const std::function<void(const std::string&)>& send);
 };
 
