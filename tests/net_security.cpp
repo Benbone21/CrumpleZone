@@ -33,7 +33,7 @@ struct NetSessionSecTest {
     static void handle(NetSession& s, Sim* sim, Conn* c, const std::vector<uint8_t>& msg) { s.handle(sim, c, msg); }
     static bool apply(NetSession& s, Sim& sim, const std::vector<uint8_t>& msg, int from) { return s.apply(sim, msg, from); }
     static void datagram(NetSession& s, Sim& sim, const std::vector<uint8_t>& d, uint32_t ip, uint16_t port) {
-        s.onDatagram(sim, d.data(), d.size(), ip, port, 1.0);
+        s.onDatagram(&sim, d.data(), d.size(), ip, port, 1.0);
     }
     static void snapshot(NetSession& s, Sim& sim, uint32_t netId, const std::vector<uint8_t>& d) { s.takeSnapshot(sim, netId, d, 1.0); }
     static void fragment(NetSession& s, Sim& sim, uint32_t netId, uint32_t seq, uint8_t f, uint8_t n, const std::vector<uint8_t>& d) {
