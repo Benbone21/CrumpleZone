@@ -147,7 +147,7 @@ to 0.88 of one machine's.)
 Tolerances the tests hold: both machines see the hit; hits within 60 ms; each truck's knock
 0.75 to 1.33 times one machine's; damage 0.6 to 1.6 times (median of five lines: a crash's
 damage is bimodal, a nose folding up neatly or not, 2 % or 6 %; 0.5 for the braker's own truck
-on a slow or lossy line); copies within 0.25 m before the hit; within 1.5 m from 0.5 s after
+on a line of 150 ms each way or more, or lossy); copies within 0.25 m before the hit; within 1.5 m from 0.5 s after
 (4 m at 250 ms each way).
 
 ## For the owner to decide

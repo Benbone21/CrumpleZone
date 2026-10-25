@@ -294,6 +294,7 @@ public:
     // else's vehicle leaves it behind: the host takes it on (parked).
     // Asks for sim.cars[car] (another player's). False: not one that can be asked for, or asking already.
     bool requestTake(Sim& sim, int car);
+    bool takePending(uint32_t oldId) const { for (const PendingTake& t : takes) if (t.oldId == oldId) return true; return false; }  // host: someone's ask for this vehicle is out with its owner
     uint32_t asking() const { return askId; }  // the vehicle asked for (0: none)
     // Owner: whether one of mine may go now (the game: nobody's driving it). Unset: whenever it's
     // stopped. (Either way, never while it's moving.)
