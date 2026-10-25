@@ -52,6 +52,7 @@ enum MsgType : uint8_t {
     MSG_TAKE,         // taker -> host: may I have it; host -> its owner: they ask
     MSG_GIVE,         // owner -> host: it's theirs now; host -> everyone: it changed hands
     MSG_REFUSE,       // owner -> host -> taker: no (+ str why)
+    MSG_SECTIONS,     // host -> client, in the welcome: u8 index, u8 count, u8 SectionType, u16 part, u16 parts, bytes: the park's edited sections (.czs text)
 };
 // (WELCOME: u8 id, u8 map, u64 the guest's datagram secret.)
 enum DgramType : uint8_t { DG_SNAP = 1, DG_HELLO = 2, DG_ACK = 3 };  // (an ack: u32 netId, u32 seq, ...: states we have, to tell the next against)
@@ -394,6 +395,10 @@ void NetSession::close() {
     directFound = false;
     directIp = 0, directPort = 0;
     udpHeld.clear();
+    sections.clear();
+    sectionsIn.clear();
+    sectionsNext = 0;
+    sectionsPending = false;
 }
 
 bool NetSession::host(int port, const std::string& name, int m, int maxP, const std::string& session) {
@@ -584,6 +589,7 @@ int NetSession::pollJoin() {
         readTcp(*conns[0]);
         if (role != CLIENT || !live(*conns[0])) return fail(error.empty() ? "connection closed" : error);
         if (pending.size() != before) joinQuiet = now;
+        if (sectionsPending && now - joinT0 < joinTimeout) return 0;  // (the world can't be built without them)
         if (now - joinT0 < 0.5 && now - joinQuiet < 0.12) return 0;
         joinStage = 0;
         players[self].active = true;
@@ -939,6 +945,32 @@ void NetSession::handle(Sim* sim, Conn* from, const std::vector<uint8_t>& msg) {
             sendTo(*from, frame(MSG_PONG, w));
             return;
         }
+        case MSG_SECTIONS: {
+            if (role != CLIENT) return;
+            const int index = r.get<uint8_t>(), count = r.get<uint8_t>(), type = r.get<uint8_t>();
+            const int part = r.get<uint16_t>(), parts = r.get<uint16_t>();
+            if (!r.ok || count < 1 || count > 16 || index >= count || type >= 64 || parts < 1 || parts > 200 || part >= parts) return;
+            if (index == 0 && part == 0) sectionsIn.clear(), sectionsNext = 0, sectionsPending = true;
+            if (sectionsNext != (index << 16 | part)) {  // (out of order: lost the thread, wait for the next whole set)
+                sectionsNext = -1, sectionsPending = false, sectionsIn.clear();
+                return;
+            }
+            if (part == 0) sectionsIn.push_back({type, std::string()});
+            size_t total = 0;
+            for (const auto& x : sectionsIn) total += x.second.size();
+            if (total + (r.n - r.at) > net::kMaxLevelBytes) {
+                sectionsNext = -1, sectionsPending = false, sectionsIn.clear();
+                return;
+            }
+            sectionsIn.back().second.append((const char*)r.p + r.at, r.n - r.at);
+            sectionsNext = part + 1 < parts ? (index << 16 | (part + 1)) : ((index + 1) << 16);
+            if (part + 1 == parts && index + 1 == count) {
+                sections = sectionsIn;
+                sectionsIn.clear();
+                sectionsPending = false;
+            }
+            return;
+        }
         case MSG_LEVEL: {
             if (role != CLIENT) return;
             const uint32_t serial = r.get<uint32_t>();
@@ -1031,6 +1063,26 @@ void NetSession::handle(Sim* sim, Conn* from, const std::vector<uint8_t>& msg) {
     }
 }
 
+void NetSession::sendSections(Conn& to) {
+    const size_t count = std::min<size_t>(sections.size(), 16);
+    size_t total = 0;
+    for (size_t i = 0; i < count; i++) total += sections[i].second.size();
+    if (!count || total > net::kMaxLevelBytes) return;  // (more than a level's worth: they build the generator's)
+    constexpr size_t kPart = 60000;
+    for (size_t i = 0; i < count; i++) {
+        const std::string& t = sections[i].second;
+        const size_t parts = std::max<size_t>(1, (t.size() + kPart - 1) / kPart);
+        for (size_t p = 0; p < parts; p++) {
+            Writer w;
+            w.put<uint8_t>((uint8_t)i), w.put<uint8_t>((uint8_t)count), w.put<uint8_t>((uint8_t)sections[i].first);
+            w.put<uint16_t>((uint16_t)p), w.put<uint16_t>((uint16_t)parts);
+            const size_t a = p * kPart, b = std::min(t.size(), a + kPart);
+            w.b.insert(w.b.end(), t.begin() + (long)a, t.begin() + (long)b);
+            sendTo(to, frame(MSG_SECTIONS, w));
+        }
+    }
+}
+
 void NetSession::welcome(Sim& sim, Conn& c) {
     Writer w;
     w.put<uint8_t>((uint8_t)c.peer);
@@ -1044,6 +1096,7 @@ void NetSession::welcome(Sim& sim, Conn& c) {
             p.str(players[k].name);
             sendTo(c, frame(MSG_PLAYER, p));
         }
+    sendSections(c);
     if (!levelText.empty()) sendLevel(&c);
     if (dayHours >= 0) sendClock(&c);
     for (const Car& car : sim.cars)

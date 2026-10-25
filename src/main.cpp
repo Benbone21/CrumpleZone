@@ -2284,7 +2284,7 @@ int main(int argc, char** argv) {
     };
     // Loads a map, keeping the vehicle you were in.
     auto loadMap = [&](int m) {
-        World::useLocalEdits = !net.active();  // (a session's worlds are the same for everyone: the generator's sections, not your saved edits of them)
+        World::useLocalEdits = net.role != NetSession::CLIENT;  // (a guest builds the host's: its edited sections came with the welcome, World::setSessionSections)
         const int model = std::max(0, sim.cars[sim.player].spec->model);
         campWorld = false;
         sim.world = World(m);
@@ -2313,10 +2313,7 @@ int main(int argc, char** argv) {
                                     : (settings.playerName.empty() ? std::string("PLAYER") : settings.playerName) + "'S GAME";
         net.password = !opt.password.empty() ? opt.password : settings.netPassword;
         if (net.host(port, settings.playerName, sim.world.map, settings.maxPlayers, session)) {
-            if (sim.world.parkEdited) {  // (the guests build the generator's sections, so the host's world must too: your saved edits are for offline play)
-                loadMap(sim.world.map);
-                std::printf("hosting: the proving ground shows the built-in sections, not the saved level edits\n");
-            }
+            net.setSections(sim.world.editedSections);  // (your edited park sections go to whoever joins: the same world for all)
             net.adopt(sim);
             hud.toast("HOSTING " + session + " ON " + mapName(sim.world.map) + ": FRIENDS ON YOUR NETWORK SEE IT IN JOIN");
             std::printf("hosting %s on port %d\n", mapName(sim.world.map), port);
@@ -2365,7 +2362,8 @@ int main(int argc, char** argv) {
             std::printf("can't join %s: %s\n", address.c_str(), net.error.c_str());
             return;
         }
-        if (net.map != sim.world.map || sim.world.parkEdited || campWorld) loadMap(net.map);
+        World::setSessionSections(net.sections);
+        if (net.map != sim.world.map || sim.world.parkEdited || !net.sections.empty() || campWorld) loadMap(net.map);
         net.adopt(sim);
         hud.toast("JOINED " + net.ownerName(0) + "'S GAME ON " + mapName(net.map));
         std::printf("joined %s (player %d)\n", address.c_str(), net.self);
@@ -2713,7 +2711,7 @@ int main(int argc, char** argv) {
             if (then) then();
             return;
         }
-        World::useLocalEdits = !net.active();
+        World::useLocalEdits = net.role != NetSession::CLIENT;
         const bool showcase = World::withShowcase;
         const int wilds = (int)World::wildsKind;
         const double halfOverride = World::halfSizeOverride;
@@ -4467,7 +4465,8 @@ int main(int argc, char** argv) {
                     menu.joining = false;
                     closeMenu();
                     run.stop();
-                    if (net.map != sim.world.map || sim.world.parkEdited || campWorld) loadMap(net.map);
+                    World::setSessionSections(net.sections);
+                    if (net.map != sim.world.map || sim.world.parkEdited || !net.sections.empty() || campWorld) loadMap(net.map);
                     net.adopt(sim);
                     hud.toast("JOINED " + net.ownerName(0) + "'S GAME ON " + mapName(net.map));
                     std::printf("joined (player %d)\n", net.self);
@@ -5698,6 +5697,10 @@ int main(int argc, char** argv) {
             if (campWas && !campWorld) dayHours = settings.clockHours;  // (left the camp: the clock goes on from where it was)
             campWas = campWorld;
             if (net.role == NetSession::HOST) net.dayHours = dayHours, net.dayRate = sim.paused ? 0 : dayRate * sim.timeScale;
+            {  // (the park sections whoever joins next builds: this world's, whenever it's rebuilt)
+                static uint64_t sectionsOf = 0;
+                if (net.role == NetSession::HOST && sectionsOf != sim.world.stamp) net.setSections(sim.world.editedSections), sectionsOf = sim.world.stamp;
+            }
             renderer.daylight = campWorld ? menuscene::daylight(campLevel) : computeDaylight(dayHours);
             sim.dayHours = dayHours;  // (the air cools at night: the tires feel it)
             // Each owner's switch is carried reliably, including OFF and high beams.

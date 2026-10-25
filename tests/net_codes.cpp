@@ -14,6 +14,8 @@
 #include "../src/netsock.h"
 #include "../src/nettunnel.h"
 #include "../src/rendezvous.h"
+#include "../src/sectionfile.h"
+#include "../src/world.h"
 #include "harness.h"
 
 struct NetSessionCodeTest {
@@ -369,3 +371,24 @@ SCENARIO(netTunnelStream, "net/tunnel-stream", "the tunnel's reliable stream: 2 
     ctx.note("cwnd " + std::to_string(a.cwnd) + " srtt " + std::to_string(a.srtt) + " rto " + std::to_string(a.rto) + " sent " + std::to_string(a.segmentsSent));
 }
 
+SCENARIO(netCodeSections, "net/code-sections", "the host's edited park sections go to a guest in the welcome (relayed too), and build in place of the generator's") {
+    ctx.add(vehicleCatalog()[2], 10, -8, 0);
+    Rig rig(ctx, 4);
+    SectionFile mud, rocky;
+    const bool have = builtinSectionFor(SEC_MUD_PIT, mud) && builtinSectionFor(SEC_ROCKY_RIVER, rocky);
+    ctx.check("two sections to send", have);
+    if (!have) return;
+    mud.about = "MY OWN MUD PIT";
+    const std::vector<std::pair<int, std::string>> mine = {{(int)SEC_MUD_PIT, saveSectionText(mud)}, {(int)SEC_ROCKY_RIVER, saveSectionText(rocky)}};
+    const std::string code = rig.open(4, true);
+    rig.host.setSections(mine);
+    NetSession& g = rig.guest();
+    ctx.check("in with the code (relayed)", rig.join(g, code, 2, 20) > 0, g.error);
+    ctx.check("the sections came whole, before the world is built", g.sections == mine,
+              std::to_string(g.sections.size()) + " sections, " + std::to_string(mine[0].second.size() + mine[1].second.size()) + " bytes");
+    World::setSessionSections(g.sections);
+    SectionFile got;
+    ctx.check("and the world builder takes them in place of the generator's", World::sessionSection(SEC_MUD_PIT, got) && got.about == "MY OWN MUD PIT" && got.nu == mud.nu);
+    ctx.check("one not sent is the generator's", !World::sessionSection(SEC_DUNES, got));
+    World::setSessionSections({});
+}

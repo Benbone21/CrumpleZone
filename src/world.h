@@ -11,6 +11,8 @@
 #include "plants.h"
 #include "rivers.h"
 
+struct SectionFile;  // (sectionfile.h)
+
 // Oriented static box (ramps, walls, poles, bumps).
 struct Box {
     V3 c, h;      // center, half extents
@@ -267,6 +269,13 @@ public:
     // from the generator. Off in multiplayer: the others build the proving ground from their own files, so the edits would desync it.
     static inline std::atomic<bool> useLocalEdits{true};
     bool parkEdited = false;      // some park section came from a saved edit
+    // The park sections built from an edit: (SectionType, its .czs text). A host sends them to whoever joins
+    // (net.h, MSG_SECTIONS), so everyone drives the same park.
+    std::vector<std::pair<int, std::string>> editedSections;
+    // A guest's worlds are built with the host's edited sections in place of the generator's (with useLocalEdits off).
+    // Set it before building; empty: the generator's.
+    static void setSessionSections(const std::vector<std::pair<int, std::string>>& sections);
+    static bool sessionSection(int type, SectionFile& out);
     uint64_t editStamp = 0;       // levelFilesStamp() when the park was built
     // The WildsKind the next MAP_WILDS is built as (a level's `terrain`: see levelWorld in level.h). Per thread, like withShowcase.
     static inline thread_local int wildsKind = WILDS_MEADOW;

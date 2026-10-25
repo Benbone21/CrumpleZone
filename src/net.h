@@ -169,6 +169,11 @@ public:
     std::string levelText;
     uint32_t levelSerial = 0;
     bool levelFresh = false;
+    // The proving ground's park sections the host built from its own edits (World::editedSections):
+    // host: set them (setSections), whoever joins gets them before building its world; client: what
+    // came (World::setSessionSections before loading the map).
+    std::vector<std::pair<int, std::string>> sections;
+    void setSections(const std::vector<std::pair<int, std::string>>& s) { sections = s; }
     // Race chatter (progress, finishes, the host's "go"): short text, relayed to everyone.
     struct GameMsg {
         int player;
@@ -486,6 +491,10 @@ private:
     std::vector<uint8_t> lampMsg(const Car& c) const;
     std::vector<uint8_t> ropeMsg(const Sim& sim, const Rope& r) const;
     void sendLevel(Conn* to);  // the level's text, in parts (to one client, or everyone)
+    void sendSections(Conn& to);
+    std::vector<std::pair<int, std::string>> sectionsIn;  // client: coming in
+    int sectionsNext = 0;      // client: the part expected next (index << 16 | part); -1: lost the thread
+    bool sectionsPending = false;
     std::string levelIn;       // client: parts so far
     uint32_t levelInSerial = 0;
     uint16_t levelInNext = 0;  // client: the part we expect next
