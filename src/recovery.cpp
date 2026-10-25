@@ -1,5 +1,6 @@
 // Recovery and trail upkeep: winch lines and tow straps, airing tires down and up, the
 // sway-bar disconnect, putting a wreck back on its wheels, and repair stations.
+#include "battery.h"
 #include <algorithm>
 #include <cstdio>
 #include <string>
@@ -267,6 +268,8 @@ void Sim::repairCar(int i) {
     double yaw = std::atan2(-fr.fwd.z, fr.fwd.x);
     if (!std::isfinite(yaw)) yaw = 0;
     dropRopes(i);
+    cables.erase(std::remove_if(cables.begin(), cables.end(), [&](const JumperCable& j) { return j.a == i || j.b == i; }), cables.end());
+    if (handCable.car == i) handCable = HandCable();
     c.respawn(V3(fr.com.x, world.clearY(fr.com.x, fr.com.z) + 0.05, fr.com.z), yaw);
     c.setDown(world);
     c.spawnPos = sp;
@@ -339,6 +342,13 @@ void Sim::dropRopes(int car) {
 
 void Sim::carRemoved(int car) {
     dropRopes(car);
+    cables.erase(std::remove_if(cables.begin(), cables.end(), [&](const JumperCable& j) { return j.a == car || j.b == car; }), cables.end());
+    for (JumperCable& j : cables) {
+        if (j.a > car) j.a--;
+        if (j.b > car) j.b--;
+    }
+    if (handCable.car == car) handCable = HandCable();
+    else if (handCable.car > car) handCable.car--;
     if (handLine.car == car) dropHandLine();
     else if (handLine.car > car) handLine.car--;
     for (Rope& r : ropes) {
@@ -792,6 +802,7 @@ void Sim::ropeForces() {
 // ---- Per frame ----------------------------------------------------------------
 
 void Sim::updateTrail(double dt) {
+    battery::step(*this, dt);
     for (int i = 0; i < (int)cars.size(); i++) {
         Car& c = cars[i];
         if (c.isProp() || c.remote) continue;

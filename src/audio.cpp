@@ -35,7 +35,7 @@ void Audio::setNearbyEngines(const Sim& sim, const V3& listener, const V3& right
         Source& out = frame.engines[slot];
         const VehicleSpec& v = *c.spec;
         out.id = c.netId ? c.netId : 0x80000000u | (uint32_t)(i + 1);
-        out.engine = EngineInput{(float)(c.engineDead || sim.paused ? 0 : c.rpm) * timeScale,
+        out.engine = EngineInput{(float)(c.engineDead || c.engineOff || sim.paused ? 0 : c.rpm) * timeScale,
             (float)clampd(c.throttle * c.tcCut, 0, 1), (float)c.boost,
             v.cylinders, (int)v.induction, (float)v.displacement, (float)v.redline, v.flatPlane,
             (uint8_t)engineSamples::forVehicle(v), voiceFor(v)};
@@ -334,6 +334,45 @@ void Audio::synthesizeTools() {
                 if (d > 0 && d < 0.1f) v += std::sin(tau * (210 + 55 * k - 520 * d) * d) * std::exp(-d * 38) * (0.7f + 0.15f * k);
             }
             return v + 0.12f * rnd() * std::exp(-t * 2);
+        });
+    }
+    // A spring clamp snapping onto a terminal: a sharp metal click and a short ring.
+    {
+        float lp = 0;
+        make(SFX_CLAMP, 0.25f, [&](float t, int) {
+            lp += (rnd() - lp) * 0.4f;
+            const float b = t - 0.045f;
+            return 0.7f * lp * std::exp(-t * 800) + 0.5f * ring(t, 2600, 90) + (b > 0 ? 0.6f * lp * std::exp(-b * 700) + 0.4f * ring(b, 1900, 60) + 0.25f * ring(b, 3700, 110) : 0.0f);
+        });
+    }
+    // A spark: a crackle of a few snaps and a thin high zap.
+    {
+        make(SFX_SPARK, 0.3f, [&](float t, int) {
+            float v = 0;
+            for (int k = 0; k < 4; k++) {
+                const float a = t - 0.012f * k * (1 + k);
+                if (a > 0) v += (rnd() * 2 - 1) * std::exp(-a * 900) * (1.0f - 0.2f * k);
+            }
+            return 0.8f * v + 0.25f * std::sin(tau * (5200 - 3000 * t) * t) * std::exp(-t * 40);
+        });
+    }
+    // The starter turning the engine over: a rough, lumpy whirr, one compression stroke after another.
+    {
+        float ph = 0, lp = 0;
+        make(SFX_STARTER, 0.3f, [&](float t, int) {
+            lp += (rnd() - lp) * 0.2f;
+            const float lump = 0.55f + 0.45f * std::sin(tau * 11 * t);
+            ph += tau * (150 + 40 * lump) / sr;
+            const float env = std::min(1.0f, t / 0.02f) * std::min(1.0f, (0.3f - t) / 0.05f);
+            return env * lump * (0.5f * std::sin(ph) + 0.25f * std::sin(2.01f * ph) + 0.35f * lp);
+        });
+    }
+    // The solenoid clicking with too little behind it.
+    {
+        float lp = 0;
+        make(SFX_CLICK, 0.2f, [&](float t, int) {
+            lp += (rnd() - lp) * 0.3f;
+            return 0.6f * lp * std::exp(-t * 600) + 0.7f * ring(t, 900, 70) + 0.4f * ring(t, 2100, 120);
         });
     }
 }

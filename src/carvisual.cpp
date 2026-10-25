@@ -1,3 +1,4 @@
+#include "battery.h"
 #include "thread_cache.h"
 #include "loadprof.h"
 #include "carvisual.h"
@@ -1966,6 +1967,32 @@ void buildRopes(const Sim& sim, std::vector<Vtx>& out) {
         const std::vector<V3> path = sim.ropePath(tmp, rad + 0.015);
         for (size_t k = 1; k < path.size(); k++) tube(out, path[k - 1], path[k], rad, winch ? 5 : 4, winch ? V3(0.72, 0.1, 0.05) : V3(0.95, 0.6, 0.08), SM_MATTE);
         blob(out, hl.hand, 0.03, V3(0.55, 0.55, 0.57), SM_METAL);  // the hook in the hand
+    }
+    {  // jumper cables (battery.h): a red and a black lead between the clamps on two batteries (or from one to your hand), drooping to the ground
+        auto lead = [&](const V3& a, const V3& b, const V3& col, double off) {
+            const double d = len(b - a), sag = std::max(0.0, (battery::kCableLen - d) * 0.25) + 0.12;
+            std::vector<V3> path;
+            for (int k = 0; k <= 10; k++) {
+                const double u = k / 10.0;
+                V3 q = a + (b - a) * u;
+                q.z += off * std::sin(3.14159 * u) * 0.08;
+                q.y = std::max(q.y - sag * 4 * u * (1 - u), sim.world.height(q.x, q.z) + 0.02);
+                path.push_back(q);
+            }
+            for (size_t k = 1; k < path.size(); k++) tube(out, path[k - 1], path[k], 0.007, 4, col, SM_MATTE);
+            blob(out, a, 0.016, col * 0.9 + V3(0.1, 0.1, 0.1), SM_METAL);
+            blob(out, b, 0.016, col * 0.9 + V3(0.1, 0.1, 0.1), SM_METAL);
+        };
+        const V3 red(0.8, 0.08, 0.06), blk(0.06, 0.06, 0.065);
+        for (const Sim::JumperCable& j : sim.cables) {
+            if (j.a < 0 || j.b < 0 || j.a >= (int)sim.cars.size() || j.b >= (int)sim.cars.size()) continue;
+            lead(battery::post(sim.cars[j.a], 0), battery::post(sim.cars[j.b], 0), red, 1);
+            lead(battery::post(sim.cars[j.a], 1), battery::post(sim.cars[j.b], 1), blk, -1);
+        }
+        if (sim.handCable.on() && sim.handCable.car < (int)sim.cars.size()) {
+            lead(battery::post(sim.cars[sim.handCable.car], 0), sim.handCable.hand, red, 1);
+            lead(battery::post(sim.cars[sim.handCable.car], 1), sim.handCable.hand - V3(0, 0.02, 0), blk, -1);
+        }
     }
     for (const Rope& r : sim.ropes) {
         auto at = [&](const RopeEnd& e) { return e.kind == ANCHOR_CAR ? sim.cars[e.car].hookPoint(e.hook) : e.p; };

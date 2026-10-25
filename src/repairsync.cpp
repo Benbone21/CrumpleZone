@@ -7,6 +7,7 @@
 #include <sstream>
 
 #include "anchors.h"
+#include "battery.h"
 #include "fixes.h"
 #include "net.h"
 
@@ -124,7 +125,8 @@ bool decode(const std::string& text, Work& out) {
             out.carry.R = v[0], out.carry.rimR = v[1], out.carry.width = v[2], out.carry.style = (int)v[3];
             out.carry.popped = v[4] == 1, out.carry.tireOnly = v[5] == 1;
         } else if (key == "do" && v.size() >= 16) {
-            const bool ok = whole(v[0], IA_NONE + 1, IA_CLOSE_HOOD) && whole(v[1], 0, 4294967295.0) && whole(v[2], -1, 31) && whole(v[3], -1, 31) && whole(v[4], -1, TOOL_COUNT - 1) &&
+            const bool ok = whole(v[0], IA_NONE + 1, IA_UNCLAMP_CABLE) && whole(v[1], 0, 4294967295.0) && whole(v[2], -1, 31) && whole(v[3], -1, 31) && whole(v[4], -1, TOOL_COUNT - 1) &&
+
                             whole(v[5], -1, PART_COUNT - 1) && whole(v[6], Fix::CV_AXLE, Fix::SPARK_PLUGS) && whole(v[7], -1, 31) && whole(v[8], 0, PART_COUNT - 1) &&
                             inRange(v[11], 0, 60) && inRange(v[12], 0, 600) && okPos(V3(v[13], v[14], v[15]));
             if (!ok) continue;
@@ -154,12 +156,30 @@ void Sender::update(const Sim& sim, const Walker* wk, Interact& ia, double now, 
         std::snprintf(b, sizeof b, "fixed %u %d %d %d %d", (unsigned)sim.cars[ia.fixedCar].netId, (int)f.kind, f.wheel, f.beam, f.axle);
         send(b);
     }
-    ia.droppedPart = -1, ia.fixedCar = -1;
+    if (online && ia.jumpedCar >= 0 && ia.jumpedCar < (int)sim.cars.size() && sim.cars[ia.jumpedCar].netId) {
+        std::snprintf(b, sizeof b, "jump %u", (unsigned)sim.cars[ia.jumpedCar].netId);
+        send(b);
+    }
+    ia.droppedPart = -1, ia.fixedCar = -1, ia.jumpedCar = -1;
     if (!online) {
         last = Work(), lastAt = -1e9;
         jacks.clear();
         hoods.clear();
+        lastCable.clear();
         return;
+    }
+    {  // your jumper cables, if they're on
+        std::string text = "cable -";
+        for (const Sim::JumperCable& j : sim.cables)
+            if (j.owner < 0 && j.a >= 0 && j.b >= 0 && j.a < (int)sim.cars.size() && j.b < (int)sim.cars.size() && sim.cars[j.a].netId && sim.cars[j.b].netId) {
+                std::snprintf(b, sizeof b, "cable %u %u", (unsigned)sim.cars[j.a].netId, (unsigned)sim.cars[j.b].netId);
+                text = b;
+            }
+        const bool changed = text != lastCable && !(lastCable.empty() && text == "cable -");
+        if (changed || (text != "cable -" && now - cableAt >= kCableRefresh)) {
+            send(text);
+            lastCable = text, cableAt = now;
+        }
     }
     // The hoods of your vehicles.
     hoods.erase(std::remove_if(hoods.begin(), hoods.end(), [&](const HoodSent& h) { return carByNetId(sim, h.id) < 0; }), hoods.end());
@@ -268,6 +288,24 @@ bool Remote::onMessage(Sim& sim, int player, const std::string& who, const std::
         if (open > 0) hoods.push_back(Hood{c->netId, now});
         return true;
     }
+    if (tag == "cable") {
+        sim.cables.erase(std::remove_if(sim.cables.begin(), sim.cables.end(), [&](const Sim::JumperCable& j) { return j.owner == player; }), sim.cables.end());
+        double a = 0, b = 0;
+        if (!(in >> a >> b) || !whole(a, 1, 4294967295.0) || !whole(b, 1, 4294967295.0) || a == b) return true;
+        const int ca = carByNetId(sim, (uint32_t)a), cb = carByNetId(sim, (uint32_t)b);
+        if (ca < 0 || cb < 0 || sim.cars[ca].isProp() || sim.cars[cb].isProp()) return true;
+        Sim::JumperCable j;
+        j.a = ca, j.b = cb, j.owner = player, j.heard = now;
+        sim.cables.push_back(j);
+        return true;
+    }
+    if (tag == "jump") {
+        double id = 0;
+        if (!(in >> id) || !whole(id, 1, 4294967295.0)) return true;
+        const int ci = carByNetId(sim, (uint32_t)id);
+        if (ci >= 0 && !sim.cars[ci].remote && !sim.cars[ci].isProp()) battery::jump(sim, ci);  // (only ever one of ours, and only a charge)
+        return true;
+    }
     if (tag == "drop") {
         double part = 0;
         Sim::DroppedPart d;
@@ -304,6 +342,7 @@ void Remote::update(Sim& sim, double dt, double now) {
         }
         k++;
     }
+    sim.cables.erase(std::remove_if(sim.cables.begin(), sim.cables.end(), [&](const Sim::JumperCable& j) { return j.owner >= 0 && now - j.heard > kCableExpiry; }), sim.cables.end());
     for (size_t k = 0; k < jacks.size();) {
         const int ci = carByNetId(sim, jacks[k].id);
         Car* c = ci >= 0 && sim.cars[ci].remote ? &sim.cars[ci] : nullptr;

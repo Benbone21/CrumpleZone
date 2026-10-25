@@ -1815,7 +1815,7 @@ NetSession::Snap NetSession::makeSnap(const Sim& sim, const Car& c, double now) 
     s.steer = (float)c.steer;
     s.brake = (float)clampd(std::max(c.brake, c.handbrake * 0.6), 0, 1);
     s.damage = (float)c.damage;
-    s.status = (uint8_t)(c.engineDead | (c.hydrolocked << 1) | (c.occupied << 2));
+    s.status = (uint8_t)(c.engineDead | (c.hydrolocked << 1) | (c.occupied << 2) | (c.engineOff << 3) | ((c.battery < 0.2) << 4));  // (bits 3, 4: ignition off, flat battery; older builds mask them)
     s.rpm = (float)c.rpm;
     s.load = (float)clampd(c.throttle * c.tcCut, 0, 1);
     s.boost = (float)c.boost;
@@ -2168,7 +2168,7 @@ void NetSession::takeSnapshot(Sim& sim, uint32_t netId, const std::vector<uint8_
     s.steer = r.get<int16_t>() / 16000.0f;
     s.brake = r.get<uint8_t>() / 255.0f;
     s.damage = r.get<uint16_t>() / 65535.0f;
-    s.status = r.get<uint8_t>() & 7;
+    s.status = r.get<uint8_t>() & 31;
     s.rpm = r.get<uint16_t>() / 3.0f;
     s.load = r.get<uint16_t>() / 65535.0f;
     s.boost = r.get<uint16_t>() / 6000.0f;
@@ -2359,6 +2359,8 @@ void NetSession::applyRemotes(Sim& sim, double now) {
         c.engineDead = s.status & 1;
         c.hydrolocked = (s.status >> 1) & 1;
         c.occupied = (s.status >> 2) & 1;
+        c.engineOff = (s.status >> 3) & 1;
+        c.battery = (s.status >> 4) & 1 ? 0.05 : std::max(c.battery, 0.8);  // (their charge isn't sent: only whether it's flat)
         c.sleeping = false;
         c.updateBounds();
         for (const auto& rl : s.ropeLen)  // (only the winch lines this vehicle works)

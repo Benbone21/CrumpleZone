@@ -218,7 +218,7 @@ void Career::setAnchorStock(const AnchorStock& a) {
 const std::vector<ShopItem>& stationRack() {
     static const std::vector<ShopItem> r = [] {
         std::vector<ShopItem> v;
-        const int toolPrice[TOOL_COUNT] = {60, 140, 220, 45, 70, 55, 180};
+        const int toolPrice[TOOL_COUNT] = {60, 140, 220, 45, 70, 55, 180, 150, 45};
         const int partPrice[PART_COUNT] = {160, 240, 300, 90, 190, 40, 25};
         for (int t = 0; t < TOOL_COUNT; t++) v.push_back({toolKey((Tool)t), toolPrice[t], toolModel((Tool)t)});
         for (int p = 0; p < PART_COUNT; p++) v.push_back({repairPartKey((RepairPart)p), partPrice[p], p == PART_TIRE ? "" : repairPartModel((RepairPart)p)});

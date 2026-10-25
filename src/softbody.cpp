@@ -1531,13 +1531,13 @@ void Car::wheelStep(double h, const World& w) {
         }
         throttleFill = pedal > throttleFill ? std::min(pedal, throttleFill + h * rise) : pedal;
     }
-    double thr = shiftTimer > 0 || engineDead ? 0.0 : throttleFill;
+    double thr = shiftTimer > 0 || (engineDead || engineOff) ? 0.0 : throttleFill;
     double power = 0.25 + 0.75 * engineHealth;  // a crushed engine bay loses power
     // Turbo: boost follows the pedal, slowly at low revs (lag), and leaks away off throttle.
     // Off boost the engine makes a bit over half its torque.
     double turbo = 1;
     if (spec->turboLag > 0) {
-        double want = engineDead ? 0 : throttle;  // traction control trims the spark, not the boost
+        double want = (engineDead || engineOff) ? 0 : throttle;  // traction control trims the spark, not the boost
         double tau = want > boost ? spec->turboLag * clampd(3000 / std::max(rpm, 1.0), 0.5, 2.0) : 0.25;
         boost += (want - boost) * std::min(1.0, h / tau);
         turbo = 0.7 + 0.3 * boost;
@@ -1590,8 +1590,8 @@ void Car::wheelStep(double h, const World& w) {
     double Te, Iin = Ie;
     if (fuel < 0) fuel = spec->fuelCapacity;
     if (jerry < 0) jerry = spec->jerryCan;
-    if (engineDead || nd == 0 || gear == 0 || outOfFuel()) {
-        if (engineDead || outOfFuel()) rpm += (0 - rpm) * std::min(1.0, h * 2);
+    if ((engineDead || engineOff) || nd == 0 || gear == 0 || outOfFuel()) {
+        if ((engineDead || engineOff) || outOfFuel()) rpm += (0 - rpm) * std::min(1.0, h * 2);
         else rpm += (spec->idleRpm + thr * (spec->redline - spec->idleRpm) - rpm) * std::min(1.0, h * 4);  // neutral: revs freely
         Te = 0;
     } else if (converterSlips) {
@@ -1643,7 +1643,7 @@ void Car::wheelStep(double h, const World& w) {
         if (rpm > spec->redline) Te = std::min(Te, 0.0) - (rpm - spec->redline) * 0.5;  // rev limiter
         autoShift(rpm);
     }
-    if (shiftTimer > 0 && gear != 0 && !engineDead && !automatic && spec->shiftTime > 0.06) {
+    if (shiftTimer > 0 && gear != 0 && !(engineDead || engineOff) && !automatic && spec->shiftTime > 0.06) {
         // Manual gearboxes open the clutch during a shift. Torque converters unlock
         // above and keep the pump RPM independent; LST/CVT keep their fast coupling.
         // Match the new input speed with the engine
@@ -1658,7 +1658,7 @@ void Car::wheelStep(double h, const World& w) {
     }
     // Fuel: what the engine burns for the power it makes (~250 g/kWh, petrol 0.745 kg/L), and
     // a trickle at idle.
-    if (fuelUse > 0 && !engineDead && fuel > 0) {
+    if (fuelUse > 0 && !(engineDead || engineOff) && fuel > 0) {
         const double kW = std::max(0.0, Te) * rpm * 2 * M_PI / 60 / 1000;
         const double lps = kW * 250.0 / 745.0 / 3600.0 + (rpm > 300 ? 0.8 / 3600.0 : 0.0);
         fuel = std::max(0.0, fuel - lps * fuelUse * h);
@@ -1670,7 +1670,7 @@ void Car::wheelStep(double h, const World& w) {
     // crank, not straight to the hubs: the gearbox, the transfer case and the differentials
     // pass it on (solved after the wheels, below). Slipping (pulling away), the clutch
     // presses a set torque into the gearbox, the same to every driven wheel.
-    const bool engaged = !clutchSlipping && nd > 0 && !engineDead && gear != 0;  // (a converter is always "in")
+    const bool engaged = !clutchSlipping && nd > 0 && !(engineDead || engineOff) && gear != 0;  // (a converter is always "in")
     brakePressure += clampd(brake - brakePressure, -h * 10, h * 7);
 
     // Limited-slip differentials: torque flows from the faster side to the slower one, up

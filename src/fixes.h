@@ -16,6 +16,8 @@ enum Tool {
     TOOL_PRY_BAR,     // control arms back into place
     TOOL_TIRE_IRONS,  // a tire off and on its rim
     TOOL_JACK,        // a corner off the ground
+    TOOL_JUMP_PACK,   // a dead battery brought back by hand (battery.h)
+    TOOL_CABLES,      // jumper cables between two vehicles' batteries (battery.h)
     TOOL_COUNT
 };
 

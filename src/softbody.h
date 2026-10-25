@@ -422,6 +422,15 @@ public:
     bool hydrolocked = false;   // sucked water into the intake (dead until repaired)
     double floodedHealth = -1;  // engineHealth before the water got in (-1: unknown): what a proper repair of the flooded engine gives back
     void clearHydrolock();      // the water's out, new plugs: it runs again, as healthy as before the flood (unknown: 85%); a wrecked one stays dead
+    // The battery (battery.h): charge 0..1. The engine is off (engineOff) from when you leave the vehicle until the starter
+    // turns it over (on getting in), which a weak battery does slowly and a flat one not at all. Lights, the winch
+    // and cranking draw it down with the engine off; running, the alternator fills it. A jump pack or jumper cables
+    // from a running vehicle give it what it needs to start.
+    double battery = 1;
+    bool engineOff = false;     // key off: the engine isn't turning (unlike engineDead, nothing's broken)
+    double crank = 0;           // how far the starter has got turning it over (0..1)
+    bool cranking = false;      // the starter is being worked right now (sounds, the dash)
+    double soak = 0;            // s the battery has spent under water
     // Trail setup.
     double tirePsi = 32;        // tire pressure (starts at the spec's; air down for rock)
     // The air around it (C): the tires cool toward it. Sim::updateTrail sets it from the
@@ -762,6 +771,19 @@ public:
 
     // Winch lines and tow straps (recovery.cpp).
     std::vector<Rope> ropes;
+    // Jumper cables (battery.h): clamped to two vehicles' batteries (indices into cars), or, with `handCable`, clamped to one and
+    // the other end in your hand. `owner`: -1 made here, else the player (net id) who clamped them, as told (repairsync.h).
+    struct JumperCable {
+        int a = -1, b = -1;
+        int owner = -1;
+        double heard = 0;
+    };
+    std::vector<JumperCable> cables;
+    struct HandCable {
+        int car = -1;  // the first clamp is on this vehicle's battery (-1: nothing in your hands)
+        V3 hand;       // where the free end is held (set each frame by the game)
+        bool on() const { return car >= 0; }
+    } handCable;
     bool realRecovery = true;          // damage stays until a repair station fixes it
     bool steeringAssist = true;        // limit steering angle at high speeds (false = simulation mode)
     std::vector<std::string> events;   // things the HUD should announce (it clears them)

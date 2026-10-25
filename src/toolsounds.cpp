@@ -67,6 +67,21 @@ void ToolSounds::update(const Play& play, const Interact& ia, const Handwork& hw
     case IA_CLOSE_HOOD:
         if (share_ < 0.7 && share >= 0.7) play(SFX_HOOD_SHUT, at, 1.0f, 0, pitch(0.08f));
         break;
+    case IA_JUMP_PACK:  // the two clamps bite, then a spark as the pack's current finds the battery, and the relay clicks over
+        if (share_ < 0.15 && share >= 0.15) play(SFX_CLAMP, at, 0.7f, 0, pitch(0.1f));
+        if (share_ < 0.3 && share >= 0.3) play(SFX_CLAMP, at, 0.7f, 0, 0.9f * pitch(0.1f));
+        if (share_ < 0.4 && share >= 0.4) play(SFX_SPARK, at, 0.6f, 0, pitch(0.2f));
+        if (share_ < 0.9 && share >= 0.9) play(SFX_CLICK, at, 0.5f, 0, pitch(0.1f));
+        break;
+    case IA_CLAMP_CABLE:  // the clamp bites; the second one sparks if the other battery is live
+        if (share_ < 0.5 && share >= 0.5) {
+            play(SFX_CLAMP, at, 0.8f, 0, pitch(0.1f));
+            if (o.step == 1) play(SFX_SPARK, at, 0.55f, 0.03f, pitch(0.2f));
+        }
+        break;
+    case IA_UNCLAMP_CABLE:
+        if (share_ < 0.5 && share >= 0.5) play(SFX_CLAMP, at, 0.6f, 0, 0.85f * pitch(0.1f));
+        break;
     case IA_FIX:
     case IA_TIRE_WORK:
         if (o.kind == IA_FIX) {  // the engine job's own sounds (fixes.h): cranked over with water spurting out, oil running out, oil going in
