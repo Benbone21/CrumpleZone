@@ -3,9 +3,9 @@
 // games only. No world, no files, nothing written to disk. Setup on a server:
 // docs/server-rendezvous-setup.md.
 //
-//   crumplezone-rendezvous [--port 27020] [--bind IP] [--relay-mbit 40] [--pair-kbps 512] ...
-//   crumplezone-rendezvous --check 127.0.0.1[:27020]      health check (counts, from this machine)
-//   crumplezone-rendezvous --selftest 127.0.0.1[:27020]   a host and a guest through it, relay both ways
+//   crumplezone-rendezvous [--port 28015] [--bind IP] [--relay-mbit 40] [--pair-kbps 512] ...
+//   crumplezone-rendezvous --check 127.0.0.1[:28015]      health check (counts, from this machine)
+//   crumplezone-rendezvous --selftest 127.0.0.1[:28015]   a host and a guest through it, relay both ways
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>

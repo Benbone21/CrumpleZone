@@ -22,7 +22,7 @@ Assumed setup (change it if this machine differs; check with `systemctl cat crum
 | Source checkout | `~/crumplezone-src` (the same one `docs/server-update.md` uses) |
 | Binary | `/opt/crumplezone/crumplezone-rendezvous` |
 | Unit | `crumplezone-rendezvous.service` |
-| Port | **UDP 27020** (`--port`) |
+| Port | **UDP 28015** (`--port`) |
 | The dedicated server (unchanged) | `/opt/crumplezone/crumplezone-server`, `crumplezone.service`, TCP+UDP 27015 |
 
 ## Rules for the agent
@@ -88,7 +88,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-ExecStart=/opt/crumplezone/crumplezone-rendezvous --port 27020 --relay-mbit 40 --pair-kbps 512
+ExecStart=/opt/crumplezone/crumplezone-rendezvous --port 28015 --relay-mbit 40 --pair-kbps 512
 Restart=on-failure
 RestartSec=3
 
@@ -131,23 +131,23 @@ sudo systemctl daemon-reload && sudo systemctl enable --now crumplezone-rendezvo
 
 ## 4. Firewall **(sudo)**
 
-Only **UDP 27020** comes in for the backend. Players' own games need nothing on this machine.
+Only **UDP 28015** comes in for the backend. Players' own games need nothing on this machine.
 Keep the existing rules: SSH, and the dedicated server's 27015 TCP+UDP.
 
 ```bash
 # ufw
-sudo ufw allow 27020/udp
+sudo ufw allow 28015/udp
 ```
 
 ```nft
 # nftables: inside the existing `chain input` (policy drop), next to the game port's rules.
 # The backend rate-limits per address itself; this caps a flood before it reaches the process
 # (one relayed game is a few hundred packets a second at most).
-udp dport 27020 meter rv_flood { ip saddr limit rate over 3000/second burst 6000 packets } drop
-udp dport 27020 accept
+udp dport 28015 meter rv_flood { ip saddr limit rate over 3000/second burst 6000 packets } drop
+udp dport 28015 accept
 ```
 
-If the provider has its own firewall (a cloud security group), open UDP 27020 there too.
+If the provider has its own firewall (a cloud security group), open UDP 28015 there too.
 
 ## 5. Settings (flags in `ExecStart`)
 
@@ -156,7 +156,7 @@ edit the unit **(sudo)**, then `sudo systemctl daemon-reload && sudo systemctl r
 
 | Flag | Default | What |
 |---|---|---|
-| `--port N` | 27020 | the UDP port. If you change it, the games need `HOST:N` (step 8) |
+| `--port N` | 28015 | the UDP port. If you change it, the games need `HOST:N` (step 8) |
 | `--bind IP` | all | listen on one IPv4 address only |
 | `--relay-mbit N` | 40 | all relayed traffic together, Mbit/s. Size it to the uplink and data cap; `0` turns the relay off (punch-only) |
 | `--pair-kbps N` | 512 | one relayed pair (a guest and its host), KB/s |
@@ -176,22 +176,22 @@ players already in stay connected if they punched through; relayed ones drop).
 
 ```bash
 systemctl status crumplezone-rendezvous --no-pager | head -5     # active (running)
-journalctl -u crumplezone-rendezvous -n 20 --no-pager             # the banner: "crumplezone-rendezvous: UDP 0.0.0.0:27020, protocol 1, ..."
-/opt/crumplezone/crumplezone-rendezvous --check 127.0.0.1         # ok 127.0.0.1:27020: codes N, pairs N, ...
+journalctl -u crumplezone-rendezvous -n 20 --no-pager             # the banner: "crumplezone-rendezvous: UDP 0.0.0.0:28015, protocol 1, ..."
+/opt/crumplezone/crumplezone-rendezvous --check 127.0.0.1         # ok 127.0.0.1:28015: codes N, pairs N, ...
 /opt/crumplezone/crumplezone-rendezvous --selftest 127.0.0.1      # selftest OK: ...
-cd ~/crumplezone-src && CZ_TEST_RENDEZVOUS=127.0.0.1:27020 timeout 120 ./build/run_tests --jobs 1 net/code-live -v   # PASS
+cd ~/crumplezone-src && CZ_TEST_RENDEZVOUS=127.0.0.1:28015 timeout 120 ./build/run_tests --jobs 1 net/code-live -v   # PASS
 ```
 
 `--check` shows the counts only to this machine (loopback). From anywhere else it answers
 with zeros, which still proves the port is reachable. If the user has another machine handy,
 run `crumplezone-rendezvous --selftest PUBLIC_IP` from there. That proves the firewall lets
-UDP 27020 in.
+UDP 28015 in.
 
 ## 7. The dedicated server keeps working
 
 Leave `crumplezone.service` as it is. Private servers still use **JOIN BY ADDRESS** with the
 password, as before. If the owner wants the dedicated server reachable by code too (owner's
-choice, off by default), add `--code 127.0.0.1:27020` to its `ExecStart` **(sudo)**. Its journal
+choice, off by default), add `--code 127.0.0.1:28015` to its `ExecStart` **(sudo)**. Its journal
 then shows a line `OPEN TO FRIENDS: CODE ABC-DEF` after each start, and players can type that
 code. A new code is issued on every restart.
 
@@ -201,7 +201,7 @@ The game has to know this machine's address. The owner chooses one of these:
 
 - **In the release** (normal): in `src/net.h`, change `#define CZ_RENDEZVOUS ""` to the DNS name
   or IP of this machine, e.g. `#define CZ_RENDEZVOUS "play.example.org"` (add `:PORT` if not
-  27020), commit, and release.
+  28015), commit, and release.
 - **Per player**, for testing: the line `rendezvous play.example.org` in the game's
   `settings.txt`, or `crumplezone --rendezvous play.example.org`.
 
@@ -229,7 +229,7 @@ sudo systemctl restart crumplezone-rendezvous
 ```
 
 To take it away entirely: `sudo systemctl disable --now crumplezone-rendezvous` and remove the
-UDP 27020 firewall rule. Games then say join codes can't be reached, and joining by address
+UDP 28015 firewall rule. Games then say join codes can't be reached, and joining by address
 still works.
 
 ## Report back

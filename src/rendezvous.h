@@ -20,7 +20,7 @@ namespace rv {
 
 constexpr uint16_t kMagic = 0xC27C;
 constexpr uint8_t kProto = 1;          // this backend protocol (a game and a backend on different ones get FAIL F_PROTO)
-constexpr int kDefaultPort = 27020;
+constexpr int kDefaultPort = 28015;
 constexpr size_t kPad = 128;           // REGISTER, LOOKUP and PING are padded to this: no answer is bigger than its question
 constexpr size_t kHeader = 4;          // u16 magic, u8 proto, u8 type
 constexpr int kCodeLen = 6;

@@ -105,7 +105,7 @@ code. Anything the host sends a guest, including future host-authoritative conta
 (`wip/netsync`), goes through the same `sendTo(Conn&)`, so it is carried on direct and relayed
 paths alike.
 
-### Backend messages (`src/rendezvous.h`, UDP port **27020**)
+### Backend messages (`src/rendezvous.h`, UDP port **28015**)
 
 Header: `u16 0xC27C, u8 proto (1), u8 type`. All integers little-endian, as in `net.cpp`.
 
@@ -335,7 +335,7 @@ The main menu's MULTIPLAYER button and the pause menu's MULTIPLAYER row open the
    `--rendezvous` on the command line. With none of them set, the code pages say that join codes
    aren't set up in this build. Pick a hostname (e.g. `play.<your-domain>`) and it goes into
    `net::kDefaultRendezvous`.
-2. **Port 27020/UDP** for the backend.
+2. **Port 28015/UDP** for the backend.
 3. **Relay limits**: 512 KB/s per pair, 40 Mbit/s in total. Raise or lower these to suit the
    box's uplink and data cap.
 4. **No host migration** when the host leaves: guests keep driving alone. Migration would need

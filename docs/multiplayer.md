@@ -80,7 +80,7 @@ password and the most players. CLOSE TO FRIENDS retires the code and keeps the p
 in. Leaving tells everyone at once.
 
 Joining by address (`IP:PORT`), LAN games and the dedicated server work as before. The server
-can take a code too (`crumplezone-server --code HOST:27020`). The game finds the join-code server
+can take a code too (`crumplezone-server --code HOST:28015`). The game finds the join-code server
 from `CZ_RENDEZVOUS` in `src/net.h`, the `rendezvous HOST[:PORT]` line in settings.txt, or
 `--rendezvous HOST[:PORT]`. `--join-code CODE` joins from the command line. Protocol 8: 0.4.0
 and 0.4.1 games can't play together. The design, the protocol and its limits are in

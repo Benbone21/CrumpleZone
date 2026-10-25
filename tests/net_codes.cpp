@@ -396,7 +396,7 @@ SCENARIO(netCodeSections, "net/code-sections", "the host's edited park sections 
 }
 
 // On the server box, against the real backend (docs/server-rendezvous-setup.md):
-//   CZ_TEST_RENDEZVOUS=127.0.0.1:27020 ./build/run_tests --jobs 1 net/code-live -v
+//   CZ_TEST_RENDEZVOUS=127.0.0.1:28015 ./build/run_tests --jobs 1 net/code-live -v
 // A host opens to friends through it, one guest punches straight through, another is made to use
 // the relay. Without the variable it does nothing.
 SCENARIO(netCodeLive, "net/code-live", "(with CZ_TEST_RENDEZVOUS) a host, a punched guest and a relayed guest through a running join-code server") {

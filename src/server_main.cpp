@@ -135,7 +135,7 @@ Options parseArgs(int argc, char** argv) {
             printf("  --lan            Also answer \"who's hosting?\" on the local network (off by default:\n");
             printf("                   for a game on your own network, not a public server)\n");
             printf("  --code HOST[:PORT]  Also take a join code from that join-code server (crumplezone-rendezvous,\n");
-            printf("                   UDP 27020 by default): players join with the code, no port forwarding\n");
+            printf("                   UDP 28015 by default): players join with the code, no port forwarding\n");
             printf("  --allow-root     Run as root anyway (don't)\n");
             printf("  --help           Show this help\n");
             exit(0);
