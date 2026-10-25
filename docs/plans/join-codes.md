@@ -4,7 +4,7 @@ Written 2026-10-25 for branch `wip/joincodes`. Status at the bottom.
 
 ## In plain words
 
-You are playing. You press ESC, pick **FRIENDS**, then **OPEN TO FRIENDS**. The game shows a
+You are playing. You press ESC, pick **MULTIPLAYER**, then **OPEN TO FRIENDS**. The game shows a
 code such as `KX7-M4Q`, with a **COPY** button. You send the code to a friend (chat, voice, text).
 Your friend picks **MULTIPLAYER → JOIN WITH CODE** on the main menu, types or pastes the code, and
 drives into your world: the same map, the level you are playing, your edited sections, your parked
@@ -42,7 +42,7 @@ Private servers keep working as they do today: **JOIN BY ADDRESS** (`IP:PORT`), 
 
 ### Host: OPEN TO FRIENDS (pause menu, while playing)
 
-1. ESC → **FRIENDS** → **OPEN TO FRIENDS**. If you aren't hosting yet, the game starts hosting
+1. ESC → **MULTIPLAYER** (the FRIENDS page) → **OPEN TO FRIENDS**. If you aren't hosting yet, the game starts hosting
    *on the world you are in*, with no reload. It uses the game port from settings. If that port
    is taken, it tries the next nine. Then it registers with the backend from the same UDP socket,
    so the address the backend sees is the one friends will reach.
@@ -133,9 +133,10 @@ Header: `u16 0xC27C, u8 proto (1), u8 type`. All integers little-endian, as in `
 * `ACK`: u32 next expected, u64 bitmap of the 64 after it (selective ack).
 * `CLOSE`: the session ended (host left, guest left, kicked).
 
-Retransmission uses the measured round trip (RTO 3x the smoothed RTT, 0.2 to 3 s, doubling). A
-small AIMD window starts at 16 segments, grows by one per round trip and halves on a loss (max
-256 ≈ 280 KB in flight). An empty ACK goes out every second as a keepalive, which also keeps the
+Retransmission uses the measured round trip (timeout = smoothed RTT + 4 deviations, 0.2 to 3 s,
+doubling per resend; a hole with 4 acked after it is resent at once). The window starts at 16
+segments, doubles each round trip until the first loss, then grows by one a round trip and drops
+to 70 % on a loss (max 256 ≈ 280 KB in flight). An empty ACK goes out every second as a keepalive, which also keeps the
 NAT mappings open. A tunnel that hears nothing for 15 s is dead. The game's vehicle-state
 datagrams (`0xC27A`, with their secret) go on the same path.
 
@@ -190,8 +191,8 @@ A level transfer (up to 8 MB, once per join) goes at the relay's per-pair limit.
 * **No open relay.** rv forwards a `RELAY` packet only when its pair id exists, its key is the
   sender's side's key, and its source address is the address that side used with rv. It only
   ever forwards to the other side's recorded address. Nobody can name a destination. Relay
-  traffic is capped per pair, per source address and in total. Pairs die with their code, or
-  after 2 minutes without traffic.
+  traffic is capped per pair, per source address and in total. Pairs die with their code
+  (at most 32 a code: the oldest goes).
 * **No amplification.** Every reply is at most as big as its request: LOOKUP and REGISTER are
   padded, and PING is answered with a reply of the same size. The COOKIE round trip proves a
   guest's address before the host is told to punch towards it. A spoofed lookup makes rv send
@@ -235,7 +236,7 @@ MAIN MENU → MULTIPLAYER                         (P_HOME)
 | MULTIPLAYER                                 |                                    |
 |                                             |  JOIN WITH CODE                    |
 | > JOIN WITH CODE        A FRIEND'S 6-LETTER |  YOUR FRIEND OPENS THEIR GAME TO   |
-|   JOIN BY ADDRESS       IP:PORT OF A SERVER |  FRIENDS (ESC > FRIENDS) AND READS |
+|   JOIN BY ADDRESS       IP:PORT OF A SERVER |  FRIENDS (ESC > MULTIPLAYER) AND READS |
 |   ON YOUR NETWORK       2 GAMES FOUND       |  YOU THE CODE.                     |
 |   HOST A PRIVATE GAME   PORT, PASSWORD      |                                    |
 |   YOUR NAME  [BREAD_____]                   |  RECENT: KX7-M4Q (BOB, 2 H AGO)    |
@@ -283,7 +284,7 @@ JOINING                                         (P_JOINING)
    > RETRY
      BACK
 
-IN GAME: ESC → FRIENDS                          (P_FRIENDS, over the game)
+IN GAME: ESC → MULTIPLAYER                         (P_FRIENDS, over the game)
 +---------------------------------------------+------------------------------------+
 | FRIENDS                                     |  CODE                              |
 | > OPEN TO FRIENDS     GET A CODE            |   KX7-M4Q          [COPY]          |
@@ -299,8 +300,7 @@ IN GAME: ESC → FRIENDS                          (P_FRIENDS, over the game)
   (a guest sees PLAYERS with pings and LEAVE THE GAME)
 ```
 
-Name entry: the YOUR NAME field on P_HOME. The first time you open MULTIPLAYER with no name set
-(the default is your login), the cursor starts in it. Names are `te::Kind::Name`, 16 characters.
+Name entry: the YOUR NAME field on P_HOME (`te::Kind::Name`, 16 characters), saved to settings.
 
 The classic PauseMenu page 2 (HOST/JOIN cards) stays reachable from the DEV page's CLASSIC MENU.
 The main menu's MULTIPLAYER button and the pause menu's MULTIPLAYER row open the new pages.
@@ -344,6 +344,18 @@ The main menu's MULTIPLAYER button and the pause menu's MULTIPLAYER row open the
 6. **Codes for the dedicated server** (`crumplezone-server --code`): included, off by default.
 7. **LAN addresses shared** only between games behind the same public IP.
 
-## Status
+## Status (2026-10-25)
 
-See the commits on `wip/joincodes` and the report at the end of the work.
+Built on `wip/joincodes`, all phases:
+
+1. The backend (`crumplezone-rendezvous`) and its tests (`net/rv-*`).
+2. NetSession: open to friends, join by code, punching, the relay, the reliable stream over UDP,
+   kick, link types, protocol 8 (`net/code-*`, `net/tunnel-stream`).
+3. Edited park sections sent to joiners (`net/code-sections`).
+4. The UI (`src/mpmenu.*`, `ui/mpmenu-*`). It's checked in the real game, two instances on one
+   machine: the host opened to friends, and the guest joined with `--join-code`.
+5. `docs/server-rendezvous-setup.md`, `crumplezone-server --code`, and `net/code-live` (a join
+   through a running backend).
+
+Not done: host migration, IPv6, encryption (as before), and the in-game HUD player list showing
+DIRECT or RELAYED (the FRIENDS page shows it).

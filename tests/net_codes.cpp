@@ -5,6 +5,8 @@
 // leaving, closing to friends, the tunnel's stream under loss.
 #include <unistd.h>
 
+#include <cstdlib>
+
 #include <map>
 #include <mutex>
 #include <random>
@@ -391,4 +393,35 @@ SCENARIO(netCodeSections, "net/code-sections", "the host's edited park sections 
     ctx.check("and the world builder takes them in place of the generator's", World::sessionSection(SEC_MUD_PIT, got) && got.about == "MY OWN MUD PIT" && got.nu == mud.nu);
     ctx.check("one not sent is the generator's", !World::sessionSection(SEC_DUNES, got));
     World::setSessionSections({});
+}
+
+// On the server box, against the real backend (docs/server-rendezvous-setup.md):
+//   CZ_TEST_RENDEZVOUS=127.0.0.1:27020 ./build/run_tests --jobs 1 net/code-live -v
+// A host opens to friends through it, one guest punches straight through, another is made to use
+// the relay. Without the variable it does nothing.
+SCENARIO(netCodeLive, "net/code-live", "(with CZ_TEST_RENDEZVOUS) a host, a punched guest and a relayed guest through a running join-code server") {
+    const char* addr = std::getenv("CZ_TEST_RENDEZVOUS");
+    if (!addr || !*addr) {
+        ctx.check("skipped: set CZ_TEST_RENDEZVOUS=HOST:PORT to run it against a live backend", true);
+        return;
+    }
+    ctx.add(vehicleCatalog()[2], 10, -8, 0);
+    Rig rig(ctx, 5);
+    rig.backend.close();  // (not ours: the live one)
+    rig.rvAddr = addr;
+    rig.host.rendezvous = addr;
+    const std::string code = rig.open(5, false);
+    ctx.note("code " + rv::formatCode(code) + " from " + addr);
+    NetSession& g = rig.guest();
+    ctx.check("a guest joins with the code", rig.join(g, code, 0) > 0, g.error);
+    ctx.check("straight through", g.myLink() == NetSession::LINK_DIRECT);
+    NetSession& r = rig.guest();
+    r.forceRelay = true;
+    ctx.check("a guest made to use the relay joins", rig.join(r, code, 0, 20) > 0, r.error);
+    ctx.check("through the relay", r.myLink() == NetSession::LINK_RELAYED);
+    rig.wall(2.0);
+    ctx.check("everyone sees everyone", rig.remotes(ctx.sim) == 2 && rig.remotes(rig.simOf(g)) == 2 && rig.remotes(rig.simOf(r)) == 2);
+    rig.host.close();
+    rig.wall(0.5);
+    ctx.check("the host closes: both guests are told", !g.active() && !r.active());
 }

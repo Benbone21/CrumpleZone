@@ -48,6 +48,7 @@ struct Options {
     std::string name = "Crumple Zone Server";
     int maxPlayers = 8;
     std::string password, passwordFile, bind;
+    std::string codeServer;  // --code HOST[:PORT]: also take a join code from that join-code server
     bool lan = false, allowRoot = false;
     double hours = 10, dayMinutes = 24;  // the time of day it starts at, and a whole day in real minutes
     bool frozen = false;                 // the clock holds at `hours`
@@ -110,6 +111,8 @@ Options parseArgs(int argc, char** argv) {
             if (!takeNumber("--day-length", argv[++i], 1, 1440, opts.dayMinutes)) opts.bad = true;
         } else if (arg == "--frozen") {
             opts.frozen = true;
+        } else if (arg == "--code" && more) {
+            opts.codeServer = argv[++i];
         } else if (arg == "--lan") {
             opts.lan = true;
         } else if (arg == "--allow-root") {
@@ -131,6 +134,8 @@ Options parseArgs(int argc, char** argv) {
             printf("  --frozen         The clock holds at --time (always that time of day)\n");
             printf("  --lan            Also answer \"who's hosting?\" on the local network (off by default:\n");
             printf("                   for a game on your own network, not a public server)\n");
+            printf("  --code HOST[:PORT]  Also take a join code from that join-code server (crumplezone-rendezvous,\n");
+            printf("                   UDP 27020 by default): players join with the code, no port forwarding\n");
             printf("  --allow-root     Run as root anyway (don't)\n");
             printf("  --help           Show this help\n");
             exit(0);
@@ -222,6 +227,10 @@ int main(int argc, char** argv) {
     net.adopt(sim);  // (so what the guests spawn is kept, and told to whoever joins later)
     printf("Hosting on port %d\n", opts.port);
     printf("Tell players to join with: --join <YOUR_PUBLIC_IP>:%d%s\n", opts.port, opts.password.empty() ? "" : " --password <the password>");
+    if (!opts.codeServer.empty()) {
+        net.rendezvous = opts.codeServer;
+        if (!net.openToFriends()) printf("No join code: %s\n", net.codeError.c_str());
+    }
     printf("Press Ctrl+C to stop.\n");
     fflush(stdout);
 
@@ -245,10 +254,15 @@ int main(int argc, char** argv) {
 
         // The game shows these on the HUD and the race screen; here they're just log lines.
         for (const std::string& e : net.events) printf("%s\n", e.c_str());
+        if (!net.events.empty()) fflush(stdout);
         net.events.clear();
         for (const std::string& e : net.log) printf("[net] %s\n", e.c_str());
         net.log.clear();
         net.gameIn.clear();
+        if (net.codeState == NetSession::CODE_FAILED && !opts.codeServer.empty()) {  // (said once; a restart tries again)
+            printf("No join code: %s\n", net.codeError.c_str());
+            opts.codeServer.clear();
+        }
 
         // Periodically report player count
         int count = net.playerCount() - 1;  // (the server itself is player 0)
