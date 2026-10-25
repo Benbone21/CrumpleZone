@@ -43,6 +43,8 @@
 #include "biome.h"
 #include "jobs.h"
 #include "career.h"
+#include "garageshop.h"
+#include "garageshopdraw.h"
 #include "interact.h"
 #include "prompts.h"
 #include "invdraw.h"
@@ -1338,7 +1340,7 @@ void drawHelp(Renderer& r, float u, int W, int H, bool mph) {
         {"HOLD " + K(KA_INTERACT), "ON FOOT: GRAB THE WINCH LINE, WALK IT OUT, HOOK IT (SAME TO UNHOOK)"},                           {K(KA_WINCH_IN) + " / " + K(KA_WINCH_OUT), "WINCH IN / OUT (" + K(KA_WINCH_SLOWER) + " " + K(KA_WINCH_FASTER) + " = SPEED)"},
         {K(KA_STRAP), "TOW STRAP: GET OUT, HOLD " + K(KA_INTERACT) + " AT A POINT"},       {K(KA_SWAY), "FRONT SWAY BAR DISCONNECT"},
         {K(KA_AIR_DOWN) + sp + K(KA_AIR_UP), "AIR DOWN / UP (STOPPED)"}, {K(KA_THROTTLE_CAP), "THROTTLE LIMIT: 100 50 25 10% (FOR CRAWLING)"},
-        {K(KA_GARAGE), "GARAGE: ENGINE, SUSPENSION, GEARBOX"},
+        {K(KA_GARAGE), "GARAGE: BUY AND FIT PARTS"},
         {K(KA_GEAR_DOWN) + sp + K(KA_GEAR_UP), "SHIFT DOWN / UP (R N 1...)"}, {K(KA_MANUAL), "MANUAL / AUTOMATIC"},
         {K(KA_MAP), "MAP (WAYPOINTS, PINGS)"},                           {K(KA_CHAT), "CHAT"},
         {"MIDDLE CLICK", "PING: GO HERE (SHIFT: HELP)"},
@@ -1432,88 +1434,6 @@ void drawScenarioStatus(Renderer& r, const Playback& pb, HudState& hud, float u,
         r.text(x + 8 * u, ly, ls, lines[k].second ? "+" : "X", lines[k].second ? 0.4f : 1.0f, lines[k].second ? 1.0f : 0.35f, 0.4f);
         r.text(x + 20 * u, ly, ls, lines[k].first, 0.9f, 0.9f, 0.92f);
     }
-}
-
-// ---- Garage -------------------------------------------------------------------------
-// Pick an engine, suspension and transmission for the car you're in; ENTER fits them
-// (the car is rebuilt from the modified spec where it stands).
-
-struct GarageUI {
-    bool open = false;
-    int vehicle = 0, slot = 0;
-    ModSet pick;
-    bool recal = false;  // recalibrate the speedometer to the tires when fitted
-};
-
-std::string fmt(const char* f, double a, double b = 0, double c = 0) {
-    char buf[96];
-    std::snprintf(buf, sizeof(buf), f, a, b, c);
-    return buf;
-}
-
-// In a career: the parts you haven't got are locked (a price if a station sells them), and
-// parts are fitted at a repair station (`station`: the one you're at, -1 none).
-void drawGarage(Renderer& r, const GarageUI& g, const Garage& garage, const Career& career, int station, const Sim& sim, float u, int W, int H) {
-    const VehicleSpec& stock = vehicleCatalog()[g.vehicle];
-    const VehicleSpec& vs = tunedSpec(g.vehicle, g.pick);
-    const float s = px(1.4f * u), big = px(2.0f * u), lh = 8 * s + 6 * u, pad = 18 * u;
-    const float w = std::min((float)W - 40 * u, 760 * u), h = pad * 3 + 8 * big * 1.5f + MOD_SLOTS * (lh * 2.4f) + lh * 7.5f;
-    const float x = (W - w) / 2, y = (H - h) / 2;
-    pill(r, x, y, w, h, 0.02f, 0.025f, 0.035f, 0.88f);
-    label(r, x + pad, y + pad, big, std::string("GARAGE  ") + stock.name, 1.0f, 0.75f, 0.3f);
-    if (career.on) {
-        const std::string where = station >= 0 ? std::string("AT ") + sim.world.stations[station].name : "FIT PARTS AT A REPAIR STATION";
-        const std::string top = "CASH $" + std::to_string(career.cash) + "   " + where;
-        r.text(x + w - pad - r.textWidth(top, s), y + pad + 2 * u, s, top, station >= 0 ? 0.55f : 1.0f, station >= 0 ? 0.9f : 0.55f, station >= 0 ? 0.6f : 0.4f);
-    }
-    r.text(x + pad, y + pad + 8 * big + 4 * u, s, stock.blurb, 0.6f, 0.62f, 0.66f);
-    float cy = y + pad * 2 + 8 * big * 1.5f;
-    for (int k = 0; k < MOD_SLOTS; k++) {
-        const auto& opts = modOptions(g.vehicle, k);
-        const ModOption& o = opts[g.pick.pick[k]];
-        bool sel = k == g.slot, fitted = garage.fitted[g.vehicle].pick[k] == g.pick.pick[k];
-        if (sel) r.rect(x + pad * 0.5f, cy - 4 * u, w - pad, lh * 2.2f, 1, 1, 1, 0.07f);
-        r.text(x + pad, cy, s, modSlotName(k), 0.6f, 0.62f, 0.66f);
-        const bool have = career.owns(g.vehicle, k, g.pick.pick[k]);
-        std::string name = std::string(sel ? "< " : "  ") + o.name + (sel ? " >" : "") + "   " +
-                           std::to_string(g.pick.pick[k] + 1) + "/" + std::to_string(opts.size()) + (fitted ? "" : "  *") + (have ? "" : "  LOCKED");
-        if (have) r.text(x + pad + 150 * u, cy, s, name, sel ? 1.0f : 0.9f, sel ? 0.8f : 0.9f, sel ? 0.35f : 0.92f);
-        else r.text(x + pad + 150 * u, cy, s, name, 0.55f, 0.55f, 0.58f);
-        std::string detail = o.detail;
-        if (!have) {
-            const int price = Career::price(g.vehicle, k, g.pick.pick[k]);
-            detail = price > 0 ? "$" + std::to_string(price) + (station >= 0 ? (pad::ui.last ? "  Y: BUY IT" : "  B: BUY IT") : "  AT ANY REPAIR STATION")
-                               : "NOT SOLD: FIND IT OUT THERE, OR WIN IT";
-        }
-        r.text(x + pad + 150 * u, cy + lh, s, detail, have ? 0.62f : 1.0f, have ? 0.65f : 0.7f, have ? 0.7f : 0.35f);
-        cy += lh * 2.4f;
-    }
-    // What the combination adds up to.
-    double rpmP = 0, rpmT = 0, P = peakPower(vs, &rpmP), T = peakTorque(vs, &rpmT);
-    double lift = (vs.layerY[0] - vs.wheelRadius) - (stock.layerY[0] - stock.wheelRadius);  // body vs axle
-    double ride = vs.layerY[0] - stock.layerY[0];
-    std::vector<std::string> lines = {
-        fmt("ENGINE   %.0f HP AT %.0f RPM", P / 745.7, rpmP) + fmt("   %.0f NM AT %.0f RPM", T, rpmT),
-        std::string("         ") + vs.engineName + fmt("   REDLINE %.0f", vs.redline),
-        std::string("GEARBOX  ") + vs.gearboxName + fmt("   FINAL DRIVE %.2f", vs.finalDrive) +
-            (vs.lowRange > 0 ? fmt("   LOW RANGE %.2f", vs.lowRange) : std::string()),
-        fmt("TIRES    %.0f MM TALL  %.0f MM WIDE", vs.wheelRadius * 2000, vs.wheelWidth * 1000) +
-            fmt("   GRIP %.2f / %.2f", vs.tireMu(), vs.tireMu() * vs.lateralGrip),
-        std::string("SPEEDO   ") + (g.recal ? "RECALIBRATED TO THESE TIRES: READS TRUE" :
-            std::fabs(vs.wheelRadius / stock.wheelRadius - 1) < 0.005 ? "FACTORY: READS TRUE" :
-            fmt("FACTORY: READS %.0f%%", std::fabs(vs.wheelRadius / stock.wheelRadius - 1) * 100) + (vs.wheelRadius > stock.wheelRadius ? " LOW" : " HIGH")),
-        fmt("RIDE     %+.0f MM BODY HEIGHT  %+.0f MM LIFT", ride * 1000, lift * 1000) +
-            fmt("   BOUNCE %.2f / %.2f HZ", vs.rideFreqFront, vs.rideFreqRear),
-    };
-    cy += lh * 0.4f;
-    for (const std::string& l : lines) {
-        r.text(x + pad, cy, s, l, 0.85f, 0.87f, 0.9f);
-        cy += lh;
-    }
-    const std::string garageKeys = pad::ui.last ? "D-PAD UP DOWN: CHOOSE PART   LEFT RIGHT: CHANGE   " + std::string(pad::hint("", pad::B_A)) + " FIT AND DRIVE   " +
-                                                      (career.on ? std::string(pad::hint("", pad::B_Y)) + " BUY   " : std::string()) + pad::hint("", pad::B_B) + " CLOSE"
-                                                : std::string("W S CHOOSE PART   A D CHANGE   C SPEEDO   ENTER FIT AND DRIVE   ") + (career.on ? "B BUY   " : "") + "G CLOSE";
-    r.text(x + pad, y + h - pad - 8 * s, s, garageKeys, 1.0f, 0.75f, 0.3f);
 }
 
 // Multiplayer: who's here (top right), and a name tag over each of their vehicles.
@@ -1996,7 +1916,12 @@ int main(int argc, char** argv) {
     // The lineup's drawing templates are made on worker threads while the window's shaders build (the first frame waits for yours).
     for (const Car& c : sim.cars)
         if (!c.isProp()) prebuildVisual(*c.spec, c.color);
-    GarageUI garageUI;
+    shop::Shop garageShop;     // the garage (garageshop.h)
+    std::string shopToast;     // what the last press in it said, shown in it
+    double shopToastT = 0;
+    bool shopDrag = false, shopRecal = false;
+    View shopView;             // the garage camera, eased toward where it wants to be
+    double shopBlend = 0;      // 0: the chase view it came from .. 1: the garage view
     Playback playback;
     throttle::Pedal throttlePedal;
     if (!opt.scenario.empty()) {
@@ -2107,11 +2032,6 @@ int main(int argc, char** argv) {
         c.spec = &tunedSpec(v, ms);
         c.respawn(c.spawnPos, c.spawnYaw);
     }
-    if (opt.showGarage && sim.cars[sim.player].spec->model >= 0) {
-        garageUI.open = true;
-        garageUI.vehicle = sim.cars[sim.player].spec->model;
-        for (int k = 0; k < MOD_SLOTS; k++) garageUI.pick.pick[k] = sim.cars[sim.player].spec->mods[k];
-    }
     // Multiplayer session (see net.h).
     NetSession net;
     net::Finder finder;  // games on the local network, while the multiplayer page is open
@@ -2179,13 +2099,22 @@ int main(int argc, char** argv) {
     };
     applySettings();
     gKeys = &settings.keys;
+    // The garage: in a career only at a repair station; in sandbox anywhere. False (and says why) if it didn't open.
     auto openGarage = [&]() {
         const Car& c = sim.cars[sim.player];
-        if (c.isProp() || c.spec->model < 0) return false;
-        garageUI.open = true;
-        garageUI.vehicle = c.spec->model;
-        garageUI.slot = 0;
-        for (int k = 0; k < MOD_SLOTS; k++) garageUI.pick.pick[k] = c.spec->mods[k];
+        if (c.isProp() || c.spec->model < 0) {
+            hud.toast("NO GARAGE FOR THIS VEHICLE");
+            return false;
+        }
+        const int at = sim.stationAt(c.frame().com);
+        if (career.on && at < 0) {
+            hud.toast("THE GARAGE IS AT THE REPAIR STATIONS: DRIVE ONTO ONE'S PAD");
+            return false;
+        }
+        garageShop.begin(c.spec->model, garage.fitted[c.spec->model], career, career.on, at >= 0);
+        shopToast.clear();
+        shopDrag = false;
+        shopBlend = 0;
         hud.showHelp = false;
         return true;
     };
@@ -2201,6 +2130,37 @@ int main(int argc, char** argv) {
         menu.close();
         sim.paused = menuWasPaused;
     };
+    // What a press in the garage did: say it there, save what changed, and back to the pause menu if it came from there.
+    auto shopResult = [&](const shop::Result& r) {
+        if (!r.toast.empty()) shopToast = r.toast, shopToastT = 3.0;
+        if (r.saveCareer && !scripted) career.save(Career::defaultPath());
+        if (r.fitted) {
+            garage.fitted[garageShop.vehicle] = garageShop.fitted;
+            if (!scripted) garage.save(garagePath);
+            shopRecal = garageShop.recal;
+        }
+        if (r.close) {
+            shopDrag = false;
+            if (garageFromMenu) openMenu();  // back where you came from
+            garageFromMenu = false;
+        }
+    };
+    if (opt.showGarage && scripted && std::getenv("CZ_SHOP_STATION") && !sim.world.stations.empty()) {  // (screenshots: onto the first repair station's pad)
+        const Station& st = sim.world.stations[0];
+        sim.teleportPlayer(st.p.x, st.p.z, st.yaw);
+    }
+    if (opt.showGarage && openGarage()) {
+        // (Screenshots: CZ_SHOP=CAT[,PART[,try]] opens on a category, a part in it, and tries it on the truck; CZ_SHOP_SPIN=rad turns the model.)
+        if (const char* sv = std::getenv("CZ_SHOP")) {
+            int c = 0, p = -1;
+            char t[16] = "";
+            std::sscanf(sv, "%d,%d,%15s", &c, &p, t);
+            garageShop.setCat(c);
+            if (p >= 0) garageShop.focus = shop::F_ITEMS, garageShop.setSel(p);
+            garageShop.previewing = p >= 0 && std::string(t) == "try";
+        }
+        if (const char* sp = std::getenv("CZ_SHOP_SPIN")) garageShop.spin = std::atof(sp), garageShop.idle = -1e9;
+    }
     bool running = true;
     int exitCode = 0;
     double wrapSeen = 0;  // sim.wrapShift the camera and effects have caught up with
@@ -2857,7 +2817,6 @@ int main(int argc, char** argv) {
             case PauseMenu::GARAGE:
                 closeMenu();
                 garageFromMenu = openGarage();
-                if (!garageFromMenu) hud.toast("NO GARAGE FOR THIS VEHICLE");
                 break;
             case PauseMenu::CONTROLS: closeMenu(); hud.showHelp = true; break;
             case PauseMenu::RESET:
@@ -3585,7 +3544,7 @@ int main(int argc, char** argv) {
 
         // ---- gamepad: what the pad is doing this frame (its presses are fed in as keys below) ----
         padCtx = editor.active || coop.typing || playback.active() || !padDev.connected() ? pad::Mode::Off
-                 : menu.open || garageUI.open || inv.open                                 ? pad::Mode::Menu
+                 : menu.open || garageShop.open || inv.open                                 ? pad::Mode::Menu
                  : coop.mapOpen                                                           ? pad::Mode::Map
                                                                                           : pad::Mode::Drive;
         padLogic.tune = {settings.padSteering, settings.padDeadzone, settings.padRumble, settings.throttle.padScale()};
@@ -3700,6 +3659,31 @@ int main(int argc, char** argv) {
                     continue;
                 }
             }
+            if (garageShop.open && !menu.open && !editor.active &&
+                (e.type == SDL_MOUSEMOTION || e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP || e.type == SDL_MOUSEWHEEL)) {
+                // The garage has the mouse: rows to point at and click, the model to drag round and zoom.
+                float mx = mouseX, my = mouseY;
+                int col = -1, row = -1;
+                if (e.type == SDL_MOUSEMOTION) {
+                    toDrawable(evMotionX(e), evMotionY(e), mx, my);
+                    const float dx = mx - mouseX, dy = my - mouseY;
+                    mouseX = mx, mouseY = my;
+                    if (shopDrag && (evMotionState(e) & 1)) garageShop.turn(dx * 0.012, dy * 0.006);
+                    else if (garageShop.hitAt(mx, my, col, row)) garageShop.hover(col, row);
+                } else if (e.type == SDL_MOUSEBUTTONDOWN) {
+                    toDrawable(evButtonX(e), evButtonY(e), mx, my);
+                    mouseX = mx, mouseY = my;
+                    if (evButton(e) == 1 && garageShop.hitAt(mx, my, col, row)) shopResult(garageShop.click(col, row, career));
+                    else if (evButton(e) == 1 && mx > garageShop.turntableX) shopDrag = true;
+                    else if (evButton(e) == 3) shopResult(garageShop.back());
+                } else if (e.type == SDL_MOUSEBUTTONUP) {
+                    shopDrag = false;
+                } else if (evWheelY(e) != 0) {
+                    if (mouseX > garageShop.turntableX) garageShop.zoomBy(evWheelY(e) > 0 ? 1 / 1.12 : 1.12);
+                    else garageShop.move(evWheelY(e) > 0 ? -1 : 1);
+                }
+                continue;
+            }
             if (e.type == SDL_MOUSEMOTION) toDrawable(evMotionX(e), evMotionY(e), mouseX, mouseY);
             if (!editor.active && !menu.open && e.type == SDL_MOUSEBUTTONDOWN && evButton(e) == 2) {
                 // Middle click: ping where the mouse points (Shift: HELP, at your truck).
@@ -3726,7 +3710,7 @@ int main(int argc, char** argv) {
                     }
                     break;
                 case SDL_KEYDOWN: {
-                    if (settings.keys.matches(KA_DEV_MENU, evKeyScancode(e), shiftDown()) && !fromPad && !evKeyRepeat(e) && !inv.open && !garageUI.open && !menu.title &&
+                    if (settings.keys.matches(KA_DEV_MENU, evKeyScancode(e), shiftDown()) && !fromPad && !evKeyRepeat(e) && !inv.open && !garageShop.open && !menu.title &&
                         !menu.listeningForKey()) {  // the dev menu (devmenu.h): F12 opens and closes it, whatever DEV HOTKEYS says
                         if (menu.devOpen()) closeMenu();
                         else {
@@ -3736,7 +3720,7 @@ int main(int argc, char** argv) {
                         }
                         break;
                     }
-                    if (settings.keys.matches(KA_DEV_TOGGLE, evKeyScancode(e), shiftDown()) && !fromPad && !evKeyRepeat(e) && !menu.open && !inv.open && !garageUI.open) {
+                    if (settings.keys.matches(KA_DEV_TOGGLE, evKeyScancode(e), shiftDown()) && !fromPad && !evKeyRepeat(e) && !menu.open && !inv.open && !garageShop.open) {
                         settings.devHotkeys = !settings.devHotkeys;  // DEV KEYS <-> GAMEPLAY KEYS (devmenu.h has the table)
                         saveSettings();
                         hud.toast(settings.devHotkeys ? "DEV KEYS: THE DEV KEYS ARE TOOLS (" + K(KA_DEV_TOGGLE) + " FOR GAMEPLAY KEYS)" : "GAMEPLAY KEYS (" + K(KA_DEV_TOGGLE) + " FOR DEV KEYS)");
@@ -3795,49 +3779,10 @@ int main(int argc, char** argv) {
                     const Keybinds::Press kh = settings.keys.resolve(evKeyScancode(e), shiftDown(), fromPad, kctx, settings.devHotkeys);
                     const int gsc = kh.key;
                     if (!fromPad && kh.action >= 0) shiftForce = kh.shift ? 1 : 0;  // (the switch asks shiftDown(): the action's own answer)
-                    if (garageUI.open) {
-                        const auto sc = evKeyScancode(e);
-                        int& pk = garageUI.pick.pick[garageUI.slot];
-                        const int n = (int)modOptions(garageUI.vehicle, garageUI.slot).size();
-                        if (sc == SC_W || sc == SC_UP) garageUI.slot = (garageUI.slot + MOD_SLOTS - 1) % MOD_SLOTS;
-                        else if (sc == SC_S || sc == SC_DOWN) garageUI.slot = (garageUI.slot + 1) % MOD_SLOTS;
-                        else if (sc == SC_A || sc == SC_LEFT) pk = (pk + n - 1) % n;
-                        else if (sc == SC_D || sc == SC_RIGHT) pk = (pk + 1) % n;
-                        else if (sc == SC_C) garageUI.recal = !garageUI.recal;
-                        else if (sc == SC_B && career.on) {  // buy the part shown, at a station
-                            const int at = sim.stationAt(sim.cars[sim.player].frame().com);
-                            std::string why;
-                            if (at < 0) hud.toast("PARTS ARE SOLD AT THE REPAIR STATIONS");
-                            else if (career.buy(garageUI.vehicle, garageUI.slot, pk, why)) {
-                                if (!scripted) career.save(Career::defaultPath());
-                                hud.toast("BOUGHT " + modOptions(garageUI.vehicle, garageUI.slot)[pk].name + ": $" + std::to_string(career.cash) + " LEFT");
-                            } else hud.toast(why);
-                        } else if ((sc == SC_RETURN || sc == SC_KP_ENTER) && career.on && sim.stationAt(sim.cars[sim.player].frame().com) < 0 &&
-                                   !(garageUI.pick.pick[0] == garage.fitted[garageUI.vehicle].pick[0] && garageUI.pick.pick[1] == garage.fitted[garageUI.vehicle].pick[1] &&
-                                     garageUI.pick.pick[2] == garage.fitted[garageUI.vehicle].pick[2] && garageUI.pick.pick[3] == garage.fitted[garageUI.vehicle].pick[3] &&
-                                     garageUI.pick.pick[4] == garage.fitted[garageUI.vehicle].pick[4])) {
-                            hud.toast("DRIVE TO A REPAIR STATION TO FIT PARTS");
-                        } else if ((sc == SC_RETURN || sc == SC_KP_ENTER) && career.on &&
-                                   [&] {
-                                       for (int k = 0; k < MOD_SLOTS; k++)
-                                           if (!career.owns(garageUI.vehicle, k, garageUI.pick.pick[k])) return true;
-                                       return false;
-                                   }()) {
-                            int k = 0;
-                            while (k < MOD_SLOTS && career.owns(garageUI.vehicle, k, garageUI.pick.pick[k])) k++;
-                            hud.toast(std::string("LOCKED: ") + modOptions(garageUI.vehicle, k)[garageUI.pick.pick[k]].name);
-                        } else if (sc == SC_RETURN || sc == SC_KP_ENTER) {
-                            garage.fitted[garageUI.vehicle] = garageUI.pick;
-                            garage.save(garagePath);
-                            sim.swapPlayerVehicle(garage.spec(garageUI.vehicle));
-                            if (garageUI.recal) sim.cars[sim.player].recalibrateSpeedo();
-                            garageUI.open = false;
-                            hud.toast(garageUI.pick.stock() ? "BACK TO STOCK" : "MODS FITTED");
-                        } else if (kh.action == KA_GARAGE || sc == SC_ESCAPE) {
-                            garageUI.open = false;
-                            if (garageFromMenu) openMenu();  // back where you came from
-                        }
-                        if (!garageUI.open) garageFromMenu = false;
+                    if (garageShop.open) {
+                        // (Its own keys, as pressed; a rebound garage key closes it too.)
+                        const int sc = kh.action == KA_GARAGE ? (int)shop::K_G : (int)evKeyScancode(e);
+                        shopResult(garageShop.key(sc, career));
                         break;
                     }
                     if (kh.action == KA_CHAT) {
@@ -4210,7 +4155,7 @@ int main(int argc, char** argv) {
             up = down = left = right = false;
             hb = true;
         }
-        if (garageUI.open || menu.open || editor.active || coop.typing || coop.mapOpen) {  // parked while you work on it
+        if (garageShop.open || menu.open || editor.active || coop.typing || coop.mapOpen) {  // parked while you work on it
             up = down = left = right = false;
             hb = true;
             winch = airing = 0;
@@ -5546,6 +5491,46 @@ int main(int argc, char** argv) {
                 cam.userYaw = y, cam.pitch = p, cam.idle = 0;
             }
         }
+        // ---- the garage (garageshop.h): the truck wearing what it shows, the part on its plinth, the garage camera
+        bool shopModel = false;
+        shop::Display shopDisp;
+        V3 shopBase, shopLo, shopHi, shopMid;
+        static bool shopRestore = false;  // closed: the fitted parts going back on (once their visual is built)
+        auto shopReady = [&](const VehicleSpec& vs) {
+            if (visualReady(vs) || blockOnTemplates) return true;
+            prebuildVisual(vs, sim.cars[sim.player].color);
+            return false;
+        };
+        if (garageShop.open) {
+            shopRestore = true;
+            garageShop.tick(dt);
+            if (padCtx == pad::Mode::Menu && (padLogic.in.lookX != 0 || padLogic.in.lookY != 0)) garageShop.turn(padLogic.in.lookX * dt * 2.6, padLogic.in.lookY * dt * 1.2);  // (gamepad: the right stick turns the model)
+            shopToastT = std::max(0.0, shopToastT - dt);
+            shopBlend = std::min(1.0, shopBlend + dt * 1.25);
+            shop::liftSync(sim, garageShop, shopReady);
+            Car& pc = sim.cars[sim.player];
+            if (shopRecal && pc.spec == &tunedSpec(garageShop.vehicle, garageShop.fitted)) pc.recalibrateSpeedo(), shopRecal = false;
+            if (const shop::Item* it = garageShop.previewing ? nullptr : garageShop.item()) {  // (trying it on: it's on the truck, not the plinth)
+                shopDisp = shop::displayFor(*it, garageShop.vehicle, garageShop.fitted);
+                shop::modelBounds(shopDisp, shopLo, shopHi);
+                shopBase = shop::plinthSpot(pc.frame(), *pc.spec);
+                shopBase.y = sim.world.height(shopBase.x, shopBase.z);
+                if (shopDisp.onDrum) {
+                    shop::Display drum;
+                    drum.id = "oil_drum";
+                    V3 dl, dh;
+                    shop::modelBounds(drum, dl, dh);
+                    shopBase.y += dh.y;
+                }
+                shopMid = shopBase + V3(0, (shopDisp.standUp ? shopHi.z - shopLo.z : shopHi.y - shopLo.y) * shopDisp.scale * 0.5, 0);
+                shopModel = true;
+            }
+        } else if (shopRestore) {
+            shop::liftSync(sim, garageShop, shopReady);
+            const Car& pc = sim.cars[sim.player];
+            if (pc.isProp() || pc.spec->model != garageShop.vehicle || pc.spec == &tunedSpec(garageShop.vehicle, garageShop.fitted)) shopRestore = false;
+            if (shopRecal && !shopRestore) sim.cars[sim.player].recalibrateSpeedo(), shopRecal = false;
+        }
         View view = editor.active ? editor.view(W, H) : campBehind() ? menuscene::camera(campLevel, sim.world, clock) : cam.update(fr, sim.world, dt, (dragging || padLooking) && !menu.open, camhold::driving(len(fr.vel), sim.paused ? 0.0 : sim.cars[sim.player].throttle));
         if (!walker.active && !editor.active && cam.mode == 2 && sim.player >= 0 && sim.player < (int)sim.cars.size()) {
             // The cockpit view from the driver's eyes (people.h sits them on the seat): the seat's hip point, up and a little ahead.
@@ -5556,6 +5541,21 @@ int main(int argc, char** argv) {
                 const V3 d = eye - view.eye;
                 view.eye += d, view.target += d;
             }
+        }
+        if (garageShop.open && !editor.active) {  // the garage camera, eased in from the chase view
+            const Car& pc = sim.cars[sim.player];
+            const shop::Cam gc = shop::camera(garageShop, pc.frame(), *pc.spec, shopModel ? shopMid : V3(), shopModel ? shopDisp.size : 1.0, clock);
+            if (shopBlend <= dt * 1.25 + 1e-9) shopView = view, shopView.eye = gc.eye, shopView.target = gc.target;
+            const double k = 1 - std::exp(-dt * 4.0);
+            shopView.eye += (gc.eye - shopView.eye) * k;
+            shopView.target += (gc.target - shopView.target) * k;
+            shopView.eye.y = std::max(shopView.eye.y, sim.world.height(shopView.eye.x, shopView.eye.z) + 0.25);
+            const double b = shopBlend * shopBlend * (3 - 2 * shopBlend);
+            view.eye = view.eye + (shopView.eye - view.eye) * b;
+            view.target = view.target + (shopView.target - view.target) * b;
+            view.up = V3(0, 1, 0);
+            view.fovy = (float)(view.fovy + (0.78 - view.fovy) * b);
+            view.hasFocus = false;
         }
         fpLean = V3(), fpWork = V3();
         if (walker.active && !editor.active && cam.mode != 3) {
@@ -5635,7 +5635,7 @@ int main(int argc, char** argv) {
         {  // the horn (held): yours at your car, each buddy's at theirs (sent as "horn 1" / "horn 0" chatter, horn.h)
             const uint8_t* ks = SDL_GetKeyboardState(nullptr);
             const bool shiftDown = ks[SC_LSHIFT] || ks[SC_RSHIFT];
-            const bool hornHeld = sim.player >= 0 && sim.player < (int)sim.cars.size() && !walker.active && !garageUI.open && !menu.open && !editor.active && !coop.typing && !coop.mapOpen &&
+            const bool hornHeld = sim.player >= 0 && sim.player < (int)sim.cars.size() && !walker.active && !garageShop.open && !menu.open && !editor.active && !coop.typing && !coop.mapOpen &&
                                   (settings.keys.held(KA_HORN, ks, shiftDown) || (padCtx == pad::Mode::Drive && padLogic.in.horn));
             if (net.active() && hornSender.update(hornHeld, clock)) net.sendGame(horn::message(hornHeld));
             else if (!net.active()) hornSender.on = hornHeld;
@@ -5712,7 +5712,7 @@ int main(int argc, char** argv) {
         // Keep saved/menu choices separate from temporary runtime reductions.
         // Scripted captures stay deterministic unless adaptation is explicitly requested.
         if (probePending && frame > 90 && !probe.active()) probePending = false, startProbe();
-        if (probe.active() && !garageUI.open && !editor.active) {
+        if (probe.active() && !garageShop.open && !editor.active) {
             const QualityProbe::Step step = probe.feed((float)frameTimeMs);
             if (step != QualityProbe::NONE) {
                 applyPreset(settings.gfx, probe.preset());
@@ -5728,7 +5728,7 @@ int main(int argc, char** argv) {
         const bool inBackground = !scripted && !(SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS);  // (another window has the focus: throttled to 15 fps below)
         if (inBackground) {
             // (frames are slow on purpose: nothing for adaptive quality to judge)
-        } else if (settings.adaptiveQuality && !probe.active() && !menu.open && !garageUI.open && !editor.active && (!scripted || opt.adaptive == 1)) {
+        } else if (settings.adaptiveQuality && !probe.active() && !menu.open && !garageShop.open && !editor.active && (!scripted || opt.adaptive == 1)) {
             adaptiveQuality.evaluate((float)frameTimeMs, adaptiveSettings);
         } else {
             adaptiveQuality.reset(settings.gfx);
@@ -5744,6 +5744,30 @@ int main(int argc, char** argv) {
         // A jack under a wheel: on the ground under its axle or arm, handle out, raised as far as it's been worked.
         renderer.frameModels.clear();
         if (editor.active) renderer.frameModels.insert(renderer.frameModels.end(), editor.ghostModels.begin(), editor.ghostModels.end());
+        if (shopModel) {  // the garage's turntable: the part turning (on an oil drum when it's small), its middle on the axis
+            if (shopDisp.onDrum) {
+                Placed drum;
+                drum.id = "oil_drum";
+                drum.p = V3(shopBase.x, sim.world.height(shopBase.x, shopBase.z), shopBase.z);
+                renderer.frameModels.push_back(drum);
+            }
+            Placed pl;
+            pl.id = shopDisp.id;
+            pl.set = shopDisp.set;
+            pl.scale = V3(shopDisp.scale, shopDisp.scale, shopDisp.scale);
+            pl.yaw = garageShop.spin;
+            pl.sunlit = true;
+            const V3 mid = (shopLo + shopHi) * (0.5 * shopDisp.scale);
+            const double cy = std::cos(pl.yaw), sy = std::sin(pl.yaw);
+            if (shopDisp.standUp) {  // (on its tread: the model's up is across, its left is down)
+                const V3 F(cy, 0, -sy), Lf(sy, 0, cy), D(0, -1, 0);
+                pl.oriented = true, pl.ax[0] = F, pl.ax[1] = Lf, pl.ax[2] = D;
+                pl.p = shopMid - (F * mid.x + Lf * mid.y + D * mid.z);
+            } else {
+                pl.p = shopBase - V3(mid.x * cy + mid.z * sy, 0, -mid.x * sy + mid.z * cy) + V3(0, -shopLo.y * shopDisp.scale, 0);
+            }
+            renderer.frameModels.push_back(pl);
+        }
         if (mk::findModel("jack"))
             for (const Car& c : sim.cars)
                 if (c.jackPlaced && c.jackWheel >= 0 && c.jackWheel < (int)c.wheels.size()) renderer.frameModels.push_back(Interact::jackModel(sim, c, c.jackWheel));
@@ -5998,8 +6022,8 @@ int main(int argc, char** argv) {
         }
         hud.update(dt);
         if (editor.active && !menu.open) editor.draw(renderer, W, H, dt);
-        else if (!menu.open && !hud.photo) drawHud(renderer, sim, view, hud, &playback, net, W, H, fps, dt, settings.mph, career, caches);
-        const bool showHud = !menu.open && !editor.active && !hud.photo;
+        else if (!menu.open && !hud.photo && !garageShop.open) drawHud(renderer, sim, view, hud, &playback, net, W, H, fps, dt, settings.mph, career, caches);
+        const bool showHud = !menu.open && !editor.active && !hud.photo && !garageShop.open;
         hud.debugOn = dbg.on;
         if (dbg.on && showHud) {  // F3: gathered and painted only while it's up
             if (dbg.tick(frameTimeMs, dt)) {
@@ -6257,7 +6281,12 @@ int main(int argc, char** argv) {
             invLay = inv.layout(W, H, u, padNow);
             drawInvMenu(renderer, inv, invLay, W, H, padNow);
         }
-        if (garageUI.open) drawGarage(renderer, garageUI, garage, career, sim.stationAt(sim.cars[sim.player].frame().com), sim, std::max(0.75f, H / 720.0f), W, H);
+        if (garageShop.open && !menu.open) {
+            const int at = sim.stationAt(sim.cars[sim.player].frame().com);
+            const std::string toast = shopToastT > 0 ? shopToast : std::string();
+            shop::draw(renderer, garageShop, career, at >= 0 ? sim.world.stations[at].name : "", W, H, (float)std::min(1.0, shopBlend * 1.6), pad::ui.last && padDev.connected(),
+                       sim.cars[sim.player].spec != &tunedSpec(garageShop.vehicle, garageShop.shown()), toast, (float)std::min(1.0, shopToastT));
+        }
         if (mapLoad.fade > 0.001f) {  // a map switch: black, with its name once it's dark enough to read
             renderer.rect(0, 0, (float)W, (float)H, 0, 0, 0, std::min(1.0f, mapLoad.fade));
             if (mapLoad.fade > 0.6f) {

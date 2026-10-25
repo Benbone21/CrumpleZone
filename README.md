@@ -143,7 +143,7 @@ scenario finishes, you can drive around in the aftermath.
 | A / D or ← / → | Steer. Keys are all or nothing, so full steer is as much as the tires can hold at your speed, on that surface (full lock when parking, a few degrees at 130 km/h), plus room to catch a slide |
 | Space | Handbrake |
 | 7 | Horn (hold; pitched by vehicle, small cars higher; other players hear it from your car). On a pad: LB + R3 |
-| G | Garage: W/S pick engine, suspension, transmission, wheels or tires, A/D change the part, Enter fits it (career: B buys it, at a repair station) |
+| G | Garage (docs/plans/garage-shop.md): the truck where it stands and the parts by category, each on a turntable with its numbers against what's fitted. W/S move, Enter opens a category / buys and fits a part, T tries it on the truck, R puts the factory part back, Q/E change category, drag and wheel turn and zoom the model, Esc backs out (career: only at a repair station) |
 | Q / E | Shift down / up (R, N, 1…; switches to manual). In manual W is gas, S is brake |
 | Shift+M | Manual / automatic gearbox |
 | Shift+L | Headlights: AUTO (on at dusk) / LOW BEAM / HIGH BEAM / OFF |
@@ -216,7 +216,7 @@ Driving is analog. The left stick is a real analog steering input: a radial dead
 | LB + Back | Next vehicle |
 | LB + Start | The controls list (shows the pad's map) |
 
-Picking a winch anchor or tow-strap point: right stick aims the crosshair, A selects the highlighted point, B cancels. With a mouse, point and click; middle-drag looks and the wheel zooms. Menus, the title screen, the level list and the garage: D-pad or left stick move (hold to repeat), A selects, B or Start goes back. On foot the left stick walks, A jumps, and the right stick looks; Y with LB gets back in. The drone camera flies with the left stick and looks with the right.
+Picking a winch anchor or tow-strap point: right stick aims the crosshair, A selects the highlighted point, B cancels. With a mouse, point and click; middle-drag looks and the wheel zooms. Menus, the title screen, the level list and the garage: D-pad or left stick move (hold to repeat), A selects, B or Start goes back (the garage: X tries a part on the truck, Y puts the factory part back, LB / RB change category, the right stick turns the model). On foot the left stick walks, A jumps, and the right stick looks; Y with LB gets back in. The drone camera flies with the left stick and looks with the right.
 
 **Rumble** (settings, CONTROLLER page: OFF / LOW / HIGH): a thump on impacts, a rumble over rough ground, a buzz from tires sliding and from the engine on its limiter. It only runs while the pad is the last thing you used and the window has the focus. The same page sets STEERING (SOFT / NORMAL / SHARP: how the stick maps to the wheels) and STICK DEADZONE (SMALL / MEDIUM / LARGE). Multiplayer needs nothing: each machine reads its own pad.
 
