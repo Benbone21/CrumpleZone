@@ -7,8 +7,8 @@ namespace {
 const char* const kToolNames[TOOL_COUNT] = {"LUG WRENCH", "WRENCHES", "SOCKET SET", "HAMMER", "PRY BAR", "TIRE IRONS", "JACK"};
 const char* const kToolModels[TOOL_COUNT] = {"lug_wrench", "wrench", "ratchet", "hammer", "pry_bar", "tire_iron", "jack"};
 const char* const kToolA[TOOL_COUNT] = {"A LUG WRENCH", "WRENCHES", "A SOCKET SET", "A HAMMER", "A PRY BAR", "TIRE IRONS", "A JACK"};
-const char* const kPartNames[PART_COUNT] = {"TIRE", "CV AXLE", "DRIVE SHAFT", "TIE ROD", "CONTROL ARM", "SPARK PLUGS"};
-const char* const kPartModels[PART_COUNT] = {"tire_part", "cv_axle", "drive_shaft", "tie_rod", "control_arm", "spark_plug"};
+const char* const kPartNames[PART_COUNT] = {"TIRE", "CV AXLE", "DRIVE SHAFT", "TIE ROD", "CONTROL ARM", "SPARK PLUGS", "ENGINE OIL"};
+const char* const kPartModels[PART_COUNT] = {"tire_part", "cv_axle", "drive_shaft", "tie_rod", "control_arm", "spark_plug", "oil_jug"};
 
 V3 hubOf(const Car& c, const Wheel& wh) { return (c.nodes[wh.inner].p + c.nodes[wh.outer].p) * 0.5; }
 
@@ -91,7 +91,7 @@ std::vector<Fix> fixesFor(const Car& c) {
     if (c.hydrolocked) {
         Fix f{Fix::SPARK_PLUGS};
         f.part = PART_SPARK_PLUGS, f.tools = {TOOL_RATCHET}, f.hold = 5;
-        f.at = fr.com + fr.fwd * c.spec->engineX + fr.up * 0.35, f.what = "PULL THE PLUGS, CRANK THE WATER OUT";
+        f.at = fr.com + fr.fwd * c.spec->engineX + fr.up * 0.35, f.what = "OPEN THE HOOD, PULL THE PLUGS, CRANK THE WATER OUT, DRAIN AND REFILL THE OIL, NEW PLUGS";
         out.push_back(f);
     }
     return out;
@@ -150,8 +150,7 @@ bool applyFix(Car& c, const Fix& f) {
     }
     case Fix::SPARK_PLUGS:
         if (!c.hydrolocked) return false;
-        c.hydrolocked = false;
-        c.engineDead = c.engineHealth < 0.12;
+        c.clearHydrolock();
         break;
     }
     c.wake();
@@ -159,8 +158,19 @@ bool applyFix(Car& c, const Fix& f) {
 }
 
 const char* jobName(int kind) {
-    static const char* const n[] = {"CV AXLE", "DRIVE SHAFT", "TIE ROD", "CONTROL ARM", "SWAY BAR LINK", "NEW TIRE", "SPARK PLUGS"};
+    static const char* const n[] = {"CV AXLE", "DRIVE SHAFT", "TIE ROD", "CONTROL ARM", "SWAY BAR LINK", "NEW TIRE", "FLOODED ENGINE"};
     return kind >= 0 && kind <= Fix::SPARK_PLUGS ? n[kind] : "REPAIR";
+}
+
+V3 enginePlugAt(const Car& c) {
+    const Frame fr = c.frame();
+    return fr.com + fr.fwd * c.spec->engineX - fr.up * 0.35;
+}
+
+RepairStep::Act engineStepAct(int fixKind, int step) {
+    if (fixKind != Fix::SPARK_PLUGS) return RepairStep::ACT_NONE;
+    const std::vector<RepairStep> st = repairSteps(fixKind, false, false);
+    return step >= 0 && step < (int)st.size() ? st[step].act : RepairStep::ACT_NONE;
 }
 
 bool jobJacks(int kind, int wheel) { return wheel >= 0 && (kind == Fix::CV_AXLE || kind == Fix::CONTROL_ARM || kind == Fix::NEW_TIRE); }
@@ -196,7 +206,23 @@ std::vector<RepairStep> repairSteps(int kind, bool jack, bool wheelOff) {
     case Fix::TIE_ROD: swap("REMOVE TIE ROD", "FIT TIE ROD", TOOL_WRENCH, PART_TIE_ROD, 5, 3.5); break;
     case Fix::SWAY_BAR: swap("REMOVE SWAY BAR LINK", "FIT SWAY BAR LINK", TOOL_WRENCH, PART_CONTROL_ARM, 4, 3.5); break;
     case Fix::DRIVE_SHAFT: swap("REMOVE DRIVE SHAFT", "FIT DRIVE SHAFT", TOOL_RATCHET, PART_DRIVE_SHAFT, 6, 5); break;
-    case Fix::SPARK_PLUGS: swap("REMOVE SPARK PLUGS", "FIT SPARK PLUGS", TOOL_RATCHET, PART_SPARK_PLUGS, 4, 4); break;
+    case Fix::SPARK_PLUGS: {
+        // A flooded engine (rivers.cpp): the hood up, the plugs out, the water cranked out of the cylinders through the plug
+        // holes, the water-fouled oil drained from the sump and the sump refilled, new plugs in (the engine's whole again
+        // here: hydrolocked is cleared only now), the hood down.
+        step(RepairStep::HOOD_UP, "HOOD OPEN", "OPEN THE HOOD (E AT THE FRONT)");
+        step(W, "REMOVE SPARK PLUGS", "REMOVE SPARK PLUGS", TOOL_RATCHET, -1, 4);
+        s.back().removes = true;
+        step(W, "CRANK THE WATER OUT", "CRANK THE ENGINE OVER, BLOW THE WATER OUT", -1, -1, 7);
+        s.back().act = RepairStep::ACT_CRANK;
+        step(W, "DRAIN THE OIL", "PULL THE DRAIN PLUG, DRAIN THE WATER AND OIL", TOOL_WRENCH, -1, 6);
+        s.back().act = RepairStep::ACT_DRAIN, s.back().under = true;
+        step(W, "REFILL THE OIL", "PUT THE DRAIN PLUG BACK, POUR IN NEW OIL", -1, PART_ENGINE_OIL, 5);
+        s.back().act = RepairStep::ACT_FILL;
+        step(W, "FIT SPARK PLUGS", "FIT SPARK PLUGS", -1, PART_SPARK_PLUGS, 4, true);
+        step(RepairStep::HOOD_DOWN, "HOOD CLOSED", "CLOSE THE HOOD (E AT THE FRONT)");
+        break;
+    }
     case Fix::NEW_TIRE:
         if (wheelOff) {  // (the tire's work is on the wheel once it's off, on the ground: tireSteps)
             step(W, "NEW TIRE ON THE RIM", "PUT A NEW TIRE ON THE WHEEL YOU TOOK OFF", -1, -1, 0, true);
@@ -231,6 +257,8 @@ RepairPlan planRepair(int kind, bool jack, bool wheelOff, int done, bool fixed, 
         case RepairStep::WORK: d = w++ < done || worked; break;
         case RepairStep::WHEEL_ON: d = worked && back; break;
         case RepairStep::LOWER: d = worked && (!wheelOff || back) && !now.jackUp; break;
+        case RepairStep::HOOD_UP: d = worked || now.hoodOpen; break;
+        case RepairStep::HOOD_DOWN: d = worked && now.hoodShut; break;
         }
         p.done[i] = d;
         if (!d && p.next < 0) p.next = (int)i;

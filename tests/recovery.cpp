@@ -370,8 +370,10 @@ SCENARIO(fieldRepair, "recovery/trail-repair", "A Bronco with a flat, a snapped 
     for (int i = 0; i < 2 && said.find("FIXED") == std::string::npos; i++) said = workOn(Fix::TIE_ROD, 8, prompt);
     ctx.check("the tie rod (no jack needed), remove it, fit it", said == "FIT TIE ROD: TIE ROD FIXED" && std::fabs(c.wheels[1].tieOffset) < 1e-9, said + " / " + prompt);
     said.clear();
-    for (int i = 0; i < 2 && said.find("FIXED") == std::string::npos; i++) said = workOn(Fix::SPARK_PLUGS, 8, prompt);
-    ctx.check("the spark plugs: the water out", said == "FIT SPARK PLUGS: SPARK PLUGS FIXED" && !c.hydrolocked && !c.engineDead, said + " / " + prompt);
+    c.setHood(true);  // (the hood: tests/enginework.cpp does it by hand)
+    ctx.run(2.0);
+    for (int i = 0; i < 8 && said.find("FIXED") == std::string::npos; i++) said = workOn(Fix::SPARK_PLUGS, 8, prompt);
+    ctx.check("the flooded engine: plugs out, water cranked out, oil drained and refilled, new plugs in", said == "FIT SPARK PLUGS: FLOODED ENGINE FIXED" && !c.hydrolocked && !c.engineDead, said + " / " + prompt);
     ctx.check("the flat corner jacks up", lift(0));
     ctx.check("the flat off", workOn(Fix::NEW_TIRE, 8, prompt) == "WHEEL OFF", prompt);
     Interact::drop(ctx.sim, wk, V3(1, 0, 0));

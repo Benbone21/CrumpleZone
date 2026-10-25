@@ -17,7 +17,9 @@ class Sim;
 // Recorded one-shots (assets/audio/sfx/*.wav, mono 48 kHz PCM16). The winch clicks and the wrench ticks are banks of short slots, one picked at random.
 enum Sfx { SFX_DOOR_OPEN, SFX_DOOR_SHUT, SFX_CLUNK, SFX_TOOLBOX_OPEN, SFX_TOOLBOX_SHUT, SFX_WRENCH, SFX_AIR_BURST, SFX_HORN, SFX_WINCH_CLICK, SFX_UI_CLICK, SFX_UI_HOVER,
            // synthesized when the sound effects load (no files): the repair and tool sounds (toolsounds.h)
-           SFX_HAMMER, SFX_JACK_PUMP, SFX_JACK_LOWER, SFX_PRY_CREAK, SFX_TIRE_IRON, SFX_WHEEL_OFF, SFX_WHEEL_ON, SFX_BOLT_DROP, SFX_NUT_SQUEAL, SFX_COUNT };
+           SFX_HAMMER, SFX_JACK_PUMP, SFX_JACK_LOWER, SFX_PRY_CREAK, SFX_TIRE_IRON, SFX_WHEEL_OFF, SFX_WHEEL_ON, SFX_BOLT_DROP, SFX_NUT_SQUEAL,
+           // the engine job (fixes.h): the hood latch and prop, the starter turning a flooded engine over, water squirting from the plug holes, oil draining or pouring
+           SFX_HOOD_OPEN, SFX_HOOD_SHUT, SFX_ENGINE_CRANK, SFX_WATER_SPRAY, SFX_GLUG, SFX_COUNT };
 
 // What a winch sounds like at a line speed (m/s, + reeling in, - paying out) and load (0..1 of its pull): the motor's hum
 // (playback rate and level), how hard it strains (0..1: a lower, rougher, driven note) and the pawl's clicks per second.

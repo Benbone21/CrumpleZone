@@ -23,6 +23,7 @@ constexpr double kLineReach = 3.0;  // m from your chest to the anchor you hook 
 constexpr double kOpenCache = 1.5;  // prise the lid off a supply cache
 constexpr double kTakeItem = 0.5, kStowItem = 0.5;  // the back, and things in and out of it
 constexpr double kReach = prompts::kReach;  // m from your chest
+constexpr double kOpenHood = 1.1, kCloseHood = 0.9;  // s to heave the hood up / let it down and press it home
 
 // Whether a car already has a line of this kind of its own out (a winch hooked from it; a strap at either end).
 bool hasLine(const Sim& sim, int ci, RopeKind kind) {
@@ -37,6 +38,7 @@ V3 hubOf(const Car& c, const Wheel& wh) { return (c.nodes[wh.inner].p + c.nodes[
 
 CornerNow cornerNow(const Sim& sim, const Car& c, int k) {
     CornerNow n;
+    n.hoodOpen = c.hoodOpen(), n.hoodShut = c.hoodShut();
     if (k < 0 || k >= (int)c.wheels.size()) return n;
     const Wheel& wh = c.wheels[k];
     n.lifted = Interact::cornerLifted(sim, c, k);
@@ -117,6 +119,7 @@ InteractOption Interact::fixOption(const Sim& sim, const Walker& wk, int ci, con
         o.blocked = true, o.prompt = what + st.verb;
         break;
     }
+    if (st.under) o.at = enginePlugAt(c);  // (the sump's drain plug, down below the engine)
     if (st.end && f.beam >= 0 && f.beam < (int)c.beams.size()) {  // a shaft's ends: each one where it bolts on
         const Beam& b = c.beams[f.beam];
         const V3 pa = c.nodes[b.a].p, pb = c.nodes[b.b].p;
@@ -330,6 +333,16 @@ InteractOption Interact::pick(const Sim& sim, const Walker& wk, const V3& eye, c
             o.at = c.hookPoint(sim.handLine.hook);
             o.prompt = sim.handLine.kind == ROPE_WINCH ? "SPOOL WINCH LINE BACK" : "STOW TOW STRAP";
             consider(o);
+        }
+        // The hood (Car::hoodOpen): E at the nose swings it up on its hinges, and down again. Engine work wants it up.
+        if (c.hasHood() && !busy && !c.hoodTorn() && len(c.frame().vel) < 0.5 && c.hood.dir == 0) {
+            InteractOption o;
+            o.car = ci, o.kind = c.hoodOpen() ? IA_CLOSE_HOOD : IA_OPEN_HOOD;
+            o.hold = c.hoodOpen() ? kCloseHood : kOpenHood;
+            o.at = c.hoodFront() - c.frame().fwd * 0.15;
+            o.prompt = c.hoodOpen() ? "CLOSE THE HOOD" : "OPEN THE HOOD";
+            // (Closing it yields to the engine work under it: looking at the sump or the plugs is never the hood.)
+            consider(o, kReach, c.hoodOpen() ? (fixesFor(c).empty() ? 0.12 : 0.45) : 0.0);
         }
         // The back (trunk.h): E at it opens the inventory (invmenu.h), where you take what you need and put it back.
         if (trunkCar && !wk.carrying.has_value() && !lineHeld) {
@@ -792,6 +805,14 @@ std::string Interact::perform(Sim& sim, Walker& wk, const InteractOption& o) {
             return sim.hookHandLine(o.end);
         case IA_UNHOOK_LINE:
             return sim.unhookRope(o.rope);
+        case IA_OPEN_HOOD:
+        case IA_CLOSE_HOOD: {
+            Car& c = sim.cars[o.car];
+            if (len(c.frame().vel) > 0.5) return "STOP THE VEHICLE FIRST";
+            c.setHood(o.kind == IA_OPEN_HOOD);
+            waitRelease = true;
+            return o.kind == IA_OPEN_HOOD ? "HOOD OPEN" : "HOOD CLOSED";
+        }
         case IA_STOW_LINE:
             sim.dropHandLine();
             return o.lineKind == ROPE_WINCH ? "WINCH LINE SPOOLED BACK" : "TOW STRAP PUT BACK";

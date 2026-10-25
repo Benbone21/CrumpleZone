@@ -254,10 +254,7 @@ void Car::fieldRepair() {
             }
         }
     }
-    if (hydrolocked) {
-        hydrolocked = false;
-        engineDead = engineHealth < 0.12;
-    }
+    if (hydrolocked) clearHydrolock();
     tirePsi = std::max(tirePsi, spec->tirePsi * 0.8);
     wake();
 }

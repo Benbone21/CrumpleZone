@@ -124,7 +124,7 @@ bool decode(const std::string& text, Work& out) {
             out.carry.R = v[0], out.carry.rimR = v[1], out.carry.width = v[2], out.carry.style = (int)v[3];
             out.carry.popped = v[4] == 1, out.carry.tireOnly = v[5] == 1;
         } else if (key == "do" && v.size() >= 16) {
-            const bool ok = whole(v[0], IA_NONE + 1, IA_AIR_DOWN_TIRE) && whole(v[1], 0, 4294967295.0) && whole(v[2], -1, 31) && whole(v[3], -1, 31) && whole(v[4], -1, TOOL_COUNT - 1) &&
+            const bool ok = whole(v[0], IA_NONE + 1, IA_CLOSE_HOOD) && whole(v[1], 0, 4294967295.0) && whole(v[2], -1, 31) && whole(v[3], -1, 31) && whole(v[4], -1, TOOL_COUNT - 1) &&
                             whole(v[5], -1, PART_COUNT - 1) && whole(v[6], Fix::CV_AXLE, Fix::SPARK_PLUGS) && whole(v[7], -1, 31) && whole(v[8], 0, PART_COUNT - 1) &&
                             inRange(v[11], 0, 60) && inRange(v[12], 0, 600) && okPos(V3(v[13], v[14], v[15]));
             if (!ok) continue;
@@ -158,7 +158,24 @@ void Sender::update(const Sim& sim, const Walker* wk, Interact& ia, double now, 
     if (!online) {
         last = Work(), lastAt = -1e9;
         jacks.clear();
+        hoods.clear();
         return;
+    }
+    // The hoods of your vehicles.
+    hoods.erase(std::remove_if(hoods.begin(), hoods.end(), [&](const HoodSent& h) { return carByNetId(sim, h.id) < 0; }), hoods.end());
+    for (const Car& c : sim.cars) {
+        if (c.remote || !c.netId || c.isProp() || !c.hasHood()) continue;
+        auto it = std::find_if(hoods.begin(), hoods.end(), [&](const HoodSent& h) { return h.id == c.netId; });
+        if (it == hoods.end()) {
+            hoods.push_back(HoodSent{c.netId});
+            it = hoods.end() - 1;
+        }
+        const bool open = c.hoodOpen() && !c.hoodTorn();
+        if (open != it->open || (open && now - it->at >= kHoodRefresh)) {
+            std::snprintf(b, sizeof b, "hood %u %d", (unsigned)c.netId, open ? 1 : 0);
+            send(b);
+            it->open = open, it->at = now;
+        }
     }
     // What you hold and do.
     const Work w = workOf(sim, wk, ia);
@@ -241,6 +258,16 @@ bool Remote::onMessage(Sim& sim, int player, const std::string& who, const std::
         it->height = height, it->heard = now;
         return true;
     }
+    if (tag == "hood") {
+        double id = 0, open = 0;
+        if (!(in >> id >> open) || !whole(id, 1, 4294967295.0) || !whole(open, 0, 1)) return true;
+        Car* c = theirs((uint32_t)id);
+        if (!c || !c->hasHood()) return true;
+        c->hood.dir = 0, c->hood.share = open > 0 ? 1 : 0;
+        hoods.erase(std::remove_if(hoods.begin(), hoods.end(), [&](const Hood& h) { return h.id == c->netId; }), hoods.end());
+        if (open > 0) hoods.push_back(Hood{c->netId, now});
+        return true;
+    }
     if (tag == "drop") {
         double part = 0;
         Sim::DroppedPart d;
@@ -267,6 +294,16 @@ bool Remote::onMessage(Sim& sim, int player, const std::string& who, const std::
 
 void Remote::update(Sim& sim, double dt, double now) {
     players.erase(std::remove_if(players.begin(), players.end(), [&](const Player& p) { return now - p.heard > kExpiry; }), players.end());
+    for (size_t k = 0; k < hoods.size();) {
+        const int ci = carByNetId(sim, hoods[k].id);
+        Car* c = ci >= 0 && sim.cars[ci].remote ? &sim.cars[ci] : nullptr;
+        if (!c || now - hoods[k].heard > kHoodExpiry) {  // (gone, or its owner went quiet)
+            if (c) c->hood.share = 0, c->hood.dir = 0;
+            hoods.erase(hoods.begin() + k);
+            continue;
+        }
+        k++;
+    }
     for (size_t k = 0; k < jacks.size();) {
         const int ci = carByNetId(sim, jacks[k].id);
         Car* c = ci >= 0 && sim.cars[ci].remote ? &sim.cars[ci] : nullptr;

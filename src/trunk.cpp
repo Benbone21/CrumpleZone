@@ -75,21 +75,19 @@ V3 Car::gateSwung(const V3& p, bool point) const {
     return point ? a + q : q;
 }
 
-void Car::setGate(bool open) {
-    if (!hasGate()) return;
-    const int pi = gatePanel();
+void Car::swingPanel(int pi, Gate& g, bool open, const V3& outDir) {
     if (pi >= 0) {
         Panel& pn = panels[pi];
         if (pn.state == 2) return;
         if (open && !pn.hand) {
-            // Which way round the hinge line is out: the way the gate's middle goes toward the back.
+            // Which way round the hinge line is out: the way the panel's middle goes toward outDir.
             V3 a, axis;
             if (hingeLine(*this, pn, a, axis)) {
                 V3 mid;
                 for (int bn : pn.bodyNodes) mid += nodes[bn].p;
                 mid = mid / (double)pn.bodyNodes.size();
-                const V3 back = -frame().fwd, r = mid - a;
-                const double plus = dot(rotateAbout(r, axis, 0, 1) - r, back), minus = dot(rotateAbout(r, axis, 0, -1) - r, back);
+                const V3 r = mid - a;
+                const double plus = dot(rotateAbout(r, axis, 0, 1) - r, outDir), minus = dot(rotateAbout(r, axis, 0, -1) - r, outDir);
                 pn.handSign = plus >= minus ? 1 : -1;
             } else {
                 pn.handSign = 1;
@@ -103,20 +101,24 @@ void Car::setGate(bool open) {
         }
         if (!pn.hand && !open) return;  // (hanging loose after a crash: nothing to drive)
     }
-    gate.dir = open ? 1 : -1;
-    gate.jam = 0;
+    g.dir = open ? 1 : -1;
+    g.jam = 0;
     wake();
 }
 
-void Car::gateStep(double dt) {
-    if (gate.dir == 0) return;
-    const double was = gate.share;
-    gate.share = clampd(gate.share + gate.dir * dt / kGateTime, 0, 1);
-    if (gate.dir > 0 && gate.share >= 1) gate.dir = 0;
-    if (gate.dir < 0 && gate.share <= 0) {
-        const int pi = gatePanel();
+void Car::setGate(bool open) {
+    if (!hasGate()) return;
+    swingPanel(gatePanel(), gate, open, -frame().fwd);
+}
+
+void Car::stepPanel(int pi, Gate& g, double dt) {
+    if (g.dir == 0) return;
+    const double was = g.share;
+    g.share = clampd(g.share + g.dir * dt / kGateTime, 0, 1);
+    if (g.dir > 0 && g.share >= 1) g.dir = 0;
+    if (g.dir < 0 && g.share <= 0) {
         if (pi < 0) {
-            gate.dir = 0;
+            g.dir = 0;
             return;
         }
         // Home: latch it again once the sheet's on the body (up against it); against something, give up.
@@ -130,23 +132,23 @@ void Car::gateStep(double dt) {
                 if (pin.kind == PIN_LATCH || pin.kind == PIN_CLIP) pin.broken = false;
             }
             pn.hand = false;
-            gate.dir = 0;
-        } else if ((gate.jam += dt) > 3) {
+            g.dir = 0;
+        } else if ((g.jam += dt) > 3) {
             pn.hand = false;  // (stuck: it hangs as it is)
-            gate.dir = 0;
+            g.dir = 0;
         }
     }
-    if (was != gate.share) wake();
+    if (was != g.share) wake();
 }
 
-void Car::gateServo(double h) {
-    (void)h;
-    const int pi = gatePanel();
+void Car::gateStep(double dt) { stepPanel(gatePanel(), gate, dt); }
+
+void Car::servoPanel(int pi, const Gate& g, double maxAngle) {
     if (pi < 0 || !panels[pi].hand) return;
     Panel& pn = panels[pi];
     V3 a, axis;
     if (!hingeLine(*this, pn, a, axis)) return;
-    const double s = gate.share, ang = pn.handSign * kGateAngle * s * s * (3 - 2 * s);
+    const double s = g.share, ang = pn.handSign * maxAngle * s * s * (3 - 2 * s);
     const double ca = std::cos(ang), sa = std::sin(ang);
     constexpr double w = 14, zeta = 0.8, cap = 70;  // a soft spring: a gas strut, not a bolt
     for (size_t k = 0; k < pn.panelNodes.size() && k < pn.pins.size(); k++) {
@@ -162,6 +164,58 @@ void Car::gateServo(double h) {
         P.f += F;
         B.f -= F;
     }
+}
+
+void Car::gateServo(double h) {
+    (void)h;
+    servoPanel(gatePanel(), gate, kGateAngle);
+    servoPanel(hoodPanel(), hood, kHoodAngle);
+}
+
+// ---- The hood ---------------------------------------------------------------------------------
+
+int Car::hoodPanel() const {
+    for (size_t i = 0; i < panels.size(); i++)
+        if (!std::strcmp(panels[i].name, "HOOD")) return (int)i;
+    return -1;
+}
+
+bool Car::hasHood() const { return !isProp() && hoodPanel() >= 0; }
+
+bool Car::hoodTorn() const {
+    const int pi = hoodPanel();
+    return pi >= 0 && panels[pi].state == 2;
+}
+
+bool Car::hoodOpen() const { return hasHood() && (hoodTorn() || (hood.share >= 0.9 && hood.dir >= 0)); }
+
+bool Car::hoodShut() const { return !hasHood() || hoodTorn() || (hood.share <= 0.02 && hood.dir <= 0); }
+
+void Car::setHood(bool open) {
+    if (!hasHood()) return;
+    swingPanel(hoodPanel(), hood, open, frame().up);
+}
+
+void Car::hoodStep(double dt) { stepPanel(hoodPanel(), hood, dt); }
+
+V3 Car::hoodAt() const {
+    const int pi = hoodPanel();
+    if (pi < 0 || panels[pi].bodyNodes.empty()) return frame().com + frame().fwd * (spec->wheelbase * 0.5) + frame().up * 0.5;
+    V3 m;
+    for (int bn : panels[pi].bodyNodes) m += nodes[bn].p;  // (the body side, so it stays where the hood sat)
+    return m / (double)panels[pi].bodyNodes.size();
+}
+
+V3 Car::hoodFront() const {
+    const int pi = hoodPanel();
+    const Frame fr = frame();
+    if (pi < 0 || panels[pi].bodyNodes.empty()) return hoodAt() + fr.fwd * 0.5;
+    // Where you stand to open it: the far end of the hood from the hinge, out in front of the nose.
+    double best = -1e9;
+    for (int bn : panels[pi].bodyNodes) best = std::max(best, dot(nodes[bn].p - fr.com, fr.fwd));
+    V3 at = hoodAt();
+    at += fr.fwd * (best - dot(at - fr.com, fr.fwd));
+    return at;
 }
 
 // ---- The cargo area and what's in it ---------------------------------------------------------

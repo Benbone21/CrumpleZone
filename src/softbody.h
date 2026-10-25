@@ -420,6 +420,8 @@ public:
     double fuelUse = 0;         // how fast it burns: 0 none (tests), 1 real, more for the game
     bool outOfFuel() const { return fuelUse > 0 && fuel == 0; }
     bool hydrolocked = false;   // sucked water into the intake (dead until repaired)
+    double floodedHealth = -1;  // engineHealth before the water got in (-1: unknown): what a proper repair of the flooded engine gives back
+    void clearHydrolock();      // the water's out, new plugs: it runs again, as healthy as before the flood (unknown: 85%); a wrecked one stays dead
     // Trail setup.
     double tirePsi = 32;        // tire pressure (starts at the spec's; air down for rock)
     // The air around it (C): the tires cool toward it. Sim::updateTrail sets it from the
@@ -473,6 +475,20 @@ public:
     bool gateCarried() const;  // the spare rides the gate's carrier: it swings away with it
     V3 gateSwung(const V3& p, bool point) const;  // a point (or direction) on the gate, turned as far as it's open
     void gateStep(double dt);  // per frame: the swing, and latching it again when it's home
+    // The hood (trunk.cpp): the HOOD panel opened by hand on its real hinges the same way (on foot, E at the front:
+    // interact.h IA_OPEN_HOOD / IA_CLOSE_HOOD), held up like the gate. Engine work (flooded engine, the battery
+    // under it: jump pack, cables) needs it open: ask hoodOpen().
+    Gate hood;
+    static constexpr double kHoodAngle = 1.25;  // rad open (72 degrees: short of the prop at 80)
+    int hoodPanel() const;     // the HOOD panel (-1: none)
+    bool hasHood() const;      // a vehicle with a hood to open (not a prop)
+    bool hoodOpen() const;     // open enough to reach in (or torn off)
+    bool hoodShut() const;     // closed and latched (a vehicle with no hood: always)
+    bool hoodTorn() const;
+    void setHood(bool open);   // starts it swinging
+    void hoodStep(double dt);  // per frame: the swing, latching it again when it's home
+    V3 hoodAt() const;         // the middle of the hood where it sits shut (world; the same open)
+    V3 hoodFront() const;      // ...and the same over the nose, where you stand to reach it
     double winchSpeed = 1.0;    // multiplier of the rated line speed (0.1-20); game preference starts at 4x
     bool swayDisconnected = false;  // front anti-roll bar unhooked
     int shaftsBroken = 0;       // axle shafts snapped since last read (for the HUD)
@@ -670,7 +686,10 @@ private:
     void poleEdgeContacts(double h, const World& w);
     void engineBlockContact(double h);
     void panelBodyContact(double h);
-    void gateServo(double h);  // the back gate driven round its hinges (trunk.cpp)
+    void gateServo(double h);  // the back gate and the hood driven round their hinges (trunk.cpp)
+    void swingPanel(int pi, Gate& g, bool open, const V3& outDir);
+    void stepPanel(int pi, Gate& g, double dt);
+    void servoPanel(int pi, const Gate& g, double maxAngle);
 public:
     bool wheelPowered(const Wheel& wh) const;  // driven, attached, and its shafts are intact
     // 4x4 controls. setDriveMode/setLocker only change state; the caller decides when the

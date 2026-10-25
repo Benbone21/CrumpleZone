@@ -49,6 +49,8 @@ enum InteractKind {
     IA_RIDE_ALONG,    // in at the passenger's door of a buddy's they're driving
     IA_AIR_UP_TIRE,   // air up a tire with the onboard compressor (or shop air)
     IA_AIR_DOWN_TIRE, // let air out of a tire at the valve
+    IA_OPEN_HOOD,     // E at the front of the vehicle: the hood swings up on its hinges and stays (Car::setHood)
+    IA_CLOSE_HOOD,    // ...and down again
 };
 
 // The repair in progress, as the on-foot checklist shows it: "CV AXLE, FRONT LEFT" and its steps.

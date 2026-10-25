@@ -171,6 +171,9 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
     engineHealth = 1;
     engineDead = false;
     hydrolocked = false;
+    floodedHealth = -1;
+    gate = Gate();  // (new panels: shut)
+    hood = Gate();
     tirePsi = vs.tirePsi;
     swayDisconnected = false;
     shaftsBroken = 0;

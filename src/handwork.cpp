@@ -312,13 +312,51 @@ Handwork handwork(const Sim& sim, const Walker& wk, const Interact& ia, const V3
         if (s < 0.85) jackGrip(pl);  // (let go as it settles)
         break;
     }
+    case IA_OPEN_HOOD:
+    case IA_CLOSE_HOOD: {
+        // Both hands on the hood's front edge: heaving it up on its hinges (or lowering it, then a press to latch it).
+        const bool open = o.kind == IA_OPEN_HOOD;
+        const double reach = smooth(std::min(1.0, t * 4)), lift = smooth(t), edge = 0.30 * (open ? lift : 1 - lift);
+        const V3 rest = eye + flat(F) * 0.35 + R * 0.2 - kUp * 0.55;
+        for (int s = 0; s < 2; s++) {
+            const V3 on = o.at + R * (s == 0 ? -0.16 : 0.16) + kUp * (edge + 0.03);
+            h.hands[s].on = true;
+            h.hands[s].p = lerp(rest + R * (s == 0 ? -0.4 : 0.0), on, reach);
+            h.hands[s].axis = norm(lerp(flat(F), -kUp, reach));
+            h.hands[s].grip = reach < 0.9 ? 0.2 : 0.8;
+        }
+        h.hasWork = true, h.workAt = o.at;
+        break;
+    }
     case IA_FIX: {
         const Fix& f = o.fix;
+        const RepairStep::Act act = engineStepAct(f.kind, o.step);
+        if (act == RepairStep::ACT_CRANK) {  // a hand on the crank pulley, turning the engine over by the starter's side
+            const double ph = secs * 2 * M_PI * 1.3;
+            h.hasWork = true, h.workAt = o.at;
+            h.hands[1].on = true;
+            h.hands[1].p = o.at + R * (0.06 * std::cos(ph)) + kUp * (0.05 * std::sin(ph)) + toward * 0.1;
+            h.hands[1].axis = -toward;
+            h.hands[1].grip = 0.55;
+            h.hands[0].on = true;  // (the other steadies on the fender)
+            h.hands[0].p = o.at - R * 0.35 + toward * 0.2 + kUp * 0.02;
+            h.hands[0].axis = -kUp;
+            h.hands[0].grip = 0.5;
+            break;
+        }
+        if (act == RepairStep::ACT_FILL) {  // the jug tipped over the filler, the oil running in
+            const double tilt = 0.35 + 1.45 * smooth(std::min(1.0, t * 1.6)), settle = 1 - std::pow(1 - std::min(1.0, t * 4), 2);
+            const V3 yv = norm(kUp * std::cos(tilt) - toward * std::sin(tilt));
+            h.hasWork = true, h.workAt = o.at;
+            sc.put(repairPartModel(PART_ENGINE_OIL), lerp(o.at + toward * 0.5 + kUp * 0.4, o.at + kUp * 0.2 + toward * 0.1, settle), R, yv);
+            sc.both(0.06, 0.02);
+            break;
+        }
         // At a corner the work's done at the hub (the axle nut, the knuckle behind it), where you
         // can see it, the tool coaxial with it; anywhere else where the step is (a plug points up,
         // a shaft's ends). One step, one tool, worked slowly for the whole hold; or the new part going in.
         V3 work = o.at, workAxis = toward;
-        if (f.kind == Fix::SPARK_PLUGS) workAxis = kUp;
+        if (f.kind == Fix::SPARK_PLUGS) workAxis = act == RepairStep::ACT_DRAIN ? -kUp : kUp;
         if (car && wh && !o.atEnd) {
             WheelItem item = wh->item;
             if (!wh->mounted) item.style = car->spec->wheelStyle;

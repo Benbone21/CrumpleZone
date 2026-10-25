@@ -682,6 +682,30 @@ Reg sparkPlugReg({"spark_plug", "SPARK PLUG", "REPAIR", "Spare part: a plug for 
                   }});
 
 // ======================================================================================
+// 14b. ENGINE OIL
+// ======================================================================================
+
+// A one-litre-class oil jug standing on its base (local +Y up, +X front): a rounded body with the handle at the back, a shoulder
+// up to a short neck with a screw cap, a label band round the middle.
+void oilJug(B& b, const P& p) {
+    const double w = p("wear");
+    const V3 body = mix(V3(0.80, 0.78, 0.70), V3(0.45, 0.42, 0.36), w * 0.5);
+    b.style(body, MATTE);
+    b.lathe(V3(0, 0, 0), {V2(0, 0), V2(0.060, 0), V2(0.066, 0.008), V2(0.068, 0.04), V2(0.068, 0.12), V2(0.060, 0.16), V2(0.034, 0.185), V2(0.026, 0.195), V2(0.026, 0.215), V2(0, 0.215)}, 18, true);
+    b.style(V3(0.70, 0.12, 0.06), MATTE);  // the label band
+    b.lathe(V3(0, 0.05, 0), {V2(0.0685, 0), V2(0.0695, 0.002), V2(0.0695, 0.058), V2(0.0685, 0.06)}, 18, false);
+    b.style(V3(0.95, 0.80, 0.15), MATTE);
+    b.cyl(V3(0, 0.215, 0), V3(0, 0.236, 0), 0.0285, 12);  // the cap
+    b.style(body * 0.92, MATTE);
+    b.tube({V3(-0.055, 0.15, 0), V3(-0.095, 0.15, 0), V3(-0.098, 0.09, 0), V3(-0.066, 0.075, 0)}, 0.008, 6);  // the handle
+}
+
+Reg oilJugReg({"oil_jug", "ENGINE OIL", "REPAIR", "Spare part: a jug of engine oil to refill the sump after a flooded engine's oil is drained; stands on its base, +Y up", 0.24,
+               {
+                   {"JUG", "A plastic oil jug with a handle and a screw cap", {wearParam(0.1)}, oilJug},
+               }});
+
+// ======================================================================================
 // 15. LUG NUT
 // ======================================================================================
 

@@ -54,6 +54,9 @@ public:
     // (The particles age in update(): the menu feeds it the real frame time, as the sim is paused behind the menu.)
     void campfire(const V3& base, double dt, const V3& wind);
     void clear();
+    // The engine job (fixes.h RepairStep::Act, 1 crank / 2 drain): water jetting out of the plug holes at `at` (spread along `fwd`), or the
+    // sump's fouled oil running out below it, for `dt` s of the work.
+    void engineJob(int act, const V3& at, const V3& fwd, double dt);
 
 private:
     enum Kind : uint8_t { SMOKE, DUST, SPARK, SHARD, CLOD, FLAME };  // CLOD: mud, sand, snow or gravel thrown by a tire

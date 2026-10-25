@@ -59,6 +59,8 @@ std::vector<std::string> cacheGear(int i) {
     if (i < 5) g.push_back(toolKey(tools[i]));
     g.push_back(repairPartKey(parts[i % 6]));
     if (i % 3 == 2) g.push_back(repairPartKey(parts[(i + 2) % 6]));
+    // (A flooded engine wants oil as well as plugs: it comes with them.)
+    if (parts[i % 6] == PART_SPARK_PLUGS || (i % 3 == 2 && parts[(i + 2) % 6] == PART_SPARK_PLUGS)) g.push_back(repairPartKey(PART_ENGINE_OIL));
     // And anchor gear: a stake in a third of them, the scarce kinds where the ground calls for them.
     if (i % 3 == 0) g.push_back(anchors::gearKey(GEAR_STAKE));
     if (i == 2 || i == 6) g.push_back(anchors::gearKey(GEAR_ICE));
@@ -217,7 +219,7 @@ const std::vector<ShopItem>& stationRack() {
     static const std::vector<ShopItem> r = [] {
         std::vector<ShopItem> v;
         const int toolPrice[TOOL_COUNT] = {60, 140, 220, 45, 70, 55, 180};
-        const int partPrice[PART_COUNT] = {160, 240, 300, 90, 190, 40};
+        const int partPrice[PART_COUNT] = {160, 240, 300, 90, 190, 40, 25};
         for (int t = 0; t < TOOL_COUNT; t++) v.push_back({toolKey((Tool)t), toolPrice[t], toolModel((Tool)t)});
         for (int p = 0; p < PART_COUNT; p++) v.push_back({repairPartKey((RepairPart)p), partPrice[p], p == PART_TIRE ? "" : repairPartModel((RepairPart)p)});
         for (int g = 0; g < GEAR_COUNT; g++) v.push_back({anchors::gearKey((AnchorGear)g), anchors::kPrice[g], anchors::gearModel((AnchorGear)g)});

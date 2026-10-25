@@ -281,6 +281,61 @@ void Audio::synthesizeTools() {
             return std::sin(ph) * stick * std::pow(std::sin(3.14159f * std::pow(x, 0.7f)), 1.2f) + 0.2f * std::sin(2 * ph) * stick;
         });
     }
+    // The hood coming up: the release's click, the hinges creaking, the prop rod / gas struts settling with a dull clank.
+    {
+        float lp = 0, ph = 0;
+        make(SFX_HOOD_OPEN, 0.9f, [&](float t, int) {
+            lp += (rnd() - lp) * 0.4f;
+            const float c = t - 0.03f, g = t - 0.12f, k = t - 0.62f;
+            ph += tau * (380 + 260 * std::min(1.0f, g / 0.4f)) * (1 + 0.05f * rnd()) / sr;
+            return (c > 0 ? 0.8f * lp * std::exp(-c * 500) + 0.5f * ring(c, 1650, 90) : 0.0f) +
+                   (g > 0 && g < 0.45f ? 0.22f * std::sin(ph) * std::sin(3.14159f * g / 0.45f) * (0.6f + 0.4f * rnd()) : 0.0f) +
+                   (k > 0 ? 0.9f * ring(k, 150, 30) + 0.6f * ring(k, 720, 50) + 0.4f * lp * std::exp(-k * 160) : 0.0f);
+        });
+    }
+    // The hood coming down and latching: a heavy hollow thunk, the sheet metal ringing after it.
+    {
+        float lp = 0, lp2 = 0;
+        make(SFX_HOOD_SHUT, 0.6f, [&](float t, int) {
+            const float n = rnd();
+            lp += (n - lp) * 0.3f, lp2 += (n - lp2) * 0.05f;
+            return 1.0f * ring(t, 85, 22) + 0.7f * ring(t, 210, 28) + 0.35f * ring(t, 640, 26) + 0.25f * ring(t, 1530, 40) + 0.6f * lp2 * std::exp(-t * 60) + 0.5f * lp * std::exp(-t * 300) +
+                   (t > 0.055f ? 0.4f * ring(t - 0.055f, 2400, 90) : 0.0f);  // (the latch catching)
+        });
+    }
+    // A flooded engine turned over on the starter with the plugs out: one labored revolution, the starter whining and the pistons pushing water.
+    {
+        float ph = 0, lp = 0;
+        make(SFX_ENGINE_CRANK, 0.55f, [&](float t, int) {
+            const float x = t / 0.55f, rate = 130 + 60 * std::sin(3.14159f * x);
+            ph += tau * rate / sr;
+            lp += (rnd() - lp) * 0.08f;
+            const float thump = std::pow(std::max(0.0f, std::sin(ph * 0.5f * 4)), 3.0f);  // (four cylinders a turn)
+            const float env = std::sin(3.14159f * std::min(1.0f, x * 1.1f));
+            return env * (0.7f * thump * std::sin(ph) + 0.3f * std::sin(tau * (480 + 140 * x) * t) * (0.6f + 0.4f * std::sin(ph * 4)) + 0.9f * lp);
+        });
+    }
+    // Water squirting out of the plug holes: a wet burst of filtered noise that drops away.
+    {
+        float lp = 0, bp = 0;
+        make(SFX_WATER_SPRAY, 0.4f, [&](float t, int) {
+            const float n = rnd();
+            lp += (n - lp) * 0.45f, bp += (lp - bp) * 0.1f;
+            const float env = std::min(1.0f, t / 0.015f) * std::exp(-t * 7);
+            return env * (1.5f * (lp - bp) + 0.25f * n * std::exp(-t * 30)) * (0.75f + 0.25f * std::sin(tau * 60 * t));
+        });
+    }
+    // Liquid glugging through a neck: bubbles bursting, each a short falling chirp.
+    {
+        make(SFX_GLUG, 0.7f, [&](float t, int) {
+            float v = 0;
+            for (int k = 0; k < 5; k++) {
+                const float at = 0.03f + k * 0.13f, d = t - at;
+                if (d > 0 && d < 0.1f) v += std::sin(tau * (210 + 55 * k - 520 * d) * d) * std::exp(-d * 38) * (0.7f + 0.15f * k);
+            }
+            return v + 0.12f * rnd() * std::exp(-t * 2);
+        });
+    }
 }
 
 WinchSound WinchSound::at(float lineSpeed, float load) {

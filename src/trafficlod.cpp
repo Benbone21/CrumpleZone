@@ -117,7 +117,7 @@ bool Sim::lodEnter(int self, double dt) {
     const RoadWalk rw(road, c.aiDir);
     const Frame& fr = aiFrames[self];
     bool ok = !c.remote && !c.proxy && !c.sleeping && !c.pilot.active && !c.aiPassing && c.aiReverseTime <= 0 && c.aiStuckTime < 0.5 &&
-              c.heldHere <= 0 && !c.jackPlaced && c.gate.dir == 0 && !c.chassis.nodes.empty() && fr.up.y > 0.85 && c.aiIndex >= 0 &&
+              c.heldHere <= 0 && !c.jackPlaced && c.gate.dir == 0 && c.hood.dir == 0 && !c.chassis.nodes.empty() && fr.up.y > 0.85 && c.aiIndex >= 0 &&
               std::fabs(c.aiLane - 2.6) < 0.05 && self != player;
     for (const Rope& r : ropes)
         if ((r.a.kind == ANCHOR_CAR && r.a.car == self) || (r.b.kind == ANCHOR_CAR && r.b.car == self)) ok = false;

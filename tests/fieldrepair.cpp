@@ -96,7 +96,8 @@ SCENARIO(fieldRepairSteps, "fieldrepair/steps", "Every field repair is a list of
         if (k != Fix::NEW_TIRE) {
             int work = 0;
             for (const RepairStep& s : st) work += s.type == RepairStep::WORK;
-            ctx.check(tag + "two work steps: remove the old, fit the new", work == 2 && st.size() >= 2 && st.size() <= 6, list);
+            // (the flooded engine is a longer job: hood, plugs out, crank, drain, refill, plugs in, hood: tests/enginework.cpp)
+            ctx.check(tag + "two work steps: remove the old, fit the new", k == Fix::SPARK_PLUGS ? work == 5 && st.size() == 7 : work == 2 && st.size() >= 2 && st.size() <= 6, list);
             int rm = -1, fit = -1;
             for (int i = 0; i < (int)st.size(); i++) {
                 if (st[i].removes) rm = i;

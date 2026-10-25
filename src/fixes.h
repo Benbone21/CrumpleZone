@@ -26,6 +26,7 @@ enum RepairPart {
     PART_TIE_ROD,
     PART_CONTROL_ARM,  // a suspension link (or a sway bar link)
     PART_SPARK_PLUGS,  // a set, for a flooded engine
+    PART_ENGINE_OIL,   // a jug of oil, to refill the sump after the water is drained
     PART_COUNT
 };
 
@@ -79,7 +80,9 @@ bool applyFix(Car& c, const Fix& f);
 // then the two jobs on the part (REMOVE the broken one, it drops beside the car; FIT the new one: that is what fixes it), then the
 // wheel goes back on and the jack comes down. A tie rod, a sway bar link, a drive shaft, the plugs: just the work.
 struct RepairStep {
-    enum Type { JACK, WHEEL_OFF, WORK, WHEEL_ON, LOWER } type = WORK;
+    enum Type { JACK, WHEEL_OFF, WORK, WHEEL_ON, LOWER, HOOD_UP, HOOD_DOWN } type = WORK;
+    // What a work step does besides the tool and the part (the engine job): the animation, sound and effect follow.
+    enum Act { ACT_NONE, ACT_CRANK, ACT_DRAIN, ACT_FILL } act = ACT_NONE;
     const char* label = "";  // the checklist's line: "OLD AXLE OUT"
     const char* verb = "";   // the prompt's: "KNOCK THE OLD AXLE OUT"
     int tool = -1;           // the Tool in your hand for it (-1: none)
@@ -89,6 +92,7 @@ struct RepairStep {
     bool removes = false;    // the broken part comes off here: dropped on the ground beside the car
     int end = 0;             // where: 0 at the fix, 1 / 2 the front / back end of a shaft
     bool ground = false;     // done on the wheel that came off, lying on the ground (the tire)
+    bool under = false;      // done from underneath (the engine's drain plug): the work is at the sump, not the top of the engine
 };
 const char* jobName(int kind);  // "CV AXLE", "SWAY BAR LINK"
 // Whether a job needs the corner up / the wheel off (the wheel only comes off a truck that loses wheels).
@@ -97,6 +101,10 @@ bool jobWheelOff(const Car& c, int kind, int wheel);
 std::vector<RepairStep> repairSteps(int kind, bool jack, bool wheelOff);
 // A new tire on a wheel off the truck (WheelItem::tireWork counts them): old tire off, new one on, bead seated and aired.
 std::vector<RepairStep> tireSteps();
+// The engine job's sump (the drain plug): under the engine, on the ground side (world).
+V3 enginePlugAt(const Car& c);
+// What step `step` of a flooded-engine job (Fix::SPARK_PLUGS) is; ACT_NONE for any other job or a step out of range.
+RepairStep::Act engineStepAct(int fixKind, int step);
 
 // How the corner is now, for the steps the jack and the wheel are.
 struct CornerNow {
@@ -104,6 +112,8 @@ struct CornerNow {
     bool jackUp = false;    // a jack under it, not let down
     bool wheelOn = true;    // a wheel bolted to the hub
     bool wheelGood = true;  // ...with its tire up (not flat)
+    bool hoodOpen = false;  // the hood up (Car::hoodOpen)
+    bool hoodShut = true;   // ...and shut again (Car::hoodShut)
 };
 // Where a job is: each step done or not, and the next one (-1: all done). `done`: its work steps done.
 struct RepairPlan {

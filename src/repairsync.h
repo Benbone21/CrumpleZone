@@ -12,6 +12,9 @@
 //       the clock on from there.
 //   "jack CAR WHEEL BASE HEIGHT FX FY FZ" / "jack CAR -1"  the jack under one of your vehicles: when it goes under or
 //       comes out, at most every kJackEvery s while it moves, and every kJackRefresh s while it's there.
+//   "hood CAR OPEN"  the hood of one of your vehicles (Car::hoodOpen): 1 up, 0 down. Sent when it changes and every kHoodRefresh s
+//       while it's up (so a late joiner learns it); the panel itself rides the car's states, this is the flag (Car::hood) the engine
+//       work (and a buddy's jumper cables) read. Unheard for kHoodExpiry s, it's down.
 //   "drop PART X Y Z YAW"  a broken part put down (Sim::droppedParts).
 //   "fixed CAR KIND WHEEL BEAM AXLE"  a repair made whole on one of your vehicles: the others make their copy whole too
 //       (only from its owner: whoever's vehicle it is does the fix, the same as everything else about it).
@@ -30,6 +33,7 @@ namespace repairsync {
 
 constexpr double kRefresh = 1.0, kExpiry = 3.0, kMinGap = 0.1;
 constexpr double kJackEvery = 0.2, kJackRefresh = 2.0, kJackExpiry = 6.0;
+constexpr double kHoodRefresh = 3.0, kHoodExpiry = 9.0;
 
 // What one player holds and does, as told.
 struct Work {
@@ -62,6 +66,12 @@ struct Sender {
         double height = 0, at = -1e9;
     };
     std::vector<JackSent> jacks;
+    struct HoodSent {
+        uint32_t id = 0;
+        bool open = false;
+        double at = -1e9;
+    };
+    std::vector<HoodSent> hoods;
     void update(const Sim& sim, const Walker* wk, Interact& ia, double now, bool online, const std::function<void(const std::string&)>& send);
 };
 
@@ -81,6 +91,11 @@ struct Remote {
         double height = 0, heard = 0;
     };
     std::vector<Jack> jacks;  // remote vehicles' jacks: where they're going (eased there)
+    struct Hood {
+        uint32_t id = 0;
+        double heard = 0;
+    };
+    std::vector<Hood> hoods;  // remote vehicles' hoods that are up (the flag; the panel comes with the states)
 
     // A chatter line from `player` (called `who`): true if it was one of these. `now`: this machine's clock.
     bool onMessage(Sim& sim, int player, const std::string& who, const std::string& text, double now);

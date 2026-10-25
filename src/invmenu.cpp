@@ -45,7 +45,7 @@ std::string InvMenu::describe(TrunkRef r) {
         case TK_TOOL:
             switch ((Tool)r.id) {
                 case TOOL_LUG_WRENCH: return "LUG WRENCH: TAKES A WHEEL OFF AND PUTS IT BACK ON";
-                case TOOL_WRENCH: return "WRENCHES: FOR TIE RODS, DRIVE SHAFTS AND SWAY BAR LINKS";
+                case TOOL_WRENCH: return "WRENCHES: FOR TIE RODS, SWAY BAR LINKS AND AN ENGINE'S DRAIN PLUG";
                 case TOOL_RATCHET: return "SOCKET SET: FOR CV AXLES, CONTROL ARMS AND SPARK PLUGS";
                 case TOOL_HAMMER: return "HAMMER: KNOCKS A CV AXLE OUT OF ITS HUB AND A TIE ROD OFF ITS KNUCKLE";
                 case TOOL_PRY_BAR: return "PRY BAR: LEVERS A BENT CONTROL ARM OR SWAY BAR LINK BACK OUT";
@@ -61,6 +61,7 @@ std::string InvMenu::describe(TrunkRef r) {
                 case PART_TIE_ROD: return "TIE ROD: PUTS THE STEERING STRAIGHT AFTER A BENT OR BROKEN ROD";
                 case PART_CONTROL_ARM: return "CONTROL ARM: REPLACES A BENT SUSPENSION ARM OR SWAY BAR LINK";
                 case PART_SPARK_PLUGS: return "SPARK PLUGS: A DRY SET FOR AN ENGINE THAT FLOODED";
+                case PART_ENGINE_OIL: return "ENGINE OIL: REFILLS THE SUMP AFTER THE WATER IS DRAINED FROM A FLOODED ENGINE";
                 default: break;
             }
             break;

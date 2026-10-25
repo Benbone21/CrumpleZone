@@ -268,6 +268,15 @@ Frame Car::frame() const {
     return f;
 }
 
+void Car::clearHydrolock() {
+    // (Drowning knocks the engine's health to 10%, which would leave it dead after any fix: the water out, the oil changed and the
+    // plugs new give back what it was before the flood.)
+    hydrolocked = false;
+    engineHealth = std::max(engineHealth, floodedHealth >= 0 ? floodedHealth : 0.85);
+    floodedHealth = -1;
+    engineDead = engineHealth < 0.12;
+}
+
 V3 Car::engineBay() const { return groupAvg(engineNodes); }
 
 double Car::engineTorque(double r) const {
@@ -366,6 +375,7 @@ void Car::computeForces(double h, const World& w) {
                 for (int i : engineNodes)
                     if (top < 0 || nodes[i].p.y > nodes[top].p.y) top = i;
             if (top >= 0 && nodes[top].p.y - (spec->extras & EXTRA_SNORKEL ? 0.15 : 0.0) < w.waterLevel(nodes[top].p.x, nodes[top].p.z)) {
+                if (!hydrolocked) floodedHealth = engineHealth;
                 engineDead = hydrolocked = true;
                 engineHealth = std::min(engineHealth, 0.1);
             }
@@ -2521,7 +2531,10 @@ int Sim::advance(double realDt, int maxSubsteps) {
     }
     if (n == maxSubsteps) accum = 0;  // can't keep up: slow down rather than spiral
     for (Car& c : cars)
-        if (c.gate.dir != 0) c.gateStep(realDt * timeScale);
+        {
+            if (c.gate.dir != 0) c.gateStep(realDt * timeScale);
+            if (c.hood.dir != 0) c.hoodStep(realDt * timeScale);
+        }
     wrapAround();
     return n;
 }

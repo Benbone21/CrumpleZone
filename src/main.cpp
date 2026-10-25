@@ -1238,6 +1238,15 @@ bool projectToScreen(const View& v, int W, int H, const V3& p, float& sx, float&
     return true;
 }
 
+// The engine job's spray and drip (fixes.h): water out of the plug holes while it's cranked over, the fouled oil off the drain plug.
+static void engineJobFx(const Sim& sim, Effects& fx, const Interact& ia, const Handwork& hw, double dt) {
+    const InteractOption& o = ia.current;
+    if (ia.progress <= 0 || o.kind != IA_FIX || o.blocked || o.car < 0 || o.car >= (int)sim.cars.size() || !hw.hasWork) return;
+    const RepairStep::Act act = engineStepAct(o.fix.kind, o.step);
+    if (act == RepairStep::ACT_CRANK) fx.engineJob(1, hw.workAt, sim.cars[o.car].frame().fwd, dt);
+    else if (act == RepairStep::ACT_DRAIN && ia.share() > 0.35) fx.engineJob(2, hw.workAt, sim.cars[o.car].frame().fwd, dt);
+}
+
 // The level being played: the clock, gates and laps, the medal times, the big banner, the
 // next gate in the world, and everyone's progress in multiplayer.
 void drawLevelHud(Renderer& r, const LevelRun& run, const Sim& sim, const View& view, int W, int H) {
@@ -5819,6 +5828,7 @@ int main(int argc, char** argv) {
                 static ToolSounds toolSounds;
                 if (audioOn) toolSounds.update(audio, interact, hw, view.eye, norm(cross(view.target - view.eye, view.up)));
             }
+            engineJobFx(sim, fx, interact, hw, dt);
             renderer.frameModels.insert(renderer.frameModels.end(), hw.models.begin(), hw.models.end());
             renderer.wheelWork = hw.wheel;
             if (hw.carriedPose && renderer.carried.on) renderer.carried.c = hw.carriedC, renderer.carried.axis = hw.carriedAxis;
@@ -5884,6 +5894,7 @@ int main(int argc, char** argv) {
                         if (rw.job.kind != IA_RAISE_JACK && rw.job.kind != IA_LOWER_JACK && rw.job.at.y < at.y + 1.1) g.crouch = std::max(g.crouch, 1.0);
                     }
                     rhOn = repairIn.handwork(sim, *rp, at, g.yaw, g.crouch, clock, rh, &rEye);
+                    if (rhOn) engineJobFx(sim, fx, rp->ia, rh, dt);
                     if (audioOn)
                         repairIn.sounds(*rp, rh, [&](Sfx s, const V3& p, float gain, float delay, float pitch) { audio.playAt(s, p, view.eye, viewRight, gain, delay, pitch); }, view.eye);
                 }
