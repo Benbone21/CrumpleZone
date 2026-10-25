@@ -86,8 +86,8 @@ namespace {
 // Datagrams: u16 magic, u8 type, u8 player, u32 netId, u32 seq, u8 frag, u8 frags, payload.
 
 enum MsgType : uint8_t {
-    MSG_HELLO = 1,    // client -> host: version, name
-    MSG_WELCOME,      // host -> client: your id, the map
+    MSG_HELLO = 1,    // client -> host: version, name, build (8)
+    MSG_WELCOME,      // host -> client: your id, the map, (8) the host's build
     MSG_REJECT,       // host -> client: why not
     MSG_PLAYER,       // id, name: someone is in the session
     MSG_LEFT,         // id
@@ -109,7 +109,7 @@ enum MsgType : uint8_t {
     MSG_GIVE,         // owner -> host: it's theirs now; host -> everyone: it changed hands
     MSG_REFUSE,       // owner -> host -> taker: no (+ str why)
 };
-// (WELCOME: u8 id, u8 map, u64 the guest's datagram secret.)
+// (WELCOME: u8 id, u8 map, u64 the guest's datagram secret, str the host's build.)
 enum DgramType : uint8_t { DG_SNAP = 1, DG_HELLO = 2, DG_ACK = 3 };  // (an ack: u32 netId, u32 seq, ...: states we have, to tell the next against)
 constexpr uint16_t kMagic = 0xC27A;
 // ... and the u64 secret of whoever the datagram is for (told in the welcome): anyone else's is dropped.
@@ -707,6 +707,7 @@ int NetSession::pollJoin() {
         Writer w;
         w.put<uint16_t>(net::kVersion);
         w.str(joinName);
+        w.str(build);
         sendTo(*c, frame(MSG_HELLO, w));
         joinStage = 2;
         joinT0 = now;
@@ -862,6 +863,10 @@ void NetSession::admit(Conn& c, const std::string& name) {
     w.str(unique);
     broadcast(frame(MSG_PLAYER, w), &c);
     events.push_back(unique + " JOINED");
+    if (!build.empty() && !c.build.empty() && c.build != build) {  // (the same protocol, but maybe not the same trucks)
+        events.push_back(unique + " RUNS BUILD " + c.build + ", THIS GAME " + build + ": HANDLING MAY DIFFER");
+        note(unique + " IS ON BUILD " + c.build + " (THIS IS " + build + ")");
+    }
 }
 
 void NetSession::handle(Sim* sim, Conn* from, const std::vector<uint8_t>& msg) {
@@ -879,6 +884,7 @@ void NetSession::handle(Sim* sim, Conn* from, const std::vector<uint8_t>& msg) {
             if (from->hello || from->challenged) return violation(from, "a second hello");
             const uint16_t ver = r.get<uint16_t>();
             const std::string name = net::sanitize(r.str(), net::kMaxNameLen);
+            if (r.ok && r.at < r.n) from->build = net::sanitize(r.str(), 16);  // (8: the build it is, if it says)
             if (!r.ok) return violation(from, "a bad hello");
             if (ver != net::kVersion) {  // (an older game can't follow this one's clock: say so plainly, not a session that drifts)
                 Writer w;
@@ -1036,6 +1042,7 @@ void NetSession::handle(Sim* sim, Conn* from, const std::vector<uint8_t>& msg) {
             if (role != CLIENT || self >= 0) return;
             const int id = r.get<uint8_t>(), m = r.get<uint8_t>();
             const uint64_t token = r.get<uint64_t>();
+            const std::string hostBuild = r.ok && r.at < r.n ? net::sanitize(r.str(), 16) : std::string();
             if (!r.ok || id < 1 || id >= net::kMaxPeers || m >= MAP_COUNT) {
                 error = "the host's welcome made no sense";
                 role = OFF;
@@ -1044,6 +1051,7 @@ void NetSession::handle(Sim* sim, Conn* from, const std::vector<uint8_t>& msg) {
             self = id;
             map = m;
             udpToken = token;
+            if (!build.empty() && !hostBuild.empty() && hostBuild != build) events.push_back("THE HOST RUNS BUILD " + hostBuild + ", YOURS " + build + ": HANDLING MAY DIFFER");
             return;
         }
         case MSG_REJECT: {
@@ -1158,6 +1166,7 @@ void NetSession::welcome(Sim& sim, Conn& c) {
     w.put<uint8_t>((uint8_t)c.peer);
     w.put<uint8_t>((uint8_t)map);
     w.put<uint64_t>(c.token);
+    w.str(build);
     sendTo(c, frame(MSG_WELCOME, w));
     for (int k = 0; k < net::kMaxPeers; k++)
         if (players[k].active && k != c.peer) {

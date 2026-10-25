@@ -2114,6 +2114,7 @@ int main(int argc, char** argv) {
     }
     // Multiplayer session (see net.h).
     NetSession net;
+    net.build = buildId();  // (told to the others: another build can handle differently)
     net::Finder finder;  // games on the local network, while the multiplayer page is open
     View lastView;
     // The pause menu, and putting its settings into effect.

@@ -33,6 +33,7 @@ SCENARIO(netTwoPlayers, "net/two-players", "Host and client over loopback: each 
     Car& hostCar = ctx.add(vehicleCatalog()[2], 10, -8, 0);  // (the client parks at z = 6.5 and drives off along +x)
     ctx.focus(hostCar);
     NetSession host;
+    host.build = "aaa1111";  // (two builds: each side is told the other's)
     const int port = testPort();
     ctx.check("host opens a session", host.host(port, "HOSTY", MAP_PROVING_GROUND), host.error);
     host.adopt(ctx.sim);
@@ -44,6 +45,7 @@ SCENARIO(netTwoPlayers, "net/two-players", "Host and client over loopback: each 
     sim2.addCar(vehicleCatalog()[3], V3(-30, 0.5, -30), 0, V3(0.2, 0.2, 0.2));
     sim2.player = 0;
     NetSession client;
+    client.build = "bbb2222";
     bool joined = false, joinDone = false;
     std::thread joiner([&] {
         joined = client.join("127.0.0.1:" + std::to_string(port), "BUDDY", 3.0);
@@ -58,6 +60,12 @@ SCENARIO(netTwoPlayers, "net/two-players", "Host and client over loopback: each 
     if (!joined) return;
     client.adopt(sim2);
     ctx.check("client got the host's map", client.map == MAP_PROVING_GROUND);
+    auto told = [](const NetSession& n, const std::string& what) {
+        for (const std::string& e : n.events)
+            if (e.find(what) != std::string::npos && e.find("HANDLING MAY DIFFER") != std::string::npos) return true;
+        return false;
+    };
+    ctx.check("each side is told the other runs another build", told(host, "BUDDY RUNS BUILD bbb2222") && told(client, "HOST RUNS BUILD aaa1111"));
 
     // Both machines run a frame at a time; the client also keeps a history of where its
     // truck really was, by the shared clock, to check what the host shows at its moment on it.

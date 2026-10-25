@@ -33,8 +33,8 @@ constexpr int kMaxPort = 65535;
 constexpr int kDiscoveryPort = 27016;  // UDP: "who's hosting?" on the local network
 constexpr int kBeaconPort = 27017;     // UDP: hosts also announce themselves here every couple of seconds
 constexpr int kMaxPeers = 8;
-constexpr uint16_t kVersion = 7;  // 7: taking over someone else's empty vehicle (MSG_TAKE / GIVE / REFUSE), a driver-in-it bit in states; 6: one clock (stamped states, chatter and lines; the sky) (5: passwords, a secret in every datagram, strict checks)
-constexpr const char* kRelease = "0.4.0";  // the first release that speaks kVersion (what an older guest is told to update to)
+constexpr uint16_t kVersion = 8;  // 8: vehicles shown now, not a view delay behind, so a crash happens at the same place on both machines (docs/plans/net-collisions.md); each side says its build. Shared with join codes (one 0.4.1 release). 7: taking over someone else's empty vehicle (MSG_TAKE / GIVE / REFUSE), a driver-in-it bit in states; 6: one clock (stamped states, chatter and lines; the sky) (5: passwords, a secret in every datagram, strict checks)
+constexpr const char* kRelease = "0.4.1";  // the first release that speaks kVersion (what an older guest is told to update to)
 constexpr double kSendRate = 20;      // vehicle states per second
 constexpr double kPlaybackDelay = 0.1; // s: the least the others are shown behind the shared clock (two states)
 constexpr double kMaxDelay = 1.0;      // s: and the most, however bad the line
@@ -212,6 +212,10 @@ public:
     // public server turns this off (it would answer anyone, with more bytes than they asked
     // with); a game on your own network keeps it on. Set before host().
     bool discovery = true;
+    // This game's build (the git commit): said on joining, both ways. A guest on another build is
+    // let in (the same protocol), but everyone's told: the physics can differ between builds, so
+    // a truck can handle differently on its owner's machine than on yours. "" = don't say.
+    std::string build;
     // Host: the local address to listen on ("" = every interface).
     std::string bindAddress;
     // Host: what went wrong or was refused (a flood, a wrong password, a malformed message),
@@ -310,6 +314,7 @@ private:
         bool challenged = false;  // host: waiting for the password's proof
         uint8_t nonce[16] = {};
         std::string name;         // (said in the hello; the guest is let in once the proof is right)
+        std::string build;        // (and its build, if it said)
         uint64_t token = 0;       // host: the secret that goes in this guest's datagrams
         uint32_t ip = 0;          // host: where it came from (host byte order)
         double born = 0, lastRx = 0;
