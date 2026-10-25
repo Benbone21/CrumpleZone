@@ -22,19 +22,21 @@
 #include <string>
 #include <vector>
 
+#include "netbase.h"
 #include "softbody.h"
 
 namespace net {
-constexpr int kDefaultPort = 27015;    // TCP and UDP: only the default; a host can use any port from kMinHostPort up
-constexpr int kMinHostPort = 1024;     // (below it needs root; hosting there is refused)
-constexpr int kMaxPort = 65535;
 // The two LAN-only ports are fixed (every game and finder must agree on them: a host's real game
 // port is in what it announces).
 constexpr int kDiscoveryPort = 27016;  // UDP: "who's hosting?" on the local network
 constexpr int kBeaconPort = 27017;     // UDP: hosts also announce themselves here every couple of seconds
 constexpr int kMaxPeers = 8;
-constexpr uint16_t kVersion = 7;  // 7: taking over someone else's empty vehicle (MSG_TAKE / GIVE / REFUSE), a driver-in-it bit in states; 6: one clock (stamped states, chatter and lines; the sky) (5: passwords, a secret in every datagram, strict checks)
-constexpr const char* kRelease = "0.4.0";  // the first release that speaks kVersion (what an older guest is told to update to)
+constexpr uint16_t kVersion = 8;  // 8: join codes (a reliable stream over UDP for guests that joined with one), the park's edited sections in the welcome (MSG_SECTIONS), a link byte in MSG_RTT, REJECT after joining (kicked, host gone); 7: taking over someone else's empty vehicle (MSG_TAKE / GIVE / REFUSE), a driver-in-it bit in states; 6: one clock (stamped states, chatter and lines; the sky) (5: passwords, a secret in every datagram, strict checks)
+#ifndef CZ_RENDEZVOUS
+#define CZ_RENDEZVOUS ""  // the owner's join-code server, e.g. "play.example.org" (docs/server-rendezvous-setup.md); settings.txt `rendezvous` and --rendezvous override it
+#endif
+constexpr const char* kDefaultRendezvous = CZ_RENDEZVOUS;  // the join-code server a game uses unless told another ("": none: codes aren't offered)
+constexpr const char* kRelease = "0.4.1";  // the first release that speaks kVersion (what an older guest is told to update to)
 constexpr double kSendRate = 20;      // vehicle states per second
 constexpr double kPlaybackDelay = 0.1; // s: the least the others are shown behind the shared clock (two states)
 constexpr double kMaxDelay = 1.0;      // s: and the most, however bad the line
@@ -52,31 +54,8 @@ constexpr size_t kMaxNameLen = 16;     // a player's name
 constexpr int kMaxCarsPerPlayer = 6;   // vehicles one guest can have in the session
 constexpr int kMaxRopesPerPlayer = 6;
 
-// A token bucket: `rate` a second, up to `burst` at once.
-struct Bucket {
-    double tokens = -1, t = 0;
-    bool take(double now, double cost, double rate, double burst) {
-        if (tokens < 0) tokens = burst, t = now;
-        tokens = std::min(burst, tokens + (now - t) * rate);
-        t = now;
-        if (tokens < cost) return false;
-        tokens -= cost;
-        return true;
-    }
-};
-
-// "28123" -> 28123. -1 unless it's 1 to 5 plain digits making minPort..65535 (no sign, space or junk).
-// Joining takes any port (minPort 1); hosting wants kMinHostPort.
-int parsePort(const std::string& s, int minPort = 1);
-// "HOST" or "HOST:PORT" (a name or an IPv4 address) -> host and port (kDefaultPort with none).
-// False, and `why`, if there is no host, a second ':' (IPv6 isn't supported), or a bad port.
-bool parseAddress(const std::string& address, std::string& host, int& port, std::string* why = nullptr);
-// Text from the network, fit for the HUD font: printable ASCII only, at most `maxLen` long.
-std::string sanitize(const std::string& s, size_t maxLen);
 // The password a join offers: the command line's if given, else the one typed in the menu.
 inline std::string joinPassword(const std::string& fromCommandLine, const std::string& typed) { return fromCommandLine.empty() ? typed : fromCommandLine; }
-// HMAC-SHA-256 (the password proof), 32 bytes.
-std::vector<uint8_t> hmacSha256(const std::string& key, const std::vector<uint8_t>& data);
 
 // A guest's estimate of the host's clock, from pings: each answer says what the host's clock
 // read when it answered. The one with the shortest round trip of the last few is the truest
@@ -157,11 +136,17 @@ struct NetPlayer {
     bool active = false;
     std::string name;
     double ping = 0;  // s, round trip to the host (as this machine knows it)
+    int link = 0;     // how it reaches the host: NetSession::Link
 };
+
+namespace rv {
+struct Endpoint;
+}
 
 class NetSession {
 public:
     enum Role { OFF, HOST, CLIENT };
+    enum Link { LINK_ADDRESS, LINK_DIRECT, LINK_RELAYED };  // joined by address (TCP); by code, punched through; by code, through the relay
     Role role = OFF;
     int self = -1;    // my player id (the host is 0)
     int map = 0;      // the session's map
@@ -188,6 +173,11 @@ public:
     std::string levelText;
     uint32_t levelSerial = 0;
     bool levelFresh = false;
+    // The proving ground's park sections the host built from its own edits (World::editedSections):
+    // host: set them (setSections), whoever joins gets them before building its world; client: what
+    // came (World::setSessionSections before loading the map).
+    std::vector<std::pair<int, std::string>> sections;
+    void setSections(const std::vector<std::pair<int, std::string>>& s) { sections = s; }
     // Race chatter (progress, finishes, the host's "go"): short text, relayed to everyone.
     struct GameMsg {
         int player;
@@ -253,6 +243,35 @@ public:
     // Sends a line of race chatter to everyone else (it comes out of their gameIn).
     void sendGame(const std::string& text);
 
+    // ---- Join codes (docs/plans/join-codes.md) ----
+    // The backend ("host" or "host:port", rv::kDefaultPort with none). Set before openToFriends() / beginJoinCode().
+    std::string rendezvous;
+    // Host: gets this session a join code from the backend (it comes in a moment: codeState).
+    // False: not hosting, or no backend set or found (codeError says).
+    bool openToFriends();
+    // Host: the code stops working; whoever joined with it stays.
+    void closeToFriends();
+    enum CodeState { CODE_OFF, CODE_ASKING, CODE_OPEN, CODE_FAILED };
+    CodeState codeState = CODE_OFF;
+    std::string joinCode;   // host: "KX7M4Q" while CODE_OPEN (rv::formatCode shows it KX7-M4Q)
+    std::string codeError;  // host: why CODE_FAILED, in plain words
+    // Client: joins the game with that code, as beginJoin() does an address: then pollJoin() every frame.
+    bool beginJoinCode(const std::string& code, const std::string& name, double timeout = 12.0);
+    bool joinWithCode(const std::string& code, const std::string& name, double timeout = 12.0);  // (waiting: the tests)
+    enum JoinStep { JS_NONE, JS_FINDING, JS_CONNECTING, JS_RELAY, JS_HELLO, JS_LOADING };
+    JoinStep joinStep() const;  // while joining by code: what's happening (the joining card says it)
+    // Why the last join failed, for the card's plain words (error has the details).
+    enum JoinFail { JF_NONE, JF_NOT_A_CODE, JF_NOT_FOUND, JF_FULL, JF_OLDER, JF_NEWER, JF_BUSY, JF_BACKEND, JF_NO_PATH, JF_PASSWORD, JF_OTHER };
+    JoinFail joinFail = JF_NONE;
+    int failPlayers = 0, failMax = 0;  // JF_FULL: how full
+    Link myLink() const;               // client: how this machine reaches the host
+    // Host: removes a player (they're told, and kept out for two minutes).
+    void kick(int peer);
+    // Tests and odd networks: don't offer this machine's LAN addresses to the backend; never
+    // punch (straight to the relay); how long to try punching before the relay.
+    bool shareLocals = true, forceRelay = false;
+    double punchSecs = 2.5;
+
     std::string ownerName(uint32_t netId) const;
     static int ownerOf(uint32_t netId) { return (int)(netId >> 16); }
 
@@ -292,7 +311,10 @@ private:
     };
     static Stream& streamFor(std::vector<Stream>& v, uint32_t netId);
     // One TCP connection: the host's, from a client; or, on a client, to the host.
+    struct Tunnel;  // a guest that joined by code: its path (punched or relayed) and its reliable stream
     struct Conn {
+        ~Conn();
+        Tunnel* tun = nullptr;  // (then fd is -1: the bytes go over UDP)
         int fd = -1;
         int peer = -1;
         bool hello = false;
@@ -318,6 +340,7 @@ private:
     };
     friend struct NetSessionTest;     // Socket-free wire/playback regression tests.
     friend struct NetSessionSecTest;  // And the hostile-input ones.
+    friend struct NetSessionCodeTest;  // And the join-code ones (a simulated NAT).
     friend struct NetSessionTimeTest;  // And the clock, timeline and delta ones (simulated latency and loss).
     struct Snap;
     struct Remote;
@@ -379,6 +402,56 @@ private:
     bool adopted = false;
 
     void accept();
+    bool live(const Conn& c) const;  // its socket or tunnel is still open
+    // Join codes.
+    struct Intro {  // host: a guest the backend introduced (punching towards it, then its tunnel)
+        uint32_t pair = 0;
+        uint64_t secret = 0, relayKey = 0;
+        uint32_t pubIp = 0;
+        uint16_t pubPort = 0;
+        std::vector<std::pair<uint32_t, uint16_t>> cands;  // where to punch (its public address, its LAN ones)
+        double born = 0, nextPunch = 0;
+    };
+    std::vector<Intro> intros;
+    Intro codeIntro;                   // client: ours, joining by code
+    uint32_t rvIp = 0;                 // the backend
+    uint16_t rvPort = 0;
+    uint64_t rvKey = 0, rvNonce = 0;   // host: the code's key; the registration's / the lookup's nonce
+    uint64_t rvCookie = 0;             // client: the backend's proof of our address
+    uint64_t rvOldKey = 0;             // host: a code closed to friends while guests that came by it are still in (kept alive for their relay)
+    double rvOldNext = 0;
+    int keptAs = -1;                   // host: players, max and locked as the backend last heard (a change is told at once)
+    double rvNext = 0, rvHeard = 0, rvLastKeep = 0, punchT0 = 0, nextPunch = 0;
+    int rvTries = 0;
+    bool rvRetired = false;            // host: closed to friends, but keeping the code's pairs for the guests in
+    std::string codeWanted;            // client: the code being joined (host: the retired code, while its guests stay)
+    uint32_t directIp = 0;             // client: the host's address the punch found (0: relay)
+    uint16_t directPort = 0;
+    bool directFound = false;
+    std::string lostWhy;               // client: why the host is gone (said in the events)
+    bool resolveRendezvous(std::string& why);
+    void pumpUdp(double now);  // reads our UDP socket: tunnels and the backend at once, game datagrams held for readUdp
+    struct HeldDgram {
+        std::vector<uint8_t> b;
+        uint32_t ip;
+        uint16_t port;
+        uint32_t viaPair;  // came through the relay for this pair (0: straight from ip:port)
+    };
+    std::vector<HeldDgram> udpHeld;
+    void onPacket(const uint8_t* p, size_t n, uint32_t ip, uint16_t port, double now, uint32_t relayedPair);
+    void onTunnel(const uint8_t* p, size_t n, uint32_t ip, uint16_t port, double now, uint32_t relayedPair);
+    Conn* acceptTunnel(const Intro& in, double now);  // host: a guest by code's first bytes: let it in (within the limits)
+    void onBackend(const uint8_t* p, size_t n, double now);
+    void serviceRendezvous(double now);
+    void serviceTunnels(double now);
+    void tunRaw(Tunnel& t, const uint8_t* p, size_t n);   // a packet on the tunnel's path (direct, or wrapped for the relay)
+    void tunPacket(Tunnel& t, uint8_t type, const uint8_t* body, size_t n);
+    void sendDgram(Conn* to, const uint8_t* p, size_t n);  // a game datagram to a guest (or, null, to the host), on its path
+    void punchTo(uint32_t pair, uint64_t secret, uint8_t type, uint32_t ip, uint16_t port);
+    Conn* tunnelConn(uint32_t pair);
+    void sendBackend(const std::vector<uint8_t>& b);
+    void registerCode(double now);
+    int pollCodeJoin(double now);  // joining by code, stages 10 (asking the backend) and 11 (punching): -1 failed
     void readTcp(Conn& c);
     void flush(Conn& c);
     void dropConn(size_t i);
@@ -389,7 +462,7 @@ private:
     // vehicles and lines in it must be that guest's own), or -1 from the host. False: refused.
     bool apply(Sim& sim, const std::vector<uint8_t>& msg, int from = -1);
     void readUdp(Sim& sim, double now);
-    void onDatagram(Sim& sim, const uint8_t* buf, size_t n, uint32_t ip, uint16_t port, double now);
+    void onDatagram(Sim* sim, const uint8_t* buf, size_t n, uint32_t ip, uint16_t port, double now, Tunnel* via = nullptr);
     void admit(Conn& c, const std::string& name);  // host: let a guest in
     void violation(Conn* c, const std::string& why);  // host: drop this guest after garbage
     void note(const std::string& what);
@@ -422,6 +495,10 @@ private:
     std::vector<uint8_t> lampMsg(const Car& c) const;
     std::vector<uint8_t> ropeMsg(const Sim& sim, const Rope& r) const;
     void sendLevel(Conn* to);  // the level's text, in parts (to one client, or everyone)
+    void sendSections(Conn& to);
+    std::vector<std::pair<int, std::string>> sectionsIn;  // client: coming in
+    int sectionsNext = 0;      // client: the part expected next (index << 16 | part); -1: lost the thread
+    bool sectionsPending = false;
     std::string levelIn;       // client: parts so far
     uint32_t levelInSerial = 0;
     uint16_t levelInNext = 0;  // client: the part we expect next

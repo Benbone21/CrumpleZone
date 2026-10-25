@@ -49,6 +49,14 @@ bool Settings::load(const std::string& path) {
             joinAddress = text == std::string("127.0.0.1") ? "" : text;  // (the old default: not something you typed)
             continue;
         }
+        if (k == "rendezvous") {
+            rendezvous = std::string(text).substr(0, 80);
+            continue;
+        }
+        if (k == "recent") {
+            if (recentJoins.size() < 3 && *text) recentJoins.push_back(std::string(text).substr(0, 60));
+            continue;
+        }
         if (k == "netpassword") {
             netPassword = std::string(text).substr(0, 32);
             continue;
@@ -146,6 +154,8 @@ bool Settings::save(const std::string& path) const {
     if (!playerName.empty()) std::fprintf(f, "name %s\n", playerName.c_str());
     if (!joinAddress.empty()) std::fprintf(f, "join %s\n", joinAddress.c_str());
     if (!sessionName.empty()) std::fprintf(f, "session %s\n", sessionName.c_str());
+    if (!rendezvous.empty()) std::fprintf(f, "rendezvous %s\n", rendezvous.c_str());
+    for (const std::string& r : recentJoins) std::fprintf(f, "recent %s\n", r.c_str());
     if (!netPassword.empty()) std::fprintf(f, "netpassword %s\n", netPassword.c_str());
     if (rememberPassword) {  // (plain text, like the rest of this file; only when asked)
         std::fprintf(f, "rememberpw 1\n");
@@ -235,7 +245,7 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
         choice(VEHICLE_ROW, "VEHICLE", cat[vehicle].name, (int)listedVehicles().size(), cat[vehicle].blurb);
         choice(MAP_ROW, "MAP", mapName(mapPick), (int)listedMaps().size(), mapHint);
         button(LEVELS_ROW, "LEVELS", std::to_string(levels.size()) + " RACES, CLIMBS AND WORLDS");
-        button(MULTI_ROW, "MULTIPLAYER", netActive ? netStatus : "HOST OR JOIN A GAME");
+        button(MULTI_ROW, "MULTIPLAYER", netActive ? netStatus : "OPEN TO FRIENDS, OR JOIN A GAME");
         button(EDITOR_ROW, "WORLD EDITOR", "BUILD YOUR OWN WORLDS AND LEVELS");
         button(SECTION_ROW, "NEW SECTION", "HAND-BUILD AN OBSTACLE SECTION (DEV)");
         button(LAB_ROW, "MODEL LAB", "PICK, TWEAK OR REDO THE GAME'S MODELS");
@@ -342,7 +352,7 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
         button(JOBS_ROW, "JOBS", jobActive ? jobStatus : "RECOVERIES, CONVOYS, SCOUTING");
         button(GARAGE_ROW, "GARAGE", "BUY AND FIT PARTS, SEE THEM UP CLOSE");
         button(PILOT_ROW, "AUTOPILOT", pilotActive ? pilotStatus : "DRIVE ITSELF SOMEWHERE");
-        button(MULTI_ROW, "MULTIPLAYER", netActive ? netStatus : "HOST OR JOIN A GAME");
+        button(MULTI_ROW, "MULTIPLAYER", netActive ? netStatus : "OPEN TO FRIENDS, OR JOIN A GAME");
         button(SETTINGS_ROW, "SETTINGS", "UNITS, GRAPHICS, SOUND");
         button(CONTROLS_ROW, "CONTROLS");
         button(DEV_ROW, "DEV MENU", s.keys.name(KA_DEV_MENU) + ": SPAWN, TELEPORT, DEBUG VIEWS");

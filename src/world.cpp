@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <mutex>
 #include <thread>
 
 namespace {
@@ -646,6 +647,23 @@ void World::buildModelYard() {
 // north strip carries on east, so driving the sections in order goes round the corner. The dunes, a
 // field 440 m long, have the band of open ground south of the loop road to themselves, driven east.
 // Each has its name over its entry and is a place on the compass and map. Seed 1 of each.
+namespace {
+std::mutex gSessionMutex;
+std::vector<std::pair<int, std::string>> gSessionSections;
+}  // namespace
+
+void World::setSessionSections(const std::vector<std::pair<int, std::string>>& sections) {
+    std::lock_guard<std::mutex> l(gSessionMutex);
+    gSessionSections = sections;
+}
+
+bool World::sessionSection(int type, SectionFile& out) {
+    std::lock_guard<std::mutex> l(gSessionMutex);
+    for (const auto& s : gSessionSections)
+        if (s.first == type && parseSectionText(s.second, out)) return true;
+    return false;
+}
+
 void World::buildSectionPark() {
     editStamp = levelFilesStamp();
     struct Strip {
@@ -665,7 +683,7 @@ void World::buildSectionPark() {
             const SectionFootprint fp = sectionFootprint(t);
             // The player's own saved edit of that section's level, if they've made one (else the generator's, as shipped).
             SectionFile mine;
-            const bool edited = useLocalEdits && editedSectionFor(t, mine);
+            const bool edited = useLocalEdits ? editedSectionFor(t, mine) : sessionSection((int)t, mine);  // (in a session: the host's edits, sent to us)
             const bool fromLevel = edited || builtinSectionFor(t, mine);  // (the player's edit, else the game's own level: both put on as files)
             SectionFrame f;
             f.entry = V3(s.x, 0, s.z) + dir * (along + (fromLevel ? std::max(fp.apron, -mine.u0) : fp.apron));
@@ -677,6 +695,7 @@ void World::buildSectionPark() {
                 b = placeSection(*this, mine, f);
                 step = std::max(step, std::max(fp.apron, -mine.u0) + mine.u1);
                 parkEdited |= edited;
+                if (edited) editedSections.push_back({(int)t, saveSectionText(mine)});
             } else {
                 b = buildSection(*this, t, 1, f);
             }

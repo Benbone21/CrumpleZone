@@ -80,7 +80,7 @@ void draw(Renderer& r, Nav& nav, int W, int H, float a, double clock, bool padLa
         y += bh + gap;
         row(c, F_CAREER, x0, y, bw, bh, ts, "CAREER", "START STOCK: FIND, WIN AND BUY BETTER PARTS", nav.sel == F_CAREER);
         y += bh + gap;
-        row(c, F_MULTI, x0, y, bw, bh, ts, "MULTIPLAYER", "HOST OR JOIN A GAME ON YOUR NETWORK", nav.sel == F_MULTI);
+        row(c, F_MULTI, x0, y, bw, bh, ts, "MULTIPLAYER", "JOIN A FRIEND WITH A CODE, OR HOST", nav.sel == F_MULTI);
         y += bh + gap;
         row(c, F_SETTINGS, x0, y, bw, bh, ts, "SETTINGS", "GRAPHICS, CONTROLS, AUDIO", nav.sel == F_SETTINGS);
         // Small DEV and QUIT, bottom left.

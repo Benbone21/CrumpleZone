@@ -67,6 +67,25 @@ Windows loopback networking, state/playback, worker and audio tests. That workfl
 edited locally and has not been run from this session. Final full-suite results are in
 `docs/performance.md`.
 
+# Join codes: open your world to friends (0.4.1)
+
+In a game, ESC > MULTIPLAYER > **OPEN TO FRIENDS** gives a code like `KX7-M4Q` (**COPY** puts it
+on the clipboard). A friend picks MULTIPLAYER > **JOIN WITH CODE** on the main menu and types or
+pastes it. Nobody forwards a port. The two games find each other through the join-code server
+on the owner's box (`crumplezone-rendezvous`, `docs/server-rendezvous-setup.md`). They punch
+through both routers and talk directly. When that's impossible, the server relays their packets.
+The joiner gets your world as it is: the map, the level you're on, your edited park sections,
+your trucks. The FRIENDS page lists who's in (ping, DIRECT or RELAYED), kicks, and sets a
+password and the most players. CLOSE TO FRIENDS retires the code and keeps the players already
+in. Leaving tells everyone at once.
+
+Joining by address (`IP:PORT`), LAN games and the dedicated server work as before. The server
+can take a code too (`crumplezone-server --code HOST:27020`). The game finds the join-code server
+from `CZ_RENDEZVOUS` in `src/net.h`, the `rendezvous HOST[:PORT]` line in settings.txt, or
+`--rendezvous HOST[:PORT]`. `--join-code CODE` joins from the command line. Protocol 8: 0.4.0
+and 0.4.1 games can't play together. The design, the protocol and its limits are in
+`docs/plans/join-codes.md`.
+
 # Hosting for the internet, safely (2026-10-16)
 
 Protocol **5**. Both ends must be this build (older builds are refused with "different game

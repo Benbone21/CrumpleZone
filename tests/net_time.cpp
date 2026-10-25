@@ -55,7 +55,7 @@ struct NetSessionTimeTest {
         s.applyRemotes(sim, now);
         s.release(&sim);
     }
-    static void datagram(NetSession& s, Sim& sim, const std::vector<uint8_t>& d) { s.onDatagram(sim, d.data(), d.size(), 0x7f000001, 1, s.curNow); }
+    static void datagram(NetSession& s, Sim& sim, const std::vector<uint8_t>& d) { s.onDatagram(&sim, d.data(), d.size(), 0x7f000001, 1, s.curNow); }
     static uint64_t token(const NetSession& s) { return s.udpToken; }
     static void setToken(NetSession& s, uint64_t t) { s.udpToken = t; }
 };
