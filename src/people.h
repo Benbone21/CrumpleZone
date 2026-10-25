@@ -13,9 +13,10 @@
 #include <cstdint>
 #include <string>
 
-#include "carvisual.h"
 #include "modelkit.h"
 #include "softbody.h"
+
+struct VisualTemplate;
 
 namespace people {
 
@@ -51,6 +52,10 @@ struct Pose {
 // The skeleton's fixed points.
 V3 shoulderOf(const Pose& p, int side);
 V3 hipOf(const Pose& p, int side);
+// Where the eyes are on the posed head (first person: the body's put so these are at the camera's).
+V3 eyesOf(const Pose& p);
+// A leg as build() draws it: the hip, the knee it bends to and the ankle (where the foot is, or as near as the leg reaches).
+void legOf(const Pose& p, int side, V3& hip, V3& knee, V3& ankle);
 
 // Appends the posed body to `out` (world space).
 void build(const Pose& p, const Look& look, mk::Mesh& out);

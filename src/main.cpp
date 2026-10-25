@@ -4239,7 +4239,7 @@ int main(int argc, char** argv) {
         }
         if (scripted) {
             bool donut = opt.script == "donut";
-            up = frame > 30 && (opt.script == "drive" || opt.script == "left" || donut || (opt.script == "hud" && !std::getenv("CZ_HUD_STILL")));
+            up = frame > 30 && (opt.script == "drive" || opt.script == "left" || donut || (opt.script == "hud" && !std::getenv("CZ_HUD_STILL")) || opt.script == "walk" || opt.script == "line");  // (walk, line: on foot, see below)
             if (opt.script == "hud") {  // screenshots of the contextual HUD: CZ_HUD_STILL=1 (stay put), CZ_HUD_FUEL=0.15 (tank fraction from frame 5), CZ_HUD_HIT=F (a knock at frame F)
                 Car& c = sim.cars[sim.player];
                 if (frame == 5 && std::getenv("CZ_HUD_FUEL") && c.spec->fuelCapacity > 0) c.fuel = c.spec->fuelCapacity * std::atof(std::getenv("CZ_HUD_FUEL"));
@@ -4616,7 +4616,7 @@ int main(int argc, char** argv) {
                     crouchWas = down;
                     if (std::getenv("CZ_CROUCH") && scripted) walker.crouching = true;  // (screenshots)
                 }
-                walker.step(sim.world, sim, dt, still ? 0 : (up ? 1 : 0) - (down ? 1 : 0), still ? 0 : (left ? 1 : 0) - (right ? 1 : 0), shiftHeld && !still, hb && !still, viewYaw);
+                walker.step(sim.world, sim, dt, still ? 0 : (up ? 1 : 0) - (down ? 1 : 0), still ? 0 : (left ? 1 : 0) - (right ? 1 : 0), (shiftHeld || (scripted && std::getenv("CZ_RUN"))) && !still, hb && !still, viewYaw);  // (CZ_RUN: screenshots running)
                 {  // hands on: hold E (pad: X) for the job in front of you
                     const uint8_t* ks = SDL_GetKeyboardState(nullptr);
                     const bool holdE = (!menu.open && !inv.open && settings.keys.held(KA_INTERACT, ks, ks[SC_LSHIFT] || ks[SC_RSHIFT])) || (padCtx == pad::Mode::Drive && padLogic.in.interact) || scriptE;
@@ -5013,7 +5013,6 @@ int main(int argc, char** argv) {
         if (scripted && (opt.script == "walk" || opt.script == "stand" || opt.script == "line")) {  // (screenshots: out of the truck and walking off, or standing by it;
             if (frame == 20) getOut();                                                                // line: walking the winch line out)
             if (frame == 25 && opt.script == "line") std::printf("%s\n", sim.takeLine(sim.player, ROPE_WINCH, 0, walker.p + V3(0, 1, 0)).c_str());
-            if (frame > 30 && opt.script != "stand") up = true;
         }
         if (scripted && opt.script == "map" && frame == 5) {  // (screenshots: the map, a ping and a waypoint)
             const V3 c = sim.cars[sim.player].frame().com;
@@ -5912,15 +5911,17 @@ int main(int argc, char** argv) {
                 people::build(p, people::lookFor(V3(0.2, 0.6, 0.95), h), renderer.people);
             };
             for (const RemoteWalker& rw : coop.walkers) buddy(rw.who, rw.p, rw.yaw, rw.stride, nullptr, rw.crouch);
-            if (const char* fg = scripted ? std::getenv("CZ_FIGURE") : nullptr) {  // (screenshots: a buddy on foot, CZ_FIGURE=m ahead of you, walking toward you[,side,speed[,turn rad/s[,crouch 0..1]]])
-                double d = 3, side = 0, sp = 1.7, turn = 0, figCrouch = 0;
-                std::sscanf(fg, "%lf,%lf,%lf,%lf,%lf", &d, &side, &sp, &turn, &figCrouch);
+            if (const char* fg = scripted ? std::getenv("CZ_FIGURE") : nullptr) {  // (screenshots: a buddy on foot, CZ_FIGURE=m ahead of you, walking toward you[,side,speed[,turn rad/s[,crouch 0..1[,yaw off toward you, rad[,count in a row]]]]]])
+                double d = 3, side = 0, sp = 1.7, turn = 0, figCrouch = 0, yawOff = 0, count = 1;
+                std::sscanf(fg, "%lf,%lf,%lf,%lf,%lf,%lf,%lf", &d, &side, &sp, &turn, &figCrouch, &yawOff, &count);
                 const V3 f = norm(V3(view.target.x - view.eye.x, 0, view.target.z - view.eye.z)), l(f.z, 0, -f.x);
-                V3 at = view.eye + f * d + l * side;
-                at.y = sim.world.height(at.x, at.z);
-                const double yaw = std::atan2(f.z, -f.x) + turn * clock;
-                const V3 vel = V3(std::cos(yaw), 0, -std::sin(yaw)) * sp;
-                buddy("CZ_FIGURE", at, yaw, clock * sp * 3.2, &vel, figCrouch);
+                for (int k = 0; k < std::max(1, (int)count); k++) {  // (several: side by side, 0.9 m apart, each their own look)
+                    V3 at = view.eye + f * d + l * (side + (k - (count - 1) * 0.5) * 0.9);
+                    at.y = sim.world.height(at.x, at.z);
+                    const double yaw = std::atan2(f.z, -f.x) + yawOff + turn * clock;
+                    const V3 vel = V3(std::cos(yaw), 0, -std::sin(yaw)) * sp;
+                    buddy(k == 0 ? std::string("CZ_FIGURE") : "CZ_FIGURE" + std::to_string(k), at, yaw, clock * sp * 3.2, &vel, figCrouch);
+                }
             }
             // Every near cab's steering wheel (it turns with the steering).
             for (int i = 0; i < (int)sim.cars.size(); i++) {

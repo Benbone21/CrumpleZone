@@ -21,8 +21,10 @@ const double kHipW = 0.092;                   // hip joint off the middle
 const double kWaist = 0.10;                   // pelvis to the chest's pivot
 const double kShoulderY = 0.37, kShoulderW = 0.182;  // shoulder joints, in the chest's frame
 const double kNeckY = 0.455;
+const double kCrouchDrop = 0.415, kCrouchLean = 0.75;  // crouched: the hips this much lower (to about 0.52 m), the chest leaning forward (rad)
+const double kHipFloor = 0.48;  // first person: the hips never lower than this (a deep crouch, on your heels; not sat on the ground)
+const double kHeadDown = 0.9, kHeadUp = 0.75;       // how far the head pitches (rad) on the neck
 const double kGripX = 0.072, kGripY = 0.03;   // a handle in the closed hand, from the wrist
-const double kSeatSlide = 0.09;               // a driver would sit this far ahead of the seat's hip point (up to the wheel): the eyes are over that
 
 double smooth01(double x) {
     x = clampd(x, 0, 1);
@@ -183,7 +185,7 @@ void buildSeat(mk::B& b, const Look& L, int detail) {
 }
 
 // The jacket's body: the waist pivot at the origin, the neck at +y.
-void buildChest(mk::B& b, const Look& L, int detail) {
+void buildChest(mk::B& b, const Look& L, int detail, bool collar = true) {
     const int sg = detail >= 2 ? 16 : 10;
     // Cut in at the waist, out over the chest and the shoulder blades, the shoulders sloping to the collar.
     b.style(L.jacket, mk::MATTE);
@@ -203,8 +205,10 @@ void buildChest(mk::B& b, const Look& L, int detail) {
     }
     // Collar standing up round the neck (open at the throat), the zip and its pull.
     b.style(L.jacketDark, mk::MATTE);
-    b.cone(V3(-0.004, 0.41, 0), V3(-0.012, 0.49, 0), 0.074, 0.066, sg, false);
-    b.torus(V3(-0.012, 0.49, 0), 0.066, 0.008, sg, 3);
+    if (collar) {  // (not your own: it'd be round your eyes)
+        b.cone(V3(-0.004, 0.41, 0), V3(-0.012, 0.49, 0), 0.074, 0.066, sg, false);
+        b.torus(V3(-0.012, 0.49, 0), 0.066, 0.008, sg, 3);
+    }
     b.style(V3(0.13, 0.13, 0.14), mk::METAL);
     b.beam(V3(0.098, -0.07, 0), V3(0.104, 0.08, 0), 0.008, 0.007, V3(1, 0, 0));
     b.beam(V3(0.104, 0.08, 0), V3(0.112, 0.27, 0), 0.008, 0.007, V3(1, 0, 0));
@@ -332,7 +336,7 @@ const mk::Mesh& piece(int what, const Look& L, int detail, int param = 0) {
     case P_HAND: buildHand(b, L, param & 1, (param >> 1) / 4.0, detail); break;
     case P_BOOT: buildBoot(b, L, detail); break;
     case P_SEAT: buildSeat(b, L, detail), shadeByHeight(m, 0, -0.1, 0.15, 0.88, 1.0); break;
-    case P_CHEST: buildChest(b, L, detail), shadeByHeight(m, 0, -0.07, 0.36, 0.84, 1.04); break;
+    case P_CHEST: buildChest(b, L, detail, param == 0), shadeByHeight(m, 0, -0.07, 0.36, 0.84, 1.04); break;
     case P_HEAD: buildHead(b, L, detail); break;
     default: break;
     }
@@ -367,6 +371,23 @@ Basis pelvisBasis(const Pose& p) {
     c.o = p.pelvis;
     return c;
 }
+// The head: pitched on the top of the neck (looking down, it comes forward over the chest), its middle at the origin.
+Basis headBasis(const Pose& p) {
+    const Basis ch = chestBasis(p);
+    Basis hd;
+    hd.x = norm(p.headF);
+    const V3 side = cross(hd.x, kUp);
+    hd.z = len(side) > 1e-3 ? norm(side) : ch.z;
+    hd.y = cross(hd.z, hd.x);
+    // The neck bends forward for about half of a look down (the head nods the rest), so the eyes come forward of the
+    // chest and down: looking at your feet, they're past the front of your jacket.
+    const double nod = std::max(-0.1, -std::asin(clampd(hd.x.y, -1, 1)) * 0.55);  // (looking up, the head tips back on the neck)
+    const V3 fh = perpTo(hd.x, kUp);
+    const V3 neckDir = kUp * std::cos(nod) + fh * std::sin(nod);
+    const V3 neckTop = ch.o + ch.y * kNeckY + neckDir * 0.1 + ch.x * 0.012;
+    hd.o = neckTop + hd.y * 0.075 - hd.x * 0.01;
+    return hd;
+}
 
 }  // namespace
 
@@ -374,9 +395,18 @@ V3 shoulderOf(const Pose& p, int side) {
     const Basis c = chestBasis(p);
     return c.o + c.y * (kShoulderY + 0.006 * p.breath) + c.z * (side == 0 ? -kShoulderW : kShoulderW);
 }
+V3 eyesOf(const Pose& p) {
+    const Basis hd = headBasis(p);
+    return hd.o + hd.x * 0.09 + hd.y * 0.01;
+}
 V3 hipOf(const Pose& p, int side) {
     const Basis c = pelvisBasis(p);
     return c.o + c.z * (side == 0 ? -kHipW : kHipW);
+}
+
+void legOf(const Pose& p, int side, V3& hip, V3& knee, V3& ankle) {
+    hip = hipOf(p, side);
+    knee = solve(hip, p.ankle[side], kThigh, kShin, p.kneePole[side], &ankle);
 }
 
 Look lookFor(const V3& jacket, uint32_t seed) {
@@ -446,7 +476,7 @@ void build(const Pose& p, const Look& L, mk::Mesh& out) {
     const Basis pel = pelvisBasis(p), ch = chestBasis(p);
     if (!p.noTorso) {
         place(out, piece(P_SEAT, L, det), pel);
-        place(out, piece(P_CHEST, L, det), ch);
+        place(out, piece(P_CHEST, L, det, p.head ? 0 : 1), ch);
     }
     // Legs: the thigh tapering to the knee, the calf swelling below it and slimming to the ankle; the jeans faded
     // at the knee, an outside seam, folds stacked over the boot.
@@ -511,12 +541,7 @@ void build(const Pose& p, const Look& L, mk::Mesh& out) {
     // Neck and head (not your own, in first person).
     if (p.head) {
         const V3 neck = ch.o + ch.y * kNeckY;
-        Basis hd;
-        hd.y = norm(ch.y * 0.6 + kUp * 0.4);
-        hd.x = perpTo(p.headF, hd.y);
-        hd.z = cross(hd.x, hd.y);
-        hd.y = cross(hd.z, hd.x);
-        hd.o = neck + ch.y * 0.115 + hd.y * 0.06 + ch.x * 0.012;
+        const Basis hd = headBasis(p);
         b.style(L.skin, mk::MATTE);
         const V3 nb = neck - ch.y * 0.03, nt = hd.o - hd.y * 0.065 - hd.x * 0.018;
         limb(b, {{nb, 0.047}, {(nb + nt) * 0.5, 0.041}, {nt, 0.043}}, sg);
@@ -583,7 +608,7 @@ Pose walking(const Gait& g, Mover& m, double dt) {
         m.air = 0;
     }
     m.land = std::max(0.0, m.land - dt * 2.6);
-    const double inAir = smooth01(m.air / 0.15);
+    const double inAir = smooth01((m.air - 0.08) / 0.2);  // (not for a moment off a bump or a step down: a jump)
     // Walking the cycle, or standing on planted feet (blended as you start and stop).
     const bool wantMove = g.grounded && m.speed > (m.move > 0.5 ? 0.16 : 0.32);
     const double movePrev = m.move;
@@ -595,7 +620,8 @@ Pose walking(const Gait& g, Mover& m, double dt) {
     const V3 dir = sNow > 0.05 ? vh / sNow : F;
     const double beta = 0.6 + (0.36 - 0.6) * run;  // share of the cycle a foot's on the ground
     const double D = 2 * M_PI / (3.2 * (1.45 + (0.85 - 1.45) * run));
-    const double travel = D * beta * amp, back = 0.05 + 0.06 * run;
+    const double crs = clampd(g.crouch, 0, 1);
+    const double travel = D * beta * amp * (1 - 0.35 * crs), back = 0.05 + 0.06 * run;  // (crouched: shorter steps)
     const double u0 = m.phase / (2 * M_PI);
     V3 cyAnkle[2], cyFwd[2];
     double lift[2];
@@ -613,7 +639,7 @@ Pose walking(const Gait& g, Mover& m, double dt) {
             const double w = (u - beta) / (1 - beta);
             x = -travel * 0.5 + travel * smooth01(w) - back * amp;
             const double peak = 0.32 - 0.08 * run;
-            const double hgt = (0.09 + 0.26 * run) * amp;
+            const double hgt = (0.09 + 0.26 * run) * amp * (1 - 0.4 * crs);
             h = hgt * (w < peak ? std::sin(w / peak * M_PI / 2) : std::cos((w - peak) / (1 - peak) * M_PI / 2));
             x -= 0.12 * run * amp * std::sin(w * M_PI) * (1 - w);  // (running, the heel kicks up behind first)
             pitch = (-0.75 + (0.28 - 0.2 * run + 0.75) * smooth01(w)) * amp;
@@ -676,7 +702,7 @@ Pose walking(const Gait& g, Mover& m, double dt) {
     const double twist = 0.11 * std::sin(ph) * amp * mv;
     const double breath = std::sin(m.t * 2 * M_PI / (4.2 - 1.6 * run));
     const double cr = clampd(g.crouch, 0, 1);
-    double hipY = 0.935 - 0.035 * run * mv - 0.5 * cr + bob - 0.13 * smooth01(m.land) - 0.004 * idle * (1 + breath);
+    double hipY = 0.935 - 0.035 * run * mv - kCrouchDrop * cr + bob - 0.13 * smooth01(m.land) - 0.004 * idle * (1 + breath);
     V3 ankle[2], fwd[2];
     for (int sd = 0; sd < 2; sd++) {
         ankle[sd] = m.planted ? stAnkle[sd] + (cyAnkle[sd] - stAnkle[sd]) * mv : cyAnkle[sd];
@@ -703,7 +729,7 @@ Pose walking(const Gait& g, Mover& m, double dt) {
     p.pelvis = pelH + kUp * hipY;
     p.pelvisF = rotateAxis(F, kUp, twist);
     p.pelvisU = norm(kUp + R * (sway * 2.2) * (1 - run));
-    const double lean = (0.05 + 0.24 * run) * amp * mv + clampd(m.accel * 0.05, -0.08, 0.12) * mv + 0.3 * smooth01(m.land) + 0.5 * cr - 0.012 * breath * idle;
+    const double lean = (0.05 + 0.24 * run) * amp * mv + clampd(m.accel * 0.05, -0.08, 0.12) * mv + 0.3 * smooth01(m.land) + kCrouchLean * cr - 0.012 * breath * idle;
     p.chestU = norm(kUp * std::cos(lean) + F * std::sin(lean) - R * (sway * 2.6));
     p.chestF = rotateAxis(F, kUp, -twist * 0.75);
     p.breath = breath;
@@ -714,7 +740,7 @@ Pose walking(const Gait& g, Mover& m, double dt) {
     }
     m.look += ((g.lookAround ? m.lookTo : 0.0) - m.look) * std::min(1.0, dt * 3.5);
     const V3 lf = rotateAxis(F, kUp, m.look);
-    const double pitch = g.lookPitch - lean * 0.6;
+    const double pitch = clampd(g.lookPitch, -kHeadDown, kHeadUp);  // (the head turns so far; the eyes the rest)
     p.headF = norm(lf * std::cos(pitch) + kUp * std::sin(pitch));
     for (int sd = 0; sd < 2; sd++) {
         const double sgn = sd == 0 ? -1.0 : 1.0;
@@ -748,102 +774,65 @@ Pose walking(const Gait& g, Mover& m, double dt) {
 }
 
 Pose firstPerson(const Gait& g, Mover& m, double dt, double viewYaw, double viewPitch, const V3& eye, const V3& lean) {
+    // The body walks (crouched as the walker is) with its head turned the way you look; then it's put where the eyes are:
+    // across (looking down, the head comes forward over the chest, so the body's a little behind the eyes), and, if the
+    // eyes are lower than this body's (leaning in to work), the hips go down and the chest bends to bring them there.
+    // (The crouch is the walker's, given once in g.crouch: the eyes being lower for it are already this body's.)
     Gait gg = g;
     gg.yaw = viewYaw;
+    gg.lookPitch = viewPitch;
     Pose p = walking(gg, m, dt);
     p.head = false;
     p.stretch = true;
     p.clip = true, p.eye = eye;
-    // Set back as you look down (and a little anyway: the eyes are over the front of the neck); hands a touch
-    // lower and in, so swinging they stay down in the corners.
     const V3 F(std::cos(viewYaw), 0, -std::sin(viewYaw)), R = cross(F, kUp);
-    const double down = std::max(0.0, -std::sin(viewPitch));
-    const double drop = -std::min(0.0, lean.y);
-    const double leaning = clampd(len(lean) / 0.15, 0, 1);  // (leaning in, the chest's under the eyes: no setting back)
-    const V3 off = F * -(0.06 + 0.1 * down) * (1 - leaning);
-    p.pelvis += off;
-    for (int s = 0; s < 2; s++) p.hand[s] += off - kUp * 0.02, p.ankle[s] += off;
-    // Crouched and leaning in: the chest goes with the eyes, the hips less (knees bend, feet stay).
-    if (drop > 0.01 || len(lean) > 0.01) {
+    const V3 leanH(lean.x, 0, lean.z);  // (leaning in to a job: the chest goes, the feet stay)
+    // Across: the whole body (feet too) under the eyes as they'd be without the lean.
+    const V3 e0 = eyesOf(p), to = eye - leanH;
+    const V3 across(to.x - e0.x, 0, to.z - e0.z);
+    p.pelvis += across;
+    for (int s = 0; s < 2; s++) p.ankle[s] += across, p.hand[s] += across - kUp * 0.02;
+    // Down and in: the hips lower (to a crouch, no further), then the chest bends, so the neck comes to where the eyes want it.
+    const double down = std::min(0.0, eye.y - eyesOf(p).y);
+    if (down < -0.01 || len(leanH) > 0.01) {
         const V3 sh0[2] = {shoulderOf(p, 0), shoulderOf(p, 1)};
-        const V3 hip0 = p.pelvis;
-        p.pelvis += kUp * (-drop * 0.95) + F * (dot(lean, F) * 0.35) + R * (dot(lean, R) * 0.5);
-        p.pelvis.y = std::max(p.pelvis.y, g.p.y + 0.42);
-        const V3 sh = hip0 + kUp * (kWaist + kShoulderY) + lean;  // where the shoulders' middle goes
-        V3 up = sh - p.pelvis;
-        up = len(up) > 1e-6 ? norm(up) : kUp;
-        p.chestU = up, p.chestF = perpTo(F, up);
-        p.pelvisU = norm(kUp + up), p.pelvisF = perpTo(F, p.pelvisU);
-        const double k = clampd(drop / 0.3, 0, 1);
-        for (int s = 0; s < 2; s++) {  // feet set apart, one a little ahead, knees out over them
+        const double Lc = kNeckY + 0.1;  // the chest's pivot to the top of the neck
+        const Basis c0 = chestBasis(p);
+        const V3 neckTo = c0.o + c0.y * Lc + leanH + kUp * down;
+        p.pelvis += kUp * (down * 0.6) + F * (dot(leanH, F) * 0.35) + R * (dot(leanH, R) * 0.5);
+        p.pelvis.y = std::max(p.pelvis.y, g.p.y + kHipFloor);
+        p.pelvisU = norm(kUp * 2.5 + norm(neckTo - p.pelvis)), p.pelvisF = perpTo(F, p.pelvisU);
+        V3 d = neckTo - (p.pelvis + p.pelvisU * kWaist);
+        V3 dirH(d.x, 0, d.z);
+        const double reachH = len(dirH);
+        dirH = reachH > 1e-3 ? dirH / reachH : F;
+        double a = std::asin(clampd(reachH / Lc, 0, 0.94));
+        const double high = Lc * std::cos(a) - d.y;  // (the neck'd be this much over where it's wanted: the hips go lower first)
+        if (high > 0) {
+            const double drop = std::min(high, p.pelvis.y - (g.p.y + kHipFloor));
+            p.pelvis.y -= drop, d.y += drop;
+        }
+        a = std::max(a, std::acos(clampd(d.y / Lc, std::cos(1.2), 1.0)));
+        p.chestU = kUp * std::cos(a) + dirH * std::sin(a), p.chestF = perpTo(F, p.chestU);
+        // The hips go back (or forward) under it so the neck's over where it's wanted; the feet stay.
+        const V3 neck = p.pelvis + p.pelvisU * kWaist + p.chestU * Lc;
+        p.pelvis += V3(neckTo.x - neck.x, 0, neckTo.z - neck.z);
+        // Low down: the feet set apart, one a little ahead, the knees out over them.
+        // (standing still only: walking, the feet go on stepping)
+        const double k = smooth01((0.8 - (p.pelvis.y - g.p.y)) / 0.3) * (1 - smooth01(m.move));
+        for (int s = 0; s < 2; s++) {
             const double sgn = s == 0 ? -1.0 : 1.0;
-            const V3 a = g.p + off + R * (sgn * 0.16) + F * (s == 0 ? 0.12 : -0.05) + kUp * kAnkle;
+            const V3 a = g.p + across + R * (sgn * 0.16) + F * (s == 0 ? 0.12 : -0.05) + kUp * kAnkle;
             p.ankle[s] = p.ankle[s] + (a - p.ankle[s]) * k;
             p.footF[s] = norm(p.footF[s] + (norm(F + R * (sgn * 0.25)) - p.footF[s]) * k), p.footU[s] = perpTo(kUp, p.footF[s]);
-            p.kneePole[s] = norm(F + R * (sgn * 0.5) + kUp * 0.3);
+            p.kneePole[s] = norm(p.kneePole[s] + (norm(F + R * (sgn * 0.5) + kUp * 0.3) - p.kneePole[s]) * k);
             p.hand[s] += shoulderOf(p, s) - sh0[s];  // (a free hand goes with its shoulder)
         }
+        const V3 e = eye - eyesOf(p);  // (what's left: the head's own lean off the neck)
+        p.pelvis += V3(e.x, 0, e.z);
+        for (int s = 0; s < 2; s++) p.hand[s] += V3(e.x, 0, e.z);
     }
     return p;
-}
-
-// ---- In the seat ----
-
-bool seatOf(const Car& c, const VisualTemplate& t, Seat& s) {
-    if (!t.cockpit.on) return false;
-    const Frame f = c.frame();
-    s.fwd = f.fwd, s.up = f.up, s.right = f.left * -1.0;
-    s.hip = boundPoint(c, t.cockpit.hip);
-    s.wheel = boundPoint(c, t.cockpit.wheel);
-    s.wheelR = t.cockpit.wheelR, s.tilt = t.cockpit.tilt;
-    return std::isfinite(s.hip.x + s.wheel.x);
-}
-
-V3 seatEye(const Seat& s) { return s.hip + s.up * 0.735 + s.fwd * (kSeatSlide + 0.05); }
-
-double wheelTurnOf(const Car& c) { return clampd(c.steerInput, -1.0, 1.0) * 4.2; }  // (about 1.3 turns to full lock)
-
-namespace {
-struct WheelFrame {
-    V3 c, axis, u, r;  // middle; toward the driver; 12 o'clock; 3 o'clock (seen from the seat)
-};
-WheelFrame wheelFrame(const Seat& s) {
-    WheelFrame w;
-    w.c = s.wheel;
-    w.axis = norm(s.fwd * -std::cos(s.tilt) + s.up * std::sin(s.tilt));
-    w.u = norm(s.fwd * std::sin(s.tilt) + s.up * std::cos(s.tilt));
-    w.r = s.right;
-    return w;
-}
-}  // namespace
-
-void steeringWheel(const Seat& s, double wheelTurn, mk::Mesh& out) {
-    const WheelFrame w = wheelFrame(s);
-    // Turned: 12 o'clock moves to the left (counter-clockwise from the seat) for a left turn.
-    const V3 u = rotateAxis(w.u, w.axis, wheelTurn), r = cross(u, w.axis);
-    // (u, r: up and right on the wheel's face as the driver sees it; axis toward the driver.)
-    const size_t start = out.v.size();
-    mk::B b(out);
-    const double R = s.wheelR;
-    std::vector<V3> rim;
-    for (int k = 0; k < 24; k++) {
-        const double a = 2 * M_PI * k / 24;
-        rim.push_back(w.c + (u * std::cos(a) + r * std::sin(a)) * R);
-    }
-    b.style(V3(0.035, 0.035, 0.038), mk::MATTE);
-    b.tube(rim, 0.017, 7, true, false);
-    // Three spokes dished back to the hub, the hub and its pad.
-    const V3 hub = w.c - w.axis * 0.045;
-    b.style(V3(0.16, 0.16, 0.17), mk::METAL);
-    for (double a : {-M_PI / 2, M_PI / 2, M_PI}) {
-        const V3 dir = u * std::cos(a) + r * std::sin(a);
-        b.beam(hub + dir * 0.035, w.c + dir * (R - 0.012), 0.034, 0.008, w.axis);
-    }
-    b.style(V3(0.05, 0.05, 0.055), mk::MATTE);
-    b.cone(hub - w.axis * 0.03, hub + w.axis * 0.025, 0.05, 0.046, 10, true);
-    b.style(V3(0.55, 0.55, 0.57), mk::METAL);
-    b.cone(hub + w.axis * 0.025, hub + w.axis * 0.03, 0.02, 0.018, 8, true);  // the badge
-    lastTris += (int)((out.v.size() - start) / 3);
 }
 
 }  // namespace people
