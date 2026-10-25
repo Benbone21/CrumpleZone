@@ -10,7 +10,17 @@ enum EngineKind : uint8_t {
     EK_V8_SMALL_BLOCK, EK_V8_BIG_BLOCK, EK_V8_LS, EK_V8_LS_SUPERCHARGED, EK_V8_FLAT_PLANE_TT, EK_KINDS
 };
 const char* engineKindName(int kind);
-int engineKindFor(int cylinders, int induction, bool flatPlane, float liters);  // (never EK_AUTO)
+// (EK_AUTO only for cylinder counts with no kind of their own; inline: vehicles.cpp uses it
+// in builds without the synth)
+inline int engineKindFor(int cylinders, int induction, bool flatPlane, float liters) {
+    switch (cylinders) {
+        case 3: return EK_I3_TURBO;
+        case 4: return induction == 1 ? EK_I4_TURBO : EK_I4;
+        case 6: return induction == 1 ? EK_V6_TWIN_TURBO : induction == 2 ? EK_V6_SUPERCHARGED : EK_V6;
+        case 8: return flatPlane ? EK_V8_FLAT_PLANE_TT : liters > 7.2f ? EK_V8_BIG_BLOCK : induction == 2 ? EK_V8_LS_SUPERCHARGED : EK_V8_SMALL_BLOCK;
+        default: return EK_AUTO;
+    }
+}
 
 // What makes one engine sound like itself beyond its cylinder count and size: its exhaust
 // (the pipe's resonance, how open it is), its cam, its intake, its valvetrain, and a few small
