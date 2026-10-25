@@ -2,10 +2,14 @@
 // jobs and medals, the stations' shop; and it all saves. Sandbox owns everything.
 #include <cmath>
 #include <cstdio>
+#include <fstream>
+#include <sstream>
 
 #include "../src/career.h"
 #include "../src/interact.h"
+#include "../src/careerworld.h"
 #include "../src/mods.h"
+#include "../src/platform.h"
 #include "../src/walker.h"
 #include "harness.h"
 
@@ -160,4 +164,108 @@ SCENARIO(careerCaches, "career/caches", "Supply caches on the Frontier and in th
     const std::string said = c.openCache(summit);
     ctx.check("its part is yours", said.rfind("FOUND: ", 0) == 0 && c.owned.count(summit.part), said);
     ctx.check("opened once only", c.openCache(summit).empty() && c.isOpened(summit));
+}
+
+namespace {
+
+std::string slurp(const std::string& path) {
+    std::ifstream f(path, std::ios::binary);
+    std::stringstream ss;
+    ss << f.rdbuf();
+    return ss.str();
+}
+void spit(const std::string& path, const std::string& text) {
+    std::ofstream f(path, std::ios::binary);
+    f << text;
+}
+// A fresh folder under build/ for one scenario (the tests are threads of one process, so each has its own).
+std::string freshDir(const std::string& name) {
+    makeDir("build");
+    makeDir("build/test-career");
+    const std::string dir = "build/test-career/" + name;
+    makeDir(dir);
+    for (const char* f : {"/profile.txt", "/profile.txt.bak", "/profile.txt.tmp", "/career.txt"}) std::remove((dir + f).c_str());
+    return dir;
+}
+
+}  // namespace
+
+SCENARIO(careerProfileMigrate, "career/profile-migrate", "With no profile.txt, loadProfile takes the old career.txt; saveProfile then writes profile.txt and leaves career.txt alone") {
+    const std::string dir = freshDir("migrate");
+    ScopedCareerDir scope(dir);
+    const std::string old = "cash 4321\nown TIRES:RACE SLICK\ncache 3:WALL TOP\n";
+    spit(dir + "/career.txt", old);
+    Career c;
+    ctx.check("loads", c.loadProfile());
+    ctx.check("the old cash", c.cash == 4321);
+    ctx.check("owns the slick", c.owned.count("TIRES:RACE SLICK") == 1);
+    ctx.check("the cache is opened", c.opened.count("3:WALL TOP") == 1);
+    ctx.check("saves", c.saveProfile());
+    ctx.check("profile.txt is there", !slurp(dir + "/profile.txt").empty());
+    ctx.check("career.txt is untouched", slurp(dir + "/career.txt") == old);
+    Career d;
+    ctx.check("and loads back", d.loadProfile() && d.cash == 4321 && d.opened == c.opened && d.owned == c.owned);
+    Career none;
+    {
+        ScopedCareerDir empty(freshDir("migrate-none"));
+        ctx.check("nothing at all: false", !none.loadProfile());
+    }
+}
+
+SCENARIO(careerProfileRoundtrip, "career/profile-roundtrip", "Owned vehicles with mods, worlds and conditions save and load back the same") {
+    const std::string dir = freshDir("roundtrip");
+    ScopedCareerDir scope(dir);
+    Career c;
+    c.startFresh(DIFF_HARDCORE);
+    c.cash = 777;
+    OwnedVehicle a, b;
+    a.vehicle = vehicleIndex("blazer");
+    a.mods.pick[MOD_ENGINE] = 1;
+    a.mods.pick[MOD_WHEELS] = (int)modOptions(a.vehicle, MOD_WHEELS).size() - 1;
+    a.world = "my-world";
+    a.condition = "dent 3 0.5\nline two with \\ slash";
+    b.vehicle = vehicleIndex("civic");
+    b.world = "second-1";
+    c.vehicles = {a, b};
+    ctx.check("saves", c.saveProfile());
+    Career d;
+    ctx.check("loads", d.loadProfile());
+    bool same = d.vehicles.size() == 2 && d.cash == 777 && d.owned == c.owned && d.stock == c.stock;
+    for (size_t i = 0; same && i < 2; i++) {
+        const OwnedVehicle &x = c.vehicles[i], &y = d.vehicles[i];
+        same &= x.vehicle == y.vehicle && x.world == y.world && x.condition == y.condition;
+        for (int k = 0; k < MOD_SLOTS; k++) same &= x.mods.pick[k] == y.mods.pick[k];
+    }
+    ctx.check("the same profile", same);
+}
+
+SCENARIO(careerProfileBak, "career/profile-bak", "A corrupt profile.txt falls back to profile.txt.bak, and a second save keeps the previous good profile as the .bak") {
+    const std::string dir = freshDir("bak");
+    ScopedCareerDir scope(dir);
+    Career c;
+    c.startFresh();
+    c.cash = 111;
+    ctx.check("first save", c.saveProfile());
+    c.cash = 222;
+    ctx.check("second save", c.saveProfile());
+    ctx.check("the .bak is the first", slurp(dir + "/profile.txt.bak").find("cash 111") != std::string::npos);
+    spit(dir + "/profile.txt", "x#!\x01z");
+    Career d;
+    ctx.check("loads", d.loadProfile());
+    ctx.check("from the .bak", d.cash == 111, std::to_string(d.cash));
+    d.cash = 333;
+    ctx.check("saving over the corrupt file", d.saveProfile());
+    ctx.check("a bad file doesn't displace the good .bak", slurp(dir + "/profile.txt.bak").find("cash 111") != std::string::npos);
+}
+
+SCENARIO(careerStartCash, "career/start-cash", "A new profile starts with the difficulty's cash and the starting tools") {
+    Career c;
+    c.startFresh(DIFF_LIGHT);
+    ctx.check("light", c.cash == 2000);
+    c.startFresh(DIFF_MEDIUM);
+    ctx.check("medium", c.cash == 1000);
+    c.startFresh(DIFF_HARDCORE);
+    ctx.check("hardcore", c.cash == 500 && c.owned.size() == 2 && c.vehicles.empty());
+    c.startFresh();
+    ctx.check("default is medium", c.cash == 1000);
 }

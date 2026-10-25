@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 
+#include "platform.h"
 #include "vehicles.h"
 
 const char* difficultyName(Difficulty d) {
@@ -54,3 +55,11 @@ std::string worldSlug(const std::string& name, const std::vector<std::string>& t
     }
     return slug;
 }
+
+namespace {
+thread_local std::string tCareerDir;
+}
+
+std::string careerConfigDir() { return tCareerDir.empty() ? configDir() : tCareerDir; }
+ScopedCareerDir::ScopedCareerDir(std::string dir) : prev_(tCareerDir) { tCareerDir = std::move(dir); }
+ScopedCareerDir::~ScopedCareerDir() { tCareerDir = prev_; }

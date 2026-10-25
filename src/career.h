@@ -13,8 +13,10 @@
 #include <vector>
 
 #include "anchors.h"
+#include "careerworld.h"
 #include "fixes.h"
 #include "mathx.h"
+#include "mods.h"
 
 class World;
 
@@ -44,6 +46,14 @@ std::vector<std::string> partSources(const std::string& key);
 
 // The caches on a map, on the ground (three by the proving ground's model yard; none on the freeway).
 std::vector<CacheSpot> cacheSpots(const World& world);
+
+// A vehicle in your profile: which one, how it is fitted, the world it was left in and what shape it is in.
+struct OwnedVehicle {
+    int vehicle = 0;         // index into vehicleCatalog()
+    ModSet mods;
+    std::string world;       // the slug of the world it was left in
+    std::string condition;   // the carsave text (damage and wear); "" = factory fresh
+};
 
 struct Career {
     bool on = false;  // career mode (else sandbox: everything owned)
@@ -86,8 +96,15 @@ struct Career {
     // the first time; a level's first gold also gives one of the best parts. Returns what to announce.
     std::string medal(const std::string& level, int medal);
 
-    void startFresh();
+    std::vector<OwnedVehicle> vehicles;  // the profile's vehicles
+
+    void startFresh(Difficulty d = DIFF_MEDIUM);  // cash is startCash(d)
     bool load(const std::string& path);
     bool save(const std::string& path) const;
-    static std::string defaultPath();  // ~/.config/crumplezone/career.txt
+    // The profile: progress and vehicles in one file, atomically written with a .bak.
+    static std::string profilePath();  // careerConfigDir()/profile.txt
+    // profile.txt, else its .bak, else the old career.txt (migrated: true, and the next saveProfile writes profile.txt); false if none exist.
+    bool loadProfile();
+    bool saveProfile() const;
+    static std::string defaultPath();  // careerConfigDir()/career.txt (the old single-file career)
 };

@@ -8,6 +8,7 @@
 
 #include "mods.h"
 #include "platform.h"
+#include "vehicles.h"
 #include "world.h"
 
 namespace {
@@ -285,9 +286,9 @@ std::string Career::medal(const std::string& level, int m) {
     return said;
 }
 
-void Career::startFresh() {
-    cash = kStartCash;
-    owned.clear(), opened.clear(), claimed.clear(), stock.clear();
+void Career::startFresh(Difficulty d) {
+    cash = startCash(d);
+    owned.clear(), opened.clear(), claimed.clear(), stock.clear(), vehicles.clear();
     // You set out with what's in any truck: a lug wrench and a jack.
     owned.insert(toolKey(TOOL_LUG_WRENCH)), owned.insert(toolKey(TOOL_JACK));
     AnchorStock a;
@@ -295,31 +296,93 @@ void Career::startFresh() {
     setAnchorStock(a);
 }
 
-bool Career::load(const std::string& path) {
-    std::ifstream f(path);
-    if (!f) return false;
-    owned.clear(), opened.clear(), claimed.clear(), stock.clear();
-    cash = 0;
+namespace {
+
+// A condition is one line in the file: backslash and newline are escaped.
+std::string escapeLine(const std::string& s) {
+    std::string r;
+    for (char c : s) r += c == '\\' ? "\\\\" : c == '\n' ? "\\n" : c == '\r' ? "" : std::string(1, c);
+    return r;
+}
+std::string unescapeLine(const std::string& s) {
+    std::string r;
+    for (size_t i = 0; i < s.size(); i++) {
+        if (s[i] == '\\' && i + 1 < s.size()) r += s[++i] == 'n' ? '\n' : s[i];
+        else r += s[i];
+    }
+    return r;
+}
+
+// Reads career text; false if it has no "cash" line (not a career file). Keys it doesn't know are skipped.
+bool parseCareer(std::istream& f, Career& c) {
+    c.owned.clear(), c.opened.clear(), c.claimed.clear(), c.stock.clear(), c.vehicles.clear();
+    c.cash = 0;
+    bool sawCash = false;
+    std::vector<std::pair<size_t, std::string>> conds;
     std::string line;
     while (std::getline(f, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
         const size_t sp = line.find(' ');
         if (sp == std::string::npos) continue;
         const std::string k = line.substr(0, sp), v = line.substr(sp + 1);
-        if (k == "cash") cash = std::atoi(v.c_str());
-        else if (k == "own") owned.insert(v);
-        else if (k == "cache") opened.insert(v);
-        else if (k == "claim") claimed.insert(v);
+        if (k == "cash") c.cash = std::atoi(v.c_str()), sawCash = true;
+        else if (k == "own") c.owned.insert(v);
+        else if (k == "cache") c.opened.insert(v);
+        else if (k == "claim") c.claimed.insert(v);
         else if (k == "stock") {  // "stock N KEY"
             const size_t sp2 = v.find(' ');
-            if (sp2 != std::string::npos) stock[v.substr(sp2 + 1)] = std::atoi(v.substr(0, sp2).c_str());
+            if (sp2 != std::string::npos) c.stock[v.substr(sp2 + 1)] = std::atoi(v.substr(0, sp2).c_str());
+        } else if (k == "veh") {  // "veh INDEX WORLD P0 P1 P2 P3 P4" (the picks as in garage.txt)
+            std::istringstream is(v);
+            OwnedVehicle ov;
+            int p[MOD_SLOTS];
+            if (!(is >> ov.vehicle >> ov.world) || ov.vehicle < 0 || ov.vehicle >= (int)vehicleCatalog().size()) continue;
+            bool ok = true;
+            for (int i = 0; i < MOD_SLOTS; i++) ok &= (bool)(is >> p[i]);
+            if (!ok) continue;
+            if (ov.world == "-") ov.world.clear();
+            for (int i = 0; i < MOD_SLOTS; i++) ov.mods.pick[i] = std::min(std::max(p[i], 0), (int)modOptions(ov.vehicle, i).size() - 1);
+            c.vehicles.push_back(ov);
+        } else if (k == "cond") {  // "cond N TEXT"
+            const size_t sp2 = v.find(' ');
+            const int n = std::atoi(v.substr(0, sp2).c_str());
+            if (n >= 0) conds.push_back({(size_t)n, sp2 == std::string::npos ? "" : unescapeLine(v.substr(sp2 + 1))});
         }
     }
+    for (const auto& cd : conds)
+        if (cd.first < c.vehicles.size()) c.vehicles[cd.first].condition = cd.second;
+    if (!sawCash) return false;
     // A career from before anchor gear: the starting set (a strap and a sling are never used up, so none means none yet).
-    if (!stock.count(anchors::gearKey(GEAR_STRAP)) && !stock.count(anchors::gearKey(GEAR_SLING))) {
+    if (!c.stock.count(anchors::gearKey(GEAR_STRAP)) && !c.stock.count(anchors::gearKey(GEAR_SLING))) {
         AnchorStock a;
         a.fill(anchors::kCareerStart);
-        setAnchorStock(a);
+        c.setAnchorStock(a);
     }
+    return true;
+}
+
+bool validCareerText(const std::string& text) {
+    std::istringstream is(text);
+    Career probe;
+    return parseCareer(is, probe);
+}
+
+std::string careerText(const Career& c) {
+    std::ostringstream f;
+    f << "cash " << c.cash << '\n';
+    for (const auto& k : c.owned) f << "own " << k << '\n';
+    for (const auto& k : c.opened) f << "cache " << k << '\n';
+    for (const auto& k : c.claimed) f << "claim " << k << '\n';
+    for (const auto& k : c.stock) f << "stock " << k.second << ' ' << k.first << '\n';
+    return f.str();
+}
+
+}  // namespace
+
+bool Career::load(const std::string& path) {
+    std::ifstream f(path);
+    if (!f) return false;
+    parseCareer(f, *this);
     return true;
 }
 
@@ -328,12 +391,32 @@ bool Career::save(const std::string& path) const {
     if (!dir.empty()) makeDir(dir);
     std::ofstream f(path);
     if (!f) return false;
-    f << "cash " << cash << '\n';
-    for (const auto& k : owned) f << "own " << k << '\n';
-    for (const auto& k : opened) f << "cache " << k << '\n';
-    for (const auto& k : claimed) f << "claim " << k << '\n';
-    for (const auto& k : stock) f << "stock " << k.second << ' ' << k.first << '\n';
+    f << careerText(*this);
     return (bool)f;
 }
 
-std::string Career::defaultPath() { return configDir() + "/career.txt"; }
+std::string Career::profilePath() { return careerConfigDir() + "/profile.txt"; }
+
+bool Career::loadProfile() {
+    for (const std::string& path : {profilePath(), profilePath() + ".bak"}) {
+        std::ifstream f(path);
+        if (f && parseCareer(f, *this)) return true;
+    }
+    return load(defaultPath());  // (the old file stays as it is)
+}
+
+bool Career::saveProfile() const {
+    makeDir(careerConfigDir());
+    std::string text = careerText(*this);
+    for (size_t i = 0; i < vehicles.size(); i++) {
+        const OwnedVehicle& v = vehicles[i];
+        text += "veh " + std::to_string(v.vehicle) + ' ' + (v.world.empty() ? "-" : v.world);
+        for (int k = 0; k < MOD_SLOTS; k++) text += ' ' + std::to_string(v.mods.pick[k]);
+        text += '\n';
+        if (!v.condition.empty()) text += "cond " + std::to_string(i) + ' ' + escapeLine(v.condition) + '\n';
+    }
+    std::string err;
+    return writeFileAtomic(profilePath(), text, &err, true, validCareerText);
+}
+
+std::string Career::defaultPath() { return careerConfigDir() + "/career.txt"; }

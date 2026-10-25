@@ -18,3 +18,15 @@ bool startableVehicle(int catalogIndex);
 // A folder-safe name for a world: lowercase letters and digits joined by '-', at most 32
 // characters, "world" if nothing is left; "-2", "-3"... appended until it isn't in `taken`.
 std::string worldSlug(const std::string& name, const std::vector<std::string>& taken);
+
+// Where the profile (profile.txt) and the old career.txt live: configDir(), unless this thread has a ScopedCareerDir
+// (the tests run as threads in one process, so each gives itself a folder instead of an environment variable).
+std::string careerConfigDir();
+struct ScopedCareerDir {
+    explicit ScopedCareerDir(std::string dir);
+    ~ScopedCareerDir();
+    ScopedCareerDir(const ScopedCareerDir&) = delete;
+    ScopedCareerDir& operator=(const ScopedCareerDir&) = delete;
+private:
+    std::string prev_;
+};
