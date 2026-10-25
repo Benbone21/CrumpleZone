@@ -12,7 +12,7 @@
 #pragma once
 #include <string>
 
-#include "../mathx.h"
+#include "../modelkit.h"
 
 namespace drivetrain {
 
@@ -35,7 +35,9 @@ struct BoxEnds {
     bool rear = false, front = false;
     V3 rearAt, frontAt;
 };
-// false if `id` isn't a gearbox, CVT or transfer case model.
+// false if `id` isn't a gearbox, CVT or transfer case model. boxEnds: with the lab's picked params; boxEndsFor: with
+// these (a TH400 is longer than a TH350, a 10-speed than a 6-speed).
 bool boxEnds(const std::string& id, int variant, BoxEnds& e);
+bool boxEndsFor(const std::string& id, int variant, const mk::P& p, BoxEnds& e);
 
 }  // namespace drivetrain

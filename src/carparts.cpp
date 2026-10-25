@@ -97,12 +97,40 @@ double clampTo(double v, double lo, double hi) { return v < lo ? lo : v > hi ? h
 // U-joint centres of the models' yokes in their own space (parts.cpp: yoke(b, x0, ...) puts its cross pins 6.8 cm out from x0).
 // The gearboxes' and transfer cases' per design (models/drivetrain.h boxEnds); the differential's {axle, bare}.
 constexpr double kYokePin = 0.068;
-bool yokeLocal(const std::string& id, int variant, bool front, V3& out) {
+// A box's ends with its params as set on it (kept: they're asked every frame).
+bool endsOf(const std::string& id, int v, const std::vector<std::pair<std::string, double>>& set, drivetrain::BoxEnds& e) {
+    static std::map<uint64_t, std::pair<bool, drivetrain::BoxEnds>> cache;
+    static std::mutex lock;
+    static uint64_t cachedFor = 0;
+    uint64_t h = 1469598103934665603ull;
+    auto mix = [&](uint64_t x) { h = (h ^ x) * 1099511628211ull; };
+    for (char ch : id) mix((unsigned char)ch);
+    mix((uint64_t)(v + 7));
+    for (const auto& kv : set) {
+        for (char ch : kv.first) mix((unsigned char)ch);
+        mix((uint64_t)std::llround(kv.second * 4096));
+    }
+    std::lock_guard<std::mutex> g(lock);
+    if (cachedFor != mk::picksVersion()) cache.clear(), cachedFor = mk::picksVersion();
+    auto it = cache.find(h);
+    if (it == cache.end()) {
+        std::pair<bool, drivetrain::BoxEnds> r(false, drivetrain::BoxEnds());
+        if (const mk::ModelDef* d = mk::findModel(id)) {
+            mk::P p = mk::pickedParams(*d, v);
+            for (const auto& kv : set) p.v[kv.first] = kv.second;
+            r.first = drivetrain::boxEndsFor(id, v, p, r.second);
+        }
+        it = cache.emplace(h, r).first;
+    }
+    e = it->second.second;
+    return it->second.first;
+}
+bool yokeLocal(const std::string& id, int variant, bool front, V3& out, const std::vector<std::pair<std::string, double>>& set) {
     const mk::ModelDef* d = mk::findModel(id);
     const int v = variant >= 0 ? variant : d ? mk::pickedVariant(*d) : 0;
     if (id == "differential") { out = V3((v == 1 ? -0.37 : -0.31) - kYokePin, 0, 0); return !front; }
     drivetrain::BoxEnds e;
-    if (!drivetrain::boxEnds(id, v, e)) return false;
+    if (!endsOf(id, v, set, e)) return false;
     if (front ? !e.front : !e.rear) return false;
     out = front ? e.frontAt : e.rearAt;
     return true;
@@ -118,7 +146,7 @@ void shaftLocal(int variant, const mk::ModelDef* d, double& lo, double& hi) {
 
 V3 partYoke(const Placed& pl, bool front) {
     V3 l;
-    if (!yokeLocal(pl.id, pl.variant, front, l)) return pl.p;
+    if (!yokeLocal(pl.id, pl.variant, front, l, pl.set)) return pl.p;
     return pl.p + pl.ax[0] * (l.x * pl.scale.x) + pl.ax[1] * (l.y * pl.scale.y) + pl.ax[2] * (l.z * pl.scale.z);
 }
 
@@ -192,12 +220,13 @@ struct Maker {
     }
 
     // A drivetrain model as the car has it (drivetrainlook.h): its design and params; `noLever`: no shift lever up through the floor.
-    void putLook(const PartLook& L, const V3& at, V3 X, V3 Y, const V3& scale, bool noLever) {
+    Placed makeLook(const PartLook& L, const V3& at, V3 X, V3 Y, const V3& scale, bool noLever) const {
         Placed pl = make(L.id, at, X, Y, scale, L.variant);
         for (int i = 0; i < L.n; i++) pl.set.emplace_back(L.set[i].key, L.set[i].value);
         if (noLever) pl.set.insert(pl.set.end(), kNoLever.begin(), kNoLever.end());
-        add(std::move(pl));
+        return pl;
     }
+    void putLook(const PartLook& L, const V3& at, V3 X, V3 Y, const V3& scale, bool noLever) { add(makeLook(L, at, X, Y, scale, noLever)); }
 
     // A snapped part: `full` is it whole, lying from `a` (its -X end) to `e`. Cut at `frac` of its length, each
     // half hangs from its own end, drooped by gravity (about the horizontal across it), the torn ends capped.
@@ -315,27 +344,31 @@ struct Maker {
         const PartLook gl = gearboxLook(vs), tl = front ? transferLook(vs) : PartLook();
         const bool xfer = *tl.id != 0;
         drivetrain::BoxEnds ge, te;
-        drivetrain::boxEnds(gl.id, gl.variant, ge);
+        const V3 up = blk.Y;
+        Placed pg = makeLook(gl, blk.rear, -D, up, V3(1, 1, 1), true), pt;  // (placed below, once their lengths are known)
+        endsOf(pg.id, pg.variant, pg.set, ge);
         const Bnd g = bounds(gl.id, gl.variant, &gl);
         const double natG = std::max(0.1, ge.inX - (ge.rear ? ge.rearAt.x : g.lo.x));  // (from the bell's face to the tail's U-joint)
         double natT = 0;
         if (xfer) {
-            drivetrain::boxEnds(tl.id, tl.variant, te);
+            pt = makeLook(tl, blk.rear, -D, up, V3(1, 1, 1), true);
+            endsOf(pt.id, pt.variant, pt.set, te);
             const Bnd t = bounds(tl.id, tl.variant, &tl);
             natT = std::max(0.1, te.inX - (te.rear ? te.rearAt.x : t.lo.x));
         }
         const double s = clampTo(total / (natG + natT), 0.55, 1.15), cs = clampTo(s, 0.85, 1.0);
-        const V3 up = blk.Y;
         const char* kind = !std::strcmp(gl.id, "gearbox_auto") ? "AUTOMATIC GEARBOX" : !std::strcmp(gl.id, "gearbox_cvt") ? "CVT GEARBOX" : "MANUAL GEARBOX";
         part(PK_GEARBOX, PS_OK, N(kind), -1, -1, -1, -1, N(vs.gearboxName));
-        putLook(gl, blk.rear + D * (ge.inX * s - 0.02), -D, up, V3(s, cs, cs), true);
+        pg.p = blk.rear + D * (ge.inX * s - 0.02), pg.scale = V3(s, cs, cs);
+        add(std::move(pg));
         yk.rear = ge.rear;
         if (ge.rear) yk.rearAt = partYoke(out.back(), false);
         if (!xfer) return;
         part(PK_TRANSFER, PS_OK, N("TRANSFER CASE"));
         // Its face on the end of the gearbox's tail housing (where the gearbox's own yoke would start: it swallows that).
         const double face = (natG - kYokePin) * s;
-        putLook(tl, blk.rear + D * (face + te.inX * s - 0.02), -D, up, V3(s, cs, cs), true);
+        pt.p = blk.rear + D * (face + te.inX * s - 0.02), pt.scale = V3(s, cs, cs);
+        add(std::move(pt));
         yk.rear = te.rear, yk.front = te.front;
         if (te.rear) yk.rearAt = partYoke(out.back(), false);
         if (te.front) yk.frontAt = partYoke(out.back(), true);
