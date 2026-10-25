@@ -43,35 +43,59 @@ int main(int argc, char** argv) {
             for (const VehicleSpec& e : engines) seen |= std::string(e.engineName) == s.engineName;
             if (!seen) engines.push_back(s);
         }
+    // Each engine three ways: idling (4 s), revved in neutral (three blips), and a pull through
+    // the revs to the redline, flat out, then a lift (a turbo's blow-off or flutter, pops) and
+    // back to idle. Boost builds and leaks as in the game (its turbo lag).
+    struct Clip { const char* name; float seconds; };
+    const Clip clips[] = {{"idle", 4}, {"rev", 6}, {"pull", 10}};
+    FILE* index = std::fopen((out + "/index.txt").c_str(), "w");
+    if (index) std::fprintf(index, "engine | kind | files (48 kHz mono): idle 4 s, rev (three blips) 6 s, pull (idle to redline flat out, lift, coast) 10 s\n");
     for (const auto& v : engines) {
-        EngineVoice synth;
-        EngineInput in{(float)v.idleRpm, 0, 0, v.cylinders, (int)v.induction, (float)v.displacement, (float)v.redline, v.flatPlane};
-        in.recording = (uint8_t)engineSamples::forVehicle(v);
-        in.voice = voiceFor(v);
-        const auto* bank = recordings.bank(in.recording);
-        std::vector<float> samples(12 * 48000);
-        double energy = 0, sum = 0; float peak = 0;
-        const auto start = std::chrono::steady_clock::now();
-        for (int i = 0; i < (int)samples.size(); i++) {
-            const float t = i / 48000.0f;
-            if (t < 2) { in.rpm = v.idleRpm; in.load = 0.05f; }
-            else if (t < 7) { in.rpm = v.idleRpm + (v.redline * 0.95f - v.idleRpm) * (t - 2) / 5; in.load = 0.85f; }
-            else if (t < 9) { in.rpm = v.redline * (0.6f + 0.12f * (t - 7)); in.load = t < 7.15f ? 0 : 0.8f; }
-            else if (t < 11) { in.rpm = v.idleRpm + (v.redline * 0.84f - v.idleRpm) * (11 - t) / 2; in.load = 0; }
-            else { in.rpm = 0; in.load = 0; }
-            in.boost = in.load;
-            samples[i] = std::tanh(synth.sample(in, 1.0f / 48000, bank) * 1.2f) * 0.8f;
-            peak = std::max(peak, std::fabs(samples[i])); energy += samples[i] * samples[i]; sum += samples[i];
-        }
-        const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
         std::string name = std::string(v.id) + "-" + v.engineName;
         for (char& ch : name) ch = std::isalnum((unsigned char)ch) ? (char)std::tolower((unsigned char)ch) : '-';
-        const std::string path = out + "/" + name + ".wav";
-
-        if (!wav(path, samples)) return 1;
-        std::printf("%s: RMS %.4f peak %.4f DC %.6f CPU %.2f%% of one core\n", name.c_str(), std::sqrt(energy / samples.size()), peak, sum / samples.size(), seconds / 12 * 100);
-        combined.insert(combined.end(), samples.begin(), samples.end());
-        combined.resize(combined.size() + 24000, 0);
+        const EngineTone tone = voiceFor(v);
+        std::printf("%s (%s)\n", name.c_str(), engineKindName(tone.kind));
+        if (index) std::fprintf(index, "%s | %s | %s-idle.wav %s-rev.wav %s-pull.wav\n", v.engineName, engineKindName(tone.kind), name.c_str(), name.c_str(), name.c_str());
+        for (const Clip& clip : clips) {
+            EngineVoice synth;
+            EngineInput in{(float)v.idleRpm, 0, 0, v.cylinders, (int)v.induction, (float)v.displacement, (float)v.redline, v.flatPlane};
+            in.recording = (uint8_t)engineSamples::forVehicle(v);
+            in.voice = tone;
+            const auto* bank = recordings.bank(in.recording);
+            std::vector<float> samples((size_t)(clip.seconds * 48000));
+            double energy = 0, sum = 0; float peak = 0, boost = 0;
+            const float idle = (float)v.idleRpm, red = (float)v.redline;
+            const auto start = std::chrono::steady_clock::now();
+            for (int i = 0; i < (int)samples.size(); i++) {
+                const float t = i / 48000.0f;
+                float rpm = idle, load = 0.04f;
+                if (clip.name[0] == 'r') {  // three blips: up fast under throttle, down slower without it
+                    const float c = std::fmod(t, 2.0f);
+                    if (c > 0.5f && c < 0.85f) load = 1, rpm = idle + (red * 0.85f - idle) * (c - 0.5f) / 0.35f;
+                    else if (c >= 0.85f) load = 0, rpm = std::max(idle, red * 0.85f - (red * 0.85f - idle) * (c - 0.85f) / 0.9f);
+                } else if (clip.name[0] == 'p') {
+                    if (t >= 1 && t < 7) load = 1, rpm = idle + (red - idle) * std::pow((t - 1) / 6, 0.8f);
+                    else if (t >= 7) load = 0, rpm = std::max(idle, red - (red - idle) * (t - 7) / 2.5f);
+                }
+                if (t > clip.seconds - 0.4f) rpm = idle, load = 0.04f;
+                if (v.induction == VehicleSpec::TURBO) {  // (as Car: lags up, leaks away)
+                    const float tau = load > boost ? (float)v.turboLag * std::clamp(3000 / std::max(rpm, 1.0f), 0.5f, 2.0f) : 0.25f;
+                    boost += (load - boost) * std::min(1.0f, 1.0f / 48000 / std::max(tau, 1e-3f));
+                } else boost = 0;
+                in.rpm = rpm, in.load = load, in.boost = boost;
+                samples[i] = synth.sample(in, 1.0f / 48000, bank) * 0.9f;
+                peak = std::max(peak, std::fabs(samples[i])); energy += samples[i] * samples[i]; sum += samples[i];
+            }
+            const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+            const std::string path = out + "/" + name + "-" + clip.name + ".wav";
+            if (!wav(path, samples)) return 1;
+            std::printf("  %-5s RMS %.4f peak %.4f DC %.6f CPU %.2f%% of one core\n", clip.name, std::sqrt(energy / samples.size()), peak, sum / samples.size(), seconds / clip.seconds * 100);
+            if (clip.name[0] == 'p') {
+                combined.insert(combined.end(), samples.begin(), samples.end());
+                combined.resize(combined.size() + 24000, 0);
+            }
+        }
     }
-    return wav(out + "/all-engines.wav", combined) ? 0 : 1;
+    if (index) std::fclose(index);
+    return wav(out + "/all-engines-pull.wav", combined) ? 0 : 1;  // (every pull, one after another)
 }
