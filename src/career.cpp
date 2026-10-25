@@ -319,6 +319,7 @@ bool parseCareer(std::istream& f, Career& c) {
     c.cash = 0;
     bool sawCash = false;
     std::vector<std::pair<size_t, std::string>> conds;
+    std::vector<int> slotOf;  // per veh line in the file (good or not): its place in c.vehicles, -1 if skipped (so "cond N" always means the Nth veh line)
     std::string line;
     while (std::getline(f, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
@@ -336,12 +337,14 @@ bool parseCareer(std::istream& f, Career& c) {
             std::istringstream is(v);
             OwnedVehicle ov;
             int p[MOD_SLOTS];
+            slotOf.push_back(-1);
             if (!(is >> ov.vehicle >> ov.world) || ov.vehicle < 0 || ov.vehicle >= (int)vehicleCatalog().size()) continue;
             bool ok = true;
             for (int i = 0; i < MOD_SLOTS; i++) ok &= (bool)(is >> p[i]);
             if (!ok) continue;
             if (ov.world == "-") ov.world.clear();
             for (int i = 0; i < MOD_SLOTS; i++) ov.mods.pick[i] = std::min(std::max(p[i], 0), (int)modOptions(ov.vehicle, i).size() - 1);
+            slotOf.back() = (int)c.vehicles.size();
             c.vehicles.push_back(ov);
         } else if (k == "cond") {  // "cond N TEXT"
             const size_t sp2 = v.find(' ');
@@ -350,7 +353,7 @@ bool parseCareer(std::istream& f, Career& c) {
         }
     }
     for (const auto& cd : conds)
-        if (cd.first < c.vehicles.size()) c.vehicles[cd.first].condition = cd.second;
+        if (cd.first < slotOf.size() && slotOf[cd.first] >= 0) c.vehicles[slotOf[cd.first]].condition = cd.second;
     if (!sawCash) return false;
     // A career from before anchor gear: the starting set (a strap and a sling are never used up, so none means none yet).
     if (!c.stock.count(anchors::gearKey(GEAR_STRAP)) && !c.stock.count(anchors::gearKey(GEAR_SLING))) {

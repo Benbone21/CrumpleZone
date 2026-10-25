@@ -269,3 +269,20 @@ SCENARIO(careerStartCash, "career/start-cash", "A new profile starts with the di
     c.startFresh();
     ctx.check("default is medium", c.cash == 1000);
 }
+
+SCENARIO(careerProfileBadVehicle, "career/profile-bad-vehicle", "A veh line that can't be read (bad catalog index, malformed) is skipped without moving later vehicles' conditions onto the wrong car") {
+    const std::string dir = freshDir("badveh");
+    ScopedCareerDir scope(dir);
+    const int civic = vehicleIndex("civic"), blazer = vehicleIndex("blazer");
+    std::string text = "cash 5\nveh " + std::to_string(civic) + " w 0 0 0 0 0\ncond 0 first\nveh 99999 w 0 0 0 0 0\ncond 1 lost\nveh oops\nveh " +
+                       std::to_string(blazer) + " w 0 0 0 0 0\ncond 3 third\nfuture-key whatever\n";
+    spit(dir + "/profile.txt", text);
+    Career c;
+    ctx.check("loads", c.loadProfile());
+    ctx.check("two vehicles survive", c.vehicles.size() == 2);
+    ctx.check("each keeps its own condition", c.vehicles.size() == 2 && c.vehicles[0].vehicle == civic && c.vehicles[0].condition == "first" &&
+              c.vehicles[1].vehicle == blazer && c.vehicles[1].condition == "third");
+    ctx.check("resaved, they still match", c.saveProfile());
+    Career d;
+    ctx.check("reloaded", d.loadProfile() && d.vehicles.size() == 2 && d.vehicles[0].condition == "first" && d.vehicles[1].condition == "third");
+}
