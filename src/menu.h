@@ -36,6 +36,8 @@ struct Settings {
     bool rememberPassword = false;
     int maxPlayers = 8;         // the most in a game you host (2..8)
     int hostPort = 27015;       // the port you host on, TCP and UDP (1024..65535; net::kDefaultPort)
+    std::string rendezvous;     // the join-code server, HOST[:PORT] ("" = the game's own, net::kDefaultRendezvous)
+    std::vector<std::string> recentJoins;  // the last codes and addresses joined, newest first (3)
     int pilotDest = 0;          // autopilot: which place (index into the menu's list)
     float pilotSpeed = 30;      // km/h
     int pilotRoute = 1;         // 0 roads only, 1 roads and trails, 2 anywhere

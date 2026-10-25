@@ -61,6 +61,9 @@
 #include "hudkit.h"
 #include "level.h"
 #include "levelrun.h"
+#include "mpmenu.h"
+#include "mpmenudraw.h"
+#include "rendezvous.h"
 #include "laptimer.h"
 #include "sectionfile.h"
 #include "menu.h"
@@ -153,6 +156,8 @@ struct Options {
     int spawnSection = -1;        // --spawn-section N: start at the Nth obstacle section's entry (0-based, proving ground)
     int hostPort = -1;            // --host [PORT]: open a multiplayer session (0: on the port in the settings)
     std::string join;             // --join HOST[:PORT]
+    std::string joinCode;         // --join-code CODE: join a friend's game with its code
+    std::string rendezvous;       // --rendezvous HOST[:PORT]: the join-code server (else settings.txt's, else the game's own)
     std::string name;             // --name NAME (multiplayer)
     std::string password;         // --password PASSWORD: for the game you host, and for the one you join
     double timeHours = -1;        // --time H: hold the clock at H hours (0..24), e.g. 21.5
@@ -440,6 +445,8 @@ Options parseArgs(int argc, char** argv) {
                 std::exit(2);
             }
         }
+        else if (a == "--join-code") o.joinCode = next();
+        else if (a == "--rendezvous") o.rendezvous = next();
         else if (a == "--name") o.name = next();
         else if (a == "--password") o.password = next();
         else if (a == "--resume-edit") o.resumeEdit = next();
@@ -2120,10 +2127,15 @@ int main(int argc, char** argv) {
     Effects fx;
     PauseMenu menu;
     mainmenu::Nav mainNav;        // the new main menu's state (mainmenu.h)
+    mpmenu::Nav mpNav;            // the multiplayer pages (mpmenu.h): the PauseMenu's page 2, in the main menu's style
+    mpmenu::View mpView;
+    bool mpWasShown = false, joinByCode = false;
+    std::string joinWhat;         // the last join: a code or an address (RETRY, RECENT)
     bool classicTitle = false;    // the old title page is up (DEV > CLASSIC MENU, or --menu 9) instead of the new one
     float mainFade = 0;           // the new menu fading in
     // The new main menu is the title screen's page 0 over the camp (the settings, multiplayer and levels pages are still the PauseMenu's).
     auto mainMenuShown = [&]() { return menu.open && menu.title && menu.pageNow() == 0 && campWorld && !classicTitle; };
+    auto mpShown = [&]() { return menu.open && menu.pageNow() == 2 && !(menu.title && classicTitle); };
     auto campBehind = [&]() { return campWorld && menu.open && menu.title; };
     bool menuWasPaused = false, garageFromMenu = false;
     float menuBlur = 0;
@@ -2308,7 +2320,7 @@ int main(int argc, char** argv) {
                 if (sim.player > i) sim.player--;
             }
     };
-    auto startHost = [&](int port) {
+    auto startHost = [&](int port, bool quietFail = false) {
         const std::string session = !settings.sessionName.empty() ? settings.sessionName
                                     : (settings.playerName.empty() ? std::string("PLAYER") : settings.playerName) + "'S GAME";
         net.password = !opt.password.empty() ? opt.password : settings.netPassword;
@@ -2318,6 +2330,7 @@ int main(int argc, char** argv) {
             hud.toast("HOSTING " + session + " ON " + mapName(sim.world.map) + ": FRIENDS ON YOUR NETWORK SEE IT IN JOIN");
             std::printf("hosting %s on port %d\n", mapName(sim.world.map), port);
         } else {
+            if (quietFail && net.portInUse) return;
             if (net.portInUse) net.error = "PORT " + std::to_string(port) + " IS IN USE: PICK ANOTHER IN THE MULTIPLAYER MENU";
             hud.toast("CAN'T HOST: " + net.error);
             std::printf("can't host: %s\n", net.error.c_str());
@@ -2344,6 +2357,8 @@ int main(int argc, char** argv) {
             if (!net::parseAddress(address, h, menu.joinPort)) menu.joinPort = net::kDefaultPort;  // (for the failed card's port help)
         }
         settings.joinAddress = address;  // (the last server, whether typed or picked from the list)
+        joinByCode = false;
+        joinWhat = address;
         net.password = net::joinPassword(opt.password, settings.joinPassword);
         peerAddress = address;
         if (net.beginJoin(address, settings.playerName)) {
@@ -2352,6 +2367,28 @@ int main(int argc, char** argv) {
             joinFailed();
         }
         std::printf("joining %s\n", address.c_str());
+    };
+    auto rendezvousAddress = [&]() { return !opt.rendezvous.empty() ? opt.rendezvous : !settings.rendezvous.empty() ? settings.rendezvous : std::string(net::kDefaultRendezvous); };
+    auto beginCodeJoin = [&](const std::string& code) {
+        menu.joining = true;
+        menu.joinLabel = "CODE " + rv::formatCode(rv::normalizeCode(code));
+        menu.joinError.clear();
+        menu.joinNeedsPw = false;
+        net.password = net::joinPassword(opt.password, settings.joinPassword);
+        net.rendezvous = rendezvousAddress();
+        joinByCode = true;
+        joinWhat = rv::formatCode(rv::normalizeCode(code));
+        if (net.beginJoinCode(code, settings.playerName)) joinState = 1;
+        else joinFailed();
+        std::printf("joining with code %s\n", joinWhat.c_str());
+    };
+    auto rememberJoin = [&](const std::string& what) {  // (RECENT on the multiplayer page)
+        if (what.empty()) return;
+        auto& r = settings.recentJoins;
+        r.erase(std::remove(r.begin(), r.end(), what), r.end());
+        r.insert(r.begin(), what);
+        if (r.size() > 3) r.resize(3);
+        saveSettings();
     };
     // ---- end multiplayer joining
     auto startJoin = [&](const std::string& address) {
@@ -3069,6 +3106,160 @@ int main(int argc, char** argv) {
             }
         }
     };
+    // ---- The multiplayer pages (mpmenu.h): the PauseMenu's page 2, drawn and driven in the main menu's style ----
+    auto upperText = [](std::string s) {
+        for (char& ch : s) ch = (char)std::toupper((unsigned char)ch);
+        return s;
+    };
+    auto mpLoadFields = [&]() {  // settings -> the pages' fields
+        mpmenu::Fields& f = mpNav.f;
+        f.name = settings.playerName;
+        f.address = settings.joinAddress;
+        f.password = settings.joinPassword;
+        f.hostPassword = settings.netPassword;
+        f.session = settings.sessionName;
+        f.port = std::to_string(settings.hostPort);
+        f.maxPlayers = net.role == NetSession::HOST ? net.maxPlayers : settings.maxPlayers;
+        f.passwordOn = net.role == NetSession::HOST ? !net.password.empty() : !settings.netPassword.empty();
+        f.map = 0;
+        const std::vector<int>& maps = listedMaps();
+        for (int i = 0; i < (int)maps.size(); i++)
+            if (maps[i] == menu.mapPick) f.map = i;
+    };
+    auto mpSaveFields = [&]() {  // the pages' fields -> settings
+        const mpmenu::Fields& f = mpNav.f;
+        if (!f.name.empty()) settings.playerName = f.name;
+        settings.joinAddress = f.address;
+        settings.joinPassword = f.password;
+        settings.netPassword = f.hostPassword;
+        settings.sessionName = f.session;
+        const int p = net::parsePort(f.port, net::kMinHostPort);
+        if (p > 0) settings.hostPort = p;
+        settings.maxPlayers = f.maxPlayers;
+        const std::vector<int>& maps = listedMaps();
+        if (!maps.empty()) menu.mapPick = maps[std::min(std::max(f.map, 0), (int)maps.size() - 1)];
+        saveSettings();
+    };
+    auto mpFillView = [&]() {
+        mpmenu::View& v = mpView;
+        v.inGame = !menu.title;
+        v.role = net.role == NetSession::HOST ? 1 : net.role == NetSession::CLIENT && !net.joining() ? 2 : 0;
+        v.codesAvailable = !rendezvousAddress().empty();
+        v.code = net.joinCode;
+        v.codeState = (int)net.codeState;
+        v.codeError = net.codeError;
+        v.players.clear();
+        for (int k = 0; k < net::kMaxPeers && v.role; k++) {
+            const NetPlayer& p = net.players[k];
+            if (!p.active) continue;
+            mpmenu::View::Player vp;
+            vp.id = k, vp.name = p.name.empty() ? "PLAYER" : p.name, vp.pingMs = (int)std::lround(p.ping * 1000);
+            vp.link = k == net.self && net.role == NetSession::CLIENT ? (int)net.myLink() : p.link;
+            vp.self = k == net.self;
+            v.players.push_back(vp);
+        }
+        v.sessionTitle = net.role == NetSession::HOST ? net.sessionName : net.ownerName(0) + "'S GAME";
+        v.mapName = v.role ? mapName(net.map) : "";
+        v.maxPlayersNow = net.maxPlayers;
+        v.lan.clear();
+        for (const PauseMenu::FoundGame& g : menu.found) v.lan.push_back({g.session, g.ok ? g.host + "  " + g.map + "  " + g.players : g.why, g.address, g.ok});
+        v.searching = menu.searching;
+        v.localIps = menu.localIps;
+        v.hostPort = net.port() ? net.port() : settings.hostPort;
+        v.joining = menu.joining;
+        v.byCode = joinByCode;
+        v.joinStep = (int)net.joinStep();
+        v.joinFail = (int)net.joinFail;
+        v.failPlayers = net.failPlayers, v.failMax = net.failMax;
+        v.joinLabel = menu.joinLabel;
+        v.joinError = menu.joinError;
+        v.needPassword = menu.joinNeedsPw;
+        v.mapNames.clear();
+        for (int mp : listedMaps()) v.mapNames.push_back(mapName(mp));
+        v.recent = settings.recentJoins;
+    };
+    auto mpSync = [&]() {  // (the page just came up: from the main menu, HOME; in the game, FRIENDS)
+        mpFillView();
+        const bool shown = mpShown();
+        if (shown && !mpWasShown) {
+            mpLoadFields();
+            mpNav.open(menu.title ? mpmenu::P_HOME : mpmenu::P_FRIENDS, mpView);
+            if (menu.joining) mpNav.showJoining();
+        }
+        mpWasShown = shown;
+    };
+    auto openToFriends = [&]() {
+        if (net.role == NetSession::CLIENT) return;
+        if (net.role != NetSession::HOST) {  // (this world as it is: no reload, the port in the settings or the next free one)
+            for (int k = 0; k < 10 && !net.active(); k++) startHost(settings.hostPort + k, k < 9);
+            if (!net.active()) return;
+            if (run.active()) net.setLevel(saveLevelText(run.level));  // (they join into the level being played)
+        }
+        net.password = mpNav.f.passwordOn ? mpNav.f.hostPassword : std::string();
+        net.maxPlayers = std::max(net.playerCount(), std::min(std::max(mpNav.f.maxPlayers, 2), net::kMaxPeers));
+        net.rendezvous = rendezvousAddress();
+        if (!net.openToFriends()) hud.toast("NO JOIN CODE: " + upperText(net.codeError));
+    };
+    auto handleMp = [&](const mpmenu::Result& r) {
+        using namespace mpmenu;
+        const int model = std::max(0, sim.cars[sim.player].spec->model);
+        switch (r.act) {
+            case A_NONE: break;
+            case A_CHANGED: mpSaveFields(); break;
+            case A_SETTINGS_LIVE:
+                mpSaveFields();
+                if (net.role == NetSession::HOST) {
+                    net.password = mpNav.f.passwordOn ? mpNav.f.hostPassword : std::string();
+                    net.maxPlayers = std::max(net.playerCount(), std::min(std::max(mpNav.f.maxPlayers, 2), net::kMaxPeers));
+                }
+                break;
+            case A_BACK:
+                if (menu.title) menu.showTitle(model, sim.world.map);
+                else menu.show(model, sim.world.map);
+                break;
+            case A_JOIN_CODE:
+                mpSaveFields();
+                mpNav.showJoining();
+                beginCodeJoin(r.text);
+                break;
+            case A_JOIN_ADDRESS:
+            case A_JOIN_FOUND:
+                mpSaveFields();
+                mpNav.showJoining();
+                beginJoin(r.text, r.label);
+                break;
+            case A_RETRY:
+                mpSaveFields();
+                mpNav.showJoining();
+                if (joinByCode) beginCodeJoin(joinWhat);
+                else beginJoin(joinWhat, menu.joinLabel);
+                break;
+            case A_CANCEL_JOIN:
+                handleMenu(PauseMenu::Result{PauseMenu::CANCEL_JOIN});
+                break;
+            case A_HOST: {
+                mpSaveFields();
+                handleMenu(PauseMenu::Result{PauseMenu::HOST});
+                if (net.role == NetSession::HOST && mpNav.f.alsoCode && !rendezvousAddress().empty()) {
+                    net.rendezvous = rendezvousAddress();
+                    net.openToFriends();
+                }
+                break;
+            }
+            case A_OPEN_FRIENDS: openToFriends(); break;
+            case A_CLOSE_FRIENDS:
+                net.closeToFriends();
+                hud.toast("CLOSED TO FRIENDS: THE CODE NO LONGER WORKS");
+                break;
+            case A_COPY_CODE: hud.toast("JOIN CODE " + rv::formatCode(net.joinCode) + " COPIED"); break;
+            case A_STOP_HOSTING:
+            case A_LEAVE: handleMenu(PauseMenu::Result{PauseMenu::LEAVE}); break;
+            case A_KICK:
+                if (r.arg > 0 && r.arg < net::kMaxPeers) hud.toast(upperText(net.players[r.arg].name) + " REMOVED");
+                net.kick(r.arg);
+                break;
+        }
+    };
     if (opt.menu == 9) {  // (testing: the title screen)
         openMenu();
         menu.showTitle(std::max(0, sim.cars[sim.player].spec->model), sim.world.map);
@@ -3080,6 +3271,7 @@ int main(int argc, char** argv) {
     }
     if (opt.hostPort >= 0) startHost(opt.hostPort > 0 ? opt.hostPort : settings.hostPort);
     else if (!opt.join.empty()) startJoin(opt.join);
+    else if (!opt.joinCode.empty()) beginCodeJoin(opt.joinCode);
     // Launched plainly (no map, spawn, session or test asked for): the title screen first.
     bool resumedEdit = false;
     if (!opt.resumeEdit.empty() && !scripted) {  // (a reload with unsaved edits: the recovery copy it just wrote)
@@ -3717,7 +3909,10 @@ int main(int argc, char** argv) {
             switch (e.type) {
                 case SDL_QUIT: running = false; break;
                 case SDL_TEXTINPUT:
-                    if (menu.open) {
+                    if (mpShown()) {
+                        mpSync();
+                        handleMp(mpNav.text(evText(e), mpView));
+                    } else if (menu.open) {
                         const uint8_t* ks = SDL_GetKeyboardState(nullptr);
                         menu.ctrl = ks[224] || ks[228] || testCtrl;
                         handleMenu(menu.textInput(evText(e).c_str(), settings));
@@ -3758,6 +3953,17 @@ int main(int argc, char** argv) {
                     }
                     if (menu.open && menu.title && classicTitle && campWorld && menu.pageNow() == 0 && evKeyScancode(e) == SC_ESCAPE) {  // (the old title page: Esc is back to the new one)
                         classicTitle = false;
+                        break;
+                    }
+                    if (mpShown()) {  // the multiplayer pages (mpmenu.h) take every key
+                        mpSync();
+                        const uint8_t* ks = SDL_GetKeyboardState(nullptr);
+                        const bool ctrl = ks[224] || ks[228] || testCtrl, shift = ks[SC_LSHIFT] || ks[SC_RSHIFT];
+                        const int before = mpNav.sel, pageBefore = mpNav.page;
+                        const mpmenu::Result r = mpNav.key(evKeyScancode(e), ctrl, shift, mpView);
+                        if (activationKey(evKeyScancode(e)) || mpNav.page != pageBefore) uiClick();
+                        else if (mpNav.sel != before) uiHover();
+                        handleMp(r);
                         break;
                     }
                     if (menu.open) {  // the menu takes every key (repeats too: hold to slide)
@@ -4124,6 +4330,16 @@ int main(int argc, char** argv) {
                             mainNav.setSel(h);
                             if (mainNav.sel != before) uiHover();
                         }
+                    } else if (mpShown()) {
+                        float mx, my;
+                        toDrawable(evMotionX(e), evMotionY(e), mx, my);
+                        mpSync();
+                        const int h = mpNav.hitAt(mx, my);
+                        if (h >= 0) {
+                            const int before = mpNav.sel;
+                            mpNav.setSel(h, mpView);
+                            if (mpNav.sel != before) uiHover();
+                        }
                     } else if (menu.open) {
                         float mx, my;
                         toDrawable(evMotionX(e), evMotionY(e), mx, my);
@@ -4158,6 +4374,15 @@ int main(int argc, char** argv) {
                         else if (evButton(e) == 3) handleMain(mainNav.back());
                         break;
                     }
+                    if (mpShown()) {
+                        float mx, my;
+                        toDrawable(evButtonX(e), evButtonY(e), mx, my);
+                        mpSync();
+                        const int h = mpNav.hitAt(mx, my);
+                        if (evButton(e) == 1 && h >= 0) uiClick(), handleMp(mpNav.choose(h, mpView));
+                        else if (evButton(e) == 3) handleMp(mpNav.back(mpView));
+                        break;
+                    }
                     if (menu.open && evButton(e) == 1) {
                         float mx, my;
                         toDrawable(evButtonX(e), evButtonY(e), mx, my);
@@ -4173,6 +4398,8 @@ int main(int argc, char** argv) {
                     if (!menu.open) cam.dist = clampd(cam.dist * std::pow(0.88, evWheelY(e)), 3.0, 60.0);
                     else if (mainMenuShown()) {
                         if (evWheelY(e) != 0 && mainNav.page != mainmenu::P_FRONT) mainNav.move(evWheelY(e) > 0 ? -1 : 1);
+                    } else if (mpShown()) {
+                        if (evWheelY(e) != 0) mpSync(), mpNav.move(evWheelY(e) > 0 ? -1 : 1, mpView);
                     } else if (evWheelY(e) != 0) menu.wheel(evWheelY(e) > 0 ? -1 : 1, settings);
                     break;
             }
@@ -4468,8 +4695,9 @@ int main(int argc, char** argv) {
                     World::setSessionSections(net.sections);
                     if (net.map != sim.world.map || sim.world.parkEdited || !net.sections.empty() || campWorld) loadMap(net.map);
                     net.adopt(sim);
-                    hud.toast("JOINED " + net.ownerName(0) + "'S GAME ON " + mapName(net.map));
+                    hud.toast("JOINED " + net.ownerName(0) + "'S GAME ON " + mapName(net.map) + (net.myLink() == NetSession::LINK_RELAYED ? " (THROUGH THE RELAY)" : ""));
                     std::printf("joined (player %d)\n", net.self);
+                    rememberJoin(joinWhat);
                 } else if (st < 0) {
                     joinFailed();
                     std::printf("can't join: %s\n", net.error.c_str());
@@ -4906,7 +5134,7 @@ int main(int argc, char** argv) {
             }
             for (const std::string& ev : sim.events) hud.toast(ev);
             sim.events.clear();
-            for (const std::string& ev : net.events) hud.toast(ev);
+            for (const std::string& ev : net.events) hud.toast(ev), std::printf("net: %s\n", ev.c_str());
             net.events.clear();
         }
 
@@ -6281,10 +6509,15 @@ int main(int argc, char** argv) {
                 renderer.rect(W - renderer.textWidth(t, ps) - 28 * us, 10 * us, renderer.textWidth(t, ps) + 20 * us, 8 * ps + 14 * us, 0, 0, 0, 0.6f);
                 renderer.text(W - renderer.textWidth(t, ps) - 18 * us, 17 * us, ps, t, 0.4f, 0.9f, 1.0f, 1.0f);
             }
+        } else if (mpShown()) {
+            mpSync();
+            mainFade = std::min(1.0f, mainFade + (float)dt * 3.0f);
+            mpmenu::draw(renderer, mpNav, mpView, W, H, mainFade, clock, pad::ui.last, !campBehind());
         } else {
             mainFade = 0;
             menu.draw(renderer, settings, W, H, dt);
         }
+        if (!mpShown()) mpWasShown = false;
         renderer.flushHud(W, H);
 
         // CZ_BENCH=1 (with --shot-frames): average frame time, the GPU finished (one pixel read back).
