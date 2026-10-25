@@ -33,7 +33,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/cache@v4
-        with: { path: .ccache, key: ccache-profile-${{ github.sha }}, restore-keys: ccache-profile- }
+        with:
+          path: .ccache
+          key: ccache-profile-${{ github.sha }}
+          restore-keys: ccache-profile-
       - name: Toolchain
         run: sudo apt-get update -q && sudo apt-get install -y -q g++ libsdl2-2.0-0 libegl1 libgl1-mesa-dri libglx-mesa0 ccache
       - name: Train
@@ -47,7 +50,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/cache@v4
-        with: { path: .ccache, key: ccache-linux-${{ github.sha }}, restore-keys: ccache-linux- }
+        with:
+          path: .ccache
+          key: ccache-linux-${{ github.sha }}
+          restore-keys: ccache-linux-
       - name: Toolchain
         run: sudo apt-get update -q && sudo apt-get install -y -q g++ libsdl2-2.0-0 libegl1 libgl1-mesa-dri libglx-mesa0 ccache
       - uses: actions/download-artifact@v4
@@ -77,7 +83,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/cache@v4
-        with: { path: .ccache, key: ccache-windows-${{ github.sha }}, restore-keys: ccache-windows- }
+        with:
+          path: .ccache
+          key: ccache-windows-${{ github.sha }}
+          restore-keys: ccache-windows-
       - name: Toolchain
         run: sudo apt-get update -q && sudo apt-get install -y -q g++-mingw-w64-x86-64-posix zip nsis ccache
       - name: Cross-compile and build the installer
@@ -142,7 +151,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/cache@v4
-        with: { path: .ccache, key: ccache-mac-${{ github.sha }}, restore-keys: ccache-mac- }
+        with:
+          path: .ccache
+          key: ccache-mac-${{ github.sha }}
+          restore-keys: ccache-mac-
       - name: ccache
         run: brew install ccache
       - name: SDL2 framework (official universal build)
