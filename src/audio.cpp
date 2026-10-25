@@ -6,6 +6,7 @@
 #include <functional>
 #include <cstdio>
 
+#include "platform.h"
 #include "sdl_min.h"
 #include "softbody.h"
 
@@ -127,7 +128,7 @@ int Audio::loadAmbience(const std::string& directory) {
 
 namespace {
 constexpr size_t kHornLoopStart = 3000, kHornLoopEnd = 13846;
-constexpr size_t kClickSlot = 3360, kWrenchSlot = 7680;  // (the banks' slots, samples: tools/sfx_prepare.py)
+constexpr size_t kClickSlot = 3360, kWrenchSlot = 7680, kStepSlot = 14400;  // (the banks' slots, samples: tools/sfx_prepare.py)
 }
 
 int Audio::loadSfx(const std::string& directory) {
@@ -137,7 +138,8 @@ int Audio::loadSfx(const std::string& directory) {
     struct { const char* file; Sfx what; } one[] = {
         {"door_open.wav", SFX_DOOR_OPEN}, {"door_shut.wav", SFX_DOOR_SHUT}, {"clunk.wav", SFX_CLUNK}, {"toolbox_rummage.wav", SFX_TOOLBOX_OPEN},
         {"toolbox_shut.wav", SFX_TOOLBOX_SHUT}, {"wrench_ratchet.wav", SFX_WRENCH}, {"air_hiss.wav", SFX_AIR_BURST}, {"horn.wav", SFX_HORN},
-        {"winch_click.wav", SFX_WINCH_CLICK}, {"ui_click.wav", SFX_UI_CLICK}};
+        {"winch_click.wav", SFX_WINCH_CLICK}, {"ui_click.wav", SFX_UI_CLICK}, {"steps_paved.wav", SFX_STEP_PAVED},
+        {"steps_gravel.wav", SFX_STEP_GRAVEL}, {"steps_sand.wav", SFX_STEP_SAND}};
     for (auto& e : one) n += readMono16(directory + "/" + e.file, sfx_[e.what]);
     if (!sfx_[SFX_UI_CLICK].empty()) {  // the hover tick: the same click, pitched up (resampled 1.15x)
         const std::vector<float>& c = sfx_[SFX_UI_CLICK];
@@ -539,8 +541,8 @@ void Audio::startSfx(Sfx what, float gain, float pan, uint32_t wait, float pitch
     }
     const std::vector<float>& d = sfx_[what];
     size_t from = 0, to = d.size();
-    if (what == SFX_WINCH_CLICK || what == SFX_WRENCH) {  // a bank: one slot, a touch louder or softer each time
-        const size_t slot = what == SFX_WINCH_CLICK ? kClickSlot : kWrenchSlot, slots = std::max<size_t>(1, d.size() / slot);
+    if (what == SFX_WINCH_CLICK || what == SFX_WRENCH || (what >= SFX_STEP_PAVED && what <= SFX_STEP_SAND)) {  // a bank: one slot, a touch louder or softer each time
+        const size_t slot = what == SFX_WINCH_CLICK ? kClickSlot : what == SFX_WRENCH ? kWrenchSlot : kStepSlot, slots = std::max<size_t>(1, d.size() / slot);
         const size_t k = (size_t)((noise() * 0.5f + 0.5f) * slots) % slots;
         from = k * slot, to = std::min(d.size(), from + slot);
         gain *= 0.85f + 0.15f * noise();
@@ -551,9 +553,9 @@ void Audio::startSfx(Sfx what, float gain, float pan, uint32_t wait, float pitch
 
 bool Audio::start() {
     if (device_) return true;
-    if (!ambienceLoaded_) std::printf("Ambience recordings: %d of 6 loaded; missing ones stay synthesized\n", loadAmbience("assets/audio/ambience"));
-    if (!sfxLoaded_) std::printf("Sound effects: %d of 13 loaded; missing ones stay silent\n", loadSfx("assets/audio/sfx"));
-    const int banks = recordingsReady_ ? recordingCount_ : loadEngineRecordings("assets/audio/engines");
+    if (!ambienceLoaded_) std::printf("Ambience recordings: %d of %d loaded; missing ones stay synthesized\n", loadAmbience(findAssetDir("assets/audio/ambience")), kAmbienceFiles);
+    if (!sfxLoaded_) std::printf("Sound effects: %d of %d loaded; missing ones stay silent\n", loadSfx(findAssetDir("assets/audio/sfx")), kSfxFiles);
+    const int banks = recordingsReady_ ? recordingCount_ : loadEngineRecordings(findAssetDir("assets/audio/engines"));
     std::printf("Engine recordings: %d banks loaded; missing banks use procedural audio\n", banks);
     SDL_AudioSpec want{}, have{};
     want.freq = 48000;

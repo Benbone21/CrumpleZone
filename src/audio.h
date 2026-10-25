@@ -16,6 +16,8 @@ class Sim;
 
 // Recorded one-shots (assets/audio/sfx/*.wav, mono 48 kHz PCM16). The winch clicks and the wrench ticks are banks of short slots, one picked at random.
 enum Sfx { SFX_DOOR_OPEN, SFX_DOOR_SHUT, SFX_CLUNK, SFX_TOOLBOX_OPEN, SFX_TOOLBOX_SHUT, SFX_WRENCH, SFX_AIR_BURST, SFX_HORN, SFX_WINCH_CLICK, SFX_UI_CLICK, SFX_UI_HOVER,
+           // footsteps (banks of short slots, one picked at random): on pavement, on gravel / dirt / grass / rock, and on sand / snow
+           SFX_STEP_PAVED, SFX_STEP_GRAVEL, SFX_STEP_SAND,
            // synthesized when the sound effects load (no files): the repair and tool sounds (toolsounds.h)
            SFX_HAMMER, SFX_JACK_PUMP, SFX_JACK_LOWER, SFX_PRY_CREAK, SFX_TIRE_IRON, SFX_WHEEL_OFF, SFX_WHEEL_ON, SFX_BOLT_DROP, SFX_NUT_SQUEAL,
            // the engine job (fixes.h): the hood latch and prop, the starter turning a flooded engine over, water squirting from the plug holes, oil draining or pouring
@@ -80,6 +82,8 @@ public:
     void setCampfire(float level, float panFire = 0.2f, float panStream = -0.6f) { campfire_ = level, campPanFire_ = panFire, campPanStream_ = panStream; }
     // The winch hardware (up to kWinches at once, nearest first): motor hum + pawl clicks, placed at the winch. `running`: the drum is turning
     // (or stalled under load); lineSpeed in m/s, + reeling in; load 0..1; gain (distance) and pan -1..1.
+    // How many recordings the folders hold (assets/audio/ambience, sfx): the start-up line says "N of these"; tests/loading.cpp checks them against the folders.
+    static constexpr int kAmbienceFiles = 6, kSfxFiles = 16;
     static constexpr int kWinches = 3;
     void setWinch(int slot, bool running, float lineSpeed, float load, float gain, float pan);
     // Game thread: works out each winch line's speed from how its length changes and publishes the nearest kWinches (own and remote players').

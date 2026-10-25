@@ -8,6 +8,9 @@
 #include "../src/toolsounds.h"
 #include "../src/fixes.h"
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <cstdio>
 #include <cstdlib>
 #include <chrono>
@@ -239,10 +242,37 @@ int main() {
         check("vehicle volume 50% is about half the amplitude", half > full * 0.4 && half < full * 0.6);
         check("ambience and tire air still play with the vehicle volume at 0", ambFull > 1e-4 && std::fabs(ambOff - ambFull) < ambFull * 1e-3 && hissOff > 0.001);
     }
+    {  // no orphans: every .wav under assets/audio is read by Audio, and the start-up line's totals match the folders
+        namespace fs = std::filesystem;
+        std::string src;
+        {
+            std::ifstream f("src/audio.cpp");
+            std::stringstream ss;
+            ss << f.rdbuf();
+            src = ss.str();
+        }
+        check("src/audio.cpp is readable from here", src.size() > 1000);
+        for (const char* dir : {"ambience", "sfx"}) {
+            int files = 0;
+            bool allNamed = true;
+            std::string orphan;
+            for (const auto& e : fs::directory_iterator(std::string("assets/audio/") + dir)) {
+                if (e.path().extension() != ".wav") continue;
+                files++;
+                if (src.find("\"" + e.path().filename().string() + "\"") == std::string::npos && src.find("/" + e.path().filename().string() + "\"") == std::string::npos) allNamed = false, orphan = e.path().filename().string();
+            }
+            const int want = std::string(dir) == "ambience" ? Audio::kAmbienceFiles : Audio::kSfxFiles;
+            check((std::string("assets/audio/") + dir + ": every .wav is named in Audio's loader" + (orphan.empty() ? "" : " (orphan: " + orphan + ")")).c_str(), allNamed);
+            check((std::string("assets/audio/") + dir + ": the start-up total matches the folder (" + std::to_string(files) + ")").c_str(), files == want);
+            Audio a;
+            const int got = std::string(dir) == "ambience" ? a.loadAmbience("assets/audio/ambience") : a.loadSfx("assets/audio/sfx");
+            check((std::string(dir) + ": every file loads").c_str(), got == files);
+        }
+    }
     {  // recorded effects: the files load; the winch's sound follows line speed and load; nothing allocates in the callback
         Audio fx;
         const int loaded = fx.loadSfx("assets/audio/sfx");
-        check("all thirteen effect recordings load (mono 48 kHz PCM16)", loaded == 13);
+        check("all the effect recordings load (mono 48 kHz PCM16)", loaded == Audio::kSfxFiles);
         const WinchSound slow = WinchSound::at(0.1f, 0), fast = WinchSound::at(0.8f, 0), loadedUp = WinchSound::at(0.3f, 0.9f), out = WinchSound::at(-0.8f, 0), stalled = WinchSound::at(0, 1);
         check("winch hum rises with line speed and sinks and strains under load", fast.motorRate > slow.motorRate * 1.3f && loadedUp.strain > 0.5f && fast.strain == 0 && loadedUp.motorGain > WinchSound::at(0.3f, 0).motorGain * 1.5f && loadedUp.motorRate < WinchSound::at(0.3f, 0).motorRate);
         check("pawl clicks follow the cable speed, paying out and reeling in", fast.clicksPerSecond > slow.clicksPerSecond * 4 && std::fabs(out.clicksPerSecond - fast.clicksPerSecond) < 1e-4f && stalled.clicksPerSecond == 0 && WinchSound::at(50, 0).clicksPerSecond <= 28);

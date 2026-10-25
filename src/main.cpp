@@ -2597,6 +2597,9 @@ int main(int argc, char** argv) {
     bool workHandOn = false;
     bool scriptE = false;  // (--script work-*: E held)
     bool mouseLook = false;
+    // Footsteps (recorded, audio.h): one per half stride, by what's underfoot -- paving, sand / snow, or gravel (dirt, grass, rock, mud, ...).
+    auto stepSfx = [](Surface su) { return su == SURF_PAVED ? SFX_STEP_PAVED : su == SURF_SAND || su == SURF_SNOW ? SFX_STEP_SAND : SFX_STEP_GRAVEL; };
+    auto stepped = [](double before, double after) { return std::floor(after / 3.14159265) != std::floor(before / 3.14159265); };
     auto closeInventory = [&]() {
         if (!inv.open) return;
         inv.close();
@@ -4832,7 +4835,10 @@ int main(int argc, char** argv) {
                     crouchWas = down;
                     if (std::getenv("CZ_CROUCH") && scripted) walker.crouching = true;  // (screenshots)
                 }
+                const double strideBefore = walker.stride;
                 walker.step(sim.world, sim, dt, still ? 0 : (up ? 1 : 0) - (down ? 1 : 0), still ? 0 : (left ? 1 : 0) - (right ? 1 : 0), (shiftHeld || (scripted && std::getenv("CZ_RUN"))) && !still, hb && !still, viewYaw);  // (CZ_RUN: screenshots running)
+                if (audioOn && walker.grounded && walker.inWater < 0.2 && stepped(strideBefore, walker.stride))  // (own steps: on the ground, out of the water)
+                    audio.play(stepSfx(sim.world.surfaceAt(walker.p.x, walker.p.z)), (walker.crouching ? 0.12f : 0.25f) * (len(V3(walker.v.x, 0, walker.v.z)) > 3.5 ? 1.6f : 1.0f), 0, 0, 0.95f + 0.1f * (float)(walker.stride - std::floor(walker.stride)));
                 {  // hands on: hold E (pad: X) for the job in front of you
                     const uint8_t* ks = SDL_GetKeyboardState(nullptr);
                     const bool holdE = (!menu.open && !inv.open && settings.keys.held(KA_INTERACT, ks, ks[SC_LSHIFT] || ks[SC_RSHIFT])) || (padCtx == pad::Mode::Drive && padLogic.in.interact) || scriptE;
@@ -6194,6 +6200,13 @@ int main(int argc, char** argv) {
                 people::Gait g;
                 g.p = at, g.yaw = yaw, g.stride = stride, g.lookAround = true, g.crouch = crouch;
                 g.grounded = at.y - sim.world.height(at.x, at.z) < 0.15;  // (off the ground: jumping)
+                {  // their steps, from where they are (a new walker's first stride is only noted)
+                    static std::map<std::string, double> lastStride;
+                    const auto it = lastStride.find(who);
+                    if (audioOn && it != lastStride.end() && g.grounded && std::fabs(stride - it->second) < 3 && stepped(it->second, stride))
+                        audio.playAt(stepSfx(sim.world.surfaceAt(at.x, at.z)), at, view.eye, viewRight, crouch > 0.5 ? 0.12f : 0.25f);
+                    lastStride[who] = stride;
+                }
                 if (vel) g.vel = *vel;
                 else g.estimate = true;
                 // What they hold and the work they're doing (repairsync.h): turned to it, down on their heels for a low job, the
