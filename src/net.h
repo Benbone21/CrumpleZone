@@ -75,6 +75,14 @@ bool parseAddress(const std::string& address, std::string& host, int& port, std:
 std::string sanitize(const std::string& s, size_t maxLen);
 // The password a join offers: the command line's if given, else the one typed in the menu.
 inline std::string joinPassword(const std::string& fromCommandLine, const std::string& typed) { return fromCommandLine.empty() ? typed : fromCommandLine; }
+// A vehicle's dents as its states carry them (and a career save keeps them): every node's
+// offset from its factory place in the body's own frame (the chassis frame's turn about the
+// body's center of mass), x y z in whole mm, clamped to +-32.7 m.
+void dentPose(const Car& c, V3& com, Quat& rot);  // the center and turn they're measured in
+std::vector<int16_t> carDents(const Car& c);
+// Puts every node where those dents say, about `com` turned by `rot` (velocities untouched).
+// False, changing nothing, if there aren't 3 for each node.
+bool applyCarDents(Car& c, const V3& com, const Quat& rot, const std::vector<int16_t>& dents);
 // HMAC-SHA-256 (the password proof), 32 bytes.
 std::vector<uint8_t> hmacSha256(const std::string& key, const std::vector<uint8_t>& data);
 

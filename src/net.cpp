@@ -1810,8 +1810,8 @@ NetSession::Snap NetSession::makeSnap(const Sim& sim, const Car& c, double now) 
     const Frame fr = c.frame();
     s.t = sharedTime(now);
     s.build = (uint32_t)c.buildCount;
-    s.rot = c.chassis.nodes.empty() ? Quat::axisAngle(V3(0, 1, 0), std::atan2(-fr.fwd.z, fr.fwd.x)) : c.chassis.rot;
-    s.com = fr.com, s.vel = fr.vel;
+    net::dentPose(c, s.com, s.rot);
+    s.vel = fr.vel;
     s.steer = (float)c.steer;
     s.brake = (float)clampd(std::max(c.brake, c.handbrake * 0.6), 0, 1);
     s.damage = (float)c.damage;
@@ -1826,17 +1826,43 @@ NetSession::Snap NetSession::makeSnap(const Sim& sim, const Car& c, double now) 
         s.wheelOmega.push_back((float)wh.omega);
         s.wheelFlags.push_back((uint8_t)(wh.popped | (wh.detached << 1) | (wh.shaftBroken << 2) | (!wh.mounted << 3)));  // (a wheel off its hub for a repair: others see the bare hub)
     }
-    const V3 rc = restCom(c);
-    s.q.resize(c.nodes.size() * 3);
-    for (size_t i = 0; i < c.nodes.size(); i++) {
-        const V3 d = s.rot.unrotate(c.nodes[i].p - fr.com) + rc - c.restLocal[i];
-        s.q[i * 3] = quant<int16_t>(d.x, 1000, -32.7, 32.7), s.q[i * 3 + 1] = quant<int16_t>(d.y, 1000, -32.7, 32.7), s.q[i * 3 + 2] = quant<int16_t>(d.z, 1000, -32.7, 32.7);
-    }
+    s.q = net::carDents(c);
     // The winch lines this vehicle works: how much line is out.
     for (const Rope& r : sim.ropes)
         if (r.netId && r.kind == ROPE_WINCH && r.a.kind == ANCHOR_CAR && &sim.cars[r.a.car] == &c && s.ropeLen.size() < 8) s.ropeLen.push_back({r.netId, (float)r.length});
     return s;
 }
+
+namespace net {
+
+void dentPose(const Car& c, V3& com, Quat& rot) {
+    const Frame fr = c.frame();
+    rot = c.chassis.nodes.empty() ? Quat::axisAngle(V3(0, 1, 0), std::atan2(-fr.fwd.z, fr.fwd.x)) : c.chassis.rot;
+    com = fr.com;
+}
+
+std::vector<int16_t> carDents(const Car& c) {
+    V3 com;
+    Quat rot;
+    dentPose(c, com, rot);
+    const V3 rc = restCom(c);
+    std::vector<int16_t> q(c.nodes.size() * 3);
+    for (size_t i = 0; i < c.nodes.size(); i++) {
+        const V3 d = rot.unrotate(c.nodes[i].p - com) + rc - c.restLocal[i];
+        q[i * 3] = quant<int16_t>(d.x, 1000, -32.7, 32.7), q[i * 3 + 1] = quant<int16_t>(d.y, 1000, -32.7, 32.7), q[i * 3 + 2] = quant<int16_t>(d.z, 1000, -32.7, 32.7);
+    }
+    return q;
+}
+
+bool applyCarDents(Car& c, const V3& com, const Quat& rot, const std::vector<int16_t>& dents) {
+    if (dents.size() != c.nodes.size() * 3 || c.restLocal.size() != c.nodes.size()) return false;
+    const V3 rc = restCom(c);
+    for (size_t i = 0; i < c.nodes.size(); i++)
+        c.nodes[i].p = com + rot.rotate(c.restLocal[i] - rc + V3(dents[i * 3], dents[i * 3 + 1], dents[i * 3 + 2]) * 0.001);
+    return true;
+}
+
+}  // namespace net
 
 std::vector<uint8_t> NetSession::encodeState(const Snap& s, const Stream::Sent* base, std::vector<int16_t>& sentQ) {
     Writer w;
