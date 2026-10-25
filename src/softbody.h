@@ -526,6 +526,8 @@ public:
     // Handed back, it's eased onto its states: shoveP / shoveV are added to where they put it
     // until they catch up (the network playback calls settleShove).
     double heldHere = 0;     // s left on our physics
+    double heldFor = 0;      // s on it since it was taken on
+    static constexpr double kMaxHold = 0.6;  // s: the most, at a stretch
     bool handBack = false;   // just let go: the playback works out the ease from here
     V3 shoveV, shoveP;
     V3 shoveNetVel;

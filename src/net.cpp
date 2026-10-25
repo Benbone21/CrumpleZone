@@ -491,6 +491,8 @@ struct NetSession::Remote {
     // Easing out a coast that guessed wrong: what's added to where the states say it is.
     V3 ease, lastShown, lastVel;
     Quat easeRot, lastRot;  // (and the turn: shown now, each state corrects the guess at it too)
+    bool wasHeld = false;   // (in a crash with one of ours last frame)
+    double heldAt = 0;      // when it was taken onto our physics (vehicle time)
     bool shown = false;
     double coastedTo = -1;  // the newest state's time while coasting past it last frame (-1: wasn't)
     struct Assembly {
@@ -2372,6 +2374,27 @@ void NetSession::applyRemotes(Sim& sim, double now) {
         if (jumped) c.heldHere = 0, c.handBack = false, c.shoveV = c.shoveP = V3();
         if (turned)
             for (size_t i = 0; i < now0.size(); i++) now0[i] = com + rm->easeRot.rotate(now0[i] - com), prev[i] = com + rm->easeRot.rotate(prev[i] - com);
+        // Held, it runs on our physics from where it was guessed to be, at the speed it was
+        // guessed to have: off by what its driver did in the last latency (braking, it came in
+        // a metre or two a second too fast, and kept that, pushed along metres from where its
+        // owner had it). Once its owner's states have the crash in them too, and a moment past it
+        // (both machines have it at the same moment; the knock itself stays ours alone, or the
+        // damage comes out different), it's steered gently onto them: its speed toward theirs,
+        // with what closes the gap in place, over 0.15 s or so.
+        if (held && !rm->wasHeld) rm->heldAt = t;
+        rm->wasHeld = held;
+        if (held && predict && newest >= rm->heldAt + 0.15 && dt > 0) {
+            V3 p, v;
+            double M = 0;
+            for (const Node& n : c.nodes) p += n.p * n.m, v += n.v * n.m, M += n.m;
+            if (M > 0) {
+                p = p / M, v = v / M;
+                V3 want = vel + (com + rm->ease - p) / 0.3;
+                if (len(want - v) > 8) want = v + norm(want - v) * 8;  // (a wild guess isn't followed far)
+                const V3 dv = (want - v) * (1 - std::exp(-dt / 0.15));
+                for (Node& n : c.nodes) n.v += dv;
+            }
+        }
         if (c.handBack) c.handBackTo(now0, vel);
         c.settleShove(vel, frameDt);
         for (size_t i = 0; i < c.nodes.size() && !held; i++) {

@@ -2709,8 +2709,11 @@ void Sim::substep() {
             return m > 0 ? p / m : V3();
         };
         if (r.heldHere <= 0 && len(vel(a) - vel(b)) < 1.0) continue;
-        if (r.heldHere <= 0) r.holdHere();
-        r.heldHere = 0.4;
+        if (r.heldHere <= 0) r.holdHere(), r.heldFor = 0;
+        // (Not for good: pushed along for long, it went its own way here while its owner's
+        // states said otherwise, metres apart. Past kMaxHold it goes back to them, hit or not;
+        // its owner's machine has the same push.)
+        if (r.heldFor < Car::kMaxHold) r.heldHere = std::min(0.4, Car::kMaxHold - r.heldFor);
     }
 
     if (!ropes.empty()) ropeForces();
@@ -2723,6 +2726,7 @@ void Sim::substep() {
             c.integrate(h);
             c.updateBounds();
             c.heldHere -= h;
+            c.heldFor += h;
             if (c.heldHere <= 0) c.handBack = true;
             continue;
         }
