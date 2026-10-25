@@ -157,5 +157,22 @@ on a slow or lossy line); copies within 0.25 m before the hit; within 1.5 m from
 2. **Hit report (design B)**: only if one-sided hits are still seen in real play.
 3. **Chatter now trails the trucks** by the view delay (a finish heard ~0.1 to 0.3 s after the
    truck is seen crossing). Fine as is, or deliver chatter on arrival instead?
-4. Slow machines (under 20 fps) still run their own truck slower than real time; worth a look
-   separately (a Mac struggling on a big map would show this).
+4. ~~Slow machines~~: decided, fixed (below).
+
+Decided (2026-10-25): warn on another build and let in; no hit report for now; chatter as built.
+
+## Slow machines (fixed after the decisions)
+
+Below 20 fps a frame ran at most 50 ms of physics (`simMaxSteps`, and `Sim::advance` let the
+rest go), as single player does so as not to spiral. In multiplayer that put a slow machine's
+own truck in slow motion for everyone: its states are stamped with the shared clock, so the
+others saw it cover 0.60 of the ground at 12 fps and 0.75 at 15 (`net/slow-host`, a Mac on a
+6 km map), and kept easing it back as each state undid the guess at where it would be.
+
+Now, in multiplayer only, every frame's physics is run (`simNetSteps`): as many steps as are
+owed, hitches too, as far as 50 ms of physics a frame goes at the cost a step has had lately
+(never fewer than before). What's still owed waits for the next frames, up to 0.25 s; past
+that the machine can't run real time even with nothing else to do, and slows as before (a test
+with 2 ms steps: 0.60 of real time, no spiral). Single player and the physics themselves are
+unchanged (fingerprint da17a95524fab674). Measured: 12 and 15 fps hosts' trucks shown at 1.00 of
+real speed, within 0.05 m of where they really are.

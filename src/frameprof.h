@@ -90,6 +90,17 @@ void describeSpike(char* line, int n, int frame, double frameMs, double typicalM
 double simCatchUp(double dt, double& usualDt);
 // The most physics steps a frame runs: 50 ms of them (below 20 fps the game slows down rather than spiral).
 inline int simMaxSteps(double h) { return h > 0 ? std::max(1, (int)(0.05 / h + 0.5)) : 1; }
+// Multiplayer can't slow down: the others show my trucks by the shared clock, so a machine at 12 fps
+// running 50 ms of physics a frame had its trucks in slow motion on everyone's screen (and
+// eased back, over and over, as each state undid the guess at where they'd be). There every frame's
+// physics is run, hitches too: as many steps as are owed (owedS: the frame and what's left over),
+// as far as kNetPhysicsMs of physics a frame goes at msPerStep (the cost measured lately; <= 0:
+// not yet), and never fewer than simMaxSteps. What's still owed waits for the next frames
+// (Sim::advance keepOwed), up to kNetOwedMax; past that the machine can't run real time at all and
+// slows down as in single player.
+constexpr double kNetPhysicsMs = 50;
+constexpr double kNetOwedMax = 0.25;
+int simNetSteps(double h, double owedS, double msPerStep);
 
 // The benchmark's camera: a drone flying a lap round `centre`, low over the ground (`h` m up), looking ahead and in.
 // `t` 0..1 is the share of the lap; heightAt gives the ground. Pure, so the path is the same every run.

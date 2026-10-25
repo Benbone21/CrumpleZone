@@ -2,6 +2,7 @@
 #include "harness.h"
 #include "../src/net.h"
 #include "../src/lights.h"
+#include "../src/frameprof.h"
 #include <algorithm>
 #include <cstdio>
 #include <deque>
@@ -534,3 +535,98 @@ SCENARIO(netMovingRear, "net/moving-crash/rear", "Both trucks moving, A at 65 km
 SCENARIO(netMovingSide, "net/moving-crash/side", "Both trucks moving at 43 km/h, A into B's side, " MOVING_CRASH_DESC) { movingCrashes(ctx, SIDE); }
 SCENARIO(netMovingBrake, "net/moving-crash/rear-brake", "A into the back of B, B braking hard 0.3 s before (A's machine hears of it only later), " MOVING_CRASH_DESC) { movingCrashes(ctx, REAR_BRAKE); }
 SCENARIO(netMovingSwerve, "net/moving-crash/side-swerve", "A into B's side, B swerving 0.3 s before, " MOVING_CRASH_DESC) { movingCrashes(ctx, SIDE_SWERVE); }
+
+// ---- A slow machine's trucks (docs/plans/net-collisions.md, "slow machines") --------------------
+//
+// A host at 12 to 15 fps (a Mac on a 6 km map) ran at most 50 ms of physics a frame, as single
+// player does below 20 fps: its own truck went at 0.65 to 0.8 of real time, and since its states
+// are stamped with the shared clock, everyone saw it in slow motion. In multiplayer every frame's
+// physics is run now (frameprof.h simNetSteps). The host's truck holds 20 m/s; another machine at
+// 60 fps 50 ms away shows it; how fast does it go there, against real time?
+namespace {
+struct SlowHost {
+    double ratio = 0;   // the copy's speed on the other machine (distance / real time) over the truck's own
+    double simRate = 0; // the host's physics seconds per real second
+    double gap = 0;     // worst: the copy against where the truck really is at that real moment (m)
+};
+SlowHost slowHost(double fps, bool keepUp, double msPerStep) {
+    const VehicleSpec& s = vehicleCatalog()[7];
+    Machine host, other;
+    for (Machine* m : {&host, &other}) {
+        m->sim.world = World(MAP_PROVING_GROUND);
+        m->sim.setupEmpty();
+    }
+    NetSessionTest::sender(host.net);
+    NetSessionTest::sender(other.net);
+    other.net.self = 1;
+    host.sim.addCar(s, V3(-200, host.sim.world.clearY(-200, -50) + 0.6, -50), 0, V3(0.8, 0.2, 0.2));
+    Car& truck = host.sim.cars[0];
+    truck.netId = 1;
+    host.sim.player = 0;
+    for (int f = 0; f < 60; f++) host.sim.advance(Ctx::kFrame, 1000);
+    NetSessionTest::spawnAny(host.net, other.net, other.sim, truck);
+    for (Node& n : truck.nodes) n.v = V3(20, 0, 0);
+    for (Wheel& w : truck.wheels) w.omega = 20 / w.R;
+    truck.gear = 3;
+    truck.wake();
+    std::multimap<double, std::vector<uint8_t>> wire;
+    std::deque<std::pair<double, V3>> truth;  // (real time, where the truck was)
+    const double hostDt = 1.0 / fps, end = 8;
+    double usualDt = 1.0 / 60, simT = 0, nextHost = 0;
+    V3 from, at;
+    double fromT = -1, speedSum = 0;
+    int speedN = 0;
+    SlowHost r;
+    for (double t = 0; t < end; t += Ctx::kFrame) {  // (t: real time, and the shared clock)
+        if (t >= nextHost) {  // the host's frame: its physics, then its state
+            nextHost += hostDt;
+            cruise(truck, 20);
+            int steps;
+            if (keepUp) steps = host.sim.advance(hostDt, std::max(simMaxSteps(host.sim.h), simNetSteps(host.sim.h, host.sim.owed() + hostDt, msPerStep)), kNetOwedMax);
+            else steps = host.sim.advance(simCatchUp(hostDt, usualDt), simMaxSteps(host.sim.h));  // (as before 0.4.1)
+            simT += steps * host.sim.h;
+            truck.updateStats();
+            truth.push_back({t + hostDt, truck.frame().com});  // (the frame shows at its end: that's when its state is stamped)
+            wire.insert({t + hostDt + 0.05, NetSessionTest::stateOf(host.net, host.sim, truck, t + hostDt)});
+            if (t > 2) speedSum += fwdSpeed(truck), speedN++;
+        }
+        while (!wire.empty() && wire.begin()->first <= t) {
+            NetSessionTest::takeAny(other.net, other.sim, 1, wire.begin()->second, wire.begin()->first);
+            wire.erase(wire.begin());
+        }
+        NetSessionTest::play(other.net, other.sim, t);
+        other.sim.advance(Ctx::kFrame, 1000);
+        const V3 copy = other.sim.cars[0].frame().com;
+        if (t > 2 && fromT < 0) from = copy, fromT = t;
+        at = copy;
+        if (keepUp && t > 2)  // (against the truck at this real moment, between the host's frames)
+            for (size_t k = 0; k + 1 < truth.size(); k++)
+                if (truth[k].first <= t && truth[k + 1].first > t) {
+                    const double u = (t - truth[k].first) / (truth[k + 1].first - truth[k].first);
+                    r.gap = std::max(r.gap, len(copy - (truth[k].second + (truth[k + 1].second - truth[k].second) * u)));
+                }
+    }
+    const double wall = end - Ctx::kFrame - fromT;
+    r.ratio = len(V3(at.x - from.x, 0, at.z - from.z)) / wall / std::max(1e-6, speedSum / std::max(1, speedN));
+    r.simRate = simT / nextHost;
+    return r;
+}
+}  // namespace
+
+SCENARIO(netSlowHost, "net/slow-host", "A host at 12 and 15 fps: its truck at 20 m/s is shown at real speed on a 60 fps machine (it was 0.6 to 0.8 of it), and where it really is; a machine whose physics alone can't keep up still slows, as before") {
+    char buf[300];
+    for (double fps : {12.0, 15.0}) {
+        const SlowHost old = slowHost(fps, false, 0.01), now = slowHost(fps, true, 0.01);
+        std::snprintf(buf, sizeof buf, "%.0f fps host: shown at %.2f of real speed before (physics %.2f of real time), %.2f now (physics %.2f); copy %.2f m off the truck at worst",
+                      fps, old.ratio, old.simRate, now.ratio, now.simRate, now.gap);
+        ctx.note(buf);
+        const std::string n = std::to_string((int)fps) + " fps host";
+        ctx.metric(n + ": before 0.4.1, shown at this share of real speed", old.ratio, "", 0.5, 0.85);
+        ctx.metric(n + ": its truck shown at this share of real speed", now.ratio, "", 0.97, 1.03);
+        ctx.metric(n + ": its physics, of real time", now.simRate, "", 0.99, 1.01);
+        ctx.metric(n + ": the copy against where the truck really is (worst)", now.gap, "m", 0, 0.25);
+    }
+    // (Physics that alone takes longer than real time: 2 ms a step at 2 kHz is 4 s a second. It slows, it doesn't spiral.)
+    const SlowHost heavy = slowHost(12, true, 2.0);
+    ctx.metric("12 fps host whose physics can't keep up: physics, of real time", heavy.simRate, "", 0.3, 0.8);
+}

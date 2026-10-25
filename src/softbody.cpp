@@ -2509,7 +2509,7 @@ void Sim::addCar(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col
     cars.back().build(vs, pos, yaw, paint);
 }
 
-int Sim::advance(double realDt, int maxSubsteps) {
+int Sim::advance(double realDt, int maxSubsteps, double keepOwed) {
     if (paused) return 0;
     updateTrail(realDt * timeScale);
     accum += realDt * timeScale;
@@ -2519,7 +2519,7 @@ int Sim::advance(double realDt, int maxSubsteps) {
         accum -= h;
         n++;
     }
-    if (n == maxSubsteps) accum = 0;  // can't keep up: slow down rather than spiral
+    if (n == maxSubsteps) accum = std::min(accum, std::max(0.0, keepOwed));  // can't keep up: slow down rather than spiral (or owe a little)
     for (Car& c : cars)
         if (c.gate.dir != 0) c.gateStep(realDt * timeScale);
     wrapAround();

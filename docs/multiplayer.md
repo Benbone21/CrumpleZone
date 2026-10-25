@@ -163,6 +163,11 @@ CZ_PASSWORD='a long random password' ./build/crumplezone-server --port 27015 --m
   steered gently back onto its owner's states once they have the crash in them too, then eased
   onto them. Shown now, both machines have the same crash at the same moment (tests
   `net/moving-crash/*`: rear end, side, last-moment braking and swerving, 0 to 250 ms each way).
+- **Slow machines** (0.4.1): in multiplayer the physics keep real time however slow the frames
+  (single player slows below 20 fps instead): each frame runs what it owes, within 50 ms of
+  physics a frame, the rest carried to the next frames (up to 0.25 s). So a 12 fps player's truck
+  is at real speed on everyone's screen (it was at 0.6). Only a machine whose physics alone are
+  slower than real time still slows (`net/slow-host`).
 - **Traffic**: states are quantized and told only by the dents that moved since the newest one the
   receiver said it has; the server re-tells each guest's states to each other guest that way, and
   sends trucks more than 150 m from all of a player's own less often (10, 5, then 2 a second past

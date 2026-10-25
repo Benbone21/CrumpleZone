@@ -821,7 +821,11 @@ public:
     // Runs every AI driver (and the player's autopilot) for one frame.
     void updateAI(double dt);
     // Advances the simulation by realDt * timeScale; returns substeps taken.
-    int advance(double realDt, int maxSubsteps);
+    // Runs whole physics steps for realDt (and what's left over from before), at most maxSubsteps.
+    // Capped, what's still owed is let go (the game slows rather than spiral), all but keepOwed s
+    // of it: multiplayer keeps up to that much, to run in the next frames (frameprof.h simNetSteps).
+    int advance(double realDt, int maxSubsteps, double keepOwed = 0);
+    double owed() const { return accum; }  // real time not yet run (s): under a step, or what advance kept
     void substep();
     void drive(bool up, bool down, bool left, bool right, bool handbrake, double dt);
     void pilotStep(int car, double dt);  // one frame of a car's autopilot

@@ -4894,10 +4894,20 @@ int main(int argc, char** argv) {
             simCredit = owed < 0 ? -owed : 0;
             const bool bgNow = !scripted && !(SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS);
             const int maxSteps = bgNow ? std::max(simMaxSteps(sim.h), (int)(0.075 / sim.h + 0.5)) : simMaxSteps(sim.h);  // (15 fps in the background: still real time)
-            simDt = (simAsyncSteps + sim.advance(std::max(0.0, owed), maxSteps)) * sim.h;
+            static double msPerStep = -1;  // (what a physics step costs here lately)
+            int stepsNow;
+            if (net.active() && !sim.paused) {  // (multiplayer: on the shared clock, however slow the frames; frameprof.h simNetSteps)
+                const double frameS = scripted ? dt : std::min(1.0, frameTimeMs / 1000.0);
+                stepsNow = sim.advance(frameS, std::max(maxSteps, simNetSteps(sim.h, sim.owed() + frameS, msPerStep)), kNetOwedMax);
+                simCredit = 0;
+            } else {
+                stepsNow = sim.advance(std::max(0.0, owed), maxSteps);
+            }
+            simDt = (simAsyncSteps + stepsNow) * sim.h;
             simAsyncSteps = 0;
             renderer.passMark(FP_GAME);
             const double physicsMs = (double)(SDL_GetPerformanceCounter() - physicsStart) * 1000 / freq;
+            if (stepsNow > 0) msPerStep = msPerStep < 0 ? physicsMs / stepsNow : msPerStep + (physicsMs / stepsNow - msPerStep) * 0.1;
             hud.physicsMs += (physicsMs - hud.physicsMs) * 0.05;
             if (scripted && frame >= (opt.bench ? benchWarm + 1 : 40)) benchPhysics += physicsMs, benchPhysicsN++;
             if (sim.wrapShift != wrapSeen) {  // the freeway moved everything back a period: so do the camera and the effects
