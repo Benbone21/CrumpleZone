@@ -67,9 +67,10 @@ bool flatFrontLeft(const Car& c) {
 
 }  // namespace
 
-SCENARIO(carsaveRoundtrip, "carsave/roundtrip", "A Blazer crashed into a barrier, a tire flat and 23.5 L in the tank: saved, rebuilt in a new world and restored, the same wreck") {
+SCENARIO(carsaveRoundtrip, "carsave/roundtrip", "A Blazer crashed into a barrier, a tire flat and 23.5 L in the tank and the battery at 40%: saved, rebuilt in a new world and restored, the same wreck") {
     Car& orig = crashedBlazer(ctx);
     ctx.check("the crash damaged it", orig.damage > 0.01, std::to_string(orig.damage));
+    orig.battery = 0.4;
     const std::string text = carsave::capture(ctx.sim, orig);
     ctx.check("one line", !text.empty() && text.find('\n') == std::string::npos && text.find('\r') == std::string::npos, std::to_string(text.size()) + " chars");
     ctx.check("vehicleOf: the Blazer", carsave::vehicleOf(text) == catalogIndex("blazer"));
@@ -105,6 +106,7 @@ SCENARIO(carsaveRoundtrip, "carsave/roundtrip", "A Blazer crashed into a barrier
     ctx.check("engine health", std::fabs(back.engineHealth - orig.engineHealth) <= 1e-9);
     ctx.check("fuel 23.5 L", std::fabs(back.fuel - 23.5) < 1e-9, std::to_string(back.fuel));
     ctx.check("jerry can as it was", back.jerry == orig.jerry);
+    ctx.check("battery 0.4", std::fabs(back.battery - 0.4) < 1e-12, std::to_string(back.battery));
     ctx.check("front-left tire flat", flatFrontLeft(back));
     double speed = 0;
     for (const Node& n : back.nodes) speed = std::max(speed, len(n.v));

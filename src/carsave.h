@@ -1,5 +1,5 @@
 // A vehicle's condition as one line of text (career saves: profile.txt's cond lines, a world's
-// left vehicles): which vehicle and mods, where it stands, its fuel, engine, wheels, hood and
+// left vehicles): which vehicle and mods, where it stands, its fuel, battery, engine, wheels, hood and
 // gate, and its damage. The dents are the node shape the multiplayer states carry
 // (net::carDents), and with them the bent and broken beams, the body's bent rest shape, the
 // pins let go and the glass broken, so a wreck comes back the wreck it was.

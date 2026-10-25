@@ -388,6 +388,7 @@ std::string capture(const Sim& sim, const Car& c) {
     s += " eng=" + num(c.engineHealth) + " flood=" + num(c.floodedHealth);
     s += std::string(" hydro=") + (c.hydrolocked ? '1' : '0') + " dead=" + (c.engineDead ? '1' : '0');
     s += " psi=" + num(c.tirePsi);
+    s += " bat=" + num(c.battery);
     s += " hood=" + gateText(c.hood) + " gate=" + gateText(c.gate);
     // Each wheel: flags:tie-rod bend:the wheel on it (radius, rim, width, spin inertia, mass, rim style).
     s += " wheels=";
@@ -482,6 +483,9 @@ bool restore(Sim& sim, Car& c, const std::string& text) {
     if (fuel < -1 || jerry < -1 || eng < 0 || eng > 1 || flood < -1 || flood > 1 || psi < 0 || psi > 200 || hydro < 0 || hydro > 1 ||
         dead < 0 || dead > 1)
         return false;
+    // (A save from before batteries has no bat: a full one.)
+    double bat = 1;
+    if (kv.count("bat") && (!toNum(kv["bat"], bat) || bat < 0 || bat > 1)) return false;
     Car::Gate hood, gate;
     if (!readGate(kv["hood"], hood) || !readGate(kv["gate"], gate)) return false;
     struct WheelSave {
@@ -550,6 +554,7 @@ bool restore(Sim& sim, Car& c, const std::string& text) {
     c.engineHealth = eng, c.floodedHealth = flood;
     c.hydrolocked = hydro, c.engineDead = dead;
     c.tirePsi = psi;
+    c.battery = bat;
     c.hood = hood, c.gate = gate;
     c.jackPlaced = false;
     settle(c);
