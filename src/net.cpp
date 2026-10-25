@@ -30,8 +30,8 @@ namespace {
 // Datagrams: u16 magic, u8 type, u8 player, u32 netId, u32 seq, u8 frag, u8 frags, payload.
 
 enum MsgType : uint8_t {
-    MSG_HELLO = 1,    // client -> host: version, name
-    MSG_WELCOME,      // host -> client: your id, the map
+    MSG_HELLO = 1,    // client -> host: version, name, build (8)
+    MSG_WELCOME,      // host -> client: your id, the map, (8) the host's build
     MSG_REJECT,       // host -> client: why not
     MSG_PLAYER,       // id, name: someone is in the session
     MSG_LEFT,         // id
@@ -54,7 +54,7 @@ enum MsgType : uint8_t {
     MSG_REFUSE,       // owner -> host -> taker: no (+ str why)
     MSG_SECTIONS,     // host -> client, in the welcome: u8 index, u8 count, u8 SectionType, u16 part, u16 parts, bytes: the park's edited sections (.czs text)
 };
-// (WELCOME: u8 id, u8 map, u64 the guest's datagram secret.)
+// (WELCOME: u8 id, u8 map, u64 the guest's datagram secret, str the host's build.)
 enum DgramType : uint8_t { DG_SNAP = 1, DG_HELLO = 2, DG_ACK = 3 };  // (an ack: u32 netId, u32 seq, ...: states we have, to tell the next against)
 constexpr uint16_t kMagic = 0xC27A;
 // ... and the u64 secret of whoever the datagram is for (told in the welcome): anyone else's is dropped.
@@ -281,6 +281,9 @@ struct NetSession::Remote {
     std::deque<std::pair<uint32_t, std::vector<int16_t>>> got;  // the dents of the last states taken (seq): what the sender tells the next against
     // Easing out a coast that guessed wrong: what's added to where the states say it is.
     V3 ease, lastShown, lastVel;
+    Quat easeRot, lastRot;  // (and the turn: shown now, each state corrects the guess at it too)
+    bool wasHeld = false;   // (in a crash with one of ours last frame)
+    double heldAt = 0;      // when it was taken onto our physics (vehicle time)
     bool shown = false;
     double coastedTo = -1;  // the newest state's time while coasting past it last frame (-1: wasn't)
     struct Assembly {
@@ -374,6 +377,7 @@ void NetSession::close() {
     sessionStart = -1;
     clock = net::ClockSync();
     view = net::Timeline();
+    vehicleAt = -1, lastPlayNow = -1e18, vehicleLeadNow = 0;
     nextSync = 0;
     dayBase = daySentAt = -1;
     dayHours = -1, dayRate = 0, dayFresh = false;
@@ -550,6 +554,7 @@ int NetSession::pollJoin() {
         Writer w;
         w.put<uint16_t>(net::kVersion);
         w.str(joinName);
+        w.str(build);
         sendTo(*c, frame(MSG_HELLO, w));
         joinStage = 2;
         joinT0 = now;
@@ -736,6 +741,10 @@ void NetSession::admit(Conn& c, const std::string& name) {
     w.str(unique);
     broadcast(frame(MSG_PLAYER, w), &c);
     events.push_back(unique + " JOINED");
+    if (!build.empty() && !c.build.empty() && c.build != build) {  // (the same protocol, but maybe not the same trucks)
+        events.push_back(unique + " RUNS BUILD " + c.build + ", THIS GAME " + build + ": HANDLING MAY DIFFER");
+        note(unique + " IS ON BUILD " + c.build + " (THIS IS " + build + ")");
+    }
 }
 
 void NetSession::handle(Sim* sim, Conn* from, const std::vector<uint8_t>& msg) {
@@ -753,6 +762,7 @@ void NetSession::handle(Sim* sim, Conn* from, const std::vector<uint8_t>& msg) {
             if (from->hello || from->challenged) return violation(from, "a second hello");
             const uint16_t ver = r.get<uint16_t>();
             const std::string name = net::sanitize(r.str(), net::kMaxNameLen);
+            if (r.ok && r.at < r.n) from->build = net::sanitize(r.str(), 16);  // (8: the build it is, if it says)
             if (!r.ok) return violation(from, "a bad hello");
             if (ver != net::kVersion) {  // (an older game can't follow this one's clock: say so plainly, not a session that drifts)
                 Writer w;
@@ -912,6 +922,7 @@ void NetSession::handle(Sim* sim, Conn* from, const std::vector<uint8_t>& msg) {
             if (role != CLIENT || self >= 0) return;
             const int id = r.get<uint8_t>(), m = r.get<uint8_t>();
             const uint64_t token = r.get<uint64_t>();
+            const std::string hostBuild = r.ok && r.at < r.n ? net::sanitize(r.str(), 16) : std::string();
             if (!r.ok || id < 1 || id >= net::kMaxPeers || m >= MAP_COUNT) {
                 error = "the host's welcome made no sense";
                 role = OFF;
@@ -920,6 +931,7 @@ void NetSession::handle(Sim* sim, Conn* from, const std::vector<uint8_t>& msg) {
             self = id;
             map = m;
             udpToken = token;
+            if (!build.empty() && !hostBuild.empty() && hostBuild != build) events.push_back("THE HOST RUNS BUILD " + hostBuild + ", YOURS " + build + ": HANDLING MAY DIFFER");
             return;
         }
         case MSG_REJECT: {
@@ -1088,6 +1100,7 @@ void NetSession::welcome(Sim& sim, Conn& c) {
     w.put<uint8_t>((uint8_t)c.peer);
     w.put<uint8_t>((uint8_t)map);
     w.put<uint64_t>(c.token);
+    w.str(build);
     sendTo(c, frame(MSG_WELCOME, w));
     for (int k = 0; k < net::kMaxPeers; k++)
         if (players[k].active && k != c.peer) {
@@ -1225,7 +1238,7 @@ bool NetSession::apply(Sim& sim, const std::vector<uint8_t>& msg, int from) {
                 rm->buf.clear();
                 rm->newestT = -1;
                 rm->shown = false;
-                rm->ease = V3();
+                rm->ease = V3(), rm->easeRot = Quat();
                 rm->coastedTo = -1;
                 for (auto& assembly : rm->assemblies) assembly.active = false;
             }
@@ -2181,7 +2194,7 @@ void NetSession::takeSnapshot(Sim& sim, uint32_t netId, const std::vector<uint8_
             // a car through everything between the old and new positions.
             rm->buf.clear();
             rm->shown = false;
-            rm->ease = V3();
+            rm->ease = V3(), rm->easeRot = Quat();
             rm->coastedTo = -1;
         }
     }
@@ -2213,7 +2226,20 @@ void NetSession::applyRemotes(Sim& sim, double now) {
     const bool had = view.started();
     const double before = view.render;
     view.step(shared, need);
-    const double t = view.render, dt = had ? std::max(0.0, t - before) : 0;
+    // The vehicles themselves are shown now, not then (docs/plans/net-collisions.md): each one
+    // run on from its newest state on its own speed and turn, so a truck is where its owner has
+    // it (to a few tens of cm) and a crash happens at the same place on both machines. (Shown
+    // `kPlaybackDelay` and more behind, a truck at 65 km/h was 2.5 to 5 m back of where it
+    // really was: each player hit the other's past.) Chatter, lines and the sky keep the view.
+    // (Less the frame about to be run: its states are stamped after their physics, these are
+    // placed before ours, which then carries them on for the frame.)
+    const double frame = clampd(now - lastPlayNow, 0, 0.05);
+    lastPlayNow = now;
+    const double t = predict ? std::max(shared - frame, view.render) : view.render;
+    const double coastMax = predict ? net::kMaxLead : net::kMaxCoast;
+    const double dt = predict ? (vehicleAt >= 0 ? std::max(0.0, t - vehicleAt) : 0) : (had ? std::max(0.0, t - before) : 0);
+    vehicleAt = t;
+    vehicleLeadNow = 0;
     for (Remote* rm : remotes) {
         const int ci = findCar(sim, rm->netId);
         if (ci < 0 || rm->buf.empty()) continue;
@@ -2232,11 +2258,33 @@ void NetSession::applyRemotes(Sim& sim, double now) {
             alpha = n.t > a.t ? clampd((at - a.t) / (n.t - a.t), 0, 1) : 0;
             com = a.com + (n.com - a.com) * alpha;
             vel = a.vel + (n.vel - a.vel) * alpha;
-            if (&n == &a) {
-                com += a.vel * clampd(at - a.t, 0, net::kMaxCoast);  // nothing newer (lost, or late): coast briefly
-                if (at > a.t + net::kMaxCoast) vel = V3();
-            }
             rot = nlerp(a.rot, n.rot, alpha);
+            if (&n == &a) {  // nothing newer (late, lost, or shown now): run on from it, a while
+                const double ahead = clampd(at - a.t, 0, coastMax);
+                com += a.vel * ahead;
+                if (at > a.t + coastMax) vel = V3();
+                else if (predict && idx > 0 && ahead > 0) {  // (turning: on at the rate it was turning)
+                    const Snap& p = b[idx - 1];
+                    const double span = a.t - p.t;
+                    if (span > 1e-3 && span < 0.3) {
+                        // On the arc it was on, too: its way of going turns (seen from above) at the rate it turned
+                        // between the last two states. (Faster than a car can corner is a knock: straight on.)
+                        const double h0 = std::atan2(p.vel.z, p.vel.x), h1 = std::atan2(a.vel.z, a.vel.x);
+                        const double w = std::remainder(h1 - h0, 2 * M_PI) / span, sp = std::hypot(a.vel.x, a.vel.z);
+                        if (std::hypot(p.vel.x, p.vel.z) > 2 && sp > 2 && std::fabs(w) < 1.5 && std::fabs(w) * ahead > 1e-6) {
+                            const double half = w * ahead / 2, chord = std::sin(half) / half * ahead;
+                            const double ch = std::cos(h1 + half), sh = std::sin(h1 + half);
+                            com += V3(ch * sp * chord, 0, sh * sp * chord) - V3(a.vel.x, 0, a.vel.z) * ahead;
+                            vel = V3(std::cos(h1 + 2 * half) * sp, a.vel.y, std::sin(h1 + 2 * half) * sp);
+                        }
+                        Quat d = a.rot * Quat{p.rot.w, -p.rot.x, -p.rot.y, -p.rot.z};
+                        if (d.w < 0) d = Quat{-d.w, -d.x, -d.y, -d.z};
+                        const double sn = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+                        const double ang = 2 * std::atan2(sn, d.w);
+                        if (sn > 1e-9 && ang / span < 6) rot = Quat::axisAngle(V3(d.x, d.y, d.z) / sn, ang / span * ahead) * a.rot, rot.normalize();
+                    }
+                }
+            }
             out.resize(c.nodes.size());
             for (size_t i = 0; i < c.nodes.size(); i++)
                 out[i] = com + rot.rotate(c.restLocal[i] - rc + a.local[i] + (n.local[i] - a.local[i]) * alpha);
@@ -2251,21 +2299,53 @@ void NetSession::applyRemotes(Sim& sim, double now) {
         pose(t, now0, vel, rot, idx, alpha);
         // A jump (put back on its wheels, towed home) is a teleport, not a speed.
         const bool jumped = len((now0[0] - prev[0]) / 0.05 - vel) > 25;
-        const bool stopped = t >= rm->buf.back().t + net::kMaxCoast;
+        const bool stopped = t >= rm->buf.back().t + coastMax;
         // States that come in after a coast put it somewhere else: ease into that over a
         // moment rather than snapping (a real jump, a recovery, still snaps: takeSnapshot).
+        // (Shown now, it's always run on from the newest: each state that comes in corrects it.)
         const double newest = rm->buf.back().t;
+        if (shared - rm->newestArrival < 3) vehicleLeadNow = std::max(vehicleLeadNow, clampd(t - newest, 0, coastMax));
         if (rm->shown && rm->coastedTo >= 0 && newest > rm->coastedTo && !jumped) {
             rm->ease = rm->lastShown + rm->lastVel * dt - com;
-            if (len(rm->ease) > 3) rm->ease = V3();
+            rm->easeRot = rm->lastRot * Quat{rot.w, -rot.x, -rot.y, -rot.z};
+            if (rm->easeRot.w < 0) rm->easeRot = Quat{-rm->easeRot.w, -rm->easeRot.x, -rm->easeRot.y, -rm->easeRot.z};
+            if (len(rm->ease) > 3) rm->ease = V3(), rm->easeRot = Quat();
         }
-        rm->ease = jumped ? V3() : rm->ease * std::exp(-dt / 0.15);
+        const double keep = std::exp(-dt / 0.15);
+        rm->ease = jumped ? V3() : rm->ease * keep;
+        rm->easeRot = jumped ? Quat() : nlerp(Quat(), rm->easeRot, keep);
         if (len(rm->ease) < 1e-4) rm->ease = V3();
         rm->coastedTo = t > newest ? newest : -1;
         rm->lastShown = com + rm->ease, rm->lastVel = vel, rm->shown = true;
+        rm->lastRot = rm->easeRot * rot;
+        rm->lastRot.normalize();
+        const bool turned = rm->easeRot.w < 1 - 1e-12;
         // (One of ours is in a crash with it: it's on our physics till they part, then eased back.)
         const bool held = c.heldHere > 0 && !jumped;
         if (jumped) c.heldHere = 0, c.handBack = false, c.shoveV = c.shoveP = V3();
+        if (turned)
+            for (size_t i = 0; i < now0.size(); i++) now0[i] = com + rm->easeRot.rotate(now0[i] - com), prev[i] = com + rm->easeRot.rotate(prev[i] - com);
+        // Held, it runs on our physics from where it was guessed to be, at the speed it was
+        // guessed to have: off by what its driver did in the last latency (braking, it came in
+        // a metre or two a second too fast, and kept that, pushed along metres from where its
+        // owner had it). Once its owner's states have the crash in them too, and a moment past it
+        // (both machines have it at the same moment; the knock itself stays ours alone, or the
+        // damage comes out different), it's steered gently onto them: its speed toward theirs,
+        // with what closes the gap in place, over 0.15 s or so.
+        if (held && !rm->wasHeld) rm->heldAt = t;
+        rm->wasHeld = held;
+        if (held && predict && newest >= rm->heldAt + 0.15 && dt > 0) {
+            V3 p, v;
+            double M = 0;
+            for (const Node& n : c.nodes) p += n.p * n.m, v += n.v * n.m, M += n.m;
+            if (M > 0) {
+                p = p / M, v = v / M;
+                V3 want = vel + (com + rm->ease - p) / 0.3;
+                if (len(want - v) > 8) want = v + norm(want - v) * 8;  // (a wild guess isn't followed far)
+                const V3 dv = (want - v) * (1 - std::exp(-dt / 0.15));
+                for (Node& n : c.nodes) n.v += dv;
+            }
+        }
         if (c.handBack) c.handBackTo(now0, vel);
         c.settleShove(vel, frameDt);
         for (size_t i = 0; i < c.nodes.size() && !held; i++) {
@@ -2273,7 +2353,7 @@ void NetSession::applyRemotes(Sim& sim, double now) {
             c.nodes[i].v = (jumped || stopped ? vel : (now0[i] - prev[i]) / 0.05) + c.shoveV;
             c.nodes[i].f = V3();
         }
-        if (!held && !c.chassis.nodes.empty()) c.chassis.rot = rot;
+        if (!held && !c.chassis.nodes.empty()) c.chassis.rot = rm->lastRot;
         const Snap& s = rm->buf[std::min(idx + (alpha > 0.5), rm->buf.size() - 1)];
         const Snap& a = rm->buf[idx];
         const Snap& b = rm->buf[std::min(idx + 1, rm->buf.size() - 1)];

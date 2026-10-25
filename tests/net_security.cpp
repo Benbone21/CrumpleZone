@@ -196,7 +196,7 @@ bool rawJoin(Rig& rig, Raw& g, int port, const std::string& name, const std::str
         while (g.next(type, body)) {
             if (type == CHALLENGE && body.size() == 16 && !password.empty())
                 g.send(frameOf(AUTH, net::hmacSha256(password, body)));
-            if (type == WELCOME && body.size() == 10) {
+            if (type == WELCOME && body.size() >= 10) {  // (8: and the host's build after)
                 g.id = body[0];
                 std::memcpy(&g.token, body.data() + 2, 8);
                 return true;

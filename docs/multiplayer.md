@@ -170,9 +170,23 @@ CZ_PASSWORD='a long random password' ./build/crumplezone-server --port 27015 --m
   how many real minutes a whole day takes (1 to 1440, default 24), `--frozen` holds it at `--time`.
   Example: `--time 12 --frozen` (always noon), `--time 6 --day-length 120` (a slow day from dawn).
 - **One clock**: the server's. Guests set theirs by it with pings (NTP style) and every state,
-  line and chatter line is stamped with it; each player shows the others a little behind it
-  (twice the send interval plus the measured latency and jitter, F3 shows how far), so a truck
-  is in the same place at the same moment on every screen.
+  line and chatter line is stamped with it. Chatter, lines hooked and the sky are shown a little
+  behind it (twice the send interval plus the measured latency and jitter), so what was said
+  then happens then on every screen. Vehicles (0.4.1) are shown *now*: each other player's truck
+  is run on from its newest state, along the arc it was on, by its age (about the one-way latency;
+  F3 shows how far), so it is where its owner has it, to a few centimetres when driven steadily.
+  Behind, a truck at 65 km/h was 2.5 to 5 m back of where it really was and each player crashed
+  into the other's past (docs/plans/net-collisions.md).
+- **Crashes between players**: each owner's machine runs its own truck's side of the crash; the
+  other's copy is taken onto its physics (a whole soft body) for the knock and up to 0.6 s after,
+  steered gently back onto its owner's states once they have the crash in them too, then eased
+  onto them. Shown now, both machines have the same crash at the same moment (tests
+  `net/moving-crash/*`: rear end, side, last-moment braking and swerving, 0 to 250 ms each way).
+- **Slow machines** (0.4.1): in multiplayer the physics keep real time however slow the frames
+  (single player slows below 20 fps instead): each frame runs what it owes, within 50 ms of
+  physics a frame, the rest carried to the next frames (up to 0.25 s). So a 12 fps player's truck
+  is at real speed on everyone's screen (it was at 0.6). Only a machine whose physics alone are
+  slower than real time still slows (`net/slow-host`).
 - **Traffic**: states are quantized and told only by the dents that moved since the newest one the
   receiver said it has; the server re-tells each guest's states to each other guest that way, and
   sends trucks more than 150 m from all of a player's own less often (10, 5, then 2 a second past
@@ -185,8 +199,11 @@ CZ_PASSWORD='a long random password' ./build/crumplezone-server --port 27015 --m
   the same. A state's status byte carries a "driver in it" bit: then you ride along instead (chatter
   "ride ID", so the server sends that truck to you at the full rate). Someone who leaves holding another's
   vehicle leaves it behind: the host takes it on, parked, and its owner can take it back.
-- **Versions**: protocol 7 (0.4.0). An older game is turned away with "version mismatch: update
-  to 0.4.0 or newer"; a newer game joining an older server is told the server is older.
+- **Versions**: protocol 8 (0.4.1). An older game is turned away with "version mismatch: update
+  to 0.4.1 or newer"; a newer game joining an older server is told the server is older. Each side
+  also says its build (the git commit) on joining: another build is let in, but everyone is told
+  "NAME RUNS BUILD x, THIS GAME y: HANDLING MAY DIFFER" (physics changes between builds, tire grip
+  say, don't change the protocol, and each player's truck handles as its owner's build has it).
 
 Firewall examples (the server is IPv4 only; keep your SSH rule or you lock yourself out):
 

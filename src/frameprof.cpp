@@ -163,6 +163,14 @@ void describeSpike(char* line, int n, int frame, double frameMs, double typicalM
                   stageMs[a], framePassName((FramePass)b), stageMs[b]);
 }
 
+int simNetSteps(double h, double owedS, double msPerStep) {
+    const int least = simMaxSteps(h);
+    if (!(h > 0) || !(owedS > 0)) return least;
+    const double owedSteps = std::ceil(std::min(owedS, kNetOwedMax + 0.1) / h);
+    const double budget = msPerStep > 0 ? kNetPhysicsMs / msPerStep : owedSteps;
+    return std::max(least, (int)std::min(owedSteps, budget));
+}
+
 double simCatchUp(double dt, double& usualDt) {
     if (!(dt > 0)) return 0;
     const double run = dt > 0.05 && dt > 2.5 * usualDt ? usualDt : dt;

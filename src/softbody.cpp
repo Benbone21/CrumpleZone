@@ -2519,7 +2519,7 @@ void Sim::addCar(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col
     cars.back().build(vs, pos, yaw, paint);
 }
 
-int Sim::advance(double realDt, int maxSubsteps) {
+int Sim::advance(double realDt, int maxSubsteps, double keepOwed) {
     if (paused) return 0;
     updateTrail(realDt * timeScale);
     accum += realDt * timeScale;
@@ -2529,7 +2529,7 @@ int Sim::advance(double realDt, int maxSubsteps) {
         accum -= h;
         n++;
     }
-    if (n == maxSubsteps) accum = 0;  // can't keep up: slow down rather than spiral
+    if (n == maxSubsteps) accum = std::min(accum, std::max(0.0, keepOwed));  // can't keep up: slow down rather than spiral (or owe a little)
     for (Car& c : cars)
         {
             if (c.gate.dir != 0) c.gateStep(realDt * timeScale);
@@ -2722,8 +2722,11 @@ void Sim::substep() {
             return m > 0 ? p / m : V3();
         };
         if (r.heldHere <= 0 && len(vel(a) - vel(b)) < 1.0) continue;
-        if (r.heldHere <= 0) r.holdHere();
-        r.heldHere = 0.4;
+        if (r.heldHere <= 0) r.holdHere(), r.heldFor = 0;
+        // (Not for good: pushed along for long, it went its own way here while its owner's
+        // states said otherwise, metres apart. Past kMaxHold it goes back to them, hit or not;
+        // its owner's machine has the same push.)
+        if (r.heldFor < Car::kMaxHold) r.heldHere = std::min(0.4, Car::kMaxHold - r.heldFor);
     }
 
     if (!ropes.empty()) ropeForces();
@@ -2736,6 +2739,7 @@ void Sim::substep() {
             c.integrate(h);
             c.updateBounds();
             c.heldHere -= h;
+            c.heldFor += h;
             if (c.heldHere <= 0) c.handBack = true;
             continue;
         }

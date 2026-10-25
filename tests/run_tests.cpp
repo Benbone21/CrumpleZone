@@ -161,6 +161,8 @@ std::string esc(const std::string& s) {
 void printResult(const Result& r, const std::map<std::string, double>& base, bool verbose) {
     std::printf("%s%s%s %s%-34s%s %s%5.1f s sim, %4.1f s wall%s\n", r.passed ? GREEN : RED, r.passed ? "PASS" : "FAIL",
                 RESET, BOLD, r.sc->name.c_str(), RESET, DIM, r.simTime, r.wall, RESET);
+    if (verbose)
+        for (const std::string& n : r.notes) std::printf("     %snote%s %s\n", DIM, RESET, n.c_str());
     for (const CheckResult& c : r.checks)
         if (!c.ok || verbose)
             std::printf("     %s%s%s %s%s%s\n", c.ok ? GREEN : RED, c.ok ? "ok  " : "FAIL", RESET, c.name.c_str(),
