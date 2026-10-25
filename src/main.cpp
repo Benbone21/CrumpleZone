@@ -124,7 +124,7 @@ struct Options {
     int mods[5] = {-1, -1, -1, -1, -1};  // --mods E,S,T[,W,R]: fit these to the player's car (testing)
     std::string clipboard;        // --clipboard TEXT: put this on the system clipboard first (testing paste); a --press scancode over 1000 is that key with Ctrl held
     int menu = -1;                // --menu P: open the pause menu on page P (testing)
-    int mainMenu = -1;            // --main-menu P: the new main menu with its camp scene, on page P (0 front, 1 map, 2 vehicle, 3 dev); a plain launch shows it too
+    int mainMenu = -1;            // --main-menu P: the new main menu with its camp scene, on page P (0 front, 1 map, 2 vehicle, 3 dev; with --main-menu-career 1 is the world list and 4 the New World page); a plain launch shows it too
     std::string campDump;         // --menu-camp-dump FILE: write the main menu camp the game ships (made by code) there and quit
     bool menuCareer = false;      // --main-menu-career: its map and vehicle pages are CAREER's
     int quality = -1;             // --quality 0-3: graphics preset (testing)
@@ -3089,10 +3089,12 @@ int main(int argc, char** argv) {
         menu.showTitle(model, settings.map);
         mainNav.open(menu.mapPick, model);
         mainNav.career = opt.menuCareer || (opt.mainMenu < 0 && settings.career);
+        mainNav.worlds = listWorlds();
         if (opt.mainMenu >= 1) {  // (--main-menu P: straight onto a page, for the screenshots)
-            if (opt.mainMenu <= 2) mainNav.choose(opt.menuCareer ? mainmenu::F_CAREER : mainmenu::F_SANDBOX);
+            if (opt.mainMenu <= 2 || opt.mainMenu == 4) mainNav.choose(opt.menuCareer ? mainmenu::F_CAREER : mainmenu::F_SANDBOX);
             if (opt.mainMenu == 2) mainNav.choose(mainNav.mapIdx);
             if (opt.mainMenu == 3) mainNav.choose(mainmenu::F_DEV);
+            if (opt.mainMenu == 4 && opt.menuCareer) mainNav.choose((int)mainNav.worlds.size());  // (NEW WORLD)
         }
     } else if (!scripted && opt.scenario.empty() && opt.map < 0 && !opt.spawnSet && opt.hostPort < 0 && opt.join.empty() && opt.menu < 0 && opt.resumeModel < 0) {
         openMenu();
@@ -3147,6 +3149,9 @@ int main(int argc, char** argv) {
                 break;
             case A_DEV_DEBUG: runDev(devmenu::Action{devmenu::FPS, 0}); break;
             case A_DEV_CLASSIC: classicTitle = true; break;
+            case A_CAREER_CONTINUE:  // (acted on by the career worlds task: the page is built, the game side is not yet)
+            case A_CAREER_NEW:
+            case A_CAREER_DELETE: break;
         }
     };
     // Mouse positions arrive in window coordinates; the HUD is drawn in drawable pixels.
@@ -3716,6 +3721,7 @@ int main(int argc, char** argv) {
             switch (e.type) {
                 case SDL_QUIT: running = false; break;
                 case SDL_TEXTINPUT:
+                    if (mainMenuShown() && mainNav.text(evText(e))) break;  // (the New World page's name field)
                     if (menu.open) {
                         const uint8_t* ks = SDL_GetKeyboardState(nullptr);
                         menu.ctrl = ks[224] || ks[228] || testCtrl;
@@ -3748,7 +3754,7 @@ int main(int argc, char** argv) {
                         }
                         {
                             const int before = mainNav.sel, pageBefore = mainNav.page;
-                            const mainmenu::Result r = mainNav.key(evKeyScancode(e));
+                            const mainmenu::Result r = mainNav.key(evKeyScancode(e), SDL_GetKeyboardState(nullptr)[224] || SDL_GetKeyboardState(nullptr)[228] || testCtrl, shiftDown());
                             if (activationKey(evKeyScancode(e)) || r.act != mainmenu::A_NONE || mainNav.page != pageBefore) uiClick();
                             else if (mainNav.sel != before) uiHover();
                             handleMain(r);

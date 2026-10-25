@@ -7,8 +7,8 @@
 
 using namespace mainmenu;
 
-SCENARIO(menuFlow, "mainmenu/flow", "SANDBOX goes front -> map -> vehicle -> start with the picks; CAREER the same with career set") {
-    for (int career = 0; career < 2; career++) {
+SCENARIO(menuFlow, "mainmenu/flow", "SANDBOX goes front -> map -> vehicle -> start with the picks (CAREER has its own world pages: mainmenu/career-worlds)") {
+    for (int career = 0; career < 1; career++) {
         Nav n;
         n.open(listedMaps()[0], listedVehicles()[0]);
         const std::string tag = career ? "CAREER: " : "SANDBOX: ";
@@ -107,4 +107,104 @@ SCENARIO(menuPicks, "mainmenu/picks", "Every listed map and vehicle can be picke
     n.choose(F_SANDBOX);
     n.hits = {{0, 0, 100, 40, 0}, {0, 50, 100, 40, 1}};
     ctx.check("the mouse finds a row", n.hitAt(10, 60) == 1 && n.hitAt(10, 45) == -1);
+}
+
+SCENARIO(menuCareerWorlds, "mainmenu/career-worlds", "CAREER lists the worlds (a damaged one can't be played) then NEW WORLD; the New World page makes A_CAREER_NEW; delete asks first") {
+    WorldSave good, bad;
+    good.name = "ALPHA", good.slug = "alpha", good.map = listedMaps()[1], good.diff = DIFF_HARDCORE, good.mode = MODE_CREW;
+    bad.name = "bad-slug", bad.slug = "bad-slug", bad.damaged = true;
+    Nav n;
+    n.open(listedMaps()[0], listedVehicles()[0]);
+    n.worlds = {bad, good};
+    n.choose(F_CAREER);
+    ctx.check("CAREER opens the world list", n.page == P_WORLDS && n.career);
+    ctx.check("two worlds and NEW WORLD: three rows", n.count() == 3);
+    ctx.check("Enter on the damaged world does nothing", n.key(K_ENTER).act == A_NONE && n.page == P_WORLDS);
+    n.key(K_S);
+    const Result c = n.key(K_ENTER);
+    ctx.check("Enter on the good one continues it, by slug", c.act == A_CAREER_CONTINUE && c.world == "alpha");
+
+    // Delete: the key asks, NO is the default and keeps it, YES returns the slug.
+    n.open(0, 0);
+    n.worlds = {bad, good};
+    n.choose(F_CAREER);
+    n.key(K_DELETE);
+    ctx.check("Delete asks (on NO)", n.page == P_DELETE_WORLD && n.sel == 1 && n.title() == "DELETE bad-slug?");
+    ctx.check("Enter on NO goes back to the list, nothing deleted", n.key(K_ENTER).act == A_NONE && n.page == P_WORLDS && n.worlds.size() == 2);
+    n.key(K_DELETE);
+    n.key(K_ESC);
+    ctx.check("Esc on the question goes back too", n.page == P_WORLDS && n.worlds.size() == 2);
+    n.key(K_DELETE);
+    n.key(K_A);
+    ctx.check("A moves to YES", n.sel == 0);
+    const Result d = n.key(K_ENTER);
+    ctx.check("YES asks the game to delete the slug and returns to the list", d.act == A_CAREER_DELETE && d.world == "bad-slug" && n.page == P_WORLDS && n.worlds.size() == 1 && n.count() == 2);
+    n.setSel(1);
+    n.key(K_DELETE);
+    ctx.check("Delete on NEW WORLD does nothing", n.page == P_WORLDS);
+
+    // New World.
+    n.setSel(1);
+    n.key(K_ENTER);
+    ctx.check("NEW WORLD opens the page with a default name", n.page == P_NEW_WORLD && n.newName == "WORLD 1" && n.count() == N_COUNT);
+    ctx.check("difficulty starts on MEDIUM", n.diffIdx == DIFF_MEDIUM);
+    n.setSel(N_NAME);
+    n.key(K_ENTER);
+    ctx.check("Enter on NAME starts typing", n.typing);
+    for (int i = 0; i < 7; i++) n.key(K_BACKSPACE);
+    ctx.check("Backspace edits the name (it doesn't leave the page)", n.page == P_NEW_WORLD && n.newName.empty());
+    n.text("my rig");
+    ctx.check("typed text is capitalised into the name", n.newName == "MY RIG");
+    n.key(K_ENTER);
+    ctx.check("Enter ends typing", !n.typing && n.sel == N_NAME);
+    ctx.check("text is refused when not typing", !n.text("X") && n.newName == "MY RIG");
+    n.setSel(N_MAP);
+    n.key(K_D);
+    ctx.check("D cycles the map", n.mapIdx == 1 || listedMaps().size() == 1);
+    n.setSel(N_DIFF);
+    n.key(K_D);
+    ctx.check("D: MEDIUM -> HARDCORE", n.diffIdx == DIFF_HARDCORE && std::string(difficultyName((Difficulty)n.diffIdx)) == "HARDCORE");
+    n.key(K_D);
+    ctx.check("...and wraps to LIGHT", n.diffIdx == DIFF_LIGHT);
+    n.key(K_A);
+    ctx.check("A wraps back to HARDCORE", n.diffIdx == DIFF_HARDCORE);
+    n.setSel(N_MODE);
+    n.key(K_D);
+    ctx.check("D: SHARED CREW", n.modeIdx == MODE_CREW);
+    n.setSel(N_VEH);
+    const std::vector<int> sv = startVehicles();
+    bool jesko = false;
+    for (size_t i = 0; i <= sv.size(); i++) {
+        jesko = jesko || !startableVehicle(n.startVehicle());
+        n.key(K_D);
+    }
+    ctx.check("a full cycle of vehicles never lands on the Jesko", !jesko && sv.size() < listedVehicles().size() + 1 && !sv.empty());
+    n.setSel(N_CREATE);
+    const Result r = n.key(K_ENTER);
+    ctx.check("CREATE returns the picks", r.act == A_CAREER_NEW && r.worldName == "MY RIG" && r.map == n.map() && r.difficulty == 2 && r.mode == MODE_CREW &&
+                                              r.vehicle == n.startVehicle() && startableVehicle(r.vehicle));
+    n.key(K_ESC);
+    ctx.check("Esc goes back to the list, on NEW WORLD", n.page == P_WORLDS && n.sel == (int)n.worlds.size());
+    n.key(K_ESC);
+    ctx.check("Esc again: the front page, on CAREER", n.page == P_FRONT && n.sel == F_CAREER);
+
+    // The default name skips the ones taken; an empty name falls back to it.
+    WorldSave w1;
+    w1.name = "WORLD 1", w1.slug = "world";
+    n.worlds = {w1};
+    n.choose(F_CAREER);
+    n.choose(1);
+    ctx.check("default name skips WORLD 1", n.newName == "WORLD 2");
+    n.newName = "  ";
+    n.setSel(N_CREATE);
+    ctx.check("a blank name creates as the default", n.key(K_ENTER).worldName == "WORLD 2");
+    // Esc while typing stops typing, not the page.
+    n.setSel(N_NAME);
+    n.key(K_ENTER);
+    n.key(K_ESC);
+    ctx.check("Esc while typing only stops typing", n.page == P_NEW_WORLD && !n.typing);
+    // SANDBOX still goes by the map and vehicle pages.
+    n.open(0, 0);
+    n.choose(F_SANDBOX);
+    ctx.check("SANDBOX keeps its map page", n.page == P_MAP && !n.career);
 }

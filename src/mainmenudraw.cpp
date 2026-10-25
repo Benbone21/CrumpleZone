@@ -1,6 +1,7 @@
 #include "mainmenudraw.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 
 #include "gamepad.h"
@@ -54,6 +55,35 @@ void row(Ctx& c, int index, float x, float y, float w, float h, float ts, const 
     hud::label(r, tx, ty, ts, label, focus ? kAmber[0] : 0.9f, focus ? kAmber[1] : 0.9f, focus ? kAmber[2] : 0.92f, (dim ? 0.55f : 1.0f) * a);
     if (two) r.text(tx, ty + th + 5 * u, small, sub, kGrey[0], kGrey[1], kGrey[2], a);
     c.nav.hits.push_back({x, y, w, h, index});
+}
+
+std::string upper(std::string s) {
+    for (char& c : s) c = (char)std::toupper((unsigned char)c);
+    return s;
+}
+
+std::string playedText(double secs) {
+    char b[48];
+    const int m = (int)(secs / 60);
+    if (m < 60) std::snprintf(b, sizeof b, "%d MIN PLAYED", m);
+    else std::snprintf(b, sizeof b, "%d H %d MIN PLAYED", m / 60, m % 60);
+    return b;
+}
+
+// What a New World row shows: its name, its pick and the second line.
+void newWorldRow(const Nav& nav, int i, bool blink, std::string& lab, std::string& sub) {
+    switch (i) {
+        case N_NAME: {
+            lab = "NAME:  " + (nav.typing ? te::withCursor(nav.newName, nav.nameEdit, blink) : nav.newName);
+            sub = nav.typing ? "" : "ENTER TO TYPE";
+            break;
+        }
+        case N_MAP: lab = std::string("MAP:  ") + mapName(nav.map()); break;
+        case N_DIFF: lab = std::string("DIFFICULTY:  ") + difficultyName((Difficulty)nav.diffIdx); break;
+        case N_MODE: lab = std::string("MODE:  ") + modeName((WorldMode)nav.modeIdx); break;
+        case N_VEH: lab = std::string("VEHICLE:  ") + vehicleCatalog()[nav.startVehicle()].name; break;
+        default: lab = "CREATE WORLD"; break;
+    }
 }
 }  // namespace
 
@@ -109,7 +139,21 @@ void draw(Renderer& r, Nav& nav, int W, int H, float a, double clock, bool padLa
     const float ts = px(2.0f * u);
     for (int i = 0; i < n; i++) {
         const float y = top + i * (rowH + gap);
-        if (nav.page == P_MAP) {
+        if (nav.page == P_WORLDS) {
+            if (i < (int)nav.worlds.size()) {
+                const WorldSave& w = nav.worlds[i];
+                if (w.damaged) row(c, i, x0, y, lw, rowH, ts, upper(w.name), "DAMAGED SAVE", nav.sel == i, true);
+                else row(c, i, x0, y, lw, rowH, ts, upper(w.name), std::string(mapName(w.map)) + " - " + difficultyName(w.diff) + " - " + modeName(w.mode), nav.sel == i);
+            } else {
+                row(c, i, x0, y, lw, rowH, ts, "NEW WORLD", "", nav.sel == i);
+            }
+        } else if (nav.page == P_NEW_WORLD) {
+            std::string lab, sub;
+            newWorldRow(nav, i, std::fmod(clock, 1.0) < 0.55, lab, sub);
+            row(c, i, x0, y, lw, rowH, ts, lab, sub, nav.sel == i);
+        } else if (nav.page == P_DELETE_WORLD) {
+            row(c, i, x0, y, lw, rowH, ts, i == 0 ? "YES, DELETE IT" : "NO, KEEP IT", "", nav.sel == i);
+        } else if (nav.page == P_MAP) {
             const int m = listedMaps()[i];
             row(c, i, x0, y, lw, rowH, ts, mapName(m), "", nav.sel == i);
         } else if (nav.page == P_VEHICLE) {
@@ -127,7 +171,61 @@ void draw(Renderer& r, Nav& nav, int W, int H, float a, double clock, bool padLa
     const float px0 = x0 + lw + 36 * u, pw = W - px0 - x0;
     if (pw < 200 * u) return;
     float py = top;
-    if (nav.page == P_MAP) {
+    if (nav.page == P_WORLDS || nav.page == P_DELETE_WORLD) {
+        const int wi = nav.page == P_DELETE_WORLD ? nav.delIdx : nav.sel;
+        const float bh = 130 * u;
+        pill(r, px0 - 6 * u, py - 6 * u, pw + 12 * u, bh + 12 * u, kPanel[0], kPanel[1], kPanel[2], 0.85f * a);
+        float y = py + 12 * u;
+        if (wi >= 0 && wi < (int)nav.worlds.size()) {
+            const WorldSave& w = nav.worlds[wi];
+            label(r, px0 + 10 * u, y, px(2.4f * u), upper(w.name), kAmber[0], kAmber[1], kAmber[2], a);
+            y += 8 * px(2.4f * u) + 14 * u;
+            if (nav.page == P_DELETE_WORLD) {
+                r.text(px0 + 10 * u, y, mid, "THE WORLD AND EVERY CAR LEFT IN IT GO FOR GOOD", 0.95f, 0.6f, 0.5f, a);
+            } else if (w.damaged) {
+                r.text(px0 + 10 * u, y, mid, "THIS SAVE CAN'T BE READ. IT CAN ONLY BE DELETED (DEL).", 0.85f, 0.85f, 0.88f, a);
+            } else {
+                r.text(px0 + 10 * u, y, mid, std::string(mapName(w.map)) + " - " + difficultyName(w.diff), 0.85f, 0.85f, 0.88f, a);
+                y += 8 * mid + 10 * u;
+                r.text(px0 + 10 * u, y, small, std::string(modeName(w.mode)) + "   " + playedText(w.playedSeconds), kGrey[0], kGrey[1], kGrey[2], a);
+                y += 8 * small + 8 * u;
+                r.text(px0 + 10 * u, y, small, std::to_string(w.left.size()) + (w.left.size() == 1 ? " CAR" : " CARS") + " LEFT IN THE WORLD", kGrey[0], kGrey[1], kGrey[2], a);
+            }
+        } else {
+            label(r, px0 + 10 * u, y, px(2.4f * u), "NEW WORLD", kAmber[0], kAmber[1], kAmber[2], a);
+            y += 8 * px(2.4f * u) + 14 * u;
+            r.text(px0 + 10 * u, y, mid, "START A CAREER: PICK A MAP, A DIFFICULTY AND A STARTER", 0.85f, 0.85f, 0.88f, a);
+        }
+    } else if (nav.page == P_NEW_WORLD) {
+        const float bh = 150 * u;
+        pill(r, px0 - 6 * u, py - 6 * u, pw + 12 * u, bh + 12 * u, kPanel[0], kPanel[1], kPanel[2], 0.85f * a);
+        float y = py + 12 * u;
+        std::string head, l1, l2;
+        char b[96];
+        switch (nav.sel) {
+            case N_NAME: head = "NAME", l1 = "WHAT THIS WORLD IS CALLED IN THE LIST"; break;
+            case N_MAP: head = mapName(nav.map()), l1 = "WHERE THE CAREER TAKES PLACE"; break;
+            case N_DIFF:
+                head = difficultyName((Difficulty)nav.diffIdx);
+                std::snprintf(b, sizeof b, "START CASH $%d", startCash((Difficulty)nav.diffIdx));
+                l1 = b, l2 = "LESS CASH, HARDER PARTS AND REPAIRS";
+                break;
+            case N_MODE:
+                head = modeName((WorldMode)nav.modeIdx);
+                l1 = nav.modeIdx == MODE_CREW ? "ONE GARAGE AND ONE POT OF CASH FOR EVERYONE" : "EACH PLAYER KEEPS THEIR OWN GARAGE AND CASH";
+                break;
+            case N_VEH: {
+                const VehicleSpec& vs = vehicleCatalog()[nav.startVehicle()];
+                head = vs.name, l1 = vs.blurb, l2 = "THE VEHICLE YOU START THIS CAREER WITH";
+                break;
+            }
+            default: head = "CREATE", l1 = "START WITH " + upper(nav.newName.empty() ? "A NEW WORLD" : nav.newName); break;
+        }
+        label(r, px0 + 10 * u, y, px(2.4f * u), head, kAmber[0], kAmber[1], kAmber[2], a);
+        y += 8 * px(2.4f * u) + 14 * u;
+        r.text(px0 + 10 * u, y, mid, l1, 0.85f, 0.85f, 0.88f, a);
+        if (!l2.empty()) r.text(px0 + 10 * u, y + 8 * mid + 10 * u, small, l2, kGrey[0], kGrey[1], kGrey[2], a);
+    } else if (nav.page == P_MAP) {
         const int m = nav.map();
         const float ph = std::min(pw * 9.0f / 16.0f, H - top - 150 * u), pwid = ph * 16.0f / 9.0f;
         pill(r, px0 - 6 * u, py - 6 * u, pwid + 12 * u, ph + 12 * u, kPanel[0], kPanel[1], kPanel[2], 0.85f * a);
