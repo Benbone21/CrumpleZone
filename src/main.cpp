@@ -89,6 +89,8 @@
 #include "simasync.h"
 #include "sdl_min.h"
 #include "softbody.h"
+#include "updatecard.h"
+#include "updater.h"
 #include "../tests/harness.h"
 
 namespace {
@@ -1758,6 +1760,7 @@ static void onTermSignal(int sig) {
 }
 
 int main(int argc, char** argv) {
+    if (update::isHelperCall(argc, argv)) return update::helperMain(argc, argv);  // (Windows: the copy that swaps in an update, updater.h)
 #ifndef _WIN32
     signal(SIGPIPE, SIG_IGN);  // (a multiplayer peer dropping mid-send; macOS has no MSG_NOSIGNAL)
 #endif
@@ -1800,6 +1803,9 @@ int main(int argc, char** argv) {
         std::setvbuf(stderr, nullptr, _IONBF, 0);
     }
 #endif
+    // The self-updater (updater.h): what a previous update left (count this start; after two failed starts, go back to the version before).
+    // True: it started that version, so this one stops here. Scripted and test runs leave it alone.
+    if (!unattended && update::init(argc, argv, net::kVersion)) return 0;
     if (scripted) {
         opt.audio = false;
         std::setvbuf(stdout, nullptr, _IONBF, 0);  // Keep packaged-app diagnostics visible during slow CI rendering.
@@ -2211,6 +2217,7 @@ int main(int argc, char** argv) {
         sim.paused = menuWasPaused;
     };
     bool running = true;
+    bool updateRestart = false, updateGood = false, updateAsked = false;  // (the self-updater, updater.h)
     int exitCode = 0;
     double wrapSeen = 0;  // sim.wrapShift the camera and effects have caught up with
     BuildWatch watch;
@@ -3517,6 +3524,13 @@ int main(int argc, char** argv) {
 
     while (running) {
         if (g_termSignals) break;  // (SIGTERM / SIGINT in normal play: quit cleanly)
+        if (!unattended) {  // the self-updater (updater.h): the launch check, its notices, "this version starts fine", the restart into an update
+            if (!updateAsked && wantCamp) updateAsked = true, update::checkOnLaunch();
+            const std::string note = update::takeNotice();
+            if (!note.empty()) hud.toast(note);
+            if (!updateGood && clock > 20) updateGood = true, update::markGood();
+            if (update::status().phase == update::Phase::Restarting) updateRestart = true, running = false;
+        }
         if (watchdog) watchdog->frame(frame);
         if (frame == testStallFrame) for (;;) std::this_thread::sleep_for(std::chrono::seconds(1));
         uint64_t now = SDL_GetPerformanceCounter();
@@ -3655,6 +3669,25 @@ int main(int argc, char** argv) {
                     continue;
                 }
                 if (!fromPad && (e.type == SDL_KEYDOWN || e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEWHEEL)) pad::ui.last = false;
+            }
+            if (updatecard::shown() && e.type != SDL_QUIT) {  // the update card (updater.h) is modal: it takes the keys, the mouse and the pad
+                if (e.type == SDL_KEYDOWN) {
+                    if (updatecard::key(evKeyScancode(e))) uiClick();
+                    continue;
+                }
+                float ux, uy;
+                if (e.type == SDL_MOUSEMOTION) {
+                    toDrawable(evMotionX(e), evMotionY(e), ux, uy);
+                    mouseX = ux, mouseY = uy;
+                    updatecard::mouseMove(ux, uy);
+                    continue;
+                }
+                if (e.type == SDL_MOUSEBUTTONDOWN) {
+                    toDrawable(evButtonX(e), evButtonY(e), ux, uy);
+                    if (evButton(e) == 1) updatecard::mouseDown(ux, uy);
+                    continue;
+                }
+                if (e.type == SDL_MOUSEBUTTONUP || e.type == SDL_MOUSEWHEEL || e.type == SDL_TEXTINPUT) continue;
             }
             if (!editor.active && !menu.open && coop.typing && e.type == SDL_KEYDOWN) {
                 const uint8_t* ks = SDL_GetKeyboardState(nullptr);
@@ -4483,6 +4516,13 @@ int main(int argc, char** argv) {
                 } else if (st < 0) {
                     joinFailed();
                     std::printf("can't join: %s\n", net.error.c_str());
+                    // The host is newer ("version mismatch: update to 0.4.1 or newer"): ask the update server now (updater.h).
+                    const size_t upd = net.error.find("version mismatch: update to ");
+                    if (upd != std::string::npos) {
+                        std::string rel = net.error.substr(upd + 28);
+                        rel = rel.substr(0, rel.find(' '));
+                        update::checkFor(net::kVersion + 1, rel);
+                    }
                 }
             }
             if (!net.joining()) net.receive(sim, netNow);
@@ -6293,6 +6333,7 @@ int main(int argc, char** argv) {
             mainFade = 0;
             menu.draw(renderer, settings, W, H, dt);
         }
+        updatecard::draw(renderer, W, H, pad::ui.last);  // (over everything: the update card, when there is one)
         renderer.flushHud(W, H);
 
         // CZ_BENCH=1 (with --shot-frames): average frame time, the GPU finished (one pixel read back).
@@ -6414,6 +6455,7 @@ int main(int argc, char** argv) {
     SDL_DestroyWindow(win);
     padDev.close();  // (before SDL goes: stops any rumble)
     SDL_Quit();
+    if (updateRestart && !update::restart(argc, argv)) std::fprintf(stderr, "crumplezone: the update is installed, but the game couldn't restart itself: start it again\n");
     if (reload) {
         std::printf("reloading the new build at %s\n", resume.size() > 5 ? resume[5].c_str() : "?");
         std::fflush(stdout);

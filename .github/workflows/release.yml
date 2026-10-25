@@ -3,6 +3,9 @@
 #   (a check that every platform still builds; nothing is published).
 # - On a version tag (v1.2.3): also publishes them as a GitHub release, with the notes in
 #   docs/releases/<tag>.md when it exists (else GitHub writes them from the commits).
+#   The release also carries the self-updater's files (src/updater.h): a per-platform zip for each OS and update-manifest.txt,
+#   signed with the Ed25519 key in the secret UPDATE_SIGNING_KEY (docs/update-signing-keys.md). The owner's server copies them
+#   from the release (docs/server-updates-setup.md). Without the secret the release is published as before, with no manifest.
 #   The mac job is skipped on a pushed tag unless the repository variable RELEASE_MAC is "true"
 #   (Settings > Variables); the release then has the .deb and .exe only. To add the Mac files
 #   later: run this workflow by hand (Run workflow) on the tag, or use release-recovery.yml.
@@ -63,12 +66,14 @@ jobs:
           make -j"$(nproc)" PGO=$PGO $TARGETS || { echo "::warning::PGO build failed, building without it"; PGO=""; rm -rf build/rel; make -j"$(nproc)" $TARGETS; }
           make -j"$(nproc)" CXXFLAGS="-O2 -march=x86-64-v2 -mtune=generic" build/test_visibility
           ./build/test_visibility
-          ./build/rel/run_tests --jobs 1 engine/collision engine/physics-workers engine/thread-cache engine/adaptive-quality tires/pressure net/state vtools/
+          ./build/rel/run_tests --jobs 1 engine/collision engine/physics-workers engine/thread-cache engine/adaptive-quality tires/pressure net/state vtools/ update/
           SDL_VIDEODRIVER=offscreen LP_NUM_THREADS=2 ./build/rel/test_render
           SDL_AUDIODRIVER=dummy CZ_AUDIO_DEVICE_TEST=1 ./build/rel/test_audio
           python3 tests/test_engine_import.py
           make deb VERSION="$V" PGO=$PGO
+          make linux-zip VERSION="$V" PGO=$PGO
           mkdir -p out && cp "build/deb/crumplezone_${V}_amd64.deb" "out/CrumpleZone-${V}-linux.deb"
+          cp build/linux/CrumpleZone-linux.zip "out/CrumpleZone-${V}-linux.zip"
       - uses: actions/upload-artifact@v4
         with: { name: linux, path: out/* }
 
@@ -93,6 +98,7 @@ jobs:
           grep -q 'NvOptimusEnablement' build/win/imports.txt
           grep -q 'AmdPowerXpressRequestHighPerformance' build/win/imports.txt
           mkdir -p out && cp build/win/CrumpleZone-setup.exe "out/CrumpleZone-${V}-windows-setup.exe"
+          cp build/win/CrumpleZone-windows.zip "out/CrumpleZone-${V}-windows.zip"
       - uses: actions/upload-artifact@v4
         with: { name: windows, path: out/* }
       - uses: actions/upload-artifact@v4
@@ -125,7 +131,7 @@ jobs:
         run: |
           .\cpu-tests\test_visibility.exe
           if ($LASTEXITCODE -ne 0) { throw "Windows culling/LOD geometry checks failed" }
-          .\cpu-tests\run_tests.exe --jobs 1 net/ engine/collision engine/physics-workers engine/thread-cache engine/adaptive-quality tires/pressure vtools/
+          .\cpu-tests\run_tests.exe --jobs 1 net/ engine/collision engine/physics-workers engine/thread-cache engine/adaptive-quality tires/pressure vtools/ update/
           if ($LASTEXITCODE -ne 0) { throw "Windows networking/physics regression checks failed (exit $LASTEXITCODE)" }
           foreach ($attempt in 1..5) {
             .\cpu-tests\run_tests.exe --jobs 1 engine/thread-cache vtools/go net/state
@@ -166,7 +172,7 @@ jobs:
           for a in 127.0.0.2 127.0.0.3 $(seq -f '127.0.1.%g' 1 40); do sudo ifconfig lo0 alias "$a" up; done
           make -j4 build/mac/bench_sim build/mac/run_tests build/mac/test_audio build/mac/test_render build/mac/test_visibility
           ./build/mac/test_visibility
-          ./build/mac/run_tests --jobs 1 net/ engine/collision engine/physics-workers engine/thread-cache engine/adaptive-quality tires/pressure vtools/
+          ./build/mac/run_tests --jobs 1 net/ engine/collision engine/physics-workers engine/thread-cache engine/adaptive-quality tires/pressure vtools/ update/
           SDL_AUDIODRIVER=dummy CZ_AUDIO_DEVICE_TEST=1 ./build/mac/test_audio
           python3 -u - <<'PY'
           import subprocess
@@ -231,6 +237,30 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with: { path: dist, merge-multiple: true }
+      - name: Sign the update manifest
+        # The self-updater's manifest (src/updatecore.h): version, and each platform's file (relative URL v<version>/<name> on the
+        # owner's server, size, SHA-256), signed with the secret's Ed25519 key. The key only ever lives in this step's environment;
+        # build/cz-update reads it from there and never prints or writes it. --require-builtin: the key must match the public key
+        # compiled into the game (src/updatekeys.h), or the games would refuse it. A failure here doesn't stop the release.
+        continue-on-error: true
+        env:
+          CZ_UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          V="${VERSION#[vV]}"
+          if [ -z "$CZ_UPDATE_SIGNING_KEY" ]; then
+            echo "::warning::No UPDATE_SIGNING_KEY secret: this release has no update manifest, so no game will be offered it (docs/update-signing-keys.md)"
+            exit 0
+          fi
+          make -j"$(nproc)" build/cz-update
+          args=()
+          for p in windows:windows.zip linux:linux.zip mac:mac.zip deb:linux.deb; do
+            f="CrumpleZone-${V}-${p#*:}"
+            if [ -s "dist/$f" ]; then args+=(--file "${p%%:*}" "v${V}/$f" "dist/$f"); fi
+          done
+          build/cz-update --sign dist/update-manifest.txt --version "$V" --date "$(date -u +%F)" \
+            --notes "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${GITHUB_REF_NAME}" --require-builtin "${args[@]}" \
+            || { echo "::error::The update manifest was not signed (see above): the release goes out without it"; rm -f dist/update-manifest.txt; exit 1; }
+          build/cz-update --verify dist/update-manifest.txt --files dist || { echo "::error::The signed manifest didn't check out: the release goes out without it"; rm -f dist/update-manifest.txt; exit 1; }
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -242,6 +272,10 @@ jobs:
           if [ -e "dist/CrumpleZone-${V}-mac.dmg" ] || [ -e "dist/CrumpleZone-${V}-mac.zip" ]; then
             names+=("CrumpleZone-${V}-mac.dmg" "CrumpleZone-${V}-mac.zip")
           fi
+          # The self-updater's files: the Windows and Linux zips, and the signed manifest when the step above made one.
+          for name in "CrumpleZone-${V}-windows.zip" "CrumpleZone-${V}-linux.zip" update-manifest.txt; do
+            if [ -s "dist/$name" ]; then names+=("$name"); fi
+          done
           for name in "${names[@]}"; do test -s "dist/$name"; done
           (cd dist && sha256sum "${names[@]}" > SHA256SUMS)
           files=()
