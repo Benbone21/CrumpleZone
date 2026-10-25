@@ -3446,6 +3446,48 @@ void Sim::respawnPlayer() {
     accum = 0;
 }
 
+V3 Sim::poleFreeShift(const Car& c) const {
+    // The car's outline seen from above, in its own level frame (dents and all), and its height.
+    const Frame fr = c.frame();
+    V3 fwd = norm(V3(fr.fwd.x, 0, fr.fwd.z));
+    if (!std::isfinite(fwd.x) || len(fwd) < 0.5) fwd = V3(1, 0, 0);
+    const V3 left(fwd.z, 0, -fwd.x);
+    double a0 = 1e9, a1 = -1e9, l0 = 1e9, l1 = -1e9, y0 = 1e9, y1 = -1e9;
+    for (const Node& n : c.nodes) {
+        const V3 r(n.p.x - fr.com.x, 0, n.p.z - fr.com.z);
+        a0 = std::min(a0, dot(r, fwd)), a1 = std::max(a1, dot(r, fwd));
+        l0 = std::min(l0, dot(r, left)), l1 = std::max(l1, dot(r, left));
+        y0 = std::min(y0, n.p.y), y1 = std::max(y1, n.p.y);
+    }
+    if (a0 > a1) return V3();
+    const double margin = 0.35;
+    // Free where it is? (Its height range down to the ground: set down on a slope, it can sink a little.)
+    auto blocked = [&](const V3& s) { return world.poleInside(fr.com.x + s.x, fr.com.z + s.z, fwd, a0, a1, l0, l1, y0 - 2.0, y1 + 0.5, margin); };
+    if (!blocked(V3())) return V3();
+    // The nearest free spot: rings outward, first straight back (the way it came in: it hit the
+    // tree nose first), then turning round to either side, straight ahead last. Each candidate
+    // also kept clear of the other cars.
+    static const double kTurns[] = {0, 30, -30, 60, -60, 90, -90, 120, -120, 150, -150, 180};
+    for (double d = 0.25; d <= 12.0; d += 0.25)
+        for (double deg : kTurns) {
+            const double ang = deg * M_PI / 180;
+            const double ca = std::cos(ang), sa = std::sin(ang);
+            const V3 dir = -fwd * ca + left * sa;
+            const V3 s = dir * d;
+            if (blocked(s)) continue;
+            bool carFree = true;
+            const double myR = 0.5 * std::hypot(a1 - a0, l1 - l0);
+            for (const Car& o : cars) {
+                if (&o == &c || o.nodes.empty()) continue;
+                const V3 oc = o.frame().com;
+                const double oR = 0.5 * std::hypot(o.bbMax.x - o.bbMin.x, o.bbMax.z - o.bbMin.z);
+                if (std::hypot(oc.x - fr.com.x - s.x, oc.z - fr.com.z - s.z) < myR + oR + 0.3 && std::fabs(oc.y - fr.com.y) < 4) carFree = false;
+            }
+            if (carFree) return s;
+        }
+    return V3();  // (boxed in all round: leave it be)
+}
+
 void Sim::rightPlayer() {
     Car& c = cars[player];
     if (c.remote) return;  // (someone else's)
@@ -3454,6 +3496,12 @@ void Sim::rightPlayer() {
     double yaw = std::atan2(-fr.fwd.z, fr.fwd.x);
     if (!std::isfinite(yaw)) yaw = 0;
     c.placeUpright(world, fr.com.x, fr.com.z, yaw);
+    // Clear of the tree it's wrapped round (a hard hit leaves the trunk inside the crumpled nose).
+    const V3 s = poleFreeShift(c);
+    if (len(s) > 0) {
+        const Frame f2 = c.frame();
+        c.placeUpright(world, f2.com.x + s.x, f2.com.z + s.z, yaw);
+    }
 }
 
 void Sim::towPlayerHome() {
@@ -3461,6 +3509,8 @@ void Sim::towPlayerHome() {
     if (c.remote) return;  // (someone else's)
     dropRopes(player);
     c.placeUpright(world, c.spawnPos.x, c.spawnPos.z, c.spawnYaw);
+    const V3 s = poleFreeShift(c);
+    if (len(s) > 0) c.placeUpright(world, c.spawnPos.x + s.x, c.spawnPos.z + s.z, c.spawnYaw);
     accum = 0;
 }
 
@@ -3469,6 +3519,8 @@ void Sim::teleportPlayer(double x, double z, double yaw) {
     if (c.remote) return;  // (someone else's)
     dropRopes(player);
     c.placeUpright(world, x, z, yaw);
+    const V3 s = poleFreeShift(c);
+    if (len(s) > 0) c.placeUpright(world, x + s.x, z + s.z, yaw);
     accum = 0;
 }
 
@@ -3481,8 +3533,17 @@ void Sim::recoverPlayer() {
     double sy = c.spawnYaw;
     double yaw = std::atan2(-fr.fwd.z, fr.fwd.x);
     if (!std::isfinite(yaw)) yaw = 0;
-    c.respawn(V3(fr.com.x, world.clearY(fr.com.x, fr.com.z) + 0.05, fr.com.z), yaw);
+    // Rebuilt like new where it stood, set on the ground there: not on top of the tree it hit
+    // (a trunk isn't somewhere to stand), and moved clear of it if the fresh, undented car would
+    // reach round it (a hard hit stops the car with the trunk inside its crumpled nose).
+    c.respawn(V3(fr.com.x, world.clearY(fr.com.x, fr.com.z, false) + 0.05, fr.com.z), yaw);
     c.setDown(world);
+    const V3 s = poleFreeShift(c);
+    if (len(s) > 0) {
+        const V3 at = c.frame().com + s;
+        c.respawn(V3(at.x, world.clearY(at.x, at.z, false) + 0.05, at.z), yaw);
+        c.setDown(world);
+    }
     c.spawnPos = sp;  // R still returns to the original spawn
     c.spawnYaw = sy;
 }

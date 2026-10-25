@@ -25,6 +25,7 @@ SCEN     += tests/people.cpp src/people.cpp
 SCEN     += tests/garageshop.cpp src/garageshop.cpp
 SCEN     += tests/drivetrainmodels.cpp
 SCEN     += tests/net_rendezvous.cpp tests/net_codes.cpp
+SCEN     += tests/treestuck.cpp
 GAME_SRC := src/main.cpp src/lab.cpp src/gamepad_sdl.cpp src/editor.cpp src/coop.cpp src/gl.cpp src/gpu.cpp src/render.cpp src/carvisual.cpp src/peopleseat.cpp src/garageshopdraw.cpp src/mpmenudraw.cpp src/scenery.cpp src/menu.cpp src/menuscene.cpp src/mainmenudraw.cpp src/mappreview.cpp src/engine_samples.cpp src/engineaudio.cpp src/audio.cpp src/music.cpp src/ambience.cpp src/daylight.cpp src/lights.cpp src/groundtex.cpp src/groundshader.cpp src/propdraw.cpp src/invdraw.cpp src/debugscreen.cpp src/buildinfo.cpp $(PHYS) $(SCEN) src/treedraw.cpp src/texcomp.cpp
 GAME_OBJ := $(patsubst %.cpp,build/%.o,$(GAME_SRC))
 TEST_OBJ := $(patsubst %.cpp,build/%.o,tests/run_tests.cpp $(PHYS) $(SCEN) src/music.cpp)

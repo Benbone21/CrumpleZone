@@ -873,6 +873,10 @@ public:
     void respawnPlayer();
     void recoverPlayer();   // rebuilt like new where it stands (arcade)
     void rightPlayer();     // put back on its wheels where it is, damage and all
+    // How far (level) the car, as it stands, must be moved to have no tree trunk or pole inside its
+    // outline: the nearest such spot, at most 12 m away (zero if it's clear where it is). R and T
+    // set a car down where it was, and after a hard hit on a tree that's around the trunk.
+    V3 poleFreeShift(const Car& c) const;
     void towPlayerHome();   // carried back to its spawn point, damage and all
     void teleportPlayer(double x, double z, double yaw);  // set down upright at x, z facing yaw (the dev menu), damage and all
     // Replaces the player's car with another vehicle type, in place.

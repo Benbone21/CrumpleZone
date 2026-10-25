@@ -365,9 +365,16 @@ public:
     V3 courseStart(int surface) const;
     // Deepest contact of a sphere of radius R (axis == nullptr), or of a wheel:
     // a disc of radius R and half-width hw spinning about `axis`.
-    bool contact(const V3& c, double R, const V3* axis, double hw, Contact& out) const;
-    // Lowest height at (x, z) where a 1 m sphere fits without touching anything.
-    double clearY(double x, double z) const;
+    // (poles = false: leaves out the poles and tree trunks.)
+    bool contact(const V3& c, double R, const V3* axis, double hw, Contact& out, bool poles = true) const;
+    // Lowest height at (x, z) where a 1 m sphere fits without touching anything. overPoles = false:
+    // a pole or a trunk doesn't count (nothing can stand on one: next to a tree, the ground, not
+    // the top of the trunk 10 m up).
+    double clearY(double x, double z, bool overPoles = true) const;
+    // Whether any pole or trunk stands inside the rectangle centered on (x, z) along `fwd` (level,
+    // unit) from a0 to a1 and across it (fwd turned left) from l0 to l1, `margin` clear of its
+    // edges, reaching between heights y0 and y1.
+    bool poleInside(double x, double z, const V3& fwd, double a0, double a1, double l0, double l1, double y0, double y1, double margin) const;
 
 private:
     // Terrain baked to a 1 m grid with the roads carved in.
