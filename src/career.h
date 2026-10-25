@@ -53,6 +53,7 @@ struct OwnedVehicle {
     ModSet mods;
     std::string world;       // the slug of the world it was left in
     std::string condition;   // the carsave text (damage and wear); "" = factory fresh
+    double drove = -1;       // its world's playedSeconds when you were last in it (-1: never): you get back into the latest
 };
 
 struct Career {

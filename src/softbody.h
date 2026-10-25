@@ -538,6 +538,8 @@ public:
     // it; here it only pushes back). netId is the same on every machine.
     bool remote = false;
     uint32_t netId = 0;
+    // A career world's car (careersession.h): its profile vehicle (0 and up), the world's left vehicle k as -2 - k, or -1 (none).
+    int careerSlot = -1;
     bool occupied = false;  // someone's in the driver's seat (mine: the game says; a remote one: its states)
     bool blowoutsOn = false;  // speed-rating blowouts: off for now (the owner's call, 2026-10-22); blowout/* tests turn them on
     uint64_t blowSeed = 1;  // seeds its tires' blowout dice (with the wheel's index): the same seed, the same blowouts

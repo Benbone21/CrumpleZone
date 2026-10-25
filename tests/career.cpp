@@ -212,7 +212,7 @@ SCENARIO(careerProfileMigrate, "career/profile-migrate", "With no profile.txt, l
     }
 }
 
-SCENARIO(careerProfileRoundtrip, "career/profile-roundtrip", "Owned vehicles with mods, worlds and conditions save and load back the same") {
+SCENARIO(careerProfileRoundtrip, "career/profile-roundtrip", "Owned vehicles with mods, worlds, conditions and when they were last driven save and load back the same") {
     const std::string dir = freshDir("roundtrip");
     ScopedCareerDir scope(dir);
     Career c;
@@ -224,6 +224,7 @@ SCENARIO(careerProfileRoundtrip, "career/profile-roundtrip", "Owned vehicles wit
     a.mods.pick[MOD_WHEELS] = (int)modOptions(a.vehicle, MOD_WHEELS).size() - 1;
     a.world = "my-world";
     a.condition = "dent 3 0.5\nline two with \\ slash";
+    a.drove = 1234.5;
     b.vehicle = vehicleIndex("civic");
     b.world = "second-1";
     c.vehicles = {a, b};
@@ -233,7 +234,7 @@ SCENARIO(careerProfileRoundtrip, "career/profile-roundtrip", "Owned vehicles wit
     bool same = d.vehicles.size() == 2 && d.cash == 777 && d.owned == c.owned && d.stock == c.stock;
     for (size_t i = 0; same && i < 2; i++) {
         const OwnedVehicle &x = c.vehicles[i], &y = d.vehicles[i];
-        same &= x.vehicle == y.vehicle && x.world == y.world && x.condition == y.condition;
+        same &= x.vehicle == y.vehicle && x.world == y.world && x.condition == y.condition && x.drove == y.drove;
         for (int k = 0; k < MOD_SLOTS; k++) same &= x.mods.pick[k] == y.mods.pick[k];
     }
     ctx.check("the same profile", same);

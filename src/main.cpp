@@ -44,6 +44,7 @@
 #include "biome.h"
 #include "jobs.h"
 #include "career.h"
+#include "careersession.h"
 #include "garageshop.h"
 #include "garageshopdraw.h"
 #include "interact.h"
@@ -133,6 +134,7 @@ struct Options {
     int grass = -1;               // --grass 0-3: the grass level (testing; see RenderSettings::grass)
     int adaptive = -1;            // --adaptive 0/1: auto-scale quality (default: on)
     bool career = false;          // --career: career mode (a fresh one when scripted)
+    std::string careerWorld;      // --career-world SLUG: into that saved career world (continued), as a reload does
     bool photo = false;           // --photo: no HUD (screenshots; F10 in the game)
     int debugScreen = 0;          // --debug-screen [graph]: F3 (and Shift+F3) already pressed
     int bench = 0;                // --bench N: fly a lap round the start for N frames (after a warm-up), print the frame times, quit
@@ -403,6 +405,7 @@ Options parseArgs(int argc, char** argv) {
             std::sscanf(v.c_str(), "%lf,%d,%d", &o.throttleCap, &o.throttleResp, &o.throttlePad);
         }
         else if (a == "--career") o.career = true;
+        else if (a == "--career-world") o.careerWorld = next();
         else if (a == "--map") o.map = std::atoi(next().c_str());
         else if (a == "--map-half") o.mapHalf = std::atof(next().c_str());
         else if (a == "--eye-fly") o.eyeFly = std::atof(next().c_str());
@@ -1698,7 +1701,7 @@ int main(int argc, char** argv) {
     const bool wantCamp = (opt.mainMenu >= 0 && !opt.lab) ||
                           (!scripted && !std::getenv("CZ_NO_MENU_SCENE") && opt.scenario.empty() && opt.script.empty() && opt.map < 0 && !opt.spawnSet && opt.spawnSection < 0 &&
                            opt.hostPort < 0 && opt.join.empty() && opt.menu < 0 && opt.resumeModel < 0 && opt.level.empty() && !opt.editor && !opt.newSection && opt.resumeEdit.empty() &&
-                           !opt.lab && !opt.loadTour);
+                           !opt.lab && !opt.loadTour && opt.careerWorld.empty());
     const bool unattended = scripted || !opt.scenario.empty() || !opt.script.empty();
     g_termScripted = unattended;
     std::unique_ptr<wd::FrameWatchdog> watchdog;
@@ -1877,9 +1880,15 @@ int main(int argc, char** argv) {
     Garage garage;
     std::string garagePath = settings.career ? configDir() + "/garage-career.txt" : Garage::defaultPath();
     garage.load(garagePath);
-    Career career;  // (career.h: what you own, cash, the caches you've opened)
+    // The career: the profile (career.h: what you own, cash, the caches you've opened, your vehicles), and the world
+    // being played (careersession.h). The old career.txt is only read, when there's no profile.txt yet (the migration).
+    CareerSession careerRun;
+    Career& career = careerRun.profile;
     career.on = settings.career;
-    if (scripted || !career.load(Career::defaultPath())) career.startFresh();
+    if (scripted || !career.loadProfile()) career.startFresh();
+    auto saveCareer = [&]() {
+        if (!scripted && career.on) career.saveProfile();
+    };
     std::vector<CacheSpot> caches;  // this map's supply caches (a career's)
     int cachesMap = -1;
     AnchorStock anchorSeen;  // the career's anchor gear as the sim last had it
@@ -2145,7 +2154,7 @@ int main(int argc, char** argv) {
     // What a press in the garage did: say it there, save what changed, and back to the pause menu if it came from there.
     auto shopResult = [&](const shop::Result& r) {
         if (!r.toast.empty()) shopToast = r.toast, shopToastT = 3.0;
-        if (r.saveCareer && !scripted) career.save(Career::defaultPath());
+        if (r.saveCareer) saveCareer();
         if (r.fitted) {
             garage.fitted[garageShop.vehicle] = garageShop.fitted;
             if (!scripted) garage.save(garagePath);
@@ -2254,8 +2263,28 @@ int main(int argc, char** argv) {
         prebuildVisual(vs, sim.cars[sim.player].color);
         afterVisual.push_back({&vs, std::move(act)});
     };
+    // A career world: left (saved) on every way out of it, and begun once its map is up (careerNext: a map load asked for it).
+    struct {
+        bool on = false;
+        WorldSave world;
+        int start = -1;  // a new world: the vehicle it starts in
+    } careerNext;
+    auto endCareer = [&]() {
+        if (!careerRun.active) return;
+        careersession::end(careerRun, sim);
+        std::printf("career: saved %s\n", careerRun.world.slug.c_str());
+    };
+    auto startPendingCareer = [&]() {
+        if (!careerNext.on) return;
+        careerNext.on = false;
+        careersession::begin(careerRun, sim, careerNext.world, settings.playerName, careerNext.start);
+        const Car& pc = sim.cars[sim.player];
+        hud.toast(careerRun.world.name + ": " + (pc.spec->model >= 0 ? vehicleCatalog()[pc.spec->model].name : "") + "  ($" + std::to_string(career.cash) + ")");
+        std::printf("career: %s %s, %d vehicles\n", careerNext.start >= 0 ? "new world" : "continued", careerRun.world.slug.c_str(), sim.vehicleCount());
+    };
     // Loads a map, keeping the vehicle you were in.
     auto loadMap = [&](int m) {
+        endCareer();
         World::useLocalEdits = !net.active();  // (a session's worlds are the same for everyone: the generator's sections, not your saved edits of them)
         const int model = std::max(0, sim.cars[sim.player].spec->model);
         campWorld = false;
@@ -2263,6 +2292,7 @@ int main(int argc, char** argv) {
         sim.setup();
         fitGarage();
         if (model != sim.cars[sim.player].spec->model) sim.swapPlayerVehicle(garage.spec(model));
+        startPendingCareer();
         sim.paused = false;
         renderer.setWorld(sim.world);
         drawnWorld = sim.world.stamp;
@@ -2380,6 +2410,7 @@ int main(int argc, char** argv) {
     auto runSlot = [&]() { return net.active() ? std::max(0, net.self) : 0; };
     bool editorSuspended = false;  // the editor is waiting while its level is tried out (F1 comes back to it)
     auto playLevel = [&](const Level& lv, const EditCore::PlaySpot* spot = nullptr) {
+        endCareer();
         editorSuspended = false;
         Car& me = sim.cars[sim.player];
         me.pilot.active = false;
@@ -2483,7 +2514,7 @@ int main(int argc, char** argv) {
                 if (pl.id == "supply_crate" && len(pl.p - c.at) < 0.05) pl.set = {{"open", 1.0}}, renderer.updateObjects(sim.world);
             jobBanner = std::max(jobBanner, 5.0);
             jobBannerText = (who.empty() ? c.id + ": " : who + " OPENED " + c.id + ": ") + said;
-            if (!scripted) career.save(Career::defaultPath());
+            saveCareer();
             return true;
         }
         return false;
@@ -2681,6 +2712,7 @@ int main(int argc, char** argv) {
     } mapLoad;
     auto requestMap = [&](int m, std::function<void()> then) {
         if (mapLoad.active()) return;
+        endCareer();  // (another map: the world's saved as it stands now)
         if (!opt.shotFrames.empty() || !opt.script.empty() || editor.active || net.active()) {
             loadMap(m);
             if (then) then();
@@ -2721,6 +2753,7 @@ int main(int argc, char** argv) {
             sim.setup();
             fitGarage();
             if (model != sim.cars[sim.player].spec->model) sim.swapPlayerVehicle(garage.spec(model));
+            startPendingCareer();
             sim.paused = false;
             renderer.adoptWorld(sim.world);
             drawnWorld = sim.world.stamp;
@@ -2748,6 +2781,7 @@ int main(int argc, char** argv) {
             hud.toast("THE EDITOR IS OFFLINE ONLY: LEAVE THE SESSION FIRST");
             return;
         }
+        endCareer();
         run.stop();
         levelHours = -1;
         stopPilot();
@@ -2769,6 +2803,7 @@ int main(int argc, char** argv) {
     // Back to the editor after a playtest: its camera, undo history and unsaved edits as they were (nothing reloaded from disk).
     auto returnToEditor = [&]() -> bool {
         if (!editorSuspended || !editor.started() || editor.core.level.map != sim.world.map || net.active()) return false;
+        endCareer();
         run.stop();
         levelHours = -1;
         stopPilot();
@@ -2791,6 +2826,7 @@ int main(int argc, char** argv) {
     };
     // Back to the main menu's camp: its world and the three parked vehicles replace what was up (offline only).
     auto enterCamp = [&]() {
+        endCareer();
         run.stop();
         levelHours = -1;
         menucamp::fireOf(campLevel, campFire);
@@ -3019,6 +3055,7 @@ int main(int argc, char** argv) {
                 quitLevel();
                 break;
             case PauseMenu::MAIN_MENU:
+                endCareer();  // (back to the menu: the world's saved; continuing it puts everything back)
                 run.stop();
                 levelHours = -1;
                 if (net.role == NetSession::HOST) net.setLevel("");
@@ -3026,7 +3063,7 @@ int main(int argc, char** argv) {
                 if (wantCamp && !net.active() && !editor.active && !mapLoad.active()) enterCamp();
                 menu.showTitle(std::max(0, sim.cars[sim.player].spec->model), campWorld ? settings.map : sim.world.map);
                 classicTitle = false;
-                if (campWorld) mainNav.open(menu.mapPick, std::max(0, sim.cars[sim.player].spec->model));
+                if (campWorld) mainNav.open(menu.mapPick, std::max(0, sim.cars[sim.player].spec->model)), mainNav.worlds = listWorlds();
                 break;
             case PauseMenu::LOAD_MAP: {
                 closeMenu();
@@ -3067,6 +3104,14 @@ int main(int argc, char** argv) {
         }
     }
     if (resumedEdit) {
+    } else if (!opt.careerWorld.empty()) {  // (a reload in a career world, or asked for: continued)
+        WorldSave w;
+        if (loadWorld(opt.careerWorld, w)) {
+            settings.career = true;
+            handleMenu(PauseMenu::Result{PauseMenu::CHANGED});
+            careerNext.on = true, careerNext.world = w, careerNext.start = -1;
+            loadMap(w.map);
+        } else std::printf("career: no world '%s'\n", opt.careerWorld.c_str());
     } else if (opt.newSection) {
         openEditor(Level(), true);
     } else if (opt.editor) {
@@ -3149,9 +3194,38 @@ int main(int argc, char** argv) {
                 break;
             case A_DEV_DEBUG: runDev(devmenu::Action{devmenu::FPS, 0}); break;
             case A_DEV_CLASSIC: classicTitle = true; break;
-            case A_CAREER_CONTINUE:  // (acted on by the career worlds task: the page is built, the game side is not yet)
             case A_CAREER_NEW:
-            case A_CAREER_DELETE: break;
+            case A_CAREER_CONTINUE: {  // into a career world: its map loads, then your vehicles go out on it (careersession.h)
+                if (net.active()) {
+                    hud.toast("LEAVE THE MULTIPLAYER SESSION FIRST");
+                    break;
+                }
+                if (mapLoad.active()) break;  // (a map on its way already: it would take the world's place)
+                WorldSave w;
+                if (r.act == A_CAREER_NEW) {
+                    w = newWorld(r.worldName, r.map, (Difficulty)r.difficulty, (WorldMode)r.mode, listWorlds());
+                    if (!saveWorld(w)) {
+                        hud.toast("CAN'T SAVE THE NEW WORLD");
+                        break;
+                    }
+                } else if (!loadWorld(r.world, w)) {
+                    hud.toast("THAT WORLD'S SAVE IS DAMAGED");
+                    mainNav.worlds = listWorlds();
+                    break;
+                }
+                settings.career = true;
+                handleMenu(PauseMenu::Result{PauseMenu::CHANGED});  // (career's own garage)
+                closeMenu();
+                run.stop();
+                levelHours = -1;
+                careerNext.on = true, careerNext.world = w, careerNext.start = r.act == A_CAREER_NEW ? r.vehicle : -1;
+                requestMap(w.map, nullptr);
+                break;
+            }
+            case A_CAREER_DELETE:
+                if (!deleteWorld(r.world)) hud.toast("COULDN'T DELETE THAT WORLD");
+                mainNav.worlds = listWorlds();
+                break;
         }
     };
     // Mouse positions arrive in window coordinates; the HUD is drawn in drawable pixels.
@@ -3557,6 +3631,7 @@ int main(int argc, char** argv) {
         last = now;
         if (dt > 0) fps += ((float)(1.0 / dt) - fps) * 0.05f;
         hud.devHotkeys = settings.devHotkeys;
+        if (careerRun.active && !sim.paused && careersession::tick(careerRun, sim, dt)) std::printf("career: autosaved %s\n", careerRun.world.slug.c_str());
         hud.newBuild = watch.poll() && !editorSuspended;  // (not during a playtest: the editor would be lost)
         if (hud.newBuild && std::getenv("CZ_AUTORELOAD")) reload = true, running = false;  // (testing the reload)
 
@@ -3585,7 +3660,9 @@ int main(int argc, char** argv) {
                 const pad::Tap& t = padLogic.taps[padTap++];
                 std::memset(&ev, 0, sizeof ev);
                 ev.type = SDL_KEYDOWN;
-                std::memcpy(ev.padding + 16, &t.scancode, 4);
+                // (The menu's X is T, the garage's try-on; on the career world list it's Delete.)
+                const int sc = t.scancode == SC_T && mainMenuShown() && mainNav.page == mainmenu::P_WORLDS ? (int)mainmenu::K_DELETE : t.scancode;
+                std::memcpy(ev.padding + 16, &sc, 4);
                 padShift = t.shift;
                 fromPad = true;
                 return true;
@@ -4532,7 +4609,7 @@ int main(int argc, char** argv) {
                         jobBannerText = "JOB DONE: " + job.title;
                         if (career.on) {  // (everyone on the job is paid)
                             jobBannerText += "   " + career.jobDone();
-                            if (!scripted) career.save(Career::defaultPath());
+                            saveCareer();
                         }
                     }
                     continue;
@@ -4668,7 +4745,7 @@ int main(int argc, char** argv) {
                     if (interact.usedPart >= 0) {  // a repair used a part
                         if (career.on) {
                             career.usePart((RepairPart)interact.usedPart);
-                            if (!scripted) career.save(Career::defaultPath());
+                            saveCareer();
                         }
                         interact.usedPart = -1;
                     }
@@ -4679,7 +4756,7 @@ int main(int argc, char** argv) {
                             const ShopItem& it = stationRack()[i];
                             if (career.buyGear(it, why)) {
                                 hud.toast("BOUGHT " + it.key.substr(it.key.find(':') + 1) + "  ($" + std::to_string(career.cash) + " LEFT)");
-                                if (!scripted) career.save(Career::defaultPath());
+                                saveCareer();
                             } else hud.toast(why);
                         }
                         interact.openedSpot.clear();
@@ -4752,7 +4829,7 @@ int main(int argc, char** argv) {
                     jobBannerText = "JOB DONE: " + job.title + b;
                     if (career.on) {
                         jobBannerText += "   " + career.jobDone();
-                        if (!scripted) career.save(Career::defaultPath());
+                        saveCareer();
                     }
                     if (net.role == NetSession::HOST) net.sendGame("jobdone");
                     jobSeed++;
@@ -4779,7 +4856,7 @@ int main(int argc, char** argv) {
                 } else if (sim.anchorStock != anchorSeen) {
                     career.setAnchorStock(sim.anchorStock);
                     anchorSeen = sim.anchorStock;
-                    if (!scripted) career.save(Career::defaultPath());
+                    saveCareer();
                 }
             }
             // Exploring: places found (you, in the truck or on foot).
@@ -4849,7 +4926,7 @@ int main(int argc, char** argv) {
                     if (!paid.empty()) {
                         jobBanner = std::max(jobBanner, 6.0);
                         jobBannerText = run.level.name + ": " + paid;
-                        if (!scripted) career.save(Career::defaultPath());
+                        saveCareer();
                     }
                 }
                 if (run.state == LevelRun::FINISHED && (bestTimes.find(run.level.name) == bestTimes.end() || run.finishTime < bestTimes[run.level.name]))
@@ -5437,6 +5514,7 @@ int main(int argc, char** argv) {
                 openMenu();
                 menu.showTitle(std::max(0, sim.cars[sim.player].spec->model), settings.map);
                 mainNav.open(menu.mapPick, std::max(0, sim.cars[sim.player].spec->model));
+                mainNav.worlds = listWorlds();
                 classicTitle = false;
             } else if (editor.wantClose && menucamp::isCamp(editor.core.level)) {  // (leaving the camp: back to the menu, on the camp as edited or as saved)
                 const bool discard = editor.discarded;
@@ -5448,6 +5526,7 @@ int main(int argc, char** argv) {
                 openMenu();
                 menu.showTitle(std::max(0, sim.cars[sim.player].spec->model), settings.map);
                 mainNav.open(menu.mapPick, std::max(0, sim.cars[sim.player].spec->model));
+                mainNav.worlds = listWorlds();
                 classicTitle = false;
             } else if (editor.wantPlay || editor.wantClose) {
                 const bool play = editor.wantPlay, here = editor.playHere;
@@ -6440,6 +6519,8 @@ int main(int argc, char** argv) {
         frame++;
     }
     writeSuiteSummary();  // (the window closed part-way: what was done)
+    const std::string careerSlug = careerRun.active ? careerRun.world.slug : "";
+    endCareer();  // (quit from a menu, the window closed, a reload, a script's quit: a career world is saved)
     if (allocWatch && !allocFrames.empty()) {
         std::vector<uint64_t> v = allocFrames;
         std::sort(v.begin(), v.end());
@@ -6460,6 +6541,7 @@ int main(int argc, char** argv) {
         resume = {"--map", std::to_string(sim.world.map), "--player", std::to_string(sim.player), "--spawn", spawn};
         if (c.spec->model >= 0) resume.insert(resume.end(), {"--resume-model", std::to_string(c.spec->model)});
     }
+    if (reload && !careerSlug.empty()) resume.insert(resume.end(), {"--career-world", careerSlug});  // (back into the world, as it was just saved)
     if (reload && editor.started() && editor.core.unsaved()) resume.insert(resume.end(), {"--resume-edit", editor.core.level.name});  // (back in the editor on the recovery copy)
     if (opt.timeHours < 0) saveSettings();  // (the clock carries on next time, and after a reload)
     if (editor.started()) editor.autosaveNow();  // (closing the game with unsaved edits, in the editor or while testing them: a recovery copy)

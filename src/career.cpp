@@ -333,7 +333,7 @@ bool parseCareer(std::istream& f, Career& c) {
         else if (k == "stock") {  // "stock N KEY"
             const size_t sp2 = v.find(' ');
             if (sp2 != std::string::npos) c.stock[v.substr(sp2 + 1)] = std::atoi(v.substr(0, sp2).c_str());
-        } else if (k == "veh") {  // "veh INDEX WORLD P0 P1 P2 P3 P4" (the picks as in garage.txt)
+        } else if (k == "veh") {  // "veh INDEX WORLD P0 P1 P2 P3 P4 [drove=SECONDS]" (the picks as in garage.txt)
             std::istringstream is(v);
             OwnedVehicle ov;
             int p[MOD_SLOTS];
@@ -342,6 +342,8 @@ bool parseCareer(std::istream& f, Career& c) {
             bool ok = true;
             for (int i = 0; i < MOD_SLOTS; i++) ok &= (bool)(is >> p[i]);
             if (!ok) continue;
+            for (std::string extra; is >> extra;)  // (later keys after the picks: "drove=SECONDS")
+                if (extra.rfind("drove=", 0) == 0) ov.drove = std::atof(extra.c_str() + 6);
             if (ov.world == "-") ov.world.clear();
             for (int i = 0; i < MOD_SLOTS; i++) ov.mods.pick[i] = std::min(std::max(p[i], 0), (int)modOptions(ov.vehicle, i).size() - 1);
             slotOf.back() = (int)c.vehicles.size();
@@ -415,6 +417,11 @@ bool Career::saveProfile() const {
         const OwnedVehicle& v = vehicles[i];
         text += "veh " + std::to_string(v.vehicle) + ' ' + (v.world.empty() ? "-" : v.world);
         for (int k = 0; k < MOD_SLOTS; k++) text += ' ' + std::to_string(v.mods.pick[k]);
+        if (v.drove >= 0) {
+            char buf[48];
+            std::snprintf(buf, sizeof buf, " drove=%.3f", v.drove);
+            text += buf;
+        }
         text += '\n';
         if (!v.condition.empty()) text += "cond " + std::to_string(i) + ' ' + escapeLine(v.condition) + '\n';
     }
