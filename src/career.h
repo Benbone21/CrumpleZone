@@ -38,6 +38,10 @@ const std::vector<ShopItem>& stationRack();
 // Where rack item i lies at a station: in a row on the ground along the shed's right side.
 V3 rackSpot(const World& world, int station, int i);
 
+// Where a part (key, mods.h) can be had besides a station: "SUPPLY CACHE: THE WALL TOP (FRONTIER)", "A LEVEL'S FIRST GOLD"
+// (the cache and reward tables below; empty if nowhere).
+std::vector<std::string> partSources(const std::string& key);
+
 // The caches on a map, on the ground (three by the proving ground's model yard; none on the freeway).
 std::vector<CacheSpot> cacheSpots(const World& world);
 

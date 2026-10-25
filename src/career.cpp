@@ -120,6 +120,20 @@ std::vector<CacheSpot> cacheSpots(const World& world) {
     return out;
 }
 
+std::vector<std::string> partSources(const std::string& key) {
+    std::vector<std::string> out;
+    if (key.empty()) return out;
+    const struct { const Loot* l; int n; int map; } maps[] = {{kFrontier, (int)(sizeof(kFrontier) / sizeof(kFrontier[0])), MAP_FRONTIER},
+                                                              {kBackcountry, (int)(sizeof(kBackcountry) / sizeof(kBackcountry[0])), MAP_BACKCOUNTRY},
+                                                              {kProving, (int)(sizeof(kProving) / sizeof(kProving[0])), MAP_PROVING_GROUND}};
+    for (const auto& m : maps)
+        for (int i = 0; i < m.n; i++)
+            if (lootKey(m.l[i]) == key) out.push_back(std::string("SUPPLY CACHE: ") + m.l[i].id + " (" + mapName(m.map) + ")");
+    for (const auto& g : kGoldParts)
+        if (modFindPart(g[0], std::atoi(g[1]), g[2]) == key) out.push_back("A LEVEL'S FIRST GOLD MEDAL");
+    return out;
+}
+
 bool Career::owns(int vehicle, int slot, int option) const {
     const std::string key = modPartKey(vehicle, slot, option);
     if (key.empty()) return false;

@@ -239,7 +239,7 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
         button(EDITOR_ROW, "WORLD EDITOR", "BUILD YOUR OWN WORLDS AND LEVELS");
         button(SECTION_ROW, "NEW SECTION", "HAND-BUILD AN OBSTACLE SECTION (DEV)");
         button(LAB_ROW, "MODEL LAB", "PICK, TWEAK OR REDO THE GAME'S MODELS");
-        button(GARAGE_ROW, "GARAGE", "ENGINE, SUSPENSION, GEARBOX");
+        button(GARAGE_ROW, "GARAGE", "BUY AND FIT PARTS, SEE THEM UP CLOSE");
         button(SETTINGS_ROW, "SETTINGS", "UNITS, GRAPHICS, SOUND");
         button(CONTROLS_ROW, "CONTROLS");
         button(QUIT_ROW, "QUIT GAME");
@@ -340,7 +340,7 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
         choice(MAP_ROW, "MAP", mapName(mapPick), (int)listedMaps().size(), mapHint);
         button(LEVELS_ROW, "LEVELS", levelActive ? "PICK ANOTHER" : "RACES, CLIMBS AND WORLDS");
         button(JOBS_ROW, "JOBS", jobActive ? jobStatus : "RECOVERIES, CONVOYS, SCOUTING");
-        button(GARAGE_ROW, "GARAGE", "ENGINE, SUSPENSION, GEARBOX");
+        button(GARAGE_ROW, "GARAGE", "BUY AND FIT PARTS, SEE THEM UP CLOSE");
         button(PILOT_ROW, "AUTOPILOT", pilotActive ? pilotStatus : "DRIVE ITSELF SOMEWHERE");
         button(MULTI_ROW, "MULTIPLAYER", netActive ? netStatus : "HOST OR JOIN A GAME");
         button(SETTINGS_ROW, "SETTINGS", "UNITS, GRAPHICS, SOUND");
