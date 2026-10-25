@@ -57,29 +57,190 @@ void place(mk::Mesh& out, const mk::Mesh& m, const Basis& b) {
     }
 }
 
+// ---- Smooth surfaces: rows of points round a middle, joined ----
+
+// Rows of `n` points, each row round its middle (which way is out); `col`: the band from a row to the next.
+struct Rows {
+    int n = 0;
+    bool closed = true;  // (false: an open strip, its ends not joined)
+    std::vector<V3> pts, mid, col;
+    int rows() const { return (int)mid.size(); }
+};
+
+// Joins the rows into a smooth surface (each normal from its neighbours, turned outward). `tip0`/`tip1`: close the first
+// or last row to that point (null: leave it open).
+void skin(mk::B& b, const Rows& r, const V3* tip0 = nullptr, const V3* tip1 = nullptr, const V3& tipCol = V3()) {
+    const int R = r.rows(), n = r.n;
+    if (R < 2 || n < 3) return;
+    std::vector<V3> nor(r.pts.size());
+    for (int i = 0; i < R; i++)
+        for (int k = 0; k < n; k++) {
+            const V3& q = r.pts[i * n + k];
+            const int k1 = r.closed ? (k + 1) % n : std::min(n - 1, k + 1), k0 = r.closed ? (k + n - 1) % n : std::max(0, k - 1);
+            const V3 around = r.pts[i * n + k1] - r.pts[i * n + k0];
+            const V3 along = r.pts[std::min(R - 1, i + 1) * n + k] - r.pts[std::max(0, i - 1) * n + k];
+            V3 nn = cross(around, along);
+            if (len(nn) < 1e-12) nn = q - r.mid[i];
+            nn = len(nn) > 1e-12 ? norm(nn) : kUp;
+            if (dot(nn, q - r.mid[i]) < 0) nn = nn * -1.0;
+            nor[i * n + k] = nn;
+        }
+    for (int i = 0; i + 1 < R; i++) {
+        b.color(r.col[i]);
+        for (int k = 0; k < (r.closed ? n : n - 1); k++) {
+            const int a = i * n + k, a1 = i * n + (k + 1) % n, c = (i + 1) * n + k, c1 = (i + 1) * n + (k + 1) % n;
+            b.triN(r.pts[a], r.pts[c], r.pts[c1], nor[a], nor[c], nor[c1]);
+            b.triN(r.pts[a], r.pts[c1], r.pts[a1], nor[a], nor[c1], nor[a1]);
+        }
+    }
+    auto cap = [&](int i, const V3& tip) {
+        b.color(tipCol);
+        const V3 tn = norm(tip - r.mid[i]);
+        for (int k = 0; k < n; k++) {
+            const int a = i * n + k, a1 = i * n + (k + 1) % n;
+            const V3 na = norm(nor[a] + tn), na1 = norm(nor[a1] + tn);
+            b.triN(r.pts[a], r.pts[a1], tip, na, na1, tn);
+        }
+    };
+    if (tip0) cap(0, *tip0);
+    if (tip1) cap(R - 1, *tip1);
+}
+
+// A body's cross-section: rounder than an ellipse, squarer than a box (a jacket over shoulders and ribs).
+const double kSquare = 2.6;
+double sp(double c) { return (c < 0 ? -1.0 : 1.0) * std::pow(std::fabs(c), 2.0 / kSquare); }
+// Round a ring of n: each point's cos and sin, and the same squared off (sp). Worked out once.
+struct RingTab {
+    double c[33], s[33], sc[33], ss[33];
+};
+const RingTab& ringTab(int n) {
+    static const std::vector<RingTab> t = [] {
+        std::vector<RingTab> v(33);
+        for (int m = 3; m <= 32; m++)
+            for (int k = 0; k < m; k++) {
+                const double a = 2 * M_PI * k / m;
+                v[m].c[k] = std::cos(a), v[m].s[k] = std::sin(a), v[m].sc[k] = sp(v[m].c[k]), v[m].ss[k] = sp(v[m].s[k]);
+            }
+        return v;
+    }();
+    return t[std::min(32, std::max(3, n))];
+}
+// The row round a torso at height y in `B` (half-width a, front df, back db).
+void torsoRow(Rows& r, const Basis& B, double y, double a, double df, double db, const V3& col) {
+    const RingTab& T = ringTab(r.n);
+    const V3 o = B.o + B.y * y;
+    for (int k = 0; k < r.n; k++) r.pts.push_back(o + B.x * ((T.c[k] >= 0 ? df : db) * T.sc[k]) + B.z * (a * T.ss[k]));
+    r.mid.push_back(B.o + B.y * y);
+    r.col.push_back(col);
+}
+// How far in front of (or behind, back) the middle a torso's surface is at z across, for half-width a and depth d.
+double surfX(double a, double d, double z) {
+    const double u = clampd(std::fabs(z) / a, 0, 0.999);
+    return d * std::pow(1 - std::pow(u, kSquare), 1 / kSquare);
+}
+
+// The jacket's (or hoodie's, vest's) rows above the waist, in the chest's frame: height, half-width, front, back.
+const double kUpper[][4] = {{0.03, 0.166, 0.106, 0.096}, {0.13, 0.168, 0.113, 0.098}, {0.22, 0.176, 0.123, 0.104}, {0.30, 0.181, 0.118, 0.108},
+                            {0.355, 0.176, 0.106, 0.104}, {0.395, 0.152, 0.092, 0.096}, {0.43, 0.108, 0.074, 0.078}, {0.462, 0.072, 0.059, 0.061}};
+const int kUpperN = 8;
+// The trousers' seat, in the hips' frame: from the crotch up to the waistband (under the jacket's hem).
+const double kSeat[][4] = {{-0.125, 0.118, 0.07, 0.085}, {-0.07, 0.16, 0.094, 0.118}, {0.0, 0.168, 0.098, 0.112}, {0.06, 0.163, 0.094, 0.098}, {0.1, 0.16, 0.092, 0.094}};
+// Interpolated in a table (the first column the height).
+void upperAt(double y, double& a, double& df, double& db) {
+    int i = 0;
+    while (i + 2 < kUpperN && kUpper[i + 1][0] < y) i++;
+    const double t = clampd((y - kUpper[i][0]) / (kUpper[i + 1][0] - kUpper[i][0]), 0, 1);
+    a = kUpper[i][1] + (kUpper[i + 1][1] - kUpper[i][1]) * t;
+    df = kUpper[i][2] + (kUpper[i + 1][2] - kUpper[i][2]) * t;
+    db = kUpper[i][3] + (kUpper[i + 1][3] - kUpper[i][3]) * t;
+}
+// Where the jacket's hem is (in the hips' frame) for each top.
+double hemY(const Look& L) { return L.top == 0 ? 0.085 : L.top == 1 ? -0.02 : 0.07; }
+V3 topColor(const Look& L) { return L.jacket; }
+V3 sleeveColor(const Look& L) { return L.top == 2 ? L.shirt : L.jacket; }
+
+// A limb swept smoothly from `a` through the joint `j` to `e` (the joint rounded over `round` of each bone), its radius
+// along it from prof(u, r, rf, col): u 0 at a, 1 at the joint, 2 at e (and a little either side: u0..u1).
+template <class Prof>
+void limbSweep(mk::B& b, const V3& a, const V3& j, const V3& e, double u0, double u1, int det, int n, const V3& ref, Prof prof, const V3* capEnd = nullptr,
+               const V3& capCol = V3()) {
+    const double rho = 0.16;
+    static const double us2[] = {0.30, 0.62, 1 - rho, 1, 1 + rho, 1.38, 1.72, 1.9};
+    static const double us1[] = {0.5, 1 - rho, 1 + rho, 1.5, 1.88};
+    static const double us0[] = {1.0};
+    const double* us = det >= 2 ? us2 : det == 1 ? us1 : us0;
+    const int nu = det >= 2 ? 8 : det == 1 ? 5 : 1;
+    std::vector<double> u;
+    u.push_back(u0);
+    for (int i = 0; i < nu; i++) u.push_back(us[i]);
+    u.push_back(u1);
+    const V3 q0 = j + (a - j) * rho, q1 = j + (e - j) * rho;
+    auto at = [&](double x) {
+        if (x <= 1 - rho) return a + (j - a) * x;
+        if (x >= 1 + rho) return j + (e - j) * (x - 1);
+        const double t = (x - (1 - rho)) / (2 * rho);
+        return q0 * ((1 - t) * (1 - t)) + j * (2 * t * (1 - t)) + q1 * (t * t);
+    };
+    Rows r;
+    r.n = n;
+    r.pts.reserve(u.size() * n), r.mid.reserve(u.size()), r.col.reserve(u.size());
+    V3 up;
+    for (size_t i = 0; i < u.size(); i++) {
+        const V3 p = at(u[i]);
+        const V3 t = norm(at(u[std::min(u.size() - 1, i + 1)]) - at(u[i == 0 ? 0 : i - 1]));
+        up = i == 0 ? perpTo(ref, t) : perpTo(up, t);
+        const V3 side = cross(t, up);
+        double rr = 0.05, rf = 0.05;
+        V3 col;
+        prof(u[i], rr, rf, col);
+        const RingTab& T = ringTab(n);
+        for (int k = 0; k < n; k++) r.pts.push_back(p + up * (rf * T.c[k]) + side * (rr * T.s[k]));
+        r.mid.push_back(p);
+        r.col.push_back(col);
+    }
+    skin(b, r, nullptr, capEnd, capCol);
+}
+// A piecewise-straight profile: (u, value) pairs, u rising.
+double tab(const double (*t)[2], int n, double u) {
+    if (u <= t[0][0]) return t[0][1];
+    for (int i = 0; i + 1 < n; i++)
+        if (u <= t[i + 1][0]) return t[i][1] + (t[i + 1][1] - t[i][1]) * (u - t[i][0]) / (t[i + 1][0] - t[i][0]);
+    return t[n - 1][1];
+}
+
 // Pieces are built in their own frame: x ahead (the toes, the face, the fingers), y up (the
 // back of the hand), z to the right.
 
-// A gloved hand: wrist at the origin, fingers along +x, the back of the hand +y. side 0 left (thumb
+// A hand (gloved or bare): wrist at the origin, fingers along +x, the back of the hand +y. side 0 left (thumb
 // toward +z), 1 right (thumb toward -z). grip 0..1 curls the fingers round a handle at
 // (kGripX, -kGripY) along z. detail 0: a mitten.
 void buildHand(mk::B& b, const Look& L, int side, double grip, int detail) {
     const double t = side == 0 ? 1.0 : -1.0;  // the thumb's side
-    const int sg = detail >= 2 ? 6 : 4;
-    // Cuff (a short gauntlet with a strap) and the palm.
-    b.style(L.gloves * 0.8, mk::MATTE);
-    b.push();
-    b.scale(V3(1, 0.78, 1));
-    b.cone(V3(-0.05, 0, 0), V3(0.012, 0, 0), 0.045, 0.041, 8, true);
-    b.pop();
-    b.style(L.glovePad, mk::MATTE);
-    b.box(V3(-0.018, 0.031, 0), V3(0.026, 0.008, 0.07), 0.003);  // the strap's tab
-    b.style(L.gloves, mk::MATTE);
-    b.box(V3(0.047, 0, 0), V3(0.096, 0.032, 0.084), 0.013);
-    b.style(L.glovePad, mk::MATTE);
-    b.box(V3(0.06, 0.016, 0), V3(0.07, 0.008, 0.07), 0.004);  // padded back
-    b.box(V3(0.093, 0.013, 0), V3(0.016, 0.01, 0.08), 0.004);  // knuckle guard
-    b.style(L.gloves, mk::MATTE);
+    const int sg = detail >= 2 ? 7 : 4;
+    const V3 main = L.gloved ? L.gloves : L.skin;
+    if (L.gloved) {  // a short gauntlet with a strap
+        b.style(L.gloves * 0.8, mk::MATTE);
+        b.push();
+        b.scale(V3(1, 0.78, 1));
+        b.cone(V3(-0.05, 0, 0), V3(0.012, 0, 0), 0.045, 0.041, detail >= 2 ? 10 : 6, true);
+        b.pop();
+        if (detail >= 1) {
+            b.style(L.glovePad, mk::MATTE);
+            b.box(V3(-0.018, 0.031, 0), V3(0.026, 0.008, 0.07), 0.003);  // the strap's tab
+        }
+    } else {  // the wrist
+        b.style(L.skin * 0.95, mk::MATTE);
+        b.cone(V3(-0.04, 0, 0), V3(0.015, 0, 0), 0.026, 0.027, detail >= 2 ? 8 : 5, false);
+    }
+    // The palm: rounded, a little cupped.
+    b.style(main, mk::MATTE);
+    b.sphere(V3(0.048, 0, 0), V3(0.052, 0.019, 0.044), detail >= 2 ? 1 : 0);
+    if (L.gloved && detail >= 1) {
+        b.style(L.glovePad, mk::MATTE);
+        b.sphere(V3(0.058, 0.012, 0), V3(0.034, 0.01, 0.036), 0);  // padded back
+        b.box(V3(0.09, 0.012, 0), V3(0.014, 0.01, 0.078), 0.004);  // knuckle guard
+    }
+    b.style(main, mk::MATTE);
     struct Finger {
         double z, x, l0, l1, l2, r;
     };
@@ -88,10 +249,20 @@ void buildHand(mk::B& b, const Look& L, int side, double grip, int detail) {
                                       {-0.0105, 0.093, 0.044, 0.028, 0.022, 0.0097},
                                       {-0.029, 0.085, 0.034, 0.022, 0.019, 0.0086}};
     const double c0 = (8 + 62 * grip) * M_PI / 180, c1 = (10 + 88 * grip) * M_PI / 180, c2 = (6 + 48 * grip) * M_PI / 180;
-    if (detail == 0) {  // mitten: the four as one block
+    const double fat = L.gloved ? 1.0 : 0.88;
+    if (detail == 0) {  // far off: a mitten, the four as one block, the thumb a stub
         const double a1 = c0 + c1 * 0.5;
         const V3 a(0.092, 0, 0), d1(std::cos(a1), -std::sin(a1), 0);
         b.beam(a, a + d1 * 0.075, 0.075, 0.024, V3(-d1.y, d1.x, 0), 0.008);
+        b.beam(V3(0.03, -0.008, 0.03 * t), V3(0.07, -0.025, 0.045 * t), 0.022, 0.022, V3(0, 1, 0));
+        return;
+    } else if (detail == 1) {  // the middle distance: each finger one piece, bent as the whole
+        for (int k = 0; k < 4; k++) {
+            const Finger& f = fingers[k];
+            const double a1 = (c0 + c1 + c2) * 0.45;
+            const V3 p(f.x, 0.002, f.z * t), d1(std::cos(a1), -std::sin(a1), 0);
+            b.cone(p, p + d1 * (f.l0 + f.l1 + f.l2) * 0.8, f.r * fat, f.r * fat * 0.85, 4, true);
+        }
     } else {
         for (int k = 0; k < 4; k++) {
             const Finger& f = fingers[k];
@@ -105,7 +276,7 @@ void buildHand(mk::B& b, const Look& L, int side, double grip, int detail) {
                 ang += cs[j];
                 const V3 dj = norm(V3(d.x * std::cos(ang), -std::sin(ang), d.z * std::cos(ang)));
                 const V3 q = p + dj * ls[j];
-                const double r0 = f.r * (1 - 0.06 * j), r1 = f.r * (1 - 0.06 * (j + 1));
+                const double r0 = f.r * fat * (1 - 0.06 * j), r1 = f.r * fat * (1 - 0.06 * (j + 1));
                 b.cone(p, q, r0, r1, sg, false);
                 if (detail >= 2 || j == 2) b.sphere(q, V3(r1, r1, r1), 0);  // (the knuckles round, close up; the tip always)
                 p = q;
@@ -121,201 +292,345 @@ void buildHand(mk::B& b, const Look& L, int side, double grip, int detail) {
         const double ls[3] = {0.036, 0.03, 0.026};
         for (int j = 0; j < 3; j++) {
             const V3 q = p + d * ls[j];
-            const double r0 = 0.0125 - 0.0012 * j, r1 = 0.0125 - 0.0012 * (j + 1);
-            if (detail > 0 || j == 0) b.cone(p, q, r0, r1, sg, false);
-            if (detail >= 2 || j == 2) b.sphere(q, V3(r1, r1, r1), 0);
+            const double r0 = (0.0125 - 0.0012 * j) * fat, r1 = (0.0125 - 0.0012 * (j + 1)) * fat;
+            if (detail >= 2 || j < 2) b.cone(p, q, r0, r1, sg, j == 1 && detail < 2);
+            if (detail >= 2) b.sphere(q, V3(r1, r1, r1), 0);
             p = q;
             // Curls in across the palm toward the fingers' side.
             d = norm(d + V3(0.08, -0.25 * grip, -0.35 * t * (0.3 + grip)));
         }
-        b.sphere(base, V3(0.017, 0.014, 0.017), 0);
+        b.sphere(base, V3(0.018, 0.015, 0.018) * fat, 0);
     }
 }
 
 // A work boot: ankle joint at the origin, toes +x, sole at y = -kAnkle.
 void buildBoot(mk::B& b, const Look& L, int detail) {
-    const int sg = detail >= 2 ? 10 : 7;
+    const int sg = detail >= 2 ? 10 : detail == 1 ? 7 : 5, sd = detail >= 2 ? 1 : 0;
+    if (detail == 0) {
+        b.style(L.soles, mk::MATTE);
+        b.box(V3(0.065, -0.072, 0), V3(0.29, 0.026, 0.104), 0.008);
+        b.style(L.boots, mk::MATTE);
+        b.box(V3(0.06, -0.04, 0), V3(0.24, 0.05, 0.096), 0.02);
+        b.cyl(V3(-0.005, -0.05, 0), V3(-0.008, 0.1, 0), 0.05, sg, true);
+        return;
+    }
+    // A lug sole cut to a foot's outline (narrow at the heel, wide across the ball), a welt round its top.
+    static const std::vector<mk::V2> sole = {{-0.082, 0},     {-0.075, 0.035}, {-0.05, 0.046}, {0.0, 0.047},  {0.07, 0.053},   {0.13, 0.056},
+                                             {0.18, 0.048},   {0.21, 0.03},    {0.219, 0.0},   {0.21, -0.03}, {0.18, -0.05},   {0.13, -0.056},
+                                             {0.07, -0.052},  {0.0, -0.046},   {-0.05, -0.044}, {-0.075, -0.033}};
+    b.style(L.soles, mk::MATTE);
+    b.extrudeUp(sole, 0.025, -kAnkle);
+    if (detail >= 2) {
+        b.style(L.soles * 1.25, mk::MATTE);
+        for (int k = 0; k < 5; k++) b.box(V3(0.17 - k * 0.055, -kAnkle + 0.0015, 0), V3(0.022, 0.004, 0.09));  // lugs (their faces flush with the sole's)
+    }
+    b.style(L.boots * 0.62, mk::MATTE);
+    b.push();
+    b.scale(V3(1.012, 1, 1.03));
+    b.extrudeUp(sole, 0.007, -0.061);  // the welt
+    b.pop();
+    // The upper: a rounded toe cap, the vamp over the instep, the heel cupped; the shaft round the ankle.
     b.style(L.boots, mk::MATTE);
+    b.sphere(V3(0.135, -0.052, 0), V3(0.084, 0.032, 0.05), sd);  // (each sits on the sole, none through it)
+    b.sphere(V3(0.05, -0.04, 0), V3(0.11, 0.044, 0.052), sd);
+    b.sphere(V3(-0.035, -0.04, 0), V3(0.052, 0.045, 0.046), sd);
     b.push();
     b.scale(V3(1.12, 1, 0.95));
-    b.cyl(V3(-0.006, -0.04, 0), V3(-0.006, 0.105, 0), 0.054, sg, true);  // shaft
+    b.cone(V3(-0.005, -0.05, 0), V3(-0.008, 0.105, 0), 0.05, 0.049, sg, true);
+    if (detail >= 2) {
+        b.style(L.boots * 0.7, mk::MATTE);
+        b.torus(V3(-0.008, 0.103, 0), 0.049, 0.007, sg, 4);  // padded collar
+    }
     b.pop();
-    b.box(V3(0.045, -0.052, 0), V3(0.235, 0.07, 0.104), 0.03);  // vamp
-    b.sphere(V3(0.13, -0.056, 0), V3(0.062, 0.036, 0.053), detail >= 2 ? 1 : 0);  // round toe
-    b.box(V3(-0.045, -0.05, 0), V3(0.085, 0.07, 0.098), 0.025);  // heel counter
-    // Tongue and laces up the front.
+    // Tongue and laces up the front, the pull tab behind.
     b.style(L.boots * 0.82, mk::MATTE);
-    b.beam(V3(0.085, -0.03, 0), V3(0.035, 0.1, 0), 0.042, 0.014, V3(1, 0.3, 0), 0.004);
-    if (detail >= 1) {
-        b.style(L.laces, mk::MATTE);
-        for (int k = 0; k < 5; k++) {
-            const double s = k / 4.0;
-            const V3 c = lerpV(V3(0.092, -0.022, 0), V3(0.046, 0.088, 0), s);
-            b.box(c, V3(0.008, 0.006, 0.052 - 0.004 * k));
-        }
-        b.style(L.boots * 0.6, mk::MATTE);
-        b.cyl(V3(-0.064, 0.07, 0), V3(-0.07, 0.11, 0), 0.008, 4, true);  // pull tab
+    b.beam(V3(0.1, -0.022, 0), V3(0.048, 0.106, 0), 0.04, 0.012, V3(1, 0.35, 0), 0.004);
+    b.style(L.laces, mk::MATTE);
+    for (int k = 0; k < 5; k++) {
+        const double s = k / 4.0;
+        const V3 c = lerpV(V3(0.104, -0.016, 0), V3(0.058, 0.09, 0), s);
+        b.box(c, V3(0.007, 0.006, 0.05 - 0.003 * k));
     }
-    // Lug sole, thicker under the heel, a welt round the top of it.
-    b.style(L.soles, mk::MATTE);
-    b.box(V3(0.048, -0.074, 0), V3(0.29, 0.024, 0.114), 0.008);
-    b.box(V3(-0.052, -0.081, 0), V3(0.09, 0.012, 0.106), 0.004);
-    b.style(L.soles * 1.6, mk::MATTE);
-    if (detail >= 2)
-        for (int k = 0; k < 4; k++) b.box(V3(0.12 - k * 0.05, -0.0855, 0), V3(0.022, 0.004, 0.1));
+    if (detail >= 2) {
+        b.style(L.boots * 0.55, mk::MATTE);
+        b.cyl(V3(-0.064, 0.075, 0), V3(-0.07, 0.115, 0), 0.008, 4, true);  // pull tab
+        b.style(L.boots * 1.15, mk::MATTE);
+        b.sphere(V3(0.172, -0.05, 0), V3(0.04, 0.024, 0.04), 0);  // the toe scuffed lighter
+    }
 }
 
-// The jeans' seat and belt: the hip joints' middle at the origin.
+// The trousers' details round the seat (the hips' frame): the belt and buckle where the jacket shows them, back pockets,
+// the fly.
 void buildSeat(mk::B& b, const Look& L, int detail) {
-    const int sg = detail >= 2 ? 14 : 9;
-    b.style(L.pants, mk::MATTE);
-    b.push();
-    b.scale(V3(0.68, 1, 1));
-    b.lathe(V3(0, 0, 0), {mk::V2(0.0, -0.105), mk::V2(0.1, -0.095), mk::V2(0.15, -0.05), mk::V2(0.162, 0.03), mk::V2(0.158, 0.1), mk::V2(0.152, 0.15)}, sg, true);
-    b.style(V3(0.2, 0.13, 0.08), mk::MATTE);  // belt
-    b.cyl(V3(0, 0.1, 0), V3(0, 0.142, 0), 0.161, sg, false);
-    b.pop();
-    b.style(V3(0.62, 0.58, 0.5), mk::METAL);
-    b.box(V3(0.113, 0.121, 0), V3(0.012, 0.038, 0.048), 0.004);  // buckle
-    if (detail >= 1) {
-        b.style(L.pantsDark, mk::MATTE);
-        for (int s = -1; s <= 1; s += 2) b.box(V3(-0.1, 0.035, s * 0.062), V3(0.01, 0.075, 0.07), 0.006);  // back pockets
-        b.box(V3(0.11, 0.035, 0), V3(0.006, 0.09, 0.012));  // fly
+    if (detail == 0) return;
+    const double G = L.girth;
+    if (L.top == 0) {  // the belt (a work jacket stops above it)
+        Rows r;
+        r.n = detail >= 2 ? 16 : 10;
+        Basis id{V3(), V3(1, 0, 0), V3(0, 1, 0), V3(0, 0, 1)};
+        const V3 belt(0.2, 0.13, 0.08);
+        torsoRow(r, id, 0.052, 0.166 * G, 0.097 * G, 0.1 * G, belt);
+        torsoRow(r, id, 0.088, 0.164 * G, 0.095 * G, 0.098 * G, belt);
+        skin(b, r);
+        b.style(V3(0.62, 0.58, 0.5), mk::METAL);
+        b.box(V3(0.097 * G + 0.004, 0.07, 0), V3(0.01, 0.034, 0.046), 0.004);  // buckle
+        if (detail >= 2) {
+            b.style(L.pantsDark, mk::MATTE);
+            for (double z : {-0.11, -0.05, 0.05, 0.11}) b.box(V3(surfX(0.166 * G, 0.097 * G, z * G) + 0.002, 0.07, z * G), V3(0.006, 0.045, 0.012));  // loops
+        }
+    }
+    b.style(L.pantsDark, mk::MATTE);
+    for (int s = -1; s <= 1; s += 2) {  // back pockets
+        const double z = s * 0.068 * G;
+        b.push();
+        b.move(-surfX(0.165 * G, 0.115 * G, z) - 0.001, -0.02, z);
+        b.roll(s * 4.0);
+        b.box(V3(), V3(0.006, 0.085, 0.078), 0.003);
+        b.pop();
+    }
+    b.box(V3(0.098 * G + 0.001, -0.02, 0.008), V3(0.004, 0.11, 0.01));  // the fly
+    if (L.legs == 1 && detail >= 2) {  // a hammer loop
+        b.box(V3(-0.02, -0.06, 0.168 * G + 0.003), V3(0.022, 0.08, 0.006), 0.002);
     }
 }
 
-// The jacket's body: the waist pivot at the origin, the neck at +y.
-void buildChest(mk::B& b, const Look& L, int detail, bool collar = true) {
-    const int sg = detail >= 2 ? 16 : 10;
-    // Cut in at the waist, out over the chest and the shoulder blades, the shoulders sloping to the collar.
-    b.style(L.jacket, mk::MATTE);
-    b.push();
-    b.scale(V3(0.58, 1, 1));
-    b.lathe(V3(0, 0, 0), {mk::V2(0.0, -0.075), mk::V2(0.162, -0.07), mk::V2(0.166, -0.02), mk::V2(0.158, 0.08), mk::V2(0.172, 0.2), mk::V2(0.186, 0.29), mk::V2(0.184, 0.345),
-                          mk::V2(0.16, 0.39), mk::V2(0.11, 0.425), mk::V2(0.06, 0.445), mk::V2(0.0, 0.448)},
-            sg, true);
-    b.style(L.jacketDark, mk::MATTE);
-    b.cyl(V3(0, -0.075, 0), V3(0, -0.032, 0), 0.169, sg, false);  // hem band
-    b.pop();
-    // Chest and back: a little fuller in front over the pecs, the shoulder blades behind.
-    b.style(L.jacket, mk::MATTE);
-    for (int s = -1; s <= 1; s += 2) {
-        b.sphere(V3(0.06, 0.265, s * 0.07), V3(0.05, 0.07, 0.085), detail >= 2 ? 1 : 0);
-        b.sphere(V3(-0.062, 0.29, s * 0.075), V3(0.042, 0.085, 0.085), detail >= 2 ? 1 : 0);
+// The top's details (the chest's frame): pockets, zip, collar or hood. `own`: your own, in first person (nothing round the
+// neck: it'd be round your eyes).
+void buildChest(mk::B& b, const Look& L, int detail, bool own) {
+    if (detail == 0) return;
+    const double G = L.girth;
+    auto front = [&](double y, double z) {
+        double a, df, db;
+        upperAt(y, a, df, db);
+        return surfX(a * G, df * G, z);
+    };
+    auto back = [&](double y, double z) {
+        double a, df, db;
+        upperAt(y, a, df, db);
+        return -surfX(a * G, db * G, z);
+    };
+    const V3 dark = L.jacket * 0.7;
+    if (L.top == 0 || L.top == 2) {  // zip up the front
+        std::vector<V3> zip;
+        for (double y : {-0.01, 0.08, 0.16, 0.24, 0.32, 0.38, 0.43}) zip.push_back(V3(front(y, 0) + 0.002, y, 0));
+        b.style(V3(0.12, 0.12, 0.13), mk::METAL);
+        b.tube(zip, 0.0045, 4, false, false);
+        b.box(V3(front(0.3, 0) + 0.006, 0.3, 0.006), V3(0.004, 0.022, 0.01), 0.002);  // its pull
     }
-    // Collar standing up round the neck (open at the throat), the zip and its pull.
-    b.style(L.jacketDark, mk::MATTE);
-    if (collar) {  // (not your own: it'd be round your eyes)
-        b.cone(V3(-0.004, 0.41, 0), V3(-0.012, 0.49, 0), 0.074, 0.066, sg, false);
-        b.torus(V3(-0.012, 0.49, 0), 0.066, 0.008, sg, 3);
-    }
-    b.style(V3(0.13, 0.13, 0.14), mk::METAL);
-    b.beam(V3(0.098, -0.07, 0), V3(0.104, 0.08, 0), 0.008, 0.007, V3(1, 0, 0));
-    b.beam(V3(0.104, 0.08, 0), V3(0.112, 0.27, 0), 0.008, 0.007, V3(1, 0, 0));
-    b.beam(V3(0.112, 0.27, 0), V3(0.07, 0.43, 0), 0.008, 0.007, V3(1, 0, 0));
-    b.box(V3(0.117, 0.21, 0), V3(0.006, 0.026, 0.012), 0.002);
-    if (detail >= 1) {
+    if (L.top == 0) {  // a work jacket: chest pockets with flaps and snaps, a yoke across the back, the collar
         for (int s = -1; s <= 1; s += 2) {
-            // Chest pockets with flaps, hand-warmer pocket openings.
-            b.style(L.jacketDark, mk::MATTE);
-            b.box(V3(0.113, 0.25, s * 0.07), V3(0.014, 0.09, 0.08), 0.006);
-            b.style(L.jacket * 0.92, mk::MATTE);
-            b.box(V3(0.121, 0.292, s * 0.07), V3(0.012, 0.024, 0.086), 0.004);
-            b.style(L.jacketDark * 0.9, mk::MATTE);
-            b.beam(V3(0.094, -0.04, s * 0.06), V3(0.09, 0.08, s * 0.095), 0.006, 0.006, V3(1, 0, 0));
-            // Seams that read at a distance: down each side, over each shoulder to the collar.
-            b.style(L.jacketDark * 0.95, mk::MATTE);
-            b.beam(V3(0, -0.06, s * 0.164), V3(0, 0.08, s * 0.157), 0.006, 0.006, V3(1, 0, 0));
-            b.beam(V3(0, 0.08, s * 0.157), V3(0, 0.29, s * 0.187), 0.006, 0.006, V3(1, 0, 0));
-            b.beam(V3(0, 0.355, s * 0.18), V3(-0.004, 0.43, s * 0.075), 0.006, 0.006, V3(0, 1, 0));
+            const double z = s * 0.075 * G;
+            b.style(L.jacket * 0.9, mk::MATTE);
+            b.box(V3(front(0.24, z) + 0.001, 0.24, z), V3(0.008, 0.085, 0.07), 0.003);
+            b.style(dark, mk::MATTE);
+            b.box(V3(front(0.29, z) + 0.004, 0.288, z), V3(0.008, 0.026, 0.076), 0.003);
+            if (detail >= 2) {
+                b.style(V3(0.55, 0.5, 0.42), mk::METAL);
+                b.sphere(V3(front(0.29, z) + 0.009, 0.284, z), V3(0.004, 0.005, 0.005), 0);
+                b.style(dark * 0.9, mk::MATTE);  // hand-warmer pocket openings
+                b.beam(V3(front(0.04, s * 0.06) + 0.002, 0.03, s * 0.06 * G), V3(front(0.13, s * 0.1) + 0.002, 0.13, s * 0.1 * G), 0.006, 0.004, V3(1, 0, 0));
+            }
         }
-        b.style(L.jacketDark * 0.85, mk::MATTE);  // shoulder yoke across the back
-        b.box(V3(-0.1, 0.335, 0), V3(0.014, 0.008, 0.22), 0.003);
+        b.style(dark, mk::MATTE);
+        b.box(V3(back(0.33, 0) - 0.002, 0.33, 0), V3(0.006, 0.012, 0.25 * G), 0.002);  // yoke seam
+        if (!own) {  // the collar standing round the neck, folded over
+            b.cone(V3(-0.006, 0.415, 0), V3(-0.014, 0.49, 0), 0.078, 0.07, detail >= 2 ? 14 : 9, false);
+            b.torus(V3(-0.014, 0.49, 0), 0.07, 0.009, detail >= 2 ? 14 : 9, 3);
+        }
+    } else if (L.top == 1) {  // a hoodie: the kangaroo pocket, the hood bunched behind the neck, its strings
+        b.style(L.jacket * 0.94, mk::MATTE);
+        b.box(V3(front(0.08, 0) + 0.002, 0.075, 0), V3(0.012, 0.13, 0.2 * G), 0.01);
+        b.style(dark, mk::MATTE);
+        for (int s = -1; s <= 1; s += 2) b.beam(V3(front(0.02, 0.1) + 0.006, 0.02, s * 0.098 * G), V3(front(0.13, 0.08) + 0.006, 0.13, s * 0.082 * G), 0.006, 0.004, V3(1, 0, 0));
+        if (!own) {
+            // The hood lies folded round the back of the neck (open at the throat) and drapes down the back.
+            b.style(L.jacket * 0.92, mk::MATTE);
+            b.push();
+            b.move(-0.012, 0.45, 0);
+            b.yaw(180 - 120);
+            b.scale(V3(0.9, 1, 1.12));
+            b.torus(V3(), 0.085, 0.032, detail >= 2 ? 16 : 10, 6, 240);
+            b.pop();
+            b.sphere(V3(back(0.38, 0) - 0.012, 0.385, 0), V3(0.028, 0.075, 0.1), detail >= 2 ? 1 : 0);
+            b.style(L.shirt * 0.9, mk::MATTE);
+            for (int s = -1; s <= 1; s += 2) {
+                b.beam(V3(0.055, 0.43, s * 0.03), V3(front(0.3, 0.03) + 0.006, 0.3, s * 0.032), 0.005, 0.005, V3(1, 0, 0));
+                b.sphere(V3(front(0.3, 0.03) + 0.006, 0.296, s * 0.032), V3(0.005, 0.01, 0.005), 0);
+            }
+        }
+    } else {  // a quilted vest over a flannel shirt: a chest pocket, the shirt's collar
+        b.style(dark, mk::MATTE);
+        b.box(V3(front(0.24, -0.07) + 0.002, 0.24, -0.075 * G), V3(0.006, 0.07, 0.06), 0.003);
+        if (!own) {
+            b.style(L.shirt, mk::MATTE);
+            b.cone(V3(-0.004, 0.42, 0), V3(-0.01, 0.475, 0), 0.07, 0.064, detail >= 2 ? 12 : 8, false);
+            for (int s = -1; s <= 1; s += 2) b.beam(V3(0.035, 0.468, s * 0.02), V3(0.062, 0.44, s * 0.044), 0.022, 0.005, V3(1, 1, 0), 0.002);
+        }
     }
+}
+
+// ---- The head ----
+
+// The head's shape: a direction from its middle (x the face's way, y up, z across) to the surface. A skull, the jaw
+// narrowing to the chin, the brow, eye sockets and cheekbones.
+V3 headShape(const V3& d) {
+    double x = d.x * 0.099, y = d.y * 0.117, z = d.z * 0.078;
+    const double low = smooth01((-d.y - 0.05) / 0.75);
+    z *= 1 - 0.2 * low;
+    x *= d.x < 0 ? 1 - 0.3 * low : 1 - 0.05 * low;
+    if (d.x < 0 && d.y > -0.2) x *= 1.04;  // the back of the skull
+    auto g = [](double v, double w) { return std::exp(-(v * v) / (w * w)); };
+    if (d.x > 0) {
+        const double az = std::fabs(d.z);
+        x += 0.006 * g(d.y - 0.28, 0.12) * g(az, 0.5) * d.x;              // brow
+        x -= 0.01 * g(d.y - 0.1, 0.1) * g(az - 0.36, 0.16) * d.x;          // eye sockets
+        z *= 1 + 0.06 * g(d.y + 0.1, 0.15) * g(d.x - 0.6, 0.3);          // cheekbones
+        x += 0.012 * g(d.y + 0.85, 0.15) * g(az, 0.3);                    // chin
+        y -= 0.008 * g(d.y + 0.85, 0.2) * g(az, 0.4);
+    }
+    return V3(x, y, z);
+}
+// A point over the head's shape in the direction d, `out` beyond it, the top `lift` taller, hair `hang`ing down behind.
+V3 overHead(const V3& d, double out, double lift, double hang) {
+    V3 q = headShape(d) + d * out;
+    if (q.y > 0) q.y *= 1 + lift;
+    if (hang > 0) {
+        q.y -= hang * smooth01((-d.y - 0.1) / 0.6) * smooth01(-d.x * 2 + 0.4);
+        if (d.x < 0.2) q += V3(d.x, 0, d.z) * (0.25 * hang * smooth01(-d.y + 0.3));
+    }
+    return q;
+}
+// A band over the head between two heights that can change round it (lo(c), hi(c): the direction's height, -1..1, for the
+// way round, c = cos of the angle off the face), `segs` round (from angle a0 to a1; all the way round: closed) and `rows`
+// up; hi of 1 closes it over the crown.
+template <class Lo, class Hi>
+void headBand(mk::B& b, int segs, int rows, double out, double lift, double hang, Lo lo, Hi hi, const V3& col, double a0 = -M_PI, double a1 = M_PI) {
+    Rows r;
+    r.closed = a1 - a0 > 2 * M_PI - 1e-6;
+    r.n = r.closed ? segs : segs + 1;
+    for (int i = 0; i <= rows; i++) {
+        const double t = (double)i / rows;
+        double ym = 0;
+        for (int k = 0; k < r.n; k++) {
+            const double a = a0 + (a1 - a0) * k / segs, c = std::cos(a);
+            const double y = clampd(lo(c) + (hi(c) - lo(c)) * t, -0.999, 0.999), h = std::sqrt(1 - y * y);
+            const V3 q = overHead(V3(h * c, y, h * std::sin(a)), out, lift, hang);
+            r.pts.push_back(q);
+            ym += q.y / r.n;
+        }
+        r.mid.push_back(V3(0, ym, 0));
+        r.col.push_back(col);
+    }
+    skin(b, r);
+}
+// The hairline (the height of the direction it starts at): high at the forehead, round over the ears, low at the nape.
+double hairline(double c, double nape, double overEars) {
+    return c > 0 ? overEars + (0.42 - overEars) * std::pow(c, 1.5) : overEars + (nape - overEars) * smooth01(-c * 1.6);
 }
 
 // The head: its middle at the origin, the face toward +x.
 void buildHead(mk::B& b, const Look& L, int detail) {
-    const int d = detail >= 2 ? 2 : 1, d0 = detail >= 2 ? 1 : 0;
-    const V3 skin = L.skin, shade = skin * 0.86;
-    b.style(skin, mk::MATTE);
-    b.sphere(V3(-0.006, 0.012, 0), V3(0.096, 0.108, 0.086), d);                 // skull
-    b.sphere(V3(0.026, -0.05, 0), V3(0.068, 0.052, 0.068), d0);                // cheeks and upper jaw
-    b.style(L.stubble ? skin * 0.72 : skin, mk::MATTE);
-    b.sphere(V3(0.03, -0.074, 0), V3(0.06, 0.042, 0.058), d0);                 // jaw
-    b.sphere(V3(0.074, -0.092, 0), V3(0.026, 0.024, 0.032), 0);                // chin
-    b.style(skin, mk::MATTE);
-    b.sphere(V3(0.078, 0.033, 0), V3(0.022, 0.016, 0.07), d0);                 // brow ridge
-    for (int k = -1; k <= 1; k += 2) b.sphere(V3(0.06, -0.01, k * 0.044), V3(0.026, 0.02, 0.022), 0);  // cheekbones
-    // Nose: bridge, tip and wings.
-    b.beam(V3(0.09, 0.022, 0), V3(0.113, -0.024, 0), 0.017, 0.014, V3(1, 0.4, 0), 0.004);
-    b.sphere(V3(0.112, -0.028, 0), V3(0.014, 0.013, 0.014), 0);
-    for (int k = -1; k <= 1; k += 2) b.sphere(V3(0.101, -0.033, k * 0.012), V3(0.011, 0.009, 0.009), 0);
-    // Ears: rim and hollow.
-    for (int k = -1; k <= 1; k += 2) {
-        b.style(skin, mk::MATTE);
-        b.sphere(V3(-0.012, -0.004, k * 0.086), V3(0.024, 0.034, 0.011), 0);
-        b.style(shade * 0.85, mk::MATTE);
-        b.sphere(V3(-0.008, -0.006, k * 0.092), V3(0.012, 0.02, 0.005), 0);
+    const int segs = detail >= 2 ? 18 : detail == 1 ? 10 : 7, rows = detail >= 2 ? 12 : detail == 1 ? 6 : 4, hr = detail >= 2 ? 5 : 2;
+    const V3 skin = L.skin, shade = skin * 0.86, hairC = L.hair;
+    auto k_ = [](double v) { return [v](double) { return v; }; };
+    // The head itself, closed under the jaw and over the crown.
+    headBand(b, segs, rows, 0, 0, 0, k_(-1), k_(1), skin);
+    // Hair.
+    const V3 hairCol = L.hairStyle == 1 ? lerpV(hairC, skin, 0.35) : hairC;
+    if (L.hairStyle == 0) {
+        headBand(b, segs, hr, 0.007, 0.05, 0, [](double c) { return hairline(c, -0.55, 0.06); }, k_(1), hairCol);
+        if (detail >= 1) {  // sideburns
+            b.style(hairCol, mk::MATTE);
+            for (int s = -1; s <= 1; s += 2) b.box(V3(0.03, -0.008, s * 0.074), V3(0.02, 0.04, 0.008), 0.003);
+        }
+    } else if (L.hairStyle == 1)
+        headBand(b, segs, hr, 0.003, 0, 0, [](double c) { return hairline(c, -0.5, 0.1); }, k_(1), hairCol);
+    else if (L.hairStyle == 2)  // long, down over the ears to the collar
+        headBand(b, segs, hr, 0.012, 0.06, 0.06, [](double c) { return c > 0.55 ? 0.42 : hairline(c, -1.0, -0.35); }, k_(1), hairCol);
+    else  // bald, a fringe round the back
+        headBand(b, segs, 2, 0.004, 0, 0, [](double c) { return -0.42 + 0.3 * smooth01(c + 0.4); }, [](double c) { return 0.18 - 0.1 * smooth01(c + 0.4); }, hairCol, 1.0, 2 * M_PI - 1.0);
+    // Beard round the jaw, under the mouth (a moustache over it), or stubble.
+    if (L.beard >= 1) {
+        const bool full = L.beard == 2;
+        headBand(b, segs, hr, full ? 0.009 : 0.0015, 0, 0, k_(-0.97), [full](double c) { return full ? -0.62 + 0.5 * smooth01((1 - c) / 0.6) : -0.66 + 0.45 * smooth01((1 - c) / 0.6); },
+                 full ? hairC * 0.95 : lerpV(skin, skin * 0.6 + hairC * 0.15, 0.7), -1.75, 1.75);
+        if (full) {
+            b.style(hairC * 0.9, mk::MATTE);
+            b.box(V3(0.094, -0.043, 0), V3(0.012, 0.011, 0.05), 0.004);
+        }
     }
-    // Eyes under the brow: whites, irises, lids; brows.
-    for (int k = -1; k <= 1; k += 2) {
-        b.style(V3(0.62, 0.6, 0.57), mk::MATTE);
-        b.sphere(V3(0.073, 0.009, k * 0.033), V3(0.011, 0.0068, 0.0095), 0);
-        b.style(L.eyes, mk::MATTE);
-        b.sphere(V3(0.082, 0.009, k * 0.033), V3(0.005, 0.0068, 0.0068), 0);
-        b.style(shade, mk::MATTE);
-        b.box(V3(0.081, 0.018, k * 0.033), V3(0.01, 0.005, 0.03), 0.002);  // upper lid
-        b.style(L.hair * 0.85, mk::MATTE);
-        b.push();
-        b.move(0.094, 0.034, k * 0.034);
-        b.roll(k * -8.0);
-        b.box(V3(0, 0, 0), V3(0.01, 0.008, 0.038), 0.002);
-        b.pop();
+    if (detail >= 1) {
+        // Ears: rim and hollow.
+        for (int k = -1; k <= 1; k += 2) {
+            b.style(skin * 0.96, mk::MATTE);
+            b.sphere(V3(-0.012, -0.004, k * 0.079), V3(0.022, 0.033, 0.011), 0);
+            b.style(shade * 0.8, mk::MATTE);
+            b.sphere(V3(-0.008, -0.006, k * 0.086), V3(0.012, 0.02, 0.005), 0);
+        }
+        // Nose: bridge, tip and wings.
+        b.style(skin * 0.98, mk::MATTE);
+        b.beam(V3(0.093, 0.024, 0), V3(0.116, -0.026, 0), 0.016, 0.014, V3(1, 0.45, 0), 0.005);
+        b.sphere(V3(0.114, -0.03, 0), V3(0.014, 0.013, 0.015), detail >= 2 ? 1 : 0);
+        for (int k = -1; k <= 1; k += 2) b.sphere(V3(0.102, -0.035, k * 0.0125), V3(0.011, 0.009, 0.009), 0);
+        // Eyes under the brow: whites, irises, lids; brows.
+        for (int k = -1; k <= 1; k += 2) {
+            b.style(V3(0.66, 0.64, 0.6), mk::MATTE);
+            b.sphere(V3(0.077, 0.01, k * 0.032), V3(0.012, 0.0075, 0.0105), 0);
+            b.style(L.eyes, mk::MATTE);
+            b.sphere(V3(0.0875, 0.0105, k * 0.031), V3(0.003, 0.006, 0.006), 0);
+            b.style(shade, mk::MATTE);
+            b.box(V3(0.087, 0.019, k * 0.032), V3(0.01, 0.005, 0.028), 0.002);  // upper lid
+            b.style(hairC * 0.85, mk::MATTE);
+            b.push();
+            b.move(0.097, 0.033, k * 0.034);
+            b.roll(k * -8.0);
+            b.box(V3(0, 0, 0), V3(0.01, 0.008, 0.036), 0.003);
+            b.pop();
+        }
+        // Lips.
+        if (L.beard != 2 || detail >= 2) {
+            b.style(L.lips, mk::MATTE);
+            b.box(V3(0.09, -0.053, 0), V3(0.012, 0.0075, 0.04), 0.0035);
+            b.style(L.lips * 1.08, mk::MATTE);
+            b.box(V3(0.087, -0.062, 0), V3(0.012, 0.009, 0.034), 0.004);
+        }
     }
-    // Lips.
-    b.style(L.lips, mk::MATTE);
-    b.box(V3(0.094, -0.054, 0), V3(0.012, 0.007, 0.04), 0.003);
-    b.style(L.lips * 1.08, mk::MATTE);
-    b.box(V3(0.091, -0.063, 0), V3(0.012, 0.008, 0.034), 0.003);
-    // Hair (short at the back and sides, sideburns) and hat.
-    b.style(L.hair, mk::MATTE);
-    b.blob(V3(-0.016, 0.024, 0), V3(0.103, 0.11, 0.094), 0.03, 3, d0 + 1, 0.3, -0.05);
-    for (int k = -1; k <= 1; k += 2) b.box(V3(0.03, -0.012, k * 0.083), V3(0.022, 0.04, 0.008), 0.003);
-    if (L.hat_ == 0) {  // ball cap, peak forward, curved
-        b.style(L.hat, mk::MATTE);
-        b.blob(V3(0.0, 0.05, 0), V3(0.105, 0.08, 0.097), 0.0, 4, 1, 0.3, 0.035);
+    // Hats.
+    const double r = 0.117;  // (the head's half-height: a height over it as the direction's)
+    if (L.hat_ == 0) {  // a ball cap: crown, the peak forward and curved, the button
+        headBand(b, segs, hr, 0.016, 0.07, 0, [r](double c) { return (0.034 + 0.016 * c) / r; }, k_(1), L.hat);
+        b.style(L.hat * 0.92, mk::MATTE);
         b.push();
-        b.scale(V3(1, 1, 0.92));
-        b.cyl(V3(0.0, 0.03, 0), V3(0.0, 0.058, 0), 0.104, 12, false);
+        b.move(0.08, 0.05, 0);
+        b.pitch(-10);
+        b.extrudeUp({mk::V2(0.0, 0.085), mk::V2(0.05, 0.078), mk::V2(0.088, 0.048), mk::V2(0.102, 0.0), mk::V2(0.088, -0.048), mk::V2(0.05, -0.078), mk::V2(0.0, -0.085)}, 0.007, -0.0035);
         b.pop();
+        if (detail >= 1) {
+            b.style(L.hat * 0.7, mk::MATTE);
+            b.sphere(V3(-0.004, 0.142, 0), V3(0.012, 0.007, 0.012), 0);
+            b.box(V3(0.106, 0.08, 0), V3(0.004, 0.028, 0.044), 0.002);  // patch
+        }
+    } else if (L.hat_ == 1) {  // a beanie with a turned-up cuff
+        headBand(b, segs, hr, 0.018, 0.12, 0, k_(0.0), k_(1), L.hat);
+        headBand(b, segs, 1, 0.025, 0.12, 0, k_(-0.06), k_(0.36), L.hat * 0.82);
+    } else if (L.hat_ == 3) {  // a bush hat: crown, band and a wide soft brim
+        headBand(b, segs, hr, 0.018, 0.12, 0, k_(0.26), k_(1), L.hat);
+        headBand(b, segs, 1, 0.022, 0.12, 0, k_(0.26), k_(0.44), L.hat * 0.6);
+        b.style(L.hat * 0.95, mk::MATTE);
         b.push();
-        b.move(0.085, 0.038, 0);
-        b.pitch(-12);
-        b.extrudeUp({mk::V2(0.0, 0.09), mk::V2(0.055, 0.08), mk::V2(0.095, 0.042), mk::V2(0.108, 0.0), mk::V2(0.095, -0.042), mk::V2(0.055, -0.08), mk::V2(0.0, -0.09)}, 0.007, -0.0035);
+        b.scale(V3(1, 1, 0.86));
+        b.lathe(V3(0, 0.036, 0), {mk::V2(0.098, 0.004), mk::V2(0.17, -0.016), mk::V2(0.185, -0.022), mk::V2(0.183, -0.014), mk::V2(0.168, -0.008), mk::V2(0.098, 0.012)},
+                detail >= 2 ? 22 : 12, true);
         b.pop();
-        b.style(L.hat * 0.7, mk::MATTE);
-        b.sphere(V3(0.0, 0.128, 0), V3(0.012, 0.007, 0.012), 0);  // button
-        b.box(V3(0.098, 0.075, 0), V3(0.004, 0.026, 0.04), 0.002);  // patch
-    } else if (L.hat_ == 1) {  // beanie, turned-up band
-        b.style(L.hat, mk::MATTE);
-        b.blob(V3(-0.005, 0.032, 0), V3(0.107, 0.11, 0.098), 0.0, 4, 1, 0.3, 0.02);
-        b.style(L.hat * 0.8, mk::MATTE);
+    } else if (L.hat_ == 4) {  // a hard hat: shell, a ridge front to back, the short peak
+        headBand(b, segs, hr, 0.026, 0.14, 0, [r](double c) { return (0.03 + 0.01 * c) / r; }, k_(1), L.hat);
+        b.style(L.hat * 0.95, mk::PAINT);
+        b.beam(V3(-0.1, 0.13, 0), V3(0.1, 0.13, 0), 0.03, 0.03, V3(0, 1, 0), 0.01);
         b.push();
-        b.scale(V3(1, 1, 0.91));
-        b.cyl(V3(-0.005, 0.03, 0), V3(-0.005, 0.07, 0), 0.109, 12, false);
+        b.move(0.1, 0.04, 0);
+        b.pitch(-8);
+        b.extrudeUp({mk::V2(-0.01, 0.07), mk::V2(0.03, 0.06), mk::V2(0.045, 0.0), mk::V2(0.03, -0.06), mk::V2(-0.01, -0.07)}, 0.008, -0.004);
         b.pop();
-    }
-}
-
-// Colour by height: darker toward a hem, a jacket's shadowed sides (soft, as dirt and shade gather there).
-void shadeByHeight(mk::Mesh& m, size_t from, double y0, double y1, double k0, double k1) {
-    for (size_t i = from; i < m.v.size(); i++) {
-        mk::MVert& q = m.v[i];
-        const double t = clampd((q.p[1] - y0) / (y1 - y0), 0, 1), k = k0 + (k1 - k0) * t * t * (3 - 2 * t);
-        // (...and a touch darker where it faces down or away round the sides)
-        const double side = 0.94 + 0.06 * clampd(0.5 + 0.5 * q.n[1] + 0.3 * std::fabs(q.n[0]), 0, 1);
-        for (int c = 0; c < 3; c++) q.c[c] = (float)(q.c[c] * k * side);
     }
 }
 
@@ -324,7 +639,15 @@ std::unordered_map<uint64_t, mk::Mesh>& cache() {
     static std::unordered_map<uint64_t, mk::Mesh> c;
     return c;
 }
-enum Piece { P_HAND = 0, P_BOOT = 1, P_SEAT = 2, P_CHEST = 3, P_HEAD = 4, P_WHEEL = 5 };
+enum Piece { P_HAND = 0, P_BOOT = 1, P_SEAT = 2, P_CHEST = 3, P_HEAD = 4, P_WHEEL = 5, P_CARGO = 6 };
+// A work pants' cargo pocket on the thigh's outside (the thigh's frame: x ahead, y up the thigh, z right; side 0 left).
+void buildCargo(mk::B& b, const Look& L, int side) {
+    const double s = side == 0 ? -1.0 : 1.0, r = 0.081 * L.girth;
+    b.style(L.pants * 0.9, mk::MATTE);
+    b.box(V3(0.005, 0.0, s * (r + 0.004)), V3(0.085, 0.11, 0.012), 0.004);
+    b.style(L.pantsDark, mk::MATTE);
+    b.box(V3(0.005, 0.05, s * (r + 0.011)), V3(0.09, 0.028, 0.008), 0.003);
+}
 const mk::Mesh& piece(int what, const Look& L, int detail, int param = 0) {
     const uint64_t key = (L.key * 1315423911ull) ^ ((uint64_t)what << 56) ^ ((uint64_t)detail << 52) ^ ((uint64_t)(param & 0xffff) << 32);
     std::lock_guard<std::mutex> lk(cacheMu);
@@ -335,9 +658,10 @@ const mk::Mesh& piece(int what, const Look& L, int detail, int param = 0) {
     switch (what) {
     case P_HAND: buildHand(b, L, param & 1, (param >> 1) / 4.0, detail); break;
     case P_BOOT: buildBoot(b, L, detail); break;
-    case P_SEAT: buildSeat(b, L, detail), shadeByHeight(m, 0, -0.1, 0.15, 0.88, 1.0); break;
-    case P_CHEST: buildChest(b, L, detail, param == 0), shadeByHeight(m, 0, -0.07, 0.36, 0.84, 1.04); break;
+    case P_SEAT: buildSeat(b, L, detail); break;
+    case P_CHEST: buildChest(b, L, detail, param == 1); break;
     case P_HEAD: buildHead(b, L, detail); break;
+    case P_CARGO: buildCargo(b, L, param); break;
     default: break;
     }
     return m;
@@ -384,7 +708,7 @@ Basis headBasis(const Pose& p) {
     const double nod = std::max(-0.1, -std::asin(clampd(hd.x.y, -1, 1)) * 0.55);  // (looking up, the head tips back on the neck)
     const V3 fh = perpTo(hd.x, kUp);
     const V3 neckDir = kUp * std::cos(nod) + fh * std::sin(nod);
-    const V3 neckTop = ch.o + ch.y * kNeckY + neckDir * 0.1 + ch.x * 0.012;
+    const V3 neckTop = ch.o + ch.y * kNeckY + neckDir * 0.088 + ch.x * 0.012;
     hd.o = neckTop + hd.y * 0.075 - hd.x * 0.01;
     return hd;
 }
@@ -412,35 +736,62 @@ void legOf(const Pose& p, int side, V3& hip, V3& knee, V3& ankle) {
 Look lookFor(const V3& jacket, uint32_t seed) {
     Look L;
     auto h = [&](int i) { return mk::hash01(seed, (uint32_t)i); };
+    auto pick = [&](int i, int n) { return std::min(n - 1, (int)(h(i) * n)); };
     L.jacket = jacket;
     L.jacketDark = jacket * 0.62;
-    static const V3 pants[] = {V3(0.16, 0.21, 0.33), V3(0.13, 0.15, 0.2), V3(0.32, 0.28, 0.2), V3(0.2, 0.2, 0.19)};
-    L.pants = pants[(int)(h(1) * 4) % 4];
+    L.top = h(10) < 0.45 ? 0 : h(10) < 0.75 ? 1 : 2;
+    L.legs = h(11) < 0.55 ? 0 : 1;
+    if (L.legs == 0) {  // jeans: indigo to faded, or black
+        static const V3 jeans[] = {V3(0.16, 0.21, 0.34), V3(0.12, 0.14, 0.21), V3(0.27, 0.33, 0.45), V3(0.1, 0.1, 0.11)};
+        L.pants = jeans[pick(1, 4)];
+        L.pantsWorn = L.pants * 1.22 + V3(0.035, 0.035, 0.04);  // (faded at the knees)
+    } else {  // work pants: duck canvas, khaki, olive, grey
+        static const V3 work[] = {V3(0.44, 0.32, 0.19), V3(0.5, 0.44, 0.31), V3(0.29, 0.31, 0.2), V3(0.3, 0.3, 0.3)};
+        L.pants = work[pick(1, 4)];
+        L.pantsWorn = L.pants * 1.1;
+    }
     L.pantsDark = L.pants * 0.7;
-    L.pantsWorn = L.pants * 1.18 + V3(0.03, 0.03, 0.03);  // (jeans faded at the knees and down the thighs)
-    static const V3 boots[] = {V3(0.33, 0.21, 0.12), V3(0.1, 0.09, 0.085), V3(0.42, 0.33, 0.2)};
-    L.boots = boots[(int)(h(2) * 3) % 3];
+    static const V3 boots[] = {V3(0.33, 0.21, 0.12), V3(0.1, 0.09, 0.085), V3(0.42, 0.33, 0.2), V3(0.24, 0.17, 0.11)};
+    L.boots = boots[pick(2, 4)];
     L.soles = V3(0.09, 0.085, 0.08);
     L.laces = V3(0.55, 0.45, 0.3);
-    static const V3 gloves[] = {V3(0.6, 0.47, 0.3), V3(0.12, 0.12, 0.13), V3(0.45, 0.42, 0.38)};
-    const int gi = (int)(h(3) * 3) % 3;
+    L.gloved = h(12) < 0.7;
+    static const V3 gloves[] = {V3(0.6, 0.47, 0.3), V3(0.12, 0.12, 0.13), V3(0.45, 0.42, 0.38), V3(0.62, 0.55, 0.2)};
+    const int gi = pick(3, 4);
     L.gloves = gloves[gi];
     L.glovePad = gi == 1 ? jacket * 0.9 : L.gloves * 0.62;
-    static const V3 skin[] = {V3(0.86, 0.68, 0.55), V3(0.8, 0.6, 0.45), V3(0.66, 0.46, 0.32), V3(0.42, 0.28, 0.2)};
-    L.skin = skin[(int)(h(4) * 4) % 4];
-    static const V3 hair[] = {V3(0.07, 0.06, 0.055), V3(0.22, 0.14, 0.09), V3(0.62, 0.48, 0.24), V3(0.5, 0.22, 0.1), V3(0.5, 0.5, 0.49)};
-    L.hair = hair[(int)(h(5) * 5) % 5];
-    L.hat_ = h(6) < 0.55 ? 0 : h(6) < 0.85 ? 1 : 2;
-    static const V3 hats[] = {V3(0.12, 0.13, 0.14), V3(0.55, 0.12, 0.08), V3(0.2, 0.3, 0.2), V3(0.75, 0.6, 0.35)};
-    L.hat = hats[(int)(h(7) * 4) % 4];
-    uint64_t k = seed;
-    for (double c : {jacket.x, jacket.y, jacket.z}) k = k * 1000003ull + (uint64_t)(c * 255);
+    static const V3 skin[] = {V3(0.88, 0.7, 0.58), V3(0.82, 0.62, 0.47), V3(0.72, 0.52, 0.37), V3(0.6, 0.42, 0.29), V3(0.45, 0.3, 0.21), V3(0.33, 0.22, 0.16)};
+    L.skin = skin[pick(4, 6)];
+    static const V3 hair[] = {V3(0.07, 0.06, 0.055), V3(0.22, 0.14, 0.09), V3(0.62, 0.48, 0.24), V3(0.5, 0.22, 0.1), V3(0.5, 0.5, 0.49), V3(0.32, 0.24, 0.16)};
+    L.hair = hair[pick(5, 6)];
+    L.hairStyle = h(14) < 0.45 ? 0 : h(14) < 0.65 ? 1 : h(14) < 0.85 ? 2 : 3;
+    L.hat_ = h(6) < 0.33 ? 0 : h(6) < 0.53 ? 1 : h(6) < 0.73 ? 2 : h(6) < 0.88 ? 3 : 4;
+    if (L.hat_ == 4) {  // hard hats: safety colours
+        static const V3 hard[] = {V3(0.86, 0.68, 0.12), V3(0.84, 0.84, 0.8), V3(0.86, 0.42, 0.1)};
+        L.hat = hard[pick(7, 3)];
+    } else {
+        static const V3 hats[] = {V3(0.12, 0.13, 0.14), V3(0.55, 0.12, 0.08), V3(0.2, 0.3, 0.2), V3(0.75, 0.6, 0.35), V3(0.42, 0.36, 0.26), V3(0.18, 0.24, 0.36)};
+        L.hat = hats[pick(7, 6)];
+    }
+    static const V3 shirts[] = {V3(0.55, 0.15, 0.12), V3(0.2, 0.3, 0.45), V3(0.25, 0.35, 0.22), V3(0.45, 0.42, 0.38), V3(0.6, 0.5, 0.36)};
+    L.shirt = shirts[pick(15, 5)];
     static const V3 eyes[] = {V3(0.25, 0.16, 0.08), V3(0.2, 0.3, 0.42), V3(0.28, 0.32, 0.18), V3(0.12, 0.08, 0.05)};
-    L.eyes = eyes[(int)(h(8) * 4) % 4];
+    L.eyes = eyes[pick(8, 4)];
     L.lips = V3(L.skin.x * 0.8, L.skin.y * 0.62, L.skin.z * 0.6);
-    L.stubble = h(9) < 0.35;
+    L.beard = h(9) < 0.3 ? 1 : h(9) < 0.48 ? 2 : 0;
+    L.stubble = L.beard == 1;
+    L.girth = 0.94 + 0.14 * h(13);
+    uint64_t k = seed * 0x9e3779b97f4a7c15ull + 2;  // (+ the model's version: a change of look rebuilds the cached pieces)
+    for (double c : {jacket.x, jacket.y, jacket.z}) k = k * 1000003ull + (uint64_t)(c * 255);
     L.key = k;
     return L;
+}
+
+Look lookFor(uint32_t seed) {
+    // Muted work colours (one hi-vis now and then).
+    static const V3 jackets[] = {V3(0.62, 0.3, 0.14), V3(0.33, 0.36, 0.2),  V3(0.15, 0.2, 0.32), V3(0.17, 0.3, 0.2),  V3(0.66, 0.5, 0.16), V3(0.2, 0.2, 0.22),
+                                 V3(0.58, 0.16, 0.12), V3(0.62, 0.5, 0.32), V3(0.14, 0.38, 0.4), V3(0.2, 0.42, 0.62), V3(0.8, 0.72, 0.12)};
+    return lookFor(jackets[std::min(10, (int)(mk::hash01(seed, 99) * 11))], seed);
 }
 
 void gripAt(Pose& p, int side, const V3& g, const V3& axis, double grip) {
@@ -454,53 +805,98 @@ void gripAt(Pose& p, int side, const V3& g, const V3& axis, double grip) {
     p.grip[side] = grip;
 }
 
-namespace {
-// A limb's tube along a polyline of (point, radius) stations.
-void limb(mk::B& b, std::initializer_list<std::pair<V3, double>> st, int sg) {
-    const std::pair<V3, double>* prev = nullptr;
-    for (const auto& q : st) {
-        if (prev) b.cone(prev->first, q.first, prev->second, q.second, sg, false);
-        prev = &q;
-    }
-}
-// A thin band round a limb at `c` (axis `ax`): a fold or a seam that reads at a distance.
-void band(mk::B& b, const V3& c, const V3& ax, double r, double w, int sg) { b.cone(c - ax * (w * 0.5), c + ax * (w * 0.5), r, r, sg, false); }
-}  // namespace
-
 const double kClipR = 0.15;  // first person: nothing of you nearer the eyes than this
+
+namespace {
+// The torso: the trousers' seat (closed under the crotch), a flannel shirt's hem under a vest, and the top from its hem
+// up to the neck. Rows below the waist follow the hips, above it the chest, one between blending the two (so it bends).
+void torso(mk::B& b, const Pose& p, const Look& L, const Basis& pel, const Basis& ch, int det, int n) {
+    const double G = L.girth;
+    {
+        Rows r;
+        r.n = n;
+        for (int i = 0; i < 5; i++) {
+            if (det == 0 && (i == 1 || i == 3)) continue;
+            const double* s = kSeat[i];
+            torsoRow(r, pel, s[0], s[1] * G, s[2] * G, s[3] * G, L.pants * (0.9 + 0.025 * i));
+        }
+        const V3 tip = pel.o + pel.y * -0.142;
+        skin(b, r, &tip, nullptr, L.pantsDark);
+    }
+    if (L.top == 2) {  // the shirt's hem, untucked under the vest
+        Rows r;
+        r.n = n;
+        torsoRow(r, pel, -0.005, 0.171 * G, 0.104 * G, 0.113 * G, L.shirt * 0.82);
+        torsoRow(r, pel, 0.025, 0.169 * G, 0.1 * G, 0.108 * G, L.shirt);
+        torsoRow(r, pel, 0.09, 0.165 * G, 0.096 * G, 0.1 * G, L.shirt);
+        skin(b, r);
+    }
+    Rows r;
+    r.n = n;
+    const double yh = hemY(L);
+    const V3 body = topColor(L), hem = L.top == 1 ? body * 0.8 : L.jacketDark;
+    torsoRow(r, pel, yh, 0.174 * G, 0.108 * G, 0.11 * G, hem);
+    torsoRow(r, pel, yh + 0.035, 0.171 * G, 0.105 * G, 0.105 * G, body * 0.88);
+    if (yh + 0.035 < 0.07 && det > 0) torsoRow(r, pel, 0.08, 0.168 * G, 0.104 * G, 0.1 * G, body * 0.9);
+    {  // the waist: halfway between the hips' frame and the chest's
+        Rows a, c;
+        a.n = c.n = n;
+        torsoRow(a, pel, kWaist + 0.03, 0.166 * G, 0.106 * G, 0.096 * G, V3());
+        torsoRow(c, ch, 0.03, 0.166 * G, 0.106 * G, 0.096 * G, V3());
+        for (int k = 0; k < n; k++) r.pts.push_back((a.pts[k] + c.pts[k]) * 0.5);
+        r.mid.push_back((a.mid[0] + c.mid[0]) * 0.5);
+        r.col.push_back(body * 0.92);
+    }
+    for (int i = 1; i < kUpperN; i++) {
+        if (det == 0 && i != 2 && i != 4 && i != 6) continue;
+        if (!p.head && i == kUpperN - 1) continue;  // (your own: closed lower, clear of your eyes)
+        const double* u = kUpper[i];
+        double shade = 0.92 + 0.12 * smooth01(u[0] / 0.36);
+        if (L.top == 2 && (i & 1)) shade *= 0.9;  // (quilted)
+        torsoRow(r, ch, u[0], u[1] * G, u[2] * G, u[3] * G, body * shade);
+    }
+    // In third person the neck goes in at the top; your own, closed (the collar's opening, seen looking down).
+    const V3 top = ch.o + ch.y * 0.44;
+    skin(b, r, nullptr, p.head ? nullptr : &top, L.shirt * 0.55);
+}
+}  // namespace
 
 void build(const Pose& p, const Look& L, mk::Mesh& out) {
     const size_t start = out.v.size();
-    const int det = p.detail, sg = det >= 2 ? 10 : det == 1 ? 7 : 5;
+    const int det = p.detail;
+    const int nT = det >= 2 ? 16 : det == 1 ? 10 : 7, nL = det >= 2 ? 12 : det == 1 ? 8 : 5;  // round the torso, round a limb
+    const double G = L.girth;
     mk::B b(out);
+    b.mat(mk::MATTE);
     const Basis pel = pelvisBasis(p), ch = chestBasis(p);
     if (!p.noTorso) {
+        torso(b, p, L, pel, ch, det, nT);
         place(out, piece(P_SEAT, L, det), pel);
         place(out, piece(P_CHEST, L, det, p.head ? 0 : 1), ch);
     }
-    // Legs: the thigh tapering to the knee, the calf swelling below it and slimming to the ankle; the jeans faded
-    // at the knee, an outside seam, folds stacked over the boot.
+    // Legs: full at the seat, the thigh tapering to a rounded knee (worn paler on jeans, patched on work pants), the calf,
+    // and the hem breaking over the boot.
     for (int s = 0; s < 2; s++) {
-        const V3 hip = hipOf(p, s), out_ = pel.z * (s == 0 ? -1.0 : 1.0);
+        const V3 hip = hipOf(p, s);
         V3 ankle;
         const V3 knee = solve(hip, p.ankle[s], kThigh, kShin, p.kneePole[s], &ankle);
-        const V3 td = norm(knee - hip), sd = norm(ankle - knee);
-        b.style(L.pants, mk::MATTE);
-        limb(b, {{hip - td * 0.02, 0.083}, {hip + (knee - hip) * 0.45, 0.071}, {knee - td * 0.03, 0.054}}, sg);
-        b.style(L.pantsWorn, mk::MATTE);
-        b.sphere(knee, V3(0.054, 0.054, 0.054), det >= 2 ? 1 : 0);
-        b.style(L.pants, mk::MATTE);
-        limb(b, {{knee + sd * 0.01, 0.052}, {knee + (ankle - knee) * 0.3, 0.054}, {ankle + sd * 0.0, 0.046}}, sg);
-        if (det >= 1) {
-            b.style(L.pantsDark, mk::MATTE);
-            const V3 so = perpTo(out_, td), ss = perpTo(out_, sd);
-            b.beam(hip + so * 0.08, knee + so * 0.052, 0.006, 0.005, so);  // outside seams
-            b.beam(knee + ss * 0.051, ankle + ss * 0.045, 0.006, 0.005, ss);
-            band(b, knee - sd * 0.035, sd, 0.053, 0.008, sg);  // a fold behind the knee
-            band(b, ankle - sd * 0.06, sd, 0.049, 0.01, sg);   // folds stacking over the boot
+        static const double rs[][2] = {{-0.15, 0.094}, {0.3, 0.088}, {0.62, 0.077}, {0.84, 0.066}, {1.0, 0.064}, {1.16, 0.062}, {1.38, 0.062}, {1.72, 0.054}, {1.86, 0.058}, {2.06, 0.066}};
+        static const double fs[][2] = {{-0.15, 0.09}, {0.3, 0.086}, {0.62, 0.075}, {0.84, 0.066}, {1.0, 0.069}, {1.16, 0.064}, {1.38, 0.066}, {1.72, 0.056}, {1.86, 0.06}, {2.06, 0.068}};
+        auto prof = [&](double u, double& r, double& rf, V3& col) {
+            r = tab(rs, 10, u) * G, rf = tab(fs, 10, u) * G;
+            const bool knee_ = u > 0.9 && u < 1.12 && det >= 1;
+            col = knee_ ? (L.legs == 0 ? L.pantsWorn : L.pants * 0.82) : u > 1.8 ? L.pantsDark : L.pants * (1.0 - 0.06 * clampd(u - 1, 0, 1));
+        };
+        limbSweep(b, hip, knee, ankle, -0.15, 2.06, det, nL, pel.x, prof);
+        if (L.legs == 1 && det >= 1) {  // a cargo pocket on the outside of the thigh
+            Basis f;
+            const V3 td = norm(knee - hip);
+            f.x = perpTo(p.kneePole[s], td);
+            f.y = td * -1.0;
+            f.z = cross(f.x, f.y);
+            f.o = hip + (knee - hip) * 0.5;
+            place(out, piece(P_CARGO, L, det, s), f);
         }
-        b.style(L.pantsDark, mk::MATTE);
-        b.cone(ankle - sd * 0.035, ankle + sd * 0.045, 0.048, 0.058, sg, true);  // the hem, breaking over the boot
         Basis f;
         f.x = norm(p.footF[s]);
         f.y = perpTo(p.footU[s], f.x);
@@ -508,8 +904,9 @@ void build(const Pose& p, const Look& L, mk::Mesh& out) {
         f.o = ankle;
         place(out, piece(P_BOOT, L, det), f);
     }
-    // Arms: a rounded shoulder, the upper arm slimming to a defined elbow, the forearm full below it and slim at the
-    // wrist; the sleeve creased at the elbow and bunched over the cuff, then the glove.
+    // Arms: the shoulder rounded, the sleeve slimming to the elbow and round it, full in the forearm, the cuff at the
+    // wrist; then the hand.
+    const V3 sleeve = sleeveColor(L), cuff = L.top == 1 ? sleeve * 0.8 : L.top == 2 ? L.shirt * 0.85 : L.jacketDark;
     for (int s = 0; s < 2; s++) {
         const V3 sh = shoulderOf(p, s);
         double l1 = kUpperArm;
@@ -517,19 +914,16 @@ void build(const Pose& p, const Look& L, mk::Mesh& out) {
         if (p.stretch && reach > (kUpperArm + kForearm) * 0.97) l1 = reach - kForearm * 0.93;
         V3 wrist;
         const V3 elbow = solve(sh, p.hand[s], l1, kForearm, p.elbowPole[s], &wrist);
-        const V3 ud = norm(elbow - sh), fd = norm(wrist - elbow);
-        b.style(L.jacket, mk::MATTE);
-        b.sphere(sh - ch.y * 0.006 + ch.z * (s == 0 ? -0.004 : 0.004), V3(0.046, 0.044, 0.047), det >= 2 ? 1 : 0);  // the deltoid
-        limb(b, {{sh, 0.047}, {sh + (elbow - sh) * 0.45, 0.043}, {elbow, 0.036}}, sg);
-        b.sphere(elbow, V3(0.036, 0.036, 0.036), 0);
-        limb(b, {{elbow, 0.036}, {elbow + (wrist - elbow) * 0.28, 0.038}, {wrist - fd * 0.05, 0.032}}, sg);
-        b.style(L.jacketDark, mk::MATTE);
-        if (det >= 1) {
-            band(b, elbow + ud * -0.03, ud, 0.041, 0.007, sg);   // creases at the inside of the elbow
-            band(b, elbow + fd * 0.035, fd, 0.039, 0.007, sg);
-            band(b, wrist - fd * 0.075, fd, 0.035, 0.008, sg);   // bunched over the cuff
-        }
-        b.cone(wrist - fd * 0.055, wrist + fd * 0.004, 0.034, 0.033, sg, true);  // cuff
+        b.color(sleeve);
+        b.sphere(sh + ch.z * (s == 0 ? 0.004 : -0.004) - ch.y * 0.014, V3(0.06, 0.052, 0.06) * G, det >= 1 ? 1 : 0);  // the shoulder
+        static const double rs[][2] = {{0.0, 0.056}, {0.35, 0.056}, {0.7, 0.051}, {1.0, 0.049}, {1.35, 0.05}, {1.75, 0.043}, {1.88, 0.046}, {2.03, 0.047}};
+        static const double fs[][2] = {{0.0, 0.054}, {0.35, 0.054}, {0.7, 0.05}, {1.0, 0.05}, {1.35, 0.046}, {1.75, 0.041}, {1.88, 0.044}, {2.03, 0.045}};
+        auto prof = [&](double u, double& r, double& rf, V3& col) {
+            r = tab(rs, 8, u) * G, rf = tab(fs, 8, u) * G;
+            col = u >= 1.85 ? cuff : (u > 0.85 && u < 1.15 && det >= 2) ? sleeve * 0.9 : sleeve;
+        };
+        const V3 tip = wrist + norm(wrist - elbow) * 0.004;
+        limbSweep(b, sh, elbow, wrist, 0.02, 2.03, det, nL - (det >= 2 ? 2 : 0), ch.x, prof, &tip, L.shirt * 0.4);
         Basis h;
         h.x = norm(p.handX[s]);
         h.y = perpTo(p.handY[s], h.x);
@@ -540,13 +934,22 @@ void build(const Pose& p, const Look& L, mk::Mesh& out) {
     }
     // Neck and head (not your own, in first person).
     if (p.head) {
-        const V3 neck = ch.o + ch.y * kNeckY;
         const Basis hd = headBasis(p);
-        b.style(L.skin, mk::MATTE);
-        const V3 nb = neck - ch.y * 0.03, nt = hd.o - hd.y * 0.065 - hd.x * 0.018;
-        limb(b, {{nb, 0.047}, {(nb + nt) * 0.5, 0.041}, {nt, 0.043}}, sg);
-        b.style(L.skin * 0.9, mk::MATTE);
-        b.sphere(nb + (nt - nb) * 0.45 + hd.x * 0.03, V3(0.012, 0.014, 0.012), 0);  // Adam's apple
+        const V3 nb = ch.o + ch.y * 0.4, nt = hd.o - hd.y * 0.066 - hd.x * 0.016;
+        Rows r;
+        r.n = det >= 2 ? 10 : det == 1 ? 7 : 5;
+        const V3 ax = norm(nt - nb), u = perpTo(ch.x, ax), v = cross(ax, u);
+        const double rad[3] = {0.056, 0.05, 0.047};
+        for (int i = 0; i < 3; i++) {
+            const V3 c = nb + (nt - nb) * (i * 0.5);
+            for (int k = 0; k < r.n; k++) {
+                const double a = 2 * M_PI * k / r.n;
+                r.pts.push_back(c + u * (rad[i] * 1.05 * std::cos(a)) + v * (rad[i] * std::sin(a)));
+            }
+            r.mid.push_back(c);
+            r.col.push_back(L.skin * 0.93);
+        }
+        skin(b, r);
         place(out, piece(P_HEAD, L, det), hd);
     }
     // First person: nothing within a hand's width of the eyes (pushed out round them, never through the camera).

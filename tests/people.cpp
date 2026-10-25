@@ -83,3 +83,44 @@ SCENARIO(peopleLookDown, "people/look-down", "First person on foot, looking anyw
                 ctx.check(b, ok, b);
             }
 }
+
+SCENARIO(peopleModels, "people/models", "Every look (tops, trousers, hats, hair, beards, gloves) builds at every detail, finite, standing on its boots, inside the triangle budgets (close 7.5k, middle 4k, far 1.1k), and the looks vary between players") {
+    int seen[5][5] = {};
+    size_t most[3] = {0, 0, 0};
+    bool finite = true, grounded = true;
+    double worst = 0;
+    for (uint32_t seed = 1; seed <= 160; seed++) {
+        const people::Look L = people::lookFor(seed * 2654435761u);
+        seen[0][L.top]++, seen[1][L.legs]++, seen[2][L.hat_]++, seen[3][L.hairStyle]++, seen[4][L.beard]++;
+        people::Mover m;
+        people::Gait g;
+        people::Pose p = people::walking(g, m, 1.0 / 60);
+        for (int det = 0; det <= 2; det++) {
+            p.detail = det;
+            mk::Mesh mesh;
+            people::build(p, L, mesh);
+            most[det] = std::max(most[det], mesh.triangles());
+            double lo = 1e9;
+            for (const mk::MVert& v : mesh.v) {
+                finite = finite && std::isfinite(v.p[0] + v.p[1] + v.p[2] + v.n[0] + v.n[1] + v.n[2]);
+                lo = std::min(lo, (double)v.p[1]);
+            }
+            grounded = grounded && std::fabs(lo) < 0.01;
+            if (std::fabs(lo) > std::fabs(worst)) worst = lo;
+        }
+    }
+    ctx.check("all finite", finite);
+    ctx.check("the soles on the ground (lowest point within 1 cm of it)", grounded, std::to_string(worst));
+    ctx.metric("close (detail 2), most triangles", (double)most[2], "tris", 3000, 7500);
+    ctx.metric("middle (detail 1), most triangles", (double)most[1], "tris", 1500, 4000);
+    ctx.metric("far (detail 0), most triangles", (double)most[0], "tris", 300, 1100);
+    const int counts[5] = {3, 2, 5, 4, 3};
+    const char* what[5] = {"tops", "trousers", "hats", "hair", "beards"};
+    for (int i = 0; i < 5; i++) {
+        bool all = true;
+        for (int k = 0; k < counts[i]; k++) all = all && seen[i][k] > 0;
+        ctx.check(std::string("every kind of ") + what[i] + " turns up among 160 players", all);
+    }
+    const people::Look a = people::lookFor(1u), b = people::lookFor(2u);
+    ctx.check("two players' looks differ", a.key != b.key);
+}

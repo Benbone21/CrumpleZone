@@ -5908,7 +5908,7 @@ int main(int argc, char** argv) {
                         }
                     }
                 }
-                people::build(p, people::lookFor(V3(0.2, 0.6, 0.95), h), renderer.people);
+                people::build(p, people::lookFor(h), renderer.people);  // (each their own clothes and colours)
             };
             for (const RemoteWalker& rw : coop.walkers) buddy(rw.who, rw.p, rw.yaw, rw.stride, nullptr, rw.crouch);
             if (const char* fg = scripted ? std::getenv("CZ_FIGURE") : nullptr) {  // (screenshots: a buddy on foot, CZ_FIGURE=m ahead of you, walking toward you[,side,speed[,turn rad/s[,crouch 0..1[,yaw off toward you, rad[,count in a row]]]]]])
