@@ -69,6 +69,7 @@ ModSet withItem(const ModSet& fitted, const Item& it);
 // What a part looks like on the turntable: a model (modelkit.h), its params, and how far it's scaled up.
 struct Display {
     std::string id;
+    int variant = -1;      // the design (an engine's or gearbox's own: drivetrainlook.h); -1 the lab's pick
     std::vector<std::pair<std::string, double>> set;
     double scale = 1;
     double size = 1;       // about how big it is as shown (m): how far back the camera sits

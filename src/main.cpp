@@ -4540,7 +4540,7 @@ int main(int argc, char** argv) {
                     footYaw = std::atan2(-d.z, d.x), footPitch = std::asin(d.y);
                 }
             }
-            if (opt.script == "damage") {  // screenshots of broken parts: CZ_BREAK=cv:fl,tie:fr,bend:fl,shaft:f,spring:rl,leaf:rr,flood (corner = front/rear + left/right),
+            if (opt.script == "damage") {  // screenshots of broken parts: CZ_BREAK=cv:fl,tie:fr,bend:fl,shaft:f,spring:rl,leaf:rr,flood,hood (corner = front/rear + left/right),
                 // CZ_STAND=fwd,left (m from the car's middle, default 2.6,1.9) and CZ_LOOKAT=fwd,left,up (m, default the front axle at hub height)
                 Car& c = sim.cars[sim.player];
                 const Frame fr0 = c.frame();
@@ -4564,6 +4564,7 @@ int main(int argc, char** argv) {
                         const std::string what = it.substr(0, colon), arg = colon == std::string::npos ? "" : it.substr(colon + 1);
                         const int k = arg.size() >= 2 ? corner(arg) : -1;
                         if (what == "flood") c.hydrolocked = true;
+                        else if (what == "hood") c.setHood(true);  // (nothing broken: the hood up, for the engine bay)
                         else if (what == "dead") c.engineDead = true;
                         else if (what == "shaft") {
                             for (Axle& ax : c.axles)
@@ -6060,6 +6061,7 @@ int main(int argc, char** argv) {
             }
             Placed pl;
             pl.id = shopDisp.id;
+            pl.variant = shopDisp.variant;
             pl.set = shopDisp.set;
             pl.scale = V3(shopDisp.scale, shopDisp.scale, shopDisp.scale);
             pl.yaw = garageShop.spin;

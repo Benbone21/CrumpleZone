@@ -8,6 +8,7 @@
 #include <map>
 #include <mutex>
 
+#include "drivetrainlook.h"
 #include "modelkit.h"
 #include "softbody.h"
 
@@ -62,8 +63,10 @@ double weightOf(const VehicleSpec& s) {
     return kg;
 }
 
-const char* engineModel(const VehicleSpec& vs) {
-    return vs.airCooled ? "crate_engine_flat4" : vs.cylinders >= 7 ? "crate_engine_v8" : vs.cylinders >= 5 ? "crate_engine_v6" : "crate_engine_i4";
+// A drivetrain part's own model, design and params (drivetrainlook.h).
+void showLook(Display& d, const PartLook& L) {
+    d.id = L.id, d.variant = L.variant;
+    for (int i = 0; i < L.n; i++) d.set.emplace_back(L.set[i].key, L.set[i].value);
 }
 
 }  // namespace
@@ -184,12 +187,12 @@ Display displayFor(const Item& it, int vehicle, const ModSet& fitted) {
         const VehicleSpec& W = tunedSpec(vehicle, with);
         const VehicleSpec& stock = vehicleCatalog()[vehicle];
         switch (it.slot) {
-            case MOD_ENGINE: d.id = engineModel(W); break;
+            case MOD_ENGINE: showLook(d, engineLook(W)); break;
             case MOD_SUSPENSION: d.id = W.leafSprings && W.leafFront ? "leaf_pack" : "coilover"; break;
             case MOD_TRANSMISSION:
                 // A new gearbox shows the box; new axle gears or lockers the axle's centre; a deeper low range the transfer case.
-                if (it.option == 0 || W.gearboxName != stock.gearboxName || W.gears != stock.gears) d.id = W.stallRpm > 0 ? "gearbox_auto" : "gearbox_manual";
-                else if (W.lowRange != stock.lowRange) d.id = "transfer_case";
+                if (it.option == 0 || W.gearboxName != stock.gearboxName || W.gears != stock.gears) showLook(d, gearboxLook(W));
+                else if (W.lowRange != stock.lowRange && *transferLook(W).id) showLook(d, transferLook(W));
                 else d.id = "differential";
                 break;
             default:  // wheels and tires: one tire of the size it gives
@@ -213,7 +216,7 @@ void modelBounds(const Display& d, V3& lo, V3& hi) {
     static std::mutex lock;
     static std::map<std::string, std::pair<V3, V3>> cache;
     static uint64_t cachedFor = ~0ull;
-    std::string key = d.id;
+    std::string key = d.id + "#" + std::to_string(d.variant);
     for (const auto& p : d.set) {
         char b[48];
         std::snprintf(b, sizeof b, " %s=%.4f", p.first.c_str(), p.second);
@@ -225,7 +228,7 @@ void modelBounds(const Display& d, V3& lo, V3& hi) {
     if (at == cache.end()) {
         std::pair<V3, V3> b(V3(-0.2, 0, -0.2), V3(0.2, 0.4, 0.2));
         if (const mk::ModelDef* def = mk::findModel(d.id)) {
-            const int v = mk::pickedVariant(*def);
+            const int v = d.variant >= 0 && d.variant < (int)def->variants.size() ? d.variant : mk::pickedVariant(*def);
             mk::P p = mk::pickedParams(*def, v);
             for (const auto& s : d.set) p.v[s.first] = s.second;
             mk::Mesh m;
