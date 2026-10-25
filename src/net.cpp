@@ -2408,7 +2408,10 @@ void NetSession::applyRemotes(Sim& sim, double now) {
         c.settleShove(vel, frameDt);
         for (size_t i = 0; i < c.nodes.size() && !held; i++) {
             c.nodes[i].p = now0[i] + rm->ease + c.shoveP;
-            c.nodes[i].v = (jumped || stopped ? vel : (now0[i] - prev[i]) / 0.05) + c.shoveV;
+            // (One node that jumped between two states, a part torn loose and flung, a dent put back by a repair,
+            // is a teleport too, not a speed: as the whole body's, above.)
+            const V3 nodeVel = (now0[i] - prev[i]) / 0.05;
+            c.nodes[i].v = (jumped || stopped || len(nodeVel - vel) > 25 ? vel : nodeVel) + c.shoveV;
             c.nodes[i].f = V3();
         }
         if (!held && !c.chassis.nodes.empty()) c.chassis.rot = rm->lastRot;
