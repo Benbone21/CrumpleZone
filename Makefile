@@ -16,10 +16,12 @@ PHYS     += src/carentry.cpp
 PHYS     += src/worldcache.cpp src/bytepack.cpp
 PHYS     += src/toolsounds.cpp src/repairsync.cpp
 PHYS     += src/rivers.cpp
+PHYS     += src/netbase.cpp src/rendezvous.cpp
 SCEN     += tests/baja.cpp tests/net_repair.cpp
 SCEN     += tests/entercar.cpp
 SCEN     += tests/winchfoot.cpp tests/allocs.cpp tests/benchreport.cpp tests/tracks.cpp src/fx.cpp
 SCEN     += tests/rivers.cpp
+SCEN     += tests/net_rendezvous.cpp
 GAME_SRC := src/main.cpp src/lab.cpp src/gamepad_sdl.cpp src/editor.cpp src/coop.cpp src/gl.cpp src/gpu.cpp src/render.cpp src/carvisual.cpp src/people.cpp src/scenery.cpp src/menu.cpp src/menuscene.cpp src/mainmenudraw.cpp src/mappreview.cpp src/engine_samples.cpp src/engineaudio.cpp src/audio.cpp src/music.cpp src/ambience.cpp src/daylight.cpp src/lights.cpp src/groundtex.cpp src/groundshader.cpp src/propdraw.cpp src/invdraw.cpp src/debugscreen.cpp src/buildinfo.cpp $(PHYS) $(SCEN) src/treedraw.cpp src/texcomp.cpp
 GAME_OBJ := $(patsubst %.cpp,build/%.o,$(GAME_SRC))
 TEST_OBJ := $(patsubst %.cpp,build/%.o,tests/run_tests.cpp $(PHYS) $(SCEN) src/music.cpp)
@@ -53,6 +55,10 @@ build/run_tests: $(TEST_OBJ)
 # Dedicated multiplayer server (headless, no SDL/OpenGL).
 build/crumplezone-server: build/src/server_main.o $(PHYS)
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -lm
+
+# Join-code backend (headless, tiny: no game code): docs/server-rendezvous-setup.md.
+build/crumplezone-rendezvous: build/tools/rendezvous_main.o build/src/rendezvous.o build/src/netbase.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lm
 
 # CPU-only workload; args: car count, separated|pileup, 2 kHz steps.
 build/bench_sim: build/tools/bench_sim.o $(patsubst %.cpp,build/%.o,$(PHYS))

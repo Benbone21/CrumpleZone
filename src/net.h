@@ -22,12 +22,10 @@
 #include <string>
 #include <vector>
 
+#include "netbase.h"
 #include "softbody.h"
 
 namespace net {
-constexpr int kDefaultPort = 27015;    // TCP and UDP: only the default; a host can use any port from kMinHostPort up
-constexpr int kMinHostPort = 1024;     // (below it needs root; hosting there is refused)
-constexpr int kMaxPort = 65535;
 // The two LAN-only ports are fixed (every game and finder must agree on them: a host's real game
 // port is in what it announces).
 constexpr int kDiscoveryPort = 27016;  // UDP: "who's hosting?" on the local network
@@ -52,31 +50,8 @@ constexpr size_t kMaxNameLen = 16;     // a player's name
 constexpr int kMaxCarsPerPlayer = 6;   // vehicles one guest can have in the session
 constexpr int kMaxRopesPerPlayer = 6;
 
-// A token bucket: `rate` a second, up to `burst` at once.
-struct Bucket {
-    double tokens = -1, t = 0;
-    bool take(double now, double cost, double rate, double burst) {
-        if (tokens < 0) tokens = burst, t = now;
-        tokens = std::min(burst, tokens + (now - t) * rate);
-        t = now;
-        if (tokens < cost) return false;
-        tokens -= cost;
-        return true;
-    }
-};
-
-// "28123" -> 28123. -1 unless it's 1 to 5 plain digits making minPort..65535 (no sign, space or junk).
-// Joining takes any port (minPort 1); hosting wants kMinHostPort.
-int parsePort(const std::string& s, int minPort = 1);
-// "HOST" or "HOST:PORT" (a name or an IPv4 address) -> host and port (kDefaultPort with none).
-// False, and `why`, if there is no host, a second ':' (IPv6 isn't supported), or a bad port.
-bool parseAddress(const std::string& address, std::string& host, int& port, std::string* why = nullptr);
-// Text from the network, fit for the HUD font: printable ASCII only, at most `maxLen` long.
-std::string sanitize(const std::string& s, size_t maxLen);
 // The password a join offers: the command line's if given, else the one typed in the menu.
 inline std::string joinPassword(const std::string& fromCommandLine, const std::string& typed) { return fromCommandLine.empty() ? typed : fromCommandLine; }
-// HMAC-SHA-256 (the password proof), 32 bytes.
-std::vector<uint8_t> hmacSha256(const std::string& key, const std::vector<uint8_t>& data);
 
 // A guest's estimate of the host's clock, from pings: each answer says what the host's clock
 // read when it answered. The one with the shortest round trip of the last few is the truest
