@@ -17,6 +17,7 @@ struct Settings {
     float ambience = 0.6f;      // outdoor wind, foliage, birds and night insects
     bool mph = false;           // speed in mph instead of km/h
     float volume = 0.8f;        // master volume 0..1
+    float vehicleVolume = 1.0f; // all vehicle sounds (engines, tires, impacts, horn, winch), under the master volume (0 = off)
     float music = 0.4f;         // background music, under the master volume (0 = off)
     float fovDeg = 66;          // vertical field of view of the chase and orbit cameras
     bool fullscreen = false, vsync = true, showFps = false;

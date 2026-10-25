@@ -600,6 +600,7 @@ void Audio::renderEffects(float* out, int frames, float dt, float sceneGain) {
         pendingTail_.store(tail + 1, std::memory_order_release);
     }
     const float smooth = 1.0f - std::exp(-dt * 12.0f);
+    const float vehicle = std::isfinite(vehicleVol_) ? std::clamp(vehicleVol_.load(), 0.0f, 1.0f) : 1.0f, vehicleA = 1 - std::exp(-dt / 0.025f);
     WinchSound ws[kWinches];
     float target[kWinches];
     const bool motor = winchMotor_.size() > 2;
@@ -619,7 +620,9 @@ void Audio::renderEffects(float* out, int frames, float dt, float sceneGain) {
     const int air = airingDir_;
     const float airTarget[2] = {air > 0 && !compressor_.empty() ? 0.28f : 0.0f, air < 0 && !airBlow_.empty() ? 0.30f : 0.0f};
     for (int i = 0; i < frames; i++) {
-        float l = 0, r = 0, ul = 0, ur = 0;
+        float l = 0, r = 0, ul = 0, ur = 0, vl = 0, vr = 0;  // (vl/vr: the vehicle bus)
+        sVehicleFx_ += (vehicle - sVehicleFx_) * vehicleA;
+        if (vehicle == 0 && sVehicleFx_ < 1e-5f) sVehicleFx_ = 0;
         for (int k = 0; k < kWinches; k++) {
             WinchState& st = winchState_[k];
             st.gain += (target[k] - st.gain) * smooth;
@@ -635,7 +638,7 @@ void Audio::renderEffects(float* out, int frames, float dt, float sceneGain) {
                 const float f = (float)(st.pos - a), m = winchMotor_[a] * (1 - f) + winchMotor_[b] * f;
                 const float drive = 1 + 4 * st.strain;
                 const float s = std::tanh(m * drive) / std::sqrt(drive) * st.gain;  // (a load drives it harder: rougher, fuller)
-                l += s * std::sqrt(0.5f * (1 - st.pan)), r += s * std::sqrt(0.5f * (1 + st.pan));
+                vl += s * std::sqrt(0.5f * (1 - st.pan)), vr += s * std::sqrt(0.5f * (1 + st.pan));
             }
             st.clickAcc += ws[k].clicksPerSecond * dt;
             if (st.clickAcc >= 1) {  // a pawl tooth: the click rate follows the line, either way
@@ -655,7 +658,7 @@ void Audio::renderEffects(float* out, int frames, float dt, float sceneGain) {
                 const std::vector<float>& d = sfx_[SFX_HORN];
                 const size_t a = (size_t)st.pos;
                 const float s = (d[a] + (d[a + 1] - d[a]) * (float)(st.pos - (double)a)) * st.env * st.gain * 0.8f;
-                l += s * std::sqrt(0.5f * (1 - st.pan)), r += s * std::sqrt(0.5f * (1 + st.pan));
+                vl += s * std::sqrt(0.5f * (1 - st.pan)), vr += s * std::sqrt(0.5f * (1 + st.pan));
                 if ((st.pos += st.pitch) >= (double)kHornLoopEnd) st.pos -= (double)(kHornLoopEnd - kHornLoopStart);
             }
         }
@@ -675,9 +678,11 @@ void Audio::renderEffects(float* out, int frames, float dt, float sceneGain) {
             const size_t a = (size_t)v.pos, b = std::min(a + 1, v.end - 1);
             const float s = d[a] + (d[b] - d[a]) * (float)(v.pos - (double)a);
             if (v.what == SFX_UI_CLICK || v.what == SFX_UI_HOVER) ul += s * v.left, ur += s * v.right;  // (menu sounds aren't ducked with the scene)
+            else if (v.what == SFX_HORN || v.what == SFX_WINCH_CLICK || v.what == SFX_DOOR_OPEN || v.what == SFX_DOOR_SHUT || v.what == SFX_STARTER) vl += s * v.left, vr += s * v.right;
             else l += s * v.left, r += s * v.right;
             if ((v.pos += v.rate) >= (double)v.end - 1) v.what = SFX_COUNT;
         }
+        l += vl * sVehicleFx_, r += vr * sVehicleFx_;
         out[2 * i] += l * sceneGain + ul, out[2 * i + 1] += r * sceneGain + ur;
     }
 }
@@ -718,6 +723,7 @@ void Audio::render(float* out, int frames) {
     updateRemoteVoices();
     const float smooth = 1.0f - std::exp(-dt * 30.0f);
     const float cabinA = 1 - std::exp(-2 * (float)M_PI * 1100 * dt);
+    const float vehicle = std::isfinite(vehicleVol_) ? std::clamp(vehicleVol_.load(), 0.0f, 1.0f) : 1.0f, vehicleA = 1 - std::exp(-dt / 0.025f);
     for (int i = 0; i < frames; i++) {
         sSlip_ += (tSlip - sSlip_) * smooth * 0.5f;
         sSpeed_ += (tSpeed - sSpeed_) * smooth;
@@ -781,7 +787,9 @@ void Audio::render(float* out, int frames) {
             hissSnd = (hissBp_ - hissBp2_) * hissEnv_ * 1.2f;
         }
 
-        float mix = engine + (squeal + wind) * sLocalGain_ + crunch * 0.9f + thump * 0.8f + glassSnd + popSnd + hissSnd;
+        sVehicle_ += (vehicle - sVehicle_) * vehicleA;
+        if (vehicle == 0 && sVehicle_ < 1e-5f) sVehicle_ = 0;
+        float mix = (engine + (squeal + wind) * sLocalGain_ + crunch * 0.9f + thump * 0.8f + glassSnd + popSnd) * sVehicle_ + hissSnd;
         float nearbyLeft = 0, nearbyRight = 0;
         for (auto& voice : nearby_) {
             if (!voice.id) continue;
@@ -790,8 +798,8 @@ void Audio::render(float* out, int frames) {
             voice.right += (voice.targetRight - voice.right) * smooth;
             if (voice.gain < 1e-6f && voice.targetGain == 0) { voice.id = 0; continue; }
             const float sound = voice.synth.sample(voice.input, dt, recordings_.bank(voice.input.recording)) * voice.gain;
-            nearbyLeft += sound * voice.left;
-            nearbyRight += sound * voice.right;
+            nearbyLeft += sound * voice.left * sVehicle_;
+            nearbyRight += sound * voice.right * sVehicle_;
         }
         const float left = std::tanh((mix + nearbyLeft) * 1.2f);
         const float right = std::tanh((mix + nearbyRight) * 1.2f);

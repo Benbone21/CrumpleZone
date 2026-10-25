@@ -215,6 +215,30 @@ int main() {
     }
     traceAllocations = false;
     check("mixer and music map changes perform no C++ allocations in the callback", callbackAllocations == 0);
+    {  // the vehicle volume: scales the car's sounds only
+        auto level = [&](float vehicle, bool car, bool hiss = false) {
+            Audio a;
+            a.loadAmbience("assets/audio/ambience");
+            a.setVolume(1); a.setVehicleVolume(vehicle);
+            a.setEnvironment(0, 12, car ? 0.0f : 0.8f);
+            a.setEngine(car ? 2500.0f : 0.0f, car ? 0.3f : 0.0f);
+            if (car) a.setSpeed(20), a.setTires(0.6f);
+            if (hiss) a.setHiss(1);
+            std::vector<float> buf(512 * 2);
+            double e = 0;
+            for (int k = 0; k < 300; k++) {
+                AudioTest::render(a, buf.data(), 512);
+                if (k >= 100) for (float x : buf) e += x * x;
+            }
+            return std::sqrt(e / (200.0 * 1024));
+        };
+        const double full = level(1, true), half = level(0.5f, true), off = level(0, true);
+        const double ambFull = level(1, false), ambOff = level(0, false), hissOff = level(0, false, true);
+        std::printf("  vehicle volume rms: full %.4f half %.4f off %.6f; ambience %.4f/%.4f; hiss at 0 %.4f\n", full, half, off, ambFull, ambOff, hissOff);
+        check("vehicle volume 0 silences the engine and tires", full > 0.01 && off < full * 1e-4);
+        check("vehicle volume 50% is about half the amplitude", half > full * 0.4 && half < full * 0.6);
+        check("ambience and tire air still play with the vehicle volume at 0", ambFull > 1e-4 && std::fabs(ambOff - ambFull) < ambFull * 1e-3 && hissOff > 0.001);
+    }
     {  // recorded effects: the files load; the winch's sound follows line speed and load; nothing allocates in the callback
         Audio fx;
         const int loaded = fx.loadSfx("assets/audio/sfx");

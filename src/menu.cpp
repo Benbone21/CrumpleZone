@@ -86,6 +86,7 @@ bool Settings::load(const std::string& path) {
         else if (k == "winchspeed" && std::isfinite(v)) winchSpeed = std::clamp((double)v, recovery::kWinchSpeedMin, recovery::kWinchSpeedMax);
         else if (k == "volume") volume = std::min(std::max(v, 0.0f), 1.0f);
         else if (k == "music") music = std::min(std::max(v, 0.0f), 1.0f);
+        else if (k == "vehiclevolume" && std::isfinite(v)) vehicleVolume = std::clamp(v, 0.0f, 1.0f);
         else if (k == "ambience" && std::isfinite(v)) ambience = std::clamp(v, 0.0f, 1.0f);
         else if (k == "fov") fovDeg = std::min(std::max(v, 50.0f), 100.0f);
         else if (k == "fullscreen") fullscreen = v != 0;
@@ -146,7 +147,7 @@ bool Settings::save(const std::string& path) const {
                  fovDeg, fullscreen, vsync, showFps, steeringAssist);
     std::fprintf(f, "shadows %d\nmsaa %d\nao %d\nbloom %d\nclouds %d\nscale %.2f\ngrassq %d\nmap %d\n", gfx.shadows,
                  gfx.msaa, gfx.ao, gfx.bloom, gfx.clouds, gfx.renderScale, gfx.grass, map);
-    std::fprintf(f, "recovery %d\nmusic %.2f\nambience %.2f\nfuel %d\ncareer %d\n", realRecovery, music, ambience, fuelMode, career);
+    std::fprintf(f, "recovery %d\nmusic %.2f\nambience %.2f\nvehiclevolume %.2f\nfuel %d\ncareer %d\n", realRecovery, music, ambience, vehicleVolume, fuelMode, career);
     std::fprintf(f, "ground %d\nprops %d\ndrawdistance %.0f\nsharpen %d\nfpstarget %d\n", gfx.ground, gfx.props, gfx.drawDistance, gfx.sharpen, fpsTarget);
     std::fprintf(f, "physicsthreads %d\nfullhud %d\n", physicsThreads, fullHud);
     std::fprintf(f, "adaptive %d\ndevhotkeys %d\ngfxchosen %d\n", adaptiveQuality, devHotkeys, gfxChosen);
@@ -190,7 +191,7 @@ int msaaIndex(int samples) {
 namespace {
 enum Id {
     // Settings page.
-    UNITS = 1, VOLUME, FOV, RECOVERY, MUSIC, TIMEOFDAY, FUEL, AMBIENCE,
+    UNITS = 1, VOLUME, FOV, RECOVERY, MUSIC, TIMEOFDAY, FUEL, AMBIENCE, VEHICLEVOL = 80,
     ADAPTIVE = 9, QUALITY = 10, SHADOWS, AA, AO, BLOOM, CLOUDS, GRASS, SCALE, SCENERY, DETECT_ROW = 19,
     FULLSCREEN = 20, VSYNC, FPS, PHYSICSTHREADS, WINCHSPEED, FPSTARGET, FULLHUD,
     PADSTEER = 30, PADDEAD, PADRUMBLE, PADINVERTX, PADINVERTY, THROTTLECAP, THROTTLERESP, THROTTLEPAD, CROUCHMODE,
@@ -492,6 +493,7 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
                t < 5 ? "CYCLE " + std::to_string((int)kDayLengths[t]) + " MIN" : std::string(timeOfDayName(t - 4)), 9);
     }
     slider(VOLUME, "VOLUME", pct(s.volume), s.volume, 21);
+    slider(VEHICLEVOL, "VEHICLE VOLUME", s.vehicleVolume > 0 ? pct(s.vehicleVolume) : "OFF", s.vehicleVolume, 21);
     slider(MUSIC, "MUSIC", s.music > 0 ? pct(s.music) : "OFF", s.music, 21);
     slider(AMBIENCE, "AMBIENCE", s.ambience > 0 ? pct(s.ambience) : "OFF", s.ambience, 21);
     slider(FOV, "FIELD OF VIEW", std::to_string((int)std::lround(s.fovDeg)) + " DEG", (s.fovDeg - 50) / 50, 26);
@@ -864,6 +866,7 @@ PauseMenu::Result PauseMenu::setSlider(int row, float frac, Settings& s) {
     frac = std::round(std::min(std::max(frac, 0.0f), 1.0f) * (steps - 1)) / (steps - 1);
     switch (r[row].id) {
         case VOLUME: s.volume = frac; break;
+        case VEHICLEVOL: s.vehicleVolume = frac; break;
         case MUSIC: s.music = frac; break;
         case AMBIENCE: s.ambience = frac; break;
         case FOV: s.fovDeg = 50 + 50 * frac; break;

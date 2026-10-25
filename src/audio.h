@@ -58,6 +58,9 @@ public:
     void setTires(float slip) { slip_ = slip; }
     void setSpeed(float metersPerSecond) { speed_ = metersPerSecond; }
     void setVolume(float v, float sceneGain = 1) { master_ = v; sceneGain_ = sceneGain; }
+    // The vehicle bus, 0..1 (0 = off): the engines (yours and other players'), tires, wind, impacts, glass, blowouts, horns, winch and door/starter sounds.
+    // Music, ambience, UI clicks, the on-foot tools and repair sounds and the tire air are not on it. Changes ease in (no clicks).
+    void setVehicleVolume(float v) { vehicleVol_ = v; }
     // Cabin exposure attenuates outdoor ambience and softens the engine mix.
     void setEnvironment(int map, float hours, float volume, float exposure = 1) {
         ambienceMap_ = map; hours_ = hours; ambienceVol_ = volume; exposure_ = exposure;
@@ -125,7 +128,8 @@ private:
     std::atomic<float> vExhaust_{0}, vMuffler_{0.35f}, vLope_{0}, vIntake_{0.4f}, vMech_{0.25f}, vRasp_{0.3f}, vCrackle_{0}, vRumble_{0}, vRoar_{0.3f};
     std::atomic<uint32_t> vSeed_{0};
     std::atomic<float> pendingImpact_{0}, pendingGlass_{0}, pendingPop_{0};
-    std::atomic<float> sceneGain_{1}, localGain_{1};
+    std::atomic<float> sceneGain_{1}, localGain_{1}, vehicleVol_{1};
+    float sVehicle_ = 1, sVehicleFx_ = 1;  // (smoothed, audio thread: the main mix, and renderEffects)
     std::atomic<int> ambienceMap_{-1};
     std::atomic<float> hours_{10}, ambienceVol_{0}, exposure_{1};
     Ambience ambience_;
