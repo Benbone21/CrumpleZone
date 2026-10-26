@@ -602,7 +602,7 @@ SCENARIO(onemapGrown, "onemap/grown", "Each region's grown country (regions2): k
         for (const Rock& k : w.rocks) rocks += ours(k.c), big += ours(k.c) && k.r > 2.0;
         for (const Bush& b : w.bushes) bushes += ours(b.p);
         std::printf("GROWN %-12s %.1f x %.1f km  trees %d  rocks %d (big %d)  bushes %d\n", r.name, wide / 1000, deep / 1000, trees, rocks, big, bushes);
-        ctx.check(n + ": grown over (trees, rocks, big boulders, bushes)", trees > 5000 && rocks > 3000 && big > 400 && bushes > 15000);
+        ctx.check(n + ": grown over (trees, rocks, big boulders, bushes)", trees > 5000 && rocks > 3000 && big > 400 && bushes > 10000);
         // Its places: in its country, with a marked trail to each.
         int places = 0, linked = 0;
         for (const MapPlace& p : mapPlaces(MAP_BACKCOUNTRY)) {

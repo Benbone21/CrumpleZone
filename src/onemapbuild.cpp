@@ -859,7 +859,7 @@ void World::growRegionCountry(CellTiles<uint8_t>& keep) {
             if (std::max(std::fabs(cx), std::fabs(cz)) < kOldBackcountryHalf) continue;  // (the Backcountry's own growth)
             const MapRegion* rg = regionAround(cx, cz);
             const int style = !rg ? 3 : rg->map == MAP_MOUNTAIN ? 0 : rg->map == MAP_FRONTIER ? 1 : 2;  // 3: the natural edge
-            uint32_t r32 = (uint32_t)(ci * 83492791) ^ (uint32_t)(cj * 2971215073u) ^ 0x7e91a3c5u;
+            uint32_t r32 = (uint32_t)ci * 83492791u ^ (uint32_t)(cj * 2971215073u) ^ 0x7e91a3c5u;
             r32 = r32 * 2654435761u + 0x6a09e667u;
             auto rr = [&]() {
                 r32 ^= r32 << 13, r32 ^= r32 >> 17, r32 ^= r32 << 5;
@@ -993,7 +993,7 @@ void World::growRegionCountry(CellTiles<uint8_t>& keep) {
                 }
             }
             // ---- Bushes, in clumps round a few middles ----
-            const int bushes0 = style == 0 ? 15 : style == 1 ? (cold > 0.5 ? 8 : 18) : style == 2 ? 18 + (int)(6 * woods) : 3;
+            const int bushes0 = style == 0 ? 12 : style == 1 ? (cold > 0.5 ? 7 : 14) : style == 2 ? 13 + (int)(5 * woods) : 3;
             double mx[3], mz[3];
             for (int c = 0; c < 3; c++) mx[c] = x0 + C * rr(), mz[c] = z0 + C * rr();
             for (int k = 0; k < bushes0; k++) {

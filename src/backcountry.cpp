@@ -1975,7 +1975,7 @@ void World::buildBackcountry() {
                 const V3 c = rel(P, face, pl.pad + 6.5, 0);
                 RockPose pose;
                 pose.yaw = face, pose.pitch = 0.04, pose.roll = 0;
-                addRock(c.x, c.z, V3(9.0, 1.1, 5.5), P.y + 0.25 - height(c.x, c.z), 5100000u + (uint32_t)(pl.p.x * 7 + pl.p.z * 3), 1.0f, &pose);
+                addRock(c.x, c.z, V3(9.0, 1.1, 5.5), P.y + 0.25 - height(c.x, c.z), 5100000u + (uint32_t)(int32_t)std::lround(pl.p.x * 7 + pl.p.z * 3), 1.0f, &pose);
                 cairn(rel(P, face, -3, 4));
                 table(rel(P, face, -4, -4).x, rel(P, face, -4, -4).z, face + M_PI / 2);
                 sign(rel(P, face, -6, 5).x, rel(P, face, -6, 5).z, face + M_PI, V3(0.3, 0.22, 0.14), PROP_MAPBOARD);
