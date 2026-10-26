@@ -17,6 +17,7 @@ PHYS     += src/worldcache.cpp src/bytepack.cpp
 PHYS     += src/toolsounds.cpp src/repairsync.cpp src/battery.cpp
 PHYS     += src/rivers.cpp src/places.cpp
 PHYS     += src/onemap.cpp src/onemapbuild.cpp
+PHYS     += src/regionland.cpp
 PHYS     += src/netbase.cpp src/nettunnel.cpp src/rendezvous.cpp
 SCEN     += tests/baja.cpp tests/net_repair.cpp
 SCEN     += tests/entercar.cpp

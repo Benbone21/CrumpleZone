@@ -289,6 +289,12 @@ private:
     // The rest of the map comes from a coarse texture, a texel per 4 cells.
     int terrainWinI_ = 0, terrainWinJ_ = 0, terrainWinW_ = 0, terrainCoarseN_ = 1;
     GLuint terrainCoarseTex = 0;
+    // The big map's regions' ground look (onemap.h groundLookAt: meadow, bare rock from, snow from), a texel per 64 m, blended
+    // across their seams by the texture's filtering; off on every other map (the uniforms' own look).
+    GLuint lookTex_ = 0;
+    bool lookOn_ = false;
+    float lookBox_[4] = {0, 0, 64, 1};
+    void updateLook(const World& world);
     void uploadTerrainCells(const World& world, int i0, int j0, int i1, int j1);  // (cells; what's outside the window is left)
     void uploadTerrainCoarse(const World& world, int i0, int j0, int i1, int j1);
     void streamTerrain(const World& world, const V3& eye);

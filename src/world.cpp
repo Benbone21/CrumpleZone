@@ -331,7 +331,7 @@ Rock& addScannedRock(World& w, const props::HullLibrary& lib, double x, double z
     for (const V3& q : k.v) k.r = std::max(k.r, len(q - k.c));
     // A big rock is cut into the convex pieces that follow its drawn surface (a lone hull would stand cm to dm above it): while the
     // world is being made, all together at the end (on a few threads; nothing looks at them before then), else now.
-    if (k.r > 1.2) {
+    if (rockCutsIntoPieces(k)) {
         if (w.deferRockSplits) k.partsDue = true;
         else attachRockParts(k, splitRock(w, k, hull));
     }
@@ -455,7 +455,7 @@ double World::halfSizeFor(int map) {
 void World::cutCachedRocks() {
     // (The world cache keeps each rock's hull, not its convex pieces: cut the big scanned ones again, from the scans' saved cuts.)
     for (Rock& k : rocks)
-        if (k.scan >= 0 && k.r > 1.2 && k.parts.empty()) k.partsDue = true;
+        if (rockCutsIntoPieces(k) && k.parts.empty()) k.partsDue = true;
     splitPendingRocks();
 }
 

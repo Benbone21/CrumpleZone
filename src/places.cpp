@@ -23,6 +23,7 @@ char placeKindGlyph(int kind) {
 const char* regionAt(int map, double x, double z) {
     if (map != MAP_BACKCOUNTRY) return "";
     if (const MapRegion* r = regionContaining(x, z)) return r->name;  // (the big map's regions: onemap.h)
+    if (const MapRegion* r = regionAround(x, z)) return r->name;      // (...and the country grown round them)
     // Elk Valley is the old 1.2 km map and its margin; round it the eight districts (backcountry.cpp: districtsAt).
     constexpr double a = 800;
     static const char* names[3][3] = {{"LAKESHORE", "SOUTH UPLANDS", "BADLANDS WASH"},
@@ -137,6 +138,42 @@ std::vector<MapPlace> backcountryPlaces() {
         std::snprintf(id, sizeof id, "BC.CACHE.%02d", (int)i + 1);
         add(v, M, id, kCaches[i].name, PK_CACHE, V3(kCaches[i].x, 0, kCaches[i].z), 0, 12, 0);
         v.back().reward = kCaches[i].cash;
+    }
+    // -- The regions' grown country (docs/plans/regions2.md, onemap.h): an outpost (fuel and a repair bay), a cabin or camp, a lookout
+    // on a rock ledge, a fire lookout and caches in each; the Mountain's pass. Marked trails link them (onemapbuild.cpp). --
+    const unsigned outpost = SVC_FUEL | SVC_PARTS | SVC_TOW | SVC_REPAIR | SVC_SAVE;
+    add(v, M, "OC.PRAIRIE_FUEL", "PRAIRIE FUEL", PK_FUEL_STOP, V3(-3170, 0, 800), kPi / 2, 40, 24, outpost);
+    add(v, M, "OC.HOMESTEAD", "MEADOW HOMESTEAD", PK_CABIN, V3(-4200, 0, 1940), 0, 35, 10, camp | SVC_PARTS);
+    add(v, M, "OC.NORTHWOODS_CAMP", "NORTHWOODS CAMP", PK_OLD_CAMP, V3(-3380, 0, 2600), kPi / 2, 35, 10, camp);
+    add(v, M, "OC.FIRE_TOWER", "PRAIRIE FIRE LOOKOUT", PK_LOOKOUT, V3(-3940, 0, 2340), 0, 40, 7);
+    add(v, M, "OC.TABLE_ROCK", "TABLE ROCK", PK_LOOKOUT, V3(-3870, 0, -2270), -kPi / 2, 40, 7);
+    add(v, M, "MT.WEST_FORK_FUEL", "WEST FORK FUEL", PK_FUEL_STOP, V3(-2750, 0, -3110), 0, 40, 24, outpost);
+    add(v, M, "MT.SNOWLINE_CABIN", "SNOWLINE CABIN", PK_CABIN, V3(-3540, 0, -3100), kPi / 2, 35, 9, camp);
+    add(v, M, "MT.HIGH_PASS", "HIGH PASS", PK_SUMMIT, V3(-3850, 0, -2880), 0, 40, 5);
+    add(v, M, "MT.EAGLE_LEDGE", "EAGLE LEDGE", PK_LOOKOUT, V3(-640, 0, -4450), kPi / 2, 40, 7);
+    add(v, M, "MT.FIRE_TOWER", "SOUTH RANGE FIRE LOOKOUT", PK_LOOKOUT, V3(-1840, 0, -4680), 0, 40, 7);
+    add(v, M, "FR.BADLANDS_FUEL", "BADLANDS FUEL", PK_FUEL_STOP, V3(710, 0, -3230), 0, 40, 24, outpost);
+    add(v, M, "FR.TABLETOP_MESA", "TABLETOP MESA", PK_LOOKOUT, V3(420, 0, -4020), kPi, 40, 7);
+    add(v, M, "FR.LINE_SHACK", "COLD CREEK LINE SHACK", PK_CABIN, V3(3460, 0, -3600), 0, 35, 9, camp | SVC_PARTS);
+    add(v, M, "FR.SLICKROCK_SHELF", "SLICKROCK SHELF", PK_LOOKOUT, V3(3680, 0, -3712), -kPi / 2, 40, 7);
+    add(v, M, "FR.FIRE_TOWER", "COLD BENCH FIRE LOOKOUT", PK_LOOKOUT, V3(4110, 0, -4450), 0, 40, 7);
+    struct RegionCache {
+        const char* id;
+        const char* name;
+        double x, z;
+        int cash;
+    };
+    static const RegionCache kRegionCaches[] = {
+        {"OC.CACHE.01", "SPLIT RAIL GATE", -4320, 440, 900},     {"OC.CACHE.02", "HAYSTACK RUIN", -3460, -1080, 800},
+        {"OC.CACHE.03", "BIRCH HOLLOW", -4280, 2620, 1100},      {"OC.CACHE.04", "REDROCK ALCOVE", -4380, -2470, 1200},
+        {"MT.CACHE.01", "AVALANCHE SHED", -3450, -3530, 1400},   {"MT.CACHE.02", "MINER'S TIN", -2070, -4290, 1000},
+        {"MT.CACHE.03", "MARMOT ROCKS", -670, -3310, 900},       {"MT.CACHE.04", "PASS SHELTER", -3720, -2990, 1800},
+        {"FR.CACHE.01", "WAGON WHEEL", 120, -3680, 800},         {"FR.CACHE.02", "DRY WELL", 400, -4520, 1000},
+        {"FR.CACHE.03", "SNOWBOUND CRATE", 3720, -4100, 1500},   {"FR.CACHE.04", "ARROYO TIN", 2430, -4390, 1100},
+    };
+    for (const RegionCache& c : kRegionCaches) {
+        add(v, M, c.id, c.name, PK_CACHE, V3(c.x, 0, c.z), 0, 12, 0);
+        v.back().reward = c.cash;
     }
     return v;
 }

@@ -10,6 +10,7 @@
 #include "grasstiles.h"
 #include "parallel.h"
 #include "streamwin.h"
+#include "onemap.h"
 
 // Render targets and data textures in the VRAM report (texcomp.h); no mips on purpose.
 static void noteRT(const char* name, const char* fmt, int w, int h, int bytesPerTexel, int mips = 0, bool runtime = true) {
@@ -301,7 +302,17 @@ uniform int uMap;                 // 0 proving ground, 1 mountain, 2 freeway
 uniform sampler2D uTerrainTex;    // per meter: height, grass, paint
 uniform float uTerrainN;          // cells per side (the map's grid)
 uniform vec2 uRockSnow;           // heights where bare rock, then snow, take over
-uniform int uTreeFadeN;           // see-through trees: this many, each (x, z, reach, fade 0..1)
+// The big map's regions' own look (onemap.h groundLookAt): a texel per uLookBox.z metres from (uLookBox.x, .y), uLookBox.w a side:
+// r meadow, g bare rock from (/400 m), b snow from (/500 m). Off (uLookOn 0): the map's own, from uMap and uRockSnow.
+uniform sampler2D uLookTex;
+uniform vec4 uLookBox;
+uniform float uLookOn;
+vec3 regionLook(vec2 xz){
+  if (uLookOn < 0.5) return vec3((uMap == 0 || uMap == 2) ? 1.0 : 0.0, uRockSnow);
+  vec3 t = texture(uLookTex, ((xz - uLookBox.xy) / uLookBox.z + 0.5) / uLookBox.w).rgb;
+  return vec3(t.r, t.g * 400.0, t.b * 500.0);
+}
+uniform int uTreeFadeN;          // see-through trees: this many, each (x, z, reach, fade 0..1)
 uniform vec4 uTreeFade[24];
 // The terrain texels (one a cell): a window of the map round the camera, toroidal (a big map; a small one is in it whole), and
 // the whole map coarse (a texel per 4 cells) for whatever lies outside the window.
@@ -428,10 +439,11 @@ void terrainProcedural(vec3 n, inout vec3 base, inout float specK, inout float s
     // Warmer and cooler stone across the range, and streaks running down the faces.
     rock *= mix(vec3(1.06, 0.97, 0.86), vec3(0.88, 0.93, 1.02), fbm(vPos.xz * 0.003 + 9.0, 2));
     rock *= 0.8 + 0.3 * vnoise(vec2((vPos.x + vPos.z) * 0.12, vPos.y * 0.012));
-    float steep = (uMap == 0 || uMap == 2) ? smoothstep(0.84, 0.62, n.y + 0.14 * (n1 - 0.5)) : smoothstep(0.72, 0.55, n.y + 0.14 * (n1 - 0.5));
-    float high = smoothstep(uRockSnow.x, uRockSnow.x + 90.0, vPos.y + 30.0 * n1);
+    vec3 lk = regionLook(vPos.xz);
+    float steep = mix(smoothstep(0.72, 0.55, n.y + 0.14 * (n1 - 0.5)), smoothstep(0.84, 0.62, n.y + 0.14 * (n1 - 0.5)), lk.x);
+    float high = smoothstep(lk.y, lk.y + 90.0, vPos.y + 30.0 * n1);
     vec3 land = mix(grass, rock, max(steep, high * 0.8));
-    float snow = smoothstep(uRockSnow.y, uRockSnow.y + 50.0, vPos.y + 70.0 * n1) * smoothstep(0.5, 0.75, n.y);
+    float snow = smoothstep(lk.z, lk.z + 50.0, vPos.y + 70.0 * n1) * smoothstep(0.5, 0.75, n.y);
     land = mix(land, vec3(0.90, 0.92, 0.96), snow);
     base = land;
 #endif
@@ -1843,6 +1855,7 @@ uniform float uCell; uniform float uNoCull;
 uniform vec4 uRing;     // this ring comes in over x..y metres from the camera, and goes out over z..w
 uniform vec4 uLook;     // x height scale, y width scale, z 1: plain blades (the far rings), w 1: seed heads and flowers
 uniform vec2 uRockSnow;
+uniform sampler2D uLookTex; uniform vec4 uLookBox; uniform float uLookOn;  // (the big map's regions' look: kLitIns regionLook)
 uniform int uPushN;
 uniform vec4 uPush[8];  // vehicles as capsules: (x, z, radius) of one end, then (x, z) of the other
 uniform vec3 uSun; uniform float uClouds;       // (the shadows are worked out here, a few times a blade instead of at every pixel)
@@ -1921,12 +1934,13 @@ void main(){
   float n1 = fbm(base * 0.02, 4);
   float dry = smoothstep(0.6, 0.8, fbm(base * 0.006 + 3.1, 3));
   float bald = smoothstep(0.60, 0.80, fbm(base * 0.30 + 9.0, 3));
-  bool meadow = uMap == 0 || uMap == 2;
-  float forest = meadow ? 0.0 : smoothstep(0.40, 0.65, fbm(base * 0.012 + vec2(7.0, -3.0), 3)) * smoothstep(6.0, 22.0, gy);
+  vec3 lk = uLookOn < 0.5 ? vec3((uMap == 0 || uMap == 2) ? 1.0 : 0.0, uRockSnow)
+                          : textureLod(uLookTex, ((base - uLookBox.xy) / uLookBox.z + 0.5) / uLookBox.w, 0.0).rgb * vec3(1.0, 400.0, 500.0);
+  float forest = (1.0 - lk.x) * smoothstep(0.40, 0.65, fbm(base * 0.012 + vec2(7.0, -3.0), 3)) * smoothstep(6.0, 22.0, gy);
   float ny = inversesqrt(1.0 + dot(slope, slope));
-  float steep = meadow ? smoothstep(0.84, 0.62, ny + 0.14 * (n1 - 0.5)) : smoothstep(0.72, 0.55, ny + 0.14 * (n1 - 0.5));
-  float high = smoothstep(uRockSnow.x, uRockSnow.x + 90.0, gy + 30.0 * n1);
-  float snow = smoothstep(uRockSnow.y, uRockSnow.y + 50.0, gy + 70.0 * n1) * smoothstep(0.5, 0.75, ny);
+  float steep = mix(smoothstep(0.72, 0.55, ny + 0.14 * (n1 - 0.5)), smoothstep(0.84, 0.62, ny + 0.14 * (n1 - 0.5)), lk.x);
+  float high = smoothstep(lk.y, lk.y + 90.0, gy + 30.0 * n1);
+  float snow = smoothstep(lk.z, lk.z + 50.0, gy + 70.0 * n1) * smoothstep(0.5, 0.75, ny);
   float wl = t00.a;
   float wet = wl > -500.0 ? 1.0 - smoothstep(0.4, 3.5, gy - wl) : 0.0;
   // How thick: the world's density, clumped (patches and gaps), thinner where the ground shows through.
@@ -2925,10 +2939,35 @@ double sceneryHeight(const World& world, double x, double z) {
 }
 }  // namespace
 
+void Renderer::updateLook(const World& world) {
+    lookOn_ = world.map == MAP_BACKCOUNTRY && world.halfSize() > kOldBackcountryHalf + 1;
+    if (!lookOn_) return;
+    const double cell = 64, h = world.halfSize();
+    const int n = (int)std::ceil(2 * h / cell) + 1;
+    std::vector<uint8_t> px((size_t)n * n * 4);
+    parallelRows(n, [&](int j) {
+        for (int i = 0; i < n; i++) {
+            const GroundLook g = groundLookAt(-h + i * cell, -h + j * cell);
+            uint8_t* q = &px[((size_t)j * n + i) * 4];
+            q[0] = (uint8_t)std::lround(clampd(g.meadow, 0, 1) * 255), q[1] = (uint8_t)std::lround(clampd(g.rockFrom / 400.0, 0, 1) * 255);
+            q[2] = (uint8_t)std::lround(clampd(g.snowFrom / 500.0, 0, 1) * 255), q[3] = 255;
+        }
+    });
+    if (!lookTex_) GenTextures(1, &lookTex_);
+    BindTexture(GL_TEXTURE_2D, lookTex_);
+    TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, n, n, 0, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+    TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    lookBox_[0] = (float)-h, lookBox_[1] = (float)-h, lookBox_[2] = (float)cell, lookBox_[3] = (float)n;
+}
+
 void Renderer::setWorld(const World& world) {
     LOADPROF("renderer.setWorld");
     waitStreaming();
     mapId = world.map == MAP_WILDS ? (int)MAP_FREEWAY : world.map;  // (the wilds are painted as the freeway's meadows are: land and paints, no pad or road)
+    updateLook(world);
     { LOADPROF("terrain.build+upload"); buildTerrain(world); }
     treeSig_ = scenerySig_ = bushSig_ = 0;  // (a new world: everything is built afresh)
     updateObjects(world);
@@ -3909,6 +3948,7 @@ void Renderer::adoptWorld(const World& world) {
     waitStreaming();
     std::shared_ptr<Prepared> p = std::move(pending_);
     mapId = world.map == MAP_WILDS ? (int)MAP_FREEWAY : world.map;
+    updateLook(world);  // (the regions' ground look: a small texture)
     if (terrainTex) DeleteTextures(1, &terrainTex);
     if (terrainCoarseTex) DeleteTextures(1, &terrainCoarseTex);
     terrainTex = p->tex, terrainCoarseTex = p->ctex, terrainGridN = p->gridN;
@@ -5410,6 +5450,13 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         ActiveTexture(GL_TEXTURE0);
         Uniform1i(uniformLocation(prog, "uTerrainCoarse"), 10);
         Uniform1f(uniformLocation(prog, "uTerrainCoarseN"), (float)terrainCoarseN_);
+        // (The regions' ground look: onemap.h. Bound even when off, so the sampler never shares a unit with another kind.)
+        ActiveTexture(GL_TEXTURE0 + 11);
+        BindTexture(GL_TEXTURE_2D, lookOn_ ? lookTex_ : terrainCoarseTex);
+        ActiveTexture(GL_TEXTURE0);
+        Uniform1i(uniformLocation(prog, "uLookTex"), 11);
+        Uniform4f(uniformLocation(prog, "uLookBox"), lookBox_[0], lookBox_[1], lookBox_[2], lookBox_[3]);
+        Uniform1f(uniformLocation(prog, "uLookOn"), lookOn_ ? 1.0f : 0.0f);
     };
     setLighting(progLit);
     uniformM4(progLit, "uModel", m4identity());
