@@ -1,3 +1,4 @@
+#include <chrono>
 #include "coop.h"
 #include "hudlayout.h"
 
@@ -179,7 +180,7 @@ void Coop::mapMouse(float x, float y, int wheel, bool drag, float dx, float dy) 
         // Zoom about the point under the mouse.
         V3 before;
         const bool on = mapPoint(x, y, before);
-        mapZoom = clampd(mapZoom * std::pow(1.25, wheel), 1.0, 12.0);
+        mapZoom = clampd(mapZoom * std::pow(1.25, wheel), mapInfinite ? 0.4 : 1.0, 12.0);
         if (on) {
             mapS = mapS * (float)std::pow(1.25, wheel);
             V3 after;
@@ -187,13 +188,15 @@ void Coop::mapMouse(float x, float y, int wheel, bool drag, float dx, float dy) 
         }
     }
     if (drag && mapS > 0) mapCx -= dx / mapS, mapCz += dy / mapS;
+    if (mapInfinite) return;  // (no edge to the procedural map)
     const double half = mapHalf;
     mapCx = clampd(mapCx, -half, half), mapCz = clampd(mapCz, -half, half);
 }
 
 bool Coop::mapPoint(float x, float y, V3& out) const {
     if (mapS <= 0) return false;
-    out = V3(mapCx + (x - mapX) / mapS, 0, mapCz - (y - mapY) / mapS);
+    out = V3(mapCx + (x - mapX) / mapS - mapOffX, 0, mapCz - (y - mapY) / mapS - mapOffZ);  // (local: a procedural map's centre is global)
+    if (mapInfinite) return true;
     return std::fabs(out.x) < mapHalf && std::fabs(out.z) < mapHalf;
 }
 
@@ -282,19 +285,34 @@ void Coop::drawChat(Renderer& r, int W, int H) const {
 }
 
 void Coop::drawMap(Renderer& r, const Sim& sim, const NetSession& net, int W, int H, const std::vector<DiscoverSpot>& places) {
-    if (mapWorld != (int)(sim.world.stamp & 0x7fffffff) || mapN == 0) buildMap(sim.world);
+    const bool pr = sim.world.map == MAP_PROCEDURAL;
+    if (pr) {
+        // Endless and fogged: the view is in global coordinates (so it follows the window sliding), centred on you to start.
+        mapInfinite = true;
+        mapOffX = (double)sim.world.proc.ox, mapOffZ = (double)sim.world.proc.oz;
+        if (!mapProcInit || mapProcSeed != sim.world.proc.seed) {
+            const V3 g = sim.player >= 0 && sim.player < (int)sim.cars.size() ? proc::ProcWorld::toGlobal(sim.world, sim.cars[sim.player].frame().com) : V3(mapOffX, 0, mapOffZ);
+            mapCx = g.x, mapCz = g.z, mapZoom = 1, mapProcSeed = sim.world.proc.seed, mapProcInit = true;
+            procEdges.clear();
+        }
+    } else {
+        mapInfinite = false, mapOffX = mapOffZ = 0, mapProcInit = false;
+        if (mapWorld != (int)(sim.world.stamp & 0x7fffffff) || mapN == 0) buildMap(sim.world);
+    }
     const float u = std::max(0.75f, H / 720.0f), s = px(1.2f * u);
     r.rect(0, 0, (float)W, (float)H, 0.02f, 0.03f, 0.04f, 0.92f);
-    // Fit the whole map in the window at zoom 1.
+    // Fit the whole map in the window at zoom 1 (the procedural map: 3 km).
     const float side = std::min((float)W - 40 * u, (float)H - 90 * u);
     const double half = mapHalf - 20;
-    mapS = (float)(side / (2 * half) * mapZoom);
+    mapS = (float)(side / (pr ? 3000.0 : 2 * half) * mapZoom);
     mapX = W / 2.0f, mapY = H / 2.0f + 10 * u;
     auto toMap = [&](double x, double z, float& sx, float& sy) {
-        sx = mapX + (float)((x - mapCx) * mapS), sy = mapY - (float)((z - mapCz) * mapS);  // north (+z) up
+        sx = mapX + (float)((x + mapOffX - mapCx) * mapS), sy = mapY - (float)((z + mapOffZ - mapCz) * mapS);  // north (+z) up
     };
     // The ground (one rect per map pixel on screen; skip what's off screen).
     const float cellPx = (float)(mapCell * mapS) + 0.6f;
+    if (pr) drawProcGround(r, W, H);
+    else
     for (int j = 0; j < mapN; j++) {
         const double z = -half + (j + 0.5) * mapCell;
         float sx, sy;
@@ -318,7 +336,8 @@ void Coop::drawMap(Renderer& r, const Sim& sim, const NetSession& net, int W, in
     };
     // The marked trails (World::trails), in their ratings' colours (a black trail edged light, so it shows on the dark ground); their
     // names along them when zoomed in.
-    {
+    if (pr) drawProcTrails(r, W, H, u);
+    else {
         static const float kTrailCol[5][3] = {{0.25f, 0.85f, 0.3f}, {0.3f, 0.55f, 1.0f}, {0.06f, 0.06f, 0.06f}, {0.95f, 0.22f, 0.15f}, {0.8f, 0.68f, 0.5f}};
         auto seg = [&](float x0, float y0, float x1, float y1, float w, const float* c, float a) {
             const float dx = x1 - x0, dy = y1 - y0, L = std::sqrt(dx * dx + dy * dy);
@@ -360,6 +379,7 @@ void Coop::drawMap(Renderer& r, const Sim& sim, const NetSession& net, int W, in
                 label(r, sx - r.textWidth(t.name, s) / 2, sy + 6 * u, s, t.name, c[0], c[1], c[2], 1);
             }
     }
+    if (!pr)
     for (const Station& st : sim.world.stations) pin(st.p, st.name, 0.55f, 1.0f, 0.55f, 9 * u);
     int found = 0;
     // A place found is marked by what it is (a letter in a coloured square); one not found yet is a "?".
@@ -381,11 +401,12 @@ void Coop::drawMap(Renderer& r, const Sim& sim, const NetSession& net, int W, in
                     label(r, sx - 3 * s, sy - 4 * s, s, g, 0.05f, 0.05f, 0.05f, 1);
                 }
             }
-        } else pin(pl.p, "?", 0.6f, 0.6f, 0.65f, 6 * u);
+        } else if (!pr || procReveal.at(pl.p.x + mapOffX, pl.p.z + mapOffZ)) pin(pl.p, "?", 0.6f, 0.6f, 0.65f, 6 * u);
     }
     {
         char b[64];
-        std::snprintf(b, sizeof b, "DISCOVERED %d OF %zu PLACES", found, places.size());
+        if (pr) std::snprintf(b, sizeof b, "EXPLORED %.1f SQ KM    %d PLACES FOUND", (double)procReveal.cells() * proc::Reveal::kCell * proc::Reveal::kCell / 1e6, found);
+        else std::snprintf(b, sizeof b, "DISCOVERED %d OF %zu PLACES", found, places.size());
         label(r, 20 * u, 14 * u + 8 * px(2.2f * u) + 8 * u, s, b, 0.85f, 0.87f, 0.9f, 1);
     }
     for (const Ping& p : pings) pin(p.p, p.who + ": " + kPingNames[p.kind], kPingCol[p.kind][0], kPingCol[p.kind][1], kPingCol[p.kind][2], 12 * u);
@@ -410,6 +431,125 @@ void Coop::drawMap(Renderer& r, const Sim& sim, const NetSession& net, int W, in
     label(r, 20 * u, 14 * u, px(2.2f * u), "MAP", 1.0f, 0.75f, 0.3f, 1);
     const char* keys = "WHEEL ZOOM   DRAG PAN   LEFT CLICK: WAYPOINT   RIGHT CLICK: PING GO HERE   SHIFT+RIGHT: PING HELP   M CLOSE";
     r.text(W / 2.0f - r.textWidth(keys, s) / 2, H - 24 * u, s, keys, 0.75f, 0.77f, 0.8f, 1);
+}
+
+// The procedural map's ground: fog everywhere, then the revealed cells from the generator's own colours (made a few ms a frame).
+void Coop::drawProcGround(Renderer& r, int W, int H) {
+    constexpr int N = proc::Reveal::kTileCells;
+    constexpr double K = proc::Reveal::kCell;
+    static const float fog[3] = {0.035f, 0.045f, 0.055f};
+    r.rect(0, 0, (float)W, (float)H, fog[0], fog[1], fog[2], 1);
+    const proc::ProcWorld& G = proc::ProcWorld::forSeed(procLiveSeed ? procLiveSeed : mapProcSeed);
+    const double gx0 = mapCx - mapX / mapS, gx1 = mapCx + (W - mapX) / mapS;
+    const double gz0 = mapCz - (H - mapY) / mapS, gz1 = mapCz + mapY / mapS;
+    const int64_t tx0 = proc::floorDiv((int64_t)std::floor(gx0 / K), N), tx1 = proc::floorDiv((int64_t)std::floor(gx1 / K), N);
+    const int64_t tz0 = proc::floorDiv((int64_t)std::floor(gz0 / K), N), tz1 = proc::floorDiv((int64_t)std::floor(gz1 / K), N);
+    if ((tx1 - tx0 + 1) * (tz1 - tz0 + 1) > 400) return;
+    const int st = std::max(1, (int)std::ceil(3.0 / (K * mapS)));  // (a rect covers `st` cells when zoomed far out)
+    const auto t0 = std::chrono::steady_clock::now();
+    for (int64_t tz = tz0; tz <= tz1; tz++)
+        for (int64_t tx = tx0; tx <= tx1; tx++) {
+            const double used = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            proc::MapImage::Tile* t = procImage.update(G, procReveal, tx, tz, std::max(0.0, 3.0 - used));
+            if (!t) continue;
+            for (int b = 0; b < N; b += st)
+                for (int a = 0; a < N; a += st) {
+                    const int i = b * N + a;
+                    if (t->alpha[i] == 0 || !t->made[i]) continue;
+                    const double cx = (tx * N + a) * K, cz = (tz * N + b) * K;
+                    const float sx = mapX + (float)((cx - mapCx) * mapS), sy = mapY - (float)((cz + K * st - mapCz) * mapS);
+                    const float size = (float)(K * st * mapS) + 0.6f;
+                    if (sx > W || sy > H || sx + size < 0 || sy + size < 0) continue;
+                    const float al = t->alpha[i] / 255.0f;
+                    const float c[3] = {t->rgb[i * 3] / 255.0f, t->rgb[i * 3 + 1] / 255.0f, t->rgb[i * 3 + 2] / 255.0f};
+                    r.rect(sx, sy, size, size, fog[0] + (c[0] - fog[0]) * al, fog[1] + (c[1] - fog[1]) * al, fog[2] + (c[2] - fog[2]) * al, 1);
+                }
+        }
+}
+
+// ...and its trails (the generator's edges, global), only along ground that has been seen.
+void Coop::drawProcTrails(Renderer& r, int W, int H, float u) {
+    static const float kTrailCol[5][3] = {{0.25f, 0.85f, 0.3f}, {0.3f, 0.55f, 1.0f}, {0.06f, 0.06f, 0.06f}, {0.95f, 0.22f, 0.15f}, {0.8f, 0.68f, 0.5f}};
+    static const float kEdge[3] = {0.85f, 0.85f, 0.8f};
+    const proc::ProcWorld& G = proc::ProcWorld::forSeed(procLiveSeed ? procLiveSeed : mapProcSeed);
+    const double gx0 = mapCx - mapX / mapS, gx1 = mapCx + (W - mapX) / mapS;
+    const double gz0 = mapCz - (H - mapY) / mapS, gz1 = mapCz + mapY / mapS;
+    const int64_t i0 = proc::floorDiv((int64_t)std::floor(gx0), proc::kCell) - 1, i1 = proc::floorDiv((int64_t)std::floor(gx1), proc::kCell) + 1;
+    const int64_t j0 = proc::floorDiv((int64_t)std::floor(gz0), proc::kCell) - 1, j1 = proc::floorDiv((int64_t)std::floor(gz1), proc::kCell) + 1;
+    if ((i1 - i0 + 1) * (j1 - j0 + 1) > 900) return;
+    const auto t0 = std::chrono::steady_clock::now();
+    std::vector<std::pair<std::shared_ptr<const proc::TrailEdge>, int>> edges;
+    for (int64_t j = j0; j <= j1; j++)
+        for (int64_t i = i0; i <= i1; i++)
+            for (int dir = 0; dir < 3; dir++) {
+                const auto key = std::make_tuple(i, j, dir);
+                auto it = procEdges.find(key);
+                if (it == procEdges.end()) {
+                    const double nx = (i + 0.5) * proc::kCell, nz = (j + 0.5) * proc::kCell;  // (about where the node is)
+                    if (!procReveal.hasTileNear(proc::floorDiv((int64_t)nx, proc::Reveal::kTile), proc::floorDiv((int64_t)nz, proc::Reveal::kTile))) continue;
+                    if (std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() > 2.5) continue;  // (the rest next frame)
+                    it = procEdges.emplace(key, G.edge(i, j, dir)).first;
+                }
+                if (it->second && it->second->on) edges.push_back({it->second, 0});
+            }
+    const float w = std::max(2.0f * u, std::min(5.0f * u, (float)(4.0 * mapS)));
+    const size_t stride = (size_t)std::max(1.0, std::ceil(5.0 / (2.0 * mapS)));
+    auto seg = [&](float x0, float y0, float x1, float y1, float lw, const float* c) {
+        const float dx = x1 - x0, dy = y1 - y0, L = std::sqrt(dx * dx + dy * dy);
+        if (L < 1e-3f) return;
+        const float nx = -dy / L * lw * 0.5f, ny = dx / L * lw * 0.5f;
+        r.tri(x0 + nx, y0 + ny, x1 + nx, y1 + ny, x1 - nx, y1 - ny, c[0], c[1], c[2], 0.95f);
+        r.tri(x0 + nx, y0 + ny, x1 - nx, y1 - ny, x0 - nx, y0 - ny, c[0], c[1], c[2], 0.95f);
+    };
+    for (int layer = 0; layer < 2; layer++)
+        for (const auto& ep : edges) {
+            const proc::TrailEdge& e = *ep.first;
+            const int rt = e.road ? 4 : std::max(0, std::min(2, e.rating));
+            if (layer == 0 && rt != 2) continue;
+            const float* c = layer == 0 ? kEdge : kTrailCol[rt];
+            const float lw = layer == 0 ? w + 2 * u : rt == 4 ? w * 0.6f : w;
+            const size_t n = e.x.size();
+            if (n < 2) continue;
+            float px0 = 0, py0 = 0;
+            bool have = false;
+            for (size_t k = 0; k < n; k += stride) {
+                const size_t kk = std::min(k, n - 1);
+                const double gx = e.ax + e.x[kk], gz = e.az + e.z[kk];
+                const float sx = mapX + (float)((gx - mapCx) * mapS), sy = mapY - (float)((gz - mapCz) * mapS);
+                const bool seen = procReveal.fade(proc::Reveal::cellOf(gx), proc::Reveal::cellOf(gz)) >= 0.5f;
+                if (have && seen && !((sx < 0 && px0 < 0) || (sx > W && px0 > W) || (sy < 0 && py0 < 0) || (sy > H && py0 > H))) seg(px0, py0, sx, sy, lw, c);
+                px0 = sx, py0 = sy, have = seen;
+            }
+        }
+}
+
+// ---- Exploring the procedural world -------------------------------------------------------------
+
+void Coop::exploreProc(const Sim& sim, const V3* walker, const std::string& dir) {
+    const World& w = sim.world;
+    if (w.map != MAP_PROCEDURAL) return;
+    if (!procLive || procLiveSeed != w.proc.seed) {
+        saveProcReveal();
+        procReveal.clear(), procImage.clear(), procEdges.clear();
+        procLive = true, procLiveSeed = w.proc.seed;
+        procPath = dir.empty() ? std::string() : dir + "/procmap/" + std::to_string(w.proc.seed) + ".bin";
+        if (!procPath.empty()) procReveal.load(procPath, procLiveSeed);
+    }
+    const proc::ProcWorld& G = proc::ProcWorld::forSeed(procLiveSeed);
+    auto see = [&](const V3& local) {
+        const V3 g = proc::ProcWorld::toGlobal(w, local);
+        procReveal.revealDisc(g.x, g.z, proc::Reveal::radiusFor(proc::Reveal::heightAbove(G, g.x, g.z, g.y)));
+    };
+    for (const Car& c : sim.cars)
+        if (!c.isProp()) see(c.frame().com);
+    if (walker) see(*walker);
+    procSaved += 0.5;
+    if (procSaved >= 30) saveProcReveal();
+}
+
+void Coop::saveProcReveal() {
+    procSaved = 0;
+    if (procLive && procReveal.dirty && !procPath.empty()) procReveal.save(procPath, procLiveSeed);
 }
 
 // ---- Exploring -----------------------------------------------------------------------------
