@@ -269,3 +269,15 @@ Follows docs/plans/procworld-rules.md sections 2 and 3. Status: being built on w
   water surface stepping down ~3 m a metre; a falls mesh (sheet and spray) is left for the render side.
 - The trails' 16 m search lattice is cached per 1 km tile and shared by every edge (the slowest chunk: 163 ms, from ~400).
 - Test: procworld/lakes-falls (rims, level water, the drop at each fall, pools); procworld/river-rules leaves still water to it.
+
+**Checkpoint 4: taller peaks and the tree line.**
+- Peaks 1.5-2.5 km: summits in the smooth uplift (so channels run off them rather than cut through them), broad domes in massifs
+  here and there on a range's axis (where a ~10 km noise is high), `summit_height` 1800 m times the world's relief. 7 peaks over
+  1.5 km in 3 x 144 km2 of seeds 1, 2, 123456789; the highest seen 1.9 km. The ranges' general mass (pass 300, peak 620) is
+  unchanged: taller everywhere made every trail steep.
+- A trail link that can't hold near its grade (over 20% of a main trail, 12% of a trail, past its limit) isn't laid: the network
+  goes round by the valleys and passes.
+- Tree line 1550 m (+-80, thinning over 250 m below it), aspens below 900 m; snow as set (dust 1350, patches 1600, whole 2000).
+  treeCover() reads the same rules, so the far forest follows (forest/far-field passes).
+- Memory: fixed a runaway bridge scan (a trail ending in deep water) that filled RAM; procworld/memory bounds the caches (226 MB
+  after a window and three slides).

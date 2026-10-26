@@ -38,7 +38,8 @@ struct RangeRule {
     double beltFrom = 0.40;        // the belt field (0..1, ~9 km features) where ranges begin (less 0.06 x the world's relief)
     double beltFull = 0.60;        // ...and where they're at full height
     double passHeight = 300;       // m over the lowland: the ranges' valley floors at their heart (times the world's relief, 0.75-1.25)
-    double peakHeight = 620;       // m: the mountains' mass over their valley floors, times the world's relief (the valleys are cut into it)
+    double peakHeight = 620;        // m: the mountains' mass over their valley floors, times the world's relief (the valleys are cut into it)
+    double summitHeight = 1800;    // m: the summits on a range's axis over its mass, times the world's relief: the peaks (1.5-2.5 km)
     double crestSpacing = 1100;    // m: about how far apart the crags on the ridges are (the rough detail on the high ground)
     double alpineFrom = 330;       // m: the alpine biome's weight starts here...
     double alpineFull = 560;       // ...and is whole here
@@ -49,9 +50,9 @@ struct RangeRule {
 struct AlpineRule {
     double treesPerHa = 420;        // trees a hectare on the slopes at the foot of the range (pines)
     double treeSlopeMax = 0.75;     // no trees steeper than this (rise over run, ~35 degrees)
-    double treeLine = 760;         // m: where the forest ends...
-    double treeLineWobble = 60;    // m: ...give or take this (a noise: higher on some spurs, lower in others)
-    double treeLineFade = 200;     // m: below the line the forest thins over this band...
+    double treeLine = 1550;        // m: where the forest ends...
+    double treeLineWobble = 80;    // m: ...give or take this (a noise: higher on some spurs, lower in others)
+    double treeLineFade = 250;     // m: below the line the forest thins over this band...
     double krummholz = 0.6;        // ...and the trees shrink to (1 - this) of their height at the line
     double meadowSize = 110;       // m: about how big the meadows are
     double trunkSpacing = 3.0;     // m: trees stand at least this far apart (drivable between, tight in places)
@@ -61,7 +62,7 @@ struct AlpineRule {
     double meadowShare = 0.05;      // of the slopes are open meadows (glades a couple of hundred metres across)
     double coniferShare = 0.93;     // pines and firs; the rest dead snags...
     double aspenShare = 0.1;       // ...or aspens, low down:
-    double aspenBelow = 500;       // m: aspens only below this
+    double aspenBelow = 900;       // m: aspens only below this
     double rockBandSlope = 0.5;      // slopes steeper than this show rock bands (9: none)...
     double rockBandSpacing = 24;   // m: ...ledges about this far apart up the slope
     double rockBandWidth = 0.3;    // ...this share of each step bare rock

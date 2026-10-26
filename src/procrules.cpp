@@ -51,6 +51,7 @@ std::vector<Key> keys() {
     k.push_back({T, "belt_full", nullptr, AT(r.range.beltFull), "0..1: where a range is at full height"});
     k.push_back({T, "pass_height", nullptr, AT(r.range.passHeight), "m over the lowland: the ranges' valley floors at their heart (times the world's relief)"});
     k.push_back({T, "peak_height", nullptr, AT(r.range.peakHeight), "m: the mountains' mass over their valley floors, times the world's relief (0.75-1.25): the valleys are cut into it"});
+    k.push_back({T, "summit_height", nullptr, AT(r.range.summitHeight), "m: the summits on a range's axis over its mass, times the world's relief: the peaks (1.5-2.5 km)"});
     k.push_back({T, "crest_spacing", nullptr, AT(r.range.crestSpacing), "m: about how far apart the crags on the high ground are (its rough detail)"});
     k.push_back({T, "alpine_from", nullptr, AT(r.range.alpineFrom), "m: the alpine biome starts to take over here..."});
     k.push_back({T, "alpine_full", nullptr, AT(r.range.alpineFull), "m: ...and is whole here"});

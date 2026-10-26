@@ -213,6 +213,16 @@ void lowWeights(const ProcWorld::Params& P, double wet, double heat, double mk, 
 }  // namespace
 
 namespace {
+// How much of the summits stand at a point: in massifs here and there along a range's axis, a few km across, not all along it.
+// (slack > 0: the same, looser, for a bound over the land round about.)
+double summitShare(const ProcWorld::Params& P, double x, double z, double massif, double slack) {
+    const double S = P.scale;
+    const double a = smoothstep(0.6 - slack, 1.0, massif);
+    if (a <= 0) return 0;
+    return a * smoothstep(0.62 - slack, 0.85, fbm(P.s[S_RIDGE] + 31, x * 0.0001 / S, z * 0.0001 / S, 2));
+}
+}  // namespace
+namespace {
 Route routeAt(const ProcWorld::Params& P, double x, double z, double wet, double heat) {  // (x, z: copies, warped below)
     const double S = P.scale;
     const RangeRule& RR = rules().range;
@@ -236,6 +246,9 @@ Route routeAt(const ProcWorld::Params& P, double x, double z, double wet, double
     r.bad = smoothstep(0.25, 0.6, w[PB_BADLANDS]) * (1 - smoothstep(0.15, 0.55, r.mk));
     const double lowU = 30 + 110 * r.bad;
     r.U = lowU + (RR.peakHeight * P.relief - lowU) * r.massif * r.massif * r.massif;  // (the mass gathers on the axis: the tops)
+    // The summits: broad domes rising over km in massifs here and there on the axis (the peaks, 1.5-2.5 km). In the uplift, so the
+    // channels see them: the creeks run down off them and climb up onto them, rather than cut through them.
+    r.U += RR.summitHeight * P.relief * summitShare(P, x, z, r.massif, 0);
     return r;
 }
 double wetAt(const ProcWorld::Params& P, double x, double z) {
@@ -1069,6 +1082,8 @@ Mass massAt(const ProcWorld::Params& P, double x, double z) {
     if (r.mk > 0.01) {
         const double rr = ridgedMF(P.s[S_RIDGE], x / RR.crestSpacing / S, z / RR.crestSpacing / S, 3);
         rough += r.mk * kCrag * RR.peakHeight * P.relief * rr * rr;
+        // (The summits: on the range's axis alone, peaks over the mass, broken by the same ridged noise. The trails and the valleys
+        // keep to the lower land; the rivers' valleys still cut up into them.)
     }
     if (r.mk < 0.99) rough += (1 - r.mk) * (1 - r.bad) * 24 * fbm(P.s[S_HILL1], x * 0.0012 / S, z * 0.0012 / S, 3);
     rough += (3 + 10 * r.mk * r.mk) * (2 * fbm(P.s[S_HILL2], x * 0.0042 / S + 3.0, z * 0.0042 / S - 1.0, 3) - 1);
@@ -1855,6 +1870,21 @@ std::shared_ptr<const TrailEdge> ProcWorld::edge(int64_t i, int64_t j, int dir) 
                 int cnt = 0;
                 for (int q = std::max(0, k - 3); q <= std::min(n - 1, k + 3); q++) sum += y0[q], cnt++;
                 y[k] = sum / cnt;
+            }
+        }
+        {  // (A link that can't keep near its grade (over a summit massif, up a gorge's wall) isn't laid: the trails go round by the
+            // valleys and passes. Its share of length past the limit, over 20 m stretches, as procworld/grades measures it.)
+            const double lim = e->road ? 0.12 : gmax;
+            double len = 0, over = 0;
+            for (int k = 0; k + 10 < n; k++) {
+                const double run = along[k + 10] - along[k], seg = along[k + 1] - along[k];
+                len += seg, over += std::fabs(y[k + 10] - y[k]) > lim * run ? seg : 0;
+            }
+            if (len > 0 && over > (e->road ? 0.2 : 0.12) * len) {
+                e->on = false, e->bridges.clear();
+                std::lock_guard<std::mutex> lock(edgeMutex);
+                if (edgeCache.size() > 40000) edgeCache.clear();
+                return edgeCache.emplace(key, std::move(e)).first->second;
             }
         }
         e->x.resize(n), e->z.resize(n), e->y.resize(n), e->along.resize(n), e->fill.resize(n);

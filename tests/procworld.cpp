@@ -930,10 +930,31 @@ SCENARIO(procAlpine, "procworld/alpine", "The alpine rules (procrules.h, biome.a
     char b[300];
     std::snprintf(b, sizeof b, "%d peaks over 1.5 km (1 km apart) in 3 x 144 km2; the highest %.0f m", peaks, top);
     ctx.note(b);
-    // (Taller ranges, 1.5-2.5 km, wait for the land-shape slice: today's contour rivers saw gorges through them, and the slopes
-    // came out too steep to drive. The alpine zones follow rules().alpine whatever the heights.)
-    // (The snow is set for those taller ranges: patches from 1.6 km, whole from 2 km. Today's ~1.3 km tops stay bare.)
+    // (The owner's rule, procworld-rules.md 2: peaks 1.5-2.5 km. The summits stand in massifs on the ranges' axes.)
+    ctx.check("peaks: at least one over 1.5 km per 100 km2", peaks * 100 >= 3 * 144);
+    ctx.check("peaks: none over 2.6 km", top < 2600);
     ctx.check("bare tops: some land over the tree line", top > A.treeLine + A.treeLineWobble);
+    {  // (and snow on them: the highest ground of some seeds round their summits, a chunk at each top over 1.9 km)
+        long cells = 0, snow = 0;
+        double best = 0;
+        for (uint64_t seed : {1ull, 2ull, 3ull, 4ull, 5ull, 6ull, 123456789ull}) {
+            const ProcWorld& G = ProcWorld::forSeed(seed);
+            double bh = 0, bx = 0, bz = 0;
+            for (double x = -8000; x < 8000; x += 200)
+                for (double z = -8000; z < 8000; z += 200) {
+                    const double h = G.macroHeight(x, z);
+                    if (h > bh) bh = h, bx = x, bz = z;
+                }
+            best = std::max(best, bh);
+            if (bh < 1900) continue;
+            auto c = G.chunk(floorDiv((int64_t)bx, kChunk), floorDiv((int64_t)bz, kChunk));
+            for (int k = 0; k < kChunk * kChunk; k++)
+                if (c->h[k] > 1900) cells++, snow += c->surf[k] == SURF_SNOW || c->surf[k] == SURF_ROCK;
+        }
+        std::snprintf(b, sizeof b, "the highest of 7 seeds' 256 km2: %.0f m; over 1.9 km round their tops, %.0f%% snow or bare rock", best, 100.0 * snow / std::max(1L, cells));
+        ctx.note(b);
+        ctx.check("snow (or rock too steep for it) over the high tops", cells > 0 && snow * 10 >= cells * 7);
+    }
     // The forest, the tree line and the snow, from the chunks: on the alpine slopes of three seeds' ranges (a chunk every 250 m).
     struct Band { long cells = 0, snow = 0, trees = 0, conifers = 0, area = 0; double treeH = 0; };
     std::map<int, Band> band;  // (by 100 m of height)
