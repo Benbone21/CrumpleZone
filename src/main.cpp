@@ -1793,6 +1793,10 @@ int main(int argc, char** argv) {
         const double stall = es ? std::atof(es) : 60.0;
         watchdog.reset(new wd::FrameWatchdog(stall, et ? std::atof(et) : 3600.0, std::max(240.0, stall)));
     }
+    // (a hang report names the startup step each thread was in: loadprof::phase below and the LOADPROF scopes)
+    loadprof::nameThread("main");
+    wd::stageReport = loadprof::activeStages;
+    loadprof::phase("settings");
     const char* stallEnv = std::getenv("CZ_TEST_STALL_FRAME");
     const int testStallFrame = stallEnv ? std::atoi(stallEnv) : -1;
     blockOnTemplates = !opt.shotFrames.empty() || opt.bench > 0;  // (screenshots and the bench show every car; the tour wants the real, waiting behaviour)
@@ -1854,6 +1858,7 @@ int main(int argc, char** argv) {
         te::clipboardSetHook = [](const std::string& s) { SDL_SetClipboardText(s.c_str()); };
     }
     static bool testCtrl = false;
+    loadprof::phase("sdl.init");
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | (opt.audio ? (uint32_t)SDL_INIT_AUDIO : 0u)) != 0) {
         fail(std::string("SDL_Init failed: ") + SDL_GetError());
         return 1;
@@ -1874,6 +1879,7 @@ int main(int argc, char** argv) {
     SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 0);
     SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 0);
 
+    loadprof::phase("sdl.window");
     uint32_t flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
     if (settings.fullscreen) flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
     SDL_Window* win = SDL_CreateWindow("Crumple Zone", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, opt.width,
@@ -1882,11 +1888,13 @@ int main(int argc, char** argv) {
         fail(std::string("could not create window: ") + SDL_GetError());
         return 1;
     }
+    loadprof::phase("gl.context");
     SDL_GLContext ctx = SDL_GL_CreateContext(win);
     if (!ctx) {
         fail(std::string("OpenGL 3.3 context failed: ") + SDL_GetError());
         return 1;
     }
+    loadprof::phase("gl.load");
     if (const char* missing = gl::load(SDL_GL_GetProcAddress)) {
         fail(std::string("missing OpenGL function ") + missing);
         return 1;
@@ -1897,6 +1905,7 @@ int main(int argc, char** argv) {
     }
     const char* glRenderer = (const char*)gl::GetString(GL_RENDERER);
     const char* glVendor = (const char*)gl::GetString(GL_VENDOR);
+    loadprof::phase("hardware");
     HardwareInfo hardware;  // (for the first-launch guess and DETECT AUTOMATICALLY)
     hardware.vendor = glVendor ? glVendor : "", hardware.renderer = glRenderer ? glRenderer : "";
     queryHardware(hardware);
@@ -1932,7 +1941,9 @@ int main(int argc, char** argv) {
 
     // Scanned rock hulls (assets/props), so what you hit is what you see; without the bake,
     // code-made rocks. Scenario playback keeps the code-made rocks the tests ran with.
+    loadprof::phase("rock hulls");
     if (opt.scenario.empty()) props::setActiveRockScans(&props::sharedHullLibrary());
+    loadprof::phase("sim (the first world)");
     // The sim starts on the proving ground. When another map or the menu's camp replaces it straight away, it's built bare: the
     // model yard and the section park (seconds of work on a build's first run) aren't laid out only to be thrown away.
     const bool showcaseOn = World::withShowcase;
@@ -1959,7 +1970,9 @@ int main(int argc, char** argv) {
     } else if (settings.map != MAP_PROVING_GROUND) sim.world = buildPick(settings.map, opt.standalone, bigHome);  // (a region's pick: the big map, started there)
     int worldPick = wantCamp ? -1 : settings.map;  // the map pick the world stands for (a region of the big map's: its old map id)
     sim.lineup = listedVehicles();  // (the overlanders and the Jesko: no Civic, UTV or buggy)
+    loadprof::phase("sim.setup (the lineup)");
     sim.setup();
+    loadprof::phase("garage");
     // Your garage: the mods fitted last time go back on the cars. (A career keeps a garage of
     // its own: it starts on factory parts.)
     if (opt.career) settings.career = true;
@@ -2025,8 +2038,10 @@ int main(int argc, char** argv) {
         sim.paused = true;
         campWorld = true;
     };
+    loadprof::phase("garage.fit");
     fitGarage();
     if (wantCamp) parkCamp();
+    loadprof::phase("cars.prebuild (worker threads)");
     // The lineup's drawing templates are made on worker threads while the window's shaders build (the first frame waits for yours).
     for (const Car& c : sim.cars)
         if (!c.isProp()) prebuildVisual(*c.spec, c.color);
@@ -2071,6 +2086,7 @@ int main(int argc, char** argv) {
         // section start is a real start, so there it becomes home.)
         if (opt.spawnSection < 0) c.spawnPos = home, c.spawnYaw = homeYaw;
     }
+    loadprof::phase("renderer.init");
     Renderer renderer;
     std::string err;
     uint64_t drawnWorld = sim.world.stamp;
@@ -2080,14 +2096,17 @@ int main(int argc, char** argv) {
         return 1;
     }
     renderer.settings = settings.gfx;
+    loadprof::phase("renderer.preload");
     renderer.preload(sim.world);
     std::printf("renderer: ready in %.0f ms (%d shader programs compiled, %d from the cache)\n",
                 (SDL_GetPerformanceCounter() - initStart) * 1000.0 / SDL_GetPerformanceFrequency(), gShaderCacheStats.compiled, gShaderCacheStats.hits);
     // (a scenario has no cars until its first frame: nothing to wait for, and nobody would ever make it)
     if (!sim.cars.empty() && sim.player >= 0 && sim.player < (int)sim.cars.size()) {
         prebuildVisual(*sim.cars[sim.player].spec, sim.cars[sim.player].color);  // (asked for, in case nothing has yet)
+        loadprof::phase("waiting for the player's car visual (worker)");
         while (!visualReady(*sim.cars[sim.player].spec)) std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
+    loadprof::phase("setup (audio, HUD, menus)");
     if (opt.lab) {  // the model lab instead of the game (lab.h)
         LabOptions lo;
         lo.select = opt.labModel, lo.variant = opt.labDesign;
@@ -3875,8 +3894,11 @@ int main(int argc, char** argv) {
     int simAsyncSteps = 0;
     const bool asyncAllowed = opt.simAsync && opt.shotFrames.empty() && !opt.loadTour && opt.script.empty();
 
+    loadprof::phase("first frame");
+    renderer.stageMarks = true;  // (its draw stages too: a software renderer compiles each shader at its first draw)
     while (running) {
-        if (g_termSignals) break;  // (SIGTERM / SIGINT in normal play: quit cleanly)
+        if (g_termSignals) break;
+        if (frame == 1) loadprof::phase(nullptr), renderer.stageMarks = false;  // (SIGTERM / SIGINT in normal play: quit cleanly)
         if (watchdog) watchdog->frame(frame);
         if (frame == testStallFrame) for (;;) std::this_thread::sleep_for(std::chrono::seconds(1));
         uint64_t now = SDL_GetPerformanceCounter();
@@ -6904,7 +6926,7 @@ int main(int argc, char** argv) {
             std::snprintf(path, sizeof(path), "%s_%04d.ppm", opt.shotPrefix.c_str(), frame);
             writePPM(path, renderer.readPixels(W, H), W, H);
             std::printf("wrote %s\n", path);
-            if (frame >= *opt.shotFrames.rbegin()) running = false;
+            if (frame >= *opt.shotFrames.rbegin()) running = false, loadprof::phase("shutdown");
         }
         if (opt.benchSuite && suitePhase == 1 && bf >= benchWarm + opt.bench + 2) {  // the run's F3 screen, beside the summary
             const BenchSuite::Done& d = suite.done().back();

@@ -13,6 +13,23 @@ on:
     branches: [sync, main]
     tags: ["v*", "V*"]
   workflow_dispatch:
+    inputs:
+      mac_only:
+        description: "Only the mac job (a check of the Mac app; nothing is published off a tag either way)"
+        type: boolean
+        default: false
+      mac_regression:
+        description: "Run the mac job's native regression checks (about 45 minutes) before the packaged app smoke test"
+        type: boolean
+        default: true
+      smoke_runs:
+        description: "How many times to launch the packaged Mac app in its smoke test"
+        type: number
+        default: 1
+      smoke_flags:
+        description: "Extra flags for the smoke test's launches, one launch per ';'-separated set (each run)"
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -28,6 +45,7 @@ jobs:
   # Opt-in PGO: build instrumented, run a fixed training workload (tools/pgo.sh), hand the profile to the linux job.
   # Never blocks a release: if this job fails, the linux job finds no profile and build plain LTO.
   profile:
+    if: ${{ !inputs.mac_only }}
     runs-on: ubuntu-24.04
     continue-on-error: true
     steps:
@@ -79,6 +97,7 @@ jobs:
         with: { name: linux, path: out/* }
 
   windows:
+    if: ${{ !inputs.mac_only }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -173,6 +192,7 @@ jobs:
           mkdir -p out && cp build/mac/CrumpleZone-mac.zip "out/CrumpleZone-${V}-mac.zip"
           cp build/mac/CrumpleZone-mac.dmg "out/CrumpleZone-${V}-mac.dmg"
       - name: Native macOS regression checks
+        if: ${{ inputs.mac_regression != false }}
         run: |
           # macOS only answers on 127.0.0.1; net/sec-flood binds its fake clients to 127.0.0.2, .0.3 and 127.0.1.1-40.
           for a in 127.0.0.2 127.0.0.3 $(seq -f '127.0.1.%g' 1 40); do sudo ifconfig lo0 alias "$a" up; done
@@ -201,23 +221,42 @@ jobs:
           PY
       - name: Packaged app smoke test
         # The hosted Mac draws in software: its first frame takes over a minute, past the scripted-run hang limit (60 s).
-        env: { CZ_WATCHDOG_STALL: "900" }
+        # CZ_STAGE_LOG: each startup step with its time, so a slow or hung launch shows where it was (a hang adds every thread's stack).
+        env: { CZ_WATCHDOG_STALL: "900", CZ_STAGE_LOG: "1", SMOKE_RUNS: "${{ inputs.smoke_runs || 1 }}", SMOKE_FLAGS: "${{ inputs.smoke_flags }}" }
         run: |
           python3 - <<'PY'
-          import pathlib, subprocess, tempfile
+          import os, pathlib, shlex, subprocess, sys, tempfile, time
           app = pathlib.Path('build/mac/CrumpleZone.app/Contents/MacOS/crumplezone').resolve()
           prefix = pathlib.Path('out-shot').resolve()
-          # Launch away from the repository so packaged framework and asset lookup are tested.
-          with tempfile.TemporaryDirectory() as cwd, open('shot.log', 'w') as log:
-              subprocess.run([str(app), '--no-audio', '--no-pad', '--quality', '0', '--ground', '1', '--props', '0', '--size', '96x64',
-                              '--shot-prefix', str(prefix), '--shot-frames', '0'], cwd=cwd,
-                             stdout=log, stderr=subprocess.STDOUT, check=True, timeout=2400)
-          if not pathlib.Path(str(prefix) + '_0000.ppm').is_file():
-              raise SystemExit('Packaged Mac app did not render its screenshot')
-          output = pathlib.Path('shot.log').read_text()
-          print(output)
-          if 'ground textures:' in output:
-              raise SystemExit('Packaged Mac ground assets failed to load')
+          runs = max(1, int(float(os.environ.get('SMOKE_RUNS') or 1)))
+          # (SMOKE_FLAGS: launches separated by ';', each its own flags after the usual ones, e.g. "--ground 0;--ground 1")
+          variants = [v.strip() for v in (os.environ.get('SMOKE_FLAGS') or '').split(';')] or ['']
+          failed = []
+          n = 0
+          for run in range(runs):
+              for extra in variants:
+                  n += 1
+                  shot = pathlib.Path(str(prefix) + '_0000.ppm')
+                  shot.unlink(missing_ok=True)
+                  name = 'shot.log' if n == 1 else f'shot{n}.log'
+                  t0 = time.time()
+                  # Launch away from the repository so packaged framework and asset lookup are tested.
+                  # (NAME=value words in a set go to the launch's environment, the rest are flags)
+                  words = shlex.split(extra)
+                  env = dict(os.environ, **dict(w.split('=', 1) for w in words if '=' in w and not w.startswith('-')))
+                  flags = [w for w in words if not ('=' in w and not w.startswith('-'))]
+                  with tempfile.TemporaryDirectory() as cwd, open(name, 'w') as log:
+                      rc = subprocess.run([str(app), '--no-audio', '--no-pad', '--quality', '0', '--ground', '1', '--props', '0', '--size', '96x64',
+                                           '--shot-prefix', str(prefix), '--shot-frames', '0'] + flags, cwd=cwd, env=env,
+                                          stdout=log, stderr=subprocess.STDOUT, timeout=2400).returncode
+                  output = pathlib.Path(name).read_text()
+                  print(f'--- launch {n} [{extra}]: exit {rc} after {time.time() - t0:.0f} s')
+                  print(output, flush=True)
+                  if rc != 0: failed.append(f'launch {n} [{extra}] exited with {rc}')
+                  elif not shot.is_file(): failed.append(f'launch {n} [{extra}] did not render its screenshot')
+                  elif 'ground textures:' in output: failed.append(f'launch {n} [{extra}]: ground assets failed to load')
+          if failed:
+              raise SystemExit('Packaged Mac app: ' + '; '.join(failed))
           PY
       - name: Verify the mounted DMG
         run: |
@@ -232,7 +271,7 @@ jobs:
         with: { name: mac, path: out/* }
       - uses: actions/upload-artifact@v4
         if: always()
-        with: { name: mac-smoke, path: "out-shot*\nshot.log", if-no-files-found: ignore }
+        with: { name: mac-smoke, path: "out-shot*\nshot*.log", if-no-files-found: ignore }
 
   publish:
     # mac may be skipped (see above); a failed or cancelled job still blocks the release.
