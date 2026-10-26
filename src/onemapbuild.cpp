@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <atomic>
 #include <queue>
 #include <thread>
 #include <unordered_map>
@@ -360,24 +361,32 @@ struct LinkPlan {
     V3 from, to;  // where it leaves the Backcountry's place and where it arrives in the region
 };
 
-std::vector<V3> findWay(const World& w, const V3& a, const V3& b, const std::function<bool(double, double)>& wetLater) {
+std::vector<V3> findWay(const World& w, const V3& a, const V3& b, const std::function<bool(double, double)>& wetLater, double margin = 500, double greed = 1.0) {
     constexpr double C = 8;
     const double H = w.halfSize() - 20;
-    const double x0 = std::max(-H, std::min(a.x, b.x) - 500), x1 = std::min(H, std::max(a.x, b.x) + 500);
-    const double z0 = std::max(-H, std::min(a.z, b.z) - 500), z1 = std::min(H, std::max(a.z, b.z) + 500);
+    const double x0 = std::max(-H, std::min(a.x, b.x) - margin), x1 = std::min(H, std::max(a.x, b.x) + margin);
+    const double z0 = std::max(-H, std::min(a.z, b.z) - margin), z1 = std::min(H, std::max(a.z, b.z) + margin);
     const int nx = (int)((x1 - x0) / C) + 1, nz = (int)((z1 - z0) / C) + 1;
     auto X = [&](int i) { return x0 + i * C; };
     auto Z = [&](int j) { return z0 + j * C; };
     std::vector<float> h((size_t)nx * nz);
     std::vector<uint8_t> wet((size_t)nx * nz), core((size_t)nx * nz);
+    const std::vector<MapRegion>& rs = mapRegions();
+    double cb[3][4];  // (each region's core, in its own coordinates: inside it is coreOutside <= 0)
+    for (int q = 0; q < 3; q++) rs[q].core(cb[q][0], cb[q][1], cb[q][2], cb[q][3]);
     for (int i = 0; i < nx; i++)
         for (int j = 0; j < nz; j++) {
             const double x = X(i), z = Z(j);
             const size_t k = (size_t)i * nz + j;
             h[k] = (float)w.height(x, z);
             wet[k] = w.waterLevel(x, z) > h[k] - 0.6 || wetLater(x, z);
-            for (const MapRegion& r : mapRegions()) core[k] |= r.coreOutside(x - r.mx, z - r.mz) <= 0;
+            for (int q = 0; q < 3; q++) core[k] |= x - rs[q].mx >= cb[q][0] && x - rs[q].mx <= cb[q][1] && z - rs[q].mz >= cb[q][2] && z - rs[q].mz <= cb[q][3];
         }
+    // (The step to each of the eight cells round one, and as the steepness below divides by it: the same numbers as working them out each time.)
+    double stepLen[3][3];
+    float roughLen[3][3];
+    for (int di = -1; di <= 1; di++)
+        for (int dj = -1; dj <= 1; dj++) stepLen[di + 1][dj + 1] = C * std::hypot(di, dj), roughLen[di + 1][dj + 1] = (float)(C * std::hypot(di, dj) + 1e-9);
     // How steep the land round each cell is, any way (a road along the foot of a cliff would have to cut into it: kept clear of).
     std::vector<float> rough((size_t)nx * nz, 0.0f);
     for (int i = 1; i + 1 < nx; i++)
@@ -385,7 +394,7 @@ std::vector<V3> findWay(const World& w, const V3& a, const V3& b, const std::fun
             const size_t k = (size_t)i * nz + j;
             float m = 0;
             for (int di = -1; di <= 1; di++)
-                for (int dj = -1; dj <= 1; dj++) m = std::max(m, std::fabs(h[k] - h[(size_t)(i + di) * nz + j + dj]) / (float)(C * std::hypot(di, dj) + 1e-9));
+                for (int dj = -1; dj <= 1; dj++) m = std::max(m, std::fabs(h[k] - h[(size_t)(i + di) * nz + j + dj]) / roughLen[di + 1][dj + 1]);
             rough[k] = m;
         }
     auto cellOf = [&](const V3& p) {
@@ -396,7 +405,8 @@ std::vector<V3> findWay(const World& w, const V3& a, const V3& b, const std::fun
     std::vector<float> g((size_t)nx * nz, 1e30f);
     std::vector<int> from((size_t)nx * nz, -1);
     std::priority_queue<std::pair<float, int>, std::vector<std::pair<float, int>>, std::greater<std::pair<float, int>>> open;
-    auto guess = [&](int k) { return (float)std::hypot(X(k / nz) - b.x, Z(k % nz) - b.z); };
+    // (`greed` over 1 trusts the straight line more: far fewer cells looked at, a way a little longer than the best. The trails use it.)
+    auto guess = [&](int k) { return (float)(greed * std::hypot(X(k / nz) - b.x, Z(k % nz) - b.z)); };
     g[start] = 0, open.push({guess(start), start});
     while (!open.empty()) {
         const auto [f, k] = open.top();
@@ -411,7 +421,7 @@ std::vector<V3> findWay(const World& w, const V3& a, const V3& b, const std::fun
                 if (ii < 0 || jj < 0 || ii >= nx || jj >= nz) continue;
                 const int q = ii * nz + jj;
                 if (wet[q] && q != goal) continue;
-                const double L = C * std::hypot(di, dj), grade = std::fabs(h[q] - h[k]) / L;
+                const double L = stepLen[di + 1][dj + 1], grade = std::fabs(h[q] - h[k]) / L;
                 if (grade > 1.0) continue;  // (past 30%: a cliff, only where there is no other way (onto a mesa): cut into a ramp when laid)
                 // Gentle grades first; steeper than 15% only where there's no other way; through a region's own land (its trails,
                 // its trees) only for the last of the way in.
@@ -518,37 +528,65 @@ std::vector<V3> World::layWay(const std::vector<V3>& way, const WayStyle& st, Ce
     struct Near {
         double d, k, lat;
     };
-    std::unordered_map<int, Near> near;
     auto cellI = [&](double v) { return std::min(std::max((int)std::lround((v + half) / kRes), 0), hN - 1); };
     // How far its sides ease into the land: `blend` m, more where it's cut deep or built up high (a bank no steeper than about 1 in 1.6).
     std::vector<double> blend(n);
     for (int k = 0; k < n; k++) blend[k] = std::max(kBlend, 2.6 * std::fabs(y[k] - raw[k]));
     for (int pass = 0; pass < 2; pass++)  // (and no sudden change along it)
         for (int k = 1; k < n; k++) blend[k] = std::max(blend[k], blend[k - 1] - 0.5), blend[n - 1 - k] = std::max(blend[n - 1 - k], blend[n - k] - 0.5);
-    for (int s = 0; s + 1 < n; s++) {
-        const V3 &a = pts[s], &b = pts[s + 1];
-        const double reach = kHalf + std::max(blend[s], blend[s + 1]);
+    // (Kept in 16-cell tiles over its bounds, made as they're reached: a hash map of the cells was most of this pass's time.)
+    double maxReach = 0, bx0 = 1e30, bx1 = -1e30, bz0 = 1e30, bz1 = -1e30;
+    for (int k = 0; k < n; k++)
+        maxReach = std::max(maxReach, kHalf + blend[k]), bx0 = std::min(bx0, pts[k].x), bx1 = std::max(bx1, pts[k].x), bz0 = std::min(bz0, pts[k].z),
+        bz1 = std::max(bz1, pts[k].z);
+    const int ti0 = cellI(bx0 - maxReach - 1) >> 4, tj0 = cellI(bz0 - maxReach - 1) >> 4, tw = (cellI(bx1 + maxReach + 1) >> 4) - ti0 + 1,
+              th = (cellI(bz1 + maxReach + 1) >> 4) - tj0 + 1;
+    std::vector<int> tileOf((size_t)tw * th, -1);
+    std::vector<std::array<Near, 256>> tiles;
+    auto slot = [&](int i, int j) -> Near& {
+        int& t = tileOf[(size_t)((i >> 4) - ti0) * th + ((j >> 4) - tj0)];
+        if (t < 0) {
+            t = (int)tiles.size();
+            tiles.emplace_back();
+            for (Near& q : tiles.back()) q.d = 1e30;
+        }
+        return tiles[t][((i & 15) << 4) | (j & 15)];
+    };
+    for (int s = 0; s + 1 < n; s += 2) {  // (2 m chords of the 1 m points: each cell is looked at half as often, a few mm off the curve)
+        const int s2 = std::min(n - 1, s + 2);
+        const V3 &a = pts[s], &b = pts[s2];
+        const double reach = kHalf + std::max({blend[s], blend[s2], blend[std::min(n - 1, s + 1)]}), reach2 = reach * reach;
         const double dx = b.x - a.x, dz = b.z - a.z, L2 = dx * dx + dz * dz, L = std::sqrt(L2);
         if (L2 < 1e-9) continue;
         for (int i = cellI(std::min(a.x, b.x) - reach); i <= cellI(std::max(a.x, b.x) + reach); i++)
             for (int j = cellI(std::min(a.z, b.z) - reach); j <= cellI(std::max(a.z, b.z) + reach); j++) {
                 const double x = -half + i * kRes, z = -half + j * kRes;
                 const double t = clampd(((x - a.x) * dx + (z - a.z) * dz) / L2, 0, 1);
-                const double d = std::hypot(x - (a.x + dx * t), z - (a.z + dz * t));
-                if (d > reach) continue;
-                const int id = i * hN + j;
-                auto it = near.find(id);
-                if (it == near.end() || d < it->second.d) near[id] = {d, s + t, (dx * (z - a.z) - dz * (x - a.x)) / L};
+                const double ex = x - (a.x + dx * t), ez = z - (a.z + dz * t), dd = ex * ex + ez * ez;
+                if (dd > reach2) continue;
+                const double d = std::sqrt(dd);
+                Near& c = slot(i, j);
+                if (d < c.d) c = {d, s + t * (s2 - s), (dx * (z - a.z) - dz * (x - a.x)) / L};
             }
     }
-    // (In a fixed order, whatever the map's hashing: the same world on every machine.)
-    std::vector<std::pair<int, Near>> cells(near.begin(), near.end());
+    // (In a fixed order: by cell.)
+    std::vector<std::pair<int, Near>> cells;
+    for (int a = 0; a < tw; a++)
+        for (int b = 0; b < th; b++) {
+            const int t = tileOf[(size_t)a * th + b];
+            if (t < 0) continue;
+            for (int q = 0; q < 256; q++)
+                if (tiles[t][q].d < 1e29) cells.push_back({((ti0 + a) * 16 + (q >> 4)) * hN + (tj0 + b) * 16 + (q & 15), tiles[t][q]});
+        }
     std::sort(cells.begin(), cells.end(), [](const auto& p, const auto& q) { return p.first < q.first; });
     for (const auto& [id, c] : cells) {
         const double e = c.d - kHalf;
         const V3 at = cellCenter(id);
         double padNear = 1;  // (a region's repair pad stays as flat as it was, the road easing off round it)
-        for (const V3& p : pads) padNear = std::min(padNear, smoothstep(11, 24, std::hypot(at.x - p.x, at.z - p.z)));
+        for (const V3& p : pads) {
+            const double dd = (at.x - p.x) * (at.x - p.x) + (at.z - p.z) * (at.z - p.z);
+            if (dd < 24 * 24) padNear = std::min(padNear, smoothstep(11, 24, std::sqrt(dd)));
+        }
         if (padNear <= 0) continue;
         if (roadMask[id] && (e > 0.5 || roadNear[id])) continue;  // (a way laid before keeps its own tread and banks)
         const int k = std::min(n - 2, (int)c.k);
@@ -607,7 +645,7 @@ void World::layRegionTrails(const std::vector<RegionBuild*>& builds, CellTiles<u
         {{P("OC.NORTHWOODS_CAMP"), P("OC.FIRE_TOWER")}, 1},
         {{P("OC.FIRE_TOWER"), P("OC.HOMESTEAD")}, 0},
         {{P("OC.HOMESTEAD"), edge(OC, P("OC.HOMESTEAD"))}, 0},
-        {{edge(OC, P("OC.TABLE_ROCK")), P("OC.TABLE_ROCK")}, 1},
+        {{edge(OC, P("OC.CACHE.04")), P("OC.CACHE.04")}, 1},  // (and on up to Table Rock by its two-track: straight up onto the mesa costs the search a lot)
         {{P("OC.PRAIRIE_FUEL"), P("OC.CACHE.01")}, 3},
         {{edge(OC, P("OC.CACHE.02")), P("OC.CACHE.02")}, 3},
         {{P("OC.HOMESTEAD"), P("OC.CACHE.03")}, 3},
@@ -637,10 +675,45 @@ void World::layRegionTrails(const std::vector<RegionBuild*>& builds, CellTiles<u
     std::vector<V3> pads;
     for (const RegionBuild* b : builds)
         for (const Station& st : b->world->stations) pads.push_back(st.p + V3(b->region->mx, 0, b->region->mz));
+    // (Every leg's way found at once, on the land as the roads left it, on a few threads; then laid one after another.)
+    std::vector<std::pair<size_t, size_t>> legIds;
+    for (size_t p = 0; p < plans.size(); p++)
+        for (size_t s = 0; s + 1 < plans[p].stops.size(); s++) legIds.push_back({p, s});
+    std::vector<std::vector<V3>> legs(legIds.size());
+    {
+        loadprof::Scope lpFind("world.regions trails find");
+        // (A leg to a thread at a time, longest first: the pass's legs take the most.)
+        std::vector<size_t> order(legIds.size());
+        for (size_t i = 0; i < order.size(); i++) order[i] = i;
+        auto span = [&](size_t i) {
+            const TrailPlan& pl = plans[legIds[i].first];
+            const V3 &a = pl.stops[legIds[i].second], &b = pl.stops[legIds[i].second + 1];
+            return std::fabs(a.x - b.x) + std::fabs(a.z - b.z);
+        };
+        std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return span(a) > span(b); });
+        std::atomic<size_t> next{0};
+        auto work = [&] {
+            for (size_t n; (n = next++) < order.size();) {
+                const size_t i = order[n];
+                const TrailPlan& pl = plans[legIds[i].first];
+                legs[i] = findWay(*this, pl.stops[legIds[i].second], pl.stops[legIds[i].second + 1], wetLater, 300, 1.4);
+            }
+        };
+        int threads = (int)std::max(1u, std::thread::hardware_concurrency());
+        if (parallelRowsCap > 0) threads = std::min(threads, parallelRowsCap);
+        threads = std::min(threads, 12);
+        std::vector<std::thread> pool;
+        for (int t = 1; t < threads; t++) pool.emplace_back(work);
+        work();
+        for (std::thread& t : pool) t.join();
+    }
+    size_t legAt = 0;
     for (const TrailPlan& plan : plans) {
         std::vector<V3> way;
+        const size_t firstLeg = legAt;
+        legAt += plan.stops.size() - 1;
         for (size_t s = 0; s + 1 < plan.stops.size(); s++) {
-            std::vector<V3> leg = findWay(*this, plan.stops[s], plan.stops[s + 1], wetLater);
+            const std::vector<V3>& leg = legs[firstLeg + s];
             if (leg.size() < 2) {
                 if (std::getenv("BC_DEBUG")) std::fprintf(stderr, "regions: no way from (%.0f, %.0f) to (%.0f, %.0f) (kind %d)\n", plan.stops[s].x, plan.stops[s].z, plan.stops[s + 1].x, plan.stops[s + 1].z, plan.kind);
                 way.clear();
@@ -852,11 +925,19 @@ void World::growRegionCountry(CellTiles<uint8_t>& keep) {
         const double gx = (hgrid[(i + 1) * hN + j] - hgrid[(i - 1) * hN + j]) / 2, gz = (hgrid[i * hN + j + 1] - hgrid[i * hN + j - 1]) / 2;
         return std::hypot(gx, gz);
     };
-    std::vector<std::vector<int>> nearTrees((size_t)cn * cn);
-    for (int ci = 0; ci < cn; ci++)
-        for (int cj = 0; cj < cn; cj++) {
+    // (On several threads: each cell's growth into a list of its own, in four passes so no two cells side by side grow at once (a tree
+    // keeps its distance from the ones in the cells round it that grew before); then all of it onto the map, cell by cell in order.)
+    struct Grown {
+        std::vector<Tree> trees;
+        std::vector<Rock> rocks;
+        std::vector<Log> logs;
+        std::vector<Bush> bushes;
+    };
+    std::vector<Grown> grown((size_t)cn * cn);
+    auto growCell = [&](int ci, int cj) {
+            Grown& out = grown[(size_t)ci * cn + cj];
             const double x0 = -half + ci * C, z0 = -half + cj * C, cx = x0 + C / 2, cz = z0 + C / 2;
-            if (std::max(std::fabs(cx), std::fabs(cz)) < kOldBackcountryHalf) continue;  // (the Backcountry's own growth)
+            if (std::max(std::fabs(cx), std::fabs(cz)) < kOldBackcountryHalf) return;  // (the Backcountry's own growth)
             const MapRegion* rg = regionAround(cx, cz);
             const int style = !rg ? 3 : rg->map == MAP_MOUNTAIN ? 0 : rg->map == MAP_FRONTIER ? 1 : 2;  // 3: the natural edge
             uint32_t r32 = (uint32_t)ci * 83492791u ^ (uint32_t)(cj * 2971215073u) ^ 0x7e91a3c5u;
@@ -895,8 +976,8 @@ void World::growRegionCountry(CellTiles<uint8_t>& keep) {
                 bool spaced = true;
                 for (int a = std::max(0, ci - 1); a <= std::min(cn - 1, ci + 1) && spaced; a++)
                     for (int b = std::max(0, cj - 1); b <= std::min(cn - 1, cj + 1) && spaced; b++)
-                        for (int ti : nearTrees[(size_t)a * cn + b])
-                            if ((trees[ti].base.x - x) * (trees[ti].base.x - x) + (trees[ti].base.z - z) * (trees[ti].base.z - z) < 3.5 * 3.5) {
+                        for (const Tree& o : grown[(size_t)a * cn + b].trees)
+                            if ((o.base.x - x) * (o.base.x - x) + (o.base.z - z) * (o.base.z - z) < 3.5 * 3.5) {
                                 spaced = false;
                                 break;
                             }
@@ -914,8 +995,7 @@ void World::growRegionCountry(CellTiles<uint8_t>& keep) {
                 t.height *= 1 - 0.3 * smoothstep(treeline - 70, treeline, h);
                 t.radius = t.height * (t.kind == 0 ? 0.2 + rr() * 0.06 : 0.26 + rr() * 0.08);
                 t.tint = (float)(0.8 + rr() * 0.4);
-                nearTrees[(size_t)ci * cn + cj].push_back((int)trees.size());
-                plant(t);
+                out.trees.push_back(t);
                 planted++;
             }
             // ---- Boulders: scattered, more on the steep and up high; a big standalone one (car-sized and up) in many cells ----
@@ -927,7 +1007,7 @@ void World::growRegionCountry(CellTiles<uint8_t>& keep) {
                 const double slope = slopeAt(i, j), h = hgrid[id];
                 if (rr() > 0.25 + 0.6 * smoothstep(0.15, 0.6, slope) + 0.2 * smoothstep(60, 200, h)) continue;
                 const double rad = 0.35 + rr() * rr() * 1.0, flat = 0.5 + 0.4 * rr();
-                addRock(x, z, V3(rad, rad * flat, rad * (0.7 + 0.3 * rr())), rad * flat * (0.5 + 0.5 * rr()), cellSeed + (uint32_t)k, (float)(0.85 + 0.25 * rr()));
+                out.rocks.push_back(makeRock(x, z, V3(rad, rad * flat, rad * (0.7 + 0.3 * rr())), rad * flat * (0.5 + 0.5 * rr()), cellSeed + (uint32_t)k, (float)(0.85 + 0.25 * rr())));
             }
             const double bigChance = style == 0 ? 0.55 : style == 1 ? 0.5 : style == 2 ? 0.25 + 0.4 * canyon : 0.12;
             if (rr() < bigChance) {
@@ -935,7 +1015,7 @@ void World::growRegionCountry(CellTiles<uint8_t>& keep) {
                 int id, i, j;
                 if (open(x, z, id, i, j) && slopeAt(i, j) < 0.7) {
                     const double rad = 1.8 + 1.8 * rr();
-                    addRock(x, z, V3(rad, rad * (0.65 + 0.25 * rr()), rad * (0.75 + 0.25 * rr())), rad * (0.75 + 0.3 * rr()), cellSeed + 20, (float)(0.85 + 0.25 * rr()));
+                    out.rocks.push_back(makeRock(x, z, V3(rad, rad * (0.65 + 0.25 * rr()), rad * (0.75 + 0.25 * rr())), rad * (0.75 + 0.3 * rr()), cellSeed + 20, (float)(0.85 + 0.25 * rr())));
                 }
             }
             // ---- Now and then a rock feature ----
@@ -951,7 +1031,7 @@ void World::growRegionCountry(CellTiles<uint8_t>& keep) {
                             const double x = fx + std::cos(a) * d, z = fz + std::sin(a) * d;
                             if (!open(x, z, id, i, j)) continue;
                             const double rad = 0.3 + rr() * rr() * 1.3;
-                            addRock(x, z, V3(rad, rad * 0.75, rad * 0.9), rad * (0.5 + 0.4 * rr()), cellSeed + 30 + (uint32_t)k, (float)(0.85 + 0.2 * rr()));
+                            out.rocks.push_back(makeRock(x, z, V3(rad, rad * 0.75, rad * 0.9), rad * (0.5 + 0.4 * rr()), cellSeed + 30 + (uint32_t)k, (float)(0.85 + 0.2 * rr())));
                         }
                     } else if (pick < 0.65 || style == 1) {  // an outcrop: big rocks shouldering out of the ground together
                         const int m = 3 + (int)(rr() * 4);
@@ -959,16 +1039,16 @@ void World::growRegionCountry(CellTiles<uint8_t>& keep) {
                             const double x = fx + (rr() * 2 - 1) * 7, z = fz + (rr() * 2 - 1) * 7;
                             if (!open(x, z, id, i, j)) continue;
                             const double rad = 2.0 + 2.0 * rr();
-                            addRock(x, z, V3(rad, rad * (0.6 + 0.3 * rr()), rad * 0.8), rad * (0.5 + 0.3 * rr()), cellSeed + 50 + (uint32_t)k, (float)(0.85 + 0.2 * rr()));
+                            out.rocks.push_back(makeRock(x, z, V3(rad, rad * (0.6 + 0.3 * rr()), rad * 0.8), rad * (0.5 + 0.3 * rr()), cellSeed + 50 + (uint32_t)k, (float)(0.85 + 0.2 * rr())));
                         }
                     } else if (pick < 0.85 && slope < 0.4) {  // a tor: a big rock with others stacked on it
                         const double rad = 2.6 + 1.2 * rr(), top = rad * 1.1;
-                        addRock(fx, fz, V3(rad, rad * 0.75, rad * 0.9), top, cellSeed + 60, 0.9f);
+                        out.rocks.push_back(makeRock(fx, fz, V3(rad, rad * 0.75, rad * 0.9), top, cellSeed + 60, 0.9f));
                         double y = top;
                         for (int k = 0; k < 2; k++) {
                             const double r2 = rad * (0.55 - 0.15 * k);
                             y += r2 * 1.2;
-                            addRock(fx + (rr() - 0.5) * 0.8, fz + (rr() - 0.5) * 0.8, V3(r2, r2 * 0.7, r2 * 0.85), y, cellSeed + 61 + (uint32_t)k, 0.9f);
+                            out.rocks.push_back(makeRock(fx + (rr() - 0.5) * 0.8, fz + (rr() - 0.5) * 0.8, V3(r2, r2 * 0.7, r2 * 0.85), y, cellSeed + 61 + (uint32_t)k, 0.9f));
                         }
                     } else {  // a slab: a wide flat rock lying with the slope, to drive up onto
                         const V3 nr = normal(fx, fz);
@@ -977,7 +1057,7 @@ void World::growRegionCountry(CellTiles<uint8_t>& keep) {
                         pose.yaw = hl > 1e-6 ? std::atan2(nr.z, -nr.x) : rr() * 6.28;  // (uphill: against the normal's lean)
                         pose.pitch = std::atan2(hl, nr.y) * 0.85, pose.roll = 0;
                         const double L = 5 + 3 * rr();
-                        addRock(fx, fz, V3(L, 0.7, L * (0.6 + 0.2 * rr())), 0.6, cellSeed + 70, (float)(0.9 + 0.15 * rr()), &pose);
+                        out.rocks.push_back(makeRock(fx, fz, V3(L, 0.7, L * (0.6 + 0.2 * rr())), 0.6, cellSeed + 70, (float)(0.9 + 0.15 * rr()), &pose));
                     }
                 }
             }
@@ -989,7 +1069,7 @@ void World::growRegionCountry(CellTiles<uint8_t>& keep) {
                 int id, i, j, id0, i0, j0, id1, i1, j1;
                 if (open(x, z, id, i, j) && paint[id] == PAINT_NONE && open(p0.x, p0.z, id0, i0, j0) && open(p1.x, p1.z, id1, i1, j1) && hgrid[id] < 175) {
                     p0.y = height(p0.x, p0.z) + r * 0.8, p1.y = height(p1.x, p1.z) + r * 0.8;
-                    logs.push_back({p0, p1, r});
+                    out.logs.push_back({p0, p1, r});
                 }
             }
             // ---- Bushes, in clumps round a few middles ----
@@ -1006,9 +1086,23 @@ void World::growRegionCountry(CellTiles<uint8_t>& keep) {
                 if ((paint[id] != PAINT_NONE && !desert) || (surf[id] != SURF_GRASS && !desert) || hgrid[id] > 215) continue;
                 const int habitat = desert || (style == 1 && cold <= 0.5) ? HAB_DESERT : style == 2 && canyon > 0.5 ? HAB_CANYON
                                     : hgrid[id] > 110 || style == 3 ? HAB_UPLAND : grove > 0.5 || woods > 0.5 ? HAB_FOREST : HAB_MEADOW;
-                bushes.push_back(growBush(V3(x, hgrid[id], z), habitat, grove > 0.35, rr(), (float)(0.75 + 0.45 * rr())));
+                out.bushes.push_back(growBush(V3(x, hgrid[id], z), habitat, grove > 0.35, rr(), (float)(0.75 + 0.45 * rr())));
             }
-        }
+    };
+    const props::HullLibrary* hulls = props::activeRockScans();  // (each thread makes its rocks from the builder's scans)
+    for (int phase = 0; phase < 4; phase++)
+        parallelRows((cn + 1) / 2, [&](int h) {
+            props::setActiveRockScans(hulls);
+            const int ci = 2 * h + (phase & 1);
+            if (ci >= cn) return;
+            for (int cj = phase >> 1; cj < cn; cj += 2) growCell(ci, cj);
+        }, 2);
+    for (Grown& g : grown) {
+        for (const Tree& t : g.trees) plant(t);
+        for (Rock& k : g.rocks) rocks.push_back(std::move(k));
+        logs.insert(logs.end(), g.logs.begin(), g.logs.end());
+        bushes.insert(bushes.end(), g.bushes.begin(), g.bushes.end());
+    }
 }
 
 World worldForPick(int pick) {

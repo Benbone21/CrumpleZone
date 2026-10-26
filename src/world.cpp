@@ -259,7 +259,7 @@ void attachRockParts(Rock& k, std::vector<props::RockHull>&& pieces) {
     }
 }
 
-Rock& addScannedRock(World& w, const props::HullLibrary& lib, double x, double z, const V3& radii, double top, uint32_t seed, float tint, const RockPose* pose) {
+Rock makeScannedRock(const World& w, const props::HullLibrary& lib, double x, double z, const V3& radii, double top, uint32_t seed, float tint, const RockPose* pose) {
     uint32_t s = seed * 2246822519u + 0x85ebca6bu;
     auto rnd = [&]() {
         s ^= s << 13;
@@ -342,12 +342,11 @@ Rock& addScannedRock(World& w, const props::HullLibrary& lib, double x, double z
         if (w.deferRockSplits) k.partsDue = true;
         else attachRockParts(k, splitRock(w, k, hull));
     }
-    w.rocks.push_back(std::move(k));
-    return w.rocks.back();
+    return k;
 }
 }  // namespace
 
-Rock& World::addRock(double x, double z, const V3& radii, double top, uint32_t seed, float tint, const RockPose* pose) {
+Rock World::makeRock(double x, double z, const V3& radii, double top, uint32_t seed, float tint, const RockPose* pose) const {
     uint32_t s = seed * 2654435761u + 0x9e3779b9u;
     auto rnd = [&]() {
         s ^= s << 13;
@@ -355,7 +354,7 @@ Rock& World::addRock(double x, double z, const V3& radii, double top, uint32_t s
         s ^= s << 5;
         return (s & 0xFFFFFF) / double(0x1000000);
     };
-    if (const props::HullLibrary* lib = props::activeRockScans()) return addScannedRock(*this, *lib, x, z, radii, top, seed, tint, pose);
+    if (const props::HullLibrary* lib = props::activeRockScans()) return makeScannedRock(*this, *lib, x, z, radii, top, seed, tint, pose);
     // Points spread evenly over the ellipsoid, then pulled in at random: deep pulls
     // cut facets, light ones keep it chunky.
     const int n = 16 + (int)(rnd() * 10);
@@ -396,7 +395,11 @@ Rock& World::addRock(double x, double z, const V3& radii, double top, uint32_t s
     for (const V3& q : k.v) c += q;
     k.c = c / (double)k.v.size();
     for (const V3& q : k.v) k.r = std::max(k.r, len(q - k.c));
-    rocks.push_back(std::move(k));
+    return k;
+}
+
+Rock& World::addRock(double x, double z, const V3& radii, double top, uint32_t seed, float tint, const RockPose* pose) {
+    rocks.push_back(makeRock(x, z, radii, top, seed, tint, pose));
     return rocks.back();
 }
 

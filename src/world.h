@@ -367,6 +367,9 @@ public:
     // With `pose` it isn't turned or tipped at random but as asked (a ledge's row of rocks, a ramp): the first half-size
     // lies along the pose's yaw, and `top` is then its highest point's height over the ground at (x, z).
     Rock& addRock(double x, double z, const V3& radii, double top, uint32_t seed, float tint = 1, const RockPose* pose = nullptr);
+    // The rock addRock would add, not added (anything about the world it reads, it only reads: rocks can be made on several threads,
+    // with the thread's scanned rocks (props::activeRockScans) the same as the world's builder's).
+    Rock makeRock(double x, double z, const V3& radii, double top, uint32_t seed, float tint = 1, const RockPose* pose = nullptr) const;
     // Indices of poles whose cylinders may overlap the box [mn, mx] (appended to out).
     void polesNear(const V3& mn, const V3& mx, std::vector<int>& out) const;
     // Every solid whose lookup cells touch the rectangle [x0, x1] x [z0, z1]: indices into

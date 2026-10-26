@@ -271,6 +271,18 @@ double valleyOpen(double x, double z, double east) {
 // The new country's land (smooth: the build adds the metre-scale bumps). `seams`: the big map's (onemap.h), where the edge ridge opens
 // into a valley wherever a region meets it.
 double outerLand(double x, double z, bool seams) {
+    if (seams) {
+        // Wholly a region's grown country (regionland.h): the Backcountry's own land would count for nothing there (the same sum as
+        // blendRegionLand's, without working it out).
+        double w[3];
+        regionWeights(x, z, w);
+        if (w[0] + w[1] + w[2] == 1.0) {
+            double h = 0;
+            for (int k = 0; k < 3; k++)
+                if (w[k] > 0) h += w[k] * regionLand(mapRegions()[k], x, z);
+            return h + bigMapEdgeRidge(x, z) * (70 + 90 * ridgedNoise(x * 0.0024 + 0.7, z * 0.0024 + 2.9, 4));
+        }
+    }
     const Districts d = districtsAt(x, z);
     const double rowMid = std::max(0.0, 1 - d.n - d.s), colMid = std::max(0.0, 1 - d.e - d.w);
     const double roll = fbmNoise(x * 0.0021 + 3.1, z * 0.0021 - 7.3, 3) - 0.5;  // broad swells
@@ -1125,6 +1137,26 @@ void World::buildBackcountry() {
         return std::hypot(gx, gz);
     };
     auto snowline = [&](double x, double z) { return 50 + 16 * (fbmNoise(x * 0.02 + 3.0, z * 0.02 - 8.0, 3) - 0.5); };
+    // The regions' weights (onemap.h) every 4 m, read between: worked out per cell they were most of this pass's time.
+    const int fn = stitch ? (int)std::ceil(2 * half / 4.0) + 1 : 0;
+    std::vector<float> field((size_t)fn * fn * 3, 0.0f);
+    if (stitch)
+        parallelRows(fn, [&](int a) {
+            for (int b = 0; b < fn; b++) {
+                double w[3];
+                regionWeights(-half + a * 4.0, -half + b * 4.0, w);
+                for (int k = 0; k < 3; k++) field[((size_t)a * fn + b) * 3 + k] = (float)w[k];
+            }
+        });
+    auto weightsAt = [&](double x, double z, double w[3]) {
+        const double u = (x + half) / 4.0, v = (z + half) / 4.0;
+        const int a = std::min(fn - 2, (int)u), b = std::min(fn - 2, (int)v);
+        const double fu = u - a, fv = v - b;
+        for (int k = 0; k < 3; k++) {
+            auto F = [&](int p, int q) { return (double)field[((size_t)p * fn + q) * 3 + k]; };
+            w[k] = F(a, b) * (1 - fu) * (1 - fv) + F(a + 1, b) * fu * (1 - fv) + F(a, b + 1) * (1 - fu) * fv + F(a + 1, b + 1) * fu * fv;
+        }
+    };
     parallelRows(hN - 2, [&](int i0) {  // (each cell paints only itself)
         const int i = i0 + 1;
         for (int j = 1; j < hN - 1; j++) {
@@ -1136,11 +1168,20 @@ void World::buildBackcountry() {
                 if (stitch && std::max(std::fabs(x), std::fabs(z)) > kSeamFrom) {
                     // A region's grown country (regionland.h): its own kind of ground, ragged where it meets the Backcountry's.
                     double w[3];
-                    regionWeights(x, z, w);
+                    weightsAt(x, z, w);
                     const int k = w[0] >= w[1] && w[0] >= w[2] ? 0 : w[1] >= w[2] ? 1 : 2;
                     if (w[k] > 0.25 + 0.5 * valueNoise(x * 0.03 + 7.0, z * 0.03 - 2.0)) {
                         uint8_t pt = PAINT_NONE, sf = SURF_GRASS;
                         if (regionGround(mapRegions()[k], x, z, h, slope, pt, sf)) paint[id] = pt, surf[id] = sf;
+                        continue;
+                    }
+                    if (std::max(std::fabs(x), std::fabs(z)) > kOldBackcountryHalf) {
+                        // The big map's natural edge past the 6 km square (north, east): the high country's ground as below, from cheaper
+                        // noise (a third of the map's cells are out here).
+                        const double wob = valueNoise(x * 0.02 + 3.0, z * 0.02 - 8.0) - 0.5;
+                        if (h > 228 + 16 * wob && slope < 0.8) paint[id] = PAINT_SNOW, surf[id] = SURF_SNOW;
+                        else if (slope > 0.85 || (h > 195 && slope > 0.5)) surf[id] = SURF_ROCK;
+                        else if (h > 140 && slope > 0.45 && nz > 0.55) paint[id] = PAINT_SCREE, surf[id] = SURF_SCREE;
                         continue;
                     }
                 }
@@ -1797,7 +1838,7 @@ void World::buildBackcountry() {
                 const V3 g = rel(P, yw, -24, 0);
                 decor("gate", g, yw + M_PI / 2, {{"open", 1}});
                 post(rel(g, yw + M_PI / 2, 0, 2.7), 1.4), post(rel(g, yw + M_PI / 2, 0, -2.7), 1.4);
-            } else if (pl.kind == PK_FUEL_STOP) {
+            } else if (pl.kind == PK_FUEL_STOP && pl.id.rfind("BC.", 0) == 0) {  // (the regions' outposts: below)
                 // A pump island under a canopy (posts at its corners), an old upright pump and a drum rack, a cairn.
                 const V3 I = rel(P, yw, 0, 7);  // (the forecourt, where you drive up, is P)
                 build("fuel_pump", I, yw, V3(2.6, 0.5, 0.6), {}, 1);
@@ -1934,8 +1975,20 @@ void World::buildBackcountry() {
             const V3 P = grounded(pl.p);
             const double yw = pl.yaw;
             int variant = pl.id[0] == 'M' ? 2 : pl.id[0] == 'F' ? 1 : 0;
-            if (pl.kind == PK_FUEL_STOP && (pl.services & SVC_REPAIR)) {
-                addStation(rel(P, yw, 10, -13), yw, pl.name.c_str());
+            if (pl.kind == PK_FUEL_STOP) {
+                // An outpost: the repair bay in the middle of its yard (as the ranger station's), the pump island under its canopy
+                // beside it, an old upright pump and a drum rack, a cairn, a map board and a gate on the way in.
+                if (pl.services & SVC_REPAIR) addStation(P, yw, pl.name.c_str());
+                const V3 I = rel(P, yw, 0, 15);
+                build("fuel_pump", I, yw, V3(2.6, 0.5, 0.6), {}, 1);
+                for (int a = -1; a <= 1; a += 2)
+                    for (int b = -1; b <= 1; b += 2) post(rel(I, yw, a * 2.7, b * 1.4), 3.7, 0.1);
+                decor("fuel_pump", rel(P, yw, 6, 18), yw + 0.3, {}, 0);
+                build("fuel_pump", rel(P, yw, -6, 17), yw + 0.5, V3(0.7, 0.5, 0.5), {}, 2);
+                cairn(rel(P, yw, -10, -13));
+                const V3 g = rel(P, yw, -22, 0);
+                decor("gate", g, yw + M_PI / 2, {{"open", 1}});
+                post(rel(g, yw + M_PI / 2, 0, 2.7), 1.4), post(rel(g, yw + M_PI / 2, 0, -2.7), 1.4);
                 sign(rel(P, yw, -12, -6).x, rel(P, yw, -12, -6).z, yw, V3(0.3, 0.22, 0.14), PROP_MAPBOARD);
             } else if (pl.kind == PK_CABIN) {
                 cabinOf(rel(P, yw, -7, 0), yw, variant, {});

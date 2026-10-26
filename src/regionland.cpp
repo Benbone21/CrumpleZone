@@ -87,13 +87,14 @@ double blendRegionLand(double x, double z, double backcountry) {
 }
 
 bool regionGround(const MapRegion& r, double x, double z, double h, double slope, uint8_t& paint, uint8_t& surface) {
-    const double nz = valueNoise(x * 0.04, z * 0.04), n1 = fbmNoise(x * 0.011 + 3.0, z * 0.011 - 2.0, 3);
+    // (Cheap noises only: this runs for every cell of the grown country.)
+    const double nz = valueNoise(x * 0.04, z * 0.04), n1 = valueNoise(x * 0.011 + 3.0, z * 0.011 - 2.0);
     auto set = [&](uint8_t p, uint8_t s) { paint = p, surface = s; return true; };
     if (r.map == MAP_MOUNTAIN) {
         if (h > 212 + 16 * (n1 - 0.5) && slope < 0.8) return set(PAINT_NONE, SURF_SNOW);  // (the shader's snow, from 205 m)
         if (slope > 0.85 || (h > 175 && slope > 0.5)) return set(PAINT_NONE, SURF_ROCK);
         if (h > 110 && slope > 0.45 && nz > 0.55) return set(PAINT_SCREE, SURF_SCREE);
-        if (regionWash(x, z) > 0.6 && slope < 0.3) return set(PAINT_GRAVEL, SURF_GRAVEL);  // (stony creek beds)
+        if (slope < 0.3 && regionWash(x, z) > 0.6) return set(PAINT_GRAVEL, SURF_GRAVEL);  // (stony creek beds)
         return false;
     }
     if (r.map == MAP_FRONTIER) {
@@ -119,6 +120,6 @@ bool regionGround(const MapRegion& r, double x, double z, double h, double slope
         if (n1 > 0.6) return set(PAINT_DESERT, SURF_DIRT);
     }
     if (slope > 0.9) return set(PAINT_NONE, SURF_ROCK);
-    if (regionWash(x, z) > 0.6 && slope < 0.25) return set(PAINT_GRAVEL, SURF_GRAVEL);
+    if (slope < 0.25 && regionWash(x, z) > 0.6) return set(PAINT_GRAVEL, SURF_GRAVEL);
     return false;
 }
