@@ -943,7 +943,9 @@ void NetSession::handle(Sim* sim, Conn* from, const std::vector<uint8_t>& msg) {
             }
             if (m == MAP_PROCEDURAL) {  // the host's endless world: its generator, seed and window
                 proc.gen = r.get<uint16_t>(), proc.seed = r.get<uint64_t>(), proc.ox = r.get<int64_t>(), proc.oz = r.get<int64_t>();
+                proc.sliding = r.get<uint8_t>() != 0, proc.tx = r.get<int64_t>(), proc.tz = r.get<int64_t>(), proc.due = r.get<double>();
                 proc.on = r.ok;
+                proc.sliding = proc.sliding && proc.on;
                 if (!r.ok || proc.gen != (uint16_t)proc::kGenVersion) {
                     error = r.ok ? "the host's world generator is v" + std::to_string(proc.gen) + ", this game's v" + std::to_string(proc::kGenVersion) + ": update to the same build"
                                  : "the host's world made no sense";
@@ -1124,7 +1126,11 @@ void NetSession::welcome(Sim& sim, Conn& c) {
     w.put<uint8_t>((uint8_t)map);
     w.put<uint64_t>(c.token);
     w.str(build);
-    if (map == MAP_PROCEDURAL) w.put<uint16_t>(proc.gen), w.put<uint64_t>(proc.seed), w.put<int64_t>(proc.ox), w.put<int64_t>(proc.oz);  // (procworld.h)
+    if (map == MAP_PROCEDURAL) {  // (procworld.h; and a slide on its way, which the guest must make too)
+        w.put<uint16_t>(proc.gen), w.put<uint64_t>(proc.seed), w.put<int64_t>(proc.ox), w.put<int64_t>(proc.oz);
+        w.put<uint8_t>(shiftOn ? 1 : 0), w.put<int64_t>(proc.ox - (int64_t)std::llround(pendingShift.d.x)), w.put<int64_t>(proc.oz - (int64_t)std::llround(pendingShift.d.z));
+        w.put<double>(pendingShift.t);
+    }
     sendTo(c, frame(MSG_WELCOME, w));
     for (int k = 0; k < net::kMaxPeers; k++)
         if (players[k].active && k != c.peer) {
@@ -1323,7 +1329,11 @@ bool NetSession::apply(Sim& sim, const std::vector<uint8_t>& msg, int from) {
             float v[6];
             for (float& x : v) x = r.get<float>();
             rp.length = v[0], rp.maxLen = v[1], rp.k = v[2], rp.c = v[3], rp.breakN = v[4], rp.stallN = v[5];
-            r.get<double>();  // (when: handle() holds it till then)
+            {  // (when: handle() holds it till then; its fixed ends were where the sender's procedural window had them)
+                const V3 fix = frameFix(r.get<double>());
+                for (RopeEnd* e : {&rp.a, &rp.b})
+                    if (e->kind != ANCHOR_CAR) e->p += fix;
+            }
             // (A line's numbers all have a sane range; the winch's maths divides by some of them.)
             ok &= okNum(v[0], 200) && v[0] >= 0 && okNum(v[1], 200) && v[1] >= 0.5 && okNum(v[2], 2e6) && v[2] >= 0 && okNum(v[3], 2e5) && v[3] >= 0 &&
                   okNum(v[4], 2e6) && v[4] >= 1 && okNum(v[5], 1e6) && v[5] >= (rp.kind == ROPE_WINCH ? 1 : 0);  // (a strap has no stall)
@@ -2548,7 +2558,7 @@ void NetSession::hold(Sim* sim, std::deque<Held>& q, double due, std::vector<uin
 }
 
 void NetSession::deliver(Sim* sim, Held& h, bool world) {
-    if (!world) gameIn.push_back({h.player, h.text});
+    if (!world) gameIn.push_back({h.player, h.text, h.due});
     else if (sim) apply(*sim, h.msg, -1);
 }
 

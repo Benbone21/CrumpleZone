@@ -2467,6 +2467,10 @@ int main(int argc, char** argv) {
         World::setSessionSections(net.sections);
         if (net.map == MAP_PROCEDURAL && net.proc.on) World::procSeed = net.proc.seed, World::procOriginSet = true, World::procOriginX = net.proc.ox, World::procOriginZ = net.proc.oz;  // (the host's window)
         if (net.map != sim.world.map || net.map == MAP_PROCEDURAL || sim.world.parkEdited || !net.sections.empty() || campWorld) loadMap(net.map), World::procOriginSet = false;
+        if (net.map == MAP_PROCEDURAL && net.proc.sliding && sim.world.map == MAP_PROCEDURAL) {  // (joined in the 3 s before a slide: make it too)
+            net.scheduleShift(net.proc.due, V3((double)(net.proc.ox - net.proc.tx), 0, (double)(net.proc.oz - net.proc.tz)));
+            procStream.want(net.proc.seed, net.proc.tx, net.proc.tz);
+        }
         net.adopt(sim);
         hud.toast("JOINED " + net.ownerName(0) + "'S GAME ON " + mapName(net.map));
         std::printf("joined %s (player %d)\n", address.c_str(), net.self);
@@ -4827,6 +4831,10 @@ int main(int argc, char** argv) {
                     World::setSessionSections(net.sections);
                     if (net.map == MAP_PROCEDURAL && net.proc.on) World::procSeed = net.proc.seed, World::procOriginSet = true, World::procOriginX = net.proc.ox, World::procOriginZ = net.proc.oz;  // (the host's window)
                     if (net.map != sim.world.map || net.map == MAP_PROCEDURAL || sim.world.parkEdited || !net.sections.empty() || campWorld) loadMap(net.map), World::procOriginSet = false;
+                    if (net.map == MAP_PROCEDURAL && net.proc.sliding && sim.world.map == MAP_PROCEDURAL) {  // (joined in the 3 s before a slide: make it too)
+                        net.scheduleShift(net.proc.due, V3((double)(net.proc.ox - net.proc.tx), 0, (double)(net.proc.oz - net.proc.tz)));
+                        procStream.want(net.proc.seed, net.proc.tx, net.proc.tz);
+                    }
                     net.adopt(sim);
                     hud.toast("JOINED " + net.ownerName(0) + "'S GAME ON " + mapName(net.map) + (net.myLink() == NetSession::LINK_RELAYED ? " (THROUGH THE RELAY)" : ""));
                     std::printf("joined (player %d)\n", net.self);
@@ -4978,7 +4986,19 @@ int main(int argc, char** argv) {
                     coop.onMessage(net.players[m.player].name, "inside");
                     continue;
                 }
-                if (m.player >= 0 && m.player < net::kMaxPeers && coop.onMessage(net.players[m.player].name, m.text)) continue;
+                if (m.player >= 0 && m.player < net::kMaxPeers && coop.onMessage(net.players[m.player].name, m.text)) {
+                    const V3 fix = sim.world.map == MAP_PROCEDURAL ? net.frameFix(m.said) : V3();  // (a ping or a buddy on foot, from before a slide)
+                    if (fix.x != 0 || fix.z != 0) {
+                        const std::string& who = net.players[m.player].name;
+                        if (m.text.rfind("ping ", 0) == 0)
+                            for (Ping& pg : coop.pings)
+                                if (pg.who == who) pg.p += fix;
+                        if (m.text.rfind("walk ", 0) == 0)
+                            for (RemoteWalker& rw : coop.walkers)
+                                if (rw.who == who) rw.p += fix;
+                    }
+                    continue;
+                }
                 if (m.text == "restart") {
                     if (run.active()) run.begin(sim, runSlot(), 3.0);
                 } else if (m.player >= 0 && m.player < net::kMaxPeers) {

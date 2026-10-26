@@ -495,6 +495,20 @@ SCENARIO(procNetSlide, "procworld/net-slide", "Multiplayer on the procedural wor
     std::snprintf(msg, sizeof msg, "procshift %llu %lld %lld %.4f", (unsigned long long)seed, (long long)(ctx.sim.world.proc.ox + 512), (long long)ctx.sim.world.proc.oz, due);
     host.sendGame(msg);
     host.scheduleShift(due, d);
+    {  // (a third player joining in the moment before the slide is told it's coming, and where to)
+        NetSession late;
+        bool lj = false, ld = false;
+        std::thread j2([&] {
+            lj = late.join("127.0.0.1:" + std::to_string(port), "LATE", 3.0);
+            ld = true;
+        });
+        for (int k = 0; k < 400 && !ld; k++) host.receive(ctx.sim, ctx.t), client.receive(sim2, ctx.t), usleep(5000);
+        j2.join();
+        ctx.check("a guest joining before the slide is told it's coming", lj && late.proc.sliding && late.proc.tx == ctx.sim.world.proc.ox + 512 &&
+                                                                        late.proc.tz == ctx.sim.world.proc.oz && std::fabs(late.proc.due - due) < 1e-6,
+                  late.error);
+        late.close();
+    }
     ctx.run(3.0, frameBoth);
     ctx.check("the guest was told and both slid", guestTold && hostSwapped && guestSwapped);
     ctx.metric("the guest's truck as the host shows it vs where it is, through the slide", worst, "m", 0, 1.5);
