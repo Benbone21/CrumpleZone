@@ -511,8 +511,9 @@ std::shared_ptr<const TrailEdge> ProcWorld::edge(int64_t i, int64_t j, int dir) 
         // The way: the cheapest path over a 16 m grid of the land round the two nodes (A*), each step dearer the steeper it climbs and
         // far dearer past the rating's grade, so it zigzags up a slope it can't take straight (switchbacks); a river crossed once, at a ford.
         constexpr double C = 16;
-        const double gx0 = std::floor((std::min(a.x, b.x) - 260) / C) * C, gz0 = std::floor((std::min(a.z, b.z) - 260) / C) * C;
-        const int NX = (int)((std::max(a.x, b.x) + 260 - gx0) / C) + 1, NZ = (int)((std::max(a.z, b.z) + 260 - gz0) / C) + 1;
+        const double W = e->road ? 420 : 260;  // (how far it may wander: a road's gentler grade wants longer switchbacks; makeChunk's gather allows ~460)
+        const double gx0 = std::floor((std::min(a.x, b.x) - W) / C) * C, gz0 = std::floor((std::min(a.z, b.z) - W) / C) * C;
+        const int NX = (int)((std::max(a.x, b.x) + W - gx0) / C) + 1, NZ = (int)((std::max(a.z, b.z) + W - gz0) / C) + 1;
         std::vector<float> H((size_t)NX * NZ);
         std::vector<uint8_t> wet((size_t)NX * NZ);
         for (int u = 0; u < NX; u++)
@@ -643,8 +644,12 @@ std::shared_ptr<const TrailEdge> ProcWorld::edge(int64_t i, int64_t j, int dir) 
                 continue;
             }
             double dev = 0;
-            for (int k = 0; k < n; k++) dev = std::max(dev, std::fabs(y[k] - lay[k]));
-            if (dev < 18) break;
+            bool kept = true;  // (held to the grade everywhere: its two ends, too far apart in height for the way between, are not)
+            for (int k = 0; k < n; k++) {
+                dev = std::max(dev, std::fabs(y[k] - lay[k]));
+                if (k && std::fabs(y[k] - y[k - 1]) > g * (along[k] - along[k - 1]) + 1e-6) kept = false;
+            }
+            if (kept && dev < (e->road ? 30 : 18)) break;  // (a road takes deeper cuts and fills before it's let climb steeper)  // (a road takes deeper cuts and fills before it's let climb steeper)
         }
         // (Its corners rounded, the crests and dips where the grade turns: a running mean, which keeps it to the grade.)
         for (int pass = 0; pass < 2; pass++) {

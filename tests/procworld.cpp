@@ -442,6 +442,34 @@ SCENARIO(procWalls, "procworld/no-walls", "Mountains, valleys and trails without
     }
 }
 
+SCENARIO(procGrades, "procworld/grades", "The roads' and trails' grades over 12 x 12 cells (6 km square) of a few seeds: the steepest, and how much is past each rating's limit") {
+    // (Where a climb couldn't keep to its rating's grade within reach of its nodes, the grade was relaxed rather than leave the
+    // tread far above or below the land: measured, not held. The worst stretch is over 20 m, so one 2 m sample can't make it.)
+    const double lim[3] = {0.15, 0.22, 0.32};
+    double roadLen = 0, roadOver = 0, roadWorst = 0, trailLen = 0, trailOver = 0, trailWorst = 0;
+    for (uint64_t seed : {1ull, 2ull, 123456789ull}) {
+        const ProcWorld& G = ProcWorld::forSeed(seed);
+        for (int64_t i = -6; i < 6; i++)
+            for (int64_t j = -6; j < 6; j++)
+                for (int dir = 0; dir < 2; dir++) {
+                    auto e = G.edge(i, j, dir);
+                    if (!e->on || e->y.size() < 12) continue;
+                    for (size_t k = 0; k + 10 < e->y.size(); k++) {
+                        const double run = e->along[k + 10] - e->along[k], gr = std::fabs(e->y[k + 10] - e->y[k]) / std::max(1e-6, run);
+                        const double seg = e->along[k + 1] - e->along[k];
+                        if (e->road) roadLen += seg, roadOver += gr > 0.12 ? seg : 0, roadWorst = std::max(roadWorst, gr);
+                        else trailLen += seg, trailOver += gr > lim[std::min(2, std::max(0, e->rating))] ? seg : 0, trailWorst = std::max(trailWorst, gr);
+                    }
+                }
+    }
+    char b[300];
+    std::snprintf(b, sizeof b, "roads: %.0f km, the steepest %.0f%%, %.1f%% of their length over 12%%", roadLen / 1000, 100 * roadWorst, 100 * roadOver / std::max(1.0, roadLen));
+    ctx.note(b);
+    std::snprintf(b, sizeof b, "trails: %.0f km, the steepest %.0f%%, %.1f%% of their length over their rating's limit", trailLen / 1000, 100 * trailWorst, 100 * trailOver / std::max(1.0, trailLen));
+    ctx.note(b);
+    ctx.check("there are roads and trails", roadLen > 1000 && trailLen > 1000);
+}
+
 SCENARIO(procCareerHook, "procworld/career-hook", "The career's world save line: a new world's seed, and a saved one built again round where it was left") {
     ctx.check("not a procedural line: refused", !ProcWorld::useSaveLine("map=backcountry"));
     ctx.check("a new world's line", ProcWorld::useSaveLine("map=procedural seed=777") && World::procSeed == 777 && !World::procOriginSet);
