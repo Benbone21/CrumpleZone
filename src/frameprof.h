@@ -111,3 +111,32 @@ BenchPose benchPose(double cx, double cz, double t, double radius, double h, dou
 
 // The process-wide profile (the game and the renderer share it).
 FrameProfile& frameProfile();
+
+// Named pieces of the frame thread's work (FRAMEWORK("stream.terrain") over a scope): their ms add up per frame, and
+// the last whole frame's are kept (beginFrame turns them over), so the frame log can say which piece a spike spent its
+// time in. Frame thread only; a few dozen names at most.
+struct FrameWork {
+    const char* name;
+    double ms;
+};
+void frameWorkAdd(const char* name, double ms);
+const std::vector<FrameWork>& frameWorkLast();  // the last whole frame's, in first-seen order
+double frameWorkNowMs();
+// The calling thread's CPU time (ms), involuntary context switches and major page faults so far (Linux; elsewhere zeros):
+// a frame whose wall time is well over its CPU time waited (on the GPU, a lock, another thread) or wasn't scheduled.
+struct ThreadUsage {
+    double cpuMs = 0;
+    long preempted = 0, majorFaults = 0;
+};
+ThreadUsage threadUsage();
+struct FrameWorkScope {
+    const char* name;
+    double t0;
+    explicit FrameWorkScope(const char* n) : name(n), t0(frameWorkNowMs()) {}
+    ~FrameWorkScope() { frameWorkAdd(name, frameWorkNowMs() - t0); }
+    FrameWorkScope(const FrameWorkScope&) = delete;
+    FrameWorkScope& operator=(const FrameWorkScope&) = delete;
+};
+#define FRAMEWORK_CAT2(a, b) a##b
+#define FRAMEWORK_CAT(a, b) FRAMEWORK_CAT2(a, b)
+#define FRAMEWORK(name) FrameWorkScope FRAMEWORK_CAT(frameWork_, __LINE__)(name)
