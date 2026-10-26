@@ -660,7 +660,14 @@ uniform int uVehicle;  // catalog body style: EF, Jesko, Bronco, 4Runner
 // y up, z across) and these are its lines: floor, belt, roof, hood front | front x,
 // half width, windshield base x, roof front x | B-pillar x, C-pillar x, liftgate
 // bottom y, liftgate half width | trim top y, roof tuck, rear x, liftgate top x.
-uniform int uShell;      // 1 4Runner, 2 Bronco, 3 Civic, 4 Tacoma (uShD.w: its cab's back x), 5 K5 Blazer, 6 Baja Bug (uShD.w: where the roof meets the deck)
+// (CAR_SHELL: each shell has a program of its own, Renderer::progCarShell, so the compiler drops the other shells' code:
+// one program with all of them took Apple's software renderer over ten minutes to build at its first draw.)
+#ifdef CAR_SHELL
+#define uShell CAR_SHELL
+#else
+uniform int uShell;
+#endif
+//                       1 4Runner, 2 Bronco, 3 Civic, 4 Tacoma (uShD.w: its cab's back x), 5 K5 Blazer, 6 Baja Bug (uShD.w: where the roof meets the deck)
 uniform vec4 uShA, uShB, uShC, uShD;
 uniform vec4 uShE;       // front door's front edge x, gate top y, bumper top y, wheel opening top y
 out vec4 oCol;
@@ -2622,7 +2629,13 @@ bool Renderer::init(const World& world, std::string& err) {
     const std::string header = "#version 330 core\n";
     const double lpShaders0 = loadprof::nowMs();
     progLit = linkProgram(kLitVS, header + kCommonFS + kLitIns + kTerrainProcFS + kLitFSBody, err);
-    progCar = linkProgram(kCarVS, header + kCommonFS + kCarFSBody, err);
+    static const bool oneCarProg = std::getenv("CZ_CAR_ONEPROG") != nullptr;  // (for comparison: one program for every shell, as before)
+    for (int s = 0; s < kCarShells; s++) {  // (a program per body shell: see CAR_SHELL in kCarFSBody)
+        progCarShell[s] = oneCarProg && s ? progCarShell[0]
+                                          : linkProgram(kCarVS, header + (oneCarProg ? std::string() : "#define CAR_SHELL " + std::to_string(s) + "\n") + kCommonFS + kCarFSBody, err);
+        if (!progCarShell[s]) return false;
+    }
+    progCar = progCarShell[0];
     progDepth = linkProgram(kDepthVS, kDepthFS, err);
     progParts = linkProgram(std::string(kPartsXf) + kPartsVS, header + kCommonFS + kLitIns + kTerrainProcFS + kLitFSBody, err);
     progPartsDepth = linkProgram(std::string(kPartsXf) + kPartsDepthVS, kDepthFS, err);
@@ -4892,14 +4905,23 @@ int Renderer::skinLod(const CarSlot& slot) const {
     return L;
 }
 
-void Renderer::drawCarBodies(const Sim& sim, GLuint prog, bool glassPass) {
+void Renderer::drawCarBodies(const Sim& sim, GLuint prog, bool glassPass, const std::function<void(GLuint)>& use) {
+    const bool bodyPass = prog == progCar;
+    GLuint current = prog;
     for (size_t ci = 0; ci < sim.cars.size() && ci < carSlots.size(); ci++) {
         if (!carShown(ci)) continue;
         const Car& car = sim.cars[ci];
         const CarSlot& slot = carSlots[ci];
         if (!slot.tpl) continue;
         const VisualTemplate& t = *static_cast<const VisualTemplate*>(slot.tpl);
-        if (prog == progCar) {
+        if (bodyPass) {
+            const GLuint want = t.shell >= 0 && t.shell < kCarShells ? progCarShell[t.shell] : progCar;
+            if (want != current) {
+                if (use) use(want);
+                else UseProgram(want);
+                current = want;
+            }
+            prog = current;
             Uniform3f(uniformLocation(prog, "uPaint"), (float)car.color.x, (float)car.color.y, (float)car.color.z);
             Uniform1i(uniformLocation(prog, "uPass"), glassPass ? 1 : 0);
             Uniform1f(uniformLocation(prog, "uBrake"), (float)std::max(car.brake, car.handbrake * 0.6));
@@ -5674,19 +5696,23 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         setLighting(progLit);
     }
     passMark(FP_OPAQUE);
+    auto stage = [&](const char* s) { if (stageMarks) loadprof::phase(s); };  // (the first frame's hang report: which draw)
+    stage("OPAQUE: car parts and wheels");
     BindVertexArray(dynVao);
     carKind_ = 3, carDrawArrays(0, (GLsizei)partVerts.size());
     drawCarParts(sim, progLit);
     drawWheels(sim, progLit);
     if (partRows) {  // the cars' mechanical parts (CarModels)
+        stage("OPAQUE: car models");
         setLighting(progParts);
         bindTerrainTex(progParts);
         Uniform1i(uniformLocation(progParts, "uMap"), mapId);
         drawCarModels(progParts);
     }
 
+    stage("OPAQUE: car bodies");
     setLighting(progCar);
-    drawCarBodies(sim, progCar, false);
+    drawCarBodies(sim, progCar, false, setLighting);
 
     // The ground last of the solid things, nearest chunks first: what's in front of it (cars, rocks, trees, grass, nearer
     // hills) has its depth down already, so the ground's costly shader only runs where the ground shows.
@@ -5800,7 +5826,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         Enable(GL_BLEND);
         BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         DepthMask(0);
-        drawCarBodies(sim, progCar, true);
+        drawCarBodies(sim, progCar, true, setLighting);
         DepthMask(1);
         Disable(GL_BLEND);
     }
@@ -5975,6 +6001,7 @@ void Renderer::preload(const World& world) {
 
 void Renderer::passMark(FramePass p) {
     if (syncTiming) Finish();
+    if (stageMarks) loadprof::phase(framePassName(p));
     frameProfile().enter(p);
     if (!gpuTiming) return;
     GpuMarks& m = gpuMarks_[gpuMarkFrame_];
