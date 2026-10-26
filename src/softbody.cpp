@@ -2471,13 +2471,31 @@ bool Car::finite() const {
 // =============================================================================
 // Sim
 
+void Sim::clearWorldLeftovers(int keep, bool keepRemotes) {
+    for (int i = (int)cars.size() - 1; i >= 0; i--)
+        if (i != keep && !(keepRemotes && cars[i].remote)) {
+            carRemoved(i);
+            cars.erase(cars.begin() + i);
+            if (keep > i) keep--;
+        }
+    player = keep >= 0 ? keep : 0;
+    if (keep >= 0) dropRopes(keep);
+    if (!keepRemotes) ropes.clear(), cables.clear();
+    handLine = HandLine();
+    handCable = HandCable();
+    setAnchors.clear();
+    looseWheels.clear();
+    droppedParts.clear();
+    playerAway = false;
+    // (the vectors' memory too: a crowded world's shouldn't stay held by the next)
+    looseWheels.shrink_to_fit();
+    if (cars.empty()) std::vector<Car>().swap(cars);
+}
+
 void Sim::setup() {
     loadprof::Scope lpSetup("sim.setup (cars)");
     const auto& cat = vehicleCatalog();
-    cars.clear();
-    ropes.clear();
-    handLine = HandLine();
-    setAnchors.clear();
+    clearWorldLeftovers(-1);
     refillAnchors();
     cars.reserve(kMaxBodies);
     colorIndex = 0;
@@ -2496,10 +2514,7 @@ void Sim::setup() {
 }
 
 void Sim::setupEmpty() {
-    cars.clear();
-    ropes.clear();
-    handLine = HandLine();
-    setAnchors.clear();
+    clearWorldLeftovers(-1);
     cars.reserve(kMaxBodies);
     colorIndex = 0;
     player = 0;
