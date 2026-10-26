@@ -11,6 +11,7 @@
 
 #include "mathx.h"
 #include "mods.h"
+#include "paint.h"
 
 class Sim;
 class Car;
@@ -27,6 +28,9 @@ bool restore(Sim& sim, Car& c, const std::string& text);
 // The catalog vehicle the text is for (-1: none), and its mods.
 int vehicleOf(const std::string& text);
 ModSet modsOf(const std::string& text);
+// Its paint (paint=BODY:ACCENT:FINISH, as garage.txt writes them; a factory paint isn't written). False (out
+// untouched) when the text has none or it's junk. restore() doesn't paint the car: the caller does (Car::setPaint).
+bool paintOf(const std::string& text, CarPaint& out);
 // The same condition, stood somewhere else: its place (com, rot as net::dentPose gives them) replaced ("" if the text
 // isn't a condition).
 std::string posed(const std::string& text, const V3& com, const Quat& rot);

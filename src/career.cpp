@@ -349,7 +349,7 @@ bool parseCareer(std::istream& f, Career& c) {
         else if (k == "stock") {  // "stock N KEY"
             const size_t sp2 = v.find(' ');
             if (sp2 != std::string::npos) c.stock[v.substr(sp2 + 1)] = std::atoi(v.substr(0, sp2).c_str());
-        } else if (k == "veh") {  // "veh INDEX WORLD P0 P1 P2 P3 P4 [drove=SECONDS]" (the picks as in garage.txt)
+        } else if (k == "veh") {  // "veh INDEX WORLD P0 P1 P2 P3 P4 [drove=SECONDS] [paint=BODY:ACCENT:FINISH]" (the picks as in garage.txt)
             std::istringstream is(v);
             OwnedVehicle ov;
             int p[MOD_SLOTS];
@@ -360,6 +360,14 @@ bool parseCareer(std::istream& f, Career& c) {
             if (!ok) continue;
             for (std::string extra; is >> extra;)  // (later keys after the picks: "drove=SECONDS")
                 if (extra.rfind("drove=", 0) == 0) ov.drove = std::atof(extra.c_str() + 6);
+                else if (extra.rfind("paint=", 0) == 0) {  // (junk: the factory's)
+                    std::string p = extra.substr(6), b, a;
+                    for (char& ch : p)
+                        if (ch == ':') ch = ' ';
+                    std::istringstream ps(p);
+                    int f = 0;
+                    if (ps >> b >> a >> f) paintFromText(b, a, f, ov.paint);
+                }
             if (ov.world == "-") ov.world.clear();
             for (int i = 0; i < MOD_SLOTS; i++) ov.mods.pick[i] = std::min(std::max(p[i], 0), (int)modOptions(ov.vehicle, i).size() - 1);
             slotOf.back() = (int)c.vehicles.size();
@@ -437,6 +445,12 @@ bool Career::saveProfile() const {
             char buf[48];
             std::snprintf(buf, sizeof buf, " drove=%.3f", v.drove);
             text += buf;
+        }
+        if (!v.paint.factory()) {
+            std::string p = paintToText(v.paint);
+            for (char& ch : p)
+                if (ch == ' ') ch = ':';
+            text += " paint=" + p;
         }
         text += '\n';
         if (!v.condition.empty()) text += "cond " + std::to_string(i) + ' ' + escapeLine(v.condition) + '\n';

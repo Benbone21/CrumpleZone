@@ -454,3 +454,53 @@ SCENARIO(careerSessionStationSwap, "career/session-station-swap", "Changing vehi
     ctx.check("continued: both out, you in the Blazer",
               vehiclesIn(sim2) == 2 && sim2.cars[sim2.player].spec->model == blazer && slotCar(sim2, 1) && slotCar(sim2, 1)->spec->model == tacoma);
 }
+
+SCENARIO(careerSessionPaint, "career/session-paint", "A career truck keeps its own paint: in profile.txt with it, back on it when the world's continued; a crew world's left vehicle keeps its paint in its condition") {
+    const std::string dir = freshDir("session-paint");
+    ScopedCareerDir scope(dir);
+    const int bronco = catalogIndex("bronco");
+    ctx.sim.setupEmpty();
+    WorldSave w = newWorld("Paint", MAP_PROVING_GROUND, DIFF_MEDIUM, MODE_PERSONAL, {});
+    CareerSession s;
+    careersession::begin(s, ctx.sim, w, "ANN", bronco);
+    CarPaint p;
+    p.setBody(0.8, 0.1, 0.1), p.setAccent(0.1, 0.1, 0.8), p.finish = PF_METALLIC;
+    Car& car = ctx.sim.cars[ctx.sim.player];
+    car.setPaint(p);  // (as the garage's PAINT page does in a world: main.cpp shopResult)
+    s.profile.vehicles[car.careerSlot].paint = p;
+    const std::string cond = carsave::capture(ctx.sim, car);
+    CarPaint fromCond;
+    ctx.check("the condition carries the paint", carsave::paintOf(cond, fromCond) && fromCond == p);
+    {
+        car.paint = CarPaint();
+        CarPaint x;
+        ctx.check("a factory paint isn't written", !carsave::paintOf(carsave::capture(ctx.sim, car), x));
+        car.setPaint(p);
+    }
+    careersession::end(s, ctx.sim);
+    Career back;
+    ctx.check("the profile loads", back.loadProfile() && back.vehicles.size() == 1);
+    ctx.check("its paint came back with it", !back.vehicles.empty() && back.vehicles[0].paint == p);
+
+    Sim sim2;
+    sim2.setupEmpty();
+    WorldSave w2;
+    ctx.check("the world loads", loadWorld(w.slug, w2));
+    CareerSession s2;
+    careersession::begin(s2, sim2, w2, "ANN");
+    ctx.check("continued, it wears its paint", sim2.cars[sim2.player].paint == p);
+
+    // A crew world's vehicle left by someone else: its paint is in its condition.
+    Sim sim3;
+    sim3.setupEmpty();
+    WorldSave crew = newWorld("Crew", MAP_PROVING_GROUND, DIFF_MEDIUM, MODE_CREW, {});
+    LeftVehicle lv;
+    lv.vehicle = bronco;
+    lv.condition = cond;
+    crew.left.push_back(lv);
+    CareerSession s3;
+    s3.write = false;
+    careersession::begin(s3, sim3, crew, "ANN", bronco);
+    const Car* left = slotCar(sim3, -2);
+    ctx.check("the left vehicle wears its paint", left && left->paint == p);
+}

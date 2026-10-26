@@ -2263,7 +2263,8 @@ int main(int argc, char** argv) {
             hud.toast("THE GARAGE IS AT THE REPAIR STATIONS: DRIVE ONTO ONE'S PAD");
             return false;
         }
-        garageShop.begin(c.spec->model, garage.fitted[c.spec->model], career, career.on, at >= 0, garage.paint[c.spec->model]);
+        const bool ownPaint = careerRun.active && c.careerSlot != -1;  // (a career world's vehicle: its own paint, not the garage's)
+        garageShop.begin(c.spec->model, garage.fitted[c.spec->model], career, career.on, at >= 0, ownPaint ? c.paint : garage.paint[c.spec->model]);
         shopToast.clear();
         shopDrag = false;
         // (shopBlend carries on: reopened while it eases out, the camera turns back from where it is)
@@ -2292,8 +2293,15 @@ int main(int argc, char** argv) {
             shopRecal = garageShop.recal;
         }
         if (r.painted) {
-            garage.paint[garageShop.vehicle] = garageShop.paint;
-            if (!scripted) garage.save(garagePath);
+            Car& pc = sim.cars[sim.player];
+            if (careerRun.active && pc.careerSlot != -1) {  // (that truck's own: it goes in the career save with it)
+                pc.setPaint(garageShop.paint);
+                if (pc.careerSlot >= 0 && pc.careerSlot < (int)career.vehicles.size()) career.vehicles[pc.careerSlot].paint = garageShop.paint;
+                saveCareer();
+            } else {
+                garage.paint[garageShop.vehicle] = garageShop.paint;
+                if (!scripted) garage.save(garagePath);
+            }
         }
         if (r.close) {
             shopDrag = false;
@@ -6176,9 +6184,10 @@ int main(int argc, char** argv) {
                 cam.userYaw = y, cam.pitch = p, cam.idle = 0;
             }
         }
-        // ---- paint: every vehicle of mine wears its garage paint (the others' come over the net: net.cpp)
+        // ---- paint: every vehicle of mine wears its garage paint (the others' come over the net: net.cpp; a career world's
+        // vehicles wear their own, from the save: careersession.cpp)
         for (Car& c : sim.cars)
-            if (!c.remote && !c.paintKept && !c.isProp() && c.spec && c.spec->model >= 0 && c.spec->model < (int)garage.paint.size() && c.paint != garage.paint[c.spec->model])
+            if (!c.remote && !c.paintKept && !c.isProp() && !(careerRun.active && c.careerSlot != -1) && c.spec && c.spec->model >= 0 && c.spec->model < (int)garage.paint.size() && c.paint != garage.paint[c.spec->model])
                 c.setPaint(garage.paint[c.spec->model]);
         // ---- the garage (garageshop.h): the truck wearing what it shows, the part on its plinth, the garage camera
         bool shopModel = false;

@@ -17,6 +17,7 @@
 #include "fixes.h"
 #include "mathx.h"
 #include "mods.h"
+#include "paint.h"
 
 class World;
 
@@ -51,6 +52,7 @@ std::vector<CacheSpot> cacheSpots(const World& world);
 struct OwnedVehicle {
     int vehicle = 0;         // index into vehicleCatalog()
     ModSet mods;
+    CarPaint paint;          // its own (a career truck keeps its colour; the garage's per-vehicle paint is sandbox's)
     std::string world;       // the slug of the world it was left in
     std::string condition;   // the carsave text (damage and wear); "" = factory fresh
     double drove = -1;       // its world's playedSeconds when you were last in it (-1: never): you get back into the latest

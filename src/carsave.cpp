@@ -389,6 +389,12 @@ std::string capture(const Sim& sim, const Car& c) {
     s += std::string(" hydro=") + (c.hydrolocked ? '1' : '0') + " dead=" + (c.engineDead ? '1' : '0');
     s += " psi=" + num(c.tirePsi);
     s += " bat=" + num(c.battery);
+    if (!c.paint.factory()) {  // (body:accent:finish, '-' for a factory colour)
+        std::string p = paintToText(c.paint);
+        for (char& ch : p)
+            if (ch == ' ') ch = ':';
+        s += " paint=" + p;
+    }
     s += " hood=" + gateText(c.hood) + " gate=" + gateText(c.gate);
     // Each wheel: flags:tie-rod bend:the wheel on it (radius, rim, width, spin inertia, mass, rim style).
     s += " wheels=";
@@ -434,6 +440,15 @@ ModSet modsOf(const std::string& text) {
         if (p[k] < 0 || p[k] >= (double)modOptions(v, k).size() || p[k] != std::floor(p[k])) return ModSet();
     for (int k = 0; k < MOD_SLOTS; k++) m.pick[k] = (int)p[k];
     return m;
+}
+
+bool paintOf(const std::string& text, CarPaint& out) {
+    std::map<std::string, std::string> kv;
+    if (!fields(text, kv) || !kv.count("paint")) return false;
+    const std::vector<std::string> p = split(kv["paint"], ':');
+    int finish = 0;
+    if (p.size() != 3 || !toInt(p[2], finish)) return false;
+    return paintFromText(p[0], p[1], finish, out);
 }
 
 std::string posed(const std::string& text, const V3& com, const Quat& rot) {

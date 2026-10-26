@@ -33,7 +33,7 @@ void freshSpot(const Sim& sim, int n, V3& at, double& yaw) {
 // One saved vehicle into the sim: built as the condition says (else as `fallback`, stock), and put back where and how
 // it was left; factory fresh at the next free spot when it has no saved place. With `there`: as it was saved (stock if
 // the catalog lost it), but stood there, facing thereYaw. Returns its index in sim.cars.
-int place(CareerSession& s, Sim& sim, int slot, const std::string& condition, int fallback, ModSet mods, int& freshCount,
+int place(CareerSession& s, Sim& sim, int slot, const std::string& condition, int fallback, ModSet mods, CarPaint paint, int& freshCount,
           const V3* there = nullptr, double thereYaw = 0) {
     int vehicle = carsave::vehicleOf(condition);
     if (vehicle >= 0) mods = carsave::modsOf(condition);
@@ -49,6 +49,8 @@ int place(CareerSession& s, Sim& sim, int slot, const std::string& condition, in
     Car& c = sim.cars[ci];
     c.careerSlot = slot;
     s.placed[slot] = vehicle;
+    if (slot <= -2) carsave::paintOf(condition, paint);  // (a crew world's left vehicle: the paint in its condition; yours: the profile's)
+    c.setPaint(paint);
     c.handbrake = 1;
     const V3 built = c.frame().com;
     if (there) {  // (its condition, with the place it was built at)
@@ -107,21 +109,21 @@ void begin(CareerSession& s, Sim& sim, const WorldSave& w, const std::string& pl
     for (int k = 0; k < (int)s.profile.vehicles.size(); k++) {
         const OwnedVehicle& ov = s.profile.vehicles[k];
         if (ov.world != w.slug) continue;
-        const int ci = place(s, sim, k, ov.condition, ov.vehicle, ov.mods, freshCount);
+        const int ci = place(s, sim, k, ov.condition, ov.vehicle, ov.mods, ov.paint, freshCount);
         const double when = startVehicle >= 0 && k + 1 == (int)s.profile.vehicles.size() ? 1e300 : ov.drove;  // (a new world: you start in the new one)
         if (when > latest) latest = when, you = ci;
     }
     if (w.mode == MODE_CREW)
         for (int k = 0; k < (int)s.world.left.size(); k++) {
             const LeftVehicle& lv = s.world.left[k];
-            place(s, sim, -2 - k, lv.condition, lv.vehicle, ModSet(), freshCount);
+            place(s, sim, -2 - k, lv.condition, lv.vehicle, ModSet(), CarPaint(), freshCount);
         }
     if (you < 0) {  // (nothing of yours here: a starter, so you aren't left on foot with nothing)
         OwnedVehicle ov;
         ov.vehicle = firstStarter();
         ov.world = w.slug;
         s.profile.vehicles.push_back(ov);
-        you = place(s, sim, (int)s.profile.vehicles.size() - 1, "", ov.vehicle, ModSet(), freshCount);
+        you = place(s, sim, (int)s.profile.vehicles.size() - 1, "", ov.vehicle, ModSet(), CarPaint(), freshCount);
     }
     sim.player = you;
     sim.cars[you].handbrake = 0;
@@ -142,6 +144,7 @@ void capture(CareerSession& s, const Sim& sim) {
             ov.condition = text;
             ov.vehicle = carsave::vehicleOf(text);
             ov.mods = carsave::modsOf(text);
+            ov.paint = c.paint;
             ov.world = s.world.slug;
             if (ci == sim.player) ov.drove = s.world.playedSeconds;
         } else if (c.careerSlot <= -2 && -2 - c.careerSlot < (int)s.world.left.size()) {
@@ -219,7 +222,7 @@ bool swapTo(CareerSession& s, Sim& sim, int k, std::string& why) {
     const double yaw = std::atan2(-f.fwd.z, f.fwd.x);
     cur.handbrake = 1;
     int fresh = 0;
-    const int ci = place(s, sim, k, ov.condition, ov.vehicle, ov.mods, fresh, &at, yaw);
+    const int ci = place(s, sim, k, ov.condition, ov.vehicle, ov.mods, ov.paint, fresh, &at, yaw);
     sim.player = ci;
     sim.cars[ci].handbrake = 0;
     sim.cars[ci].wake();
