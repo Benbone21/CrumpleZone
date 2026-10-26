@@ -153,3 +153,74 @@ A trail follows the land and climbs steeper rather than ride a causeway. Trails 
 
 ## Not in scope
 Waterfalls, lakes, obstacle sections on black trails, and map reveal. These are already on the list from the first build.
+
+## Slice: land shape with real drainage (design, 2026-10-26)
+Follows docs/plans/procworld-rules.md sections 2 and 3. Status: designed, not built (see "Handover" at the end).
+
+### Why the current rivers can't be patched into this
+- Today's rivers are contour lines of a warped noise field (`Macro::riverS/creekS`). Their water sits at a separate smooth level (`drain`), and their valleys are carved down to it afterwards.
+- There are no sources and no joining. Checkpoint 1 made them safe: nothing is filled, rings and tight bends fade, and a channel fades where the land isn't 3 m above it.
+- But they still cross ridges in gorges. When the ranges were raised to 1.5–2.5 km, those gorges made 14% of the ground steeper than 2:1. The fix for that removed the start windows' water altogether.
+- So the land must be shaped around the drainage, not the drainage cut into the land.
+
+### Design: drainage first, then the land round it
+1. **The drainage lattice.**
+   - One node per D = 160 m cell, jittered within it.
+   - Each node has a routing height: the large-scale land only. That is the continent swell, plus a smooth massif along each range belt (highest along the belt's axis), plus a gentle low-frequency tilt. There are no hills and no ridged detail, so there are almost no pits.
+2. **Flow.**
+   - Each node drains to the neighbour (of 8) with the smallest key (routing height, then hash), but only if that key is smaller than its own.
+   - Because the key strictly decreases downstream, the network is a forest of trees: no loops, by construction.
+   - A node with no lower neighbour is a sink: a lake basin, with its level at the lowest rim neighbour's height.
+3. **Accumulation.**
+   - A(n) = 1 + the sum of A over the nodes that drain into n.
+   - Memoised in a sharded global cache. A cap of ~30k nodes guards against huge basins.
+   - It is a pure function of seed and node, so it is the same on every machine and in every window.
+   - **Creek:** A ≥ ~12 (about 0.3 km²).
+   - **Big river:** A ≥ ~400 (about 10 km²). Tune for about one big river every 5 km.
+4. **Channels.**
+   - The node-to-downstream segments, smoothed (Chaikin, together with the main stem upstream and downstream) and meandered by a small perpendicular noise.
+   - Width and depth grow with A. Big rivers are 1.5–2 m deep and fast; creeks are 0.3–0.5 m.
+5. **Bed level.**
+   - level(n) = min(the node's valley floor, the highest upstream level − grade × length).
+   - Computed and memoised like A, so it never rises downstream.
+6. **The land is built round the channels.**
+   - h = level(nearest channel) + valleyProfile(distance, A) + relief × ridgeMask(distance to the nearest channel).
+   - The profile is −depth in the channel and rises monotonically. Banks are gentle on soil (about 1:2.5), steeper in rock bands.
+   - Relief (the ridged field, the peaks) grows with distance from the channels and with the range belt.
+   - Ridgelines therefore fall naturally between drainages. Passes fall where two valley heads meet: the low points of the crest.
+   - Peak height 1.5–2.5 km is reached far from the channels, inside the belts.
+   - The bed is at or below the banks by construction.
+7. **Queries.**
+   - A chunk gathers the channel segments of the nodes within the widest valley's reach (about 10 cells, 21² nodes), culled by bounding box.
+   - The 4 m macro lattice reads distance, level and A from that list.
+   - `groundHeight` (for trail routing and places) uses a thread-local cache of gathered blocks.
+8. **Crossings.**
+   - A trail edge crossing a creek fords it, as today.
+   - Big rivers are given known fords, one every ~2–3 km along each river: a riffle where the bed is raised to about 0.4 m over 20–30 m.
+   - Trail A* makes crossing a big river very expensive except at a known ford, or at a bridge cell on main trails (a fraction of them).
+   - A bridge is a timber or log deck, made as boxes plus a model, stand-ins like the places'.
+9. **Lakes and waterfalls** (a follow-up inside the slice).
+   - A sink's basin fills to its spill level; water where the land is below it.
+   - Tarns are small sinks high up.
+   - Falls go only where the land profile along a channel drops more than ~6 m within ~10 m (rock steps). Each gets a plunge pool (the bed deepened below it) and a falls mesh.
+10. **Then:**
+    - Raise `terrain.ranges.peak_height` so peaks reach 1.5–2.5 km.
+    - Refit `biome.alpine.tree_line` to the new heights. The snow is already at full height.
+    - Biome roughness per section 2 goes in the biome rows.
+
+### Tests to add
+- **Bed at or below the banks:** every water sample ≤ the ground 30 m to either side, across the flow.
+- **Never rising downstream:** along every channel polyline, the level never rises (except into a lake).
+- **Tree-shaped:** each node's downstream chain ends in a sink within a bounded number of steps, and no node is visited twice.
+- **River spacing:** a 20 km transect crosses about 3–5 big rivers, and every range valley has a creek.
+- **No walls:** `procworld/no-walls`, `procworld/earthworks` and `procworld/grades` no worse than today's:
+  - main trails: 7.7% of length over 12%, steepest 40%;
+  - trails: 1.6% over their rating's limit;
+  - earthworks sides: worst 3.9 m a metre (main trails) and 2.9 m a metre (trails).
+- **Peaks:** at least one peak over 1.5 km per 100 km², each with snow over 2 km.
+
+### Handover
+- Estimated size: about 500 lines for the drainage core (lattice, cache, accumulation, levels, channel query); about 200 for rebuilding `land()`/`macroAt()` round it; about 200 of tests.
+- Then tuning: trails, places and biomes all read the land. Every procworld test needs re-measuring.
+- It touches only `src/procworld.*` and `src/procrules.*` (new `[water]`/`[terrain]` keys). No render or tree-draw code: no conflict with wip/fartrees.
+- Bridges need a deck model or boxes in `buildPlaces`-style code (procworld.cpp).
