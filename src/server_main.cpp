@@ -33,6 +33,7 @@
 #include "bgwork.h"
 #include "daylight.h"
 #include "net.h"
+#include "procrules.h"
 #include "procworld.h"
 #include "props.h"
 #include "softbody.h"
@@ -169,6 +170,7 @@ Options parseArgs(int argc, char** argv) {
 int main(int argc, char** argv) {
     Options opts = parseArgs(argc, argv);
     if (opts.bad) return 2;
+    proc::loadShippedRules();  // (before any land is made)
     if (!opts.passwordFile.empty()) {
         std::ifstream f(opts.passwordFile);
         std::string line;
@@ -275,7 +277,7 @@ int main(int argc, char** argv) {
         // The procedural world: its window follows the players (the middle of the box round their vehicles), told 3 s ahead and
         // swapped by everyone at that moment on the shared clock. (Built on a worker; the server only keeps the land and the solids.)
         if (sim.world.map == MAP_PROCEDURAL) {
-            net.proc.on = true, net.proc.gen = (uint16_t)proc::kGenVersion, net.proc.seed = sim.world.proc.seed;
+            net.proc.on = true, net.proc.gen = proc::genStamp(), net.proc.seed = sim.world.proc.seed;
             net.proc.ox = sim.world.proc.ox, net.proc.oz = sim.world.proc.oz;
             const double shared = net.sharedTime(t);
             if (!net.shiftPending()) {

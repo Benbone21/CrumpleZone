@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include "render.h"
+#include "procrules.h"
 #include "procworld.h"
 #include "loadprof.h"
 #include "watermesh.h"
@@ -5831,7 +5832,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     if (mapId == MAP_MOUNTAIN) Uniform2f(uniformLocation(progLit, "uRockSnow"), 165.0f, 205.0f);
     else if (mapId == MAP_FRONTIER) Uniform2f(uniformLocation(progLit, "uRockSnow"), 125.0f, 400.0f);  // (its snow is painted on)
     else if (mapId == MAP_BACKCOUNTRY) Uniform2f(uniformLocation(progLit, "uRockSnow"), 105.0f, 400.0f);  // (its snow is painted on)
-    else if (mapId == MAP_PROCEDURAL) Uniform2f(uniformLocation(progLit, "uRockSnow"), 560.0f, 880.0f);  // (bare rock high in its ranges; its snow is painted on)
+    else if (mapId == MAP_PROCEDURAL) Uniform2f(uniformLocation(progLit, "uRockSnow"), (float)proc::rules().alpine.treeLine, (float)proc::rules().alpine.snowDust);  // (bare rock high in its ranges; its snow is painted on)
     else Uniform2f(uniformLocation(progLit, "uRockSnow"), 60.0f, 240.0f);
     passMark(FP_OPAQUE);
     UseProgram(progLit);
@@ -5946,7 +5947,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         if (mapId == MAP_MOUNTAIN) Uniform2f(uniformLocation(progGrass, "uRockSnow"), 165.0f, 205.0f);
         else if (mapId == MAP_FRONTIER) Uniform2f(uniformLocation(progGrass, "uRockSnow"), 125.0f, 400.0f);
         else if (mapId == MAP_BACKCOUNTRY) Uniform2f(uniformLocation(progGrass, "uRockSnow"), 105.0f, 400.0f);
-        else if (mapId == MAP_PROCEDURAL) Uniform2f(uniformLocation(progGrass, "uRockSnow"), 560.0f, 880.0f);
+        else if (mapId == MAP_PROCEDURAL) Uniform2f(uniformLocation(progGrass, "uRockSnow"), (float)proc::rules().alpine.treeLine, (float)proc::rules().alpine.snowDust);
         else Uniform2f(uniformLocation(progGrass, "uRockSnow"), 60.0f, 240.0f);
         // Vehicles near the camera, each as a capsule along its wheels, for the grass to bend away from.
         float push[32] = {};
@@ -6079,9 +6080,15 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
             if (mapId == MAP_MOUNTAIN) rs[0] = 165.0f, rs[1] = 205.0f;
             else if (mapId == MAP_FRONTIER) rs[0] = 125.0f, rs[1] = 400.0f;
             else if (mapId == MAP_BACKCOUNTRY) rs[0] = 105.0f, rs[1] = 400.0f;
-            else if (mapId == MAP_PROCEDURAL) rs[0] = 560.0f, rs[1] = 880.0f;
+            else if (mapId == MAP_PROCEDURAL) rs[0] = (float)proc::rules().alpine.treeLine, rs[1] = (float)proc::rules().alpine.snowDust;
             else rs[0] = 60.0f, rs[1] = 240.0f;
             Uniform2f(uniformLocation(prog, "uRockSnow"), rs[0], rs[1]);
+            // (The snow drawn on natural ground: over how many metres it comes in, how much of the ground it covers at most, and how much
+            // lower it comes on a north face. The procedural world's is a dusting from its rules (its snowfields are painted on).)
+            if (mapId == MAP_PROCEDURAL) {
+                const proc::AlpineRule& A = proc::rules().alpine;
+                Uniform3f(uniformLocation(prog, "uSnowLook"), (float)std::max(50.0, A.snowFull - A.snowDust), (float)A.snowDustCover, (float)A.snowNorth);
+            } else Uniform3f(uniformLocation(prog, "uSnowLook"), 50.0f, 1.0f, 0.0f);
             ActiveTexture(GL_TEXTURE0 + 3);
             BindTexture(GL_TEXTURE_2D_ARRAY, groundTex.albedo);
             ActiveTexture(GL_TEXTURE0 + 4);

@@ -948,8 +948,9 @@ void NetSession::handle(Sim* sim, Conn* from, const std::vector<uint8_t>& msg) {
                 proc.sliding = r.get<uint8_t>() != 0, proc.tx = r.get<int64_t>(), proc.tz = r.get<int64_t>(), proc.due = r.get<double>();
                 proc.on = r.ok;
                 proc.sliding = proc.sliding && proc.on;
-                if (!r.ok || proc.gen != (uint16_t)proc::kGenVersion) {
-                    error = r.ok ? "the host's world generator is v" + std::to_string(proc.gen) + ", this game's v" + std::to_string(proc::kGenVersion) + ": update to the same build"
+                if (!r.ok || proc.gen != proc::genStamp()) {
+                    error = r.ok ? ((proc.gen | proc::genStamp()) & 0x8000 ? std::string("the host's procedural world rules (assets/procworld/rules.txt) aren't this game's: use the same file")
+                                                                          : "the host's world generator is v" + std::to_string(proc.gen) + ", this game's v" + std::to_string(proc::kGenVersion) + ": update to the same build")
                                  : "the host's world made no sense";
                     role = OFF;
                     return;

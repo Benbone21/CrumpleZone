@@ -12,6 +12,7 @@ uniform sampler2DArray uGroundB;  // RG tangent normal, B roughness, A ambient o
 #define GQ 2
 #endif
 const int uGroundQ = GQ;
+uniform vec3 uSnowLook;  // natural ground's snow: the metres it comes in over, the most of the ground it covers, how much lower on a north face
 
 #if GQ <= 1
 // LOW and POTATO: value noise from one texture tap (a table of the same lattice hash: the patches fall where HIGH puts them; the bilinear weights are put through the smoothstep by
@@ -223,7 +224,7 @@ void main(){
   gMeadow = lk.x;
   gSteep = mix(smoothstep(0.72, 0.55, N0.y + 0.14 * (gN1 - 0.5)), smoothstep(0.84, 0.62, N0.y + 0.14 * (gN1 - 0.5)), gMeadow);
   gHigh = smoothstep(lk.y, lk.y + 90.0, vPos.y + 30.0 * gN1);
-  gSnowH = smoothstep(lk.z, lk.z + 50.0, vPos.y + 70.0 * gN1) * smoothstep(0.5, 0.75, N0.y);
+  gSnowH = smoothstep(lk.z, lk.z + uSnowLook.x, vPos.y + 70.0 * gN1 + uSnowLook.z * clamp(N0.z * 3.0, 0.0, 1.0)) * uSnowLook.y * smoothstep(0.5, 0.75, N0.y);
   gForest = smoothstep(0.40, 0.65, (lo == 1 ? fbmFew(p * 0.012 + vec2(7.0, -3.0), 1, 3) : fbm(p * 0.012 + vec2(7.0, -3.0), 3))) * smoothstep(6.0, 22.0, vPos.y);
 
 #ifdef X_NONOISE

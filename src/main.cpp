@@ -60,6 +60,7 @@
 #include "bgwork.h"
 #include "places.h"
 #include "procstream.h"
+#include "procrules.h"
 #include "procworld.h"
 #include "debugscreen.h"
 #include "editor.h"
@@ -1785,6 +1786,7 @@ int main(int argc, char** argv) {
     signal(SIGPIPE, SIG_IGN);  // (a multiplayer peer dropping mid-send; macOS has no MSG_NOSIGNAL)
 #endif
     Options opt = parseArgs(argc, argv);
+    proc::loadShippedRules();  // (before any land is made)
     pilotSetAsyncReplans(!std::getenv("CZ_PILOT_SYNC"));  // (the game: replans while driving made in the background; the tests plan in the step)
     if (!opt.real.empty()) {  // (before anything asks for the map list: MAP_REAL is on it when a real terrain is active)
         std::string why;
@@ -5228,7 +5230,7 @@ int main(int argc, char** argv) {
             }
             if (net.role == NetSession::HOST) {  // (what a joining guest is told: procworld.h)
                 net.proc.on = sim.world.map == MAP_PROCEDURAL;
-                net.proc.gen = (uint16_t)proc::kGenVersion, net.proc.seed = sim.world.proc.seed, net.proc.ox = sim.world.proc.ox, net.proc.oz = sim.world.proc.oz;
+                net.proc.gen = proc::genStamp(), net.proc.seed = sim.world.proc.seed, net.proc.ox = sim.world.proc.ox, net.proc.oz = sim.world.proc.oz;
             }
             for (const NetSession::GameMsg& m : net.gameIn) {
                 if (m.player == 0 && m.text.rfind("procshift ", 0) == 0 && net.role == NetSession::CLIENT && sim.world.map == MAP_PROCEDURAL) {  // the host slides the window

@@ -1,0 +1,94 @@
+# Crumple Zone: the procedural world's rules (src/procrules.h). The game reads this file at startup (F5 restarts it).
+# Each line is   key = value   # what it does (units). A key left out, or a line it can't read, keeps the built-in value.
+# Changing these changes the land of every seed: players in a multiplayer game need the same file.
+
+[roads.paved]
+half_width = 3.5                  # m: the tread's half-width
+grade_max = 0.1                   # the steepest grade (rise over run) the routing lets it out to before it takes a deeper cut or fill
+fill_max = 10                     # m: the deepest cut or fill against the land; deeper, and the grade is let out instead
+
+[roads.main]
+half_width = 3                    # m: the tread's half-width
+grade_max = 0.45                  # the steepest grade (rise over run) the routing lets it out to before it takes a deeper cut or fill
+fill_max = 2.5                    # m: the deepest cut or fill against the land; deeper, and the grade is let out instead
+
+[roads.trail]
+half_width = 2                    # m: the tread's half-width
+grade_max = 0.6                   # the steepest grade (rise over run) the routing lets it out to before it takes a deeper cut or fill
+fill_max = 2.5                    # m: the deepest cut or fill against the land; deeper, and the grade is let out instead
+
+[roads.twotrack]
+half_width = 2                    # m: the tread's half-width
+grade_max = 0.7                   # the steepest grade (rise over run) the routing lets it out to before it takes a deeper cut or fill
+fill_max = 1.5                    # m: the deepest cut or fill against the land; deeper, and the grade is let out instead
+
+[roads]
+batter = 2.2                      # earthworks' sides (and places' levelled lots) are this times their depth wide (the steepest part about 1 : batter/1.5)
+
+[water]
+freeboard = 3                     # m: the land stands at least this over a river's or creek's water, or the channel fades (nothing is filled)
+river_bend_min = 220              # m: a river's tightest bend; tighter (a ring, a hairpin) and it fades out
+creek_bend_min = 110              # m: a creek's tightest bend
+bank_batter = 2.5                 # a valley's wall is this times its depth wide (the steepest part about 1 : bank_batter/1.5)
+river_valley_max = 1000           # m: the widest a river valley's wall goes (gorges in the ranges are steeper)
+river_cut_max = 100000            # m: where the land stands this far over a river's level no valley is cut: rivers run between the mountains
+creek_valley_max = 160            # m: the widest a creek valley's wall goes
+
+[terrain.ranges]
+belt_from = 0.4                   # 0..1: where the slow belt field (~9 km features) starts raising a range (less 0.06 x the world's relief)
+belt_full = 0.6                   # 0..1: where a range is at full height
+pass_height = 260                 # m over the lowland: the ranges' high valleys and passes
+peak_height = 820                 # m: the ridges' top over the passes, times the world's relief (0.75-1.25)
+crest_spacing = 1923              # m: about how far apart the crests are (wider: broader, gentler mountains)
+alpine_from = 330                 # m: the alpine biome starts to take over here...
+alpine_full = 560                 # m: ...and is whole here
+alpine_heat_shift = 100           # m: in the coldest country the alpine comes this much lower (in the hottest, higher)
+
+[biome.alpine]
+trees_per_ha = 85                 # trees a hectare on the slopes below the tree line (pines)
+tree_slope_max = 0.75             # no trees on ground steeper than this (rise over run; 0.7 is 35 degrees)
+tree_line = 760                   # m: the height the forest ends at...
+tree_line_wobble = 60             # m: ...give or take this (a slow noise)
+tree_line_fade = 200              # m: below the line the forest thins out over this band
+krummholz = 0.6                   # 0..1: trees at the line are (1 - this) of their height (stunted)
+meadow_share = 0.2                # 0..1: this share of the forested slopes is open meadow (glades ~200 m across)
+conifer_share = 0.93              # 0..1: pines and firs; the rest are dead snags, or aspens low down
+aspen_share = 0.1                 # 0..1: aspens (broadleaf) among the trees at the foot, none from aspen_below up
+aspen_below = 500                 # m: aspens only below this
+rock_band_slope = 0.5             # slopes steeper than this show bands of bare rock (ledges)
+rock_band_spacing = 24            # m: about this far apart up the slope
+rock_band_width = 0.3             # 0..1: this share of each step is bare rock
+scree_slope = 0.4                 # above the tree line, slopes steeper than this are scree (in patches)
+rock_slope = 0.8                  # slopes steeper than this are bare rock
+snow_dust = 820                   # m: a dusting of snow starts here (drawn only: nothing underfoot)
+snow_dust_cover = 0.45            # 0..1: the dusting covers at most this share of the ground (thickening from snow_dust to snow_full)
+snow_patchy = 900                 # m: patches of snow (underfoot) start here, more the higher...
+snow_full = 1150                  # m: ...and the snow lies whole from here
+snow_north = 120                  # m: the snow comes this much lower on a north face
+snow_hollow = 80                  # m: ...and this much lower in a hollow (a gully 10 m or more below the ground 32 m round)
+snow_slope_max = 0.85             # steeper than this the snow slides off (bare rock)
+rocks_per_ha = 45                 # loose rocks and boulders tried a hectare (steep ground keeps more of them)
+
+[trees.meadow]
+per_ha = 22                       # trees a hectare at most
+grove_min = 0.15                  # 0..1: away from groves, this share of per_ha
+conifer = 0.2                     # 0..1: the share of conifers (pines)
+snag = 0.04                       # 0..1: the share of dead snags; the rest are broadleaf
+
+[trees.forest]
+per_ha = 98                       # trees a hectare at most
+grove_min = 0.55                  # 0..1: away from groves, this share of per_ha
+conifer = 0.45                    # 0..1: the share of conifers (pines)
+snag = 0.06                       # 0..1: the share of dead snags; the rest are broadleaf
+
+[trees.badlands]
+per_ha = 6                        # trees a hectare at most
+grove_min = 1                     # 0..1: away from groves, this share of per_ha
+conifer = 0                       # 0..1: the share of conifers (pines)
+snag = 0.55                       # 0..1: the share of dead snags; the rest are broadleaf
+
+[trees.dunes]
+per_ha = 0.7                      # trees a hectare at most
+grove_min = 1                     # 0..1: away from groves, this share of per_ha
+conifer = 0                       # 0..1: the share of conifers (pines)
+snag = 0.55                       # 0..1: the share of dead snags; the rest are broadleaf

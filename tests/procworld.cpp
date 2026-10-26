@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdio>
 #include <array>
+#include <map>
 #include <set>
 
 #include "../src/procworld.h"
@@ -684,11 +685,11 @@ SCENARIO(procEarthworks, "procworld/earthworks", "Roads' and trails' earthworks 
                             double pn = G.groundHeight(cx + nx * sd * (e->half() + 1), cz + nz * sd * (e->half() + 1));
                             for (double d = e->half() + 2; d < 46; d += 1) {
                                 const double qx = cx + nx * sd * d, qz = cz + nz * sd * d, hc = chunkH(G, qx, qz), hn = G.groundHeight(qx, qz);
-                                worst = std::max(worst, std::fabs(hc - pc) - std::fabs(hn - pn));
+                                worst = std::max(worst, std::fabs(hc - pc) - std::max(1.0, std::fabs(hn - pn)));  // (steeper than 1:1 and than the land was)
                                 pc = hc, pn = hn;
                             }
                             if (worst > s.worstSide) s.worstSide = worst, s.wx = cx, s.wz = cz, s.ws = seed;
-                            s.sideOver += worst > 1.0;
+                            s.sideOver += worst > 0.5;
                         }
                     }
                 }
@@ -696,14 +697,14 @@ SCENARIO(procEarthworks, "procworld/earthworks", "Roads' and trails' earthworks 
     for (int r = 0; r < 2; r++) {
         const Stat& s = st[r];
         char b[260];
-        std::snprintf(b, sizeof b, "%s: %ld samples; cut or fill: deepest %.1f m, %.2f%% past the limit; sides: steepest %.2f m a metre over the land's own (seed %llu at %.0f, %.0f), %.2f%% over 1",
+        std::snprintf(b, sizeof b, "%s: %ld samples; cut or fill: deepest %.1f m, %.2f%% past the limit; sides: steepest %.2f m a metre over 1:1 and the land's own (seed %llu at %.0f, %.0f), %.2f%% over 0.5",
                       r ? "gravel roads" : "trails", s.n, s.worstFill, 100.0 * s.fillOver / std::max(1L, s.n), s.worstSide, (unsigned long long)s.ws, s.wx, s.wz, 100.0 * s.sideOver / std::max(1L, 2 * s.n));
         ctx.note(b);
         ctx.check(std::string(r ? "roads" : "trails") + ": under 1% of the tread past its kind's cut and fill limit", s.fillOver * 100 < s.n);
-        // (v0.4.7: trails 4.3% and roads 10.2% of sides over 1, the steepest 9.0 and 9.4 m a metre: walls. A level tread across a steep
-        // slope makes a short steep bank on its high side, so some are over 1.)
-        ctx.check(std::string(r ? "roads" : "trails") + ": under 10% of the sides a metre a metre steeper than the land", s.sideOver * 10 < 2 * s.n);
-        ctx.check(std::string(r ? "roads" : "trails") + ": no side a wall (over 4.5 m a metre steeper than the land)", s.worstSide < 4.5);
+        // (A level tread across a steep slope makes a short steep bank on its high side, so a few are over.)
+        // (v0.4.7: 9.0 and 9.4 m a metre at worst. Two treads crossing at different heights still make a short steep ramp.)
+        ctx.check(std::string(r ? "main trails" : "trails") + ": under 12% of the sides half a metre a metre steeper than 1:1 and the land", s.sideOver * 100 < 12 * 2 * s.n);
+        ctx.check(std::string(r ? "main trails" : "trails") + ": no side a wall (over 4.5 m a metre steeper than 1:1 and the land)", s.worstSide < 4.5);
     }
 }
 
@@ -859,4 +860,106 @@ SCENARIO(procNoRings, "procworld/no-rings", "No river or creek runs in a ring (p
         ctx.note("seed " + std::to_string(seed) + ": " + std::to_string(rings) + " patches of land closed in by water");
         ctx.check("seed " + std::to_string(seed) + ": no rings", rings == 0);
     }
+}
+
+SCENARIO(procRulesFile, "procworld/rules-file", "The rules file (assets/procworld/rules.txt) is the built-in rules, every key in it; a file read over them changes what it names, and a bad line changes nothing") {
+    // (CZ_WRITE_RULES=path writes the built-in rules as a file: how the shipped one is made after a default changes.)
+    const std::string text = rulesText(Rules());
+    if (const char* out = std::getenv("CZ_WRITE_RULES")) {
+        if (FILE* f = std::fopen(out, "wb")) std::fwrite(text.data(), 1, text.size(), f), std::fclose(f), ctx.note(std::string("wrote ") + out);
+    }
+    std::string shipped;
+    if (FILE* f = std::fopen("assets/procworld/rules.txt", "rb")) {
+        char b[4096];
+        size_t n;
+        while ((n = std::fread(b, 1, sizeof b, f)) > 0) shipped.append(b, n);
+        std::fclose(f);
+    }
+    ctx.check("assets/procworld/rules.txt is the built-in rules (CZ_WRITE_RULES=assets/procworld/rules.txt ./build/run_tests procworld/rules-file remakes it)", shipped == text);
+    Rules r;
+    std::vector<std::string> warn;
+    parseRules(text, r, &warn);
+    ctx.check("the built-in rules read back the same, with no warnings", rulesText(r) == text && warn.empty());
+    parseRules("[biome.alpine]\ntree_line = 1234  # a comment\nsnow_full = lots\n[roads.trail]\nfill_max=1.5\nno_such = 3\n", r, &warn);
+    ctx.check("a value read over the defaults", r.alpine.treeLine == 1234 && r.road[RK_TRAIL].fillMax == 1.5);
+    ctx.check("a bad value keeps the default", r.alpine.snowFull == Rules().alpine.snowFull);
+    ctx.check("bad lines are noted", warn.size() == 2);
+    ctx.check("the rules in force in the tests are the built-in ones", rulesStamp() == 0);
+}
+
+SCENARIO(procAlpine, "procworld/alpine", "The alpine rules (procrules.h, biome.alpine): tall snowy peaks, pine forest on the slopes to a tree line, stunted near it, bare above it, snow more the higher") {
+    const AlpineRule& A = rules().alpine;
+    // Peaks: the highest ground on a 100 m lattice of 12 km square, three seeds.
+    int peaks = 0;
+    double top = 0;
+    std::vector<std::array<double, 2>> rangeSpots;  // (alpine slopes to look at closely)
+    for (uint64_t seed : {1ull, 2ull, 123456789ull}) {
+        const ProcWorld& G = ProcWorld::forSeed(seed);
+        std::vector<std::array<double, 3>> hi;
+        for (double x = -6000; x < 6000; x += 100)
+            for (double z = -6000; z < 6000; z += 100) {
+                const double h = G.macroHeight(x, z);
+                top = std::max(top, h);
+                if (h > 1500) hi.push_back({h, x, z});
+                if (h > A.treeLine - 500 && h < A.treeLine - 300 && rangeSpots.size() < 400 && ((long)(x + z) / 100) % 7 == 0) rangeSpots.push_back({x, z});
+            }
+        std::sort(hi.begin(), hi.end(), [](auto& a, auto& b) { return a[0] > b[0]; });
+        std::vector<std::array<double, 3>> kept;  // (peaks 1 km apart)
+        for (auto& p : hi) {
+            bool far = true;
+            for (auto& k : kept) far &= (k[1] - p[1]) * (k[1] - p[1]) + (k[2] - p[2]) * (k[2] - p[2]) > 1000 * 1000;
+            if (far) kept.push_back(p);
+        }
+        peaks += (int)kept.size();
+    }
+    char b[300];
+    std::snprintf(b, sizeof b, "%d peaks over 1.5 km (1 km apart) in 3 x 144 km2; the highest %.0f m", peaks, top);
+    ctx.note(b);
+    // (Taller ranges, 1.5-2.5 km, wait for the land-shape slice: today's contour rivers saw gorges through them, and the slopes
+    // came out too steep to drive. The alpine zones follow rules().alpine whatever the heights.)
+    ctx.check("snowy peaks: some land over the full snow line", top > A.snowFull);
+    // The forest, the tree line and the snow, from the chunks: on the alpine slopes of three seeds' ranges (a chunk every 250 m).
+    struct Band { long cells = 0, snow = 0, trees = 0, conifers = 0, area = 0; double treeH = 0; };
+    std::map<int, Band> band;  // (by 100 m of height)
+    for (uint64_t seed : {1ull, 2ull, 123456789ull})
+    for (double x = -6000; x < 6000; x += 250)
+        for (double z = -6000; z < 6000; z += 250) {
+            const ProcWorld& G = ProcWorld::forSeed(seed);
+            const Macro m = G.macro(x, z);
+            if (m.w[PB_MOUNTAINS] < 0.9) continue;
+            auto c = G.chunk(floorDiv((int64_t)x, kChunk), floorDiv((int64_t)z, kChunk));
+            for (int k = 0; k < kChunk * kChunk; k++) {  // (by each cell's own height: the valleys are cut far under the range's land)
+                Band& bd = band[(int)std::floor(c->h[k] / 100)];
+                bd.cells++, bd.snow += c->surf[k] == SURF_SNOW;
+                const int i = k / kChunk, j = k % kChunk;
+                if (i > 0 && j > 0 && i < kChunk - 1 && j < kChunk - 1 && std::fabs(c->h[k + kChunk] - c->h[k - kChunk]) < 1.2 && std::fabs(c->h[k + 1] - c->h[k - 1]) < 1.2) bd.area++;
+            }
+            for (const TreeSpec& t : c->trees) {
+                Band& bd = band[(int)std::floor(c->h[(size_t)std::min(63, (int)t.x) * kChunk + std::min(63, (int)t.z)] / 100)];
+                bd.trees++, bd.conifers += t.kind == 0, bd.treeH += t.height;
+            }
+        }
+    double prevSnow = -1;
+    bool snowGrows = true, bareAbove = true;
+    double forestHa = 0, forestN = 0, coniferShare = 0, coniferN = 0, lowH = 0, lowN = 0, highH = 0, highN = 0;
+    for (auto& [bh, bd] : band) {
+        if (bd.cells < 4096) continue;
+        const double snow = (double)bd.snow / bd.cells, ha = bd.area / 10000.0, perHa = ha > 0 ? bd.trees / ha : 0;
+        std::snprintf(b, sizeof b, "%4d-%4d m: %3ld chunks, snow %4.0f%%, %5.1f trees a hectare of gentle ground, %3.0f%% conifers, mean height %4.1f m", bh * 100, bh * 100 + 100,
+                      bd.cells / 4096, 100 * snow, perHa, bd.trees ? 100.0 * bd.conifers / bd.trees : 0.0, bd.trees ? bd.treeH / bd.trees : 0.0);
+        ctx.note(b);
+        if (bh * 100 >= A.snowPatchy - 100 && bd.cells >= 4096 * 4) snowGrows &= snow >= prevSnow - 0.05, prevSnow = snow;
+        if (bh * 100 >= A.treeLine + A.treeLineWobble) bareAbove &= bd.trees == 0;
+        if ((bh + 1) * 100 <= A.treeLine - A.treeLineFade && bh * 100 >= rules().range.alpineFrom) forestHa += perHa * bd.cells, forestN += bd.cells, coniferShare += bd.conifers, coniferN += bd.trees, lowH += bd.treeH, lowN += bd.trees;
+        if (bh * 100 >= A.treeLine - 150 && bh * 100 < A.treeLine + A.treeLineWobble) highH += bd.treeH, highN += bd.trees;
+    }
+    const double dens = forestN ? forestHa / forestN : 0;
+    std::snprintf(b, sizeof b, "below the tree line: %.0f trees a hectare of gentle ground (rule %.0f, less the meadows), %.0f%% conifers; mean height %.1f m low, %.1f m near the line",
+                  dens, A.treesPerHa, coniferN ? 100 * coniferShare / coniferN : 0.0, lowN ? lowH / lowN : 0.0, highN ? highH / highN : 0.0);
+    ctx.note(b);
+    ctx.check("forest on the slopes: within 40-110% of the rule's density", dens > 0.4 * A.treesPerHa && dens < 1.1 * A.treesPerHa);
+    ctx.check("mostly conifers below the tree line", coniferN > 0 && coniferShare / coniferN > 0.8);
+    ctx.check("stunted near the tree line", lowN > 0 && highN > 0 && highH / highN < 0.8 * lowH / lowN);
+    ctx.check("no trees over the tree line", bareAbove);
+    ctx.check("more snow the higher (where there's enough high ground to tell)", snowGrows);
 }

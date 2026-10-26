@@ -17,7 +17,7 @@ PHYS     += src/worldcache.cpp src/bytepack.cpp
 PHYS     += src/toolsounds.cpp src/repairsync.cpp src/battery.cpp
 PHYS     += src/rivers.cpp src/places.cpp
 PHYS     += src/onemap.cpp src/onemapbuild.cpp
-PHYS     += src/procworld.cpp src/procreveal.cpp
+PHYS     += src/procworld.cpp src/procrules.cpp src/procreveal.cpp
 PHYS     += src/regionland.cpp
 PHYS     += src/netbase.cpp src/nettunnel.cpp src/rendezvous.cpp
 SCEN     += tests/baja.cpp tests/net_repair.cpp
@@ -233,6 +233,7 @@ windows: build/win/CrumpleZone/crumplezone.exe
 	cp -r assets/ground build/win/CrumpleZone/assets/
 	if [ -d assets/audio ]; then cp -r assets/audio build/win/CrumpleZone/assets/; fi
 	if [ -d assets/menu ]; then cp -r assets/menu build/win/CrumpleZone/assets/; fi
+	if [ -d assets/procworld ]; then cp -r assets/procworld build/win/CrumpleZone/assets/; fi
 	if [ -f assets/props/props.txt ]; then cp -r assets/props build/win/CrumpleZone/assets/; fi
 	if [ -d assets/models ]; then cp -r assets/models build/win/CrumpleZone/assets/; fi
 	@cd build/win && rm -f CrumpleZone-windows.zip && if command -v zip >/dev/null 2>&1; then zip -qr CrumpleZone-windows.zip CrumpleZone; \
@@ -286,6 +287,7 @@ mac: build/mac/crumplezone
 	cp -R assets/ground $(MACAPP)/Contents/Resources/assets/
 	if [ -d assets/audio ]; then cp -R assets/audio $(MACAPP)/Contents/Resources/assets/; fi
 	if [ -d assets/menu ]; then cp -R assets/menu $(MACAPP)/Contents/Resources/assets/; fi
+	if [ -d assets/procworld ]; then cp -R assets/procworld $(MACAPP)/Contents/Resources/assets/; fi
 	if [ -f assets/props/props.txt ]; then cp -R assets/props $(MACAPP)/Contents/Resources/assets/; fi
 	if [ -d assets/models ]; then cp -R assets/models $(MACAPP)/Contents/Resources/assets/; fi
 	cp -R $(MACSDL)/SDL2.framework $(MACAPP)/Contents/Frameworks/
@@ -344,6 +346,7 @@ deb: build/rel/crumplezone
 	mkdir -p $(DEBROOT)/opt/crumplezone/assets && cp -r assets/ground $(DEBROOT)/opt/crumplezone/assets/
 	if [ -d assets/audio ]; then cp -r assets/audio $(DEBROOT)/opt/crumplezone/assets/; fi
 	if [ -d assets/menu ]; then cp -r assets/menu $(DEBROOT)/opt/crumplezone/assets/; fi
+	if [ -d assets/procworld ]; then cp -r assets/procworld $(DEBROOT)/opt/crumplezone/assets/; fi
 	if [ -f assets/props/props.txt ]; then cp -r assets/props $(DEBROOT)/opt/crumplezone/assets/; fi
 	if [ -d assets/models ]; then cp -r assets/models $(DEBROOT)/opt/crumplezone/assets/; fi
 	ln -s /opt/crumplezone/crumplezone $(DEBROOT)/usr/games/crumplezone
