@@ -80,7 +80,7 @@ as the Backcountry's are, 10 000 big rocks took 1.5 GB.
 
 | | One map (8.2 km) | Regions grown (10.24 km) |
 |---|---|---|
-| World build, headless, code rocks / scanned rocks | 3.2 s / 4.0 s | 4.4-5.0 s / 5.0-6.4 s |
+| World build, headless, code rocks / scanned rocks | 3.2 s / 4.0 s | 4.4-5.0 s / 5.0-6.4 s; after the speed-ups ~1.2x the 8 km map's, back to back under the same load (4.07 vs 3.42 s) |
 | RAM the world adds, code rocks / scanned rocks | 612 / 1095 MB | ~1000 / ~1600 MB |
 | Trees, rocks, bushes | 72k, 11.5k, 79k | 164k, 42.6k, 155k |
 | World cache file | 82 MB | 107 MB |
@@ -93,7 +93,7 @@ The scattered scenery boulders as single hulls saved 1.2 GB (10 000 big rocks cu
 real window on the 7900 XTX (paused while the owner played): the frame time at the trailhead and at each region's start, against
 `docs/hardware/linux-7900xtx-onemap.md`.
 
-Land hash `baead4e58239af7c` (headless, code rocks) on Linux and on the Windows build under wine. Physics fingerprint unchanged
+Land hash `1bb9ed3935450d1c` (headless, code rocks) on Linux and on the Windows build under wine. Physics fingerprint unchanged
 (`da17a95524fab674`).
 
 ## Multiplayer
