@@ -609,6 +609,14 @@ public:
     bool sleptPark = false;  // the parking brake when it fell asleep
     double sleptControls[4] = {};  // throttle, brake, handbrake and steer when it fell asleep
     V3 bbMin, bbMax;
+    // Bits of it left lying far off (a bumper torn off at the wall, the car driven away; a shard of
+    // body flung clear): per node, 1 = more than kStrayReach outside the box of the structure still
+    // holding together, and then left out of bbMin/bbMax and the contact grids. Counted in it, a bumper
+    // a kilometre back stretched the box over the map: every parked car and prop paired with it and
+    // woke, and the pole and grid queries swept the whole box, frame after frame (updateBounds).
+    static constexpr double kStrayReach = 3.0;
+    std::vector<uint8_t> stray;
+    int strays = 0;
     double impactEnergy = 0;  // joules absorbed by deformation since last read
     double damage = 0;        // 0..1
     int brokenBeams = 0;

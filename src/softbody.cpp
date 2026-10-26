@@ -2250,11 +2250,35 @@ void Car::updateBounds() {
     // Movement, rebuilds, recovery and network snapshots invalidate parked-car caches too.
     if (grid) grid->stamp = -1;
     nodeGridStamp = -1;
-    bbMin = bbMax = nodes[0].p;
-    for (const Node& n : nodes) {
-        bbMin = V3(std::min(bbMin.x, n.p.x), std::min(bbMin.y, n.p.y), std::min(bbMin.z, n.p.z));
-        bbMax = V3(std::max(bbMax.x, n.p.x), std::max(bbMax.y, n.p.y), std::max(bbMax.z, n.p.z));
+    // The structure still holding together: the body nodes the chassis frame keeps (all of them
+    // without one). Whatever lies further than kStrayReach outside it is a stray (softbody.h).
+    V3 cMin(1e300, 1e300, 1e300), cMax(-1e300, -1e300, -1e300);
+    const int nb = std::min(bodyNodes, (int)nodes.size());
+    const bool held = !chassis.nodes.empty();
+    for (int i = 0; i < nb; i++) {
+        if (held && i < (int)chassis.slot.size() && chassis.slot[i] >= 0 && !chassis.attached[chassis.slot[i]]) continue;
+        const V3& p = nodes[i].p;
+        cMin = V3(std::min(cMin.x, p.x), std::min(cMin.y, p.y), std::min(cMin.z, p.z));
+        cMax = V3(std::max(cMax.x, p.x), std::max(cMax.y, p.y), std::max(cMax.z, p.z));
     }
+    if (cMin.x > cMax.x) cMin = V3(-1e300, -1e300, -1e300), cMax = V3(1e300, 1e300, 1e300);  // (nothing held: keep it all)
+    const V3 r(kStrayReach, kStrayReach, kStrayReach);
+    cMin -= r;
+    cMax += r;
+    stray.assign(nodes.size(), 0);
+    strays = 0;
+    bbMin = V3(1e300, 1e300, 1e300), bbMax = V3(-1e300, -1e300, -1e300);
+    for (size_t i = 0; i < nodes.size(); i++) {
+        const V3& p = nodes[i].p;
+        if (p.x < cMin.x || p.x > cMax.x || p.y < cMin.y || p.y > cMax.y || p.z < cMin.z || p.z > cMax.z) {
+            stray[i] = 1;
+            strays++;
+            continue;
+        }
+        bbMin = V3(std::min(bbMin.x, p.x), std::min(bbMin.y, p.y), std::min(bbMin.z, p.z));
+        bbMax = V3(std::max(bbMax.x, p.x), std::max(bbMax.y, p.y), std::max(bbMax.z, p.z));
+    }
+    if (!(bbMin.x <= bbMax.x)) bbMin = bbMax = nodes[0].p;
     const double m = 0.15 + (wheels.empty() ? 0.25 : wheels[0].R);
     bbMin -= V3(m, m, m);
     bbMax += V3(m, m, m);
@@ -2827,6 +2851,7 @@ void Sim::setPhysicsThreads(int threads) {
 
 // Rebuild only the geometry that moved; parked supports keep their collision grids.
 void Car::prepareContact(long step) {
+    const bool cut = strays > 0 && stray.size() == nodes.size();  // (strays: left out, see updateBounds)
     if (grid->stamp != step && (!sleeping || grid->stamp < 0)) {
         updateTris();
         grid->clear();
@@ -2834,6 +2859,7 @@ void Car::prepareContact(long step) {
         for (int ti = 0; ti < (int)tris.size(); ti++) {
             const Tri& t = tris[ti];
             if (t.torn) continue;
+            if (cut && (stray[t.v[0]] | stray[t.v[1]] | stray[t.v[2]])) continue;  // (lying far off: out of the box, out of reach)
             V3 mn = nodes[t.v[0]].p, mx = mn;
             for (int c = 1; c < 3; c++) {
                 const V3& p = nodes[t.v[c]].p;
@@ -2861,13 +2887,14 @@ void Car::prepareContact(long step) {
     if (nodeGridStamp != step && (!sleeping || nodeGridStamp < 0)) {
         nodeGrid->clear();
         for (int i = 0; i < bodyNodes; i++) {
-            if (!nodeTris[i].empty()) continue;
+            if (!nodeTris[i].empty() || (cut && stray[i])) continue;
             const V3& p = nodes[i].p;
             nodeGrid->insert(i, p - reach, p + reach);
         }
         // The ladder frame and the engine block: what a bumper finds behind the sheet metal.
         for (const std::vector<int>* hard : {&ladder, &engineNodes})
             for (int i : *hard) {
+                if (cut && stray[i]) continue;
                 const V3& p = nodes[i].p;
                 nodeGrid->insert(i, p - reach, p + reach);
             }
