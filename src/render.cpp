@@ -44,6 +44,13 @@ namespace {
 
 // (The sun and sky come from the clock: see daylight.h and drawScene.)
 const float kFog[3] = {0.66f, 0.74f, 0.84f};
+// Trees past this (m, at detail 1) are pictures (treedraw.h): where their plainest meshes began (forest::lodReach(2)). The meshes
+// dissolve into them over the band before it.
+constexpr double kImpostorFrom = 200, kImpostorBand = 30;
+// ...and in the far shadow cascade from here: their shadows there are a few texels (the near cascade keeps every mesh).
+constexpr double kShadowImpostorFrom = 100;
+constexpr double kCanopyFrom = 700, kCanopyFull = 2200;  // (m) far off, the ground under a wood takes the canopy's colour over this
+constexpr double kFarForestFrom = 1000;  // (m) the window's trees hand over to the far forest (farforest.h): inside every window's edge
 
 // Shared fragment-shader helpers: noise, shadows, sky, fog. Everything renders into a
 // linear HDR target; the composite pass tone maps it (see kCompositeFS).
@@ -2672,6 +2679,23 @@ bool Renderer::init(const World& world, std::string& err) {
     progPartsDepth = linkProgram(std::string(kPartsXf) + kPartsDepthVS, kDepthFS, err);
     progTree = linkProgram(kTreeVS, header + kCommonFS + kLitIns + kTreeFSBody, err);
     progTreeDepth = linkProgram(kTreeDepthVS, kDepthFS, err);
+    progTreePre = linkProgram(kTreeVS, header + kCommonFS + kTreePreFSBody, err);
+    if (!progTreePre) std::fprintf(stderr, "tree pre-pass shader: %s\n", err.c_str()), err.clear();
+    {  // (the far trees' pictures: if their shaders won't build, the meshes go on drawing to the end)
+        std::string ierr;
+        progImpostor = linkProgram(header + kImpostorPlace + kImpostorVS, header + kCommonFS + kImpostorFSBody, ierr);
+        progImpostorDepth = linkProgram(header + kImpostorPlace + kImpostorVS, kImpostorDepthFS, ierr);
+        progImpCapture = linkProgram(kImpostorCaptureVS, kImpostorCaptureFS, ierr);
+        progFarForest = linkProgram(header + kImpostorPlace + kFarForestVS, header + kCommonFS + kImpostorFSBody, ierr);
+        if (!progFarForest) std::fprintf(stderr, "far forest shader: %s\n", ierr.c_str());
+        if (!progImpostor || !progImpostorDepth || !progImpCapture) {
+            std::fprintf(stderr, "tree impostor shaders: %s\n", ierr.c_str());
+            progImpostor = progImpostorDepth = progImpCapture = 0;
+        }
+        static const bool noImp = std::getenv("CZ_NO_IMPOSTORS") != nullptr;  // (for comparing: the meshes all the way out)
+        impAtlas_.captureProg = progImpCapture;
+        if (!noImp && progImpCapture) trees_.enableImpostors(&impAtlas_), staged_.trees.enableImpostors(&impAtlas_);
+    }
     progLine = linkProgram(kLineVS, kLineFS, err);
     progXray = linkProgram(kXrayVS, kXrayFS, err);
     progSky = linkProgram(kSkyVS, header + kCommonFS + kSkyFSBody, err);
@@ -3124,7 +3148,7 @@ void Renderer::updateObjectsStage(const World& world, int stage) {
     // (The trees and the rest of the scenery are only rebuilt when something they're made from changed: moving a block in the
     // editor leaves the forest alone, so a drag keeps up with the mouse.)
     // (A procedural window's swap: what the worker made, when it was made for this quality and cover.)
-    const Prepared::PreObjects* pre = preObjs_ && preObjs_->pq == pq && preObjs_->cover.pines == cover.pines && preObjs_->cover.snags == cover.snags &&
+    Prepared::PreObjects* pre = preObjs_ && preObjs_->pq == pq && preObjs_->cover.pines == cover.pines && preObjs_->cover.snags == cover.snags &&
                                               preObjs_->cover.rocks == cover.rocks && preObjs_->cover.logs == cover.logs && preObjs_->cover.bushes == cover.bushes
                                           ? preObjs_.get()
                                           : nullptr;
@@ -3138,7 +3162,7 @@ void Renderer::updateObjectsStage(const World& world, int stage) {
     if (pre && stage == 2) {
         bushSig_ = pre->bushSig;
         bushes_.build(pre->bushSet);
-        std::vector<Vtx> v = pre->bushVerts;
+        std::vector<Vtx> v = std::move(pre->bushVerts);  // (moved: a dense wood's logs are a few hundred MB)
         bushBatches = pre->bushBatches;
         uploadStatic(bushVao, bushVbo, v);
         bushVertexCount = (int)v.size();
@@ -3146,7 +3170,7 @@ void Renderer::updateObjectsStage(const World& world, int stage) {
     }
     if (pre && stage == 3) {
         scenerySig_ = pre->scenerySig;
-        std::vector<Vtx> v = pre->sceneryVerts;
+        std::vector<Vtx> v = std::move(pre->sceneryVerts);
         sceneryBatches = pre->sceneryBatches;
         uploadStatic(sceneryVao, sceneryVbo, v);
         sceneryVertexCount = (int)v.size();
@@ -3200,6 +3224,9 @@ void Renderer::updateObjectsStage(const World& world, int stage) {
         LOADPROF("scenery.bin+upload");
         uploadBatches(sceneryVao, sceneryVbo, v, sceneryBatches);
         sceneryVertexCount = (int)v.size();
+        // (The last stage of a build: the meshes' CPU copies, hundreds of MB in a dense wood, have been freed; malloc keeps freed
+        // memory unless asked to hand it back.)
+        std::thread([] { releaseFreedMemory(); }).detach();
     }
 }
 
@@ -3212,22 +3239,46 @@ void Renderer::uploadBatches(GLuint& vao, GLuint& vbo, std::vector<Vtx>& vertice
 }
 
 void Renderer::binBatches(std::vector<Vtx>& vertices, std::vector<StaticBatch>& batches) {
-    std::map<std::pair<int, int>, std::vector<Vtx>> bins;
-    for (size_t k = 0; k + 2 < vertices.size(); k += 3) {
+    // (In place: the triangles' indices sorted by bin, stably, then the triangles moved round their cycles. No second copy of the
+    // vertices: a dense wood's logs are a few hundred MB of them.)
+    const size_t nt = vertices.size() / 3;
+    vertices.resize(nt * 3);
+    std::vector<std::pair<std::pair<int, int>, uint32_t>> key(nt);
+    for (size_t t = 0; t < nt; t++) {
+        const size_t k = t * 3;
         const float x = (vertices[k].p[0] + vertices[k+1].p[0] + vertices[k+2].p[0]) / 3;
         const float z = (vertices[k].p[2] + vertices[k+1].p[2] + vertices[k+2].p[2]) / 3;
-        auto& bin = bins[{(int)std::floor(x / 64), (int)std::floor(z / 64)}];
-        bin.insert(bin.end(), vertices.begin() + k, vertices.begin() + k + 3);
+        key[t] = {{(int)std::floor(x / 64), (int)std::floor(z / 64)}, (uint32_t)t};
     }
-    vertices.clear();
+    std::sort(key.begin(), key.end());
+    std::vector<bool> done(nt, false);  // (key[i].second: the triangle that goes to slot i)
+    for (size_t i = 0; i < nt; i++) {
+        if (done[i] || key[i].second == i) { done[i] = true; continue; }
+        const Vtx hold[3] = {vertices[i * 3], vertices[i * 3 + 1], vertices[i * 3 + 2]};
+        for (size_t cur = i;;) {
+            const size_t src = key[cur].second;
+            done[cur] = true;
+            if (src == i) {
+                for (int q = 0; q < 3; q++) vertices[cur * 3 + q] = hold[q];
+                break;
+            }
+            for (int q = 0; q < 3; q++) vertices[cur * 3 + q] = vertices[src * 3 + q];
+            cur = src;
+        }
+    }
     batches.clear();
-    for (const auto& entry : bins) {
+    for (size_t i = 0; i < nt;) {
+        size_t j = i;
         StaticBatch batch;
-        batch.first = (int)vertices.size();
-        batch.count = (int)entry.second.size();
-        for (const auto& v : entry.second) batch.bounds.add(V3(v.p[0], v.p[1], v.p[2]));
-        vertices.insert(vertices.end(), entry.second.begin(), entry.second.end());
+        batch.first = (int)(i * 3);
+        for (; j < nt && key[j].first == key[i].first; j++)
+            for (int q = 0; q < 3; q++) {
+                const Vtx& v = vertices[j * 3 + q];
+                batch.bounds.add(V3(v.p[0], v.p[1], v.p[2]));
+            }
+        batch.count = (int)((j - i) * 3);
         batches.push_back(batch);
+        i = j;
     }
 }
 
@@ -3749,7 +3800,8 @@ void Renderer::prepareTerrain(const World& world, Prepared& p) {
     // Backdrop is already coarse; spatially batch it for camera culling too.
     std::vector<Vtx> bv;
     std::vector<unsigned> bi;
-    buildBackdrop(world, bv, bi);
+    if (world.map == MAP_PROCEDURAL) p.farForest = std::make_shared<FarForestGrid>();
+    buildBackdrop(world, bv, bi, p.farForest.get());
     const unsigned bbase = (unsigned)p.coarseVerts.size();
     p.coarseVerts.insert(p.coarseVerts.end(), bv.begin(), bv.end());
     std::map<std::pair<int, int>, std::vector<unsigned>> backdrop;
@@ -4179,6 +4231,8 @@ void Renderer::adoptTerrain(Prepared& p) {
         for (int k : farGroups_[g].chunks) chunkGroup_[k] = g, farGroups_[g].loaded += terrainChunks[k].slot >= 0;
     }
     occl_ = std::move(p.occl);
+    if (p.farForest) farForest_.upload(p.farForest);
+    else farForest_.clear();
     if (!terrainVao) GenVertexArrays(1, &terrainVao);
     if (!coarseVao) GenVertexArrays(1, &coarseVao);
     setupVtxVao(terrainVao, terrainVbo);
@@ -4234,7 +4288,7 @@ void Renderer::adoptWorld(const World& world) {
         preObjs_.reset();
         staged_.ready = false, staged_.step = 0;
         objStage_ = 4;
-        std::thread([p]() mutable { p.reset(); }).detach();  // (what went out, and what came in's CPU copies: freed off this frame)
+        std::thread([p]() mutable { p.reset(); releaseFreedMemory(); }).detach();  // (what went out, and what came in's CPU copies: freed off this frame, and handed back)
         return;
     }
     uploadStatic(waterVao, waterVbo, p->water);
@@ -4302,7 +4356,7 @@ bool Renderer::stepWorld(const World& world) {
 
 // The mountain range around the map, 3 km past its edge: a coarse grid with the map's
 // square cut out of it (its edge meets the crags at the rim).
-void Renderer::buildBackdrop(const World& world, std::vector<Vtx>& verts, std::vector<unsigned>& idx) {
+void Renderer::buildBackdrop(const World& world, std::vector<Vtx>& verts, std::vector<unsigned>& idx, FarForestGrid* farForest) {
     // (The procedural world: its ranges seen far off, 6 km past its window, a little coarser.)
     const bool endless = world.map == MAP_PROCEDURAL;
     const double spacing = endless ? 32.0 : 24.0, half = world.halfSize(), reach = half + (endless ? 6000.0 : 3000.0);
@@ -4313,12 +4367,51 @@ void Renderer::buildBackdrop(const World& world, std::vector<Vtx>& verts, std::v
         // (Its heights once each, on the grid, the slopes from the neighbours: the land with its valleys cut is dear to work out.
         // On the window's edge, the window's own ground, so the two meet.)
         std::vector<double> H((size_t)n * n);
+        // (The far forest's field on the same grid: the generator's tree rule at each sample, from the climate there.)
+        struct Clim { float w[proc::PB_COUNT], wet; };
+        std::vector<Clim> clim(farForest ? (size_t)n * n : 0);
+        const proc::ProcWorld& G = proc::ProcWorld::forSeed(world.proc.seed);
         parallelRows(n, [&](int i) {
             for (int j = 0; j < n; j++) {
                 const double x = -reach + i * spacing, z = -reach + j * spacing;
-                H[(size_t)i * n + j] = std::fabs(x) <= half + 1e-6 && std::fabs(z) <= half + 1e-6 ? world.height(x, z) : sceneryHeight(world, x, z);
+                const bool inside = std::fabs(x) <= half + 1e-6 && std::fabs(z) <= half + 1e-6;
+                if (!farForest) {
+                    H[(size_t)i * n + j] = inside ? world.height(x, z) : sceneryHeight(world, x, z);
+                    continue;
+                }
+                // (sceneryHeight's own sums: the generator's ground, its valleys cut, from the climate kept for the trees)
+                const double gx = x + (double)world.proc.ox, gz = z + (double)world.proc.oz;
+                const proc::Macro m = G.macroAt(gx, gz, false);
+                H[(size_t)i * n + j] = inside ? world.height(x, z) : G.groundHeight(gx, gz, m);
+                Clim& c = clim[(size_t)i * n + j];
+                for (int b = 0; b < proc::PB_COUNT; b++) c.w[b] = (float)m.w[b];
+                c.wet = (float)m.wet;
             }
         });
+        if (farForest) {
+            FarForestGrid& F = *farForest;
+            F.n = n, F.spacing = spacing, F.origin = -reach, F.ox = world.proc.ox, F.oz = world.proc.oz;
+            F.cover.assign((size_t)n * n * 4, 0);
+            F.height.resize((size_t)n * n);
+            parallelRows(n, [&](int i) {
+                for (int j = 0; j < n; j++) {
+                    const size_t k = (size_t)i * n + j;
+                    F.height[k] = (float)H[k];
+                    const int i0 = std::max(0, i - 1), i1 = std::min(n - 1, i + 1), j0 = std::max(0, j - 1), j1 = std::min(n - 1, j + 1);
+                    const double slope = std::hypot((H[(size_t)i1 * n + j] - H[(size_t)i0 * n + j]) / ((i1 - i0) * spacing),
+                                                    (H[(size_t)i * n + j1] - H[(size_t)i * n + j0]) / ((j1 - j0) * spacing));
+                    proc::Macro m;
+                    for (int b = 0; b < proc::PB_COUNT; b++) m.w[b] = clim[k].w[b];
+                    m.wet = clim[k].wet;
+                    const double gx = -reach + i * spacing + (double)world.proc.ox, gz = -reach + j * spacing + (double)world.proc.oz;
+                    const proc::ProcWorld::TreeCover tc = G.treeCover(gx, gz, m, H[k], slope);
+                    auto byte = [](double v) { return (uint8_t)std::clamp((int)std::lround(v * 255), 0, 255); };
+                    F.cover[k * 4 + 0] = (uint8_t)std::clamp((int)std::lround(FarForestGrid::realized(tc.triedPerHa) / FarForestGrid::kPerHaUnit), 0, 255);
+                    F.cover[k * 4 + 1] = byte(tc.conifer), F.cover[k * 4 + 2] = byte(tc.snag), F.cover[k * 4 + 3] = byte(1 - tc.shrink);
+                }
+            });
+            F.finish();
+        }
         parallelRows(n, [&](int i) {
             for (int j = 0; j < n; j++) {
                 const double x = -reach + i * spacing, z = -reach + j * spacing;
@@ -5715,8 +5808,24 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         uniformM4(progTreeDepth, "uLightVP", lightVP[c]);
         if (!noVegShadow) {
             // (shadows from the lighter copies; a bush's only near the eye: further off it's a speck)
-            geometryStats_.shadowSceneryVertices += trees_.draw({lightVP[c], view.eye, vegDetail(), 1 + c, true, 1, nullptr, terrainAll_ ? 0.0 : 600.0}, &vegStats_.treesShadow);  // (a big map: the cascades reach a few hundred metres)
-            geometryStats_.shadowSceneryVertices += bushes_.draw({lightVP[c], view.eye, vegDetail(), 0, true, 0.5, nullptr, terrainAll_ ? 0.0 : 400.0}, &vegStats_.bushesShadow);
+            // (The far cascade: past the meshes' reach, the pictures turned to the light. The near one keeps every mesh.)
+            forest::View sv{lightVP[c], view.eye, vegDetail(), 1 + c, true, 1, nullptr, terrainAll_ ? 0.0 : 600.0};
+            const bool pictures = c == 1 && treePictures && trees_.impostorsReady() && progImpostorDepth;
+            if (pictures) sv.impostorFrom = kShadowImpostorFrom;
+            geometryStats_.shadowSceneryVertices += trees_.draw(sv, &vegStats_.treesShadow);  // (a big map: the cascades reach a few hundred metres)
+            if (pictures) {
+                UseProgram(progImpostorDepth);
+                uniformM4(progImpostorDepth, "uVP", lightVP[c]);
+                Uniform1i(uniformLocation(progImpostorDepth, "uFaceLight"), 1);
+                Uniform3f(uniformLocation(progImpostorDepth, "uLightDir"), (float)keyDir.x, (float)keyDir.y, (float)keyDir.z);
+                TreeDraw::ImpostorRange ir;
+                ir.from = kShadowImpostorFrom, ir.thin = sv.maxDist, ir.to = sv.maxDist, ir.toBand = 0.15 * sv.maxDist;
+                geometryStats_.shadowSceneryVertices += trees_.drawImpostors(sv, ir, progImpostorDepth, true, &vegStats_.treesShadow);
+                UseProgram(progTreeDepth);
+            }
+            // (A bush's shadow only in the near cascade on a big map: further off it's a speck, and a dense wood's undergrowth is
+            // thousands of them.)
+            if (c == 0 || terrainAll_) geometryStats_.shadowSceneryVertices += bushes_.draw({lightVP[c], view.eye, vegDetail(), 0, true, 0.5, nullptr, terrainAll_ ? 0.0 : 400.0}, &vegStats_.bushesShadow);
         }
         UseProgram(progDepth);
         drawBatches(sceneryVao, sceneryBatches, lightVP[c], true);
@@ -5901,17 +6010,68 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         Uniform1i(uniformLocation(progTree, "uMap"), mapId);
         Uniform1i(uniformLocation(progTree, "uTreeFadeN"), n);
         if (n) Uniform4fv(uniformLocation(progTree, "uTreeFade"), n, list);
+        if (progTreePre) {
+            UseProgram(progTreePre);
+            uniformM4(progTreePre, "uVP", vp);
+            Uniform1i(uniformLocation(progTreePre, "uTreeFadeN"), n);
+            if (n) Uniform4fv(uniformLocation(progTreePre, "uTreeFade"), n, list);
+            UseProgram(progTree);
+        }
     }
     if (!noVeg) {
         // (On a big map the forest stops at 2 km, 800 m on the lowest props setting: the fog has most of it by then.)
-        const forest::View tv{vp, view.eye, vegDetail(), 0, false, 1, &occl_, terrainAll_ ? 0.0 : settings.props <= 0 ? 800.0 : 1200.0};
+        forest::View tv{vp, view.eye, vegDetail(), 0, false, 1, &occl_, terrainAll_ ? 0.0 : settings.props <= 0 ? 800.0 : 1200.0};
+        const bool pictures = treePictures && trees_.impostorsReady() && progImpostor;
+        if (pictures) tv.impostorFrom = kImpostorFrom, tv.impostorBand = kImpostorBand;
         {
             FRAMEWORK("veg.trees");
-            geometryStats_.sceneryVertices += trees_.draw(tv, &vegStats_.trees);
+            // (A dense wood is leaf behind leaf: its depth first, then each pixel shaded once.)
+            static const bool noPre = std::getenv("CZ_NO_TREE_PREPASS") != nullptr;
+            if (progTreePre && !noPre) {
+                UseProgram(progTreePre);
+                ColorMask(0, 0, 0, 0);
+                trees_.draw(tv, nullptr);
+                ColorMask(1, 1, 1, 1);
+                UseProgram(progTree);
+                DepthMask(0);
+                geometryStats_.sceneryVertices += trees_.redraw(&vegStats_.trees);
+                DepthMask(1);
+            } else geometryStats_.sceneryVertices += trees_.draw(tv, &vegStats_.trees);
+        }
+        if (pictures) {
+            // Past the meshes: the same trees as pictures, thinned as the meshes were, out to where the far forest takes over (or the
+            // meshes' old reach).
+            FRAMEWORK("veg.impostors");
+            UseProgram(progImpostor);
+            setLighting(progImpostor);
+            uniformM4(progImpostor, "uVP", vp);
+            Uniform1i(uniformLocation(progImpostor, "uFaceLight"), 0);
+            TreeDraw::ImpostorRange ir;
+            ir.from = kImpostorFrom, ir.band = kImpostorBand, ir.thin = tv.maxDist;
+            ir.to = tv.maxDist, ir.toBand = 0.15 * tv.maxDist;
+            static const bool noFar = std::getenv("CZ_NO_FARFOREST") != nullptr;  // (for comparing: the window's trees only)
+            const bool far = farForestOn && !noFar && progFarForest && farForest_.ready() && tv.maxDist > 0;
+            if (!far) farForest_.tilesDrawn = 0;
+            if (far) ir.to = kFarForestFrom, ir.toBand = 0.15 * kFarForestFrom;
+            forest::View iv = tv;
+            iv.hidden = nullptr;  // (the horizon test costs the CPU more than the pictures it would save cost the GPU)
+            geometryStats_.sceneryVertices += trees_.drawImpostors(iv, ir, progImpostor, false, &vegStats_.trees);
+            if (far) {
+                // Past the window's trees, out to the fog: the far forest (farforest.h), in the same pictures.
+                FRAMEWORK("veg.farforest");
+                UseProgram(progFarForest);
+                setLighting(progFarForest);
+                Uniform1i(uniformLocation(progFarForest, "uFaceLight"), 0);
+                FarForest::Range fr;
+                fr.from = ir.to, fr.fromBand = ir.toBand, fr.to = std::min<double>(farZ_, 6000.0);
+                farForest_.draw(tv, fr, progFarForest, trees_, nullptr, &vegStats_.farTrees);  // (no horizon test: as for the pictures)
+            }
+            UseProgram(progTree);
         }
         Uniform1i(uniformLocation(progTree, "uTreeFadeN"), 0);  // (the see-through trees' leaves only)
         forest::View bv = tv;
         if (!terrainAll_) bv.maxDist = 400;  // (a big map: no bush reaches further than this anyway, and its cells aren't even looked at)
+        if (!terrainAll_) bv.reach = 0.7;  // (a big map: the undergrowth not as far as on the small ones; trees hide most of it past that)
         FRAMEWORK("veg.bushes");
         geometryStats_.sceneryVertices += bushes_.draw(bv, &vegStats_.bushes);
     }
@@ -6096,6 +6256,10 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
             ActiveTexture(GL_TEXTURE0);
             Uniform1i(uniformLocation(prog, "uGroundA"), 3);
             Uniform1i(uniformLocation(prog, "uGroundB"), 4);
+            // (the far forest's canopy colour on the far ground: the procedural world's)
+            static const bool noCanopy = std::getenv("CZ_NO_CANOPY") != nullptr;
+            if (farForestOn && !noCanopy && farForest_.ready()) farForest_.bindGround(prog, 12, kCanopyFrom, kCanopyFull);
+            else Uniform2f(uniformLocation(prog, "uFFFade"), 0, 0);
             if (cheap || groundTier(gq) <= 1) {  // (the cheap tiers read their noise from a texture)
                 ActiveTexture(GL_TEXTURE0 + 5);
                 BindTexture(GL_TEXTURE_2D, noiseTex);

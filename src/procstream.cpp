@@ -1,4 +1,5 @@
 #include "procstream.h"
+#include "platform.h"
 
 #include <algorithm>
 #include <chrono>
@@ -112,7 +113,7 @@ bool ProcStream::tick(Sim& sim, Renderer& renderer, const V3& focus, bool allowe
         auto old = std::make_shared<World>(std::move(sim.world));
         sim.world = std::move(*next_);
         next_.reset();
-        std::thread([old]() mutable { old.reset(); }).detach();
+        std::thread([old]() mutable { old.reset(); releaseFreedMemory(); }).detach();  // (and handed back to the system: malloc keeps it otherwise)
         proc::shiftSim(sim, shift);
         renderer.adoptWorld(sim.world);
         while (!renderer.stepWorld(sim.world)) {}  // (all the scenery this frame: nothing is drawn half there)

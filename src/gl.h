@@ -18,7 +18,7 @@ typedef unsigned long long GLuint64;
 
 enum : GLenum {
     GL_FALSE_ = 0, GL_TRUE_ = 1,
-    GL_POINTS = 0x0000, GL_LINES = 0x0001, GL_TRIANGLES = 0x0004,
+    GL_POINTS = 0x0000, GL_LINES = 0x0001, GL_TRIANGLES = 0x0004, GL_TRIANGLE_STRIP = 0x0005,
     GL_DEPTH_BUFFER_BIT = 0x0100, GL_COLOR_BUFFER_BIT = 0x4000,
     GL_LEQUAL = 0x0203, GL_LESS = 0x0201, GL_GREATER = 0x0204,
     GL_SRC_ALPHA = 0x0302, GL_ONE_MINUS_SRC_ALPHA = 0x0303,
@@ -47,7 +47,7 @@ enum : GLenum {
     GL_ONE = 1, GL_RGBA = 0x1908, GL_HALF_FLOAT = 0x140B, GL_RG = 0x8227, GL_R16F = 0x822D,
     GL_RGBA16F = 0x881A, GL_RGBA32F = 0x8814, GL_R11F_G11F_B10F = 0x8C3A, GL_DEPTH_COMPONENT32F = 0x8CAC,
     GL_READ_FRAMEBUFFER = 0x8CA8, GL_DRAW_FRAMEBUFFER = 0x8CA9, GL_COLOR_ATTACHMENT0 = 0x8CE0,
-    GL_RENDERBUFFER = 0x8D41, GL_MAX_SAMPLES = 0x8D57,
+    GL_RENDERBUFFER = 0x8D41, GL_COLOR_ATTACHMENT1 = 0x8CE1, GL_R32F = 0x822E, GL_MAX_SAMPLES = 0x8D57,
     // Texture arrays and filtering (the ground's photo-scanned materials).
     GL_TEXTURE_2D_ARRAY = 0x8C1A, GL_SRGB8_ALPHA8 = 0x8C43, GL_RGBA8 = 0x8058, GL_REPEAT = 0x2901,
     GL_LINEAR_MIPMAP_LINEAR = 0x2703, GL_TEXTURE_MAX_ANISOTROPY = 0x84FE, GL_MAX_TEXTURE_MAX_ANISOTROPY = 0x84FF,
@@ -73,6 +73,7 @@ enum : GLenum {
     X(void, Disable, (GLenum))                                                                 \
     X(void, DepthFunc, (GLenum))                                                               \
     X(void, DepthMask, (GLboolean))                                                            \
+    X(void, ColorMask, (GLboolean, GLboolean, GLboolean, GLboolean))                           \
     X(void, BlendFunc, (GLenum, GLenum))                                                       \
     X(void, PolygonOffset, (GLfloat, GLfloat))                                                 \
     X(void, PixelStorei, (GLenum, GLint))                                                      \
@@ -95,6 +96,7 @@ enum : GLenum {
     X(void, Uniform1i, (GLint, GLint))                                                         \
     X(void, Uniform1f, (GLint, GLfloat))                                                       \
     X(void, Uniform2f, (GLint, GLfloat, GLfloat))                                              \
+    X(void, Uniform2i, (GLint, GLint, GLint))                                                  \
     X(void, Uniform3f, (GLint, GLfloat, GLfloat, GLfloat))                                     \
     X(void, Uniform4f, (GLint, GLfloat, GLfloat, GLfloat, GLfloat))                            \
     X(void, UniformMatrix4fv, (GLint, GLsizei, GLboolean, const GLfloat*))                     \
@@ -141,6 +143,8 @@ enum : GLenum {
     X(void, CompressedTexImage2D, (GLenum, GLint, GLenum, GLsizei, GLsizei, GLint, GLsizei, const void*)) \
     X(void, CompressedTexImage3D, (GLenum, GLint, GLenum, GLsizei, GLsizei, GLsizei, GLint, GLsizei, const void*)) \
     X(void, GenerateMipmap, (GLenum))                                                          \
+    X(void, FramebufferTextureLayer, (GLenum, GLenum, GLuint, GLint, GLint))                   \
+    X(void, DrawBuffers, (GLsizei, const GLenum*))                                             \
     X(void, VertexAttribDivisor, (GLuint, GLuint))                                             \
     X(void, DrawElementsInstanced, (GLenum, GLsizei, GLenum, const void*, GLsizei))            \
     X(void, DrawArraysInstanced, (GLenum, GLint, GLsizei, GLsizei))                            \

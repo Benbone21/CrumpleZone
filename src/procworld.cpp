@@ -1643,3 +1643,40 @@ void World::buildProcedural() {
         spawnYaw = 0;
     }
 }
+
+namespace proc {
+// (The far forest's hook: the tree rule of makeChunk's "Trees, by the rules", the same sums at one point. The chunks' own cells also
+// rule out sand, snow, bare rock and trail paint; on far land that leaves the rock bands of steep alpine slopes, counted here as the
+// share of the slope they take.)
+ProcWorld::TreeCover ProcWorld::treeCover(double gx, double gz, const Macro& m, double h, double slope) const {
+    const Params& P = *params_;
+    const Rules& RU = rules();
+    const AlpineRule& AR = RU.alpine;
+    TreeCover tc;
+    tc.maxPerHa = AR.treesPerHa;
+    for (int b = 0; b < PB_COUNT; b++) tc.maxPerHa = std::max(tc.maxPerHa, b == PB_MOUNTAINS ? AR.treesPerHa : RU.trees[b].perHa);
+    const double tl = AR.treeLine + AR.treeLineWobble * (2 * fbm(P.s[S_SNOW] + 1, gx * 0.0022, gz * 0.0022, 2) - 1);
+    if (h > tl || slope > AR.treeSlopeMax || slope > AR.rockSlope) return tc;
+    const double groveHere = smoothstep(0.36, 0.62, fbm(P.s[S_GROVE], gx * 0.004, gz * 0.004, 3));
+    const double meadow = AR.meadowShare > 0 ? smoothstep(0.36 + 0.28 * AR.meadowShare - 0.03, 0.36 + 0.28 * AR.meadowShare + 0.03, fbm(P.s[S_GROVE] + 5, gx / AR.meadowSize, gz / AR.meadowSize, 3)) : 1.0;
+    double dens = 0, conifer = 0, snag = 0;
+    for (int b = 0; b < PB_COUNT; b++) {
+        const double per = b == PB_MOUNTAINS ? AR.treesPerHa * meadow : RU.trees[b].perHa * (RU.trees[b].groveMin + (1 - RU.trees[b].groveMin) * groveHere);
+        dens += m.w[b] * per;
+        if (b == PB_MOUNTAINS) {
+            const double aspen = h < AR.aspenBelow ? AR.aspenShare : 0;
+            conifer += m.w[b] * AR.coniferShare * (1 - aspen), snag += m.w[b] * (1 - AR.coniferShare) * (1 - aspen);
+        } else {
+            double cf = RU.trees[b].conifer;
+            if (b == PB_FOREST) cf *= 1 - 0.65 * smoothstep(0.6, 0.9, m.wet);
+            conifer += m.w[b] * cf, snag += m.w[b] * RU.trees[b].snag;
+        }
+    }
+    dens *= 1 - smoothstep(tl - AR.treeLineFade, tl, h) * 0.85;
+    if (slope > AR.rockBandSlope && m.w[PB_MOUNTAINS] > 0) dens *= 1 - AR.rockBandWidth * m.w[PB_MOUNTAINS];
+    if (m.w[PB_DUNES] > 0.5) dens *= 0.2;  // (sand: the chunks' trees skip it)
+    tc.triedPerHa = dens, tc.conifer = conifer, tc.snag = snag;
+    tc.shrink = 1 - (1 - 0.4 * (m.w[PB_BADLANDS] + m.w[PB_DUNES])) * (1 - AR.krummholz * smoothstep(tl - AR.treeLineFade, tl, h));
+    return tc;
+}
+}  // namespace proc
