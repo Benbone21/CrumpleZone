@@ -154,7 +154,7 @@ struct Options {
     double mapHalf = 0;           // --map-half M (dev): every map built M m each way from its middle (big-map tests: docs/plans/big-maps.md)
     bool standalone = false;      // --standalone (dev): --map 1, 3 or 5 is that old map on its own, not its region of the big map (docs/plans/one-map.md)
     int map = -1;                 // --map N: 0 proving ground, 1 mountain
-    std::string real;             // --real DIR|FILE: the real terrain MAP_REAL (6) is (realterrain.h, docs/real-terrain.md): a folder with terrain.txt, or the sidecar
+    std::string real;             // --real DIR|FILE: the real terrain MAP_REAL (7) is (realterrain.h, docs/real-terrain.md): a folder with terrain.txt, or the sidecar
     double orbitYaw = 0, orbitPitch = 0.2, orbitDist = 7.5;  // degrees, degrees, meters
     bool spawnSet = false;
     bool loadTour = false;  // --load-tour: switch maps, swap and spawn vehicles on a timer, report the worst frame of each

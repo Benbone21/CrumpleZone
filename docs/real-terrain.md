@@ -1,6 +1,6 @@
 # Real terrain: a real place's elevation model as a map
 
-The importer takes a digital elevation model (DEM) of a real place and builds a drivable map from it. The map is `MAP_REAL` (id 6).
+The importer takes a digital elevation model (DEM) of a real place and builds a drivable map from it. The map is `MAP_REAL` (id 7; 6 is the procedural world's).
 
 What it builds:
 - the land;
@@ -92,7 +92,7 @@ make build/realterrain
 build/realterrain info  path/USGS_13_n39w110.tif               # what the file is
 build/realterrain sample path/USGS_13_n39w110.tif 38.573 -109.55 # elevations at points
 build/realterrain make  path/moab.terrain.txt --out maps/moab --preview moab.ppm
-./crumplezone --real maps/moab --map 6
+./crumplezone --real maps/moab --map 7
 ```
 
 `make` does the following:
@@ -145,7 +145,7 @@ build/realterrain make  path/moab.terrain.txt --out maps/moab --preview moab.ppm
   - The host's welcome carries the terrain's hash and name.
   - A guest looks through its own `maps/` for a sidecar whose DEM and text hash the same, and plays on that. Without one it is turned away, told the name and hash: *"put the same DEM and terrain.txt in maps/NAME/"*.
   - The file is not sent over the network yet. Give friends the folder `make --out` wrote: one cropped `dem.tif` and `terrain.txt`, a few MB.
-  - Another real map shares `MAP_REAL`'s id. Discoveries are keyed `6:NAME`, so two real maps with a place of the same name share it.
+  - Another real map shares `MAP_REAL`'s id. Discoveries are keyed `7:NAME`, so two real maps with a place of the same name share it.
 
 ## Limits and next steps
 
