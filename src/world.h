@@ -267,6 +267,8 @@ public:
     // Whether the Backcountry is built as the big map, with the Mountain, the Frontier and the Open Country stitched on round it
     // (onemap.h, docs/plans/one-map.md); off, it's the 6 km map alone. Per thread, like withShowcase (tests that only need the old map).
     static inline thread_local bool stitchRegions = true;
+    // Whether the Backcountry gets its trail network (bctrails.cpp): tools/trailroute routes the network over the land without it.
+    static inline thread_local bool withTrailNetwork = true;
     static int gridSizeFor(int map) { return (int)(2 * halfSizeFor(map) / kRes) + 1; }
     double halfSize() const { return half; }
     static constexpr double kPadRadius = 140.0;

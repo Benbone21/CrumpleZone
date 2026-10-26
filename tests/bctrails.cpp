@@ -8,6 +8,7 @@
 #include <set>
 #include <string>
 
+#include "../src/autopilot.h"
 #include "../src/places.h"
 #include "../src/props.h"
 #include "harness.h"
@@ -202,7 +203,34 @@ SCENARIO(bctrailsNetwork, "bctrails/network", "The trail network: every trail la
     ctx.metric("Copper Creek at the pass: water", water, "m", 0.15, 0.6);
 }
 
-SCENARIO(bctrailsRocks, "bctrails/rocks", "Rock features and the fill: big boulders (car-sized and more) all over the new country, outcrops, the set pieces; never on a trail's tread") {
+SCENARIO(bctrailsPlaces, "bctrails/places-by-trail", "The autopilot (a Bronco, anywhere) finds a way along each trail to the place at its end: the cabins, the fire lookout, the obstacle trails' ends") {
+    World::stitchRegions = false;
+    ctx.sim.world = World(MAP_BACKCOUNTRY);
+    World::stitchRegions = true;
+    const World& w = ctx.sim.world;
+    const VehicleSpec& bronco = vehicle("bronco");
+    const struct {
+        const char* trail;
+        const char* place;
+    } legs[] = {{"BALD KNOB TRAIL", "BC.BALD_KNOB"}, {"LINE SHACK TRACK", "BC.LINE_SHACK"}, {"PROSPECTOR TRAIL", "BC.PROSPECTOR_CABIN"},
+                {"BEAVER POND TRACK", "BC.BEAVER_POND_CABIN"}, {"MOUNTAIN HUT TRACK", "BC.MOUNTAIN_HUT"}, {"SLAB CITY TRACK", "BC.SLAB_CITY"},
+                {"TORS TRACK", "BC.THE_TORS"}, {"BALANCED ROCK TRACK", "BC.BALANCED_ROCK"}};
+    for (const auto& l : legs) {
+        const std::vector<V3>& t = bcTrailLine(l.trail);
+        const MapPlace* p = findPlace(MAP_BACKCOUNTRY, l.place);
+        if (t.size() < 10 || !p) {
+            ctx.check(std::string(l.trail) + ": there", false);
+            continue;
+        }
+        std::vector<V3> route;
+        const V3 from(t[0].x, w.height(t[0].x, t[0].z), t[0].z), goal(p->p.x, w.height(p->p.x, p->p.z), p->p.z);
+        const bool ok = planRoute(w, bronco, from, goal, PILOT_ANYWHERE, {}, route);
+        std::printf("BY TRAIL %-22s to %-22s %s\n", l.trail, l.place, ok ? "ok" : "NONE");
+        ctx.check(std::string("along ") + l.trail + " to " + l.place, ok);
+    }
+}
+
+SCENARIO(bctrailsRocks,"bctrails/rocks", "Rock features and the fill: big boulders (car-sized and more) all over the new country, outcrops, the set pieces; never on a trail's tread") {
     const World& w = smallMap();
     std::set<std::pair<int, int>> tread;  // (2 m cells within 2 m of a trail's middle, but the pass's and its spur's)
     for (const BcTrailInfo& t : bcTrails()) {

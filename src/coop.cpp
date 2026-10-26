@@ -342,6 +342,13 @@ void Coop::drawMap(Renderer& r, const Sim& sim, const NetSession& net, int W, in
                     seg(x0, y0, x1, y1, lw, c, 0.95f);
                 }
             }
+        for (const std::vector<V3>& road : sim.world.regionRoads)  // (the gravel roads out to the big map's regions: green too)
+            for (size_t k = 0; k + 8 < road.size(); k += 8) {
+                float x0, y0, x1, y1;
+                toMap(road[k].x, road[k].z, x0, y0), toMap(road[k + 8].x, road[k + 8].z, x1, y1);
+                if ((x0 < 0 && x1 < 0) || (x0 > W && x1 > W) || (y0 < 0 && y1 < 0) || (y0 > H && y1 > H)) continue;
+                seg(x0, y0, x1, y1, w, kTrailCol[0], 0.95f);
+            }
         if (mapZoom > 2.4)
             for (const World::MarkedTrail& t : sim.world.trails) {
                 if (t.pts.size() < 4 || t.rating >= 4) continue;

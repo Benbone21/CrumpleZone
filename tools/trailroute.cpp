@@ -60,7 +60,7 @@ std::vector<Spec> specs() {
     return {
         // ---- Red: COPPER PASS, from Pass Hut over the Notch, across Copper Creek, up the switchbacks and the Shelf to the saddle
         // between Copper Peak and the Thumb, and down the north side to the Surveyor's Cabin ----
-        {"COPPER PASS", 3, 0.23, {{91, 496}, {70, 630}, {60, 860}, {60, 905}, pin(250, 950, 1), pin(30, 1010, -1), pin(250, 1070, 1), pin(40, 1130, -1),
+        {"COPPER PASS", 3, 0.23, {{104, 497}, {70, 630}, {60, 860}, {60, 905}, pin(250, 950, 1), pin(30, 1010, -1), pin(250, 1070, 1), pin(40, 1130, -1),
                                   pin(255, 1185, 1, 9, true), shelf(210, 1216), shelf(176, 1227), shelf(143, 1242), shelf(112, 1260), shelf(82, 1281), {62, 1312},
                                   {40, 1350}, {33, 1403}, {-20, 1600}, at("BC.SURVEYOR_CABIN", 10, -16)}},
         {"COPPER PEAK SPUR", 2, 0.27, {{40, 1408}, {300, 1545}}},
@@ -74,7 +74,7 @@ std::vector<Spec> specs() {
         // ---- Blue: moderate trails ----
         {"LAKESHORE CUTOFF", 1, 0.17, {{-790, -120}, {-1000, -600}, at("BC.FUEL_LAKE", 0, 22)}},
         {"FISHERMAN'S TRAIL", 1, 0.17, {at("BC.FUEL_LAKE", -10, -20), at("BC.FISHING_SHACK", 16, 10)}},
-        {"BADLANDS TRAIL", 1, 0.17, {at("BC.FUEL_SOUTH", 22, 0), {800, -1500}, {1500, -1450}, {2100, -1650}, {2238, -1720}}},
+        {"BADLANDS TRAIL", 1, 0.17, {at("BC.FUEL_SOUTH", 22, 0), {800, -1500}, {1500, -1450}, {2100, -1650}, {2345, -1746}}},  // (onto the Lost Mine's spur, below its dry falls)
         {"BEAR CREEK FORD TRAIL", 1, 0.17, {{340, 110}, {600, 80}, ford(796, 50), at("BC.BEAR_CREEK_CAMP", -10, 20)}},
         {"FALLS TRAIL", 1, 0.17, {at("BC.FUEL_RIM", 22, 0), {1700, -150}, {1790, -80}}},
         {"NORTH RIM TRAIL", 1, 0.17, {{796, 100}, {1100, 150}, at("BC.RIM_OVERLOOK", -20, 0)}},
@@ -91,14 +91,14 @@ std::vector<Spec> specs() {
         {"GULLY WAY OUT", 1, 0.17, {{700, -1238}, {808, -1080}}},
         {"CRAWL WAY OUT", 1, 0.17, {{1508, -1080}, at("BC.PROSPECTOR_CABIN", -10, -18)}},
         {"PROSPECTOR TRAIL", 1, 0.17, {at("BC.FUEL_RIM", 0, -22), at("BC.PROSPECTOR_CABIN", 0, 22)}},
-        {"BALD KNOB TRAIL", 2, 0.24, {join("COPPER VALLEY ROAD", -680, 900), at("BC.BALD_KNOB", 0, -16)}},
+        {"BALD KNOB TRAIL", 2, 0.24, {join("COPPER VALLEY ROAD", -680, 900), at("BC.BALD_KNOB", 0, -6)}},
         // ---- Faint two-tracks: everywhere else, so there's always a way to follow ----
         {"SLAB CITY TRACK", 4, 0.2, {join("COPPER VALLEY ROAD", -842, 551), {-842, 514}}},
         {"BALANCED ROCK TRACK", 4, 0.2, {join("COPPER VALLEY ROAD", -411, 889), {-411, 874}}},
         {"TORS TRACK", 4, 0.2, {join("SOUTH FORK ROAD", -150, -1050), {-122, -1050}}},
         {"LINE SHACK TRACK", 4, 0.2, {at("BC.LOGGERS_CAMP", -18, -10), at("BC.LINE_SHACK", 18, 0)}},
         {"BEAVER POND TRACK", 4, 0.2, {join("TIMBER ROAD", -1600, 1150), at("BC.BEAVER_POND_CABIN", 18, 0)}},
-        {"MOUNTAIN HUT TRACK", 4, 0.2, {join("SUMMIT RIDGE TRAIL", 349, 1994), at("BC.MOUNTAIN_HUT", 0, 16)}},
+        {"MOUNTAIN HUT TRACK", 4, 0.2, {join("SUMMIT RIDGE TRAIL", 349, 1994), at("BC.MOUNTAIN_HUT", 0, 7)}},
         {"STOCK TRAIL", 4, 0.2, {join("RANGER ROAD", -790, -200), {-1500, -250}, {-2000, -400}, {-2350, -550}}},
         {"OLD SKID ROAD", 4, 0.2, {at("BC.HERMIT_CABIN", -22, 10), {-1700, 1750}, {-2100, 1850}}},
         {"BADLANDS TWO-TRACK", 4, 0.2, {join("BADLANDS TRAIL", 1500, -1450), {1950, -1150}, at("BC.BEAR_CREEK_CAMP", 10, -20)}},
@@ -163,9 +163,16 @@ std::vector<V3> route(const World& w, const Spec& sp, const Via& a, const Via& b
             const bool fordNear = (a.ford && std::hypot(x - a.x, z - a.z) < 30) || (b.ford && std::hypot(x - b.x, z - b.z) < 30);
             g.wet[k] = w.waterLevel(x, z) > g.h[k] - 0.3 && !fordNear;
             const bool oldMap = std::max(std::fabs(x), std::fabs(z)) < 535;
-            const bool viaNear = std::hypot(x - a.x, z - a.z) < 90 || std::hypot(x - b.x, z - b.z) < 90;
+            const bool viaNear = std::hypot(x - a.x, z - a.z) < 20 || std::hypot(x - b.x, z - b.z) < 20;  // (an old trail's tread only where this one leaves it)
             const bool viaClose = std::hypot(x - a.x, z - a.z) < 60 || std::hypot(x - b.x, z - b.z) < 60;
-            g.banned[k] = (oldMap && !viaNear && w.roadAt(x, z).near) || (!viaClose && nearRoad(w, x, z, 70)) || inSetPiece(x, z, viaClose);
+            auto oldTrail = [&] {  // (the old map's trails and 14 m either side of them)
+                for (int o = 0; o < 9; o++)
+                    if (const uint8_t pt = w.roadAt(x + (o % 3 - 1) * 14.0, z + (o / 3 - 1) * 14.0).paint;
+                        pt == PAINT_TRAIL || pt == PAINT_GRAVEL || pt == PAINT_SAND || pt == PAINT_MUD || pt == PAINT_PAD)
+                        return true;
+                return false;
+            };
+            g.banned[k] = (oldMap && !viaNear && oldTrail()) || (!viaClose && nearRoad(w, x, z, 70)) || inSetPiece(x, z, viaClose);
             g.easy[k] = std::hypot(x - a.x, z - a.z) < 45 || std::hypot(x - b.x, z - b.z) < 45;
         }
     for (int i = 1; i + 1 < g.nx; i++)
@@ -229,6 +236,7 @@ int main(int argc, char** argv) {
         if (!std::strcmp(argv[k], "--ppm")) png = argv[k + 1];
     props::ScopedRockScans none(nullptr);
     parallelRowsCap = 2;  // (a dev tool: it needn't take the whole machine)
+    World::withTrailNetwork = false;  // (the land as it is before the network is laid on it)
     World w(MAP_BACKCOUNTRY);
     for (int k = 1; k + 3 < argc; k++)
         if (!std::strcmp(argv[k], "--settle")) {  // --settle x z clear [x z clear ...]: the nearest open, gentle, dry spot `clear` m from any trail

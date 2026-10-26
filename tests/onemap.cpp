@@ -195,7 +195,7 @@ SCENARIO(onemapBackcountryKept, "onemap/backcountry-kept", "The Backcountry with
     // (And a place's yard where a road starts is levelled to the ground round it, which the road changed by a few millimetres.)
     auto nearPad = [&](double x, double z) {
         for (const char* id : {"BC.RANGER", "BC.FUEL_LAKE"})
-            if (const MapPlace* p = findPlace(MAP_BACKCOUNTRY, id); p && std::hypot(x - p->p.x, z - p->p.z) < p->pad * 1.5 + 30) return true;
+            if (const MapPlace* p = findPlace(MAP_BACKCOUNTRY, id); p && std::hypot(x - p->p.x, z - p->p.z) < p->pad * 1.5 + 70) return true;  // (+70: the trail network's trails out of these yards are pinned to their ground)
         return false;
     };
     long cells = 0, same = 0;
@@ -225,14 +225,17 @@ SCENARIO(onemapBackcountryKept, "onemap/backcountry-kept", "The Backcountry with
         std::multiset<std::pair<long, long>> a, b;
         get(big, a), get(*old, b);
         size_t diff = 0;
-        for (const auto& k : a) diff += b.count(k) == 0;
-        for (const auto& k : b) diff += a.count(k) == 0;
+        for (const auto& k : a)
+            if (b.count(k) == 0 && ++diff <= 4) std::printf("ONLY BIG %s at %.2f, %.2f\n", what, k.first / 100.0, k.second / 100.0);
+        for (const auto& k : b)
+            if (a.count(k) == 0 && ++diff <= 8) std::printf("ONLY OLD %s at %.2f, %.2f\n", what, k.first / 100.0, k.second / 100.0);
         ctx.check(std::string("its ") + what, diff <= allowed * b.size() && !a.empty(), std::to_string(diff) + " differ of " + std::to_string(b.size()));
     };
     compare("trees", [&](const World& w, auto& s) { for (const Tree& t : w.trees) if (within(t.base)) s.insert(key(t.base)); });
     compare("rocks", [&](const World& w, auto& s) { for (const Rock& k : w.rocks) if (within(k.c)) s.insert(key(k.c)); }, 0.015);
     compare("logs", [&](const World& w, auto& s) { for (const Log& l : w.logs) if (within(l.a)) s.insert(key(l.a)); });
-    compare("bushes", [&](const World& w, auto& s) { for (const Bush& u : w.bushes) if (within(u.p)) s.insert(key(u.p)); });
+    // (Bushes: the trail network's fill (bctrails.cpp) puts a handful differently where the big map's land differs by millimetres.)
+    compare("bushes", [&](const World& w, auto& s) { for (const Bush& u : w.bushes) if (within(u.p)) s.insert(key(u.p)); }, 0.0005);
     compare("boxes and models", [&](const World& w, auto& s) {
         for (const Box& u : w.boxes) if (within(u.c)) s.insert(key(u.c));
         for (const Placed& m : w.models) if (within(m.p)) s.insert(key(m.p));

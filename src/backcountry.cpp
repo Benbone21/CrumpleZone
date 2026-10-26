@@ -1643,7 +1643,7 @@ void World::buildBackcountry() {
     steps.next("bc.trail network");
     // ---- The trail network out into the new country, COPPER PASS and the rest (bctrails.cpp): after the old map's growth (it clears what
     // grew on its treads), before the new country's (which grows round them) ---------------------------------------------------------
-    layBackcountryTrails(keep, edge);
+    if (withTrailNetwork) layBackcountryTrails(keep, edge);
 
     steps.next("bc.the new country's growth");
     // ---- The new country: trees, rocks, logs and bushes, 64 m cell by cell (each cell its own random numbers, from where it is:
@@ -1756,7 +1756,7 @@ void World::buildBackcountry() {
     }
 
     steps.next("bc.trail dress");
-    dressBackcountryTrails(keep, edge);
+    if (withTrailNetwork) dressBackcountryTrails(keep, edge);
 
     steps.next("bc.places dress");
     // ---- Places (places.h): the ranger station, fuel stops, cabins and camps, the lost mine, the lookouts' cairns -------------------------

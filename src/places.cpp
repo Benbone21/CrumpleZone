@@ -167,7 +167,10 @@ std::vector<MapPlace> backcountryPlaces() {
     cache("BC.CACHE.T5", "SLAB CITY STASH", V3(-842, 0, 551) + V3(14, 0, -9), 900);
     cache("BC.CACHE.T6", "TORS HIDEY-HOLE", V3(-150, 0, -1050) + V3(-10, 0, 8), 850);
     cache("BC.CACHE.T7", "LOOKOUT LOCKER", V3(-680, 0, 1202), 1000);
-    cache("BC.CACHE.T8", "HUT WOODBOX", V3(367, 0, 1997) + V3(8, 0, 8), 1200);
+    {  // (by the track up to the hut, halfway: the hut stands on a steep shoulder)
+        const std::vector<V3>& t = bcTrailLine("MOUNTAIN HUT TRACK");
+        cache("BC.CACHE.T8", "HUT WOODBOX", t.empty() ? V3(367, 0, 1997) : t[t.size() / 2], 1200);
+    }
     for (const BcSetPiece& s : bcSetPieces()) cache(s.cacheId, s.cacheName, s.exit + norm(s.exit - s.entry) * 40.0, s.cash);
     return v;
 }

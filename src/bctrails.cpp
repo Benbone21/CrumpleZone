@@ -311,6 +311,16 @@ void World::layBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& edg
         creek = c, creekBed = bed, creekSoft = soft, creekEast = east;
     }
 
+    // The places' yards (places.h: levelled before the trails), which a trail runs into but doesn't change.
+    std::vector<std::pair<V3, double>> pads;
+    for (const MapPlace& pl : mapPlaces(MAP_BACKCOUNTRY))
+        if (pl.pad > 0) pads.push_back({pl.p, pl.pad + 1.5});
+    auto onPad = [&](int id) {
+        const double x = X(id / hN), z = X(id % hN);
+        for (const auto& p : pads)
+            if (std::fabs(x - p.first.x) < p.second && std::fabs(z - p.first.z) < p.second && std::hypot(x - p.first.x, z - p.first.z) < p.second) return true;
+        return false;
+    };
     // ---- Each trail: its profile (the land smoothed, cut and filled to its grade, eased into the places it joins and down through the
     // fords), its tread laid and painted ----------------------------------------------------------------------------------------------
     std::vector<std::vector<double>> profiles(R.size());
@@ -417,6 +427,7 @@ void World::layBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& edg
         scanNear(pts, halfW + maxBlend, [&](int id, double d, double k, double lat) {
             const double e = d - halfW;
             if (edge[id] < e) return;  // (an earlier trail's tread is nearer: left as it is)
+            if (onPad(id)) return;     // (and a place's yard stays as level as it was made)
             const int ki = (int)clampd(std::floor(k), 0, n - 1);
             if (e > blend[ki]) return;
             const double ty = yAt(y, k);
@@ -786,6 +797,7 @@ void World::dressBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& e
                 const double x0 = -H + ci * C, z0 = -H + cj * C, cx = x0 + C / 2, cz = z0 + C / 2;
                 const double far = std::max(std::fabs(cx), std::fabs(cz));
                 if (far < 560 || far > 2580) continue;
+                seed = 4000000u + (uint32_t)(ci * cn + cj) * 64u;  // (each cell's rocks their own seeds: one cell changing moves nothing in another)
                 uint32_t r32 = (uint32_t)(ci * 83492791) ^ (uint32_t)(cj * 2971215073u) ^ 0x7a11c0deu;
                 r32 = r32 * 2654435761u + 0x6d2b79f5u;
                 auto rr = [&]() {
@@ -944,6 +956,7 @@ void World::dressBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& e
             if (slopeAt(x, z) > 0.75) paint[id] = PAINT_ROCK, surf[id] = SURF_ROCK;
         }
 
+    seed = 4700000;  // (the set pieces' rocks: their own run of seeds, whatever the fill took)
     // ---- The rock set pieces ------------------------------------------------------------------------------------------------------
     auto placeAt = [](const char* id) {
         const MapPlace* p = findPlace(MAP_BACKCOUNTRY, id);
@@ -1060,7 +1073,7 @@ void World::dressBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& e
     };
     {
         // BALD KNOB: a four-legged fire lookout on the knob over Copper Valley, a cabin at its foot.
-        const V3 t = placeAt("BC.BALD_KNOB");
+        const V3 t0 = placeAt("BC.BALD_KNOB"), t = t0 + V3(-4.5, 0, 3.5);  // (the tower to one side of the yard: you drive up into the middle)
         const double y0 = height(t.x, t.z);
         const V3 wood(0.36, 0.30, 0.22), tin(0.45, 0.46, 0.46);
         const size_t from = boxes.size();
@@ -1073,9 +1086,8 @@ void World::dressBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& e
         addBox(V3(t.x, y0 + 15.2, t.z), V3(1.7, 1.0, 1.7), 0, 0, 0, V3(0.45, 0.2, 0.12));
         addBox(V3(t.x, y0 + 16.35, t.z), V3(2.1, 0.1, 2.1), 0, 0, 0, tin);
         standIn(from, "fire_tower", V3(t.x, y0, t.z), 0);
-        build("cabin", rel(t, 0, -8, 6), M_PI / 2, V3(2.7, 1.9, 2.2), {}, 2);
-        table(rel(t, 0, 7, -5), 0.3);
-        fixtures.push_back({PROP_CAIRN, rel(t, 0, 6, 6), V3(), 1.0});
+        table(rel(t0, 0, 4, -5), 0.3);
+        fixtures.push_back({PROP_CAIRN, rel(t0, 0, 5, 4), V3(), 1.0});
     }
     for (const char* id : {"BC.LINE_SHACK", "BC.PROSPECTOR_CABIN", "BC.BEAVER_POND_CABIN", "BC.MOUNTAIN_HUT"}) {
         const MapPlace* pl = findPlace(MAP_BACKCOUNTRY, id);
