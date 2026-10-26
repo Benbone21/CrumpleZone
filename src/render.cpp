@@ -9,6 +9,7 @@
 #include "perf.h"
 #include "grasstiles.h"
 #include "parallel.h"
+#include "streamwin.h"
 
 // Render targets and data textures in the VRAM report (texcomp.h); no mips on purpose.
 static void noteRT(const char* name, const char* fmt, int w, int h, int bytesPerTexel, int mips = 0, bool runtime = true) {
@@ -3098,7 +3099,7 @@ void terrainTexel(const World& world, double x, double z, float* t) {
     t[3] = (float)std::max(world.waterLevel(x, z), -1000.0);
 }
 // The window's first cell for a camera at grid cell (ci, cj), on a map of n cells a side.
-int windowStart(int c, int n, int w) { return std::min(std::max(c - w / 2, 0), std::max(0, n - w)); }
+int windowStart(int c, int n, int w) { return streamwin::start(c, n, w); }
 // The whole map's coarse texels.
 void coarseTexels(const World& world, int n, std::vector<float>& out, int& cn) {
     cn = (n + kCoarseCell - 1) / kCoarseCell;
@@ -3631,33 +3632,13 @@ void Renderer::streamTerrain(const World& world, const V3& eye) {
             terrainWinI_ = wi, terrainWinJ_ = wj;
             uploadTerrainCells(world, wi, wj, wi + w - 1, wj + w - 1);
         } else if (!texJob_) {
-            if (std::abs(di) > kTexSlack || std::abs(dj) > kTexSlack) texMoving_ = true;
-            if (texMoving_ && std::abs(di) < kTexStep / 2 && std::abs(dj) < kTexStep / 2) texMoving_ = false;
-            if (texMoving_) {
-                // One step, along whichever way it's further off: the cells it brings in are a strip along the window's leading edge.
+            // One step (streamwin.h): the cells it brings in are a strip along the window's leading edge.
+            const streamwin::Step step = streamwin::next(terrainWinI_, terrainWinJ_, wi, wj, w, n, kTexSlack, kTexStep, texMoving_);
+            if (!step.pieces.empty()) {
                 auto job = std::make_shared<TexJob>();
                 job->world = &world, job->stamp = world.stamp, job->gen = streamGen_;
-                job->fromI = terrainWinI_, job->fromJ = terrainWinJ_, job->toI = terrainWinI_, job->toJ = terrainWinJ_;
-                int i0, i1, j0, j1;
-                if (std::abs(di) >= std::abs(dj)) {
-                    const int s = std::clamp(di, -kTexStep, kTexStep);
-                    job->toI += s;
-                    i0 = s > 0 ? job->fromI + w : job->toI, i1 = s > 0 ? job->toI + w - 1 : job->fromI - 1, j0 = job->toJ, j1 = job->toJ + w - 1;
-                } else {
-                    const int s = std::clamp(dj, -kTexStep, kTexStep);
-                    job->toJ += s;
-                    j0 = s > 0 ? job->fromJ + w : job->toJ, j1 = s > 0 ? job->toJ + w - 1 : job->fromJ - 1, i0 = job->toI, i1 = job->toI + w - 1;
-                }
-                // (Stored toroidally: the strip splits where it wraps.)
-                for (int a0 = i0; a0 <= i1;) {
-                    const int a1 = std::min(i1, a0 + (w - 1 - a0 % w));
-                    for (int b0 = j0; b0 <= j1;) {
-                        const int b1 = std::min(j1, b0 + (w - 1 - b0 % w));
-                        job->strips.push_back({a0, b0, a1 - a0 + 1, b1 - b0 + 1, {}});
-                        b0 = b1 + 1;
-                    }
-                    a0 = a1 + 1;
-                }
+                job->fromI = terrainWinI_, job->fromJ = terrainWinJ_, job->toI = step.toI, job->toJ = step.toJ;
+                for (const streamwin::Piece& pc : step.pieces) job->strips.push_back({pc.a0, pc.b0, pc.cw, pc.ch, {}});
                 texJob_ = job;
                 bg_.post([job, half] {
                     for (TexJob::Strip& st : job->strips) {
