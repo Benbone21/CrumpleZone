@@ -4101,10 +4101,32 @@ bool Renderer::stepWorld(const World& world) {
 // The mountain range around the map, 3 km past its edge: a coarse grid with the map's
 // square cut out of it (its edge meets the crags at the rim).
 void Renderer::buildBackdrop(const World& world, std::vector<Vtx>& verts, std::vector<unsigned>& idx) {
-    const double spacing = 24.0, half = world.halfSize(), reach = half + 3000.0;
+    // (The procedural world: its ranges seen far off, 6 km past its window, a little coarser.)
+    const bool endless = world.map == MAP_PROCEDURAL;
+    const double spacing = endless ? 32.0 : 24.0, half = world.halfSize(), reach = half + (endless ? 6000.0 : 3000.0);
     const int n = (int)(2 * reach / spacing) + 1;
     const unsigned base = (unsigned)verts.size();
     verts.resize(base + (size_t)n * n);
+    if (endless) {
+        // (Its heights once each, on the grid, the slopes from the neighbours: the land with its valleys cut is dear to work out.
+        // On the window's edge, the window's own ground, so the two meet.)
+        std::vector<double> H((size_t)n * n);
+        parallelRows(n, [&](int i) {
+            for (int j = 0; j < n; j++) {
+                const double x = -reach + i * spacing, z = -reach + j * spacing;
+                H[(size_t)i * n + j] = std::fabs(x) <= half + 1e-6 && std::fabs(z) <= half + 1e-6 ? world.height(x, z) : sceneryHeight(world, x, z);
+            }
+        });
+        parallelRows(n, [&](int i) {
+            for (int j = 0; j < n; j++) {
+                const double x = -reach + i * spacing, z = -reach + j * spacing;
+                const int i0 = std::max(0, i - 1), i1 = std::min(n - 1, i + 1), j0 = std::max(0, j - 1), j1 = std::min(n - 1, j + 1);
+                const V3 nrm = norm(V3((H[(size_t)i0 * n + j] - H[(size_t)i1 * n + j]) / ((i1 - i0) * spacing), 1.0,
+                                       (H[(size_t)i * n + j0] - H[(size_t)i * n + j1]) / ((j1 - j0) * spacing)));
+                verts[base + (size_t)i * n + j] = vtx(V3(x, H[(size_t)i * n + j], z), nrm, 0, 0, 0, SM_TERRAIN);
+            }
+        });
+    } else
     parallelRows(n, [&](int i) {
         for (int j = 0; j < n; j++) {
             double x = -reach + i * spacing, z = -reach + j * spacing;
@@ -5591,6 +5613,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     if (mapId == MAP_MOUNTAIN) Uniform2f(uniformLocation(progLit, "uRockSnow"), 165.0f, 205.0f);
     else if (mapId == MAP_FRONTIER) Uniform2f(uniformLocation(progLit, "uRockSnow"), 125.0f, 400.0f);  // (its snow is painted on)
     else if (mapId == MAP_BACKCOUNTRY) Uniform2f(uniformLocation(progLit, "uRockSnow"), 105.0f, 400.0f);  // (its snow is painted on)
+    else if (mapId == MAP_PROCEDURAL) Uniform2f(uniformLocation(progLit, "uRockSnow"), 560.0f, 880.0f);  // (bare rock high in its ranges; its snow is painted on)
     else Uniform2f(uniformLocation(progLit, "uRockSnow"), 60.0f, 240.0f);
     passMark(FP_OPAQUE);
     UseProgram(progLit);
@@ -5698,6 +5721,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         if (mapId == MAP_MOUNTAIN) Uniform2f(uniformLocation(progGrass, "uRockSnow"), 165.0f, 205.0f);
         else if (mapId == MAP_FRONTIER) Uniform2f(uniformLocation(progGrass, "uRockSnow"), 125.0f, 400.0f);
         else if (mapId == MAP_BACKCOUNTRY) Uniform2f(uniformLocation(progGrass, "uRockSnow"), 105.0f, 400.0f);
+        else if (mapId == MAP_PROCEDURAL) Uniform2f(uniformLocation(progGrass, "uRockSnow"), 560.0f, 880.0f);
         else Uniform2f(uniformLocation(progGrass, "uRockSnow"), 60.0f, 240.0f);
         // Vehicles near the camera, each as a capsule along its wheels, for the grass to bend away from.
         float push[32] = {};
@@ -5826,6 +5850,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
             if (mapId == MAP_MOUNTAIN) rs[0] = 165.0f, rs[1] = 205.0f;
             else if (mapId == MAP_FRONTIER) rs[0] = 125.0f, rs[1] = 400.0f;
             else if (mapId == MAP_BACKCOUNTRY) rs[0] = 105.0f, rs[1] = 400.0f;
+            else if (mapId == MAP_PROCEDURAL) rs[0] = 560.0f, rs[1] = 880.0f;
             else rs[0] = 60.0f, rs[1] = 240.0f;
             Uniform2f(uniformLocation(prog, "uRockSnow"), rs[0], rs[1]);
             ActiveTexture(GL_TEXTURE0 + 3);

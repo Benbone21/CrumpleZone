@@ -217,11 +217,25 @@ Commits on `wip/procworld`, one per phase (a, b+c, d, e), on top of main with th
   (map id 6, `World::proc`, the thread-local seed and origin), `main.cpp`, `render.cpp/.h`, `groundshader.cpp`,
   `treedraw.cpp`, `propdraw.cpp/.h`, `forest.cpp`, `places.cpp`, `net.cpp/.h`, `server_main.cpp`, `debuginfo.cpp`,
   `menu.*`, `mainmenudraw.cpp`.
-- **Trails (changed):** the tread's height is no longer graded per edge. It is `ProcWorld::trailLevel(x, z)`: the
-  land low-passed over ~36 m (37 taps), then down the river's or creek's valley and into the water at a ford. Because
-  it is a function of position, two trails that meet or cross agree. The per-edge grading made 10-75 m walls where
-  trails crossed. Diagonal edges are off for now, since they crossed other edges. Mountain trails come out steep
-  (black); grades of 30-50% happen on valley walls.
+- **Relief (changed after the owner's "too flat"):** `land()` is now a continent swell (+-60 m), mountain belts
+  (a warped low-frequency field) holding a domain-warped ridged multifractal (peaks to ~1.1 km), foothills
+  (110-280 m of rolling noise) everywhere else, sand basins in the dunes, and in the badlands a plateau cut by
+  canyons with 9 m benches. Rivers drain at a level raised 200 m in the ranges and cut valleys as wide as 2x their
+  depth (up to 1 km). The valley walls go by the river field's offset over its usual slope (`Macro::riverV`), not by
+  the linearised distance, which far out changed many metres a metre and stood up as walls. Every river's valley is
+  cut, wet or dry, so a river that fades into a dry wash doesn't leave its walls standing.
+- **Trails (changed again):** each edge is routed by A* over a 16 m grid of the carved ground (`groundHeight`) within
+  260 m of its nodes. A step costs more the steeper it climbs and far more past the rating's grade (roads 12%, green
+  15%, blue 22%, black 32%), so trails zigzag up slopes. The path is smoothed and its height profile is the ground
+  low-passed, held to the grade, with fords pinned to the water. Where the grade would leave it more than 18 m above
+  or below the land, the grade is relaxed a step at a time instead (a few mountain trails come out steeper than their
+  rating). The chunk lays each tread with earthworks as wide as its cut or fill is deep (~1:1.3, at most 40 m). Near
+  two legs of a switchback, or two trails, each contributes as near as it is, so there are no steps between them.
+  `procworld/no-walls` checks that under 1% of the ground is steeper than 2:1 and that no metre has a cliff over 15 m.
+  The tread checks in `rivers-trails` were loosened (kinks 0.6%, steps 2.5 m): trails that cross at different
+  heights, or a switchback next to another trail, meet in a short ramp.
+- **The backdrop** past the window uses the same carved ground, and the window's own heights on its edge. Before
+  this, the uncarved land stood up as a wall at the window's edge.
 - **Creeks** only run where the land is within ~10 m of their level. Otherwise they cut gorges through the hills.
 - **The slide is invisible:** in a screenshot diff before and after a 64 m slide with nothing else changing, 439 of
   922k pixels differ (float rounding). Getting there took these changes:
@@ -240,9 +254,10 @@ Commits on `wip/procworld`, one per phase (a, b+c, d, e), on top of main with th
   - Texels go up through a pixel buffer: a direct `TexSubImage2D` into the big float texture stalled 20-200 ms a
     slice.
   - Index buffers that came out the same are not sent again.
-  - What's left on the swap frame is `adoptWorld` (props, boxes) and uploading the prepared meshes: 30-45 ms on the
-    offscreen iGPU (Radeon 780M class). Before the work it was 670 ms + 165 ms. The 3070 m window takes 0.4-0.5 s
-    of worker time per slide.
+  - The upload is staged: `Renderer::stageWorld` sends a piece per frame (2 ms budget: water, boxes, each tree set,
+    the bush and scenery buffers) while the old window is still drawn, and the swap frame only swaps (~0.1 ms). The
+    old window is freed on a detached thread. `test_render` "procedural slide" checks that no frame round a slide
+    goes over 2x the median + 2 ms. Before any of this the swap frame took 670 ms + 165 ms.
 - **Multiplayer (as built):**
   - The host (or the dedicated server, `--map 6 --seed N`) sends `procshift <seed> <x> <z> <due>` (host-only
     chatter) 3 s before `due` on the shared clock.
@@ -251,14 +266,14 @@ Commits on `wip/procworld`, one per phase (a, b+c, d, e), on top of main with th
   - `NetSession::frameFix` moves vehicle states stamped across a slide into the receiver's frame, and `shiftNow`
     moves the buffered ones. Relays go out as sent.
   - Tested: the guest's truck as the host shows it stays within 0.13 m of where it is through a slide.
-  - **Known gaps:**
-    - a guest joining during the 3 s before a slide misses it, and rejoining fixes it;
-    - on-foot buddies, pings and rope anchors briefly show in the other frame;
-    - spawn messages are not frame-fixed.
+  - A guest joining in the 3 s before a slide gets it in the welcome and slides too. Pings, buddies on foot and rope
+    anchors sent before a slide are moved into the new frame.
+  - **Known gaps:** spawn messages are not frame-fixed. The 3 km window follows the host, so a group spread over
+    more than ~1.5 km sees the far members drive off its edge (they keep driving on their own window's ground).
 - **Saves and career:** `ProcWorld::saveLine(world)` gives "map=procedural seed=N origin=X,Z", and
-  `ProcWorld::useSaveLine(line)` sets up the next build. See the report for how New World uses them. Discovery
-  still saves `PROCEDURAL:<NAME>`, so all seeds share one namespace: a name found in one world counts as found in
-  another. The fix is to key discovery by `PW.<i>.<j>.<WHAT>` with the seed, when career phase 6 lands.
+  `ProcWorld::useSaveLine(line)` sets up the next build. See the report for how New World uses them. Discoveries
+  and caches are keyed by seed and place id (`proc::placeKey`: `<seed>#PW.<i>.<j>.<WHAT>`), so a place found in one
+  world doesn't count in another.
 - **Place names** are unique within 30 km, through an injective fold of the cell index onto the word pairs. Ids are
   unique everywhere.
 - **Not done:**
