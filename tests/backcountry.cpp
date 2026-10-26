@@ -8,6 +8,7 @@
 #include <string>
 
 #include "../src/autopilot.h"
+#include "../src/onemap.h"
 #include "harness.h"
 
 namespace {
@@ -94,8 +95,13 @@ SCENARIO(backcountryMap, "maps/backcountry",
     const World& w = ctx.sim.world;
     ctx.metric("time to build the map", secs, "s", 0, 6);
     // Stations: four, on pads flat to a few centimetres across their reach.
-    ctx.metric("repair stations", (double)w.stations.size(), "", 3, 5);  // (four camps and the ranger station)
+    // (Four camps and the ranger station; on the big map the regions round it bring theirs besides: the Mountain's 3, the Frontier's 5.)
+    int own = 0;
+    for (const Station& st : w.stations) own += regionContaining(st.p.x, st.p.z) == nullptr;
+    ctx.metric("repair stations", (double)own, "", 3, 5);
+    ctx.check("the regions' stations besides", w.stations.size() - own == (w.regionStarts.empty() ? 0u : 8u), std::to_string(w.stations.size() - own));
     for (const Station& st : w.stations) {
+        if (regionContaining(st.p.x, st.p.z)) continue;  // (a region's are its old map's: onemap/region-copy)
         double lo = 1e9, hi = -1e9;
         for (double dx = -st.r; dx <= st.r; dx += 1.5)
             for (double dz = -st.r; dz <= st.r; dz += 1.5) {

@@ -1,6 +1,7 @@
 #include "thread_cache.h"
 #include "parallel.h"
 #include "world.h"
+#include "onemap.h"
 #include "worldcache.h"
 #include "laptimer.h"
 #include "loadprof.h"
@@ -77,7 +78,9 @@ V3 World::courseStart(int surface) const {
 }
 
 const std::vector<int>& listedMaps() {
-    static const std::vector<int> m = {MAP_PROVING_GROUND, MAP_MOUNTAIN, MAP_FREEWAY, MAP_FRONTIER, MAP_BACKCOUNTRY, MAP_WILDS};  // (all back on the list, 2026-10-18: the owner edits them)
+    // (All back on the list, 2026-10-18: the owner edits them. Since the one map (2026-10-25, docs/plans/one-map.md) the Mountain, the
+    // Frontier and the Open Country are the Backcountry's regions: on the list as places to start on it, beside it.)
+    static const std::vector<int> m = {MAP_PROVING_GROUND, MAP_BACKCOUNTRY, MAP_MOUNTAIN, MAP_FRONTIER, MAP_WILDS, MAP_FREEWAY};
     return m;
 }
 
@@ -99,6 +102,11 @@ int nextListedMap(int map, int dir) {
 
 const char* mapName(int map) {
     return map == MAP_MOUNTAIN ? "MOUNTAIN" : map == MAP_FREEWAY ? "FREEWAY" : map == MAP_FRONTIER ? "FRONTIER" : map == MAP_BACKCOUNTRY ? "BACKCOUNTRY" : map == MAP_WILDS ? "OPEN COUNTRY" : "PROVING GROUND";
+}
+
+std::string mapPickName(int map) {
+    if (map == MAP_MOUNTAIN || map == MAP_FRONTIER || map == MAP_WILDS) return std::string(mapName(MAP_BACKCOUNTRY)) + ": " + mapName(map);
+    return mapName(map);
 }
 
 const char* wildsKindName(int kind) {
@@ -439,7 +447,9 @@ World::World(int m) : map(m) {
 
 double World::halfSizeFor(int map) {
     if (halfSizeOverride > 0) return halfSizeOverride;
-    return map == MAP_BACKCOUNTRY ? 3072.0 : kDefaultHalfSize;  // (the Backcountry: 6 x 6 km, docs/plans/big-maps.md)
+    // (The Backcountry: 6 x 6 km (docs/plans/big-maps.md), or 8 x 8 km with the regions stitched on round it (docs/plans/one-map.md).)
+    if (map == MAP_BACKCOUNTRY) return stitchRegions ? kOneMapHalf : kOldBackcountryHalf;
+    return kDefaultHalfSize;
 }
 
 void World::cutCachedRocks() {
@@ -1095,11 +1105,17 @@ void World::bakeTerrain() {
 
 double World::height(double x, double z) const {
     if (!std::isfinite(x) || !std::isfinite(z)) return 0;  // (an exploded vehicle: the game resets it after the frame)
-    double fx = (x + half) / kRes, fz = (z + half) / kRes;
-    fx = clampd(fx, 0, hN - 1.001);
-    fz = clampd(fz, 0, hN - 1.001);
-    int i = (int)fx, j = (int)fz;
-    double tx = fx - i, tz = fz - j;
+    // (The big map grew round the 6 km Backcountry (onemap.h): there the cell and the fraction across it are worked out from that map's
+    // corner, as they were on it, then moved by the whole cells it grew by, so the land under a wheel is the same to the last bit. On
+    // every other map `base` is its own half-size and this is as it always was.)
+    const double base = map == MAP_BACKCOUNTRY && half > kOldBackcountryHalf + 1 ? kOldBackcountryHalf : half;
+    const int shift = (int)std::lround((half - base) / kRes);
+    double fx = (x + base) / kRes, fz = (z + base) / kRes;
+    fx = clampd(fx, -shift, hN - 1.001 - shift);
+    fz = clampd(fz, -shift, hN - 1.001 - shift);
+    const double flx = std::floor(fx), flz = std::floor(fz);
+    const int i = (int)flx + shift, j = (int)flz + shift;
+    const double tx = fx - flx, tz = fz - flz;
     double a = gridAt(i, j), b = gridAt(i + 1, j), c = gridAt(i, j + 1), d = gridAt(i + 1, j + 1);
     return (a * (1 - tx) + b * tx) * (1 - tz) + (c * (1 - tx) + d * tx) * tz;
 }

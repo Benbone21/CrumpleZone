@@ -13,7 +13,8 @@
 
 namespace {
 const char kMagic[8] = {'C', 'Z', 'W', 'O', 'R', 'L', 'D', '1'};
-constexpr uint64_t kFormat = 4;  // bump with any change to what's written below or to how a map is built that the build id misses
+constexpr uint64_t kFormat = 5;  // 5: the big map's regions' starts and roads (World::regionStarts, regionRoads)
+// bump with any change to what's written below or to how a map is built that the build id misses
 
 struct Out {
     std::vector<uint8_t> b;
@@ -158,6 +159,11 @@ struct WorldIO {
             io.pod(f.poolR), io.pod(f.poolDepth);
         });
         io.pod(w.parkingYaw), io.pod(w.crashProps), io.pod(w.wrapPeriod), io.pod(w.cellEdits);
+        io.list(w.regionStarts, [&](auto& s) {
+            io.pod(s.map), io.v3(s.spawn), io.pod(s.yaw), io.pod(s.parkingYaw);
+            io.list(s.parking, [&](auto& p) { io.v3(p); });
+        });
+        io.list(w.regionRoads, [&](auto& r) { io.list(r, [&](auto& p) { io.v3(p); }); });
     }
     static bool sane(const World& w) {
         const size_t n = (size_t)w.hN * w.hN;

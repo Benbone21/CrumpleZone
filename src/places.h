@@ -90,6 +90,12 @@ struct DiscoverSpot {
     V3 p;
     double radius = 30;
     int kind = -1;  // PlaceKind, or -1 for a plain named spot
+    // A spot of one of the big map's regions (onemap.h): found, it's kept under the old map it was on ("1:TRAILHEAD", as before),
+    // and `label` is what's shown ("MOUNTAIN: TRAILHEAD"). -1: the map it's on.
+    int map = -1;
+    std::string label;
+    int keyMap(int current) const { return map >= 0 ? map : current; }
+    const std::string& shown() const { return label.empty() ? name : label; }
 };
 // The places on a map that are found by getting near (everything but caches and photo spots).
 std::vector<DiscoverSpot> discoverSpots(int map);

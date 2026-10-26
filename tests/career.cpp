@@ -7,6 +7,7 @@
 #include "../src/interact.h"
 #include "../src/mods.h"
 #include "../src/walker.h"
+#include "../src/onemap.h"
 #include "harness.h"
 
 namespace {
@@ -119,8 +120,19 @@ SCENARIO(careerCaches, "career/caches", "Supply caches on the Frontier and in th
         const World& w = ctx.sim.world;
         const std::vector<CacheSpot> spots = cacheSpots(w);
         const std::string name = mapName(map);
-        const size_t want = map == MAP_BACKCOUNTRY ? 60 : 10;  // (the 6 km Backcountry: the ten hand-made ones and fifty from its places: places.h)
+        // (The Backcountry: the ten hand-made ones and fifty from its places (places.h); on the big map, the Frontier's ten in its region besides.)
+        const size_t want = map == MAP_BACKCOUNTRY ? (w.regionStarts.empty() ? 60 : 70) : 10;
         ctx.check(name + ": " + std::to_string(want) + " caches", spots.size() == want, std::to_string(spots.size()));
+        if (map == MAP_BACKCOUNTRY && !w.regionStarts.empty()) {
+            // The Frontier's own, still the Frontier's (an opened one stays opened), where they were on its map, moved over.
+            World fr(MAP_FRONTIER);
+            const std::vector<CacheSpot> own = cacheSpots(fr);
+            int same = 0;
+            for (const CacheSpot& o : own)
+                for (const CacheSpot& s : spots)
+                    same += s.id == o.id && s.map == MAP_FRONTIER && std::hypot(s.at.x - regionToWorld(MAP_FRONTIER, o.at).x, s.at.z - regionToWorld(MAP_FRONTIER, o.at).z) < 0.01;
+            ctx.check("the Frontier's caches in its region, still the Frontier's", same == (int)own.size() && !own.empty(), std::to_string(same));
+        }
         bool contents = true, dry = true, apart = true, onMap = true;
         std::string bad;
         for (size_t i = 0; i < spots.size(); i++) {

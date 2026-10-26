@@ -29,6 +29,7 @@
 #include <string>
 
 #include "loadprof.h"
+#include "onemap.h"
 #include "parallel.h"
 #include "places.h"
 #include "rivers.h"
@@ -253,6 +254,9 @@ Districts districtsAt(double x, double z) {
 // cell, sharp: the new country's land is sampled every 4 m, which would smear a cliff.)
 double valleyFloor(double x) { return x > 540 ? 2.6 + 0.009 * (x - 540) : x < -540 ? 2.6 - 0.0008 * (-540 - x) : 2.6; }
 double riverFloor(double x) { return valleyFloor(x) + elkFallsRise(x, riverZ(x)); }
+// Elk River's mouth on the big map (onemap.h): a lake on the seam with the Open Country, west of where the old map's edge was.
+const V3 kMouthLake(-2840, 0, 18);
+constexpr double kMouthLakeR = 100;
 // The big lake on the Lakeshore.
 const V3 kLake(-1850, 0, -1650);
 constexpr double kLakeR = 480, kLakeY = 1.2;
@@ -263,8 +267,9 @@ double valleyOpen(double x, double z, double east) {
     const double open = smoothstep(40, 380, dv), gorge = smoothstep(26, 90, dv);
     return open + (gorge - open) * east;
 }
-// The new country's land (smooth: the build adds the metre-scale bumps).
-double outerLand(double x, double z) {
+// The new country's land (smooth: the build adds the metre-scale bumps). `seams`: the big map's (onemap.h), where the edge ridge opens
+// into a valley wherever a region meets it.
+double outerLand(double x, double z, bool seams) {
     const Districts d = districtsAt(x, z);
     const double rowMid = std::max(0.0, 1 - d.n - d.s), colMid = std::max(0.0, 1 - d.e - d.w);
     const double roll = fbmNoise(x * 0.0021 + 3.1, z * 0.0021 - 7.3, 3) - 0.5;  // broad swells
@@ -294,7 +299,8 @@ double outerLand(double x, double z) {
     }
     // The map's edge: the land rises into a ridge you won't drive over.
     const double e = std::max(std::fabs(x), std::fabs(z));
-    h += smoothstep(2720, 3050, e) * (55 + 90 * ridge);
+    h += smoothstep(2720, 3050, e) * (55 + 90 * ridge) * (seams ? 1 - edgeRidgeOpening(x, z) : 1.0);
+    if (seams) h += bigMapEdgeRidge(x, z) * (70 + 90 * ridge);  // (the big map's own edge, wherever the ridge above was opened)
     return h;
 }
 
@@ -316,13 +322,14 @@ const Poly& wreckTrail() {
 void backcountryLand(double half, int hN, std::vector<float>& out) {
     out.assign((size_t)hN * hN, 0.0f);
     auto X = [&](int i) { return -half + i * 1.0; };
+    const bool seams = half > kOldBackcountryHalf + 1;  // (the big map: onemap.h)
     // The new country, a sample every 4 m (smooth: bilinear between them, the bumps added per cell).
     const int mn = (int)std::ceil(2 * half / 4.0) + 1;
     std::vector<float> macro((size_t)mn * mn);
     parallelRows(mn, [&](int a) {
         for (int b = 0; b < mn; b++) {
             const double x = -half + a * 4.0, z = -half + b * 4.0;
-            macro[(size_t)a * mn + b] = std::max(std::fabs(x), std::fabs(z)) < kInner - 8 ? 0.0f : (float)outerLand(x, z);
+            macro[(size_t)a * mn + b] = std::max(std::fabs(x), std::fabs(z)) < kInner - 8 ? 0.0f : (float)outerLand(x, z, seams);
         }
     });
     auto outerAt = [&](double x, double z) {
@@ -375,6 +382,10 @@ void World::buildBackcountry() {
     auto X = [&](int i) { return -half + i * kRes; };
     auto cellI = [&](double v) { return std::min(std::max((int)std::lround((v + half) / kRes), 0), hN - 1); };
     auto at = [&](double x, double z) -> int { return cellI(x) * hN + cellI(z); };
+    // The big map (onemap.h): the regions' old maps are built on workers meanwhile, and stitched on once the land is made.
+    const bool stitch = half > kOldBackcountryHalf + 1;
+    std::vector<RegionBuild*> regionBuilds;
+    if (stitch) regionBuilds = startRegionBuilds();
 
     steps.next("bc.the land");
     // ---- The land -----------------------------------------------------------------------------
@@ -391,6 +402,16 @@ void World::buildBackcountry() {
     CellTiles<uint8_t> keep;  // no trees, rocks or bushes here
     CellTiles<float> edge;    // distance past the nearest trail's tread
     keep.reset(hN, 0), edge.reset(hN, 1e9f);
+    if (stitch) {
+        steps.next("bc.regions land");
+        finishRegionBuilds(regionBuilds);
+        stitchRegionLand(regionBuilds, keep);
+        // (Elk River, its mouth lake and the Lakeshore's lake are laid on later: the roads keep clear of where they'll be.)
+        layRegionRoads(regionBuilds, keep, [&](double x, double z) {
+            return (x > kMouthLake.x && x < 3100 && std::fabs(z - riverZ(x)) < 45) || std::hypot(x - kMouthLake.x, z - kMouthLake.z) < kMouthLakeR * 1.15 + 90 ||
+                   lakeDist(x, z) < kLakeR + 120;
+        });
+    }
 
     // Scratch for scanning cells near a polyline.
     CellTiles<float> sd, sk, sl;
@@ -896,8 +917,8 @@ void World::buildBackcountry() {
             std::vector<V3> ctl;
             if (side == 0)
                 for (double x = 3060; x >= 540; x -= 30) ctl.push_back(V3(x, 0, riverZ(x)));
-            else
-                for (double x = -540; x >= -3060; x -= 30) ctl.push_back(V3(x, 0, riverZ(x)));
+            else  // (on the big map it ends in a lake on the seam with the Open Country: onemap.h)
+                for (double x = -540; x >= (stitch ? kMouthLake.x + kMouthLakeR * 0.6 : -3060); x -= 30) ctl.push_back(V3(x, 0, riverZ(x)));
             const Poly o = smooth(ctl);
             const int m = (int)o.size();
             std::vector<double> ol(m), od(m), ob(m);
@@ -918,6 +939,24 @@ void World::buildBackcountry() {
             record(side == 0 ? "ELK RIVER (BEAR CREEK CANYON)" : "ELK RIVER (WEST)", o, ol, od, &os);
             if (side == 0) eastRiver = o, eastLevel = ol, eastStretch = os;
             else westRiver = o, westLevel = ol, westStretch = os;
+        }
+        // The big map: Elk River's mouth, a lake on the seam with the Open Country (where it ran off the old map's edge).
+        if (stitch && !westLevel.empty()) {
+            const double level = westLevel.back() - 0.01;
+            const V3 c = kMouthLake;
+            const double reach = kMouthLakeR * 1.15 + 100;  // (its banks rise 0.35 a metre from the water, ~30 m to the land round it)
+            for (int i = cellI(c.x - reach); i <= cellI(c.x + reach); i++)
+                for (int j = cellI(c.z - reach); j <= cellI(c.z + reach); j++) {
+                    const double x = X(i), z = X(j), d = std::hypot(x - c.x, z - c.z);
+                    const double ang = std::atan2(z - c.z, x - c.x);  // (a shore that wanders, the same all the way round)
+                    const double rr = kMouthLakeR * (0.85 + 0.3 * valueNoise(std::cos(ang) * 1.3 + 4.0, std::sin(ang) * 1.3 + 0.7));
+                    const int id = i * hN + j;
+                    const double q = d / rr, bed = d < rr ? level - 2.4 * (1 - q * q) - 0.15 : level + 0.15 + (d - rr) * 0.35;
+                    if (hgrid[id] > bed) hgrid[id] = (float)bed;
+                    if (hgrid[id] < level && d < rr + 6) waterY[id] = (float)level, flowX[id] = flowZ[id] = 0, surf[id] = SURF_MUD, paint[id] = PAINT_MUD;
+                    else if (d < rr + 4 && paint[id] == PAINT_NONE) surf[id] = SURF_GRAVEL, paint[id] = PAINT_GRAVEL;
+                    if (d < rr + 8) keep[id] = 1;
+                }
         }
     }
 
@@ -1569,13 +1608,18 @@ void World::buildBackcountry() {
     {
         constexpr double C = 64;
         const int cn = (int)std::ceil(2 * half / C);
+        // (Each cell's random numbers come from its place counted from the 6 km map's corner, as they were before the map grew to 8 km;
+        // beyond that square, out on the big map's edge mountains and in the regions, nothing grows from here.)
+        const int c0 = (int)std::lround((half - kOldBackcountryHalf) / C), cn0 = (int)std::ceil(2 * kOldBackcountryHalf / C);
         std::vector<std::vector<int>> nearTrees((size_t)cn * cn);
         int bigRocks = 0;
         for (int ci = 0; ci < cn; ci++)
             for (int cj = 0; cj < cn; cj++) {
                 const double x0 = -half + ci * C, z0 = -half + cj * C, cx = x0 + C / 2, cz = z0 + C / 2;
                 if (std::max(std::fabs(cx), std::fabs(cz)) < kInner + 40) continue;  // (the old map has its own)
-                uint32_t r32 = (uint32_t)(ci * 73856093) ^ (uint32_t)(cj * 19349663) ^ 0x51ed2701u;
+                if (std::max(std::fabs(cx), std::fabs(cz)) > kOldBackcountryHalf) continue;
+                const int si = ci - c0, sj = cj - c0;
+                uint32_t r32 = (uint32_t)(si * 73856093) ^ (uint32_t)(sj * 19349663) ^ 0x51ed2701u;
                 r32 = r32 * 2654435761u + 0x9e3779b9u;
                 auto rr = [&]() {
                     r32 ^= r32 << 13, r32 ^= r32 >> 17, r32 ^= r32 << 5;
@@ -1637,7 +1681,7 @@ void World::buildBackcountry() {
                     const bool big = slope > 0.5 && rr() < 0.12 && bigRocks < 400;
                     const double rad = big ? 1.6 + 2.0 * rr() : 0.35 + rr() * rr() * 0.75, flat = 0.5 + 0.4 * rr();
                     bigRocks += big;
-                    addRock(x, z, V3(rad, rad * flat, rad * (0.7 + 0.3 * rr())), rad * flat * (0.5 + 0.5 * rr()), 1000000u + (uint32_t)(ci * cn + cj) * 8u + (uint32_t)k,
+                    addRock(x, z, V3(rad, rad * flat, rad * (0.7 + 0.3 * rr())), rad * flat * (0.5 + 0.5 * rr()), 1000000u + (uint32_t)(si * cn0 + sj) * 8u + (uint32_t)k,
                             (float)(0.85 + 0.25 * rr()));
                 }
                 // A fallen log in the woods.
@@ -1866,6 +1910,11 @@ void World::buildBackcountry() {
     spawnYaw = 0;
     parking = {V3(kTrailhead.x - 8, 0, kTrailhead.z + 13), V3(kTrailhead.x - 8, 0, kTrailhead.z + 19), V3(kTrailhead.x - 16, 0, kTrailhead.z + 7)};
     parkingYaw = 0;
+    if (stitch) {
+        steps.next("bc.regions");
+        stitchRegionContent(regionBuilds);
+        for (RegionBuild* b : regionBuilds) delete b;
+    }
 }
 
 V3 backcountryFeature(const char* name) {

@@ -2,6 +2,7 @@
 #include <atomic>
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -175,6 +176,9 @@ enum MapId { MAP_PROVING_GROUND, MAP_MOUNTAIN, MAP_FREEWAY, MAP_FRONTIER, MAP_BA
 enum WildsKind { WILDS_MEADOW, WILDS_DESERT, WILDS_FOREST, WILDS_CANYON, WILDS_WETLAND, WILDS_UPLAND, WILDS_COUNT };
 const char* wildsKindName(int kind);
 const char* mapName(int map);  // as the menu shows it
+// A map as a pick on the map list: the Mountain, the Frontier and the Open Country are start points on the Backcountry's big map now
+// (onemap.h): "BACKCOUNTRY: MOUNTAIN".
+std::string mapPickName(int map);
 // The map whose music and ambience a map uses (the wilds sound like the proving ground's open country).
 inline int soundMap(int map) { return map == MAP_WILDS ? (int)MAP_PROVING_GROUND : map; }
 // The maps on offer (menus, hosting, the editor): just the proving ground, where everything in
@@ -234,6 +238,9 @@ public:
     static double halfSizeFor(int map);
     // Tests: every map built on this thread is this big instead (0: as the map has it). Per thread, like withShowcase.
     static inline thread_local double halfSizeOverride = 0;
+    // Whether the Backcountry is built as the big map, with the Mountain, the Frontier and the Open Country stitched on round it
+    // (onemap.h, docs/plans/one-map.md); off, it's the 6 km map alone. Per thread, like withShowcase (tests that only need the old map).
+    static inline thread_local bool stitchRegions = true;
     static int gridSizeFor(int map) { return (int)(2 * halfSizeFor(map) / kRes) + 1; }
     double halfSize() const { return half; }
     static constexpr double kPadRadius = 140.0;
@@ -326,6 +333,19 @@ public:
     bool spawnSlot(int k, V3& p, double& yaw) const;
     std::vector<V3> parking;     // where the other vehicles start, facing parkingYaw
     double parkingYaw = M_PI / 2;
+    // The big map's regions' own starts (onemap.h): where each old map started you, and its parked vehicles, moved over. Starting at
+    // one (startAtRegion) makes it the map's start.
+    struct RegionStart {
+        int map = 0;
+        V3 spawn;
+        double yaw = 0;
+        std::vector<V3> parking;
+        double parkingYaw = M_PI / 2;
+    };
+    std::vector<RegionStart> regionStarts;
+    // The gravel roads from the Backcountry into each region (onemapbuild.cpp), as laid: a point every metre, at the road's height.
+    std::vector<std::vector<V3>> regionRoads;
+    bool startAtRegion(int oldMap);  // false: not a region of this map
     bool crashProps = true;      // crash boxes and barriers (the proving ground)
     // The freeway repeats every wrapPeriod meters along x (0: the map doesn't). The sim
     // shifts everything back by a period as you drive on, so it never ends.
@@ -391,6 +411,17 @@ private:
     void buildSectionPark(); // the obstacle sections laid out outside the loop road (world.cpp)
     void buildMountain();
     double mountainHeight(double x, double z) const;
+    // The big map (onemapbuild.cpp): the regions' old maps, built on workers while the Backcountry's land is made; their land laid
+    // into it with the seams blended (before the Backcountry paints and plants, so its growth follows the seams; `keep` marks the
+    // regions' cores, where it grows nothing), then the rest of each: surfaces, roads, water, everything on it, stations and starts.
+    struct RegionBuild;
+    static std::vector<RegionBuild*> startRegionBuilds();
+    static void finishRegionBuilds(std::vector<RegionBuild*>& builds);
+    void stitchRegionLand(const std::vector<RegionBuild*>& builds, CellTiles<uint8_t>& keep);
+    void stitchRegionContent(const std::vector<RegionBuild*>& builds);
+    // (`wetLater`: where the Backcountry's rivers and lakes will be, which aren't on the land yet when the roads are laid.)
+    void layRegionRoads(const std::vector<RegionBuild*>& builds, CellTiles<uint8_t>& keep, const std::function<bool(double, double)>& wetLater);
+    CellTiles<uint8_t> roadMask;  // (while the big map is built: the cells the roads above took, which the regions' own ground doesn't)
     void scatterScenery(uint32_t seed);  // bushes and rocks between the trees
     // Digs a lake basin `depth` deep at (x, z) radius r, banks rising at ~1:4, and fills it.
     void addLake(double x, double z, double r, double depth);

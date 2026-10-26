@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <sstream>
 
+#include "onemap.h"
 #include "rivers.h"
 #include "world.h"
 
@@ -21,6 +22,7 @@ char placeKindGlyph(int kind) {
 
 const char* regionAt(int map, double x, double z) {
     if (map != MAP_BACKCOUNTRY) return "";
+    if (const MapRegion* r = regionContaining(x, z)) return r->name;  // (the big map's regions: onemap.h)
     // Elk Valley is the old 1.2 km map and its margin; round it the eight districts (backcountry.cpp: districtsAt).
     constexpr double a = 800;
     static const char* names[3][3] = {{"LAKESHORE", "SOUTH UPLANDS", "BADLANDS WASH"},
@@ -31,6 +33,8 @@ const char* regionAt(int map, double x, double z) {
 }
 std::vector<std::string> regionNames(int map) {
     if (map != MAP_BACKCOUNTRY) return {};
+    // (The Backcountry's own districts. The big map's regions round it are named by regionAt too, but their places are their old maps':
+    // the autopilot's and discovery's lists, not this table.)
     return {"ELK VALLEY", "RANGER FLATS", "TIMBER BASIN", "COPPER RIDGE", "HIGH LAKES", "BEAR CREEK CANYON", "BADLANDS WASH", "SOUTH UPLANDS", "LAKESHORE"};
 }
 
@@ -207,8 +211,8 @@ bool isFound(const std::vector<std::string>& found, int map, const std::string& 
 std::vector<std::string> visitSpots(std::vector<std::string>& found, int map, const V3& at, const std::vector<DiscoverSpot>& spots) {
     std::vector<std::string> fresh;
     for (const DiscoverSpot& s : spots)
-        if (std::hypot(s.p.x - at.x, s.p.z - at.z) < s.radius && !isFound(found, map, s.name)) {
-            found.push_back(std::to_string(map) + ":" + s.name);
+        if (std::hypot(s.p.x - at.x, s.p.z - at.z) < s.radius && !isFound(found, s.keyMap(map), s.name)) {
+            found.push_back(std::to_string(s.keyMap(map)) + ":" + s.name);
             fresh.push_back(s.name);
         }
     return fresh;
@@ -222,9 +226,8 @@ bool takeFoundMessage(std::vector<std::string>& found, int currentMap, const std
     if (sp == std::string::npos) return false;
     const int map = std::atoi(text.c_str() + 6);
     const std::string n = text.substr(sp + 1);
-    if (map != currentMap) return false;
-    bool known = false;
-    for (const DiscoverSpot& s : valid) known |= s.name == n;
+    bool known = false;  // (a region's spot comes under its old map's id)
+    for (const DiscoverSpot& s : valid) known |= s.name == n && s.keyMap(currentMap) == map;
     if (!known || isFound(found, map, n)) return false;
     found.push_back(std::to_string(map) + ":" + n);
     name = n;
