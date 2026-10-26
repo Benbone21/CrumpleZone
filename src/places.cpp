@@ -7,6 +7,7 @@
 #include <sstream>
 
 #include "onemap.h"
+#include "realterrain.h"
 #include "rivers.h"
 #include "world.h"
 
@@ -145,6 +146,7 @@ std::vector<MapPlace> backcountryPlaces() {
 const std::vector<MapPlace>& mapPlaces(int map) {
     static const std::vector<MapPlace> bc = backcountryPlaces();
     static const std::vector<MapPlace> none;
+    if (map == MAP_REAL) return realterrain::places();  // (the active real terrain's, from its plan)
     return map == MAP_BACKCOUNTRY ? bc : none;
 }
 const MapPlace* findPlace(int map, const std::string& id) {

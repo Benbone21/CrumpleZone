@@ -171,7 +171,10 @@ inline double surfaceGrip(Surface s) { return surfaceInfo(s).grip; }
 
 // MAP_WILDS is the clean ground that obstacle-section levels are set in: natural country with nothing laid out on it (no
 // course, pad, yard or park), dressed as one of the WildsKinds (World::wildsKind when it's built). Not on the map list: only levels use it.
-enum MapId { MAP_PROVING_GROUND, MAP_MOUNTAIN, MAP_FREEWAY, MAP_FRONTIER, MAP_BACKCOUNTRY, MAP_WILDS, MAP_COUNT };
+// MAP_PROCEDURAL is the endless seeded world (procworld.h, wip/procworld: its id, 6, is kept for it here; without it a World(6) is
+// the proving ground). MAP_REAL (7): a real place's elevation model made into a map (realterrain.h, docs/real-terrain.md): the one
+// active real terrain.
+enum MapId { MAP_PROVING_GROUND, MAP_MOUNTAIN, MAP_FREEWAY, MAP_FRONTIER, MAP_BACKCOUNTRY, MAP_WILDS, MAP_PROCEDURAL, MAP_REAL, MAP_COUNT };
 // What the wilds look like: which ground and growth surround the obstacle (the section's biome, biome.h).
 enum WildsKind { WILDS_MEADOW, WILDS_DESERT, WILDS_FOREST, WILDS_CANYON, WILDS_WETLAND, WILDS_UPLAND, WILDS_COUNT };
 const char* wildsKindName(int kind);
@@ -417,6 +420,7 @@ private:
     void buildLapLine();     // the lap timer's start/finish gate on the loop road (world.cpp)
     void buildSectionPark(); // the obstacle sections laid out outside the loop road (world.cpp)
     void buildMountain();
+    void buildReal();        // MAP_REAL: the active real terrain (realterrainbuild.cpp)
     double mountainHeight(double x, double z) const;
     // The big map (onemapbuild.cpp): the regions' old maps, built on workers while the Backcountry's land is made; their land laid
     // into it with the seams blended (before the Backcountry paints and plants, so its growth follows the seams; `keep` marks the
