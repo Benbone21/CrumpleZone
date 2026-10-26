@@ -111,7 +111,7 @@ void draw(Renderer& r, Nav& nav, int W, int H, float a, double clock, bool padLa
         const float y = top + i * (rowH + gap);
         if (nav.page == P_MAP) {
             const int m = listedMaps()[i];
-            row(c, i, x0, y, lw, rowH, ts, mapName(m), "", nav.sel == i);
+            row(c, i, x0, y, lw, rowH, ts, mapPickName(m), "", nav.sel == i);
         } else if (nav.page == P_VEHICLE) {
             const VehicleSpec& vs = vehicleCatalog()[listedVehicles()[i]];
             row(c, i, x0, y, lw, rowH, ts, vs.name, "", nav.sel == i);
@@ -146,13 +146,13 @@ void draw(Renderer& r, Nav& nav, int W, int H, float a, double clock, bool padLa
             r.rect(px0, py, pwid, ph, 0.12f, 0.14f, 0.12f, a);
         }
         py += ph + 20 * u;
-        label(r, px0, py, px(2.4f * u), mapName(m), kAmber[0], kAmber[1], kAmber[2], a);
+        label(r, px0, py, px(2.4f * u), mapPickName(m), kAmber[0], kAmber[1], kAmber[2], a);
         py += 8 * px(2.4f * u) + 8 * u;
-        const char* about = m == MAP_MOUNTAIN ? "TRAILHEAD, SUMMIT TRAIL, CRAWL PARK, VALLEY LOOP"
+        const char* about = m == MAP_MOUNTAIN ? "START AT THE MOUNTAIN: SUMMIT TRAIL, CRAWL PARK, VALLEY LOOP"
                             : m == MAP_FREEWAY ? "THREE LANES EACH WAY THAT NEVER END: TOP SPEED"
-                            : m == MAP_FRONTIER ? "DESERT, RIVERS, LAKES, A RANGE, A RACE CIRCUIT, A RALLY STAGE"
-                            : m == MAP_BACKCOUNTRY ? "TRAILS TO CRAWL, MUD, FORD AND EXPLORE WITH BUDDIES"
-                            : m == MAP_WILDS ? "CLEAN, NATURAL COUNTRY: ROOM TO TRY ANYTHING"
+                            : m == MAP_FRONTIER ? "START AT THE FRONTIER: DESERT, RIVERS, A RANGE, A RACE CIRCUIT"
+                            : m == MAP_BACKCOUNTRY ? "8 KM: TRAILS, RIVERS AND PLACES, THE MOUNTAIN, FRONTIER AND OPEN COUNTRY ROUND IT"
+                            : m == MAP_WILDS ? "START IN THE OPEN COUNTRY: ROOM TO TRY ANYTHING"
                                              : "THE PROVING GROUND: A LOOP, A MODEL YARD AND OBSTACLE SECTIONS";
         r.text(px0, py, mid, about, 0.85f, 0.85f, 0.88f, a);
     } else if (nav.page == P_VEHICLE) {
@@ -168,7 +168,7 @@ void draw(Renderer& r, Nav& nav, int W, int H, float a, double clock, bool padLa
         std::snprintf(buf, sizeof buf, "%.1f M LONG   %.1f M WIDE", vs.length, vs.width);
         r.text(px0 + 10 * u, y, small, buf, kGrey[0], kGrey[1], kGrey[2], a);
         y += 8 * small + 18 * u;
-        r.text(px0 + 10 * u, y, mid, std::string(nav.career ? "CAREER" : "SANDBOX") + " ON " + mapName(nav.map()), 0.95f, 0.85f, 0.6f, a);
+        r.text(px0 + 10 * u, y, mid, std::string(nav.career ? "CAREER" : "SANDBOX") + " ON " + mapPickName(nav.map()), 0.95f, 0.85f, 0.6f, a);
         y += 8 * mid + 10 * u;
         r.text(px0 + 10 * u, y, small, nav.career ? "STOCK PARTS: EARN AND BUY THE REST" : "EVERY PART IS YOURS TO FIT", kGrey[0], kGrey[1], kGrey[2], a);
     } else {

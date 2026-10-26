@@ -31,12 +31,12 @@ namespace net {
 constexpr int kDiscoveryPort = 27016;  // UDP: "who's hosting?" on the local network
 constexpr int kBeaconPort = 27017;     // UDP: hosts also announce themselves here every couple of seconds
 constexpr int kMaxPeers = 8;
-constexpr uint16_t kVersion = 8;  // 8 (0.4.1): vehicles shown now, not a view delay behind (docs/plans/net-collisions.md), each side says its build; join codes (a reliable stream over UDP for guests that joined with one), the park's edited sections in the welcome (MSG_SECTIONS), a link byte in MSG_RTT, REJECT after joining (kicked, host gone); 7: taking over someone else's empty vehicle (MSG_TAKE / GIVE / REFUSE), a driver-in-it bit in states; 6: one clock (stamped states, chatter and lines; the sky) (5: passwords, a secret in every datagram, strict checks)
+constexpr uint16_t kVersion = 9;  // 9: the Backcountry is the 8 km one map (docs/plans/one-map.md): the same map id builds a different world; 8 (0.4.1): vehicles shown now, not a view delay behind (docs/plans/net-collisions.md), each side says its build; join codes (a reliable stream over UDP for guests that joined with one), the park's edited sections in the welcome (MSG_SECTIONS), a link byte in MSG_RTT, REJECT after joining (kicked, host gone); 7: taking over someone else's empty vehicle (MSG_TAKE / GIVE / REFUSE), a driver-in-it bit in states; 6: one clock (stamped states, chatter and lines; the sky) (5: passwords, a secret in every datagram, strict checks)
 #ifndef CZ_RENDEZVOUS
 #define CZ_RENDEZVOUS "gigachad.website:28015"  // the owner's join-code server (docs/server-rendezvous-setup.md); settings.txt `rendezvous` and --rendezvous override it
 #endif
 constexpr const char* kDefaultRendezvous = CZ_RENDEZVOUS;  // the join-code server a game uses unless told another ("": none: codes aren't offered)
-constexpr const char* kRelease = "0.4.2";  // the first release that speaks kVersion (what an older guest is told to update to)
+constexpr const char* kRelease = "0.4.6";  // the first release that speaks kVersion (what an older guest is told to update to)
 constexpr double kSendRate = 20;      // vehicle states per second
 constexpr double kPlaybackDelay = 0.1; // s: the least the others are shown behind the shared clock (two states)
 constexpr double kMaxDelay = 1.0;      // s: and the most, however bad the line

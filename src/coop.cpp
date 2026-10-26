@@ -323,12 +323,12 @@ void Coop::drawMap(Renderer& r, const Sim& sim, const NetSession& net, int W, in
                                                 {0.4f, 0.7f, 1.0f},   {0.8f, 0.75f, 0.7f},  {1.0f, 1.0f, 1.0f},   {0.5f, 0.9f, 0.9f},  {0.7f, 0.6f, 0.55f},
                                                 {1.0f, 0.5f, 0.8f},   {1.0f, 0.9f, 0.3f},   {0.9f, 0.45f, 0.4f}};
     for (const auto& pl : places) {
-        const bool known = isDiscovered(mapNow, pl.name);
+        const bool known = isDiscovered(pl.keyMap(mapNow), pl.name);
         found += known;
         if (known) {
             const float* c = pl.kind >= 0 && pl.kind < PK_COUNT ? kKindCol[pl.kind] : kKindCol[PK_CABIN];
             const bool showName = mapZoom > 1.8 || pl.kind == PK_RANGER_STATION || pl.kind == PK_FUEL_STOP || pl.kind < 0;  // (a 6 km map has dozens: names when zoomed in)
-            pin(pl.p, showName ? pl.name : std::string(), c[0], c[1], c[2], 9 * u);
+            pin(pl.p, showName ? pl.shown() : std::string(), c[0], c[1], c[2], 9 * u);
             if (pl.kind >= 0) {
                 float sx, sy;
                 toMap(pl.p.x, pl.p.z, sx, sy);

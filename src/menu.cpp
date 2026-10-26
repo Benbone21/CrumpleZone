@@ -233,10 +233,11 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
         row.frac = frac;
         r.push_back(row);
     };
-    const char* mapHint = mapPick == MAP_MOUNTAIN   ? "TRAILHEAD, SUMMIT TRAIL, CRAWL PARK, VALLEY LOOP"
+    const char* mapHint = mapPick == MAP_MOUNTAIN   ? "START AT THE MOUNTAIN: SUMMIT TRAIL, CRAWL PARK, VALLEY LOOP"
                           : mapPick == MAP_FREEWAY ? "THREE LANES EACH WAY THAT NEVER END: TOP SPEED"
-                          : mapPick == MAP_FRONTIER ? "DESERT, RIVERS, LAKES, A RANGE, A RACE CIRCUIT, A RALLY STAGE"
-                          : mapPick == MAP_BACKCOUNTRY ? "TRAILS TO CRAWL, MUD, FORD AND EXPLORE WITH BUDDIES"
+                          : mapPick == MAP_FRONTIER ? "START AT THE FRONTIER: DESERT, RIVERS, A RANGE, A RACE CIRCUIT"
+                          : mapPick == MAP_BACKCOUNTRY ? "8 KM: TRAILS, RIVERS AND PLACES, THE MOUNTAIN, FRONTIER AND OPEN COUNTRY ROUND IT"
+                          : mapPick == MAP_WILDS ? "START IN THE OPEN COUNTRY: ROOM TO TRY ANYTHING"
                                                     : "EVERYTHING IN THE GAME, LAID OUT TO LOOK AT AND TRY";
     if (page == 0 && title) {
         const auto& cat = vehicleCatalog();
@@ -244,7 +245,7 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
         choice(MODE_ROW, "MODE", s.career ? "CAREER" : "SANDBOX", 2,
                s.career ? "START STOCK: FIND, WIN AND BUY BETTER PARTS" : "EVERY PART ON EVERY VEHICLE, ANY TIME");
         choice(VEHICLE_ROW, "VEHICLE", cat[vehicle].name, (int)listedVehicles().size(), cat[vehicle].blurb);
-        choice(MAP_ROW, "MAP", mapName(mapPick), (int)listedMaps().size(), mapHint);
+        choice(MAP_ROW, "MAP", mapPickName(mapPick), (int)listedMaps().size(), mapHint);
         button(LEVELS_ROW, "LEVELS", std::to_string(levels.size()) + " RACES, CLIMBS AND WORLDS");
         button(MULTI_ROW, "MULTIPLAYER", netActive ? netStatus : "OPEN TO FRIENDS, OR JOIN A GAME");
         button(EDITOR_ROW, "WORLD EDITOR", "BUILD YOUR OWN WORLDS AND LEVELS");
@@ -348,7 +349,7 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
             button(LQUIT_ROW, "QUIT LEVEL", "BACK TO FREE DRIVE");
         }
         choice(VEHICLE_ROW, "VEHICLE", cat[vehicle].name, (int)listedVehicles().size(), cat[vehicle].blurb);
-        choice(MAP_ROW, "MAP", mapName(mapPick), (int)listedMaps().size(), mapHint);
+        choice(MAP_ROW, "MAP", mapPickName(mapPick), (int)listedMaps().size(), mapHint);
         button(LEVELS_ROW, "LEVELS", levelActive ? "PICK ANOTHER" : "RACES, CLIMBS AND WORLDS");
         button(JOBS_ROW, "JOBS", jobActive ? jobStatus : "RECOVERIES, CONVOYS, SCOUTING");
         button(GARAGE_ROW, "GARAGE", "BUY AND FIT PARTS, SEE THEM UP CLOSE");
@@ -431,7 +432,7 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
             const size_t c1 = r.size();
             const std::string me = s.playerName.empty() ? std::string("PLAYER") : s.playerName;
             text(SESSION_ROW, "GAME NAME", s.sessionName, "TYPE IT", me + "'S GAME");
-            choice(HMAP_ROW, "MAP", mapName(mapPick), (int)listedMaps().size());
+            choice(HMAP_ROW, "MAP", mapPickName(mapPick), (int)listedMaps().size());
             choice(HMAX_ROW, "PLAYERS", "UP TO " + std::to_string(std::min(std::max(s.maxPlayers, 2), 8)), 7);
             {
                 const std::string shown = portEdited ? portText : std::to_string(s.hostPort);

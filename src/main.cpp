@@ -53,6 +53,7 @@
 #include "carentry.h"
 #include "buildinfo.h"
 #include "coop.h"
+#include "onemap.h"
 #include "places.h"
 #include "debugscreen.h"
 #include "editor.h"
@@ -560,19 +561,22 @@ struct Place {
     V3 p;
     int kind = 0;  // 0 a spot, 1 nearest repair station, 2 where the camera looks, 3 follow a vehicle, 4 loop road
     int car = -1;
+    // A region's spot on the big map (onemap.h): the old map and the name it had there, which finding it is kept under ("MAP:NAME"),
+    // so what was found on the old map stays found.
+    int keyMap = -1;
+    std::string keyName;
 };
-std::vector<Place> pilotPlaces(const Sim& sim, const NetSession& net) {
+// An old map's own named spots (its coordinates). `start`: where the map starts you.
+std::vector<Place> oldMapPlaces(int map, const V3& start) {
     std::vector<Place> out;
-    out.push_back({"NEAREST REPAIR STATION", V3(), 1});
-    for (const Station& st : sim.world.stations) out.push_back({st.name, st.p});
-    if (sim.world.map == MAP_MOUNTAIN) {
-        out.push_back({"TRAILHEAD", sim.world.spawn});
+    if (map == MAP_MOUNTAIN) {
+        out.push_back({"TRAILHEAD", start});
         out.push_back({"SUMMIT LOOKOUT (TRAIL END)", mountainFeature("lookout")});
         out.push_back({"CRAWL PARK", mountainFeature("dome") + V3(0, 0, -34)});
         out.push_back({"WIDOWMAKER SPUR (START)", mountainFeature("spur") - norm(mountainFeature("pinnacle") - mountainFeature("spur")) * 6});
         out.push_back({"BOULDER GULLY (FOOT)", mountainFeature("gully") - norm(mountainFeature("gullytop") - mountainFeature("gully")) * 8});
         out.push_back({"THE LAKE", V3(140, 0, -378)});
-    } else if (sim.world.map == MAP_FRONTIER) {
+    } else if (map == MAP_FRONTIER) {
         out.push_back({"PADDOCK", frontierFeature("start")});
         out.push_back({"MESA CLIMB (FOOT)", frontierFeature("mesaclimb") + V3(8, 0, 0)});
         out.push_back({"SLICKROCK BOWL", frontierFeature("bowl")});
@@ -588,6 +592,18 @@ std::vector<Place> pilotPlaces(const Sim& sim, const NetSession& net) {
         out.push_back({"MUD HILL", frontierFeature("mudhill")});
         out.push_back({"COLD CREEK VALLEY", frontierFeature("snowfield")});
         out.push_back({"COLD CREEK LODGE", frontierFeature("lodge")});
+    }
+    return out;
+}
+std::vector<Place> pilotPlaces(const Sim& sim, const NetSession& net) {
+    std::vector<Place> out;
+    out.push_back({"NEAREST REPAIR STATION", V3(), 1});
+    for (const Station& st : sim.world.stations) {
+        const MapRegion* r = sim.world.map == MAP_BACKCOUNTRY ? regionContaining(st.p.x, st.p.z) : nullptr;  // (a region's: found under its old map)
+        out.push_back({st.name, st.p, 0, -1, r ? r->map : -1, r ? st.name : ""});
+    }
+    if (sim.world.map == MAP_MOUNTAIN || sim.world.map == MAP_FRONTIER) {
+        for (const Place& p : oldMapPlaces(sim.world.map, sim.world.spawn)) out.push_back(p);
     } else if (sim.world.map == MAP_BACKCOUNTRY) {
         out.push_back({"CREEK CRAWL (FOOT)", backcountryFeature("creekfoot")});
         out.push_back({"OLD MINE", backcountryFeature("mine")});
@@ -611,6 +627,16 @@ std::vector<Place> pilotPlaces(const Sim& sim, const NetSession& net) {
             bool have = false;
             for (const Place& q : out) have |= q.kind == 0 && std::hypot(q.p.x - mp.p.x, q.p.z - mp.p.z) < 40;
             if (!have) out.push_back({mp.name, V3(mp.p.x, sim.world.height(mp.p.x, mp.p.z), mp.p.z)});
+        }
+        // The regions round it (onemap.h): their starts and their old maps' spots, moved over, under their region's name.
+        for (const World::RegionStart& rs : sim.world.regionStarts) {
+            const std::string region = mapName(rs.map);
+            const std::vector<Place> own = oldMapPlaces(rs.map, worldToRegion(rs.map, rs.spawn));
+            if (own.empty()) out.push_back({region + ": START", rs.spawn, 0, -1, rs.map, "START"});
+            for (const Place& p : own) {
+                const V3 q = regionToWorld(rs.map, p.p);
+                out.push_back({region + ": " + p.name, V3(q.x, sim.world.height(q.x, q.z), q.z), 0, -1, rs.map, p.name});
+            }
         }
     } else if (sim.world.map == MAP_PROVING_GROUND) {
         out.push_back({"SPAWN", sim.world.spawn});
@@ -1883,7 +1909,8 @@ int main(int argc, char** argv) {
         campLevel = menuscene::load();
         menucamp::fireOf(campLevel, campFire);
         sim.world = menuscene::buildWorld(campLevel);
-    } else if (settings.map != MAP_PROVING_GROUND) sim.world = World(settings.map);
+    } else if (settings.map != MAP_PROVING_GROUND) sim.world = worldForPick(settings.map);  // (a region's pick: the big map, started there)
+    int worldPick = wantCamp ? -1 : settings.map;  // the map pick the world stands for (a region of the big map's: its old map id)
     sim.lineup = listedVehicles();  // (the overlanders and the Jesko: no Civic, UTV or buggy)
     sim.setup();
     // Your garage: the mods fitted last time go back on the cars. (A career keeps a garage of
@@ -2275,12 +2302,14 @@ int main(int argc, char** argv) {
         prebuildVisual(vs, sim.cars[sim.player].color);
         afterVisual.push_back({&vs, std::move(act)});
     };
-    // Loads a map, keeping the vehicle you were in.
-    auto loadMap = [&](int m) {
+    // Loads a map, keeping the vehicle you were in. A region of the big map (onemap.h) is the big map, started there; `standalone`: the
+    // old map on its own (the bench suite's scenes, which the hardware baselines compare against).
+    auto loadMap = [&](int m, bool standalone = false) {
         World::useLocalEdits = net.role != NetSession::CLIENT;  // (a guest builds the host's: its edited sections came with the welcome, World::setSessionSections)
         const int model = std::max(0, sim.cars[sim.player].spec->model);
         campWorld = false;
-        sim.world = World(m);
+        sim.world = standalone ? World(m) : worldForPick(m);
+        worldPick = m;
         sim.setup();
         fitGarage();
         if (model != sim.cars[sim.player].spec->model) sim.swapPlayerVehicle(garage.spec(model));
@@ -2423,7 +2452,12 @@ int main(int argc, char** argv) {
     refreshLevelsLater = refreshLevels;
     auto runSlot = [&]() { return net.active() ? std::max(0, net.self) : 0; };
     bool editorSuspended = false;  // the editor is waiting while its level is tried out (F1 comes back to it)
-    auto playLevel = [&](const Level& lv, const EditCore::PlaySpot* spot = nullptr) {
+    // `fromEditor`: a try-out of the level being edited, played on the map the editor has it on (an old map's levels play in their region
+    // of the big map otherwise: placeInRegion).
+    auto playLevel = [&](const Level& given, const EditCore::PlaySpot* spot = nullptr, bool fromEditor = false) {
+        Level lv = given;
+        int madeOn = lv.map;
+        const bool moved = !fromEditor && placeInRegion(lv, &madeOn);
         editorSuspended = false;
         Car& me = sim.cars[sim.player];
         me.pilot.active = false;
@@ -2431,8 +2465,10 @@ int main(int argc, char** argv) {
         const int model = lv.vehicle >= 0 && lv.vehicle < (int)vehicleCatalog().size() ? lv.vehicle : std::max(0, me.spec->model);
         campWorld = false;
         sim.world = levelWorld(lv);
+        if (moved && !lv.hasStart) sim.world.startAtRegion(madeOn);  // (no start of its own: where its old map started you)
         applyLevel(lv, sim.world);
         addGateMarkers(lv, sim.world);
+        worldPick = madeOn;
         // Just you on the grid (and the other players, in a session).
         for (int i = (int)sim.cars.size() - 1; i >= 0; i--)
             if (i != sim.player && !sim.cars[i].remote) {
@@ -2470,7 +2506,7 @@ int main(int argc, char** argv) {
             c.spawnPos = c.frame().com, c.spawnYaw = yaw;
             hud.toast(spot && spot->here ? lv.name + ": FROM HERE" : lv.name + ": FREE DRIVE");
         }
-        if (net.role == NetSession::HOST) net.setLevel(saveLevelText(lv));
+        if (net.role == NetSession::HOST) net.setLevel(saveLevelText(given));  // (as it was made: the others move it as this did)
     };
     auto restartLevel = [&]() {
         if (!run.active()) return;
@@ -2541,7 +2577,11 @@ int main(int argc, char** argv) {
             if (pl.kind != 0) continue;
             bool have = false;
             for (size_t k = 0; k < fromTable; k++) have |= std::hypot(spots[k].p.x - pl.p.x, spots[k].p.z - pl.p.z) < 40;
-            if (!have) spots.push_back({pl.name, pl.p, 30, -1});
+            if (!have) {
+                DiscoverSpot d{pl.keyMap >= 0 ? pl.keyName : pl.name, pl.p, 30, -1};
+                if (pl.keyMap >= 0) d.map = pl.keyMap, d.label = pl.name;
+                spots.push_back(d);
+            }
         }
         return spots;
     };
@@ -2756,7 +2796,7 @@ int main(int argc, char** argv) {
         mapLoad.fut = std::async(std::launch::async, [=] {
             World::withShowcase = showcase, World::wildsKind = wilds, World::halfSizeOverride = halfOverride;
             props::setActiveRockScans(hulls);
-            auto w = std::make_unique<World>(m);
+            auto w = std::make_unique<World>(worldForPick(m));
             auto p = Renderer::prepareWorld(*w, cover);
             return std::make_pair(std::move(w), std::move(p));
         });
@@ -2778,6 +2818,7 @@ int main(int argc, char** argv) {
             campWorld = false;
             sim.world = std::move(*L.world);
             L.world.reset();
+            worldPick = L.map;
             sim.setup();
             fitGarage();
             if (model != sim.cars[sim.player].spec->model) sim.swapPlayerVehicle(garage.spec(model));
@@ -2935,7 +2976,7 @@ int main(int argc, char** argv) {
                 break;
             case PauseMenu::HOST:
                 saveSettings();
-                if (menu.mapPick != sim.world.map || campWorld) {  // (the HOST card's map)
+                if (menu.mapPick != worldPick || campWorld) {  // (the HOST card's map)
                     run.stop();
                     levelHours = -1;
                     loadMap(menu.mapPick);
@@ -2970,7 +3011,7 @@ int main(int argc, char** argv) {
                 if (net.role == NetSession::HOST) net.setLevel("");
                 const bool staleEdits = menu.mapPick == MAP_PROVING_GROUND && sim.world.map == MAP_PROVING_GROUND && !net.active() &&
                                         sim.world.editStamp != levelFilesStamp();  // (a level saved since the proving ground was built)
-                if ((menu.mapPick != sim.world.map || staleEdits || campWorld) && net.role != NetSession::CLIENT) {
+                if ((menu.mapPick != worldPick || staleEdits || campWorld) && net.role != NetSession::CLIENT) {
                     requestMap(menu.mapPick, nullptr);
                     settings.map = menu.mapPick;
                     saveSettings();
@@ -3172,7 +3213,7 @@ int main(int argc, char** argv) {
         v.joinError = menu.joinError;
         v.needPassword = menu.joinNeedsPw;
         v.mapNames.clear();
-        for (int mp : listedMaps()) v.mapNames.push_back(mapName(mp));
+        for (int mp : listedMaps()) v.mapNames.push_back(mapPickName(mp));
         v.recent = settings.recentJoins;
     };
     auto mpSync = [&]() {  // (the page just came up: from the main menu, HOME; in the game, FRIENDS)
@@ -3677,7 +3718,7 @@ int main(int argc, char** argv) {
     auto startNextRun = [&]() -> bool {
         if (!suite.next()) return false;
         const BenchSuite::Entry& e = suite.current();
-        if (sim.world.map != e.map) loadMap(e.map);
+        if (sim.world.map != e.map) loadMap(e.map, true);  // (the suite's scenes are the old maps on their own: the baselines' scenes)
         if (e.spawn) sim.cars[sim.player].respawn(V3(e.x, sim.world.clearY(e.x, e.z) + 0.05, e.z), e.heading * M_PI / 180);
         applyPreset(settings.gfx, e.preset);
         benchCentre = sim.cars[sim.player].frame().com;
@@ -5085,12 +5126,18 @@ int main(int argc, char** argv) {
                 }
                 coop.mapNow = sim.world.map;
                 const V3 me = walker.active ? walker.p : sim.cars[sim.player].frame().com;
-                for (const std::string& name : coop.discover(sim.world.map, me, discoverySpots())) {
+                const std::vector<DiscoverSpot> spotsHere = discoverySpots();
+                for (const std::string& name : coop.discover(sim.world.map, me, spotsHere)) {
+                    // (A region's spot is kept under its old map: that's the map the message names.)
+                    const DiscoverSpot* spot = nullptr;
+                    for (const DiscoverSpot& d : spotsHere)
+                        if (d.name == name && std::hypot(d.p.x - me.x, d.p.z - me.z) < d.radius) spot = &d;
+                    const std::string shown = spot ? spot->shown() : name;
                     jobBanner = std::max(jobBanner, 4.0);
-                    jobBannerText = "DISCOVERED: " + name;
+                    jobBannerText = "DISCOVERED: " + shown;
                     if (net.active()) {
-                        coop.say("FOUND " + name, myName(), net);
-                        net.sendGame(foundMessage(sim.world.map, name));  // (the others have found it too)
+                        coop.say("FOUND " + shown, myName(), net);
+                        net.sendGame(foundMessage(spot ? spot->keyMap(sim.world.map) : sim.world.map, name));  // (the others have found it too)
                     }
                     if (!scripted) coop.saveDiscoveries(discoveriesPath);
                 }
@@ -5732,9 +5779,9 @@ int main(int argc, char** argv) {
                     // Back to driving: on the world as edited, or on the level as last saved when the edits were discarded.
                     Level free = lastEdited;
                     free.mode = LEVEL_FREE;
-                    playLevel(free, free.hasStart ? nullptr : &spot);
+                    playLevel(free, free.hasStart ? nullptr : &spot, true);
                 } else {
-                    playLevel(editor.core.levelToPlay(here), here ? &spot : nullptr);
+                    playLevel(editor.core.levelToPlay(here), here ? &spot : nullptr, true);
                 }
                 editorSuspended = !discard;  // (discarded: nothing to come back to, F2 opens the saved level fresh)
                 hud.toast(discard ? "EDITS DISCARDED: DRIVING " + lastEdited.name : play ? (here ? "TESTING FROM HERE" : "TESTING " + lastEdited.name) : "DRIVING THE EDITED WORLD");

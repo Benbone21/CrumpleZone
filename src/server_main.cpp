@@ -33,6 +33,7 @@
 #include "props.h"
 #include "softbody.h"
 #include "vehicles.h"
+#include "onemap.h"
 #include "world.h"
 
 namespace {
@@ -44,7 +45,7 @@ void handleSignal(int /*sig*/) {
 
 struct Options {
     int port = net::kDefaultPort;
-    int map = 1;  // mountain
+    int map = 1;  // mountain (a start on the big Backcountry: onemap.h)
     std::string name = "Crumple Zone Server";
     int maxPlayers = 8;
     std::string password, passwordFile, bind;
@@ -201,7 +202,7 @@ int main(int argc, char** argv) {
     Sim sim;
     World::useLocalEdits = false;  // (the players' games build it the same way: no saved edits)
     World::withShowcase = true;  // (the same proving ground the players' games build: the model yard, the section park)
-    sim.world = World(opts.map);
+    sim.world = worldForPick(opts.map);  // (the Mountain, the Frontier, the Open Country: the big map, started there: onemap.h)
     sim.lineup = listedVehicles();
     sim.setup();
     // (The server runs no physics: its parked trucks stay as built, and are told to the others
@@ -219,7 +220,7 @@ int main(int argc, char** argv) {
     net.password = opts.password;
     net.discovery = opts.lan;
     net.bindAddress = opts.bind;
-    if (!net.host(opts.port, "SERVER", opts.map, opts.maxPlayers, sessionName)) {
+    if (!net.host(opts.port, "SERVER", sim.world.map, opts.maxPlayers, sessionName)) {
         if (net.portInUse) fprintf(stderr, "Port %d is in use: pick another with --port PORT (or CZ_PORT)\n", opts.port);
         else fprintf(stderr, "Failed to host on port %d: %s\n", opts.port, net.error.c_str());
         return 1;
