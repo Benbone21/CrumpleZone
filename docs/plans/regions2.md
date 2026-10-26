@@ -76,6 +76,26 @@ steep), a big standalone boulder (car-sized and up) in many cells, and now and t
 slab lying with the slope. The scattered scenery boulders keep a single hull for the physics (`kWholeRockSeeds`): cut into convex pieces
 as the Backcountry's are, 10 000 big rocks took 1.5 GB.
 
+## Measured (2026-10-25, Ryzen 9 9900X, other agents' load 10-25; game runs offscreen on the iGPU, not the 7900 XTX)
+
+| | One map (8.2 km) | Regions grown (10.24 km) |
+|---|---|---|
+| World build, headless, code rocks / scanned rocks | 3.2 s / 4.0 s | 4.4-5.0 s / 5.0-6.4 s |
+| RAM the world adds, code rocks / scanned rocks | 612 / 1095 MB | ~1000 / ~1600 MB |
+| Trees, rocks, bushes | 72k, 11.5k, 79k | 164k, 42.6k, 155k |
+| World cache file | 82 MB | 107 MB |
+| Game RSS at the Mountain, F3 (warm cache) | ~1.75 GB | ~2.0-2.5 GB (first launch peak 3.2 GB while the cache is written) |
+| Renderer ready, cold | 3.0 s | 5.0 s |
+| Bench at the trailhead (iGPU), GPU stages summed | 47.8 ms | 48.6 ms (TERRAIN cpu 0.26 -> 0.39 ms) |
+| Bench at the Mountain's start (iGPU), CPU stages | VEGETATION 0.25, PROPS 0.27, SHADOWS 0.31 ms | 0.51, 0.53, 0.54 ms (the country round it is grown now) |
+
+The scattered scenery boulders as single hulls saved 1.2 GB (10 000 big rocks cut into pieces took 1.5 GB). Still to measure in a
+real window on the 7900 XTX (paused while the owner played): the frame time at the trailhead and at each region's start, against
+`docs/hardware/linux-7900xtx-onemap.md`.
+
+Land hash `baead4e58239af7c` (headless, code rocks) on Linux and on the Windows build under wine. Physics fingerprint unchanged
+(`da17a95524fab674`).
+
 ## Multiplayer
 
 The map id is the same; every machine builds the same land from it (`onemap/same-every-time`: one thread or many, through the cache).
