@@ -225,6 +225,8 @@ private:
 
     static const int kBloomLevels = 6;
     GLuint progLit = 0, progDepth = 0, progLine = 0, progSky = 0, progHud = 0, progFx = 0, progCar = 0;
+    static const int kCarShells = 7;        // body shells (bodyshell.cpp: 0 the lattice body, 1..6 sculpted)
+    GLuint progCarShell[kCarShells] = {};   // the car body shader built for each (progCar: the lattice body's)
     GLuint progTerrain = 0;                 // the ground shader in use this frame
     GLuint noiseTex = 0;                    // the cheap ground tiers' noise
     GLuint progTerrainTier[4] = {0, 0, 0, 0};  // per tier (groundTier)
@@ -448,7 +450,9 @@ private:
     void ensureTargets(int w, int h, int samples);
     void postProcess(const View& view, const M4& proj);
     void prepareCars(const Sim& sim, DebugView debug, const V3& eye);
-    void drawCarBodies(const Sim& sim, GLuint prog, bool glassPass);
+    // prog: progDepth (shadows), or progCar for the main and glass passes: each car then draws with its shell's
+    // program, which `use` makes current (and lights) when it changes.
+    void drawCarBodies(const Sim& sim, GLuint prog, bool glassPass, const std::function<void(GLuint)>& use = nullptr);
     void drawWheels(const Sim& sim, GLuint prog);
     void drawCarParts(const Sim& sim, GLuint prog);
     void prepareCarModels();
