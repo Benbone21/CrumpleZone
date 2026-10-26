@@ -207,3 +207,64 @@ Five biomes, all made from existing ground types:
 - map reveal (it waits for career phase 6);
 - keying discovery by id;
 - terrain edits.
+
+## 12. As built (2026-10-25), and what changed from the plan above
+
+Commits on `wip/procworld`, one per phase (a, b+c, d, e), on top of main with the one big map.
+
+- **Files:** `src/procworld.{h,cpp}` (generator, chunk/edge/node caches, places, `World::buildProcedural`),
+  `src/procstream.{h,cpp}` (the window sliding in the game), `tests/procworld.cpp`. Small hooks: `world.h/.cpp`
+  (map id 6, `World::proc`, the thread-local seed and origin), `main.cpp`, `render.cpp/.h`, `groundshader.cpp`,
+  `treedraw.cpp`, `propdraw.cpp/.h`, `forest.cpp`, `places.cpp`, `net.cpp/.h`, `server_main.cpp`, `debuginfo.cpp`,
+  `menu.*`, `mainmenudraw.cpp`.
+- **Trails (changed):** the tread's height is no longer graded per edge. It is `ProcWorld::trailLevel(x, z)`: the
+  land low-passed over ~36 m (37 taps), then down the river's or creek's valley and into the water at a ford. Because
+  it is a function of position, two trails that meet or cross agree. The per-edge grading made 10-75 m walls where
+  trails crossed. Diagonal edges are off for now, since they crossed other edges. Mountain trails come out steep
+  (black); grades of 30-50% happen on valley walls.
+- **Creeks** only run where the land is within ~10 m of their level. Otherwise they cut gorges through the hills.
+- **The slide is invisible:** in a screenshot diff before and after a 64 m slide with nothing else changing, 439 of
+  922k pixels differ (float rounding). Getting there took these changes:
+  - the shaders' patterns (ground, grass tufts and wind, clouds and their shadows, water ripples, tree bark and
+    leaves, prop snow) read `NP = vPos + uNoiseOff`, where `uNoiseOff` is the window origin minus an anchor taken
+    when the world was loaded. Lighting and the terrain texels still use the real `vPos`. The anchor moves (one
+    pattern change) after 12 km of travel, to keep float precision;
+  - the scanned props' picks, trees' and bushes' looks, cliff cards and scatter cells are keyed by world position,
+    not by list index or window cell;
+  - `World::grassDensity` is keyed by world position too.
+- **The swap's cost:**
+  - The worker builds the World, the prepared terrain and the scenery meshes (`Renderer::prepareObjects`).
+  - The terrain buffers and textures of the window that went out are kept and refilled for the next one
+    (`Renderer::Spare`), so no allocation happens. A spare set is made at load: a 2048² RGBA32F `TexImage2D` cost
+    ~370 ms on the iGPU.
+  - Texels go up through a pixel buffer: a direct `TexSubImage2D` into the big float texture stalled 20-200 ms a
+    slice.
+  - Index buffers that came out the same are not sent again.
+  - What's left on the swap frame is `adoptWorld` (props, boxes) and uploading the prepared meshes: 30-45 ms on the
+    offscreen iGPU (Radeon 780M class). Before the work it was 670 ms + 165 ms. The 3070 m window takes 0.4-0.5 s
+    of worker time per slide.
+- **Multiplayer (as built):**
+  - The host (or the dedicated server, `--map 6 --seed N`) sends `procshift <seed> <x> <z> <due>` (host-only
+    chatter) 3 s before `due` on the shared clock.
+  - Every machine builds the window meanwhile and swaps at `due`. A late machine waits for its build: a hitch, but
+    never out of step.
+  - `NetSession::frameFix` moves vehicle states stamped across a slide into the receiver's frame, and `shiftNow`
+    moves the buffered ones. Relays go out as sent.
+  - Tested: the guest's truck as the host shows it stays within 0.13 m of where it is through a slide.
+  - **Known gaps:**
+    - a guest joining during the 3 s before a slide misses it, and rejoining fixes it;
+    - on-foot buddies, pings and rope anchors briefly show in the other frame;
+    - spawn messages are not frame-fixed.
+- **Saves and career:** `ProcWorld::saveLine(world)` gives "map=procedural seed=N origin=X,Z", and
+  `ProcWorld::useSaveLine(line)` sets up the next build. See the report for how New World uses them. Discovery
+  still saves `PROCEDURAL:<NAME>`, so all seeds share one namespace: a name found in one world counts as found in
+  another. The fix is to key discovery by `PW.<i>.<j>.<WHAT>` with the seed, when career phase 6 lands.
+- **Place names** are unique within 30 km, through an injective fold of the cell index onto the word pairs. Ids are
+  unique everywhere.
+- **Not done:**
+  - waterfalls and lakes;
+  - obstacle sections on black trails;
+  - map reveal;
+  - `World::rivers` spots (river sound comes from the water grid's flood fill);
+  - the M map's view centre doesn't follow a slide;
+  - reeds on procedural rivers (rivers have gravel beds, not mud).
