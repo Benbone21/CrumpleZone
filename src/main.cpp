@@ -5598,6 +5598,7 @@ int main(int argc, char** argv) {
                     if (!caches.empty()) sim.world.buildGrid();
                 }
                 coop.mapNow = sim.world.map;
+                if (sim.world.map == MAP_PROCEDURAL) coop.exploreProc(sim, walker.active ? &walker.p : nullptr, scripted ? std::string() : configDir());  // (the map's fog)
                 const V3 me = walker.active ? walker.p : sim.cars[sim.player].frame().com;
                 const std::vector<DiscoverSpot> spotsHere = discoverySpots();
                 for (const std::string& name : coop.discover(sim.world.map, me, spotsHere)) {
@@ -7345,6 +7346,7 @@ int main(int argc, char** argv) {
     if (reload && editor.started() && editor.core.unsaved()) resume.insert(resume.end(), {"--resume-edit", editor.core.level.name});  // (back in the editor on the recovery copy)
     if (opt.timeHours < 0) saveSettings();  // (the clock carries on next time, and after a reload)
     if (editor.started()) editor.autosaveNow();  // (closing the game with unsaved edits, in the editor or while testing them: a recovery copy)
+    if (!scripted) coop.saveProcReveal();
     playback.stop();
     net.close();
     audio.stop();
