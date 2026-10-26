@@ -55,19 +55,19 @@ void main(){
   }
   float specK = 0.04, specP = 16.0;
   if (mat == 12) {
-    float g1 = vnoise(vPos.xz * 2.3 + vPos.y * 1.1), g2 = vnoise(vPos.zy * 2.7 - vPos.x * 0.9);
+    float g1 = vnoise(NP.xz * 2.3 + NP.y * 1.1), g2 = vnoise(NP.zy * 2.7 - NP.x * 0.9);
     base *= 0.72 + 0.5 * (0.5 * g1 + 0.5 * g2);
-    float vein = 1.0 - smoothstep(0.0, 0.04, abs(vnoise(vPos.xy * 0.9 + vPos.z * 0.6) - 0.5));
+    float vein = 1.0 - smoothstep(0.0, 0.04, abs(vnoise(NP.xy * 0.9 + NP.z * 0.6) - 0.5));
     base *= 1.0 - 0.35 * vein;
-    float lichen = smoothstep(0.6, 0.72, vnoise(vPos.xz * 3.1 + vPos.y * 2.0)) * smoothstep(0.35, 0.85, n.y);
+    float lichen = smoothstep(0.6, 0.72, vnoise(NP.xz * 3.1 + NP.y * 2.0)) * smoothstep(0.35, 0.85, n.y);
     base = mix(base, vec3(0.42, 0.45, 0.26), lichen * 0.5);
     specK = 0.06; specP = 20.0;
   } else if (mat == 14) {
-    float g = vnoise(vec2((vPos.x + vPos.z) * 2.0, vPos.y * 14.0)) * 0.6 + vnoise(vec2(vPos.y * 2.0, (vPos.x - vPos.z) * 16.0)) * 0.4;
+    float g = vnoise(vec2((NP.x + NP.z) * 2.0, NP.y * 14.0)) * 0.6 + vnoise(vec2(NP.y * 2.0, (NP.x - NP.z) * 16.0)) * 0.4;
     base *= 0.78 + 0.35 * g;
     specK = 0.03;
   } else if (mat == 13) {
-    base *= 0.8 + 0.4 * vnoise(vPos.xz * 2.2 + vPos.y * 1.7);
+    base *= 0.8 + 0.4 * vnoise(NP.xz * 2.2 + NP.y * 1.7);
     specK = 0.0;
   }
   vec3 lin = pow(max(base, 0.0), vec3(2.2));

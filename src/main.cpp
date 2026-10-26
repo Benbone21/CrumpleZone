@@ -55,6 +55,8 @@
 #include "coop.h"
 #include "onemap.h"
 #include "places.h"
+#include "procstream.h"
+#include "procworld.h"
 #include "debugscreen.h"
 #include "editor.h"
 #include "fx.h"
@@ -150,6 +152,10 @@ struct Options {
     double throttleCap = -1;      // --throttle PCT[,RESPONSE[,PAD]]: the throttle limit (testing)
     int throttleResp = 0, throttlePad = 0;
     double eyeFly = 0;            // --eye-fly V (dev, with --eye): the drone flies on ahead at V m/s, its height over the ground kept (the streaming test)
+    unsigned long long seed = 0;  // --seed N|random: the procedural world's seed (procworld.h)
+    bool seedSet = false;
+    bool procOriginSet = false;   // --proc-origin X,Z: its window round that global point (a dev reload picks up where it was)
+    long long procOx = 0, procOz = 0;
     double mapHalf = 0;           // --map-half M (dev): every map built M m each way from its middle (big-map tests: docs/plans/big-maps.md)
     bool standalone = false;      // --standalone (dev): --map 1, 3 or 5 is that old map on its own, not its region of the big map (docs/plans/one-map.md)
     int map = -1;                 // --map N: 0 proving ground, 1 mountain
@@ -318,7 +324,8 @@ struct BuildWatch {
     void exec(int argc, char** argv, const std::vector<std::string>& extra) {
 #ifndef _WIN32
         static const std::set<std::string> withValue = {"--map", "--player", "--spawn", "--resume-model", "--resume-edit", "--scenario", "--script",
-                                                        "--shot-prefix", "--shot-frames", "--clipboard", "--menu", "--orbit", "--spawn-section", "--eye"};
+                                                        "--shot-prefix", "--shot-frames", "--clipboard", "--menu", "--orbit", "--spawn-section", "--eye",
+                                                        "--seed", "--proc-origin"};
         static const std::set<std::string> flags = {"--garage", "--show-help", "--debug-screen", "--debug-graph", "--full-hud", "--standalone"};
         std::vector<std::string> args = {exe};
         for (int i = 1; i < argc; i++) {
@@ -414,6 +421,10 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--map") o.map = std::atoi(next().c_str());
         else if (a == "--map-half") o.mapHalf = std::atof(next().c_str());
         else if (a == "--standalone") o.standalone = true;
+        else if (a == "--seed") {
+            const std::string v = next();
+            o.seed = v == "random" ? proc::ProcWorld::randomSeed() : std::strtoull(v.c_str(), nullptr, 10), o.seedSet = o.seed != 0;
+        } else if (a == "--proc-origin") o.procOriginSet = std::sscanf(next().c_str(), "%lld,%lld", &o.procOx, &o.procOz) == 2;
         else if (a == "--eye-fly") o.eyeFly = std::atof(next().c_str());
         else if (a == "--mods") {
             std::string s = next();
@@ -1799,6 +1810,11 @@ int main(int argc, char** argv) {
     World::withShowcase = opt.scenario.empty();  // (the model yard and section park laid out on the proving ground: not under a test's replay)
     if (opt.map >= 0) settings.map = opt.map < MAP_COUNT ? opt.map : MAP_PROVING_GROUND;  // (--map with no such map: the proving ground)
     if (!opt.scenario.empty()) settings.map = MAP_PROVING_GROUND;  // the tests are built for it
+    // The procedural world's seed: --seed, else the last one (a new one the first time).
+    if (opt.seedSet) settings.procSeed = opt.seed;
+    if (!settings.procSeed) settings.procSeed = proc::ProcWorld::randomSeed();
+    World::procSeed = settings.procSeed;
+    if (opt.procOriginSet) World::procOriginSet = true, World::procOriginX = opt.procOx, World::procOriginZ = opt.procOz;
     if (opt.lab) settings.map = MAP_PROVING_GROUND;                // (the model lab builds its own studio)
     if (opt.fullscreen) settings.fullscreen = true;
 
@@ -1913,6 +1929,7 @@ int main(int argc, char** argv) {
         sim.world = menuscene::buildWorld(campLevel);
     } else if (settings.map != MAP_PROVING_GROUND) sim.world = opt.standalone ? World(settings.map) : worldForPick(settings.map);  // (a region's pick: the big map, started there)
     int worldPick = wantCamp ? -1 : settings.map;  // the map pick the world stands for (a region of the big map's: its old map id)
+    World::procOriginSet = false;  // (--proc-origin was for this first window only: the next world starts at its start)
     sim.lineup = listedVehicles();  // (the overlanders and the Jesko: no Civic, UTV or buggy)
     sim.setup();
     // Your garage: the mods fitted last time go back on the cars. (A career keeps a garage of
@@ -2244,6 +2261,7 @@ int main(int argc, char** argv) {
     bool running = true;
     int exitCode = 0;
     double wrapSeen = 0;  // sim.wrapShift the camera and effects have caught up with
+    ProcStream procStream;  // the procedural world's window, sliding with you (procstream.h)
     BuildWatch watch;
     if (!scripted) watch.start();
     bool reload = false;
@@ -2332,6 +2350,7 @@ int main(int argc, char** argv) {
         World::useLocalEdits = net.role != NetSession::CLIENT;  // (a guest builds the host's: its edited sections came with the welcome, World::setSessionSections)
         const int model = std::max(0, sim.cars[sim.player].spec->model);
         campWorld = false;
+        procStream.reset();
         sim.world = standalone ? World(m) : worldForPick(m);
         worldPick = m;
         sim.setup();
@@ -2810,11 +2829,16 @@ int main(int argc, char** argv) {
         const bool showcase = World::withShowcase;
         const int wilds = (int)World::wildsKind;
         const double halfOverride = World::halfSizeOverride;
+        const uint64_t procSeed = World::procSeed;
+        const bool procSet = World::procOriginSet;
+        const int64_t procX = World::procOriginX, procZ = World::procOriginZ;
         const props::HullLibrary* hulls = props::activeRockScans();
         const ScanCover cover = renderer.scanCover();
+        procStream.reset();
         mapLoad.map = m, mapLoad.then = std::move(then), mapLoad.st = MapLoad::WORK;
         mapLoad.fut = std::async(std::launch::async, [=] {
             World::withShowcase = showcase, World::wildsKind = wilds, World::halfSizeOverride = halfOverride;
+            World::procSeed = procSeed, World::procOriginSet = procSet, World::procOriginX = procX, World::procOriginZ = procZ;
             props::setActiveRockScans(hulls);
             auto w = std::make_unique<World>(worldForPick(m));
             auto p = Renderer::prepareWorld(*w, cover);
@@ -3050,6 +3074,10 @@ int main(int argc, char** argv) {
                                         sim.world.editStamp != levelFilesStamp();  // (a level saved since the proving ground was built)
                 const bool otherSave = worldCareer != career.on && !net.active();  // (career <-> sandbox: the other mode's vehicles don't come along)
                 if ((menu.mapPick != worldPick || staleEdits || campWorld || otherSave) && net.role != NetSession::CLIENT) {
+                    if (menu.mapPick == MAP_PROCEDURAL && sim.world.map != MAP_PROCEDURAL) {  // (into the procedural world from elsewhere: a brand-new one)
+                        settings.procSeed = proc::ProcWorld::randomSeed();
+                        World::procSeed = settings.procSeed, World::procOriginSet = false;
+                    }
                     requestMap(menu.mapPick, nullptr);
                     settings.map = menu.mapPick;
                     saveSettings();
@@ -4548,6 +4576,14 @@ int main(int argc, char** argv) {
                 startPilot();
             }
             if (opt.script == "pilot") up = down = left = right = false;
+            if (opt.script == "proctour" && sim.world.map == MAP_PROCEDURAL && frame > 30 && frame % 200 == 0) {  // the window sliding: hop 600 m east
+                const Frame f = sim.cars[sim.player].frame();
+                sim.teleportPlayer(f.com.x + 600, f.com.z, 0);
+            }
+            if (opt.script == "procslide" && sim.world.map == MAP_PROCEDURAL) {  // the window slides 64 m under a parked truck: nothing should change on screen
+                up = down = left = right = false;
+                if (frame == 100 && !std::getenv("CZ_PROC_NOSLIDE")) procStream.want(sim.world.proc.seed, sim.world.proc.ox + 64, sim.world.proc.oz + 128);
+            }
             if (opt.script == "trafficlod") {  // screenshots of far traffic as proxies and the handover: one AI car, you 600 m up the road facing it
                 up = down = left = right = false;
                 if (frame == 5) sim.spawnTraffic(*sim.cars[sim.player].spec);
@@ -5236,6 +5272,30 @@ int main(int argc, char** argv) {
                 cam.target += d;
                 fx.translate(d);
                 wrapSeen = sim.wrapShift;
+            }
+            // The procedural world: its window slides with you (the host's call in multiplayer). On the frame a new one goes in,
+            // everything the sim holds has moved by d: so do the camera, the effects, you on foot and the marks on the map.
+            if (sim.world.map == MAP_PROCEDURAL && !mapLoad.active() && !editor.active && !sim.cars.empty()) {
+                const V3 focus = walker.active ? walker.p : sim.cars[sim.player].frame().com;
+                V3 d;
+                if (procStream.tick(sim, renderer, focus, net.role != NetSession::CLIENT, d)) {
+                    cam.target += d, cam.droneEye += d;
+                    fx.translate(d);
+                    walker.p += d;
+                    lastView.eye += d, lastView.target += d, camFrom.eye += d, camFrom.target += d;
+                    crouchAt += d, crouchFrom += d, workHand += d, rideAt += d;
+                    for (Ping& pg : coop.pings) pg.p += d;
+                    coop.waypoint += d;
+                    for (RemoteWalker& rw : coop.walkers) rw.p += d;
+                    job.target += d;
+                    for (V3& q : job.spots) q += d;
+                    cachesMap = -1;  // (this window's caches, where they now are)
+                    drawnWorld = sim.world.stamp;
+                    if (std::getenv("CZ_PROC_LOG"))
+                        std::printf("procworld: window -> %lld,%lld (shift %.0f,%.0f), built in %.0f ms, swap %.1f ms\n", (long long)sim.world.proc.ox,
+                                    (long long)sim.world.proc.oz, d.x, d.z, procStream.lastBuildMs, procStream.lastSwapMs);
+                    loadprof::report("procworld window");  // (CZ_LOADPROF: what the build and the swap spent)
+                }
             }
             for (const std::string& ev : sim.events) hud.toast(ev);
             sim.events.clear();
@@ -6834,6 +6894,8 @@ int main(int argc, char** argv) {
         char spawn[96];
         std::snprintf(spawn, sizeof spawn, "%.2f,%.2f,%.1f", f.com.x, f.com.z, std::atan2(-f.fwd.z, f.fwd.x) * 180 / M_PI);
         resume = {"--map", std::to_string(sim.world.map), "--player", std::to_string(sim.player), "--spawn", spawn};
+        if (sim.world.map == MAP_PROCEDURAL)  // (the same window of the same world: the spot above is in it)
+            resume.insert(resume.end(), {"--seed", std::to_string(sim.world.proc.seed), "--proc-origin", std::to_string(sim.world.proc.ox) + "," + std::to_string(sim.world.proc.oz)});
         if (c.spec->model >= 0) resume.insert(resume.end(), {"--resume-model", std::to_string(c.spec->model)});
     }
     if (reload && editor.started() && editor.core.unsaved()) resume.insert(resume.end(), {"--resume-edit", editor.core.level.name});  // (back in the editor on the recovery copy)

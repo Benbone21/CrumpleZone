@@ -80,7 +80,7 @@ V3 World::courseStart(int surface) const {
 const std::vector<int>& listedMaps() {
     // (All back on the list, 2026-10-18: the owner edits them. Since the one map (2026-10-25, docs/plans/one-map.md) the Mountain, the
     // Frontier and the Open Country are the Backcountry's regions: on the list as places to start on it, beside it.)
-    static const std::vector<int> m = {MAP_PROVING_GROUND, MAP_BACKCOUNTRY, MAP_MOUNTAIN, MAP_FRONTIER, MAP_WILDS, MAP_FREEWAY};
+    static const std::vector<int> m = {MAP_PROVING_GROUND, MAP_BACKCOUNTRY, MAP_MOUNTAIN, MAP_FRONTIER, MAP_WILDS, MAP_FREEWAY, MAP_PROCEDURAL};
     return m;
 }
 
@@ -101,7 +101,7 @@ int nextListedMap(int map, int dir) {
 }
 
 const char* mapName(int map) {
-    return map == MAP_MOUNTAIN ? "MOUNTAIN" : map == MAP_FREEWAY ? "FREEWAY" : map == MAP_FRONTIER ? "FRONTIER" : map == MAP_BACKCOUNTRY ? "BACKCOUNTRY" : map == MAP_WILDS ? "OPEN COUNTRY" : "PROVING GROUND";
+    return map == MAP_MOUNTAIN ? "MOUNTAIN" : map == MAP_FREEWAY ? "FREEWAY" : map == MAP_FRONTIER ? "FRONTIER" : map == MAP_BACKCOUNTRY ? "BACKCOUNTRY" : map == MAP_WILDS ? "OPEN COUNTRY" : map == MAP_PROCEDURAL ? "PROCEDURAL" : "PROVING GROUND";
 }
 
 std::string mapPickName(int map) {
@@ -435,9 +435,10 @@ World::World(int m) : map(m) {
         else if (map == MAP_FRONTIER) buildFrontier();
         else if (map == MAP_BACKCOUNTRY) buildBackcountry();
         else if (map == MAP_WILDS) buildWilds();
+        else if (map == MAP_PROCEDURAL) buildProcedural();
         else buildProvingGround();
         // The slab the player starts on (and the parked trucks): in the game's proving ground, as the other maps are always built.
-        if (map != MAP_PROVING_GROUND || withShowcase) addMapSpawnPads(*this);
+        if ((map != MAP_PROVING_GROUND || withShowcase) && map != MAP_PROCEDURAL) addMapSpawnPads(*this);  // (the procedural world lays its own)
         splitPendingRocks();
         loadprof::Scope lpStore("world.cache write");
         worldcache::store(*this);
@@ -446,6 +447,7 @@ World::World(int m) : map(m) {
 }
 
 double World::halfSizeFor(int map) {
+    if (map == MAP_PROCEDURAL) return 1536.0;  // (a 3 km window of it, whatever the tests ask: procworld.h kWindowHalf)
     if (halfSizeOverride > 0) return halfSizeOverride;
     // (The Backcountry: 6 x 6 km (docs/plans/big-maps.md), or 8 x 8 km with the regions stitched on round it (docs/plans/one-map.md).)
     if (map == MAP_BACKCOUNTRY) return stitchRegions ? kOneMapHalf : kOldBackcountryHalf;
@@ -1159,7 +1161,8 @@ float World::grassDensity(double x, double z) const {
     RoadInfo r = roadAt(x, z);
     if (r.near && r.paint != PAINT_NONE) return 0;
     double h = height(x, z);
-    float d = (float)(0.35 + 0.65 * fbmNoise(x * 0.03 + 11.0, z * 0.03 - 4.0, 3));
+    const double nx = map == MAP_PROCEDURAL ? x + (double)proc.ox : x, nz = map == MAP_PROCEDURAL ? z + (double)proc.oz : z;  // (its window's: where in the world)
+    float d = (float)(0.35 + 0.65 * fbmNoise(nx * 0.03 + 11.0, nz * 0.03 - 4.0, 3));
     if (r.near) d *= (float)smoothstep(kRoadHalfWidth + 1.5, kRoadHalfWidth + 4.5, std::fabs(r.lateral));  // thins out toward the verge
     if (map == MAP_PROVING_GROUND) d *= (float)smoothstep(2, 12, padOutside(x, z));
     return d * (float)(1 - smoothstep(120, 190, h));  // thins out up the mountains

@@ -171,7 +171,8 @@ inline double surfaceGrip(Surface s) { return surfaceInfo(s).grip; }
 
 // MAP_WILDS is the clean ground that obstacle-section levels are set in: natural country with nothing laid out on it (no
 // course, pad, yard or park), dressed as one of the WildsKinds (World::wildsKind when it's built). Not on the map list: only levels use it.
-enum MapId { MAP_PROVING_GROUND, MAP_MOUNTAIN, MAP_FREEWAY, MAP_FRONTIER, MAP_BACKCOUNTRY, MAP_WILDS, MAP_COUNT };
+// MAP_PROCEDURAL is the endless seeded world (procworld.h): World holds a window of it round World::proc.
+enum MapId { MAP_PROVING_GROUND, MAP_MOUNTAIN, MAP_FREEWAY, MAP_FRONTIER, MAP_BACKCOUNTRY, MAP_WILDS, MAP_PROCEDURAL, MAP_COUNT };
 // What the wilds look like: which ground and growth surround the obstacle (the section's biome, biome.h).
 enum WildsKind { WILDS_MEADOW, WILDS_DESERT, WILDS_FOREST, WILDS_CANYON, WILDS_WETLAND, WILDS_UPLAND, WILDS_COUNT };
 const char* wildsKindName(int kind);
@@ -284,6 +285,17 @@ public:
     static void setSessionSections(const std::vector<std::pair<int, std::string>>& sections);
     static bool sessionSection(int type, SectionFile& out);
     uint64_t editStamp = 0;       // levelFilesStamp() when the park was built
+    // MAP_PROCEDURAL (procworld.h): its seed and where this window of it is (global metres: its middle, a chunk corner), and where
+    // the world started. The next one built on this thread is made from procSeed round procOriginX/Z (procOriginSet false: round
+    // the seed's start).
+    struct ProcInfo {
+        uint64_t seed = 0;
+        int64_t ox = 0, oz = 0;
+        int64_t startX = 0, startZ = 0;
+    } proc;
+    static inline thread_local uint64_t procSeed = 1;
+    static inline thread_local bool procOriginSet = false;
+    static inline thread_local int64_t procOriginX = 0, procOriginZ = 0;
     // The WildsKind the next MAP_WILDS is built as (a level's `terrain`: see levelWorld in level.h). Per thread, like withShowcase.
     static inline thread_local int wildsKind = WILDS_MEADOW;
     // The park's obstacle sections (sections.h), in the order they're driven: where each starts.
@@ -413,6 +425,7 @@ private:
     void buildFrontier();
     void buildBackcountry();
     void buildWilds();       // the clean open country for obstacle sections (world.cpp)
+    void buildProcedural();  // a window of the endless world (procworld.cpp)
     void buildModelYard();   // every model laid out on the proving ground (world.cpp)
     void buildLapLine();     // the lap timer's start/finish gate on the loop road (world.cpp)
     void buildSectionPark(); // the obstacle sections laid out outside the loop road (world.cpp)

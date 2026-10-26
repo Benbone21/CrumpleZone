@@ -13,6 +13,7 @@
 // Quality (RenderSettings::props): 0 off (all code-made), 1 low, 2 high, 3 ultra: LOD
 // distances, the billboard distance, scatter reach and density, texture size.
 #pragma once
+#include <cmath>
 #include "occlusion.h"
 #include <functional>
 #include <map>
@@ -133,6 +134,15 @@ private:
     std::vector<Cell> cells;      // statics in 32 m cells
     int cellN = 0;
     const World* world = nullptr;
+    // The procedural world: where this window's origin is in the world (whole metres), so picks key off world positions.
+    bool anchored = false;
+    double anchorX = 0, anchorZ = 0;
+    uint32_t placeHash(double x, double z, uint32_t salt) const {  // (of a world position to 1/8 m)
+        const uint64_t a = (uint64_t)(int64_t)std::llround((x + anchorX) * 8), b = (uint64_t)(int64_t)std::llround((z + anchorZ) * 8);
+        uint64_t h = a * 0x9E3779B97F4A7C15ull ^ (b + 0x632BE59BD9B4E019ull) * 0xC2B2AE3D27D4EB4Full ^ salt;
+        h ^= h >> 31, h *= 0x7FB5D329728EA185ull, h ^= h >> 27;
+        return (uint32_t)(h >> 16);
+    }
     int quality = 2;
     float time = 0;
     V3 eye;

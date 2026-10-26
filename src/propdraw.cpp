@@ -88,7 +88,7 @@ void main(){
   if (uHasArm == 1) { vec3 a = texture(uArm, vUv).rgb; ao = a.r; rough = max(a.g, 0.05); }
   vec3 alb = d.rgb * vExtra.x;
   // Snow lying on whatever faces up (props standing in snow).
-  float snow = vExtra.z * smoothstep(0.45, 0.8, n.y + 0.15 * (hash(floor(vPos.xz * 6.0)) - 0.5));
+  float snow = vExtra.z * smoothstep(0.45, 0.8, n.y + 0.15 * (hash(floor(NP.xz * 6.0)) - 0.5));
   alb = mix(alb, vec3(0.80, 0.83, 0.88), snow);
   rough = mix(rough, 0.6, snow);
   float sh = shadowAt(vPos, N);
@@ -538,6 +538,10 @@ void PropRenderer::addInstance(std::vector<Inst>& out, int model, const V3 ax[3]
 
 void PropRenderer::setWorld(const World& w, int q) {
     world = &w;
+    // The procedural world's windows (procworld.h): every pick here keyed by where a thing is in the world, not where it falls in
+    // this window or its lists, so the next window draws the same scans in the same places.
+    anchored = w.map == MAP_PROCEDURAL;
+    anchorX = anchored ? (double)w.proc.ox : 0, anchorZ = anchored ? (double)w.proc.oz : 0;
     statics.clear();
     cells.clear();
     scatter.clear();
@@ -552,7 +556,7 @@ void PropRenderer::setWorld(const World& w, int q) {
     // Trees: the sapling scans, scaled to the tree (a touch wider or narrower each).
     for (size_t i = 0; i < w.trees.size(); i++) {
         const Tree& t = w.trees[i];
-        const uint32_t h = (uint32_t)i * 2654435761u + 17;
+        const uint32_t h = anchored ? placeHash(t.base.x, t.base.z, 17) : (uint32_t)i * 2654435761u + 17;
         const bool snowy = w.surfaceAt(t.base.x, t.base.z) == SURF_SNOW;
         V3 ax[3];
         if (t.kind == 0 && cv.pines) {
@@ -573,7 +577,8 @@ void PropRenderer::setWorld(const World& w, int q) {
     if (cv.logs)
         for (size_t i = 0; i < w.logs.size(); i++) {
             const Log& g = w.logs[i];
-            const int m = logModels[hash32((uint32_t)i + 99) % logModels.size()];
+            const uint32_t lh = anchored ? placeHash(g.a.x, g.a.z, 99) : (uint32_t)i + 99;
+            const int m = logModels[hash32(lh) % logModels.size()];
             const Model& md = models[m];
             const V3 d = g.b - g.a;
             const double L = len(d);
@@ -587,14 +592,14 @@ void PropRenderer::setWorld(const World& w, int q) {
             const V3 ax[3] = {ex * sx, ey * sr, ez * sr};
             const V3 mid((md.bmin[0] + md.bmax[0]) * 0.5, (md.bmin[1] + md.bmax[1]) * 0.5, (md.bmin[2] + md.bmax[2]) * 0.5);
             const V3 origin = (g.a + g.b) * 0.5 - (ax[0] * mid.x + ax[1] * mid.y + ax[2] * mid.z);
-            addInstance(statics, m, ax, origin, 1.0f, w.surfaceAt(origin.x, origin.z) == SURF_SNOW ? 1.0f : 0.0f, (uint32_t)i + 99, false, true,
+            addInstance(statics, m, ax, origin, 1.0f, w.surfaceAt(origin.x, origin.z) == SURF_SNOW ? 1.0f : 0.0f, lh, false, true,
                         (float)(L + 2 * g.r));
         }
     // Bushes: shrubs as wide as the bush.
     if (cv.bushes)
         for (size_t i = 0; i < w.bushes.size(); i++) {
             const Bush& b = w.bushes[i];
-            const uint32_t h = (uint32_t)i * 40503u + 5;
+            const uint32_t h = anchored ? placeHash(b.p.x, b.p.z, 5) : (uint32_t)i * 40503u + 5;
             const int m = bushModels[hash32(h) % bushModels.size()];
             const double s = b.r / std::max(0.05f, models[m].radius) * 1.1;
             V3 ax[3];
@@ -624,9 +629,12 @@ void PropRenderer::setWorld(const World& w, int q) {
         };
         std::vector<Spot> spots;
         const double step = 6.0, lim = w.halfSize() - 80;
-        for (double x = -lim; x < lim; x += step)
-            for (double z = -lim; z < lim; z += step) {
-                const uint32_t h = hash32((uint32_t)(x * 7 + 5000) * 73856093u ^ (uint32_t)(z * 7 + 5000) * 19349663u);
+        // (Anchored: the grid on the world's 6 m lines, hashed by where it is in the world.)
+        const double x0 = anchored ? -lim + (6.0 - std::fmod(std::fmod(anchorX - lim, 6.0) + 6.0, 6.0)) : -lim;
+        const double z0 = anchored ? -lim + (6.0 - std::fmod(std::fmod(anchorZ - lim, 6.0) + 6.0, 6.0)) : -lim;
+        for (double x = x0; x < lim; x += step)
+            for (double z = z0; z < lim; z += step) {
+                const uint32_t h = anchored ? placeHash(x, z, 6000) : hash32((uint32_t)(x * 7 + 5000) * 73856093u ^ (uint32_t)(z * 7 + 5000) * 19349663u);
                 const double jx = x + (hashf(h, 1) - 0.5) * step, jz = z + (hashf(h, 2) - 0.5) * step;
                 const V3 n = w.normal(jx, jz);
                 if (n.y > 0.72 || n.y < 0.2) continue;  // steeper than ~44 degrees
@@ -636,14 +644,18 @@ void PropRenderer::setWorld(const World& w, int q) {
                 spots.push_back({h, jx, jz});
             }
         std::sort(spots.begin(), spots.end(), [](const Spot& a, const Spot& b) { return a.h < b.h; });
-        const int cap = q >= 3 ? 900 : q == 2 ? 600 : 300;
+        const int cap = anchored ? (q >= 3 ? 4000 : q == 2 ? 2600 : 1300) : q >= 3 ? 900 : q == 2 ? 600 : 300;
+        if (anchored) {  // (a share of the spots by their own hash, not the window's first few hundred: the same ones in every window)
+            const double share = q >= 3 ? 0.12 : q == 2 ? 0.08 : 0.04;
+            spots.erase(std::remove_if(spots.begin(), spots.end(), [&](const Spot& s) { return hashf(s.h, 11) > share; }), spots.end());
+        }
         std::set<long long> taken;
         int placed = 0;
         for (const Spot& sp : spots) {
             if (placed >= cap) break;
             const uint32_t h = sp.h;
             const double jx = sp.x, jz = sp.z;
-            const long long key = (long long)std::floor(jx / 9.0) * 100000 + (long long)std::floor(jz / 9.0);
+            const long long key = (long long)std::floor((jx + anchorX) / 9.0) * 1000003 + (long long)std::floor((jz + anchorZ) / 9.0);
             if (taken.count(key)) continue;
             taken.insert(key);
             const V3 n = w.normal(jx, jz);
@@ -718,7 +730,7 @@ void PropRenderer::buildScatterCell(int cx, int cz, std::vector<Inst>& out) {
     };
     for (int k = 0; k < tries; k++) {
         const uint32_t h = hash32(base + (uint32_t)k * 0x9e3779b9u);
-        const double x = (cx + hashf(h, 1)) * kScatterCell, z = (cz + hashf(h, 2)) * kScatterCell;
+        const double x = (cx + hashf(h, 1)) * kScatterCell - anchorX, z = (cz + hashf(h, 2)) * kScatterCell - anchorZ;
         if (std::fabs(x) > w.halfSize() - 30 || std::fabs(z) > w.halfSize() - 30) continue;
         const RoadInfo r = w.roadAt(x, z);
         if (r.near || r.paint != PAINT_NONE) continue;  // off roads, trails, pads and painted ground
@@ -790,8 +802,9 @@ void PropRenderer::beginFrame(const World& w, const V3& eyePos, const M4& viewPr
     // Scatter cells round the camera: make the new ones, drop the far ones.
     if (quality > 0 && loaded() && (!scatterGrass.empty() || !scatterFern.empty() || !scatterLitter.empty())) {
         const double reach = kScatterReach[quality];
-        const int c0x = (int)std::floor((eye.x - reach) / kScatterCell), c1x = (int)std::floor((eye.x + reach) / kScatterCell);
-        const int c0z = (int)std::floor((eye.z - reach) / kScatterCell), c1z = (int)std::floor((eye.z + reach) / kScatterCell);
+        // (Cells of the world: anchored, counted from its origin, not the window's.)
+        const int c0x = (int)std::floor((eye.x + anchorX - reach) / kScatterCell), c1x = (int)std::floor((eye.x + anchorX + reach) / kScatterCell);
+        const int c0z = (int)std::floor((eye.z + anchorZ - reach) / kScatterCell), c1z = (int)std::floor((eye.z + anchorZ + reach) / kScatterCell);
         for (auto it = scatter.begin(); it != scatter.end();) {
             const int cx = (int)(it->first >> 32), cz = (int)(int32_t)(it->first & 0xffffffff);
             if (cx < c0x - 1 || cx > c1x + 1 || cz < c0z - 1 || cz > c1z + 1) it = scatter.erase(it);

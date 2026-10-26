@@ -81,6 +81,10 @@ bool Settings::load(const std::string& path) {
             sessionName = v.substr(0, 24);
             continue;
         }
+        if (k == "procseed") {  // (a 64-bit number: not through a float)
+            procSeed = std::strtoull(text, nullptr, 10);
+            continue;
+        }
         const float v = (float)std::atof(text);
         if (k == "mph") mph = v != 0;
         else if (k == "winchspeed" && std::isfinite(v)) winchSpeed = std::clamp((double)v, recovery::kWinchSpeedMin, recovery::kWinchSpeedMax);
@@ -152,6 +156,7 @@ bool Settings::save(const std::string& path) const {
     std::fprintf(f, "physicsthreads %d\nfullhud %d\n", physicsThreads, fullHud);
     std::fprintf(f, "adaptive %d\ndevhotkeys %d\ngfxchosen %d\n", adaptiveQuality, devHotkeys, gfxChosen);
     std::fprintf(f, "winchspeed %.2f\n", winchSpeed);
+    if (procSeed) std::fprintf(f, "procseed %llu\n", procSeed);
     if (!playerName.empty()) std::fprintf(f, "name %s\n", playerName.c_str());
     if (!joinAddress.empty()) std::fprintf(f, "join %s\n", joinAddress.c_str());
     if (!sessionName.empty()) std::fprintf(f, "session %s\n", sessionName.c_str());
@@ -238,6 +243,7 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
                           : mapPick == MAP_FRONTIER ? "START AT THE FRONTIER: DESERT, RIVERS, A RANGE, A RACE CIRCUIT"
                           : mapPick == MAP_BACKCOUNTRY ? "8 KM: TRAILS, RIVERS AND PLACES, THE MOUNTAIN, FRONTIER AND OPEN COUNTRY ROUND IT"
                           : mapPick == MAP_WILDS ? "START IN THE OPEN COUNTRY: ROOM TO TRY ANYTHING"
+                          : mapPick == MAP_PROCEDURAL ? "A BRAND-NEW ENDLESS WORLD EVERY TIME: DRIVE AS FAR AS YOU LIKE"
                                                     : "EVERYTHING IN THE GAME, LAID OUT TO LOOK AT AND TRY";
     if (page == 0 && title) {
         const auto& cat = vehicleCatalog();
