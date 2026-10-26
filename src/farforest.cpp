@@ -38,8 +38,6 @@ void main(){
   ivec2 cl = ivec2(c % uTileN, c / uTileN);
   ivec2 gc = uTileCell + cl;
   uvec3 a = pcg3(uvec3(uint(gc.x), uint(gc.y), uint(slot + 16 * uLevel)));
-  uvec3 b = pcg3(a ^ uvec3(0x9E3779B9u, 0x85EBCA6Bu, 0xC2B2AE35u));
-  uvec3 e = pcg3(b ^ uvec3(0x27D4EB2Fu, 0x165667B1u, 0xD3A2646Cu));
   vec2 p = uTileLocal + (vec2(cl) + vec2(u01(a.x), u01(a.y))) * uCell;
   float d = length(p - uEye.xz);
   float lo = clamp((uLevelFade.x - d) / uLevelFade.y, 0.0, 1.0), hi = clamp((uLevelFade.z - d) / uLevelFade.w, 0.0, 1.0);
@@ -50,6 +48,8 @@ void main(){
   float rho = cov.r * 255.0 * uPerHaUnit / 10000.0;
   float keep = d <= 1200.0 ? 1.0 - 0.75 * smoothstep(400.0, 1200.0, d) : 0.25 * 1200.0 / d;
   if (u01(a.z) >= rho * keep * uCell * uCell / float(uSlots)) { none(); return; }
+  uvec3 b = pcg3(a ^ uvec3(0x9E3779B9u, 0x85EBCA6Bu, 0xC2B2AE35u));  // (the rest of its numbers: only for the tries kept)
+  uvec3 e = pcg3(b ^ uvec3(0x27D4EB2Fu, 0x165667B1u, 0xD3A2646Cu));
   float q = u01(b.x);
   int kind = q < cov.b ? 2 : q < cov.b + cov.g ? 0 : 1;
   if (uKindShare[kind].w <= 0.0) kind = uKindShare[0].w > 0.0 ? 0 : uKindShare[1].w > 0.0 ? 1 : 2;
@@ -73,7 +73,7 @@ void FarForestGrid::finish() {
     for (int i = 0; i < n; i++)
         for (int j = 0; j < n; j++) {
             const size_t b = (size_t)(i / kBlock) * bn + j / kBlock;
-            const float h = height[(size_t)i * n + j];
+            const float h = height[(size_t)j * n + i];
             blockLo[b] = std::min(blockLo[b], h), blockHi[b] = std::max(blockHi[b], h);
         }
 }
@@ -93,20 +93,11 @@ void FarForest::upload(const std::shared_ptr<const FarForestGrid>& g) {
         }
         GenVertexArrays(1, &vao_);
     }
-    // (Row i of the grid is x: stored as the texture's rows by j, so (u, v) = (x, z).)
-    std::vector<uint8_t> c((size_t)g->n * g->n * 4);
-    std::vector<float> h((size_t)g->n * g->n);
-    for (int i = 0; i < g->n; i++)
-        for (int j = 0; j < g->n; j++) {
-            const size_t s = (size_t)i * g->n + j, t = (size_t)j * g->n + i;
-            for (int k = 0; k < 4; k++) c[t * 4 + k] = g->cover[s * 4 + k];
-            h[t] = g->height[s];
-        }
     PixelStorei(GL_UNPACK_ALIGNMENT, 1);
     BindTexture(GL_TEXTURE_2D, tex_[0]);
-    TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, g->n, g->n, 0, GL_RGBA, GL_UNSIGNED_BYTE, c.data());
+    TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, g->n, g->n, 0, GL_RGBA, GL_UNSIGNED_BYTE, g->cover.data());
     BindTexture(GL_TEXTURE_2D, tex_[1]);
-    TexImage2D(GL_TEXTURE_2D, 0, GL_R32F, g->n, g->n, 0, GL_RED, GL_FLOAT, h.data());
+    TexImage2D(GL_TEXTURE_2D, 0, GL_R32F, g->n, g->n, 0, GL_RED, GL_FLOAT, g->height.data());
     BindTexture(GL_TEXTURE_2D, 0);
     PixelStorei(GL_UNPACK_ALIGNMENT, 4);
     n_ = g->n;

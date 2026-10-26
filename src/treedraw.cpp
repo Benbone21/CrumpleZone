@@ -212,7 +212,7 @@ void main(){
 const char* const kImpostorDepthFS = R"(#version 330 core
 in vec3 vPos; in vec3 vUv0; in vec3 vUv1; in float vMix; in vec2 vLook; in vec3 vAx0; in vec3 vAx2; in vec3 vRight; in float vR; in vec2 vFade;
 uniform sampler2DArray uImpCol;
-void main(){ if (mix(texture(uImpCol, vUv0).a, texture(uImpCol, vUv1).a, vMix) < 0.5) discard; })";
+void main(){ if (texture(uImpCol, vMix < 0.5 ? vUv0 : vUv1).a < 0.5) discard; })";  // (the nearer side alone: a shadow texel or two)
 
 namespace {
 constexpr int kInstFloats = 12;

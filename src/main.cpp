@@ -4154,6 +4154,7 @@ int main(int argc, char** argv) {
         }
         const int bf = frame - benchBase;  // (frames into the bench run)
         if (frame == 90) std::thread([] { meshcache::flush(); }).detach();  // (what the first seconds generated, for the next run: off the main thread)
+        if (frame == 150) std::thread([] { releaseFreedMemory(); }).detach();  // (what the load freed on its threads, by now, handed back to the system)
         for (size_t i = 0; i < afterVisual.size();)
             if (visualReady(*afterVisual[i].first)) {
                 auto act = std::move(afterVisual[i].second);

@@ -4395,8 +4395,8 @@ void Renderer::buildBackdrop(const World& world, std::vector<Vtx>& verts, std::v
             F.height.resize((size_t)n * n);
             parallelRows(n, [&](int i) {
                 for (int j = 0; j < n; j++) {
-                    const size_t k = (size_t)i * n + j;
-                    F.height[k] = (float)H[k];
+                    const size_t k = (size_t)i * n + j, t = (size_t)j * n + i;  // (t: as the textures hold it, a row for each z)
+                    F.height[t] = (float)H[k];
                     const int i0 = std::max(0, i - 1), i1 = std::min(n - 1, i + 1), j0 = std::max(0, j - 1), j1 = std::min(n - 1, j + 1);
                     const double slope = std::hypot((H[(size_t)i1 * n + j] - H[(size_t)i0 * n + j]) / ((i1 - i0) * spacing),
                                                     (H[(size_t)i * n + j1] - H[(size_t)i * n + j0]) / ((j1 - j0) * spacing));
@@ -4406,8 +4406,8 @@ void Renderer::buildBackdrop(const World& world, std::vector<Vtx>& verts, std::v
                     const double gx = -reach + i * spacing + (double)world.proc.ox, gz = -reach + j * spacing + (double)world.proc.oz;
                     const proc::ProcWorld::TreeCover tc = G.treeCover(gx, gz, m, H[k], slope);
                     auto byte = [](double v) { return (uint8_t)std::clamp((int)std::lround(v * 255), 0, 255); };
-                    F.cover[k * 4 + 0] = (uint8_t)std::clamp((int)std::lround(FarForestGrid::realized(tc.triedPerHa) / FarForestGrid::kPerHaUnit), 0, 255);
-                    F.cover[k * 4 + 1] = byte(tc.conifer), F.cover[k * 4 + 2] = byte(tc.snag), F.cover[k * 4 + 3] = byte(1 - tc.shrink);
+                    F.cover[t * 4 + 0] = (uint8_t)std::clamp((int)std::lround(FarForestGrid::realized(tc.triedPerHa) / FarForestGrid::kPerHaUnit), 0, 255);
+                    F.cover[t * 4 + 1] = byte(tc.conifer), F.cover[t * 4 + 2] = byte(tc.snag), F.cover[t * 4 + 3] = byte(1 - tc.shrink);
                 }
             });
             F.finish();

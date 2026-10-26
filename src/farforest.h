@@ -24,7 +24,8 @@ extern const char* const kFarForestVS;  // (after kImpostorPlace)
 
 struct FarForestGrid {
     int n = 0;
-    double spacing = 32, origin = 0;  // sample (i, j) at window coordinates (origin + i * spacing, origin + j * spacing)
+    double spacing = 32, origin = 0;  // sample (i, j) at window coordinates (origin + i * spacing, origin + j * spacing), kept at j * n + i
+                                      // (as the textures hold it: x along a row)
     int64_t ox = 0, oz = 0;           // the window's origin (global m)
     std::vector<uint8_t> cover;       // 4 a sample: trees a hectare (x kPerHaUnit), conifer share, snag share, height kept (all /255)
     std::vector<float> height;        // the ground as the backdrop draws it
