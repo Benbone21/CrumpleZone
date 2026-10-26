@@ -448,6 +448,7 @@ uint64_t Chunk::hash() const {
     for (const RockSpec& r : rocks) bytes(&r.x, sizeof(float) * 7), bytes(&r.seed, 4);
     for (const BushSpec& b : bushes) bytes(&b.x, sizeof(float) * 4), bytes(&b.habitat, 2);
     for (const LogSpec& l : logs) bytes(&l.ax, sizeof(float) * 5);
+    for (const StumpSpec& t : stumps) bytes(&t.x, sizeof(float) * 5);
     return hh;
 }
 
@@ -1123,6 +1124,40 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
         if (c->surf[id] == SURF_GRASS && slopeAt(i, j) < 0.4 && open(i, j) && open(i2, j2) && open(i3, j3))
             c->logs.push_back({(float)(fx - dx * L2), (float)(fz - dz * L2), (float)(fx + dx * L2), (float)(fz + dz * L2), (float)r});
     }
+    // The alpine forest floor (biome.alpine): fallen logs and stumps among the trees, below the tree line. Both are things to drive
+    // over or round (logs: capsules; stumps: posts), kept off the trails and the water.
+    {
+        auto nearTree = [&](double fx, double fz, double r) {
+            for (const auto& pq : placed)
+                if (sqr(pq.first - fx) + sqr(pq.second - fz) < r * r) return true;
+            return false;
+        };
+        const int logTries = (int)(w[PB_MOUNTAINS] * AR.logsPerHa * haChunk + rr());
+        for (int k = 0; k < logTries; k++) {
+            const double fx = 6 + 52 * rr(), fz = 6 + 52 * rr(), L2 = 1.5 + 3.5 * rr(), r = 0.12 + 0.2 * rr();
+            double dx = rr() - 0.5, dz = rr() - 0.5;
+            const double dl = std::sqrt(dx * dx + dz * dz) + 1e-9;
+            dx /= dl, dz /= dl;
+            int i, j, i2, j2, i3, j3;
+            const int id = cellOf(fx, fz, i, j);
+            cellOf(fx - dx * L2, fz - dz * L2, i2, j2), cellOf(fx + dx * L2, fz + dz * L2, i3, j3);
+            if (c->surf[id] == SURF_SNOW || c->surf[id] == SURF_ROCK || slopeAt(i, j) > 0.5 || !open(i, j) || !open(i2, j2) || !open(i3, j3)) continue;
+            if (!nearTree(fx, fz, 7) || c->h[id] > treeLineAt((double)gx0 + fx, (double)gz0 + fz)) continue;
+            bool clear = true;  // (not through a trunk)
+            for (const auto& pq : placed)
+                for (int t = -2; t <= 2 && clear; t++) clear = sqr(pq.first - (fx + dx * L2 * t / 2)) + sqr(pq.second - (fz + dz * L2 * t / 2)) > 1.0;
+            if (clear) c->logs.push_back({(float)(fx - dx * L2), (float)(fz - dz * L2), (float)(fx + dx * L2), (float)(fz + dz * L2), (float)r});
+        }
+        const int stumpTries = (int)(w[PB_MOUNTAINS] * AR.stumpsPerHa * haChunk + rr());
+        for (int k = 0; k < stumpTries; k++) {
+            const double fx = 64 * rr(), fz = 64 * rr(), r = 0.2 + 0.2 * rr(), hh = 0.3 + 0.5 * rr(), yaw = 6.283 * rr();
+            int i, j;
+            const int id = cellOf(fx, fz, i, j);
+            if (c->surf[id] == SURF_SNOW || c->surf[id] == SURF_ROCK || slopeAt(i, j) > 0.6 || !open(i, j) || nearTree(fx, fz, 1.5) || !nearTree(fx, fz, 8)) continue;
+            if (c->h[id] > treeLineAt((double)gx0 + fx, (double)gz0 + fz)) continue;
+            c->stumps.push_back({(float)fx, (float)fz, (float)r, (float)hh, (float)yaw});
+        }
+    }
     // Bushes: what grows where (reeds by the water).
     // (And the alpine forest's undergrowth (biome.alpine undergrowth_per_ha): the more trees round it, the more of it, none in the open.)
     const int baseBush = (int)(14 * (0.3 + 0.7 * std::max(grove, w[PB_BADLANDS] + w[PB_DUNES] * 0.3)) + rr()) + (anyWater ? 10 : 0);
@@ -1571,6 +1606,11 @@ void World::buildProcedural() {
                     plant(t);
                 }
                 for (const RockSpec& s : c.rocks) addRock(lx0 + s.x, lz0 + s.z, V3(s.rx, s.ry, s.rz), s.top, s.seed, s.tint);
+                for (const StumpSpec& s : c.stumps) {
+                    const double x = lx0 + s.x, z = lz0 + s.z, y = height(x, z);
+                    fixtures.push_back({PROP_STUMP, V3(x, y, z), V3(s.r, s.h, 0), s.yaw});
+                    poles.push_back({x, z, y - 0.3, y + s.h, s.r});
+                }
                 for (const LogSpec& s : c.logs) {
                     V3 a(lx0 + s.ax, 0, lz0 + s.az), b(lx0 + s.bx, 0, lz0 + s.bz);
                     a.y = height(a.x, a.z) + s.r * 0.8, b.y = height(b.x, b.z) + s.r * 0.8;

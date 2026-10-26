@@ -63,6 +63,8 @@ std::vector<Key> keys() {
     k.push_back({A, "meadow_size", nullptr, AT(r.alpine.meadowSize), "m: about how big the meadows are"});
     k.push_back({A, "trunk_spacing", nullptr, AT(r.alpine.trunkSpacing), "m: trees stand at least this far apart (drivable between, tight in places)"});
     k.push_back({A, "undergrowth_per_ha", nullptr, AT(r.alpine.undergrowthPerHa), "bushes a hectare tried under the trees (kept only within 6 m of a tree, below the tree line)"});
+    k.push_back({A, "logs_per_ha", nullptr, AT(r.alpine.logsPerHa), "fallen logs a hectare tried under the trees (solid: drive over or round)"});
+    k.push_back({A, "stumps_per_ha", nullptr, AT(r.alpine.stumpsPerHa), "stumps a hectare tried under the trees (solid)"});
     k.push_back({A, "conifer_share", nullptr, AT(r.alpine.coniferShare), "0..1: pines and firs; the rest are dead snags, or aspens low down"});
     k.push_back({A, "aspen_share", nullptr, AT(r.alpine.aspenShare), "0..1: aspens (broadleaf) among the trees at the foot, none from aspen_below up"});
     k.push_back({A, "aspen_below", nullptr, AT(r.alpine.aspenBelow), "m: aspens only below this"});

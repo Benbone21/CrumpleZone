@@ -42,7 +42,7 @@ struct RangeRule {
 
 // ---- Alpine: forest, tree line, rock and snow -----------------------------------------------------------------------------------
 struct AlpineRule {
-    double treesPerHa = 230;        // trees a hectare on the slopes at the foot of the range (pines)
+    double treesPerHa = 420;        // trees a hectare on the slopes at the foot of the range (pines)
     double treeSlopeMax = 0.75;     // no trees steeper than this (rise over run, ~35 degrees)
     double treeLine = 760;         // m: where the forest ends...
     double treeLineWobble = 60;    // m: ...give or take this (a noise: higher on some spurs, lower in others)
@@ -50,8 +50,10 @@ struct AlpineRule {
     double krummholz = 0.6;        // ...and the trees shrink to (1 - this) of their height at the line
     double meadowSize = 110;       // m: about how big the meadows are
     double trunkSpacing = 3.0;     // m: trees stand at least this far apart (drivable between, tight in places)
-    double undergrowthPerHa = 160; // bushes a hectare tried under the trees (kept only near trees, below the tree line)
-    double meadowShare = 0.1;      // of the slopes are open meadows (glades a couple of hundred metres across)
+    double undergrowthPerHa = 360; // bushes a hectare tried under the trees (kept only near trees, below the tree line)
+    double logsPerHa = 14;         // fallen logs a hectare tried under the trees (drive over or round them)
+    double stumpsPerHa = 18;       // stumps a hectare tried under the trees
+    double meadowShare = 0.05;      // of the slopes are open meadows (glades a couple of hundred metres across)
     double coniferShare = 0.93;     // pines and firs; the rest dead snags...
     double aspenShare = 0.1;       // ...or aspens, low down:
     double aspenBelow = 500;       // m: aspens only below this

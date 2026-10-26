@@ -55,6 +55,9 @@ struct BushSpec {
     float x, z, u, tint;
     uint8_t habitat, edge;
 };
+struct StumpSpec {
+    float x, z, r, h, yaw;
+};
 struct LogSpec {
     float ax, az, bx, bz, r;
 };
@@ -71,6 +74,7 @@ struct Chunk {
     std::vector<RockSpec> rocks;
     std::vector<BushSpec> bushes;
     std::vector<LogSpec> logs;
+    std::vector<StumpSpec> stumps;
     double genMs = 0;  // how long it took to make
     uint64_t hash() const;  // of every byte above (not genMs)
 };

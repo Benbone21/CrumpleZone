@@ -45,16 +45,18 @@ alpine_full = 560                 # m: ...and is whole here
 alpine_heat_shift = 100           # m: in the coldest country the alpine comes this much lower (in the hottest, higher)
 
 [biome.alpine]
-trees_per_ha = 230                # trees a hectare on the slopes below the tree line (pines)
+trees_per_ha = 420                # trees a hectare on the slopes below the tree line (pines)
 tree_slope_max = 0.75             # no trees on ground steeper than this (rise over run; 0.7 is 35 degrees)
 tree_line = 760                   # m: the height the forest ends at...
 tree_line_wobble = 60             # m: ...give or take this (a slow noise)
 tree_line_fade = 200              # m: below the line the forest thins out over this band
 krummholz = 0.6                   # 0..1: trees at the line are (1 - this) of their height (stunted)
-meadow_share = 0.1                # 0..1: this share of the forested slopes is open meadow
+meadow_share = 0.05               # 0..1: this share of the forested slopes is open meadow
 meadow_size = 110                 # m: about how big the meadows are
 trunk_spacing = 3                 # m: trees stand at least this far apart (drivable between, tight in places)
-undergrowth_per_ha = 160          # bushes a hectare tried under the trees (kept only within 6 m of a tree, below the tree line)
+undergrowth_per_ha = 360          # bushes a hectare tried under the trees (kept only within 6 m of a tree, below the tree line)
+logs_per_ha = 14                  # fallen logs a hectare tried under the trees (solid: drive over or round)
+stumps_per_ha = 18                # stumps a hectare tried under the trees (solid)
 conifer_share = 0.93              # 0..1: pines and firs; the rest are dead snags, or aspens low down
 aspen_share = 0.1                 # 0..1: aspens (broadleaf) among the trees at the foot, none from aspen_below up
 aspen_below = 500                 # m: aspens only below this

@@ -592,7 +592,22 @@ SCENARIO(procDriveSlide, "procworld/drive-slide", "100 km out, a truck driving a
             double worst = 0;
             for (double a = -40; a <= 40; a += 20)
                 for (double c = -40; c <= 40; c += 20) worst = std::max(worst, std::fabs(G.groundHeight(gx + a, gz + c) - h));
-            if (worst < 4) break;
+            // (...and a clear way east from where it starts: no tree, log or stump within 4 m of its first 40 m.)
+            int64_t ox, oz;
+            ProcWorld::snapOrigin(gx, gz, ox, oz);
+            bool clear = true;
+            for (int64_t cx = floorDiv(ox - 8, kChunk); cx <= floorDiv(ox + 48, kChunk); cx++)
+                for (int64_t cz = floorDiv(oz - 8, kChunk); cz <= floorDiv(oz + 8, kChunk); cz++) {
+                    auto c = G.chunk(cx, cz);
+                    auto blocks = [&](double x, double z, double r) {
+                        const double gx2 = (double)(cx * kChunk) + x - (double)ox, gz2 = (double)(cz * kChunk) + z - (double)oz;
+                        return gx2 > -4 && gx2 < 44 && std::fabs(gz2) < 4 + r;
+                    };
+                    for (const TreeSpec& t : c->trees) clear &= !blocks(t.x, t.z, t.radius);
+                    for (const StumpSpec& t : c->stumps) clear &= !blocks(t.x, t.z, t.r);
+                    for (const LogSpec& l : c->logs) clear &= !blocks(l.ax, l.az, 1) && !blocks(l.bx, l.bz, 1) && !blocks((l.ax + l.bx) / 2, (l.az + l.bz) / 2, 1);
+                }
+            if (worst < 4 && clear) break;
         }
     }
     auto setup = [&](Sim& s) {
@@ -958,7 +973,7 @@ SCENARIO(procAlpine, "procworld/alpine", "The alpine rules (procrules.h, biome.a
     std::snprintf(b, sizeof b, "below the tree line: %.0f trees a hectare of gentle ground (rule %.0f, less the meadows), %.0f%% conifers; mean height %.1f m low, %.1f m near the line",
                   dens, A.treesPerHa, coniferN ? 100 * coniferShare / coniferN : 0.0, lowN ? lowH / lowN : 0.0, highN ? highH / highN : 0.0);
     ctx.note(b);
-    ctx.check("thick forest on the slopes: over 120 trees a hectare, within 40-110% of the rule's density", dens > 120 && dens > 0.4 * A.treesPerHa && dens < 1.1 * A.treesPerHa);
+    ctx.check("thick forest on the slopes: over 190 trees a hectare, within 40-110% of the rule's density", dens > 190 && dens > 0.4 * A.treesPerHa && dens < 1.1 * A.treesPerHa);
     ctx.check("mostly conifers below the tree line", coniferN > 0 && coniferShare / coniferN > 0.8);
     ctx.check("stunted near the tree line", lowN > 0 && highN > 0 && highH / highN < 0.8 * lowH / lowN);
     ctx.check("no trees over the tree line", bareAbove);
