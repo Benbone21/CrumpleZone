@@ -1,6 +1,8 @@
 #include "bgwork.h"
 
+#include <algorithm>
 #include <cerrno>
+#include <vector>
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -27,7 +29,34 @@ void lowerThreadPriority() {
 #endif
 }
 
+namespace {
+std::mutex& readersMutex() {
+    static std::mutex m;
+    return m;
+}
+std::vector<BgWork*>& readers() {
+    static std::vector<BgWork*> v;
+    return v;
+}
+}  // namespace
+
+BgWork::BgWork(bool readsWorld) : readsWorld_(readsWorld) {
+    if (!readsWorld_) return;
+    std::lock_guard<std::mutex> l(readersMutex());
+    readers().push_back(this);
+}
+
+void waitWorldReaders() {
+    std::lock_guard<std::mutex> l(readersMutex());
+    for (BgWork* w : readers()) w->wait();
+}
+
 BgWork::~BgWork() {
+    if (readsWorld_) {
+        std::lock_guard<std::mutex> l(readersMutex());
+        auto& v = readers();
+        v.erase(std::remove(v.begin(), v.end(), this), v.end());
+    }
     {
         std::lock_guard<std::mutex> l(m_);
         quit_ = true;

@@ -3602,7 +3602,7 @@ void Renderer::dropStreamJobs() {
 }
 
 void Renderer::waitStreaming() {
-    bg_.wait();
+    waitWorldReaders();  // (this one's, and any other background work that reads the world: the autopilot's replans)
     dropStreamJobs();
 }
 

@@ -6,7 +6,10 @@
 #include <thread>
 #include <vector>
 
+#include "../src/autopilot.h"
+#include "../src/bgwork.h"
 #include "../src/physics_workers.h"
+#include "../src/vehicles.h"
 #include "../src/streamwin.h"
 #include "harness.h"
 
@@ -95,4 +98,38 @@ SCENARIO(poolContentionGuard, "hitches/pool-guard", "A physics pool whose worker
     pool.run(8, [&](int i) { hits[i] += std::this_thread::get_id() == caller ? 1 : 100; });
     for (auto& h : hits) once &= h == 1;
     ctx.check("while it's fallen back the batch runs on the caller alone", once);
+}
+
+namespace {
+bool samePath(const std::vector<V3>& a, const std::vector<V3>& b) {
+    if (a.size() != b.size()) return false;
+    for (size_t k = 0; k < a.size(); k++)
+        if (a[k].x != b[k].x || a[k].y != b[k].y || a[k].z != b[k].z) return false;
+    return true;
+}
+}  // namespace
+
+SCENARIO(pilotReplanBackground, "hitches/pilot-replan", "A replan made in the background: the old route drives on meanwhile, the new one goes in once made, and the same as one made at once") {
+    Car& c = ctx.add(vehicleCatalog()[2], -110, -110, 0);
+    ctx.focus(c);
+    ctx.run(0.5);
+    const World& w = ctx.sim.world;
+    pilotStart(c, w, V3(120, 0, -110), "THE FAR SIDE", 30 / 3.6, PILOT_ANYWHERE);
+    ctx.check("the first route is planned at once", c.pilot.active && c.pilot.path.size() >= 2);
+    const std::vector<V3> first = c.pilot.path;
+    const V3 from = c.frame().com, goal(100, 0, 60);
+    pilotReplan(c, w, from, goal, 1.0, 1);
+    const bool keptOld = samePath(c.pilot.path, first) && c.pilot.replanning != nullptr;
+    waitWorldReaders();
+    pilotTakeReplan(c, w);
+    const std::vector<V3> background = c.pilot.path;
+    std::vector<V3> now;
+    planRoute(w, *c.spec, from, goal, c.pilot.route, c.pilot.avoid, now, 1.0);
+    ctx.check("while it's being made the old route stays", keptOld);
+    ctx.check("once made it goes in, the same route as one made at once", !c.pilot.replanning && samePath(background, now) && !samePath(background, first));
+    pilotReplan(c, w, from, V3(120, 0, -110), 1.0, 1);
+    waitWorldReaders();
+    c.pilot.active = false;  // (stopped meanwhile: what was made is dropped)
+    pilotTakeReplan(c, w);
+    ctx.check("a replan that lands after the autopilot stopped is dropped", samePath(c.pilot.path, background) && !c.pilot.replanning);
 }

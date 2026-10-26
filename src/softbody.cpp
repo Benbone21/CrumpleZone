@@ -3460,8 +3460,7 @@ void Sim::pilotStep(int i, double dt) {
         if (ap.replanTime <= 0 && len(g - ap.goal) > 8) {
             ap.replanTime = 3;
             ap.goal = g;
-            std::vector<V3> np;
-            if (planRoute(world, *c.spec, c.frame().com, g, ap.route, ap.avoid, np)) ap.path = np, ap.idx = 0;
+            pilotReplan(c, world, c.frame().com, g, 1.0);  // (in the background in the game: the old route meanwhile)
         }
     }
     const bool was = ap.active;

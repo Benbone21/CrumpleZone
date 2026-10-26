@@ -4,6 +4,7 @@
 #include "autopilot.h"
 #include "frameprof.h"
 #include "parallel.h"
+#include "bgwork.h"
 
 #include <algorithm>
 #include <cmath>
@@ -964,16 +965,60 @@ std::string pilotStart(Car& car, const World& w, const V3& goal, const std::stri
     return buf;
 }
 
+// ---- Replans in the background (autopilot.h pilotSetAsyncReplans) ----
+struct PilotPlanJob {
+    const World* world = nullptr;
+    uint64_t stamp = 0;
+    std::vector<V3> path;
+    bool ok = false;
+    std::atomic<bool> done{false};
+};
+namespace {
+std::atomic<bool> g_asyncReplans{false};
+BgWork& replanWork() {
+    static BgWork work(true);  // (reads the world)
+    return work;
+}
+}  // namespace
+
+void pilotSetAsyncReplans(bool on) { g_asyncReplans = on; }
+
+void pilotReplan(Car& c, const World& w, const V3& from, const V3& goal, double capScale, int async) {
+    Autopilot& ap = c.pilot;
+    if (async < 0 ? !g_asyncReplans : async == 0) {
+        std::vector<V3> np;
+        if (planRoute(w, *c.spec, from, goal, ap.route, ap.avoid, np, capScale)) ap.path = np, ap.idx = 0;
+        return;
+    }
+    if (ap.replanning) return;  // (one at a time: the newest ask waits for the one being made)
+    auto job = std::make_shared<PilotPlanJob>();
+    job->world = &w, job->stamp = w.stamp;
+    ap.replanning = job;
+    auto vs = std::make_shared<const VehicleSpec>(*c.spec);  // (a copy: the car may be swapped or rebuilt meanwhile)
+    const int route = ap.route;
+    const std::vector<V3> avoid = ap.avoid;
+    replanWork().post([job, vs, from, goal, route, avoid, capScale] {
+        job->ok = planRoute(*job->world, *vs, from, goal, route, avoid, job->path, capScale);
+        job->done.store(true, std::memory_order_release);
+    });
+}
+
+void pilotTakeReplan(Car& c, const World& w) {
+    Autopilot& ap = c.pilot;
+    if (!ap.replanning || !ap.replanning->done.load(std::memory_order_acquire)) return;
+    PilotPlanJob& j = *ap.replanning;
+    if (j.ok && j.world == &w && j.stamp == w.stamp && ap.active && j.path.size() >= 2) ap.path = std::move(j.path), ap.idx = 0;
+    ap.replanning.reset();
+}
+
 bool pilotDrive(Car& c, const World& w, double dt, const std::vector<Car>* cars) {
     Autopilot& ap = c.pilot;
+    pilotTakeReplan(c, w);
     if (!ap.active || ap.path.size() < 2) return false;
     const Frame fr = c.frame();
     const V3 pos = fr.com;
     const double v = dot(fr.vel, fr.fwd);
-    auto replan = [&] {
-        std::vector<V3> np;
-        if (planRoute(w, *c.spec, pos, ap.goal, ap.route, ap.avoid, np, ap.capScale[bestLevel(*c.spec)])) ap.path = np, ap.idx = 0;
-    };
+    auto replan = [&] { pilotReplan(c, w, pos, ap.goal, ap.capScale[bestLevel(*c.spec)]); };
     // Where along the route are we? (Search ahead of the last spot.)
     {
         int best = ap.idx;

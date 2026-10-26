@@ -54,6 +54,8 @@
 #include "buildinfo.h"
 #include "coop.h"
 #include "onemap.h"
+#include "autopilot.h"
+#include "bgwork.h"
 #include "places.h"
 #include "debugscreen.h"
 #include "editor.h"
@@ -1756,6 +1758,7 @@ int main(int argc, char** argv) {
     signal(SIGPIPE, SIG_IGN);  // (a multiplayer peer dropping mid-send; macOS has no MSG_NOSIGNAL)
 #endif
     Options opt = parseArgs(argc, argv);
+    pilotSetAsyncReplans(!std::getenv("CZ_PILOT_SYNC"));  // (the game: replans while driving made in the background; the tests plan in the step)
     if (!opt.campDump.empty()) {
         const bool ok = menuscene::dump(opt.campDump);
         std::printf("%s %s\n", ok ? "wrote" : "could not write", opt.campDump.c_str());
@@ -5241,6 +5244,7 @@ int main(int argc, char** argv) {
                     bool shown = false;  // (a marker in the world's models: gone when the map's rebuilt)
                     for (const Placed& pl : sim.world.models) shown |= pl.id == "(station racks)";
                     if (!shown) {
+                        waitWorldReaders();  // (background work reading the world: not while it changes)
                         Placed mark;
                         mark.id = "(station racks)";
                         sim.world.models.push_back(mark);
@@ -5253,6 +5257,7 @@ int main(int argc, char** argv) {
                 }
                 if (!career.on) caches.clear(), cachesMap = -1;
                 else if (cachesMap != sim.world.map || (!caches.empty() && !crateAt(caches[0].at))) {
+                    waitWorldReaders();  // (as above)
                     caches = cacheSpots(sim.world);
                     cachesMap = sim.world.map;
                     for (const CacheSpot& c : caches)

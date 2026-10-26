@@ -304,9 +304,10 @@ private:
     bool texMoving_ = false;         // the window is on its way to the camera, a step at a time
     uint64_t streamGen_ = 0;
     void dropStreamJobs();
-    BgWork bg_;
+    BgWork bg_{true};
 public:
-    // Waits for the streaming's background work and drops it: before the world is replaced (the jobs read it).
+    // Waits for the streaming's background work and drops it, and for any other that reads the world (the autopilot's replans,
+    // bgwork.h waitWorldReaders): before the world is replaced.
     void waitStreaming();
     // (tests) The streaming's background work is all done and taken in (the window where the camera wants it, no chunk queued).
     bool streamingSettled() const { return !texJob_ && !chunkJob_ && !texMoving_; }
