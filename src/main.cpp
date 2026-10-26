@@ -2462,7 +2462,8 @@ int main(int argc, char** argv) {
             return;
         }
         World::setSessionSections(net.sections);
-        if (net.map != sim.world.map || sim.world.parkEdited || !net.sections.empty() || campWorld) loadMap(net.map);
+        if (net.map == MAP_PROCEDURAL && net.proc.on) World::procSeed = net.proc.seed, World::procOriginSet = true, World::procOriginX = net.proc.ox, World::procOriginZ = net.proc.oz;  // (the host's window)
+        if (net.map != sim.world.map || net.map == MAP_PROCEDURAL || sim.world.parkEdited || !net.sections.empty() || campWorld) loadMap(net.map), World::procOriginSet = false;
         net.adopt(sim);
         hud.toast("JOINED " + net.ownerName(0) + "'S GAME ON " + mapName(net.map));
         std::printf("joined %s (player %d)\n", address.c_str(), net.self);
@@ -4804,7 +4805,8 @@ int main(int argc, char** argv) {
                     closeMenu();
                     run.stop();
                     World::setSessionSections(net.sections);
-                    if (net.map != sim.world.map || sim.world.parkEdited || !net.sections.empty() || campWorld) loadMap(net.map);
+                    if (net.map == MAP_PROCEDURAL && net.proc.on) World::procSeed = net.proc.seed, World::procOriginSet = true, World::procOriginX = net.proc.ox, World::procOriginZ = net.proc.oz;  // (the host's window)
+                    if (net.map != sim.world.map || net.map == MAP_PROCEDURAL || sim.world.parkEdited || !net.sections.empty() || campWorld) loadMap(net.map), World::procOriginSet = false;
                     net.adopt(sim);
                     hud.toast("JOINED " + net.ownerName(0) + "'S GAME ON " + mapName(net.map) + (net.myLink() == NetSession::LINK_RELAYED ? " (THROUGH THE RELAY)" : ""));
                     std::printf("joined (player %d)\n", net.self);
@@ -4872,7 +4874,22 @@ int main(int argc, char** argv) {
                     hud.toast("THE HOST'S LEVEL WON'T LOAD: " + why);
                 }
             }
+            if (net.role == NetSession::HOST) {  // (what a joining guest is told: procworld.h)
+                net.proc.on = sim.world.map == MAP_PROCEDURAL;
+                net.proc.gen = (uint16_t)proc::kGenVersion, net.proc.seed = sim.world.proc.seed, net.proc.ox = sim.world.proc.ox, net.proc.oz = sim.world.proc.oz;
+            }
             for (const NetSession::GameMsg& m : net.gameIn) {
+                if (m.player == 0 && m.text.rfind("procshift ", 0) == 0 && net.role == NetSession::CLIENT && sim.world.map == MAP_PROCEDURAL) {  // the host slides the window
+                    unsigned long long seed = 0;
+                    long long ox = 0, oz = 0;
+                    double due = 0;
+                    if (std::sscanf(m.text.c_str() + 10, "%llu %lld %lld %lf", &seed, &ox, &oz, &due) == 4 && seed == sim.world.proc.seed && std::isfinite(due) &&
+                        std::llabs(ox - sim.world.proc.ox) < 8192 && std::llabs(oz - sim.world.proc.oz) < 8192) {
+                        net.scheduleShift(due, V3((double)(sim.world.proc.ox - ox), 0, (double)(sim.world.proc.oz - oz)));
+                        procStream.want(seed, ox, oz);
+                    }
+                    continue;
+                }
                 if (m.text.rfind("job|", 0) == 0) {  // the host's job (again, for latecomers)
                     Job j;
                     if (Job::parse(m.text, j) && (!jobOn || j.title != job.title || job.wreckId != j.wreckId)) {
@@ -5285,9 +5302,33 @@ int main(int argc, char** argv) {
             // The procedural world: its window slides with you (the host's call in multiplayer). On the frame a new one goes in,
             // everything the sim holds has moved by d: so do the camera, the effects, you on foot and the marks on the map.
             if (sim.world.map == MAP_PROCEDURAL && !mapLoad.active() && !editor.active && !sim.cars.empty()) {
-                const V3 focus = walker.active ? walker.p : sim.cars[sim.player].frame().com;
+                V3 focus = walker.active ? walker.p : sim.cars[sim.player].frame().com;
+                const bool mp = net.active();
+                const double sharedNow = mp ? net.sharedTime((double)SDL_GetPerformanceCounter() / freq) : -1;
+                if (net.role == NetSession::HOST) {
+                    // The host slides everyone's window: round the middle of the group (the box round every vehicle), told 3 s ahead
+                    // so each machine has it built, and swapped by all at that moment on the shared clock.
+                    V3 lo(1e18, 0, 1e18), hi(-1e18, 0, -1e18);
+                    for (const Car& c : sim.cars)
+                        if (!c.isProp()) {
+                            const V3 p = c.frame().com;
+                            lo = V3(std::min(lo.x, p.x), 0, std::min(lo.z, p.z)), hi = V3(std::max(hi.x, p.x), 0, std::max(hi.z, p.z));
+                        }
+                    if (lo.x < 1e17) focus = (lo + hi) * 0.5;
+                    if (!procStream.busy() && !net.shiftPending() && std::max(std::fabs(focus.x), std::fabs(focus.z)) >= proc::kSlide) {
+                        int64_t ox, oz;
+                        proc::ProcWorld::snapOrigin((double)sim.world.proc.ox + focus.x, (double)sim.world.proc.oz + focus.z, ox, oz);
+                        const double due = sharedNow + 3.0;
+                        char msg[160];
+                        std::snprintf(msg, sizeof msg, "procshift %llu %lld %lld %.4f", (unsigned long long)sim.world.proc.seed, (long long)ox, (long long)oz, due);
+                        net.sendGame(msg);
+                        net.scheduleShift(due, V3((double)(sim.world.proc.ox - ox), 0, (double)(sim.world.proc.oz - oz)));
+                        procStream.want(sim.world.proc.seed, ox, oz);
+                    }
+                }
                 V3 d;
-                if (procStream.tick(sim, renderer, focus, net.role != NetSession::CLIENT, d)) {
+                if (procStream.tick(sim, renderer, focus, !mp, d, sharedNow, mp && net.shiftPending() ? net.shiftDue() : -1.0)) {
+                    if (mp) net.shiftNow();  // (the others' buffered states into the new frame too)
                     cam.target += d, cam.droneEye += d;
                     fx.translate(d);
                     walker.p += d;

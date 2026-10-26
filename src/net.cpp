@@ -4,6 +4,7 @@
 #include "thread_cache.h"
 // Multiplayer session: see net.h.
 #include "net.h"
+#include "procworld.h"
 
 #include <algorithm>
 #include <cctype>
@@ -127,7 +128,7 @@ bool okPos(const V3& p) { return okNum(p.x, kPosLimit) && okNum(p.y, kPosLimit) 
 
 
 // Race chatter only the host may say: a guest sending these is lying about who's in charge.
-bool hostOnlyChatter(const std::string& t) { return t.rfind("job", 0) == 0 || t.rfind("restart", 0) == 0; }
+bool hostOnlyChatter(const std::string& t) { return t.rfind("job", 0) == 0 || t.rfind("restart", 0) == 0 || t.rfind("procshift", 0) == 0; }
 
 std::vector<uint8_t> frame(MsgType t, const Writer& w) {
     std::vector<uint8_t> m;
@@ -940,6 +941,16 @@ void NetSession::handle(Sim* sim, Conn* from, const std::vector<uint8_t>& msg) {
                 role = OFF;
                 return;
             }
+            if (m == MAP_PROCEDURAL) {  // the host's endless world: its generator, seed and window
+                proc.gen = r.get<uint16_t>(), proc.seed = r.get<uint64_t>(), proc.ox = r.get<int64_t>(), proc.oz = r.get<int64_t>();
+                proc.on = r.ok;
+                if (!r.ok || proc.gen != (uint16_t)proc::kGenVersion) {
+                    error = r.ok ? "the host's world generator is v" + std::to_string(proc.gen) + ", this game's v" + std::to_string(proc::kGenVersion) + ": update to the same build"
+                                 : "the host's world made no sense";
+                    role = OFF;
+                    return;
+                }
+            }
             self = id;
             map = m;
             udpToken = token;
@@ -1113,6 +1124,7 @@ void NetSession::welcome(Sim& sim, Conn& c) {
     w.put<uint8_t>((uint8_t)map);
     w.put<uint64_t>(c.token);
     w.str(build);
+    if (map == MAP_PROCEDURAL) w.put<uint16_t>(proc.gen), w.put<uint64_t>(proc.seed), w.put<int64_t>(proc.ox), w.put<int64_t>(proc.oz);  // (procworld.h)
     sendTo(c, frame(MSG_WELCOME, w));
     for (int k = 0; k < net::kMaxPeers; k++)
         if (players[k].active && k != c.peer) {
@@ -2201,6 +2213,9 @@ void NetSession::takeSnapshot(Sim& sim, uint32_t netId, const std::vector<uint8_
     s.boost = clampd(s.boost, 0, 10);
     s.gear = (int8_t)std::min(std::max((int)s.gear, -1), (int)car.spec->gears.size());  // (it indexes the gear table)
     for (float& o : s.wheelOmega) o = (float)clampd(o, -3000, 3000);
+    // (The procedural world's window slid between when it was sent and now, here or there: into this machine's frame. Relayed as sent.)
+    const V3 fix = frameFix(s.t);
+    s.com += fix;
     // Stamped with the shared clock: how late it is says how far behind the others must be shown.
     const double shared = sharedTime(now);
     if (clockSynced()) {
@@ -2230,7 +2245,13 @@ void NetSession::takeSnapshot(Sim& sim, uint32_t netId, const std::vector<uint8_
             for (Conn* c : conns)
                 if (c->peer == ownerOf(netId) && c->hello && c->acks.size() < 256) c->acks.push_back({netId, sequence});
     }
-    if (role == HOST && ownerOf(netId) != self) relayState(sim, netId, s);  // (on to the other guests, each told against what they have)
+    if (role == HOST && ownerOf(netId) != self) {  // (on to the other guests, each told against what they have)
+        if (fix.x != 0 || fix.z != 0) {
+            Snap sent = s;
+            sent.com -= fix;
+            relayState(sim, netId, sent);
+        } else relayState(sim, netId, s);
+    }
     rm->buf.push_back(std::move(s));
     while (rm->buf.size() > 30) rm->buf.pop_front();
 }
@@ -2646,6 +2667,28 @@ void NetSession::setLevel(const std::string& text) {
     levelText = text;
     levelSerial++;
     sendLevel(nullptr);
+}
+
+void NetSession::scheduleShift(double t, const V3& d) {
+    pendingShift.t = t, pendingShift.d = d;
+    shiftOn = true;
+}
+
+void NetSession::shiftNow() {
+    if (!shiftOn) return;
+    for (Remote* rm : remotes)
+        for (Snap& s : rm->buf) s.com += pendingShift.d;
+    pastShifts.push_back(pendingShift);
+    while (pastShifts.size() > 4) pastShifts.erase(pastShifts.begin());
+    shiftOn = false;
+}
+
+V3 NetSession::frameFix(double stamp) const {
+    V3 fix;
+    if (shiftOn && stamp >= pendingShift.t) fix -= pendingShift.d;  // (sent from the new frame; here it's the old one still)
+    for (const WorldShift& s : pastShifts)
+        if (stamp < s.t) fix += s.d;  // (sent from the old frame, before a slide that's happened here)
+    return fix;
 }
 
 void NetSession::sendGame(const std::string& text) {

@@ -49,7 +49,8 @@ void ProcStream::start(Renderer& renderer, const World* at) {
     });
 }
 
-bool ProcStream::tick(Sim& sim, Renderer& renderer, const V3& focus, bool allowed, V3& shift) {
+bool ProcStream::tick(Sim& sim, Renderer& renderer, const V3& focus, bool allowed, V3& shift, double sharedNow, double due) {
+    const bool timed = due >= 0, late = timed && sharedNow >= due;  // (multiplayer: everyone swaps at `due` on the shared clock)
     World& w = sim.world;
     if (w.map != MAP_PROCEDURAL) {
         if (st_ != IDLE) reset();
@@ -70,7 +71,8 @@ bool ProcStream::tick(Sim& sim, Renderer& renderer, const V3& focus, bool allowe
         start(renderer, &sim.world);
     }
     if (st_ == WORK) {
-        if (fut_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return false;
+        if (!late && fut_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return false;
+        fut_.wait();  // (late: it must go in now, so wait for it here: a hitch on a slow machine, not a world out of step)
         auto made = fut_.get();
         next_ = std::move(made.first);
         renderer.beginUpload(std::move(made.second));
@@ -78,7 +80,8 @@ bool ProcStream::tick(Sim& sim, Renderer& renderer, const V3& focus, bool allowe
         st_ = UPLOAD;
     }
     if (st_ == UPLOAD) {
-        if (!renderer.pumpUpload(3.0)) return false;
+        if (!renderer.pumpUpload(late ? 1e9 : 3.0)) return false;
+        if (timed && !late) return false;  // (ready: it goes in at the moment the host named)
         const double t0 = loadprof::nowMs();
         shift = V3((double)(w.proc.ox - next_->proc.ox), 0, (double)(w.proc.oz - next_->proc.oz));
         sim.world = std::move(*next_);

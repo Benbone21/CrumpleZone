@@ -18,7 +18,8 @@ public:
     // Call every frame on MAP_PROCEDURAL. `focus`: where the window should follow (local). `allowed`: whether it may start a new
     // window (multiplayer: only the host decides; a guest is told, see want()). Returns true on the frame a new window went in, with
     // `shift` the offset everything moved by (new local = old local + shift).
-    bool tick(Sim& sim, Renderer& renderer, const V3& focus, bool allowed, V3& shift);
+    // In multiplayer `due` (shared clock) is when every machine swaps: not before, and at it whatever it takes (-1: as soon as ready).
+    bool tick(Sim& sim, Renderer& renderer, const V3& focus, bool allowed, V3& shift, double sharedNow = -1, double due = -1);
     // A window round this origin (global, a chunk corner) is wanted (a guest told by the host; a test). Built as tick() goes.
     void want(uint64_t seed, int64_t ox, int64_t oz);
     bool busy() const { return st_ != IDLE; }

@@ -9,7 +9,10 @@
 #include <set>
 
 #include "../src/procworld.h"
+#include "../src/net.h"
 #include "harness.h"
+#include <thread>
+#include <unistd.h>
 
 using namespace proc;
 
@@ -409,6 +412,85 @@ SCENARIO(procCareerHook, "procworld/career-hook", "The career's world save line:
     const V3 g = ProcWorld::toGlobal(c, V3(10.5, 3, -20.25));
     const V3 l = ProcWorld::toLocal(c, g);
     ctx.check("global and window coordinates, there and back", l.x == 10.5 && l.z == -20.25 && g.x == (double)c.proc.ox + 10.5);
+}
+
+SCENARIO(procNetSlide, "procworld/net-slide", "Multiplayer on the procedural world: the guest is told the host's seed, window and generator; the host slides everyone's window at a moment on the shared clock and the guest's truck, seen on the host, doesn't jump") {
+    const uint64_t seed = 6060;
+    ctx.sim.world = windowAt(seed, 0, 0);
+    const V3 at = ctx.sim.world.spawn;
+    Car& hostCar = ctx.add(p4Runner(), at.x + 12, at.z - 10, 0);
+    ctx.focus(hostCar);
+    NetSession host;
+    const int port = 27900 + (int)(getpid() % 90);
+    ctx.check("host opens a session on the procedural world", host.host(port, "HOSTY", MAP_PROCEDURAL), host.error);
+    host.proc.on = true, host.proc.gen = (uint16_t)kGenVersion, host.proc.seed = seed, host.proc.ox = ctx.sim.world.proc.ox, host.proc.oz = ctx.sim.world.proc.oz;
+    host.adopt(ctx.sim);
+    NetSession client;
+    bool joined = false, done = false;
+    std::thread joiner([&] {
+        joined = client.join("127.0.0.1:" + std::to_string(port), "BUDDY", 3.0);
+        done = true;
+    });
+    for (int k = 0; k < 400 && !done; k++) host.receive(ctx.sim, ctx.t), usleep(5000);
+    joiner.join();
+    ctx.check("guest let in", joined, client.error);
+    if (!joined) return;
+    ctx.check("guest told the seed, window and generator", client.map == MAP_PROCEDURAL && client.proc.on && client.proc.seed == seed &&
+                                                           client.proc.ox == ctx.sim.world.proc.ox && client.proc.gen == kGenVersion);
+    Sim sim2;
+    sim2.world = windowAt(client.proc.seed, (double)client.proc.ox, (double)client.proc.oz);
+    sim2.setupEmpty();
+    sim2.addCar(p4Runner(), V3(at.x - 10, sim2.world.clearY(at.x - 10, at.z + 8) + 0.6, at.z + 8), 0, V3(0.2, 0.2, 0.2));
+    sim2.player = 0;
+    sim2.cars[0].gear = 1;
+    client.adopt(sim2);
+    // The next window (512 m east), made ahead on both machines.
+    World nextHost = windowAt(seed, (double)ctx.sim.world.proc.ox + 512, (double)ctx.sim.world.proc.oz);
+    World nextGuest = windowAt(seed, (double)sim2.world.proc.ox + 512, (double)sim2.world.proc.oz);
+    const V3 d((double)(ctx.sim.world.proc.ox - nextHost.proc.ox), 0, 0);
+    bool hostSwapped = false, guestSwapped = false, guestTold = false;
+    double worst = 0, due = -1;
+    auto frameBoth = [&] {
+        host.send(ctx.sim, ctx.t);
+        host.receive(ctx.sim, ctx.t);
+        client.receive(sim2, ctx.t);
+        for (const NetSession::GameMsg& m : client.gameIn)
+            if (m.text.rfind("procshift ", 0) == 0) {
+                unsigned long long sd = 0;
+                long long ox = 0, oz = 0;
+                double t = 0;
+                if (std::sscanf(m.text.c_str() + 10, "%llu %lld %lld %lf", &sd, &ox, &oz, &t) == 4)
+                    guestTold = true, client.scheduleShift(t, V3((double)(sim2.world.proc.ox - ox), 0, (double)(sim2.world.proc.oz - oz)));
+            }
+        client.gameIn.clear();
+        // Each machine swaps at the named moment on its own idea of the shared clock.
+        if (due >= 0 && !hostSwapped && host.sharedTime(ctx.t) >= due) ctx.sim.world = std::move(nextHost), shiftSim(ctx.sim, d), host.shiftNow(), hostSwapped = true;
+        if (client.shiftPending() && !guestSwapped && client.sharedTime(ctx.t) >= client.shiftDue()) sim2.world = std::move(nextGuest), shiftSim(sim2, d), client.shiftNow(), guestSwapped = true;
+        sim2.cars[0].throttle = 0.3;
+        sim2.advance(Ctx::kFrame, 1000);
+        client.send(sim2, ctx.t);
+        // Where the host shows the guest's truck against where it is, in world coordinates.
+        const Car* r = nullptr;
+        for (const Car& c : ctx.sim.cars)
+            if (c.remote) r = &c;
+        if (r && ctx.t > 2.0) {
+            const V3 shown = ProcWorld::toGlobal(ctx.sim.world, r->frame().com), real = ProcWorld::toGlobal(sim2.world, sim2.cars[0].frame().com);
+            worst = std::max(worst, len(V3(shown.x - real.x, 0, shown.z - real.z)));
+            if (std::getenv("CZ_NETSLIDE_LOG")) std::printf("t %.2f host %.2f guest %.2f due %.2f swapped %d %d err %.2f told %d\n", ctx.t, host.sharedTime(ctx.t), client.sharedTime(ctx.t), due, hostSwapped, guestSwapped, len(V3(shown.x - real.x, 0, shown.z - real.z)), guestTold);
+        }
+        usleep(300);
+    };
+    ctx.run(2.5, frameBoth);
+    due = host.sharedTime(ctx.t) + 1.0;
+    char msg[128];
+    std::snprintf(msg, sizeof msg, "procshift %llu %lld %lld %.4f", (unsigned long long)seed, (long long)(ctx.sim.world.proc.ox + 512), (long long)ctx.sim.world.proc.oz, due);
+    host.sendGame(msg);
+    host.scheduleShift(due, d);
+    ctx.run(3.0, frameBoth);
+    ctx.check("the guest was told and both slid", guestTold && hostSwapped && guestSwapped);
+    ctx.metric("the guest's truck as the host shows it vs where it is, through the slide", worst, "m", 0, 1.5);
+    client.close();
+    host.close();
 }
 
 SCENARIO(procDriveSlide, "procworld/drive-slide", "100 km out, a truck driving along while the window slides under it (everything moved by the offset) goes on exactly as the same truck with no slide") {

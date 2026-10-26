@@ -1167,7 +1167,7 @@ double farHeight(const World& w, double x, double z) {
 void shiftSim(Sim& sim, const V3& d) {
     for (Car& c : sim.cars) {
         c.translate(d);
-        c.spawnPos += d, c.jackFoot += d, c.shoveP += d;
+        c.spawnPos += d, c.jackFoot += d;  // (not shoveP: an offset, not a place)
         for (V3& g : c.glassBursts) g += d;
     }
     for (LooseWheel& lw : sim.looseWheels) lw.p += d;

@@ -191,6 +191,20 @@ public:
         std::string text;
     };
     std::vector<GameMsg> gameIn;
+    // The procedural world (procworld.h): host: its window as it is now (the game sets it; it goes out in the welcome, after
+    // everything an older guest reads); client: what came. A guest with another generator version is turned away.
+    struct ProcWindow {
+        bool on = false;
+        uint16_t gen = 0;
+        uint64_t seed = 0;
+        int64_t ox = 0, oz = 0;
+    } proc;
+    // Its window sliding: at shared time t every machine's world moves by d (new local = old local + d). States stamped before
+    // t are in the old frame, from t on in the new: they're taken into this machine's frame as they come (frameFix).
+    void scheduleShift(double t, const V3& d);  // (told by the host's "procshift", or the host deciding)
+    void shiftNow();                            // (the frame this machine's new window went in: the others' buffered states move too)
+    bool shiftPending() const { return shiftOn; }
+    double shiftDue() const { return pendingShift.t; }
 
     // A shared secret. Host: if set, guests must prove they know it (an HMAC of a fresh
     // challenge; the password itself never goes over the wire). Client: what to offer. Kept
@@ -414,6 +428,14 @@ private:
     std::vector<Known> knownCars;       // my vehicles as the others know them
     std::vector<uint32_t> knownRopes;   // lines everyone knows about
     std::vector<Remote*> remotes;
+    struct WorldShift {
+        double t = 0;
+        V3 d;
+    };
+    WorldShift pendingShift;
+    bool shiftOn = false;
+    std::vector<WorldShift> pastShifts;   // (the last few seconds' slides: a state from before one is moved on by it)
+    V3 frameFix(double stamp) const;
     std::vector<std::vector<uint8_t>> pending;  // reliable messages read before adopt()
     size_t pendingBytes = 0;
     bool adopted = false;
