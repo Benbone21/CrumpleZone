@@ -409,6 +409,7 @@ private:
         const VehicleSpec* spec;
         int builds;
         uint8_t lamps;
+        CarPaint paint;
     };
     std::vector<Known> knownCars;       // my vehicles as the others know them
     std::vector<uint32_t> knownRopes;   // lines everyone knows about

@@ -43,6 +43,10 @@ inline void makeDir(const std::string& path) {
 #endif
 }
 
+// Hands memory the program has freed back to the system (glibc keeps it in its arenas, one per thread that allocated: a map
+// built on a worker leaves hundreds of MB counted as ours after it is gone). A no-op where the allocator returns it itself.
+void releaseFreedMemory();
+
 // The running executable's full path (symlinks resolved) and its folder; "" if unknown.
 // (platform.cpp: /proc/self/exe, GetModuleFileName, _NSGetExecutablePath.)
 std::string exePath();

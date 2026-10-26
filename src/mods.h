@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "paint.h"
 #include "vehicles.h"
 
 enum ModSlot { MOD_ENGINE, MOD_SUSPENSION, MOD_TRANSMISSION, MOD_WHEELS, MOD_TIRES, MOD_SLOTS };
@@ -54,6 +55,7 @@ const VehicleSpec& tunedSpec(int vehicle, const ModSet& mods);
 // traffic all use these. Saved between runs.
 struct Garage {
     std::vector<ModSet> fitted;
+    std::vector<CarPaint> paint;  // per vehicle (factory unless painted)
     Garage();
     const VehicleSpec& spec(int vehicle) const { return tunedSpec(vehicle, fitted[vehicle]); }
     bool load(const std::string& path);

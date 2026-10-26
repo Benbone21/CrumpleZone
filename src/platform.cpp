@@ -5,6 +5,9 @@
 #include <fstream>
 #include <sstream>
 #include <sys/stat.h>
+#ifdef __linux__
+#include <malloc.h>
+#endif
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -147,4 +150,10 @@ bool writeFileAtomic(const std::string& path, const std::string& data, std::stri
     }
 #endif
     return true;
+}
+
+void releaseFreedMemory() {
+#if defined(__GLIBC__)
+    malloc_trim(0);
+#endif
 }

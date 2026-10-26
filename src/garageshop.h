@@ -13,13 +13,14 @@
 
 #include "career.h"
 #include "mods.h"
+#include "paint.h"
 
 class Sim;
 struct Frame;
 
 namespace shop {
 
-enum Group { G_MOD, G_GEAR };
+enum Group { G_MOD, G_GEAR, G_PAINT };
 
 // A category: a mod slot, or the station rack's items whose key starts with `prefix` ("TOOL:").
 struct Category {
@@ -69,6 +70,7 @@ ModSet withItem(const ModSet& fitted, const Item& it);
 // What a part looks like on the turntable: a model (modelkit.h), its params, and how far it's scaled up.
 struct Display {
     std::string id;
+    int variant = -1;      // the design (an engine's or gearbox's own: drivetrainlook.h); -1 the lab's pick
     std::vector<std::pair<std::string, double>> set;
     double scale = 1;
     double size = 1;       // about how big it is as shown (m): how far back the camera sits
@@ -86,12 +88,17 @@ enum Key {
     K_Q = 20, K_E = 8, K_T = 23, K_R = 21, K_B = 5, K_C = 6, K_Z = 29, K_X = 27, K_G = 10,
 };
 
-enum Focus { F_CATS, F_ITEMS };
+enum Focus { F_CATS, F_ITEMS, F_PICK };  // F_PICK: the PAINT page's colour picker (a preset, hue, saturation or brightness)
+
+// The PAINT page's rows (Item::option), and the picker's controls (Shop::ctl).
+enum PaintRow { PR_BODY, PR_ACCENT, PR_FINISH, PR_FACTORY, PAINT_ROWS };
+enum PickCtl { PC_PRESET, PC_HUE, PC_SAT, PC_VAL, PICK_CTLS };
 
 struct Result {
     bool close = false;        // the shop shut (the fitted parts go back on: liftSync)
     bool fitted = false;       // `Shop::fitted` changed: save the garage, the truck is rebuilt on it
     bool saveCareer = false;   // cash or what you own changed
+    bool painted = false;      // `Shop::paint` changed: save the garage, the truck wears it now
     std::string toast;
 };
 
@@ -102,6 +109,7 @@ public:
     bool atStation = true;   // career: buying and fitting only at a repair station
     int vehicle = 0;         // catalog index
     ModSet fitted;           // what's on the truck (the garage's)
+    CarPaint paint;             // ... and the paint it wears (the PAINT page edits it live)
     bool previewing = false; // trying the focused part on the truck
     bool recal = false;      // recalibrate the speedo to the tires when fitting
     Focus focus = F_CATS;
@@ -112,7 +120,7 @@ public:
     // it was turned by hand (it turns itself after a moment).
     double spin = 0, tilt = 0.32, zoom = 1, idle = 99;
 
-    void begin(int vehicle, const ModSet& fitted, const Career& c, bool career, bool atStation);
+    void begin(int vehicle, const ModSet& fitted, const Career& c, bool career, bool atStation, const CarPaint& paint = CarPaint());
     void refresh(const Career& c);     // the list again (after a buy, or the career changed)
     const Category& category() const;
     const Item* item() const;          // the focused item (null on the category list... or an empty one)
@@ -125,6 +133,15 @@ public:
     Result tryOn();                    // T: the focused part on the truck (again: off)
     Result factory(Career& c);         // R: the factory part back in the focused part's slot
     Result close();
+    // The PAINT page. paintRow(): the focused row (PaintRow) or -1 when the page isn't the category in use.
+    int paintRow() const;
+    int pickRow = PR_BODY;  // which colour the picker edits
+    int ctl = PC_PRESET;    // ... and with which control
+    int dragCtl = -1;       // a slider being dragged with the mouse
+    double hsv[3] = {0, 0.8, 0.8};  // the picker's working colour
+    Result pickAdjust(int dir);     // left / right in the picker (a preset, or a step of hue, saturation, brightness)
+    Result pointer(float x, float y, bool press, bool held);  // the mouse over the picker: a press picks a swatch or starts a slider; held drags it
+    Result cycleFinish(int dir);
     void move(int dir);
     void setCat(int i);
     void setSel(int i);
@@ -144,12 +161,18 @@ public:
     // Where each row was drawn (drawable pixels), for the mouse: set by the painter.
     struct Hit { float x, y, w, h; int col, row; };
     std::vector<Hit> hits;
-    float turntableX = 0;  // the mouse drags the model to the right of this
+    float turntableX = 0;
+    struct Slider { float x, w; };  // (the picker's slider tracks as drawn, for the mouse)
+    Slider sliders[3] = {};  // the mouse drags the model to the right of this
     bool hitAt(float x, float y, int& col, int& row) const;
 
 private:
     const Career* careerRef_ = nullptr;  // (what the lists are made against: the one begin() was given)
     Result fit(int slot, int option, const std::string& said);
+    std::vector<Item> listFor(const Career& c) const;
+    void enterPick(int row);
+    void setPickColour(Result& r);
+    void applyPreset(int i, Result& r);
 };
 
 // The garage camera: the truck where it stands (`fr`, its spec), the plinth beside it. `t` drifts it.

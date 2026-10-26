@@ -13,6 +13,7 @@
 
 #include "autopilot.h"
 #include "mathx.h"
+#include "paint.h"
 #include "rope.h"
 #include "tires.h"
 #include "vehicles.h"
@@ -381,7 +382,15 @@ public:
     std::vector<double> aeroShare;  // per body node: its share of the downforce (empty = none)
     double aeroSpeed = 0;           // airspeed along the car (m/s), as the aero last saw it
 
-    V3 color;
+    V3 color;      // what the body shader paints (the paint's body colour, else the factory's)
+    V3 baseColor;  // the factory's (the car's own livery or the palette's)
+    bool paintKept = false;  // taken over from someone: it keeps the paint it came in (not my garage's)
+    CarPaint paint;   // the owner's: body, accent, finish (paint.h); stays through rebuilds
+    void setPaint(const CarPaint& p) {
+        if (!paint.bodySet) baseColor = color;
+        paint = p;
+        color = p.bodySet ? V3(p.body[0] / 255.0, p.body[1] / 255.0, p.body[2] / 255.0) : baseColor;
+    }
     V3 spawnPos;
     double spawnYaw = 0;
 
@@ -609,6 +618,14 @@ public:
     bool sleptPark = false;  // the parking brake when it fell asleep
     double sleptControls[4] = {};  // throttle, brake, handbrake and steer when it fell asleep
     V3 bbMin, bbMax;
+    // Bits of it left lying far off (a bumper torn off at the wall, the car driven away; a shard of
+    // body flung clear): per node, 1 = more than kStrayReach outside the box of the structure still
+    // holding together, and then left out of bbMin/bbMax and the contact grids. Counted in it, a bumper
+    // a kilometre back stretched the box over the map: every parked car and prop paired with it and
+    // woke, and the pole and grid queries swept the whole box, frame after frame (updateBounds).
+    static constexpr double kStrayReach = 3.0;
+    std::vector<uint8_t> stray;
+    int strays = 0;
     double impactEnergy = 0;  // joules absorbed by deformation since last read
     double damage = 0;        // 0..1
     int brokenBeams = 0;
@@ -859,6 +876,11 @@ public:
     // in the Civic: what the tests expect). The game sets listedVehicles().
     std::vector<int> lineup;
     void setupEmpty();  // just the world (for tests)
+    // A new world is going in (a map, a level, the editor, the menu's camp): everything the last one left lying about goes, so
+    // nothing of it carries over and the vehicle cap counts only this world's. Every car but `keep` (-1: all of them; with
+    // keepRemotes, other players' too: a session's are its own), loose wheels, dropped parts, lines, cables and set stakes.
+    // You are back in your seat. setup() does it all (and puts the new world's lineup out).
+    void clearWorldLeftovers(int keep, bool keepRemotes = false);
     // Runs every AI driver (and the player's autopilot) for one frame.
     void updateAI(double dt);
     // Advances the simulation by realDt * timeScale; returns substeps taken.
@@ -873,6 +895,10 @@ public:
     void respawnPlayer();
     void recoverPlayer();   // rebuilt like new where it stands (arcade)
     void rightPlayer();     // put back on its wheels where it is, damage and all
+    // How far (level) the car, as it stands, must be moved to have no tree trunk or pole inside its
+    // outline: the nearest such spot, at most 12 m away (zero if it's clear where it is). R and T
+    // set a car down where it was, and after a hard hit on a tree that's around the trunk.
+    V3 poleFreeShift(const Car& c) const;
     void towPlayerHome();   // carried back to its spawn point, damage and all
     void teleportPlayer(double x, double z, double yaw);  // set down upright at x, z facing yaw (the dev menu), damage and all
     // Replaces the player's car with another vehicle type, in place.

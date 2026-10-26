@@ -51,6 +51,8 @@ SCENARIO(shopCategories, "shop/categories", "The categories are every mod slot a
         if (c.group == G_MOD) {
             mods++;
             ctx.check("mod slot " + c.name + ": every option listed", (int)list.size() == (int)modOptions(v, c.slot).size());
+        } else if (c.group == G_PAINT) {
+            ctx.check("the PAINT page has its rows", (int)list.size() == PAINT_ROWS);
         } else {
             ctx.check(c.name + ": has items", !list.empty());
             for (const Item& it : list) rackSeen.insert(it.rack);
@@ -68,6 +70,7 @@ SCENARIO(shopModels, "shop/models", "Every part of every vehicle, and every rack
     for (int v = 0; v < (int)vehicleCatalog().size(); v++)
         for (const Category& c : categories())
             for (const Item& it : items(c, v, ModSet(), sandbox)) {
+                if (it.group == G_PAINT) continue;  // (the truck is its own picture)
                 const Display d = displayFor(it, v, ModSet());
                 if (!mk::findModel(d.id)) all = false, missing = d.id + " for " + it.name;
                 if (!(d.size > 0.3 && d.size < 2.5)) sized = false;

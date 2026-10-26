@@ -2250,11 +2250,35 @@ void Car::updateBounds() {
     // Movement, rebuilds, recovery and network snapshots invalidate parked-car caches too.
     if (grid) grid->stamp = -1;
     nodeGridStamp = -1;
-    bbMin = bbMax = nodes[0].p;
-    for (const Node& n : nodes) {
-        bbMin = V3(std::min(bbMin.x, n.p.x), std::min(bbMin.y, n.p.y), std::min(bbMin.z, n.p.z));
-        bbMax = V3(std::max(bbMax.x, n.p.x), std::max(bbMax.y, n.p.y), std::max(bbMax.z, n.p.z));
+    // The structure still holding together: the body nodes the chassis frame keeps (all of them
+    // without one). Whatever lies further than kStrayReach outside it is a stray (softbody.h).
+    V3 cMin(1e300, 1e300, 1e300), cMax(-1e300, -1e300, -1e300);
+    const int nb = std::min(bodyNodes, (int)nodes.size());
+    const bool held = !chassis.nodes.empty();
+    for (int i = 0; i < nb; i++) {
+        if (held && i < (int)chassis.slot.size() && chassis.slot[i] >= 0 && !chassis.attached[chassis.slot[i]]) continue;
+        const V3& p = nodes[i].p;
+        cMin = V3(std::min(cMin.x, p.x), std::min(cMin.y, p.y), std::min(cMin.z, p.z));
+        cMax = V3(std::max(cMax.x, p.x), std::max(cMax.y, p.y), std::max(cMax.z, p.z));
     }
+    if (cMin.x > cMax.x) cMin = V3(-1e300, -1e300, -1e300), cMax = V3(1e300, 1e300, 1e300);  // (nothing held: keep it all)
+    const V3 r(kStrayReach, kStrayReach, kStrayReach);
+    cMin -= r;
+    cMax += r;
+    stray.assign(nodes.size(), 0);
+    strays = 0;
+    bbMin = V3(1e300, 1e300, 1e300), bbMax = V3(-1e300, -1e300, -1e300);
+    for (size_t i = 0; i < nodes.size(); i++) {
+        const V3& p = nodes[i].p;
+        if (p.x < cMin.x || p.x > cMax.x || p.y < cMin.y || p.y > cMax.y || p.z < cMin.z || p.z > cMax.z) {
+            stray[i] = 1;
+            strays++;
+            continue;
+        }
+        bbMin = V3(std::min(bbMin.x, p.x), std::min(bbMin.y, p.y), std::min(bbMin.z, p.z));
+        bbMax = V3(std::max(bbMax.x, p.x), std::max(bbMax.y, p.y), std::max(bbMax.z, p.z));
+    }
+    if (!(bbMin.x <= bbMax.x)) bbMin = bbMax = nodes[0].p;
     const double m = 0.15 + (wheels.empty() ? 0.25 : wheels[0].R);
     bbMin -= V3(m, m, m);
     bbMax += V3(m, m, m);
@@ -2447,13 +2471,31 @@ bool Car::finite() const {
 // =============================================================================
 // Sim
 
+void Sim::clearWorldLeftovers(int keep, bool keepRemotes) {
+    for (int i = (int)cars.size() - 1; i >= 0; i--)
+        if (i != keep && !(keepRemotes && cars[i].remote)) {
+            carRemoved(i);
+            cars.erase(cars.begin() + i);
+            if (keep > i) keep--;
+        }
+    player = keep >= 0 ? keep : 0;
+    if (keep >= 0) dropRopes(keep);
+    if (!keepRemotes) ropes.clear(), cables.clear();
+    handLine = HandLine();
+    handCable = HandCable();
+    setAnchors.clear();
+    looseWheels.clear();
+    droppedParts.clear();
+    playerAway = false;
+    // (the vectors' memory too: a crowded world's shouldn't stay held by the next)
+    looseWheels.shrink_to_fit();
+    if (cars.empty()) std::vector<Car>().swap(cars);
+}
+
 void Sim::setup() {
     loadprof::Scope lpSetup("sim.setup (cars)");
     const auto& cat = vehicleCatalog();
-    cars.clear();
-    ropes.clear();
-    handLine = HandLine();
-    setAnchors.clear();
+    clearWorldLeftovers(-1);
     refillAnchors();
     cars.reserve(kMaxBodies);
     colorIndex = 0;
@@ -2472,10 +2514,7 @@ void Sim::setup() {
 }
 
 void Sim::setupEmpty() {
-    cars.clear();
-    ropes.clear();
-    handLine = HandLine();
-    setAnchors.clear();
+    clearWorldLeftovers(-1);
     cars.reserve(kMaxBodies);
     colorIndex = 0;
     player = 0;
@@ -2827,6 +2866,7 @@ void Sim::setPhysicsThreads(int threads) {
 
 // Rebuild only the geometry that moved; parked supports keep their collision grids.
 void Car::prepareContact(long step) {
+    const bool cut = strays > 0 && stray.size() == nodes.size();  // (strays: left out, see updateBounds)
     if (grid->stamp != step && (!sleeping || grid->stamp < 0)) {
         updateTris();
         grid->clear();
@@ -2834,6 +2874,7 @@ void Car::prepareContact(long step) {
         for (int ti = 0; ti < (int)tris.size(); ti++) {
             const Tri& t = tris[ti];
             if (t.torn) continue;
+            if (cut && (stray[t.v[0]] | stray[t.v[1]] | stray[t.v[2]])) continue;  // (lying far off: out of the box, out of reach)
             V3 mn = nodes[t.v[0]].p, mx = mn;
             for (int c = 1; c < 3; c++) {
                 const V3& p = nodes[t.v[c]].p;
@@ -2861,13 +2902,14 @@ void Car::prepareContact(long step) {
     if (nodeGridStamp != step && (!sleeping || nodeGridStamp < 0)) {
         nodeGrid->clear();
         for (int i = 0; i < bodyNodes; i++) {
-            if (!nodeTris[i].empty()) continue;
+            if (!nodeTris[i].empty() || (cut && stray[i])) continue;
             const V3& p = nodes[i].p;
             nodeGrid->insert(i, p - reach, p + reach);
         }
         // The ladder frame and the engine block: what a bumper finds behind the sheet metal.
         for (const std::vector<int>* hard : {&ladder, &engineNodes})
             for (int i : *hard) {
+                if (cut && stray[i]) continue;
                 const V3& p = nodes[i].p;
                 nodeGrid->insert(i, p - reach, p + reach);
             }
@@ -3446,6 +3488,48 @@ void Sim::respawnPlayer() {
     accum = 0;
 }
 
+V3 Sim::poleFreeShift(const Car& c) const {
+    // The car's outline seen from above, in its own level frame (dents and all), and its height.
+    const Frame fr = c.frame();
+    V3 fwd = norm(V3(fr.fwd.x, 0, fr.fwd.z));
+    if (!std::isfinite(fwd.x) || len(fwd) < 0.5) fwd = V3(1, 0, 0);
+    const V3 left(fwd.z, 0, -fwd.x);
+    double a0 = 1e9, a1 = -1e9, l0 = 1e9, l1 = -1e9, y0 = 1e9, y1 = -1e9;
+    for (const Node& n : c.nodes) {
+        const V3 r(n.p.x - fr.com.x, 0, n.p.z - fr.com.z);
+        a0 = std::min(a0, dot(r, fwd)), a1 = std::max(a1, dot(r, fwd));
+        l0 = std::min(l0, dot(r, left)), l1 = std::max(l1, dot(r, left));
+        y0 = std::min(y0, n.p.y), y1 = std::max(y1, n.p.y);
+    }
+    if (a0 > a1) return V3();
+    const double margin = 0.35;
+    // Free where it is? (Its height range down to the ground: set down on a slope, it can sink a little.)
+    auto blocked = [&](const V3& s) { return world.poleInside(fr.com.x + s.x, fr.com.z + s.z, fwd, a0, a1, l0, l1, y0 - 2.0, y1 + 0.5, margin); };
+    if (!blocked(V3())) return V3();
+    // The nearest free spot: rings outward, first straight back (the way it came in: it hit the
+    // tree nose first), then turning round to either side, straight ahead last. Each candidate
+    // also kept clear of the other cars.
+    static const double kTurns[] = {0, 30, -30, 60, -60, 90, -90, 120, -120, 150, -150, 180};
+    for (double d = 0.25; d <= 12.0; d += 0.25)
+        for (double deg : kTurns) {
+            const double ang = deg * M_PI / 180;
+            const double ca = std::cos(ang), sa = std::sin(ang);
+            const V3 dir = -fwd * ca + left * sa;
+            const V3 s = dir * d;
+            if (blocked(s)) continue;
+            bool carFree = true;
+            const double myR = 0.5 * std::hypot(a1 - a0, l1 - l0);
+            for (const Car& o : cars) {
+                if (&o == &c || o.nodes.empty()) continue;
+                const V3 oc = o.frame().com;
+                const double oR = 0.5 * std::hypot(o.bbMax.x - o.bbMin.x, o.bbMax.z - o.bbMin.z);
+                if (std::hypot(oc.x - fr.com.x - s.x, oc.z - fr.com.z - s.z) < myR + oR + 0.3 && std::fabs(oc.y - fr.com.y) < 4) carFree = false;
+            }
+            if (carFree) return s;
+        }
+    return V3();  // (boxed in all round: leave it be)
+}
+
 void Sim::rightPlayer() {
     Car& c = cars[player];
     if (c.remote) return;  // (someone else's)
@@ -3454,6 +3538,12 @@ void Sim::rightPlayer() {
     double yaw = std::atan2(-fr.fwd.z, fr.fwd.x);
     if (!std::isfinite(yaw)) yaw = 0;
     c.placeUpright(world, fr.com.x, fr.com.z, yaw);
+    // Clear of the tree it's wrapped round (a hard hit leaves the trunk inside the crumpled nose).
+    const V3 s = poleFreeShift(c);
+    if (len(s) > 0) {
+        const Frame f2 = c.frame();
+        c.placeUpright(world, f2.com.x + s.x, f2.com.z + s.z, yaw);
+    }
 }
 
 void Sim::towPlayerHome() {
@@ -3461,6 +3551,8 @@ void Sim::towPlayerHome() {
     if (c.remote) return;  // (someone else's)
     dropRopes(player);
     c.placeUpright(world, c.spawnPos.x, c.spawnPos.z, c.spawnYaw);
+    const V3 s = poleFreeShift(c);
+    if (len(s) > 0) c.placeUpright(world, c.spawnPos.x + s.x, c.spawnPos.z + s.z, c.spawnYaw);
     accum = 0;
 }
 
@@ -3469,6 +3561,8 @@ void Sim::teleportPlayer(double x, double z, double yaw) {
     if (c.remote) return;  // (someone else's)
     dropRopes(player);
     c.placeUpright(world, x, z, yaw);
+    const V3 s = poleFreeShift(c);
+    if (len(s) > 0) c.placeUpright(world, x + s.x, z + s.z, yaw);
     accum = 0;
 }
 
@@ -3481,8 +3575,17 @@ void Sim::recoverPlayer() {
     double sy = c.spawnYaw;
     double yaw = std::atan2(-fr.fwd.z, fr.fwd.x);
     if (!std::isfinite(yaw)) yaw = 0;
-    c.respawn(V3(fr.com.x, world.clearY(fr.com.x, fr.com.z) + 0.05, fr.com.z), yaw);
+    // Rebuilt like new where it stood, set on the ground there: not on top of the tree it hit
+    // (a trunk isn't somewhere to stand), and moved clear of it if the fresh, undented car would
+    // reach round it (a hard hit stops the car with the trunk inside its crumpled nose).
+    c.respawn(V3(fr.com.x, world.clearY(fr.com.x, fr.com.z, false) + 0.05, fr.com.z), yaw);
     c.setDown(world);
+    const V3 s = poleFreeShift(c);
+    if (len(s) > 0) {
+        const V3 at = c.frame().com + s;
+        c.respawn(V3(at.x, world.clearY(at.x, at.z, false) + 0.05, at.z), yaw);
+        c.setDown(world);
+    }
     c.spawnPos = sp;  // R still returns to the original spawn
     c.spawnYaw = sy;
 }

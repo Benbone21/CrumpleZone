@@ -1173,7 +1173,7 @@ V3 World::normal(double x, double z) const {
     return norm(V3(-dx, 1, -dz));
 }
 
-bool World::contact(const V3& c, double R, const V3* axis, double hw, Contact& out) const {
+bool World::contact(const V3& c, double R, const V3* axis, double hw, Contact& out, bool withPoles) const {
     if (!std::isfinite(c.x + c.y + c.z)) return false;
     // Support distance of the shape along -n (how far it reaches toward the surface).
     auto support = [&](const V3& n) {
@@ -1201,6 +1201,7 @@ bool World::contact(const V3& c, double R, const V3* axis, double hw, Contact& o
     // Boxes.
     const double reach = R + hw;
     // Poles and trunks (vertical cylinders).
+    if (withPoles)
     for (int pi : poleGrid[cellOf(c.x) * gridN + cellOf(c.z)]) {
         const Pole& p = poles[pi];
         if (c.y < p.y0 - reach || c.y > p.y1 + reach) continue;
@@ -1333,11 +1334,11 @@ bool World::contact(const V3& c, double R, const V3* axis, double hw, Contact& o
     return hit;
 }
 
-double World::clearY(double x, double z) const {
+double World::clearY(double x, double z, bool overPoles) const {
     double y = height(x, z);
     Contact ct;
     for (int i = 0; i < 120; i++) {
-        if (!contact(V3(x, y + 1.0, z), 1.0, nullptr, 0, ct)) return y;
+        if (!contact(V3(x, y + 1.0, z), 1.0, nullptr, 0, ct, overPoles)) return y;
         y += 0.25;
     }
     return y;
@@ -1468,6 +1469,23 @@ void World::polesNear(const V3& mn, const V3& mx, std::vector<int>& out) const {
                 if (p.x + p.r < mn.x || p.x - p.r > mx.x || p.z + p.r < mn.z || p.z - p.r > mx.z) continue;
                 if (std::find(out.begin(), out.end(), pi) == out.end()) out.push_back(pi);
             }
+}
+
+bool World::poleInside(double x, double z, const V3& fwd, double a0, double a1, double l0, double l1, double y0, double y1, double margin) const {
+    if (gridN == 0) return false;
+    const V3 left(fwd.z, 0, -fwd.x);  // (fwd turned left: +X forward has -Z on its left, as Frame::left)
+    const double reach = std::max(std::max(std::fabs(a0), std::fabs(a1)), std::max(std::fabs(l0), std::fabs(l1))) * 1.5 + margin + 1.0;
+    CZ_THREAD_CACHE(std::vector<int>, near);
+    near.clear();
+    polesNear(V3(x - reach, 0, z - reach), V3(x + reach, 0, z + reach), near);
+    for (int pi : near) {
+        const Pole& p = poles[pi];
+        if (p.y1 < y0 || p.y0 > y1) continue;
+        const V3 d(p.x - x, 0, p.z - z);
+        const double a = dot(d, fwd), l = dot(d, left), m = p.r + margin;
+        if (a > a0 - m && a < a1 + m && l > l0 - m && l < l1 + m) return true;
+    }
+    return false;
 }
 
 void World::solidsNear(double x0, double z0, double x1, double z1, NearbySolids& out) const {
