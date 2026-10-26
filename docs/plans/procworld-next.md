@@ -17,6 +17,21 @@ Owner, 2026-10-25, after seeing the mountain screenshots (seeds 1, 2, 123456789)
    - The far-view (low-detail) terrain must use the same colours as the near terrain, so there's no colour change at the window edge or at distance either.
 5. **More, taller mountains, with snow.** Many more high peaks than now, well above about 1.1 km. Big snow-capped ranges visible from far away, with the snow line varying (lower on north faces, following the land's shape) and snowfields, not a flat cut-off height.
 
+### Added 2026-10-26 (owner, after driving 0.4.7, screenshot from a ridge)
+6. **M map: unexplored is fogged.** The procedural map currently shows everything. It should start dark and reveal around where you've driven/walked (wider from high ground), kept per seed. The map is endless: it pans anywhere you've been, with no edge.
+7. **Trees all the way to the horizon.** Keep the near tree render distance, but draw far trees cheaply (impostors / billboard clusters / a forest-canopy layer on the far terrain) so distant hills aren't bare land.
+8. **The weird lines.** Long pale straight lines run up and across the far hills (roads/trails or their earthworks seen at distance, or terrain LOD seams). Find what they are and make them look like real roads/trails at distance, or remove them.
+9. **More features and rocks:** outcrops, boulders, rock bands, scree on steep ground, across all biomes.
+10. **Rougher ground** in many sections: bumps, ruts, small dips off the roads, not smooth rolling grass everywhere.
+11. **Ground colour patches** (the red/green camouflage blotches in the screenshot) are too strong; covered by item 4.
+
+### Added 2026-10-26 (owner, later the same day)
+12. **Snow grows with height:** a light dusting, then patchy, then full snowfields at the top; not a flat cut-off.
+13. **Biome variety near spawn:** the owner found only mountains and grass. Desert, swamp/wetland, mesa (red rock buttes and canyons) and the others must appear within a reasonable drive (the first ~5 km), with mountains still a major part. Test: within N km of spawn, on several seeds, each biome appears.
+14. **Water:** no rivers seen. Rivers and creeks should be clearly visible and common; add lakes, and waterfalls where rivers drop off steep ground. Check that procedural rivers render water.
+15. **Trail clutter:** many more plants, rocks, logs and sticks on and beside roads, gravel and especially trails, things you drive over (small rocks, logs and branches with physics where cheap; tiny sticks visual only). Trails should feel overgrown: bushes crowding in, grass between the ruts, branches over the edges.
+16. More rocks and features off the trail, and rougher ground (items 9 and 10).
+
 ## Approach (to refine when started)
 - **Biome weights.** Replace the dithered borders with continuous weights from the climate fields (temperature from height and latitude-like noise, moisture from rivers and distance to water, plus slope and aspect). Every layer reads the same weights:
   - ground paint: blended in the shader from a weight texture, as the big map's regions do with `groundLookAt`;
