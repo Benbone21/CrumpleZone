@@ -177,7 +177,9 @@ public:
     DrainStats drainStats(double x0, double z0, double x1, double z1) const;
     // The lakes and waterfalls in a square (global): where (a lake's middle; a fall's lip), the water's level (a fall's: at its lip),
     // and a lake's radius or a fall's height.
-    struct WaterFeature { int kind = 0; double x = 0, z = 0, level = 0, size = 0, fx = 0, fz = 0; };  // kind 0 lake, 1 fall (fx, fz: its way down)
+    // (A lake's sub: 1 a basin (a sink, no outlet), 2 a tarn, 3 a valley lake behind a rock bar, 4 a pond; outlet: the level of the
+    // channel node its water leaves by (-1e9: none). A fall's width: its channel's.)
+    struct WaterFeature { int kind = 0; double x = 0, z = 0, level = 0, size = 0, fx = 0, fz = 0; int sub = 0; double outlet = -1e9, width = 0; };  // kind 0 lake, 1 fall (fx, fz: its way down)
     std::vector<WaterFeature> waterFeatures(double x0, double z0, double x1, double z1) const;
     // The channels crossing a straight line (a transect): where along it, and the drainage of each (lattice nodes).
     std::vector<std::pair<double, double>> channelsAcross(double x0, double z0, double x1, double z1, double minArea) const;

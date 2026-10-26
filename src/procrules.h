@@ -39,7 +39,7 @@ struct RangeRule {
     double beltFull = 0.60;        // ...and where they're at full height
     double passHeight = 300;       // m over the lowland: the ranges' valley floors at their heart (times the world's relief, 0.75-1.25)
     double peakHeight = 620;        // m: the mountains' mass over their valley floors, times the world's relief (the valleys are cut into it)
-    double summitHeight = 1800;    // m: the summits on a range's axis over its mass, times the world's relief: the peaks (1.5-2.5 km)
+    double summitHeight = 2900;    // m: the summits on a range's axis over its mass, times the world's relief: the peaks (1.5-2.5 km)
     double crestSpacing = 1100;    // m: about how far apart the crags on the ridges are (the rough detail on the high ground)
     double alpineFrom = 330;       // m: the alpine biome's weight starts here...
     double alpineFull = 560;       // ...and is whole here
@@ -93,7 +93,7 @@ struct Rules {
         {2.0, 0.60, 2.5},   // trails (green and blue)
         {2.0, 0.70, 1.5},   // two-tracks (black)
     };
-    double batter = 2.2;      // earthworks' sides (and a place's levelled lot) are this times their depth wide (eased in: the steepest part about 1 : 1.5)
+    double batter = 2.5;      // earthworks' sides (and a place's levelled lot) are this times their depth wide (eased in: the steepest part about 1 : 1.5)
     WaterRule water;
     RangeRule range;
     AlpineRule alpine;
