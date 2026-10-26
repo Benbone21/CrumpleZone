@@ -541,6 +541,7 @@ struct Lab {
         std::printf("model lab: %zu models; picks in %s\n", order.size(), picksPath.empty() ? "(nowhere: no assets folder)" : picksPath.c_str());
         r.frameModels.clear();
         r.carModels.clear();
+        r.waitStreaming();  // (its background streaming reads the world)
         sim.world = studioWorld();
         r.setWorld(sim.world);
         int start = 0;

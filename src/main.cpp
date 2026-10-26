@@ -54,6 +54,8 @@
 #include "buildinfo.h"
 #include "coop.h"
 #include "onemap.h"
+#include "autopilot.h"
+#include "bgwork.h"
 #include "places.h"
 #include "debugscreen.h"
 #include "editor.h"
@@ -1723,11 +1725,40 @@ static void onTermSignal(int sig) {
     if (g_termScripted || g_termSignals++ >= 1) _exit(128 + sig);
 }
 
+// The big map, built from a pick of the map list (not a level's, the editor's or the camp's), and its own start (the
+// Backcountry's, before a region's start replaced it). Picking another of its regions then moves you there on the same world
+// instead of building the 8 km map again (a 650 ms freeze, and two of it in memory at once: 3 GB).
+struct BigHome {
+    bool live = false;
+    bool localEdits = true;  // (World::useLocalEdits it was built with)
+    V3 spawn;
+    double yaw = 0, parkingYaw = 0;
+    std::vector<V3> parking;
+};
+// A pick's world, as worldForPick (onemap.h) makes it, noting the big map's own start in `home`.
+static World buildPick(int pick, bool standalone, BigHome& home) {
+    home.live = false;
+    if (standalone) return World(pick);
+    World w(isRegionMap(pick) ? (int)MAP_BACKCOUNTRY : pick);
+    if (w.map == MAP_BACKCOUNTRY && !w.regionStarts.empty()) {
+        home.live = true, home.localEdits = World::useLocalEdits;
+        home.spawn = w.spawn, home.yaw = w.spawnYaw, home.parking = w.parking, home.parkingYaw = w.parkingYaw;
+    }
+    if (isRegionMap(pick)) w.startAtRegion(pick);
+    return w;
+}
+// Is the world up the big map from a pick, and `pick` one of its regions (or the Backcountry itself)?
+static bool onBigMapAlready(const BigHome& home, const World& w, int pick, bool standalone) {
+    return home.live && !standalone && home.localEdits == World::useLocalEdits && w.map == MAP_BACKCOUNTRY && !w.regionStarts.empty() &&
+           (pick == MAP_BACKCOUNTRY || isRegionMap(pick));
+}
+
 int main(int argc, char** argv) {
 #ifndef _WIN32
     signal(SIGPIPE, SIG_IGN);  // (a multiplayer peer dropping mid-send; macOS has no MSG_NOSIGNAL)
 #endif
     Options opt = parseArgs(argc, argv);
+    pilotSetAsyncReplans(!std::getenv("CZ_PILOT_SYNC"));  // (the game: replans while driving made in the background; the tests plan in the step)
     if (!opt.campDump.empty()) {
         const bool ok = menuscene::dump(opt.campDump);
         std::printf("%s %s\n", ok ? "wrote" : "could not write", opt.campDump.c_str());
@@ -1908,6 +1939,7 @@ int main(int argc, char** argv) {
     } catch (const std::system_error& error) {
         std::fprintf(stderr, "Physics workers unavailable; using one thread: %s\n", error.what());
     }
+    BigHome bigHome;  // (see buildPick)
     Level campLevel;  // the main menu's camp (menuscene.h): the player's file, the game's, or made by code
     V3 campFire;
     bool campLoaded = false;  // (campLevel read: at launch for the menu's camp, else the first time MAIN MENU goes back to it)
@@ -1916,7 +1948,7 @@ int main(int argc, char** argv) {
         campLoaded = true;
         menucamp::fireOf(campLevel, campFire);
         sim.world = menuscene::buildWorld(campLevel);
-    } else if (settings.map != MAP_PROVING_GROUND) sim.world = opt.standalone ? World(settings.map) : worldForPick(settings.map);  // (a region's pick: the big map, started there)
+    } else if (settings.map != MAP_PROVING_GROUND) sim.world = buildPick(settings.map, opt.standalone, bigHome);  // (a region's pick: the big map, started there)
     int worldPick = wantCamp ? -1 : settings.map;  // the map pick the world stands for (a region of the big map's: its old map id)
     sim.lineup = listedVehicles();  // (the overlanders and the Jesko: no Civic, UTV or buggy)
     sim.setup();
@@ -2333,11 +2365,40 @@ int main(int argc, char** argv) {
     bool worldCareer = career.on;
     // Loads a map, keeping the vehicle you were in. A region of the big map (onemap.h) is the big map, started there; `standalone`: the
     // old map on its own (the bench suite's scenes, which the hardware baselines compare against).
+    // Another region of the big map that's up already: you start there (its start, the vehicles round it), on the same world. As a
+    // load would, it puts out the lineup afresh and drops what the last place had going (a job, being on foot, the crates' list).
+    auto moveOnBigMap = [&](int m) {
+        LOADPROF("map.move (same world)");
+        const int model = std::max(0, sim.cars[sim.player].spec->model);
+        if (isRegionMap(m)) sim.world.startAtRegion(m);
+        else sim.world.spawn = bigHome.spawn, sim.world.spawnYaw = bigHome.yaw, sim.world.parking = bigHome.parking, sim.world.parkingYaw = bigHome.parkingYaw;
+        worldPick = m;
+        sim.setup();
+        const int cachesWere = cachesMap;
+        if (worldChanged) worldChanged();
+        cachesMap = cachesWere;  // (the crates are in this world already: not laid out again)
+        fitGarage();
+        if (model != sim.cars[sim.player].spec->model) sim.swapPlayerVehicle(garage.spec(model));
+        sim.paused = false;
+        hud.bestKmh = 0;
+        dbgSimSeconds = 0;
+        wrapSeen = sim.wrapShift = 0;
+        fx.clear();
+        cam.initialized = false;
+    };
     auto loadMap = [&](int m, bool standalone = false) {
         World::useLocalEdits = net.role != NetSession::CLIENT;  // (a guest builds the host's: its edited sections came with the welcome, World::setSessionSections)
         const int model = std::max(0, sim.cars[sim.player].spec->model);
+        const bool same = !campWorld && onBigMapAlready(bigHome, sim.world, m, standalone);
         campWorld = false;
-        sim.world = standalone ? World(m) : worldForPick(m);
+        renderer.waitStreaming();  // (its background streaming reads the world)
+        if (same) {
+            moveOnBigMap(m);
+            return;
+        }
+        { World gone = std::move(sim.world); }  // (the last world freed before the next is built: not both in memory at once)
+        releaseFreedMemory();                   // (...and handed back, so the build's threads don't stack theirs on top)
+        sim.world = buildPick(m, standalone, bigHome);
         worldPick = m;
         sim.setup();
         if (worldChanged) worldChanged();
@@ -2494,6 +2555,7 @@ int main(int argc, char** argv) {
         me.ai = false;
         const int model = lv.vehicle >= 0 && lv.vehicle < (int)vehicleCatalog().size() ? lv.vehicle : std::max(0, me.spec->model);
         campWorld = false;
+        renderer.waitStreaming(), bigHome.live = false;  // (its background streaming reads the world)
         sim.world = levelWorld(lv);
         if (moved && !lv.hasStart) sim.world.startAtRegion(madeOn);  // (no start of its own: where its old map started you)
         applyLevel(lv, sim.world);
@@ -2802,12 +2864,13 @@ int main(int argc, char** argv) {
         float fade = 0;  // how black the screen is
         int warm = 0;    // frames held black once built: the first draws of the new buffers and textures (80 ms and more) land here, not in the fade
         std::function<void()> then;
+        std::shared_ptr<BigHome> home;  // (what buildPick noted of the world being made)
         bool active() const { return st != IDLE; }
     } mapLoad;
     auto requestMap = [&](int m, std::function<void()> then) {
         if (mapLoad.active()) return;
-        if (!opt.shotFrames.empty() || !opt.script.empty() || editor.active || net.active()) {
-            loadMap(m);
+        if (!opt.shotFrames.empty() || !opt.script.empty() || editor.active || net.active() || (!campWorld && onBigMapAlready(bigHome, sim.world, m, false))) {
+            loadMap(m);  // (another region of the big map that's up: a move, no load)
             if (then) then();
             return;
         }
@@ -2818,10 +2881,12 @@ int main(int argc, char** argv) {
         const props::HullLibrary* hulls = props::activeRockScans();
         const ScanCover cover = renderer.scanCover();
         mapLoad.map = m, mapLoad.then = std::move(then), mapLoad.st = MapLoad::WORK;
+        auto home = std::make_shared<BigHome>();
+        mapLoad.home = home;
         mapLoad.fut = std::async(std::launch::async, [=] {
             World::withShowcase = showcase, World::wildsKind = wilds, World::halfSizeOverride = halfOverride;
             props::setActiveRockScans(hulls);
-            auto w = std::make_unique<World>(worldForPick(m));
+            auto w = std::make_unique<World>(buildPick(m, false, *home));
             auto p = Renderer::prepareWorld(*w, cover);
             return std::make_pair(std::move(w), std::move(p));
         });
@@ -2841,8 +2906,10 @@ int main(int argc, char** argv) {
             LOADPROF("mapload.swap (sim)");
             const int model = std::max(0, sim.cars[sim.player].spec->model);
             campWorld = false;
+            renderer.waitStreaming();  // (its background streaming reads the world)
             sim.world = std::move(*L.world);
             L.world.reset();
+            if (L.home) bigHome = *L.home, L.home.reset();
             worldPick = L.map;
             sim.setup();
             if (worldChanged) worldChanged();
@@ -2878,9 +2945,10 @@ int main(int argc, char** argv) {
         run.stop();
         levelHours = -1;
         stopPilot();
-        if (newSection) editor.newSection(sim.world, renderer);  // (a fresh open country, the canvas cleared)
+        if (newSection) bigHome.live = false, editor.newSection(sim.world, renderer);  // (a fresh open country, the canvas cleared)
         else {
             campWorld = false;
+            renderer.waitStreaming(), bigHome.live = false;  // (its background streaming reads the world)
             sim.world = levelWorld(base);
             editor.open(sim.world, renderer, base);
             if (atPlayer) {  // (F2 from driving: the camera starts above and behind you, looking the way you face)
@@ -2902,6 +2970,7 @@ int main(int argc, char** argv) {
         levelHours = -1;
         stopPilot();
         campWorld = false;
+        renderer.waitStreaming(), bigHome.live = false;  // (its background streaming reads the world)
         sim.world = levelWorld(editor.core.level);
         sim.clearWorldLeftovers(sim.player);
         if (worldChanged) worldChanged();
@@ -2926,6 +2995,7 @@ int main(int argc, char** argv) {
         levelHours = -1;
         if (!campLoaded) campLevel = menuscene::load(), campLoaded = true;
         menucamp::fireOf(campLevel, campFire);
+        renderer.waitStreaming(), bigHome.live = false;  // (its background streaming reads the world)
         sim.world = menuscene::buildWorld(campLevel);
         sim.setup();
         if (worldChanged) worldChanged();
@@ -3676,7 +3746,7 @@ int main(int argc, char** argv) {
         }
     };
     // CZ_FRAMELOG=1 with --bench: a histogram, and every frame over 1.5x the median with its stages (CPU/GPU ms).
-    struct FrameRec { int bf; double ms, cpu[FP_COUNT], gpu[FP_COUNT]; };
+    struct FrameRec { int bf; double ms, cpu[FP_COUNT], gpu[FP_COUNT]; float x, z; std::string work; double threadMs; long preempted, faults; };
     std::vector<FrameRec> frameRecs;
     auto printFrameLog = [&] {
         if (frameRecs.empty()) return;
@@ -3684,6 +3754,25 @@ int main(int argc, char** argv) {
         for (auto& f : frameRecs) t.push_back(f.ms);
         std::sort(t.begin(), t.end());
         const double med = t[t.size() / 2];
+        {  // (the tail: percentiles, the worst, and how many frames went over 1.5x the median)
+            auto pct = [&](double q) { return t[std::min(t.size() - 1, (size_t)std::floor(t.size() * q))]; };
+            int over = 0;
+            for (double v : t) over += v > med * 1.5;
+            std::printf("framelog: frames %zu, median %.3f, p99 %.3f, p99.9 %.3f, worst %.3f ms, %d over 1.5x the median\n", t.size(), med, pct(0.99), pct(0.999), t.back(), over);
+        }
+        if (const char* csv = std::getenv("CZ_FRAMELOG_CSV")) {  // (every frame: its time, where the camera was, the stages' CPU/GPU ms)
+            if (FILE* fcsv = std::fopen(csv, "w")) {
+                std::fprintf(fcsv, "frame,ms,x,z,thread_ms,preempted,faults");
+                for (int i = 0; i < FP_COUNT; i++) std::fprintf(fcsv, ",%s,%s_gpu", framePassName((FramePass)i), framePassName((FramePass)i));
+                std::fprintf(fcsv, "\n");
+                for (auto& f : frameRecs) {
+                    std::fprintf(fcsv, "%d,%.3f,%.1f,%.1f,%.3f,%ld,%ld", f.bf, f.ms, f.x, f.z, f.threadMs, f.preempted, f.faults);
+                    for (int i = 0; i < FP_COUNT; i++) std::fprintf(fcsv, ",%.3f,%.3f", f.cpu[i], f.gpu[i]);
+                    std::fprintf(fcsv, "\n");
+                }
+                std::fclose(fcsv);
+            }
+        }
         static const double edges[] = {2.0, 2.25, 2.5, 2.75, 3.0, 3.5, 4, 5, 6, 8, 12, 1e9};
         int h[12] = {};
         for (double v : t) { int k = 0; while (v >= edges[k]) k++; h[k]++; }
@@ -3692,9 +3781,9 @@ int main(int argc, char** argv) {
         std::printf("\n");
         int n = 0, last = -100;
         for (auto& f : frameRecs) if (f.ms > med * 1.5) {
-            std::printf("framelog: f%d (+%d) %.2f ms |", f.bf, f.bf - last, f.ms);
+            std::printf("framelog: f%d (+%d) %.2f ms (thread CPU %.2f, preempted %ld, faults %ld) |", f.bf, f.bf - last, f.ms, f.threadMs, f.preempted, f.faults);
             for (int i = 0; i < FP_COUNT; i++) if (f.cpu[i] > 0.15 || f.gpu[i] > 0.15) std::printf(" %s %.2f/%.2f", framePassName((FramePass)i), f.cpu[i], f.gpu[i]);
-            std::printf("\n");
+            std::printf("%s%s\n", f.work.empty() ? "" : " |", f.work.c_str());
             last = f.bf;
             if (++n >= 400) break;
         }
@@ -3836,9 +3925,24 @@ int main(int argc, char** argv) {
             }
             if (frameTimeMs < 250) typical = frame <= 10 ? frameTimeMs : typical + (std::min(frameTimeMs, typical * 3) - typical) * 0.05;
         }
-        if (opt.bench && bf > benchWarm && bf <= benchWarm + opt.bench && std::getenv("CZ_FRAMELOG")) {  // (every measured frame's stages, for the slow-frame report)
+        static const bool frameLogOn = std::getenv("CZ_FRAMELOG") != nullptr;
+        if (frameLogOn && (opt.bench ? bf > benchWarm && bf <= benchWarm + opt.bench : frame > 300 && frameRecs.size() < 100000)) {  // (every measured frame's stages, for the slow-frame report; playing: from frame 300, printed at the end)
             FrameRec fr;
             fr.bf = bf, fr.ms = frameTimeMs;
+            {  // (the frame thread's own CPU time over the last frame, against its wall time)
+                static ThreadUsage before = threadUsage();
+                const ThreadUsage u = threadUsage();
+                fr.threadMs = u.cpuMs - before.cpuMs, fr.preempted = u.preempted - before.preempted, fr.faults = u.majorFaults - before.majorFaults;
+                before = u;
+            }
+            const V3 at = cam.mode == 3 || sim.cars.empty() ? cam.droneEye : sim.cars[sim.player].frame().com;
+            fr.x = (float)at.x, fr.z = (float)at.z;
+            for (const FrameWork& w : frameWorkLast())
+                if (w.ms > 0.2) {
+                    char b[96];
+                    std::snprintf(b, sizeof b, " %s %.2f", w.name, w.ms);
+                    fr.work += b;
+                }
             std::copy(frameProfile().last, frameProfile().last + FP_COUNT, fr.cpu);
             for (int i = 0; i < FP_COUNT; i++) fr.gpu[i] = frameProfile().gpuValid ? frameProfile().lastGpu[i] : -1;
             frameRecs.push_back(fr);
@@ -4550,7 +4654,9 @@ int main(int argc, char** argv) {
             if (opt.script == "pilot" && frame == 20) {  // screenshot: autopilot to the halfway hut
                 const std::vector<Place> places = pilotPlaces(sim, net);
                 for (int k = 0; k < (int)places.size(); k++)
-                    if (places[k].name.find("HALFWAY") != std::string::npos) settings.pilotDest = k;
+                    if (places[k].name.find(std::getenv("CZ_PILOT_DEST") ? std::getenv("CZ_PILOT_DEST") : "HALFWAY") != std::string::npos) settings.pilotDest = k;  // (CZ_PILOT_DEST=NAME: another place; with --bench, the drive is what's measured)
+                if (std::getenv("CZ_PILOT_LIST"))
+                    for (const Place& pl : places) std::printf("pilot place: %s (%.0f, %.0f)\n", pl.name.c_str(), pl.p.x, pl.p.z);
                 startPilot();
             }
             if (opt.script == "pilot") up = down = left = right = false;
@@ -5144,6 +5250,7 @@ int main(int argc, char** argv) {
                     bool shown = false;  // (a marker in the world's models: gone when the map's rebuilt)
                     for (const Placed& pl : sim.world.models) shown |= pl.id == "(station racks)";
                     if (!shown) {
+                        waitWorldReaders();  // (background work reading the world: not while it changes)
                         Placed mark;
                         mark.id = "(station racks)";
                         sim.world.models.push_back(mark);
@@ -5156,6 +5263,7 @@ int main(int argc, char** argv) {
                 }
                 if (!career.on) caches.clear(), cachesMap = -1;
                 else if (cachesMap != sim.world.map || (!caches.empty() && !crateAt(caches[0].at))) {
+                    waitWorldReaders();  // (as above)
                     caches = cacheSpots(sim.world);
                     cachesMap = sim.world.map;
                     for (const CacheSpot& c : caches)
@@ -5875,7 +5983,7 @@ int main(int argc, char** argv) {
             footYaw -= lx * 2.6 * dt;
             footPitch = clampd(footPitch + ly * 1.8 * dt, -1.45, 1.45);
         }
-        if (opt.bench) {  // (the lap: 30 m round the start, 2.5 m up, once over the warm-up and the run)
+        if (opt.bench && !opt.eyeSet && opt.script.empty()) {  // (the lap: 30 m round the start, 2.5 m up, once over the warm-up and the run; --eye X,Z,H,YAW,PITCH --eye-fly V: a straight flight instead, the streaming route)
             auto ground = [](const void* w, double x, double z) { return ((const World*)w)->height(x, z); };
             const BenchPose bp = benchPose(benchCentre.x, benchCentre.z, (double)bf / (benchWarm + opt.bench), 30, 2.5, ground, &sim.world);
             cam.mode = 3, cam.droneEye = V3(bp.x, bp.y, bp.z), cam.droneYaw = bp.yaw, cam.dronePitch = bp.pitch;
@@ -6825,6 +6933,7 @@ int main(int argc, char** argv) {
         frame++;
     }
     writeSuiteSummary();  // (the window closed part-way: what was done)
+    if (!opt.bench) printFrameLog();  // (CZ_FRAMELOG=1 while playing: the frames since the 300th)
     if (allocWatch && !allocFrames.empty()) {
         std::vector<uint64_t> v = allocFrames;
         std::sort(v.begin(), v.end());

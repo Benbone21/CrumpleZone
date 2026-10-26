@@ -1,3 +1,4 @@
+#include "frameprof.h"
 #include "thread_cache.h"
 #include "softbody.h"
 #include "loadprof.h"
@@ -3459,14 +3460,16 @@ void Sim::pilotStep(int i, double dt) {
         if (ap.replanTime <= 0 && len(g - ap.goal) > 8) {
             ap.replanTime = 3;
             ap.goal = g;
-            std::vector<V3> np;
-            if (planRoute(world, *c.spec, c.frame().com, g, ap.route, ap.avoid, np)) ap.path = np, ap.idx = 0;
+            pilotReplan(c, world, c.frame().com, g, 1.0);  // (in the background in the game: the old route meanwhile)
         }
     }
     const bool was = ap.active;
     const int mode0 = c.driveMode;
     const bool lf0 = c.lockFront, lr0 = c.lockRear, sway0 = c.swayDisconnected, air0 = ap.airTarget > 0;
-    pilotDrive(c, world, dt, &cars);
+    {
+        FRAMEWORK("pilot.drive");
+        pilotDrive(c, world, dt, &cars);
+    }
     if (i != player) return;
     if (was && !ap.active && ap.arrived) events.push_back("AUTOPILOT: " + ap.status);
     // Say what it changed on the truck.
