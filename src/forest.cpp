@@ -264,6 +264,7 @@ void buildBushes(const World& w, Set& out) {
         in.warm = 0;
         // Out to where it's a few pixels across: further for a big one.
         in.reach = (float)(100 + 80 * b.r);
+        out.maxReach = std::max(out.maxReach, in.reach);
         in.shape = it->second, in.tree = (int)i;
         out.inst.push_back(in);
     }
@@ -326,14 +327,18 @@ void Picker::pick(const Set& s, const View& v, std::vector<std::vector<Pick>>& b
     }
     // (nearest cells first, and the near LODs drawn first: what's in front fills the depth first, so less is shaded behind it)
     order_.clear();
+    // (Nothing past where the pictures take over is a mesh: those cells aren't looked through at all.)
+    double cut = v.maxDist > 0 ? v.maxDist : 1e30;
+    if (v.impostorFrom > 0) cut = std::min(cut, v.impostorFrom * v.detail);
+    if (s.maxReach > 0) cut = std::min(cut, (double)s.maxReach * v.detail * v.reach);  // (the bushes: past the biggest one's reach, none)
     for (const Block& bl : blocks_) {
         RenderBounds bb;
         bb.lo = bl.lo, bb.hi = bl.hi;
-        if ((v.maxDist > 0 && bb.distance(v.eye) > v.maxDist) || !bb.visible(v.vp)) continue;  // (then so is every cell in it)
+        if (bb.distance(v.eye) > cut || !bb.visible(v.vp)) continue;  // (then so is every cell in it)
         for (int k : bl.cells) {
             RenderBounds b;
             b.lo = cells_[k].lo, b.hi = cells_[k].hi;
-            if (v.maxDist > 0 && b.distance(v.eye) > v.maxDist) continue;
+            if (b.distance(v.eye) > cut) continue;
             if (!b.visible(v.vp)) continue;
             // (A big map: the horizon test only from 200 to 600 m. Nearer, a cell is next to never behind a hill; further, it holds
             // few trees after the thinning. Either way the test costs more than drawing what it would save.)
@@ -355,6 +360,11 @@ void Picker::pick(const Set& s, const View& v, std::vector<std::vector<Pick>>& b
                 // reads as a stand; the instance's own hash picks which stay, so the same ones do as you move.)
                 const uint32_t hsh = (uint32_t)i * 2654435761u;
                 if ((hsh >> 8) * (1.0 / 16777216.0) > 1 - 0.75 * smoothstep(0.33 * v.maxDist, v.maxDist, d)) continue;
+            }
+            if (v.impostorFrom > 0) {
+                const double F = v.impostorFrom * v.detail;
+                if (d >= F) continue;
+                if (!v.shadow) fade = std::min(fade, (float)std::min(1.0, (F - d) / (v.impostorBand * v.detail)));
             }
             if (in.reach > 0) {
                 const double R = in.reach * v.detail * v.reach;
@@ -378,6 +388,26 @@ void Picker::pick(const Set& s, const View& v, std::vector<std::vector<Pick>>& b
             while (lod > 0 && sh.lod[lod].v.empty()) lod--;
             buckets[in.shape * kLods + lod].push_back({i, fade});
         }
+}
+
+void Picker::visibleCells(const View& v, double dmin, double dmax, std::vector<int>& out) const {
+    out.clear();
+    for (const Block& bl : blocks_) {
+        RenderBounds bb;
+        bb.lo = bl.lo, bb.hi = bl.hi;
+        if (bb.distance(v.eye) >= dmax || !bb.visible(v.vp)) continue;
+        for (int k : bl.cells) {
+            RenderBounds b;
+            b.lo = cells_[k].lo, b.hi = cells_[k].hi;
+            const double dist = b.distance(v.eye);
+            if (dist >= dmax || !b.visible(v.vp)) continue;
+            // (all of it nearer than dmin: the farthest corner)
+            const double fx = std::max(std::fabs(b.lo.x - v.eye.x), std::fabs(b.hi.x - v.eye.x)), fz = std::max(std::fabs(b.lo.z - v.eye.z), std::fabs(b.hi.z - v.eye.z));
+            if (std::hypot(fx, fz) < dmin) continue;
+            if (v.hidden && dist > 200 && dist < 600 && v.hidden->occluded(b)) continue;
+            out.push_back(k);
+        }
+    }
 }
 
 void logMesh(const World& w, const Log& g, uint32_t seed, mk::Mesh& out) {

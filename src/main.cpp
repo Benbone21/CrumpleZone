@@ -4154,6 +4154,7 @@ int main(int argc, char** argv) {
         }
         const int bf = frame - benchBase;  // (frames into the bench run)
         if (frame == 90) std::thread([] { meshcache::flush(); }).detach();  // (what the first seconds generated, for the next run: off the main thread)
+        if (frame == 150) std::thread([] { releaseFreedMemory(); }).detach();  // (what the load freed on its threads, by now, handed back to the system)
         for (size_t i = 0; i < afterVisual.size();)
             if (visualReady(*afterVisual[i].first)) {
                 auto act = std::move(afterVisual[i].second);
@@ -7261,9 +7262,9 @@ int main(int argc, char** argv) {
                 if (dbgMsN) std::printf("bench: debug screen %.3f ms/frame CPU (gather + queue) over %d frames\n", dbgMsSum / dbgMsN, dbgMsN);
                 const VegStats& vs = renderer.vegStats();
                 auto pass = [](const VegStats::Pass& p) { return std::to_string(p.draws) + " draws " + std::to_string(p.tris / 1000) + "k tris"; };
-                std::printf("bench: vegetation main: trees %s (%d), bushes %s (%d), reeds and logs %s, grass %s (%d tufts); shadows: trees %s, bushes %s, reeds and logs %s\n",
+                std::printf("bench: vegetation main: trees %s (%d), bushes %s (%d), reeds and logs %s, grass %s (%d tufts), far forest %d tiles (%dk tries); shadows: trees %s, bushes %s, reeds and logs %s\n",
                             pass(vs.trees).c_str(), vs.trees.inst, pass(vs.bushes).c_str(), vs.bushes.inst, pass(vs.logs).c_str(), pass(vs.grass).c_str(), vs.grass.inst,
-                            pass(vs.treesShadow).c_str(), pass(vs.bushesShadow).c_str(), pass(vs.logsShadow).c_str());
+                            vs.farTrees.draws, vs.farTrees.inst / 1000, pass(vs.treesShadow).c_str(), pass(vs.bushesShadow).c_str(), pass(vs.logsShadow).c_str());
                 const PropStats& ps = renderer.propStats();
                 std::printf("bench: props %.2f ms GPU (timer queries), %.2f ms CPU (%.2f ms culling/LODs); main %d draws, %d instances, %d billboards, %d scatter, %.0fk tris; "
                             "shadows %d draws, %d instances, %.0fk tris\n",

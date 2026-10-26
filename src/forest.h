@@ -46,6 +46,7 @@ struct Set {
     std::vector<Shape> shapes;
     std::vector<Inst> inst;  // one per tree drawn
     float lodAt[kLods] = {1e9f, 1e9f, 1e9f, 1e9f};  // nearer than lodAt[l]: LOD l (at detail 1)
+    float maxReach = 0;  // the farthest any instance's reach goes (0: one has none)
     size_t vertices() const;  // in all the shapes' meshes (every LOD)
     size_t bakedVertices() const;  // what baking every tree into one mesh at full detail would take
 };
@@ -69,6 +70,9 @@ struct View {
     double reach = 1;   // the instances' reaches scaled by this too (shadows: only the near bushes cast)
     const TerrainOcclusion* hidden = nullptr;  // main pass only: cells behind the ground are skipped (occlusion.h)
     double maxDist = 0;  // nothing farther (m; faded out over its last 15%): a big map's distant forest is left to the fog (0: no limit)
+    // Pictures take over from here (m, at detail 1; treedraw.h drawImpostors): the meshes fade out over the band before it (a shadow
+    // pass: they stop at it). 0: no pictures.
+    double impostorFrom = 0, impostorBand = 30;
 };
 struct Pick {
     int inst;
@@ -84,6 +88,9 @@ public:
         std::vector<int> inst;
     };
     const std::vector<Cell>& cells() const { return cells_; }
+    // The cells in the view whose boxes come within [dmin, dmax) of the eye (the view's maxDist, if any, ignored), and aren't behind
+    // the ground (v.hidden): what pick() would look through, without its per-instance work.
+    void visibleCells(const View& v, double dmin, double dmax, std::vector<int>& out) const;
     // An instance's bounding sphere (world): its middle and radius.
     static void sphere(const Set& s, const Inst& in, V3& c, double& r);
 

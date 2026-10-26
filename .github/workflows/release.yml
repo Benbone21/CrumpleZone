@@ -30,13 +30,17 @@ on:
         description: "Extra flags for the smoke test's launches, one launch per ';'-separated set (each run)"
         type: string
         default: ""
+      version:
+        description: "Version to build and name the files with on a by-hand run off a tag, e.g. 0.4.7 (blank: 0.0.0-dev). Nothing is published off a tag."
+        type: string
+        default: ""
 
 permissions:
   contents: write
 
 env:
   # v1.2.3 on a tag, else 0.0.0-dev (a Debian version has to start with a digit)
-  VERSION: ${{ (startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/V')) && github.ref_name || '0.0.0-dev' }}
+  VERSION: ${{ (startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/V')) && github.ref_name || inputs.version || '0.0.0-dev' }}
   # ccache (the Makefile uses it when installed); the folder is cached between runs per job
   CCACHE_DIR: ${{ github.workspace }}/.ccache
   CCACHE_MAXSIZE: 2G

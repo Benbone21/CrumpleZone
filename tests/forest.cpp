@@ -5,7 +5,9 @@
 #include <cstdio>
 #include <map>
 
+#include "../src/farforest.h"
 #include "../src/forest.h"
+#include "../src/procworld.h"
 #include "harness.h"
 
 SCENARIO(forestInstances, "forest/instances", "Every tree is one instance of a model built once: the meshes are a few percent of baking the forest, and far copies are much lighter") {
@@ -189,4 +191,73 @@ SCENARIO(forestBudget, "forest/budget", "The trees and bushes a dense view draws
     ctx.metric("shadows: tree triangles over the main view's", (double)count(trees, b).tris / std::max<long long>(1, t.tris), "", 0, 0.98);
     pb.pick(bushes, v, b);
     ctx.check("only near bushes cast shadows", count(bushes, b).inst < u.inst * 0.6);
+}
+
+SCENARIO(forestFarField, "forest/far-field", "The far forest's field (farforest.h) grows what the chunks grow: its trees a hectare and its conifers, from the generator's own tree rule") {
+    // Chunks of two seeds' worlds against the field at their four 32 m samples (the backdrop's spacing): the trees a hectare the
+    // chunks end up with, and the field's, binned by how wooded the field says it is.
+    double realSum[3] = {}, fieldSum[3] = {}, conR = 0, conF = 0;
+    int n[3] = {}, trees = 0;
+    for (uint64_t seed : {1ull, 2ull}) {
+        const proc::ProcWorld& G = proc::ProcWorld::forSeed(seed);
+        for (int64_t cx = -24; cx < 24; cx += 6)
+            for (int64_t cz = -24; cz < 24; cz += 6) {
+                auto c = G.chunk(cx, cz);
+                double field = 0, con = 0;
+                for (int a = 0; a < 2; a++)
+                    for (int b = 0; b < 2; b++) {
+                        const double gx = (double)cx * 64 + 16 + 32 * a, gz = (double)cz * 64 + 16 + 32 * b;
+                        const proc::Macro m = G.macroAt(gx, gz, false);
+                        const double h = G.groundHeight(gx, gz, m);
+                        const double slope = std::hypot(G.groundHeight(gx + 32, gz) - G.groundHeight(gx - 32, gz), G.groundHeight(gx, gz + 32) - G.groundHeight(gx, gz - 32)) / 64;
+                        const auto tc = G.treeCover(gx, gz, m, h, slope);
+                        field += FarForestGrid::realized(tc.triedPerHa) / 4, con += tc.conifer / 4;
+                    }
+                const int bin = field < 40 ? 0 : field < 150 ? 1 : 2;
+                realSum[bin] += c->trees.size() / 0.4096, fieldSum[bin] += field, n[bin]++;
+                int cc = 0;
+                for (const auto& t : c->trees) cc += t.kind == 0;
+                conR += cc, conF += con * c->trees.size(), trees += (int)c->trees.size();
+            }
+    }
+    char b[200];
+    for (int k = 0; k < 3; k++) {
+        std::snprintf(b, sizeof b, "%s: %d chunks, the chunks %.0f trees a hectare, the field %.0f", k == 0 ? "open" : k == 1 ? "thin wood" : "thick wood", n[k],
+                      n[k] ? realSum[k] / n[k] : 0.0, n[k] ? fieldSum[k] / n[k] : 0.0);
+        ctx.note(b);
+    }
+    std::snprintf(b, sizeof b, "conifers: the chunks %.2f, the field %.2f", trees ? conR / trees : 0.0, trees ? conF / trees : 0.0);
+    ctx.note(b);
+    ctx.check("some thick wood and some open land among the chunks", n[2] >= 4 && n[0] >= 4);
+    for (int k = 1; k < 3; k++)
+        if (n[k] >= 4) ctx.check(std::string(k == 1 ? "thin" : "thick") + " wood: the field within a quarter of the chunks' trees", std::fabs(fieldSum[k] - realSum[k]) <= 0.25 * realSum[k]);
+    ctx.check("open land: the field under 40 trees a hectare there too", n[0] == 0 || realSum[0] / n[0] < 40);
+    ctx.check("the field's conifer share within 0.08 of the chunks'", trees > 0 && std::fabs(conR - conF) / trees < 0.08);
+}
+
+SCENARIO(forestPictures, "forest/pictures", "Past where the pictures take over (forest::View::impostorFrom) no tree is a mesh; before it they dissolve over the band; shadows stop there") {
+    World w(MAP_FRONTIER);
+    forest::Set s;
+    forest::build(w, false, false, s);
+    forest::Picker p;
+    p.build(s);
+    std::vector<std::vector<forest::Pick>> bk;
+    V3 fwd;
+    forest::View v = viewAt(w, 290, -480, 30, 0, -5, fwd);
+    v.impostorFrom = 200, v.impostorBand = 30;
+    int past = 0, band = 0, bandFaded = 0, nearFull = 0, nearN = 0;
+    for (bool shadow : {false, true}) {
+        v.shadow = shadow;
+        p.pick(s, v, bk);
+        for (const auto& b : bk)
+            for (const forest::Pick& q : b) {
+                const double d = std::hypot(s.inst[q.inst].x - v.eye.x, s.inst[q.inst].z - v.eye.z);
+                if (d >= 200) past++;
+                else if (!shadow && d > 175) band++, bandFaded += q.fade < 1;
+                else if (!shadow && d < 160) nearN++, nearFull += q.fade >= 0.999f;
+            }
+    }
+    ctx.check("no mesh past the pictures' start, shadows too", past == 0);
+    ctx.check("in the band they fade (dissolving into the pictures)", band > 0 && bandFaded == band);
+    ctx.check("nearer, whole", nearN > 0 && nearFull == nearN);
 }
