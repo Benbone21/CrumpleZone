@@ -71,10 +71,34 @@ struct Chunk {
 // The smooth fields at a point (what a chunk samples every 4 m and blends between).
 struct Macro {
     double h = 0;              // the land before the bumps, rivers and trails
-    double drain = 0;          // the land low-passed: what water lies level on
+    double drain = 0;          // the land low-passed: the level a river's water lies at (it changes slowly along it)
+    double creekLevel = 0;     // ...and a creek's (less smoothed: creeks run down the hills)
     double w[PB_COUNT] = {};   // how much of each biome (sums to 1)
     double wet = 0, rug = 0, heat = 0;  // the climate
-    double river = 0, creek = 0;        // the river fields (a channel where one crosses 0.5)
+    // Rivers and creeks are where a field crosses 0.5: their signed distance from the middle of the channel (m), how much of one
+    // there is here (0: none; under 0.5 a dry wash), and which way the water runs (unit, downhill on the drain).
+    double riverS = 1e9, creekS = 1e9;
+    double riverOn = 0, creekOn = 0;
+    double flowX = 0, flowZ = 0, cflowX = 0, cflowZ = 0;
+};
+
+// The trail network: one node in every kCell x kCell cell of the world, joined to its east and north neighbours (now and then
+// one is left out, and some cells have a diagonal too). An edge is a function of its two nodes alone, so the chunks either side
+// of a border lay the same trail. Every node is a place (places come in phase d).
+struct TrailNode {
+    double x = 0, z = 0, h = 0;  // global; the flat ground's height
+    int64_t i = 0, j = 0;        // its cell
+    bool outpost = false, fuel = false;
+};
+struct TrailEdge {
+    bool on = false;
+    bool road = false;           // a gravel road (between outposts): wider, gentler
+    int rating = 0;              // 0 green, 1 blue, 2 black
+    double ax = 0, az = 0;       // where it starts (global): the samples are from here
+    std::vector<float> x, z, y;  // a sample every ~2 m: offsets from (ax, az), and the graded tread's height
+    std::vector<float> along;    // m from the start
+    double x0 = 0, x1 = 0, z0 = 0, z1 = 0;  // its bounds (global)
+    double half() const { return road ? 3.0 : 2.0; }  // the tread's half-width
 };
 
 class ProcWorld {
@@ -91,6 +115,15 @@ public:
     Macro macro(double gx, double gz) const;
     double macroHeight(double gx, double gz) const;  // macro(...).h, cheaper (the far backdrop)
     int biomeAt(double gx, double gz) const;         // the biome with the most weight there
+    // The trail network (procworld.h TrailNode): the node of cell (i, j), and the edge from it east (0), north (1) or north-east (2).
+    TrailNode node(int64_t i, int64_t j) const;
+    std::shared_ptr<const TrailEdge> edge(int64_t i, int64_t j, int dir) const;  // (cached)
+    // The river and creek at a point: their channel's half-width there, and how deep the middle is.
+    double riverHalfWidth(double gx, double gz) const;
+    double creekHalfWidth(double gx, double gz) const;
+    double riverDepth(double gx, double gz) const;
+    double trailLevel(double gx, double gz) const;  // where a trail's tread lies (the land low-passed, down to the water at a ford)
+    Macro land(double gx, double gz) const;         // macro() without the rivers and creeks
     // A chunk (cached: the same object for the same chunk while it's kept).
     std::shared_ptr<const Chunk> chunk(int64_t cx, int64_t cz) const;
     std::shared_ptr<Chunk> makeChunk(int64_t cx, int64_t cz) const;  // (always made afresh: the tests)

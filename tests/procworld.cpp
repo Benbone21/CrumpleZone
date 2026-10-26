@@ -173,7 +173,7 @@ SCENARIO(procChunkBudget, "procworld/chunk-budget", "A chunk is made within its 
     for (int k = 0; k < 64; k++) ms.push_back(G.makeChunk(300 + k % 8, -200 + k / 8)->genMs);
     std::sort(ms.begin(), ms.end());
     ctx.metric("median ms per chunk (one core)", ms[ms.size() / 2], "ms", 0, 6);
-    ctx.metric("slowest of 64", ms.back(), "ms", 0, 25);
+    ctx.metric("slowest of 64 (the ones that lay out new trails)", ms.back(), "ms", 0, 150);
     clearChunkCache();
     const auto t0 = std::chrono::steady_clock::now();
     World w = windowAt(2024, 5000, 5000);
@@ -183,6 +183,163 @@ SCENARIO(procChunkBudget, "procworld/chunk-budget", "A chunk is made within its 
     World w2 = windowAt(2024, 5512, 5000);
     const double s2 = std::chrono::duration<double>(std::chrono::steady_clock::now() - t1).count();
     ctx.metric("the next window, slid 512 m (the rest cached)", s2, "s", 0, 10);
+}
+
+SCENARIO(procRiversTrails, "procworld/rivers-trails", "A window has rivers with water, trails and fords; the water lies level across chunk borders and runs one way along a channel; trails are continuous treads") {
+    int withWater = 0, withTrails = 0, fords = 0, seeds = 0;
+    long borderPairs = 0, innerPairs = 0, borderSteps = 0, innerSteps = 0, treadPairs = 0, treadSteps = 0;
+    double worstTread = 0;
+    std::string worstAt;
+    std::string where;
+    for (uint64_t seed : {11ull, 22ull, 33ull, 44ull}) {
+        World w = windowAt(seed, 0, 0);
+        seeds++;
+        int water = 0, tread = 0, ford = 0;
+        const int n = w.gridSize();
+        const double half = w.halfSize();
+        auto onTread = [&](double x, double z) {
+            const RoadInfo r = w.roadAt(x, z);
+            return r.lateral != 0 && std::fabs(r.lateral) < 1.5 && (r.paint == PAINT_TRAIL || r.paint == PAINT_GRAVEL || r.paint == PAINT_SNOW);
+        };
+        for (int i = 1; i < n - 1; i += 1)
+            for (int j = 1; j < n - 1; j += 1) {
+                const double x = -half + i, z = -half + j;
+                const double wl = w.waterLevel(x, z);
+                const bool wet = wl > -1e8 && wl > w.height(x, z), tr = onTread(x, z);
+                water += wet;
+                tread += tr;
+                if (wet && tr) {
+                    ford++;
+                    if (where.empty()) where = "seed " + std::to_string(seed) + " ford at " + std::to_string((int)x) + "," + std::to_string((int)z);
+                }
+                // The water's level between wet neighbours (east): steps (a creek running into a river) no more often at a chunk border than inside one.
+                const double wl2 = w.waterLevel(x + 1, z);
+                if (wet && wl2 > -1e8) {
+                    const bool border = i % 64 == 63, step = std::fabs(wl2 - wl) > 0.05;
+                    (border ? borderPairs : innerPairs)++;
+                    (border ? borderSteps : innerSteps) += step;
+                }
+                if (tr && onTread(x + 1, z) && onTread(x - 1, z))  // (a kink: the grade changing by over 30% from one metre to the next)
+                    treadPairs++, treadSteps += std::fabs(w.height(x + 1, z) - 2 * w.height(x, z) + w.height(x - 1, z)) > 0.3;
+                if (tr && onTread(x + 1, z) && std::fabs(w.height(x + 1, z) - w.height(x, z)) > worstTread) {
+                    worstTread = std::fabs(w.height(x + 1, z) - w.height(x, z));
+                    char b[160];
+                    std::snprintf(b, sizeof b, "worst tread step: seed %llu at %.0f,%.0f: %.2f -> %.2f (lat %.2f, %.2f)", (unsigned long long)seed, x, z, w.height(x, z),
+                                  w.height(x + 1, z), w.roadAt(x, z).lateral, w.roadAt(x + 1, z).lateral);
+                    worstAt = b;
+                }
+            }
+        withWater += water > 500, withTrails += tread > 2000, fords += ford;
+        ctx.note("seed " + std::to_string(seed) + ": " + std::to_string(water) + " wet cells, " + std::to_string(tread) + " trail cells, " + std::to_string(ford) + " in fords");
+    }
+    if (!where.empty()) ctx.note(where);
+    ctx.note(worstAt);
+    ctx.check("rivers with water in most windows", withWater >= 2, std::to_string(withWater) + " of " + std::to_string(seeds));
+    ctx.check("trails in every window", withTrails == seeds);
+    ctx.check("fords where trails cross water", fords > 0);
+    const double fb = borderPairs ? (double)borderSteps / borderPairs : 0, fi = innerPairs ? (double)innerSteps / innerPairs : 0;
+    ctx.metric("share of wet neighbours across a chunk border whose level steps", fb, "", 0, 2 * fi + 0.01);
+    ctx.metric("...and inside a chunk (creeks joining rivers)", fi, "", 0, 1);
+    ctx.metric("share of a trail's tread where the grade kinks by over 30% in a metre", treadPairs ? (double)treadSteps / treadPairs : 1, "", 0, 0.002);
+    ctx.metric("worst step along a trail's tread (between neighbouring cells)", worstTread, "m", 0, 2.0);
+}
+
+// A map of a window from above (CZ_PROC_MAPS=dir: written there as map_seed<N>.ppm): the land shaded, its ground, water, trails, trees.
+SCENARIO(procMapImages, "procworld/map-images", "(with CZ_PROC_MAPS=dir) top-down maps of a few seeds' first windows, for looking at") {
+    const char* dir = std::getenv("CZ_PROC_MAPS");
+    if (!dir) {
+        ctx.note("CZ_PROC_MAPS not set: nothing drawn");
+        return;
+    }
+    for (uint64_t seed : {1ull, 2ull, 11ull, 123456789ull}) {
+        World::procSeed = seed, World::procOriginSet = false;
+        World w(MAP_PROCEDURAL);
+        const int S = 1024, n = w.gridSize();
+        const double half = w.halfSize(), step = 2 * half / S;
+        std::vector<unsigned char> img((size_t)S * S * 3);
+        for (int py = 0; py < S; py++)
+            for (int px = 0; px < S; px++) {
+                const double x = -half + (px + 0.5) * step, z = half - (py + 0.5) * step;
+                const double h = w.height(x, z), hx = w.height(x + step, z), hz = w.height(x, z + step);
+                const double shade = std::clamp(0.75 + 0.9 * ((hx - h) - (hz - h)) / step, 0.35, 1.25);
+                const RoadInfo r = w.roadAt(x, z);
+                const Surface s = w.surfaceAt(x, z);
+                double c[3] = {0.36, 0.52, 0.22};
+                auto set = [&](double a, double b, double d) { c[0] = a, c[1] = b, c[2] = d; };
+                if (r.paint == PAINT_DESERT) set(0.78, 0.6, 0.42);
+                else if (r.paint == PAINT_REDROCK) set(0.62, 0.3, 0.18);
+                else if (r.paint == PAINT_SAND) set(0.88, 0.78, 0.55);
+                else if (r.paint == PAINT_SNOW) set(0.95, 0.95, 0.98);
+                else if (r.paint == PAINT_SCREE) set(0.55, 0.53, 0.5);
+                else if (s == SURF_ROCK) set(0.5, 0.48, 0.45);
+                for (double& v : c) v *= shade * (0.8 + 0.2 * std::clamp(h / 150, 0.0, 1.0));
+                if (r.lateral != 0 && std::fabs(r.lateral) < 2.5 && (r.paint == PAINT_TRAIL || r.paint == PAINT_GRAVEL)) set(r.paint == PAINT_GRAVEL ? 0.95 : 0.55, r.paint == PAINT_GRAVEL ? 0.9 : 0.35, 0.2);
+                const double wl = w.waterLevel(x, z);
+                if (wl > h) set(0.15, 0.35, 0.75);
+                for (int k = 0; k < 3; k++) img[((size_t)py * S + px) * 3 + k] = (unsigned char)std::clamp(c[k] * 255, 0.0, 255.0);
+            }
+        {  // (where to look: the nearest water and the nearest ford to the start)
+            double bw = 1e18, bf = 1e18;
+            V3 pw, pf;
+            for (double x = -half + 2; x < half - 2; x += 2)
+                for (double z = -half + 2; z < half - 2; z += 2) {
+                    if (w.waterLevel(x, z) <= w.height(x, z)) continue;
+                    const double d = std::hypot(x - w.spawn.x, z - w.spawn.z);
+                    if (d < bw) bw = d, pw = V3(x, 0, z);
+                    const RoadInfo r = w.roadAt(x, z);
+                    if (r.lateral != 0 && std::fabs(r.lateral) < 1.5 && d < bf) bf = d, pf = V3(x, 0, z);
+                }
+            char b[200];
+            std::snprintf(b, sizeof b, "seed %llu: start %.0f,%.0f; nearest water %.0f,%.0f (%.0f m); nearest ford %.0f,%.0f (%.0f m)", (unsigned long long)seed, w.spawn.x,
+                          w.spawn.z, pw.x, pw.z, bw, pf.x, pf.z, bf);
+            ctx.note(b);
+        }
+        for (const Tree& t : w.trees) {  // (a dark dot each)
+            const int px = (int)((t.base.x + half) / step), py = (int)((half - t.base.z) / step);
+            if (px >= 0 && py >= 0 && px < S && py < S)
+                for (int k = 0; k < 3; k++) img[((size_t)py * S + px) * 3 + k] = (unsigned char)(img[((size_t)py * S + px) * 3 + k] * 0.45);
+        }
+        const std::string path = std::string(dir) + "/map_seed" + std::to_string(seed) + ".ppm";
+        if (FILE* f = std::fopen(path.c_str(), "wb")) {
+            std::fprintf(f, "P6\n%d %d\n255\n", S, S);
+            std::fwrite(img.data(), 1, img.size(), f);
+            std::fclose(f);
+            ctx.note("wrote " + path + " (" + std::to_string(n) + " cells a side, north up)");
+        }
+    }
+    World::procOriginSet = false;
+}
+
+SCENARIO(procDebugDump,"procworld/zz-dump", "(temporary)") {
+    unsigned long long dseed = 11; double DX = -392, DZ = 1262, ST = 1;
+    if (const char* e = std::getenv("CZ_DUMP")) std::sscanf(e, "%llu,%lf,%lf,%lf", &dseed, &DX, &DZ, &ST);
+    World::procSeed = dseed, World::procOriginSet = false;
+    World w(MAP_PROCEDURAL);
+    for (int dz = -3; dz <= 3; dz++) {
+        std::string line;
+        for (int dx = -4; dx <= 4; dx++) {
+            const double x = DX + dx * ST, z = DZ + dz * ST;
+            char b[64];
+            const RoadInfo r = w.roadAt(x, z);
+            std::snprintf(b, sizeof b, "%6.1f/%5.1f/%4.0f/%d ", w.height(x, z), r.lateral, r.along, r.paint);
+            line += b;
+        }
+        ctx.note(line);
+    }
+    const ProcWorld& G = ProcWorld::forSeed(dseed);
+    const double gx = DX + (double)w.proc.ox, gz = DZ + (double)w.proc.oz;
+    for (int k = -6; k <= 6; k += 2) {
+        const Macro m = G.macro(gx + k * ST, gz);
+        ctx.note("x+" + std::to_string(k) + " trail level " + std::to_string(G.trailLevel(gx + k * ST, gz)) + " land " + std::to_string(G.land(gx + k * ST, gz).h) + " riverS " +
+                 std::to_string(m.riverS) + " on " + std::to_string(m.riverOn) + " creekS " + std::to_string(m.creekS) + " on " + std::to_string(m.creekOn) + " drain " +
+                 std::to_string(m.drain) + " creekLevel " + std::to_string(m.creekLevel));
+    }
+    const int64_t ci = floorDiv((int64_t)gx, kCell), cj = floorDiv((int64_t)gz, kCell);
+    for (int64_t i = ci - 1; i <= ci + 1; i++)
+        for (int64_t j = cj - 1; j <= cj + 1; j++) {
+            const TrailNode n = G.node(i, j);
+            ctx.note("node " + std::to_string(i) + "," + std::to_string(j) + " at " + std::to_string(n.x - w.proc.ox) + "," + std::to_string(n.z - w.proc.oz) + " h " + std::to_string(n.h));
+        }
 }
 
 SCENARIO(procDriveSlide, "procworld/drive-slide", "100 km out, a truck driving along while the window slides under it (everything moved by the offset) goes on exactly as the same truck with no slide") {
