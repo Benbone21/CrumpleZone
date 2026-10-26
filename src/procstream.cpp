@@ -6,6 +6,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <thread>
+#ifdef __linux__
+#include <sys/resource.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
 
 #include "loadprof.h"
 #include "parallel.h"
@@ -36,16 +41,24 @@ void ProcStream::start(Renderer& renderer, const World* at) {
     const ScanCover cover = renderer.scanCover();
     const int pq = renderer.objectsQuality();
     t0_ = loadprof::nowMs();
+    const Renderer* rp = &renderer;
     fut_ = std::async(std::launch::async, [=] {
         // (A few threads only: the game goes on meanwhile, and its own workers need the rest.)
         const int hw = (int)std::max(1u, std::thread::hardware_concurrency());
-        parallelRowsCap = std::max(1, std::min(6, hw / 3));
+        parallelRowsCap = std::max(1, std::min(3, hw / 6));
+#ifdef __linux__
+        setpriority(PRIO_PROCESS, (id_t)syscall(SYS_gettid), 8);  // (and below the game's own threads: the threads it starts inherit it)
+#endif
         props::setActiveRockScans(hulls);
         World::procSeed = seed, World::procOriginSet = true, World::procOriginX = ox, World::procOriginZ = oz;
         auto w = std::make_unique<World>(MAP_PROCEDURAL);
         auto p = Renderer::prepareWorld(*w, cover);
-        Renderer::prepareObjects(*w, *p, at, pq, cover);  // (the scenery too: the swap frame only uploads it)
-        return std::make_pair(std::move(w), std::move(p));
+        Renderer::prepareObjects(*w, *p, at, pq, cover);  // (the scenery too, and the scans' layout and the places: the swap frame only swaps)
+        rp->prepareProps(*w, *p);
+        Made m;
+        m.places = proc::windowPlaces(*w);
+        m.world = std::move(w), m.prep = std::move(p);
+        return m;
     });
 }
 
@@ -63,6 +76,7 @@ bool ProcStream::tick(Sim& sim, Renderer& renderer, const V3& focus, bool allowe
         proc::ProcWorld::snapOrigin((double)w.proc.ox + focus.x, (double)w.proc.oz + focus.z, ox, oz);
         want(w.proc.seed, ox, oz);
     }
+    if (st_ != UPLOAD) staged_ = false;
     if (st_ == WORK && !fut_.valid()) {
         if (seed_ != w.proc.seed) {  // (a stale request for another world)
             st_ = IDLE;
@@ -73,19 +87,29 @@ bool ProcStream::tick(Sim& sim, Renderer& renderer, const V3& focus, bool allowe
     if (st_ == WORK) {
         if (!late && fut_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return false;
         fut_.wait();  // (late: it must go in now, so wait for it here: a hitch on a slow machine, not a world out of step)
-        auto made = fut_.get();
-        next_ = std::move(made.first);
-        renderer.beginUpload(std::move(made.second));
+        Made made = fut_.get();
+        next_ = std::move(made.world);
+        places = std::move(made.places);
+        renderer.beginUpload(std::move(made.prep));
         lastBuildMs = loadprof::nowMs() - t0_;
         st_ = UPLOAD;
     }
     if (st_ == UPLOAD) {
-        if (!renderer.pumpUpload(late ? 1e9 : 3.0)) return false;
+        // (The terrain, then the scenery, onto the GPU a couple of ms a frame, apart from what's drawn: the swap only swaps.)
+        if (!renderer.pumpUpload(late ? 1e9 : 2.0)) return false;
+        if (!staged_) {
+            if (!renderer.stageWorld(late ? 1e9 : 2.0)) return false;
+            staged_ = true;
+            if (!late) return false;  // (the swap on a frame of its own, not on the last upload's)
+        }
         if (timed && !late) return false;  // (ready: it goes in at the moment the host named)
         const double t0 = loadprof::nowMs();
         shift = V3((double)(w.proc.ox - next_->proc.ox), 0, (double)(w.proc.oz - next_->proc.oz));
+        // (The window that goes out is freed on a thread of its own: hundreds of MB handed back is ms of the frame.)
+        auto old = std::make_shared<World>(std::move(sim.world));
         sim.world = std::move(*next_);
         next_.reset();
+        std::thread([old]() mutable { old.reset(); }).detach();
         proc::shiftSim(sim, shift);
         renderer.adoptWorld(sim.world);
         while (!renderer.stepWorld(sim.world)) {}  // (all the scenery this frame: nothing is drawn half there)

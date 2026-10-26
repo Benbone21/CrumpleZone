@@ -202,6 +202,14 @@ const std::vector<V3>& lostMineSpur() {
 
 std::vector<DiscoverSpot> discoverSpots(int map) {
     std::vector<DiscoverSpot> out;
+    if (map == MAP_PROCEDURAL) {  // (kept by the world's seed and the place's id, so another world's same name isn't found; shown by name)
+        for (const MapPlace& p : mapPlaces(map))
+            if (p.kind != PK_CACHE && p.kind != PK_PHOTO_SPOT) {
+                out.push_back({proc::placeKey(proc::activeSeed(), p.id), p.p, p.radius, p.kind});
+                out.back().label = p.name;
+            }
+        return out;
+    }
     for (const MapPlace& p : mapPlaces(map))
         if (p.kind != PK_CACHE && p.kind != PK_PHOTO_SPOT) out.push_back({p.name, p.p, p.radius, p.kind});
     return out;

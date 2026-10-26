@@ -2270,6 +2270,9 @@ int main(int argc, char** argv) {
     int exitCode = 0;
     double wrapSeen = 0;  // sim.wrapShift the camera and effects have caught up with
     ProcStream procStream;  // the procedural world's window, sliding with you (procstream.h)
+    std::deque<double> procFrames;  // (its slides' cost: the last frames' times, the worst during one, frames to watch after it)
+    double procWorst = 0, procSwapRatio = 0;
+    int procAfter = 0;
     BuildWatch watch;
     if (!scripted) watch.start();
     bool reload = false;
@@ -2610,7 +2613,7 @@ int main(int argc, char** argv) {
             for (Placed& pl : sim.world.models)  // its lid comes off
                 if (pl.id == "supply_crate" && len(pl.p - c.at) < 0.05) pl.set = {{"open", 1.0}}, renderer.updateObjects(sim.world);
             jobBanner = std::max(jobBanner, 5.0);
-            jobBannerText = (who.empty() ? c.id + ": " : who + " OPENED " + c.id + ": ") + said;
+            jobBannerText = (who.empty() ? c.shown() + ": " : who + " OPENED " + c.shown() + ": ") + said;
             if (!scripted) career.save(Career::defaultPath());
             return true;
         }
@@ -3816,6 +3819,23 @@ int main(int argc, char** argv) {
         if (frame == testStallFrame) for (;;) std::this_thread::sleep_for(std::chrono::seconds(1));
         uint64_t now = SDL_GetPerformanceCounter();
         const double frameTimeMs = 1000.0 * (double)(now - last) / freq;
+        // The procedural world's slides (CZ_PROC_LOG): every frame from the build's start to just after the swap against the median
+        // of the frames before it (the owner's rule: none over twice the median).
+        if (sim.world.map == MAP_PROCEDURAL) {
+            procFrames.push_back(frameTimeMs);
+            if (procFrames.size() > 240) procFrames.pop_front();
+            if (procStream.busy() || procAfter > 0) procWorst = std::max(procWorst, frameTimeMs);
+            if (procAfter > 0 && --procAfter == 0) {
+                std::vector<double> v(procFrames.begin(), procFrames.end());
+                std::nth_element(v.begin(), v.begin() + v.size() / 2, v.end());
+                const double med = v[v.size() / 2];
+                procSwapRatio = std::max(procSwapRatio, procWorst / std::max(med, 0.1));
+                if (std::getenv("CZ_PROC_LOG"))
+                    std::printf("procworld: slide %d: worst frame %.1f ms over the build, upload and swap; median %.1f ms (x%.2f)\n", procStream.swaps, procWorst, med,
+                                procWorst / std::max(med, 0.1));
+                procWorst = 0;
+            }
+        }
         mapLoadTick(frameTimeMs / 1000.0);
         tourTick(frameTimeMs);
         if (opt.benchSuite && (!suite.begun() || suitePhase == 2) && !startNextRun()) {
@@ -4592,7 +4612,7 @@ int main(int argc, char** argv) {
             }
             if (opt.script == "procslide" && sim.world.map == MAP_PROCEDURAL) {  // the window slides 64 m under a parked truck: nothing should change on screen
                 up = down = left = right = false;
-                if (frame == 100 && !std::getenv("CZ_PROC_NOSLIDE")) procStream.want(sim.world.proc.seed, sim.world.proc.ox + 64, sim.world.proc.oz + 128);
+                if (frame % 300 == 100 && !procStream.busy() && !std::getenv("CZ_PROC_NOSLIDE")) procStream.want(sim.world.proc.seed, sim.world.proc.ox + 64, sim.world.proc.oz + 128);
             }
             if (opt.script == "trafficlod") {  // screenshots of far traffic as proxies and the handover: one AI car, you 600 m up the road facing it
                 up = down = left = right = false;
@@ -4910,7 +4930,10 @@ int main(int argc, char** argv) {
                 }
                 if (m.text.rfind("found ", 0) == 0) {  // a buddy found a place: it counts for you too
                     std::string name;
-                    if (takeFoundMessage(coop.discovered, sim.world.map, discoverySpots(), m.text, name)) {
+                    const std::vector<DiscoverSpot> spots = discoverySpots();
+                    if (takeFoundMessage(coop.discovered, sim.world.map, spots, m.text, name)) {
+                        for (const DiscoverSpot& d : spots)  // (shown by its name: a procedural place is kept by its key)
+                            if (d.name == name) name = d.shown();
                         jobBanner = std::max(jobBanner, 4.0);
                         jobBannerText = "DISCOVERED: " + name;
                         if (!scripted) coop.saveDiscoveries(discoveriesPath);
@@ -5329,6 +5352,7 @@ int main(int argc, char** argv) {
                 V3 d;
                 if (procStream.tick(sim, renderer, focus, !mp, d, sharedNow, mp && net.shiftPending() ? net.shiftDue() : -1.0)) {
                     if (mp) net.shiftNow();  // (the others' buffered states into the new frame too)
+                    procAfter = 3;
                     cam.target += d, cam.droneEye += d;
                     fx.translate(d);
                     walker.p += d;
@@ -5339,7 +5363,7 @@ int main(int argc, char** argv) {
                     for (RemoteWalker& rw : coop.walkers) rw.p += d;
                     job.target += d;
                     for (V3& q : job.spots) q += d;
-                    proc::setActiveWindow(sim.world);  // (its places, in the new window's coordinates)
+                    proc::setActiveWindow(sim.world, std::move(procStream.places));  // (its places, in the new window's coordinates)
                     cachesMap = -1;  // (this window's caches, where they now are)
                     drawnWorld = sim.world.stamp;
                     if (std::getenv("CZ_PROC_LOG"))

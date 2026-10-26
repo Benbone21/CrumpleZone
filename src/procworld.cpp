@@ -979,7 +979,7 @@ void ProcWorld::nodePlaces(int64_t i, int64_t j, std::vector<MapPlace>& out) con
 namespace {
 std::mutex activeMutex;
 std::vector<MapPlace> active;
-uint64_t activeSeed = 0;
+uint64_t activeSeed_ = 0;
 int64_t activeOx = 0, activeOz = 0;
 }  // namespace
 
@@ -1000,16 +1000,18 @@ std::vector<MapPlace> windowPlaces(const World& w) {
     return out;
 }
 
-void setActiveWindow(const World& w) {
-    std::vector<MapPlace> v = windowPlaces(w);
+void setActiveWindow(const World& w) { setActiveWindow(w, windowPlaces(w)); }
+
+void setActiveWindow(const World& w, std::vector<MapPlace>&& v) {
     std::lock_guard<std::mutex> lock(activeMutex);
     active = std::move(v);
-    activeSeed = w.proc.seed, activeOx = w.proc.ox, activeOz = w.proc.oz;
+    activeSeed_ = w.proc.seed, activeOx = w.proc.ox, activeOz = w.proc.oz;
 }
 const std::vector<MapPlace>& activePlaces() { return active; }
+uint64_t activeSeed() { return activeSeed_; }
 const char* activeRegionAt(double x, double z) {
-    if (!activeSeed) return "";
-    return intern(ProcWorld::forSeed(activeSeed).regionName(x + (double)activeOx, z + (double)activeOz));
+    if (!activeSeed_) return "";
+    return intern(ProcWorld::forSeed(activeSeed_).regionName(x + (double)activeOx, z + (double)activeOz));
 }
 
 // The buildings and things at a window's places (World::buildProcedural): the outposts' sheds and stations, the cabins, camps,

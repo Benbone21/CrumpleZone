@@ -174,6 +174,10 @@ double farHeight(const World& w, double x, double z);
 // The places of the window in play (places.h mapPlaces(MAP_PROCEDURAL) returns these, in window coordinates): set when a window
 // goes in (the game on a load or a slide; tests). regionName: the region (2 km) a window point is in, as a stable C string.
 void setActiveWindow(const World& w);
+void setActiveWindow(const World& w, std::vector<MapPlace>&& places);  // (made already: windowPlaces on a worker)
+uint64_t activeSeed();
+// What a procedural place is kept under in saves (discoveries, opened caches): its world's seed and its id, "<seed>#PW.<i>.<j>.<WHAT>".
+inline std::string placeKey(uint64_t seed, const std::string& id) { return std::to_string(seed) + "#" + id; }
 const std::vector<MapPlace>& activePlaces();
 const char* activeRegionAt(double x, double z);
 // A window's places, in its coordinates (whole nodes within it, 100 m in from its edge).

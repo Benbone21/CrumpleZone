@@ -31,6 +31,10 @@ struct VegStats {
 class TreeDraw {
 public:
     void build(const forest::Set& set);
+    // The same in two halves: the CPU's part (any thread), then onto the GPU.
+    struct Built;
+    static void prepare(const forest::Set& set, Built& out);
+    void upload(Built&& b);
     // Draws what the view sees with the tree program in use. Returns the vertices sent.
     unsigned draw(const forest::View& view, VegStats::Pass* stats = nullptr);
     int instances() const { return (int)set_.inst.size(); }
@@ -47,6 +51,16 @@ private:
         int first = 0, count = 0;
     };
     std::vector<std::array<Range, forest::kLods>> ranges_;  // per shape
+public:
+    struct Built {
+        forest::Set set;
+        std::vector<float> v;
+        std::vector<unsigned> idx;
+        std::vector<std::array<Range, forest::kLods>> ranges;
+        forest::Picker picker;
+        size_t meshVerts = 0, baked = 0;
+    };
+private:
     std::vector<std::vector<forest::Pick>> buckets_;  // per (shape, LOD): what a pass draws
     std::vector<float> data_;
     struct Run {

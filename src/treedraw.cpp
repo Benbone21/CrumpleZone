@@ -97,12 +97,21 @@ constexpr int kInstFloats = 12;
 
 
 void TreeDraw::build(const forest::Set& set) {
+    Built b;
+    prepare(set, b);
+    upload(std::move(b));
+}
+
+void TreeDraw::prepare(const forest::Set& set, Built& out) {
+    forest::Set& set_ = out.set;
+    std::vector<float>& v = out.v;
+    std::vector<unsigned>& idx = out.idx;
+    std::vector<std::array<Range, forest::kLods>>& ranges_ = out.ranges;
     set_ = set;
-    meshVerts_ = set.vertices(), baked_ = set.bakedVertices();
+    size_t& meshVerts_ = out.meshVerts;
+    meshVerts_ = set.vertices(), out.baked = set.bakedVertices();
     // The meshes, one after another: position, normal, colour and material (the lit shader's Vtx), each
     // corner once (the smooth ones are shared by a few triangles: shaded once), and the triangles' indices.
-    std::vector<float> v;
-    std::vector<unsigned> idx;
     v.reserve(meshVerts_ * 6);
     idx.reserve(meshVerts_);
     ranges_.assign(set.shapes.size(), {});
@@ -122,6 +131,16 @@ void TreeDraw::build(const forest::Set& set) {
             if (sh.lod[l].v.size() > 1) sh.lod[l].v.resize(1), sh.lod[l].v.shrink_to_fit();
         }
     }
+    out.picker.build(set_);
+}
+
+void TreeDraw::upload(Built&& b) {
+    set_ = std::move(b.set);
+    ranges_ = std::move(b.ranges);
+    picker_ = std::move(b.picker);
+    meshVerts_ = b.meshVerts, baked_ = b.baked;
+    const std::vector<float>& v = b.v;
+    const std::vector<unsigned>& idx = b.idx;
     if (!vao_) {
         GenVertexArrays(1, &vao_);
         GenBuffers(1, &vbo_);
@@ -149,7 +168,6 @@ void TreeDraw::build(const forest::Set& set) {
     BufferData(GL_ELEMENT_ARRAY_BUFFER, idx.size() * sizeof(unsigned), idx.data(), GL_STATIC_DRAW);
     BindVertexArray(0);
     uniqueVerts_ = v.size() / 10;
-    picker_.build(set_);
     // (room for every instance: a pass refills it, never grows it)
     instCap_ = std::max<size_t>(1, set_.inst.size()) * kInstFloats;
     data_.reserve(instCap_);

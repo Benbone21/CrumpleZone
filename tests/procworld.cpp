@@ -320,6 +320,15 @@ SCENARIO(procPlaces, "procworld/places", "Places at the trail nodes: an outpost 
     setActiveWindow(s);
     ctx.check("mapPlaces(PROCEDURAL) is the window's", !mapPlaces(MAP_PROCEDURAL).empty() && mapPlaces(MAP_PROCEDURAL).size() == windowPlaces(s).size());
     ctx.note(std::string("region at the start: ") + regionAt(MAP_PROCEDURAL, s.spawn.x, s.spawn.z));
+    // Found places and opened caches are kept by the world's seed and the place's id (another world's place of the same name isn't
+    // found), and shown by name.
+    const std::vector<DiscoverSpot> spots = discoverSpots(MAP_PROCEDURAL);
+    bool keyed = !spots.empty();
+    for (const DiscoverSpot& d : spots) keyed &= d.name.rfind("5150#PW.", 0) == 0 && !d.label.empty() && d.label.find("PW.") == std::string::npos;
+    ctx.check("discoveries kept by seed and place id, shown by name", keyed, spots.empty() ? "none" : spots[0].name + " / " + spots[0].shown());
+    std::vector<std::string> found;
+    const std::vector<std::string> fresh = visitSpots(found, MAP_PROCEDURAL, spots[0].p, spots);
+    ctx.check("...and found as such", !fresh.empty() && found[0] == std::to_string(MAP_PROCEDURAL) + ":" + spots[0].name);
 }
 
 // A map of a window from above (CZ_PROC_MAPS=dir: written there as map_seed<N>.ppm): the land shaded, its ground, water, trails, trees.

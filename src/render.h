@@ -96,6 +96,11 @@ public:
     void beginUpload(std::shared_ptr<Prepared> p);
     bool pumpUpload(double budgetMs);  // true once everything is uploaded
     void adoptWorld(const World& world);
+    // A procedural window (procstream.h), after pumpUpload: its scenery onto the GPU a piece a frame, apart from what's drawn; true
+    // once it's all there (adoptWorld then swaps it in at no cost). budgetMs: about what to spend a frame.
+    bool stageWorld(double budgetMs);
+    // The scans laid out for a world ahead of its swap (any thread; procworld's worker): into what prepareObjects made.
+    void prepareProps(const World& world, Prepared& p) const;
     bool stepWorld(const World& world);  // true once the scenery is built
     // People on foot this frame (you, your buddies): drawn as simple figures.
     struct Figure {
@@ -323,6 +328,8 @@ public:
         GLuint vbo = 0, ibo = 0, tex = 0, cvbo = 0, cibo = 0;
         size_t vDone = 0, iDone = 0, cvDone = 0, ciDone = 0;
         int rowsDone = 0;
+        bool coarseLater = false;  // (a procedural window: its coarse texture goes up in slices in stage 3)
+        int coarseRows = 0;
         int stage = 0;
     };
     // (Any thread, after prepareWorld: the scenery's meshes for `world` as it will be drawn once it has been moved to `asAt`, with
@@ -352,6 +359,13 @@ private:
     size_t terrainBytes_[4] = {};  // the sizes of terrainVbo, terrainIbo, coarseVbo, coarseIbo
     GLuint unpackPbo_ = 0;         // (a procedural window's terrain texels go up through this)
     std::shared_ptr<Prepared::PreObjects> preObjs_;  // (adoptWorld: the scenery made on the worker, for the object stages)
+    struct Staged {  // (stageWorld: the next window's scenery, on the GPU apart from what's drawn; after a swap, the last one's, to reuse)
+        int step = 0;
+        bool ready = false;
+        size_t done = 0;
+        GLuint waterVao = 0, waterVbo = 0, boxVao = 0, boxVbo = 0, bushVao = 0, bushVbo = 0, sceneryVao = 0, sceneryVbo = 0;
+        TreeDraw trees, bushes;
+    } staged_;
     int objStage_ = 0, stagePq_ = 0;
     void updateObjectsStage(const World& world, int stage);
     static void prepareTerrain(const World& world, Prepared& p);

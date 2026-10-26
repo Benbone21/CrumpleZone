@@ -3016,8 +3016,11 @@ struct Renderer::Prepared::PreObjects {
     ScanCover cover;
     uint64_t treeSig = 0, bushSig = 0, scenerySig = 0;
     forest::Set treeSet, bushSet;
-    std::vector<Vtx> bushVerts, sceneryVerts;
-    std::vector<StaticBatch> bushBatches, sceneryBatches;
+    std::vector<Vtx> bushVerts, sceneryVerts, boxVerts;
+    std::vector<StaticBatch> bushBatches, sceneryBatches, boxBatches;
+    bool hasLayout = false;
+    PropRenderer::Layout props;  // (the scans: laid out on the worker, adopted on the swap)
+    TreeDraw::Built treeBuilt, bushBuilt;  // (the trees' and bushes' meshes and pickers, made on the worker)
 };
 
 void Renderer::updateObjects(const World& world) {
@@ -3150,6 +3153,13 @@ void Renderer::binBatches(std::vector<Vtx>& vertices, std::vector<StaticBatch>& 
     }
 }
 
+void Renderer::prepareProps(const World& world, Prepared& p) const {
+    if (!p.objs || !propsOk) return;
+    LOADPROF("props.layout (worker)");
+    props.layout(world, p.objs->pq, p.objs->props);
+    p.objs->hasLayout = true;
+}
+
 void Renderer::prepareObjects(const World& world, Prepared& p, const void* asAt, int pq, const ScanCover& cover) {
     LOADPROF("objects.prepare (worker)");
     auto o = std::make_shared<Prepared::PreObjects>();
@@ -3158,11 +3168,13 @@ void Renderer::prepareObjects(const World& world, Prepared& p, const void* asAt,
     for (const Tree& t : world.trees) ts.vec(t.base), ts.num(t.height), ts.num(t.radius), ts.num(t.kind), ts.num(t.tint);
     o->treeSig = ts.h;
     forest::build(world, cover.pines, cover.snags, o->treeSet);
+    TreeDraw::prepare(o->treeSet, o->treeBuilt);
     Sig bs = sceneryBase(world, pq, cover, asAt);
     for (const Bush& b : world.bushes) bs.vec(b.p), bs.num(b.r), bs.num(b.tint), bs.num(b.kind);
     for (const Log& g : world.logs) bs.vec(g.a), bs.vec(g.b), bs.num(g.r);
     o->bushSig = bs.h;
     if (!cover.bushes) forest::buildBushes(world, o->bushSet);
+    TreeDraw::prepare(o->bushSet, o->bushBuilt);
     buildBushMesh(world, o->bushVerts, cover);
     binBatches(o->bushVerts, o->bushBatches);
     Sig ss = sceneryBase(world, pq, cover, asAt);
@@ -3177,6 +3189,8 @@ void Renderer::prepareObjects(const World& world, Prepared& p, const void* asAt,
         for (const auto& kv : m.set) ss.str(kv.first), ss.num(kv.second);
     }
     o->scenerySig = ss.h;
+    buildBoxMesh(world, o->boxVerts);
+    binBatches(o->boxVerts, o->boxBatches);
     buildRockMesh(world, o->sceneryVerts, cover);
     buildPropMesh(world, o->sceneryVerts);
     binBatches(o->sceneryVerts, o->sceneryBatches);
@@ -3813,6 +3827,7 @@ std::shared_ptr<Renderer::Prepared> Renderer::prepareWorld(const World& world, c
 void Renderer::beginUpload(std::shared_ptr<Prepared> p) {
     pending_ = std::move(p);
     pending_->stage = 0;
+    staged_.step = 0, staged_.done = 0, staged_.ready = false;  // (stageWorld starts over for this one)
 }
 
 bool Renderer::pumpUpload(double budgetMs) {
@@ -3839,12 +3854,7 @@ bool Renderer::pumpUpload(double budgetMs) {
         p->bytes[0] = spare_.vBytes, p->bytes[1] = spare_.iBytes, p->bytes[2] = spare_.cvBytes, p->bytes[3] = spare_.ciBytes;
         if (spare_.idxHash == p->idxHash) p->iDone = p->lodIdx.size() * sizeof(unsigned), p->ciDone = p->coarseIdx.size() * sizeof(unsigned);
         spare_ = Spare();
-        if (!unpackPbo_) GenBuffers(1, &unpackPbo_);
-        BindBuffer(GL_PIXEL_UNPACK_BUFFER, unpackPbo_);
-        BufferData(GL_PIXEL_UNPACK_BUFFER, (GLsizeiptr)((size_t)p->coarseN * p->coarseN * 16), p->coarse.data(), GL_STREAM_DRAW);
-        BindTexture(GL_TEXTURE_2D, p->ctex);
-        TexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, p->coarseN, p->coarseN, GL_RGBA, GL_FLOAT, nullptr);
-        BindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+        p->coarseLater = true;  // (its coarse texture goes up with the rest, a slice a frame: stage 3)
         p->stage = 1;
         if (over()) return false;
     }
@@ -3905,13 +3915,30 @@ bool Renderer::pumpUpload(double budgetMs) {
                 p->rowsDone += k;
                 if (over()) return false;
             }
+            if (p->coarseLater) {  // (the coarse texture too, through the pixel buffer, a megabyte's rows at a time)
+                BindTexture(GL_TEXTURE_2D, p->ctex);
+                const int crow = std::max(1, (int)(slice / ((size_t)p->coarseN * 16)));
+                while (p->coarseRows < p->coarseN) {
+                    const int k = std::min(crow, p->coarseN - p->coarseRows);
+                    BindBuffer(GL_PIXEL_UNPACK_BUFFER, unpackPbo_);
+                    BufferData(GL_PIXEL_UNPACK_BUFFER, (GLsizeiptr)((size_t)p->coarseN * k * 16), &p->coarse[(size_t)p->coarseRows * p->coarseN * 4], GL_STREAM_DRAW);
+                    TexSubImage2D(GL_TEXTURE_2D, 0, 0, p->coarseRows, p->coarseN, k, GL_RGBA, GL_FLOAT, nullptr);
+                    BindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+                    p->coarseRows += k;
+                    if (over()) return false;
+                }
+            }
         }
-        std::vector<Vtx>().swap(p->poolVerts);
-        std::vector<unsigned>().swap(p->lodIdx);
-        std::vector<Vtx>().swap(p->coarseVerts);
-        std::vector<unsigned>().swap(p->coarseIdx);
-        std::vector<float>().swap(p->data);
-        std::vector<float>().swap(p->coarse);
+        // (Handed back on a thread of their own: freeing a few hundred MB is ms of a frame.)
+        struct Junk {
+            std::vector<Vtx> a, b;
+            std::vector<unsigned> c, d;
+            std::vector<float> e, f;
+        };
+        auto junk = std::make_shared<Junk>();
+        junk->a.swap(p->poolVerts), junk->c.swap(p->lodIdx), junk->b.swap(p->coarseVerts), junk->d.swap(p->coarseIdx);
+        junk->e.swap(p->data), junk->f.swap(p->coarse);
+        std::thread([junk]() mutable { junk.reset(); }).detach();
         p->stage = 4;
     }
     return true;
@@ -3983,11 +4010,87 @@ void Renderer::adoptWorld(const World& world) {
     }
     preObjs_ = p->objs;
     ensureSpare();
+    if (staged_.ready && p->objs) {  // (a procedural window staged a piece a frame: swapped in whole, nothing built now)
+        Prepared::PreObjects& o = *p->objs;
+        std::swap(waterVao, staged_.waterVao), std::swap(waterVbo, staged_.waterVbo);
+        waterVertexCount = (int)p->water.size();
+        stagePq_ = o.pq;
+        if (o.hasLayout) o.props.world = &world, props.adopt(std::move(o.props));
+        else props.setWorld(world, o.pq);
+        scanCover_ = o.cover;
+        treeFade_.assign(world.trees.size(), 0.0f);
+        propsApplied = settings.props;
+        std::swap(boxVao, staged_.boxVao), std::swap(boxVbo, staged_.boxVbo);
+        std::swap(boxBatches, o.boxBatches), boxVertexCount = (int)o.boxVerts.size();
+        std::swap(trees_, staged_.trees), treeSig_ = o.treeSig, treeVertexCount = (int)trees_.meshVertices();
+        std::swap(bushes_, staged_.bushes), bushSig_ = o.bushSig;
+        std::swap(bushVao, staged_.bushVao), std::swap(bushVbo, staged_.bushVbo);
+        std::swap(bushBatches, o.bushBatches), bushVertexCount = (int)o.bushVerts.size();
+        std::swap(sceneryVao, staged_.sceneryVao), std::swap(sceneryVbo, staged_.sceneryVbo);
+        std::swap(sceneryBatches, o.sceneryBatches), sceneryVertexCount = (int)o.sceneryVerts.size();
+        scenerySig_ = o.scenerySig;
+        preObjs_.reset();
+        staged_.ready = false, staged_.step = 0;
+        objStage_ = 4;
+        std::thread([p]() mutable { p.reset(); }).detach();  // (what went out, and what came in's CPU copies: freed off this frame)
+        return;
+    }
     uploadStatic(waterVao, waterVbo, p->water);
     waterVertexCount = (int)p->water.size();
     treeSig_ = scenerySig_ = bushSig_ = 0;
     updateObjectsStage(world, 0);
     objStage_ = 1;
+}
+
+// A procedural window's scenery onto the GPU ahead of its swap, a piece a frame into buffers of its own (the ones the window before
+// last used): the water, the boxes, the trees, the bushes, the reeds and logs, the rocks and models. Big buffers go a megabyte at a
+// time. The frame it goes in only swaps them (adoptWorld).
+bool Renderer::stageWorld(double budgetMs) {
+    Prepared* p = pending_.get();
+    if (!p || !p->objs || p->stage < 4) return false;
+    if (staged_.ready) return true;
+    Prepared::PreObjects& o = *p->objs;
+    if (o.pq != (propsOk ? std::min(std::max(settings.props, 0), 3) : 0)) return staged_.ready = false, true;  // (the quality changed: built the ordinary way)
+    const double t0 = loadprof::nowMs();
+    auto over = [&] { return loadprof::nowMs() - t0 >= budgetMs; };
+    // One buffer of vertices, a slice at a time: false while there's more.
+    auto slices = [&](GLuint& vao, GLuint& vbo, const std::vector<Vtx>& v) {
+        if (!vao) {
+            GenVertexArrays(1, &vao);
+            GenBuffers(1, &vbo);
+            setupVtxVao(vao, vbo);
+        }
+        BindBuffer(GL_ARRAY_BUFFER, vbo);
+        const size_t total = v.size() * sizeof(Vtx);
+        if (staged_.done == 0) {  // (made bigger only when it must, with room to spare: a big buffer's allocation is ms of a frame)
+            GLint have = 0;
+            GetBufferParameteriv(GL_ARRAY_BUFFER, 0x8764 /* GL_BUFFER_SIZE */, &have);
+            if ((size_t)have < total || total == 0) BufferData(GL_ARRAY_BUFFER, (GLsizeiptr)std::max<size_t>(total + total / 4, 16), nullptr, GL_STATIC_DRAW);
+        }
+        while (staged_.done < total) {
+            const size_t k = std::min<size_t>(1 << 20, total - staged_.done);
+            BufferSubData(GL_ARRAY_BUFFER, (GLintptr)staged_.done, (GLsizeiptr)k, (const char*)v.data() + staged_.done);
+            staged_.done += k;
+            if (over() && staged_.done < total) return false;
+        }
+        staged_.done = 0;
+        return true;
+    };
+    while (!over() || staged_.step == 0) {
+        bool next = true;
+        switch (staged_.step) {
+            case 0: next = slices(staged_.waterVao, staged_.waterVbo, p->water); break;
+            case 1: next = slices(staged_.boxVao, staged_.boxVbo, o.boxVerts); break;
+            case 2: staged_.trees.upload(std::move(o.treeBuilt)); break;
+            case 3: staged_.bushes.upload(std::move(o.bushBuilt)); break;
+            case 4: next = slices(staged_.bushVao, staged_.bushVbo, o.bushVerts); break;
+            case 5: next = slices(staged_.sceneryVao, staged_.sceneryVbo, o.sceneryVerts); break;
+            default: staged_.ready = true; return true;
+        }
+        if (next) staged_.step++;
+        if (staged_.step == 3 || staged_.step == 4) break;  // (a tree set's upload is a frame's work on its own)
+    }
+    return false;
 }
 
 bool Renderer::stepWorld(const World& world) {

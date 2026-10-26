@@ -26,6 +26,8 @@ struct CacheSpot {
     std::string part;  // part key (mods.h), or "" for cash
     int cash = 0;
     std::vector<std::string> gear;  // and some trail-repair gear: "TOOL:HAMMER", "REPAIR:CV AXLE" (fixes.h)
+    std::string label;  // what's shown, when the id isn't (the procedural world's: its id is the seed and place id)
+    const std::string& shown() const { return label.empty() ? id : label; }
 };
 
 // What a repair station's rack sells (on foot, hold E): every tool and every repair part.

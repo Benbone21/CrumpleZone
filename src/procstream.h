@@ -8,6 +8,7 @@
 #include <memory>
 
 #include "mathx.h"
+#include "places.h"
 #include "render.h"
 
 class Sim;
@@ -30,13 +31,20 @@ public:
     // What the last ones cost (for the F3 screen and the bench): the worker's build, and the swap frame's work on the game thread.
     double lastBuildMs = 0, lastSwapMs = 0, worstSwapMs = 0;
     int swaps = 0;
+    std::vector<MapPlace> places;  // (the window that went in: its places, made on the worker: proc::setActiveWindow)
 
 private:
     enum State { IDLE, WORK, UPLOAD } st_ = IDLE;
-    std::future<std::pair<std::unique_ptr<World>, std::shared_ptr<Renderer::Prepared>>> fut_;
+    struct Made {
+        std::unique_ptr<World> world;
+        std::shared_ptr<Renderer::Prepared> prep;
+        std::vector<MapPlace> places;
+    };
+    std::future<Made> fut_;
     std::unique_ptr<World> next_;
     uint64_t seed_ = 0;
     int64_t ox_ = 0, oz_ = 0;
     double t0_ = 0;
+    bool staged_ = false;  // (the scenery's on the GPU: it goes in on the next frame)
     void start(Renderer& renderer, const World* at);  // (at: where the window will live once swapped in: its scenery is keyed by it)
 };

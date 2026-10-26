@@ -106,6 +106,7 @@ enum : GLenum {
     X(void, BindBuffer, (GLenum, GLuint))                                                      \
     X(void, BufferData, (GLenum, GLsizeiptr, const void*, GLenum))                             \
     X(void, BufferSubData, (GLenum, GLintptr, GLsizeiptr, const void*))                        \
+    X(void, GetBufferParameteriv, (GLenum, GLenum, GLint*))                                     \
     X(void, VertexAttribPointer, (GLuint, GLint, GLenum, GLboolean, GLsizei, const void*))     \
     X(void, EnableVertexAttribArray, (GLuint))                                                 \
     X(void, DrawArrays, (GLenum, GLint, GLsizei))                                              \
