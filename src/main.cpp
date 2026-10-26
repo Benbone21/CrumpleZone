@@ -3676,7 +3676,7 @@ int main(int argc, char** argv) {
         }
     };
     // CZ_FRAMELOG=1 with --bench: a histogram, and every frame over 1.5x the median with its stages (CPU/GPU ms).
-    struct FrameRec { int bf; double ms, cpu[FP_COUNT], gpu[FP_COUNT]; float x, z; std::string work; };
+    struct FrameRec { int bf; double ms, cpu[FP_COUNT], gpu[FP_COUNT]; float x, z; std::string work; double threadMs; long preempted, faults; };
     std::vector<FrameRec> frameRecs;
     auto printFrameLog = [&] {
         if (frameRecs.empty()) return;
@@ -3692,11 +3692,11 @@ int main(int argc, char** argv) {
         }
         if (const char* csv = std::getenv("CZ_FRAMELOG_CSV")) {  // (every frame: its time, where the camera was, the stages' CPU/GPU ms)
             if (FILE* fcsv = std::fopen(csv, "w")) {
-                std::fprintf(fcsv, "frame,ms,x,z");
+                std::fprintf(fcsv, "frame,ms,x,z,thread_ms,preempted,faults");
                 for (int i = 0; i < FP_COUNT; i++) std::fprintf(fcsv, ",%s,%s_gpu", framePassName((FramePass)i), framePassName((FramePass)i));
                 std::fprintf(fcsv, "\n");
                 for (auto& f : frameRecs) {
-                    std::fprintf(fcsv, "%d,%.3f,%.1f,%.1f", f.bf, f.ms, f.x, f.z);
+                    std::fprintf(fcsv, "%d,%.3f,%.1f,%.1f,%.3f,%ld,%ld", f.bf, f.ms, f.x, f.z, f.threadMs, f.preempted, f.faults);
                     for (int i = 0; i < FP_COUNT; i++) std::fprintf(fcsv, ",%.3f,%.3f", f.cpu[i], f.gpu[i]);
                     std::fprintf(fcsv, "\n");
                 }
@@ -3711,7 +3711,7 @@ int main(int argc, char** argv) {
         std::printf("\n");
         int n = 0, last = -100;
         for (auto& f : frameRecs) if (f.ms > med * 1.5) {
-            std::printf("framelog: f%d (+%d) %.2f ms |", f.bf, f.bf - last, f.ms);
+            std::printf("framelog: f%d (+%d) %.2f ms (thread CPU %.2f, preempted %ld, faults %ld) |", f.bf, f.bf - last, f.ms, f.threadMs, f.preempted, f.faults);
             for (int i = 0; i < FP_COUNT; i++) if (f.cpu[i] > 0.15 || f.gpu[i] > 0.15) std::printf(" %s %.2f/%.2f", framePassName((FramePass)i), f.cpu[i], f.gpu[i]);
             std::printf("%s%s\n", f.work.empty() ? "" : " |", f.work.c_str());
             last = f.bf;
@@ -3858,7 +3858,14 @@ int main(int argc, char** argv) {
         if (opt.bench && bf > benchWarm && bf <= benchWarm + opt.bench && std::getenv("CZ_FRAMELOG")) {  // (every measured frame's stages, for the slow-frame report)
             FrameRec fr;
             fr.bf = bf, fr.ms = frameTimeMs;
-            fr.x = (float)cam.droneEye.x, fr.z = (float)cam.droneEye.z;
+            {  // (the frame thread's own CPU time over the last frame, against its wall time)
+                static ThreadUsage before = threadUsage();
+                const ThreadUsage u = threadUsage();
+                fr.threadMs = u.cpuMs - before.cpuMs, fr.preempted = u.preempted - before.preempted, fr.faults = u.majorFaults - before.majorFaults;
+                before = u;
+            }
+            const V3 at = cam.mode == 3 || sim.cars.empty() ? cam.droneEye : sim.cars[sim.player].frame().com;
+            fr.x = (float)at.x, fr.z = (float)at.z;
             for (const FrameWork& w : frameWorkLast())
                 if (w.ms > 0.2) {
                     char b[96];
@@ -4576,7 +4583,9 @@ int main(int argc, char** argv) {
             if (opt.script == "pilot" && frame == 20) {  // screenshot: autopilot to the halfway hut
                 const std::vector<Place> places = pilotPlaces(sim, net);
                 for (int k = 0; k < (int)places.size(); k++)
-                    if (places[k].name.find("HALFWAY") != std::string::npos) settings.pilotDest = k;
+                    if (places[k].name.find(std::getenv("CZ_PILOT_DEST") ? std::getenv("CZ_PILOT_DEST") : "HALFWAY") != std::string::npos) settings.pilotDest = k;  // (CZ_PILOT_DEST=NAME: another place; with --bench, the drive is what's measured)
+                if (std::getenv("CZ_PILOT_LIST"))
+                    for (const Place& pl : places) std::printf("pilot place: %s (%.0f, %.0f)\n", pl.name.c_str(), pl.p.x, pl.p.z);
                 startPilot();
             }
             if (opt.script == "pilot") up = down = left = right = false;
@@ -5901,7 +5910,7 @@ int main(int argc, char** argv) {
             footYaw -= lx * 2.6 * dt;
             footPitch = clampd(footPitch + ly * 1.8 * dt, -1.45, 1.45);
         }
-        if (opt.bench && !opt.eyeSet) {  // (the lap: 30 m round the start, 2.5 m up, once over the warm-up and the run; --eye X,Z,H,YAW,PITCH --eye-fly V: a straight flight instead, the streaming route)
+        if (opt.bench && !opt.eyeSet && opt.script != "pilot") {  // (the lap: 30 m round the start, 2.5 m up, once over the warm-up and the run; --eye X,Z,H,YAW,PITCH --eye-fly V: a straight flight instead, the streaming route)
             auto ground = [](const void* w, double x, double z) { return ((const World*)w)->height(x, z); };
             const BenchPose bp = benchPose(benchCentre.x, benchCentre.z, (double)bf / (benchWarm + opt.bench), 30, 2.5, ground, &sim.world);
             cam.mode = 3, cam.droneEye = V3(bp.x, bp.y, bp.z), cam.droneYaw = bp.yaw, cam.dronePitch = bp.pitch;

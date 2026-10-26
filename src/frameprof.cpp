@@ -4,6 +4,10 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#ifdef __linux__
+#include <sys/resource.h>
+#include <time.h>
+#endif
 
 namespace {
 int64_t nowNs() {
@@ -17,10 +21,21 @@ const char* framePassName(FramePass p) {
 }
 
 namespace {
-std::vector<FrameWork> g_workCur, g_workLast;
+thread_local std::vector<FrameWork> g_workCur, g_workLast;  // (per thread: only the frame thread's are turned over and read)
 }
 
 double frameWorkNowMs() { return nowNs() * 1e-6; }
+
+ThreadUsage threadUsage() {
+    ThreadUsage u;
+#ifdef __linux__
+    timespec ts;
+    if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) == 0) u.cpuMs = ts.tv_sec * 1e3 + ts.tv_nsec * 1e-6;
+    rusage r;
+    if (getrusage(RUSAGE_THREAD, &r) == 0) u.preempted = r.ru_nivcsw, u.majorFaults = r.ru_majflt;
+#endif
+    return u;
+}
 
 void frameWorkAdd(const char* name, double ms) {
     for (FrameWork& w : g_workCur)

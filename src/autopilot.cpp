@@ -2,6 +2,8 @@
 // Autopilot: route planning, seeing the ground ahead, picking a line and a drive setup,
 // and driving (see autopilot.h).
 #include "autopilot.h"
+#include "frameprof.h"
+#include "parallel.h"
 
 #include <algorithm>
 #include <cmath>
@@ -94,10 +96,15 @@ const Grid& gridFor(const World& w, const V3& from, const V3& to) {
     g.track.assign(N, 0);
     g.tall.assign(N, 0);
     g.lumps.clear();
-    for (int i = 0; i < kN; i++)
-        for (int j = 0; j < kN; j++) {
-            const double x = centerX(i), z = centerZ(j);
-            const int id = i * kN + j;
+    // (Row by row on a few threads: the window's corner and size are this thread's (thread_local), so taken along.)
+    const double ox = gOx, oz = gOz;
+    const int kn = kN;
+    Grid* gp = &g;  // (g is this thread's too: named in the lambda, it would be each worker's own)
+    parallelRows(kn, [&w, gp, ox, oz, kn](int i) {
+        Grid& g = *gp;
+        for (int j = 0; j < kn; j++) {
+            const double x = ox + (i + 0.5) * kCell, z = oz + (j + 0.5) * kCell;
+            const int id = i * kn + j;
             g.h[id] = (float)w.height(x, z);
             const Surface s = w.surfaceAt(x, z);
             g.surf[id] = s;
@@ -108,6 +115,7 @@ const Grid& gridFor(const World& w, const V3& from, const V3& to) {
             // Deep water.
             if (w.waterLevel(x, z) - g.h[id] > 0.45) g.tall[id] = 1;
         }
+    }, 32);
     for (int i = 1; i < kN - 1; i++)
         for (int j = 1; j < kN - 1; j++) {
             const double gx = (g.h[(i + 1) * kN + j] - g.h[(i - 1) * kN + j]) / (2 * kCell);
@@ -142,11 +150,13 @@ const Grid& gridFor(const World& w, const V3& from, const V3& to) {
     for (const Rock& rk : w.rocks) {
         double reach = 0;
         for (const V3& v : rk.v) reach = std::max(reach, std::hypot(v.x - rk.c.x, v.z - rk.c.z));
+        if (!inWindow(rk.c.x, rk.c.z, reach + 2)) continue;  // (nothing of it, nor of its lump's keep-clear disc, falls in the window)
         const double hgt = sampleObs(rk.c.x, rk.c.z, reach, [&](double x, double z) { return rockTop(rk, x, z); });
         if (hgt > 0.05) g.lumps.push_back({rk.c.x, rk.c.z, reach, hgt, false});
     }
     for (const Log& l : w.logs) {
         const V3 d = l.b - l.a;
+        if (!inWindow((l.a.x + l.b.x) / 2, (l.a.z + l.b.z) / 2, len(d) * 0.5 + l.r + 2)) continue;  // (as the rocks)
         const int n = std::max(1, (int)(len(d) / 1.0));
         double hgt = 0;
         for (int k = 0; k <= n; k++) {
@@ -162,6 +172,7 @@ const Grid& gridFor(const World& w, const V3& from, const V3& to) {
     for (const Box& b : w.boxes) {
         if (!b.solid && !b.hidden) continue;
         const double reach = std::hypot(b.h.x, b.h.z);
+        if (!inWindow(b.c.x, b.c.z, reach + 2 * grow + 1)) continue;  // (its samples and its grown outline: all outside)
         const double hgt = sampleObs(b.c.x, b.c.z, reach, [&](double x, double z) { return boxTop(b, x, z); });
         if (hgt < 1.6) continue;  // a ledge or a step: climbable by something, the planner decides
         // A wall: its outline on the ground (it may be turned), grown.
@@ -197,7 +208,8 @@ bool planRoute(const World& w, const VehicleSpec& vs, const V3& from, const V3& 
                std::vector<V3>& out, double capScale) {
     out.clear();
     double TP=nowMs(); struct PS{double t;~PS(){g_pt.plan+=nowMs()-t;g_pt.plans++;}} ps{TP};
-    const Grid& g = gridFor(w, from, to);
+    FRAMEWORK("pilot.plan");
+    const Grid& g = [&]() -> const Grid& { FRAMEWORK("pilot.grid"); return gridFor(w, from, to); }();
     const bool truck = vs.transfer != XFER_NONE;
     const Limits lim{truck ? 0.5 : 0.28, truck ? 0.45 : 0.26, truck};
     // Ledges and rocks: the tallest step it can take, and drop it will go off.
@@ -660,6 +672,7 @@ double sideOf(const Line& L, double x, double z, const V3& f) {
 
 // Looks ahead, tries lines, and settles on one (sets ap.onRoute / kappa / lineSpeed / need...).
 void sense(Car& c, Autopilot& ap, const World& w, const std::vector<Car>* cars, double v) {
+    FRAMEWORK("pilot.sense");
     if (ap.body.build != c.buildCount) buildBody(c, ap.body);
     const PilotBody& b = ap.body;
     if (b.under.empty()) return;

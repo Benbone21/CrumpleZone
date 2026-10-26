@@ -1,3 +1,4 @@
+#include "frameprof.h"
 #include "thread_cache.h"
 #include "softbody.h"
 #include "loadprof.h"
@@ -3466,7 +3467,10 @@ void Sim::pilotStep(int i, double dt) {
     const bool was = ap.active;
     const int mode0 = c.driveMode;
     const bool lf0 = c.lockFront, lr0 = c.lockRear, sway0 = c.swayDisconnected, air0 = ap.airTarget > 0;
-    pilotDrive(c, world, dt, &cars);
+    {
+        FRAMEWORK("pilot.drive");
+        pilotDrive(c, world, dt, &cars);
+    }
     if (i != player) return;
     if (was && !ap.active && ap.arrived) events.push_back("AUTOPILOT: " + ap.status);
     // Say what it changed on the truck.

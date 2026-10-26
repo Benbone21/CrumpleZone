@@ -122,6 +122,13 @@ struct FrameWork {
 void frameWorkAdd(const char* name, double ms);
 const std::vector<FrameWork>& frameWorkLast();  // the last whole frame's, in first-seen order
 double frameWorkNowMs();
+// The calling thread's CPU time (ms), involuntary context switches and major page faults so far (Linux; elsewhere zeros):
+// a frame whose wall time is well over its CPU time waited (on the GPU, a lock, another thread) or wasn't scheduled.
+struct ThreadUsage {
+    double cpuMs = 0;
+    long preempted = 0, majorFaults = 0;
+};
+ThreadUsage threadUsage();
 struct FrameWorkScope {
     const char* name;
     double t0;
