@@ -2389,6 +2389,7 @@ int main(int argc, char** argv) {
             return;
         }
         { World gone = std::move(sim.world); }  // (the last world freed before the next is built: not both in memory at once)
+        releaseFreedMemory();                   // (...and handed back, so the build's threads don't stack theirs on top)
         sim.world = buildPick(m, standalone, bigHome);
         worldPick = m;
         sim.setup();
