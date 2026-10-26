@@ -228,7 +228,7 @@ windows-installer: windows
 # A universal (Apple silicon + Intel) app with SDL2.framework inside it. Needs the official
 # SDL2 macOS framework (from the SDL2-2.x.dmg) in $(MACSDL). Ad-hoc signed only: the first
 # launch needs right-click > Open (or: xattr -dr com.apple.quarantine CrumpleZone.app).
-VERSION  ?= 0.4.5
+VERSION  ?= 0.4.6
 MACCXX   ?= clang++
 MACSDL   ?= third_party/sdl2-mac
 MACLTO   ?= -flto=thin
