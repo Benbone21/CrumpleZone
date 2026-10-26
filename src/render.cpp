@@ -1,4 +1,6 @@
 #include <future>
+#include <array>
+#include <atomic>
 #include <chrono>
 #include "render.h"
 #include "loadprof.h"
@@ -2924,6 +2926,7 @@ double sceneryHeight(const World& world, double x, double z) {
 
 void Renderer::setWorld(const World& world) {
     LOADPROF("renderer.setWorld");
+    waitStreaming();
     mapId = world.map == MAP_WILDS ? (int)MAP_FREEWAY : world.map;  // (the wilds are painted as the freeway's meadows are: land and paints, no pad or road)
     { LOADPROF("terrain.build+upload"); buildTerrain(world); }
     treeSig_ = scenerySig_ = bushSig_ = 0;  // (a new world: everything is built afresh)
@@ -3201,6 +3204,7 @@ void Renderer::drawTerrain(const M4& vp, const View& view, const std::function<v
 }
 
 void Renderer::updateWater(const World& world) {
+    dropStreamJobs();  // (the texture is made again below)
     std::vector<Vtx> wv;
     buildWaterMesh(world, wv);
     uploadStatic(waterVao, waterVbo, wv);
@@ -3346,6 +3350,7 @@ static void farPatch(const World& world, double spacing, int i0, int j0, int w, 
 
 void Renderer::updateTerrainRegion(const World& world, int i0, int j0, int i1, int j1) {
     if (!terrainVao || terrainGridN <= 0) return;
+    dropStreamJobs();  // (what they're making may be from before the edit)
     const double half = world.halfSize();
     // (One past the edit each way: the normals there changed too.)
     i0 = std::max(0, i0 - 2), j0 = std::max(0, j0 - 2), i1 = std::min(terrainGridN - 1, i1 + 2), j1 = std::min(terrainGridN - 1, j1 + 2);
@@ -3559,30 +3564,140 @@ void Renderer::prepareTerrain(const World& world, Prepared& p) {
     p.occl.build(hs, on, spacing * f, -half);
 }
 
-// Loads the full meshes of the chunks near the camera and drops the far ones (a big map; a small one has them all).
+// The streaming's background jobs (render.h): what each was asked for, and what it made.
+struct Renderer::TexJob {
+    const World* world = nullptr;
+    uint64_t stamp = 0, gen = 0;
+    int fromI = 0, fromJ = 0, toI = 0, toJ = 0;  // the window it steps from, and to
+    struct Strip {
+        int a0, b0, cw, ch;  // first cell (i, j) and size: one piece that doesn't wrap in the texture
+        std::vector<float> data;
+    };
+    std::vector<Strip> strips;
+    std::atomic<bool> done{false};
+};
+struct Renderer::ChunkJob {
+    const World* world = nullptr;
+    uint64_t stamp = 0, gen = 0;
+    std::vector<int> chunks, slots;  // each chunk built, and the pool slot it's for
+    std::vector<Vtx> verts;          // kChunkVerts each, in that order
+    int uploaded = 0;
+    std::atomic<bool> done{false};
+};
+constexpr int kTexStep = 32;              // cells the window steps at a time (a strip of 32 x 2048 texels, 1 MB, a few ms of a background thread)
+constexpr int kChunkUploadsPerFrame = 8;  // built chunk meshes put in their slots a frame (8 x 165 KB)
+constexpr double kStreamNow = 160;        // m: a chunk wanted this close (after a jump) is built in the frame, as it always was
+
+void Renderer::dropStreamJobs() {
+    if (chunkJob_)
+        for (size_t q = 0; q < chunkJob_->chunks.size(); q++) {
+            if (chunkJob_->chunks[q] < (int)chunkQueued_.size()) chunkQueued_[chunkJob_->chunks[q]] = 0;
+            if (chunkJob_->slots[q] < (int)slotChunk_.size() && slotChunk_[chunkJob_->slots[q]] == -2) slotChunk_[chunkJob_->slots[q]] = -1;
+        }
+    texJob_.reset(), chunkJob_.reset();
+    texMoving_ = false;
+    streamGen_++;
+    streamEye_ = V3(1e9, 0, 1e9), streamPending_ = true;
+}
+
+void Renderer::waitStreaming() {
+    bg_.wait();
+    dropStreamJobs();
+}
+
+// Loads the full meshes of the chunks near the camera and drops the far ones (a big map; a small one has them all), and keeps
+// the terrain texture's window round the camera. The CPU work is done on a background thread (bg_): the frame only uploads.
 void Renderer::streamTerrain(const World& world, const V3& eye) {
     // The texture's window follows the camera, a strip at a time.
     if (terrainWinW_ > 0 && terrainWinW_ < terrainGridN && terrainTex) {
+        FRAMEWORK("stream.texwindow");
         const double half = world.halfSize();
         const int w = terrainWinW_, n = terrainGridN;
+        // A strip made: in it goes, and the window steps onto it (what the step uncovers was the far edge it stepped away from).
+        if (texJob_ && texJob_->done.load(std::memory_order_acquire)) {
+            const TexJob& j = *texJob_;
+            if (j.world == &world && j.stamp == world.stamp && j.gen == streamGen_ && j.fromI == terrainWinI_ && j.fromJ == terrainWinJ_) {
+                BindTexture(GL_TEXTURE_2D, terrainTex);
+                for (const TexJob::Strip& st : j.strips) TexSubImage2D(GL_TEXTURE_2D, 0, st.a0 % w, st.b0 % w, st.cw, st.ch, GL_RGBA, GL_FLOAT, st.data.data());
+                terrainWinI_ = j.toI, terrainWinJ_ = j.toJ;
+            }
+            texJob_.reset();
+        }
         const int wi = windowStart((int)std::lround(eye.x + half), n, w), wj = windowStart((int)std::lround(eye.z + half), n, w);
-        if (std::abs(wi - terrainWinI_) > kTexSlack || std::abs(wj - terrainWinJ_) > kTexSlack) {
-            const int oi = terrainWinI_, oj = terrainWinJ_;
+        const int di = wi - terrainWinI_, dj = wj - terrainWinJ_;
+        if (std::abs(di) >= w / 2 || std::abs(dj) >= w / 2) {
+            // A jump (a respawn, the drone sent far): the whole window, now, as a load would.
+            texJob_.reset(), texMoving_ = false;
             terrainWinI_ = wi, terrainWinJ_ = wj;
-            // What's new: the columns past the old window, then the rows (the whole window when it jumped further than it is wide).
-            if (std::abs(wi - oi) >= w || std::abs(wj - oj) >= w) {
-                uploadTerrainCells(world, wi, wj, wi + w - 1, wj + w - 1);
-            } else {
-                if (wi > oi) uploadTerrainCells(world, oi + w, wj, wi + w - 1, wj + w - 1);
-                if (wi < oi) uploadTerrainCells(world, wi, wj, oi - 1, wj + w - 1);
-                if (wj > oj) uploadTerrainCells(world, wi, oj + w, wi + w - 1, wj + w - 1);
-                if (wj < oj) uploadTerrainCells(world, wi, wj, wi + w - 1, oj - 1);
+            uploadTerrainCells(world, wi, wj, wi + w - 1, wj + w - 1);
+        } else if (!texJob_) {
+            if (std::abs(di) > kTexSlack || std::abs(dj) > kTexSlack) texMoving_ = true;
+            if (texMoving_ && std::abs(di) < kTexStep / 2 && std::abs(dj) < kTexStep / 2) texMoving_ = false;
+            if (texMoving_) {
+                // One step, along whichever way it's further off: the cells it brings in are a strip along the window's leading edge.
+                auto job = std::make_shared<TexJob>();
+                job->world = &world, job->stamp = world.stamp, job->gen = streamGen_;
+                job->fromI = terrainWinI_, job->fromJ = terrainWinJ_, job->toI = terrainWinI_, job->toJ = terrainWinJ_;
+                int i0, i1, j0, j1;
+                if (std::abs(di) >= std::abs(dj)) {
+                    const int s = std::clamp(di, -kTexStep, kTexStep);
+                    job->toI += s;
+                    i0 = s > 0 ? job->fromI + w : job->toI, i1 = s > 0 ? job->toI + w - 1 : job->fromI - 1, j0 = job->toJ, j1 = job->toJ + w - 1;
+                } else {
+                    const int s = std::clamp(dj, -kTexStep, kTexStep);
+                    job->toJ += s;
+                    j0 = s > 0 ? job->fromJ + w : job->toJ, j1 = s > 0 ? job->toJ + w - 1 : job->fromJ - 1, i0 = job->toI, i1 = job->toI + w - 1;
+                }
+                // (Stored toroidally: the strip splits where it wraps.)
+                for (int a0 = i0; a0 <= i1;) {
+                    const int a1 = std::min(i1, a0 + (w - 1 - a0 % w));
+                    for (int b0 = j0; b0 <= j1;) {
+                        const int b1 = std::min(j1, b0 + (w - 1 - b0 % w));
+                        job->strips.push_back({a0, b0, a1 - a0 + 1, b1 - b0 + 1, {}});
+                        b0 = b1 + 1;
+                    }
+                    a0 = a1 + 1;
+                }
+                texJob_ = job;
+                bg_.post([job, half] {
+                    for (TexJob::Strip& st : job->strips) {
+                        st.data.resize((size_t)st.cw * st.ch * 4);
+                        for (int r = 0; r < st.ch; r++)
+                            for (int c = 0; c < st.cw; c++) terrainTexel(*job->world, -half + st.a0 + c, -half + st.b0 + r, &st.data[((size_t)r * st.cw + c) * 4]);
+                    }
+                    job->done.store(true, std::memory_order_release);
+                });
             }
         }
     }
     if (terrainAll_ || !terrainVao || slotChunk_.empty()) return;
+    if (chunkQueued_.size() != terrainChunks.size()) chunkQueued_.assign(terrainChunks.size(), 0);
+    // Built meshes: into their slots, a few a frame.
+    if (chunkJob_ && chunkJob_->done.load(std::memory_order_acquire)) {
+        FRAMEWORK("stream.chunkupload");
+        ChunkJob& j = *chunkJob_;
+        const bool good = j.world == &world && j.stamp == world.stamp && j.gen == streamGen_;
+        BindBuffer(GL_ARRAY_BUFFER, terrainVbo);
+        const int end = good ? std::min((int)j.chunks.size(), j.uploaded + kChunkUploadsPerFrame) : (int)j.chunks.size();
+        for (int q = j.uploaded; q < end; q++) {
+            const int k = j.chunks[q], slot = j.slots[q];
+            chunkQueued_[k] = 0;
+            if (slotChunk_[slot] != -2) continue;
+            TerrainChunk& c = terrainChunks[k];
+            if (!good || c.slot >= 0 || c.bounds.distance(eye) > kStreamOut) {  // (gone out of range meanwhile)
+                slotChunk_[slot] = -1;
+                continue;
+            }
+            c.slot = slot, slotChunk_[slot] = k;
+            if (chunkGroup_[k] >= 0) farGroups_[chunkGroup_[k]].loaded++;
+            BufferSubData(GL_ARRAY_BUFFER, (GLintptr)((size_t)slot * kChunkVerts * sizeof(Vtx)), (GLsizeiptr)(kChunkVerts * sizeof(Vtx)), &j.verts[(size_t)q * kChunkVerts]);
+        }
+        j.uploaded = end;
+        if (j.uploaded >= (int)j.chunks.size()) chunkJob_.reset();
+    }
     // (Looked at again once the camera has gone 8 m, or while there's something still to load.)
     if (!streamPending_ && len(eye - streamEye_) < 8) return;
+    FRAMEWORK("stream.chunks");
     streamEye_ = eye;
     static std::vector<std::pair<double, int>> want;
     want.clear();
@@ -3594,32 +3709,61 @@ void Renderer::streamTerrain(const World& world, const V3& eye) {
             slotChunk_[c.slot] = -1, c.slot = -1;
             if (chunkGroup_[k] >= 0) farGroups_[chunkGroup_[k]].loaded--;
         }
-        else if (c.slot < 0 && d < kStreamIn) want.push_back({d, k});
+        else if (c.slot < 0 && !chunkQueued_[k] && d < kStreamIn) want.push_back({d, k});
     }
-    streamPending_ = (int)want.size() > kStreamPerFrame;
+    streamPending_ = !want.empty() || chunkJob_;
     if (want.empty()) return;
     std::sort(want.begin(), want.end());
-    std::vector<int> slots;
-    for (int s = 0; s < (int)slotChunk_.size() && (int)slots.size() < std::min((int)want.size(), kStreamPerFrame); s++)
-        if (slotChunk_[s] < 0) slots.push_back(s);
-    if (slots.empty()) return;
-    const int m = (int)slots.size();
     static const bool dbg = std::getenv("CZ_STREAM_DEBUG") != nullptr;
-    const double t0 = loadprof::nowMs();
-    struct Done { const double& t0; int m; ~Done() { if (dbg) std::printf("stream: %d chunks %.2f ms\n", m, loadprof::nowMs() - t0); } } done{t0, m};
-    static std::vector<Vtx> buf;
-    buf.assign((size_t)m * kChunkVerts, Vtx{});
-    parallelRows(m, [&](int q) {
-        const TerrainChunk& c = terrainChunks[want[q].second];
-        chunkVertices(world, terrainSpacing, c.i0, c.j0, c.w, c.h, &buf[(size_t)q * kChunkVerts]);
-    }, 1);
-    BindBuffer(GL_ARRAY_BUFFER, terrainVbo);
-    for (int q = 0; q < m; q++) {
-        TerrainChunk& c = terrainChunks[want[q].second];
-        c.slot = slots[q], slotChunk_[slots[q]] = want[q].second;
-        if (chunkGroup_[want[q].second] >= 0) farGroups_[chunkGroup_[want[q].second]].loaded++;
-        BufferSubData(GL_ARRAY_BUFFER, (GLintptr)((size_t)c.slot * kChunkVerts * sizeof(Vtx)), (GLsizeiptr)(kChunkVerts * sizeof(Vtx)), &buf[(size_t)q * kChunkVerts]);
+    std::vector<int> slots;
+    // Right by the camera (after a jump): built now, on a few threads, as it always was (else its coarse patch would show).
+    int now = 0;
+    while (now < (int)want.size() && now < kStreamPerFrame && want[now].first < kStreamNow) now++;
+    if (now) {
+        for (int s = 0; s < (int)slotChunk_.size() && (int)slots.size() < now; s++)
+            if (slotChunk_[s] == -1) slots.push_back(s);
+        const int m = (int)slots.size();
+        const double t0 = loadprof::nowMs();
+        static std::vector<Vtx> buf;
+        buf.assign((size_t)m * kChunkVerts, Vtx{});
+        parallelRows(m, [&](int q) {
+            const TerrainChunk& c = terrainChunks[want[q].second];
+            chunkVertices(world, terrainSpacing, c.i0, c.j0, c.w, c.h, &buf[(size_t)q * kChunkVerts]);
+        }, 1);
+        BindBuffer(GL_ARRAY_BUFFER, terrainVbo);
+        for (int q = 0; q < m; q++) {
+            TerrainChunk& c = terrainChunks[want[q].second];
+            c.slot = slots[q], slotChunk_[slots[q]] = want[q].second;
+            if (chunkGroup_[want[q].second] >= 0) farGroups_[chunkGroup_[want[q].second]].loaded++;
+            BufferSubData(GL_ARRAY_BUFFER, (GLintptr)((size_t)c.slot * kChunkVerts * sizeof(Vtx)), (GLsizeiptr)(kChunkVerts * sizeof(Vtx)), &buf[(size_t)q * kChunkVerts]);
+        }
+        if (dbg) std::printf("stream: %d chunks in the frame %.2f ms\n", m, loadprof::nowMs() - t0);
+        streamPending_ = true;
+        return;
     }
+    // The rest: built in the background, the nearest first.
+    if (chunkJob_) return;
+    for (int s = 0; s < (int)slotChunk_.size() && (int)slots.size() < std::min((int)want.size(), kStreamPerFrame); s++)
+        if (slotChunk_[s] == -1) slots.push_back(s);
+    if (slots.empty()) return;
+    auto job = std::make_shared<ChunkJob>();
+    job->world = &world, job->stamp = world.stamp, job->gen = streamGen_;
+    std::vector<std::array<int, 4>> rect;
+    for (int q = 0; q < (int)slots.size(); q++) {
+        const int k = want[q].second;
+        job->chunks.push_back(k), job->slots.push_back(slots[q]);
+        chunkQueued_[k] = 1, slotChunk_[slots[q]] = -2;  // (-2: the slot is spoken for)
+        rect.push_back({terrainChunks[k].i0, terrainChunks[k].j0, terrainChunks[k].w, terrainChunks[k].h});
+    }
+    chunkJob_ = job;
+    const double spacing = terrainSpacing;
+    bg_.post([job, rect = std::move(rect), spacing] {
+        const double t0 = loadprof::nowMs();
+        job->verts.assign(rect.size() * kChunkVerts, Vtx{});
+        for (size_t q = 0; q < rect.size(); q++) chunkVertices(*job->world, spacing, rect[q][0], rect[q][1], rect[q][2], rect[q][3], &job->verts[q * kChunkVerts]);
+        if (dbg) std::printf("stream: %zu chunks in the background %.2f ms\n", rect.size(), loadprof::nowMs() - t0);
+        job->done.store(true, std::memory_order_release);
+    });
 }
 
 void Renderer::buildTerrain(const World& world) {
@@ -3781,6 +3925,7 @@ void Renderer::adoptTerrain(Prepared& p) {
 
 void Renderer::adoptWorld(const World& world) {
     LOADPROF("renderer.adoptWorld");
+    waitStreaming();
     std::shared_ptr<Prepared> p = std::move(pending_);
     mapId = world.map == MAP_WILDS ? (int)MAP_FREEWAY : world.map;
     if (terrainTex) DeleteTextures(1, &terrainTex);
@@ -5365,10 +5510,14 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     if (!noVeg) {
         // (On a big map the forest stops at 2 km, 800 m on the lowest props setting: the fog has most of it by then.)
         const forest::View tv{vp, view.eye, vegDetail(), 0, false, 1, &occl_, terrainAll_ ? 0.0 : settings.props <= 0 ? 800.0 : 1200.0};
-        geometryStats_.sceneryVertices += trees_.draw(tv, &vegStats_.trees);
+        {
+            FRAMEWORK("veg.trees");
+            geometryStats_.sceneryVertices += trees_.draw(tv, &vegStats_.trees);
+        }
         Uniform1i(uniformLocation(progTree, "uTreeFadeN"), 0);  // (the see-through trees' leaves only)
         forest::View bv = tv;
         if (!terrainAll_) bv.maxDist = 400;  // (a big map: no bush reaches further than this anyway, and its cells aren't even looked at)
+        FRAMEWORK("veg.bushes");
         geometryStats_.sceneryVertices += bushes_.draw(bv, &vegStats_.bushes);
     }
     passMark(FP_PROPS);
@@ -5378,10 +5527,13 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     if (!noVeg) drawBushes(vp, view.eye, false, vegStats_.logs);
     geometryStats_.occlusionTests = occl_.asked, geometryStats_.occlusionHidden = occl_.hidden;
     passMark(FP_PROPS);
-    props.draw(vp, [&](GLuint prog) {
-        setLighting(prog);
-        Uniform1i(uniformLocation(prog, "uMap"), mapId);
-    });
+    {
+        FRAMEWORK("props.draw");
+        props.draw(vp, [&](GLuint prog) {
+            setLighting(prog);
+            Uniform1i(uniformLocation(prog, "uMap"), mapId);
+        });
+    }
     passMark(FP_VEG);
     UseProgram(progLit);
     if (settings.grass > 0) {

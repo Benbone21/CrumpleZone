@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "bgwork.h"
 #include "daylight.h"
 #include "frameprof.h"
 #include "gl.h"
@@ -291,6 +292,24 @@ private:
     void uploadTerrainCells(const World& world, int i0, int j0, int i1, int j1);  // (cells; what's outside the window is left)
     void uploadTerrainCoarse(const World& world, int i0, int j0, int i1, int j1);
     void streamTerrain(const World& world, const V3& eye);
+    // The streaming's CPU work runs on bg_ (bgwork.h), never in the frame: the next strip of the texture's window
+    // (texJob_: computed there, uploaded and the window stepped onto it once it's done) and the meshes of the chunks
+    // coming into range (chunkJob_: built there, put in their slots a few a frame). streamGen_ changes when the land
+    // does (an edit, a new world): a job begun before that is dropped.
+    struct TexJob;
+    struct ChunkJob;
+    std::shared_ptr<TexJob> texJob_;
+    std::shared_ptr<ChunkJob> chunkJob_;
+    std::vector<char> chunkQueued_;  // per chunk: its mesh is being built (chunkJob_)
+    bool texMoving_ = false;         // the window is on its way to the camera, a step at a time
+    uint64_t streamGen_ = 0;
+    void dropStreamJobs();
+    BgWork bg_;
+public:
+    // Waits for the streaming's background work and drops it: before the world is replaced (the jobs read it).
+    void waitStreaming();
+    // (tests) The streaming's background work is all done and taken in (the window where the camera wants it, no chunk queued).
+    bool streamingSettled() const { return !texJob_ && !chunkJob_ && !texMoving_; }
 public:
     struct Prepared {
         double spacing = 1;

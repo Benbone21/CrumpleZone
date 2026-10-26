@@ -2332,6 +2332,7 @@ int main(int argc, char** argv) {
         World::useLocalEdits = net.role != NetSession::CLIENT;  // (a guest builds the host's: its edited sections came with the welcome, World::setSessionSections)
         const int model = std::max(0, sim.cars[sim.player].spec->model);
         campWorld = false;
+        renderer.waitStreaming();  // (its background streaming reads the world)
         sim.world = standalone ? World(m) : worldForPick(m);
         worldPick = m;
         sim.setup();
@@ -2489,6 +2490,7 @@ int main(int argc, char** argv) {
         me.ai = false;
         const int model = lv.vehicle >= 0 && lv.vehicle < (int)vehicleCatalog().size() ? lv.vehicle : std::max(0, me.spec->model);
         campWorld = false;
+        renderer.waitStreaming();  // (its background streaming reads the world)
         sim.world = levelWorld(lv);
         if (moved && !lv.hasStart) sim.world.startAtRegion(madeOn);  // (no start of its own: where its old map started you)
         applyLevel(lv, sim.world);
@@ -2836,6 +2838,7 @@ int main(int argc, char** argv) {
             LOADPROF("mapload.swap (sim)");
             const int model = std::max(0, sim.cars[sim.player].spec->model);
             campWorld = false;
+            renderer.waitStreaming();  // (its background streaming reads the world)
             sim.world = std::move(*L.world);
             L.world.reset();
             worldPick = L.map;
@@ -2876,6 +2879,7 @@ int main(int argc, char** argv) {
         if (newSection) editor.newSection(sim.world, renderer);  // (a fresh open country, the canvas cleared)
         else {
             campWorld = false;
+            renderer.waitStreaming();  // (its background streaming reads the world)
             sim.world = levelWorld(base);
             editor.open(sim.world, renderer, base);
             if (atPlayer) {  // (F2 from driving: the camera starts above and behind you, looking the way you face)
@@ -2897,6 +2901,7 @@ int main(int argc, char** argv) {
         levelHours = -1;
         stopPilot();
         campWorld = false;
+        renderer.waitStreaming();  // (its background streaming reads the world)
         sim.world = levelWorld(editor.core.level);
         sim.clearWorldLeftovers(sim.player);
         if (worldChanged) worldChanged();
@@ -2920,6 +2925,7 @@ int main(int argc, char** argv) {
         run.stop();
         levelHours = -1;
         menucamp::fireOf(campLevel, campFire);
+        renderer.waitStreaming();  // (its background streaming reads the world)
         sim.world = menuscene::buildWorld(campLevel);
         sim.setup();
         if (worldChanged) worldChanged();
@@ -3670,7 +3676,7 @@ int main(int argc, char** argv) {
         }
     };
     // CZ_FRAMELOG=1 with --bench: a histogram, and every frame over 1.5x the median with its stages (CPU/GPU ms).
-    struct FrameRec { int bf; double ms, cpu[FP_COUNT], gpu[FP_COUNT]; };
+    struct FrameRec { int bf; double ms, cpu[FP_COUNT], gpu[FP_COUNT]; float x, z; std::string work; };
     std::vector<FrameRec> frameRecs;
     auto printFrameLog = [&] {
         if (frameRecs.empty()) return;
@@ -3678,6 +3684,25 @@ int main(int argc, char** argv) {
         for (auto& f : frameRecs) t.push_back(f.ms);
         std::sort(t.begin(), t.end());
         const double med = t[t.size() / 2];
+        {  // (the tail: percentiles, the worst, and how many frames went over 1.5x the median)
+            auto pct = [&](double q) { return t[std::min(t.size() - 1, (size_t)std::floor(t.size() * q))]; };
+            int over = 0;
+            for (double v : t) over += v > med * 1.5;
+            std::printf("framelog: frames %zu, median %.3f, p99 %.3f, p99.9 %.3f, worst %.3f ms, %d over 1.5x the median\n", t.size(), med, pct(0.99), pct(0.999), t.back(), over);
+        }
+        if (const char* csv = std::getenv("CZ_FRAMELOG_CSV")) {  // (every frame: its time, where the camera was, the stages' CPU/GPU ms)
+            if (FILE* fcsv = std::fopen(csv, "w")) {
+                std::fprintf(fcsv, "frame,ms,x,z");
+                for (int i = 0; i < FP_COUNT; i++) std::fprintf(fcsv, ",%s,%s_gpu", framePassName((FramePass)i), framePassName((FramePass)i));
+                std::fprintf(fcsv, "\n");
+                for (auto& f : frameRecs) {
+                    std::fprintf(fcsv, "%d,%.3f,%.1f,%.1f", f.bf, f.ms, f.x, f.z);
+                    for (int i = 0; i < FP_COUNT; i++) std::fprintf(fcsv, ",%.3f,%.3f", f.cpu[i], f.gpu[i]);
+                    std::fprintf(fcsv, "\n");
+                }
+                std::fclose(fcsv);
+            }
+        }
         static const double edges[] = {2.0, 2.25, 2.5, 2.75, 3.0, 3.5, 4, 5, 6, 8, 12, 1e9};
         int h[12] = {};
         for (double v : t) { int k = 0; while (v >= edges[k]) k++; h[k]++; }
@@ -3688,7 +3713,7 @@ int main(int argc, char** argv) {
         for (auto& f : frameRecs) if (f.ms > med * 1.5) {
             std::printf("framelog: f%d (+%d) %.2f ms |", f.bf, f.bf - last, f.ms);
             for (int i = 0; i < FP_COUNT; i++) if (f.cpu[i] > 0.15 || f.gpu[i] > 0.15) std::printf(" %s %.2f/%.2f", framePassName((FramePass)i), f.cpu[i], f.gpu[i]);
-            std::printf("\n");
+            std::printf("%s%s\n", f.work.empty() ? "" : " |", f.work.c_str());
             last = f.bf;
             if (++n >= 400) break;
         }
@@ -3833,6 +3858,13 @@ int main(int argc, char** argv) {
         if (opt.bench && bf > benchWarm && bf <= benchWarm + opt.bench && std::getenv("CZ_FRAMELOG")) {  // (every measured frame's stages, for the slow-frame report)
             FrameRec fr;
             fr.bf = bf, fr.ms = frameTimeMs;
+            fr.x = (float)cam.droneEye.x, fr.z = (float)cam.droneEye.z;
+            for (const FrameWork& w : frameWorkLast())
+                if (w.ms > 0.2) {
+                    char b[96];
+                    std::snprintf(b, sizeof b, " %s %.2f", w.name, w.ms);
+                    fr.work += b;
+                }
             std::copy(frameProfile().last, frameProfile().last + FP_COUNT, fr.cpu);
             for (int i = 0; i < FP_COUNT; i++) fr.gpu[i] = frameProfile().gpuValid ? frameProfile().lastGpu[i] : -1;
             frameRecs.push_back(fr);
@@ -5869,7 +5901,7 @@ int main(int argc, char** argv) {
             footYaw -= lx * 2.6 * dt;
             footPitch = clampd(footPitch + ly * 1.8 * dt, -1.45, 1.45);
         }
-        if (opt.bench) {  // (the lap: 30 m round the start, 2.5 m up, once over the warm-up and the run)
+        if (opt.bench && !opt.eyeSet) {  // (the lap: 30 m round the start, 2.5 m up, once over the warm-up and the run; --eye X,Z,H,YAW,PITCH --eye-fly V: a straight flight instead, the streaming route)
             auto ground = [](const void* w, double x, double z) { return ((const World*)w)->height(x, z); };
             const BenchPose bp = benchPose(benchCentre.x, benchCentre.z, (double)bf / (benchWarm + opt.bench), 30, 2.5, ground, &sim.world);
             cam.mode = 3, cam.droneEye = V3(bp.x, bp.y, bp.z), cam.droneYaw = bp.yaw, cam.dronePitch = bp.pitch;

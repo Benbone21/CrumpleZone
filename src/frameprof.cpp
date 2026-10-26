@@ -16,7 +16,25 @@ const char* framePassName(FramePass p) {
     return p < FP_COUNT ? kNames[p] : "?";
 }
 
+namespace {
+std::vector<FrameWork> g_workCur, g_workLast;
+}
+
+double frameWorkNowMs() { return nowNs() * 1e-6; }
+
+void frameWorkAdd(const char* name, double ms) {
+    for (FrameWork& w : g_workCur)
+        if (w.name == name) { w.ms += ms; return; }
+    g_workCur.push_back({name, ms});
+}
+
+const std::vector<FrameWork>& frameWorkLast() { return g_workLast; }
+
 void FrameProfile::beginFrame() {
+    if (this == &frameProfile()) {
+        g_workLast.swap(g_workCur);
+        g_workCur.clear();
+    }
     const int64_t t = nowNs();
     if (open_) {
         cur_[pass_] += (t - since_) * 1e-6;
