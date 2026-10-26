@@ -2194,7 +2194,7 @@ int main(int argc, char** argv) {
         garageShop.begin(c.spec->model, garage.fitted[c.spec->model], career, career.on, at >= 0, garage.paint[c.spec->model]);
         shopToast.clear();
         shopDrag = false;
-        shopBlend = 0;
+        // (shopBlend carries on: reopened while it eases out, the camera turns back from where it is)
         hud.showHelp = false;
         return true;
     };
@@ -5933,6 +5933,7 @@ int main(int argc, char** argv) {
             if (pc.isProp() || pc.spec->model != garageShop.vehicle || pc.spec == &tunedSpec(garageShop.vehicle, garageShop.fitted)) shopRestore = false;
             if (shopRecal && !shopRestore) sim.cars[sim.player].recalibrateSpeedo(), shopRecal = false;
         }
+        if (!garageShop.open) shopBlend = std::max(0.0, shopBlend - dt * 1.25);  // (closed: the camera eases back to the chase view)
         View view = editor.active ? editor.view(W, H) : campBehind() ? menuscene::camera(campLevel, sim.world, clock) : cam.update(fr, sim.world, dt, (dragging || padLooking) && !menu.open, camhold::driving(len(fr.vel), sim.paused ? 0.0 : sim.cars[sim.player].throttle));
         if (!walker.active && !editor.active && cam.mode == 2 && sim.player >= 0 && sim.player < (int)sim.cars.size()) {
             // The cockpit view from the driver's eyes (people.h sits them on the seat): the seat's hip point, up and a little ahead.
@@ -5944,13 +5945,15 @@ int main(int argc, char** argv) {
                 view.eye += d, view.target += d;
             }
         }
-        if (garageShop.open && !editor.active) {  // the garage camera, eased in from the chase view
+        if ((garageShop.open || shopBlend > 0) && !editor.active) {  // the garage camera, eased in from the chase view (and back out when it closes)
             const Car& pc = sim.cars[sim.player];
-            const shop::Cam gc = shop::camera(garageShop, pc.frame(), *pc.spec, shopModel ? shopMid : V3(), shopModel ? shopDisp.size : 1.0, clock);
-            if (shopBlend <= dt * 1.25 + 1e-9) shopView = view, shopView.eye = gc.eye, shopView.target = gc.target;
-            const double k = 1 - std::exp(-dt * 4.0);
-            shopView.eye += (gc.eye - shopView.eye) * k;
-            shopView.target += (gc.target - shopView.target) * k;
+            if (garageShop.open) {
+                const shop::Cam gc = shop::camera(garageShop, pc.frame(), *pc.spec, shopModel ? shopMid : V3(), shopModel ? shopDisp.size : 1.0, clock);
+                if (shopBlend <= dt * 1.25 + 1e-9) shopView = view, shopView.eye = gc.eye, shopView.target = gc.target;
+                const double k = 1 - std::exp(-dt * 4.0);
+                shopView.eye += (gc.eye - shopView.eye) * k;
+                shopView.target += (gc.target - shopView.target) * k;
+            }
             shopView.eye.y = std::max(shopView.eye.y, sim.world.height(shopView.eye.x, shopView.eye.z) + 0.25);
             const double b = shopBlend * shopBlend * (3 - 2 * shopBlend);
             view.eye = view.eye + (shopView.eye - view.eye) * b;
