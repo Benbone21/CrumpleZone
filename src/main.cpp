@@ -1892,6 +1892,25 @@ int main(int argc, char** argv) {
     Garage garage;
     std::string garagePath = settings.career ? configDir() + "/garage-career.txt" : Garage::defaultPath();
     garage.load(garagePath);
+    if (const char* pv = std::getenv("CZ_PAINT"); pv && scripted) {  // (screenshots: CZ_PAINT=body:accent:finish[,...] hex or '-', handed to the vehicles in turn: c41e24:f0be14:2,1e46be:-:1)
+        std::vector<CarPaint> list;
+        for (const std::string& part : [&] {
+                 std::vector<std::string> v;
+                 std::string cur;
+                 for (const char* q = pv;; q++) {
+                     if (*q == ',' || !*q) v.push_back(cur), cur.clear();
+                     else cur += *q;
+                     if (!*q) break;
+                 }
+                 return v;
+             }()) {
+            char b[16] = "-", a[16] = "-";
+            int f = 0;
+            CarPaint cp;
+            if (std::sscanf(part.c_str(), "%15[^:]:%15[^:]:%d", b, a, &f) >= 2 && paintFromText(b, a, f, cp)) list.push_back(cp);
+        }
+        for (size_t i = 0; i < garage.paint.size() && !list.empty(); i++) garage.paint[i] = list[i % list.size()];
+    }
     Career career;  // (career.h: what you own, cash, the caches you've opened)
     career.on = settings.career;
     if (scripted || !career.load(Career::defaultPath())) career.startFresh();
@@ -2138,7 +2157,7 @@ int main(int argc, char** argv) {
             hud.toast("THE GARAGE IS AT THE REPAIR STATIONS: DRIVE ONTO ONE'S PAD");
             return false;
         }
-        garageShop.begin(c.spec->model, garage.fitted[c.spec->model], career, career.on, at >= 0);
+        garageShop.begin(c.spec->model, garage.fitted[c.spec->model], career, career.on, at >= 0, garage.paint[c.spec->model]);
         shopToast.clear();
         shopDrag = false;
         shopBlend = 0;
@@ -2166,6 +2185,10 @@ int main(int argc, char** argv) {
             if (!scripted) garage.save(garagePath);
             shopRecal = garageShop.recal;
         }
+        if (r.painted) {
+            garage.paint[garageShop.vehicle] = garageShop.paint;
+            if (!scripted) garage.save(garagePath);
+        }
         if (r.close) {
             shopDrag = false;
             if (garageFromMenu) openMenu();  // back where you came from
@@ -2185,6 +2208,7 @@ int main(int argc, char** argv) {
             garageShop.setCat(c);
             if (p >= 0) garageShop.focus = shop::F_ITEMS, garageShop.setSel(p);
             garageShop.previewing = p >= 0 && std::string(t) == "try";
+            if (p >= 0 && std::string(t) == "pick") garageShop.activate(career);  // (the PAINT page's colour picker)
         }
         if (const char* sp = std::getenv("CZ_SHOP_SPIN")) garageShop.spin = std::atof(sp), garageShop.idle = -1e9;
     }
@@ -3908,16 +3932,19 @@ int main(int argc, char** argv) {
                     toDrawable(evMotionX(e), evMotionY(e), mx, my);
                     const float dx = mx - mouseX, dy = my - mouseY;
                     mouseX = mx, mouseY = my;
-                    if (shopDrag && (evMotionState(e) & 1)) garageShop.turn(dx * 0.012, dy * 0.006);
+                    if (garageShop.dragCtl >= 0 && (evMotionState(e) & 1)) shopResult(garageShop.pointer(mx, my, false, true));
+                    else if (shopDrag && (evMotionState(e) & 1)) garageShop.turn(dx * 0.012, dy * 0.006);
                     else if (garageShop.hitAt(mx, my, col, row)) garageShop.hover(col, row);
                 } else if (e.type == SDL_MOUSEBUTTONDOWN) {
                     toDrawable(evButtonX(e), evButtonY(e), mx, my);
                     mouseX = mx, mouseY = my;
-                    if (evButton(e) == 1 && garageShop.hitAt(mx, my, col, row)) shopResult(garageShop.click(col, row, career));
+                    if (evButton(e) == 1 && garageShop.hitAt(mx, my, col, row) && col >= 2) shopResult(garageShop.pointer(mx, my, true, true));
+                    else if (evButton(e) == 1 && garageShop.hitAt(mx, my, col, row)) shopResult(garageShop.click(col, row, career));
                     else if (evButton(e) == 1 && mx > garageShop.turntableX) shopDrag = true;
                     else if (evButton(e) == 3) shopResult(garageShop.back());
                 } else if (e.type == SDL_MOUSEBUTTONUP) {
                     shopDrag = false;
+                    garageShop.pointer(mouseX, mouseY, false, false);
                 } else if (evWheelY(e) != 0) {
                     if (mouseX > garageShop.turntableX) garageShop.zoomBy(evWheelY(e) > 0 ? 1 / 1.12 : 1.12);
                     else garageShop.move(evWheelY(e) > 0 ? -1 : 1);
@@ -5807,6 +5834,10 @@ int main(int argc, char** argv) {
                 cam.userYaw = y, cam.pitch = p, cam.idle = 0;
             }
         }
+        // ---- paint: every vehicle of mine wears its garage paint (the others' come over the net: net.cpp)
+        for (Car& c : sim.cars)
+            if (!c.remote && !c.paintKept && !c.isProp() && c.spec && c.spec->model >= 0 && c.spec->model < (int)garage.paint.size() && c.paint != garage.paint[c.spec->model])
+                c.setPaint(garage.paint[c.spec->model]);
         // ---- the garage (garageshop.h): the truck wearing what it shows, the part on its plinth, the garage camera
         bool shopModel = false;
         shop::Display shopDisp;

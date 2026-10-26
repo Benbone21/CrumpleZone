@@ -13,6 +13,7 @@
 
 #include "autopilot.h"
 #include "mathx.h"
+#include "paint.h"
 #include "rope.h"
 #include "tires.h"
 #include "vehicles.h"
@@ -381,7 +382,15 @@ public:
     std::vector<double> aeroShare;  // per body node: its share of the downforce (empty = none)
     double aeroSpeed = 0;           // airspeed along the car (m/s), as the aero last saw it
 
-    V3 color;
+    V3 color;      // what the body shader paints (the paint's body colour, else the factory's)
+    V3 baseColor;  // the factory's (the car's own livery or the palette's)
+    bool paintKept = false;  // taken over from someone: it keeps the paint it came in (not my garage's)
+    CarPaint paint;   // the owner's: body, accent, finish (paint.h); stays through rebuilds
+    void setPaint(const CarPaint& p) {
+        if (!paint.bodySet) baseColor = color;
+        paint = p;
+        color = p.bodySet ? V3(p.body[0] / 255.0, p.body[1] / 255.0, p.body[2] / 255.0) : baseColor;
+    }
     V3 spawnPos;
     double spawnYaw = 0;
 

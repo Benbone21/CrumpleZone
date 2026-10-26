@@ -498,6 +498,7 @@ void terrainProcedural(vec3 n, inout vec3 base, inout float specK, inout float s
 )";
 
 const char* kLitFSBody = R"(
+uniform vec4 uRimTint;  // w 1: a car's wheels in its accent colour (paint.h): the rim, not the tire, glass or the dark hub
 void main(){
   vec3 n = normalize(vNrm);
   vec3 base = vCol.rgb;
@@ -506,6 +507,10 @@ void main(){
   mat -= wear * 200;
   bool sunlit = mat >= 100;  // (a cargo model inside a body's shadow: Placed::sunlit)
   if (sunlit) mat -= 100;
+  if (uRimTint.w > 0.5 && mat != 9 && mat != 5 && mat != 6) {
+    float lum = dot(base, vec3(0.3, 0.59, 0.11));
+    if (lum > 0.1) base = uRimTint.rgb * clamp(0.45 + lum * 1.1, 0.0, 1.15);
+  }
   if (wear == 1) base = mix(base, base * vec3(1.0, 0.72, 0.5), 0.7);  // bent: warmed
   else if (wear == 2) base = mix(base, vec3(0.62, 0.17, 0.08), 0.45) * 0.9;  // broken: rust red
   else if (wear == 3) base *= 0.3;  // dead: soot
@@ -632,6 +637,8 @@ uniform vec4 uLampOn;  // lit: headlamp left, right (1 low, 1.5 high), tail lamp
 uniform vec4 uLampOk;  // still whole: the same four (0 = smashed)
 uniform float uReverse;  // 1 in reverse: the reversing lamps
 uniform vec4 uTrim;    // two-tone lower body: color, top (lattice k; 0 = none)
+uniform vec4 uAccent;  // the owner's accent colour (paint.h), w 1: a stripe down the middle of the bonnet and roof
+uniform int uFinish;   // 0 gloss, 1 matte, 2 metallic
 uniform int uPass;     // 0 = body, 1 = glass
 uniform int uVehicle;  // catalog body style: EF, Jesko, Bronco, 4Runner
 // Sculpted shell (bodyshell.cpp): vLat is then the rest position in meters (x along,
@@ -1469,6 +1476,14 @@ void main(){
     }
   }
 
+  if (kind == 0 && uAccent.w > 0.5 && n.y > 0.6) {  // the accent stripe, with a dark pinstripe either side
+    float lat = abs(uShell > 0 ? P.z / 0.9 : (j - 0.5 * W) / max(0.5 * W, 1.0));
+    float fwl = max(fwidth(lat), 1e-4);
+    float edge = 1.0 - smoothstep(0.085, 0.085 + fwl * 1.5, lat);
+    float pin = (1.0 - smoothstep(0.012, 0.012 + fwl * 1.5, abs(lat - 0.112))) * 0.8;
+    base = mix(base, vec3(0.03), pin);
+    base = mix(base, uAccent.rgb, edge);
+  }
   vec3 lin = pow(base, vec3(2.2));
   float sh = shadowAt(vPos, n);
   float ndl = max(dot(n, uSun), 0.0);
@@ -1483,7 +1498,14 @@ void main(){
   int side = (uShell > 0 ? P.z > 0.0 : j > 0.5 * W) ? 1 : 0;
   bool rearLens = uShell > 0 ? P.x < 0.0 : region == 6;
   vec3 col;
-  if (kind == 0) {  // clear-coated paint
+  if (kind == 0 && uFinish == 1) {  // matte: no clear coat, a soft sheen
+    col = lin * lit + lin * env * 0.05 + env * fres * 0.1 + pow(max(dot(n, H), 0.0), 10.0) * 0.12 * spec + lspec * 0.1;
+  } else if (kind == 0 && uFinish == 2) {  // metallic: the colour in the reflections, and flakes that catch the sun
+    vec3 cell = floor(vLat * (uShell > 0 ? 220.0 : 55.0));
+    vec3 fn = normalize(n + (vec3(hash3(cell), hash3(cell + 7.1), hash3(cell + 13.3)) - 0.5) * 0.9);
+    float flake = pow(max(dot(fn, H), 0.0), 50.0);
+    col = lin * lit * 0.85 + lin * env * 0.55 + env * fres * 0.9 + (lin * 0.8 + 0.15) * flake * 2.2 * spec + pow(max(dot(n, H), 0.0), 140.0) * 1.8 * spec + lspec * 0.5;
+  } else if (kind == 0) {  // clear-coated paint
     col = lin * lit + lin * env * 0.12 + env * fres * 0.9 + pow(max(dot(n, H), 0.0), 140.0) * 1.8 * spec + lspec * 0.5;
   } else if (kind == 1 || kind == 5) {
     col = lin * lit + env * fres * (kind == 1 ? 0.18 : 0.05) + lspec * (kind == 1 ? 0.05 : 0.01);
@@ -4366,6 +4388,13 @@ void Renderer::drawWheels(const Sim& sim, GLuint prog) {
             carDrawArrays(0, wheelVertexCount[0][st]);
         }
     };
+    const GLint rimLoc = uniformLocation(prog, "uRimTint");
+    auto rimTint = [&](const Car* car) {  // (the accent colour on the rims of a painted car; off for everything else)
+        float c[3] = {0, 0, 0};
+        const bool on = car && car->paint.accentSet;
+        if (on) car->paint.accentF(c);
+        Uniform4f(rimLoc, c[0], c[1], c[2], on ? 1.0f : 0.0f);
+    };
     for (const Car& car : sim.cars) {
         if (car.wheels.empty() || !carShown(&car - sim.cars.data())) continue;
         Frame fr = car.frame();
@@ -4373,6 +4402,7 @@ void Renderer::drawWheels(const Sim& sim, GLuint prog) {
         // The car's own tread on this wheel (and chains over it when they're on).
         const int tread = std::min(std::max(car.spec->tireType, 0), TIRE_TYPES - 1);
         auto drawTread = [&](int st, const M4& tm, double chain) {  // (chain: how much of one is wrapped on, 0..1)
+            rimTint(nullptr);
             uniformM4(prog, "uModel", tm);
             BindVertexArray(tireVao[L][st][tread]);
             carDrawArrays(0, treadVertexCount[L][st][tread]);
@@ -4394,6 +4424,7 @@ void Renderer::drawWheels(const Sim& sim, GLuint prog) {
             };
             const int st = std::min(std::max(wh.mounted ? wh.item.style : car.spec->wheelStyle, 0), WHEEL_STYLES - 1);
             BindVertexArray(wheelVao[L][st]);
+            rimTint(&car);
             if (!wh.mounted) {
                 // Nothing on the hub but its rotor (the caliper below) and the studs: a sliver of rim face.
                 uniformM4(prog, "uModel", wm(true, kBareHubR / wh.R));
@@ -4408,6 +4439,7 @@ void Renderer::drawWheels(const Sim& sim, GLuint prog) {
                 const M4 tm = wm(true, scale);
                 drawTread(st, tm, chain);
                 BindVertexArray(wheelVao[L][st]);
+                rimTint(&car);
                 uniformM4(prog, "uModel", wm(true));
                 carDrawArrays(tireVertexCount[L][st], wheelVertexCount[L][st] - tireVertexCount[L][st]);
             } else {
@@ -4417,9 +4449,11 @@ void Renderer::drawWheels(const Sim& sim, GLuint prog) {
                 const double bulge = 1 + 0.3 * (1 - vertical);
                 drawTread(st, wm(true, 1.0, vertical, bulge), chain);
                 BindVertexArray(wheelVao[L][st]);
+                rimTint(&car);
                 uniformM4(prog, "uModel", wm(true));
                 carDrawArrays(tireVertexCount[L][st], wheelVertexCount[L][st] - tireVertexCount[L][st]);
             }
+            rimTint(nullptr);
             if (L) continue;
             BindVertexArray(caliperVao);
             // (The off-road rim is smaller for its tire: its brake is too.)
@@ -4569,7 +4603,8 @@ void Renderer::prepareCars(const Sim& sim, DebugView debug, const V3& eye) {
         }
         int shattered = 0;
         for (const Tri& tr : car.tris) shattered += tr.shattered;
-        const bool bodyDirty = moved || shattered != slot.shattered;
+        const uint32_t paintKey = 1u + car.paint.finish + ((uint32_t)(car.color.x * 255) << 8) + ((uint32_t)(car.color.y * 255) << 16) + ((uint32_t)(car.color.z * 255) << 24);
+        const bool bodyDirty = moved || shattered != slot.shattered || paintKey != slot.paintKey;
 
         const int beam = ci < carBeams.size() ? carBeams[ci] : 0;
         if (carLampState.size() < sim.cars.size()) carLampState.resize(sim.cars.size());
@@ -4619,6 +4654,12 @@ void Renderer::prepareCars(const Sim& sim, DebugView debug, const V3& eye) {
             }
             local.clear();
             evalParts(P, t, local);
+            slot.paintKey = paintKey;
+            // (Painted parts were made in the colour the first car of this type wore: this one's own.)
+            if (std::fabs(t.bakedPaint[0] - car.color.x) + std::fabs(t.bakedPaint[1] - car.color.y) + std::fabs(t.bakedPaint[2] - car.color.z) > 0.004)
+                for (Vtx& pv : local)
+                    if (pv.c[3] > 3.5f && pv.c[3] < 4.5f && std::fabs(pv.c[0] - t.bakedPaint[0]) + std::fabs(pv.c[1] - t.bakedPaint[1]) + std::fabs(pv.c[2] - t.bakedPaint[2]) < 0.004f)
+                        pv.c[0] = (float)car.color.x, pv.c[1] = (float)car.color.y, pv.c[2] = (float)car.color.z;
             for (Vtx& pv : local) {
                 if (pv.c[3] < 5.5f || pv.c[3] > 6.5f) continue;
                 const int sd = pv.p[2] < 0 ? 0 : 1;  // (local z: toward the car's right)
@@ -4706,7 +4747,13 @@ void Renderer::drawCarBodies(const Sim& sim, GLuint prog, bool glassPass) {
             Uniform4f(uniformLocation(prog, "uStyle"), t.style[0], t.style[1], t.style[2], t.style[3]);
             const VehicleSpec& vs = *car.spec;
             Uniform1i(uniformLocation(prog, "uVehicle"), vs.model);
-            Uniform4f(uniformLocation(prog, "uTrim"), vs.trimColor[0], vs.trimColor[1], vs.trimColor[2], vs.trimTop);
+            {
+                float ac[3] = {vs.trimColor[0], vs.trimColor[1], vs.trimColor[2]};
+                if (car.paint.accentSet) car.paint.accentF(ac);
+                Uniform4f(uniformLocation(prog, "uTrim"), ac[0], ac[1], ac[2], vs.trimTop);
+                Uniform4f(uniformLocation(prog, "uAccent"), ac[0], ac[1], ac[2], car.paint.accentSet ? 1.0f : 0.0f);
+                Uniform1i(uniformLocation(prog, "uFinish"), car.paint.finish);
+            }
             const float* sp = t.shellParam;
             Uniform1i(uniformLocation(prog, "uShell"), t.shell);
             Uniform4f(uniformLocation(prog, "uShA"), sp[0], sp[1], sp[2], sp[3]);
