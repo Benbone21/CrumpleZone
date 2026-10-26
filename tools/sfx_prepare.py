@@ -46,6 +46,31 @@ def shot(x, peak=0.9, thr=0.01, tail=0.02, start=0.0, end=None):  # trimmed wher
 
 S = 'assets/audio/sfx/'
 SHOP_ONLY = len(sys.argv) > 2 and sys.argv[2] == 'shop'
+
+def steps(name, thr, count=6, slot=0.3):  # a bank of `count` footsteps (the strongest onsets, >= 0.45 s apart), `slot` s each, tail faded out
+    x = load(name)
+    c = np.concatenate([[0], np.cumsum(np.abs(x).astype(np.float64))])
+    env = (c[480:] - c[:-480]) / 480  # (a 10 ms moving average)
+    cand, i, top = [], 0, env.max()
+    while i < len(env) - 1:
+        if env[i] > thr * top:
+            a = i + int(np.argmax(env[i:i + int(0.15 * R)]))
+            cand.append((env[a], i)); i += int(0.45 * R)
+        else: i += 1
+    bank, n = [], int(slot * R)
+    for _, at in sorted(sorted(cand, reverse=True)[:count], key=lambda t: t[1]):
+        y = x[max(0, at - int(0.01 * R)): max(0, at - int(0.01 * R)) + n].copy()
+        y = np.pad(y, (0, n - len(y)))
+        y[:int(0.003 * R)] *= np.linspace(0, 1, int(0.003 * R))
+        y *= np.minimum(1, np.linspace(1, 0, n) * 4)
+        bank.append(y / max(1e-6, np.abs(y).max()) * 0.9)
+    return np.concatenate(bank)
+
+if len(sys.argv) > 2 and sys.argv[2] == 'steps':  # (only these: python3 tools/sfx_prepare.py <wav folder> steps)
+    save('assets/audio/sfx/steps_paved.wav', steps('freesound_community-concrete-footsteps-1-6265', 0.3))
+    save('assets/audio/sfx/steps_gravel.wav', steps('freesound_community-footsteps-dirt-gravel-6823', 0.3))
+    save('assets/audio/sfx/steps_sand.wav', steps('freesound_community-sand-walk-106366', 0.3))
+    sys.exit(0)
 if SHOP_ONLY:
     save('assets/audio/ambience/shop.wav', loop(load('freesound_community-auto-shop-soundscape-68816'), 2.0, 15.4, 0.6, 0.8))
     sys.exit(0)
@@ -93,3 +118,6 @@ save('assets/audio/ambience/forest.wav', loop(load('soundreality-nature-forest-s
 # the repair shop's ambience (a loop under every repair station / shop): 2 s to 17.4 s of the soundscape (its fade-out tail is left off), 0.6 s crossfade.
 # (Run as: python3 tools/sfx_prepare.py <wav folder> shop   to make only this one.)
 save('assets/audio/ambience/shop.wav', loop(load('freesound_community-auto-shop-soundscape-68816'), 2.0, 15.4, 0.6, 0.8))
+save(S + 'steps_paved.wav', steps('freesound_community-concrete-footsteps-1-6265', 0.3))
+save(S + 'steps_gravel.wav', steps('freesound_community-footsteps-dirt-gravel-6823', 0.3))
+save(S + 'steps_sand.wav', steps('freesound_community-sand-walk-106366', 0.3))

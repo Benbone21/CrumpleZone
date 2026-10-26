@@ -17,6 +17,7 @@ struct Settings {
     float ambience = 0.6f;      // outdoor wind, foliage, birds and night insects
     bool mph = false;           // speed in mph instead of km/h
     float volume = 0.8f;        // master volume 0..1
+    float vehicleVolume = 1.0f; // all vehicle sounds (engines, tires, impacts, horn, winch), under the master volume (0 = off)
     float music = 0.4f;         // background music, under the master volume (0 = off)
     float fovDeg = 66;          // vertical field of view of the chase and orbit cameras
     bool fullscreen = false, vsync = true, showFps = false;
@@ -36,6 +37,8 @@ struct Settings {
     bool rememberPassword = false;
     int maxPlayers = 8;         // the most in a game you host (2..8)
     int hostPort = 27015;       // the port you host on, TCP and UDP (1024..65535; net::kDefaultPort)
+    std::string rendezvous;     // the join-code server, HOST[:PORT] ("" = the game's own, net::kDefaultRendezvous)
+    std::vector<std::string> recentJoins;  // the last codes and addresses joined, newest first (3)
     int pilotDest = 0;          // autopilot: which place (index into the menu's list)
     float pilotSpeed = 30;      // km/h
     int pilotRoute = 1;         // 0 roads only, 1 roads and trails, 2 anywhere

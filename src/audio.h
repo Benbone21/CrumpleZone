@@ -16,6 +16,8 @@ class Sim;
 
 // Recorded one-shots (assets/audio/sfx/*.wav, mono 48 kHz PCM16). The winch clicks and the wrench ticks are banks of short slots, one picked at random.
 enum Sfx { SFX_DOOR_OPEN, SFX_DOOR_SHUT, SFX_CLUNK, SFX_TOOLBOX_OPEN, SFX_TOOLBOX_SHUT, SFX_WRENCH, SFX_AIR_BURST, SFX_HORN, SFX_WINCH_CLICK, SFX_UI_CLICK, SFX_UI_HOVER,
+           // footsteps (banks of short slots, one picked at random): on pavement, on gravel / dirt / grass / rock, and on sand / snow
+           SFX_STEP_PAVED, SFX_STEP_GRAVEL, SFX_STEP_SAND,
            // synthesized when the sound effects load (no files): the repair and tool sounds (toolsounds.h)
            SFX_HAMMER, SFX_JACK_PUMP, SFX_JACK_LOWER, SFX_PRY_CREAK, SFX_TIRE_IRON, SFX_WHEEL_OFF, SFX_WHEEL_ON, SFX_BOLT_DROP, SFX_NUT_SQUEAL,
            // the engine job (fixes.h): the hood latch and prop, the starter turning a flooded engine over, water squirting from the plug holes, oil draining or pouring
@@ -41,7 +43,7 @@ public:
     void setVoice(int cylinders, float liters, int induction, bool flatPlane, float redline, const EngineTone& voice = EngineTone{}) {
         vExhaust_ = voice.exhaustHz, vMuffler_ = voice.muffler, vLope_ = voice.lope, vIntake_ = voice.intake;
         vMech_ = voice.mech, vRasp_ = voice.rasp, vCrackle_ = voice.crackle, vSeed_ = voice.seed;
-        vRumble_ = voice.rumble, vRoar_ = voice.roar;
+        vRumble_ = voice.rumble, vRoar_ = voice.roar, vKind_ = voice.kind, vVtec_ = voice.vtecRpm;
         cyl_ = cylinders;
         liters_ = liters;
         induction_ = induction;
@@ -58,6 +60,9 @@ public:
     void setTires(float slip) { slip_ = slip; }
     void setSpeed(float metersPerSecond) { speed_ = metersPerSecond; }
     void setVolume(float v, float sceneGain = 1) { master_ = v; sceneGain_ = sceneGain; }
+    // The vehicle bus, 0..1 (0 = off): the engines (yours and other players'), tires, wind, impacts, glass, blowouts, horns, winch and door/starter sounds.
+    // Music, ambience, UI clicks, the on-foot tools and repair sounds and the tire air are not on it. Changes ease in (no clicks).
+    void setVehicleVolume(float v) { vehicleVol_ = v; }
     // Cabin exposure attenuates outdoor ambience and softens the engine mix.
     void setEnvironment(int map, float hours, float volume, float exposure = 1) {
         ambienceMap_ = map; hours_ = hours; ambienceVol_ = volume; exposure_ = exposure;
@@ -77,6 +82,8 @@ public:
     void setCampfire(float level, float panFire = 0.2f, float panStream = -0.6f) { campfire_ = level, campPanFire_ = panFire, campPanStream_ = panStream; }
     // The winch hardware (up to kWinches at once, nearest first): motor hum + pawl clicks, placed at the winch. `running`: the drum is turning
     // (or stalled under load); lineSpeed in m/s, + reeling in; load 0..1; gain (distance) and pan -1..1.
+    // How many recordings the folders hold (assets/audio/ambience, sfx): the start-up line says "N of these"; tests/loading.cpp checks them against the folders.
+    static constexpr int kAmbienceFiles = 6, kSfxFiles = 16;
     static constexpr int kWinches = 3;
     void setWinch(int slot, bool running, float lineSpeed, float load, float gain, float pan);
     // Game thread: works out each winch line's speed from how its length changes and publishes the nearest kWinches (own and remote players').
@@ -122,10 +129,12 @@ private:
     std::atomic<bool> flatPlane_{false};
     std::atomic<float> liters_{1.6f}, redline_{6500}, boost_{0};
     // The engine's voice (EngineTone), a field at a time for the audio thread.
-    std::atomic<float> vExhaust_{0}, vMuffler_{0.35f}, vLope_{0}, vIntake_{0.4f}, vMech_{0.25f}, vRasp_{0.3f}, vCrackle_{0}, vRumble_{0}, vRoar_{0.3f};
+    std::atomic<float> vExhaust_{0}, vMuffler_{0.35f}, vLope_{0}, vIntake_{0.4f}, vMech_{0.25f}, vRasp_{0.3f}, vCrackle_{0}, vRumble_{0}, vRoar_{0.3f}, vVtec_{0};
     std::atomic<uint32_t> vSeed_{0};
+    std::atomic<int> vKind_{0};
     std::atomic<float> pendingImpact_{0}, pendingGlass_{0}, pendingPop_{0};
-    std::atomic<float> sceneGain_{1}, localGain_{1};
+    std::atomic<float> sceneGain_{1}, localGain_{1}, vehicleVol_{1};
+    float sVehicle_ = 1, sVehicleFx_ = 1;  // (smoothed, audio thread: the main mix, and renderEffects)
     std::atomic<int> ambienceMap_{-1};
     std::atomic<float> hours_{10}, ambienceVol_{0}, exposure_{1};
     Ambience ambience_;

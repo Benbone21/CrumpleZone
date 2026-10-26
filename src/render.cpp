@@ -1,4 +1,6 @@
 #include <future>
+#include <array>
+#include <atomic>
 #include <chrono>
 #include "render.h"
 #include "loadprof.h"
@@ -7,6 +9,8 @@
 #include "perf.h"
 #include "grasstiles.h"
 #include "parallel.h"
+#include "streamwin.h"
+#include "onemap.h"
 
 // Render targets and data textures in the VRAM report (texcomp.h); no mips on purpose.
 static void noteRT(const char* name, const char* fmt, int w, int h, int bytesPerTexel, int mips = 0, bool runtime = true) {
@@ -298,7 +302,17 @@ uniform int uMap;                 // 0 proving ground, 1 mountain, 2 freeway
 uniform sampler2D uTerrainTex;    // per meter: height, grass, paint
 uniform float uTerrainN;          // cells per side (the map's grid)
 uniform vec2 uRockSnow;           // heights where bare rock, then snow, take over
-uniform int uTreeFadeN;           // see-through trees: this many, each (x, z, reach, fade 0..1)
+// The big map's regions' own look (onemap.h groundLookAt): a texel per uLookBox.z metres from (uLookBox.x, .y), uLookBox.w a side:
+// r meadow, g bare rock from (/400 m), b snow from (/500 m). Off (uLookOn 0): the map's own, from uMap and uRockSnow.
+uniform sampler2D uLookTex;
+uniform vec4 uLookBox;
+uniform float uLookOn;
+vec3 regionLook(vec2 xz){
+  if (uLookOn < 0.5) return vec3((uMap == 0 || uMap == 2) ? 1.0 : 0.0, uRockSnow);
+  vec3 t = texture(uLookTex, ((xz - uLookBox.xy) / uLookBox.z + 0.5) / uLookBox.w).rgb;
+  return vec3(t.r, t.g * 400.0, t.b * 500.0);
+}
+uniform int uTreeFadeN;          // see-through trees: this many, each (x, z, reach, fade 0..1)
 uniform vec4 uTreeFade[24];
 // The terrain texels (one a cell): a window of the map round the camera, toroidal (a big map; a small one is in it whole), and
 // the whole map coarse (a texel per 4 cells) for whatever lies outside the window.
@@ -425,10 +439,11 @@ void terrainProcedural(vec3 n, inout vec3 base, inout float specK, inout float s
     // Warmer and cooler stone across the range, and streaks running down the faces.
     rock *= mix(vec3(1.06, 0.97, 0.86), vec3(0.88, 0.93, 1.02), fbm(vPos.xz * 0.003 + 9.0, 2));
     rock *= 0.8 + 0.3 * vnoise(vec2((vPos.x + vPos.z) * 0.12, vPos.y * 0.012));
-    float steep = (uMap == 0 || uMap == 2) ? smoothstep(0.84, 0.62, n.y + 0.14 * (n1 - 0.5)) : smoothstep(0.72, 0.55, n.y + 0.14 * (n1 - 0.5));
-    float high = smoothstep(uRockSnow.x, uRockSnow.x + 90.0, vPos.y + 30.0 * n1);
+    vec3 lk = regionLook(vPos.xz);
+    float steep = mix(smoothstep(0.72, 0.55, n.y + 0.14 * (n1 - 0.5)), smoothstep(0.84, 0.62, n.y + 0.14 * (n1 - 0.5)), lk.x);
+    float high = smoothstep(lk.y, lk.y + 90.0, vPos.y + 30.0 * n1);
     vec3 land = mix(grass, rock, max(steep, high * 0.8));
-    float snow = smoothstep(uRockSnow.y, uRockSnow.y + 50.0, vPos.y + 70.0 * n1) * smoothstep(0.5, 0.75, n.y);
+    float snow = smoothstep(lk.z, lk.z + 50.0, vPos.y + 70.0 * n1) * smoothstep(0.5, 0.75, n.y);
     land = mix(land, vec3(0.90, 0.92, 0.96), snow);
     base = land;
 #endif
@@ -498,6 +513,7 @@ void terrainProcedural(vec3 n, inout vec3 base, inout float specK, inout float s
 )";
 
 const char* kLitFSBody = R"(
+uniform vec4 uRimTint;  // w 1: a car's wheels in its accent colour (paint.h): the rim, not the tire, glass or the dark hub
 void main(){
   vec3 n = normalize(vNrm);
   vec3 base = vCol.rgb;
@@ -506,6 +522,10 @@ void main(){
   mat -= wear * 200;
   bool sunlit = mat >= 100;  // (a cargo model inside a body's shadow: Placed::sunlit)
   if (sunlit) mat -= 100;
+  if (uRimTint.w > 0.5 && mat != 9 && mat != 5 && mat != 6) {
+    float lum = dot(base, vec3(0.3, 0.59, 0.11));
+    if (lum > 0.1) base = uRimTint.rgb * clamp(0.45 + lum * 1.1, 0.0, 1.15);
+  }
   if (wear == 1) base = mix(base, base * vec3(1.0, 0.72, 0.5), 0.7);  // bent: warmed
   else if (wear == 2) base = mix(base, vec3(0.62, 0.17, 0.08), 0.45) * 0.9;  // broken: rust red
   else if (wear == 3) base *= 0.3;  // dead: soot
@@ -632,13 +652,22 @@ uniform vec4 uLampOn;  // lit: headlamp left, right (1 low, 1.5 high), tail lamp
 uniform vec4 uLampOk;  // still whole: the same four (0 = smashed)
 uniform float uReverse;  // 1 in reverse: the reversing lamps
 uniform vec4 uTrim;    // two-tone lower body: color, top (lattice k; 0 = none)
+uniform vec4 uAccent;  // the owner's accent colour (paint.h), w 1: a stripe down the middle of the bonnet and roof
+uniform int uFinish;   // 0 gloss, 1 matte, 2 metallic
 uniform int uPass;     // 0 = body, 1 = glass
 uniform int uVehicle;  // catalog body style: EF, Jesko, Bronco, 4Runner
 // Sculpted shell (bodyshell.cpp): vLat is then the rest position in meters (x along,
 // y up, z across) and these are its lines: floor, belt, roof, hood front | front x,
 // half width, windshield base x, roof front x | B-pillar x, C-pillar x, liftgate
 // bottom y, liftgate half width | trim top y, roof tuck, rear x, liftgate top x.
-uniform int uShell;      // 1 4Runner, 2 Bronco, 3 Civic, 4 Tacoma (uShD.w: its cab's back x), 5 K5 Blazer, 6 Baja Bug (uShD.w: where the roof meets the deck)
+// (CAR_SHELL: each shell has a program of its own, Renderer::progCarShell, so the compiler drops the other shells' code:
+// one program with all of them took Apple's software renderer over ten minutes to build at its first draw.)
+#ifdef CAR_SHELL
+#define uShell CAR_SHELL
+#else
+uniform int uShell;
+#endif
+//                       1 4Runner, 2 Bronco, 3 Civic, 4 Tacoma (uShD.w: its cab's back x), 5 K5 Blazer, 6 Baja Bug (uShD.w: where the roof meets the deck)
 uniform vec4 uShA, uShB, uShC, uShD;
 uniform vec4 uShE;       // front door's front edge x, gate top y, bumper top y, wheel opening top y
 out vec4 oCol;
@@ -1469,6 +1498,14 @@ void main(){
     }
   }
 
+  if (kind == 0 && uAccent.w > 0.5 && n.y > 0.6) {  // the accent stripe, with a dark pinstripe either side
+    float lat = abs(uShell > 0 ? P.z / 0.9 : (j - 0.5 * W) / max(0.5 * W, 1.0));
+    float fwl = max(fwidth(lat), 1e-4);
+    float edge = 1.0 - smoothstep(0.085, 0.085 + fwl * 1.5, lat);
+    float pin = (1.0 - smoothstep(0.012, 0.012 + fwl * 1.5, abs(lat - 0.112))) * 0.8;
+    base = mix(base, vec3(0.03), pin);
+    base = mix(base, uAccent.rgb, edge);
+  }
   vec3 lin = pow(base, vec3(2.2));
   float sh = shadowAt(vPos, n);
   float ndl = max(dot(n, uSun), 0.0);
@@ -1483,7 +1520,14 @@ void main(){
   int side = (uShell > 0 ? P.z > 0.0 : j > 0.5 * W) ? 1 : 0;
   bool rearLens = uShell > 0 ? P.x < 0.0 : region == 6;
   vec3 col;
-  if (kind == 0) {  // clear-coated paint
+  if (kind == 0 && uFinish == 1) {  // matte: no clear coat, a soft sheen
+    col = lin * lit + lin * env * 0.05 + env * fres * 0.1 + pow(max(dot(n, H), 0.0), 10.0) * 0.12 * spec + lspec * 0.1;
+  } else if (kind == 0 && uFinish == 2) {  // metallic: the colour in the reflections, and flakes that catch the sun
+    vec3 cell = floor(vLat * (uShell > 0 ? 220.0 : 55.0));
+    vec3 fn = normalize(n + (vec3(hash3(cell), hash3(cell + 7.1), hash3(cell + 13.3)) - 0.5) * 0.9);
+    float flake = pow(max(dot(fn, H), 0.0), 50.0);
+    col = lin * lit * 0.85 + lin * env * 0.55 + env * fres * 0.9 + (lin * 0.8 + 0.15) * flake * 2.2 * spec + pow(max(dot(n, H), 0.0), 140.0) * 1.8 * spec + lspec * 0.5;
+  } else if (kind == 0) {  // clear-coated paint
     col = lin * lit + lin * env * 0.12 + env * fres * 0.9 + pow(max(dot(n, H), 0.0), 140.0) * 1.8 * spec + lspec * 0.5;
   } else if (kind == 1 || kind == 5) {
     col = lin * lit + env * fres * (kind == 1 ? 0.18 : 0.05) + lspec * (kind == 1 ? 0.05 : 0.01);
@@ -1818,6 +1862,7 @@ uniform float uCell; uniform float uNoCull;
 uniform vec4 uRing;     // this ring comes in over x..y metres from the camera, and goes out over z..w
 uniform vec4 uLook;     // x height scale, y width scale, z 1: plain blades (the far rings), w 1: seed heads and flowers
 uniform vec2 uRockSnow;
+uniform sampler2D uLookTex; uniform vec4 uLookBox; uniform float uLookOn;  // (the big map's regions' look: kLitIns regionLook)
 uniform int uPushN;
 uniform vec4 uPush[8];  // vehicles as capsules: (x, z, radius) of one end, then (x, z) of the other
 uniform vec3 uSun; uniform float uClouds;       // (the shadows are worked out here, a few times a blade instead of at every pixel)
@@ -1896,12 +1941,13 @@ void main(){
   float n1 = fbm(base * 0.02, 4);
   float dry = smoothstep(0.6, 0.8, fbm(base * 0.006 + 3.1, 3));
   float bald = smoothstep(0.60, 0.80, fbm(base * 0.30 + 9.0, 3));
-  bool meadow = uMap == 0 || uMap == 2;
-  float forest = meadow ? 0.0 : smoothstep(0.40, 0.65, fbm(base * 0.012 + vec2(7.0, -3.0), 3)) * smoothstep(6.0, 22.0, gy);
+  vec3 lk = uLookOn < 0.5 ? vec3((uMap == 0 || uMap == 2) ? 1.0 : 0.0, uRockSnow)
+                          : textureLod(uLookTex, ((base - uLookBox.xy) / uLookBox.z + 0.5) / uLookBox.w, 0.0).rgb * vec3(1.0, 400.0, 500.0);
+  float forest = (1.0 - lk.x) * smoothstep(0.40, 0.65, fbm(base * 0.012 + vec2(7.0, -3.0), 3)) * smoothstep(6.0, 22.0, gy);
   float ny = inversesqrt(1.0 + dot(slope, slope));
-  float steep = meadow ? smoothstep(0.84, 0.62, ny + 0.14 * (n1 - 0.5)) : smoothstep(0.72, 0.55, ny + 0.14 * (n1 - 0.5));
-  float high = smoothstep(uRockSnow.x, uRockSnow.x + 90.0, gy + 30.0 * n1);
-  float snow = smoothstep(uRockSnow.y, uRockSnow.y + 50.0, gy + 70.0 * n1) * smoothstep(0.5, 0.75, ny);
+  float steep = mix(smoothstep(0.72, 0.55, ny + 0.14 * (n1 - 0.5)), smoothstep(0.84, 0.62, ny + 0.14 * (n1 - 0.5)), lk.x);
+  float high = smoothstep(lk.y, lk.y + 90.0, gy + 30.0 * n1);
+  float snow = smoothstep(lk.z, lk.z + 50.0, gy + 70.0 * n1) * smoothstep(0.5, 0.75, ny);
   float wl = t00.a;
   float wet = wl > -500.0 ? 1.0 - smoothstep(0.4, 3.5, gy - wl) : 0.0;
   // How thick: the world's density, clumped (patches and gaps), thinner where the ground shows through.
@@ -2583,7 +2629,13 @@ bool Renderer::init(const World& world, std::string& err) {
     const std::string header = "#version 330 core\n";
     const double lpShaders0 = loadprof::nowMs();
     progLit = linkProgram(kLitVS, header + kCommonFS + kLitIns + kTerrainProcFS + kLitFSBody, err);
-    progCar = linkProgram(kCarVS, header + kCommonFS + kCarFSBody, err);
+    static const bool oneCarProg = std::getenv("CZ_CAR_ONEPROG") != nullptr;  // (for comparison: one program for every shell, as before)
+    for (int s = 0; s < kCarShells; s++) {  // (a program per body shell: see CAR_SHELL in kCarFSBody)
+        progCarShell[s] = oneCarProg && s ? progCarShell[0]
+                                          : linkProgram(kCarVS, header + (oneCarProg ? std::string() : "#define CAR_SHELL " + std::to_string(s) + "\n") + kCommonFS + kCarFSBody, err);
+        if (!progCarShell[s]) return false;
+    }
+    progCar = progCarShell[0];
     progDepth = linkProgram(kDepthVS, kDepthFS, err);
     progParts = linkProgram(std::string(kPartsXf) + kPartsVS, header + kCommonFS + kLitIns + kTerrainProcFS + kLitFSBody, err);
     progPartsDepth = linkProgram(std::string(kPartsXf) + kPartsDepthVS, kDepthFS, err);
@@ -2900,9 +2952,35 @@ double sceneryHeight(const World& world, double x, double z) {
 }
 }  // namespace
 
+void Renderer::updateLook(const World& world) {
+    lookOn_ = world.map == MAP_BACKCOUNTRY && world.halfSize() > kOldBackcountryHalf + 1;
+    if (!lookOn_) return;
+    const double cell = 64, h = world.halfSize();
+    const int n = (int)std::ceil(2 * h / cell) + 1;
+    std::vector<uint8_t> px((size_t)n * n * 4);
+    parallelRows(n, [&](int j) {
+        for (int i = 0; i < n; i++) {
+            const GroundLook g = groundLookAt(-h + i * cell, -h + j * cell);
+            uint8_t* q = &px[((size_t)j * n + i) * 4];
+            q[0] = (uint8_t)std::lround(clampd(g.meadow, 0, 1) * 255), q[1] = (uint8_t)std::lround(clampd(g.rockFrom / 400.0, 0, 1) * 255);
+            q[2] = (uint8_t)std::lround(clampd(g.snowFrom / 500.0, 0, 1) * 255), q[3] = 255;
+        }
+    });
+    if (!lookTex_) GenTextures(1, &lookTex_);
+    BindTexture(GL_TEXTURE_2D, lookTex_);
+    TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, n, n, 0, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+    TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    lookBox_[0] = (float)-h, lookBox_[1] = (float)-h, lookBox_[2] = (float)cell, lookBox_[3] = (float)n;
+}
+
 void Renderer::setWorld(const World& world) {
     LOADPROF("renderer.setWorld");
+    waitStreaming();
     mapId = world.map == MAP_WILDS ? (int)MAP_FREEWAY : world.map;  // (the wilds are painted as the freeway's meadows are: land and paints, no pad or road)
+    updateLook(world);
     { LOADPROF("terrain.build+upload"); buildTerrain(world); }
     treeSig_ = scenerySig_ = bushSig_ = 0;  // (a new world: everything is built afresh)
     updateObjects(world);
@@ -3073,7 +3151,7 @@ void terrainTexel(const World& world, double x, double z, float* t) {
     t[3] = (float)std::max(world.waterLevel(x, z), -1000.0);
 }
 // The window's first cell for a camera at grid cell (ci, cj), on a map of n cells a side.
-int windowStart(int c, int n, int w) { return std::min(std::max(c - w / 2, 0), std::max(0, n - w)); }
+int windowStart(int c, int n, int w) { return streamwin::start(c, n, w); }
 // The whole map's coarse texels.
 void coarseTexels(const World& world, int n, std::vector<float>& out, int& cn) {
     cn = (n + kCoarseCell - 1) / kCoarseCell;
@@ -3179,6 +3257,7 @@ void Renderer::drawTerrain(const M4& vp, const View& view, const std::function<v
 }
 
 void Renderer::updateWater(const World& world) {
+    dropStreamJobs();  // (the texture is made again below)
     std::vector<Vtx> wv;
     buildWaterMesh(world, wv);
     uploadStatic(waterVao, waterVbo, wv);
@@ -3324,6 +3403,7 @@ static void farPatch(const World& world, double spacing, int i0, int j0, int w, 
 
 void Renderer::updateTerrainRegion(const World& world, int i0, int j0, int i1, int j1) {
     if (!terrainVao || terrainGridN <= 0) return;
+    dropStreamJobs();  // (what they're making may be from before the edit)
     const double half = world.halfSize();
     // (One past the edit each way: the normals there changed too.)
     i0 = std::max(0, i0 - 2), j0 = std::max(0, j0 - 2), i1 = std::min(terrainGridN - 1, i1 + 2), j1 = std::min(terrainGridN - 1, j1 + 2);
@@ -3537,30 +3617,120 @@ void Renderer::prepareTerrain(const World& world, Prepared& p) {
     p.occl.build(hs, on, spacing * f, -half);
 }
 
-// Loads the full meshes of the chunks near the camera and drops the far ones (a big map; a small one has them all).
+// The streaming's background jobs (render.h): what each was asked for, and what it made.
+struct Renderer::TexJob {
+    const World* world = nullptr;
+    uint64_t stamp = 0, gen = 0;
+    int fromI = 0, fromJ = 0, toI = 0, toJ = 0;  // the window it steps from, and to
+    struct Strip {
+        int a0, b0, cw, ch;  // first cell (i, j) and size: one piece that doesn't wrap in the texture
+        std::vector<float> data;
+    };
+    std::vector<Strip> strips;
+    std::atomic<bool> done{false};
+};
+struct Renderer::ChunkJob {
+    const World* world = nullptr;
+    uint64_t stamp = 0, gen = 0;
+    std::vector<int> chunks, slots;  // each chunk built, and the pool slot it's for
+    std::vector<Vtx> verts;          // kChunkVerts each, in that order
+    int uploaded = 0;
+    std::atomic<bool> done{false};
+};
+constexpr int kTexStep = 32;              // cells the window steps at a time (a strip of 32 x 2048 texels, 1 MB, a few ms of a background thread)
+constexpr int kChunkUploadsPerFrame = 8;  // built chunk meshes put in their slots a frame (8 x 165 KB)
+constexpr double kStreamNow = 160;        // m: a chunk wanted this close (after a jump) is built in the frame, as it always was
+
+void Renderer::dropStreamJobs() {
+    if (chunkJob_)
+        for (size_t q = 0; q < chunkJob_->chunks.size(); q++) {
+            if (chunkJob_->chunks[q] < (int)chunkQueued_.size()) chunkQueued_[chunkJob_->chunks[q]] = 0;
+            if (chunkJob_->slots[q] < (int)slotChunk_.size() && slotChunk_[chunkJob_->slots[q]] == -2) slotChunk_[chunkJob_->slots[q]] = -1;
+        }
+    texJob_.reset(), chunkJob_.reset();
+    texMoving_ = false;
+    streamGen_++;
+    streamEye_ = V3(1e9, 0, 1e9), streamPending_ = true;
+}
+
+void Renderer::waitStreaming() {
+    waitWorldReaders();  // (this one's, and any other background work that reads the world: the autopilot's replans)
+    dropStreamJobs();
+}
+
+// Loads the full meshes of the chunks near the camera and drops the far ones (a big map; a small one has them all), and keeps
+// the terrain texture's window round the camera. The CPU work is done on a background thread (bg_): the frame only uploads.
 void Renderer::streamTerrain(const World& world, const V3& eye) {
     // The texture's window follows the camera, a strip at a time.
     if (terrainWinW_ > 0 && terrainWinW_ < terrainGridN && terrainTex) {
+        FRAMEWORK("stream.texwindow");
         const double half = world.halfSize();
         const int w = terrainWinW_, n = terrainGridN;
+        // A strip made: in it goes, and the window steps onto it (what the step uncovers was the far edge it stepped away from).
+        if (texJob_ && texJob_->done.load(std::memory_order_acquire)) {
+            const TexJob& j = *texJob_;
+            if (j.world == &world && j.stamp == world.stamp && j.gen == streamGen_ && j.fromI == terrainWinI_ && j.fromJ == terrainWinJ_) {
+                BindTexture(GL_TEXTURE_2D, terrainTex);
+                for (const TexJob::Strip& st : j.strips) TexSubImage2D(GL_TEXTURE_2D, 0, st.a0 % w, st.b0 % w, st.cw, st.ch, GL_RGBA, GL_FLOAT, st.data.data());
+                terrainWinI_ = j.toI, terrainWinJ_ = j.toJ;
+            }
+            texJob_.reset();
+        }
         const int wi = windowStart((int)std::lround(eye.x + half), n, w), wj = windowStart((int)std::lround(eye.z + half), n, w);
-        if (std::abs(wi - terrainWinI_) > kTexSlack || std::abs(wj - terrainWinJ_) > kTexSlack) {
-            const int oi = terrainWinI_, oj = terrainWinJ_;
+        const int di = wi - terrainWinI_, dj = wj - terrainWinJ_;
+        if (std::abs(di) >= w / 2 || std::abs(dj) >= w / 2) {
+            // A jump (a respawn, the drone sent far): the whole window, now, as a load would.
+            texJob_.reset(), texMoving_ = false;
             terrainWinI_ = wi, terrainWinJ_ = wj;
-            // What's new: the columns past the old window, then the rows (the whole window when it jumped further than it is wide).
-            if (std::abs(wi - oi) >= w || std::abs(wj - oj) >= w) {
-                uploadTerrainCells(world, wi, wj, wi + w - 1, wj + w - 1);
-            } else {
-                if (wi > oi) uploadTerrainCells(world, oi + w, wj, wi + w - 1, wj + w - 1);
-                if (wi < oi) uploadTerrainCells(world, wi, wj, oi - 1, wj + w - 1);
-                if (wj > oj) uploadTerrainCells(world, wi, oj + w, wi + w - 1, wj + w - 1);
-                if (wj < oj) uploadTerrainCells(world, wi, wj, wi + w - 1, oj - 1);
+            uploadTerrainCells(world, wi, wj, wi + w - 1, wj + w - 1);
+        } else if (!texJob_) {
+            // One step (streamwin.h): the cells it brings in are a strip along the window's leading edge.
+            const streamwin::Step step = streamwin::next(terrainWinI_, terrainWinJ_, wi, wj, w, n, kTexSlack, kTexStep, texMoving_);
+            if (!step.pieces.empty()) {
+                auto job = std::make_shared<TexJob>();
+                job->world = &world, job->stamp = world.stamp, job->gen = streamGen_;
+                job->fromI = terrainWinI_, job->fromJ = terrainWinJ_, job->toI = step.toI, job->toJ = step.toJ;
+                for (const streamwin::Piece& pc : step.pieces) job->strips.push_back({pc.a0, pc.b0, pc.cw, pc.ch, {}});
+                texJob_ = job;
+                bg_.post([job, half] {
+                    for (TexJob::Strip& st : job->strips) {
+                        st.data.resize((size_t)st.cw * st.ch * 4);
+                        for (int r = 0; r < st.ch; r++)
+                            for (int c = 0; c < st.cw; c++) terrainTexel(*job->world, -half + st.a0 + c, -half + st.b0 + r, &st.data[((size_t)r * st.cw + c) * 4]);
+                    }
+                    job->done.store(true, std::memory_order_release);
+                });
             }
         }
     }
     if (terrainAll_ || !terrainVao || slotChunk_.empty()) return;
+    if (chunkQueued_.size() != terrainChunks.size()) chunkQueued_.assign(terrainChunks.size(), 0);
+    // Built meshes: into their slots, a few a frame.
+    if (chunkJob_ && chunkJob_->done.load(std::memory_order_acquire)) {
+        FRAMEWORK("stream.chunkupload");
+        ChunkJob& j = *chunkJob_;
+        const bool good = j.world == &world && j.stamp == world.stamp && j.gen == streamGen_;
+        BindBuffer(GL_ARRAY_BUFFER, terrainVbo);
+        const int end = good ? std::min((int)j.chunks.size(), j.uploaded + kChunkUploadsPerFrame) : (int)j.chunks.size();
+        for (int q = j.uploaded; q < end; q++) {
+            const int k = j.chunks[q], slot = j.slots[q];
+            chunkQueued_[k] = 0;
+            if (slotChunk_[slot] != -2) continue;
+            TerrainChunk& c = terrainChunks[k];
+            if (!good || c.slot >= 0 || c.bounds.distance(eye) > kStreamOut) {  // (gone out of range meanwhile)
+                slotChunk_[slot] = -1;
+                continue;
+            }
+            c.slot = slot, slotChunk_[slot] = k;
+            if (chunkGroup_[k] >= 0) farGroups_[chunkGroup_[k]].loaded++;
+            BufferSubData(GL_ARRAY_BUFFER, (GLintptr)((size_t)slot * kChunkVerts * sizeof(Vtx)), (GLsizeiptr)(kChunkVerts * sizeof(Vtx)), &j.verts[(size_t)q * kChunkVerts]);
+        }
+        j.uploaded = end;
+        if (j.uploaded >= (int)j.chunks.size()) chunkJob_.reset();
+    }
     // (Looked at again once the camera has gone 8 m, or while there's something still to load.)
     if (!streamPending_ && len(eye - streamEye_) < 8) return;
+    FRAMEWORK("stream.chunks");
     streamEye_ = eye;
     static std::vector<std::pair<double, int>> want;
     want.clear();
@@ -3572,32 +3742,61 @@ void Renderer::streamTerrain(const World& world, const V3& eye) {
             slotChunk_[c.slot] = -1, c.slot = -1;
             if (chunkGroup_[k] >= 0) farGroups_[chunkGroup_[k]].loaded--;
         }
-        else if (c.slot < 0 && d < kStreamIn) want.push_back({d, k});
+        else if (c.slot < 0 && !chunkQueued_[k] && d < kStreamIn) want.push_back({d, k});
     }
-    streamPending_ = (int)want.size() > kStreamPerFrame;
+    streamPending_ = !want.empty() || chunkJob_;
     if (want.empty()) return;
     std::sort(want.begin(), want.end());
-    std::vector<int> slots;
-    for (int s = 0; s < (int)slotChunk_.size() && (int)slots.size() < std::min((int)want.size(), kStreamPerFrame); s++)
-        if (slotChunk_[s] < 0) slots.push_back(s);
-    if (slots.empty()) return;
-    const int m = (int)slots.size();
     static const bool dbg = std::getenv("CZ_STREAM_DEBUG") != nullptr;
-    const double t0 = loadprof::nowMs();
-    struct Done { const double& t0; int m; ~Done() { if (dbg) std::printf("stream: %d chunks %.2f ms\n", m, loadprof::nowMs() - t0); } } done{t0, m};
-    static std::vector<Vtx> buf;
-    buf.assign((size_t)m * kChunkVerts, Vtx{});
-    parallelRows(m, [&](int q) {
-        const TerrainChunk& c = terrainChunks[want[q].second];
-        chunkVertices(world, terrainSpacing, c.i0, c.j0, c.w, c.h, &buf[(size_t)q * kChunkVerts]);
-    }, 1);
-    BindBuffer(GL_ARRAY_BUFFER, terrainVbo);
-    for (int q = 0; q < m; q++) {
-        TerrainChunk& c = terrainChunks[want[q].second];
-        c.slot = slots[q], slotChunk_[slots[q]] = want[q].second;
-        if (chunkGroup_[want[q].second] >= 0) farGroups_[chunkGroup_[want[q].second]].loaded++;
-        BufferSubData(GL_ARRAY_BUFFER, (GLintptr)((size_t)c.slot * kChunkVerts * sizeof(Vtx)), (GLsizeiptr)(kChunkVerts * sizeof(Vtx)), &buf[(size_t)q * kChunkVerts]);
+    std::vector<int> slots;
+    // Right by the camera (after a jump): built now, on a few threads, as it always was (else its coarse patch would show).
+    int now = 0;
+    while (now < (int)want.size() && now < kStreamPerFrame && want[now].first < kStreamNow) now++;
+    if (now) {
+        for (int s = 0; s < (int)slotChunk_.size() && (int)slots.size() < now; s++)
+            if (slotChunk_[s] == -1) slots.push_back(s);
+        const int m = (int)slots.size();
+        const double t0 = loadprof::nowMs();
+        static std::vector<Vtx> buf;
+        buf.assign((size_t)m * kChunkVerts, Vtx{});
+        parallelRows(m, [&](int q) {
+            const TerrainChunk& c = terrainChunks[want[q].second];
+            chunkVertices(world, terrainSpacing, c.i0, c.j0, c.w, c.h, &buf[(size_t)q * kChunkVerts]);
+        }, 1);
+        BindBuffer(GL_ARRAY_BUFFER, terrainVbo);
+        for (int q = 0; q < m; q++) {
+            TerrainChunk& c = terrainChunks[want[q].second];
+            c.slot = slots[q], slotChunk_[slots[q]] = want[q].second;
+            if (chunkGroup_[want[q].second] >= 0) farGroups_[chunkGroup_[want[q].second]].loaded++;
+            BufferSubData(GL_ARRAY_BUFFER, (GLintptr)((size_t)c.slot * kChunkVerts * sizeof(Vtx)), (GLsizeiptr)(kChunkVerts * sizeof(Vtx)), &buf[(size_t)q * kChunkVerts]);
+        }
+        if (dbg) std::printf("stream: %d chunks in the frame %.2f ms\n", m, loadprof::nowMs() - t0);
+        streamPending_ = true;
+        return;
     }
+    // The rest: built in the background, the nearest first.
+    if (chunkJob_) return;
+    for (int s = 0; s < (int)slotChunk_.size() && (int)slots.size() < std::min((int)want.size(), kStreamPerFrame); s++)
+        if (slotChunk_[s] == -1) slots.push_back(s);
+    if (slots.empty()) return;
+    auto job = std::make_shared<ChunkJob>();
+    job->world = &world, job->stamp = world.stamp, job->gen = streamGen_;
+    std::vector<std::array<int, 4>> rect;
+    for (int q = 0; q < (int)slots.size(); q++) {
+        const int k = want[q].second;
+        job->chunks.push_back(k), job->slots.push_back(slots[q]);
+        chunkQueued_[k] = 1, slotChunk_[slots[q]] = -2;  // (-2: the slot is spoken for)
+        rect.push_back({terrainChunks[k].i0, terrainChunks[k].j0, terrainChunks[k].w, terrainChunks[k].h});
+    }
+    chunkJob_ = job;
+    const double spacing = terrainSpacing;
+    bg_.post([job, rect = std::move(rect), spacing] {
+        const double t0 = loadprof::nowMs();
+        job->verts.assign(rect.size() * kChunkVerts, Vtx{});
+        for (size_t q = 0; q < rect.size(); q++) chunkVertices(*job->world, spacing, rect[q][0], rect[q][1], rect[q][2], rect[q][3], &job->verts[q * kChunkVerts]);
+        if (dbg) std::printf("stream: %zu chunks in the background %.2f ms\n", rect.size(), loadprof::nowMs() - t0);
+        job->done.store(true, std::memory_order_release);
+    });
 }
 
 void Renderer::buildTerrain(const World& world) {
@@ -3759,8 +3958,10 @@ void Renderer::adoptTerrain(Prepared& p) {
 
 void Renderer::adoptWorld(const World& world) {
     LOADPROF("renderer.adoptWorld");
+    waitStreaming();
     std::shared_ptr<Prepared> p = std::move(pending_);
     mapId = world.map == MAP_WILDS ? (int)MAP_FREEWAY : world.map;
+    updateLook(world);  // (the regions' ground look: a small texture)
     if (terrainTex) DeleteTextures(1, &terrainTex);
     if (terrainCoarseTex) DeleteTextures(1, &terrainCoarseTex);
     terrainTex = p->tex, terrainCoarseTex = p->ctex, terrainGridN = p->gridN;
@@ -4366,6 +4567,13 @@ void Renderer::drawWheels(const Sim& sim, GLuint prog) {
             carDrawArrays(0, wheelVertexCount[0][st]);
         }
     };
+    const GLint rimLoc = uniformLocation(prog, "uRimTint");
+    auto rimTint = [&](const Car* car) {  // (the accent colour on the rims of a painted car; off for everything else)
+        float c[3] = {0, 0, 0};
+        const bool on = car && car->paint.accentSet;
+        if (on) car->paint.accentF(c);
+        Uniform4f(rimLoc, c[0], c[1], c[2], on ? 1.0f : 0.0f);
+    };
     for (const Car& car : sim.cars) {
         if (car.wheels.empty() || !carShown(&car - sim.cars.data())) continue;
         Frame fr = car.frame();
@@ -4373,6 +4581,7 @@ void Renderer::drawWheels(const Sim& sim, GLuint prog) {
         // The car's own tread on this wheel (and chains over it when they're on).
         const int tread = std::min(std::max(car.spec->tireType, 0), TIRE_TYPES - 1);
         auto drawTread = [&](int st, const M4& tm, double chain) {  // (chain: how much of one is wrapped on, 0..1)
+            rimTint(nullptr);
             uniformM4(prog, "uModel", tm);
             BindVertexArray(tireVao[L][st][tread]);
             carDrawArrays(0, treadVertexCount[L][st][tread]);
@@ -4394,6 +4603,7 @@ void Renderer::drawWheels(const Sim& sim, GLuint prog) {
             };
             const int st = std::min(std::max(wh.mounted ? wh.item.style : car.spec->wheelStyle, 0), WHEEL_STYLES - 1);
             BindVertexArray(wheelVao[L][st]);
+            rimTint(&car);
             if (!wh.mounted) {
                 // Nothing on the hub but its rotor (the caliper below) and the studs: a sliver of rim face.
                 uniformM4(prog, "uModel", wm(true, kBareHubR / wh.R));
@@ -4408,6 +4618,7 @@ void Renderer::drawWheels(const Sim& sim, GLuint prog) {
                 const M4 tm = wm(true, scale);
                 drawTread(st, tm, chain);
                 BindVertexArray(wheelVao[L][st]);
+                rimTint(&car);
                 uniformM4(prog, "uModel", wm(true));
                 carDrawArrays(tireVertexCount[L][st], wheelVertexCount[L][st] - tireVertexCount[L][st]);
             } else {
@@ -4417,9 +4628,11 @@ void Renderer::drawWheels(const Sim& sim, GLuint prog) {
                 const double bulge = 1 + 0.3 * (1 - vertical);
                 drawTread(st, wm(true, 1.0, vertical, bulge), chain);
                 BindVertexArray(wheelVao[L][st]);
+                rimTint(&car);
                 uniformM4(prog, "uModel", wm(true));
                 carDrawArrays(tireVertexCount[L][st], wheelVertexCount[L][st] - tireVertexCount[L][st]);
             }
+            rimTint(nullptr);
             if (L) continue;
             BindVertexArray(caliperVao);
             // (The off-road rim is smaller for its tire: its brake is too.)
@@ -4569,7 +4782,8 @@ void Renderer::prepareCars(const Sim& sim, DebugView debug, const V3& eye) {
         }
         int shattered = 0;
         for (const Tri& tr : car.tris) shattered += tr.shattered;
-        const bool bodyDirty = moved || shattered != slot.shattered;
+        const uint32_t paintKey = 1u + car.paint.finish + ((uint32_t)(car.color.x * 255) << 8) + ((uint32_t)(car.color.y * 255) << 16) + ((uint32_t)(car.color.z * 255) << 24);
+        const bool bodyDirty = moved || shattered != slot.shattered || paintKey != slot.paintKey;
 
         const int beam = ci < carBeams.size() ? carBeams[ci] : 0;
         if (carLampState.size() < sim.cars.size()) carLampState.resize(sim.cars.size());
@@ -4619,6 +4833,12 @@ void Renderer::prepareCars(const Sim& sim, DebugView debug, const V3& eye) {
             }
             local.clear();
             evalParts(P, t, local);
+            slot.paintKey = paintKey;
+            // (Painted parts were made in the colour the first car of this type wore: this one's own.)
+            if (std::fabs(t.bakedPaint[0] - car.color.x) + std::fabs(t.bakedPaint[1] - car.color.y) + std::fabs(t.bakedPaint[2] - car.color.z) > 0.004)
+                for (Vtx& pv : local)
+                    if (pv.c[3] > 3.5f && pv.c[3] < 4.5f && std::fabs(pv.c[0] - t.bakedPaint[0]) + std::fabs(pv.c[1] - t.bakedPaint[1]) + std::fabs(pv.c[2] - t.bakedPaint[2]) < 0.004f)
+                        pv.c[0] = (float)car.color.x, pv.c[1] = (float)car.color.y, pv.c[2] = (float)car.color.z;
             for (Vtx& pv : local) {
                 if (pv.c[3] < 5.5f || pv.c[3] > 6.5f) continue;
                 const int sd = pv.p[2] < 0 ? 0 : 1;  // (local z: toward the car's right)
@@ -4685,14 +4905,23 @@ int Renderer::skinLod(const CarSlot& slot) const {
     return L;
 }
 
-void Renderer::drawCarBodies(const Sim& sim, GLuint prog, bool glassPass) {
+void Renderer::drawCarBodies(const Sim& sim, GLuint prog, bool glassPass, const std::function<void(GLuint)>& use) {
+    const bool bodyPass = prog == progCar;
+    GLuint current = prog;
     for (size_t ci = 0; ci < sim.cars.size() && ci < carSlots.size(); ci++) {
         if (!carShown(ci)) continue;
         const Car& car = sim.cars[ci];
         const CarSlot& slot = carSlots[ci];
         if (!slot.tpl) continue;
         const VisualTemplate& t = *static_cast<const VisualTemplate*>(slot.tpl);
-        if (prog == progCar) {
+        if (bodyPass) {
+            const GLuint want = t.shell >= 0 && t.shell < kCarShells ? progCarShell[t.shell] : progCar;
+            if (want != current) {
+                if (use) use(want);
+                else UseProgram(want);
+                current = want;
+            }
+            prog = current;
             Uniform3f(uniformLocation(prog, "uPaint"), (float)car.color.x, (float)car.color.y, (float)car.color.z);
             Uniform1i(uniformLocation(prog, "uPass"), glassPass ? 1 : 0);
             Uniform1f(uniformLocation(prog, "uBrake"), (float)std::max(car.brake, car.handbrake * 0.6));
@@ -4706,7 +4935,13 @@ void Renderer::drawCarBodies(const Sim& sim, GLuint prog, bool glassPass) {
             Uniform4f(uniformLocation(prog, "uStyle"), t.style[0], t.style[1], t.style[2], t.style[3]);
             const VehicleSpec& vs = *car.spec;
             Uniform1i(uniformLocation(prog, "uVehicle"), vs.model);
-            Uniform4f(uniformLocation(prog, "uTrim"), vs.trimColor[0], vs.trimColor[1], vs.trimColor[2], vs.trimTop);
+            {
+                float ac[3] = {vs.trimColor[0], vs.trimColor[1], vs.trimColor[2]};
+                if (car.paint.accentSet) car.paint.accentF(ac);
+                Uniform4f(uniformLocation(prog, "uTrim"), ac[0], ac[1], ac[2], vs.trimTop);
+                Uniform4f(uniformLocation(prog, "uAccent"), ac[0], ac[1], ac[2], car.paint.accentSet ? 1.0f : 0.0f);
+                Uniform1i(uniformLocation(prog, "uFinish"), car.paint.finish);
+            }
             const float* sp = t.shellParam;
             Uniform1i(uniformLocation(prog, "uShell"), t.shell);
             Uniform4f(uniformLocation(prog, "uShA"), sp[0], sp[1], sp[2], sp[3]);
@@ -5098,6 +5333,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     const SeeThrough seeThrough{view.eye, view.focus, view.hasFocus && !noSeeThrough, noSeeThrough ? 0.0f : view.fadeNear};
     props.setSeeThrough(seeThrough);
     props.occluder = &occl_;
+    props.timing = gpuTiming;  // (its timer queries only when they're read: F3, the bench)
     props.beginFrame(sim.world, view.eye, M4(), propsOk ? settings.props : 0, view.time);
 
     farZ_ = settings.drawDistance > 0 ? std::max(150.0f, settings.drawDistance) : 6000.0f;  // (a draw distance: everything past it is clipped)
@@ -5236,6 +5472,13 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         ActiveTexture(GL_TEXTURE0);
         Uniform1i(uniformLocation(prog, "uTerrainCoarse"), 10);
         Uniform1f(uniformLocation(prog, "uTerrainCoarseN"), (float)terrainCoarseN_);
+        // (The regions' ground look: onemap.h. Bound even when off, so the sampler never shares a unit with another kind.)
+        ActiveTexture(GL_TEXTURE0 + 11);
+        BindTexture(GL_TEXTURE_2D, lookOn_ ? lookTex_ : terrainCoarseTex);
+        ActiveTexture(GL_TEXTURE0);
+        Uniform1i(uniformLocation(prog, "uLookTex"), 11);
+        Uniform4f(uniformLocation(prog, "uLookBox"), lookBox_[0], lookBox_[1], lookBox_[2], lookBox_[3]);
+        Uniform1f(uniformLocation(prog, "uLookOn"), lookOn_ ? 1.0f : 0.0f);
     };
     setLighting(progLit);
     uniformM4(progLit, "uModel", m4identity());
@@ -5318,10 +5561,14 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     if (!noVeg) {
         // (On a big map the forest stops at 2 km, 800 m on the lowest props setting: the fog has most of it by then.)
         const forest::View tv{vp, view.eye, vegDetail(), 0, false, 1, &occl_, terrainAll_ ? 0.0 : settings.props <= 0 ? 800.0 : 1200.0};
-        geometryStats_.sceneryVertices += trees_.draw(tv, &vegStats_.trees);
+        {
+            FRAMEWORK("veg.trees");
+            geometryStats_.sceneryVertices += trees_.draw(tv, &vegStats_.trees);
+        }
         Uniform1i(uniformLocation(progTree, "uTreeFadeN"), 0);  // (the see-through trees' leaves only)
         forest::View bv = tv;
         if (!terrainAll_) bv.maxDist = 400;  // (a big map: no bush reaches further than this anyway, and its cells aren't even looked at)
+        FRAMEWORK("veg.bushes");
         geometryStats_.sceneryVertices += bushes_.draw(bv, &vegStats_.bushes);
     }
     passMark(FP_PROPS);
@@ -5331,10 +5578,13 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     if (!noVeg) drawBushes(vp, view.eye, false, vegStats_.logs);
     geometryStats_.occlusionTests = occl_.asked, geometryStats_.occlusionHidden = occl_.hidden;
     passMark(FP_PROPS);
-    props.draw(vp, [&](GLuint prog) {
-        setLighting(prog);
-        Uniform1i(uniformLocation(prog, "uMap"), mapId);
-    });
+    {
+        FRAMEWORK("props.draw");
+        props.draw(vp, [&](GLuint prog) {
+            setLighting(prog);
+            Uniform1i(uniformLocation(prog, "uMap"), mapId);
+        });
+    }
     passMark(FP_VEG);
     UseProgram(progLit);
     if (settings.grass > 0) {
@@ -5446,19 +5696,23 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         setLighting(progLit);
     }
     passMark(FP_OPAQUE);
+    auto stage = [&](const char* s) { if (stageMarks) loadprof::phase(s); };  // (the first frame's hang report: which draw)
+    stage("OPAQUE: car parts and wheels");
     BindVertexArray(dynVao);
     carKind_ = 3, carDrawArrays(0, (GLsizei)partVerts.size());
     drawCarParts(sim, progLit);
     drawWheels(sim, progLit);
     if (partRows) {  // the cars' mechanical parts (CarModels)
+        stage("OPAQUE: car models");
         setLighting(progParts);
         bindTerrainTex(progParts);
         Uniform1i(uniformLocation(progParts, "uMap"), mapId);
         drawCarModels(progParts);
     }
 
+    stage("OPAQUE: car bodies");
     setLighting(progCar);
-    drawCarBodies(sim, progCar, false);
+    drawCarBodies(sim, progCar, false, setLighting);
 
     // The ground last of the solid things, nearest chunks first: what's in front of it (cars, rocks, trees, grass, nearer
     // hills) has its depth down already, so the ground's costly shader only runs where the ground shows.
@@ -5572,7 +5826,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         Enable(GL_BLEND);
         BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         DepthMask(0);
-        drawCarBodies(sim, progCar, true);
+        drawCarBodies(sim, progCar, true, setLighting);
         DepthMask(1);
         Disable(GL_BLEND);
     }
@@ -5747,6 +6001,7 @@ void Renderer::preload(const World& world) {
 
 void Renderer::passMark(FramePass p) {
     if (syncTiming) Finish();
+    if (stageMarks) loadprof::phase(framePassName(p));
     frameProfile().enter(p);
     if (!gpuTiming) return;
     GpuMarks& m = gpuMarks_[gpuMarkFrame_];

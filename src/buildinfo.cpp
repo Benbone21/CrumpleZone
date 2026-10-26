@@ -17,3 +17,5 @@ std::string buildDescription() {
     for (char& c : s) c = (char)std::toupper((unsigned char)c);
     return s;
 }
+
+std::string buildId() { return CZ_GIT; }

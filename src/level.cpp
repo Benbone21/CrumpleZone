@@ -1,4 +1,5 @@
 #include "level.h"
+#include "onemap.h"
 
 #include <algorithm>
 #include <cmath>
@@ -300,6 +301,33 @@ void placeObject(const LevelObject& obj, World& w) {
         case OBJ_BUSH: w.bushes.push_back({V3(o.p.x, w.height(o.p.x, o.p.z) + o.lift, o.p.z), std::max(0.2, o.size.x), o.col[0], plantKindOf(o.sub)}); break;
         default: break;
     }
+}
+
+bool placeInRegion(Level& lv, int* from) {
+    const MapRegion* r = regionOf(lv.map);
+    if (!r || !World::stitchRegions || (lv.map == MAP_WILDS && lv.terrain != WILDS_MEADOW)) return false;
+    const V3 off(r->mx, 0, r->mz);
+    if (from) *from = lv.map;
+    // The cells: keyed on the old map's grid, now on the big one's (both at 1 m, so a cell moves by a whole number of cells).
+    const int n0 = World::gridSizeFor(lv.map), n1 = World::gridSizeFor(MAP_BACKCOUNTRY);
+    const int di = (int)std::lround(r->mx - World::halfSizeFor(lv.map) + World::halfSizeFor(MAP_BACKCOUNTRY));
+    const int dj = (int)std::lround(r->mz - World::halfSizeFor(lv.map) + World::halfSizeFor(MAP_BACKCOUNTRY));
+    auto move = [&](auto& cells) {
+        std::remove_reference_t<decltype(cells)> moved;
+        for (const auto& c : cells) {
+            const int i = c.first / n0 + di, j = c.first % n0 + dj;
+            if (i >= 0 && j >= 0 && i < n1 && j < n1) moved.emplace(i * n1 + j, c.second);
+        }
+        cells.swap(moved);
+    };
+    move(lv.heights), move(lv.surfaces), move(lv.water), move(lv.flow);
+    lv.start += off;
+    for (Gate& g : lv.gates) g.p += off;
+    for (LevelObject& o : lv.objects) o.p += off, o.p2 += off;
+    for (V3& q : lv.removed) q.x += off.x, q.z += off.z;  // ((x, kind, z))
+    lv.section.x += off.x, lv.section.z += off.z;
+    lv.map = MAP_BACKCOUNTRY;
+    return true;
 }
 
 void applyLevel(const Level& lv, World& w) {

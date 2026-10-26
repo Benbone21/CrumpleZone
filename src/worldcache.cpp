@@ -1,4 +1,5 @@
 #include "worldcache.h"
+#include "realterrain.h"
 
 #include <cstring>
 #include <mutex>
@@ -13,7 +14,8 @@
 
 namespace {
 const char kMagic[8] = {'C', 'Z', 'W', 'O', 'R', 'L', 'D', '1'};
-constexpr uint64_t kFormat = 4;  // bump with any change to what's written below or to how a map is built that the build id misses
+constexpr uint64_t kFormat = 5;  // 5: the big map's regions' starts and roads (World::regionStarts, regionRoads)
+// bump with any change to what's written below or to how a map is built that the build id misses
 
 struct Out {
     std::vector<uint8_t> b;
@@ -158,6 +160,11 @@ struct WorldIO {
             io.pod(f.poolR), io.pod(f.poolDepth);
         });
         io.pod(w.parkingYaw), io.pod(w.crashProps), io.pod(w.wrapPeriod), io.pod(w.cellEdits);
+        io.list(w.regionStarts, [&](auto& s) {
+            io.pod(s.map), io.v3(s.spawn), io.pod(s.yaw), io.pod(s.parkingYaw);
+            io.list(s.parking, [&](auto& p) { io.v3(p); });
+        });
+        io.list(w.regionRoads, [&](auto& r) { io.list(r, [&](auto& p) { io.v3(p); }); });
     }
     static bool sane(const World& w) {
         const size_t n = (size_t)w.hN * w.hN;
@@ -184,12 +191,20 @@ struct WorldIO {
         }
     }
     static void heights(Out& o, const World& w) {
-        std::vector<float> base, h = w.hgrid;
+        // (Written as they are, then xor'd where they lie in the buffer: no second copy of a grid that's 270 MB on the big map.)
+        std::vector<float> base;
         const bool predicted = baseLand(w, base);
-        if (predicted) xorWith(h, base);
         o.pod(predicted);
-        o.arr(h);
-        o.shuffled.push_back({o.b.size() - h.size() * 4, h.size()});
+        o.arr(w.hgrid);
+        const size_t at = o.b.size() - w.hgrid.size() * 4;
+        if (predicted)
+            for (size_t k = 0; k < w.hgrid.size(); k++) {
+                uint32_t a, c;
+                std::memcpy(&a, o.b.data() + at + k * 4, 4), std::memcpy(&c, &base[k], 4);
+                a ^= c;
+                std::memcpy(o.b.data() + at + k * 4, &a, 4);
+            }
+        o.shuffled.push_back({at, w.hgrid.size()});
     }
     static void heights(In& in, World& w) {
         bool predicted = false;
@@ -256,11 +271,11 @@ struct WorldIO {
 namespace worldcache {
 
 namespace {
-std::string fileFor(int map) { return "world-" + std::to_string(map); }
+std::string fileFor(int map) { return map == MAP_REAL ? std::string("world-real") : "world-" + std::to_string(map); }
 }  // namespace
 
 bool cacheable(int map) {
-    return (map == MAP_FRONTIER || map == MAP_BACKCOUNTRY || map == MAP_MOUNTAIN) && !bypass && World::halfSizeOverride <= 0 &&
+    return (map == MAP_FRONTIER || map == MAP_BACKCOUNTRY || map == MAP_MOUNTAIN || (map == MAP_REAL && realterrain::activeHash() != 0)) && !bypass && World::halfSizeOverride <= 0 &&
            meshcache::enabled();
 }
 
@@ -269,6 +284,7 @@ uint64_t keyFor(int map) {
     meshcache::Hasher h;
     h.bytes(kMagic, sizeof kMagic), h.u64(kFormat), h.u64(meshcache::codeVersion());
     h.u64((uint64_t)map), h.num(World::halfSizeFor(map));
+    if (map == MAP_REAL) h.u64(realterrain::activeHash());  // (the real terrain's DEM file and sidecar)
     // The scanned rocks in use (the rocks' hulls come from them): which, and what they are.
     if (const props::HullLibrary* lib = props::activeRockScans()) {
         h.u64(lib->hulls.size());
@@ -285,6 +301,8 @@ uint64_t keyFor(int map) {
 // The file: the magic, the format, the transformed runs, then the packed fields (bytepack.h).
 std::vector<uint8_t> encode(const World& w) {
     Out o;
+    // (Room for it all at once: growing a buffer the size of the big map's would hold two of it at a time.)
+    o.b.reserve((size_t)w.gridSize() * w.gridSize() * 7 + ((size_t)64 << 20));
     WorldIO::fields(o, w);
     for (const auto& r : o.shuffled) bytepack::deltaShuffle32(o.b, r.first, r.second);
     Out head;
@@ -292,7 +310,8 @@ std::vector<uint8_t> encode(const World& w) {
     head.pod(kFormat);
     head.pod((uint64_t)o.shuffled.size());
     for (const auto& r : o.shuffled) head.pod(r.first), head.pod(r.second);
-    const std::vector<uint8_t> packed = bytepack::pack(o.b);
+    std::vector<uint8_t> packed = bytepack::pack(o.b);
+    std::vector<uint8_t>().swap(o.b);
     head.b.insert(head.b.end(), packed.begin(), packed.end());
     return std::move(head.b);
 }

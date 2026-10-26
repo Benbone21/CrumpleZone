@@ -11,6 +11,7 @@
 #include "../src/mods.h"
 #include "../src/platform.h"
 #include "../src/walker.h"
+#include "../src/onemap.h"
 #include "harness.h"
 
 namespace {
@@ -123,7 +124,20 @@ SCENARIO(careerCaches, "career/caches", "Supply caches on the Frontier and in th
         const World& w = ctx.sim.world;
         const std::vector<CacheSpot> spots = cacheSpots(w);
         const std::string name = mapName(map);
-        ctx.check(name + ": ten caches", spots.size() == 10, std::to_string(spots.size()));
+        // (The Backcountry: the ten hand-made ones and fifty from its places (places.h); on the big map, the Frontier's ten in its region
+        // besides, and the twelve of the regions' grown country (regions2: four each).)
+        const size_t want = map == MAP_BACKCOUNTRY ? (w.regionStarts.empty() ? 60 : 82) : 10;
+        ctx.check(name + ": " + std::to_string(want) + " caches", spots.size() == want, std::to_string(spots.size()));
+        if (map == MAP_BACKCOUNTRY && !w.regionStarts.empty()) {
+            // The Frontier's own, still the Frontier's (an opened one stays opened), where they were on its map, moved over.
+            World fr(MAP_FRONTIER);
+            const std::vector<CacheSpot> own = cacheSpots(fr);
+            int same = 0;
+            for (const CacheSpot& o : own)
+                for (const CacheSpot& s : spots)
+                    same += s.id == o.id && s.map == MAP_FRONTIER && std::hypot(s.at.x - regionToWorld(MAP_FRONTIER, o.at).x, s.at.z - regionToWorld(MAP_FRONTIER, o.at).z) < 0.01;
+            ctx.check("the Frontier's caches in its region, still the Frontier's", same == (int)own.size() && !own.empty(), std::to_string(same));
+        }
         bool contents = true, dry = true, apart = true, onMap = true;
         std::string bad;
         for (size_t i = 0; i < spots.size(); i++) {
@@ -131,7 +145,7 @@ SCENARIO(careerCaches, "career/caches", "Supply caches on the Frontier and in th
             std::printf("  %s %s at (%.0f, %.0f): %s\n", name.c_str(), s.id.c_str(), s.at.x, s.at.z, s.part.empty() ? ("$" + std::to_string(s.cash)).c_str() : modPartTitle(s.part).c_str());
             if (s.part.empty() ? s.cash <= 0 : modPartTitle(s.part).empty()) contents = false, bad += " " + s.id;
             if (w.waterLevel(s.at.x, s.at.z) > s.at.y - 0.1) dry = false, bad += " wet:" + s.id;
-            if (std::fabs(s.at.x) > 590 || std::fabs(s.at.z) > 590) onMap = false;
+            if (std::fabs(s.at.x) > w.halfSize() - 10 || std::fabs(s.at.z) > w.halfSize() - 10) onMap = false;
             for (size_t j = 0; j < i; j++)
                 if (len(spots[j].at - s.at) < 30) apart = false, bad += " near:" + s.id;
             for (const Station& st : w.stations)

@@ -50,11 +50,21 @@ bool isDir(const std::string& path);
 long long fileMTime(const std::string& path);
 // Deletes a folder and everything in it (symlinks are removed, not followed); false if anything is left. (platform.cpp)
 bool removeTree(const std::string& dir);
+// Hands memory the program has freed back to the system (glibc keeps it in its arenas, one per thread that allocated: a map
+// built on a worker leaves hundreds of MB counted as ours after it is gone). A no-op where the allocator returns it itself.
+void releaseFreedMemory();
 
 // The running executable's full path (symlinks resolved) and its folder; "" if unknown.
 // (platform.cpp: /proc/self/exe, GetModuleFileName, _NSGetExecutablePath.)
 std::string exePath();
 std::string exeDir();
+
+// Finds an installed folder like "assets/audio/sfx": the first of these bases that has it wins -- the working folder (running from the
+// repo), the exe's folder, exeDir()/../Resources (inside a macOS .app) and exeDir()/.. and ../.. (a build/ or tools/ binary). The .deb,
+// the .app and the Windows shortcuts don't start the game in its own folder, so a cwd-relative "assets/..." misses there. Returns the
+// folder (base + "/" + rel), or "" if none has it. The second form takes explicit bases (for the tests). (platform.cpp)
+std::string findAssetDir(const std::string& rel);
+std::string findAssetDir(const std::string& rel, const std::vector<std::string>& bases);
 
 // Writes a file so a crash or power loss never leaves it half-written: the text goes to PATH.tmp (same folder), is flushed and
 // fsync'd, then renamed over PATH (Windows: MoveFileEx REPLACE_EXISTING). With keepBak, the file it replaces is first copied to

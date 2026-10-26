@@ -49,6 +49,14 @@ bool Settings::load(const std::string& path) {
             joinAddress = text == std::string("127.0.0.1") ? "" : text;  // (the old default: not something you typed)
             continue;
         }
+        if (k == "rendezvous") {
+            rendezvous = std::string(text).substr(0, 80);
+            continue;
+        }
+        if (k == "recent") {
+            if (recentJoins.size() < 3 && *text) recentJoins.push_back(std::string(text).substr(0, 60));
+            continue;
+        }
         if (k == "netpassword") {
             netPassword = std::string(text).substr(0, 32);
             continue;
@@ -78,6 +86,7 @@ bool Settings::load(const std::string& path) {
         else if (k == "winchspeed" && std::isfinite(v)) winchSpeed = std::clamp((double)v, recovery::kWinchSpeedMin, recovery::kWinchSpeedMax);
         else if (k == "volume") volume = std::min(std::max(v, 0.0f), 1.0f);
         else if (k == "music") music = std::min(std::max(v, 0.0f), 1.0f);
+        else if (k == "vehiclevolume" && std::isfinite(v)) vehicleVolume = std::clamp(v, 0.0f, 1.0f);
         else if (k == "ambience" && std::isfinite(v)) ambience = std::clamp(v, 0.0f, 1.0f);
         else if (k == "fov") fovDeg = std::min(std::max(v, 50.0f), 100.0f);
         else if (k == "fullscreen") fullscreen = v != 0;
@@ -138,7 +147,7 @@ bool Settings::save(const std::string& path) const {
                  fovDeg, fullscreen, vsync, showFps, steeringAssist);
     std::fprintf(f, "shadows %d\nmsaa %d\nao %d\nbloom %d\nclouds %d\nscale %.2f\ngrassq %d\nmap %d\n", gfx.shadows,
                  gfx.msaa, gfx.ao, gfx.bloom, gfx.clouds, gfx.renderScale, gfx.grass, map);
-    std::fprintf(f, "recovery %d\nmusic %.2f\nambience %.2f\nfuel %d\ncareer %d\n", realRecovery, music, ambience, fuelMode, career);
+    std::fprintf(f, "recovery %d\nmusic %.2f\nambience %.2f\nvehiclevolume %.2f\nfuel %d\ncareer %d\n", realRecovery, music, ambience, vehicleVolume, fuelMode, career);
     std::fprintf(f, "ground %d\nprops %d\ndrawdistance %.0f\nsharpen %d\nfpstarget %d\n", gfx.ground, gfx.props, gfx.drawDistance, gfx.sharpen, fpsTarget);
     std::fprintf(f, "physicsthreads %d\nfullhud %d\n", physicsThreads, fullHud);
     std::fprintf(f, "adaptive %d\ndevhotkeys %d\ngfxchosen %d\n", adaptiveQuality, devHotkeys, gfxChosen);
@@ -146,6 +155,8 @@ bool Settings::save(const std::string& path) const {
     if (!playerName.empty()) std::fprintf(f, "name %s\n", playerName.c_str());
     if (!joinAddress.empty()) std::fprintf(f, "join %s\n", joinAddress.c_str());
     if (!sessionName.empty()) std::fprintf(f, "session %s\n", sessionName.c_str());
+    if (!rendezvous.empty()) std::fprintf(f, "rendezvous %s\n", rendezvous.c_str());
+    for (const std::string& r : recentJoins) std::fprintf(f, "recent %s\n", r.c_str());
     if (!netPassword.empty()) std::fprintf(f, "netpassword %s\n", netPassword.c_str());
     if (rememberPassword) {  // (plain text, like the rest of this file; only when asked)
         std::fprintf(f, "rememberpw 1\n");
@@ -180,7 +191,7 @@ int msaaIndex(int samples) {
 namespace {
 enum Id {
     // Settings page.
-    UNITS = 1, VOLUME, FOV, RECOVERY, MUSIC, TIMEOFDAY, FUEL, AMBIENCE,
+    UNITS = 1, VOLUME, FOV, RECOVERY, MUSIC, TIMEOFDAY, FUEL, AMBIENCE, VEHICLEVOL = 80,
     ADAPTIVE = 9, QUALITY = 10, SHADOWS, AA, AO, BLOOM, CLOUDS, GRASS, SCALE, SCENERY, DETECT_ROW = 19,
     FULLSCREEN = 20, VSYNC, FPS, PHYSICSTHREADS, WINCHSPEED, FPSTARGET, FULLHUD,
     PADSTEER = 30, PADDEAD, PADRUMBLE, PADINVERTX, PADINVERTY, THROTTLECAP, THROTTLERESP, THROTTLEPAD, CROUCHMODE,
@@ -222,10 +233,11 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
         row.frac = frac;
         r.push_back(row);
     };
-    const char* mapHint = mapPick == MAP_MOUNTAIN   ? "TRAILHEAD, SUMMIT TRAIL, CRAWL PARK, VALLEY LOOP"
+    const char* mapHint = mapPick == MAP_MOUNTAIN   ? "START AT THE MOUNTAIN: SUMMIT TRAIL, CRAWL PARK, VALLEY LOOP"
                           : mapPick == MAP_FREEWAY ? "THREE LANES EACH WAY THAT NEVER END: TOP SPEED"
-                          : mapPick == MAP_FRONTIER ? "DESERT, RIVERS, LAKES, A RANGE, A RACE CIRCUIT, A RALLY STAGE"
-                          : mapPick == MAP_BACKCOUNTRY ? "TRAILS TO CRAWL, MUD, FORD AND EXPLORE WITH BUDDIES"
+                          : mapPick == MAP_FRONTIER ? "START AT THE FRONTIER: DESERT, RIVERS, A RANGE, A RACE CIRCUIT"
+                          : mapPick == MAP_BACKCOUNTRY ? "8 KM: TRAILS, RIVERS AND PLACES, THE MOUNTAIN, FRONTIER AND OPEN COUNTRY ROUND IT"
+                          : mapPick == MAP_WILDS ? "START IN THE OPEN COUNTRY: ROOM TO TRY ANYTHING"
                                                     : "EVERYTHING IN THE GAME, LAID OUT TO LOOK AT AND TRY";
     if (page == 0 && title) {
         const auto& cat = vehicleCatalog();
@@ -233,9 +245,9 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
         choice(MODE_ROW, "MODE", s.career ? "CAREER" : "SANDBOX", 2,
                s.career ? "START STOCK: FIND, WIN AND BUY BETTER PARTS" : "EVERY PART ON EVERY VEHICLE, ANY TIME");
         choice(VEHICLE_ROW, "VEHICLE", cat[vehicle].name, (int)listedVehicles().size(), cat[vehicle].blurb);
-        choice(MAP_ROW, "MAP", mapName(mapPick), (int)listedMaps().size(), mapHint);
+        choice(MAP_ROW, "MAP", mapPickName(mapPick), (int)listedMaps().size(), mapHint);
         button(LEVELS_ROW, "LEVELS", std::to_string(levels.size()) + " RACES, CLIMBS AND WORLDS");
-        button(MULTI_ROW, "MULTIPLAYER", netActive ? netStatus : "HOST OR JOIN A GAME");
+        button(MULTI_ROW, "MULTIPLAYER", netActive ? netStatus : "OPEN TO FRIENDS, OR JOIN A GAME");
         button(EDITOR_ROW, "WORLD EDITOR", "BUILD YOUR OWN WORLDS AND LEVELS");
         button(SECTION_ROW, "NEW SECTION", "HAND-BUILD AN OBSTACLE SECTION (DEV)");
         button(LAB_ROW, "MODEL LAB", "PICK, TWEAK OR REDO THE GAME'S MODELS");
@@ -337,12 +349,12 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
             button(LQUIT_ROW, "QUIT LEVEL", "BACK TO FREE DRIVE");
         }
         choice(VEHICLE_ROW, "VEHICLE", cat[vehicle].name, (int)listedVehicles().size(), cat[vehicle].blurb);
-        choice(MAP_ROW, "MAP", mapName(mapPick), (int)listedMaps().size(), mapHint);
+        choice(MAP_ROW, "MAP", mapPickName(mapPick), (int)listedMaps().size(), mapHint);
         button(LEVELS_ROW, "LEVELS", levelActive ? "PICK ANOTHER" : "RACES, CLIMBS AND WORLDS");
         button(JOBS_ROW, "JOBS", jobActive ? jobStatus : "RECOVERIES, CONVOYS, SCOUTING");
         button(GARAGE_ROW, "GARAGE", "BUY AND FIT PARTS, SEE THEM UP CLOSE");
         button(PILOT_ROW, "AUTOPILOT", pilotActive ? pilotStatus : "DRIVE ITSELF SOMEWHERE");
-        button(MULTI_ROW, "MULTIPLAYER", netActive ? netStatus : "HOST OR JOIN A GAME");
+        button(MULTI_ROW, "MULTIPLAYER", netActive ? netStatus : "OPEN TO FRIENDS, OR JOIN A GAME");
         button(SETTINGS_ROW, "SETTINGS", "UNITS, GRAPHICS, SOUND");
         button(CONTROLS_ROW, "CONTROLS");
         button(DEV_ROW, "DEV MENU", s.keys.name(KA_DEV_MENU) + ": SPAWN, TELEPORT, DEBUG VIEWS");
@@ -420,7 +432,7 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
             const size_t c1 = r.size();
             const std::string me = s.playerName.empty() ? std::string("PLAYER") : s.playerName;
             text(SESSION_ROW, "GAME NAME", s.sessionName, "TYPE IT", me + "'S GAME");
-            choice(HMAP_ROW, "MAP", mapName(mapPick), (int)listedMaps().size());
+            choice(HMAP_ROW, "MAP", mapPickName(mapPick), (int)listedMaps().size());
             choice(HMAX_ROW, "PLAYERS", "UP TO " + std::to_string(std::min(std::max(s.maxPlayers, 2), 8)), 7);
             {
                 const std::string shown = portEdited ? portText : std::to_string(s.hostPort);
@@ -482,6 +494,7 @@ std::vector<PauseMenu::Row> PauseMenu::rows(const Settings& s) const {
                t < 5 ? "CYCLE " + std::to_string((int)kDayLengths[t]) + " MIN" : std::string(timeOfDayName(t - 4)), 9);
     }
     slider(VOLUME, "VOLUME", pct(s.volume), s.volume, 21);
+    slider(VEHICLEVOL, "VEHICLE VOLUME", s.vehicleVolume > 0 ? pct(s.vehicleVolume) : "OFF", s.vehicleVolume, 21);
     slider(MUSIC, "MUSIC", s.music > 0 ? pct(s.music) : "OFF", s.music, 21);
     slider(AMBIENCE, "AMBIENCE", s.ambience > 0 ? pct(s.ambience) : "OFF", s.ambience, 21);
     slider(FOV, "FIELD OF VIEW", std::to_string((int)std::lround(s.fovDeg)) + " DEG", (s.fovDeg - 50) / 50, 26);
@@ -854,6 +867,7 @@ PauseMenu::Result PauseMenu::setSlider(int row, float frac, Settings& s) {
     frac = std::round(std::min(std::max(frac, 0.0f), 1.0f) * (steps - 1)) / (steps - 1);
     switch (r[row].id) {
         case VOLUME: s.volume = frac; break;
+        case VEHICLEVOL: s.vehicleVolume = frac; break;
         case MUSIC: s.music = frac; break;
         case AMBIENCE: s.ambience = frac; break;
         case FOV: s.fovDeg = 50 + 50 * frac; break;

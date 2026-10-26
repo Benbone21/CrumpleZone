@@ -8,6 +8,7 @@
 #include <map>
 #include <mutex>
 
+#include "drivetrainlook.h"
 #include "modelkit.h"
 #include "softbody.h"
 
@@ -62,8 +63,10 @@ double weightOf(const VehicleSpec& s) {
     return kg;
 }
 
-const char* engineModel(const VehicleSpec& vs) {
-    return vs.airCooled ? "crate_engine_flat4" : vs.cylinders >= 7 ? "crate_engine_v8" : vs.cylinders >= 5 ? "crate_engine_v6" : "crate_engine_i4";
+// A drivetrain part's own model, design and params (drivetrainlook.h).
+void showLook(Display& d, const PartLook& L) {
+    d.id = L.id, d.variant = L.variant;
+    for (int i = 0; i < L.n; i++) d.set.emplace_back(L.set[i].key, L.set[i].value);
 }
 
 }  // namespace
@@ -76,6 +79,11 @@ const std::vector<Category>& categories() {
             c.group = G_MOD, c.slot = k, c.name = modSlotName(k);
             for (const SlotName& n : kSlotNames)
                 if (n.slot == k) c.name = n.name, c.blurb = n.blurb;
+            v.push_back(c);
+        }
+        {
+            Category c;
+            c.group = G_PAINT, c.name = "PAINT", c.blurb = "BODY COLOUR, ACCENT AND FINISH";
             v.push_back(c);
         }
         // The rack's kinds, in the order the rack has them.
@@ -114,6 +122,16 @@ std::vector<Item> items(const Category& c, int vehicle, const ModSet& fitted, co
                 it.state = ST_LOCKED;
                 for (const std::string& w : partSources(it.key)) it.where += (it.where.empty() ? "" : "  OR  ") + w;
             }
+            out.push_back(it);
+        }
+        return out;
+    }
+    if (c.group == G_PAINT) {
+        static const char* names[PAINT_ROWS] = {"BODY COLOUR", "ACCENT: TRIM AND RIMS", "FINISH", "FACTORY PAINT"};
+        for (int r = 0; r < PAINT_ROWS; r++) {
+            Item it;
+            it.group = G_PAINT, it.option = r, it.name = names[r], it.key = std::string("PAINT:") + names[r];
+            it.state = ST_OWNED;
             out.push_back(it);
         }
         return out;
@@ -176,6 +194,7 @@ std::vector<Stat> compare(int vehicle, const ModSet& fitted, const ModSet& with)
 
 Display displayFor(const Item& it, int vehicle, const ModSet& fitted) {
     Display d;
+    if (it.group == G_PAINT) return d;  // (no part: the truck itself is the picture)
     if (it.group == G_GEAR) {
         const ShopItem& r = stationRack()[it.rack];
         d.id = r.model.empty() ? "tire_part" : r.model;
@@ -184,12 +203,12 @@ Display displayFor(const Item& it, int vehicle, const ModSet& fitted) {
         const VehicleSpec& W = tunedSpec(vehicle, with);
         const VehicleSpec& stock = vehicleCatalog()[vehicle];
         switch (it.slot) {
-            case MOD_ENGINE: d.id = engineModel(W); break;
+            case MOD_ENGINE: showLook(d, engineLook(W)); break;
             case MOD_SUSPENSION: d.id = W.leafSprings && W.leafFront ? "leaf_pack" : "coilover"; break;
             case MOD_TRANSMISSION:
                 // A new gearbox shows the box; new axle gears or lockers the axle's centre; a deeper low range the transfer case.
-                if (it.option == 0 || W.gearboxName != stock.gearboxName || W.gears != stock.gears) d.id = W.stallRpm > 0 ? "gearbox_auto" : "gearbox_manual";
-                else if (W.lowRange != stock.lowRange) d.id = "transfer_case";
+                if (it.option == 0 || W.gearboxName != stock.gearboxName || W.gears != stock.gears) showLook(d, gearboxLook(W));
+                else if (W.lowRange != stock.lowRange && *transferLook(W).id) showLook(d, transferLook(W));
                 else d.id = "differential";
                 break;
             default:  // wheels and tires: one tire of the size it gives
@@ -213,7 +232,7 @@ void modelBounds(const Display& d, V3& lo, V3& hi) {
     static std::mutex lock;
     static std::map<std::string, std::pair<V3, V3>> cache;
     static uint64_t cachedFor = ~0ull;
-    std::string key = d.id;
+    std::string key = d.id + "#" + std::to_string(d.variant);
     for (const auto& p : d.set) {
         char b[48];
         std::snprintf(b, sizeof b, " %s=%.4f", p.first.c_str(), p.second);
@@ -225,7 +244,7 @@ void modelBounds(const Display& d, V3& lo, V3& hi) {
     if (at == cache.end()) {
         std::pair<V3, V3> b(V3(-0.2, 0, -0.2), V3(0.2, 0.4, 0.2));
         if (const mk::ModelDef* def = mk::findModel(d.id)) {
-            const int v = mk::pickedVariant(*def);
+            const int v = d.variant >= 0 && d.variant < (int)def->variants.size() ? d.variant : mk::pickedVariant(*def);
             mk::P p = mk::pickedParams(*def, v);
             for (const auto& s : d.set) p.v[s.first] = s.second;
             mk::Mesh m;
@@ -239,10 +258,12 @@ void modelBounds(const Display& d, V3& lo, V3& hi) {
 
 // ---- The navigation ------------------------------------------------------------------
 
-void Shop::begin(int v, const ModSet& f, const Career& c, bool careerOn, bool station) {
+void Shop::begin(int v, const ModSet& f, const Career& c, bool careerOn, bool station, const CarPaint& p) {
     open = true;
+    paint = p, dragCtl = -1;
     vehicle = v, fitted = f, career = careerOn, atStation = station;
     previewing = false;
+    listFirst = -1;
     focus = F_CATS;
     cat = clampi(cat, 0, (int)categories().size() - 1);
     sel = 0;
@@ -253,14 +274,43 @@ void Shop::begin(int v, const ModSet& f, const Career& c, bool careerOn, bool st
 
 void Shop::refresh(const Career& c) {
     careerRef_ = &c;
-    list = items(category(), vehicle, fitted, c);
+    list = listFor(c);
     sel = clampi(sel, 0, std::max(0, (int)list.size() - 1));
+}
+
+namespace {
+std::string colourName(bool set, const uint8_t rgb[3]) {
+    if (!set) return "FACTORY";
+    const int p = paintPresetOf(rgb);
+    if (p >= 0) return paintPresets()[p].name;
+    char b[16];
+    std::snprintf(b, sizeof b, "CUSTOM %02X%02X%02X", rgb[0], rgb[1], rgb[2]);
+    return b;
+}
+}  // namespace
+
+std::vector<Item> Shop::listFor(const Career& c) const {
+    std::vector<Item> l = items(category(), vehicle, fitted, c);
+    if (category().group == G_PAINT) {
+        for (Item& it : l) {
+            if (it.option == PR_BODY) it.detail = colourName(paint.bodySet, paint.body);
+            else if (it.option == PR_ACCENT) it.detail = colourName(paint.accentSet, paint.accent);
+            else if (it.option == PR_FINISH) it.detail = paintFinishName(paint.finish);
+            else it.detail = paint.factory() ? "ALREADY FACTORY" : "BACK TO HOW IT CAME";
+        }
+    }
+    return l;
+}
+
+int Shop::paintRow() const {
+    if (category().group != G_PAINT || focus == F_CATS || sel < 0 || sel >= (int)list.size()) return -1;
+    return list[sel].option;
 }
 
 const Category& Shop::category() const { return categories()[clampi(cat, 0, (int)categories().size() - 1)]; }
 
 const Item* Shop::item() const {
-    if (focus != F_ITEMS || sel < 0 || sel >= (int)list.size()) return nullptr;
+    if (focus == F_CATS || sel < 0 || sel >= (int)list.size() || list[sel].group == G_PAINT) return nullptr;
     return &list[sel];
 }
 
@@ -277,7 +327,8 @@ void Shop::setCat(int i) {
     if (cat == was && !list.empty()) return;
     previewing = false;
     sel = 0;
-    if (careerRef_) list = items(category(), vehicle, fitted, *careerRef_);
+    listFirst = -1;  // (a new list opens centred on its fitted part)
+    if (careerRef_) list = listFor(*careerRef_);
     // (A mod slot opens on what's fitted.)
     for (int k = 0; k < (int)list.size(); k++)
         if (list[k].state == ST_FITTED) sel = k;
@@ -288,6 +339,10 @@ void Shop::setSel(int i) { sel = clampi(i, 0, std::max(0, (int)list.size() - 1))
 void Shop::nextCat(int dir) { setCat(cat + dir); }
 
 void Shop::move(int dir) {
+    if (focus == F_PICK) {
+        ctl = (ctl + dir + PICK_CTLS) % PICK_CTLS;
+        return;
+    }
     if (focus == F_CATS) {
         setCat(cat + dir);
         return;
@@ -299,12 +354,18 @@ void Shop::move(int dir) {
 Result Shop::close() {
     Result r;
     open = false;
+    dragCtl = -1;
     previewing = false;
     r.close = true;
     return r;
 }
 
 Result Shop::back() {
+    if (focus == F_PICK) {
+        focus = F_ITEMS;
+        dragCtl = -1;
+        return {};
+    }
     if (focus == F_ITEMS) {
         focus = F_CATS;
         previewing = false;
@@ -319,7 +380,7 @@ Result Shop::fit(int slot, int option, const std::string& said) {
     previewing = false;
     if (careerRef_) {
         const int keep = sel;
-        list = items(category(), vehicle, fitted, *careerRef_);
+        list = listFor(*careerRef_);
         setSel(keep);
     }
     r.fitted = true;
@@ -336,6 +397,23 @@ Result Shop::activate(Career& c) {
         sel = 0;  // (onto what's fitted)
         for (int k = 0; k < (int)list.size(); k++)
             if (list[k].state == ST_FITTED) sel = k;
+        return r;
+    }
+    if (focus == F_PICK) return back();
+    if (category().group == G_PAINT && paintRow() >= 0) {
+        const int row = paintRow();
+        if (row == PR_BODY || row == PR_ACCENT) enterPick(row);
+        else if (row == PR_FINISH) return cycleFinish(1);
+        else {
+            if (paint.factory()) {
+                r.toast = "IT'S ALREADY THE FACTORY PAINT";
+                return r;
+            }
+            paint = CarPaint();
+            r.painted = true;
+            r.toast = "FACTORY PAINT BACK ON";
+            refresh(c);
+        }
         return r;
     }
     const Item* it = item();
@@ -382,6 +460,105 @@ Result Shop::activate(Career& c) {
     }
 }
 
+// ---- CarPaint -------------------------------------------------------------------------------
+
+void Shop::enterPick(int row) {
+    focus = F_PICK, pickRow = row, ctl = PC_PRESET, dragCtl = -1;
+    const bool set = row == PR_BODY ? paint.bodySet : paint.accentSet;
+    const uint8_t* c = row == PR_BODY ? paint.body : paint.accent;
+    const uint8_t* start = set ? c : paintPresets()[0].rgb;
+    rgbToHsv(start[0] / 255.0, start[1] / 255.0, start[2] / 255.0, hsv[0], hsv[1], hsv[2]);
+}
+
+// The picker's colour (hue, saturation, brightness) onto the colour being edited.
+void Shop::setPickColour(Result& r) {
+    double R, G, B;
+    hsvToRgb(hsv[0], hsv[1], hsv[2], R, G, B);
+    const CarPaint was = paint;
+    if (pickRow == PR_BODY) paint.setBody(R, G, B);
+    else paint.setAccent(R, G, B);
+    if (paint != was) r.painted = true;
+    if (careerRef_) {
+        const int keep = sel;
+        list = listFor(*careerRef_);
+        setSel(keep);
+    }
+}
+
+void Shop::applyPreset(int i, Result& r) {
+    const auto& pr = paintPresets();
+    if (i < 0 || i >= (int)pr.size()) return;
+    const CarPaint was = paint;
+    uint8_t* c = pickRow == PR_BODY ? paint.body : paint.accent;
+    for (int k = 0; k < 3; k++) c[k] = pr[i].rgb[k];
+    (pickRow == PR_BODY ? paint.bodySet : paint.accentSet) = true;
+    rgbToHsv(c[0] / 255.0, c[1] / 255.0, c[2] / 255.0, hsv[0], hsv[1], hsv[2]);
+    if (paint != was) r.painted = true;
+    r.toast = pr[i].name;
+    if (careerRef_) {
+        const int keep = sel;
+        list = listFor(*careerRef_);
+        setSel(keep);
+    }
+}
+
+Result Shop::pickAdjust(int dir) {
+    Result r;
+    if (ctl == PC_PRESET) {
+        const int n = (int)paintPresets().size();
+        const bool set = pickRow == PR_BODY ? paint.bodySet : paint.accentSet;
+        const int at = set ? paintPresetOf(pickRow == PR_BODY ? paint.body : paint.accent) : -1;
+        applyPreset(at < 0 ? (dir > 0 ? 0 : n - 1) : (at + dir + n) % n, r);
+        return r;
+    }
+    const int k = ctl - PC_HUE;
+    const double step = 0.02 * dir;
+    if (k == 0) hsv[0] = hsv[0] + step - std::floor(hsv[0] + step);
+    else hsv[k] = std::min(1.0, std::max(0.0, hsv[k] + step));
+    setPickColour(r);
+    return r;
+}
+
+Result Shop::cycleFinish(int dir) {
+    Result r;
+    paint.finish = (uint8_t)((paint.finish + dir + PF_FINISHES) % PF_FINISHES);
+    r.painted = true;
+    r.toast = std::string("FINISH: ") + paintFinishName(paint.finish);
+    if (careerRef_) {
+        const int keep = sel;
+        list = listFor(*careerRef_);
+        setSel(keep);
+    }
+    return r;
+}
+
+Result Shop::pointer(float x, float y, bool press, bool held) {
+    Result r;
+    if (!held) {
+        dragCtl = -1;
+        return r;
+    }
+    int col = -1, row = -1;
+    if (press && hitAt(x, y, col, row) && col >= 2) {
+        if (focus != F_PICK) {
+            const int pr = paintRow();
+            enterPick(pr == PR_ACCENT ? PR_ACCENT : PR_BODY);
+        }
+        if (col == 2) {
+            ctl = PC_PRESET;
+            applyPreset(row, r);
+            return r;
+        }
+        if (row >= 0 && row < 3) dragCtl = row, ctl = PC_HUE + row;
+    }
+    if (dragCtl >= 0 && focus == F_PICK) {
+        const Slider& sl = sliders[dragCtl];
+        hsv[dragCtl] = std::min(1.0, std::max(0.0, (double)((x - sl.x) / std::max(1.0f, sl.w))));
+        setPickColour(r);
+    }
+    return r;
+}
+
 Result Shop::tryOn() {
     Result r;
     const Item* it = item();
@@ -421,6 +598,32 @@ Result Shop::factory(Career& c) {
 Result Shop::key(int sc, Career& c) {
     careerRef_ = &c;
     Result r;
+    if (focus == F_PICK) {  // the colour picker: up and down pick the control, left and right change it
+        switch (sc) {
+            case K_LEFT:
+            case K_A: return pickAdjust(-1);
+            case K_RIGHT:
+            case K_D: return pickAdjust(1);
+            case K_R:
+            case K_B: {
+                bool& set = pickRow == PR_BODY ? paint.bodySet : paint.accentSet;
+                if (set) set = false, r.painted = true, r.toast = "FACTORY COLOUR BACK";
+                refresh(c);
+                return r;
+            }
+            case K_ENTER:
+            case K_KPENTER:
+            case K_SPACE: return back();
+            default: break;
+        }
+    } else if (paintRow() == PR_FINISH && (sc == K_LEFT || sc == K_A || sc == K_RIGHT || sc == K_D)) {
+        return cycleFinish(sc == K_LEFT || sc == K_A ? -1 : 1);
+    } else if (category().group == G_PAINT && focus == F_ITEMS && (sc == K_R || sc == K_B)) {
+        if (paint.factory()) r.toast = "IT'S ALREADY THE FACTORY PAINT";
+        else paint = CarPaint(), r.painted = true, r.toast = "FACTORY PAINT BACK ON";
+        refresh(c);
+        return r;
+    }
     switch (sc) {
         case K_ESC:
         case K_BACKSPACE: return back();
@@ -458,11 +661,16 @@ Result Shop::key(int sc, Career& c) {
 
 void Shop::hover(int col, int row) {
     if (col == 0 && focus == F_CATS) setCat(row);
-    if (col == 1 && focus == F_ITEMS) setSel(row);
+    if (col == 1 && (focus == F_ITEMS || focus == F_PICK)) {
+        if (focus == F_PICK && row != sel) focus = F_ITEMS;
+        setSel(row);
+    }
 }
 
 Result Shop::click(int col, int row, Career& c) {
     careerRef_ = &c;
+    if (col >= 2) return {};  // (the picker: pointer())
+    if (focus == F_PICK) focus = F_ITEMS, dragCtl = -1;
     if (col == 0) {
         if (focus == F_ITEMS && row == cat) return back();
         focus = F_CATS;
@@ -496,6 +704,10 @@ void Shop::tick(double dt) {
 
 std::string Shop::actionLabel(const Career& c) const {
     if (focus == F_CATS) return "OPEN";
+    if (const int pr = paintRow(); pr >= 0) {
+        if (focus == F_PICK) return "DONE";
+        return pr == PR_FINISH ? "NEXT FINISH" : pr == PR_FACTORY ? (paint.factory() ? "" : "RESET") : "PICK A COLOUR";
+    }
     const Item* it = item();
     if (!it) return "";
     if (it->group == G_GEAR) {
@@ -513,6 +725,12 @@ std::string Shop::actionLabel(const Career& c) const {
 }
 
 std::string Shop::hint(bool pad) const {
+    if (focus == F_PICK)
+        return pad ? "D-PAD UP DOWN CONTROL   LEFT RIGHT CHANGE   A DONE   Y FACTORY COLOUR   B BACK"
+                   : "W S CONTROL   A D CHANGE   MOUSE CLICK OR DRAG   R FACTORY COLOUR   ENTER DONE";
+    if (paintRow() >= 0)
+        return pad ? "D-PAD MOVE   A PICK   LEFT RIGHT FINISH   Y FACTORY PAINT   RIGHT STICK TURN   B BACK"
+                   : "W S MOVE   ENTER PICK   A D FINISH   R FACTORY PAINT   DRAG TURN   WHEEL ZOOM   ESC BACK";
     if (focus == F_CATS)
         return pad ? "D-PAD MOVE   A OPEN   LB RB CATEGORY   Y FACTORY PART   B CLOSE" : "W S MOVE   ENTER OPEN   R FACTORY PART   C SPEEDO   ESC CLOSE";
     const Item* it = item();
@@ -597,6 +815,7 @@ bool liftSync(Sim& sim, const Shop& s, const std::function<bool(const VehicleSpe
     if (sim.player < 0 || sim.player >= (int)sim.cars.size()) return false;
     Car& c = sim.cars[sim.player];
     if (c.isProp() || c.remote || !c.spec || c.spec->model != s.vehicle) return false;
+    if (c.paint != s.paint) c.setPaint(s.paint);  // (paint is cheap: the PAINT page shows live)
     const ModSet shown = s.open ? s.shown() : s.fitted;
     const VehicleSpec& want = tunedSpec(s.vehicle, shown);
     if (c.spec == &want) return false;

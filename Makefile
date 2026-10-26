@@ -10,26 +10,39 @@ LDLIBS   := -l:libSDL2-2.0.so.0 -lpthread -lm
 
 MODELS   := $(sort $(wildcard src/models/*.cpp))
 PHYS     := src/modelkit.cpp $(MODELS) src/perf.cpp src/physics_workers.cpp src/collision.cpp src/props.cpp src/jobs.cpp src/walker.cpp src/softbody.cpp src/recovery.cpp src/net.cpp src/level.cpp src/levels_builtin.cpp src/levelrun.cpp src/laptimer.cpp src/editcore.cpp src/saveflow.cpp src/textedit.cpp src/autopilot.cpp src/pilotsense.cpp src/carbuild.cpp src/world.cpp src/spawnpad.cpp src/sections.cpp src/mountain.cpp src/freeway.cpp src/frontier.cpp src/backcountry.cpp src/vehicles.cpp src/mods.cpp src/gamepad.cpp src/platform.cpp src/tires.cpp src/interact.cpp src/prompts.cpp src/fixes.cpp src/carparts.cpp src/carframe.cpp src/vtools.cpp src/keybinds.cpp src/devmenu.cpp src/career.cpp src/anchors.cpp src/biome.cpp src/plants.cpp src/handwork.cpp src/sectionfile.cpp src/trunk.cpp src/invmenu.cpp src/objshape.cpp src/bodyshell.cpp src/throttle.cpp src/debuginfo.cpp src/forest.cpp src/meshopt.cpp src/frameprof.cpp src/watermesh.cpp src/worldsound.cpp src/texenc.cpp src/occlusion.cpp src/loadprof.cpp src/meshcache.cpp src/benchreport.cpp src/simdkern.cpp src/trafficlod.cpp
-SCEN     := tests/perf.cpp tests/carsleep.cpp tests/drivetrain.cpp tests/net_state.cpp tests/collision.cpp tests/props.cpp tests/jobs.cpp tests/walker.cpp tests/editor.cpp tests/levels.cpp tests/circuit.cpp tests/frontier.cpp tests/backcountry.cpp tests/freeway.cpp tests/surfaces.cpp tests/handling.cpp tests/harness.cpp tests/scenarios.cpp tests/components.cpp tests/offroad.cpp tests/recovery.cpp tests/net.cpp tests/autopilot.cpp tests/nearby.cpp tests/gamepad.cpp tests/tires.cpp tests/vtools.cpp tests/simulation.cpp tests/vehicle_physics.cpp tests/dynamics.cpp tests/extreme.cpp tests/environment.cpp tests/towing.cpp tests/keybinds.cpp tests/park-brake.cpp tests/devmenu.cpp tests/treads.cpp tests/wobble.cpp tests/jeskowob.cpp tests/career.cpp tests/models.cpp tests/carparts.cpp tests/sections.cpp tests/anchors.cpp tests/music.cpp tests/trunk.cpp tests/fieldrepair.cpp tests/net_security.cpp tests/carframe.cpp tests/spawnpads.cpp tests/invmenu.cpp tests/rumble.cpp tests/editbrush.cpp tests/objshape.cpp tests/editobjects.cpp tests/throttle.cpp tests/f3info.cpp tests/plants.cpp tests/forest.cpp tests/grass.cpp tests/textedit.cpp tests/winch_payout.cpp tests/meshopt.cpp tests/frameprof.cpp tests/crashshare.cpp tests/gfxdetect.cpp tests/net_bandwidth.cpp tests/net_time.cpp tests/texenc.cpp tests/carshell.cpp tests/occlusion.cpp tests/loading.cpp tests/simd.cpp tests/watchdog.cpp tests/trafficlod.cpp tests/speedo.cpp tests/hudlayout.cpp tests/laptimer.cpp tests/provground.cpp tests/blowout.cpp tests/tiretemp.cpp tests/frontalign.cpp tests/camhold.cpp tests/prompts.cpp tests/mainmenu.cpp src/mainmenu.cpp tests/menucamp.cpp src/menucamp.cpp
+SCEN     := tests/perf.cpp tests/carsleep.cpp tests/drivetrain.cpp tests/net_state.cpp tests/collision.cpp tests/props.cpp tests/jobs.cpp tests/walker.cpp tests/editor.cpp tests/levels.cpp tests/circuit.cpp tests/frontier.cpp tests/backcountry.cpp tests/freeway.cpp tests/surfaces.cpp tests/handling.cpp tests/harness.cpp tests/scenarios.cpp tests/components.cpp tests/offroad.cpp tests/recovery.cpp tests/net.cpp tests/autopilot.cpp tests/nearby.cpp tests/gamepad.cpp tests/tires.cpp tests/vtools.cpp tests/simulation.cpp tests/vehicle_physics.cpp tests/dynamics.cpp tests/extreme.cpp tests/environment.cpp tests/towing.cpp tests/keybinds.cpp tests/park-brake.cpp tests/devmenu.cpp tests/treads.cpp tests/wobble.cpp tests/jeskowob.cpp tests/career.cpp tests/models.cpp tests/carparts.cpp tests/sections.cpp tests/anchors.cpp tests/music.cpp tests/trunk.cpp tests/fieldrepair.cpp tests/net_security.cpp tests/carframe.cpp tests/spawnpads.cpp tests/worldswitch.cpp tests/invmenu.cpp tests/rumble.cpp tests/editbrush.cpp tests/objshape.cpp tests/editobjects.cpp tests/throttle.cpp tests/f3info.cpp tests/plants.cpp tests/forest.cpp tests/grass.cpp tests/textedit.cpp tests/winch_payout.cpp tests/meshopt.cpp tests/frameprof.cpp tests/crashshare.cpp tests/gfxdetect.cpp tests/net_bandwidth.cpp tests/net_time.cpp tests/texenc.cpp tests/carshell.cpp tests/occlusion.cpp tests/loading.cpp tests/simd.cpp tests/watchdog.cpp tests/trafficlod.cpp tests/speedo.cpp tests/hudlayout.cpp tests/laptimer.cpp tests/provground.cpp tests/blowout.cpp tests/tiretemp.cpp tests/frontalign.cpp tests/camhold.cpp tests/prompts.cpp tests/mainmenu.cpp src/mainmenu.cpp tests/mpmenu.cpp src/mpmenu.cpp tests/menucamp.cpp src/menucamp.cpp
 PHYS     += src/allocstat.cpp
-PHYS     += src/carentry.cpp
+PHYS     += src/carentry.cpp src/drivetrainlook.cpp
 PHYS     += src/worldcache.cpp src/bytepack.cpp
 PHYS     += src/toolsounds.cpp src/repairsync.cpp src/battery.cpp
-PHYS     += src/rivers.cpp
+PHYS     += src/rivers.cpp src/places.cpp
+PHYS     += src/onemap.cpp src/onemapbuild.cpp
+PHYS     += src/regionland.cpp
+PHYS     += src/netbase.cpp src/nettunnel.cpp src/rendezvous.cpp
 SCEN     += tests/baja.cpp tests/net_repair.cpp
 SCEN     += tests/entercar.cpp
 SCEN     += tests/winchfoot.cpp tests/allocs.cpp tests/benchreport.cpp tests/tracks.cpp src/fx.cpp
-SCEN     += tests/rivers.cpp tests/enginework.cpp tests/battery.cpp
+SCEN     += tests/rivers.cpp tests/enginework.cpp tests/battery.cpp tests/places.cpp
 SCEN     += tests/people.cpp src/people.cpp
 SCEN     += tests/garageshop.cpp src/garageshop.cpp
 PHYS     += src/careerworld.cpp
 SCEN     += tests/careerworld.cpp
 PHYS     += src/carsave.cpp src/careersession.cpp
 SCEN     += tests/carsave.cpp
-GAME_SRC := src/main.cpp src/lab.cpp src/gamepad_sdl.cpp src/editor.cpp src/coop.cpp src/gl.cpp src/gpu.cpp src/render.cpp src/carvisual.cpp src/peopleseat.cpp src/garageshopdraw.cpp src/scenery.cpp src/menu.cpp src/menuscene.cpp src/mainmenudraw.cpp src/mappreview.cpp src/engine_samples.cpp src/engineaudio.cpp src/audio.cpp src/music.cpp src/ambience.cpp src/daylight.cpp src/lights.cpp src/groundtex.cpp src/groundshader.cpp src/propdraw.cpp src/invdraw.cpp src/debugscreen.cpp src/buildinfo.cpp $(PHYS) $(SCEN) src/treedraw.cpp src/texcomp.cpp
+SCEN     += tests/drivetrainmodels.cpp
+PHYS     += src/paint.cpp
+SCEN     += tests/carpaint.cpp
+SCEN     += tests/net_rendezvous.cpp tests/net_codes.cpp
+SCEN     += tests/onemap.cpp
+SCEN     += tests/treestuck.cpp
+SCEN     += tests/hitches.cpp
+PHYS     += src/bgwork.cpp
+PHYS     += src/realterrain.cpp src/realterrainplan.cpp src/realterrainbuild.cpp
+SCEN     += tests/realterrain.cpp
+GAME_SRC := src/main.cpp src/lab.cpp src/gamepad_sdl.cpp src/editor.cpp src/coop.cpp src/gl.cpp src/gpu.cpp src/render.cpp src/carvisual.cpp src/peopleseat.cpp src/garageshopdraw.cpp src/mpmenudraw.cpp src/scenery.cpp src/menu.cpp src/menuscene.cpp src/mainmenudraw.cpp src/mappreview.cpp src/engine_samples.cpp src/engineaudio.cpp src/audio.cpp src/music.cpp src/ambience.cpp src/daylight.cpp src/lights.cpp src/groundtex.cpp src/groundshader.cpp src/propdraw.cpp src/invdraw.cpp src/debugscreen.cpp src/buildinfo.cpp $(PHYS) $(SCEN) src/treedraw.cpp src/texcomp.cpp
 GAME_OBJ := $(patsubst %.cpp,build/%.o,$(GAME_SRC))
 TEST_OBJ := $(patsubst %.cpp,build/%.o,tests/run_tests.cpp $(PHYS) $(SCEN) src/music.cpp)
-HEADERS  := $(wildcard src/*.h tests/*.h)
+HEADERS  := $(wildcard src/*.h src/models/*.h tests/*.h)
 
 all: crumplezone
 
@@ -59,6 +72,10 @@ build/run_tests: $(TEST_OBJ)
 # Dedicated multiplayer server (headless, no SDL/OpenGL).
 build/crumplezone-server: build/src/server_main.o $(PHYS)
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -lm
+
+# Join-code backend (headless, tiny: no game code): docs/server-rendezvous-setup.md.
+build/crumplezone-rendezvous: build/tools/rendezvous_main.o build/src/rendezvous.o build/src/netbase.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lm
 
 # CPU-only workload; args: car count, separated|pileup, 2 kHz steps.
 build/bench_sim: build/tools/bench_sim.o $(patsubst %.cpp,build/%.o,$(PHYS))
@@ -103,6 +120,10 @@ build/engine_preview: build/tools/engine_preview.o build/src/engineaudio.o build
 
 # Same CPU benchmark compiled with the portable Windows release flags.
 build/win/bench_sim.exe: build/win/obj/tools/bench_sim.o $(patsubst %.cpp,build/win/obj/%.o,$(PHYS))
+	$(WINCXX) $(WINFLAGS) -o $@ $^ -lws2_32 -liphlpapi -static -static-libgcc -static-libstdc++
+
+# The world-build timer for Windows (its land hash: the same big map on Linux and Windows? docs/plans/one-map.md).
+build/win/worldtime.exe: build/win/obj/tools/worldtime.o $(patsubst %.cpp,build/win/obj/%.o,$(PHYS))
 	$(WINCXX) $(WINFLAGS) -o $@ $^ -lws2_32 -liphlpapi -static -static-libgcc -static-libstdc++
 
 build/win/run_tests.exe: build/win/obj/tests/run_tests.o $(patsubst %.cpp,build/win/obj/%.o,$(PHYS) $(SCEN) src/music.cpp)
@@ -222,7 +243,7 @@ windows-installer: windows
 # A universal (Apple silicon + Intel) app with SDL2.framework inside it. Needs the official
 # SDL2 macOS framework (from the SDL2-2.x.dmg) in $(MACSDL). Ad-hoc signed only: the first
 # launch needs right-click > Open (or: xattr -dr com.apple.quarantine CrumpleZone.app).
-VERSION  ?= 0.4.0
+VERSION  ?= 0.4.6
 MACCXX   ?= clang++
 MACSDL   ?= third_party/sdl2-mac
 MACLTO   ?= -flto=thin
@@ -348,3 +369,7 @@ clean:
 	rm -rf build crumplezone
 
 .PHONY: windows windows-installer mac mac-dev mac-dmg deb all test run clean bake meshaudit
+
+# The real-terrain importer's tool (docs/real-terrain.md): build/realterrain info|sample|make|synth ...
+build/realterrain: build/tools/realterrain.o $(patsubst %.cpp,build/%.o,$(PHYS))
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -lm

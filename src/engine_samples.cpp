@@ -205,7 +205,7 @@ float EngineVoice::sample(const EngineInput& input, float dt, const engineSample
     const float liters = std::isfinite(input.liters) ? std::clamp(input.liters, 0.6f, 10.0f) : 1.6f;
     const uint64_t identity = (uint64_t)input.recording | (uint64_t)std::clamp(input.cylinders, 1, 12) << 8 |
         (uint64_t)std::clamp(input.induction, 0, 2) << 12 | (uint64_t)input.flatPlane << 14 |
-        (uint64_t)std::lround(liters * 100) << 16;
+        (uint64_t)std::lround(liters * 100) << 16 | (uint64_t)input.voice.kind << 32;
     if (identity_ == UINT64_MAX) { identity_ = identity; lastInput_ = input; }
     if (bank != bank_ || identity != identity_) {
         previous_ = recorded_; previousBank_ = bank_; bank_ = bank;

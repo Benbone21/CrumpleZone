@@ -8,6 +8,7 @@
 #include <string>
 
 #include "../src/autopilot.h"
+#include "../src/onemap.h"
 #include "harness.h"
 
 namespace {
@@ -87,15 +88,21 @@ double waterDepth(const World& w, const V3& p, double r = 2) {
 }  // namespace
 
 SCENARIO(backcountryMap, "maps/backcountry",
-         "The Backcountry: builds in reasonable time; 4 repair stations on flat pads; every surface is somewhere; 3-5 km of trail; the ford is shallow and the deep crossing deep") {
+         "The Backcountry: builds in reasonable time; 4 camp repair stations (and the ranger station's) on flat pads; every surface is somewhere; 3-5 km of trail; the ford is shallow and the deep crossing deep") {
     const auto t0 = std::chrono::steady_clock::now();
     ctx.sim.world = World(MAP_BACKCOUNTRY);
     const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     const World& w = ctx.sim.world;
     ctx.metric("time to build the map", secs, "s", 0, 6);
     // Stations: four, on pads flat to a few centimetres across their reach.
-    ctx.metric("repair stations", (double)w.stations.size(), "", 3, 4);
+    // (Four camps and the ranger station; on the big map the regions round it bring theirs besides: the Mountain's 3, the Frontier's 5.)
+    int own = 0;
+    for (const Station& st : w.stations) own += regionContaining(st.p.x, st.p.z) == nullptr && regionAround(st.p.x, st.p.z) == nullptr;
+    ctx.metric("repair stations", (double)own, "", 3, 5);
+    // (...and each region's grown country an outpost's repair bay: regions2.)
+    ctx.check("the regions' stations besides", w.stations.size() - own == (w.regionStarts.empty() ? 0u : 11u), std::to_string(w.stations.size() - own));
     for (const Station& st : w.stations) {
+        if (regionContaining(st.p.x, st.p.z)) continue;  // (a region's are its old map's: onemap/region-copy)
         double lo = 1e9, hi = -1e9;
         for (double dx = -st.r; dx <= st.r; dx += 1.5)
             for (double dz = -st.r; dz <= st.r; dz += 1.5) {

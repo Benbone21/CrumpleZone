@@ -7,6 +7,8 @@
 #include <sstream>
 
 #include "mods.h"
+#include "onemap.h"
+#include "places.h"
 #include "platform.h"
 #include "vehicles.h"
 #include "world.h"
@@ -101,9 +103,15 @@ std::vector<CacheSpot> cacheSpots(const World& world) {
     if (world.map == MAP_FRONTIER) list = kFrontier, n = sizeof(kFrontier) / sizeof(kFrontier[0]);
     else if (world.map == MAP_BACKCOUNTRY) list = kBackcountry, n = sizeof(kBackcountry) / sizeof(kBackcountry[0]);
     else if (world.map == MAP_PROVING_GROUND) list = kProving, n = sizeof(kProving) / sizeof(kProving[0]);
-    for (int i = 0; i < n; i++) {
-        const Loot& l = list[i];
-        const V3 f = (!l.feature ? V3() : world.map == MAP_FRONTIER ? frontierFeature(l.feature) : backcountryFeature(l.feature)) + V3(l.dx, 0, l.dz);
+    // On the big map (onemap.h) the Frontier's caches are in its region: moved over, and still the Frontier's (an opened one stays opened).
+    const bool frontierHere = world.map == MAP_BACKCOUNTRY && !world.regionStarts.empty() && regionOf(MAP_FRONTIER);
+    const int nOwn = n, nFrontier = frontierHere ? (int)(sizeof(kFrontier) / sizeof(kFrontier[0])) : 0;
+    for (int i = 0; i < nOwn + nFrontier; i++) {
+        const bool region = i >= nOwn;
+        const Loot& l = region ? kFrontier[i - nOwn] : list[i];
+        const int lootMap = region ? (int)MAP_FRONTIER : world.map;
+        const V3 f = regionToWorld(region ? (int)MAP_FRONTIER : -1,
+                                   (!l.feature ? V3() : lootMap == MAP_FRONTIER ? frontierFeature(l.feature) : backcountryFeature(l.feature)) + V3(l.dx, 0, l.dz));
         // (On dry ground: out of the bog or the river, the nearest spot above the water.)
         V3 p = f;
         auto dry = [&](const V3& q) { return world.waterLevel(q.x, q.z) < world.height(q.x, q.z) - 0.3; };
@@ -116,7 +124,15 @@ std::vector<CacheSpot> cacheSpots(const World& world) {
                 }
             }
         p.y = world.height(p.x, p.z);
-        out.push_back({l.id, world.map, p, lootKey(l), l.cash, cacheGear(i)});
+        out.push_back({l.id, lootMap, p, lootKey(l), l.cash, cacheGear(region ? i - nOwn : i)});
+    }
+    // The big map's caches come from its table of places (places.h), after the hand-made ones (whose ids stay as they were).
+    int k = nOwn;
+    for (const MapPlace* pl : placesOfKind(world.map, PK_CACHE)) {
+        if (std::max(std::fabs(pl->p.x), std::fabs(pl->p.z)) > world.halfSize() - 20) continue;  // (the regions' grown country: not on the 6 km map)
+        V3 p = pl->p;
+        p.y = world.height(p.x, p.z);
+        out.push_back({pl->name, world.map, p, "", pl->reward, cacheGear(k++)});
     }
     return out;
 }

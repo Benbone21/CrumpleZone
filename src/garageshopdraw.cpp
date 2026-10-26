@@ -54,6 +54,7 @@ const float* stateColor(const Item& it) {
 }
 
 std::string stateText(const Shop& s, const Item& it) {
+    if (it.group == G_PAINT) return "";
     if (it.group == G_GEAR) {
         const std::string have = it.carried < 0 ? "" : it.tool ? (it.carried ? "YOU HAVE ONE" : "") : (it.carried ? "YOU CARRY " + std::to_string(it.carried) : "");
         if (!s.career) return have;
@@ -68,6 +69,93 @@ std::string stateText(const Shop& s, const Item& it) {
     }
 }
 }  // namespace
+
+// A frame round a rectangle.
+static void outline(Renderer& r, float x, float y, float w, float h, float t, const float* c, float a) {
+    r.rect(x, y, w, t, c[0], c[1], c[2], a);
+    r.rect(x, y + h - t, w, t, c[0], c[1], c[2], a);
+    r.rect(x, y, t, h, c[0], c[1], c[2], a);
+    r.rect(x + w - t, y, t, h, c[0], c[1], c[2], a);
+}
+
+// The PAINT page's card: the swatches (16 presets), the hue / saturation / brightness sliders, the finish.
+static void drawPaintCard(Renderer& r, Shop& s, int prow, float cx, float y0, float pw, float u, float a, bool padLast) {
+    const float small = px(1.2f * u), ns = px(2.2f * u), lh = 8 * small + 7 * u;
+    const bool picker = prow == PR_BODY || prow == PR_ACCENT;
+    const bool editing = s.focus == F_PICK;
+    const int which = picker ? prow : s.pickRow;
+    const bool set = which == PR_BODY ? s.paint.bodySet : s.paint.accentSet;
+    const uint8_t* cur = which == PR_BODY ? s.paint.body : s.paint.accent;
+    const float sw = (pw - 12 * u) / 8.0f, swH = sw * 0.8f;
+    const float sliderH = 14 * u, gap = 10 * u;
+    const float cardH = picker ? 16 * u + 8 * ns + lh * 2 + 2 * swH + 3 * (sliderH + lh + gap) + lh * 2 + 10 * u : 16 * u + 8 * ns + lh * 4 + 10 * u;
+    pill(r, cx - 8 * u, y0 - 8 * u, pw + 16 * u, cardH, kPanel[0], kPanel[1], kPanel[2], 0.82f * a);
+    float y = y0 + 6 * u;
+    std::string name = prow >= 0 ? s.list[s.sel].name : std::string("PAINT");
+    label(r, cx + 6 * u, y, ns, fit(name, pw - 12 * u, ns), kAmber[0], kAmber[1], kAmber[2], a);
+    y += 8 * ns + 10 * u;
+    if (!picker) {
+        const std::string d = prow >= 0 ? s.list[s.sel].detail : std::string("BODY COLOUR, ACCENT AND FINISH");
+        r.text(cx + 6 * u, y, small, fit(d, pw - 12 * u, small), 0.85f, 0.85f, 0.88f, a);
+        y += lh * 1.4f;
+        const std::string how = prow == PR_FINISH ? "ENTER OR LEFT AND RIGHT CHANGES THE FINISH" : prow == PR_FACTORY ? "ENTER PUTS THE FACTORY PAINT BACK" : "PICK A ROW";
+        r.text(cx + 6 * u, y, small, fit(how, pw - 12 * u, small), kGrey[0], kGrey[1], kGrey[2], a);
+        y += lh * 1.4f;
+        r.text(cx + 6 * u, y, small, "SAVED WITH YOUR GARAGE; EVERYONE IN A SESSION SEES IT", kGrey[0], kGrey[1], kGrey[2], a * 0.8f);
+        return;
+    }
+    // The colour now, and its name.
+    double hr, hg, hb;
+    hsvToRgb(s.hsv[0], s.hsv[1], s.hsv[2], hr, hg, hb);
+    const float cr = set ? cur[0] / 255.0f : (float)hr, cg = set ? cur[1] / 255.0f : (float)hg, cb = set ? cur[2] / 255.0f : (float)hb;
+    r.rect(cx + 6 * u, y, 28 * u, lh * 1.7f, cr, cg, cb, a * (set ? 1.0f : 0.45f));
+    outline(r, cx + 6 * u, y, 28 * u, lh * 1.7f, 1.5f * u, kGrey, a);
+    const std::string pname = set ? (paintPresetOf(cur) >= 0 ? std::string(paintPresets()[paintPresetOf(cur)].name) : std::string("CUSTOM")) : std::string("FACTORY");
+    char hex[16];
+    std::snprintf(hex, sizeof hex, "%02X%02X%02X", (int)std::lround(cr * 255), (int)std::lround(cg * 255), (int)std::lround(cb * 255));
+    r.text(cx + 42 * u, y + 2 * u, small, fit(pname, pw - 60 * u, small), 0.92f, 0.92f, 0.95f, a);
+    r.text(cx + 42 * u, y + 2 * u + lh * 0.85f, small, set ? std::string("#") + hex : std::string("PICK TO REPAINT"), kGrey[0], kGrey[1], kGrey[2], a);
+    y += lh * 2;
+    // The 16 presets, 8 across.
+    const auto& pr = paintPresets();
+    const int at = set ? paintPresetOf(cur) : -1;
+    for (int i = 0; i < (int)pr.size(); i++) {
+        const float x = cx + 6 * u + (i % 8) * sw, yy = y + (i / 8) * swH;
+        r.rect(x + 1.5f * u, yy + 1.5f * u, sw - 3 * u, swH - 3 * u, pr[i].rgb[0] / 255.0f, pr[i].rgb[1] / 255.0f, pr[i].rgb[2] / 255.0f, a);
+        if (i == at) outline(r, x, yy, sw, swH, 2 * u, editing && s.ctl == PC_PRESET ? kAmber : kGrey, a);
+        s.hits.push_back({x, yy, sw, swH, 2, i});
+    }
+    if (editing && s.ctl == PC_PRESET) outline(r, cx + 3 * u, y - 3 * u, 8 * sw + 6 * u, 2 * swH + 6 * u, 1.5f * u, kAmber, 0.6f * a);
+    y += 2 * swH + gap;
+    // The sliders.
+    const char* lab[3] = {"HUE", "SATURATION", "BRIGHTNESS"};
+    const float trackX = cx + 6 * u, trackW = pw - 12 * u;
+    for (int k = 0; k < 3; k++) {
+        const bool on = editing && s.ctl == PC_HUE + k;
+        const double v = s.hsv[k];
+        char val[24];
+        std::snprintf(val, sizeof val, k == 0 ? "%d DEG" : "%d%%", (int)std::lround(k == 0 ? v * 360 : v * 100));
+        r.text(trackX, y, small, lab[k], on ? kAmber[0] : kGrey[0], on ? kAmber[1] : kGrey[1], on ? kAmber[2] : kGrey[2], a);
+        r.text(trackX + trackW - r.textWidth(val, small), y, small, val, 0.9f, 0.9f, 0.92f, a);
+        y += lh - 2 * u;
+        const int segs = 32;
+        for (int g = 0; g < segs; g++) {
+            const double t = (g + 0.5) / segs;
+            double R, G, B;
+            if (k == 0) hsvToRgb(t, 1, 1, R, G, B);
+            else if (k == 1) hsvToRgb(s.hsv[0], t, s.hsv[2], R, G, B);
+            else hsvToRgb(s.hsv[0], s.hsv[1], t, R, G, B);
+            r.rect(trackX + trackW * g / segs, y, trackW / segs + 1, sliderH, (float)R, (float)G, (float)B, a * (set || editing ? 1.0f : 0.6f));
+        }
+        const float hx = trackX + (float)v * trackW;
+        r.rect(hx - 2 * u, y - 3 * u, 4 * u, sliderH + 6 * u, 1, 1, 1, a);
+        outline(r, trackX, y, trackW, sliderH, 1.2f * u, on ? kAmber : kGrey, a * (on ? 1.0f : 0.6f));
+        s.sliders[k] = {trackX, trackW};
+        s.hits.push_back({trackX, y - 4 * u, trackW, sliderH + 8 * u, 3, k});
+        y += sliderH + gap;
+    }
+    r.text(cx + 6 * u, y, small, fit(editing ? (padLast ? "UP DOWN PICK A CONTROL, LEFT RIGHT CHANGE IT, A DONE" : "W S PICK A CONTROL, A D CHANGE IT, ENTER DONE") : (padLast ? "A TO EDIT THE COLOUR" : "ENTER OR CLICK TO EDIT THE COLOUR"), pw - 12 * u, small), kGrey[0], kGrey[1], kGrey[2], a);
+}
 
 void draw(Renderer& r, Shop& s, const Career& c, const std::string& where, int W, int H, float a, bool padLast, bool pending, const std::string& toast, float toastA) {
     s.hits.clear();
@@ -114,7 +202,11 @@ void draw(Renderer& r, Shop& s, const Career& c, const std::string& where, int W
     const float x1 = x0 + cw + 12 * u, iw = std::min(W * 0.3f, 440 * u), ih = 40 * u, igap = 4 * u;
     const int vis = std::max(1, (int)((bottom - top + igap) / (ih + igap)));
     const int n = (int)s.list.size();
-    const int first = std::max(0, std::min(n - vis, s.sel - vis / 2));
+    int first = s.listFirst < 0 ? s.sel - vis / 2 : s.listFirst;
+    if (s.sel < first) first = s.sel;
+    else if (s.sel >= first + vis) first = s.sel - vis + 1;
+    first = std::max(0, std::min(n - vis, first));
+    s.listFirst = first;
     const bool itemsOn = s.focus == F_ITEMS;
     const float its = px(1.4f * u);
     for (int k = 0; k < std::min(vis, n - first); k++) {
@@ -152,6 +244,10 @@ void draw(Renderer& r, Shop& s, const Career& c, const std::string& where, int W
     const float px0 = x1 + iw + 26 * u, pw = std::min(440 * u, W - px0 - x0);
     if (pw < 180 * u) return;
     const float cx = W - x0 - pw;
+    if (const int prow = s.paintRow(); prow >= 0 || s.category().group == G_PAINT) {
+        drawPaintCard(r, s, prow, cx, top, pw, u, a, padLast);
+        return;
+    }
     const Item* it = s.item();
     float y = top;
     std::vector<std::pair<std::string, const float*>> lines;  // (built first: the panel's height)

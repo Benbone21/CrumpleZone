@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "bgwork.h"
 #include "daylight.h"
 #include "frameprof.h"
 #include "gl.h"
@@ -182,6 +183,7 @@ public:
     // (a timestamp query). gpuFrameBegin() at the top of each frame reads back a frame from a few frames ago.
     bool gpuTiming = false;
     bool syncTiming = false;  // (--bench-sync: wait for the GPU at each mark, so the CPU times are each stage's whole cost)
+    bool stageMarks = false;  // (the first frame: each stage is the main thread's loadprof phase, so a hang report names it)
     void passMark(FramePass p);
     void preload(const World& world);  // (after init and settings: loads what the first frame would)
     void gpuFrameBegin();
@@ -199,6 +201,7 @@ private:
         const void* builtTpl = nullptr;  // what the cached meshes were built for
         std::vector<float> snap;     // the watched nodes, in the car's frame, when they were built
         int shattered = -1, debug = -1;
+        uint32_t paintKey = 0;       // the colour and finish it was built in (a repaint rebuilds the parts)
         float lampKey[5] = {-1, -1, -1, -1, -1};
         int builds = 0;              // (tests and the bench: how many times it's been rebuilt)
         GLuint modelsVao = 0, modelsVbo = 0, modelsIdx = 0;  // the merged parts (CarModels), their part numbers
@@ -223,6 +226,8 @@ private:
 
     static const int kBloomLevels = 6;
     GLuint progLit = 0, progDepth = 0, progLine = 0, progSky = 0, progHud = 0, progFx = 0, progCar = 0;
+    static const int kCarShells = 7;        // body shells (bodyshell.cpp: 0 the lattice body, 1..6 sculpted)
+    GLuint progCarShell[kCarShells] = {};   // the car body shader built for each (progCar: the lattice body's)
     GLuint progTerrain = 0;                 // the ground shader in use this frame
     GLuint noiseTex = 0;                    // the cheap ground tiers' noise
     GLuint progTerrainTier[4] = {0, 0, 0, 0};  // per tier (groundTier)
@@ -287,9 +292,34 @@ private:
     // The rest of the map comes from a coarse texture, a texel per 4 cells.
     int terrainWinI_ = 0, terrainWinJ_ = 0, terrainWinW_ = 0, terrainCoarseN_ = 1;
     GLuint terrainCoarseTex = 0;
+    // The big map's regions' ground look (onemap.h groundLookAt: meadow, bare rock from, snow from), a texel per 64 m, blended
+    // across their seams by the texture's filtering; off on every other map (the uniforms' own look).
+    GLuint lookTex_ = 0;
+    bool lookOn_ = false;
+    float lookBox_[4] = {0, 0, 64, 1};
+    void updateLook(const World& world);
     void uploadTerrainCells(const World& world, int i0, int j0, int i1, int j1);  // (cells; what's outside the window is left)
     void uploadTerrainCoarse(const World& world, int i0, int j0, int i1, int j1);
     void streamTerrain(const World& world, const V3& eye);
+    // The streaming's CPU work runs on bg_ (bgwork.h), never in the frame: the next strip of the texture's window
+    // (texJob_: computed there, uploaded and the window stepped onto it once it's done) and the meshes of the chunks
+    // coming into range (chunkJob_: built there, put in their slots a few a frame). streamGen_ changes when the land
+    // does (an edit, a new world): a job begun before that is dropped.
+    struct TexJob;
+    struct ChunkJob;
+    std::shared_ptr<TexJob> texJob_;
+    std::shared_ptr<ChunkJob> chunkJob_;
+    std::vector<char> chunkQueued_;  // per chunk: its mesh is being built (chunkJob_)
+    bool texMoving_ = false;         // the window is on its way to the camera, a step at a time
+    uint64_t streamGen_ = 0;
+    void dropStreamJobs();
+    BgWork bg_{true};
+public:
+    // Waits for the streaming's background work and drops it, and for any other that reads the world (the autopilot's replans,
+    // bgwork.h waitWorldReaders): before the world is replaced.
+    void waitStreaming();
+    // (tests) The streaming's background work is all done and taken in (the window where the camera wants it, no chunk queued).
+    bool streamingSettled() const { return !texJob_ && !chunkJob_ && !texMoving_; }
 public:
     struct Prepared {
         double spacing = 1;
@@ -446,7 +476,9 @@ private:
     void ensureTargets(int w, int h, int samples);
     void postProcess(const View& view, const M4& proj);
     void prepareCars(const Sim& sim, DebugView debug, const V3& eye);
-    void drawCarBodies(const Sim& sim, GLuint prog, bool glassPass);
+    // prog: progDepth (shadows), or progCar for the main and glass passes: each car then draws with its shell's
+    // program, which `use` makes current (and lights) when it changes.
+    void drawCarBodies(const Sim& sim, GLuint prog, bool glassPass, const std::function<void(GLuint)>& use = nullptr);
     void drawWheels(const Sim& sim, GLuint prog);
     void drawCarParts(const Sim& sim, GLuint prog);
     void prepareCarModels();

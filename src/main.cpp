@@ -11,6 +11,7 @@
 #include <memory>
 #include <mutex>
 #include "loadprof.h"
+#include "realterrain.h"
 #include "watchdog.h"
 #include "benchreport.h"
 #include "meshcache.h"
@@ -54,6 +55,10 @@
 #include "carentry.h"
 #include "buildinfo.h"
 #include "coop.h"
+#include "onemap.h"
+#include "autopilot.h"
+#include "bgwork.h"
+#include "places.h"
 #include "debugscreen.h"
 #include "editor.h"
 #include "fx.h"
@@ -65,6 +70,9 @@
 #include "hudkit.h"
 #include "level.h"
 #include "levelrun.h"
+#include "mpmenu.h"
+#include "mpmenudraw.h"
+#include "rendezvous.h"
 #include "laptimer.h"
 #include "sectionfile.h"
 #include "menu.h"
@@ -96,6 +104,8 @@
 #include "../tests/harness.h"
 
 namespace {
+// Which map's music and ambience play (soundMap): on the big map, the region's country you're in sounds like its old map (onemap.h).
+int regionSoundMap = -1;
 
 const double kTimeScales[] = {1.0, 0.5, 0.25, 0.1, 0.03};
 
@@ -148,7 +158,9 @@ struct Options {
     int throttleResp = 0, throttlePad = 0;
     double eyeFly = 0;            // --eye-fly V (dev, with --eye): the drone flies on ahead at V m/s, its height over the ground kept (the streaming test)
     double mapHalf = 0;           // --map-half M (dev): every map built M m each way from its middle (big-map tests: docs/plans/big-maps.md)
+    bool standalone = false;      // --standalone (dev): --map 1, 3 or 5 is that old map on its own, not its region of the big map (docs/plans/one-map.md)
     int map = -1;                 // --map N: 0 proving ground, 1 mountain
+    std::string real;             // --real DIR|FILE: the real terrain MAP_REAL (7) is (realterrain.h, docs/real-terrain.md): a folder with terrain.txt, or the sidecar
     double orbitYaw = 0, orbitPitch = 0.2, orbitDist = 7.5;  // degrees, degrees, meters
     bool spawnSet = false;
     bool loadTour = false;  // --load-tour: switch maps, swap and spawn vehicles on a timer, report the worst frame of each
@@ -158,6 +170,8 @@ struct Options {
     int spawnSection = -1;        // --spawn-section N: start at the Nth obstacle section's entry (0-based, proving ground)
     int hostPort = -1;            // --host [PORT]: open a multiplayer session (0: on the port in the settings)
     std::string join;             // --join HOST[:PORT]
+    std::string joinCode;         // --join-code CODE: join a friend's game with its code
+    std::string rendezvous;       // --rendezvous HOST[:PORT]: the join-code server (else settings.txt's, else the game's own)
     std::string name;             // --name NAME (multiplayer)
     std::string password;         // --password PASSWORD: for the game you host, and for the one you join
     double timeHours = -1;        // --time H: hold the clock at H hours (0..24), e.g. 21.5
@@ -313,7 +327,7 @@ struct BuildWatch {
 #ifndef _WIN32
         static const std::set<std::string> withValue = {"--map", "--player", "--spawn", "--resume-model", "--resume-edit", "--scenario", "--script",
                                                         "--shot-prefix", "--shot-frames", "--clipboard", "--menu", "--orbit", "--spawn-section", "--eye"};
-        static const std::set<std::string> flags = {"--garage", "--show-help", "--debug-screen", "--debug-graph", "--full-hud"};
+        static const std::set<std::string> flags = {"--garage", "--show-help", "--debug-screen", "--debug-graph", "--full-hud", "--standalone"};
         std::vector<std::string> args = {exe};
         for (int i = 1; i < argc; i++) {
             const std::string a = argv[i];
@@ -408,6 +422,8 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--career-world") o.careerWorld = next();
         else if (a == "--map") o.map = std::atoi(next().c_str());
         else if (a == "--map-half") o.mapHalf = std::atof(next().c_str());
+        else if (a == "--real") o.real = next();
+        else if (a == "--standalone") o.standalone = true;
         else if (a == "--eye-fly") o.eyeFly = std::atof(next().c_str());
         else if (a == "--mods") {
             std::string s = next();
@@ -446,6 +462,8 @@ Options parseArgs(int argc, char** argv) {
                 std::exit(2);
             }
         }
+        else if (a == "--join-code") o.joinCode = next();
+        else if (a == "--rendezvous") o.rendezvous = next();
         else if (a == "--name") o.name = next();
         else if (a == "--password") o.password = next();
         else if (a == "--resume-edit") o.resumeEdit = next();
@@ -555,19 +573,22 @@ struct Place {
     V3 p;
     int kind = 0;  // 0 a spot, 1 nearest repair station, 2 where the camera looks, 3 follow a vehicle, 4 loop road
     int car = -1;
+    // A region's spot on the big map (onemap.h): the old map and the name it had there, which finding it is kept under ("MAP:NAME"),
+    // so what was found on the old map stays found.
+    int keyMap = -1;
+    std::string keyName;
 };
-std::vector<Place> pilotPlaces(const Sim& sim, const NetSession& net) {
+// An old map's own named spots (its coordinates). `start`: where the map starts you.
+std::vector<Place> oldMapPlaces(int map, const V3& start) {
     std::vector<Place> out;
-    out.push_back({"NEAREST REPAIR STATION", V3(), 1});
-    for (const Station& st : sim.world.stations) out.push_back({st.name, st.p});
-    if (sim.world.map == MAP_MOUNTAIN) {
-        out.push_back({"TRAILHEAD", sim.world.spawn});
+    if (map == MAP_MOUNTAIN) {
+        out.push_back({"TRAILHEAD", start});
         out.push_back({"SUMMIT LOOKOUT (TRAIL END)", mountainFeature("lookout")});
         out.push_back({"CRAWL PARK", mountainFeature("dome") + V3(0, 0, -34)});
         out.push_back({"WIDOWMAKER SPUR (START)", mountainFeature("spur") - norm(mountainFeature("pinnacle") - mountainFeature("spur")) * 6});
         out.push_back({"BOULDER GULLY (FOOT)", mountainFeature("gully") - norm(mountainFeature("gullytop") - mountainFeature("gully")) * 8});
         out.push_back({"THE LAKE", V3(140, 0, -378)});
-    } else if (sim.world.map == MAP_FRONTIER) {
+    } else if (map == MAP_FRONTIER) {
         out.push_back({"PADDOCK", frontierFeature("start")});
         out.push_back({"MESA CLIMB (FOOT)", frontierFeature("mesaclimb") + V3(8, 0, 0)});
         out.push_back({"SLICKROCK BOWL", frontierFeature("bowl")});
@@ -583,6 +604,18 @@ std::vector<Place> pilotPlaces(const Sim& sim, const NetSession& net) {
         out.push_back({"MUD HILL", frontierFeature("mudhill")});
         out.push_back({"COLD CREEK VALLEY", frontierFeature("snowfield")});
         out.push_back({"COLD CREEK LODGE", frontierFeature("lodge")});
+    }
+    return out;
+}
+std::vector<Place> pilotPlaces(const Sim& sim, const NetSession& net) {
+    std::vector<Place> out;
+    out.push_back({"NEAREST REPAIR STATION", V3(), 1});
+    for (const Station& st : sim.world.stations) {
+        const MapRegion* r = sim.world.map == MAP_BACKCOUNTRY ? regionContaining(st.p.x, st.p.z) : nullptr;  // (a region's: found under its old map)
+        out.push_back({st.name, st.p, 0, -1, r ? r->map : -1, r ? st.name : ""});
+    }
+    if (sim.world.map == MAP_MOUNTAIN || sim.world.map == MAP_FRONTIER) {
+        for (const Place& p : oldMapPlaces(sim.world.map, sim.world.spawn)) out.push_back(p);
     } else if (sim.world.map == MAP_BACKCOUNTRY) {
         out.push_back({"CREEK CRAWL (FOOT)", backcountryFeature("creekfoot")});
         out.push_back({"OLD MINE", backcountryFeature("mine")});
@@ -600,6 +633,23 @@ std::vector<Place> pilotPlaces(const Sim& sim, const NetSession& net) {
         out.push_back({"SNOW CORNER", backcountryFeature("snowcorner")});
         out.push_back({"FIRE TOWER", backcountryFeature("towerlook")});
         out.push_back({"TRAPPER'S CABIN", backcountryFeature("cabinend")});
+        // The places of the big map (places.h): the ones not already listed here (within 40 m of one that is).
+        for (const MapPlace& mp : mapPlaces(MAP_BACKCOUNTRY)) {
+            if (mp.kind == PK_CACHE || mp.kind == PK_PHOTO_SPOT || mp.kind == PK_ABANDONED_VEHICLE) continue;
+            bool have = false;
+            for (const Place& q : out) have |= q.kind == 0 && std::hypot(q.p.x - mp.p.x, q.p.z - mp.p.z) < 40;
+            if (!have) out.push_back({mp.name, V3(mp.p.x, sim.world.height(mp.p.x, mp.p.z), mp.p.z)});
+        }
+        // The regions round it (onemap.h): their starts and their old maps' spots, moved over, under their region's name.
+        for (const World::RegionStart& rs : sim.world.regionStarts) {
+            const std::string region = mapName(rs.map);
+            const std::vector<Place> own = oldMapPlaces(rs.map, worldToRegion(rs.map, rs.spawn));
+            if (own.empty()) out.push_back({region + ": START", rs.spawn, 0, -1, rs.map, "START"});
+            for (const Place& p : own) {
+                const V3 q = regionToWorld(rs.map, p.p);
+                out.push_back({region + ": " + p.name, V3(q.x, sim.world.height(q.x, q.z), q.z), 0, -1, rs.map, p.name});
+            }
+        }
     } else if (sim.world.map == MAP_PROVING_GROUND) {
         out.push_back({"SPAWN", sim.world.spawn});
         out.push_back({"CRASH WALL", V3(95, 0, 0)});
@@ -1683,11 +1733,45 @@ static void onTermSignal(int sig) {
     if (g_termScripted || g_termSignals++ >= 1) _exit(128 + sig);
 }
 
+// The big map, built from a pick of the map list (not a level's, the editor's or the camp's), and its own start (the
+// Backcountry's, before a region's start replaced it). Picking another of its regions then moves you there on the same world
+// instead of building the 8 km map again (a 650 ms freeze, and two of it in memory at once: 3 GB).
+struct BigHome {
+    bool live = false;
+    bool localEdits = true;  // (World::useLocalEdits it was built with)
+    V3 spawn;
+    double yaw = 0, parkingYaw = 0;
+    std::vector<V3> parking;
+};
+// A pick's world, as worldForPick (onemap.h) makes it, noting the big map's own start in `home`.
+static World buildPick(int pick, bool standalone, BigHome& home) {
+    home.live = false;
+    if (standalone) return World(pick);
+    World w(isRegionMap(pick) ? (int)MAP_BACKCOUNTRY : pick);
+    if (w.map == MAP_BACKCOUNTRY && !w.regionStarts.empty()) {
+        home.live = true, home.localEdits = World::useLocalEdits;
+        home.spawn = w.spawn, home.yaw = w.spawnYaw, home.parking = w.parking, home.parkingYaw = w.parkingYaw;
+    }
+    if (isRegionMap(pick)) w.startAtRegion(pick);
+    return w;
+}
+// Is the world up the big map from a pick, and `pick` one of its regions (or the Backcountry itself)?
+static bool onBigMapAlready(const BigHome& home, const World& w, int pick, bool standalone) {
+    return home.live && !standalone && home.localEdits == World::useLocalEdits && w.map == MAP_BACKCOUNTRY && !w.regionStarts.empty() &&
+           (pick == MAP_BACKCOUNTRY || isRegionMap(pick));
+}
+
 int main(int argc, char** argv) {
 #ifndef _WIN32
     signal(SIGPIPE, SIG_IGN);  // (a multiplayer peer dropping mid-send; macOS has no MSG_NOSIGNAL)
 #endif
     Options opt = parseArgs(argc, argv);
+    pilotSetAsyncReplans(!std::getenv("CZ_PILOT_SYNC"));  // (the game: replans while driving made in the background; the tests plan in the step)
+    if (!opt.real.empty()) {  // (before anything asks for the map list: MAP_REAL is on it when a real terrain is active)
+        std::string why;
+        if (realterrain::selectPath(opt.real, &why)) std::printf("real terrain: %s (%s)\n", realterrain::displayName(), opt.real.c_str());
+        else std::fprintf(stderr, "--real %s: %s\n", opt.real.c_str(), why.c_str());
+    }
     if (!opt.campDump.empty()) {
         const bool ok = menuscene::dump(opt.campDump);
         std::printf("%s %s\n", ok ? "wrote" : "could not write", opt.campDump.c_str());
@@ -1703,6 +1787,9 @@ int main(int argc, char** argv) {
                            opt.hostPort < 0 && opt.join.empty() && opt.menu < 0 && opt.resumeModel < 0 && opt.level.empty() && !opt.editor && !opt.newSection && opt.resumeEdit.empty() &&
                            !opt.lab && !opt.loadTour && opt.careerWorld.empty());
     const bool unattended = scripted || !opt.scenario.empty() || !opt.script.empty();
+    // MAIN MENU from the game goes back to the new menu's camp whenever a person is playing, not only after a plain launch (an F5
+    // reload or --map starts in the world, but the way back is the same). Test runs keep the old title page.
+    const bool campMenu = wantCamp || (!unattended && !std::getenv("CZ_NO_MENU_SCENE") && !opt.lab && !opt.loadTour);
     g_termScripted = unattended;
     std::unique_ptr<wd::FrameWatchdog> watchdog;
     if (unattended) {
@@ -1711,6 +1798,10 @@ int main(int argc, char** argv) {
         const double stall = es ? std::atof(es) : 60.0;
         watchdog.reset(new wd::FrameWatchdog(stall, et ? std::atof(et) : 3600.0, std::max(240.0, stall)));
     }
+    // (a hang report names the startup step each thread was in: loadprof::phase below and the LOADPROF scopes)
+    loadprof::nameThread("main");
+    wd::stageReport = loadprof::activeStages;
+    loadprof::phase("settings");
     const char* stallEnv = std::getenv("CZ_TEST_STALL_FRAME");
     const int testStallFrame = stallEnv ? std::atoi(stallEnv) : -1;
     blockOnTemplates = !opt.shotFrames.empty() || opt.bench > 0;  // (screenshots and the bench show every car; the tour wants the real, waiting behaviour)
@@ -1772,6 +1863,7 @@ int main(int argc, char** argv) {
         te::clipboardSetHook = [](const std::string& s) { SDL_SetClipboardText(s.c_str()); };
     }
     static bool testCtrl = false;
+    loadprof::phase("sdl.init");
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | (opt.audio ? (uint32_t)SDL_INIT_AUDIO : 0u)) != 0) {
         fail(std::string("SDL_Init failed: ") + SDL_GetError());
         return 1;
@@ -1792,6 +1884,7 @@ int main(int argc, char** argv) {
     SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 0);
     SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 0);
 
+    loadprof::phase("sdl.window");
     uint32_t flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
     if (settings.fullscreen) flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
     SDL_Window* win = SDL_CreateWindow("Crumple Zone", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, opt.width,
@@ -1800,11 +1893,13 @@ int main(int argc, char** argv) {
         fail(std::string("could not create window: ") + SDL_GetError());
         return 1;
     }
+    loadprof::phase("gl.context");
     SDL_GLContext ctx = SDL_GL_CreateContext(win);
     if (!ctx) {
         fail(std::string("OpenGL 3.3 context failed: ") + SDL_GetError());
         return 1;
     }
+    loadprof::phase("gl.load");
     if (const char* missing = gl::load(SDL_GL_GetProcAddress)) {
         fail(std::string("missing OpenGL function ") + missing);
         return 1;
@@ -1815,6 +1910,7 @@ int main(int argc, char** argv) {
     }
     const char* glRenderer = (const char*)gl::GetString(GL_RENDERER);
     const char* glVendor = (const char*)gl::GetString(GL_VENDOR);
+    loadprof::phase("hardware");
     HardwareInfo hardware;  // (for the first-launch guess and DETECT AUTOMATICALLY)
     hardware.vendor = glVendor ? glVendor : "", hardware.renderer = glRenderer ? glRenderer : "";
     queryHardware(hardware);
@@ -1850,7 +1946,9 @@ int main(int argc, char** argv) {
 
     // Scanned rock hulls (assets/props), so what you hit is what you see; without the bake,
     // code-made rocks. Scenario playback keeps the code-made rocks the tests ran with.
+    loadprof::phase("rock hulls");
     if (opt.scenario.empty()) props::setActiveRockScans(&props::sharedHullLibrary());
+    loadprof::phase("sim (the first world)");
     // The sim starts on the proving ground. When another map or the menu's camp replaces it straight away, it's built bare: the
     // model yard and the section park (seconds of work on a build's first run) aren't laid out only to be thrown away.
     const bool showcaseOn = World::withShowcase;
@@ -1865,21 +1963,46 @@ int main(int argc, char** argv) {
     } catch (const std::system_error& error) {
         std::fprintf(stderr, "Physics workers unavailable; using one thread: %s\n", error.what());
     }
+    BigHome bigHome;  // (see buildPick)
     Level campLevel;  // the main menu's camp (menuscene.h): the player's file, the game's, or made by code
     V3 campFire;
+    bool campLoaded = false;  // (campLevel read: at launch for the menu's camp, else the first time MAIN MENU goes back to it)
     if (wantCamp) {  // (the menu's camp instead of the saved map: choosing a map loads it)
         campLevel = menuscene::load();
+        campLoaded = true;
         menucamp::fireOf(campLevel, campFire);
         sim.world = menuscene::buildWorld(campLevel);
-    } else if (settings.map != MAP_PROVING_GROUND) sim.world = World(settings.map);
+    } else if (settings.map != MAP_PROVING_GROUND) sim.world = buildPick(settings.map, opt.standalone, bigHome);  // (a region's pick: the big map, started there)
+    int worldPick = wantCamp ? -1 : settings.map;  // the map pick the world stands for (a region of the big map's: its old map id)
     sim.lineup = listedVehicles();  // (the overlanders and the Jesko: no Civic, UTV or buggy)
+    loadprof::phase("sim.setup (the lineup)");
     sim.setup();
+    loadprof::phase("garage");
     // Your garage: the mods fitted last time go back on the cars. (A career keeps a garage of
     // its own: it starts on factory parts.)
     if (opt.career) settings.career = true;
     Garage garage;
     std::string garagePath = settings.career ? configDir() + "/garage-career.txt" : Garage::defaultPath();
     garage.load(garagePath);
+    if (const char* pv = std::getenv("CZ_PAINT"); pv && scripted) {  // (screenshots: CZ_PAINT=body:accent:finish[,...] hex or '-', handed to the vehicles in turn: c41e24:f0be14:2,1e46be:-:1)
+        std::vector<CarPaint> list;
+        for (const std::string& part : [&] {
+                 std::vector<std::string> v;
+                 std::string cur;
+                 for (const char* q = pv;; q++) {
+                     if (*q == ',' || !*q) v.push_back(cur), cur.clear();
+                     else cur += *q;
+                     if (!*q) break;
+                 }
+                 return v;
+             }()) {
+            char b[16] = "-", a[16] = "-";
+            int f = 0;
+            CarPaint cp;
+            if (std::sscanf(part.c_str(), "%15[^:]:%15[^:]:%d", b, a, &f) >= 2 && paintFromText(b, a, f, cp)) list.push_back(cp);
+        }
+        for (size_t i = 0; i < garage.paint.size() && !list.empty(); i++) garage.paint[i] = list[i % list.size()];
+    }
     // The career: the profile (career.h: what you own, cash, the caches you've opened, your vehicles), and the world
     // being played (careersession.h). The old career.txt is only read, when there's no profile.txt yet (the migration).
     CareerSession careerRun;
@@ -1906,13 +2029,7 @@ int main(int argc, char** argv) {
     bool campWorld = false;  // sim.world is the main menu's camp (a map load, a level or the editor ends it)
     // Three of the listed vehicles parked round the camp's fire: the player's car becomes the first (the lineup's others are dropped).
     auto parkCamp = [&]() {
-        for (int i = (int)sim.cars.size() - 1; i >= 0; i--)
-            if (i != sim.player) {
-                sim.carRemoved(i);
-                sim.cars.erase(sim.cars.begin() + i);
-                if (sim.player > i) sim.player--;
-            }
-        sim.dropRopes(sim.player);
+        sim.clearWorldLeftovers(sim.player);
         const std::vector<int>& lv = listedVehicles();
         menucamp::Meta meta = menucamp::metaOf(campLevel);
         if (meta.vehicles == 0) meta.vehicles = 1, meta.veh[0].x = campFire.x + 4, meta.veh[0].z = campFire.z - 2;  // (no stand-ins left in the level: one parked by the fire)
@@ -1934,8 +2051,10 @@ int main(int argc, char** argv) {
         sim.paused = true;
         campWorld = true;
     };
+    loadprof::phase("garage.fit");
     fitGarage();
     if (wantCamp) parkCamp();
+    loadprof::phase("cars.prebuild (worker threads)");
     // The lineup's drawing templates are made on worker threads while the window's shaders build (the first frame waits for yours).
     for (const Car& c : sim.cars)
         if (!c.isProp()) prebuildVisual(*c.spec, c.color);
@@ -1980,6 +2099,7 @@ int main(int argc, char** argv) {
         // section start is a real start, so there it becomes home.)
         if (opt.spawnSection < 0) c.spawnPos = home, c.spawnYaw = homeYaw;
     }
+    loadprof::phase("renderer.init");
     Renderer renderer;
     std::string err;
     uint64_t drawnWorld = sim.world.stamp;
@@ -1989,14 +2109,17 @@ int main(int argc, char** argv) {
         return 1;
     }
     renderer.settings = settings.gfx;
+    loadprof::phase("renderer.preload");
     renderer.preload(sim.world);
     std::printf("renderer: ready in %.0f ms (%d shader programs compiled, %d from the cache)\n",
                 (SDL_GetPerformanceCounter() - initStart) * 1000.0 / SDL_GetPerformanceFrequency(), gShaderCacheStats.compiled, gShaderCacheStats.hits);
     // (a scenario has no cars until its first frame: nothing to wait for, and nobody would ever make it)
     if (!sim.cars.empty() && sim.player >= 0 && sim.player < (int)sim.cars.size()) {
         prebuildVisual(*sim.cars[sim.player].spec, sim.cars[sim.player].color);  // (asked for, in case nothing has yet)
+        loadprof::phase("waiting for the player's car visual (worker)");
         while (!visualReady(*sim.cars[sim.player].spec)) std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
+    loadprof::phase("setup (audio, HUD, menus)");
     if (opt.lab) {  // the model lab instead of the game (lab.h)
         LabOptions lo;
         lo.select = opt.labModel, lo.variant = opt.labDesign;
@@ -2057,16 +2180,22 @@ int main(int argc, char** argv) {
     }
     // Multiplayer session (see net.h).
     NetSession net;
+    net.build = buildId();  // (told to the others: another build can handle differently)
     net::Finder finder;  // games on the local network, while the multiplayer page is open
     View lastView;
     // The pause menu, and putting its settings into effect.
     Effects fx;
     PauseMenu menu;
     mainmenu::Nav mainNav;        // the new main menu's state (mainmenu.h)
+    mpmenu::Nav mpNav;            // the multiplayer pages (mpmenu.h): the PauseMenu's page 2, in the main menu's style
+    mpmenu::View mpView;
+    bool mpWasShown = false, joinByCode = false;
+    std::string joinWhat;         // the last join: a code or an address (RETRY, RECENT)
     bool classicTitle = false;    // the old title page is up (DEV > CLASSIC MENU, or --menu 9) instead of the new one
     float mainFade = 0;           // the new menu fading in
     // The new main menu is the title screen's page 0 over the camp (the settings, multiplayer and levels pages are still the PauseMenu's).
     auto mainMenuShown = [&]() { return menu.open && menu.title && menu.pageNow() == 0 && campWorld && !classicTitle; };
+    auto mpShown = [&]() { return menu.open && menu.pageNow() == 2 && !(menu.title && classicTitle); };
     auto campBehind = [&]() { return campWorld && menu.open && menu.title; };
     bool menuWasPaused = false, garageFromMenu = false;
     float menuBlur = 0;
@@ -2134,10 +2263,10 @@ int main(int argc, char** argv) {
             hud.toast("THE GARAGE IS AT THE REPAIR STATIONS: DRIVE ONTO ONE'S PAD");
             return false;
         }
-        garageShop.begin(c.spec->model, garage.fitted[c.spec->model], career, career.on, at >= 0);
+        garageShop.begin(c.spec->model, garage.fitted[c.spec->model], career, career.on, at >= 0, garage.paint[c.spec->model]);
         shopToast.clear();
         shopDrag = false;
-        shopBlend = 0;
+        // (shopBlend carries on: reopened while it eases out, the camera turns back from where it is)
         hud.showHelp = false;
         return true;
     };
@@ -2162,6 +2291,10 @@ int main(int argc, char** argv) {
             if (!scripted) garage.save(garagePath);
             shopRecal = garageShop.recal;
         }
+        if (r.painted) {
+            garage.paint[garageShop.vehicle] = garageShop.paint;
+            if (!scripted) garage.save(garagePath);
+        }
         if (r.close) {
             shopDrag = false;
             if (garageFromMenu) openMenu();  // back where you came from
@@ -2181,6 +2314,7 @@ int main(int argc, char** argv) {
             garageShop.setCat(c);
             if (p >= 0) garageShop.focus = shop::F_ITEMS, garageShop.setSel(p);
             garageShop.previewing = p >= 0 && std::string(t) == "try";
+            if (p >= 0 && std::string(t) == "pick") garageShop.activate(career);  // (the PAINT page's colour picker)
         }
         if (const char* sp = std::getenv("CZ_SHOP_SPIN")) garageShop.spin = std::atof(sp), garageShop.idle = -1e9;
     }
@@ -2305,14 +2439,51 @@ int main(int argc, char** argv) {
         hud.toast(careerRun.world.name + ": " + (pc.spec->model >= 0 ? vehicleCatalog()[pc.spec->model].name : "") + "  ($" + std::to_string(career.cash) + ")");
         std::printf("career: %s %s, %d vehicles\n", careerNext.start >= 0 ? "new world" : "continued", careerRun.world.slug.c_str(), sim.vehicleCount());
     };
-    // Loads a map, keeping the vehicle you were in.
-    auto loadMap = [&](int m) {
-        endCareer();
-        World::useLocalEdits = !net.active();  // (a session's worlds are the same for everyone: the generator's sections, not your saved edits of them)
+    // A new world went in (a map, a level, the editor, the camp): what the game keeps of the last one goes with it (a job, being on
+    // foot, the crates). Set below, where that state lives. worldCareer: the mode (the save) this world's vehicles were put out in.
+    std::function<void()> worldChanged;
+    bool worldCareer = career.on;
+    // Loads a map, keeping the vehicle you were in. A region of the big map (onemap.h) is the big map, started there; `standalone`: the
+    // old map on its own (the bench suite's scenes, which the hardware baselines compare against).
+    // Another region of the big map that's up already: you start there (its start, the vehicles round it), on the same world. As a
+    // load would, it puts out the lineup afresh and drops what the last place had going (a job, being on foot, the crates' list).
+    auto moveOnBigMap = [&](int m) {
+        LOADPROF("map.move (same world)");
         const int model = std::max(0, sim.cars[sim.player].spec->model);
-        campWorld = false;
-        sim.world = World(m);
+        if (isRegionMap(m)) sim.world.startAtRegion(m);
+        else sim.world.spawn = bigHome.spawn, sim.world.spawnYaw = bigHome.yaw, sim.world.parking = bigHome.parking, sim.world.parkingYaw = bigHome.parkingYaw;
+        worldPick = m;
         sim.setup();
+        const int cachesWere = cachesMap;
+        if (worldChanged) worldChanged();
+        cachesMap = cachesWere;  // (the crates are in this world already: not laid out again)
+        fitGarage();
+        if (model != sim.cars[sim.player].spec->model) sim.swapPlayerVehicle(garage.spec(model));
+        startPendingCareer();  // (a career world on the map that's up: begun here, no load)
+        sim.paused = false;
+        hud.bestKmh = 0;
+        dbgSimSeconds = 0;
+        wrapSeen = sim.wrapShift = 0;
+        fx.clear();
+        cam.initialized = false;
+    };
+    auto loadMap = [&](int m, bool standalone = false) {
+        endCareer();  // (another map, or another place on this one: the world's saved as it stands now)
+        World::useLocalEdits = net.role != NetSession::CLIENT;  // (a guest builds the host's: its edited sections came with the welcome, World::setSessionSections)
+        const int model = std::max(0, sim.cars[sim.player].spec->model);
+        const bool same = !campWorld && onBigMapAlready(bigHome, sim.world, m, standalone);
+        campWorld = false;
+        renderer.waitStreaming();  // (its background streaming reads the world)
+        if (same) {
+            moveOnBigMap(m);
+            return;
+        }
+        { World gone = std::move(sim.world); }  // (the last world freed before the next is built: not both in memory at once)
+        releaseFreedMemory();                   // (...and handed back, so the build's threads don't stack theirs on top)
+        sim.world = buildPick(m, standalone, bigHome);
+        worldPick = m;
+        sim.setup();
+        if (worldChanged) worldChanged();
         fitGarage();
         if (model != sim.cars[sim.player].spec->model) sim.swapPlayerVehicle(garage.spec(model));
         startPendingCareer();
@@ -2333,19 +2504,17 @@ int main(int argc, char** argv) {
                 if (sim.player > i) sim.player--;
             }
     };
-    auto startHost = [&](int port) {
+    auto startHost = [&](int port, bool quietFail = false) {
         const std::string session = !settings.sessionName.empty() ? settings.sessionName
                                     : (settings.playerName.empty() ? std::string("PLAYER") : settings.playerName) + "'S GAME";
         net.password = !opt.password.empty() ? opt.password : settings.netPassword;
         if (net.host(port, settings.playerName, sim.world.map, settings.maxPlayers, session)) {
-            if (sim.world.parkEdited) {  // (the guests build the generator's sections, so the host's world must too: your saved edits are for offline play)
-                loadMap(sim.world.map);
-                std::printf("hosting: the proving ground shows the built-in sections, not the saved level edits\n");
-            }
+            net.setSections(sim.world.editedSections);  // (your edited park sections go to whoever joins: the same world for all)
             net.adopt(sim);
             hud.toast("HOSTING " + session + " ON " + mapName(sim.world.map) + ": FRIENDS ON YOUR NETWORK SEE IT IN JOIN");
             std::printf("hosting %s on port %d\n", mapName(sim.world.map), port);
         } else {
+            if (quietFail && net.portInUse) return;
             if (net.portInUse) net.error = "PORT " + std::to_string(port) + " IS IN USE: PICK ANOTHER IN THE MULTIPLAYER MENU";
             hud.toast("CAN'T HOST: " + net.error);
             std::printf("can't host: %s\n", net.error.c_str());
@@ -2372,6 +2541,8 @@ int main(int argc, char** argv) {
             if (!net::parseAddress(address, h, menu.joinPort)) menu.joinPort = net::kDefaultPort;  // (for the failed card's port help)
         }
         settings.joinAddress = address;  // (the last server, whether typed or picked from the list)
+        joinByCode = false;
+        joinWhat = address;
         net.password = net::joinPassword(opt.password, settings.joinPassword);
         peerAddress = address;
         if (net.beginJoin(address, settings.playerName)) {
@@ -2380,6 +2551,28 @@ int main(int argc, char** argv) {
             joinFailed();
         }
         std::printf("joining %s\n", address.c_str());
+    };
+    auto rendezvousAddress = [&]() { return !opt.rendezvous.empty() ? opt.rendezvous : !settings.rendezvous.empty() ? settings.rendezvous : std::string(net::kDefaultRendezvous); };
+    auto beginCodeJoin = [&](const std::string& code) {
+        menu.joining = true;
+        menu.joinLabel = "CODE " + rv::formatCode(rv::normalizeCode(code));
+        menu.joinError.clear();
+        menu.joinNeedsPw = false;
+        net.password = net::joinPassword(opt.password, settings.joinPassword);
+        net.rendezvous = rendezvousAddress();
+        joinByCode = true;
+        joinWhat = rv::formatCode(rv::normalizeCode(code));
+        if (net.beginJoinCode(code, settings.playerName)) joinState = 1;
+        else joinFailed();
+        std::printf("joining with code %s\n", joinWhat.c_str());
+    };
+    auto rememberJoin = [&](const std::string& what) {  // (RECENT on the multiplayer page)
+        if (what.empty()) return;
+        auto& r = settings.recentJoins;
+        r.erase(std::remove(r.begin(), r.end(), what), r.end());
+        r.insert(r.begin(), what);
+        if (r.size() > 3) r.resize(3);
+        saveSettings();
     };
     // ---- end multiplayer joining
     auto startJoin = [&](const std::string& address) {
@@ -2390,7 +2583,8 @@ int main(int argc, char** argv) {
             std::printf("can't join %s: %s\n", address.c_str(), net.error.c_str());
             return;
         }
-        if (net.map != sim.world.map || sim.world.parkEdited || campWorld) loadMap(net.map);
+        World::setSessionSections(net.sections);
+        if (net.map != sim.world.map || sim.world.parkEdited || !net.sections.empty() || campWorld) loadMap(net.map);
         net.adopt(sim);
         hud.toast("JOINED " + net.ownerName(0) + "'S GAME ON " + mapName(net.map));
         std::printf("joined %s (player %d)\n", address.c_str(), net.self);
@@ -2432,25 +2626,28 @@ int main(int argc, char** argv) {
     refreshLevelsLater = refreshLevels;
     auto runSlot = [&]() { return net.active() ? std::max(0, net.self) : 0; };
     bool editorSuspended = false;  // the editor is waiting while its level is tried out (F1 comes back to it)
-    auto playLevel = [&](const Level& lv, const EditCore::PlaySpot* spot = nullptr) {
+    // `fromEditor`: a try-out of the level being edited, played on the map the editor has it on (an old map's levels play in their region
+    // of the big map otherwise: placeInRegion).
+    auto playLevel = [&](const Level& given, const EditCore::PlaySpot* spot = nullptr, bool fromEditor = false) {
         endCareer();
+        Level lv = given;
+        int madeOn = lv.map;
+        const bool moved = !fromEditor && placeInRegion(lv, &madeOn);
         editorSuspended = false;
         Car& me = sim.cars[sim.player];
         me.pilot.active = false;
         me.ai = false;
         const int model = lv.vehicle >= 0 && lv.vehicle < (int)vehicleCatalog().size() ? lv.vehicle : std::max(0, me.spec->model);
         campWorld = false;
+        renderer.waitStreaming(), bigHome.live = false;  // (its background streaming reads the world)
         sim.world = levelWorld(lv);
+        if (moved && !lv.hasStart) sim.world.startAtRegion(madeOn);  // (no start of its own: where its old map started you)
         applyLevel(lv, sim.world);
         addGateMarkers(lv, sim.world);
-        // Just you on the grid (and the other players, in a session).
-        for (int i = (int)sim.cars.size() - 1; i >= 0; i--)
-            if (i != sim.player && !sim.cars[i].remote) {
-                sim.carRemoved(i);
-                sim.cars.erase(sim.cars.begin() + i);
-                if (sim.player > i) sim.player--;
-            }
-        sim.dropRopes(sim.player);
+        worldPick = madeOn;
+        // Just you on the grid (and the other players, in a session): nothing of the last world's.
+        sim.clearWorldLeftovers(sim.player, net.active());
+        if (worldChanged) worldChanged();
         sim.swapPlayerVehicle(garage.spec(model));
         sim.paused = false;
         renderer.setWorld(sim.world);
@@ -2480,7 +2677,7 @@ int main(int argc, char** argv) {
             c.spawnPos = c.frame().com, c.spawnYaw = yaw;
             hud.toast(spot && spot->here ? lv.name + ": FROM HERE" : lv.name + ": FREE DRIVE");
         }
-        if (net.role == NetSession::HOST) net.setLevel(saveLevelText(lv));
+        if (net.role == NetSession::HOST) net.setLevel(saveLevelText(given));  // (as it was made: the others move it as this did)
     };
     auto restartLevel = [&]() {
         if (!run.active()) return;
@@ -2542,6 +2739,23 @@ int main(int argc, char** argv) {
         }
         return false;
     };
+    // The spots that count as finding something on this map: its table of places (places.h) and the autopilot's named spots, except the
+    // ones the table already has (within 40 m of one).
+    auto discoverySpots = [&]() {
+        std::vector<DiscoverSpot> spots = discoverSpots(sim.world.map);
+        const size_t fromTable = spots.size();
+        for (const Place& pl : pilotPlaces(sim, net)) {
+            if (pl.kind != 0) continue;
+            bool have = false;
+            for (size_t k = 0; k < fromTable; k++) have |= std::hypot(spots[k].p.x - pl.p.x, spots[k].p.z - pl.p.z) < 40;
+            if (!have) {
+                DiscoverSpot d{pl.keyMap >= 0 ? pl.keyName : pl.name, pl.p, 30, -1};
+                if (pl.keyMap >= 0) d.map = pl.keyMap, d.label = pl.name;
+                spots.push_back(d);
+            }
+        }
+        return spots;
+    };
     auto refreshJobs = [&]() {
         std::vector<JobPlace> places;
         for (const Place& pl : pilotPlaces(sim, net))
@@ -2594,6 +2808,9 @@ int main(int argc, char** argv) {
     bool workHandOn = false;
     bool scriptE = false;  // (--script work-*: E held)
     bool mouseLook = false;
+    // Footsteps (recorded, audio.h): one per half stride, by what's underfoot -- paving, sand / snow, or gravel (dirt, grass, rock, mud, ...).
+    auto stepSfx = [](Surface su) { return su == SURF_PAVED ? SFX_STEP_PAVED : su == SURF_SAND || su == SURF_SNOW ? SFX_STEP_SAND : SFX_STEP_GRAVEL; };
+    auto stepped = [](double before, double after) { return std::floor(after / 3.14159265) != std::floor(before / 3.14159265); };
     auto closeInventory = [&]() {
         if (!inv.open) return;
         inv.close();
@@ -2731,27 +2948,30 @@ int main(int argc, char** argv) {
         float fade = 0;  // how black the screen is
         int warm = 0;    // frames held black once built: the first draws of the new buffers and textures (80 ms and more) land here, not in the fade
         std::function<void()> then;
+        std::shared_ptr<BigHome> home;  // (what buildPick noted of the world being made)
         bool active() const { return st != IDLE; }
     } mapLoad;
     auto requestMap = [&](int m, std::function<void()> then) {
         if (mapLoad.active()) return;
         endCareer();  // (another map: the world's saved as it stands now)
-        if (!opt.shotFrames.empty() || !opt.script.empty() || editor.active || net.active()) {
-            loadMap(m);
+        if (!opt.shotFrames.empty() || !opt.script.empty() || editor.active || net.active() || (!campWorld && onBigMapAlready(bigHome, sim.world, m, false))) {
+            loadMap(m);  // (another region of the big map that's up: a move, no load)
             if (then) then();
             return;
         }
-        World::useLocalEdits = !net.active();
+        World::useLocalEdits = net.role != NetSession::CLIENT;
         const bool showcase = World::withShowcase;
         const int wilds = (int)World::wildsKind;
         const double halfOverride = World::halfSizeOverride;
         const props::HullLibrary* hulls = props::activeRockScans();
         const ScanCover cover = renderer.scanCover();
         mapLoad.map = m, mapLoad.then = std::move(then), mapLoad.st = MapLoad::WORK;
+        auto home = std::make_shared<BigHome>();
+        mapLoad.home = home;
         mapLoad.fut = std::async(std::launch::async, [=] {
             World::withShowcase = showcase, World::wildsKind = wilds, World::halfSizeOverride = halfOverride;
             props::setActiveRockScans(hulls);
-            auto w = std::make_unique<World>(m);
+            auto w = std::make_unique<World>(buildPick(m, false, *home));
             auto p = Renderer::prepareWorld(*w, cover);
             return std::make_pair(std::move(w), std::move(p));
         });
@@ -2771,9 +2991,13 @@ int main(int argc, char** argv) {
             LOADPROF("mapload.swap (sim)");
             const int model = std::max(0, sim.cars[sim.player].spec->model);
             campWorld = false;
+            renderer.waitStreaming();  // (its background streaming reads the world)
             sim.world = std::move(*L.world);
             L.world.reset();
+            if (L.home) bigHome = *L.home, L.home.reset();
+            worldPick = L.map;
             sim.setup();
+            if (worldChanged) worldChanged();
             fitGarage();
             if (model != sim.cars[sim.player].spec->model) sim.swapPlayerVehicle(garage.spec(model));
             startPendingCareer();
@@ -2808,9 +3032,10 @@ int main(int argc, char** argv) {
         run.stop();
         levelHours = -1;
         stopPilot();
-        if (newSection) editor.newSection(sim.world, renderer);  // (a fresh open country, the canvas cleared)
+        if (newSection) bigHome.live = false, editor.newSection(sim.world, renderer);  // (a fresh open country, the canvas cleared)
         else {
             campWorld = false;
+            renderer.waitStreaming(), bigHome.live = false;  // (its background streaming reads the world)
             sim.world = levelWorld(base);
             editor.open(sim.world, renderer, base);
             if (atPlayer) {  // (F2 from driving: the camera starts above and behind you, looking the way you face)
@@ -2819,6 +3044,8 @@ int main(int argc, char** argv) {
                 else editor.lookFrom(pf.com, std::atan2(-pf.fwd.z, pf.fwd.x));
             }
         }
+        sim.clearWorldLeftovers(sim.player);  // (offline: just you; the last world's vehicles don't wait in this one)
+        if (worldChanged) worldChanged();
         drawnWorld = sim.world.stamp;
         sim.paused = true;
         fx.clear();
@@ -2831,7 +3058,10 @@ int main(int argc, char** argv) {
         levelHours = -1;
         stopPilot();
         campWorld = false;
+        renderer.waitStreaming(), bigHome.live = false;  // (its background streaming reads the world)
         sim.world = levelWorld(editor.core.level);
+        sim.clearWorldLeftovers(sim.player);
+        if (worldChanged) worldChanged();
         editor.resume(sim.world, renderer);
         drawnWorld = sim.world.stamp;
         sim.paused = true;
@@ -2852,9 +3082,12 @@ int main(int argc, char** argv) {
         endCareer();
         run.stop();
         levelHours = -1;
+        if (!campLoaded) campLevel = menuscene::load(), campLoaded = true;
         menucamp::fireOf(campLevel, campFire);
+        renderer.waitStreaming(), bigHome.live = false;  // (its background streaming reads the world)
         sim.world = menuscene::buildWorld(campLevel);
         sim.setup();
+        if (worldChanged) worldChanged();
         fitGarage();
         parkCamp();
         for (const Car& c : sim.cars)
@@ -2871,6 +3104,17 @@ int main(int argc, char** argv) {
     auto uiClick = [&]() { if (audioOn) audio.play(SFX_UI_CLICK, 0.35f); };
     auto uiHover = [&]() { if (audioOn) audio.play(SFX_UI_HOVER, 0.16f); };
     auto activationKey = [](int sc) { return sc == 40 || sc == 88 || sc == 44; };  // (Enter, keypad Enter, Space: the pad's A arrives as Enter)
+    worldChanged = [&]() {
+        worldCareer = career.on;
+        if (jobOn && net.role == NetSession::HOST) net.sendGame("jobstop");
+        jobOn = false;  // (its wreck and its places were the last world's)
+        cachesMap = -1;
+        if (walker.active) {  // (back in your seat: the sim has you there)
+            walker.active = false, crouchLatch = false;
+            cam.dist = carCamDist;
+        }
+        releaseFreedMemory();  // (the last world's terrain and scenery, freed on worker threads, back to the system)
+    };
     auto handleMenu = [&](PauseMenu::Result res) {
         switch (res.action) {
             case PauseMenu::NONE: break;
@@ -2951,7 +3195,7 @@ int main(int argc, char** argv) {
                 break;
             case PauseMenu::HOST:
                 saveSettings();
-                if (menu.mapPick != sim.world.map || campWorld) {  // (the HOST card's map)
+                if (menu.mapPick != worldPick || campWorld) {  // (the HOST card's map)
                     run.stop();
                     levelHours = -1;
                     loadMap(menu.mapPick);
@@ -2987,7 +3231,8 @@ int main(int argc, char** argv) {
                 if (net.role == NetSession::HOST) net.setLevel("");
                 const bool staleEdits = menu.mapPick == MAP_PROVING_GROUND && sim.world.map == MAP_PROVING_GROUND && !net.active() &&
                                         sim.world.editStamp != levelFilesStamp();  // (a level saved since the proving ground was built)
-                if ((menu.mapPick != sim.world.map || staleEdits || campWorld) && net.role != NetSession::CLIENT) {
+                const bool otherSave = worldCareer != career.on && !net.active();  // (career <-> sandbox: the other mode's vehicles don't come along)
+                if ((menu.mapPick != worldPick || staleEdits || campWorld || otherSave) && net.role != NetSession::CLIENT) {
                     requestMap(menu.mapPick, nullptr);
                     settings.map = menu.mapPick;
                     saveSettings();
@@ -3101,7 +3346,7 @@ int main(int argc, char** argv) {
                 levelHours = -1;
                 if (net.role == NetSession::HOST) net.setLevel("");
                 refreshLevels();
-                if (wantCamp && !net.active() && !editor.active && !mapLoad.active()) enterCamp();
+                if (campMenu && !net.active() && !editor.active && !mapLoad.active()) enterCamp();
                 menu.showTitle(std::max(0, sim.cars[sim.player].spec->model), campWorld ? settings.map : sim.world.map);
                 classicTitle = false;
                 if (campWorld) mainNav.open(menu.mapPick, std::max(0, sim.cars[sim.player].spec->model)), mainNav.worlds = listWorlds();
@@ -3122,6 +3367,160 @@ int main(int argc, char** argv) {
             }
         }
     };
+    // ---- The multiplayer pages (mpmenu.h): the PauseMenu's page 2, drawn and driven in the main menu's style ----
+    auto upperText = [](std::string s) {
+        for (char& ch : s) ch = (char)std::toupper((unsigned char)ch);
+        return s;
+    };
+    auto mpLoadFields = [&]() {  // settings -> the pages' fields
+        mpmenu::Fields& f = mpNav.f;
+        f.name = settings.playerName;
+        f.address = settings.joinAddress;
+        f.password = settings.joinPassword;
+        f.hostPassword = settings.netPassword;
+        f.session = settings.sessionName;
+        f.port = std::to_string(settings.hostPort);
+        f.maxPlayers = net.role == NetSession::HOST ? net.maxPlayers : settings.maxPlayers;
+        f.passwordOn = net.role == NetSession::HOST ? !net.password.empty() : !settings.netPassword.empty();
+        f.map = 0;
+        const std::vector<int>& maps = listedMaps();
+        for (int i = 0; i < (int)maps.size(); i++)
+            if (maps[i] == menu.mapPick) f.map = i;
+    };
+    auto mpSaveFields = [&]() {  // the pages' fields -> settings
+        const mpmenu::Fields& f = mpNav.f;
+        if (!f.name.empty()) settings.playerName = f.name;
+        settings.joinAddress = f.address;
+        settings.joinPassword = f.password;
+        settings.netPassword = f.hostPassword;
+        settings.sessionName = f.session;
+        const int p = net::parsePort(f.port, net::kMinHostPort);
+        if (p > 0) settings.hostPort = p;
+        settings.maxPlayers = f.maxPlayers;
+        const std::vector<int>& maps = listedMaps();
+        if (!maps.empty()) menu.mapPick = maps[std::min(std::max(f.map, 0), (int)maps.size() - 1)];
+        saveSettings();
+    };
+    auto mpFillView = [&]() {
+        mpmenu::View& v = mpView;
+        v.inGame = !menu.title;
+        v.role = net.role == NetSession::HOST ? 1 : net.role == NetSession::CLIENT && !net.joining() ? 2 : 0;
+        v.codesAvailable = !rendezvousAddress().empty();
+        v.code = net.joinCode;
+        v.codeState = (int)net.codeState;
+        v.codeError = net.codeError;
+        v.players.clear();
+        for (int k = 0; k < net::kMaxPeers && v.role; k++) {
+            const NetPlayer& p = net.players[k];
+            if (!p.active) continue;
+            mpmenu::View::Player vp;
+            vp.id = k, vp.name = p.name.empty() ? "PLAYER" : p.name, vp.pingMs = (int)std::lround(p.ping * 1000);
+            vp.link = k == net.self && net.role == NetSession::CLIENT ? (int)net.myLink() : p.link;
+            vp.self = k == net.self;
+            v.players.push_back(vp);
+        }
+        v.sessionTitle = net.role == NetSession::HOST ? net.sessionName : net.ownerName(0) + "'S GAME";
+        v.mapName = v.role ? mapName(net.map) : "";
+        v.maxPlayersNow = net.maxPlayers;
+        v.lan.clear();
+        for (const PauseMenu::FoundGame& g : menu.found) v.lan.push_back({g.session, g.ok ? g.host + "  " + g.map + "  " + g.players : g.why, g.address, g.ok});
+        v.searching = menu.searching;
+        v.localIps = menu.localIps;
+        v.hostPort = net.port() ? net.port() : settings.hostPort;
+        v.joining = menu.joining;
+        v.byCode = joinByCode;
+        v.joinStep = (int)net.joinStep();
+        v.joinFail = (int)net.joinFail;
+        v.failPlayers = net.failPlayers, v.failMax = net.failMax;
+        v.joinLabel = menu.joinLabel;
+        v.joinError = menu.joinError;
+        v.needPassword = menu.joinNeedsPw;
+        v.mapNames.clear();
+        for (int mp : listedMaps()) v.mapNames.push_back(mapPickName(mp));
+        v.recent = settings.recentJoins;
+    };
+    auto mpSync = [&]() {  // (the page just came up: from the main menu, HOME; in the game, FRIENDS)
+        mpFillView();
+        const bool shown = mpShown();
+        if (shown && !mpWasShown) {
+            mpLoadFields();
+            mpNav.open(menu.title ? mpmenu::P_HOME : mpmenu::P_FRIENDS, mpView);
+            if (menu.joining) mpNav.showJoining();
+        }
+        mpWasShown = shown;
+    };
+    auto openToFriends = [&]() {
+        if (net.role == NetSession::CLIENT) return;
+        if (net.role != NetSession::HOST) {  // (this world as it is: no reload, the port in the settings or the next free one)
+            for (int k = 0; k < 10 && !net.active(); k++) startHost(settings.hostPort + k, k < 9);
+            if (!net.active()) return;
+            if (run.active()) net.setLevel(saveLevelText(run.level));  // (they join into the level being played)
+        }
+        net.password = mpNav.f.passwordOn ? mpNav.f.hostPassword : std::string();
+        net.maxPlayers = std::max(net.playerCount(), std::min(std::max(mpNav.f.maxPlayers, 2), net::kMaxPeers));
+        net.rendezvous = rendezvousAddress();
+        if (!net.openToFriends()) hud.toast("NO JOIN CODE: " + upperText(net.codeError));
+    };
+    auto handleMp = [&](const mpmenu::Result& r) {
+        using namespace mpmenu;
+        const int model = std::max(0, sim.cars[sim.player].spec->model);
+        switch (r.act) {
+            case A_NONE: break;
+            case A_CHANGED: mpSaveFields(); break;
+            case A_SETTINGS_LIVE:
+                mpSaveFields();
+                if (net.role == NetSession::HOST) {
+                    net.password = mpNav.f.passwordOn ? mpNav.f.hostPassword : std::string();
+                    net.maxPlayers = std::max(net.playerCount(), std::min(std::max(mpNav.f.maxPlayers, 2), net::kMaxPeers));
+                }
+                break;
+            case A_BACK:
+                if (menu.title) menu.showTitle(model, sim.world.map);
+                else menu.show(model, sim.world.map);
+                break;
+            case A_JOIN_CODE:
+                mpSaveFields();
+                mpNav.showJoining();
+                beginCodeJoin(r.text);
+                break;
+            case A_JOIN_ADDRESS:
+            case A_JOIN_FOUND:
+                mpSaveFields();
+                mpNav.showJoining();
+                beginJoin(r.text, r.label);
+                break;
+            case A_RETRY:
+                mpSaveFields();
+                mpNav.showJoining();
+                if (joinByCode) beginCodeJoin(joinWhat);
+                else beginJoin(joinWhat, menu.joinLabel);
+                break;
+            case A_CANCEL_JOIN:
+                handleMenu(PauseMenu::Result{PauseMenu::CANCEL_JOIN});
+                break;
+            case A_HOST: {
+                mpSaveFields();
+                handleMenu(PauseMenu::Result{PauseMenu::HOST});
+                if (net.role == NetSession::HOST && mpNav.f.alsoCode && !rendezvousAddress().empty()) {
+                    net.rendezvous = rendezvousAddress();
+                    net.openToFriends();
+                }
+                break;
+            }
+            case A_OPEN_FRIENDS: openToFriends(); break;
+            case A_CLOSE_FRIENDS:
+                net.closeToFriends();
+                hud.toast("CLOSED TO FRIENDS: THE CODE NO LONGER WORKS");
+                break;
+            case A_COPY_CODE: hud.toast("JOIN CODE " + rv::formatCode(net.joinCode) + " COPIED"); break;
+            case A_STOP_HOSTING:
+            case A_LEAVE: handleMenu(PauseMenu::Result{PauseMenu::LEAVE}); break;
+            case A_KICK:
+                if (r.arg > 0 && r.arg < net::kMaxPeers) hud.toast(upperText(net.players[r.arg].name) + " REMOVED");
+                net.kick(r.arg);
+                break;
+        }
+    };
     if (opt.menu == 9) {  // (testing: the title screen)
         openMenu();
         menu.showTitle(std::max(0, sim.cars[sim.player].spec->model), sim.world.map);
@@ -3133,6 +3532,7 @@ int main(int argc, char** argv) {
     }
     if (opt.hostPort >= 0) startHost(opt.hostPort > 0 ? opt.hostPort : settings.hostPort);
     else if (!opt.join.empty()) startJoin(opt.join);
+    else if (!opt.joinCode.empty()) beginCodeJoin(opt.joinCode);
     // Launched plainly (no map, spawn, session or test asked for): the title screen first.
     bool resumedEdit = false;
     if (!opt.resumeEdit.empty() && !scripted) {  // (a reload with unsaved edits: the recovery copy it just wrote)
@@ -3405,7 +3805,7 @@ int main(int argc, char** argv) {
                 }
                 run.stop();
                 levelHours = -1;
-                requestMap(sim.world.map, nullptr);
+                requestMap(careerNext.on ? careerNext.world.map : sim.world.map, nullptr);  // (a world's own map id: its region of the big map)
                 hud.toast("WORLD RESET");
                 break;
             case REPAIR: sim.recoverPlayer(); hud.toast("REPAIRED"); break;
@@ -3503,7 +3903,7 @@ int main(int argc, char** argv) {
         }
     };
     // CZ_FRAMELOG=1 with --bench: a histogram, and every frame over 1.5x the median with its stages (CPU/GPU ms).
-    struct FrameRec { int bf; double ms, cpu[FP_COUNT], gpu[FP_COUNT]; };
+    struct FrameRec { int bf; double ms, cpu[FP_COUNT], gpu[FP_COUNT]; float x, z; std::string work; double threadMs; long preempted, faults; };
     std::vector<FrameRec> frameRecs;
     auto printFrameLog = [&] {
         if (frameRecs.empty()) return;
@@ -3511,6 +3911,25 @@ int main(int argc, char** argv) {
         for (auto& f : frameRecs) t.push_back(f.ms);
         std::sort(t.begin(), t.end());
         const double med = t[t.size() / 2];
+        {  // (the tail: percentiles, the worst, and how many frames went over 1.5x the median)
+            auto pct = [&](double q) { return t[std::min(t.size() - 1, (size_t)std::floor(t.size() * q))]; };
+            int over = 0;
+            for (double v : t) over += v > med * 1.5;
+            std::printf("framelog: frames %zu, median %.3f, p99 %.3f, p99.9 %.3f, worst %.3f ms, %d over 1.5x the median\n", t.size(), med, pct(0.99), pct(0.999), t.back(), over);
+        }
+        if (const char* csv = std::getenv("CZ_FRAMELOG_CSV")) {  // (every frame: its time, where the camera was, the stages' CPU/GPU ms)
+            if (FILE* fcsv = std::fopen(csv, "w")) {
+                std::fprintf(fcsv, "frame,ms,x,z,thread_ms,preempted,faults");
+                for (int i = 0; i < FP_COUNT; i++) std::fprintf(fcsv, ",%s,%s_gpu", framePassName((FramePass)i), framePassName((FramePass)i));
+                std::fprintf(fcsv, "\n");
+                for (auto& f : frameRecs) {
+                    std::fprintf(fcsv, "%d,%.3f,%.1f,%.1f,%.3f,%ld,%ld", f.bf, f.ms, f.x, f.z, f.threadMs, f.preempted, f.faults);
+                    for (int i = 0; i < FP_COUNT; i++) std::fprintf(fcsv, ",%.3f,%.3f", f.cpu[i], f.gpu[i]);
+                    std::fprintf(fcsv, "\n");
+                }
+                std::fclose(fcsv);
+            }
+        }
         static const double edges[] = {2.0, 2.25, 2.5, 2.75, 3.0, 3.5, 4, 5, 6, 8, 12, 1e9};
         int h[12] = {};
         for (double v : t) { int k = 0; while (v >= edges[k]) k++; h[k]++; }
@@ -3519,9 +3938,9 @@ int main(int argc, char** argv) {
         std::printf("\n");
         int n = 0, last = -100;
         for (auto& f : frameRecs) if (f.ms > med * 1.5) {
-            std::printf("framelog: f%d (+%d) %.2f ms |", f.bf, f.bf - last, f.ms);
+            std::printf("framelog: f%d (+%d) %.2f ms (thread CPU %.2f, preempted %ld, faults %ld) |", f.bf, f.bf - last, f.ms, f.threadMs, f.preempted, f.faults);
             for (int i = 0; i < FP_COUNT; i++) if (f.cpu[i] > 0.15 || f.gpu[i] > 0.15) std::printf(" %s %.2f/%.2f", framePassName((FramePass)i), f.cpu[i], f.gpu[i]);
-            std::printf("\n");
+            std::printf("%s%s\n", f.work.empty() ? "" : " |", f.work.c_str());
             last = f.bf;
             if (++n >= 400) break;
         }
@@ -3589,7 +4008,7 @@ int main(int argc, char** argv) {
     auto startNextRun = [&]() -> bool {
         if (!suite.next()) return false;
         const BenchSuite::Entry& e = suite.current();
-        if (sim.world.map != e.map) loadMap(e.map);
+        if (sim.world.map != e.map) loadMap(e.map, true);  // (the suite's scenes are the old maps on their own: the baselines' scenes)
         if (e.spawn) sim.cars[sim.player].respawn(V3(e.x, sim.world.clearY(e.x, e.z) + 0.05, e.z), e.heading * M_PI / 180);
         applyPreset(settings.gfx, e.preset);
         benchCentre = sim.cars[sim.player].frame().com;
@@ -3605,8 +4024,11 @@ int main(int argc, char** argv) {
     int simAsyncSteps = 0;
     const bool asyncAllowed = opt.simAsync && opt.shotFrames.empty() && !opt.loadTour && opt.script.empty();
 
+    loadprof::phase("first frame");
+    renderer.stageMarks = true;  // (its draw stages too: a software renderer compiles each shader at its first draw)
     while (running) {
-        if (g_termSignals) break;  // (SIGTERM / SIGINT in normal play: quit cleanly)
+        if (g_termSignals) break;
+        if (frame == 1) loadprof::phase(nullptr), renderer.stageMarks = false;  // (SIGTERM / SIGINT in normal play: quit cleanly)
         if (watchdog) watchdog->frame(frame);
         if (frame == testStallFrame) for (;;) std::this_thread::sleep_for(std::chrono::seconds(1));
         uint64_t now = SDL_GetPerformanceCounter();
@@ -3663,9 +4085,24 @@ int main(int argc, char** argv) {
             }
             if (frameTimeMs < 250) typical = frame <= 10 ? frameTimeMs : typical + (std::min(frameTimeMs, typical * 3) - typical) * 0.05;
         }
-        if (opt.bench && bf > benchWarm && bf <= benchWarm + opt.bench && std::getenv("CZ_FRAMELOG")) {  // (every measured frame's stages, for the slow-frame report)
+        static const bool frameLogOn = std::getenv("CZ_FRAMELOG") != nullptr;
+        if (frameLogOn && (opt.bench ? bf > benchWarm && bf <= benchWarm + opt.bench : frame > 300 && frameRecs.size() < 100000)) {  // (every measured frame's stages, for the slow-frame report; playing: from frame 300, printed at the end)
             FrameRec fr;
             fr.bf = bf, fr.ms = frameTimeMs;
+            {  // (the frame thread's own CPU time over the last frame, against its wall time)
+                static ThreadUsage before = threadUsage();
+                const ThreadUsage u = threadUsage();
+                fr.threadMs = u.cpuMs - before.cpuMs, fr.preempted = u.preempted - before.preempted, fr.faults = u.majorFaults - before.majorFaults;
+                before = u;
+            }
+            const V3 at = cam.mode == 3 || sim.cars.empty() ? cam.droneEye : sim.cars[sim.player].frame().com;
+            fr.x = (float)at.x, fr.z = (float)at.z;
+            for (const FrameWork& w : frameWorkLast())
+                if (w.ms > 0.2) {
+                    char b[96];
+                    std::snprintf(b, sizeof b, " %s %.2f", w.name, w.ms);
+                    fr.work += b;
+                }
             std::copy(frameProfile().last, frameProfile().last + FP_COUNT, fr.cpu);
             for (int i = 0; i < FP_COUNT; i++) fr.gpu[i] = frameProfile().gpuValid ? frameProfile().lastGpu[i] : -1;
             frameRecs.push_back(fr);
@@ -3811,16 +4248,19 @@ int main(int argc, char** argv) {
                     toDrawable(evMotionX(e), evMotionY(e), mx, my);
                     const float dx = mx - mouseX, dy = my - mouseY;
                     mouseX = mx, mouseY = my;
-                    if (shopDrag && (evMotionState(e) & 1)) garageShop.turn(dx * 0.012, dy * 0.006);
+                    if (garageShop.dragCtl >= 0 && (evMotionState(e) & 1)) shopResult(garageShop.pointer(mx, my, false, true));
+                    else if (shopDrag && (evMotionState(e) & 1)) garageShop.turn(dx * 0.012, dy * 0.006);
                     else if (garageShop.hitAt(mx, my, col, row)) garageShop.hover(col, row);
                 } else if (e.type == SDL_MOUSEBUTTONDOWN) {
                     toDrawable(evButtonX(e), evButtonY(e), mx, my);
                     mouseX = mx, mouseY = my;
-                    if (evButton(e) == 1 && garageShop.hitAt(mx, my, col, row)) shopResult(garageShop.click(col, row, career));
+                    if (evButton(e) == 1 && garageShop.hitAt(mx, my, col, row) && col >= 2) shopResult(garageShop.pointer(mx, my, true, true));
+                    else if (evButton(e) == 1 && garageShop.hitAt(mx, my, col, row)) shopResult(garageShop.click(col, row, career));
                     else if (evButton(e) == 1 && mx > garageShop.turntableX) shopDrag = true;
                     else if (evButton(e) == 3) shopResult(garageShop.back());
                 } else if (e.type == SDL_MOUSEBUTTONUP) {
                     shopDrag = false;
+                    garageShop.pointer(mouseX, mouseY, false, false);
                 } else if (evWheelY(e) != 0) {
                     if (mouseX > garageShop.turntableX) garageShop.zoomBy(evWheelY(e) > 0 ? 1 / 1.12 : 1.12);
                     else garageShop.move(evWheelY(e) > 0 ? -1 : 1);
@@ -3847,7 +4287,10 @@ int main(int argc, char** argv) {
                 case SDL_QUIT: running = false; break;
                 case SDL_TEXTINPUT:
                     if (mainMenuShown() && mainNav.text(evText(e))) break;  // (the New World page's name field)
-                    if (menu.open) {
+                    if (mpShown()) {
+                        mpSync();
+                        handleMp(mpNav.text(evText(e), mpView));
+                    } else if (menu.open) {
                         const uint8_t* ks = SDL_GetKeyboardState(nullptr);
                         menu.ctrl = ks[224] || ks[228] || testCtrl;
                         handleMenu(menu.textInput(evText(e).c_str(), settings));
@@ -3888,6 +4331,17 @@ int main(int argc, char** argv) {
                     }
                     if (menu.open && menu.title && classicTitle && campWorld && menu.pageNow() == 0 && evKeyScancode(e) == SC_ESCAPE) {  // (the old title page: Esc is back to the new one)
                         classicTitle = false;
+                        break;
+                    }
+                    if (mpShown()) {  // the multiplayer pages (mpmenu.h) take every key
+                        mpSync();
+                        const uint8_t* ks = SDL_GetKeyboardState(nullptr);
+                        const bool ctrl = ks[224] || ks[228] || testCtrl, shift = ks[SC_LSHIFT] || ks[SC_RSHIFT];
+                        const int before = mpNav.sel, pageBefore = mpNav.page;
+                        const mpmenu::Result r = mpNav.key(evKeyScancode(e), ctrl, shift, mpView);
+                        if (activationKey(evKeyScancode(e)) || mpNav.page != pageBefore) uiClick();
+                        else if (mpNav.sel != before) uiHover();
+                        handleMp(r);
                         break;
                     }
                     if (menu.open) {  // the menu takes every key (repeats too: hold to slide)
@@ -4215,6 +4669,16 @@ int main(int argc, char** argv) {
                             mainNav.setSel(h);
                             if (mainNav.sel != before) uiHover();
                         }
+                    } else if (mpShown()) {
+                        float mx, my;
+                        toDrawable(evMotionX(e), evMotionY(e), mx, my);
+                        mpSync();
+                        const int h = mpNav.hitAt(mx, my);
+                        if (h >= 0) {
+                            const int before = mpNav.sel;
+                            mpNav.setSel(h, mpView);
+                            if (mpNav.sel != before) uiHover();
+                        }
                     } else if (menu.open) {
                         float mx, my;
                         toDrawable(evMotionX(e), evMotionY(e), mx, my);
@@ -4249,6 +4713,15 @@ int main(int argc, char** argv) {
                         else if (evButton(e) == 3) handleMain(mainNav.back());
                         break;
                     }
+                    if (mpShown()) {
+                        float mx, my;
+                        toDrawable(evButtonX(e), evButtonY(e), mx, my);
+                        mpSync();
+                        const int h = mpNav.hitAt(mx, my);
+                        if (evButton(e) == 1 && h >= 0) uiClick(), handleMp(mpNav.choose(h, mpView));
+                        else if (evButton(e) == 3) handleMp(mpNav.back(mpView));
+                        break;
+                    }
                     if (menu.open && evButton(e) == 1) {
                         float mx, my;
                         toDrawable(evButtonX(e), evButtonY(e), mx, my);
@@ -4264,6 +4737,8 @@ int main(int argc, char** argv) {
                     if (!menu.open) cam.dist = clampd(cam.dist * std::pow(0.88, evWheelY(e)), 3.0, 60.0);
                     else if (mainMenuShown()) {
                         if (evWheelY(e) != 0 && mainNav.page != mainmenu::P_FRONT) mainNav.move(evWheelY(e) > 0 ? -1 : 1);
+                    } else if (mpShown()) {
+                        if (evWheelY(e) != 0) mpSync(), mpNav.move(evWheelY(e) > 0 ? -1 : 1, mpView);
                     } else if (evWheelY(e) != 0) menu.wheel(evWheelY(e) > 0 ? -1 : 1, settings);
                     break;
             }
@@ -4343,7 +4818,9 @@ int main(int argc, char** argv) {
             if (opt.script == "pilot" && frame == 20) {  // screenshot: autopilot to the halfway hut
                 const std::vector<Place> places = pilotPlaces(sim, net);
                 for (int k = 0; k < (int)places.size(); k++)
-                    if (places[k].name.find("HALFWAY") != std::string::npos) settings.pilotDest = k;
+                    if (places[k].name.find(std::getenv("CZ_PILOT_DEST") ? std::getenv("CZ_PILOT_DEST") : "HALFWAY") != std::string::npos) settings.pilotDest = k;  // (CZ_PILOT_DEST=NAME: another place; with --bench, the drive is what's measured)
+                if (std::getenv("CZ_PILOT_LIST"))
+                    for (const Place& pl : places) std::printf("pilot place: %s (%.0f, %.0f)\n", pl.name.c_str(), pl.p.x, pl.p.z);
                 startPilot();
             }
             if (opt.script == "pilot") up = down = left = right = false;
@@ -4421,7 +4898,7 @@ int main(int argc, char** argv) {
                     footYaw = std::atan2(-d.z, d.x), footPitch = std::asin(d.y);
                 }
             }
-            if (opt.script == "damage") {  // screenshots of broken parts: CZ_BREAK=cv:fl,tie:fr,bend:fl,shaft:f,spring:rl,leaf:rr,flood (corner = front/rear + left/right),
+            if (opt.script == "damage") {  // screenshots of broken parts: CZ_BREAK=cv:fl,tie:fr,bend:fl,shaft:f,spring:rl,leaf:rr,flood,hood (corner = front/rear + left/right),
                 // CZ_STAND=fwd,left (m from the car's middle, default 2.6,1.9) and CZ_LOOKAT=fwd,left,up (m, default the front axle at hub height)
                 Car& c = sim.cars[sim.player];
                 const Frame fr0 = c.frame();
@@ -4445,6 +4922,7 @@ int main(int argc, char** argv) {
                         const std::string what = it.substr(0, colon), arg = colon == std::string::npos ? "" : it.substr(colon + 1);
                         const int k = arg.size() >= 2 ? corner(arg) : -1;
                         if (what == "flood") c.hydrolocked = true;
+                        else if (what == "hood") c.setHood(true);  // (nothing broken: the hood up, for the engine bay)
                         else if (what == "dead") c.engineDead = true;
                         else if (what == "shaft") {
                             for (Axle& ax : c.axles)
@@ -4556,10 +5034,12 @@ int main(int argc, char** argv) {
                     menu.joining = false;
                     closeMenu();
                     run.stop();
-                    if (net.map != sim.world.map || sim.world.parkEdited || campWorld) loadMap(net.map);
+                    World::setSessionSections(net.sections);
+                    if (net.map != sim.world.map || sim.world.parkEdited || !net.sections.empty() || campWorld) loadMap(net.map);
                     net.adopt(sim);
-                    hud.toast("JOINED " + net.ownerName(0) + "'S GAME ON " + mapName(net.map));
+                    hud.toast("JOINED " + net.ownerName(0) + "'S GAME ON " + mapName(net.map) + (net.myLink() == NetSession::LINK_RELAYED ? " (THROUGH THE RELAY)" : ""));
                     std::printf("joined (player %d)\n", net.self);
+                    rememberJoin(joinWhat);
                 } else if (st < 0) {
                     joinFailed();
                     std::printf("can't join: %s\n", net.error.c_str());
@@ -4642,6 +5122,15 @@ int main(int argc, char** argv) {
                     jobOn = false;
                     continue;
                 }
+                if (m.text.rfind("found ", 0) == 0) {  // a buddy found a place: it counts for you too
+                    std::string name;
+                    if (takeFoundMessage(coop.discovered, sim.world.map, discoverySpots(), m.text, name)) {
+                        jobBanner = std::max(jobBanner, 4.0);
+                        jobBannerText = "DISCOVERED: " + name;
+                        if (!scripted) coop.saveDiscoveries(discoveriesPath);
+                    }
+                    continue;
+                }
                 if (m.text.rfind("cache ", 0) == 0) {  // a buddy opened a supply cache: it counts for you too
                     const size_t sp = m.text.find(' ', 6);
                     if (career.on && sp != std::string::npos && std::atoi(m.text.c_str() + 6) == sim.world.map) {
@@ -4705,7 +5194,10 @@ int main(int argc, char** argv) {
                     crouchWas = down;
                     if (std::getenv("CZ_CROUCH") && scripted) walker.crouching = true;  // (screenshots)
                 }
+                const double strideBefore = walker.stride;
                 walker.step(sim.world, sim, dt, still ? 0 : (up ? 1 : 0) - (down ? 1 : 0), still ? 0 : (left ? 1 : 0) - (right ? 1 : 0), (shiftHeld || (scripted && std::getenv("CZ_RUN"))) && !still, hb && !still, viewYaw);  // (CZ_RUN: screenshots running)
+                if (audioOn && walker.grounded && walker.inWater < 0.2 && stepped(strideBefore, walker.stride))  // (own steps: on the ground, out of the water)
+                    audio.play(stepSfx(sim.world.surfaceAt(walker.p.x, walker.p.z)), (walker.crouching ? 0.12f : 0.25f) * (len(V3(walker.v.x, 0, walker.v.z)) > 3.5 ? 1.6f : 1.0f), 0, 0, 0.95f + 0.1f * (float)(walker.stride - std::floor(walker.stride)));
                 {  // hands on: hold E (pad: X) for the job in front of you
                     const uint8_t* ks = SDL_GetKeyboardState(nullptr);
                     const bool holdE = (!menu.open && !inv.open && settings.keys.held(KA_INTERACT, ks, ks[SC_LSHIFT] || ks[SC_RSHIFT])) || (padCtx == pad::Mode::Drive && padLogic.in.interact) || scriptE;
@@ -4922,6 +5414,7 @@ int main(int argc, char** argv) {
                     bool shown = false;  // (a marker in the world's models: gone when the map's rebuilt)
                     for (const Placed& pl : sim.world.models) shown |= pl.id == "(station racks)";
                     if (!shown) {
+                        waitWorldReaders();  // (background work reading the world: not while it changes)
                         Placed mark;
                         mark.id = "(station racks)";
                         sim.world.models.push_back(mark);
@@ -4934,6 +5427,7 @@ int main(int argc, char** argv) {
                 }
                 if (!career.on) caches.clear(), cachesMap = -1;
                 else if (cachesMap != sim.world.map || (!caches.empty() && !crateAt(caches[0].at))) {
+                    waitWorldReaders();  // (as above)
                     caches = cacheSpots(sim.world);
                     cachesMap = sim.world.map;
                     for (const CacheSpot& c : caches)
@@ -4950,15 +5444,21 @@ int main(int argc, char** argv) {
                         }
                     if (!caches.empty()) sim.world.buildGrid();
                 }
-                std::vector<std::pair<std::string, V3>> places;
-                for (const Place& pl : pilotPlaces(sim, net))
-                    if (pl.kind == 0) places.push_back({pl.name, pl.p});
                 coop.mapNow = sim.world.map;
                 const V3 me = walker.active ? walker.p : sim.cars[sim.player].frame().com;
-                for (const std::string& name : coop.discover(sim.world.map, me, places)) {
+                const std::vector<DiscoverSpot> spotsHere = discoverySpots();
+                for (const std::string& name : coop.discover(sim.world.map, me, spotsHere)) {
+                    // (A region's spot is kept under its old map: that's the map the message names.)
+                    const DiscoverSpot* spot = nullptr;
+                    for (const DiscoverSpot& d : spotsHere)
+                        if (d.name == name && std::hypot(d.p.x - me.x, d.p.z - me.z) < d.radius) spot = &d;
+                    const std::string shown = spot ? spot->shown() : name;
                     jobBanner = std::max(jobBanner, 4.0);
-                    jobBannerText = "DISCOVERED: " + name;
-                    if (net.active()) coop.say("FOUND " + name, myName(), net);
+                    jobBannerText = "DISCOVERED: " + shown;
+                    if (net.active()) {
+                        coop.say("FOUND " + shown, myName(), net);
+                        net.sendGame(foundMessage(spot ? spot->keyMap(sim.world.map) : sim.world.map, name));  // (the others have found it too)
+                    }
                     if (!scripted) coop.saveDiscoveries(discoveriesPath);
                 }
             }
@@ -4993,10 +5493,20 @@ int main(int argc, char** argv) {
             simCredit = owed < 0 ? -owed : 0;
             const bool bgNow = !scripted && !(SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS);
             const int maxSteps = bgNow ? std::max(simMaxSteps(sim.h), (int)(0.075 / sim.h + 0.5)) : simMaxSteps(sim.h);  // (15 fps in the background: still real time)
-            simDt = (simAsyncSteps + sim.advance(std::max(0.0, owed), maxSteps)) * sim.h;
+            static double msPerStep = -1;  // (what a physics step costs here lately)
+            int stepsNow;
+            if (net.active() && !sim.paused) {  // (multiplayer: on the shared clock, however slow the frames; frameprof.h simNetSteps)
+                const double frameS = scripted ? dt : std::min(1.0, frameTimeMs / 1000.0);
+                stepsNow = sim.advance(frameS, std::max(maxSteps, simNetSteps(sim.h, sim.owed() + frameS, msPerStep)), kNetOwedMax);
+                simCredit = 0;
+            } else {
+                stepsNow = sim.advance(std::max(0.0, owed), maxSteps);
+            }
+            simDt = (simAsyncSteps + stepsNow) * sim.h;
             simAsyncSteps = 0;
             renderer.passMark(FP_GAME);
             const double physicsMs = (double)(SDL_GetPerformanceCounter() - physicsStart) * 1000 / freq;
+            if (stepsNow > 0) msPerStep = msPerStep < 0 ? physicsMs / stepsNow : msPerStep + (physicsMs / stepsNow - msPerStep) * 0.1;
             hud.physicsMs += (physicsMs - hud.physicsMs) * 0.05;
             if (scripted && frame >= (opt.bench ? benchWarm + 1 : 40)) benchPhysics += physicsMs, benchPhysicsN++;
             if (sim.wrapShift != wrapSeen) {  // the freeway moved everything back a period: so do the camera and the effects
@@ -5007,7 +5517,7 @@ int main(int argc, char** argv) {
             }
             for (const std::string& ev : sim.events) hud.toast(ev);
             sim.events.clear();
-            for (const std::string& ev : net.events) hud.toast(ev);
+            for (const std::string& ev : net.events) hud.toast(ev), std::printf("net: %s\n", ev.c_str());
             net.events.clear();
         }
 
@@ -5076,12 +5586,26 @@ int main(int argc, char** argv) {
             audio.setBoost(vs.induction == VehicleSpec::TURBO ? (float)car.boost : 0.0f);
             audio.setTires(sim.paused ? 0 : slip);
             audio.setVolume(settings.volume, campBehind() ? 0.85f : menu.open ? 0.35f : 1.0f);
+            audio.setVehicleVolume(settings.vehicleVolume);
             audio.setCampfire(campBehind() ? 0.85f : 0.0f, 0.25f, 0.1f);  // (the fire sits right of the middle of the picture, the stream runs across the foreground)
             {  // the music follows the country under you (steadied, so a border doesn't flip it back and forth)
                 static BiomeTracker biomes;
                 const V3 at = walker.active ? walker.p : fr.com;
                 biomes.update(sim.world, at.x, at.z, dt);
-                audio.setMusic(soundMap(sim.world.map), settings.music, biomes.current);  // master volume applies to the whole mix
+                // On the big map, a region's country sounds like its old map (onemap.h), once you've been in it a few seconds.
+                {
+                    static int pending = -1;
+                    static double pendingFor = 0;
+                    int here = soundMap(sim.world.map);
+                    if (sim.world.map == MAP_BACKCOUNTRY)
+                        if (const MapRegion* r = regionAround(at.x, at.z)) here = soundMap(r->map);
+                    if (here != pending) pending = here, pendingFor = 0;
+                    pendingFor += dt;
+                    static int lastMap = -1;
+                    if (sim.world.map != lastMap) lastMap = sim.world.map, regionSoundMap = here;
+                    if (pendingFor > 4.0) regionSoundMap = pending;
+                }
+                audio.setMusic(regionSoundMap, settings.music, biomes.current);  // master volume applies to the whole mix
             }
             audio.setSpeed(sim.paused ? 0 : (float)len(fr.vel));
             float amp = (float)clampd(std::log10(1.0 + impact / 50.0) / 3.5, 0, 1);
@@ -5590,9 +6114,9 @@ int main(int argc, char** argv) {
                     // Back to driving: on the world as edited, or on the level as last saved when the edits were discarded.
                     Level free = lastEdited;
                     free.mode = LEVEL_FREE;
-                    playLevel(free, free.hasStart ? nullptr : &spot);
+                    playLevel(free, free.hasStart ? nullptr : &spot, true);
                 } else {
-                    playLevel(editor.core.levelToPlay(here), here ? &spot : nullptr);
+                    playLevel(editor.core.levelToPlay(here), here ? &spot : nullptr, true);
                 }
                 editorSuspended = !discard;  // (discarded: nothing to come back to, F2 opens the saved level fresh)
                 hud.toast(discard ? "EDITS DISCARDED: DRIVING " + lastEdited.name : play ? (here ? "TESTING FROM HERE" : "TESTING " + lastEdited.name) : "DRIVING THE EDITED WORLD");
@@ -5638,7 +6162,7 @@ int main(int argc, char** argv) {
             footYaw -= lx * 2.6 * dt;
             footPitch = clampd(footPitch + ly * 1.8 * dt, -1.45, 1.45);
         }
-        if (opt.bench) {  // (the lap: 30 m round the start, 2.5 m up, once over the warm-up and the run)
+        if (opt.bench && !opt.eyeSet && opt.script.empty()) {  // (the lap: 30 m round the start, 2.5 m up, once over the warm-up and the run; --eye X,Z,H,YAW,PITCH --eye-fly V: a straight flight instead, the streaming route)
             auto ground = [](const void* w, double x, double z) { return ((const World*)w)->height(x, z); };
             const BenchPose bp = benchPose(benchCentre.x, benchCentre.z, (double)bf / (benchWarm + opt.bench), 30, 2.5, ground, &sim.world);
             cam.mode = 3, cam.droneEye = V3(bp.x, bp.y, bp.z), cam.droneYaw = bp.yaw, cam.dronePitch = bp.pitch;
@@ -5652,6 +6176,10 @@ int main(int argc, char** argv) {
                 cam.userYaw = y, cam.pitch = p, cam.idle = 0;
             }
         }
+        // ---- paint: every vehicle of mine wears its garage paint (the others' come over the net: net.cpp)
+        for (Car& c : sim.cars)
+            if (!c.remote && !c.paintKept && !c.isProp() && c.spec && c.spec->model >= 0 && c.spec->model < (int)garage.paint.size() && c.paint != garage.paint[c.spec->model])
+                c.setPaint(garage.paint[c.spec->model]);
         // ---- the garage (garageshop.h): the truck wearing what it shows, the part on its plinth, the garage camera
         bool shopModel = false;
         shop::Display shopDisp;
@@ -5692,6 +6220,7 @@ int main(int argc, char** argv) {
             if (pc.isProp() || pc.spec->model != garageShop.vehicle || pc.spec == &tunedSpec(garageShop.vehicle, garageShop.fitted)) shopRestore = false;
             if (shopRecal && !shopRestore) sim.cars[sim.player].recalibrateSpeedo(), shopRecal = false;
         }
+        if (!garageShop.open) shopBlend = std::max(0.0, shopBlend - dt * 1.25);  // (closed: the camera eases back to the chase view)
         View view = editor.active ? editor.view(W, H) : campBehind() ? menuscene::camera(campLevel, sim.world, clock) : cam.update(fr, sim.world, dt, (dragging || padLooking) && !menu.open, camhold::driving(len(fr.vel), sim.paused ? 0.0 : sim.cars[sim.player].throttle));
         if (!walker.active && !editor.active && cam.mode == 2 && sim.player >= 0 && sim.player < (int)sim.cars.size()) {
             // The cockpit view from the driver's eyes (people.h sits them on the seat): the seat's hip point, up and a little ahead.
@@ -5703,13 +6232,15 @@ int main(int argc, char** argv) {
                 view.eye += d, view.target += d;
             }
         }
-        if (garageShop.open && !editor.active) {  // the garage camera, eased in from the chase view
+        if ((garageShop.open || shopBlend > 0) && !editor.active) {  // the garage camera, eased in from the chase view (and back out when it closes)
             const Car& pc = sim.cars[sim.player];
-            const shop::Cam gc = shop::camera(garageShop, pc.frame(), *pc.spec, shopModel ? shopMid : V3(), shopModel ? shopDisp.size : 1.0, clock);
-            if (shopBlend <= dt * 1.25 + 1e-9) shopView = view, shopView.eye = gc.eye, shopView.target = gc.target;
-            const double k = 1 - std::exp(-dt * 4.0);
-            shopView.eye += (gc.eye - shopView.eye) * k;
-            shopView.target += (gc.target - shopView.target) * k;
+            if (garageShop.open) {
+                const shop::Cam gc = shop::camera(garageShop, pc.frame(), *pc.spec, shopModel ? shopMid : V3(), shopModel ? shopDisp.size : 1.0, clock);
+                if (shopBlend <= dt * 1.25 + 1e-9) shopView = view, shopView.eye = gc.eye, shopView.target = gc.target;
+                const double k = 1 - std::exp(-dt * 4.0);
+                shopView.eye += (gc.eye - shopView.eye) * k;
+                shopView.target += (gc.target - shopView.target) * k;
+            }
             shopView.eye.y = std::max(shopView.eye.y, sim.world.height(shopView.eye.x, shopView.eye.z) + 0.25);
             const double b = shopBlend * shopBlend * (3 - 2 * shopBlend);
             view.eye = view.eye + (shopView.eye - view.eye) * b;
@@ -5820,7 +6351,7 @@ int main(int argc, char** argv) {
             }
         }
         if (audioOn) audio.setWinches(sim, view.eye, norm(cross(view.target - view.eye, view.up)), simDt);
-        if (audioOn) audio.setEnvironment(soundMap(sim.world.map), (float)dayHours, settings.ambience,
+        if (audioOn) audio.setEnvironment(regionSoundMap >= 0 ? regionSoundMap : soundMap(sim.world.map), (float)dayHours, settings.ambience,
                                          !walker.active && cam.mode == 2 ? 0.3f : 1.0f);
         if (audioOn) {  // the repair shops' din, the rivers and brooks, the forest (worldsound.h)
             static WorldSounds worldSounds;
@@ -5859,6 +6390,10 @@ int main(int argc, char** argv) {
             if (campWas && !campWorld) dayHours = settings.clockHours;  // (left the camp: the clock goes on from where it was)
             campWas = campWorld;
             if (net.role == NetSession::HOST) net.dayHours = dayHours, net.dayRate = sim.paused ? 0 : dayRate * sim.timeScale;
+            {  // (the park sections whoever joins next builds: this world's, whenever it's rebuilt)
+                static uint64_t sectionsOf = 0;
+                if (net.role == NetSession::HOST && sectionsOf != sim.world.stamp) net.setSections(sim.world.editedSections), sectionsOf = sim.world.stamp;
+            }
             renderer.daylight = campWorld ? menuscene::daylight(campLevel) : computeDaylight(dayHours);
             sim.dayHours = dayHours;  // (the air cools at night: the tires feel it)
             // Each owner's switch is carried reliably, including OFF and high beams.
@@ -5914,6 +6449,7 @@ int main(int argc, char** argv) {
             }
             Placed pl;
             pl.id = shopDisp.id;
+            pl.variant = shopDisp.variant;
             pl.set = shopDisp.set;
             pl.scale = V3(shopDisp.scale, shopDisp.scale, shopDisp.scale);
             pl.yaw = garageShop.spin;
@@ -6054,6 +6590,13 @@ int main(int argc, char** argv) {
                 people::Gait g;
                 g.p = at, g.yaw = yaw, g.stride = stride, g.lookAround = true, g.crouch = crouch;
                 g.grounded = at.y - sim.world.height(at.x, at.z) < 0.15;  // (off the ground: jumping)
+                {  // their steps, from where they are (a new walker's first stride is only noted)
+                    static std::map<std::string, double> lastStride;
+                    const auto it = lastStride.find(who);
+                    if (audioOn && it != lastStride.end() && g.grounded && std::fabs(stride - it->second) < 3 && stepped(it->second, stride))
+                        audio.playAt(stepSfx(sim.world.surfaceAt(at.x, at.z)), at, view.eye, viewRight, crouch > 0.5 ? 0.12f : 0.25f);
+                    lastStride[who] = stride;
+                }
                 if (vel) g.vel = *vel;
                 else g.estimate = true;
                 // What they hold and the work they're doing (repairsync.h): turned to it, down on their heels for a low job, the
@@ -6355,10 +6898,7 @@ int main(int argc, char** argv) {
         if (showHud || (coop.mapOpen && !menu.open && !editor.active)) {
             if (showHud) coop.drawWorld(renderer, sim, net, view, W, H);
             if (coop.mapOpen) {
-                std::vector<std::pair<std::string, V3>> places;
-                for (const Place& pl : pilotPlaces(sim, net))
-                    if (pl.kind == 0) places.push_back({pl.name, pl.p});
-                coop.drawMap(renderer, sim, net, W, H, places);
+                coop.drawMap(renderer, sim, net, W, H, discoverySpots());
             }
             coop.drawChat(renderer, W, H);
         }
@@ -6472,10 +7012,15 @@ int main(int argc, char** argv) {
                 renderer.rect(W - renderer.textWidth(t, ps) - 28 * us, 10 * us, renderer.textWidth(t, ps) + 20 * us, 8 * ps + 14 * us, 0, 0, 0, 0.6f);
                 renderer.text(W - renderer.textWidth(t, ps) - 18 * us, 17 * us, ps, t, 0.4f, 0.9f, 1.0f, 1.0f);
             }
+        } else if (mpShown()) {
+            mpSync();
+            mainFade = std::min(1.0f, mainFade + (float)dt * 3.0f);
+            mpmenu::draw(renderer, mpNav, mpView, W, H, mainFade, clock, pad::ui.last, !campBehind());
         } else {
             mainFade = 0;
             menu.draw(renderer, settings, W, H, dt);
         }
+        if (!mpShown()) mpWasShown = false;
         renderer.flushHud(W, H);
 
         // CZ_BENCH=1 (with --shot-frames): average frame time, the GPU finished (one pixel read back).
@@ -6530,7 +7075,7 @@ int main(int argc, char** argv) {
             std::snprintf(path, sizeof(path), "%s_%04d.ppm", opt.shotPrefix.c_str(), frame);
             writePPM(path, renderer.readPixels(W, H), W, H);
             std::printf("wrote %s\n", path);
-            if (frame >= *opt.shotFrames.rbegin()) running = false;
+            if (frame >= *opt.shotFrames.rbegin()) running = false, loadprof::phase("shutdown");
         }
         if (opt.benchSuite && suitePhase == 1 && bf >= benchWarm + opt.bench + 2) {  // the run's F3 screen, beside the summary
             const BenchSuite::Done& d = suite.done().back();
@@ -6567,6 +7112,7 @@ int main(int argc, char** argv) {
         frame++;
     }
     writeSuiteSummary();  // (the window closed part-way: what was done)
+    if (!opt.bench) printFrameLog();  // (CZ_FRAMELOG=1 while playing: the frames since the 300th)
     const std::string careerSlug = careerRun.active ? careerRun.world.slug : "";
     endCareer(CAREER_QUIT);  // (quit from a menu, the window closed, a reload, a script's quit: a career world is saved)
     if (allocWatch && !allocFrames.empty()) {

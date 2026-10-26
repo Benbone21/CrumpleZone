@@ -385,6 +385,7 @@ void gatherNet(const DebugInputs& in, DebugColumn& R) {
     R.add(DT_TEXT, "PLAYERS %d / %d  PROTOCOL v%d", n.playerCount(), n.maxPlayers, (int)net::kVersion);
     R.add(DT_TEXT, "TRAFFIC IN %.1f KB/S  OUT %.1f KB/S  (%.0f STATES/S)", in.rateInKB, in.rateOutKB, net::kSendRate);
     if (!n.clockSynced()) R.add(DT_WARN, "SETTING THE CLOCK BY THE HOST'S");
+    else if (n.predict) R.add(n.vehicleLead() > 0.3 ? DT_WARN : DT_TEXT, "VEHICLES SHOWN NOW (RUN ON %.0f MS)  CHATTER %.0f MS BEHIND", n.vehicleLead() * 1000, n.viewDelay() * 1000);
     else R.add(n.viewDelay() > 0.3 ? DT_WARN : DT_TEXT, "OTHERS SHOWN %.0f MS BEHIND THE SHARED CLOCK", n.viewDelay() * 1000);
     for (int k = 0; k < net::kMaxPeers; k++) {
         const NetPlayer& p = n.players[k];

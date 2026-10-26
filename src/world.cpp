@@ -1,7 +1,9 @@
 #include "thread_cache.h"
 #include "parallel.h"
 #include "world.h"
+#include "onemap.h"
 #include "worldcache.h"
+#include "realterrain.h"
 #include "laptimer.h"
 #include "loadprof.h"
 
@@ -15,6 +17,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <mutex>
 #include <thread>
 
 namespace {
@@ -76,7 +79,14 @@ V3 World::courseStart(int surface) const {
 }
 
 const std::vector<int>& listedMaps() {
-    static const std::vector<int> m = {MAP_PROVING_GROUND, MAP_MOUNTAIN, MAP_FREEWAY, MAP_FRONTIER, MAP_BACKCOUNTRY, MAP_WILDS};  // (all back on the list, 2026-10-18: the owner edits them)
+    // (All back on the list, 2026-10-18: the owner edits them. Since the one map (2026-10-25, docs/plans/one-map.md) the Mountain, the
+    // Frontier and the Open Country are the Backcountry's regions: on the list as places to start on it, beside it.)
+    // (A real terrain (realterrain.h) is on it last when there is one: given with --real, or found in maps/ at the first call.)
+    static const std::vector<int> m = [] {
+        std::vector<int> v = {MAP_PROVING_GROUND, MAP_BACKCOUNTRY, MAP_MOUNTAIN, MAP_FRONTIER, MAP_WILDS, MAP_FREEWAY};
+        if (realterrain::available()) v.push_back(MAP_REAL);
+        return v;
+    }();
     return m;
 }
 
@@ -97,7 +107,13 @@ int nextListedMap(int map, int dir) {
 }
 
 const char* mapName(int map) {
+    if (map == MAP_REAL) return realterrain::displayName();
     return map == MAP_MOUNTAIN ? "MOUNTAIN" : map == MAP_FREEWAY ? "FREEWAY" : map == MAP_FRONTIER ? "FRONTIER" : map == MAP_BACKCOUNTRY ? "BACKCOUNTRY" : map == MAP_WILDS ? "OPEN COUNTRY" : "PROVING GROUND";
+}
+
+std::string mapPickName(int map) {
+    if (map == MAP_MOUNTAIN || map == MAP_FRONTIER || map == MAP_WILDS) return std::string(mapName(MAP_BACKCOUNTRY)) + ": " + mapName(map);
+    return mapName(map);
 }
 
 const char* wildsKindName(int kind) {
@@ -243,7 +259,7 @@ void attachRockParts(Rock& k, std::vector<props::RockHull>&& pieces) {
     }
 }
 
-Rock& addScannedRock(World& w, const props::HullLibrary& lib, double x, double z, const V3& radii, double top, uint32_t seed, float tint, const RockPose* pose) {
+Rock makeScannedRock(const World& w, const props::HullLibrary& lib, double x, double z, const V3& radii, double top, uint32_t seed, float tint, const RockPose* pose) {
     uint32_t s = seed * 2246822519u + 0x85ebca6bu;
     auto rnd = [&]() {
         s ^= s << 13;
@@ -322,16 +338,15 @@ Rock& addScannedRock(World& w, const props::HullLibrary& lib, double x, double z
     for (const V3& q : k.v) k.r = std::max(k.r, len(q - k.c));
     // A big rock is cut into the convex pieces that follow its drawn surface (a lone hull would stand cm to dm above it): while the
     // world is being made, all together at the end (on a few threads; nothing looks at them before then), else now.
-    if (k.r > 1.2) {
+    if (rockCutsIntoPieces(k)) {
         if (w.deferRockSplits) k.partsDue = true;
         else attachRockParts(k, splitRock(w, k, hull));
     }
-    w.rocks.push_back(std::move(k));
-    return w.rocks.back();
+    return k;
 }
 }  // namespace
 
-Rock& World::addRock(double x, double z, const V3& radii, double top, uint32_t seed, float tint, const RockPose* pose) {
+Rock World::makeRock(double x, double z, const V3& radii, double top, uint32_t seed, float tint, const RockPose* pose) const {
     uint32_t s = seed * 2654435761u + 0x9e3779b9u;
     auto rnd = [&]() {
         s ^= s << 13;
@@ -339,7 +354,7 @@ Rock& World::addRock(double x, double z, const V3& radii, double top, uint32_t s
         s ^= s << 5;
         return (s & 0xFFFFFF) / double(0x1000000);
     };
-    if (const props::HullLibrary* lib = props::activeRockScans()) return addScannedRock(*this, *lib, x, z, radii, top, seed, tint, pose);
+    if (const props::HullLibrary* lib = props::activeRockScans()) return makeScannedRock(*this, *lib, x, z, radii, top, seed, tint, pose);
     // Points spread evenly over the ellipsoid, then pulled in at random: deep pulls
     // cut facets, light ones keep it chunky.
     const int n = 16 + (int)(rnd() * 10);
@@ -380,7 +395,11 @@ Rock& World::addRock(double x, double z, const V3& radii, double top, uint32_t s
     for (const V3& q : k.v) c += q;
     k.c = c / (double)k.v.size();
     for (const V3& q : k.v) k.r = std::max(k.r, len(q - k.c));
-    rocks.push_back(std::move(k));
+    return k;
+}
+
+Rock& World::addRock(double x, double z, const V3& radii, double top, uint32_t seed, float tint, const RockPose* pose) {
+    rocks.push_back(makeRock(x, z, radii, top, seed, tint, pose));
     return rocks.back();
 }
 
@@ -426,6 +445,7 @@ World::World(int m) : map(m) {
         else if (map == MAP_FRONTIER) buildFrontier();
         else if (map == MAP_BACKCOUNTRY) buildBackcountry();
         else if (map == MAP_WILDS) buildWilds();
+        else if (map == MAP_REAL) buildReal();
         else buildProvingGround();
         // The slab the player starts on (and the parked trucks): in the game's proving ground, as the other maps are always built.
         if (map != MAP_PROVING_GROUND || withShowcase) addMapSpawnPads(*this);
@@ -438,13 +458,16 @@ World::World(int m) : map(m) {
 
 double World::halfSizeFor(int map) {
     if (halfSizeOverride > 0) return halfSizeOverride;
-    return map == MAP_BACKCOUNTRY ? 3072.0 : kDefaultHalfSize;  // (the Backcountry: 6 x 6 km, docs/plans/big-maps.md)
+    // (The Backcountry: 6 x 6 km (docs/plans/big-maps.md), or 8 x 8 km with the regions stitched on round it (docs/plans/one-map.md).)
+    if (map == MAP_BACKCOUNTRY) return stitchRegions ? kOneMapHalf : kOldBackcountryHalf;
+    if (map == MAP_REAL) return realterrain::activeHalf();
+    return kDefaultHalfSize;
 }
 
 void World::cutCachedRocks() {
     // (The world cache keeps each rock's hull, not its convex pieces: cut the big scanned ones again, from the scans' saved cuts.)
     for (Rock& k : rocks)
-        if (k.scan >= 0 && k.r > 1.2 && k.parts.empty()) k.partsDue = true;
+        if (rockCutsIntoPieces(k) && k.parts.empty()) k.partsDue = true;
     splitPendingRocks();
 }
 
@@ -646,6 +669,23 @@ void World::buildModelYard() {
 // north strip carries on east, so driving the sections in order goes round the corner. The dunes, a
 // field 440 m long, have the band of open ground south of the loop road to themselves, driven east.
 // Each has its name over its entry and is a place on the compass and map. Seed 1 of each.
+namespace {
+std::mutex gSessionMutex;
+std::vector<std::pair<int, std::string>> gSessionSections;
+}  // namespace
+
+void World::setSessionSections(const std::vector<std::pair<int, std::string>>& sections) {
+    std::lock_guard<std::mutex> l(gSessionMutex);
+    gSessionSections = sections;
+}
+
+bool World::sessionSection(int type, SectionFile& out) {
+    std::lock_guard<std::mutex> l(gSessionMutex);
+    for (const auto& s : gSessionSections)
+        if (s.first == type && parseSectionText(s.second, out)) return true;
+    return false;
+}
+
 void World::buildSectionPark() {
     editStamp = levelFilesStamp();
     struct Strip {
@@ -665,7 +705,7 @@ void World::buildSectionPark() {
             const SectionFootprint fp = sectionFootprint(t);
             // The player's own saved edit of that section's level, if they've made one (else the generator's, as shipped).
             SectionFile mine;
-            const bool edited = useLocalEdits && editedSectionFor(t, mine);
+            const bool edited = useLocalEdits ? editedSectionFor(t, mine) : sessionSection((int)t, mine);  // (in a session: the host's edits, sent to us)
             const bool fromLevel = edited || builtinSectionFor(t, mine);  // (the player's edit, else the game's own level: both put on as files)
             SectionFrame f;
             f.entry = V3(s.x, 0, s.z) + dir * (along + (fromLevel ? std::max(fp.apron, -mine.u0) : fp.apron));
@@ -677,6 +717,7 @@ void World::buildSectionPark() {
                 b = placeSection(*this, mine, f);
                 step = std::max(step, std::max(fp.apron, -mine.u0) + mine.u1);
                 parkEdited |= edited;
+                if (edited) editedSections.push_back({(int)t, saveSectionText(mine)});
             } else {
                 b = buildSection(*this, t, 1, f);
             }
@@ -1076,11 +1117,17 @@ void World::bakeTerrain() {
 
 double World::height(double x, double z) const {
     if (!std::isfinite(x) || !std::isfinite(z)) return 0;  // (an exploded vehicle: the game resets it after the frame)
-    double fx = (x + half) / kRes, fz = (z + half) / kRes;
-    fx = clampd(fx, 0, hN - 1.001);
-    fz = clampd(fz, 0, hN - 1.001);
-    int i = (int)fx, j = (int)fz;
-    double tx = fx - i, tz = fz - j;
+    // (The big map grew round the 6 km Backcountry (onemap.h): there the cell and the fraction across it are worked out from that map's
+    // corner, as they were on it, then moved by the whole cells it grew by, so the land under a wheel is the same to the last bit. On
+    // every other map `base` is its own half-size and this is as it always was.)
+    const double base = map == MAP_BACKCOUNTRY && half > kOldBackcountryHalf + 1 ? kOldBackcountryHalf : half;
+    const int shift = (int)std::lround((half - base) / kRes);
+    double fx = (x + base) / kRes, fz = (z + base) / kRes;
+    fx = clampd(fx, -shift, hN - 1.001 - shift);
+    fz = clampd(fz, -shift, hN - 1.001 - shift);
+    const double flx = std::floor(fx), flz = std::floor(fz);
+    const int i = (int)flx + shift, j = (int)flz + shift;
+    const double tx = fx - flx, tz = fz - flz;
     double a = gridAt(i, j), b = gridAt(i + 1, j), c = gridAt(i, j + 1), d = gridAt(i + 1, j + 1);
     return (a * (1 - tx) + b * tx) * (1 - tz) + (c * (1 - tx) + d * tx) * tz;
 }
@@ -1138,7 +1185,7 @@ V3 World::normal(double x, double z) const {
     return norm(V3(-dx, 1, -dz));
 }
 
-bool World::contact(const V3& c, double R, const V3* axis, double hw, Contact& out) const {
+bool World::contact(const V3& c, double R, const V3* axis, double hw, Contact& out, bool withPoles) const {
     if (!std::isfinite(c.x + c.y + c.z)) return false;
     // Support distance of the shape along -n (how far it reaches toward the surface).
     auto support = [&](const V3& n) {
@@ -1166,6 +1213,7 @@ bool World::contact(const V3& c, double R, const V3* axis, double hw, Contact& o
     // Boxes.
     const double reach = R + hw;
     // Poles and trunks (vertical cylinders).
+    if (withPoles)
     for (int pi : poleGrid[cellOf(c.x) * gridN + cellOf(c.z)]) {
         const Pole& p = poles[pi];
         if (c.y < p.y0 - reach || c.y > p.y1 + reach) continue;
@@ -1298,11 +1346,11 @@ bool World::contact(const V3& c, double R, const V3* axis, double hw, Contact& o
     return hit;
 }
 
-double World::clearY(double x, double z) const {
+double World::clearY(double x, double z, bool overPoles) const {
     double y = height(x, z);
     Contact ct;
     for (int i = 0; i < 120; i++) {
-        if (!contact(V3(x, y + 1.0, z), 1.0, nullptr, 0, ct)) return y;
+        if (!contact(V3(x, y + 1.0, z), 1.0, nullptr, 0, ct, overPoles)) return y;
         y += 0.25;
     }
     return y;
@@ -1433,6 +1481,23 @@ void World::polesNear(const V3& mn, const V3& mx, std::vector<int>& out) const {
                 if (p.x + p.r < mn.x || p.x - p.r > mx.x || p.z + p.r < mn.z || p.z - p.r > mx.z) continue;
                 if (std::find(out.begin(), out.end(), pi) == out.end()) out.push_back(pi);
             }
+}
+
+bool World::poleInside(double x, double z, const V3& fwd, double a0, double a1, double l0, double l1, double y0, double y1, double margin) const {
+    if (gridN == 0) return false;
+    const V3 left(fwd.z, 0, -fwd.x);  // (fwd turned left: +X forward has -Z on its left, as Frame::left)
+    const double reach = std::max(std::max(std::fabs(a0), std::fabs(a1)), std::max(std::fabs(l0), std::fabs(l1))) * 1.5 + margin + 1.0;
+    CZ_THREAD_CACHE(std::vector<int>, near);
+    near.clear();
+    polesNear(V3(x - reach, 0, z - reach), V3(x + reach, 0, z + reach), near);
+    for (int pi : near) {
+        const Pole& p = poles[pi];
+        if (p.y1 < y0 || p.y0 > y1) continue;
+        const V3 d(p.x - x, 0, p.z - z);
+        const double a = dot(d, fwd), l = dot(d, left), m = p.r + margin;
+        if (a > a0 - m && a < a1 + m && l > l0 - m && l < l1 + m) return true;
+    }
+    return false;
 }
 
 void World::solidsNear(double x0, double z0, double x1, double z1, NearbySolids& out) const {

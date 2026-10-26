@@ -1402,6 +1402,7 @@ const VisualTemplate& visualTemplate(const Car& car) {
     LOADPROF("car.visualTemplate (first sight)");
     auto made = std::make_unique<VisualTemplate>();
     VisualTemplate& t = *made;
+    t.bakedPaint[0] = (float)car.color.x, t.bakedPaint[1] = (float)car.color.y, t.bakedPaint[2] = (float)car.color.z;
     const VehicleSpec& vs = *car.spec;
     const int cells = (int)vs.profile[0].size();
     int glassStart=cells, glassEnd=0, glassLayer=0;
@@ -1608,6 +1609,8 @@ void prebuildVisual(const VehicleSpec& spec, const V3& color) {
     if (slot.ready.load(std::memory_order_acquire) || slot.queued.exchange(true)) return;
     const VehicleSpec* sp = &spec;
     std::thread([sp, color] {
+        loadprof::nameThread("car visual");
+        loadprof::phase(sp->name);
         Car scratch;
         scratch.build(*sp, V3(0, 1, 0), 0, sp->paintColor[0] >= 0 ? V3(sp->paintColor[0], sp->paintColor[1], sp->paintColor[2]) : color);
         visualTemplate(scratch);

@@ -4,6 +4,10 @@
 #include <cstdio>
 #include <fstream>
 #include <sstream>
+#include <sys/stat.h>
+#ifdef __linux__
+#include <malloc.h>
+#endif
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -52,6 +56,27 @@ std::string exeDir() {
     const std::string s = exePath();
     const size_t cut = s.find_last_of("/\\");
     return cut == std::string::npos ? "" : s.substr(0, cut);
+}
+
+std::string findAssetDir(const std::string& rel, const std::vector<std::string>& bases) {
+    for (const std::string& b : bases) {
+        const std::string d = b + "/" + rel;
+#ifdef _WIN32
+        const DWORD a = GetFileAttributesA(d.c_str());
+        if (a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY)) return d;
+#else
+        struct stat st;
+        if (stat(d.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) return d;
+#endif
+    }
+    return "";
+}
+
+std::string findAssetDir(const std::string& rel) {
+    std::vector<std::string> bases = {"."};
+    const std::string exe = exeDir();
+    if (!exe.empty()) bases.insert(bases.end(), {exe, exe + "/../Resources", exe + "/..", exe + "/../.."});
+    return findAssetDir(rel, bases);
 }
 
 long gAtomicFailAfter = -1;
@@ -184,4 +209,10 @@ bool writeFileAtomic(const std::string& path, const std::string& data, std::stri
     }
 #endif
     return true;
+}
+
+void releaseFreedMemory() {
+#if defined(__GLIBC__)
+    malloc_trim(0);
+#endif
 }
