@@ -1743,6 +1743,9 @@ int main(int argc, char** argv) {
                            opt.hostPort < 0 && opt.join.empty() && opt.menu < 0 && opt.resumeModel < 0 && opt.level.empty() && !opt.editor && !opt.newSection && opt.resumeEdit.empty() &&
                            !opt.lab && !opt.loadTour);
     const bool unattended = scripted || !opt.scenario.empty() || !opt.script.empty();
+    // MAIN MENU from the game goes back to the new menu's camp whenever a person is playing, not only after a plain launch (an F5
+    // reload or --map starts in the world, but the way back is the same). Test runs keep the old title page.
+    const bool campMenu = wantCamp || (!unattended && !std::getenv("CZ_NO_MENU_SCENE") && !opt.lab && !opt.loadTour);
     g_termScripted = unattended;
     std::unique_ptr<wd::FrameWatchdog> watchdog;
     if (unattended) {
@@ -1907,8 +1910,10 @@ int main(int argc, char** argv) {
     }
     Level campLevel;  // the main menu's camp (menuscene.h): the player's file, the game's, or made by code
     V3 campFire;
+    bool campLoaded = false;  // (campLevel read: at launch for the menu's camp, else the first time MAIN MENU goes back to it)
     if (wantCamp) {  // (the menu's camp instead of the saved map: choosing a map loads it)
         campLevel = menuscene::load();
+        campLoaded = true;
         menucamp::fireOf(campLevel, campFire);
         sim.world = menuscene::buildWorld(campLevel);
     } else if (settings.map != MAP_PROVING_GROUND) sim.world = opt.standalone ? World(settings.map) : worldForPick(settings.map);  // (a region's pick: the big map, started there)
@@ -2919,6 +2924,7 @@ int main(int argc, char** argv) {
     auto enterCamp = [&]() {
         run.stop();
         levelHours = -1;
+        if (!campLoaded) campLevel = menuscene::load(), campLoaded = true;
         menucamp::fireOf(campLevel, campFire);
         sim.world = menuscene::buildWorld(campLevel);
         sim.setup();
@@ -3162,7 +3168,7 @@ int main(int argc, char** argv) {
                 levelHours = -1;
                 if (net.role == NetSession::HOST) net.setLevel("");
                 refreshLevels();
-                if (wantCamp && !net.active() && !editor.active && !mapLoad.active()) enterCamp();
+                if (campMenu && !net.active() && !editor.active && !mapLoad.active()) enterCamp();
                 menu.showTitle(std::max(0, sim.cars[sim.player].spec->model), campWorld ? settings.map : sim.world.map);
                 classicTitle = false;
                 if (campWorld) mainNav.open(menu.mapPick, std::max(0, sim.cars[sim.player].spec->model));
