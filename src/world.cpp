@@ -3,6 +3,7 @@
 #include "world.h"
 #include "onemap.h"
 #include "worldcache.h"
+#include "realterrain.h"
 #include "laptimer.h"
 #include "loadprof.h"
 
@@ -80,7 +81,12 @@ V3 World::courseStart(int surface) const {
 const std::vector<int>& listedMaps() {
     // (All back on the list, 2026-10-18: the owner edits them. Since the one map (2026-10-25, docs/plans/one-map.md) the Mountain, the
     // Frontier and the Open Country are the Backcountry's regions: on the list as places to start on it, beside it.)
-    static const std::vector<int> m = {MAP_PROVING_GROUND, MAP_BACKCOUNTRY, MAP_MOUNTAIN, MAP_FRONTIER, MAP_WILDS, MAP_FREEWAY};
+    // (A real terrain (realterrain.h) is on it last when there is one: given with --real, or found in maps/ at the first call.)
+    static const std::vector<int> m = [] {
+        std::vector<int> v = {MAP_PROVING_GROUND, MAP_BACKCOUNTRY, MAP_MOUNTAIN, MAP_FRONTIER, MAP_WILDS, MAP_FREEWAY};
+        if (realterrain::available()) v.push_back(MAP_REAL);
+        return v;
+    }();
     return m;
 }
 
@@ -101,6 +107,7 @@ int nextListedMap(int map, int dir) {
 }
 
 const char* mapName(int map) {
+    if (map == MAP_REAL) return realterrain::displayName();
     return map == MAP_MOUNTAIN ? "MOUNTAIN" : map == MAP_FREEWAY ? "FREEWAY" : map == MAP_FRONTIER ? "FRONTIER" : map == MAP_BACKCOUNTRY ? "BACKCOUNTRY" : map == MAP_WILDS ? "OPEN COUNTRY" : "PROVING GROUND";
 }
 
@@ -435,6 +442,7 @@ World::World(int m) : map(m) {
         else if (map == MAP_FRONTIER) buildFrontier();
         else if (map == MAP_BACKCOUNTRY) buildBackcountry();
         else if (map == MAP_WILDS) buildWilds();
+        else if (map == MAP_REAL) buildReal();
         else buildProvingGround();
         // The slab the player starts on (and the parked trucks): in the game's proving ground, as the other maps are always built.
         if (map != MAP_PROVING_GROUND || withShowcase) addMapSpawnPads(*this);
@@ -449,6 +457,7 @@ double World::halfSizeFor(int map) {
     if (halfSizeOverride > 0) return halfSizeOverride;
     // (The Backcountry: 6 x 6 km (docs/plans/big-maps.md), or 8 x 8 km with the regions stitched on round it (docs/plans/one-map.md).)
     if (map == MAP_BACKCOUNTRY) return stitchRegions ? kOneMapHalf : kOldBackcountryHalf;
+    if (map == MAP_REAL) return realterrain::activeHalf();
     return kDefaultHalfSize;
 }
 

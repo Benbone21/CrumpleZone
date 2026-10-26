@@ -11,6 +11,7 @@
 #include <memory>
 #include <mutex>
 #include "loadprof.h"
+#include "realterrain.h"
 #include "watchdog.h"
 #include "benchreport.h"
 #include "meshcache.h"
@@ -153,6 +154,7 @@ struct Options {
     double mapHalf = 0;           // --map-half M (dev): every map built M m each way from its middle (big-map tests: docs/plans/big-maps.md)
     bool standalone = false;      // --standalone (dev): --map 1, 3 or 5 is that old map on its own, not its region of the big map (docs/plans/one-map.md)
     int map = -1;                 // --map N: 0 proving ground, 1 mountain
+    std::string real;             // --real DIR|FILE: the real terrain MAP_REAL (6) is (realterrain.h, docs/real-terrain.md): a folder with terrain.txt, or the sidecar
     double orbitYaw = 0, orbitPitch = 0.2, orbitDist = 7.5;  // degrees, degrees, meters
     bool spawnSet = false;
     bool loadTour = false;  // --load-tour: switch maps, swap and spawn vehicles on a timer, report the worst frame of each
@@ -413,6 +415,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--career") o.career = true;
         else if (a == "--map") o.map = std::atoi(next().c_str());
         else if (a == "--map-half") o.mapHalf = std::atof(next().c_str());
+        else if (a == "--real") o.real = next();
         else if (a == "--standalone") o.standalone = true;
         else if (a == "--eye-fly") o.eyeFly = std::atof(next().c_str());
         else if (a == "--mods") {
@@ -1728,6 +1731,11 @@ int main(int argc, char** argv) {
     signal(SIGPIPE, SIG_IGN);  // (a multiplayer peer dropping mid-send; macOS has no MSG_NOSIGNAL)
 #endif
     Options opt = parseArgs(argc, argv);
+    if (!opt.real.empty()) {  // (before anything asks for the map list: MAP_REAL is on it when a real terrain is active)
+        std::string why;
+        if (realterrain::selectPath(opt.real, &why)) std::printf("real terrain: %s (%s)\n", realterrain::displayName(), opt.real.c_str());
+        else std::fprintf(stderr, "--real %s: %s\n", opt.real.c_str(), why.c_str());
+    }
     if (!opt.campDump.empty()) {
         const bool ok = menuscene::dump(opt.campDump);
         std::printf("%s %s\n", ok ? "wrote" : "could not write", opt.campDump.c_str());
