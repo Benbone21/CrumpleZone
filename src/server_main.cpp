@@ -30,6 +30,7 @@
 #include <string>
 #include <thread>
 
+#include "bgwork.h"
 #include "daylight.h"
 #include "net.h"
 #include "procworld.h"
@@ -38,6 +39,7 @@
 #include "vehicles.h"
 #include "onemap.h"
 #include "world.h"
+#include "realterrain.h"
 
 namespace {
 
@@ -101,6 +103,12 @@ Options parseArgs(int argc, char** argv) {
             opts.map = atoi(argv[++i]);
         } else if (arg == "--seed" && more) {
             opts.seed = std::strtoull(argv[++i], nullptr, 10);
+        } else if (arg == "--real" && more) {  // (MAP_REAL's terrain: a folder with terrain.txt, or the sidecar: docs/real-terrain.md)
+            std::string why;
+            if (!realterrain::selectPath(argv[++i], &why)) {
+                fprintf(stderr, "--real %s: %s\n", argv[i], why.c_str());
+                opts.bad = true;
+            }
         } else if (arg == "--name" && more) {
             opts.name = argv[++i];
         } else if (arg == "--players" && more) {
@@ -299,6 +307,7 @@ int main(int argc, char** argv) {
             } else if (shared >= net.shiftDue() && nextWindow.valid()) {
                 std::unique_ptr<World> w = nextWindow.get();
                 const V3 d((double)(sim.world.proc.ox - w->proc.ox), 0, (double)(sim.world.proc.oz - w->proc.oz));
+                waitWorldReaders();  // (background work reading the world: not while it changes)
                 sim.world = std::move(*w);
                 proc::shiftSim(sim, d);
                 net.shiftNow();

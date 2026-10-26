@@ -161,6 +161,7 @@ public:
     // Where each row was drawn (drawable pixels), for the mouse: set by the painter.
     struct Hit { float x, y, w, h; int col, row; };
     std::vector<Hit> hits;
+    int listFirst = -1;  // the parts list's first shown row (-1: centre on the selection); it scrolls only when the selection leaves the view, so pointing at an edge row doesn't run the list
     float turntableX = 0;
     struct Slider { float x, w; };  // (the picker's slider tracks as drawn, for the mouse)
     Slider sliders[3] = {};  // the mouse drags the model to the right of this

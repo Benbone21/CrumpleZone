@@ -52,7 +52,8 @@ void ProcStream::start(Renderer& renderer, const World* at) {
         props::setActiveRockScans(hulls);
         World::procSeed = seed, World::procOriginSet = true, World::procOriginX = ox, World::procOriginZ = oz;
         auto w = std::make_unique<World>(MAP_PROCEDURAL);
-        auto p = Renderer::prepareWorld(*w, cover);
+        const V3 mid(0, 0, 0);  // (the window was centred near the player)
+        auto p = Renderer::prepareWorld(*w, cover, &mid);
         Renderer::prepareObjects(*w, *p, at, pq, cover);  // (the scenery too, and the scans' layout and the places: the swap frame only swaps)
         rp->prepareProps(*w, *p);
         Made m;
@@ -105,6 +106,8 @@ bool ProcStream::tick(Sim& sim, Renderer& renderer, const V3& focus, bool allowe
         if (timed && !late) return false;  // (ready: it goes in at the moment the host named)
         const double t0 = loadprof::nowMs();
         shift = V3((double)(w.proc.ox - next_->proc.ox), 0, (double)(w.proc.oz - next_->proc.oz));
+        // (The renderer's background streaming, and the autopilot's replans, read the world: done with it before it goes.)
+        renderer.waitStreaming();
         // (The window that goes out is freed on a thread of its own: hundreds of MB handed back is ms of the frame.)
         auto old = std::make_shared<World>(std::move(sim.world));
         sim.world = std::move(*next_);

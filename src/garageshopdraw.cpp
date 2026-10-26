@@ -202,7 +202,11 @@ void draw(Renderer& r, Shop& s, const Career& c, const std::string& where, int W
     const float x1 = x0 + cw + 12 * u, iw = std::min(W * 0.3f, 440 * u), ih = 40 * u, igap = 4 * u;
     const int vis = std::max(1, (int)((bottom - top + igap) / (ih + igap)));
     const int n = (int)s.list.size();
-    const int first = std::max(0, std::min(n - vis, s.sel - vis / 2));
+    int first = s.listFirst < 0 ? s.sel - vis / 2 : s.listFirst;
+    if (s.sel < first) first = s.sel;
+    else if (s.sel >= first + vis) first = s.sel - vis + 1;
+    first = std::max(0, std::min(n - vis, first));
+    s.listFirst = first;
     const bool itemsOn = s.focus == F_ITEMS;
     const float its = px(1.4f * u);
     for (int k = 0; k < std::min(vis, n - first); k++) {

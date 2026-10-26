@@ -1028,11 +1028,14 @@ void PropRenderer::submitBillboards(GLuint prog, bool depth) {
 }
 
 void PropRenderer::beginQuery(int pass) {
-    if (!queries[queryFrame][pass]) return;
+    if (!timing || !queries[queryFrame][pass]) return;
     BeginQuery(GL_TIME_ELAPSED, queries[queryFrame][pass]);
     queryUsed[queryFrame][pass] = true;
+    queryOpen = true;
 }
-void PropRenderer::endQuery() { EndQuery(GL_TIME_ELAPSED); }
+void PropRenderer::endQuery() {
+    if (queryOpen) EndQuery(GL_TIME_ELAPSED), queryOpen = false;
+}
 
 void PropRenderer::drawShadow(const M4& lightVP, int cascade, const V3& lightDir) {
     if (!loaded() || quality <= 0 || statics.empty()) return;

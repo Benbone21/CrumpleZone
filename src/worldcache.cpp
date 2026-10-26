@@ -1,4 +1,5 @@
 #include "worldcache.h"
+#include "realterrain.h"
 
 #include <cstring>
 #include <mutex>
@@ -270,11 +271,11 @@ struct WorldIO {
 namespace worldcache {
 
 namespace {
-std::string fileFor(int map) { return "world-" + std::to_string(map); }
+std::string fileFor(int map) { return map == MAP_REAL ? std::string("world-real") : "world-" + std::to_string(map); }
 }  // namespace
 
 bool cacheable(int map) {
-    return (map == MAP_FRONTIER || map == MAP_BACKCOUNTRY || map == MAP_MOUNTAIN) && !bypass && World::halfSizeOverride <= 0 &&
+    return (map == MAP_FRONTIER || map == MAP_BACKCOUNTRY || map == MAP_MOUNTAIN || (map == MAP_REAL && realterrain::activeHash() != 0)) && !bypass && World::halfSizeOverride <= 0 &&
            meshcache::enabled();
 }
 
@@ -283,6 +284,7 @@ uint64_t keyFor(int map) {
     meshcache::Hasher h;
     h.bytes(kMagic, sizeof kMagic), h.u64(kFormat), h.u64(meshcache::codeVersion());
     h.u64((uint64_t)map), h.num(World::halfSizeFor(map));
+    if (map == MAP_REAL) h.u64(realterrain::activeHash());  // (the real terrain's DEM file and sidecar)
     // The scanned rocks in use (the rocks' hulls come from them): which, and what they are.
     if (const props::HullLibrary* lib = props::activeRockScans()) {
         h.u64(lib->hulls.size());

@@ -263,6 +263,7 @@ void Shop::begin(int v, const ModSet& f, const Career& c, bool careerOn, bool st
     paint = p, dragCtl = -1;
     vehicle = v, fitted = f, career = careerOn, atStation = station;
     previewing = false;
+    listFirst = -1;
     focus = F_CATS;
     cat = clampi(cat, 0, (int)categories().size() - 1);
     sel = 0;
@@ -326,6 +327,7 @@ void Shop::setCat(int i) {
     if (cat == was && !list.empty()) return;
     previewing = false;
     sel = 0;
+    listFirst = -1;  // (a new list opens centred on its fitted part)
     if (careerRef_) list = listFor(*careerRef_);
     // (A mod slot opens on what's fitted.)
     for (int k = 0; k < (int)list.size(); k++)

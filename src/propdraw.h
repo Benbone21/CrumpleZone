@@ -70,6 +70,9 @@ public:
     // Main pass: `setLighting` sets the shared uniforms (sun, sky, fog, shadows, lamps) on a program.
     void draw(const M4& viewProj, const std::function<void(GLuint)>& setLighting);
     void endFrame();  // collects the GPU timings
+    // GPU timer queries on its passes (F3, the bench: the renderer's gpuTiming). Off, nothing asks the driver for a query's
+    // result: that waits for the driver's thread to catch up with the frame so far (Mesa's glthread), a stall in the frame.
+    bool timing = false;
     // Main pass only (never a shadow pass): cells and scatter behind the ground are skipped (occlusion.h). Set once; null = off.
     const TerrainOcclusion* occluder = nullptr;
     // The editor changed the ground in [x0, x1] x [z0, z1]: the scatter there is placed again.
@@ -196,6 +199,7 @@ private:
     static const int kQueryFrames = 4;
     GLuint queries[kQueryFrames][3] = {};
     bool queryUsed[kQueryFrames][3] = {};
+    bool queryOpen = false;
     int queryFrame = 0;
     double lastGpuMs = -1;
     void beginQuery(int pass);
