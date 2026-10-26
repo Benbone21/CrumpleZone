@@ -302,7 +302,7 @@ void main(){
   oCol = vec4(selW[0] + selW[1] + float(selV[0] + selV[1]) + texTotal + procBase.x); return;
 #endif
   // ---- Photo layers ----
-  bool two = uGroundQ >= 2 && dist < 420.0;  // (the second, turned tap out to the middle distance: one tap's tiling shows as stripes on a far slope)
+  bool two = uGroundQ >= 2 && dist < 250.0;
   float mix2 = 0.15 + 0.7 * smoothstep(0.25, 0.75, vnoise(p * 0.11 + 4.0));
   float wTop = smoothstep(0.55, 0.93, N0.y);  // how much the top-down mapping counts on a slope
   bool steepFace = uGroundQ >= 2 && wTop < 0.999 && dist < 400.0;
