@@ -89,8 +89,8 @@ float gNoiseA, gNoiseB;
 #else
 // (LOW and POTATO work these two out where a paint needs them: meadow and forest floor need neither.)
 float gNA = -1.0, gNB = -1.0;
-float noiseA(){ if (gNA < 0.0) gNA = fbmFew(vPos.xz * 0.35 + 5.0, 2, 3); return gNA; }
-float noiseB(){ if (gNB < 0.0) gNB = fbmFew(vPos.xz * 0.55 - 3.0, 1, 2); return gNB; }
+float noiseA(){ if (gNA < 0.0) gNA = fbmFew(NP.xz * 0.35 + 5.0, 2, 3); return gNA; }
+float noiseB(){ if (gNB < 0.0) gNB = fbmFew(NP.xz * 0.55 - 3.0, 1, 2); return gNB; }
 #define gNoiseA noiseA()
 #define gNoiseB noiseB()
 #endif
@@ -193,8 +193,8 @@ void sideFrames(vec3 g, vec3 dPx, vec3 dPy){
   sideZ.R = vec3(sz, 0.0, 0.0);  sideZ.N = vec3(0.0, 0.0, sz);
   float wx = pow(abs(g.x), 4.0), wz = pow(abs(g.z), 4.0);
   sideX.w = wx / max(wx + wz, 1e-5); sideZ.w = 1.0 - sideX.w;
-  sideX.uv = vec2(dot(vPos, sideX.R), -vPos.y); sideX.gx = vec2(dot(dPx, sideX.R), -dPx.y); sideX.gy = vec2(dot(dPy, sideX.R), -dPy.y);
-  sideZ.uv = vec2(dot(vPos, sideZ.R), -vPos.y); sideZ.gx = vec2(dot(dPx, sideZ.R), -dPx.y); sideZ.gy = vec2(dot(dPy, sideZ.R), -dPy.y);
+  sideX.uv = vec2(dot(NP, sideX.R), -vPos.y); sideX.gx = vec2(dot(dPx, sideX.R), -dPx.y); sideX.gy = vec2(dot(dPy, sideX.R), -dPy.y);
+  sideZ.uv = vec2(dot(NP, sideZ.R), -vPos.y); sideZ.gx = vec2(dot(dPx, sideZ.R), -dPx.y); sideZ.gy = vec2(dot(dPy, sideZ.R), -dPy.y);
 }
 vec4 sideTap(sampler2DArray s, float L, Side f, float scale){
   return textureGrad(s, vec3(f.uv * scale, L), f.gx * scale, f.gy * scale);
@@ -206,7 +206,7 @@ void main(){
   oCol = vec4(vPos * 0.001 + vNrm, 1.0); return;
 #endif
   vec3 N0 = normalize(vNrm);
-  vec2 p = vPos.xz;
+  vec2 p = NP.xz, pr = vPos.xz;  // (patterns follow the world, the terrain's texels the window: kCommonFS uNoiseOff)
   vec3 dPx = dFdx(vPos), dPy = dFdy(vPos);
   float dist = length(vPos - uCam);
 
@@ -234,7 +234,7 @@ void main(){
 #endif
   // ---- The four cells round this point, from a slightly wobbled spot so edges are ragged, not 1 m stairs ----
   vec2 wob = lo == 1 ? vec2(0.0) : (vec2(vnoise(p * 0.8), vnoise(p.yx * 0.8 + 7.0)) - 0.5) * 1.4;
-  vec2 gp = p + wob + (uTerrainN - 1.0) * 0.5;
+  vec2 gp = pr + wob + (uTerrainN - 1.0) * 0.5;
   ivec2 i0 = clamp(ivec2(floor(gp)), ivec2(0), ivec2(int(uTerrainN) - 2));
   vec2 f = clamp(gp - vec2(i0), 0.0, 1.0);
   f = f * f * (3.0 - 2.0 * f);
@@ -405,7 +405,7 @@ void main(){
     nrm = normalize(mix(nrm, N0, pud * 0.85));
   }
   // ---- Wet ground at the water's edge, and a dark silty bed under it ----
-  float wl = terrainCell(ivec2(floor(p + uTerrainN * 0.5))).a;
+  float wl = terrainCell(ivec2(floor(pr + uTerrainN * 0.5))).a;
   float wet = 1.0 - smoothstep(0.0, 0.5, vPos.y - wl);
   alb *= mix(1.0, 0.40, wet);
   rough = mix(rough, 0.25, wet * 0.7);

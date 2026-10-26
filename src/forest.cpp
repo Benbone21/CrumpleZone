@@ -187,13 +187,22 @@ mk::Mesh simplify(const mk::Mesh& m, double cell) {
 
 constexpr double kFarCell = 0.9;  // (model units: a tree is 10 tall)
 
+// The procedural world's windows (procworld.h): a tree's or a bush's look from where it is in the world, not from where it falls in
+// this window's list, so the next window draws it the same.
+int worldSeed(const World& w, double x, double z) {
+    const uint64_t a = (uint64_t)(int64_t)std::llround((x + (double)w.proc.ox) * 8), b = (uint64_t)(int64_t)std::llround((z + (double)w.proc.oz) * 8);
+    uint64_t h = a * 0x9E3779B97F4A7C15ull ^ (b + 0x632BE59BD9B4E019ull) * 0xC2B2AE3D27D4EB4Full;
+    h ^= h >> 31, h *= 0x7FB5D329728EA185ull, h ^= h >> 27;
+    return 1 + (int)((h >> 20) & 0x3FFFFFFF);
+}
+
 void build(const World& w, bool skipPines, bool skipSnags, Set& out) {
     out = Set();
     for (int l = 0; l < kLods; l++) out.lodAt[l] = (float)lodReach(l);
     std::map<std::tuple<int, int, int, int>, int> index;
     for (size_t i = 0; i < w.trees.size(); i++) {
         const Tree& t = w.trees[i];
-        const int seed = (int)i + 1;  // (as the baked forest had it: a tree keeps its look)
+        const int seed = w.map == MAP_PROCEDURAL ? worldSeed(w, t.base.x, t.base.z) : (int)i + 1;  // (as the baked forest had it: a tree keeps its look)
         if (t.kind < 0 || t.kind > 2 || (t.kind == 0 && skipPines) || (t.kind == 2 && skipSnags)) continue;
         Look lk;
         lk.kind = t.kind;
@@ -231,6 +240,7 @@ void buildBushes(const World& w, Set& out) {
     for (size_t i = 0; i < w.bushes.size(); i++) {
         const Bush& b = w.bushes[i];
         seed++;  // (as the baked bushes had it: a bush keeps its look)
+        if (w.map == MAP_PROCEDURAL) seed = worldSeed(w, b.p.x, b.p.z);
         const int kind = plantKindOf(b.kind), sd = 1 + seed % 6, dry = seed % 7 == 0 ? 1 : 0;
         const auto key = std::make_tuple(kind, sd, dry);
         auto it = index.find(key);

@@ -25,11 +25,15 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <future>
+#include <memory>
 #include <string>
 #include <thread>
 
+#include "bgwork.h"
 #include "daylight.h"
 #include "net.h"
+#include "procworld.h"
 #include "props.h"
 #include "softbody.h"
 #include "vehicles.h"
@@ -47,6 +51,7 @@ void handleSignal(int /*sig*/) {
 struct Options {
     int port = net::kDefaultPort;
     int map = 1;  // mountain (a start on the big Backcountry: onemap.h)
+    unsigned long long seed = 0;  // the procedural world's (map 6; 0: a new one)
     std::string name = "Crumple Zone Server";
     int maxPlayers = 8;
     std::string password, passwordFile, bind;
@@ -96,6 +101,8 @@ Options parseArgs(int argc, char** argv) {
             else envBad = false;
         } else if (arg == "--map" && more) {
             opts.map = atoi(argv[++i]);
+        } else if (arg == "--seed" && more) {
+            opts.seed = std::strtoull(argv[++i], nullptr, 10);
         } else if (arg == "--real" && more) {  // (MAP_REAL's terrain: a folder with terrain.txt, or the sidecar: docs/real-terrain.md)
             std::string why;
             if (!realterrain::selectPath(argv[++i], &why)) {
@@ -130,7 +137,8 @@ Options parseArgs(int argc, char** argv) {
             printf("  --port PORT      TCP/UDP game port, any from %d to %d (default %d; or the CZ_PORT variable)\n", net::kMinHostPort, net::kMaxPort,
                    net::kDefaultPort);
             printf("  --map MAP        Map number: 0 proving ground, 1 mountain,\n");
-            printf("                   2 freeway, 3 frontier, 4 backcountry (default 1)\n");
+            printf("                   2 freeway, 3 frontier, 4 backcountry, 6 procedural (default 1)\n");
+            printf("  --seed N         The procedural world's seed (map 6; default: a new world)\n");
             printf("  --name NAME      Session name in lobby (default \"Crumple Zone Server\")\n");
             printf("  --players N      Slots, the server's own included (default 8, max %d: 7 guests)\n", net::kMaxPeers);
             printf("  --password PW    Players must give this to join (strongly recommended on the internet).\n");
@@ -209,6 +217,10 @@ int main(int argc, char** argv) {
     Sim sim;
     World::useLocalEdits = false;  // (the players' games build it the same way: no saved edits)
     World::withShowcase = true;  // (the same proving ground the players' games build: the model yard, the section park)
+    if (opts.map == MAP_PROCEDURAL) {  // (an endless world from a seed: the server slides its window with the players, procworld.h)
+        World::procSeed = opts.seed ? opts.seed : proc::ProcWorld::randomSeed();
+        printf("  Seed:       %llu\n", (unsigned long long)World::procSeed);
+    }
     sim.world = worldForPick(opts.map);  // (the Mountain, the Frontier, the Open Country: the big map, started there: onemap.h)
     sim.lineup = listedVehicles();
     sim.setup();
@@ -245,6 +257,7 @@ int main(int argc, char** argv) {
     // Main loop: handle network, send states to clients
     auto start = std::chrono::steady_clock::now();
     int lastPlayerCount = 0;
+    std::future<std::unique_ptr<World>> nextWindow;  // (the procedural world's next window, on its way)
 
     while (running) {
         // Convert current time to seconds since start
@@ -259,6 +272,49 @@ int main(int argc, char** argv) {
         // Handle network input and send states
         net.receive(sim, t);
         net.send(sim, t);
+        // The procedural world: its window follows the players (the middle of the box round their vehicles), told 3 s ahead and
+        // swapped by everyone at that moment on the shared clock. (Built on a worker; the server only keeps the land and the solids.)
+        if (sim.world.map == MAP_PROCEDURAL) {
+            net.proc.on = true, net.proc.gen = (uint16_t)proc::kGenVersion, net.proc.seed = sim.world.proc.seed;
+            net.proc.ox = sim.world.proc.ox, net.proc.oz = sim.world.proc.oz;
+            const double shared = net.sharedTime(t);
+            if (!net.shiftPending()) {
+                V3 lo(1e18, 0, 1e18), hi(-1e18, 0, -1e18);
+                for (const Car& c : sim.cars)
+                    if (c.remote && !c.isProp()) {
+                        const V3 p = c.frame().com;
+                        lo = V3(std::min(lo.x, p.x), 0, std::min(lo.z, p.z)), hi = V3(std::max(hi.x, p.x), 0, std::max(hi.z, p.z));
+                    }
+                const V3 focus = (lo + hi) * 0.5;
+                if (lo.x < 1e17 && std::max(std::fabs(focus.x), std::fabs(focus.z)) >= proc::kSlide) {
+                    int64_t ox, oz;
+                    proc::ProcWorld::snapOrigin((double)sim.world.proc.ox + focus.x, (double)sim.world.proc.oz + focus.z, ox, oz);
+                    const double due = shared + 3.0;
+                    char msg[160];
+                    std::snprintf(msg, sizeof msg, "procshift %llu %lld %lld %.4f", (unsigned long long)sim.world.proc.seed, (long long)ox, (long long)oz, due);
+                    net.sendGame(msg);
+                    net.scheduleShift(due, V3((double)(sim.world.proc.ox - ox), 0, (double)(sim.world.proc.oz - oz)));
+                    const uint64_t seed = sim.world.proc.seed;
+                    const props::HullLibrary* hulls = props::activeRockScans();
+                    nextWindow = std::async(std::launch::async, [=] {
+                        props::setActiveRockScans(hulls);
+                        World::procSeed = seed, World::procOriginSet = true, World::procOriginX = ox, World::procOriginZ = oz;
+                        auto w = std::make_unique<World>(MAP_PROCEDURAL);
+                        w->trimForServer();
+                        return w;
+                    });
+                }
+            } else if (shared >= net.shiftDue() && nextWindow.valid()) {
+                std::unique_ptr<World> w = nextWindow.get();
+                const V3 d((double)(sim.world.proc.ox - w->proc.ox), 0, (double)(sim.world.proc.oz - w->proc.oz));
+                waitWorldReaders();  // (background work reading the world: not while it changes)
+                sim.world = std::move(*w);
+                proc::shiftSim(sim, d);
+                net.shiftNow();
+                printf("window -> %lld,%lld\n", (long long)sim.world.proc.ox, (long long)sim.world.proc.oz);
+                fflush(stdout);
+            }
+        }
 
         // The game shows these on the HUD and the race screen; here they're just log lines.
         for (const std::string& e : net.events) printf("%s\n", e.c_str());

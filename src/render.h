@@ -92,11 +92,16 @@ public:
     // water from the world; beginUpload/pumpUpload put them on the GPU a few ms a frame into spare buffers; adoptWorld swaps them
     // in (with the first stage of the scenery), and stepWorld does one more stage of it per call until it returns true.
     struct Prepared;
-    static std::shared_ptr<Prepared> prepareWorld(const World& world, const ScanCover& cover = ScanCover());  // (cover: what the scans draw, see scanCover())
+    static std::shared_ptr<Prepared> prepareWorld(const World& world, const ScanCover& cover = ScanCover(), const V3* focus = nullptr);  // (cover: what the scans draw, see scanCover(); focus: where the camera will be, else the spawn)
     ScanCover scanCover() const { return scanCover_; }
     void beginUpload(std::shared_ptr<Prepared> p);
     bool pumpUpload(double budgetMs);  // true once everything is uploaded
     void adoptWorld(const World& world);
+    // A procedural window (procstream.h), after pumpUpload: its scenery onto the GPU a piece a frame, apart from what's drawn; true
+    // once it's all there (adoptWorld then swaps it in at no cost). budgetMs: about what to spend a frame.
+    bool stageWorld(double budgetMs);
+    // The scans laid out for a world ahead of its swap (any thread; procworld's worker): into what prepareObjects made.
+    void prepareProps(const World& world, Prepared& p) const;
     bool stepWorld(const World& world);  // true once the scenery is built
     // People on foot this frame (you, your buddies): drawn as simple figures.
     struct Figure {
@@ -341,14 +346,55 @@ public:
         int coarseN = 1;
         GLuint ctex = 0;
         std::vector<Vtx> water;
+        // The procedural world's next window (procstream.h): the buffers it replaces are kept for the one after (the same sizes), so a
+        // slide allocates nothing; and its scenery is made here too (prepareObjects), so the swap frame only uploads.
+        bool keepSpare = false;
+        size_t bytes[4] = {};  // (the sizes of vbo, ibo, cvbo, cibo below)
+        uint64_t idxHash = 0;  // (keepSpare: of lodIdx and coarseIdx)
+        struct PreObjects;
+        std::shared_ptr<PreObjects> objs;
         // The upload: spare buffers filled a slice at a time.
         GLuint vbo = 0, ibo = 0, tex = 0, cvbo = 0, cibo = 0;
         size_t vDone = 0, iDone = 0, cvDone = 0, ciDone = 0;
         int rowsDone = 0;
+        bool coarseLater = false;  // (a procedural window: its coarse texture goes up in slices in stage 3)
+        int coarseRows = 0;
         int stage = 0;
     };
+    // (Any thread, after prepareWorld: the scenery's meshes for `world` as it will be drawn once it has been moved to `asAt`, with
+    // props quality pq and the scans covering `cover`.)
+    static void prepareObjects(const World& world, Prepared& p, const void* asAt, int pq, const ScanCover& cover);
+    int objectsQuality() const { return propsOk ? std::min(std::max(settings.props, 0), 3) : 0; }
+
 private:
     std::shared_ptr<Prepared> pending_;
+    // The buffers and textures a procedural window's swap left (Prepared::keepSpare), for the next one to fill.
+    struct Spare {
+        GLuint vbo = 0, ibo = 0, cvbo = 0, cibo = 0, tex = 0, ctex = 0;
+        size_t vBytes = 0, iBytes = 0, cvBytes = 0, ciBytes = 0;
+        int texW = 0, coarseN = 0;
+        uint64_t idxHash = 0;  // what its index buffers hold (Prepared::idxHash; 0: nothing yet)
+    } spare_;
+    void dropSpare();
+    void ensureSpare();
+    // The shaders' patterns (kCommonFS uNoiseOff): on the procedural world they're anchored to the world at a point, and offset by
+    // where the window's origin is from it, so they don't move as the window slides. A new anchor (one pattern change) every 12 km.
+    bool noiseAnchored_ = false;
+    uint64_t noiseSeed_ = 0;
+    int64_t noiseAnchor_[2] = {0, 0};
+    float noiseOff_[2] = {0, 0};
+    void anchorNoise(const World& world);
+    uint64_t terrainIdxHash_ = 0;
+    size_t terrainBytes_[4] = {};  // the sizes of terrainVbo, terrainIbo, coarseVbo, coarseIbo
+    GLuint unpackPbo_ = 0;         // (a procedural window's terrain texels go up through this)
+    std::shared_ptr<Prepared::PreObjects> preObjs_;  // (adoptWorld: the scenery made on the worker, for the object stages)
+    struct Staged {  // (stageWorld: the next window's scenery, on the GPU apart from what's drawn; after a swap, the last one's, to reuse)
+        int step = 0;
+        bool ready = false;
+        size_t done = 0;
+        GLuint waterVao = 0, waterVbo = 0, boxVao = 0, boxVbo = 0, bushVao = 0, bushVbo = 0, sceneryVao = 0, sceneryVbo = 0;
+        TreeDraw trees, bushes;
+    } staged_;
     int objStage_ = 0, stagePq_ = 0;
     void updateObjectsStage(const World& world, int stage);
     static void prepareTerrain(const World& world, Prepared& p);
@@ -390,6 +436,7 @@ private:
     float farZ_ = 6000;  // this frame's far plane (a draw distance brings it in)
     int gpuMarkFrame_ = 0;
     void uploadBatches(GLuint& vao, GLuint& vbo, std::vector<Vtx>& vertices, std::vector<StaticBatch>& batches);
+    static void binBatches(std::vector<Vtx>& vertices, std::vector<StaticBatch>& batches);  // (into 64 m bins; any thread)
     void drawBatches(GLuint vao, const std::vector<StaticBatch>& batches, const M4& vp, bool shadow);
     void drawBushes(const M4& vp, const V3& eye, bool shadow, VegStats::Pass& stats);  // (the reed and log batches within sight: small things, not drawn far off)
     void drawTerrain(const M4& vp, const View& view, const std::function<void(GLuint, bool)>& setup = nullptr, GLuint noProcProg = 0, GLuint procProg = 0, GLuint farProg = 0);
