@@ -1043,7 +1043,7 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
         const double tl = treeLineAt(gx, gz);
         if (h > tl) continue;
         const double groveHere = smoothstep(0.36, 0.62, fbm(P.s[S_GROVE], gx * 0.004, gz * 0.004, 3));
-        const double meadow = AR.meadowShare > 0 ? smoothstep(0.36 + 0.28 * AR.meadowShare - 0.03, 0.36 + 0.28 * AR.meadowShare + 0.03, fbm(P.s[S_GROVE] + 5, gx * 0.005, gz * 0.005, 3)) : 1.0;
+        const double meadow = AR.meadowShare > 0 ? smoothstep(0.36 + 0.28 * AR.meadowShare - 0.03, 0.36 + 0.28 * AR.meadowShare + 0.03, fbm(P.s[S_GROVE] + 5, gx / AR.meadowSize, gz / AR.meadowSize, 3)) : 1.0;
         double dens = 0;
         for (int b = 0; b < PB_COUNT; b++) {
             const double per = b == PB_MOUNTAINS ? AR.treesPerHa * meadow : RU.trees[b].perHa * (RU.trees[b].groveMin + (1 - RU.trees[b].groveMin) * groveHere);
@@ -1052,7 +1052,7 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
         dens *= 1 - smoothstep(tl - AR.treeLineFade, tl, h) * 0.85;  // (thinning to the line: a few stunted ones right up to it)
         if (keep * maxHa >= dens) continue;
         bool spaced = true;
-        for (const auto& pq : placed) spaced &= sqr(pq.first - fx) + sqr(pq.second - fz) > 3.5 * 3.5;
+        for (const auto& pq : placed) spaced &= sqr(pq.first - fx) + sqr(pq.second - fz) > sqr(AR.trunkSpacing);  // (drivable between, tight in places)
         if (!spaced) continue;
         TreeSpec t;
         t.x = (float)fx, t.z = (float)fz;
@@ -1124,12 +1124,19 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
             c->logs.push_back({(float)(fx - dx * L2), (float)(fz - dz * L2), (float)(fx + dx * L2), (float)(fz + dz * L2), (float)r});
     }
     // Bushes: what grows where (reeds by the water).
-    const int bushTries = (int)(14 * (0.3 + 0.7 * std::max(grove, w[PB_BADLANDS] + w[PB_DUNES] * 0.3)) + rr()) + (anyWater ? 10 : 0);
+    // (And the alpine forest's undergrowth (biome.alpine undergrowth_per_ha): the more trees round it, the more of it, none in the open.)
+    const int baseBush = (int)(14 * (0.3 + 0.7 * std::max(grove, w[PB_BADLANDS] + w[PB_DUNES] * 0.3)) + rr()) + (anyWater ? 10 : 0);
+    const int bushTries = baseBush + (int)(w[PB_MOUNTAINS] * AR.undergrowthPerHa * haChunk + rr());
     for (int k = 0; k < bushTries; k++) {
         const double fx = 64 * rr(), fz = 64 * rr();
         int i, j;
         const int id = cellOf(fx, fz, i, j);
         const int b = CC(i, j).dom;
+        if (k >= baseBush) {  // (undergrowth: under the trees, below the tree line)
+            int near = 0;
+            for (const auto& pq : placed) near += sqr(pq.first - fx) + sqr(pq.second - fz) < 6.0 * 6.0;
+            if (near == 0 || c->h[id] > treeLineAt((double)gx0 + fx, (double)gz0 + fz)) continue;
+        }
         if (c->surf[id] == SURF_SNOW || c->surf[id] == SURF_ROCK || CC(i, j).water > -1e8 || CC(i, j).roadNear) continue;
         if (b == PB_DUNES && rr() < 0.8) continue;
         // (Near the water: reeds and wet ground; elsewhere what the biome grows.)
@@ -1139,7 +1146,7 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
         if (CC(i, j).keep && !wetSide) continue;
         BushSpec s;
         s.x = (float)fx, s.z = (float)fz, s.u = (float)rr(), s.tint = (float)(0.75 + 0.45 * rr());
-        s.habitat = (uint8_t)(wetSide ? HAB_WETLAND : b == PB_BADLANDS || b == PB_DUNES ? HAB_DESERT : b == PB_MOUNTAINS ? HAB_UPLAND : b == PB_FOREST ? HAB_FOREST : HAB_MEADOW);
+        s.habitat = (uint8_t)(wetSide ? HAB_WETLAND : b == PB_BADLANDS || b == PB_DUNES ? HAB_DESERT : k >= baseBush ? HAB_FOREST : b == PB_MOUNTAINS ? HAB_UPLAND : b == PB_FOREST ? HAB_FOREST : HAB_MEADOW);
         s.edge = grove > 0.4;
         c->bushes.push_back(s);
     }

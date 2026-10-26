@@ -42,13 +42,16 @@ struct RangeRule {
 
 // ---- Alpine: forest, tree line, rock and snow -----------------------------------------------------------------------------------
 struct AlpineRule {
-    double treesPerHa = 85;        // trees a hectare on the slopes at the foot of the range (pines)
+    double treesPerHa = 230;        // trees a hectare on the slopes at the foot of the range (pines)
     double treeSlopeMax = 0.75;     // no trees steeper than this (rise over run, ~35 degrees)
     double treeLine = 760;         // m: where the forest ends...
     double treeLineWobble = 60;    // m: ...give or take this (a noise: higher on some spurs, lower in others)
     double treeLineFade = 200;     // m: below the line the forest thins over this band...
     double krummholz = 0.6;        // ...and the trees shrink to (1 - this) of their height at the line
-    double meadowShare = 0.2;      // of the slopes are open meadows (glades a couple of hundred metres across)
+    double meadowSize = 110;       // m: about how big the meadows are
+    double trunkSpacing = 3.0;     // m: trees stand at least this far apart (drivable between, tight in places)
+    double undergrowthPerHa = 160; // bushes a hectare tried under the trees (kept only near trees, below the tree line)
+    double meadowShare = 0.1;      // of the slopes are open meadows (glades a couple of hundred metres across)
     double coniferShare = 0.93;     // pines and firs; the rest dead snags...
     double aspenShare = 0.1;       // ...or aspens, low down:
     double aspenBelow = 500;       // m: aspens only below this
@@ -57,12 +60,12 @@ struct AlpineRule {
     double rockBandWidth = 0.3;    // ...this share of each step bare rock
     double screeSlope = 0.4;       // above the tree line, slopes steeper than this are scree (where a patch noise says)...
     double rockSlope = 0.8;        // ...and steeper than this bare rock
-    double snowDust = 820;         // m: a dusting of snow begins (drawn: no snow underfoot), thickening up to snowFull...
+    double snowDust = 1350;         // m: a dusting of snow begins (drawn: no snow underfoot), thickening up to snowFull...
     double snowDustCover = 0.45;    // ...where it covers at most this share of the ground (the snow underfoot is the patches)
-    double snowPatchy = 900;       // m: patches of snow (snow underfoot) begin...
-    double snowFull = 1150;         // m: ...and lie whole from here
-    double snowNorth = 120;          // m: the snow comes this much lower on a north face
-    double snowHollow = 80;         // m: ...and this much lower in a hollow (a gully 10 m or more below the ground 32 m round)
+    double snowPatchy = 1600;       // m: patches of snow (snow underfoot) begin...
+    double snowFull = 2000;         // m: ...and lie whole from here
+    double snowNorth = 200;          // m: the snow comes this much lower on a north face
+    double snowHollow = 150;         // m: ...and this much lower in a hollow (a gully 10 m or more below the ground 32 m round)
     double snowSlopeMax = 0.85;    // steeper than this the snow slides off: rock
     double rocksPerHa = 45;        // loose rocks and boulders tried a hectare (steep ground keeps more of them)
 };

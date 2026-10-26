@@ -59,7 +59,10 @@ std::vector<Key> keys() {
     k.push_back({A, "tree_line_wobble", nullptr, AT(r.alpine.treeLineWobble), "m: ...give or take this (a slow noise)"});
     k.push_back({A, "tree_line_fade", nullptr, AT(r.alpine.treeLineFade), "m: below the line the forest thins out over this band"});
     k.push_back({A, "krummholz", nullptr, AT(r.alpine.krummholz), "0..1: trees at the line are (1 - this) of their height (stunted)"});
-    k.push_back({A, "meadow_share", nullptr, AT(r.alpine.meadowShare), "0..1: this share of the forested slopes is open meadow (glades ~200 m across)"});
+    k.push_back({A, "meadow_share", nullptr, AT(r.alpine.meadowShare), "0..1: this share of the forested slopes is open meadow"});
+    k.push_back({A, "meadow_size", nullptr, AT(r.alpine.meadowSize), "m: about how big the meadows are"});
+    k.push_back({A, "trunk_spacing", nullptr, AT(r.alpine.trunkSpacing), "m: trees stand at least this far apart (drivable between, tight in places)"});
+    k.push_back({A, "undergrowth_per_ha", nullptr, AT(r.alpine.undergrowthPerHa), "bushes a hectare tried under the trees (kept only within 6 m of a tree, below the tree line)"});
     k.push_back({A, "conifer_share", nullptr, AT(r.alpine.coniferShare), "0..1: pines and firs; the rest are dead snags, or aspens low down"});
     k.push_back({A, "aspen_share", nullptr, AT(r.alpine.aspenShare), "0..1: aspens (broadleaf) among the trees at the foot, none from aspen_below up"});
     k.push_back({A, "aspen_below", nullptr, AT(r.alpine.aspenBelow), "m: aspens only below this"});

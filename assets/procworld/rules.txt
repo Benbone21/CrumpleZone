@@ -45,13 +45,16 @@ alpine_full = 560                 # m: ...and is whole here
 alpine_heat_shift = 100           # m: in the coldest country the alpine comes this much lower (in the hottest, higher)
 
 [biome.alpine]
-trees_per_ha = 85                 # trees a hectare on the slopes below the tree line (pines)
+trees_per_ha = 230                # trees a hectare on the slopes below the tree line (pines)
 tree_slope_max = 0.75             # no trees on ground steeper than this (rise over run; 0.7 is 35 degrees)
 tree_line = 760                   # m: the height the forest ends at...
 tree_line_wobble = 60             # m: ...give or take this (a slow noise)
 tree_line_fade = 200              # m: below the line the forest thins out over this band
 krummholz = 0.6                   # 0..1: trees at the line are (1 - this) of their height (stunted)
-meadow_share = 0.2                # 0..1: this share of the forested slopes is open meadow (glades ~200 m across)
+meadow_share = 0.1                # 0..1: this share of the forested slopes is open meadow
+meadow_size = 110                 # m: about how big the meadows are
+trunk_spacing = 3                 # m: trees stand at least this far apart (drivable between, tight in places)
+undergrowth_per_ha = 160          # bushes a hectare tried under the trees (kept only within 6 m of a tree, below the tree line)
 conifer_share = 0.93              # 0..1: pines and firs; the rest are dead snags, or aspens low down
 aspen_share = 0.1                 # 0..1: aspens (broadleaf) among the trees at the foot, none from aspen_below up
 aspen_below = 500                 # m: aspens only below this
@@ -60,12 +63,12 @@ rock_band_spacing = 24            # m: about this far apart up the slope
 rock_band_width = 0.3             # 0..1: this share of each step is bare rock
 scree_slope = 0.4                 # above the tree line, slopes steeper than this are scree (in patches)
 rock_slope = 0.8                  # slopes steeper than this are bare rock
-snow_dust = 820                   # m: a dusting of snow starts here (drawn only: nothing underfoot)
+snow_dust = 1350                  # m: a dusting of snow starts here (drawn only: nothing underfoot)
 snow_dust_cover = 0.45            # 0..1: the dusting covers at most this share of the ground (thickening from snow_dust to snow_full)
-snow_patchy = 900                 # m: patches of snow (underfoot) start here, more the higher...
-snow_full = 1150                  # m: ...and the snow lies whole from here
-snow_north = 120                  # m: the snow comes this much lower on a north face
-snow_hollow = 80                  # m: ...and this much lower in a hollow (a gully 10 m or more below the ground 32 m round)
+snow_patchy = 1600                # m: patches of snow (underfoot) start here, more the higher...
+snow_full = 2000                  # m: ...and the snow lies whole from here
+snow_north = 200                  # m: the snow comes this much lower on a north face
+snow_hollow = 150                 # m: ...and this much lower in a hollow (a gully 10 m or more below the ground 32 m round)
 snow_slope_max = 0.85             # steeper than this the snow slides off (bare rock)
 rocks_per_ha = 45                 # loose rocks and boulders tried a hectare (steep ground keeps more of them)
 

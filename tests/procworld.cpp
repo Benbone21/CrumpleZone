@@ -917,7 +917,8 @@ SCENARIO(procAlpine, "procworld/alpine", "The alpine rules (procrules.h, biome.a
     ctx.note(b);
     // (Taller ranges, 1.5-2.5 km, wait for the land-shape slice: today's contour rivers saw gorges through them, and the slopes
     // came out too steep to drive. The alpine zones follow rules().alpine whatever the heights.)
-    ctx.check("snowy peaks: some land over the full snow line", top > A.snowFull);
+    // (The snow is set for those taller ranges: patches from 1.6 km, whole from 2 km. Today's ~1.3 km tops stay bare.)
+    ctx.check("bare tops: some land over the tree line", top > A.treeLine + A.treeLineWobble);
     // The forest, the tree line and the snow, from the chunks: on the alpine slopes of three seeds' ranges (a chunk every 250 m).
     struct Band { long cells = 0, snow = 0, trees = 0, conifers = 0, area = 0; double treeH = 0; };
     std::map<int, Band> band;  // (by 100 m of height)
@@ -957,7 +958,7 @@ SCENARIO(procAlpine, "procworld/alpine", "The alpine rules (procrules.h, biome.a
     std::snprintf(b, sizeof b, "below the tree line: %.0f trees a hectare of gentle ground (rule %.0f, less the meadows), %.0f%% conifers; mean height %.1f m low, %.1f m near the line",
                   dens, A.treesPerHa, coniferN ? 100 * coniferShare / coniferN : 0.0, lowN ? lowH / lowN : 0.0, highN ? highH / highN : 0.0);
     ctx.note(b);
-    ctx.check("forest on the slopes: within 40-110% of the rule's density", dens > 0.4 * A.treesPerHa && dens < 1.1 * A.treesPerHa);
+    ctx.check("thick forest on the slopes: over 120 trees a hectare, within 40-110% of the rule's density", dens > 120 && dens > 0.4 * A.treesPerHa && dens < 1.1 * A.treesPerHa);
     ctx.check("mostly conifers below the tree line", coniferN > 0 && coniferShare / coniferN > 0.8);
     ctx.check("stunted near the tree line", lowN > 0 && highN > 0 && highH / highN < 0.8 * lowH / lowN);
     ctx.check("no trees over the tree line", bareAbove);
