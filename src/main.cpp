@@ -100,6 +100,8 @@
 #include "../tests/harness.h"
 
 namespace {
+// Which map's music and ambience play (soundMap): on the big map, the region's country you're in sounds like its old map (onemap.h).
+int regionSoundMap = -1;
 
 const double kTimeScales[] = {1.0, 0.5, 0.25, 0.1, 0.03};
 
@@ -5314,7 +5316,20 @@ int main(int argc, char** argv) {
                 static BiomeTracker biomes;
                 const V3 at = walker.active ? walker.p : fr.com;
                 biomes.update(sim.world, at.x, at.z, dt);
-                audio.setMusic(soundMap(sim.world.map), settings.music, biomes.current);  // master volume applies to the whole mix
+                // On the big map, a region's country sounds like its old map (onemap.h), once you've been in it a few seconds.
+                {
+                    static int pending = -1;
+                    static double pendingFor = 0;
+                    int here = soundMap(sim.world.map);
+                    if (sim.world.map == MAP_BACKCOUNTRY)
+                        if (const MapRegion* r = regionAround(at.x, at.z)) here = soundMap(r->map);
+                    if (here != pending) pending = here, pendingFor = 0;
+                    pendingFor += dt;
+                    static int lastMap = -1;
+                    if (sim.world.map != lastMap) lastMap = sim.world.map, regionSoundMap = here;
+                    if (pendingFor > 4.0) regionSoundMap = pending;
+                }
+                audio.setMusic(regionSoundMap, settings.music, biomes.current);  // master volume applies to the whole mix
             }
             audio.setSpeed(sim.paused ? 0 : (float)len(fr.vel));
             float amp = (float)clampd(std::log10(1.0 + impact / 50.0) / 3.5, 0, 1);
@@ -6055,7 +6070,7 @@ int main(int argc, char** argv) {
             }
         }
         if (audioOn) audio.setWinches(sim, view.eye, norm(cross(view.target - view.eye, view.up)), simDt);
-        if (audioOn) audio.setEnvironment(soundMap(sim.world.map), (float)dayHours, settings.ambience,
+        if (audioOn) audio.setEnvironment(regionSoundMap >= 0 ? regionSoundMap : soundMap(sim.world.map), (float)dayHours, settings.ambience,
                                          !walker.active && cam.mode == 2 ? 0.3f : 1.0f);
         if (audioOn) {  // the repair shops' din, the rivers and brooks, the forest (worldsound.h)
             static WorldSounds worldSounds;

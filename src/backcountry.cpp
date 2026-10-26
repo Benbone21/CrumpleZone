@@ -32,6 +32,7 @@
 #include "onemap.h"
 #include "parallel.h"
 #include "places.h"
+#include "regionland.h"
 #include "rivers.h"
 #include "world.h"
 
@@ -300,7 +301,10 @@ double outerLand(double x, double z, bool seams) {
     // The map's edge: the land rises into a ridge you won't drive over.
     const double e = std::max(std::fabs(x), std::fabs(z));
     h += smoothstep(2720, 3050, e) * (55 + 90 * ridge) * (seams ? 1 - edgeRidgeOpening(x, z) : 1.0);
-    if (seams) h += bigMapEdgeRidge(x, z) * (70 + 90 * ridge);  // (the big map's own edge, wherever the ridge above was opened)
+    if (seams) {
+        h = blendRegionLand(x, z, h);                // (the regions' grown country: regionland.h; nothing within kSeamFrom)
+        h += bigMapEdgeRidge(x, z) * (70 + 90 * ridge);  // (the big map's own edge, wherever the ridge above was opened)
+    }
     return h;
 }
 
@@ -407,10 +411,12 @@ void World::buildBackcountry() {
         finishRegionBuilds(regionBuilds);
         stitchRegionLand(regionBuilds, keep);
         // (Elk River, its mouth lake and the Lakeshore's lake are laid on later: the roads keep clear of where they'll be.)
-        layRegionRoads(regionBuilds, keep, [&](double x, double z) {
+        const std::function<bool(double, double)> wetLater = [&](double x, double z) {
             return (x > kMouthLake.x && x < 3100 && std::fabs(z - riverZ(x)) < 45) || std::hypot(x - kMouthLake.x, z - kMouthLake.z) < kMouthLakeR * 1.15 + 90 ||
                    lakeDist(x, z) < kLakeR + 120;
-        });
+        };
+        layRegionRoads(regionBuilds, keep, wetLater);
+        layRegionTrails(regionBuilds, keep, wetLater);  // (the regions' grown country: regionland.h)
     }
 
     // Scratch for scanning cells near a polyline.
@@ -1127,6 +1133,17 @@ void World::buildBackcountry() {
             if (std::max(std::fabs(x), std::fabs(z)) > kInner) {  // the new country: by district
                 if (paint[id] != PAINT_NONE || surf[id] != SURF_GRASS) continue;
                 const double slope = slopeAtCell(i, j), nz = valueNoise(x * 0.04, z * 0.04);
+                if (stitch && std::max(std::fabs(x), std::fabs(z)) > kSeamFrom) {
+                    // A region's grown country (regionland.h): its own kind of ground, ragged where it meets the Backcountry's.
+                    double w[3];
+                    regionWeights(x, z, w);
+                    const int k = w[0] >= w[1] && w[0] >= w[2] ? 0 : w[1] >= w[2] ? 1 : 2;
+                    if (w[k] > 0.25 + 0.5 * valueNoise(x * 0.03 + 7.0, z * 0.03 - 2.0)) {
+                        uint8_t pt = PAINT_NONE, sf = SURF_GRASS;
+                        if (regionGround(mapRegions()[k], x, z, h, slope, pt, sf)) paint[id] = pt, surf[id] = sf;
+                        continue;
+                    }
+                }
                 const Districts d = districtsAt(x, z);
                 const double dry = d.s * d.e;  // the badlands
                 if (h > 228 + 16 * (fbmNoise(x * 0.02 + 3.0, z * 0.02 - 8.0, 3) - 0.5) && slope < 0.8) paint[id] = PAINT_SNOW, surf[id] = SURF_SNOW;
@@ -1716,6 +1733,10 @@ void World::buildBackcountry() {
             }
     }
 
+    if (stitch) {
+        steps.next("bc.regions growth");
+        growRegionCountry(keep);  // (the regions' grown country and the big map's natural edge: onemapbuild.cpp)
+    }
     steps.next("bc.places dress");
     // ---- Places (places.h): the ranger station, fuel stops, cabins and camps, the lost mine, the lookouts' cairns -------------------------
     {
@@ -1903,6 +1924,60 @@ void World::buildBackcountry() {
                 decor("gate", V3(2285, height(2285, -1745), -1745), yw + M_PI / 2, {{"open", 0.85}});
                 (void)g;
                 post(V3(2285, height(2285, -1745), -1745 + 2.7), 1.4), post(V3(2285, height(2285, -1745), -1745 - 2.7), 1.4);
+            }
+        }
+        // The regions' places (docs/plans/regions2.md): their outposts' repair bays, cabins and camps, fire lookouts, and the lookouts
+        // out on a ledge of rock (a slab reaching out over the drop from the lookout's yard).
+        for (const MapPlace& pl : mapPlaces(MAP_BACKCOUNTRY)) {
+            if (pl.id.rfind("BC.", 0) == 0) continue;
+            const V3 P = grounded(pl.p);
+            const double yw = pl.yaw;
+            int variant = pl.id[0] == 'M' ? 2 : pl.id[0] == 'F' ? 1 : 0;
+            if (pl.kind == PK_FUEL_STOP && (pl.services & SVC_REPAIR)) {
+                addStation(rel(P, yw, 10, -13), yw, pl.name.c_str());
+                sign(rel(P, yw, -12, -6).x, rel(P, yw, -12, -6).z, yw, V3(0.3, 0.22, 0.14), PROP_MAPBOARD);
+            } else if (pl.kind == PK_CABIN) {
+                cabinOf(rel(P, yw, -7, 0), yw, variant, {});
+                woodpile(rel(P, yw, -1, 4.6), yw);
+                outhouse(rel(P, yw, -9, -7), yw + M_PI);
+                fire(rel(P, yw, 7, -5));
+                table(rel(P, yw, 6, 4).x, rel(P, yw, 6, 4).z, yw);
+            } else if (pl.kind == PK_OLD_CAMP) {
+                tent(rel(P, yw, 0, -3), yw + 0.3);
+                tent(rel(P, yw, 1, 4), yw - 0.5);
+                fire(rel(P, yw, 6, 0));
+                table(rel(P, yw, 8, 5).x, rel(P, yw, 8, 5).z, yw);
+                woodpile(rel(P, yw, -4, 9), yw);
+            } else if (pl.kind == PK_LOOKOUT && pl.id.find("FIRE_TOWER") != std::string::npos) {
+                // A fire lookout: four legs, a platform and a cab (the Backcountry's tower, drawn as its model).
+                const double y0 = P.y;
+                const V3 wood(0.36, 0.30, 0.22), tin(0.45, 0.46, 0.46);
+                const size_t tower = boxes.size();
+                for (int a = -1; a <= 1; a += 2)
+                    for (int b = -1; b <= 1; b += 2) piece(V3(P.x + a * 1.75, y0 + 7.0, P.z + b * 1.75), V3(0.14, 7.2, 0.14), 0, -a * 0.075, -b * 0.075, wood);
+                piece(V3(P.x, y0 + 14.1, P.z), V3(2.3, 0.12, 2.3), 0, 0, 0, wood);
+                piece(V3(P.x, y0 + 15.2, P.z), V3(1.7, 1.0, 1.7), 0, 0, 0, V3(0.45, 0.2, 0.12));
+                piece(V3(P.x, y0 + 16.35, P.z), V3(2.1, 0.1, 2.1), 0, 0, 0, tin);
+                for (int a = -1; a <= 1; a += 2)
+                    for (int b = -1; b <= 1; b += 2) poles.push_back({P.x + a * 1.75, P.z + b * 1.75, y0 - 0.5, y0 + 14, 0.16});
+                standIn(tower, "fire_tower", V3(P.x, y0, P.z), 0);
+                cairn(rel(P, yw, 6, 4));
+                table(rel(P, yw, -5, -5).x, rel(P, yw, -5, -5).z, yw);
+            } else if (pl.kind == PK_LOOKOUT) {
+                // Out over the steepest drop from the yard: a single great slab of rock, its top level with the yard, to drive out on.
+                double best = 1e9, face = yw;
+                for (int k = 0; k < 24; k++) {
+                    const double a = k * M_PI / 12;
+                    const double h = height(P.x + std::cos(a) * 26, P.z - std::sin(a) * 26);
+                    if (h < best) best = h, face = a;
+                }
+                const V3 c = rel(P, face, pl.pad + 6.5, 0);
+                RockPose pose;
+                pose.yaw = face, pose.pitch = 0.04, pose.roll = 0;
+                addRock(c.x, c.z, V3(9.0, 1.1, 5.5), P.y + 0.25 - height(c.x, c.z), 5100000u + (uint32_t)(pl.p.x * 7 + pl.p.z * 3), 1.0f, &pose);
+                cairn(rel(P, face, -3, 4));
+                table(rel(P, face, -4, -4).x, rel(P, face, -4, -4).z, face + M_PI / 2);
+                sign(rel(P, face, -6, 5).x, rel(P, face, -6, 5).z, face + M_PI, V3(0.3, 0.22, 0.14), PROP_MAPBOARD);
             }
         }
     }
