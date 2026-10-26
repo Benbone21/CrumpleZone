@@ -16,6 +16,8 @@
 #include "mods.h"
 #include "nettunnel.h"
 #include "rendezvous.h"
+#include "realterrain.h"
+#include "world.h"
 
 #include "netsock.h"
 
@@ -940,6 +942,19 @@ void NetSession::handle(Sim* sim, Conn* from, const std::vector<uint8_t>& msg) {
                 role = OFF;
                 return;
             }
+            // (A real terrain (MAP_REAL, realterrain.h): the host says which file; this side needs the same one in its maps/.)
+            if (m == MAP_REAL) {
+                const uint64_t realHash = r.ok && r.at + 8 <= r.n ? r.get<uint64_t>() : 0;
+                const std::string realName = r.ok && r.at < r.n ? net::sanitize(r.str(), 24) : std::string();
+                if (!realHash || !realterrain::selectByHash(realHash, realName)) {
+                    char hx[24];
+                    std::snprintf(hx, sizeof hx, "%016llx", (unsigned long long)realHash);
+                    error = "the host plays real terrain " + (realName.empty() ? std::string("?") : realName) + " (" + hx +
+                            "): put the same DEM and terrain.txt in maps/" + realName + "/";
+                    role = OFF;
+                    return;
+                }
+            }
             self = id;
             map = m;
             udpToken = token;
@@ -1113,6 +1128,7 @@ void NetSession::welcome(Sim& sim, Conn& c) {
     w.put<uint8_t>((uint8_t)map);
     w.put<uint64_t>(c.token);
     w.str(build);
+    if (map == MAP_REAL) w.put<uint64_t>(realterrain::activeHash()), w.str(realterrain::activeName());  // (which real terrain: a guest needs the same file)
     sendTo(c, frame(MSG_WELCOME, w));
     for (int k = 0; k < net::kMaxPeers; k++)
         if (players[k].active && k != c.peer) {

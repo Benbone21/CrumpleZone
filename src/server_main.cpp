@@ -35,6 +35,7 @@
 #include "vehicles.h"
 #include "onemap.h"
 #include "world.h"
+#include "realterrain.h"
 
 namespace {
 
@@ -95,6 +96,12 @@ Options parseArgs(int argc, char** argv) {
             else envBad = false;
         } else if (arg == "--map" && more) {
             opts.map = atoi(argv[++i]);
+        } else if (arg == "--real" && more) {  // (MAP_REAL's terrain: a folder with terrain.txt, or the sidecar: docs/real-terrain.md)
+            std::string why;
+            if (!realterrain::selectPath(argv[++i], &why)) {
+                fprintf(stderr, "--real %s: %s\n", argv[i], why.c_str());
+                opts.bad = true;
+            }
         } else if (arg == "--name" && more) {
             opts.name = argv[++i];
         } else if (arg == "--players" && more) {
