@@ -936,6 +936,14 @@ void World::dressBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& e
                          counts[3], counts[4], counts[5], counts[6], counts[7]);
     }
 
+    // ---- The Rimrock's face (and Copper Peak's crags): bare rock wherever it's cliff ------------------------------------------------
+    for (double x = -260; x <= 640; x += 1)
+        for (double z = 1100; z <= 1900; z += 1) {
+            const int id = cellIndex(x, z);
+            if (id < 0 || paint[id] != PAINT_NONE || waterLevel(x, z) > -1e8) continue;
+            if (slopeAt(x, z) > 0.75) paint[id] = PAINT_ROCK, surf[id] = SURF_ROCK;
+        }
+
     // ---- The rock set pieces ------------------------------------------------------------------------------------------------------
     auto placeAt = [](const char* id) {
         const MapPlace* p = findPlace(MAP_BACKCOUNTRY, id);
