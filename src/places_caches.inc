@@ -20,7 +20,7 @@ const CacheRow kCaches[] = {
     {"SLAG HEAP", 630, 2415, 1400},
     {"SADDLE CAIRN", -235, 1904, 1150},
     {"RIDGE NOTCH", 733, 2104, 1300},
-    {"OLD ASSAY HUT", 1, 1871, 1150},
+    {"OLD ASSAY HUT", -8, 1855, 1150},  // (moved off Copper Peak's flank when it rose)
     {"SCREE SHELTER", -513, 1756, 1100},
     {"TARN SHORE", 1918, 2371, 1500},
     {"ALPINE MEADOW", 1028, 1927, 1250},

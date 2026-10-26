@@ -13,11 +13,11 @@
 
 const char* placeKindName(int kind) {
     static const char* n[PK_COUNT] = {"RANGER STATION", "FUEL STOP", "CABIN",  "OLD CAMP", "LOOKOUT", "WATERFALL", "MINE",
-                                      "SUMMIT",         "CROSSING",  "RUIN",   "PHOTO SPOT", "CACHE",   "ABANDONED VEHICLE"};
+                                      "SUMMIT",         "CROSSING",  "RUIN",   "PHOTO SPOT", "CACHE",   "ABANDONED VEHICLE", "OBSTACLE"};
     return kind >= 0 && kind < PK_COUNT ? n[kind] : "";
 }
 char placeKindGlyph(int kind) {
-    static const char g[PK_COUNT + 1] = "RFCALWMSXUPKV";
+    static const char g[PK_COUNT + 1] = "RFCALWMSXUPKVO";
     return kind >= 0 && kind < PK_COUNT ? g[kind] : '?';
 }
 
@@ -139,6 +139,36 @@ std::vector<MapPlace> backcountryPlaces() {
         add(v, M, id, kCaches[i].name, PK_CACHE, V3(kCaches[i].x, 0, kCaches[i].z), 0, 12, 0);
         v.back().reward = kCaches[i].cash;
     }
+    // -- The trail network's places (bctrails.cpp): COPPER PASS and its obstacles, Copper Peak, the rock set pieces, the fire lookout and
+    //    the cabins out along the trails, the obstacle trails built from the proving ground's sections, and caches at the hardest spots --
+    add(v, M, "BC.COPPER_PEAK", "COPPER PEAK", PK_SUMMIT, bcTrailFeature("peak"), 0, 35, 0);
+    add(v, M, "BC.COPPER_PASS", "COPPER PASS", PK_LOOKOUT, bcTrailFeature("saddle"), 0, 40, 0);
+    add(v, M, "BC.THE_NOTCH", "THE NOTCH", PK_OBSTACLE, bcTrailFeature("notch"), 0, 30, 0);
+    add(v, M, "BC.COPPER_CREEK", "COPPER CREEK CROSSING", PK_RIVER_CROSSING, bcTrailFeature("creekbank"), 0, 35, 0);
+    add(v, M, "BC.THE_SWITCHBACKS", "THE SWITCHBACKS", PK_OBSTACLE, bcTrailFeature("switchbacks"), 0, 35, 0);
+    add(v, M, "BC.THE_SHELF", "THE SHELF", PK_OBSTACLE, bcTrailFeature("slab"), 0, 35, 0);
+    add(v, M, "BC.SLAB_CITY", "SLAB CITY", PK_OBSTACLE, V3(-842, 0, 551), 0, 45, 0);
+    add(v, M, "BC.BALANCED_ROCK", "BALANCED ROCK", PK_LOOKOUT, V3(-411, 0, 889), 0, 35, 0);
+    add(v, M, "BC.THE_TORS", "THE TORS", PK_LOOKOUT, V3(-150, 0, -1050), 0, 40, 0);
+    add(v, M, "BC.BALD_KNOB", "BALD KNOB FIRE LOOKOUT", PK_LOOKOUT, V3(-699, 0, 1166), 0, 40, 8);
+    add(v, M, "BC.LINE_SHACK", "LINE SHACK", PK_CABIN, V3(-2200, 0, 300), kPi / 2, 35, 9, camp);
+    add(v, M, "BC.PROSPECTOR_CABIN", "PROSPECTOR'S CABIN", PK_CABIN, V3(1700, 0, -900), kPi / 2, 35, 9, camp | SVC_PARTS);
+    add(v, M, "BC.BEAVER_POND_CABIN", "BEAVER POND CABIN", PK_CABIN, V3(-1600, 0, 1150), 0, 35, 9, camp);
+    add(v, M, "BC.MOUNTAIN_HUT", "COPPER MOUNTAIN HUT", PK_CABIN, V3(349, 0, 1994), -kPi / 2, 35, 9, camp | SVC_PARTS);
+    for (const BcSetPiece& s : bcSetPieces()) add(v, M, s.id, s.name, PK_OBSTACLE, s.entry, 0, 40, 0);
+    auto cache = [&](const char* id, const char* name, V3 p, int cash) {
+        add(v, M, id, name, PK_CACHE, p, 0, 12, 0);
+        v.back().reward = cash;
+    };
+    cache("BC.CACHE.T1", "SUMMIT REGISTER BOX", bcTrailFeature("peak") + V3(-6, 0, 3), 1500);
+    cache("BC.CACHE.T2", "PASS CAIRN CACHE", bcTrailFeature("saddle") + V3(8, 0, -6), 1400);
+    cache("BC.CACHE.T3", "UNDER THE SLAB", bcTrailFeature("shelftop") + V3(0, 0, 0), 1500);
+    cache("BC.CACHE.T4", "NOTCH TOOLBOX", bcTrailFeature("notchtop"), 1100);
+    cache("BC.CACHE.T5", "SLAB CITY STASH", V3(-842, 0, 551) + V3(14, 0, -9), 900);
+    cache("BC.CACHE.T6", "TORS HIDEY-HOLE", V3(-150, 0, -1050) + V3(-10, 0, 8), 850);
+    cache("BC.CACHE.T7", "LOOKOUT LOCKER", V3(-680, 0, 1202), 1000);
+    cache("BC.CACHE.T8", "HUT WOODBOX", V3(367, 0, 1997) + V3(8, 0, 8), 1200);
+    for (const BcSetPiece& s : bcSetPieces()) cache(s.cacheId, s.cacheName, s.exit + norm(s.exit - s.entry) * 40.0, s.cash);
     return v;
 }
 }  // namespace
@@ -176,6 +206,7 @@ int placePay(const MapPlace& p) {
         case PK_RANGER_STATION: return 300;
         case PK_CABIN: return 200;
         case PK_ABANDONED_VEHICLE: return 200;
+        case PK_OBSTACLE: return 350;
         case PK_PHOTO_SPOT: return p.reward;
         case PK_CACHE: return p.reward;
         default: return 150;  // a fuel stop, a camp, a crossing

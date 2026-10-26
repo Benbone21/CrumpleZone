@@ -316,12 +316,49 @@ void Coop::drawMap(Renderer& r, const Sim& sim, const NetSession& net, int W, in
         r.rect(sx - size / 2 + 1.5f * u, sy - size / 2 + 1.5f * u, size - 3 * u, size - 3 * u, cr, cg, cb, 1);
         if (!t.empty()) label(r, sx + size, sy - 4 * s, s, t, cr, cg, cb, 1);
     };
+    // The marked trails (World::trails), in their ratings' colours (a black trail edged light, so it shows on the dark ground); their
+    // names along them when zoomed in.
+    {
+        static const float kTrailCol[5][3] = {{0.25f, 0.85f, 0.3f}, {0.3f, 0.55f, 1.0f}, {0.06f, 0.06f, 0.06f}, {0.95f, 0.22f, 0.15f}, {0.8f, 0.68f, 0.5f}};
+        auto seg = [&](float x0, float y0, float x1, float y1, float w, const float* c, float a) {
+            const float dx = x1 - x0, dy = y1 - y0, L = std::sqrt(dx * dx + dy * dy);
+            if (L < 1e-3f) return;
+            const float nx = -dy / L * w * 0.5f, ny = dx / L * w * 0.5f;
+            r.tri(x0 + nx, y0 + ny, x1 + nx, y1 + ny, x1 - nx, y1 - ny, c[0], c[1], c[2], a);
+            r.tri(x0 + nx, y0 + ny, x1 - nx, y1 - ny, x0 - nx, y0 - ny, c[0], c[1], c[2], a);
+        };
+        static const float kEdge[3] = {0.85f, 0.85f, 0.8f};
+        const float w = std::max(2.0f * u, std::min(5.0f * u, (float)(4.0 * mapS)));
+        for (int layer = 0; layer < 2; layer++)
+            for (const World::MarkedTrail& t : sim.world.trails) {
+                const int rt = std::max(0, std::min(4, t.rating));
+                if (layer == 0 && rt != 2) continue;
+                const float* c = layer == 0 ? kEdge : kTrailCol[rt];
+                const float lw = layer == 0 ? w + 2 * u : rt == 4 ? w * 0.6f : w;
+                for (size_t k = 0; k + 1 < t.pts.size(); k++) {
+                    float x0, y0, x1, y1;
+                    toMap(t.pts[k].x, t.pts[k].z, x0, y0), toMap(t.pts[k + 1].x, t.pts[k + 1].z, x1, y1);
+                    if ((x0 < 0 && x1 < 0) || (x0 > W && x1 > W) || (y0 < 0 && y1 < 0) || (y0 > H && y1 > H)) continue;
+                    seg(x0, y0, x1, y1, lw, c, 0.95f);
+                }
+            }
+        if (mapZoom > 2.4)
+            for (const World::MarkedTrail& t : sim.world.trails) {
+                if (t.pts.size() < 4 || t.rating >= 4) continue;
+                const V3 m = t.pts[t.pts.size() / 2];
+                float sx, sy;
+                toMap(m.x, m.z, sx, sy);
+                if (sx < 0 || sx > W || sy < 0 || sy > H) continue;
+                const float* c = t.rating == 2 ? kEdge : kTrailCol[std::max(0, std::min(3, t.rating))];
+                label(r, sx - r.textWidth(t.name, s) / 2, sy + 6 * u, s, t.name, c[0], c[1], c[2], 1);
+            }
+    }
     for (const Station& st : sim.world.stations) pin(st.p, st.name, 0.55f, 1.0f, 0.55f, 9 * u);
     int found = 0;
     // A place found is marked by what it is (a letter in a coloured square); one not found yet is a "?".
     static const float kKindCol[PK_COUNT][3] = {{0.55f, 1.0f, 0.55f}, {1.0f, 0.65f, 0.25f}, {0.85f, 0.65f, 0.45f}, {0.75f, 0.8f, 0.45f}, {0.6f, 0.85f, 1.0f},
                                                 {0.4f, 0.7f, 1.0f},   {0.8f, 0.75f, 0.7f},  {1.0f, 1.0f, 1.0f},   {0.5f, 0.9f, 0.9f},  {0.7f, 0.6f, 0.55f},
-                                                {1.0f, 0.5f, 0.8f},   {1.0f, 0.9f, 0.3f},   {0.9f, 0.45f, 0.4f}};
+                                                {1.0f, 0.5f, 0.8f},   {1.0f, 0.9f, 0.3f},   {0.9f, 0.45f, 0.4f},  {1.0f, 0.55f, 0.2f}};
     for (const auto& pl : places) {
         const bool known = isDiscovered(pl.keyMap(mapNow), pl.name);
         found += known;

@@ -14,7 +14,7 @@
 
 namespace {
 const char kMagic[8] = {'C', 'Z', 'W', 'O', 'R', 'L', 'D', '1'};
-constexpr uint64_t kFormat = 5;  // 5: the big map's regions' starts and roads (World::regionStarts, regionRoads)
+constexpr uint64_t kFormat = 6;  // 5: the big map's regions' starts and roads (World::regionStarts, regionRoads); 6: its marked trails (World::trails)
 // bump with any change to what's written below or to how a map is built that the build id misses
 
 struct Out {
@@ -165,6 +165,7 @@ struct WorldIO {
             io.list(s.parking, [&](auto& p) { io.v3(p); });
         });
         io.list(w.regionRoads, [&](auto& r) { io.list(r, [&](auto& p) { io.v3(p); }); });
+        io.list(w.trails, [&](auto& t) { io.str(t.name), io.pod(t.rating), io.list(t.pts, [&](auto& p) { io.v3(p); }); });
     }
     static bool sane(const World& w) {
         const size_t n = (size_t)w.hN * w.hN;

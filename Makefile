@@ -34,6 +34,8 @@ SCEN     += tests/hitches.cpp
 PHYS     += src/bgwork.cpp
 PHYS     += src/realterrain.cpp src/realterrainplan.cpp src/realterrainbuild.cpp
 SCEN     += tests/realterrain.cpp
+PHYS     += src/bctrails.cpp
+SCEN     += tests/bctrails.cpp
 GAME_SRC := src/main.cpp src/lab.cpp src/gamepad_sdl.cpp src/editor.cpp src/coop.cpp src/gl.cpp src/gpu.cpp src/render.cpp src/carvisual.cpp src/peopleseat.cpp src/garageshopdraw.cpp src/mpmenudraw.cpp src/scenery.cpp src/menu.cpp src/menuscene.cpp src/mainmenudraw.cpp src/mappreview.cpp src/engine_samples.cpp src/engineaudio.cpp src/audio.cpp src/music.cpp src/ambience.cpp src/daylight.cpp src/lights.cpp src/groundtex.cpp src/groundshader.cpp src/propdraw.cpp src/invdraw.cpp src/debugscreen.cpp src/buildinfo.cpp $(PHYS) $(SCEN) src/treedraw.cpp src/texcomp.cpp
 GAME_OBJ := $(patsubst %.cpp,build/%.o,$(GAME_SRC))
 TEST_OBJ := $(patsubst %.cpp,build/%.o,tests/run_tests.cpp $(PHYS) $(SCEN) src/music.cpp)
@@ -368,3 +370,10 @@ clean:
 # The real-terrain importer's tool (docs/real-terrain.md): build/realterrain info|sample|make|synth ...
 build/realterrain: build/tools/realterrain.o $(patsubst %.cpp,build/%.o,$(PHYS))
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -lm
+
+# Trail routing for the Backcountry (dev tool): build/trailroute [--ppm FILE] > src/bctrails_routes.inc
+build/trailroute: build/tools/trailroute.o $(patsubst %.cpp,build/%.o,$(PHYS))
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -lm
+
+# The trail network's table (an included file the header list misses)
+build/src/bctrails.o build/rel/src/bctrails.o build/win/obj/src/bctrails.o build/mac/obj/src/bctrails.o build/macdev/obj/src/bctrails.o: src/bctrails_routes.inc

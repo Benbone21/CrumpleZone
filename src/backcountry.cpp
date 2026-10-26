@@ -267,6 +267,25 @@ double valleyOpen(double x, double z, double east) {
     const double open = smoothstep(40, 380, dv), gorge = smoothstep(26, 90, dv);
     return open + (gorge - open) * east;
 }
+const V3 kCopperPeak(300, 0, 1550), kCopperThumb(-100, 0, 1330);
+constexpr double kRimrockR = 342;  // (the Rimrock's edge, from the peak)
+// Copper Peak, the big mountain of the north (bctrails.cpp: COPPER PASS climbs it), and the Thumb, the crag beside it: two cones with
+// rock ribs down them, risen out of Copper Ridge's land wherever they stand above it. Copper Pass is the saddle where they meet (about
+// 185 m); the peak's top is the highest ground in the Backcountry (about 310 m, snow).
+double copperPeakLand(double x, double z, double h) {
+    const double d1 = std::hypot(x - kCopperPeak.x, z - kCopperPeak.z), d2 = std::hypot(x - kCopperThumb.x, z - kCopperThumb.z);
+    if (std::min(d1, d2) > 760) return h;
+    const double rib = ridgedNoise(x * 0.011 + 4.4, z * 0.011 - 2.2, 3);
+    double m1 = 312 - 0.42 * (std::sqrt(d1 * d1 + 45 * 45) - 45) + 16 * (rib - 0.55) * smoothstep(40, 160, d1) * smoothstep(620, 300, d1);
+    // The Rimrock: a cliff band round the peak's south-west face, 32 m high, that the pass's shelf climbs across.
+    const double ang = std::atan2(z - kCopperPeak.z, x - kCopperPeak.x);
+    m1 -= 32 * smoothstep(-2.9, -2.68, ang) * smoothstep(-1.62, -1.84, ang) * smoothstep(kRimrockR - 3, kRimrockR + 5, d1);
+    const double m2 = 262 - 0.5 * (std::sqrt(d2 * d2 + 25 * 25) - 25) + 10 * (rib - 0.55) * smoothstep(30, 120, d2) * smoothstep(420, 200, d2);
+    const double m = 0.5 * (m1 + m2 + std::sqrt(sq(m1 - m2) + 18 * 18));  // (a soft max: the saddle's rounded)
+    const double k2 = 36 * smoothstep(760, 600, std::min(d1, d2));
+    return 0.5 * (h + m + std::sqrt(sq(h - m) + k2));  // (and risen out of the land with a soft edge)
+}
+
 // The new country's land (smooth: the build adds the metre-scale bumps). `seams`: the big map's (onemap.h), where the edge ridge opens
 // into a valley wherever a region meets it.
 double outerLand(double x, double z, bool seams) {
@@ -288,6 +307,7 @@ double outerLand(double x, double z, bool seams) {
     const double mid = 22 + 22 * roll + 12 * hill;
     double h = d.n * (d.w * timber + colMid * copper + d.e * lakes) + d.s * (d.w * shore + colMid * south + d.e * bad) +
                rowMid * (d.w * flats + colMid * mid + d.e * canyon);
+    h = copperPeakLand(x, z, h);
     // Elk River's valley right across: wide and gentle, a canyon in the east.
     const double floor = valleyFloor(x);
     h = floor + (h - floor) * valleyOpen(x, z, d.e);
@@ -332,12 +352,26 @@ void backcountryLand(double half, int hN, std::vector<float>& out) {
             macro[(size_t)a * mn + b] = std::max(std::fabs(x), std::fabs(z)) < kInner - 8 ? 0.0f : (float)outerLand(x, z, seams);
         }
     });
+    // (Between the samples a Catmull-Rom curve both ways, not straight lines: bilinear patches would show on every slope as stripes
+    // 4 m apart, their shading creased at each sample.)
     auto outerAt = [&](double x, double z) {
         const double u = (x + half) / 4.0, v = (z + half) / 4.0;
         const int a = std::min(mn - 2, (int)u), b = std::min(mn - 2, (int)v);
         const double fu = u - a, fv = v - b;
-        auto M = [&](int p, int q) { return (double)macro[(size_t)p * mn + q]; };
-        return M(a, b) * (1 - fu) * (1 - fv) + M(a + 1, b) * fu * (1 - fv) + M(a, b + 1) * (1 - fu) * fv + M(a + 1, b + 1) * fu * fv +
+        auto M = [&](int p, int q) { return (double)macro[(size_t)std::max(0, std::min(mn - 1, p)) * mn + std::max(0, std::min(mn - 1, q))]; };
+        auto cr = [](double t, double w[4]) {
+            const double t2 = t * t, t3 = t2 * t;
+            w[0] = 0.5 * (-t3 + 2 * t2 - t), w[1] = 0.5 * (3 * t3 - 5 * t2 + 2), w[2] = 0.5 * (-3 * t3 + 4 * t2 + t), w[3] = 0.5 * (t3 - t2);
+        };
+        double wu[4], wv[4];
+        cr(fu, wu), cr(fv, wv);
+        double sm = 0;
+        for (int p = 0; p < 4; p++) {
+            double row = 0;
+            for (int q = 0; q < 4; q++) row += wv[q] * M(a - 1 + p, b - 1 + q);
+            sm += wu[p] * row;
+        }
+        return sm +
                0.9 * (valueNoise(x * 0.09 + 5.0, z * 0.09 + 1.0) - 0.5) + 0.35 * (valueNoise(x * 0.31, z * 0.27) - 0.5) +
                (x > elkFalls()[0].x - 330 ? elkFallsRise(x, z) * (1 - valleyOpen(x, z, districtsAt(x, z).e)) : 0.0);
     };
@@ -1606,6 +1640,11 @@ void World::buildBackcountry() {
         bushes.push_back(growBush(V3(x, hgrid[id], z), habitat, forest > 0.38, plantRoll(x, z, 44), (float)(0.75 + plantRoll(x, z, 45) * 0.45)));
     }
 
+    steps.next("bc.trail network");
+    // ---- The trail network out into the new country, COPPER PASS and the rest (bctrails.cpp): after the old map's growth (it clears what
+    // grew on its treads), before the new country's (which grows round them) ---------------------------------------------------------
+    layBackcountryTrails(keep, edge);
+
     steps.next("bc.the new country's growth");
     // ---- The new country: trees, rocks, logs and bushes, 64 m cell by cell (each cell its own random numbers, from where it is:
     // nothing in one cell moves when another changes), by district ----------------------------------------------------------
@@ -1715,6 +1754,9 @@ void World::buildBackcountry() {
                 }
             }
     }
+
+    steps.next("bc.trail dress");
+    dressBackcountryTrails(keep, edge);
 
     steps.next("bc.places dress");
     // ---- Places (places.h): the ranger station, fuel stops, cabins and camps, the lost mine, the lookouts' cairns -------------------------
@@ -1914,6 +1956,21 @@ void World::buildBackcountry() {
     spawnYaw = 0;
     parking = {V3(kTrailhead.x - 8, 0, kTrailhead.z + 13), V3(kTrailhead.x - 8, 0, kTrailhead.z + 19), V3(kTrailhead.x - 16, 0, kTrailhead.z + 7)};
     parkingYaw = 0;
+    // The old map's trails for the M map (bctrails.cpp has put the network's there).
+    {
+        const struct { const char* id; const char* name; int rating; } old[] = {
+            {"mud", "THE MUD RUN", 2},  {"creek", "CREEK CRAWL", 3}, {"ridge", "SLICKROCK RIDGE", 2}, {"ridgeroad", "RIDGE ROAD", 0},
+            {"hill", "HEARTBREAK HILL", 3}, {"wash", "SAND WASH", 1}, {"shelf", "SHELF ROAD", 2},    {"pass", "HIGH PASS", 1},
+            {"tower", "TOWER ROAD", 0},  {"cabin", "CABIN SPUR", 0},  {"wreck", "WRECK SPUR", 0}};
+        for (const auto& o : old) {
+            MarkedTrail mt;
+            mt.name = o.name, mt.rating = o.rating;
+            const Poly& t = backcountryTrail(o.id);
+            for (size_t k = 0; k < t.size(); k += 8) mt.pts.push_back(V3(t[k].x, height(t[k].x, t[k].z), t[k].z));
+            if (!t.empty()) mt.pts.push_back(V3(t.back().x, height(t.back().x, t.back().z), t.back().z));
+            trails.push_back(std::move(mt));
+        }
+    }
     if (stitch) {
         steps.next("bc.regions");
         stitchRegionContent(regionBuilds);
