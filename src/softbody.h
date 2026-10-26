@@ -859,6 +859,11 @@ public:
     // in the Civic: what the tests expect). The game sets listedVehicles().
     std::vector<int> lineup;
     void setupEmpty();  // just the world (for tests)
+    // A new world is going in (a map, a level, the editor, the menu's camp): everything the last one left lying about goes, so
+    // nothing of it carries over and the vehicle cap counts only this world's. Every car but `keep` (-1: all of them; with
+    // keepRemotes, other players' too: a session's are its own), loose wheels, dropped parts, lines, cables and set stakes.
+    // You are back in your seat. setup() does it all (and puts the new world's lineup out).
+    void clearWorldLeftovers(int keep, bool keepRemotes = false);
     // Runs every AI driver (and the player's autopilot) for one frame.
     void updateAI(double dt);
     // Advances the simulation by realDt * timeScale; returns substeps taken.

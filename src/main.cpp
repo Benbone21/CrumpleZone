@@ -1910,13 +1910,7 @@ int main(int argc, char** argv) {
     bool campWorld = false;  // sim.world is the main menu's camp (a map load, a level or the editor ends it)
     // Three of the listed vehicles parked round the camp's fire: the player's car becomes the first (the lineup's others are dropped).
     auto parkCamp = [&]() {
-        for (int i = (int)sim.cars.size() - 1; i >= 0; i--)
-            if (i != sim.player) {
-                sim.carRemoved(i);
-                sim.cars.erase(sim.cars.begin() + i);
-                if (sim.player > i) sim.player--;
-            }
-        sim.dropRopes(sim.player);
+        sim.clearWorldLeftovers(sim.player);
         const std::vector<int>& lv = listedVehicles();
         menucamp::Meta meta = menucamp::metaOf(campLevel);
         if (meta.vehicles == 0) meta.vehicles = 1, meta.veh[0].x = campFire.x + 4, meta.veh[0].z = campFire.z - 2;  // (no stand-ins left in the level: one parked by the fire)
@@ -2275,6 +2269,10 @@ int main(int argc, char** argv) {
         prebuildVisual(vs, sim.cars[sim.player].color);
         afterVisual.push_back({&vs, std::move(act)});
     };
+    // A new world went in (a map, a level, the editor, the camp): what the game keeps of the last one goes with it (a job, being on
+    // foot, the crates). Set below, where that state lives. worldCareer: the mode (the save) this world's vehicles were put out in.
+    std::function<void()> worldChanged;
+    bool worldCareer = career.on;
     // Loads a map, keeping the vehicle you were in.
     auto loadMap = [&](int m) {
         World::useLocalEdits = net.role != NetSession::CLIENT;  // (a guest builds the host's: its edited sections came with the welcome, World::setSessionSections)
@@ -2282,6 +2280,7 @@ int main(int argc, char** argv) {
         campWorld = false;
         sim.world = World(m);
         sim.setup();
+        if (worldChanged) worldChanged();
         fitGarage();
         if (model != sim.cars[sim.player].spec->model) sim.swapPlayerVehicle(garage.spec(model));
         sim.paused = false;
@@ -2433,14 +2432,9 @@ int main(int argc, char** argv) {
         sim.world = levelWorld(lv);
         applyLevel(lv, sim.world);
         addGateMarkers(lv, sim.world);
-        // Just you on the grid (and the other players, in a session).
-        for (int i = (int)sim.cars.size() - 1; i >= 0; i--)
-            if (i != sim.player && !sim.cars[i].remote) {
-                sim.carRemoved(i);
-                sim.cars.erase(sim.cars.begin() + i);
-                if (sim.player > i) sim.player--;
-            }
-        sim.dropRopes(sim.player);
+        // Just you on the grid (and the other players, in a session): nothing of the last world's.
+        sim.clearWorldLeftovers(sim.player, net.active());
+        if (worldChanged) worldChanged();
         sim.swapPlayerVehicle(garage.spec(model));
         sim.paused = false;
         renderer.setWorld(sim.world);
@@ -2779,6 +2773,7 @@ int main(int argc, char** argv) {
             sim.world = std::move(*L.world);
             L.world.reset();
             sim.setup();
+            if (worldChanged) worldChanged();
             fitGarage();
             if (model != sim.cars[sim.player].spec->model) sim.swapPlayerVehicle(garage.spec(model));
             sim.paused = false;
@@ -2822,6 +2817,8 @@ int main(int argc, char** argv) {
                 else editor.lookFrom(pf.com, std::atan2(-pf.fwd.z, pf.fwd.x));
             }
         }
+        sim.clearWorldLeftovers(sim.player);  // (offline: just you; the last world's vehicles don't wait in this one)
+        if (worldChanged) worldChanged();
         drawnWorld = sim.world.stamp;
         sim.paused = true;
         fx.clear();
@@ -2834,6 +2831,8 @@ int main(int argc, char** argv) {
         stopPilot();
         campWorld = false;
         sim.world = levelWorld(editor.core.level);
+        sim.clearWorldLeftovers(sim.player);
+        if (worldChanged) worldChanged();
         editor.resume(sim.world, renderer);
         drawnWorld = sim.world.stamp;
         sim.paused = true;
@@ -2856,6 +2855,7 @@ int main(int argc, char** argv) {
         menucamp::fireOf(campLevel, campFire);
         sim.world = menuscene::buildWorld(campLevel);
         sim.setup();
+        if (worldChanged) worldChanged();
         fitGarage();
         parkCamp();
         for (const Car& c : sim.cars)
@@ -2872,6 +2872,17 @@ int main(int argc, char** argv) {
     auto uiClick = [&]() { if (audioOn) audio.play(SFX_UI_CLICK, 0.35f); };
     auto uiHover = [&]() { if (audioOn) audio.play(SFX_UI_HOVER, 0.16f); };
     auto activationKey = [](int sc) { return sc == 40 || sc == 88 || sc == 44; };  // (Enter, keypad Enter, Space: the pad's A arrives as Enter)
+    worldChanged = [&]() {
+        worldCareer = career.on;
+        if (jobOn && net.role == NetSession::HOST) net.sendGame("jobstop");
+        jobOn = false;  // (its wreck and its places were the last world's)
+        cachesMap = -1;
+        if (walker.active) {  // (back in your seat: the sim has you there)
+            walker.active = false, crouchLatch = false;
+            cam.dist = carCamDist;
+        }
+        releaseFreedMemory();  // (the last world's terrain and scenery, freed on worker threads, back to the system)
+    };
     auto handleMenu = [&](PauseMenu::Result res) {
         switch (res.action) {
             case PauseMenu::NONE: break;
@@ -2970,7 +2981,8 @@ int main(int argc, char** argv) {
                 if (net.role == NetSession::HOST) net.setLevel("");
                 const bool staleEdits = menu.mapPick == MAP_PROVING_GROUND && sim.world.map == MAP_PROVING_GROUND && !net.active() &&
                                         sim.world.editStamp != levelFilesStamp();  // (a level saved since the proving ground was built)
-                if ((menu.mapPick != sim.world.map || staleEdits || campWorld) && net.role != NetSession::CLIENT) {
+                const bool otherSave = worldCareer != career.on && !net.active();  // (career <-> sandbox: the other mode's vehicles don't come along)
+                if ((menu.mapPick != sim.world.map || staleEdits || campWorld || otherSave) && net.role != NetSession::CLIENT) {
                     requestMap(menu.mapPick, nullptr);
                     settings.map = menu.mapPick;
                     saveSettings();
