@@ -11,6 +11,7 @@
 #include "frameprof.h"
 #include "gl.h"
 #include "treedraw.h"
+#include "farforest.h"
 #include "visibility.h"
 #include "occlusion.h"
 #include "groundtex.h"
@@ -187,6 +188,10 @@ public:
     // Frame timing (frameprof.h): the stage `p` starts now, on the CPU (frameProfile()) and, with gpuTiming, on the GPU
     // (a timestamp query). gpuFrameBegin() at the top of each frame reads back a frame from a few frames ago.
     bool gpuTiming = false;
+    // The trees past their meshes' reach as pictures, and the procedural world's far forest (treedraw.h, farforest.h): off, the
+    // meshes go out to their old reach and the far land is bare (tests and comparisons; also CZ_NO_IMPOSTORS, CZ_NO_FARFOREST).
+    bool treePictures = true, farForestOn = true;
+    int farForestTiles() const { return farForest_.tilesDrawn; }
     bool syncTiming = false;  // (--bench-sync: wait for the GPU at each mark, so the CPU times are each stage's whole cost)
     bool stageMarks = false;  // (the first frame: each stage is the main thread's loadprof phase, so a hang report names it)
     void passMark(FramePass p);
@@ -346,6 +351,7 @@ public:
         int coarseN = 1;
         GLuint ctex = 0;
         std::vector<Vtx> water;
+        std::shared_ptr<FarForestGrid> farForest;  // (the procedural world: the far forest's field, farforest.h)
         // The procedural world's next window (procstream.h): the buffers it replaces are kept for the one after (the same sizes), so a
         // slide allocates nothing; and its scenery is made here too (prepareObjects), so the swap frame only uploads.
         bool keepSpare = false;
@@ -443,9 +449,12 @@ private:
     GLuint boxVao = 0, boxVbo = 0;
     int boxVertexCount = 0;
     TreeDraw trees_, bushes_;       // the forest and the bushes, instanced (treedraw.h)
+    FarForest farForest_;           // (the procedural world: trees past the window, farforest.h)
+    ImpostorAtlas impAtlas_;        // (the trees' pictures past their meshes: trees_ and the staged window's share it)
     // How far the vegetation's detail reaches (its LOD distances and reaches), by the scenery quality.
     double vegDetail() const { static const double k[4] = {0.6, 0.7, 1.0, 1.3}; return k[std::min(std::max(settings.props, 0), 3)]; }
     GLuint progTree = 0, progTreeDepth = 0;
+    GLuint progTreePre = 0, progFarForest = 0, progImpostor = 0, progImpostorDepth = 0, progImpCapture = 0;  // (trees as pictures past their meshes: treedraw.h)
     int treeVertexCount = 0;
     ScanCover scanCover_;           // what the scanned props draw instead of the code-made meshes
     std::vector<float> treeFade_;   // per tree (World::trees): how much of it the camera hides now (treefade.h)
@@ -515,7 +524,7 @@ private:
     int skinLod(const CarSlot& slot) const;  // 0 the skin, 1-2 its far copies (built on demand)
     void buildChains();
     void buildFont();
-    static void buildBackdrop(const World& world, std::vector<Vtx>& verts, std::vector<unsigned>& idx);
+    static void buildBackdrop(const World& world, std::vector<Vtx>& verts, std::vector<unsigned>& idx, FarForestGrid* farForest = nullptr);
     void ensureShadows(int size);
     void ensureGround(int quality);
     int groundTier(int gq) const;

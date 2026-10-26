@@ -148,6 +148,11 @@ public:
     Macro macroAt(double gx, double gz, bool flow) const;  // macro(), or without the water's way (cheaper)
     Macro land(double gx, double gz) const;         // macro() without the rivers and creeks
     double drainAt(double gx, double gz) const;     // (land().drain alone)
+    // The far forest's hook (render: farforest.h), read-only on the chunks' tree rule (makeChunk): the trees a hectare a chunk tries at
+    // a point of ground height h and slope (rise over run), on open ground (no trail, water or spacing there); the shares of conifers
+    // and snags (the rest broadleaf); and how much their height is cut (0..1: the deserts', the tree line's). m: macroAt(gx, gz, ...).
+    struct TreeCover { double triedPerHa = 0, maxPerHa = 0, conifer = 0, snag = 0, shrink = 0; };
+    TreeCover treeCover(double gx, double gz, const Macro& m, double h, double slope) const;
     // The places (places.h MapPlace, in GLOBAL metres): what node (i, j) is (a place kind, or -1 a plain junction) and everything
     // found at it (the place, a cache near it, now and then an abandoned vehicle), and the fords on its edges. Ids are
     // "PW.<i>.<j>.<WHAT>" (stable for a seed: saves keep them); names are unique within ~20 km.

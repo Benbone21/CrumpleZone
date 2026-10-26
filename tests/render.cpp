@@ -490,6 +490,46 @@ int main() {
             clean();
             std::puts("PASS procedural slide: staged a piece a frame, swapped at no cost");
         }
+        {
+            // Far trees (treedraw.h pictures, farforest.h): looking out over the procedural world, the trees past 200 m are pictures
+            // (a couple of triangles each, not a mesh), and past the window's trees the far forest draws to the fog; the frame with them
+            // costs about what it did with meshes and bare far land. (Apple's software renderer takes seconds a frame: there the frames
+            // are drawn to check what's drawn, not timed.)
+            const char* gr = (const char*)gl::GetString(GL_RENDERER);
+            const bool timeFrames = !(gr && std::strstr(gr, "Software Renderer"));
+            View fv;
+            fv.eye = sim.world.spawn + V3(0, 60, 0), fv.target = sim.world.spawn + V3(1000, 20, 400), fv.up = V3(0, 1, 0), fv.width = 160, fv.height = 90;
+            auto finish = reinterpret_cast<void (*)()>(SDL_GL_GetProcAddress("glFinish"));
+            auto frames = [&](bool on, int n) {
+                renderer.treePictures = renderer.farForestOn = on;
+                std::vector<double> t;
+                for (int f = 0; f < n; f++) {
+                    if (finish) finish();
+                    const auto t0 = std::chrono::steady_clock::now();
+                    renderer.drawScene(sim, fv, DEBUG_OFF, nullptr);
+                    if (finish) finish();
+                    t.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+                }
+                std::sort(t.begin(), t.end());
+                return t[t.size() / 2];
+            };
+            const int n = timeFrames ? 40 : 3;
+            frames(true, 3);
+            const double on = frames(true, n);
+            const VegStats vs = renderer.vegStats();
+            const int tiles = renderer.farForestTiles();
+            const double off = frames(false, n);
+            const VegStats vsOff = renderer.vegStats();
+            renderer.treePictures = renderer.farForestOn = true;
+            std::printf("Render check: far trees: %d trees drawn (%lldk triangles) with pictures, %d (%lldk) as meshes; far forest %d tiles; median frame %.2f ms "
+                        "with, %.2f without%s\n", vs.trees.inst, vs.trees.tris / 1000, vsOff.trees.inst, vsOff.trees.tris / 1000, tiles, on, off,
+                        timeFrames ? "" : " (not timed: a software renderer)");
+            if (tiles <= 0) throw std::runtime_error("the far forest drew nothing looking out over the land");
+            if (vsOff.trees.inst > 0 && vs.trees.tris >= vsOff.trees.tris) throw std::runtime_error("the far trees as pictures didn't cut the trees' triangles");
+            if (timeFrames && on > 1.5 * off + 1.0) throw std::runtime_error("the far trees cost the frame over half as much again");
+            clean();
+            std::puts("PASS far trees: pictures past the meshes, the far forest to the fog, the frame no dearer");
+        }
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL render: %s\n", error.what());
         result = 1;

@@ -12,6 +12,11 @@ uniform sampler2DArray uGroundB;  // RG tangent normal, B roughness, A ambient o
 #define GQ 2
 #endif
 const int uGroundQ = GQ;
+// The far forest's field (farforest.h): far off, the ground under a wood takes the canopy's colour (its trees there are pictures,
+// thinned out with distance; between them it reads as a wood, not as bare grass). uFFFade: from x to y metres; y 0: off.
+uniform sampler2D uFFCover;
+uniform vec4 uFFGrid;
+uniform vec2 uFFFade;
 uniform vec3 uSnowLook;  // natural ground's snow: the metres it comes in over, the most of the ground it covers, how much lower on a north face
 
 #if GQ <= 1
@@ -420,6 +425,16 @@ void main(){
 #endif
   // ---- Light it ----
   vec3 lin = mix(alb, pow(max(procBase, vec3(0.0)), vec3(2.2)), clamp(gProc, 0.0, 1.0));
+  if (uFFFade.y > 0.0) {
+    float k = smoothstep(uFFFade.x, uFFFade.y, length(vPos.xz - uCam.xz));
+    vec2 fuv = ((vPos.xz - uFFGrid.xy) / uFFGrid.z + 0.5) / uFFGrid.w;
+    if (k > 0.0 && fuv.x > 0.0 && fuv.y > 0.0 && fuv.x < 1.0 && fuv.y < 1.0) {
+      vec4 cv = texture(uFFCover, fuv);
+      float wood = clamp(cv.r * 255.0 * 1.2 / 200.0, 0.0, 1.0);  // (trees a hectare, over a closed wood's)
+      vec3 canopy = mix(vec3(0.030, 0.140, 0.014), vec3(0.010, 0.062, 0.026), clamp(cv.g / max(1.0 - cv.b, 0.05), 0.0, 1.0));  // (broadleaf, conifer)
+      lin = mix(lin, canopy, k * wood * 0.85);
+    }
+  }
   vec3 n = normalize(mix(nrm, N0, clamp(gProc, 0.0, 1.0)));
 #ifdef X_NOSH
   float sh = 1.0;
