@@ -617,6 +617,13 @@ std::vector<Place> pilotPlaces(const Sim& sim, const NetSession& net) {
     }
     if (sim.world.map == MAP_MOUNTAIN || sim.world.map == MAP_FRONTIER) {
         for (const Place& p : oldMapPlaces(sim.world.map, sim.world.spawn)) out.push_back(p);
+    } else if (sim.world.map == MAP_PROCEDURAL) {  // the window's places (procworld.h), nearest first
+        std::vector<const MapPlace*> v;
+        for (const MapPlace& mp : mapPlaces(MAP_PROCEDURAL))
+            if (mp.kind != PK_CACHE && mp.kind != PK_PHOTO_SPOT && mp.kind != PK_ABANDONED_VEHICLE) v.push_back(&mp);
+        const V3 me = sim.cars.empty() ? V3() : sim.cars[sim.player].frame().com;
+        std::sort(v.begin(), v.end(), [&](const MapPlace* a, const MapPlace* b) { return std::hypot(a->p.x - me.x, a->p.z - me.z) < std::hypot(b->p.x - me.x, b->p.z - me.z); });
+        for (size_t k = 0; k < v.size() && k < 24; k++) out.push_back({v[k]->name, V3(v[k]->p.x, sim.world.height(v[k]->p.x, v[k]->p.z), v[k]->p.z)});
     } else if (sim.world.map == MAP_BACKCOUNTRY) {
         out.push_back({"CREEK CRAWL (FOOT)", backcountryFeature("creekfoot")});
         out.push_back({"OLD MINE", backcountryFeature("mine")});
@@ -1930,6 +1937,7 @@ int main(int argc, char** argv) {
     } else if (settings.map != MAP_PROVING_GROUND) sim.world = opt.standalone ? World(settings.map) : worldForPick(settings.map);  // (a region's pick: the big map, started there)
     int worldPick = wantCamp ? -1 : settings.map;  // the map pick the world stands for (a region of the big map's: its old map id)
     World::procOriginSet = false;  // (--proc-origin was for this first window only: the next world starts at its start)
+    if (sim.world.map == MAP_PROCEDURAL) proc::setActiveWindow(sim.world);
     sim.lineup = listedVehicles();  // (the overlanders and the Jesko: no Civic, UTV or buggy)
     sim.setup();
     // Your garage: the mods fitted last time go back on the cars. (A career keeps a garage of
@@ -2965,6 +2973,7 @@ int main(int argc, char** argv) {
     auto activationKey = [](int sc) { return sc == 40 || sc == 88 || sc == 44; };  // (Enter, keypad Enter, Space: the pad's A arrives as Enter)
     worldChanged = [&]() {
         worldCareer = career.on;
+        if (sim.world.map == MAP_PROCEDURAL) proc::setActiveWindow(sim.world);  // (its places: mapPlaces, discovery, caches, the autopilot)
         if (jobOn && net.role == NetSession::HOST) net.sendGame("jobstop");
         jobOn = false;  // (its wreck and its places were the last world's)
         cachesMap = -1;
@@ -5289,6 +5298,7 @@ int main(int argc, char** argv) {
                     for (RemoteWalker& rw : coop.walkers) rw.p += d;
                     job.target += d;
                     for (V3& q : job.spots) q += d;
+                    proc::setActiveWindow(sim.world);  // (its places, in the new window's coordinates)
                     cachesMap = -1;  // (this window's caches, where they now are)
                     drawnWorld = sim.world.stamp;
                     if (std::getenv("CZ_PROC_LOG"))

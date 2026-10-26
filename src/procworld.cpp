@@ -5,10 +5,13 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <list>
 #include <mutex>
 #include <random>
+#include <set>
 #include <thread>
 #include <unordered_map>
 
@@ -312,23 +315,43 @@ std::string ProcWorld::regionName(double gx, double gz) const {
     return std::string(a[h % na]) + " " + b[(h >> 20) % nb];
 }
 
+std::string ProcWorld::saveLine(const World& w) {
+    return "map=procedural seed=" + std::to_string(w.proc.seed) + " origin=" + std::to_string(w.proc.ox) + "," + std::to_string(w.proc.oz);
+}
+
+bool ProcWorld::useSaveLine(const std::string& line) {
+    if (line.find("map=procedural") == std::string::npos) return false;
+    const size_t s = line.find("seed=");
+    if (s == std::string::npos) return false;
+    const unsigned long long seed = std::strtoull(line.c_str() + s + 5, nullptr, 10);
+    if (!seed) return false;
+    World::procSeed = seed, World::procOriginSet = false;
+    const size_t o = line.find("origin=");
+    long long x = 0, z = 0;
+    if (o != std::string::npos && std::sscanf(line.c_str() + o + 7, "%lld,%lld", &x, &z) == 2) World::procOriginSet = true, World::procOriginX = x, World::procOriginZ = z;
+    return true;
+}
+
 void ProcWorld::snapOrigin(double gx, double gz, int64_t& ox, int64_t& oz) {
     ox = (int64_t)std::floor(gx / kChunk + 0.5) * kChunk;
     oz = (int64_t)std::floor(gz / kChunk + 0.5) * kChunk;
 }
 
 void ProcWorld::start(int64_t& x, int64_t& z, double& yaw) const {
-    // (Phase a: the gentlest open ground near the world's origin, not on a mountain. Places come in phase d.)
+    // The outpost nearest the world's origin: you start on its lot, beside the shed, facing the way it does.
     double best = 1e18;
-    x = 0, z = 0, yaw = 0;
-    for (int a = -12; a <= 12; a++)
-        for (int b = -12; b <= 12; b++) {
-            const double gx = a * 24.0, gz = b * 24.0;
-            const double h0 = macroHeight(gx, gz), hx = macroHeight(gx + 12, gz), hz = macroHeight(gx, gz + 12);
-            const double slope = std::sqrt(sqr(hx - h0) + sqr(hz - h0)) / 12;
-            const double cost = slope * 400 + std::sqrt(gx * gx + gz * gz) * 0.05 + std::max(0.0, h0 - 60) * 0.5;
-            if (cost < best) best = cost, x = (int64_t)gx, z = (int64_t)gz;
+    TrailNode at;
+    for (int64_t i = -3; i <= 2; i++)
+        for (int64_t j = -3; j <= 2; j++) {
+            const TrailNode n = node(i, j);
+            if (!n.outpost) continue;
+            const double d = n.x * n.x + n.z * n.z;
+            if (d < best) best = d, at = n;
         }
+    yaw = nodeYaw(at);
+    // (12 m to the side of the shed's open end: on the lot, clear of the posts. The yaw is one of four, so these are whole.)
+    const double fx = std::cos(yaw), fz = -std::sin(yaw);
+    x = std::llround(at.x + fz * 14), z = std::llround(at.z - fx * 14);
 }
 
 void ProcWorld::startOrigin(int64_t& ox, int64_t& oz) const {
@@ -363,7 +386,34 @@ uint64_t Chunk::hash() const {
 }
 
 // ---- The trail network ----------------------------------------------------------------------------------------------------------
+namespace {
+struct NodeKey {
+    uint64_t seed;
+    int64_t i, j;
+    bool operator==(const NodeKey& o) const { return seed == o.seed && i == o.i && j == o.j; }
+};
+struct NodeHash {
+    size_t operator()(const NodeKey& k) const { return (size_t)hashIJ(k.seed ^ 0x4E0DEull, k.i, k.j); }
+};
+std::mutex nodeMutex;
+std::unordered_map<NodeKey, TrailNode, NodeHash> nodeCache;
+}  // namespace
+
 TrailNode ProcWorld::node(int64_t i, int64_t j) const {
+    const NodeKey key{seed_, i, j};
+    {
+        std::lock_guard<std::mutex> lock(nodeMutex);
+        auto it = nodeCache.find(key);
+        if (it != nodeCache.end()) return it->second;
+    }
+    const TrailNode n = makeNode(i, j);
+    std::lock_guard<std::mutex> lock(nodeMutex);
+    if (nodeCache.size() > 40000) nodeCache.clear();
+    nodeCache.emplace(key, n);
+    return n;
+}
+
+TrailNode ProcWorld::makeNode(int64_t i, int64_t j) const {
     const Params& P = *params_;
     TrailNode n;
     n.i = i, n.j = j;
@@ -444,7 +494,15 @@ std::shared_ptr<const TrailEdge> ProcWorld::edge(int64_t i, int64_t j, int dir) 
         // The tread's height all along it: the trail level (a function of where: see trailLevel), and its rating from how steep that runs.
         std::vector<double> y(n), along(n, 0.0);
         for (int k = 0; k < n; k++)
-            if (k % 4 == 0 || k == n - 1) y[k] = trailLevel(a.x + px[k], a.z + pz[k]);  // (every ~8 m: it's smooth; the rest between)
+            if (k % 4 == 0 || k == n - 1) {
+                const double gx = a.x + px[k], gz = a.z + pz[k];
+                y[k] = trailLevel(gx, gz);  // (every ~8 m: it's smooth; the rest between)
+                if (!e->ford) {  // (where it first wades: a river crossing to find)
+                    const Macro m = macro(gx, gz);
+                    if ((m.riverOn > 0.5 && std::fabs(m.riverS) < riverHalfWidth(gx, gz)) || (m.creekOn > 0.5 && std::fabs(m.creekS) < creekHalfWidth(gx, gz)))
+                        e->ford = true, e->fordX = gx, e->fordZ = gz;
+                }
+            }
         for (int k = 0; k < n; k++) {
             if (k % 4 && k != n - 1) {
                 const int k0 = k - k % 4, k1 = std::min(n - 1, k0 + 4);
@@ -497,6 +555,22 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
                     auto e = edge(i, j, dir);
                     if (e->on && e->x1 >= (double)gx0 - 2 && e->x0 <= (double)gx0 + 66 && e->z1 >= (double)gz0 - 2 && e->z0 <= (double)gz0 + 66) edges.push_back(e);
                 }
+    }
+    // The places' flat ground (their plazas) near this chunk.
+    struct Plaza {
+        double x, z, h, r;
+        bool lot;  // an outpost's gravel lot
+    };
+    std::vector<Plaza> plazas;
+    {
+        const int64_t ci = floorDiv(gx0 + 32, kCell), cj = floorDiv(gz0 + 32, kCell);
+        for (int64_t i = ci - 1; i <= ci + 1; i++)
+            for (int64_t j = cj - 1; j <= cj + 1; j++) {
+                const TrailNode n = node(i, j);
+                const double r = plazaRadius(n);
+                if (n.x + r + 14 < (double)gx0 - 1 || n.x - r - 14 > (double)gx0 + 65 || n.z + r + 14 < (double)gz0 - 1 || n.z - r - 14 > (double)gz0 + 65) continue;
+                plazas.push_back({n.x, n.z, n.h, r, n.outpost || n.fuel});
+            }
     }
     // Every cell (and its apron): the land, rivers and creeks cut into it, the trails laid on it.
     struct Cell {
@@ -596,6 +670,13 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
                     if (e < 3) cl.keep = 1;
                     if (cl.water > -1e8 && h >= cl.water - 0.05) cl.water = -1e9, cl.fx = cl.fz = 0;  // (the bank it climbs out on)
                 }
+            }
+            for (const Plaza& pz : plazas) {  // (level ground for the place's buildings, easing into the land)
+                const double d = std::sqrt(sqr(x - pz.x) + sqr(z - pz.z));
+                if (d > pz.r + 14) continue;
+                h += (pz.h - h) * smoothstep(pz.r + 14, pz.r, d);
+                if (d < pz.r + 3) cl.keep = 1, cl.water = -1e9, cl.fx = cl.fz = 0;
+                if (pz.lot && d < pz.r - 1) cl.bed = 4;
             }
             cl.h = h;
             int b1 = 0, b2 = -1;
@@ -775,6 +856,249 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
     }
     c->genMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     return c;
+}
+
+// ---- Places -----------------------------------------------------------------------------------------------------------------------
+namespace {
+const char* intern(const std::string& s) {  // (names the game keeps const char* to: stations, regions)
+    static std::mutex m;
+    static std::set<std::string> pool;
+    std::lock_guard<std::mutex> lock(m);
+    return pool.insert(s).first->c_str();
+}
+const char* const kAdj[] = {"RED",     "WILLOW",  "BEAR",     "COYOTE",   "CEDAR",   "IRON",    "LONG",    "HIGH",    "LOST",    "STONE",   "ASPEN",
+                            "SILVER",  "BLACK",   "EAGLE",    "PINE",     "ELK",     "COPPER",  "DRY",     "HOLLOW",  "MULE",    "BADGER",  "JUNIPER",
+                            "CROW",    "SAGE",    "GRANITE",  "RAVEN",    "BUFFALO", "LONESOME", "SHADOW", "THUNDER", "BRUSHY",  "COTTONWOOD", "TIMBER",
+                            "SPRUCE",  "HAWK",    "OWL",      "LITTLE",   "BIG",     "ANTELOPE", "WOLF",   "FOX",     "CANYON",  "GOLD",    "BITTER",
+                            "SWEETWATER", "CLEAR", "MUDDY",   "ROCKY",    "WINDY",   "COLD",    "WARM",    "TWIN",    "BROKEN",  "HIDDEN",  "OLD",
+                            "WHISKEY", "POWDER",  "LODGEPOLE", "BLUEBIRD", "MAGPIE", "OTTER"};
+const char* const kNoun[] = {"FLATS", "CREEK", "RIDGE", "HOLLOW", "MESA",  "PASS",   "SPRINGS", "BASIN", "GULCH", "MEADOW", "PEAK",   "BUTTE",
+                             "DRAW",  "BENCH", "POINT", "KNOB",   "PARK",  "FORK",   "BEND",    "WASH",  "LAKE",  "BLUFF",  "CANYON", "GAP",
+                             "TOP",   "RUN",   "ROCKS", "PINES",  "GROVE", "HILL",   "BOTTOM",  "SADDLE", "DOME", "CROSSING", "VALLEY", "TANK",
+                             "SEEP",  "SLIDE", "SHELF", "LEDGE",  "COVE",  "NOTCH",  "BRAKE",   "GLADE", "COULEE", "BREAKS", "SLOPE",  "WELLS",
+                             "CORNER", "LOOP", "CUT",   "HEIGHTS", "MOUND", "PRAIRIE", "SLOUGH", "BOG",  "CAMP",  "TRACE",  "VISTA"};
+constexpr int kNA = (int)(sizeof kAdj / sizeof kAdj[0]), kNN = (int)(sizeof kNoun / sizeof kNoun[0]);
+inline int64_t pmod(int64_t a, int64_t m) { return ((a % m) + m) % m; }
+const char* kindTag(int kind) {
+    switch (kind) {
+        case PK_RANGER_STATION: return "OUTPOST";
+        case PK_FUEL_STOP: return "FUEL";
+        case PK_CABIN: return "CABIN";
+        case PK_OLD_CAMP: return "CAMP";
+        case PK_LOOKOUT: return "LOOKOUT";
+        case PK_MINE: return "MINE";
+        case PK_RUIN: return "RUINS";
+        default: return "PLACE";
+    }
+}
+// Eight ways out from a node (for where its cache lies): unit vectors, no trig.
+const double kOut8[8][2] = {{1, 0}, {0.7071067811865476, 0.7071067811865476}, {0, 1}, {-0.7071067811865476, 0.7071067811865476},
+                            {-1, 0}, {-0.7071067811865476, -0.7071067811865476}, {0, -1}, {0.7071067811865476, -0.7071067811865476}};
+}  // namespace
+
+std::string ProcWorld::placeName(int64_t i, int64_t j, int salt) const {
+    // (The cell, folded 59 x 59 (30 km a side), numbered, then scrambled one to one over the word pairs (61 x 59 of them): no two
+    // cells within 30 km share a name. The seed shifts the scramble.)
+    const int64_t c = pmod(i, 59) * 59 + pmod(j, 59);
+    const int64_t k = pmod(c * 1009 + (int64_t)(seed_ % 3599) + salt * 1201, (int64_t)kNA * kNN);
+    return std::string(kAdj[k / kNN]) + " " + kNoun[k % kNN];
+}
+
+int ProcWorld::nodeKind(const TrailNode& n) const {
+    if (n.outpost) return PK_RANGER_STATION;
+    if (n.fuel) return PK_FUEL_STOP;
+    const double r = hash01(params_->s[S_DITHER] + 501, n.i, n.j);
+    const int b = biomeAt(n.x, n.z);
+    if (r < 0.26) return PK_CABIN;
+    if (r < 0.44) return PK_OLD_CAMP;
+    if (r < 0.58) return PK_LOOKOUT;
+    if (r < 0.68) return b == PB_BADLANDS || b == PB_MOUNTAINS ? PK_MINE : PK_RUIN;
+    if (r < 0.76) return PK_RUIN;
+    return -1;
+}
+
+double ProcWorld::plazaRadius(const TrailNode& n) const {
+    switch (nodeKind(n)) {
+        case PK_RANGER_STATION: return 30;
+        case PK_FUEL_STOP: return 16;
+        case PK_CABIN: return 14;
+        case PK_OLD_CAMP: return 13;
+        case PK_MINE: return 14;
+        case PK_LOOKOUT: return 9;
+        case PK_RUIN: return 10;
+        default: return 5;
+    }
+}
+
+double ProcWorld::nodeYaw(const TrailNode& n) const { return M_PI / 2 * (double)(hashIJ(params_->s[S_DITHER] + 601, n.i, n.j) % 4); }
+
+void ProcWorld::nodePlaces(int64_t i, int64_t j, std::vector<MapPlace>& out) const {
+    const TrailNode n = node(i, j);
+    const int kind = nodeKind(n);
+    const std::string base = "PW." + std::to_string(i) + "." + std::to_string(j);
+    auto add = [&](const std::string& what, const std::string& name, int k, double x, double z, double radius, double pad, unsigned svc) {
+        MapPlace m;
+        m.id = base + "." + what, m.name = name, m.kind = k, m.map = MAP_PROCEDURAL, m.p = V3(x, 0, z), m.yaw = nodeYaw(n), m.radius = radius, m.pad = pad;
+        m.services = svc;
+        m.region = intern(regionName(x, z));
+        out.push_back(m);
+        return &out.back();
+    };
+    const std::string nm = placeName(i, j, 0);
+    if (kind == PK_RANGER_STATION)
+        add("OUTPOST", nm + " OUTPOST", kind, n.x, n.z, 50, plazaRadius(n), SVC_REPAIR | SVC_SHOP | SVC_FUEL | SVC_JOBS | SVC_TOW | SVC_SAVE | SVC_PARTS);
+    else if (kind == PK_FUEL_STOP) add("FUEL", nm + " FUEL", kind, n.x, n.z, 35, plazaRadius(n), SVC_FUEL | SVC_PARTS | SVC_TOW);
+    else if (kind == PK_CABIN) add("CABIN", nm + " CABIN", kind, n.x, n.z, 35, plazaRadius(n), SVC_TOW | SVC_SAVE);
+    else if (kind == PK_OLD_CAMP) add("CAMP", nm + " CAMP", kind, n.x, n.z, 35, plazaRadius(n), SVC_TOW | SVC_SAVE);
+    else if (kind >= 0) add(kindTag(kind), nm + " " + kindTag(kind), kind, n.x, n.z, 40, plazaRadius(n), 0);
+    // A supply cache off the trail near about every second node (richer further out).
+    const uint64_t hc = hashIJ(params_->s[S_DITHER] + 701, i, j);
+    if (hc % 100 < 55) {
+        const double* d = kOut8[(hc >> 8) % 8];
+        const double dist = 45 + (double)((hc >> 16) % 40);
+        const double cx = n.x + d[0] * dist, cz = n.z + d[1] * dist;
+        const Macro m = macro(cx, cz);
+        const bool wet = (m.riverOn > 0.3 && std::fabs(m.riverS) < riverHalfWidth(cx, cz) + 6) || (m.creekOn > 0.3 && std::fabs(m.creekS) < creekHalfWidth(cx, cz) + 4);
+        if (!wet) add("CACHE", nm + " CACHE", PK_CACHE, cx, cz, 12, 0, 0)->reward = 150 + (int)(450 * remoteness(cx, cz)) / 10 * 10;
+    }
+    // Now and then an abandoned vehicle by a node, for the career to recover.
+    if (hc % 1000 >= 960) {
+        static const char* kVeh[][2] = {{"blazer", "FLAT TIRES, A DEAD BATTERY"}, {"4runner", "WATER IN THE ENGINE"}, {"civic", "OUT OF FUEL"}, {"utv", "A BROKEN AXLE"}};
+        const auto& v = kVeh[(hc >> 24) % 4];
+        const double* d = kOut8[((hc >> 8) + 4) % 8];
+        MapPlace* p = add("VEHICLE", nm + " WRECK", PK_ABANDONED_VEHICLE, n.x + d[0] * 30, n.z + d[1] * 30, 35, 0, 0);
+        p->vehicle = v[0], p->condition = v[1];
+    }
+    // The fords on the trails out of it (east and north): river crossings.
+    for (int dir = 0; dir < 2; dir++) {
+        const auto e = edge(i, j, dir);
+        if (e->on && e->ford) add(dir ? "FORD.N" : "FORD.E", nm + (dir ? " CROSSING" : " FORD"), PK_RIVER_CROSSING, e->fordX, e->fordZ, 45, 0, 0);
+    }
+}
+
+namespace {
+std::mutex activeMutex;
+std::vector<MapPlace> active;
+uint64_t activeSeed = 0;
+int64_t activeOx = 0, activeOz = 0;
+}  // namespace
+
+std::vector<MapPlace> windowPlaces(const World& w) {
+    std::vector<MapPlace> out;
+    if (w.map != MAP_PROCEDURAL) return out;
+    const ProcWorld& G = ProcWorld::forSeed(w.proc.seed);
+    const double half = w.halfSize(), in = half - 100;
+    const int64_t i0 = floorDiv(w.proc.ox - (int64_t)half, kCell), i1 = floorDiv(w.proc.ox + (int64_t)half, kCell);
+    const int64_t j0 = floorDiv(w.proc.oz - (int64_t)half, kCell), j1 = floorDiv(w.proc.oz + (int64_t)half, kCell);
+    std::vector<MapPlace> all;
+    for (int64_t i = i0; i <= i1; i++)
+        for (int64_t j = j0; j <= j1; j++) G.nodePlaces(i, j, all);
+    for (MapPlace& p : all) {
+        p.p = V3(p.p.x - (double)w.proc.ox, 0, p.p.z - (double)w.proc.oz);
+        if (std::fabs(p.p.x) < in && std::fabs(p.p.z) < in) out.push_back(std::move(p));
+    }
+    return out;
+}
+
+void setActiveWindow(const World& w) {
+    std::vector<MapPlace> v = windowPlaces(w);
+    std::lock_guard<std::mutex> lock(activeMutex);
+    active = std::move(v);
+    activeSeed = w.proc.seed, activeOx = w.proc.ox, activeOz = w.proc.oz;
+}
+const std::vector<MapPlace>& activePlaces() { return active; }
+const char* activeRegionAt(double x, double z) {
+    if (!activeSeed) return "";
+    return intern(ProcWorld::forSeed(activeSeed).regionName(x + (double)activeOx, z + (double)activeOz));
+}
+
+// The buildings and things at a window's places (World::buildProcedural): the outposts' sheds and stations, the cabins, camps,
+// lookouts, mines and ruins, a sign at every junction. All from the place (where it is in the world), so every window has them alike.
+void buildPlaces(World& w, const std::vector<MapPlace>& places) {
+    const V3 brown(0.4, 0.3, 0.2);
+    auto grounded = [&](V3 q) {
+        q.y = w.height(q.x, q.z);
+        return q;
+    };
+    auto rel = [&](const V3& o, double yaw, double ahead, double left) {
+        return grounded(V3(o.x + std::cos(yaw) * ahead + std::sin(yaw) * left, 0, o.z - std::sin(yaw) * ahead + std::cos(yaw) * left));
+    };
+    using Set = std::vector<std::pair<std::string, double>>;
+    auto build = [&](const char* id, const V3& at, double yaw, const V3& half, Set set = {}, int variant = -1) {
+        const size_t from = w.boxes.size();
+        w.addBox(V3(at.x, at.y + half.y, at.z), half, yaw, 0, 0, brown);
+        w.standIn(from, id, at, yaw, std::move(set));
+        if (variant >= 0 && !w.models.empty() && w.models.back().id == id) w.models.back().variant = variant;
+    };
+    auto decor = [&](const char* id, const V3& at, double yaw, Set set = {}) { w.placeModel(id, at, yaw, std::move(set)); };
+    auto fixture = [&](PropKind k, const V3& at, double yaw) {
+        Prop p{k, grounded(at), V3(), yaw};
+        w.fixtures.push_back(p);
+    };
+    auto table = [&](const V3& at, double yaw) {
+        fixture(PROP_TABLE, at, yaw);
+        w.addBox(V3(at.x, at.y + 0.4, at.z), V3(0.95, 0.4, 0.8), yaw, 0, 0, brown);
+        w.boxes.back().hidden = true;
+    };
+    auto sign = [&](const V3& at, double yaw, PropKind kind) {
+        Prop sg{kind, grounded(at), V3(), yaw};
+        sg.col[0] = 0.1f, sg.col[1] = 0.55f, sg.col[2] = 0.2f;
+        w.fixtures.push_back(sg);
+        w.poles.push_back({sg.a.x, sg.a.z, sg.a.y - 0.4, sg.a.y + 2.0, 0.07});
+    };
+    for (const MapPlace& pl : places) {
+        const V3 P = grounded(pl.p);
+        const double yw = pl.yaw;
+        switch (pl.kind) {
+            case PK_RANGER_STATION:
+                w.addStation(P, yw, intern(pl.name));
+                build("ranger_station", rel(P, yw, 0, 17), yw + M_PI / 2, V3(5.2, 1.8, 3.4));
+                build("fuel_pump", rel(P, yw, 6, -14), yw - M_PI / 2, V3(3.0, 0.6, 1.8), {}, 1);
+                build("woodpile", rel(P, yw, -10, 22), yw, V3(1.4, 0.5, 0.5));
+                build("outhouse", rel(P, yw, 12, 23), yw + M_PI / 2, V3(0.6, 1.1, 0.6));
+                table(rel(P, yw, -4, 22), yw);
+                sign(rel(P, yw, 16, 8), yw, PROP_MAPBOARD);
+                break;
+            case PK_FUEL_STOP: {
+                const V3 I = rel(P, yw, 0, 6);
+                build("fuel_pump", I, yw, V3(2.6, 0.5, 0.6), {}, 1);
+                for (int a = -1; a <= 1; a += 2)
+                    for (int b = -1; b <= 1; b += 2) {
+                        const V3 q = rel(I, yw, a * 2.7, b * 1.4);
+                        w.poles.push_back({q.x, q.z, q.y - 0.3, q.y + 3.7, 0.1});
+                    }
+                decor("fuel_pump", rel(P, yw, 3, -7), yw + 0.3, {});
+                fixture(PROP_CAIRN, rel(P, yw, -7, -6), 0.4);
+                break;
+            }
+            case PK_CABIN:
+                build("cabin", rel(P, yw, -6, 0), yw, V3(2.7, 1.9, 2.2), {}, (int)(pl.name.size() % 2));
+                build("woodpile", rel(P, yw, 0, 4.6), yw, V3(1.4, 0.5, 0.5));
+                build("outhouse", rel(P, yw, -8, -7), yw + M_PI, V3(0.6, 1.1, 0.6));
+                table(rel(P, yw, 5, 4), yw);
+                break;
+            case PK_OLD_CAMP:
+                decor("tent", rel(P, yw, 0, -4), yw + 0.3);
+                decor("tent", rel(P, yw, 2, 4), yw - 0.5);
+                decor("campfire", rel(P, yw, 6, 0), 0);
+                table(rel(P, yw, 8, 5), yw);
+                break;
+            case PK_LOOKOUT:
+                fixture(PROP_CAIRN, rel(P, yw, 3, 0), 0.7);
+                table(rel(P, yw, -3, 2), yw);
+                break;
+            case PK_MINE:
+                build("mine_portal", rel(P, yw, -9, 0), yw, V3(1.6, 1.6, 2.2));
+                decor("ore_cart", rel(P, yw, -3, 1.5), yw);
+                break;
+            case PK_RUIN:
+                decor("wreck_pickup", rel(P, yw, 0, 3), yw + 0.6);
+                fixture(PROP_CAIRN, rel(P, yw, -4, -3), 1.1);
+                break;
+            default: break;
+        }
+        if (pl.kind != PK_CACHE && pl.kind != PK_RIVER_CROSSING && pl.kind != PK_ABANDONED_VEHICLE) sign(rel(P, yw, 3, -(pl.pad + 2)), yw, PROP_SIGN);
+    }
 }
 
 // ---- The chunk cache ----------------------------------------------------------------------------------------------------------------
@@ -964,6 +1288,11 @@ void World::buildProcedural() {
                     bushes.push_back(bu);
                 }
             }
+    }
+    // The places (their buildings, signs and camps), from where they are in the world.
+    {
+        loadprof::Scope lp("proc.places");
+        buildPlaces(*this, windowPlaces(*this));
     }
     // The start: a pad there when it's well inside this window. (Elsewhere the spawn is the window's middle: nothing starts there.)
     const double lsx = (double)(sx - proc.ox), lsz = (double)(sz - proc.oz);

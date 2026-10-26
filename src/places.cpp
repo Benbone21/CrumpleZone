@@ -7,6 +7,7 @@
 #include <sstream>
 
 #include "onemap.h"
+#include "procworld.h"
 #include "rivers.h"
 #include "world.h"
 
@@ -21,6 +22,7 @@ char placeKindGlyph(int kind) {
 }
 
 const char* regionAt(int map, double x, double z) {
+    if (map == MAP_PROCEDURAL) return proc::activeRegionAt(x, z);  // (2 km regions, named from the seed)
     if (map != MAP_BACKCOUNTRY) return "";
     if (const MapRegion* r = regionContaining(x, z)) return r->name;  // (the big map's regions: onemap.h)
     // Elk Valley is the old 1.2 km map and its margin; round it the eight districts (backcountry.cpp: districtsAt).
@@ -145,6 +147,7 @@ std::vector<MapPlace> backcountryPlaces() {
 const std::vector<MapPlace>& mapPlaces(int map) {
     static const std::vector<MapPlace> bc = backcountryPlaces();
     static const std::vector<MapPlace> none;
+    if (map == MAP_PROCEDURAL) return proc::activePlaces();  // (the window in play: procworld.h setActiveWindow)
     return map == MAP_BACKCOUNTRY ? bc : none;
 }
 const MapPlace* findPlace(int map, const std::string& id) {

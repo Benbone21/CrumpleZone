@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "mathx.h"
+#include "places.h"
 
 class World;
 class Sim;
@@ -92,6 +93,8 @@ struct TrailNode {
 };
 struct TrailEdge {
     bool on = false;
+    bool ford = false;           // it wades a river or creek: where (global), the middle of the first
+    double fordX = 0, fordZ = 0;
     bool road = false;           // a gravel road (between outposts): wider, gentler
     int rating = 0;              // 0 green, 1 blue, 2 black
     double ax = 0, az = 0;       // where it starts (global): the samples are from here
@@ -106,6 +109,11 @@ public:
     // The generator for a seed (made once, kept): the career's hook. A new world: ProcWorld::forSeed(ProcWorld::randomSeed()).
     static const ProcWorld& forSeed(uint64_t seed);
     static uint64_t randomSeed();  // a fresh one (from the clock and the OS)
+    // The career's world save (career phase 1, src/careerworld.*): a world's map line is "map=procedural seed=<u64>", and where its
+    // window was "origin=<x>,<z>". saveLine makes it from a world; useSaveLine sets up the next World(MAP_PROCEDURAL) built on this
+    // thread from one (false: not a procedural line). New World: useSaveLine("map=procedural seed=" + std::to_string(randomSeed())).
+    static std::string saveLine(const World& w);
+    static bool useSaveLine(const std::string& line);
     // Where a seed's world starts (global metres): its first outpost; and the window to build round it (a chunk corner).
     void start(int64_t& x, int64_t& z, double& yaw) const;
     void startOrigin(int64_t& ox, int64_t& oz) const;
@@ -116,7 +124,8 @@ public:
     double macroHeight(double gx, double gz) const;  // macro(...).h, cheaper (the far backdrop)
     int biomeAt(double gx, double gz) const;         // the biome with the most weight there
     // The trail network (procworld.h TrailNode): the node of cell (i, j), and the edge from it east (0), north (1) or north-east (2).
-    TrailNode node(int64_t i, int64_t j) const;
+    TrailNode node(int64_t i, int64_t j) const;  // (cached)
+    TrailNode makeNode(int64_t i, int64_t j) const;
     std::shared_ptr<const TrailEdge> edge(int64_t i, int64_t j, int dir) const;  // (cached)
     // The river and creek at a point: their channel's half-width there, and how deep the middle is.
     double riverHalfWidth(double gx, double gz) const;
@@ -124,6 +133,14 @@ public:
     double riverDepth(double gx, double gz) const;
     double trailLevel(double gx, double gz) const;  // where a trail's tread lies (the land low-passed, down to the water at a ford)
     Macro land(double gx, double gz) const;         // macro() without the rivers and creeks
+    // The places (places.h MapPlace, in GLOBAL metres): what node (i, j) is (a place kind, or -1 a plain junction) and everything
+    // found at it (the place, a cache near it, now and then an abandoned vehicle), and the fords on its edges. Ids are
+    // "PW.<i>.<j>.<WHAT>" (stable for a seed: saves keep them); names are unique within ~20 km.
+    int nodeKind(const TrailNode& n) const;
+    double plazaRadius(const TrailNode& n) const;  // the flat ground its buildings stand on (m)
+    double nodeYaw(const TrailNode& n) const;      // which way its buildings face (one of four)
+    void nodePlaces(int64_t i, int64_t j, std::vector<MapPlace>& out) const;
+    std::string placeName(int64_t i, int64_t j, int salt) const;  // "COYOTE FLATS" (unique within ~20 km for a salt)
     // A chunk (cached: the same object for the same chunk while it's kept).
     std::shared_ptr<const Chunk> chunk(int64_t cx, int64_t cz) const;
     std::shared_ptr<Chunk> makeChunk(int64_t cx, int64_t cz) const;  // (always made afresh: the tests)
@@ -153,6 +170,14 @@ void clearChunkCache();
 
 // The far backdrop's land past a window's edge (render.cpp sceneryHeight): the generator's macro height.
 double farHeight(const World& w, double x, double z);
+
+// The places of the window in play (places.h mapPlaces(MAP_PROCEDURAL) returns these, in window coordinates): set when a window
+// goes in (the game on a load or a slide; tests). regionName: the region (2 km) a window point is in, as a stable C string.
+void setActiveWindow(const World& w);
+const std::vector<MapPlace>& activePlaces();
+const char* activeRegionAt(double x, double z);
+// A window's places, in its coordinates (whole nodes within it, 100 m in from its edge).
+std::vector<MapPlace> windowPlaces(const World& w);
 
 // Moves everything the sim holds by d (whole metres): vehicles, loose wheels, ropes, anchors, dropped parts, lines in hand.
 void shiftSim(Sim& sim, const V3& d);
