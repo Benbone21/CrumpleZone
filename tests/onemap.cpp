@@ -234,7 +234,7 @@ SCENARIO(onemapBackcountryKept, "onemap/backcountry-kept", "The Backcountry with
     };
     compare("trees", [&](const World& w, auto& s) { for (const Tree& t : w.trees) if (within(t.base)) s.insert(key(t.base)); });
     compare("rocks", [&](const World& w, auto& s) { for (const Rock& k : w.rocks) if (within(k.c)) s.insert(key(k.c)); }, 0.015);
-    compare("logs", [&](const World& w, auto& s) { for (const Log& l : w.logs) if (within(l.a)) s.insert(key(l.a)); });
+    compare("logs", [&](const World& w, auto& s) { for (const Log& l : w.logs) if (within(l.a)) s.insert(key(l.a)); }, 0.001);  // (the fill's, as the bushes below)
     // (Bushes: the trail network's fill (bctrails.cpp) puts a handful differently where the big map's land differs by millimetres.)
     compare("bushes", [&](const World& w, auto& s) { for (const Bush& u : w.bushes) if (within(u.p)) s.insert(key(u.p)); }, 0.0005);
     compare("boxes and models", [&](const World& w, auto& s) {

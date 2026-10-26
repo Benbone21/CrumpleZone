@@ -524,8 +524,10 @@ void World::layBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& edg
         rv.name = "COPPER CREEK";
         for (int k = 0; k < n; k += 6) {
             RiverSpot sp;
-            sp.p = V3(c[k].x, yAt(bed, k) + 0.6 - 0.55 + 0.32, c[k].z), sp.depth = 0.32f, sp.halfWidth = 2.4f, sp.speed = 0.9f;
-            sp.cls = (uint8_t)RIVER_RIFFLE, sp.bed = (uint8_t)BED_GRAVEL;
+            const double lv = waterLevel(c[k].x, c[k].z), dep = lv - height(c[k].x, c[k].z);
+            if (dep < 0.05) continue;  // (its dry ends)
+            sp.p = V3(c[k].x, lv, c[k].z), sp.depth = (float)dep, sp.halfWidth = 2.4f, sp.speed = 0.9f;
+            sp.cls = (uint8_t)riverClassForDepth(dep), sp.bed = (uint8_t)BED_GRAVEL;
             rv.spots.push_back(sp);
         }
         rivers.push_back(std::move(rv));
@@ -743,6 +745,13 @@ void World::layBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& edg
 void World::dressBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& edge) {
     loadprof::Scope lp("bc.trail dress");
     (void)edge;
+    // Every place (a cache, a photo spot, a crossing) is kept clear of the fill: 10 m round it.
+    for (const MapPlace& pl : mapPlaces(MAP_BACKCOUNTRY))
+        for (double dx = -10; dx <= 10; dx += 1)
+            for (double dz = -10; dz <= 10; dz += 1) {
+                const int id = dx * dx + dz * dz <= 100 ? cellIndex(pl.p.x + dx, pl.p.z + dz) : -1;
+                if (id >= 0) keep[id] = 1;
+            }
     // Where trees stand now (3 m cells), so nothing is put down in a trunk.
     std::unordered_set<int64_t> treeAt;
     auto key3 = [](double x, double z) { return (int64_t)std::floor(x / 3 + 5000) * 100000 + (int64_t)std::floor(z / 3 + 5000); };
@@ -797,7 +806,9 @@ void World::dressBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& e
                 const double x0 = -H + ci * C, z0 = -H + cj * C, cx = x0 + C / 2, cz = z0 + C / 2;
                 const double far = std::max(std::fabs(cx), std::fabs(cz));
                 if (far < 560 || far > 2580) continue;
-                seed = 4000000u + (uint32_t)(ci * cn + cj) * 64u;  // (each cell's rocks their own seeds: one cell changing moves nothing in another)
+                // (Each cell's rocks their own seeds, so one cell changing moves nothing in another; scenery, from kWholeRockSeeds' range (world.h):
+                // whole hulls to the physics, for a fraction of the memory. The slabs, made to be driven on, are cut into their pieces.)
+                seed = kWholeRockSeeds + 0x800000u + (uint32_t)(ci * cn + cj) * 64u;
                 uint32_t r32 = (uint32_t)(ci * 83492791) ^ (uint32_t)(cj * 2971215073u) ^ 0x7a11c0deu;
                 r32 = r32 * 2654435761u + 0x6d2b79f5u;
                 auto rr = [&]() {
@@ -818,9 +829,9 @@ void World::dressBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& e
                 };
                 const float tintBase = (float)(dry > 0.4 ? 1.12 : 0.92 + 0.12 * rr());
                 // A big boulder, and a few smaller ones round it.
-                if (rr() < 0.09 + 0.12 * grove + 0.1 * high + 0.08 * dry) {
+                if (rr() < 0.16 + 0.2 * grove + 0.15 * high + 0.12 * dry) {
                     double x, z;
-                    const double r = 1.9 + 1.9 * std::pow(rr(), 1.5), flat = 0.62 + 0.25 * rr();
+                    const double r = 1.9 + 2.4 * std::pow(rr(), 1.5), flat = 0.62 + 0.25 * rr();
                     if (spot(x, z, r + 1) && slopeAt(x, z) < 0.6) {
                         rock(x, z, V3(r, r * flat, r * (0.75 + 0.2 * rr())), r * flat * (1.15 + 0.35 * rr()), tintBase);
                         counts[0]++;
@@ -836,7 +847,7 @@ void World::dressBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& e
                 if (rr() < (0.03 + 0.12 * high + 0.12 * dry + 0.06 * smoothstep(0.2, 0.5, slopeAt(cx, cz)))) {
                     double x, z;
                     if (spot(x, z, 6)) {
-                        paintRock(x, z, 6 + 2 * rr());
+                        (void)rr();  // (the land under the fill is left as it is: its paint is the map's)
                         const int m = 4 + (int)(rr() * 3);
                         for (int k = 0; k < m; k++) {
                             const double a = rr() * 6.283, d = 5 * std::sqrt(rr()), q = k < 2 ? 1.4 + 1.0 * rr() : 0.5 + 0.3 * rr();
@@ -856,7 +867,6 @@ void World::dressBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& e
                             pose.yaw = rr() * 6.283, pose.pitch = M_PI / 2 - 0.15 + 0.3 * rr();  // (its long axis standing up)
                             rock(x + d * std::cos(a), z + d * std::sin(a), V3(rh, rw, rw * 0.9), rh * 1.6, tintBase, &pose);
                         }
-                        paintRock(x, z, 5);
                         counts[2]++;
                     }
                 }
@@ -867,7 +877,7 @@ void World::dressBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& e
                         RockPose pose;
                         pose.yaw = rr() * 6.283, pose.pitch = 0.08 + 0.14 * rr();
                         const double L = 3.5 + 2.5 * rr();
-                        rock(x, z, V3(L, 0.9 + 0.3 * rr(), L * (0.6 + 0.2 * rr())), 0.5 + 0.4 * rr(), tintBase, &pose);
+                        addRock(x, z, V3(L, 0.9 + 0.3 * rr(), L * (0.6 + 0.2 * rr())), 0.5 + 0.4 * rr(), 5000000u + (uint32_t)(ci * cn + cj), tintBase, &pose);
                         counts[3]++;
                     }
                 }
