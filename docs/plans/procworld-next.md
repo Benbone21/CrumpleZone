@@ -256,3 +256,16 @@ Follows docs/plans/procworld-rules.md sections 2 and 3. Status: being built on w
   earthworks under them (the river runs on). Built in each window (buildBridges): a plank deck on log stringers, rails and posts, a
   crib pier under a long one; boxes as stand-ins (no bridge model yet). Each bridge is a river-crossing place ("... BRIDGE").
 - Test: procworld/crossings (no trail wades a big river off its fords; decks over the water; the window builds the deck).
+
+**Checkpoint 3: lakes and waterfalls.**
+- Lakes: one at each sink of the network (a basin). Its level is filled to 0.25 m under the lowest point of its rim (the land
+  round it, without lakes, at 1.45-1.75 times its radius) and at most a metre over where its channels come down. A bowl under the
+  water (25-240 m radius, 1.5-8 m deep), a gentle shore rising from it. Water level, still. Trails go round (A* cost 8000).
+  Sinks are rare (0-8 in 144 km2), so lakes are too; tarns are the small sinks high up. Swamp ponds: no swamp biome yet.
+- Waterfalls: on a stretch that drops 20 m or more (steeper than 1:8), wet, in the ranges, one in eight by the node's dice. Most
+  of the drop (up to 14 m) comes at once over a ~4 m rock step; the stretch below has a plunge pool (1.3 m deeper) and a 3:1 rock
+  wall behind its start so its valley doesn't wrap round and smear the step. A dry (perched) creek's step is no waterfall. Each
+  trail cell's tallest fall is a place ("... FALLS", PK_WATERFALL). **Render hook not done:** the water over a fall is the cells'
+  water surface stepping down ~3 m a metre; a falls mesh (sheet and spray) is left for the render side.
+- The trails' 16 m search lattice is cached per 1 km tile and shared by every edge (the slowest chunk: 163 ms, from ~400).
+- Test: procworld/lakes-falls (rims, level water, the drop at each fall, pools); procworld/river-rules leaves still water to it.

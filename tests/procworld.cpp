@@ -304,7 +304,7 @@ SCENARIO(procPlaces, "procworld/places", "Places at the trail nodes: an outpost 
     int bad = 0, checked = 0, matched = 0, inBoth = 0;
     std::string why;
     for (const MapPlace& p : pa) {
-        if (p.kind == PK_CACHE || p.kind == PK_RIVER_CROSSING || p.kind == PK_ABANDONED_VEHICLE) continue;
+        if (p.kind == PK_CACHE || p.kind == PK_RIVER_CROSSING || p.kind == PK_ABANDONED_VEHICLE || p.kind == PK_WATERFALL) continue;
         checked++;
         const double h = a.height(p.p.x, p.p.z);
         double rough = 0;
@@ -739,7 +739,7 @@ SCENARIO(procRiverRules, "procworld/river-rules", "Rivers and creeks keep to the
                 // Across the flow, 30 m out either side: the ground stands at or above the water.
                 V3 f = w.waterFlow(x, z);
                 double fl = std::sqrt(f.x * f.x + f.z * f.z);
-                if (fl < 1e-6) f = V3(1, 0, 0), fl = 1;
+                if (fl < 1e-6) continue;  // (still water: a lake, procworld/lakes)
                 const double fx = f.x / fl, fz = f.z / fl;
                 for (int sd = -1; sd <= 1; sd += 2) {
                     const double gx = x - fz * sd * 30, gz = z + fx * sd * 30;
@@ -815,7 +815,7 @@ SCENARIO(procRiverRules, "procworld/river-rules", "Rivers and creeks keep to the
                 for (int a = 0; a < kChunk; a += 2)
                     for (int b = 0; b < kChunk; b += 2) {
                         const float lv = c->water[(size_t)a * kChunk + b];
-                        if (lv < -1e8f) continue;
+                        if (lv < -1e8f || (c->flowX[(size_t)a * kChunk + b] == 0 && c->flowZ[(size_t)a * kChunk + b] == 0)) continue;  // (lakes: still)
                         wetN++;
                         const double x = (double)(cx * kChunk + a), z = (double)(cz * kChunk + b);
                         raised += lv > G.macroAt(x, z, false).h + 0.5;
@@ -1124,4 +1124,57 @@ SCENARIO(procCrossings, "procworld/crossings", "Big rivers are real obstacles: a
         ctx.note("a bridge: seed " + std::to_string(bseed) + " at " + std::to_string((int)bx) + "," + std::to_string((int)bz));
         World::procOriginSet = false;
     }
+}
+
+SCENARIO(procLakesFalls, "procworld/lakes-falls", "Lakes sit in basins, level, under the rim all round; waterfalls only where the land really drops (6 m or more within 10 m), each with a plunge pool; both on the map") {
+    long lakes = 0, rimN = 0, rimBreach = 0, levelN = 0, levelOff = 0, falls = 0, tallFalls = 0, pools = 0;
+    double worstBreach = 0;
+    for (uint64_t seed : {1ull, 2ull, 3ull, 123456789ull}) {
+        const ProcWorld& G = ProcWorld::forSeed(seed);
+        for (const auto& f : G.waterFeatures(-6000, -6000, 6000, 6000)) {
+            if (f.kind == 0) {
+                if (lakes++ >= 12) continue;
+                // (the water from the chunks: level all over; and the ground round it at 1.6 R: over the water, or water of its own)
+                for (int a = -8; a <= 8; a++)
+                    for (int b = -8; b <= 8; b++) {
+                        const double dx = a / 8.0, dz = b / 8.0, r = std::sqrt(dx * dx + dz * dz);
+                        if (r < 1e-9) continue;
+                        const double ux = dx / r, uz = dz / r;
+                        if (std::fabs(r - 1) > 0.07) continue;  // (the ring: 64 or so points)
+                        const double rx = f.x + ux * 1.6 * f.size, rz = f.z + uz * 1.6 * f.size;
+                        const int64_t ix = (int64_t)std::floor(rx), iz = (int64_t)std::floor(rz);
+                        auto c = G.chunk(floorDiv(ix, kChunk), floorDiv(iz, kChunk));
+                        const size_t k = (size_t)(ix - c->cx * kChunk) * kChunk + (size_t)(iz - c->cz * kChunk);
+                        const double gh = c->h[k], wl = c->water.empty() ? -1e9 : c->water[k];
+                        rimN++;
+                        if (gh < f.level - 0.05 && wl < f.level - 0.05) rimBreach++, worstBreach = std::max(worstBreach, f.level - gh);
+                        // (and inside: the water's level is the lake's)
+                        const double lx = f.x + ux * 0.6 * f.size, lz = f.z + uz * 0.6 * f.size;
+                        const int64_t jx = (int64_t)std::floor(lx), jz = (int64_t)std::floor(lz);
+                        auto c2 = G.chunk(floorDiv(jx, kChunk), floorDiv(jz, kChunk));
+                        const size_t k2 = (size_t)(jx - c2->cx * kChunk) * kChunk + (size_t)(jz - c2->cz * kChunk);
+                        if (!c2->water.empty() && c2->water[k2] > -1e8f) levelN++, levelOff += std::fabs(c2->water[k2] - f.level) > 0.05;
+                    }
+            } else {
+                falls++;
+                // (the land along its way down: 6 m or more within 10 m at the step; and the pool below deeper than the water just above)
+                auto ground = [&](double x, double z) { return G.groundHeight(x, z); };
+                const double above = ground(f.x - f.fx * 3, f.z - f.fz * 3), below = ground(f.x + f.fx * 7, f.z + f.fz * 7);
+                tallFalls += above - below >= 6;
+                const Macro m = G.macroAt(f.x + f.fx * 10, f.z + f.fz * 10, true);
+                pools += m.creekS < m.creekHW || m.riverS < m.riverHW ? (std::min(m.creekS < m.creekHW ? m.creekDepth : 9.0, m.riverS < m.riverHW ? m.riverDepth : 9.0) > 1.2) : 0;
+            }
+        }
+    }
+    char b[300];
+    std::snprintf(b, sizeof b, "4 x 144 km2: %ld lakes (12 a seed looked at), %ld waterfalls; rims: %ld of %ld points under the water (worst %.1f m); water level: %ld of %ld points off",
+                  lakes, falls, rimBreach, rimN, worstBreach, levelOff, levelN);
+    ctx.note(b);
+    std::snprintf(b, sizeof b, "falls: %ld of %ld drop 6 m or more within 10 m; %ld with a plunge pool", tallFalls, falls, pools);
+    ctx.note(b);
+    ctx.check("there are lakes and waterfalls", lakes > 0 && falls > 0);
+    ctx.check("lakes: under the rim all round (under 2% of the rim's points low)", rimBreach * 50 <= rimN);
+    ctx.check("lakes: the water lies level", levelOff == 0 && levelN > 0);
+    ctx.check("waterfalls: where the land drops 6 m or more within 10 m (97%: a few where a neighbour's valley cuts the step back)", tallFalls * 100 >= falls * 97);
+    ctx.check("waterfalls: most with a plunge pool below (deeper than the stream: 1.2 m+)", pools * 10 >= falls * 8);
 }

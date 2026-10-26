@@ -275,6 +275,7 @@ struct DBlock {
     std::atomic<int8_t> up2[kB * kB];    // the biggest neighbour draining into it in the end (-2: not yet found)
     std::atomic<float> K[kB * kB];       // the smooth land with the rivers' valleys at the node (NaN: not yet)
     std::atomic<int8_t> perched[kB * kB];  // a creek's stretch whose water would stand over the land beside it: dry (-1: not yet)
+    std::atomic<float> lakeW[kB * kB];     // a sink's lake's level (NaN: not yet)
 };
 struct BKey {
     uint64_t seed;
@@ -334,6 +335,7 @@ std::shared_ptr<DBlock> makeBlock(const ProcWorld& G, int64_t bi, int64_t bj) {
             b->down2[q].store(-3, std::memory_order_relaxed), b->A2[q].store(-1, std::memory_order_relaxed), b->up2[q].store(-2, std::memory_order_relaxed);
             b->K[q].store(std::numeric_limits<float>::quiet_NaN(), std::memory_order_relaxed);
             b->perched[q].store(-1, std::memory_order_relaxed);
+            b->lakeW[q].store(std::numeric_limits<float>::quiet_NaN(), std::memory_order_relaxed);
         }
     return b;
 }
@@ -739,6 +741,8 @@ struct DrainSeg {
     uint8_t notch;              // a creek's or gully's: cut into the land the rivers left, its side a fixed width (wfix)
     float wfix;
     int64_t ni, nj;             // the node it's the stretch of
+    uint8_t fall;               // the lip-to-foot stretch of a waterfall
+    uint8_t wall;               // ...and the stretch below it: a wall behind its start
 };
 
 // How much water a channel of node n carries, by the climate there: a river fades to a dry wash in the desert, a creek needs wet ground.
@@ -748,6 +752,18 @@ double channelWet(const ProcWorld::Params& P, const NodeInfo& n, int cls) {
     lowWeights(P, n.wet, n.heat, n.mk, w);
     if (cls >= 2) return clamp01(1.25 - 1.7 * (w[PB_DUNES] + 0.75 * w[PB_BADLANDS]) * (1 - n.mk));  // (the ranges' rivers run from the snows)
     return clamp01((n.wet - 0.3 + 0.6 * n.mk) * 3) * clamp01(1.2 - 1.6 * (w[PB_DUNES] + 0.6 * w[PB_BADLANDS]));  // (the ranges are wet: snowmelt)
+}
+
+struct FallInfo {
+    double height = 0;  // m: the step (0: no waterfall)
+};
+// Is there a waterfall on node (i, j)'s stretch (its drop ln - l3 across it)? Steep (20 m or more in the stretch: over 1 in 8), wet,
+// in the ranges, not a ford; one in eight of those, by the node's dice. Up to 14 m.
+FallInfo fallOf(const ProcWorld& G, int64_t i, int64_t j, const DrainSeg& s, const NodeInfo& n, double ln, double l3) {
+    FallInfo f;
+    const double d = ln - l3;
+    if (s.cls >= 1 && s.wet > 0.5 && !s.ford && n.mk > 0.4 && d >= 20 && hash01(G.params().s[S_D8] + 77, i, j) < 0.12) f.height = std::min(14.0, 0.6 * d);
+    return f;
 }
 
 // Node (i, j)'s stretch of channel (and its link into the bigger one it joins), as straight pieces, relative to (ox, oz).
@@ -854,13 +870,37 @@ void nodeSegs(const ProcWorld& G, int64_t i, int64_t j, double ox, double oz, st
     }
     double px = p0x, pz = p0z, pl = ln;
     const size_t first = out.size();
-    for (int k = 1; k <= 4; k++) {
-        const double t = k * 0.25, a = (1 - t) * (1 - t), b = 2 * t * (1 - t), c = t * t;
-        const double ql = ln + (l3 - ln) * t;
+    // (A waterfall: only where the channel really drops, a steep stretch high in the ranges with water in it; most of the stretch's
+    // drop then comes at once over a rock step ~4 m long half-way along, with a plunge pool below it. The rest of the drop is spread
+    // over the stretch, so the level still never rises.)
+    const FallInfo fi = fallOf(G, i, j, s, n, ln, l3);
+    double tl = 0.5, tf = 0.5, tp = 0.5;
+    if (fi.height > 0) {
+        const double plen = std::sqrt(sqr(n.x - p0x) + sqr(n.z - p0z)) + std::sqrt(sqr(p2x - n.x) + sqr(p2z - n.z));
+        tf = tl + 4 / std::max(40.0, plen), tp = tf + 14 / std::max(40.0, plen);
+    }
+    const double drop = ln - l3, rest = drop - fi.height;
+    auto levelAtT = [&](double t) {
+        if (fi.height <= 0) return ln + (l3 - ln) * t;
+        if (t <= tl) return ln - rest * t;
+        if (t < tf) return ln - rest * tl - fi.height * (t - tl) / (tf - tl);
+        return ln - fi.height - rest * (tl + (1 - tl) * (t - tf) / (1 - tf));
+    };
+    double ts[8];
+    int nt = 0;
+    for (double t : {0.25, 0.5}) ts[nt++] = t;
+    if (fi.height > 0) ts[nt++] = tf, ts[nt++] = tp;
+    for (double t : {0.75, 1.0}) ts[nt++] = t;
+    double prevT = 0;
+    for (int q = 0; q < nt; q++) {
+        const double t = ts[q], a = (1 - t) * (1 - t), b = 2 * t * (1 - t), c = t * t;
+        const double ql = levelAtT(t);
         const double qx = a * p0x + b * n.x + c * p2x, qz = a * p0z + b * n.z + c * p2z;
         emit(px, pz, qx, qz, pl, ql);
-        if (k == 2 && s.ford) out.back().depth = (float)std::min((double)s.depth, rules().water.fordDepth);
-        px = qx, pz = qz, pl = ql;
+        if (std::fabs(t - 0.5) < 1e-9 && s.ford) out.back().depth = (float)std::min((double)s.depth, rules().water.fordDepth);
+        if (fi.height > 0 && std::fabs(prevT - tl) < 1e-9 && !out.empty()) out.back().fall = 1;
+        if (fi.height > 0 && std::fabs(prevT - tf) < 1e-9 && !out.empty()) out.back().depth += 1.3f, out.back().wall = 1;  // (the plunge pool)
+        px = qx, pz = qz, pl = ql, prevT = t;
     }
     if (s.ford)  // (the ford is the middle stretch alone: the rest of the node's curve deep)
         for (size_t k = first; k < out.size(); k++) out[k].ford = out[k].depth < s.depth;
@@ -872,6 +912,10 @@ struct DTile {
     std::vector<DrainSeg> segs;
     std::vector<uint32_t> start;  // kTC * kTC + 1
     std::vector<uint16_t> idx;    // the pieces whose valleys reach each cell (and 8 m round it)
+    // The lakes near it: one in each basin (a sink of the network: nothing lower round it), its water at the level its channels
+    // come down to, a bowl R across and D deep under that, a gentle shore rising from it (relative to the tile's corner).
+    struct Lake { float x, z, R, D; int64_t ni, nj; };  // (its level: lakeLevelOf, worked out when first asked for)
+    std::vector<Lake> lakes;
 };
 struct TKey {
     uint64_t seed;
@@ -899,6 +943,11 @@ std::shared_ptr<const DTile> makeTile(const ProcWorld& G, int64_t ti, int64_t tj
             // (A creek's or gully's valley reaches a few hundred metres at most (kNotchReach): only a river's reaches further.)
             const bool near = i >= in0 && i <= in1 && j >= jn0 && j <= jn1;
             if (riversOnly || !near ? !isRiver(G, i, j) : areaOf(G, i, j) < gully) continue;
+            if (!riversOnly && near && down2Of(G, i, j) < 0) {  // (a sink: a lake)
+                const NodeInfo n = nodeInfo(G, i, j);
+                const double A = areaOf(G, i, j);
+                t->lakes.push_back({(float)(n.x - t->ox), (float)(n.z - t->oz), (float)std::min(240.0, 25 + 5 * std::sqrt(A)), (float)std::min(8.0, 1.5 + 0.25 * std::sqrt(A)), i, j});
+            }
             const size_t from = all.size();
             nodeSegs(G, i, j, t->ox, t->oz, all, riversOnly);
             for (size_t k = from; k < all.size(); k++) {
@@ -966,7 +1015,10 @@ std::shared_ptr<const DTile> tileAt(const ProcWorld& G, double x, double z, bool
 
 // The valley a piece cuts, at distance d from its middle where its level is L: the bed under the water, a low bank, the flat floor,
 // then the side up to the mass M (steepest at its foot; flat on top). bed=false: the valley without its bed (the floor right across).
-inline double valleyAt(const DrainSeg& s, double d, double L, double M, bool bed) {
+inline double valleyCore(const DrainSeg& s, double d, double L, double M, bool bed);
+// (Below a waterfall the stretch has a wall behind its start (3:1, rock): its valley doesn't wrap round up the step and smear it.)
+inline double valleyAt(const DrainSeg& s, double d, double L, double M, bool bed, double behind = 0) { return valleyCore(s, d, L, M, bed) + (s.wall ? 3.0 * behind : 0.0); }
+inline double valleyCore(const DrainSeg& s, double d, double L, double M, bool bed) {
     if (d < s.hw) return bed ? L - s.depth * (1 - sqr(d / s.hw)) : L + s.bank;
     if (d < s.hw + 1.5) return bed ? L + s.bank * (d - s.hw) / 1.5 : L + s.bank;
     const double e = d - s.hw - s.F;
@@ -976,10 +1028,19 @@ inline double valleyAt(const DrainSeg& s, double d, double L, double M, bool bed
     const double u = e / W;
     return u >= 1 ? M : top + (M - top) * u * (2 - u);
 }
+// A lake's ground at r from its middle: the bowl under the water out to R, then a shore rising gently, steeper further out (it meets
+// the land round long before it ends: kLakeReach).
+constexpr double kLakeReach = 260;
+inline double lakeGround(const DTile::Lake& L, double W, double r) {
+    if (r < L.R) return W - L.D * (1 - sqr(r / L.R));
+    const double e = r - L.R;
+    return W + 0.12 * e + 0.02 * e * e;
+}
 // Where point (px, pz) (relative to the tile) is along the piece: the distance from it, and how far along (0..1).
-inline void segNear(const DrainSeg& s, double px, double pz, double& d, double& t) {
+inline void segNear(const DrainSeg& s, double px, double pz, double& d, double& t, double& behind) {
     const double vx = px - s.ax, vz = pz - s.az;
     double a = vx * s.dx + vz * s.dz;
+    behind = a < 0 ? -a : 0;
     a = a < 0 ? 0 : a > s.len ? s.len : a;
     d = std::sqrt(sqr(vx - s.dx * a) + sqr(vz - s.dz * a));
     t = a / s.len;
@@ -1045,10 +1106,10 @@ double valeAt(const ProcWorld& G, double x, double z) {
     for (uint32_t k = T->start[c]; k < T->start[c + 1]; k++) {
         const DrainSeg& s = T->segs[T->idx[k]];
         if (px < std::min(s.ax, s.bx) - s.reach || px > std::max(s.ax, s.bx) + s.reach || pz < std::min(s.az, s.bz) - s.reach || pz > std::max(s.az, s.bz) + s.reach) continue;
-        double d, t;
-        segNear(s, px, pz, d, t);
+        double d, t, bh;
+        segNear(s, px, pz, d, t, bh);
         if (d > s.reach) continue;
-        env = std::min(env, valleyAt(s, d, s.la + (s.lb - s.la) * t, ms.M, false));
+        env = std::min(env, valleyAt(s, d, s.la + (s.lb - s.la) * t, ms.M, false, bh));
     }
     return env;
 }
@@ -1065,10 +1126,10 @@ double valeSmoothAt(const ProcWorld& G, double x, double z) {
     for (uint32_t k = T->start[c]; k < T->start[c + 1]; k++) {
         const DrainSeg& s = T->segs[T->idx[k]];
         if (px < std::min(s.ax, s.bx) - s.reach || px > std::max(s.ax, s.bx) + s.reach || pz < std::min(s.az, s.bz) - s.reach || pz > std::max(s.az, s.bz) + s.reach) continue;
-        double d, t;
-        segNear(s, px, pz, d, t);
+        double d, t, bh;
+        segNear(s, px, pz, d, t, bh);
         if (d > s.reach) continue;
-        env = std::min(env, valleyAt(s, d, s.la + (s.lb - s.la) * t, M, false));
+        env = std::min(env, valleyAt(s, d, s.la + (s.lb - s.la) * t, M, false, bh));
     }
     return env;
 }
@@ -1076,7 +1137,8 @@ double valeSmoothAt(const ProcWorld& G, double x, double z) {
 
 // The land at a point from the channels near it (indices into a tile's pieces, the rivers' first): the mass, cut by the rivers'
 // valleys (the lowest of them), then by the creeks' and gullies' notches.
-static Macro evalMacro(const ProcWorld& G, double x, double z, const DTile& T, const uint16_t* idx, int n) {
+double lakeLevelOf(const ProcWorld& G, const DTile::Lake& L, double ox, double oz);
+static Macro evalMacro(const ProcWorld& G, double x, double z, const DTile& T, const uint16_t* idx, int n, bool withLakes = true) {
     const RangeRule& RR = rules().range;
     Macro m;
     const Mass ms = massAt(G.params(), x, z);
@@ -1092,16 +1154,24 @@ static Macro evalMacro(const ProcWorld& G, double x, double z, const DTile& T, c
         if (s.notch && !valeDone) vale = env, valeDone = true;
         // (Quick reject: further than its reach from either end's box.)
         if (px < std::min(s.ax, s.bx) - s.reach || px > std::max(s.ax, s.bx) + s.reach || pz < std::min(s.az, s.bz) - s.reach || pz > std::max(s.az, s.bz) + s.reach) continue;
-        double d, t;
-        segNear(s, px, pz, d, t);
+        double d, t, bh;
+        segNear(s, px, pz, d, t, bh);
         if (d > s.reach) continue;
         const double L = s.la + (s.lb - s.la) * t;
-        const double v = valleyAt(s, d, L, s.notch ? vale : M, false);
+        const double v = valleyAt(s, d, L, s.notch ? vale : M, false, bh);
         if (v < env) env = v, Lmin = L, m.floorArea = s.A;
         if (s.cls >= 2 && d < rd) rd = d, rs = &s, rt = t;
         if (s.cls == 1 && d < cd) cd = d, cs = &s, ct = t;
     }
     if (!valeDone) vale = env;
+    for (const DTile::Lake& L : T.lakes) {  // (the lakes' bowls and shores)
+        if (!withLakes) break;
+        const double r = std::sqrt(sqr(px - L.x) + sqr(pz - L.z));
+        if (r > L.R + kLakeReach) continue;
+        const double W = lakeLevelOf(G, L, T.ox, T.oz), v = lakeGround(L, W, r);
+        if (v < env) env = v, Lmin = W;
+        if (r < 1.5 * L.R && v < W) m.lakeLevel = std::max(m.lakeLevel, W);
+    }
     m.floor = Lmin, m.vale = vale;
     m.h = env;
 
@@ -1123,12 +1193,32 @@ static Macro evalMacro(const ProcWorld& G, double x, double z, const DTile& T, c
 }
 
 namespace {
-Macro macroNoPerch(const ProcWorld& G, double x, double z) {
+Macro macroNoPerch(const ProcWorld& G, double x, double z, bool withLakes = true) {
     const auto T = tileAt(G, x, z);
     const int a = std::min(kTC - 1, std::max(0, (int)std::floor((x - T->ox) / kTCell))), b = std::min(kTC - 1, std::max(0, (int)std::floor((z - T->oz) / kTCell)));
     const int c = a * kTC + b;
-    return evalMacro(G, x, z, *T, T->idx.data() + T->start[c], (int)(T->start[c + 1] - T->start[c]));
+    return evalMacro(G, x, z, *T, T->idx.data() + T->start[c], (int)(T->start[c + 1] - T->start[c]), withLakes);
 }
+}  // namespace
+// A lake's level: its basin filled to just under the lowest point of its rim (the land round it, without the lakes, at 1.6 times its
+// radius), and no more than a metre over where its channels come down to. So it sits under the rim all round, and level.
+double lakeLevelOf(const ProcWorld& G, const DTile::Lake& L, double ox, double oz) {
+    int q;
+    {
+        const float w = blockFor(G, L.ni, L.nj, q)->lakeW[q].load(std::memory_order_relaxed);
+        if (w == w) return w;
+    }
+    const double cx = ox + L.x, cz = oz + L.z;
+    double rim = 1e300;
+    static const double kDir[16][2] = {{1, 0}, {0.92388, 0.38268}, {0.70711, 0.70711}, {0.38268, 0.92388}, {0, 1}, {-0.38268, 0.92388}, {-0.70711, 0.70711}, {-0.92388, 0.38268},
+                                       {-1, 0}, {-0.92388, -0.38268}, {-0.70711, -0.70711}, {-0.38268, -0.92388}, {0, -1}, {0.38268, -0.92388}, {0.70711, -0.70711}, {0.92388, -0.38268}};
+    for (const auto& d : kDir)
+        for (double f : {1.45, 1.6, 1.75}) rim = std::min(rim, macroNoPerch(G, cx + d[0] * f * L.R, cz + d[1] * f * L.R, false).h);
+    const float W = (float)std::min(rim - 0.25, levelOf(G, L.ni, L.nj) + 1.0);
+    blockFor(G, L.ni, L.nj, q)->lakeW[q].store(W, std::memory_order_relaxed);
+    return W;
+}
+namespace {
 // (The rule: water never stands over the land beside it. A creek's stretch, where the land 30 m to either side, across it, is lower than
 // its water (on a valley's side at a slant, or beside a deeper neighbour), carries no water there: it's dry, seeped into the scree.)
 bool creekPerched(const ProcWorld& G, int64_t i, int64_t j) {
@@ -1226,6 +1316,34 @@ ProcWorld::DrainStats ProcWorld::drainStats(double x0, double z0, double x1, dou
     return st;
 }
 
+std::vector<ProcWorld::WaterFeature> ProcWorld::waterFeatures(double x0, double z0, double x1, double z1) const {
+    std::vector<WaterFeature> out;
+    const DrainClass DC = drainClass();
+    const int64_t i0 = (int64_t)std::floor(x0 / kD) - 1, i1 = (int64_t)std::floor(x1 / kD) + 1, j0 = (int64_t)std::floor(z0 / kD) - 1, j1 = (int64_t)std::floor(z1 / kD) + 1;
+    for (int64_t i = i0; i <= i1; i++)
+        for (int64_t j = j0; j <= j1; j++) {
+            if (areaOf(*this, i, j) < DC.gully) continue;
+            const NodeInfo n = nodeInfo(*this, i, j);
+            if (down2Of(*this, i, j) < 0) {
+                if (n.x >= x0 && n.x < x1 && n.z >= z0 && n.z < z1)
+                {
+                    const double A = areaOf(*this, i, j);
+                    const DTile::Lake L{0, 0, (float)std::min(240.0, 25 + 5 * std::sqrt(A)), (float)std::min(8.0, 1.5 + 0.25 * std::sqrt(A)), i, j};
+                    out.push_back({0, n.x, n.z, lakeLevelOf(*this, L, n.x, n.z), L.R, 0, 0});
+                }
+                continue;
+            }
+            std::vector<DrainSeg> own;
+            nodeSegs(*this, i, j, 0, 0, own, false);
+            bool dry = false, any = false;
+            for (const DrainSeg& e : own) any |= e.fall != 0;
+            if (any && own[0].cls == 1) dry = creekPerched(*this, i, j);  // (a dry step: no waterfall)
+            for (const DrainSeg& e : own)
+                if (e.fall && !dry && e.ax >= x0 && e.ax < x1 && e.az >= z0 && e.az < z1) out.push_back({1, e.ax, e.az, e.la, e.la - e.lb, e.dx, e.dz});
+        }
+    return out;
+}
+
 std::vector<std::pair<double, double>> ProcWorld::channelsAcross(double x0, double z0, double x1, double z1, double minArea) const {
     // (Each channel piece the line crosses, as (how far along the line, the channel's drainage). A channel's two pieces either side of
     // a crossing point count once: crossings within 60 m of each other with the same drainage are one.)
@@ -1254,6 +1372,7 @@ std::vector<std::pair<double, double>> ProcWorld::channelsAcross(double x0, doub
 }
 
 // (The caches of the drainage: dropped with the chunks'.)
+static void clearGridCache();
 static void clearDrainCaches() {
     {
         std::lock_guard<std::mutex> lock(blockMutex);
@@ -1263,6 +1382,7 @@ static void clearDrainCaches() {
         std::lock_guard<std::mutex> lock(tileMutex);
         tileMap[0].clear(), tileMap[1].clear();
     }
+    clearGridCache();
     drainEpoch++;
 }
 
@@ -1413,7 +1533,7 @@ TrailNode ProcWorld::makeNode(int64_t i, int64_t j) const {
         const Macro m = macroAt(x, z, false);
         const double g = groundHeight(x, z, m), e = groundHeight(x + 20, z), w = groundHeight(x - 20, z), s = groundHeight(x, z + 20), nn = groundHeight(x, z - 20);
         const double slope = (std::fabs(e - w) + std::fabs(s - nn)) / 40 + (std::fabs(e + w - 2 * g) + std::fabs(s + nn - 2 * g)) / 40;
-        const double clear = std::min(std::fabs(m.riverS) - m.riverHW - (m.riverOn > 0 ? 45 : 15), std::fabs(m.creekS) - 20);
+        const double clear = m.lakeLevel > -1e8 ? -40.0 : std::min(std::fabs(m.riverS) - m.riverHW - (m.riverOn > 0 ? 45 : 15), std::fabs(m.creekS) - 20);
         const double score = std::min(clear, 30.0) - 160 * slope - 0.12 * g;
         if (score > best) best = score, n.x = x, n.z = z, n.h = (2 * g + e + w + s + nn) / 6;
     }
@@ -1432,6 +1552,67 @@ struct EdgeHash {
 };
 std::mutex edgeMutex;
 std::unordered_map<EdgeKey, std::shared_ptr<const TrailEdge>, EdgeHash> edgeCache;
+}  // namespace
+
+namespace {
+// The trails' search lattice (16 m), cached by 1 km tile and shared by every edge over it: the carved ground, and what water is there
+// (0 none, 1 a river or creek to wade, 2 a big river off its fords: a bridge or nothing, 3 a lake: round it).
+struct GridPoint {
+    float h;
+    uint8_t wet;
+};
+struct GridTile {
+    GridPoint p[64 * 64];
+};
+std::mutex gridMutex;
+std::unordered_map<TKey, std::shared_ptr<const GridTile>, TKHash> gridMap;
+}  // namespace
+static void clearGridCache() {
+    std::lock_guard<std::mutex> lock(gridMutex);
+    gridMap.clear();
+}
+namespace {
+GridPoint gridPoint(const ProcWorld& G, int64_t u, int64_t v) {
+    const int64_t ti = floorDiv(u, 64), tj = floorDiv(v, 64);
+    thread_local struct {
+        uint64_t seed = 0, epoch = 0;
+        int64_t i = INT64_MIN, j = 0;
+        std::shared_ptr<const GridTile> t;
+    } slot[4];
+    thread_local int next = 0;
+    const uint64_t ep = drainEpoch.load(std::memory_order_relaxed);
+    const GridTile* t = nullptr;
+    for (auto& s : slot)
+        if (s.t && s.epoch == ep && s.i == ti && s.j == tj && s.seed == G.seed()) t = s.t.get();
+    if (!t) {
+        std::shared_ptr<const GridTile> got;
+        {
+            std::lock_guard<std::mutex> lock(gridMutex);
+            auto it = gridMap.find({G.seed(), ti, tj});
+            if (it != gridMap.end()) got = it->second;
+        }
+        if (!got) {
+            auto made = std::make_shared<GridTile>();
+            for (int a = 0; a < 64; a++)
+                for (int b = 0; b < 64; b++) {
+                    const double x = (double)((ti * 64 + a) * 16), z = (double)((tj * 64 + b) * 16);
+                    const Macro m = G.macroAt(x, z, false);  // (a creek dry just there still costs a crossing)
+                    GridPoint& g = made->p[a * 64 + b];
+                    g.h = (float)G.groundHeight(x, z, m);
+                    g.wet = (m.riverOn > 0.35 && std::fabs(m.riverS) < m.riverHW + 8) || (m.creekOn > 0.35 && std::fabs(m.creekS) < m.creekHW + 4);
+                    if (m.bigRiver && !m.riverFord && m.riverOn > 0.5 && std::fabs(m.riverS) < m.riverHW + 4) g.wet = 2;
+                    if (m.lakeLevel > -1e8 && m.h < m.lakeLevel + 2) g.wet = 3;
+                }
+            std::lock_guard<std::mutex> lock(gridMutex);
+            if (gridMap.size() > 800) gridMap.clear();  // (~13 MB)
+            got = gridMap.emplace(TKey{G.seed(), ti, tj}, made).first->second;
+        }
+        auto& s = slot[next++ & 3];
+        s.seed = G.seed(), s.epoch = ep, s.i = ti, s.j = tj, s.t = got;
+        t = got.get();
+    }
+    return t->p[(u - ti * 64) * 64 + (v - tj * 64)];
+}
 }  // namespace
 
 std::shared_ptr<const TrailEdge> ProcWorld::edge(int64_t i, int64_t j, int dir) const {
@@ -1467,12 +1648,8 @@ std::shared_ptr<const TrailEdge> ProcWorld::edge(int64_t i, int64_t j, int dir) 
         std::vector<uint8_t> wet((size_t)NX * NZ);
         for (int u = 0; u < NX; u++)
             for (int v = 0; v < NZ; v++) {
-                const double x = gx0 + u * C, z = gz0 + v * C;
-                const Macro m = macroAt(x, z, false);  // (a creek dry just there still costs a crossing)
-                H[(size_t)u * NZ + v] = (float)groundHeight(x, z, m);
-                wet[(size_t)u * NZ + v] = (m.riverOn > 0.35 && std::fabs(m.riverS) < m.riverHW + 8) || (m.creekOn > 0.35 && std::fabs(m.creekS) < m.creekHW + 4);
-                // (A big river off its known fords: deep and fast. 2: no way across but a bridge.)
-                if (m.bigRiver && !m.riverFord && m.riverOn > 0.5 && std::fabs(m.riverS) < m.riverHW + 4) wet[(size_t)u * NZ + v] = 2;
+                const GridPoint g = gridPoint(*this, (int64_t)std::llround(gx0 / C) + u, (int64_t)std::llround(gz0 / C) + v);
+                H[(size_t)u * NZ + v] = g.h, wet[(size_t)u * NZ + v] = g.wet;
             }
         // (Which trails may bridge a big river: most main trails, a few others. The rest cross at a known ford, or not at all.)
         const bool canBridge = hash01(P.s[S_DITHER] + 801 + (uint64_t)dir, i, j) < (e->road ? 0.75 : 0.15);
@@ -1522,7 +1699,8 @@ std::shared_ptr<const TrailEdge> ProcWorld::edge(int64_t i, int64_t j, int dir) 
                 const double g = std::fabs(H[nc] - H[c]) / L, q = g / gmax;
                 double step = L * (1 + 3 * q * q);
                 if (q > 1) step += L * (e->road ? 150 : 100) * (q - 1);  // (past its grade: only where there's no other way)
-                if (wet[nc] == 2 && wet[c] != 2) step += canBridge || e->road ? 350 : 8000;  // (a bridge costs; wading a big river: never, nearly)
+                if (wet[nc] == 3) step += 8000;  // (into a lake: never, nearly)
+                else if (wet[nc] == 2 && wet[c] != 2) step += canBridge || e->road ? 350 : 8000;  // (a bridge costs; wading a big river: never, nearly)
                 else if (wet[nc] && !wet[c]) step += 120;  // (into the water: a crossing costs, so it crosses once)
                 if (din < ND) {
                     const double cs = ux[din] * ux[d] + uz[din] * uz[d];
@@ -1590,7 +1768,6 @@ std::shared_ptr<const TrailEdge> ProcWorld::edge(int64_t i, int64_t j, int dir) 
             bool any = false;
             for (int k = 0; k < n; k++) {
                 const double gx = a.x + px[k], gz = a.z + pz[k];
-                if (wet[cellOf(gx, gz)] != 2) continue;
                 const Macro m = macroAt(gx, gz, false);
                 if (m.bigRiver && !m.riverFord && m.riverOn > 0.5 && std::fabs(m.riverS) < m.riverHW + 2) deep[k] = 1, wl[k] = m.riverLevel, any = true;
             }
@@ -1799,11 +1976,11 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
                 const double h0c = h;
                 double cut = 0;
                 for (const DrainSeg* s : beds) {
-                    double d, t;
-                    segNear(*s, x - T.ox, z - T.oz, d, t);
+                    double d, t, bh;
+                    segNear(*s, x - T.ox, z - T.oz, d, t, bh);
                     const double e = d - s->hw - s->F;
                     if (e > 18) continue;
-                    const double lv = s->la + (s->lb - s->la) * t, v = valleyAt(*s, d, lv, s->notch ? Vc : Mc, true);
+                    const double lv = s->la + (s->lb - s->la) * t, v = valleyAt(*s, d, lv, s->notch ? Vc : Mc, true, bh);
                     const double c = (h0c - v) * (1 - smoothstep(8.0, 18.0, e));
                     if (c > cut) cut = c;
                     if (v < h0c - cut + 1e-9 && e < 8 && (!arg || v < argV)) arg = s, argL = lv, argD = d, argV = v;
@@ -1821,6 +1998,16 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
                         cl.fx = arg->dx * sp, cl.fz = arg->dz * sp;
                     }
                 }
+            }
+            // The lakes: still water at their level over their bowls.
+            for (const DTile::Lake& L : T.lakes) {
+                const double r = std::sqrt(sqr(x - T.ox - L.x) + sqr(z - T.oz - L.z));
+                if (r > 1.5 * L.R) continue;
+                const double W = lakeLevelOf(*this, L, T.ox, T.oz);
+                if (h >= W - 0.02) continue;
+                if (cl.water < W) cl.water = W, cl.fx = cl.fz = 0;
+                if (r < L.R) cl.bed = 1;
+                cl.keep = 1;
             }
             // The trails: each one's tread, the land easing into it over a few metres (as wide as the tread's cut or fill is deep, about:
             // ~1:1.3, not a wall). Each trail's height here is its nearest stretches' (a switchback's two legs: the land goes the way of
@@ -2273,7 +2460,7 @@ void ProcWorld::nodePlaces(int64_t i, int64_t j, std::vector<MapPlace>& out) con
         const double dist = 45 + (double)((hc >> 16) % 40);
         const double cx = n.x + d[0] * dist, cz = n.z + d[1] * dist;
         const Macro m = macro(cx, cz);
-        const bool wet = (m.riverOn > 0.3 && std::fabs(m.riverS) < m.riverHW + 6) || (m.creekOn > 0.3 && std::fabs(m.creekS) < m.creekHW + 4);
+        const bool wet = (m.riverOn > 0.3 && std::fabs(m.riverS) < m.riverHW + 6) || (m.creekOn > 0.3 && std::fabs(m.creekS) < m.creekHW + 4) || m.lakeLevel > -1e8;
         if (!wet) add("CACHE", nm + " CACHE", PK_CACHE, cx, cz, 12, 0, 0)->reward = 150 + (int)(450 * remoteness(cx, cz)) / 10 * 10;
     }
     // Now and then an abandoned vehicle by a node, for the career to recover.
@@ -2283,6 +2470,15 @@ void ProcWorld::nodePlaces(int64_t i, int64_t j, std::vector<MapPlace>& out) con
         const double* d = kOut8[((hc >> 8) + 4) % 8];
         MapPlace* p = add("VEHICLE", nm + " WRECK", PK_ABANDONED_VEHICLE, n.x + d[0] * 30, n.z + d[1] * 30, 35, 0, 0);
         p->vehicle = v[0], p->condition = v[1];
+    }
+    // The waterfalls in its cell (one at most: the tallest), a place to find.
+    {
+        const double cx0 = (double)(i * kCell), cz0 = (double)(j * kCell);
+        const auto wf = waterFeatures(cx0, cz0, cx0 + kCell, cz0 + kCell);
+        const WaterFeature* best = nullptr;
+        for (const WaterFeature& f : wf)
+            if (f.kind == 1 && (!best || f.size > best->size)) best = &f;
+        if (best) add("FALLS", placeName(i, j, 3) + " FALLS", PK_WATERFALL, best->x, best->z, 40, 0, 0);
     }
     // The fords on the trails out of it (east and north): river crossings.
     for (int dir = 0; dir < 2; dir++) {
@@ -2418,7 +2614,7 @@ void buildPlaces(World& w, const std::vector<MapPlace>& places) {
                 break;
             default: break;
         }
-        if (pl.kind != PK_CACHE && pl.kind != PK_RIVER_CROSSING && pl.kind != PK_ABANDONED_VEHICLE) sign(rel(P, yw, 3, -(pl.pad + 2)), yw, PROP_SIGN);
+        if (pl.kind != PK_CACHE && pl.kind != PK_RIVER_CROSSING && pl.kind != PK_ABANDONED_VEHICLE && pl.kind != PK_WATERFALL) sign(rel(P, yw, 3, -(pl.pad + 2)), yw, PROP_SIGN);
     }
 }
 

@@ -102,6 +102,7 @@ struct Macro {
     bool bigRiver = false;     // a big river (deep and fast: crossed at its fords, or on bridges)
     bool riverFord = false;    // ...at one of its known fords here (a riffle: shallow)
     int64_t creekNode = INT64_MIN, creekNodeJ = 0;  // (the drainage lattice node whose stretch the creek is)
+    double lakeLevel = -1e9;   // a lake's water level, where its water or shore is (-1e9: none)
 };
 
 // The trail network: one node in every kCell x kCell cell of the world, joined to its east and north neighbours (now and then
@@ -174,6 +175,10 @@ public:
         double meanA = 0;
     };
     DrainStats drainStats(double x0, double z0, double x1, double z1) const;
+    // The lakes and waterfalls in a square (global): where (a lake's middle; a fall's lip), the water's level (a fall's: at its lip),
+    // and a lake's radius or a fall's height.
+    struct WaterFeature { int kind = 0; double x = 0, z = 0, level = 0, size = 0, fx = 0, fz = 0; };  // kind 0 lake, 1 fall (fx, fz: its way down)
+    std::vector<WaterFeature> waterFeatures(double x0, double z0, double x1, double z1) const;
     // The channels crossing a straight line (a transect): where along it, and the drainage of each (lattice nodes).
     std::vector<std::pair<double, double>> channelsAcross(double x0, double z0, double x1, double z1, double minArea) const;
     // The far forest's hook (render: farforest.h), read-only on the chunks' tree rule (makeChunk): the trees a hectare a chunk tries at
