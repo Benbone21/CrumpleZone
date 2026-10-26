@@ -19,11 +19,20 @@ void reset();
 void report(const char* title);        // prints the stages (if enabled), then clears them
 double nowMs();
 
+// What every thread is busy with right now, for a hang report (the watchdog prints it when it trips). Each thread has a
+// phase (a step of startup: phase("sdl.window") replaces the one before; nullptr: none) and the stack of the Scopes and
+// Steps it is inside. Names must outlive their use (string literals). CZ_STAGE_LOG=1 prints each phase as it starts.
+void phase(const char* name);
+void nameThread(const char* name);  // shown in the report ("main", "car visual", ...)
+void enter(const char* stage);      // (Scope and Steps do these)
+void leave();
+std::string activeStages();         // one line per busy thread: "  main #0: sdl.window (912.3 s) > ..."; "" if none
+
 struct Scope {
     const char* name;
     double t0;
-    explicit Scope(const char* n) : name(n), t0(nowMs()) {}
-    ~Scope() { add(name, nowMs() - t0); }
+    explicit Scope(const char* n) : name(n), t0(nowMs()) { enter(n); }
+    ~Scope() { leave(), add(name, nowMs() - t0); }
     Scope(const Scope&) = delete;
     Scope& operator=(const Scope&) = delete;
 };
@@ -34,8 +43,9 @@ struct Steps {
     double t0 = 0;
     void next(const char* n) {
         const double t = nowMs();
-        if (name) add(name, t - t0);
+        if (name) leave(), add(name, t - t0);
         name = n, t0 = t;
+        if (n) enter(n);
     }
     Steps() = default;
     explicit Steps(const char* first) { next(first); }

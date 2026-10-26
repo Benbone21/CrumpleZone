@@ -1609,6 +1609,8 @@ void prebuildVisual(const VehicleSpec& spec, const V3& color) {
     if (slot.ready.load(std::memory_order_acquire) || slot.queued.exchange(true)) return;
     const VehicleSpec* sp = &spec;
     std::thread([sp, color] {
+        loadprof::nameThread("car visual");
+        loadprof::phase(sp->name);
         Car scratch;
         scratch.build(*sp, V3(0, 1, 0), 0, sp->paintColor[0] >= 0 ? V3(sp->paintColor[0], sp->paintColor[1], sp->paintColor[2]) : color);
         visualTemplate(scratch);
