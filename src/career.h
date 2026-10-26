@@ -90,9 +90,13 @@ struct Career {
     // Buys something off a station's rack: false (and why) if it can't.
     bool buyGear(const ShopItem& it, std::string& why);
 
-    bool isOpened(const CacheSpot& c) const { return opened.count(std::to_string(c.map) + ":" + c.id) > 0; }
-    // Opens it (once): its part or cash is yours. Returns what to announce ("" if opened already).
+    static std::string cacheKey(const CacheSpot& c) { return std::to_string(c.map) + ":" + c.id; }  // "MAP:ID"
+    bool isOpened(const CacheSpot& c) const { return opened.count(cacheKey(c)) > 0; }
+    // Opens it (once): its part or cash is yours. Returns what to announce ("" if opened already). (A career world keeps its
+    // own opened caches: careersession::openCache.)
     std::string openCache(const CacheSpot& c);
+    // What's in it, yours (whether or not it was opened before: the caller keeps that). Returns what to announce.
+    std::string takeCache(const CacheSpot& c);
     // A job done: pays. Returns what to announce.
     std::string jobDone();
     // A level finished with a medal (0 none, 1 bronze, 2 silver, 3 gold): pays for each medal
@@ -101,13 +105,17 @@ struct Career {
 
     std::vector<OwnedVehicle> vehicles;  // the profile's vehicles
 
+    bool fresh = false;  // made by startFresh and not loaded since (only such a profile takes a new world's difficulty)
     void startFresh(Difficulty d = DIFF_MEDIUM);  // cash is startCash(d)
-    bool load(const std::string& path);
+    bool load(const std::string& path);  // false if it can't be read or isn't a career (then nothing changes)
     bool save(const std::string& path) const;
     // The profile: progress and vehicles in one file, atomically written with a .bak.
     static std::string profilePath();  // careerConfigDir()/profile.txt
-    // profile.txt, else its .bak, else the old career.txt (migrated: true, and the next saveProfile writes profile.txt); false if none exist.
+    // profile.txt, else its .bak, else (only when neither is there) the old career.txt (migrated: true, and the next
+    // saveProfile writes profile.txt); false if none can be read (then nothing changes).
     bool loadProfile();
+    // Whether profile.txt or its .bak is there (loadProfile false with one there: damaged, not missing).
+    static bool profileExists();
     bool saveProfile() const;
     static std::string defaultPath();  // careerConfigDir()/career.txt (the old single-file career)
 };

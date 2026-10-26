@@ -1537,7 +1537,8 @@ void drawPlayers(Renderer& r, const Sim& sim, const NetSession& net, const View&
 
 // A career's supply caches still to open, within ~250 m: a marker over each and how far.
 // (Your cash, top left.)
-void drawCaches(Renderer& r, const Career& career, const HudState& hud, const std::vector<CacheSpot>& caches, const View& view, float u, int W, int H) {
+void drawCaches(Renderer& r, const CareerSession& run, const HudState& hud, const std::vector<CacheSpot>& caches, const View& view, float u, int W, int H) {
+    const Career& career = run.profile;
     if (!career.on) return;
     const std::string cash = "CAREER  $" + std::to_string(career.cash);
     const float cs = px(1.4f * u);
@@ -1545,7 +1546,7 @@ void drawCaches(Renderer& r, const Career& career, const HudState& hud, const st
     pill(r, 12 * u, cy, r.textWidth(cash, cs) + 16 * u, 8 * cs + 10 * u, 0.02f, 0.025f, 0.035f, 0.75f);
     r.text(20 * u, cy + 5 * u, cs, cash, 0.55f, 0.9f, 0.6f);
     for (const CacheSpot& c : caches) {
-        if (career.isOpened(c)) continue;
+        if (careersession::cacheOpened(run, c)) continue;
         const double d = len(c.at - view.eye);
         if (d > 250) continue;
         float sx, sy;
@@ -1573,7 +1574,7 @@ void drawTags(Renderer& r, const World& world, const View& view, float u, int W,
 }
 
 void drawHud(Renderer& r, const Sim& sim, const View& view, HudState& hud, const Playback* pb, const NetSession& net, int W,
-             int H, float fps, double dt, bool mph, const Career& career, const std::vector<CacheSpot>& caches) {
+             int H, float fps, double dt, bool mph, const CareerSession& careerRun, const std::vector<CacheSpot>& caches) {
     float u = std::max(0.75f, H / 720.0f);
     const Car& car = sim.cars[sim.player];
     drawGauges(r, car, hud, u, W, H, dt, mph);
@@ -1584,7 +1585,7 @@ void drawHud(Renderer& r, const Sim& sim, const View& view, HudState& hud, const
     drawStation(r, sim, u, W, H);
     if (!hud.debugOn) drawPlayers(r, sim, net, view, u, W, H, hud.showFps);  // (F3 lists them itself)
     drawPilot(r, sim, view, u, W, H);
-    drawCaches(r, career, hud, caches, view, u, W, H);
+    drawCaches(r, careerRun, hud, caches, view, u, W, H);
     drawTags(r, sim.world, view, u, W, H);
 
     // Top-center: compass, scenario status, persistent states, then toasts.
@@ -2010,9 +2011,10 @@ int main(int argc, char** argv) {
     careerRun.write = !careerQuiet;
     Career& career = careerRun.profile;
     career.on = settings.career;
-    if (scripted || !career.loadProfile()) career.startFresh();
+    bool profileDamaged = false;  // (profile.txt or its .bak there but unreadable: never written over; a world won't start)
+    if (scripted || !career.loadProfile()) profileDamaged = !scripted && Career::profileExists(), career.startFresh();
     auto saveCareer = [&]() {
-        if (!careerQuiet && career.on) career.saveProfile();
+        if (!careerQuiet && career.on && !profileDamaged) career.saveProfile();
     };
     std::vector<CacheSpot> caches;  // this map's supply caches (a career's)
     int cachesMap = -1;
@@ -2237,7 +2239,7 @@ int main(int argc, char** argv) {
         sim.steeringAssist = settings.steeringAssist;
     };
     auto saveSettings = [&]() {
-        if (!scripted) settings.save(settingsPath);
+        if (!careerQuiet) settings.save(settingsPath);  // (scripted and --script runs never write settings.txt)
     };
     // Graphics detection (perf.h): the hardware guess is on already (first launch) or applied here (the button); the probe then
     // measures a few seconds of the running game and steps the preset toward the FPS target.
@@ -2264,7 +2266,9 @@ int main(int argc, char** argv) {
             return false;
         }
         const bool ownPaint = careerRun.active && c.careerSlot != -1;  // (a career world's vehicle: its own paint, not the garage's)
-        garageShop.begin(c.spec->model, garage.fitted[c.spec->model], career, career.on, at >= 0, ownPaint ? c.paint : garage.paint[c.spec->model]);
+        ModSet fitted = garage.fitted[c.spec->model];
+        careersession::shopMods(careerRun, sim, fitted);  // (a career world's vehicle: its own parts, so opening changes nothing on it)
+        garageShop.begin(c.spec->model, fitted, career, career.on, at >= 0, ownPaint ? c.paint : garage.paint[c.spec->model]);
         shopToast.clear();
         shopDrag = false;
         // (shopBlend carries on: reopened while it eases out, the camera turns back from where it is)
@@ -2288,8 +2292,10 @@ int main(int argc, char** argv) {
         if (!r.toast.empty()) shopToast = r.toast, shopToastT = 3.0;
         if (r.saveCareer) saveCareer();
         if (r.fitted) {
-            garage.fitted[garageShop.vehicle] = garageShop.fitted;
-            if (!scripted) garage.save(garagePath);
+            if (!careersession::fit(careerRun, sim, garageShop.vehicle, garageShop.fitted)) {  // (a career world's vehicle: in the profile with it)
+                garage.fitted[garageShop.vehicle] = garageShop.fitted;
+                if (!scripted) garage.save(garagePath);
+            }
             shopRecal = garageShop.recal;
         }
         if (r.painted) {
@@ -2442,7 +2448,26 @@ int main(int argc, char** argv) {
     auto startPendingCareer = [&]() {
         if (!careerNext.on) return;
         careerNext.on = false;
-        careersession::begin(careerRun, sim, careerNext.world, settings.playerName, careerNext.start);
+        std::string why;
+        if (!careersession::begin(careerRun, sim, careerNext.world, settings.playerName, careerNext.start, &why)) {  // (a damaged profile: left alone)
+            std::printf("career: %s\n", why.c_str());
+            settings.career = career.on = false;  // (back to sandbox, as endCareer goes)
+            saveSettings();
+            garagePath = Garage::defaultPath();
+            garage = Garage();
+            garage.load(garagePath);
+            const Car& pc = sim.cars[sim.player];
+            if (!pc.isProp() && pc.spec->model >= 0) sim.swapPlayerVehicle(garage.spec(pc.spec->model));
+            cachesMap = -1;
+            sim.anchorStock = AnchorStock();
+            hud.toast(why);
+            return;
+        }
+        bool lids = false;  // (crates already out on this map: their lids as this world has them)
+        for (const CacheSpot& c : caches)
+            for (Placed& pl : sim.world.models)
+                if (pl.id == "supply_crate" && len(pl.p - c.at) < 0.05) pl.set = {{"open", careersession::cacheOpened(careerRun, c) ? 1.0 : 0.0}}, lids = true;
+        if (lids) renderer.updateObjects(sim.world);
         const Car& pc = sim.cars[sim.player];
         hud.toast(careerRun.world.name + ": " + (pc.spec->model >= 0 ? vehicleCatalog()[pc.spec->model].name : "") + "  ($" + std::to_string(career.cash) + ")");
         std::printf("career: %s %s, %d vehicles\n", careerNext.start >= 0 ? "new world" : "continued", careerRun.world.slug.c_str(), sim.vehicleCount());
@@ -2736,13 +2761,13 @@ int main(int argc, char** argv) {
     auto openCache = [&](const std::string& id, const std::string& who) {
         for (const CacheSpot& c : caches) {
             if (c.id != id) continue;
-            const std::string said = career.openCache(c);
+            const std::string said = careersession::openCache(careerRun, sim, c);  // (a world's own opened caches, saved with it)
             if (said.empty()) return false;
             for (Placed& pl : sim.world.models)  // its lid comes off
                 if (pl.id == "supply_crate" && len(pl.p - c.at) < 0.05) pl.set = {{"open", 1.0}}, renderer.updateObjects(sim.world);
             jobBanner = std::max(jobBanner, 5.0);
             jobBannerText = (who.empty() ? c.id + ": " : who + " OPENED " + c.id + ": ") + said;
-            saveCareer();
+            if (!careerRun.active) saveCareer();
             return true;
         }
         return false;
@@ -5212,7 +5237,7 @@ int main(int argc, char** argv) {
                     interact.spots.clear();  // (a career's supply caches in reach: E opens one)
                     if (career.on) {
                         for (const CacheSpot& c : caches)
-                            if (!career.isOpened(c) && len(c.at - walker.p) < 6) interact.spots.push_back({c.id, c.at, "OPEN THE SUPPLY CACHE"});
+                            if (!careersession::cacheOpened(careerRun, c) && len(c.at - walker.p) < 6) interact.spots.push_back({c.id, c.at, "OPEN THE SUPPLY CACHE"});
                         // A station's rack: tools and repair parts for sale.
                         for (int s = 0; s < (int)sim.world.stations.size(); s++) {
                             if (len(sim.world.stations[s].p - walker.p) > 14) continue;
@@ -5446,7 +5471,7 @@ int main(int argc, char** argv) {
                                 sim.world.boxes.back().hidden = true;
                                 Placed pl;
                                 pl.id = "supply_crate", pl.p = c.at, pl.yaw = yaw;
-                                pl.set = {{"open", career.isOpened(c) ? 1.0 : 0.0}};
+                                pl.set = {{"open", careersession::cacheOpened(careerRun, c) ? 1.0 : 0.0}};
                                 sim.world.models.push_back(pl);
                             }
                         }
@@ -6739,7 +6764,7 @@ int main(int argc, char** argv) {
         }
         hud.update(dt);
         if (editor.active && !menu.open) editor.draw(renderer, W, H, dt);
-        else if (!menu.open && !hud.photo && !garageShop.open) drawHud(renderer, sim, view, hud, &playback, net, W, H, fps, dt, settings.mph, career, caches);
+        else if (!menu.open && !hud.photo && !garageShop.open) drawHud(renderer, sim, view, hud, &playback, net, W, H, fps, dt, settings.mph, careerRun, caches);
         const bool showHud = !menu.open && !editor.active && !hud.photo && !garageShop.open;
         hud.debugOn = dbg.on;
         if (dbg.on && showHud) {  // F3: gathered and painted only while it's up

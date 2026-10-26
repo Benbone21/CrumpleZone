@@ -205,7 +205,11 @@ std::string Career::grant(const std::string& key) {
 
 std::string Career::openCache(const CacheSpot& c) {
     if (isOpened(c)) return "";
-    opened.insert(std::to_string(c.map) + ":" + c.id);
+    opened.insert(cacheKey(c));
+    return takeCache(c);
+}
+
+std::string Career::takeCache(const CacheSpot& c) {
     std::string said;
     if (!c.part.empty()) said = "FOUND: " + grant(c.part);
     else cash += c.cash, said = "FOUND: $" + std::to_string(c.cash);
@@ -303,6 +307,7 @@ std::string Career::medal(const std::string& level, int m) {
 }
 
 void Career::startFresh(Difficulty d) {
+    fresh = true;
     cash = startCash(d);
     owned.clear(), opened.clear(), claimed.clear(), stock.clear(), vehicles.clear();
     // You set out with what's in any truck: a lug wrench and a jack.
@@ -411,7 +416,10 @@ std::string careerText(const Career& c) {
 bool Career::load(const std::string& path) {
     std::ifstream f(path);
     if (!f) return false;
-    parseCareer(f, *this);
+    Career c;  // (read aside: a file that isn't a career changes nothing)
+    if (!parseCareer(f, c)) return false;
+    c.on = on;
+    *this = c;
     return true;
 }
 
@@ -426,11 +434,14 @@ bool Career::save(const std::string& path) const {
 
 std::string Career::profilePath() { return careerConfigDir() + "/profile.txt"; }
 
+bool Career::profileExists() {
+    return (bool)std::ifstream(profilePath()) || (bool)std::ifstream(profilePath() + ".bak");
+}
+
 bool Career::loadProfile() {
-    for (const std::string& path : {profilePath(), profilePath() + ".bak"}) {
-        std::ifstream f(path);
-        if (f && parseCareer(f, *this)) return true;
-    }
+    for (const std::string& path : {profilePath(), profilePath() + ".bak"})
+        if (load(path)) return true;
+    if (profileExists()) return false;  // (damaged: not the old career.txt over it)
     return load(defaultPath());  // (the old file stays as it is)
 }
 

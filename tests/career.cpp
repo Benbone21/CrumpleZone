@@ -301,3 +301,20 @@ SCENARIO(careerProfileBadVehicle, "career/profile-bad-vehicle", "A veh line that
     Career d;
     ctx.check("reloaded", d.loadProfile() && d.vehicles.size() == 2 && d.vehicles[0].condition == "first" && d.vehicles[1].condition == "third");
 }
+
+SCENARIO(careerProfileBrokenOld, "career/profile-broken-old", "A broken or empty old career.txt isn't migrated as $0 with no tools; a damaged profile.txt doesn't fall back to career.txt") {
+    const std::string dir = freshDir("broken-old");
+    ScopedCareerDir scope(dir);
+    spit(dir + "/career.txt", "");
+    Career c;
+    ctx.check("an empty career.txt: nothing loaded", !c.loadProfile());
+    ctx.check("Career::load says so too", !c.load(dir + "/career.txt"));
+    spit(dir + "/career.txt", "cash 4321\n");
+    spit(dir + "/profile.txt", "garbage\n");
+    Career d;
+    ctx.check("a damaged profile.txt: not the old career.txt instead", !d.loadProfile() && d.cash != 4321, std::to_string(d.cash));
+    Career e;
+    e.cash = 9;
+    e.loadProfile();
+    ctx.check("a failed load leaves the career as it was", e.cash == 9);
+}

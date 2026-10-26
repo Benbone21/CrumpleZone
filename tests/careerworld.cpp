@@ -9,6 +9,7 @@
 #include "../src/careersession.h"
 #include "../src/careerworld.h"
 #include "../src/carsave.h"
+#include "../src/garageshop.h"
 #include "../src/net.h"
 #include "../src/platform.h"
 #include "../src/vehicles.h"
@@ -403,8 +404,9 @@ SCENARIO(careerSessionStationSwap, "career/session-station-swap", "Changing vehi
     WorldSave w = newWorld("Swaps", MAP_PROVING_GROUND, DIFF_MEDIUM, MODE_PERSONAL, {});
     CareerSession s;
     careersession::begin(s, ctx.sim, w, "ANN", blazer);
-    OwnedVehicle other;  // (a Tacoma of yours in no world)
+    OwnedVehicle other;  // (a Tacoma of yours in this world, parked off somewhere: not out)
     other.vehicle = tacoma;
+    other.world = w.slug;
     s.profile.vehicles.push_back(other);
     {  // the Blazer bent a little, and settled
         Car& c = ctx.sim.cars[ctx.sim.player];
@@ -503,4 +505,215 @@ SCENARIO(careerSessionPaint, "career/session-paint", "A career truck keeps its o
     careersession::begin(s3, sim3, crew, "ANN", bronco);
     const Car* left = slotCar(sim3, -2);
     ctx.check("the left vehicle wears its paint", left && left->paint == p);
+}
+
+// ---- Final-review fixes: progress kept, the garage, starters, caches per world ----
+
+SCENARIO(careerSessionKeepsProgress, "career/session-keeps-progress", "A profile from career play without a world (cash, parts, no vehicles) keeps its progress in a NEW WORLD; a damaged profile refuses the world and is left alone") {
+    const std::string dir = freshDir("session-keeps-progress");
+    ScopedCareerDir scope(dir);
+    const int bronco = catalogIndex("bronco");
+    {
+        Career p;
+        p.startFresh();
+        p.cash = 4321;
+        p.grant("TIRES:MUD-TERRAIN");
+        p.opened.insert("3:SUMMIT");
+        ctx.check("profile saved", p.saveProfile());
+    }
+    ctx.sim.setupEmpty();
+    WorldSave w = newWorld("Hard", MAP_PROVING_GROUND, DIFF_HARDCORE, MODE_PERSONAL, {});
+    CareerSession s;
+    ctx.check("begun", careersession::begin(s, ctx.sim, w, "ANN", bronco));
+    ctx.check("the cash kept (not the difficulty's)", s.profile.cash == 4321, std::to_string(s.profile.cash));
+    ctx.check("the part kept", s.profile.owned.count("TIRES:MUD-TERRAIN") == 1);
+    ctx.check("the opened cache kept", s.profile.opened.count("3:SUMMIT") == 1);
+    ctx.check("and the Bronco", s.profile.vehicles.size() == 1 && s.profile.vehicles[0].vehicle == bronco);
+    careersession::end(s, ctx.sim);
+
+    // A profile.txt that won't parse (and no good .bak): the world isn't begun and nothing is written over it.
+    const std::string junk = "this is not a profile\n";
+    spit(dir + "/profile.txt", junk);
+    spit(dir + "/profile.txt.bak", junk);
+    Sim sim2;
+    sim2.setupEmpty();
+    WorldSave w2 = newWorld("Other", MAP_PROVING_GROUND, DIFF_LIGHT, MODE_PERSONAL, {});
+    CareerSession s2;
+    std::string why;
+    ctx.check("refused", !careersession::begin(s2, sim2, w2, "ANN", bronco, &why) && !why.empty(), why);
+    ctx.check("not active, career off", !s2.active && !s2.profile.on);
+    careersession::end(s2, sim2);
+    ctx.check("the files left as they were", slurp(dir + "/profile.txt") == junk && slurp(dir + "/profile.txt.bak") == junk);
+
+    // Only the .bak there, and it damaged: refused too.
+    std::remove((dir + "/profile.txt").c_str());
+    CareerSession s3;
+    ctx.check("a damaged .bak alone: refused", !careersession::begin(s3, sim2, w2, "ANN", bronco, &why));
+}
+
+SCENARIO(careerSessionScripted, "career/session-scripted", "A scripted run's session (write off) never reads profile.txt: a fresh profile starts at the world's difficulty, a kept one stays as it was") {
+    const std::string dir = freshDir("session-scripted");
+    ScopedCareerDir scope(dir);
+    spit(dir + "/profile.txt", "cash 4321\n");
+    ctx.sim.setupEmpty();
+    WorldSave w = newWorld("Quiet", MAP_PROVING_GROUND, DIFF_HARDCORE, MODE_PERSONAL, {});
+    CareerSession s;
+    s.write = false;
+    s.profile.startFresh();  // (as main.cpp does for a scripted run)
+    ctx.check("begun", careersession::begin(s, ctx.sim, w, "ANN", catalogIndex("blazer")));
+    ctx.check("profile.txt not read: the difficulty's cash", s.profile.cash == 500, std::to_string(s.profile.cash));
+    Sim sim2;
+    sim2.setupEmpty();
+    CareerSession s2;
+    s2.write = false;
+    s2.profile.cash = 77;
+    careersession::begin(s2, sim2, w, "ANN", catalogIndex("blazer"));
+    ctx.check("not a fresh one: kept as it was", s2.profile.cash == 77, std::to_string(s2.profile.cash));
+}
+
+SCENARIO(careerSessionStarters, "career/session-starters", "A world with none of yours: a starter only when you own no vehicles; else your last driven one is moved here, as it was, to the spawn") {
+    const std::string dir = freshDir("session-starters");
+    ScopedCareerDir scope(dir);
+    const int bronco = catalogIndex("bronco"), tacoma = catalogIndex("tacoma");
+    ctx.sim.setupEmpty();
+    WorldSave a = newWorld("World A", MAP_PROVING_GROUND, DIFF_MEDIUM, MODE_PERSONAL, {});
+    saveWorld(a);
+    WorldSave b = newWorld("World B", MAP_PROVING_GROUND, DIFF_MEDIUM, MODE_PERSONAL, {a});
+    saveWorld(b);
+    {  // no vehicles at all: continuing B mints one
+        Sim sim0;
+        sim0.setupEmpty();
+        CareerSession s;
+        s.write = false;
+        careersession::begin(s, sim0, b, "ANN");
+        ctx.check("nothing owned: a starter", s.profile.vehicles.size() == 1 && s.profile.vehicles[0].world == b.slug);
+    }
+    // A Tacoma (driven long ago) and a dented Bronco (driven last), both in world A.
+    Sim& simA = ctx.sim;
+    CareerSession sa;
+    careersession::begin(sa, simA, a, "ANN", bronco);
+    {
+        Car& c = simA.cars[simA.player];
+        for (size_t k = 0; k < c.beams.size(); k += 7)
+            if (c.beams[k].type == BEAM_BODY) c.beams[k].L0 *= 1.02;
+        c.handbrake = 1;
+    }
+    ctx.run(1.5);
+    sa.world.playedSeconds = 50;
+    careersession::capture(sa, simA);
+    const std::vector<int16_t> dents = net::carDents(simA.cars[simA.player]);
+    OwnedVehicle old;
+    old.vehicle = tacoma, old.world = a.slug, old.drove = 10;
+    sa.profile.vehicles.push_back(old);
+    careersession::end(sa, simA);
+    ctx.check("the Bronco was driven last", sa.profile.vehicles[0].drove == 50);
+
+    Sim simB;
+    simB.setupEmpty();
+    CareerSession sb;
+    WorldSave b2;
+    loadWorld(b.slug, b2);
+    careersession::begin(sb, simB, b2, "ANN");
+    ctx.check("no new vehicle minted", sb.profile.vehicles.size() == 2, std::to_string(sb.profile.vehicles.size()));
+    ctx.check("the Bronco moved to world B", sb.profile.vehicles[0].world == b.slug && sb.profile.vehicles[1].world == a.slug);
+    const Car& you = simB.cars[simB.player];
+    ctx.check("you're in it", you.spec->model == bronco && you.careerSlot == 0 && vehiclesIn(simB) == 1);
+    const V3 d = you.frame().com - simB.world.spawn;
+    ctx.check("at the spawn", std::hypot(d.x, d.z) < 1.0, std::to_string(std::hypot(d.x, d.z)) + " m");
+    const double off = worstDentMm(dents, net::carDents(you));
+    ctx.check("its dents came with it (2 mm)", off <= 2, std::to_string(off) + " mm");
+
+    // DRIVE/swap: only what's in this world (no delivery yet).
+    Station st;
+    st.p = V3(you.frame().com.x, 0, you.frame().com.z);
+    simB.world.stations.push_back(st);
+    ctx.check("the Tacoma in world A isn't offered", careersession::ownedOf(sb, simB, tacoma) < 0);
+    std::string why;
+    ctx.check("nor can you swap into it", !careersession::swapTo(sb, simB, 1, why), why);
+}
+
+SCENARIO(careerSessionCaches, "career/session-caches", "A cache opened in a world is opened in that world only (saved with it); without a world it's the profile's") {
+    const std::string dir = freshDir("session-caches");
+    ScopedCareerDir scope(dir);
+    CacheSpot spot;
+    spot.id = "TEST CRATE", spot.map = MAP_PROVING_GROUND, spot.cash = 250;
+    ctx.sim.setupEmpty();
+    WorldSave a = newWorld("Cache A", MAP_PROVING_GROUND, DIFF_MEDIUM, MODE_PERSONAL, {});
+    CareerSession s;
+    careersession::begin(s, ctx.sim, a, "ANN", catalogIndex("blazer"));
+    const int cash0 = s.profile.cash;
+    ctx.check("closed at first", !careersession::cacheOpened(s, spot));
+    ctx.check("opens and pays", !careersession::openCache(s, ctx.sim, spot).empty() && s.profile.cash == cash0 + 250);
+    ctx.check("opened in this world", careersession::cacheOpened(s, spot) && s.world.opened.size() == 1);
+    ctx.check("not in the profile", s.profile.opened.empty());
+    ctx.check("once only", careersession::openCache(s, ctx.sim, spot).empty());
+    WorldSave saved;
+    ctx.check("the world was saved with it", loadWorld(a.slug, saved) && saved.opened.size() == 1);
+    careersession::end(s, ctx.sim);
+
+    Sim sim2;
+    sim2.setupEmpty();
+    WorldSave b = newWorld("Cache B", MAP_PROVING_GROUND, DIFF_MEDIUM, MODE_PERSONAL, {a});
+    CareerSession s2;
+    careersession::begin(s2, sim2, b, "ANN", catalogIndex("bronco"));
+    ctx.check("still closed in world B", !careersession::cacheOpened(s2, spot));
+    ctx.check("and pays there", !careersession::openCache(s2, sim2, spot).empty());
+    careersession::end(s2, sim2);
+
+    CareerSession none;  // (career without a world)
+    none.write = false;
+    none.profile.on = true;
+    ctx.check("no world: the profile's", !careersession::openCache(none, sim2, spot).empty() && none.profile.isOpened(spot));
+}
+
+SCENARIO(careerSessionGarage, "career/session-garage", "The garage on an owned truck: opened with its own parts (not the garage file's), it isn't rebuilt or repaired; fitting goes in the profile") {
+    const std::string dir = freshDir("session-garage");
+    ScopedCareerDir scope(dir);
+    const int bronco = catalogIndex("bronco");
+    int slot = -1;
+    for (int k = 0; k < MOD_SLOTS && slot < 0; k++)
+        if (modOptions(bronco, k).size() > 1) slot = k;
+    ctx.check("the Bronco has a part to change", slot >= 0);
+    if (slot < 0) return;
+    ctx.sim.setupEmpty();
+    WorldSave w = newWorld("Shop", MAP_PROVING_GROUND, DIFF_MEDIUM, MODE_PERSONAL, {});
+    {
+        Career p;
+        p.startFresh();
+        OwnedVehicle ov;
+        ov.vehicle = bronco, ov.world = w.slug;
+        ov.mods.pick[slot] = 1;
+        p.vehicles.push_back(ov);
+        p.saveProfile();
+    }
+    CareerSession s;
+    careersession::begin(s, ctx.sim, w, "ANN");
+    Car& c = ctx.sim.cars[ctx.sim.player];
+    ctx.check("built with its own parts", c.spec == &tunedSpec(bronco, s.profile.vehicles[0].mods));
+    for (size_t k = 0; k < c.beams.size(); k += 7)
+        if (c.beams[k].type == BEAM_BODY) c.beams[k].L0 *= 1.02;
+    c.handbrake = 1;
+    ctx.run(1.5);
+    const VehicleSpec* built = c.spec;
+    const std::vector<int16_t> dents = net::carDents(c);
+
+    Garage garage;  // (the garage file's Bronco: stock, unlike the owned one)
+    ModSet fit = garage.fitted[bronco];
+    ctx.check("a career truck: its own parts", careersession::shopMods(s, ctx.sim, fit) && fit.pick[slot] == 1);
+    shop::Shop shop;
+    shop.begin(bronco, fit, s.profile, true, true, c.paint);
+    ctx.check("open: not rebuilt", !shop::liftSync(ctx.sim, shop) && ctx.sim.cars[ctx.sim.player].spec == built);
+    shop.close();
+    ctx.check("closed: not rebuilt", !shop::liftSync(ctx.sim, shop) && ctx.sim.cars[ctx.sim.player].spec == built);
+    const double off = worstDentMm(dents, net::carDents(ctx.sim.cars[ctx.sim.player]));
+    ctx.check("its dents unchanged (2 mm)", off <= 2, std::to_string(off) + " mm");
+
+    ModSet other = fit;
+    other.pick[slot] = 0;
+    ctx.check("fitting: into the profile", careersession::fit(s, ctx.sim, bronco, other) && s.profile.vehicles[0].mods.pick[slot] == 0);
+    Career back;
+    ctx.check("and saved", back.loadProfile() && back.vehicles.size() == 1 && back.vehicles[0].mods.pick[slot] == 0);
+    CareerSession sandbox;
+    ModSet keep = garage.fitted[bronco];
+    ctx.check("not a career world: the garage's", !careersession::shopMods(sandbox, ctx.sim, keep) && !careersession::fit(sandbox, ctx.sim, bronco, other));
 }

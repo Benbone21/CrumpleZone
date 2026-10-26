@@ -13,8 +13,6 @@ namespace careersession {
 
 namespace {
 
-bool exists(const std::string& path) { return (bool)std::ifstream(path); }
-
 // The first vehicle a career can start in (the catalog's order).
 int firstStarter() {
     for (int v : listedVehicles())
@@ -77,15 +75,21 @@ int place(CareerSession& s, Sim& sim, int slot, const std::string& condition, in
 
 }  // namespace
 
-void begin(CareerSession& s, Sim& sim, const WorldSave& w, const std::string& playerName, int startVehicle) {
+bool begin(CareerSession& s, Sim& sim, const WorldSave& w, const std::string& playerName, int startVehicle, std::string* why) {
+    // The profile: read from disk (a scripted run keeps what it has). A damaged one isn't started over: refused.
+    if (s.write) {
+        Career loaded;
+        if (loaded.loadProfile()) s.profile = loaded;
+        else if (Career::profileExists()) {
+            if (why) *why = "YOUR CAREER PROFILE IS DAMAGED: NOT STARTED (" + Career::profilePath() + ")";
+            return false;
+        } else s.profile.startFresh(w.diff);  // (nothing at all: a fresh start at this world's difficulty)
+    } else if (s.profile.fresh) s.profile.startFresh(w.diff);
+    s.profile.fresh = false;
     s.world = w;
     s.player = playerName;
     s.sinceSave = 0;
     s.placed.clear();
-    // (Only the old career.txt: its progress comes along, nothing lost. Nothing at all: a fresh start at this world's difficulty.)
-    const bool migrating = !exists(Career::profilePath()) && !exists(Career::profilePath() + ".bak") && exists(Career::defaultPath());
-    if (!s.profile.loadProfile()) s.profile.startFresh(w.diff);
-    else if (startVehicle >= 0 && s.profile.vehicles.empty() && !migrating) s.profile.startFresh(w.diff);
     s.profile.on = true;
     s.active = true;
 
@@ -118,16 +122,27 @@ void begin(CareerSession& s, Sim& sim, const WorldSave& w, const std::string& pl
             const LeftVehicle& lv = s.world.left[k];
             place(s, sim, -2 - k, lv.condition, lv.vehicle, ModSet(), CarPaint(), freshCount);
         }
-    if (you < 0) {  // (nothing of yours here: a starter, so you aren't left on foot with nothing)
+    if (you < 0 && s.profile.vehicles.empty()) {  // (you own nothing: a starter, so you aren't left on foot with nothing)
         OwnedVehicle ov;
         ov.vehicle = firstStarter();
         ov.world = w.slug;
         s.profile.vehicles.push_back(ov);
         you = place(s, sim, (int)s.profile.vehicles.size() - 1, "", ov.vehicle, ModSet(), CarPaint(), freshCount);
+    } else if (you < 0) {  // (yours are all elsewhere: the one you drove last comes here, as it is, to the spawn)
+        int k = 0;
+        for (int i = 1; i < (int)s.profile.vehicles.size(); i++)
+            if (s.profile.vehicles[i].drove >= s.profile.vehicles[k].drove) k = i;
+        OwnedVehicle& ov = s.profile.vehicles[k];
+        ov.world = w.slug;
+        V3 at;
+        double yaw;
+        freshSpot(sim, freshCount++, at, yaw);
+        you = place(s, sim, k, ov.condition, ov.vehicle, ov.mods, ov.paint, freshCount, &at, yaw);
     }
     sim.player = you;
     sim.cars[you].handbrake = 0;
     sim.cars[you].wake();
+    return true;
 }
 
 void capture(CareerSession& s, const Sim& sim) {
@@ -186,20 +201,18 @@ bool canSwapHere(const Sim& sim) {
 
 int ownedOf(const CareerSession& s, const Sim& sim, int vehicle) {
     const int in = sim.player >= 0 && sim.player < (int)sim.cars.size() ? sim.cars[sim.player].careerSlot : -1;
-    int any = -1;
     for (int k = 0; k < (int)s.profile.vehicles.size(); k++) {
         const OwnedVehicle& ov = s.profile.vehicles[k];
-        if (k == in || ov.vehicle != vehicle) continue;
-        if (ov.world == s.world.slug) return k;
-        if (any < 0) any = k;
+        if (k != in && ov.vehicle == vehicle && ov.world == s.world.slug) return k;
     }
-    return any;
+    return -1;
 }
 
 bool swapTo(CareerSession& s, Sim& sim, int k, std::string& why) {
     if (!s.active) return why = "NOT IN A CAREER WORLD", false;
     if (k < 0 || k >= (int)s.profile.vehicles.size()) return why = "YOU DON'T OWN THAT VEHICLE", false;
     if (sim.cars[sim.player].careerSlot == k) return why = "YOU'RE IN IT ALREADY", false;
+    if (s.profile.vehicles[k].world != s.world.slug) return why = "THAT ONE IS IN ANOTHER WORLD", false;  // (until delivery: career phase 7)
     if (!canSwapHere(sim)) return why = "SWAP VEHICLES AT A STATION", false;
     capture(s, sim);  // (the one you're in stays parked here, as it is now; the one wanted as it was left)
     for (int i = (int)sim.cars.size() - 1; i >= 0; i--)  // (out of wherever it stands in this world)
@@ -209,7 +222,6 @@ bool swapTo(CareerSession& s, Sim& sim, int k, std::string& why) {
             if (sim.player > i) sim.player--;
         }
     OwnedVehicle& ov = s.profile.vehicles[k];
-    ov.world = s.world.slug;  // (from another world, or none: delivered here)
     // Beside the one you're in, facing the same way.
     Car& cur = sim.cars[sim.player];
     const Frame f = cur.frame();
@@ -226,6 +238,47 @@ bool swapTo(CareerSession& s, Sim& sim, int k, std::string& why) {
     sim.player = ci;
     sim.cars[ci].handbrake = 0;
     sim.cars[ci].wake();
+    return true;
+}
+
+bool cacheOpened(const CareerSession& s, const CacheSpot& c) {
+    return s.active ? s.world.opened.count(Career::cacheKey(c)) > 0 : s.profile.isOpened(c);
+}
+
+std::string openCache(CareerSession& s, const Sim& sim, const CacheSpot& c) {
+    if (!s.active) return s.profile.openCache(c);
+    if (cacheOpened(s, c)) return "";
+    s.world.opened.insert(Career::cacheKey(c));
+    const std::string said = s.profile.takeCache(c);
+    saveBoth(s, sim);
+    return said;
+}
+
+namespace {
+// The player's car when it's one of the session's (careerSlot != -1), else null.
+const Car* sessionCar(const CareerSession& s, const Sim& sim) {
+    if (!s.active || sim.player < 0 || sim.player >= (int)sim.cars.size()) return nullptr;
+    const Car& c = sim.cars[sim.player];
+    return c.remote || c.isProp() || !c.spec || c.careerSlot == -1 ? nullptr : &c;
+}
+}  // namespace
+
+bool shopMods(const CareerSession& s, const Sim& sim, ModSet& fitted) {
+    const Car* c = sessionCar(s, sim);
+    if (!c) return false;
+    for (int k = 0; k < MOD_SLOTS; k++) fitted.pick[k] = c->spec->mods[k];  // (what it's built on: the shop shows it as it is)
+    return true;
+}
+
+bool fit(CareerSession& s, const Sim& sim, int vehicle, const ModSet& mods) {
+    const Car* c = sessionCar(s, sim);
+    if (!c || c->spec->model != vehicle) return false;
+    if (c->careerSlot >= 0 && c->careerSlot < (int)s.profile.vehicles.size()) {
+        OwnedVehicle& ov = s.profile.vehicles[c->careerSlot];
+        if (ov.vehicle != vehicle) return false;
+        ov.mods = mods;
+        if (s.write) s.profile.saveProfile();
+    }  // (a crew world's left vehicle: its condition carries its parts at the next save)
     return true;
 }
 
