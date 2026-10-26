@@ -79,7 +79,7 @@ struct ByRoads {
 SCENARIO(onemapLayout, "onemap/layout", "The regions sit inside the big map, apart from each other and from the Backcountry's places; their coordinates go and come back") {
     const std::vector<MapRegion>& rs = mapRegions();
     ctx.check("three regions: open country, mountain, frontier", rs.size() == 3 && rs[0].map == MAP_WILDS && rs[1].map == MAP_MOUNTAIN && rs[2].map == MAP_FRONTIER);
-    ctx.check("the big map's size", std::fabs(World::halfSizeFor(MAP_BACKCOUNTRY) - kOneMapHalf) < 1e-9 && World::gridSizeFor(MAP_BACKCOUNTRY) == 8193);
+    ctx.check("the big map's size", std::fabs(World::halfSizeFor(MAP_BACKCOUNTRY) - kOneMapHalf) < 1e-9 && World::gridSizeFor(MAP_BACKCOUNTRY) == 10241);
     bool inside = true, apart = true, clear = true, trip = true, named = true;
     std::string why;
     for (size_t a = 0; a < rs.size(); a++) {
@@ -92,6 +92,7 @@ SCENARIO(onemapLayout, "onemap/layout", "The regions sit inside the big map, apa
         }
         // (No place of the Backcountry's in a region's square or its seam band.)
         for (const MapPlace& p : mapPlaces(MAP_BACKCOUNTRY)) {
+            if (p.id.rfind("BC.", 0) != 0) continue;  // (the regions' own places are in their grown country: onemap/grown)
             const double dx = std::max({r.x0() - p.p.x, 0.0, p.p.x - r.x1()}), dz = std::max({r.z0() - p.p.z, 0.0, p.p.z - r.z1()});
             const double lx = p.p.x - r.mx, lz = p.p.z - r.mz;
             if (std::hypot(dx, dz) < 150 || (r.seamward(lx, lz) && r.coreOutside(lx, lz) < r.seamFade())) clear = false, why += " " + p.id;
@@ -361,7 +362,8 @@ SCENARIO(onemapSame, "onemap/same-every-time", "The big map builds the same on o
 
 SCENARIO(onemapRoads, "onemap/roads", "A gravel road from the Backcountry into each region: from its place to the region's start, loop road or lodge, no steeper than 13%, dry, its banks no cliffs") {
     const World& w = bigMap();
-    ctx.check("three roads", w.regionRoads.size() == 3, std::to_string(w.regionRoads.size()));
+    // (Three roads in, then the regions' own trails: onemap/grown.)
+    ctx.check("three roads, then the trails", w.regionRoads.size() >= 3, std::to_string(w.regionRoads.size()));
     struct End {
         const char* what;
         V3 from;
@@ -440,6 +442,10 @@ SCENARIO(onemapPlacesReachable, "onemap/places-reachable", "Every region's start
         for (const auto& f : oldMapSpots(r.map)) todo.push_back({std::string(r.name) + " " + f.first, regionToWorld(r.map, f.second)});
         for (const Station& st : oldMap(r.map).stations) todo.push_back({std::string(r.name) + " " + st.name, regionToWorld(r.map, st.p)});
     }
+    // The places of the regions' grown country (regions2), caches and all. (The Mountain's pass is a hard trail with ledges a stock
+    // truck may not climb, but the planner, which reckons with a built-up rig's reach, still finds its way over.)
+    for (const MapPlace& p : mapPlaces(MAP_BACKCOUNTRY))
+        if (p.id.rfind("BC.", 0) != 0) todo.push_back({p.id, p.p});
     // Dry, where it was dry on its own map.
     std::string wet;
     for (const Target& t : todo) {
@@ -563,4 +569,76 @@ SCENARIO(onemapOldLevels, "onemap/old-levels", "Levels made on the Mountain, the
     pg.map = MAP_PROVING_GROUND;
     ctx.check("the open country's meadow: moved", placeInRegion(meadow) && meadow.map == MAP_BACKCOUNTRY && std::fabs(meadow.start.x - (5 + regionOf(MAP_WILDS)->mx)) < 1e-9);
     ctx.check("its desert, and the proving ground: as they were", !placeInRegion(desert) && desert.map == MAP_WILDS && !placeInRegion(pg) && pg.map == MAP_PROVING_GROUND);
+}
+
+SCENARIO(onemapGrown, "onemap/grown", "Each region's grown country (regions2): kilometres of its own kind of land and look round its old map, filled with its growth and rock, its places linked by marked trails, the Mountain's pass over the high ground with its obstacles") {
+    const World& w = bigMap();
+    // The weights: nothing of a region's within the Backcountry's own land; never more than the whole.
+    bool zero = true, bounded = true;
+    for (double x = -kOneMapHalf; x <= kOneMapHalf; x += 97)
+        for (double z = -kOneMapHalf; z <= kOneMapHalf; z += 89) {
+            double wt[3];
+            regionWeights(x, z, wt);
+            if (std::max(std::fabs(x), std::fabs(z)) <= kSeamFrom) zero &= wt[0] == 0 && wt[1] == 0 && wt[2] == 0;
+            bounded &= wt[0] >= 0 && wt[1] >= 0 && wt[2] >= 0 && wt[0] + wt[1] + wt[2] <= 1 + 1e-9;
+        }
+    ctx.check("no region within the Backcountry's own land; the weights sum to 1 at most", zero && bounded);
+    const GroundLook bc = groundLookAt(0, 0);
+    ctx.check("the Backcountry's look in its middle", bc.meadow == 0 && bc.rockFrom == 105 && bc.snowFrom == 400);
+    for (const MapRegion& r : mapRegions()) {
+        const std::string n = r.name;
+        const double wide = r.ex1 - r.ex0, deep = r.ez1 - r.ez0;
+        ctx.check(n + ": 2 km and more each way, 8 km2 and more", std::min(wide, deep) >= 2000 && wide * deep >= 8e6, std::to_string((int)wide) + " x " + std::to_string((int)deep));
+        ctx.check(n + ": its country inside the map", r.ex0 >= -kOneMapHalf && r.ex1 <= kOneMapHalf && r.ez0 >= -kOneMapHalf && r.ez1 <= kOneMapHalf);
+        // Its own look, out in its country (half way from its old map to its far edge).
+        const double fx = r.seamSide == 0 ? (r.ex0 + r.x0()) / 2 : r.mx, fz = r.seamSide == 2 ? (r.ez0 + r.z0()) / 2 : r.mz;
+        const GroundLook g = groundLookAt(fx, fz);
+        ctx.check(n + ": its own ground look", std::fabs(g.rockFrom - r.rockFrom) < 1 && std::fabs(g.snowFrom - r.snowFrom) < 1, std::to_string(g.rockFrom) + "/" + std::to_string(g.snowFrom));
+        ctx.check(n + ": named so", std::string(regionAt(MAP_BACKCOUNTRY, fx, fz)) == n);
+        // Growth and rock in its grown country (outside the old map's square).
+        int trees = 0, rocks = 0, big = 0, bushes = 0;
+        auto ours = [&](const V3& p) { return regionAround(p.x, p.z) == &r && !regionContaining(p.x, p.z); };
+        for (const Tree& t : w.trees) trees += ours(t.base);
+        for (const Rock& k : w.rocks) rocks += ours(k.c), big += ours(k.c) && k.r > 2.0;
+        for (const Bush& b : w.bushes) bushes += ours(b.p);
+        std::printf("GROWN %-12s %.1f x %.1f km  trees %d  rocks %d (big %d)  bushes %d\n", r.name, wide / 1000, deep / 1000, trees, rocks, big, bushes);
+        ctx.check(n + ": grown over (trees, rocks, big boulders, bushes)", trees > 5000 && rocks > 3000 && big > 400 && bushes > 10000);
+        // Its places: in its country, with a marked trail to each.
+        int places = 0, linked = 0;
+        for (const MapPlace& p : mapPlaces(MAP_BACKCOUNTRY)) {
+            if (regionAround(p.p.x, p.p.z) != &r || p.id.rfind("BC.", 0) == 0) continue;
+            places++;
+            bool near = false;
+            for (size_t k = 3; k < w.regionRoads.size() && !near; k++)
+                for (const V3& q : w.regionRoads[k]) near |= std::hypot(q.x - p.p.x, q.z - p.p.z) < p.radius;
+            linked += near;
+        }
+        ctx.check(n + ": its places (an outpost, a cabin or camp, lookouts, caches), each on a trail", places >= 7 && linked == places, std::to_string(linked) + "/" + std::to_string(places));
+    }
+    // The Mountain's pass: over the high ground, a hard trail with ledges on it.
+    const MapPlace* top = findPlace(MAP_BACKCOUNTRY, "MT.HIGH_PASS");
+    const std::vector<V3>* pass = nullptr;
+    for (size_t k = 3; k < w.regionRoads.size(); k++)
+        for (const V3& q : w.regionRoads[k])
+            if (top && std::hypot(q.x - top->p.x, q.z - top->p.z) < 30) pass = &w.regionRoads[k];
+    ctx.check("the Mountain's pass", pass != nullptr);
+    if (!pass) return;
+    double lo = 1e9, hi = -1e9, L = 0;
+    for (size_t k = 0; k < pass->size(); k++) {
+        lo = std::min(lo, (*pass)[k].y), hi = std::max(hi, (*pass)[k].y);
+        if (k) L += std::hypot((*pass)[k].x - (*pass)[k - 1].x, (*pass)[k].z - (*pass)[k - 1].z);
+    }
+    int ledges = 0, scree = 0;
+    for (const Box& b : w.boxes) {
+        if (!b.rock) continue;
+        for (size_t k = 0; k < pass->size(); k += 2)
+            if (std::hypot(b.c.x - (*pass)[k].x, b.c.z - (*pass)[k].z) < 2) {
+                ledges++;
+                break;
+            }
+    }
+    for (const V3& q : *pass) scree += w.surfaceAt(q.x, q.z) == SURF_SCREE;
+    std::printf("PASS %.2f km, %.0f m to %.0f m, %d ledges, %d m of scree\n", L / 1000, lo, hi, ledges, scree);
+    ctx.check("the pass climbs over 150 m to the high ground", hi - lo > 150 && hi > 200);
+    ctx.check("...with ledges and a scree climb on it", ledges >= 9 && scree >= 30, std::to_string(ledges) + " ledges, " + std::to_string(scree) + " m scree");
 }

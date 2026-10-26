@@ -83,6 +83,7 @@ void addSlot(int v, float w){
 #endif
 // Per-pixel environment, worked out once.
 float gN1, gDry, gForest, gSteep, gHigh, gSnowH, gAlt, gBald;
+float gMeadow;  // how much the natural ground is meadow (the proving ground's and the freeway's; the big map's regions: regionLook)
 #if GQ >= 2
 float gNoiseA, gNoiseB;
 #else
@@ -98,23 +99,25 @@ float gDens;
 void naturalGround(float w){
   float rockW = max(gSteep, gHigh * 0.8);
   float flatW = (1.0 - rockW) * (1.0 - gSnowH) * w;
-  bool meadow = uMap == 0 || uMap == 2;
   float t = smoothstep(0.35, 0.65, gN1);
-  if (meadow) {
+  if (gMeadow > 0.001) {
+    float fw = flatW * gMeadow;
     float bare = gBald * 0.5;
-    addSlot(5, flatW * (1.0 - t) * (1.0 - gDry) * (1.0 - bare));
-    addSlot(4, flatW * t * (1.0 - gDry) * (1.0 - bare));
-    addSlot(14, flatW * gDry * (1.0 - bare));
-    addSlot(2, flatW * bare);
-  } else {
+    addSlot(5, fw * (1.0 - t) * (1.0 - gDry) * (1.0 - bare));
+    addSlot(4, fw * t * (1.0 - gDry) * (1.0 - bare));
+    addSlot(14, fw * gDry * (1.0 - bare));
+    addSlot(2, fw * bare);
+  }
+  if (gMeadow < 0.999) {
+    float fw = flatW * (1.0 - gMeadow);
     float lit = gForest * (1.0 - gBald * 0.3);
     float gr = 1.0 - lit;
     float bare = gBald * 0.55 * (1.0 - lit * 0.5);
-    addSlot(3, flatW * lit);
-    addSlot(5, flatW * gr * (1.0 - t) * (1.0 - gDry) * (1.0 - bare));
-    addSlot(4, flatW * gr * t * (1.0 - gDry) * (1.0 - bare));
-    addSlot(14, flatW * gr * gDry * (1.0 - bare));
-    addSlot(2, flatW * (gr * bare + lit * gBald * 0.3));
+    addSlot(3, fw * lit);
+    addSlot(5, fw * gr * (1.0 - t) * (1.0 - gDry) * (1.0 - bare));
+    addSlot(4, fw * gr * t * (1.0 - gDry) * (1.0 - bare));
+    addSlot(14, fw * gr * gDry * (1.0 - bare));
+    addSlot(2, fw * (gr * bare + lit * gBald * 0.3));
   }
   float rw = rockW * (1.0 - gSnowH) * w;
 #if GQ >= 2
@@ -216,9 +219,11 @@ void main(){
 #endif
   gDry = smoothstep(0.6, 0.8, (lo == 1 ? fbmFew(p * 0.006 + 3.1, 1, 3) : fbm(p * 0.006 + 3.1, 3)));
   gBald = smoothstep(0.60, 0.80, (lo == 1 ? fbmFew(p * 0.30 + 9.0, 2, 3) : fbm(p * 0.30 + 9.0, 3)));
-  gSteep = (uMap == 0 || uMap == 2) ? smoothstep(0.84, 0.62, N0.y + 0.14 * (gN1 - 0.5)) : smoothstep(0.72, 0.55, N0.y + 0.14 * (gN1 - 0.5));
-  gHigh = smoothstep(uRockSnow.x, uRockSnow.x + 90.0, vPos.y + 30.0 * gN1);
-  gSnowH = smoothstep(uRockSnow.y, uRockSnow.y + 50.0, vPos.y + 70.0 * gN1) * smoothstep(0.5, 0.75, N0.y);
+  vec3 lk = regionLook(p);
+  gMeadow = lk.x;
+  gSteep = mix(smoothstep(0.72, 0.55, N0.y + 0.14 * (gN1 - 0.5)), smoothstep(0.84, 0.62, N0.y + 0.14 * (gN1 - 0.5)), gMeadow);
+  gHigh = smoothstep(lk.y, lk.y + 90.0, vPos.y + 30.0 * gN1);
+  gSnowH = smoothstep(lk.z, lk.z + 50.0, vPos.y + 70.0 * gN1) * smoothstep(0.5, 0.75, N0.y);
   gForest = smoothstep(0.40, 0.65, (lo == 1 ? fbmFew(p * 0.012 + vec2(7.0, -3.0), 1, 3) : fbm(p * 0.012 + vec2(7.0, -3.0), 3))) * smoothstep(6.0, 22.0, vPos.y);
 
 #ifdef X_NONOISE

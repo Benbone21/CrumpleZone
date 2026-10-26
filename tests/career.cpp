@@ -120,8 +120,9 @@ SCENARIO(careerCaches, "career/caches", "Supply caches on the Frontier and in th
         const World& w = ctx.sim.world;
         const std::vector<CacheSpot> spots = cacheSpots(w);
         const std::string name = mapName(map);
-        // (The Backcountry: the ten hand-made ones and fifty from its places (places.h); on the big map, the Frontier's ten in its region besides.)
-        const size_t want = map == MAP_BACKCOUNTRY ? (w.regionStarts.empty() ? 60 : 70) : 10;
+        // (The Backcountry: the ten hand-made ones and fifty from its places (places.h); on the big map, the Frontier's ten in its region
+        // besides, and the twelve of the regions' grown country (regions2: four each).)
+        const size_t want = map == MAP_BACKCOUNTRY ? (w.regionStarts.empty() ? 60 : 82) : 10;
         ctx.check(name + ": " + std::to_string(want) + " caches", spots.size() == want, std::to_string(spots.size()));
         if (map == MAP_BACKCOUNTRY && !w.regionStarts.empty()) {
             // The Frontier's own, still the Frontier's (an opened one stays opened), where they were on its map, moved over.

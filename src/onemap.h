@@ -14,7 +14,7 @@
 
 class World;
 
-constexpr double kOneMapHalf = 4096.0;   // the big map's half-size (m): 8192 m square
+constexpr double kOneMapHalf = 5120.0;   // the big map's half-size (m): 10.24 km square (8.2 km before the regions grew)
 constexpr double kRegionHalf = 600.0;    // an old map's half-size
 constexpr double kOldBackcountryHalf = 3072.0;  // the 6 km Backcountry's, whose land and places are the big map's middle
 constexpr double kSeamFrom = 2650.0;     // the Backcountry's own land is left alone within this far of the middle (its places reach 2567 m)
@@ -27,7 +27,12 @@ struct MapRegion {
     // that side its own land is used (past it, its old rim rose: the land there is the seam's blend instead).
     int seamSide;
     double trust;
-    double sideTrust;   // the same across its two sides beside the seam (its far side is the big map's edge: its rim stays there)
+    double sideTrust;   // the same across its two sides beside the seam
+    double farTrust;    // ...and its far side (its old rim there gives way to the country round it)
+    // Its grown country (docs/plans/regions2.md): the rectangle round its old map, in big-map coordinates, where the land, the ground's
+    // look and what grows are its own kind of country; and that look (the ground shader's: meadow 0..1, bare rock from, snow from).
+    double ex0, ex1, ez0, ez1;
+    float meadow, rockFrom, snowFrom;
     // Its square on the big map, and the core whose land, growth and everything else is the old map's own.
     double x0() const { return mx - kRegionHalf; }
     double x1() const { return mx + kRegionHalf; }
@@ -52,6 +57,22 @@ int combinedMapFor(int map);                  // the map an old map's places are
 V3 regionToWorld(int map, const V3& p);       // a point on an old map, on the big one (unchanged for a map that isn't a region)
 V3 worldToRegion(int map, const V3& p);       // and back
 const MapRegion* regionContaining(double x, double z);  // whose square (x, z) is in (nullptr: none)
+
+// The regions' grown country (MapRegion::ex0..): how much of (x, z) is each region's, in mapRegions() order (0 within kSeamFrom of the
+// middle, easing in over 400 m past it; neighbours share their border over kRegionBlend; the sum is at most 1, the rest the Backcountry's).
+constexpr double kRegionBlend = 300;
+void regionWeights(double x, double z, double w[3]);
+const MapRegion* regionAround(double x, double z);  // the region whose country (x, z) mostly is (nullptr: the Backcountry's)
+// The ground shader's look at (x, z) on the big map: the regions' own blended into the Backcountry's.
+struct GroundLook {
+    float meadow = 0, rockFrom = 105, snowFrom = 400;
+};
+GroundLook groundLookAt(double x, double z);
+// What a region's own kinds of country there are at (x, z) (0..1 each): the Open Country's woods in its north and red-rock canyons in
+// its south, the Frontier's badlands (west and south) and its cold high country (east).
+double openWoods(double x, double z);
+double openCanyon(double x, double z);
+double frontierCold(double x, double z);
 
 // How open the Backcountry's edge ridge is at (x, z) on the big map (0 the ridge, 1 none): open round each region, so the seam is a
 // broad valley and the region's other sides meet low hills, not a wall.

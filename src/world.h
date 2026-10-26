@@ -55,6 +55,11 @@ struct Rock {
     bool partsDue = false;  // (placed while its world was being made: the world cuts it at the end, World::splitPendingRocks)
     V3 at;  // the point its pose turns it about (code-made: the middle of its points; scanned: the scan's middle)
 };
+// Scenery boulders scattered over the big map's grown country (onemapbuild.cpp: growRegionCountry) are added with seeds from kWholeRockSeeds on:
+// their single hull is what they are to the physics too (not cut into convex pieces: a few dm of slack in a hollow, off the trails, for a
+// fraction of the memory). Said by the seed, so a world from the cache and one built fresh agree.
+constexpr uint32_t kWholeRockSeeds = 0x40000000u;
+inline bool rockCutsIntoPieces(const Rock& k) { return k.scan >= 0 && k.r > 1.2 && (k.seed < kWholeRockSeeds || k.seed >= kWholeRockSeeds + 0x1000000u); }
 
 // Fallen log: a capsule from a to b.
 struct Log {
@@ -373,6 +378,9 @@ public:
     // With `pose` it isn't turned or tipped at random but as asked (a ledge's row of rocks, a ramp): the first half-size
     // lies along the pose's yaw, and `top` is then its highest point's height over the ground at (x, z).
     Rock& addRock(double x, double z, const V3& radii, double top, uint32_t seed, float tint = 1, const RockPose* pose = nullptr);
+    // The rock addRock would add, not added (anything about the world it reads, it only reads: rocks can be made on several threads,
+    // with the thread's scanned rocks (props::activeRockScans) the same as the world's builder's).
+    Rock makeRock(double x, double z, const V3& radii, double top, uint32_t seed, float tint = 1, const RockPose* pose = nullptr) const;
     // Indices of poles whose cylinders may overlap the box [mn, mx] (appended to out).
     void polesNear(const V3& mn, const V3& mx, std::vector<int>& out) const;
     // Every solid whose lookup cells touch the rectangle [x0, x1] x [z0, z1]: indices into
@@ -445,6 +453,31 @@ private:
     // (`wetLater`: where the Backcountry's rivers and lakes will be, which aren't on the land yet when the roads are laid.)
     void layRegionRoads(const std::vector<RegionBuild*>& builds, CellTiles<uint8_t>& keep, const std::function<bool(double, double)>& wetLater);
     CellTiles<uint8_t> roadMask;  // (while the big map is built: the cells the roads above took, which the regions' own ground doesn't)
+    // The regions' grown country (docs/plans/regions2.md, onemapbuild.cpp): the marked trails between their places and the Mountain's
+    // pass (laid with the roads, into regionRoads after them), the growth and rock of their country (after the Backcountry's own), and
+    // at the end the trails' markers, signs and the pass's obstacles.
+    struct RegionWay {
+        std::vector<V3> pts;  // as laid: a point a metre, at the tread's height
+        int kind = 0;         // 0 an easy trail, 1 a harder one, 2 the Mountain's pass
+        std::vector<std::pair<double, double>> steps;  // (the pass) its ledges: (metres along, rise)
+        std::vector<std::pair<double, double>> camber; // (the pass) off-camber stretches: (from, to) metres along
+        double screeFrom = -1, screeTo = -1;           // (the pass) its scree climb
+    };
+    std::vector<RegionWay> regionWays;
+    size_t linkRoads = 0;  // (how many of regionRoads are the roads in from the Backcountry; the trails come after)
+    struct WayStyle {
+        double half = 3.5, blend = 12, maxGrade = 0.12;
+        int window = 15;       // the land under it smoothed over this many metres either side
+        uint8_t paint = PAINT_ROAD, surface = SURF_GRAVEL;
+    };
+    // Lays a way (from findWay's cells, smoothed into a curve) on the land: cut and filled to the style's grade, eased into the land
+    // either side, painted. `shape` may change its heights before it's laid (steps); `tilt` gives its tread a cross-slope (metres up per
+    // metre left) at a point along it. Returns it as laid (a point a metre).
+    std::vector<V3> layWay(const std::vector<V3>& way, const WayStyle& st, CellTiles<uint8_t>& keep, const std::vector<V3>& pads, int thin,
+                           const std::function<void(std::vector<double>&)>& shape = nullptr, const std::function<double(double)>& tilt = nullptr);
+    void layRegionTrails(const std::vector<RegionBuild*>& builds, CellTiles<uint8_t>& keep, const std::function<bool(double, double)>& wetLater);
+    void growRegionCountry(CellTiles<uint8_t>& keep);  // (after the Backcountry's growth: the 64 m cells past its 6 km square)
+    void dressRegionTrails();                          // (the very end)
     void scatterScenery(uint32_t seed);  // bushes and rocks between the trees
     // Digs a lake basin `depth` deep at (x, z) radius r, banks rising at ~1:4, and fills it.
     void addLake(double x, double z, double r, double depth);

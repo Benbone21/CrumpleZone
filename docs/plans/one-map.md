@@ -1,5 +1,7 @@
 # One map: the Backcountry with the Mountain, the Frontier and the Open Country stitched on
 
+Grown since (2026-10-25, `wip/regions2`): the map is 10.24 km and each region has kilometres of its own country round it: `docs/plans/regions2.md`.
+
 Owner's ask (2026-10-25): "stitch all the current maps together except Proving Ground and Freeway, so we have one big map."
 Branch: `wip/onemap`. Status: phases 1-4 built (section 9 says what changed from the plan); phase 5 (measurements) in `docs/hardware/linux-7900xtx-onemap.md`.
 
