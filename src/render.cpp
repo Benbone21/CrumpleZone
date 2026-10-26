@@ -5271,6 +5271,7 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
     const SeeThrough seeThrough{view.eye, view.focus, view.hasFocus && !noSeeThrough, noSeeThrough ? 0.0f : view.fadeNear};
     props.setSeeThrough(seeThrough);
     props.occluder = &occl_;
+    props.timing = gpuTiming;  // (its timer queries only when they're read: F3, the bench)
     props.beginFrame(sim.world, view.eye, M4(), propsOk ? settings.props : 0, view.time);
 
     farZ_ = settings.drawDistance > 0 ? std::max(150.0f, settings.drawDistance) : 6000.0f;  // (a draw distance: everything past it is clipped)

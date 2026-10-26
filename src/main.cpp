@@ -3855,7 +3855,8 @@ int main(int argc, char** argv) {
             }
             if (frameTimeMs < 250) typical = frame <= 10 ? frameTimeMs : typical + (std::min(frameTimeMs, typical * 3) - typical) * 0.05;
         }
-        if (opt.bench && bf > benchWarm && bf <= benchWarm + opt.bench && std::getenv("CZ_FRAMELOG")) {  // (every measured frame's stages, for the slow-frame report)
+        static const bool frameLogOn = std::getenv("CZ_FRAMELOG") != nullptr;
+        if (frameLogOn && (opt.bench ? bf > benchWarm && bf <= benchWarm + opt.bench : frame > 300 && frameRecs.size() < 100000)) {  // (every measured frame's stages, for the slow-frame report; playing: from frame 300, printed at the end)
             FrameRec fr;
             fr.bf = bf, fr.ms = frameTimeMs;
             {  // (the frame thread's own CPU time over the last frame, against its wall time)
@@ -5910,7 +5911,7 @@ int main(int argc, char** argv) {
             footYaw -= lx * 2.6 * dt;
             footPitch = clampd(footPitch + ly * 1.8 * dt, -1.45, 1.45);
         }
-        if (opt.bench && !opt.eyeSet && opt.script != "pilot") {  // (the lap: 30 m round the start, 2.5 m up, once over the warm-up and the run; --eye X,Z,H,YAW,PITCH --eye-fly V: a straight flight instead, the streaming route)
+        if (opt.bench && !opt.eyeSet && opt.script.empty()) {  // (the lap: 30 m round the start, 2.5 m up, once over the warm-up and the run; --eye X,Z,H,YAW,PITCH --eye-fly V: a straight flight instead, the streaming route)
             auto ground = [](const void* w, double x, double z) { return ((const World*)w)->height(x, z); };
             const BenchPose bp = benchPose(benchCentre.x, benchCentre.z, (double)bf / (benchWarm + opt.bench), 30, 2.5, ground, &sim.world);
             cam.mode = 3, cam.droneEye = V3(bp.x, bp.y, bp.z), cam.droneYaw = bp.yaw, cam.dronePitch = bp.pitch;
@@ -6857,6 +6858,7 @@ int main(int argc, char** argv) {
         frame++;
     }
     writeSuiteSummary();  // (the window closed part-way: what was done)
+    if (!opt.bench) printFrameLog();  // (CZ_FRAMELOG=1 while playing: the frames since the 300th)
     if (allocWatch && !allocFrames.empty()) {
         std::vector<uint64_t> v = allocFrames;
         std::sort(v.begin(), v.end());
