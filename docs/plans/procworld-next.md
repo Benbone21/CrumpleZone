@@ -155,7 +155,7 @@ A trail follows the land and climbs steeper rather than ride a causeway. Trails 
 Waterfalls, lakes, obstacle sections on black trails, and map reveal. These are already on the list from the first build.
 
 ## Slice: land shape with real drainage (design, 2026-10-26)
-Follows docs/plans/procworld-rules.md sections 2 and 3. Status: designed, not built (see "Handover" at the end).
+Follows docs/plans/procworld-rules.md sections 2 and 3. Status: being built on wip/procworld3-land (see "As built" at the end).
 
 ### Why the current rivers can't be patched into this
 - Today's rivers are contour lines of a warped noise field (`Macro::riverS/creekS`). Their water sits at a separate smooth level (`drain`), and their valleys are carved down to it afterwards.
@@ -224,3 +224,26 @@ Follows docs/plans/procworld-rules.md sections 2 and 3. Status: designed, not bu
 - Then tuning: trails, places and biomes all read the land. Every procworld test needs re-measuring.
 - It touches only `src/procworld.*` and `src/procrules.*` (new `[water]`/`[terrain]` keys). No render or tree-draw code: no conflict with wip/fartrees.
 - Bridges need a deck model or boxes in `buildPlaces`-style code (procworld.cpp).
+
+### As built (wip/procworld3-land)
+**Checkpoint 1: the drainage core and the land round it** (generator v4). Where it differs from the design above:
+- **Two passes.** Pass 1 is the design's D8 on the routing height R (a slow lowland tilt plus the ranges' massifs, read through a
+  ~3 km warp so fall lines bend; no pits from the warp). Its drainage decides the **rivers** (over 1.5 km2) and their levels. Pass 2
+  re-routes every other node (creeks and gullies) down the smooth land *with the rivers' valleys cut*, so a creek runs straight down a
+  valley's side to its river instead of across it. Rivers and each river's headwater chain keep pass 1. Still a tree: pass-1 edges
+  fall in R, pass-2 edges fall in that land, and a pass-2 chain ends in a river or a headwater.
+- **Levels.** A river's level is integrated up from its sink, climbing toward its target (R plus a share of the uplift that shrinks
+  with its size) at no more than its grade (big rivers 4% in the ranges, a tenth of that in the lowland). A creek's or gully's level
+  is a running minimum from its sources down of (the land the rivers left, less its notch depth), never under the river it joins. So
+  nothing rises downstream (tested node to node and along every straight piece).
+- **The land.** The mass M = R + uplift + rough (crags, knolls, hollows; the desert's benches and dunes). Rivers cut valleys into M
+  (a bed, a low bank, a flat floor, then a concave side whose width is the batter times the height it climbs at each point: 1:6 in the
+  ranges, 1:14 in the lowland). Creeks and gullies then cut notches into that (deeper where they cross a slope at a slant, so the
+  land beside them stands over them both sides; a deep cut through a rise is a steep-sided gorge). Everything is a min of continuous
+  pieces, so the land is continuous and the bed is under its banks by construction.
+- **Water.** A creek's stretch whose water would stand over the land 30 m across from it is dry there (memoised per node). Water never
+  shows over the valley floor round it (where a creek crosses a bigger one's floor on the way in).
+- **Trails.** The A* now has a turning cost (state = cell and heading), so climbs are long legs with real switchbacks rather than a
+  saw's teeth; the path is corner-cut twice, not three times (which pulled switchback turns straight up the slope).
+- **Classes:** gully 0.08 km2 (dry), creek 0.3 (fordable), river 1.5, big river 2.5 km2 (10-26 m wide, 1.5-2 m deep). The rules are
+  in `[water]` of assets/procworld/rules.txt.

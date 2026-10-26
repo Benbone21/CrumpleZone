@@ -180,7 +180,7 @@ void MapImage::colour(const ProcWorld& g, double gx, double gz, float out[3]) {
     const double shade = std::min(1.35, std::max(0.45, 1.0 + (-dx * 0.7 + dz * 0.7) / (2 * e) * 1.4));
     for (float& v : c) v = (float)std::min(1.0, std::max(0.0, v * shade * (0.92 + 0.0006 * h)));
     // Rivers and creeks.
-    const double rw = m.riverOn > 0.5 ? g.riverHalfWidth(gx, gz) : 0, cw = m.creekOn > 0.5 ? g.creekHalfWidth(gx, gz) : 0;
+    const double rw = m.riverOn > 0.5 ? m.riverHW : 0, cw = m.creekOn > 0.5 ? m.creekHW : 0;
     const double half = (double)Reveal::kCell * 0.5;
     const bool river = rw > 0 && std::fabs(m.riverS) < std::max(rw, half), creek = cw > 0 && std::fabs(m.creekS) < std::max(cw, half * 0.6);
     if (river || creek) {

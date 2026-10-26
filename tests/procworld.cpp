@@ -846,8 +846,8 @@ SCENARIO(procNoRings, "procworld/no-rings", "No river or creek runs in a ring (p
                 for (int a = t; a < R; a += 4)
                     for (int b = 0; b < R; b++) {
                         const double x = -half + a * C, z = -half + b * C;
-                        const Macro m = G.macroAt(x, z, false);
-                        ch[(size_t)a * R + b] = (m.creekOn > 0.5 && std::fabs(m.creekS) < G.creekHalfWidth(x, z) + 5) || (m.riverOn > 0.5 && std::fabs(m.riverS) < G.riverHalfWidth(x, z) + 5);
+                        const Macro m = G.macroAt(x, z, true);
+                        ch[(size_t)a * R + b] = (m.creekOn > 0.5 && std::fabs(m.creekS) < m.creekHW + 5) || (m.riverOn > 0.5 && std::fabs(m.riverS) < m.riverHW + 5);
                     }
             });
         for (auto& t : th) t.join();
@@ -978,4 +978,102 @@ SCENARIO(procAlpine, "procworld/alpine", "The alpine rules (procrules.h, biome.a
     ctx.check("stunted near the tree line", lowN > 0 && highN > 0 && highH / highN < 0.8 * lowH / lowN);
     ctx.check("no trees over the tree line", bareAbove);
     ctx.check("more snow the higher (where there's enough high ground to tell)", snowGrows);
+}
+
+SCENARIO(procDrainTree, "procworld/drainage-tree", "The drainage network (procworld.cpp): every node's way down ends in a sink, no node twice (a forest of trees, no loops); no channel's level ever rises downstream; sinks are rare") {
+    for (uint64_t seed : {1ull, 2ull, 123456789ull}) {
+        const ProcWorld& G = ProcWorld::forSeed(seed);
+        const auto st = G.drainStats(-6000, -6000, 6000, 6000);
+        char b[400];
+        std::snprintf(b, sizeof b, "seed %llu, 144 km2: %ld nodes; %ld sinks; channels: %ld creek, %ld river, %ld big river nodes; longest way down %ld nodes; %ld loops or dead ends; %ld node-to-node rises; %ld rises along the pieces",
+                      (unsigned long long)seed, st.nodes, st.sinks, st.creeks, st.rivers, st.bigRivers, st.maxChain, st.chainsBad, st.levelRises, st.pieceRises);
+        ctx.note(b);
+        ctx.check("seed " + std::to_string(seed) + ": every way down ends in a sink, no node visited twice", st.chainsBad == 0 && st.chainsChecked == st.nodes);
+        ctx.check("seed " + std::to_string(seed) + ": no level rises downstream (node to node, and along every piece)", st.levelRises == 0 && st.pieceRises == 0);
+        ctx.check("seed " + std::to_string(seed) + ": sinks (lake basins) rare: under 10 in 144 km2", st.sinks < 10);
+    }
+}
+
+SCENARIO(procRiverSpacing, "procworld/river-spacing", "Big rivers about every 5 km: 3-5 across a 20 km line on average (16 lines over 4 seeds); and the ranges' creeks carry water (out of the desert)") {
+    double tot = 0;
+    int n = 0;
+    std::string l;
+    for (uint64_t seed : {1ull, 2ull, 3ull, 123456789ull}) {
+        const ProcWorld& G = ProcWorld::forSeed(seed);
+        const double ang[4][2] = {{1, 0}, {0, 1}, {0.7071, 0.7071}, {0.7071, -0.7071}};
+        for (int d = 0; d < 4; d++) {
+            auto c = G.channelsAcross(-10000 * ang[d][0], -10000 * ang[d][1], 10000 * ang[d][0], 10000 * ang[d][1], rules().water.bigRiverArea);
+            int cnt = 0;
+            double last = -1e9;
+            for (auto& q : c) cnt += q.first - last > 300, last = q.first;  // (a river crossing the line a few times close together: once)
+            tot += cnt, n++, l += " " + std::to_string(cnt);
+        }
+    }
+    ctx.note("big rivers across each 20 km line:" + l);
+    ctx.metric("big rivers across a 20 km line, on average", tot / n, "", 3, 5);
+    for (uint64_t seed : {1ull, 2ull, 123456789ull}) {
+        const ProcWorld& G = ProcWorld::forSeed(seed);
+        const auto st = G.drainStats(-6000, -6000, 6000, 6000);
+        char b[200];
+        std::snprintf(b, sizeof b, "seed %llu: %ld creek nodes in the ranges out of the desert, %.0f%% with water (%.0f%% dry where they'd stand over the land beside them)", (unsigned long long)seed, st.rangeCreeks,
+                      100.0 * st.rangeCreeksWet / std::max(1L, st.rangeCreeks), 100.0 * st.rangeCreeksPerched / std::max(1L, st.rangeCreeks));
+        ctx.note(b);
+        ctx.check("seed " + std::to_string(seed) + ": the ranges' creeks: most carry water (over 70%)", st.rangeCreeks > 100 && st.rangeCreeksWet * 10 > st.rangeCreeks * 7);
+    }
+}
+
+SCENARIO(procDrainMap, "procworld/drain-map", "(with CZ_PROC_MAPS=dir) a 24 km overview of each seed's land and drainage, for looking at (CZ_MAP_SPAN, CZ_MAP_X, CZ_MAP_Z)") {
+    const char* dir = std::getenv("CZ_PROC_MAPS");
+    if (!dir) {
+        ctx.note("CZ_PROC_MAPS not set: nothing drawn");
+        return;
+    }
+    const double span = std::getenv("CZ_MAP_SPAN") ? std::atof(std::getenv("CZ_MAP_SPAN")) : 24000;
+    const double cx0 = std::getenv("CZ_MAP_X") ? std::atof(std::getenv("CZ_MAP_X")) : 0, cz0 = std::getenv("CZ_MAP_Z") ? std::atof(std::getenv("CZ_MAP_Z")) : 0;
+    for (uint64_t seed : {1ull, 2ull, 123456789ull}) {
+        const ProcWorld& G = ProcWorld::forSeed(seed);
+        const int S = 900;
+        const double step = span / S;
+        std::vector<double> H((size_t)S * S);
+        std::vector<Macro> MM((size_t)S * S);
+        std::vector<std::thread> th;
+        for (int t = 0; t < 4; t++)
+            th.emplace_back([&, t] {
+                for (int py = t; py < S; py += 4)
+                    for (int px = 0; px < S; px++) {
+                        const double x = cx0 - span / 2 + (px + 0.5) * step, z = cz0 + span / 2 - (py + 0.5) * step;
+                        MM[(size_t)py * S + px] = G.macroAt(x, z, true);
+                        H[(size_t)py * S + px] = G.groundHeight(x, z, MM[(size_t)py * S + px]);
+                    }
+            });
+        for (auto& t : th) t.join();
+        std::vector<unsigned char> img((size_t)S * S * 3);
+        double top = 0;
+        for (int py = 0; py < S; py++)
+            for (int px = 0; px < S; px++) {
+                const size_t k = (size_t)py * S + px;
+                const Macro& m = MM[k];
+                const double h = H[k];
+                top = std::max(top, h);
+                const double hx = H[(size_t)py * S + std::min(S - 1, px + 1)], hz = H[(size_t)std::max(0, py - 1) * S + px];
+                const double shade = std::clamp(0.8 + 1.2 * ((hx - h) - (hz - h)) / step, 0.3, 1.4);
+                double c[3];
+                const double t = std::clamp(h / 2000, 0.0, 1.0);
+                c[0] = 0.25 + 0.6 * t, c[1] = 0.45 + 0.35 * t, c[2] = 0.2 + 0.7 * t;
+                if (m.w[PB_DUNES] + m.w[PB_BADLANDS] > 0.5) c[0] = 0.8, c[1] = 0.6, c[2] = 0.4;
+                for (double& v : c) v *= shade;
+                if (m.riverS < m.riverHW + step * 0.7) {
+                    if (m.riverOn > 0.5) c[0] = 0.1, c[1] = m.bigRiver ? 0.2 : 0.4, c[2] = m.bigRiver ? 0.9 : 0.8;
+                    else c[0] = 0.9, c[1] = 0.8, c[2] = 0.5;
+                } else if (m.creekS < m.creekHW + step * 0.4 && m.creekOn > 0.5) c[0] = 0.3, c[1] = 0.6, c[2] = 0.9;
+                for (int q = 0; q < 3; q++) img[k * 3 + q] = (unsigned char)std::clamp(c[q] * 255, 0.0, 255.0);
+            }
+        const std::string path = std::string(dir) + "/drain_seed" + std::to_string(seed) + ".ppm";
+        if (FILE* f = std::fopen(path.c_str(), "wb")) {
+            std::fprintf(f, "P6\n%d %d\n255\n", S, S);
+            std::fwrite(img.data(), 1, img.size(), f);
+            std::fclose(f);
+        }
+        ctx.note("wrote " + path + ", highest " + std::to_string((int)top) + " m");
+    }
 }

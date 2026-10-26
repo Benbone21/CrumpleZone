@@ -19,22 +19,27 @@ struct RoadRule {
 
 // ---- Water ----------------------------------------------------------------------------------------------------------------------
 struct WaterRule {
-    double freeboard = 3.0;          // m: the land stands at least this over a channel's water, or the channel fades (nothing is filled)
-    double riverBendMin = 220;       // m: a river's tightest bend (its contour's radius); tighter (a ring, a hairpin) and it fades out
-    double creekBendMin = 110;       // m: a creek's
-    double bankBatter = 2.5;         // a valley's wall is this times its depth wide (eased in: steepest about 1 : bankBatter / 1.5)
-    double riverValleyMax = 1000;    // m: the widest a river's valley wall goes (a gorge in the ranges is steeper: rock)
-    double creekValleyMax = 160;     // m: a creek's
-    double riverCutMax = 100000;        // m: where the land stands this far over a river's level, no valley is cut (rivers go round mountains)
+    // (The drainage network, procworld.cpp: a lattice node every 160 m drains to its lowest neighbour; its drainage is the area
+    // upstream of it. docs/plans/procworld-next.md "Slice: land shape with real drainage".)
+    double gullyArea = 0.08;         // km2: a channel drains this much before it cuts a gully (dry)...
+    double creekArea = 0.3;          // km2: ...a creek (water, fordable)...
+    double riverArea = 1.5;          // km2: ...a river...
+    double bigRiverArea = 2.5;       // km2: ...a big river (deep and fast: crossed at its known fords, or on a bridge)
+    double bankBatter = 6.0;         // in the ranges a valley's side is this times its height wide (steepest at its foot: 1 : batter/2)
+    double lowBatter = 14;            // ...in the lowland
+    double riverGrade = 0.04;        // the steepest a big river's level climbs in the ranges (a tenth of it in the lowland)
+    double creekGrade = 0.33;        // ...and a creek's high in the ranges (cascades)
+    double fordSpacing = 2500;       // m: about how far apart a big river's known fords are
+    double fordDepth = 0.4;          // m: the water over a ford's riffle
 };
 
 // ---- Terrain: the mountain ranges ---------------------------------------------------------------------------------------------
 struct RangeRule {
     double beltFrom = 0.40;        // the belt field (0..1, ~9 km features) where ranges begin (less 0.06 x the world's relief)
     double beltFull = 0.60;        // ...and where they're at full height
-    double passHeight = 260;       // m over the lowland: the ranges' high valleys and passes
-    double peakHeight = 820;       // m: the ridged field's top on top of that, times the world's relief (0.75-1.25)
-    double crestSpacing = 1923;    // m: about how far apart the crests are
+    double passHeight = 300;       // m over the lowland: the ranges' valley floors at their heart (times the world's relief, 0.75-1.25)
+    double peakHeight = 620;       // m: the mountains' mass over their valley floors, times the world's relief (the valleys are cut into it)
+    double crestSpacing = 1100;    // m: about how far apart the crags on the ridges are (the rough detail on the high ground)
     double alpineFrom = 330;       // m: the alpine biome's weight starts here...
     double alpineFull = 560;       // ...and is whole here
     double alpineHeatShift = 100;    // m: in the coldest country the alpine comes this much lower (and in the hottest this much higher)
