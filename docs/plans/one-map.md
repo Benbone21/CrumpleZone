@@ -169,3 +169,33 @@ A region start is the host's choice for where they start; guests start at the ma
 1. The name: the big map is still called BACKCOUNTRY (the regions' names show on the M map and in the start points). A new name is a
    one-line change.
 2. The north and east beyond the 6 km square are bare edge mountains. Room for a fourth region later (the Freeway stays separate, as asked).
+
+## 11. As built (2026-10-25, `wip/onemap`)
+
+What changed from the plan while building it:
+- **Seams by offset.** The band round a region is the Backcountry's own land raised or lowered by how far the region's edge stands
+  above it there (smoothed along the edge, more the further out), fading to nothing over 340-380 m (seam side) or 300 m (the other
+  sides). The land keeps its own hills through the band, and nothing of the region's is drawn out in straight lines.
+- **The edge ridge** is opened within 150 m of each region's square, back to full by 650 m, so a region's sides meet low hills, not a
+  wall; the big map has its own edge mountains in its last 330 m all round.
+- **Trusted cores:** the seam side as planned (505 / 465 m), and the two sides beside it too (the Mountain 515 m, the Frontier 485 m,
+  the Open Country 465 m), where their old rims rose. The far side is the big map's edge: the old rim stays there.
+- **The regions' ground** reaches into the band in ragged patches over 160 m (noise), and their trees and bushes just past the core
+  (within 40 m) stay, re-grounded, so the woods don't end in a line.
+- **Roads:** found with an A* over 8 m cells (gentle grades first, off the foot of cliffs, out of water and of where Elk River and the
+  lakes will be, round the regions' cores where it can), cut and filled to 12% with banks that widen with the cut. Ranger Station ->
+  Open Country 2.5 km, Lakeshore Fuel -> the Mountain's loop road 2.9 km, the Lost Mine's wash -> Cold Creek Lodge 1.6 km.
+- **The 6 km Backcountry kept to the last bit:** its scatter keeps its seeds (counted from the 6 km corner), and `World::height`
+  works the cell fraction out from that corner too, so the old map's land under a wheel is bit-identical (the autopilot's Far Side
+  run drives the same 202.7 s as on main). The new country's big outcrops stop at 400, counted from the west; a few cells further east
+  now get one (under 1% of the rocks within 2.6 km change size, none move).
+- Elk River's mouth lake sits in the river's own canyon (its west reach runs 10-25 m below the land, as on the 6 km map).
+- The Frontier's frozen tarn and slickrock bowl: the planner finds no way to them on the Frontier itself either, so the reachability
+  test leaves them out.
+- `--standalone` (dev) builds an old map on its own; the bench suite does that for its scenes.
+
+Measurements: `docs/hardware/linux-7900xtx-onemap.md`.
+
+Not done (later, if wanted): the ground shader's rock/snow heights per region (the whole map uses the Backcountry's; the Mountain's
+snow is painted on); the music and ambience by region (the Backcountry's everywhere); a textured M map; region places in the places
+table (they're in the DRIVE TO and discovery lists, under their old map ids).
