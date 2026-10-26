@@ -146,6 +146,7 @@ void Editor::newSection(World& w, Renderer& r) {
     l.map = MAP_WILDS;  // (open country, nothing laid out on it: what you make here looks the way it plays)
     l.name = uniqueSectionName();
     l.mode = LEVEL_SPRINT;
+    r.waitStreaming();  // (its background streaming reads the world)
     w = levelWorld(l);
     open(w, r, l);
     core.newSection(wildsSectionCanvas());
@@ -872,6 +873,7 @@ void Editor::afterFlow() {
         l.map = newMap;
         l.name = "UNTITLED";
         World& w = *core.world;
+        if (rend) rend->waitStreaming();  // (as above)
         w = World(newMap);
         open(w, *rend, l);
         say(std::string("NEW LEVEL ON ") + mapName(newMap));
@@ -932,6 +934,7 @@ void Editor::doOpen(int index) {
 void Editor::openLevel(const Level& lv, bool recovered) {
     // A fresh copy of its map, then the level on it.
     World& w = *core.world;
+    if (rend) rend->waitStreaming();  // (its background streaming reads the world)
     w = levelWorld(lv);
     Level l = lv;
     if (l.builtin) l.builtin = false, l.file.clear(), l.name = l.name + " (MINE)";

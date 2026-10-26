@@ -1,4 +1,4 @@
-// Frame hitches (docs/hardware/linux-7900xtx-hitches.md): the big map's streaming does a bounded piece of work at a time and
+// Frame hitches on the big map (branch wip/hitches): the streaming does a bounded piece of work at a time and
 // keeps what the shaders read right; the physics pool stops waiting on a worker the machine isn't running.
 #include <atomic>
 #include <chrono>
