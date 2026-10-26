@@ -1,6 +1,7 @@
 // The procedural world: the generator (pure functions of seed and global position), the chunk cache and World::buildProcedural
 // (a window of the land). See procworld.h and docs/superpowers/specs/2026-10-25-procedural-world-design.md.
 #include "procworld.h"
+#include "procrules.h"
 
 #include <algorithm>
 #include <chrono>
@@ -262,24 +263,45 @@ Macro ProcWorld::macroAt(double x, double z, bool flow) const {
     auto field = [&](uint64_t s, double f, double px, double pz) { return fbm(s, (px + wx) * f, (pz + wz) * f, 3); };
     // (Far from the channel that's a poor guess, changing many metres a metre where the field's slope does: the valley's walls,
     // hundreds of metres out, go by the field's offset over its usual slope instead, which changes smoothly.)
-    auto channel = [&](uint64_t s, double f, double& sdist, double& vdist, double& tx, double& tz) {
+    // (The rule, procrules.h kWater: no rings and no hairpins. A channel is a contour of the field, and a contour closes on itself
+    // round the field's bumps: there it bends tightly all the way round. Where its radius of curvature, from the field's second
+    // differences over D m, is under rMin, the channel fades out: no water, no valley.)
+    auto channel = [&](uint64_t s, double f, double rMin, double& sdist, double& vdist, double& tx, double& tz, double& keep) {
         const double r0 = field(s, f, x, z), rx = field(s, f, x + 2, z), rz = field(s, f, x, z + 2);
         const double gx = (rx - r0) / 2, gz = (rz - r0) / 2, g = std::sqrt(gx * gx + gz * gz);
         sdist = (r0 - 0.5) / std::max(g, 1e-6);
         vdist = std::fabs(r0 - 0.5) / f;  // (near the channel, under the bank's smoothstep either way)
         tx = g > 1e-9 ? -gz / g : 1, tz = g > 1e-9 ? gx / g : 0;
+        keep = 1;
+        const double taper = 1 - smoothstep(1.5 * rMin, 2.5 * rMin, std::fabs(sdist));  // (far out a bend doesn't matter: spared the cost)
+        if (taper > 0) {
+            const double D = 0.12 * rMin;
+            const double px = field(s, f, x + D, z), mx = field(s, f, x - D, z), pz = field(s, f, x, z + D), mz = field(s, f, x, z - D);
+            const double pp = field(s, f, x + D, z + D), pm = field(s, f, x + D, z - D), mp = field(s, f, x - D, z + D), mm = field(s, f, x - D, z - D);
+            const double fx = (px - mx) / (2 * D), fz = (pz - mz) / (2 * D), fxx = (px - 2 * r0 + mx) / (D * D), fzz = (pz - 2 * r0 + mz) / (D * D);
+            const double fxz = (pp - pm - mp + mm) / (4 * D * D), g2 = fx * fx + fz * fz;
+            const double k = std::fabs(fxx * fz * fz - 2 * fxz * fx * fz + fzz * fx * fx) / std::max(g2 * std::sqrt(g2), 1e-30);  // (1/m)
+            keep = 1 - (1 - smoothstep(rMin, 2 * rMin, 1 / std::max(k, 1e-9))) * taper;
+        }
     };
-    double tx, tz, ctx2, ctz;
-    channel(P.s[S_RIVER], 0.00045 / S, m.riverS, m.riverV, tx, tz);
-    channel(P.s[S_CREEK], 0.0012 / S, m.creekS, m.creekV, ctx2, ctz);
+    double tx, tz, ctx2, ctz, rKeep, cKeep;
+    channel(P.s[S_RIVER], 0.00045 / S, kWater.riverBendMin, m.riverS, m.riverV, tx, tz, rKeep);
+    channel(P.s[S_CREEK], 0.0012 / S, kWater.creekBendMin, m.creekS, m.creekV, ctx2, ctz, cKeep);
     // (Downhill: the way the land's broad swell falls along the channel.)
     if (!flow) tx = tz = ctx2 = ctz = 0;
     const double dgx = !flow ? 0 : drainAt(x + 24, z) - drainAt(x - 24, z), dgz = !flow ? 0 : drainAt(x, z + 24) - drainAt(x, z - 24);
-    const double sgn = tx * dgx + tz * dgz > 0 ? -1.0 : 1.0, csgn = ctx2 * dgx + ctz * dgz > 0 ? -1.0 : 1.0;
+    // (A creek runs down its own level, not the river's.)
+    const bool nearCreek = flow && std::fabs(m.creekS) < 60;  // (the way it runs only matters in the water)
+    const double cgx = !nearCreek ? 0 : land(x + 24, z).creekLevel - land(x - 24, z).creekLevel, cgz = !nearCreek ? 0 : land(x, z + 24).creekLevel - land(x, z - 24).creekLevel;
+    const double sgn = tx * dgx + tz * dgz > 0 ? -1.0 : 1.0, csgn = ctx2 * cgx + ctz * cgz > 0 ? -1.0 : 1.0;
     m.flowX = tx * sgn, m.flowZ = tz * sgn, m.cflowX = ctx2 * csgn, m.cflowZ = ctz * csgn;
     m.riverOn = clamp01(1.25 - 1.7 * (m.w[PB_DUNES] + 0.75 * m.w[PB_BADLANDS]));          // (dry washes in the desert)
     m.creekOn = clamp01((m.wet - 0.3) * 3) * clamp01(1.2 - 1.6 * (m.w[PB_DUNES] + 0.6 * m.w[PB_BADLANDS]));
     m.creekOn *= 1 - smoothstep(6, 14, m.h - m.creekLevel);  // (creeks run in the low country: no gorges cut through the hills)
+    // (The rule: water never stands above the land. Where the land isn't kWater.freeboard over a channel's level, the channel fades:
+    // a river to a dry wash, a creek out. Nothing is ever filled to carry water.)
+    m.riverOn *= smoothstep(0.0, kWater.freeboard, m.h - m.drain) * rKeep;
+    m.creekOn *= smoothstep(0.0, kWater.freeboard, m.h - m.creekLevel) * cKeep;
     return m;
 }
 
@@ -303,17 +325,18 @@ double ProcWorld::groundHeight(double x, double z, const Macro& m) const {
     double h = m.h;
     {  // (every river's valley, wet or a dry wash: see makeChunk)
         const double d = std::fabs(m.riverS), dv = m.riverV, hw = riverHalfWidth(x, z), level = m.drain, bank = level + 0.3, wetK = smoothstep(0.3, 0.6, m.riverOn);
-        const double V = std::min(1000.0, 25 + 2.0 * std::max(0.0, h - level));
+        const double V = std::min(kWater.riverValleyMax, 25 + kWater.bankBatter * std::max(0.0, h - level));
         const double wall = h > bank ? bank + (h - bank) * smoothstep(hw, hw + V, wallDist(d, dv, hw)) : h;
-        const double wetNh = d < hw ? level - riverDepth(x, z) * (1 - sqr(d / hw)) : wall;
+        const double wetNh = d < hw ? std::min(wall, level - riverDepth(x, z) * (1 - sqr(d / hw))) : wall;
         const double dryNh = wall - 0.8 * std::min(1.0, m.riverOn * 4) * (1 - smoothstep(hw * 0.5, hw + 8, d));
         h = dryNh + (wetNh - dryNh) * wetK;
     }
-    if (m.creekOn > 0.02) {
+    const double cOn = m.creekOn * smoothstep(0.0, kWater.freeboard, h - m.creekLevel);  // (the river's valley cut under it: the creek ends above it)
+    if (cOn > 0.02) {
         const double d = std::fabs(m.creekS), dv = m.creekV, hw = creekHalfWidth(x, z), level = m.creekLevel, bank = level + 0.2;
-        const double V = std::min(120.0, 10 + 1.5 * std::max(0.0, h - level));
-        const double nh = d < hw ? level - 0.3 : h > bank ? bank + (h - bank) * smoothstep(hw, hw + V, wallDist(d, dv, hw)) : bank;
-        h += (nh - h) * std::min(1.0, m.creekOn * 2);
+        const double V = std::min(kWater.creekValleyMax, 10 + kWater.bankBatter * std::max(0.0, h - level));
+        const double nh = h > bank ? (d < hw ? level - 0.3 : bank + (h - bank) * smoothstep(hw, hw + V, wallDist(d, dv, hw))) : h;
+        h += (nh - h) * std::min(1.0, cOn * 2);
     }
     return h;
 }
@@ -597,10 +620,11 @@ std::shared_ptr<const TrailEdge> ProcWorld::edge(int64_t i, int64_t j, int dir) 
             raw[k] = Hat(px[k], pz[k]);
             if (k) along[k] = along[k - 1] + std::sqrt(sqr(px[k] - px[k - 1]) + sqr(pz[k] - pz[k - 1]));
         }
+        const int smoothR = e->road ? 8 : 4;  // (a road's profile smoothed over ~32 m; a trail's follows the land closer, ~16 m)
         for (int k = 0; k < n; k++) {
             double s = 0;
             int cnt = 0;
-            for (int q = std::max(0, k - 8); q <= std::min(n - 1, k + 8); q++) s += raw[q], cnt++;
+            for (int q = std::max(0, k - smoothR); q <= std::min(n - 1, k + smoothR); q++) s += raw[q], cnt++;
             y[k] = s / cnt;
         }
         for (int k = 0; k < n; k += 4) {  // (fords: where it's in a river or a creek, the water's level less a wading depth)
@@ -623,9 +647,12 @@ std::shared_ptr<const TrailEdge> ProcWorld::edge(int64_t i, int64_t j, int dir) 
         // Held to the grade; where that would leave it far above or below the land (a climb the way round couldn't spread out: a
         // gorge's wall), steeper instead, a step at a time, rather than on a tall bank or down a deep cut.
         // (A ford the grade can't reach from the next one, a creek's just up from where it joins a river: let go, graded.)
+        // (The rule, roadrules.h kRoadKinds: a road's cut or fill under kFillMax[road] of the land, a trail's a couple of metres: a trail
+        // follows the land and climbs steeper rather than ride a causeway. The grade is let out a step at a time to its kind's steepest.)
         const std::vector<double> lay = y;
+        const RoadRule& rule = roadRule(e->road ? RK_GRAVEL : e->rating >= 2 ? RK_TWOTRACK : RK_TRAIL);
         double g = gmax;
-        for (int tries = 0, guard = 0; tries < 8; tries++, g *= 1.35) {
+        for (int tries = 0, guard = 0; tries < 12; tries++, g = std::min(g * 1.25, rule.gradeMax)) {
             y = lay;
             for (int pass = 0; pass < 10; pass++)
                 for (int dirn = 0; dirn < 2; dirn++)
@@ -646,10 +673,10 @@ std::shared_ptr<const TrailEdge> ProcWorld::edge(int64_t i, int64_t j, int dir) 
             double dev = 0;
             bool kept = true;  // (held to the grade everywhere: its two ends, too far apart in height for the way between, are not)
             for (int k = 0; k < n; k++) {
-                dev = std::max(dev, std::fabs(y[k] - lay[k]));
+                if (!pinned(k)) dev = std::max(dev, std::fabs(y[k] - raw[k]));  // (against the land itself, not the smoothed profile)
                 if (k && std::fabs(y[k] - y[k - 1]) > g * (along[k] - along[k - 1]) + 1e-6) kept = false;
             }
-            if (kept && dev < (e->road ? 30 : 18)) break;  // (a road takes deeper cuts and fills before it's let climb steeper)  // (a road takes deeper cuts and fills before it's let climb steeper)
+            if ((kept && dev < rule.fillMax) || g >= rule.gradeMax) break;
         }
         // (Its corners rounded, the crests and dips where the grade turns: a running mean, which keeps it to the grade.)
         for (int pass = 0; pass < 2; pass++) {
@@ -665,7 +692,7 @@ std::shared_ptr<const TrailEdge> ProcWorld::edge(int64_t i, int64_t j, int dir) 
         e->x.resize(n), e->z.resize(n), e->y.resize(n), e->along.resize(n), e->fill.resize(n);
         double x0 = 1e18, x1 = -1e18, z0 = 1e18, z1 = -1e18;
         for (int k = 0; k < n; k++) {
-            e->x[k] = (float)px[k], e->z[k] = (float)pz[k], e->y[k] = (float)y[k], e->along[k] = (float)along[k], e->fill[k] = (float)(y[k] - lay[k]);
+            e->x[k] = (float)px[k], e->z[k] = (float)pz[k], e->y[k] = (float)y[k], e->along[k] = (float)along[k], e->fill[k] = (float)(y[k] - raw[k]);
             x0 = std::min(x0, px[k]), x1 = std::max(x1, px[k]), z0 = std::min(z0, pz[k]), z1 = std::max(z1, pz[k]);
         }
         const double margin = kTreadReach;  // (the widest earthworks)
@@ -750,20 +777,21 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
             for (int b = 0; b < PB_COUNT; b++) w[b] = blend(i, j, [b](const Macro& m) { return m.w[b]; }), bump += w[b] * kBump[b];
             double h = blend(i, j, [](const Macro& m) { return m.h; });
             // Uneven underfoot: bumps a few metres across.
-            h += bump * (0.9 * (vnoise(P.s[S_BUMP1], x * 0.09 + 5.0, z * 0.09 + 1.0) - 0.5) + 0.35 * (vnoise(P.s[S_BUMP2], x * 0.31, z * 0.27) - 0.5));
+            const double bumpH = bump * (0.9 * (vnoise(P.s[S_BUMP1], x * 0.09 + 5.0, z * 0.09 + 1.0) - 0.5) + 0.35 * (vnoise(P.s[S_BUMP2], x * 0.31, z * 0.27) - 0.5));
+            h += bumpH;
             // A river: its channel cut down to the drain level, banks easing back up to the land (wider the higher the land stands).
             const double rOn = blend(i, j, [](const Macro& m) { return m.riverOn; });
             {  // (Every river's valley is cut, wet or a dry wash: one that faded with the wet would leave its walls standing.)
                 const double d = std::fabs(blend(i, j, [](const Macro& m) { return m.riverS; })), dv = blend(i, j, [](const Macro& m) { return m.riverV; });
                 const double hw = riverHalfWidth(x, z), level = blend(i, j, [](const Macro& m) { return m.drain; });
                 const double wetK = smoothstep(0.3, 0.6, rOn);  // (a river fades into a dry wash in the desert: carved as one, blended)
-                const double V = std::min(1000.0, 25 + 2.0 * std::max(0.0, h - level));
+                const double V = std::min(kWater.riverValleyMax, 25 + kWater.bankBatter * std::max(0.0, h - level));
                 if (wallDist(d, dv, hw) < hw + 10 + V) {  // (all the way out: cut short, the walls would end in a step)
                     const bool wet = rOn > 0.5;
                     const double depth = riverDepth(x, z);
                     const double bank = level + 0.3;
-                    const double wall = h > bank ? bank + (h - bank) * smoothstep(hw, hw + V, wallDist(d, dv, hw)) : bank + (h - bank) * smoothstep(hw + 4, hw + 30, d);
-                    const double wetNh = d < hw ? level - depth * (1 - sqr(d / hw)) : wall;  // (low ground: a levee, then down)
+                    const double wall = h > bank ? bank + (h - bank) * smoothstep(hw, hw + V, wallDist(d, dv, hw)) : h;  // (never filled)
+                    const double wetNh = d < hw ? std::min(wall, level - depth * (1 - sqr(d / hw))) : wall;
                     const double dryNh = (h > bank ? wall : h) - 0.8 * std::min(1.0, rOn * 4) * (1 - smoothstep(hw * 0.5, hw + 8, d));
                     h = dryNh + (wetNh - dryNh) * wetK;
                     if (d < hw + 0.5 && rOn > 0.02) cl.bed = wet ? 1 : 2;
@@ -776,17 +804,18 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
                 }
             }
             // A creek: the same, small, at its own level.
-            const double cOn = blend(i, j, [](const Macro& m) { return m.creekOn; });
+            const double cLevel = blend(i, j, [](const Macro& m) { return m.creekLevel; });
+            const double hNoBump = h - bumpH;  // (the land as groundHeight has it here: carved, no bumps)
+            const double cOn = blend(i, j, [](const Macro& m) { return m.creekOn; }) * smoothstep(0.0, kWater.freeboard, hNoBump - cLevel);
             if (cOn > 0.02) {
                 const double d = std::fabs(blend(i, j, [](const Macro& m) { return m.creekS; })), dv = blend(i, j, [](const Macro& m) { return m.creekV; });
-                const double hw = creekHalfWidth(x, z), level = blend(i, j, [](const Macro& m) { return m.creekLevel; });
-                const double V = std::min(120.0, 10 + 1.5 * std::max(0.0, h - level));
+                const double hw = creekHalfWidth(x, z), level = cLevel;
+                const double V = std::min(kWater.creekValleyMax, 10 + kWater.bankBatter * std::max(0.0, h - level));
                 if (wallDist(d, dv, hw) < hw + V && cl.water < -1e8) {
                     const bool wet = cOn > 0.5;
                     const double depth = 0.25 + 0.2 * vnoise(P.s[S_CREEK] + 3, x * 0.01, z * 0.01);
                     const double bank = level + 0.2;
-                    double nh = d < hw ? level - depth * (1 - sqr(d / hw)) : bank + (h - bank) * smoothstep(hw, hw + V, wallDist(d, dv, hw));
-                    if (d >= hw && h < bank) nh = bank + (h - bank) * smoothstep(hw + 2, hw + 14, d);
+                    const double nh = h > bank ? (d < hw ? level - depth * (1 - sqr(d / hw)) : bank + (h - bank) * smoothstep(hw, hw + V, wallDist(d, dv, hw))) : h;  // (never filled)
                     h = h + (nh - h) * std::min(1.0, cOn * 2);
                     if (d < hw + 0.4 && !cl.bed) cl.bed = wet ? 1 : 2;
                     if (d < hw + 2) cl.keep = 1;
@@ -822,7 +851,7 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
                     const double t = std::min(1.0, std::max(0.0, ((lx - axp) * dx + (lz - azp) * dz) / L2));
                     const double qx = axp + dx * t - lx, qz = azp + dz * t - lz, dd = qx * qx + qz * qz;
                     const double fill = e.fill[k] + (e.fill[k + 1] - e.fill[k]) * t;
-                    const double bw = std::min(kTreadReach - 8, base + 1.3 * std::fabs(fill)), ed = std::sqrt(dd) - e.half();
+                    const double bw = std::min(kTreadReach - 8, base + kBatter * std::fabs(fill)), ed = std::sqrt(dd) - e.half();
                     if (dd < best) {
                         best = dd, bestE = &e, bestBw = bw;
                         bestAlong = e.along[k] + (e.along[k + 1] - e.along[k]) * t;
@@ -840,19 +869,19 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
                 }
                 seg.clear();
                 if (s8 <= 0 || nNear == 12) continue;
-                near[nNear++] = {wMax, s8y / s8, edMin, std::min(kTreadReach - 8, base + 1.3 * std::fabs(s8f / s8)), e.road};
+                near[nNear++] = {wMax, s8y / s8, edMin, std::min(kTreadReach - 8, base + kBatter * std::fabs(s8f / s8)), e.road};
             }
-            double sumW = 0, sumWY = 0;
+            double sumW = 0, sumWY = 0, open = 1;  // (open: how much of the land is left, each tread taking its share of what the others left)
             for (int q = 0; q < nNear; q++) {
                 // (The nearest tread has its way: another's share falls away within a few metres of being further, or as many as it
                 // is above or below it: two trails that cross at different heights meet in a ramp, not a step.)
                 double r = 0;
                 for (int o = 0; o < nNear; o++)
-                    if (o != q) r = std::max(r, (near[q].ed - near[o].ed) / (3 + std::fabs(near[q].y - near[o].y)));
+                    if (o != q) r = std::max(r, (near[q].ed - near[o].ed) / (3 + 1.5 * std::fabs(near[q].y - near[o].y)));
                 const double wq = near[q].w / (1 + r * r * r * r);
-                sumW += wq, sumWY += wq * near[q].y;
+                sumW += wq, sumWY += wq * near[q].y, open *= 1 - std::min(1.0, wq);
             }
-            if (sumW > 0) h = h0 + (sumWY - sumW * h0) / std::max(1.0, sumW);
+            if (sumW > 0) h = h0 + (sumWY / sumW - h0) * (1 - open);  // (two half-weights make three quarters, not a whole: no step where earthworks overlap)
             if (bestE) {
                 const double e = std::sqrt(best) - bestE->half();
                 if (e < bestBw) {
@@ -864,7 +893,7 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
             }
             for (const Plaza& pz : plazas) {  // (level ground for the place's buildings, easing into the land)
                 const double d = std::sqrt(sqr(x - pz.x) + sqr(z - pz.z));
-                const double bw = std::min(80.0, std::max(14.0, 1.3 * std::fabs(pz.h - h)));  // (as the trails' earthworks)
+                const double bw = std::min(80.0, std::max(14.0, kBatter * std::fabs(pz.h - h)));  // (as the trails' earthworks)
                 if (d > pz.r + bw) continue;
                 h += (pz.h - h) * smoothstep(pz.r + bw, pz.r, d);
                 if (d < pz.r + 3) cl.keep = 1, cl.water = -1e9, cl.fx = cl.fz = 0;

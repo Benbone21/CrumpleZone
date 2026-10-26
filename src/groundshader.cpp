@@ -235,7 +235,7 @@ void main(){
   // ---- The four cells round this point, from a slightly wobbled spot so edges are ragged, not 1 m stairs ----
   vec2 wob = lo == 1 ? vec2(0.0) : (vec2(vnoise(p * 0.8), vnoise(p.yx * 0.8 + 7.0)) - 0.5) * 1.4;
   vec2 gp = pr + wob + (uTerrainN - 1.0) * 0.5;
-  ivec2 i0 = clamp(ivec2(floor(gp)), ivec2(0), ivec2(int(uTerrainN) - 2));
+  ivec2 i0 = ivec2(floor(gp));  // (unclamped: past the grid terrainCell gives plain ground, not the edge's paint run on)
   vec2 f = clamp(gp - vec2(i0), 0.0, 1.0);
   f = f * f * (3.0 - 2.0 * f);
   vec4 c00 = terrainCell(i0), c10 = terrainCell(i0 + ivec2(1, 0));

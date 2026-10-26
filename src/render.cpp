@@ -325,13 +325,20 @@ uniform vec4 uTreeFade[24];
 uniform vec4 uTerrainWin;          // the window: its first cell (i, j), its texels a side, 1 when it holds the whole map
 uniform sampler2D uTerrainCoarse;
 uniform float uTerrainCoarseN;
-vec4 terrainCell(ivec2 g){
+vec4 terrainCellIn(ivec2 g){
   g = clamp(g, ivec2(0), ivec2(int(uTerrainN) - 1));
   if (uTerrainWin.w > 0.5) return texelFetch(uTerrainTex, g, 0);  // (the whole map is in the window, as stored)
   ivec2 r = g - ivec2(uTerrainWin.xy);
   int w = int(uTerrainWin.z);
   if (r.x < 0 || r.y < 0 || r.x >= w || r.y >= w) return texelFetch(uTerrainCoarse, clamp(g / 4, ivec2(0), ivec2(int(uTerrainCoarseN) - 1)), 0);
   return texelFetch(uTerrainTex, g % w, 0);
+}
+// Past the map's grid (the far backdrop): its height on the edge, but no paint, grass or water. (Clamped whole, a road or a river
+// crossing the edge ran on as a long straight stripe across the far hills.)
+vec4 terrainCell(ivec2 g){
+  ivec2 c = clamp(g, ivec2(0), ivec2(int(uTerrainN) - 1));
+  vec4 t = terrainCellIn(c);
+  return c == g ? t : vec4(t.r, 0.0, 0.0, -1000.0);
 }
 )";
 
@@ -1853,13 +1860,20 @@ uniform sampler2D uTerrainTex; uniform float uTerrainN;
 uniform vec4 uTerrainWin;          // the window: its first cell (i, j), its texels a side, 1 when it holds the whole map
 uniform sampler2D uTerrainCoarse;
 uniform float uTerrainCoarseN;
-vec4 terrainCell(ivec2 g){
+vec4 terrainCellIn(ivec2 g){
   g = clamp(g, ivec2(0), ivec2(int(uTerrainN) - 1));
   if (uTerrainWin.w > 0.5) return texelFetch(uTerrainTex, g, 0);  // (the whole map is in the window, as stored)
   ivec2 r = g - ivec2(uTerrainWin.xy);
   int w = int(uTerrainWin.z);
   if (r.x < 0 || r.y < 0 || r.x >= w || r.y >= w) return texelFetch(uTerrainCoarse, clamp(g / 4, ivec2(0), ivec2(int(uTerrainCoarseN) - 1)), 0);
   return texelFetch(uTerrainTex, g % w, 0);
+}
+// Past the map's grid (the far backdrop): its height on the edge, but no paint, grass or water. (Clamped whole, a road or a river
+// crossing the edge ran on as a long straight stripe across the far hills.)
+vec4 terrainCell(ivec2 g){
+  ivec2 c = clamp(g, ivec2(0), ivec2(int(uTerrainN) - 1));
+  vec4 t = terrainCellIn(c);
+  return c == g ? t : vec4(t.r, 0.0, 0.0, -1000.0);
 }
 uniform mat4 uVP; uniform vec3 uCam; uniform float uTime;
 uniform int uSide; uniform int uBlades; uniform int uMap;
@@ -2080,13 +2094,20 @@ uniform sampler2D uTerrainTex; uniform float uTerrainN;
 uniform vec4 uTerrainWin;          // the window: its first cell (i, j), its texels a side, 1 when it holds the whole map
 uniform sampler2D uTerrainCoarse;
 uniform float uTerrainCoarseN;
-vec4 terrainCell(ivec2 g){
+vec4 terrainCellIn(ivec2 g){
   g = clamp(g, ivec2(0), ivec2(int(uTerrainN) - 1));
   if (uTerrainWin.w > 0.5) return texelFetch(uTerrainTex, g, 0);  // (the whole map is in the window, as stored)
   ivec2 r = g - ivec2(uTerrainWin.xy);
   int w = int(uTerrainWin.z);
   if (r.x < 0 || r.y < 0 || r.x >= w || r.y >= w) return texelFetch(uTerrainCoarse, clamp(g / 4, ivec2(0), ivec2(int(uTerrainCoarseN) - 1)), 0);
   return texelFetch(uTerrainTex, g % w, 0);
+}
+// Past the map's grid (the far backdrop): its height on the edge, but no paint, grass or water. (Clamped whole, a road or a river
+// crossing the edge ran on as a long straight stripe across the far hills.)
+vec4 terrainCell(ivec2 g){
+  ivec2 c = clamp(g, ivec2(0), ivec2(int(uTerrainN) - 1));
+  vec4 t = terrainCellIn(c);
+  return c == g ? t : vec4(t.r, 0.0, 0.0, -1000.0);
 }
 float groundAt(vec2 xz){
   vec2 g = xz + (uTerrainN - 1.0) * 0.5;

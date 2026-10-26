@@ -9,6 +9,7 @@
 #include <set>
 
 #include "../src/procworld.h"
+#include "../src/procrules.h"
 #include "../src/net.h"
 #include "harness.h"
 #include <thread>
@@ -642,4 +643,220 @@ SCENARIO(procStartPad,"procworld/start-pad", "Round the start (its pad, the grou
         return std::to_string(t) + " trees " + std::to_string(r) + " rocks " + std::to_string(bu) + " bushes";
     };
     ctx.check("the same things round it", count(a, 0, 0) == count(b, dx, dz), count(a, 0, 0) + " vs " + count(b, dx, dz));
+}
+
+namespace {
+// The chunk cache's ground at a global metre (what the game stands on: carved, bumps, trails).
+double chunkCell(const ProcWorld& G, int64_t ix, int64_t iz) {
+    auto c = G.chunk(floorDiv(ix, kChunk), floorDiv(iz, kChunk));
+    return c->h[(size_t)(ix - c->cx * kChunk) * kChunk + (size_t)(iz - c->cz * kChunk)];
+}
+double chunkH(const ProcWorld& G, double x, double z) {  // (bilinear between the cells, as the ground is drawn and driven on)
+    const double fx = std::floor(x), fz = std::floor(z), tx = x - fx, tz = z - fz;
+    const int64_t ix = (int64_t)fx, iz = (int64_t)fz;
+    return (chunkCell(G, ix, iz) * (1 - tx) + chunkCell(G, ix + 1, iz) * tx) * (1 - tz) + (chunkCell(G, ix, iz + 1) * (1 - tx) + chunkCell(G, ix + 1, iz + 1) * tx) * tz;
+}
+}  // namespace
+
+SCENARIO(procEarthworks, "procworld/earthworks", "Roads' and trails' earthworks keep to their rules (procrules.h): no tread rides a cut or fill deeper than its kind's limit, and no side is a wall") {
+    // (Owner, screenshot 2: a trail along the top of a 10 m embankment with near-vertical sides. Across each tread, every 6 m along it:
+    // how much steeper the ground beside it is than the land it was cut from, metre by metre out to 45 m.)
+    struct Stat { long n = 0, fillOver = 0, sideOver = 0; double worstFill = 0, worstSide = 0, wx = 0, wz = 0; uint64_t ws = 0; };
+    Stat st[2];
+    for (uint64_t seed : {1ull, 2ull, 123456789ull}) {
+        const ProcWorld& G = ProcWorld::forSeed(seed);
+        for (int64_t i = -3; i < 3; i++)
+            for (int64_t j = -3; j < 3; j++)
+                for (int dir = 0; dir < 2; dir++) {
+                    auto e = G.edge(i, j, dir);
+                    if (!e->on) continue;
+                    Stat& s = st[e->road ? 1 : 0];
+                    const RoadRule& rule = roadRule(e->road ? RK_GRAVEL : e->rating >= 2 ? RK_TWOTRACK : RK_TRAIL);
+                    for (size_t k = 4; k + 4 < e->x.size(); k += 3) {
+                        const double tx = e->x[k + 1] - e->x[k - 1], tz = e->z[k + 1] - e->z[k - 1], L = std::sqrt(tx * tx + tz * tz);
+                        if (L < 1e-6) continue;
+                        const double nx = -tz / L, nz = tx / L, cx = e->ax + e->x[k], cz = e->az + e->z[k];
+                        s.n++;
+                        const double fill = std::fabs(e->fill[k]);
+                        s.worstFill = std::max(s.worstFill, fill), s.fillOver += fill > rule.fillMax + 1.0;  // (a metre for the land's bumps)
+                        for (int sd = -1; sd <= 1; sd += 2) {
+                            double worst = 0, pc = chunkH(G, cx + nx * sd * (e->half() + 1), cz + nz * sd * (e->half() + 1));
+                            double pn = G.groundHeight(cx + nx * sd * (e->half() + 1), cz + nz * sd * (e->half() + 1));
+                            for (double d = e->half() + 2; d < 46; d += 1) {
+                                const double qx = cx + nx * sd * d, qz = cz + nz * sd * d, hc = chunkH(G, qx, qz), hn = G.groundHeight(qx, qz);
+                                worst = std::max(worst, std::fabs(hc - pc) - std::fabs(hn - pn));
+                                pc = hc, pn = hn;
+                            }
+                            if (worst > s.worstSide) s.worstSide = worst, s.wx = cx, s.wz = cz, s.ws = seed;
+                            s.sideOver += worst > 1.0;
+                        }
+                    }
+                }
+    }
+    for (int r = 0; r < 2; r++) {
+        const Stat& s = st[r];
+        char b[260];
+        std::snprintf(b, sizeof b, "%s: %ld samples; cut or fill: deepest %.1f m, %.2f%% past the limit; sides: steepest %.2f m a metre over the land's own (seed %llu at %.0f, %.0f), %.2f%% over 1",
+                      r ? "gravel roads" : "trails", s.n, s.worstFill, 100.0 * s.fillOver / std::max(1L, s.n), s.worstSide, (unsigned long long)s.ws, s.wx, s.wz, 100.0 * s.sideOver / std::max(1L, 2 * s.n));
+        ctx.note(b);
+        ctx.check(std::string(r ? "roads" : "trails") + ": under 1% of the tread past its kind's cut and fill limit", s.fillOver * 100 < s.n);
+        // (v0.4.7: trails 4.3% and roads 10.2% of sides over 1, the steepest 9.0 and 9.4 m a metre: walls. A level tread across a steep
+        // slope makes a short steep bank on its high side, so some are over 1.)
+        ctx.check(std::string(r ? "roads" : "trails") + ": under 10% of the sides a metre a metre steeper than the land", s.sideOver * 10 < 2 * s.n);
+        ctx.check(std::string(r ? "roads" : "trails") + ": no side a wall (over 4.5 m a metre steeper than the land)", s.worstSide < 4.5);
+    }
+}
+
+SCENARIO(procRiverRules, "procworld/river-rules", "Rivers and creeks keep to the water rules (procrules.h kWater): the water never above the land beside it, never rising downstream, no rings, banks not walls") {
+    // (Owner, screenshot 4: rivers along the tops of vertical-walled embankments, a creek in a ring round a sunken bowl.)
+    for (uint64_t seed : {1ull, 2ull, 123456789ull}) {
+        World::procSeed = seed, World::procOriginSet = false;
+        World w(MAP_PROCEDURAL);
+        const double half = w.halfSize() - 50;
+        long wet = 0, above = 0, rises = 0, steps = 0, bankN = 0, bankWall = 0;
+        double worstAbove = 0, worstRise = 0, worstBank = 0;
+        for (double x = -half; x < half; x += 3)
+            for (double z = -half; z < half; z += 3) {
+                const double lv = w.waterLevel(x, z);
+                if (lv < -1e5) continue;
+                wet++;
+                // Across the flow, 30 m out either side: the ground stands at or above the water.
+                V3 f = w.waterFlow(x, z);
+                double fl = std::sqrt(f.x * f.x + f.z * f.z);
+                if (fl < 1e-6) f = V3(1, 0, 0), fl = 1;
+                const double fx = f.x / fl, fz = f.z / fl;
+                for (int sd = -1; sd <= 1; sd += 2) {
+                    const double gx = x - fz * sd * 30, gz = z + fx * sd * 30;
+                    if (std::fabs(gx) > half || std::fabs(gz) > half) continue;
+                    const double over = lv - w.height(gx, gz);
+                    if (over > 0.1) above++, worstAbove = std::max(worstAbove, over);
+                }
+                // 4 m on downstream: the water is no higher.
+                const double dx = x + fx * 4, dz = z + fz * 4, lv2 = w.waterLevel(dx, dz);
+                if (lv2 > -1e5) {
+                    steps++;
+                    if (lv2 > lv + 0.05) rises++, worstRise = std::max(worstRise, lv2 - lv);
+                }
+                // The banks: from 2 m past the water's edge out 40 m, no metre steeper than 1.2 more than the land was.
+                if (((long)(x * 7 + z * 13)) % 5 == 0)
+                    for (int sd = -1; sd <= 1; sd += 2) {
+                        double prev = w.height(x, z), worst = 0;
+                        bool dry = false;
+                        for (double d = 1; d < 40; d += 1) {
+                            const double gx = x - fz * sd * d, gz = z + fx * sd * d;
+                            if (std::fabs(gx) > half || std::fabs(gz) > half) break;
+                            const double h = w.height(gx, gz);
+                            if (w.waterLevel(gx, gz) < -1e5) dry = true;
+                            if (dry) worst = std::max(worst, std::fabs(h - prev));
+                            prev = h;
+                        }
+                        bankN++, bankWall += worst > 1.5, worstBank = std::max(worstBank, worst);
+                    }
+            }
+        // No rings: the dry ground cut off from the window's edge by water (on a 6 m raster, the channels thickened) is small.
+        const int R = (int)(2 * half / 6);
+        std::vector<uint8_t> chan((size_t)R * R, 0), seen((size_t)R * R, 0);
+        for (int a = 0; a < R; a++)
+            for (int b = 0; b < R; b++)
+                for (int q = 0; q < 4 && !chan[(size_t)a * R + b]; q++) chan[(size_t)a * R + b] = w.waterLevel(-half + a * 6 + (q & 1) * 3, -half + b * 6 + (q >> 1) * 3) > -1e5;
+        std::vector<int> stack;
+        for (int a = 0; a < R; a++)
+            for (int b = 0; b < R; b++)
+                if ((a == 0 || b == 0 || a == R - 1 || b == R - 1) && !chan[(size_t)a * R + b]) seen[(size_t)a * R + b] = 1, stack.push_back(a * R + b);
+        while (!stack.empty()) {
+            const int c = stack.back();
+            stack.pop_back();
+            const int a = c / R, b = c % R;
+            const int nb[4][2] = {{a + 1, b}, {a - 1, b}, {a, b + 1}, {a, b - 1}};
+            for (auto& n : nb)
+                if (n[0] >= 0 && n[1] >= 0 && n[0] < R && n[1] < R && !chan[(size_t)n[0] * R + n[1]] && !seen[(size_t)n[0] * R + n[1]])
+                    seen[(size_t)n[0] * R + n[1]] = 1, stack.push_back(n[0] * R + n[1]);
+        }
+        long enclosed = 0;
+        for (int a = 0; a < R; a++)
+            for (int b = 0; b < R; b++) enclosed += !chan[(size_t)a * R + b] && !seen[(size_t)a * R + b];
+        char b[400];
+        std::snprintf(b, sizeof b, "seed %llu: %ld wet samples; %ld (%.2f%%) with ground under the water 30 m aside (worst %.1f m); downstream rises %ld of %ld (worst %.2f m); "
+                      "banks: %.2f%% with a metre over 1.5 m (steepest %.1f); %.0f m2 of dry land enclosed by water",
+                      (unsigned long long)seed, wet, above, 100.0 * above / std::max(1L, 2 * wet), worstAbove, rises, steps, worstRise, 100.0 * bankWall / std::max(1L, bankN), worstBank,
+                      36.0 * enclosed);
+        ctx.note(b);
+        ctx.check("seed " + std::to_string(seed) + ": there are rivers or creeks", wet > 200);
+        ctx.check("seed " + std::to_string(seed) + ": the water is above the ground 30 m aside under 0.5% of the time", above * 200 < 2 * wet);
+        ctx.check("seed " + std::to_string(seed) + ": the water never rises downstream (under 0.5%, a few cm)", rises * 200 < std::max(1L, steps) && worstRise < 0.5);
+        ctx.check("seed " + std::to_string(seed) + ": no ring of water round dry land (under 2,000 m2 enclosed)", 36.0 * enclosed < 2000);
+        ctx.check("seed " + std::to_string(seed) + ": banks under 1% walls", bankWall * 100 < std::max(1L, bankN));
+    }
+    // (And where v0.4.7 carried a river on a bank: seed 123456789 round (2340, 1435), where its water stood up to 7 m over the land
+    // 30 m aside. Every chunk of 2 km square there: no water over the uncarved land, nor a metre over the ground beside it.)
+    {
+        const ProcWorld& G = ProcWorld::forSeed(123456789);
+        long wetN = 0, raised = 0, beside = 0;
+        for (int64_t cx = 20; cx < 52; cx++)
+            for (int64_t cz = 7; cz < 39; cz++) {
+                auto c = G.chunk(cx, cz);
+                if (c->water.empty()) continue;
+                for (int a = 0; a < kChunk; a += 2)
+                    for (int b = 0; b < kChunk; b += 2) {
+                        const float lv = c->water[(size_t)a * kChunk + b];
+                        if (lv < -1e8f) continue;
+                        wetN++;
+                        const double x = (double)(cx * kChunk + a), z = (double)(cz * kChunk + b);
+                        raised += lv > G.macroAt(x, z, false).h + 0.5;
+                        const double fx = c->flowX[(size_t)a * kChunk + b], fz = c->flowZ[(size_t)a * kChunk + b], fl = std::sqrt(fx * fx + fz * fz);
+                        if (fl < 1e-6) continue;
+                        for (int sd = -1; sd <= 1; sd += 2) beside += lv > G.groundHeight(x - fz / fl * sd * 30, z + fx / fl * sd * 30) + 1;
+                    }
+            }
+        char b[200];
+        std::snprintf(b, sizeof b, "seed 123456789 round (2340, 1435): %ld wet samples, %ld over the uncarved land, %ld a metre over the ground 30 m aside", wetN, raised, beside);
+        ctx.note(b);
+        ctx.check("no water carried over the land (seed 123456789, 2 km square)", wetN > 100 && raised == 0 && beside * 200 < wetN);
+    }
+    World::procOriginSet = false;
+}
+
+SCENARIO(procNoRings, "procworld/no-rings", "No river or creek runs in a ring (procrules.h kWater): over 8 km square of three seeds, no dry land is closed in by water") {
+    // (Owner, screenshot 4: a creek in a ring round a sunken bowl. A channel is a contour of a noise field, which closes round the
+    // field's bumps; v0.4.7 had 4, 1 and 4 such rings in 10 km square of these seeds.)
+    const double half = 4000, C = 10;
+    const int R = (int)(2 * half / C);
+    for (uint64_t seed : {1ull, 2ull, 123456789ull}) {
+        const ProcWorld& G = ProcWorld::forSeed(seed);
+        std::vector<uint8_t> ch((size_t)R * R), seen((size_t)R * R);
+        std::vector<std::thread> th;
+        for (int t = 0; t < 4; t++)
+            th.emplace_back([&, t] {
+                for (int a = t; a < R; a += 4)
+                    for (int b = 0; b < R; b++) {
+                        const double x = -half + a * C, z = -half + b * C;
+                        const Macro m = G.macroAt(x, z, false);
+                        ch[(size_t)a * R + b] = (m.creekOn > 0.5 && std::fabs(m.creekS) < G.creekHalfWidth(x, z) + 5) || (m.riverOn > 0.5 && std::fabs(m.riverS) < G.riverHalfWidth(x, z) + 5);
+                    }
+            });
+        for (auto& t : th) t.join();
+        std::vector<int> st;
+        auto flood = [&](int start) {
+            long n = 0;
+            st.push_back(start), seen[(size_t)start] = 1;
+            while (!st.empty()) {
+                const int c = st.back(), a = c / R, b = c % R;
+                st.pop_back(), n++;
+                const int nb[4][2] = {{a + 1, b}, {a - 1, b}, {a, b + 1}, {a, b - 1}};
+                for (auto& q : nb)
+                    if (q[0] >= 0 && q[1] >= 0 && q[0] < R && q[1] < R && !ch[(size_t)q[0] * R + q[1]] && !seen[(size_t)q[0] * R + q[1]])
+                        seen[(size_t)q[0] * R + q[1]] = 1, st.push_back(q[0] * R + q[1]);
+            }
+            return n;
+        };
+        for (int a = 0; a < R; a++)
+            for (int b = 0; b < R; b++)
+                if ((a == 0 || b == 0 || a == R - 1 || b == R - 1) && !ch[(size_t)a * R + b] && !seen[(size_t)a * R + b]) flood(a * R + b);
+        int rings = 0;
+        for (int a = 0; a < R; a++)
+            for (int b = 0; b < R; b++)
+                if (!ch[(size_t)a * R + b] && !seen[(size_t)a * R + b]) rings += flood(a * R + b) >= 4;
+        ctx.note("seed " + std::to_string(seed) + ": " + std::to_string(rings) + " patches of land closed in by water");
+        ctx.check("seed " + std::to_string(seed) + ": no rings", rings == 0);
+    }
 }
