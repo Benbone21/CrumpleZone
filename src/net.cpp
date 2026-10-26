@@ -72,6 +72,11 @@ struct Writer {
         const uint8_t* p = reinterpret_cast<const uint8_t*>(&v);
         b.insert(b.end(), p, p + sizeof(T));
     }
+    void paint(const CarPaint& p) {
+        uint8_t b[kPaintWire];
+        paintToWire(p, b);
+        for (uint8_t v : b) put<uint8_t>(v);
+    }
     void str(const std::string& s) {
         put<uint8_t>((uint8_t)std::min<size_t>(s.size(), 255));
         b.insert(b.end(), s.begin(), s.begin() + std::min<size_t>(s.size(), 255));
@@ -101,6 +106,13 @@ struct Reader {
         std::string s((const char*)p + at, len);
         at += len;
         return s;
+    }
+    // CarPaint (paint.h) if it's there: an older peer's message ends before it (factory colours).
+    bool paint(CarPaint& out) {
+        if (at + kPaintWire > n) return false;
+        uint8_t b[kPaintWire];
+        for (int k = 0; k < kPaintWire; k++) b[k] = get<uint8_t>();
+        return paintFromWire(b, out);
     }
     V3 v3() {
         float x = get<float>(), y = get<float>(), z = get<float>();
@@ -1135,6 +1147,7 @@ std::vector<uint8_t> NetSession::spawnMsg(const Car& c) const {
     w.put<float>((float)yaw);
     w.put<uint8_t>(c.lampMode);
     w.put<uint32_t>((uint32_t)c.buildCount);
+    w.paint(c.paint);  // (after everything an older peer reads: it ignores the rest and shows the factory colour)
     return frame(MSG_SPAWN, w);
 }
 
@@ -1142,6 +1155,7 @@ std::vector<uint8_t> NetSession::lampMsg(const Car& c) const {
     Writer w;
     w.put<uint32_t>(c.netId);
     w.put<uint8_t>(c.lampMode);
+    w.paint(c.paint);  // (a repaint rides the lamps' message, which older peers read as far as the mode)
     return frame(MSG_LAMPS, w);
 }
 
@@ -1210,6 +1224,8 @@ bool NetSession::apply(Sim& sim, const std::vector<uint8_t>& msg, int from) {
             const double yaw = r.get<float>();
             const uint8_t lamps = r.get<uint8_t>();
             const uint32_t build = r.get<uint32_t>();
+            CarPaint paint;
+            r.paint(paint);
             if (!r.ok || !ownerOk(netId) || !okPos(pos) || !okNum(yaw, 1e4) || !okNum(color.x, 1e3) || !okNum(color.y, 1e3) || !okNum(color.z, 1e3))
                 return false;
             const VehicleSpec* spec = specFrom(id);
@@ -1226,11 +1242,13 @@ bool NetSession::apply(Sim& sim, const std::vector<uint8_t>& msg, int from) {
                 i = (int)sim.cars.size() - 1;
             } else {
                 sim.dropRopes(i);
+                sim.cars[i].paint = CarPaint();  // (the colour here is the truth: the paint comes after)
                 sim.cars[i].build(*spec, pos, yaw, color);
             }
             Car& c = sim.cars[i];
             c.remote = true;
             c.netId = netId;
+            c.setPaint(paint);
             c.handbrake = 0, c.parkBrake = false;
             c.lampMode = std::min<uint8_t>(lamps, 3);
             c.buildCount = (int)build;
@@ -1247,9 +1265,12 @@ bool NetSession::apply(Sim& sim, const std::vector<uint8_t>& msg, int from) {
         case MSG_LAMPS: {
             const uint32_t id = r.get<uint32_t>();
             const uint8_t mode = r.get<uint8_t>();
+            CarPaint paint;
+            const bool hasPaint = r.paint(paint);
             const int i = findCar(sim, id);
             if (!r.ok || !ownerOk(id) || mode >= 4 || i < 0 || !sim.cars[i].remote) return false;
             sim.cars[i].lampMode = mode;
+            if (hasPaint && paint != sim.cars[i].paint) sim.cars[i].setPaint(paint);
             return true;
         }
         case MSG_DESPAWN: {
@@ -1431,7 +1452,8 @@ bool NetSession::rekey(Sim& sim, uint32_t oldId, uint32_t newId, bool asked) {
         c.occupied = false;
         c.throttle = c.brake = 0;
         c.handbrake = 1, c.parkBrake = true;  // (it was empty: it stays put)
-        knownCars.push_back({newId, c.spec, c.buildCount, c.lampMode});  // (everyone has it already: no spawn)
+        c.paintKept = true;  // (it keeps the colours everyone has seen on it)
+        knownCars.push_back({newId, c.spec, c.buildCount, c.lampMode, c.paint});  // (everyone has it already: no spawn)
         e.kind = CarEvent::GOT;
     } else if (ri < remotes.size()) {  // someone else's: its states come from them now, told afresh
         Remote* rm = remotes[ri];
@@ -2534,15 +2556,17 @@ void NetSession::send(Sim& sim, double now) {
         seen.push_back(c.netId);
         auto k = std::find_if(knownCars.begin(), knownCars.end(), [&](const Known& kc) { return kc.netId == c.netId; });
         if (k == knownCars.end()) {
-            knownCars.push_back({c.netId, c.spec, c.buildCount, c.lampMode});
+            knownCars.push_back({c.netId, c.spec, c.buildCount, c.lampMode, c.paint});
             broadcast(spawnMsg(c));
         } else if (k->spec != c.spec || k->builds != c.buildCount) {
             k->spec = c.spec;
             k->builds = c.buildCount;
             k->lamps = c.lampMode;
+            k->paint = c.paint;
             broadcast(spawnMsg(c));
-        } else if (k->lamps != c.lampMode) {
+        } else if (k->lamps != c.lampMode || k->paint != c.paint) {
             k->lamps = c.lampMode;
+            k->paint = c.paint;
             broadcast(lampMsg(c));
         }
     }

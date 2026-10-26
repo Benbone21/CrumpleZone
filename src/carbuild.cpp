@@ -148,7 +148,8 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
     glassBursts.clear();
     extForce.clear();
     gearboxOut = -1;
-    color = col;
+    if (!paint.bodySet) baseColor = col;
+    color = paint.bodySet ? V3(paint.body[0] / 255.0, paint.body[1] / 255.0, paint.body[2] / 255.0) : col;
     spawnPos = pos;
     spawnYaw = yaw;
     throttle = brake = handbrake = steerInput = steer = rackSteer = brakePressure = 0;

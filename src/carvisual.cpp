@@ -1402,6 +1402,7 @@ const VisualTemplate& visualTemplate(const Car& car) {
     LOADPROF("car.visualTemplate (first sight)");
     auto made = std::make_unique<VisualTemplate>();
     VisualTemplate& t = *made;
+    t.bakedPaint[0] = (float)car.color.x, t.bakedPaint[1] = (float)car.color.y, t.bakedPaint[2] = (float)car.color.z;
     const VehicleSpec& vs = *car.spec;
     const int cells = (int)vs.profile[0].size();
     int glassStart=cells, glassEnd=0, glassLayer=0;

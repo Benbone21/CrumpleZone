@@ -199,6 +199,7 @@ private:
         const void* builtTpl = nullptr;  // what the cached meshes were built for
         std::vector<float> snap;     // the watched nodes, in the car's frame, when they were built
         int shattered = -1, debug = -1;
+        uint32_t paintKey = 0;       // the colour and finish it was built in (a repaint rebuilds the parts)
         float lampKey[5] = {-1, -1, -1, -1, -1};
         int builds = 0;              // (tests and the bench: how many times it's been rebuilt)
         GLuint modelsVao = 0, modelsVbo = 0, modelsIdx = 0;  // the merged parts (CarModels), their part numbers

@@ -778,7 +778,7 @@ const VehicleSpec& tunedSpec(int vehicle, const ModSet& mods) {
     return *slot;
 }
 
-Garage::Garage() : fitted(vehicleCatalog().size()) {}
+Garage::Garage() : fitted(vehicleCatalog().size()), paint(vehicleCatalog().size()) {}
 
 std::string Garage::defaultPath() {
     return configDir() + "/garage.txt";
@@ -791,6 +791,16 @@ bool Garage::load(const std::string& path) {
     while (std::fgets(line, sizeof line, f)) {  // "id engine suspension transmission [wheels tires]"
         char id[64];
         int p[MOD_SLOTS] = {0, 0, 0, 0, 0};
+        {  // "paint <id> <body hex|-> <accent hex|-> <finish>": a line older builds skip
+            char pid[64], body[16], accent[16];
+            int finish = 0;
+            if (std::sscanf(line, "paint %63s %15s %15s %d", pid, body, accent, &finish) >= 3) {
+                const auto& cat = vehicleCatalog();
+                for (size_t v = 0; v < cat.size(); v++)
+                    if (std::string(cat[v].id) == pid) paintFromText(body, accent, finish, paint[v]);
+                continue;
+            }
+        }
         if (std::sscanf(line, "%63s %d %d %d %d %d", id, &p[0], &p[1], &p[2], &p[3], &p[4]) < 4) continue;
         const auto& cat = vehicleCatalog();
         for (size_t v = 0; v < cat.size(); v++) {
@@ -812,6 +822,8 @@ bool Garage::save(const std::string& path) const {
     const auto& cat = vehicleCatalog();
     for (size_t v = 0; v < cat.size(); v++)
         std::fprintf(f, "%s %d %d %d %d %d\n", cat[v].id, fitted[v].pick[0], fitted[v].pick[1], fitted[v].pick[2], fitted[v].pick[3], fitted[v].pick[4]);
+    for (size_t v = 0; v < cat.size(); v++)
+        if (!paint[v].factory()) std::fprintf(f, "paint %s %s\n", cat[v].id, paintToText(paint[v]).c_str());
     std::fclose(f);
     return true;
 }
