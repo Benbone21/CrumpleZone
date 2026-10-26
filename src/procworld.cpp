@@ -1785,7 +1785,8 @@ std::shared_ptr<const TrailEdge> ProcWorld::edge(int64_t i, int64_t j, int dir) 
                 const double deck = std::max(std::max(raw[b0], raw[b1]), level + 1.8);
                 for (int q = b0; q <= b1; q++) br[q] = 1, y[q] = deck;
                 e->bridges.push_back({a.x + px[b0], a.z + pz[b0], a.x + px[b1], a.z + pz[b1], deck});
-                k = b1;
+                k = std::max(k1, b1);  // (on past this one: never back, even where it ends in the water)
+                if (e->bridges.size() > 16) break;  // (never near: a trail crosses a river or two)
             }
         }
         if (!e->on) {  // (no way over: no trail)
@@ -2699,6 +2700,40 @@ std::shared_ptr<const Chunk> ProcWorld::chunk(int64_t cx, int64_t cz) const {
         C.order.pop_back();
     }
     return made;
+}
+
+size_t cacheBytes() {
+    size_t n = 0;
+    {
+        std::lock_guard<std::mutex> lock(blockMutex);
+        n += blockMap.size() * sizeof(DBlock);
+    }
+    {
+        std::lock_guard<std::mutex> lock(tileMutex);
+        for (const auto& m : tileMap)
+            for (const auto& kv : m) n += sizeof(DTile) + kv.second->segs.capacity() * sizeof(DrainSeg) + kv.second->idx.capacity() * 2 + kv.second->start.capacity() * 4 + kv.second->lakes.capacity() * sizeof(DTile::Lake);
+    }
+    {
+        std::lock_guard<std::mutex> lock(gridMutex);
+        n += gridMap.size() * sizeof(GridTile);
+    }
+    {
+        Cache& C = cache();
+        std::lock_guard<std::mutex> lock(C.m);
+        for (const auto& kv : C.map) {
+            const Chunk& c = *kv.second.first;
+            n += sizeof(Chunk) + c.h.capacity() * 4 + c.surf.capacity() + c.paint.capacity() + (c.water.capacity() + c.flowX.capacity() + c.flowZ.capacity() + c.roadLat.capacity() + c.roadAlong.capacity()) * 4 +
+                 c.roadNear.capacity() + c.trees.capacity() * sizeof(TreeSpec) + c.rocks.capacity() * sizeof(RockSpec) + c.bushes.capacity() * sizeof(BushSpec) + c.logs.capacity() * sizeof(LogSpec) + c.stumps.capacity() * sizeof(StumpSpec);
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(edgeMutex);
+        for (const auto& kv : edgeCache) {
+            const TrailEdge& e = *kv.second;
+            n += sizeof(TrailEdge) + (e.x.capacity() + e.z.capacity() + e.y.capacity() + e.along.capacity() + e.fill.capacity()) * 4 + e.onBridge.capacity() + e.bridges.capacity() * sizeof(TrailEdge::Span);
+        }
+    }
+    return n;
 }
 
 size_t cachedChunks() {

@@ -1178,3 +1178,20 @@ SCENARIO(procLakesFalls, "procworld/lakes-falls", "Lakes sit in basins, level, u
     ctx.check("waterfalls: where the land drops 6 m or more within 10 m (97%: a few where a neighbour's valley cuts the step back)", tallFalls * 100 >= falls * 97);
     ctx.check("waterfalls: most with a plunge pool below (deeper than the stream: 1.2 m+)", pools * 10 >= falls * 8);
 }
+
+SCENARIO(procMemory, "procworld/memory", "What the generator keeps stays bounded: a world's window built, slid three times and its trails laid keeps under 1.5 GB of caches (the chunk cache and the drainage's blocks and tiles all have caps)") {
+    clearChunkCache();
+    World w = windowAt(4242, 0, 0);
+    for (int k = 1; k <= 3; k++) World w2 = windowAt(4242, 512.0 * k, -512.0 * k);
+    const double mb = cacheBytes() / 1048576.0;
+    long rss = 0;
+    if (FILE* f = std::fopen("/proc/self/status", "r")) {  // (the whole test process: noted, not checked; other tests run beside it)
+        char line[256];
+        while (std::fgets(line, sizeof line, f))
+            if (std::sscanf(line, "VmHWM: %ld kB", &rss) == 1) break;
+        std::fclose(f);
+    }
+    ctx.note("the process's peak resident memory so far: " + std::to_string(rss / 1024) + " MB");
+    ctx.metric("the generator's caches after a window and three slides", mb, "MB", 0, 1500);
+    World::procOriginSet = false;
+}

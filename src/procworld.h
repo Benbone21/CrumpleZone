@@ -219,6 +219,7 @@ private:
 
 // The chunk cache: how many chunks it holds, and dropping them all (tests).
 size_t cachedChunks();
+size_t cacheBytes();  // (everything the generator keeps: lattice blocks, channel tiles, chunks, trails)
 void clearChunkCache();
 
 // The far backdrop's land past a window's edge (render.cpp sceneryHeight): the generator's macro height.
