@@ -109,6 +109,10 @@ build/engine_preview: build/tools/engine_preview.o build/src/engineaudio.o build
 build/win/bench_sim.exe: build/win/obj/tools/bench_sim.o $(patsubst %.cpp,build/win/obj/%.o,$(PHYS))
 	$(WINCXX) $(WINFLAGS) -o $@ $^ -lws2_32 -liphlpapi -static -static-libgcc -static-libstdc++
 
+# The world-build timer for Windows (its land hash: the same big map on Linux and Windows? docs/plans/one-map.md).
+build/win/worldtime.exe: build/win/obj/tools/worldtime.o $(patsubst %.cpp,build/win/obj/%.o,$(PHYS))
+	$(WINCXX) $(WINFLAGS) -o $@ $^ -lws2_32 -liphlpapi -static -static-libgcc -static-libstdc++
+
 build/win/run_tests.exe: build/win/obj/tests/run_tests.o $(patsubst %.cpp,build/win/obj/%.o,$(PHYS) $(SCEN) src/music.cpp)
 	$(WINCXX) $(WINFLAGS) -o $@ $^ -lws2_32 -liphlpapi -static -static-libgcc -static-libstdc++
 

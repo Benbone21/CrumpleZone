@@ -190,12 +190,20 @@ struct WorldIO {
         }
     }
     static void heights(Out& o, const World& w) {
-        std::vector<float> base, h = w.hgrid;
+        // (Written as they are, then xor'd where they lie in the buffer: no second copy of a grid that's 270 MB on the big map.)
+        std::vector<float> base;
         const bool predicted = baseLand(w, base);
-        if (predicted) xorWith(h, base);
         o.pod(predicted);
-        o.arr(h);
-        o.shuffled.push_back({o.b.size() - h.size() * 4, h.size()});
+        o.arr(w.hgrid);
+        const size_t at = o.b.size() - w.hgrid.size() * 4;
+        if (predicted)
+            for (size_t k = 0; k < w.hgrid.size(); k++) {
+                uint32_t a, c;
+                std::memcpy(&a, o.b.data() + at + k * 4, 4), std::memcpy(&c, &base[k], 4);
+                a ^= c;
+                std::memcpy(o.b.data() + at + k * 4, &a, 4);
+            }
+        o.shuffled.push_back({at, w.hgrid.size()});
     }
     static void heights(In& in, World& w) {
         bool predicted = false;
@@ -291,6 +299,8 @@ uint64_t keyFor(int map) {
 // The file: the magic, the format, the transformed runs, then the packed fields (bytepack.h).
 std::vector<uint8_t> encode(const World& w) {
     Out o;
+    // (Room for it all at once: growing a buffer the size of the big map's would hold two of it at a time.)
+    o.b.reserve((size_t)w.gridSize() * w.gridSize() * 7 + ((size_t)64 << 20));
     WorldIO::fields(o, w);
     for (const auto& r : o.shuffled) bytepack::deltaShuffle32(o.b, r.first, r.second);
     Out head;
@@ -298,7 +308,8 @@ std::vector<uint8_t> encode(const World& w) {
     head.pod(kFormat);
     head.pod((uint64_t)o.shuffled.size());
     for (const auto& r : o.shuffled) head.pod(r.first), head.pod(r.second);
-    const std::vector<uint8_t> packed = bytepack::pack(o.b);
+    std::vector<uint8_t> packed = bytepack::pack(o.b);
+    std::vector<uint8_t>().swap(o.b);
     head.b.insert(head.b.end(), packed.begin(), packed.end());
     return std::move(head.b);
 }

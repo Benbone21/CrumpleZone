@@ -953,7 +953,11 @@ void World::buildBackcountry() {
                     const int id = i * hN + j;
                     const double q = d / rr, bed = d < rr ? level - 2.4 * (1 - q * q) - 0.15 : level + 0.15 + (d - rr) * 0.35;
                     if (hgrid[id] > bed) hgrid[id] = (float)bed;
-                    if (hgrid[id] < level && d < rr + 6) waterY[id] = (float)level, flowX[id] = flowZ[id] = 0, surf[id] = SURF_MUD, paint[id] = PAINT_MUD;
+                    if (hgrid[id] < level && d < rr + 6) {
+                        // (Where the river runs in, its current and its bed go on into the lake.)
+                        if (waterY[id] < -1e8f) flowX[id] = flowZ[id] = 0, surf[id] = SURF_MUD, paint[id] = PAINT_MUD;
+                        waterY[id] = std::max((float)waterY[id], (float)level);
+                    }
                     else if (d < rr + 4 && paint[id] == PAINT_NONE) surf[id] = SURF_GRAVEL, paint[id] = PAINT_GRAVEL;
                     if (d < rr + 8) keep[id] = 1;
                 }

@@ -151,6 +151,7 @@ struct Options {
     int throttleResp = 0, throttlePad = 0;
     double eyeFly = 0;            // --eye-fly V (dev, with --eye): the drone flies on ahead at V m/s, its height over the ground kept (the streaming test)
     double mapHalf = 0;           // --map-half M (dev): every map built M m each way from its middle (big-map tests: docs/plans/big-maps.md)
+    bool standalone = false;      // --standalone (dev): --map 1, 3 or 5 is that old map on its own, not its region of the big map (docs/plans/one-map.md)
     int map = -1;                 // --map N: 0 proving ground, 1 mountain
     double orbitYaw = 0, orbitPitch = 0.2, orbitDist = 7.5;  // degrees, degrees, meters
     bool spawnSet = false;
@@ -318,7 +319,7 @@ struct BuildWatch {
 #ifndef _WIN32
         static const std::set<std::string> withValue = {"--map", "--player", "--spawn", "--resume-model", "--resume-edit", "--scenario", "--script",
                                                         "--shot-prefix", "--shot-frames", "--clipboard", "--menu", "--orbit", "--spawn-section", "--eye"};
-        static const std::set<std::string> flags = {"--garage", "--show-help", "--debug-screen", "--debug-graph", "--full-hud"};
+        static const std::set<std::string> flags = {"--garage", "--show-help", "--debug-screen", "--debug-graph", "--full-hud", "--standalone"};
         std::vector<std::string> args = {exe};
         for (int i = 1; i < argc; i++) {
             const std::string a = argv[i];
@@ -412,6 +413,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--career") o.career = true;
         else if (a == "--map") o.map = std::atoi(next().c_str());
         else if (a == "--map-half") o.mapHalf = std::atof(next().c_str());
+        else if (a == "--standalone") o.standalone = true;
         else if (a == "--eye-fly") o.eyeFly = std::atof(next().c_str());
         else if (a == "--mods") {
             std::string s = next();
@@ -1909,7 +1911,7 @@ int main(int argc, char** argv) {
         campLevel = menuscene::load();
         menucamp::fireOf(campLevel, campFire);
         sim.world = menuscene::buildWorld(campLevel);
-    } else if (settings.map != MAP_PROVING_GROUND) sim.world = worldForPick(settings.map);  // (a region's pick: the big map, started there)
+    } else if (settings.map != MAP_PROVING_GROUND) sim.world = opt.standalone ? World(settings.map) : worldForPick(settings.map);  // (a region's pick: the big map, started there)
     int worldPick = wantCamp ? -1 : settings.map;  // the map pick the world stands for (a region of the big map's: its old map id)
     sim.lineup = listedVehicles();  // (the overlanders and the Jesko: no Civic, UTV or buggy)
     sim.setup();
