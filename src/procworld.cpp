@@ -1471,7 +1471,11 @@ std::shared_ptr<const TrailEdge> ProcWorld::edge(int64_t i, int64_t j, int dir) 
                 const Macro m = macroAt(x, z, false);  // (a creek dry just there still costs a crossing)
                 H[(size_t)u * NZ + v] = (float)groundHeight(x, z, m);
                 wet[(size_t)u * NZ + v] = (m.riverOn > 0.35 && std::fabs(m.riverS) < m.riverHW + 8) || (m.creekOn > 0.35 && std::fabs(m.creekS) < m.creekHW + 4);
+                // (A big river off its known fords: deep and fast. 2: no way across but a bridge.)
+                if (m.bigRiver && !m.riverFord && m.riverOn > 0.5 && std::fabs(m.riverS) < m.riverHW + 4) wet[(size_t)u * NZ + v] = 2;
             }
+        // (Which trails may bridge a big river: most main trails, a few others. The rest cross at a known ford, or not at all.)
+        const bool canBridge = hash01(P.s[S_DITHER] + 801 + (uint64_t)dir, i, j) < (e->road ? 0.75 : 0.15);
         auto cellOf = [&](double x, double z) {
             const int u = std::min(NX - 1, std::max(0, (int)std::lround((x - gx0) / C))), v = std::min(NZ - 1, std::max(0, (int)std::lround((z - gz0) / C)));
             return u * NZ + v;
@@ -1518,7 +1522,8 @@ std::shared_ptr<const TrailEdge> ProcWorld::edge(int64_t i, int64_t j, int dir) 
                 const double g = std::fabs(H[nc] - H[c]) / L, q = g / gmax;
                 double step = L * (1 + 3 * q * q);
                 if (q > 1) step += L * (e->road ? 150 : 100) * (q - 1);  // (past its grade: only where there's no other way)
-                if (wet[nc] && !wet[c]) step += 120;  // (into the water: a crossing costs, so it crosses once)
+                if (wet[nc] == 2 && wet[c] != 2) step += canBridge || e->road ? 350 : 8000;  // (a bridge costs; wading a big river: never, nearly)
+                else if (wet[nc] && !wet[c]) step += 120;  // (into the water: a crossing costs, so it crosses once)
                 if (din < ND) {
                     const double cs = ux[din] * ux[d] + uz[din] * uz[d];
                     step += turnK * (1 - cs) + (cs < -0.3 ? hairpinK : 0);
@@ -1576,12 +1581,48 @@ std::shared_ptr<const TrailEdge> ProcWorld::edge(int64_t i, int64_t j, int dir) 
             for (int q = std::max(0, k - smoothR); q <= std::min(n - 1, k + smoothR); q++) s += raw[q], cnt++;
             y[k] = s / cnt;
         }
+        // Bridges: where it's over a big river off its known fords, a deck from bank to bank, level, over the water by 1.5 m or more (1.8 at the deepest-sampled level).
+        // (A trail that may not bridge and still found no ford is left out: big rivers are real obstacles.)
+        std::vector<char> br(n, 0);
+        {
+            std::vector<char> deep(n, 0);
+            std::vector<double> wl(n, -1e9);
+            bool any = false;
+            for (int k = 0; k < n; k++) {
+                const double gx = a.x + px[k], gz = a.z + pz[k];
+                if (wet[cellOf(gx, gz)] != 2) continue;
+                const Macro m = macroAt(gx, gz, false);
+                if (m.bigRiver && !m.riverFord && m.riverOn > 0.5 && std::fabs(m.riverS) < m.riverHW + 2) deep[k] = 1, wl[k] = m.riverLevel, any = true;
+            }
+            for (int k = 0; k < n && any; k++) {
+                if (!deep[k]) continue;
+                int k1 = k;
+                double level = wl[k];
+                for (int q = k; q < n && q <= k1 + 4; q++)
+                    if (deep[q]) k1 = q, level = std::max(level, wl[q]);
+                if (!canBridge && !e->road) {
+                    e->on = false;
+                    break;
+                }
+                const int b0 = std::max(1, k - 5), b1 = std::min(n - 2, k1 + 5);  // (onto the banks, ~10 m past the water)
+                const double deck = std::max(std::max(raw[b0], raw[b1]), level + 1.8);
+                for (int q = b0; q <= b1; q++) br[q] = 1, y[q] = deck;
+                e->bridges.push_back({a.x + px[b0], a.z + pz[b0], a.x + px[b1], a.z + pz[b1], deck});
+                k = b1;
+            }
+        }
+        if (!e->on) {  // (no way over: no trail)
+            std::lock_guard<std::mutex> lock(edgeMutex);
+            if (edgeCache.size() > 40000) edgeCache.clear();
+            e->bridges.clear();
+            return edgeCache.emplace(key, std::move(e)).first->second;
+        }
         for (int k = 0; k < n; k += 4) {  // (fords: where it's in a river or a creek, the water's level less a wading depth)
             const double gx = a.x + px[k], gz = a.z + pz[k];
-            if (!wet[cellOf(gx, gz)]) continue;
+            if (!wet[cellOf(gx, gz)] || br[k]) continue;
             const Macro m = macro(gx, gz);
             double fy = 1e9;
-            if (m.riverOn > 0.5 && std::fabs(m.riverS) < m.riverHW + 2) fy = m.riverLevel - 0.45;
+            if (m.riverOn > 0.5 && std::fabs(m.riverS) < m.riverHW + 2) fy = m.riverLevel - 0.45, e->bigFord |= m.bigRiver;
             else if (m.creekOn > 0.5 && std::fabs(m.creekS) < m.creekHW + 1) fy = m.creekLevel - 0.3;
             if (fy > 1e8) continue;
             for (int q = std::max(0, k - 2); q <= std::min(n - 1, k + 2); q++) ford[q] = 1, y[q] = fy;
@@ -1592,7 +1633,7 @@ std::shared_ptr<const TrailEdge> ProcWorld::edge(int64_t i, int64_t j, int dir) 
         for (int pass = 0; pass < 2; pass++)
             for (int k = 1; k < n; k++)
                 if (ford[k] && ford[k - 1] && std::fabs(y[k] - y[k - 1]) > gmax * (along[k] - along[k - 1]) + 1e-9) ford[y[k] > y[k - 1] ? k : k - 1] = 0;
-        auto pinned = [&](int k) { return k == 0 || k == n - 1 || ford[k]; };
+        auto pinned = [&](int k) { return k == 0 || k == n - 1 || ford[k] || br[k]; };
         // Held to the grade; where that would leave it far above or below the land (a climb the way round couldn't spread out: a
         // gorge's wall), steeper instead, a step at a time, rather than on a tall bank or down a deep cut.
         // (A ford the grade can't reach from the next one, a creek's just up from where it joins a river: let go, graded.)
@@ -1639,6 +1680,7 @@ std::shared_ptr<const TrailEdge> ProcWorld::edge(int64_t i, int64_t j, int dir) 
             }
         }
         e->x.resize(n), e->z.resize(n), e->y.resize(n), e->along.resize(n), e->fill.resize(n);
+        if (!e->bridges.empty()) e->onBridge.assign(br.begin(), br.end());
         double x0 = 1e18, x1 = -1e18, z0 = 1e18, z1 = -1e18;
         for (int k = 0; k < n; k++) {
             e->x[k] = (float)px[k], e->z[k] = (float)pz[k], e->y[k] = (float)y[k], e->along[k] = (float)along[k], e->fill[k] = (float)(y[k] - raw[k]);
@@ -1704,7 +1746,7 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
         const double rx0 = (double)gx0 - 2 - kTreadReach - e.ax, rx1 = (double)gx0 + 66 + kTreadReach - e.ax;
         const double rz0 = (double)gz0 - 2 - kTreadReach - e.az, rz1 = (double)gz0 + 66 + kTreadReach - e.az;
         for (size_t k = 0; k + 1 < e.x.size(); k++)
-            if (std::max(e.x[k], e.x[k + 1]) >= rx0 && std::min(e.x[k], e.x[k + 1]) <= rx1 && std::max(e.z[k], e.z[k + 1]) >= rz0 && std::min(e.z[k], e.z[k + 1]) <= rz1)
+            if ((e.onBridge.empty() || (!e.onBridge[k] && !e.onBridge[k + 1])) && std::max(e.x[k], e.x[k + 1]) >= rx0 && std::min(e.x[k], e.x[k + 1]) <= rx1 && std::max(e.z[k], e.z[k + 1]) >= rz0 && std::min(e.z[k], e.z[k + 1]) <= rz1)
                 reach[q].push_back((uint32_t)k);
     }
     // The places' flat ground (their plazas) near this chunk.
@@ -2246,6 +2288,10 @@ void ProcWorld::nodePlaces(int64_t i, int64_t j, std::vector<MapPlace>& out) con
     for (int dir = 0; dir < 2; dir++) {
         const auto e = edge(i, j, dir);
         if (e->on && e->ford) add(dir ? "FORD.N" : "FORD.E", nm + (dir ? " CROSSING" : " FORD"), PK_RIVER_CROSSING, e->fordX, e->fordZ, 45, 0, 0);
+        if (e->on && !e->bridges.empty()) {  // (and its bridges over the big rivers)
+            const TrailEdge::Span& b = e->bridges.front();
+            add(dir ? "BRIDGE.N" : "BRIDGE.E", nm + (dir ? " LOG BRIDGE" : " BRIDGE"), PK_RIVER_CROSSING, 0.5 * (b.ax + b.bx), 0.5 * (b.az + b.bz), 45, 0, 0);
+        }
     }
 }
 
@@ -2374,6 +2420,43 @@ void buildPlaces(World& w, const std::vector<MapPlace>& places) {
         }
         if (pl.kind != PK_CACHE && pl.kind != PK_RIVER_CROSSING && pl.kind != PK_ABANDONED_VEHICLE) sign(rel(P, yw, 3, -(pl.pad + 2)), yw, PROP_SIGN);
     }
+}
+
+// The timber bridges over the big rivers on the trails of a window (stand-ins: a plank deck on log stringers, rails, a crib pier in the
+// middle of a long one), from the edges' spans, so every window that holds one builds it alike.
+void buildBridges(World& w) {
+    const ProcWorld& G = ProcWorld::forSeed(w.proc.seed);
+    const double half = w.halfSize() - 12;
+    const int64_t i0 = floorDiv(w.proc.ox - (int64_t)w.halfSize(), kCell) - 1, i1 = floorDiv(w.proc.ox + (int64_t)w.halfSize(), kCell) + 1;
+    const int64_t j0 = floorDiv(w.proc.oz - (int64_t)w.halfSize(), kCell) - 1, j1 = floorDiv(w.proc.oz + (int64_t)w.halfSize(), kCell) + 1;
+    const V3 plank(0.47, 0.35, 0.23), log(0.36, 0.27, 0.18);
+    for (int64_t i = i0; i <= i1; i++)
+        for (int64_t j = j0; j <= j1; j++)
+            for (int dir = 0; dir < 2; dir++) {
+                const auto e = G.edge(i, j, dir);
+                if (!e->on) continue;
+                for (const TrailEdge::Span& b : e->bridges) {
+                    const double ax = b.ax - (double)w.proc.ox, az = b.az - (double)w.proc.oz, bx = b.bx - (double)w.proc.ox, bz = b.bz - (double)w.proc.oz;
+                    const double mx = 0.5 * (ax + bx), mz = 0.5 * (az + bz);
+                    if (std::fabs(mx) > half || std::fabs(mz) > half) continue;
+                    const double dx = bx - ax, dz = bz - az, L = std::sqrt(dx * dx + dz * dz);
+                    if (L < 1) continue;
+                    const double yaw = std::atan2(-dz, dx), hw = e->half() + 0.6, sx = -dz / L, sz = dx / L;  // (sx, sz: to its left)
+                    w.addBox(V3(mx, b.y - 0.15, mz), V3(0.5 * L + 1, 0.15, hw), yaw, 0, 0, plank);  // (the deck)
+                    for (int sd = -1; sd <= 1; sd += 2) {
+                        w.addBox(V3(mx + sx * sd * (hw - 0.3), b.y - 0.55, mz + sz * sd * (hw - 0.3)), V3(0.5 * L + 1, 0.25, 0.25), yaw, 0, 0, log);  // (stringers)
+                        w.addBox(V3(mx + sx * sd * (hw + 0.05), b.y + 0.45, mz + sz * sd * (hw + 0.05)), V3(0.5 * L, 0.08, 0.08), yaw, 0, 0, log);    // (rails)
+                        for (int k = 0; k <= 4; k++) {  // (rail posts)
+                            const double t = -0.5 + 0.25 * k, px = mx + dx * t + sx * sd * (hw + 0.05), pz = mz + dz * t + sz * sd * (hw + 0.05);
+                            w.poles.push_back({px, pz, b.y - 0.1, b.y + 0.55, 0.09});
+                        }
+                    }
+                    if (L > 22) {  // (a crib pier of logs in the middle, from the bed up)
+                        const double bed = w.height(mx, mz);
+                        if (b.y - 0.7 > bed) w.addBox(V3(mx, 0.5 * (bed + b.y - 0.7) - 0.3, mz), V3(1.0, 0.5 * (b.y - 0.7 - bed) + 0.3, hw - 0.4), yaw, 0, 0, log);
+                    }
+                }
+            }
 }
 
 // ---- The chunk cache ----------------------------------------------------------------------------------------------------------------
@@ -2576,6 +2659,7 @@ void World::buildProcedural() {
     {
         loadprof::Scope lp("proc.places");
         buildPlaces(*this, windowPlaces(*this));
+        buildBridges(*this);
     }
     // The start: a pad there when it's well inside this window. (Elsewhere the spawn is the window's middle: nothing starts there.)
     const double lsx = (double)(sx - proc.ox), lsz = (double)(sz - proc.oz);

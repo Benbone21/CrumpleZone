@@ -247,3 +247,12 @@ Follows docs/plans/procworld-rules.md sections 2 and 3. Status: being built on w
   saw's teeth; the path is corner-cut twice, not three times (which pulled switchback turns straight up the slope).
 - **Classes:** gully 0.08 km2 (dry), creek 0.3 (fordable), river 1.5, big river 2.5 km2 (10-26 m wide, 1.5-2 m deep). The rules are
   in `[water]` of assets/procworld/rules.txt.
+
+**Checkpoint 2: fords and bridges.**
+- Big rivers' known fords: one node stretch in ~16 (about every 2.5 km along a river) has a ~40 m riffle in its middle, 0.4 m deep.
+- Trail A*: a big river's deep water costs 8000 to enter (a known ford: as any crossing, 120); main trails and 15% of the others may
+  bridge it instead (350). A trail that may not bridge and found no ford is left out: big rivers are real obstacles.
+- A bridge: the samples over the water and ~10 m onto each bank are pinned level at the higher bank or 1.8 m over the water; no
+  earthworks under them (the river runs on). Built in each window (buildBridges): a plank deck on log stringers, rails and posts, a
+  crib pier under a long one; boxes as stand-ins (no bridge model yet). Each bridge is a river-crossing place ("... BRIDGE").
+- Test: procworld/crossings (no trail wades a big river off its fords; decks over the water; the window builds the deck).

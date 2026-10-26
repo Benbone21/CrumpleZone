@@ -1077,3 +1077,51 @@ SCENARIO(procDrainMap, "procworld/drain-map", "(with CZ_PROC_MAPS=dir) a 24 km o
         ctx.note("wrote " + path + ", highest " + std::to_string((int)top) + " m");
     }
 }
+
+SCENARIO(procCrossings, "procworld/crossings", "Big rivers are real obstacles: a trail crosses one only at a known ford (a riffle, shallow) or on a bridge whose deck stands over the water; the bridge is built in the window") {
+    long trails = 0, bigFords = 0, bridges = 0, wades = 0, lowDecks = 0, gone = 0;
+    std::string where;
+    double bx = 0, bz = 0, by = 0;
+    uint64_t bseed = 0;
+    for (uint64_t seed : {1ull, 2ull, 3ull, 123456789ull}) {
+        const ProcWorld& G = ProcWorld::forSeed(seed);
+        for (int64_t i = -6; i < 6; i++)
+            for (int64_t j = -6; j < 6; j++)
+                for (int dir = 0; dir < 2; dir++) {
+                    auto e = G.edge(i, j, dir);
+                    if (!e->on) {
+                        gone++;
+                        continue;
+                    }
+                    trails++, bigFords += e->bigFord, bridges += (long)e->bridges.size();
+                    for (size_t k = 0; k < e->x.size(); k++) {
+                        const double x = e->ax + e->x[k], z = e->az + e->z[k];
+                        const Macro m = G.macroAt(x, z, false);
+                        const bool deep = m.bigRiver && !m.riverFord && m.riverOn > 0.5 && m.riverS < m.riverHW - 0.5;
+                        if (deep && (e->onBridge.empty() || !e->onBridge[k])) {
+                            wades++;
+                            if (where.empty()) where = "seed " + std::to_string(seed) + " edge " + std::to_string(i) + "," + std::to_string(j) + "," + std::to_string(dir);
+                        }
+                    }
+                    for (const TrailEdge::Span& s : e->bridges) {
+                        const Macro m = G.macroAt(0.5 * (s.ax + s.bx), 0.5 * (s.az + s.bz), false);
+                        lowDecks += s.y < m.riverLevel + 1.4;
+                        if (!bseed) bseed = seed, bx = 0.5 * (s.ax + s.bx), bz = 0.5 * (s.az + s.bz), by = s.y;
+                    }
+                }
+    }
+    ctx.note(std::to_string(trails) + " trails in 4 x 36 km2: " + std::to_string(bigFords) + " ford a big river at a known ford, " + std::to_string(bridges) + " bridges; " + std::to_string(gone) + " links without a trail; " +
+             std::to_string(wades) + " samples wading a big river elsewhere" + (where.empty() ? "" : " (first: " + where + ")"));
+    ctx.check("no trail wades a big river off its known fords", wades == 0);
+    ctx.check("there are known fords and bridges", bigFords > 0 && bridges > 0);
+    ctx.check("every bridge's deck stands 1.4 m or more over the water", lowDecks == 0);
+    if (bseed) {
+        World w = windowAt(bseed, bx, bz);
+        const double lx = bx - (double)w.proc.ox, lz = bz - (double)w.proc.oz;
+        bool deck = false;
+        for (const Box& b : w.boxes) deck |= std::fabs(b.c.x - lx) < 3 && std::fabs(b.c.z - lz) < 3 && std::fabs(b.c.y + 0.15 - by) < 0.2;
+        ctx.check("the window round a bridge builds its deck", deck);
+        ctx.note("a bridge: seed " + std::to_string(bseed) + " at " + std::to_string((int)bx) + "," + std::to_string((int)bz));
+        World::procOriginSet = false;
+    }
+}

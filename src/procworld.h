@@ -123,6 +123,12 @@ struct TrailEdge {
     std::vector<float> along;    // m from the start
     std::vector<float> fill;     // how far the tread is above (+) or below the land there: its earthworks
     double x0 = 0, x1 = 0, z0 = 0, z1 = 0;  // its bounds (global)
+    // Where it crosses a big river off its known fords: on a timber bridge (procrules big_river_area; built in buildProcedural). Each
+    // span's ends (global) and its deck's height; and which of the samples are on a deck (no earthworks under them: the river runs on).
+    struct Span { double ax, az, bx, bz, y; };
+    std::vector<Span> bridges;
+    std::vector<uint8_t> onBridge;   // (empty: no bridge)
+    bool bigFord = false;            // it fords a big river at one of its known fords
     double half() const { return roadRule(road ? RK_GRAVEL : rating >= 2 ? RK_TWOTRACK : RK_TRAIL).halfWidth; }  // the tread's half-width (procrules.h)
 };
 
