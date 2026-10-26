@@ -128,6 +128,7 @@ std::vector<CacheSpot> cacheSpots(const World& world) {
     // The big map's caches come from its table of places (places.h), after the hand-made ones (whose ids stay as they were).
     int k = nOwn;
     for (const MapPlace* pl : placesOfKind(world.map, PK_CACHE)) {
+        if (std::max(std::fabs(pl->p.x), std::fabs(pl->p.z)) > world.halfSize() - 20) continue;  // (the regions' grown country: not on the 6 km map)
         V3 p = pl->p;
         p.y = world.height(p.x, p.z);
         out.push_back({pl->name, world.map, p, "", pl->reward, cacheGear(k++)});

@@ -97,9 +97,10 @@ SCENARIO(backcountryMap, "maps/backcountry",
     // Stations: four, on pads flat to a few centimetres across their reach.
     // (Four camps and the ranger station; on the big map the regions round it bring theirs besides: the Mountain's 3, the Frontier's 5.)
     int own = 0;
-    for (const Station& st : w.stations) own += regionContaining(st.p.x, st.p.z) == nullptr;
+    for (const Station& st : w.stations) own += regionContaining(st.p.x, st.p.z) == nullptr && regionAround(st.p.x, st.p.z) == nullptr;
     ctx.metric("repair stations", (double)own, "", 3, 5);
-    ctx.check("the regions' stations besides", w.stations.size() - own == (w.regionStarts.empty() ? 0u : 8u), std::to_string(w.stations.size() - own));
+    // (...and each region's grown country an outpost's repair bay: regions2.)
+    ctx.check("the regions' stations besides", w.stations.size() - own == (w.regionStarts.empty() ? 0u : 11u), std::to_string(w.stations.size() - own));
     for (const Station& st : w.stations) {
         if (regionContaining(st.p.x, st.p.z)) continue;  // (a region's are its old map's: onemap/region-copy)
         double lo = 1e9, hi = -1e9;

@@ -12,6 +12,7 @@
 
 #include "../src/autopilot.h"
 #include "../src/net.h"
+#include "../src/onemap.h"
 #include "../src/places.h"
 #include "harness.h"
 
@@ -28,7 +29,45 @@ int count(const std::vector<MapPlace>& v, int kind) {
 }  // namespace
 
 SCENARIO(placesTable, "pois/table", "The Backcountry's places: how many of each, unique stable ids and names, each in the district it says, services where they belong, photo spots with a subject") {
-    const std::vector<MapPlace>& v = mapPlaces(MAP_BACKCOUNTRY);
+    // The table holds the Backcountry's own places ("BC.", in its nine districts: the counts and the shipped ids below are theirs),
+    // then the regions' grown country's (docs/plans/regions2.md: "OC.", "MT.", "FR.", each in its region: checked on their own below).
+    const std::vector<MapPlace>& all = mapPlaces(MAP_BACKCOUNTRY);
+    std::vector<MapPlace> v, grown;
+    for (const MapPlace& p : all) (p.id.rfind("BC.", 0) == 0 ? v : grown).push_back(p);
+    {
+        std::set<std::string> ids, names;
+        for (const MapPlace& p : all) {
+            ids.insert(p.id);
+            if (p.kind != PK_PHOTO_SPOT) names.insert(p.name);
+        }
+        ctx.check("ids and names unique across the whole table", ids.size() == all.size() && names.size() == all.size() - (size_t)count(all, PK_PHOTO_SPOT));
+        // The Backcountry's own come first: a region's place never sits among them.
+        size_t firstGrown = all.size();
+        for (size_t i = 0; i < all.size(); i++)
+            if (all[i].id.rfind("BC.", 0) != 0) firstGrown = std::min(firstGrown, i);
+        ctx.check("the regions' places after the Backcountry's", firstGrown == v.size());
+        const char* codes[3] = {"OC.", "MT.", "FR."};
+        for (int k = 0; k < 3; k++) {
+            const MapRegion& r = mapRegions()[k];
+            std::vector<MapPlace> mine;
+            std::string bad;
+            for (const MapPlace& p : grown)
+                if (p.id.rfind(codes[k], 0) == 0) {
+                    mine.push_back(p);
+                    if (std::string(p.region) != r.name || std::string(regionAt(MAP_BACKCOUNTRY, p.p.x, p.p.z)) != r.name || regionContaining(p.p.x, p.p.z))
+                        bad += " " + p.id;
+                }
+            const std::string n = r.name;
+            ctx.check(n + ": its places in its grown country (out of its old map's square), prefixed " + codes[k], bad.empty() && !mine.empty(), bad);
+            int outposts = 0;
+            for (const MapPlace& p : mine) outposts += p.kind == PK_FUEL_STOP && (p.services & SVC_FUEL) && (p.services & SVC_REPAIR);
+            ctx.check(n + ": an outpost (fuel and a repair bay), a cabin or camp, two lookouts, four caches",
+                      outposts == 1 && count(mine, PK_CABIN) + count(mine, PK_OLD_CAMP) >= 1 && count(mine, PK_LOOKOUT) >= 2 && count(mine, PK_CACHE) == 4);
+        }
+        size_t prefixed = 0;
+        for (const MapPlace& p : grown) prefixed += p.id.rfind("OC.", 0) == 0 || p.id.rfind("MT.", 0) == 0 || p.id.rfind("FR.", 0) == 0;
+        ctx.check("every place after the Backcountry's is a region's", prefixed == grown.size());
+    }
     ctx.check("one ranger station", count(v, PK_RANGER_STATION) == 1);
     ctx.check("four new fuel stops", count(v, PK_FUEL_STOP) == 4);
     ctx.check("six or more cabins and old camps", count(v, PK_CABIN) + count(v, PK_OLD_CAMP) >= 6, std::to_string(count(v, PK_CABIN) + count(v, PK_OLD_CAMP)));

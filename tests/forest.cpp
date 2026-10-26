@@ -138,7 +138,8 @@ SCENARIO(forestCulling, "forest/culling", "A view draws every tree and bush it c
                     const float* m = v.vp.m;
                     const double cx = m[0] * c.x + m[4] * c.y + m[8] * c.z + m[12], cy = m[1] * c.x + m[5] * c.y + m[9] * c.z + m[13];
                     const double cw = m[3] * c.x + m[7] * c.y + m[11] * c.z + m[15];
-                    const bool reachOk = s.inst[i].reach <= 0 || d < s.inst[i].reach * 0.85;
+                    // (...and nearer than the view's far plane: the big map's far corners are past it from here)
+                    const bool reachOk = (s.inst[i].reach <= 0 || d < s.inst[i].reach * 0.85) && d < 5800;
                     if (cw > r + 0.1 && std::fabs(cx) < 0.9 * cw && std::fabs(cy) < 0.9 * cw && reachOk) {
                         inView++;
                         if (got[i] < 0) dropped++;
