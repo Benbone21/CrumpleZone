@@ -55,19 +55,19 @@ void main(){
   }
   float specK = 0.04, specP = 16.0;
   if (mat == 12) {
-    float g1 = vnoise(vPos.xz * 2.3 + vPos.y * 1.1), g2 = vnoise(vPos.zy * 2.7 - vPos.x * 0.9);
+    float g1 = vnoise(NP.xz * 2.3 + NP.y * 1.1), g2 = vnoise(NP.zy * 2.7 - NP.x * 0.9);
     base *= 0.72 + 0.5 * (0.5 * g1 + 0.5 * g2);
-    float vein = 1.0 - smoothstep(0.0, 0.04, abs(vnoise(vPos.xy * 0.9 + vPos.z * 0.6) - 0.5));
+    float vein = 1.0 - smoothstep(0.0, 0.04, abs(vnoise(NP.xy * 0.9 + NP.z * 0.6) - 0.5));
     base *= 1.0 - 0.35 * vein;
-    float lichen = smoothstep(0.6, 0.72, vnoise(vPos.xz * 3.1 + vPos.y * 2.0)) * smoothstep(0.35, 0.85, n.y);
+    float lichen = smoothstep(0.6, 0.72, vnoise(NP.xz * 3.1 + NP.y * 2.0)) * smoothstep(0.35, 0.85, n.y);
     base = mix(base, vec3(0.42, 0.45, 0.26), lichen * 0.5);
     specK = 0.06; specP = 20.0;
   } else if (mat == 14) {
-    float g = vnoise(vec2((vPos.x + vPos.z) * 2.0, vPos.y * 14.0)) * 0.6 + vnoise(vec2(vPos.y * 2.0, (vPos.x - vPos.z) * 16.0)) * 0.4;
+    float g = vnoise(vec2((NP.x + NP.z) * 2.0, NP.y * 14.0)) * 0.6 + vnoise(vec2(NP.y * 2.0, (NP.x - NP.z) * 16.0)) * 0.4;
     base *= 0.78 + 0.35 * g;
     specK = 0.03;
   } else if (mat == 13) {
-    base *= 0.8 + 0.4 * vnoise(vPos.xz * 2.2 + vPos.y * 1.7);
+    base *= 0.8 + 0.4 * vnoise(NP.xz * 2.2 + NP.y * 1.7);
     specK = 0.0;
   }
   vec3 lin = pow(max(base, 0.0), vec3(2.2));
@@ -97,12 +97,21 @@ constexpr int kInstFloats = 12;
 
 
 void TreeDraw::build(const forest::Set& set) {
+    Built b;
+    prepare(set, b);
+    upload(std::move(b));
+}
+
+void TreeDraw::prepare(const forest::Set& set, Built& out) {
+    forest::Set& set_ = out.set;
+    std::vector<float>& v = out.v;
+    std::vector<unsigned>& idx = out.idx;
+    std::vector<std::array<Range, forest::kLods>>& ranges_ = out.ranges;
     set_ = set;
-    meshVerts_ = set.vertices(), baked_ = set.bakedVertices();
+    size_t& meshVerts_ = out.meshVerts;
+    meshVerts_ = set.vertices(), out.baked = set.bakedVertices();
     // The meshes, one after another: position, normal, colour and material (the lit shader's Vtx), each
     // corner once (the smooth ones are shared by a few triangles: shaded once), and the triangles' indices.
-    std::vector<float> v;
-    std::vector<unsigned> idx;
     v.reserve(meshVerts_ * 6);
     idx.reserve(meshVerts_);
     ranges_.assign(set.shapes.size(), {});
@@ -122,6 +131,16 @@ void TreeDraw::build(const forest::Set& set) {
             if (sh.lod[l].v.size() > 1) sh.lod[l].v.resize(1), sh.lod[l].v.shrink_to_fit();
         }
     }
+    out.picker.build(set_);
+}
+
+void TreeDraw::upload(Built&& b) {
+    set_ = std::move(b.set);
+    ranges_ = std::move(b.ranges);
+    picker_ = std::move(b.picker);
+    meshVerts_ = b.meshVerts, baked_ = b.baked;
+    const std::vector<float>& v = b.v;
+    const std::vector<unsigned>& idx = b.idx;
     if (!vao_) {
         GenVertexArrays(1, &vao_);
         GenBuffers(1, &vbo_);
@@ -149,7 +168,6 @@ void TreeDraw::build(const forest::Set& set) {
     BufferData(GL_ELEMENT_ARRAY_BUFFER, idx.size() * sizeof(unsigned), idx.data(), GL_STATIC_DRAW);
     BindVertexArray(0);
     uniqueVerts_ = v.size() / 10;
-    picker_.build(set_);
     // (room for every instance: a pass refills it, never grows it)
     instCap_ = std::max<size_t>(1, set_.inst.size()) * kInstFloats;
     data_.reserve(instCap_);

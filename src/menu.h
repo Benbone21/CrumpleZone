@@ -25,6 +25,7 @@ struct Settings {
     int physicsThreads = 0;     // 0 AUTO; 1 serial; otherwise up to the available logical CPUs
     bool steeringAssist = true; // limit steering angle at high speeds (false = simulation mode)
     int map = 0;                // the map you were on last
+    unsigned long long procSeed = 0;  // the procedural world's seed (procworld.h; 0: none yet, the next one is new)
     bool realRecovery = true;   // damage stays until a repair station (or arcade: T fixes it)
     bool career = false;        // career (start stock, find, win and buy parts) or sandbox (every part)
     double winchSpeed = 4.0;    // saved gameplay speed multiplier; 1x is rated line speed

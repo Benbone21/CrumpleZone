@@ -1,4 +1,5 @@
 #include "debuginfo.h"
+#include "procworld.h"
 
 #include <algorithm>
 #include <cmath>
@@ -246,6 +247,14 @@ void gatherLeft(const DebugInputs& in, DebugColumn& L) {
     if (wl > -1e8 && wl > ground) L.add(DT_WARN, "WATER %.2f M DEEP  (SURFACE %.2f)", wl - ground, wl);
     else L.add(DT_DIM, "WATER NONE");
     if (w.wrapPeriod > 0) L.add(DT_TEXT, "FREEWAY LOOPS %.0f M  (SHIFTED %.0f M)", w.wrapPeriod, sim.wrapShift);
+    if (w.map == MAP_PROCEDURAL) {  // (the endless world: where in it, and its window)
+        const V3 g = proc::ProcWorld::toGlobal(w, me);
+        const proc::ProcWorld& G = proc::ProcWorld::forSeed(w.proc.seed);
+        L.add(DT_TEXT, "WORLD SEED %llu  GEN V%d", (unsigned long long)w.proc.seed, proc::kGenVersion);
+        L.add(DT_TEXT, "WORLD XZ %.0f / %.0f  (%.1f KM OUT)", g.x, g.z, std::sqrt(g.x * g.x + g.z * g.z) / 1000);
+        L.add(DT_TEXT, "WINDOW %lld / %lld  %s  %s", (long long)w.proc.ox, (long long)w.proc.oz, proc::biomeName(G.biomeAt(g.x, g.z)), G.regionName(g.x, g.z).c_str());
+        L.add(DT_DIM, "CHUNKS CACHED %zu", proc::cachedChunks());
+    }
     L.add(DT_DIM, "");
 
     // What's in the world.

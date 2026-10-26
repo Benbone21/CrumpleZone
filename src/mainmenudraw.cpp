@@ -251,6 +251,7 @@ void draw(Renderer& r, Nav& nav, int W, int H, float a, double clock, bool padLa
                             : m == MAP_FRONTIER ? "START AT THE FRONTIER: DESERT, RIVERS, A RANGE, A RACE CIRCUIT"
                             : m == MAP_BACKCOUNTRY ? "8 KM: TRAILS, RIVERS AND PLACES, THE MOUNTAIN, FRONTIER AND OPEN COUNTRY ROUND IT"
                             : m == MAP_WILDS ? "START IN THE OPEN COUNTRY: ROOM TO TRY ANYTHING"
+                            : m == MAP_PROCEDURAL ? "A BRAND-NEW ENDLESS WORLD EVERY TIME: DRIVE AS FAR AS YOU LIKE"
                                              : "THE PROVING GROUND: A LOOP, A MODEL YARD AND OBSTACLE SECTIONS";
         r.text(px0, py, mid, about, 0.85f, 0.85f, 0.88f, a);
     } else if (nav.page == P_VEHICLE) {

@@ -59,6 +59,8 @@
 #include "autopilot.h"
 #include "bgwork.h"
 #include "places.h"
+#include "procstream.h"
+#include "procworld.h"
 #include "debugscreen.h"
 #include "editor.h"
 #include "fx.h"
@@ -157,6 +159,10 @@ struct Options {
     double throttleCap = -1;      // --throttle PCT[,RESPONSE[,PAD]]: the throttle limit (testing)
     int throttleResp = 0, throttlePad = 0;
     double eyeFly = 0;            // --eye-fly V (dev, with --eye): the drone flies on ahead at V m/s, its height over the ground kept (the streaming test)
+    unsigned long long seed = 0;  // --seed N|random: the procedural world's seed (procworld.h)
+    bool seedSet = false;
+    bool procOriginSet = false;   // --proc-origin X,Z: its window round that global point (a dev reload picks up where it was)
+    long long procOx = 0, procOz = 0;
     double mapHalf = 0;           // --map-half M (dev): every map built M m each way from its middle (big-map tests: docs/plans/big-maps.md)
     bool standalone = false;      // --standalone (dev): --map 1, 3 or 5 is that old map on its own, not its region of the big map (docs/plans/one-map.md)
     int map = -1;                 // --map N: 0 proving ground, 1 mountain
@@ -326,7 +332,8 @@ struct BuildWatch {
     void exec(int argc, char** argv, const std::vector<std::string>& extra) {
 #ifndef _WIN32
         static const std::set<std::string> withValue = {"--map", "--player", "--spawn", "--resume-model", "--resume-edit", "--scenario", "--script",
-                                                        "--shot-prefix", "--shot-frames", "--clipboard", "--menu", "--orbit", "--spawn-section", "--eye"};
+                                                        "--shot-prefix", "--shot-frames", "--clipboard", "--menu", "--orbit", "--spawn-section", "--eye",
+                                                        "--seed", "--proc-origin"};
         static const std::set<std::string> flags = {"--garage", "--show-help", "--debug-screen", "--debug-graph", "--full-hud", "--standalone"};
         std::vector<std::string> args = {exe};
         for (int i = 1; i < argc; i++) {
@@ -424,6 +431,10 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--map-half") o.mapHalf = std::atof(next().c_str());
         else if (a == "--real") o.real = next();
         else if (a == "--standalone") o.standalone = true;
+        else if (a == "--seed") {
+            const std::string v = next();
+            o.seed = v == "random" ? proc::ProcWorld::randomSeed() : std::strtoull(v.c_str(), nullptr, 10), o.seedSet = o.seed != 0;
+        } else if (a == "--proc-origin") o.procOriginSet = std::sscanf(next().c_str(), "%lld,%lld", &o.procOx, &o.procOz) == 2;
         else if (a == "--eye-fly") o.eyeFly = std::atof(next().c_str());
         else if (a == "--mods") {
             std::string s = next();
@@ -616,6 +627,13 @@ std::vector<Place> pilotPlaces(const Sim& sim, const NetSession& net) {
     }
     if (sim.world.map == MAP_MOUNTAIN || sim.world.map == MAP_FRONTIER) {
         for (const Place& p : oldMapPlaces(sim.world.map, sim.world.spawn)) out.push_back(p);
+    } else if (sim.world.map == MAP_PROCEDURAL) {  // the window's places (procworld.h), nearest first
+        std::vector<const MapPlace*> v;
+        for (const MapPlace& mp : mapPlaces(MAP_PROCEDURAL))
+            if (mp.kind != PK_CACHE && mp.kind != PK_PHOTO_SPOT && mp.kind != PK_ABANDONED_VEHICLE) v.push_back(&mp);
+        const V3 me = sim.cars.empty() ? V3() : sim.cars[sim.player].frame().com;
+        std::sort(v.begin(), v.end(), [&](const MapPlace* a, const MapPlace* b) { return std::hypot(a->p.x - me.x, a->p.z - me.z) < std::hypot(b->p.x - me.x, b->p.z - me.z); });
+        for (size_t k = 0; k < v.size() && k < 24; k++) out.push_back({v[k]->name, V3(v[k]->p.x, sim.world.height(v[k]->p.x, v[k]->p.z), v[k]->p.z)});
     } else if (sim.world.map == MAP_BACKCOUNTRY) {
         out.push_back({"CREEK CRAWL (FOOT)", backcountryFeature("creekfoot")});
         out.push_back({"OLD MINE", backcountryFeature("mine")});
@@ -1851,6 +1869,11 @@ int main(int argc, char** argv) {
     World::withShowcase = opt.scenario.empty();  // (the model yard and section park laid out on the proving ground: not under a test's replay)
     if (opt.map >= 0) settings.map = opt.map < MAP_COUNT ? opt.map : MAP_PROVING_GROUND;  // (--map with no such map: the proving ground)
     if (!opt.scenario.empty()) settings.map = MAP_PROVING_GROUND;  // the tests are built for it
+    // The procedural world's seed: --seed, else the last one (a new one the first time).
+    if (opt.seedSet) settings.procSeed = opt.seed;
+    if (!settings.procSeed) settings.procSeed = proc::ProcWorld::randomSeed();
+    World::procSeed = settings.procSeed;
+    if (opt.procOriginSet) World::procOriginSet = true, World::procOriginX = opt.procOx, World::procOriginZ = opt.procOz;
     if (opt.lab) settings.map = MAP_PROVING_GROUND;                // (the model lab builds its own studio)
     if (opt.fullscreen) settings.fullscreen = true;
 
@@ -1975,6 +1998,8 @@ int main(int argc, char** argv) {
         sim.world = menuscene::buildWorld(campLevel);
     } else if (settings.map != MAP_PROVING_GROUND) sim.world = buildPick(settings.map, opt.standalone, bigHome);  // (a region's pick: the big map, started there)
     int worldPick = wantCamp ? -1 : settings.map;  // the map pick the world stands for (a region of the big map's: its old map id)
+    World::procOriginSet = false;  // (--proc-origin was for this first window only: the next world starts at its start)
+    if (sim.world.map == MAP_PROCEDURAL) proc::setActiveWindow(sim.world);
     sim.lineup = listedVehicles();  // (the overlanders and the Jesko: no Civic, UTV or buggy)
     loadprof::phase("sim.setup (the lineup)");
     sim.setup();
@@ -2335,6 +2360,10 @@ int main(int argc, char** argv) {
     bool running = true;
     int exitCode = 0;
     double wrapSeen = 0;  // sim.wrapShift the camera and effects have caught up with
+    ProcStream procStream;  // the procedural world's window, sliding with you (procstream.h)
+    std::deque<double> procFrames;  // (its slides' cost: the last frames' times, the worst during one, frames to watch after it)
+    double procWorst = 0, procSwapRatio = 0;
+    int procAfter = 0;
     BuildWatch watch;
     if (!scripted) watch.start();
     bool reload = false;
@@ -2506,6 +2535,7 @@ int main(int argc, char** argv) {
         const int model = std::max(0, sim.cars[sim.player].spec->model);
         const bool same = !campWorld && onBigMapAlready(bigHome, sim.world, m, standalone);
         campWorld = false;
+        procStream.reset();  // (its worker builds a window of its own: dropped before the world goes)
         renderer.waitStreaming();  // (its background streaming reads the world)
         if (same) {
             moveOnBigMap(m);
@@ -2617,7 +2647,12 @@ int main(int argc, char** argv) {
             return;
         }
         World::setSessionSections(net.sections);
-        if (net.map != sim.world.map || sim.world.parkEdited || !net.sections.empty() || campWorld) loadMap(net.map);
+        if (net.map == MAP_PROCEDURAL && net.proc.on) World::procSeed = net.proc.seed, World::procOriginSet = true, World::procOriginX = net.proc.ox, World::procOriginZ = net.proc.oz;  // (the host's window)
+        if (net.map != sim.world.map || net.map == MAP_PROCEDURAL || sim.world.parkEdited || !net.sections.empty() || campWorld) loadMap(net.map), World::procOriginSet = false;
+        if (net.map == MAP_PROCEDURAL && net.proc.sliding && sim.world.map == MAP_PROCEDURAL) {  // (joined in the 3 s before a slide: make it too)
+            net.scheduleShift(net.proc.due, V3((double)(net.proc.ox - net.proc.tx), 0, (double)(net.proc.oz - net.proc.tz)));
+            procStream.want(net.proc.seed, net.proc.tx, net.proc.tz);
+        }
         net.adopt(sim);
         hud.toast("JOINED " + net.ownerName(0) + "'S GAME ON " + mapName(net.map));
         std::printf("joined %s (player %d)\n", address.c_str(), net.self);
@@ -2766,7 +2801,7 @@ int main(int argc, char** argv) {
             for (Placed& pl : sim.world.models)  // its lid comes off
                 if (pl.id == "supply_crate" && len(pl.p - c.at) < 0.05) pl.set = {{"open", 1.0}}, renderer.updateObjects(sim.world);
             jobBanner = std::max(jobBanner, 5.0);
-            jobBannerText = (who.empty() ? c.id + ": " : who + " OPENED " + c.id + ": ") + said;
+            jobBannerText = (who.empty() ? c.shown() + ": " : who + " OPENED " + c.shown() + ": ") + said;
             if (!careerRun.active) saveCareer();
             return true;
         }
@@ -2996,13 +3031,18 @@ int main(int argc, char** argv) {
         const bool showcase = World::withShowcase;
         const int wilds = (int)World::wildsKind;
         const double halfOverride = World::halfSizeOverride;
+        const uint64_t procSeed = World::procSeed;
+        const bool procSet = World::procOriginSet;
+        const int64_t procX = World::procOriginX, procZ = World::procOriginZ;
         const props::HullLibrary* hulls = props::activeRockScans();
         const ScanCover cover = renderer.scanCover();
+        procStream.reset();
         mapLoad.map = m, mapLoad.then = std::move(then), mapLoad.st = MapLoad::WORK;
         auto home = std::make_shared<BigHome>();
         mapLoad.home = home;
         mapLoad.fut = std::async(std::launch::async, [=] {
             World::withShowcase = showcase, World::wildsKind = wilds, World::halfSizeOverride = halfOverride;
+            World::procSeed = procSeed, World::procOriginSet = procSet, World::procOriginX = procX, World::procOriginZ = procZ;
             props::setActiveRockScans(hulls);
             auto w = std::make_unique<World>(buildPick(m, false, *home));
             auto p = Renderer::prepareWorld(*w, cover);
@@ -3139,6 +3179,7 @@ int main(int argc, char** argv) {
     auto activationKey = [](int sc) { return sc == 40 || sc == 88 || sc == 44; };  // (Enter, keypad Enter, Space: the pad's A arrives as Enter)
     worldChanged = [&]() {
         worldCareer = career.on;
+        if (sim.world.map == MAP_PROCEDURAL) proc::setActiveWindow(sim.world);  // (its places: mapPlaces, discovery, caches, the autopilot)
         if (jobOn && net.role == NetSession::HOST) net.sendGame("jobstop");
         jobOn = false;  // (its wreck and its places were the last world's)
         cachesMap = -1;
@@ -3266,6 +3307,10 @@ int main(int argc, char** argv) {
                                         sim.world.editStamp != levelFilesStamp();  // (a level saved since the proving ground was built)
                 const bool otherSave = worldCareer != career.on && !net.active();  // (career <-> sandbox: the other mode's vehicles don't come along)
                 if ((menu.mapPick != worldPick || staleEdits || campWorld || otherSave) && net.role != NetSession::CLIENT) {
+                    if (menu.mapPick == MAP_PROCEDURAL && sim.world.map != MAP_PROCEDURAL) {  // (into the procedural world from elsewhere: a brand-new one)
+                        settings.procSeed = proc::ProcWorld::randomSeed();
+                        World::procSeed = settings.procSeed, World::procOriginSet = false;
+                    }
                     requestMap(menu.mapPick, nullptr);
                     settings.map = menu.mapPick;
                     saveSettings();
@@ -4066,6 +4111,23 @@ int main(int argc, char** argv) {
         if (frame == testStallFrame) for (;;) std::this_thread::sleep_for(std::chrono::seconds(1));
         uint64_t now = SDL_GetPerformanceCounter();
         const double frameTimeMs = 1000.0 * (double)(now - last) / freq;
+        // The procedural world's slides (CZ_PROC_LOG): every frame from the build's start to just after the swap against the median
+        // of the frames before it (the owner's rule: none over twice the median).
+        if (sim.world.map == MAP_PROCEDURAL) {
+            procFrames.push_back(frameTimeMs);
+            if (procFrames.size() > 240) procFrames.pop_front();
+            if (procStream.busy() || procAfter > 0) procWorst = std::max(procWorst, frameTimeMs);
+            if (procAfter > 0 && --procAfter == 0) {
+                std::vector<double> v(procFrames.begin(), procFrames.end());
+                std::nth_element(v.begin(), v.begin() + v.size() / 2, v.end());
+                const double med = v[v.size() / 2];
+                procSwapRatio = std::max(procSwapRatio, procWorst / std::max(med, 0.1));
+                if (std::getenv("CZ_PROC_LOG"))
+                    std::printf("procworld: slide %d: worst frame %.1f ms over the build, upload and swap; median %.1f ms (x%.2f)\n", procStream.swaps, procWorst, med,
+                                procWorst / std::max(med, 0.1));
+                procWorst = 0;
+            }
+        }
         mapLoadTick(frameTimeMs / 1000.0);
         tourTick(frameTimeMs);
         if (opt.benchSuite && (!suite.begun() || suitePhase == 2) && !startNextRun()) {
@@ -4857,6 +4919,14 @@ int main(int argc, char** argv) {
                 startPilot();
             }
             if (opt.script == "pilot") up = down = left = right = false;
+            if (opt.script == "proctour" && sim.world.map == MAP_PROCEDURAL && frame > 30 && frame % 200 == 0) {  // the window sliding: hop 600 m east
+                const Frame f = sim.cars[sim.player].frame();
+                sim.teleportPlayer(f.com.x + 600, f.com.z, 0);
+            }
+            if (opt.script == "procslide" && sim.world.map == MAP_PROCEDURAL) {  // the window slides 64 m under a parked truck: nothing should change on screen
+                up = down = left = right = false;
+                if (frame % 300 == 100 && !procStream.busy() && !std::getenv("CZ_PROC_NOSLIDE")) procStream.want(sim.world.proc.seed, sim.world.proc.ox + 64, sim.world.proc.oz + 128);
+            }
             if (opt.script == "trafficlod") {  // screenshots of far traffic as proxies and the handover: one AI car, you 600 m up the road facing it
                 up = down = left = right = false;
                 if (frame == 5) sim.spawnTraffic(*sim.cars[sim.player].spec);
@@ -5068,7 +5138,12 @@ int main(int argc, char** argv) {
                     closeMenu();
                     run.stop();
                     World::setSessionSections(net.sections);
-                    if (net.map != sim.world.map || sim.world.parkEdited || !net.sections.empty() || campWorld) loadMap(net.map);
+                    if (net.map == MAP_PROCEDURAL && net.proc.on) World::procSeed = net.proc.seed, World::procOriginSet = true, World::procOriginX = net.proc.ox, World::procOriginZ = net.proc.oz;  // (the host's window)
+                    if (net.map != sim.world.map || net.map == MAP_PROCEDURAL || sim.world.parkEdited || !net.sections.empty() || campWorld) loadMap(net.map), World::procOriginSet = false;
+                    if (net.map == MAP_PROCEDURAL && net.proc.sliding && sim.world.map == MAP_PROCEDURAL) {  // (joined in the 3 s before a slide: make it too)
+                        net.scheduleShift(net.proc.due, V3((double)(net.proc.ox - net.proc.tx), 0, (double)(net.proc.oz - net.proc.tz)));
+                        procStream.want(net.proc.seed, net.proc.tx, net.proc.tz);
+                    }
                     net.adopt(sim);
                     hud.toast("JOINED " + net.ownerName(0) + "'S GAME ON " + mapName(net.map) + (net.myLink() == NetSession::LINK_RELAYED ? " (THROUGH THE RELAY)" : ""));
                     std::printf("joined (player %d)\n", net.self);
@@ -5136,7 +5211,22 @@ int main(int argc, char** argv) {
                     hud.toast("THE HOST'S LEVEL WON'T LOAD: " + why);
                 }
             }
+            if (net.role == NetSession::HOST) {  // (what a joining guest is told: procworld.h)
+                net.proc.on = sim.world.map == MAP_PROCEDURAL;
+                net.proc.gen = (uint16_t)proc::kGenVersion, net.proc.seed = sim.world.proc.seed, net.proc.ox = sim.world.proc.ox, net.proc.oz = sim.world.proc.oz;
+            }
             for (const NetSession::GameMsg& m : net.gameIn) {
+                if (m.player == 0 && m.text.rfind("procshift ", 0) == 0 && net.role == NetSession::CLIENT && sim.world.map == MAP_PROCEDURAL) {  // the host slides the window
+                    unsigned long long seed = 0;
+                    long long ox = 0, oz = 0;
+                    double due = 0;
+                    if (std::sscanf(m.text.c_str() + 10, "%llu %lld %lld %lf", &seed, &ox, &oz, &due) == 4 && seed == sim.world.proc.seed && std::isfinite(due) &&
+                        std::llabs(ox - sim.world.proc.ox) < 8192 && std::llabs(oz - sim.world.proc.oz) < 8192) {
+                        net.scheduleShift(due, V3((double)(sim.world.proc.ox - ox), 0, (double)(sim.world.proc.oz - oz)));
+                        procStream.want(seed, ox, oz);
+                    }
+                    continue;
+                }
                 if (m.text.rfind("job|", 0) == 0) {  // the host's job (again, for latecomers)
                     Job j;
                     if (Job::parse(m.text, j) && (!jobOn || j.title != job.title || job.wreckId != j.wreckId)) {
@@ -5157,7 +5247,10 @@ int main(int argc, char** argv) {
                 }
                 if (m.text.rfind("found ", 0) == 0) {  // a buddy found a place: it counts for you too
                     std::string name;
-                    if (takeFoundMessage(coop.discovered, sim.world.map, discoverySpots(), m.text, name)) {
+                    const std::vector<DiscoverSpot> spots = discoverySpots();
+                    if (takeFoundMessage(coop.discovered, sim.world.map, spots, m.text, name)) {
+                        for (const DiscoverSpot& d : spots)  // (shown by its name: a procedural place is kept by its key)
+                            if (d.name == name) name = d.shown();
                         jobBanner = std::max(jobBanner, 4.0);
                         jobBannerText = "DISCOVERED: " + name;
                         if (!scripted) coop.saveDiscoveries(discoveriesPath);
@@ -5202,7 +5295,19 @@ int main(int argc, char** argv) {
                     coop.onMessage(net.players[m.player].name, "inside");
                     continue;
                 }
-                if (m.player >= 0 && m.player < net::kMaxPeers && coop.onMessage(net.players[m.player].name, m.text)) continue;
+                if (m.player >= 0 && m.player < net::kMaxPeers && coop.onMessage(net.players[m.player].name, m.text)) {
+                    const V3 fix = sim.world.map == MAP_PROCEDURAL ? net.frameFix(m.said) : V3();  // (a ping or a buddy on foot, from before a slide)
+                    if (fix.x != 0 || fix.z != 0) {
+                        const std::string& who = net.players[m.player].name;
+                        if (m.text.rfind("ping ", 0) == 0)
+                            for (Ping& pg : coop.pings)
+                                if (pg.who == who) pg.p += fix;
+                        if (m.text.rfind("walk ", 0) == 0)
+                            for (RemoteWalker& rw : coop.walkers)
+                                if (rw.who == who) rw.p += fix;
+                    }
+                    continue;
+                }
                 if (m.text == "restart") {
                     if (run.active()) run.begin(sim, runSlot(), 3.0);
                 } else if (m.player >= 0 && m.player < net::kMaxPeers) {
@@ -5547,6 +5652,56 @@ int main(int argc, char** argv) {
                 cam.target += d;
                 fx.translate(d);
                 wrapSeen = sim.wrapShift;
+            }
+            // The procedural world: its window slides with you (the host's call in multiplayer). On the frame a new one goes in,
+            // everything the sim holds has moved by d: so do the camera, the effects, you on foot and the marks on the map.
+            if (sim.world.map == MAP_PROCEDURAL && !mapLoad.active() && !editor.active && !sim.cars.empty()) {
+                V3 focus = walker.active ? walker.p : sim.cars[sim.player].frame().com;
+                const bool mp = net.active();
+                const double sharedNow = mp ? net.sharedTime((double)SDL_GetPerformanceCounter() / freq) : -1;
+                if (net.role == NetSession::HOST) {
+                    // The host slides everyone's window: round the middle of the group (the box round every vehicle), told 3 s ahead
+                    // so each machine has it built, and swapped by all at that moment on the shared clock.
+                    V3 lo(1e18, 0, 1e18), hi(-1e18, 0, -1e18);
+                    for (const Car& c : sim.cars)
+                        if (!c.isProp()) {
+                            const V3 p = c.frame().com;
+                            lo = V3(std::min(lo.x, p.x), 0, std::min(lo.z, p.z)), hi = V3(std::max(hi.x, p.x), 0, std::max(hi.z, p.z));
+                        }
+                    if (lo.x < 1e17) focus = (lo + hi) * 0.5;
+                    if (!procStream.busy() && !net.shiftPending() && std::max(std::fabs(focus.x), std::fabs(focus.z)) >= proc::kSlide) {
+                        int64_t ox, oz;
+                        proc::ProcWorld::snapOrigin((double)sim.world.proc.ox + focus.x, (double)sim.world.proc.oz + focus.z, ox, oz);
+                        const double due = sharedNow + 3.0;
+                        char msg[160];
+                        std::snprintf(msg, sizeof msg, "procshift %llu %lld %lld %.4f", (unsigned long long)sim.world.proc.seed, (long long)ox, (long long)oz, due);
+                        net.sendGame(msg);
+                        net.scheduleShift(due, V3((double)(sim.world.proc.ox - ox), 0, (double)(sim.world.proc.oz - oz)));
+                        procStream.want(sim.world.proc.seed, ox, oz);
+                    }
+                }
+                V3 d;
+                if (procStream.tick(sim, renderer, focus, !mp, d, sharedNow, mp && net.shiftPending() ? net.shiftDue() : -1.0)) {
+                    if (mp) net.shiftNow();  // (the others' buffered states into the new frame too)
+                    procAfter = 3;
+                    cam.target += d, cam.droneEye += d;
+                    fx.translate(d);
+                    walker.p += d;
+                    lastView.eye += d, lastView.target += d, camFrom.eye += d, camFrom.target += d;
+                    crouchAt += d, crouchFrom += d, workHand += d, rideAt += d;
+                    for (Ping& pg : coop.pings) pg.p += d;
+                    coop.waypoint += d;
+                    for (RemoteWalker& rw : coop.walkers) rw.p += d;
+                    job.target += d;
+                    for (V3& q : job.spots) q += d;
+                    proc::setActiveWindow(sim.world, std::move(procStream.places));  // (its places, in the new window's coordinates)
+                    cachesMap = -1;  // (this window's caches, where they now are)
+                    drawnWorld = sim.world.stamp;
+                    if (std::getenv("CZ_PROC_LOG"))
+                        std::printf("procworld: window -> %lld,%lld (shift %.0f,%.0f), built in %.0f ms, swap %.1f ms\n", (long long)sim.world.proc.ox,
+                                    (long long)sim.world.proc.oz, d.x, d.z, procStream.lastBuildMs, procStream.lastSwapMs);
+                    loadprof::report("procworld window");  // (CZ_LOADPROF: what the build and the swap spent)
+                }
             }
             for (const std::string& ev : sim.events) hud.toast(ev);
             sim.events.clear();
@@ -7167,6 +7322,8 @@ int main(int argc, char** argv) {
         char spawn[96];
         std::snprintf(spawn, sizeof spawn, "%.2f,%.2f,%.1f", f.com.x, f.com.z, std::atan2(-f.fwd.z, f.fwd.x) * 180 / M_PI);
         resume = {"--map", std::to_string(sim.world.map), "--player", std::to_string(sim.player), "--spawn", spawn};
+        if (sim.world.map == MAP_PROCEDURAL)  // (the same window of the same world: the spot above is in it)
+            resume.insert(resume.end(), {"--seed", std::to_string(sim.world.proc.seed), "--proc-origin", std::to_string(sim.world.proc.ox) + "," + std::to_string(sim.world.proc.oz)});
         if (c.spec->model >= 0) resume.insert(resume.end(), {"--resume-model", std::to_string(c.spec->model)});
     }
     if (reload && !careerSlug.empty()) resume.insert(resume.end(), {"--career-world", careerSlug});  // (back into the world, as it was just saved)

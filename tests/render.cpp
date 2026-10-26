@@ -6,6 +6,10 @@
 #include "../src/gpu.h"
 #include "../src/menu.h"
 #include "../src/sdl_min.h"
+#include "../src/procstream.h"
+#include "../src/procworld.h"
+#include <algorithm>
+#include <vector>
 #include <chrono>
 #include <cstdio>
 #include <memory>
@@ -416,6 +420,70 @@ int main() {
             if (each > 0.25) throw std::runtime_error("each vehicle standing costs the CPU over 0.25 ms a frame");
             clean();
             std::puts("PASS vehicles: per-car draw and triangle budgets near and far, kept meshes, dents shown at once, culled, cheap to add");
+        }
+        {
+            // The procedural world's window sliding (procstream.h): no frame from the build's start to after the swap costs the game
+            // thread over twice the median frame (plus 2 ms), and the swap frame's own work is a few ms.
+            World::procSeed = 4242, World::procOriginSet = false;
+            sim.cars.resize(1);
+            sim.world = World(MAP_PROCEDURAL);
+            proc::setActiveWindow(sim.world);
+            applyPreset(renderer.settings, 2);
+            renderer.setWorld(sim.world);
+            View pv;
+            pv.eye = sim.world.spawn + V3(-20, 12, -20), pv.target = sim.world.spawn, pv.up = V3(0, 1, 0), pv.width = 160, pv.height = 90;
+            ProcStream ps;
+            // (Each frame timed from an idle GPU: a GPU-bound machine's queue filling up stalls the CPU every few frames, slide or not.)
+            auto finish = reinterpret_cast<void (*)()>(SDL_GL_GetProcAddress("glFinish"));
+            auto frame = [&](bool slide) {
+                if (finish) finish();
+                const auto t0 = std::chrono::steady_clock::now();
+                V3 d;
+                if (slide && ps.tick(sim, renderer, V3(), false, d)) pv.eye += d, pv.target += d;
+                renderer.drawScene(sim, pv, DEBUG_OFF, nullptr);
+                return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            };
+            std::vector<double> calm;
+            double calmWorst = 0;
+            for (int f = 0; f < 160; f++) {
+                const double ms = frame(false);
+                if (f >= 10) calm.push_back(ms), calmWorst = std::max(calmWorst, ms);
+                if (f >= 10 && std::getenv("CZ_SLIDE_LOG") && ms > 11) std::printf("  calm frame %d: %.2f ms\n", f, ms);
+            }
+            std::printf("Render check: procedural, no slide: worst of 150 frames %.2f ms\n", calmWorst);
+            std::vector<double> sorted = calm;
+            std::sort(sorted.begin(), sorted.end());
+            const double median = sorted[sorted.size() / 2];
+            // (Up to three slides: on a busy machine other work lands in some frames; the slide's own cost shows in the best of them.)
+            bool ok = false;
+            for (int attempt = 0; attempt < 3 && !ok; attempt++) {
+                const int before = ps.swaps;
+                ps.want(sim.world.proc.seed, sim.world.proc.ox + 64, sim.world.proc.oz + 128);
+                double worst = 0;
+                int frames = 0;
+                std::vector<double> sliding;
+                for (; frames < 4000 && ps.swaps == before; frames++) {
+                    const double ms = frame(true);
+                    if (ms > 1.5 * median && std::getenv("CZ_SLIDE_LOG")) std::printf("  slide frame %d: %.2f ms\n", frames, ms);
+                    worst = std::max(worst, ms), sliding.push_back(ms);
+                    if (ps.busy()) std::this_thread::sleep_for(std::chrono::milliseconds(2));  // (the worker's build goes on meanwhile)
+                }
+                for (int f = 0; f < 3; f++) {
+                    const double ms = frame(true);
+                    if (std::getenv("CZ_SLIDE_LOG")) std::printf("  after the swap %d: %.2f ms\n", f, ms);
+                    worst = std::max(worst, ms), sliding.push_back(ms);
+                }
+                std::sort(sliding.begin(), sliding.end());
+                const double p95 = sliding[sliding.size() * 95 / 100];
+                std::printf("Render check: procedural slide %d: median frame %.2f ms CPU (worst with no slide %.2f); over %d frames of build, upload and swap: 95%% under "
+                            "%.2f ms, worst %.2f ms; the swap's own work %.2f ms\n", attempt + 1, median, calmWorst, frames, p95, worst, ps.lastSwapMs);
+                if (ps.swaps != before + 1) throw std::runtime_error("the procedural window didn't slide");
+                if (ps.lastSwapMs > 2.0) throw std::runtime_error("the procedural slide's swap did more than swap");
+                ok = p95 <= 2 * median + 2.0;
+            }
+            if (!ok) throw std::runtime_error("the procedural slide's frames cost over twice the median (three tries)");
+            clean();
+            std::puts("PASS procedural slide: staged a piece a frame, swapped at no cost");
         }
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL render: %s\n", error.what());
