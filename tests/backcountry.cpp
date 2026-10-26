@@ -93,7 +93,7 @@ SCENARIO(backcountryMap, "maps/backcountry",
     ctx.sim.world = World(MAP_BACKCOUNTRY);
     const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     const World& w = ctx.sim.world;
-    ctx.metric("time to build the map", secs, "s", 0, 6);
+    ctx.metric("time to build the map", secs, "s", 0, 15);  // (15: with the trail network, its rock features and its obstacle trails, on a busy machine)
     // Stations: four, on pads flat to a few centimetres across their reach.
     // (Four camps and the ranger station; on the big map the regions round it bring theirs besides: the Mountain's 3, the Frontier's 5.)
     int own = 0;
@@ -310,6 +310,8 @@ bool pilotRun(Ctx& ctx, Car& c, const V3& goal, double kmh, double maxS, int rou
     const std::string msg = pilotStart(c, ctx.sim.world, goal, "THERE", kmh / 3.6, route);
     ctx.check("route planned", c.pilot.active, msg);
     if (std::getenv("BC_TRACE")) std::printf("ROUTE %zu points: %s\n", c.pilot.path.size(), msg.c_str());
+    if (std::getenv("BC_ROUTE"))
+        for (size_t k = 0; k < c.pilot.path.size(); k += 10) std::printf("PATH %.0f %.0f\n", c.pilot.path[k].x, c.pilot.path[k].z);
     const int i = (int)(&c - ctx.sim.cars.data());
     ctx.runUntil(maxS, [&] { return !c.pilot.active; }, [&] {
         ctx.sim.pilotStep(i, Ctx::kFrame);
@@ -380,7 +382,7 @@ SCENARIO(backcountryBigCountry, "backcountry/big-country", "The 6 km Backcountry
     } legs[] = {{"RANGER FLATS", V3(-480, 0, -60), V3(-1500, 0, 160)}, {"TIMBER BASIN", V3(-480, 0, 300), V3(-1400, 0, 1300)},
                 {"LAKESHORE", V3(-450, 0, -450), V3(-1250, 0, -1150)}, {"SOUTH UPLANDS", V3(0, 0, -480), V3(150, 0, -1500)},
                 {"BADLANDS WASH", V3(450, 0, -450), V3(1500, 0, -1500)}, {"BEAR CREEK RIM", V3(480, 0, -200), V3(1500, 0, -350)},
-                {"HIGH LAKES", V3(480, 0, 420), V3(1500, 0, 1400)}, {"COPPER RIDGE", V3(-1400, 0, 1300), V3(0, 0, 1900)}};
+                {"HIGH LAKES", V3(480, 0, 420), V3(1500, 0, 1400)}, {"COPPER RIDGE", V3(-1400, 0, 1300), V3(-78, 0, 1924)}};  // (the Surveyor's Cabin: (0, 1900) is under Copper Peak's boulders now)
     for (const auto& l : legs) {
         std::vector<V3> route;
         const bool ok = planRoute(w, bBronco(), l.from, l.to, PILOT_ANYWHERE, {}, route);

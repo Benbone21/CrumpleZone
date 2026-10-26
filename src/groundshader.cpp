@@ -330,7 +330,7 @@ void main(){
       a = mix(sd / max(sideX.w * step(0.02, sideX.w) + sideZ.w * step(0.02, sideZ.w), 1e-3), a, wTop);
     }
     // Far off, each layer eases toward its own average colour: no tiling to see from across the valley.
-    a.rgb = mix(a.rgb, avgA[k].rgb, smoothstep(180.0, 700.0, dist) * 0.6);
+    a.rgb = mix(a.rgb, avgA[k].rgb, smoothstep(120.0, 600.0, dist) * 0.7);
     A[k] = a;
     A[k].a = clamp(A[k].a, 0.0, 1.0);
   }
@@ -385,6 +385,7 @@ void main(){
   // ---- Large-scale variation: patches of lighter and darker, warmer and cooler ground ----
   float bright = 0.80 + 0.40 * (lo == 1 ? fbmFew(p * 0.045 + 11.0, 1, 3) : fbm(p * 0.045 + 11.0, 3));
   vec3 warm = mix(vec3(1.05, 1.0, 0.92), vec3(0.94, 0.99, 1.04), vnoise(p * 0.02 - 6.0));
+  bright *= 0.9 + 0.2 * vnoise(p * 0.007 + 2.0);  // (and broad patches, a few hundred metres across)
   alb *= bright * warm;
   // ---- Wheel tracks worn into trails and roads, and packed down in snow ----
   float sl = vCol.g;

@@ -223,6 +223,29 @@ void backcountryLand(double half, int n, std::vector<float>& out);
 // A trail's center line, ~1 m apart, in the direction of travel: "creek", "ridge", "mud", "wash",
 // "hill", "ridgeroad", "shelf", "pass", "tower", "river", "cabin".
 const std::vector<V3>& backcountryTrail(const char* name);
+// The marked trail network round Elk Valley (bctrails.cpp): each trail's name, rating (0 green, 1 blue, 2 black, 3 red, 4 a faint
+// two-track) and its center line, ~1 m apart in the direction it was laid; and the named spots on them (the pass's obstacles:
+// notch, creek, scree, switchbacks, shelf, slab, choke, saddle, peak, ...). An unknown name: an empty line / (0, 0, 0).
+struct BcTrailInfo {
+    std::string name;
+    int rating = 0;
+    double maxGrade = 0.12;
+};
+const std::vector<BcTrailInfo>& bcTrails();
+const std::vector<V3>& bcTrailLine(const std::string& name);
+V3 bcTrailFeature(const char* name);
+// The obstacle trails built from the proving ground's sections, out in their own country (bctrails.cpp): where each starts and ends.
+struct BcSetPiece {
+    const char* id;
+    const char* name;
+    const char* cacheId;
+    const char* cacheName;
+    int cash;
+    V3 entry, exit;  // (x, z: the first section's entry and the last one's exit)
+    double heading;  // the game's yaw
+    std::vector<int> types;  // SectionType, in order
+};
+const std::vector<BcSetPiece>& bcSetPieces();
 
 struct Contact {
     V3 n;            // surface normal, pointing out of the obstacle
@@ -253,6 +276,8 @@ public:
     // Whether the Backcountry is built as the big map, with the Mountain, the Frontier and the Open Country stitched on round it
     // (onemap.h, docs/plans/one-map.md); off, it's the 6 km map alone. Per thread, like withShowcase (tests that only need the old map).
     static inline thread_local bool stitchRegions = true;
+    // Whether the Backcountry gets its trail network (bctrails.cpp): tools/trailroute routes the network over the land without it.
+    static inline thread_local bool withTrailNetwork = true;
     static int gridSizeFor(int map) { return (int)(2 * halfSizeFor(map) / kRes) + 1; }
     double halfSize() const { return half; }
     static constexpr double kPadRadius = 140.0;
@@ -368,6 +393,13 @@ public:
     std::vector<RegionStart> regionStarts;
     // The gravel roads from the Backcountry into each region (onemapbuild.cpp), as laid: a point every metre, at the road's height.
     std::vector<std::vector<V3>> regionRoads;
+    // The trails to follow (the Backcountry's, bctrails.cpp), for the M map: a point every ~8 m at the tread's height.
+    struct MarkedTrail {
+        std::string name;
+        int rating = 0;  // 0 green, 1 blue, 2 black, 3 red, 4 a faint two-track
+        std::vector<V3> pts;
+    };
+    std::vector<MarkedTrail> trails;
     bool startAtRegion(int oldMap);  // false: not a region of this map
     bool crashProps = true;      // crash boxes and barriers (the proving ground)
     // The freeway repeats every wrapPeriod meters along x (0: the map doesn't). The sim
@@ -456,6 +488,11 @@ private:
     void stitchRegionContent(const std::vector<RegionBuild*>& builds);
     // (`wetLater`: where the Backcountry's rivers and lakes will be, which aren't on the land yet when the roads are laid.)
     void layRegionRoads(const std::vector<RegionBuild*>& builds, CellTiles<uint8_t>& keep, const std::function<bool(double, double)>& wetLater);
+    // The Backcountry's trail network and what's along it (bctrails.cpp): laid after the old map's own growth, before the new country's.
+    void layBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& edge);
+    // ...and after the new country's growth: its rock features, the rocks, bushes, trees and logs that fill the open country between, the
+    // places the trails lead to (the fire lookout, the cabins), the obstacle trails' signs.
+    void dressBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& edge);
     CellTiles<uint8_t> roadMask;  // (while the big map is built: the cells the roads above took, which the regions' own ground doesn't)
     // The regions' grown country (docs/plans/regions2.md, onemapbuild.cpp): the marked trails between their places and the Mountain's
     // pass (laid with the roads, into regionRoads after them), the growth and rock of their country (after the Backcountry's own), and

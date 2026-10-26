@@ -26,6 +26,7 @@ enum PlaceKind : int {
     PK_PHOTO_SPOT,
     PK_CACHE,
     PK_ABANDONED_VEHICLE,
+    PK_OBSTACLE,  // a trail's set piece: a shelf, a rock garden, a staircase of slabs (the Backcountry's trails, bctrails.cpp)
     PK_COUNT
 };
 const char* placeKindName(int kind);  // "RANGER STATION"

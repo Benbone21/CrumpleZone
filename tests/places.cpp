@@ -71,7 +71,7 @@ SCENARIO(placesTable, "pois/table", "The Backcountry's places: how many of each,
     ctx.check("one ranger station", count(v, PK_RANGER_STATION) == 1);
     ctx.check("four new fuel stops", count(v, PK_FUEL_STOP) == 4);
     ctx.check("six or more cabins and old camps", count(v, PK_CABIN) + count(v, PK_OLD_CAMP) >= 6, std::to_string(count(v, PK_CABIN) + count(v, PK_OLD_CAMP)));
-    ctx.check("five lookouts", count(v, PK_LOOKOUT) == 5);
+    ctx.check("five lookouts (and the trail network's four)", count(v, PK_LOOKOUT) == 9, std::to_string(count(v, PK_LOOKOUT)));
     ctx.check("both waterfalls", count(v, PK_WATERFALL) == 2);
     ctx.check("two mines", count(v, PK_MINE) == 2);
     ctx.check("six or more river crossings", count(v, PK_RIVER_CROSSING) >= 6, std::to_string(count(v, PK_RIVER_CROSSING)));
@@ -110,9 +110,12 @@ SCENARIO(placesTable, "pois/table", "The Backcountry's places: how many of each,
     }
     // Stable: a saved game refers to a place by its id (and the discovery list by its name), so these never change. New places go at
     // the end of the table.
+    // (The ones that shipped before the trail network's, which follow the caches from Copper Peak on.)
     uint64_t hi = 1469598103934665603ull, hn = hi;
-    for (const MapPlace& p : v)
+    for (const MapPlace& p : v) {
+        if (p.id == "BC.COPPER_PEAK") break;
         if (p.kind != PK_CACHE) hi = fnv(hi, p.id), hn = fnv(hn, p.name);
+    }
     std::printf("PLACES ids %016llx names %016llx (%zu places)\n", (unsigned long long)hi, (unsigned long long)hn, v.size());
     ctx.check("the place ids and names are the ones that shipped (new places go at the end of the table, after the others but before the caches)", hi == 0x28e497dc6fa22ed3ull && hn == 0xcccfc52f15ad0ea7ull);
     const MapPlace* ranger = findPlace(MAP_BACKCOUNTRY, "BC.RANGER");
@@ -200,7 +203,10 @@ SCENARIO(placesReachable, "pois/all-reachable", "The autopilot (a Bronco, anywhe
     const World& w = ctx.sim.world;
     const VehicleSpec& bronco = vehicleCatalog()[2];
     std::vector<const MapPlace*> todo;
-    for (const MapPlace& p : mapPlaces(MAP_BACKCOUNTRY)) todo.push_back(&p);
+    // (The Shelf, a ledge cut across the Rimrock on COPPER PASS, is driven by bctrails/pass-shelf: the planner's cost grid can't see a
+    // way onto a ledge built up against a cliff, any more than the Frontier's tarn.)
+    for (const MapPlace& p : mapPlaces(MAP_BACKCOUNTRY))
+        if (p.id != "BC.THE_SHELF") todo.push_back(&p);
     std::vector<V3> reached = {w.spawn};
     std::string unreached;
     int ok = 0;
