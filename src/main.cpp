@@ -3749,9 +3749,10 @@ int main(int argc, char** argv) {
     const bool asyncAllowed = opt.simAsync && opt.shotFrames.empty() && !opt.loadTour && opt.script.empty();
 
     loadprof::phase("first frame");
+    renderer.stageMarks = true;  // (its draw stages too: a software renderer compiles each shader at its first draw)
     while (running) {
         if (g_termSignals) break;
-        if (frame == 1) loadprof::phase(nullptr);  // (SIGTERM / SIGINT in normal play: quit cleanly)
+        if (frame == 1) loadprof::phase(nullptr), renderer.stageMarks = false;  // (SIGTERM / SIGINT in normal play: quit cleanly)
         if (watchdog) watchdog->frame(frame);
         if (frame == testStallFrame) for (;;) std::this_thread::sleep_for(std::chrono::seconds(1));
         uint64_t now = SDL_GetPerformanceCounter();
@@ -6751,7 +6752,7 @@ int main(int argc, char** argv) {
             std::snprintf(path, sizeof(path), "%s_%04d.ppm", opt.shotPrefix.c_str(), frame);
             writePPM(path, renderer.readPixels(W, H), W, H);
             std::printf("wrote %s\n", path);
-            if (frame >= *opt.shotFrames.rbegin()) running = false;
+            if (frame >= *opt.shotFrames.rbegin()) running = false, loadprof::phase("shutdown");
         }
         if (opt.benchSuite && suitePhase == 1 && bf >= benchWarm + opt.bench + 2) {  // the run's F3 screen, beside the summary
             const BenchSuite::Done& d = suite.done().back();

@@ -182,6 +182,7 @@ public:
     // (a timestamp query). gpuFrameBegin() at the top of each frame reads back a frame from a few frames ago.
     bool gpuTiming = false;
     bool syncTiming = false;  // (--bench-sync: wait for the GPU at each mark, so the CPU times are each stage's whole cost)
+    bool stageMarks = false;  // (the first frame: each stage is the main thread's loadprof phase, so a hang report names it)
     void passMark(FramePass p);
     void preload(const World& world);  // (after init and settings: loads what the first frame would)
     void gpuFrameBegin();

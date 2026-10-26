@@ -5794,6 +5794,7 @@ void Renderer::preload(const World& world) {
 
 void Renderer::passMark(FramePass p) {
     if (syncTiming) Finish();
+    if (stageMarks) loadprof::phase(framePassName(p));
     frameProfile().enter(p);
     if (!gpuTiming) return;
     GpuMarks& m = gpuMarks_[gpuMarkFrame_];
