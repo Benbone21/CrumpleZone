@@ -36,6 +36,9 @@ namespace careersession {
 // (taken off, or shed) is back on: the loose wheels lying about aren't saved. A world with none of yours in it: your
 // most recently driven vehicle is moved here (as it was) to the spawn; a starter only when you own no vehicles at all.
 bool begin(CareerSession& s, Sim& sim, const WorldSave& w, const std::string& playerName, int startVehicle = -1, std::string* why = nullptr);
+// Whether begin (writing) could read the profile: none on disk, or one that loads. False (and why) for a profile.txt or .bak
+// that is there but damaged: a NEW WORLD is refused before its world.txt is made, so no empty world is left behind.
+bool profileReadable(std::string* why = nullptr);
 // Each of the session's cars' condition written back into profile.vehicles / world.left (not a car that is no longer
 // the vehicle put out for its slot: swapped for another type, it would turn the owned one into that).
 void capture(CareerSession& s, const Sim& sim);

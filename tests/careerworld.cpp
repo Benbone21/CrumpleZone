@@ -524,6 +524,7 @@ SCENARIO(careerSessionKeepsProgress, "career/session-keeps-progress", "A profile
     ctx.sim.setupEmpty();
     WorldSave w = newWorld("Hard", MAP_PROVING_GROUND, DIFF_HARDCORE, MODE_PERSONAL, {});
     CareerSession s;
+    ctx.check("a readable profile can start a world", careersession::profileReadable());
     ctx.check("begun", careersession::begin(s, ctx.sim, w, "ANN", bronco));
     ctx.check("the cash kept (not the difficulty's)", s.profile.cash == 4321, std::to_string(s.profile.cash));
     ctx.check("the part kept", s.profile.owned.count("TIRES:MUD-TERRAIN") == 1);
@@ -540,6 +541,7 @@ SCENARIO(careerSessionKeepsProgress, "career/session-keeps-progress", "A profile
     WorldSave w2 = newWorld("Other", MAP_PROVING_GROUND, DIFF_LIGHT, MODE_PERSONAL, {});
     CareerSession s2;
     std::string why;
+    ctx.check("a damaged profile: unreadable (a NEW WORLD is refused before its world.txt is made)", !careersession::profileReadable(&why) && !why.empty(), why);
     ctx.check("refused", !careersession::begin(s2, sim2, w2, "ANN", bronco, &why) && !why.empty(), why);
     ctx.check("not active, career off", !s2.active && !s2.profile.on);
     careersession::end(s2, sim2);
@@ -548,7 +550,9 @@ SCENARIO(careerSessionKeepsProgress, "career/session-keeps-progress", "A profile
     // Only the .bak there, and it damaged: refused too.
     std::remove((dir + "/profile.txt").c_str());
     CareerSession s3;
-    ctx.check("a damaged .bak alone: refused", !careersession::begin(s3, sim2, w2, "ANN", bronco, &why));
+    ctx.check("a damaged .bak alone: refused", !careersession::begin(s3, sim2, w2, "ANN", bronco, &why) && !careersession::profileReadable());
+    std::remove((dir + "/profile.txt.bak").c_str());
+    ctx.check("no profile at all: readable (a fresh one starts)", careersession::profileReadable());
 }
 
 SCENARIO(careerSessionScripted, "career/session-scripted", "A scripted run's session (write off) never reads profile.txt: a fresh profile starts at the world's difficulty, a kept one stays as it was") {
@@ -650,6 +654,7 @@ SCENARIO(careerSessionCaches, "career/session-caches", "A cache opened in a worl
     WorldSave saved;
     ctx.check("the world was saved with it", loadWorld(a.slug, saved) && saved.opened.size() == 1);
     careersession::end(s, ctx.sim);
+    ctx.check("left the world: the profile's state again (the crates' lids go back to it)", !careersession::cacheOpened(s, spot));
 
     Sim sim2;
     sim2.setupEmpty();

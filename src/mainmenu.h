@@ -87,6 +87,7 @@ public:
     bool typing = false;            // the NAME row is taking keys and text
     int diffIdx = DIFF_MEDIUM, modeIdx = MODE_PERSONAL;
     int startIdx = 0;               // index into startVehicles()
+    int worldMapIdx = 0;            // index into careerMaps() (no procedural or real terrain career worlds yet)
 
     // Opens on the front page, the pickers on the map and vehicle last used (a MapId, a catalog index).
     void open(int map, int vehicle);
@@ -104,6 +105,7 @@ public:
     int vehicle() const;   // the catalog index picked
     std::string title() const;
     int startVehicle() const;  // the catalog index picked on the New World page
+    int worldMap() const;      // the MapId picked on the New World page (one of careerMaps())
 
     // Where each row was drawn (drawable pixels), for the mouse: set by the painter.
     struct Hit { float x, y, w, h; int row; };

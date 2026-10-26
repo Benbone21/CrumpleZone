@@ -160,7 +160,16 @@ SCENARIO(menuCareerWorlds, "mainmenu/career-worlds", "CAREER lists the worlds (a
     ctx.check("text is refused when not typing", !n.text("X") && n.newName == "MY RIG");
     n.setSel(N_MAP);
     n.key(K_D);
-    ctx.check("D cycles the map", n.mapIdx == 1 || listedMaps().size() == 1);
+    ctx.check("D cycles the map", n.worldMapIdx == 1 || careerMaps().size() == 1);
+    bool openEnded = false;
+    for (size_t i = 0; i <= careerMaps().size(); i++) {
+        openEnded = openEnded || n.worldMap() == MAP_PROCEDURAL || n.worldMap() == MAP_REAL;
+        n.key(K_D);
+    }
+    ctx.check("a full cycle of maps never lands on the procedural or a real terrain (not career maps yet)", !openEnded && !careerMaps().empty());
+    ctx.check("the career maps are the listed ones less those", careerMaps().size() + 1 + (mapListed(MAP_REAL) ? 1 : 0) == listedMaps().size() && !careerMap(MAP_PROCEDURAL) &&
+                                                                     !careerMap(MAP_REAL) && careerMap(MAP_BACKCOUNTRY));
+    n.worldMapIdx = 1 % (int)careerMaps().size();
     n.setSel(N_DIFF);
     n.key(K_D);
     ctx.check("D: MEDIUM -> HARDCORE", n.diffIdx == DIFF_HARDCORE && std::string(difficultyName((Difficulty)n.diffIdx)) == "HARDCORE");
@@ -181,7 +190,7 @@ SCENARIO(menuCareerWorlds, "mainmenu/career-worlds", "CAREER lists the worlds (a
     ctx.check("a full cycle of vehicles never lands on the Jesko", !jesko && sv.size() < listedVehicles().size() + 1 && !sv.empty());
     n.setSel(N_CREATE);
     const Result r = n.key(K_ENTER);
-    ctx.check("CREATE returns the picks", r.act == A_CAREER_NEW && r.worldName == "MY RIG" && r.map == n.map() && r.difficulty == 2 && r.mode == MODE_CREW &&
+    ctx.check("CREATE returns the picks", r.act == A_CAREER_NEW && r.worldName == "MY RIG" && r.map == n.worldMap() && careerMap(r.map) && r.difficulty == 2 && r.mode == MODE_CREW &&
                                               r.vehicle == n.startVehicle() && startableVehicle(r.vehicle));
     n.key(K_ESC);
     ctx.check("Esc goes back to the list, on NEW WORLD", n.page == P_WORLDS && n.sel == (int)n.worlds.size());

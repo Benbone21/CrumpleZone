@@ -2319,7 +2319,7 @@ int main(int argc, char** argv) {
         if (r.fitted) {
             if (!careersession::fit(careerRun, sim, garageShop.vehicle, garageShop.fitted)) {  // (a career world's vehicle: in the profile with it)
                 garage.fitted[garageShop.vehicle] = garageShop.fitted;
-                if (!scripted) garage.save(garagePath);
+                if (!careerQuiet) garage.save(garagePath);  // (as saveSettings: scripted and --script runs never write)
             }
             shopRecal = garageShop.recal;
         }
@@ -2331,7 +2331,7 @@ int main(int argc, char** argv) {
                 saveCareer();
             } else {
                 garage.paint[garageShop.vehicle] = garageShop.paint;
-                if (!scripted) garage.save(garagePath);
+                if (!careerQuiet) garage.save(garagePath);  // (as saveSettings: scripted and --script runs never write)
             }
         }
         if (r.close) {
@@ -2451,6 +2451,14 @@ int main(int argc, char** argv) {
     // Out of the world is out of career mode (no career without a world): back to sandbox, its garage and gear, unless
     // the world is to restart (CAREER_RESTART) or the game is quitting (CAREER_QUIT: only the setting).
     enum { CAREER_TO_SANDBOX, CAREER_QUIT, CAREER_RESTART };
+    // The crates already out on this map: their lids as the career has them now (a world's, or the profile's out of one).
+    auto layLids = [&]() {
+        bool lids = false;
+        for (const CacheSpot& c : caches)
+            for (Placed& pl : sim.world.models)
+                if (pl.id == "supply_crate" && len(pl.p - c.at) < 0.05) pl.set = {{"open", careersession::cacheOpened(careerRun, c) ? 1.0 : 0.0}}, lids = true;
+        if (lids) renderer.updateObjects(sim.world);
+    };
     auto endCareer = [&](int how = CAREER_TO_SANDBOX) {
         if (!careerRun.active) return;
         careersession::end(careerRun, sim);  // (career.on goes off with it)
@@ -2464,6 +2472,7 @@ int main(int argc, char** argv) {
         garage.load(garagePath);
         const Car& pc = sim.cars[sim.player];
         if (!pc.isProp() && pc.spec->model >= 0) sim.swapPlayerVehicle(garage.spec(pc.spec->model));
+        layLids();  // (out of the world: the crates still on this map as the profile has them, not as the world left them)
         cachesMap = -1;
         sim.anchorStock = AnchorStock();
         hud.toast("LEFT " + careerRun.world.name + " (SAVED): SANDBOX");
@@ -2492,11 +2501,8 @@ int main(int argc, char** argv) {
             hud.toast(why);
             return;
         }
-        bool lids = false;  // (crates already out on this map: their lids as this world has them)
-        for (const CacheSpot& c : caches)
-            for (Placed& pl : sim.world.models)
-                if (pl.id == "supply_crate" && len(pl.p - c.at) < 0.05) pl.set = {{"open", careersession::cacheOpened(careerRun, c) ? 1.0 : 0.0}}, lids = true;
-        if (lids) renderer.updateObjects(sim.world);
+        profileDamaged = false;  // (begun: the profile on disk was read, so saving it writes over nothing unreadable)
+        layLids();               // (crates already out on this map: their lids as this world has them)
         const Car& pc = sim.cars[sim.player];
         hud.toast(careerRun.world.name + ": " + (pc.spec->model >= 0 ? vehicleCatalog()[pc.spec->model].name : "") + "  ($" + std::to_string(career.cash) + ")");
         std::printf("career: %s %s, %d vehicles\n", careerNext.start >= 0 ? "new world" : "continued", careerRun.world.slug.c_str(), sim.vehicleCount());
@@ -3723,6 +3729,11 @@ int main(int argc, char** argv) {
                 if (mapLoad.active()) break;  // (a map on its way already: it would take the world's place)
                 WorldSave w;
                 if (r.act == A_CAREER_NEW) {
+                    std::string why;
+                    if (!careerQuiet && !careersession::profileReadable(&why)) {  // (refused before its world.txt is made: no empty world left)
+                        hud.toast(why);
+                        break;
+                    }
                     w = careersession::newWorldFor(career, r.worldName, r.map, (Difficulty)r.difficulty, (WorldMode)r.mode);
                     if (!careerQuiet && !saveWorld(w)) {
                         hud.toast("CAN'T SAVE THE NEW WORLD");
@@ -3731,6 +3742,10 @@ int main(int argc, char** argv) {
                 } else if (!loadWorld(r.world, w)) {
                     hud.toast("THAT WORLD'S SAVE IS DAMAGED");
                     mainNav.worlds = listWorlds();
+                    break;
+                }
+                if (!careerMap(w.map)) {  // (the procedural world and a real terrain aren't career maps yet: New World doesn't offer them)
+                    hud.toast("A CAREER WORLD CAN'T BE ON " + std::string(mapName(w.map)) + " YET");
                     break;
                 }
                 settings.career = true;

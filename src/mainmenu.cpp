@@ -80,6 +80,7 @@ int Nav::count() const {
 }
 
 int Nav::map() const { return listedMaps()[clampi(mapIdx, 0, (int)listedMaps().size() - 1)]; }
+int Nav::worldMap() const { return careerMaps()[clampi(worldMapIdx, 0, (int)careerMaps().size() - 1)]; }
 int Nav::vehicle() const { return listedVehicles()[clampi(vehIdx, 0, (int)listedVehicles().size() - 1)]; }
 int Nav::startVehicle() const {
     const std::vector<int> sv = startVehicles();
@@ -142,7 +143,7 @@ Result Nav::back() {
 void Nav::cycle(int row, int dir) {
     auto wrap = [&](int v, int n) { return n <= 0 ? 0 : ((v + dir) % n + n) % n; };
     switch (row) {
-        case N_MAP: mapIdx = wrap(mapIdx, (int)listedMaps().size()); break;
+        case N_MAP: worldMapIdx = wrap(worldMapIdx, (int)careerMaps().size()); break;
         case N_DIFF: diffIdx = wrap(diffIdx, DIFF_COUNT); break;
         case N_MODE: modeIdx = wrap(modeIdx, 2); break;
         case N_VEH: startIdx = wrap(startIdx, (int)startVehicles().size()); break;
@@ -187,6 +188,9 @@ Result Nav::choose(int i) {
         case P_WORLDS: {
             if (sel >= (int)worlds.size()) {  // NEW WORLD
                 page = P_NEW_WORLD, sel = N_NAME;
+                worldMapIdx = 0;  // (the map last picked, when a career world can be on it)
+                for (int i = 0; i < (int)careerMaps().size(); i++)
+                    if (careerMaps()[i] == map()) worldMapIdx = i;
                 newName = defaultWorldName(worlds);
                 nameEdit.reset();
                 typing = false;
@@ -212,7 +216,7 @@ Result Nav::choose(int i) {
                 Result r;
                 r.act = A_CAREER_NEW, r.career = true;
                 r.worldName = name.empty() ? defaultWorldName(worlds) : name;
-                r.map = map(), r.difficulty = diffIdx, r.mode = modeIdx, r.vehicle = startVehicle();
+                r.map = worldMap(), r.difficulty = diffIdx, r.mode = modeIdx, r.vehicle = startVehicle();
                 return r;
             }
             cycle(sel, 1);

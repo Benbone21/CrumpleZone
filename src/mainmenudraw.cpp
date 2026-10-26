@@ -78,7 +78,7 @@ void newWorldRow(const Nav& nav, int i, bool blink, std::string& lab, std::strin
             sub = nav.typing ? "" : "ENTER TO TYPE";
             break;
         }
-        case N_MAP: lab = std::string("MAP:  ") + mapName(nav.map()); break;
+        case N_MAP: lab = std::string("MAP:  ") + mapName(nav.worldMap()); break;
         case N_DIFF: lab = std::string("DIFFICULTY:  ") + difficultyName((Difficulty)nav.diffIdx); break;
         case N_MODE: lab = std::string("MODE:  ") + modeName((WorldMode)nav.modeIdx); break;
         case N_VEH: lab = std::string("VEHICLE:  ") + vehicleCatalog()[nav.startVehicle()].name; break;
@@ -204,7 +204,7 @@ void draw(Renderer& r, Nav& nav, int W, int H, float a, double clock, bool padLa
         char b[96];
         switch (nav.sel) {
             case N_NAME: head = "NAME", l1 = "WHAT THIS WORLD IS CALLED IN THE LIST"; break;
-            case N_MAP: head = mapName(nav.map()), l1 = "WHERE THE CAREER TAKES PLACE"; break;
+            case N_MAP: head = mapName(nav.worldMap()), l1 = "WHERE THE CAREER TAKES PLACE"; break;
             case N_DIFF:
                 head = difficultyName((Difficulty)nav.diffIdx);
                 std::snprintf(b, sizeof b, "START CASH $%d", startCash((Difficulty)nav.diffIdx));

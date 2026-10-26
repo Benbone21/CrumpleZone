@@ -96,6 +96,22 @@ bool mapListed(int map) {
     return false;
 }
 
+const std::vector<int>& careerMaps() {
+    static const std::vector<int> m = [] {
+        std::vector<int> v;
+        for (int x : listedMaps())
+            if (x != MAP_PROCEDURAL && x != MAP_REAL) v.push_back(x);
+        return v;
+    }();
+    return m;
+}
+
+bool careerMap(int map) {
+    for (int m : careerMaps())
+        if (m == map) return true;
+    return false;
+}
+
 int nextListedMap(int map, int dir) {
     const std::vector<int>& l = listedMaps();
     int at = -1;

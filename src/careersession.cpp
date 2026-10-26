@@ -75,13 +75,24 @@ int place(CareerSession& s, Sim& sim, int slot, const std::string& condition, in
 
 }  // namespace
 
+namespace {
+const char* kDamaged = "YOUR CAREER PROFILE IS DAMAGED: NOT STARTED (";
+}
+
+bool profileReadable(std::string* why) {
+    Career loaded;
+    if (loaded.loadProfile() || !Career::profileExists()) return true;
+    if (why) *why = kDamaged + Career::profilePath() + ")";
+    return false;
+}
+
 bool begin(CareerSession& s, Sim& sim, const WorldSave& w, const std::string& playerName, int startVehicle, std::string* why) {
     // The profile: read from disk (a scripted run keeps what it has). A damaged one isn't started over: refused.
     if (s.write) {
         Career loaded;
         if (loaded.loadProfile()) s.profile = loaded;
         else if (Career::profileExists()) {
-            if (why) *why = "YOUR CAREER PROFILE IS DAMAGED: NOT STARTED (" + Career::profilePath() + ")";
+            if (why) *why = kDamaged + Career::profilePath() + ")";
             return false;
         } else s.profile.startFresh(w.diff);  // (nothing at all: a fresh start at this world's difficulty)
     } else if (s.profile.fresh) s.profile.startFresh(w.diff);
