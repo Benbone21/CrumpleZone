@@ -778,6 +778,14 @@ double travelOf(const VehicleSpec& v, bool front, bool bump) {
 // wellTire* and the kit's travel), and wheel spacers keep the inner sidewall where the factory
 // tire's was, clear of the arms, springs and frame (the track widens; flares cover the tread).
 void fitBody(VehicleSpec& s, const VehicleSpec& stock) {
+    // No lower than the body can go: a floor ~9.5 cm up at most (the Jesko's splitter clears a
+    // kerb at 7), or the factory's if that's lower. A kit or smaller wheels that would take it
+    // further down have the spring perches set where it stops.
+    const double minFloor = std::min(stock.layerY[0], 0.095);
+    if (s.layerY[0] < minFloor) raiseBody(s, minFloor - s.layerY[0]);
+    // How far the body sits lower over its wheels than the factory's: the wells are cut that
+    // much deeper (the tire meets them sooner, at lock and over a bump).
+    const double lowered = std::max(0.0, (stock.layerY[0] - stock.wheelRadius) - (s.layerY[0] - s.wheelRadius));
     const double wellR = std::max(stock.wheelRadius, stock.wellTireRadius);
     const double wF = s.wheelWidth, wR = s.wheelWidthRear > 0 ? s.wheelWidthRear : s.wheelWidth;
     const double sF = stock.wheelWidth, sR = stock.wheelWidthRear > 0 ? stock.wheelWidthRear : stock.wheelWidth;
@@ -787,7 +795,7 @@ void fitBody(VehicleSpec& s, const VehicleSpec& stock) {
         for (bool bump : {true, false})
             longer |= travelOf(s, front, bump) > travelOf(stock, front, bump) + 0.005;
     // (With the room round them the factory left round its own tire.)
-    const double needR = s.wheelRadius + (wellR - stock.wheelRadius);
+    const double needR = s.wheelRadius + (wellR - stock.wheelRadius) + lowered;
     const double needW = std::max(wF, wR) + (wellW - std::max(sF, sR));
     if (needR > wellR + 0.002 || needW > wellW + 0.002 || longer) {
         s.wellTireRadius = std::max({wellR, needR, s.wellTireRadius});

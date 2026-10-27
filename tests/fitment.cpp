@@ -335,9 +335,11 @@ void judge(Ctx& ctx, int v, const ModSet& ms, const std::string& what, const Bas
     }
     // The rub allowance over stock: the factory build's own (the coarse lattice brushing a
     // tire at the bump stops) and a little more.
+    // (On the move: up to a 4 kN touch, a 1,300 hp launch squatting a live axle onto its stops;
+    // the factory 4Runner's own fenders take 5-7 kN in the drop.)
     auto rubOk = [&](double got, double stock, double extra) { return got <= std::max(stock * 1.5, stock + extra); };
     const bool ok = f.finite && f.upright && rubOk(f.restRub, base.rub[0], 150) && rubOk(f.lockRub, base.rub[1], 500) &&
-                    rubOk(f.driveRub, base.rub[2], 2500) && rubOk(f.bumpRub, base.rub[3], 2500) && rubOk(f.dropRub, base.rub[4] * 1.4, 8000) &&
+                    rubOk(f.driveRub, base.rub[2], 4000) && rubOk(f.bumpRub, base.rub[3], 2500) && rubOk(f.dropRub, base.rub[4] * 1.4, 8000) &&
                     std::fabs(f.roll) < 1.0 && std::fabs(f.pitch - base.pitch) < 2.0 && f.ride > 0.04 && f.ssf > 0.80 && f.buzz < 0.10 &&
                     std::fabs(f.pull) < 2.5 && f.weave < 1.5 && f.kmh > 15 && shaft < std::max(24.0, std::min(32.0, base.shaft + 12)) && bayOk(bay.radiatorGap, base.bay.radiatorGap) &&
                     bayOk(bay.firewallGap, base.bay.firewallGap) && bayOk(bay.hoodGap, base.bay.hoodGap) && bayOk(bay.tireGap, base.bay.tireGap);
