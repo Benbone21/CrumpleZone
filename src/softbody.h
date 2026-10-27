@@ -43,6 +43,33 @@ enum BeamType : uint8_t {
     BEAM_TYPE_COUNT
 };
 
+// The shock absorber in every coil-over (and leaf spring's shock), one valving for all of them.
+// `c` is the beam's damping rate, set per vehicle (and per garage suspension kit) from its
+// damping ratio; this is the shape of the curve around it, as a real twin-tube or monotube shock:
+//   - Rebound (extending) is about 2.5-3x as firm as bump (compressing): the bump stroke lets the
+//     wheel ride up over a hit, the rebound stroke stops the body springing back up after it.
+//   - Digressive: firm at low shaft speeds (body roll, pitch and heave, ~0.05-0.3 m/s), then the
+//     valves open and it climbs more slowly on sharp hits, so rough ground doesn't turn harsh.
+//     (The old curve blew off in bump at 0.25 m/s to 30%: a landing or a pothole met almost no
+//     bump damping, ran into the stops, and the rebound threw the body back up.)
+// Rubber bump stops (and live axles' jounce bumpers) give back only part of what squashes them
+// (rubber's hysteresis): a hard landing doesn't bounce off them.
+struct Damper {
+    static constexpr double kRebound = 1.6, kReboundKnee = 0.35, kReboundHigh = 0.85;  // x c up to the knee (m/s), then x kRebound*kReboundHigh
+    static constexpr double kBump = 0.65, kBumpKnee = 0.30, kBumpHigh = 0.70;
+    static constexpr double kStopReturn = 0.5;  // share of a bump stop's push lost while it unloads
+    static constexpr double kMaxSlope = kRebound;  // steepest dF/dv over c (the step's stability check)
+    // Damper force along the beam (+ pulls the ends together) at closing speed vrel (+ extending).
+    static double force(double c, double vrel) {
+        if (vrel > 0) return c * kRebound * (vrel < kReboundKnee ? vrel : kReboundKnee + kReboundHigh * (vrel - kReboundKnee));
+        const double sv = -vrel;
+        return -c * kBump * (sv < kBumpKnee ? sv : kBumpKnee + kBumpHigh * (sv - kBumpKnee));
+    }
+    // A rubber stop's push Fs (< 0) while it's squashed (vrel < 0) or let off (vrel > 0); eased in
+    // over 5 cm/s so a stop that's resting doesn't chatter.
+    static double stop(double Fs, double vrel) { return vrel > 0 ? Fs * (1 - kStopReturn * std::min(1.0, vrel / 0.05)) : Fs; }
+};
+
 struct Beam {
     int a, b;
     double hardening = 5;  // how quickly the yield point rises as the beam is deformed

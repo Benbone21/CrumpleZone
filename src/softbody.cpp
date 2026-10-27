@@ -340,10 +340,6 @@ void Car::computeForces(double h, const World& w) {
         const char* option = std::getenv("CZ_FREE_COILS");
         return option && std::string(option) == "1";
     }();
-    static const bool highSpeedDamping = [] {
-        const char* option = std::getenv("CZ_HIGH_SPEED_DAMPING");
-        return option && std::string(option) == "1";
-    }();
     const V3 g(0, -9.81, 0);
     const double dragPerKg = 0.5 * 1.2 * spec->dragArea / mass;  // 0.5 * rho * Cd * A, spread over the nodes
     for (Node& n : nodes) n.f = g * n.m - n.v * (len(n.v) * dragPerKg * n.m);
@@ -500,7 +496,7 @@ void Car::computeForces(double h, const World& w) {
             // the rubber is solid and the tube is on the frame: steel on steel.
             if (L >= b.minL + 0.01) continue;
             double c = std::min(b.minL + 0.01 - L, 0.03);
-            F = -(25 * b.k * c * c / 0.03 + 25 * b.k * std::max(0.0, b.minL - 0.02 - L) + 100 * b.k * std::max(0.0, b.minL - 0.04 - L));
+            F = Damper::stop(-(25 * b.k * c * c / 0.03 + 25 * b.k * std::max(0.0, b.minL - 0.02 - L) + 100 * b.k * std::max(0.0, b.minL - 0.04 - L)), vrel);
             if (vrel < 0) F += b.c * vrel;
         } else if (b.type == BEAM_SPRING) {
             F = b.k * (L - b.L0);
@@ -514,29 +510,11 @@ void Car::computeForces(double h, const World& w) {
             // Progressive rubber bump stop: firms up over its first 3 cm.
             if (L < b.minL + 0.01) {
                 double c = std::min(b.minL + 0.01 - L, 0.03);
-                F -= 25 * b.k * c * c / 0.03 + 25 * b.k * std::max(0.0, b.minL - 0.02 - L);
+                F += Damper::stop(-(25 * b.k * c * c / 0.03 + 25 * b.k * std::max(0.0, b.minL - 0.02 - L)), vrel);
             } else if (L > b.maxL) {
                 F += 25 * b.k * (L - b.maxL);
             }
-            // Dampers resist rebound (extension) harder than bump. In bump the valves blow
-            // off above ~0.25 m/s, so a sharp hit doesn't turn into a huge kick; rebound
-            // stays firm so the car doesn't spring itself into the air.
-            // High-speed choke: additional damping above ~3 m/s to prevent bottoming on
-            // large bumps (monotube shock absorber behavior). Subtle effect.
-            if (vrel > 0) {
-                F += b.c * 1.35 * vrel;
-                // High-speed choke in rebound (very subtle)
-                if (highSpeedDamping && vrel > 3.0) {
-                    F += b.c * 0.2 * (vrel - 3.0);
-                }
-            } else {
-                double sv = -vrel, knee = 0.25;
-                F -= b.c * 0.65 * (sv < knee ? sv : knee + 0.3 * (sv - knee));
-                // High-speed choke in bump (very subtle)
-                if (highSpeedDamping && sv > 3.0) {
-                    F -= b.c * 0.15 * (sv - 3.0);
-                }
-            }
+            F += Damper::force(b.c, vrel);
             // A leaf pack's leaves rub on each other as it flexes: friction damping, strongest
             // on small, quick movements (washboard), as real leaf springs ride.
             if (b.friction > 0) F += b.friction * std::tanh(vrel / 0.06);  // (smoothed: an explicit step can't hold a true stick)

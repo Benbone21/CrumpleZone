@@ -43,6 +43,7 @@ PHYS     += src/realterrain.cpp src/realterrainplan.cpp src/realterrainbuild.cpp
 SCEN     += tests/realterrain.cpp
 PHYS     += src/bctrails.cpp
 SCEN     += tests/bctrails.cpp
+SCEN     += tests/damping.cpp
 GAME_SRC := src/main.cpp src/lab.cpp src/gamepad_sdl.cpp src/editor.cpp src/coop.cpp src/gl.cpp src/gpu.cpp src/render.cpp src/carvisual.cpp src/peopleseat.cpp src/garageshopdraw.cpp src/mpmenudraw.cpp src/scenery.cpp src/menu.cpp src/menuscene.cpp src/mainmenudraw.cpp src/mappreview.cpp src/engine_samples.cpp src/engineaudio.cpp src/audio.cpp src/music.cpp src/ambience.cpp src/daylight.cpp src/lights.cpp src/groundtex.cpp src/groundshader.cpp src/propdraw.cpp src/invdraw.cpp src/debugscreen.cpp src/buildinfo.cpp $(PHYS) $(SCEN) src/treedraw.cpp src/texcomp.cpp
 GAME_SRC += src/procstream.cpp src/farforest.cpp
 GAME_OBJ := $(patsubst %.cpp,build/%.o,$(GAME_SRC))
