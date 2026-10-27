@@ -194,9 +194,12 @@ inline int soundMap(int map) { return map == MAP_WILDS ? (int)MAP_PROVING_GROUND
 // built here, for the tests and --map.)
 const std::vector<int>& listedMaps();
 bool mapListed(int map);
-// The maps a career world can be on: the listed ones less the procedural world and a real terrain (a career world keeps its crates'
-// opened state by spot, and those two have no fixed spots yet: their windows slide, or the terrain comes from outside the save).
+// The hand-made maps a career world can be on ("BUILT MAPS"): the listed ones less the procedural world and a real terrain.
 const std::vector<int>& careerMaps();
+// The custom worlds a career can be on ("CUSTOM WORLD"): the procedural world, made from the seed the career world keeps (its
+// crates are kept by seed and place id, career.cpp). A real terrain is not offered: its land comes from outside the save.
+const std::vector<int>& customWorldMaps();
+// A built map or a custom world.
 bool careerMap(int map);
 inline bool mapForLevels(int map) { return map == MAP_WILDS || mapListed(map); }  // (levels can be on a listed map or on the wilds)
 int nextListedMap(int map, int dir);  // the next one on the list (from any map)
@@ -453,6 +456,11 @@ public:
     // unit) from a0 to a1 and across it (fwd turned left) from l0 to l1, `margin` clear of its
     // edges, reaching between heights y0 and y1.
     bool poleInside(double x, double z, const V3& fwd, double a0, double a1, double l0, double l1, double y0, double y1, double margin) const;
+    // The same rectangle, but anything a car can't drive through: poles and trunks, and the boxes, rocks and logs that stand
+    // more than `step` above whichever is higher of the ground under them and `floorY` (what a tire just rolls over doesn't
+    // count, nor the slab a car stands on). For a way out: the corridor a car would drive along.
+    bool solidInside(double x, double z, const V3& fwd, double a0, double a1, double l0, double l1, double y0, double y1, double margin,
+                     double floorY, double step) const;
 
 private:
     // Terrain baked to a 1 m grid with the roads carved in.

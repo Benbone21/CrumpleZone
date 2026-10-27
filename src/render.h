@@ -181,6 +181,8 @@ public:
         unsigned carRebuilds = 0;      // skins and merged parts built again this frame (the rest drew what they had)
         unsigned carKindTris[6] = {};  // main pass: skin, glass, bound parts, running gear, wheels, parts models
         unsigned modelVertices = 0, shadowModelVertices = 0, modelDraws = 0, shadowModelDraws = 0;  // (of those: the code-made models, boxes and figures)
+        unsigned shadowTerrainTriangles = 0;  // the ground's triangles in both shadow passes (its slopes turned from the sun)
+        unsigned horizonRows = 0;             // rows of the long-shadow map worked out this frame (updateHorizon)
     };
     const GeometryStats& geometryStats() const { return geometryStats_; }
     double grassGpuMs() const { return grassGpuMs_; }  // (CZ_BENCH: the grass pass on the GPU, a few frames late)
@@ -311,6 +313,26 @@ private:
     void uploadTerrainCells(const World& world, int i0, int j0, int i1, int j1);  // (cells; what's outside the window is left)
     void uploadTerrainCoarse(const World& world, int i0, int j0, int i1, int j1);
     void streamTerrain(const World& world, const V3& eye);
+    // The ground in the shadow maps (drawScene's shadow passes): the loaded chunks inside a cascade's light box, depth only, their
+    // faces turned from the light (the lit ones culled: no acne on the sunny ground, and what stands on a lee slope is in its shade).
+    void drawTerrainCasters(const M4& lightVP, int cascade);
+    // The land's long shadows, past the shadow maps' few hundred metres: a map round the camera (kHorizonTexels a side, kHorizonTexel
+    // m a texel) holding, per texel, the height below which the key light is behind the land toward it (a march over the coarse
+    // terrain texture, on the GPU). Every lit shader reads it (kCommonFS horizonShadow): the ground, cars, trees, props, grass. Worked
+    // out again when the light turns, the camera moves a step (kHorizonSnap) or the land changes: into the spare texture a slice a
+    // frame, then swapped in (all at once when there is none yet). Off below HIGH shadows.
+    struct Horizon {
+        GLuint tex[2] = {}, fbo[2] = {}, sampler = 0, prog = 0;
+        int live = -1, back = -1, rowsDone = 0;  // the texture in use (-1: none), the one being made and how far it is
+        float x0[2] = {}, z0[2] = {};            // each one's corner (world x, z)
+        V3 sun[2];
+        uint64_t gen[2] = {};
+        float maxH = 0, minH = 0;  // the land's (and backdrop's) highest and lowest point
+        bool on = false;           // this frame's lit shaders read it
+    } horizon_;
+    uint64_t horizonGen_ = 1;  // bumped when the land under the coarse texture changes (a slice rebuild); live = -1 when it's a new land
+    void horizonLandChanged(bool newLand);
+    void updateHorizon(const V3& eye, const V3& keyDir, int shadowQuality);
     // The streaming's CPU work runs on bg_ (bgwork.h), never in the frame: the next strip of the texture's window
     // (texJob_: computed there, uploaded and the window stepped onto it once it's done) and the meshes of the chunks
     // coming into range (chunkJob_: built there, put in their slots a few a frame). streamGen_ changes when the land

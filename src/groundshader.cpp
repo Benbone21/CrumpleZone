@@ -436,12 +436,14 @@ void main(){
     }
   }
   vec3 n = normalize(mix(nrm, N0, clamp(gProc, 0.0, 1.0)));
+  float NL = max(dot(n, uSun), 0.0);
 #ifdef X_NOSH
   float sh = 1.0;
 #else
-  float sh = shadowAt(vPos, N0);
+  // (Turned from the light, the sun's term is nothing anyway: no shadow lookups. A lee slope, now the ground casts, is the
+  // dear part of a low sun's picture: the edges of its shade want every PCF tap.)
+  float sh = NL > 0.0 || gProc > 0.001 ? shadowAt(vPos, N0) : 1.0;
 #endif
-  float NL = max(dot(n, uSun), 0.0);
   vec3 V = normalize(uCam - vPos);
   vec3 H = normalize(V + uSun);
   float aoD = mix(1.0, ao, 0.55);

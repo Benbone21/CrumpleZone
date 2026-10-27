@@ -72,8 +72,9 @@ bool shopMods(const CareerSession& s, const Sim& sim, ModSet& fitted);
 // that catalog vehicle (the garage file's then).
 bool fit(CareerSession& s, const Sim& sim, int vehicle, const ModSet& mods);
 
-// A new world (not saved) whose slug is free of the saved worlds and of any the profile's vehicles still name.
-WorldSave newWorldFor(const Career& profile, const std::string& name, int map, Difficulty d, WorldMode m);
+// A new world (not saved) whose slug is free of the saved worlds and of any the profile's vehicles still name. A custom world
+// (MAP_PROCEDURAL) gets `seed`, or with 0 a random one no saved world has.
+WorldSave newWorldFor(const Career& profile, const std::string& name, int map, Difficulty d, WorldMode m, uint64_t seed = 0);
 // Deletes a world (deleteWorld). The profile's vehicles in it are kept, in no world (not put out anywhere); the profile
 // is saved if any were. With write false nothing is touched on disk. False if the folder couldn't be removed.
 bool forgetWorld(Career& profile, const std::string& slug, bool write);

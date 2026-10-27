@@ -138,7 +138,7 @@ struct Options {
     int mods[5] = {-1, -1, -1, -1, -1};  // --mods E,S,T[,W,R]: fit these to the player's car (testing)
     std::string clipboard;        // --clipboard TEXT: put this on the system clipboard first (testing paste); a --press scancode over 1000 is that key with Ctrl held
     int menu = -1;                // --menu P: open the pause menu on page P (testing)
-    int mainMenu = -1;            // --main-menu P: the new main menu with its camp scene, on page P (0 front, 1 map, 2 vehicle, 3 dev; with --main-menu-career 1 is the world list and 4 the New World page); a plain launch shows it too
+    int mainMenu = -1;            // --main-menu P: the new main menu with its camp scene, on page P (0 front, 1 map, 2 vehicle, 3 dev; with --main-menu-career 1 is the world list, 4 the New World page, 5 its map page, 6 its vehicle page, 7 New World on the custom world); a plain launch shows it too
     std::string campDump;         // --menu-camp-dump FILE: write the main menu camp the game ships (made by code) there and quit
     bool menuCareer = false;      // --main-menu-career: its map and vehicle pages are CAREER's
     int quality = -1;             // --quality 0-3: graphics preset (testing)
@@ -1873,9 +1873,10 @@ int main(int argc, char** argv) {
     if (opt.map >= 0) settings.map = opt.map < MAP_COUNT ? opt.map : MAP_PROVING_GROUND;  // (--map with no such map: the proving ground)
     if (!opt.scenario.empty()) settings.map = MAP_PROVING_GROUND;  // the tests are built for it
     // The procedural world's seed: --seed, else the last one (a new one the first time).
-    if (opt.seedSet) settings.procSeed = opt.seed;
+    // (A reload inside a career world passes that world's seed too: it builds the same land, but isn't the sandbox's seed from then on.)
+    if (opt.seedSet && opt.careerWorld.empty()) settings.procSeed = opt.seed;
     if (!settings.procSeed) settings.procSeed = proc::ProcWorld::randomSeed();
-    World::procSeed = settings.procSeed;
+    World::procSeed = opt.seedSet ? opt.seed : settings.procSeed;
     if (opt.procOriginSet) World::procOriginSet = true, World::procOriginX = opt.procOx, World::procOriginZ = opt.procOz;
     if (opt.lab) settings.map = MAP_PROVING_GROUND;                // (the model lab builds its own studio)
     if (opt.fullscreen) settings.fullscreen = true;
@@ -2451,6 +2452,12 @@ int main(int argc, char** argv) {
         WorldSave world;
         int start = -1;  // a new world: the vehicle it starts in
     } careerNext;
+    // A custom world's land (MAP_PROCEDURAL): its own seed, round the window its cars were saved in, for the next map built. A built map: nothing.
+    auto careerLand = [&](const WorldSave& w) {
+        if (w.map != MAP_PROCEDURAL || !w.seed) return;
+        World::procSeed = w.seed;
+        World::procOriginSet = w.originSet, World::procOriginX = w.ox, World::procOriginZ = w.oz;
+    };
     // Out of the world is out of career mode (no career without a world): back to sandbox, its garage and gear, unless
     // the world is to restart (CAREER_RESTART) or the game is quitting (CAREER_QUIT: only the setting).
     enum { CAREER_TO_SANDBOX, CAREER_QUIT, CAREER_RESTART };
@@ -3198,6 +3205,7 @@ int main(int argc, char** argv) {
         }
         releaseFreedMemory();  // (the last world's terrain and scenery, freed on worker threads, back to the system)
     };
+    std::function<void(const mainmenu::Result&)> handleMainFn;  // (the new main menu's actions: set below; the old title page's career start goes through it too)
     auto handleMenu = [&](PauseMenu::Result res) {
         switch (res.action) {
             case PauseMenu::NONE: break;
@@ -3309,6 +3317,20 @@ int main(int argc, char** argv) {
             case PauseMenu::FREE_DRIVE: {
                 closeMenu();
                 if (careerRefuses("LEAVE TO THE MAIN MENU TO CHANGE MAP")) break;
+                if (career.on && !net.active() && handleMainFn) {
+                    // The old title page with MODE: CAREER. A career is always in a world (careersession.h): this makes one, as CAREER > NEW
+                    // WORLD would, on this map (a custom world gets its own seed) in this vehicle, and it's saved now, so CAREER lists it.
+                    mainmenu::Result r(mainmenu::A_CAREER_NEW);
+                    r.career = true;
+                    r.map = careerMap(menu.mapPick) ? menu.mapPick : careerMaps()[0];
+                    const std::vector<int> sv = mainmenu::startVehicles();
+                    r.vehicle = startableVehicle(res.vehicle) || sv.empty() ? res.vehicle : sv[0];
+                    r.worldName = mainmenu::defaultWorldName(listWorlds());
+                    r.difficulty = DIFF_MEDIUM, r.mode = MODE_PERSONAL;
+                    handleMainFn(r);
+                    if (careerNext.on || careerRun.active) hud.toast("NEW CAREER WORLD: " + r.worldName + " (SAVED: CAREER IN THE MAIN MENU CONTINUES IT)");
+                    break;
+                }
                 run.stop();
                 levelHours = -1;
                 if (net.role == NetSession::HOST) net.setLevel("");
@@ -3639,6 +3661,7 @@ int main(int argc, char** argv) {
             settings.career = true;
             handleMenu(PauseMenu::Result{PauseMenu::CHANGED});
             careerNext.on = true, careerNext.world = w, careerNext.start = -1;
+            careerLand(w);
             loadMap(w.map);
         } else std::printf("career: no world '%s'\n", opt.careerWorld.c_str());
     } else if (opt.newSection) {
@@ -3665,17 +3688,24 @@ int main(int argc, char** argv) {
         mainNav.career = opt.menuCareer || (opt.mainMenu < 0 && settings.career);
         mainNav.worlds = listWorlds();
         if (opt.mainMenu >= 1) {  // (--main-menu P: straight onto a page, for the screenshots)
-            if (opt.mainMenu <= 2 || opt.mainMenu == 4) mainNav.choose(opt.menuCareer ? mainmenu::F_CAREER : mainmenu::F_SANDBOX);
+            if (opt.mainMenu <= 2 || opt.mainMenu >= 4) mainNav.choose(opt.menuCareer ? mainmenu::F_CAREER : mainmenu::F_SANDBOX);
             if (opt.mainMenu == 2) mainNav.choose(mainNav.mapIdx);
             if (opt.mainMenu == 3) mainNav.choose(mainmenu::F_DEV);
-            if (opt.mainMenu == 4 && opt.menuCareer) mainNav.choose((int)mainNav.worlds.size());  // (NEW WORLD)
+            if (opt.mainMenu >= 4 && opt.menuCareer) mainNav.choose((int)mainNav.worlds.size());  // (NEW WORLD)
+            if (opt.mainMenu == 5 && opt.menuCareer) mainNav.choose(mainmenu::N_MAP);  // (its map page)
+            if (opt.mainMenu == 6 && opt.menuCareer) mainNav.choose(mainmenu::N_VEH);  // (its vehicle page)
+            if (opt.mainMenu == 7 && opt.menuCareer) {  // (New World on the custom world: the SEED row)
+                const std::vector<int> maps = mainmenu::newWorldMaps();
+                mainNav.choose(mainmenu::N_MAP);
+                mainNav.choose((int)maps.size() - 1);
+            }
         }
     } else if (!scripted && opt.scenario.empty() && opt.map < 0 && !opt.spawnSet && opt.hostPort < 0 && opt.join.empty() && opt.menu < 0 && opt.resumeModel < 0) {
         openMenu();
         menu.showTitle(std::max(0, sim.cars[sim.player].spec->model), sim.world.map);
     }
     // What the new main menu asked for (mainmenu.h).
-    auto handleMain = [&](const mainmenu::Result& r) {
+    handleMainFn = [&](const mainmenu::Result& r) {
         using namespace mainmenu;
         const int model = std::max(0, sim.cars[sim.player].spec->model);
         switch (r.act) {
@@ -3737,7 +3767,7 @@ int main(int argc, char** argv) {
                         hud.toast(why);
                         break;
                     }
-                    w = careersession::newWorldFor(career, r.worldName, r.map, (Difficulty)r.difficulty, (WorldMode)r.mode);
+                    w = careersession::newWorldFor(career, r.worldName, r.map, (Difficulty)r.difficulty, (WorldMode)r.mode, r.seed);
                     if (!careerQuiet && !saveWorld(w)) {
                         hud.toast("CAN'T SAVE THE NEW WORLD");
                         break;
@@ -3747,7 +3777,7 @@ int main(int argc, char** argv) {
                     mainNav.worlds = listWorlds();
                     break;
                 }
-                if (!careerMap(w.map)) {  // (the procedural world and a real terrain aren't career maps yet: New World doesn't offer them)
+                if (!careerMap(w.map)) {  // (a real terrain isn't a career map: New World doesn't offer it)
                     hud.toast("A CAREER WORLD CAN'T BE ON " + std::string(mapName(w.map)) + " YET");
                     break;
                 }
@@ -3757,6 +3787,8 @@ int main(int argc, char** argv) {
                 run.stop();
                 levelHours = -1;
                 careerNext.on = true, careerNext.world = w, careerNext.start = r.act == A_CAREER_NEW ? r.vehicle : -1;
+                careerLand(w);  // (a custom world: its own land, the same every time it's continued)
+                if (r.act == A_CAREER_NEW) std::printf("career: made %s on %s%s\n", w.slug.c_str(), mapName(w.map), w.seed ? (" seed " + std::to_string(w.seed)).c_str() : "");
                 requestMap(w.map, nullptr);
                 break;
             }
@@ -3767,6 +3799,7 @@ int main(int argc, char** argv) {
                 break;
         }
     };
+    auto& handleMain = handleMainFn;
     // Mouse positions arrive in window coordinates; the HUD is drawn in drawable pixels.
     auto toDrawable = [&](int x, int y, float& dx, float& dy) {
         int ww = 1, wh = 1, dw = 1, dh = 1;
@@ -3898,6 +3931,7 @@ int main(int argc, char** argv) {
                 if (careerRun.active) {  // (a career world: saved, then the same world again on the fresh map)
                     endCareer(CAREER_RESTART);
                     careerNext.on = true, careerNext.world = careerRun.world, careerNext.start = -1;
+                    careerLand(careerRun.world);
                 }
                 run.stop();
                 levelHours = -1;

@@ -2055,7 +2055,7 @@ void Car::build(const VehicleSpec& vs, const V3& pos, double yaw, const V3& col)
                     c2 *= c2;
                     bool spring = e.type == BEAM_SPRING || e.type == BEAM_BUMPSTOP;
                     K += c2 * e.k * (e.type == BEAM_BUMPSTOP ? 125 : spring ? 26 : 1);
-                    C += c2 * e.c * (spring ? 1.35 : 1);
+                    C += c2 * e.c * (e.type == BEAM_SPRING ? Damper::kMaxSlope : 1);
                 }
                 worst = std::max(worst, h * h * (K + pk) + 2 * h * (C + pc));
             }
