@@ -62,12 +62,16 @@ int main(int argc, char** argv) {
     const uint64_t seed = std::strtoull(argv[1], nullptr, 10);
     const int64_t ti = std::atoll(argv[2]), tj = std::atoll(argv[3]);
     const std::string dir = argv[4];
-    const double step = argc > 5 ? std::atof(argv[5]) : 4;
+    double step = argc > 5 ? std::atof(argv[5]) : 4;
     loadShippedRules();
     const ProcWorld& G = ProcWorld::forSeed(seed);
     const int S = ProcWorld::erosionTileSize();
-    const int n = (int)(S / step) + 1;
-    const double x0 = (double)ti * S, z0 = (double)tj * S;
+    int n = (int)(S / step) + 1;
+    double x0 = (double)ti * S, z0 = (double)tj * S;
+    if (const char* c = std::getenv("EV_AREA")) {  // (cx,cz,span: a square round a point instead of the tile)
+        double cx, cz, span;
+        if (std::sscanf(c, "%lf,%lf,%lf", &cx, &cz, &span) == 3) n = 600, step = span / 599, x0 = cx - span / 2, z0 = cz - span / 2;
+    }
     // The tile alone, timed (a cold one).
     double ox, oz, cell, ms;
     int en;
@@ -144,7 +148,7 @@ int main(int argc, char** argv) {
             if (m.lakeLevel > h) lakeB[(size_t)a * n + b] = m.lakeLevel;
         }
     });
-    const std::string stem = dir + "/eros_" + std::to_string(seed) + "_" + std::to_string(ti) + "_" + std::to_string(tj);
+    const std::string stem = dir + "/eros_" + std::to_string(seed) + "_" + (std::getenv("EV_NAME") ? std::string(std::getenv("EV_NAME")) : std::to_string(ti) + "_" + std::to_string(tj));
     auto water = [&](std::vector<unsigned char> img, const std::vector<double>& H, const std::vector<double>& W) {
         long cells = 0;
         for (int py = 0; py < n; py++)
