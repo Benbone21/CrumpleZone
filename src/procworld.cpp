@@ -290,6 +290,7 @@ struct DBlock {
     std::atomic<float> K[kB * kB];       // the smooth land with the rivers' valleys at the node (NaN: not yet)
     std::atomic<int8_t> perched[kB * kB];  // a creek's stretch whose water would stand over the land beside it: dry (-1: not yet)
     std::atomic<float> lakeW[kB * kB];     // a sink's lake's level (NaN: not yet)
+    std::atomic<int8_t> lakeOk[kB * kB];   // a lake's rim stands over its water all round but its lip (-1: not yet)
 };
 struct BKey {
     uint64_t seed;
@@ -350,6 +351,7 @@ std::shared_ptr<DBlock> makeBlock(const ProcWorld& G, int64_t bi, int64_t bj) {
             b->K[q].store(std::numeric_limits<float>::quiet_NaN(), std::memory_order_relaxed);
             b->perched[q].store(-1, std::memory_order_relaxed);
             b->lakeW[q].store(std::numeric_limits<float>::quiet_NaN(), std::memory_order_relaxed);
+            b->lakeOk[q].store(-1, std::memory_order_relaxed);
         }
     return b;
 }
@@ -653,7 +655,7 @@ double valeAt(const ProcWorld& G, double x, double z);  // (below: the land with
 inline double notchDepth(double A, double mk, double cross, double along) {
     const DrainClass DC = drainClass();
     const double base = A >= DC.creek ? 2.5 + 0.45 * std::sqrt(A) : 1.2 + 0.3 * std::sqrt(A);
-    return base * (1 + 0.5 * mk) + 32 * std::min(0.8, cross) + 4 * std::min(1.0, along);
+    return base * (1 + 0.5 * mk) + 34 * std::min(1.3, cross) + 4 * std::min(1.0, along);
 }
 
 // A creek's or gully's level at node (i, j) (drainage under river_area): as low as its notch under the land the rivers left at each of
@@ -920,16 +922,158 @@ void nodeSegs(const ProcWorld& G, int64_t i, int64_t j, double ox, double oz, st
         for (size_t k = first; k < out.size(); k++) out[k].ford = out[k].depth < s.depth;
 }
 
+// The lakes, one at most at a node (procworld-rules.md 3; the owner, after review: "lakes fill natural low ground, not dug holes").
+// A lake is water let into ground the land already has, up to a lip:
+//   1 a basin: a sink of the network; filled to just under the lowest point round it (lakeLevelOf). No outlet.
+//   2 a tarn: high in the ranges at a creek's head, gentle there: a cirque. Its floor is shaped as a broad flat dish (a 1:8 shore, a back
+//     wall where the dish meets the slope above) and a low lip (a moraine) across the creek below holds the water up to it.
+//   3 a valley lake: on a gentle stretch of a river or creek in the lowland and foothills, a low ridge across the valley (a rock bar or
+//     moraine) a little below the node, with its lip where the channel crosses it; the water backs up the valley floor and into the
+//     side valleys, as far as the land is under the lip, so it's long and follows the valley.
+//   4 a pond: the same, small and shallow, on a gully or small creek in the wet lowland.
+// The water: where the land is under the lip and drains to the lake's node (upstream of the lip): its shore is the land's own contour.
+// The outlet is the node's own channel, over the lip and on down: the lake stands on the drainage tree.
+struct Lake {
+    int kind = 0;
+    int64_t ni = 0, nj = 0;
+    double cx = 0, cz = 0;               // the node (global)
+    double qx = 0, qz = 0, fx = 0, fz = 0;  // the lip (on the channel) and which way the water leaves over it
+    double W = 0;                        // the water's level (a basin's: lakeLevelOf)
+    double crest = 0, notch = 0, lat = 0;   // the dam over the water, the lip's half-width, how far across the valley the dam runs
+    double dishR = 0, dishD = 0;         // the floor shaped under the water: its flat bed's radius (a valley lake's: half-width) and depth
+    double ex = 0, ez = 0, ea = 0;       // a valley lake's or pond's floor: its middle and half-length along the valley (a tarn's: round its node)
+    int64_t di = 0, dj = 0;              // the node below it
+    double reach = 0;                    // how far up from the lip the water may go
+};
+inline bool even2(int64_t a, int m) { return ((a % m) + m) % m == 0; }
+struct TKeyLake {
+    uint64_t seed;
+    int64_t i, j;
+    bool operator==(const TKeyLake& o) const { return seed == o.seed && i == o.i && j == o.j; }
+};
+struct TKLHash {
+    size_t operator()(const TKeyLake& k) const { return (size_t)hashIJ(k.seed ^ 0x1A4Eull, k.i, k.j); }
+};
+// (The cheap first part: which kind of lake node (i, j) would be, by its place in the network, the climate and the dice. Sinks aside.)
+int lakeKindAt(const ProcWorld& G, int64_t i, int64_t j) {
+    if (!(even2(i, 2) && even2(j, 2))) return 0;
+    const DrainClass DC = drainClass();
+    const double A = areaOf(G, i, j);
+    if (A < DC.gully || down2Of(G, i, j) < 0) return 0;
+    const ProcWorld::Params& P = G.params();
+    const NodeInfo n = nodeInfo(G, i, j);
+    const double roll = hash01(P.s[S_D8] + 211, i, j);
+    const bool river = isRiver(G, i, j);
+    if (n.mk > 0.45 && !river && A < 4 * DC.creek && even2(i, 6) && even2(j, 6) && roll < 0.95 && levelOf(G, i, j) > rules().alpine.treeLine - 800) return 2;
+    if (A >= DC.creek && A < DC.big && (river || (even2(i, 4) && even2(j, 4))) && roll < 0.75) return 3;
+    if (n.wet > 0.35 && !river && A < 3 * DC.creek && roll < 0.45) return 4;
+    return 0;
+}
+std::atomic<long> gLakeFunnel[16];
+struct FunnelPrint { ~FunnelPrint() { if (std::getenv("CZ_LAKE_DBG")) { for (int k = 0; k < 12; k++) std::fprintf(stderr, "funnel %d: %ld\n", k, gLakeFunnel[k].load()); } } } gFunnelPrint;
+Lake lakeOfRaw(const ProcWorld& G, int64_t i, int64_t j);
+// (memoised: every tile round a lake asks for it)
+std::mutex lakeMemoMutex;
+std::unordered_map<TKeyLake, Lake, TKLHash> lakeMemo;
+Lake lakeOf(const ProcWorld& G, int64_t i, int64_t j) {
+    const TKeyLake key{G.seed(), i, j};
+    {
+        std::lock_guard<std::mutex> lock(lakeMemoMutex);
+        auto it = lakeMemo.find(key);
+        if (it != lakeMemo.end()) return it->second;
+    }
+    const Lake L = lakeOfRaw(G, i, j);
+    std::lock_guard<std::mutex> lock(lakeMemoMutex);
+    if (lakeMemo.size() > 400000) lakeMemo.clear();  // (~60 MB at most)
+    lakeMemo.emplace(key, L);
+    return L;
+}
+Lake lakeOfRaw(const ProcWorld& G, int64_t i, int64_t j) {
+    Lake L;
+    const DrainClass DC = drainClass();
+    const double A = areaOf(G, i, j);
+    if (A < DC.gully) return L;
+    const ProcWorld::Params& P = G.params();
+    const NodeInfo n = nodeInfo(G, i, j);
+    L.ni = i, L.nj = j, L.cx = n.x, L.cz = n.z;
+    const int d = down2Of(G, i, j);
+    if (d < 0) {
+        L.kind = 1, L.reach = 300;
+        return L;
+    }
+    const double size = hash01(P.s[S_D8] + 212, i, j);
+    const double lv = levelOf(G, i, j);
+    const int kind = lakeKindAt(G, i, j);
+    if (!kind) return L;
+    // (room round it: no stronger lake within 3 nodes, by the dice)
+    const double pri = hash01(P.s[S_D8] + 214, i, j);
+    for (int a = -3; a <= 3; a++)
+        for (int b = -3; b <= 3; b++)
+            if ((a || b) && lakeKindAt(G, i + a, j + b) && hash01(P.s[S_D8] + 214, i + a, j + b) > pri) return L;
+    gLakeFunnel[kind]++;
+    // (The node's channel: where on it the lip goes (past a tarn's floor; a little below the node for the others), its level there.)
+    std::vector<DrainSeg> own;
+    nodeSegs(G, i, j, 0, 0, own, false);
+    if (own.empty()) return L;
+    if (kind == 2) L.dishR = 18 + 22 * size, L.dishD = 1.2 + 1.3 * size;
+    const double want = kind == 2 ? L.dishR + 8 * L.dishD + 6 : 0;  // (m along from the node)
+    double best = 1e300;
+    const DrainSeg* q = nullptr;
+    double qt = 0;
+    for (const DrainSeg& e : own)  // (the point of its curve nearest the node, or that far on past it)
+        for (double t : {0.0, 0.25, 0.5, 0.75, 1.0}) {
+            const double x = e.ax + (e.bx - e.ax) * t, z = e.az + (e.bz - e.az) * t, r = std::sqrt(sqr(x - n.x) + sqr(z - n.z));
+            const bool past = (x - n.x) * e.dx + (z - n.z) * e.dz >= 0;
+            const double score = past ? std::fabs(r - std::max(want, 30.0)) : 1e9;
+            if (score < best) best = score, q = &e, qt = t;
+        }
+    if (!q) return L;
+    L.qx = q->ax + (q->bx - q->ax) * qt, L.qz = q->az + (q->bz - q->az) * qt, L.fx = q->dx, L.fz = q->dz;
+    const double lq = q->la + (q->lb - q->la) * qt;
+    L.di = i + kN8[d][0], L.dj = j + kN8[d][1];
+    if (kind == 2) {
+        L.W = lq + 2.0;  // (the water up to the moraine's lip, 2 m over the creek where it leaves)
+        if (lv - L.W > 15) return gLakeFunnel[5]++, Lake{};  // (the cirque's floor cut back into the slope 15 m at most: steeper, a meadow, no tarn)
+        L.crest = 0.8, L.notch = q->hw + 1.5, L.reach = L.dishR + 8 * L.dishD + 60;
+        L.ex = n.x, L.ez = n.z, L.ea = L.dishR;
+    } else {
+        const double drop = lv - lq, along = std::sqrt(sqr(L.qx - n.x) + sqr(L.qz - n.z));
+        const double grade = drop / std::max(along, 20.0);
+        if (grade > 0.08) return gLakeFunnel[6 + (kind == 4)]++, Lake{};  // (a gentle stretch only: a steep one makes no lake)
+        const double s2 = hash01(P.s[S_D8] + 213, i, j);
+        const double Hd = kind == 3 ? 1.5 + 2.5 * size : 0.8 + 0.6 * size;
+        L.W = lq + Hd, L.crest = kind == 3 ? 1.0 : 0.6, L.notch = q->hw + 2, L.reach = kind == 3 ? 1600 : 500;
+        // (its floor: a long shallow dish up the valley from the lip, flat-bedded, a 1:8 shore)
+        // (its floor no longer than the valley's rise lets it be without cutting deep: a few metres of cut at its head at most)
+        const double longest = (Hd + 4) / std::max(grade, 0.004);
+        L.ea = std::min(longest, kind == 3 ? 80 + 220 * s2 : 22 + 30 * s2), L.dishR = std::min(L.ea, kind == 3 ? 30 + 55 * size : 14 + 18 * s2), L.dishD = kind == 3 ? 1.8 + 1.8 * s2 : 1.0 + 0.5 * size;
+        L.ex = L.qx - L.fx * (L.ea + 4), L.ez = L.qz - L.fz * (L.ea + 4);
+    }
+    L.kind = kind;
+    // (How far across the valley the dam runs: out to where the land the rivers left is over the water, past the creek's own notch.)
+    const double px = -L.fz, pz = L.fx;
+    double lat = 0;
+    double latMin = 1e9;
+    for (int sd = -1; sd <= 1; sd += 2) {
+        double c = 10;
+        for (; c < 700; c += 10)
+            if (valeAt(G, L.qx + px * c * sd, L.qz + pz * c * sd) > L.W + 0.6) break;
+        if (c >= 700) return gLakeFunnel[8]++, Lake{};  // (no valley to dam: the land round is too low)
+        lat = std::max(lat, c), latMin = std::min(latMin, c);
+    }
+    // (A valley lake or pond only in a valley broad enough: its sides by the dam 1:4 or gentler on average.)
+    if (kind != 2 && latMin < 3 * (L.W + 0.6 - lq)) return gLakeFunnel[9]++, Lake{};
+    L.lat = std::max(lat + (q->notch ? q->wfix : 0) + 10, L.dishR + 8 * L.dishD + 20);
+    return L;
+}
+
 // ---- The channels near a 1 km tile (cached), binned by 128 m cell ---------------------------------------------------------------
 struct DTile {
     double ox = 0, oz = 0;        // its corner (global)
     std::vector<DrainSeg> segs;
     std::vector<uint32_t> start;  // kTC * kTC + 1
     std::vector<uint16_t> idx;    // the pieces whose valleys reach each cell (and 8 m round it)
-    // The lakes near it: one in each basin (a sink of the network: nothing lower round it), its water at the level its channels
-    // come down to, a bowl R across and D deep under that, a gentle shore rising from it (relative to the tile's corner).
-    struct Lake { float x, z, R, D; int64_t ni, nj; };  // (its level: lakeLevelOf, worked out when first asked for)
-    std::vector<Lake> lakes;
+    std::vector<Lake> lakes;  // (the lakes whose water, dam or floor may reach it)
 };
 struct TKey {
     uint64_t seed;
@@ -957,11 +1101,6 @@ std::shared_ptr<const DTile> makeTile(const ProcWorld& G, int64_t ti, int64_t tj
             // (A creek's or gully's valley reaches a few hundred metres at most (kNotchReach): only a river's reaches further.)
             const bool near = i >= in0 && i <= in1 && j >= jn0 && j <= jn1;
             if (riversOnly || !near ? !isRiver(G, i, j) : areaOf(G, i, j) < gully) continue;
-            if (!riversOnly && near && down2Of(G, i, j) < 0) {  // (a sink: a lake)
-                const NodeInfo n = nodeInfo(G, i, j);
-                const double A = areaOf(G, i, j);
-                t->lakes.push_back({(float)(n.x - t->ox), (float)(n.z - t->oz), (float)std::min(240.0, 25 + 5 * std::sqrt(A)), (float)std::min(8.0, 1.5 + 0.25 * std::sqrt(A)), i, j});
-            }
             const size_t from = all.size();
             nodeSegs(G, i, j, t->ox, t->oz, all, riversOnly);
             for (size_t k = from; k < all.size(); k++) {
@@ -971,6 +1110,20 @@ std::shared_ptr<const DTile> makeTile(const ProcWorld& G, int64_t ti, int64_t tj
                 t->segs.push_back(s);
             }
         }
+    if (!riversOnly) {  // (the lakes: any whose lip lies within its water's reach of the tile)
+        const int64_t a0 = (int64_t)std::floor((t->ox - 1700) / kD), a1 = (int64_t)std::floor((t->ox + kTile + 1700) / kD);
+        const int64_t b0 = (int64_t)std::floor((t->oz - 1700) / kD), b1 = (int64_t)std::floor((t->oz + kTile + 1700) / kD);
+        for (int64_t i = a0; i <= a1; i++)
+            for (int64_t j = b0; j <= b1; j++) {
+                const bool cand = (even2(i, 2) && even2(j, 2)) || down2Of(G, i, j) < 0;  // (cheap first: lakeOf only takes even nodes or sinks)
+                if (!cand) continue;
+                const Lake L = lakeOf(G, i, j);
+                if (!L.kind) continue;
+                const double r = L.reach + 200;
+                if (L.qx + r < t->ox || L.qx - r > t->ox + kTile || L.qz + r < t->oz || L.qz - r > t->oz + kTile) continue;
+                t->lakes.push_back(L);
+            }
+    }
     // (The rivers' pieces first: a point's land is the rivers' valleys, then the creeks' notches cut into that.)
     std::stable_sort(t->segs.begin(), t->segs.end(), [](const DrainSeg& a, const DrainSeg& b) { return a.notch < b.notch; });
     if (t->segs.size() > 65535) t->segs.resize(65535);  // (never near: a few thousand)
@@ -1041,14 +1194,6 @@ inline double valleyCore(const DrainSeg& s, double d, double L, double M, bool b
     const double W = s.notch ? std::min((double)s.wfix, 6 + s.bat * (M - top)) : std::min((double)s.reach - s.hw - s.F, 12 + s.bat * (M - top));
     const double u = e / W;
     return u >= 1 ? M : top + (M - top) * u * (2 - u);
-}
-// A lake's ground at r from its middle: the bowl under the water out to R, then a shore rising gently, steeper further out (it meets
-// the land round long before it ends: kLakeReach).
-constexpr double kLakeReach = 260;
-inline double lakeGround(const DTile::Lake& L, double W, double r) {
-    if (r < L.R) return W - L.D * (1 - sqr(r / L.R));
-    const double e = r - L.R;
-    return W + 0.12 * e + 0.02 * e * e;
 }
 // Where point (px, pz) (relative to the tile) is along the piece: the distance from it, and how far along (0..1).
 inline void segNear(const DrainSeg& s, double px, double pz, double& d, double& t, double& behind) {
@@ -1151,9 +1296,69 @@ double valeSmoothAt(const ProcWorld& G, double x, double z) {
 }
 }  // namespace
 
+double lakeLevelOf(const ProcWorld& G, const Lake& L);
+bool lakeOkOf(const ProcWorld& G, const Lake& L);
+namespace {
+// Does the land of node (ai, aj) drain down to node (ni, nj) (within a few km)?
+bool drainsTo(const ProcWorld& G, int64_t ai, int64_t aj, int64_t ni, int64_t nj) {
+    for (int k = 0; k < 40; k++) {
+        if (ai == ni && aj == nj) return true;
+        const int d = down2Of(G, ai, aj);
+        if (d < 0) return false;
+        ai += kN8[d][0], aj += kN8[d][1];
+    }
+    return false;
+}
+// A lake's dam across its valley at a point (-1e300: none here): its crest the lip's level (in the notch where the channel crosses)
+// or a little over it, falling away 0.35 a metre up and down the valley and fading out past the valley's sides.
+double damAt(const Lake& L, double x, double z) {
+    if (L.kind < 2) return -1e300;
+    if (L.kind == 2) {  // (a tarn's: a horseshoe moraine round the downhill half of its floor, the outlet's notch where the creek leaves)
+        const double vx = x - L.ex, vz = z - L.ez, r = std::sqrt(vx * vx + vz * vz);
+        const double rd = std::sqrt(sqr(L.qx - L.ex) + sqr(L.qz - L.ez)), ring = std::fabs(r - rd);  // (through the lip)
+        if (ring > 40 || r < 1e-6) return -1e300;
+        const double cs = (vx * L.fx + vz * L.fz) / r;  // (1 at the lip, -1 at the back wall)
+        if (cs < -0.45) return -1e300;
+        const double nx = x - L.qx, nz = z - L.qz, notchD = std::sqrt(nx * nx + nz * nz);
+        return L.W + L.crest * smoothstep(L.notch, L.notch + 6, notchD) - 0.35 * std::max(0.0, ring - 2) - 3 * std::max(0.0, -0.3 - cs);
+    }
+    const double vx = x - L.qx, vz = z - L.qz, b = vx * L.fx + vz * L.fz, c = std::fabs(-vx * L.fz + vz * L.fx);
+    if (std::fabs(b) > 40 || c > L.lat + 60) return -1e300;
+    return L.W + L.crest * smoothstep(L.notch, L.notch + 6, c) - 0.35 * std::max(0.0, std::fabs(b) - 2) - 0.5 * std::max(0.0, c - L.lat);
+}
+// A tarn's cirque floor (1e300: none here): flat under the water, then a 1:8 shore, steepening further out (where it meets the slope
+// above, the cirque's back wall).
+double dishAt(const Lake& L, double x, double z) {
+    if (L.kind < 2) return 1e300;
+    const double vx = x - L.ex, vz = z - L.ez;
+    double r;
+    if (L.kind == 2) r = std::sqrt(vx * vx + vz * vz);
+    else {  // (stretched along the valley: the half-length ea counts as the half-width)
+        const double u = (vx * L.fx + vz * L.fz) * L.dishR / L.ea, v = -vx * L.fz + vz * L.fx;
+        r = std::sqrt(u * u + v * v);
+    }
+    // (Flat under the water, a 1:8 shore to 0.6 m over it, then up steeply: it shapes the shore, it doesn't cut into the hills round.)
+    const double e = std::max(0.0, r - L.dishR), e1 = 8 * (L.dishD + 0.6);
+    if (e <= e1) return L.W - L.dishD + e / 8;
+    if (e - e1 > 90) return 1e300;
+    return L.W + 0.6 + 1.5 * (e - e1) + 0.05 * sqr(e - e1);
+}
+// Is a point (whose ground is under the water's level, its valley that of node fi, fj) in the lake: upstream of the lip and draining to it.
+bool inLake(const ProcWorld& G, const Lake& L, double x, double z, bool hasFloor, int64_t fi, int64_t fj) {
+    if (L.kind == 1) return hasFloor && drainsTo(G, fi, fj, L.ni, L.nj) && sqr(x - L.cx) + sqr(z - L.cz) < sqr(L.reach);
+    const double vx = x - L.qx, vz = z - L.qz;
+    if (vx * L.fx + vz * L.fz > -0.5 || vx * vx + vz * vz > sqr(L.reach)) return false;
+    const double dish = dishAt(L, x, z);
+    if (dish < L.W + 0.5) return true;  // (over its shaped floor)
+    if (L.kind == 2 || L.kind == 4) return false;  // (a tarn or a pond: its own floor alone)
+    // (a valley lake: on up its valley and its inlets as far as the land is under the lip: land draining to its node, or to the node
+    // below it short of the lip)
+    return hasFloor && (drainsTo(G, fi, fj, L.ni, L.nj) || (fi == L.di && fj == L.dj));
+}
+}  // namespace
+
 // The land at a point from the channels near it (indices into a tile's pieces, the rivers' first): the mass, cut by the rivers'
-// valleys (the lowest of them), then by the creeks' and gullies' notches.
-double lakeLevelOf(const ProcWorld& G, const DTile::Lake& L, double ox, double oz);
+// valleys (the lowest of them), then by the creeks' and gullies' notches; the lakes' cirque floors and dams; and their water.
 static Macro evalMacro(const ProcWorld& G, double x, double z, const DTile& T, const uint16_t* idx, int n, bool withLakes = true) {
     const RangeRule& RR = rules().range;
     Macro m;
@@ -1165,6 +1370,8 @@ static Macro evalMacro(const ProcWorld& G, double x, double z, const DTile& T, c
     bool valeDone = false;
     const DrainSeg *rs = nullptr, *cs = nullptr;
     double rt = 0, ct = 0;
+    int64_t fi = 0, fj = 0;
+    bool hasFloor = false;
     for (int k = 0; k < n; k++) {
         const DrainSeg& s = T.segs[idx[k]];
         if (s.notch && !valeDone) vale = env, valeDone = true;
@@ -1175,20 +1382,30 @@ static Macro evalMacro(const ProcWorld& G, double x, double z, const DTile& T, c
         if (d > s.reach) continue;
         const double L = s.la + (s.lb - s.la) * t;
         const double v = valleyAt(s, d, L, s.notch ? vale : M, false, bh);
-        if (v < env) env = v, Lmin = L, m.floorArea = s.A;
+        if (v < env) env = v, Lmin = L, m.floorArea = s.A, fi = s.ni, fj = s.nj, hasFloor = true;
         if (s.cls >= 2 && d < rd) rd = d, rs = &s, rt = t;
         if (s.cls == 1 && d < cd) cd = d, cs = &s, ct = t;
     }
     if (!valeDone) vale = env;
-    for (const DTile::Lake& L : T.lakes) {  // (the lakes' bowls and shores)
-        if (!withLakes) break;
-        const double r = std::sqrt(sqr(px - L.x) + sqr(pz - L.z));
-        if (r > L.R + kLakeReach) continue;
-        const double W = lakeLevelOf(G, L, T.ox, T.oz), v = lakeGround(L, W, r);
-        if (v < env) env = v, Lmin = W;
-        if (r < 1.5 * L.R && v < W) m.lakeLevel = std::max(m.lakeLevel, W);
+    if (withLakes) {
+        for (const Lake& L : T.lakes) {  // (a lake's shaped floor: cut)
+            const double v = dishAt(L, x, z);
+            if (v < env && !lakeOkOf(G, L)) continue;
+            if (v < env) env = v, Lmin = std::min(Lmin, L.W);
+        }
+        for (const Lake& L : T.lakes) {  // (the dams: a low ridge across the valley, over the land)
+            double v = damAt(L, x, z);
+            if (v > -1e299 && !lakeOkOf(G, L)) v = -1e300;
+            if (v > -1e299) m.damH = std::max(m.damH, v);
+            if (v > env) env = v;
+        }
+        for (const Lake& L : T.lakes) {  // (the water: where the ground's under the lip, in the lake's valley, upstream of the lip)
+            const double W = L.kind == 1 ? lakeLevelOf(G, L) : L.W;
+            if (env < W && W > m.lakeLevel && inLake(G, L, x, z, hasFloor, fi, fj) && lakeOkOf(G, L)) m.lakeLevel = W, Lmin = std::min(Lmin, W);
+        }
     }
     m.floor = Lmin, m.vale = vale;
+    if (hasFloor) m.floorNode = fi, m.floorNode2 = fj;
     m.h = env;
 
     // ---- The biomes: up high, the mountains; below, by the climate ----
@@ -1216,23 +1433,56 @@ Macro macroNoPerch(const ProcWorld& G, double x, double z, bool withLakes = true
     return evalMacro(G, x, z, *T, T->idx.data() + T->start[c], (int)(T->start[c + 1] - T->start[c]), withLakes);
 }
 }  // namespace
-// A lake's level: its basin filled to just under the lowest point of its rim (the land round it, without the lakes, at 1.6 times its
-// radius), and no more than a metre over where its channels come down to. So it sits under the rim all round, and level.
-double lakeLevelOf(const ProcWorld& G, const DTile::Lake& L, double ox, double oz) {
+// A basin's level: filled to just under the lowest point round it (the land, without lakes, 40-140 m from its middle), and no more than
+// a metre over where its channels come down to. (The other lakes' levels are their lips'.)
+double lakeLevelOf(const ProcWorld& G, const Lake& L) {
+    if (L.kind != 1) return L.W;
     int q;
     {
         const float w = blockFor(G, L.ni, L.nj, q)->lakeW[q].load(std::memory_order_relaxed);
         if (w == w) return w;
     }
-    const double cx = ox + L.x, cz = oz + L.z;
     double rim = 1e300;
     static const double kDir[16][2] = {{1, 0}, {0.92388, 0.38268}, {0.70711, 0.70711}, {0.38268, 0.92388}, {0, 1}, {-0.38268, 0.92388}, {-0.70711, 0.70711}, {-0.92388, 0.38268},
                                        {-1, 0}, {-0.92388, -0.38268}, {-0.70711, -0.70711}, {-0.38268, -0.92388}, {0, -1}, {0.38268, -0.92388}, {0.70711, -0.70711}, {0.92388, -0.38268}};
     for (const auto& d : kDir)
-        for (double f : {1.45, 1.6, 1.75}) rim = std::min(rim, macroNoPerch(G, cx + d[0] * f * L.R, cz + d[1] * f * L.R, false).h);
-    const float W = (float)std::min(rim - 0.25, levelOf(G, L.ni, L.nj) + 1.0);
+        for (double f : {40.0, 80.0, 140.0}) rim = std::min(rim, macroNoPerch(G, L.cx + d[0] * f, L.cz + d[1] * f, false).h);
+    const float W = (float)std::min(rim - 0.3, levelOf(G, L.ni, L.nj) + 1.0);
     blockFor(G, L.ni, L.nj, q)->lakeW[q].store(W, std::memory_order_relaxed);
     return W;
+}
+// Does a lake hold (its floor's rim, the land without lakes just past its shaped floor, over its water all round but across its lip)?
+// Worked out when first asked for, memoised. (A basin's level is its rim's already.)
+bool lakeOkOf(const ProcWorld& G, const Lake& L) {
+    if (L.kind == 1) return true;
+    int q;
+    {
+        const int o = blockFor(G, L.ni, L.nj, q)->lakeOk[q].load(std::memory_order_relaxed);
+        if (o >= 0) return o;
+    }
+    bool ok = true;
+    for (int k = 0; k < 48 && ok; k++)
+        for (double add : {1.0, 4.0, 10.0}) {  // (just past where its water can reach on its floor, and a little further)
+            if (!ok) break;
+            const double rr = L.dishR + 8 * (L.dishD + 0.5) + add;
+            const double a = k * (6.283185307179586 / 48);
+            // (unit vector, by a short series: no libm in what's generated)
+            const double a2 = a > 3.141592653589793 ? a - 6.283185307179586 : a;
+            const double cs = 1 - a2 * a2 / 2 + a2 * a2 * a2 * a2 / 24 - a2 * a2 * a2 * a2 * a2 * a2 / 720 + a2 * a2 * a2 * a2 * a2 * a2 * a2 * a2 / 40320;
+            const double sn = a2 - a2 * a2 * a2 / 6 + a2 * a2 * a2 * a2 * a2 / 120 - a2 * a2 * a2 * a2 * a2 * a2 * a2 / 5040 + a2 * a2 * a2 * a2 * a2 * a2 * a2 * a2 * a2 / 362880;
+            if (cs > 0.75) continue;  // (the lip's side: the dam holds it)
+            // (round its floor: a tarn's a circle; a valley lake's stretched along the valley)
+            const double along = cs * rr * (L.kind == 2 ? 1 : L.ea / L.dishR), across = sn * rr;
+            const double x = L.ex + L.fx * along - L.fz * across, z = L.ez + L.fz * along + L.fx * across;
+            const Macro mm = macroNoPerch(G, x, z, false);
+            ok = std::max(mm.h, damAt(L, x, z)) > L.W + 0.2;  // (its own dam counts)
+            // (a creek's valley coming in, under the water's level: the water backs up it, that's the lake, not a gap in its rim)
+            if (!ok && L.kind == 3 && mm.floorNode != INT64_MIN) ok = drainsTo(G, mm.floorNode, mm.floorNode2, L.ni, L.nj);
+            if (!ok && (L.kind == 2 || L.kind == 4) && mm.floorNode != INT64_MIN) ok = drainsTo(G, mm.floorNode, mm.floorNode2, L.ni, L.nj) && add < 5;
+        }
+    blockFor(G, L.ni, L.nj, q)->lakeOk[q].store(ok ? 1 : 0, std::memory_order_relaxed);
+    gLakeFunnel[10 + ok]++;
+    return ok;
 }
 namespace {
 // (The rule: water never stands over the land beside it. A creek's stretch, where the land 30 m to either side, across it, is lower than
@@ -1249,8 +1499,10 @@ bool creekPerched(const ProcWorld& G, int64_t i, int64_t j) {
     for (size_t k = 0; k < own.size() && !perched; k++) {  // (along its own curve: the middle of each straight piece)
         if (own[k].cls != 1) continue;
         const DrainSeg& e = own[k];
-        const double cx = 0.5 * (e.ax + e.bx), cz = 0.5 * (e.az + e.bz), lv = 0.5 * (e.la + e.lb);
-        for (int sd = -1; sd <= 1 && !perched; sd += 2) perched = macroNoPerch(G, cx - e.dz * 30 * sd, cz + e.dx * 30 * sd).h < lv - 0.1;
+        for (double t : {0.1, 0.5, 0.9}) {  // (a few points along each straight piece)
+            const double cx = e.ax + (e.bx - e.ax) * t, cz = e.az + (e.bz - e.az) * t, lv = e.la + (e.lb - e.la) * t;
+            for (int sd = -1; sd <= 1 && !perched; sd += 2) perched = macroNoPerch(G, cx - e.dz * 30 * sd, cz + e.dx * 30 * sd).h < lv - 0.35;
+        }
     }
     blockFor(G, i, j, q)->perched[q].store(perched ? 1 : 0, std::memory_order_relaxed);
     return perched;
@@ -1276,7 +1528,7 @@ double ProcWorld::groundHeight(double, double, const Macro& m) const {
     double h = m.h;
     if (m.riverS < m.riverHW) h = std::min(h, m.riverLevel - m.riverDepth * (1 - sqr(m.riverS / m.riverHW)));
     if (m.creekS < m.creekHW) h = std::min(h, m.creekLevel - m.creekDepth * (1 - sqr(m.creekS / m.creekHW)));
-    return h;
+    return std::max(h, m.damH);  // (a lake's dam: over the channel's bed, its lip)
 }
 
 ProcWorld::DrainStats ProcWorld::drainStats(double x0, double z0, double x1, double z1) const {
@@ -1340,22 +1592,27 @@ std::vector<ProcWorld::WaterFeature> ProcWorld::waterFeatures(double x0, double 
         for (int64_t j = j0; j <= j1; j++) {
             if (areaOf(*this, i, j) < DC.gully) continue;
             const NodeInfo n = nodeInfo(*this, i, j);
-            if (down2Of(*this, i, j) < 0) {
-                if (n.x >= x0 && n.x < x1 && n.z >= z0 && n.z < z1)
-                {
-                    const double A = areaOf(*this, i, j);
-                    const DTile::Lake L{0, 0, (float)std::min(240.0, 25 + 5 * std::sqrt(A)), (float)std::min(8.0, 1.5 + 0.25 * std::sqrt(A)), i, j};
-                    out.push_back({0, n.x, n.z, lakeLevelOf(*this, L, n.x, n.z), L.R, 0, 0});
-                }
-                continue;
+            const Lake lk = (even2(i, 2) && even2(j, 2)) || down2Of(*this, i, j) < 0 ? lakeOf(*this, i, j) : Lake{};
+            if (lk.kind && n.x >= x0 && n.x < x1 && n.z >= z0 && n.z < z1 && lakeOkOf(*this, lk)) {
+                // (a lake: its lip (a basin: its middle), the water's level, how far across (a tarn: its floor's radius; a valley
+                // lake or pond: its dam's half-length), and its outlet: the level of its channel at the lip)
+                WaterFeature f{0, lk.kind == 1 ? n.x : lk.qx, lk.kind == 1 ? n.z : lk.qz, lakeLevelOf(*this, lk), lk.kind == 2 ? lk.dishR : lk.lat, lk.fx, lk.fz};
+                f.sub = lk.kind;
+                f.outlet = lk.kind == 1 ? -1e9 : lk.W;
+                out.push_back(f);
             }
+            if (down2Of(*this, i, j) < 0) continue;
             std::vector<DrainSeg> own;
             nodeSegs(*this, i, j, 0, 0, own, false);
             bool dry = false, any = false;
             for (const DrainSeg& e : own) any |= e.fall != 0;
             if (any && own[0].cls == 1) dry = creekPerched(*this, i, j);  // (a dry step: no waterfall)
             for (const DrainSeg& e : own)
-                if (e.fall && !dry && e.ax >= x0 && e.ax < x1 && e.az >= z0 && e.az < z1) out.push_back({1, e.ax, e.az, e.la, e.la - e.lb, e.dx, e.dz});
+                if (e.fall && !dry && e.ax >= x0 && e.ax < x1 && e.az >= z0 && e.az < z1) {
+                    WaterFeature f{1, e.ax, e.az, e.la, e.la - e.lb, e.dx, e.dz};
+                    f.width = 2 * e.hw;
+                    out.push_back(f);
+                }
         }
     return out;
 }
@@ -1389,7 +1646,9 @@ std::vector<std::pair<double, double>> ProcWorld::channelsAcross(double x0, doub
 
 // (The caches of the drainage: dropped with the chunks'.)
 static void clearGridCache();
+static void clearLakeMemo();
 static void clearDrainCaches() {
+    clearLakeMemo();
     {
         std::lock_guard<std::mutex> lock(blockMutex);
         blockMap.clear();
@@ -1583,6 +1842,10 @@ struct GridTile {
 std::mutex gridMutex;
 std::unordered_map<TKey, std::shared_ptr<const GridTile>, TKHash> gridMap;
 }  // namespace
+static void clearLakeMemo() {
+    std::lock_guard<std::mutex> lock(lakeMemoMutex);
+    lakeMemo.clear();
+}
 static void clearGridCache() {
     std::lock_guard<std::mutex> lock(gridMutex);
     gridMap.clear();
@@ -1617,7 +1880,7 @@ GridPoint gridPoint(const ProcWorld& G, int64_t u, int64_t v) {
                     g.h = (float)G.groundHeight(x, z, m);
                     g.wet = (m.riverOn > 0.35 && std::fabs(m.riverS) < m.riverHW + 8) || (m.creekOn > 0.35 && std::fabs(m.creekS) < m.creekHW + 4);
                     if (m.bigRiver && !m.riverFord && m.riverOn > 0.5 && std::fabs(m.riverS) < m.riverHW + 4) g.wet = 2;
-                    if (m.lakeLevel > -1e8 && m.h < m.lakeLevel + 2) g.wet = 3;
+                    if ((m.lakeLevel > -1e8 && m.h < m.lakeLevel + 2) || m.damH > -1e8) g.wet = 3;  // (a lake, or its dam: round it, never through its lip)
                 }
             std::lock_guard<std::mutex> lock(gridMutex);
             if (gridMap.size() > 800) gridMap.clear();  // (~13 MB)
@@ -1876,12 +2139,13 @@ std::shared_ptr<const TrailEdge> ProcWorld::edge(int64_t i, int64_t j, int dir) 
         {  // (A link that can't keep near its grade (over a summit massif, up a gorge's wall) isn't laid: the trails go round by the
             // valleys and passes. Its share of length past the limit, over 20 m stretches, as procworld/grades measures it.)
             const double lim = e->road ? 0.12 : gmax;
-            double len = 0, over = 0;
+            double len = 0, over = 0, cut = 0;
             for (int k = 0; k + 10 < n; k++) {
                 const double run = along[k + 10] - along[k], seg = along[k + 1] - along[k];
                 len += seg, over += std::fabs(y[k + 10] - y[k]) > lim * run ? seg : 0;
+                cut += !pinned(k) && std::fabs(y[k] - raw[k]) >= 1.5 ? seg : 0;  // (on a cut or a bank: a trail across a steep side)
             }
-            if (len > 0 && over > (e->road ? 0.2 : 0.12) * len) {
+            if (len > 0 && (over > (e->road ? 0.2 : 0.07) * len || (!e->road && cut > 0.25 * len))) {
                 e->on = false, e->bridges.clear();
                 std::lock_guard<std::mutex> lock(edgeMutex);
                 if (edgeCache.size() > 40000) edgeCache.clear();
@@ -2031,15 +2295,34 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
                     }
                 }
             }
-            // The lakes: still water at their level over their bowls.
-            for (const DTile::Lake& L : T.lakes) {
-                const double r = std::sqrt(sqr(x - T.ox - L.x) + sqr(z - T.oz - L.z));
-                if (r > 1.5 * L.R) continue;
-                const double W = lakeLevelOf(*this, L, T.ox, T.oz);
-                if (h >= W - 0.02) continue;
-                if (cl.water < W) cl.water = W, cl.fx = cl.fz = 0;
-                if (r < L.R) cl.bed = 1;
-                cl.keep = 1;
+            // The lakes: their cirque floors and dams exactly here; still water at their level where the ground's under it in a lake
+            // (the lattice says which: the lake's valley), no channel's trench under it, and a gravel or sand shore round it.
+            for (const Lake& L : T.lakes)
+                if (dishAt(L, x, z) < h && lakeOkOf(*this, L)) h = std::min(h, dishAt(L, x, z) + std::max(0.0, bumpH));
+            for (const Lake& L : T.lakes)
+                if (damAt(L, x, z) > h && lakeOkOf(*this, L)) h = std::max(h, damAt(L, x, z));
+            {
+                double W = -1e9;
+                for (int qa = -1; qa <= 2; qa++)  // (the lattice round it, 4-8 m: is this ground in a lake's valley?)
+                    for (int qb = -1; qb <= 2; qb++) {
+                        const int la = std::min(L - 1, std::max(0, ((i + 4) >> 2) + qa)), lb = std::min(L - 1, std::max(0, ((j + 4) >> 2) + qb));
+                        W = std::max(W, M[(size_t)la * L + lb].lakeLevel);
+                    }
+                bool upstream = false;  // (and this metre itself upstream of that lake's lip)
+                for (const Lake& Lk : T.lakes)
+                    if (std::fabs(Lk.kind == 1 ? lakeLevelOf(*this, Lk) - W : Lk.W - W) < 1e-6)
+                        upstream |= Lk.kind == 1 || ((x - Lk.qx) * Lk.fx + (z - Lk.qz) * Lk.fz < -0.5 && ((Lk.kind != 2 && Lk.kind != 4) || dishAt(Lk, x, z) < Lk.W + 0.5));  // (a tarn or pond: on its floor, exactly)
+                if (!upstream) W = -1e9;
+                if (W > -1e8) {
+                    if (h < W - 0.02) {
+                        h = std::max(h, blend(i, j, [](const Macro& m) { return m.h; }));  // (no trench under the water)
+                        if (h < W - 0.02) {
+                            if (cl.water < W) cl.water = W, cl.fx = cl.fz = 0;
+                            cl.keep = 1, cl.bed = 0;
+                        }
+                    }
+                    if (cl.water < W && h < W + 0.9) cl.bed = cl.bed ? cl.bed : 5, cl.keep = 1;  // (the shore)
+                }
             }
             // The trails: each one's tread, the land easing into it over a few metres (as wide as the tread's cut or fill is deep, about:
             // ~1:1.3, not a wall). Each trail's height here is its nearest stretches' (a switchback's two legs: the land goes the way of
@@ -2210,6 +2493,10 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
             if (cl.bed == 1) s = SURF_GRAVEL, pt = PAINT_GRAVEL;
             else if (cl.bed == 2) s = SURF_SAND, pt = PAINT_SAND;
             else if (cl.bed == 4) s = SURF_GRAVEL, pt = PAINT_GRAVEL;
+            else if (cl.bed == 5 && s != SURF_SNOW) {  // (a lake's shore: sand in the desert, gravel elsewhere)
+                if (cl.dom == PB_BADLANDS || cl.dom == PB_DUNES) s = SURF_SAND, pt = PAINT_SAND;
+                else s = SURF_GRAVEL, pt = PAINT_GRAVEL;
+            }
             else if (cl.bed == 3) {
                 if (pt == PAINT_SNOW) s = SURF_SNOW;  // (packed snow up high)
                 else if (cl.water > -1e8 || (anyWater && c->water[id] > -1e8)) s = SURF_GRAVEL, pt = PAINT_GRAVEL;  // (a ford)
@@ -2742,7 +3029,7 @@ size_t cacheBytes() {
     {
         std::lock_guard<std::mutex> lock(tileMutex);
         for (const auto& m : tileMap)
-            for (const auto& kv : m) n += sizeof(DTile) + kv.second->segs.capacity() * sizeof(DrainSeg) + kv.second->idx.capacity() * 2 + kv.second->start.capacity() * 4 + kv.second->lakes.capacity() * sizeof(DTile::Lake);
+            for (const auto& kv : m) n += sizeof(DTile) + kv.second->segs.capacity() * sizeof(DrainSeg) + kv.second->idx.capacity() * 2 + kv.second->start.capacity() * 4 + kv.second->lakes.capacity() * sizeof(Lake);
     }
     {
         std::lock_guard<std::mutex> lock(gridMutex);

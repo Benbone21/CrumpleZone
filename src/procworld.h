@@ -87,6 +87,7 @@ struct Macro {
     double h = 0;              // the land before the bumps, the channels' beds and the trails (the valleys are in it)
     double floor = 0;          // the level of the channel whose valley this is (the lowest valley's)
     double floorArea = 0;      // ...that channel's drainage (lattice nodes; 0: none, the mass)
+    int64_t floorNode = INT64_MIN, floorNode2 = 0;  // ...and its lattice node (i, j)
     double mass = 0;           // the land before any valley was cut (the uplifted mass)
     double vale = 0;           // ...with the rivers' valleys cut, before the creeks' and gullies' notches
     double w[PB_COUNT] = {};   // how much of each biome (sums to 1)
@@ -102,7 +103,8 @@ struct Macro {
     bool bigRiver = false;     // a big river (deep and fast: crossed at its fords, or on bridges)
     bool riverFord = false;    // ...at one of its known fords here (a riffle: shallow)
     int64_t creekNode = INT64_MIN, creekNodeJ = 0;  // (the drainage lattice node whose stretch the creek is)
-    double lakeLevel = -1e9;   // a lake's water level, where its water or shore is (-1e9: none)
+    double lakeLevel = -1e9;   // a lake's water level, where its water is (-1e9: none)
+    double damH = -1e9;        // a lake's dam's ridge here (the ground is at least this: over a channel's bed)
 };
 
 // The trail network: one node in every kCell x kCell cell of the world, joined to its east and north neighbours (now and then
@@ -177,7 +179,9 @@ public:
     DrainStats drainStats(double x0, double z0, double x1, double z1) const;
     // The lakes and waterfalls in a square (global): where (a lake's middle; a fall's lip), the water's level (a fall's: at its lip),
     // and a lake's radius or a fall's height.
-    struct WaterFeature { int kind = 0; double x = 0, z = 0, level = 0, size = 0, fx = 0, fz = 0; };  // kind 0 lake, 1 fall (fx, fz: its way down)
+    // (A lake's sub: 1 a basin (a sink, no outlet), 2 a tarn, 3 a valley lake behind a rock bar, 4 a pond; outlet: the level of the
+    // channel node its water leaves by (-1e9: none). A fall's width: its channel's.)
+    struct WaterFeature { int kind = 0; double x = 0, z = 0, level = 0, size = 0, fx = 0, fz = 0; int sub = 0; double outlet = -1e9, width = 0; };  // kind 0 lake, 1 fall (fx, fz: its way down)
     std::vector<WaterFeature> waterFeatures(double x0, double z0, double x1, double z1) const;
     // The channels crossing a straight line (a transect): where along it, and the drainage of each (lattice nodes).
     std::vector<std::pair<double, double>> channelsAcross(double x0, double z0, double x1, double z1, double minArea) const;

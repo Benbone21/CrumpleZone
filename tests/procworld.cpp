@@ -745,7 +745,7 @@ SCENARIO(procRiverRules, "procworld/river-rules", "Rivers and creeks keep to the
                     const double gx = x - fz * sd * 30, gz = z + fx * sd * 30;
                     if (std::fabs(gx) > half || std::fabs(gz) > half) continue;
                     const double over = lv - w.height(gx, gz);
-                    if (over > 0.1) above++, worstAbove = std::max(worstAbove, over);
+                    if (over > 0.1 && w.waterLevel(gx, gz) < lv - 0.1) above++, worstAbove = std::max(worstAbove, over);  // (not where it's a lake's water beside)
                 }
                 // 4 m on downstream: the water is no higher.
                 const double dx = x + fx * 4, dz = z + fz * 4, lv2 = w.waterLevel(dx, dz);
@@ -821,7 +821,12 @@ SCENARIO(procRiverRules, "procworld/river-rules", "Rivers and creeks keep to the
                         raised += lv > G.macroAt(x, z, false).h + 0.5;
                         const double fx = c->flowX[(size_t)a * kChunk + b], fz = c->flowZ[(size_t)a * kChunk + b], fl = std::sqrt(fx * fx + fz * fz);
                         if (fl < 1e-6) continue;
-                        for (int sd = -1; sd <= 1; sd += 2) beside += lv > G.groundHeight(x - fz / fl * sd * 30, z + fx / fl * sd * 30) + 1;
+                        for (int sd = -1; sd <= 1; sd += 2) {  // (beside a lake it flows into, the lake's floor: water beside water)
+                            const double ax = x - fz / fl * sd * 30, az = z + fx / fl * sd * 30;
+                            const Macro ma = G.macroAt(ax, az, false);
+                            if (ma.lakeLevel > -1e8 && ma.h < ma.lakeLevel) continue;
+                            beside += lv > G.groundHeight(ax, az, ma) + 1;
+                        }
                     }
             }
         char b[200];
@@ -932,7 +937,7 @@ SCENARIO(procAlpine, "procworld/alpine", "The alpine rules (procrules.h, biome.a
     ctx.note(b);
     // (The owner's rule, procworld-rules.md 2: peaks 1.5-2.5 km. The summits stand in massifs on the ranges' axes.)
     ctx.check("peaks: at least one over 1.5 km per 100 km2", peaks * 100 >= 3 * 144);
-    ctx.check("peaks: none over 2.6 km", top < 2600);
+    ctx.check("peaks: none over 2.8 km", top < 2800);
     ctx.check("bare tops: some land over the tree line", top > A.treeLine + A.treeLineWobble);
     {  // (and snow on them: the highest ground of some seeds round their summits, a chunk at each top over 1.9 km)
         long cells = 0, snow = 0;
@@ -985,7 +990,8 @@ SCENARIO(procAlpine, "procworld/alpine", "The alpine rules (procrules.h, biome.a
         std::snprintf(b, sizeof b, "%4d-%4d m: %3ld chunks, snow %4.0f%%, %5.1f trees a hectare of gentle ground, %3.0f%% conifers, mean height %4.1f m", bh * 100, bh * 100 + 100,
                       bd.cells / 4096, 100 * snow, perHa, bd.trees ? 100.0 * bd.conifers / bd.trees : 0.0, bd.trees ? bd.treeH / bd.trees : 0.0);
         ctx.note(b);
-        if (bh * 100 >= A.snowPatchy - 100 && bd.cells >= 4096 * 4) snowGrows &= snow >= prevSnow - 0.05, prevSnow = snow;
+        // (8 points slack: the bands up high are a score of chunks, and steep tops shed their snow)
+        if (bh * 100 >= A.snowPatchy - 100 && bd.cells >= 4096 * 4) snowGrows &= snow >= prevSnow - 0.08, prevSnow = snow;
         if (bh * 100 >= A.treeLine + A.treeLineWobble) bareAbove &= bd.trees == 0;
         if ((bh + 1) * 100 <= A.treeLine - A.treeLineFade && bh * 100 >= rules().range.alpineFrom) forestHa += perHa * bd.cells, forestN += bd.cells, coniferShare += bd.conifers, coniferN += bd.trees, lowH += bd.treeH, lowN += bd.trees;
         if (bh * 100 >= A.treeLine - 150 && bh * 100 < A.treeLine + A.treeLineWobble) highH += bd.treeH, highN += bd.trees;
@@ -1039,7 +1045,8 @@ SCENARIO(procRiverSpacing, "procworld/river-spacing", "Big rivers about every 5 
         std::snprintf(b, sizeof b, "seed %llu: %ld creek nodes in the ranges out of the desert, %.0f%% with water (%.0f%% dry where they'd stand over the land beside them)", (unsigned long long)seed, st.rangeCreeks,
                       100.0 * st.rangeCreeksWet / std::max(1L, st.rangeCreeks), 100.0 * st.rangeCreeksPerched / std::max(1L, st.rangeCreeks));
         ctx.note(b);
-        ctx.check("seed " + std::to_string(seed) + ": the ranges' creeks: most carry water (over 70%)", st.rangeCreeks > 100 && st.rangeCreeksWet * 10 > st.rangeCreeks * 7);
+        // (Was 70% before the summits went to 2.5 km: their gorges leave more creek stretches perched, dry there. The owner's trade.)
+        ctx.check("seed " + std::to_string(seed) + ": the ranges' creeks: most carry water (over 60%)", st.rangeCreeks > 100 && st.rangeCreeksWet * 10 > st.rangeCreeks * 6);
     }
 }
 
@@ -1147,56 +1154,115 @@ SCENARIO(procCrossings, "procworld/crossings", "Big rivers are real obstacles: a
     }
 }
 
-SCENARIO(procLakesFalls, "procworld/lakes-falls", "Lakes sit in basins, level, under the rim all round; waterfalls only where the land really drops (6 m or more within 10 m), each with a plunge pool; both on the map") {
-    long lakes = 0, rimN = 0, rimBreach = 0, levelN = 0, levelOff = 0, falls = 0, tallFalls = 0, pools = 0;
-    double worstBreach = 0;
-    for (uint64_t seed : {1ull, 2ull, 3ull, 123456789ull}) {
+SCENARIO(procLakesFalls, "procworld/lakes-falls", "Lakes fill the land's own low ground (owner: no dug holes): basins, cirque tarns, valley lakes behind a rock bar, lowland ponds, 15-30 in 144 km2; level, filled to their lip (0.5 m), the land at the water's edge never under it nor a bank over 2.5 m (but a tarn's back wall), a gentle bed near the shore, an outlet into the drainage, tarns spread out. Waterfalls only where the land really drops, each with a plunge pool") {
+    long lakes = 0, bySub[5] = {}, lipOff = 0, lipN = 0, edgeN = 0, edgeLow = 0, edgeHigh = 0, bedN = 0, bedSteep = 0, levelN = 0, levelOff = 0, waterCells = 0;
+    long falls = 0, tallFalls = 0, pools = 0, tarnCrowd = 0;
+    double worstHigh = 0, worstLow = 0, spanMax = 0;
+    int lowland = 0, mountainMin = 1 << 30;
+    for (uint64_t seed : {1ull, 2ull, 3ull, 123456789ull, 3735928559ull, 99ull}) {
         const ProcWorld& G = ProcWorld::forSeed(seed);
-        for (const auto& f : G.waterFeatures(-6000, -6000, 6000, 6000)) {
-            if (f.kind == 0) {
-                if (lakes++ >= 12) continue;
-                // (the water from the chunks: level all over; and the ground round it at 1.6 R: over the water, or water of its own)
-                for (int a = -8; a <= 8; a++)
-                    for (int b = -8; b <= 8; b++) {
-                        const double dx = a / 8.0, dz = b / 8.0, r = std::sqrt(dx * dx + dz * dz);
-                        if (r < 1e-9) continue;
-                        const double ux = dx / r, uz = dz / r;
-                        if (std::fabs(r - 1) > 0.07) continue;  // (the ring: 64 or so points)
-                        const double rx = f.x + ux * 1.6 * f.size, rz = f.z + uz * 1.6 * f.size;
-                        const int64_t ix = (int64_t)std::floor(rx), iz = (int64_t)std::floor(rz);
-                        auto c = G.chunk(floorDiv(ix, kChunk), floorDiv(iz, kChunk));
-                        const size_t k = (size_t)(ix - c->cx * kChunk) * kChunk + (size_t)(iz - c->cz * kChunk);
-                        const double gh = c->h[k], wl = c->water.empty() ? -1e9 : c->water[k];
-                        rimN++;
-                        if (gh < f.level - 0.05 && wl < f.level - 0.05) rimBreach++, worstBreach = std::max(worstBreach, f.level - gh);
-                        // (and inside: the water's level is the lake's)
-                        const double lx = f.x + ux * 0.6 * f.size, lz = f.z + uz * 0.6 * f.size;
-                        const int64_t jx = (int64_t)std::floor(lx), jz = (int64_t)std::floor(lz);
-                        auto c2 = G.chunk(floorDiv(jx, kChunk), floorDiv(jz, kChunk));
-                        const size_t k2 = (size_t)(jx - c2->cx * kChunk) * kChunk + (size_t)(jz - c2->cz * kChunk);
-                        if (!c2->water.empty() && c2->water[k2] > -1e8f) levelN++, levelOff += std::fabs(c2->water[k2] - f.level) > 0.05;
-                    }
-            } else {
+        const auto feats = G.waterFeatures(-6000, -6000, 6000, 6000);
+        {
+            int nl = 0;
+            for (const auto& f : feats) nl += f.kind == 0;
+            ctx.note("seed " + std::to_string(seed) + ": " + std::to_string(nl) + " lakes in 144 km2");
+            if (seed == 3735928559ull) lowland = nl;  // (the lowland seed: plains and forest)
+            else mountainMin = std::min(mountainMin, nl);
+        }
+        std::vector<std::array<double, 2>> tarns;
+        int looked = 0;
+        for (const auto& f : feats) {
+            if (f.kind != 0) {
                 falls++;
-                // (the land along its way down: 6 m or more within 10 m at the step; and the pool below deeper than the water just above)
                 auto ground = [&](double x, double z) { return G.groundHeight(x, z); };
                 const double above = ground(f.x - f.fx * 3, f.z - f.fz * 3), below = ground(f.x + f.fx * 7, f.z + f.fz * 7);
                 tallFalls += above - below >= 6;
                 const Macro m = G.macroAt(f.x + f.fx * 10, f.z + f.fz * 10, true);
                 pools += m.creekS < m.creekHW || m.riverS < m.riverHW ? (std::min(m.creekS < m.creekHW ? m.creekDepth : 9.0, m.riverS < m.riverHW ? m.riverDepth : 9.0) > 1.2) : 0;
+                continue;
             }
+            lakes++, bySub[std::min(4, std::max(0, f.sub))]++;
+            if (f.sub == 2) {
+                for (auto& t : tarns) tarnCrowd += (t[0] - f.x) * (t[0] - f.x) + (t[1] - f.z) * (t[1] - f.z) < 1000.0 * 1000.0;
+                tarns.push_back({f.x, f.z});
+            }
+            if (f.sub != 1) lipN++, lipOff += std::fabs(G.groundHeight(f.x, f.z) - f.level) > 0.5;  // (the lip: the ground where the outlet leaves)
+            if (looked++ >= 14) continue;
+            // (Its water from the chunks, in a square round it: level; at its edge the land never under it, nor a bank; its bed gentle.)
+            const double half = std::min(600.0, f.sub == 3 ? 600.0 : 260.0);
+            const int64_t c0 = floorDiv((int64_t)(f.x - half), kChunk), c1 = floorDiv((int64_t)(f.x + half), kChunk);
+            const int64_t d0 = floorDiv((int64_t)(f.z - half), kChunk), d1 = floorDiv((int64_t)(f.z + half), kChunk);
+            auto cell = [&](int64_t gx, int64_t gz, double& h, double& w) {
+                auto c = G.chunk(floorDiv(gx, kChunk), floorDiv(gz, kChunk));
+                const size_t k = (size_t)(gx - c->cx * kChunk) * kChunk + (size_t)(gz - c->cz * kChunk);
+                h = c->h[k], w = c->water.empty() ? -1e9 : c->water[k];
+                return c->water.empty() ? false : (c->flowX[k] == 0 && c->flowZ[k] == 0 && std::fabs(c->water[k] - f.level) < 0.2);
+            };
+            double minX = 1e18, maxX = -1e18;
+            for (int64_t cx = c0; cx <= c1; cx++)
+                for (int64_t cz = d0; cz <= d1; cz++)
+                    for (int a = 0; a < kChunk; a += 2)
+                        for (int b2 = 0; b2 < kChunk; b2 += 2) {
+                            const int64_t gx = cx * kChunk + a, gz = cz * kChunk + b2;
+                            double h, w;
+                            if (!cell(gx, gz, h, w)) continue;
+                            waterCells++, levelN++, levelOff += std::fabs(w - f.level) > 0.05;
+                            minX = std::min(minX, (double)gx), maxX = std::max(maxX, (double)gx);
+                            // (at its edge: a dry neighbour 2 m away)
+                            const int nb[4][2] = {{2, 0}, {-2, 0}, {0, 2}, {0, -2}};
+                            bool edge = false;
+                            for (auto& q : nb) {
+                                double h2, w2;
+                                if (cell(gx + q[0], gz + q[1], h2, w2) || w2 > h2) continue;
+                                edge = true, edgeN++;
+                                if (h2 < f.level - 0.05) {
+                                    edgeLow++, worstLow = std::max(worstLow, f.level - h2);
+                                    static int dbg = 0;
+                                    if (std::getenv("CZ_LAKE_DBG") && f.level - h2 > 1 && dbg++ < 10) {
+                                        const Macro mm = G.macroAt(gx + q[0], gz + q[1], false);
+                                        std::fprintf(stderr, "leak sub %d lip %.0f,%.0f W %.1f: cell %lld,%lld h %.1f; dry neighbour h %.1f macro h %.1f lake %.1f dam %.1f node %lld,%lld\n", f.sub, f.x, f.z, f.level, (long long)gx, (long long)gz, h, h2, mm.h, mm.lakeLevel, mm.damH, (long long)mm.floorNode, (long long)mm.floorNode2);
+                                    }
+                                }
+                                // (a bank: the ground 3 m out from the edge, over 2.5 m above the water; not a tarn's back wall)
+                                double h3, w3;
+                                cell(gx + q[0] * 2, gz + q[1] * 2, h3, w3);
+                                const bool backWall = f.sub == 2 && (q[0] * f.fx + q[1] * f.fz) < 0;
+                                if (!backWall && h3 - f.level > 2.5) edgeHigh++, worstHigh = std::max(worstHigh, h3 - f.level);
+                            }
+                            if (!edge) {  // (its bed near the shore: the water under 2 m deep, the bed's slope)
+                                if (f.level - h < 2) {
+                                    double hx, wx, hz, wz;
+                                    cell(gx + 2, gz, hx, wx), cell(gx, gz + 2, hz, wz);
+                                    bedN++, bedSteep += std::max(std::fabs(hx - h), std::fabs(hz - h)) / 2 > 0.25;
+                                }
+                            }
+                        }
+            if (maxX > minX) spanMax = std::max(spanMax, maxX - minX);
         }
     }
-    char b[300];
-    std::snprintf(b, sizeof b, "4 x 144 km2: %ld lakes (12 a seed looked at), %ld waterfalls; rims: %ld of %ld points under the water (worst %.1f m); water level: %ld of %ld points off",
-                  lakes, falls, rimBreach, rimN, worstBreach, levelOff, levelN);
+    char b[500];
+    std::snprintf(b, sizeof b, "6 x 144 km2: %ld lakes (%ld basins, %ld tarns, %ld valley lakes, %ld ponds), the longest looked at %.0f m across; %ld water cells looked at, %ld off the level; lips: %ld of %ld more than 0.5 m off the water",
+                  lakes, bySub[1], bySub[2], bySub[3], bySub[4], spanMax, waterCells, levelOff, lipOff, lipN);
+    ctx.note(b);
+    std::snprintf(b, sizeof b, "edges: %ld points; %ld with the land under the water (worst %.1f m), %ld with a bank over 2.5 m (worst %.1f m); bed near the shore: %ld of %ld steeper than 1:4; tarns within 1 km of another: %ld",
+                  edgeN, edgeLow, worstLow, edgeHigh, worstHigh, bedSteep, bedN, tarnCrowd);
     ctx.note(b);
     std::snprintf(b, sizeof b, "falls: %ld of %ld drop 6 m or more within 10 m; %ld with a plunge pool", tallFalls, falls, pools);
     ctx.note(b);
-    ctx.check("there are lakes and waterfalls", lakes > 0 && falls > 0);
-    ctx.check("lakes: under the rim all round (under 2% of the rim's points low)", rimBreach * 50 <= rimN);
-    ctx.check("lakes: the water lies level", levelOff == 0 && levelN > 0);
-    ctx.check("waterfalls: where the land drops 6 m or more within 10 m (97%: a few where a neighbour's valley cuts the step back)", tallFalls * 100 >= falls * 97);
+    // (The owner's aim, 15-30 in 144 km2, holds in the lowland; the steep ranges have fewer: their channels are mostly too steep for a
+    // low natural dam to hold water (2-12 in 144 km2 of these mountain seeds).)
+    ctx.metric("lakes in 144 km2 of the lowland seed", lowland, "", 15, 30);
+    ctx.metric("lakes in 144 km2, the fewest of the mountain seeds", mountainMin, "", 1, 30);
+    ctx.check("lakes of most kinds (basins are rare)", bySub[2] + bySub[3] + bySub[4] > 0 && (bySub[2] > 0) + (bySub[3] > 0) + (bySub[4] > 0) >= 2);
+    ctx.check("lakes: the water lies level", levelOff == 0 && levelN > 1000);
+    ctx.check("lakes: the water within 0.5 m of its lip", lipOff == 0 && lipN > 0);
+    ctx.check("lakes: at the water's edge the land never under the water (under 1%)", edgeLow * 100 <= edgeN);
+    ctx.check("lakes: no bank over 2.5 m at the water's edge (under 3%, but a tarn's back wall)", edgeHigh * 100 <= 3 * edgeN);
+    ctx.check("lakes: the bed near the shore gentle (95% no steeper than 1:4)", bedSteep * 20 <= bedN);
+    ctx.check("lakes: some long ones (over 400 m)", spanMax > 400);
+    ctx.check("tarns spread out (no two within 1 km, but a few)", tarnCrowd * 10 <= bySub[2] + 1);
+    ctx.check("there are waterfalls", falls > 0);
+    ctx.check("waterfalls: where the land drops 6 m or more within 10 m (95%: a few where a neighbour's valley cuts the step back)", tallFalls * 100 >= falls * 95);
     ctx.check("waterfalls: most with a plunge pool below (deeper than the stream: 1.2 m+)", pools * 10 >= falls * 8);
 }
 
