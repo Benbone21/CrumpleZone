@@ -106,8 +106,19 @@ const std::vector<int>& careerMaps() {
     return m;
 }
 
+const std::vector<int>& customWorldMaps() {
+    static const std::vector<int> m = [] {
+        std::vector<int> v;
+        if (mapListed(MAP_PROCEDURAL)) v.push_back(MAP_PROCEDURAL);
+        return v;
+    }();
+    return m;
+}
+
 bool careerMap(int map) {
     for (int m : careerMaps())
+        if (m == map) return true;
+    for (int m : customWorldMaps())
         if (m == map) return true;
     return false;
 }

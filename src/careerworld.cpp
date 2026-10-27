@@ -9,6 +9,8 @@
 
 #include "net.h"
 #include "platform.h"
+#include "procworld.h"
+#include "world.h"
 #include "vehicles.h"
 
 const char* difficultyName(Difficulty d) {
@@ -107,6 +109,11 @@ bool parseWorld(const std::string& text, WorldSave& w) {
         else if (k == "mode") w.mode = std::atoi(v.c_str()) == MODE_CREW ? MODE_CREW : MODE_PERSONAL;
         else if (k == "build") w.build = v;
         else if (k == "played") w.playedSeconds = std::max(0.0, std::atof(v.c_str()));
+        else if (k == "seed") w.seed = std::strtoull(v.c_str(), nullptr, 10);
+        else if (k == "origin") {  // "origin OX OZ"
+            long long x = 0, z = 0;
+            if (std::sscanf(v.c_str(), "%lld %lld", &x, &z) == 2) w.originSet = true, w.ox = x, w.oz = z;
+        } else if (k == "truck") w.lastVehicle = std::atoi(v.c_str());
         else if (k == "cache") w.opened.insert(v);
         else if (k == "left") {  // "left VEHICLE OWNER"
             const size_t sp2 = v.find(' ');
@@ -139,6 +146,9 @@ std::string worldText(const WorldSave& w) {
     char buf[48];
     std::snprintf(buf, sizeof buf, "played %.3f\n", w.playedSeconds);
     t += buf;
+    if (w.seed) t += "seed " + std::to_string(w.seed) + '\n';
+    if (w.originSet) t += "origin " + std::to_string(w.ox) + ' ' + std::to_string(w.oz) + '\n';
+    if (w.lastVehicle >= 0) t += "truck " + std::to_string(w.lastVehicle) + '\n';
     for (const auto& k : w.opened) t += "cache " + k + '\n';
     for (size_t i = 0; i < w.left.size(); i++) {
         t += "left " + std::to_string(w.left[i].vehicle) + ' ' + escapeLine(w.left[i].owner) + '\n';
@@ -203,7 +213,9 @@ std::vector<WorldSave> listWorlds() {
         if (!isDir(worldsDir() + "/" + n)) continue;
         WorldSave w;
         loadWorld(n, w);
-        found.push_back({fileMTime(worldsDir() + "/" + n + "/world.txt"), w});
+        const long long t = fileMTime(worldsDir() + "/" + n + "/world.txt");
+        w.savedAt = t;
+        found.push_back({t, w});
     }
     std::stable_sort(found.begin(), found.end(), [](const auto& a, const auto& b) {
         return a.first != b.first ? a.first > b.first : a.second.slug < b.second.slug;
@@ -218,7 +230,32 @@ bool deleteWorld(const std::string& slug) {
     return removeTree(worldsDir() + "/" + slug);
 }
 
-WorldSave newWorld(const std::string& name, int map, Difficulty d, WorldMode m, const std::vector<WorldSave>& existing) {
+uint64_t freshWorldSeed(const std::vector<WorldSave>& existing) {
+    for (;;) {
+        const uint64_t s = proc::ProcWorld::randomSeed();
+        bool taken = s == 0;
+        for (const WorldSave& e : existing) taken = taken || e.seed == s;
+        if (!taken) return s;
+    }
+}
+
+uint64_t parseSeed(const std::string& text) {
+    size_t a = 0, b = text.size();
+    while (a < b && text[a] == ' ') a++;
+    while (b > a && text[b - 1] == ' ') b--;
+    if (a == b) return 0;
+    bool digits = b - a <= 19;
+    for (size_t i = a; i < b && digits; i++) digits = std::isdigit((unsigned char)text[i]) != 0;
+    if (digits) {
+        const uint64_t v = std::strtoull(text.substr(a, b - a).c_str(), nullptr, 10);
+        if (v) return v;
+    }
+    uint64_t h = 1469598103934665603ull;  // (FNV-1a of the text as typed, capitals)
+    for (size_t i = a; i < b; i++) h = (h ^ (unsigned char)std::toupper((unsigned char)text[i])) * 1099511628211ull;
+    return h ? h : 1;
+}
+
+WorldSave newWorld(const std::string& name, int map, Difficulty d, WorldMode m, const std::vector<WorldSave>& existing, uint64_t seed) {
     std::vector<std::string> taken;
     for (const auto& e : existing) taken.push_back(e.slug);
     WorldSave w;
@@ -228,5 +265,6 @@ WorldSave newWorld(const std::string& name, int map, Difficulty d, WorldMode m, 
     w.diff = d;
     w.mode = m;
     w.build = net::kRelease;
+    if (map == MAP_PROCEDURAL) w.seed = seed ? seed : freshWorldSeed(existing);
     return w;
 }

@@ -11,7 +11,9 @@
 
 namespace mainmenu {
 
-enum Page { P_FRONT, P_MAP, P_VEHICLE, P_DEV, P_WORLDS, P_NEW_WORLD, P_DELETE_WORLD };
+enum Page { P_FRONT, P_MAP, P_VEHICLE, P_DEV, P_WORLDS, P_NEW_WORLD, P_DELETE_WORLD,
+            P_WORLD_MAP,       // New World's MAP: the BUILT MAPS, then the CUSTOM WORLD (endless land from a seed)
+            P_START_VEHICLE };  // New World's VEHICLE: the starters as pictures, clicked to pick
 
 // What a press asks main.cpp to do. (Moves between pages are done inside; they return A_NONE.)
 enum Act {
@@ -21,7 +23,7 @@ enum Act {
     A_SETTINGS,      // the settings page (the SETTINGS button)
     A_QUIT,
     A_CAREER_CONTINUE,  // a saved world chosen: Result::world is its slug
-    A_CAREER_NEW,       // CREATE on the New World page: worldName, map, difficulty, mode and vehicle are the picks
+    A_CAREER_NEW,       // CREATE on the New World page: worldName, map, seed, difficulty, mode and vehicle are the picks
     A_CAREER_DELETE,    // YES on the delete page: Result::world is the slug (the game calls deleteWorld; the Nav has already dropped it from its list)
     A_DEV_EDITOR,    // the world editor
     A_DEV_SECTION,   // a new obstacle section in the editor
@@ -44,14 +46,25 @@ struct Result {
     int difficulty = 1;     // A_CAREER_NEW: a Difficulty
     int mode = 0;           // A_CAREER_NEW: a WorldMode
     std::string worldName;  // A_CAREER_NEW: the name typed
+    uint64_t seed = 0;      // A_CAREER_NEW on a custom world: its seed (never 0 there); 0 on a built map
     bool operator==(const Result& o) const {
         return act == o.act && career == o.career && map == o.map && vehicle == o.vehicle && world == o.world && difficulty == o.difficulty &&
-               mode == o.mode && worldName == o.worldName;
+               mode == o.mode && worldName == o.worldName && seed == o.seed;
     }
 };
 
-// The New World page's rows.
-enum NewRow { N_NAME, N_MAP, N_DIFF, N_MODE, N_VEH, N_CREATE, N_COUNT };
+// The New World page's rows. SEED is only used on a custom world (moving skips it on a built map).
+enum NewRow { N_NAME, N_MAP, N_SEED, N_DIFF, N_MODE, N_VEH, N_CREATE, N_COUNT };
+
+// What New World's MAP offers, in order: the built maps (careerMaps()), then the custom worlds (customWorldMaps()).
+std::vector<int> newWorldMaps();
+bool customWorld(int map);  // one of customWorldMaps()
+
+// A hit row (Nav::hits) that is no row: the world list's DELETE button (opens the delete page for the focused world).
+constexpr int kHitDelete = 1000;
+
+// "WORLD <n>" for the lowest n no saved world already has.
+std::string defaultWorldName(const std::vector<WorldSave>& worlds);
 
 // The catalog indices a career can start in: listedVehicles() without the ones startableVehicle() refuses.
 std::vector<int> startVehicles();
@@ -84,10 +97,12 @@ public:
     // The New World page's picks.
     std::string newName;
     te::Edit nameEdit;
-    bool typing = false;            // the NAME row is taking keys and text
+    bool typing = false;            // the focused row (NAME or SEED) is taking keys and text
     int diffIdx = DIFF_MEDIUM, modeIdx = MODE_PERSONAL;
     int startIdx = 0;               // index into startVehicles()
-    int worldMapIdx = 0;            // index into careerMaps() (no procedural or real terrain career worlds yet)
+    int worldMapIdx = 0;            // index into newWorldMaps()
+    std::string seedText;           // a custom world's seed as shown and typed (digits, or words: parseSeed)
+    te::Edit seedEdit;
 
     // Opens on the front page, the pickers on the map and vehicle last used (a MapId, a catalog index).
     void open(int map, int vehicle);
@@ -105,7 +120,10 @@ public:
     int vehicle() const;   // the catalog index picked
     std::string title() const;
     int startVehicle() const;  // the catalog index picked on the New World page
-    int worldMap() const;      // the MapId picked on the New World page (one of careerMaps())
+    int worldMap() const;      // the MapId picked on the New World page (one of newWorldMaps())
+    bool customPick() const { return customWorld(worldMap()); }
+    void rerollSeed();         // a new random seed no saved world has
+    uint64_t seedPick() const; // the seed CREATE would use (parseSeed of the text; a fresh one when it's blank)
 
     // Where each row was drawn (drawable pixels), for the mouse: set by the painter.
     struct Hit { float x, y, w, h; int row; };
