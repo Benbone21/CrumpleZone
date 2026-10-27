@@ -248,7 +248,7 @@ vec3 lampLight(vec3 p, vec3 n, vec3 V, float specP, float wrap, out vec3 spec){
       float er = uLampUp[i].w * hemi * wr * wr / (d2 + 0.5);
       float Er = max(dot(n, Lr) + 0.3, 0.0) * (1.0 - wrap) / 1.3 + wrap * 0.6;
       Er = er * Er * 5.0 / (er * Er + 5.0);
-      vec3 lc = (uLampPos[i].w > 4.5 ? vec3(0.80, 0.90, 1.0) : vec3(1.0, 0.05, 0.02)) / tint;
+      vec3 lc = (uLampPos[i].w > 4.5 ? vec3(1.0, 0.92, 0.74) : vec3(1.0, 0.025, 0.008)) / tint;
       E += lc * Er;
       spec += lc * (pow(max(dot(n, normalize(Lr + V)), 0.0), specP) * Er);
       continue;
@@ -1577,7 +1577,7 @@ void main(){
   } else if (kind == 4) {  // tail lamp: lit with the headlamps, much brighter when braking
     vec3 red = pow(vec3(0.7, 0.04, 0.03), vec3(2.2));
     float ok = uLampOk[2 + side];
-    col = red * lit * 0.5 + env * fres * 0.6 + vec3(1.0, 0.05, 0.03) * (0.12 + 2.5 * uLampOn[2 + side] + 9.0 * uBrake * ok);
+    col = red * lit * 0.5 + env * fres * 0.6 + vec3(1.0, 0.022, 0.01) * (0.12 + 2.0 * uLampOn[2 + side] + 4.0 * uBrake * ok);
     col = mix(red * lit * 0.2 + env * fres * 0.3, col, ok);
   } else if (kind == 8) {  // amber corner / indicator lens: the parking lights glow with the headlamps
     col = vec3(0.85, 0.25, 0.015) * (0.05 + lit * 0.4 + 1.2 * uLampOn[side]) + env * fres * 0.4;
@@ -2999,7 +2999,7 @@ void Renderer::postProcess(const View& view, const M4& proj) {
     ActiveTexture(GL_TEXTURE0);
     // The chain sums kBloomLevels blurred copies: normalize it here.
     // (More glow round the lamps at night, when the eye is open wide.)
-    Uniform1f(uniformLocation(progComposite, "uBloomK"), bloom && rs.blur <= 0 ? fadeBloom_ * 0.08f * (1 + 0.8f * daylight.night) / kBloomLevels : 0.0f);
+    Uniform1f(uniformLocation(progComposite, "uBloomK"), bloom && rs.blur <= 0 ? fadeBloom_ * 0.12f * (1 + 1.0f * daylight.night) / kBloomLevels : 0.0f);
     Uniform1f(uniformLocation(progComposite, "uNight"), daylight.night);
     Uniform1f(uniformLocation(progComposite, "uBlur"), chain ? rs.blur : 0.0f);
     Uniform1f(uniformLocation(progComposite, "uBlurNorm"), 0.8f / kBloomLevels);
@@ -5435,7 +5435,7 @@ void Renderer::buildLampGlow(const Sim& sim, const V3& eye, std::vector<Vtx>& ou
                 }
             }
         }
-        static const float kHead[3] = {1.0f, 0.90f, 0.74f}, kRed[3] = {1.0f, 0.05f, 0.02f}, kWhite[3] = {0.85f, 0.93f, 1.0f};
+        static const float kHead[3] = {1.0f, 0.90f, 0.74f}, kRed[3] = {1.0f, 0.018f, 0.006f}, kWhite[3] = {1.0f, 0.93f, 0.78f};
         if (lp.beam > 0)
             for (int s = 0; s < 2; s++)
                 if (lp.head[s] > 0.5f) emit(lp.headPos[s] + lp.fwd * 0.04, lp.fwd, lp.beam == 2 ? 1.6f : 1.0f, kHead, 0.20);
@@ -5443,7 +5443,7 @@ void Renderer::buildLampGlow(const Sim& sim, const V3& eye, std::vector<Vtx>& ou
         const V3 mid = (lp.tailPos[0] + lp.tailPos[1]) * 0.5;
         for (int s = 0; s < 2; s++) {
             if (lp.tail[s] < 0.5f) continue;
-            const float k = (lp.beam ? 0.5f : 0.0f) + 3.5f * brake;
+            const float k = (lp.beam ? 0.5f : 0.0f) + 2.0f * brake;
             emit(lp.tailPos[s] - lp.fwd * 0.04, back, k * (0.6f + 0.4f * night), kRed, 0.12 + 0.10 * brake);
             if (car.gear < 0) emit(lp.tailPos[s] * 0.6 + mid * 0.4 - lp.fwd * 0.04 - lp.up * 0.1, back, 1.3f, kWhite, 0.12);
         }
@@ -5861,9 +5861,9 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
                     float* D = lampDir + lampCount * 4;
                     float* U = lampUp + lampCount * 4;
                     P[0] = (float)mid.x, P[1] = (float)mid.y, P[2] = (float)mid.z, P[3] = rev ? 5.0f : 3.0f;
-                    D[0] = (float)lp.fwd.x, D[1] = (float)lp.fwd.y, D[2] = (float)lp.fwd.z, D[3] = rev ? 14.0f : 16.0f;
+                    D[0] = (float)lp.fwd.x, D[1] = (float)lp.fwd.y, D[2] = (float)lp.fwd.z, D[3] = rev ? 14.0f : 11.0f;
                     U[0] = (float)lp.up.x, U[1] = (float)lp.up.y, U[2] = (float)lp.up.z;
-                    U[3] = rev ? 9.0f * ok : (lp.beam ? 2.5f : 0.0f) * ok + 14.0f * brake * ok;
+                    U[3] = rev ? 9.0f * ok : (lp.beam ? 2.5f : 0.0f) * ok + 7.0f * brake * ok;
                     lampCount++;
                 }
                 if (++cars >= 4) break;
