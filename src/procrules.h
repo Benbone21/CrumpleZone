@@ -97,7 +97,7 @@ struct SlopeRockRule {
 };
 
 // ---- The scatter after the Backcountry's (owner: "I really like ... the dispersion of rocks and items and trails") ----------------
-// Measured on both maps (build/review/procscale/dispersion.txt): the Backcountry has ~11 rocks a hectare, clumped (Clark-Evans R 0.5),
+// Measured on both maps (wip/procworld5-scale: build/review/procscale/numbers.txt): the Backcountry has ~11 rocks a hectare, clumped (Clark-Evans R 0.5),
 // a log a hectare, bushes in thickets (R 0.7), and rocks along and on its rated trails.
 struct ScatterRule {
     double rockRate = 1.6;        // the loose rocks tried, times the old scatter's
