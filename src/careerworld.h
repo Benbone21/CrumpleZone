@@ -1,5 +1,6 @@
 // Career worlds: the difficulty and mode a world is created with, and the folder name it gets.
 #pragma once
+#include <cstdint>
 #include <set>
 #include <string>
 #include <vector>
@@ -50,6 +51,13 @@ struct WorldSave {
     std::vector<LeftVehicle> left;
     std::set<std::string> opened;
     double playedSeconds = 0;
+    // A custom world (MAP_PROCEDURAL): the seed its land is made from (0 on a built map), and the window of it the cars in this save
+    // stand in (World::ProcInfo ox/oz when it was saved: the positions in the cars' saves are round it). originSet false: the seed's start.
+    uint64_t seed = 0;
+    bool originSet = false;
+    int64_t ox = 0, oz = 0;
+    int lastVehicle = -1;    // the catalog index you were in when it was last saved (-1: not known)
+    long long savedAt = 0;   // listWorlds(): world.txt's time (seconds since 1970; 0 not known). Not in the file.
     bool damaged = false;
 };
 
@@ -58,5 +66,10 @@ bool saveWorld(const WorldSave& w);  // atomic; the previous good world.txt beco
 bool loadWorld(const std::string& slug, WorldSave& w);  // falls back to the .bak; both bad: w.damaged, false
 std::vector<WorldSave> listWorlds();  // every folder in worldsDir(), damaged ones too, most recently saved first
 bool deleteWorld(const std::string& slug);
-// A new world (not saved): the slug is free among `existing`, build is this release.
-WorldSave newWorld(const std::string& name, int map, Difficulty d, WorldMode m, const std::vector<WorldSave>& existing);
+// A new world (not saved): the slug is free among `existing`, build is this release. On MAP_PROCEDURAL it gets `seed`, or with 0 a
+// random one that none of `existing` has (two new custom worlds are never the same land unless the player types the same seed).
+WorldSave newWorld(const std::string& name, int map, Difficulty d, WorldMode m, const std::vector<WorldSave>& existing, uint64_t seed = 0);
+// A random seed for a new custom world that none of `existing` has (never 0).
+uint64_t freshWorldSeed(const std::vector<WorldSave>& existing);
+// What a typed seed means: digits are the number itself, anything else is hashed (so "MY CANYON" is a seed too). 0 for blank.
+uint64_t parseSeed(const std::string& text);

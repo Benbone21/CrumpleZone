@@ -194,9 +194,12 @@ inline int soundMap(int map) { return map == MAP_WILDS ? (int)MAP_PROVING_GROUND
 // built here, for the tests and --map.)
 const std::vector<int>& listedMaps();
 bool mapListed(int map);
-// The maps a career world can be on: the listed ones less the procedural world and a real terrain (a career world keeps its crates'
-// opened state by spot, and those two have no fixed spots yet: their windows slide, or the terrain comes from outside the save).
+// The hand-made maps a career world can be on ("BUILT MAPS"): the listed ones less the procedural world and a real terrain.
 const std::vector<int>& careerMaps();
+// The custom worlds a career can be on ("CUSTOM WORLD"): the procedural world, made from the seed the career world keeps (its
+// crates are kept by seed and place id, career.cpp). A real terrain is not offered: its land comes from outside the save.
+const std::vector<int>& customWorldMaps();
+// A built map or a custom world.
 bool careerMap(int map);
 inline bool mapForLevels(int map) { return map == MAP_WILDS || mapListed(map); }  // (levels can be on a listed map or on the wilds)
 int nextListedMap(int map, int dir);  // the next one on the list (from any map)
