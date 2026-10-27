@@ -21,6 +21,7 @@
 #include "../src/platform.h"
 #include "../src/props.h"
 #include "../src/worldcache.h"
+#include "../src/worldprint.h"
 #include "harness.h"
 
 namespace {
@@ -361,6 +362,72 @@ SCENARIO(onemapSame, "onemap/same-every-time", "The big map builds the same on o
                  c.regionStarts[k].parking.size() == a.regionStarts[k].parking.size();
     ctx.check("...its regions' starts", starts);
     std::printf("CACHE big map: %.1f MB\n", bytes.size() / 1048576.0);
+}
+
+// The same big map on every machine (docs/plans/xplat-world.md): what's on it and the land, a hash per category (src/worldprint.h),
+// against what Linux builds. Linux, Windows and macOS (CI runs this on each) must all agree: a guest drives the world it built itself,
+// and a rock that's somewhere else on the guest's machine than on the host's is one it drives through, or hits where there is none.
+// If you changed the big map on purpose, run this on Linux and paste the new hashes it prints (WORLDPRINT lines) below.
+namespace {
+struct Golden {
+    const char* cat;
+    uint64_t h;
+};
+// Code-made rocks (the dedicated server's; and the tests' big map)...
+const Golden kBareGolden[] = {
+    {"terrain", 0xc5de2d4181e488bbull},
+    {"ground", 0x1909611ed75ea744ull},
+    {"water", 0x47d33adb82c9070eull},
+    {"rocks", 0x5db8fecf561c4900ull},
+    {"trees", 0xff9c864722e88248ull},
+    {"logs", 0xe6e09f444f33c667ull},
+    {"bushes", 0x9eaaa945cf5bffdaull},
+    {"boxes", 0xeaee9db4bc5cacb3ull},
+    {"poles", 0x5d5b725f7c98047aull},
+    {"props", 0x0e403bd1d8542387ull},
+    {"places", 0xc4663ffe163282d9ull},
+    {"trails", 0x1abb6d010909b118ull}};
+// ...and the scanned ones the game places (assets/props/rocks.hull).
+const Golden kScansGolden[] = {
+    {"terrain", 0xc5de2d4181e488bbull},
+    {"ground", 0x1909611ed75ea744ull},
+    {"water", 0x47d33adb82c9070eull},
+    {"rocks", 0x55380c41b260a74bull},
+    {"trees", 0xfa0376f3b629c371ull},
+    {"logs", 0x80c84e715c3cbb51ull},
+    {"bushes", 0x5bf9fa57b43c8df8ull},
+    {"boxes", 0x27304ab23d141004ull},
+    {"poles", 0x12be7c26b987fb00ull},
+    {"props", 0x03e02f94aa6702a8ull},
+    {"places", 0xc4663ffe163282d9ull},
+    {"trails", 0x1abb6d010909b118ull}};
+void checkPrint(Ctx& ctx, const char* what, const worldprint::Print& p, const Golden* g, size_t n) {
+    for (int c = 0; c < worldprint::CAT_COUNT; c++)
+        std::printf("WORLDPRINT %s %-8s 0x%016llxull  (%zu)\n", what, worldprint::catName(c), (unsigned long long)p.cat[c], p.count[c]);
+    for (size_t k = 0; k < n; k++)
+        for (int c = 0; c < worldprint::CAT_COUNT; c++)
+            if (!std::strcmp(worldprint::catName(c), g[k].cat)) {
+                char buf[96];
+                std::snprintf(buf, sizeof buf, "%016llx here, %016llx on Linux", (unsigned long long)p.cat[c], (unsigned long long)g[k].h);
+                ctx.check(std::string(what) + ": " + g[k].cat + " as Linux builds them", p.cat[c] == g[k].h, buf);
+            }
+}
+}  // namespace
+
+SCENARIO(onemapXplat, "onemap/xplat-fingerprint", "The big map is the same on every OS (Linux's): its land, rocks, trees, logs, bushes, props, places and trails, a hash each") {
+    checkPrint(ctx, "code-made rocks", worldprint::print(bigMap()), kBareGolden, sizeof kBareGolden / sizeof *kBareGolden);
+    const props::HullLibrary& lib = props::sharedHullLibrary();
+    ctx.check("the scanned rocks are there (assets/props/rocks.hull)", lib.loaded(), lib.loaded() ? "" : "no assets/props: the game's own rocks not checked");
+    if (!lib.loaded()) return;
+    std::unique_ptr<World> w;
+    {
+        props::ScopedRockScans scans(&lib);
+        const bool was = worldcache::bypass;
+        worldcache::bypass = true;  // (built, not read from a cache another build made)
+        w = std::make_unique<World>(MAP_BACKCOUNTRY);
+        worldcache::bypass = was;
+    }
+    checkPrint(ctx, "scanned rocks", worldprint::print(*w), kScansGolden, sizeof kScansGolden / sizeof *kScansGolden);
 }
 
 SCENARIO(onemapRoads, "onemap/roads", "A gravel road from the Backcountry into each region: from its place to the region's start, loop road or lodge, no steeper than 13%, dry, its banks no cliffs") {

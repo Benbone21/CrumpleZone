@@ -1,5 +1,6 @@
 // A timber bridge's wear (bridgelayout.h).
 #include "bridgelayout.h"
+#include "detmath.h"
 
 #include <algorithm>
 #include <cmath>
@@ -18,7 +19,7 @@ double BridgeLayout::Piece::topAt(double z) const {
     // (A broken piece is tipped about its sound end: its far end down.)
     if (kind != 2) return -drop;
     const double w = z1 - z0, u = roll > 0 ? (z - z0) : (z1 - z);
-    return -drop - std::fabs(std::sin(roll)) * std::clamp(u, 0.0, w);
+    return -drop - std::fabs(dm::sin(roll)) * std::clamp(u, 0.0, w);
 }
 
 namespace {
@@ -96,7 +97,7 @@ BridgeLayout bridgeLayout(const BridgeLook& look) {
         }
         for (int k = 0; k < rows * segs; k++) {
             drop[k] = state[k] == 1 ? 0.03 + 0.06 * r() : state[k] == 2 ? 0.02 + 0.03 * r() : 0;
-            roll[k] = state[k] == 2 ? (r() < 0.5 ? -1 : 1) * std::asin(std::min(0.9, (0.08 + 0.1 * r()) / sw)) : 0;  // (its far end 8-18 cm down: never below the stringers' tops)
+            roll[k] = state[k] == 2 ? (r() < 0.5 ? -1 : 1) * dm::asin(std::min(0.9, (0.08 + 0.1 * r()) / sw)) : 0;  // (its far end 8-18 cm down: never below the stringers' tops)
         }
     }
     // Running boards: two boards along each wheel track, in lengths ~2.4 m (staggered board to board); on a worn bridge some gone

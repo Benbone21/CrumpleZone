@@ -90,6 +90,10 @@ build/bench_sim: build/tools/bench_sim.o $(patsubst %.cpp,build/%.o,$(PHYS))
 build/worldtime: build/tools/worldtime.o $(patsubst %.cpp,build/%.o,$(PHYS))
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -lm
 
+# The world's fingerprint, by category (src/worldprint.h): build/worldprint [--scans] [--threads N] [--dump FILE] [MAP...]
+build/worldprint: build/tools/worldprint.o $(patsubst %.cpp,build/%.o,$(PHYS))
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -lm
+
 # Prototype performance targets are measured separately from functional scenario checks.
 build/bench_autopilot: build/tests/run_tests.o build/tests/lidar.o build/tests/harness.o $(patsubst %.cpp,build/%.o,$(PHYS))
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -lm
@@ -129,6 +133,9 @@ build/win/bench_sim.exe: build/win/obj/tools/bench_sim.o $(patsubst %.cpp,build/
 
 # The world-build timer for Windows (its land hash: the same big map on Linux and Windows? docs/plans/one-map.md).
 build/win/worldtime.exe: build/win/obj/tools/worldtime.o $(patsubst %.cpp,build/win/obj/%.o,$(PHYS))
+	$(WINCXX) $(WINFLAGS) -o $@ $^ -lws2_32 -liphlpapi -static -static-libgcc -static-libstdc++
+
+build/win/worldprint.exe: build/win/obj/tools/worldprint.o $(patsubst %.cpp,build/win/obj/%.o,$(PHYS))
 	$(WINCXX) $(WINFLAGS) -o $@ $^ -lws2_32 -liphlpapi -static -static-libgcc -static-libstdc++
 
 build/win/run_tests.exe: build/win/obj/tests/run_tests.o $(patsubst %.cpp,build/win/obj/%.o,$(PHYS) $(SCEN) src/music.cpp)
@@ -191,6 +198,8 @@ build/rel/crumplezone: $(REL_GAME)
 build/rel/run_tests: $(REL_TEST)
 	$(CXX) $(RELFLAGS) $(RELLD) -o $@ $^ -lpthread -lm
 build/rel/bench_sim: build/rel/tools/bench_sim.o $(REL_PHYS)
+	$(CXX) $(RELFLAGS) $(RELLD) -o $@ $^ -lpthread -lm
+build/rel/worldprint: build/rel/tools/worldprint.o $(REL_PHYS)
 	$(CXX) $(RELFLAGS) $(RELLD) -o $@ $^ -lpthread -lm
 build/rel/test_render: build/rel/tests/render.o $(filter-out build/rel/src/main.o,$(REL_GAME))
 	$(CXX) $(RELFLAGS) $(RELLD) -o $@ $^ $(LDLIBS)

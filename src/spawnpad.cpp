@@ -1,4 +1,5 @@
 #include "spawnpad.h"
+#include "detmath.h"
 
 #include <algorithm>
 #include <cmath>
@@ -13,7 +14,7 @@ constexpr double kMaxRamp = 30.0;
 // A pad's frame: u ahead (the way it faces), v to its left.
 struct PadFrame {
     double x, z, fx, fz, lx, lz;
-    PadFrame(const SpawnPad& s) : x(s.p.x), z(s.p.z), fx(std::cos(s.yaw)), fz(-std::sin(s.yaw)), lx(std::sin(s.yaw)), lz(std::cos(s.yaw)) {}
+    PadFrame(const SpawnPad& s) : x(s.p.x), z(s.p.z), fx(dm::cos(s.yaw)), fz(-dm::sin(s.yaw)), lx(dm::sin(s.yaw)), lz(dm::cos(s.yaw)) {}
     void local(double wx, double wz, double& u, double& v) const {
         u = (wx - x) * fx + (wz - z) * fz;
         v = (wx - x) * lx + (wz - z) * lz;
@@ -25,9 +26,9 @@ struct PadFrame {
 bool looseProp(PropKind k) { return k != PROP_FENCE && k != PROP_GARAGE && k != PROP_CABIN; }
 bool clearablePole(const World& w, const Pole& pl) {
     for (const Tree& t : w.trees)
-        if (std::hypot(t.base.x - pl.x, t.base.z - pl.z) < 0.05) return true;
+        if (dm::hypot(t.base.x - pl.x, t.base.z - pl.z) < 0.05) return true;
     for (const Prop& f : w.fixtures)
-        if (looseProp(f.kind) && std::hypot(f.a.x - pl.x, f.a.z - pl.z) < 1.6) return true;
+        if (looseProp(f.kind) && dm::hypot(f.a.x - pl.x, f.a.z - pl.z) < 1.6) return true;
     return false;
 }
 
@@ -35,7 +36,7 @@ bool clearablePole(const World& w, const Pole& pl) {
 double outside(const SpawnPad& s, double u, double v) {
     const double du = std::max(-s.back - u, u - (s.front + s.ramp)), dv = std::fabs(v) - s.half;
     if (du <= 0 && dv <= 0) return std::max(du, dv);
-    return std::hypot(std::max(du, 0.0), std::max(dv, 0.0));
+    return dm::hypot(std::max(du, 0.0), std::max(dv, 0.0));
 }
 
 // The ground the slab sits on, before it changes: its mean height (what the pad is cut or filled to), and the
@@ -79,7 +80,7 @@ void clearPad(World& w, const SpawnPad& s) {
     };
     auto nearStation = [&](double x, double z) {
         for (const Station& st : w.stations)
-            if (std::hypot(st.p.x - x, st.p.z - z) < 7.0) return true;
+            if (dm::hypot(st.p.x - x, st.p.z - z) < 7.0) return true;
         return false;
     };
     auto drop = [](auto& vec, auto gone) { vec.erase(std::remove_if(vec.begin(), vec.end(), gone), vec.end()); };
@@ -156,7 +157,7 @@ void build(World& w, SpawnPad& s) {
             const double d = outside(s, u, v);
             if (d >= kGuard + blend) continue;
             bool atStation = false;  // (a repair station's own ground is left as it is: its pad stays level)
-            for (const Station& st : w.stations) atStation |= std::hypot(st.p.x - c.x, st.p.z - c.z) < 9.0;
+            for (const Station& st : w.stations) atStation |= dm::hypot(st.p.x - c.x, st.p.z - c.z) < 9.0;
             if (atStation && d > 0) continue;
             const double plane = u <= s.front || s.ramp <= 0 ? H0 : H0 - s.drop * clampd((u - s.front) / s.ramp, 0, 1);
             const double wgt = d <= kGuard ? 1.0 : 1.0 - smoothstep(kGuard, kGuard + blend, d);
@@ -230,7 +231,7 @@ bool goodSpot(const World& w, const SpawnPad& s0) {
         };
         // A repair shed (10 m by 7.4 and its roof): any point of its footprint in.
         for (const Station& st : w.stations) {
-            const double sfx = std::cos(st.yaw), sfz = -std::sin(st.yaw);
+            const double sfx = dm::cos(st.yaw), sfz = -dm::sin(st.yaw);
             for (double a = -5.6; a <= 5.6; a += 1.0)
                 for (double b = -4.4; b <= 4.4; b += 1.0) {
                     double u, v;
@@ -298,7 +299,7 @@ void addMapSpawnPads(World& w) {
     for (double r = 0; r <= 30; r += 3)
         for (int k = 0; k < (r == 0 ? 1 : 8); k++) {
             const double ang = k * M_PI / 4;
-            const V3 q = w.spawn + V3(std::cos(ang), 0, std::sin(ang)) * r;
+            const V3 q = w.spawn + V3(dm::cos(ang), 0, dm::sin(ang)) * r;
             for (int d = 0; d <= 12; d++) {
                 const double dy = (d % 2 ? -1 : 1) * ((d + 1) / 2) * M_PI / 12;  // 0, -15, +15, ... 180 degrees
                 const double cost = r + std::fabs(dy) * 4;
@@ -325,7 +326,7 @@ void addMapSpawnPads(World& w) {
 
 bool World::spawnSlot(int k, V3& p, double& yaw) const {
     for (const SpawnPad& s : spawnPads) {
-        if (std::hypot(s.p.x - spawn.x, s.p.z - spawn.z) > 0.5) continue;
+        if (dm::hypot(s.p.x - spawn.x, s.p.z - spawn.z) > 0.5) continue;
         if (k < 0 || k >= s.slots) return false;
         double u, v;
         padSlotUV(s.cols, k, u, v);

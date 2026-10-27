@@ -9,6 +9,7 @@
 // (traffic keeps right).
 #include <cmath>
 
+#include "detmath.h"
 #include "world.h"
 
 namespace {
@@ -48,10 +49,10 @@ void World::buildFreeway() {
             const double x = X(i), z = X(j), az = std::fabs(z), fx = fold(x);
             const int id = i * hN + j;
             // Rolling farmland either side, periodic along the road, climbing to hills.
-            double h = 6 + 5 * std::sin(tau * x + 0.013 * z) + 2.5 * std::sin(3 * tau * x + 0.05 * z + 1.0) + 1.2 * std::sin(7 * tau * x - 0.04 * z);
+            double h = 6 + 5 * dm::sin(tau * x + 0.013 * z) + 2.5 * dm::sin(3 * tau * x + 0.05 * z + 1.0) + 1.2 * dm::sin(7 * tau * x - 0.04 * z);
             h *= smoothstep(28, 95, az);
-            h += std::pow(std::max(0.0, az - 430), 2) * 0.02;  // hills close the valley in
-            const double rest = std::hypot(fx, z - restZ);
+            h += dm::pow(std::max(0.0, az - 430), 2) * 0.02;  // hills close the valley in
+            const double rest = dm::hypot(fx, z - restZ);
             h *= smoothstep(22, 40, rest) * smoothstep(8, 16, std::fabs(fx) + std::max(0.0, kRail - z) * 10);  // flat round the shop and its road
             hgrid[id] = (float)h;
             if (az <= kPaved) {

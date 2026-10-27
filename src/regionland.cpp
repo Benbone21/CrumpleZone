@@ -1,8 +1,9 @@
 // The country grown round the big map's regions (regionland.h, docs/plans/regions2.md).
 //
-// Only polynomials, smoothsteps, the lattice noises and std::sin go into the land, as in the maps' own: the same heights on every
-// machine (the multiplayer world check, World::landHash).
+// Only polynomials, smoothsteps, the lattice noises and dm::sin (detmath.h) go into the land, as in the maps' own: the same heights on
+// every machine (the multiplayer world check, World::landHash).
 #include "regionland.h"
+#include "detmath.h"
 
 #include <algorithm>
 #include <cmath>
@@ -13,7 +14,7 @@ namespace {
 double sq(double v) { return v * v; }
 
 // The Frontier's canyon: its centre line across the cold bench (z at x), and its floor's height there.
-double canyonZ(double x) { return -3900 + 260 * std::sin(x * 0.0019 + 0.7) + 90 * std::sin(x * 0.0061 - 1.3); }
+double canyonZ(double x) { return -3900 + 260 * dm::sin(x * 0.0019 + 0.7) + 90 * dm::sin(x * 0.0061 - 1.3); }
 double canyonFloor(double x) { return 7 + 0.026 * std::max(0.0, x - 2300); }
 
 double mountainCountry(const MapRegion& r, double x, double z) {

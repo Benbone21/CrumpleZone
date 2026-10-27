@@ -15,6 +15,7 @@
 #include <cmath>
 #include <string>
 
+#include "detmath.h"
 #include "parallel.h"
 #include "world.h"
 
@@ -27,14 +28,14 @@ const double kTwisterX = -70, kBoulderX = -95, kLedgeX = -120, kLogX = -145, kNo
 const double kLaneZ0 = -425, kLaneZ1 = -335;
 
 // The summit trail's spiral: radius r0 e^(-k t) at angle -90 deg + t, one full turn.
-const double kSpiralR0 = kPeakZ + 125, kSpiralR1 = 92, kSpiralK = std::log(kSpiralR0 / kSpiralR1) / (2 * M_PI);
+const double kSpiralR0 = kPeakZ + 125, kSpiralR1 = 92, kSpiralK = dm::log(kSpiralR0 / kSpiralR1) / (2 * M_PI);
 V3 spiralAt(double t) {
-    const double th = -M_PI / 2 + t, r = kSpiralR0 * std::exp(-kSpiralK * t);
-    return V3(kPeakX + r * std::cos(th), 0, kPeakZ + r * std::sin(th));
+    const double th = -M_PI / 2 + t, r = kSpiralR0 * dm::exp(-kSpiralK * t);
+    return V3(kPeakX + r * dm::cos(th), 0, kPeakZ + r * dm::sin(th));
 }
 V3 spiralDir(double t) {  // uphill along the trail
     const double th = -M_PI / 2 + t;
-    return norm(V3(-kSpiralK * std::cos(th) - std::sin(th), 0, -kSpiralK * std::sin(th) + std::cos(th)));
+    return norm(V3(-kSpiralK * dm::cos(th) - dm::sin(th), 0, -kSpiralK * dm::sin(th) + dm::cos(th)));
 }
 
 // Widowmaker Spur: a knife-edge ridge running out east from the summit trail (where it
@@ -45,7 +46,7 @@ const double kSpurLen = 160;       // to the pinnacle's center
 const double kPinnacleR = 10;
 V3 spurOut() {  // outward from the peak at the junction
     const double th = -M_PI / 2 + kSpurT;
-    return V3(std::cos(th), 0, std::sin(th));
+    return V3(dm::cos(th), 0, dm::sin(th));
 }
 V3 spurStart() { return spiralAt(kSpurT) + spurOut() * 2.4; }  // the trail's outer edge
 // Crest height above the junction, flat half width, and the crest's cross-slope (rise
@@ -85,7 +86,7 @@ const double kGullyStepH[3] = {0.4, 0.45, 0.4};
 // Repair stations.
 const V3 kTrailheadShop(-36, 0, -342), kParkPit(-222, 0, -338);
 const double kHutT = kSpurT - 0.11;  // ~30 m before the spur, on the outside of the trail
-V3 hutOut() { return V3(std::cos(-M_PI / 2 + kHutT), 0, std::sin(-M_PI / 2 + kHutT)); }
+V3 hutOut() { return V3(dm::cos(-M_PI / 2 + kHutT), 0, dm::sin(-M_PI / 2 + kHutT)); }
 V3 halfwayHut() { return spiralAt(kHutT) + hutOut() * 9.6; }
 
 struct Rng {
@@ -115,22 +116,22 @@ static double twisterBump(double x, double z) {
         double mz = kLaneZ0 + 12 + 3.2 * k, mx = kTwisterX + (k % 2 ? 1.15 : -1.15);
         double amp = 0.5 + 0.022 * k;  // 0.5 m rising to 0.79 m
         double dd = ((x - mx) * (x - mx) + (z - mz) * (z - mz)) / (1.35 * 1.35);
-        if (dd < 9) h += amp * std::exp(-dd);
+        if (dd < 9) h += amp * dm::exp(-dd);
     }
     return h;
 }
 
 double World::mountainHeight(double x, double z) const {
     // Valley floor: gentle rolls.
-    double h = 3.5 * std::sin(x * 0.011 + 0.4) * std::cos(z * 0.013 - 1.1) + 1.5 * std::sin((x - z) * 0.027);
+    double h = 3.5 * dm::sin(x * 0.011 + 0.4) * dm::cos(z * 0.013 - 1.1) + 1.5 * dm::sin((x - z) * 0.027);
     // The massif: a cone with ridged flanks...
-    double d = std::hypot(x - kPeakX, z - kPeakZ);
+    double d = dm::hypot(x - kPeakX, z - kPeakZ);
     double cone = std::max(0.0, 1 - d / kMassifR);
-    h += kMassifH * std::pow(cone, 1.4) * (0.85 + 0.3 * ridgedNoise(x * 0.006 + 2.0, z * 0.006 - 1.0, 4));
+    h += kMassifH * dm::pow(cone, 1.4) * (0.85 + 0.3 * ridgedNoise(x * 0.006 + 2.0, z * 0.006 - 1.0, 4));
     // ...and a lower peak to the west.
-    double d2 = std::hypot(x + 330, z - 140);
+    double d2 = dm::hypot(x + 330, z - 140);
     double cone2 = std::max(0.0, 1 - d2 / 260);
-    h += 140 * std::pow(cone2, 1.8) * (0.8 + 0.4 * ridgedNoise(x * 0.008 - 4.0, z * 0.008 + 3.0, 4));
+    h += 140 * dm::pow(cone2, 1.8) * (0.8 + 0.4 * ridgedNoise(x * 0.008 - 4.0, z * 0.008 + 3.0, 4));
     // Rim mountains keep you on the map.
     double ex = std::max(0.0, std::fabs(x) - 520), ez = std::max(0.0, std::fabs(z) - 520);
     h += (ex * ex + ez * ez) * 0.02;
@@ -154,17 +155,17 @@ void World::buildMountain() {
     // logarithmic spiral (constant share of the radius per radian) round it, so the grade
     // grows from ~5% to ~18% as the cone steepens.
     std::vector<V3> trailCtl = {{kLotX + 10, 0, kLotZ + 26}, {0, 0, -260}, {25, 0, -185}, {38, 0, -140}};
-    const double r0 = kPeakZ + 125, r1 = 92, turns = 2 * M_PI, k = std::log(r0 / r1) / turns;
+    const double r0 = kPeakZ + 125, r1 = 92, turns = 2 * M_PI, k = dm::log(r0 / r1) / turns;
     for (double t = 0.12; t <= turns; t += 0.12) {
-        double th = -M_PI / 2 + t, r = r0 * std::exp(-k * t);
-        trailCtl.push_back(V3(kPeakX + r * std::cos(th), 0, kPeakZ + r * std::sin(th)));
+        double th = -M_PI / 2 + t, r = r0 * dm::exp(-k * t);
+        trailCtl.push_back(V3(kPeakX + r * dm::cos(th), 0, kPeakZ + r * dm::sin(th)));
     }
     Path trail{splinePoints(trailCtl, false), false, 2.4, PAINT_TRAIL};
     // The valley loop road (gravel; traffic drives it).
     std::vector<V3> loopCtl;
     for (int s = 0; s < 16; s++) {
         double a = 2 * M_PI * s / 16;
-        loopCtl.push_back(V3(-10 + 290 * std::cos(a), 0, -365 + 135 * std::sin(a)));
+        loopCtl.push_back(V3(-10 + 290 * dm::cos(a), 0, -365 + 135 * dm::sin(a)));
     }
     Path loop{splinePoints(loopCtl, true), true, kRoadHalfWidth, PAINT_ROAD};
     // The track from the crawl park's north edge, across the creek, to the foot of the gully.
@@ -191,7 +192,7 @@ void World::buildMountain() {
         for (int pass = 0; pass < 2; pass++)
             for (int s = 1; s < n; s++) {
                 int i = pass ? n - 1 - s : s, prev = pass ? i + 1 : i - 1;
-                double ds = std::hypot(p.pts[i].x - p.pts[prev].x, p.pts[i].z - p.pts[prev].z);
+                double ds = dm::hypot(p.pts[i].x - p.pts[prev].x, p.pts[i].z - p.pts[prev].z);
                 p.pts[i].y = clampd(p.pts[i].y, p.pts[prev].y - maxGrade * ds, p.pts[prev].y + maxGrade * ds);
             }
     };
@@ -229,7 +230,7 @@ void World::buildMountain() {
                     double x = X(i), z = X(j);
                     double t = clampd(((x - a.x) * dir.x + (z - a.z) * dir.z) / L, 0, 1);
                     double cx = a.x + d.x * t, cz = a.z + d.z * t;
-                    double dd = std::hypot(x - cx, z - cz);
+                    double dd = dm::hypot(x - cx, z - cz);
                     int id = i * hN + j;
                     if (p.paint == PAINT_TRAIL) trailDist[id] = std::min(trailDist[id], (float)dd);
                     if (dd - p.half >= edge[id]) continue;
@@ -262,7 +263,7 @@ void World::buildMountain() {
             for (int j = cellI(z0 - blend); j <= cellI(z1 + blend); j++) {
                 double x = X(i), z = X(j);
                 double dx = std::max({x0 - x, x - x1, 0.0}), dz = std::max({z0 - z, z - z1, 0.0});
-                double d = std::hypot(dx, dz);
+                double d = dm::hypot(dx, dz);
                 int id = i * hN + j;
                 double w = smoothstep(blend, 0, d);
                 hgrid[id] = (float)(hgrid[id] + (y - hgrid[id]) * w);
@@ -280,7 +281,7 @@ void World::buildMountain() {
     // Slickrock dome: smooth granite, up to ~30 degrees.
     for (int i = cellI(kDomeX - kDomeR); i <= cellI(kDomeX + kDomeR); i++)
         for (int j = cellI(kDomeZ - kDomeR); j <= cellI(kDomeZ + kDomeR); j++) {
-            double d = std::hypot(X(i) - kDomeX, X(j) - kDomeZ) / kDomeR;
+            double d = dm::hypot(X(i) - kDomeX, X(j) - kDomeZ) / kDomeR;
             if (d >= 1) continue;
             int id = i * hN + j;
             double q = 1 - d * d;
@@ -306,7 +307,7 @@ void World::buildMountain() {
             double x = X(i), z = X(j);
             double across = smoothstep(7, 4, std::fabs(x - 67)), along = smoothstep(-430, -420, z) * smoothstep(-300, -310, z);
             int id = i * hN + j;
-            hgrid[id] += (float)(0.55 * (1 - std::cos((z + 430) * 2 * M_PI / 9.0)) * 0.5 * across * along);
+            hgrid[id] += (float)(0.55 * (1 - dm::cos((z + 430) * 2 * M_PI / 9.0)) * 0.5 * across * along);
             if (across > 0.5) {
                 paint[id] = PAINT_TRAIL;
                 surf[id] = SURF_DIRT;
@@ -326,7 +327,7 @@ void World::buildMountain() {
         for (int i = cellI(std::min(a.x, b.x) - 9); i <= cellI(std::max(a.x, b.x) + 9); i++)
             for (int j = cellI(std::min(a.z, b.z) - 9); j <= cellI(std::max(a.z, b.z) + 9); j++) {
                 double t = clampd(((X(i) - a.x) * d.x + (X(j) - a.z) * d.z) / (L * L), 0, 1);
-                double dd = std::hypot(X(i) - (a.x + d.x * t), X(j) - (a.z + d.z * t));
+                double dd = dm::hypot(X(i) - (a.x + d.x * t), X(j) - (a.z + d.z * t));
                 creekDist[i * hN + j] = std::min(creekDist[i * hN + j], (float)dd);
             }
     }
@@ -348,7 +349,7 @@ void World::buildMountain() {
         for (int i = 0; i < hN; i++)
             for (int j = 0; j < hN; j++) {
                 const int id = i * hN + j;
-                if (std::hypot(X(i) - lake.x, X(j) - lake.z) > lake.r + 25 || paint[id] != PAINT_NONE) continue;
+                if (dm::hypot(X(i) - lake.x, X(j) - lake.z) > lake.r + 25 || paint[id] != PAINT_NONE) continue;
                 const double above = hgrid[id] - lake.y;
                 if (above > -0.6 && above < 0.9 + 0.5 * valueNoise(X(i) * 0.15, X(j) * 0.15)) surf[id] = SURF_SAND, paint[id] = PAINT_SAND;
             }
@@ -360,7 +361,7 @@ void World::buildMountain() {
     auto levelDisc = [&](const V3& c, double r, double y, double blend, uint8_t pnt, uint8_t sf) {
         for (int i = cellI(c.x - r - blend); i <= cellI(c.x + r + blend); i++)
             for (int j = cellI(c.z - r - blend); j <= cellI(c.z + r + blend); j++) {
-                const double d = std::hypot(X(i) - c.x, X(j) - c.z);
+                const double d = dm::hypot(X(i) - c.x, X(j) - c.z);
                 const int id = i * hN + j;
                 const double w = smoothstep(r + blend, r, d);
                 hgrid[id] = (float)(hgrid[id] + (y - hgrid[id]) * w);
@@ -402,7 +403,7 @@ void World::buildMountain() {
                 sf = a.surf;
             }
             // The pinnacle: a flat-topped knob to turn round on.
-            const double dp = std::hypot(x - pin.x, z - pin.z);
+            const double dp = dm::hypot(x - pin.x, z - pin.z);
             const double ph = spurY + 0.5 - std::max(0.0, dp - kPinnacleR) * 1.75;
             if (ph > h) {
                 h = ph;
@@ -428,7 +429,7 @@ void World::buildMountain() {
             int cnt = 0;
             for (int w = -8; w <= 8; w++)
                 if (k + w >= 0 && k + w <= kGullyLen) sum += raw[k + w], cnt++;
-            const double depth = 1.0 + 4.0 * std::pow(std::sin(M_PI * k / kGullyLen), 0.7);
+            const double depth = 1.0 + 4.0 * dm::pow(dm::sin(M_PI * k / kGullyLen), 0.7);
             lo = std::max(lo, sum / cnt - depth);  // never dips: water ran down it
             // ...and no steeper than 40%: near the head, where the peak steepens, it
             // cuts deeper instead.
@@ -474,9 +475,9 @@ void World::buildMountain() {
             int id = i * hN + j;
             if (paint[id] != PAINT_NONE) continue;
             double gx = (gridAt(i + 1, j) - gridAt(i - 1, j)) / (2 * kRes), gz = (gridAt(i, j + 1) - gridAt(i, j - 1)) / (2 * kRes);
-            if (std::hypot(gx, gz) > 0.85 || hgrid[id] > 195) surf[id] = SURF_ROCK;
+            if (dm::hypot(gx, gz) > 0.85 || hgrid[id] > 195) surf[id] = SURF_ROCK;
             // Snow lies on the gentler ground up high (above the lookout).
-            if (std::hypot(gx, gz) < 0.6 && hgrid[id] > 150 + 22 * fbmNoise(X(i) * 0.02 + 5.0, X(j) * 0.02 - 2.0, 3))
+            if (dm::hypot(gx, gz) < 0.6 && hgrid[id] > 150 + 22 * fbmNoise(X(i) * 0.02 + 5.0, X(j) * 0.02 - 2.0, 3))
                 surf[id] = SURF_SNOW, paint[id] = PAINT_SNOW;
         }
     // Gravel lots and the creek's banks: loose gravel, not packed dirt.
@@ -497,7 +498,7 @@ void World::buildMountain() {
         double x = kBoulderX + rng.range(-4.8, 4.8), z = rng.range(kLaneZ0 + 8, kLaneZ1 - 8);
         double r = rng.range(0.45, 0.95);
         bool clear = true;
-        for (const Rock& o : rocks) clear &= std::hypot(o.c.x - x, o.c.z - z) > (o.r + r) * 0.75;
+        for (const Rock& o : rocks) clear &= dm::hypot(o.c.x - x, o.c.z - z) > (o.r + r) * 0.75;
         if (clear) boulder(x, z, r, r * rng.range(0.55, 0.95));
     }
     // V-notch walls.
@@ -518,7 +519,7 @@ void World::buildMountain() {
     // Logs across the log lane, getting bigger.
     for (int g = 0; g < 7; g++) {
         double z = kLaneZ0 + 12 + 10 * g, r = 0.17 + 0.025 * g, ang = rng.range(-0.25, 0.25);
-        V3 c(kLogX, 0, z), half(4.6 * std::cos(ang), 0, 4.6 * std::sin(ang));
+        V3 c(kLogX, 0, z), half(4.6 * dm::cos(ang), 0, 4.6 * dm::sin(ang));
         V3 a = c - half, b = c + half;
         a.y = groundAt(a.x, a.z) + r * 0.85;
         b.y = groundAt(b.x, b.z) + r * 0.85;
@@ -527,12 +528,12 @@ void World::buildMountain() {
     // Widowmaker Spur: square rock ledges across the crest, boulders in the tread on the
     // loose way down to the last saddle.
     {
-        const double yaw = std::atan2(-out.z, out.x);
+        const double yaw = dm::atan2(-out.z, out.x);
         for (double st : kSpurSteps) {
             const SpurAt a = spurAt(st + 0.9);
             const V3 c = s0 + out * (st + 0.8);
             const double top = spurY + a.dh;
-            addBox(V3(c.x, top - 0.9, c.z), V3(0.8, 0.9, a.half + 0.5), yaw, 0, -std::atan(a.tilt), V3(0.4, 0.38, 0.35));
+            addBox(V3(c.x, top - 0.9, c.z), V3(0.8, 0.9, a.half + 0.5), yaw, 0, -dm::atan(a.tilt), V3(0.4, 0.38, 0.35));
             boxes.back().rock = true;
         }
         for (int n = 0, attempt = 0; n < 7 && attempt < 200; attempt++) {
@@ -540,7 +541,7 @@ void World::buildMountain() {
             const double sa = rng.range(103, 126), lat = (n % 2 ? 1 : -1) * rng.range(0.6, 1.25), r = rng.range(0.3, 0.45);
             const V3 p = s0 + out * sa + spurLeft * lat;
             bool clear = true;
-            for (size_t k = rocks.size() - n; k < rocks.size(); k++) clear &= std::hypot(rocks[k].c.x - p.x, rocks[k].c.z - p.z) > 1.8;
+            for (size_t k = rocks.size() - n; k < rocks.size(); k++) clear &= dm::hypot(rocks[k].c.x - p.x, rocks[k].c.z - p.z) > 1.8;
             if (!clear) continue;
             boulder(p.x, p.z, r, rng.range(0.2, 0.32));
             n++;
@@ -552,19 +553,19 @@ void World::buildMountain() {
         const SpurAt a = spurAt(sa);
         const double off = rng.range(3.0, 9.0) + r;
         const V3 p = s0 + out * sa + spurLeft * (sd * (a.half + off));
-        if (std::hypot(p.x - pin.x, p.z - pin.z) < kPinnacleR + r + 2) continue;
+        if (dm::hypot(p.x - pin.x, p.z - pin.z) < kPinnacleR + r + 2) continue;
         addRock(p.x, p.z, V3(r, r * rng.range(0.5, 0.8), r * rng.range(0.6, 0.9)), r * 0.45, rng.s, (float)rng.range(0.8, 1.05));
         n++;
     }
     // Boulder Gully: ledge risers and a choke of boulders to pick a line through.
     {
-        const double yaw = std::atan2(-gUp.z, gUp.x);
+        const double yaw = dm::atan2(-gUp.z, gUp.x);
         for (int st = 0; st < 3; st++) {
             // The riser is square; the top follows the floor's slope beyond it.
-            const double s1 = kGullySteps[st] + 1, slope = (gullyFloorAt(s1 + 2) - gullyFloorAt(s1)) / 2, pitch = std::atan(slope);
+            const double s1 = kGullySteps[st] + 1, slope = (gullyFloorAt(s1 + 2) - gullyFloorAt(s1)) / 2, pitch = dm::atan(slope);
             const double sc = kGullySteps[st] + 0.8, top = gullyFloorAt(s1) - slope * (s1 - sc);
             const V3 c = gFoot + gUp * sc;
-            addBox(V3(c.x, top - 1.0 / std::cos(pitch), c.z), V3(0.8, 1.0, 3.6), yaw, pitch, 0, V3(0.4, 0.37, 0.34));
+            addBox(V3(c.x, top - 1.0 / dm::cos(pitch), c.z), V3(0.8, 1.0, 3.6), yaw, pitch, 0, V3(0.4, 0.37, 0.34));
             boxes.back().rock = true;
         }
         const size_t first = rocks.size();
@@ -575,7 +576,7 @@ void World::buildMountain() {
             bool clear = true;
             for (double st : kGullySteps) clear &= std::fabs(sa - st - 0.8) > 2.2;
             const V3 p = gFoot + gUp * sa + gLeft * lat;
-            for (size_t k = first; k < rocks.size() && clear; k++) clear = std::hypot(rocks[k].c.x - p.x, rocks[k].c.z - p.z) > (rocks[k].r + r) * 0.8;
+            for (size_t k = first; k < rocks.size() && clear; k++) clear = dm::hypot(rocks[k].c.x - p.x, rocks[k].c.z - p.z) > (rocks[k].r + r) * 0.8;
             if (clear) boulder(p.x, p.z, r, r * rng.range(0.5, 0.9));
         }
     }
@@ -585,7 +586,7 @@ void World::buildMountain() {
         for (size_t s = 1; s < trail.pts.size(); s++) {
             const V3& a = trail.pts[s - 1];
             const V3& b = trail.pts[s];
-            along += std::hypot(b.x - a.x, b.z - a.z);
+            along += dm::hypot(b.x - a.x, b.z - a.z);
             if (along < 120) continue;  // the first stretch from the lot is easy
             V3 dir = norm(V3(b.x - a.x, 0, b.z - a.z)), side(-dir.z, 0, dir.x);
             if (rng() < 0.22) {  // edge boulder
@@ -617,10 +618,10 @@ void World::buildMountain() {
         if (edge[id] < margin || creekDist[id] < 3.5 || keep[id]) return false;
         if (x > kParkX0 - 10 && x < kParkX1 + 10 && z > kParkZ0 - 10 && z < kParkZ1 + 10) return false;
         if (std::fabs(x - kLotX) < 45 && std::fabs(z - kLotZ) < 35) return false;
-        if (std::hypot(x - 26, z - 318) < 12 || std::hypot(x - 155, z + 383) < 12) return false;  // cabin, picnic spot
+        if (dm::hypot(x - 26, z - 318) < 12 || dm::hypot(x - 155, z + 383) < 12) return false;  // cabin, picnic spot
         if (x > 52 && x < 82 && z > -440 && z < -290) return false;  // whoops
         for (const Water& wt : waters)
-            if (std::hypot(x - wt.x, z - wt.z) < wt.r + margin) return false;
+            if (dm::hypot(x - wt.x, z - wt.z) < wt.r + margin) return false;
         return true;
     };
     auto slopeAt = [&](double x, double z) {
@@ -653,7 +654,7 @@ void World::buildMountain() {
         double y = groundAt(x, z);
         if (y < 18 || y > 170 || fbmNoise(x * 0.012 + 7, z * 0.012 - 3, 3) < 0.5 || slopeAt(x, z) > 0.7) continue;
         double r = rng.range(0.18, 0.38), L = rng.range(4, 11), a = rng.range(0, 2 * M_PI);
-        V3 p0(x - std::cos(a) * L / 2, 0, z - std::sin(a) * L / 2), p1(x + std::cos(a) * L / 2, 0, z + std::sin(a) * L / 2);
+        V3 p0(x - dm::cos(a) * L / 2, 0, z - dm::sin(a) * L / 2), p1(x + dm::cos(a) * L / 2, 0, z + dm::sin(a) * L / 2);
         if (!clearOfPaths(p0.x, p0.z, 5) || !clearOfPaths(p1.x, p1.z, 5)) continue;
         p0.y = groundAt(p0.x, p0.z) + r * 0.8;
         p1.y = groundAt(p1.x, p1.z) + r * 0.8;
@@ -682,7 +683,7 @@ void World::buildMountain() {
     rocksBefore = rocks.size();
     for (int attempt = 0; attempt < 20000 && rocks.size() < rocksBefore + 220; attempt++) {
         double a = rng.range(0, 2 * M_PI), d = rng.range(30, 140);
-        double x = kPeakX + d * std::cos(a), z = kPeakZ + d * std::sin(a);
+        double x = kPeakX + d * dm::cos(a), z = kPeakZ + d * dm::sin(a);
         if (!clearOfPaths(x, z, 3) || groundAt(x, z) < 150) continue;
         double r = rng.range(0.25, 0.6);
         boulder(x, z, r, r * rng.range(0.3, 0.7));
@@ -699,7 +700,7 @@ void World::buildMountain() {
     // A pile of big rocks on the summit.
     for (int s = 0; s < 22; s++) {
         double a = rng.range(0, 2 * M_PI), d = rng.range(0, 30), r = rng.range(1.2, 3.2);
-        boulder(kPeakX + d * std::cos(a), kPeakZ + d * std::sin(a), r, r * rng.range(0.6, 1.2));
+        boulder(kPeakX + d * dm::cos(a), kPeakZ + d * dm::sin(a), r, r * rng.range(0.6, 1.2));
     }
     for (int attempt = 0; attempt < 40000 && bushes.size() < 3200; attempt++) {
         double x = rng.range(-540, 540), z = rng.range(-540, 540);
@@ -716,8 +717,8 @@ void World::buildMountain() {
         V3 a(x0, groundAt(x0, z0), z0), b(x1, groundAt(x1, z1), z1);
         fixtures.push_back({PROP_FENCE, a, b});
         V3 d = b - a;
-        double L = std::hypot(d.x, d.z), yaw = std::atan2(-d.z, d.x);
-        addBox((a + b) * 0.5 + V3(0, 0.62, 0), V3(L / 2, 0.3, 0.06), yaw, std::atan2(d.y, L), 0, V3(0.4, 0.3, 0.2));
+        double L = dm::hypot(d.x, d.z), yaw = dm::atan2(-d.z, d.x);
+        addBox((a + b) * 0.5 + V3(0, 0.62, 0), V3(L / 2, 0.3, 0.06), yaw, dm::atan2(d.y, L), 0, V3(0.4, 0.3, 0.2));
         boxes.back().hidden = true;
         for (double s = 0; s <= L + 0.01; s += 2.5) {
             V3 p = a + d * (s / L);
@@ -743,7 +744,7 @@ void World::buildMountain() {
         s.col[0] = (float)col.x, s.col[1] = (float)col.y, s.col[2] = (float)col.z;
         fixtures.push_back(s);
         double half = kind == PROP_MAPBOARD ? 0.8 : 0.0;
-        V3 side(std::sin(yaw), 0, std::cos(yaw));
+        V3 side(dm::sin(yaw), 0, dm::cos(yaw));
         for (int k = kind == PROP_MAPBOARD ? -1 : 1; k <= 1; k += 2)
             poles.push_back({x + side.x * half * k, z + side.z * half * k, s.a.y - 0.4, s.a.y + 2.0, 0.07});
     };
@@ -769,12 +770,12 @@ void World::buildMountain() {
     // A fire ring by the lake.
     for (int k = 0; k < 11; k++) {
         double a = k * 2 * M_PI / 11;
-        addRock(155 + 0.95 * std::cos(a), -383 + 0.95 * std::sin(a), V3(0.24, 0.17, 0.2), 0.18, 900 + k, 0.8f);
+        addRock(155 + 0.95 * dm::cos(a), -383 + 0.95 * dm::sin(a), V3(0.24, 0.17, 0.2), 0.18, 900 + k, 0.8f);
     }
 
     // ---- Repair stations ----
     auto station = [&](const V3& c, double yaw, const char* name) {
-        const V3 f(std::cos(yaw), 0, -std::sin(yaw)), sd(std::sin(yaw), 0, std::cos(yaw));
+        const V3 f(dm::cos(yaw), 0, -dm::sin(yaw)), sd(dm::sin(yaw), 0, dm::cos(yaw));
         for (int i = cellI(c.x - 9); i <= cellI(c.x + 9); i++)
             for (int j = cellI(c.z - 9); j <= cellI(c.z + 9); j++) {
                 const V3 d(X(i) - c.x, 0, X(j) - c.z);
@@ -789,14 +790,14 @@ void World::buildMountain() {
     station(kParkPit, 0, "CRAWL PARK PIT");
     {
         const V3 t = spiralDir(kHutT);
-        station(halfwayHut(), std::atan2(-t.z, t.x), "HALFWAY HUT");
+        station(halfwayHut(), dm::atan2(-t.z, t.x), "HALFWAY HUT");
     }
     // The hard lines: rating signs where they start, cairns where they finish, reflector
     // posts along the spur's edges.
-    sign(spiralAt(kSpurT).x - out.x * 3.4, spiralAt(kSpurT).z - out.z * 3.4, std::atan2(-out.z, out.x), black);
+    sign(spiralAt(kSpurT).x - out.x * 3.4, spiralAt(kSpurT).z - out.z * 3.4, dm::atan2(-out.z, out.x), black);
     {
         const V3 p = gFoot - gUp * 3 + gLeft * 4.6;
-        sign(p.x, p.z, std::atan2(gUp.z, -gUp.x), red);
+        sign(p.x, p.z, dm::atan2(gUp.z, -gUp.x), red);
         sign(-200, -318, M_PI / 2, red);  // and where its track leaves the park
     }
     auto cairn = [&](const V3& p) { fixtures.push_back({PROP_CAIRN, V3(p.x, groundAt(p.x, p.z), p.z), V3(), rng.range(0, 6.28)}); };
@@ -807,7 +808,7 @@ void World::buildMountain() {
             if ((int)(sa / 14) % 2 != (sd > 0)) continue;  // alternate sides
             const SpurAt a = spurAt(sa);
             const V3 p = s0 + out * sa + spurLeft * (sd * (a.half + 0.35));
-            fixtures.push_back({PROP_MARKER, V3(p.x, groundAt(p.x, p.z), p.z), V3(), std::atan2(-out.z, out.x)});
+            fixtures.push_back({PROP_MARKER, V3(p.x, groundAt(p.x, p.z), p.z), V3(), dm::atan2(-out.z, out.x)});
         }
 
     // Traffic drives the valley loop.
@@ -818,7 +819,7 @@ void World::buildMountain() {
         loopAlong[i] = loopLength;
         const V3& a = loopRoad[i];
         const V3& b = loopRoad[(i + 1) % loopRoad.size()];
-        loopLength += std::hypot(b.x - a.x, b.z - a.z);
+        loopLength += dm::hypot(b.x - a.x, b.z - a.z);
     }
 
     // The trailhead: you start facing the mountain, the other trucks parked beside you.

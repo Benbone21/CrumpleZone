@@ -1,4 +1,5 @@
 #include "rivers.h"
+#include "detmath.h"
 
 #include <algorithm>
 #include <cmath>
@@ -66,7 +67,7 @@ const std::vector<FallsSite>& elkFalls() {
     return f;
 }
 
-double elkRiverZ(double x) { return 14 + 36 * std::sin(x * 0.0068 + 0.9) + 12 * std::sin(x * 0.019 + 2.3); }
+double elkRiverZ(double x) { return 14 + 36 * dm::sin(x * 0.0068 + 0.9) + 12 * dm::sin(x * 0.019 + 2.3); }
 
 // Below each falls the river runs in a gorge it has cut back into the canyon floor: steep walls kFallsFace wide either side, the
 // gorge widening downstream and its walls sinking away into the canyon over a few hundred metres.
