@@ -56,6 +56,8 @@ BridgeLayout bridgeLayout(const BridgeLook& look) {
     b.fair = b.damage < kFairDamage;
     Rng r{look.seed * 2654435761u + 17};
     const double d = b.damage;
+    b.runners = r() < 0.45;
+    b.base = b.runners ? kRunnerThick : 0.0;
     // The deck: rows of planks across, each in pieces between the stringers.
     const int rows = (int)std::floor(2 * b.E / kPlankPitch);
     const double pitch = 2 * b.E / rows;
@@ -93,9 +95,38 @@ BridgeLayout bridgeLayout(const BridgeLook& look) {
                 if (S(row, q) == 1 || S(row, q) == 2) S(row, q) = 0;
         }
         for (int k = 0; k < rows * segs; k++) {
-            drop[k] = state[k] == 1 ? 0.03 + 0.06 * r() : state[k] == 2 ? 0.02 + 0.05 * r() : 0;
-            roll[k] = state[k] == 2 ? (r() < 0.5 ? -1 : 1) * std::atan2(0.12 + 0.13 * r(), sw) : 0;
+            drop[k] = state[k] == 1 ? 0.03 + 0.06 * r() : state[k] == 2 ? 0.02 + 0.03 * r() : 0;
+            roll[k] = state[k] == 2 ? (r() < 0.5 ? -1 : 1) * std::asin(std::min(0.9, (0.08 + 0.1 * r()) / sw)) : 0;  // (its far end 8-18 cm down: never below the stringers' tops)
         }
+    }
+    // Running boards: two boards along each wheel track, in lengths ~2.4 m (staggered board to board); on a worn bridge some gone
+    // or sagging. (state as the planks'.)
+    struct Run { double x0, x1, z0, z1, drop; uint8_t s; };
+    std::vector<Run> runs;
+    if (b.runners)
+        for (int sd = -1; sd <= 1; sd += 2)
+            for (int k = 0; k < 2; k++) {
+                const double zc = sd * kRunnerTrack + (k - 0.5) * 0.26;
+                double x = -b.E + 0.05;
+                bool first = true;
+                while (x < b.E - 0.05) {
+                    const double len = first ? 1.0 + 1.4 * r() : 2.2 + 0.5 * r();
+                    const double x1 = std::min(b.E - 0.05, x + len);
+                    const double u = r();
+                    const uint8_t st = b.fair ? 0 : u < 0.35 * d ? 3 : u < 0.5 * d ? 1 : 0;
+                    runs.push_back({x + 0.015, x1 - 0.015, zc - 0.12, zc + 0.12, st == 1 ? 0.02 + 0.02 * r() : 0.0, st});
+                    x = x1, first = false;
+                }
+            }
+    // Curb logs along both edges, in sections; a worn bridge has lost some.
+    {
+        const int n = std::max(2, (int)std::lround(2 * b.E / 5.0));
+        for (int side = 0; side < 2; side++)
+            for (int k = 0; k < n; k++) {
+                const double x0 = -b.E + 2 * b.E * k / n, x1 = -b.E + 2 * b.E * (k + 1) / n;
+                if (!b.fair && r() < 0.3 * d) continue;
+                b.curbs.push_back({x0 + 0.02, x1 - 0.02, side ? 1 : -1});
+            }
     }
     auto build = [&]() {
         b.deck.clear();
@@ -105,12 +136,18 @@ BridgeLayout bridgeLayout(const BridgeLook& look) {
                 const uint8_t s = S(row, q);
                 if (s == 3) continue;
                 const double z0 = -b.hw + q * sw + (q ? 0.01 : 0), z1 = -b.hw + (q + 1) * sw - (q + 1 < segs ? 0.01 : 0);
-                b.deck.push_back({x0, x1, z0, z1, drop[(size_t)row * segs + q], roll[(size_t)row * segs + q], (uint8_t)std::min<int>(s, 2)});
+                b.deck.push_back({x0, x1, z0, z1, b.base + drop[(size_t)row * segs + q], roll[(size_t)row * segs + q], (uint8_t)std::min<int>(s, 2)});
             }
         }
+        for (const Run& u : runs)
+            if (u.s != 3) {
+                b.deck.push_back({u.x0, u.x1, u.z0, u.z1, u.drop, 0, u.s});
+                b.deck.back().runner = 1;
+            }
     };
     // The drivable line: somewhere across the deck with room for its tracks; holes along it longer than maxGap get a plank back.
-    b.lineZ = b.fair ? 0 : (2 * r() - 1) * std::max(0.0, b.hw - kTrackOut - 0.15);
+    // (With running boards it's theirs; else anywhere with its tracks inside the curb logs.)
+    b.lineZ = b.fair || b.runners ? 0 : (2 * r() - 1) * std::max(0.0, b.hw - kTrackOut - 2 * kCurbR - 0.05);
     build();
     const double gap = std::clamp(look.maxGap, 0.3, 1.2);
     // (A track's holes: the stretches along it no piece covers, longer than a crack.)

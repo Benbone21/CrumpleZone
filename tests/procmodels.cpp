@@ -131,6 +131,7 @@ SCENARIO(procModelsBridgeWear, "procmodels/bridge-wear", "Bridges are worn by th
     const BridgeRule& R = rules().bridge;
     long n = 0, fair = 0, mainN = 0, otherN = 0;
     double mainD = 0, otherD = 0, worstLine = 0, gone = 0, pieces = 0, roughest = 0;
+    long withRunners = 0, notAcross = 0;
     std::string roughAt, fairAt;
     for (uint64_t seed : {1ull, 2ull, 3ull, 4ull, 5ull, 123456789ull}) {
         const ProcWorld& G = ProcWorld::forSeed(seed);
@@ -153,9 +154,11 @@ SCENARIO(procModelsBridgeWear, "procmodels/bridge-wear", "Bridges are worn by th
                         look.missing = modelQuant(R.missingShare), look.maxGap = modelQuant(R.maxGap), look.seed = (uint32_t)(n * 7 + 3);
                         const BridgeLayout L = bridgeLayout(look);
                         worstLine = std::max(worstLine, lineWorstHole(L));
+                        withRunners += L.runners;
+                        for (const BridgeLayout::Piece& p : L.deck) notAcross += !p.runner && p.x1 - p.x0 > kPlankPitch;  // (a cross plank is a plank's width along)
                         if (!L.fair) {
                             const int rows = (int)std::floor(2 * L.E / kPlankPitch), segs = std::max(3, (int)std::lround(2 * L.hw / 0.95));
-                            pieces += rows * segs, gone += rows * segs - (double)L.deck.size();
+                            pieces += rows * segs, gone += rows * segs - (double)std::count_if(L.deck.begin(), L.deck.end(), [](const BridgeLayout::Piece& p) { return !p.runner; });
                         }
                     }
                 }
@@ -165,6 +168,8 @@ SCENARIO(procModelsBridgeWear, "procmodels/bridge-wear", "Bridges are worn by th
     ctx.note(b);
     ctx.note("the roughest (wear " + std::to_string(roughest) + "): " + roughAt + "; a fair one: " + fairAt);
     ctx.check("there are bridges", n >= 10);
+    ctx.check("the deck is planks laid across (none along but the running boards)", notAcross == 0, std::to_string(notAcross));
+    ctx.metric("share of bridges with running boards", n ? (double)withRunners / n : 0, "", 0.2, 0.7);
     ctx.metric("share in fair shape", n ? (double)fair / n : 0, "", 0.03, 0.35);
     ctx.check("main trails' bridges kept better than others'", !mainN || !otherN || mainD / mainN < otherD / otherN);
     ctx.metric("worn decks' plank pieces gone", pieces ? gone / pieces : 0, "", 0.08, 0.45);
@@ -185,15 +190,29 @@ SCENARIO(procModelsBridges, "procmodels/bridge-collision", "A bridge model on ev
     for (const Placed& pl : dressed.models)
         if (pl.id == "timber_bridge") bridges.push_back(placedBridge(pl));
     int worn = 0;
-    for (const PlacedBridge& pb : bridges) worn += !pb.lay.fair;
+    for (const PlacedBridge& pb : bridges) {
+        worn += !pb.lay.fair;
+        if (std::getenv("BRIDGE_DEBUG")) std::printf("bridge at %.1f %.1f %.1f fw %.2f %.2f E %.1f hw %.2f %s\n", pb.o.x, pb.o.y, pb.o.z, pb.fw.x, pb.fw.z, pb.lay.E, pb.lay.hw, pb.lay.fair ? "fair" : "worn");
+    }
     ctx.note(std::to_string(bridges.size()) + " bridges in the window, " + std::to_string(worn) + " worn");
-    // Every box and post of the bare window is in the dressed one, but the decks, rails and posts of the worn bridges (3 boxes, 10 posts each).
+    // Every box and post of the bare window is in the dressed one, bit for bit, but the decks, rails and posts of the worn bridges.
+    auto inWorn = [&](const V3& p) {
+        for (const PlacedBridge& pb : bridges) {
+            if (pb.lay.fair) continue;
+            const V3 r = p - pb.o;
+            if (std::fabs(dot(r, pb.fw)) / pb.sx < pb.lay.E + 0.5 && std::fabs(dot(r, pb.lf)) < pb.lay.hw + 0.5 && std::fabs(r.y) < 1.2) return true;
+        }
+        return false;
+    };
     auto sameBox = [](const Box& p, const Box& q) { return !std::memcmp(&p.c, &q.c, sizeof p.c) && !std::memcmp(&p.h, &q.h, sizeof p.h) && !std::memcmp(p.ax, q.ax, sizeof p.ax) && p.solid == q.solid; };
-    int boxesGone = 0, polesGone = 0;
-    for (const Box& p : bare.boxes) boxesGone += std::none_of(dressed.boxes.begin(), dressed.boxes.end(), [&](const Box& q) { return sameBox(p, q); });
-    for (const Pole& p : bare.poles) polesGone += std::none_of(dressed.poles.begin(), dressed.poles.end(), [&](const Pole& q) { return !std::memcmp(&p, &q, sizeof p); });
-    ctx.check("the fair bridges and everything else: the same collision, bit for bit", boxesGone == 3 * worn && polesGone == 10 * worn,
-              std::to_string(boxesGone) + " boxes and " + std::to_string(polesGone) + " posts gone");
+    int boxesGone = 0, polesGone = 0, goneElsewhere = 0;
+    for (const Box& p : bare.boxes)
+        if (std::none_of(dressed.boxes.begin(), dressed.boxes.end(), [&](const Box& q) { return sameBox(p, q); })) boxesGone++, goneElsewhere += !inWorn(p.c);
+    for (const Pole& p : bare.poles)
+        if (std::none_of(dressed.poles.begin(), dressed.poles.end(), [&](const Pole& q) { return !std::memcmp(&p, &q, sizeof p); }))
+            polesGone++, goneElsewhere += !inWorn(V3(p.x, 0.5 * (p.y0 + p.y1), p.z));
+    ctx.check("the fair bridges and everything else: the same collision, bit for bit", goneElsewhere == 0 && boxesGone >= 3 * worn && polesGone >= 9 * worn,
+              std::to_string(boxesGone) + " boxes and " + std::to_string(polesGone) + " posts gone, " + std::to_string(goneElsewhere) + " of them not a worn bridge's");
     // A worn bridge's deck: solid just under each plank piece's top, and nothing where a piece is gone (between the ties).
     int on = 0, onMiss = 0, holes = 0, holeHit = 0;
     double worstLine = 0;
@@ -228,7 +247,7 @@ SCENARIO(procModelsBridges, "procmodels/bridge-collision", "A bridge model on ev
                 double run = 0, worst = 0;
                 for (double x = -pb.lay.E; x <= pb.lay.E; x += 0.02) {
                     bool deck = false;
-                    for (double y : {-0.02, -0.08, -0.16, -0.24}) deck |= solidAt(dressed, pb.at(x, y, z));
+                    for (double y : {-0.02, -0.08, -0.14, -0.20, -0.25}) deck |= solidAt(dressed, pb.at(x, y, z));
                     run = deck ? 0 : run + 0.02 * pb.sx, worst = std::max(worst, run);
                 }
                 worstLine = std::max(worstLine, worst);
@@ -267,7 +286,10 @@ SCENARIO(procModelsBridges, "procmodels/bridge-collision", "A bridge model on ev
         for (size_t k = 0; k < pb.lay.deck.size(); k += 7) {
             const BridgeLayout::Piece& q = pb.lay.deck[k];
             const double xm = 0.5 * (q.x0 + q.x1), zm = 0.5 * (q.z0 + q.z1);
-            n++, bad += std::fabs(topHit(xm, zm) - q.topAt(zm)) > 0.02;
+            double top = -1e9;  // (the highest piece there: a running board over a cross plank)
+            for (const BridgeLayout::Piece& o : pb.lay.deck)
+                if (xm >= o.x0 && xm <= o.x1 && zm >= o.z0 && zm <= o.z1) top = std::max(top, o.topAt(zm));
+            n++, bad += std::fabs(topHit(xm, zm) - top) > 0.02;
         }
         ctx.check("the drawn planks are where the collision's are", bad == 0, std::to_string(bad) + " of " + std::to_string(n) + " pieces");
         ctx.metric("a worn bridge's triangles", (double)m.triangles(), "", 500, 20000);

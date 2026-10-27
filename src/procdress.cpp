@@ -114,6 +114,8 @@ void dressBridges(World& w, size_t firstBox, size_t firstPole) {
     const int64_t i0 = floorDiv(w.proc.ox - (int64_t)w.halfSize(), kCell) - 1, i1 = floorDiv(w.proc.ox + (int64_t)w.halfSize(), kCell) + 1;
     const int64_t j0 = floorDiv(w.proc.oz - (int64_t)w.halfSize(), kCell) - 1, j1 = floorDiv(w.proc.oz + (int64_t)w.halfSize(), kCell) + 1;
     struct { double r, g, b; } const wood{0.36, 0.27, 0.18};
+    struct Done { double mx, mz, ux, uz; bool worn; };
+    std::vector<Done> done;
     for (int64_t i = i0; i <= i1; i++)
         for (int64_t j = j0; j <= j1; j++)
             for (int dir = 0; dir < 2; dir++) {
@@ -131,6 +133,17 @@ void dressBridges(World& w, size_t firstBox, size_t firstPole) {
                     bc += 5 + (standInPier ? 1 : 0), pc += 10;
                     if (bc > w.boxes.size() || pc > w.poles.size()) return;  // (not buildBridges' walk after all: leave the stand-ins as they are)
                     const double yaw = std::atan2(-dz, dx), ux = dx / L, uz = dz / L;
+                    // (Two trails can lay the same span, one each way: it's one bridge. The second's stand-ins go with the first's.)
+                    bool again = false;
+                    for (const Done& o : done)
+                        if (std::hypot(o.mx - mx, o.mz - mz) < 0.5 && std::fabs(o.ux * ux + o.uz * uz) > 0.99) {
+                            again = true;
+                            if (o.worn) {
+                                deadBox[deckBox] = deadBox[railBox[0]] = deadBox[railBox[1]] = 1;
+                                for (size_t k = posts0; k < posts0 + 10; k++) deadPole[k] = 1;
+                            }
+                        }
+                    if (again) continue;
                     // The model's numbers, as its mesh cache will round them (so the collision below is made from the same ones).
                     const double Lq = modelQuant(L), hw = modelQuant(e->half() + 0.6), sx = L / Lq;
                     BridgeLook look;
@@ -151,44 +164,51 @@ void dressBridges(World& w, size_t firstBox, size_t firstPole) {
                               {"seed", (double)s1}, {"seed2", (double)s2}, {"damage", look.damage}, {"missing", look.missing}, {"gap", look.maxGap}};
                     if (bridgeHasPier(L)) pl.set.push_back({"pier", modelQuant(std::max(0.0, b.y - bed))});
                     w.models.push_back(pl);
-                    if (lay.fair) continue;  // (a sound deck: the stand-in's one box is it)
-                    // A worn bridge: its deck, rails and posts are the layout's, piece by piece. (The outer stringers and the pier stay.)
-                    deadBox[deckBox] = deadBox[railBox[0]] = deadBox[railBox[1]] = 1;
-                    for (size_t k = posts0; k < posts0 + 10; k++) deadPole[k] = 1;
+                    done.push_back({mx, mz, ux, uz, !lay.fair});
                     const V3 O(mx, b.y, mz), fw(ux, 0, uz), lf(-uz, 0, ux);
                     auto at = [&](double x, double y, double z) { return O + fw * (x * sx) + V3(0, y, 0) + lf * z; };
                     auto solid = [&](const V3& c, const V3& h, double roll) {
                         w.addBox(c, h, yaw, 0, roll, V3(wood.r, wood.g, wood.b));
                         w.boxes.back().hidden = true;
                     };
-                    // Plank pieces: a sound piece's run along the deck (the same across, level) one box; a sagging or broken one its own.
-                    std::vector<BridgeLayout::Piece> ps = lay.deck;
-                    std::sort(ps.begin(), ps.end(), [](const BridgeLayout::Piece& p, const BridgeLayout::Piece& q) { return p.z0 != q.z0 ? p.z0 < q.z0 : p.x0 < q.x0; });
-                    const double t = 0.3,  // (solid as deep as the stand-in deck: a thin box lets a tire's nodes through or wedges them; the top is the plank's)
-                                 pitch = 2 * lay.E / std::floor(2 * lay.E / kPlankPitch);
-                    for (size_t k = 0; k < ps.size();) {
-                        const BridgeLayout::Piece& p = ps[k];
-                        if (p.kind == 0) {
-                            size_t m = k + 1;
-                            while (m < ps.size() && ps[m].kind == 0 && ps[m].z0 == p.z0 && ps[m].x0 - ps[m - 1].x1 < pitch * 0.5) m++;
-                            const double x0 = p.x0, x1 = ps[m - 1].x1;
-                            solid(at(0.5 * (x0 + x1), -0.5 * t, 0.5 * (p.z0 + p.z1)), V3(0.5 * (x1 - x0) * sx, 0.5 * t, 0.5 * (p.z1 - p.z0)), 0);
-                            k = m;
-                            continue;
-                        }
-                        const double xm = 0.5 * (p.x0 + p.x1), hx = 0.5 * (p.x1 - p.x0) * sx, wz = p.z1 - p.z0;
-                        if (p.kind == 1) solid(at(xm, -p.drop - 0.5 * t, 0.5 * (p.z0 + p.z1)), V3(hx, 0.5 * t, 0.5 * wz), 0);
-                        else {  // tipped about its sound end (bridgelayout.cpp topAt)
-                            const double th = p.roll, sn = std::sin(std::fabs(th)), cs = std::cos(th);
+                    // The curb logs along the edges (every bridge: a wheel against one is stopped by it), a box each.
+                    for (const BridgeLayout::Curb& c : lay.curbs)
+                        solid(at(0.5 * (c.x0 + c.x1), -lay.base + kCurbR, c.side * (hw - kCurbR)), V3(0.5 * (c.x1 - c.x0) * sx, 0.9 * kCurbR, 0.9 * kCurbR), 0);
+                    if (lay.fair) continue;  // (a sound deck: the stand-in's one box is it)
+                    // A worn bridge: its deck, rails and posts are the layout's, piece by piece. (The outer stringers and the pier stay.)
+                    deadBox[deckBox] = deadBox[railBox[0]] = deadBox[railBox[1]] = 1;
+                    for (size_t k = posts0; k < posts0 + 10; k++) deadPole[k] = 1;
+                    // (Each box is solid as deep as the stand-in deck, 0.3 m: a thin one lets a tire's nodes through or wedges them. Its top
+                    // is the plank's.)
+                    const double t = 0.3;
+                    // Cross planks: a row's sound pieces side by side at one height one box (the plank); a sagging or broken piece its own.
+                    std::vector<BridgeLayout::Piece> cross, runs;
+                    for (const BridgeLayout::Piece& p : lay.deck) (p.runner ? runs : cross).push_back(p);
+                    std::sort(cross.begin(), cross.end(), [](const BridgeLayout::Piece& p, const BridgeLayout::Piece& q) { return p.x0 != q.x0 ? p.x0 < q.x0 : p.z0 < q.z0; });
+                    for (size_t k = 0; k < cross.size();) {
+                        const BridgeLayout::Piece& p = cross[k];
+                        const double xm = 0.5 * (p.x0 + p.x1), hx = 0.5 * (p.x1 - p.x0) * sx;
+                        if (p.kind == 2) {  // tipped about its sound end (bridgelayout.cpp topAt)
+                            const double wz = p.z1 - p.z0, th = p.roll, sn = std::sin(std::fabs(th)), cs = std::cos(th);
                             const double pz = th > 0 ? p.z0 : p.z1, dz2 = th > 0 ? cs : -cs;  // (pivot, and the way along it, across)
                             const double nz = th > 0 ? sn : -sn, ny = cs;                     // (its top's normal, in (z, y))
                             const double cz = pz + dz2 * 0.5 * wz - nz * 0.5 * t, cy = -p.drop - sn * 0.5 * wz - ny * 0.5 * t;
                             solid(at(xm, cy, cz), V3(hx, 0.5 * t, 0.5 * wz), th);
+                            k++;
+                            continue;
                         }
-                        k++;
+                        size_t m = k + 1;
+                        while (m < cross.size() && cross[m].x0 == p.x0 && cross[m].kind == p.kind && cross[m].drop == p.drop && cross[m].z0 - cross[m - 1].z1 < 0.05) m++;
+                        const double z0 = p.z0, z1 = cross[m - 1].z1;
+                        solid(at(xm, -p.drop - 0.5 * t, 0.5 * (z0 + z1)), V3(hx, 0.5 * t, 0.5 * (z1 - z0)), 0);
+                        k = m;
                     }
+                    // Running boards: a box a board length (as thick as they are: the cross planks are under them).
+                    for (const BridgeLayout::Piece& p : runs)
+                        solid(at(0.5 * (p.x0 + p.x1), -p.drop - 0.5 * kRunnerThick, 0.5 * (p.z0 + p.z1)), V3(0.5 * (p.x1 - p.x0) * sx, 0.5 * kRunnerThick, 0.5 * (p.z1 - p.z0)), 0);
                     // Ties under them, and the stringers between the outer two: what a wheel through a hole comes down on.
-                    for (int k = 0; k <= bridgeTies(lay.E); k++) solid(at(bridgeTieX(lay.E, k), -0.2, 0), V3(0.1 * sx, 0.1, hw + 0.1), 0);
+                    const double tieTop = -lay.base - kPlankThick;
+                    for (int k = 0; k <= bridgeTies(lay.E); k++) solid(at(bridgeTieX(lay.E, k), 0.5 * (tieTop - 0.3), 0), V3(0.1 * sx, 0.5 * (tieTop + 0.3), hw + 0.1), 0);
                     const int ns = bridgeStringers(hw);
                     for (int k = 1; k + 1 < ns; k++) solid(at(0, -0.55, bridgeStringerZ(hw, k)), V3(lay.E * sx, 0.25, 0.25), 0);
                     // Whole rails, and posts where they still stand (a leaning one where it is at the height a bumper meets it).

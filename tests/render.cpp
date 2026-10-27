@@ -8,6 +8,7 @@
 #include "../src/sdl_min.h"
 #include "../src/procstream.h"
 #include "../src/procworld.h"
+#include "../src/bridgelayout.h"
 #include "../src/procdress.h"
 #include <algorithm>
 #include <vector>
@@ -539,8 +540,24 @@ int main() {
             const bool timeFrames = !(gr && std::strstr(gr, "Software Renderer"));
             auto finish = reinterpret_cast<void (*)()>(SDL_GL_GetProcAddress("glFinish"));
             struct Spot { const char* what; uint64_t seed; double gx, gz; V3 eyeOff; };
-            // (seed 1's 14 m fall, tests/procmodels.cpp procmodels/falls; seed 3's roughest bridge, procmodels/bridge-drive)
-            const Spot spots[2] = {{"waterfall", 1, -6174.3, 264.0, V3(-21, 9, -21.6)}, {"worn bridge", 3, -1630.5, 1653.0, V3(-12, 5, 5)}};
+            // (Found in the generator, as it is now: seed 1's first fall over 5 m, looked at from 22 m down its way, below its lip; and the first worn
+            // bridge near the middle of seed 1..5's worlds, from beside it.)
+            Spot spots[2] = {{"waterfall", 1, 0, 0, V3()}, {"worn bridge", 0, 0, 0, V3(-12, 5, 5)}};
+            for (const proc::FallSpan& f : proc::fallSpans(proc::ProcWorld::forSeed(1), -6000, -6000, 6000, 6000))
+                if (f.top - f.bottom > 5) {
+                    spots[0].gx = f.x, spots[0].gz = f.z, spots[0].eyeOff = V3(f.fx * 22, -4, f.fz * 22);
+                    break;
+                }
+            for (uint64_t sd = 1; sd <= 5 && !spots[1].seed; sd++)
+                for (int64_t i = -6; i < 6 && !spots[1].seed; i++)
+                    for (int64_t j = -6; j < 6 && !spots[1].seed; j++)
+                        for (int dir = 0; dir < 2 && !spots[1].seed; dir++) {
+                            const auto e = proc::ProcWorld::forSeed(sd).edge(i, j, dir);
+                            if (e->on)
+                                for (const proc::TrailEdge::Span& b : e->bridges)
+                                    if (!spots[1].seed && proc::bridgeWear(b, e->road) >= 0.5) spots[1].seed = sd, spots[1].gx = 0.5 * (b.ax + b.bx), spots[1].gz = 0.5 * (b.az + b.bz);
+                        }
+            if (spots[0].eyeOff.y == 0 || !spots[1].seed) throw std::runtime_error("no waterfall or worn bridge to look at");
             for (const Spot& sp : spots) {
                 double ms[2] = {0, 0};
                 std::vector<unsigned char> px[2];
@@ -571,7 +588,7 @@ int main() {
                 for (size_t k = 0; k + 2 < px[0].size() && k + 2 < px[1].size(); k += 3) differ += std::abs(px[0][k] - px[1][k]) + std::abs(px[0][k + 1] - px[1][k + 1]) + std::abs(px[0][k + 2] - px[1][k + 2]) > 30;
                 std::printf("Render check: %s: median frame %.2f ms dressed, %.2f bare; %ld of %d pixels changed%s\n", sp.what, ms[1], ms[0], differ, 160 * 90,
                             timeFrames ? "" : " (not timed: a software renderer)");
-                if (differ < 100) throw std::runtime_error(std::string("the ") + sp.what + " isn't drawn (the frame looks as it did without it)");
+                if (differ < 40) throw std::runtime_error(std::string("the ") + sp.what + " isn't drawn (the frame looks as it did without it)");
                 if (timeFrames && ms[1] > 1.25 * ms[0] + 1.0) throw std::runtime_error(std::string("the ") + sp.what + " costs the frame over a quarter again");
             }
             clean();

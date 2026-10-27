@@ -63,41 +63,52 @@ void logAt(B& b, const V3& a, const V3& e, double r, uint32_t seed, uint32_t i, 
     }
 }
 
-// The deck: plank pieces as bridgelayout.h has them (the same numbers make its collision: procdress.cpp), on ties across the
-// stringers. A bridge in fair shape has its planks whole and running planks along the wheel tracks (their top the deck's); a worn
-// one's planks are the deck's top themselves, some sagging, some broken and tipped, many gone.
+// The deck as bridgelayout.h lays it (the same numbers make its collision: procdress.cpp): cross planks laid across the stringers
+// side by side, a plank a row (a sound run of a row's pieces is one plank; a worn deck's are sagging, broken and tipped, or gone),
+// running boards along the wheel tracks on some bridges, curb logs along the edges, all on ties across the stringers.
 void deck(B& b, const Dims& d) {
     const proc::BridgeLayout& L = d.lay;
-    const double top = L.fair ? -0.05 : 0.0;
+    std::vector<proc::BridgeLayout::Piece> cross, runs;
+    for (const auto& q : L.deck) (q.runner ? runs : cross).push_back(q);
+    std::sort(cross.begin(), cross.end(), [](const auto& p, const auto& q) { return p.x0 != q.x0 ? p.x0 < q.x0 : p.z0 < q.z0; });
     uint32_t k = 0;
-    for (const proc::BridgeLayout::Piece& q : L.deck) {
+    for (size_t i = 0; i < cross.size();) {
+        const proc::BridgeLayout::Piece& q = cross[i];
         k++;
         b.style(oldWood(kPlank, d, 11, k), WOOD);
-        const double xm = 0.5 * (q.x0 + q.x1), wx = q.x1 - q.x0, w = q.z1 - q.z0;
+        const double xm = 0.5 * (q.x0 + q.x1), wx = q.x1 - q.x0;
         if (q.kind == 2) {  // tipped about its sound end
-            const double th = q.roll, s = std::sin(std::fabs(th)), c = std::cos(th);
-            const V3 piv(xm, top - q.drop, th > 0 ? q.z0 : q.z1), dir(0, -s, th > 0 ? c : -c);
+            const double w = q.z1 - q.z0, th = q.roll, s = std::sin(std::fabs(th)), c = std::cos(th);
+            const V3 piv(xm, -q.drop, th > 0 ? q.z0 : q.z1), dir(0, -s, th > 0 ? c : -c);
             const V3 n(0, c, th > 0 ? s : -s);
             b.beam(piv + dir * 0.02 - n * (0.5 * proc::kPlankThick), piv + dir * w - n * (0.5 * proc::kPlankThick), wx, proc::kPlankThick, n);
-        } else
-            b.box(V3(xm, top - q.drop - 0.5 * proc::kPlankThick, 0.5 * (q.z0 + q.z1)), V3(wx, proc::kPlankThick, w - 0.01));
+            i++;
+            continue;
+        }
+        size_t j = i + 1;  // (the sound pieces of the row next to each other at one height: one plank)
+        while (j < cross.size() && cross[j].x0 == q.x0 && cross[j].kind == q.kind && cross[j].drop == q.drop && cross[j].z0 - cross[j - 1].z1 < 0.05) j++;
+        const double z0 = q.z0, z1 = cross[j - 1].z1;
+        const double jut = (z0 <= -d.hw + 1e-6 || z1 >= d.hw - 1e-6) ? 0.06 * (hash01(d.seed + 12, k) - 0.5) : 0.0;  // (the plank ends a little ragged)
+        b.box(V3(xm, -q.drop - 0.5 * proc::kPlankThick, 0.5 * (z0 + z1) + 0.5 * jut), V3(wx, proc::kPlankThick, z1 - z0 - 0.01 + std::fabs(jut)));
+        i = j;
     }
-    if (L.fair) {
-        const double track = std::min(0.95, d.hw * 0.45);
-        for (int sd = -1; sd <= 1; sd += 2)
-            for (int q = -1; q <= 1; q++) {
-                b.style(oldWood(kPlank * 0.92, d, 13, (uint32_t)(sd * 3 + q + 10)), WOOD);
-                b.box(V3(0, -0.025, sd * track + q * 0.24), V3(2 * d.E - 0.1, 0.05, 0.22), 0.008);
-            }
+    for (const proc::BridgeLayout::Piece& q : runs) {
+        b.style(oldWood(kPlank * 0.92, d, 13, ++k), WOOD);
+        b.box(V3(0.5 * (q.x0 + q.x1), -q.drop - 0.5 * proc::kRunnerThick, 0.5 * (q.z0 + q.z1)), V3(q.x1 - q.x0, proc::kRunnerThick, q.z1 - q.z0));
+    }
+    // Curb logs (wheel guards) along the edges, on the cross planks.
+    for (const proc::BridgeLayout::Curb& c : L.curbs) {
+        const double z = c.side * (d.hw - proc::kCurbR), y = -L.base + proc::kCurbR;
+        logAt(b, V3(c.x0, y, z), V3(c.x1, y, z), proc::kCurbR, d.seed + 31, (uint32_t)(++k), 0.5 * L.damage);
     }
     // Ties across under the planks (and out past the edges at the posts: the braces' feet).
-    const double tieTop = top - proc::kPlankThick;
+    const double tieTop = -L.base - proc::kPlankThick;
     for (int t = 0; t <= proc::bridgeTies(d.E); t++) {
         const double x = proc::bridgeTieX(d.E, t);
         b.style(oldWood(kLog * 1.1, d, 15, t), WOOD);
         b.box(V3(x, 0.5 * (tieTop - 0.3), 0), V3(0.2, tieTop + 0.3, 2 * d.hw + 0.2), 0.01);
     }
-    // Stringers: logs end to end on the abutments (and the pier).
+    // Stringers: logs running bank to bank under the deck, on the abutments (and the pier).
     const int n = proc::bridgeStringers(d.hw);
     for (int s = 0; s < n; s++) logAt(b, V3(-d.E, -0.55, proc::bridgeStringerZ(d.hw, s)), V3(d.E, -0.55, proc::bridgeStringerZ(d.hw, s)), 0.25, d.seed, 40 + s, 0.6 * L.damage);
 }
