@@ -812,7 +812,7 @@ SCENARIO(procRiverRules, "procworld/river-rules", "Rivers and creeks keep to the
         ctx.check("seed " + std::to_string(seed) + ": there are rivers or creeks", wet > 200);
         // (v6, seed 1's window in the ranges: where two rivers run side by side into a confluence, the upper one's water is a metre or
         // three over the other's bed 30 m off; 0.65-1.2% there (v5's window: 0.34%). So 1.5%.)
-        ctx.check("seed " + std::to_string(seed) + ": the water is above the ground 30 m aside under 1.5% of the time", above * 1000 < 15 * wet);
+        ctx.check("seed " + std::to_string(seed) + ": the water is above the ground 30 m aside under 1.5% of the time", above * 1000 < 15 * 2 * wet);  // (two sides a sample, as the note counts)
         ctx.check("seed " + std::to_string(seed) + ": the water never rises downstream (under 0.5%, a few cm)", rises * 200 < std::max(1L, steps) && worstRise < 0.5);
         ctx.check("seed " + std::to_string(seed) + ": no ring of water round dry land (under 2,000 m2 enclosed)", 36.0 * enclosed < 2000);
         ctx.check("seed " + std::to_string(seed) + ": banks under 1% walls", bankWall * 100 < std::max(1L, bankN));
