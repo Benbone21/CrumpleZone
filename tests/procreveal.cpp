@@ -71,7 +71,7 @@ SCENARIO(revealUnexplored, "procworld/reveal-unexplored", "Ground not visited st
     const auto t0 = std::chrono::steady_clock::now();
     MapImage::Tile* p = img2.update(G, big, 0, 0, 0.5);
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-    ctx.check("a budgeted update stops early and carries on later", p && !p->complete && ms < 20);
+    ctx.check("a budgeted update stops early and carries on later", p && !p->complete && ms < 20, std::to_string(ms) + " ms, " + (p && p->complete ? "complete" : "not complete"));
     int calls = 1;
     while (!img2.update(G, big, 0, 0, 5)->complete && calls < 2000) calls++;
     ctx.note("full-tile (about 2500 revealed pixels) took " + std::to_string(calls) + " updates of 5 ms after the first");

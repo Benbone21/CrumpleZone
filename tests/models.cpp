@@ -21,7 +21,7 @@ size_t budgetFor(const std::string& id) {
         {"tree_pine", 700}, {"tree_broadleaf", 420}, {"tree_snag", 220}, {"bush", 130}, {"stump", 80},
         {"marker_post", 100}, {"cairn", 250}, {"trail_sign", 400}, {"person", 2500},
         {"repair_shed", 12000}, {"fire_tower", 12000}, {"sign_gantry", 12000}, {"race_gate", 12000},
-        {"cabin", 6500}, {"garage", 6000}, {"ranger_station", 12000}, {"mine_headframe", 12000}, {"chain_bundle", 2600}, {"crate_engine_v8", 3600}, {"crate_engine_v8_dohc", 3600}, {"crate_engine_v6", 3600}, {"crate_engine_i4", 3600}, {"crate_engine_i3", 3600}, {"crate_engine_flat4", 3600}, {"wreck_pickup", 10000}, {"ore_cart", 5000}, {"mine_portal", 6000}, {"jersey_barrier", 6000}, {"guardrail", 6000},
+        {"cabin", 6500}, {"timber_bridge", 12000}, {"garage", 6000}, {"ranger_station", 12000}, {"mine_headframe", 12000}, {"chain_bundle", 2600}, {"crate_engine_v8", 3600}, {"crate_engine_v8_dohc", 3600}, {"crate_engine_v6", 3600}, {"crate_engine_i4", 3600}, {"crate_engine_i3", 3600}, {"crate_engine_flat4", 3600}, {"wreck_pickup", 10000}, {"ore_cart", 5000}, {"mine_portal", 6000}, {"jersey_barrier", 6000}, {"guardrail", 6000},
     };
     auto it = b.find(id);
     return it == b.end() ? 2500 : it->second;
@@ -72,7 +72,7 @@ SCENARIO(modelsBuild, "models/build", "Every design of every model builds: sound
                 mk::build(d, v, far, f);
                 ctx.check(tag + "far copy within budget", f.triangles() <= farBudget.at(d.id), std::to_string(f.triangles()) + " > " + std::to_string(farBudget.at(d.id)));
             }
-            const bool hangs = d.id == "tree_saver" || d.id == "chain_sling" || d.id == "fp_hand";  // (round a trunk or boulder at belt height; in your hand)
+            const bool hangs = d.id == "tree_saver" || d.id == "chain_sling" || d.id == "fp_hand" || d.id == "timber_bridge";  // (round a trunk or boulder at belt height; in your hand; a bridge's origin is its deck, over a river)
             ctx.check(tag + "stands on the ground", hangs || (m.lo.y > -0.6 && m.lo.y < 0.25), std::to_string(m.lo.y));
             const double big = std::max({size.x, size.y, size.z});
             ctx.check(tag + "about the size it says", big > d.size * 0.25 && big < d.size * 4 + 1, std::to_string(big) + " m against " + std::to_string(d.size));

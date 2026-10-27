@@ -19,22 +19,36 @@ struct RoadRule {
 
 // ---- Water ----------------------------------------------------------------------------------------------------------------------
 struct WaterRule {
-    double freeboard = 3.0;          // m: the land stands at least this over a channel's water, or the channel fades (nothing is filled)
-    double riverBendMin = 220;       // m: a river's tightest bend (its contour's radius); tighter (a ring, a hairpin) and it fades out
-    double creekBendMin = 110;       // m: a creek's
-    double bankBatter = 2.5;         // a valley's wall is this times its depth wide (eased in: steepest about 1 : bankBatter / 1.5)
-    double riverValleyMax = 1000;    // m: the widest a river's valley wall goes (a gorge in the ranges is steeper: rock)
-    double creekValleyMax = 160;     // m: a creek's
-    double riverCutMax = 100000;        // m: where the land stands this far over a river's level, no valley is cut (rivers go round mountains)
+    // (The drainage network, procworld.cpp: a lattice node every 160 m drains to its lowest neighbour; its drainage is the area
+    // upstream of it. docs/plans/procworld-next.md "Slice: land shape with real drainage".)
+    double gullyArea = 0.08;         // km2: a channel drains this much before it cuts a gully (dry)...
+    double creekArea = 0.3;          // km2: ...a creek (water, fordable)...
+    double riverArea = 1.5;          // km2: ...a river...
+    double bigRiverArea = 2.5;       // km2: ...a big river (deep and fast: crossed at its known fords, or on a bridge)
+    double bankBatter = 6.0;         // in the ranges a valley's side is this times its height wide (steepest at its foot: 1 : batter/2)
+    double lowBatter = 14;            // ...in the lowland
+    double riverGrade = 0.04;        // the steepest a big river's level climbs in the ranges (a tenth of it in the lowland)
+    double creekGrade = 0.33;        // ...and a creek's high in the ranges (cascades)
+    double fordSpacing = 2500;       // m: about how far apart a big river's known fords are
+    double fordDepth = 0.4;          // m: the water over a ford's riffle
+};
+
+// ---- Bridges: how worn the timber bridges are (procdress.cpp, bridgelayout.h) ------------------------------------------------------
+struct BridgeRule {
+    double damage = 0.75;        // 0..1: how worn a rough bridge is on the whole (the planks gone, broken and sagging, the rails and posts)
+    double fairShare = 0.15;     // the share of bridges in fair shape (sound deck and rails): main trails' 1.4 times as often, other trails' half as often
+    double missingShare = 0.45;  // the share of the deck's plank pieces missing on the roughest bridge (fewer on a less worn one)
+    double maxGap = 0.75;        // m: the widest hole left along the one drivable line every bridge keeps (off it, any size)
 };
 
 // ---- Terrain: the mountain ranges ---------------------------------------------------------------------------------------------
 struct RangeRule {
     double beltFrom = 0.40;        // the belt field (0..1, ~9 km features) where ranges begin (less 0.06 x the world's relief)
     double beltFull = 0.60;        // ...and where they're at full height
-    double passHeight = 260;       // m over the lowland: the ranges' high valleys and passes
-    double peakHeight = 820;       // m: the ridged field's top on top of that, times the world's relief (0.75-1.25)
-    double crestSpacing = 1923;    // m: about how far apart the crests are
+    double passHeight = 300;       // m over the lowland: the ranges' valley floors at their heart (times the world's relief, 0.75-1.25)
+    double peakHeight = 620;        // m: the mountains' mass over their valley floors, times the world's relief (the valleys are cut into it)
+    double summitHeight = 2900;    // m: the summits on a range's axis over its mass, times the world's relief: the peaks (1.5-2.5 km)
+    double crestSpacing = 1100;    // m: about how far apart the crags on the ridges are (the rough detail on the high ground)
     double alpineFrom = 330;       // m: the alpine biome's weight starts here...
     double alpineFull = 560;       // ...and is whole here
     double alpineHeatShift = 100;    // m: in the coldest country the alpine comes this much lower (and in the hottest this much higher)
@@ -44,9 +58,9 @@ struct RangeRule {
 struct AlpineRule {
     double treesPerHa = 420;        // trees a hectare on the slopes at the foot of the range (pines)
     double treeSlopeMax = 0.75;     // no trees steeper than this (rise over run, ~35 degrees)
-    double treeLine = 760;         // m: where the forest ends...
-    double treeLineWobble = 60;    // m: ...give or take this (a noise: higher on some spurs, lower in others)
-    double treeLineFade = 200;     // m: below the line the forest thins over this band...
+    double treeLine = 1550;        // m: where the forest ends...
+    double treeLineWobble = 80;    // m: ...give or take this (a noise: higher on some spurs, lower in others)
+    double treeLineFade = 250;     // m: below the line the forest thins over this band...
     double krummholz = 0.6;        // ...and the trees shrink to (1 - this) of their height at the line
     double meadowSize = 110;       // m: about how big the meadows are
     double trunkSpacing = 3.0;     // m: trees stand at least this far apart (drivable between, tight in places)
@@ -56,7 +70,7 @@ struct AlpineRule {
     double meadowShare = 0.05;      // of the slopes are open meadows (glades a couple of hundred metres across)
     double coniferShare = 0.93;     // pines and firs; the rest dead snags...
     double aspenShare = 0.1;       // ...or aspens, low down:
-    double aspenBelow = 500;       // m: aspens only below this
+    double aspenBelow = 900;       // m: aspens only below this
     double rockBandSlope = 0.5;      // slopes steeper than this show rock bands (9: none)...
     double rockBandSpacing = 24;   // m: ...ledges about this far apart up the slope
     double rockBandWidth = 0.3;    // ...this share of each step bare rock
@@ -80,6 +94,32 @@ struct TreeRule {
     double snag;
 };
 
+// ---- Erosion: the land worn by water and frost (proceros.h; procworld.cpp erodes it in fixed tiles) ---------------------------------
+struct ErosionBiomeRule {
+    double cut;      // stream power: m an iteration a channel draining 1 ha cuts at slope 1 (gullies; more drained, deeper: as its square root)
+    double deposit;  // 0..2: how readily the load drops where the slope eases (fans at slope feet, flat silted floors)
+    double talus;    // the steepest ground holds (rise over run): steeper slides down to it (scree; 1.4: cliffs stand)
+    double creep;    // 0..0.2: soil creep, rounding (soft rolling land; ~0 keeps rock crests sharp)
+};
+struct ErosionRule {
+    double on = 1;            // 1: the land is eroded; 0: not (the land shaped round its drainage alone)
+    double coarseIterations = 50;  // the erosion's steps (on the 8 m grid the land is worn on)
+    double iterations = 0;    // (unused since the tiles went to 8 m: a 4 m pass would need the land sampled four times as often)
+    double maxCut = 4;        // m: the most a step cuts anywhere
+    double maxDepth = 60;     // m: the eroded land stays within this of the land it wore
+    double glacierIterations = 0;   // (experimental, off: its flow lines are the whole grid's, so tiles disagree at seams) the ice ages' steps (before the rivers): glaciers above glacier_line scoop cirques and troughs
+    double glacierLine = 1500;      // m: ice gathers above this, melts below
+    double glacierCut = 0.004;      // how hard the ice wears its bed (m a step per square root of the ice passing, m3 a year)
+    double damMin = 4, damMax = 16; // m: a valley's natural dam stands this much over its channel (a site's dice between them)
+    double lakeShare = 0.4;         // 0..1: the share of valley-lake sites (gentle valley stretches) with a natural dam across them
+    double lakeMinArea = 0.5;       // ha: the water a valley's natural dam holds is a lake from this big...
+    double lakeMinDepth = 1.5;      // m: ...and this deep (twice as deep for a hollow no dam made)
+    double lakeOpenArea = 3;        // ha: a hollow no dam made (a sink of the drainage, a low spot the wear left) holds a lake only from this big
+    double pitFill = 0.25;          // 0..1: how much of the load reaching a closed hollow silts it (lakes last)
+    // meadow, forest, badlands (desert and mesa), mountains (alpine), dunes
+    ErosionBiomeRule biome[5] = {{0.5, 2.4, 0.6, 0.1}, {0.6, 2.4, 0.7, 0.06}, {2.8, 3.6, 1.4, 0.0}, {2.0, 1.8, 0.9, 0.01}, {0.16, 3.0, 0.6, 0.05}};
+};
+
 struct Rules {
     RoadRule road[RK_COUNT] = {
         {3.5, 0.10, 10.0},  // paved (reserved: none yet)
@@ -87,11 +127,13 @@ struct Rules {
         {2.0, 0.60, 2.5},   // trails (green and blue)
         {2.0, 0.70, 1.5},   // two-tracks (black)
     };
-    double batter = 2.2;      // earthworks' sides (and a place's levelled lot) are this times their depth wide (eased in: the steepest part about 1 : 1.5)
+    double batter = 2.5;      // earthworks' sides (and a place's levelled lot) are this times their depth wide (eased in: the steepest part about 1 : 1.5)
     WaterRule water;
+    BridgeRule bridge;
     RangeRule range;
     AlpineRule alpine;
     // meadow, forest, badlands, mountains (its density and shares: alpine), dunes
+    ErosionRule erosion;
     TreeRule trees[5] = {{22, 0.15, 0.2, 0.04}, {98, 0.55, 0.45, 0.06}, {6, 1.0, 0.0, 0.55}, {27, 1.0, 0.9, 0.1}, {0.7, 1.0, 0.0, 0.55}};
 };
 

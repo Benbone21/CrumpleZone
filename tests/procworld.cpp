@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <cstdio>
 #include <array>
 #include <map>
@@ -65,7 +66,7 @@ SCENARIO(procSeedsDiffer, "procworld/seeds-differ", "Different seeds make clearl
         std::array<double, PB_COUNT> mix{};
         for (int a = -20; a <= 20; a++)
             for (int b = -20; b <= 20; b++) {
-                const Macro m = G.macro(a * 250.0, b * 250.0);
+                const Macro m = G.macroCached(a * 250.0, b * 250.0);  // (the land before its wear where no tile is made: seeds differ either way)
                 h.push_back(m.h);
                 for (int k = 0; k < PB_COUNT; k++) mix[k] += m.w[k] / (41.0 * 41.0);
             }
@@ -304,7 +305,7 @@ SCENARIO(procPlaces, "procworld/places", "Places at the trail nodes: an outpost 
     int bad = 0, checked = 0, matched = 0, inBoth = 0;
     std::string why;
     for (const MapPlace& p : pa) {
-        if (p.kind == PK_CACHE || p.kind == PK_RIVER_CROSSING || p.kind == PK_ABANDONED_VEHICLE) continue;
+        if (p.kind == PK_CACHE || p.kind == PK_RIVER_CROSSING || p.kind == PK_ABANDONED_VEHICLE || p.kind == PK_WATERFALL) continue;
         checked++;
         const double h = a.height(p.p.x, p.p.z);
         double rough = 0;
@@ -739,13 +740,13 @@ SCENARIO(procRiverRules, "procworld/river-rules", "Rivers and creeks keep to the
                 // Across the flow, 30 m out either side: the ground stands at or above the water.
                 V3 f = w.waterFlow(x, z);
                 double fl = std::sqrt(f.x * f.x + f.z * f.z);
-                if (fl < 1e-6) f = V3(1, 0, 0), fl = 1;
+                if (fl < 1e-6) continue;  // (still water: a lake, procworld/lakes)
                 const double fx = f.x / fl, fz = f.z / fl;
                 for (int sd = -1; sd <= 1; sd += 2) {
                     const double gx = x - fz * sd * 30, gz = z + fx * sd * 30;
                     if (std::fabs(gx) > half || std::fabs(gz) > half) continue;
                     const double over = lv - w.height(gx, gz);
-                    if (over > 0.1) above++, worstAbove = std::max(worstAbove, over);
+                    if (over > 0.1 && w.waterLevel(gx, gz) < lv - 0.1) above++, worstAbove = std::max(worstAbove, over);  // (not where it's a lake's water beside)
                 }
                 // 4 m on downstream: the water is no higher.
                 const double dx = x + fx * 4, dz = z + fz * 4, lv2 = w.waterLevel(dx, dz);
@@ -815,13 +816,18 @@ SCENARIO(procRiverRules, "procworld/river-rules", "Rivers and creeks keep to the
                 for (int a = 0; a < kChunk; a += 2)
                     for (int b = 0; b < kChunk; b += 2) {
                         const float lv = c->water[(size_t)a * kChunk + b];
-                        if (lv < -1e8f) continue;
+                        if (lv < -1e8f || (c->flowX[(size_t)a * kChunk + b] == 0 && c->flowZ[(size_t)a * kChunk + b] == 0)) continue;  // (lakes: still)
                         wetN++;
                         const double x = (double)(cx * kChunk + a), z = (double)(cz * kChunk + b);
                         raised += lv > G.macroAt(x, z, false).h + 0.5;
                         const double fx = c->flowX[(size_t)a * kChunk + b], fz = c->flowZ[(size_t)a * kChunk + b], fl = std::sqrt(fx * fx + fz * fz);
                         if (fl < 1e-6) continue;
-                        for (int sd = -1; sd <= 1; sd += 2) beside += lv > G.groundHeight(x - fz / fl * sd * 30, z + fx / fl * sd * 30) + 1;
+                        for (int sd = -1; sd <= 1; sd += 2) {  // (beside a lake it flows into, the lake's floor: water beside water)
+                            const double ax = x - fz / fl * sd * 30, az = z + fx / fl * sd * 30;
+                            const Macro ma = G.macroAt(ax, az, false);
+                            if (ma.lakeLevel > -1e8 && ma.h < ma.lakeLevel) continue;
+                            beside += lv > G.groundHeight(ax, az, ma) + 1;
+                        }
                     }
             }
         char b[200];
@@ -846,8 +852,8 @@ SCENARIO(procNoRings, "procworld/no-rings", "No river or creek runs in a ring (p
                 for (int a = t; a < R; a += 4)
                     for (int b = 0; b < R; b++) {
                         const double x = -half + a * C, z = -half + b * C;
-                        const Macro m = G.macroAt(x, z, false);
-                        ch[(size_t)a * R + b] = (m.creekOn > 0.5 && std::fabs(m.creekS) < G.creekHalfWidth(x, z) + 5) || (m.riverOn > 0.5 && std::fabs(m.riverS) < G.riverHalfWidth(x, z) + 5);
+                        const Macro m = G.macroAt(x, z, true);
+                        ch[(size_t)a * R + b] = (m.creekOn > 0.5 && std::fabs(m.creekS) < m.creekHW + 5) || (m.riverOn > 0.5 && std::fabs(m.riverS) < m.riverHW + 5);
                     }
             });
         for (auto& t : th) t.join();
@@ -913,7 +919,7 @@ SCENARIO(procAlpine, "procworld/alpine", "The alpine rules (procrules.h, biome.a
         std::vector<std::array<double, 3>> hi;
         for (double x = -6000; x < 6000; x += 100)
             for (double z = -6000; z < 6000; z += 100) {
-                const double h = G.macroHeight(x, z);
+                const double h = G.macroCached(x, z).h;  // (the peaks before the wear, where no tile is made: within 60 m of the worn)
                 top = std::max(top, h);
                 if (h > 1500) hi.push_back({h, x, z});
                 if (h > A.treeLine - 500 && h < A.treeLine - 300 && rangeSpots.size() < 400 && ((long)(x + z) / 100) % 7 == 0) rangeSpots.push_back({x, z});
@@ -930,10 +936,31 @@ SCENARIO(procAlpine, "procworld/alpine", "The alpine rules (procrules.h, biome.a
     char b[300];
     std::snprintf(b, sizeof b, "%d peaks over 1.5 km (1 km apart) in 3 x 144 km2; the highest %.0f m", peaks, top);
     ctx.note(b);
-    // (Taller ranges, 1.5-2.5 km, wait for the land-shape slice: today's contour rivers saw gorges through them, and the slopes
-    // came out too steep to drive. The alpine zones follow rules().alpine whatever the heights.)
-    // (The snow is set for those taller ranges: patches from 1.6 km, whole from 2 km. Today's ~1.3 km tops stay bare.)
+    // (The owner's rule, procworld-rules.md 2: peaks 1.5-2.5 km. The summits stand in massifs on the ranges' axes.)
+    ctx.check("peaks: at least one over 1.5 km per 100 km2", peaks * 100 >= 3 * 144);
+    ctx.check("peaks: none over 2.8 km", top < 2800);
     ctx.check("bare tops: some land over the tree line", top > A.treeLine + A.treeLineWobble);
+    {  // (and snow on them: the highest ground of some seeds round their summits, a chunk at each top over 1.9 km)
+        long cells = 0, snow = 0;
+        double best = 0;
+        for (uint64_t seed : {1ull, 2ull, 3ull, 4ull, 5ull, 6ull, 123456789ull}) {
+            const ProcWorld& G = ProcWorld::forSeed(seed);
+            double bh = 0, bx = 0, bz = 0;
+            for (double x = -8000; x < 8000; x += 200)
+                for (double z = -8000; z < 8000; z += 200) {
+                    const double h = G.macroCached(x, z).h;  // (the peaks before the wear, where no tile is made: within 60 m of the worn)
+                    if (h > bh) bh = h, bx = x, bz = z;
+                }
+            best = std::max(best, bh);
+            if (bh < 1900) continue;
+            auto c = G.chunk(floorDiv((int64_t)bx, kChunk), floorDiv((int64_t)bz, kChunk));
+            for (int k = 0; k < kChunk * kChunk; k++)
+                if (c->h[k] > 1900) cells++, snow += c->surf[k] == SURF_SNOW || c->surf[k] == SURF_ROCK;
+        }
+        std::snprintf(b, sizeof b, "the highest of 7 seeds' 256 km2: %.0f m; over 1.9 km round their tops, %.0f%% snow or bare rock", best, 100.0 * snow / std::max(1L, cells));
+        ctx.note(b);
+        ctx.check("snow (or rock too steep for it) over the high tops", cells > 0 && snow * 10 >= cells * 7);
+    }
     // The forest, the tree line and the snow, from the chunks: on the alpine slopes of three seeds' ranges (a chunk every 250 m).
     struct Band { long cells = 0, snow = 0, trees = 0, conifers = 0, area = 0; double treeH = 0; };
     std::map<int, Band> band;  // (by 100 m of height)
@@ -964,7 +991,8 @@ SCENARIO(procAlpine, "procworld/alpine", "The alpine rules (procrules.h, biome.a
         std::snprintf(b, sizeof b, "%4d-%4d m: %3ld chunks, snow %4.0f%%, %5.1f trees a hectare of gentle ground, %3.0f%% conifers, mean height %4.1f m", bh * 100, bh * 100 + 100,
                       bd.cells / 4096, 100 * snow, perHa, bd.trees ? 100.0 * bd.conifers / bd.trees : 0.0, bd.trees ? bd.treeH / bd.trees : 0.0);
         ctx.note(b);
-        if (bh * 100 >= A.snowPatchy - 100 && bd.cells >= 4096 * 4) snowGrows &= snow >= prevSnow - 0.05, prevSnow = snow;
+        // (8 points slack: the bands up high are a score of chunks, and steep tops shed their snow)
+        if (bh * 100 >= A.snowPatchy - 100 && bd.cells >= 4096 * 4) snowGrows &= snow >= prevSnow - 0.08, prevSnow = snow;
         if (bh * 100 >= A.treeLine + A.treeLineWobble) bareAbove &= bd.trees == 0;
         if ((bh + 1) * 100 <= A.treeLine - A.treeLineFade && bh * 100 >= rules().range.alpineFrom) forestHa += perHa * bd.cells, forestN += bd.cells, coniferShare += bd.conifers, coniferN += bd.trees, lowH += bd.treeH, lowN += bd.trees;
         if (bh * 100 >= A.treeLine - 150 && bh * 100 < A.treeLine + A.treeLineWobble) highH += bd.treeH, highN += bd.trees;
@@ -978,4 +1006,368 @@ SCENARIO(procAlpine, "procworld/alpine", "The alpine rules (procrules.h, biome.a
     ctx.check("stunted near the tree line", lowN > 0 && highN > 0 && highH / highN < 0.8 * lowH / lowN);
     ctx.check("no trees over the tree line", bareAbove);
     ctx.check("more snow the higher (where there's enough high ground to tell)", snowGrows);
+}
+
+SCENARIO(procDrainTree, "procworld/drainage-tree", "The drainage network (procworld.cpp): every node's way down ends in a sink, no node twice (a forest of trees, no loops); no channel's level ever rises downstream; sinks are rare") {
+    for (uint64_t seed : {1ull, 2ull, 123456789ull}) {
+        const ProcWorld& G = ProcWorld::forSeed(seed);
+        const auto st = G.drainStats(-6000, -6000, 6000, 6000);
+        char b[400];
+        std::snprintf(b, sizeof b, "seed %llu, 144 km2: %ld nodes; %ld sinks; channels: %ld creek, %ld river, %ld big river nodes; longest way down %ld nodes; %ld loops or dead ends; %ld node-to-node rises; %ld rises along the pieces",
+                      (unsigned long long)seed, st.nodes, st.sinks, st.creeks, st.rivers, st.bigRivers, st.maxChain, st.chainsBad, st.levelRises, st.pieceRises);
+        ctx.note(b);
+        ctx.check("seed " + std::to_string(seed) + ": every way down ends in a sink, no node visited twice", st.chainsBad == 0 && st.chainsChecked == st.nodes);
+        ctx.check("seed " + std::to_string(seed) + ": no level rises downstream (node to node, and along every piece)", st.levelRises == 0 && st.pieceRises == 0);
+        ctx.check("seed " + std::to_string(seed) + ": sinks (lake basins) rare: under 10 in 144 km2", st.sinks < 10);
+    }
+}
+
+SCENARIO(procRiverSpacing, "procworld/river-spacing", "Big rivers about every 5 km: 3-5 across a 20 km line on average (16 lines over 4 seeds); and the ranges' creeks carry water (out of the desert)") {
+    double tot = 0;
+    int n = 0;
+    std::string l;
+    for (uint64_t seed : {1ull, 2ull, 3ull, 123456789ull}) {
+        const ProcWorld& G = ProcWorld::forSeed(seed);
+        const double ang[4][2] = {{1, 0}, {0, 1}, {0.7071, 0.7071}, {0.7071, -0.7071}};
+        for (int d = 0; d < 4; d++) {
+            auto c = G.channelsAcross(-10000 * ang[d][0], -10000 * ang[d][1], 10000 * ang[d][0], 10000 * ang[d][1], rules().water.bigRiverArea);
+            int cnt = 0;
+            double last = -1e9;
+            for (auto& q : c) cnt += q.first - last > 300, last = q.first;  // (a river crossing the line a few times close together: once)
+            tot += cnt, n++, l += " " + std::to_string(cnt);
+        }
+    }
+    ctx.note("big rivers across each 20 km line:" + l);
+    ctx.metric("big rivers across a 20 km line, on average", tot / n, "", 3, 5);
+    for (uint64_t seed : {1ull, 2ull, 123456789ull}) {
+        const ProcWorld& G = ProcWorld::forSeed(seed);
+        const auto st = G.drainStats(-6000, -6000, 6000, 6000);
+        char b[200];
+        std::snprintf(b, sizeof b, "seed %llu: %ld creek nodes in the ranges out of the desert, %.0f%% with water (%.0f%% dry where they'd stand over the land beside them)", (unsigned long long)seed, st.rangeCreeks,
+                      100.0 * st.rangeCreeksWet / std::max(1L, st.rangeCreeks), 100.0 * st.rangeCreeksPerched / std::max(1L, st.rangeCreeks));
+        ctx.note(b);
+        // (Was 70% before the summits went to 2.5 km: their gorges leave more creek stretches perched, dry there. The owner's trade.)
+        ctx.check("seed " + std::to_string(seed) + ": the ranges' creeks: most carry water (over 60%)", st.rangeCreeks > 100 && st.rangeCreeksWet * 10 > st.rangeCreeks * 6);
+    }
+}
+
+SCENARIO(procDrainMap, "procworld/drain-map", "(with CZ_PROC_MAPS=dir) a 24 km overview of each seed's land and drainage, for looking at (CZ_MAP_SPAN, CZ_MAP_X, CZ_MAP_Z)") {
+    const char* dir = std::getenv("CZ_PROC_MAPS");
+    if (!dir) {
+        ctx.note("CZ_PROC_MAPS not set: nothing drawn");
+        return;
+    }
+    const double span = std::getenv("CZ_MAP_SPAN") ? std::atof(std::getenv("CZ_MAP_SPAN")) : 24000;
+    const double cx0 = std::getenv("CZ_MAP_X") ? std::atof(std::getenv("CZ_MAP_X")) : 0, cz0 = std::getenv("CZ_MAP_Z") ? std::atof(std::getenv("CZ_MAP_Z")) : 0;
+    for (uint64_t seed : {1ull, 2ull, 123456789ull}) {
+        const ProcWorld& G = ProcWorld::forSeed(seed);
+        const int S = 900;
+        const double step = span / S;
+        std::vector<double> H((size_t)S * S);
+        std::vector<Macro> MM((size_t)S * S);
+        std::vector<std::thread> th;
+        for (int t = 0; t < 4; t++)
+            th.emplace_back([&, t] {
+                for (int py = t; py < S; py += 4)
+                    for (int px = 0; px < S; px++) {
+                        const double x = cx0 - span / 2 + (px + 0.5) * step, z = cz0 + span / 2 - (py + 0.5) * step;
+                        MM[(size_t)py * S + px] = G.macroAt(x, z, true);
+                        H[(size_t)py * S + px] = G.groundHeight(x, z, MM[(size_t)py * S + px]);
+                    }
+            });
+        for (auto& t : th) t.join();
+        std::vector<unsigned char> img((size_t)S * S * 3);
+        double top = 0;
+        for (int py = 0; py < S; py++)
+            for (int px = 0; px < S; px++) {
+                const size_t k = (size_t)py * S + px;
+                const Macro& m = MM[k];
+                const double h = H[k];
+                top = std::max(top, h);
+                const double hx = H[(size_t)py * S + std::min(S - 1, px + 1)], hz = H[(size_t)std::max(0, py - 1) * S + px];
+                const double shade = std::clamp(0.8 + 1.2 * ((hx - h) - (hz - h)) / step, 0.3, 1.4);
+                double c[3];
+                const double t = std::clamp(h / 2000, 0.0, 1.0);
+                c[0] = 0.25 + 0.6 * t, c[1] = 0.45 + 0.35 * t, c[2] = 0.2 + 0.7 * t;
+                if (m.w[PB_DUNES] + m.w[PB_BADLANDS] > 0.5) c[0] = 0.8, c[1] = 0.6, c[2] = 0.4;
+                for (double& v : c) v *= shade;
+                if (m.riverS < m.riverHW + step * 0.7) {
+                    if (m.riverOn > 0.5) c[0] = 0.1, c[1] = m.bigRiver ? 0.2 : 0.4, c[2] = m.bigRiver ? 0.9 : 0.8;
+                    else c[0] = 0.9, c[1] = 0.8, c[2] = 0.5;
+                } else if (m.creekS < m.creekHW + step * 0.4 && m.creekOn > 0.5) c[0] = 0.3, c[1] = 0.6, c[2] = 0.9;
+                for (int q = 0; q < 3; q++) img[k * 3 + q] = (unsigned char)std::clamp(c[q] * 255, 0.0, 255.0);
+            }
+        const std::string path = std::string(dir) + "/drain_seed" + std::to_string(seed) + ".ppm";
+        if (FILE* f = std::fopen(path.c_str(), "wb")) {
+            std::fprintf(f, "P6\n%d %d\n255\n", S, S);
+            std::fwrite(img.data(), 1, img.size(), f);
+            std::fclose(f);
+        }
+        ctx.note("wrote " + path + ", highest " + std::to_string((int)top) + " m");
+    }
+}
+
+SCENARIO(procCrossings, "procworld/crossings", "Big rivers are real obstacles: a trail crosses one only at a known ford (a riffle, shallow) or on a bridge whose deck stands over the water; the bridge is built in the window") {
+    long trails = 0, bigFords = 0, bridges = 0, wades = 0, lowDecks = 0, gone = 0;
+    std::string where;
+    double bx = 0, bz = 0, by = 0;
+    uint64_t bseed = 0;
+    TrailEdge::Span bspan{};
+    for (uint64_t seed : {1ull, 2ull, 3ull, 123456789ull}) {
+        const ProcWorld& G = ProcWorld::forSeed(seed);
+        for (int64_t i = -6; i < 6; i++)
+            for (int64_t j = -6; j < 6; j++)
+                for (int dir = 0; dir < 2; dir++) {
+                    auto e = G.edge(i, j, dir);
+                    if (!e->on) {
+                        gone++;
+                        continue;
+                    }
+                    trails++, bigFords += e->bigFord, bridges += (long)e->bridges.size();
+                    for (size_t k = 0; k < e->x.size(); k++) {
+                        const double x = e->ax + e->x[k], z = e->az + e->z[k];
+                        const Macro m = G.macroAt(x, z, false);
+                        const bool deep = m.bigRiver && !m.riverFord && m.riverOn > 0.5 && m.riverS < m.riverHW - 0.5;
+                        if (deep && (e->onBridge.empty() || !e->onBridge[k])) {
+                            wades++;
+                            if (where.empty()) where = "seed " + std::to_string(seed) + " edge " + std::to_string(i) + "," + std::to_string(j) + "," + std::to_string(dir);
+                        }
+                    }
+                    for (const TrailEdge::Span& s : e->bridges) {
+                        const Macro m = G.macroAt(0.5 * (s.ax + s.bx), 0.5 * (s.az + s.bz), false);
+                        lowDecks += s.y < m.riverLevel + 1.4;
+                        if (!bseed) bseed = seed, bx = 0.5 * (s.ax + s.bx), bz = 0.5 * (s.az + s.bz), by = s.y, bspan = s;
+                    }
+                }
+    }
+    ctx.note(std::to_string(trails) + " trails in 4 x 36 km2: " + std::to_string(bigFords) + " ford a big river at a known ford, " + std::to_string(bridges) + " bridges; " + std::to_string(gone) + " links without a trail; " +
+             std::to_string(wades) + " samples wading a big river elsewhere" + (where.empty() ? "" : " (first: " + where + ")"));
+    ctx.check("no trail wades a big river off its known fords", wades == 0);
+    ctx.check("there are known fords and bridges", bigFords > 0 && bridges > 0);
+    ctx.check("every bridge's deck stands 1.4 m or more over the water", lowDecks == 0);
+    if (bseed) {
+        World w = windowAt(bseed, bx, bz);
+        const double lx = bx - (double)w.proc.ox, lz = bz - (double)w.proc.oz;
+        bool deck = false;
+        for (const Box& b : w.boxes) deck |= std::fabs(b.c.x - lx) < 3 && std::fabs(b.c.z - lz) < 3 && std::fabs(b.c.y + 0.15 - by) < 0.2;
+        ctx.check("the window round a bridge builds its deck", deck);
+        // (Its approaches graded to the deck: the ground at each end and 4 m on never over the deck; and nothing grows or lies on the
+        // span or its approaches.)
+        const double ax = bspan.ax - (double)w.proc.ox, az = bspan.az - (double)w.proc.oz, ex = bspan.bx - (double)w.proc.ox, ez = bspan.bz - (double)w.proc.oz;
+        const double len = std::sqrt((ex - ax) * (ex - ax) + (ez - az) * (ez - az)), ux = (ex - ax) / len, uz = (ez - az) / len;
+        double over = -1e9;
+        for (double t : {-4.0, -1.0, 0.0}) {
+            over = std::max(over, w.height(ax + ux * t, az + uz * t) - by);
+            over = std::max(over, w.height(ex - ux * t, ez - uz * t) - by);
+        }
+        ctx.check("the ground at a bridge's ends never over its deck (graded approaches)", over < 0.1, std::to_string(over) + " m");
+        long clutter = 0;
+        auto onSpan = [&](const V3& p, double r) {
+            const double rx = p.x - ax, rz = p.z - az, al = rx * ux + rz * uz, ac = std::fabs(-rx * uz + rz * ux);
+            return al > -6 - r && al < len + 6 + r && ac < 4 + r;
+        };
+        for (const Tree& t : w.trees) clutter += onSpan(t.base, 0.3);
+        for (const Rock& r : w.rocks) clutter += onSpan(r.c, r.r);
+        ctx.check("no tree or rock on a bridge's span or approaches", clutter == 0, std::to_string(clutter));
+        ctx.note("a bridge: seed " + std::to_string(bseed) + " at " + std::to_string((int)bx) + "," + std::to_string((int)bz));
+        World::procOriginSet = false;
+    }
+}
+
+SCENARIO(procLakesFalls, "procworld/lakes-falls", "Lakes are the water the worn land holds behind its valleys' natural dams (owner: no dug holes; valley lakes only): a few in 144 km2 (2-6 aimed), of varied sizes; level, the land at the water's edge never under it, few steep banks, a gentle bed near the shore. Waterfalls only where the land really drops, each with a plunge pool") {
+    long lakes = 0, bySub[5] = {}, lipOff = 0, lipN = 0, edgeN = 0, edgeLow = 0, edgeHigh = 0, bedN = 0, bedSteep = 0, levelN = 0, levelOff = 0, waterCells = 0;
+    long falls = 0, tallFalls = 0, pools = 0, tarnCrowd = 0;
+    double worstHigh = 0, worstLow = 0, spanMax = 0;
+    int lowland = 0, mountainMin = 1 << 30;
+    double rMin = 1e9, rMax = 0;
+    long seedsN = 0, seedMax = 0;
+    for (uint64_t seed : {1ull, 2ull, 3735928559ull}) {
+        const ProcWorld& G = ProcWorld::forSeed(seed);
+        const auto feats = G.waterFeatures(-6000, -6000, 6000, 6000);
+        {
+            int nl = 0;
+            for (const auto& f : feats) nl += f.kind == 0;
+            ctx.note("seed " + std::to_string(seed) + ": " + std::to_string(nl) + " lakes in 144 km2");
+            if (seed == 3735928559ull) lowland = nl;  // (the lowland seed: plains and forest)
+            else mountainMin = std::min(mountainMin, nl);
+            seedsN++, seedMax = std::max(seedMax, (long)nl);
+        }
+        std::vector<std::array<double, 2>> tarns;
+        int looked = 0;
+        for (const auto& f : feats) {
+            if (f.kind != 0) {
+                falls++;
+                auto ground = [&](double x, double z) { return G.groundHeight(x, z); };
+                const double above = ground(f.x - f.fx * 3, f.z - f.fz * 3), below = ground(f.x + f.fx * 7, f.z + f.fz * 7);
+                tallFalls += above - below >= 6;
+                const Macro m = G.macroAt(f.x + f.fx * 10, f.z + f.fz * 10, true);
+                pools += m.creekS < m.creekHW || m.riverS < m.riverHW ? (std::min(m.creekS < m.creekHW ? m.creekDepth : 9.0, m.riverS < m.riverHW ? m.riverDepth : 9.0) > 1.2) : 0;
+                continue;
+            }
+            lakes++, bySub[std::min(4, std::max(0, f.sub))]++;
+            rMin = std::min(rMin, f.size), rMax = std::max(rMax, f.size);
+            if (f.sub == 2) {
+                for (auto& t : tarns) tarnCrowd += (t[0] - f.x) * (t[0] - f.x) + (t[1] - f.z) * (t[1] - f.z) < 1000.0 * 1000.0;
+                tarns.push_back({f.x, f.z});
+            }
+            if (looked++ >= 14) continue;
+            // (Its water from the chunks, in a square round it: level; at its edge the land never under it, nor a bank; its bed gentle.)
+            const double half = std::min(600.0, 2.5 * f.size + 60);
+            const int64_t c0 = floorDiv((int64_t)(f.x - half), kChunk), c1 = floorDiv((int64_t)(f.x + half), kChunk);
+            const int64_t d0 = floorDiv((int64_t)(f.z - half), kChunk), d1 = floorDiv((int64_t)(f.z + half), kChunk);
+            auto cell = [&](int64_t gx, int64_t gz, double& h, double& w) {
+                auto c = G.chunk(floorDiv(gx, kChunk), floorDiv(gz, kChunk));
+                const size_t k = (size_t)(gx - c->cx * kChunk) * kChunk + (size_t)(gz - c->cz * kChunk);
+                h = c->h[k], w = c->water.empty() ? -1e9 : c->water[k];
+                return c->water.empty() ? false : (c->flowX[k] == 0 && c->flowZ[k] == 0 && std::fabs(c->water[k] - f.level) < 0.2);
+            };
+            double minX = 1e18, maxX = -1e18;
+            for (int64_t cx = c0; cx <= c1; cx++)
+                for (int64_t cz = d0; cz <= d1; cz++)
+                    for (int a = 0; a < kChunk; a += 2)
+                        for (int b2 = 0; b2 < kChunk; b2 += 2) {
+                            const int64_t gx = cx * kChunk + a, gz = cz * kChunk + b2;
+                            double h, w;
+                            if (!cell(gx, gz, h, w)) continue;
+                            waterCells++, levelN++, levelOff += std::fabs(w - f.level) > 0.05;
+                            if (std::fabs(w - f.level) > 0.05 && std::getenv("CZ_LAKE_DBG")) {
+                                static int dl = 0;
+                                if (dl++ < 6) std::fprintf(stderr, "off level: lake %.0f,%.0f W %.3f: cell %lld,%lld water %.3f h %.2f\n", f.x, f.z, f.level, (long long)gx, (long long)gz, w, h);
+                            }
+                            minX = std::min(minX, (double)gx), maxX = std::max(maxX, (double)gx);
+                            // (at its edge: a dry neighbour 2 m away)
+                            const int nb[4][2] = {{2, 0}, {-2, 0}, {0, 2}, {0, -2}};
+                            bool edge = false;
+                            for (auto& q : nb) {
+                                double h2, w2;
+                                if (cell(gx + q[0], gz + q[1], h2, w2) || w2 > h2) continue;
+                                edge = true, edgeN++;
+                                if (h2 < f.level - 0.05) {
+                                    edgeLow++, worstLow = std::max(worstLow, f.level - h2);
+                                    static int dbg = 0;
+                                    if (std::getenv("CZ_LAKE_DBG") && f.level - h2 > 1 && dbg++ < 10) {
+                                        const Macro mm = G.macroAt(gx + q[0], gz + q[1], false);
+                                        std::fprintf(stderr, "leak sub %d lip %.0f,%.0f W %.1f: cell %lld,%lld h %.1f; dry neighbour h %.1f macro h %.1f lake %.1f dam %.1f node %lld,%lld\n", f.sub, f.x, f.z, f.level, (long long)gx, (long long)gz, h, h2, mm.h, mm.lakeLevel, mm.damH, (long long)mm.floorNode, (long long)mm.floorNode2);
+                                    }
+                                }
+                                // (a bank: the ground 3 m out from the edge, over 2.5 m above the water; not a tarn's back wall)
+                                double h3, w3;
+                                cell(gx + q[0] * 2, gz + q[1] * 2, h3, w3);
+                                const bool backWall = f.sub == 2 && (q[0] * f.fx + q[1] * f.fz) < 0;
+                                if (!backWall && h3 - f.level > 2.5) edgeHigh++, worstHigh = std::max(worstHigh, h3 - f.level);
+                            }
+                            if (!edge) {  // (its bed near the shore: the water under 2 m deep, the bed's slope)
+                                if (f.level - h < 2) {
+                                    double hx, wx, hz, wz;
+                                    cell(gx + 2, gz, hx, wx), cell(gx, gz + 2, hz, wz);
+                                    bedN++, bedSteep += std::max(std::fabs(hx - h), std::fabs(hz - h)) / 2 > 0.25;
+                                }
+                            }
+                        }
+            if (maxX > minX) spanMax = std::max(spanMax, maxX - minX);
+        }
+    }
+    char b[500];
+    std::snprintf(b, sizeof b, "6 x 144 km2: %ld lakes (%ld basins, %ld tarns, %ld valley lakes, %ld ponds), the longest looked at %.0f m across; %ld water cells looked at, %ld off the level; lips: %ld of %ld more than 0.5 m off the water",
+                  lakes, bySub[1], bySub[2], bySub[3], bySub[4], spanMax, waterCells, levelOff, lipOff, lipN);
+    ctx.note(b);
+    std::snprintf(b, sizeof b, "edges: %ld points; %ld with the land under the water (worst %.1f m), %ld with a bank over 2.5 m (worst %.1f m); bed near the shore: %ld of %ld steeper than 1:4; tarns within 1 km of another: %ld",
+                  edgeN, edgeLow, worstLow, edgeHigh, worstHigh, bedSteep, bedN, tarnCrowd);
+    ctx.note(b);
+    std::snprintf(b, sizeof b, "falls: %ld of %ld drop 6 m or more within 10 m; %ld with a plunge pool", tallFalls, falls, pools);
+    ctx.note(b);
+    std::snprintf(b, sizeof b, "lake radii %.0f-%.0f m; at most %ld lakes in one seed's 144 km2", rMin, rMax, seedMax);
+    ctx.note(b);
+    // (The owner's aim: valley lakes behind natural dams, on the order of 2-6 in 144 km2, of varied sizes.)
+    ctx.metric("lakes in 144 km2, on average over the seeds", (double)lakes / std::max(1L, seedsN), "", 1.5, 8);
+    ctx.check("no seed crowded with lakes (at most 10 in 144 km2)", seedMax <= 10, std::to_string(seedMax));
+    ctx.check("lakes of varied sizes (the biggest over twice the smallest across)", rMax > 2 * rMin);
+    ctx.check("lakes: the water lies level", levelOff == 0 && levelN > 1000);
+    ctx.check("lakes: at the water's edge the land never under the water (under 1%)", edgeLow * 100 <= edgeN);
+    ctx.check("lakes: few banks over 2.5 m at the water's edge (under 10%: where a worn slope comes down to it)", edgeHigh * 10 <= edgeN);
+    ctx.check("lakes: the bed near the shore mostly gentle (85% no steeper than 1:4)", bedSteep * 100 <= bedN * 15);
+    ctx.check("there are waterfalls", falls > 0);
+    ctx.check("waterfalls: where the land drops 6 m or more within 10 m (95%: a few where a neighbour's valley cuts the step back)", tallFalls * 100 >= falls * 95);
+    ctx.check("waterfalls: most with a plunge pool below (deeper than the stream: 1.2 m+)", pools * 10 >= falls * 8);
+}
+
+SCENARIO(procMemory, "procworld/memory", "What the generator keeps stays bounded: a world's window built, slid three times and its trails laid keeps under 1.5 GB of caches (the chunk cache and the drainage's blocks and tiles all have caps)") {
+    clearChunkCache();
+    World w = windowAt(4242, 0, 0);
+    for (int k = 1; k <= 3; k++) World w2 = windowAt(4242, 512.0 * k, -512.0 * k);
+    const double mb = cacheBytes() / 1048576.0;
+    long rss = 0;
+    if (FILE* f = std::fopen("/proc/self/status", "r")) {  // (the whole test process: noted, not checked; other tests run beside it)
+        char line[256];
+        while (std::fgets(line, sizeof line, f))
+            if (std::sscanf(line, "VmHWM: %ld kB", &rss) == 1) break;
+        std::fclose(f);
+    }
+    ctx.note("the process's peak resident memory so far: " + std::to_string(rss / 1024) + " MB");
+    ctx.metric("the generator's caches after a window and three slides", mb, "MB", 0, 1500);
+    World::procOriginSet = false;
+}
+
+#include "../src/proceros.h"
+SCENARIO(procErosion, "procworld/erosion", "The land is worn by erosion in fixed tiles (proceros.h): the same tile wears to the same bytes on two threads at once, the tiles agree across their seams, a tile is made within its budget, and the worn land is worn (gullies cut, not left as it was)") {
+    const ProcWorld& G = ProcWorld::forSeed(1);
+    clearChunkCache();
+    // (Two independent erosions of the same land, on two threads at once: the same bytes.)
+    ErosionGrid g0;
+    double ox, oz;
+    G.erosionInput(-2, 2, g0, ox, oz);
+    ErosionGrid g1 = g0, g2 = g0;
+    ErosionRun run;
+    run.coarseIterations = (int)rules().erosion.coarseIterations, run.iterations = (int)rules().erosion.iterations, run.maxCut = rules().erosion.maxCut;
+    std::thread t1([&] { erodeGrid(g1, run); }), t2([&] { erodeGrid(g2, run); });
+    t1.join(), t2.join();
+    uint64_t h1 = 1469598103934665603ull, h2 = h1;
+    for (size_t i = 0; i < g1.h.size(); i++) {
+        uint32_t a, b;
+        std::memcpy(&a, &g1.h[i], 4), std::memcpy(&b, &g2.h[i], 4);
+        h1 = (h1 ^ a) * 1099511628211ull, h2 = (h2 ^ b) * 1099511628211ull;
+    }
+    ctx.check("the same tile worn on two threads at once: the same bytes", h1 == h2 && g1.h == g2.h);
+    ctx.note("seed 1 tile (-2, 2) worn: " + hex(h1));
+    // (The tile itself, timed, and its neighbours across the seams.)
+    double cell, ms;
+    int n;
+    const std::vector<float> d = G.erosionTile(-2, 2, ox, oz, n, cell, ms);
+    double worn = 0;
+    for (float v : d) worn = std::max(worn, (double)-v);
+    ctx.check("the land is worn: gullies over 10 m deep", worn > 10, std::to_string(worn) + " m");
+    ctx.check("a tile is made within 3 s", ms < 3000, std::to_string((int)ms) + " ms");
+    ctx.note("tile (-2, 2): " + std::to_string((int)ms) + " ms to wear");
+    double ox2, oz2, ms2;
+    int n2;
+    const std::vector<float> e = G.erosionTile(-1, 2, ox2, oz2, n2, cell, ms2);
+    double sq = 0;
+    long cnt = 0;
+    for (int a = 0; a < n; a++)
+        for (int b = 0; b < n; b++) {
+            const int a2 = a + (int)std::lround((ox - ox2) / cell);
+            if (a2 < 0 || a2 >= n2) continue;
+            const double v = d[(size_t)a * n + b] - e[(size_t)a2 * n2 + b];
+            sq += v * v, cnt++;
+        }
+    const double rms = std::sqrt(sq / std::max(1L, cnt));
+    ctx.check("two tiles agree over their shared band (under 1 m RMS)", cnt > 0 && rms < 1.0, std::to_string(rms) + " m over " + std::to_string(cnt));
+    double step = 0;
+    for (int k = 0; k < 200; k++)
+        for (int q = -140; q < 140; q++) {
+            const double x = -2048 + q, z = 4096 + 10 + k * 10;
+            step = std::max(step, std::fabs(G.erosionAt(x + 1, z) - G.erosionAt(x, z)));
+        }
+    ctx.check("no step at the seam (under 3 m a metre)", step < 3, std::to_string(step));
+    // (Multiplayer: two machines make the same land. From nothing cached, two threads at once each make the same chunk on worn land
+    // (its tiles made by whichever gets there first), and another generator for the seed after the caches are dropped: one hash.)
+    clearChunkCache();
+    uint64_t c1 = 0, c2 = 0;
+    clearErosionTiles();
+    std::thread u1([&] { c1 = G.makeChunk(-40, 70)->hash(); }), u2([&] { c2 = G.makeChunk(-40, 70)->hash(); });
+    u1.join(), u2.join();
+    clearChunkCache(), clearErosionTiles();
+    const ProcWorld other(1);
+    const uint64_t c3 = other.makeChunk(-40, 70)->hash();
+    ctx.check("the same worn chunk from two threads at once, and again from nothing", c1 == c2 && c1 == c3, hex(c1) + " " + hex(c2) + " " + hex(c3));
 }

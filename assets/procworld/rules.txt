@@ -23,23 +23,33 @@ grade_max = 0.7                   # the steepest grade (rise over run) the routi
 fill_max = 1.5                    # m: the deepest cut or fill against the land; deeper, and the grade is let out instead
 
 [roads]
-batter = 2.2                      # earthworks' sides (and places' levelled lots) are this times their depth wide (the steepest part about 1 : batter/1.5)
+batter = 2.5                      # earthworks' sides (and places' levelled lots) are this times their depth wide (the steepest part about 1 : batter/1.5)
 
 [water]
-freeboard = 3                     # m: the land stands at least this over a river's or creek's water, or the channel fades (nothing is filled)
-river_bend_min = 220              # m: a river's tightest bend; tighter (a ring, a hairpin) and it fades out
-creek_bend_min = 110              # m: a creek's tightest bend
-bank_batter = 2.5                 # a valley's wall is this times its depth wide (the steepest part about 1 : bank_batter/1.5)
-river_valley_max = 1000           # m: the widest a river valley's wall goes (gorges in the ranges are steeper)
-river_cut_max = 100000            # m: where the land stands this far over a river's level no valley is cut: rivers run between the mountains
-creek_valley_max = 160            # m: the widest a creek valley's wall goes
+gully_area = 0.08                 # km2: a channel drains this much before it cuts a gully (dry)...
+creek_area = 0.3                  # km2: ...a creek (water, fordable)...
+river_area = 1.5                  # km2: ...a river...
+big_river_area = 2.5              # km2: ...a big river (deep and fast: crossed at its known fords, or on a bridge)
+bank_batter = 6                   # in the ranges a valley's side is this times its height wide (the steepest, at its foot, 1 : bank_batter/2)
+low_batter = 14                   # ...in the lowland
+river_grade = 0.04                # the steepest a big river's level climbs in the ranges (a tenth of it in the lowland)
+creek_grade = 0.33                # ...and a creek's, high in the ranges (cascades)
+ford_spacing = 2500               # m: about how far apart a big river's known fords are
+ford_depth = 0.4                  # m: the water over a ford's riffle
+
+[bridges]
+damage = 0.75                     # 0..1: how worn a rough bridge is on the whole (planks gone, broken and sagging; rails and posts)
+fair_share = 0.15                 # the share of bridges in fair shape (main trails' 1.4 times as often, other trails' half as often)
+missing_share = 0.45              # the share of the deck's plank pieces missing on the roughest bridge
+max_gap = 0.75                    # m: the widest hole on the one drivable line every bridge keeps (keep it under ~0.9)
 
 [terrain.ranges]
 belt_from = 0.4                   # 0..1: where the slow belt field (~9 km features) starts raising a range (less 0.06 x the world's relief)
 belt_full = 0.6                   # 0..1: where a range is at full height
-pass_height = 260                 # m over the lowland: the ranges' high valleys and passes
-peak_height = 820                 # m: the ridges' top over the passes, times the world's relief (0.75-1.25)
-crest_spacing = 1923              # m: about how far apart the crests are (wider: broader, gentler mountains)
+pass_height = 300                 # m over the lowland: the ranges' valley floors at their heart (times the world's relief)
+peak_height = 620                 # m: the mountains' mass over their valley floors, times the world's relief (0.75-1.25): the valleys are cut into it
+summit_height = 2900              # m: the summits on a range's axis over its mass, times the world's relief: the peaks (1.5-2.5 km)
+crest_spacing = 1100              # m: about how far apart the crags on the high ground are (its rough detail)
 alpine_from = 330                 # m: the alpine biome starts to take over here...
 alpine_full = 560                 # m: ...and is whole here
 alpine_heat_shift = 100           # m: in the coldest country the alpine comes this much lower (in the hottest, higher)
@@ -47,9 +57,9 @@ alpine_heat_shift = 100           # m: in the coldest country the alpine comes t
 [biome.alpine]
 trees_per_ha = 420                # trees a hectare on the slopes below the tree line (pines)
 tree_slope_max = 0.75             # no trees on ground steeper than this (rise over run; 0.7 is 35 degrees)
-tree_line = 760                   # m: the height the forest ends at...
-tree_line_wobble = 60             # m: ...give or take this (a slow noise)
-tree_line_fade = 200              # m: below the line the forest thins out over this band
+tree_line = 1550                  # m: the height the forest ends at...
+tree_line_wobble = 80             # m: ...give or take this (a slow noise)
+tree_line_fade = 250              # m: below the line the forest thins out over this band
 krummholz = 0.6                   # 0..1: trees at the line are (1 - this) of their height (stunted)
 meadow_share = 0.05               # 0..1: this share of the forested slopes is open meadow
 meadow_size = 110                 # m: about how big the meadows are
@@ -59,7 +69,7 @@ logs_per_ha = 14                  # fallen logs a hectare tried under the trees 
 stumps_per_ha = 18                # stumps a hectare tried under the trees (solid)
 conifer_share = 0.93              # 0..1: pines and firs; the rest are dead snags, or aspens low down
 aspen_share = 0.1                 # 0..1: aspens (broadleaf) among the trees at the foot, none from aspen_below up
-aspen_below = 500                 # m: aspens only below this
+aspen_below = 900                 # m: aspens only below this
 rock_band_slope = 0.5             # slopes steeper than this show bands of bare rock (ledges)
 rock_band_spacing = 24            # m: about this far apart up the slope
 rock_band_width = 0.3             # 0..1: this share of each step is bare rock
@@ -73,6 +83,53 @@ snow_north = 200                  # m: the snow comes this much lower on a north
 snow_hollow = 150                 # m: ...and this much lower in a hollow (a gully 10 m or more below the ground 32 m round)
 snow_slope_max = 0.85             # steeper than this the snow slides off (bare rock)
 rocks_per_ha = 45                 # loose rocks and boulders tried a hectare (steep ground keeps more of them)
+
+[erosion]
+on = 1                            # 1: the land is worn by water and frost (gullies, fans, silted floors, scree); 0: not
+coarse_iterations = 50            # the erosion's steps, on the 8 m grid the land is worn on (more: deeper worn, slower)
+iterations = 0                    # (unused: a 4 m pass after the 8 m one; it needs the land sampled four times as often)
+max_cut = 4                       # m: the most one step cuts anywhere
+max_depth = 60                    # m: the worn land stays within this of the land before
+glacier_iterations = 0            # the ice ages' steps, before the rivers: glaciers scoop cirques and U-shaped troughs, leave moraines (0: none)
+glacier_line = 1500               # m: ice gathers above this and melts below it
+glacier_cut = 0.004               # how hard the ice wears its bed (m a step per square root of the ice passing, m3 a year)
+dam_min = 4                       # m: a valley's natural dam (a rock bar, a landslide) stands at least this much over its channel...
+dam_max = 16                      # m: ...and at most this much (each site's dice: lakes of varied sizes)
+lake_share = 0.4                  # 0..1: the share of gentle valley stretches with a natural dam (rock bar, landslide) across them: the lakes
+lake_min_area = 0.5               # ha: water the worn land holds behind a valley's natural dam is a lake from this big...
+lake_min_depth = 1.5              # m: ...and this deep (twice as deep for a hollow no dam made)
+lake_open_area = 3                # ha: a hollow no dam made (a sink of the drainage, a low spot left by the wear) holds a lake only from this big
+pit_fill = 0.25                   # 0..1: how much of the load reaching a closed hollow silts it (the rest settles: lakes last)
+
+[erosion.meadow]
+cut = 0.5                         # stream power: m a step a channel draining 1 ha cuts at slope 1 (gullies; deeper as the square root of what drains)
+deposit = 2.4                     # 0..2: how readily the load drops where the slope eases (fans at slope feet, silted flat floors)
+talus = 0.6                       # the steepest the ground holds (rise over run): steeper slides down to it (scree; 1.4 and up: cliffs stand)
+creep = 0.1                       # 0..0.2: soil creep rounding the land (soft rolling ground; near 0 keeps rock crests sharp)
+
+[erosion.forest]
+cut = 0.6                         # stream power: m a step a channel draining 1 ha cuts at slope 1 (gullies; deeper as the square root of what drains)
+deposit = 2.4                     # 0..2: how readily the load drops where the slope eases (fans at slope feet, silted flat floors)
+talus = 0.7                       # the steepest the ground holds (rise over run): steeper slides down to it (scree; 1.4 and up: cliffs stand)
+creep = 0.06                      # 0..0.2: soil creep rounding the land (soft rolling ground; near 0 keeps rock crests sharp)
+
+[erosion.badlands]
+cut = 2.8                         # stream power: m a step a channel draining 1 ha cuts at slope 1 (gullies; deeper as the square root of what drains)
+deposit = 3.6                     # 0..2: how readily the load drops where the slope eases (fans at slope feet, silted flat floors)
+talus = 1.4                       # the steepest the ground holds (rise over run): steeper slides down to it (scree; 1.4 and up: cliffs stand)
+creep = 0                         # 0..0.2: soil creep rounding the land (soft rolling ground; near 0 keeps rock crests sharp)
+
+[erosion.alpine]
+cut = 2                           # stream power: m a step a channel draining 1 ha cuts at slope 1 (gullies; deeper as the square root of what drains)
+deposit = 1.8                     # 0..2: how readily the load drops where the slope eases (fans at slope feet, silted flat floors)
+talus = 0.9                       # the steepest the ground holds (rise over run): steeper slides down to it (scree; 1.4 and up: cliffs stand)
+creep = 0.01                      # 0..0.2: soil creep rounding the land (soft rolling ground; near 0 keeps rock crests sharp)
+
+[erosion.dunes]
+cut = 0.16                        # stream power: m a step a channel draining 1 ha cuts at slope 1 (gullies; deeper as the square root of what drains)
+deposit = 3                       # 0..2: how readily the load drops where the slope eases (fans at slope feet, silted flat floors)
+talus = 0.6                       # the steepest the ground holds (rise over run): steeper slides down to it (scree; 1.4 and up: cliffs stand)
+creep = 0.05                      # 0..0.2: soil creep rounding the land (soft rolling ground; near 0 keeps rock crests sharp)
 
 [trees.meadow]
 per_ha = 22                       # trees a hectare at most

@@ -488,6 +488,11 @@ void Coop::drawProcTrails(Renderer& r, int W, int H, float u) {
                     const double nx = (i + 0.5) * proc::kCell, nz = (j + 0.5) * proc::kCell;  // (about where the node is)
                     if (!procReveal.hasTileNear(proc::floorDiv((int64_t)nx, proc::Reveal::kTile), proc::floorDiv((int64_t)nz, proc::Reveal::kTile))) continue;
                     if (std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() > 2.5) continue;  // (the rest next frame)
+                    // (Its trail lies on worn land: never wait for the erosion's tiles on this thread; ask for them in the background.)
+                    if (!proc::erosionMade(G, nx - 3000, nz - 3000, nx + 3000, nz + 3000)) {
+                        proc::prefetchErosion(G, nx - 3000, nz - 3000, nx + 3000, nz + 3000);
+                        continue;
+                    }
                     it = procEdges.emplace(key, G.edge(i, j, dir)).first;
                 }
                 if (it->second && it->second->on) edges.push_back({it->second, 0});

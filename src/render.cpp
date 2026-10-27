@@ -2186,44 +2186,53 @@ void falls(int mat){
   vec3 n = normalize(vNrm);
   vec3 Vv = uCam - vPos;
   float dist = length(Vv);
+  bool puff = mat == 22 || mat == 23;
+  if (puff && dist > 550.0) discard;
   vec3 V = Vv / dist;
-  float sh = shadowAt(vPos, vec3(0, 1, 0));
-  vec3 irr = ambientAt(vec3(0, 1, 0)) * 1.1 + sh * kSunCol * 0.6;
   vec3 white = vec3(0.86, 0.9, 0.92);
-  float t = uTime, a = 0.0;
-  vec3 col = white * irr;
+  float t = uTime, a = 0.0, streak = 0.0, aer = 0.0, f = 0.0;
+  // How see-through it is first: most of a puff's quad and much of the foam is nothing, and those fragments stop here, before the
+  // lighting (the shadow lookup is the dear part: a fall's puffs cover much of the screen near it).
   if (mat == 20) {
     // Streaks that fall as the water does: a parcel s m down left the lip sqrt(2 s / g) seconds ago, so its pattern stretches
     // as it speeds up. Glassy over the lip, white and torn lower down.
     float s = max(vCol.g, 0.0), age = t - sqrt(2.0 * s / 9.81);
     float k1 = vnoise(vec2(vCol.r * 1.6, age * 3.0)), k2 = vnoise(vec2(vCol.r * 4.3 + 7.0, age * 7.0 + 3.1));
-    float streak = 0.55 * k1 + 0.45 * k2;
-    float aer = smoothstep(0.0, 6.0, s);
+    streak = 0.55 * k1 + 0.45 * k2;
+    aer = smoothstep(0.0, 6.0, s);
     a = vCol.b * clamp(0.35 + 0.3 * aer + 0.45 * smoothstep(0.35, 0.8, streak), 0.0, 0.95);
-    vec3 r = reflect(-V, n);
-    vec3 glass = vec3(0.06, 0.11, 0.10) * irr + skyColor(vec3(r.x, max(r.y, 0.02), r.z), 2) * 0.25;
-    col = mix(glass, white * irr * (0.85 + 0.3 * streak), 0.35 + 0.65 * aer);
     a *= 0.6 + 0.4 * abs(dot(n, V));
   } else if (mat == 21) {
-    float f = vnoise(NP.xz * 1.7 + vec2(t * 0.6, -t * 0.4)) * 0.6 + vnoise(NP.xz * 4.1 - vec2(t * 1.1, t * 0.7)) * 0.4;
+    f = vnoise(NP.xz * 1.7 + vec2(t * 0.6, -t * 0.4)) * 0.6 + vnoise(NP.xz * 4.1 - vec2(t * 1.1, t * 0.7)) * 0.4;
     a = vCol.b * smoothstep(0.22, 0.6, f) * 0.95 * smoothstep(0.02, 0.25, abs(dot(n, V)));  // (a ledge's band seen edge-on fades)
-    col = white * irr * (0.9 + 0.2 * f);
-  } else if (mat == 22 || mat == 23) {
+  } else if (puff) {
     bool mist = mat == 23;
     vec2 uv = vCol.rg - 0.5;
     float r = length(uv) * 2.0;
+    if (r > 1.0) discard;
+    a = (1.0 - smoothstep(0.25, 1.0, r)) * smoothstep(0.05, 0.45, abs(dot(n, V)))  // (the crossed quad seen edge-on fades out)
+        * smoothstep(1.5, 6.0, dist) * (1.0 - smoothstep(300.0, 550.0, dist));         // (none in your face; nor far off, a few pixels of overdraw)
+    if (a < 0.01) discard;
     float rise = t * (mist ? 0.05 : 0.35) + vCol.b * 10.0;
     float nz = vnoise(uv * (mist ? 2.2 : 3.5) + vec2(vCol.b * 13.0, -rise));
     float pulse = 0.7 + 0.3 * sin(t * (mist ? 0.5 : 2.3) + vCol.b * 6.283);
-    a = (1.0 - smoothstep(0.25, 1.0, r)) * smoothstep(0.2, 0.75, nz) * pulse * (mist ? 0.16 : 0.55);
-    a *= smoothstep(0.05, 0.45, abs(dot(n, V)));  // (the crossed quad seen edge-on fades out)
-    a *= smoothstep(1.5, 6.0, dist);              // (and none in your face)
-    col = white * irr * 1.05;
+    a *= smoothstep(0.2, 0.75, nz) * pulse * (mist ? 0.16 : 0.55);
   } else {
     float w = 0.5 + 0.5 * sin(vCol.r * 2.6 - t * 3.2 + 2.0 * vnoise(NP.xz * 0.5));
     a = vCol.b * pow(w, 6.0) * 0.45;
   }
   a = clamp(a, 0.0, 0.97);
+  if (a < 0.004) discard;
+  // (A puff is soft and lit through: no shadow lookup for it.)
+  float sh = puff ? 0.8 : shadowAt(vPos, vec3(0, 1, 0));
+  vec3 irr = ambientAt(vec3(0, 1, 0)) * 1.1 + sh * kSunCol * 0.6;
+  vec3 col = white * irr;
+  if (mat == 20) {
+    vec3 r = reflect(-V, n);
+    vec3 glass = vec3(0.06, 0.11, 0.10) * irr + skyColor(vec3(r.x, max(r.y, 0.02), r.z), 2) * 0.25;
+    col = mix(glass, white * irr * (0.85 + 0.3 * streak), 0.35 + 0.65 * aer);
+  } else if (mat == 21) col = white * irr * (0.9 + 0.2 * f);
+  else if (puff) col = white * irr * 1.05;
   oCol = vec4(applyFog(col, vPos) * a, 1.0);
   oKeep = vec4(vec3(1.0 - a), 1.0);
 }
@@ -4413,7 +4422,7 @@ void Renderer::buildBackdrop(const World& world, std::vector<Vtx>& verts, std::v
                 }
                 // (sceneryHeight's own sums: the generator's ground, its valleys cut, from the climate kept for the trees)
                 const double gx = x + (double)world.proc.ox, gz = z + (double)world.proc.oz;
-                const proc::Macro m = G.macroAt(gx, gz, false);
+                const proc::Macro m = G.macroCached(gx, gz);  // (worn where its erosion tiles are made: never waits on one)
                 H[(size_t)i * n + j] = inside ? world.height(x, z) : G.groundHeight(gx, gz, m);
                 Clim& c = clim[(size_t)i * n + j];
                 for (int b = 0; b < proc::PB_COUNT; b++) c.w[b] = (float)m.w[b];
