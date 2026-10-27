@@ -1,6 +1,7 @@
 // The procedural world: the generator (pure functions of seed and global position), the chunk cache and World::buildProcedural
 // (a window of the land). See procworld.h and docs/superpowers/specs/2026-10-25-procedural-world-design.md.
 #include "procworld.h"
+#include "procdress.h"
 #include "procrules.h"
 
 #include <algorithm>
@@ -3425,7 +3426,10 @@ void World::buildProcedural() {
     {
         loadprof::Scope lp("proc.places");
         buildPlaces(*this, windowPlaces(*this));
+        const size_t bridgeBox0 = boxes.size(), bridgePole0 = poles.size();
         buildBridges(*this);
+        dressBridges(*this, bridgeBox0, bridgePole0);  // (procdress.h: the bridges' and falls' models)
+        dressFalls(*this);
     }
     // The start: a pad there when it's well inside this window. (Elsewhere the spawn is the window's middle: nothing starts there.)
     const double lsx = (double)(sx - proc.ox), lsz = (double)(sz - proc.oz);
@@ -3473,5 +3477,26 @@ ProcWorld::TreeCover ProcWorld::treeCover(double gx, double gz, const Macro& m, 
     tc.triedPerHa = dens, tc.conifer = conifer, tc.snag = snag;
     tc.shrink = 1 - (1 - 0.4 * (m.w[PB_BADLANDS] + m.w[PB_DUNES])) * (1 - AR.krummholz * smoothstep(tl - AR.treeLineFade, tl, h));
     return tc;
+}
+}  // namespace proc
+
+namespace proc {
+// (procmodels' hook: the falls' render data, read-only; the same falls as waterFeatures' kind 1, with the step's width and length.)
+std::vector<FallSpan> fallSpans(const ProcWorld& G, double x0, double z0, double x1, double z1) {
+    std::vector<FallSpan> out;
+    const DrainClass DC = drainClass();
+    const int64_t i0 = (int64_t)std::floor(x0 / kD) - 1, i1 = (int64_t)std::floor(x1 / kD) + 1, j0 = (int64_t)std::floor(z0 / kD) - 1, j1 = (int64_t)std::floor(z1 / kD) + 1;
+    for (int64_t i = i0; i <= i1; i++)
+        for (int64_t j = j0; j <= j1; j++) {
+            if (areaOf(G, i, j) < DC.gully || down2Of(G, i, j) < 0) continue;
+            std::vector<DrainSeg> own;
+            nodeSegs(G, i, j, 0, 0, own, false);
+            bool any = false;
+            for (const DrainSeg& e : own) any |= e.fall != 0;
+            if (!any || (own[0].cls == 1 && creekPerched(G, i, j))) continue;
+            for (const DrainSeg& e : own)
+                if (e.fall && e.ax >= x0 && e.ax < x1 && e.az >= z0 && e.az < z1) out.push_back({e.ax, e.az, e.la, e.lb, 2.0 * e.hw, e.dx, e.dz, e.len});
+        }
+    return out;
 }
 }  // namespace proc

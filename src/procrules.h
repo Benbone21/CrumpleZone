@@ -33,6 +33,14 @@ struct WaterRule {
     double fordDepth = 0.4;          // m: the water over a ford's riffle
 };
 
+// ---- Bridges: how worn the timber bridges are (procdress.cpp, bridgelayout.h) ------------------------------------------------------
+struct BridgeRule {
+    double damage = 0.75;        // 0..1: how worn a rough bridge is on the whole (the planks gone, broken and sagging, the rails and posts)
+    double fairShare = 0.15;     // the share of bridges in fair shape (sound deck and rails): main trails' 1.4 times as often, other trails' half as often
+    double missingShare = 0.45;  // the share of the deck's plank pieces missing on the roughest bridge (fewer on a less worn one)
+    double maxGap = 0.75;        // m: the widest hole left along the one drivable line every bridge keeps (off it, any size)
+};
+
 // ---- Terrain: the mountain ranges ---------------------------------------------------------------------------------------------
 struct RangeRule {
     double beltFrom = 0.40;        // the belt field (0..1, ~9 km features) where ranges begin (less 0.06 x the world's relief)
@@ -116,6 +124,7 @@ struct Rules {
     };
     double batter = 2.5;      // earthworks' sides (and a place's levelled lot) are this times their depth wide (eased in: the steepest part about 1 : 1.5)
     WaterRule water;
+    BridgeRule bridge;
     RangeRule range;
     AlpineRule alpine;
     // meadow, forest, badlands, mountains (its density and shares: alpine), dunes

@@ -37,6 +37,12 @@ creek_grade = 0.33                # ...and a creek's, high in the ranges (cascad
 ford_spacing = 2500               # m: about how far apart a big river's known fords are
 ford_depth = 0.4                  # m: the water over a ford's riffle
 
+[bridges]
+damage = 0.75                     # 0..1: how worn a rough bridge is on the whole (planks gone, broken and sagging; rails and posts)
+fair_share = 0.15                 # the share of bridges in fair shape (main trails' 1.4 times as often, other trails' half as often)
+missing_share = 0.45              # the share of the deck's plank pieces missing on the roughest bridge
+max_gap = 0.75                    # m: the widest hole on the one drivable line every bridge keeps (keep it under ~0.9)
+
 [terrain.ranges]
 belt_from = 0.4                   # 0..1: where the slow belt field (~9 km features) starts raising a range (less 0.06 x the world's relief)
 belt_full = 0.6                   # 0..1: where a range is at full height

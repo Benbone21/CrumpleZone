@@ -254,3 +254,11 @@ std::vector<MapPlace> windowPlaces(const World& w);
 void shiftSim(Sim& sim, const V3& d);
 
 }  // namespace proc
+
+namespace proc {
+// (procmodels' hook, read-only: the waterfall models and their pools, procdress.cpp.) The falls whose lip is in a square (global): the
+// lip's middle, the water's level at its top and at its foot, the channel's width there, which way it falls (unit) and how long the
+// rock step is (m, lip to foot).
+struct FallSpan { double x, z, top, bottom, width, fx, fz, len; };
+std::vector<FallSpan> fallSpans(const ProcWorld& G, double x0, double z0, double x1, double z1);
+}  // namespace proc

@@ -174,6 +174,7 @@ struct Options {
     std::string resumeEdit;  // --resume-edit NAME: reopen that level's recovery copy in the editor (after a reload with unsaved edits)
     int resumeModel = -1;  // --resume-model: the vehicle to be in (after a reload)
     double spawnX = 0, spawnZ = 0, spawnHeading = 0;  // heading in degrees, 0 = +X
+    double spawnY = -1e9;                              // (--spawn X,Z,HEADING,Y: dropped from just over Y, not on the lowest clear spot: onto a bridge's deck)
     int spawnSection = -1;        // --spawn-section N: start at the Nth obstacle section's entry (0-based, proving ground)
     int hostPort = -1;            // --host [PORT]: open a multiplayer session (0: on the port in the settings)
     std::string join;             // --join HOST[:PORT]
@@ -451,7 +452,7 @@ Options parseArgs(int argc, char** argv) {
         }
         else if (a == "--spawn") {
             std::string s = next();
-            o.spawnSet = std::sscanf(s.c_str(), "%lf,%lf,%lf", &o.spawnX, &o.spawnZ, &o.spawnHeading) >= 2;
+            o.spawnSet = std::sscanf(s.c_str(), "%lf,%lf,%lf,%lf", &o.spawnX, &o.spawnZ, &o.spawnHeading, &o.spawnY) >= 2;
         }
         else if (a == "--spawn-section") o.spawnSection = std::atoi(next().c_str());
         else if (a == "--host") {
@@ -2123,7 +2124,7 @@ int main(int argc, char** argv) {
         Car& c = sim.cars[sim.player];
         const V3 home = c.spawnPos;
         const double homeYaw = c.spawnYaw;
-        c.respawn(V3(opt.spawnX, sim.world.clearY(opt.spawnX, opt.spawnZ) + 0.05, opt.spawnZ), opt.spawnHeading * M_PI / 180);
+        c.respawn(V3(opt.spawnX, opt.spawnY > -1e8 ? opt.spawnY + 0.1 : sim.world.clearY(opt.spawnX, opt.spawnZ) + 0.05, opt.spawnZ), opt.spawnHeading * M_PI / 180);
         // (--spawn only places you: a hot reload passes where you were, and home must stay the map's spawn pad. A
         // section start is a real start, so there it becomes home.)
         if (opt.spawnSection < 0) c.spawnPos = home, c.spawnYaw = homeYaw;
