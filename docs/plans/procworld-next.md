@@ -291,3 +291,17 @@ Follows docs/plans/procworld-rules.md sections 2 and 3. Status: being built on w
   lowland. Each filled to just under its rim's lowest point; every one but a basin drains on by its node's channel. ~22 per 144 km2.
 - For the render side: ProcWorld::waterFeatures(x0, z0, x1, z1) lists lakes and falls (a fall's lip, level, height, way down,
   width); TrailEdge::bridges lists the bridge spans (ends and deck height).
+
+**Lakes reworked (owner: "lakes fill natural low ground, not dug holes").** No bowls. A lake is water let into ground the land has, up
+to a lip:
+- Valley lakes: a low ridge across the valley (a rock bar or moraine, 1-1.2 m over the water, falling 0.35 a metre either way) a
+  little below a node on a gentle (under 8%) stretch of a river or creek; its lip where the channel crosses. Its floor up the valley
+  is shaped as a long shallow dish (flat bed, 1:8 shore, then up steeply, so it shapes the shore without cutting into the hills),
+  and the water runs on up the valley and its inlets as far as the land is under the lip, draining to the node: its shore is the
+  land's contour. Up to 600 m long in the tested seeds.
+- Tarns: at a gentle creek head high in the ranges, one per ~1 km at most: a cirque floor cut into the slope (flat bed, 1:8 shore,
+  its back wall where it meets the slope) and a horseshoe moraine round its downhill half, the outlet's notch in it.
+- Ponds: the same, small and shallow, in wet ground; their own floor alone. Basins: sinks, filled to just under their rim.
+- A lake counts only if its rim stands over its water all round but its lip and its inlets (checked lazily, per node). No two
+  lakes within 3 nodes. No channel trench under the water; a gravel (desert: sand) shore band. Trails keep off a lake's dam.
+- 24 lakes in 144 km2 of the lowland seed; 2-12 in the steep mountain seeds (their channels are mostly too steep for a low dam).
