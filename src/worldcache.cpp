@@ -14,7 +14,7 @@
 
 namespace {
 const char kMagic[8] = {'C', 'Z', 'W', 'O', 'R', 'L', 'D', '1'};
-constexpr uint64_t kFormat = 6;  // 5: the big map's regions' starts and roads (World::regionStarts, regionRoads); 6: its marked trails (World::trails)
+constexpr uint64_t kFormat = 7;  // 5: the big map's regions' starts and roads (World::regionStarts, regionRoads); 6: its marked trails (World::trails); 7: maps built with detmath (the same on every machine)
 // bump with any change to what's written below or to how a map is built that the build id misses
 
 struct Out {

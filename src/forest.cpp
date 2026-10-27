@@ -1,4 +1,6 @@
 #include "forest.h"
+#include "detmath.h"
+#include "detsort.h"
 
 #include "biome.h"
 #include "plants.h"
@@ -88,13 +90,13 @@ Profile measure(const mk::Mesh& m) {
         double r = pr.r.empty() ? 0.2 : pr.r.back();
         if (!cut.empty()) {
             // (the middle: of the points nearest the axis line, so a branch off to one side doesn't drag it)
-            std::sort(cut.begin(), cut.end(), [](const V3& a, const V3& b) { return a.x * a.x + a.z * a.z < b.x * b.x + b.z * b.z; });
+            dm::sort(cut.begin(), cut.end(), [](const V3& a, const V3& b) { return a.x * a.x + a.z * a.z < b.x * b.x + b.z * b.z; });  // (ties: libstdc++'s order everywhere)
             const size_t n = std::max<size_t>(3, cut.size() * 2 / 3);
             V3 c;
             for (size_t k = 0; k < std::min(n, cut.size()); k++) c = c + cut[k];
             c = c / (double)std::min(n, cut.size());
             std::vector<double> d;
-            for (const V3& q : cut) d.push_back(std::hypot(q.x - c.x, q.z - c.z));
+            for (const V3& q : cut) d.push_back(dm::hypot(q.x - c.x, q.z - c.z));
             std::nth_element(d.begin(), d.begin() + d.size() / 2, d.end());
             r = d[d.size() / 2];
         }
@@ -351,7 +353,7 @@ void Picker::pick(const Set& s, const View& v, std::vector<std::vector<Pick>>& b
     for (const auto& ok : order_)
         for (int i : cells_[ok.second].inst) {
             const Inst& in = s.inst[i];
-            const double d = std::hypot(in.x - v.eye.x, in.z - v.eye.z);
+            const double d = dm::hypot(in.x - v.eye.x, in.z - v.eye.z);
             float fade = 1;
             if (v.maxDist > 0) {
                 if (d >= v.maxDist) continue;
@@ -403,7 +405,7 @@ void Picker::visibleCells(const View& v, double dmin, double dmax, std::vector<i
             if (dist >= dmax || !b.visible(v.vp)) continue;
             // (all of it nearer than dmin: the farthest corner)
             const double fx = std::max(std::fabs(b.lo.x - v.eye.x), std::fabs(b.hi.x - v.eye.x)), fz = std::max(std::fabs(b.lo.z - v.eye.z), std::fabs(b.hi.z - v.eye.z));
-            if (std::hypot(fx, fz) < dmin) continue;
+            if (dm::hypot(fx, fz) < dmin) continue;
             if (v.hidden && dist > 200 && dist < 600 && v.hidden->occluded(b)) continue;
             out.push_back(k);
         }
@@ -449,11 +451,11 @@ void logMesh(const World& w, const Log& g, uint32_t seed, mk::Mesh& out) {
     std::vector<V3> pos((segs + 1) * sides), nrm((segs + 1) * sides);
     for (int i = 0; i <= segs; i++) {
         const double t = (double)i / segs;
-        const double ri = r * (0.95 - 0.07 * t) * (0.97 + 0.03 * std::sin(t * 9.0 + h01(1) * 6.0));
-        const V3 c = g.a + ax * (L * t) + vv * (0.04 * r * std::sin(t * 3.1 + h01(2) * 6.0));  // (a little bent)
+        const double ri = r * (0.95 - 0.07 * t) * (0.97 + 0.03 * dm::sin(t * 9.0 + h01(1) * 6.0));
+        const V3 c = g.a + ax * (L * t) + vv * (0.04 * r * dm::sin(t * 3.1 + h01(2) * 6.0));  // (a little bent)
         for (int j = 0; j < sides; j++) {
             const double a = 2 * M_PI * j / sides + h01(3);
-            const V3 d = u * std::cos(a) + vv * std::sin(a);
+            const V3 d = u * dm::cos(a) + vv * dm::sin(a);
             const double ridge = (j & 1) ? 1.0 : 0.93 - 0.04 * h01(i * 17 + j);
             pos[i * sides + j] = c + d * (ri * ridge);
             nrm[i * sides + j] = d;
@@ -509,7 +511,7 @@ void logMesh(const World& w, const Log& g, uint32_t seed, mk::Mesh& out) {
         const double t = 0.2 + 0.6 * h01(41 + s), a = (h01(44 + s) < 0.5 ? -1 : 1) * (0.55 + 0.6 * h01(45 + s));  // (round from straight up, to one side)
         V3 up = V3(0, 1, 0) - ax * ax.y;
         up = len(up) > 1e-6 ? norm(up) : vv;
-        const V3 side = cross(ax, up), dir = norm(up * std::cos(a) + side * std::sin(a) + ax * (0.35 * (h01(47 + s) - 0.3)));
+        const V3 side = cross(ax, up), dir = norm(up * dm::cos(a) + side * dm::sin(a) + ax * (0.35 * (h01(47 + s) - 0.3)));
         const V3 o = g.a + ax * (L * t) + dir * (r * 0.6);
         const double sl = r * (0.8 + 1.1 * h01(50 + s)), sr = r * (0.24 + 0.12 * h01(53 + s));
         const V3 tip = o + dir * sl;
@@ -517,7 +519,7 @@ void logMesh(const World& w, const Log& g, uint32_t seed, mk::Mesh& out) {
         const int n = 5;
         for (int j = 0; j < n; j++) {
             const double a0 = 2 * M_PI * j / n, a1 = 2 * M_PI * (j + 1) / n;
-            const V3 d0 = su * std::cos(a0) + sv * std::sin(a0), d1 = su * std::cos(a1) + sv * std::sin(a1);
+            const V3 d0 = su * dm::cos(a0) + sv * dm::sin(a0), d1 = su * dm::cos(a1) + sv * dm::sin(a1);
             const V3 q0 = o + d0 * sr, q1 = o + d1 * sr;
             const V3 t0 = tip + d0 * (sr * 0.6) + dir * (sr * (h01(60 + s * 7 + j) - 0.5)), t1 = tip + d1 * (sr * 0.6) + dir * (sr * (h01(60 + s * 7 + (j + 1) % n) - 0.5));
             const V3 col = cover(barkCol(d0, 70 + s * 7 + j), o, d0);

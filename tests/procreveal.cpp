@@ -1,9 +1,13 @@
 // The procedural map's fog (src/procreveal.h): the reveal radius grows with height, explored cells are kept in global coordinates
 // (they survive the window sliding), the file round-trips, and what was not visited stays dark.
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <random>
+#include <string>
 #include <unistd.h>
 
 #include "../src/procreveal.h"
@@ -23,9 +27,17 @@ World revealWindowAt(uint64_t seed, double gx, double gz) {
     return w;
 }
 std::string tempDir() {
+#ifdef _WIN32  // (no mkdtemp: a fresh folder in the temp directory; the Windows build of the tests didn't compile)
+    static std::atomic<int> made{0};
+    const std::filesystem::path p = std::filesystem::temp_directory_path() / ("cz-procmap-" + std::to_string(std::random_device{}()) + "-" + std::to_string(made++));
+    std::error_code ec;
+    std::filesystem::create_directories(p, ec);
+    return p.string();
+#else
     char t[] = "/tmp/cz-procmap-XXXXXX";
     const char* d = mkdtemp(t);
     return d ? d : "/tmp";
+#endif
 }
 }  // namespace
 

@@ -28,6 +28,7 @@
 #include <cstdlib>
 #include <string>
 
+#include "detmath.h"
 #include "loadprof.h"
 #include "parallel.h"
 #include "world.h"
@@ -63,16 +64,16 @@ std::vector<V3> trackPoints(std::vector<V3>* apex = nullptr, std::vector<double>
     for (int i = 0; i < n; i++) {
         const V3 P = flat(v[(i - 1 + n) % n]), C = flat(v[i]), Q = flat(v[(i + 1) % n]);
         const V3 d1 = norm(C - P), d2 = norm(Q - C);
-        const double turn = std::acos(clampd(dot(d1, d2), -1, 1)), sgn = d1.x * d2.z - d1.z * d2.x > 0 ? 1 : -1;
+        const double turn = dm::acos(clampd(dot(d1, d2), -1, 1)), sgn = d1.x * d2.z - d1.z * d2.x > 0 ? 1 : -1;
         // The radius asked for, unless the arc wouldn't fit between its neighbours.
         double r = v[i].y;
         const double room = 0.5 * std::min(len(C - P), len(Q - C));
-        if (r * std::tan(turn / 2) > room) r = room / std::tan(turn / 2);
-        const double T = r * std::tan(turn / 2);
+        if (r * dm::tan(turn / 2) > room) r = room / dm::tan(turn / 2);
+        const double T = r * dm::tan(turn / 2);
         Arc& A = arcs[i];
         A.r = r, A.a = C - d1 * T, A.b = C + d2 * T;
         A.c = A.a + V3(-d1.z * sgn, 0, d1.x * sgn) * r;
-        A.a0 = std::atan2(A.a.z - A.c.z, A.a.x - A.c.x);
+        A.a0 = dm::atan2(A.a.z - A.c.z, A.a.x - A.c.x);
         A.sweep = sgn * turn;
     }
     std::vector<V3> out;
@@ -87,15 +88,15 @@ std::vector<V3> trackPoints(std::vector<V3>* apex = nullptr, std::vector<double>
     for (int i = 0; i < n; i++) {
         const Arc& A = arcs[i];
         const int steps = std::max(2, (int)std::round(A.r * std::fabs(A.sweep) / 2.0));
-        const double cross = -(A.sweep > 0 ? 1 : -1) * std::tan(kTrackBank[i % 10] * M_PI / 180);
+        const double cross = -(A.sweep > 0 ? 1 : -1) * dm::tan(kTrackBank[i % 10] * M_PI / 180);
         for (int k = 0; k < steps; k++) {
             const double ang = A.a0 + A.sweep * k / steps;
-            out.push_back(A.c + V3(std::cos(ang), 0, std::sin(ang)) * A.r);
+            out.push_back(A.c + V3(dm::cos(ang), 0, dm::sin(ang)) * A.r);
             slope.push_back(cross);
         }
         if (apex) {
             const double ang = A.a0 + A.sweep * 0.5;
-            apex->push_back(A.c + V3(std::cos(ang), 0, std::sin(ang)) * A.r);
+            apex->push_back(A.c + V3(dm::cos(ang), 0, dm::sin(ang)) * A.r);
         }
         line(A.b, i + 1 < n ? arcs[i + 1].a : mid);
     }
@@ -108,7 +109,7 @@ std::vector<V3> trackPoints(std::vector<V3>* apex = nullptr, std::vector<double>
         for (int k = 0; k < m; k++) {
             double sum = 0, wsum = 0;
             for (int o = -win; o <= win; o++) {
-                const double w = 0.5 + 0.5 * std::cos(M_PI * o / (win + 1));
+                const double w = 0.5 + 0.5 * dm::cos(M_PI * o / (win + 1));
                 sum += w * slope[((k + o) % m + m) % m];
                 wsum += w;
             }
@@ -132,9 +133,12 @@ constexpr double kTrailHalf = 2.8;
 // without building the map (the built-in levels, the autopilot's places). The build lays them out again into the g* below and
 // frontier/feature-table checks it lands on these; after a change to the land, update them from what it prints.
 const V3 kWallFootAt(-0x1.3ap+8, 0, 0x1.2ap+8), kWallTopAt(-0x1.55p+8, 0, 0x1.58c3ef6815016p+8),
-    kWallFromAt(-0x1.2ee32d1f75af1p+8, 0, 0x1.155cebe6879e3p+8), kSummitAt(0x1.594cf6ed0cf16p+3, 0, 0x1.976b638edadb9p+8),
+    kWallFromAt(-0x1.2ee32d1f75af1p+8, 0, 0x1.155cebe6879e3p+8), kSummitAt(0x1.594cf6ed0cf15p+3, 0, 0x1.976b638edadb9p+8),
     kGardenAt(0x1.2a2ba873be38fp+7, 0, 0x1.12d918940d245p+8);
-V3 gWallFoot = kWallFootAt, gWallTop = kWallTopAt, gWallFrom = kWallFromAt, gSummit = kSummitAt, gGarden = kGardenAt;
+// (Per thread: a build searches for them in place, and another thread's build, or a lookup on another thread while a build runs (a
+// Backcountry builds its Frontier region on a worker), saw them half-searched: THE WALL and its crates somewhere else, a world that
+// depended on what else was running (world/bake-threads, frontier/feature-table flaked). Off the building thread they're the tables'.)
+thread_local V3 gWallFoot = kWallFootAt, gWallTop = kWallTopAt, gWallFrom = kWallFromAt, gSummit = kSummitAt, gGarden = kGardenAt;
 // Rivers: from source to mouth.
 const std::vector<V3> kSnakeCtl = {{330, 0, 500}, {300, 0, 384}, {262, 0, 292}, {272, 0, 202}, {242, 0, 112},
                                    {270, 0, 22},  {320, 0, -58}, {362, 0, -118}, {392, 0, -150}};
@@ -187,12 +191,12 @@ std::vector<V3> resample(const std::vector<V3>& pts, double step) {
     double carry = 0;
     for (size_t k = 0; k + 1 < pts.size(); k++) {
         const V3 a = pts[k], b = pts[k + 1];
-        const double L = std::hypot(b.x - a.x, b.z - a.z);
+        const double L = dm::hypot(b.x - a.x, b.z - a.z);
         double s = step - carry;
         for (; s <= L; s += step) out.push_back(a + (b - a) * (s / L));
         carry = L - (s - step);
     }
-    if (std::hypot(out.back().x - pts.back().x, out.back().z - pts.back().z) > 0.2 * step) out.push_back(pts.back());
+    if (dm::hypot(out.back().x - pts.back().x, out.back().z - pts.back().z) > 0.2 * step) out.push_back(pts.back());
     return out;
 }
 // The point `s` metres along a polyline sampled every metre (clamped to its ends).
@@ -225,7 +229,7 @@ Near nearest(const std::vector<V3>& pts, bool closed, double x, double z) {
         const double dx = b.x - a.x, dz = b.z - a.z, L2 = dx * dx + dz * dz, L = std::sqrt(L2);
         if (L2 < 1e-9) continue;
         const double t = clampd(((x - a.x) * dx + (z - a.z) * dz) / L2, 0, 1);
-        const double cx = a.x + dx * t, cz = a.z + dz * t, d = std::hypot(x - cx, z - cz);
+        const double cx = a.x + dx * t, cz = a.z + dz * t, d = dm::hypot(x - cx, z - cz);
         if (d < best.d) {
             best.d = d, best.seg = s, best.t = t, best.along = along + L * t;
             best.lat = (dx * (z - a.z) - dz * (x - a.x)) / L;
@@ -246,7 +250,7 @@ V3 hillEnd(bool south) {
 // trail where it runs through (fading out west of x ~200: its first stretch off the stage, the way out by the bog).
 double bayouMask(double x, double z) {
     const double n = 0.12 * (valueNoise(x * 0.03 + 4.0, z * 0.03 - 7.0) - 0.5);
-    const double r = std::hypot((x - kBayou.x) / kBayouRX, (z - kBayou.z) / kBayouRZ) + n;
+    const double r = dm::hypot((x - kBayou.x) / kBayouRX, (z - kBayou.z) / kBayouRZ) + n;
     double m = smoothstep(1.02, 0.84, r);
     if (m < 1 && x > 165 && x < 490 && z < -320 && z > -500) {
         const Near t = nearest(bayouTrail(), false, x, z);
@@ -263,7 +267,7 @@ double coldMask(double x, double z) {
     return smoothstep(west - 12, west + 12, x + 22 * n) * smoothstep(228, 262, z + 26 * n);
 }
 
-double desertness(double x, double z) { return smoothstep(-235, -330, x + 25 * std::sin(z * 0.012)); }
+double desertness(double x, double z) { return smoothstep(-235, -330, x + 25 * dm::sin(z * 0.012)); }
 double mountainness(double z) { return smoothstep(150, 430, z); }
 
 // The summit trail, laid out like a trail crew would: traverse the slope at a steady ~14%
@@ -278,10 +282,10 @@ std::vector<V3> summitTrail(const World& w) {
         if ((dir > 0 && pos.x > xMax) || (dir < 0 && pos.x < xMin)) {
             // Hairpin: a half circle (10 m radius) round toward the uphill side.
             const V3 c = pos + V3(0, 0, 10);
-            const double a0 = std::atan2(pos.z - c.z, pos.x - c.x);
+            const double a0 = dm::atan2(pos.z - c.z, pos.x - c.x);
             for (int k = 1; k <= 15; k++) {
                 const double a = a0 + dir * M_PI * k / 15.0;
-                pos = c + V3(std::cos(a), 0, std::sin(a)) * 10.0;
+                pos = c + V3(dm::cos(a), 0, dm::sin(a)) * 10.0;
                 pts.push_back(pos);
             }
             dir = -dir;
@@ -293,7 +297,7 @@ std::vector<V3> summitTrail(const World& w) {
         V3 next = pos;
         for (int k = 0; k <= 30; k++) {
             const double ang = (k - 15) * (75.0 / 15) * M_PI / 180;
-            const V3 d(dir * std::cos(ang), 0, std::fabs(std::sin(ang)) * (k >= 15 ? 1 : -1));
+            const V3 d(dir * dm::cos(ang), 0, std::fabs(dm::sin(ang)) * (k >= 15 ? 1 : -1));
             const V3 q = pos + d * step;
             const double g = (h(q) - h(pos)) / step;
             const double score = std::fabs(g - grade) + 0.05 * std::fabs(ang);
@@ -309,7 +313,7 @@ std::vector<V3> summitTrail(const World& w) {
 
 double World::frontierHeight(double x, double z) const {
     // The plains: gentle rolls.
-    double h = 4 + 2.5 * std::sin(x * 0.013 + 1.0) * std::cos(z * 0.011) + 1.2 * std::sin((x + z) * 0.03);
+    double h = 4 + 2.5 * dm::sin(x * 0.013 + 1.0) * dm::cos(z * 0.011) + 1.2 * dm::sin((x + z) * 0.03);
     // Foothills, then the range to the north.
     const double m = mountainness(z);
     h += smoothstep(110, 260, z) * 14 * fbmNoise(x * 0.012 + 3.0, z * 0.012, 3);
@@ -317,12 +321,12 @@ double World::frontierHeight(double x, double z) const {
     // Desert to the west: lower, dunes on it.
     const double dw = desertness(x, z);
     if (dw > 0) {
-        const double ridge = std::pow(1 - std::fabs(std::sin(0.034 * (0.8 * x + 0.6 * z) + 1.4 * std::sin(0.009 * z + 0.004 * x))), 2.2);
+        const double ridge = dm::pow(1 - std::fabs(dm::sin(0.034 * (0.8 * x + 0.6 * z) + 1.4 * dm::sin(0.009 * z + 0.004 * x))), 2.2);
         const double dunes = 7.5 * ridge * (0.55 + 0.45 * valueNoise(x * 0.01, z * 0.01)) + 1.5 * valueNoise(x * 0.05, z * 0.05);
         h = h * (1 - 0.6 * dw) + dw * dunes * (1 - m);
         // The mesa and the butte: flat tops on steep red walls.
         auto table = [&](const V3& c, double r, double top) {
-            const double d = std::hypot(x - c.x, z - c.z) + 4 * (valueNoise(x * 0.06, z * 0.06) - 0.5);
+            const double d = dm::hypot(x - c.x, z - c.z) + 4 * (valueNoise(x * 0.06, z * 0.06) - 0.5);
             return top * smoothstep(r + 7, r, d);
         };
         h += dw * (table(kMesa, kMesaR, 10) + table(kButte, 20, 12));
@@ -400,7 +404,7 @@ void World::buildFrontier() {
                 for (int q = 1; q < n; q++) {
                     const int k = dirn ? n - 1 - q : q, prev = dirn ? k + 1 : k - 1;
                     if (prev < 0 || prev >= n) continue;
-                    const double run = std::hypot(pts[k].x - pts[prev].x, pts[k].z - pts[prev].z), lim = p.maxGrade * run;
+                    const double run = dm::hypot(pts[k].x - pts[prev].x, pts[k].z - pts[prev].z), lim = p.maxGrade * run;
                     pts[k].y = clampd(pts[k].y, pts[prev].y - lim, pts[prev].y + lim);
                 }
         const double reach = p.half + p.blend;
@@ -408,13 +412,13 @@ void World::buildFrontier() {
         for (int s = 0; s < (p.closed ? n : n - 1); s++) {
             const V3& a = pts[s];
             const V3& b = pts[(s + 1) % n];
-            const double dx = b.x - a.x, dz = b.z - a.z, L = std::hypot(dx, dz);
+            const double dx = b.x - a.x, dz = b.z - a.z, L = dm::hypot(dx, dz);
             if (L < 1e-6) continue;
             for (int i = cellI(std::min(a.x, b.x) - reach); i <= cellI(std::max(a.x, b.x) + reach); i++)
                 for (int j = cellI(std::min(a.z, b.z) - reach); j <= cellI(std::max(a.z, b.z) + reach); j++) {
                     const double x = X(i), z = X(j);
                     const double t = clampd(((x - a.x) * dx + (z - a.z) * dz) / (L * L), 0, 1);
-                    const double dd = std::hypot(x - (a.x + dx * t), z - (a.z + dz * t));
+                    const double dd = dm::hypot(x - (a.x + dx * t), z - (a.z + dz * t));
                     const int id = i * hN + j;
                     if (dd - p.half >= edge[id]) continue;
                     edge[id] = (float)(dd - p.half);
@@ -450,7 +454,7 @@ void World::buildFrontier() {
         for (int i = cellI(x0 - blend); i <= cellI(x1 + blend); i++)
             for (int j = cellI(z0 - blend); j <= cellI(z1 + blend); j++) {
                 const double x = X(i), z = X(j);
-                const double d = std::hypot(std::max({x0 - x, x - x1, 0.0}), std::max({z0 - z, z - z1, 0.0}));
+                const double d = dm::hypot(std::max({x0 - x, x - x1, 0.0}), std::max({z0 - z, z - z1, 0.0}));
                 const int id = i * hN + j;
                 hgrid[id] = (float)(hgrid[id] + (y - hgrid[id]) * smoothstep(blend, 0, d));
                 if (d < 0.5) paint[id] = pnt, surf[id] = sf, keep[id] = 1;
@@ -478,7 +482,7 @@ void World::buildFrontier() {
     // the height `top`. The ramp under the ledges takes up the rest; its sides meet the
     // ground around over `bank` metres (a short bank: steep rock walls, a gully).
     auto staircase = [&](const V3& start, double yaw, int steps, double tread, double riser, double width, double top, double bank) {
-        const V3 f(std::cos(yaw), 0, -std::sin(yaw)), l(-f.z, 0, f.x);
+        const V3 f(dm::cos(yaw), 0, -dm::sin(yaw)), l(-f.z, 0, f.x);
         const double y0 = height(start.x, start.z), L = steps * tread;
         const double slope = std::max(0.0, (top - y0 - steps * riser) / L);
         const double reach = L + 12;
@@ -496,7 +500,7 @@ void World::buildFrontier() {
                 hgrid[id] = (float)(hgrid[id] + (ramp - hgrid[id]) * w);
                 if (u < width / 2 + std::max(1.0, bank) && s > -1 && s < L + 1) paint[id] = PAINT_REDROCK, surf[id] = SURF_ROCK, keep[id] = 1;
             }
-        const double pitch = std::atan(slope), hyp = std::sqrt(1 + slope * slope);
+        const double pitch = dm::atan(slope), hyp = std::sqrt(1 + slope * slope);
         for (int k = 0; k < steps; k++) {
             const double sc = (k + 0.5) * tread, thick = riser * 1.5 + 0.4;
             const V3 c = start + f * sc;
@@ -523,7 +527,7 @@ void World::buildFrontier() {
                 const V3 a(x, 0, z);
                 for (int k = 0; k < 12; k++) {
                     const double yaw = k * M_PI / 6;
-                    const V3 f(std::cos(yaw), 0, -std::sin(yaw));
+                    const V3 f(dm::cos(yaw), 0, -dm::sin(yaw));
                     // The approach leaves the stage just off it and comes into a run-up 12 m
                     // before the first ledge from more or less straight behind (no hairpin).
                     const V3 run = a - f * 12;
@@ -557,7 +561,7 @@ void World::buildFrontier() {
         // The approach: a short track from the stage to a run-up lined up with the stairs,
         // then straight at the first ledge; no steeper than ~18% (the foot is cut down into
         // the hillside to suit).
-        const V3 wf(std::cos(wallYaw), 0, -std::sin(wallYaw));
+        const V3 wf(dm::cos(wallYaw), 0, -dm::sin(wallYaw));
         const V3 runUp = gWallFoot - wf * 12;
         const double yFrom = height(wallFrom.x, wallFrom.z);
         const double L1 = len(runUp - wallFrom), L2 = 12;
@@ -594,7 +598,7 @@ void World::buildFrontier() {
                     const V3 d(X(i) - gWallFoot.x, 0, X(j) - gWallFoot.z);
                     const double sa = dot(d, wf), u = std::fabs(dot(d, wl));
                     if (sa < L) continue;
-                    const double out = std::hypot(std::max(0.0, sa - (L + 12)), std::max(0.0, u - 7));
+                    const double out = dm::hypot(std::max(0.0, sa - (L + 12)), std::max(0.0, u - 7));
                     if (out > 5) continue;
                     const int id = i * hN + j;
                     hgrid[id] = (float)(hgrid[id] + (top - hgrid[id]) * smoothstep(5, 0, out));
@@ -609,7 +613,7 @@ void World::buildFrontier() {
     // ---- Desert: slickrock bowl, dry wash ----------------------------------------------------
     for (int i = cellI(kBowl.x - 36); i <= cellI(kBowl.x + 36); i++)
         for (int j = cellI(kBowl.z - 36); j <= cellI(kBowl.z + 36); j++) {
-            const double d = std::hypot(X(i) - kBowl.x, X(j) - kBowl.z) / 34;
+            const double d = dm::hypot(X(i) - kBowl.x, X(j) - kBowl.z) / 34;
             if (d >= 1) continue;
             const int id = i * hN + j;
             hgrid[id] += (float)(-6 * (1 - d * d) * (1 - d * d) + 7 * smoothstep(0.55, 0.95, d) * (1 - smoothstep(0.95, 1.0, d)));
@@ -625,7 +629,7 @@ void World::buildFrontier() {
         const double y = height(kTarn.x, kTarn.z) - 0.5;
         for (int i = cellI(kTarn.x - 40); i <= cellI(kTarn.x + 40); i++)
             for (int j = cellI(kTarn.z - 40); j <= cellI(kTarn.z + 40); j++) {
-                const double d = std::hypot(X(i) - kTarn.x, X(j) - kTarn.z);
+                const double d = dm::hypot(X(i) - kTarn.x, X(j) - kTarn.z);
                 const int id = i * hN + j;
                 const double w = smoothstep(36, 22, d);
                 hgrid[id] = (float)(hgrid[id] + (y - hgrid[id]) * w);
@@ -669,13 +673,13 @@ void World::buildFrontier() {
         std::vector<float> nearestD(N, 1e9f);  // each cell takes its water from the nearest stretch
         for (int s = 0; s + 1 < n; s++) {
             const V3 &a = pts[s], &b = pts[s + 1];
-            const double dx = b.x - a.x, dz = b.z - a.z, L = std::hypot(dx, dz);
+            const double dx = b.x - a.x, dz = b.z - a.z, L = dm::hypot(dx, dz);
             if (L < 1e-6) continue;
             for (int i = cellI(std::min(a.x, b.x) - reach); i <= cellI(std::max(a.x, b.x) + reach); i++)
                 for (int j = cellI(std::min(a.z, b.z) - reach); j <= cellI(std::max(a.z, b.z) + reach); j++) {
                     const double x = X(i), z = X(j);
                     const double t = clampd(((x - a.x) * dx + (z - a.z) * dz) / (L * L), 0, 1);
-                    const double dd = std::hypot(x - (a.x + dx * t), z - (a.z + dz * t));
+                    const double dd = dm::hypot(x - (a.x + dx * t), z - (a.z + dz * t));
                     if (dd > reach) continue;
                     const int id = i * hN + j;
                     const double level = lvl[s] + (lvl[s + 1] - lvl[s]) * t, dep = depth[s] + (depth[s + 1] - depth[s]) * t;
@@ -716,7 +720,7 @@ void World::buildFrontier() {
     for (int i = cellI(kEchoLake.x - kEchoR * 1.3); i <= cellI(kEchoLake.x + kEchoR * 1.3); i++)
         for (int j = cellI(kEchoLake.z - kEchoR * 1.3); j <= cellI(kEchoLake.z + kEchoR * 1.3); j++) {
             const int id = i * hN + j;
-            if (std::hypot(X(i) - kEchoLake.x, X(j) - kEchoLake.z) > kEchoR * 1.25) continue;
+            if (dm::hypot(X(i) - kEchoLake.x, X(j) - kEchoLake.z) > kEchoR * 1.25) continue;
             const double above = hgrid[id] - echoY;
             if (above < 0) waterY[id] = std::max((float)waterY[id], (float)echoY), keep[id] = 1;
             if (above > -0.8 && above < 1.2 && paint[id] == PAINT_NONE) paint[id] = PAINT_SAND, surf[id] = SURF_SAND, keep[id] = 1;
@@ -727,7 +731,7 @@ void World::buildFrontier() {
         const double y = muddyLvl.back();
         for (int i = cellI(kDelta.x - 50); i <= cellI(kDelta.x + 50); i++)
             for (int j = cellI(kDelta.z - 50); j <= cellI(kDelta.z + 50); j++) {
-                const double d = std::hypot(X(i) - kDelta.x, X(j) - kDelta.z);
+                const double d = dm::hypot(X(i) - kDelta.x, X(j) - kDelta.z);
                 if (d > 48) continue;
                 const int id = i * hN + j;
                 const double target = y - 0.15 + 0.5 * valueNoise(X(i) * 0.08, X(j) * 0.08);
@@ -741,7 +745,7 @@ void World::buildFrontier() {
     // Mud bog in the south meadows: a hollow of sticky mud with hummocks.
     for (int i = cellI(kBog.x - 34); i <= cellI(kBog.x + 34); i++)
         for (int j = cellI(kBog.z - 34); j <= cellI(kBog.z + 34); j++) {
-            const double d = std::hypot((X(i) - kBog.x) / 1.4, X(j) - kBog.z);
+            const double d = dm::hypot((X(i) - kBog.x) / 1.4, X(j) - kBog.z);
             if (d > 24) continue;
             const int id = i * hN + j;
             hgrid[id] -= (float)(0.9 * smoothstep(24, 12, d) - 0.45 * (valueNoise(X(i) * 0.25, X(j) * 0.25) - 0.5));
@@ -768,7 +772,7 @@ void World::buildFrontier() {
             for (int dirn = 0; dirn < 2; dirn++)
                 for (int q = 1; q < n; q++) {
                     const int k = dirn ? n - 1 - q : q, prev = dirn ? k + 1 : k - 1;
-                    const double run = std::hypot(pts[k].x - pts[prev].x, pts[k].z - pts[prev].z);
+                    const double run = dm::hypot(pts[k].x - pts[prev].x, pts[k].z - pts[prev].z);
                     y[k] = clampd(y[k], y[prev] - maxGrade * run, y[prev] + maxGrade * run);
                 }
         return y;
@@ -784,13 +788,13 @@ void World::buildFrontier() {
         double along = 0;
         for (int s = 0; s + 1 < n; s++) {
             const V3 &a = pts[s], &b = pts[s + 1];
-            const double dx = b.x - a.x, dz = b.z - a.z, L = std::hypot(dx, dz);
+            const double dx = b.x - a.x, dz = b.z - a.z, L = dm::hypot(dx, dz);
             if (L < 1e-6) continue;
             for (int i = cellI(std::min(a.x, b.x) - reach); i <= cellI(std::max(a.x, b.x) + reach); i++)
                 for (int j = cellI(std::min(a.z, b.z) - reach); j <= cellI(std::max(a.z, b.z) + reach); j++) {
                     const double x = X(i), z = X(j);
                     const double t = clampd(((x - a.x) * dx + (z - a.z) * dz) / (L * L), 0, 1);
-                    const double dd = std::hypot(x - (a.x + dx * t), z - (a.z + dz * t)) - half;
+                    const double dd = dm::hypot(x - (a.x + dx * t), z - (a.z + dz * t)) - half;
                     if (dd > blend) continue;
                     const int id = i * hN + j;
                     if (e[id] > 1e8f) cells.push_back(id);
@@ -851,7 +855,7 @@ void World::buildFrontier() {
     for (double s = 25; s <= coldL - 50; s += 1) {
         const V3 p = pointAlong(cold, s), q = pointAlong(cold, s + 1);
         const V3 d = norm(V3(q.x - p.x, 0, q.z - p.z)), l(-d.z, 0, d.x);
-        const double off = -17 + 26 * smoothstep(125, 55, s) + 5 * std::sin(s * 0.06) + 2.5 * std::sin(s * 0.17);
+        const double off = -17 + 26 * smoothstep(125, 55, s) + 5 * dm::sin(s * 0.06) + 2.5 * dm::sin(s * 0.17);
         creek.push_back(p + l * off);
         creek.back().y = height(creek.back().x, creek.back().z);  // its bed follows the floor
     }
@@ -860,7 +864,7 @@ void World::buildFrontier() {
             const V3& p = creek[k];
             for (int i = cellI(p.x - 4); i <= cellI(p.x + 4); i++)
                 for (int j = cellI(p.z - 4); j <= cellI(p.z + 4); j++) {
-                    const double d = std::hypot(X(i) - p.x, X(j) - p.z), w = 1.5 + 0.6 * valueNoise(X(i) * 0.3, X(j) * 0.3);
+                    const double d = dm::hypot(X(i) - p.x, X(j) - p.z), w = 1.5 + 0.6 * valueNoise(X(i) * 0.3, X(j) * 0.3);
                     const int id = i * hN + j;
                     // Sunk a little into the snow, with banks gentle enough to drive out of (it's ice).
                     if (sink && d < 4) hgrid[id] = (float)std::min((double)hgrid[id], p.y - 0.15 * smoothstep(4, 1.2, d));
@@ -874,7 +878,7 @@ void World::buildFrontier() {
         const double y = height(kIcePond.x, kIcePond.z) - 0.4;
         for (int i = cellI(kIcePond.x - kIcePondR - 10); i <= cellI(kIcePond.x + kIcePondR + 10); i++)
             for (int j = cellI(kIcePond.z - kIcePondR - 10); j <= cellI(kIcePond.z + kIcePondR + 10); j++) {
-                const double d = std::hypot(X(i) - kIcePond.x, (X(j) - kIcePond.z) * 1.3) + 2.5 * valueNoise(X(i) * 0.15, X(j) * 0.15);
+                const double d = dm::hypot(X(i) - kIcePond.x, (X(j) - kIcePond.z) * 1.3) + 2.5 * valueNoise(X(i) * 0.15, X(j) * 0.15);
                 const int id = i * hN + j;
                 hgrid[id] = (float)(hgrid[id] + (y - hgrid[id]) * smoothstep(kIcePondR + 8, kIcePondR, d));
                 if (d < kIcePondR + 1.5) paint[id] = PAINT_ICE, surf[id] = SURF_ICE, keep[id] = 1;
@@ -902,7 +906,7 @@ void World::buildFrontier() {
             const int id = i * hN + j;
             swamp[id] = (float)m;
             double rel = 1.7 * (fbmNoise(x * 0.022 + 5.0, z * 0.022 - 2.0, 3) - 0.5) + 0.55 * (valueNoise(x * 0.12, z * 0.12) - 0.5) + 0.02;
-            rel += 0.2 * std::tanh(rel / 0.03);  // the pools have banks (a cut edge, not a long wet slope)
+            rel += 0.2 * dm::tanh(rel / 0.03);  // the pools have banks (a cut edge, not a long wet slope)
             const double floorY = std::max(kBayouY - 0.6, kBayouY + rel);
             hgrid[id] = (float)(hgrid[id] + (floorY - hgrid[id]) * m);
             if (m > 0.05 && waterY[id] < -1e8) waterY[id] = (float)kBayouY, flowX[id] = flowZ[id] = 0;
@@ -912,7 +916,7 @@ void World::buildFrontier() {
     // averages 20% (~30% at the steepest), the south one 16%.
     const V3 hillA = hillEnd(false), hillB = hillEnd(true);
     const V3 hillDir = norm(V3(hillB.x - hillA.x, 0, hillB.z - hillA.z)), hillLeft(-hillDir.z, 0, hillDir.x);
-    const double hillL = std::hypot(hillB.x - hillA.x, hillB.z - hillA.z), hillTop = kHillTopAt * hillL;
+    const double hillL = dm::hypot(hillB.x - hillA.x, hillB.z - hillA.z), hillTop = kHillTopAt * hillL;
     auto hillRise = [&](double u) {
         const double up = 1.5 * kHillH / 0.3, down = 1.5 * kHillH / 0.24;  // a smoothstep's steepest is 1.5x its mean
         return smoothstep(hillTop - up - 3, hillTop - 3, u) * smoothstep(hillTop + down + 3, hillTop + 3, u);
@@ -960,7 +964,7 @@ void World::buildFrontier() {
         for (int k = 0; k < btN; k++) {
             const double m = smoothstep(0.3, 0.9, bayouMask(bt[k].x, bt[k].z));
             if (m <= 0) continue;
-            double y = kBayouY + 0.3 + 0.07 * std::sin(k * 1.15) * (0.5 + valueNoise(k * 0.05, 3.0));
+            double y = kBayouY + 0.3 + 0.07 * dm::sin(k * 1.15) * (0.5 + valueNoise(k * 0.05, 3.0));
             for (const Dip& d : dips) {
                 const double u = k - d.s;
                 const double f = smoothstep(-d.len / 2, -d.len / 2 + d.ramp, u) * smoothstep(d.len / 2, d.len / 2 - d.ramp, u);
@@ -1014,7 +1018,7 @@ void World::buildFrontier() {
             const int id = i * hN + j;
             const double x = X(i), z = X(j);
             const double gx = (hgrid[(i + 1) * hN + j] - hgrid[(i - 1) * hN + j]) / (2 * kRes), gz = (hgrid[i * hN + j + 1] - hgrid[i * hN + j - 1]) / (2 * kRes);
-            const double slope = std::hypot(gx, gz), h = hgrid[id];
+            const double slope = dm::hypot(gx, gz), h = hgrid[id];
             const double dw = desertness(x, z);
             const bool onPath = paint[id] == PAINT_GRAVEL || paint[id] == PAINT_TRAIL || paint[id] == PAINT_TRACK || paint[id] == PAINT_WET;
             // The desert: the stage's gravel gives way to sand, the land to sand and hardpan.
@@ -1044,7 +1048,7 @@ void World::buildFrontier() {
             if (cm < 0.5 + 0.4 * (valueNoise(x * 0.09 + 5.0, z * 0.09) - 0.5) + 0.3 * (valueNoise(x * 0.3, z * 0.3) - 0.5)) continue;
             if (paint[id] == PAINT_ICE || paint[id] == PAINT_PAD || paint[id] == PAINT_GRAVEL || waterY[id] > -1e8) continue;
             const double gx = (hgrid[(i + 1) * hN + j] - hgrid[(i - 1) * hN + j]) / 2, gz = (hgrid[i * hN + j + 1] - hgrid[i * hN + j - 1]) / 2;
-            const double slope = std::hypot(gx, gz);
+            const double slope = dm::hypot(gx, gz);
             // Snow sticks up to ~50 degrees; past that, grey rock.
             if (paint[id] == PAINT_TRAIL || slope < 1.15 + 0.35 * (valueNoise(x * 0.07, z * 0.07) - 0.5)) paint[id] = PAINT_SNOW, surf[id] = SURF_SNOW;
             else paint[id] = PAINT_ROCK, surf[id] = SURF_ROCK;
@@ -1059,7 +1063,7 @@ void World::buildFrontier() {
                 const Near r = nearest(road, false, X(i), X(j));
                 const double u = r.d - kSnowHalf - 0.4;
                 if (u <= 0 || u >= 2.8) continue;
-                hgrid[id] += (float)(0.55 * std::sin(M_PI * u / 2.8) * smoothstep(80, 110, r.along) * (0.8 + 0.4 * valueNoise(X(i) * 0.2, X(j) * 0.2)));
+                hgrid[id] += (float)(0.55 * dm::sin(M_PI * u / 2.8) * smoothstep(80, 110, r.along) * (0.8 + 0.4 * valueNoise(X(i) * 0.2, X(j) * 0.2)));
             }
     }
     // Ice on the road: where it crosses the frozen creek, and two patches of black ice.
@@ -1069,7 +1073,7 @@ void World::buildFrontier() {
             const V3 p = pointAlong(snowRoad(), s);
             for (int i = cellI(p.x - 3); i <= cellI(p.x + 3); i++)
                 for (int j = cellI(p.z - 3); j <= cellI(p.z + 3); j++)
-                    if (std::hypot(X(i) - p.x, X(j) - p.z) < kSnowHalf * (0.6 + 0.4 * valueNoise(X(i) * 0.4, X(j) * 0.4)))
+                    if (dm::hypot(X(i) - p.x, X(j) - p.z) < kSnowHalf * (0.6 + 0.4 * valueNoise(X(i) * 0.4, X(j) * 0.4)))
                         paint[i * hN + j] = PAINT_ICE, surf[i * hN + j] = SURF_ICE;
         }
 
@@ -1112,7 +1116,7 @@ void World::buildFrontier() {
     // THE WALL's gully: boulders heaped along both banks, too big to climb (the stairs are
     // the way up).
     {
-        const V3 f(std::cos(wallYaw), 0, -std::sin(wallYaw)), l(-f.z, 0, f.x);
+        const V3 f(dm::cos(wallYaw), 0, -dm::sin(wallYaw)), l(-f.z, 0, f.x);
         const double L = 12 * kStairTread;
         int k = 0;
         for (double s = -3; s <= L + 3; s += 2.4)
@@ -1129,7 +1133,7 @@ void World::buildFrontier() {
             const V3& p = wash[k];
             for (int i = cellI(p.x - 7); i <= cellI(p.x + 7); i++)
                 for (int j = cellI(p.z - 7); j <= cellI(p.z + 7); j++) {
-                    const double d = std::hypot(X(i) - p.x, X(j) - p.z);
+                    const double d = dm::hypot(X(i) - p.x, X(j) - p.z);
                     if (d > 6.5) continue;
                     const int id = i * hN + j;
                     hgrid[id] = (float)std::min((double)hgrid[id], height(p.x, p.z) - 0.9 * smoothstep(6.5, 2, d) + 0.2);
@@ -1221,7 +1225,7 @@ void World::buildFrontier() {
     auto trailSign = [&](const std::vector<V3>& pts, double s, double side, float r, float g, float b) {
         const V3 p = pointAlong(pts, s), d = norm(pointAlong(pts, s + 2) - p), l(-d.z, 0, d.x);
         const V3 q = p + l * side;
-        sign(q.x, q.z, std::atan2(d.z, -d.x), r, g, b);
+        sign(q.x, q.z, dm::atan2(d.z, -d.x), r, g, b);
     };
     auto marker = [&](const V3& p) {
         Prop m;
@@ -1272,8 +1276,8 @@ void World::buildFrontier() {
             const V3 p = pointAlong(bt, s), d = norm(pointAlong(bt, s + 2) - p), l(-d.z, 0, d.x);
             const V3 c = p + l * ((rnd2() < 0.5 ? -1 : 1) * (kBayouHalf + 3.5 + rnd2() * 9));
             if (swamp[at(c.x, c.z)] < 0.5 || keep[at(c.x, c.z)]) continue;
-            const double yaw = std::atan2(d.z, d.x) + (rnd2() - 0.5) * 1.2, L = 3 + rnd2() * 4, r = 0.17 + rnd2() * 0.15;
-            const V3 ax(std::cos(yaw) * L / 2, 0, std::sin(yaw) * L / 2);
+            const double yaw = dm::atan2(d.z, d.x) + (rnd2() - 0.5) * 1.2, L = 3 + rnd2() * 4, r = 0.17 + rnd2() * 0.15;
+            const V3 ax(dm::cos(yaw) * L / 2, 0, dm::sin(yaw) * L / 2);
             V3 a = c - ax, b = c + ax;
             if (keep[at(a.x, a.z)] || keep[at(b.x, b.z)]) continue;
             a.y = height(a.x, a.z) + r * 0.55, b.y = height(b.x, b.z) + r * 0.55;
@@ -1308,7 +1312,7 @@ void World::buildFrontier() {
         {
             const V3 p = pointAlong(bt, 24), d = norm(pointAlong(bt, 26) - p), l(-d.z, 0, d.x);
             const V3 c = p - l * 13;
-            const double y = height(c.x, c.z), yaw = std::atan2(-l.z, l.x) + M_PI;  // facing the trail
+            const double y = height(c.x, c.z), yaw = dm::atan2(-l.z, l.x) + M_PI;  // facing the trail
             fixtures.push_back({PROP_CABIN, V3(c.x, y, c.z), V3(), yaw});
             addBox(V3(c.x, y + 1.7, c.z), V3(2.3, 1.9, 2.8), yaw, 0, 0, V3(0.4, 0.3, 0.2));
             boxes.back().hidden = true;
@@ -1323,11 +1327,11 @@ void World::buildFrontier() {
             const double x = 335 + rnd2() * 175, z = 225 + rnd2() * 285;
             const int i = cellI(x), j = cellI(z), id = i * hN + j;
             if (keep[id] || paint[id] != PAINT_SNOW || hgrid[id] > 150) continue;
-            const double slope = std::hypot(hgrid[(i + 1) * hN + j] - hgrid[(i - 1) * hN + j], hgrid[i * hN + j + 1] - hgrid[i * hN + j - 1]) / 2;
+            const double slope = dm::hypot(hgrid[(i + 1) * hN + j] - hgrid[(i - 1) * hN + j], hgrid[i * hN + j + 1] - hgrid[i * hN + j - 1]) / 2;
             if (slope > 0.75) continue;
             const double grove = smoothstep(0.4, 0.62, valueNoise(x * 0.03 + 1.0, z * 0.03 + 8.0));
             const double p = (0.06 + 0.7 * grove) * (1 - smoothstep(95, 150, hgrid[id]));
-            if (rnd2() > p || nearest(road, false, x, z).d < 7.5 || std::hypot(x - kLodge.x, z - kLodge.z) < 22) continue;
+            if (rnd2() > p || nearest(road, false, x, z).d < 7.5 || dm::hypot(x - kLodge.x, z - kLodge.z) < 22) continue;
             plant(x, z, rnd2() < 0.06 ? 2 : 0, 7 + rnd2() * 9 * (1 - 0.5 * smoothstep(60, 140, hgrid[id])), 0.75 + rnd2() * 0.25);
             planted++;
         }
@@ -1401,7 +1405,7 @@ V3 frontierFeature(const char* name) {
                     if (r.d > 3) continue;
                     bool fresh = true;
                     for (V3& f : found)
-                        if (std::hypot(f.x - rally[k].x, f.z - rally[k].z) < 40) fresh = false;
+                        if (dm::hypot(f.x - rally[k].x, f.z - rally[k].z) < 40) fresh = false;
                     if (fresh) found.push_back(rally[k]);
                 }
                 out.insert(out.end(), found.begin(), found.end());

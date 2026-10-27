@@ -1,4 +1,5 @@
 #include "biome.h"
+#include "detmath.h"
 
 #include <cmath>
 
@@ -27,8 +28,8 @@ Biome biomeAt(const World& w, double x, double z) {
     for (const World::SectionSpot& s : w.sections) {
         const SectionFootprint fp = sectionFootprint((SectionType)s.type);
         const double dx = x - s.entry.x, dz = z - s.entry.z;
-        const double u = dx * std::cos(s.heading) - dz * std::sin(s.heading);
-        const double v = dx * std::sin(s.heading) + dz * std::cos(s.heading);
+        const double u = dx * dm::cos(s.heading) - dz * dm::sin(s.heading);
+        const double v = dx * dm::sin(s.heading) + dz * dm::cos(s.heading);
         if (u > -fp.apron && u < fp.length + fp.apron && std::fabs(v) < fp.half) return sectionBiome(s.type);
     }
     const double h = w.height(x, z);

@@ -92,6 +92,8 @@ jobs:
           make -j"$(nproc)" CXXFLAGS="-O2 -march=x86-64-v2 -mtune=generic" build/test_visibility
           ./build/test_visibility
           ./build/rel/run_tests --jobs 1 engine/collision engine/physics-workers engine/thread-cache engine/adaptive-quality tires/pressure net/state vtools/
+          # The big map's fingerprint (src/worldprint.h): every OS must build Linux's world (the WORLDPRINT lines can be compared across the logs).
+          CZ_XPLAT_SCANS=1 ./build/rel/run_tests --jobs 1 -v onemap/xplat-fingerprint
           SDL_VIDEODRIVER=offscreen LP_NUM_THREADS=2 ./build/rel/test_render
           SDL_AUDIODRIVER=dummy CZ_AUDIO_DEVICE_TEST=1 ./build/rel/test_audio
           python3 tests/test_engine_import.py
@@ -121,6 +123,7 @@ jobs:
           make -j"$(nproc)" build/win/bench_sim.exe build/win/run_tests.exe build/win/test_audio.exe build/win/test_visibility.exe
           mkdir -p build/win/cpu-tests
           cp build/win/bench_sim.exe build/win/run_tests.exe build/win/test_audio.exe build/win/test_visibility.exe third_party/sdl2-win64/SDL2.dll build/win/cpu-tests/
+          mkdir -p build/win/cpu-tests/assets && cp -r assets/props build/win/cpu-tests/assets/  # (the scanned rocks, for onemap/xplat-fingerprint)
           x86_64-w64-mingw32-objdump -p build/win/CrumpleZone/crumplezone.exe > build/win/imports.txt
           grep -q 'NvOptimusEnablement' build/win/imports.txt
           grep -q 'AmdPowerXpressRequestHighPerformance' build/win/imports.txt
@@ -159,6 +162,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Windows culling/LOD geometry checks failed" }
           .\cpu-tests\run_tests.exe --jobs 1 net/ engine/collision engine/physics-workers engine/thread-cache engine/adaptive-quality tires/pressure vtools/
           if ($LASTEXITCODE -ne 0) { throw "Windows networking/physics regression checks failed (exit $LASTEXITCODE)" }
+          $env:CZ_XPLAT_SCANS = '1'
+          .\cpu-tests\run_tests.exe --jobs 1 -v onemap/xplat-fingerprint
+          if ($LASTEXITCODE -ne 0) { throw "Windows builds another big map than Linux (onemap/xplat-fingerprint: the WORLDPRINT lines say which part)" }
           foreach ($attempt in 1..5) {
             .\cpu-tests\run_tests.exe --jobs 1 engine/thread-cache vtools/go net/state
             if ($LASTEXITCODE -ne 0) { throw "Windows thread-exit stress failed (attempt $attempt, exit $LASTEXITCODE)" }
@@ -203,6 +209,7 @@ jobs:
           make -j4 build/mac/bench_sim build/mac/run_tests build/mac/test_audio build/mac/test_render build/mac/test_visibility
           ./build/mac/test_visibility
           ./build/mac/run_tests --jobs 1 net/ engine/collision engine/physics-workers engine/thread-cache engine/adaptive-quality tires/pressure vtools/
+          CZ_XPLAT_SCANS=1 ./build/mac/run_tests --jobs 1 -v onemap/xplat-fingerprint
           SDL_AUDIODRIVER=dummy CZ_AUDIO_DEVICE_TEST=1 ./build/mac/test_audio
           python3 -u - <<'PY'
           import subprocess

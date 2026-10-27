@@ -1,4 +1,5 @@
 #include "places.h"
+#include "detmath.h"
 
 #include <algorithm>
 #include <cmath>
@@ -124,7 +125,7 @@ std::vector<MapPlace> backcountryPlaces() {
     vehicle("BC.LAKESIDE_CIVIC", "LAKESIDE CIVIC", V3(-1298, 0, -1638), 0.4, "civic", "OUT OF FUEL, STRIPPED OF ITS PARTS");
     // -- Photo spots: p is where the truck stands, `subject` what the picture is of --
     auto photo = [&](const char* id, const char* name, V3 p, V3 subject, double subjectY, int pay) {
-        add(v, M, id, name, PK_PHOTO_SPOT, p, std::atan2(-(subject.z - p.z), subject.x - p.x), 25, 0);
+        add(v, M, id, name, PK_PHOTO_SPOT, p, dm::atan2(-(subject.z - p.z), subject.x - p.x), 25, 0);
         v.back().subject = V3(subject.x, 0, subject.z), v.back().subjectY = subjectY, v.back().reward = pay;
     };
     photo("BC.PHOTO_BEAR_FALLS", "BEAR FALLS FROM THE POOL", V3(1812, 0, 4), V3(1897, 0, 56), 10, 700);
@@ -295,7 +296,7 @@ bool isFound(const std::vector<std::string>& found, int map, const std::string& 
 std::vector<std::string> visitSpots(std::vector<std::string>& found, int map, const V3& at, const std::vector<DiscoverSpot>& spots) {
     std::vector<std::string> fresh;
     for (const DiscoverSpot& s : spots)
-        if (std::hypot(s.p.x - at.x, s.p.z - at.z) < s.radius && !isFound(found, s.keyMap(map), s.name)) {
+        if (dm::hypot(s.p.x - at.x, s.p.z - at.z) < s.radius && !isFound(found, s.keyMap(map), s.name)) {
             found.push_back(std::to_string(s.keyMap(map)) + ":" + s.name);
             fresh.push_back(s.name);
         }

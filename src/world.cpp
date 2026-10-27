@@ -1,3 +1,5 @@
+#include "detmath.h"
+#include "detsort.h"
 #include "thread_cache.h"
 #include "parallel.h"
 #include "world.h"
@@ -254,9 +256,9 @@ namespace {
 // World::addRock with the scanned hulls on.
 // The frame a pose asks for: (along, up, across), right-handed (along x up = across).
 void poseFrame(const RockPose& p, V3 out[3]) {
-    const double cy = std::cos(p.yaw), sy = std::sin(p.yaw), cp = std::cos(p.pitch), sp = std::sin(p.pitch);
+    const double cy = dm::cos(p.yaw), sy = dm::sin(p.yaw), cp = dm::cos(p.pitch), sp = dm::sin(p.pitch);
     const V3 along(cy * cp, sp, -sy * cp), up0(-cy * sp, cp, sy * sp);
-    out[0] = along, out[1] = rotateAxis(up0, along, p.roll), out[2] = cross(along, out[1]);
+    out[0] = along, out[1] = dm::rotateAxis(up0, along, p.roll), out[2] = cross(along, out[1]);
 }
 
 std::vector<props::RockHull> splitRock(const World& w, const Rock& k, const props::RockHull& hull) {
@@ -303,6 +305,11 @@ Rock makeScannedRock(const World& w, const props::HullLibrary& lib, double x, do
         int i;
         bool swap;
     };
+    // The procedural world (procworld.h) still fits its rocks with the C library's log, std::sort and mathx's rotateAxis, so its
+    // worlds stay as they were while it's being worked on: not the same on every machine yet (docs/plans/xplat-world.md).
+    const bool cLibm = w.map == MAP_PROCEDURAL;
+    auto fitLog = [cLibm](double v) { return cLibm ? std::log(v) : dm::log(v); };
+    auto turn = [cLibm](const V3& v, const V3& k, double a) { return cLibm ? rotateAxis(v, k, a) : dm::rotateAxis(v, k, a); };
     std::vector<Cand> cands;
     const double ry = std::max(radii.y, 1e-3);
     for (int i = 0; i < (int)lib.hulls.size(); i++) {
@@ -310,11 +317,15 @@ Rock makeScannedRock(const World& w, const props::HullLibrary& lib, double x, do
         const double hy = std::max(h.y, 1e-3);
         for (int sw = 0; sw < 2; sw++) {
             const double hx = sw ? h.z : h.x, hz = sw ? h.x : h.z;
-            const double sc = std::fabs(std::log((hx / hy) / (radii.x / ry))) + std::fabs(std::log((hz / hy) / (radii.z / ry)));
+            const double sc = std::fabs(fitLog((hx / hy) / (radii.x / ry))) + std::fabs(fitLog((hz / hy) / (radii.z / ry)));
             cands.push_back({sc, i, sw != 0});
         }
     }
-    std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) { return a.score < b.score || (a.score == b.score && a.i < b.i); });
+    // (A scan as wide as it is long ties with itself turned round, and which of the two comes first decides how it is fitted: dm::sort,
+    // libstdc++'s order for the ties on every machine, as the worlds were built before. The score's log is detmath's.)
+    auto byScore = [](const Cand& a, const Cand& b) { return a.score < b.score || (a.score == b.score && a.i < b.i); };
+    if (cLibm) std::sort(cands.begin(), cands.end(), byScore);
+    else dm::sort(cands.begin(), cands.end(), byScore);
     std::vector<Cand> pick;
     for (const Cand& c : cands) {
         bool dup = false;
@@ -334,7 +345,7 @@ Rock makeScannedRock(const World& w, const props::HullLibrary& lib, double x, do
     const double yaw = rnd() * 2 * M_PI, tipX = (rnd() - 0.5) * 0.2, tipZ = (rnd() - 0.5) * 0.2;
     // Model axes in the world: scaled, tipped, turned.
     V3 ax[3] = {V3(scale.x, 0, 0), V3(0, scale.y, 0), V3(0, 0, scale.z)};
-    for (V3& a : ax) a = rotateAxis(rotateAxis(rotateAxis(a, V3(1, 0, 0), tipX), V3(0, 0, 1), tipZ), V3(0, 1, 0), yaw);
+    for (V3& a : ax) a = turn(turn(turn(a, V3(1, 0, 0), tipX), V3(0, 0, 1), tipZ), V3(0, 1, 0), yaw);
     if (pose) {  // (the scan's long axis, whichever of its two the fit gave the first half-size, along the pose's)
         V3 f[3];
         poseFrame(*pose, f);
@@ -390,12 +401,12 @@ Rock World::makeRock(double x, double z, const V3& radii, double top, uint32_t s
     for (int i = 0; i < n; i++) {
         double y = 1 - 2 * (i + 0.5) / n, rr = std::sqrt(std::max(0.0, 1 - y * y));
         double a = i * 2.39996 + rnd() * 0.6;
-        V3 d(std::cos(a) * rr, y, std::sin(a) * rr);
+        V3 d(dm::cos(a) * rr, y, dm::sin(a) * rr);
         double k = 0.72 + 0.3 * rnd();
         V3 q(d.x * radii.x * k, d.y * radii.y * k, d.z * radii.z * k);
-        q = rotateAxis(q, V3(1, 0, 0), tipX);
-        q = rotateAxis(q, V3(0, 0, 1), tipZ);
-        q = rotateAxis(q, V3(0, 1, 0), yaw);
+        q = dm::rotateAxis(q, V3(1, 0, 0), tipX);
+        q = dm::rotateAxis(q, V3(0, 0, 1), tipZ);
+        q = dm::rotateAxis(q, V3(0, 1, 0), yaw);
         if (pose) {
             V3 f[3];
             poseFrame(*pose, f);
@@ -433,20 +444,20 @@ Rock& World::addRock(double x, double z, const V3& radii, double top, uint32_t s
 void World::addLake(double x, double z, double r, double depth) {
     // An irregular shore: the basin's radius wanders with the bearing.
     auto shore = [&](double ang) {
-        return r * (0.72 + 0.4 * valueNoise(std::cos(ang) * 1.6 + x * 0.013, std::sin(ang) * 1.6 + z * 0.013));
+        return r * (0.72 + 0.4 * valueNoise(dm::cos(ang) * 1.6 + x * 0.013, dm::sin(ang) * 1.6 + z * 0.013));
     };
     // Water stands just below the lowest point of the rim.
     double level = 1e9;
     for (int a = 0; a < 128; a++) {
         double ang = a * M_PI / 64, rr = shore(ang);
-        level = std::min(level, height(x + rr * std::cos(ang), z + rr * std::sin(ang)));
+        level = std::min(level, height(x + rr * dm::cos(ang), z + rr * dm::sin(ang)));
     }
     level -= 0.15;
     const double reach = r * 1.15 + 40;
     for (int i = std::max(0, (int)((x - reach + half) / kRes)); i <= std::min(hN - 1, (int)((x + reach + half) / kRes)); i++)
         for (int j = std::max(0, (int)((z - reach + half) / kRes)); j <= std::min(hN - 1, (int)((z + reach + half) / kRes)); j++) {
-            double px = -half + i * kRes, pz = -half + j * kRes, d = std::hypot(px - x, pz - z);
-            double rr = shore(std::atan2(pz - z, px - x)), q = d / rr;
+            double px = -half + i * kRes, pz = -half + j * kRes, d = dm::hypot(px - x, pz - z);
+            double rr = shore(dm::atan2(pz - z, px - x)), q = d / rr;
             double bed = d < rr ? level - depth * (1 - q * q) : level + (d - rr) * 0.25;
             float& hh = hgrid[i * hN + j];
             hh = (float)std::min((double)hh, bed);
@@ -728,7 +739,7 @@ void World::buildSectionPark() {
         {-240, 460, 0, {SEC_DUNES}},  // (its middle line is z 460: the field fills the band south of the loop road)
     };
     for (const Strip& s : strips) {
-        const V3 dir(std::cos(s.heading), 0, -std::sin(s.heading));
+        const V3 dir(dm::cos(s.heading), 0, -dm::sin(s.heading));
         double along = 0;  // from the strip's start
         for (SectionType t : s.types) {
             const SectionFootprint fp = sectionFootprint(t);
@@ -791,15 +802,15 @@ void World::scatterScenery(uint32_t seed) {
     // A pond out in a meadow: the first open spot far from the pad, the roads and the trees.
     for (double pz = 380; pz > -400 && waters.empty(); pz -= 40)
         for (double px = -380; px < 400 && waters.empty(); px += 40) {
-            if (std::hypot(px, pz) < 260 || !clearOfTrees(px, pz, 60)) continue;
+            if (dm::hypot(px, pz) < 260 || !clearOfTrees(px, pz, 60)) continue;
             bool clear = true;
             for (double a = 0; a < 2 * M_PI && clear; a += 0.5)
-                for (double rr : {0.0, 30.0, 60.0}) clear &= !roadAt(px + rr * std::cos(a), pz + rr * std::sin(a)).near;
+                for (double rr : {0.0, 30.0, 60.0}) clear &= !roadAt(px + rr * dm::cos(a), pz + rr * dm::sin(a)).near;
             if (clear) addLake(px, pz, 26, 1.6);
         }
     auto dry = [&](double x, double z, double margin) {
         for (const Water& wt : waters)
-            if (std::hypot(x - wt.x, z - wt.z) < wt.r + margin) return false;
+            if (dm::hypot(x - wt.x, z - wt.z) < wt.r + margin) return false;
         return true;
     };
     // Bushes: most at the edges of the woods, a few out in the open.
@@ -850,21 +861,21 @@ void World::buildWilds() {
     parallelRows(hN, [&](int i) {
         for (int j = 0; j < hN; j++) {
             const double x = X(i), z = X(j);
-            const double hills = 9.0 * std::sin(x * 0.012 + 0.7) * std::cos(z * 0.010 - 0.3) + 4.0 * std::sin(x * 0.027 + z * 0.021 + 1.3) +
-                                 1.6 * std::sin(x * 0.061 - z * 0.047) * std::cos(z * 0.053 + x * 0.013);
+            const double hills = 9.0 * dm::sin(x * 0.012 + 0.7) * dm::cos(z * 0.010 - 0.3) + 4.0 * dm::sin(x * 0.027 + z * 0.021 + 1.3) +
+                                 1.6 * dm::sin(x * 0.061 - z * 0.047) * dm::cos(z * 0.053 + x * 0.013);
             // (Calmer through the middle, where the sections lie: the ground there is for a run-in, not for hills.)
-            const double calm = 0.35 + 0.65 * smoothstep(70, 200, std::hypot(x * 0.45, z * 1.5));
-            double h = hills * amp * calm + 6.0 * smoothstep(100, 240, std::hypot(x, z));
+            const double calm = 0.35 + 0.65 * smoothstep(70, 200, dm::hypot(x * 0.45, z * 1.5));
+            double h = hills * amp * calm + 6.0 * smoothstep(100, 240, dm::hypot(x, z));
             if (kind == WILDS_DESERT) h += 3.0 * (fbmNoise(x * 0.006 + 4.0, z * 0.006 - 2.0, 3) - 0.5);  // long swells of sand
             if (kind == WILDS_CANYON) {  // mesas: flat-topped, with cliffs round them, left out of the middle where the sections are
                 const double rim = fbmNoise(x * 0.0065 + 11.0, z * 0.0065 - 4.0, 3) + 0.012 * (valueNoise(x * 0.05, z * 0.05) - 0.5);
-                h += 17.0 * smoothstep(0.545, 0.556, rim) * smoothstep(170, 260, std::hypot(x, z));
+                h += 17.0 * smoothstep(0.545, 0.556, rim) * smoothstep(170, 260, dm::hypot(x, z));
             }
             // Uneven underfoot: bumps a few metres across.
             const double bump = kind == WILDS_DESERT ? 0.3 : kind == WILDS_UPLAND ? 0.8 : 0.5;
             h += bump * (fbmNoise(x * 0.09 + 5.0, z * 0.09 + 1.0, 2) - 0.5) + 0.5 * bump * (valueNoise(x * 0.31, z * 0.27) - 0.5);
             // Hills close in far out, and keep you on the map.
-            const double d = std::hypot(std::max(0.0, std::fabs(x) - (half - 130)), std::max(0.0, std::fabs(z) - (half - 130)));
+            const double d = dm::hypot(std::max(0.0, std::fabs(x) - (half - 130)), std::max(0.0, std::fabs(z) - (half - 130)));
             h += 0.0045 * d * d + 0.02 * d;
             hgrid[i * hN + j] = (float)h;
         }
@@ -896,7 +907,7 @@ void World::buildWilds() {
                     else surf[id] = SURF_DIRT, paint[id] = PAINT_DESERT;
                     break;
                 case WILDS_WETLAND:  // wet ground in the flat low spots (not in the middle, where the section's own mud is)
-                    if (n1 < 0.34 && slope < 0.09 && std::hypot(x, z * 2.2) > 200) surf[id] = SURF_MUD, paint[id] = PAINT_MUD;
+                    if (n1 < 0.34 && slope < 0.09 && dm::hypot(x, z * 2.2) > 200) surf[id] = SURF_MUD, paint[id] = PAINT_MUD;
                     break;
                 case WILDS_UPLAND:  // scree on the steeper ground and in patches
                     if (slope > 0.3 || (n1 > 0.64 && n2 > 0.45)) surf[id] = SURF_SCREE, paint[id] = PAINT_SCREE;
@@ -917,7 +928,7 @@ void World::buildWilds() {
     };
     auto cellOf2 = [&](double v) { return std::min(std::max((int)std::lround((v + half) / kRes), 0), hN - 1); };
     auto wet = [&](double x, double z) { return surf[cellOf2(x) * hN + cellOf2(z)] == SURF_MUD; };
-    auto grove = [](double x, double z) { return 0.5 + 0.25 * std::sin(x * 0.021 + 1.7) * std::cos(z * 0.017 - 0.4) + 0.25 * std::sin((x + z) * 0.013); };
+    auto grove = [](double x, double z) { return 0.5 + 0.25 * dm::sin(x * 0.021 + 1.7) * dm::cos(z * 0.017 - 0.4) + 0.25 * dm::sin((x + z) * 0.013); };
     int treeMax = 0, bushMax = 0, rockMax = 0;
     switch (kind) {
         case WILDS_MEADOW: treeMax = 650, bushMax = 1000, rockMax = 140; break;
@@ -930,7 +941,7 @@ void World::buildWilds() {
     for (int attempt = 0; attempt < 600000 && (int)trees.size() < treeMax; attempt++) {
         const double x = (rnd() * 2 - 1) * 500, z = (rnd() * 2 - 1) * 500;
         // (The woods are thickest round the middle, where you'll be, and thin out toward the rim.)
-        if ((kind == WILDS_FOREST || kind == WILDS_WETLAND) && rnd() > 1 - 0.85 * smoothstep(160, 470, std::hypot(x, z))) continue;
+        if ((kind == WILDS_FOREST || kind == WILDS_WETLAND) && rnd() > 1 - 0.85 * smoothstep(160, 470, dm::hypot(x, z))) continue;
         const int i = cellOf2(x), j = cellOf2(z);
         const double slope = slopeAt(i, j);
         if (slope > (kind == WILDS_CANYON ? 0.2 : 0.5)) continue;
@@ -997,9 +1008,9 @@ double World::baseHeight(double x, double z) const {
     const double out = padOutside(x, z);
     if (out > 0) {
         double t = smoothstep(0, kZoneRamp, out);
-        double hills = 9.0 * std::sin(x * 0.012 + 0.7) * std::cos(z * 0.010 - 0.3) +
-                       4.0 * std::sin(x * 0.027 + z * 0.021 + 1.3) +
-                       1.6 * std::sin(x * 0.061 - z * 0.047) * std::cos(z * 0.053 + x * 0.013);
+        double hills = 9.0 * dm::sin(x * 0.012 + 0.7) * dm::cos(z * 0.010 - 0.3) +
+                       4.0 * dm::sin(x * 0.027 + z * 0.021 + 1.3) +
+                       1.6 * dm::sin(x * 0.061 - z * 0.047) * dm::cos(z * 0.053 + x * 0.013);
         h = t * (hills + 6.0 * t);
         // Flat under the surface course (and its run-up).
     }
@@ -1118,7 +1129,7 @@ void World::bakeTerrain() {
         return (rng & 0xFFFFFF) / double(0x1000000);
     };
     auto grove = [](double x, double z) {  // smooth 0..1 field deciding where woods grow
-        return 0.5 + 0.25 * std::sin(x * 0.021 + 1.7) * std::cos(z * 0.017 - 0.4) + 0.25 * std::sin((x + z) * 0.013);
+        return 0.5 + 0.25 * dm::sin(x * 0.021 + 1.7) * dm::cos(z * 0.017 - 0.4) + 0.25 * dm::sin((x + z) * 0.013);
     };
     for (int attempt = 0; attempt < 20000 && trees.size() < 650; attempt++) {
         double x = (rnd() * 2 - 1) * 500, z = (rnd() * 2 - 1) * 500;
@@ -1398,7 +1409,7 @@ void World::addStation(V3 p, double yaw, const char* name) {
     pr.yaw = yaw;
     fixtures.push_back(pr);
     // Steel posts at the shed's four corners, 10 m long (drive-through) and 7.4 m wide.
-    const V3 fwd(std::cos(yaw), 0, -std::sin(yaw)), side(std::sin(yaw), 0, std::cos(yaw));
+    const V3 fwd(dm::cos(yaw), 0, -dm::sin(yaw)), side(dm::sin(yaw), 0, dm::cos(yaw));
     for (int a = -1; a <= 1; a += 2)
         for (int b = -1; b <= 1; b += 2) {
             const V3 q = p + fwd * (5.0 * a) + side * (3.7 * b);
@@ -1426,9 +1437,9 @@ void World::addBox(V3 c, V3 h, double yaw, double pitch, double roll, V3 col) {
     b.h = h;
     V3 ax[3] = {V3(1, 0, 0), V3(0, 1, 0), V3(0, 0, 1)};
     for (V3& a : ax) {
-        a = rotateAxis(a, V3(1, 0, 0), roll);
-        a = rotateAxis(a, V3(0, 0, 1), pitch);
-        a = rotateAxis(a, V3(0, 1, 0), yaw);
+        a = dm::rotateAxis(a, V3(1, 0, 0), roll);
+        a = dm::rotateAxis(a, V3(0, 0, 1), pitch);
+        a = dm::rotateAxis(a, V3(0, 1, 0), yaw);
     }
     for (int i = 0; i < 3; i++) b.ax[i] = ax[i];
     b.col[0] = (float)col.x;
@@ -1442,10 +1453,10 @@ void World::addRamp(V3 from, V3 to, double width, double thick, V3 col) {
     // A box whose top face runs along the line from -> to.
     V3 d = to - from;
     double horiz = std::sqrt(d.x * d.x + d.z * d.z);
-    double yaw = std::atan2(-d.z, d.x);
-    double pitch = std::atan2(d.y, horiz);
+    double yaw = dm::atan2(-d.z, d.x);
+    double pitch = dm::atan2(d.y, horiz);
     double L = len(d);
-    V3 up = rotateAxis(rotateAxis(V3(0, 1, 0), V3(0, 0, 1), pitch), V3(0, 1, 0), yaw);
+    V3 up = dm::rotateAxis(dm::rotateAxis(V3(0, 1, 0), V3(0, 0, 1), pitch), V3(0, 1, 0), yaw);
     V3 c = (from + to) * 0.5 - up * (thick * 0.5);
     addBox(c, V3(L * 0.5, thick * 0.5, width * 0.5), yaw, pitch, 0, col);
 }
@@ -1700,24 +1711,24 @@ std::string World::removeNear(double x, double z, double r, int onlyKind) {
     const bool any = onlyKind < 0 || onlyKind > 6;
     if (any || onlyKind == 0)
         for (int i = 0; i < (int)rocks.size(); i++) {
-            const double d = std::hypot(rocks[i].c.x - x, rocks[i].c.z - z);
+            const double d = dm::hypot(rocks[i].c.x - x, rocks[i].c.z - z);
             consider(any ? std::max(0.0, d - rocks[i].r * 0.5) : d, 0, i);
         }
     if (any || onlyKind == 1)
-        for (int i = 0; i < (int)trees.size(); i++) consider(std::hypot(trees[i].base.x - x, trees[i].base.z - z), 1, i);
+        for (int i = 0; i < (int)trees.size(); i++) consider(dm::hypot(trees[i].base.x - x, trees[i].base.z - z), 1, i);
     if (any || onlyKind == 2)
         for (int i = 0; i < (int)logs.size(); i++) {
             const V3 m = (logs[i].a + logs[i].b) * 0.5;
-            consider(std::hypot(m.x - x, m.z - z), 2, i);
+            consider(dm::hypot(m.x - x, m.z - z), 2, i);
         }
     if (any || onlyKind == 3)
         for (int i = 0; i < (int)boxes.size(); i++)
-            if (!boxes[i].hidden) consider(std::hypot(boxes[i].c.x - x, boxes[i].c.z - z), 3, i);
+            if (!boxes[i].hidden) consider(dm::hypot(boxes[i].c.x - x, boxes[i].c.z - z), 3, i);
     if (any || onlyKind == 4)
-        for (int i = 0; i < (int)fixtures.size(); i++) consider(std::hypot(fixtures[i].a.x - x, fixtures[i].a.z - z), 4, i);
+        for (int i = 0; i < (int)fixtures.size(); i++) consider(dm::hypot(fixtures[i].a.x - x, fixtures[i].a.z - z), 4, i);
     if (any || onlyKind == 6)  // (a bush counts only when asked for by kind: in an old file's "any" it would steal the removal)
         if (onlyKind == 6)
-            for (int i = 0; i < (int)bushes.size(); i++) consider(std::hypot(bushes[i].p.x - x, bushes[i].p.z - z), 6, i);
+            for (int i = 0; i < (int)bushes.size(); i++) consider(dm::hypot(bushes[i].p.x - x, bushes[i].p.z - z), 6, i);
     switch (kind) {
         case 6: bushes.erase(bushes.begin() + idx); return "BUSH";
         case 0: rocks.erase(rocks.begin() + idx); return "ROCK";
@@ -1725,7 +1736,7 @@ std::string World::removeNear(double x, double z, double r, int onlyKind) {
             const Tree t = trees[idx];
             trees.erase(trees.begin() + idx);
             for (size_t k = 0; k < poles.size(); k++)
-                if (std::hypot(poles[k].x - t.base.x, poles[k].z - t.base.z) < 0.05) {
+                if (dm::hypot(poles[k].x - t.base.x, poles[k].z - t.base.z) < 0.05) {
                     poles.erase(poles.begin() + k);
                     break;
                 }
@@ -1740,16 +1751,16 @@ std::string World::removeNear(double x, double z, double r, int onlyKind) {
                 // A repair shed is the station, the shed and its four corner posts: take them
                 // all (the posts used to stay behind, standing in the open).
                 for (size_t k = 0; k < stations.size(); k++)
-                    if (std::hypot(stations[k].p.x - f.a.x, stations[k].p.z - f.a.z) < 0.05) {
+                    if (dm::hypot(stations[k].p.x - f.a.x, stations[k].p.z - f.a.z) < 0.05) {
                         stations.erase(stations.begin() + k);
                         break;
                     }
-                const V3 fwd(std::cos(f.yaw), 0, -std::sin(f.yaw)), side(std::sin(f.yaw), 0, std::cos(f.yaw));
+                const V3 fwd(dm::cos(f.yaw), 0, -dm::sin(f.yaw)), side(dm::sin(f.yaw), 0, dm::cos(f.yaw));
                 for (int a = -1; a <= 1; a += 2)
                     for (int b = -1; b <= 1; b += 2) {
                         const V3 q = f.a + fwd * (5.0 * a) + side * (3.7 * b);
                         for (size_t k = 0; k < poles.size(); k++)
-                            if (std::hypot(poles[k].x - q.x, poles[k].z - q.z) < 0.05) {
+                            if (dm::hypot(poles[k].x - q.x, poles[k].z - q.z) < 0.05) {
                                 poles.erase(poles.begin() + k);
                                 break;
                             }
@@ -1759,14 +1770,14 @@ std::string World::removeNear(double x, double z, double r, int onlyKind) {
             // What a map stood under it: the cabin's and table's collision box, a fence's rail box and posts, a sign's pole(s), a stump's.
             auto dropPole = [&](double px, double pz) {
                 for (size_t k = 0; k < poles.size(); k++)
-                    if (std::hypot(poles[k].x - px, poles[k].z - pz) < 0.06) {
+                    if (dm::hypot(poles[k].x - px, poles[k].z - pz) < 0.06) {
                         poles.erase(poles.begin() + k);
                         return;
                     }
             };
             auto dropBox = [&](const V3& c) {
                 for (size_t k = 0; k < boxes.size(); k++)
-                    if (boxes[k].hidden && std::hypot(boxes[k].c.x - c.x, boxes[k].c.z - c.z) < 0.06 && std::fabs(boxes[k].c.y - c.y) < 0.06) {
+                    if (boxes[k].hidden && dm::hypot(boxes[k].c.x - c.x, boxes[k].c.z - c.z) < 0.06 && std::fabs(boxes[k].c.y - c.y) < 0.06) {
                         boxes.erase(boxes.begin() + k);
                         return;
                     }
@@ -1776,7 +1787,7 @@ std::string World::removeNear(double x, double z, double r, int onlyKind) {
                 case PROP_TABLE: dropBox(V3(f.a.x, f.a.y + 0.4, f.a.z)); break;
                 case PROP_FENCE: {
                     const V3 d = f.b - f.a;
-                    const double L = std::hypot(d.x, d.z);
+                    const double L = dm::hypot(d.x, d.z);
                     dropBox((f.a + f.b) * 0.5 + V3(0, 0.62, 0));
                     if (L > 0.1)
                         for (double t = 0; t <= L + 0.01; t += 2.5) dropPole(f.a.x + d.x * (t / L), f.a.z + d.z * (t / L));
@@ -1784,7 +1795,7 @@ std::string World::removeNear(double x, double z, double r, int onlyKind) {
                 }
                 case PROP_SIGN: dropPole(f.a.x, f.a.z); break;
                 case PROP_MAPBOARD: {
-                    const V3 side(std::sin(f.yaw), 0, std::cos(f.yaw));
+                    const V3 side(dm::sin(f.yaw), 0, dm::cos(f.yaw));
                     for (int k = -1; k <= 1; k += 2) dropPole(f.a.x + side.x * 0.8 * k, f.a.z + side.z * 0.8 * k);
                     break;
                 }

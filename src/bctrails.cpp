@@ -23,6 +23,7 @@
 #include <string>
 #include <unordered_set>
 
+#include "detmath.h"
 #include "loadprof.h"
 #include "onemap.h"
 #include "places.h"
@@ -60,13 +61,13 @@ Poly resample(const Poly& pts, double step) {
     double carry = 0;
     for (size_t k = 0; k + 1 < pts.size(); k++) {
         const V3 a = pts[k], b = pts[k + 1];
-        const double L = std::hypot(b.x - a.x, b.z - a.z);
+        const double L = dm::hypot(b.x - a.x, b.z - a.z);
         if (L < 1e-9) continue;
         double s = step - carry;
         for (; s <= L; s += step) out.push_back(a + (b - a) * (s / L));
         carry = L - (s - step);
     }
-    if (std::hypot(out.back().x - pts.back().x, out.back().z - pts.back().z) > 0.2 * step) out.push_back(pts.back());
+    if (dm::hypot(out.back().x - pts.back().x, out.back().z - pts.back().z) > 0.2 * step) out.push_back(pts.back());
     return out;
 }
 V3 pointAlong(const Poly& pts, double s) {
@@ -97,7 +98,7 @@ const std::vector<Poly>& lines() {
         for (const Row& r : rows()) {
             std::vector<V3> c;
             for (const auto& p : r.ctl)
-                if (c.empty() || std::hypot(c.back().x - p.first, c.back().z - p.second) > 0.5) c.push_back(V3(p.first, 0, p.second));
+                if (c.empty() || dm::hypot(c.back().x - p.first, c.back().z - p.second) > 0.5) c.push_back(V3(p.first, 0, p.second));
             out.push_back(c.size() > 1 ? resample(splinePoints(c, false), 1.0) : c);
         }
         return out;
@@ -152,7 +153,7 @@ const std::vector<BcSetPiece>& bcSetPieces() {
             {"BC.SLICKROCK_CRAWL", "SLICKROCK CRAWL", "BC.CACHE.T11", "CRAWLER'S STASH", 1500, V3(830, 0, -1080), V3(), 0, {SEC_ROCK_WALL, SEC_CLIFF_SHELF, SEC_ROCK_WALL}},
         };
         for (BcSetPiece& p : v) {
-            const V3 dir(std::cos(p.heading), 0, -std::sin(p.heading));
+            const V3 dir(dm::cos(p.heading), 0, -dm::sin(p.heading));
             double along = 0;
             for (size_t k = 0; k < p.types.size(); k++) {
                 const SectionFootprint fp = sectionFootprint((SectionType)p.types[k]);
@@ -224,7 +225,7 @@ void World::layBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& edg
                 for (int j = cellI(std::min(a.z, b.z) - reach); j <= cellI(std::max(a.z, b.z) + reach); j++) {
                     const double x = X(i), z = X(j);
                     const double t = clampd(((x - a.x) * dx + (z - a.z) * dz) / L2, 0, 1);
-                    const double d = std::hypot(x - (a.x + dx * t), z - (a.z + dz * t));
+                    const double d = dm::hypot(x - (a.x + dx * t), z - (a.z + dz * t));
                     if (d > reach) continue;
                     const int id = i * hN + j;
                     if (sd[id] > 1e8f) cells.push_back(id);
@@ -286,7 +287,7 @@ void World::layBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& edg
         if (road >= 0)
             for (int k = 0; k < n; k++) {
                 const int q = nearestIdx(Ls[road], c[k].x, c[k].z);
-                soft[k] = smoothstep(26, 12, std::hypot(Ls[road][q].x - c[k].x, Ls[road][q].z - c[k].z));
+                soft[k] = smoothstep(26, 12, dm::hypot(Ls[road][q].x - c[k].x, Ls[road][q].z - c[k].z));
             }
         scanNear(c, 14, [&](int id, double d, double k, double) {
             const int ki = (int)clampd(std::floor(k), 0, n - 1);
@@ -318,7 +319,7 @@ void World::layBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& edg
     auto onPad = [&](int id) {
         const double x = X(id / hN), z = X(id % hN);
         for (const auto& p : pads)
-            if (std::fabs(x - p.first.x) < p.second && std::fabs(z - p.first.z) < p.second && std::hypot(x - p.first.x, z - p.first.z) < p.second) return true;
+            if (std::fabs(x - p.first.x) < p.second && std::fabs(z - p.first.z) < p.second && dm::hypot(x - p.first.x, z - p.first.z) < p.second) return true;
         return false;
     };
     // ---- Each trail: its profile (the land smoothed, cut and filled to its grade, eased into the places it joins and down through the
@@ -354,8 +355,8 @@ void World::layBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& edg
         }
         // The Shelf: it runs along the foot of the Rimrock, so it climbs on a ledge built up against the cliff, from the foot to the top.
         if ((int)t == passRow) {
-            const double y0 = y[P.shelf0], ang = std::atan2(1281.0 - 1550.0, 82.0 - 300.0);
-            const double yTop = height(300 + 334 * std::cos(ang), 1550 + 334 * std::sin(ang));
+            const double y0 = y[P.shelf0], ang = dm::atan2(1281.0 - 1550.0, 82.0 - 300.0);
+            const double yTop = height(300 + 334 * dm::cos(ang), 1550 + 334 * dm::sin(ang));
             for (int k = P.shelf0; k <= P.shelf1; k++) y[k] = y0 + (yTop - y0) * (k - P.shelf0) / (double)(P.shelf1 - P.shelf0), pinned[k] = 1;
         }
         // (Its grade: the rating's, but a switchback's turn is a landing, near level, the legs between taking the climb.)
@@ -371,7 +372,7 @@ void World::layBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& edg
                 for (int q = 1; q < n; q++) {
                     const int k = dirn ? n - 1 - q : q, prev = dirn ? k + 1 : k - 1;
                     if (pinned[k]) continue;
-                    const double run = std::hypot(pts[k].x - pts[prev].x, pts[k].z - pts[prev].z), g = std::min(gk[k], gk[prev]);
+                    const double run = dm::hypot(pts[k].x - pts[prev].x, pts[k].z - pts[prev].z), g = std::min(gk[k], gk[prev]);
                     y[k] = clampd(y[k], y[prev] - g * run, y[prev] + g * run);
                 }
         // The pass's ledges: a square rise (its lip a row of rock, below), a flat on top, and easing back down to the line.
@@ -552,7 +553,7 @@ void World::layBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& edg
             const double top = std::max(0.05, topY - groundAt(p));
             r.y = std::max(r.y, (top + 0.3) / 2);
             RockPose pose;
-            pose.yaw = std::atan2(-d.z, d.x) + M_PI / 2 + yawJitter;  // (its long axis across the trail)
+            pose.yaw = dm::atan2(-d.z, d.x) + M_PI / 2 + yawJitter;  // (its long axis across the trail)
             rock(p, r, top, tint, &pose);
         };
         // THE NOTCH: bare rock, a garden of boulders and four ledges.
@@ -603,7 +604,7 @@ void World::layBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& edg
                 const double r = 2.3 + 0.4 * (side > 0);
                 RockPose pose;
                 const V3 d = dirAlong(L, s);
-                pose.yaw = std::atan2(-d.z, d.x);
+                pose.yaw = dm::atan2(-d.z, d.x);
                 rock(pointAlong(L, s) + leftAlong(L, s) * (side * (1.2 + r * 0.85)), V3(r, r * 0.85, r * 0.85), r * 1.35, 0.88f, &pose);
             }
             laid(s - 2.5, -0.7, V3(0.9, 0.35, 0.8), yAt(y, s - 2.5) + 0.46, 0.1, 0.95f);
@@ -631,8 +632,8 @@ void World::layBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& edg
             const double s = P.slab;
             const V3 d = dirAlong(L, s), l = leftAlong(L, s), p = pointAlong(L, s) + l * (drop * 1.8);
             RockPose pose;
-            pose.yaw = std::atan2(-d.z, d.x);
-            pose.pitch = std::atan((yAt(y, s + 6) - yAt(y, s - 6)) / 12);
+            pose.yaw = dm::atan2(-d.z, d.x);
+            pose.pitch = dm::atan((yAt(y, s + 6) - yAt(y, s - 6)) / 12);
             const double topY = yAt(y, s) + 0.3;  // (a lip up onto it)
             rock(p, V3(9.5, 1.5, 4.0), std::max(0.1, topY - height(p.x, p.z)), 0.92f, &pose);
         }
@@ -679,7 +680,7 @@ void World::layBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& edg
             const double side = R[t].rating == 0 ? 5.0 : 4.6;
             V3 q = p + l * side;
             if (edge[cellIndex(q.x, q.z)] < 1.0) q = p - l * side;  // (not in another trail's tread)
-            Prop sg{PROP_SIGN, V3(q.x, height(q.x, q.z), q.z), V3(), std::atan2(d.z, -d.x)};
+            Prop sg{PROP_SIGN, V3(q.x, height(q.x, q.z), q.z), V3(), dm::atan2(d.z, -d.x)};
             sg.col[0] = (float)kCol[rating].x, sg.col[1] = (float)kCol[rating].y, sg.col[2] = (float)kCol[rating].z;
             fixtures.push_back(sg);
             poles.push_back({q.x, q.z, sg.a.y - 0.4, sg.a.y + 2.0, 0.07});
@@ -698,7 +699,7 @@ void World::layBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& edg
     // growth, a red sign and their name at each end ------------------------------------------------------------------------------------
     for (size_t pi = 0; pi < bcSetPieces().size(); pi++) {
         const BcSetPiece& sp = bcSetPieces()[pi];
-        const V3 dir(std::cos(sp.heading), 0, -std::sin(sp.heading)), left(-dir.z, 0, dir.x);
+        const V3 dir(dm::cos(sp.heading), 0, -dm::sin(sp.heading)), left(-dir.z, 0, dir.x);
         double along = 0;
         for (size_t k = 0; k < sp.types.size(); k++) {
             const SectionType t = (SectionType)sp.types[k];
@@ -712,7 +713,7 @@ void World::layBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& edg
             along += fp.length + 2 * fp.apron + kSetPieceGap;
         }
         // (Its ground, and the gaps between: no growth from the new country on it.)
-        const double L = std::hypot(sp.exit.x - sp.entry.x, sp.exit.z - sp.entry.z), hw = 34 + 26;
+        const double L = dm::hypot(sp.exit.x - sp.entry.x, sp.exit.z - sp.entry.z), hw = 34 + 26;
         for (double a = -26; a <= L + 26; a += 1)
             for (double b = -hw; b <= hw; b += 1) {
                 const V3 q = sp.entry + dir * a + left * b;
@@ -722,7 +723,7 @@ void World::layBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& edg
         static const V3 red(0.75, 0.08, 0.06);
         for (int end = 0; end < 2; end++) {
             const V3 p = end ? sp.exit + dir * 6.0 + left * 5.0 : sp.entry - dir * 6.0 + left * 5.0;
-            Prop sg{PROP_SIGN, V3(p.x, height(p.x, p.z), p.z), V3(), end ? std::atan2(-dir.z, dir.x) : std::atan2(dir.z, -dir.x)};
+            Prop sg{PROP_SIGN, V3(p.x, height(p.x, p.z), p.z), V3(), end ? dm::atan2(-dir.z, dir.x) : dm::atan2(dir.z, -dir.x)};
             sg.col[0] = (float)red.x, sg.col[1] = (float)red.y, sg.col[2] = (float)red.z;
             fixtures.push_back(sg);
             poles.push_back({p.x, p.z, sg.a.y - 0.4, sg.a.y + 2.0, 0.07});
@@ -769,12 +770,12 @@ void World::dressBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& e
         if (id < 0 || keep[id] || waterLevel(x, z) > height(x, z) - 0.3) return false;
         for (int a = 0; a < 4; a++) {
             const double ang = a * M_PI / 2;
-            const int q = cellIndex(x + r * std::cos(ang), z + r * std::sin(ang));
+            const int q = cellIndex(x + r * dm::cos(ang), z + r * dm::sin(ang));
             if (q < 0 || keep[q]) return false;
         }
         return true;
     };
-    auto slopeAt = [&](double x, double z) { return std::hypot(height(x + 1, z) - height(x - 1, z), height(x, z + 1) - height(x, z - 1)) / 2; };
+    auto slopeAt = [&](double x, double z) { return dm::hypot(height(x + 1, z) - height(x - 1, z), height(x, z + 1) - height(x, z - 1)) / 2; };
     uint32_t seed = 4000000;
     auto rock = [&](double x, double z, const V3& r, double top, float tint, const RockPose* pose = nullptr) -> Rock& {
         return addRock(x, z, r, top, seed++, tint, pose);
@@ -831,14 +832,14 @@ void World::dressBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& e
                 // A big boulder, and a few smaller ones round it.
                 if (rr() < 0.16 + 0.2 * grove + 0.15 * high + 0.12 * dry) {
                     double x, z;
-                    const double r = 1.9 + 2.4 * std::pow(rr(), 1.5), flat = 0.62 + 0.25 * rr();
+                    const double r = 1.9 + 2.4 * dm::pow(rr(), 1.5), flat = 0.62 + 0.25 * rr();
                     if (spot(x, z, r + 1) && slopeAt(x, z) < 0.6) {
                         rock(x, z, V3(r, r * flat, r * (0.75 + 0.2 * rr())), r * flat * (1.15 + 0.35 * rr()), tintBase);
                         counts[0]++;
                         const int sats = 1 + (int)(rr() * 2.5);
                         for (int k = 0; k < sats; k++) {
                             const double a = rr() * 6.283, d = r * (1.2 + 0.9 * rr()), q = 0.35 + 0.45 * rr();  // (under ~0.8: one hull, no pieces)
-                            const double sx = x + d * std::cos(a), sz = z + d * std::sin(a);
+                            const double sx = x + d * dm::cos(a), sz = z + d * dm::sin(a);
                             if (open(sx, sz, q) && !treeNear(sx, sz, q)) rock(sx, sz, V3(q, q * 0.7, q * 0.85), q * 0.7, tintBase);
                         }
                     }
@@ -851,7 +852,7 @@ void World::dressBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& e
                         const int m = 4 + (int)(rr() * 3);
                         for (int k = 0; k < m; k++) {
                             const double a = rr() * 6.283, d = 5 * std::sqrt(rr()), q = k < 2 ? 1.4 + 1.0 * rr() : 0.5 + 0.3 * rr();
-                            rock(x + d * std::cos(a), z + d * std::sin(a), V3(q, q * (0.7 + 0.4 * rr()), q * 0.8), q * (0.9 + 0.6 * rr()), tintBase);
+                            rock(x + d * dm::cos(a), z + d * dm::sin(a), V3(q, q * (0.7 + 0.4 * rr()), q * 0.8), q * (0.9 + 0.6 * rr()), tintBase);
                         }
                         counts[1]++;
                     }
@@ -865,7 +866,7 @@ void World::dressBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& e
                             const double a = rr() * 6.283, d = 3.5 * std::sqrt(rr()), rw = 1.0 + 0.6 * rr(), rh = 2.2 + 1.6 * rr();
                             RockPose pose;
                             pose.yaw = rr() * 6.283, pose.pitch = M_PI / 2 - 0.15 + 0.3 * rr();  // (its long axis standing up)
-                            rock(x + d * std::cos(a), z + d * std::sin(a), V3(rh, rw, rw * 0.9), rh * 1.6, tintBase, &pose);
+                            rock(x + d * dm::cos(a), z + d * dm::sin(a), V3(rh, rw, rw * 0.9), rh * 1.6, tintBase, &pose);
                         }
                         counts[2]++;
                     }
@@ -886,7 +887,7 @@ void World::dressBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& e
                     const int m = (int)(field * (3 + 6 * rr()));
                     for (int k = 0; k < m; k++) {
                         double x, z;
-                        const double q = 0.3 + 0.5 * std::pow(rr(), 1.5);
+                        const double q = 0.3 + 0.5 * dm::pow(rr(), 1.5);
                         if (spot(x, z, q)) rock(x, z, V3(q, q * (0.6 + 0.3 * rr()), q * 0.85), q * (0.6 + 0.4 * rr()), tintBase), counts[4]++;
                     }
                 }
@@ -897,7 +898,7 @@ void World::dressBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& e
                         const int m = 3 + (int)(rr() * 2);
                         for (int k = 0; k < m; k++) {
                             const double a = rr() * 6.283, d = 2.5 * std::sqrt(rr()), q = 0.3 + 0.45 * rr();
-                            rock(x + d * std::cos(a), z + d * std::sin(a), V3(q, q * 0.65, q * 0.85), q * 0.6, tintBase);
+                            rock(x + d * dm::cos(a), z + d * dm::sin(a), V3(q, q * 0.65, q * 0.85), q * 0.6, tintBase);
                         }
                         counts[5]++;
                     }
@@ -913,7 +914,7 @@ void World::dressBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& e
                     const int habitat = desert ? HAB_DESERT : wetW > 0.5 && height(x, z) < 20 ? HAB_WETLAND : height(x, z) > 120 ? HAB_UPLAND : grove > 0.5 ? HAB_FOREST : HAB_MEADOW;
                     const int m = 3 + (int)(rr() * 4);
                     for (int k = 0; k < m; k++) {
-                        const double a = rr() * 6.283, d = 4.5 * std::sqrt(rr()), bx = x + d * std::cos(a), bz = z + d * std::sin(a);
+                        const double a = rr() * 6.283, d = 4.5 * std::sqrt(rr()), bx = x + d * dm::cos(a), bz = z + d * dm::sin(a);
                         if (!open(bx, bz, 0.5)) continue;
                         bushes.push_back(growBush(V3(bx, height(bx, bz), bz), habitat, grove > 0.35, rr(), (float)(0.75 + 0.45 * rr())));
                         counts[6]++;
@@ -924,7 +925,7 @@ void World::dressBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& e
                     double x, z;
                     if (m > 0 && spot(x, z, 4)) {
                         for (int k = 0; k < m; k++) {
-                            const double a = rr() * 6.283, d = k ? 4 + 7 * rr() : 0, tx = x + d * std::cos(a), tz = z + d * std::sin(a);
+                            const double a = rr() * 6.283, d = k ? 4 + 7 * rr() : 0, tx = x + d * dm::cos(a), tz = z + d * dm::sin(a);
                             if (!open(tx, tz, 1.5) || treeNear(tx, tz, 3) || slopeAt(tx, tz) > 0.7) continue;
                             const int id = cellIndex(tx, tz);
                             if (paint[id] != PAINT_NONE && paint[id] != PAINT_DESERT) continue;
@@ -945,7 +946,7 @@ void World::dressBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& e
                     double x, z;
                     if (spot(x, z, 4)) {
                         const double r = 0.18 + 0.2 * rr(), L = 4 + 7 * rr(), a = rr() * 6.283;
-                        V3 p0(x - std::cos(a) * L / 2, 0, z - std::sin(a) * L / 2), p1(x + std::cos(a) * L / 2, 0, z + std::sin(a) * L / 2);
+                        V3 p0(x - dm::cos(a) * L / 2, 0, z - dm::sin(a) * L / 2), p1(x + dm::cos(a) * L / 2, 0, z + dm::sin(a) * L / 2);
                         if (open(p0.x, p0.z, 0.5) && open(p1.x, p1.z, 0.5)) {
                             p0.y = height(p0.x, p0.z) + r * 0.8, p1.y = height(p1.x, p1.z) + r * 0.8;
                             logs.push_back({p0, p1, r});
@@ -983,7 +984,7 @@ void World::dressBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& e
     // (Anything that grew where a set piece stands goes.)
     auto clearRound = [&](const V3& c, double r) {
         std::set<std::pair<double, double>> felled;
-        auto in = [&](double x, double z) { return std::hypot(x - c.x, z - c.z) < r; };
+        auto in = [&](double x, double z) { return dm::hypot(x - c.x, z - c.z) < r; };
         trees.erase(std::remove_if(trees.begin(), trees.end(), [&](const Tree& t) {
                         if (!in(t.base.x, t.base.z)) return false;
                         felled.insert({t.base.x, t.base.z});
@@ -1004,18 +1005,18 @@ void World::dressBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& e
         auto hh = [&](uint32_t salt) { return h01(k * 31 + 7, salt); };
         for (k = 0; k < 9; k++) {  // the big ones
             const double a = k * 2.399 + 0.4, d = 8 + 20 * hh(1), r = 2.6 + 1.8 * hh(2);
-            rock(c.x + d * std::cos(a), c.z + d * std::sin(a), V3(r, r * (0.7 + 0.2 * hh(3)), r * 0.85), r * (1.1 + 0.4 * hh(4)), 0.95f);
+            rock(c.x + d * dm::cos(a), c.z + d * dm::sin(a), V3(r, r * (0.7 + 0.2 * hh(3)), r * 0.85), r * (1.1 + 0.4 * hh(4)), 0.95f);
         }
         for (k = 0; k < 7; k++) {  // slabs: tilted ramps, some up against a boulder's side
             const double a = k * 2.0 + 1.1, d = 5 + 18 * hh(5);
             RockPose pose;
             pose.yaw = a + M_PI * hh(6), pose.pitch = 0.12 + 0.25 * hh(7), pose.roll = 0.15 * (hh(8) - 0.5);
             const double L = 4.0 + 3.0 * hh(9);
-            rock(c.x + d * std::cos(a), c.z + d * std::sin(a), V3(L, 1.0, L * 0.65), 0.6 + 1.2 * hh(10), 1.0f, &pose);
+            rock(c.x + d * dm::cos(a), c.z + d * dm::sin(a), V3(L, 1.0, L * 0.65), 0.6 + 1.2 * hh(10), 1.0f, &pose);
         }
         for (k = 0; k < 30; k++) {  // rubble between
             const double a = hh(11) * 6.283, d = 30 * std::sqrt(hh(12)), q = 0.3 + 0.6 * hh(13);
-            rock(c.x + d * std::cos(a), c.z + d * std::sin(a), V3(q, q * 0.7, q * 0.85), q * 0.7, 1.0f);
+            rock(c.x + d * dm::cos(a), c.z + d * dm::sin(a), V3(q, q * 0.7, q * 0.85), q * 0.7, 1.0f);
         }
     }
     // BALANCED ROCK: a great boulder on a pillar, beside the valley road.
@@ -1036,7 +1037,7 @@ void World::dressBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& e
         lift(cap, topY - 0.35 - lowY);
         for (int k = 0; k < 6; k++) {
             const double a = k * 1.1, q = 0.6 + 0.5 * h01(k, 90);
-            rock(c.x + 5.5 * std::cos(a), c.z + 5.5 * std::sin(a), V3(q, q * 0.7, q), q * 0.7, 0.9f);
+            rock(c.x + 5.5 * dm::cos(a), c.z + 5.5 * dm::sin(a), V3(q, q * 0.7, q), q * 0.7, 0.9f);
         }
     }
     // THE TORS: a crown of granite pillars on the uplands, boulders tumbled round them.
@@ -1048,11 +1049,11 @@ void World::dressBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& e
             const double a = k * 2.399, d = 4 + 13 * h01(k, 91), rh = 3.0 + 3.5 * h01(k, 92), rw = 1.3 + 0.9 * h01(k, 93);
             RockPose pose;
             pose.yaw = h01(k, 94) * 6.283, pose.pitch = M_PI / 2 - 0.2 + 0.4 * h01(k, 95);
-            rock(c.x + d * std::cos(a), c.z + d * std::sin(a), V3(rh, rw, rw * 0.85), rh * 1.7, 1.05f, &pose);
+            rock(c.x + d * dm::cos(a), c.z + d * dm::sin(a), V3(rh, rw, rw * 0.85), rh * 1.7, 1.05f, &pose);
         }
         for (int k = 0; k < 24; k++) {
             const double a = h01(k, 96) * 6.283, d = 6 + 18 * h01(k, 97), q = 0.5 + 1.5 * h01(k, 98);
-            rock(c.x + d * std::cos(a), c.z + d * std::sin(a), V3(q, q * 0.75, q * 0.9), q * 0.8, 1.0f);
+            rock(c.x + d * dm::cos(a), c.z + d * dm::sin(a), V3(q, q * 0.75, q * 0.9), q * 0.8, 1.0f);
         }
     }
 
@@ -1070,7 +1071,7 @@ void World::dressBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& e
         if (variant >= 0 && !models.empty() && models.back().id == id) models.back().variant = variant;
     };
     auto rel = [&](const V3& o, double yaw, double ahead, double left) {
-        V3 q(o.x + std::cos(yaw) * ahead + std::sin(yaw) * left, 0, o.z - std::sin(yaw) * ahead + std::cos(yaw) * left);
+        V3 q(o.x + dm::cos(yaw) * ahead + dm::sin(yaw) * left, 0, o.z - dm::sin(yaw) * ahead + dm::cos(yaw) * left);
         q.y = height(q.x, q.z);
         return q;
     };
@@ -1078,7 +1079,7 @@ void World::dressBackcountryTrails(CellTiles<uint8_t>& keep, CellTiles<float>& e
         placeModel("campfire", V3(c.x, height(c.x, c.z), c.z), 0);
         for (int k = 0; k < 11; k++) {
             const double a = k * 2 * M_PI / 11;
-            addRock(c.x + 0.95 * std::cos(a), c.z + 0.95 * std::sin(a), V3(0.24, 0.17, 0.2), 0.18, 4900 + k, 0.8f);
+            addRock(c.x + 0.95 * dm::cos(a), c.z + 0.95 * dm::sin(a), V3(0.24, 0.17, 0.2), 0.18, 4900 + k, 0.8f);
         }
     };
     {
