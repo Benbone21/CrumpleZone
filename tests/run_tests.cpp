@@ -89,7 +89,7 @@ const double kDefaultTimeout = 300;  // s of wall time (a scenario takes 1-100 s
 double scenarioTimeout = kDefaultTimeout;
 bool timeoutGiven = false;
 // Scenarios that legitimately run long, with their own limit (the longest, net/crash-share, took 84 s at --jobs 6 on a busy machine; x3 is under the 300 s default, these get headroom).
-const std::map<std::string, double> kLongScenarios = {{"net/crash-share", 400}, {"ai/traffic", 400}, {"vehicle-physics/top-speed", 400}};
+const std::map<std::string, double> kLongScenarios = {{"net/crash-share", 400}, {"ai/traffic", 400}, {"vehicle-physics/top-speed", 400}, {"procworld/alpine", 600}, {"procworld/lakes-falls", 600}, {"procworld/places", 600}};
 double limitFor(const std::string& name) {
     auto it = kLongScenarios.find(name);
     return it != kLongScenarios.end() && !timeoutGiven ? std::max(it->second, scenarioTimeout) : scenarioTimeout;

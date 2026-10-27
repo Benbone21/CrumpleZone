@@ -62,8 +62,8 @@ void erodeLevel(ErosionGrid& g, const ErosionRun& run, int iterations, std::vect
     std::vector<float>& h = g.h;
     float* H = h.data();
     // (the lowest each cell may be worn to: its floor, or where it starts if lower)
-    std::vector<float> lo(N);
-    for (size_t i = 0; i < N; i++) lo[i] = g.floor.empty() ? -1e30f : std::min(H[i], g.floor[i]);
+    std::vector<float> lo(N), up(N);
+    for (size_t i = 0; i < N; i++) lo[i] = g.floor.empty() ? -1e30f : std::min(H[i], g.floor[i]), up[i] = g.ceil.empty() ? 1e30f : std::max(H[i], g.ceil[i]);
     for (int it = 0; it < iterations; it++) {
         // ---- 1-2. Water, its load, the cut and the deposit: from the highest cell down ----
         sortDown(h, order, key, tmpO, tmpK);
@@ -91,11 +91,11 @@ void erodeLevel(ErosionGrid& g, const ErosionRun& run, int iterations, std::vect
             if (wsum <= 0) {  // (a closed hollow: its load silts it up, to just over its lowest neighbour so it drains next time)
                 if (!g.fixed[i]) {
                     const double room = hmin - hi + 1e-3;
-                    if (room > 0) H[i] = (float)(hi + std::min(run.pitFill * qin / cA, room));
+                    if (room > 0) H[i] = (float)std::min((double)up[i], hi + std::min(run.pitFill * qin / cA, room));
                 }
                 continue;
             }
-            double out = qin;
+            double out = g.fixed[i] == 2 ? 0.0 : qin;  // (standing water: what's carried settles in it, out of sight)
             if (!g.fixed[i]) {
                 double e = g.kErode[i] * std::sqrt(area * 1e-4) * smax;
                 if (e > run.maxCut) e = run.maxCut;
@@ -105,6 +105,7 @@ void erodeLevel(ErosionGrid& g, const ErosionRun& run, int iterations, std::vect
                 if (net > 0.9 * (hi - hlow)) net = 0.9 * (hi - hlow);  // (never cut under its lowest receiver: no pits dug)
                 if (net < 0 && hup < 1e29 && -net > (hup - hi) + run.maxCut * 0.1) net = -((hup - hi) + run.maxCut * 0.1);  // (never piled far over the ground above it)
                 if (hi - net < lo[i]) net = hi - lo[i] > 0 ? hi - lo[i] : 0;
+                if (hi - net > up[i]) net = hi - up[i] < 0 ? hi - up[i] : 0;
                 H[i] = (float)(hi - net);
                 out = qin + net * cA;
                 if (out < 0) out = 0;
@@ -135,7 +136,7 @@ void erodeLevel(ErosionGrid& g, const ErosionRun& run, int iterations, std::vect
                         if (ex[d] > 0) dh[i + off[d]] += (float)(f * ex[d]);
                 }
             for (size_t i = 0; i < N; i++)
-                if (!g.fixed[i]) H[i] = std::max(lo[i], H[i] + dh[i]);
+                if (!g.fixed[i]) H[i] = std::min(up[i], std::max(lo[i], H[i] + dh[i]));
         }
         // ---- Soil creep: a little of the Laplacian (rounds the soft land; the rock keeps its edges) ----
         for (int a = 1; a + 1 < n; a++)
@@ -145,7 +146,7 @@ void erodeLevel(ErosionGrid& g, const ErosionRun& run, int iterations, std::vect
                 dh[i] = g.fixed[i] ? 0.0f : (float)(g.creep[i] * lap);
             }
         for (int a = 1; a + 1 < n; a++)
-            for (int b = 1; b + 1 < n; b++) H[(size_t)a * n + b] = std::max(lo[(size_t)a * n + b], H[(size_t)a * n + b] + dh[(size_t)a * n + b]);
+            for (int b = 1; b + 1 < n; b++) H[(size_t)a * n + b] = std::min(up[(size_t)a * n + b], std::max(lo[(size_t)a * n + b], H[(size_t)a * n + b] + dh[(size_t)a * n + b]));
     }
     if (areaOut) areaOut->assign(A.begin(), A.end());
 }
@@ -260,6 +261,10 @@ void glaciate(ErosionGrid& g, const ErosionRun& run) {
 
 void erodeGrid(ErosionGrid& g, const ErosionRun& run, std::vector<float>* areaOut) {
     const int n = g.n;
+    if (run.maxFill < 1e9) {  // (silt never piles more than maxFill over the land: no fan buries a valley or a dam)
+        g.ceil.resize(g.h.size());
+        for (size_t i = 0; i < g.h.size(); i++) g.ceil[i] = g.h[i] + (float)run.maxFill;
+    }
     if (run.coarseIterations > 0 && n % 2 == 1 && n >= 9) {
         // ---- Coarse first (twice the spacing: a quarter of the cells, the broad gullies and spurs), its change laid on the fine grid ----
         const int m = (n + 1) / 2;
@@ -268,16 +273,18 @@ void erodeGrid(ErosionGrid& g, const ErosionRun& run, std::vector<float>* areaOu
         const size_t M = (size_t)m * m;
         c.h.resize(M), c.kErode.resize(M), c.gDep.resize(M), c.talus.resize(M), c.creep.resize(M), c.fixed.assign(M, 0);
         if (!g.floor.empty()) c.floor.resize(M);
+        if (!g.ceil.empty()) c.ceil.resize(M);
         for (int a = 0; a < m; a++)
             for (int b = 0; b < m; b++) {
                 const size_t i = (size_t)a * m + b, f = (size_t)(2 * a) * n + 2 * b;
                 c.h[i] = g.h[f], c.kErode[i] = g.kErode[f], c.gDep[i] = g.gDep[f], c.talus[i] = g.talus[f], c.creep[i] = g.creep[f];
                 if (!g.floor.empty()) c.floor[i] = g.floor[f];
+                if (!g.ceil.empty()) c.ceil[i] = g.ceil[f];
                 uint8_t fx = 0;  // (fixed if any fine cell round it is: a narrow channel isn't lost between the samples)
                 for (int da = -1; da <= 1; da++)
                     for (int db = -1; db <= 1; db++) {
                         const int fa = 2 * a + da, fb = 2 * b + db;
-                        if (fa >= 0 && fa < n && fb >= 0 && fb < n) fx |= g.fixed[(size_t)fa * n + fb];
+                        if (fa >= 0 && fa < n && fb >= 0 && fb < n) fx = std::max(fx, g.fixed[(size_t)fa * n + fb]);
                     }
                 c.fixed[i] = fx;
             }
@@ -293,12 +300,14 @@ void erodeGrid(ErosionGrid& g, const ErosionRun& run, std::vector<float>* areaOu
                 const double d01 = c.h[(size_t)a0 * m + b1] - c0[(size_t)a0 * m + b1], d11 = c.h[(size_t)a1 * m + b1] - c0[(size_t)a1 * m + b1];
                 const float v = g.h[f] + (float)(0.25 * (d00 + d10 + d01 + d11));
                 g.h[f] = g.floor.empty() ? v : std::max(v, std::min(g.h[f], g.floor[f]));
+                if (!g.ceil.empty()) g.h[f] = std::min(g.h[f], std::max(g.ceil[f], g.h[f] - (float)(0.25 * (d00 + d10 + d01 + d11))));
             }
     }
     erodeLevel(g, run, run.iterations, areaOut);
 }
 
-int findLakes(int n, double cell, const std::vector<float>& h, std::vector<float>& level, double minArea, double minDepth) {
+int findLakes(int n, double cell, const std::vector<float>& h, std::vector<float>& level, double minArea, double minDepth, std::vector<LakeInfo>* info) {
+    if (info) info->clear();
     const size_t N = (size_t)n * n;
     std::vector<float> F;
     fillDepressions(n, h, F);
@@ -325,6 +334,27 @@ int findLakes(int n, double cell, const std::vector<float>& h, std::vector<float
         if ((double)cells.size() * cell * cell < minArea || deep < minDepth) continue;
         lakes++;
         for (size_t i : cells) level[i] = F[i];
+        if (info) {
+            LakeInfo L;
+            L.level = F[s0], L.area = (double)cells.size() * cell * cell, L.depth = deep;
+            L.a0 = L.b0 = n, L.a1 = L.b1 = -1;
+            double sa = 0, sb = 0, best = 1e30;
+            for (size_t i : cells) {
+                const int a = (int)(i / n), b = (int)(i % n);
+                sa += a, sb += b;
+                L.a0 = std::min(L.a0, a), L.a1 = std::max(L.a1, a), L.b0 = std::min(L.b0, b), L.b1 = std::max(L.b1, b);
+                for (int d = 0; d < 8; d++) {
+                    const int na = a + kDA[d], nb = b + kDB[d];
+                    if (na < 0 || na >= n || nb < 0 || nb >= n) continue;
+                    const size_t j = (size_t)na * n + nb;
+                    if (level[j] > -1e29f) continue;
+                    const double v = h[j];
+                    if (v < best || (v == best && j < (size_t)L.la * n + L.lb)) best = v, L.la = na, L.lb = nb;
+                }
+            }
+            L.ca = sa / cells.size(), L.cb = sb / cells.size();
+            info->push_back(L);
+        }
     }
     return lakes;
 }

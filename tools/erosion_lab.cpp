@@ -66,6 +66,39 @@ int main(int argc, char** argv) {
     const int64_t ti = std::atoll(argv[2]), tj = std::atoll(argv[3]);
     const std::string dir = argv[4];
     loadShippedRules();
+    if (std::getenv("ER_FORDS")) {  // (the trails fording big rivers, as procworld/crossings counts them)
+        for (uint64_t sd : {1ull, 2ull, 3ull, 123456789ull}) {
+            const ProcWorld& G = ProcWorld::forSeed(sd);
+            for (int64_t i = -6; i < 6; i++)
+                for (int64_t j = -6; j < 6; j++)
+                    for (int dir = 0; dir < 2; dir++) {
+                        auto e = G.edge(i, j, dir);
+                        const bool want = std::getenv("ER_FORDS")[0] == 'a' ? true : false;
+                        if (e->bigFord || (want && sd == 3 && ((i == -6 && j == -4 && dir == 0) || (i == -3 && j == 0 && dir == 1) || (i == -3 && j == 1 && dir == 0)))) std::printf("seed %llu edge %lld,%lld,%d: on %d bigFord %d bridges %zu\n", (unsigned long long)sd, (long long)i, (long long)j, dir, e->on, e->bigFord, e->bridges.size());
+                    }
+        }
+        return 0;
+    }
+    if (std::getenv("ER_CHUNKS")) {  // (the chunk-budget test's chunks, timed)
+        const ProcWorld& G = ProcWorld::forSeed(seed);
+        for (int k = 0; k < 64; k++) {
+            auto c = G.makeChunk(300 + k % 8, -200 + k / 8);
+            if (c->genMs > 50) std::printf("chunk %d: %.0f ms (tiles %.0f)\n", k, c->genMs, c->tileMs);
+        }
+        return 0;
+    }
+    if (std::getenv("ER_COUNT")) {  // (the lakes in 12 x 12 km round tile (ti, tj)'s corner)
+        const ProcWorld& G = ProcWorld::forSeed(seed);
+        const int S = ProcWorld::erosionTileSize();
+        const double x0 = ti * S - 6000.0, z0 = tj * S - 6000.0;
+        const auto t0 = std::chrono::steady_clock::now();
+        prewarmErosion(G, x0, z0, x0 + 12000, z0 + 12000);
+        int n = 0;
+        for (const auto& f : G.waterFeatures(x0, z0, x0 + 12000, z0 + 12000))
+            if (f.kind == 0) n++, std::printf("  lake at %.0f,%.0f level %.1f radius %.0f m\n", f.x, f.z, f.level, f.size);
+        std::printf("seed %llu: %d lakes in 144 km2 (%.0f s)\n", (unsigned long long)seed, n, std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+        return 0;
+    }
     if (std::getenv("ER_SCAN")) {  // (what each tile round (ti, tj) is: its land's range and biomes)
         {
             Rules r = rules();

@@ -27,8 +27,9 @@ struct ErosionGrid {
     std::vector<float> gDep;     // ...deposition (G: 0 none, 1 drops the upstream mean erosion rate)
     std::vector<float> talus;    // ...the angle of repose (rise over run)
     std::vector<float> creep;    // ...soil creep (0..0.2 of the Laplacian an iteration)
-    std::vector<uint8_t> fixed;  // ...never changed (1)
+    std::vector<uint8_t> fixed;  // ...never changed (1; 2: standing water, which keeps what's carried into it)
     std::vector<float> floor;    // ...never worn lower than this (the drainage's valley floor: its channels stay the lowest ground)
+    std::vector<float> ceil;     // ...never silted higher than this (erodeGrid sets it: the land plus ErosionRun::maxFill)
 };
 
 struct ErosionRun {
@@ -37,6 +38,7 @@ struct ErosionRun {
     int talusPasses = 2;      // talus passes an iteration
     double rain = 1;          // water a cell (the area's unit: A is in m2 times this)
     double maxCut = 1.5;      // m: the most a cell is cut in one iteration
+    double maxFill = 6;       // m: the most silt piles over the land anywhere
     double talusRate = 0.4;   // 0..0.5: how much of a slope's excess over its repose slides in one pass
     // Glaciers first (the ice ages: before the rivers): ice gathers above glacierLine and flows down the land's fall lines, wearing
     // its bed by how much ice passes (not by slope: so it overdeepens, cirque floors and troughs scooped below their lips), and drops
@@ -53,7 +55,13 @@ void erodeGrid(ErosionGrid& g, const ErosionRun& run, std::vector<float>* area =
 
 // The lakes of a grid: the closed hollows (fillDepressions) over minArea m2 and minDepth deep. level: the water's level per cell
 // (-1e30: dry); returns how many lakes.
-int findLakes(int n, double cell, const std::vector<float>& h, std::vector<float>& level, double minArea, double minDepth);
+struct LakeInfo {
+    double level = 0, area = 0, depth = 0;  // m, m2, m
+    double ca = 0, cb = 0;                  // its middle (cells)
+    int a0 = 0, b0 = 0, a1 = 0, b1 = 0;     // its cells' bounds
+    int la = 0, lb = 0;                     // where it spills (the lowest cell round it, outside it)
+};
+int findLakes(int n, double cell, const std::vector<float>& h, std::vector<float>& level, double minArea, double minDepth, std::vector<LakeInfo>* info = nullptr);
 
 // Fills the closed hollows of a grid (priority flood, Barnes et al. 2014): `filled` is the lowest surface over h that drains every
 // cell off the grid's edge (flat over a hollow: its water level, at its spill point). Deterministic (ties by index).

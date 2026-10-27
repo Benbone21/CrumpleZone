@@ -4390,7 +4390,7 @@ void Renderer::buildBackdrop(const World& world, std::vector<Vtx>& verts, std::v
                 }
                 // (sceneryHeight's own sums: the generator's ground, its valleys cut, from the climate kept for the trees)
                 const double gx = x + (double)world.proc.ox, gz = z + (double)world.proc.oz;
-                const proc::Macro m = G.macroAt(gx, gz, false);
+                const proc::Macro m = G.macroCached(gx, gz);  // (worn where its erosion tiles are made: never waits on one)
                 H[(size_t)i * n + j] = inside ? world.height(x, z) : G.groundHeight(gx, gz, m);
                 Clim& c = clim[(size_t)i * n + j];
                 for (int b = 0; b < proc::PB_COUNT; b++) c.w[b] = (float)m.w[b];

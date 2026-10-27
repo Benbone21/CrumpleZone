@@ -92,13 +92,19 @@ std::vector<Key> keys() {
     k.push_back({A, "rocks_per_ha", nullptr, AT(r.alpine.rocksPerHa), "loose rocks and boulders tried a hectare (steep ground keeps more of them)"});
     const char* E = "erosion";
     k.push_back({E, "on", nullptr, AT(r.erosion.on), "1: the land is worn by water and frost (gullies, fans, silted floors, scree); 0: not"});
-    k.push_back({E, "coarse_iterations", nullptr, AT(r.erosion.coarseIterations), "the erosion's steps on an 8 m grid first (the broad gullies and spurs; more: deeper worn, slower)..."});
-    k.push_back({E, "iterations", nullptr, AT(r.erosion.iterations), "...then on the 4 m grid (the fine gullies)"});
+    k.push_back({E, "coarse_iterations", nullptr, AT(r.erosion.coarseIterations), "the erosion's steps, on the 8 m grid the land is worn on (more: deeper worn, slower)"});
+    k.push_back({E, "iterations", nullptr, AT(r.erosion.iterations), "(unused: a 4 m pass after the 8 m one; it needs the land sampled four times as often)"});
     k.push_back({E, "max_cut", nullptr, AT(r.erosion.maxCut), "m: the most one step cuts anywhere"});
     k.push_back({E, "max_depth", nullptr, AT(r.erosion.maxDepth), "m: the worn land stays within this of the land before"});
     k.push_back({E, "glacier_iterations", nullptr, AT(r.erosion.glacierIterations), "the ice ages' steps, before the rivers: glaciers scoop cirques and U-shaped troughs, leave moraines (0: none)"});
     k.push_back({E, "glacier_line", nullptr, AT(r.erosion.glacierLine), "m: ice gathers above this and melts below it"});
     k.push_back({E, "glacier_cut", nullptr, AT(r.erosion.glacierCut), "how hard the ice wears its bed (m a step per square root of the ice passing, m3 a year)"});
+    k.push_back({E, "dam_min", nullptr, AT(r.erosion.damMin), "m: a valley's natural dam (a rock bar, a landslide) stands at least this much over its channel..."});
+    k.push_back({E, "dam_max", nullptr, AT(r.erosion.damMax), "m: ...and at most this much (each site's dice: lakes of varied sizes)"});
+    k.push_back({E, "lake_share", nullptr, AT(r.erosion.lakeShare), "0..1: the share of gentle valley stretches with a natural dam (rock bar, landslide) across them: the lakes"});
+    k.push_back({E, "lake_min_area", nullptr, AT(r.erosion.lakeMinArea), "ha: water the worn land holds behind a valley's natural dam is a lake from this big..."});
+    k.push_back({E, "lake_min_depth", nullptr, AT(r.erosion.lakeMinDepth), "m: ...and this deep (twice as deep for a hollow no dam made)"});
+    k.push_back({E, "lake_open_area", nullptr, AT(r.erosion.lakeOpenArea), "ha: a hollow no dam made (a sink of the drainage, a low spot left by the wear) holds a lake only from this big"});
     k.push_back({E, "pit_fill", nullptr, AT(r.erosion.pitFill), "0..1: how much of the load reaching a closed hollow silts it (the rest settles: lakes last)"});
     {
         static const char* const kErSec[5] = {"erosion.meadow", "erosion.forest", "erosion.badlands", "erosion.alpine", "erosion.dunes"};

@@ -305,3 +305,28 @@ to a lip:
 - A lake counts only if its rim stands over its water all round but its lip and its inlets (checked lazily, per node). No two
   lakes within 3 nodes. No channel trench under the water; a gravel (desert: sand) shore band. Trails keep off a lake's dam.
 - 24 lakes in 144 km2 of the lowland seed; 2-12 in the steep mountain seeds (their channels are mostly too steep for a low dam).
+
+## Slice: real erosion (wip/procworld4-erosion)
+**Checkpoint 1 (prototype, approved by the owner):** the land the drainage builds (`evalMacro`, without lakes) is worn in fixed
+2048 m tiles (`src/proceros.*`): stream power with deposition (Yuan et al. 2019; water spread to every lower neighbour by slope^2),
+talus and soil creep; 50 steps on an 8 m grid, then 12 on the 4 m grid. Deterministic: one thread a tile, a radix-sorted visiting order
+(ties by index), only + - * / and sqrt. A tile is worn with a 384 m margin; the change is kept over the tile and a 128 m band round it,
+and neighbours cross-fade over the band (a partition of unity: the same from either side). The worn land never goes under its valley's
+floor (the drainage's channels stay the lowest ground) and wet channels are never worn. Per-biome strength: `[erosion.<biome>]`.
+
+**Checkpoint 2 (integration):**
+- Tiles: cached (49, LRU, ~2.6 MB each), one maker per tile (others wait). `prewarmErosion` makes what a window needs (its trails look
+  ~3 km round it) a few at once before its chunks; `prefetchErosion` queues the tiles the next windows will want on one background
+  thread below the game's priority. `CZ_GEN_THREADS` caps the threads (tests: 2). `macroCached` (the far backdrop, the map) uses the
+  tiles made already and never waits. A chunk's wait for tiles is `Chunk::tileMs`, apart from `genMs`.
+- Lakes (owner: valley dams only): a share (`lake_share`) of the gentle valley stretches get a natural dam (a rock bar or landslide,
+  4-16 m over the channel, 1:4 sides, its crest a metre over the spill where the channel crosses) on the land before it's worn. Water
+  standing from the start is kept through the wear (not silted); silt never piles more than 6 m. After the wear, the worn ground's
+  hollows are filled to their spill points (priority flood); a lake is the water within 60 m of a dam's lip (0.5 ha, 1.5 m deep), or a
+  big deep hollow no dam made (`lake_open_area`). Each lake belongs to the tile its middle is in and may run over its blend band. The
+  chunks: water where the ground's under the level in the lake, the ground beside it built up to the shore where a bed or a trail would
+  leave it under, gravel or sand shores where gentle, the dam standing back over a channel's bed. Old lakes (dished floors, tarns,
+  ponds, glacier pass) are off while erosion is on.
+- Bridges: the deck over the highest bank under it, 6 m of level approach graded to it at each end; nothing grows or lies within 5 m
+  of a span or 8 m past its ends.
+- Generator v5.

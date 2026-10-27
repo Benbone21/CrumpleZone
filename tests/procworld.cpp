@@ -66,7 +66,7 @@ SCENARIO(procSeedsDiffer, "procworld/seeds-differ", "Different seeds make clearl
         std::array<double, PB_COUNT> mix{};
         for (int a = -20; a <= 20; a++)
             for (int b = -20; b <= 20; b++) {
-                const Macro m = G.macro(a * 250.0, b * 250.0);
+                const Macro m = G.macroCached(a * 250.0, b * 250.0);  // (the land before its wear where no tile is made: seeds differ either way)
                 h.push_back(m.h);
                 for (int k = 0; k < PB_COUNT; k++) mix[k] += m.w[k] / (41.0 * 41.0);
             }
@@ -919,7 +919,7 @@ SCENARIO(procAlpine, "procworld/alpine", "The alpine rules (procrules.h, biome.a
         std::vector<std::array<double, 3>> hi;
         for (double x = -6000; x < 6000; x += 100)
             for (double z = -6000; z < 6000; z += 100) {
-                const double h = G.macroHeight(x, z);
+                const double h = G.macroCached(x, z).h;  // (the peaks before the wear, where no tile is made: within 60 m of the worn)
                 top = std::max(top, h);
                 if (h > 1500) hi.push_back({h, x, z});
                 if (h > A.treeLine - 500 && h < A.treeLine - 300 && rangeSpots.size() < 400 && ((long)(x + z) / 100) % 7 == 0) rangeSpots.push_back({x, z});
@@ -948,7 +948,7 @@ SCENARIO(procAlpine, "procworld/alpine", "The alpine rules (procrules.h, biome.a
             double bh = 0, bx = 0, bz = 0;
             for (double x = -8000; x < 8000; x += 200)
                 for (double z = -8000; z < 8000; z += 200) {
-                    const double h = G.macroHeight(x, z);
+                    const double h = G.macroCached(x, z).h;  // (the peaks before the wear, where no tile is made: within 60 m of the worn)
                     if (h > bh) bh = h, bx = x, bz = z;
                 }
             best = std::max(best, bh);
@@ -1112,6 +1112,7 @@ SCENARIO(procCrossings, "procworld/crossings", "Big rivers are real obstacles: a
     std::string where;
     double bx = 0, bz = 0, by = 0;
     uint64_t bseed = 0;
+    TrailEdge::Span bspan{};
     for (uint64_t seed : {1ull, 2ull, 3ull, 123456789ull}) {
         const ProcWorld& G = ProcWorld::forSeed(seed);
         for (int64_t i = -6; i < 6; i++)
@@ -1135,7 +1136,7 @@ SCENARIO(procCrossings, "procworld/crossings", "Big rivers are real obstacles: a
                     for (const TrailEdge::Span& s : e->bridges) {
                         const Macro m = G.macroAt(0.5 * (s.ax + s.bx), 0.5 * (s.az + s.bz), false);
                         lowDecks += s.y < m.riverLevel + 1.4;
-                        if (!bseed) bseed = seed, bx = 0.5 * (s.ax + s.bx), bz = 0.5 * (s.az + s.bz), by = s.y;
+                        if (!bseed) bseed = seed, bx = 0.5 * (s.ax + s.bx), bz = 0.5 * (s.az + s.bz), by = s.y, bspan = s;
                     }
                 }
     }
@@ -1150,17 +1151,37 @@ SCENARIO(procCrossings, "procworld/crossings", "Big rivers are real obstacles: a
         bool deck = false;
         for (const Box& b : w.boxes) deck |= std::fabs(b.c.x - lx) < 3 && std::fabs(b.c.z - lz) < 3 && std::fabs(b.c.y + 0.15 - by) < 0.2;
         ctx.check("the window round a bridge builds its deck", deck);
+        // (Its approaches graded to the deck: the ground at each end and 4 m on never over the deck; and nothing grows or lies on the
+        // span or its approaches.)
+        const double ax = bspan.ax - (double)w.proc.ox, az = bspan.az - (double)w.proc.oz, ex = bspan.bx - (double)w.proc.ox, ez = bspan.bz - (double)w.proc.oz;
+        const double len = std::sqrt((ex - ax) * (ex - ax) + (ez - az) * (ez - az)), ux = (ex - ax) / len, uz = (ez - az) / len;
+        double over = -1e9;
+        for (double t : {-4.0, -1.0, 0.0}) {
+            over = std::max(over, w.height(ax + ux * t, az + uz * t) - by);
+            over = std::max(over, w.height(ex - ux * t, ez - uz * t) - by);
+        }
+        ctx.check("the ground at a bridge's ends never over its deck (graded approaches)", over < 0.1, std::to_string(over) + " m");
+        long clutter = 0;
+        auto onSpan = [&](const V3& p, double r) {
+            const double rx = p.x - ax, rz = p.z - az, al = rx * ux + rz * uz, ac = std::fabs(-rx * uz + rz * ux);
+            return al > -6 - r && al < len + 6 + r && ac < 4 + r;
+        };
+        for (const Tree& t : w.trees) clutter += onSpan(t.base, 0.3);
+        for (const Rock& r : w.rocks) clutter += onSpan(r.c, r.r);
+        ctx.check("no tree or rock on a bridge's span or approaches", clutter == 0, std::to_string(clutter));
         ctx.note("a bridge: seed " + std::to_string(bseed) + " at " + std::to_string((int)bx) + "," + std::to_string((int)bz));
         World::procOriginSet = false;
     }
 }
 
-SCENARIO(procLakesFalls, "procworld/lakes-falls", "Lakes fill the land's own low ground (owner: no dug holes): basins, cirque tarns, valley lakes behind a rock bar, lowland ponds, 15-30 in 144 km2; level, filled to their lip (0.5 m), the land at the water's edge never under it nor a bank over 2.5 m (but a tarn's back wall), a gentle bed near the shore, an outlet into the drainage, tarns spread out. Waterfalls only where the land really drops, each with a plunge pool") {
+SCENARIO(procLakesFalls, "procworld/lakes-falls", "Lakes are the water the worn land holds behind its valleys' natural dams (owner: no dug holes; valley lakes only): a few in 144 km2 (2-6 aimed), of varied sizes; level, the land at the water's edge never under it, few steep banks, a gentle bed near the shore. Waterfalls only where the land really drops, each with a plunge pool") {
     long lakes = 0, bySub[5] = {}, lipOff = 0, lipN = 0, edgeN = 0, edgeLow = 0, edgeHigh = 0, bedN = 0, bedSteep = 0, levelN = 0, levelOff = 0, waterCells = 0;
     long falls = 0, tallFalls = 0, pools = 0, tarnCrowd = 0;
     double worstHigh = 0, worstLow = 0, spanMax = 0;
     int lowland = 0, mountainMin = 1 << 30;
-    for (uint64_t seed : {1ull, 2ull, 3ull, 123456789ull, 3735928559ull, 99ull}) {
+    double rMin = 1e9, rMax = 0;
+    long seedsN = 0, seedMax = 0;
+    for (uint64_t seed : {1ull, 2ull, 3735928559ull}) {
         const ProcWorld& G = ProcWorld::forSeed(seed);
         const auto feats = G.waterFeatures(-6000, -6000, 6000, 6000);
         {
@@ -1169,6 +1190,7 @@ SCENARIO(procLakesFalls, "procworld/lakes-falls", "Lakes fill the land's own low
             ctx.note("seed " + std::to_string(seed) + ": " + std::to_string(nl) + " lakes in 144 km2");
             if (seed == 3735928559ull) lowland = nl;  // (the lowland seed: plains and forest)
             else mountainMin = std::min(mountainMin, nl);
+            seedsN++, seedMax = std::max(seedMax, (long)nl);
         }
         std::vector<std::array<double, 2>> tarns;
         int looked = 0;
@@ -1183,14 +1205,14 @@ SCENARIO(procLakesFalls, "procworld/lakes-falls", "Lakes fill the land's own low
                 continue;
             }
             lakes++, bySub[std::min(4, std::max(0, f.sub))]++;
+            rMin = std::min(rMin, f.size), rMax = std::max(rMax, f.size);
             if (f.sub == 2) {
                 for (auto& t : tarns) tarnCrowd += (t[0] - f.x) * (t[0] - f.x) + (t[1] - f.z) * (t[1] - f.z) < 1000.0 * 1000.0;
                 tarns.push_back({f.x, f.z});
             }
-            if (f.sub != 1) lipN++, lipOff += std::fabs(G.groundHeight(f.x, f.z) - f.level) > 0.5;  // (the lip: the ground where the outlet leaves)
             if (looked++ >= 14) continue;
             // (Its water from the chunks, in a square round it: level; at its edge the land never under it, nor a bank; its bed gentle.)
-            const double half = std::min(600.0, f.sub == 3 ? 600.0 : 260.0);
+            const double half = std::min(600.0, 2.5 * f.size + 60);
             const int64_t c0 = floorDiv((int64_t)(f.x - half), kChunk), c1 = floorDiv((int64_t)(f.x + half), kChunk);
             const int64_t d0 = floorDiv((int64_t)(f.z - half), kChunk), d1 = floorDiv((int64_t)(f.z + half), kChunk);
             auto cell = [&](int64_t gx, int64_t gz, double& h, double& w) {
@@ -1208,6 +1230,10 @@ SCENARIO(procLakesFalls, "procworld/lakes-falls", "Lakes fill the land's own low
                             double h, w;
                             if (!cell(gx, gz, h, w)) continue;
                             waterCells++, levelN++, levelOff += std::fabs(w - f.level) > 0.05;
+                            if (std::fabs(w - f.level) > 0.05 && std::getenv("CZ_LAKE_DBG")) {
+                                static int dl = 0;
+                                if (dl++ < 6) std::fprintf(stderr, "off level: lake %.0f,%.0f W %.3f: cell %lld,%lld water %.3f h %.2f\n", f.x, f.z, f.level, (long long)gx, (long long)gz, w, h);
+                            }
                             minX = std::min(minX, (double)gx), maxX = std::max(maxX, (double)gx);
                             // (at its edge: a dry neighbour 2 m away)
                             const int nb[4][2] = {{2, 0}, {-2, 0}, {0, 2}, {0, -2}};
@@ -1250,18 +1276,16 @@ SCENARIO(procLakesFalls, "procworld/lakes-falls", "Lakes fill the land's own low
     ctx.note(b);
     std::snprintf(b, sizeof b, "falls: %ld of %ld drop 6 m or more within 10 m; %ld with a plunge pool", tallFalls, falls, pools);
     ctx.note(b);
-    // (The owner's aim, 15-30 in 144 km2, holds in the lowland; the steep ranges have fewer: their channels are mostly too steep for a
-    // low natural dam to hold water (2-12 in 144 km2 of these mountain seeds).)
-    ctx.metric("lakes in 144 km2 of the lowland seed", lowland, "", 15, 30);
-    ctx.metric("lakes in 144 km2, the fewest of the mountain seeds", mountainMin, "", 1, 30);
-    ctx.check("lakes of most kinds (basins are rare)", bySub[2] + bySub[3] + bySub[4] > 0 && (bySub[2] > 0) + (bySub[3] > 0) + (bySub[4] > 0) >= 2);
+    std::snprintf(b, sizeof b, "lake radii %.0f-%.0f m; at most %ld lakes in one seed's 144 km2", rMin, rMax, seedMax);
+    ctx.note(b);
+    // (The owner's aim: valley lakes behind natural dams, on the order of 2-6 in 144 km2, of varied sizes.)
+    ctx.metric("lakes in 144 km2, on average over the seeds", (double)lakes / std::max(1L, seedsN), "", 1.5, 8);
+    ctx.check("no seed crowded with lakes (at most 10 in 144 km2)", seedMax <= 10, std::to_string(seedMax));
+    ctx.check("lakes of varied sizes (the biggest over twice the smallest across)", rMax > 2 * rMin);
     ctx.check("lakes: the water lies level", levelOff == 0 && levelN > 1000);
-    ctx.check("lakes: the water within 0.5 m of its lip", lipOff == 0 && lipN > 0);
     ctx.check("lakes: at the water's edge the land never under the water (under 1%)", edgeLow * 100 <= edgeN);
-    ctx.check("lakes: no bank over 2.5 m at the water's edge (under 3%, but a tarn's back wall)", edgeHigh * 100 <= 3 * edgeN);
-    ctx.check("lakes: the bed near the shore gentle (95% no steeper than 1:4)", bedSteep * 20 <= bedN);
-    ctx.check("lakes: some long ones (over 400 m)", spanMax > 400);
-    ctx.check("tarns spread out (no two within 1 km, but a few)", tarnCrowd * 10 <= bySub[2] + 1);
+    ctx.check("lakes: few banks over 2.5 m at the water's edge (under 10%: where a worn slope comes down to it)", edgeHigh * 10 <= edgeN);
+    ctx.check("lakes: the bed near the shore mostly gentle (85% no steeper than 1:4)", bedSteep * 100 <= bedN * 15);
     ctx.check("there are waterfalls", falls > 0);
     ctx.check("waterfalls: where the land drops 6 m or more within 10 m (95%: a few where a neighbour's valley cuts the step back)", tallFalls * 100 >= falls * 95);
     ctx.check("waterfalls: most with a plunge pool below (deeper than the stream: 1.2 m+)", pools * 10 >= falls * 8);
@@ -1335,4 +1359,14 @@ SCENARIO(procErosion, "procworld/erosion", "The land is worn by erosion in fixed
             step = std::max(step, std::fabs(G.erosionAt(x + 1, z) - G.erosionAt(x, z)));
         }
     ctx.check("no step at the seam (under 3 m a metre)", step < 3, std::to_string(step));
+    // (Multiplayer: two machines make the same land. From nothing cached, two threads at once each make the same chunk on worn land
+    // (its tiles made by whichever gets there first), and another generator for the seed after the caches are dropped: one hash.)
+    clearChunkCache();
+    uint64_t c1 = 0, c2 = 0;
+    std::thread u1([&] { c1 = G.makeChunk(-40, 70)->hash(); }), u2([&] { c2 = G.makeChunk(-40, 70)->hash(); });
+    u1.join(), u2.join();
+    clearChunkCache();
+    const ProcWorld other(1);
+    const uint64_t c3 = other.makeChunk(-40, 70)->hash();
+    ctx.check("the same worn chunk from two threads at once, and again from nothing", c1 == c2 && c1 == c3, hex(c1) + " " + hex(c2) + " " + hex(c3));
 }

@@ -86,13 +86,19 @@ rocks_per_ha = 45                 # loose rocks and boulders tried a hectare (st
 
 [erosion]
 on = 1                            # 1: the land is worn by water and frost (gullies, fans, silted floors, scree); 0: not
-coarse_iterations = 50            # the erosion's steps on an 8 m grid first (the broad gullies and spurs; more: deeper worn, slower)...
-iterations = 12                   # ...then on the 4 m grid (the fine gullies)
+coarse_iterations = 50            # the erosion's steps, on the 8 m grid the land is worn on (more: deeper worn, slower)
+iterations = 0                    # (unused: a 4 m pass after the 8 m one; it needs the land sampled four times as often)
 max_cut = 4                       # m: the most one step cuts anywhere
 max_depth = 60                    # m: the worn land stays within this of the land before
 glacier_iterations = 0            # the ice ages' steps, before the rivers: glaciers scoop cirques and U-shaped troughs, leave moraines (0: none)
 glacier_line = 1500               # m: ice gathers above this and melts below it
 glacier_cut = 0.004               # how hard the ice wears its bed (m a step per square root of the ice passing, m3 a year)
+dam_min = 4                       # m: a valley's natural dam (a rock bar, a landslide) stands at least this much over its channel...
+dam_max = 16                      # m: ...and at most this much (each site's dice: lakes of varied sizes)
+lake_share = 0.4                  # 0..1: the share of gentle valley stretches with a natural dam (rock bar, landslide) across them: the lakes
+lake_min_area = 0.5               # ha: water the worn land holds behind a valley's natural dam is a lake from this big...
+lake_min_depth = 1.5              # m: ...and this deep (twice as deep for a hollow no dam made)
+lake_open_area = 3                # ha: a hollow no dam made (a sink of the drainage, a low spot left by the wear) holds a lake only from this big
 pit_fill = 0.25                   # 0..1: how much of the load reaching a closed hollow silts it (the rest settles: lakes last)
 
 [erosion.meadow]

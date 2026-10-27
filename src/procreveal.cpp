@@ -20,7 +20,7 @@ double Reveal::heightAbove(const ProcWorld& g, double gx, double gz, double y) {
     const int n = 8;
     for (int i = 0; i < n; i++) {
         const double a = i * (2 * M_PI / n);
-        sum += g.macroHeight(gx + 400 * std::cos(a), gz + 400 * std::sin(a));
+        sum += g.macroCached(gx + 400 * std::cos(a), gz + 400 * std::sin(a)).h;  // (never waits on an erosion tile: the game thread)
     }
     return std::max(0.0, y - sum / n);
 }
@@ -164,7 +164,7 @@ bool Reveal::load(const std::string& path, uint64_t seed) {
 
 void MapImage::colour(const ProcWorld& g, double gx, double gz, float out[3]) {
     static const float kBase[PB_COUNT][3] = {{0.33f, 0.47f, 0.24f}, {0.20f, 0.34f, 0.19f}, {0.72f, 0.44f, 0.29f}, {0.55f, 0.52f, 0.48f}, {0.86f, 0.74f, 0.52f}};
-    const Macro m = g.macroAt(gx, gz, false);
+    const Macro m = g.macroCached(gx, gz);  // (the map: worn where its erosion tiles are made, never waiting on one)
     float c[3] = {0, 0, 0};
     for (int b = 0; b < PB_COUNT; b++)
         for (int k = 0; k < 3; k++) c[k] += (float)m.w[b] * kBase[b][k];
@@ -176,7 +176,7 @@ void MapImage::colour(const ProcWorld& g, double gx, double gz, float out[3]) {
     }
     // Hillshade (light from the north-west), from the smooth land.
     const double e = Reveal::kCell;
-    const double dx = g.macroHeight(gx + e, gz) - g.macroHeight(gx - e, gz), dz = g.macroHeight(gx, gz + e) - g.macroHeight(gx, gz - e);
+    const double dx = g.macroCached(gx + e, gz).h - g.macroCached(gx - e, gz).h, dz = g.macroCached(gx, gz + e).h - g.macroCached(gx, gz - e).h;
     const double shade = std::min(1.35, std::max(0.45, 1.0 + (-dx * 0.7 + dz * 0.7) / (2 * e) * 1.4));
     for (float& v : c) v = (float)std::min(1.0, std::max(0.0, v * shade * (0.92 + 0.0006 * h)));
     // Rivers and creeks.

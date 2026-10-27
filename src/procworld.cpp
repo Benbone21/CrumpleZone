@@ -20,8 +20,10 @@
 #include <random>
 #include <set>
 #include <thread>
+#include <tuple>
 #include <unordered_map>
 
+#include "bgwork.h"
 #include "forest.h"
 #include "loadprof.h"
 #include "parallel.h"
@@ -1431,6 +1433,24 @@ static Macro evalMacro(const ProcWorld& G, double x, double z, const DTile& T, c
     return m;
 }
 
+// A valley lake's natural dam (a rock bar or a landslide across the valley) stands on the land before it's worn: a share of the sites.
+inline bool damOn(const ProcWorld& G, const Lake& L) { return L.kind == 3 && hash01(G.seed() ^ 0xDA3ull, L.ni, L.nj) < rules().erosion.lakeShare; }
+// The dam itself (-1e300: none here): a broad mound across the valley at the site's lip, 4-16 m over the channel there (by the site's
+// dice: varied lakes), sides 1:4 up and down the valley; its crest a metre over the spill, which is where the channel crosses (the
+// water leaves by its own creek). Only on the ground of this valley (the land draining to the site, or just below it): it never
+// spills over a ridge into the next one.
+double rockDamAt(const ProcWorld& G, const Lake& L, double x, double z, int64_t fi, int64_t fj) {
+    const double H = rules().erosion.damMin + (rules().erosion.damMax - rules().erosion.damMin) * hash01(G.seed() ^ 0xDA4ull, L.ni, L.nj);
+    const double spill = L.W + H;
+    const double vx = x - L.qx, vz = z - L.qz, c = std::fabs(-vx * L.fz + vz * L.fx), b = std::fabs(vx * L.fx + vz * L.fz + damBow(L, c));
+    const double reachB = 6 + 4 * (H + 1);
+    if (b > reachB || c > 900) return -1e300;
+    if (fi == INT64_MIN || !(drainsTo(G, fi, fj, L.ni, L.nj) || (fi == L.di && fj == L.dj))) return -1e300;
+    return spill + smoothstep(L.notch + 2, L.notch + 10, c) - 0.25 * std::max(0.0, b - 6);
+}
+
+thread_local bool gTileWorker = false;  // (this thread makes tiles for prewarmErosion: no threads of its own)
+
 // ---- Erosion (proceros.h): the land worn by water and frost, in fixed tiles ---------------------------------------------------------
 // The land (evalMacro, without lakes) is sampled every kECell m over a kETile square tile and kEMargin round it, worn down by
 // erodeGrid, and what that changed (the worn land less the land) is kept over the tile and kEBlend round it. A point takes its own
@@ -1438,14 +1458,15 @@ static Macro evalMacro(const ProcWorld& G, double x, double z, const DTile& T, c
 // point in a blend band is at least kEMargin - kEBlend from the edge of every grid that wore it.
 namespace {
 constexpr int64_t kETile = 2048;
-constexpr int kECell = 4, kEBlend = 128, kEMargin = 384;
+constexpr int kECell = 8, kEBlend = 128, kEMargin = 384;  // (8 m: the land sampled and worn every 8 m, read between by bilinear blend)
 constexpr int kEN = (int)((kETile + 2 * kEBlend) / kECell) + 1;   // the change's grid: cells a side
 constexpr int kEGrid = (int)((kETile + 2 * kEMargin) / kECell) + 1;  // the worn grid: cells a side
 struct ETile {
     double ox = 0, oz = 0;  // the change's grid's corner (global)
     std::vector<float> d;   // kEN x kEN, a * kEN + b (a along x)
     std::vector<float> lake;  // kEN x kEN: the water's level where the worn land holds a lake (-1e30: none)
-    int lakes = 0;
+    struct Lk { double x, z, level, area, depth, lipX, lipZ; };
+    std::vector<Lk> lakes;    // (its lakes: the middle, the level, m2, the deepest, where it spills (global))
     double ms = 0;          // how long it took
 };
 struct ESlot {
@@ -1468,6 +1489,7 @@ void sampleErosionGrid(const ProcWorld& G, int64_t ti, int64_t tj, ErosionGrid& 
     const char* cap = std::getenv("CZ_GEN_THREADS");
     const int saveCap = parallelRowsCap;
     if (cap && *cap) parallelRowsCap = std::max(1, std::atoi(cap));
+    if (gTileWorker) parallelRowsCap = 1;  // (prewarm's own threads: one each, so the total stays under its cap)
     parallelRows(n, [&](int a) {
         for (int b = 0; b < n; b++) {
             const double x = gx0 + (double)a * kECell, z = gz0 + (double)b * kECell;
@@ -1479,9 +1501,15 @@ void sampleErosionGrid(const ProcWorld& G, int64_t ti, int64_t tj, ErosionGrid& 
             double h = m.h;
             // (The lakes' natural dams (a moraine, a rock bar) across their valleys, on the land before it's worn: the water is then
             // whatever the worn land holds behind them. No floor is shaped: nothing is dug.)
-            for (const Lake& L : T->lakes) h = std::max(h, damAt(L, x, z));
+            for (const Lake& L : T->lakes)
+                if (damOn(G, L)) h = std::max(h, rockDamAt(G, L, x, z, m.floorNode, m.floorNode2));  // (valleys' natural dams alone: the owner's choice)
             g.h[i] = (float)h;
             g.floor[i] = m.floorNode != INT64_MIN ? (float)(m.floor + 0.3) : -1e30f;
+            if (h > m.h) g.floor[i] = (float)std::max((double)g.floor[i], h - 1.0);  // (a dam is rock: it weathers a little, never breached)
+            // (Within 35 m of a channel with water, never worn under its water: a gully beside a creek doesn't leave it standing over
+            // the land.)
+            if (m.creekOn > 0.5 && m.creekS < 35) g.floor[i] = (float)std::max((double)g.floor[i], m.creekLevel + 0.35);
+            if (m.riverOn > 0.5 && m.riverS < 35) g.floor[i] = (float)std::max((double)g.floor[i], m.riverLevel + 0.35);
             double ke = 0, gd = 0, ta = 0, cr = 0;
             for (int k = 0; k < PB_COUNT; k++) {
                 const ErosionBiomeRule& B = ER.biome[k];
@@ -1489,7 +1517,7 @@ void sampleErosionGrid(const ProcWorld& G, int64_t ti, int64_t tj, ErosionGrid& 
             }
             g.kErode[i] = (float)ke, g.gDep[i] = (float)gd, g.talus[i] = (float)ta, g.creep[i] = (float)cr;
             // (A channel's water is never worn: its bed and level are the drainage's. The grid's edge holds.)
-            const bool wet = (m.riverOn > 0.5 && m.riverS < m.riverHW + 2) || (m.creekOn > 0.5 && m.creekS < m.creekHW + 2);
+            const bool wet = (m.riverOn > 0.5 && m.riverS < m.riverHW + kECell * 0.5) || (m.creekOn > 0.5 && m.creekS < m.creekHW + kECell * 0.5);
             if (wet || a == 0 || b == 0 || a == n - 1 || b == n - 1) g.fixed[i] = 1;
         }
     }, 8);
@@ -1502,9 +1530,36 @@ std::shared_ptr<const ETile> makeErosionTile(const ProcWorld& G, int64_t ti, int
     const int n = kEGrid;
     ErosionGrid g;
     sampleErosionGrid(G, ti, tj, g);
+    {  // (The waterfalls' steps aren't worn: their rock stands, 24 m round each lip.)
+        std::set<std::pair<int64_t, int64_t>> seen;
+        const double gx0 = (double)(ti * kETile - kEMargin), gz0 = (double)(tj * kETile - kEMargin);
+        for (double x = gx0; x < gx0 + n * kECell + kTile; x += kTile)
+            for (double z = gz0; z < gz0 + n * kECell + kTile; z += kTile) {
+                const auto T = tileAt(G, std::min(x, gx0 + (n - 1) * kECell), std::min(z, gz0 + (n - 1) * kECell));
+                if (!seen.insert({(int64_t)T->ox, (int64_t)T->oz}).second) continue;
+                for (const DrainSeg& sg : T->segs) {
+                    if (!sg.fall) continue;
+                    const double lx = T->ox + sg.ax, lz = T->oz + sg.az;
+                    const int a0 = (int)std::floor((lx - 24 - gx0) / kECell), a1 = (int)std::ceil((lx + 24 - gx0) / kECell);
+                    const int b0 = (int)std::floor((lz - 24 - gz0) / kECell), b1 = (int)std::ceil((lz + 24 - gz0) / kECell);
+                    for (int a = std::max(0, a0); a <= std::min(n - 1, a1); a++)
+                        for (int b = std::max(0, b0); b <= std::min(n - 1, b1); b++)
+                            if (sqr(gx0 + a * kECell - lx) + sqr(gz0 + b * kECell - lz) < 24.0 * 24.0) g.fixed[(size_t)a * n + b] = std::max<uint8_t>(g.fixed[(size_t)a * n + b], 1);
+                }
+            }
+    }
     const std::vector<float> base = g.h;
+    {  // (Standing water from the start (behind the valleys' dams, in the land's own hollows) is a lake through the wear: its bed isn't
+       // silted up nor worn; what comes down settles out of sight.)
+        std::vector<float> F;
+        fillDepressions(n, g.h, F);
+        for (size_t i = 0; i < F.size(); i++)
+            if (F[i] - g.h[i] > 0.1f) g.fixed[i] = 2;
+    }
     ErosionRun run;
-    run.iterations = (int)ER.iterations, run.coarseIterations = (int)ER.coarseIterations, run.maxCut = ER.maxCut;
+    // (One resolution, the grid's own (8 m): the steps the prototype ran on its 8 m pass. A 4 m pass after it (rules: iterations) would
+    // need the land sampled every 4 m: four times the cost, for a little smoothing the bilinear read gives anyway.)
+    run.coarseIterations = 0, run.iterations = (int)ER.coarseIterations, run.maxCut = ER.maxCut;
     run.glacierIterations = (int)ER.glacierIterations, run.glacierLine = ER.glacierLine, run.glacierCut = ER.glacierCut, run.pitFill = ER.pitFill;
     const double sampleMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     erodeGrid(g, run);
@@ -1513,23 +1568,122 @@ std::shared_ptr<const ETile> makeErosionTile(const ProcWorld& G, int64_t ti, int
     t->d.resize((size_t)kEN * kEN);
     const int off = (kEMargin - kEBlend) / kECell;
     const float lim = (float)ER.maxDepth;
-    // (The change, softened once (1 2 1 each way): no one-cell steps where a worn cell meets one held at its valley's floor.)
+    std::vector<float> fin(g.h.size());
+    for (size_t i = 0; i < fin.size(); i++) fin[i] = base[i] + std::max(-lim, std::min(lim, g.h[i] - base[i]));
     for (int a = 0; a < kEN; a++)
         for (int b = 0; b < kEN; b++) {
-            double sum = 0;
-            for (int da = -1; da <= 1; da++)
-                for (int db = -1; db <= 1; db++) {
-                    const size_t i = (size_t)(a + off + da) * n + (b + off + db);
-                    sum += (double)((da ? 1 : 2) * (db ? 1 : 2)) * ((double)g.h[i] - base[i]);
-                }
-            t->d[(size_t)a * kEN + b] = std::max(-lim, std::min(lim, (float)(sum / 16)));
+            const size_t i = (size_t)(a + off) * n + (b + off);
+            t->d[(size_t)a * kEN + b] = fin[i] - base[i];
         }
-    {  // (the lakes: the worn land's closed hollows, filled to their spill points; over 0.3 ha and a metre deep)
+    {  // (The lakes: the worn ground's closed hollows, filled to their spill points. Only those wholly inside the tile, clear of the
+       // blend bands: their water and its shore are this tile's ground alone, the same from either side.)
         std::vector<float> lv;
-        t->lakes = findLakes(n, kECell, g.h, lv, 3000, 1.0);
-        t->lake.resize((size_t)kEN * kEN);
+        std::vector<LakeInfo> info;
+        findLakes(n, kECell, fin, lv, 0.5e4, 1.0, &info);
+        // (Each lake belongs to the tile its middle is in, and may run out over the blend band round it (its change grid), not past.)
+        const int lo = off + 2, hi = off + kEN - 3, c0 = kEMargin / kECell, c1 = kEMargin / kECell + (int)kETile / kECell;
+        t->lake.assign((size_t)kEN * kEN, -1e30f);
+        std::vector<uint8_t> keep(n > 0 ? (size_t)n * n : 0, 0);
+        const double gx0 = (double)(ti * kETile - kEMargin), gz0 = (double)(tj * kETile - kEMargin);
+        // (The water a valley's natural dam holds (the owner's choice): water within 60 m of a dam's lip; and the biggest of
+        // the worn land's own hollows. Its small ones stay dry.)
+        std::vector<std::pair<double, double>> lips;
+        {
+            std::set<std::pair<int64_t, int64_t>> seen;
+            for (double x = gx0; x < gx0 + n * kECell + kTile; x += kTile)
+                for (double z = gz0; z < gz0 + n * kECell + kTile; z += kTile)
+                    for (const Lake& L : tileAt(G, std::min(x, gx0 + (n - 1) * kECell), std::min(z, gz0 + (n - 1) * kECell))->lakes)
+                        if (damOn(G, L) && seen.insert({L.ni, L.nj}).second) lips.push_back({L.qx, L.qz});
+        }
+        for (const LakeInfo& L : info) {
+            if (L.a0 < lo || L.b0 < lo || L.a1 > hi || L.b1 > hi || L.ca < c0 || L.ca >= c1 || L.cb < c0 || L.cb >= c1) continue;
+            bool dammed = false;
+            for (const auto& q : lips) {  // (its water comes within 60 m of a dam's lip: that dam holds it, whichever way it spills)
+                const double qa = (q.first - gx0) / kECell, qb = (q.second - gz0) / kECell;
+                const int r = 60 / kECell;
+                if (qa < L.a0 - r || qa > L.a1 + r || qb < L.b0 - r || qb > L.b1 + r) continue;
+                for (int a = std::max(L.a0, (int)qa - r); a <= std::min(L.a1, (int)qa + r) && !dammed; a++)
+                    for (int b = std::max(L.b0, (int)qb - r); b <= std::min(L.b1, (int)qb + r) && !dammed; b++)
+                        dammed = std::fabs(lv[(size_t)a * n + b] - (float)L.level) < 1e-6f;
+            }
+            if (dammed && (L.area < ER.lakeMinArea * 1e4 || L.depth < ER.lakeMinDepth)) continue;
+            // (Water in a hollow no dam made (a sink of the drainage, a low spot the wear left): only a big, deep one.)
+            if (!dammed && (L.area < ER.lakeOpenArea * 1e4 || L.depth < 2 * ER.lakeMinDepth)) continue;
+            t->lakes.push_back({gx0 + L.ca * kECell, gz0 + L.cb * kECell, L.level, L.area, L.depth, gx0 + L.la * (double)kECell, gz0 + L.lb * (double)kECell});
+            for (int a = L.a0; a <= L.a1; a++)
+                for (int b = L.b0; b <= L.b1; b++)
+                    if (std::fabs(lv[(size_t)a * n + b] - (float)L.level) < 1e-6f) keep[(size_t)a * n + b] = 1;
+        }
+        // (Each kept lake's cells, and the shore cells round them (ground within 0.3 m under the level, or over it): the water's edge
+        // is then the land's own contour, read metre by metre, not the 8 m cells' outline. Never past the lip, where the land falls.)
+        {  // (Two kept lakes side by side at nearly the same level, split by a sill a hand high: the smaller goes, no step in the water.)
+            std::vector<int> lab(keep.size(), -1);
+            std::vector<long> size;
+            std::vector<size_t> st;
+            for (size_t s0 = 0; s0 < keep.size(); s0++) {
+                if (!keep[s0] || lab[s0] >= 0) continue;
+                const int id = (int)size.size();
+                size.push_back(0);
+                st.assign(1, s0), lab[s0] = id;
+                while (!st.empty()) {
+                    const size_t i = st.back();
+                    st.pop_back();
+                    size[id]++;
+                    const int a = (int)(i / n), b = (int)(i % n);
+                    for (int da = -1; da <= 1; da++)
+                        for (int db = -1; db <= 1; db++) {
+                            const int na = a + da, nb = b + db;
+                            if (na < 0 || nb < 0 || na >= n || nb >= n) continue;
+                            const size_t j = (size_t)na * n + nb;
+                            if (keep[j] && lab[j] < 0 && lv[j] == lv[i]) lab[j] = id, st.push_back(j);
+                        }
+                }
+            }
+            std::vector<uint8_t> drop(size.size(), 0);
+            for (int a = 0; a + 2 < n; a++)
+                for (int b = 0; b + 2 < n; b++) {
+                    const size_t i = (size_t)a * n + b;
+                    if (lab[i] < 0) continue;
+                    for (int da = 0; da <= 2; da++)  // (within two cells: their shores would meet)
+                        for (int db = -2; db <= 2; db++) {
+                            if (b + db < 0) continue;
+                            const size_t j = (size_t)(a + da) * n + b + db;
+                            if (lab[j] < 0 || lab[j] == lab[i]) continue;
+                            const int small = size[lab[i]] < size[lab[j]] || (size[lab[i]] == size[lab[j]] && lab[i] > lab[j]) ? lab[i] : lab[j];
+                            drop[small] = 1;
+                        }
+                }
+            for (size_t i = 0; i < keep.size(); i++)
+                if (lab[i] >= 0 && drop[lab[i]]) keep[i] = 0;
+            // (and the dropped one's record)
+            std::vector<ETile::Lk> kept;
+            for (const ETile::Lk& L : t->lakes) {
+                const int a = (int)std::lround((L.x - gx0) / kECell), b = (int)std::lround((L.z - gz0) / kECell);
+                bool any = false;
+                for (int da = -3; da <= 3 && !any; da++)
+                    for (int db = -3; db <= 3 && !any; db++) {
+                        const int na = a + da, nb = b + db;
+                        if (na >= 0 && nb >= 0 && na < n && nb < n) any = keep[(size_t)na * n + nb] && std::fabs(lv[(size_t)na * n + nb] - (float)L.level) < 1e-6f;
+                    }
+                if (any) kept.push_back(L);
+            }
+            t->lakes.swap(kept);
+        }
+        std::vector<float> wl(keep.size(), -1e30f);
+        for (size_t i = 0; i < keep.size(); i++)
+            if (keep[i]) wl[i] = lv[i];
+        for (int a = 1; a + 1 < n; a++)
+            for (int b = 1; b + 1 < n; b++) {
+                const size_t i = (size_t)a * n + b;
+                if (keep[i]) continue;
+                float w = -1e30f;
+                for (int da = -1; da <= 1; da++)
+                    for (int db = -1; db <= 1; db++)
+                        if (keep[(size_t)(a + da) * n + b + db]) w = std::max(w, lv[(size_t)(a + da) * n + b + db]);
+                if (w > -1e29f && fin[i] >= w - 0.3f) wl[i] = w;
+            }
         for (int a = 0; a < kEN; a++)
-            for (int b = 0; b < kEN; b++) t->lake[(size_t)a * kEN + b] = lv[(size_t)(a + off) * n + (b + off)];
+            for (int b = 0; b < kEN; b++) t->lake[(size_t)a * kEN + b] = wl[(size_t)(a + off) * n + (b + off)];
     }
     t->ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     eMade++;
@@ -1556,7 +1710,7 @@ std::shared_ptr<const ETile> erosionTile(const ProcWorld& G, int64_t ti, int64_t
         auto it = eMap.find({G.seed(), ti, tj});
         if (it != eMap.end()) f = it->second.f, it->second.used = ++eClock;
         else {
-            if (eMap.size() >= 24) {  // (~32 MB: the least lately used goes; what's in use is held)
+            if (eMap.size() >= 160) {  // (~100 MB at 0.6 MB a tile: the least lately used goes; what's in use is held)
                 auto old = eMap.begin();
                 for (auto q = eMap.begin(); q != eMap.end(); ++q)
                     if (q->second.used < old->second.used) old = q;
@@ -1574,8 +1728,21 @@ std::shared_ptr<const ETile> erosionTile(const ProcWorld& G, int64_t ti, int64_t
     return t;
 }
 
-// What erosion changed at a point (m: + silted, - worn away).
-double erosionAt(const ProcWorld& G, double x, double z) {
+// A tile if it's made already (else null: never waits, never starts one).
+std::shared_ptr<const ETile> erosionTileIfMade(const ProcWorld& G, int64_t ti, int64_t tj) {
+    std::shared_future<std::shared_ptr<const ETile>> f;
+    {
+        std::lock_guard<std::mutex> lock(eMutex);
+        auto it = eMap.find({G.seed(), ti, tj});
+        if (it == eMap.end()) return nullptr;
+        f = it->second.f;
+    }
+    if (f.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return nullptr;
+    return f.get();
+}
+
+// What erosion changed at a point (m: + silted, - worn away). wait false: from the tiles made already alone (the far backdrop).
+double erosionAt(const ProcWorld& G, double x, double z, bool wait = true) {
     const int64_t ti = (int64_t)std::floor(x / (double)kETile), tj = (int64_t)std::floor(z / (double)kETile);
     const double u = x - (double)(ti * kETile), v = z - (double)(tj * kETile);
     int64_t is[2] = {ti, ti}, js[2] = {tj, tj};
@@ -1589,7 +1756,8 @@ double erosionAt(const ProcWorld& G, double x, double z) {
         for (int q = 0; q < 2; q++) {
             const double w = wi[p] * wj[q];
             if (w <= 0) continue;
-            const auto T = erosionTile(G, is[p], js[q]);
+            const auto T = wait ? erosionTile(G, is[p], js[q]) : erosionTileIfMade(G, is[p], js[q]);
+            if (!T) continue;
             const double fx = (x - T->ox) / kECell, fz = (z - T->oz) / kECell;
             const int a = std::min(kEN - 2, std::max(0, (int)std::floor(fx))), b = std::min(kEN - 2, std::max(0, (int)std::floor(fz)));
             const double tx = std::min(1.0, std::max(0.0, fx - a)), tz = std::min(1.0, std::max(0.0, fz - b));
@@ -1602,10 +1770,29 @@ double erosionAt(const ProcWorld& G, double x, double z) {
 
 // The land at a point, worn: what erosion changed added, but never lower than the floor of the valley it's in (the channel's level
 // stays the drainage's: no water stands over the land beside it).
-void applyErosion(const ProcWorld& G, double x, double z, Macro& m) {
+void applyErosion(const ProcWorld& G, double x, double z, Macro& m, bool wait = true) {
     if (rules().erosion.on <= 0) return;
-    const double D = erosionAt(G, x, z);
-    m.h += D;  // (the erosion kept to each valley's floor already, cell by cell)
+    const double D = erosionAt(G, x, z, wait);
+    double keep = -1e30;  // (as the tiles keep it, cell by cell: within 35 m of a channel's water never worn under it; here exactly,
+                          // between the cells too)
+    if (m.creekOn > 0.5 && m.creekS < 35) keep = std::max(keep, m.creekLevel + 0.35);
+    if (m.riverOn > 0.5 && m.riverS < 35) keep = std::max(keep, m.riverLevel + 0.35);
+    m.h = std::max(m.h + D, std::min(m.h, keep));
+    // (A lake the worn land holds here: its own tile's, the nearest of its cells.)
+    // (Each lake is its own tile's, but may run out over the blend band into the next: the tiles whose change grids hold the point.)
+    const int64_t ti = (int64_t)std::floor(x / (double)kETile), tj = (int64_t)std::floor(z / (double)kETile);
+    const double u = x - (double)(ti * kETile), v = z - (double)(tj * kETile);
+    const int64_t i1 = u < kEBlend ? ti - 1 : u > kETile - kEBlend ? ti + 1 : ti, j1 = v < kEBlend ? tj - 1 : v > kETile - kEBlend ? tj + 1 : tj;
+    for (int64_t qi : {ti, i1})
+        for (int64_t qj : {tj, j1}) {
+            if ((qi == i1 && i1 == ti && qi != ti) || (qj == j1 && j1 == tj && qj != tj)) continue;
+            const auto T = wait ? erosionTile(G, qi, qj) : erosionTileIfMade(G, qi, qj);
+            if (!T || T->lakes.empty()) continue;
+            const int a = (int)std::floor((x - T->ox) / kECell + 0.5), b = (int)std::floor((z - T->oz) / kECell + 0.5);
+            if (a < 0 || b < 0 || a >= kEN || b >= kEN) continue;
+            const float w = T->lake[(size_t)a * kEN + b];
+            if (w > -1e29f && w > m.lakeLevel) m.lakeLevel = w, m.floor = std::min(m.floor, (double)w);
+        }
 }
 }  // namespace
 
@@ -1705,15 +1892,67 @@ std::vector<float> ProcWorld::erosionTile(int64_t ti, int64_t tj, double& ox, do
     ox = T->ox, oz = T->oz, n = kEN, cell = kECell, ms = T->ms;
     return T->d;
 }
-double ProcWorld::erosionLake(double gx, double gz) const {
-    if (rules().erosion.on <= 0) return -1e9;
-    const auto T = proc::erosionTile(*this, (int64_t)std::floor(gx / (double)kETile), (int64_t)std::floor(gz / (double)kETile));
-    const int a = (int)std::lround((gx - T->ox) / kECell), b = (int)std::lround((gz - T->oz) / kECell);
-    if (a < 0 || b < 0 || a >= kEN || b >= kEN) return -1e9;
-    const float v = T->lake[(size_t)a * kEN + b];
-    return v > -1e29f ? v : -1e9;
-}
+double ProcWorld::erosionLake(double gx, double gz) const { return rules().erosion.on > 0 ? macroAt(gx, gz, false).lakeLevel : -1e9; }
 double ProcWorld::erosionAt(double gx, double gz) const { return rules().erosion.on > 0 ? proc::erosionAt(*this, gx, gz) : 0.0; }
+
+Macro ProcWorld::macroCached(double x, double z) const {
+    const auto T = tileAt(*this, x, z);
+    const int a = std::min(kTC - 1, std::max(0, (int)std::floor((x - T->ox) / kTCell))), b = std::min(kTC - 1, std::max(0, (int)std::floor((z - T->oz) / kTCell)));
+    const int c = a * kTC + b;
+    Macro m = evalMacro(*this, x, z, *T, T->idx.data() + T->start[c], (int)(T->start[c + 1] - T->start[c]), true);
+    applyErosion(*this, x, z, m, false);
+    return m;
+}
+
+// The erosion tiles a box needs (and its blend bands' neighbours), made now, a few at once (CZ_GEN_THREADS caps the threads).
+void prewarmErosion(const ProcWorld& G, double x0, double z0, double x1, double z1) {
+    if (rules().erosion.on <= 0) return;
+    std::vector<std::pair<int64_t, int64_t>> want;
+    for (int64_t i = (int64_t)std::floor((x0 - kEBlend) / (double)kETile); i <= (int64_t)std::floor((x1 + kEBlend) / (double)kETile); i++)
+        for (int64_t j = (int64_t)std::floor((z0 - kEBlend) / (double)kETile); j <= (int64_t)std::floor((z1 + kEBlend) / (double)kETile); j++) want.push_back({i, j});
+    const char* cap = std::getenv("CZ_GEN_THREADS");
+    const int save = parallelRowsCap;
+    parallelRowsCap = cap && *cap ? std::max(1, std::atoi(cap)) : std::min(4, (int)std::max(1u, std::thread::hardware_concurrency()));
+    parallelRows((int)want.size(), [&](int k) {
+        const bool was = gTileWorker;
+        gTileWorker = true;
+        proc::erosionTile(G, want[k].first, want[k].second);
+        gTileWorker = was;
+    }, 1);
+    parallelRowsCap = save;
+}
+bool erosionMade(const ProcWorld& G, double x0, double z0, double x1, double z1) {
+    if (rules().erosion.on <= 0) return true;
+    for (int64_t i = (int64_t)std::floor((x0 - kEBlend) / (double)kETile); i <= (int64_t)std::floor((x1 + kEBlend) / (double)kETile); i++)
+        for (int64_t j = (int64_t)std::floor((z0 - kEBlend) / (double)kETile); j <= (int64_t)std::floor((z1 + kEBlend) / (double)kETile); j++)
+            if (!erosionTileIfMade(G, i, j)) return false;
+    return true;
+}
+// ...or later, one at a time on a background thread below the game's priority (the tiles ahead of a window: ready before it slides).
+void prefetchErosion(const ProcWorld& G, double x0, double z0, double x1, double z1) {
+    if (rules().erosion.on <= 0 || std::getenv("CZ_NO_EROSION_PREFETCH")) return;
+    static BgWork work;
+    const uint64_t seed = G.seed();
+    for (int64_t i = (int64_t)std::floor((x0 - kEBlend) / (double)kETile); i <= (int64_t)std::floor((x1 + kEBlend) / (double)kETile); i++)
+        for (int64_t j = (int64_t)std::floor((z0 - kEBlend) / (double)kETile); j <= (int64_t)std::floor((z1 + kEBlend) / (double)kETile); j++) {
+            if (erosionTileIfMade(G, i, j)) continue;
+            static std::mutex qm;
+            static std::set<std::tuple<uint64_t, int64_t, int64_t>> queued;
+            {  // (queued once: asked again every frame until it's made)
+                std::lock_guard<std::mutex> lock(qm);
+                if (queued.size() > 4096) queued.clear();
+                if (!queued.insert({seed, i, j}).second) continue;
+            }
+            work.post([seed, i, j] {
+                static thread_local bool lowered = false;
+                if (!lowered) lowerThreadPriority(), lowered = true;
+                gTileWorker = true;  // (one thread: the land ahead is made quietly)
+                proc::erosionTile(ProcWorld::forSeed(seed), i, j);
+                std::lock_guard<std::mutex> lock(qm);
+                queued.erase({seed, i, j});
+            });
+        }
+}
 
 Macro ProcWorld::land(double x, double z) const { return macroAt(x, z, false); }
 Macro ProcWorld::macro(double x, double z) const { return macroAt(x, z, true); }
@@ -1793,13 +2032,26 @@ ProcWorld::DrainStats ProcWorld::drainStats(double x0, double z0, double x1, dou
 std::vector<ProcWorld::WaterFeature> ProcWorld::waterFeatures(double x0, double z0, double x1, double z1) const {
     std::vector<WaterFeature> out;
     const DrainClass DC = drainClass();
+    if (rules().erosion.on > 0) {  // (the lakes the worn land holds behind its valleys' natural dams: each tile's own)
+        for (int64_t ti = (int64_t)std::floor(x0 / (double)kETile); ti <= (int64_t)std::floor(x1 / (double)kETile); ti++)
+            for (int64_t tj = (int64_t)std::floor(z0 / (double)kETile); tj <= (int64_t)std::floor(z1 / (double)kETile); tj++)
+                for (const ETile::Lk& L : proc::erosionTile(*this, ti, tj)->lakes) {
+                    if (L.x < x0 || L.x >= x1 || L.z < z0 || L.z >= z1) continue;
+                    double fx = L.lipX - L.x, fz = L.lipZ - L.z;
+                    const double fl = std::sqrt(fx * fx + fz * fz);
+                    if (fl > 1e-6) fx /= fl, fz /= fl;
+                    WaterFeature f{0, L.x, L.z, L.level, std::sqrt(L.area / 3.141592653589793), fx, fz};
+                    f.sub = 3, f.outlet = L.level;
+                    out.push_back(f);
+                }
+    }
     const int64_t i0 = (int64_t)std::floor(x0 / kD) - 1, i1 = (int64_t)std::floor(x1 / kD) + 1, j0 = (int64_t)std::floor(z0 / kD) - 1, j1 = (int64_t)std::floor(z1 / kD) + 1;
     for (int64_t i = i0; i <= i1; i++)
         for (int64_t j = j0; j <= j1; j++) {
             if (areaOf(*this, i, j) < DC.gully) continue;
             const NodeInfo n = nodeInfo(*this, i, j);
             const Lake lk = (even2(i, 2) && even2(j, 2)) || down2Of(*this, i, j) < 0 ? lakeOf(*this, i, j) : Lake{};
-            if (lk.kind && n.x >= x0 && n.x < x1 && n.z >= z0 && n.z < z1 && lakeOkOf(*this, lk)) {
+            if (rules().erosion.on <= 0 && lk.kind && n.x >= x0 && n.x < x1 && n.z >= z0 && n.z < z1 && lakeOkOf(*this, lk)) {
                 // (a lake: its lip (a basin: its middle), the water's level, how far across (a tarn: its floor's radius; a valley
                 // lake or pond: its dam's half-length), and its outlet: the level of its channel at the lip)
                 WaterFeature f{0, lk.kind == 1 ? n.x : lk.qx, lk.kind == 1 ? n.z : lk.qz, lakeLevelOf(*this, lk), lk.kind == 2 ? lk.dishR : lk.lat, lk.fx, lk.fz};
@@ -2250,7 +2502,7 @@ std::shared_ptr<const TrailEdge> ProcWorld::edge(int64_t i, int64_t j, int dir) 
         }
         // Bridges: where it's over a big river off its known fords, a deck from bank to bank, level, over the water by 1.5 m or more (1.8 at the deepest-sampled level).
         // (A trail that may not bridge and still found no ford is left out: big rivers are real obstacles.)
-        std::vector<char> br(n, 0);
+        std::vector<char> br(n, 0), app(n, 0);
         {
             std::vector<char> deep(n, 0);
             std::vector<double> wl(n, -1e9);
@@ -2271,8 +2523,15 @@ std::shared_ptr<const TrailEdge> ProcWorld::edge(int64_t i, int64_t j, int dir) 
                     break;
                 }
                 const int b0 = std::max(1, k - 5), b1 = std::min(n - 2, k1 + 5);  // (onto the banks, ~10 m past the water)
-                const double deck = std::max(std::max(raw[b0], raw[b1]), level + 1.8);
+                // (The deck over the highest bank under it, and ~6 m of level approach at each end graded to it (earthworks): the
+                // ground meets the deck at its ends, never stands over it.)
+                double deck = level + 1.8;
+                for (int q = b0; q <= b1; q++) deck = std::max(deck, raw[q]);
                 for (int q = b0; q <= b1; q++) br[q] = 1, y[q] = deck;
+                for (int q = 1; q <= 3; q++) {
+                    if (b0 - q >= 1) app[b0 - q] = 1, y[b0 - q] = deck;
+                    if (b1 + q <= n - 2) app[b1 + q] = 1, y[b1 + q] = deck;
+                }
                 e->bridges.push_back({a.x + px[b0], a.z + pz[b0], a.x + px[b1], a.z + pz[b1], deck});
                 k = std::max(k1, b1);  // (on past this one: never back, even where it ends in the water)
                 if (e->bridges.size() > 16) break;  // (never near: a trail crosses a river or two)
@@ -2300,7 +2559,7 @@ std::shared_ptr<const TrailEdge> ProcWorld::edge(int64_t i, int64_t j, int dir) 
         for (int pass = 0; pass < 2; pass++)
             for (int k = 1; k < n; k++)
                 if (ford[k] && ford[k - 1] && std::fabs(y[k] - y[k - 1]) > gmax * (along[k] - along[k - 1]) + 1e-9) ford[y[k] > y[k - 1] ? k : k - 1] = 0;
-        auto pinned = [&](int k) { return k == 0 || k == n - 1 || ford[k] || br[k]; };
+        auto pinned = [&](int k) { return k == 0 || k == n - 1 || ford[k] || br[k] || app[k]; };
         // Held to the grade; where that would leave it far above or below the land (a climb the way round couldn't spread out: a
         // gorge's wall), steeper instead, a step at a time, rather than on a tall bank or down a deep cut.
         // (A ford the grade can't reach from the next one, a creek's just up from where it joins a river: let go, graded.)
@@ -2378,10 +2637,16 @@ std::shared_ptr<const TrailEdge> ProcWorld::edge(int64_t i, int64_t j, int dir) 
 }
 
 std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
+    // (The worn land's tiles it stands on, made first if they aren't yet: their own cost, not the chunk's (the game makes them ahead).)
+    const auto tw = std::chrono::steady_clock::now();
+    // (and the trails it looks at: from nodes up to two 512 m cells off, their search ~420 m round, on 1 km lattice tiles: ~3 km)
+    prewarmErosion(*this, (double)(cx * kChunk) - 3000, (double)(cz * kChunk) - 3000, (double)(cx * kChunk) + 3064, (double)(cz * kChunk) + 3064);
+    const double tileWait = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tw).count();
     const auto t0 = std::chrono::steady_clock::now();
     const Params& P = *params_;
     auto c = std::make_shared<Chunk>();
     c->cx = cx, c->cz = cz;
+    c->tileMs = tileWait;
     const int64_t gx0 = cx * kChunk, gz0 = cz * kChunk;
     // The channels near the chunk (from its tile), and the smooth fields every 4 m, from 4 m before the chunk to 4 m past it
     // (global lattice points: the same in every chunk).
@@ -2461,6 +2726,8 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
         int8_t bed = 0;        // 1 river or creek bed, 2 a dry wash, 3 trail tread, 4 road tread
         float lat = 0, along = 0;
         bool roadNear = false;
+        bool bridge = false;   // under or by a bridge's deck or its approach: nothing at all grows or lies here
+        double lakeW = -1e9;   // a worn-land lake's level, within its lattice's reach of here
     };
     std::vector<Cell> C((size_t)A * A);
     static const double kBump[PB_COUNT] = {0.85, 1.0, 0.9, 1.4, 0.25};
@@ -2477,6 +2744,7 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
             const double overFloor = h - blend(i, j, [](const Macro& m) { return m.floor; });
             bumpH += (std::fabs(bumpH) - bumpH) * (1 - smoothstep(0.6, 2.5, overFloor));
             h += bumpH;
+            const double preCut = h;  // (the land before the channels' beds: a lake's dam stands back up over a bed cut through it)
             // The channels: each bed, its banks and floor, cut exactly here (the lowest of them: nothing is filled).
             {
                 const double Mc = blend(i, j, [](const Macro& m) { return m.mass; }), Vc = blend(i, j, [](const Macro& m) { return m.vale; });
@@ -2515,6 +2783,12 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
                 if (rules().erosion.on <= 0 && dishAt(L, x, z) < h && lakeOkOf(*this, L)) h = std::min(h, dishAt(L, x, z) + std::max(0.0, bumpH));
             for (const Lake& L : T.lakes)
                 if (rules().erosion.on <= 0 && damAt(L, x, z) > h && lakeOkOf(*this, L)) h = std::max(h, damAt(L, x, z));
+            if (rules().erosion.on > 0)  // (the worn land's lakes: their dams were worn with the land; a channel's bed doesn't cut through one)
+                for (const Lake& Lk : T.lakes)
+                    if (h < preCut && damOn(*this, Lk)) {
+                        const Macro& mn = M[(size_t)std::min(L - 1, (i + 6) >> 2) * L + std::min(L - 1, (j + 6) >> 2)];
+                        h = std::max(h, std::min(preCut, rockDamAt(*this, Lk, x, z, mn.floorNode, mn.floorNode2)));
+                    }
             {
                 double W = -1e9;
                 for (int qa = -1; qa <= 2; qa++)  // (the lattice round it, 4-8 m: is this ground in a lake's valley?)
@@ -2523,9 +2797,22 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
                         W = std::max(W, M[(size_t)la * L + lb].lakeLevel);
                     }
                 bool upstream = false;  // (and this metre itself upstream of that lake's lip)
+                if (rules().erosion.on > 0 && W > -1e8) {  // (the worn land's lakes: this metre nearer the lake's lattice points than the dry ones round it)
+                    const int la = (i + 4) >> 2, lb = (j + 4) >> 2;
+                    const double fu = ((i + 4) & 3) * 0.25, fv = ((j + 4) & 3) * 0.25;
+                    auto in = [&](int qa, int qb) { return M[(size_t)std::min(L - 1, la + qa) * L + std::min(L - 1, lb + qb)].lakeLevel > -1e8 ? 1.0 : 0.0; };
+                    upstream = (in(0, 0) * (1 - fu) + in(1, 0) * fu) * (1 - fv) + (in(0, 1) * (1 - fu) + in(1, 1) * fu) * fv >= 0.5;
+                }
                 for (const Lake& Lk : T.lakes)
+                    if (rules().erosion.on <= 0)
                     if (std::fabs(Lk.kind == 1 ? lakeLevelOf(*this, Lk) - W : Lk.W - W) < 1e-6)
                         upstream |= Lk.kind == 1 || ((x - Lk.qx) * Lk.fx + (z - Lk.qz) * Lk.fz + damBow(Lk, std::fabs(-(x - Lk.qx) * Lk.fz + (z - Lk.qz) * Lk.fx)) < -0.5 && ((Lk.kind != 2 && Lk.kind != 4) || dishAt(Lk, x, z) < Lk.W + 0.5));  // (a tarn or pond: on its floor, exactly)
+                if (!upstream && rules().erosion.on > 0 && W > -1e8 && h < W + 0.05) {
+                    // (Just off a worn-land lake (within its lattice's reach) and under its level: a channel's bed or a bump's hollow
+                    // the 4 m lattice didn't see. Built up to the shore, so the water never stands over the land beside it.)
+                    h = W + 0.05, cl.water = -1e9, cl.fx = cl.fz = 0, cl.keep = 1, cl.bed = cl.bed == 1 ? 5 : cl.bed;
+                }
+                if (rules().erosion.on > 0) cl.lakeW = W;
                 if (!upstream) W = -1e9;
                 if (W > -1e8) {
                     if (h < W - 0.02) {
@@ -2535,7 +2822,10 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
                             cl.keep = 1, cl.bed = 0;
                         }
                     }
-                    if (cl.water < W && h < W + 0.9) cl.bed = cl.bed ? cl.bed : 5, cl.keep = 1;  // (the shore)
+                    // (the shore: a gravel or sand beach where it's gentle; where the land comes down steep to the water, the land as it is)
+                    const int sa = std::min(L - 2, (i + 4) >> 2), sb = std::min(L - 2, (j + 4) >> 2);
+                    const double sl = std::max(std::fabs(M[(size_t)(sa + 1) * L + sb].h - M[(size_t)sa * L + sb].h), std::fabs(M[(size_t)sa * L + sb + 1].h - M[(size_t)sa * L + sb].h)) / 4;
+                    if (cl.water < W && h < W + 0.9 && (rules().erosion.on <= 0 || sl < 0.3)) cl.bed = cl.bed ? cl.bed : 5, cl.keep = 1;
                 }
             }
             // The trails: each one's tread, the land easing into it over a few metres (as wide as the tread's cut or fill is deep, about:
@@ -2604,6 +2894,14 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
                     if (cl.water > -1e8 && h >= cl.water - 0.05) cl.water = -1e9, cl.fx = cl.fz = 0;  // (the bank it climbs out on)
                 }
             }
+            for (const auto& ep : edges)  // (a bridge's span and approaches, 8 m past each end and 5 m either side of the deck: clear)
+                for (const TrailEdge::Span& sp : ep->bridges) {
+                    const double vx = sp.bx - sp.ax, vz = sp.bz - sp.az, len = std::sqrt(vx * vx + vz * vz);
+                    if (len < 1e-6) continue;
+                    const double ux = vx / len, uz = vz / len, rx = x - sp.ax, rz = z - sp.az;
+                    const double along = rx * ux + rz * uz, across = std::fabs(-rx * uz + rz * ux);
+                    if (along > -8 && along < len + 8 && across < ep->half() + 5) cl.keep = 1, cl.bridge = true;
+                }
             for (const Plaza& pz : plazas) {  // (level ground for the place's buildings, easing into the land)
                 const double d = std::sqrt(sqr(x - pz.x) + sqr(z - pz.z));
                 const double bw = std::min(80.0, std::max(14.0, rules().batter * std::fabs(pz.h - h)));  // (as the trails' earthworks)
@@ -2611,6 +2909,12 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
                 h += (pz.h - h) * smoothstep(pz.r + bw, pz.r, d);
                 if (d < pz.r + 3) cl.keep = 1, cl.water = -1e9, cl.fx = cl.fz = 0;
                 if (pz.lot && d < pz.r - 1) cl.bed = 4;
+            }
+            // (By a worn-land lake, after the trails and places have had their way: water where the ground's under its level, else
+            // the ground never under it beside the water.)
+            if (cl.lakeW > -1e8 && h < cl.lakeW - 0.02 && cl.water < cl.lakeW) {
+                if (cl.bed == 3 || cl.bed == 4) cl.water = cl.lakeW, cl.fx = cl.fz = 0;  // (a tread into the shallows)
+                else h = cl.lakeW + 0.05;
             }
             cl.h = h;
             int b1 = 0, b2 = -1;
@@ -2808,7 +3112,7 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
         int i, j;
         cellOf(fx, fz, i, j);
         const Cell& cl = CC(i, j);
-        if (cl.water < -1e8 || cl.water - cl.h > 0.35 || cl.roadNear || cl.lat != 0) continue;
+        if (cl.water < -1e8 || cl.water - cl.h > 0.35 || cl.roadNear || cl.lat != 0 || cl.bridge) continue;
         const double rad = 0.3 + 0.35 * rr();
         RockSpec r;
         r.x = (float)fx, r.z = (float)fz, r.rx = (float)rad, r.ry = (float)(rad * 0.6), r.rz = (float)(rad * 0.85), r.top = (float)(rad * 0.45);
@@ -2882,7 +3186,7 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
         bool wetSide = false;
         for (int a = -3; a <= 3 && !wetSide; a += 3)
             for (int q = -3; q <= 3 && !wetSide; q += 3) wetSide = i + a >= -1 && i + a <= 64 && j + q >= -1 && j + q <= 64 && CC(i + a, j + q).water > -1e8;
-        if (CC(i, j).keep && !wetSide) continue;
+        if ((CC(i, j).keep && !wetSide) || CC(i, j).bridge) continue;
         BushSpec s;
         s.x = (float)fx, s.z = (float)fz, s.u = (float)rr(), s.tint = (float)(0.75 + 0.45 * rr());
         s.habitat = (uint8_t)(wetSide ? HAB_WETLAND : b == PB_BADLANDS || b == PB_DUNES ? HAB_DESERT : k >= baseBush ? HAB_FOREST : b == PB_MOUNTAINS ? HAB_UPLAND : b == PB_FOREST ? HAB_FOREST : HAB_MEADOW);
@@ -3289,7 +3593,9 @@ void clearChunkCache() {
 double farHeight(const World& w, double x, double z) {
     const double half = w.halfSize();
     if (std::fabs(x) <= half && std::fabs(z) <= half) return w.height(x, z);
-    return ProcWorld::forSeed(w.proc.seed).groundHeight(x + (double)w.proc.ox, z + (double)w.proc.oz);  // (its valleys cut, as the window's)
+    const ProcWorld& G = ProcWorld::forSeed(w.proc.seed);
+    const double gx = x + (double)w.proc.ox, gz = z + (double)w.proc.oz;
+    return G.groundHeight(gx, gz, G.macroCached(gx, gz));  // (its valleys cut, as the window's; worn where its tiles are made)
 }
 
 void shiftSim(Sim& sim, const V3& d) {
@@ -3343,6 +3649,11 @@ void World::buildProcedural() {
     const int64_t cx0 = floorDiv(gx0, kChunk), cz0 = floorDiv(gz0, kChunk);
     const int cn = (hN + kChunk - 1) / kChunk;
     std::vector<std::shared_ptr<const Chunk>> ch((size_t)cn * cn);
+    {
+        // (The worn land's tiles first, a few at once: the window and what its trails look at round it.)
+        loadprof::Scope lp("proc.erosion");
+        prewarmErosion(G, (double)gx0 - 3000, (double)gz0 - 3000, (double)gx0 + 2 * half + 3000, (double)gz0 + 2 * half + 3000);
+    }
     {
         loadprof::Scope lp("proc.chunks");
         parallelRows(cn * cn, [&](int k) { ch[k] = G.chunk(cx0 + k / cn, cz0 + k % cn); }, 4);
@@ -3441,12 +3752,15 @@ void World::buildProcedural() {
         spawn = V3(0, height(0, 0), 0);
         spawnYaw = 0;
     }
+    // The tiles the next windows will want (it slides kSlide at a time), worn in the background, before they're needed.
+    prefetchErosion(G, (double)gx0 - kSlide - 3000, (double)gz0 - kSlide - 3000, (double)gx0 + 2 * half + kSlide + 3000, (double)gz0 + 2 * half + kSlide + 3000);
 }
 
 namespace proc {
 // (The far forest's hook: the tree rule of makeChunk's "Trees, by the rules", the same sums at one point. The chunks' own cells also
 // rule out sand, snow, bare rock and trail paint; on far land that leaves the rock bands of steep alpine slopes, counted here as the
 // share of the slope they take.)
+static constexpr double kTreeRough = 1.5;  // (fitted: forest/far-field)
 ProcWorld::TreeCover ProcWorld::treeCover(double gx, double gz, const Macro& m, double h, double slope) const {
     const Params& P = *params_;
     const Rules& RU = rules();
@@ -3474,6 +3788,13 @@ ProcWorld::TreeCover ProcWorld::treeCover(double gx, double gz, const Macro& m, 
     dens *= 1 - smoothstep(tl - AR.treeLineFade, tl, h) * 0.85;
     if (slope > AR.rockBandSlope && m.w[PB_MOUNTAINS] > 0) dens *= 1 - AR.rockBandWidth * m.w[PB_MOUNTAINS];
     if (m.w[PB_DUNES] > 0.5) dens *= 0.2;  // (sand: the chunks' trees skip it)
+    if (rules().erosion.on > 0) {  // (the worn land's gullies and spurs, under the field's spacing: their steep sides grow fewer (tiles made only: never waits))
+        const double e = 8;
+        const double gxE = proc::erosionAt(*this, gx + e, gz, false) - proc::erosionAt(*this, gx - e, gz, false);
+        const double gzE = proc::erosionAt(*this, gx, gz + e, false) - proc::erosionAt(*this, gx, gz - e, false);
+        const double rough = std::sqrt(gxE * gxE + gzE * gzE) / (2 * e);
+        dens *= std::max(0.0, 1 - kTreeRough * rough);
+    }
     tc.triedPerHa = dens, tc.conifer = conifer, tc.snag = snag;
     tc.shrink = 1 - (1 - 0.4 * (m.w[PB_BADLANDS] + m.w[PB_DUNES])) * (1 - AR.krummholz * smoothstep(tl - AR.treeLineFade, tl, h));
     return tc;
