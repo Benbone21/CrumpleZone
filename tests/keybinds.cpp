@@ -129,6 +129,18 @@ SCENARIO(keysSettings, "keybinds/settings", "Bindings round-trip through setting
     twice.loadSetting("key_brake", SC_W);
     twice.sanitize();
     ctx.check("two actions on one key are thrown out", twice.isDefault());
+
+    Keybinds legacy;  // (a file from before the parking brake had P: pause on P, the brake moved aside to F7)
+    for (int k = 0; k < KA_COUNT; k++) legacy.loadSetting(settingsName((KeyAction)k), Keybinds().saveValue((KeyAction)k));
+    legacy.loadSetting("key_pause", SC_P);
+    legacy.loadSetting("key_parkbrake", 64);
+    legacy.sanitize();
+    ctx.check("an old file's parking brake comes back to P, and pause to F6", legacy.key(KA_PARK_BRAKE) == SC_P && legacy.key(KA_PAUSE) == SC_F6);
+    Keybinds chosen;  // (a player who put pause on P after the brake had it keeps theirs)
+    chosen.loadSetting("key_parkbrake", SC_K);
+    chosen.loadSetting("key_pause", SC_P);
+    chosen.sanitize();
+    ctx.check("a parking brake the player put on another key stays there", chosen.key(KA_PARK_BRAKE) == SC_K && chosen.key(KA_PAUSE) == SC_P);
 }
 
 SCENARIO(keysTable, "keybinds/table", "Every keyboard action is in the table once, with a label, a settings name and a group; no clashes among the defaults") {

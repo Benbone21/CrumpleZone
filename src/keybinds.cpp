@@ -276,6 +276,13 @@ bool Keybinds::loadSetting(const std::string& name, int value) {
 
 void Keybinds::sanitize() {
     auto usable = [&](int a) { return (code[a] == 0 && loaded[a]) || bindable(code[a]) || (a == KA_MENU && code[a] == SC_ESCAPE); };
+    // A file saved before the parking brake had P (pause was on P): pause sat on P, so the brake went aside to an
+    // F key. Both go to today's defaults: the parking brake on P, pause on F6.
+    if (loaded[KA_PAUSE] && code[KA_PAUSE] == SC_P && !shift[KA_PAUSE] && (!loaded[KA_PARK_BRAKE] || (code[KA_PARK_BRAKE] >= 64 && code[KA_PARK_BRAKE] <= 66 && !shift[KA_PARK_BRAKE]))) {
+        code[KA_PAUSE] = kInfo[KA_PAUSE].def, shift[KA_PAUSE] = kInfo[KA_PAUSE].shift;
+        code[KA_PARK_BRAKE] = kInfo[KA_PARK_BRAKE].def, shift[KA_PARK_BRAKE] = kInfo[KA_PARK_BRAKE].shift;
+        loaded[KA_PARK_BRAKE] = true;
+    }
     // An action added since the file was saved (its key is a default) whose key a saved binding took moves aside
     // to a free F key, rather than throw away every binding.
     for (int a = 0; a < KA_COUNT; a++) {
