@@ -505,7 +505,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         bronco.engineLen = 0.62;
         bronco.engineWid = 0.66;
         bronco.engineHgt = 0.62;
-        bronco.gearboxLen = 0.85;
+        bronco.gearboxLen = 0.93;  // (the long 10R80 and the transfer case: its tail where it was before the engine came forward)
         bronco.bodyStiffness = 1.2;
         bronco.frameStiffness = 0.30;  // ladder frame: twists more than a unibody
         bronco.bodyStrength = 1.0;     // high-strength steel body
@@ -1081,7 +1081,10 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         tacoma.doorLength = 1.05;
         tacoma.bodyWidth.clear();
         // 4,445-4,540 lb (2,016-2,059 kg) by the listings: ~2,040 kg, about 55/45 empty.
-        tacoma.structureMass = 450;  // cab and bed shells (the frame is its own, below)
+        // Cab and bed shells (the frame is its own, below). Spread over the lattice by height, the
+        // shell put ~180 kg in the bed, half again what a composite bed weighs: 40 kg of it is the
+        // cab's floor and firewall instead (the item below).
+        tacoma.structureMass = 410;
         tacoma.panelMass = 165;
         tacoma.items = {
             {"radiator", 18, 2.30, 0.85, 0},                {"battery", 20, 2.05, 1.00, -0.55},
@@ -1095,20 +1098,20 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
             {"front bumper", 20, 2.62, 0.68, 0},             {"rear step bumper and hitch", 30, -2.62, 0.62, 0},
             {"spare wheel under the bed", 34, -2.25, 0.50, 0}, {"composite bed liner and floor", 25, -1.75, 0.98, 0},
             // (The cab is the dense steel; the bed is a light box.)
-            {"cab floor, firewall and pillars", 100, 0.90, 0.75, 0}, {"core support and inner fenders", 65, 2.20, 0.85, 0},
+            {"cab floor, firewall and pillars", 140, 0.90, 0.75, 0}, {"core support and inner fenders", 65, 2.20, 0.85, 0},
             {"A/C, alternator and power steering", 28, 2.15, 0.85, 0.1},  // (on the block's front: they move with it)
         };
         tacoma.engineMass = 167;   // aluminum 2GR-FKS
         tacoma.gearboxMass = 110;  // 6-speed auto and transfer case
         // (Its block over the front axle, the diff under the sump, as on the real truck: 3rd-gen
         // Tacomas weigh ~56% on the front. Was 1.58, 24 cm behind the axle, and it came out 52%.)
-        tacoma.engineX = 1.80;
+        tacoma.engineX = 1.78;
         tacoma.engineY = 0.92;
         tacoma.engineZ = 0;
         tacoma.engineLen = 0.60;
         tacoma.engineWid = 0.66;
         tacoma.engineHgt = 0.62;
-        tacoma.gearboxLen = 0.90;
+        tacoma.gearboxLen = 1.00;  // (AC60F ~0.70 m and the transfer case ~0.30: its tail barely moved with the engine, the rear shaft the length it was)
         tacoma.induction = VehicleSpec::NATURAL;
         tacoma.displacement = 3.5;
         tacoma.cylinders = 6;
@@ -1252,15 +1255,15 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         blazer.engineMass = 240;   // cast-iron small block with its accessories
         blazer.gearboxMass = 110;  // SM465 (~70 kg, cast iron) and the NP205 (~40 kg)
         blazer.transverse = false;
-        // (The small block's front over the front axle's leaves and its water pump just behind the
-        // radiator, as on the real K5. Was 1.35, the radiator 20 cm further back than it's drawn.)
-        blazer.engineX = 1.50;
-        blazer.engineY = 1.02;
+        // (The small block's front over the front axle and its water pump just behind the radiator, as
+        // on the real K5: 12 cm forward. Was 1.35, the radiator 20 cm further back than it's drawn.)
+        blazer.engineX = 1.47;
+        blazer.engineY = 0.97;  // (moved forward under the falling hood line, it sits 5 cm lower: the air cleaner under the hood)
         blazer.engineZ = 0;
         blazer.engineLen = 0.68;
         blazer.engineWid = 0.66;
         blazer.engineHgt = 0.64;
-        blazer.gearboxLen = 0.90;
+        blazer.gearboxLen = 0.93;  // (SM465 ~0.6 m and the NP205)
         blazer.induction = VehicleSpec::NATURAL;
         blazer.turboLag = 0;
         blazer.displacement = 5.7;
