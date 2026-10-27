@@ -77,9 +77,9 @@ uniform mat3 uSkyRot;                        // world direction -> star sphere
 // Vehicle headlamps (lights.h): spot lights, two per car for the nearest few cars.
 uniform int uLampN;
 uniform vec4 uFire;                          // a camp fire's point light: position, strength (0: none; the main menu's scene)
-uniform vec4 uLampPos[16];                   // lens center, beam (1 low, 2 high)
-uniform vec4 uLampDir[16];                   // beam axis (the car's forward), range (m)
-uniform vec4 uLampUp[16];                    // the car's up, peak intensity
+uniform vec4 uLampPos[20];                   // lens center, kind (1 low beam, 2 high beam, 3 tail and brake lamps, 5 reversing lamps)
+uniform vec4 uLampDir[20];                   // beam axis (the car's forward), range (m)
+uniform vec4 uLampUp[20];                    // the car's up, peak intensity
 float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 // Ordered dither (4x4 Bayer) at a pixel, 0..1: a fade of f drops the pixels whose threshold is under f (screen door).
 const int kBayer[16] = int[](0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5);
@@ -235,18 +235,31 @@ vec3 ambientAt(vec3 n){ return mix(uAmbGround, uAmbSky, n.y * 0.5 + 0.5); }
 vec3 lampLight(vec3 p, vec3 n, vec3 V, float specP, float wrap, out vec3 spec){
   vec3 E = vec3(0.0);
   spec = vec3(0.0);
+  const vec3 tint = vec3(1.0, 0.95, 0.86);  // warm white
   for (int i = 0; i < uLampN; i++) {
     vec3 L = uLampPos[i].xyz - p;
     float d2 = dot(L, L), range = uLampDir[i].w;
     if (d2 > range * range) continue;
     vec3 f = uLampDir[i].xyz, up = uLampUp[i].xyz;
+    if (uLampPos[i].w > 2.5) {  // tail, brake and reversing lamps: a soft glow over the half-space behind the car
+      vec3 Lr = L * inversesqrt(d2);
+      float hemi = smoothstep(-0.15, 0.6, dot(Lr, f));
+      float wr = clamp(1.0 - d2 / (range * range), 0.0, 1.0);
+      float er = uLampUp[i].w * hemi * wr * wr / (d2 + 0.5);
+      float Er = max(dot(n, Lr) + 0.3, 0.0) * (1.0 - wrap) / 1.3 + wrap * 0.6;
+      Er = er * Er * 5.0 / (er * Er + 5.0);
+      vec3 lc = (uLampPos[i].w > 4.5 ? vec3(0.80, 0.90, 1.0) : vec3(1.0, 0.05, 0.02)) / tint;
+      E += lc * Er;
+      spec += lc * (pow(max(dot(n, normalize(Lr + V)), 0.0), specP) * Er);
+      continue;
+    }
     float fz = -dot(L, f);
     if (fz < 0.3) continue;  // behind the lens, or the car's own bumper just ahead of it
     float x = dot(L, cross(up, f)) / fz, y = -dot(L, up) / fz;  // tangents right of and above the beam axis
     // Low beam: a flat cutoff just below level (so it doesn't dazzle), spread wide. High
     // beam: a long round hot spot. Both are dimmer on the ground close in (steep below
     // the axis): that's what keeps the pool even down the road.
-    float across = 0.45 * smoothstep(1.1, 0.25, abs(x)) + 0.55 * exp(-x * x * 18.0);
+    float across = 0.40 * exp(-x * x * 2.6) + 0.60 * exp(-x * x * 20.0);  // a wide soft skirt round a hotter core
     float near = min(1.0, pow(0.035 / max(abs(y), 1e-3), 3.0));
     float prof = uLampPos[i].w > 1.5 ? (y < 0.0 ? near : exp(-y * y * 300.0) + 0.15 * smoothstep(0.25, 0.0, y))
                                      : smoothstep(0.004, -0.012, y) * near;
@@ -259,7 +272,6 @@ vec3 lampLight(vec3 p, vec3 n, vec3 V, float specP, float wrap, out vec3 spec){
     E += vec3(Ei);
     spec += vec3(pow(max(dot(n, normalize(Ln + V)), 0.0), specP) * Ei);
   }
-  const vec3 tint = vec3(1.0, 0.95, 0.86);  // warm white
   if (uFire.w > 0.0) {  // the camp fire: an orange point light that flickers (its strength does)
     vec3 L = uFire.xyz - p;
     float d2 = dot(L, L);
@@ -1767,6 +1779,25 @@ void main(){
   oCol = vec4(applyFog(col, vPos), a);
 })";
 
+// The lamp lenses' glow: round sprites added on in the HDR target (so the bloom picks them up).
+const char* kGlowFS = R"(#version 330 core
+in vec2 vUv; in float vMode; in vec4 vCol; in vec3 vPos;
+uniform vec3 uCam;
+out vec4 oCol;
+void main(){
+  if (vMode > 0.5) {  // a beam's haze: a thin cone, brightest where you look through the most of it, fading with distance
+    vec3 N = normalize(cross(dFdx(vPos), dFdy(vPos)));
+    float facing = abs(dot(N, normalize(uCam - vPos)));
+    float a = facing * facing * pow(1.0 - vUv.x, 2.2) * smoothstep(0.0, 0.1, vUv.x);
+    oCol = vec4(vCol.rgb * a, 1.0);
+    return;
+  }
+  float r2 = dot(vUv, vUv);
+  if (r2 > 1.0) discard;
+  float f = 1.0 - r2;
+  oCol = vec4(vCol.rgb * (3.0 * exp(-r2 * 14.0) + 0.45 * f * f * f), 1.0);
+})";
+
 const char* kHudVS = R"(#version 330 core
 layout(location=0) in vec2 aPos;
 layout(location=1) in vec2 aUv;
@@ -2707,6 +2738,7 @@ bool Renderer::init(const World& world, std::string& err) {
         if (!progIcon || !progIconMesh) std::fprintf(stderr, "icon shaders: %s\n", ierr.c_str()), progIcon = progIconMesh = 0;
     }
     progFx = linkProgram(kFxVS, header + kCommonFS + kFxFSBody, err);
+    progGlow = linkProgram(kFxVS, kGlowFS, err);
     progAO = linkProgram(kPostVS, kAOFS, err);
     progDown = linkProgram(kPostVS, kDownFS, err);
     progUp = linkProgram(kPostVS, kUpFS, err);
@@ -5340,6 +5372,84 @@ int Renderer::skinLod(const CarSlot& slot) const {
     return L;
 }
 
+// Glow sprites at the lit lamps: headlamps (seen from the front), tail and brake lamps (from behind) and the
+// reversing lamps. Brighter the more you look into them; a lamp that's smashed or put out gives none.
+void Renderer::buildLampGlow(const Sim& sim, const V3& eye, std::vector<Vtx>& out) {
+    out.clear();
+    const float night = daylight.night;
+    auto quad = [&](const V3& c, double R, const V3& e, const float rgb[3]) {
+        const V3 cc = c + e * std::min(0.12, 0.3 * len(eye - c));
+        V3 r = cross(V3(0, 1, 0), e);
+        if (len(r) < 1e-4) r = V3(1, 0, 0);
+        r = norm(r);
+        const V3 u = cross(e, r);
+        const float col[4] = {rgb[0], rgb[1], rgb[2], 1};
+        const V3 q[4] = {cc - r * R - u * R, cc + r * R - u * R, cc + r * R + u * R, cc - r * R + u * R};
+        static const float uv[4][2] = {{-1, -1}, {1, -1}, {1, 1}, {-1, 1}};
+        static const int idx[6] = {0, 1, 2, 0, 2, 3};
+        for (int k : idx)
+            out.push_back(Vtx{{(float)q[k].x, (float)q[k].y, (float)q[k].z}, {uv[k][0], uv[k][1], 0}, {col[0], col[1], col[2], col[3]}});
+    };
+    for (size_t ci = 0; ci < sim.cars.size() && ci < carLampState.size(); ci++) {
+        const CarLamps& lp = carLampState[ci];
+        if (!lp.placed || !carShown(ci)) continue;
+        const Car& car = sim.cars[ci];
+        const float brake = (float)std::max(car.brake, car.handbrake * 0.6);
+        const double dist = len(lp.headPos[0] - eye);
+        if (dist > 500) continue;
+        auto emit = [&](const V3& c, const V3& axis, float k, const float tint[3], double size) {
+            if (k <= 0.01f) return;
+            const V3 e = norm(eye - c);
+            const double facing = dot(e, axis);
+            const float front = (float)smoothstep(-0.05, 0.55, facing);
+            if (front <= 0.001f) return;
+            const float glare = (float)std::pow(std::max(facing, 0.0), 6.0);  // looking straight into it
+            const double d = len(eye - c);
+            const double R = size * (1.0 + 1.6 * glare) + d * 0.004;
+            const float a = k * front * (0.6f + 1.4f * glare) * (float)std::min(1.0, 0.45 + 70.0 / (d * d + 70.0));
+            const float rgb[3] = {tint[0] * a, tint[1] * a, tint[2] * a};
+            quad(c, R, e, rgb);
+        };
+        // Beam haze (medium quality and up; dusk and night): a thin cone out of each lit headlamp.
+        if (lp.beam > 0 && settings.bloom && night > 0.2f && dist < 120) {
+            const V3 right = norm(cross(lp.fwd, lp.up));
+            const bool hi = lp.beam == 2;
+            const double Lc = hi ? 60 : 32, rh = hi ? 0.11 : 0.28, rv = hi ? 0.05 : 0.035, drop = hi ? -0.01 : 0.0;  // (kept off the ground: a cone cutting the road shows its edge)
+            const float k = (hi ? 0.06f : 0.045f) * night;
+            for (int s = 0; s < 2; s++) {
+                if (lp.head[s] < 0.5f) continue;
+                const V3 c = lp.headPos[s] + lp.fwd * 0.1;
+                const float col[4] = {k * 1.0f, k * 0.90f, k * 0.76f, 1};
+                const int N = 14;
+                V3 ring[N];
+                for (int j = 0; j < N; j++) {
+                    const double t = j * 2 * M_PI / N;
+                    ring[j] = c + lp.fwd * Lc + (right * (std::cos(t) * rh) + lp.up * (std::sin(t) * rv - drop)) * Lc;
+                }
+                auto vtx = [&](const V3& p, float along) {
+                    out.push_back(Vtx{{(float)p.x, (float)p.y, (float)p.z}, {along, 0, 1}, {col[0], col[1], col[2], col[3]}});
+                };
+                for (int j = 0; j < N; j++) {
+                    const V3 &a = ring[j], &b = ring[(j + 1) % N];
+                    vtx(c, 0), vtx(a, 1), vtx(b, 1);
+                }
+            }
+        }
+        static const float kHead[3] = {1.0f, 0.90f, 0.74f}, kRed[3] = {1.0f, 0.05f, 0.02f}, kWhite[3] = {0.85f, 0.93f, 1.0f};
+        if (lp.beam > 0)
+            for (int s = 0; s < 2; s++)
+                if (lp.head[s] > 0.5f) emit(lp.headPos[s] + lp.fwd * 0.04, lp.fwd, lp.beam == 2 ? 1.6f : 1.0f, kHead, 0.20);
+        const V3 back = lp.fwd * -1.0;
+        const V3 mid = (lp.tailPos[0] + lp.tailPos[1]) * 0.5;
+        for (int s = 0; s < 2; s++) {
+            if (lp.tail[s] < 0.5f) continue;
+            const float k = (lp.beam ? 0.5f : 0.0f) + 3.5f * brake;
+            emit(lp.tailPos[s] - lp.fwd * 0.04, back, k * (0.6f + 0.4f * night), kRed, 0.12 + 0.10 * brake);
+            if (car.gear < 0) emit(lp.tailPos[s] * 0.6 + mid * 0.4 - lp.fwd * 0.04 - lp.up * 0.1, back, 1.3f, kWhite, 0.12);
+        }
+    }
+}
+
 void Renderer::drawCarBodies(const Sim& sim, GLuint prog, bool glassPass, const std::function<void(GLuint)>& use) {
     const bool bodyPass = prog == progCar;
     GLuint current = prog;
@@ -5720,8 +5830,43 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
                 // Peak intensities: a low beam lights the road about evenly out to ~30 m,
                 // a high beam reaches past 100 m.
                 U[0] = (float)lp.up.x, U[1] = (float)lp.up.y, U[2] = (float)lp.up.z;
-                U[3] = (lp.beam == 2 ? 45000.0f : 20000.0f) * lp.head[s];
+                U[3] = (lp.beam == 2 ? 28000.0f : 14000.0f) * lp.head[s];
                 lampCount++;
+            }
+        }
+        // The rear lamps light the ground behind a car a little, red (and white in reverse): one soft light
+        // each between the tail lamps, for the nearest few cars, at dusk and night only (by day they'd not show).
+        if (daylight.night > 0.08f) {
+            std::vector<std::pair<double, int>> rear;
+            for (size_t ci = 0; ci < sim.cars.size() && ci < carLampState.size(); ci++) {
+                const CarLamps& lp = carLampState[ci];
+                const Car& car = sim.cars[ci];
+                const float brake = (float)std::max(car.brake, car.handbrake * 0.6);
+                if (!lp.placed || lp.tail[0] + lp.tail[1] < 0.1f || (lp.beam == 0 && brake < 0.05f && car.gear >= 0)) continue;
+                const double d = len(lp.tailPos[0] - view.eye);
+                if (d < 60) rear.push_back({d, (int)ci});
+            }
+            std::sort(rear.begin(), rear.end());
+            int cars = 0;
+            for (const auto& r : rear) {
+                const CarLamps& lp = carLampState[r.second];
+                const Car& car = sim.cars[r.second];
+                const float brake = (float)std::max(car.brake, car.handbrake * 0.6);
+                const float ok = 0.5f * (lp.tail[0] + lp.tail[1]);
+                const V3 mid = (lp.tailPos[0] + lp.tailPos[1]) * 0.5 - lp.fwd * 0.08;
+                for (int kind = 0; kind < 2 && lampCount < kMaxLamps; kind++) {
+                    const bool rev = kind == 1;
+                    if (rev && car.gear >= 0) continue;
+                    float* P = lampPos + lampCount * 4;
+                    float* D = lampDir + lampCount * 4;
+                    float* U = lampUp + lampCount * 4;
+                    P[0] = (float)mid.x, P[1] = (float)mid.y, P[2] = (float)mid.z, P[3] = rev ? 5.0f : 3.0f;
+                    D[0] = (float)lp.fwd.x, D[1] = (float)lp.fwd.y, D[2] = (float)lp.fwd.z, D[3] = rev ? 14.0f : 16.0f;
+                    U[0] = (float)lp.up.x, U[1] = (float)lp.up.y, U[2] = (float)lp.up.z;
+                    U[3] = rev ? 9.0f * ok : (lp.beam ? 2.5f : 0.0f) * ok + 14.0f * brake * ok;
+                    lampCount++;
+                }
+                if (++cars >= 4) break;
             }
         }
     }
@@ -6345,6 +6490,25 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         drawCarBodies(sim, progCar, true, setLighting);
         DepthMask(1);
         Disable(GL_BLEND);
+    }
+
+    // Lamp glow: sprites added on over the lit lamps.
+    if (progGlow && debug != DEBUG_PARTS && debug != DEBUG_BEAMS_ONLY) {
+        buildLampGlow(sim, view.eye, glowVerts);
+        if (!glowVerts.empty()) {
+            UseProgram(progGlow);
+            uniformM4(progGlow, "uVP", vp);
+            uniformV3(progGlow, "uCam", view.eye);
+            BindBuffer(GL_ARRAY_BUFFER, fxVbo);
+            BufferData(GL_ARRAY_BUFFER, glowVerts.size() * sizeof(Vtx), glowVerts.data(), GL_STREAM_DRAW);
+            BindVertexArray(fxVao);
+            Enable(GL_BLEND);
+            BlendFunc(GL_ONE, GL_ONE);
+            DepthMask(0);
+            DrawArrays(GL_TRIANGLES, 0, (GLsizei)glowVerts.size());
+            DepthMask(1);
+            Disable(GL_BLEND);
+        }
     }
 
     // Hurt parts glowing through what hides them: only where something's in front (depth greater), added on.

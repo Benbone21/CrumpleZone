@@ -4927,6 +4927,8 @@ int main(int argc, char** argv) {
             left = (opt.script == "left" || donut) && frame > 90;
             hb = donut && frame > 150 && frame < 175;
             down = right = false;
+            if (opt.script == "brake") up = false, hb = frame > 30;                   // (screenshots of the brake lamps: the handbrake on)
+            if (opt.script == "reverse") up = false, down = frame > 30 && frame < 75;  // (the reversing lamps: a short back-up)
             if (donut) sim.cars[sim.player].tractionControl = false;
             if (opt.script == "pilot" && frame == 20) {  // screenshot: autopilot to the halfway hut
                 const std::vector<Place> places = pilotPlaces(sim, net);

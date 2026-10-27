@@ -235,7 +235,7 @@ private:
     };
 
     static const int kBloomLevels = 6;
-    GLuint progLit = 0, progDepth = 0, progLine = 0, progSky = 0, progHud = 0, progFx = 0, progCar = 0;
+    GLuint progLit = 0, progDepth = 0, progLine = 0, progSky = 0, progHud = 0, progFx = 0, progCar = 0, progGlow = 0;
     static const int kCarShells = 7;        // body shells (bodyshell.cpp: 0 the lattice body, 1..6 sculpted)
     GLuint progCarShell[kCarShells] = {};   // the car body shader built for each (progCar: the lattice body's)
     GLuint progTerrain = 0;                 // the ground shader in use this frame
@@ -491,11 +491,12 @@ public:
 private:
     std::vector<CarLamps> carLampState;  // per car this frame (prepareCars)
     // The headlamps lit as spot lights this frame (the nearest cars'), for the shaders.
-    static const int kMaxLamps = 16;
+    static const int kMaxLamps = 20;
     int lampCount = 0;
     float lampPos[kMaxLamps * 4], lampDir[kMaxLamps * 4], lampUp[kMaxLamps * 4];
     std::vector<std::pair<const void*, GLuint>> templateVbos;
-    std::vector<Vtx> partVerts, lineVerts, fxVerts;
+    std::vector<Vtx> partVerts, lineVerts, fxVerts, glowVerts;
+    void buildLampGlow(const Sim& sim, const V3& eye, std::vector<Vtx>& out);  // the lamps' glow sprites (lights.h)
     std::vector<float> hudVerts;
     struct IconDraw {
         std::string key;
