@@ -63,15 +63,38 @@ alpine_heat_shift = 100           # m: in the coldest country the alpine comes t
 
 [terrain.knolls]
 knoll_size = 90                   # m: the rolling knolls' size (the land's lumps, after the Backcountry's)
-knoll_height = 22                 # m: ...and their height, top to hollow, about
+knoll_height = 14                 # m: ...and their height, top to hollow, about
 hill_size = 170                   # m: the hills' size
-hill_height = 30                  # m: ...and their height
+hill_height = 22                  # m: ...and their height
 knob_size = 85                    # m: the rocky knobs' size (sharp-crested)
-knob_height = 16                  # m: ...and their height
+knob_height = 10                  # m: ...and their height
 floor_clear = 8                   # m over a channel's level where they're whole (lower they fade: valley floors stay at their water)
 channel_clear = 30                # m: within this of a creek's or river's bank they only rise
 desert = 0.25                     # 0..1: how much of them the dunes and badlands keep
-mountains = 0.8                   # 0..1: ...and the alpine (it has its own crags)
+mountains = 0.5                   # 0..1: ...and the alpine (it has its own crags)
+
+[rocks.slope]
+scree_from = 0.35                 # rise over run: slopes steeper than this take extra rocks (scree, outcrops)...
+scree_per_ha = 45                 # ...this many a hectare tried at cliff_from, fewer down to none at scree_from
+scree_size = 1.3                  # m: their radius at cliff_from (0.5 at scree_from), give or take a half
+cliff_from = 0.9                  # rise over run: steeper than this the face is a rock wall (big slabs laid along it and sunk in)...
+cliff_full = 1.3                  # ...wholly covered from here
+cliff_per_ha = 130                # slabs tried a hectare of rock wall (packed: they overlap)
+cliff_size = 3.2                  # m: a slab's radius across the face, give or take a third (its thickness about a third of it)
+base_reach = 20                   # m: below a rock wall, a boulder field this far out from its foot...
+base_per_ha = 70                  # ...this many a hectare tried, the biggest nearest the wall
+desert = 0.8                      # 0..1: how much of them the badlands and dunes keep (rounder rock)
+lowland = 0.6                     # 0..1: ...and the meadows and woods (the alpine keeps them all)
+
+[scatter]
+rock_rate = 1.6                   # the loose rocks tried, times the old scatter's (the Backcountry's ~11 a hectare)
+cluster_share = 0.3               # 0..1: of those placed, this share are a cluster's middle: bigger, with smaller ones round it...
+cluster_rocks = 3                 # ...about this many
+logs_per_ha = 1.4                 # fallen logs a hectare tried in the woods (the meadows' groves half that)
+bush_thicket = 0.75               # 0..1: how much the bushes gather in thickets (0: evenly)
+blue_rocks = 3                    # rocks beside a blue trail's tread, every 100 m
+black_rocks = 5                   # ...beside a black one's
+black_tread = 2                   # ...and low ones on a black one's tread (driven over), every 100 m
 
 [biome.alpine]
 trees_per_ha = 420                # trees a hectare on the slopes below the tree line (pines)

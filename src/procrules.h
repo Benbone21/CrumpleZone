@@ -75,7 +75,7 @@ struct KnollRule {
     double floorClear = 8;      // m over a channel's level where they're whole (lower, they fade: a valley's floor stays where its water is)
     double channelClear = 30;   // m: ...and within this of a creek's or river's bank they only rise
     double desert = 0.25;       // 0..1: how much of them the dunes and badlands keep (smooth sand, its own mesas)
-    double mountains = 0.8;     // 0..1: ...and the alpine (it has its crags)
+    double mountains = 0.5;     // 0..1: ...and the alpine (it has its crags)
 };
 
 // ---- Rocks that follow the land's steepness (owner: "the steeper the terrain, the more rocks and the larger, so it's like cliff walls") --
@@ -94,6 +94,20 @@ struct SlopeRockRule {
     double basePerHa = 70;      // ...this many a hectare tried, the biggest nearest the wall
     double desert = 0.8;        // 0..1: how much of them the badlands and dunes keep (rounder rock)
     double lowland = 0.6;       // 0..1: ...and the meadows and woods (the alpine keeps them all)
+};
+
+// ---- The scatter after the Backcountry's (owner: "I really like ... the dispersion of rocks and items and trails") ----------------
+// Measured on both maps (build/review/procscale/dispersion.txt): the Backcountry has ~11 rocks a hectare, clumped (Clark-Evans R 0.5),
+// a log a hectare, bushes in thickets (R 0.7), and rocks along and on its rated trails.
+struct ScatterRule {
+    double rockRate = 1.6;        // the loose rocks tried, times the old scatter's
+    double clusterShare = 0.3;    // 0..1: of those placed, this share are a cluster's middle: bigger, with smaller ones round it...
+    double clusterRocks = 3;      // ...about this many
+    double logsPerHa = 1.4;       // fallen logs a hectare tried in the woods (the meadows' groves half that)
+    double bushThicket = 0.75;    // 0..1: how much the bushes gather in thickets (0: even, as before)
+    double blueRocks = 3;         // rocks beside a blue trail's tread, every 100 m
+    double blackRocks = 5;        // ...beside a black one's
+    double blackTread = 2;        // ...and low ones on a black one's tread (driven over), every 100 m
 };
 
 // ---- Alpine: forest, tree line, rock and snow -----------------------------------------------------------------------------------
@@ -175,6 +189,7 @@ struct Rules {
     RangeRule range;
     KnollRule knoll;
     SlopeRockRule slopeRock;
+    ScatterRule scatter;
     AlpineRule alpine;
     // meadow, forest, badlands, mountains (its density and shares: alpine), dunes
     ErosionRule erosion;

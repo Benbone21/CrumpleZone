@@ -91,6 +91,15 @@ std::vector<Key> keys() {
     k.push_back({SR, "base_per_ha", nullptr, AT(r.slopeRock.basePerHa), "...this many a hectare tried, the biggest nearest the wall"});
     k.push_back({SR, "desert", nullptr, AT(r.slopeRock.desert), "0..1: how much of them the badlands and dunes keep (rounder rock)"});
     k.push_back({SR, "lowland", nullptr, AT(r.slopeRock.lowland), "0..1: ...and the meadows and woods (the alpine keeps them all)"});
+    const char* SC = "scatter";
+    k.push_back({SC, "rock_rate", nullptr, AT(r.scatter.rockRate), "the loose rocks tried, times the old scatter's (the Backcountry's ~11 a hectare)"});
+    k.push_back({SC, "cluster_share", nullptr, AT(r.scatter.clusterShare), "0..1: of those placed, this share are a cluster's middle: bigger, with smaller ones round it..."});
+    k.push_back({SC, "cluster_rocks", nullptr, AT(r.scatter.clusterRocks), "...about this many"});
+    k.push_back({SC, "logs_per_ha", nullptr, AT(r.scatter.logsPerHa), "fallen logs a hectare tried in the woods (the meadows' groves half that)"});
+    k.push_back({SC, "bush_thicket", nullptr, AT(r.scatter.bushThicket), "0..1: how much the bushes gather in thickets (0: evenly)"});
+    k.push_back({SC, "blue_rocks", nullptr, AT(r.scatter.blueRocks), "rocks beside a blue trail's tread, every 100 m"});
+    k.push_back({SC, "black_rocks", nullptr, AT(r.scatter.blackRocks), "...beside a black one's"});
+    k.push_back({SC, "black_tread", nullptr, AT(r.scatter.blackTread), "...and low ones on a black one's tread (driven over), every 100 m"});
     const char* A = "biome.alpine";
     k.push_back({A, "trees_per_ha", nullptr, AT(r.alpine.treesPerHa), "trees a hectare on the slopes below the tree line (pines)"});
     k.push_back({A, "tree_slope_max", nullptr, AT(r.alpine.treeSlopeMax), "no trees on ground steeper than this (rise over run; 0.7 is 35 degrees)"});

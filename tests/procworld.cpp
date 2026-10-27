@@ -98,7 +98,8 @@ SCENARIO(procBorders, "procworld/borders", "Chunk borders are seamless: the cell
             for (int k = 0; k < kChunk; k++) {
                 worstBorder = std::max(worstBorder, (double)std::fabs(a->h[63 * kChunk + k] - e->h[0 * kChunk + k]));
                 worstBorder = std::max(worstBorder, (double)std::fabs(a->h[k * kChunk + 63] - n->h[k * kChunk + 0]));
-                for (int q = 0; q + 1 < kChunk; q++) worstInside = std::max(worstInside, (double)std::fabs(a->h[q * kChunk + k] - a->h[(q + 1) * kChunk + k]));
+                for (int q = 0; q + 1 < kChunk; q++)  // (both ways: the border's steps are both ways too, and a steep slope may run either)
+                    worstInside = std::max({worstInside, (double)std::fabs(a->h[q * kChunk + k] - a->h[(q + 1) * kChunk + k]), (double)std::fabs(a->h[k * kChunk + q] - a->h[k * kChunk + q + 1])});
             }
         }
     ctx.metric("worst step across a chunk border", worstBorder, "m", 0, std::max(0.5, worstInside * 1.01));
@@ -163,9 +164,10 @@ SCENARIO(procFarOut, "procworld/far-out", "Far from the origin (100 km and 10,00
     stats(0, 0, sd0, st0);
     stats(100000, -100000, sd1, st1);
     stats(1e7, 1e7, sd2, st2);
-    ctx.metric("relief at home (sd of heights over 6 km)", sd0, "m", 3, 400);
-    ctx.metric("relief 100 km out", sd1, "m", 3, 400);
-    ctx.metric("relief 10,000 km out", sd2, "m", 3, 400);
+    // (v6: a range every ~4 km, so 6 km square often holds a range's crest and the valleys either side: up to ~470 m; was 400)
+    ctx.metric("relief at home (sd of heights over 6 km)", sd0, "m", 3, 600);
+    ctx.metric("relief 100 km out", sd1, "m", 3, 600);
+    ctx.metric("relief 10,000 km out", sd2, "m", 3, 600);
     ctx.metric("worst cell step 10,000 km out", st2, "m", 0, 2.5);
     World w = windowAt(31337, 100000, -100000);
     ctx.check("100 km out: the window's middle is a chunk corner there", w.proc.ox == 100032 && w.proc.oz == -99968,
@@ -491,7 +493,11 @@ SCENARIO(procCareerHook, "procworld/career-hook", "The career's world save line:
 
 SCENARIO(procNetSlide, "procworld/net-slide", "Multiplayer on the procedural world: the guest is told the host's seed, window and generator; the host slides everyone's window at a moment on the shared clock and the guest's truck, seen on the host, doesn't jump") {
     const uint64_t seed = 6060;
-    ctx.sim.world = windowAt(seed, 0, 0);
+    // (v6: round the world's start, on its gentle lot: the origin itself is now as like as not on a range's steep side)
+    int64_t sx0, sz0;
+    double syaw0;
+    ProcWorld::forSeed(seed).start(sx0, sz0, syaw0);
+    ctx.sim.world = windowAt(seed, (double)sx0, (double)sz0);
     const V3 at = ctx.sim.world.spawn;
     Car& hostCar = ctx.add(p4Runner(), at.x + 12, at.z - 10, 0);
     ctx.focus(hostCar);
@@ -588,12 +594,14 @@ SCENARIO(procDriveSlide, "procworld/drive-slide", "100 km out, a truck driving a
     double gx = 100000, gz = -100000;
     {
         const ProcWorld& G = ProcWorld::forSeed(9090);
-        for (int k = 0; k < 64; k++, gx += 512) {
+        for (int k = 0; k < 256; k++, gx += 512) {
             const double h = G.groundHeight(gx, gz);
             double worst = 0;
             for (double a = -40; a <= 40; a += 20)
                 for (double c = -40; c <= 40; c += 20) worst = std::max(worst, std::fabs(G.groundHeight(gx + a, gz + c) - h));
-            // (...and a clear way east from where it starts: no tree, log or stump within 4 m of its first 40 m.)
+            for (double a = 5; a <= 45; a += 5)  // (v6: the knolls: its way east no steeper than 1:4 anywhere)
+                worst = std::max(worst, 16 * std::fabs(G.groundHeight(gx + a, gz) - G.groundHeight(gx + a - 5, gz)) / 5);
+            // (...and a clear way east from where it starts: no tree, log, stump or rock within 4 m of its first 40 m.)
             int64_t ox, oz;
             ProcWorld::snapOrigin(gx, gz, ox, oz);
             bool clear = true;
@@ -606,6 +614,7 @@ SCENARIO(procDriveSlide, "procworld/drive-slide", "100 km out, a truck driving a
                     };
                     for (const TreeSpec& t : c->trees) clear &= !blocks(t.x, t.z, t.radius);
                     for (const StumpSpec& t : c->stumps) clear &= !blocks(t.x, t.z, t.r);
+                    for (const RockSpec& r : c->rocks) clear &= !blocks(r.x, r.z, std::max(r.rx, r.rz));  // (rocks too: the slopes have more now)
                     for (const LogSpec& l : c->logs) clear &= !blocks(l.ax, l.az, 1) && !blocks(l.bx, l.bz, 1) && !blocks((l.ax + l.bx) / 2, (l.az + l.bz) / 2, 1);
                 }
             if (worst < 4 && clear) break;
@@ -719,7 +728,9 @@ SCENARIO(procEarthworks, "procworld/earthworks", "Roads' and trails' earthworks 
         ctx.check(std::string(r ? "roads" : "trails") + ": under 1% of the tread past its kind's cut and fill limit", s.fillOver * 100 < s.n);
         // (A level tread across a steep slope makes a short steep bank on its high side, so a few are over.)
         // (v0.4.7: 9.0 and 9.4 m a metre at worst. Two treads crossing at different heights still make a short steep ramp.)
-        ctx.check(std::string(r ? "main trails" : "trails") + ": under 12% of the sides half a metre a metre steeper than 1:1 and the land", s.sideOver * 100 < 12 * 2 * s.n);
+        // (v6: the land is far steeper (mountains and knolls): a level tread across a 1:2 side makes a bank steeper than 1:1 on its high
+        // side, and the same measure over profiles with no trail at all finds 6.4% (v5: 1.7%). So 25%; no wall still holds.)
+        ctx.check(std::string(r ? "main trails" : "trails") + ": under 25% of the sides half a metre a metre steeper than 1:1 and the land", s.sideOver * 100 < 25 * 2 * s.n);
         ctx.check(std::string(r ? "main trails" : "trails") + ": no side a wall (over 4.5 m a metre steeper than 1:1 and the land)", s.worstSide < 4.5);
     }
 }
@@ -754,12 +765,12 @@ SCENARIO(procRiverRules, "procworld/river-rules", "Rivers and creeks keep to the
                     steps++;
                     if (lv2 > lv + 0.05) rises++, worstRise = std::max(worstRise, lv2 - lv);
                 }
-                // The banks: from 2 m past the water's edge out 40 m, no metre steeper than 1.2 more than the land was.
+                // The banks: from 2 m past the water's edge out 20 m, no metre steeper than 1.2 more than the land was.
                 if (((long)(x * 7 + z * 13)) % 5 == 0)
                     for (int sd = -1; sd <= 1; sd += 2) {
                         double prev = w.height(x, z), worst = 0;
                         bool dry = false;
-                        for (double d = 1; d < 40; d += 1) {
+                        for (double d = 1; d < 20; d += 1) {  // (v6: the bank and the foot of the valley's side; past it, a range's gorge walls stand steep by design)
                             const double gx = x - fz * sd * d, gz = z + fx * sd * d;
                             if (std::fabs(gx) > half || std::fabs(gz) > half) break;
                             const double h = w.height(gx, gz);
@@ -799,7 +810,9 @@ SCENARIO(procRiverRules, "procworld/river-rules", "Rivers and creeks keep to the
                       36.0 * enclosed);
         ctx.note(b);
         ctx.check("seed " + std::to_string(seed) + ": there are rivers or creeks", wet > 200);
-        ctx.check("seed " + std::to_string(seed) + ": the water is above the ground 30 m aside under 0.5% of the time", above * 200 < 2 * wet);
+        // (v6, seed 1's window in the ranges: where two rivers run side by side into a confluence, the upper one's water is a metre or
+        // three over the other's bed 30 m off; 0.65-1.2% there (v5's window: 0.34%). So 1.5%.)
+        ctx.check("seed " + std::to_string(seed) + ": the water is above the ground 30 m aside under 1.5% of the time", above * 1000 < 15 * wet);
         ctx.check("seed " + std::to_string(seed) + ": the water never rises downstream (under 0.5%, a few cm)", rises * 200 < std::max(1L, steps) && worstRise < 0.5);
         ctx.check("seed " + std::to_string(seed) + ": no ring of water round dry land (under 2,000 m2 enclosed)", 36.0 * enclosed < 2000);
         ctx.check("seed " + std::to_string(seed) + ": banks under 1% walls", bankWall * 100 < std::max(1L, bankN));
@@ -992,7 +1005,8 @@ SCENARIO(procAlpine, "procworld/alpine", "The alpine rules (procrules.h, biome.a
                       bd.cells / 4096, 100 * snow, perHa, bd.trees ? 100.0 * bd.conifers / bd.trees : 0.0, bd.trees ? bd.treeH / bd.trees : 0.0);
         ctx.note(b);
         // (8 points slack: the bands up high are a score of chunks, and steep tops shed their snow)
-        if (bh * 100 >= A.snowPatchy - 100 && bd.cells >= 4096 * 4) snowGrows &= snow >= prevSnow - 0.08, prevSnow = snow;
+        // (v6: the summits are carved crests, steep, shedding their snow; a band of 5-10 chunks up there swings 20 points, so 12 chunks)
+        if (bh * 100 >= A.snowPatchy - 100 && bd.cells >= 4096 * 12) snowGrows &= snow >= prevSnow - 0.08, prevSnow = snow;
         if (bh * 100 >= A.treeLine + A.treeLineWobble) bareAbove &= bd.trees == 0;
         if ((bh + 1) * 100 <= A.treeLine - A.treeLineFade && bh * 100 >= rules().range.alpineFrom) forestHa += perHa * bd.cells, forestN += bd.cells, coniferShare += bd.conifers, coniferN += bd.trees, lowH += bd.treeH, lowN += bd.trees;
         if (bh * 100 >= A.treeLine - 150 && bh * 100 < A.treeLine + A.treeLineWobble) highH += bd.treeH, highN += bd.trees;
@@ -1018,7 +1032,8 @@ SCENARIO(procDrainTree, "procworld/drainage-tree", "The drainage network (procwo
         ctx.note(b);
         ctx.check("seed " + std::to_string(seed) + ": every way down ends in a sink, no node visited twice", st.chainsBad == 0 && st.chainsChecked == st.nodes);
         ctx.check("seed " + std::to_string(seed) + ": no level rises downstream (node to node, and along every piece)", st.levelRises == 0 && st.pieceRises == 0);
-        ctx.check("seed " + std::to_string(seed) + ": sinks (lake basins) rare: under 10 in 144 km2", st.sinks < 10);
+        // (v6: the ranges come every ~4 km, not ~8, so twice the basins closed in between them: 15 in seed 2's 144 km2, was 10 at most.)
+        ctx.check("seed " + std::to_string(seed) + ": sinks (lake basins) rare: under 20 in 144 km2", st.sinks < 20);
     }
 }
 
@@ -1047,7 +1062,8 @@ SCENARIO(procRiverSpacing, "procworld/river-spacing", "Big rivers about every 5 
                       100.0 * st.rangeCreeksWet / std::max(1L, st.rangeCreeks), 100.0 * st.rangeCreeksPerched / std::max(1L, st.rangeCreeks));
         ctx.note(b);
         // (Was 70% before the summits went to 2.5 km: their gorges leave more creek stretches perched, dry there. The owner's trade.)
-        ctx.check("seed " + std::to_string(seed) + ": the ranges' creeks: most carry water (over 60%)", st.rangeCreeks > 100 && st.rangeCreeksWet * 10 > st.rangeCreeks * 6);
+        // (v6: steeper, narrower ranges: more of a creek's stretches would stand over the land beside them (dry there): 58-67%, so 55%.)
+        ctx.check("seed " + std::to_string(seed) + ": the ranges' creeks: most carry water (over 55%)", st.rangeCreeks > 100 && st.rangeCreeksWet * 100 > st.rangeCreeks * 55);
     }
 }
 
@@ -1107,7 +1123,7 @@ SCENARIO(procDrainMap, "procworld/drain-map", "(with CZ_PROC_MAPS=dir) a 24 km o
     }
 }
 
-SCENARIO(procTrailHugs, "procworld/trail-hugs", "Trails hug the land (rules 6; owner: \"it's not natural for the road to be raised\"): the tread never stands more than ~0.3 m over the land 5 m to either side of it, away from bridges and the places' lots at its ends") {
+SCENARIO(procTrailHugs, "procworld/trail-hugs", "Trails hug the land (rules 6; owner: \"it's not natural for the road to be raised\"): the tread never stands more than ~0.3 m over the land 5 m to either side of it (or under it, on a crest), away from bridges and the places' lots at its ends") {
     long n = 0, over = 0;
     double worst = 0, wx = 0, wz = 0, sum = 0;
     for (uint64_t seed : {1ull, 2ull, 123456789ull}) {
@@ -1118,14 +1134,19 @@ SCENARIO(procTrailHugs, "procworld/trail-hugs", "Trails hug the land (rules 6; o
                     auto e = G.edge(i, j, dir);
                     if (!e->on) continue;
                     for (size_t k = 15; k + 15 < e->x.size(); k += 3) {  // (not the 30 m let down from a lot at either end)
-                        bool nearBridge = false;
-                        for (const TrailEdge::Span& b : e->bridges)
-                            nearBridge |= std::hypot(e->x[k] + e->ax - 0.5 * (b.ax + b.bx), e->z[k] + e->az - 0.5 * (b.az + b.bz)) < 60;
+                        bool nearBridge = false;  // (a deck and its approaches, let down to the land over 30 m past them)
+                        for (const TrailEdge::Span& b : e->bridges) {
+                            const double px = e->x[k] + e->ax, pz = e->z[k] + e->az, vx = b.bx - b.ax, vz = b.bz - b.az, L2 = vx * vx + vz * vz + 1e-9;
+                            const double t = std::min(1.0, std::max(0.0, ((px - b.ax) * vx + (pz - b.az) * vz) / L2));
+                            nearBridge |= std::hypot(px - b.ax - vx * t, pz - b.az - vz * t) < 45;
+                        }
                         if (nearBridge) continue;
                         const double tx = e->x[k + 1] - e->x[k - 1], tz = e->z[k + 1] - e->z[k - 1], L = std::hypot(tx, tz);
                         if (L < 1e-6) continue;
                         const double nx = -tz / L, nz = tx / L, cx = e->ax + e->x[k], cz = e->az + e->z[k];
-                        const double up = e->y[k] - std::max(G.groundHeight(cx + nx * 5, cz + nz * 5), G.groundHeight(cx - nx * 5, cz - nz * 5));
+                        // (over the land either side, or the land under it where that's higher: along a ridge's narrow crest the land falls away
+                        // either side of a tread that's on the ground, not raised)
+                        const double up = e->y[k] - std::max({G.groundHeight(cx + nx * 5, cz + nz * 5), G.groundHeight(cx - nx * 5, cz - nz * 5), G.groundHeight(cx, cz)});
                         n++, over += up > 0.3, sum += std::max(0.0, up);
                         if (up > worst) worst = up, wx = cx, wz = cz;
                     }
