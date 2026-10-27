@@ -586,7 +586,7 @@ void World::buildModelYard() {
         if (id == "jersey_barrier") return {{"length", 6}};
         return {};
     };
-    auto see = [](const std::string& id) { return id != "fp_hand" && id != "lug_nut" && id != "waterfall"; };  // (the falls: drawn by the water pass, on rivers)
+    auto see = [](const std::string& id) { return id != "fp_hand" && id != "lug_nut" && id != "waterfall" && id != "timber_bridge"; };  // (the falls: drawn by the water pass, on rivers; the bridges span rivers, 10-40 m: the procedural world's)
     // Things to walk through or round rather than bump into.
     auto ghost = [](const std::string& id) {
         return id == "repair_shed" || id == "fire_tower" || id == "race_gate" || id == "sign_gantry" || id == "mine_portal" || id == "tent" ||
