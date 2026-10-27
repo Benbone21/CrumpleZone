@@ -2131,10 +2131,8 @@ static void clearDrainCaches() {
         tileMap[0].clear(), tileMap[1].clear();
     }
     clearGridCache();
-    {
-        std::lock_guard<std::mutex> lock(eMutex);
-        eMap.clear();
-    }
+    // (The erosion's tiles stay: a pure function of the seed and the rules, and dear to make (a test dropping the chunks beside another
+    // test's window build mustn't make it wait for them again). clearErosionTiles drops them.)
     drainEpoch++;
 }
 
@@ -3596,6 +3594,11 @@ size_t cachedChunks() {
     std::lock_guard<std::mutex> lock(C.m);
     return C.map.size();
 }
+void clearErosionTiles() {
+    std::lock_guard<std::mutex> lock(eMutex);
+    eMap.clear();
+}
+
 void clearChunkCache() {
     {
         Cache& C = cache();

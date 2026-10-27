@@ -236,6 +236,7 @@ private:
 size_t cachedChunks();
 size_t cacheBytes();  // (everything the generator keeps: lattice blocks, channel tiles, chunks, trails)
 void clearChunkCache();
+void clearErosionTiles();  // (the erosion's tiles: kept through clearChunkCache, a pure function of the seed and the rules)
 
 // The erosion tiles (proceros.h) a box of land needs: made now, a few at once (prewarm: a window's build), or queued on a background
 // thread below the game's priority (prefetch: the land ahead). CZ_GEN_THREADS caps prewarm's threads.

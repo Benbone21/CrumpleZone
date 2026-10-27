@@ -1363,9 +1363,10 @@ SCENARIO(procErosion, "procworld/erosion", "The land is worn by erosion in fixed
     // (its tiles made by whichever gets there first), and another generator for the seed after the caches are dropped: one hash.)
     clearChunkCache();
     uint64_t c1 = 0, c2 = 0;
+    clearErosionTiles();
     std::thread u1([&] { c1 = G.makeChunk(-40, 70)->hash(); }), u2([&] { c2 = G.makeChunk(-40, 70)->hash(); });
     u1.join(), u2.join();
-    clearChunkCache();
+    clearChunkCache(), clearErosionTiles();
     const ProcWorld other(1);
     const uint64_t c3 = other.makeChunk(-40, 70)->hash();
     ctx.check("the same worn chunk from two threads at once, and again from nothing", c1 == c2 && c1 == c3, hex(c1) + " " + hex(c2) + " " + hex(c3));
