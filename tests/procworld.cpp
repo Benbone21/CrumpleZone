@@ -1107,6 +1107,103 @@ SCENARIO(procDrainMap, "procworld/drain-map", "(with CZ_PROC_MAPS=dir) a 24 km o
     }
 }
 
+SCENARIO(procTrailHugs, "procworld/trail-hugs", "Trails hug the land (rules 6; owner: \"it's not natural for the road to be raised\"): the tread never stands more than ~0.3 m over the land 5 m to either side of it, away from bridges and the places' lots at its ends") {
+    long n = 0, over = 0;
+    double worst = 0, wx = 0, wz = 0, sum = 0;
+    for (uint64_t seed : {1ull, 2ull, 123456789ull}) {
+        const ProcWorld& G = ProcWorld::forSeed(seed);
+        for (int64_t i = -3; i < 3; i++)
+            for (int64_t j = -3; j < 3; j++)
+                for (int dir = 0; dir < 2; dir++) {
+                    auto e = G.edge(i, j, dir);
+                    if (!e->on) continue;
+                    for (size_t k = 15; k + 15 < e->x.size(); k += 3) {  // (not the 30 m let down from a lot at either end)
+                        bool nearBridge = false;
+                        for (const TrailEdge::Span& b : e->bridges)
+                            nearBridge |= std::hypot(e->x[k] + e->ax - 0.5 * (b.ax + b.bx), e->z[k] + e->az - 0.5 * (b.az + b.bz)) < 60;
+                        if (nearBridge) continue;
+                        const double tx = e->x[k + 1] - e->x[k - 1], tz = e->z[k + 1] - e->z[k - 1], L = std::hypot(tx, tz);
+                        if (L < 1e-6) continue;
+                        const double nx = -tz / L, nz = tx / L, cx = e->ax + e->x[k], cz = e->az + e->z[k];
+                        const double up = e->y[k] - std::max(G.groundHeight(cx + nx * 5, cz + nz * 5), G.groundHeight(cx - nx * 5, cz - nz * 5));
+                        n++, over += up > 0.3, sum += std::max(0.0, up);
+                        if (up > worst) worst = up, wx = cx, wz = cz;
+                    }
+                }
+    }
+    char b[240];
+    std::snprintf(b, sizeof b, "%ld tread samples: %.2f%% over the land 5 m either side by more than 0.3 m; the most %.2f m (at %.0f, %.0f); on average %.3f m over", n, 100.0 * over / std::max(1L, n), worst, wx, wz,
+                  sum / std::max(1L, n));
+    ctx.note(b);
+    // (v0.4.7 main: 4.6% over 0.3 m, the worst 6.7 m: trails along a valley's floor rode a bank over it. What's left is a tread across a
+    // knoll's crown or the lip of a wash, a metre at most.)
+    ctx.check("trails: under 1% of the tread more than 0.3 m over the land either side", over * 100 < n);
+    ctx.check("trails: none on a bank (over 2 m above the land either side)", worst < 2.0);
+}
+
+SCENARIO(procWashShape, "procworld/wash-shape", "Dry washes are natural, not one stamped section (owner: \"the dry river bed is the exact same width and depth everywhere\"): followed down their course, their width and depth vary") {
+    // (Each dry channel found over 6 km square of a few seeds, followed downstream 6 m a step; its section across, from the chunks'
+    // ground: the depth under the lower of its two rims within 8 m, and the width at half that depth.)
+    double cvW = 0, cvD = 0, mW = 0;
+    int nc = 0;
+    for (uint64_t seed : {2ull, 777ull, 2024ull}) {
+        const ProcWorld& G = ProcWorld::forSeed(seed);
+        std::vector<std::pair<double, double>> starts;
+        for (double x = -3000; x < 3000; x += 64)
+            for (double z = -3000; z < 3000; z += 64) {
+                const Macro m = G.macro(x, z);
+                if (m.creekOn < 0.5 && m.creekS < 40 && m.creekHW > 0.6 && m.riverS > 60 && m.lakeLevel < -1e8) {
+                    bool far = true;
+                    for (const auto& q : starts) far &= std::hypot(q.first - x, q.second - z) > 600;
+                    if (far) starts.push_back({x, z});
+                }
+            }
+        for (const auto& st : starts) {
+            double px = st.first, pz = st.second;
+            std::vector<double> W, D;
+            for (int step = 0; step < 60; step++) {
+                const Macro m = G.macroAt(px, pz, false);
+                if (m.creekS > 30 || m.creekOn > 0.5) break;
+                const double fl = std::hypot(m.cflowX, m.cflowZ);
+                if (fl < 1e-6) break;
+                const double ux = m.cflowX / fl, uz = m.cflowZ / fl, nx = -uz, nz = ux;
+                std::vector<double> p;
+                for (double s = -20; s <= 20; s += 0.5) p.push_back(chunkH(G, px + nx * s, pz + nz * s));
+                int im = 30;
+                for (int q = 30; q <= 50; q++)
+                    if (p[q] < p[im]) im = q;
+                double rl = -1e9, rr = -1e9;
+                for (int q = std::max(0, im - 16); q < im; q++) rl = std::max(rl, p[q]);
+                for (int q = im + 1; q <= std::min((int)p.size() - 1, im + 16); q++) rr = std::max(rr, p[q]);
+                const double depth = std::min(rl, rr) - p[im], half = p[im] + 0.5 * depth;
+                int a = im, c = im;
+                while (a > 0 && p[a - 1] < half) a--;
+                while (c + 1 < (int)p.size() && p[c + 1] < half) c++;
+                if (depth > 0.05) W.push_back((c - a) * 0.5), D.push_back(depth);
+                px += nx * (-20 + im * 0.5) + ux * 6, pz += nz * (-20 + im * 0.5) + uz * 6;
+            }
+            if (W.size() < 15) continue;
+            auto cv = [](const std::vector<double>& v, double& mean) {
+                double s = 0, q = 0;
+                for (double x : v) s += x;
+                mean = s / v.size();
+                for (double x : v) q += (x - mean) * (x - mean);
+                return std::sqrt(q / v.size()) / mean;
+            };
+            double mw, md;
+            cvW += cv(W, mw), cvD += cv(D, md), mW += mw, nc++;
+        }
+    }
+    char b[200];
+    std::snprintf(b, sizeof b, "%d dry channels followed: width at half depth %.1f m on average, varying along their course by %.2f (CoV); depth by %.2f", nc, nc ? mW / nc : 0, nc ? cvW / nc : 0,
+                  nc ? cvD / nc : 0);
+    ctx.note(b);
+    ctx.check("there are dry washes to follow", nc >= 10);
+    // (main before this: width CoV 0.17-0.26 and depth 0.24-0.38 by seed, and most of that the notch the wash runs in, not its bed.)
+    ctx.check("a wash's width varies along it (CoV over 0.3)", nc && cvW / nc > 0.3);
+    ctx.check("...and its depth (CoV over 0.35)", nc && cvD / nc > 0.35);
+}
+
 SCENARIO(procCrossings, "procworld/crossings", "Big rivers are real obstacles: a trail crosses one only at a known ford (a riffle, shallow) or on a bridge whose deck stands over the water; the bridge is built in the window") {
     long trails = 0, bigFords = 0, bridges = 0, wades = 0, lowDecks = 0, gone = 0;
     std::string where;
