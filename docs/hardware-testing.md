@@ -46,6 +46,7 @@ What a fresh clone contains: `assets/ground`, `assets/props` and the code. `asse
 ## Options
 - `--bench-suite [FRAMES[,WARMUP]]`: Frontier, Open Country (Wilds) and Boulder Gully, each at POTATO, LOW, MEDIUM and HIGH; default 600 frames after 120. Add `--size 1920x1080` (default: the window's size) or `--bench-out FILE` (the summary file; the screenshots go beside it).
 - `--bench FRAMES[,WARMUP] [--map N] [--quality 0-3|potato]`: one run. The report file is `<date-time>-<map>-<quality>-<WxH>.txt` in the same folder, or `--bench-out FILE`.
+- Windows with display scaling above 100%: the exe isn't DPI aware, so it gets the scaled desktop (a 4K screen at 150% renders at 2560x1440) and `--size` is in scaled pixels. For native resolution, set `SDL_WINDOWS_DPI_AWARENESS=permonitorv2` in the environment and add `--fullscreen`.
 - Each run is a lap by a drone camera, the same every time, with VSync off and a fixed 60 Hz physics step, so frame times are real GPU and CPU cost.
 
 ## What the suite writes
