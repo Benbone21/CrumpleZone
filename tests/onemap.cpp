@@ -428,6 +428,8 @@ SCENARIO(onemapXplat, "onemap/xplat-fingerprint", "The big map is the same on ev
         worldcache::bypass = was;
     }
     checkPrint(ctx, "scanned rocks", worldprint::print(*w), kScansGolden, sizeof kScansGolden / sizeof *kScansGolden);
+    w.reset();
+    releaseFreedMemory();  // (a whole big map's worth, handed back: the other big-map tests run beside this one)
 }
 
 SCENARIO(onemapRoads, "onemap/roads", "A gravel road from the Backcountry into each region: from its place to the region's start, loop road or lodge, no steeper than 13%, dry, its banks no cliffs") {

@@ -135,7 +135,10 @@ constexpr double kTrailHalf = 2.8;
 const V3 kWallFootAt(-0x1.3ap+8, 0, 0x1.2ap+8), kWallTopAt(-0x1.55p+8, 0, 0x1.58c3ef6815016p+8),
     kWallFromAt(-0x1.2ee32d1f75af1p+8, 0, 0x1.155cebe6879e3p+8), kSummitAt(0x1.594cf6ed0cf16p+3, 0, 0x1.976b638edadb9p+8),
     kGardenAt(0x1.2a2ba873be38fp+7, 0, 0x1.12d918940d245p+8);
-V3 gWallFoot = kWallFootAt, gWallTop = kWallTopAt, gWallFrom = kWallFromAt, gSummit = kSummitAt, gGarden = kGardenAt;
+// (Per thread: a build searches for them in place, and another thread's build, or a lookup on another thread while a build runs (a
+// Backcountry builds its Frontier region on a worker), saw them half-searched: THE WALL and its crates somewhere else, a world that
+// depended on what else was running (world/bake-threads, frontier/feature-table flaked). Off the building thread they're the tables'.)
+thread_local V3 gWallFoot = kWallFootAt, gWallTop = kWallTopAt, gWallFrom = kWallFromAt, gSummit = kSummitAt, gGarden = kGardenAt;
 // Rivers: from source to mouth.
 const std::vector<V3> kSnakeCtl = {{330, 0, 500}, {300, 0, 384}, {262, 0, 292}, {272, 0, 202}, {242, 0, 112},
                                    {270, 0, 22},  {320, 0, -58}, {362, 0, -118}, {392, 0, -150}};
