@@ -1,3 +1,4 @@
+#include <cerrno>
 #include "careerworld.h"
 
 #include <algorithm>
@@ -244,11 +245,12 @@ uint64_t parseSeed(const std::string& text) {
     while (a < b && text[a] == ' ') a++;
     while (b > a && text[b - 1] == ' ') b--;
     if (a == b) return 0;
-    bool digits = b - a <= 19;
+    bool digits = b - a <= 20;  // (a random seed can run to 20 digits)
     for (size_t i = a; i < b && digits; i++) digits = std::isdigit((unsigned char)text[i]) != 0;
     if (digits) {
+        errno = 0;
         const uint64_t v = std::strtoull(text.substr(a, b - a).c_str(), nullptr, 10);
-        if (v) return v;
+        if (v && errno != ERANGE) return v;
     }
     uint64_t h = 1469598103934665603ull;  // (FNV-1a of the text as typed, capitals)
     for (size_t i = a; i < b; i++) h = (h ^ (unsigned char)std::toupper((unsigned char)text[i])) * 1099511628211ull;
