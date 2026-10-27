@@ -1310,6 +1310,9 @@ bool drainsTo(const ProcWorld& G, int64_t ai, int64_t aj, int64_t ni, int64_t nj
 }
 // A lake's dam across its valley at a point (-1e300: none here): its crest the lip's level (in the notch where the channel crosses)
 // or a little over it, falling away 0.35 a metre up and down the valley and fading out past the valley's sides.
+// (A dam bows out downstream in the middle, like a moraine or a rock bar, not a straight wall: its line runs back upstream toward its
+// ends, by c^2 / 2R with R the dam's half-length.)
+inline double damBow(const Lake& L, double c) { return c * c / (2 * std::max(30.0, L.lat)); }
 double damAt(const Lake& L, double x, double z) {
     if (L.kind < 2) return -1e300;
     if (L.kind == 2) {  // (a tarn's: a horseshoe moraine round the downhill half of its floor, the outlet's notch where the creek leaves)
@@ -1321,7 +1324,7 @@ double damAt(const Lake& L, double x, double z) {
         const double nx = x - L.qx, nz = z - L.qz, notchD = std::sqrt(nx * nx + nz * nz);
         return L.W + L.crest * smoothstep(L.notch, L.notch + 6, notchD) - 0.35 * std::max(0.0, ring - 2) - 3 * std::max(0.0, -0.3 - cs);
     }
-    const double vx = x - L.qx, vz = z - L.qz, b = vx * L.fx + vz * L.fz, c = std::fabs(-vx * L.fz + vz * L.fx);
+    const double vx = x - L.qx, vz = z - L.qz, c = std::fabs(-vx * L.fz + vz * L.fx), b = vx * L.fx + vz * L.fz + damBow(L, c);
     if (std::fabs(b) > 40 || c > L.lat + 60) return -1e300;
     return L.W + L.crest * smoothstep(L.notch, L.notch + 6, c) - 0.35 * std::max(0.0, std::fabs(b) - 2) - 0.5 * std::max(0.0, c - L.lat);
 }
@@ -1346,7 +1349,7 @@ double dishAt(const Lake& L, double x, double z) {
 bool inLake(const ProcWorld& G, const Lake& L, double x, double z, bool hasFloor, int64_t fi, int64_t fj) {
     if (L.kind == 1) return hasFloor && drainsTo(G, fi, fj, L.ni, L.nj) && sqr(x - L.cx) + sqr(z - L.cz) < sqr(L.reach);
     const double vx = x - L.qx, vz = z - L.qz;
-    if (vx * L.fx + vz * L.fz > -0.5 || vx * vx + vz * vz > sqr(L.reach)) return false;
+    if (vx * L.fx + vz * L.fz + damBow(L, std::fabs(-vx * L.fz + vz * L.fx)) > -0.5 || vx * vx + vz * vz > sqr(L.reach)) return false;
     const double dish = dishAt(L, x, z);
     if (dish < L.W + 0.5) return true;  // (over its shaped floor)
     if (L.kind == 2 || L.kind == 4) return false;  // (a tarn or a pond: its own floor alone)
@@ -2310,7 +2313,7 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
                 bool upstream = false;  // (and this metre itself upstream of that lake's lip)
                 for (const Lake& Lk : T.lakes)
                     if (std::fabs(Lk.kind == 1 ? lakeLevelOf(*this, Lk) - W : Lk.W - W) < 1e-6)
-                        upstream |= Lk.kind == 1 || ((x - Lk.qx) * Lk.fx + (z - Lk.qz) * Lk.fz < -0.5 && ((Lk.kind != 2 && Lk.kind != 4) || dishAt(Lk, x, z) < Lk.W + 0.5));  // (a tarn or pond: on its floor, exactly)
+                        upstream |= Lk.kind == 1 || ((x - Lk.qx) * Lk.fx + (z - Lk.qz) * Lk.fz + damBow(Lk, std::fabs(-(x - Lk.qx) * Lk.fz + (z - Lk.qz) * Lk.fx)) < -0.5 && ((Lk.kind != 2 && Lk.kind != 4) || dishAt(Lk, x, z) < Lk.W + 0.5));  // (a tarn or pond: on its floor, exactly)
                 if (!upstream) W = -1e9;
                 if (W > -1e8) {
                     if (h < W - 0.02) {
