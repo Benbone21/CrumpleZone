@@ -1,4 +1,5 @@
 // Offscreen OpenGL integration checks, including an emulated driver rejecting HDR MSAA.
+#include <cmath>
 #include <cstring>
 #include "../src/render.h"
 #include "../src/carparts.h"
@@ -308,6 +309,52 @@ int main() {
         if (!renderer.geometryStats().terrainTriangles)
             throw std::runtime_error("editor updates lost terrain batches");
         std::puts("PASS culling rejects world behind camera; editor updates retain terrain and scenery batches");
+        {  // The land casts: a ridge 250 m high shades flat ground 550 m west of it under a low morning sun (past the shadow maps' reach:
+           // the long-shadow map), and with the sun high it changes nothing there.
+            const View keep = view;
+            const int shadows = renderer.settings.shadows;
+            renderer.settings.shadows = 3;
+            const World& w = sim.world;
+            const int n = w.gridSize();
+            std::vector<std::pair<int, float>> old;
+            int i0 = n, j0 = n, i1 = -1, j1 = -1;
+            for (int x = 300; x <= 320; x++)
+                for (int z = -250; z <= 150; z++) {
+                    const int id = w.cellIndex(x, z);
+                    if (id < 0) continue;
+                    old.push_back({id, w.cellHeight(id)});
+                    i0 = std::min(i0, id / n), i1 = std::max(i1, id / n), j0 = std::min(j0, id % n), j1 = std::max(j1, id % n);
+                }
+            const V3 probe(-250, w.height(-250, -50), -50);
+            view.eye = probe + V3(4, 22, 0), view.target = probe, view.up = V3(0, 1, 0);
+            view.width = 160, view.height = 90;
+            auto lum = [&](double hours) {
+                renderer.daylight = computeDaylight(hours);
+                for (int k = 0; k < 10; k++) renderer.drawScene(sim, view, DEBUG_OFF, nullptr);  // (the long-shadow map is made again over 8 frames)
+                clean();
+                const std::vector<unsigned char> px = renderer.readPixels(view.width, view.height);
+                double sum = 0;
+                for (int y = 40; y < 50; y++)
+                    for (int x = 75; x < 85; x++) sum += px[(y * view.width + x) * 3] + px[(y * view.width + x) * 3 + 1] + px[(y * view.width + x) * 3 + 2];
+                return sum / 300.0;
+            };
+            const double flatAm = lum(6.5), flatNoon = lum(12);
+            for (const auto& h : old) sim.world.setCellHeight(h.first, h.second + 250);
+            renderer.updateTerrainRegion(sim.world, i0, j0, i1, j1);
+            const double shadeAm = lum(6.5), ridgeNoon = lum(12);
+            const unsigned rows = renderer.geometryStats().horizonRows, casters = renderer.geometryStats().shadowTerrainTriangles;
+            for (const auto& h : old) sim.world.setCellHeight(h.first, h.second);
+            renderer.updateTerrainRegion(sim.world, i0, j0, i1, j1);
+            renderer.daylight = computeDaylight(10);
+            renderer.settings.shadows = shadows;
+            view = keep;
+            std::printf("Render check: ground 550 m west of a 250 m ridge, low morning sun: %.1f (%.1f without the ridge); at noon %.1f (%.1f); "
+                        "%u long-shadow rows this frame, %u ground triangles in the shadow maps\n", shadeAm, flatAm, ridgeNoon, flatNoon, rows, casters);
+            if (!casters) throw std::runtime_error("the ground drew nothing into the shadow maps");
+            if (!(shadeAm < 0.85 * flatAm)) throw std::runtime_error("a ridge's long shadow did not darken the ground behind it");
+            if (!(std::fabs(ridgeNoon - flatNoon) < 0.05 * flatNoon)) throw std::runtime_error("a ridge shades ground 550 m off under a high sun");
+            std::puts("PASS the land casts shadows: a ridge's long shadow at a low sun, none at noon");
+        }
         {  // Night, MSAA: thin leaves, needles and blades only partly over a pixel must not shade to NaN (it blooms into coloured sparks).
             const View keep = view;
             const int msaa = renderer.settings.msaa;

@@ -106,8 +106,19 @@ const std::vector<int>& careerMaps() {
     return m;
 }
 
+const std::vector<int>& customWorldMaps() {
+    static const std::vector<int> m = [] {
+        std::vector<int> v;
+        if (mapListed(MAP_PROCEDURAL)) v.push_back(MAP_PROCEDURAL);
+        return v;
+    }();
+    return m;
+}
+
 bool careerMap(int map) {
     for (int m : careerMaps())
+        if (m == map) return true;
+    for (int m : customWorldMaps())
         if (m == map) return true;
     return false;
 }
@@ -1515,6 +1526,57 @@ bool World::poleInside(double x, double z, const V3& fwd, double a0, double a1, 
         const V3 d(p.x - x, 0, p.z - z);
         const double a = dot(d, fwd), l = dot(d, left), m = p.r + margin;
         if (a > a0 - m && a < a1 + m && l > l0 - m && l < l1 + m) return true;
+    }
+    return false;
+}
+
+bool World::solidInside(double x, double z, const V3& fwd, double a0, double a1, double l0, double l1, double y0, double y1, double margin,
+                        double floorY, double step) const {
+    if (poleInside(x, z, fwd, a0, a1, l0, l1, y0, y1, margin)) return true;
+    if (gridN == 0) return false;
+    const V3 left(fwd.z, 0, -fwd.x);
+    const double reach = std::max(std::max(std::fabs(a0), std::fabs(a1)), std::max(std::fabs(l0), std::fabs(l1))) * 1.5 + margin + 1.0;
+    CZ_THREAD_CACHE(NearbySolids, near);
+    solidsNear(x - reach, z - reach, x + reach, z + reach, near);
+    // A solid's points (corners, or a log's ends widened by its radius) seen in the rectangle's frame: blocking when its
+    // outline there overlaps the rectangle and it rises clear of the floor.
+    double pa0, pa1, pl0, pl1, top, bot;
+    auto start = [&] { pa0 = pl0 = bot = 1e18, pa1 = pl1 = top = -1e18; };
+    auto addPt = [&](const V3& p, double r) {
+        const V3 d(p.x - x, 0, p.z - z);
+        const double a = dot(d, fwd), l = dot(d, left);
+        pa0 = std::min(pa0, a - r), pa1 = std::max(pa1, a + r), pl0 = std::min(pl0, l - r), pl1 = std::max(pl1, l + r);
+        top = std::max(top, p.y + r), bot = std::min(bot, p.y - r);
+    };
+    auto hits = [&](double gx, double gz) {
+        if (pa1 < a0 - margin || pa0 > a1 + margin || pl1 < l0 - margin || pl0 > l1 + margin) return false;
+        if (bot > y1 || top < y0) return false;
+        return top > std::max(height(gx, gz), floorY) + step;
+    };
+    for (int bi : near.boxes) {
+        const Box& b = boxes[bi];
+        if (!b.solid) continue;
+        start();
+        for (int k = 0; k < 8; k++)
+            addPt(b.c + b.ax[0] * ((k & 1) ? b.h.x : -b.h.x) + b.ax[1] * ((k & 2) ? b.h.y : -b.h.y) + b.ax[2] * ((k & 4) ? b.h.z : -b.h.z), 0);
+        if (hits(b.c.x, b.c.z)) return true;
+    }
+    for (int ri : near.rocks) {
+        const Rock& r = rocks[ri];
+        start();
+        for (const V3& v : r.v) addPt(v, 0);
+        if (r.v.empty()) addPt(r.c, r.r);
+        if (hits(r.c.x, r.c.z)) return true;
+    }
+    for (int li : near.logs) {
+        const Log& g = logs[li];
+        const int n = 1 + (int)(len(g.b - g.a) / 0.25);  // (along it a bit at a time: a log lying across the corner isn't in it)
+        for (int k = 0; k <= n; k++) {
+            const V3 p = g.a + (g.b - g.a) * ((double)k / n);
+            start();
+            addPt(p, g.r);
+            if (hits(p.x, p.z)) return true;
+        }
     }
     return false;
 }

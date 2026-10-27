@@ -340,10 +340,6 @@ void Car::computeForces(double h, const World& w) {
         const char* option = std::getenv("CZ_FREE_COILS");
         return option && std::string(option) == "1";
     }();
-    static const bool highSpeedDamping = [] {
-        const char* option = std::getenv("CZ_HIGH_SPEED_DAMPING");
-        return option && std::string(option) == "1";
-    }();
     const V3 g(0, -9.81, 0);
     const double dragPerKg = 0.5 * 1.2 * spec->dragArea / mass;  // 0.5 * rho * Cd * A, spread over the nodes
     for (Node& n : nodes) n.f = g * n.m - n.v * (len(n.v) * dragPerKg * n.m);
@@ -500,7 +496,7 @@ void Car::computeForces(double h, const World& w) {
             // the rubber is solid and the tube is on the frame: steel on steel.
             if (L >= b.minL + 0.01) continue;
             double c = std::min(b.minL + 0.01 - L, 0.03);
-            F = -(25 * b.k * c * c / 0.03 + 25 * b.k * std::max(0.0, b.minL - 0.02 - L) + 100 * b.k * std::max(0.0, b.minL - 0.04 - L));
+            F = Damper::stop(-(25 * b.k * c * c / 0.03 + 25 * b.k * std::max(0.0, b.minL - 0.02 - L) + 100 * b.k * std::max(0.0, b.minL - 0.04 - L)), vrel);
             if (vrel < 0) F += b.c * vrel;
         } else if (b.type == BEAM_SPRING) {
             F = b.k * (L - b.L0);
@@ -514,29 +510,11 @@ void Car::computeForces(double h, const World& w) {
             // Progressive rubber bump stop: firms up over its first 3 cm.
             if (L < b.minL + 0.01) {
                 double c = std::min(b.minL + 0.01 - L, 0.03);
-                F -= 25 * b.k * c * c / 0.03 + 25 * b.k * std::max(0.0, b.minL - 0.02 - L);
+                F += Damper::stop(-(25 * b.k * c * c / 0.03 + 25 * b.k * std::max(0.0, b.minL - 0.02 - L)), vrel);
             } else if (L > b.maxL) {
                 F += 25 * b.k * (L - b.maxL);
             }
-            // Dampers resist rebound (extension) harder than bump. In bump the valves blow
-            // off above ~0.25 m/s, so a sharp hit doesn't turn into a huge kick; rebound
-            // stays firm so the car doesn't spring itself into the air.
-            // High-speed choke: additional damping above ~3 m/s to prevent bottoming on
-            // large bumps (monotube shock absorber behavior). Subtle effect.
-            if (vrel > 0) {
-                F += b.c * 1.35 * vrel;
-                // High-speed choke in rebound (very subtle)
-                if (highSpeedDamping && vrel > 3.0) {
-                    F += b.c * 0.2 * (vrel - 3.0);
-                }
-            } else {
-                double sv = -vrel, knee = 0.25;
-                F -= b.c * 0.65 * (sv < knee ? sv : knee + 0.3 * (sv - knee));
-                // High-speed choke in bump (very subtle)
-                if (highSpeedDamping && sv > 3.0) {
-                    F -= b.c * 0.15 * (sv - 3.0);
-                }
-            }
+            F += Damper::force(b.c, vrel);
             // A leaf pack's leaves rub on each other as it flexes: friction damping, strongest
             // on small, quick movements (washboard), as real leaf springs ride.
             if (b.friction > 0) F += b.friction * std::tanh(vrel / 0.06);  // (smoothed: an explicit step can't hold a true stick)
@@ -3511,14 +3489,23 @@ void Sim::respawnPlayer() {
     accum = 0;
 }
 
-V3 Sim::poleFreeShift(const Car& c) const {
-    // The car's outline seen from above, in its own level frame (dents and all), and its height.
+V3 Sim::poleFreeShift(const Car& c, double* turn) const {
+    if (turn) *turn = 0;
+    // The car's outline seen from above, in its own level frame (dents and all, not a panel lying where it came off), and its
+    // height.
     const Frame fr = c.frame();
     V3 fwd = norm(V3(fr.fwd.x, 0, fr.fwd.z));
     if (!std::isfinite(fwd.x) || len(fwd) < 0.5) fwd = V3(1, 0, 0);
     const V3 left(fwd.z, 0, -fwd.x);
+    std::vector<char> off(c.nodes.size(), 0);
+    for (const Panel& p : c.panels)
+        if (p.state == 2)
+            for (int j : p.panelNodes)
+                if (j >= 0 && j < (int)off.size()) off[j] = 1;
     double a0 = 1e9, a1 = -1e9, l0 = 1e9, l1 = -1e9, y0 = 1e9, y1 = -1e9;
-    for (const Node& n : c.nodes) {
+    for (int i = 0; i < (int)c.nodes.size(); i++) {
+        if (off[i]) continue;
+        const Node& n = c.nodes[i];
         const V3 r(n.p.x - fr.com.x, 0, n.p.z - fr.com.z);
         a0 = std::min(a0, dot(r, fwd)), a1 = std::max(a1, dot(r, fwd));
         l0 = std::min(l0, dot(r, left)), l1 = std::max(l1, dot(r, left));
@@ -3526,30 +3513,64 @@ V3 Sim::poleFreeShift(const Car& c) const {
     }
     if (a0 > a1) return V3();
     const double margin = 0.35;
-    // Free where it is? (Its height range down to the ground: set down on a slope, it can sink a little.)
-    auto blocked = [&](const V3& s) { return world.poleInside(fr.com.x + s.x, fr.com.z + s.z, fwd, a0, a1, l0, l1, y0 - 2.0, y1 + 0.5, margin); };
-    if (!blocked(V3())) return V3();
-    // The nearest free spot: rings outward, first straight back (the way it came in: it hit the
-    // tree nose first), then turning round to either side, straight ahead last. Each candidate
-    // also kept clear of the other cars.
-    static const double kTurns[] = {0, 30, -30, 60, -60, 90, -90, 120, -120, 150, -150, 180};
-    for (double d = 0.25; d <= 12.0; d += 0.25)
-        for (double deg : kTurns) {
-            const double ang = deg * M_PI / 180;
-            const double ca = std::cos(ang), sa = std::sin(ang);
-            const V3 dir = -fwd * ca + left * sa;
-            const V3 s = dir * d;
-            if (blocked(s)) continue;
-            bool carFree = true;
-            const double myR = 0.5 * std::hypot(a1 - a0, l1 - l0);
+    // A way out: a corridor as wide as the car (its real outline) and a little more, a car's length (3 m at least) straight
+    // ahead or straight back, with no trunk, pole or solid too tall to roll over in it. Set down with neither, the car is
+    // as stuck as before (a second tree just behind it, a rock in front).
+    const double run = std::max(3.0, a1 - a0), side = 0.5, step = 0.3;
+    // How many ways out a spot (shifted s, facing f) has: -1 if a trunk is in the car's outline there, or another car is
+    // (where it already stands, a car alongside doesn't count: parked beside it on a pad, it isn't moved off).
+    auto ways = [&](const V3& s, const V3& f) {
+        const double x = fr.com.x + s.x, z = fr.com.z + s.z;
+        if (world.poleInside(x, z, f, a0, a1, l0, l1, y0 - 2.0, y1 + 0.5, margin)) return -1;
+        const double myR = 0.5 * std::hypot(a1 - a0, l1 - l0);
+        if (len(s) > 0)
             for (const Car& o : cars) {
                 if (&o == &c || o.nodes.empty()) continue;
                 const V3 oc = o.frame().com;
                 const double oR = 0.5 * std::hypot(o.bbMax.x - o.bbMin.x, o.bbMax.z - o.bbMin.z);
-                if (std::hypot(oc.x - fr.com.x - s.x, oc.z - fr.com.z - s.z) < myR + oR + 0.3 && std::fabs(oc.y - fr.com.y) < 4) carFree = false;
+                if (std::hypot(oc.x - x, oc.z - z) < myR + oR + 0.3 && std::fabs(oc.y - fr.com.y) < 4) return -1;
             }
-            if (carFree) return s;
+        const bool ahead = !world.solidInside(x, z, f, a1 - 0.5, a1 + run, l0, l1, y0 - 2.0, y1 + 0.5, side, y0, step);
+        const bool back = !world.solidInside(x, z, f, a0 - run, a0 + 0.5, l0, l1, y0 - 2.0, y1 + 0.5, side, y0, step);
+        return (int)ahead + (int)back;
+    };
+    // The nearest spot with both ways out, unless one with a single way out is nearer by more than 1.5 m; failing both,
+    // the nearest with nothing in the outline. Rings outward, first straight back (the way it came in: it hit the tree
+    // nose first), then turning round to either side, straight ahead last; on each ring facing as it was first, then
+    // turned a little (when the caller can turn it).
+    static const double kDirs[] = {0, 30, -30, 60, -60, 90, -90, 120, -120, 150, -150, 180};
+    static const double kYaws[] = {0, 15, -15, 30, -30};
+    const int nYaws = turn ? 5 : 1;
+    V3 one, any;
+    double oneTurn = 0, anyTurn = 0, oneD = -1;
+    bool haveAny = false;
+    for (double d = 0; d <= 12.0; d += 0.25) {
+        if (oneD >= 0 && d > oneD + 1.5) break;
+        for (int yi = 0; yi < nYaws; yi++) {
+            const double ya = kYaws[yi] * M_PI / 180;
+            const V3 f = fwd * std::cos(ya) + left * std::sin(ya);
+            for (double deg : kDirs) {
+                const double ang = deg * M_PI / 180;
+                const V3 s = (-fwd * std::cos(ang) + left * std::sin(ang)) * d;
+                const int w = ways(s, f);
+                if (w == 2) {
+                    if (turn) *turn = ya;
+                    return s;
+                }
+                if (w == 1 && oneD < 0) one = s, oneTurn = ya, oneD = d;
+                if (w >= 0 && !haveAny) any = s, anyTurn = ya, haveAny = true;
+                if (d == 0) break;  // (no direction to go in)
+            }
         }
+    }
+    if (oneD >= 0) {
+        if (turn) *turn = oneTurn;
+        return one;
+    }
+    if (haveAny) {
+        if (turn) *turn = anyTurn;
+        return any;
+    }
     return V3();  // (boxed in all round: leave it be)
 }
 
@@ -3562,10 +3583,11 @@ void Sim::rightPlayer() {
     if (!std::isfinite(yaw)) yaw = 0;
     c.placeUpright(world, fr.com.x, fr.com.z, yaw);
     // Clear of the tree it's wrapped round (a hard hit leaves the trunk inside the crumpled nose).
-    const V3 s = poleFreeShift(c);
-    if (len(s) > 0) {
+    double turn = 0;
+    const V3 s = poleFreeShift(c, &turn);
+    if (len(s) > 0 || turn != 0) {
         const Frame f2 = c.frame();
-        c.placeUpright(world, f2.com.x + s.x, f2.com.z + s.z, yaw);
+        c.placeUpright(world, f2.com.x + s.x, f2.com.z + s.z, yaw + turn);
     }
 }
 
@@ -3574,8 +3596,9 @@ void Sim::towPlayerHome() {
     if (c.remote) return;  // (someone else's)
     dropRopes(player);
     c.placeUpright(world, c.spawnPos.x, c.spawnPos.z, c.spawnYaw);
-    const V3 s = poleFreeShift(c);
-    if (len(s) > 0) c.placeUpright(world, c.spawnPos.x + s.x, c.spawnPos.z + s.z, c.spawnYaw);
+    double turn = 0;
+    const V3 s = poleFreeShift(c, &turn);
+    if (len(s) > 0 || turn != 0) c.placeUpright(world, c.spawnPos.x + s.x, c.spawnPos.z + s.z, c.spawnYaw + turn);
     accum = 0;
 }
 
@@ -3584,8 +3607,9 @@ void Sim::teleportPlayer(double x, double z, double yaw) {
     if (c.remote) return;  // (someone else's)
     dropRopes(player);
     c.placeUpright(world, x, z, yaw);
-    const V3 s = poleFreeShift(c);
-    if (len(s) > 0) c.placeUpright(world, x + s.x, z + s.z, yaw);
+    double turn = 0;
+    const V3 s = poleFreeShift(c, &turn);
+    if (len(s) > 0 || turn != 0) c.placeUpright(world, x + s.x, z + s.z, yaw + turn);
     accum = 0;
 }
 
@@ -3603,10 +3627,11 @@ void Sim::recoverPlayer() {
     // reach round it (a hard hit stops the car with the trunk inside its crumpled nose).
     c.respawn(V3(fr.com.x, world.clearY(fr.com.x, fr.com.z, false) + 0.05, fr.com.z), yaw);
     c.setDown(world);
-    const V3 s = poleFreeShift(c);
-    if (len(s) > 0) {
+    double turn = 0;
+    const V3 s = poleFreeShift(c, &turn);
+    if (len(s) > 0 || turn != 0) {
         const V3 at = c.frame().com + s;
-        c.respawn(V3(at.x, world.clearY(at.x, at.z, false) + 0.05, at.z), yaw);
+        c.respawn(V3(at.x, world.clearY(at.x, at.z, false) + 0.05, at.z), yaw + turn);
         c.setDown(world);
     }
     c.spawnPos = sp;  // R still returns to the original spawn

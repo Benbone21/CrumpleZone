@@ -158,6 +158,12 @@ bool begin(CareerSession& s, Sim& sim, const WorldSave& w, const std::string& pl
 
 void capture(CareerSession& s, const Sim& sim) {
     if (!s.active) return;
+    if (s.world.map == MAP_PROCEDURAL && sim.world.map == MAP_PROCEDURAL) {  // (the window the cars below stand in: continuing builds this one)
+        if (!s.world.seed) s.world.seed = sim.world.proc.seed;
+        if (sim.world.proc.seed == s.world.seed) s.world.originSet = true, s.world.ox = sim.world.proc.ox, s.world.oz = sim.world.proc.oz;
+    }
+    if (sim.player >= 0 && sim.player < (int)sim.cars.size() && sim.cars[sim.player].spec && sim.cars[sim.player].spec->model >= 0 && !sim.cars[sim.player].isProp())
+        s.world.lastVehicle = sim.cars[sim.player].spec->model;
     for (int ci = 0; ci < (int)sim.cars.size(); ci++) {
         const Car& c = sim.cars[ci];
         if (c.remote || c.careerSlot == -1) continue;
@@ -293,7 +299,7 @@ bool fit(CareerSession& s, const Sim& sim, int vehicle, const ModSet& mods) {
     return true;
 }
 
-WorldSave newWorldFor(const Career& profile, const std::string& name, int map, Difficulty d, WorldMode m) {
+WorldSave newWorldFor(const Career& profile, const std::string& name, int map, Difficulty d, WorldMode m, uint64_t seed) {
     std::vector<WorldSave> taken = listWorlds();
     for (const OwnedVehicle& ov : profile.vehicles)
         if (!ov.world.empty()) {
@@ -301,7 +307,7 @@ WorldSave newWorldFor(const Career& profile, const std::string& name, int map, D
             w.slug = ov.world;
             taken.push_back(w);
         }
-    return newWorld(name, map, d, m, taken);
+    return newWorld(name, map, d, m, taken, seed);
 }
 
 bool forgetWorld(Career& profile, const std::string& slug, bool write) {

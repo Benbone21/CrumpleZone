@@ -43,7 +43,7 @@ enum : GLenum {
     GL_COMPILE_STATUS = 0x8B81, GL_LINK_STATUS = 0x8B82,
     GL_PROGRAM_POINT_SIZE = 0x8642,
     GL_FRAMEBUFFER_COMPLETE = 0x8CD5, GL_DEPTH_ATTACHMENT = 0x8D00, GL_FRAMEBUFFER = 0x8D40,
-    GL_NONE = 0, GL_BACK = 0x0405,
+    GL_NONE = 0, GL_BACK = 0x0405, GL_FRONT = 0x0404, GL_DEPTH_CLAMP = 0x864F, GL_CURRENT_PROGRAM = 0x8B8D,
     GL_ONE = 1, GL_RGBA = 0x1908, GL_HALF_FLOAT = 0x140B, GL_RG = 0x8227, GL_R16F = 0x822D,
     GL_RGBA16F = 0x881A, GL_RGBA32F = 0x8814, GL_R11F_G11F_B10F = 0x8C3A, GL_DEPTH_COMPONENT32F = 0x8CAC,
     GL_READ_FRAMEBUFFER = 0x8CA8, GL_DRAW_FRAMEBUFFER = 0x8CA9, GL_COLOR_ATTACHMENT0 = 0x8CE0,
@@ -157,7 +157,12 @@ enum : GLenum {
     X(void, GetQueryObjectui64v, (GLuint, GLenum, GLuint64*))                                  \
     X(void, QueryCounter, (GLuint, GLenum))                                                    \
     X(void, Finish, (void))                                                                    \
-    X(void, DeleteProgram, (GLuint))
+    X(void, DeleteProgram, (GLuint))                                                           \
+    X(void, CullFace, (GLenum))                                                                \
+    X(GLboolean, IsProgram, (GLuint))                                                                \
+    X(void, GenSamplers, (GLsizei, GLuint*))                                                   \
+    X(void, BindSampler, (GLuint, GLuint))                                                     \
+    X(void, SamplerParameteri, (GLuint, GLenum, GLint))
 
 // Functions past OpenGL 3.3, loaded when the driver has them (null when not).
 #define CZ_GL_OPTIONAL(X)                                                                      \

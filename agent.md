@@ -170,8 +170,8 @@ Without `--time`, captures start at 10:00 with the clock running.
 
 - **Release integration (2026-10-14):** all available branch work is merged into `main` for
   `v0.1.9`; read `docs/release-merge-0.1.9.md` and the new handoff first. Release defaults
-  preserve the verified suspension behavior. High-speed damping and free coils remain
-  opt-in development experiments (`CZ_HIGH_SPEED_DAMPING=1`, `CZ_FREE_COILS=1`) after
+  preserve the verified suspension behavior. Free coils remain an
+  opt-in development experiment (`CZ_FREE_COILS=1`; the old `CZ_HIGH_SPEED_DAMPING` is gone, replaced by the shared `Damper` valving in softbody.h) after
   regression checks found instability. The final functional suite passes 448/468 with
   the same 20 failures as the prior verified build; no new failing scenarios.
   Networking passes after sandbox restrictions were removed. Native Windows CI exposed

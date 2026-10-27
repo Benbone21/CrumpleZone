@@ -13,6 +13,7 @@
 #include "../src/net.h"
 #include "../src/platform.h"
 #include "../src/vehicles.h"
+#include "../src/world.h"
 #include "harness.h"
 
 SCENARIO(careerWorldSettings, "career/world-settings", "Start cash by difficulty; the Jesko can't be a starter; world slugs are folder-safe, unique and short") {
@@ -721,4 +722,59 @@ SCENARIO(careerSessionGarage, "career/session-garage", "The garage on an owned t
     CareerSession sandbox;
     ModSet keep = garage.fitted[bronco];
     ctx.check("not a career world: the garage's", !careersession::shopMods(sandbox, ctx.sim, keep) && !careersession::fit(sandbox, ctx.sim, bronco, other));
+}
+
+SCENARIO(careerWorldMenuPath, "career/world-menu-path", "A world made the way CAREER > NEW WORLD makes it (profileReadable, newWorldFor, saveWorld) is on disk at once and listed again with its map, seed and truck") {
+    const std::string dir = freshDir("menu-path");
+    ScopedCareerDir scope(dir);
+    Career profile;
+    std::string why;
+    ctx.check("no profile yet: a world can be made", careersession::profileReadable(&why), why);
+    const WorldSave built = careersession::newWorldFor(profile, "TRAIL DAYS", MAP_BACKCOUNTRY, DIFF_LIGHT, MODE_PERSONAL);
+    ctx.check("saved as soon as it's made", saveWorld(built) && fileThere(dir + "/worlds/" + built.slug + "/world.txt"));
+    ctx.check("a built map has no seed", built.seed == 0);
+    // Two custom worlds, no seed typed: two lands.
+    const WorldSave c1 = careersession::newWorldFor(profile, "WILD ONE", MAP_PROCEDURAL, DIFF_MEDIUM, MODE_PERSONAL);
+    ctx.check("the first custom world saved", saveWorld(c1));
+    const WorldSave c2 = careersession::newWorldFor(profile, "WILD TWO", MAP_PROCEDURAL, DIFF_MEDIUM, MODE_PERSONAL);
+    ctx.check("the second custom world saved", saveWorld(c2));
+    ctx.check("two new custom worlds get different seeds", c1.seed != 0 && c2.seed != 0 && c1.seed != c2.seed, std::to_string(c1.seed) + " " + std::to_string(c2.seed));
+    // A typed seed is kept as typed, even one another world has.
+    const WorldSave c3 = careersession::newWorldFor(profile, "FRIEND'S", MAP_PROCEDURAL, DIFF_MEDIUM, MODE_CREW, c1.seed);
+    ctx.check("a typed seed is the world's", c3.seed == c1.seed && saveWorld(c3));
+    // Listed again (the CAREER page reads listWorlds()).
+    const std::vector<WorldSave> all = listWorlds();
+    auto find = [&](const std::string& slug) -> const WorldSave* {
+        for (const WorldSave& w : all)
+            if (w.slug == slug) return &w;
+        return nullptr;
+    };
+    const WorldSave *b = find(built.slug), *l1 = find(c1.slug), *l2 = find(c2.slug);
+    ctx.check("all four listed", all.size() == 4 && b && l1 && l2);
+    ctx.check("the built one: its name and map, a save time", b && b->name == "TRAIL DAYS" && b->map == MAP_BACKCOUNTRY && b->savedAt > 0 && !b->damaged);
+    ctx.check("the custom ones keep their seeds", l1 && l2 && l1->map == MAP_PROCEDURAL && l1->seed == c1.seed && l2->seed == c2.seed);
+    // A world played and left: its window and truck come back from the file.
+    WorldSave played = c1;
+    played.originSet = true, played.ox = 4096, played.oz = -2048, played.lastVehicle = catalogIndex("bronco");
+    ctx.check("saved again after play", saveWorld(played));
+    WorldSave back;
+    ctx.check("loads", loadWorld(c1.slug, back));
+    ctx.check("seed, window and truck kept", back.seed == c1.seed && back.originSet && back.ox == 4096 && back.oz == -2048 && back.lastVehicle == played.lastVehicle);
+    WorldSave plain;
+    loadWorld(built.slug, plain);
+    ctx.check("a built map's save has no seed or window", plain.seed == 0 && !plain.originSet);
+
+    // The seed reaches the land: the procedural map built from each world's seed (as the game sets it before the load) is that seed's.
+    const uint64_t seedWas = World::procSeed;
+    const bool setWas = World::procOriginSet;
+    World::procSeed = c1.seed, World::procOriginSet = false;
+    World a(MAP_PROCEDURAL);
+    World::procSeed = c2.seed, World::procOriginSet = false;
+    World z(MAP_PROCEDURAL);
+    World::procSeed = c1.seed, World::procOriginSet = false;
+    World again(MAP_PROCEDURAL);
+    World::procSeed = seedWas, World::procOriginSet = setWas;
+    ctx.check("each world's land is made from its seed", a.proc.seed == c1.seed && z.proc.seed == c2.seed);
+    ctx.check("two seeds, two lands", a.landHash() != z.landHash());
+    ctx.check("the same seed again (after another one's tiles were made), the same land", again.landHash() == a.landHash());
 }

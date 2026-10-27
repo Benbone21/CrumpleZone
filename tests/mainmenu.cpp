@@ -161,14 +161,15 @@ SCENARIO(menuCareerWorlds, "mainmenu/career-worlds", "CAREER lists the worlds (a
     n.setSel(N_MAP);
     n.key(K_D);
     ctx.check("D cycles the map", n.worldMapIdx == 1 || careerMaps().size() == 1);
-    bool openEnded = false;
-    for (size_t i = 0; i <= careerMaps().size(); i++) {
-        openEnded = openEnded || n.worldMap() == MAP_PROCEDURAL || n.worldMap() == MAP_REAL;
+    bool sawCustom = false, sawReal = false;
+    for (size_t i = 0; i <= newWorldMaps().size(); i++) {
+        sawCustom = sawCustom || n.worldMap() == MAP_PROCEDURAL;
+        sawReal = sawReal || n.worldMap() == MAP_REAL;
         n.key(K_D);
     }
-    ctx.check("a full cycle of maps never lands on the procedural or a real terrain (not career maps yet)", !openEnded && !careerMaps().empty());
-    ctx.check("the career maps are the listed ones less those", careerMaps().size() + 1 + (mapListed(MAP_REAL) ? 1 : 0) == listedMaps().size() && !careerMap(MAP_PROCEDURAL) &&
-                                                                     !careerMap(MAP_REAL) && careerMap(MAP_BACKCOUNTRY));
+    ctx.check("a full cycle of maps reaches the custom world but never a real terrain", sawCustom && !sawReal && !careerMaps().empty());
+    ctx.check("the built maps are the listed ones less the procedural and a real terrain", careerMaps().size() + 1 + (mapListed(MAP_REAL) ? 1 : 0) == listedMaps().size() &&
+                                                                     careerMap(MAP_PROCEDURAL) && !careerMap(MAP_REAL) && careerMap(MAP_BACKCOUNTRY));
     n.worldMapIdx = 1 % (int)careerMaps().size();
     n.setSel(N_DIFF);
     n.key(K_D);
@@ -191,7 +192,7 @@ SCENARIO(menuCareerWorlds, "mainmenu/career-worlds", "CAREER lists the worlds (a
     n.setSel(N_CREATE);
     const Result r = n.key(K_ENTER);
     ctx.check("CREATE returns the picks", r.act == A_CAREER_NEW && r.worldName == "MY RIG" && r.map == n.worldMap() && careerMap(r.map) && r.difficulty == 2 && r.mode == MODE_CREW &&
-                                              r.vehicle == n.startVehicle() && startableVehicle(r.vehicle));
+                                              r.vehicle == n.startVehicle() && startableVehicle(r.vehicle) && r.seed == 0);
     n.key(K_ESC);
     ctx.check("Esc goes back to the list, on NEW WORLD", n.page == P_WORLDS && n.sel == (int)n.worlds.size());
     n.key(K_ESC);
@@ -216,4 +217,82 @@ SCENARIO(menuCareerWorlds, "mainmenu/career-worlds", "CAREER lists the worlds (a
     n.open(0, 0);
     n.choose(F_SANDBOX);
     ctx.check("SANDBOX keeps its map page", n.page == P_MAP && !n.career);
+}
+
+SCENARIO(menuNewWorldPages, "mainmenu/new-world-pages", "New World's MAP page (BUILT MAPS, then the CUSTOM WORLD), the custom world's SEED row, the vehicle picker page, the list's DELETE button") {
+    Nav n;
+    n.open(listedMaps()[0], listedVehicles()[0]);
+    n.choose(F_CAREER);
+    n.choose(0);  // (no worlds: NEW WORLD)
+    ctx.check("on the New World page", n.page == P_NEW_WORLD);
+    // MAP: its own page, the built maps then the custom world.
+    n.setSel(N_MAP);
+    n.key(K_ENTER);
+    const std::vector<int> maps = newWorldMaps();
+    ctx.check("Enter on MAP opens the map page", n.page == P_WORLD_MAP && n.count() == (int)maps.size() && n.title() == "NEW WORLD: WHERE?");
+    ctx.check("the built maps come first, then the custom world, last", (int)maps.size() == (int)careerMaps().size() + (int)customWorldMaps().size() &&
+                                                                          customWorld(maps.back()) && maps.back() == MAP_PROCEDURAL && !customWorld(maps[0]));
+    n.key(K_ESC);
+    ctx.check("Esc goes back to New World, on MAP", n.page == P_NEW_WORLD && n.sel == N_MAP);
+    ctx.check("a built map: moving down skips SEED", !n.customPick() && (n.key(K_S), n.sel == N_DIFF));
+    n.setSel(N_SEED);
+    ctx.check("...and the mouse can't land on it", n.sel == N_DIFF);
+    n.key(K_W);
+    n.key(K_ENTER);
+    n.setSel((int)maps.size() - 1);
+    n.key(K_ENTER);
+    ctx.check("picking the custom world goes back to New World, on SEED", n.page == P_NEW_WORLD && n.customPick() && n.sel == N_SEED);
+    const std::string first = n.seedText;
+    ctx.check("a new world shows a random seed", !first.empty() && parseSeed(first) != 0 && std::to_string(parseSeed(first)) == first);
+    n.key(K_D);
+    ctx.check("D: a new seed", !n.seedText.empty() && n.seedText != first);
+    n.key(K_ENTER);
+    ctx.check("Enter on SEED types", n.typing);
+    for (int i = 0; i < 24; i++) n.key(K_BACKSPACE);
+    n.text("red canyon");
+    n.key(K_ENTER);
+    ctx.check("a typed seed (words: capitals)", !n.typing && n.seedText == "RED CANYON");
+    n.setSel(N_CREATE);
+    Result r = n.key(K_ENTER);
+    ctx.check("CREATE on the custom world carries the typed seed", r.act == A_CAREER_NEW && r.map == MAP_PROCEDURAL && r.seed == parseSeed("RED CANYON") && r.seed != 0);
+    ctx.check("the same words, the same seed; digits are the number", parseSeed("red canyon") == parseSeed("RED CANYON") && parseSeed("12345") == 12345 && parseSeed("  ") == 0);
+    n.seedText.clear();
+    r = n.key(K_ENTER);
+    ctx.check("a blank seed still gets one", r.seed != 0);
+
+    // Two new worlds in a row: two seeds.
+    n.key(K_ESC);
+    n.choose(0);
+    const std::string s1 = n.seedText;
+    n.key(K_ESC);
+    n.choose(0);
+    ctx.check("each New World gets a different seed", !s1.empty() && n.seedText != s1);
+
+    // VEHICLE: the picker page.
+    n.setSel(N_VEH);
+    n.key(K_ENTER);
+    const std::vector<int> sv = startVehicles();
+    ctx.check("Enter on VEHICLE opens the picker", n.page == P_START_VEHICLE && n.count() == (int)sv.size() && n.sel == n.startIdx);
+    n.key(K_D);
+    ctx.check("D steps along the cards", n.sel == (int)(1 % sv.size()));
+    n.key(K_ESC);
+    ctx.check("Esc goes back without picking", n.page == P_NEW_WORLD && n.sel == N_VEH && n.startIdx == 0);
+    n.key(K_ENTER);
+    const int last = (int)sv.size() - 1;
+    n.choose(last);  // (a click on the last card)
+    ctx.check("a click on a card picks it and goes on to CREATE", n.page == P_NEW_WORLD && n.sel == N_CREATE && n.startIdx == last && n.startVehicle() == sv[last]);
+    ctx.check("...and CREATE starts in it", n.key(K_ENTER).vehicle == sv[last]);
+
+    // The world list's DELETE button.
+    WorldSave w;
+    w.name = "ALPHA", w.slug = "alpha", w.map = careerMaps()[0];
+    n.open(0, 0);
+    n.worlds = {w};
+    n.choose(F_CAREER);
+    n.setSel(kHitDelete);
+    ctx.check("hovering DELETE moves nothing", n.sel == 0 && n.page == P_WORLDS);
+    n.choose(kHitDelete);
+    ctx.check("clicking DELETE asks about the focused world", n.page == P_DELETE_WORLD && n.delIdx == 0 && n.sel == 1);
+    n.key(K_ESC);
+    ctx.check("the CONTINUE button is the world's row", n.choose(0).act == A_CAREER_CONTINUE);
 }

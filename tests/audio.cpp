@@ -41,6 +41,8 @@ void soundscapeTests(const std::function<void(const char*, bool)>& check, void (
 
 struct AudioTest {
     static void render(Audio& audio, float* out, int frames) { audio.render(out, frames); }
+    static void seed(Audio& audio, uint32_t rng) { audio.rng_ = rng; }
+    static size_t fireSamples(const Audio& audio) { return audio.fireLoop_.size(); }
     static bool hissRates() {
         for (int rate : {8000, 22050, 44100, 48000, 192000}) {
             Audio audio;
@@ -220,6 +222,30 @@ int main() {
     }
     traceAllocations = false;
     check("mixer and music map changes perform no C++ allocations in the callback", callbackAllocations == 0);
+    {  // the main menu's camp plays ONE fire: with campfire.wav loaded, the synthesized fire contributes nothing (the mix doesn't depend on its noise state)
+        auto camp = [&](bool recorded, uint32_t seed) {
+            Audio a;
+            if (recorded) a.loadAmbience("assets/audio/ambience");
+            AudioTest::seed(a, seed);
+            a.setVolume(1); a.setEngine(0, 0); a.setCampfire(0.85f, 0.25f, 0.1f);
+            std::vector<float> buf(512 * 2), all;
+            for (int k = 0; k < 300; k++) {
+                AudioTest::render(a, buf.data(), 512);
+                if (k >= 150) all.insert(all.end(), buf.begin(), buf.end());
+            }
+            return std::pair<size_t, std::vector<float>>(AudioTest::fireSamples(a), all);
+        };
+        const auto a = camp(true, 0x12345678u), b = camp(true, 0x9e3779b9u), synthA = camp(false, 0x12345678u), synthB = camp(false, 0x9e3779b9u);
+        auto rmsDiff = [](const std::vector<float>& x, const std::vector<float>& y) {
+            double d = 0, e = 0;
+            for (size_t i = 0; i < x.size(); i++) d += (x[i] - y[i]) * (x[i] - y[i]), e += x[i] * x[i];
+            return std::sqrt(d / std::max(1e-12, e));
+        };
+        std::printf("  camp fire: recording %zu samples; mix changes with the noise seed by %.5f (recorded) and %.3f (synthesized)\n", a.first, rmsDiff(a.second, b.second), rmsDiff(synthA.second, synthB.second));
+        check("the camp's recorded fire loads (campfire.wav, 48 kHz mono PCM16)", a.first > 48000);
+        check("with the recording, the synthesized fire is not in the camp mix", rmsDiff(a.second, b.second) < 1e-4);
+        check("without it, the synthesized fire is (the comparison above is sensitive)", rmsDiff(synthA.second, synthB.second) > 0.05);
+    }
     {  // the vehicle volume: scales the car's sounds only
         auto level = [&](float vehicle, bool car, bool hiss = false) {
             Audio a;
