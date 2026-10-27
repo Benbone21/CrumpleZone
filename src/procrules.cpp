@@ -46,6 +46,11 @@ std::vector<Key> keys() {
     k.push_back({W, "creek_grade", nullptr, AT(r.water.creekGrade), "...and a creek's, high in the ranges (cascades)"});
     k.push_back({W, "ford_spacing", nullptr, AT(r.water.fordSpacing), "m: about how far apart a big river's known fords are"});
     k.push_back({W, "ford_depth", nullptr, AT(r.water.fordDepth), "m: the water over a ford's riffle"});
+    const char* BR = "bridges";
+    k.push_back({BR, "damage", nullptr, AT(r.bridge.damage), "0..1: how worn a rough bridge is on the whole (planks gone, broken and sagging; rails and posts)"});
+    k.push_back({BR, "fair_share", nullptr, AT(r.bridge.fairShare), "the share of bridges in fair shape (main trails' 1.4 times as often, other trails' half as often)"});
+    k.push_back({BR, "missing_share", nullptr, AT(r.bridge.missingShare), "the share of the deck's plank pieces missing on the roughest bridge"});
+    k.push_back({BR, "max_gap", nullptr, AT(r.bridge.maxGap), "m: the widest hole on the one drivable line every bridge keeps (keep it under ~0.9)"});
     const char* T = "terrain.ranges";
     k.push_back({T, "belt_from", nullptr, AT(r.range.beltFrom), "0..1: where the slow belt field (~9 km features) starts raising a range (less 0.06 x the world's relief)"});
     k.push_back({T, "belt_full", nullptr, AT(r.range.beltFull), "0..1: where a range is at full height"});

@@ -8,6 +8,7 @@
 #include "../src/sdl_min.h"
 #include "../src/procstream.h"
 #include "../src/procworld.h"
+#include "../src/procdress.h"
 #include <algorithm>
 #include <vector>
 #include <chrono>
@@ -529,6 +530,52 @@ int main() {
             if (timeFrames && on > 1.5 * off + 1.0) throw std::runtime_error("the far trees cost the frame over half as much again");
             clean();
             std::puts("PASS far trees: pictures past the meshes, the far forest to the fog, the frame no dearer");
+        }
+        {
+            // The procedural world's set pieces (procdress.h): a waterfall and a worn timber bridge are drawn (the frame looks different
+            // with them than with the bare generator's window) and cost the frame little. (Apple's software renderer takes seconds a
+            // frame: there the frames are drawn to check what's drawn, not timed: the pattern of the slide check above.)
+            const char* gr = (const char*)gl::GetString(GL_RENDERER);
+            const bool timeFrames = !(gr && std::strstr(gr, "Software Renderer"));
+            auto finish = reinterpret_cast<void (*)()>(SDL_GL_GetProcAddress("glFinish"));
+            struct Spot { const char* what; uint64_t seed; double gx, gz; V3 eyeOff; };
+            // (seed 1's 14 m fall, tests/procmodels.cpp procmodels/falls; seed 3's roughest bridge, procmodels/bridge-drive)
+            const Spot spots[2] = {{"waterfall", 1, -6174.3, 264.0, V3(-21, 9, -21.6)}, {"worn bridge", 3, -1630.5, 1653.0, V3(-12, 5, 5)}};
+            for (const Spot& sp : spots) {
+                double ms[2] = {0, 0};
+                std::vector<unsigned char> px[2];
+                for (int dressed = 0; dressed < 2; dressed++) {
+                    World::procSeed = sp.seed, World::procOriginSet = true, World::procOriginX = (int64_t)sp.gx, World::procOriginZ = (int64_t)sp.gz;
+                    proc::dressWindows = dressed != 0;
+                    sim.world = World(MAP_PROCEDURAL);
+                    proc::dressWindows = true, World::procOriginSet = false;
+                    proc::setActiveWindow(sim.world);
+                    renderer.setWorld(sim.world);
+                    const V3 at(sp.gx - (double)sim.world.proc.ox, 0, sp.gz - (double)sim.world.proc.oz);
+                    View v;
+                    v.target = V3(at.x, sim.world.height(at.x, at.z) + 3, at.z);
+                    v.eye = v.target + sp.eyeOff, v.up = V3(0, 1, 0), v.width = 160, v.height = 90;
+                    std::vector<double> t;
+                    for (int f = 0; f < (timeFrames ? 60 : 3); f++) {
+                        if (finish) finish();
+                        const auto t0 = std::chrono::steady_clock::now();
+                        renderer.drawScene(sim, v, DEBUG_OFF, nullptr);
+                        if (finish) finish();
+                        if (f >= 2) t.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+                    }
+                    std::sort(t.begin(), t.end());
+                    ms[dressed] = t[t.size() / 2];
+                    px[dressed] = renderer.readPixels(v.width, v.height);
+                }
+                long differ = 0;
+                for (size_t k = 0; k + 2 < px[0].size() && k + 2 < px[1].size(); k += 3) differ += std::abs(px[0][k] - px[1][k]) + std::abs(px[0][k + 1] - px[1][k + 1]) + std::abs(px[0][k + 2] - px[1][k + 2]) > 30;
+                std::printf("Render check: %s: median frame %.2f ms dressed, %.2f bare; %ld of %d pixels changed%s\n", sp.what, ms[1], ms[0], differ, 160 * 90,
+                            timeFrames ? "" : " (not timed: a software renderer)");
+                if (differ < 100) throw std::runtime_error(std::string("the ") + sp.what + " isn't drawn (the frame looks as it did without it)");
+                if (timeFrames && ms[1] > 1.25 * ms[0] + 1.0) throw std::runtime_error(std::string("the ") + sp.what + " costs the frame over a quarter again");
+            }
+            clean();
+            std::puts("PASS procedural set pieces: a waterfall and a worn bridge drawn, at little cost");
         }
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL render: %s\n", error.what());
