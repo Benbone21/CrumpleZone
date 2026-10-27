@@ -17,7 +17,7 @@ PHYS     += src/worldcache.cpp src/bytepack.cpp
 PHYS     += src/toolsounds.cpp src/repairsync.cpp src/battery.cpp
 PHYS     += src/rivers.cpp src/places.cpp
 PHYS     += src/onemap.cpp src/onemapbuild.cpp
-PHYS     += src/procworld.cpp src/procrules.cpp src/procreveal.cpp
+PHYS     += src/procworld.cpp src/procrules.cpp src/procreveal.cpp src/proceros.cpp
 PHYS     += src/regionland.cpp
 PHYS     += src/netbase.cpp src/nettunnel.cpp src/rendezvous.cpp
 SCEN     += tests/baja.cpp tests/net_repair.cpp
@@ -388,3 +388,9 @@ build/trailroute: build/tools/trailroute.o $(patsubst %.cpp,build/%.o,$(PHYS))
 
 # The trail network's table (an included file the header list misses)
 build/src/bctrails.o build/rel/src/bctrails.o build/win/obj/src/bctrails.o build/mac/obj/src/bctrails.o build/macdev/obj/src/bctrails.o: src/bctrails_routes.inc
+
+# The procedural world's erosion on one tile (dev tool): build/erosion_view SEED TI TJ OUTDIR
+build/erosion_view: build/tools/erosion_view.o $(patsubst %.cpp,build/%.o,$(PHYS))
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -lm
+build/erosion_lab: build/tools/erosion_lab.o $(patsubst %.cpp,build/%.o,$(PHYS))
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -lm

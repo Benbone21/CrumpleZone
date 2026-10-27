@@ -20,6 +20,7 @@
 #include "procrules.h"
 
 class World;
+namespace proc { struct ErosionGrid; }
 class Sim;
 struct MapPlace;
 
@@ -190,6 +191,14 @@ public:
     // and snags (the rest broadleaf); and how much their height is cut (0..1: the deserts', the tree line's). m: macroAt(gx, gz, ...).
     struct TreeCover { double triedPerHa = 0, maxPerHa = 0, conifer = 0, snag = 0, shrink = 0; };
     TreeCover treeCover(double gx, double gz, const Macro& m, double h, double slope) const;
+    // Erosion (proceros.h) works in fixed tiles of the land: tile (ti, tj) is [ti, ti + 1) x [tj, tj + 1) times erosionTileSize m.
+    // What it changed there (m: + silted, - worn), every `cell` m from (ox, oz), n x n (index a * n + b, a along x), and how long
+    // it took to make (tests, tools: the seams, the cost).
+    static int erosionTileSize();
+    std::vector<float> erosionTile(int64_t ti, int64_t tj, double& ox, double& oz, int& n, double& cell, double& ms) const;
+    double erosionAt(double gx, double gz) const;  // what erosion changed at a point (the tiles blended)
+    double erosionLake(double gx, double gz) const;  // (prototype) the level of a lake the worn land holds there (its own tile's; -1e9: none)
+    void erosionInput(int64_t ti, int64_t tj, ErosionGrid& g, double& ox, double& oz) const;  // (tools: the grid a tile wears, from (ox, oz))
     // The places (places.h MapPlace, in GLOBAL metres): what node (i, j) is (a place kind, or -1 a plain junction) and everything
     // found at it (the place, a cache near it, now and then an abandoned vehicle), and the fords on its edges. Ids are
     // "PW.<i>.<j>.<WHAT>" (stable for a seed: saves keep them); names are unique within ~20 km.

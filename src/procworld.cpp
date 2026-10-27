@@ -10,6 +10,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <atomic>
+#include <condition_variable>
+#include <future>
 #include <limits>
 #include <list>
 #include <mutex>
@@ -23,6 +25,7 @@
 #include "loadprof.h"
 #include "parallel.h"
 #include "plants.h"
+#include "proceros.h"
 #include "softbody.h"
 #include "spawnpad.h"
 #include "world.h"
@@ -1389,7 +1392,7 @@ static Macro evalMacro(const ProcWorld& G, double x, double z, const DTile& T, c
         if (s.cls == 1 && d < cd) cd = d, cs = &s, ct = t;
     }
     if (!valeDone) vale = env;
-    if (withLakes) {
+    if (withLakes && rules().erosion.on <= 0) {
         for (const Lake& L : T.lakes) {  // (a lake's shaped floor: cut)
             const double v = dishAt(L, x, z);
             if (v < env && !lakeOkOf(G, L)) continue;
@@ -1427,12 +1430,192 @@ static Macro evalMacro(const ProcWorld& G, double x, double z, const DTile& T, c
     return m;
 }
 
+// ---- Erosion (proceros.h): the land worn by water and frost, in fixed tiles ---------------------------------------------------------
+// The land (evalMacro, without lakes) is sampled every kECell m over a kETile square tile and kEMargin round it, worn down by
+// erodeGrid, and what that changed (the worn land less the land) is kept over the tile and kEBlend round it. A point takes its own
+// tile's change, and near a tile's edge (within kEBlend) a smooth blend of the tiles either side: the same from both sides, and every
+// point in a blend band is at least kEMargin - kEBlend from the edge of every grid that wore it.
+namespace {
+constexpr int64_t kETile = 2048;
+constexpr int kECell = 4, kEBlend = 128, kEMargin = 384;
+constexpr int kEN = (int)((kETile + 2 * kEBlend) / kECell) + 1;   // the change's grid: cells a side
+constexpr int kEGrid = (int)((kETile + 2 * kEMargin) / kECell) + 1;  // the worn grid: cells a side
+struct ETile {
+    double ox = 0, oz = 0;  // the change's grid's corner (global)
+    std::vector<float> d;   // kEN x kEN, a * kEN + b (a along x)
+    std::vector<float> lake;  // kEN x kEN: the water's level where the worn land holds a lake (-1e30: none)
+    int lakes = 0;
+    double ms = 0;          // how long it took
+};
+struct ESlot {
+    std::shared_future<std::shared_ptr<const ETile>> f;
+    uint64_t used = 0;
+};
+std::mutex eMutex;
+std::unordered_map<TKey, ESlot, TKHash> eMap;
+std::atomic<uint64_t> eClock{0}, eMade{0};
+
+void sampleErosionGrid(const ProcWorld& G, int64_t ti, int64_t tj, ErosionGrid& g) {
+    const ErosionRule& ER = rules().erosion;
+    const double gx0 = (double)(ti * kETile - kEMargin), gz0 = (double)(tj * kETile - kEMargin);
+    const int n = kEGrid;
+    g.n = n, g.cell = kECell;
+    const size_t N = (size_t)n * n;
+    g.h.resize(N), g.kErode.resize(N), g.gDep.resize(N), g.talus.resize(N), g.creep.resize(N), g.fixed.assign(N, 0), g.floor.resize(N);
+    // (The land, without lakes: a pure function of the point, so the rows can be made on any number of threads. CZ_GEN_THREADS caps
+    // them: tests, and while someone plays.)
+    const char* cap = std::getenv("CZ_GEN_THREADS");
+    const int saveCap = parallelRowsCap;
+    if (cap && *cap) parallelRowsCap = std::max(1, std::atoi(cap));
+    parallelRows(n, [&](int a) {
+        for (int b = 0; b < n; b++) {
+            const double x = gx0 + (double)a * kECell, z = gz0 + (double)b * kECell;
+            const auto T = tileAt(G, x, z);
+            const int ca = std::min(kTC - 1, std::max(0, (int)std::floor((x - T->ox) / kTCell))), cb = std::min(kTC - 1, std::max(0, (int)std::floor((z - T->oz) / kTCell)));
+            const int c = ca * kTC + cb;
+            const Macro m = evalMacro(G, x, z, *T, T->idx.data() + T->start[c], (int)(T->start[c + 1] - T->start[c]), false);
+            const size_t i = (size_t)a * n + b;
+            double h = m.h;
+            // (The lakes' natural dams (a moraine, a rock bar) across their valleys, on the land before it's worn: the water is then
+            // whatever the worn land holds behind them. No floor is shaped: nothing is dug.)
+            for (const Lake& L : T->lakes) h = std::max(h, damAt(L, x, z));
+            g.h[i] = (float)h;
+            g.floor[i] = m.floorNode != INT64_MIN ? (float)(m.floor + 0.3) : -1e30f;
+            double ke = 0, gd = 0, ta = 0, cr = 0;
+            for (int k = 0; k < PB_COUNT; k++) {
+                const ErosionBiomeRule& B = ER.biome[k];
+                ke += m.w[k] * B.cut, gd += m.w[k] * B.deposit, ta += m.w[k] * B.talus, cr += m.w[k] * B.creep;
+            }
+            g.kErode[i] = (float)ke, g.gDep[i] = (float)gd, g.talus[i] = (float)ta, g.creep[i] = (float)cr;
+            // (A channel's water is never worn: its bed and level are the drainage's. The grid's edge holds.)
+            const bool wet = (m.riverOn > 0.5 && m.riverS < m.riverHW + 2) || (m.creekOn > 0.5 && m.creekS < m.creekHW + 2);
+            if (wet || a == 0 || b == 0 || a == n - 1 || b == n - 1) g.fixed[i] = 1;
+        }
+    }, 8);
+    parallelRowsCap = saveCap;
+}
+
+std::shared_ptr<const ETile> makeErosionTile(const ProcWorld& G, int64_t ti, int64_t tj) {
+    const auto t0 = std::chrono::steady_clock::now();
+    const ErosionRule& ER = rules().erosion;
+    const int n = kEGrid;
+    ErosionGrid g;
+    sampleErosionGrid(G, ti, tj, g);
+    const std::vector<float> base = g.h;
+    ErosionRun run;
+    run.iterations = (int)ER.iterations, run.coarseIterations = (int)ER.coarseIterations, run.maxCut = ER.maxCut;
+    run.glacierIterations = (int)ER.glacierIterations, run.glacierLine = ER.glacierLine, run.glacierCut = ER.glacierCut, run.pitFill = ER.pitFill;
+    const double sampleMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    erodeGrid(g, run);
+    auto t = std::make_shared<ETile>();
+    t->ox = (double)(ti * kETile - kEBlend), t->oz = (double)(tj * kETile - kEBlend);
+    t->d.resize((size_t)kEN * kEN);
+    const int off = (kEMargin - kEBlend) / kECell;
+    const float lim = (float)ER.maxDepth;
+    // (The change, softened once (1 2 1 each way): no one-cell steps where a worn cell meets one held at its valley's floor.)
+    for (int a = 0; a < kEN; a++)
+        for (int b = 0; b < kEN; b++) {
+            double sum = 0;
+            for (int da = -1; da <= 1; da++)
+                for (int db = -1; db <= 1; db++) {
+                    const size_t i = (size_t)(a + off + da) * n + (b + off + db);
+                    sum += (double)((da ? 1 : 2) * (db ? 1 : 2)) * ((double)g.h[i] - base[i]);
+                }
+            t->d[(size_t)a * kEN + b] = std::max(-lim, std::min(lim, (float)(sum / 16)));
+        }
+    {  // (the lakes: the worn land's closed hollows, filled to their spill points; over 0.3 ha and a metre deep)
+        std::vector<float> lv;
+        t->lakes = findLakes(n, kECell, g.h, lv, 3000, 1.0);
+        t->lake.resize((size_t)kEN * kEN);
+        for (int a = 0; a < kEN; a++)
+            for (int b = 0; b < kEN; b++) t->lake[(size_t)a * kEN + b] = lv[(size_t)(a + off) * n + (b + off)];
+    }
+    t->ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    eMade++;
+    if (std::getenv("CZ_EROSION_LOG")) std::fprintf(stderr, "erosion tile %lld,%lld: %.0f ms (the land sampled in %.0f)\n", (long long)ti, (long long)tj, t->ms, sampleMs);
+    return t;
+}
+
+std::shared_ptr<const ETile> erosionTile(const ProcWorld& G, int64_t ti, int64_t tj) {
+    struct Slot {
+        uint64_t seed = 0, epoch = 0;
+        int64_t i = 0, j = 0;
+        std::shared_ptr<const ETile> t;
+    };
+    thread_local Slot slots[4];
+    thread_local int next = 0;
+    const uint64_t ep = drainEpoch.load(std::memory_order_relaxed);
+    for (Slot& s : slots)
+        if (s.t && s.epoch == ep && s.i == ti && s.j == tj && s.seed == G.seed()) return s.t;
+    std::shared_future<std::shared_ptr<const ETile>> f;
+    std::promise<std::shared_ptr<const ETile>> mine;
+    bool make = false;
+    {
+        std::lock_guard<std::mutex> lock(eMutex);
+        auto it = eMap.find({G.seed(), ti, tj});
+        if (it != eMap.end()) f = it->second.f, it->second.used = ++eClock;
+        else {
+            if (eMap.size() >= 24) {  // (~32 MB: the least lately used goes; what's in use is held)
+                auto old = eMap.begin();
+                for (auto q = eMap.begin(); q != eMap.end(); ++q)
+                    if (q->second.used < old->second.used) old = q;
+                eMap.erase(old);
+            }
+            f = mine.get_future().share();
+            eMap[{G.seed(), ti, tj}] = ESlot{f, ++eClock};
+            make = true;
+        }
+    }
+    if (make) mine.set_value(makeErosionTile(G, ti, tj));
+    std::shared_ptr<const ETile> t = f.get();
+    Slot& s = slots[next++ & 3];
+    s.seed = G.seed(), s.epoch = ep, s.i = ti, s.j = tj, s.t = t;
+    return t;
+}
+
+// What erosion changed at a point (m: + silted, - worn away).
+double erosionAt(const ProcWorld& G, double x, double z) {
+    const int64_t ti = (int64_t)std::floor(x / (double)kETile), tj = (int64_t)std::floor(z / (double)kETile);
+    const double u = x - (double)(ti * kETile), v = z - (double)(tj * kETile);
+    int64_t is[2] = {ti, ti}, js[2] = {tj, tj};
+    double wi[2] = {1, 0}, wj[2] = {1, 0};
+    if (u < kEBlend) is[1] = ti - 1, wi[0] = smoothstep(-kEBlend, kEBlend, u), wi[1] = 1 - wi[0];
+    else if (u > kETile - kEBlend) is[1] = ti + 1, wi[0] = 1 - smoothstep(kETile - kEBlend, kETile + kEBlend, u), wi[1] = 1 - wi[0];
+    if (v < kEBlend) js[1] = tj - 1, wj[0] = smoothstep(-kEBlend, kEBlend, v), wj[1] = 1 - wj[0];
+    else if (v > kETile - kEBlend) js[1] = tj + 1, wj[0] = 1 - smoothstep(kETile - kEBlend, kETile + kEBlend, v), wj[1] = 1 - wj[0];
+    double sum = 0;
+    for (int p = 0; p < 2; p++)
+        for (int q = 0; q < 2; q++) {
+            const double w = wi[p] * wj[q];
+            if (w <= 0) continue;
+            const auto T = erosionTile(G, is[p], js[q]);
+            const double fx = (x - T->ox) / kECell, fz = (z - T->oz) / kECell;
+            const int a = std::min(kEN - 2, std::max(0, (int)std::floor(fx))), b = std::min(kEN - 2, std::max(0, (int)std::floor(fz)));
+            const double tx = std::min(1.0, std::max(0.0, fx - a)), tz = std::min(1.0, std::max(0.0, fz - b));
+            const float* d = T->d.data();
+            const double d00 = d[(size_t)a * kEN + b], d10 = d[(size_t)(a + 1) * kEN + b], d01 = d[(size_t)a * kEN + b + 1], d11 = d[(size_t)(a + 1) * kEN + b + 1];
+            sum += w * ((d00 + (d10 - d00) * tx) * (1 - tz) + (d01 + (d11 - d01) * tx) * tz);
+        }
+    return sum;
+}
+
+// The land at a point, worn: what erosion changed added, but never lower than the floor of the valley it's in (the channel's level
+// stays the drainage's: no water stands over the land beside it).
+void applyErosion(const ProcWorld& G, double x, double z, Macro& m) {
+    if (rules().erosion.on <= 0) return;
+    const double D = erosionAt(G, x, z);
+    m.h += D;  // (the erosion kept to each valley's floor already, cell by cell)
+}
+}  // namespace
+
 namespace {
 Macro macroNoPerch(const ProcWorld& G, double x, double z, bool withLakes = true) {
     const auto T = tileAt(G, x, z);
     const int a = std::min(kTC - 1, std::max(0, (int)std::floor((x - T->ox) / kTCell))), b = std::min(kTC - 1, std::max(0, (int)std::floor((z - T->oz) / kTCell)));
     const int c = a * kTC + b;
-    return evalMacro(G, x, z, *T, T->idx.data() + T->start[c], (int)(T->start[c + 1] - T->start[c]), withLakes);
+    Macro m = evalMacro(G, x, z, *T, T->idx.data() + T->start[c], (int)(T->start[c + 1] - T->start[c]), withLakes);
+    applyErosion(G, x, z, m);
+    return m;
 }
 }  // namespace
 // A basin's level: filled to just under the lowest point round it (the land, without lakes, 40-140 m from its middle), and no more than
@@ -1510,6 +1693,26 @@ bool creekPerched(const ProcWorld& G, int64_t i, int64_t j) {
     return perched;
 }
 }  // namespace
+
+int ProcWorld::erosionTileSize() { return (int)kETile; }
+void ProcWorld::erosionInput(int64_t ti, int64_t tj, ErosionGrid& g, double& ox, double& oz) const {
+    sampleErosionGrid(*this, ti, tj, g);
+    ox = (double)(ti * kETile - kEMargin), oz = (double)(tj * kETile - kEMargin);
+}
+std::vector<float> ProcWorld::erosionTile(int64_t ti, int64_t tj, double& ox, double& oz, int& n, double& cell, double& ms) const {
+    const auto T = proc::erosionTile(*this, ti, tj);
+    ox = T->ox, oz = T->oz, n = kEN, cell = kECell, ms = T->ms;
+    return T->d;
+}
+double ProcWorld::erosionLake(double gx, double gz) const {
+    if (rules().erosion.on <= 0) return -1e9;
+    const auto T = proc::erosionTile(*this, (int64_t)std::floor(gx / (double)kETile), (int64_t)std::floor(gz / (double)kETile));
+    const int a = (int)std::lround((gx - T->ox) / kECell), b = (int)std::lround((gz - T->oz) / kECell);
+    if (a < 0 || b < 0 || a >= kEN || b >= kEN) return -1e9;
+    const float v = T->lake[(size_t)a * kEN + b];
+    return v > -1e29f ? v : -1e9;
+}
+double ProcWorld::erosionAt(double gx, double gz) const { return rules().erosion.on > 0 ? proc::erosionAt(*this, gx, gz) : 0.0; }
 
 Macro ProcWorld::land(double x, double z) const { return macroAt(x, z, false); }
 Macro ProcWorld::macro(double x, double z) const { return macroAt(x, z, true); }
@@ -1660,6 +1863,10 @@ static void clearDrainCaches() {
         tileMap[0].clear(), tileMap[1].clear();
     }
     clearGridCache();
+    {
+        std::lock_guard<std::mutex> lock(eMutex);
+        eMap.clear();
+    }
     drainEpoch++;
 }
 
@@ -2186,7 +2393,11 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
     constexpr int L = 19, A = 66;  // lattice points a side; cells a side with a one-cell apron (for slopes)
     std::vector<Macro> M((size_t)L * L);
     for (int a = 0; a < L; a++)
-        for (int b = 0; b < L; b++) M[(size_t)a * L + b] = evalMacro(*this, (double)(gx0 - 4 + 4 * a), (double)(gz0 - 4 + 4 * b), T, tIdx, tN);
+        for (int b = 0; b < L; b++) {
+            const double x = (double)(gx0 - 4 + 4 * a), z = (double)(gz0 - 4 + 4 * b);
+            M[(size_t)a * L + b] = evalMacro(*this, x, z, T, tIdx, tN);
+            applyErosion(*this, x, z, M[(size_t)a * L + b]);
+        }
     auto blend = [&](int i, int j, auto get) {
         const int ii = i + 4, jj = j + 4, la = ii >> 2, lb = jj >> 2;
         const double fu = (ii & 3) * 0.25, fv = (jj & 3) * 0.25;
@@ -2300,9 +2511,9 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
             // The lakes: their cirque floors and dams exactly here; still water at their level where the ground's under it in a lake
             // (the lattice says which: the lake's valley), no channel's trench under it, and a gravel or sand shore round it.
             for (const Lake& L : T.lakes)
-                if (dishAt(L, x, z) < h && lakeOkOf(*this, L)) h = std::min(h, dishAt(L, x, z) + std::max(0.0, bumpH));
+                if (rules().erosion.on <= 0 && dishAt(L, x, z) < h && lakeOkOf(*this, L)) h = std::min(h, dishAt(L, x, z) + std::max(0.0, bumpH));
             for (const Lake& L : T.lakes)
-                if (damAt(L, x, z) > h && lakeOkOf(*this, L)) h = std::max(h, damAt(L, x, z));
+                if (rules().erosion.on <= 0 && damAt(L, x, z) > h && lakeOkOf(*this, L)) h = std::max(h, damAt(L, x, z));
             {
                 double W = -1e9;
                 for (int qa = -1; qa <= 2; qa++)  // (the lattice round it, 4-8 m: is this ground in a lake's valley?)
@@ -3036,6 +3247,10 @@ size_t cacheBytes() {
     {
         std::lock_guard<std::mutex> lock(gridMutex);
         n += gridMap.size() * sizeof(GridTile);
+    }
+    {
+        std::lock_guard<std::mutex> lock(eMutex);
+        n += eMap.size() * (sizeof(ETile) + (size_t)kEN * kEN * 2 * sizeof(float));
     }
     {
         Cache& C = cache();

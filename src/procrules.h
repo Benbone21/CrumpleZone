@@ -86,6 +86,27 @@ struct TreeRule {
     double snag;
 };
 
+// ---- Erosion: the land worn by water and frost (proceros.h; procworld.cpp erodes it in fixed tiles) ---------------------------------
+struct ErosionBiomeRule {
+    double cut;      // stream power: m an iteration a channel draining 1 ha cuts at slope 1 (gullies; more drained, deeper: as its square root)
+    double deposit;  // 0..2: how readily the load drops where the slope eases (fans at slope feet, flat silted floors)
+    double talus;    // the steepest ground holds (rise over run): steeper slides down to it (scree; 1.4: cliffs stand)
+    double creep;    // 0..0.2: soil creep, rounding (soft rolling land; ~0 keeps rock crests sharp)
+};
+struct ErosionRule {
+    double on = 1;            // 1: the land is eroded; 0: not (the land shaped round its drainage alone)
+    double coarseIterations = 50;  // the erosion's steps on an 8 m grid first (the broad gullies and spurs)...
+    double iterations = 12;   // ...then on the 4 m grid (the fine ones)
+    double maxCut = 4;        // m: the most a step cuts anywhere
+    double maxDepth = 60;     // m: the eroded land stays within this of the land it wore
+    double glacierIterations = 0;   // (experimental, off: its flow lines are the whole grid's, so tiles disagree at seams) the ice ages' steps (before the rivers): glaciers above glacier_line scoop cirques and troughs
+    double glacierLine = 1500;      // m: ice gathers above this, melts below
+    double glacierCut = 0.004;      // how hard the ice wears its bed (m a step per square root of the ice passing, m3 a year)
+    double pitFill = 0.25;          // 0..1: how much of the load reaching a closed hollow silts it (lakes last)
+    // meadow, forest, badlands (desert and mesa), mountains (alpine), dunes
+    ErosionBiomeRule biome[5] = {{0.5, 2.4, 0.6, 0.1}, {0.6, 2.4, 0.7, 0.06}, {2.8, 3.6, 1.4, 0.0}, {2.0, 1.8, 0.9, 0.01}, {0.16, 3.0, 0.6, 0.05}};
+};
+
 struct Rules {
     RoadRule road[RK_COUNT] = {
         {3.5, 0.10, 10.0},  // paved (reserved: none yet)
@@ -98,6 +119,7 @@ struct Rules {
     RangeRule range;
     AlpineRule alpine;
     // meadow, forest, badlands, mountains (its density and shares: alpine), dunes
+    ErosionRule erosion;
     TreeRule trees[5] = {{22, 0.15, 0.2, 0.04}, {98, 0.55, 0.45, 0.06}, {6, 1.0, 0.0, 0.55}, {27, 1.0, 0.9, 0.1}, {0.7, 1.0, 0.0, 0.55}};
 };
 

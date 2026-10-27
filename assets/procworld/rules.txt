@@ -78,6 +78,47 @@ snow_hollow = 150                 # m: ...and this much lower in a hollow (a gul
 snow_slope_max = 0.85             # steeper than this the snow slides off (bare rock)
 rocks_per_ha = 45                 # loose rocks and boulders tried a hectare (steep ground keeps more of them)
 
+[erosion]
+on = 1                            # 1: the land is worn by water and frost (gullies, fans, silted floors, scree); 0: not
+coarse_iterations = 50            # the erosion's steps on an 8 m grid first (the broad gullies and spurs; more: deeper worn, slower)...
+iterations = 12                   # ...then on the 4 m grid (the fine gullies)
+max_cut = 4                       # m: the most one step cuts anywhere
+max_depth = 60                    # m: the worn land stays within this of the land before
+glacier_iterations = 0            # the ice ages' steps, before the rivers: glaciers scoop cirques and U-shaped troughs, leave moraines (0: none)
+glacier_line = 1500               # m: ice gathers above this and melts below it
+glacier_cut = 0.004               # how hard the ice wears its bed (m a step per square root of the ice passing, m3 a year)
+pit_fill = 0.25                   # 0..1: how much of the load reaching a closed hollow silts it (the rest settles: lakes last)
+
+[erosion.meadow]
+cut = 0.5                         # stream power: m a step a channel draining 1 ha cuts at slope 1 (gullies; deeper as the square root of what drains)
+deposit = 2.4                     # 0..2: how readily the load drops where the slope eases (fans at slope feet, silted flat floors)
+talus = 0.6                       # the steepest the ground holds (rise over run): steeper slides down to it (scree; 1.4 and up: cliffs stand)
+creep = 0.1                       # 0..0.2: soil creep rounding the land (soft rolling ground; near 0 keeps rock crests sharp)
+
+[erosion.forest]
+cut = 0.6                         # stream power: m a step a channel draining 1 ha cuts at slope 1 (gullies; deeper as the square root of what drains)
+deposit = 2.4                     # 0..2: how readily the load drops where the slope eases (fans at slope feet, silted flat floors)
+talus = 0.7                       # the steepest the ground holds (rise over run): steeper slides down to it (scree; 1.4 and up: cliffs stand)
+creep = 0.06                      # 0..0.2: soil creep rounding the land (soft rolling ground; near 0 keeps rock crests sharp)
+
+[erosion.badlands]
+cut = 2.8                         # stream power: m a step a channel draining 1 ha cuts at slope 1 (gullies; deeper as the square root of what drains)
+deposit = 3.6                     # 0..2: how readily the load drops where the slope eases (fans at slope feet, silted flat floors)
+talus = 1.4                       # the steepest the ground holds (rise over run): steeper slides down to it (scree; 1.4 and up: cliffs stand)
+creep = 0                         # 0..0.2: soil creep rounding the land (soft rolling ground; near 0 keeps rock crests sharp)
+
+[erosion.alpine]
+cut = 2                           # stream power: m a step a channel draining 1 ha cuts at slope 1 (gullies; deeper as the square root of what drains)
+deposit = 1.8                     # 0..2: how readily the load drops where the slope eases (fans at slope feet, silted flat floors)
+talus = 0.9                       # the steepest the ground holds (rise over run): steeper slides down to it (scree; 1.4 and up: cliffs stand)
+creep = 0.01                      # 0..0.2: soil creep rounding the land (soft rolling ground; near 0 keeps rock crests sharp)
+
+[erosion.dunes]
+cut = 0.16                        # stream power: m a step a channel draining 1 ha cuts at slope 1 (gullies; deeper as the square root of what drains)
+deposit = 3                       # 0..2: how readily the load drops where the slope eases (fans at slope feet, silted flat floors)
+talus = 0.6                       # the steepest the ground holds (rise over run): steeper slides down to it (scree; 1.4 and up: cliffs stand)
+creep = 0.05                      # 0..0.2: soil creep rounding the land (soft rolling ground; near 0 keeps rock crests sharp)
+
 [trees.meadow]
 per_ha = 22                       # trees a hectare at most
 grove_min = 0.15                  # 0..1: away from groves, this share of per_ha

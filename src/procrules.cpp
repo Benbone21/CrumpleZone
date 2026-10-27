@@ -85,6 +85,29 @@ std::vector<Key> keys() {
     k.push_back({A, "snow_hollow", nullptr, AT(r.alpine.snowHollow), "m: ...and this much lower in a hollow (a gully 10 m or more below the ground 32 m round)"});
     k.push_back({A, "snow_slope_max", nullptr, AT(r.alpine.snowSlopeMax), "steeper than this the snow slides off (bare rock)"});
     k.push_back({A, "rocks_per_ha", nullptr, AT(r.alpine.rocksPerHa), "loose rocks and boulders tried a hectare (steep ground keeps more of them)"});
+    const char* E = "erosion";
+    k.push_back({E, "on", nullptr, AT(r.erosion.on), "1: the land is worn by water and frost (gullies, fans, silted floors, scree); 0: not"});
+    k.push_back({E, "coarse_iterations", nullptr, AT(r.erosion.coarseIterations), "the erosion's steps on an 8 m grid first (the broad gullies and spurs; more: deeper worn, slower)..."});
+    k.push_back({E, "iterations", nullptr, AT(r.erosion.iterations), "...then on the 4 m grid (the fine gullies)"});
+    k.push_back({E, "max_cut", nullptr, AT(r.erosion.maxCut), "m: the most one step cuts anywhere"});
+    k.push_back({E, "max_depth", nullptr, AT(r.erosion.maxDepth), "m: the worn land stays within this of the land before"});
+    k.push_back({E, "glacier_iterations", nullptr, AT(r.erosion.glacierIterations), "the ice ages' steps, before the rivers: glaciers scoop cirques and U-shaped troughs, leave moraines (0: none)"});
+    k.push_back({E, "glacier_line", nullptr, AT(r.erosion.glacierLine), "m: ice gathers above this and melts below it"});
+    k.push_back({E, "glacier_cut", nullptr, AT(r.erosion.glacierCut), "how hard the ice wears its bed (m a step per square root of the ice passing, m3 a year)"});
+    k.push_back({E, "pit_fill", nullptr, AT(r.erosion.pitFill), "0..1: how much of the load reaching a closed hollow silts it (the rest settles: lakes last)"});
+    {
+        static const char* const kErSec[5] = {"erosion.meadow", "erosion.forest", "erosion.badlands", "erosion.alpine", "erosion.dunes"};
+        static double* (*const ec[5])(Rules&) = {AT(r.erosion.biome[0].cut), AT(r.erosion.biome[1].cut), AT(r.erosion.biome[2].cut), AT(r.erosion.biome[3].cut), AT(r.erosion.biome[4].cut)};
+        static double* (*const ed[5])(Rules&) = {AT(r.erosion.biome[0].deposit), AT(r.erosion.biome[1].deposit), AT(r.erosion.biome[2].deposit), AT(r.erosion.biome[3].deposit), AT(r.erosion.biome[4].deposit)};
+        static double* (*const et[5])(Rules&) = {AT(r.erosion.biome[0].talus), AT(r.erosion.biome[1].talus), AT(r.erosion.biome[2].talus), AT(r.erosion.biome[3].talus), AT(r.erosion.biome[4].talus)};
+        static double* (*const er[5])(Rules&) = {AT(r.erosion.biome[0].creep), AT(r.erosion.biome[1].creep), AT(r.erosion.biome[2].creep), AT(r.erosion.biome[3].creep), AT(r.erosion.biome[4].creep)};
+        for (int b = 0; b < 5; b++) {
+            k.push_back({kErSec[b], "cut", nullptr, ec[b], "stream power: m a step a channel draining 1 ha cuts at slope 1 (gullies; deeper as the square root of what drains)"});
+            k.push_back({kErSec[b], "deposit", nullptr, ed[b], "0..2: how readily the load drops where the slope eases (fans at slope feet, silted flat floors)"});
+            k.push_back({kErSec[b], "talus", nullptr, et[b], "the steepest the ground holds (rise over run): steeper slides down to it (scree; 1.4 and up: cliffs stand)"});
+            k.push_back({kErSec[b], "creep", nullptr, er[b], "0..0.2: soil creep rounding the land (soft rolling ground; near 0 keeps rock crests sharp)"});
+        }
+    }
     static const char* const kBiome[5] = {"trees.meadow", "trees.forest", "trees.badlands", "trees.mountains", "trees.dunes"};
     static double* (*const ph[5])(Rules&) = {AT(r.trees[0].perHa), AT(r.trees[1].perHa), AT(r.trees[2].perHa), AT(r.trees[3].perHa), AT(r.trees[4].perHa)};
     static double* (*const gm[5])(Rules&) = {AT(r.trees[0].groveMin), AT(r.trees[1].groveMin), AT(r.trees[2].groveMin), AT(r.trees[3].groveMin), AT(r.trees[4].groveMin)};

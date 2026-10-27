@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <cstdio>
 #include <array>
 #include <map>
@@ -1281,4 +1282,57 @@ SCENARIO(procMemory, "procworld/memory", "What the generator keeps stays bounded
     ctx.note("the process's peak resident memory so far: " + std::to_string(rss / 1024) + " MB");
     ctx.metric("the generator's caches after a window and three slides", mb, "MB", 0, 1500);
     World::procOriginSet = false;
+}
+
+#include "../src/proceros.h"
+SCENARIO(procErosion, "procworld/erosion", "The land is worn by erosion in fixed tiles (proceros.h): the same tile wears to the same bytes on two threads at once, the tiles agree across their seams, a tile is made within its budget, and the worn land is worn (gullies cut, not left as it was)") {
+    const ProcWorld& G = ProcWorld::forSeed(1);
+    clearChunkCache();
+    // (Two independent erosions of the same land, on two threads at once: the same bytes.)
+    ErosionGrid g0;
+    double ox, oz;
+    G.erosionInput(-2, 2, g0, ox, oz);
+    ErosionGrid g1 = g0, g2 = g0;
+    ErosionRun run;
+    run.coarseIterations = (int)rules().erosion.coarseIterations, run.iterations = (int)rules().erosion.iterations, run.maxCut = rules().erosion.maxCut;
+    std::thread t1([&] { erodeGrid(g1, run); }), t2([&] { erodeGrid(g2, run); });
+    t1.join(), t2.join();
+    uint64_t h1 = 1469598103934665603ull, h2 = h1;
+    for (size_t i = 0; i < g1.h.size(); i++) {
+        uint32_t a, b;
+        std::memcpy(&a, &g1.h[i], 4), std::memcpy(&b, &g2.h[i], 4);
+        h1 = (h1 ^ a) * 1099511628211ull, h2 = (h2 ^ b) * 1099511628211ull;
+    }
+    ctx.check("the same tile worn on two threads at once: the same bytes", h1 == h2 && g1.h == g2.h);
+    ctx.note("seed 1 tile (-2, 2) worn: " + hex(h1));
+    // (The tile itself, timed, and its neighbours across the seams.)
+    double cell, ms;
+    int n;
+    const std::vector<float> d = G.erosionTile(-2, 2, ox, oz, n, cell, ms);
+    double worn = 0;
+    for (float v : d) worn = std::max(worn, (double)-v);
+    ctx.check("the land is worn: gullies over 10 m deep", worn > 10, std::to_string(worn) + " m");
+    ctx.check("a tile is made within 3 s", ms < 3000, std::to_string((int)ms) + " ms");
+    ctx.note("tile (-2, 2): " + std::to_string((int)ms) + " ms to wear");
+    double ox2, oz2, ms2;
+    int n2;
+    const std::vector<float> e = G.erosionTile(-1, 2, ox2, oz2, n2, cell, ms2);
+    double sq = 0;
+    long cnt = 0;
+    for (int a = 0; a < n; a++)
+        for (int b = 0; b < n; b++) {
+            const int a2 = a + (int)std::lround((ox - ox2) / cell);
+            if (a2 < 0 || a2 >= n2) continue;
+            const double v = d[(size_t)a * n + b] - e[(size_t)a2 * n2 + b];
+            sq += v * v, cnt++;
+        }
+    const double rms = std::sqrt(sq / std::max(1L, cnt));
+    ctx.check("two tiles agree over their shared band (under 1 m RMS)", cnt > 0 && rms < 1.0, std::to_string(rms) + " m over " + std::to_string(cnt));
+    double step = 0;
+    for (int k = 0; k < 200; k++)
+        for (int q = -140; q < 140; q++) {
+            const double x = -2048 + q, z = 4096 + 10 + k * 10;
+            step = std::max(step, std::fabs(G.erosionAt(x + 1, z) - G.erosionAt(x, z)));
+        }
+    ctx.check("no step at the seam (under 3 m a metre)", step < 3, std::to_string(step));
 }
