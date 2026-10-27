@@ -78,7 +78,6 @@ enum KeyAction {
     KA_DEBUG_INFO,  // F3: the debug info screen (was the FPS counter)
     // GAME
     KA_MENU,
-    KA_PAUSE,
     KA_HELP,
     KA_FULLSCREEN,
     KA_CHAT,
@@ -125,6 +124,7 @@ std::string keyName(int scancode);     // "W", "SPACE", "F4"... for the menu
 struct Keybinds {
     int code[KA_COUNT];        // 0: unbound
     bool shift[KA_COUNT];      // bound to Shift+key
+    bool legacyPauseOnP = false;  // an old file's key_pause line had P (pause is the menu now: Esc)
     bool loaded[KA_COUNT];     // came from the settings file (an action added since, whose key a saved binding took, moves aside)
 
     Keybinds() { resetDefaults(); }

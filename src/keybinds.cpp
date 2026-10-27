@@ -73,7 +73,6 @@ const Info kInfo[KA_COUNT] = {
     {SC_F3, false, "DEBUG INFO", "key_devfps", KG_VIEW, ANY, false, false},
     // GAME
     {SC_ESCAPE, false, "MENU", "key_menu", KG_GAME, ANY, false, false},
-    {SC_F6, false, "PAUSE", "key_pause", KG_GAME, ANY, false, false},
     {SC_H, false, "CONTROLS OVERLAY", "key_help", KG_GAME, ANY, false, false},
     {SC_F11, false, "FULLSCREEN", "key_fullscreen", KG_GAME, ANY, false, false},
     {SC_RETURN, false, "CHAT", "key_chat", KG_GAME, ANY, false, false},
@@ -264,6 +263,10 @@ Keybinds::Press Keybinds::resolve(int sc, bool withShift, bool fromPad, unsigned
 }
 
 bool Keybinds::loadSetting(const std::string& name, int value) {
+    if (name == "key_pause") {  // (the old pause key: gone, Esc's menu pauses; an old file's P there moved the parking brake aside)
+        legacyPauseOnP = value == SC_P;
+        return true;
+    }
     for (int a = 0; a < KA_COUNT; a++) {
         if (name != kInfo[a].setting) continue;
         code[a] = value & 4095;
@@ -276,13 +279,12 @@ bool Keybinds::loadSetting(const std::string& name, int value) {
 
 void Keybinds::sanitize() {
     auto usable = [&](int a) { return (code[a] == 0 && loaded[a]) || bindable(code[a]) || (a == KA_MENU && code[a] == SC_ESCAPE); };
-    // A file saved before the parking brake had P (pause was on P): pause sat on P, so the brake went aside to an
-    // F key. Both go to today's defaults: the parking brake on P, pause on F6.
-    if (loaded[KA_PAUSE] && code[KA_PAUSE] == SC_P && !shift[KA_PAUSE] && (!loaded[KA_PARK_BRAKE] || (code[KA_PARK_BRAKE] >= 64 && code[KA_PARK_BRAKE] <= 66 && !shift[KA_PARK_BRAKE]))) {
-        code[KA_PAUSE] = kInfo[KA_PAUSE].def, shift[KA_PAUSE] = kInfo[KA_PAUSE].shift;
+    // A file saved before the parking brake had P (pause was on P): the brake went aside to an F key. It comes back to P.
+    if (legacyPauseOnP && (!loaded[KA_PARK_BRAKE] || (code[KA_PARK_BRAKE] >= 64 && code[KA_PARK_BRAKE] <= 66 && !shift[KA_PARK_BRAKE]))) {
         code[KA_PARK_BRAKE] = kInfo[KA_PARK_BRAKE].def, shift[KA_PARK_BRAKE] = kInfo[KA_PARK_BRAKE].shift;
         loaded[KA_PARK_BRAKE] = true;
     }
+    legacyPauseOnP = false;
     // An action added since the file was saved (its key is a default) whose key a saved binding took moves aside
     // to a free F key, rather than throw away every binding.
     for (int a = 0; a < KA_COUNT; a++) {

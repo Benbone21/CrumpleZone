@@ -135,12 +135,12 @@ SCENARIO(keysSettings, "keybinds/settings", "Bindings round-trip through setting
     legacy.loadSetting("key_pause", SC_P);
     legacy.loadSetting("key_parkbrake", 64);
     legacy.sanitize();
-    ctx.check("an old file's parking brake comes back to P, and pause to F6", legacy.key(KA_PARK_BRAKE) == SC_P && legacy.key(KA_PAUSE) == SC_F6);
+    ctx.check("an old file's parking brake comes back to P", legacy.key(KA_PARK_BRAKE) == SC_P && legacy.actionFor(SC_F6) == -1);
     Keybinds chosen;  // (a player who put pause on P after the brake had it keeps theirs)
     chosen.loadSetting("key_parkbrake", SC_K);
     chosen.loadSetting("key_pause", SC_P);
     chosen.sanitize();
-    ctx.check("a parking brake the player put on another key stays there", chosen.key(KA_PARK_BRAKE) == SC_K && chosen.key(KA_PAUSE) == SC_P);
+    ctx.check("a parking brake the player put on another key stays there", chosen.key(KA_PARK_BRAKE) == SC_K);
 }
 
 SCENARIO(keysTable, "keybinds/table", "Every keyboard action is in the table once, with a label, a settings name and a group; no clashes among the defaults") {
@@ -234,17 +234,17 @@ SCENARIO(keysResetExport, "keybinds/reset-export", "Reset all gives the defaults
     Keybinds kb;
     kb.bind(KA_WINCH, SC_K);
     kb.bind(KA_LIGHTS, SC_B, false);
-    kb.unbind(KA_PAUSE);
-    ctx.check("unbound shows as NONE and resolves to nothing", kb.name(KA_PAUSE) == "NONE" && kb.resolve(SC_F6, false, false, KCTX_DRIVE, false).action == -1);
+    kb.unbind(KA_HELP);
+    ctx.check("unbound shows as NONE and resolves to nothing", kb.name(KA_HELP) == "NONE" && kb.resolve(defaultKey(KA_HELP), false, false, KCTX_DRIVE, false).action == -1);
     ctx.check("nothing clashes after the rebinds", !anyClash(kb) && !kb.isDefault());
     const std::string text = kb.exportDefaults();
     int lines = 0;
     for (char ch : text) lines += ch == '\n';
     ctx.check("the export is a comment line and one {key, shift} line per action", lines == KA_COUNT + 1 && text.find("{25, false},  // key_winch") == std::string::npos &&
-                                                                                  text.find("key_winch: K") != std::string::npos && text.find("key_pause: NONE") != std::string::npos &&
-                                                                                  text.find("{0, false},  // key_pause") != std::string::npos);
+                                                                                  text.find("key_winch: K") != std::string::npos && text.find("key_help: NONE") != std::string::npos &&
+                                                                                  text.find("{0, false},  // key_help") != std::string::npos);
     kb.resetDefaults();
-    ctx.check("reset all: the defaults, every action", kb.isDefault() && kb.name(KA_LIGHTS) == "SHIFT+L" && kb.key(KA_PAUSE) == SC_F6);
+    ctx.check("reset all: the defaults, every action", kb.isDefault() && kb.name(KA_LIGHTS) == "SHIFT+L" && kb.key(KA_HELP) == defaultKey(KA_HELP));
     const std::string def = kb.exportDefaults();
     ctx.check("the default export lists the defaults", def.find("key_throttle: W") != std::string::npos && def.find("key_lights: SHIFT+L") != std::string::npos &&
                                                          def.find("key_devmenu: F12") != std::string::npos);

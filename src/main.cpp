@@ -1435,7 +1435,7 @@ void drawHelp(Renderer& r, float u, int W, int H, bool mph) {
         {K(KA_LIGHTS), "LIGHTS: AUTO, LOW, HIGH, OFF"},
         {K(KA_LOCK_FRONT) + sp + K(KA_LOCK_REAR), "FRONT / REAR LOCKER"}, {K(KA_AUTOPILOT), "AUTOPILOT (ESC > AUTOPILOT: WHERE)"},
         {K(KA_CAMERA), "CAMERA"},                                        {"MOUSE", "LOOK / ZOOM"},
-        {K(KA_PAUSE), "PAUSE"},                                          {K(KA_PARK_BRAKE), "PARKING BRAKE"},
+        {K(KA_PARK_BRAKE), "PARKING BRAKE"},
         {K(KA_TRACTION), "TRACTION CONTROL"},                            {K(KA_HORN), "HORN (HOLD)"},
         {K(KA_FULLSCREEN), "FULLSCREEN"},                                {K(KA_PHOTO), "HIDE THE HUD (PHOTOS)"},
         {K(KA_HUD_ALL), "HOLD: SHOW THE FULL HUD"},
@@ -4661,10 +4661,6 @@ int main(int argc, char** argv) {
                             hud.toast(c.parkBrake ? "PARKING BRAKE ON" : "PARKING BRAKE OFF");
                             break;
                         }
-                        case SC_F6:
-                            if (net.active()) hud.toast("NO PAUSING IN MULTIPLAYER (" + K(KA_MENU) + " STILL OPENS THE MENU)");
-                            else sim.paused = !sim.paused;
-                            break;
                         case SC_X: {
                             Car& c = sim.cars[sim.player];
                             c.tractionControl = !c.tractionControl;
