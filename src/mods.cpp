@@ -792,6 +792,7 @@ void fitBody(VehicleSpec& s, const VehicleSpec& stock) {
     if (needR > wellR + 0.002 || needW > wellW + 0.002 || longer) {
         s.wellTireRadius = std::max({wellR, needR, s.wellTireRadius});
         s.wellTireWidth = std::max({wellW, needW, s.wellTireWidth});
+        s.wellsTrimmed = true;
     }
     // Long travel on wishbones (or struts) takes long arms, or the wheel swings round a tight arc,
     // tucking in and leaning over at the ends of its travel and into the wheelhouse: the arms grow

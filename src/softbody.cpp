@@ -1264,8 +1264,7 @@ void Car::buildWheelRub() {
         };
         // (Trimmed by a builder, a well leaves a couple of cm over the kit's bump stops, for the
         // stops' own squash on a hard landing.)
-        const bool trimmed = spec != stock && (spec->wellTireRadius > std::max(stock->wheelRadius, stock->wellTireRadius) + 1e-6 ||
-                                               spec->wellTireWidth > stock->wellTireWidth + 1e-6);
+        const bool trimmed = spec != stock && spec->wellsTrimmed;
         const double bump = std::max(travel(*stock, true), trimmed ? travel(*spec, true) + 0.025 : 0.0);
         const double droop = std::max(travel(*stock, false), trimmed ? travel(*spec, false) : 0.0);
         const double reach = wh.R + 0.35;
