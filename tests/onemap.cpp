@@ -416,6 +416,12 @@ void checkPrint(Ctx& ctx, const char* what, const worldprint::Print& p, const Go
 
 SCENARIO(onemapXplat, "onemap/xplat-fingerprint", "The big map is the same on every OS (Linux's): its land, rocks, trees, logs, bushes, props, places and trails, a hash each") {
     checkPrint(ctx, "code-made rocks", worldprint::print(bigMap()), kBareGolden, sizeof kBareGolden / sizeof *kBareGolden);
+    // (Another whole big map, a GB more beside the other big-map tests: only asked for, as CI does on each OS. A full run of the
+    // suite under an 8 GB cap ran out with it.)
+    if (!std::getenv("CZ_XPLAT_SCANS")) {
+        ctx.note("CZ_XPLAT_SCANS not set: the scanned rocks' world not built (CZ_XPLAT_SCANS=1 run_tests onemap/xplat-fingerprint)");
+        return;
+    }
     const props::HullLibrary& lib = props::sharedHullLibrary();
     ctx.check("the scanned rocks are there (assets/props/rocks.hull)", lib.loaded(), lib.loaded() ? "" : "no assets/props: the game's own rocks not checked");
     if (!lib.loaded()) return;

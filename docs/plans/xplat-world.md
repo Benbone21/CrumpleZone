@@ -16,7 +16,12 @@ Measured with `build/worldprint` (below) on Linux and on the Windows build under
   roughly what a Mac (libc++) had.
 - **Everything else** that goes through `sin`, `cos`, `atan2`, `hypot`, `exp`, `pow`: rivers, trees, poles, props and trails differed in
   the last bits (1e-12 m: not visible, but not the same world, and any of it can cross a threshold on another machine).
-- Not a cause: thread count (1, 2 and 3 threads give the same bits), `-march=native` against x86-64-v2 with LTO (the same bits: no FMA,
+- **A race between builds** (src/frontier.cpp): the Frontier's build searched for THE WALL, the summit and the rock garden in shared
+  globals (gWallFoot...), which other threads read (frontierFeature: crates, levels) and other Frontier builds wrote. The Backcountry
+  builds its Frontier region on a worker thread, so what it placed could depend on what else was running and how many cores there
+  were (world/bake-threads failed on BACKCOUNTRY in full-suite runs, frontier/feature-table flaked). They're per thread now (off the
+  building thread, the table's values, which the build lands on). The summit's table entry moved by an ulp (detmath).
+- Not a cause: thread count on its own (1, 2 and 3 threads give the same bits), `-march=native` against x86-64-v2 with LTO (the same bits: no FMA,
   `-ffp-contract=off` is on every target), the world cache (keyed by the build), the hull library (text with 5 decimals, read the same
   everywhere), `unordered_*` (only looked up in the Backcountry's build, never walked).
 
@@ -46,7 +51,8 @@ format is 7.
 - `build/worldprint [--scans] [--threads N] [--dump FILE] [MAP...]` (also `build/win/worldprint.exe`, `build/rel/worldprint`): a hash
   per category (terrain, ground, water, rocks, trees, logs, bushes, boxes, poles, props, places, trails). `--dump` writes every object and
   every 256 m tile of land as a line, doubles as their bits, to `diff` two machines' worlds and find the first thing that differs.
-- `run_tests onemap/xplat-fingerprint`: the same hashes for the big map (code-made and scanned rocks) against Linux's, which are written
+- `CZ_XPLAT_SCANS=1 run_tests onemap/xplat-fingerprint`: the same hashes for the big map (code-made rocks always; the scanned rocks with
+  CZ_XPLAT_SCANS, another 1 GB beside the other big-map tests) against Linux's, which are written
   in tests/onemap.cpp. CI runs it on Linux, Windows and macOS. If the map is changed on purpose, run it on Linux and paste the new
   `WORLDPRINT` lines' hashes into the test.
 
