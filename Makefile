@@ -31,6 +31,7 @@ SCEN     += tests/careerworld.cpp
 PHYS     += src/carsave.cpp src/careersession.cpp
 SCEN     += tests/carsave.cpp
 SCEN     += tests/drivetrainmodels.cpp
+SCEN     += tests/fitment.cpp
 PHYS     += src/paint.cpp
 SCEN     += tests/carpaint.cpp
 SCEN     += tests/net_rendezvous.cpp tests/net_codes.cpp
