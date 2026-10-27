@@ -588,6 +588,9 @@ void shellArch(const VehicleSpec& vs, double& centerY, double& radius) {
         centerY = vs.layerY[0] - 0.40 + 0.389;
         radius = 0.47;
     }
+    // (Trimmed bigger for a garage build's taller tires or longer travel: mods.cpp fitBody.)
+    const Style* st = styleFor(vs);
+    radius += archGrowth(vs, centerY, radius, st ? st->archPow : 2.0);
 }
 
 double shellArchHeight(const VehicleSpec& vs, double d) {

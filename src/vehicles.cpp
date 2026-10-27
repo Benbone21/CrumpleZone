@@ -108,6 +108,50 @@ void raiseBody(VehicleSpec& vs, double dy) {
     for (MassItem& it : vs.items) it.y += dy;
 }
 
+namespace {
+
+const VehicleSpec* factoryOf(const VehicleSpec& vs) {
+    for (const VehicleSpec& c : vehicleCatalog())
+        if (vs.id && c.id && std::string(c.id) == vs.id) return &c;
+    return nullptr;
+}
+
+// The smallest arch (centre cy, power p) that clears the tire's side profile, a hand's
+// clearance round it, from its rest height up to full bump: what's above the sill.
+double archNeed(const VehicleSpec& v, double cy, double p) {
+    const double R = v.wheelRadius + 0.02;
+    const double bump = (v.bumpFront > 0 ? std::max(v.bumpFront, v.bumpRear) : 0.085 * v.wheelRadius / 0.32);
+    double need = 0;
+    for (double u : {0.0, 0.5, 1.0})
+        for (int k = 0; k < 72; k++) {
+            const double a = k * M_PI / 36, x = std::fabs(R * std::cos(a)), y = v.wheelRadius + u * bump + R * std::sin(a);
+            if (y < v.layerY[0]) continue;
+            const double up = std::max(0.0, y - cy);
+            need = std::max(need, std::pow(std::pow(x, p) + std::pow(up, p), 1 / p));
+        }
+    return need;
+}
+
+}  // namespace
+
+double archGrowth(const VehicleSpec& vs, double cy, double r, double p) {
+    (void)r;
+    const VehicleSpec* f = factoryOf(vs);
+    if (!f || f == &vs) return 0;
+    const double cyStock = cy - (vs.layerY[0] - f->layerY[0]);
+    return std::max(0.0, archNeed(vs, cy, p) - archNeed(*f, cyStock, p));
+}
+
+double tirePoke(const VehicleSpec& vs, bool front) {
+    const VehicleSpec* f = factoryOf(vs);
+    if (!f || f == &vs) return 0;
+    auto outer = [&](const VehicleSpec& v) {
+        const double t = front ? v.trackFront : v.trackRear, w = !front && v.wheelWidthRear > 0 ? v.wheelWidthRear : v.wheelWidth;
+        return t > 0 ? t / 2 + w / 2 : v.width / 2 - 0.08;
+    };
+    return std::max(0.0, outer(vs) - outer(*f));
+}
+
 EngineTone voiceFor(const VehicleSpec& vs) {
     EngineTone e = vs.voice;
     if (!e.seed) {  // (from its name: two engines never sound quite alike)
@@ -453,7 +497,9 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         bronco.engineMass = 200;
         bronco.gearboxMass = 130;  // 10-speed auto and transfer case
         bronco.transverse = false;
-        bronco.engineX = 1.45;
+        // (Its block just ahead of the front axle line, as on the real truck: the front diff sits
+        // under the sump's back half. Was 1.45, 4 cm behind the axle.)
+        bronco.engineX = 1.53;
         bronco.engineY = 0.88;
         bronco.engineZ = 0;
         bronco.engineLen = 0.62;
@@ -600,7 +646,9 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         };
         runner.engineMass = 198;   // iron-block 5VZ-FE with the supercharger
         runner.gearboxMass = 100;  // 4-speed auto and transfer case
-        runner.engineX = 1.28;
+        // (Its block over the front axle, the IFS diff under the sump, as on the real 3rd-gen
+        // 4Runner. Was 1.28, 20 cm behind it: the bay drawn ahead of it stood empty.)
+        runner.engineX = 1.43;
         runner.engineY = 0.80;
         runner.engineLen = 0.58;
         runner.engineWid = 0.62;
@@ -1048,11 +1096,13 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
             {"spare wheel under the bed", 34, -2.25, 0.50, 0}, {"composite bed liner and floor", 25, -1.75, 0.98, 0},
             // (The cab is the dense steel; the bed is a light box.)
             {"cab floor, firewall and pillars", 100, 0.90, 0.75, 0}, {"core support and inner fenders", 65, 2.20, 0.85, 0},
-            {"A/C, alternator and power steering", 28, 2.00, 0.85, 0.1},
+            {"A/C, alternator and power steering", 28, 2.15, 0.85, 0.1},  // (on the block's front: they move with it)
         };
         tacoma.engineMass = 167;   // aluminum 2GR-FKS
         tacoma.gearboxMass = 110;  // 6-speed auto and transfer case
-        tacoma.engineX = 1.58;
+        // (Its block over the front axle, the diff under the sump, as on the real truck: 3rd-gen
+        // Tacomas weigh ~56% on the front. Was 1.58, 24 cm behind the axle, and it came out 52%.)
+        tacoma.engineX = 1.80;
         tacoma.engineY = 0.92;
         tacoma.engineZ = 0;
         tacoma.engineLen = 0.60;
@@ -1189,7 +1239,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         blazer.structureMass = 380;  // the steel body tub (the frame is its own, below)
         blazer.panelMass = 150;      // thick 1970s sheet metal
         blazer.items = {
-            {"radiator and core support", 30, 1.82, 0.88, 0},   {"battery", 25, 1.55, 1.00, -0.55},
+            {"radiator and core support", 30, 2.02, 0.88, 0},   {"battery", 25, 1.55, 1.00, -0.55},
             {"front bumper (chrome)", 30, 2.20, 0.62, 0},       {"steering box and drag link", 22, 1.75, 0.70, -0.45},
             {"front prop shaft", 10, 0.90, 0.52, 0.1},          {"rear prop shaft", 15, -0.45, 0.52, 0},
             {"dashboard and heater", 32, 0.80, 1.10, 0},        {"front bucket seats", 44, 0.05, 0.98, 0},
@@ -1202,7 +1252,9 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         blazer.engineMass = 240;   // cast-iron small block with its accessories
         blazer.gearboxMass = 110;  // SM465 (~70 kg, cast iron) and the NP205 (~40 kg)
         blazer.transverse = false;
-        blazer.engineX = 1.35;
+        // (The small block's front over the front axle's leaves and its water pump just behind the
+        // radiator, as on the real K5. Was 1.35, the radiator 20 cm further back than it's drawn.)
+        blazer.engineX = 1.50;
         blazer.engineY = 1.02;
         blazer.engineZ = 0;
         blazer.engineLen = 0.68;

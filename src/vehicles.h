@@ -310,6 +310,14 @@ double peakPower(const VehicleSpec& vs, double* atRpm = nullptr);
 // The engine's voice with its seed (from its name: each engine its own small differences).
 EngineTone voiceFor(const VehicleSpec& vs);
 double peakTorque(const VehicleSpec& vs, double* atRpm = nullptr);
+// How much bigger a drawn wheel arch (centre height cy over the ground, radius r, superellipse
+// power p: 2 round) must be cut on this build than on the factory car, so its tires keep the
+// factory's clearance up through their travel (mods.cpp fitBody trims the wells to match). 0 on
+// a stock car or one whose tires fit under its arches.
+double archGrowth(const VehicleSpec& vs, double cy, double r, double p = 2.0);
+// How far this build's tire treads stand out past the factory's at the front and rear axles (m;
+// spacers and wider tires): what fender flares must cover.
+double tirePoke(const VehicleSpec& vs, bool front);
 // Moves the body (and everything on it) up by dy relative to the wheels: lift kits, lowering.
 void raiseBody(VehicleSpec& vs, double dy);
 // Wheel-less soft bodies placed around the map: foam crash boxes, concrete barriers.
