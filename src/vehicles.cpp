@@ -505,7 +505,7 @@ const std::vector<VehicleSpec>& vehicleCatalog() {
         bronco.engineLen = 0.62;
         bronco.engineWid = 0.66;
         bronco.engineHgt = 0.62;
-        bronco.gearboxLen = 0.93;  // (the long 10R80 and the transfer case: its tail where it was before the engine came forward)
+        bronco.gearboxLen = 0.90;  // (the long 10R80 and the transfer case: its tail, and the transfer case, only 3 cm further forward)
         bronco.bodyStiffness = 1.2;
         bronco.frameStiffness = 0.30;  // ladder frame: twists more than a unibody
         bronco.bodyStrength = 1.0;     // high-strength steel body
