@@ -1928,22 +1928,37 @@ bool erosionMade(const ProcWorld& G, double x0, double z0, double x1, double z1)
             if (!erosionTileIfMade(G, i, j)) return false;
     return true;
 }
+std::atomic<bool>& prefetchStopping() {
+    static std::atomic<bool> v{false};
+    return v;
+}
+BgWork* prefetchWork() {
+    static BgWork* w = [] {
+        BgWork* b = new BgWork;  // (never destroyed)
+        std::atexit([] { prefetchStopping() = true; prefetchWork()->wait(); });
+        return b;
+    }();
+    return w;
+}
 // ...or later, one at a time on a background thread below the game's priority (the tiles ahead of a window: ready before it slides).
 void prefetchErosion(const ProcWorld& G, double x0, double z0, double x1, double z1) {
     if (rules().erosion.on <= 0 || std::getenv("CZ_NO_EROSION_PREFETCH")) return;
-    static BgWork work;
+    // (Made once and never destroyed; at exit, before the caches it fills are torn down, what's queued is dropped and the one tile
+    // in hand finished.)
+    BgWork* work = prefetchWork();
     const uint64_t seed = G.seed();
     for (int64_t i = (int64_t)std::floor((x0 - kEBlend) / (double)kETile); i <= (int64_t)std::floor((x1 + kEBlend) / (double)kETile); i++)
         for (int64_t j = (int64_t)std::floor((z0 - kEBlend) / (double)kETile); j <= (int64_t)std::floor((z1 + kEBlend) / (double)kETile); j++) {
             if (erosionTileIfMade(G, i, j)) continue;
-            static std::mutex qm;
-            static std::set<std::tuple<uint64_t, int64_t, int64_t>> queued;
+            static std::mutex& qm = *new std::mutex;  // (never destroyed: a job in hand at exit still unlocks it)
+            static std::set<std::tuple<uint64_t, int64_t, int64_t>>& queued = *new std::set<std::tuple<uint64_t, int64_t, int64_t>>;
             {  // (queued once: asked again every frame until it's made)
                 std::lock_guard<std::mutex> lock(qm);
                 if (queued.size() > 4096) queued.clear();
                 if (!queued.insert({seed, i, j}).second) continue;
             }
-            work.post([seed, i, j] {
+            work->post([seed, i, j] {
+                if (prefetchStopping()) return;
                 static thread_local bool lowered = false;
                 if (!lowered) lowerThreadPriority(), lowered = true;
                 gTileWorker = true;  // (one thread: the land ahead is made quietly)
