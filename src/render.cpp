@@ -49,6 +49,10 @@ const float kFog[3] = {0.66f, 0.74f, 0.84f};
 constexpr double kImpostorFrom = 200, kImpostorBand = 30;
 // ...and in the far shadow cascade from here: their shadows there are a few texels (the near cascade keeps every mesh).
 constexpr double kShadowImpostorFrom = 100;
+// The land's long shadows (Renderer::updateHorizon): the map's texels a side, metres a texel, the step its middle follows the
+// camera in, and the texture unit every lit shader reads it from.
+constexpr int kHorizonTexels = 1024, kHorizonUnit = 8;
+constexpr float kHorizonTexel = 4.0f, kHorizonSnap = 256.0f;
 constexpr double kCanopyFrom = 700, kCanopyFull = 2200;  // (m) far off, the ground under a wood takes the canopy's colour over this
 constexpr double kFarForestFrom = 1000;  // (m) the window's trees hand over to the far forest (farforest.h): inside every window's edge
 
@@ -59,6 +63,9 @@ uniform vec3 uSun; uniform vec3 uCam; uniform vec3 uFog;
 uniform sampler2DShadow uShadow0, uShadow1;  // near and far cascade
 uniform mat4 uLightVP0, uLightVP1;
 uniform vec4 uShadowCfg;                     // on, PCF taps, -, -
+// The land's long shadows (Renderer::updateHorizon): per texel, the height under which the key light is behind the land.
+uniform sampler2D uHorizon;                  // (always unit 8: set when the program is linked)
+uniform vec4 uHorizonBox;                    // its corner (x, z), 1 / its span in metres, on
 uniform float uTime, uClouds;
 // The procedural world (procworld.h): where its window's origin is from where the noise is anchored, so the ground's, the
 // clouds' and the scenery's patterns stay put in the world as the window slides (0 on the other maps). NP: a fragment's
@@ -146,7 +153,21 @@ float shadowMap(vec3 p, vec3 n){
   float nearS = pcf(uShadow0, vec3(c0.xy, c0.z - 0.00012), 2.2 / vec2(textureSize(uShadow0, 0)).x, rot);
   return mix(nearS, far, smoothstep(0.42, 0.5, e0));
 }
-float shadowAt(vec3 p, vec3 n){ return shadowMap(p, n) * cloudShadow(p); }
+// In the shade of the land toward the sun (a ridge, a mountain): from fully lit a metre under the map's height to dark 3.5 m under
+// (a soft edge, and room for the coarse heights it's made from); faded out toward the map's edge.
+float horizonShadow(vec3 p){
+  if (uHorizonBox.w < 0.5) return 1.0;
+  vec2 uv = (p.xz - uHorizonBox.xy) * uHorizonBox.z;
+  float e = max(abs(uv.x - 0.5), abs(uv.y - 0.5));
+  if (e >= 0.5) return 1.0;
+  float under = texture(uHorizon, uv).r - p.y;
+  return mix(1.0 - smoothstep(1.0, 3.5, under), 1.0, smoothstep(0.42, 0.5, e));
+}
+float shadowAt(vec3 p, vec3 n){
+  float hz = horizonShadow(p);
+  if (hz <= 0.0) return 0.0;  // (deep in a mountain's shade: the shadow maps can't make it darker)
+  return min(shadowMap(p, n), hz) * cloudShadow(p);
+}
 float hash3(vec3 p){ return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
 // Stars: a grid over the star sphere (which turns with the clock) with one star in a
 // few of its cells, most faint, some bright, gently twinkling; a faint milky band.
@@ -1927,6 +1948,7 @@ uniform vec4 uPush[8];  // vehicles as capsules: (x, z, radius) of one end, then
 uniform vec3 uSun; uniform float uClouds;       // (the shadows are worked out here, a few times a blade instead of at every pixel)
 uniform vec2 uNoiseOff;  // (the procedural world: see kCommonFS)
 uniform sampler2DShadow uShadow0, uShadow1; uniform mat4 uLightVP0, uLightVP1; uniform vec4 uShadowCfg;
+uniform sampler2D uHorizon; uniform vec4 uHorizonBox;  // (the land's long shadows: kCommonFS horizonShadow)
 out vec3 vPos; out vec3 vN; centroid out vec3 vC0; centroid out vec3 vC1; centroid out vec3 vC2; out vec2 vT; out float vSh;  // (centroid: see kLitVS)
 float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float vnoise(vec2 p){
@@ -1960,6 +1982,11 @@ float grassShadow(vec3 p){
     }
     sh = far;
     if (e0 < 0.5 && c0.z < 1.0) sh = mix(texture(uShadow0, vec3(c0.xy, c0.z - 0.00012)), far, smoothstep(0.42, 0.5, e0));
+  }
+  if (uHorizonBox.w > 0.5) {
+    vec2 uv = (p.xz - uHorizonBox.xy) * uHorizonBox.z;
+    float e = max(abs(uv.x - 0.5), abs(uv.y - 0.5));
+    if (e < 0.5) sh = min(sh, mix(1.0 - smoothstep(1.0, 3.5, textureLod(uHorizon, uv, 0.0).r - p.y), 1.0, smoothstep(0.42, 0.5, e)));
   }
   if (uClouds > 0.0) {
     vec2 w = p.xz + uNoiseOff + uSun.xz / max(uSun.y, 0.2) * (1800.0 - p.y);
@@ -2565,12 +2592,25 @@ void setShaderCacheDir(const std::string& dir) { gShaderCacheDir = dir; }
 ShaderCacheStats gShaderCacheStats;
 namespace {
 
+// Samplers every lit program reads from the same unit, whatever pass draws it: set once, as it's linked (a uniform's value isn't
+// kept in a program binary, so a cached one too).
+void fixedSamplers(GLuint p) {
+    const GLint at = GetUniformLocation(p, "uHorizon");
+    if (at < 0) return;
+    GLint was = 0;
+    GetIntegerv(GL_CURRENT_PROGRAM, &was);
+    UseProgram(p);
+    Uniform1i(at, kHorizonUnit);
+    UseProgram(was && IsProgram((GLuint)was) ? (GLuint)was : 0);  // (one deleted while in use is gone once it's left)
+}
+
 GLuint linkProgram(const std::string& vsSrc, const std::string& fsSrc, std::string& err) {
     const bool cache = binariesOk();
     const std::string path = cache ? shaderCachePath(vsSrc, fsSrc) : std::string();
     if (cache)
         if (GLuint p = loadCachedProgram(path)) {
             gShaderCacheStats.hits++;
+            fixedSamplers(p);
             return p;
         }
     const char* vs = vsSrc.c_str();
@@ -2595,6 +2635,7 @@ GLuint linkProgram(const std::string& vsSrc, const std::string& fsSrc, std::stri
     }
     gShaderCacheStats.compiled++;
     if (cache) saveCachedProgram(p, path);
+    fixedSamplers(p);
     return p;
 }
 
@@ -3523,6 +3564,156 @@ void Renderer::drawTerrain(const M4& vp, const View& view, const std::function<v
     }
 }
 
+// The ground in a shadow pass: every loaded chunk in the light's box, the near cascade at full detail and the far one at the
+// next LOD (every LOD keeps the chunk's edges: no gaps between them). Only the faces turned from the light go in (the lit
+// ones culled), pushed back by the pass's polygon offset: the sunny ground never shadows itself, while a slope's lee side
+// stands in front of what lies beyond it. Depth clamped: a hill nearer the light than the box's near plane still casts.
+void Renderer::drawTerrainCasters(const M4& lightVP, int cascade) {
+    static const bool off = std::getenv("CZ_NO_TERRAIN_SHADOW") != nullptr;  // (for comparing)
+    if (off || !terrainVao || terrainChunks.empty() || terrainLods_.empty()) return;
+    UseProgram(progDepth);
+    uniformM4(progDepth, "uLightVP", lightVP);
+    uniformM4(progDepth, "uModel", m4identity());
+    Enable(GL_DEPTH_CLAMP);
+    Enable(GL_CULL_FACE);
+    CullFace(GL_FRONT);
+    BindVertexArray(terrainVao);
+    const int lod = cascade == 0 ? 0 : 1;
+    for (const TerrainChunk& chunk : terrainChunks) {
+        if (chunk.backdrop || chunk.slot < 0 || !chunk.bounds.visible(lightVP)) continue;
+        const LodSet& set = terrainLods_[chunk.lodSet];
+        DrawElementsBaseVertex(GL_TRIANGLES, set.count[lod], GL_UNSIGNED_INT, reinterpret_cast<const void*>((uintptr_t)set.first[lod] * sizeof(unsigned)),
+                               chunk.slot * kChunkVerts);
+        geometryStats_.shadowTerrainTriangles += set.count[lod] / 3;
+    }
+    CullFace(GL_BACK);
+    Disable(GL_CULL_FACE);
+    Disable(GL_DEPTH_CLAMP);
+}
+
+namespace {
+// The long-shadow map's texels (Renderer::updateHorizon): from each texel's middle, toward the key light over the coarse terrain
+// texture (filtered: a sampler object for this pass), the highest the land rises above the light's line, as a height there.
+// A point under it is in the land's shade. The steps grow with the distance (fine near, a few tens of metres far off) and stop
+// once even the highest land couldn't rise above what's found. Past the map's edge the land is taken as low.
+const char* kHorizonFS = R"(#version 330 core
+uniform sampler2D uTerrainCoarse;
+uniform float uTerrainCoarseN, uHalf, uMaxH, uT0, uReach;
+uniform vec4 uBox;    // the map's corner (x, z), metres a texel
+uniform vec3 uToSun;  // toward the key light: across the ground (x, z), and its rise a metre
+out float oH;
+float hAt(vec2 xz){
+  vec2 c = (xz + uHalf - 2.0) * 0.25;  // (coarse texel ci's middle is at -half + 4 ci + 2)
+  if (min(c.x, c.y) < -0.5 || max(c.x, c.y) > uTerrainCoarseN - 0.5) return -1e6;
+  return textureLod(uTerrainCoarse, (c + 0.5) / uTerrainCoarseN, 0.0).r;
+}
+void main(){
+  vec2 p = uBox.xy + gl_FragCoord.xy * uBox.z;
+  float best = -1e6;
+  const int N = 96;
+  for (int k = 0; k < N; k++){
+    float f = float(k) / float(N - 1);
+    float t = uT0 + (uReach - uT0) * f * f;
+    if (uMaxH - t * uToSun.z < best) break;
+    best = max(best, hAt(p + uToSun.xy * t) - t * uToSun.z);
+  }
+  oH = best;
+})";
+}  // namespace
+
+void Renderer::horizonLandChanged(bool newLand) {
+    horizonGen_++;
+    if (newLand) horizon_.live = -1, horizon_.back = -1;  // (else a map being made carries on, and the next one starts after: an edit
+                                                          // every frame, a brush stroke, still gets one finished)
+}
+
+void Renderer::updateHorizon(const V3& eye, const V3& keyDir, int shadowQuality) {
+    static const bool off = std::getenv("CZ_NO_HORIZON") != nullptr;  // (for comparing)
+    Horizon& H = horizon_;
+    H.on = false;
+    const double flat = std::hypot(keyDir.x, keyDir.z);
+    if (off || shadowQuality < 2 || !terrainCoarseTex || terrainGridN <= 1 || flat < 1e-3 || keyDir.y <= 0 || terrainChunks.empty()) return;
+    const int N = kHorizonTexels;
+    if (!H.prog) {
+        std::string err;
+        H.prog = linkProgram(kPostVS, kHorizonFS, err);
+        if (!H.prog) {
+            std::fprintf(stderr, "long shadows: %s\n", err.c_str());
+            H.prog = ~0u;
+        }
+        GenSamplers(1, &H.sampler);
+        SamplerParameteri(H.sampler, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        SamplerParameteri(H.sampler, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        SamplerParameteri(H.sampler, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        SamplerParameteri(H.sampler, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        for (int k = 0; k < 2; k++) {
+            GenTextures(1, &H.tex[k]);
+            BindTexture(GL_TEXTURE_2D, H.tex[k]);
+            TexImage2D(GL_TEXTURE_2D, 0, GL_R32F, N, N, 0, GL_RED, GL_FLOAT, nullptr);
+            noteRT("long shadow map", "R32F", N, N, 4);
+            TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            GenFramebuffers(1, &H.fbo[k]);
+            BindFramebuffer(GL_FRAMEBUFFER, H.fbo[k]);
+            FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, H.tex[k], 0);
+            if (CheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) H.prog = ~0u;
+        }
+        BindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
+    if (H.prog == ~0u) return;
+    // Where it wants to be: round the camera (a step at a time), with the light where it is now.
+    const float span = N * kHorizonTexel;
+    const float x0 = std::round((float)eye.x / kHorizonSnap) * kHorizonSnap - span * 0.5f, z0 = std::round((float)eye.z / kHorizonSnap) * kHorizonSnap - span * 0.5f;
+    auto current = [&](int k) { return k >= 0 && H.x0[k] == x0 && H.z0[k] == z0 && H.gen[k] == horizonGen_ && dot(H.sun[k], keyDir) > 0.99999994; };  // (0.02 degrees)
+    if (H.back < 0 && !current(H.live)) {
+        H.back = H.live < 0 ? 0 : 1 - H.live;
+        H.rowsDone = 0;
+        H.x0[H.back] = x0, H.z0[H.back] = z0, H.sun[H.back] = keyDir, H.gen[H.back] = horizonGen_;
+    }
+    if (H.back >= 0) {
+        const int b = H.back;
+        if (H.rowsDone == 0) {
+            // The land's highest and lowest point (the march's reach and its early stop): the chunks' bounds, backdrop and all.
+            float hi = -1e9f, lo = 1e9f;
+            for (const TerrainChunk& c : terrainChunks)
+                if (c.bounds.hi.y >= c.bounds.lo.y) hi = std::max(hi, (float)c.bounds.hi.y), lo = std::min(lo, (float)c.bounds.lo.y);
+            H.maxH = hi >= lo ? hi + 2 : 1e4f, H.minH = hi >= lo ? lo : 0;
+        }
+        const int rows = H.live < 0 ? N - H.rowsDone : std::min(N / 8, N - H.rowsDone);  // (none yet: all of it now)
+        const V3 k = H.sun[b];
+        const double fl = std::hypot(k.x, k.z), rise = k.y / fl;
+        const float reach = (float)std::min(4000.0, (H.maxH - H.minH) / std::max(rise, 0.05) + 50);
+        BindFramebuffer(GL_FRAMEBUFFER, H.fbo[b]);
+        Viewport(0, H.rowsDone, N, rows);
+        Disable(GL_DEPTH_TEST);
+        Disable(GL_BLEND);
+        UseProgram(H.prog);
+        ActiveTexture(GL_TEXTURE0 + 10);
+        BindTexture(GL_TEXTURE_2D, terrainCoarseTex);
+        BindSampler(10, H.sampler);
+        Uniform1i(uniformLocation(H.prog, "uTerrainCoarse"), 10);
+        Uniform1f(uniformLocation(H.prog, "uTerrainCoarseN"), (float)terrainCoarseN_);
+        Uniform1f(uniformLocation(H.prog, "uHalf"), (float)(terrainGridN - 1) * 0.5f);
+        Uniform1f(uniformLocation(H.prog, "uMaxH"), H.maxH);
+        Uniform1f(uniformLocation(H.prog, "uT0"), 12.0f);
+        Uniform1f(uniformLocation(H.prog, "uReach"), std::max(reach, 100.0f));
+        Uniform4f(uniformLocation(H.prog, "uBox"), H.x0[b], H.z0[b], kHorizonTexel, 0);
+        Uniform3f(uniformLocation(H.prog, "uToSun"), (float)(k.x / fl), (float)(k.z / fl), (float)rise);
+        BindVertexArray(postVao);
+        DrawArrays(GL_TRIANGLES, 0, 3);
+        BindSampler(10, 0);
+        ActiveTexture(GL_TEXTURE0);
+        BindFramebuffer(GL_FRAMEBUFFER, 0);
+        Enable(GL_DEPTH_TEST);
+        geometryStats_.horizonRows += rows;
+        H.rowsDone += rows;
+        if (H.rowsDone >= N) H.live = b, H.back = -1;
+    }
+    H.on = H.live >= 0;
+}
+
 void Renderer::updateWater(const World& world) {
     dropStreamJobs();  // (the texture is made again below)
     std::vector<Vtx> wv;
@@ -3591,8 +3782,10 @@ void Renderer::uploadTerrainCoarse(const World& world, int i0, int j0, int i1, i
         TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         terrainCoarseN_ = got;
+        horizonLandChanged(true);
         return;
     }
+    horizonLandChanged(i0 <= 0 && j0 <= 0 && i1 >= n - 1 && j1 >= n - 1);  // (all of it: a new land of the same size)
     const double half = world.halfSize();
     const int c0 = std::max(0, i0 / kCoarseCell), c1 = std::min(cn - 1, i1 / kCoarseCell), r0 = std::max(0, j0 / kCoarseCell), r1 = std::min(cn - 1, j1 / kCoarseCell);
     if (c1 < c0 || r1 < r0) return;
@@ -4298,6 +4491,7 @@ void Renderer::adoptWorld(const World& world) {
     terrainWinW_ = p->texW, terrainWinI_ = p->winI, terrainWinJ_ = p->winJ, terrainCoarseN_ = p->coarseN;
     noteRT("terrain height map", "RGBA32F", p->texW, p->texW, 16, 0, true);
     adoptTerrain(*p);  // (drops the last spare set; with keepSpare, the old buffers are the new one)
+    horizonLandChanged(true);  // (a new land, or the procedural window slid: the long-shadow map's coordinates moved)
     if (p->keepSpare && spare_.vbo && oldTex && oldCoarse && oldW == p->texW && oldCoarseN == p->coarseN)
         spare_.tex = oldTex, spare_.ctex = oldCoarse, spare_.texW = oldW, spare_.coarseN = oldCoarseN;
     else {
@@ -5911,6 +6105,8 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
                      lightView;
     }
 
+    updateHorizon(view.eye, keyDir, sq);  // (the land's long shadows: a slice of the next map, when the light or camera moved)
+
     Enable(GL_DEPTH_TEST);
     DepthFunc(GL_LEQUAL);
     Disable(GL_CULL_FACE);
@@ -6001,8 +6197,14 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         carVisible_.clear();
         shadowPass_ = false;
         props.drawShadow(lightVP[c], c, keyDir);
+        drawTerrainCasters(lightVP[c], c);
         Disable(GL_POLYGON_OFFSET_FILL);
     }
+    // The long-shadow map for every lit pass (kCommonFS horizonShadow; the programs' uHorizon is this unit). (Something is
+    // always bound there, so the unit never holds a texture of another kind.)
+    ActiveTexture(GL_TEXTURE0 + kHorizonUnit);
+    BindTexture(GL_TEXTURE_2D, horizon_.on ? horizon_.tex[horizon_.live] : terrainCoarseTex);
+    ActiveTexture(GL_TEXTURE0);
 
     // Main pass, into the HDR target.
     passMark(FP_SKY);
@@ -6058,6 +6260,10 @@ void Renderer::drawScene(const Sim& sim, const View& view, DebugView debug, Effe
         uniformM4(prog, "uLightVP0", lightVP[0]);
         uniformM4(prog, "uLightVP1", lightVP[1]);
         Uniform4f(uniformLocation(prog, "uShadowCfg"), sq ? 1.0f : 0.0f, (float)kShadowTaps[sq], 0, 0);
+        if (horizon_.on) {
+            const int k = horizon_.live;
+            Uniform4f(uniformLocation(prog, "uHorizonBox"), horizon_.x0[k], horizon_.z0[k], 1.0f / (kHorizonTexels * kHorizonTexel), 1.0f);
+        } else Uniform4f(uniformLocation(prog, "uHorizonBox"), 0, 0, 0, 0);
         for (int c = 0; c < 2; c++) {
             ActiveTexture(GL_TEXTURE0 + c);
             BindTexture(GL_TEXTURE_2D, shadowTex[c]);
