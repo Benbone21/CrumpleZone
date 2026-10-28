@@ -1522,8 +1522,8 @@ void drawScenarioStatus(Renderer& r, const Playback& pb, HudState& hud, float u,
     }
 }
 
-// Multiplayer: who's here (top right), and a name tag over each of their vehicles.
-void drawPlayers(Renderer& r, const Sim& sim, const NetSession& net, const View& view, float u, int W, int H, bool fpsOn) {
+// Multiplayer: who's here (top right).
+void drawPlayers(Renderer& r, const NetSession& net, float u, int W, bool fpsOn) {
     if (!net.active()) return;
     const float s = px(1.3f * u), lh = 8 * s + 6 * u;
     float y = hudlayout::playersList(u, W, 1, 0, fpsOn).y;  // (under the FPS block when that is up)
@@ -1538,22 +1538,7 @@ void drawPlayers(Renderer& r, const Sim& sim, const NetSession& net, const View&
         r.text(W - w - 3 * u, y + 3 * u, s, buf, k == net.self ? 1.0f : 0.6f, k == net.self ? 0.75f : 0.9f, k == net.self ? 0.3f : 1.0f);
         y += lh;
     }
-    // Name tags: project a point above each of their vehicles.
-    const V3 fwd = norm(view.target - view.eye), right = norm(cross(fwd, view.up)), up = cross(right, fwd);
-    const double f = 1.0 / std::tan(view.fovy / 2);
-    for (const Car& c : sim.cars) {
-        if (!c.remote || c.isProp()) continue;
-        const V3 p = c.frame().com + V3(0, 1.9, 0) - view.eye;
-        const double z = dot(p, fwd);
-        if (z < 1.0 || z > 400) continue;
-        const float sx = W / 2.0f + (float)(dot(p, right) / z * f * H / 2), sy = H / 2.0f - (float)(dot(p, up) / z * f * H / 2);
-        std::string tag = net.ownerName(c.netId);
-        if (c.engineDead) tag += c.hydrolocked ? "  (FLOODED)" : "  (ENGINE DEAD)";
-        const float ts = px((z < 40 ? 1.4f : 1.1f) * u);
-        const float tw = r.textWidth(tag, ts);
-        pill(r, sx - tw / 2 - 6 * u, sy - 4 * u, tw + 12 * u, 8 * ts + 8 * u, 0.0f, 0.0f, 0.0f, 0.5f);
-        r.text(sx - tw / 2, sy, ts, tag, 0.6f, 0.9f, 1.0f);
-    }
+    // (Their name tags: Coop::drawWorld, one over each vehicle.)
 }
 
 // A career's supply caches still to open, within ~250 m: a marker over each and how far.
@@ -1604,7 +1589,7 @@ void drawHud(Renderer& r, const Sim& sim, const View& view, HudState& hud, const
     drawRecovery(r, sim, hud, u, W);
     drawAnchors(r, sim, hud, u, W, H);
     drawStation(r, sim, u, W, H);
-    if (!hud.debugOn) drawPlayers(r, sim, net, view, u, W, H, hud.showFps);  // (F3 lists them itself)
+    if (!hud.debugOn) drawPlayers(r, net, u, W, hud.showFps);  // (F3 lists them itself)
     drawPilot(r, sim, view, u, W, H);
     drawCaches(r, careerRun, hud, caches, view, u, W, H);
     drawTags(r, sim.world, view, u, W, H);
