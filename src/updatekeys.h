@@ -7,7 +7,7 @@ namespace update {
 // GitHub Actions secret UPDATE_SIGNING_KEY. Two entries while a key is being replaced; nullptr ends the list. With no key the game
 // never trusts a manifest, so it says that updates aren't set up in this build.
 constexpr const char* kUpdatePublicKeys[] = {
-    // "0123...cdef",   <- the owner's public key goes here (tools: build/cz-update --keygen)
+    "b4af0d4e279fa1ef9d97b8b75b943a3a86c396dae793f23ebc52c285ccfef445",  // the owner's key (2026-10-28)
     nullptr,
 };
 
