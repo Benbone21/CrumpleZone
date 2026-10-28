@@ -55,6 +55,7 @@ const float* stateColor(const Item& it) {
 
 std::string stateText(const Shop& s, const Item& it) {
     if (it.group == G_PAINT) return "";
+    if (it.group == G_VEHICLE) return it.state == ST_FITTED ? "YOU'RE IN IT" : "";
     if (it.group == G_GEAR) {
         const std::string have = it.carried < 0 ? "" : it.tool ? (it.carried ? "YOU HAVE ONE" : "") : (it.carried ? "YOU CARRY " + std::to_string(it.carried) : "");
         if (!s.career) return have;
@@ -265,6 +266,14 @@ void draw(Renderer& r, Shop& s, const Career& c, const std::string& where, int W
             int owned = 0, sale = 0;
             for (const Item& x : s.list) owned += x.state == ST_OWNED || x.state == ST_FITTED, sale += x.state == ST_FOR_SALE;
             action = std::to_string(s.list.size()) + " PARTS" + (s.career ? "   " + std::to_string(owned) + " YOURS   " + std::to_string(sale) + " FOR SALE" : "");
+        } else if (cat.group == G_VEHICLE) {
+            if (s.focus == F_ITEMS && s.sel >= 0 && s.sel < (int)s.list.size()) {
+                name = s.list[s.sel].name, detail = s.list[s.sel].detail;
+                state = s.list[s.sel].state == ST_FITTED ? "YOU'RE IN IT" : s.career ? "YOURS, PARKED HERE" : "";
+                action = s.actionLabel(c);
+            } else {
+                action = s.list.empty() ? "NO OTHER VEHICLE HERE" : std::to_string(s.list.size()) + (s.career ? " YOURS IN THIS WORLD" : " VEHICLES");
+            }
         } else {
             action = std::to_string(s.list.size()) + " ON THE RACK";
         }

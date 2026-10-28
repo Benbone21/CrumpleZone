@@ -57,7 +57,9 @@ const Info kInfo[KA_COUNT] = {
     {SC_O, false, "TOW STRAP", "key_strap", KG_RECOVERY, ANY, false, false},
     {SC_R, false, "REPAIR (TWICE: RESPAWN)", "key_repair", KG_RECOVERY, ANY, false, false},
     {SC_T, false, "BACK ON ITS WHEELS", "key_flip", KG_RECOVERY, ANY, false, false},
-    {SC_U, false, "AUTOPILOT", "key_autopilot", KG_RECOVERY, ANY, false, false},
+    {SC_U, false, "AUTOPILOT: START / STOP", "key_autopilot", KG_RECOVERY, ANY, false, false},
+    {SC_U, true, "AUTOPILOT: WHERE TO", "key_autopilotpick", KG_RECOVERY, ANY, false, false},
+    {SC_J, true, "JOBS", "key_jobs", KG_RECOVERY, ANY, false, false},
     // ON FOOT
     {SC_J, false, "GET OUT / IN", "key_getinout", KG_FOOT, ANY, false, false},
     {SC_E, false, "INTERACT (HOLD)", "key_interact", KG_FOOT, F, true, false},

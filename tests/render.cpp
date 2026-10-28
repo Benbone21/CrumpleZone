@@ -238,6 +238,8 @@ int main() {
         }
         PauseMenu ambientMenu;
         ambientMenu.showPage(1, 0, 0);
+        ambientMenu.key(SC_E, settings);  // (the AUDIO tab: GRAPHICS, CONTROLS, AUDIO)
+        ambientMenu.key(SC_E, settings);
         bool foundAmbience = false;
         for (int row = 0; row < 64; row++) {
             const float previous = settings.ambience;
