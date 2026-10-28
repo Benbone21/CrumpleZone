@@ -97,10 +97,16 @@ public:
     ScanCover scanCover() const { return scanCover_; }
     void beginUpload(std::shared_ptr<Prepared> p);
     bool pumpUpload(double budgetMs);  // true once everything is uploaded
-    void adoptWorld(const World& world);
+    // slid: a procedural window that slid by this (new local = old local + slid; procstream.h): the same land, moved, so the long
+    // shadows drawn now are kept (moved with it) while the next are made a slice a frame, not all of them on the frame after the swap.
+    void adoptWorld(const World& world, const V3* slid = nullptr);
     // A procedural window (procstream.h), after pumpUpload: its scenery onto the GPU a piece a frame, apart from what's drawn; true
     // once it's all there (adoptWorld then swaps it in at no cost). budgetMs: about what to spend a frame.
     bool stageWorld(double budgetMs);
+    // What a procedural swap let go of (the window that went out's terrain lists, what came in's CPU copies), freed on a thread of
+    // its own: called the frame after the swap (ProcStream::tick), as freeing hundreds of MB on one thread while the swap frame's
+    // own allocations wait on the allocator's lock cost that frame ms on a 4-core machine.
+    void freeRetired();
     // The scans laid out for a world ahead of its swap (any thread; procworld's worker): into what prepareObjects made.
     void prepareProps(const World& world, Prepared& p) const;
     bool stepWorld(const World& world);  // true once the scenery is built
@@ -332,6 +338,7 @@ private:
     } horizon_;
     uint64_t horizonGen_ = 1;  // bumped when the land under the coarse texture changes (a slice rebuild); live = -1 when it's a new land
     void horizonLandChanged(bool newLand);
+    void horizonSlid(const V3& shift);  // (adoptWorld's slid)
     void updateHorizon(const V3& eye, const V3& keyDir, int shadowQuality);
     // The streaming's CPU work runs on bg_ (bgwork.h), never in the frame: the next strip of the texture's window
     // (texJob_: computed there, uploaded and the window stepped onto it once it's done) and the meshes of the chunks
@@ -415,6 +422,7 @@ private:
     uint64_t terrainIdxHash_ = 0;
     size_t terrainBytes_[4] = {};  // the sizes of terrainVbo, terrainIbo, coarseVbo, coarseIbo
     GLuint unpackPbo_ = 0;         // (a procedural window's terrain texels go up through this)
+    std::shared_ptr<Prepared> retired_;  // (freeRetired)
     std::shared_ptr<Prepared::PreObjects> preObjs_;  // (adoptWorld: the scenery made on the worker, for the object stages)
     struct Staged {  // (stageWorld: the next window's scenery, on the GPU apart from what's drawn; after a swap, the last one's, to reuse)
         int step = 0;

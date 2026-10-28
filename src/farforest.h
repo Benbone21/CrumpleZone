@@ -41,7 +41,11 @@ struct FarForestGrid {
 
 class FarForest {
 public:
-    void upload(const std::shared_ptr<const FarForestGrid>& g);
+    void upload(const std::shared_ptr<const FarForestGrid>& g) { stage(g), adoptStaged(g); }
+    // A procedural window's field onto the GPU ahead of its swap (Renderer::stageWorld), into the textures not drawn from; the swap
+    // frame's adoptStaged then only swaps them (and uploads it there only if it wasn't staged).
+    void stage(const std::shared_ptr<const FarForestGrid>& g);
+    void adoptStaged(const std::shared_ptr<const FarForestGrid>& g);
     bool ready() const { return tex_[0] != 0 && n_ > 0; }
     void clear() { n_ = 0; grid_.reset(); }
     struct Range {
@@ -60,4 +64,8 @@ private:
     GLuint tex_[2] = {0, 0}, vao_ = 0;
     int n_ = 0;
     std::shared_ptr<const FarForestGrid> grid_;
+    GLuint backTex_[2] = {0, 0};  // (stage's: cover, height)
+    int backN_ = 0;               // (their size, as allocated)
+    std::shared_ptr<const FarForestGrid> backGrid_;  // (what's in them)
+    int texN_ = 0;                // (tex_'s size, as allocated)
 };

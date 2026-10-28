@@ -3627,6 +3627,16 @@ void Renderer::horizonLandChanged(bool newLand) {
                                                           // every frame, a brush stroke, still gets one finished)
 }
 
+void Renderer::horizonSlid(const V3& shift) {
+    // The land the live map was made from is still there, moved by the shift (whole metres): it stays in use, moved with it, until
+    // its successor round the camera, from the new window's coarse texture, is done (updateHorizon: N/8 rows a frame, as when the
+    // sun moves). One being made is dropped: its rows so far came from the old window's texture.
+    horizonGen_++;
+    Horizon& H = horizon_;
+    for (int k = 0; k < 2; k++) H.x0[k] += (float)shift.x, H.z0[k] += (float)shift.z;
+    H.back = -1, H.rowsDone = 0;
+}
+
 void Renderer::updateHorizon(const V3& eye, const V3& keyDir, int shadowQuality) {
     static const bool off = std::getenv("CZ_NO_HORIZON") != nullptr;  // (for comparing)
     Horizon& H = horizon_;
@@ -4450,22 +4460,24 @@ void Renderer::adoptTerrain(Prepared& p) {
     if (coarseIbo) DeleteBuffers(1, &coarseIbo);
     terrainVbo = p.vbo, terrainIbo = p.ibo, coarseVbo = p.cvbo, coarseIbo = p.cibo;
     terrainSpacing = p.spacing, terrainMeshN = p.n;
-    terrainChunks = std::move(p.chunks);
-    terrainLods_ = std::move(p.lods);
+    // (Swapped, not moved: the window that goes out's chunks, LOD sets, far groups and occlusion grid go out with `p`, which a
+    // procedural slide frees on a thread of its own after the swap frame (freeRetired), not here.)
+    std::swap(terrainChunks, p.chunks);
+    std::swap(terrainLods_, p.lods);
     terrainAll_ = p.all;
     streamEye_ = V3(1e9, 0, 1e9), streamPending_ = true;
     terrainOcclStep_ = p.occlStep;
     slotChunk_.assign(p.poolSlots, -1);
     for (int k = 0; k < (int)terrainChunks.size(); k++)
         if (terrainChunks[k].slot >= 0) slotChunk_[terrainChunks[k].slot] = k;
-    farGroups_ = std::move(p.groups);
+    std::swap(farGroups_, p.groups);
     chunkGroup_.assign(terrainChunks.size(), -1);
     for (int g = 0; g < (int)farGroups_.size(); g++) {
         farGroups_[g].loaded = 0;
         for (int k : farGroups_[g].chunks) chunkGroup_[k] = g, farGroups_[g].loaded += terrainChunks[k].slot >= 0;
     }
-    occl_ = std::move(p.occl);
-    if (p.farForest) farForest_.upload(p.farForest);
+    std::swap(occl_, p.occl);
+    if (p.farForest) farForest_.adoptStaged(p.farForest);  // (a procedural window's was put on the GPU by stageWorld: only swapped here)
     else farForest_.clear();
     if (!terrainVao) GenVertexArrays(1, &terrainVao);
     if (!coarseVao) GenVertexArrays(1, &coarseVao);
@@ -4478,7 +4490,7 @@ void Renderer::adoptTerrain(Prepared& p) {
     BindVertexArray(0);
 }
 
-void Renderer::adoptWorld(const World& world) {
+void Renderer::adoptWorld(const World& world, const V3* slid) {
     LOADPROF("renderer.adoptWorld");
     waitStreaming();
     std::shared_ptr<Prepared> p = std::move(pending_);
@@ -4491,7 +4503,8 @@ void Renderer::adoptWorld(const World& world) {
     terrainWinW_ = p->texW, terrainWinI_ = p->winI, terrainWinJ_ = p->winJ, terrainCoarseN_ = p->coarseN;
     noteRT("terrain height map", "RGBA32F", p->texW, p->texW, 16, 0, true);
     adoptTerrain(*p);  // (drops the last spare set; with keepSpare, the old buffers are the new one)
-    horizonLandChanged(true);  // (a new land, or the procedural window slid: the long-shadow map's coordinates moved)
+    if (slid) horizonSlid(*slid);  // (the procedural window slid: the long shadows kept, moved, and made again over a few frames)
+    else horizonLandChanged(true);  // (a new land)
     if (p->keepSpare && spare_.vbo && oldTex && oldCoarse && oldW == p->texW && oldCoarseN == p->coarseN)
         spare_.tex = oldTex, spare_.ctex = oldCoarse, spare_.texW = oldW, spare_.coarseN = oldCoarseN;
     else {
@@ -4523,7 +4536,7 @@ void Renderer::adoptWorld(const World& world) {
         preObjs_.reset();
         staged_.ready = false, staged_.step = 0;
         objStage_ = 4;
-        std::thread([p]() mutable { p.reset(); releaseFreedMemory(); }).detach();  // (what went out, and what came in's CPU copies: freed off this frame, and handed back)
+        retired_ = std::move(p);  // (what went out, and what came in's CPU copies: freed on a thread from the next frame on, freeRetired)
         return;
     }
     uploadStatic(waterVao, waterVbo, p->water);
@@ -4576,12 +4589,19 @@ bool Renderer::stageWorld(double budgetMs) {
             case 3: staged_.bushes.upload(std::move(o.bushBuilt)); break;
             case 4: next = slices(staged_.bushVao, staged_.bushVbo, o.bushVerts); break;
             case 5: next = slices(staged_.sceneryVao, staged_.sceneryVbo, o.sceneryVerts); break;
+            case 6: farForest_.stage(p->farForest); break;  // (the far forest's field: a couple of MB of textures)
             default: staged_.ready = true; return true;
         }
         if (next) staged_.step++;
         if (staged_.step == 3 || staged_.step == 4) break;  // (a tree set's upload is a frame's work on its own)
     }
     return false;
+}
+
+void Renderer::freeRetired() {
+    if (!retired_) return;
+    std::thread([p = std::move(retired_)]() mutable { p.reset(); releaseFreedMemory(); }).detach();  // (and handed back to the system)
+    retired_.reset();
 }
 
 bool Renderer::stepWorld(const World& world) {
