@@ -2298,6 +2298,16 @@ int main(int argc, char** argv) {
         const bool ownPaint = careerRun.active && c.careerSlot != -1;  // (a career world's vehicle: its own paint, not the garage's)
         ModSet fitted = garage.fitted[c.spec->model];
         careersession::shopMods(careerRun, sim, fitted);  // (a career world's vehicle: its own parts, so opening changes nothing on it)
+        garageShop.swaps.clear();  // (SWAP VEHICLE: in a career the vehicles you own in this world, at a station; in sandbox every listed one)
+        if (career.on) {
+            if (careerRun.active)
+                for (int k = 0; k < (int)careerRun.profile.vehicles.size(); k++) {
+                    const OwnedVehicle& ov = careerRun.profile.vehicles[k];
+                    if (ov.world == careerRun.world.slug) garageShop.swaps.push_back({ov.vehicle, k, c.careerSlot == k});
+                }
+        } else {
+            for (int v : listedVehicles()) garageShop.swaps.push_back({v, -1, v == c.spec->model});
+        }
         garageShop.begin(c.spec->model, fitted, career, career.on, at >= 0, ownPaint ? c.paint : garage.paint[c.spec->model]);
         shopToast.clear();
         shopDrag = false;
@@ -2337,6 +2347,19 @@ int main(int argc, char** argv) {
             } else {
                 garage.paint[garageShop.vehicle] = garageShop.paint;
                 if (!careerQuiet) garage.save(garagePath);  // (as saveSettings: scripted and --script runs never write)
+            }
+        }
+        if (r.swapVehicle >= 0) {  // the SWAP VEHICLE page's pick
+            if (r.swapSlot >= 0) {  // a career world: one of yours, at this station (careersession.h keeps the one you leave parked here)
+                std::string why;
+                if (!careersession::swapTo(careerRun, sim, r.swapSlot, why)) hud.toast(why);
+                else {
+                    cam.initialized = false;
+                    hud.toast(std::string("NOW DRIVING ") + vehicleCatalog()[r.swapVehicle].name + " (YOURS LEFT PARKED HERE)");
+                }
+            } else {
+                sim.swapPlayerVehicle(garage.spec(r.swapVehicle));
+                hud.toast(std::string("NOW DRIVING ") + vehicleCatalog()[r.swapVehicle].name);
             }
         }
         if (r.close) {
@@ -3717,6 +3740,7 @@ int main(int argc, char** argv) {
                 openEditor(l);
                 break;
             }
+            case A_LEVELS:
             case A_DEV_LEVELS:
                 if (refreshLevelsLater) refreshLevelsLater();
                 menu.showTitlePage(4, model, settings.map);

@@ -20,7 +20,7 @@ struct Frame;
 
 namespace shop {
 
-enum Group { G_MOD, G_GEAR, G_PAINT };
+enum Group { G_MOD, G_GEAR, G_PAINT, G_VEHICLE };  // G_VEHICLE: the SWAP VEHICLE page (Shop::swaps)
 
 // A category: a mod slot, or the station rack's items whose key starts with `prefix` ("TOOL:").
 struct Category {
@@ -94,7 +94,17 @@ enum Focus { F_CATS, F_ITEMS, F_PICK };  // F_PICK: the PAINT page's colour pick
 enum PaintRow { PR_BODY, PR_ACCENT, PR_FINISH, PR_FACTORY, PAINT_ROWS };
 enum PickCtl { PC_PRESET, PC_HUE, PC_SAT, PC_VAL, PICK_CTLS };
 
+// A vehicle the SWAP VEHICLE page offers: in a career, the ones you own in this world (slot: its place in the profile); in
+// sandbox, every listed vehicle (slot -1). main.cpp fills Shop::swaps before begin().
+struct SwapChoice {
+    int vehicle = 0;       // catalog index
+    int slot = -1;         // career: the OwnedVehicle's index in the profile
+    bool current = false;  // the one you're in
+};
+
 struct Result {
+    int swapVehicle = -1;      // the swap page's pick: the catalog index (the shop closes; main.cpp does the swap)...
+    int swapSlot = -1;         // ... and the career slot (-1 in sandbox)
     bool close = false;        // the shop shut (the fitted parts go back on: liftSync)
     bool fitted = false;       // `Shop::fitted` changed: save the garage, the truck is rebuilt on it
     bool saveCareer = false;   // cash or what you own changed
@@ -115,6 +125,7 @@ public:
     Focus focus = F_CATS;
     int cat = 0, sel = 0;
     std::vector<Item> list;  // the focused category's items
+    std::vector<SwapChoice> swaps;  // the SWAP VEHICLE page's vehicles (set before begin(); nothing: the page says there's none)
 
     // The turntable: the model's turn (rad), the camera's tilt and zoom; idle counts up from the last time
     // it was turned by hand (it turns itself after a moment).

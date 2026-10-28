@@ -51,6 +51,8 @@ SCENARIO(menuFront, "mainmenu/front", "The front page: MULTIPLAYER, SETTINGS, QU
     ctx.check("MULTIPLAYER asks for the join page", n.choose(F_MULTI).act == A_MULTIPLAYER && n.page == P_FRONT);
     ctx.check("SETTINGS asks for the settings", n.choose(F_SETTINGS).act == A_SETTINGS);
     ctx.check("QUIT quits", n.choose(F_QUIT).act == A_QUIT);
+    ctx.check("LEVELS (on the front page, not under DEV) asks for the levels list", n.choose(F_LEVELS).act == A_LEVELS && n.page == P_FRONT);
+    ctx.check("...and ENTER on it with the keys does the same", (n.open(0, 0), n.setSel(F_LEVELS), n.key(K_ENTER).act == A_LEVELS));
     n.open(0, 0);
     std::vector<int> seen;
     for (int i = 0; i < F_COUNT; i++) seen.push_back(n.sel), n.key(K_S);

@@ -86,6 +86,11 @@ const std::vector<Category>& categories() {
             c.group = G_PAINT, c.name = "PAINT", c.blurb = "BODY COLOUR, ACCENT AND FINISH";
             v.push_back(c);
         }
+        {
+            Category c;
+            c.group = G_VEHICLE, c.name = "SWAP VEHICLE", c.blurb = "DRIVE ANOTHER VEHICLE FROM HERE";
+            v.push_back(c);
+        }
         // The rack's kinds, in the order the rack has them.
         for (const ShopItem& it : stationRack()) {
             const size_t colon = it.key.find(':');
@@ -126,6 +131,7 @@ std::vector<Item> items(const Category& c, int vehicle, const ModSet& fitted, co
         }
         return out;
     }
+    if (c.group == G_VEHICLE) return out;  // (Shop::listFor: the vehicles come from the shop, not the career)
     if (c.group == G_PAINT) {
         static const char* names[PAINT_ROWS] = {"BODY COLOUR", "ACCENT: TRIM AND RIMS", "FINISH", "FACTORY PAINT"};
         for (int r = 0; r < PAINT_ROWS; r++) {
@@ -194,7 +200,7 @@ std::vector<Stat> compare(int vehicle, const ModSet& fitted, const ModSet& with)
 
 Display displayFor(const Item& it, int vehicle, const ModSet& fitted) {
     Display d;
-    if (it.group == G_PAINT) return d;  // (no part: the truck itself is the picture)
+    if (it.group == G_PAINT || it.group == G_VEHICLE) return d;  // (no part: the truck itself is the picture)
     if (it.group == G_GEAR) {
         const ShopItem& r = stationRack()[it.rack];
         d.id = r.model.empty() ? "tire_part" : r.model;
@@ -291,6 +297,17 @@ std::string colourName(bool set, const uint8_t rgb[3]) {
 
 std::vector<Item> Shop::listFor(const Career& c) const {
     std::vector<Item> l = items(category(), vehicle, fitted, c);
+    if (category().group == G_VEHICLE) {
+        const auto& cat = vehicleCatalog();
+        for (int k = 0; k < (int)swaps.size(); k++) {
+            const int v = clampi(swaps[k].vehicle, 0, (int)cat.size() - 1);
+            Item it;
+            it.group = G_VEHICLE, it.option = k, it.key = std::string("SWAP:") + cat[v].name;
+            it.name = cat[v].name, it.detail = cat[v].blurb;
+            it.state = swaps[k].current ? ST_FITTED : ST_OWNED;
+            l.push_back(it);
+        }
+    }
     if (category().group == G_PAINT) {
         for (Item& it : l) {
             if (it.option == PR_BODY) it.detail = colourName(paint.bodySet, paint.body);
@@ -310,7 +327,7 @@ int Shop::paintRow() const {
 const Category& Shop::category() const { return categories()[clampi(cat, 0, (int)categories().size() - 1)]; }
 
 const Item* Shop::item() const {
-    if (focus == F_CATS || sel < 0 || sel >= (int)list.size() || list[sel].group == G_PAINT) return nullptr;
+    if (focus == F_CATS || sel < 0 || sel >= (int)list.size() || list[sel].group == G_PAINT || list[sel].group == G_VEHICLE) return nullptr;
     return &list[sel];
 }
 
@@ -400,6 +417,25 @@ Result Shop::activate(Career& c) {
         return r;
     }
     if (focus == F_PICK) return back();
+    if (category().group == G_VEHICLE) {  // the swap page: ENTER on a vehicle
+        if (sel < 0 || sel >= (int)list.size()) {
+            r.toast = swaps.empty() ? "NO OTHER VEHICLE HERE" : "";
+            return r;
+        }
+        const SwapChoice& sw = swaps[list[sel].option];
+        if (career && !atStation) {
+            r.toast = "SWAP VEHICLES AT A STATION";
+            return r;
+        }
+        if (sw.current) {
+            r.toast = "YOU'RE IN IT ALREADY";
+            return r;
+        }
+        r.swapVehicle = sw.vehicle, r.swapSlot = sw.slot;
+        r.close = true;
+        r.toast = std::string("NOW DRIVING ") + vehicleCatalog()[clampi(sw.vehicle, 0, (int)vehicleCatalog().size() - 1)].name;
+        return r;
+    }
     if (category().group == G_PAINT && paintRow() >= 0) {
         const int row = paintRow();
         if (row == PR_BODY || row == PR_ACCENT) enterPick(row);
@@ -704,6 +740,10 @@ void Shop::tick(double dt) {
 
 std::string Shop::actionLabel(const Career& c) const {
     if (focus == F_CATS) return "OPEN";
+    if (category().group == G_VEHICLE) {
+        if (sel < 0 || sel >= (int)list.size()) return "";
+        return swaps[list[sel].option].current ? "YOU'RE IN IT" : "SWAP TO IT";
+    }
     if (const int pr = paintRow(); pr >= 0) {
         if (focus == F_PICK) return "DONE";
         return pr == PR_FINISH ? "NEXT FINISH" : pr == PR_FACTORY ? (paint.factory() ? "" : "RESET") : "PICK A COLOUR";
@@ -733,6 +773,8 @@ std::string Shop::hint(bool pad) const {
                    : "W S MOVE   ENTER PICK   A D FINISH   R FACTORY PAINT   DRAG TURN   WHEEL ZOOM   ESC BACK";
     if (focus == F_CATS)
         return pad ? "D-PAD MOVE   A OPEN   LB RB CATEGORY   Y FACTORY PART   B CLOSE" : "W S MOVE   ENTER OPEN   R FACTORY PART   C SPEEDO   ESC CLOSE";
+    if (category().group == G_VEHICLE)
+        return pad ? "D-PAD MOVE   A SWAP TO IT   LB RB CATEGORY   B BACK" : "W S MOVE   ENTER SWAP TO IT   Q E CATEGORY   ESC BACK";
     const Item* it = item();
     const bool mod = it && it->group == G_MOD;
     if (pad)

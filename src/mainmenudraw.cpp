@@ -183,6 +183,8 @@ void draw(Renderer& r, Nav& nav, int W, int H, float a, double clock, bool padLa
         row(c, F_MULTI, x0, y, bw, bh, ts, "MULTIPLAYER", "JOIN A FRIEND WITH A CODE, OR HOST", nav.sel == F_MULTI);
         y += bh + gap;
         row(c, F_SETTINGS, x0, y, bw, bh, ts, "SETTINGS", "GRAPHICS, CONTROLS, AUDIO", nav.sel == F_SETTINGS);
+        y += bh + gap;
+        row(c, F_LEVELS, x0, y, bw, bh, ts, "LEVELS", "RACES, CLIMBS AND WORLDS", nav.sel == F_LEVELS);
         // Small DEV and QUIT, bottom left.
         const float sy = H - 74 * u, sw = 74 * u, sh = 28 * u, st = px(1.6f * u);
         const char* names[2] = {"DEV", "QUIT"};

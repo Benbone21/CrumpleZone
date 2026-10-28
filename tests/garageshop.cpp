@@ -53,6 +53,8 @@ SCENARIO(shopCategories, "shop/categories", "The categories are every mod slot a
             ctx.check("mod slot " + c.name + ": every option listed", (int)list.size() == (int)modOptions(v, c.slot).size());
         } else if (c.group == G_PAINT) {
             ctx.check("the PAINT page has its rows", (int)list.size() == PAINT_ROWS);
+        } else if (c.group == G_VEHICLE) {
+            ctx.check("the SWAP VEHICLE page is filled by the shop, from what it was given", list.empty());
         } else {
             ctx.check(c.name + ": has items", !list.empty());
             for (const Item& it : list) rackSeen.insert(it.rack);
@@ -320,4 +322,72 @@ SCENARIO(shopStats, "shop/stats", "The card's numbers are the real ones: power f
     ctx.check("the lift kit shows taller tires and more clearance", tire && clear);
     const std::vector<Stat> same = compare(v, ModSet(), ModSet());
     ctx.check("the part that's fitted shows only power and weight", same.size() == 2);
+}
+
+namespace {
+int swapCat() {
+    for (int i = 0; i < (int)categories().size(); i++)
+        if (categories()[i].group == G_VEHICLE) return i;
+    return -1;
+}
+}  // namespace
+
+SCENARIO(shopSwapSandbox, "shop/swap-sandbox", "Sandbox: the SWAP VEHICLE page offers every listed vehicle, marks the one you're in, and ENTER on another picks it and closes the shop") {
+    Career c;  // (sandbox)
+    Shop s;
+    const int here = listedVehicles()[1];
+    for (int v : listedVehicles()) s.swaps.push_back({v, -1, v == here});
+    s.begin(here, ModSet(), c, false, false);
+    ctx.check("the page is in the categories", swapCat() >= 0 && std::string(categories()[swapCat()].name) == "SWAP VEHICLE");
+    s.setCat(swapCat());
+    s.key(K_ENTER, c);
+    ctx.check("opens onto the list: every listed vehicle", s.focus == F_ITEMS && s.list.size() == listedVehicles().size());
+    int cur = 0;
+    for (const Item& it : s.list) cur += it.state == ST_FITTED;
+    ctx.check("exactly one is marked as the one you're in", cur == 1 && s.list[1].state == ST_FITTED);
+    ctx.check("no truck to preview, nothing to try on", s.item() == nullptr);
+    s.setSel(1);
+    Result r = s.key(K_ENTER, c);
+    ctx.check("ENTER on your own vehicle does nothing but say so", r.swapVehicle < 0 && !r.close && !r.toast.empty());
+    s.setSel(0);
+    r = s.key(K_ENTER, c);
+    ctx.check("ENTER on another: its catalog index, no career slot, shop closes", r.swapVehicle == listedVehicles()[0] && r.swapSlot == -1 && r.close);
+    ctx.check("a click picks too (the second click, on the focused row)", [&] {
+        Shop m = s;
+        m.focus = F_CATS;
+        m.setCat(swapCat());
+        m.click(0, swapCat(), c);
+        const Result first = m.click(1, 2, c);  // (a click on another row only focuses it)
+        const Result q = m.click(1, 2, c);      // (on the focused row it picks)
+        return first.swapVehicle < 0 && q.swapVehicle == listedVehicles()[2];
+    }());
+}
+
+SCENARIO(shopSwapCareer, "shop/swap-career", "Career: the SWAP VEHICLE page lists the vehicles you own here (what main.cpp gave it), only at a station") {
+    Career c = careerWith(1000);
+    Shop s;
+    const int a = listedVehicles()[0], b = listedVehicles()[2];
+    s.swaps.push_back({a, 0, true});
+    s.swaps.push_back({b, 1, false});
+    s.begin(a, ModSet(), c, true, true);
+    s.setCat(swapCat());
+    s.key(K_ENTER, c);
+    ctx.check("only the two you own, not the whole catalog", s.list.size() == 2 && s.list[0].state == ST_FITTED && s.list[1].state == ST_OWNED);
+    s.setSel(1);
+    Result r = s.key(K_ENTER, c);
+    ctx.check("at a station: the pick, with its profile slot, and the shop closes", r.swapVehicle == b && r.swapSlot == 1 && r.close);
+    Shop away;
+    away.swaps = s.swaps;
+    away.begin(a, ModSet(), c, true, false);
+    away.setCat(swapCat());
+    away.key(K_ENTER, c);
+    away.setSel(1);
+    r = away.key(K_ENTER, c);
+    ctx.check("away from a station: refused, shop stays open", r.swapVehicle < 0 && !r.close && r.toast.find("STATION") != std::string::npos);
+    Shop lone;
+    lone.swaps.push_back({a, 0, true});
+    lone.begin(a, ModSet(), c, true, true);
+    lone.setCat(swapCat());
+    lone.key(K_ENTER, c);
+    ctx.check("owning only the one you're in: it says so", lone.list.size() == 1 && lone.key(K_ENTER, c).swapVehicle < 0);
 }
