@@ -173,6 +173,9 @@ public:
     void showDev(int currentVehicle, int currentMap, bool fromPause = false);  // opens Settings on the DEV tab (already in Settings: switches to it)
     bool devOpen() const { return open && page == 1 && tab == T_DEV; }
     bool onPausePage() const { return open && !title && page == 0; }
+    // The new main menu is up (the title screen's first page): whatever is behind it (the camp, a plain screen while a map loads, in multiplayer
+    // or from the editor). Only DEV > CLASSIC MENU (`classic`) shows the old title page instead.
+    bool newMainMenu(bool classic) const { return open && title && page == 0 && !classic; }
     std::vector<std::string> devSections;  // the map's obstacle sections (TELEPORT)
     std::vector<std::string> devPlaces;    // and its places
     bool devScenario = false;              // a scenario is playing (its checks list is offered)

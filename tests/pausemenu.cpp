@@ -182,3 +182,31 @@ SCENARIO(pauseStandalone, "pausemenu/key-pages", "The autopilot and jobs pages o
     ctx.check("jobs page", m.pageNow() == 5);
     ctx.check("BACK leaves the menu", (m.select(s, "BACK"), m.key(SC_RETURN, s).action == PauseMenu::RESUME));
 }
+
+SCENARIO(mainMenuRoutes, "pausemenu/main-menu-routes", "Every route to MAIN MENU lands on the new main menu, never the old title page; only DEV > CLASSIC MENU shows the old one") {
+    Settings s;
+    PauseMenu m;
+    m.show(0, 0);
+    m.select(s, "MAIN MENU");
+    ctx.check("the pause menu's MAIN MENU row asks for the main menu", m.key(SC_RETURN, s).action == PauseMenu::MAIN_MENU);
+    ctx.check("the pause menu is not the main menu", !m.newMainMenu(false));
+    // (main.cpp answers that with showTitle() whether the camp could load or not: a map still loading, multiplayer, the editor.)
+    m.showTitle(0, 0);
+    ctx.check("showTitle: the new main menu", m.newMainMenu(false));
+    ctx.check("...and only DEV > CLASSIC MENU makes it the old page", !m.newMainMenu(true));
+    for (int pg : {1, 2, 4}) {
+        m.showTitlePage(pg, 0, 0);
+        ctx.check("a title page (" + std::to_string(pg) + ") is not the front page", !m.newMainMenu(false));
+        m.key(SC_ESCAPE, s);
+        if (pg == 2) m.key(SC_ESCAPE, s);
+        ctx.check("Esc from title page " + std::to_string(pg) + " is back on the new main menu", m.newMainMenu(false) || m.pageNow() == 0);
+    }
+    PauseMenu g;
+    g.show(0, 0);
+    g.showSettings(PauseMenu::T_GENERAL, 0, 0, true);
+    g.key(SC_ESCAPE, s);
+    g.select(s, "MAIN MENU");
+    ctx.check("back from Settings in a game, MAIN MENU is still the same one row", g.selectedLabel(s) == "MAIN MENU" && g.key(SC_RETURN, s).action == PauseMenu::MAIN_MENU);
+    PauseMenu closed;
+    ctx.check("a closed menu is no main menu", !closed.newMainMenu(false));
+}

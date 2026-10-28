@@ -2226,7 +2226,8 @@ int main(int argc, char** argv) {
     bool classicTitle = false;    // the old title page is up (DEV > CLASSIC MENU, or --menu 9) instead of the new one
     float mainFade = 0;           // the new menu fading in
     // The new main menu is the title screen's page 0 over the camp (the settings, multiplayer and levels pages are still the PauseMenu's).
-    auto mainMenuShown = [&]() { return menu.open && menu.title && menu.pageNow() == 0 && campWorld && !classicTitle; };
+    // (Over the camp when it's loaded; otherwise, with a map still loading, in multiplayer or from the editor, over a plain dark screen: never the old page.)
+    auto mainMenuShown = [&]() { return menu.newMainMenu(classicTitle); };
     auto mpShown = [&]() { return menu.open && menu.pageNow() == 2 && !(menu.title && classicTitle); };
     auto campBehind = [&]() { return campWorld && menu.open && menu.title; };
     bool menuWasPaused = false, garageFromMenu = false;
@@ -3481,7 +3482,8 @@ int main(int argc, char** argv) {
                 if (campMenu && !net.active() && !editor.active && !mapLoad.active()) enterCamp();
                 menu.showTitle(std::max(0, sim.cars[sim.player].spec->model), campWorld ? settings.map : sim.world.map);
                 classicTitle = false;
-                if (campWorld) mainNav.open(menu.mapPick, std::max(0, sim.cars[sim.player].spec->model)), mainNav.worlds = listWorlds();
+                mainNav.open(menu.mapPick, std::max(0, sim.cars[sim.player].spec->model)), mainNav.worlds = listWorlds();  // (the camp, or when it can't load now, a plain screen: the new menu either way)
+                mainNav.career = settings.career;
                 break;
         }
     };
@@ -3639,9 +3641,10 @@ int main(int argc, char** argv) {
                 break;
         }
     };
-    if (opt.menu == 9) {  // (testing: the title screen)
+    if (opt.menu == 9) {  // (testing: the title screen: the new main menu, on a plain screen when the camp isn't loaded)
         openMenu();
         menu.showTitle(std::max(0, sim.cars[sim.player].spec->model), sim.world.map);
+        mainNav.open(menu.mapPick, std::max(0, sim.cars[sim.player].spec->model)), mainNav.worlds = listWorlds();
     } else if (opt.menu >= 1) {  // (1: the settings page)
         openMenu();
         menu.showPage(opt.menu, std::max(0, sim.cars[sim.player].spec->model), sim.world.map);
@@ -3712,6 +3715,7 @@ int main(int argc, char** argv) {
     } else if (!scripted && opt.scenario.empty() && opt.map < 0 && !opt.spawnSet && opt.hostPort < 0 && opt.join.empty() && opt.menu < 0 && opt.resumeModel < 0) {
         openMenu();
         menu.showTitle(std::max(0, sim.cars[sim.player].spec->model), sim.world.map);
+        mainNav.open(menu.mapPick, std::max(0, sim.cars[sim.player].spec->model)), mainNav.worlds = listWorlds();
     }
     // What the new main menu asked for (mainmenu.h).
     handleMainFn = [&](const mainmenu::Result& r) {
@@ -4629,7 +4633,7 @@ int main(int argc, char** argv) {
                         }
                         break;
                     }
-                    if (menu.open && menu.title && classicTitle && campWorld && menu.pageNow() == 0 && evKeyScancode(e) == SC_ESCAPE) {  // (the old title page: Esc is back to the new one)
+                    if (menu.open && menu.title && classicTitle && menu.pageNow() == 0 && evKeyScancode(e) == SC_ESCAPE) {  // (the old title page: Esc is back to the new one)
                         classicTitle = false;
                         break;
                     }
