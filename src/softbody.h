@@ -932,6 +932,7 @@ public:
     V3 poleFreeShift(const Car& c, double* turn = nullptr) const;
     void towPlayerHome();   // carried back to its spawn point, damage and all
     void teleportPlayer(double x, double z, double yaw);  // set down upright at x, z facing yaw (the dev menu), damage and all
+    void teleportCar(int car, double x, double z, double yaw);  // ...any of my vehicles (the dev free cam sets carried ones down with it)
     // Replaces the player's car with another vehicle type, in place.
     void swapPlayerVehicle(const VehicleSpec& vs);
     // Adds a parked vehicle a few meters ahead of the player; returns false when full.

@@ -12,7 +12,7 @@ const char* groupName(Group g) {
 
 const char* groupHint(Group g) {
     static const char* const n[G_COUNT] = {"DRIVE A DIFFERENT VEHICLE", "PARKED OR AI VEHICLES IN FRONT OF YOU", "SPAWN, SECTIONS, PLACES",
-                                           "TIME OF DAY, SLOW MOTION, RELOAD THE MAP", "REPAIR, FLIP, REFUEL", "BEAM VIEWS, FPS",
+                                           "TIME OF DAY, SLOW MOTION, RELOAD THE MAP", "REPAIR, FLIP, REFUEL", "FREE CAM, BEAM VIEWS, FPS",
                                            "EDITOR, MODEL LAB, RELOAD, EXPORT KEYBINDS"};
     return g >= 0 && g < G_COUNT ? n[g] : "";
 }
@@ -30,6 +30,7 @@ Action forKeyAction(KeyAction a) {
         case KA_DEV_EDITOR: return {EDITOR, 0};
         case KA_DEV_RELOAD: return {RELOAD, 0};
         case KA_DEV_SCENARIO: return {SCENARIO_CHECKS, 0};
+        case KA_DEV_FREECAM: return {FREE_CAM, 0};
         default: return {};
     }
 }
@@ -92,6 +93,7 @@ std::vector<Item> items(Group g, const Keybinds* kb) {
             add(REFUEL, 0, "REFUEL", "TANK AND SPARE CAN");
             break;
         case G_VIEW: {
+            add(FREE_CAM, 0, "FREE CAM", kb ? bound(KA_DEV_FREECAM) + ": FLY, CARRY AND SPAWN VEHICLES" : "FLY, CARRY AND SPAWN VEHICLES");
             static const char* const v[4] = {"BEAM VIEW: OFF", "BEAM VIEW: X-RAY", "BEAM VIEW: BEAMS ONLY", "BEAM VIEW: PARTS"};  // (DebugView, render.h)
             for (int k = 0; k < 4; k++) add(BEAM_VIEW, k, v[k], k == 1 && kb ? bound(KA_DEV_BEAM) + " CYCLES THEM" : "");
             add(FPS, 0, "DEBUG INFO");
