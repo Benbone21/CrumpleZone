@@ -3,6 +3,7 @@
 #include "../src/net.h"
 #include "../src/lights.h"
 #include "../src/frameprof.h"
+#include "../src/freecam.h"
 #include <algorithm>
 #include <cstdio>
 #include <deque>
@@ -630,4 +631,40 @@ SCENARIO(netSlowHost, "net/slow-host", "A host at 12 and 15 fps: its truck at 20
     // (Physics that alone takes longer than real time: 2 ms a step at 2 kHz is 4 s a second. It slows, it doesn't spiral.)
     const SlowHost heavy = slowHost(12, true, 2.0);
     ctx.metric("12 fps host whose physics can't keep up: physics, of real time", heavy.simRate, "", 0.3, 0.8);
+}
+
+SCENARIO(netFreecamCarry, "net/freecam-carry", "The host's dev free cam carries its vehicle off and sets it down: the others see it carried, then set down where it was, upright and at rest") {
+    Sim origin;
+    source(origin);
+    NetSession sender, receiver;
+    NetSessionTest::sender(sender);
+    NetSessionTest::spawn(sender, receiver, ctx.sim, origin.cars[0]);
+    for (int k = 0; k < 60; k++) origin.advance(1.0 / 60, 1000);  // (settled on its wheels)
+    freecam::Carry cr;
+    ctx.check("the host picks its vehicle up", freecam::pickUp(origin, 0, cr));
+    const V3 start = origin.cars[0].frame().com;
+    double time = 0, worstLag = 0;
+    for (int k = 1; k <= 60; k++) {  // 3 s, a state every 50 ms: carried 30 m off and 5 m up
+        time = k * 0.05;
+        origin.advance(0.05, 1000);
+        freecam::hold(origin, cr, start + V3(time * 10, 5, 0));
+        NetSessionTest::take(receiver, ctx.sim, NetSessionTest::state(sender, origin, time), time + 0.02);
+        NetSessionTest::play(receiver, ctx.sim, time + 0.02);
+        if (k > 20) worstLag = std::max(worstLag, len(ctx.sim.cars[0].frame().com - origin.cars[0].frame().com));
+    }
+    ctx.metric("how far behind the carried vehicle is shown (the playback delay, at 10 m/s)", worstLag, "m", 0, 3.0);
+    ctx.check("shown up in the air with it", ctx.sim.cars[0].frame().com.y > start.y + 4);
+    const V3 drop = start + V3(40, 0, 12);
+    freecam::dropAt(origin, cr, drop.x, drop.z);
+    for (int k = 1; k <= 30; k++) {  // 1.5 s more
+        time += 0.05;
+        origin.advance(0.05, 1000);
+        NetSessionTest::take(receiver, ctx.sim, NetSessionTest::state(sender, origin, time), time + 0.02);
+        NetSessionTest::play(receiver, ctx.sim, time + 0.02);
+    }
+    for (int k = 1; k <= 30; k++) NetSessionTest::play(receiver, ctx.sim, time + 0.02 + k / 60.0);  // (the playback catches up)
+    const Frame mine = origin.cars[0].frame(), theirs = ctx.sim.cars[0].frame();
+    ctx.check("the host's is set down at the point, upright", std::hypot(mine.com.x - drop.x, mine.com.z - drop.z) < 1.5 && mine.up.y > 0.95);
+    ctx.check("the others see it there", len(theirs.com - mine.com) < 0.3, std::to_string(len(theirs.com - mine.com)) + " m off");
+    ctx.check("upright and at rest there", theirs.up.y > 0.95 && len(theirs.vel) < 0.5);
 }

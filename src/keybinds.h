@@ -101,6 +101,7 @@ enum KeyAction {
     KA_DEV_SLOWER,
     KA_DEV_FASTER,
     KA_DEV_EDITOR,
+    KA_DEV_FREECAM,  // F8: the dev free cam (freecam.h)
     KA_DEV_SCENARIO,
     KA_COUNT
 };

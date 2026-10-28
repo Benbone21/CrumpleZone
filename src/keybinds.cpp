@@ -96,6 +96,7 @@ const Info kInfo[KA_COUNT] = {
     {SC_LEFTBRACKET, false, "SLOW MOTION: SLOWER", "key_devslower", KG_DEV, ANY, false, true},
     {SC_RIGHTBRACKET, false, "SLOW MOTION: FASTER", "key_devfaster", KG_DEV, ANY, false, true},
     {SC_F2, false, "LEVEL EDITOR HERE", "key_deveditor", KG_DEV, ANY, false, true},
+    {SC_F8, false, "FREE CAM", "key_devfreecam", KG_DEV, ANY, false, true},
     {SC_J, false, "SCENARIO CHECKS LIST", "key_devscenario", KG_DEV, SCN, false, true},
 };
 static_assert(sizeof kInfo / sizeof kInfo[0] == KA_COUNT, "one kInfo row per KeyAction");
@@ -297,7 +298,7 @@ void Keybinds::sanitize() {
         code[a] = 0, shift[a] = false;
         for (int f : {64, 65, 66}) {  // F7 F8 F9 (not the dev menu's F12)
             bool used = false;
-            for (int b = 0; b < KA_COUNT; b++) used |= code[b] == f && b != a;
+            for (int b = 0; b < KA_COUNT; b++) used |= code[b] == f && b != a && kInfo[b].gated == kInfo[a].gated;  // (a dev key on it, FREE CAM's F8, answers only in DEV KEYS mode)
             if (!used) {
                 code[a] = f;
                 break;

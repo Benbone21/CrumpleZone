@@ -3602,10 +3602,13 @@ void Sim::towPlayerHome() {
     accum = 0;
 }
 
-void Sim::teleportPlayer(double x, double z, double yaw) {
-    Car& c = cars[player];
+void Sim::teleportPlayer(double x, double z, double yaw) { teleportCar(player, x, z, yaw); }
+
+void Sim::teleportCar(int car, double x, double z, double yaw) {
+    if (car < 0 || car >= (int)cars.size()) return;
+    Car& c = cars[car];
     if (c.remote) return;  // (someone else's)
-    dropRopes(player);
+    dropRopes(car);
     c.placeUpright(world, x, z, yaw);
     double turn = 0;
     const V3 s = poleFreeShift(c, &turn);
