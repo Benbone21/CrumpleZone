@@ -21,6 +21,7 @@ enum Act {
     A_START,         // map + vehicle + career chosen: free drive there
     A_MULTIPLAYER,   // the join / host page
     A_SETTINGS,      // the settings page (the SETTINGS button)
+    A_LEVELS,        // the levels page (the LEVELS button): pick a race, climb or world and start it
     A_QUIT,
     A_CAREER_CONTINUE,  // a saved world chosen: Result::world is its slug
     A_CAREER_NEW,       // CREATE on the New World page: worldName, map, seed, difficulty, mode and vehicle are the picks
@@ -70,7 +71,7 @@ std::string defaultWorldName(const std::vector<WorldSave>& worlds);
 std::vector<int> startVehicles();
 
 // The front page's focus order.
-enum Front { F_SANDBOX, F_CAREER, F_MULTI, F_SETTINGS, F_DEV, F_QUIT, F_COUNT };
+enum Front { F_SANDBOX, F_CAREER, F_MULTI, F_SETTINGS, F_LEVELS, F_DEV, F_QUIT, F_COUNT };
 
 struct DevEntry {
     Act act;
