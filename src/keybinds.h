@@ -62,7 +62,9 @@ enum KeyAction {
     KA_STRAP,
     KA_REPAIR,
     KA_FLIP,
-    KA_AUTOPILOT,
+    KA_AUTOPILOT,       // starts and stops it, to the place last picked
+    KA_AUTOPILOT_PICK,  // opens the autopilot page: where to, how fast, which roads (the pause menu no longer has it)
+    KA_JOBS,            // opens the jobs on offer here (the pause menu no longer has them)
     // ON FOOT
     KA_GET_IN_OUT,
     KA_INTERACT,
