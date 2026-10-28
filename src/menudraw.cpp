@@ -307,7 +307,7 @@ void PauseMenu::drawSettings(Renderer& r, const Settings& s, int W, int H, float
         scroll = 0;
         for (int q = 0; q < (int)all.size(); q++) idx.push_back(q);
         const float t1 = total(1, rowNormal), t0 = total(0, rowNormal);
-        if (t1 > g.rowsH) k = t1 - t0 > 0 ? std::min(1.0f, std::max(0.0f, (g.rowsH - t0) / (t1 - t0))) : 0.0f;
+        if (t1 > g.rowsH) k = t1 - t0 > 0 ? std::min(1.0f, std::max(0.45f, (g.rowsH - t0) / (t1 - t0))) : 0.45f;
         if (total(k, rowNormal) > g.rowsH + 0.5f) {
             int nrows = 0;
             for (const Row& row : all) nrows += row.kind != HEADER;

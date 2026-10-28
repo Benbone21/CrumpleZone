@@ -427,7 +427,7 @@ std::vector<PauseMenu::Row> PauseMenu::rowsFor(int tabIndex, const Settings& s) 
     if (tabIndex == T_GRAPHICS) {
         header("QUALITY");
         choice(QUALITY, "QUALITY", presetName(presetOf(s.gfx)), 5, "POTATO: FOR THE WEAKEST LAPTOPS. HALF RESOLUTION, NO SHADOWS, 300 M OF VIEW");
-        button(DETECT_ROW, "DETECT AUTOMATICALLY", "PICK QUALITY FOR THIS COMPUTER: TESTS A FEW SECONDS OF DRIVING");
+        button(DETECT_ROW, "DETECT AUTOMATICALLY", "TESTS A FEW SECONDS OF DRIVING");
         choice(ADAPTIVE, "ADAPTIVE QUALITY", kOffOn[s.adaptiveQuality], 2, "AUTO-SCALE GRAPHICS TO MAINTAIN FRAMERATE");
         choice(FPSTARGET, "FPS TARGET", s.fpsTarget > 0 ? std::to_string(s.fpsTarget) + " FPS" : s.fpsTarget < 0 ? std::string("MATCH DISPLAY") : std::string("UNCAPPED"), 7,
                "WHAT ADAPTIVE QUALITY AIMS FOR (NEVER ABOVE 144). WITH VSYNC OFF, ALSO THE FRAME CAP. MATCH DISPLAY: YOUR MONITOR'S REFRESH RATE");

@@ -215,7 +215,6 @@ private:
         float u, x, y, w, h, tabY, tabH, rowsY, rowsH;
     };
     Geom settingsGeom(int W, int H, const Settings& s) const;
-    std::vector<Hit> tabHits;
     std::vector<Row> rowsFor(int tabIndex, const Settings& s) const;  // a settings tab's rows
     void drawSettings(Renderer& r, const Settings& s, int W, int H, float a);
     std::vector<devmenu::Item> devItems(const Keybinds& kb) const;  // the rows of the group shown (the scenario one only while a scenario plays)

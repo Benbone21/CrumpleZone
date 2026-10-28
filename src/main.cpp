@@ -1434,14 +1434,14 @@ void drawHelp(Renderer& r, float u, int W, int H, bool mph) {
         {K(KA_GET_IN_OUT), "GET OUT / IN (ON FOOT: " + K(KA_INTERACT) + " WINCH LINE, " + K(KA_FUEL_CAN) + " FUEL CAN)"},
         {K(KA_TRANSFER), mph ? "4X4: 2H 4H 4L (LOW: BELOW 5 MPH)" : "4X4: 2H 4H 4L (LOW: BELOW 8 KM/H)"},
         {K(KA_LIGHTS), "LIGHTS: AUTO, LOW, HIGH, OFF"},
-        {K(KA_LOCK_FRONT) + sp + K(KA_LOCK_REAR), "FRONT / REAR LOCKER"}, {K(KA_AUTOPILOT), "AUTOPILOT (ESC > AUTOPILOT: WHERE)"},
+        {K(KA_LOCK_FRONT) + sp + K(KA_LOCK_REAR), "FRONT / REAR LOCKER"}, {K(KA_AUTOPILOT) + " / " + K(KA_AUTOPILOT_PICK), "AUTOPILOT: START / STOP, WHERE TO"}, {K(KA_JOBS), "JOBS ON OFFER HERE"},
         {K(KA_CAMERA), "CAMERA"},                                        {"MOUSE", "LOOK / ZOOM"},
         {K(KA_PARK_BRAKE), "PARKING BRAKE"},
         {K(KA_TRACTION), "TRACTION CONTROL"},                            {K(KA_HORN), "HORN (HOLD)"},
         {K(KA_FULLSCREEN), "FULLSCREEN"},                                {K(KA_PHOTO), "HIDE THE HUD (PHOTOS)"},
         {K(KA_HUD_ALL), "HOLD: SHOW THE FULL HUD"},
         {K(KA_DEBUG_INFO), "DEBUG SCREEN (SHIFT: GRAPH)"},
-        {K(KA_DEV_MENU), "DEV MENU: SPAWN, TELEPORT, DEBUG"},            {K(KA_MENU), "MENU: CARS, SETTINGS, QUIT"},
+        {K(KA_DEV_MENU), "SETTINGS > DEV: SPAWN, TELEPORT, DEBUG"},            {K(KA_MENU), "MENU: MULTIPLAYER, SETTINGS, MAIN MENU, QUIT"},
         {K(KA_HELP), "CLOSE"},
     };
     const int n = (int)keys.size(), rows = (n + 1) / 2;
@@ -3233,23 +3233,6 @@ int main(int argc, char** argv) {
                 break;
             }
             case PauseMenu::RESUME: closeMenu(); break;
-            case PauseMenu::DRIVE:
-                closeMenu();
-                if (careerRun.active) {  // (a career world: one of your own, at a station; careersession.h)
-                    const int k = careersession::ownedOf(careerRun, sim, res.vehicle);
-                    std::string why;
-                    if (walker.active) hud.toast("GET INTO YOUR VEHICLE FIRST");
-                    else if (k < 0) hud.toast(std::string("YOU DON'T OWN ANOTHER ") + vehicleCatalog()[res.vehicle].name);
-                    else if (!careersession::swapTo(careerRun, sim, k, why)) hud.toast(why);
-                    else {
-                        cam.initialized = false;
-                        hud.toast(std::string("NOW DRIVING ") + vehicleCatalog()[res.vehicle].name + " (YOURS LEFT PARKED HERE)");
-                    }
-                    break;
-                }
-                sim.swapPlayerVehicle(garage.spec(res.vehicle));
-                hud.toast(std::string("NOW DRIVING ") + vehicleCatalog()[res.vehicle].name);
-                break;
             case PauseMenu::GARAGE:
                 closeMenu();
                 garageFromMenu = openGarage();
@@ -3477,20 +3460,6 @@ int main(int argc, char** argv) {
                 classicTitle = false;
                 if (campWorld) mainNav.open(menu.mapPick, std::max(0, sim.cars[sim.player].spec->model)), mainNav.worlds = listWorlds();
                 break;
-            case PauseMenu::LOAD_MAP: {
-                closeMenu();
-                if (careerRefuses("LEAVE TO THE MAIN MENU TO CHANGE MAP")) break;
-                if (net.active()) {
-                    hud.toast("LEAVE THE MULTIPLAYER SESSION TO CHANGE MAPS");
-                    break;
-                }
-                requestMap(res.vehicle, nullptr);
-                levelHours = -1;
-                settings.map = res.vehicle;
-                saveSettings();
-                hud.toast(std::string("MAP: ") + mapName(res.vehicle));
-                break;
-            }
         }
     };
     // ---- The multiplayer pages (mpmenu.h): the PauseMenu's page 2, drawn and driven in the main menu's style ----
@@ -4741,6 +4710,13 @@ int main(int argc, char** argv) {
                         devmenu::dispatchKey(settings.keys, evKeyScancode(e), shiftDown(), settings.devHotkeys, kctx,
                                              [](void* fn, const devmenu::Action& a) { (*static_cast<std::function<void(const devmenu::Action&)>*>(fn))(a); }, &runDev))
                         break;
+                    if (kh.action == KA_AUTOPILOT_PICK || kh.action == KA_JOBS) {  // (their pages, straight from the game: no longer rows of the pause menu)
+                        if (!editor.active && !inv.open) {
+                            openMenu();
+                            menu.showPage(kh.action == KA_JOBS ? 5 : 3, std::max(0, sim.cars[sim.player].spec->model), sim.world.map);
+                        }
+                        break;
+                    }
                     switch (gsc) {
                         case SC_ESCAPE:  // (the pause menu: Esc on the keyboard, Start on the pad, the MENU key if rebound)
                             if (hud.showHelp) hud.showHelp = false;

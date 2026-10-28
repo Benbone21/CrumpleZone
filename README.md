@@ -154,7 +154,9 @@ scenario finishes, you can drive around in the aftermath.
 | V | Winch: point and click an anchor; right stick + A on a controller. V with a line attached unhooks it |
 | Z / Shift+Z | Winch in / pay out (- and = change the saved speed, 0.1–20x; default 4x) |
 | O | Tow strap: hooked on foot (get out, hold E at a recovery point, walk the end to the other vehicle's point, hold E); O in the seat just says so |
-| U | Autopilot on/off: drives to the place picked in Esc → Autopilot |
+| U | Autopilot on/off: drives to the place last picked |
+| Shift+U | Opens the autopilot page: where to, speed, roads (rebindable) |
+| Shift+J | Opens the jobs on offer here (rebindable) |
 | Tab | Switch to another vehicle |
 | R | Repair in place. R twice quickly: respawn at the start (in a level: restart the attempt) |
 | T | Real recovery: back on your wheels where you are, damage stays. Arcade: repaired, upright |
@@ -179,7 +181,7 @@ Esc → Settings → Controls → Keyboard keybinds lists every keyboard action 
 
 ### Dev menu and dev keys
 
-The test and debug tools are not loose keys any more. **F12** (or Esc → DEV MENU) opens the dev menu, which works with the mouse, keyboard and controller: SPAWN VEHICLE (swap the one you drive for the Blazer, Bronco, 4Runner, Tacoma, Jesko or Baja Bug), SPAWN AHEAD (parked or AI vehicles, remove this one), TELEPORT (map spawn, each obstacle section, any place), WORLD (time of day, slow motion, reload the map), VEHICLE (repair, respawn, flip upright, refuel), VIEW (free cam, beam views, FPS counter) and TOOLS (level editor, new section, model lab, reload the new build, a scenario's checks list). Teleport, reload the map and refuel are refused in a multiplayer session; the rest does for guests what the old keys did.
+The test and debug tools are not loose keys any more. **F12** (or Esc → SETTINGS → DEV tab) opens the dev menu, which works with the mouse, keyboard and controller: SPAWN VEHICLE (swap the one you drive for the Blazer, Bronco, 4Runner, Tacoma, Jesko or Baja Bug), SPAWN AHEAD (parked or AI vehicles, remove this one), TELEPORT (map spawn, each obstacle section, any place), WORLD (time of day, slow motion, reload the map), VEHICLE (repair, respawn, flip upright, refuel), VIEW (free cam, beam views, FPS counter) and TOOLS (level editor, new section, model lab, reload the new build, a scenario's checks list). Teleport, reload the map and refuel are refused in a multiplayer session; the rest does for guests what the old keys did.
 
 **FREE CAM** (F8 in DEV KEYS mode, or F12 → VIEW → FREE CAM; `src/freecam.*`) is the drone camera as a dev tool. WASD fly, Q/E down/up, drag looks, Shift goes three times as fast, and the mouse wheel (or - and =) steps the speed from 3 m/s to 800 m/s for crossing kilometres; the procedural world's window and the Backcountry's terrain stream in round the camera. X flies through the ground. The vehicle under the crosshair is outlined and named. Click (or G) picks it up: it hangs in front of the camera, held rigid and at rest, and follows as you fly; R (Shift+R the other way) or Ctrl+wheel turns it 15 degrees; click or G again sets it down upright on its wheels at the crosshair, and a right click (or F) lets go of it where it hangs. B opens a spawn picker (Enter or click: at the crosshair; Shift: already carried). V drives the carried or targeted vehicle. F8 or Esc goes back to your vehicle's camera. Any car can be carried (yours, parked, AI); in multiplayer only the host carries, spawns and switches (the moves reach the others in its states), and a career world needs DEV KEYS on.
 
@@ -430,7 +432,7 @@ The Bronco, the 4Runner, the Tacoma, the rock buggy and the side-by-side have re
 
 ## Autopilot
 
-Esc → Autopilot picks where and how; U starts and stops it (steering or the pedals take over too).
+Shift+U (rebindable) opens the autopilot page to pick where and how; U starts and stops it (steering or the pedals take over too).
 
 - **Drive to:** the nearest repair station, any station, the trailhead, the summit lookout, the crawl park, the Widowmaker Spur, Boulder Gully, the lake (proving ground: spawn, crash wall, jumps, washboard), wherever the camera is looking, following any other vehicle (yours or a buddy's), or cruising the loop road with traffic.
 - **Speed:** 5–100 km/h. It slows for bends, steep descents and rough ground, and stops at the end.
@@ -518,7 +520,7 @@ The idea: trucks break, and your buddies get you home. (Until multiplayer lands,
 
 ## Maps
 
-Pick the map in the pause menu (Esc); the game remembers it. All maps are on the list (and in the editor). From the command line, `--map N`: `0` proving ground, `1` mountain, `2` freeway, `3` Frontier, `4` Backcountry. (The seeded Wilderness map was removed for now, commit `c735d9e` has the generator; `5` is now the plain **open country** the obstacle-section levels are set in: rolling land with nothing laid out on it. The game ships a level for each obstacle section on it: STEEP HILL, MUD PIT, ROCKY RIVER, ROCK WALL, DUNES, CLIFF SHELF and TIMBER, each on country of its own kind.)
+Pick the map in the main menu; the game remembers it. All maps are on the list (and in the editor). From the command line, `--map N`: `0` proving ground, `1` mountain, `2` freeway, `3` Frontier, `4` Backcountry. (The seeded Wilderness map was removed for now, commit `c735d9e` has the generator; `5` is now the plain **open country** the obstacle-section levels are set in: rolling land with nothing laid out on it. The game ships a level for each obstacle section on it: STEEP HILL, MUD PIT, ROCKY RIVER, ROCK WALL, DUNES, CLIFF SHELF and TIMBER, each on country of its own kind.)
 
 ### Backcountry
 
@@ -585,7 +587,7 @@ Everything in one 1 km map. You start in the paddock in the middle.
 - **Repair stations:** in the paddock, at the desert outpost, at the lakeside garage, at the mountain hut, and at Cold Creek Lodge.
 - **Surfaces:** every surface type is somewhere on the map.
 
-The autopilot (Esc → Autopilot) can drive you to the paddock, the mesa climb, the slickrock bowl, THE WALL, the summit, the tarn, the Snake River ford, the beach, the bog, the delta, Blackwater Bayou, the edge of THE WALLOW, the top of MUD HILL, Cold Creek valley or Cold Creek Lodge.
+The autopilot (Shift+U) can drive you to the paddock, the mesa climb, the slickrock bowl, THE WALL, the summit, the tarn, the Snake River ford, the beach, the bog, the delta, Blackwater Bayou, the edge of THE WALLOW, the top of MUD HILL, Cold Creek valley or Cold Creek Lodge.
 
 ### Mountain
 
