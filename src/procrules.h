@@ -93,16 +93,16 @@ struct MesaRule {
 // the cliff's foot. The scanned rocks (props::activeRockScans) are what's drawn and driven on.
 struct SlopeRockRule {
     double screeFrom = 0.35;    // rise over run: slopes steeper than this take extra rocks (scree, outcrops)...
-    double screePerHa = 45;     // ...this many a hectare tried at cliff_from, fewer down to none at scree_from
+    double screePerHa = 30;     // ...this many a hectare tried at cliff_from, fewer down to none at scree_from
     double screeSize = 2.4;     // m: their radius at cliff_from (0.8 at scree_from), give or take a half: car-sized, to crawl over
     double cliffFrom = 0.9;     // rise over run: steeper than this the face is a rock wall...
     double cliffFull = 1.3;     // ...wholly covered from here
-    double cliffPerHa = 130;    // slabs tried a hectare of rock wall (packed: they overlap)
+    double cliffPerHa = 70;     // slabs tried a hectare of rock wall (packed: they overlap)
     double cliffSize = 5.5;     // m: a slab's radius across the face, give or take a third (its thickness about a third of it)
     double torShare = 0.12;     // 0..1: of the wall's rocks, this share stand up out of it instead: outcrops and tors...
     double torSize = 7;         // m: ...this big (house-sized and more), give or take a third
     double baseReach = 20;      // m: below a rock wall, a boulder field this far out from its foot...
-    double basePerHa = 70;      // ...this many a hectare tried, the biggest nearest the wall
+    double basePerHa = 40;      // ...this many a hectare tried, the biggest nearest the wall
     double desert = 0.8;        // 0..1: how much of them the badlands and dunes keep (rounder rock)
     double lowland = 0.6;       // 0..1: ...and the meadows and woods (the alpine keeps them all)
 };

@@ -793,7 +793,8 @@ int PropRenderer::lodFor(const Inst& in, double dist, bool shadowPass) const {
         const int tris[3] = {g.lodTris[0], g.lodTris[1], g.lodTris[2]};
         // (A shadow from one under ~10 px on screen is a speck: those cast none.)
         if (shadowPass && in.size < props::kLodShadowCullSize / k * std::max(dist, 0.1)) return -1;
-        return props::solidLod(tris, in.size, dist, k);
+        // (The procedural world's rocks are many and big (rock walls, tors): a coarser LOD for the same size on screen)
+        return props::solidLod(tris, in.size, dist, world && world->map == MAP_PROCEDURAL ? k * 0.5 : k);
     }
     const double s = in.size / std::max(dist, 0.1);  // by size on screen
     if (s > 0.06 / k) return 0;
