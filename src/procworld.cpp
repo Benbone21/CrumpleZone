@@ -3420,7 +3420,7 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
         r.top = (float)(rad * flat * (0.5 + 0.5 * rr()));
         r.tint = (float)(0.85 + 0.25 * rr());
         r.seed = (uint32_t)(hashIJ(seed_ ^ 0x50C4ull, cx, cz) >> 8) + (uint32_t)k * 7919u;
-        if (rad > 1.2) r.seed = wholeRockSeed(r.seed);  // (a big one off the trails: its single hull, not cut into pieces: the memory)
+        r.seed = wholeRockSeed(r.seed);  // (scenery off the trails: its single hull, never cut into pieces: the memory (a window held 1 GB of pieces))
         if (rr() < SCR.clusterShare) {  // (a cluster (rules 5): this one bigger, smaller ones round it)
             const double grow = 1.5;
             r.rx *= (float)grow, r.ry *= (float)grow, r.rz *= (float)grow, r.top *= (float)grow;
