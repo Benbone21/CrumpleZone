@@ -2117,7 +2117,7 @@ int main(int argc, char** argv) {
         Car& c = sim.cars[sim.player];
         const V3 home = c.spawnPos;
         const double homeYaw = c.spawnYaw;
-        c.respawn(V3(opt.spawnX, opt.spawnY > -1e8 ? opt.spawnY + 0.1 : sim.world.clearY(opt.spawnX, opt.spawnZ) + 0.05, opt.spawnZ), opt.spawnHeading * M_PI / 180);
+        c.respawn(V3(opt.spawnX, opt.spawnY > -1e8 ? sim.world.clearYFrom(opt.spawnX, opt.spawnZ, opt.spawnY) + 0.1 : sim.world.clearY(opt.spawnX, opt.spawnZ) + 0.05, opt.spawnZ), opt.spawnHeading * M_PI / 180);  // (a resumed spot: never inside a rock the land has grown there since)
         // (--spawn only places you: a hot reload passes where you were, and home must stay the map's spawn pad. A
         // section start is a real start, so there it becomes home.)
         if (opt.spawnSection < 0) c.spawnPos = home, c.spawnYaw = homeYaw;
@@ -5219,9 +5219,12 @@ int main(int argc, char** argv) {
                 startPilot();
             }
             if (opt.script == "pilot") up = down = left = right = false;
-            if (opt.script == "proctour" && sim.world.map == MAP_PROCEDURAL && frame > 30 && frame % 200 == 0) {  // the window sliding: hop 600 m east
+            if (opt.script == "proctour" && sim.world.map == MAP_PROCEDURAL && frame > 30 && frame % 50 == 0 && !procStream.busy()) {  // the window sliding: hop 600 m east once the last slide is in
                 const Frame f = sim.cars[sim.player].frame();
-                sim.teleportPlayer(f.com.x + 600, f.com.z, 0);
+                if (f.com.x < proc::kSlide) {
+                    std::printf("proctour: window at %lld,%lld, truck at global %.0f,%.0f\n", (long long)sim.world.proc.ox, (long long)sim.world.proc.oz, f.com.x + (double)sim.world.proc.ox, f.com.z + (double)sim.world.proc.oz);
+                    sim.teleportPlayer(f.com.x + 600, f.com.z, 0);
+                }
             }
             if (opt.script == "procslide" && sim.world.map == MAP_PROCEDURAL) {  // the window slides 64 m under a parked truck: nothing should change on screen
                 up = down = left = right = false;

@@ -25,7 +25,7 @@ struct WaterRule {
     double creekArea = 0.3;          // km2: ...a creek (water, fordable)...
     double riverArea = 1.5;          // km2: ...a river...
     double bigRiverArea = 2.5;       // km2: ...a big river (deep and fast: crossed at its known fords, or on a bridge)
-    double bankBatter = 6.0;         // in the ranges a valley's side is this times its height wide (steepest at its foot: 1 : batter/2)
+    double bankBatter = 4.5;         // in the ranges a valley's side is this times its height wide (steepest at its foot: 1 : batter/2)
     double lowBatter = 14;            // ...in the lowland
     double riverGrade = 0.04;        // the steepest a big river's level climbs in the ranges (a tenth of it in the lowland)
     double creekGrade = 0.33;        // ...and a creek's high in the ranges (cascades)
@@ -43,15 +43,84 @@ struct BridgeRule {
 
 // ---- Terrain: the mountain ranges ---------------------------------------------------------------------------------------------
 struct RangeRule {
-    double beltFrom = 0.40;        // the belt field (0..1, ~9 km features) where ranges begin (less 0.06 x the world's relief)
-    double beltFull = 0.60;        // ...and where they're at full height
+    double beltSize = 4000;        // m: about how far apart the ranges are across the world's grain (the belt field's features)
+    double beltStretch = 2.0;      // ...and how many times longer they run along it (long ridgelines)
+    double beltFrom = 0.20;        // the belt field (0..1) where ranges begin (less 0.06 x the world's relief)
+    double beltFull = 0.42;        // ...and where they're at full height
+    double desertSink = 0;        // the belt field less this in hot dry country: the ranges give way to mesa and desert there
+    double beltTop = 0.62;         // ...and where their valley floors and mass have risen whole (the range's axis)
     double passHeight = 300;       // m over the lowland: the ranges' valley floors at their heart (times the world's relief, 0.75-1.25)
-    double peakHeight = 620;        // m: the mountains' mass over their valley floors, times the world's relief (the valleys are cut into it)
-    double summitHeight = 2900;    // m: the summits on a range's axis over its mass, times the world's relief: the peaks (1.5-2.5 km)
-    double crestSpacing = 1100;    // m: about how far apart the crags on the ridges are (the rough detail on the high ground)
+    double peakHeight = 800;        // m: the mountains' mass over their valley floors, times the world's relief (the valleys are cut into it)
+    double summitHeight = 1500;    // m: the summits on a range's axis over its mass, times the world's relief: the peaks (1.5-2.5 km)
+    double summitSize = 3000;     // m: about how big the summit massifs' field is (a massif every so far along a range's axis)
+    double summitFrom = 0.50;      // 0..1: where that field starts raising summits...
+    double summitFull = 0.75;      // ...and where they're whole
+    double summitCarve = 0.5;        // 0..1: the most of a summit's height its gullies cut (crests and spurs between them, not domes)
+    double crestSpacing = 700;    // m: about how far apart the crags on the ridges are (the rough detail on the high ground)
     double alpineFrom = 330;       // m: the alpine biome's weight starts here...
     double alpineFull = 560;       // ...and is whole here
     double alpineHeatShift = 100;    // m: in the coldest country the alpine comes this much lower (and in the hottest this much higher)
+};
+
+// ---- Terrain: the knolls (owner: "more like the Backcountry": lumpy hills, saddles and gullies everywhere, no long flat stretches) --
+// Three layers over the land the valleys left (after src/backcountry.cpp's uplands): rolling knolls, bigger hills and rocky knobs. They
+// fade out down at a channel's level (beds and the water stay as the drainage made them) and never take the land more than halfway
+// down to its valley's floor.
+struct KnollRule {
+    double knollSize = 90;      // m: the knolls' size
+    double knollHeight = 14;    // m: their height (top to hollow, about)
+    double hillSize = 170;      // m: the hills' size
+    double hillHeight = 22;     // m: their height
+    double knobSize = 85;       // m: the rocky knobs' size (ridged: sharp-crested)
+    double knobHeight = 10;     // m: their height
+    double floorClear = 16;     // m over a channel's level where they're whole (lower, they fade: a valley's floor stays where its water is)
+    double channelClear = 30;   // m: ...and within this of a creek's or river's bank they only rise
+    double desert = 0.25;       // 0..1: how much of them the dunes and badlands keep (smooth sand, its own mesas)
+    double mountains = 0.5;     // 0..1: ...and the alpine (it has its crags)
+};
+
+// ---- Terrain: mesas (owner: "Monument Valley": big flat-topped mesas and buttes, sheer cliff bands over talus slopes, spires) ----
+struct MesaRule {
+    double height = 170;        // m: a mesa's top over the desert floor
+    double size = 700;          // m: about how big the mesa field's features are (mesas, buttes between)
+    double cliff = 0.65;        // 0..1: the share of its height in the sheer band at the top (the rest the talus under it)
+    double spires = 0.4;        // 0..1: how many lone spires and needles stand on the flats
+};
+
+// ---- Rocks that follow the land's steepness (owner: "the steeper the terrain, the more rocks and the larger, so it's like cliff walls") --
+// Gentle ground keeps the scatter. Moderate slopes take more and bigger rocks (scree, outcrops); steep faces are covered in big slabs
+// packed and overlapping, laid along the face and sunk into it (a rock wall, not boulders sitting on a hill), with a boulder field at
+// the cliff's foot. The scanned rocks (props::activeRockScans) are what's drawn and driven on.
+struct SlopeRockRule {
+    double screeFrom = 0.35;    // rise over run: slopes steeper than this take extra rocks (scree, outcrops)...
+    double screePerHa = 30;     // ...this many a hectare tried at cliff_from, fewer down to none at scree_from
+    double screeSize = 2.4;     // m: their radius at cliff_from (0.8 at scree_from), give or take a half: car-sized, to crawl over
+    double cliffFrom = 0.9;     // rise over run: steeper than this the face is a rock wall...
+    double cliffFull = 1.3;     // ...wholly covered from here
+    double cliffPerHa = 70;     // slabs tried a hectare of rock wall (packed: they overlap)
+    double cliffSize = 5.5;     // m: a slab's radius across the face, give or take a third (its thickness about a third of it)
+    double torShare = 0.12;     // 0..1: of the wall's rocks, this share stand up out of it instead: outcrops and tors...
+    double torSize = 7;         // m: ...this big (house-sized and more), give or take a third
+    double baseReach = 20;      // m: below a rock wall, a boulder field this far out from its foot...
+    double basePerHa = 40;      // ...this many a hectare tried, the biggest nearest the wall
+    double desert = 0.8;        // 0..1: how much of them the badlands and dunes keep (rounder rock)
+    double lowland = 0.6;       // 0..1: ...and the meadows and woods (the alpine keeps them all)
+};
+
+// ---- The scatter after the Backcountry's (owner: "I really like ... the dispersion of rocks and items and trails") ----------------
+// Measured on both maps (wip/procworld5-scale: build/review/procscale/numbers.txt): the Backcountry has ~11 rocks a hectare, clumped (Clark-Evans R 0.5),
+// a log a hectare, bushes in thickets (R 0.7), and rocks along and on its rated trails.
+struct ScatterRule {
+    double rockRate = 1.6;        // the loose rocks tried, times the old scatter's
+    double rockSize = 1.8;        // ...and their size, times the old scatter's (owner: big enough to crawl over)
+    double clusterShare = 0.3;    // 0..1: of those placed, this share are a cluster's middle: bigger, with smaller ones round it...
+    double clusterRocks = 3;      // ...about this many
+    double downedTrees = 1.5;     // trunks fallen across a trail every 100 m in the thickest woods (fewer as they thin)
+    double logsPerHa = 1.4;       // fallen logs a hectare tried in the woods (the meadows' groves half that)
+    double bushThicket = 0.75;    // 0..1: how much the bushes gather in thickets (0: even, as before)
+    double blueRocks = 3;         // rocks beside a blue trail's tread, every 100 m
+    double blackRocks = 5;        // ...beside a black one's
+    double blackTread = 2;        // ...and low ones on a black one's tread (driven over), every 100 m
 };
 
 // ---- Alpine: forest, tree line, rock and snow -----------------------------------------------------------------------------------
@@ -131,6 +200,10 @@ struct Rules {
     WaterRule water;
     BridgeRule bridge;
     RangeRule range;
+    KnollRule knoll;
+    MesaRule mesa;
+    SlopeRockRule slopeRock;
+    ScatterRule scatter;
     AlpineRule alpine;
     // meadow, forest, badlands, mountains (its density and shares: alpine), dunes
     ErosionRule erosion;

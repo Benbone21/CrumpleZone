@@ -305,11 +305,8 @@ Rock makeScannedRock(const World& w, const props::HullLibrary& lib, double x, do
         int i;
         bool swap;
     };
-    // The procedural world (procworld.h) still fits its rocks with the C library's log, std::sort and mathx's rotateAxis, so its
-    // worlds stay as they were while it's being worked on: not the same on every machine yet (docs/plans/xplat-world.md).
-    const bool cLibm = w.map == MAP_PROCEDURAL;
-    auto fitLog = [cLibm](double v) { return cLibm ? std::log(v) : dm::log(v); };
-    auto turn = [cLibm](const V3& v, const V3& k, double a) { return cLibm ? rotateAxis(v, k, a) : dm::rotateAxis(v, k, a); };
+    auto fitLog = [](double v) { return dm::log(v); };
+    auto turn = [](const V3& v, const V3& k, double a) { return dm::rotateAxis(v, k, a); };
     std::vector<Cand> cands;
     const double ry = std::max(radii.y, 1e-3);
     for (int i = 0; i < (int)lib.hulls.size(); i++) {
@@ -324,8 +321,7 @@ Rock makeScannedRock(const World& w, const props::HullLibrary& lib, double x, do
     // (A scan as wide as it is long ties with itself turned round, and which of the two comes first decides how it is fitted: dm::sort,
     // libstdc++'s order for the ties on every machine, as the worlds were built before. The score's log is detmath's.)
     auto byScore = [](const Cand& a, const Cand& b) { return a.score < b.score || (a.score == b.score && a.i < b.i); };
-    if (cLibm) std::sort(cands.begin(), cands.end(), byScore);
-    else dm::sort(cands.begin(), cands.end(), byScore);
+    dm::sort(cands.begin(), cands.end(), byScore);
     std::vector<Cand> pick;
     for (const Cand& c : cands) {
         bool dup = false;
@@ -1385,6 +1381,15 @@ bool World::contact(const V3& c, double R, const V3* axis, double hw, Contact& o
         }
     }
     return hit;
+}
+
+double World::clearYFrom(double x, double z, double y) const {
+    Contact ct;
+    for (int i = 0; i < 120; i++) {
+        if (!contact(V3(x, y + 1.0, z), 1.0, nullptr, 0, ct, false)) return y;
+        y += 0.25;
+    }
+    return y;
 }
 
 double World::clearY(double x, double z, bool overPoles) const {

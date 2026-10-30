@@ -30,7 +30,7 @@ gully_area = 0.08                 # km2: a channel drains this much before it cu
 creek_area = 0.3                  # km2: ...a creek (water, fordable)...
 river_area = 1.5                  # km2: ...a river...
 big_river_area = 2.5              # km2: ...a big river (deep and fast: crossed at its known fords, or on a bridge)
-bank_batter = 6                   # in the ranges a valley's side is this times its height wide (the steepest, at its foot, 1 : bank_batter/2)
+bank_batter = 4.5                 # in the ranges a valley's side is this times its height wide (the steepest, at its foot, 1 : bank_batter/2)
 low_batter = 14                   # ...in the lowland
 river_grade = 0.04                # the steepest a big river's level climbs in the ranges (a tenth of it in the lowland)
 creek_grade = 0.33                # ...and a creek's, high in the ranges (cascades)
@@ -44,15 +44,68 @@ missing_share = 0.45              # the share of the deck's plank pieces missing
 max_gap = 0.75                    # m: the widest hole on the one drivable line every bridge keeps (keep it under ~0.9)
 
 [terrain.ranges]
-belt_from = 0.4                   # 0..1: where the slow belt field (~9 km features) starts raising a range (less 0.06 x the world's relief)
-belt_full = 0.6                   # 0..1: where a range is at full height
+belt_size = 4000                  # m: about how far apart the ranges are across the world's grain (the slow belt field's features; the world's scale, 0.85-1.2, times it)
+belt_stretch = 2                  # ...and how many times longer they run along the grain (long ridgelines)
+belt_from = 0.2                   # 0..1: where the belt field starts raising a range (less 0.06 x the world's relief)
+belt_full = 0.42                  # 0..1: where a range is at full height (its rough, its biome)
+desert_sink = 0                   # the belt field less this in hot dry country: the ranges give way to mesa and desert there
+belt_top = 0.62                   # 0..1: where its valley floors and mass have risen whole (the range's axis: under it, the foothills)
 pass_height = 300                 # m over the lowland: the ranges' valley floors at their heart (times the world's relief)
-peak_height = 620                 # m: the mountains' mass over their valley floors, times the world's relief (0.75-1.25): the valleys are cut into it
-summit_height = 2900              # m: the summits on a range's axis over its mass, times the world's relief: the peaks (1.5-2.5 km)
-crest_spacing = 1100              # m: about how far apart the crags on the high ground are (its rough detail)
+peak_height = 800                 # m: the mountains' mass over their valley floors, times the world's relief (0.75-1.25): the valleys are cut into it
+summit_height = 1500              # m: the summits on a range's axis over its mass, times the world's relief: the peaks (1.5-2.5 km)
+summit_size = 3000                # m: about how big the summit massifs' field is (a massif of peaks every so far along a range's axis)
+summit_from = 0.5                 # 0..1: where that field starts raising summits...
+summit_full = 0.75                # 0..1: ...and where they're whole
+summit_carve = 0.5                # 0..1: the most of a summit's height its gullies cut (crests and spurs between them, not domes)
+crest_spacing = 700               # m: about how far apart the crags on the high ground are (its rough detail)
 alpine_from = 330                 # m: the alpine biome starts to take over here...
 alpine_full = 560                 # m: ...and is whole here
 alpine_heat_shift = 100           # m: in the coldest country the alpine comes this much lower (in the hottest, higher)
+
+[terrain.mesas]
+height = 170                      # m: a mesa's top over the desert floor
+size = 700                        # m: about how big the mesa field's features are (mesas, buttes between)
+cliff = 0.65                      # 0..1: the share of its height in the sheer band at the top (the rest the talus under it)
+spires = 0.4                      # 0..1: how many lone spires and needles stand on the flats
+
+[terrain.knolls]
+knoll_size = 90                   # m: the rolling knolls' size (the land's lumps, after the Backcountry's)
+knoll_height = 14                 # m: ...and their height, top to hollow, about
+hill_size = 170                   # m: the hills' size
+hill_height = 22                  # m: ...and their height
+knob_size = 85                    # m: the rocky knobs' size (sharp-crested)
+knob_height = 10                  # m: ...and their height
+floor_clear = 16                  # m over a channel's level where they're whole (lower they fade: valley floors stay at their water)
+channel_clear = 30                # m: within this of a creek's or river's bank they only rise
+desert = 0.25                     # 0..1: how much of them the dunes and badlands keep
+mountains = 0.5                   # 0..1: ...and the alpine (it has its own crags)
+
+[rocks.slope]
+scree_from = 0.35                 # rise over run: slopes steeper than this take extra rocks (scree, outcrops)...
+scree_per_ha = 30                 # ...this many a hectare tried at cliff_from, fewer down to none at scree_from
+scree_size = 2.4                  # m: their radius at cliff_from (0.8 at scree_from), give or take a half: car-sized, to crawl over
+cliff_from = 0.9                  # rise over run: steeper than this the face is a rock wall (big slabs laid along it and sunk in)...
+cliff_full = 1.3                  # ...wholly covered from here
+tor_share = 0.12                  # 0..1: of the wall's rocks, this share stand up out of it instead: outcrops and tors...
+tor_size = 7                      # m: ...this big (house-sized and more), give or take a third
+cliff_per_ha = 70                 # slabs tried a hectare of rock wall (packed: they overlap)
+cliff_size = 5.5                  # m: a slab's radius across the face, give or take a third (its thickness about a third of it)
+base_reach = 20                   # m: below a rock wall, a boulder field this far out from its foot...
+base_per_ha = 40                  # ...this many a hectare tried, the biggest nearest the wall
+desert = 0.8                      # 0..1: how much of them the badlands and dunes keep (rounder rock)
+lowland = 0.6                     # 0..1: ...and the meadows and woods (the alpine keeps them all)
+
+[scatter]
+rock_rate = 1.6                   # the loose rocks tried, times the old scatter's (the Backcountry's ~11 a hectare)
+rock_size = 1.8                   # ...and their size, times the old scatter's (big enough to crawl over)
+cluster_share = 0.3               # 0..1: of those placed, this share are a cluster's middle: bigger, with smaller ones round it...
+cluster_rocks = 3                 # ...about this many
+downed_trees = 1.5                # trunks fallen across a trail every 100 m in the thickest woods (fewer as they thin): over, or round
+logs_per_ha = 1.4                 # fallen logs a hectare tried in the woods (the meadows' groves half that)
+bush_thicket = 0.75               # 0..1: how much the bushes gather in thickets (0: evenly)
+blue_rocks = 3                    # rocks beside a blue trail's tread, every 100 m
+black_rocks = 5                   # ...beside a black one's
+black_tread = 2                   # ...and low ones on a black one's tread (driven over), every 100 m
 
 [biome.alpine]
 trees_per_ha = 420                # trees a hectare on the slopes below the tree line (pines)

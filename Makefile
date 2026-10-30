@@ -459,3 +459,6 @@ build/erosion_view: build/tools/erosion_view.o $(patsubst %.cpp,build/%.o,$(PHYS
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -lm
 build/erosion_lab: build/tools/erosion_lab.o $(patsubst %.cpp,build/%.o,$(PHYS))
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -lm
+# How mountainous the land is round the start (dev tool): build/procscale SEED OUTDIR [SPAN_M] [STEP_M]
+build/procscale: build/tools/procscale.o $(patsubst %.cpp,build/%.o,$(PHYS))
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -lm
