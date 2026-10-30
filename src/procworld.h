@@ -80,6 +80,7 @@ struct Chunk {
     std::vector<StumpSpec> stumps;
     double genMs = 0;  // how long it took to make
     double tileMs = 0;  // ...and how long it waited first for the worn land's tiles (proceros.h: the game makes them ahead)
+    double edgeMs = 0;  // ...and laying out the trails it needed that weren't made yet (the game lays them out ahead too: prefetchErosion)
     uint64_t hash() const;  // of every byte above (not genMs)
 };
 

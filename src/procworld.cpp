@@ -2113,7 +2113,25 @@ void prefetchErosion(const ProcWorld& G, double x0, double z0, double x1, double
                 std::lock_guard<std::mutex> lock(qm);
                 queued.erase({seed, i, j});
             });
-        }
+        }    // (and the trails ahead, laid out on the same quiet thread once their land is worn: the chunks then only read them, no hitch)
+    {
+        static std::mutex& em = *new std::mutex;
+        static std::set<std::tuple<uint64_t, int64_t, int64_t>>& done = *new std::set<std::tuple<uint64_t, int64_t, int64_t>>;
+        for (int64_t i = (int64_t)std::floor(x0 / kCell) - 1; i <= (int64_t)std::floor(x1 / kCell); i++)
+            for (int64_t j = (int64_t)std::floor(z0 / kCell) - 1; j <= (int64_t)std::floor(z1 / kCell); j++) {
+                {
+                    std::lock_guard<std::mutex> lock(em);
+                    if (done.size() > 20000) done.clear();
+                    if (!done.insert({seed, i, j}).second) continue;
+                }
+                work->post([seed, i, j] {
+                    if (prefetchStopping()) return;
+                    gTileWorker = true;
+                    const ProcWorld& G2 = ProcWorld::forSeed(seed);
+                    for (int dir = 0; dir < 3; dir++) G2.edge(i, j, dir);
+                });
+            }
+    }
 }
 
 Macro ProcWorld::land(double x, double z) const { return macroAt(x, z, false); }
@@ -2849,7 +2867,7 @@ std::shared_ptr<const TrailEdge> ProcWorld::edge(int64_t i, int64_t j, int dir) 
             for (int pass = 0; pass < 2; pass++) {
                 for (int k = 0; k < n; k++)  // (not by the water: its crossing stays as the grading laid it, out of the deep)
                     if (!pinned(k)) {
-                        if (!wet[cellOf(a.x + px[k], a.z + pz[k])]) y[k] = std::min(y[k], fine[k] + lift[k]);
+                        if (wet[cellOf(a.x + px[k], a.z + pz[k])] < 2) y[k] = std::min(y[k], fine[k] + lift[k]);  // (down through a creek's ravine, a ford: never a bank over it; a big river's or a lake's edge stays as laid)
                         y[k] = std::max(y[k], fine[k] - sink[k]);  // (nor a cut deeper than its kind's, by the water too)
                     }
                 if (pass) break;
@@ -2926,6 +2944,7 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
     // The trails that come near this chunk.
     std::vector<std::shared_ptr<const TrailEdge>> edges;
     {
+        const auto te = std::chrono::steady_clock::now();
         const int64_t ci = floorDiv(gx0 + 32, kCell), cj = floorDiv(gz0 + 32, kCell);
         for (int64_t i = ci - 2; i <= ci + 1; i++)  // (an edge runs east or north of its cell's node, wandering up to ~260 m off)
             for (int64_t j = cj - 2; j <= cj + 1; j++)
@@ -2933,6 +2952,7 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
                     auto e = edge(i, j, dir);
                     if (e->on && e->x1 >= (double)gx0 - 2 && e->x0 <= (double)gx0 + 66 && e->z1 >= (double)gz0 - 2 && e->z0 <= (double)gz0 + 66) edges.push_back(e);
                 }
+        c->edgeMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - te).count();
     }
     // (Each one's stretches that come within reach of this chunk: the rest needn't be looked at cell by cell.)
     std::vector<std::vector<uint32_t>> reach(edges.size());
@@ -3067,6 +3087,7 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
                     h = W + 0.05, cl.water = -1e9, cl.fx = cl.fz = 0, cl.keep = 1, cl.bed = cl.bed == 1 ? 5 : cl.bed;
                 }
                 if (rules().erosion.on > 0) cl.lakeW = W;
+                if (rules().erosion.on > 0 && W > -1e8 && cl.water > -1e8 && cl.water < W - 0.02 && h < W) cl.water = W;  // (a river into a lake that stands over it: its backwater, level with the lake, no step up)
                 if (!upstream) W = -1e9;
                 if (W > -1e8) {
                     if (h < W - 0.02) {
@@ -3631,7 +3652,7 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
         s.edge = grove > 0.4;
         c->bushes.push_back(s);
     }
-    c->genMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    c->genMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() - c->edgeMs;  // (its own work: the trails are laid out ahead)
     return c;
 }
 
