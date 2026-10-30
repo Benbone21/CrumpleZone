@@ -1,3 +1,4 @@
+#include "detmath.h"
 #include "procreveal.h"
 
 #include <algorithm>
@@ -20,7 +21,7 @@ double Reveal::heightAbove(const ProcWorld& g, double gx, double gz, double y) {
     const int n = 8;
     for (int i = 0; i < n; i++) {
         const double a = i * (2 * M_PI / n);
-        sum += g.macroCached(gx + 400 * std::cos(a), gz + 400 * std::sin(a)).h;  // (never waits on an erosion tile: the game thread)
+        sum += g.macroCached(gx + 400 * dm::cos(a), gz + 400 * dm::sin(a)).h;  // (never waits on an erosion tile: the game thread)
     }
     return std::max(0.0, y - sum / n);
 }

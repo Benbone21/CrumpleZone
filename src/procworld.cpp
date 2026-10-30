@@ -1,5 +1,6 @@
 // The procedural world: the generator (pure functions of seed and global position), the chunk cache and World::buildProcedural
 // (a window of the land). See procworld.h and docs/superpowers/specs/2026-10-25-procedural-world-design.md.
+#include "detmath.h"
 #include "procworld.h"
 #include "procdress.h"
 #include "procrules.h"
@@ -2398,7 +2399,7 @@ void ProcWorld::start(int64_t& x, int64_t& z, double& yaw) const {
     }
     yaw = nodeYaw(at);
     // (12 m to the side of the shed's open end: on the lot, clear of the posts. The yaw is one of four, so these are whole.)
-    const double fx = std::cos(yaw), fz = -std::sin(yaw);
+    const double fx = dm::cos(yaw), fz = -dm::sin(yaw);
     x = std::llround(at.x + fz * 14), z = std::llround(at.z - fx * 14);
 }
 
@@ -3801,6 +3802,24 @@ void ProcWorld::nodePlaces(int64_t i, int64_t j, std::vector<MapPlace>& out) con
         const bool wet = (m.riverOn > 0.3 && std::fabs(m.riverS) < m.riverHW + 6) || (m.creekOn > 0.3 && std::fabs(m.creekS) < m.creekHW + 4) || m.lakeLevel > -1e8;
         if (!wet) add("CACHE", nm + " CACHE", PK_CACHE, cx, cz, 12, 0, 0)->reward = 150 + (int)(450 * remoteness(cx, cz)) / 10 * 10;
     }
+    // Wrecks: rusting cars and trucks round the node, on the trails and off them, unlabelled; some still hold something worth the
+    // walk (searched on foot, as a cache is: a cache's reward, else nothing).
+    {
+        const uint64_t hw = hashIJ(params_->s[S_DITHER] + 703, i, j);
+        const int nWrecks = (int)(hw % 100 < 35 ? 0 : hw % 100 < 75 ? 1 : 2);
+        for (int q = 0; q < nWrecks; q++) {
+            const double u1 = hash01(params_->s[S_DITHER] + 711 + (uint64_t)q, i, j), u2 = hash01(params_->s[S_DITHER] + 721 + (uint64_t)q, i, j);
+            const double ang = u1 * 6.2831853, dist = 25 + 180 * u2;
+            const double wx = n.x + dm::cos(ang) * dist, wz = n.z + dm::sin(ang) * dist;
+            const Macro m = macro(wx, wz);
+            const bool wet = (m.riverOn > 0.3 && std::fabs(m.riverS) < m.riverHW + 6) || (m.creekOn > 0.3 && std::fabs(m.creekS) < m.creekHW + 4) || m.lakeLevel > -1e8;
+            if (wet) continue;
+            MapPlace* p = add("WRECK" + std::to_string(q), "", PK_CACHE, wx, wz, 8, 0, 0);
+            p->vehicle = "wreck";
+            p->yaw = u1 * 37.0;
+            p->reward = hash01(params_->s[S_DITHER] + 731 + (uint64_t)q, i, j) < 0.4 ? 50 + (int)(250 * remoteness(wx, wz)) / 10 * 10 : 0;
+        }
+    }
     // Now and then an abandoned vehicle by a node, for the career to recover.
     if (hc % 1000 >= 960) {
         static const char* kVeh[][2] = {{"blazer", "FLAT TIRES, A DEAD BATTERY"}, {"4runner", "WATER IN THE ENGINE"}, {"civic", "OUT OF FUEL"}, {"utv", "A BROKEN AXLE"}};
@@ -3876,7 +3895,7 @@ void buildPlaces(World& w, const std::vector<MapPlace>& places) {
         return q;
     };
     auto rel = [&](const V3& o, double yaw, double ahead, double left) {
-        return grounded(V3(o.x + std::cos(yaw) * ahead + std::sin(yaw) * left, 0, o.z - std::sin(yaw) * ahead + std::cos(yaw) * left));
+        return grounded(V3(o.x + dm::cos(yaw) * ahead + dm::sin(yaw) * left, 0, o.z - dm::sin(yaw) * ahead + dm::cos(yaw) * left));
     };
     using Set = std::vector<std::pair<std::string, double>>;
     auto build = [&](const char* id, const V3& at, double yaw, const V3& half, Set set = {}, int variant = -1) {
@@ -3904,6 +3923,10 @@ void buildPlaces(World& w, const std::vector<MapPlace>& places) {
     for (const MapPlace& pl : places) {
         const V3 P = grounded(pl.p);
         const double yw = pl.yaw;
+        if (pl.kind == PK_CACHE && pl.vehicle == "wreck") {  // (a wreck: the rusted pickup, no sign, no label)
+            decor("wreck_pickup", P, yw);
+            continue;
+        }
         switch (pl.kind) {
             case PK_RANGER_STATION:
                 w.addStation(P, yw, intern(pl.name));
@@ -3975,7 +3998,7 @@ void buildBridges(World& w) {
                     if (std::fabs(mx) > half || std::fabs(mz) > half) continue;
                     const double dx = bx - ax, dz = bz - az, L = std::sqrt(dx * dx + dz * dz);
                     if (L < 1) continue;
-                    const double yaw = std::atan2(-dz, dx), hw = e->half() + 0.6, sx = -dz / L, sz = dx / L;  // (sx, sz: to its left)
+                    const double yaw = dm::atan2(-dz, dx), hw = e->half() + 0.6, sx = -dz / L, sz = dx / L;  // (sx, sz: to its left)
                     w.addBox(V3(mx, b.y - 0.15, mz), V3(0.5 * L + 1, 0.15, hw), yaw, 0, 0, plank);  // (the deck)
                     for (int sd = -1; sd <= 1; sd += 2) {
                         w.addBox(V3(mx + sx * sd * (hw - 0.3), b.y - 0.55, mz + sz * sd * (hw - 0.3)), V3(0.5 * L + 1, 0.25, 0.25), yaw, 0, 0, log);  // (stringers)

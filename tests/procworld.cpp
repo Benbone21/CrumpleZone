@@ -274,13 +274,14 @@ SCENARIO(procPlaces, "procworld/places", "Places at the trail nodes: an outpost 
     const ProcWorld& G = ProcWorld::forSeed(5150);
     // Names and ids over 41 x 41 nodes (20 km): no two alike.
     std::set<std::string> ids, names;
-    int dupIds = 0, dupNames = 0, outposts = 0, caches = 0, kinds[PK_COUNT] = {};
+    int dupIds = 0, dupNames = 0, outposts = 0, caches = 0, kinds[PK_COUNT] = {}, wrecks = 0, wreckLoot = 0;
     for (int64_t i = -20; i <= 20; i++)
         for (int64_t j = -20; j <= 20; j++) {
             std::vector<MapPlace> v;
             G.nodePlaces(i, j, v);
             for (const MapPlace& p : v) {
                 dupIds += !ids.insert(p.id).second;
+                if (p.vehicle == "wreck") { wrecks++, wreckLoot += p.reward > 0; continue; }  // (the wrecks: unlabelled scenery, some with loot)
                 dupNames += !names.insert(p.name).second;
                 outposts += p.kind == PK_RANGER_STATION, caches += p.kind == PK_CACHE;
                 kinds[p.kind]++;
@@ -290,6 +291,8 @@ SCENARIO(procPlaces, "procworld/places", "Places at the trail nodes: an outpost 
     ctx.metric("names repeated within 20 km", dupNames, "", 0, 0);
     ctx.metric("outposts per 100 km2 (one per 3 x 3 cells: ~42)", outposts * 100.0 / (41 * 41 * 0.512 * 0.512), "", 30, 60);
     ctx.metric("caches per 100 km2", caches * 100.0 / (41 * 41 * 0.512 * 0.512), "", 50, 400);
+    ctx.metric("wrecks per 100 km2 (some with loot)", wrecks * 100.0 / (41 * 41 * 0.512 * 0.512), "", 100, 1000);
+    ctx.check("some wrecks hold loot", wreckLoot > 0 && wreckLoot < wrecks);
     std::string mix;
     for (int k = 0; k < PK_COUNT; k++)
         if (kinds[k]) mix += std::string(placeKindName(k)) + " " + std::to_string(kinds[k]) + ", ";

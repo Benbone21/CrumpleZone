@@ -1,4 +1,5 @@
 // The procedural world's set pieces as models: waterfalls and timber bridges (procdress.h).
+#include "detmath.h"
 #include "procdress.h"
 
 #include <algorithm>
@@ -43,7 +44,7 @@ void dressFalls(World& w) {
         const double W = std::max(1.8, s.width * 0.92), len = std::max(1.5, s.len);
         Falls f;
         f.lip = lip;
-        f.yaw = std::atan2(-s.fz, s.fx);
+        f.yaw = dm::atan2(-s.fz, s.fx);
         f.height = H;
         f.width = W;
         f.seed = spotHash(s.x, s.z, 1);
@@ -132,11 +133,11 @@ void dressBridges(World& w, size_t firstBox, size_t firstPole) {
                     const size_t deckBox = bc, railBox[2] = {bc + 2, bc + 4}, posts0 = pc;
                     bc += 5 + (standInPier ? 1 : 0), pc += 10;
                     if (bc > w.boxes.size() || pc > w.poles.size()) return;  // (not buildBridges' walk after all: leave the stand-ins as they are)
-                    const double yaw = std::atan2(-dz, dx), ux = dx / L, uz = dz / L;
+                    const double yaw = dm::atan2(-dz, dx), ux = dx / L, uz = dz / L;
                     // (Two trails can lay the same span, one each way: it's one bridge. The second's stand-ins go with the first's.)
                     bool again = false;
                     for (const Done& o : done)
-                        if (std::hypot(o.mx - mx, o.mz - mz) < 0.5 && std::fabs(o.ux * ux + o.uz * uz) > 0.99) {
+                        if (dm::hypot(o.mx - mx, o.mz - mz) < 0.5 && std::fabs(o.ux * ux + o.uz * uz) > 0.99) {
                             again = true;
                             if (o.worn) {
                                 deadBox[deckBox] = deadBox[railBox[0]] = deadBox[railBox[1]] = 1;
@@ -189,7 +190,7 @@ void dressBridges(World& w, size_t firstBox, size_t firstPole) {
                         const BridgeLayout::Piece& p = cross[k];
                         const double xm = 0.5 * (p.x0 + p.x1), hx = 0.5 * (p.x1 - p.x0) * sx;
                         if (p.kind == 2) {  // tipped about its sound end (bridgelayout.cpp topAt)
-                            const double wz = p.z1 - p.z0, th = p.roll, sn = std::sin(std::fabs(th)), cs = std::cos(th);
+                            const double wz = p.z1 - p.z0, th = p.roll, sn = dm::sin(std::fabs(th)), cs = dm::cos(th);
                             const double pz = th > 0 ? p.z0 : p.z1, dz2 = th > 0 ? cs : -cs;  // (pivot, and the way along it, across)
                             const double nz = th > 0 ? sn : -sn, ny = cs;                     // (its top's normal, in (z, y))
                             const double cz = pz + dz2 * 0.5 * wz - nz * 0.5 * t, cy = -p.drop - sn * 0.5 * wz - ny * 0.5 * t;
@@ -222,7 +223,7 @@ void dressBridges(World& w, size_t firstBox, size_t firstPole) {
                             const BridgeLayout::Post& p = lay.posts[side][k];
                             if (p.state == 2) continue;
                             const double reach = p.state == 1 ? 1.1 : 0.0;
-                            const V3 q = at(p.x + std::sin(p.tip) * reach, 0, p.z + std::sin(p.lean) * reach);
+                            const V3 q = at(p.x + dm::sin(p.tip) * reach, 0, p.z + dm::sin(p.lean) * reach);
                             w.poles.push_back({q.x, q.z, b.y - 0.1, b.y + (p.state == 1 ? 0.4 : 0.55), 0.09});
                         }
                     }
