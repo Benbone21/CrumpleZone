@@ -1548,7 +1548,10 @@ static Macro evalMacro(const ProcWorld& G, double x, double z, const DTile& T, c
             const MesaRule& MR = rules().mesa;
             const ProcWorld::Params& P = G.params();
             const double f = fbm(P.s[S_MESA] + 3, x / (MR.size * P.scale), z / (MR.size * P.scale), 3);
-            const double talus = smoothstep(0.46, 0.56, f), band = smoothstep(0.565, 0.58, f);
+            const double talus = smoothstep(0.46, 0.56, f);
+            // (Breaks in the band here and there: a steep ramp up through it, the way onto the top (the trails find them))
+            const double brk = smoothstep(0.72, 0.8, vnoise(P.s[S_MESA] + 21, x / 90.0, z / 90.0));
+            const double band = smoothstep(0.565, 0.58, f) * (1 - brk) + smoothstep(0.5, 0.62, f) * brk;
             double shape = (1 - MR.cliff) * talus + MR.cliff * band;
             const double sp = ridgedMF(P.s[S_MESA] + 9, x / 140.0, z / 140.0, 2);  // (spires: needles where the ridged field peaks)
             shape = std::max(shape, 0.6 * MR.spires * smoothstep(0.82, 0.9, sp) * (1 - talus) * 1.6);
@@ -3207,6 +3210,7 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
             const double t = w[b2] / (w[b1] + w[b2]);  // 0..0.5
             const double dith = 0.5 + 0.35 * (vnoise(P.s[S_DITHER], x * 0.03, z * 0.03) - 0.5);  // (one short, natural edge where two biomes meet: no patchwork of the other inside)
             cl.dom = (uint8_t)(2 * t > dith ? b2 : b1);
+            if (w[PB_BADLANDS] > 0.15 + 0.1 * (dith - 0.5) && cl.dom != PB_MOUNTAINS) cl.dom = PB_BADLANDS;  // (mesa country is desert ground right across: red sand and sage, no grass)
             for (int b = 0; b < PB_COUNT; b++) cl.w[b] = (float)w[b];
         }
     auto CC = [&](int i, int j) -> const Cell& { return C[(size_t)(i + 1) * A + (j + 1)]; };
