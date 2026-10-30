@@ -189,6 +189,7 @@ private:
     struct Bucket {
         int model, lod;
         std::vector<float> data;  // 16 floats an instance
+        std::vector<float> dist;  // each instance's distance (rocks: drawn nearest first, so what's behind is turned away by depth)
     };
     std::vector<Bucket> buckets;
     std::map<long long, int> bucketOf;

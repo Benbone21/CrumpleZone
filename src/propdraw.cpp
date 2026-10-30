@@ -841,7 +841,7 @@ void PropRenderer::select(const float pl[6][4], bool useBillboards, int lodBias,
         double& out;
         ~Timer() { out += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(); }
     } timer{t0, stats.selectMs};
-    for (Bucket& b : buckets) b.data.clear();
+    for (Bucket& b : buckets) b.data.clear(), b.dist.clear();
     bbData.resize(models.size());
     for (auto& v : bbData) v.clear();
     const double bbDist = kBillboardDist[quality];
@@ -888,6 +888,7 @@ void PropRenderer::select(const float pl[6][4], bool useBillboards, int lodBias,
         d.insert(d.end(), in.m, in.m + 12);
         d.insert(d.end(), in.extra, in.extra + 3);
         d.push_back(fade);
+        buckets[bi].dist.push_back((float)dist);
     };
     // (Nothing in a cell or block whose biggest instance is under the cull size at its nearest is drawn: it's passed over.)
     const double cull = props::kLodCullSize / std::max(0.1, (double)kLodK[quality]);
@@ -907,7 +908,9 @@ void PropRenderer::select(const float pl[6][4], bool useBillboards, int lodBias,
             b.add(c.mn), b.add(c.mx);
             // (A big map: the horizon test only from 64 to 450 m, as for the ground: render.cpp drawTerrain.)
             const double d = big ? b.distance(eye) : 100;
-            if (d > 64 && d < 450 && occluder->occluded(b)) continue;
+            // (The procedural world: every cell past 40 m: its big rocks are dear to draw, the test cheap beside them)
+            const bool endless = world && world->map == MAP_PROCEDURAL;
+            if (d > (endless ? 40 : 64) && (endless || d < 450) && occluder->occluded(b)) continue;
         }
         for (int i : c.inst) {
             Inst& in = statics[i];
@@ -917,6 +920,22 @@ void PropRenderer::select(const float pl[6][4], bool useBillboards, int lodBias,
         }
       }
     }
+    if (!shadowPass)  // (rocks nearest first: the big ones in front fill the depth buffer and what's behind them is never shaded)
+        for (Bucket& b : buckets) {
+            const Model& g = models[b.model];
+            if ((g.kind != props::KIND_ROCK && g.kind != props::KIND_CLIFF) || b.dist.size() < 2) continue;
+            // (by bands of distance, not exactly: a counting sort, cheap for tens of thousands)
+            constexpr int kBands = 24;
+            int count[kBands + 1] = {};
+            auto band = [](float dd) { return std::min(kBands - 1, (int)(std::sqrt(std::max(0.0f, dd)) * 0.6f)); };
+            for (float dd : b.dist) count[band(dd) + 1]++;
+            for (int q = 0; q < kBands; q++) count[q + 1] += count[q];
+            std::vector<int> order(b.dist.size());
+            for (size_t q = 0; q < b.dist.size(); q++) order[count[band(b.dist[q])]++] = (int)q;
+            std::vector<float> d2(b.data.size());
+            for (size_t q = 0; q < order.size(); q++) std::copy(b.data.begin() + order[q] * 16, b.data.begin() + order[q] * 16 + 16, d2.begin() + q * 16);
+            b.data.swap(d2);
+        }
     if (!shadowPass || lodBias == 0)
         for (const auto& kv : scatter) {
             if (!shadowPass && occluder && !kv.second.empty()) {
