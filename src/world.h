@@ -452,6 +452,7 @@ public:
     // a pole or a trunk doesn't count (nothing can stand on one: next to a tree, the ground, not
     // the top of the trunk 10 m up).
     double clearY(double x, double z, bool overPoles = true) const;
+    double clearYFrom(double x, double z, double y0) const;  // (the same, looking up from y0 rather than the ground: a resumed spot on a bridge's deck, clear of a rock that's grown there since)
     // Whether any pole or trunk stands inside the rectangle centered on (x, z) along `fwd` (level,
     // unit) from a0 to a1 and across it (fwd turned left) from l0 to l1, `margin` clear of its
     // edges, reaching between heights y0 and y1.

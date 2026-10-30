@@ -657,7 +657,27 @@ double riverLevelOf(const ProcWorld& G, int64_t i, int64_t j) {
             const NodeInfo d = nodeInfo(G, pi + kN8[n.down][0], pj + kN8[n.down][1]);
             const double A = accum1Of(G, pi, pj), len = std::sqrt(sqr(d.x - n.x) + sqr(d.z - n.z));
             const double T = n.R + n.U * upFrac(A);
-            const double g = std::min(std::max((T - below) / len, kGradeMin), std::max(kGradeMin, gradeMax(A, n.mk)));
+            double g = std::min(std::max((T - below) / len, kGradeMin), std::max(kGradeMin, gradeMax(A, n.mk)));
+            // (Into a confluence: every river joining there comes in at a whisper of grade over the last stretch, so where the two
+            // run side by side into it neither stands metres over the other's bed beside it (rules 3).)
+            // (Two rivers may run side by side a few links before they meet: so the last three links into a confluence.)
+            {
+                int64_t di = pi + kN8[n.down][0], dj = pj + kN8[n.down][1];
+                for (int hop = 0; hop < 3; hop++) {
+                    int inflows = 0;
+                    for (int e = 0; e < 8 && inflows < 2; e++) {
+                        const int64_t mi = di + kN8[e][0], mj = dj + kN8[e][1];
+                        if (isRiver(G, mi, mj) && down1Of(G, mi, mj) == ((e + 4) & 7)) inflows++;
+                    }
+                    if (inflows >= 2) {
+                        g = std::min(g, 4 * kGradeMin);
+                        break;
+                    }
+                    const int dd = down1Of(G, di, dj);
+                    if (dd < 0) break;
+                    di += kN8[dd][0], dj += kN8[dd][1];
+                }
+            }
             lv = below + g * len;
         }
         lv = (double)(float)lv;  // (as kept)
@@ -1509,7 +1529,9 @@ static Macro evalMacro(const ProcWorld& G, double x, double z, const DTile& T, c
         // there would put the land beside it under its water.)
         // (And none on a channel itself or its banks: a waterfall's lip and pool, a ford, stay as the water made them.)
         const double wneg = smoothstep(0.0, KR.floorClear, over) * smoothstep(4.0, 60.0, bank);
-        const double wpos = std::max(smoothstep(0.0, KR.floorClear, over), smoothstep(4.0, KR.channelClear, bank)) * smoothstep(1.0, 8.0, bank);
+        // (rising gently from the bank: no steep step up beside the water; a river's floor, where its lakes stand, wider)
+        const double wpos = std::max(smoothstep(0.0, KR.floorClear, over), 0.5 * smoothstep(4.0, KR.channelClear, bank)) * smoothstep(1.0, 25.0, bank) *
+                            smoothstep(0.0, 70.0, rs ? rd - rs->hw : 1e9);
         const double k = bm * (K >= 0 ? K * wpos : K * wneg);
         m.h = std::max(Lmin + 0.5 * std::max(0.0, over), env + k);
     }
@@ -2966,7 +2988,8 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
                     // (Water never stands over the valley's land round it: where a creek crosses a bigger one's floor on its way in, the
                     // floor is lower than its water, and it's dry there.)
                     const double valley = blend(i, j, [](const Macro& m) { return m.h; });
-                    if (arg->wet > 0.5 && argD < argHW + 1.5 && h < argL - 0.02 && argL <= valley + 0.3 && !(arg->cls == 1 && creekPerched(*this, arg->ni, arg->nj))) {
+                    if (arg->wet > 0.5 && argD < argHW + 1.5 && h < argL - 0.02 && argL <= valley + 0.3 && !(arg->cls == 1 && creekPerched(*this, arg->ni, arg->nj)) &&
+                        (argL <= valley - 0.2 || argL <= macroAt(x, z, false).h + 0.3)) {  // (near the line, the land itself, not the 4 m lattice's blend: at a channel's sharp turn the blend stands over it)
                         cl.water = argL;
                         const double sp = arg->cls == 3 ? (arg->ford ? 1.9 : 1.5) : arg->cls == 2 ? 1.0 : 0.7;  // (big rivers fast: fastest over a ford's riffle)
                         cl.fx = arg->dx * sp, cl.fz = arg->dz * sp;
@@ -3293,6 +3316,20 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
     // Rocks: more on the steep and in the badlands and mountains; now and then a big outcrop; stones along the riffles' edges.
     const double rockRate = 1.2 * w[PB_MEADOW] + 2.0 * w[PB_FOREST] + 6.0 * w[PB_BADLANDS] + 0.4 * w[PB_DUNES];
     const ScatterRule& SCR = RU.scatter;
+    // (A big rock reaches out of its chunk: clear of every trail's tread within its reach, read off the trails themselves.)
+    auto trailNear = [&](double fx, double fz, double reach) {
+        const double gx = (double)gx0 + fx, gz = (double)gz0 + fz;
+        for (const auto& ep : edges) {
+            const TrailEdge& e = *ep;
+            const double R = reach + e.half() + 2;
+            if (gx < e.x0 - R + kTreadReach || gx > e.x1 + R - kTreadReach || gz < e.z0 - R + kTreadReach || gz > e.z1 + R - kTreadReach) continue;
+            for (size_t k = 0; k < e.x.size(); k += 2) {
+                const double dx = e.ax + e.x[k] - gx, dz = e.az + e.z[k] - gz;
+                if (dx * dx + dz * dz < R * R) return true;
+            }
+        }
+        return false;
+    };
     const int rockTries = (int)(SCR.rockRate * (rockRate * 1.6 + w[PB_MOUNTAINS] * AR.rocksPerHa * haChunk) + rr());
     for (int k = 0; k < rockTries; k++) {
         const double fx = 64 * rr(), fz = 64 * rr();
@@ -3303,12 +3340,14 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
         if (c->surf[id] == SURF_SAND && rr() < 0.85) continue;
         if (rr() > 0.25 + 0.75 * smoothstep(0.15, 0.6, slope)) continue;
         const bool big = slope > 0.4 && rr() < 0.15;
-        const double rad = big ? 1.4 + 2.2 * rr() : 0.35 + rr() * rr() * 0.9, flat = 0.5 + 0.4 * rr();
+        const double rad = SCR.rockSize * (big ? 1.4 + 2.2 * rr() : 0.35 + rr() * rr() * 0.9), flat = 0.5 + 0.4 * rr();
+        if (rad > 2 && trailNear(fx, fz, rad)) continue;
         RockSpec r;
         r.x = (float)fx, r.z = (float)fz, r.rx = (float)rad, r.ry = (float)(rad * flat), r.rz = (float)(rad * (0.7 + 0.3 * rr()));
         r.top = (float)(rad * flat * (0.5 + 0.5 * rr()));
         r.tint = (float)(0.85 + 0.25 * rr());
         r.seed = (uint32_t)(hashIJ(seed_ ^ 0x50C4ull, cx, cz) >> 8) + (uint32_t)k * 7919u;
+        if (rad > 1.2) r.seed = wholeRockSeed(r.seed);  // (a big one off the trails: its single hull, not cut into pieces: the memory)
         if (rr() < SCR.clusterShare) {  // (a cluster (rules 5): this one bigger, smaller ones round it)
             const double grow = 1.5;
             r.rx *= (float)grow, r.ry *= (float)grow, r.rz *= (float)grow, r.top *= (float)grow;
@@ -3379,6 +3418,7 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
         };
         // (Clear of the trails, water, bridges and places: open ground right round its footprint.)
         auto clearRound = [&](double fx, double fz, double rad) {
+            if (rad > 2 && trailNear(fx, fz, rad)) return false;
             for (int q = 0; q < 9; q++) {
                 const double ax = q == 8 ? 0 : kDir8[q][0], az = q == 8 ? 0 : kDir8[q][1];
                 int i, j;
@@ -3415,13 +3455,22 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
             const double scree = smoothstep(SR.screeFrom, SR.cliffFrom, slope) * (1 - wall);
             const double want = wall * SR.cliffPerHa + scree * SR.screePerHa;
             if (keep * std::max(SR.screePerHa, SR.cliffPerHa) >= want) continue;
-            if (q < wall) {  // (a slab of the wall)
+            if (q < wall && rr() < SR.torShare) {  // (a tor: a house-sized outcrop standing up out of the face, sunk a third)
+                const double rad = SR.torSize * (0.67 + 0.66 * q2);
+                if (!clearRound(fx, fz, rad)) continue;
+                RockSpec r;
+                r.x = (float)fx, r.z = (float)fz, r.rx = (float)rad, r.ry = (float)(rad * (0.7 + 0.3 * rr())), r.rz = (float)(rad * (0.7 + 0.3 * rr()));
+                r.top = (float)(r.ry * (0.9 + 0.4 * rr()));
+                r.tint = (float)(0.8 + 0.25 * rr());
+                r.seed = wholeRockSeed(base + 9u + (uint32_t)k * 7919u);
+                c->rocks.push_back(r);
+            } else if (q < wall) {  // (a slab of the wall: big, laid along the face, overlapping its neighbours into a solid face)
                 const double rad = SR.cliffSize * (0.67 + 0.66 * q2);
                 if (!clearRound(fx, fz, rad)) continue;
-                laid(fx, fz, rad, rad * (0.28 + 0.12 * rr() + 0.25 * round), rad * (0.7 + 0.4 * rr()), base + (uint32_t)k * 7919u, 0.45);
+                laid(fx, fz, rad, rad * (0.28 + 0.12 * rr() + 0.25 * round), rad * (0.7 + 0.4 * rr()), base + (uint32_t)k * 7919u, 0.5);
             } else {  // (scree: blocks lying on the slope, half sunk; now and then an outcrop)
                 const double t = smoothstep(SR.screeFrom, SR.cliffFrom, slope);
-                double rad = (0.5 + (SR.screeSize - 0.5) * t) * (0.5 + q2);
+                double rad = (0.8 + (SR.screeSize - 0.8) * t) * (0.5 + q2);
                 if (rr() < 0.08) rad *= 2.2;
                 if (!clearRound(fx, fz, rad)) continue;
                 laid(fx, fz, rad, rad * (0.45 + 0.25 * rr() + 0.25 * round), rad * (0.7 + 0.3 * rr()), base + 3u + (uint32_t)k * 7919u, 0.6);
@@ -3446,7 +3495,7 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
             }
             if (foot < 0) continue;
             const double near = 1 - foot / SR.baseReach;
-            const double rad = (0.6 + 1.8 * near) * (0.6 + 0.8 * q);
+            const double rad = (0.9 + 3.0 * near) * (0.6 + 0.8 * q);  // (the biggest, car- to house-sized, nearest the wall)
             if (!clearRound(fx, fz, rad)) continue;
             RockSpec r;
             r.x = (float)fx, r.z = (float)fz, r.rx = (float)rad, r.ry = (float)(rad * (0.6 + 0.3 * rr() + 0.2 * round)), r.rz = (float)(rad * (0.7 + 0.3 * rr()));

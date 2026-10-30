@@ -82,9 +82,11 @@ std::vector<Key> keys() {
     const char* SR = "rocks.slope";
     k.push_back({SR, "scree_from", nullptr, AT(r.slopeRock.screeFrom), "rise over run: slopes steeper than this take extra rocks (scree, outcrops)..."});
     k.push_back({SR, "scree_per_ha", nullptr, AT(r.slopeRock.screePerHa), "...this many a hectare tried at cliff_from, fewer down to none at scree_from"});
-    k.push_back({SR, "scree_size", nullptr, AT(r.slopeRock.screeSize), "m: their radius at cliff_from (0.5 at scree_from), give or take a half"});
+    k.push_back({SR, "scree_size", nullptr, AT(r.slopeRock.screeSize), "m: their radius at cliff_from (0.8 at scree_from), give or take a half: car-sized, to crawl over"});
     k.push_back({SR, "cliff_from", nullptr, AT(r.slopeRock.cliffFrom), "rise over run: steeper than this the face is a rock wall (big slabs laid along it and sunk in)..."});
     k.push_back({SR, "cliff_full", nullptr, AT(r.slopeRock.cliffFull), "...wholly covered from here"});
+    k.push_back({SR, "tor_share", nullptr, AT(r.slopeRock.torShare), "0..1: of the wall's rocks, this share stand up out of it instead: outcrops and tors..."});
+    k.push_back({SR, "tor_size", nullptr, AT(r.slopeRock.torSize), "m: ...this big (house-sized and more), give or take a third"});
     k.push_back({SR, "cliff_per_ha", nullptr, AT(r.slopeRock.cliffPerHa), "slabs tried a hectare of rock wall (packed: they overlap)"});
     k.push_back({SR, "cliff_size", nullptr, AT(r.slopeRock.cliffSize), "m: a slab's radius across the face, give or take a third (its thickness about a third of it)"});
     k.push_back({SR, "base_reach", nullptr, AT(r.slopeRock.baseReach), "m: below a rock wall, a boulder field this far out from its foot..."});
@@ -93,6 +95,7 @@ std::vector<Key> keys() {
     k.push_back({SR, "lowland", nullptr, AT(r.slopeRock.lowland), "0..1: ...and the meadows and woods (the alpine keeps them all)"});
     const char* SC = "scatter";
     k.push_back({SC, "rock_rate", nullptr, AT(r.scatter.rockRate), "the loose rocks tried, times the old scatter's (the Backcountry's ~11 a hectare)"});
+    k.push_back({SC, "rock_size", nullptr, AT(r.scatter.rockSize), "...and their size, times the old scatter's (big enough to crawl over)"});
     k.push_back({SC, "cluster_share", nullptr, AT(r.scatter.clusterShare), "0..1: of those placed, this share are a cluster's middle: bigger, with smaller ones round it..."});
     k.push_back({SC, "cluster_rocks", nullptr, AT(r.scatter.clusterRocks), "...about this many"});
     k.push_back({SC, "logs_per_ha", nullptr, AT(r.scatter.logsPerHa), "fallen logs a hectare tried in the woods (the meadows' groves half that)"});

@@ -72,7 +72,7 @@ struct KnollRule {
     double hillHeight = 22;     // m: their height
     double knobSize = 85;       // m: the rocky knobs' size (ridged: sharp-crested)
     double knobHeight = 10;     // m: their height
-    double floorClear = 8;      // m over a channel's level where they're whole (lower, they fade: a valley's floor stays where its water is)
+    double floorClear = 16;     // m over a channel's level where they're whole (lower, they fade: a valley's floor stays where its water is)
     double channelClear = 30;   // m: ...and within this of a creek's or river's bank they only rise
     double desert = 0.25;       // 0..1: how much of them the dunes and badlands keep (smooth sand, its own mesas)
     double mountains = 0.5;     // 0..1: ...and the alpine (it has its crags)
@@ -85,11 +85,13 @@ struct KnollRule {
 struct SlopeRockRule {
     double screeFrom = 0.35;    // rise over run: slopes steeper than this take extra rocks (scree, outcrops)...
     double screePerHa = 45;     // ...this many a hectare tried at cliff_from, fewer down to none at scree_from
-    double screeSize = 1.3;     // m: their radius at cliff_from (0.5 at scree_from), give or take a half
+    double screeSize = 2.4;     // m: their radius at cliff_from (0.8 at scree_from), give or take a half: car-sized, to crawl over
     double cliffFrom = 0.9;     // rise over run: steeper than this the face is a rock wall...
     double cliffFull = 1.3;     // ...wholly covered from here
     double cliffPerHa = 130;    // slabs tried a hectare of rock wall (packed: they overlap)
-    double cliffSize = 3.2;     // m: a slab's radius across the face, give or take a third (its thickness about a third of it)
+    double cliffSize = 5.5;     // m: a slab's radius across the face, give or take a third (its thickness about a third of it)
+    double torShare = 0.12;     // 0..1: of the wall's rocks, this share stand up out of it instead: outcrops and tors...
+    double torSize = 7;         // m: ...this big (house-sized and more), give or take a third
     double baseReach = 20;      // m: below a rock wall, a boulder field this far out from its foot...
     double basePerHa = 70;      // ...this many a hectare tried, the biggest nearest the wall
     double desert = 0.8;        // 0..1: how much of them the badlands and dunes keep (rounder rock)
@@ -101,6 +103,7 @@ struct SlopeRockRule {
 // a log a hectare, bushes in thickets (R 0.7), and rocks along and on its rated trails.
 struct ScatterRule {
     double rockRate = 1.6;        // the loose rocks tried, times the old scatter's
+    double rockSize = 1.8;        // ...and their size, times the old scatter's (owner: big enough to crawl over)
     double clusterShare = 0.3;    // 0..1: of those placed, this share are a cluster's middle: bigger, with smaller ones round it...
     double clusterRocks = 3;      // ...about this many
     double logsPerHa = 1.4;       // fallen logs a hectare tried in the woods (the meadows' groves half that)

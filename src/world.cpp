@@ -1387,6 +1387,15 @@ bool World::contact(const V3& c, double R, const V3* axis, double hw, Contact& o
     return hit;
 }
 
+double World::clearYFrom(double x, double z, double y) const {
+    Contact ct;
+    for (int i = 0; i < 120; i++) {
+        if (!contact(V3(x, y + 1.0, z), 1.0, nullptr, 0, ct, false)) return y;
+        y += 0.25;
+    }
+    return y;
+}
+
 double World::clearY(double x, double z, bool overPoles) const {
     double y = height(x, z);
     Contact ct;

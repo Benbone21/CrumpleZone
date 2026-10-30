@@ -68,7 +68,7 @@ hill_size = 170                   # m: the hills' size
 hill_height = 22                  # m: ...and their height
 knob_size = 85                    # m: the rocky knobs' size (sharp-crested)
 knob_height = 10                  # m: ...and their height
-floor_clear = 8                   # m over a channel's level where they're whole (lower they fade: valley floors stay at their water)
+floor_clear = 16                  # m over a channel's level where they're whole (lower they fade: valley floors stay at their water)
 channel_clear = 30                # m: within this of a creek's or river's bank they only rise
 desert = 0.25                     # 0..1: how much of them the dunes and badlands keep
 mountains = 0.5                   # 0..1: ...and the alpine (it has its own crags)
@@ -76,11 +76,13 @@ mountains = 0.5                   # 0..1: ...and the alpine (it has its own crag
 [rocks.slope]
 scree_from = 0.35                 # rise over run: slopes steeper than this take extra rocks (scree, outcrops)...
 scree_per_ha = 45                 # ...this many a hectare tried at cliff_from, fewer down to none at scree_from
-scree_size = 1.3                  # m: their radius at cliff_from (0.5 at scree_from), give or take a half
+scree_size = 2.4                  # m: their radius at cliff_from (0.8 at scree_from), give or take a half: car-sized, to crawl over
 cliff_from = 0.9                  # rise over run: steeper than this the face is a rock wall (big slabs laid along it and sunk in)...
 cliff_full = 1.3                  # ...wholly covered from here
+tor_share = 0.12                  # 0..1: of the wall's rocks, this share stand up out of it instead: outcrops and tors...
+tor_size = 7                      # m: ...this big (house-sized and more), give or take a third
 cliff_per_ha = 130                # slabs tried a hectare of rock wall (packed: they overlap)
-cliff_size = 3.2                  # m: a slab's radius across the face, give or take a third (its thickness about a third of it)
+cliff_size = 5.5                  # m: a slab's radius across the face, give or take a third (its thickness about a third of it)
 base_reach = 20                   # m: below a rock wall, a boulder field this far out from its foot...
 base_per_ha = 70                  # ...this many a hectare tried, the biggest nearest the wall
 desert = 0.8                      # 0..1: how much of them the badlands and dunes keep (rounder rock)
@@ -88,6 +90,7 @@ lowland = 0.6                     # 0..1: ...and the meadows and woods (the alpi
 
 [scatter]
 rock_rate = 1.6                   # the loose rocks tried, times the old scatter's (the Backcountry's ~11 a hectare)
+rock_size = 1.8                   # ...and their size, times the old scatter's (big enough to crawl over)
 cluster_share = 0.3               # 0..1: of those placed, this share are a cluster's middle: bigger, with smaller ones round it...
 cluster_rocks = 3                 # ...about this many
 logs_per_ha = 1.4                 # fallen logs a hectare tried in the woods (the meadows' groves half that)

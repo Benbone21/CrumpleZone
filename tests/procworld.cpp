@@ -13,6 +13,7 @@
 #include "../src/procworld.h"
 #include "../src/procrules.h"
 #include "../src/net.h"
+#include "../src/props.h"
 #include "harness.h"
 #include <thread>
 #include <unistd.h>
@@ -740,6 +741,7 @@ SCENARIO(procRiverRules, "procworld/river-rules", "Rivers and creeks keep to the
     for (uint64_t seed : {1ull, 2ull, 123456789ull}) {
         World::procSeed = seed, World::procOriginSet = false;
         World w(MAP_PROCEDURAL);
+        const ProcWorld& G = ProcWorld::forSeed(seed);
         const double half = w.halfSize() - 50;
         long wet = 0, above = 0, rises = 0, steps = 0, bankN = 0, bankWall = 0;
         double worstAbove = 0, worstRise = 0, worstBank = 0;
@@ -765,20 +767,23 @@ SCENARIO(procRiverRules, "procworld/river-rules", "Rivers and creeks keep to the
                     steps++;
                     if (lv2 > lv + 0.05) rises++, worstRise = std::max(worstRise, lv2 - lv);
                 }
-                // The banks: from 2 m past the water's edge out 20 m, no metre steeper than 1.2 more than the land was.
+                // The banks: from 2 m past the water's edge out 20 m, no metre 1.5 m high and steeper by 1.2 than the land the channel
+                // was cut into. (v6: a creek slanting across a range's 1:0.7 side has that side for its bank; the land's own steepness.)
                 if (((long)(x * 7 + z * 13)) % 5 == 0)
                     for (int sd = -1; sd <= 1; sd += 2) {
-                        double prev = w.height(x, z), worst = 0;
+                        const V3 g0 = ProcWorld::toGlobal(w, V3(x, 0, z));
+                        double prev = w.height(x, z), prevL = G.macroHeight(g0.x, g0.z), worst = 0;
                         bool dry = false;
-                        for (double d = 1; d < 20; d += 1) {  // (v6: the bank and the foot of the valley's side; past it, a range's gorge walls stand steep by design)
+                        for (double d = 1; d < 20; d += 1) {
                             const double gx = x - fz * sd * d, gz = z + fx * sd * d;
                             if (std::fabs(gx) > half || std::fabs(gz) > half) break;
-                            const double h = w.height(gx, gz);
+                            const V3 gg = ProcWorld::toGlobal(w, V3(gx, 0, gz));
+                            const double h = w.height(gx, gz), hl = G.macroHeight(gg.x, gg.z);
                             if (w.waterLevel(gx, gz) < -1e5) dry = true;
-                            if (dry) worst = std::max(worst, std::fabs(h - prev));
-                            prev = h;
+                            if (dry && std::fabs(h - prev) > 1.5) worst = std::max(worst, std::fabs(h - prev) - std::fabs(hl - prevL));
+                            prev = h, prevL = hl;
                         }
-                        bankN++, bankWall += worst > 1.5, worstBank = std::max(worstBank, worst);
+                        bankN++, bankWall += worst > 1.2, worstBank = std::max(worstBank, worst);
                     }
             }
         // No rings: the dry ground cut off from the window's edge by water (on a 6 m raster, the channels thickened) is small.
@@ -810,9 +815,7 @@ SCENARIO(procRiverRules, "procworld/river-rules", "Rivers and creeks keep to the
                       36.0 * enclosed);
         ctx.note(b);
         ctx.check("seed " + std::to_string(seed) + ": there are rivers or creeks", wet > 200);
-        // (v6, seed 1's window in the ranges: where two rivers run side by side into a confluence, the upper one's water is a metre or
-        // three over the other's bed 30 m off; 0.65-1.2% there (v5's window: 0.34%). So 1.5%.)
-        ctx.check("seed " + std::to_string(seed) + ": the water is above the ground 30 m aside under 1.5% of the time", above * 1000 < 15 * 2 * wet);  // (two sides a sample, as the note counts)
+        ctx.check("seed " + std::to_string(seed) + ": the water is above the ground 30 m aside under 0.5% of the time", above * 200 < 2 * wet);
         ctx.check("seed " + std::to_string(seed) + ": the water never rises downstream (under 0.5%, a few cm)", rises * 200 < std::max(1L, steps) && worstRise < 0.5);
         ctx.check("seed " + std::to_string(seed) + ": no ring of water round dry land (under 2,000 m2 enclosed)", 36.0 * enclosed < 2000);
         ctx.check("seed " + std::to_string(seed) + ": banks under 1% walls", bankWall * 100 < std::max(1L, bankN));
@@ -839,6 +842,8 @@ SCENARIO(procRiverRules, "procworld/river-rules", "Rivers and creeks keep to the
                             const double ax = x - fz / fl * sd * 30, az = z + fx / fl * sd * 30;
                             const Macro ma = G.macroAt(ax, az, false);
                             if (ma.lakeLevel > -1e8 && ma.h < ma.lakeLevel) continue;
+                            // (nor beside another channel's water as high, where two run together into a confluence: water beside water)
+                            if ((ma.riverOn > 0.5 && ma.riverS < ma.riverHW && ma.riverLevel > lv - 0.1) || (ma.creekOn > 0.5 && ma.creekS < ma.creekHW && ma.creekLevel > lv - 0.1)) continue;
                             beside += lv > G.groundHeight(ax, az, ma) + 1;
                         }
                     }
@@ -1223,6 +1228,66 @@ SCENARIO(procWashShape, "procworld/wash-shape", "Dry washes are natural, not one
     // (main before this: width CoV 0.17-0.26 and depth 0.24-0.38 by seed, and most of that the notch the wash runs in, not its bed.)
     ctx.check("a wash's width varies along it (CoV over 0.3)", nc && cvW / nc > 0.3);
     ctx.check("...and its depth (CoV over 0.35)", nc && cvD / nc > 0.35);
+}
+
+SCENARIO(procRocksSolid, "procworld/rocks-solid", "Every rock you can see is solid (owner: a 4Runner sat inside a big boulder on a steep slope): a truck driven into the biggest rocks of a mountain window (the game's scanned rocks: slabs, outcrops, clusters) never ends up inside one") {
+    props::ScopedRockScans scans(&props::sharedHullLibrary());
+    if (!props::activeRockScans()) {
+        ctx.note("no scanned rocks here (assets/props/rocks.hull): skipped");
+        return;
+    }
+    const uint64_t seed = 326904175;
+    int64_t sx0, sz0;
+    double syaw0;
+    ProcWorld::forSeed(seed).start(sx0, sz0, syaw0);
+    ctx.sim.world = windowAt(seed, (double)sx0, (double)sz0);
+    World& w = ctx.sim.world;
+    // (the biggest rocks within 700 m, a spread of them)
+    std::vector<int> big;
+    for (int i = 0; i < (int)w.rocks.size(); i++)
+        if (w.rocks[i].r > 2.2 && std::hypot(w.rocks[i].c.x, w.rocks[i].c.z) < 700) big.push_back(i);
+    std::sort(big.begin(), big.end(), [&](int a, int b) { return w.rocks[a].r > w.rocks[b].r || (w.rocks[a].r == w.rocks[b].r && a < b); });
+    if (big.size() > 8) big.resize(8);
+    ctx.note(std::to_string(big.size()) + " big rocks tried (radius " + (big.empty() ? std::string("-") : std::to_string(w.rocks[big.back()].r) + " - " + std::to_string(w.rocks[big.front()].r)) + " m)");
+    auto inside = [&](const V3& p) {  // (how deep p is inside any rock: the shallowest face's distance, across its pieces)
+        double worst = 0;
+        for (const Rock& k : w.rocks) {
+            if (dot(p - k.c, p - k.c) > k.r * k.r) continue;
+            const size_t np = std::max<size_t>(1, k.parts.size());
+            for (size_t q = 0; q < np; q++) {
+                const Rock& kp = k.parts.empty() ? k : k.parts[q];
+                double out = -1e9;
+                for (size_t f = 0; f < kp.f.size(); f++) out = std::max(out, dot(kp.fn[f], p) - kp.fd[f]);
+                if (out < 0) worst = std::max(worst, -out);
+            }
+        }
+        return worst;
+    };
+    double worstDeep = 0;
+    int tried = 0;
+    for (int ri : big) {
+        ctx.sim.cars.clear();
+        const Rock& k = w.rocks[ri];
+        // (from 8 m off its edge, on its downhill side if it has one, driven straight at it)
+        double best = -1e9, ang = 0;
+        for (int a = 0; a < 8; a++) {
+            const double t = a * M_PI / 4, x = k.c.x + std::cos(t) * (k.r + 8), z = k.c.z + std::sin(t) * (k.r + 8);
+            const double s = -w.height(x, z);
+            if (s > best) best = s, ang = t;
+        }
+        const double x = k.c.x + std::cos(ang) * (k.r + 8), z = k.c.z + std::sin(ang) * (k.r + 8);
+        const double heading = std::atan2(-(k.c.z - z), k.c.x - x) * 180 / M_PI;  // (0 = +X, 90 = -Z)
+        Car& c = ctx.add(p4Runner(), x, z, heading);
+        ctx.launch(c, 7.0);
+        double deep = 0;
+        ctx.run(3.0, [&] {
+            for (const Node& n : ctx.sim.cars[0].nodes) deep = std::max(deep, inside(n.p));
+        });
+        worstDeep = std::max(worstDeep, deep), tried++;
+    }
+    // (0.4: a node pressed into any hard surface under a truck at speed; deeper is inside the rock)
+    ctx.metric("deepest a truck's node went inside a rock", worstDeep, "m", 0, 0.4);
+    ctx.check("big rocks to drive into", tried >= 4);
 }
 
 SCENARIO(procCrossings, "procworld/crossings", "Big rivers are real obstacles: a trail crosses one only at a known ford (a riffle, shallow) or on a bridge whose deck stands over the water; the bridge is built in the window") {
