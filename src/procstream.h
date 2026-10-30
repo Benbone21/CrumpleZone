@@ -42,6 +42,7 @@ private:
     };
     std::future<Made> fut_;
     std::unique_ptr<World> next_;
+    std::unique_ptr<World> retired_;  // (the window the last swap took out: freed from the next tick on)
     uint64_t seed_ = 0;
     int64_t ox_ = 0, oz_ = 0;
     double t0_ = 0;

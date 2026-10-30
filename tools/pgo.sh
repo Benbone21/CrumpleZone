@@ -29,8 +29,11 @@ linux)
     # Scenario subset (physics, collision, net, tools).
     build/rel/run_tests --jobs 1 engine/collision engine/physics-workers tires/pressure net/state vtools/ || fail "run_tests subset"
     # Offscreen game: the draw/cull/scenery path on two maps (software GL is fine; only the game's own code is profiled).
+    # The instrumented build loads the 10 km Backcountry several times slower than a player's build (a counter on every branch; see
+    # the Makefile's PGOFLAGS), so the load watchdog gets 600 s here, not 240: this is training, not a check of load times.
+    # CZ_STAGE_LOG: each startup step's time in the log, so a slow load shows where it went.
     for map in 4 1; do
-        SDL_VIDEODRIVER=offscreen LP_NUM_THREADS=2 CZ_BENCH=1 build/rel/crumplezone --no-audio --no-pad --map $map --quality 0 \
+        CZ_WATCHDOG_STALL=600 CZ_STAGE_LOG=1 SDL_VIDEODRIVER=offscreen LP_NUM_THREADS=2 CZ_BENCH=1 build/rel/crumplezone --no-audio --no-pad --map $map --quality 0 \
             --size 480x270 --time 10 --photo --adaptive 0 --shot-prefix build/pgo-shot --shot-frames 60 || fail "game render map $map"
     done
     rm -f build/pgo-shot*

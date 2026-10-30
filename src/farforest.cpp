@@ -78,29 +78,44 @@ void FarForestGrid::finish() {
         }
 }
 
-void FarForest::upload(const std::shared_ptr<const FarForestGrid>& g) {
-    grid_ = g;
-    n_ = 0;
-    if (!g || g->n <= 0) return;
-    if (!tex_[0]) {
-        GenTextures(2, tex_);
+void FarForest::stage(const std::shared_ptr<const FarForestGrid>& g) {
+    if (!g || g->n <= 0 || backGrid_ == g) return;
+    if (!backTex_[0]) {
+        GenTextures(2, backTex_);
         for (int t = 0; t < 2; t++) {
-            BindTexture(GL_TEXTURE_2D, tex_[t]);
+            BindTexture(GL_TEXTURE_2D, backTex_[t]);
             TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
             TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
             TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
             TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         }
-        GenVertexArrays(1, &vao_);
     }
+    if (!vao_) GenVertexArrays(1, &vao_);
     PixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    BindTexture(GL_TEXTURE_2D, tex_[0]);
-    TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, g->n, g->n, 0, GL_RGBA, GL_UNSIGNED_BYTE, g->cover.data());
-    BindTexture(GL_TEXTURE_2D, tex_[1]);
-    TexImage2D(GL_TEXTURE_2D, 0, GL_R32F, g->n, g->n, 0, GL_RED, GL_FLOAT, g->height.data());
+    // (The same size every window: written into the storage it has, not made again.)
+    const bool fresh = backN_ != g->n;
+    BindTexture(GL_TEXTURE_2D, backTex_[0]);
+    if (fresh) TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, g->n, g->n, 0, GL_RGBA, GL_UNSIGNED_BYTE, g->cover.data());
+    else TexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, g->n, g->n, GL_RGBA, GL_UNSIGNED_BYTE, g->cover.data());
+    BindTexture(GL_TEXTURE_2D, backTex_[1]);
+    if (fresh) TexImage2D(GL_TEXTURE_2D, 0, GL_R32F, g->n, g->n, 0, GL_RED, GL_FLOAT, g->height.data());
+    else TexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, g->n, g->n, GL_RED, GL_FLOAT, g->height.data());
     BindTexture(GL_TEXTURE_2D, 0);
     PixelStorei(GL_UNPACK_ALIGNMENT, 4);
-    n_ = g->n;
+    backN_ = g->n, backGrid_ = g;
+}
+
+void FarForest::adoptStaged(const std::shared_ptr<const FarForestGrid>& g) {
+    if (!g || g->n <= 0) {
+        grid_ = g, n_ = 0;
+        return;
+    }
+    stage(g);  // (nothing if it's there already)
+    std::swap(tex_[0], backTex_[0]), std::swap(tex_[1], backTex_[1]), std::swap(texN_, backN_);
+    // (The back pair now holds the window that went out, and keeps its field: freed when the next one is staged, not on this frame,
+    // where a few MB handed back cost llvmpipe's swap frame 1.7 ms.)
+    backGrid_ = std::move(grid_);
+    grid_ = g, n_ = g->n;
 }
 
 void FarForest::bindGround(GLuint prog, int unit, double from, double to) const {

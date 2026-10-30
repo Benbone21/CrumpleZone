@@ -178,10 +178,14 @@ LTOJ     ?= auto
 RELARCH  ?= -march=x86-64-v2 -mtune=generic
 PGODIR   ?= $(CURDIR)/build/pgo
 PGO      ?=
+# The training build's counters are plain adds (-fprofile-update=single), not atomic ones: with atomic adds every thread of a map's
+# build (parallelRows) fights over the same counters' cache lines, and the 10 km Backcountry took 229 s of land alone on a 4-core CI
+# runner, past the game's 240 s load watchdog (worldprint, 4 threads: 265 s atomic, 52 s plain, 17 s uninstrumented). A few counts
+# lost to races don't matter to the optimizer; -fprofile-correction smooths what they leave inconsistent (gcc's advice for threads).
 ifeq ($(PGO),gen)
-PGOFLAGS := -fprofile-generate=$(PGODIR) -fprofile-update=prefer-atomic
+PGOFLAGS := -fprofile-generate=$(PGODIR) -fprofile-update=single
 else ifeq ($(PGO),use)
-PGOFLAGS := -fprofile-use=$(PGODIR) -fprofile-partial-training -Wno-missing-profile -Wno-coverage-mismatch
+PGOFLAGS := -fprofile-use=$(PGODIR) -fprofile-correction -fprofile-partial-training -Wno-missing-profile -Wno-coverage-mismatch
 else
 PGOFLAGS :=
 endif
@@ -222,7 +226,7 @@ endif
 WINCXX   ?= x86_64-w64-mingw32-g++-posix
 WINSDL   ?= third_party/sdl2-win64
 # LTO always (every Windows build is a release); PGO as for Linux (tools/pgo.sh windows: trained under wine, since gcc profiles are not portable across compiler builds), -s strips the link.
-WINPGO   := $(if $(filter use,$(PGO)),-fprofile-use=$(PGODIR)/win -fprofile-partial-training -Wno-missing-profile -Wno-coverage-mismatch,$(if $(filter gen,$(PGO)),-fprofile-generate=$(PGODIR)/win -fprofile-update=prefer-atomic))
+WINPGO   := $(if $(filter use,$(PGO)),-fprofile-use=$(PGODIR)/win -fprofile-correction -fprofile-partial-training -Wno-missing-profile -Wno-coverage-mismatch,$(if $(filter gen,$(PGO)),-fprofile-generate=$(PGODIR)/win -fprofile-update=single))
 WINFLAGS := -O2 -march=x86-64-v2 -mtune=generic -flto=$(LTOJ) $(FPFLAGS) $(WINPGO) -std=gnu++17 -Wall -D_WIN32_WINNT=0x0601
 WIN_OBJ  := $(patsubst %.cpp,build/win/obj/%.o,$(GAME_SRC))
 

@@ -66,6 +66,14 @@ void ProcStream::start(Renderer& renderer, const World* at) {
 
 bool ProcStream::tick(Sim& sim, Renderer& renderer, const V3& focus, bool allowed, V3& shift, double sharedNow, double due) {
     const bool timed = due >= 0, late = timed && sharedNow >= due;  // (multiplayer: everyone swaps at `due` on the shared clock)
+    // The last swap's leavings (the window that went out: hundreds of MB), freed on a thread of their own, and handed back to the
+    // system (malloc keeps it otherwise). Not on the swap frame: that thread's frees hold the allocator's lock, and the swap's own
+    // allocations waited on it, ms on a 4-core machine.
+    if (retired_) {
+        std::thread([old = std::move(retired_)]() mutable { old.reset(); releaseFreedMemory(); }).detach();
+        retired_.reset();
+    }
+    renderer.freeRetired();
     World& w = sim.world;
     if (w.map != MAP_PROCEDURAL) {
         if (st_ != IDLE) reset();
@@ -109,13 +117,12 @@ bool ProcStream::tick(Sim& sim, Renderer& renderer, const V3& focus, bool allowe
         shift = V3((double)(w.proc.ox - next_->proc.ox), 0, (double)(w.proc.oz - next_->proc.oz));
         // (The renderer's background streaming, and the autopilot's replans, read the world: done with it before it goes.)
         renderer.waitStreaming();
-        // (The window that goes out is freed on a thread of its own: hundreds of MB handed back is ms of the frame.)
-        auto old = std::make_shared<World>(std::move(sim.world));
+        // (The window that goes out is freed on a thread of its own, from the next frame: hundreds of MB handed back is ms of a frame.)
+        retired_ = std::make_unique<World>(std::move(sim.world));  // (freed on a thread from the next frame on: see freeRetired)
         sim.world = std::move(*next_);
         next_.reset();
-        std::thread([old]() mutable { old.reset(); releaseFreedMemory(); }).detach();  // (and handed back to the system: malloc keeps it otherwise)
         proc::shiftSim(sim, shift);
-        renderer.adoptWorld(sim.world);
+        renderer.adoptWorld(sim.world, &shift);
         while (!renderer.stepWorld(sim.world)) {}  // (all the scenery this frame: nothing is drawn half there)
         st_ = IDLE;
         lastSwapMs = loadprof::nowMs() - t0;

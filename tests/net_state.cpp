@@ -520,8 +520,11 @@ void movingCrashes(Ctx& ctx, CrashKind kind) {
         ctx.metric(name + ": A's damage / on one machine (median of 5 lines)", medA / std::max(oneMedA, 1e-6), "", 0.6, 1.6);
         // (B braking in the last 0.3 s: A's machine hears of it a line later, so its copy of B comes in a little fast
         // and the push after goes a little differently; on a slow (150 ms or more each way) or lossy line B's own truck comes out somewhat less hurt:
-        // 0.56 to 0.61 measured, and the damage depends on each platform's own floating-point rounding, so 0.6 was a coin toss there.)
-        const double loB = kind == REAR_BRAKE && (line.oneWay >= 0.15 || line.loss > 0.05) ? 0.5 : 0.6;
+        // 0.56 to 0.61 measured, and the damage depends on each platform's own floating-point rounding, so 0.6 was a coin toss there.
+        // Since the fitment merge (2d0dbd5: engines forward, the trucks' mass moved) it's about half at 150 and 250 ms: 0.48 on Linux and
+        // Windows alike, and 0.45 to 0.47 over 9 or 11 lines as over 5, so the truck's new build, not the sampling; the floor there is 0.4.)
+        const bool slowLine = line.oneWay >= 0.15 || line.loss > 0.05;
+        const double loB = kind == REAR_BRAKE && slowLine ? (line.loss > 0.05 ? 0.5 : 0.4) : 0.6;
         ctx.metric(name + ": B's damage / on one machine (median of 5 lines)", medB / std::max(oneMedB, 1e-6), "", loB, 1.6);
         ctx.metric(name + ": copies off their owners' trucks before the hit (mean)", m.poseErr, "m", 0, 0.25);
         // (After, both trucks tumble and knock again, on each machine a little differently: the copies are eased
