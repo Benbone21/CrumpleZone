@@ -1735,6 +1735,14 @@ std::shared_ptr<const ETile> makeErosionTile(const ProcWorld& G, int64_t ti, int
                         if (damOn(G, L) && seen.insert({L.ni, L.nj}).second) lips.push_back({L.qx, L.qz});
         }
         for (const LakeInfo& L : info) {
+            {  // (none among the mesas: the hollows between them are dry pans, and a mesa's band would stand at its shore)
+                const double lx = gx0 + L.ca * kECell, lz = gz0 + L.cb * kECell;
+                const auto TT = tileAt(G, lx, lz);
+                const int ta = std::min(kTC - 1, std::max(0, (int)std::floor((lx - TT->ox) / kTCell))), tb = std::min(kTC - 1, std::max(0, (int)std::floor((lz - TT->oz) / kTCell)));
+                const int tc = ta * kTC + tb;
+                const Macro mm = evalMacro(G, lx, lz, *TT, TT->idx.data() + TT->start[tc], (int)(TT->start[tc + 1] - TT->start[tc]), false);
+                if (mm.w[PB_BADLANDS] > 0.45) continue;
+            }
             if (L.a0 < lo || L.b0 < lo || L.a1 > hi || L.b1 > hi || L.ca < c0 || L.ca >= c1 || L.cb < c0 || L.cb >= c1) continue;
             bool dammed = false;
             for (const auto& q : lips) {  // (its water comes within 60 m of a dam's lip: that dam holds it, whichever way it spills)
@@ -2554,7 +2562,7 @@ std::shared_ptr<const TrailEdge> ProcWorld::edge(int64_t i, int64_t j, int dir) 
         // The way: the cheapest path over a 16 m grid of the land round the two nodes (A*), each step dearer the steeper it climbs and
         // far dearer past the rating's grade, so it zigzags up a slope it can't take straight (switchbacks); a river crossed once, at a ford.
         constexpr double C = 16;
-        const double W = e->road ? 440 : 280;  // (how far it may wander: a road's gentler grade wants longer switchbacks; makeChunk's gather allows ~460)
+        const double W = e->road ? 320 : 220;  // (how far it may wander: a road's gentler grade wants longer switchbacks; makeChunk's gather allows ~460)
         const double gx0 = std::floor((std::min(a.x, b.x) - W) / C) * C, gz0 = std::floor((std::min(a.z, b.z) - W) / C) * C;
         const int NX = (int)((std::max(a.x, b.x) + W - gx0) / C) + 1, NZ = (int)((std::max(a.z, b.z) + W - gz0) / C) + 1;
         std::vector<float> H((size_t)NX * NZ);
@@ -2840,7 +2848,10 @@ std::shared_ptr<const TrailEdge> ProcWorld::edge(int64_t i, int64_t j, int dir) 
             }
             for (int pass = 0; pass < 2; pass++) {
                 for (int k = 0; k < n; k++)  // (not by the water: its crossing stays as the grading laid it, out of the deep)
-                    if (!pinned(k) && !wet[cellOf(a.x + px[k], a.z + pz[k])]) y[k] = std::max(std::min(y[k], fine[k] + lift[k]), fine[k] - sink[k]);  // (nor a cut deeper than its kind's)
+                    if (!pinned(k)) {
+                        if (!wet[cellOf(a.x + px[k], a.z + pz[k])]) y[k] = std::min(y[k], fine[k] + lift[k]);
+                        y[k] = std::max(y[k], fine[k] - sink[k]);  // (nor a cut deeper than its kind's, by the water too)
+                    }
                 if (pass) break;
                 const std::vector<double> y0 = y;  // (the clamp's corners eased: a short running mean, clamped again)
                 for (int k = 0; k < n; k++) {
@@ -3148,6 +3159,7 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
                     const double off = std::max({0.0, -8 - along, along - len - 8, across - ep->half() - 5});
                     if (off < bridgeOff) bridgeOff = off, bridgeY = sp.y;
                 }
+            if (bridgeOff <= 0 && h > bridgeY) h = bridgeY;  // (a bridge's ends and approaches: the ground never over its deck)
             for (const Plaza& pz : plazas) {  // (level ground for the place's buildings, easing into the land)
                 const double d = std::sqrt(sqr(x - pz.x) + sqr(z - pz.z));
                 const double bw = std::min(80.0, std::max(14.0, rules().batter * std::fabs(pz.h - h)));  // (as the trails' earthworks)

@@ -47,7 +47,7 @@ struct RangeRule {
     double beltStretch = 2.0;      // ...and how many times longer they run along it (long ridgelines)
     double beltFrom = 0.20;        // the belt field (0..1) where ranges begin (less 0.06 x the world's relief)
     double beltFull = 0.42;        // ...and where they're at full height
-    double desertSink = 0.3;      // the belt field less this in hot dry country: the ranges give way to mesa and desert there
+    double desertSink = 0;        // the belt field less this in hot dry country: the ranges give way to mesa and desert there
     double beltTop = 0.62;         // ...and where their valley floors and mass have risen whole (the range's axis)
     double passHeight = 300;       // m over the lowland: the ranges' valley floors at their heart (times the world's relief, 0.75-1.25)
     double peakHeight = 800;        // m: the mountains' mass over their valley floors, times the world's relief (the valleys are cut into it)

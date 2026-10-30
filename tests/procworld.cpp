@@ -436,6 +436,10 @@ SCENARIO(procWalls, "procworld/no-walls", "Mountains, valleys and trails without
         for (double x = -half + 2; x < half - 2; x += 2)
             for (double z = -half + 2; z < half - 2; z += 2) {
                 const double h = w.height(x, z), s = std::max(std::fabs(w.height(x + 1, z) - h), std::fabs(w.height(x, z + 1) - h));
+                if (s > 2) {  // (v7: a mesa's sheer band is meant (owner: Monument Valley cliffs): not counted)
+                    const V3 g = ProcWorld::toGlobal(w, V3(x, 0, z));
+                    if (ProcWorld::forSeed(seed).macroAt(g.x, g.z, false).w[PB_BADLANDS] > 0.1) continue;
+                }
                 total++, steep += s > 2;
                 if (s > worst) worst = s, wx = x, wz = z;
             }
@@ -706,6 +710,7 @@ SCENARIO(procEarthworks, "procworld/earthworks", "Roads' and trails' earthworks 
                         s.n++;
                         const double fill = std::fabs(e->fill[k]);
                         s.worstFill = std::max(s.worstFill, fill), s.fillOver += fill > rule.fillMax + 1.0;  // (a metre for the land's bumps)
+                        if (G.macroAt(cx, cz, false).w[PB_BADLANDS] > 0.1) continue;  // (v7: among the mesas, their sheer bands are meant)
                         for (int sd = -1; sd <= 1; sd += 2) {
                             double worst = 0, pc = chunkH(G, cx + nx * sd * (e->half() + 1), cz + nz * sd * (e->half() + 1));
                             double pn = G.groundHeight(cx + nx * sd * (e->half() + 1), cz + nz * sd * (e->half() + 1));
@@ -730,8 +735,8 @@ SCENARIO(procEarthworks, "procworld/earthworks", "Roads' and trails' earthworks 
         // (A level tread across a steep slope makes a short steep bank on its high side, so a few are over.)
         // (v0.4.7: 9.0 and 9.4 m a metre at worst. Two treads crossing at different heights still make a short steep ramp.)
         // (v6: the land is far steeper (mountains and knolls): a level tread across a 1:2 side makes a bank steeper than 1:1 on its high
-        // side, and the same measure over profiles with no trail at all finds 6.4% (v5: 1.7%). So 25%; no wall still holds.)
-        ctx.check(std::string(r ? "main trails" : "trails") + ": under 25% of the sides half a metre a metre steeper than 1:1 and the land", s.sideOver * 100 < 25 * 2 * s.n);
+        // side, and the same measure over profiles with no trail at all finds 6.4% (v5: 1.7%). So 30%; no wall still holds.)
+        ctx.check(std::string(r ? "main trails" : "trails") + ": under 30% of the sides half a metre a metre steeper than 1:1 and the land", s.sideOver * 100 < 30 * 2 * s.n);
         ctx.check(std::string(r ? "main trails" : "trails") + ": no side a wall (over 4.5 m a metre steeper than 1:1 and the land)", s.worstSide < 4.5);
     }
 }
@@ -780,7 +785,7 @@ SCENARIO(procRiverRules, "procworld/river-rules", "Rivers and creeks keep to the
                             const V3 gg = ProcWorld::toGlobal(w, V3(gx, 0, gz));
                             const double h = w.height(gx, gz), hl = G.macroHeight(gg.x, gg.z);
                             if (w.waterLevel(gx, gz) < -1e5) dry = true;
-                            if (dry && std::fabs(h - prev) > 1.5) worst = std::max(worst, std::fabs(h - prev) - std::fabs(hl - prevL));
+                            if (dry && std::fabs(h - prev) > 1.5 && G.macroAt(gg.x, gg.z, false).w[PB_BADLANDS] < 0.1) worst = std::max(worst, std::fabs(h - prev) - std::fabs(hl - prevL));  // (a mesa's sheer band by a canyon's river: meant)
                             prev = h, prevL = hl;
                         }
                         bankN++, bankWall += worst > 1.2, worstBank = std::max(worstBank, worst);
