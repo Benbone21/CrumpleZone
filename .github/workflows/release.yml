@@ -130,6 +130,8 @@ jobs:
           mkdir -p build/win/cpu-tests
           cp build/win/bench_sim.exe build/win/run_tests.exe build/win/test_audio.exe build/win/test_visibility.exe third_party/sdl2-win64/SDL2.dll build/win/cpu-tests/
           mkdir -p build/win/cpu-tests/assets && cp -r assets/props build/win/cpu-tests/assets/  # (the scanned rocks, for onemap/xplat-fingerprint)
+          # (test_audio reads assets/audio and src/audio.cpp relative to its folder; the windows-cpu job has no checkout)
+          cp -r assets/audio build/win/cpu-tests/assets/ && mkdir -p build/win/cpu-tests/src && cp src/audio.cpp build/win/cpu-tests/src/
           x86_64-w64-mingw32-objdump -p build/win/CrumpleZone/crumplezone.exe > build/win/imports.txt
           grep -q 'NvOptimusEnablement' build/win/imports.txt
           grep -q 'AmdPowerXpressRequestHighPerformance' build/win/imports.txt
@@ -178,7 +180,11 @@ jobs:
           }
           $env:SDL_AUDIODRIVER = 'dummy'
           $env:CZ_AUDIO_DEVICE_TEST = '1'
-          .\cpu-tests\test_audio.exe
+          Push-Location cpu-tests
+          .\test_audio.exe
+          $audioExit = $LASTEXITCODE
+          Pop-Location
+          $LASTEXITCODE = $audioExit
           if ($LASTEXITCODE -ne 0) { throw "Windows audio regression checks failed" }
 
   mac:
