@@ -56,6 +56,7 @@ std::vector<Key> keys() {
     k.push_back({T, "belt_stretch", nullptr, AT(r.range.beltStretch), "...and how many times longer they run along the grain (long ridgelines)"});
     k.push_back({T, "belt_from", nullptr, AT(r.range.beltFrom), "0..1: where the belt field starts raising a range (less 0.06 x the world's relief)"});
     k.push_back({T, "belt_full", nullptr, AT(r.range.beltFull), "0..1: where a range is at full height (its rough, its biome)"});
+    k.push_back({T, "desert_sink", nullptr, AT(r.range.desertSink), "the belt field less this in hot dry country: the ranges give way to mesa and desert there"});
     k.push_back({T, "belt_top", nullptr, AT(r.range.beltTop), "0..1: where its valley floors and mass have risen whole (the range's axis: under it, the foothills)"});
     k.push_back({T, "pass_height", nullptr, AT(r.range.passHeight), "m over the lowland: the ranges' valley floors at their heart (times the world's relief)"});
     k.push_back({T, "peak_height", nullptr, AT(r.range.peakHeight), "m: the mountains' mass over their valley floors, times the world's relief (0.75-1.25): the valleys are cut into it"});
@@ -68,6 +69,11 @@ std::vector<Key> keys() {
     k.push_back({T, "alpine_from", nullptr, AT(r.range.alpineFrom), "m: the alpine biome starts to take over here..."});
     k.push_back({T, "alpine_full", nullptr, AT(r.range.alpineFull), "m: ...and is whole here"});
     k.push_back({T, "alpine_heat_shift", nullptr, AT(r.range.alpineHeatShift), "m: in the coldest country the alpine comes this much lower (in the hottest, higher)"});
+    const char* MS = "terrain.mesas";
+    k.push_back({MS, "height", nullptr, AT(r.mesa.height), "m: a mesa's top over the desert floor"});
+    k.push_back({MS, "size", nullptr, AT(r.mesa.size), "m: about how big the mesa field's features are (mesas, buttes between)"});
+    k.push_back({MS, "cliff", nullptr, AT(r.mesa.cliff), "0..1: the share of its height in the sheer band at the top (the rest the talus under it)"});
+    k.push_back({MS, "spires", nullptr, AT(r.mesa.spires), "0..1: how many lone spires and needles stand on the flats"});
     const char* KN = "terrain.knolls";
     k.push_back({KN, "knoll_size", nullptr, AT(r.knoll.knollSize), "m: the rolling knolls' size (the land's lumps, after the Backcountry's)"});
     k.push_back({KN, "knoll_height", nullptr, AT(r.knoll.knollHeight), "m: ...and their height, top to hollow, about"});

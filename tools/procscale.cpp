@@ -57,6 +57,7 @@ int main(int argc, char** argv) {
     G.start(sx, sz, yaw);
     const int n = (int)(span / step) + 1;
     const double x0 = sx - span / 2, z0 = sz - span / 2;
+    std::vector<int> dom((size_t)n * n);
     std::vector<double> H((size_t)n * n), alp((size_t)n * n), lake((size_t)n * n, 0), river((size_t)n * n, 0);
     parallelRows(n, [&](int a) {
         for (int b = 0; b < n; b++) {
@@ -64,6 +65,9 @@ int main(int argc, char** argv) {
             const size_t i = (size_t)a * n + b;
             H[i] = G.groundHeight(x0 + a * step, z0 + b * step, m);
             alp[i] = m.w[PB_MOUNTAINS];
+            int bb = 0;
+            for (int q = 1; q < PB_COUNT; q++) if (m.w[q] > m.w[bb]) bb = q;
+            dom[i] = bb;
             if (m.lakeLevel > H[i]) lake[i] = 1;
             if (m.riverS < m.riverHW && m.riverOn > 0) river[i] = m.bigRiver ? 2 : 1;
         }
@@ -162,6 +166,17 @@ int main(int argc, char** argv) {
                 mxv(dh) / 1000, med(dm) / 1000, mnv(dm) / 1000,
                 dmMiss ? "none" : std::to_string(mxv(dm) / 1000).substr(0, 4).c_str(), dmMiss ? (" (" + std::to_string(dmMiss) + " directions reach none)").c_str() : "");
     std::printf("  anywhere in the square: hills within 1 km of %.0f%% of it, mountains within 2 km of %.0f%%; the mean way to mountains %.1f km\n", 100 * inH1, 100 * inM2, meanM / 1000, 100 * st1, 100 * st2, hi);
+    {
+        const char* nm[PB_COUNT] = {"plains", "forest", "mesa", "alpine", "desert"};
+        std::printf("  biomes (share; nearest from the start):");
+        const int cc = n / 2;
+        for (int b = 0; b < PB_COUNT; b++) {
+            long cntb = 0; double best = 1e9;
+            for (int a = 0; a < n; a++) for (int q = 0; q < n; q++) if (dom[(size_t)a * n + q] == b) cntb++, best = std::min(best, std::hypot(a - cc, q - cc) * step);
+            std::printf(" %s %.0f%% %.1f km;", nm[b], 100.0 * cntb / ((double)n * n), best > 1e8 ? 99.0 : best / 1000);
+        }
+        std::printf("\n");
+    }
     std::printf("  lake water %.0f ha; big rivers' water %.0f ha\n", lakeHa, bigRiv * step * step / 1e4);
     std::printf("CSV,%llu,%.0f,%.0f,%.1f,%.1f,%.1f,%.1f,%d,%d,%.2f,%.2f,%.2f,%d,%.0f,%.0f,%.2f,%.2f,%.3f,%.0f\n", (unsigned long long)seed, H[(size_t)c * n + c], rel[(size_t)c * n + c], 100.0 * low / cnt,
                 100.0 * hill / cnt, 100.0 * mtn / cnt, 100.0 * alpS / cnt, peaks1k, peaks, med(dh) / 1000, med(dm) / 1000, mxv(dm) / 1000, dmMiss, 100 * inH1, 100 * inM2, meanM / 1000, 100 * st1, 100 * st2, hi);

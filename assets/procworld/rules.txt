@@ -48,6 +48,7 @@ belt_size = 4000                  # m: about how far apart the ranges are across
 belt_stretch = 2                  # ...and how many times longer they run along the grain (long ridgelines)
 belt_from = 0.2                   # 0..1: where the belt field starts raising a range (less 0.06 x the world's relief)
 belt_full = 0.42                  # 0..1: where a range is at full height (its rough, its biome)
+desert_sink = 0.3                 # the belt field less this in hot dry country: the ranges give way to mesa and desert there
 belt_top = 0.62                   # 0..1: where its valley floors and mass have risen whole (the range's axis: under it, the foothills)
 pass_height = 300                 # m over the lowland: the ranges' valley floors at their heart (times the world's relief)
 peak_height = 800                 # m: the mountains' mass over their valley floors, times the world's relief (0.75-1.25): the valleys are cut into it
@@ -60,6 +61,12 @@ crest_spacing = 700               # m: about how far apart the crags on the high
 alpine_from = 330                 # m: the alpine biome starts to take over here...
 alpine_full = 560                 # m: ...and is whole here
 alpine_heat_shift = 100           # m: in the coldest country the alpine comes this much lower (in the hottest, higher)
+
+[terrain.mesas]
+height = 170                      # m: a mesa's top over the desert floor
+size = 700                        # m: about how big the mesa field's features are (mesas, buttes between)
+cliff = 0.65                      # 0..1: the share of its height in the sheer band at the top (the rest the talus under it)
+spires = 0.4                      # 0..1: how many lone spires and needles stand on the flats
 
 [terrain.knolls]
 knoll_size = 90                   # m: the rolling knolls' size (the land's lumps, after the Backcountry's)

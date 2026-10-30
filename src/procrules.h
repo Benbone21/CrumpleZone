@@ -47,6 +47,7 @@ struct RangeRule {
     double beltStretch = 2.0;      // ...and how many times longer they run along it (long ridgelines)
     double beltFrom = 0.20;        // the belt field (0..1) where ranges begin (less 0.06 x the world's relief)
     double beltFull = 0.42;        // ...and where they're at full height
+    double desertSink = 0.3;      // the belt field less this in hot dry country: the ranges give way to mesa and desert there
     double beltTop = 0.62;         // ...and where their valley floors and mass have risen whole (the range's axis)
     double passHeight = 300;       // m over the lowland: the ranges' valley floors at their heart (times the world's relief, 0.75-1.25)
     double peakHeight = 800;        // m: the mountains' mass over their valley floors, times the world's relief (the valleys are cut into it)
@@ -76,6 +77,14 @@ struct KnollRule {
     double channelClear = 30;   // m: ...and within this of a creek's or river's bank they only rise
     double desert = 0.25;       // 0..1: how much of them the dunes and badlands keep (smooth sand, its own mesas)
     double mountains = 0.5;     // 0..1: ...and the alpine (it has its crags)
+};
+
+// ---- Terrain: mesas (owner: "Monument Valley": big flat-topped mesas and buttes, sheer cliff bands over talus slopes, spires) ----
+struct MesaRule {
+    double height = 170;        // m: a mesa's top over the desert floor
+    double size = 700;          // m: about how big the mesa field's features are (mesas, buttes between)
+    double cliff = 0.65;        // 0..1: the share of its height in the sheer band at the top (the rest the talus under it)
+    double spires = 0.4;        // 0..1: how many lone spires and needles stand on the flats
 };
 
 // ---- Rocks that follow the land's steepness (owner: "the steeper the terrain, the more rocks and the larger, so it's like cliff walls") --
@@ -191,6 +200,7 @@ struct Rules {
     BridgeRule bridge;
     RangeRule range;
     KnollRule knoll;
+    MesaRule mesa;
     SlopeRockRule slopeRock;
     ScatterRule scatter;
     AlpineRule alpine;

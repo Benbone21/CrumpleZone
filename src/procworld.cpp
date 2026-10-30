@@ -249,7 +249,12 @@ Route routeAt(const ProcWorld::Params& P, double x, double z, double wet, double
     const double bk = RR.beltSize / 8300, wf = 0.00006 / bk;
     const double wa = 4000 * bk * (fbm(P.s[S_WARP1] + 5, x * wf, z * wf, 2) - 0.5), wc = 4000 * bk * (fbm(P.s[S_WARP2] + 5, x * wf, z * wf, 2) - 0.5);
     const double fc = 1 / (RR.beltSize * S), fa = fc / RR.beltStretch;
-    const double belt = fbm(P.s[S_RANGE], (ga + wa) * fa, (gc + wc) * fc, 3);
+    double belt = fbm(P.s[S_RANGE], (ga + wa) * fa, (gc + wc) * fc, 3);
+    {  // (Desert country, hot and dry: the ranges sink away there into mesa and sand, several km of it, before the next range.)
+        double lw0[PB_COUNT];
+        lowWeights(P, wet, heat, 0, lw0);
+        belt -= RR.desertSink * smoothstep(0.25, 0.6, lw0[PB_BADLANDS] + lw0[PB_DUNES]);
+    }
     r.mk = smoothstep(RR.beltFrom - 0.06 * P.relief, RR.beltFull, belt);
     // (The range rises all the way to its axis, the belt field's crest: no flat-topped plateau with a rim.)
     r.massif = smoothstep(0.0, 1.0, (belt - RR.beltFrom) / std::max(0.05, RR.beltTop - RR.beltFrom));
@@ -1534,6 +1539,24 @@ static Macro evalMacro(const ProcWorld& G, double x, double z, const DTile& T, c
                             smoothstep(0.0, 70.0, rs ? rd - rs->hw : 1e9);
         const double k = bm * (K >= 0 ? K * wpos : K * wneg);
         m.h = std::max(Lmin + 0.5 * std::max(0.0, over), env + k);
+    }
+    // ---- The mesas (procrules.h MesaRule; Monument Valley): over the land the valleys left, flat-topped at the desert floor's level
+    // and a mesa's height over it, a sheer band on a talus slope, lone spires; the rivers and creeks cut canyons through them ----
+    {
+        const double bench = smoothstep(0.3, 0.6, m.w[PB_BADLANDS]);  // (wherever the mesa biome holds, in the ranges' foothills too)
+        if (bench > 0) {
+            const MesaRule& MR = rules().mesa;
+            const ProcWorld::Params& P = G.params();
+            const double f = fbm(P.s[S_MESA] + 3, x / (MR.size * P.scale), z / (MR.size * P.scale), 3);
+            const double talus = smoothstep(0.46, 0.56, f), band = smoothstep(0.565, 0.58, f);
+            double shape = (1 - MR.cliff) * talus + MR.cliff * band;
+            const double sp = ridgedMF(P.s[S_MESA] + 9, x / 140.0, z / 140.0, 2);  // (spires: needles where the ridged field peaks)
+            shape = std::max(shape, 0.6 * MR.spires * smoothstep(0.82, 0.9, sp) * (1 - talus) * 1.6);
+            const double top = ms.r.R + 30 + MR.height * P.relief * shape;  // (the desert floor, 30 m of fill, then the mesa)
+            const double bank = std::min(rs ? rd - rs->hw : 1e9, cs ? cd - cs->hw : 1e9);
+            const double wch = smoothstep(6.0, 45.0, bank);  // (the canyons: a channel's water cuts down through it)
+            if (top > m.h) m.h += (top - m.h) * bench * wch * smoothstep(0.0, 0.02, shape);
+        }
     }
     // The water near: the nearest river's and creek's channel.
     if (rs) {
@@ -3149,7 +3172,7 @@ std::shared_ptr<Chunk> ProcWorld::makeChunk(int64_t cx, int64_t cz) const {
             for (int b = 0; b < PB_COUNT; b++)
                 if (b != b1 && (b2 < 0 || w[b] > w[b2])) b2 = b;
             const double t = w[b2] / (w[b1] + w[b2]);  // 0..0.5
-            const double dith = 0.55 + 0.7 * (vnoise(P.s[S_DITHER], x * 0.06, z * 0.06) - 0.5) + 0.3 * (hash01(P.s[S_DITHER], gx0 + i, gz0 + j) - 0.5);
+            const double dith = 0.5 + 0.35 * (vnoise(P.s[S_DITHER], x * 0.03, z * 0.03) - 0.5);  // (one short, natural edge where two biomes meet: no patchwork of the other inside)
             cl.dom = (uint8_t)(2 * t > dith ? b2 : b1);
             for (int b = 0; b < PB_COUNT; b++) cl.w[b] = (float)w[b];
         }
